@@ -1,0 +1,22 @@
+{
+  "name": "窗口与电脑侧缓冲都覆盖不到时要求基线快照",
+  "why": "守住『不存在大概补上了』：两侧都补不齐时必须明确要求快照，而不是少发几条了事。",
+  "bridge": { "s1": { "events": [] } },
+  "relay": { "windowSize": 2 },
+  "device": { "since": { "s1": 0 } },
+  "steps": [
+    { "op": "append", "sid": "s1", "itemId": "m1", "text": "一" },
+    { "op": "append", "sid": "s1", "itemId": "m2", "text": "二" },
+    { "op": "append", "sid": "s1", "itemId": "m3", "text": "三" },
+    { "op": "append", "sid": "s1", "itemId": "m4", "text": "四" },
+    { "op": "relayEvictAll" },
+    { "op": "bridgeTrim", "sid": "s1", "upto": 2 },
+    { "op": "hello" },
+    { "op": "ack", "sid": "s1" }
+  ],
+  "expect": {
+    "recovery": { "s1": { "source": "bridge", "outcome": "snapshot", "reason": "window-missed" } },
+    "items": { "s1": ["m1", "m2", "m3", "m4"] },
+    "converged": true
+  }
+}

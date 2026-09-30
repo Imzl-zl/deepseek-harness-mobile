@@ -1,0 +1,19 @@
+{
+  "name": "幂等表必须持久化:重启后重发不得二次执行",
+  "why": "守住契约 §5.6 与 I8。同一幂等键在『去重表幸存』时只生效一次;去重表丢失后会二次执行 —— 这正是它必须落盘而不是只放内存的可执行证据。",
+  "bridge": { "s1": { "events": [] } },
+  "relay": { "windowSize": 10 },
+  "device": { "since": { "s1": 0 } },
+  "steps": [
+    { "op": "sendTwice", "sid": "s1", "requestId": "r1", "text": "跑测试" },
+    { "op": "bridgeRestart", "keepDedupe": true },
+    { "op": "sendTwice", "sid": "s1", "requestId": "r1", "text": "跑测试" },
+    { "op": "sendTwice", "sid": "s1", "requestId": "r2", "text": "再跑一次" },
+    { "op": "bridgeRestart", "keepDedupe": false },
+    { "op": "sendTwice", "sid": "s1", "requestId": "r2", "text": "再跑一次" }
+  ],
+  "expect": {
+    "requests": { "r1": 1, "r2": 2 },
+    "bridgeItemCount": { "s1": 2 }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "live 流式帧不推进修订号、不产生条目",
+  "why": "守住契约 §3:live 帧是易变的,不占 seq、不进重放窗口、不参与 ack、不落盘;最终文本由持久事件还原。",
+  "bridge": { "s1": { "events": [] } },
+  "relay": { "windowSize": 10 },
+  "device": { "since": { "s1": 0 } },
+  "steps": [
+    { "op": "live", "sid": "s1", "stream": 1, "rev": 1, "text": "你" },
+    { "op": "append", "sid": "s1", "itemId": "m1", "text": "你好" },
+    { "op": "live", "sid": "s1", "stream": 1, "rev": 2, "text": "好" },
+    { "op": "hello" },
+    { "op": "ack", "sid": "s1" },
+    { "op": "live", "sid": "s1", "stream": 1, "rev": 3, "text": "!" }
+  ],
+  "expect": {
+    "recovery": { "s1": { "source": "relay", "outcome": "delta", "from": 1, "to": 1, "items": 1 } },
+    "items": { "s1": ["m1"] },
+    "itemCount": { "s1": 1 },
+    "deviceCursor": { "s1": 1 },
+    "liveIgnored": true,
+    "converged": true
+  }
+}

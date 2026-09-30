@@ -1,0 +1,18 @@
+{
+  "name": "同一幂等键重发只产生一条消息",
+  "why": "守住准入第 4 条：断线重发不得产生第二条消息。DSH 自身的去重只看当前 inbox 与内存日志，桥接必须自己有界去重。",
+  "bridge": { "s1": { "events": [] } },
+  "relay": { "windowSize": 10 },
+  "device": { "since": { "s1": 0 } },
+  "steps": [
+    { "op": "sendTwice", "sid": "s1", "requestId": "r1", "text": "你好" },
+    { "op": "hello" },
+    { "op": "ack", "sid": "s1" }
+  ],
+  "expect": {
+    "requests": { "r1": 1 },
+    "items": { "s1": ["req:r1"] },
+    "itemCount": { "s1": 1 },
+    "converged": true
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "接收端按 seq 去重、遇空洞要求快照",
+  "why": "守住契约 §5.4 规则 5(与 DSH follow() 的『跳号即抛错、倒退静默跳过』等价):重复帧丢弃、前向空洞不入库并触发一次恢复,恢复自然落到 snapshotRequired。",
+  "bridge": { "s1": { "events": [] } },
+  "relay": { "windowSize": 10 },
+  "device": { "since": { "s1": 0 } },
+  "steps": [
+    { "op": "append", "sid": "s1", "itemId": "m1", "text": "一" },
+    { "op": "redeliver", "sid": "s1", "seq": 1 },
+    { "op": "redeliver", "sid": "s1", "seq": 1 },
+    { "op": "append", "sid": "s1", "itemId": "m2", "text": "二" },
+    { "op": "append", "sid": "s1", "itemId": "m3", "text": "三" },
+    { "op": "redeliver", "sid": "s1", "seq": 3 },
+    { "op": "relayEvictAll" },
+    { "op": "bridgeTrim", "sid": "s1", "upto": 3 },
+    { "op": "hello" }
+  ],
+  "expect": {
+    "gaps": { "s1": 1 },
+    "duplicates": { "s1": 1 },
+    "recovery": { "s1": { "source": "bridge", "outcome": "snapshot", "reason": "window-missed", "asOfSeq": 3, "hasMore": false } },
+    "items": { "s1": ["m1", "m2", "m3"] },
+    "itemCount": { "s1": 3 },
+    "deviceCursor": { "s1": 3 },
+    "converged": true
+  }
+}

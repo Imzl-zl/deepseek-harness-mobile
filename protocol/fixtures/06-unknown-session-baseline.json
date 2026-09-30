@@ -1,0 +1,15 @@
+{
+  "name": "不存在的会话要求基线快照",
+  "why": "守住会话被删除/被替换后的行为：不能返回空增量让手机以为这个会话是空的。",
+  "bridge": { "s1": { "events": [] } },
+  "relay": { "windowSize": 10 },
+  "device": { "since": { "gone": 3 } },
+  "steps": [
+    { "op": "append", "sid": "s1", "itemId": "m1", "text": "一" },
+    { "op": "hello" }
+  ],
+  "expect": {
+    "recovery": { "gone": { "source": "bridge", "outcome": "snapshot", "reason": "no-session" } },
+    "converged": true
+  }
+}

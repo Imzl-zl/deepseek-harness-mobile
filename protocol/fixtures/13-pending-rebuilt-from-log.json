@@ -1,0 +1,23 @@
+{
+  "name": "待审批集合可从持久日志重建",
+  "why": "守住契约 §6.3 与 I4:ask 与 outcome 成对落盘,悬空即『有 ask、无 outcome』;桥接重启后从日志重建,不依赖进程内存。",
+  "bridge": { "s1": { "events": [] } },
+  "relay": { "windowSize": 10 },
+  "device": { "since": { "s1": 0 } },
+  "steps": [
+    { "op": "ask", "sid": "s1", "callId": "c1", "payload": { "tool": "bash" } },
+    { "op": "ask", "sid": "s1", "callId": "c2", "payload": { "tool": "write" } },
+    { "op": "answer", "sid": "s1", "callId": "c1", "decision": "allowed-once" },
+    { "op": "hello" },
+    { "op": "ack", "sid": "s1" },
+    { "op": "bridgeRestart", "keepDedupe": true },
+    { "op": "rebuildPending" }
+  ],
+  "expect": {
+    "pending": { "s1": ["c2"] },
+    "items": { "s1": ["i:c1", "i:c2"] },
+    "itemCount": { "s1": 2 },
+    "deviceCursor": { "s1": 3 },
+    "converged": true
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "中转状态全部清空后重启仍能恢复",
+  "why": "守住决策笔记的准入第 1 条：删掉中转全部业务状态再重启，已配对设备重连必须只凭电脑侧数据恢复——不丢事件、不产生重复条目。",
+  "bridge": { "s1": { "events": [] } },
+  "relay": { "windowSize": 10 },
+  "device": { "since": { "s1": 0 } },
+  "steps": [
+    { "op": "append", "sid": "s1", "itemId": "m1", "text": "一" },
+    { "op": "append", "sid": "s1", "itemId": "m2", "text": "二" },
+    { "op": "append", "sid": "s1", "itemId": "m3", "text": "三" },
+    { "op": "hello" },
+    { "op": "ackSeq", "sid": "s1", "seq": 1 },
+    { "op": "relayRestart" },
+    { "op": "append", "sid": "s1", "itemId": "m4", "text": "四" },
+    { "op": "hello" },
+    { "op": "ack", "sid": "s1" }
+  ],
+  "expect": {
+    "recovery": {
+      "s1": [
+        { "source": "relay", "outcome": "delta", "from": 1, "to": 3 },
+        { "source": "bridge", "outcome": "delta", "from": 2, "to": 4 }
+      ]
+    },
+    "items": { "s1": ["m1", "m2", "m3", "m4"] },
+    "itemCount": { "s1": 4 },
+    "converged": true
+  }
+}

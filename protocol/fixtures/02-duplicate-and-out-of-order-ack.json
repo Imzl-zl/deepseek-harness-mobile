@@ -1,0 +1,32 @@
+{
+  "name": "重复投递与乱序 ack 不产生重复条目",
+  "why": "守住『条目 upsert-only + 稳定 itemId』：同一帧重复到达、以及 ack 乱序，都不能让手机侧多出条目或把游标推错。",
+  "bridge": { "s1": { "events": [] } },
+  "relay": { "windowSize": 10 },
+  "device": { "since": { "s1": 0 } },
+  "steps": [
+    { "op": "append", "sid": "s1", "itemId": "m1", "text": "一" },
+    { "op": "append", "sid": "s1", "itemId": "m2", "text": "二" },
+    { "op": "append", "sid": "s1", "itemId": "m3", "text": "三" },
+    { "op": "hello" },
+    { "op": "redeliver", "sid": "s1", "seq": 2 },
+    { "op": "redeliver", "sid": "s1", "seq": 2 },
+    { "op": "ackSeq", "sid": "s1", "seq": 1 },
+    { "op": "ackSeq", "sid": "s1", "seq": 3 },
+    { "op": "ackSeq", "sid": "s1", "seq": 2 },
+    { "op": "append", "sid": "s1", "itemId": "m3", "text": "三(内容更新)" },
+    { "op": "hello" }
+  ],
+  "expect": {
+    "recovery": {
+      "s1": [
+        { "source": "relay", "outcome": "delta", "from": 1, "to": 3 },
+        { "source": "relay", "outcome": "delta", "from": 4, "to": 4, "items": 1 }
+      ]
+    },
+    "items": { "s1": ["m1", "m2", "m3"] },
+    "itemCount": { "s1": 3 },
+    "converged": true,
+    "deviceCursor": { "s1": 3 }
+  }
+}

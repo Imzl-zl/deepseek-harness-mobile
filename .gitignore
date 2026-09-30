@@ -1,0 +1,13 @@
+# 归一决定与取舍见 .agents/notes/implemented/2026-10-01-collaboration-single-source-of-truth.md
+
+# 原型截图产物:由 mock/proto/tools/shoot*.mjs 生成,约 9 MB,不入库
+mock/proto/shots/
+
+# 协作体系归一的改前快照。首提交已是归一后状态,
+# 归一前的差异只在这个目录里可见,所以不要删。
+setup-collaboration-files.backup/
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+Desktop.ini

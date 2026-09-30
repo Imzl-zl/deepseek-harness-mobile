@@ -1,0 +1,19 @@
+{
+  "name": "中转窗口被逐出后由电脑侧补齐",
+  "why": "守住『中转不是真值源』：窗口丢了不影响正确性，电脑侧的增量缓冲仍能给出完整增量。",
+  "bridge": { "s1": { "events": [] } },
+  "relay": { "windowSize": 10 },
+  "device": { "since": { "s1": 0 } },
+  "steps": [
+    { "op": "append", "sid": "s1", "itemId": "m1", "text": "一" },
+    { "op": "append", "sid": "s1", "itemId": "m2", "text": "二" },
+    { "op": "relayEvictAll" },
+    { "op": "hello" },
+    { "op": "ack", "sid": "s1" }
+  ],
+  "expect": {
+    "recovery": { "s1": { "source": "bridge", "outcome": "delta", "from": 1, "to": 2 } },
+    "items": { "s1": ["m1", "m2"] },
+    "converged": true
+  }
+}

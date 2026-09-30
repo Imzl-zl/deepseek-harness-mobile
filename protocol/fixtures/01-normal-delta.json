@@ -1,0 +1,20 @@
+{
+  "name": "重连补课走中转窗口",
+  "why": "守住『恢复只有两种结果』与『中转的有界窗口能独立完成补课』：设备离线期间的帧留在窗口里，重连时不必打扰电脑侧。",
+  "bridge": { "s1": { "events": [] } },
+  "relay": { "windowSize": 10 },
+  "device": { "since": { "s1": 0 } },
+  "steps": [
+    { "op": "append", "sid": "s1", "itemId": "m1", "text": "第一条" },
+    { "op": "append", "sid": "s1", "itemId": "m2", "text": "第二条" },
+    { "op": "append", "sid": "s1", "itemId": "m3", "text": "第三条" },
+    { "op": "hello" },
+    { "op": "ack", "sid": "s1" }
+  ],
+  "expect": {
+    "recovery": { "s1": { "source": "relay", "outcome": "delta", "from": 1, "to": 3 } },
+    "items": { "s1": ["m1", "m2", "m3"] },
+    "converged": true,
+    "relayRoutingKeysOnly": true
+  }
+}

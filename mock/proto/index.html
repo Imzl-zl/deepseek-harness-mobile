@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>DSH Mobile · 交互原型(聊天即主页 + 抽屉 + 文件预览)</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app" class="motion">
+
+  <!-- ============================================================ 页面栈 -->
+  <div class="stack">
+
+    <!-- ---------------------------------------------------------- 会话页 -->
+    <section class="page page--chat" id="pageChat">
+      <header class="appbar">
+        <button class="ib" data-act="drawer-open" data-icon="panelLeft" aria-label="打开会话抽屉"></button>
+        <h1 class="ttl">手机端控制电脑DSH方案</h1>
+        <!-- 状态位:有后台任务显示任务状态,没有就显示文件变更;点它弹右侧抽屉 -->
+        <button class="statuspill" id="statusPill" data-act="status-open" aria-label="会话状态"></button>
+        <button class="ib" data-act="new-session" data-icon="newChat" aria-label="新建会话"></button>
+      </header>
+
+      <div class="seg" id="mainSeg" role="tablist">
+        <span class="seg-ind"></span>
+        <button class="seg-btn is-on" role="tab">对话</button>
+        <button class="seg-btn" role="tab">轨迹</button>
+      </div>
+
+      <div class="pager" id="pager">
+        <div class="pager-track">
+
+          <!-- ============ 对话 ============ -->
+          <div class="pg">
+            <div class="scroll" id="msgs">
+
+              <div class="turn turn--u">
+                <div class="b">帮我把 DSH 会话做成手机版,要地道的移动端手感</div>
+              </div>
+
+              <div class="turn a">
+                <div class="a-head">
+                  <span class="a-ava" data-icon="sparkle" data-icon-size="14"></span><span class="a-who">助手</span>
+                  <span class="a-mdl">· claude-opus</span>
+                </div>
+                <div class="md" data-longpress-msg>
+                  <p>参考 <b>rikkahub</b> 重做了导航结构:<b>聊天即主页 + 抽屉</b>;抽屉支持左缘跟手拖出、拖回关闭、遮罩点按关闭。</p>
+                  <ul>
+                    <li>顶栏 <code class="ic">☰</code> 开抽屉,<code class="ic">＋</code> 新建</li>
+                    <li><b>改动文件点开是全屏文件预览</b>,不再内联塞在气泡里</li>
+                    <li>长按消息 / 长按列表行 → 底部 sheet</li>
+                  </ul>
+
+                  <div class="code">
+                    <div class="code-h">
+                      <span>dart · chat_page.dart</span>
+                      <button class="cp" data-act="copy-code" data-copy="ModalNavigationDrawer(drawer: const SessionDrawer(), child: ...)"><span data-icon="copy" data-icon-size="14"></span>复制</button>
+                    </div>
+<pre><span class="tk-c">// DSH 配色 → M3,导航换成 M3 抽屉</span>
+<span class="tk-k">final</span> scheme = <span class="tk-f">ColorScheme</span>.dark(
+  surface: <span class="tk-f">Color</span>(<span class="tk-s">0xFF151517</span>),
+  primary: <span class="tk-f">Color</span>(<span class="tk-s">0xFF5686FE</span>),
+);</pre>
+                  </div>
+
+                  <div class="tool">
+                    <button class="tool-r">
+                      <span class="tool-ic" data-icon="edit" data-icon-size="14"></span>
+                      <span class="tool-nm">edit</span>
+                      <span class="tool-arg">app/lib/ui/chat_page.dart</span>
+                      <span class="tool-diffstat"><span class="p">+128</span> <span class="m">−46</span></span>
+                      <span class="tool-cv" data-icon="chevronRight" data-icon-size="16"></span>
+                    </button>
+                    <div class="tool-body">替换 Scaffold 为 ModalNavigationDrawer,底部导航移除,改由抽屉承载会话历史。</div>
+                  </div>
+
+                  <div class="idiff">
+                    <div class="idiff-h">导航模型</div>
+                    <div class="idiff-b">
+                      <div class="idiff-l dl"><span class="sg">−</span><span class="tx">bottomNavigationBar: const DshNavBar(),</span></div>
+                      <div class="idiff-l ad"><span class="sg">+</span><span class="tx">drawer: const SessionDrawer(),</span></div>
+                      <div class="idiff-l ad"><span class="sg">+</span><span class="tx">leading: const DrawerButton(),</span></div>
+                    </div>
+                  </div>
+
+                  <!-- 变更文件:点开全屏预览(之前这版漏了) -->
+                  <div class="files">
+                    <button class="fchip" data-act="open-file" data-file="app/lib/ui/chat_page.dart">
+                      <span class="fi" data-icon="edit" data-icon-size="14"></span><span class="nm">chat_page.dart</span>
+                      <span class="st"><span class="p">+128</span> <span class="m">−46</span></span>
+                    </button>
+                    <button class="fchip" data-act="open-file" data-file="docs/design-and-tech-plan.md">
+                      <span class="fi" data-icon="deliverDoc" data-icon-size="14"></span><span class="nm">design-and-tech-plan.md</span>
+                      <span class="st"><span class="p">+12</span> <span class="m">−3</span></span>
+                    </button>
+                    <button class="fchip" data-act="open-file" data-file="app/lib/ui/timeline_page.dart">
+                      <span class="fi" data-icon="code" data-icon-size="14"></span><span class="nm">timeline_page.dart</span>
+                      <span class="st"><span class="p">+214</span></span>
+                    </button>
+                    <button class="fmore" data-act="files-all">另外 4 个 <span data-icon="chevronRight" data-icon-size="14"></span></button>
+                  </div>
+
+                  <div class="imgs">
+                    <img class="thumb" src="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%221200%22%20height%3D%22800%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22a%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%235686FE%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%239E7BAA%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%221200%22%20height%3D%22800%22%20fill%3D%22url(%23a)%22%2F%3E%3Ctext%20x%3D%2260%22%20y%3D%22740%22%20font-family%3D%22monospace%22%20font-size%3D%2244%22%20fill%3D%22%23fff%22%3E%E6%A1%8C%E9%9D%A2%E6%88%AA%E5%9B%BE%201%3C%2Ftext%3E%3C%2Fsvg%3E"
+                         data-act="img-open" data-i="0" alt="桌面截图 1">
+                    <img class="thumb" src="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22800%22%20height%3D%221200%22%3E%3Crect%20width%3D%22800%22%20height%3D%221200%22%20fill%3D%22%231F3124%22%2F%3E%3Crect%20x%3D%2260%22%20y%3D%2280%22%20width%3D%22680%22%20height%3D%22180%22%20rx%3D%2228%22%20fill%3D%22%2341C977%22%20opacity%3D%22.35%22%2F%3E%3Ctext%20x%3D%2260%22%20y%3D%221120%22%20font-family%3D%22monospace%22%20font-size%3D%2240%22%20fill%3D%22%2341C977%22%3Ediff%20%E7%AB%96%E5%9B%BE%3C%2Ftext%3E%3C%2Fsvg%3E"
+                         data-act="img-open" data-i="1" alt="diff 竖图">
+                  </div>
+
+                  <p class="press">· 长按消息:复制 / 重发 / 分支 ·</p>
+                </div>
+              </div>
+
+              <div class="turn a">
+                <div class="a-head"><span class="a-ava" data-icon="sparkle" data-icon-size="14"></span><span class="a-who">助手</span><span class="a-mdl">· claude-opus</span></div>
+                <div class="md" data-longpress-msg>
+                  <p>要清理构建产物、并写一份配置到工作区外。审批和提问都不在气泡里,而是<b>接管输入栏</b>(DSH 的 composer takeover);需要时也可以从这里重新打开。</p>
+                  <div class="tool">
+                    <button class="tool-r" data-act="reopen-approval">
+                      <span class="tool-ic" data-icon="api" data-icon-size="14"></span>
+                      <span class="tool-nm">bash</span>
+                      <span class="tool-arg">rm -rf build/ &amp;&amp; flutter clean</span>
+                      <span class="tool-st" style="color:var(--warn)">等待审批</span>
+                    </button>
+                    <div class="tool-body">只读 / 工作区内修改模式下,越权操作要你确认;完全权限模式下这一步不会出现。</div>
+                  </div>
+                  <div class="tool">
+                    <button class="tool-r" data-act="reopen-question">
+                      <span class="tool-ic" data-icon="question" data-icon-size="14"></span>
+                      <span class="tool-nm">ask_user_question</span>
+                      <span class="tool-arg">3 题 · 含多选与自定义答案</span>
+                      <span class="tool-st" style="color:var(--warn)">等待回答</span>
+                    </button>
+                    <div class="tool-body">收起面板后从这里重新打开(DSH 的 nav.close 语义)。</div>
+                  </div>
+
+                  <!-- 后台任务 / 子代理明细都在右侧抽屉,由图顶栏状态位与右下计数 chip 进入;
+                       对话流里不再放入口(左右两个抽屉互相跳没有道理,已撤) -->
+                </div>
+              </div>
+
+            </div>
+            <button class="fab-down" id="fabDown" aria-label="回到底部" data-icon="chevronDown" data-icon-size="18"></button>
+          </div>
+
+          <!-- ============ 轨迹 ============ -->
+          <div class="pg">
+            <div class="tj-tools">
+              <div class="chips">
+                <button class="chip is-on" data-act="tj-chip">时长</button>
+                <button class="chip" data-act="tj-chip">轮次</button>
+                <button class="chip" data-act="tj-chip">调用</button>
+              </div>
+              <button class="ib" data-act="toast" data-msg="轨迹搜索" data-icon="search" aria-label="搜索轨迹"></button>
+            </div>
+
+            <div class="scroll" style="padding-top:0">
+              <div class="gantt">
+                <div class="gantt-in">
+                  <div class="grow"><span class="lb">输入</span>
+                    <div class="gtrack"><span class="gspan g-u" style="left:0%;width:9%"></span></div>
+                  </div>
+                  <div class="grow"><span class="lb">模型</span>
+                    <div class="gtrack">
+                      <span class="gspan g-m" style="left:9%;width:14%;opacity:.5"></span>
+                      <span class="gspan g-m" style="left:23%;width:26%"></span>
+                      <span class="gspan g-m" style="left:64%;width:18%;opacity:.6"></span>
+                    </div>
+                  </div>
+                  <div class="grow"><span class="lb">工具</span>
+                    <div class="gtrack">
+                      <span class="gspan g-t" style="left:49%;width:7%"></span>
+                      <span class="gspan g-t" style="left:57%;width:6%"></span>
+                      <span class="gspan g-e" style="left:82%;width:3%"></span>
+                    </div>
+                  </div>
+                  <div style="font-size:11px;color:var(--cap);margin-top:6px">← 横滑查看完整时间轴 →</div>
+                </div>
+              </div>
+
+              <div class="ledger">
+                <button class="lg c" data-act="sheet-traj">
+                  <span class="bar"></span>
+                  <span class="m">
+                    <span class="r1"><span class="nm"><span data-icon="info" data-icon-size="13"></span> 上下文</span><span class="tt">120 ms</span></span>
+                    <span class="r2">系统提示词 + 工具定义注入,含 4 个 MCP server</span>
+                  </span>
+                  <span class="cv" data-icon="chevronRight" data-icon-size="16"></span>
+                </button>
+                <button class="lg a" data-act="sheet-traj">
+                  <span class="bar"></span>
+                  <span class="m">
+                    <span class="r1"><span class="nm"><span data-icon="sparkle" data-icon-size="13"></span> 助手</span><span class="tt">12.4 s</span></span>
+                    <span class="r2">我先快速看一下现有导航实现,再决定改哪几个文件。</span>
+                  </span>
+                  <span class="cv" data-icon="chevronRight" data-icon-size="16"></span>
+                </button>
+                <button class="lg t" data-act="sheet-traj">
+                  <span class="bar"></span>
+                  <span class="m">
+                    <span class="r1"><span class="nm"><span data-icon="browse" data-icon-size="13"></span> 工具 · read</span><span class="tt">84 ms</span></span>
+                    <span class="r2">rikkahub/…/ChatPage.kt → 741 行</span>
+                  </span>
+                  <span class="cv" data-icon="chevronRight" data-icon-size="16"></span>
+                </button>
+                <button class="lg t" data-act="sheet-traj">
+                  <span class="bar"></span>
+                  <span class="m">
+                    <span class="r1"><span class="nm"><span data-icon="edit" data-icon-size="13"></span> 工具 · edit</span><span class="tt">310 ms</span></span>
+                    <span class="r2">app/lib/ui/chat_page.dart +128 −46</span>
+                  </span>
+                  <span class="cv" data-icon="chevronRight" data-icon-size="16"></span>
+                </button>
+                <button class="lg e" data-act="sheet-traj">
+                  <span class="bar"></span>
+                  <span class="m">
+                    <span class="r1"><span class="nm"><span data-icon="warningTriangle" data-icon-size="13"></span> 错误</span><span class="tt">1.2 s</span></span>
+                    <span class="r2">flutter analyze:unused_import(已自动修复)</span>
+                  </span>
+                  <span class="cv" data-icon="chevronRight" data-icon-size="16"></span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <footer class="foot">
+        <!-- DSH conversation.input.dock:目标与只读任务清单;原型数据明确标示为演示 -->
+        <div class="conversation-dock" id="conversationDock">
+          <div id="goalDock"></div>
+          <div id="todoDock"></div>
+        </div>
+        <div class="takeover" id="takeover"></div>
+        <div class="composer-stack" id="composerStack">
+          <div class="composer">
+            <!-- 结构照 DSH InputBar:卡片内 = 附件 → 文字 → 控制行(左 tools / 右 trailing) -->
+            <div class="attach-rail" id="attachRail" hidden aria-label="待发送附件"></div>
+            <textarea class="field" id="input" rows="1"
+              placeholder="发消息或创建任务, / 调用指令, @ 文件或对话"></textarea>
+            <!-- 控制行:左边一组(＋ / 模型·等级 / 权限),右边只有发送。
+                 注:DSH 桌面把模型放在 .trailing(右侧);手机主流是左侧集中、右侧单发送键,
+                 这里按移动端习惯偏离桌面结构(方案 §7.2 已记为有意偏离)。 -->
+            <div class="composer-row2">
+              <div class="ctools">
+                <button class="ib" data-act="attach" data-icon="plus" data-icon-size="18" aria-label="添加文件或调用指令"></button>
+                <button class="chip" id="chipModel" data-act="pick-model"><b>claude-opus</b> <span class="cap">· 高</span> <span class="cap" data-icon="chevronDown" data-icon-size="12"></span></button>
+                <button class="chip chip--icon" id="chipPerm" data-act="pick-perm" aria-label="访问模式"></button>
+              </div>
+              <button class="send" id="send" aria-label="发送消息" disabled></button>
+            </div>
+          </div>
+        </div>
+        <!-- dock 在输入卡片**之后**(DSH InputBar.tsx:499):统计与上下文挂在卡片下方,不顶输入框 -->
+        <div class="stats">
+          <button class="stat" data-act="sheet-stats" id="statTurn"><span data-icon="gauge" data-icon-size="13"></span> 第 1 轮 · 3 步</button>
+          <button class="stat" data-act="sheet-usage"><span data-icon="database" data-icon-size="13"></span> 302K · 缓存 0%</button>
+          <button class="stat" data-act="sheet-context"><span class="ring"></span> 3%</button>
+        </div>
+      </footer>
+    </section>
+
+    <!-- ---------------------------------------------------------- 右侧抽屉:一个抽屉,三个面板
+         diff/预览、运行中的任务、子智能体 —— 都是"右边看一眼"的东西,合并成一个抽屉,
+         对话流里只留一行提示。横屏/宽屏是右侧栏,竖屏自动降级全屏(见 layoutSidePane)。 -->
+    <section class="page page--side" id="pageSide">
+      <div class="side-top">
+        <div class="side-bar">
+          <button class="ib" data-act="side-close" data-icon="chevronRight" aria-label="收起"></button>
+          <div class="ptitle">
+            <div class="n" id="sideTitle">文件预览</div>
+            <div class="p" id="sideSub"></div>
+          </div>
+          <div class="dstat"><span class="p" id="fileAdd"></span><span class="m" id="fileDel"></span></div>
+          <span id="sideMore"></span>
+        </div>
+        <div class="sidetabs" id="sideTabs" role="tablist">
+          <button class="stab is-on" data-panel="file" role="tab">文件</button>
+          <button class="stab" data-panel="jobs" role="tab">任务<b class="n" id="tabJobsN" hidden></b></button>
+          <button class="stab" data-panel="subs" role="tab">子代理<b class="n" id="tabSubsN" hidden></b></button>
+        </div>
+      </div>
+
+      <div class="side-panel is-on" id="panelFile">
+        <div class="file-meta">
+          <span class="badge" id="fileStatus">已修改</span>
+          <span class="badge" id="fileLang">dart</span>
+          <span id="fileSize">5.1 KB</span>
+          <span class="ftools">
+            <button class="toolbtn" data-act="toggle-split" id="btnSplit" aria-pressed="false"
+              title="并排 / 统一"><span data-icon="compareSplit" data-icon-size="14"></span>统一</button>
+            <button class="toolbtn" data-act="toggle-wrap" id="btnWrap" aria-pressed="false"
+              title="换行"><span data-icon="wrapFill" data-icon-size="14"></span>换行</button>
+          </span>
+        </div>
+
+        <div class="seg" id="fileSeg" role="tablist">
+          <span class="seg-ind"></span>
+          <button class="seg-btn is-on" role="tab">差异</button>
+          <button class="seg-btn" role="tab">文件</button>
+        </div>
+
+        <div class="file-view" id="fileView"></div>
+
+        <div class="file-actions" id="fileActions">
+          <button class="btn btn--out" data-act="copy-path"><span data-icon="copy" data-icon-size="14"></span>复制路径</button>
+          <button class="btn btn--out" data-act="open-pc"><span data-icon="rightUp" data-icon-size="14"></span>在电脑打开</button>
+          <button class="btn btn--fill" data-act="share"><span data-icon="share" data-icon-size="14"></span>分享</button>
+        </div>
+      </div>
+
+      <!-- 面板 2:后台任务 -->
+      <div class="side-panel" id="panelJobs">
+        <div class="file-view" id="jobsList"></div>
+        <div class="file-actions">
+          <button class="btn btn--out" data-act="jobs-stop-all">停止全部运行中</button>
+          <button class="btn btn--out" data-act="jobs-clear">清空已结束</button>
+        </div>
+      </div>
+
+      <!-- 面板 3:子智能体 -->
+      <div class="side-panel" id="panelSubs">
+        <div class="file-view" id="subsList"></div>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- 设置页
+         首屏只放五组入口;具体字段按 settings-porting-notes.md 分层进入二级页。 -->
+    <section class="page page--settings" id="pageSettings" aria-hidden="true">
+      <header class="settings-head">
+        <button class="ib" id="settingsBack" data-act="settings-back" data-icon="chevronLeft" aria-label="返回"></button>
+        <h1 id="settingsTitle">设置</h1>
+        <button class="ib" data-act="settings-close" data-icon="close" aria-label="关闭设置"></button>
+      </header>
+      <div class="settings-scroll" id="settingsScroll">
+        <div id="settingsHome" class="settings-view is-on"></div>
+        <div id="settingsDetail" class="settings-view" hidden></div>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- 自动化任务
+         对齐 DSH ui-schedule,结构照 `TaskManagerPage.tsx:114-203`:
+         状态筛选(全部/已开启/已结束)+ 搜索 + 行内"频率 / 下次计划时间"三元组;
+         空态分三种(无任务 / 无已结束 / 无匹配,`:69-71`)。
+         详情只做规则里的名称与内容:时间规则编辑要 cron 与时区选择器(`TaskDetail.tsx`),原型不做。
+         删除确认文案照抄 `task-manager-locales.ts:270-278`;已结束任务只读。
+         页面不提供创建表单:DSH 的"新建"是开新会话让模型建任务(`TaskManagerPage.tsx:22-27`)。
+         数据为演示:`schedule.list/update/delete` 未进 AA bridge,原型不假装已远程提交。 -->
+    <section class="page page--tasks" id="pageTasks" aria-hidden="true" aria-label="自动化任务">
+      <header class="settings-head">
+        <button class="ib" data-act="tasks-close" data-icon="chevronLeft" aria-label="返回"></button>
+        <h1>自动化任务</h1>
+        <button class="ib" data-act="tasks-close" data-icon="close" aria-label="关闭自动化任务"></button>
+      </header>
+
+      <div class="tasks-pane">
+        <div class="tasks-topbar">
+          <div class="tasks-filters" role="group" aria-label="任务状态">
+            <button class="tasks-filter is-on" data-act="tasks-filter" data-filter="all" aria-pressed="true">全部</button>
+            <button class="tasks-filter" data-act="tasks-filter" data-filter="active" aria-pressed="false">已开启</button>
+            <button class="tasks-filter" data-act="tasks-filter" data-filter="inactive" aria-pressed="false">已结束</button>
+          </div>
+          <button class="btn btn--fill tasks-new" data-act="tasks-new">
+            <span data-icon="plus" data-icon-size="13"></span>新建
+          </button>
+        </div>
+
+        <div class="tasks-search">
+          <span data-icon="search" data-icon-size="15"></span>
+          <input id="tasksSearch" type="search" placeholder="搜索自动化任务" aria-label="搜索任务" autocomplete="off">
+          <button class="ib" id="tasksSearchClear" data-act="tasks-search-clear" data-icon="closeFill" data-icon-size="14" aria-label="清空搜索" hidden></button>
+        </div>
+
+        <div class="tasks-scroll" id="tasksView" aria-label="任务列表"></div>
+      </div>
+
+      <div class="tasks-detail" id="tasksDetail" hidden aria-label="任务详情"></div>
+    </section>
+
+  </div>
+
+  <!-- ============================================================ 抽屉 -->
+  <div class="scrim" id="scrim"></div>
+  <div class="side-scrim" id="sideScrim"></div>
+  <aside class="drawer" id="drawer" aria-hidden="true" aria-label="会话抽屉">
+    <div class="drawer-head">
+      <div class="logo" data-icon="sparkle" data-icon-size="16"></div>
+      <div class="t">DSH</div>
+      <button class="ib" data-act="toast" data-msg="新建会话" data-icon="newChat" aria-label="新建会话"></button>
+    </div>
+
+    <button class="newbtn" data-act="new-session"><span data-icon="newChat" data-icon-size="18"></span>新建会话</button>
+
+    <div class="conn">
+      <span class="g"></span>
+      <span class="m"><span class="n">我的电脑</span><span class="s">中转已连接 · 空闲</span></span>
+      <span class="os" style="font-size:11px;color:var(--cap)">Windows</span>
+      <button class="ib" data-act="toast" data-msg="设备页:配对 / 吊销 / 切换设备" data-icon="chevronRight" data-icon-size="16" aria-label="设备详情"></button>
+    </div>
+
+    <!-- 搜索:真输入框(之前是个只弹 toast 的假框,点了没反应) -->
+    <div class="search">
+      <span data-icon="search" data-icon-size="15"></span>
+      <input id="drawerSearch" type="search" placeholder="搜索会话"
+        autocomplete="off" enterkeyhint="search" aria-label="搜索会话">
+      <button class="ib" id="drawerSearchClear" data-act="drawer-search-clear" hidden
+        data-icon="closeFill" data-icon-size="14" aria-label="清除搜索"></button>
+    </div>
+    <div class="dempty" id="drawerEmpty" hidden>没有匹配的会话。</div>
+
+    <div class="ptr" id="ptr"><span class="spin"></span><span>下拉刷新</span></div>
+
+    <div class="dlist" id="dlist">
+      <div class="dsec">今天</div>
+
+      <div class="drow-wrap">
+        <div class="drow-actions">
+          <button class="arc"><span data-icon="archive" data-icon-size="18"></span><span>归档</span></button>
+          <button class="del"><span data-icon="trash" data-icon-size="18"></span><span>删除</span></button>
+        </div>
+        <button class="drow is-on">
+          <span class="dot"></span>
+          <span class="m"><span class="t">手机端控制电脑DSH方案</span><span class="p">抽屉 + 文件预览已按真机手感重做</span></span>
+          <span class="tm">3 分钟</span>
+        </button>
+      </div>
+
+      <div class="drow-wrap">
+        <div class="drow-actions">
+          <button class="arc"><span data-icon="archive" data-icon-size="18"></span><span>归档</span></button>
+          <button class="del"><span data-icon="trash" data-icon-size="18"></span><span>删除</span></button>
+        </div>
+        <button class="drow">
+          <span class="dot"></span>
+          <span class="m"><span class="t">重构鉴权状态机</span><span class="p">已完成 · 12 轮</span></span>
+          <span class="tm">14:20</span>
+        </button>
+      </div>
+
+      <div class="dsec">昨天</div>
+
+      <div class="drow-wrap">
+        <div class="drow-actions">
+          <button class="arc"><span data-icon="archive" data-icon-size="18"></span><span>归档</span></button>
+          <button class="del"><span data-icon="trash" data-icon-size="18"></span><span>删除</span></button>
+        </div>
+        <button class="drow">
+          <span class="dot"></span>
+          <span class="m"><span class="t">修复 diff 渲染越界</span><span class="p">已完成 · 5 轮</span></span>
+          <span class="tm">昨天</span>
+        </button>
+      </div>
+
+      <div class="drow-wrap">
+        <div class="drow-actions">
+          <button class="arc"><span data-icon="archive" data-icon-size="18"></span><span>归档</span></button>
+          <button class="del"><span data-icon="trash" data-icon-size="18"></span><span>删除</span></button>
+        </div>
+        <button class="drow">
+          <span class="dot"></span>
+          <span class="m"><span class="t">接入 bridge 只读会话</span><span class="p">已完成 · 8 轮</span></span>
+          <span class="tm">昨天</span>
+        </button>
+      </div>
+
+      <div class="dsec">更早</div>
+
+      <div class="drow-wrap">
+        <div class="drow-actions">
+          <button class="arc"><span data-icon="archive" data-icon-size="18"></span><span>归档</span></button>
+          <button class="del"><span data-icon="trash" data-icon-size="18"></span><span>删除</span></button>
+        </div>
+        <button class="drow">
+          <span class="dot"></span>
+          <span class="m"><span class="t">抽取 DSH 设计 token</span><span class="p">已完成 · 3 轮</span></span>
+          <span class="tm">周一</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="drawer-foot">
+      <button class="fitem" data-act="toast" data-msg="文件页(接 bridge 后开)"><span class="i" data-icon="folderClose" data-icon-size="18"></span>文件</button>
+      <button class="fitem" data-act="toast" data-msg="会话归档列表"><span class="i" data-icon="archive" data-icon-size="18"></span>归档</button>
+      <button class="fitem" data-act="demo"><span class="i" data-icon="play" data-icon-size="18"></span>演示</button>
+      <!-- ui-schedule 在 DSH 侧栏是独立主面板(`TaskManagerIcon.tsx` 用时钟轮廓图标),
+           手机上同"设置"一样走抽屉底栏 + 全屏页,不进设置组。
+           底栏标签按本条栏的两字惯例取短名「自动化」:320px 宽下 5 项会把「自动化任务」挤换行,
+           整条底栏被撑高(52→65px)。完整名保留在 aria-label 与页面标题。 -->
+      <button class="fitem" data-act="tasks-open" aria-label="自动化任务"><span class="i" data-icon="clock" data-icon-size="18"></span>自动化</button>
+      <button class="fitem" data-act="settings-open"><span class="i" data-icon="settings" data-icon-size="18"></span>设置</button>
+    </div>
+  </aside>
+
+  <!-- 左缘手势带:开抽屉 / 文件页返回 -->
+  <div class="edge edge--open" id="edgeOpen"></div>
+  <div class="edge edge--back" id="edgeBack"></div>
+
+  <!-- ============================================================ sheet / lightbox -->
+  <div class="sheet-host" id="sheetHost"></div>
+
+  <div class="lightbox" id="lightbox">
+    <div class="lb-bar">
+      <button class="ib" data-act="lb-close" data-icon="close" aria-label="关闭原图预览"></button>
+      <span class="lb-i" id="lbIdx">1 / 2</span>
+    </div>
+    <img id="lbImg" alt="图片预览">
+  </div>
+
+  <div class="desktop-tip">已进入 ≥900px 宽屏:抽屉转为常驻</div>
+</div>
+
+<script src="icons.js"></script>
+<script src="interactions.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

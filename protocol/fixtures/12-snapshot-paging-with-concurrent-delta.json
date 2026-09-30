@@ -1,0 +1,36 @@
+{
+  "name": "快照分页期间到达的增量不丢也不重",
+  "why": "守住契约 §5.4 规则 4:分页期间 ev 只缓存不渲染;每页都累积;分页结束后按 seq 合并 —— 既不丢事件,也不产生重复条目。",
+  "snapshotPageSize": 2,
+  "bridge": { "s1": { "events": [] } },
+  "relay": { "windowSize": 10 },
+  "device": { "since": { "s1": 0 } },
+  "steps": [
+    { "op": "append", "sid": "s1", "itemId": "m1", "text": "一" },
+    { "op": "append", "sid": "s1", "itemId": "m2", "text": "二" },
+    { "op": "append", "sid": "s1", "itemId": "m3", "text": "三" },
+    { "op": "append", "sid": "s1", "itemId": "m4", "text": "四" },
+    { "op": "append", "sid": "s1", "itemId": "m5", "text": "五" },
+    { "op": "relayEvictAll" },
+    { "op": "bridgeTrim", "sid": "s1", "upto": 5 },
+    { "op": "hello" },
+    { "op": "append", "sid": "s1", "itemId": "m6", "text": "六" },
+    { "op": "redeliver", "sid": "s1", "seq": 6 },
+    { "op": "snapshotPage", "sid": "s1" },
+    { "op": "snapshotPage", "sid": "s1" },
+    { "op": "ack", "sid": "s1" }
+  ],
+  "expect": {
+    "recovery": {
+      "s1": [
+        { "source": "bridge", "outcome": "snapshot", "reason": "window-missed", "asOfSeq": 5, "hasMore": true },
+        { "source": "bridge", "outcome": "snapshot", "asOfSeq": 5, "hasMore": true },
+        { "source": "bridge", "outcome": "snapshot", "asOfSeq": 5, "hasMore": false }
+      ]
+    },
+    "items": { "s1": ["m1", "m2", "m3", "m4", "m5", "m6"] },
+    "itemCount": { "s1": 6 },
+    "deviceCursor": { "s1": 6 },
+    "converged": true
+  }
+}
