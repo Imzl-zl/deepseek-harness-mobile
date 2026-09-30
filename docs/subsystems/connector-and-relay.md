@@ -16,7 +16,7 @@
   "name": "@dsh-mobile/connector",
   "version": "0.1.0",
   "type": "module",
-  "packageManager": "pnpm@11.7.0",
+  "packageManager": "pnpm@11.13.0",
   "main": "./lib/index.js",
   "files": ["lib", "cordis.patch.yml", "README.md"],
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
@@ -46,7 +46,7 @@
       config: {}
 ```
 
-**版本基线(2026-09-30 核实)**:DSH 仓库根为 `@deepseek-ai/dsh-root@0.2.0-rc.2`,对应公共 npm 上 `@deepseek-ai/dsh-*` 的 **`next` dist-tag = `0.2.0-rc.2`**。**不要用 `latest`**——它落后很多(例如 `@deepseek-ai/dsh-jobs` 的 latest 是 `0.0.1-rc.3`、`@deepseek-ai/dsh-api-session-controller` 是 `0.1.2-alpha.2`)。`@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` 用 `latest`(4.0.4 / 3.18.4)。包管理器与 DSH 一致:`pnpm@11.7.0`。
+**版本基线(2026-10-01 复核)**:DSH 仓库根为 `@deepseek-ai/dsh-root@0.2.0-rc.2`,对应公共 npm 上 `@deepseek-ai/dsh-*` 的 **`next` dist-tag = `0.2.0-rc.2`**。**不要用 `latest`**——它落后很多(实测:`@deepseek-ai/dsh-jobs` 的 latest 是 `0.0.1-rc.3`、`dsh-api-session-controller` 是 `0.1.2-alpha.2`、`dsh-typert-protocol` 是 `0.1.0-rc.6`,而三者的 `next` 都是 `0.2.0-rc.2`)。`@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` 用 `latest`(4.0.4 / 3.18.4)。包管理器钉 **`pnpm@11.13.0`**:connector 是独立 npm bundle、不是 DSH workspace 成员,与 DSH 根的补丁号一致买不到功能,钉一个本机真实存在的版本才能离线可复现。取舍见 `.agents/notes/implemented/2026-10-01-connector-workspace-shape.md`。
 
 **兼容性只看 `peerDependencies`**(`packages/boot/app-boot/src/plugin-compatibility.ts:68`);不匹配会被静默跳过并记入 `skippedBundles`(`profile.ts:675-681`)。写 `engines.dsh` 没有任何效果(`packages/util/package-manifest/README.md:93`)。peer 用**精确版本**(照参考插件),DSH 升级时要同步改;peer 的比较语义未逐行核实,第一次装进 profile 时按 §4 里程碑 2 确认。
 

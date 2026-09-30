@@ -11,3 +11,7 @@ setup-collaboration-files.backup/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# connector:依赖与构建产物(构建脚本见 connector/tsdown.config.ts)
+connector/node_modules/
+connector/lib/

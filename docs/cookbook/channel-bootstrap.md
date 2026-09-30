@@ -27,7 +27,7 @@ node mock/proto/tools/verify-icons.cjs     # 改过 mock/proto 才需要
 
 | 项 | 值 |
 |---|---|
-| 包管理器 | `pnpm@11.7.0`(与 DSH 仓库根一致) |
+| 包管理器 | `pnpm@11.13.0`(本机实测值;connector 是独立 bundle,不跟 DSH 根的补丁号) |
 | Node | `^22.19.0 \|\| >=24.0.0` |
 | DSH 包版本 | 公共 npm 的 **`next` tag = `0.2.0-rc.2`**(`latest` 落后很多,**不要用**) |
 | cordis / schemastery | `4.0.4` / `3.18.4`(`latest`) |

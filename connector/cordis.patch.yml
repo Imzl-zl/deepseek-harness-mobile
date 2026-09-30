@@ -1,0 +1,8 @@
+# 电脑侧桥接的接入样板。形状见 DSH 的 cordis 插件开发技能
+# packages/preset/agent-preset/skills/cordis-plugin-development/references/host-plugin.md:20-27
+#
+# 工程形态与版本策略见 .agents/notes/implemented/2026-10-01-connector-workspace-shape.md
+- insert:
+    - id: dsh-mobile-connector
+      name: '@dsh-mobile/connector'
+      config: {}
