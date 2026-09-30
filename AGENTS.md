@@ -14,10 +14,13 @@
 - 环境:Windows / PowerShell(pwsh);Node.js 可用(`node --check`、验证脚本均以 node 运行)。
 - 语言/运行时:原型 = 纯浏览器 JS/CSS/HTML(无构建步骤、无 npm 依赖);App = Dart / Flutter(仅主题层已落地)。
 - 主要技术栈:Flutter(目标 iOS / 安卓 / 鸿蒙 OHOS fork);原型用原生 DOM + 手写手势。
+- 版本控制:git;远端 `github.com/Imzl-zl/deepseek-harness-mobile`(`main`)。`mock/proto/shots/`(生成物,约 9 MB)与 `setup-collaboration-files.backup/` 不入库。
 - 配置根目录:无(本仓库无 `package.json` / `pubspec.yaml` / CI 配置;`app/` 尚无 Flutter 工程文件)。
-- 标准验证命令:
+- 标准验证命令(完整清单、断言条数与截图命令见 §5 与 `tools.md`):
+  - `node protocol/verify-fixtures.mjs` / `verify-loopback.mjs` / `verify-vectors.mjs` —— 通道协议(不需要浏览器)
+  - `node app/tools/verify-platform-boundary.mjs` —— 多端边界(不需要 Flutter 工程)
   - `node mock/proto/tools/verify-icons.cjs` —— 图标集完整性(不需要浏览器)
-  - `pwsh -File mock/proto/tools/cdp.ps1` 起 headless Chrome,再设 `CDP_URL` / `NO_PROXY` 后跑 `verify-proto.mjs` / `verify-authz.mjs` / `verify-picker.mjs` / `measure-composer.mjs`
+  - `pwsh -File mock/proto/tools/cdp.ps1` 起 headless Chrome,再设 `CDP_URL` / `NO_PROXY` 后跑 `verify-*.mjs`
   - `node --check mock/proto/app.js`(以及 `interactions.js`、`tools/*.mjs`)
 
 ## 1. 作用
@@ -59,7 +62,7 @@
 
 ## 5. 验证、入口与关键路径
 
-- 无浏览器验证:`node mock/proto/tools/verify-icons.cjs`;语法检查 `node --check <file>`。
+- 语法检查:`node --check <file>`(原型 `app.js` / `interactions.js` / `tools/*.mjs`)。
 - 通道协议验证(不需要浏览器/手机/公网):`node protocol/verify-fixtures.mjs`(16 条 fixture / 486 项:恢复只有"增量或快照"两种结果)、`node protocol/verify-loopback.mjs`(26 项三角色回环,含中转清空后重启)、`node protocol/verify-vectors.mjs`(33 项跨端密码学向量)。**改 `protocol/` 后三条都必须全绿**;改断言时补一次变异校验(做法见 `tools.md`)。
 - 多端边界校验(不需要 Flutter 工程):`node app/tools/verify-platform-boundary.mjs` —— 6 条规则扫 `app/lib` 与 `app/packages`,自带 13 条规则自检(细则见 `tools.md`)。**改 `app/lib/` 或 `app/packages/` 后必须跑。**
 - 浏览器验证(独立 headless,不碰日常浏览器):`pwsh -File mock/proto/tools/cdp.ps1 -Port 9400`,然后
