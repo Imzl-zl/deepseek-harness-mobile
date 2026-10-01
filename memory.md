@@ -70,6 +70,7 @@
 - **`transport/connection.ts` 已落地,并且第一次有端到端证据**:把状态机 + 退避 + 保活 + 攒批 + codec 接到注入的 socket 工厂上,测试里起**真的 WebSocket 服务端**当对端,走完 `idle → connecting → handshake → serving`、收发真帧、掐断重连、握手门禁拒绝业务帧 —— 5 个端到端用例全绿。接线时踩到一个**单元测试抓不到的**真 bug:`encodeFrame` 没输出行分隔符,而分帧器把最后一段当半行留着,于是每帧被永久缓冲、对端永远收不到;`decodeFrame(encodeFrame(x))` 照样过(JSON.parse 容忍尾随空白),两边各自自洽、合起来才断。修法是把分隔符放进编解码层。另一处:`fc` 的分配权收归连接层(它是 nonce 来源,不能让上层决定),且每次建连换新计数器。
 - **`index.ts` 的真实装配(发布服务、注册 answerer、起 transport)与 `observability.ts` 仍未做。**
 - **`index.ts` 真实装配与 `observability.ts` 已落地**:`apply(ctx, config)` 用 `lifecycle.ts` 的顺序引擎把五步接起来(校验配置 → 开两个 domain 并迁移 meta → `ctx.provide` 发布服务 → 注册 answerer → 起 transport);`inject` 只列必需服务,可选能力走 `ctx.get`;配置不全**拒绝挂载**而不是空跑。`observability.ts` 把 cordis 的 printf logger 收成两参数形状 + 内存指标。分层校验规则**扩到入口文件**(它同样直接用宿主接口,不管就会成为盲区)。**方法面(契约 §5.7)未实现**:非连接层帧显式告警并计数,不静默丢弃。
+- **第 5 步已起步(装进 profile)**:专用 profile `dsh-mobile-test`(不动 `desktop` / `web`)里,插件装成 `link:` 并进了 `dsh.profile.bundles`;`--dump-config` 无跳过报告、树里有我们插入的 entry —— **设计文档里标着「尚未逐行核实」的 peer 兼容性判据,现在被实测证实通过**。只装 `dsh-base` 时插件停在 `pending (waiting for service: sessionController)`(该服务由 `dsh-web-app` 带来);换成 web 同款栈后激活。**真机连通(手机端 / 中转)仍未做。**
 - **`relay/` 与 `app/` 的代码都还没开始。**
 - **协议六条已定稿并进 fixtures**:live 流式帧、快照水位与分页、待审批的持久投影、流控窗口(ack 兼信用)、接收端 seen-seq、审批仲裁判定表——对应 fixture `10`–`16`。
 - **审批接管已定**(不再是产品决策):默认 `foreground` 档——App 前台**且**已订阅该会话才 claim,否则 delegate 给桌面;`always` / `never` 可选;claim 后看护超时 10 min 按 fail-closed 结束。判定表可执行(fixture `16`)。

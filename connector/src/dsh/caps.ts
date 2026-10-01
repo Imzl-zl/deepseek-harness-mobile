@@ -5,10 +5,17 @@
  *
  * - **裸读 `ctx.sessionController` 会抛异常**，不是返回 undefined
  *   （`vendor/cordis/src/reflect.ts:144` 与 `:159-161`），所以能力位一律走 `ctx.get`。
- * - **`inject = [...]` 里写了不存在的服务 = fiber 永远 PENDING**，无异常、无日志、
- *   无 UI 报错（`vendor/cordis/src/fiber.ts:611-623`）。所以只有**必需**服务才写进
- *   `inject`，可选能力一律在这里 `ctx.get` 读出来；否则一个拼错的服务名会让整个插件
- *   静默地永不加载。
+ * - **`inject = [...]` 里写了不存在的服务，插件不会被激活** —— 实测在 profile 里启动时
+ *   DSH 会明确报出来：
+ *
+ *   ```text
+ *   dsh: warning: 1 entry did not activate
+ *   dsh-mobile-connector (@dsh-mobile/connector): pending (waiting for service: sessionController)
+ *   ```
+ *
+ *   所以它**不是静默降级**（早先版本的注释说它"无异常、无日志"，那是错的，已按实测改正）。
+ *   但仍然值得只把**必需**服务写进 `inject`：一行 warning 容易被淹没，
+ *   而一个连会话都拿不到的桥接本来也没有存在意义。
  *
  * `ctx.get('拼错的键')` 同样静默返回 undefined（`reflect.ts:237-243`），所以本文件把
  * 服务键集中成常量，供 `index.ts` 的 `inject` 与能力位共用一处定义。
@@ -71,8 +78,8 @@ export function readCaps(ctx: Context): Caps {
 /**
  * 启动时自报健康：列出**必需**服务的缺失情况。
  *
- * 存在的意义是把 `inject` 那个静默降级口子变得可见 —— 服务名拼错时 fiber 会永远停在
- * PENDING，插件一个日志都不会打；调用方拿这个结果主动记录/上报，就能看见。
+ * 存在的意义是让「插件没激活」这件事在**插件自己的日志里**也留一条 ——
+ * DSH 那行 `pending (waiting for service: ...)` 是有的（实测），但它混在启动日志里容易被淹没。
  *
  * @returns 缺失的必需服务键；空数组表示齐备。
  */
