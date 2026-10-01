@@ -45,6 +45,14 @@ export interface HttpFaceOptions {
    * 而"校验失败一律 401"这条判定在这里就定死，不必等库。
    */
   authenticate: (token: string) => Authenticated | undefined
+  /**
+   * 限流（可选）。**按身份**取令牌 —— 不是按 IP：中转在代理之后时 IP 会把所有人归成一个，
+   * 那是最糟的形态（一个人把大家限住）。它在**认证之后**调用，所以键一定是身份。
+   *
+   * 未认证的洪水（拿错令牌刷）**不在这里**处理：那时还没有身份，桶键无处安放 ——
+   * 那属于边缘/前置治理（反代限流、连接数上限）。
+   */
+  rateLimit?: (key: string) => { allowed: boolean; retryAfterMs: number }
   log?: ChannelLogger
 }
 
@@ -87,6 +95,18 @@ export function createHttpFace(options: HttpFaceOptions): HttpFace {
           ? (request.body as Record<string, unknown>)
           : {}
       const codeHash = typeof body['codeHash'] === 'string' ? body['codeHash'] : ''
+
+      // 限流在**认证之后**：此时桶键一定是身份（不是 IP）。所有端点一视同仁 ——
+      // 换票最容易被刷（每个请求都要读凭据面、查登记表、写票）。
+      const decision = options.rateLimit?.(caller.id)
+      if (decision !== undefined && !decision.allowed) {
+        log?.debug(`限流：${caller.id} 被拒（${decision.retryAfterMs}ms 后可再试）`)
+        return {
+          // 429 + `retryAfterMs`（HTTP 上对应 `Retry-After`）：客户端据此退避，而不是立刻重试。
+          status: 429,
+          body: { error: 'rate-limited', retryAfterMs: decision.retryAfterMs },
+        }
+      }
 
       if (request.path === '/ws-ticket') {
         if (caller.kind !== 'device') {

@@ -1,6 +1,18 @@
 # Agent Note: 中转移流 —— 令牌桶（还没有调用方，接线在下一轮）
 
-Status: implemented（`relay/src/rate-limit.ts` + 5 条用例）· **接线未做**（见文末）
+Status: implemented（`relay/src/rate-limit.ts` + 5 条用例）· **HTTP 面已接线**（`server`/`main` 的配置装配仍未做）
+
+## 接线进展（同日）
+
+`http-face.ts` 已接：`HttpFaceOptions.rateLimit?: (key) => {allowed, retryAfterMs}`，
+在**认证之后**调用，被拒回 **429** + `{error:'rate-limited', retryAfterMs}`。4 条用例钉住行为，
+其中两条是安全/方向性的：**被限流时一张票都不发**（429 之后仍发出的票本身就是凭据，
+而它会被记进客户端日志）、**桶键是身份而不是 IP**（用例断言键就是 `'dev-1'`），
+以及"令牌不对时回 401 而非先被限流掩盖"（未认证的请求没有身份，桶键无处安放）。
+
+**仍缺**：`server.ts` / `main.ts` 把容量与速率做成配置并建一个 limiter 传进去 ——
+在此之前，**运行中的中继还没有限流**（这个模块在 HTTP 面有调用方，但产品装配还没接）。
+WS 升级路径也还没用同一个 limiter。
 
 ## Problem
 
