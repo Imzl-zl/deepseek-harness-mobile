@@ -9,7 +9,8 @@
  * 2 open-store          两个 domain 打开 + meta 按 schema 逐代迁移
  * 3 publish-service     ctx.provide('dshMobileConnector', api) ← 手机端能力门控读它
  * 4 register-answerers  审批与提问的 claim-or-delegate（§6.2）
- * 5 start-transport     出站 WSS
+ * 5 load-identity       取（或首次生成）本机身份种子（§12.1）
+ * 6 start-transport     出站 WSS，并把 §4.1 的握手交给驱动器
  * ```
  *
  * 两处刻意的选择：
@@ -19,6 +20,10 @@
  *   无 UI 报错**的静默降级（`caps.ts` 有完整理由）。
  * - **配置不全就拒绝挂载**，不是"空跑等配置"。一个连着中转却没有 relayUrl 的插件
  *   会在服务端制造一条永远不完整的配对记录，排查起来比挂载失败难得多。
+ *   身份同理：拿不到身份种子就不启动通道，而不是每次重启换一套新身份。
+ *
+ * `credentials` 从"可选"升成了必需服务（`caps.ts` 有 cite）：电脑侧身份种子存在凭据 seam 里，
+ * 没有它连握手都构造不出来 —— 把这种前提当可选项，只会得到一个永远握不了手的空壳。
  *
  * **方法面（契约 §5.7）尚未实现**：本节只处理连接层的四类帧（`ping` / `pong` /
  * `credit` / `presence`），其余帧按「未实现」**显式告警并计数**，不静默丢弃 ——
@@ -38,9 +43,11 @@ import type { Context } from '@deepseek-ai/cordis'
 
 import { type ConnectorConfig, Config } from './config.js'
 import { REQUIRED_SERVICES, readCaps, type Caps } from './dsh/caps.js'
+import { loadOrCreateIdentity, type Identity } from './dsh/identity.js'
 import { registerInteractions, type RemoteInteractionPort } from './dsh/interactions.js'
 import type { TakeoverDevice, TakeoverMode } from './protocol/takeover.js'
 import type { WireFrame } from './protocol/frame.js'
+import { createHandshakeDriver } from './protocol/handshake-driver.js'
 import { mount, type LifecycleStep } from './lifecycle.js'
 import { METRIC, createChannelLogger, createMetrics, type ChannelLogger, type ChannelMetrics } from './observability.js'
 import { createAliases, type Aliases } from './alias.js'
@@ -51,6 +58,12 @@ import { createConnection, type Connection } from './transport/connection.js'
 export const name = 'dsh-mobile-connector'
 
 export { Config }
+
+/**
+ * `pcId` 的默认值。只在存储里还没有 `connectorId` 时写入一次，之后一直读存储的那个 ——
+ * 它参与握手 transcript，换一次就等于所有设备的握手全部验签失败。
+ */
+const DEFAULT_CONNECTOR_ID = 'local'
 
 /** 只有必需服务进 `inject`；可选能力走 `ctx.get`（见文件头）。 */
 export const inject: string[] = [...REQUIRED_SERVICES]
@@ -95,6 +108,10 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
    */
   let aliases: Aliases | null = null
   let devicesTable: { get(key: string): DeviceRecord | undefined } | null = null
+  /** 本机身份（§4.1）。在 `load-identity` 之前是 null，`start-transport` 之前必然已就绪。 */
+  let identity: Identity | null = null
+  /** 本机标识：进 `hello-ack` 的 `pcId`，因而参与 transcript。 */
+  let connectorId = ''
 
   /**
    * 已认证设备的**瞬时**状态（在线、前台、已订阅、最近交互）。
@@ -189,7 +206,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           // 「尚未配置」用空串表达（见 store/index.ts）：首次挂载时写入初值。
           await core.global.set(
             initialMeta({
-              connectorId: 'local',
+              connectorId: DEFAULT_CONNECTOR_ID,
               relayUrl: relayUrl ?? '',
               connTokenSecretRef: relayTokenSecretRef ?? '',
             }),
@@ -197,6 +214,10 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         }
 
         metrics.gauge(METRIC.pairedDevices, [...core.table('devices').keys()].length)
+
+        // 本机标识：`pcId` 进 transcript，必须**稳定** —— 换一次，所有在途握手都会验签失败。
+        // 空串是「尚未配置」的哨兵（见 store/index.ts），这里用与写入时同一个默认值。
+        connectorId = migrated.connectorId === '' ? DEFAULT_CONNECTOR_ID : migrated.connectorId
 
         // 别名：先对账两个方向再用 —— 崩在两次 put 之间的残留在这一步被清掉，
         // 否则残缺的 by_sid 会让入站 sid 校验失败，或让 ensure 重复分配别名。
@@ -245,13 +266,51 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
     },
 
     {
+      name: 'load-identity',
+      async run() {
+        // `credentials` 在 `inject` 里（必需服务，见 `caps.ts`），所以这里可以裸读 ——
+        // 与 `open-store` 读 `ctx.storageDomain` 同一个写法。
+        const loaded = await loadOrCreateIdentity(ctx.credentials)
+        identity = loaded
+        logger.debug('本机身份已就绪', { pcId: connectorId })
+      },
+    },
+
+    {
       name: 'start-transport',
       async run() {
+        const local = identity
+        if (local === null) {
+          // 步骤顺序由 `lifecycle.ts` 保证，所以走到这里必然是装配写错了，而不是"还没准备好"。
+          throw new Error('start-transport 在身份就绪前被调用：装配顺序有误')
+        }
+
         const next = createConnection({
           url: relayUrl ?? '',
           // Node 22+ 自带全局 WebSocket；不引第三方客户端。
           dial: (url) => new WebSocket(url) as never,
           log: logger,
+          handshake: createHandshakeDriver({
+            identity: { dh: local.keys.dh, signSeedHex: local.keys.signSeedHex },
+            pcId: connectorId,
+            peerOf: (devId) => {
+              const record = devicesTable?.get(devId)
+              // 未配对、已吊销、查不到一律 undefined：对手机都是同一件事（§3.1 的 not-paired）。
+              if (record === undefined || record.revokedAt !== undefined) return undefined
+              return {
+                edPubHex: record.edPub,
+                dhPubHex: record.dhPub,
+                pairingId: record.pairingId,
+              }
+            },
+          }),
+          onEstablished: ({ devId, keys }) => {
+            metrics.increment(METRIC.handshakesEstablished)
+            logger.info(`握手完成：设备 ${devId} 已建立端到端会话`)
+            // 方法面落地前，会话密钥没有消费者（业务帧的 AEAD 封箱是下一步）。
+            // 如实写在这里：**现在这条通道还发不出业务帧**，不是"已经在加密通信了"。
+            void keys
+          },
           onStateChange: (from, to) => {
             metrics.increment(METRIC.stateTransitions)
             if (to === 'connecting') metrics.increment(METRIC.connects)

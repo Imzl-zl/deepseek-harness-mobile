@@ -9,15 +9,41 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { ProtocolError } from '../src/protocol/errors.js'
-import { MAX_FRAME_BYTES, type WireFrame } from '../src/protocol/frame.js'
+import { ID_PATTERN, MAX_FRAME_BYTES, newFrameId, type WireFrame } from '../src/protocol/frame.js'
 import {
   assertHandshakePhase,
   createLineSplitter,
   decodeFrame,
   encodeFrame,
+  isHandshakeFrame,
 } from '../src/transport/codec.js'
 
 const ping = (fc: number): WireFrame => ({ v: 1, t: 'ping', fc })
+
+test('帧 id：生成点产出的东西必须过得了自己的字符集校验', () => {
+  // `newFrameId` 与 `ID_PATTERN` 放在同一个文件就是为了这条：分开写迟早出现
+  // 手拼 base64 的代码（带 `+` `/` `=`），而症状是 AAD 两端不一致 —— "解不开"，不是"字段非法"。
+  for (let i = 0; i < 50; i += 1) {
+    const id = newFrameId()
+    assert.match(id, ID_PATTERN, `生成的 id 不合规：${id}`)
+    // 16 字节 base64url = 22 个字符（无填充）。
+    assert.equal(id.length, 22)
+  }
+  assert.notEqual(newFrameId(), newFrameId(), '两次生成不该撞上')
+})
+
+test('isHandshakeFrame：握手帧的判据只有一处', () => {
+  for (const frame of [
+    { v: 1, t: 'hello', id: 'a', box: '' },
+    { v: 1, t: 'hello-ack', id: 'a', box: '' },
+    { v: 1, t: 'confirm', id: 'a', box: '' },
+  ] as WireFrame[]) {
+    assert.equal(isHandshakeFrame(frame), true, `${frame.t} 是握手帧`)
+  }
+  for (const frame of [ping(0), { v: 1, t: 'credit', fc: 0 }] as WireFrame[]) {
+    assert.equal(isHandshakeFrame(frame), false, `${frame.t} 不是握手帧`)
+  }
+})
 
 test('编码：往返一致，超限直接抛', () => {
   const frame = ping(7)
@@ -82,9 +108,11 @@ test('id / sid 的 ASCII 安全字符集必须在解码处拦', () => {
 })
 
 test('握手门禁：未完成握手只收握手帧', () => {
-  // 握手帧照收。
+  // 握手三帧照收。`confirm` 必须在列内：它是 §4.1 的第三条消息（手机 → 电脑），
+  // 应答方要收到它才能判定握手完成 —— 漏了它的症状是"手机永远停在握手"。
   assert.doesNotThrow(() => assertHandshakePhase({ v: 1, t: 'hello', id: 'a', box: '' }, false))
   assert.doesNotThrow(() => assertHandshakePhase({ v: 1, t: 'hello-ack', id: 'a', box: '' }, false))
+  assert.doesNotThrow(() => assertHandshakePhase({ v: 1, t: 'confirm', id: 'a', box: '' }, false))
 
   // 业务帧在握手前到达是攻击面，必须拦。
   for (const frame of [ping(0), { v: 1, t: 'credit', fc: 0 } as WireFrame]) {

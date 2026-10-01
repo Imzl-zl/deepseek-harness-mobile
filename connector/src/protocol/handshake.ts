@@ -33,7 +33,7 @@ export function transcriptHashOf(transcript: Buffer, sha256: (data: Buffer) => B
 }
 
 export interface VerifySignatureInput {
-  /** 被签的规范串（`crypto.ts` 的 `transcriptOf`）。 */
+  /** 被签的规范串（`handshake-frames.ts` 的 `transcriptFromFields`）。 */
   transcript: Buffer
   /** 32 字节原始 Ed25519 公钥的十六进制。 */
   publicKeyHex: string

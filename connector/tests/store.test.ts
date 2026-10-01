@@ -72,3 +72,39 @@ test('迁移：同版本直通、未来版本拒绝', () => {
     /connector\/unsupported/,
   )
 })
+
+test('迁移：v1 → v2 逐代升，只动 meta，不碰设备行', () => {
+  // v1 的 meta 就是「现在的形状少一代版本号」；设备记录新增的 `pairingId` 没有任何历史行
+  // 需要补（配对流程还没落地，插件至今只读那张表），所以迁移不该凭空造一个配对标识出来。
+  const v1 = { ...initialMeta({ connectorId: 'c1', relayUrl: 'wss://x', connTokenSecretRef: 'ref' }), schema: 1 }
+  const migrated = migrateMeta(v1)
+
+  assert.equal(migrated.schema, SCHEMA_VERSION)
+  assert.equal(migrated.schema, 2)
+  assert.deepEqual(
+    { ...migrated, schema: 1 },
+    v1,
+    '迁移只该改版本号，其余字段原样带过去',
+  )
+
+  // 逐代：起点必须是紧邻的上一代，不能跳代。
+  assert.throws(() => migrateMeta({ ...v1, schema: 0 }), /缺少 v0 → v1 的迁移/)
+})
+
+test('设备记录：pairingId 是必填 —— 缺了它设备能配对却再也握不上手', () => {
+  const devices = coreDomain.tables['devices']
+  assert.ok(devices !== undefined)
+  const base = {
+    edPub: 'a'.repeat(64),
+    dhPub: 'b'.repeat(64),
+    name: '手机',
+    pairedAt: 1,
+  }
+  assert.equal(devices.valueSchema.safeParse(base).success, false, '没有 pairingId 必须不合法')
+  assert.equal(devices.valueSchema.safeParse({ ...base, pairingId: 'pair-1' }).success, true)
+  assert.equal(
+    devices.valueSchema.safeParse({ ...base, pairingId: '' }).success,
+    false,
+    '空串不是配对标识',
+  )
+})

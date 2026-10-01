@@ -66,10 +66,10 @@
 ```
 
 - `connecting`:手机先 `POST /ws-ticket` 换一次性 ticket(令牌不进 URL 与日志),再带 ticket 升级。电脑侧直接带连接器令牌。
-- `handshake`:见 §4.1;未完成握手的连接**只接受握手帧**,其余帧一律 `protocol/bad-frame` 并关闭。
+- `handshake`:见 §4.1;未完成握手的连接**只接受握手帧**(`hello` / `hello-ack` / `confirm`),其余帧一律 `protocol/bad-frame` 并关闭。
 - `serving`:进入服务态后,手机无条件发 `hello`(§5.4)补齐状态。
 - `backoff`:指数退避,`1s → 2s → 4s → … → 30s` 封顶,抖动 ±20%。**只在 App 前台重连**;切后台主动断开并停表。
-- 半开连接:`serving` 期间任一方向连续 2 个心跳周期无任何帧 → 视为断开,重连。
+- 半开连接:`serving` 期间**任一方向**连续 2 个心跳周期无任何帧 → 视为断开,重连。收帧与发帧都重置空闲计时;**唯一的例外是 `ping` 自己**——它是探针,若它重置计时,空闲期就永远攒不满两个周期,半开再也判不出来(一个空闲期只探一次,`pingedInThisIdle` 保证)。
 
 ---
 
@@ -83,6 +83,7 @@ type Frame =
   // 连接层:握手与保活
   | { v: 1; t: 'hello';       id: string; box: string }
   | { v: 1; t: 'hello-ack';   id: string; box: string }
+  | { v: 1; t: 'confirm';     id: string; box: string }
   | { v: 1; t: 'ping';        fc: number }
   | { v: 1; t: 'pong';        fc: number }
   // 连接层:流控信用(收到即回,不要求落盘)
@@ -100,8 +101,9 @@ type Frame =
 
 规则:
 
-- **`fc` 是发送方向该连接的帧计数器**,从 0 开始,每发一帧 +1(含 `ping` / `credit`)。它是 nonce 与重放防护的唯一来源(§4.2)。
+- **`fc` 是发送方向该连接的帧计数器**,从 0 开始,每发一帧 +1(含 `ping` / `credit`)。它是 nonce 与重放防护的唯一来源(§4.2)。握手三帧(`hello` / `hello-ack` / `confirm`)不带 `fc` —— 它们是明文且发生在密钥建立之前,盖一个计数器值只会让线上帧与本文的形状不一致。
 - **`box` = AEAD 密文**,内含方法名 / 事件类型 / 载荷。**`res ok:false` 的错误也封箱**,明文只留帧类型。
+  **例外是握手三帧**(`hello` / `hello-ack` / `confirm`):它们的 `box` 是**明文编码容器**(契约 §4.1)——此刻两侧还没有可用的会话密钥,而这三帧正是用来建立它的。
 - **AAD 规范化**(两端必须字节一致):
   ```text
   aad = v "|" t "|" id "|" sid "|" seq "|" fc
@@ -148,9 +150,9 @@ seed(32B, 存系统安全存储)
 只存一个 secret,便于三端安全存储统一管理(鸿蒙 HUKS / iOS Keychain / Android Keystore)。
 
 ```text
-手机 → 电脑   hello     { box: { ephPubA(32B), devId, nonceA(32B) } }        签名在本帧之后附于 hello-ack 的 transcript
+手机 → 电脑   hello     { box: { ephPubA(32B), devId, nonceA(32B) } }
 电脑 → 手机   hello-ack { box: { ephPubB(32B), pcId,  nonceB(32B), sigB } }
-手机 → 电脑   confirm   { box: { sigA, transcriptHash[0..8) } }              ← 即第一条业务帧
+手机 → 电脑   confirm   { box: { sigA, transcriptHash[0..8) } }
 ```
 
 - `transcript` = 两帧里**参与签名的字段**的规范拼接(**不含签名本身**):`dsh-mobile/v1|hello|ephPubA|devId|nonceA|hello-ack|ephPubB|pcId|nonceB`(字节序固定)。`sigB = Ed25519_sign(idSignB, transcript)`,`sigA` 同理。
@@ -166,7 +168,11 @@ seed(32B, 存系统安全存储)
   ```
 - **前向保密**:`ss3` 强制包含双方的临时密钥 ⇒ 长期种子泄露也**不能**解密已结束连接的历史记录。每连接一把新密钥 ⇒ 无需"密钥轮换"功能。
 - **相互认证**:双方都要验签对方的临时公钥;验签失败即 `protocol/not-paired` 并断开。中继替换公钥无法通过验签。
-- **确认**:收到对方第一条能解开的 AEAD 帧即确认;`confirm` 内的 `transcriptHash[0..8)` 不匹配即断开。
+- **握手完成的判据**(两侧各自判定,不存在第四条消息):
+  - 发起方(手机):收到 `hello-ack` 且**验签 `sigB` 通过** → 派生会话密钥 → 发 `confirm` → 进 `serving`;
+  - 应答方(电脑):收到 `confirm` 且**验签 `sigA` 通过、`transcriptHash[0..8)` 比对一致** → 派生会话密钥 → 进 `serving`。
+  - 验签失败或摘要不匹配一律 `protocol/not-paired` 并断开。
+- 握手三帧的 `box` 是**明文编码容器**(§3 已注明例外):此刻会话密钥还没建立。所以「收到对方第一条能解开的 AEAD 帧」是密钥可用的**观测**,不是握手完成的判据 —— 判据只有上面那两条。
 - **每次握手都必须新生成临时密钥对**,不得跨连接复用:复用会让 `fc` 从 0 重数 ⇒ nonce 重用 ⇒ 直接破掉 AEAD。握手失败后的重试同样要重新生成。
 - 握手超时 10 s;失败不计入业务重试次数。
 
@@ -379,7 +385,7 @@ claim(请求) :=
 
 ```text
 dsh_mobile_meta      表 meta        { schema: 1, connectorId, relayUrl, connTokenSecretRef, aliasVersion }
-dsh_mobile_devices   表 devices     { devId: { edPub(32B), dhPub(32B), name, pairedAt, revokedAt? } }
+dsh_mobile_devices   表 devices     { devId: { edPub(32B), dhPub(32B), name, pairedAt, pairingId, revokedAt? } }
 dsh_mobile_aliases   表 by_sid      { sid: dshSessionId }
                      表 by_session  { dshSessionId: sid }
 dsh_mobile_dedupe    表 dedupe      { requestId: { at, status, resultRef } }   // 有界 10000 / TTL 24h
@@ -388,6 +394,7 @@ dsh_mobile_takeover  表 takeover    { devId: { mode, lastInteractedAt } }
 ```
 
 - **设备公钥命名照 §4.1**:种子派生的是 Ed25519 身份签名密钥与 X25519 静态 DH 密钥,所以是 `edPub` + `dhPub`;不要写成含义含糊的 `idPub`(那会让人以为是"身份公钥"、与该签名密钥混起来)。
+- **`pairingId` 必须随设备一起持久化**:它就是 §12.1 的「配对标识」(配对码的 HKDF 输出),参与 §4.1 的 `info`。每次重连都要用它重算 `master`,所以两端都得存住 —— 手机在安全存储,电脑侧在设备记录里。
 - `aliasVersion` 是 `repo.info` 要报的「别名→会话元映射版本」(§5.7);`connTokenSecretRef` 是连接器令牌的凭据引用,**令牌本体走 `ctx.credentials` 具名记录面**(`credentialKey('<包名>','<id>')`)。
 - `takeover` 表存每个设备的接管档位与最近交互时间,是 §6.2 仲裁判定的输入。
 - schema 版本与迁移写在 `meta.schema`;**不使用** DSH 的会话落盘格式(v4 且仍在演进,见 `../channel-review-notes.md` §2.7)。

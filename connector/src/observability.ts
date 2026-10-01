@@ -95,6 +95,8 @@ export const METRIC = {
   connects: 'connector.connect.count',
   /** 因协议原因被拒的帧数。 */
   rejectedFrames: 'connector.frames.rejected',
+  /** 握手成功次数（§4.1 的两道校验都过了）。 */
+  handshakesEstablished: 'connector.handshake.established',
   /** 收到的帧总数。 */
   inboundFrames: 'connector.frames.inbound',
   /** 发出的帧总数。 */

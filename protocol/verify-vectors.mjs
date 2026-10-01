@@ -3,10 +3,11 @@
  *
  * 跑法：node protocol/verify-vectors.mjs
  *
- * 它做三件事：
+ * 它做四件事：
  * 1. 从固定输入重算握手派生（含 ss1/ss2/ss3、master、kA2B/kB2A）并与向量比对；
- * 2. 重算每条 AEAD 向量，并做一次"解密回明文"的往返；
- * 3. 跑篡改用例：改 AAD 或改 fc 都必须解密失败（这是 nonce 与 AAD 规则的负向证据）。
+ * 2. 重算设备身份（主种子 → Ed25519 / X25519 两把长期密钥）；
+ * 3. **从字段重拼 transcript** 并重签 —— 只重签存好的那串字节拦不住"顺序写反"；
+ * 4. 重算每条 AEAD 向量（含解密往返），再跑篡改用例：改 AAD 或改 fc 都必须解密失败。
  *
  * 两侧实现（connector 用 TS、手机端用 Dart）各自跑同一批向量；任何一侧对不上，
  * 说明该侧的曲线/HKDF/AEAD/AAD 规范化与契约不一致。
@@ -15,7 +16,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { deriveHandshake, seal, open, signTranscript, keyPairFrom } from './tools/vectors-core.mjs'
+import { deriveHandshake, deriveIdentity, seal, open, signTranscript, keyPairFrom, transcriptOf } from './tools/vectors-core.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const VECTORS = join(HERE, 'vectors')
@@ -37,12 +38,26 @@ check(recomputed.master.slice(0, 64) === recomputed.kA2B, 'master 前 32 字节�
 check(recomputed.master.slice(64) === recomputed.kB2A, 'master 后 32 字节必须是 kB2A')
 check(recomputed.ss1 !== recomputed.ss2 && recomputed.ss2 !== recomputed.ss3, '三个共享密钥必须互不相同')
 
+// ---- 2. 设备身份（主种子 → 两把长期密钥）----
+const identity = deriveIdentity(hs.identity.masterSeed)
+for (const [key, want] of Object.entries(hs.identity.expected)) {
+  check(identity[key] === want, `identity.${key}`, `向量 ${want}，重算 ${identity[key]}`)
+}
+check(
+  identity.edSeed !== identity.dhSeed,
+  '两把长期密钥必须来自不同的 info（否则签名密钥与 DH 密钥是同一把）',
+)
+
+// ---- 3. 握手签名：拼串规则本身也要重算 ----
+// 只重签向量里存好的那串字节是不够的：两端各自拼一遍、比对同一段字节，才拦得住"顺序写反"。
 const sig = hs.signature
-const recomputedSig = signTranscript(sig.signerEdSeed, Buffer.from(sig.transcript, 'utf8'))
+const rebuilt = transcriptOf(sig.fields)
+check(rebuilt.toString('utf8') === sig.transcript, 'transcript 拼串（从字段拼）', `向量 ${sig.transcript}，重算 ${rebuilt.toString('utf8')}`)
+const recomputedSig = signTranscript(sig.signerEdSeed, rebuilt)
 check(recomputedSig === sig.sig, 'handshake 签名', `向量 ${sig.sig}，重算 ${recomputedSig}`)
 check(keyPairFrom('ed25519', sig.signerEdSeed).pubHex.length === 64, '签名公钥必须是 32 字节')
 
-// ---- 2. AEAD 往返 ----
+// ---- 4. AEAD 往返 ----
 const aead = JSON.parse(readFileSync(join(VECTORS, 'aead.json'), 'utf8'))
 for (const v of aead.vectors) {
   const again = seal({ keyHex: v.key, fc: v.fc, aadFields: v.aad, plaintext: v.plaintext })
@@ -52,7 +67,7 @@ for (const v of aead.vectors) {
   check(back === v.plaintext, `${v.name}: 解密往返`, `得到 ${JSON.stringify(back).slice(0, 40)}`)
 }
 
-// ---- 3. 篡改用例必须失败 ----
+// ---- 5. 篡改用例必须失败 ----
 for (const t of aead.tamper) {
   const v = aead.vectors[t.vectorIndex]
   const aadFields = { ...v.aad, ...(t.patch ?? {}) }
@@ -72,4 +87,4 @@ if (failures.length > 0) {
   for (const line of failures) console.error(`  - ${line}`)
   process.exit(1)
 }
-console.log(`ALL CHECKS PASSED — ${checks} 项断言（跨端密码学向量：握手派生 + AEAD 往返 + 篡改拒绝）`)
+console.log(`ALL CHECKS PASSED — ${checks} 项断言（跨端密码学向量：握手派生 + 设备身份 + 拼串与签名 + AEAD 往返 + 篡改拒绝）`)

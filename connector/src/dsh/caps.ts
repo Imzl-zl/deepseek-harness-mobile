@@ -25,8 +25,13 @@ import type { Context } from '@deepseek-ai/cordis'
 /**
  * 本插件**必需**的服务键 —— 缺任何一个，桥接都没有存在意义。
  * `index.ts` 的 `inject` 直接用这一份，避免两处各写一遍后拼错。
+ *
+ * `credentials` 在这里而不是"可选"里：电脑侧**身份种子**就存在凭据 seam 的记录面
+ * （`dsh/identity.ts`），拿不到它连握手都构造不出来。它由 `@deepseek-ai/dsh-base` 提供
+ * （`packages/bundle/base/cordis.patch.yml:117-118` 注册 `@deepseek-ai/dsh-credentials-local`），
+ * 而 base 已经是任何可跑 profile 的前提（`storageDomain` 同理）。
  */
-export const REQUIRED_SERVICES = ['sessionController', 'storageDomain'] as const
+export const REQUIRED_SERVICES = ['sessionController', 'storageDomain', 'credentials'] as const
 
 /**
  * **可选**能力。缺了只是对应功能置灰，不该让插件不加载，所以**不写进 `inject`**。
@@ -37,7 +42,6 @@ export const OPTIONAL_SERVICES = [
   'jobs',
   'subagents',
   'settings',
-  'credentials',
 ] as const
 
 /** 通道对外公布的能力位。 */
@@ -56,7 +60,7 @@ export interface Caps {
   subagents: boolean
   /** 设置读写面。 */
   settings: boolean
-  /** 凭据写面（只有写面，见 `settings.ts`）。 */
+  /** 凭据面（手机侧只有设置页的密钥写面）。**必需服务**，所以通常为 true。 */
   credentials: boolean
 }
 

@@ -12,6 +12,7 @@
  *
  * 移植源：`protocol/reference/frame.mjs`（行为基准，不是可搬运的代码）。
  */
+import { randomBytes } from 'node:crypto'
 
 /** 线上帧类型。 */
 export const FRAME_TYPES = ['req', 'res', 'ev', 'live', 'ack', 'presence', 'ping', 'pong'] as const
@@ -80,10 +81,15 @@ export interface WireRoutingView {
 /**
  * 线上帧（契约 §3）。**明文头只保留路由、补课与密码学需要的最小字段**；
  * 方法名、事件类型与内容全在密封载荷 `box` 里。`res ok:false` 的错误也封箱。
+ *
+ * 例外是握手三帧（`hello` / `hello-ack` / `confirm`）：它们的 `box` 是**明文编码容器**
+ * （§4.1）——此刻两侧还没有可用的会话密钥，而这三帧正是用来建立它的。
+ * 三帧为什么必须是三个独立类型见 `.agents/notes/implemented/2026-10-01-handshake-third-frame.md`
  */
 export type WireFrame =
   | { v: 1; t: 'hello'; id: string; box: string }
   | { v: 1; t: 'hello-ack'; id: string; box: string }
+  | { v: 1; t: 'confirm'; id: string; box: string }
   | { v: 1; t: 'ping'; fc: number }
   | { v: 1; t: 'pong'; fc: number }
   | { v: 1; t: 'credit'; fc: number }
@@ -111,14 +117,34 @@ export function wireRoutingOf(frame: WireFrame): WireRoutingView {
  */
 export const ID_PATTERN = /^[A-Za-z0-9_-]+$/
 
-/** AAD 需要参与规范化的字段（契约 §3）。缺字段的位置用**空串**占位。 */
+/** 帧 `id` 的长度（契约 §3：16 字节 base64url）。 */
+export const FRAME_ID_BYTES = 16
+
+/**
+ * 生成一个帧 `id`。
+ *
+ * 与 `ID_PATTERN` 放在同一个文件：**字符集约束与生成点是同一件事的两端**。
+ * 分开写就会出现手拼 id 的代码（base64 而非 base64url 会带 `+` `/` `=`），
+ * 而它的症状是 AAD 拼串两端不一致 —— 表现为"解不开"，不是"字段非法"。
+ */
+export function newFrameId(): string {
+  return Buffer.from(randomBytes(FRAME_ID_BYTES)).toString('base64url')
+}
+
+/**
+ * AAD 需要参与规范化的字段（契约 §3）。缺字段的位置用**空串**占位。
+ *
+ * 于是「缺」有两种等价写法：**省掉这个键**，或显式写 `''` —— 规范化把它们都变成空串。
+ * 两种都收，是因为跨端向量（`protocol/vectors/*.json`）里缺字段就写作 `''`，
+ * 而产品代码习惯省掉；类型若只认一种，另一侧就得靠断言硬转。
+ */
 export interface AadFields {
   v?: number
   t: string
   id?: string
   sid?: string
-  seq?: number
-  fc?: number
+  seq?: number | ''
+  fc?: number | ''
 }
 
 /**

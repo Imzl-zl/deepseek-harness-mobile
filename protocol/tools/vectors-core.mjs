@@ -84,9 +84,43 @@ export function deriveHandshake(input) {
   }
 }
 
-/** 握手签名的被签内容（transcript 的规范串）。 */
-export function transcriptOf({ info, pairingId, helloBox, helloAckBox }) {
-  return Buffer.from(`dsh-mobile/v1|${info}|${pairingId}|${helloBox}|${helloAckBox}`, 'utf8')
+/**
+ * 设备身份的派生（契约 §4.1）：**一个 32 字节主种子**分成两把长期密钥。
+ *
+ * 只存一个 secret 的理由是三端安全存储能统一（HUKS / Keychain / Keystore 都只认一把）。
+ * 盐为空 —— 与 RFC 5869 里"盐缺省即全零"等价；`info` 的两个串是**域分隔**，
+ * 改一个字就是另一套密钥（所以它进了向量，不是实现细节）。
+ */
+export function deriveIdentity(masterSeedHex) {
+  const seed = unb(masterSeedHex)
+  if (seed.length !== 32) throw new Error(`主种子必须是 32 字节（当前 ${seed.length}）`)
+  const derive = (info) => Buffer.from(hkdfSync('sha256', seed, Buffer.alloc(0), Buffer.from(info, 'utf8'), 32))
+  const edSeed = derive('id-sign')
+  const dhSeed = derive('id-dh')
+  return {
+    edSeed: h(edSeed),
+    dhSeed: h(dhSeed),
+    edPub: keyPairFrom('ed25519', h(edSeed)).pubHex,
+    dhPub: keyPairFrom('x25519', h(dhSeed)).pubHex,
+  }
+}
+
+/** transcript 的固定前缀。改动它等于改协议版本。 */
+export const TRANSCRIPT_LABEL = 'dsh-mobile/v1'
+
+/**
+ * 握手签名的被签内容（契约 §4.1）：**从字段拼**，不拼两帧 `box`。
+ *
+ * 拼 `box` 是循环定义 —— `sigB` 就在 `hello-ack` 的 `box` 里，而 transcript 又要被 `sigB` 签。
+ * 顺序是协议的一部分：换顺序不会报错，只会让两侧算出不同 transcript（症状是"公钥被替换"）。
+ *
+ * 定案过程与另一个被否的方案见 `.agents/notes/implemented/2026-10-01-handshake-third-frame.md`
+ */
+export function transcriptOf({ ephPubA, devId, nonceA, ephPubB, pcId, nonceB }) {
+  return Buffer.from(
+    [TRANSCRIPT_LABEL, 'hello', ephPubA, devId, nonceA, 'hello-ack', ephPubB, pcId, nonceB].join('|'),
+    'utf8',
+  )
 }
 
 export function signTranscript(seedHex, transcript) {

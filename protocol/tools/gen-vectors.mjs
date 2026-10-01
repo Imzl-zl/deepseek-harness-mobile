@@ -13,7 +13,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { deriveHandshake, seal, signTranscript, keyPairFrom } from './vectors-core.mjs'
+import { deriveHandshake, deriveIdentity, seal, signTranscript, keyPairFrom, transcriptOf } from './vectors-core.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const OUT = join(HERE, '..', 'vectors')
@@ -42,19 +42,29 @@ for (const [key, value] of Object.entries(input)) {
 
 const expected = deriveHandshake(input)
 
-const transcriptInput = {
-  info: input.info,
-  pairingId: input.pairingId,
-  helloBox: '7b2265706850756241223a226465616462656566227d',
-  helloAckBox: '7b2265706850756242223a226361666562616265227d',
+// ---- 设备身份：主种子 → 两把长期密钥（§4.1）----
+const identity = {
+  masterSeed: asc(0x71),
+  expected: deriveIdentity(asc(0x71)),
 }
-const transcript = `dsh-mobile/v1|${transcriptInput.info}|${transcriptInput.pairingId}|${transcriptInput.helloBox}|${transcriptInput.helloAckBox}`
+
+// ---- 握手签名：被签的是**字段**，不是两帧 box（§4.1；拼 box 是循环定义）----
+const transcriptFields = {
+  ephPubA: asc(0x31),
+  devId: 'dev-0001',
+  nonceA: asc(0x41),
+  ephPubB: asc(0x51),
+  pcId: 'pc-0001',
+  nonceB: asc(0x61),
+}
+const transcript = transcriptOf(transcriptFields)
 const signerEdSeed = asc(0xd0)
 const signature = {
-  ...transcriptInput,
-  transcript,
+  fields: transcriptFields,
+  // 拼串结果本身也进向量：两端各拼一遍，比对同一段字节（拼串规则写错会在这里现形）。
+  transcript: transcript.toString('utf8'),
   signerEdSeed,
-  sig: signTranscript(signerEdSeed, Buffer.from(transcript, 'utf8')),
+  sig: signTranscript(signerEdSeed, transcript),
 }
 
 const handshake = {
@@ -63,6 +73,7 @@ const handshake = {
   note: '两侧实现必须复现 expected 的全部字段;master 的前后 32 字节分别是 kA2B / kB2A',
   input,
   expected,
+  identity,
   signature,
 }
 writeFileSync(join(OUT, 'handshake.json'), `${JSON.stringify(handshake, null, 2)}\n`)

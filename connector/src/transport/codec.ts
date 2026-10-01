@@ -14,13 +14,23 @@
 import { ID_PATTERN, MAX_FRAME_BYTES, WIRE_VERSION, type WireFrame } from '../protocol/frame.js'
 import { ProtocolError } from '../protocol/errors.js'
 
-/** 握手阶段的帧类型。未完成握手的连接只接受这些。 */
-export const HANDSHAKE_FRAME_TYPES = ['hello', 'hello-ack'] as const
+/**
+ * 握手阶段的帧类型。未完成握手的连接只接受这些。
+ *
+ * `confirm` 必须在列内：它是 §4.1 的**第三条**握手消息（手机 → 电脑），
+ * 而应答方要收到它才能判定握手完成。漏了它的症状是"手机永远停在握手"——
+ * 电脑侧看起来一切正常，只是把 confirm 当成业务帧拒掉并断开。
+ *
+ * 为什么它是独立的帧类型（而不是"塞进第一条业务帧"）见
+ * `.agents/notes/implemented/2026-10-01-handshake-third-frame.md`
+ */
+export const HANDSHAKE_FRAME_TYPES = ['hello', 'hello-ack', 'confirm'] as const
 
 /** 已知帧类型（契约 §3 的联合）。 */
 export const KNOWN_FRAME_TYPES = [
   'hello',
   'hello-ack',
+  'confirm',
   'ping',
   'pong',
   'credit',
@@ -126,11 +136,27 @@ export function decodeFrame(line: string): DecodeResult {
  */
 export function assertHandshakePhase(frame: WireFrame, handshakeDone: boolean): void {
   if (handshakeDone) return
-  if ((HANDSHAKE_FRAME_TYPES as readonly string[]).includes(frame.t)) return
+  if (isHandshakeFrame(frame)) return
   throw new ProtocolError(
     'protocol/bad-frame',
     `握手未完成时收到 ${frame.t} 帧：本阶段只接受 ${HANDSHAKE_FRAME_TYPES.join(' / ')}`,
   )
+}
+
+/**
+ * 是不是握手帧。
+ *
+ * 导出的理由：连接层要用**同一个**判据决定「这一帧交给握手驱动器还是交给上层」、
+ * 「驱动器允许写哪些帧」，以及「这一帧要不要盖 `fc`」。三处各写一遍就会漂移，
+ * 而漂移的表现是某一类帧在某个阶段悄悄走错路。
+ */
+export function isHandshakeFrame(frame: WireFrame): boolean {
+  return isHandshakeFrameType(frame.t)
+}
+
+/** 同上，但只需要帧类型字符串（线上解码前、或从 `OutboundFrame` 判断时用）。 */
+export function isHandshakeFrameType(type: string): boolean {
+  return (HANDSHAKE_FRAME_TYPES as readonly string[]).includes(type)
 }
 
 /**

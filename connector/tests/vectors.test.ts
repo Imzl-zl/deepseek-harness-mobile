@@ -2,9 +2,10 @@
  * 跑 `protocol/vectors`（跨端密码学互操作）。
  *
  * 这是 `protocol/verify-vectors.mjs` 在 connector 侧的对应物，判据逐条对齐：
- * 重算握手派生 → 重算 AEAD 并做解密往返 → 跑篡改用例（改 AAD 或改 `fc` 必须解密失败）。
+ * 重算握手派生 → 重算设备身份 → **重拼 transcript 并重签** → 重算 AEAD 并做解密往返
+ * → 跑篡改用例（改 AAD 或改 `fc` 必须解密失败）。
  *
- * **断言数必须与参考侧一致（33）**：数量对不上说明移植时漏了断言。
+ * **断言数必须与参考侧一致（39）**：数量对不上说明移植时漏了断言。
  *
  * 为什么本层单独要一批向量：协议 fixtures 有意不测加密（那边的 `seal` 是可逆占位），
  * 而两侧实现各自实现 X25519 / Ed25519 / HKDF / AEAD 时极易漂移 —— 漂移的表现是
@@ -16,14 +17,15 @@ import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { deriveHandshake, keyPairFrom, open, seal, signTranscript } from '../src/protocol/crypto.js'
+import { deriveHandshake, deriveIdentity, keyPairFrom, open, seal, signTranscript } from '../src/protocol/crypto.js'
 import type { AadFields } from '../src/protocol/frame.js'
+import { transcriptFromFields } from '../src/protocol/handshake-frames.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const VECTORS = join(HERE, '..', '..', 'protocol', 'vectors')
 
 /** `verify-vectors.mjs` 的断言总数。两侧实现跑同一批向量，这个数必须相等。 */
-const REFERENCE_CHECK_COUNT = 33
+const REFERENCE_CHECK_COUNT = 39
 
 /* fixtures/vectors 是运行期读入的动态 JSON，形状由 gen-vectors 保证。 */
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -57,11 +59,40 @@ test('跨端密码学向量：握手派生 + AEAD 往返 + 篡改拒绝，断言
     '三个共享密钥必须互不相同',
   )
 
-  const sig = hs.signature as Json
-  const recomputedSig = signTranscript(
-    sig.signerEdSeed as string,
-    Buffer.from(sig.transcript as string, 'utf8'),
+  // ---- 2. 设备身份（主种子 → 两把长期密钥）----
+  const derived = deriveIdentity(hs.identity.masterSeed as string)
+  // 向量用的字段名是**规范里的名字**（Ed25519 / X25519），产品 API 用的是角色名，
+  // 所以这里显式对一次；对不上就是有一侧改了命名而向量没跟上。
+  const identity: Record<string, string> = {
+    edSeed: derived.signSeedHex,
+    dhSeed: derived.dhSeedHex,
+    edPub: derived.sign.publicKeyHex,
+    dhPub: derived.dh.publicKeyHex,
+  }
+  for (const [key, want] of Object.entries(hs.identity.expected as Record<string, string>)) {
+    check(identity[key] === want, `identity.${key}`, `向量 ${want}，重算 ${identity[key]}`)
+  }
+  check(
+    identity['edSeed'] !== identity['dhSeed'],
+    '两把长期密钥必须来自不同的 info（否则签名密钥与 DH 密钥是同一把）',
   )
+
+  // ---- 3. 握手签名：拼串规则本身也要重算 ----
+  // 只重签向量里存好的那串字节是不够的：两端各自拼一遍、比对同一段字节，才拦得住"顺序写反"。
+  const sig = hs.signature as Json
+  const fields = sig.fields as Json
+  // 向量里 hello 与 hello-ack 的字段是平铺存的；这里按**帧**拆开，走的正是产品那条两参数路径
+  // （两个端点的字段来自不同的帧，所以拼串函数必须分别收）。
+  const rebuilt = transcriptFromFields(
+    { ephPubA: fields.ephPubA, devId: fields.devId, nonceA: fields.nonceA },
+    { ephPubB: fields.ephPubB, pcId: fields.pcId, nonceB: fields.nonceB },
+  )
+  check(
+    rebuilt.toString('utf8') === sig.transcript,
+    'transcript 拼串（从字段拼）',
+    `向量 ${sig.transcript as string}，重算 ${rebuilt.toString('utf8')}`,
+  )
+  const recomputedSig = signTranscript(sig.signerEdSeed as string, rebuilt)
   check(recomputedSig === sig.sig, 'handshake 签名', `向量 ${sig.sig}，重算 ${recomputedSig}`)
   check(
     keyPairFrom('ed25519', sig.signerEdSeed as string).publicKeyHex.length === 64,

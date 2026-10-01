@@ -29,12 +29,15 @@
  *
  * `defineDomain` 的 `version` 是**介质格式**版本（配 `compatibleVersions`）；
  * `meta.schema` 是**业务 schema** 版本。逐代迁移按后者做，别混。
+ *
+ * `pairingId` 为什么必须随设备存、schema 为什么升到 v2 见
+ * `.agents/notes/implemented/2026-10-01-connector-identity-home.md`
  */
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import { z } from 'zod'
 
 /** 业务 schema 版本，写在 `meta.schema`（契约 §1.4）。 */
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 /** 32 字节公钥的十六进制长度。 */
 const PUB_HEX = 64
@@ -47,6 +50,13 @@ const deviceSchema = z.object({
   dhPub: z.string().length(PUB_HEX),
   name: z.string().min(1),
   pairedAt: z.number(),
+  /**
+   * 配对标识（契约 §12.1）：配对码的 HKDF 输出，参与 §4.1 的 `info`。
+   *
+   * **必须随设备存住**：每次重连都要用它重算 `master`，而配对码本身一次性、5 分钟就失效了。
+   * 缺了这个字段，设备能配对却再也握不上手（而且看起来像"验签失败"）。
+   */
+  pairingId: z.string().min(1),
   /** 吊销时间；存在即已吊销（电脑侧删除公钥）。 */
   revokedAt: z.number().optional(),
 })
@@ -151,8 +161,12 @@ export function initialMeta(input: {
  * 高于当前版本一律拒绝启动（`connector/unsupported`）—— 老插件读新数据是
  * 「看起来能跑但语义已经错了」，比直接不启动危险得多。
  *
- * 现在只有 v1，所以迁移表是空的；`SCHEMA_VERSION` 涨上去时在这里逐代补，
+ * 现在到 v2，所以迁移表里只有一条。`SCHEMA_VERSION` 涨上去时在这里逐代补，
  * **不要**写成 `if (v <= 1) … else if (v <= 3) …` 那种跳代分支。
+ *
+ * v1 → v2 只动 `meta`：`devices` 增加了 `pairingId`，而**设备行从来没有任何写入方**
+ * （配对流程还没落地，本插件至今只读这张表），所以不存在需要补字段的历史行 ——
+ * 迁移不该凭空造一个配对标识出来。
  */
 export function migrateMeta(from: MetaRecord): MetaRecord {
   if (from.schema > SCHEMA_VERSION) {
@@ -162,7 +176,9 @@ export function migrateMeta(from: MetaRecord): MetaRecord {
   }
   let current = from
   // 逐代迁移表：key = 起始版本，每步只升一代。新增版本时在这里加一行。
-  const steps: Record<number, (meta: MetaRecord) => MetaRecord> = {}
+  const steps: Record<number, (meta: MetaRecord) => MetaRecord> = {
+    1: (meta) => ({ ...meta, schema: 2 }),
+  }
   while (current.schema < SCHEMA_VERSION) {
     const step = steps[current.schema]
     if (step === undefined) {

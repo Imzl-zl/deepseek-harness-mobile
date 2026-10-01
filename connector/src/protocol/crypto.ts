@@ -23,6 +23,7 @@ import {
   createPublicKey,
   diffieHellman,
   hkdfSync,
+  randomBytes,
   sign,
   type KeyObject,
 } from 'node:crypto'
@@ -30,10 +31,14 @@ import {
 import { aadOf, type AadFields } from './frame.js'
 import { ProtocolError } from './errors.js'
 
-/** 密钥派生的 info 串（契约 §4.1）。 */
-export const HANDSHAKE_INFO = 'dsh-mobile/v1'
+/**
+ * 会话密钥派生的 `info` 前缀（契约 §4.1）。实际传给 HKDF 的是
+ * `` `${KEY_INFO}|${pairingId}` `` —— 配对标识参与派生，所以两端必须用同一个。
+ *
+ * transcript 的标签（`dsh-mobile/v1`）**不在这里**：它的唯一出处是
+ * `handshake-frames.ts` 的 `TRANSCRIPT_LABEL`，两处各写一遍就会漂移。
+ */
 export const KEY_INFO = 'dsh-mobile/v1/keys'
-export const TRANSCRIPT_INFO = 'dsh-mobile/v1'
 export const AEAD_ALGORITHM = 'chacha20-poly1305'
 export const AEAD_TAG_BYTES = 16
 export const MASTER_KEY_BYTES = 64
@@ -192,6 +197,57 @@ export function publicKeyFrom(curve: Curve, hex: string): KeyObject {
   })
 }
 
+/** 身份派生的两个 `info` 串（契约 §4.1）。改一个字就是另一套长期密钥。 */
+export const IDENTITY_INFO = { sign: 'id-sign', dh: 'id-dh' } as const
+
+export interface IdentityKeys {
+  /** 派生出的 Ed25519 种子（`signTranscript` 收的是种子，不是 `KeyObject`）。 */
+  signSeedHex: string
+  /** 派生出的 X25519 种子。 */
+  dhSeedHex: string
+  /** Ed25519 身份签名密钥对：签/验 transcript。 */
+  sign: KeyPair
+  /** X25519 静态 DH 密钥对：参与 §4.1 的三份共享密钥。 */
+  dh: KeyPair
+}
+
+/**
+ * 设备身份（契约 §4.1）：**一个 32 字节主种子**经 HKDF 分成两把长期密钥。
+ *
+ * 为什么只存一个 secret：三端的安全存储（HUKS / Keychain / Keystore）只认"一把密钥"
+ * 这件事最好统一；分成两把再各存一次，等于把同一份风险抄两遍。
+ *
+ * `salt` 为空 —— 与 RFC 5869 的"盐缺省即全零"等价。两个 `info` 是**域分隔**：
+ * 少了它，签名密钥与 DH 密钥会是同一把（`deriveIdentity` 的测试专门拦这个）。
+ *
+ * 与 `protocol/tools/vectors-core.mjs` 的 `deriveIdentity` 必须逐字节一致 ——
+ * 手机端（Dart）实现也要复现同一批向量。
+ */
+export function deriveIdentity(masterSeedHex: string): IdentityKeys {
+  const seed = fromHex(masterSeedHex)
+  if (seed.length !== 32) throw new Error(`主种子必须是 32 字节，收到 ${seed.length}`)
+  const derive = (info: string): string =>
+    toHex(Buffer.from(hkdfSync('sha256', seed, Buffer.alloc(0), Buffer.from(info, 'utf8'), 32)))
+  const signSeedHex = derive(IDENTITY_INFO.sign)
+  const dhSeedHex = derive(IDENTITY_INFO.dh)
+  return {
+    signSeedHex,
+    dhSeedHex,
+    sign: keyPairFrom('ed25519', signSeedHex),
+    dh: keyPairFrom('x25519', dhSeedHex),
+  }
+}
+
+/**
+ * 新身份的主种子。**只在首次配对时生成一次**（契约 §12.1 第 1 步），生成即落安全存储。
+ *
+ * 放在协议层而不是适配层：它没有 DSH 依赖，而"随机数从哪来"是实现细节，
+ * 不该和"种子存哪"（适配层的事）混在一起。
+ */
+export function generateIdentitySeed(): string {
+  return toHex(randomBytes(32))
+}
+
 export interface SessionKeyInput {
   /**
    * 本端在握手里的角色。**这个参数是必需的，不是冗余信息**：
@@ -328,18 +384,7 @@ export function deriveHandshake(input: HandshakeInput): HandshakeDerivation {
   }
 }
 
-/** 握手签名的被签内容（transcript 的规范串，契约 §4.1）。 */
-export function transcriptOf(input: {
-  info: string
-  pairingId: string
-  helloBox: string
-  helloAckBox: string
-}): Buffer {
-  return Buffer.from(
-    `${TRANSCRIPT_INFO}|${input.info}|${input.pairingId}|${input.helloBox}|${input.helloAckBox}`,
-    'utf8',
-  )
-}
+/** 握手签名的被签内容见 `handshake-frames.ts` 的 `transcriptFromFields`（契约 §4.1）。 */
 
 /** 用 Ed25519 身份密钥对 transcript 签名。验签失败即 `protocol/not-paired` 并断开。 */
 export function signTranscript(edSeedHex: string, transcript: Buffer): string {

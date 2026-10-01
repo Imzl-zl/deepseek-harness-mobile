@@ -11,20 +11,19 @@ import { test } from 'node:test'
 
 import { ProtocolError } from '../src/protocol/errors.js'
 import { CONFIRM_HASH_BYTES, transcriptHashOf, verifyConfirm, verifySignature } from '../src/protocol/handshake.js'
-import { keyPairFrom, signTranscript, transcriptOf } from '../src/protocol/crypto.js'
+import { keyPairFrom, signTranscript } from '../src/protocol/crypto.js'
+import { transcriptFromFields } from '../src/protocol/handshake-frames.js'
 
 const sha256 = (data: Buffer): Buffer => createHash('sha256').update(data).digest()
 
 /** 固定的 32 字节种子。 */
 const seed = (n: number): string => n.toString(16).padStart(2, '0').repeat(32)
 
-const transcript = (): Buffer =>
-  transcriptOf({
-    info: 'dsh-mobile/v1',
-    pairingId: 'pair-1',
-    helloBox: 'hello-box-bytes',
-    helloAckBox: 'hello-ack-box-bytes',
-  })
+/** 两端各自拼一遍的那段字节（契约 §4.1：**从字段拼**，不拼两帧 `box`）。 */
+const HELLO = { ephPubA: seed(0x03), devId: 'dev-1', nonceA: seed(0x04) }
+const ACK = { ephPubB: seed(0x13), pcId: 'pc-1', nonceB: seed(0x14) }
+const transcript = (ack: Partial<typeof ACK> = {}): Buffer =>
+  transcriptFromFields(HELLO, { ...ACK, ...ack })
 
 test('验签：正确的签名通过', () => {
   const signer = keyPairFrom('ed25519', seed(0x11))
@@ -71,12 +70,8 @@ test('验签：被换过公钥即拒，且错误码是 protocol/not-paired', () 
 
 test('验签：签的是别的 transcript 也拒', () => {
   const signer = keyPairFrom('ed25519', seed(0x11))
-  const otherTranscript = transcriptOf({
-    info: 'dsh-mobile/v1',
-    pairingId: 'pair-1',
-    helloBox: 'tampered',
-    helloAckBox: 'hello-ack-box-bytes',
-  })
+  // 对端 acK 的 `pcId` 换了一个字符 —— 也就是"我们拼的不是同一段字节"。
+  const otherTranscript = transcript({ pcId: 'pc-2' })
   const sig = signTranscript(seed(0x11), otherTranscript)
 
   // hello 帧被改过一个字节 → 签名对不上。
@@ -127,12 +122,7 @@ test('confirm：transcript 本身不同（哪怕签名都合法）也要被拦',
   // 这是 confirm 存在的理由：签名只能证明"对方持有私钥"，
   // 不能证明"我们签的是同一段字节"。
   const mine = transcript()
-  const theirs = transcriptOf({
-    info: 'dsh-mobile/v1',
-    pairingId: 'pair-1',
-    helloBox: 'hello-box-bytes',
-    helloAckBox: 'different-ack',
-  })
+  const theirs = transcript({ nonceB: seed(0x15) })
   const theirHash = transcriptHashOf(theirs, sha256)
   assert.throws(
     () => verifyConfirm({ transcript: mine, transcriptHash: theirHash, sha256 }),

@@ -77,31 +77,16 @@
 connector/
 ├── package.json  cordis.patch.yml  tsconfig.json
 ├── src/
-│   ├── index.ts              # 插件入口:装配、发布服务、dispose
-│   ├── config.ts             # Schemastery 配置(上表)
-│   ├── protocol/             # ← 与 protocol/fixtures 一一对应,无 DSH 依赖
-│   │   ├── frame.ts          #   帧编解码 + AAD 规范化(§3)
-│   │   ├── crypto.ts         #   握手、HKDF、AEAD、fc 计数器(§4)
-│   │   ├── flow.ts           #   流控窗口(§4.3)
-│   │   ├── recovery.ts       #   恢复判定与快照分页(§5.4)
-│   │   ├── items.ts          #   itemId 推导与 upsert(§5.2)
-│   │   ├── dedupe.ts         #   幂等表(§5.6)
-│   │   └── errors.ts         #   封闭错误码(§3.1)
-│   ├── dsh/                  # 薄适配层:只做映射,不重建语义
-│   │   ├── sessions.ts       #   follow / page / prompt / cancel + seq→条目
-│   │   ├── interactions.ts   #   approval / userQuestions(claim-or-delegate)
-│   │   ├── jobs.ts           #   ctx.jobs 投影(按 owner 过滤)
-│   │   ├── subagents.ts      #   listChildren / listDescendants
-│   │   ├── settings.ts       #   settings.* / credentials.*(单向写面)
-│   │   └── caps.ts           #   能力门控(服务是否存在)
-│   ├── transport/            # 出站 WSS:退避、心跳、半开检测、批量合并
-│   ├── store/                # ctx.storage domain KV + schema 迁移(§1.4)
-│   ├── push/                 # 摘要生成与 60 s 合并,投递给中转
-│   └── observability.ts      # 结构化日志 + 指标
-└── tests/
-    ├── fixtures.test.ts      # 跑 protocol/fixtures(与 Dart 侧同一批)
-    └── vectors.test.ts       # 跑 protocol/vectors(跨端互操作)
+│   ├── protocol/    帧与 AAD(§3)、密码学与握手(§4)、流控(§4.3)、恢复(§5.4)、itemId(§5.2)、幂等(§5.6)、错误码(§3.1)
+│   ├── dsh/         薄适配层:只做映射,不重建语义(§2.2 适配表)
+│   ├── transport/   出站 WSS:退避、心跳、半开、攒批、拨号接线
+│   ├── store/       ctx.storage domain KV + schema 迁移(§1.4)
+│   ├── push/        摘要生成与 60 s 合并,投递给中转
+│   └── 根部         入口装配 / 配置 / 生命周期顺序引擎 / 日志与指标
+└── tests/           跑 protocol/fixtures 与 protocol/vectors(与 Dart 侧同一批)
 ```
+
+**逐文件清单不写在这里**:它是源码的投影,抄一遍必然漂移(本节就曾漏掉握手与别名两个模块)。层与职责是稳定信息,文件看 `src/` 本身。
 
 分层规则:`protocol/` 与 `store/` 不 import 任何 DSH 类型;`dsh/` 不 import `transport/`。依赖方向单向向下,便于`protocol/` 在纯 Node 下跑 fixtures。
 
@@ -113,7 +98,8 @@ mount
  ├─ store.open():迁移到当前 schema → 载入 devices / aliases / dedupe
  ├─ 发布服务 ctx.provide('dshMobileConnector', api)     ← 手机端能力门控读它
  ├─ 注册 answerer(TakeoverGate 判定,见 §1.5)
- ├─ transport.start():出站连接(退避)→ 握手 → serving
+ ├─ load-identity:取(或首次生成)本机身份种子(§12.1)
+ ├─ transport.start():出站连接(退避)→ 握手(§4.1 三帧)→ serving
  └─ 订阅策略:只为"手机已订阅的会话"建立 follow
 
 dispose

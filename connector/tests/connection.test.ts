@@ -8,79 +8,18 @@
  * 用短周期（心跳 40 ms、攒批 30 ms）让整套链路在一秒内跑完。
  */
 import assert from 'node:assert/strict'
-import { after, test } from 'node:test'
-
-import { WebSocketServer, type WebSocket as ServerSocket } from 'ws'
+import { test } from 'node:test'
 
 import type { WireFrame } from '../src/protocol/frame.js'
 import { createConnection, type Connection } from '../src/transport/connection.js'
+import { startPeer, waitFor, type Peer } from './support/peer.js'
 
-/** 等一个条件成立，超时即失败 —— 比固定 sleep 稳，也比 sleep 快。 */
-async function waitFor(
-  label: string,
-  predicate: () => boolean,
-  timeoutMs = 3_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (predicate()) return
-    await new Promise((resolve) => setTimeout(resolve, 5))
-  }
-  throw new Error(`等待超时：${label}`)
-}
-
-/** 向对端发一帧。**必须带行分隔符** —— 契约 §3 是行级 JSON。 */
-function sendFrame(socket: ServerSocket | undefined, frame: unknown): void {
-  socket?.send(`${JSON.stringify(frame)}\n`)
-}
-
-interface Peer {
-  url: string
-  received: WireFrame[]
-  sockets: ServerSocket[]
-  /** 掐掉当前连接（模拟网络中断）—— 服务端仍在监听，所以重连会成功。 */
-  dropCurrent(): void
-  /** 向当前连接发一帧。 */
-  send(frame: unknown): void
-  close(): Promise<void>
-}
-
-async function startPeer(): Promise<Peer> {
-  const server = new WebSocketServer({ port: 0 })
-  await new Promise<void>((resolve) => server.once('listening', resolve))
-  const address = server.address()
-  if (address === null || typeof address === 'string') throw new Error('拿不到端口')
-
-  const received: WireFrame[] = []
-  const sockets: ServerSocket[] = []
-
-  server.on('connection', (socket) => {
-    sockets.push(socket)
-    socket.on('message', (data) => {
-      for (const line of data.toString().split('\n')) {
-        if (line.trim() !== '') received.push(JSON.parse(line) as WireFrame)
-      }
-    })
-  })
-
-  return {
-    url: `ws://127.0.0.1:${address.port}`,
-    received,
-    sockets,
-    dropCurrent() {
-      sockets.at(-1)?.terminate()
-    },
-    send(frame) {
-      sendFrame(sockets.at(-1), frame)
-    },
-    async close() {
-      for (const socket of sockets) socket.terminate()
-      await new Promise<void>((resolve) => server.close(() => resolve()))
-    },
-  }
-}
-
-const TRANSPORT_DEFAULTS = { heartbeatMs: 40, batchMs: 30 } as const
+/**
+ * 这组用例只关心「接线」，所以心跳一律拉到 5 s：握手阶段本来就一帧都不发，
+ * 用 40 ms 这种真实周期会让半开判据在握手走完之前就把连接关掉 ——
+ * 那种失败随机器负载时红时绿，而它检验的并不是用例想测的东西。
+ */
+const TRANSPORT_DEFAULTS = { heartbeatMs: 5_000, batchMs: 30 } as const
 
 /** 取 `fc`（不是每个帧变体都有它）。 */
 const fcOf = (frame: WireFrame | undefined): number | undefined =>
@@ -275,4 +214,55 @@ test('端到端：握手前收到业务帧，连接被关闭', async (t) => {
     () => connection.state !== 'handshake' && connection.state !== 'serving',
   )
   assert.equal(warnings.length > 0, true, '应记录一次拒绝')
+})
+
+test('端到端：发帧也重置空闲计时（半开判据是「任一方向」）', async (t) => {
+  const peer = await startPeer()
+  // 短心跳：半开阈值 = 2 × 40 = 80 ms，用例几百毫秒内就能给出结论。
+  const connection = track(t, peer, (url) =>
+    createConnection({
+      url,
+      dial: (target) => new WebSocket(target) as never,
+      onFrame: () => {},
+      heartbeatMs: 40,
+      batchMs: 30,
+    }),
+  )
+
+  connection.start()
+  await waitFor('进入 handshake', () => connection.state === 'handshake')
+  connection.markHandshakeDone()
+
+  // **只发不收**：对端一个字节都不回。若发帧不算「有动静」，80 ms 后就会被判半开 ——
+  // 而契约 §2.2 写的是「任一方向」。
+  const until = Date.now() + 300
+  while (Date.now() < until) {
+    assert.equal(connection.send({ v: 1, t: 'credit' }), true)
+    await new Promise((resolve) => setTimeout(resolve, 15))
+    assert.equal(connection.state, 'serving', '发帧期间不该被判半开')
+  }
+  assert.equal(peer.received.filter((f) => f.t === 'credit').length > 5, true)
+})
+
+test('端到端：完全空闲仍会判半开（ping 不许把空闲计时重置掉）', async (t) => {
+  const peer = await startPeer()
+  const connection = track(t, peer, (url) =>
+    createConnection({
+      url,
+      dial: (target) => new WebSocket(target) as never,
+      onFrame: () => {},
+      heartbeatMs: 40,
+      batchMs: 30,
+    }),
+  )
+
+  connection.start()
+  await waitFor('进入 handshake', () => connection.state === 'handshake')
+  connection.markHandshakeDone()
+
+  // 一个周期后该发探针，两个周期后该判半开。
+  // 如果连 `ping` 自己都重置空闲计时，这里会永远停在 `serving`：
+  // 每个周期都发一次 ping，沉默时间永远攒不满两个周期。
+  await waitFor('发出探针 ping', () => peer.received.some((f) => f.t === 'ping'))
+  await waitFor('判定半开并进入退避', () => connection.state === 'backoff')
 })
