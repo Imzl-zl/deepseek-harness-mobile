@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { createRelayCore } from '../src/core.js'
+import { createRelayCore } from '../src/core.ts'
 
 const line = (frame: Record<string, unknown>): string => JSON.stringify({ v: 1, ...frame })
 const ev = (sid: string, seq: number, box = 'x'): string =>

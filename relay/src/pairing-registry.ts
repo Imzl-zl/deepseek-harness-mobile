@@ -17,7 +17,7 @@
  * 3. **连接器断开即失效**：不然设备会拿到一张指向一条已经不存在的连接的 ticket，
  *    症状是"扫码后一直连不上"，而中转侧看起来一切正常。
  */
-import type { ChannelLogger } from './logger.js'
+import type { ChannelLogger } from './logger.ts'
 
 /** 登记寿命：与配对码同寿（契约 §12.1：5 分钟）。 */
 export const PAIRING_REGISTRATION_TTL_MS = 5 * 60 * 1000

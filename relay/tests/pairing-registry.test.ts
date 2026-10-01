@@ -10,7 +10,7 @@ import { test } from 'node:test'
 import {
   PAIRING_REGISTRATION_TTL_MS,
   createPairingRegistry,
-} from '../src/pairing-registry.js'
+} from '../src/pairing-registry.ts'
 
 const HASH_A = 'a'.repeat(64)
 const HASH_B = 'b'.repeat(64)

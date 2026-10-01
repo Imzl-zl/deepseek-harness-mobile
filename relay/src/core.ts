@@ -20,10 +20,10 @@
  * 让它的 `sid` 归属失效（下一台连接器发同一个 `sid` 时重新学）。
  * 设备断开：清它的重放窗口与订阅关系（重连是一次新的订阅），并忘掉它的配对归属。
  */
-import { createPairingRegistry, type PairingRegistry } from './pairing-registry.js'
-import { createRouting, type Routing, type RoutedFrame } from './routing.js'
-import { routingViewOf } from './protocol-view.js'
-import type { ChannelLogger } from './logger.js'
+import { createPairingRegistry, type PairingRegistry } from './pairing-registry.ts'
+import { createRouting, type Routing, type RoutedFrame } from './routing.ts'
+import { routingViewOf } from './protocol-view.ts'
+import type { ChannelLogger } from './logger.ts'
 
 export interface RelayCoreOptions {
   routing?: Routing

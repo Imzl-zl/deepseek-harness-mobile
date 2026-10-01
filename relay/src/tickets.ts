@@ -18,7 +18,7 @@
  */
 import { createHash, randomBytes as nodeRandomBytes } from 'node:crypto'
 
-import type { ChannelLogger } from './logger.js'
+import type { ChannelLogger } from './logger.ts'
 
 /** 票值长度（16 字节 = 128 位；与 `requestId`、配对码同规格）。 */
 export const TICKET_BYTES = 16

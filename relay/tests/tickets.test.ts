@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { TICKET_TTL_MS, createTicketStore } from '../src/tickets.js'
+import { TICKET_TTL_MS, createTicketStore } from '../src/tickets.ts'
 
 function setup(patch: { now?: () => number } = {}) {
   let round = 0

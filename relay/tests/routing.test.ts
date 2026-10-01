@@ -7,8 +7,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { createRouting, type RoutedFrame } from '../src/routing.js'
-import { routingViewOf } from '../src/protocol-view.js'
+import { createRouting, type RoutedFrame } from '../src/routing.ts'
+import { routingViewOf } from '../src/protocol-view.ts'
 
 const frame = (raw: string): RoutedFrame => {
   const view = routingViewOf(raw)

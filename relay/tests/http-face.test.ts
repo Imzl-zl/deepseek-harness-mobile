@@ -8,9 +8,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { createRelayCore } from '../src/core.js'
-import { createHttpFace, type Authenticated } from '../src/http-face.js'
-import { createTicketStore } from '../src/tickets.js'
+import { createRelayCore } from '../src/core.ts'
+import { createHttpFace, type Authenticated } from '../src/http-face.ts'
+import { createTicketStore } from '../src/tickets.ts'
 
 const TOKENS: Record<string, Authenticated> = {
   'device-token-1': { kind: 'device', id: 'dev-1' },

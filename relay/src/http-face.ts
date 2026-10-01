@@ -25,9 +25,9 @@
  * `409` 里**不细分**原因：那几种处境对手机是同一件事（让电脑重新出码），
  * 细分只会让客户端多几个永远走不到的分支。
  */
-import type { RelayCore } from './core.js'
-import type { TicketStore } from './tickets.js'
-import type { ChannelLogger } from './logger.js'
+import type { RelayCore } from './core.ts'
+import type { TicketStore } from './tickets.ts'
+import type { ChannelLogger } from './logger.ts'
 
 /** 已认证的调用方。`kind` 决定它能调哪些端点。 */
 export interface Authenticated {

@@ -22,7 +22,7 @@
  * 窗口有上限，超限时**先停推再要求快照**（丢弃最旧的一段，并记 `snapshotRequired`），
  * 而不是无限增长。
  */
-import type { FrameType } from './protocol-view.js'
+import type { FrameType } from './protocol-view.ts'
 
 /** 中转能看到的全部字段（I10）。`seq` 只有 `ev` / `persisted` 这类有序帧才有。 */
 export interface RoutingView {
