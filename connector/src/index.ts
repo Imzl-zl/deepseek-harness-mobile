@@ -58,6 +58,7 @@ import { createAliases, type Aliases } from './alias.js'
 import type { JobRegistry } from '@deepseek-ai/dsh-jobs'
 import { createJobsPort, createJobControlPort, type JobControlService } from './dsh/jobs.js'
 import { createJobSubscriptions } from './job-subscriptions.js'
+import { createSessionSubscriptions } from './session-subscriptions.js'
 import { createSessionsAdapter } from './dsh/sessions.js'
 import type { DeviceRecord } from './store/index.js'
 import { coreDomain, initialMeta, migrateMeta, windowsDomain } from './store/index.js'
@@ -332,11 +333,36 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
                 log: logger,
               })
 
+        // 会话订阅：与任务输出**同一套骨架**（背压、承诺兑现、跟连接活），
+        // 两处只在"键怎么取、开启帧怎么展开、有没有终止帧"上不同。
+        const sessionSubscriptions = createSessionSubscriptions({
+          source: createSessionsAdapter(ctx.sessionController),
+          send: (out) => {
+            if (next.state !== 'serving') return 'closed'
+            const body = JSON.stringify(out.payload)
+            const frame =
+              out.t === 'ev'
+                ? { v: 1 as const, t: 'ev' as const, sid: out.sid, seq: out.seq, box: body }
+                : {
+                    v: 1 as const,
+                    t: 'live' as const,
+                    sid: out.sid,
+                    stream: out.stream,
+                    rev: out.rev,
+                    box: body,
+                  }
+            return next.send(frame) ? 'sent' : 'paused'
+          },
+          waitWritable: () => next.whenWritable('ev'),
+          log: logger,
+        })
+
         const methodFace = createMethodFace({
           handlers: createHandlers({
             caps: () => readCaps(ctx),
             aliasVersion: () => aliases?.version ?? 0,
             sessions: createSessionsAdapter(ctx.sessionController),
+            sessionSubscriptions,
             // 任务服务是**可选**的（`caps.ts` 的 OPTIONAL_SERVICES）：缺了就不挂 `job.*`，
             // 手机侧看到的是"这个方法不存在"，而不是一个会回错的按钮。
             ...(ctx.get('jobs') === undefined
@@ -409,9 +435,12 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             metrics.increment(METRIC.stateTransitions)
             if (to === 'connecting') metrics.increment(METRIC.connects)
             logger.debug(`连接状态 ${from} → ${to}`)
-            // 连接一离开服务态，任务输出订阅全部终止：手机这一侧收不到任何东西，
-            // 让它重连后自己按 `from` 重订（宿主流不会为断了的连接白跑）。
-            if (from === 'serving' && to !== 'serving') jobSubscriptions?.stopAll()
+            // 连接一离开服务态，任务输出与会话订阅全部终止：手机这一侧收不到任何东西，
+            // 让它重连后自己按 `from` / `since` 重订（宿主流不会为断了的连接白跑）。
+            if (from === 'serving' && to !== 'serving') {
+              jobSubscriptions?.stopAll()
+              sessionSubscriptions.stopAll()
+            }
           },
           onFrame: (frame: WireFrame) => {
             metrics.increment(METRIC.inboundFrames)

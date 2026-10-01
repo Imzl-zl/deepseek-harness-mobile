@@ -16,6 +16,7 @@ import { WIRE_VERSION } from '../src/protocol/frame.js'
 import type { Caps } from '../src/dsh/caps.js'
 import type { JobControlPort, JobsPort } from '../src/dsh/jobs.js'
 import type { JobSubscriptions } from '../src/job-subscriptions.js'
+import type { SessionSubscriptions } from '../src/session-subscriptions.js'
 import { createFakeAliases } from './support/fake-aliases.js'
 
 /** 什么都不做的任务端口；只用它来"挂着 `job.*`"。 */
@@ -180,6 +181,70 @@ function fakeSubscriptions(overrides: Partial<JobSubscriptions> = {}): JobSubscr
     ...overrides,
   }
 }
+
+/** 会话订阅注册表：默认什么都不做。 */
+function fakeSessionSubscriptions(
+  overrides: Partial<SessionSubscriptions> = {},
+): SessionSubscriptions {
+  return {
+    subscribe: (input) =>
+      Promise.resolve({ since: input.since ?? 0, hasMore: false }),
+    unsubscribe: () => true,
+    stopAll: () => {},
+    active: 0,
+    ...overrides,
+  }
+}
+
+test('session.subscribe：把 sid 与 DSH 会话 id 都交给注册表，并回水位与 hasMore', async () => {
+  const seen: unknown[] = []
+  const handlers = build({
+    aliases: preloadedAliases(),
+    sessionSubscriptions: fakeSessionSubscriptions({
+      subscribe: (input) => {
+        seen.push(input)
+        return Promise.resolve({ since: 100, hasMore: true })
+      },
+    }),
+  })
+  const handler = handlers['session.subscribe']
+  assert.ok(handler !== undefined)
+
+  assert.deepEqual(await handler({ sid: 'sid_dsh-1' }, {}), { since: 100, hasMore: true })
+  assert.deepEqual(seen, [{ sid: 'sid_dsh-1', dshSessionId: 'dsh-1' }])
+  await handler({ sid: 'sid_dsh-1', since: 7 }, {})
+  assert.deepEqual(seen[1], { sid: 'sid_dsh-1', dshSessionId: 'dsh-1', since: 7 })
+})
+
+test('session.subscribe / unsubscribe：参数与别名不合规就回结构化错误', async () => {
+  const handlers = build({
+    aliases: preloadedAliases(),
+    sessionSubscriptions: fakeSessionSubscriptions(),
+  })
+  const subscribe = handlers['session.subscribe']
+  const unsubscribe = handlers['session.unsubscribe']
+  assert.ok(subscribe !== undefined && unsubscribe !== undefined)
+
+  for (const since of [-1, 2.5, '9', null]) {
+    await assert.rejects(
+      async () => subscribe({ sid: 'sid_dsh-1', since }, {}),
+      (error: unknown) => error instanceof ProtocolError && error.code === 'protocol/bad-frame',
+      `since=${String(since)} 应当被拒`,
+    )
+  }
+  await assert.rejects(
+    async () => subscribe({ sid: 'sid_nobody' }, {}),
+    (error: unknown) => error instanceof ProtocolError && error.code === 'session/not-found',
+  )
+  assert.throws(
+    () => unsubscribe({ sid: 'sid_nobody' }, {}),
+    (error: unknown) => error instanceof ProtocolError && error.code === 'session/not-found',
+  )
+
+  const without = build()
+  assert.equal('session.subscribe' in without, false)
+  assert.equal('session.unsubscribe' in without, false)
+})
 
 test('job.follow：把 sid 与 DSH 会话 id 都交给注册表，并回它给出来的起点', async () => {
   const seen: unknown[] = []

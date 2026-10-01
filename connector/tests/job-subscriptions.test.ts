@@ -7,7 +7,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { createJobSubscriptions, type JobFrameSendOutcome } from '../src/job-subscriptions.js'
+import { createJobSubscriptions } from '../src/job-subscriptions.js'
+import type { SendOutcome } from '../src/subscriptions.js'
 import type { JobOutputFrame } from '../src/protocol/job-output.js'
 import { createControllableSource } from './support/job-stream.js'
 
@@ -40,12 +41,12 @@ const status = (jobId: string): JobOutputFrame => ({
 })
 
 /** 收集出帧，并可按需把某一帧判成"满窗"。 */
-function collector(outcomes: JobFrameSendOutcome[] = []) {
+function collector(outcomes: SendOutcome[] = []) {
   const sent: JobOutputFrame[] = []
   let index = 0
   return {
     sent,
-    send: (_sid: string, frame: JobOutputFrame): JobFrameSendOutcome => {
+    send: (_sid: string, frame: JobOutputFrame): SendOutcome => {
       const forced = outcomes[index]
       index += 1
       if (forced === 'paused' || forced === 'closed') return forced

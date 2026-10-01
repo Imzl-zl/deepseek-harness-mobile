@@ -127,13 +127,14 @@ dsh plugin --profile <name> add <connector 本地路径>
 **接线到哪一步了**(真机联调前先看这一句):连接层已经完整 —— 三帧握手、会话密钥、
 每一种业务帧的 AEAD 封箱/解封、§4.3 的流控(W=128、收到即回 `credit`、满窗只压 `ev`/`live`),
 连接级 e2e 用手机侧的**独立实现**双向跑通过;方法面与 §5.6 的幂等管道也在。
-方法面当前 **7/22**:`repo.info` / `devices.list` / `session.list`(会话清单,不含标题 ——
-该面不返回标题,契约 §5.7 已写明)/ `job.list`(任务清单)/ `job.kill`(停止,走宿主的人发起门面)/
-`job.follow` + `job.unfollow`(任务输出订阅:每任务至多一条流、可换起点、跟着连接活);
-**缺服务的部署里这些方法根本不在表里**(`job.*` 要 `jobs` 与 `jobController`)。其余回 `connector/unsupported`。
-所以下面 5.1 的"发一句 / 回一句"还差:会话订阅与翻页
-(`session.subscribe`/`page`,要 `follow` 的 `cursor` 与订阅生命周期)、
-带键的写方法(`session.prompt` 等)、以及能产出设备行的配对流程(§12.1)。
+方法面当前 **9/22**:`repo.info` / `devices.list` / `session.list`(会话清单,不含标题 ——
+该面不返回标题,契约 §5.7 已写明)/ `session.subscribe` + `session.unsubscribe`(会话事件与流式输出;
+开启快照的补课事件**逐条**发)/ `job.list` / `job.kill`(走宿主的人发起门面)/
+`job.follow` + `job.unfollow`(任务输出订阅);**缺服务的部署里这些方法根本不在表里**
+(`job.*` 要 `jobs` 与 `jobController`)。其余回 `connector/unsupported`。
+**已知缺口(手机视图还不可用)**:`persisted` 水位(手机的"水位已对齐"依赖它)与 `session.page`
+都还没做,`session.prompt` 也未接。
+所以下面 5.1 的"发一句 / 回一句"还差:上面的三个缺口 + 能产出设备行的配对流程(§12.1)。
 
 5.1 先用 Tailscale 直连做第一跳(契约 §14.6 的顺序):
 

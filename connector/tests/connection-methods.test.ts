@@ -21,7 +21,9 @@ import { ProtocolError } from '../src/protocol/errors.js'
 import { completeHandshake, start, type Fixture } from './support/secure-connection.js'
 import type { SessionKeys } from '../src/protocol/crypto.js'
 import type { JobSubscriptions } from '../src/job-subscriptions.js'
+import type { SessionSubscriptions } from '../src/session-subscriptions.js'
 import { createControllableSource } from './support/job-stream.js'
+import { createControllableSessionSource } from './support/session-stream.js'
 
 const CAPS = {
   sessions: true,
@@ -34,7 +36,10 @@ const CAPS = {
   credentials: true,
 } as const
 
-function fixtureHandlers(subscriptions: JobSubscriptions | null = null) {
+function fixtureHandlers(
+  subscriptions: JobSubscriptions | null = null,
+  sessionSubscriptions: SessionSubscriptions | null = null,
+) {
   return createHandlers({
     caps: () => ({ ...CAPS }),
     aliasVersion: () => 7,
@@ -84,6 +89,7 @@ function fixtureHandlers(subscriptions: JobSubscriptions | null = null) {
       follow: () => (async function* () {})(),
     },
     ...(subscriptions === null ? {} : { jobSubscriptions: subscriptions }),
+    ...(sessionSubscriptions === null ? {} : { sessionSubscriptions }),
   })
 }
 
@@ -325,7 +331,7 @@ test('端到端：手机点停止 —— 受理回执，外来任务回 job/not-
 test('端到端：手机订任务输出 —— 三帧解得出，unfollow 停流，连接断开全停', async (t) => {
   const { source, streams } = createControllableSource()
   const f = await start(t, {
-    handlers: (subscriptions) => fixtureHandlers(subscriptions),
+    handlers: ({ job }) => fixtureHandlers(job),
     jobSource: source,
   })
   f.connection.start()
@@ -395,7 +401,7 @@ test('端到端：手机订任务输出 —— 三帧解得出，unfollow 停流
 test('端到端：连接断开时任务输出订阅全停（手机收不到，重连后自己按 from 重订）', async (t) => {
   const { source, streams } = createControllableSource()
   const f = await start(t, {
-    handlers: (subscriptions) => fixtureHandlers(subscriptions),
+    handlers: ({ job }) => fixtureHandlers(job),
     jobSource: source,
   })
   f.connection.start()
@@ -426,6 +432,101 @@ test('端到端：连接断开时任务输出订阅全停（手机收不到，�
   f.connection.stop()
   await waitFor('订阅被清空', () => f.subscriptions?.active === 0)
   assert.equal(streams[0]?.signal.aborted, true, '断开即中止宿主流')
+})
+
+test('端到端：手机订会话 —— 快照补课事件逐条 ev、assistant 流走 live，退订即停', async (t) => {
+  const { source, streams } = createControllableSessionSource()
+  const f = await start(t, { handlers: ({ session }) => fixtureHandlers(null, session), sessionSource: source })
+  f.connection.start()
+  await waitFor('进入 handshake', () => f.connection.state === 'handshake')
+  const keys = await completeHandshake(f)
+
+  sendRequest(f, keys, 0, 'req_rrrrrrrrrrrr', '{"method":"session.list"}')
+  await waitFor('收到会话清单', () => f.peer.received.some((frame) => frame.t === 'res'))
+  const sid = String(
+    (responseOf(f, keys, 0).envelope['result'] as { sessions: { sid: string }[] }).sessions[0]?.sid,
+  )
+
+  sendRequest(
+    f,
+    keys,
+    1,
+    'req_ssssssssssss',
+    `{"method":"session.subscribe","params":{"sid":"${sid}"}}`,
+  )
+  await waitFor('会话流开起来了', () => streams.length === 1)
+  streams[0]?.push({
+    kind: 'opening',
+    cursor: 100,
+    header: { id: 'dsh-1' } as never,
+    records: [
+      { event: { type: 'user/message', seq: 98, time: 1 } },
+      { event: { type: 'user/message', seq: 99, time: 2 } },
+    ] as never,
+    hasMore: true,
+  })
+  await waitFor(
+    '收到订阅应答与两条补课事件',
+    () =>
+      f.peer.received.filter((frame) => frame.t === 'res').length >= 2 &&
+      f.peer.received.filter((frame) => frame.t === 'ev').length >= 2,
+  )
+  assert.deepEqual(
+    responseOf(f, keys, 1).envelope['result'],
+    { since: 100, hasMore: true },
+    '回的是基线水位与"还有更早的历史"',
+  )
+
+  streams[0]?.push({
+    kind: 'live',
+    frame: { type: 'chunk', attemptId: 'att-1', revision: 1, index: 1, time: 9, chunk: { text: '你' } } as never,
+  })
+  await waitFor('收到流式帧', () => f.peer.received.some((frame) => frame.t === 'live'))
+
+  // 手机侧用自己的实现解箱（`ev` 的 AAD 含 seq，`live` 的 AAD 只含 sid 与 fc）。
+  const events = f.peer.received
+    .filter((frame) => frame.t === 'ev')
+    .map((frame) =>
+      JSON.parse(
+        phoneOpenBox({
+          keys,
+          header: { t: 'ev', fc: frame.fc, sid: frame.sid, seq: frame.t === 'ev' ? frame.seq : undefined },
+          box: frame.box,
+        }),
+      ),
+    )
+  assert.deepEqual(
+    events.map((payload) => (payload as { seq: number }).seq),
+    [98, 99],
+    '补课事件一条都不能少',
+  )
+
+  const liveFrame = f.peer.received.find((frame) => frame.t === 'live')
+  assert.ok(liveFrame !== undefined && liveFrame.t === 'live')
+  assert.equal(liveFrame.stream, 1, '`stream` 由电脑侧分配')
+  assert.equal(liveFrame.rev, 1, '`rev` 用宿主的 index（手机侧据此 +1 追加）')
+  assert.deepEqual(
+    JSON.parse(
+      phoneOpenBox({
+        keys,
+        header: { t: 'live', fc: liveFrame.fc, sid: liveFrame.sid },
+        box: liveFrame.box,
+      }),
+    ),
+    { type: 'chunk', time: 9, chunk: { text: '你' } },
+  )
+
+  sendRequest(
+    f,
+    keys,
+    2,
+    'req_tttttttttttt',
+    `{"method":"session.unsubscribe","params":{"sid":"${sid}"}}`,
+  )
+  await waitFor('收到退订应答', () => f.peer.received.filter((frame) => frame.t === 'res').length >= 3)
+  assert.deepEqual(responseOf(f, keys, 2).envelope['result'], { stopped: true })
+  assert.equal(streams[0]?.signal.aborted, true, '退订必须真的中止会话流')
+  assert.equal(f.sessionSubscriptions?.active, 0)
 })
 
 test('端到端：连着问两件事，两个应答各自对得上自己的 id', async (t) => {

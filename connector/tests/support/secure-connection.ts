@@ -27,6 +27,11 @@ import {
   type JobFollowSource,
   type JobSubscriptions,
 } from '../../src/job-subscriptions.js'
+import {
+  createSessionSubscriptions,
+  type SessionFollowSource,
+  type SessionSubscriptions,
+} from '../../src/session-subscriptions.js'
 import { createMethodFace } from '../../src/method-face.js'
 import { createConnection, type Connection } from '../../src/transport/connection.js'
 import { startPeer, waitFor, type Peer } from './peer.js'
@@ -56,6 +61,8 @@ export interface Fixture {
   watchClose(): void
   /** 任务输出订阅注册表（只在给了 `jobSource` 时非空）。 */
   subscriptions: JobSubscriptions | null
+  /** 会话订阅注册表（只在给了 sessionSource 时非空）。 */
+  sessionSubscriptions: SessionSubscriptions | null
 }
 
 /** 起对端 + 连接，并注册清理。 */
@@ -70,7 +77,10 @@ export async function start(
      */
     handlers?:
       | Partial<Record<MethodName, MethodHandler>>
-      | ((subscriptions: JobSubscriptions | null) => Partial<Record<MethodName, MethodHandler>>)
+      | ((registries: {
+          job: JobSubscriptions | null
+          session: SessionSubscriptions | null
+        }) => Partial<Record<MethodName, MethodHandler>>)
     /** 给了它就装幂等执行（与 `index.ts` 的装配一致）。 */
     idempotency?: Idempotency
     /**
@@ -81,6 +91,8 @@ export async function start(
      * 只有 fixture 需要这样绕一下。
      */
     jobSource?: JobFollowSource
+    /** 给了它就装会话订阅注册表（与 `index.ts` 的装配一致）。 */
+    sessionSource?: SessionFollowSource
   } = {},
 ): Promise<Fixture> {
   const pc = deriveIdentity(PC_SEED)
@@ -112,9 +124,34 @@ export async function start(
           },
           waitWritable: () => (wired === null ? Promise.resolve() : wired.whenWritable('job')),
         })
+  const sessionSubscriptions =
+    options.sessionSource === undefined
+      ? null
+      : createSessionSubscriptions({
+          source: options.sessionSource,
+          send: (out) => {
+            if (wired === null || wired.state !== 'serving') return 'closed'
+            const body = JSON.stringify(out.payload)
+            const frame =
+              out.t === 'ev'
+                ? { v: 1 as const, t: 'ev' as const, sid: out.sid, seq: out.seq, box: body }
+                : {
+                    v: 1 as const,
+                    t: 'live' as const,
+                    sid: out.sid,
+                    stream: out.stream,
+                    rev: out.rev,
+                    box: body,
+                  }
+            return wired.send(frame) ? 'sent' : 'paused'
+          },
+          waitWritable: () => (wired === null ? Promise.resolve() : wired.whenWritable('ev')),
+        })
   /** 给了 handlers 才装方法面 —— 握手与流控那两组用例不需要它。 */
   const handlerTable =
-    typeof options.handlers === 'function' ? options.handlers(subscriptions) : options.handlers
+    typeof options.handlers === 'function'
+      ? options.handlers({ job: subscriptions, session: sessionSubscriptions })
+      : options.handlers
   const face =
     handlerTable === undefined
       ? null
@@ -158,7 +195,10 @@ export async function start(
     batchMs: 30,
     // 与产品装配一致：连接离开服务态即终止任务输出订阅（手机收不到，它重连后自己按 from 重订）。
     onStateChange: (from, to) => {
-      if (from === 'serving' && to !== 'serving') subscriptions?.stopAll()
+      if (from === 'serving' && to !== 'serving') {
+        subscriptions?.stopAll()
+        sessionSubscriptions?.stopAll()
+      }
     },
   })
   wired = connection
@@ -176,6 +216,7 @@ export async function start(
     frames,
     closes,
     subscriptions,
+    sessionSubscriptions,
     watchClose: () => {
       peer.sockets.at(-1)?.on('close', (code: number, reason: Buffer) => {
         closes.push({ code, reason: reason.toString() })

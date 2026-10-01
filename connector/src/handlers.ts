@@ -24,6 +24,7 @@ import type { MethodHandler, MethodName } from './protocol/methods.js'
 import type { Caps } from './dsh/caps.js'
 import type { JobControlPort, JobsPort } from './dsh/jobs.js'
 import type { JobSubscriptions } from './job-subscriptions.js'
+import type { SessionSubscriptions } from './session-subscriptions.js'
 import type { SessionSummaryRow } from './dsh/sessions.js'
 
 /** 设备清单里的一行。**不含公钥** —— 手机不需要别人的公钥，少发一个字段就少一处泄漏面。 */
@@ -82,6 +83,13 @@ export interface HandlerDeps {
    * 那两件事属于连接层，装配时才知道（见 `index.ts` 的 `start-transport`）。
    */
   jobSubscriptions?: JobSubscriptions
+  /**
+   * 会话订阅（`session.subscribe` / `session.unsubscribe`）。
+   *
+   * 与任务订阅分开是因为两者的"键"与"终止帧"都不同（会话按 `sid`、没有终止帧），
+   * 但**机制共用同一个骨架**（背压、承诺兑现、跟连接活）——见 `subscriptions.ts`。
+   */
+  sessionSubscriptions?: SessionSubscriptions
 }
 
 export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, MethodHandler>> {
@@ -184,6 +192,30 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       const jobId = requireString(params, 'jobId')
       // 归属围栏与取消原因都在宿主门面里（见 `dsh/jobs.ts`）；这里只把它的结论转达给手机。
       return { outcome: control.kill(dshSessionId, jobId) }
+    }
+  }
+
+  if (deps.sessionSubscriptions !== undefined) {
+    const subscriptions = deps.sessionSubscriptions
+    handlers['session.subscribe'] = async (params) => {
+      const sid = requireSid(params)
+      const dshSessionId = requireSession(sid)
+      const since = paramOf(params, 'since')
+      if (since !== undefined && (typeof since !== 'number' || !Number.isSafeInteger(since) || since < 0)) {
+        throw new ProtocolError('protocol/bad-frame', 'since 必须是非负整数')
+      }
+      // 回的是**基线水位**与"还有没有更早的历史"：手机据此重订与决定要不要 `session.page`。
+      return subscriptions.subscribe({
+        sid,
+        dshSessionId,
+        ...(since === undefined ? {} : { since }),
+      })
+    }
+
+    handlers['session.unsubscribe'] = (params) => {
+      const sid = requireSid(params)
+      requireSession(sid)
+      return { stopped: subscriptions.unsubscribe(sid) }
     }
   }
 
