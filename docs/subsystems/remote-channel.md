@@ -304,7 +304,8 @@ type SyncSnapshot = {
 | `session.refetch` | 手机→电脑 | — | 取单个大条目 |
 | `interaction.respond` | 手机→电脑 | `i:<callId>:<decision>` | 审批 / 提问 / 计划审查的应答 |
 | `interaction.list` | 手机→电脑 | — | 待处理集合(从日志重建,§6.3) |
-| `job.list` / `job.follow` / `job.unfollow` / `job.kill` | 手机→电脑 | — | 任务投影与输出流 |
+| `job.list` / `job.follow` / `job.unfollow` | 手机→电脑 | — | 任务投影与输出流 |
+| `job.kill` | 手机→电脑 | — | **走宿主的人类发起门面**(`jobController.kill`):归属围栏由注册表判(`未知任务` 与 `不属于这个会话` **都**归 `job/not-found`),取消原因写宿主的 `cancelled by the user` —— 于是手机点停止与桌面点停止在模型眼里是同一件事。返回 `{ outcome: 'requested' \| 'already-finished' }`,**落终态等 `settled` 事件,不做乐观更新** |
 | `settings.describe` / `settings.update` | 手机→电脑 | `requestId` | 读写设置(密钥面见下) |
 | `credentials.set` / `credentials.unset` | 手机→电脑 | `requestId` | **单向写面**,无读方法 |
 | `devices.list` / `devices.revoke` | 手机→电脑 | — | 设备管理(吊销 = 电脑侧删公钥) |
@@ -318,6 +319,8 @@ type SyncSnapshot = {
 
 - **带 `sid` 的方法在别名未知时回 `session/not-found`**(§3.1 给它的客户端行为是「从列表移除」)。**不得回空结果**:空列表说的是"这个会话没有数据",而事实是"我不认识这个会话" —— 两者对手机是不同的事(一个是刷新,一个是把这个会话删掉)。
 - **`sid` 参数缺失或形状不对 → `protocol/bad-frame`**(它是请求本身不合法,不是数据不存在)。
+- **凡宿主已有"人发起"门面的操作,一律走门面,不在插件里复述它的语义**(`job.kill` 是第一个):
+  门面里的取消原因、归属围栏与错误码映射都是宿主的,自己抄一遍会在 DSH 改词时**静默分叉**。
 
 ---
 

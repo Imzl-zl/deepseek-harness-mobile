@@ -22,7 +22,7 @@ import { WIRE_VERSION } from './protocol/frame.js'
 import { ProtocolError } from './protocol/errors.js'
 import type { MethodHandler, MethodName } from './protocol/methods.js'
 import type { Caps } from './dsh/caps.js'
-import type { JobsPort } from './dsh/jobs.js'
+import type { JobControlPort, JobsPort } from './dsh/jobs.js'
 import type { SessionSummaryRow } from './dsh/sessions.js'
 
 /** 设备清单里的一行。**不含公钥** —— 手机不需要别人的公钥，少发一个字段就少一处泄漏面。 */
@@ -66,6 +66,14 @@ export interface HandlerDeps {
    * 与"这个方法没实现"在手机侧是同一种表现（按钮置灰），而电脑侧少一条永远走不到的分支。
    */
   jobs?: JobsPort
+  /**
+   * 任务控制（可选服务 `jobController`，由 `dsh-web-app` 提供，base 里没有）。
+   *
+   * 与 `jobs` 分开是因为它们是**两个服务**，而"停任务"这件事必须走宿主的人类发起门面
+   * （理由见 `dsh/jobs.ts` 的 `JobControlPort`）—— 于是两种能力可以独立缺失：
+   * 只装 base 的部署能列任务但停不了，那时 `job.*` 里就只有 `job.list`。
+   */
+  jobControl?: JobControlPort
 }
 
 export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, MethodHandler>> {
@@ -88,10 +96,14 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
   }
 
   /** 取 `params.sid`（形状不对留给 `requireSession` 报 `protocol/bad-frame`）。 */
-  const sidOf = (params: unknown): unknown =>
-    typeof params === 'object' && params !== null
-      ? (params as Record<string, unknown>)['sid']
+  const sidOf = (params: unknown): unknown => paramOf(params, 'sid')
+
+  /** 取 `params` 里的某个字段（形状不对时返回 `undefined`，由各自的校验报错）。 */
+  function paramOf(params: unknown, key: string): unknown {
+    return typeof params === 'object' && params !== null
+      ? (params as Record<string, unknown>)[key]
       : undefined
+  }
 
   const handlers: Partial<Record<MethodName, MethodHandler>> = {
     'devices.list': () => ({
@@ -142,6 +154,19 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
           ...(row.finishedAt === undefined ? {} : { finishedAt: row.finishedAt }),
         })),
       }
+    }
+  }
+
+  if (deps.jobControl !== undefined) {
+    const control = deps.jobControl
+    handlers['job.kill'] = (params) => {
+      const dshSessionId = requireSession(sidOf(params))
+      const jobId = paramOf(params, 'jobId')
+      if (typeof jobId !== 'string' || jobId === '') {
+        throw new ProtocolError('protocol/bad-frame', 'jobId 必填')
+      }
+      // 归属围栏与取消原因都在宿主门面里（见 `dsh/jobs.ts`）；这里只把它的结论转达给手机。
+      return { outcome: control.kill(dshSessionId, jobId) }
     }
   }
 

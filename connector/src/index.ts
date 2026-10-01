@@ -56,7 +56,7 @@ import { mount, type LifecycleStep } from './lifecycle.js'
 import { METRIC, createChannelLogger, createMetrics, type ChannelLogger, type ChannelMetrics } from './observability.js'
 import { createAliases, type Aliases } from './alias.js'
 import type { JobRegistry } from '@deepseek-ai/dsh-jobs'
-import { createJobsPort } from './dsh/jobs.js'
+import { createJobsPort, createJobControlPort, type JobControlService } from './dsh/jobs.js'
 import { createSessionsAdapter } from './dsh/sessions.js'
 import type { DeviceRecord } from './store/index.js'
 import { coreDomain, initialMeta, migrateMeta, windowsDomain } from './store/index.js'
@@ -319,6 +319,10 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             ...(ctx.get('jobs') === undefined
               ? {}
               : { jobs: createJobsPort(ctx.get('jobs') as JobRegistry) }),
+            // 任务控制是**另一个**可选服务（`dsh-web-app` 提供，base 没有）：缺了就只列不停。
+            ...(ctx.get('jobController') === undefined
+              ? {}
+              : { jobControl: createJobControlPort(ctx.get('jobController') as JobControlService) }),
             aliases: {
               ensure: (dshSessionId) => {
                 if (aliases === null) {

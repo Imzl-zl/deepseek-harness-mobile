@@ -15,7 +15,8 @@ import { test } from 'node:test'
 
 import type { JobEvent, JobRegistry, JobView } from '@deepseek-ai/dsh-jobs'
 
-import { createJobsPort } from '../src/dsh/jobs.js'
+import { createJobControlPort, createJobsPort } from '../src/dsh/jobs.js'
+import { ProtocolError } from '../src/protocol/errors.js'
 
 /** DSH 的 `JobId` 是 branded 类型；测试里把普通字符串标成它。 */
 const jobId = (value: string): JobView['id'] => value as JobView['id']
@@ -93,23 +94,41 @@ test('readOutput：走 readAt（非消耗式），caller 是第三个参数，lo
   assert.equal(output.lossy, true, '有缺口必须显式上报，不许静默拼接')
 })
 
-test('kill：原样转达，返回受理与否（不乐观更新）', () => {
-  const calls: unknown[][] = []
-  const port = createJobsPort(
-    fakeRegistry({
-      kill: (...args: unknown[]) => {
-        calls.push(args)
-        return args[0] === 'j-done' ? 'already-finished' : 'requested'
-      },
-    }),
+test('jobControl.kill：走宿主的人类发起门面，只把 job/not-found 转成协议码', () => {
+  const calls: unknown[] = []
+  const port = createJobControlPort({
+    kill: (request) => {
+      calls.push(request)
+      if (request.jobId === 'j-foreign') {
+        // 门面把「未知任务」与「不属于这个会话」**都**归成这一个码（注释原文
+        // "the client renders one story"）—— 这里如实转达，不自己再判一次。
+        const error = new Error('job not found') as Error & { code?: string }
+        error.code = 'job/not-found'
+        throw error
+      }
+      if (request.jobId === 'j-boom') throw new Error('producer 的 cancel 抛了')
+      return { outcome: request.jobId === 'j-done' ? 'already-finished' : 'requested' }
+    },
+  })
+
+  assert.equal(port.kill('sess-1', 'j1'), 'requested')
+  assert.equal(port.kill('sess-1', 'j-done'), 'already-finished')
+  assert.deepEqual(calls, [
+    { sessionId: 'sess-1', jobId: 'j1' },
+    { sessionId: 'sess-1', jobId: 'j-done' },
+  ])
+
+  assert.throws(
+    () => port.kill('sess-1', 'j-foreign'),
+    (error: unknown) => error instanceof ProtocolError && error.code === 'job/not-found',
   )
 
-  assert.equal(port.kill('j1', 'sess-1'), 'requested')
-  assert.equal(port.kill('j-done', 'sess-1'), 'already-finished')
-  assert.deepEqual(calls, [
-    ['j1', 'sess-1'],
-    ['j-done', 'sess-1'],
-  ])
+  // 生产者取消时抛的错**不得**伪装成 job-not-found：门面注释明说它要照原样上抛
+  // （否则手机侧会看到"任务不存在"，而真相是"停不下来"）。
+  assert.throws(
+    () => port.kill('sess-1', 'j-boom'),
+    (error: unknown) => !(error instanceof ProtocolError),
+  )
 })
 
 test('subscribe：无主事件两种形状都要排掉（含 output —— 它把 owner 放在事件自己身上）', () => {

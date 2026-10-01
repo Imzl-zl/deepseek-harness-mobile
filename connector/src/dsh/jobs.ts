@@ -23,6 +23,8 @@
  */
 import type { JobChunk, JobEvent, JobRegistry, JobView } from '@deepseek-ai/dsh-jobs'
 
+import { ProtocolError } from '../protocol/errors.js'
+
 /** 任务行。字段取自 `JobView`（`packages/jobs/jobs/src/view.ts:65-100`）。 */
 export interface JobRow {
   id: string
@@ -62,14 +64,6 @@ export interface JobOutput {
 export interface JobsPort {
   /** 只列**严格属于该会话**的任务（无主任务不算）。 */
   listOwnedBy(dshSessionId: string): JobRow[]
-  /**
-   * 请求停止。返回 `'requested'`（已受理）或 `'already-finished'`（已是终态）。
-   *
-   * **对处于 `stopping` 的任务会再次调用 producer 的 `cancel`**
-   * （`jobs-local/src/index.ts:458-468`），别把它当「只发一次」。
-   * 落终态要等 `settled` 事件，不做乐观更新。
-   */
-  kill(id: string, dshSessionId: string): 'requested' | 'already-finished'
   /** 按偏移**非消耗式**读输出；`caller` 必须给，否则有主任务读不到。 */
   readOutput(id: string, from: number, dshSessionId: string): JobOutput
   /**
@@ -90,11 +84,6 @@ export function createJobsPort(jobs: JobRegistry): JobsPort {
         .list(dshSessionId as never)
         .filter((view) => view.owner !== undefined)
         .map(toRow)
-    },
-
-    kill(id, dshSessionId) {
-      // `kill(id, caller?, reason?)`（`packages/jobs/jobs/src/index.ts:160`）。
-      return jobs.kill(id as never, dshSessionId as never)
     },
 
     readOutput(id, from, dshSessionId) {
@@ -119,6 +108,67 @@ export function createJobsPort(jobs: JobRegistry): JobsPort {
         if (unowned) return
         listener(event)
       })
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 任务控制：走**宿主的人类发起门面**，不直接调注册表
+// ---------------------------------------------------------------------------
+
+/**
+ * `jobController` 是宿主已经做好的"人发起"任务门面：
+ * `packages/api/job-controller/src/index.ts:43`（`super(ctx, 'jobController', …)`）、
+ * `:109-124` 的 `kill`。
+ *
+ * **为什么不让 `JobsPort` 自己调 `jobs.kill`**（它也有围栏：`jobs-local/src/index.ts:328-330`
+ * 的 `expect(id, caller)`）——差别在另外两件事，而两件都不是我们能自己复述的：
+ *
+ * 1. **取消原因**：门面写的是 `'cancelled by the user'`（`:123`），这个字符串会进模型看到的
+ *    工具结果。我们若在自己代码里抄一遍，DSH 改词时两边会**静默分叉**：桌面点停止与手机点停止
+ *    在模型眼里变成两件事。
+ * 2. **错误码映射**：门面把「未知任务」与「不属于这个会话的任务」**都**归成 `job/not-found`
+ *    （`:114-119` 的注释原文 "the client renders one story"）——这正是 §3.1 那个码的语义。
+ *    自己做就得再判一次，而多判一次就多一处会漂移的判据。
+ *
+ * 它由 `@deepseek-ai/dsh-web-app` 提供（`packages/bundle/web-app/cordis.patch.yml:126-127`），
+ * **base 里没有** —— 所以它是可选能力：缺了就不挂 `job.kill`（见 `handlers.ts` 的按需挂表）。
+ */
+export interface JobControlPort {
+  /**
+   * 请人（手机）之意停掉一个任务。
+   *
+   * @returns 注册表是否受理（`already-finished` = 已是终态）。**落终态要等 `settled` 事件**，
+   *   不做乐观更新。
+   * @throws {ProtocolError} `job/not-found`：未知任务，或该任务不属于这个会话。
+   *   其余错误（例如 producer 的取消抛错）照原样上抛 —— 门面的注释明说它**不得**
+   *   伪装成 job-not-found（`:120-122`）。
+   */
+  kill(dshSessionId: string, jobId: string): 'requested' | 'already-finished'
+}
+
+/** `JobController` 里我们真正用到的那一面（收窄成端口，便于脱离 DSH 测试）。 */
+export interface JobControlService {
+  kill(request: { sessionId: unknown; jobId: unknown }): { outcome: 'requested' | 'already-finished' }
+}
+
+/** 宿主错误对象上的 `code`（`RemoteError` 带它；这里只结构化地读，不依赖它的类型）。 */
+function errorCodeOf(error: unknown): string | undefined {
+  const code = (error as { code?: unknown } | null)?.code
+  return typeof code === 'string' ? code : undefined
+}
+
+export function createJobControlPort(controller: JobControlService): JobControlPort {
+  return {
+    kill(dshSessionId, jobId) {
+      try {
+        return controller.kill({ sessionId: dshSessionId, jobId }).outcome
+      } catch (error) {
+        if (errorCodeOf(error) === 'job/not-found') {
+          throw new ProtocolError('job/not-found', `任务 ${jobId} 不存在，或不属于这个会话`)
+        }
+        throw error
+      }
     },
   }
 }

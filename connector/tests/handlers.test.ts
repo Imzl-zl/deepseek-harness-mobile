@@ -14,18 +14,29 @@ import { createHandlers, type HandlerDeps } from '../src/handlers.js'
 import { ProtocolError } from '../src/protocol/errors.js'
 import { WIRE_VERSION } from '../src/protocol/frame.js'
 import type { Caps } from '../src/dsh/caps.js'
-import type { JobsPort } from '../src/dsh/jobs.js'
+import type { JobControlPort, JobsPort } from '../src/dsh/jobs.js'
 import { createFakeAliases } from './support/fake-aliases.js'
 
 /** 什么都不做的任务端口；只用它来"挂着 `job.*`"。 */
 function fakeJobs(overrides: Partial<JobsPort> = {}): JobsPort {
   return {
     listOwnedBy: () => [],
-    kill: () => 'requested',
     readOutput: () => ({ chunks: [], next: 0, lossy: false }),
     subscribe: () => () => {},
     ...overrides,
   }
+}
+
+/** 任务控制端口：默认受理，可注入失败。 */
+function fakeJobControl(overrides: Partial<JobControlPort> = {}): JobControlPort {
+  return { kill: () => 'requested', ...overrides }
+}
+
+/** 已经分配过别名的替身（`sid_dsh-1` → `dsh-1`），供需要反解的方法用。 */
+function preloadedAliases(): ReturnType<typeof createFakeAliases> {
+  const aliases = createFakeAliases()
+  aliases.bySid.set('sid_dsh-1', 'dsh-1')
+  return aliases
 }
 
 /** 取 `repo.info` 报出来的方法清单。 */
@@ -78,6 +89,82 @@ test('repo.info：协议版本、能力位、别名版本，以及**表的键**'
   assert.deepEqual(info.methods, ['devices.list', 'repo.info', 'session.list'])
 })
 
+test('job.kill：转达受理与否，并把 jobId 交给宿主门面', () => {
+  const seen: unknown[][] = []
+  const handlers = build({
+    aliases: preloadedAliases(),
+    jobControl: fakeJobControl({
+      kill: (sessionId, jobId) => {
+        seen.push([sessionId, jobId])
+        return jobId === 'j-done' ? 'already-finished' : 'requested'
+      },
+    }),
+  })
+  const handler = handlers['job.kill']
+  assert.ok(handler !== undefined)
+
+  assert.deepEqual(handler({ sid: 'sid_dsh-1', jobId: 'j1' }, {}), { outcome: 'requested' })
+  assert.deepEqual(handler({ sid: 'sid_dsh-1', jobId: 'j-done' }, {}), { outcome: 'already-finished' })
+  assert.deepEqual(seen, [
+    ['dsh-1', 'j1'],
+    ['dsh-1', 'j-done'],
+  ], '门面要的是 DSH 会话 id，不是别名')
+})
+
+test('job.kill：jobId 缺失或形状不对 → protocol/bad-frame；别名未知 → session/not-found', () => {
+  const handlers = build({ aliases: preloadedAliases(), jobControl: fakeJobControl() })
+  const handler = handlers['job.kill']
+  assert.ok(handler !== undefined)
+
+  for (const params of [undefined, {}, { sid: 'sid_dsh-1' }, { sid: 'sid_dsh-1', jobId: '' }, { sid: 'sid_dsh-1', jobId: 7 }]) {
+    assert.throws(
+      () => handler(params, {}),
+      (error: unknown) => error instanceof ProtocolError && error.code === 'protocol/bad-frame',
+      `${JSON.stringify(params)} 应当被拒`,
+    )
+  }
+
+  assert.throws(
+    () => handler({ sid: 'sid_nobody', jobId: 'j1' }, {}),
+    (error: unknown) => error instanceof ProtocolError && error.code === 'session/not-found',
+  )
+})
+
+test('job.kill：宿主的 job/not-found 原样转达（手机据此刷新任务列表）', () => {
+  const handlers = build({
+    aliases: preloadedAliases(),
+    jobControl: fakeJobControl({
+      kill: () => {
+        throw new ProtocolError('job/not-found', '不属于这个会话')
+      },
+    }),
+  })
+  const handler = handlers['job.kill']
+  assert.ok(handler !== undefined)
+
+  assert.throws(
+    () => handler({ sid: 'sid_dsh-1', jobId: 'j-foreign' }, {}),
+    (error: unknown) => error instanceof ProtocolError && error.code === 'job/not-found',
+  )
+})
+
+test('两种任务能力可以独立缺失：只列不停 / 都没有', () => {
+  // 只装 base 的部署（没有 jobController）：能列任务，停不了。
+  const listOnly = build({ jobs: fakeJobs() })
+  assert.equal('job.list' in listOnly, true)
+  assert.equal('job.kill' in listOnly, false)
+  assert.deepEqual(handlers_info(listOnly).methods, [
+    'devices.list',
+    'job.list',
+    'repo.info',
+    'session.list',
+  ])
+
+  const neither = build()
+  assert.equal('job.list' in neither, false)
+  assert.equal('job.kill' in neither, false)
+})
+
 test('job.list：sid 反解回会话，逐字段映射任务行', async () => {
   const aliases = createFakeAliases()
   const sid = await aliases.ensure('dsh-1')
@@ -110,7 +197,6 @@ test('job.list：sid 反解回会话，逐字段映射任务行', async () => {
           },
         ]
       },
-      kill: () => 'requested',
       readOutput: () => ({ chunks: [], next: 0, lossy: false }),
       subscribe: () => () => {},
     },

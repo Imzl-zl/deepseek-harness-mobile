@@ -17,6 +17,7 @@ import { waitFor } from './support/peer.js'
 import { phoneOpenBox, phoneSealBox } from './support/phone.js'
 import { createMemoryDedupeRows } from './support/dedupe-rows.js'
 import { createFakeAliases } from './support/fake-aliases.js'
+import { ProtocolError } from '../src/protocol/errors.js'
 import { completeHandshake, start, type Fixture } from './support/secure-connection.js'
 import type { SessionKeys } from '../src/protocol/crypto.js'
 
@@ -69,9 +70,15 @@ function fixtureHandlers() {
               },
             ]
           : [],
-      kill: () => 'requested',
       readOutput: () => ({ chunks: [], next: 0, lossy: false }),
       subscribe: () => () => {},
+    },
+    // 端口层面的替身：真实端口会把宿主的 job/not-found 转成协议码（见 dsh/jobs.ts），这里照样。
+    jobControl: {
+      kill: (_sessionId, jobId) => {
+        if (jobId === 'j-foreign') throw new ProtocolError('job/not-found', '不属于这个会话')
+        return jobId === 'j-done' ? 'already-finished' : 'requested'
+      },
     },
   })
 }
@@ -129,7 +136,7 @@ test('端到端：手机问 repo.info，电脑侧回一个可解的 res（id 对
   assert.deepEqual(info.caps, CAPS, '能力位要在结果里（手机据此置灰按钮）')
   assert.deepEqual(
     info.methods,
-    ['devices.list', 'job.list', 'repo.info', 'session.list'],
+    ['devices.list', 'job.kill', 'job.list', 'repo.info', 'session.list'],
     '实现了哪些方法也由同一张表报出',
   )
 })
@@ -248,6 +255,50 @@ test('端到端：手机问 job.list —— sid 反解回会话，未知 sid 回
   const missing = responseOf(f, keys, 2)
   assert.equal(missing.ok, false)
   assert.equal(missing.envelope['code'], 'session/not-found')
+  assert.equal(f.connection.state, 'serving')
+  assert.deepEqual(f.closes, [])
+})
+
+test('端到端：手机点停止 —— 受理回执，外来任务回 job/not-found 且连接留着', async (t) => {
+  const f = await start(t, { handlers: fixtureHandlers() })
+  f.connection.start()
+  await waitFor('进入 handshake', () => f.connection.state === 'handshake')
+  const keys = await completeHandshake(f)
+
+  // 先拿 sid（真实流程：列会话 → 操作其中的任务）。
+  sendRequest(f, keys, 0, 'req_jjjjjjjjjjjj', '{"method":"session.list"}')
+  await waitFor('收到会话清单', () => f.peer.received.some((frame) => frame.t === 'res'))
+  const sid = (responseOf(f, keys, 0).envelope['result'] as { sessions: { sid: string }[] })
+    .sessions[0]?.sid
+
+  sendRequest(
+    f,
+    keys,
+    1,
+    'req_kkkkkkkkkkkk',
+    `{"method":"job.kill","params":{"sid":"${String(sid)}","jobId":"j1"}}`,
+  )
+  await waitFor('收到第二个 res', () => f.peer.received.filter((frame) => frame.t === 'res').length === 2)
+  const killed = responseOf(f, keys, 1)
+  assert.equal(killed.ok, true)
+  assert.deepEqual(
+    killed.envelope['result'],
+    { outcome: 'requested' },
+    '受理与否由注册表说了算，不做乐观更新',
+  )
+
+  // 不属于这个会话（或已不存在）的任务：回 job/not-found，手机据此刷新列表；连接留着。
+  sendRequest(
+    f,
+    keys,
+    2,
+    'req_llllllllllll',
+    `{"method":"job.kill","params":{"sid":"${String(sid)}","jobId":"j-foreign"}}`,
+  )
+  await waitFor('收到第三个 res', () => f.peer.received.filter((frame) => frame.t === 'res').length === 3)
+  const foreign = responseOf(f, keys, 2)
+  assert.equal(foreign.ok, false)
+  assert.equal(foreign.envelope['code'], 'job/not-found')
   assert.equal(f.connection.state, 'serving')
   assert.deepEqual(f.closes, [])
 })
