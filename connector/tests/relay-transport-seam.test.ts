@@ -120,12 +120,6 @@ test('令牌不对：升级被拒，连接层进入退避重连而不是停在�
 
 test(
   '设备经中转抵达连接器：换票 → 升级 → 设备那一行出现在连接器的 onFrame 里',
-  {
-    skip:
-      '暂未通过：中转**已经**把设备那一帧转给了连接器（本轮日志里不再出现"丢弃"），' +
-      '但连接器的 onFrame 没收到 —— 症状已收窄到连接器入站路径或 socket 写出。' +
-      '证据与下一步见 .agents/notes/proposed/2026-10-01-three-party-path-first-frame-lost.md',
-  },
   async (t) => {
   const deviceToken = 'device-token-1'
   const relay = await startRelayProcess(t, [
@@ -190,7 +184,9 @@ test(
     device.onopen = () => resolve()
     device.onerror = () => reject(new Error('设备带票升级失败（中转应当接受它）'))
   })
-  device.send(JSON.stringify({ v: 1, t: 'req', id: 'r1', sid: 'sid_1', fc: 0, box: '{}' }))
+  // **必须补换行**：协议是行级分帧（§3），连接器侧的分帧器只在遇到 `\n` 时才交出一帧。
+  // 不补的话那一行会永远攒在分帧器里 —— 表现正是"对端什么都没收到"，而两边看起来都正常。
+  device.send(`${JSON.stringify({ v: 1, t: 'req', id: 'r1', sid: 'sid_1', fc: 0, box: '{}' })}\n`)
 
   try {
     await waitFor('连接器收到设备那一行', () => frames.some((frame) => frame.t === 'req'))
