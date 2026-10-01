@@ -1,6 +1,21 @@
 # Agent Note: 无 `sid` 回帧无法在中继处解复用 —— 一个协议层的缺口
 
-Status: proposed（需要定夺；`tests/relay-keyed-three-party.test.ts` 当前 `skip` 指向本篇）
+Status: **已解决**（按出路 1 落地：回帧回显请求的 `id`。结论见下，诊断过程保留）
+
+## 结论与落地
+
+在 `handshake-driver.ts` 里把 `hello-ack` 的 `id` 从 `newFrameId()` 改成 **`frame.id`**（回显请求），
+并在契约 §3 写明这条规则（`pair-ack` 一直就是这么做的）。**握手随即经中继成立**，
+带密钥的三方链路用例从"卡在握手"变成**通过**（真签名 + 真 transcript + 真 AEAD 双向）。
+
+两处顺带确认的事实：
+
+- **`id` 不参与 transcript**（`transcriptFromFields` 只拼 `box` 里的字段）⇒ 改它**不影响签名**，
+  **不必重生成 protocol 向量**（那三条门禁 486/49/26 改完全绿）。
+- 测试里设备的第一条业务帧原本带 `sid: 'sid_1'` —— 那是**测试的形状错了**：生产里请求帧
+  **不带 `sid`**（`sid` 由 `params` 携带），靠"设备→绑定的连接器"这条无 `sid` 路由走；
+  带 `sid` 的是**事件帧**（`ev`/`live`），由连接器发出，中继的归属表也正是在那时学到的。
+  改掉之后一次通过。
 
 ## 现象与证据
 

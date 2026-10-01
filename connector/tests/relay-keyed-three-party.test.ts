@@ -27,13 +27,6 @@ const DEVICE_TOKEN = 'device-token-1'
 
 test(
   '带密钥的三方链路：握手经中继成立，业务帧 AEAD 双向通过',
-  {
-    skip:
-      '暂未通过：证据是中继日志「hello-ack 找不到对应设备 { requestId: -dvrTwpBbOjOLSiVTsdHvg }」，' +
-      '而设备发的 hello 用的是 id: "h1" —— **两端各自生成 id，中继无法按 id 关联无 sid 的回帧**。' +
-      '这是协议层的缺口（不是实现 bug）：需要定夺"电脑侧回帧是否必须回显请求 id"，' +
-      '或中继另立一条按连接确定回程的规则。见 .agents/notes/proposed/2026-10-01-sidless-reply-demux.md',
-  },
   async (t) => {
   const relay = await startRelayProcess(t, [
     { kind: 'connector', id: 'conn-1', token: TOKEN },
@@ -134,18 +127,21 @@ test(
   }
   assert.equal(connection.state, 'serving', '握手成立后连接器进入服务态')
 
-  // 业务帧：真 AEAD（手机封、连接器解；连接器封、手机解），带 sid ⇒ 走归属表
+  // 业务帧：真 AEAD（手机封、连接器解；连接器封、手机解）。
+  // **不带 `sid`**：这正是生产里的形状 —— 请求帧靠"设备→绑定的连接器"走（无 sid 路由），
+  // 而 `sid` 由 `params` 携带；带 `sid` 的是**事件帧**（`ev`/`live`），它们由连接器发出，
+  // 中继的归属表也正是在那时学到的。
   assert.ok(keys !== undefined)
-  const header = { t: 'req', id: 'r1', sid: 'sid_1', fc: 1 }
+  const header = { t: 'req', id: 'r1', fc: 1 }
   const sealed = phoneSealBox({ keys, header, plaintext: JSON.stringify({ method: 'session.list' }) })
-  device.send(`${JSON.stringify({ v: 1, t: 'req', id: 'r1', sid: 'sid_1', fc: 1, box: sealed })}\n`)
+  device.send(`${JSON.stringify({ v: 1, t: 'req', id: 'r1', fc: 1, box: sealed })}\n`)
 
   await waitFor('连接器解出业务帧', () => served.some((frame) => frame.t === 'req'), 8_000)
-  assert.equal(served.find((frame) => frame.t === 'req')?.sid, 'sid_1')
+  assert.equal(served.find((frame) => frame.t === 'req')?.t, 'req')
 
-  // 回程：连接器封箱 → 经中继 → 手机解箱
+  // 回程：连接器封箱 → 经中继 → 手机解箱（`id` 回显，故无需 `sid` 也能回到发起方）
   assert.equal(
-    connection.send({ v: 1, t: 'res', id: 'r1', sid: 'sid_1', ok: true, box: JSON.stringify({ ok: true }) }),
+    connection.send({ v: 1, t: 'res', id: 'r1', ok: true, box: JSON.stringify({ ok: true }) }),
     true,
   )
   await waitFor('手机收到应答帧', () => framesBack.some((frame) => frame.t === 'res'), 8_000)
@@ -153,7 +149,7 @@ test(
   assert.ok(reply !== undefined)
   const opened = phoneOpenBox({
     keys,
-    header: { t: 'res', id: 'r1', sid: 'sid_1', fc: reply.fc },
+    header: { t: 'res', id: 'r1', fc: reply.fc },
     box: reply.box,
   })
   assert.deepEqual(JSON.parse(opened), { ok: true }, 'AEAD 双向成立（手机解开了连接器封的那一箱）')

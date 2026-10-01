@@ -174,7 +174,12 @@ export function createHandshakeDriver(options: HandshakeDriverOptions): Handshak
       context.send({
         v: 1,
         t: 'hello-ack',
-        id: newFrameId(),
+        // **回显请求的 `id`**（不是自己生成一个）：中继只看得见帧头（I10），
+        // 而握手帧没有 `sid` —— 回帧要靠这个 `id` 才能被送回发起的那台设备。
+        // 各自生成 id 的话，中继在"一台电脑同时服务多台设备"时无法解复用（只能丢弃回帧）。
+        // 注意：`id` **不参与 transcript**（`transcriptFromFields` 只拼 box 里的字段），
+        // 所以这里不影响签名与既有向量。
+        id: frame.id,
         box: encodeHelloAck({ ...ackFields, sigB: signTranscript(options.identity.signSeedHex, transcript) }),
       })
 
