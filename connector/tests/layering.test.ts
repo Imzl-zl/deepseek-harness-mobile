@@ -58,11 +58,12 @@ const RULES: Rule[] = [
   },
   {
     id: 'dsh-cites-evidence',
-    why: '适配层的每条 DSH 行为都要能回指源码行号；没有行号的适配等于按印象写的，'
-      + 'DSH 一升级就没人能核对（根 AGENTS.md 常驻军规）',
-    appliesTo: (path) => path.startsWith('dsh/'),
+    why: '凡是用到 DSH / cordis 宿主接口的地方都要能回指源码行号；没有行号的适配等于按印象写的，'
+      + '宿主一升级就没人能核对（根 AGENTS.md 常驻军规）。覆盖适配层**与入口文件** —— '
+      + '入口同样直接用宿主接口（effect / provide / logger），不管它就会成为规则的盲区',
+    appliesTo: (path) => path.startsWith('dsh/') || path === 'index.ts',
     match: (content) =>
-      EVIDENCE.test(content) ? null : '适配层文件里没有任何 packages/...:<行号> 引用',
+      EVIDENCE.test(content) ? null : '文件里没有任何 packages/... 或 vendor/... 的 <文件>:<行号> 引用',
   },
   {
     id: 'service-key-registered',

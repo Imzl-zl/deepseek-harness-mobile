@@ -69,6 +69,7 @@
 - **`transport/codec.ts` 已落地**:行级 JSON 分帧 + §3 的四条规则(8 MiB 单帧上限、未知帧类型不带 `id` 就忽略 / 带 `id` 必须回不支持、**握手门禁**、`id`/`sid` 的 ASCII 安全字符集)。ASCII 限制在**解码处**拦的理由是:AAD 由字段拼串而来,放一个需要 JSON 转义的字符进去会让两端算出的 AAD 不同,而症状是"解不开"而不是"字段非法"。**WSS 拨号接线仍未做**;已装 `ws`(devDependency)作为测试用的服务端。
 - **`transport/connection.ts` 已落地,并且第一次有端到端证据**:把状态机 + 退避 + 保活 + 攒批 + codec 接到注入的 socket 工厂上,测试里起**真的 WebSocket 服务端**当对端,走完 `idle → connecting → handshake → serving`、收发真帧、掐断重连、握手门禁拒绝业务帧 —— 5 个端到端用例全绿。接线时踩到一个**单元测试抓不到的**真 bug:`encodeFrame` 没输出行分隔符,而分帧器把最后一段当半行留着,于是每帧被永久缓冲、对端永远收不到;`decodeFrame(encodeFrame(x))` 照样过(JSON.parse 容忍尾随空白),两边各自自洽、合起来才断。修法是把分隔符放进编解码层。另一处:`fc` 的分配权收归连接层(它是 nonce 来源,不能让上层决定),且每次建连换新计数器。
 - **`index.ts` 的真实装配(发布服务、注册 answerer、起 transport)与 `observability.ts` 仍未做。**
+- **`index.ts` 真实装配与 `observability.ts` 已落地**:`apply(ctx, config)` 用 `lifecycle.ts` 的顺序引擎把五步接起来(校验配置 → 开两个 domain 并迁移 meta → `ctx.provide` 发布服务 → 注册 answerer → 起 transport);`inject` 只列必需服务,可选能力走 `ctx.get`;配置不全**拒绝挂载**而不是空跑。`observability.ts` 把 cordis 的 printf logger 收成两参数形状 + 内存指标。分层校验规则**扩到入口文件**(它同样直接用宿主接口,不管就会成为盲区)。**方法面(契约 §5.7)未实现**:非连接层帧显式告警并计数,不静默丢弃。
 - **`relay/` 与 `app/` 的代码都还没开始。**
 - **协议六条已定稿并进 fixtures**:live 流式帧、快照水位与分页、待审批的持久投影、流控窗口(ack 兼信用)、接收端 seen-seq、审批仲裁判定表——对应 fixture `10`–`16`。
 - **审批接管已定**(不再是产品决策):默认 `foreground` 档——App 前台**且**已订阅该会话才 claim,否则 delegate 给桌面;`always` / `never` 可选;claim 后看护超时 10 min 按 fail-closed 结束。判定表可执行(fixture `16`)。
