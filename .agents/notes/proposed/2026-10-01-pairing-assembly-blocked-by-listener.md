@@ -46,3 +46,29 @@ Status: proposed（`src/pairing.ts` 与 `src/pairing-endpoint.ts` 已就绪；**
 
 两者的**配对逻辑与帧协议完全相同**（`pair` / `pair-ack`、`codeHash`、`pairingId` 派生），
 所以这个选择**只影响传输装配**，不影响已完成的任何一层。
+
+## 选 2 之前必须知道的一件事：接受来的连接**不该自愈**
+
+读了一遍拨号路径（`connection.ts:530-594`），`connect()` 做四件事：重置（`window` / `handshakeDone` / `session`）
+→ `options.dial(url)` → 接线（`onopen` 里 `transition('handshake')` + 建握手会话；`onmessage` → `handleMessage`；
+`onclose` 收口）→ `onclose` 里**退避重连**（`transition('closed')` → `backoff` → `schedule(connect)`）。
+
+关键在于最后一件：**拨号连接的 `onclose` 会自己连回去**。而"接受来的连接"没有拨号目标 ——
+它的对端走了就该由**监听面**决定要不要再接一个，而不是让这条连接去拨一个它从未拨过的地址。
+所以 `attach(socket)` 不是把接线那段抽出来就完事，它引入的是**第二种生命周期**：
+
+| | 拨号连接（现役） | 接受连接（要加的） |
+|---|---|---|
+| 谁发起 | 本侧 `dial(url)` | 对端（监听面 accept 后交给它） |
+| 就绪事件 | `onopen` 会触发 | **已经 OPEN**：`onopen` 不会再触发，得直接走一次"打开"处理 |
+| 断开后 | 退避重连 | **不重连**，收口后由监听面决定（`stopped = true` 或交给下一条连接） |
+| 地址 | 一个必须配置的 `url` | 没有 `url`（`url` 只是给 `dial` 用的） |
+
+**可复用的那一段**：`onmessage` → `handleMessage` 与 `onclose` 的收口（清 `socket`/`session`/`cipher`、
+`transition('closed')`）两边完全一样；而"打开之后做什么"（`transition('handshake')` + 建握手会话）
+也一样，只是触发时机不同。所以正确的抽法是 `wireSocket(socket, { alreadyOpen })` 加一个
+"要不要自愈"的开关，而不是抽完 `onopen` 就以为完事。
+
+**这一步的意义**：它把"加个监听面"从"再写几百行"缩成"抽出一段接线 + 一个生命周期开关"，
+但**必须先想清楚不自愈这条**（否则接受来的连接会在对端断开后去拨 `relayUrl`，
+症状是"监听模式下桥接莫名其妙连去中转"）。
