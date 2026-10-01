@@ -43,6 +43,8 @@ import type { TakeoverDevice, TakeoverMode } from './protocol/takeover.js'
 import type { WireFrame } from './protocol/frame.js'
 import { mount, type LifecycleStep } from './lifecycle.js'
 import { METRIC, createChannelLogger, createMetrics, type ChannelLogger, type ChannelMetrics } from './observability.js'
+import { createAliases, type Aliases } from './alias.js'
+import type { DeviceRecord } from './store/index.js'
 import { coreDomain, initialMeta, migrateMeta, windowsDomain } from './store/index.js'
 import { createConnection, type Connection } from './transport/connection.js'
 
@@ -75,20 +77,68 @@ interface Assembly {
    */
   relayUrl: string | undefined
   relayTokenSecretRef: string | undefined
+  /** 接管档位（契约 §6.2）。同样是挂载时取一次快照。 */
+  approvalTakeover: TakeoverMode
 }
 
 function buildSteps(assembly: Assembly): LifecycleStep[] {
-  const { ctx, relayUrl, relayTokenSecretRef, logger, metrics, abort } = assembly
+  const { ctx, relayUrl, relayTokenSecretRef, approvalTakeover, logger, metrics, abort } = assembly
 
   let closeStore: (() => Promise<void>) | null = null
   let connection: Connection | null = null
   let unregisterInteractions: (() => void) | null = null
 
   /** 设备状态与档位。真值在 store 里，这里给出 transport 需要的读取面。 */
+  /**
+   * 挂载期才可用的东西。`open-store` 之前都是 null —— 所以 `takeover` 里的读取
+   * 一律走可选链，而不是假设它们已就绪。
+   */
+  let aliases: Aliases | null = null
+  let devicesTable: { get(key: string): DeviceRecord | undefined } | null = null
+
+  /**
+   * 已认证设备的**瞬时**状态（在线、前台、已订阅、最近交互）。
+   *
+   * 持久部分（身份、配对时间）在设备表里；这一份由连接层在设备完成鉴权后写入。
+   * **现在恒为空** —— 设备鉴权与 presence 上报还没落地，所以 answerer 仍然不会 claim。
+   * 但原因从"别名查不到"变成了"还没有设备在线"，这是正确的中间状态，不是缺陷。
+   */
+  const liveRegistry = new Map<
+    string,
+    {
+      online: boolean
+      foreground: boolean
+      subscribed: string[]
+      lastInteractedAt?: Record<string, number>
+    }
+  >()
+
+  const liveDevices = (): readonly TakeoverDevice[] => {
+    const table = devicesTable
+    if (table === null) return []
+    const rows: TakeoverDevice[] = []
+    for (const [id, live] of liveRegistry) {
+      const record = table.get(id)
+      // **连接层认证过不等于授权过**：没配过对、或已吊销的设备一律不参与仲裁。
+      if (record === undefined || record.revokedAt !== undefined) continue
+      rows.push({
+        id,
+        pairedAt: record.pairedAt,
+        online: live.online,
+        foreground: live.foreground,
+        subscribed: live.subscribed,
+        ...(live.lastInteractedAt === undefined
+          ? {}
+          : { lastInteractedAt: live.lastInteractedAt }),
+      })
+    }
+    return rows
+  }
+
   const takeover = {
-    mode: (): TakeoverMode => 'foreground',
-    devices: (): readonly TakeoverDevice[] => [],
-    sidOf: (_dshSessionId: string): string | undefined => undefined,
+    mode: (): TakeoverMode => approvalTakeover,
+    devices: liveDevices,
+    sidOf: (dshSessionId: string): string | undefined => aliases?.sidOf(dshSessionId),
   }
 
   const port: RemoteInteractionPort = {
@@ -147,6 +197,18 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         }
 
         metrics.gauge(METRIC.pairedDevices, [...core.table('devices').keys()].length)
+
+        // 别名：先对账两个方向再用 —— 崩在两次 put 之间的残留在这一步被清掉，
+        // 否则残缺的 by_sid 会让入站 sid 校验失败，或让 ensure 重复分配别名。
+        devicesTable = core.table('devices')
+        aliases = createAliases(
+          { bySid: core.table('by_sid'), bySession: core.table('by_session') },
+          { initialVersion: migrated.aliasVersion },
+        )
+        const repaired = await aliases.reconcile()
+        if (repaired > 0) {
+          logger.warn(`清理了 ${repaired} 条残留的会话别名（上次可能崩在写中间）`)
+        }
         abort.signal.addEventListener('abort', () => {
           void closeStore?.()
         })
@@ -241,13 +303,22 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   // `Volatile<T>` 是稳定引用而非普通值：取一次快照，之后不再重新读（见 `Assembly` 的说明）。
   const relayUrl = config.relayUrl.get()
   const relayTokenSecretRef = config.relayTokenRef.get()
+  const approvalTakeover = config.approvalTakeover.get()
 
   ctx.effect(() => {
     const abort = new AbortController()
     let mounted: Awaited<ReturnType<typeof mount>> | null = null
 
     const started = mount(
-      buildSteps({ ctx, relayUrl, relayTokenSecretRef, logger, metrics, abort }),
+      buildSteps({
+        ctx,
+        relayUrl,
+        relayTokenSecretRef,
+        approvalTakeover,
+        logger,
+        metrics,
+        abort,
+      }),
     ).then(
       (lifecycle) => {
         mounted = lifecycle
