@@ -46,3 +46,88 @@ export function unseal<T>(box: string): T {
 export function routingOf(frame: Frame): RoutingView {
   return { t: frame.t, sid: frame.sid, seq: frame.seq }
 }
+
+// ---------------------------------------------------------------------------
+// 以下为**真实线级**帧层（契约 §3）。上面那部分是 fixtures 用的词汇层
+// （`protocol/reference/frame.mjs` 的对应物，`seal` / `unseal` 在那里是可逆占位）。
+// 两层刻意放在同一文件：设计文档 §1.2 把「帧编解码 + AAD 规范化」都归给 frame.ts。
+// ---------------------------------------------------------------------------
+
+/** 帧版本。对端版本不支持即 `protocol/unsupported-version`（契约 §3.1）。 */
+export const WIRE_VERSION = 1
+
+/** 单帧上限 8 MiB（契约 §3）。发送侧不得发出，收到即 `protocol/bad-frame`。 */
+export const MAX_FRAME_BYTES = 8 * 1024 * 1024
+
+/**
+ * **中继的路由视图是四个字段**（契约 §3）：`t`、`sid`、`seq`、`fc`。
+ *
+ * 注意它与上面 `ROUTING_KEYS`（三个字段）**不是同一件事**：那是 fixtures 词汇层，
+ * 产品实现比它多一个 `fc`（`protocol/reference/frame.mjs` 的注释也点明了这处差异）。
+ */
+export const WIRE_ROUTING_KEYS = ['t', 'sid', 'seq', 'fc'] as const
+
+export type WireRoutingKey = (typeof WIRE_ROUTING_KEYS)[number]
+
+/** 中继侧对一帧建立的路由视图。 */
+export interface WireRoutingView {
+  t: string
+  sid?: string
+  seq?: number
+  fc?: number
+}
+
+/**
+ * 线上帧（契约 §3）。**明文头只保留路由、补课与密码学需要的最小字段**；
+ * 方法名、事件类型与内容全在密封载荷 `box` 里。`res ok:false` 的错误也封箱。
+ */
+export type WireFrame =
+  | { v: 1; t: 'hello'; id: string; box: string }
+  | { v: 1; t: 'hello-ack'; id: string; box: string }
+  | { v: 1; t: 'ping'; fc: number }
+  | { v: 1; t: 'pong'; fc: number }
+  | { v: 1; t: 'credit'; fc: number }
+  | { v: 1; t: 'req'; id: string; sid?: string; fc: number; box: string }
+  | { v: 1; t: 'res'; id: string; sid?: string; fc: number; ok: true; box: string }
+  | { v: 1; t: 'res'; id: string; sid?: string; fc: number; ok: false; box: string }
+  | { v: 1; t: 'ev'; sid: string; seq: number; fc: number; box: string }
+  | { v: 1; t: 'live'; sid: string; stream: number; rev: number; fc: number; box: string }
+  | { v: 1; t: 'persisted'; sid: string; seq: number; fc: number }
+  | { v: 1; t: 'presence'; computer: 'online' | 'offline'; app?: 'foreground' | 'background' }
+
+export function wireRoutingOf(frame: WireFrame): WireRoutingView {
+  const view: WireRoutingView = { t: frame.t }
+  if ('sid' in frame && frame.sid !== undefined) view.sid = frame.sid
+  if ('seq' in frame && frame.seq !== undefined) view.seq = frame.seq
+  if ('fc' in frame && frame.fc !== undefined) view.fc = frame.fc
+  return view
+}
+
+/**
+ * `id` / `sid` 限定的 ASCII 安全字符集（契约 §3）。
+ *
+ * 存在理由：AAD 是把字段拼成串再哈希，而两端 JSON 转义习惯不同 —— 限制字符集后
+ * 拼串结果与 JSON 转义无关，AAD 才可能做到「两端字节一致」。
+ */
+export const ID_PATTERN = /^[A-Za-z0-9_-]+$/
+
+/** AAD 需要参与规范化的字段（契约 §3）。缺字段的位置用**空串**占位。 */
+export interface AadFields {
+  v?: number
+  t: string
+  id?: string
+  sid?: string
+  seq?: number
+  fc?: number
+}
+
+/**
+ * AAD 规范化：`v "|" t "|" id "|" sid "|" seq "|" fc`（契约 §3）。
+ *
+ * 数字一律十进制无前导零、无小数点 —— 这里直接依赖 JS 的 `String(number)`，
+ * 它本身就满足这两条。**不要**在这里做补零或十六进制格式化。
+ */
+export function aadOf(fields: AadFields): Uint8Array {
+  const { v = WIRE_VERSION, t, id = '', sid = '', seq = '', fc = '' } = fields
+  return new TextEncoder().encode([v, t, id, sid, seq, fc].join('|'))
+}

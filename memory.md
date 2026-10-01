@@ -55,12 +55,13 @@
 - **三端可移植性上限** → `.agents/notes/proposed/2026-09-30-mobile-portability-ceilings.md`(加密 `cryptography`、本地库 sqflite、三端都不做后台长连接)。
 - **规格的可执行部分** → `protocol/fixtures/` + `protocol/reference/`;为什么规格是 fixtures 而不是 JSON Schema,见 `.agents/notes/implemented/2026-09-30-protocol-fixtures-as-spec.md`。
 - **connector 协议层** → `src/protocol/` 自持实现(不 import DSH 类型);中转与手机侧只作测试替身;**断言数必须 = 486**。取舍与被否方案见 `.agents/notes/implemented/2026-10-01-connector-protocol-port.md`。
-- **connector 工程形态** → 独立 pnpm 工程(**不是** DSH workspace 成员,最终以 npm bundle 装进 profile)、`packageManager` 钉 `pnpm@11.13.0`、九处 DSH 版本(6 dev + 3 peer)全钉 `0.2.0-rc.2` 精确版、兼容性**只看 `peerDependencies`**(不匹配会被静默跳过,写 `engines.dsh` 无效)、`src/protocol/` 不得 import DSH 类型。取舍与被否方案见 `.agents/notes/implemented/2026-10-01-connector-workspace-shape.md`。
+- **connector 工程形态** → 独立 pnpm 工程(**不是** DSH workspace 成员,最终以 npm bundle 装进 profile)、`packageManager` 钉 `pnpm@11.13.0`、十三个 DSH 版本(10 dev + 3 peer)全钉 `0.2.0-rc.2` 精确版、兼容性**只看 `peerDependencies`**(不匹配会被静默跳过,写 `engines.dsh` 无效)、`src/protocol/` 不得 import DSH 类型。取舍与被否方案见 `.agents/notes/implemented/2026-10-01-connector-workspace-shape.md`。
 
 ## 进行中 / 未完成
 
 - **`protocol/` 已落地**:16 条 fixtures + 参考实现 + 三个校验脚本(fixtures / loopback / vectors)。参考实现**不是产品代码**,两侧(TS 插件 / Dart 手机端)要各写一遍,对着同一批 fixtures 跑。
 - **`connector/` 第 1–3 步完成**:工程形态 + 骨架 + **协议层实现**。`src/protocol/` 是产品代码(frame / items / dedupe / recovery / takeover);中转与手机侧只作**测试替身**(`tests/support/relay.ts` + 测试内的手机侧),不进 `src/`。判据全过:`tsc --noEmit` 退出 0、`pnpm build` 产出 `lib/index.js` 且入口可真加载、`pnpm test` **16 条 fixture 全绿且断言数 = 486**(与参考侧相等)。取舍见 `.agents/notes/implemented/2026-10-01-connector-protocol-port.md`。**DSH 适配层(第 4 步)六个适配器全部落地**:`sessions`(follow/page/prompt/cancel,基线切点取 follow 开启帧的 `cursor`)、`interactions`(同进程直连 waterfall,不走 `$events` Remote 流)、`jobs`(只用 `readAt` 不用 `read`,`listOwnedBy` 排掉无主)、`subagents`(拍平 diagnostic 联合,只用 `listDescendants` 提供活动态)、`settings`(**安全路径唯一**:读固定 `redactSecrets`,写只走 `mutate`,凭据只有写面)、`caps`(`ctx.get` + 静默降级自报)。判据 `tests/layering.test.ts` 把第 4 步的 grep 仪式变成可机械执行的断言(协议层零 DSH 依赖 / 适配层带源码引用 / 服务键集中登记,自带规则自检)。**第 5 步(装进 profile 真机连通)未开始。**
+- **`protocol/` 的连接层也在 connector 侧落地**:`crypto.ts`(X25519/Ed25519/HKDF/ChaCha20-Poly1305 + `fc` 计数器 + 重放防护)、`flow.ts`(W=128 发送窗口,保活帧不占额度)、`errors.ts`(§3.1 封闭表 + 每码的客户端行为)、`frame.ts` 补真实线级帧与 AAD 规范化。判据:`pnpm test` 跑 `protocol/vectors` 的 33 项(握手 15 + AEAD 15 + 篡改 3),与参考侧数字相等。**`transport/` / `store/` / `push/` / `index.ts` 装配仍未开始。**
 - **`relay/` 与 `app/` 的代码都还没开始。**
 - **协议六条已定稿并进 fixtures**:live 流式帧、快照水位与分页、待审批的持久投影、流控窗口(ack 兼信用)、接收端 seen-seq、审批仲裁判定表——对应 fixture `10`–`16`。
 - **审批接管已定**(不再是产品决策):默认 `foreground` 档——App 前台**且**已订阅该会话才 claim,否则 delegate 给桌面;`always` / `never` 可选;claim 后看护超时 10 min 按 fail-closed 结束。判定表可执行(fixture `16`)。
