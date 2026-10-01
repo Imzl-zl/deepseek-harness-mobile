@@ -106,6 +106,8 @@ type Frame =
   | { v: 1; t: 'ev';   sid: string; seq: number; fc: number; box: string }
   | { v: 1; t: 'live'; sid: string; stream: number; rev: number; fc: number; box: string }
   | { v: 1; t: 'job';  sid: string; fc: number; box: string }
+  | { v: 1; t: 'pair'; id: string; box: string }
+  | { v: 1; t: 'pair-ack'; id: string; box: string }
   | { v: 1; t: 'persisted'; sid: string; seq: number; fc: number; box: string }
   // 投影:在线态(明文,中继可转发)
   | { v: 1; t: 'presence'; computer: 'online' | 'offline'; app?: 'foreground' | 'background' }
@@ -115,7 +117,7 @@ type Frame =
 
 - **`fc` 是发送方向该连接的帧计数器**,从 0 开始,每发一帧 +1(含 `ping` / `credit`)。它是 nonce 与重放防护的唯一来源(§4.2)。握手三帧(`hello` / `hello-ack` / `confirm`)不带 `fc` —— 它们是明文且发生在密钥建立之前,盖一个计数器值只会让线上帧与本文的形状不一致。
 - **`box` = AEAD 密文**,内含方法名 / 事件类型 / 载荷。**`res ok:false` 的错误也封箱**,明文只留帧类型。
-- **唯一的明文例外是握手三帧与 `presence`**:前者发生在密钥建立之前(那时没有可用密钥),后者由中继合成(§9)因而中继必须能原样转发。**其余每一种帧都带 `box`,包括 `ping` / `pong` / `credit` / `persisted` 这些"没有内容"的控制帧** —— 它们的载荷是空串,封箱买到的不是保密而是**认证**:
+- **唯一的明文例外是握手三帧与 `presence`**:前者发生在密钥建立之前(那时没有可用密钥),后者由中继合成(§9)因而中继必须能原样转发。**配对帧 `pair` / `pair-ack` 同理是明文** —— 配对发生在密钥建立之前,而这些帧正是让双方此后能加密的前提;它们的载荷里带的是配对码的**哈希**(§12.1),所以即使走中继也不泄露凭据。**其余每一种帧都带 `box`,包括 `ping` / `pong` / `credit` / `persisted` 这些"没有内容"的控制帧** —— 它们的载荷是空串,封箱买到的不是保密而是**认证**:
   - `fc` 出现在 AAD 里,不认证就等于让**未认证的数字直接驱动重放窗口**:注入一帧 `credit{fc: 10^9}` 会把守卫推高,此后所有合法帧都被判成重放(§4.2)。
   - `credit` 与 `persisted` 都会改变对端状态(放宽发送窗口 / 允许裁剪增量缓冲),未经认证的状态变更就是可被中继伪造的状态变更。
   - 代价是每个控制帧多 16 字节认证标签 + 一次加解密,对 60 s 一次的心跳与逐帧 `credit` 都可忽略。

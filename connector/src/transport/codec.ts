@@ -14,6 +14,7 @@
 import {
   FRAME_TYPES,
   HANDSHAKE_FRAME_TYPES,
+  PAIRING_FRAME_TYPES,
   ID_PATTERN,
   MAX_FRAME_BYTES,
   WIRE_VERSION,
@@ -128,9 +129,12 @@ export function decodeFrame(line: string): DecodeResult {
 export function assertHandshakePhase(frame: WireFrame, handshakeDone: boolean): void {
   if (handshakeDone) return
   if (isHandshakeFrame(frame)) return
+  // 配对帧也允许：它必须在密钥建立**之前**到达（那正是它的用途），
+  // 而且它的载荷是配对码的**哈希**（§12.1），所以明文不泄露凭据。
+  if ((PAIRING_FRAME_TYPES as readonly string[]).includes(frame.t)) return
   throw new ProtocolError(
     'protocol/bad-frame',
-    `握手未完成时收到 ${frame.t} 帧：本阶段只接受 ${HANDSHAKE_FRAME_TYPES.join(' / ')}`,
+    `握手未完成时收到 ${frame.t} 帧：本阶段只接受 ${[...HANDSHAKE_FRAME_TYPES, ...PAIRING_FRAME_TYPES].join(' / ')}`,
   )
 }
 

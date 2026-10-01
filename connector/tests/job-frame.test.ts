@@ -14,9 +14,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { FRAME_TYPES } from '../src/protocol/frame.js'
+import { FRAME_TYPES, needsBox } from '../src/protocol/frame.js'
 import { pausable } from '../src/protocol/flow.js'
-import { KNOWN_FRAME_TYPES } from '../src/transport/codec.js'
+import { KNOWN_FRAME_TYPES, assertHandshakePhase } from '../src/transport/codec.js'
 import { waitFor } from './support/peer.js'
 import { phoneOpenBox } from './support/phone.js'
 import { completeHandshake, start } from './support/secure-connection.js'
@@ -27,6 +27,8 @@ test('帧类型清单只有一份：与契约 §3 的联合逐项相等', () => 
     'hello',
     'hello-ack',
     'confirm',
+    'pair',
+    'pair-ack',
     'ping',
     'pong',
     'credit',
@@ -41,6 +43,26 @@ test('帧类型清单只有一份：与契约 §3 的联合逐项相等', () => 
   assert.deepEqual([...FRAME_TYPES], contract)
   // 编解码那份**不是**第二份真值：同一个对象。
   assert.equal(KNOWN_FRAME_TYPES, FRAME_TYPES, 'KNOWN_FRAME_TYPES 必须是 FRAME_TYPES 的别名，不许另起一份')
+})
+
+test('配对帧：明文（密钥还没建起来），且握手完成前**允许**通过门禁', () => {
+  // 明文：密钥建立之前没有"封箱"可言；`box` 里就是明文 JSON（载荷是配对码的**哈希**）。
+  assert.equal(needsBox('pair'), false)
+  assert.equal(needsBox('pair-ack'), false)
+  assert.equal(needsBox('req'), true, '业务帧照旧要封箱')
+
+  // 门禁：配对帧必须在握手完成**前**就能通过 —— 那正是它的用途。
+  assert.doesNotThrow(() =>
+    assertHandshakePhase({ v: 1, t: 'pair', id: 'p1', box: '{}' }, false),
+  )
+  assert.doesNotThrow(() =>
+    assertHandshakePhase({ v: 1, t: 'pair-ack', id: 'p1', box: '{}' }, false),
+  )
+  // 其余业务帧在握手完成前仍然一律拒绝（否则"未加密的业务帧"就可能溜进来）。
+  assert.throws(
+    () => assertHandshakePhase({ v: 1, t: 'req', id: 'r1', fc: 0, box: '{}' }, false),
+    /只接受/,
+  )
 })
 
 test('可补帧集合：job 与 ev / live 同类（满窗时可暂停），res 不可暂停', () => {
