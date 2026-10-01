@@ -27,6 +27,11 @@ import {
   type JobFollowSource,
   type JobSubscriptions,
 } from '../../src/job-subscriptions.js'
+import { createPairing, type Pairing } from '../../src/pairing.js'
+import {
+  createPairingEndpoint,
+  type PairingReply,
+} from '../../src/pairing-endpoint.js'
 import {
   createSessionSubscriptions,
   type SessionFollowSource,
@@ -50,6 +55,12 @@ export type Cleanup = { after(fn: () => void | Promise<void>): void }
 
 export interface Fixture {
   connection: Connection
+  /** 配对核心（只在给了 `pairing` 时非空）：测试拿它出码。 */
+  pairing: Pairing | null
+  /** 电脑侧收到的配对回执（断言回给了手机什么）。 */
+  pairingReplies: PairingReply[]
+  /** 配对落下的设备行（peerOf 先查这里）。 */
+  pairingDevices: Map<string, { edPubHex: string; dhPubHex: string; pairingId: string }>
   peer: Peer
   phone: Phone
   established: HandshakeEstablishment[]
@@ -93,6 +104,13 @@ export async function start(
     jobSource?: JobFollowSource
     /** 给了它就装会话订阅注册表（与 `index.ts` 的装配一致）。 */
     sessionSource?: SessionFollowSource
+    /**
+     * 给了它就装配对端点（契约 §12.1 第 3 步）：入站 `pair` → 校验 → 落设备行 → 明文回执。
+     *
+     * 落进的是**内存设备表**并接给 `peerOf` —— 与产品装配同一个形状
+     * （配对成功之后，握手才认得出这台设备）。
+     */
+    pairing?: { pcPubEd: string; pcPubDh: string }
   } = {},
 ): Promise<Fixture> {
   const pc = deriveIdentity(PC_SEED)
@@ -113,6 +131,35 @@ export async function start(
   const closes: { code: number; reason: string }[] = []
   /** 连接晚于注册表建出来，所以注册表通过这两个闭包引用它（见 `jobSource` 的说明）。 */
   let wired: Connection | null = null
+  /** 配对：核心 + 内存设备表（`peerOf` 先查它）+ 收到的回执。 */
+  const pairingDevices = new Map<string, { edPubHex: string; dhPubHex: string; pairingId: string }>()
+  const pairingReplies: PairingReply[] = []
+  const pairingCore =
+    options.pairing === undefined
+      ? null
+      : createPairing({
+          relayUrl: 'wss://relay.invalid/ws',
+          pcPubEd: options.pairing.pcPubEd,
+          pcPubDh: options.pairing.pcPubDh,
+        })
+  const endpoint =
+    pairingCore === null
+      ? null
+      : createPairingEndpoint({
+          pairing: pairingCore,
+          putDevice: (devId, row) => {
+            pairingDevices.set(devId, {
+              edPubHex: row.edPubHex,
+              dhPubHex: row.dhPubHex,
+              pairingId: row.pairingId,
+            })
+            return Promise.resolve()
+          },
+          reply: ({ id, payload }) => {
+            pairingReplies.push(payload)
+            wired?.sendPairingFrame({ v: 1, t: 'pair-ack', id, box: JSON.stringify(payload) })
+          },
+        })
   const subscriptions =
     options.jobSource === undefined
       ? null
@@ -168,14 +215,18 @@ export async function start(
       handshake: createHandshakeDriver({
         identity: { dh: pc.dh, signSeedHex: pc.signSeedHex },
         pcId: PC_ID,
-        peerOf: (devId) =>
-          devId === DEV_ID
+        peerOf: (devId) => {
+          // 配对过的设备优先（产品装配里这就是 devices 表）。
+          const paired = pairingDevices.get(devId)
+          if (paired !== undefined) return paired
+          return devId === DEV_ID
             ? {
                 edPubHex: phoneIdentity.sign.publicKeyHex,
                 dhPubHex: phoneIdentity.dh.publicKeyHex,
                 pairingId: PAIRING,
               }
-            : undefined,
+            : undefined
+        },
         timeoutMs: 2_000,
       }),
       // 电脑侧 = 应答方：`kA2B` 解入站、`kB2A` 封出站。
@@ -184,7 +235,12 @@ export async function start(
     onEstablished: (result) => established.push(result),
     onFrame: (frame) => {
       frames.push(frame)
-      // 与 `index.ts` 的装配一致：`req` 归方法面，应答走同一条出帧路径（由连接层分配 `fc` 与封箱）。
+      // 与 `index.ts` 的装配一致：`pair` 只在握手之前来（连接层把非握手帧直接交到这里），
+      // 由配对端点处理；`req` 归方法面，应答走同一条出帧路径（连接层分配 `fc` 与封箱）。
+      if (endpoint !== null && frame.t === 'pair') {
+        void endpoint.handle({ id: frame.id, box: frame.box })
+        return
+      }
       if (face !== null && frame.t === 'req') {
         void face.handle(frame).then((response) => {
           if (response !== null) connection.send(response)
@@ -217,6 +273,9 @@ export async function start(
     closes,
     subscriptions,
     sessionSubscriptions,
+    pairing: pairingCore,
+    pairingReplies,
+    pairingDevices,
     watchClose: () => {
       peer.sockets.at(-1)?.on('close', (code: number, reason: Buffer) => {
         closes.push({ code, reason: reason.toString() })

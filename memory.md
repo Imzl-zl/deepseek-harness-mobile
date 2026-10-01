@@ -38,7 +38,7 @@
 | `node app/tools/verify-platform-boundary.mjs` | 17 项(含 13 条规则自检):多端边界与 `Platform.isOhos` 禁令 |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
 | `cd connector && pnpm exec tsc --noEmit` | connector 类型检查(改 `connector/src/**` 后必跑) |
-| `cd connector && pnpm test` | connector 全套 **238 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**49 项**),外加握手驱动 / 封箱 / 流控 / 任务帧 / 订阅骨架 / 方法面 / 幂等 / 四个 DSH 适配器 / 连接级 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
+| `cd connector && pnpm test` | connector 全套 **244 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**49 项**),外加握手驱动 / 封箱 / 流控 / 任务帧 / 订阅骨架 / 方法面 / 幂等 / 四个 DSH 适配器 / 连接级 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
 | `cd connector && pnpm build` | 产出 `lib/index.js` + `lib/index.d.ts`(装进 profile 的那份产物) |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker`;跑法见 `tools.md` |
 
@@ -87,6 +87,10 @@
 - 当前最挡路的一条:CDP 端口可能要换 —— 9222 被日常 Chrome 占用,9400 也可能被上一轮遗留的 headless Chrome 占着,开新端口前先探 `/json/version`。
 
 ## 最近活跃窗口
+
+- 2026-10-01 配对端点独立成层(本轮):"校验配对码 → 落设备行 → 回执"是**安全边界**(谁成为设备由它决定),而产品与 fixture 都要用 —— 两边各写一份必然分叉,症状是"测试绿、真机红"。抽成 `src/pairing-endpoint.ts`(只依赖三个收窄端口:配对核心 / `putDevice` / `reply`),并把三条不会报错的语义各写一条会红的用例:① 失败(过期/不对/已用过)**不是协议错误**,回原因**不关连接**(§9);② **先落行、再回执**(反了会出现"配对成功但连不上" —— 手机立刻握手时 `peerOf` 还查不到);③ 落行失败**不许**回 ok。失败文案在电脑侧翻译好(`REASON_TEXT`),手机只管显示。证据:`pnpm test` **244 项**、`tsc` 0、`pnpm build`、三条 protocol 门禁 486/26/49、多端边界 17;端点 5 条单测 + 连接级 e2e(真 socket 上 `pair` → 设备行落下 → 明文 `pair-ack` 过线且无 `fc` → 不关连接)。**仍未做**:产品的出码入口(要先查 `ctx.commands` 的注册面,**不猜**);`pair` → 握手的完整 e2e(需要把手机侧客户端按配对得到的身份参数化)。取舍见 `.agents/notes/implemented/2026-10-01-pairing-endpoint.md`。
+
+- 2026-10-01 配对帧进出连接层:入站**不需要改**(连接层在握手完成前本来就把非握手帧交给 `options.onFrame`,`connection.ts:415-419`);出站补 `sendPairingFrame`(收窄成只接受 `pair`/`pair-ack`,**不放宽 `send()`**)与 `write` 的明文判据(从 `isHandshakeFrameType` 换成 `isPreKeysPlaintextFrame`)。**教训**:编辑时用太短的锚点把 `whenWritable` 的实现行替换掉了,读回后修好。
 
 - 2026-10-01 配对(电脑侧那一半,本轮):做 §12.1 时发现契约对**两处关键参数只给了意图** —— `pairingId` 的 HKDF 参数(它参与握手 `info`,两端算不一样就握不上手,而报错看不出是这个原因)与短指纹 SAS 的算法(没定义等于没有这条防护)。**先把定义写进契约再实现,不猜**:`pairingId = base64url(HKDF-SHA256(码, salt 空, info "dsh-mobile/v1/pairing", 32))`;`SAS = sha256("dsh-mobile/v1/sas|pcPubEd|devPubEd")` 前 4 字节 mod 10⁶ 补零 6 位(**用公钥**:配对未完成就要能显示,而用配对码算出来的值在公钥被换时仍然相同 —— 正好绕过它该防的攻击);二维码载荷 `{v, relay, pcPubEd, pcPubDh, code}`。实现 `src/pairing.ts`:码 16 字节 base64url、**只存哈希**、5 分钟、一次性;一次性靠**内存 pending + 消费即销毁**(没有"可能已被用过"的中间态),`mismatch` **不消费**(否则别人猜错一次,真手机就配不上)。证据:`pnpm test` **235 项**、`tsc` 0、`pnpm build`、三条 protocol 门禁 486/26/49、多端边界 17;配对 7 条单测(测试自身也修了一处:确定性替身两次出同一个码,于是"旧码立刻失效"构造不出来)。**仍未做**:配对请求的**传输通道**(§12.1 说"经中转转给电脑",而 `relay/` 还不存在 —— 请求格式已定成中转安全的 `codeHash`,直连与中转两条路都能用,所以这个分叉只需在"先落中转"与"先做直连配对"之间选)、把 `pairing.ts` 接进插件生命周期(出码入口/写 devices 表/显示 SAS)、设备令牌(中转侧)。取证:契约 §12 的中转表存 `code_hash`(不是码)⇒ 请求不该带码,于是 `pairingId` 由**哈希**派生。取舍见 `.agents/notes/implemented/2026-10-01-pairing-pc-side.md`。
 
