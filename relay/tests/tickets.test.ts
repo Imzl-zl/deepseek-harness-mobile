@@ -84,6 +84,21 @@ test('prune：只清过期的，活的留着', () => {
   assert.equal(store.consume(fresh.ticket), 'dev-2')
 })
 
+test('自清：**未被使用**的过期票会在后续发票时被清掉（不必等外部调用 prune）', () => {
+  let clock = 1_000_000
+  const { store } = setup({ now: () => clock })
+
+  // 先发 63 张（不消费），**然后**让它们过期 —— 自清发生在第 64 次发票当时，
+  // 所以过期的票必须在那一刻之前就已经过期，否则它清不到东西（这正是我第一版写错的地方）。
+  for (let i = 0; i < 63; i += 1) store.issue(`dev-${i}`)
+  assert.deepEqual(store.stats, { tickets: 63 })
+
+  clock += TICKET_TTL_MS + 1
+  // 第 64 次发票：触发自清（`PRUNE_EVERY = 64`）→ 63 张过期的被清掉，再加这一张新的。
+  store.issue('dev-late')
+  assert.deepEqual(store.stats, { tickets: 1 }, '过期的未用票不会一直堆在表里')
+})
+
 test('两次发票拿到不同的票（随机源每次都用）', () => {
   const { store, rounds } = setup()
   const first = store.issue('dev-1')

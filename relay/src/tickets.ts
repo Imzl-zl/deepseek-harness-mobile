@@ -30,6 +30,15 @@ export const TICKET_BYTES = 16
  */
 export const TICKET_TTL_MS = 60_000
 
+/**
+ * 每发票多少次做一次过期清理。
+ *
+ * **未被使用**的票过期后会一直留在表里（`consume` 只清它自己那一张）：
+ * 一台设备按限流上限（默认 6/秒）刷一小时能攒两万条 —— 每条很小，但表会长。
+ * 自清而不是定时器：不引入后台任务（与限流器的桶自清同一个理由）。
+ */
+const PRUNE_EVERY = 64
+
 export interface TicketIssue {
   /** 票值：**只在这一刻返回**，中转不留明文。 */
   readonly ticket: string
@@ -68,6 +77,19 @@ export function createTicketStore(options: TicketStoreOptions = {}): TicketStore
 
   /** `票的哈希 → { deviceId, expiresAt }`。**没有明文票**。 */
   const tickets = new Map<string, { deviceId: string; expiresAt: number }>()
+  /** 发票计数：每 `PRUNE_EVERY` 次做一次过期清理（见该常量的说明）。 */
+  let issued = 0
+
+  const prune = (): number => {
+    const at = now()
+    let removed = 0
+    for (const [key, entry] of tickets) {
+      if (entry.expiresAt > at) continue
+      tickets.delete(key)
+      removed += 1
+    }
+    return removed
+  }
 
   return {
     get stats() {
@@ -75,6 +97,13 @@ export function createTicketStore(options: TicketStoreOptions = {}): TicketStore
     },
 
     issue(deviceId) {
+      // 自清：**未被使用**的票过期后会一直留在表里（`consume` 只清它自己那一张）。
+      // 一台设备按限流上限刷一小时能攒两万条 —— 每条很小，但表会长。
+      // 每 PRUNE_EVERY 次做一次全表扫描（摊销到单次可以忽略），与限流器的自清同一个理由：
+      // **不引入后台任务**。
+      issued += 1
+      if (issued % PRUNE_EVERY === 0) prune()
+
       const ticket = Buffer.from(random(TICKET_BYTES)).toString('base64url')
       const expiresAt = now() + ttlMs
       tickets.set(hashOf(ticket), { deviceId, expiresAt })
@@ -95,15 +124,6 @@ export function createTicketStore(options: TicketStoreOptions = {}): TicketStore
       return entry.deviceId
     },
 
-    prune() {
-      const at = now()
-      let removed = 0
-      for (const [key, entry] of tickets) {
-        if (entry.expiresAt > at) continue
-        tickets.delete(key)
-        removed += 1
-      }
-      return removed
-    },
+    prune,
   }
 }
