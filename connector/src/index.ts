@@ -48,6 +48,8 @@ import { loadOrCreateIdentity, type Identity } from './dsh/identity.js'
 import { createPairing } from './pairing.js'
 import { createPairingEndpoint } from './pairing-endpoint.js'
 import { readRelayToken } from './dsh/relay-token.js'
+import { createPairingRegistrar } from './pairing-register.js'
+import { offerForScanning } from './pairing-offer.js'
 import { registerInteractions, type RemoteInteractionPort } from './dsh/interactions.js'
 import type { TakeoverDevice, TakeoverMode } from './protocol/takeover.js'
 import type { WireFrame } from './protocol/frame.js'
@@ -123,6 +125,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
    */
   let currentDeviceId: string | null = null
   let unregisterInteractions: (() => void) | null = null
+/** 出码命令的注销（ctx.commands.register 返回的就是它）。 */
+let unregisterPairingCommand: (() => void) | null = null
 
   /** 设备状态与档位。真值在 store 里，这里给出 transport 需要的读取面。 */
   /**
@@ -291,6 +295,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         unregisterInteractions = registerInteractions(ctx, { port, takeover, log: logger })
       },
       undo() {
+        unregisterPairingCommand?.()
+        unregisterPairingCommand = null
         unregisterInteractions?.()
         unregisterInteractions = null
       },
@@ -421,6 +427,29 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           log: logger,
         })
 
+        // 出码入口：一条斜杠命令。**登记不成就不出码**（`offerForScanning` 的判断），
+        // 否则操作者会拿到一张扫了也配不上的二维码，而失败面出现在手机侧。
+        const commands = ctx.get('commands') as
+          | { register(definition: unknown): () => void }
+          | undefined
+        if (commands === undefined) {
+          // `commands` 不在服务清单里时插件仍能工作（配对靠别的方式触发），所以只留声。
+          logger.warn('commands 服务不在：`dsh-mobile-pair` 出码命令不可用')
+        } else {
+          const registerPairing = createPairingRegistrar({
+            relayUrl: relayUrl ?? '',
+            // 令牌**现读**（`readRelayToken` 不缓存）：出码是人工动作，换令牌后立刻生效；
+            // 也省得为这个只在出码时用到的值安排装配顺序。
+            tokenSource: () => readRelayToken(ctx.credentials, relayTokenSecretRef ?? ''),
+            log: logger,
+          })
+          unregisterPairingCommand = commands.register({
+            name: 'dsh-mobile-pair',
+            description: '生成手机配对二维码（一次性、5 分钟有效）',
+            handler: () => offerForScanning({ pairing: pairingCore, register: registerPairing, log: logger }),
+          })
+        }
+
         const methodFace = createMethodFace({
           handlers: createHandlers({
             caps: () => readCaps(ctx),
@@ -468,7 +497,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           methods: [...methodFace.implemented],
         })
 
-        // 连接器令牌（§12.2）：拨号要用它做升级头的 `Authorization`。
+        // 连接器令牌（§12.2）：**拨号与出码登记共用同一个值**，所以在这一步开头读一次。
         // 读不到就**大声失败**（`readRelayToken` 的契约）：起来一个连不上中转的插件没有意义。
         const relayToken = await readRelayToken(ctx.credentials, relayTokenSecretRef ?? '')
 
