@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { createPairing, pairingCodeHash } from '../src/pairing.js'
+import { PAIRING_TTL_MS, createPairing, pairingCodeHash } from '../src/pairing.js'
 import { offerForScanning } from '../src/pairing-offer.js'
 
 function setup(registerImpl?: (codeHash: string) => Promise<void>) {
@@ -50,6 +50,18 @@ test('登记失败：**不出码**，回一个说明原因的结果（而不是�
   // 关键：失败结果里**不许**夹带任何码/载荷（否则操作者可能照着它去扫）。
   assert.equal(/[A-Za-z0-9_-]{22}/.test(result.text), false, '失败文案里不许出现码')
   assert.equal(result.text.includes('pcPubEd'), false, '也不许出现载荷片段')
+})
+
+test('成功文案里的有效期**从常量算**（写死数字会变成一句撒谎的提示）', async () => {
+  const { pairing, register } = setup()
+  const result = await offerForScanning({ pairing, register })
+  assert.equal(result.kind, 'success')
+  const minutes = Math.round(PAIRING_TTL_MS / 60_000)
+  assert.match(
+    result.text,
+    new RegExp(`${minutes} 分钟`),
+    '文案与 PAIRING_TTL_MS 必须同源：改常量而不改文案，操作者会按过期的时间安排',
+  )
 })
 
 test('一次出码只登记一次，且用的是**这一次**的哈希（重新出码换哈希）', async () => {

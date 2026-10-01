@@ -45,7 +45,7 @@ import { type ConnectorConfig, Config } from './config.js'
 import { REQUIRED_SERVICES, readCaps, type Caps } from './dsh/caps.js'
 import { deriveIdentity } from './protocol/crypto.js'
 import { loadOrCreateIdentity, type Identity } from './dsh/identity.js'
-import { createPairing } from './pairing.js'
+import { PAIRING_TTL_MS, createPairing } from './pairing.js'
 import { createPairingEndpoint } from './pairing-endpoint.js'
 import { readRelayToken } from './dsh/relay-token.js'
 import { createPairingRegistrar } from './pairing-register.js'
@@ -445,7 +445,7 @@ let unregisterPairingCommand: (() => void) | null = null
           })
           unregisterPairingCommand = commands.register({
             name: 'dsh-mobile-pair',
-            description: '生成手机配对二维码（一次性、5 分钟有效）',
+            description: `生成手机配对二维码（一次性、${Math.round(PAIRING_TTL_MS / 60_000)} 分钟有效）`,
             handler: () => offerForScanning({ pairing: pairingCore, register: registerPairing, log: logger }),
           })
         }

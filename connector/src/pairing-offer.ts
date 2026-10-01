@@ -10,7 +10,7 @@
  * 于是它可以脱离 DSH 与网络测（登记做成端口）。
  */
 import type { ChannelLogger } from './observability.js'
-import type { Pairing } from './pairing.js'
+import { PAIRING_TTL_MS, type Pairing } from './pairing.js'
 
 export interface PairingOfferDeps {
   pairing: Pairing
@@ -39,5 +39,8 @@ export async function offerForScanning(deps: PairingOfferDeps): Promise<OfferRes
   }
   deps.log?.info(`已出码并登记到中转（${Math.round((offer.expiresAt - Date.now()) / 1000)} 秒内有效）`)
   // 码**只在这里出现**：它进操作者眼前的二维码，不落盘、不进日志。
-  return { kind: 'success', text: `手机扫码配对（5 分钟内有效，一次性）：\n${offer.payload}` }
+  // 有效期**从常量算**，不写死数字：写死的话，改 `PAIRING_TTL_MS` 会留下一句撒谎的提示
+  //（操作者按它安排时间，而码已经过期了）。
+  const minutes = Math.round(PAIRING_TTL_MS / 60_000)
+  return { kind: 'success', text: `手机扫码配对（${minutes} 分钟内有效，一次性）：\n${offer.payload}` }
 }
