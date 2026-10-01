@@ -122,7 +122,8 @@ test(
   '设备经中转抵达连接器：换票 → 升级 → 设备那一行出现在连接器的 onFrame 里',
   {
     skip:
-      '暂未通过：连接器的**首帧没有抵达中转**，于是中转学不到 sid 归属、设备帧被丢弃。' +
+      '暂未通过：中转**已经**把设备那一帧转给了连接器（本轮日志里不再出现"丢弃"），' +
+      '但连接器的 onFrame 没收到 —— 症状已收窄到连接器入站路径或 socket 写出。' +
       '证据与下一步见 .agents/notes/proposed/2026-10-01-three-party-path-first-frame-lost.md',
   },
   async (t) => {
@@ -136,10 +137,22 @@ test(
 
   // 连接器先上线（中转的"出码登记 → 认领"要求它在线），并进服务态。
   const frames: { t?: string; id?: string }[] = []
+  // 观测：包一层 `send`，记录**真正写到 socket 上**的字节。
+  // 这一层能一次分开两种可能：帧没出连接器（send/batcher 吞了）vs 出了但中转没收（中转侧的事）。
+  const sent: string[] = []
   const connection = createConnection({
     url: `${wsBase}/ws/connector`,
-    dial: (url) =>
-      new WebSocket(url, { headers: { authorization: `Bearer ${TOKEN}` } } as never) as never,
+    dial: (url) => {
+      const ws = new WebSocket(url, { headers: { authorization: `Bearer ${TOKEN}` } } as never) as never as {
+        send(data: string): void
+      }
+      const original = ws.send.bind(ws)
+      ws.send = (data: string) => {
+        sent.push(String(data))
+        original(data)
+      }
+      return ws as never
+    },
     onFrame: (frame) => frames.push(frame as { t?: string; id?: string }),
   })
   t.after(() => connection.stop())

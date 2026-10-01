@@ -168,6 +168,12 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
       if (kind === 'connector') core.detachConnector(id)
       else core.detachDevice(id)
     })
+
+    // **`error` 必须监听**：写失败（对端已消失、socket 半开）在 `ws` 里是 `error` 事件，
+    // 不监听就是**静默丢失** —— 而"对端没收到"与"我们没写成功"在日志上将无从区分。
+    ws.on('error', (error) => {
+      log?.warn(`${kind} ${id} 的 socket 出错（这一条连接上后续的投递可能都没发出去）`, error)
+    })
   }
 
   await new Promise<void>((resolve) => {
