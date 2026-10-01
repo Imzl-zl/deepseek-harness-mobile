@@ -65,6 +65,7 @@
 - **`store/` 已落地**:存储 schema 收敛到契约 §8.1 一处(`connector-and-relay.md` §1.4 只留使用纪律 —— 之前两节对同一套表有四处不一致,见下);按**写入特征**拆两个域(`dsh_mobile_core` 小且正确性关键 / `dsh_mobile_windows` 大且可丢),因为 domain 的写入走单写链,同域会让 16 MiB 的窗口写堵住必须同步落盘的 `dedupe`。取舍见 `.agents/notes/implemented/2026-10-01-connector-store-schema.md`。**`transport/` / `push/` / `index.ts` 装配仍未开始。**
 - **`transport/` 的纯逻辑部分已落地**:退避(1→30s 指数 ±20% 抖动)、保活(60s 心跳 + 2 周期半开判据)、攒批(50ms 或 ≥4KiB)、连接状态机(六态白名单迁移)。四个单元的时间与随机数**全部注入**,所以掉线/半开/攒批/非法迁移这些真机上最难复现的路径都能直接测。**WSS 接线本身未实现**(需要中转地址与令牌,属第 5 步)。
 - **`push/` 与 `index.ts` 的 §1.3 生命周期装配仍未开始。**
+- **`push/` 与生命周期引擎已落地**:`push/`(四类触发 + 同会话同类型 60s 折叠 + `rich`/`doorbell` 两档;**通知对象是白名单字段,没有能承载正文的位置** —— 推送通道不在端到端加密范围内)。`lifecycle.ts` 把 §1.3 的**顺序**抽成可测引擎:mount 中途失败逆序回滚、**dispose 尽力而为**(某步抛错不拦住后面的步骤,尤其 transport.stop 失败时仍必须 close-store)。**`index.ts` 的真实装配(发布服务、注册 answerer、起 transport)与 WSS 接线仍未做。**
 - **`relay/` 与 `app/` 的代码都还没开始。**
 - **协议六条已定稿并进 fixtures**:live 流式帧、快照水位与分页、待审批的持久投影、流控窗口(ack 兼信用)、接收端 seen-seq、审批仲裁判定表——对应 fixture `10`–`16`。
 - **审批接管已定**(不再是产品决策):默认 `foreground` 档——App 前台**且**已订阅该会话才 claim,否则 delegate 给桌面;`always` / `never` 可选;claim 后看护超时 10 min 按 fail-closed 结束。判定表可执行(fixture `16`)。
