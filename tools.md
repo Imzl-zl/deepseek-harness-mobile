@@ -6,6 +6,7 @@
 - 真值优先级:`docs/design-and-tech-plan.md`(总纲)> 三份 `docs/*-notes.md`(专项)> 可跑通的验证脚本 > 本文件。
 - 主链路:改 `mock/proto/` → 跑验证脚本 → 截图 → 同步 `app/`(Flutter 落地端)。
 - 本仓库**没有 CI**;`mock/proto/`、`protocol/`、`app/tools/` 全是显式 `node` 脚本,不存在 `npm test` 这类约定命令。**例外:`connector/` 是 pnpm 工程**(见下),它的命令走 `pnpm exec` / `pnpm test`。
+- **`relay/` 也是工程,但不需要构建、也不需要安装即可跑测试**:`cd relay; node --test` 直接跑(33 条:路由 7 + 配对登记 6 + 中转大脑 6 + 一次性 ticket 7 + HTTP 面 7)。它靠 Node 的**类型剥离**(≥22.6,本机 24.13)运行,所以**导入写 `.ts` 结尾**——Node 不做 `.js` → `.ts` 映射(写 `.js` 报 `ERR_MODULE_NOT_FOUND`,实测)。类型检查:`./connector/node_modules/.bin/tsc.cmd --noEmit -p relay/tsconfig.json --typeRoots ./connector/node_modules/@types`(`relay/` 自己 `pnpm install` 之后就用自己的)。**别把 relay 的导入"顺手统一"成连接器那样的 `.js`**:连接器是插件(要产物,tsdown 打包),中转是独立服务(直接 `node src/main.ts` 起),两者运行时不同。
 
 ## Read First
 
