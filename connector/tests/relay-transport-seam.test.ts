@@ -33,7 +33,10 @@ const waitFor = async (what: string, check: () => boolean, timeoutMs = 5_000): P
 }
 
 /** 起一个真的中转子进程，返回它的端口（从它打印的启动行里读出来）。 */
-async function startRelayProcess(t: { after(fn: () => void | Promise<void>): void }, token: string) {
+async function startRelayProcess(
+  t: { after(fn: () => void | Promise<void>): void },
+  tokens: { kind: 'device' | 'connector'; id: string; token: string }[],
+) {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-relay-'))
   const configPath = join(dir, 'relay.config.json')
   await writeFile(
@@ -41,9 +44,12 @@ async function startRelayProcess(t: { after(fn: () => void | Promise<void>): voi
     JSON.stringify({
       port: 0,
       host: '127.0.0.1',
-      tokens: [
-        { kind: 'connector', id: 'conn-1', hash: createHash('sha256').update(token, 'utf8').digest('hex') },
-      ],
+      // 配置里**只放摘要**（§12.2）：明文令牌只存在于测试自己这一侧。
+      tokens: tokens.map((entry) => ({
+        kind: entry.kind,
+        id: entry.id,
+        hash: createHash('sha256').update(entry.token, 'utf8').digest('hex'),
+      })),
     }),
     'utf8',
   )
@@ -80,7 +86,7 @@ async function startRelayProcess(t: { after(fn: () => void | Promise<void>): voi
 }
 
 test('连接器带令牌拨号到**独立进程中转**：升级成功、连接层进入握手态', async (t) => {
-  const relay = await startRelayProcess(t, TOKEN)
+  const relay = await startRelayProcess(t, [{ kind: 'connector', id: 'conn-1', token: TOKEN }])
 
   const connection = createConnection({
     url: `ws://127.0.0.1:${relay.port}/ws/connector`,
@@ -98,7 +104,7 @@ test('连接器带令牌拨号到**独立进程中转**：升级成功、连接�
 })
 
 test('令牌不对：升级被拒，连接层进入退避重连而不是停在假的"已连接"状态', async (t) => {
-  const relay = await startRelayProcess(t, TOKEN)
+  const relay = await startRelayProcess(t, [{ kind: 'connector', id: 'conn-1', token: TOKEN }])
 
   const connection = createConnection({
     url: `ws://127.0.0.1:${relay.port}/ws/connector`,
@@ -110,6 +116,76 @@ test('令牌不对：升级被拒，连接层进入退避重连而不是停在�
   connection.start()
 
   await waitFor('进入退避重连', () => connection.state === 'backoff')
+})
+
+test(
+  '设备经中转抵达连接器：换票 → 升级 → 设备那一行出现在连接器的 onFrame 里',
+  {
+    skip:
+      '暂未通过：连接器的**首帧没有抵达中转**，于是中转学不到 sid 归属、设备帧被丢弃。' +
+      '证据与下一步见 .agents/notes/proposed/2026-10-01-three-party-path-first-frame-lost.md',
+  },
+  async (t) => {
+  const deviceToken = 'device-token-1'
+  const relay = await startRelayProcess(t, [
+    { kind: 'connector', id: 'conn-1', token: TOKEN },
+    { kind: 'device', id: 'dev-1', token: deviceToken },
+  ])
+  const httpBase = `http://127.0.0.1:${relay.port}`
+  const wsBase = `ws://127.0.0.1:${relay.port}`
+
+  // 连接器先上线（中转的"出码登记 → 认领"要求它在线），并进服务态。
+  const frames: { t?: string; id?: string }[] = []
+  const connection = createConnection({
+    url: `${wsBase}/ws/connector`,
+    dial: (url) =>
+      new WebSocket(url, { headers: { authorization: `Bearer ${TOKEN}` } } as never) as never,
+    onFrame: (frame) => frames.push(frame as { t?: string; id?: string }),
+  })
+  t.after(() => connection.stop())
+  connection.start()
+  await waitFor('连接器进入握手态', () => connection.state === 'handshake')
+  // 明文通道模式：手动宣告握手完成，于是 `send` 可用（本用例不测密码学，只测转发）。
+  connection.markHandshakeDone()
+  await waitFor('连接器进入服务态', () => connection.state === 'serving')
+
+  // 出码登记（连接器令牌）→ 换票（设备令牌 + codeHash）
+  const codeHash = 'hash-a'
+  const registered = await fetch(`${httpBase}/pairing/register`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ codeHash }),
+  })
+  assert.equal(registered.status, 201)
+  const ticketed = await fetch(`${httpBase}/ws-ticket`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${deviceToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ codeHash }),
+  })
+  assert.equal(ticketed.status, 201)
+  const { ticket } = (await ticketed.json()) as { ticket: string }
+
+  // 连接器先说一句：中转据此学到这个 sid 归它。
+  // **用 `res` 而不是 `ev`**：`ev` 是"可攒批/可暂停"的帧（§4.3），会先在连接层的 batcher 里等
+  // 一次 flush；本用例只想验证**转发**，不想让时序掺进攒批器 —— 那属于连接层自己的测试。
+  assert.equal(connection.send({ v: 1, t: 'res', id: 'r0', sid: 'sid_1', ok: true, box: 'x' }), true)
+
+  // 设备带票升级，然后发一行 —— 它应当出现在**连接器的 onFrame** 里。
+  const device = new WebSocket(`${wsBase}/ws/device?ticket=${encodeURIComponent(ticket)}`)
+  t.after(() => device.close())
+  await new Promise<void>((resolve, reject) => {
+    device.onopen = () => resolve()
+    device.onerror = () => reject(new Error('设备带票升级失败（中转应当接受它）'))
+  })
+  device.send(JSON.stringify({ v: 1, t: 'req', id: 'r1', sid: 'sid_1', fc: 0, box: '{}' }))
+
+  try {
+    await waitFor('连接器收到设备那一行', () => frames.some((frame) => frame.t === 'req'))
+  } catch (error) {
+    // 超时时把中转的输出带出来：它只转发与记账，线索都在那儿。
+    throw new Error(`${String(error)}\n中转输出：\n${relay.output()}`)
+  }
+  assert.equal(frames.find((frame) => frame.t === 'req')?.id, 'r1', '原样转发（中转不解载荷、不改帧头）')
 })
 
 test('入口配错就在**启动时**失败：没有 tokens 直接退出（不留下"起来了但都 401"的中转）', async (t) => {

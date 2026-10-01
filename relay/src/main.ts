@@ -58,6 +58,16 @@ const relay = await startRelay({
   port: config.port ?? 8787,
   host: config.host ?? '127.0.0.1',
   authenticate,
+  // 中转必须**留声**：它只转发与记账，出问题时（投递目标不在、丢弃、认证被拒）
+  // 日志是唯一的线索。级别用 debug 之外的 info/warn，默认就能看见。
+  log: {
+    info: (message, detail) => console.log(`[relay] ${message}`, detail ?? ''),
+    warn: (message, detail) => console.warn(`[relay] ${message}`, detail ?? ''),
+    error: (message, detail) => console.error(`[relay] ${message}`, detail ?? ''),
+    debug: (message, detail) => {
+      if (process.env['DSH_RELAY_DEBUG'] === '1') console.log(`[relay:debug] ${message}`, detail ?? '')
+    },
+  },
 })
 
 console.log(`中转已监听 ws://${config.host ?? '127.0.0.1'}:${relay.port}（摘要表 ${authenticate.size} 条）`)
