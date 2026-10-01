@@ -27,6 +27,10 @@ test('start-transport 与连接之间的耦合面恰好是这 4 个成员（抽�
   const members = new Set<string>()
   for (const match of source.matchAll(/\b(?:next|port)\.([A-Za-z_$][\w$]*)/g)) {
     const member = match[1]
+    // 正则的捕获组在类型上是 `string | undefined`（`noUncheckedIndexedAccess`）——
+    // 这一行是我第 72 轮重写时**漏掉**的：漏了它 `tsc` 就红，而当时我只跑了用例
+    // （tsx 剥类型**不做检查**），于是红了两轮才被全量门禁扫出来。
+    if (member === undefined) continue
     // `next.start()` 是**连接自己的生命周期**（不属于"每连接状态"的耦合面）；
     // `port.start()` 不该存在（窄端口里没有它）——所以这里只豁免 next 的那一个。
     if (member === 'start' && match[0].startsWith('next.')) continue
