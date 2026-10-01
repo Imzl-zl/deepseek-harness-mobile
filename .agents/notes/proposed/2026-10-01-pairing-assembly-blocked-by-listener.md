@@ -72,3 +72,24 @@ Status: proposed（`src/pairing.ts` 与 `src/pairing-endpoint.ts` 已就绪；**
 **这一步的意义**：它把"加个监听面"从"再写几百行"缩成"抽出一段接线 + 一个生命周期开关"，
 但**必须先想清楚不自愈这条**（否则接受来的连接会在对端断开后去拨 `relayUrl`，
 症状是"监听模式下桥接莫名其妙连去中转"）。
+
+## 进展（同日）：接受路径已经落地
+
+按上面那张表实现了 `attach(socket)`（`connector/src/transport/connection.ts`）：
+
+- `connect()` 里那段接线抽成了 **`wireSocket(socket, { alreadyOpen, heals })`** ——
+  "打开之后做什么"提成 `onOpen()`，拨号与接受共用同一份；
+- `attach(socket)` 用 `{ alreadyOpen: true, heals: false }`：**直接**走一次 `onOpen()`（不等 `onopen`），
+  断开后**不自愈**；
+- 测试 `tests/connection-accept.test.ts`：真 `ws` 服务器 accept → `attach` → 状态**直接进 `handshake`**
+  （证明 `alreadyOpen` 那条），对端断开后 `dials === 0` 且状态**不是** `backoff`/`connecting`
+  （证明不自愈那条）。拨号路径行为不变（原有 244 项一条没改地绿）。
+
+**仍然缺的**（剩下的是装配，不是机制）：
+1. **监听面本身**：一个接受 WSS 连接并把它交给 `attach` 的地方（`ws` 的 `WebSocketServer` +
+   与 `createConnection` 的接线），以及它在生命周期里的位置（与拨号互斥还是并存）。
+2. **产品的出码入口**：`ctx.commands.register` 那条命令（API 已查清，见上）。
+3. **端点装配**：把 `pairingEndpoint` 接进 `index.ts` 的 `handleFrame`（`case 'pair'`）与
+   `devices` 表写入（注意 `edPubHex` → `edPub` 的字段改名）。
+4. **`pair` → 握手 → `session.prompt` 的本机回环 e2e**：接受路径上把整条链路跑通
+   （不需要 Tailscale，先把同一台机器上的"配对 → 发送"证出来）。

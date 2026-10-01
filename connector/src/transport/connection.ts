@@ -195,6 +195,13 @@ export interface Connection {
    */
   sendPairingFrame(frame: WireFrame): void
   /**
+   * 接管一个已经打开的 socket（监听面 accept 之后交给它）。
+   *
+   * 与拨号路径的两处不同都是必需的：**已经 OPEN**（onopen 不再触发，要直接走一次打开处理）
+   * 与**不自愈**（接受来的连接没有拨号目标）。详见 ttach 的注释。
+   */
+  attach(socket: DialSocket): void
+  /**
    * 手动宣告握手完成。**只在不配 `secure` 的装配里可用**（测试与手工调试）——
    * 配了 `secure` 时握手结论只能来自驱动器：手动调用等于绕过两道校验。
    */
@@ -537,10 +544,41 @@ export function createConnection(options: ConnectionOptions): Connection {
     handshakeDone = false
     session = null
 
-    const next = options.dial(options.url)
+    // 拨号连接**自愈**：对端走了就退避重连（`url` 是它的目标）。
+    wireSocket(options.dial(options.url), { alreadyOpen: false, heals: true })
+  }
+
+  /**
+   * 接管一个**已经打开的** socket（对端连进来的，比如监听面 accept 之后）。
+   *
+   * 与拨号路径的两处不同都是**必需的**，不是风格差异：
+   *
+   * - **已经 OPEN**：`onopen` 不会再触发，所以"打开之后做什么"要直接走一次
+   *   （否则连接永远停在 `connecting`，症状是"连上了但什么都不发生"）。
+   * - **不自愈**：接受来的连接没有拨号目标。让它按拨号那套在断开时去 `dial(options.url)`，
+   *   症状是"监听模式下桥接莫名其妙连去中转" —— 而重新接受一条连接是**监听面的职责**。
+   */
+  const attach = (socket: DialSocket): void => {
+    if (stopped) return
+    transition('connecting')
+    splitter = createLineSplitter()
+    counter = createSendCounter()
+    cipher = null
+    window = createSendWindow()
+    handshakeDone = false
+    session = null
+    wireSocket(socket, { alreadyOpen: true, heals: false })
+  }
+
+  /** 接线：**拨号与接受共用这一处**（差别只由两个开关表达，见 `attach` 的说明）。 */
+  const wireSocket = (
+    next: DialSocket,
+    mode: { alreadyOpen: boolean; heals: boolean },
+  ): void => {
     socket = next
 
-    next.onopen = () => {
+    /** 由 `onopen` 或"已打开的 socket"直接调用（两种触发时机，同一段处理）。 */
+    const onOpen = (): void => {
       if (stopped) return
       // 鉴权在 WSS 建立时已完成（ticket / 连接器令牌，§2.2），下一步就是 §4.1 的握手。
       transition('handshake')
@@ -566,6 +604,11 @@ export function createConnection(options: ConnectionOptions): Connection {
         }) ?? null
     }
 
+    next.onopen = onOpen
+    // 接受来的 socket 已经 OPEN：`onopen` 不会再触发，所以这里直接走一次。
+    // （少了这一步的症状是"连上了但什么都不发生"——连接永远停在 `connecting`。）
+    if (mode.alreadyOpen) onOpen()
+
     next.onmessage = (event) => {
       if (stopped) return
       handleMessage(event.data)
@@ -584,6 +627,9 @@ export function createConnection(options: ConnectionOptions): Connection {
       cipher = null
       if (stopped) return
       transition('closed')
+      // **只有拨号连接自愈**：接受来的连接没有拨号目标，重新接受一条是监听面的职责。
+      // 让它按拨号那套去 `dial(url)` 的症状是"监听模式下桥接莫名其妙连去中转"。
+      if (!mode.heals) return
       const delay = backoff.next()
       transition('backoff')
       cancelRetry = schedule(() => {
@@ -634,6 +680,7 @@ export function createConnection(options: ConnectionOptions): Connection {
     },
 
     sendPairingFrame,
+    attach,
 
     whenWritable(type) {
       if (machine.acceptsBusinessFrames && window.canSend(type)) return Promise.resolve()
