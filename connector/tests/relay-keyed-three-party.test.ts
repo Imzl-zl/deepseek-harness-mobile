@@ -29,10 +29,10 @@ test(
   '带密钥的三方链路：握手经中继成立，业务帧 AEAD 双向通过',
   {
     skip:
-      '暂未通过：停在"连接器握手成立"（约 8.8s 超时）。已排除：帧格式（nonceA 必须 32 字节 hex）、' +
-      '导入路径、PhoneFrameHeader 形状。下一步：DSH_RELAY_DEBUG=1 看 hello / hello-ack 是否都过了中继 —— ' +
-      '当前判断（未证实）是 noSidByRequestId 的关联被"每次回帧即删"用掉了，而握手是两次往返。' +
-      '见 .agents/notes/proposed/2026-10-01-keyed-three-party-handshake.md',
+      '暂未通过：证据是中继日志「hello-ack 找不到对应设备 { requestId: -dvrTwpBbOjOLSiVTsdHvg }」，' +
+      '而设备发的 hello 用的是 id: "h1" —— **两端各自生成 id，中继无法按 id 关联无 sid 的回帧**。' +
+      '这是协议层的缺口（不是实现 bug）：需要定夺"电脑侧回帧是否必须回显请求 id"，' +
+      '或中继另立一条按连接确定回程的规则。见 .agents/notes/proposed/2026-10-01-sidless-reply-demux.md',
   },
   async (t) => {
   const relay = await startRelayProcess(t, [
@@ -126,7 +126,12 @@ test(
 
   // 握手第一步：hello（明文帧，无 sid ⇒ 靠 ticket 绑定路由，第 47 轮那条规则）
   device.send(`${JSON.stringify({ v: 1, t: 'hello', id: 'h1', box: phone.helloBox() })}\n`)
-  await waitFor('连接器握手成立', () => established === 1, 8_000)
+  try {
+    await waitFor('连接器握手成立', () => established === 1, 8_000)
+  } catch (error) {
+    // 超时时把中转的输出带出来：它逐条记录"收到/投给谁/丢弃原因"。
+    throw new Error(`${String(error)}\n中转输出：\n${relay.output()}`)
+  }
   assert.equal(connection.state, 'serving', '握手成立后连接器进入服务态')
 
   // 业务帧：真 AEAD（手机封、连接器解；连接器封、手机解），带 sid ⇒ 走归属表
