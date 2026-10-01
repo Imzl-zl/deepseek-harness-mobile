@@ -57,6 +57,9 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.19.0
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
       tsdown:
         specifier: 0.22.14
         version: 0.22.14(tsx@4.21.0)(typescript@5.9.3)
@@ -66,6 +69,9 @@ importers:
       typescript:
         specifier: 5.9.3
         version: 5.9.3
+      ws:
+        specifier: 8.18.3
+        version: 8.18.3
 
 packages:
 
@@ -914,6 +920,9 @@ packages:
   '@types/node@24.19.0':
     resolution: {integrity: sha512-zY+5tKxXdhGh1PYI0ac+7juvEu4OI6vWtVVoj5i2m42jxAY1U+zHGt6QCyOFwykdP62sM3MJ9stoYYUw5aCWew==}
 
+  '@types/ws@8.18.1':
+    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
+
   '@yuku-codegen/binding-android-arm64@0.8.7':
     resolution: {integrity: sha512-C/0zV5IhgVdYhGJTwrY0v8dknxlhiKwtVJkMUaexu9/QvRmzlV4vfU3hZlUSgqc2BxQHntL1mCVbDq8j0FRFDw==}
     cpu: [arm64]
@@ -1301,6 +1310,18 @@ packages:
   verkit@0.3.2:
     resolution: {integrity: sha512-zj/ob3UsvJGN0whEAKFp53REA5X66hvffVqoCtVQAakJKnKlH+/PcOfMoFwIG/o4rElqLv/ycAFlx8ZlXUorCg==}
     engines: {node: '>=18.12.0'}
+
+  ws@8.18.3:
+    resolution: {integrity: sha512-PEIGCY5tSlUt50cqyMXfCzX+oOPqN0vuGqWzbcJ2xvnkzkq46oOpz7dQaTDBdfICb4N14+GARUDw2XV2N4tvzg==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
 
   ws@8.22.0:
     resolution: {integrity: sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg==}
@@ -2066,6 +2087,10 @@ snapshots:
     dependencies:
       undici-types: 7.24.6
 
+  '@types/ws@8.18.1':
+    dependencies:
+      '@types/node': 24.19.0
+
   '@yuku-codegen/binding-android-arm64@0.8.7':
     optional: true
 
@@ -2373,6 +2398,8 @@ snapshots:
   undici-types@7.24.6: {}
 
   verkit@0.3.2: {}
+
+  ws@8.18.3: {}
 
   ws@8.22.0: {}
 

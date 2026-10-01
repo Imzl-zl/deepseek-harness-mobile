@@ -41,6 +41,16 @@ export {
 } from './batch.js'
 
 export {
+  HANDSHAKE_FRAME_TYPES,
+  KNOWN_FRAME_TYPES,
+  assertHandshakePhase,
+  createLineSplitter,
+  decodeFrame,
+  encodeFrame,
+  type DecodeResult,
+} from './codec.js'
+
+export {
   HALF_OPEN_PERIODS,
   HEARTBEAT_MS,
   createKeepalive,
