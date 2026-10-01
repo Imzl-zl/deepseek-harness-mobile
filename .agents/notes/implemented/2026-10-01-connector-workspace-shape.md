@@ -14,7 +14,7 @@ Status: implemented
 
 ## Decision
 
-`connector/` 建成**独立的 pnpm 工程**（不是 DSH workspace 的成员，最终以 npm bundle 形式装进目标 profile 的 `node_modules`）；`packageManager` 钉本机真实存在的 `pnpm@11.13.0`；DSH 侧九处版本（6 个 devDependencies + 3 个 peerDependencies）**全部钉 `0.2.0-rc.2` 精确版本**，peer 不写范围。
+`connector/` 建成**独立的 pnpm 工程**（不是 DSH workspace 的成员，最终以 npm bundle 形式装进目标 profile 的 `node_modules`）；`packageManager` 钉本机真实存在的 `pnpm@11.13.0`；DSH 侧十三个版本（10 个 devDependencies + 3 个 peerDependencies）**全部钉 `0.2.0-rc.2` 精确版本**，peer 不写范围。
 
 准入门槛（可机械判定）：
 
@@ -46,5 +46,5 @@ Status: implemented
 ## Consequences
 
 - 收益：connector 的依赖解析可复现（`packageManager` + lockfile 都进仓）；DSH 版本策略有明文判据，同时避开 `latest` 落后与 peer 静默跳过这两个坑；`src/protocol/` 不依赖 DSH 类型这条单向依赖有门槛可机械检查；文档基线与本机实测重新对齐，`pnpm@11.7.0` 这个未经论证的数字不再当约束用。
-- 代价：本仓从此有了第一套包管理配置与 lockfile，`tools.md`「本仓库没有 `package.json` / CI，所有命令都是显式脚本」这条现状事实随之失效（已同步改）；DSH 每次发 rc 都要手工同步九处版本号，且**改一处要同步三个文件**（package.json / 设计文档 §1.1 / cookbook 基线表），漏一处就是三处漂移；peer 的精确比较语义仍未逐行核实——在第一次装进 profile（里程碑 2）之前，这套策略只是「照参考插件的形状」得来的经验，不是实测结论。
+- 代价：本仓从此有了第一套包管理配置与 lockfile，`tools.md`「本仓库没有 `package.json` / CI，所有命令都是显式脚本」这条现状事实随之失效（已同步改）；DSH 每次发 rc 都要手工同步十三处版本号，且**改一处要同步三个文件**（package.json / 设计文档 §1.1 / cookbook 基线表），漏一处就是三处漂移；peer 的精确比较语义仍未逐行核实——在第一次装进 profile（里程碑 2）之前，这套策略只是「照参考插件的形状」得来的经验，不是实测结论。第十处 devDependency（`dsh-subagent`）与设置/凭据那三个包是接第 4 步适配层时按实际用到的类型追加的，取舍见 `.agents/notes/implemented/2026-10-01-connector-settings-adapter.md`。
 - 落地时实测到的两处工具链陷阱（已进 `tools.md` Pitfalls，此处只记结论）：**其一**，pnpm 11 的构建脚本审批闸拦的是**每一次 `pnpm exec` / `pnpm run`**，不只是 install——`esbuild`（经 `tsx` 传入的传递依赖）未获批准时连 `pnpm exec tsc --noEmit` 都跑不起来，极易误判成「依赖装坏了」；而实测把它记为拒绝后 `tsx` / `esbuild` 照常可用（平台包 `@esbuild/win32-x64` 是独立安装的，postinstall 只做校验），所以严守「默认拒绝」没有付出功能代价。**其二**，tsdown 在 `platform: 'node'` 时 `fixedExtension` 默认 true，产物是 `dist/index.mjs`，与设计文档声明的 `lib/index.js` 对不上——若不核对，装上 profile 后 `main` / `exports` 会指向一个不存在的文件，而这类失败只会在里程碑 2 装进 profile 时才暴露。两处都说明：**「能编译」不等于「能用」，产物路径要拿真实加载来验**。

@@ -28,11 +28,18 @@
   "devDependencies": {
     "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
     "@deepseek-ai/dsh-api-session-controller": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-credentials": "0.2.0-rc.2",
     "@deepseek-ai/dsh-jobs": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-settings": "0.2.0-rc.2",
     "@deepseek-ai/dsh-storage": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-storage-domain": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-subagent": "0.2.0-rc.2",
     "@deepseek-ai/dsh-user-approval": "0.2.0-rc.2",
     "@deepseek-ai/dsh-user-questions": "0.2.0-rc.2"
-    // …按需追加;DSH 各包是已发布的 npm 包,用它们做类型检查,不必对着源码
+    // 这十个只用于类型检查(DSH 各包已发布到 npm,不必对着源码)。
+    // `dsh-settings` / `dsh-credentials` 不是可选的:适配层靠它们的类型钉住
+    // `describe({ redactSecrets: true })` 这个选项名,见
+    // .agents/notes/implemented/2026-10-01-connector-settings-adapter.md
   },
   "engines": { "node": "^22.19.0 || >=24.0.0" }
 }
