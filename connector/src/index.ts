@@ -47,6 +47,7 @@ import { deriveIdentity } from './protocol/crypto.js'
 import { loadOrCreateIdentity, type Identity } from './dsh/identity.js'
 import { createPairing } from './pairing.js'
 import { createPairingEndpoint } from './pairing-endpoint.js'
+import { readRelayToken } from './dsh/relay-token.js'
 import { registerInteractions, type RemoteInteractionPort } from './dsh/interactions.js'
 import type { TakeoverDevice, TakeoverMode } from './protocol/takeover.js'
 import type { WireFrame } from './protocol/frame.js'
@@ -467,10 +468,23 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           methods: [...methodFace.implemented],
         })
 
+        // 连接器令牌（§12.2）：拨号要用它做升级头的 `Authorization`。
+        // 读不到就**大声失败**（`readRelayToken` 的契约）：起来一个连不上中转的插件没有意义。
+        const relayToken = await readRelayToken(ctx.credentials, relayTokenSecretRef ?? '')
+
         const next = createConnection({
           url: relayUrl ?? '',
           // Node 22+ 自带全局 WebSocket；不引第三方客户端。
-          dial: (url) => new WebSocket(url) as never,
+          //
+          // **连接器令牌走升级头的 `Authorization`**（§2.2）：实测 Node 的全局 `WebSocket`
+          // 支持第二参数传 options 对象（undici 的非标准扩展，见笔记），所以这里能带头 ——
+          // 三参数形式与裸调用都收不到（服务端只会看到 `(none)`）。
+          // 令牌在装配时读一次（`readRelayToken` 不缓存，但**每次拨号都由同一个连接对象发起**，
+          // 于是运行期换令牌需要重连 —— 这是可接受的：换令牌本来就意味着换一次连接）。
+          dial: (url) =>
+            new WebSocket(url, {
+              headers: { authorization: `Bearer ${relayToken}` },
+            } as never) as never,
           log: logger,
           secure: {
             handshake: createHandshakeDriver({
