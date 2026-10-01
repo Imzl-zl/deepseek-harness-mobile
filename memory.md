@@ -41,6 +41,7 @@
 | `node app/tools/verify-platform-boundary.mjs` | 17 项(含 13 条规则自检):多端边界与 `Platform.isOhos` 禁令 |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
 | `cd connector && pnpm exec tsc --noEmit` | connector 类型检查(改 `connector/src/**` 后必跑) |
+| `cd connector && pnpm test` | connector 跑 `protocol/fixtures`:16 条 / **486 项断言**(须与参考侧 `verify-fixtures.mjs` 的数字相等,不等就是抄漏了断言) |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker`;跑法见 `tools.md` |
 
 **改断言时必须做一次变异校验**:故意破坏一条不变量,确认断言真的变红(做过两次,见下"最近活跃窗口")。
@@ -53,12 +54,13 @@
 - **多端边界** → `docs/subsystems/app-platform-boundaries.md`:三层结构、C1–C6 判据、版本闸门、已知框架缺口。取舍见 `.agents/notes/proposed/2026-09-30-experience-first-three-layer-split.md`。
 - **三端可移植性上限** → `.agents/notes/proposed/2026-09-30-mobile-portability-ceilings.md`(加密 `cryptography`、本地库 sqflite、三端都不做后台长连接)。
 - **规格的可执行部分** → `protocol/fixtures/` + `protocol/reference/`;为什么规格是 fixtures 而不是 JSON Schema,见 `.agents/notes/implemented/2026-09-30-protocol-fixtures-as-spec.md`。
+- **connector 协议层** → `src/protocol/` 自持实现(不 import DSH 类型);中转与手机侧只作测试替身;**断言数必须 = 486**。取舍与被否方案见 `.agents/notes/implemented/2026-10-01-connector-protocol-port.md`。
 - **connector 工程形态** → 独立 pnpm 工程(**不是** DSH workspace 成员,最终以 npm bundle 装进 profile)、`packageManager` 钉 `pnpm@11.13.0`、九处 DSH 版本(6 dev + 3 peer)全钉 `0.2.0-rc.2` 精确版、兼容性**只看 `peerDependencies`**(不匹配会被静默跳过,写 `engines.dsh` 无效)、`src/protocol/` 不得 import DSH 类型。取舍与被否方案见 `.agents/notes/implemented/2026-10-01-connector-workspace-shape.md`。
 
 ## 进行中 / 未完成
 
 - **`protocol/` 已落地**:16 条 fixtures + 参考实现 + 三个校验脚本(fixtures / loopback / vectors)。参考实现**不是产品代码**,两侧(TS 插件 / Dart 手机端)要各写一遍,对着同一批 fixtures 跑。
-- **`connector/` 已有骨架**(第 1–2 步完成):`package.json` / `cordis.patch.yml` / `tsconfig.json` / `tsdown.config.ts` + `src/**` 占位。判据已过:`pnpm exec tsc --noEmit` 退出 0,`pnpm build` 产出 `lib/index.js` + `lib/index.d.ts`,且入口能被 node 真正加载出 `apply` + `Config`。**协议层移植(第 3 步)与 DSH 适配层(第 4 步)未开始。**
+- **`connector/` 第 1–3 步完成**:工程形态 + 骨架 + **协议层实现**。`src/protocol/` 是产品代码(frame / items / dedupe / recovery / takeover);中转与手机侧只作**测试替身**(`tests/support/relay.ts` + 测试内的手机侧),不进 `src/`。判据全过:`tsc --noEmit` 退出 0、`pnpm build` 产出 `lib/index.js` 且入口可真加载、`pnpm test` **16 条 fixture 全绿且断言数 = 486**(与参考侧相等)。取舍见 `.agents/notes/implemented/2026-10-01-connector-protocol-port.md`。**DSH 适配层(第 4 步)未开始。**
 - **`relay/` 与 `app/` 的代码都还没开始。**
 - **协议六条已定稿并进 fixtures**:live 流式帧、快照水位与分页、待审批的持久投影、流控窗口(ack 兼信用)、接收端 seen-seq、审批仲裁判定表——对应 fixture `10`–`16`。
 - **审批接管已定**(不再是产品决策):默认 `foreground` 档——App 前台**且**已订阅该会话才 claim,否则 delegate 给桌面;`always` / `never` 可选;claim 后看护超时 10 min 按 fail-closed 结束。判定表可执行(fixture `16`)。
@@ -73,7 +75,7 @@
 
 ## 最近活跃窗口
 
-- 2026-10-01 开工第 1–2 步:`connector/` 从零建起 —— 定工程形态并留笔记(独立 pnpm 工程、九处 DSH 版本钉 `0.2.0-rc.2`、兼容性只看 peerDependencies),建骨架并跑通判据(`tsc --noEmit` 退出 0、`pnpm build` 产出 `lib/index.js`、入口加载出 `apply` + `Config`)。顺带排掉两个坑:pnpm 11 的构建脚本审批闸记在 `pnpm-workspace.yaml` 的 `allowBuilds`(旧写法不生效)且会拦下每一次 `pnpm exec`;tsdown 在 node 平台默认输出 `.mjs`,与声明的 `lib/index.js` 对不上。**协议层移植(第 3 步)未开始。**
+- 2026-10-01 开工第 1–3 步:`connector/` 从零建到协议层跑绿 —— ① 定工程形态并留笔记(独立 pnpm 工程、九处 DSH 版本钉 `0.2.0-rc.2`、兼容性只看 peerDependencies);② 建骨架并跑通判据;③ 把 `protocol/reference/` 移植成 `src/protocol/` 的 TS(frame / items / dedupe / recovery / takeover),中转与手机侧只作测试替身,**16 条 fixture 全绿且断言数 = 486 与参考侧相等**。顺带排掉两个坑:pnpm 11 的构建脚本审批闸记在 `pnpm-workspace.yaml` 的 `allowBuilds`(旧写法不生效)且会拦下每一次 `pnpm exec`;tsdown 在 node 平台默认输出 `.mjs`,与声明的 `lib/index.js` 对不上。第 4 步(DSH 适配层)未开始。
 
 - 2026-10-01 协作体系归一 + 建仓:每个事实只留一个家 —— 坑点归 `tools.md`、模块规则下沉到新建的 `mock/proto/AGENTS.md`、`.serena` 记忆清成纯指针;修掉 `tools.md` 的「自检 10 条」(实际 13 条)、补齐根 `AGENTS.md` §5 门禁清单与 `docs/architecture.md`(补上 `protocol/` 与四个子系统)。建 git 仓库并接远端,让「代码与笔记同批提交」从纸面变成可执行。十条门禁跑通,写进文档的条数全部按实测复核。取舍见 `.agents/notes/implemented/2026-10-01-collaboration-single-source-of-truth.md`。
 
