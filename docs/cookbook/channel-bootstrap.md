@@ -170,10 +170,26 @@ dsh plugin --profile <name> add <connector 本地路径>
 
 ## 7. 中转(`relay/`)
 
+**起它**(`relay/` 是独立服务,不需要构建;导入写 `.ts`,直接跑在 Node 的类型剥离下):
+
+```powershell
+cd relay
+pnpm install                                                   # only ws is a runtime dep
+node src/main.ts --config ./relay.config.example.json --issue-token connector home-pc
+# ↑ 令牌只显示这一次;写进配置的是它的 sha256 摘要(配置里没有令牌)
+node src/main.ts --config relay.config.json                    # 启动并打印生效的限流值
+node src/main.ts --config relay.config.json --revoke-token connector home-pc
+```
+
+配置字段:`port` / `host` / `tokens`(摘要表) / `rateLimit`(`capacity` + `refillPerSecond`;
+不配则用默认 60 与每秒 6 —— **默认生效**,因为默认敞开的转发器是隐患)。
+`tokens` 为空时**拒绝启动**(引导路径是先签发再启动)。样例见 `relay.config.example.json`,
+并有一条用例真的拿它启动一次(样例坏了会让操作者以为是自己改错)。
+
 按 `../subsystems/connector-and-relay.md` §2 落表、接口与 `window` 有界窗口。上线前置:
 
 - **不变量**:中转代码里不得出现按事件内容分支的逻辑;删掉 `window` 全表后重启,已配对设备重连仍收敛;
-- 限流 / 吊销 / 审计按 §2.4;
+- 限流(**HTTP 与 WS 升级两条路都限,按身份不按 IP**)/ 吊销(**软吊销**:`revokedAt` 留行,重签即轮换)/ 审计按 §2.4;
 - 合规:ICP 备案、PIPL 告知与最小化、厂商推送账号与模板报备;
 - 容量:按 §2.5 的估算做一次压测(**空闲连接数、转发吞吐、窗口内存**三项),不许拿估算当结论。
 
