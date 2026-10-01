@@ -19,19 +19,24 @@ const EXPECTED = ['send', 'sendPairingFrame', 'state', 'whenWritable'] as const
 test('start-transport 与连接之间的耦合面恰好是这 4 个成员（抽取的规模不许悄悄变大）', () => {
   const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')
 
-  // 只统计"被当作连接用的那个变量"上的成员访问：源码里它就是 `next.`
-  // （`next` 只在 `start-transport` 里指连接；`next.start()` 是连接自己的生命周期，不算耦合面）。
+  // 统计**两条路**上的成员访问：
+  // - `next.` —— 直接碰连接（迁移前的主力）；
+  // - `port.` —— 迁移后走窄端口 `ConnectionPort`（类型见 `src/transport/connection.ts`）。
+  // 只数一条路的话，迁移过程中门禁会"看起来通过"（调用点已经搬走），
+  // 而新增的第 5 个成员从另一条路悄悄进来 —— 那正是这条门禁要挡的事。
   const members = new Set<string>()
-  for (const match of source.matchAll(/\bnext\.([A-Za-z_$][\w$]*)/g)) {
+  for (const match of source.matchAll(/\b(?:next|port)\.([A-Za-z_$][\w$]*)/g)) {
     const member = match[1]
-    if (member === undefined || member === 'start') continue
+    // `next.start()` 是**连接自己的生命周期**（不属于"每连接状态"的耦合面）；
+    // `port.start()` 不该存在（窄端口里没有它）——所以这里只豁免 next 的那一个。
+    if (member === 'start' && match[0].startsWith('next.')) continue
     members.add(member)
   }
 
   assert.deepEqual(
     [...members].sort(),
     [...EXPECTED],
-    '耦合面变了：新增的成员要么纳入抽取用的窄端口，要么说明这里真的需要更多能力 —— ' +
-      '两种情况都该先看一眼那份笔记（它把抽取的规模量化成了"4 个成员 / 9 处调用"）',
+    '耦合面变了：新增的成员要么纳入窄端口 `ConnectionPort` 并同步这份清单，' +
+      '要么说明这里真的需要更多能力 —— 两种情况都该先看那份笔记（它把抽取规模量化成"4 个成员 / 9 处调用"）',
   )
 })
