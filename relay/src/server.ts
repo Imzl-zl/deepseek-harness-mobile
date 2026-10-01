@@ -21,6 +21,7 @@ import { WebSocketServer, type WebSocket } from 'ws'
 
 import { createRelayCore, type RelayCore } from './core.ts'
 import { createHttpFace, type Authenticated } from './http-face.ts'
+import { createRateLimiter } from './rate-limit.ts'
 import { createTicketStore } from './tickets.ts'
 import type { ChannelLogger } from './logger.ts'
 
@@ -32,6 +33,15 @@ export interface RelayServerOptions {
   host?: string
   /** 校验令牌（实现方去查摘要表，§12.2）。 */
   authenticate: (token: string) => Authenticated | undefined
+  /**
+   * 限流参数（按身份，§12 的"按设备限流与审计"）。
+   *
+   * **有默认值**：一个默认敞开的转发器是隐患（一台设备可以把票刷满）。
+   * 默认值取"宽松但封顶"：`capacity 60` / `refillPerSecond 6` —— 手机正常重连与
+   * 翻历史远达不到，而脚本猛刷会在几秒内被挡住。启动时会把生效值打进日志，
+   * 免得操作者事后问"为什么我被 429 了"。
+   */
+  rateLimit?: { capacity: number; refillPerSecond: number }
   log?: ChannelLogger
 }
 
@@ -65,10 +75,19 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
   const log = options.log
   const core = createRelayCore({ ...(log === undefined ? {} : { log }) })
   const tickets = createTicketStore({ ...(log === undefined ? {} : { log }) })
+  const limits = options.rateLimit ?? { capacity: 60, refillPerSecond: 6 }
+  const limiter = createRateLimiter({
+    capacity: limits.capacity,
+    refillPerSecond: limits.refillPerSecond,
+    ...(log === undefined ? {} : { log }),
+  })
+  log?.info(`限流生效：每身份容量 ${limits.capacity}，补充 ${limits.refillPerSecond}/秒`)
+
   const face = createHttpFace({
     core,
     tickets,
     authenticate: options.authenticate,
+    rateLimit: (key) => limiter.take(key),
     ...(log === undefined ? {} : { log }),
   })
 
