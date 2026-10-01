@@ -15,6 +15,7 @@ import { ProtocolError } from '../src/protocol/errors.js'
 import { WIRE_VERSION } from '../src/protocol/frame.js'
 import type { Caps } from '../src/dsh/caps.js'
 import type { JobControlPort, JobsPort } from '../src/dsh/jobs.js'
+import type { JobSubscriptions } from '../src/job-subscriptions.js'
 import { createFakeAliases } from './support/fake-aliases.js'
 
 /** 什么都不做的任务端口；只用它来"挂着 `job.*`"。 */
@@ -167,6 +168,93 @@ test('两种任务能力可以独立缺失：只列不停 / 都没有', () => {
   const neither = build()
   assert.equal('job.list' in neither, false)
   assert.equal('job.kill' in neither, false)
+})
+
+/** 任务输出订阅注册表：默认什么都不做。 */
+function fakeSubscriptions(overrides: Partial<JobSubscriptions> = {}): JobSubscriptions {
+  return {
+    follow: (input) => Promise.resolve({ from: input.from ?? 0 }),
+    unfollow: () => true,
+    stopAll: () => {},
+    active: 0,
+    ...overrides,
+  }
+}
+
+test('job.follow：把 sid 与 DSH 会话 id 都交给注册表，并回它给出来的起点', async () => {
+  const seen: unknown[] = []
+  const handlers = build({
+    aliases: preloadedAliases(),
+    jobSubscriptions: fakeSubscriptions({
+      follow: (input) => {
+        seen.push(input)
+        return Promise.resolve({ from: 42 })
+      },
+    }),
+  })
+  const handler = handlers['job.follow']
+  assert.ok(handler !== undefined)
+
+  assert.deepEqual(await handler({ sid: 'sid_dsh-1', jobId: 'j1' }, {}), { from: 42 })
+  assert.deepEqual(
+    seen,
+    [{ sid: 'sid_dsh-1', dshSessionId: 'dsh-1', jobId: 'j1' }],
+    '订阅键是 sid（通道的键），宿主流要的是 DSH 会话 id —— 两个都得给',
+  )
+
+  await handler({ sid: 'sid_dsh-1', jobId: 'j1', from: 100 }, {})
+  assert.deepEqual(seen[1], { sid: 'sid_dsh-1', dshSessionId: 'dsh-1', jobId: 'j1', from: 100 })
+})
+
+test('job.follow / job.unfollow：参数与别名不合规就回结构化错误', async () => {
+  const handlers = build({ aliases: preloadedAliases(), jobSubscriptions: fakeSubscriptions() })
+  const follow = handlers['job.follow']
+  const unfollow = handlers['job.unfollow']
+  assert.ok(follow !== undefined && unfollow !== undefined)
+
+  for (const params of [undefined, {}, { sid: 'sid_dsh-1' }, { sid: 'sid_dsh-1', jobId: '' }]) {
+    await assert.rejects(
+      async () => follow(params, {}),
+      (error: unknown) => error instanceof ProtocolError && error.code === 'protocol/bad-frame',
+      `${JSON.stringify(params)} 应当被拒`,
+    )
+  }
+  // 偏移是绝对字节下标：负数 / 小数 / 非数字都不接受。
+  for (const from of [-1, 1.5, '10', null]) {
+    await assert.rejects(
+      async () => follow({ sid: 'sid_dsh-1', jobId: 'j1', from }, {}),
+      (error: unknown) => error instanceof ProtocolError && error.code === 'protocol/bad-frame',
+      `from=${String(from)} 应当被拒`,
+    )
+  }
+
+  await assert.rejects(
+    async () => follow({ sid: 'sid_nobody', jobId: 'j1' }, {}),
+    (error: unknown) => error instanceof ProtocolError && error.code === 'session/not-found',
+  )
+  assert.throws(
+    () => unfollow({ sid: 'sid_nobody', jobId: 'j1' }, {}),
+    (error: unknown) => error instanceof ProtocolError && error.code === 'session/not-found',
+  )
+})
+
+test('job.unfollow：回"有没有真的停掉一个"', () => {
+  const answers = [true, false]
+  const handlers = build({
+    aliases: preloadedAliases(),
+    jobSubscriptions: fakeSubscriptions({ unfollow: () => answers.shift() ?? false }),
+  })
+  const handler = handlers['job.unfollow']
+  assert.ok(handler !== undefined)
+
+  assert.deepEqual(handler({ sid: 'sid_dsh-1', jobId: 'j1' }, {}), { stopped: true })
+  assert.deepEqual(handler({ sid: 'sid_dsh-1', jobId: 'j1' }, {}), { stopped: false })
+})
+
+test('订阅能力缺了：job.follow / job.unfollow 不在表里', () => {
+  const without = build()
+  assert.equal('job.follow' in without, false)
+  assert.equal('job.unfollow' in without, false)
 })
 
 test('job.list：sid 反解回会话，逐字段映射任务行', async () => {

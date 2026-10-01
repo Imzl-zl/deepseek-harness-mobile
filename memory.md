@@ -5,14 +5,14 @@
 
 ## 下一步(新会话从这里开始)
 
-**目标**:把任务输出订阅接完(`job.follow` / `job.unfollow` + 订阅注册表),之后做会话订阅与翻页。
+**目标**:接会话订阅与翻页(`session.subscribe` / `session.page` / `session.unsubscribe`)—— 复用这一轮的订阅机制与背压。
 
 **开工顺序**:
 
-1. **`src/job-subscriptions.ts`**:每个 `(sid, jobId)` **至多一个订阅**;`follow` 幂等(已有订阅返回当前起点),`from` 不同则先终止旧的再起新的(用**代数令牌**防止旧循环继续出帧);出帧前逐帧判 `send` 结果 —— `'paused'` 时 `await connection.whenWritable('job')` 再重试同一帧(**一次只压一帧**,背压自然传回宿主流),`'closed'` 则收工;`status` 到达即正常结束并清表;宿主抛错时发一帧 `error`;`stopAll()` 与**连接离开服务态**共用(回调 `onStateChange`)。
-2. **`job.follow` / `job.unfollow` 两个方法** + `index.ts` 装配(需要一个"出帧"入口:`next.send({v:1,t:'job',sid,box:JSON.stringify(payload)})`)。
-3. **e2e**:手机 follow → 收到解箱后的 `opened`/`output`/`status`;unfollow 后不再有帧;连接断开自动终止(断言宿主流被 abort)。
-4. 之后:会话订阅与翻页(`session.subscribe`/`page`,复用同一套背压与订阅生命周期)、`interactions.ts` 测试缺口、配对流程(§12.1)。
+1. **`session.subscribe(sid, since?)`**:要 `follow` 的**开启帧 `cursor`** 当基线水位(§5.1 的恢复语义:`since` 即同时完成恢复)。出帧走 `ev`(有序号,进重放窗口)与 `live`(易速流),两者都已在"可暂停"集合里 —— 订阅循环可**直接复用** `job-subscriptions.ts` 的三条约定(一次一帧 + `whenWritable`、承诺必兑现、跟连接活);值得把其中通用的部分提取成共享的"订阅"骨架,而不是复制一份。
+2. **`session.page`**:用开启帧的 `cursor` 当 `throughSeq`(§5.3 明说),再向后翻;注意大结果走 `chunk` 路径(§5.3 的 64 KiB 上限)。
+3. **`session.unsubscribe`** 与连接断开共用清理。
+4. 之后:`interactions.ts` 测试缺口、配对流程(§12.1,真机联调最后一块空白)、`relay/` 与手机端 Dart。
 
 协议本身已定稿,**不需要再决策**;`docs/subsystems/remote-channel.md` 是唯一规格源,`protocol/fixtures/` 与 `protocol/vectors/` 是它的可执行部分。
 
@@ -37,7 +37,7 @@
 | `node app/tools/verify-platform-boundary.mjs` | 17 项(含 13 条规则自检):多端边界与 `Platform.isOhos` 禁令 |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
 | `cd connector && pnpm exec tsc --noEmit` | connector 类型检查(改 `connector/src/**` 后必跑) |
-| `cd connector && pnpm test` | connector 全套 **183 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**49 项**),外加握手驱动 / 封箱 / 流控 / 任务帧 / 方法面 / 幂等 / 四个 DSH 适配器 / 连接级 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
+| `cd connector && pnpm test` | connector 全套 **199 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**49 项**),外加握手驱动 / 封箱 / 流控 / 任务帧 / 方法面 / 幂等 / 四个 DSH 适配器 / 连接级 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
 | `cd connector && pnpm build` | 产出 `lib/index.js` + `lib/index.d.ts`(装进 profile 的那份产物) |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker`;跑法见 `tools.md` |
 
@@ -66,7 +66,8 @@
 - **电脑侧身份种子有落点了**:`ctx.credentials` 具名记录面(`dsh-mobile-connector/identity`,grant 载荷),首启生成一次、读不懂就抛错**绝不覆盖**;`credentials` 因此从可选升为必需服务。**未实测**:真实 `credentials-local` 上的写入(记录面语义由单测覆盖,服务存在性由 `--dump-config` 证实)。
 - **业务帧的封箱已落地**:`protocol/box.ts` —— 除握手三帧与 `presence` 外**每帧都封箱**(控制帧封空载荷:`fc` 在 AAD 里,不认证就等于让未认证的数字驱动重放窗口),箱 = `base64url(密文‖tag)`,**重放窗口只在认证通过后推进**。封箱是连接层出帧/收帧的单一收口(`write` 里"分配 `fc`"与"封箱"紧挨着),上层看到的 `box` 永远是明文;`secure` 把握手与密码器绑成一个对象,配了就不可能明文上线。证据:连接级 e2e 用**手机侧独立实现**(自己拼 nonce/AAD/容器,不 import `box.ts`)双向跑通,篡改/重放/缺 box 三种形状各有关连接的错误码。取舍见 `.agents/notes/implemented/2026-10-01-business-frame-sealing.md`。
 - **流控已接线**:W=128 窗口 + "收到即回 `credit`";`credit` 的 `fc` 是它自己的序号、**被确认的序号在箱里**(`{"ack":N}`,累计确认,QUIC 同形),`credit` 自己不再回 `credit`;满窗**只压可补的两类**(`ev`/`live`)—— 压 `res` 会死锁;暂停不是丢弃(队列里的帧等 `credit` 到达再放)。取舍与被否方案见 `.agents/notes/implemented/2026-10-01-flow-control-wiring.md`。
-- **方法面已接线,5/22 个方法可用**:`src/method-face.ts`(解信封 → 分发 → 封 `res`,从不抛、从不碰 `fc`/封箱,返回值收窄成 `ResFrame`)+ `src/handlers.ts`(**"实现了什么"的唯一出处**:`repo.info` 报的就是这张表的键;可选服务的方法**按需挂**)。已实现 `repo.info` / `devices.list` / `session.list` / `job.list` / `job.kill`;其余回 `connector/unsupported`。带 `sid` 的方法有两条统一规则(契约 §5.7):**别名未知 → `session/not-found`,形状不对 → `protocol/bad-frame`;绝不回空列表**。取舍见 `.agents/notes/implemented/2026-10-01-method-face-wiring.md`、`...-job-list-and-sid-resolution.md`、`...-job-kill-host-facade.md`。
+- **方法面已接线,7/22 个方法可用**:`src/method-face.ts`(解信封 → 分发 → 封 `res`,从不抛、从不碰 `fc`/封箱,返回值收窄成 `ResFrame`)+ `src/handlers.ts`(**"实现了什么"的唯一出处**:`repo.info` 报的就是这张表的键;可选服务的方法**按需挂**)。已实现 `repo.info` / `devices.list` / `session.list` / `job.list` / `job.kill` / `job.follow` / `job.unfollow`;其余回 `connector/unsupported`。带 `sid` 的方法有两条统一规则(契约 §5.7):**别名未知 → `session/not-found`,形状不对 → `protocol/bad-frame`;绝不回空列表**。取舍见 `.agents/notes/implemented/2026-10-01-method-face-wiring.md`、`...-job-list-and-sid-resolution.md`、`...-job-kill-host-facade.md`、`...-job-output-subscription.md`。
+- **任务输出订阅已通**:`src/job-subscriptions.ts` —— 每个 `(sid, jobId)` 至多一条宿主流(`follow` 幂等,`from` 不同则先终止旧的);**背压一次只压一帧**(满窗 `await whenWritable` 再重发同一帧,压住消费端即压住宿主流,不缓冲);**挂起的承诺必被兑现**(被替换/收起/断开时回 `internal`,否则方法面永远挂着);**订阅跟着连接活**(离开服务态即全停)。终结机制**只有 abort 一条**(变异校验查出原来多写了一个不可达判据,已删)。取舍见 `.agents/notes/implemented/2026-10-01-job-output-subscription.md`。
 - **`session.list` 已落地**:清单取自 `sessionController.list`(权威、**已按活动排序**、且是已有必需服务),**不带标题**(该面不返回标题;`session-title` 读的是活的 `Session`,落盘-only 拿不到 → 契约 §5.7 那一行已改写明);别名在方法面合成,给手机的行**逐字段构造**(DSH 会话 id 绝不过线,e2e 有断言)。取舍与欠账见 `.agents/notes/implemented/2026-10-01-session-list-wiring.md`。
 - **任务输出的传输底座已就位(订阅注册表与方法还没写)**:新增帧类型 `job`(`{v,t,sid,fc,box}`,无 `seq`)—— 契约术语表把 `live` 的 `stream` 定死为「assistant 尝试的流 id」,而手机对 `rev` 的读法是「跳跃即丢流」,任务输出的推进量却是**字节偏移**(会跳号),复用会让手机丢掉正在渲染的 assistant 文本。载荷三帧**照宿主 `jobController.follow` 一对一**(`opened`/`output`/`status`,宿主已做 100 ms 合并与 64 KiB 限帧),另加一帧 `error`(宿主出错就是抛,而设计要求手机显式渲染中断)。**满窗恢复信号 `connection.whenWritable(type)`** 已补(任务输出是第一个由调用方驱动的可补流;此前 `send` 回 `false` 后没有任何"窗口空了"的通知)。**顺带修掉一处两个真值源**:`protocol/frame.ts` 的 `FRAME_TYPES` 旧清单(8 项,含化石 `'ack'`)与 codec 的 13 项清单已漂移,现在真值只有 `frame.ts` 一份。取舍见 `.agents/notes/implemented/2026-10-01-job-output-transport-shape.md`。
 - **订阅过滤的真缺陷已修**:`jobs` 的无主事件有**两种形状**(`job.owner` 与事件自己的 `owner`),旧过滤只排前一种,导致无主任务的 `output` 插进每个会话的流。取舍与被否方案见 `.agents/notes/implemented/2026-10-01-jobs-event-owner-shapes.md`。
@@ -85,6 +86,10 @@
 - 当前最挡路的一条:CDP 端口可能要换 —— 9222 被日常 Chrome 占用,9400 也可能被上一轮遗留的 headless Chrome 占着,开新端口前先探 `/json/version`。
 
 ## 最近活跃窗口
+
+- 2026-10-01 任务输出订阅接通(本轮):方法面 **7/22**,手机第一次能真的看任务输出。四处定案:① **每个 `(sid,jobId)` 至多一条宿主流** —— 重复 follow 幂等(`from` 不同则先终止旧的),因为输出帧**没有去重键**(它的"修订号"是字节偏移,同一段推两遍两帧看起来一样,手机只能渲染成重复);② **背压一次只压一帧**(满窗 `await whenWritable` 再重发同一帧)—— 宿主流本来就是按需拉的 `AsyncIterable`,停在这里天然把背压传回去,**不需要缓冲队列**;③ **挂起的承诺必被兑现**(被替换/收起/断开时回 `internal`),否则一个 `req` 永远等不到 `res`;④ **订阅跟着连接活**。**变异校验查出并删掉一处不可达代码**:外层"是不是当前订阅"的判据在(替换/收起/停止都 abort、迭代器在 `next()` 里就中止)的结构下永远不会执行 —— 改成只靠 abort 一条机制,并把承重的 `finally` 判据与"卡在满窗时被收起"补成会红的用例。顺带把 `job.list` 的响应行收敛到适配器那一个投影(`job.list`/`opened`/`status` 三处同形状)。证据:`pnpm test` **199 项**、`tsc` 0、`pnpm build`、三条 protocol 门禁 486/26/49、多端边界 17;六处变异 ㊾㊿(51)(52)(53) 命中(含 e2e 的"断开全停")。取舍见 `.agents/notes/implemented/2026-10-01-job-output-subscription.md`。
+
+- 2026-10-01 任务输出的传输形状定案:新增帧类型 **`job`**(不是复用 `live` —— 契约把 `live` 的 `stream` 定死为 assistant 尝试的流 id,手机对 `rev` 的读法是"跳跃即丢流",而任务输出的推进量是**字节偏移**);载荷三帧照宿主 `jobController.follow` 一对一,另加一帧 `error`。**压出一个底座洞并修掉**:`send` 满窗回 `false` 后没有任何"窗口空了"的通知,而 §4.3 要求压住而不是丢弃 —— 补 `whenWritable(type)`。顺带收掉两处重复真值(帧类型清单、攒批集合)。取舍见 `.agents/notes/implemented/2026-10-01-job-output-transport-shape.md`。
 
 - 2026-10-01 任务输出的传输形状定案(本轮):新增帧类型 **`job`**,而不是复用 `live` —— 契约把 `live` 的 `stream` 定死为「assistant 尝试的流 id」,手机对 `rev` 的读法是「跳跃即丢流」,而任务输出的推进量是**字节偏移**(会跳号),复用会让手机丢掉正在渲染的 assistant 文本;而"给字段第二个含义"正是 `credit` 那处已否掉的做法。载荷三帧照宿主 `jobController.follow` 一对一(宿主已做 100 ms 合并与 64 KiB 限帧,不自己写观察循环),另加一帧 `error`(宿主出错就是抛,而设计要求手机显式渲染中断)。**压出一个底座洞并修掉**:`send` 满窗回 `false` 后没有任何"窗口空了"的通知,而 §4.3 要求压住而不是丢弃 —— 补 `whenWritable(type)`(窗口释放时兑现,**离开服务态也兑现**,否则发送方永远挂着)。**顺带收掉两处重复真值**:`protocol/frame.ts` 的 8 项旧清单(含化石 `'ack'`)与 codec 的 13 项清单已漂移;攒批集合与"可暂停"集合本是两份却必须同组 —— 现在前者只有 `FRAME_TYPES` 一份、后者由 `pausable` 派生。证据:`pnpm test` **183 项**、`tsc` 0、`pnpm build`、三条 protocol 门禁 486/26/49、多端边界 17;四处变异 ㊺㊻㊼㊽ 命中,其中 ㊼ **第一次没让用例红** —— 第一版是无界 `await pending`,被"连接自己断开"这条别的路径满足了(跑了 16 秒仍绿);改成有界等待 + 断言"连接还活着"后 0.9 秒精确红(教训已进 `tools.md`)。取舍见 `.agents/notes/implemented/2026-10-01-job-output-transport-shape.md`;**订阅注册表与两个方法留到下一轮**(方法面仍是 5/22)。另有一起自伤记录在 `docs/postmortem/2026-10-01-source-file-overwritten-by-shell-edit.md`,规则已进 `AGENTS.md` §6。
 

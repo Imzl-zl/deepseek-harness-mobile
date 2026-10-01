@@ -57,6 +57,7 @@ import { METRIC, createChannelLogger, createMetrics, type ChannelLogger, type Ch
 import { createAliases, type Aliases } from './alias.js'
 import type { JobRegistry } from '@deepseek-ai/dsh-jobs'
 import { createJobsPort, createJobControlPort, type JobControlService } from './dsh/jobs.js'
+import { createJobSubscriptions } from './job-subscriptions.js'
 import { createSessionsAdapter } from './dsh/sessions.js'
 import type { DeviceRecord } from './store/index.js'
 import { coreDomain, initialMeta, migrateMeta, windowsDomain } from './store/index.js'
@@ -309,6 +310,28 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           if (removed > 0) logger.debug(`幂等表挂载时收敛：清掉 ${removed} 条过期/超容条目`)
         }
 
+        // 任务控制是**另一个**可选服务（`dsh-web-app` 提供，base 没有）：缺了就只列不停。
+        const jobControl =
+          ctx.get('jobController') === undefined
+            ? null
+            : createJobControlPort(ctx.get('jobController') as JobControlService)
+        // 输出订阅：注册表要"往连接里出帧"，而连接在这一步里已由 `next` 代表。
+        // 出帧三态在这里归一：不在服务态 → `'closed'`（别发了）；满窗 → `'paused'`（等窗口）。
+        const jobSubscriptions =
+          jobControl === null
+            ? null
+            : createJobSubscriptions({
+                source: jobControl,
+                send: (sid, output) => {
+                  if (next.state !== 'serving') return 'closed'
+                  return next.send({ v: 1, t: 'job', sid, box: JSON.stringify(output) })
+                    ? 'sent'
+                    : 'paused'
+                },
+                waitWritable: () => next.whenWritable('job'),
+                log: logger,
+              })
+
         const methodFace = createMethodFace({
           handlers: createHandlers({
             caps: () => readCaps(ctx),
@@ -319,10 +342,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             ...(ctx.get('jobs') === undefined
               ? {}
               : { jobs: createJobsPort(ctx.get('jobs') as JobRegistry) }),
-            // 任务控制是**另一个**可选服务（`dsh-web-app` 提供，base 没有）：缺了就只列不停。
-            ...(ctx.get('jobController') === undefined
-              ? {}
-              : { jobControl: createJobControlPort(ctx.get('jobController') as JobControlService) }),
+            ...(jobControl === null ? {} : { jobControl }),
+            ...(jobSubscriptions === null ? {} : { jobSubscriptions }),
             aliases: {
               ensure: (dshSessionId) => {
                 if (aliases === null) {
@@ -388,6 +409,9 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             metrics.increment(METRIC.stateTransitions)
             if (to === 'connecting') metrics.increment(METRIC.connects)
             logger.debug(`连接状态 ${from} → ${to}`)
+            // 连接一离开服务态，任务输出订阅全部终止：手机这一侧收不到任何东西，
+            // 让它重连后自己按 `from` 重订（宿主流不会为断了的连接白跑）。
+            if (from === 'serving' && to !== 'serving') jobSubscriptions?.stopAll()
           },
           onFrame: (frame: WireFrame) => {
             metrics.increment(METRIC.inboundFrames)

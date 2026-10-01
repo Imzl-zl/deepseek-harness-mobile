@@ -127,13 +127,11 @@ dsh plugin --profile <name> add <connector 本地路径>
 **接线到哪一步了**(真机联调前先看这一句):连接层已经完整 —— 三帧握手、会话密钥、
 每一种业务帧的 AEAD 封箱/解封、§4.3 的流控(W=128、收到即回 `credit`、满窗只压 `ev`/`live`),
 连接级 e2e 用手机侧的**独立实现**双向跑通过;方法面与 §5.6 的幂等管道也在。
-方法面当前 **5/22**:`repo.info` / `devices.list` / `session.list`(会话清单,不含标题 ——
-该面不返回标题,契约 §5.7 已写明)/ `job.list`(任务清单)/ `job.kill`(停止,走宿主的人发起门面);
-**缺服务的部署里这些方法根本不在表里**(`job.list` 要 `jobs`、`job.kill` 要 `jobController`)。
-任务输出的**传输底座**已就位(帧类型 `job` 与满窗恢复信号),但订阅注册表与
-`job.follow` / `job.unfollow` 两个方法还没接,所以手机暂时看不到任务输出。
-其余回 `connector/unsupported`。
-所以下面 5.1 的"发一句 / 回一句"还差:任务输出订阅、会话订阅与翻页
+方法面当前 **7/22**:`repo.info` / `devices.list` / `session.list`(会话清单,不含标题 ——
+该面不返回标题,契约 §5.7 已写明)/ `job.list`(任务清单)/ `job.kill`(停止,走宿主的人发起门面)/
+`job.follow` + `job.unfollow`(任务输出订阅:每任务至多一条流、可换起点、跟着连接活);
+**缺服务的部署里这些方法根本不在表里**(`job.*` 要 `jobs` 与 `jobController`)。其余回 `connector/unsupported`。
+所以下面 5.1 的"发一句 / 回一句"还差:会话订阅与翻页
 (`session.subscribe`/`page`,要 `follow` 的 `cursor` 与订阅生命周期)、
 带键的写方法(`session.prompt` 等)、以及能产出设备行的配对流程(§12.1)。
 

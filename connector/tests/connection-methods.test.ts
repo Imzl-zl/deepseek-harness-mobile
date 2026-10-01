@@ -20,6 +20,8 @@ import { createFakeAliases } from './support/fake-aliases.js'
 import { ProtocolError } from '../src/protocol/errors.js'
 import { completeHandshake, start, type Fixture } from './support/secure-connection.js'
 import type { SessionKeys } from '../src/protocol/crypto.js'
+import type { JobSubscriptions } from '../src/job-subscriptions.js'
+import { createControllableSource } from './support/job-stream.js'
 
 const CAPS = {
   sessions: true,
@@ -32,7 +34,7 @@ const CAPS = {
   credentials: true,
 } as const
 
-function fixtureHandlers() {
+function fixtureHandlers(subscriptions: JobSubscriptions | null = null) {
   return createHandlers({
     caps: () => ({ ...CAPS }),
     aliasVersion: () => 7,
@@ -81,7 +83,23 @@ function fixtureHandlers() {
       },
       follow: () => (async function* () {})(),
     },
+    ...(subscriptions === null ? {} : { jobSubscriptions: subscriptions }),
   })
+}
+
+/** 手机侧解出收到的所有 `job` 帧载荷（用手机侧自己那份封箱实现）。 */
+function jobPayloadsOf(f: Fixture, keys: SessionKeys): unknown[] {
+  return f.peer.received
+    .filter((frame) => frame.t === 'job')
+    .map((frame) =>
+      JSON.parse(
+        phoneOpenBox({
+          keys,
+          header: { t: 'job', fc: frame.fc, sid: frame.sid },
+          box: frame.box,
+        }),
+      ),
+    )
 }
 
 /** 手机侧发一个封装好的 `req`。 */
@@ -302,6 +320,112 @@ test('端到端：手机点停止 —— 受理回执，外来任务回 job/not-
   assert.equal(foreign.envelope['code'], 'job/not-found')
   assert.equal(f.connection.state, 'serving')
   assert.deepEqual(f.closes, [])
+})
+
+test('端到端：手机订任务输出 —— 三帧解得出，unfollow 停流，连接断开全停', async (t) => {
+  const { source, streams } = createControllableSource()
+  const f = await start(t, {
+    handlers: (subscriptions) => fixtureHandlers(subscriptions),
+    jobSource: source,
+  })
+  f.connection.start()
+  await waitFor('进入 handshake', () => f.connection.state === 'handshake')
+  const keys = await completeHandshake(f)
+
+  // 先拿 sid（真实流程：列会话 → 展开任务）。
+  sendRequest(f, keys, 0, 'req_mmmmmmmmmmmm', '{"method":"session.list"}')
+  await waitFor('收到会话清单', () => f.peer.received.some((frame) => frame.t === 'res'))
+  const sid = (responseOf(f, keys, 0).envelope['result'] as { sessions: { sid: string }[] })
+    .sessions[0]?.sid
+
+  // 订阅：手机要等宿主的 opened 帧才有应答，所以先发请求、再推帧。
+  sendRequest(
+    f,
+    keys,
+    1,
+    'req_nnnnnnnnnnnn',
+    `{"method":"job.follow","params":{"sid":"${String(sid)}","jobId":"j1"}}`,
+  )
+  await waitFor('宿主流开起来了', () => streams.length === 1)
+  streams[0]?.push({
+    kind: 'opened',
+    jobId: 'j1',
+    from: 0,
+    job: { id: 'j1', kind: 'shell', label: '构建', status: 'running', startedAt: 10, outputTotal: 0 },
+  })
+  await waitFor('收到 follow 的应答', () => f.peer.received.filter((frame) => frame.t === 'res').length >= 2)
+  const followed = responseOf(f, keys, 1)
+  assert.equal(followed.ok, true)
+  assert.deepEqual(followed.envelope['result'], { from: 0 }, '起点由宿主说了算，插件只转达')
+
+  streams[0]?.push({
+    kind: 'output',
+    jobId: 'j1',
+    chunks: [{ at: 0, text: '编译中…', channel: 'stdout' }],
+    next: 12,
+  })
+  await waitFor('收到输出帧', () => f.peer.received.filter((frame) => frame.t === 'job').length >= 2)
+
+  // 手机侧用自己的封箱实现解开这些帧（两端独立实现能对上，才算真的通了）。
+  assert.deepEqual(jobPayloadsOf(f, keys), [
+    {
+      kind: 'opened',
+      jobId: 'j1',
+      from: 0,
+      job: { id: 'j1', kind: 'shell', label: '构建', status: 'running', startedAt: 10, outputTotal: 0 },
+    },
+    { kind: 'output', jobId: 'j1', chunks: [{ at: 0, text: '编译中…', channel: 'stdout' }], next: 12 },
+  ])
+
+  // 收起面板 → 停流（宿主那条流必须被中止，不能让它为没人看的输出白跑）。
+  sendRequest(
+    f,
+    keys,
+    2,
+    'req_oooooooooooo',
+    `{"method":"job.unfollow","params":{"sid":"${String(sid)}","jobId":"j1"}}`,
+  )
+  await waitFor('收到 unfollow 的应答', () => f.peer.received.filter((frame) => frame.t === 'res').length >= 3)
+  assert.deepEqual(responseOf(f, keys, 2).envelope['result'], { stopped: true })
+  assert.equal(streams[0]?.signal.aborted, true, 'unfollow 必须真的中止宿主流')
+  assert.equal(f.subscriptions?.active, 0)
+  assert.deepEqual(f.closes, [], '整个过程连接都不该被关掉')
+})
+
+test('端到端：连接断开时任务输出订阅全停（手机收不到，重连后自己按 from 重订）', async (t) => {
+  const { source, streams } = createControllableSource()
+  const f = await start(t, {
+    handlers: (subscriptions) => fixtureHandlers(subscriptions),
+    jobSource: source,
+  })
+  f.connection.start()
+  await waitFor('进入 handshake', () => f.connection.state === 'handshake')
+  const keys = await completeHandshake(f)
+
+  sendRequest(f, keys, 0, 'req_pppppppppppp', '{"method":"session.list"}')
+  await waitFor('收到会话清单', () => f.peer.received.some((frame) => frame.t === 'res'))
+  const sid = (responseOf(f, keys, 0).envelope['result'] as { sessions: { sid: string }[] })
+    .sessions[0]?.sid
+
+  sendRequest(
+    f,
+    keys,
+    1,
+    'req_qqqqqqqqqqqq',
+    `{"method":"job.follow","params":{"sid":"${String(sid)}","jobId":"j1"}}`,
+  )
+  await waitFor('宿主流开起来了', () => streams.length === 1)
+  streams[0]?.push({
+    kind: 'opened',
+    jobId: 'j1',
+    from: 0,
+    job: { id: 'j1', kind: 'shell', label: '构建', status: 'running', startedAt: 10, outputTotal: 0 },
+  })
+  await waitFor('订阅就位', () => f.subscriptions?.active === 1)
+
+  f.connection.stop()
+  await waitFor('订阅被清空', () => f.subscriptions?.active === 0)
+  assert.equal(streams[0]?.signal.aborted, true, '断开即中止宿主流')
 })
 
 test('端到端：连着问两件事，两个应答各自对得上自己的 id', async (t) => {

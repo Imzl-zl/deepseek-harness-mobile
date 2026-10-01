@@ -23,6 +23,7 @@ import { ProtocolError } from './protocol/errors.js'
 import type { MethodHandler, MethodName } from './protocol/methods.js'
 import type { Caps } from './dsh/caps.js'
 import type { JobControlPort, JobsPort } from './dsh/jobs.js'
+import type { JobSubscriptions } from './job-subscriptions.js'
 import type { SessionSummaryRow } from './dsh/sessions.js'
 
 /** 设备清单里的一行。**不含公钥** —— 手机不需要别人的公钥，少发一个字段就少一处泄漏面。 */
@@ -74,9 +75,30 @@ export interface HandlerDeps {
    * 只装 base 的部署能列任务但停不了，那时 `job.*` 里就只有 `job.list`。
    */
   jobControl?: JobControlPort
+  /**
+   * 任务输出订阅（同样只在 `jobController` 在的时候才有）。
+   *
+   * 与 `jobControl` 分开传是因为注册表还需要"怎么出帧"与"窗口满了等谁"——
+   * 那两件事属于连接层，装配时才知道（见 `index.ts` 的 `start-transport`）。
+   */
+  jobSubscriptions?: JobSubscriptions
 }
 
 export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, MethodHandler>> {
+  /**
+   * 取一个**形状合法**的 `sid`（契约 §5.7：形状不对是请求不合法，不是数据不存在）。
+   *
+   * 与 `requireSession` 分开是因为带 `sid` 的方法有两件事要做：先校验形状，再查别名。
+   * 订阅类方法还要把 `sid` **原样留着**当订阅键（它是通道的键，不是 DSH 会话 id）。
+   */
+  const requireSid = (params: unknown): string => {
+    const sid = paramOf(params, 'sid')
+    if (typeof sid !== 'string' || sid === '') {
+      throw new ProtocolError('protocol/bad-frame', 'sid 必填')
+    }
+    return sid
+  }
+
   /**
    * 把一个 `sid` 反解回 DSH 会话 id（契约 §5.1：手机与中继只见 `sid`）。
    *
@@ -84,15 +106,21 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
    * （"这个会话没有任务"），而事实是"我不认识这个会话"。所以回 `session/not-found`
    * ——§3.1 给它的客户端行为就是「从列表移除」，正是这里该发生的事。
    */
-  const requireSession = (sid: unknown): string => {
-    if (typeof sid !== 'string' || sid === '') {
-      throw new ProtocolError('protocol/bad-frame', 'sid 必填')
-    }
+  const requireSession = (sid: string): string => {
     const dshSessionId = deps.aliases.sessionOf(sid)
     if (dshSessionId === undefined) {
       throw new ProtocolError('session/not-found', `未知的会话别名：${sid}`)
     }
     return dshSessionId
+  }
+
+  /** 取一个非空字符串参数（`jobId` 之类）。 */
+  const requireString = (params: unknown, key: string): string => {
+    const value = paramOf(params, key)
+    if (typeof value !== 'string' || value === '') {
+      throw new ProtocolError('protocol/bad-frame', `${key} 必填`)
+    }
+    return value
   }
 
   /** 取 `params.sid`（形状不对留给 `requireSession` 报 `protocol/bad-frame`）。 */
@@ -140,19 +168,11 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
   if (deps.jobs !== undefined) {
     const jobs = deps.jobs
     handlers['job.list'] = (params) => {
-      const dshSessionId = requireSession(sidOf(params))
+      const dshSessionId = requireSession(requireSid(params))
       return {
-        jobs: jobs.listOwnedBy(dshSessionId).map((row) => ({
-          id: row.id,
-          kind: row.kind,
-          label: row.label,
-          status: row.status,
-          startedAt: row.startedAt,
-          outputTotal: row.outputTotal,
-          ...(row.progress === undefined ? {} : { progress: row.progress }),
-          ...(row.detail === undefined ? {} : { detail: row.detail }),
-          ...(row.finishedAt === undefined ? {} : { finishedAt: row.finishedAt }),
-        })),
+        // 适配器给的行**就是**给手机的形状（同一个投影：`protocol/job-output.ts` 的 `JobRowView`），
+        // 这里不再抄一遍字段 —— 抄一遍就多一处会漂移的地方。
+        jobs: jobs.listOwnedBy(dshSessionId),
       }
     }
   }
@@ -160,13 +180,37 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
   if (deps.jobControl !== undefined) {
     const control = deps.jobControl
     handlers['job.kill'] = (params) => {
-      const dshSessionId = requireSession(sidOf(params))
-      const jobId = paramOf(params, 'jobId')
-      if (typeof jobId !== 'string' || jobId === '') {
-        throw new ProtocolError('protocol/bad-frame', 'jobId 必填')
-      }
+      const dshSessionId = requireSession(requireSid(params))
+      const jobId = requireString(params, 'jobId')
       // 归属围栏与取消原因都在宿主门面里（见 `dsh/jobs.ts`）；这里只把它的结论转达给手机。
       return { outcome: control.kill(dshSessionId, jobId) }
+    }
+  }
+
+  if (deps.jobSubscriptions !== undefined) {
+    const subscriptions = deps.jobSubscriptions
+    handlers['job.follow'] = async (params) => {
+      const sid = requireSid(params)
+      const dshSessionId = requireSession(sid)
+      const jobId = requireString(params, 'jobId')
+      const from = paramOf(params, 'from')
+      if (from !== undefined && (typeof from !== 'number' || !Number.isSafeInteger(from) || from < 0)) {
+        // 偏移是**绝对字节下标**：负数或小数说明对端理解错了协议，早点吵比拿它去读盘好。
+        throw new ProtocolError('protocol/bad-frame', 'from 必须是非负整数')
+      }
+      return subscriptions.follow({
+        sid,
+        dshSessionId,
+        jobId,
+        ...(from === undefined ? {} : { from }),
+      })
+    }
+
+    handlers['job.unfollow'] = (params) => {
+      const sid = requireSid(params)
+      requireSession(sid)
+      const jobId = requireString(params, 'jobId')
+      return { stopped: subscriptions.unfollow(sid, jobId) }
     }
   }
 

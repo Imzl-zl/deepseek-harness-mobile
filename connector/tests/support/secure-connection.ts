@@ -22,6 +22,11 @@ import {
 } from '../../src/protocol/handshake-driver.js'
 import type { MethodHandler, MethodName } from '../../src/protocol/methods.js'
 import type { Idempotency } from '../../src/idempotency.js'
+import {
+  createJobSubscriptions,
+  type JobFollowSource,
+  type JobSubscriptions,
+} from '../../src/job-subscriptions.js'
 import { createMethodFace } from '../../src/method-face.js'
 import { createConnection, type Connection } from '../../src/transport/connection.js'
 import { startPeer, waitFor, type Peer } from './peer.js'
@@ -49,15 +54,33 @@ export interface Fixture {
   closes: { code: number; reason: string }[]
   /** 在握手阶段就挂上关闭监听 —— 连接被关得很快，晚了就抓不到。 */
   watchClose(): void
+  /** 任务输出订阅注册表（只在给了 `jobSource` 时非空）。 */
+  subscriptions: JobSubscriptions | null
 }
 
 /** 起对端 + 连接，并注册清理。 */
 export async function start(
   t: Cleanup,
   options: {
-    handlers?: Partial<Record<MethodName, MethodHandler>>
+    /**
+     * 方法表。
+     *
+     * 两种写法都收：直接给表（多数用例），或给一个"拿到订阅注册表再建表"的工厂
+     * （订阅要往连接里出帧，而注册表必须先于方法面建出来 —— 见 `jobSource`）。
+     */
+    handlers?:
+      | Partial<Record<MethodName, MethodHandler>>
+      | ((subscriptions: JobSubscriptions | null) => Partial<Record<MethodName, MethodHandler>>)
     /** 给了它就装幂等执行（与 `index.ts` 的装配一致）。 */
     idempotency?: Idempotency
+    /**
+     * 给了它就装任务输出订阅注册表（与 `index.ts` 的装配一致）。
+     *
+     * **可变引用是必需的**：注册表要往连接里出帧，而连接在注册表之后才建出来。
+     * 产品代码里两者都在同一个 `start-transport` 步骤里（`next` 已在手），
+     * 只有 fixture 需要这样绕一下。
+     */
+    jobSource?: JobFollowSource
   } = {},
 ): Promise<Fixture> {
   const pc = deriveIdentity(PC_SEED)
@@ -76,12 +99,27 @@ export async function start(
   const established: HandshakeEstablishment[] = []
   const frames: WireFrame[] = []
   const closes: { code: number; reason: string }[] = []
+  /** 连接晚于注册表建出来，所以注册表通过这两个闭包引用它（见 `jobSource` 的说明）。 */
+  let wired: Connection | null = null
+  const subscriptions =
+    options.jobSource === undefined
+      ? null
+      : createJobSubscriptions({
+          source: options.jobSource,
+          send: (sid, output) => {
+            if (wired === null || wired.state !== 'serving') return 'closed'
+            return wired.send({ v: 1, t: 'job', sid, box: JSON.stringify(output) }) ? 'sent' : 'paused'
+          },
+          waitWritable: () => (wired === null ? Promise.resolve() : wired.whenWritable('job')),
+        })
   /** 给了 handlers 才装方法面 —— 握手与流控那两组用例不需要它。 */
+  const handlerTable =
+    typeof options.handlers === 'function' ? options.handlers(subscriptions) : options.handlers
   const face =
-    options.handlers === undefined
+    handlerTable === undefined
       ? null
       : createMethodFace({
-          handlers: options.handlers,
+          handlers: handlerTable,
           ...(options.idempotency === undefined ? {} : { idempotency: options.idempotency }),
         })
 
@@ -118,8 +156,14 @@ export async function start(
     },
     heartbeatMs: 5_000,
     batchMs: 30,
+    // 与产品装配一致：连接离开服务态即终止任务输出订阅（手机收不到，它重连后自己按 from 重订）。
+    onStateChange: (from, to) => {
+      if (from === 'serving' && to !== 'serving') subscriptions?.stopAll()
+    },
   })
+  wired = connection
   t.after(async () => {
+    subscriptions?.stopAll()
     connection.stop()
     await peer.close()
   })
@@ -131,6 +175,7 @@ export async function start(
     established,
     frames,
     closes,
+    subscriptions,
     watchClose: () => {
       peer.sockets.at(-1)?.on('close', (code: number, reason: Buffer) => {
         closes.push({ code, reason: reason.toString() })
