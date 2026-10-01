@@ -87,7 +87,7 @@ type Frame =
   // 连接层:保活与流控信用(空载荷也要封箱,理由见下)
   | { v: 1; t: 'ping';        fc: number; box: string }
   | { v: 1; t: 'pong';        fc: number; box: string }
-  | { v: 1; t: 'credit';      fc: number; box: string }
+  | { v: 1; t: 'credit';      fc: number; box: string }   // box = { ack } —— 见 §4.3
   // 会话层:请求 / 应答 / 事件 / 落盘水位
   | { v: 1; t: 'req';  id: string; sid?: string; fc: number; box: string }
   | { v: 1; t: 'res';  id: string; sid?: string; fc: number; ok: true;  box: string }
@@ -192,8 +192,15 @@ seed(32B, 存系统安全存储)
 
 ### 4.3 流控
 
-- 发送方维护 `unacked`(已发未收 `credit` 的帧数),上限 **W = 128 帧**;达到上限即暂停发送(优先暂停 `ev` 与 `live`,`ping` / `pong` 不占额度)。
-- 接收方**每收到一帧立即回 `credit { fc }`**(不要求落盘)——这是**连接层信用**,与会话层的落盘水位是两件事。
+- 发送方维护 `unacked`(已发未收 `credit` 的帧数),上限 **W = 128 帧**;达到上限即**暂停**发送(不是丢弃)。
+  暂停的**只有可补的两类**(`ev` / `live`)—— 其余帧是对端在等的应答(`res`)或正确性依赖的水位(`persisted`)与信用(`credit`),
+  压住它们会死锁:手机在等 `res`,而 `res` 因为窗口满发不出去。`ping` / `pong` 不占额度。
+- 接收方**每收到一帧立即回 `credit`**(不要求落盘)—— 这是**连接层信用**,与会话层的落盘水位是两件事。
+  - **`credit` 的 `fc` 是它自己的帧序号,被确认的序号在箱里**:`box = {"ack": N}` 表示"我已收到 `[0, N]`"(累计确认;单 TCP 流保序,所以不需要区间集合)。
+    两件事必须分开:帧头的 `fc` 是**发送方向**的计数器(nonce 与重放防护的唯一来源,§4.2),而 `ack` 说的是**对端**的计数器 —— 若用同一个字段表示,`credit` 就成了唯一一个 `fc` 语义例外的帧,重放守卫与 nonce 派生都得为它开洞。
+    同 QUIC 的形状:ACK 帧承载确认信息,而它所在的包有**自己的**包号。
+  - 把 `ack` 放进箱里同时解决了**伪造**:不经认证的 ack 能让对端误以为窗口已放开,额度形同虚设。
+  - **`credit` 自己不再回 `credit`**:如果它也要被确认,两端就会互相刷 ack 停不下来(同 QUIC 里 ACK 帧不是 ack-eliciting 的处理)。
 - 会话层落盘水位用 `persisted { sid, seq }`:手机**落盘后**才发;电脑侧据此裁剪增量缓冲(§5.5),并允许中转裁剪重放窗口。
 - 两层分离的理由:流控要求即时反馈,落盘要求持久确认;混用一个 ack 会让两者互相拖累(等 fsync 才能继续收帧)。
 

@@ -5,14 +5,13 @@
 
 ## 下一步(新会话从这里开始)
 
-**目标**:让手机真的能"发一句、收到一句" —— 也就是**方法面 + 流控**这一层。
+**目标**:让手机真的能"发一句、收到一句" —— 也就是**方法面**这一层(流控与封箱都已就绪)。
 
 **开工顺序**:
 
-1. **流控接线**(§4.3):`flow.ts` 的 W=128 发送窗口与"收到即回 `credit`"还没接到收发路径上。它是方法面之前该做的事 —— 没有它,一次大回复会把对端缓冲打满。
-2. **方法面 handler**:`protocol/methods.ts` 的 22 个方法名与分发骨架已就绪(幂等键强制、分发器不抛);逐个接上 `src/dsh/` 的适配器(`req` → dispatch → `res`,按 `id` 关联)。当前一律回 `connector/unsupported`。
-3. **配对流程(§12.1)**:二维码 / 配对码 → 写设备记录(含 `pairingId`)与手机侧凭据。没有它就**没有设备行**,`peerOf` 恒返回 undefined,握手一律 `protocol/not-paired` —— 这是离"真机发一句"最近的一块空白。
-4. **`relay/` 产品化**与**手机端 Dart**(后者前置:先装 Flutter SDK)。
+1. **方法面 handler**:`protocol/methods.ts` 的 22 个方法名与分发骨架已就绪(幂等键强制、分发器不抛,`tests/methods.test.ts` 有回归);要做的是把 `req` 的明文载荷解成 `RequestEnvelope` → `dispatch` → 把 `ResponseEnvelope` 封回 `res` 并**按 `id` 关联**,先接最简单的几个(`repo.info` / `session.list` / `settings.describe`)打通闭环,再铺开。
+2. **配对流程(§12.1)**:二维码 / 配对码 → 写设备记录(含 `pairingId`)与手机侧凭据。没有它就**没有设备行**,`peerOf` 恒返回 undefined,握手一律 `protocol/not-paired` —— 这是离"真机发一句"最近的一块空白。
+3. **`relay/` 产品化**与**手机端 Dart**(后者前置:先装 Flutter SDK)。
 
 协议本身已定稿,**不需要再决策**;`docs/subsystems/remote-channel.md` 是唯一规格源,`protocol/fixtures/` 与 `protocol/vectors/` 是它的可执行部分。
 
@@ -37,7 +36,7 @@
 | `node app/tools/verify-platform-boundary.mjs` | 17 项(含 13 条规则自检):多端边界与 `Platform.isOhos` 禁令 |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
 | `cd connector && pnpm exec tsc --noEmit` | connector 类型检查(改 `connector/src/**` 后必跑) |
-| `cd connector && pnpm test` | connector 全套 **111 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**49 项**),外加握手驱动 / 封箱 / 连接级 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
+| `cd connector && pnpm test` | connector 全套 **117 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**49 项**),外加握手驱动 / 封箱 / 流控 / 连接级 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
 | `cd connector && pnpm build` | 产出 `lib/index.js` + `lib/index.d.ts`(装进 profile 的那份产物) |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker`;跑法见 `tools.md` |
 
@@ -65,7 +64,7 @@
 - **规格本轮补了两处洞**(均先改 `remote-channel.md` 再改代码):① `confirm` 从"帧联合里根本没有"变成 §3 里的第三个握手帧,同时删掉 §4.1 中"即第一条业务帧""第一帧能解开即确认"这两句与 §2.2 硬冲突的话;② `pairingId` 进 §8.1 设备记录(否则每次重连算不出 `master`)。取舍见 `...-handshake-third-frame.md` 与 `...-connector-identity-home.md`。
 - **电脑侧身份种子有落点了**:`ctx.credentials` 具名记录面(`dsh-mobile-connector/identity`,grant 载荷),首启生成一次、读不懂就抛错**绝不覆盖**;`credentials` 因此从可选升为必需服务。**未实测**:真实 `credentials-local` 上的写入(记录面语义由单测覆盖,服务存在性由 `--dump-config` 证实)。
 - **业务帧的封箱已落地**:`protocol/box.ts` —— 除握手三帧与 `presence` 外**每帧都封箱**(控制帧封空载荷:`fc` 在 AAD 里,不认证就等于让未认证的数字驱动重放窗口),箱 = `base64url(密文‖tag)`,**重放窗口只在认证通过后推进**。封箱是连接层出帧/收帧的单一收口(`write` 里"分配 `fc`"与"封箱"紧挨着),上层看到的 `box` 永远是明文;`secure` 把握手与密码器绑成一个对象,配了就不可能明文上线。证据:连接级 e2e 用**手机侧独立实现**(自己拼 nonce/AAD/容器,不 import `box.ts`)双向跑通,篡改/重放/缺 box 三种形状各有关连接的错误码。取舍见 `.agents/notes/implemented/2026-10-01-business-frame-sealing.md`。
-- **流控未接线**:`flow.ts` 的 W=128 发送窗口与"收到即回 `credit`"还没有接到收发路径上(帧已经能封箱,但没人管额度)。
+- **流控已接线**:W=128 窗口 + "收到即回 `credit`";`credit` 的 `fc` 是它自己的序号、**被确认的序号在箱里**(`{"ack":N}`,累计确认,QUIC 同形),`credit` 自己不再回 `credit`;满窗**只压可补的两类**(`ev`/`live`)—— 压 `res` 会死锁;暂停不是丢弃(队列里的帧等 `credit` 到达再放)。取舍与被否方案见 `.agents/notes/implemented/2026-10-01-flow-control-wiring.md`。
 - **方法面 handler 未实现**:`protocol/methods.ts` 的 22 个封闭方法名 + 分发骨架(幂等键强制、分发器不抛)已就绪,但每个方法当前都回 `connector/unsupported`。
 - **配对流程未实现**(§12.1):二维码 / 配对码 → 写设备记录(含 `pairingId`)。没有它就没有设备行,`peerOf` 恒 undefined、握手一律 `protocol/not-paired`。
 - **`relay/`(中转)与 `app/`(手机端)的代码都还没开始**,后者前置是先装 Flutter SDK。
@@ -80,6 +79,10 @@
 - 当前最挡路的一条:CDP 端口可能要换 —— 9222 被日常 Chrome 占用,9400 也可能被上一轮遗留的 headless Chrome 占着,开新端口前先探 `/json/version`。
 
 ## 最近活跃窗口
+
+- 2026-10-01 流控接线(本轮):把 §4.3 的 W=128 与"收到即回 `credit`"接到收发路径上,并定案三处纸面上说不清的语义 —— ① `credit` 的 `fc` 是**它自己**的序号(与 nonce、重放守卫同一套语义),被确认的序号放进箱里 `{"ack":N}`(累计确认;QUIC 的 ACK 在保护包内、包号仍是自己的);② `credit` 自己不再回 `credit`(否则两端互刷 ack),并与 QUIC 的"ACK 不是 ack-eliciting"对齐;③ 满窗**只压可补的两类**(压 `res` 会死锁),且暂停不是丢弃(队列里的帧等 `credit` 到达再放)。实现:`flow.ts` 的 `canSend` 自带优先级、`encodeCredit`/`decodeCredit`、连接层 `accountFlow`(在解箱之后记账)+ `drainBatch` 重入队 + `write` 在分配 `fc` 之前查窗口。**变异校验抓出一处重复逻辑**:最初"早返回 + 谓词"把同一条规则写了两遍、谓词成死逻辑,改成一个变异都不红;改成两个并列 `if` 后同一变异立刻命中。证据:`pnpm test` **117 项**、`tsc` 0、`pnpm build`、三条 protocol 门禁 486/26/49、多端边界 17;两处新变异 ⑳㉑ 逐条命中。
+
+- 2026-10-01 业务帧封箱:把 `box` 的 AEAD 补上,并修掉它暴露的三处问题 —— ① `ping`/`pong`/`credit`/`persisted` 带 `fc` 却没有 `box`(未认证的数字直接驱动重放窗口,`credit`/`persisted` 还可被中继伪造改状态)→ 除握手三帧与 `presence` 外一律封箱;② 箱的容器格式没定义 → 定为 `base64url(密文‖tag)` 并**进向量**(39 → **49 项**);③ `crypto.open` 把 `node:crypto` 裸错误漏给协议层 → 认证失败转 `protocol/bad-frame`。证据:连接级 e2e 用手机侧**独立实现**(自己拼 nonce/AAD/容器,不 import `box.ts`)双向跑通;四处变异 ⑯⑰⑱⑲ 逐条命中。取舍见 `.agents/notes/implemented/2026-10-01-business-frame-sealing.md`。
 
 - 2026-10-01 业务帧封箱(本轮):把 `box` 的 AEAD 补上,并修掉它暴露的三处问题 —— ① `ping`/`pong`/`credit`/`persisted` 带 `fc` 却没有 `box`(未认证的数字直接驱动重放窗口,`credit`/`persisted` 还可被中继伪造改状态)→ 除握手三帧与 `presence` 外一律封箱;② 箱的容器格式没定义 → 定为 `base64url(密文‖tag)` 并**进向量**(5 条 AEAD 各加容器与容器往返两项,39 → **49 项**);③ `crypto.open` 把 `node:crypto` 裸错误漏给协议层 → 认证失败转 `protocol/bad-frame`。实现:`protocol/box.ts`(方向映射 + 容器 + 重放守卫"先验后进" + 同一 `fc` 不许封两次的绊线)、连接层 `secure` 把握手与密码器绑成一个对象、`needsBox`/`hasBox` 两个判据收敛到协议层一处。证据:`pnpm test` **111 项**、`tsc` 0、`pnpm build` 出产物、三条 protocol 门禁 486/26/49、多端边界 17、图标 98;四处变异校验 ⑯⑰⑱⑲ 逐条命中(见 `tools.md`)。
 

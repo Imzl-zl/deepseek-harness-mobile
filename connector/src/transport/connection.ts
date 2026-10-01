@@ -32,6 +32,13 @@
 import { ProtocolError } from '../protocol/errors.js'
 import { createSendCounter, type SendCounter, type SessionKeys } from '../protocol/crypto.js'
 import { aadFieldsOf, hasBox, isHandshakeFrameType, needsBox, type WireFrame } from '../protocol/frame.js'
+import {
+  createSendWindow,
+  decodeCredit,
+  elicitsCredit,
+  encodeCredit,
+  type SendWindow,
+} from '../protocol/flow.js'
 import type { BoxCodec } from '../protocol/box.js'
 import type {
   HandshakeDriver,
@@ -199,6 +206,8 @@ export function createConnection(options: ConnectionOptions): Connection {
   let session: HandshakeSession | null = null
   /** 本次连接的箱密码器。**每连接换一把密钥**，所以建连时必须清空（§4.2）。 */
   let cipher: BoxCodec | null = null
+  /** 本次连接的发送窗口（契约 §4.3）。**每连接归零**：`fc` 重数，额度也随之重来。 */
+  let window: SendWindow = createSendWindow()
 
   const log = options.log
 
@@ -238,10 +247,19 @@ export function createConnection(options: ConnectionOptions): Connection {
     cancelFlush = schedule(run, period)
   }
 
+  /**
+   * 把攒的批发出去。
+   *
+   * 满窗时**不丢**：发不出去的可补帧重新入队，等 `credit` 到达再放（契约 §4.3 说的是"暂停"
+   * 而不是"丢弃"）。队列因此有界 —— `send()` 满窗时根本不再接收新的可补帧，
+   * 能积压的只有"入队时窗口还开着、真正要发时窗口已满"的那一批。
+   */
   const drainBatch = (): void => {
     const batch = batcher.take()
     if (batch === null || socket === null) return
-    for (const frame of batch.items) write(frame)
+    for (const frame of batch.items) {
+      if (!write(frame)) batcher.push(frame, estimateBytes(frame), now())
+    }
   }
 
   // ---- 收发 ----
@@ -265,14 +283,23 @@ export function createConnection(options: ConnectionOptions): Connection {
    * **除了 `ping`**：它是探针本身，`keepalive.tick()` 已经为它重置过，再重置一次会把
    * 「一个空闲期只探一次」这条抹掉，于是每个周期都发 ping、空闲计时永远攒不满两个周期，
    * **半开就永远判不出来**。
+   *
+   * @returns `false` 表示**这一帧没发出去**（满窗的可补帧，或没有密码器）。
    */
-  const write = (frame: OutboundFrame): void => {
-    if (socket === null) return
+  const write = (frame: OutboundFrame): boolean => {
+    if (socket === null) return false
+    // 窗口检查在**分配 `fc` 之前**：没发出去的帧不该消耗序号，否则窗口算术会把没上线的帧也算进去。
+    if (!window.canSend(frame.t)) return false
     try {
       const handshakeFrame = isHandshakeFrameType(frame.t)
       const wire = handshakeFrame
         ? (frame as WireFrame)
         : ({ ...frame, fc: counter.next() } as WireFrame)
+
+      if (!handshakeFrame) {
+        // 只有真的发出去才记账：窗口算的是"已发未确认"，不是"打算发"。
+        if ('fc' in wire && wire.fc !== undefined) window.onSent(wire.fc, wire.t)
+      }
 
       if (!handshakeFrame && needsBox(wire.t)) {
         if (!hasBox(wire)) {
@@ -285,22 +312,24 @@ export function createConnection(options: ConnectionOptions): Connection {
             // 配了 `secure` 却拿不出密码器：只可能是"握手已过但密码器没装上"这类装配错误。
             // 宁可不发，也不明文上线。
             log?.warn(`还没有会话密钥，${wire.t} 帧不发（配了 secure 的连接不允许明文帧）`)
-            return
+            return false
           }
           // 明文通道模式（未配 `secure`）：`box` 原样透传。
           socket.send(encodeFrame(wire))
           if (frame.t !== 'ping') keepalive.onFrame(now())
-          return
+          return true
         }
         socket.send(encodeFrame({ ...wire, box: cipher.sealFrame(wire, wire.box) }))
         if (frame.t !== 'ping') keepalive.onFrame(now())
-        return
+        return true
       }
 
       socket.send(encodeFrame(wire))
       if (frame.t !== 'ping') keepalive.onFrame(now())
+      return true
     } catch (error) {
       log?.warn('发帧失败', error)
+      return false
     }
   }
 
@@ -315,6 +344,35 @@ export function createConnection(options: ConnectionOptions): Connection {
       return
     }
     write(frame)
+  }
+
+  /**
+   * 收帧后的流控记账（契约 §4.3）。**必须在解箱之后**：`ack` 与 `fc` 都要先被认证，
+   * 否则一帧伪造的 credit 就能替对端松开窗口。
+   *
+   * 两个 `if` 刻意**不写成 if/else、也不提前 return**：`credit` 走记账、其余帧走回执，
+   * 而"`credit` 不回 `credit`"这条规则**只由 `elicitsCredit` 表达一次**。
+   * （变异校验里踩过：写成"早返回 + 谓词"两处各表一遍时，谓词成了死逻辑 ——
+   * 把它改成恒真都没有任何测试会红。）
+   */
+  const accountFlow = (frame: WireFrame): void => {
+    if (!('fc' in frame) || frame.fc === undefined) return
+
+    if (frame.t === 'credit') {
+      const ack = decodeCredit(hasBox(frame) ? frame.box : '')
+      const before = window.unacked
+      window.onCredit(ack)
+      if (window.unacked < before) {
+        // 窗口刚松开：被压住的可补帧立刻放出去，不等下一个攒批窗口。
+        drainBatch()
+      }
+    }
+
+    // 收到的每一帧都立刻回 credit。`credit` 自己除外 —— 否则两端互刷 ack 停不下来。
+    if (elicitsCredit(frame.t)) {
+      const sent = write({ v: 1, t: 'credit', box: encodeCredit(frame.fc) })
+      if (!sent) log?.warn(`回 credit(${frame.fc}) 没发出去`)
+    }
   }
 
   const handleFrame = (frame: WireFrame): void => {
@@ -343,9 +401,12 @@ export function createConnection(options: ConnectionOptions): Connection {
       }
       // 解箱失败会抛（认证失败 → bad-frame；fc 不单调 → replay），由调用方关连接。
       // 上层的 `box` 一律是**明文载荷**：加密只存在于这一层。
-      options.onFrame({ ...frame, box: cipher.openFrame(frame, frame.box) }, now())
+      const opened = { ...frame, box: cipher.openFrame(frame, frame.box) }
+      accountFlow(opened)
+      options.onFrame(opened, now())
       return
     }
+    accountFlow(frame)
     options.onFrame(frame, now())
   }
 
@@ -409,6 +470,8 @@ export function createConnection(options: ConnectionOptions): Connection {
     splitter = createLineSplitter()
     counter = createSendCounter()
     cipher = null
+    // 新连接新账本：`fc` 从 0 重数，额度也随之归零（§4.3）。
+    window = createSendWindow()
     handshakeDone = false
     session = null
 
@@ -498,12 +561,14 @@ export function createConnection(options: ConnectionOptions): Connection {
 
     send(frame) {
       if (!machine.acceptsBusinessFrames) return false
+      // 满窗时对可补帧如实回 `false`：这一帧**没有被接受**，调用方据此暂停（§4.3）。
+      // 其余帧不受窗口限制（压住 `res` 会死锁），所以这一条只可能拦下 `ev` / `live`。
+      if (!window.canSend(frame.t)) return false
       if (BATCHED_FRAME_TYPES.has(frame.t)) {
         batcher.push(frame, estimateBytes(frame), now())
         return true
       }
-      write(frame)
-      return true
+      return write(frame)
     },
 
     markHandshakeDone() {

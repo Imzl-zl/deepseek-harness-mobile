@@ -18,10 +18,13 @@ import {
   SEND_WINDOW_FRAMES,
   consumesCredit,
   createSendWindow,
+  decodeCredit,
+  elicitsCredit,
+  encodeCredit,
   pausable,
 } from '../src/protocol/flow.js'
 
-test('流控窗口：额度规则与 unacked 算术', () => {
+test('流控窗口：额度规则、优先级与 unacked 算术', () => {
   // 保活帧不占额度 —— 否则满窗时双方互等超时，走进假的半开故障。
   assert.equal(consumesCredit('ping'), false)
   assert.equal(consumesCredit('pong'), false)
@@ -29,25 +32,32 @@ test('流控窗口：额度规则与 unacked 算术', () => {
     assert.equal(consumesCredit(t), true, `${t} 应占额度`)
   }
 
-  // 满窗时优先暂停可补的帧；应答与水位不该被压住。
+  // 满窗时只压可补的两类；应答与水位不该被压住（压住会死锁：手机在等 res）。
   assert.equal(pausable('ev'), true)
   assert.equal(pausable('live'), true)
   assert.equal(pausable('res'), false)
   assert.equal(pausable('credit'), false)
   assert.equal(pausable('persisted'), false)
 
+  // `credit` 自己不再被确认 —— 否则两端互相刷 ack 停不下来。
+  assert.equal(elicitsCredit('credit'), false)
+  for (const t of ['ev', 'req', 'res', 'persisted', 'ping', 'pong'] as const) {
+    assert.equal(elicitsCredit(t), true, `${t} 应触发 credit`)
+  }
+
   const window = createSendWindow(4)
   assert.equal(window.unacked, 0)
-  for (let fc = 0; fc < 4; fc += 1) {
-    assert.equal(window.onSent(fc, 'ev'), true, `第 ${fc} 帧应可发`)
-  }
+  for (let fc = 0; fc < 4; fc += 1) window.onSent(fc, 'ev')
   assert.equal(window.unacked, 4)
-  assert.equal(window.canSend('ev'), false, '满窗后不该再发可暂停帧')
+  assert.equal(window.canSend('ev'), false, '满窗后不该再发可补帧')
+  assert.equal(window.canSend('live'), false, 'live 同样可补，同样该压')
   assert.equal(window.canSend('ping'), true, '保活帧不受窗口限制')
-  // 超窗时 onSent 必须回 false，让调用方回退，而不是"先发了再说"。
-  assert.equal(window.onSent(4, 'ev'), false)
+  // 优先级规则：满窗时 res / credit / persisted 照发。
+  assert.equal(window.canSend('res'), true, '压住 res 会死锁')
+  assert.equal(window.canSend('credit'), true)
+  assert.equal(window.canSend('persisted'), true)
 
-  // credit { fc } 确认的是 [0, fc]。
+  // credit { ack } 确认的是 [0, ack]；窗口随之松开。
   window.onCredit(1)
   assert.equal(window.unacked, 2)
   assert.equal(window.canSend('ev'), true)
@@ -55,6 +65,31 @@ test('流控窗口：额度规则与 unacked 算术', () => {
   // 迟到的低 credit 不得把窗口"放大"回一个已确认过的状态。
   window.onCredit(0)
   assert.equal(window.unacked, 2, 'credit 只能前进')
+})
+
+test('流控窗口：不可暂停的帧照发，但仍计入 unacked', () => {
+  const window = createSendWindow(2)
+  window.onSent(0, 'ev')
+  window.onSent(1, 'ev')
+  assert.equal(window.canSend('ev'), false)
+
+  // 满窗时 res 照发 —— 它是被压住的对端在等的东西；但它同样占额度（契约 §4.3）。
+  window.onSent(2, 'res')
+  assert.equal(window.unacked, 3, 'res 也该计入已发未确认')
+  assert.equal(window.canSend('ev'), false, '窗口不会因为发了 res 而松开')
+})
+
+test('credit 载荷：累计确认编解码，坏值一律 protocol/bad-frame', () => {
+  assert.equal(decodeCredit(encodeCredit(0)), 0)
+  assert.equal(decodeCredit(encodeCredit(12345)), 12345)
+
+  for (const bad of ['not json', '[]', '{}', '{"ack":"7"}', '{"ack":-1}', '{"ack":1.5}']) {
+    assert.throws(
+      () => decodeCredit(bad),
+      (e: unknown) => e instanceof ProtocolError && e.code === 'protocol/bad-frame',
+      `${bad} 应被拒`,
+    )
+  }
 })
 
 test('流控窗口：默认上限与契约一致', () => {
