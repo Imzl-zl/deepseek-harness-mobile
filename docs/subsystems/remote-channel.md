@@ -373,16 +373,24 @@ claim(请求) :=
 
 ### 8.1 电脑侧存储(`ctx.storage` domain KV)
 
+**本节是存储 schema 的唯一出处**;`connector-and-relay.md` §1.4 只写使用纪律,不重复表结构。
+域名与表名必须匹配 `^[a-z][a-z0-9_]*$` —— **不允许连字符**(`packages/storage/storage/src/backend.ts:10`)。
+
 ```text
-kv:devices          → { devId: { idPub(32B), edPub(32B), name, pairedAt, revoked? } }
-kv:aliases          → { sid: dshSessionId }  +  { dshSessionId: sid }
-kv:dedupe           → { requestId: { at, status, resultRef } }        // 有界 10000 / TTL 24h
-kv:windows          → { sid: { frames: BoundedBuffer, trimmedUpto, lastPersisted } }
-kv:meta             → { schema: 1, connectorId, relayUrl, connTokenSecretRef }
+dsh_mobile_meta      表 meta        { schema: 1, connectorId, relayUrl, connTokenSecretRef, aliasVersion }
+dsh_mobile_devices   表 devices     { devId: { edPub(32B), dhPub(32B), name, pairedAt, revokedAt? } }
+dsh_mobile_aliases   表 by_sid      { sid: dshSessionId }
+                     表 by_session  { dshSessionId: sid }
+dsh_mobile_dedupe    表 dedupe      { requestId: { at, status, resultRef } }   // 有界 10000 / TTL 24h
+dsh_mobile_windows   表 windows     { sid: { frames: BoundedBuffer, trimmedUpto, lastPersisted } }  // 16 MiB / 10000
+dsh_mobile_takeover  表 takeover    { devId: { mode, lastInteractedAt } }
 ```
 
-- schema 版本与迁移写在 `kv:meta.schema`;**不使用** DSH 的会话落盘格式(v4 且仍在演进,见 `../channel-review-notes.md` §2.7)。
-- `connectorId` 与令牌:令牌本体走 `ctx.credentials` 具名记录面(`credentialKey('<包名>','<id>')`)。
+- **设备公钥命名照 §4.1**:种子派生的是 Ed25519 身份签名密钥与 X25519 静态 DH 密钥,所以是 `edPub` + `dhPub`;不要写成含义含糊的 `idPub`(那会让人以为是"身份公钥"、与该签名密钥混起来)。
+- `aliasVersion` 是 `repo.info` 要报的「别名→会话元映射版本」(§5.7);`connTokenSecretRef` 是连接器令牌的凭据引用,**令牌本体走 `ctx.credentials` 具名记录面**(`credentialKey('<包名>','<id>')`)。
+- `takeover` 表存每个设备的接管档位与最近交互时间,是 §6.2 仲裁判定的输入。
+- schema 版本与迁移写在 `meta.schema`;**不使用** DSH 的会话落盘格式(v4 且仍在演进,见 `../channel-review-notes.md` §2.7)。
+- **storage domain 本身没有迁移函数**:介质格式的演进靠声明 —— `version` + `compatibleVersions` + `layout` + `invalidRecords`(`packages/storage/storage-domain/src/spec.ts:35-72`);**业务** schema 的逐代迁移要自己按 `meta.schema` 做。两个号互相独立。
 
 ### 8.2 中转存储
 

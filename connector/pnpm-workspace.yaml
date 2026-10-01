@@ -1,2 +1,17 @@
+# esbuild 的构建脚本显式记为拒绝(见 docs 与 .agents/notes 的工程形态笔记);
+# 实测拒绝后 tsx / esbuild 照常可用,平台包是独立安装的。
 allowBuilds:
   esbuild: false
+
+# zod 必须全树只有一份。
+#
+# 理由:`dsh-storage-domain` 的 `domainTable(schema)` 只接受**它自己那份** zod 的 `ZodType`;
+# 而 pnpm 的严格隔离下,我们直接依赖的 zod 与它依赖的 zod 是两份独立副本。
+# 两份副本的 `$ZodTypeInternals` 名义上不兼容 —— 表现是 `tsc` 报一长串
+# "def.checks are incompatible between these types",运行时则炸
+# `Cannot read properties of undefined (reading 'safeParse')`。
+#
+# 实测:`dsh-storage-domain` 解析到 zod 4.6.5,而直接声明 `^4.4.3` 会装成 4.4.3。
+# 所以这里钉死 4.6.5,让两边共用一份。
+overrides:
+  zod: 4.6.5

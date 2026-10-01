@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  zod: 4.6.5
+
 importers:
 
   .:
@@ -17,6 +20,9 @@ importers:
       '@deepseek-ai/schemastery':
         specifier: 3.18.4
         version: 3.18.4
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
     devDependencies:
       '@deepseek-ai/dsh-agent':
         specifier: 0.2.0-rc.2

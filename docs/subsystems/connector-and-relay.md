@@ -129,14 +129,13 @@ dispose
 
 ### 1.4 存储(`ctx.storage` domain KV)
 
-```text
-kv:meta      { schema: 1, connectorId, relayUrl, aliasVersion }
-kv:devices   { devId: { edPub, dhPub, name, pairedAt, revokedAt? } }
-kv:aliases   { bySid: {sid→dshSessionId}, bySession: {dshSessionId→sid} }
-kv:dedupe    { requestId: { at, status, resultRef } }          // 10000 / TTL 24h
-kv:windows   { sid: { frames: [...], trimmedUpto, lastPersisted } }  // 16 MiB / 10000
-kv:takeover  { devId: { mode, lastInteractedAt } }
-```
+**表结构的唯一出处是契约 §8.1**(`remote-channel.md`),本节只写**使用纪律**:
+
+- schema 版本与迁移写在 `kv:meta.schema`;低于当前版本按**逐代**迁移升上来,不把兼容分支写进主路径;高于当前版本**拒绝启动**并报 `connector/unsupported`。
+- **`meta.schema` 与 storage domain 自己的 `version` 是两个独立的号**:前者是我们的业务 schema,后者是 `defineDomain` 声明的**介质格式**版本(配 `compatibleVersions`,见 `packages/storage/storage-domain/src/spec.ts:35-72`)。混用会让迁移逻辑在介质格式变化时误判。
+- 窗口帧**先入内存、后批量落盘**(每 500 ms 或每 64 帧一次);`lastPersisted` 与去重表**同步落盘** —— 它们决定正确性,滞后就会在崩溃后重放。
+- **任何落盘失败都必须降级为「要求快照」**,而不是静默丢帧。
+- **不使用** DSH 的会话落盘格式(v4 且仍在演进,见 `../channel-review-notes.md` §2.7)。
 
 迁移规则:每次 `store.open()` 读 `meta.schema`;低版本按**逐代迁移**升到当前版本(不写兼容分支到主路径);高于当前版本则拒绝启动并报 `connector/unsupported`。
 
