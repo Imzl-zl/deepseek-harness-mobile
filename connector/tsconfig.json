@@ -17,9 +17,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  // 跨工程的那条 e2e(relay ⇄ connector)用 `.ts` 后缀导入 relay 源码,而那只在
-  // `allowImportingTsExtensions` 下合法 —— 这里**不开**它(否则 src/ 里也能写 .ts,而构建
-  // 走 tsdown 不认那个后缀)。那条用例交给 `tsconfig.e2e.json` 单独检查。
-  "include": ["src", "tests", "tsdown.config.ts"],
-  "exclude": ["tests/relay-transport-seam.test.ts"]
+  "include": ["src", "tests", "tsdown.config.ts"]
 }
