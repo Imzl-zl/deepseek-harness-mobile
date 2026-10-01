@@ -58,6 +58,7 @@ import { createAliases, type Aliases } from './alias.js'
 import type { JobRegistry } from '@deepseek-ai/dsh-jobs'
 import { createJobsPort, createJobControlPort, type JobControlService } from './dsh/jobs.js'
 import { createJobSubscriptions } from './job-subscriptions.js'
+import { createSessionBuffer } from './session-buffer.js'
 import { createSessionSubscriptions } from './session-subscriptions.js'
 import { createSessionsAdapter } from './dsh/sessions.js'
 import type { DeviceRecord } from './store/index.js'
@@ -108,6 +109,14 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
 
   let closeStore: (() => Promise<void>) | null = null
   let connection: Connection | null = null
+  /**
+   * 当前这条连接的**已认证设备**（来自握手）。
+   *
+   * 增量缓冲的裁剪水位是**按设备**记的（契约 §5.5 要求"全部配对设备都确认"），
+   * 所以入站 `persisted` 必须知道它来自哪台设备 —— 身份只能来自握手，不能来自帧内容
+   * （帧里的字段是手机自己报的，可以撒谎）。
+   */
+  let currentDeviceId: string | null = null
   let unregisterInteractions: (() => void) | null = null
 
   /** 设备状态与档位。真值在 store 里，这里给出 transport 需要的读取面。 */
@@ -333,13 +342,23 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
                 log: logger,
               })
 
+        // 增量缓冲：每个被订阅的会话一段，裁剪权在手机手里（全部配对设备确认过才裁）。
+        const sessionBuffer = createSessionBuffer({
+          pairedDevices: () =>
+            devicesTable === null
+              ? []
+              : [...devicesTable.keys()].filter((id) => devicesTable?.get(id)?.revokedAt === undefined),
+          log: logger,
+        })
+
         // 会话订阅：与任务输出**同一套骨架**（背压、承诺兑现、跟连接活），
         // 两处只在"键怎么取、开启帧怎么展开、有没有终止帧"上不同。
         const sessionSubscriptions = createSessionSubscriptions({
           source: createSessionsAdapter(ctx.sessionController),
+          buffer: sessionBuffer,
           send: (out) => {
             if (next.state !== 'serving') return 'closed'
-            const body = JSON.stringify(out.payload)
+            const body = out.body
             const frame =
               out.t === 'ev'
                 ? { v: 1 as const, t: 'ev' as const, sid: out.sid, seq: out.seq, box: body }
@@ -429,6 +448,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           },
           onEstablished: ({ devId }) => {
             metrics.increment(METRIC.handshakesEstablished)
+            currentDeviceId = devId
             logger.info(`握手完成：设备 ${devId} 已建立端到端会话`)
           },
           onStateChange: (from, to) => {
@@ -440,6 +460,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             if (from === 'serving' && to !== 'serving') {
               jobSubscriptions?.stopAll()
               sessionSubscriptions.stopAll()
+              // 连接没了，"这台设备"的身份也就不再成立：不留下一个可能张冠李戴的水位。
+              currentDeviceId = null
             }
           },
           onFrame: (frame: WireFrame) => {
@@ -459,6 +481,17 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             case 'credit':
             case 'presence':
               // 保活与流控记账已在 connection 内部处理；这里无需再动作。
+              return
+            case 'persisted':
+              // 手机说"这条 seq 之前的我都写进本地库了"（契约 §5.3 / §5.5）。
+              // 据此推进这台设备的落盘水位；等**全部配对设备**都覆盖过才允许裁掉缓冲头部 ——
+              // 快的那台确认了不代表慢的那台也收到了。
+              if (currentDeviceId !== null) {
+                const removed = sessionBuffer.ack(frame.sid, currentDeviceId, frame.seq)
+                if (removed > 0) {
+                  logger.debug(`增量缓冲裁剪：${frame.sid} 裁掉 ${removed} 条（设备 ${currentDeviceId} 确认到 ${frame.seq}）`)
+                }
+              }
               return
             case 'req':
               // 方法面。**异步**：handler 可能要等 DSH 服务，而收帧路径不能阻塞

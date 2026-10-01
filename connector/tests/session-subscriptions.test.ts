@@ -8,17 +8,18 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { createSessionSubscriptions } from '../src/session-subscriptions.js'
+import { createSessionSubscriptions, type SessionOutbound } from '../src/session-subscriptions.js'
+import { createSessionBuffer } from '../src/session-buffer.js'
 import type { SessionFrame } from '../src/dsh/sessions.js'
 import type { SendOutcome } from '../src/subscriptions.js'
 import { createControllableSessionSource } from './support/session-stream.js'
 
 function collector(outcomes: SendOutcome[] = []) {
-  const sent: { t: string; seq?: number; stream?: number; rev?: number; payload: unknown }[] = []
+  const sent: SessionOutbound[] = []
   let index = 0
   return {
     sent,
-    send: (frame: { t: string; seq?: number; stream?: number; rev?: number; payload: unknown }) => {
+    send: (frame: SessionOutbound) => {
       const forced = outcomes[index]
       index += 1
       if (forced === 'paused' || forced === 'closed') return forced
@@ -65,7 +66,7 @@ test('subscribe：开启快照的补课事件**逐条**展开成 ev，并回水�
   streams[0]?.push(opening(100, [98, 99, 100], true))
   assert.deepEqual(await pending, { since: 100, hasMore: true }, '水位与"还有更早的历史"都要回给手机')
   assert.deepEqual(
-    sink.sent.map((frame) => [frame.t, frame.seq]),
+    sink.sent.map((frame) => [frame.t, frame.t === 'ev' ? frame.seq : undefined]),
     [
       ['ev', 98],
       ['ev', 99],
@@ -120,6 +121,51 @@ test('subscribe：后续事件继续走 ev；assistant 流用**电脑侧分配**
   assert.deepEqual(
     sink.sent.filter((frame) => frame.t === 'live').map((frame) => frame.stream),
     [1, 1, 1, 2],
+  )
+})
+
+test('重订走增量：缓冲覆盖得到就补发那一段，并跳过快照里重复的 seq', async () => {
+  const { source, streams } = createControllableSessionSource()
+  const sink = collector()
+  const buffer = createSessionBuffer({ pairedDevices: () => ['dev-1'] })
+  const subscriptions = createSessionSubscriptions({
+    source,
+    send: sink.send,
+    waitWritable: () => Promise.resolve(),
+    buffer,
+  })
+
+  // 第一次订阅：快照给了 1、2，随后又来一条 3。这三条都进了缓冲（发之前记）。
+  const first = subscriptions.subscribe({ sid: 'sid_1', dshSessionId: 'dsh-1' })
+  await flush()
+  streams[0]?.push(opening(2, [1, 2]))
+  await first
+  streams[0]?.push(event(3))
+  await flush()
+  assert.deepEqual(
+    sink.sent.filter((frame) => frame.t === 'ev').map((frame) => (frame.t === 'ev' ? frame.seq : 0)),
+    [1, 2, 3],
+  )
+
+  // 断线重连（订阅没了，缓冲还在）：手机报它手里的水位是 2。
+  subscriptions.unsubscribe('sid_1')
+  const again = subscriptions.subscribe({ sid: 'sid_1', dshSessionId: 'dsh-1', since: 2 })
+  await flush()
+  assert.equal(streams.length, 2, '重订要开新的会话流')
+
+  // 宿主的快照**不知道我们手里有什么**：它照样给 1、2、3。重复的必须按 seq 跳掉。
+  streams[1]?.push(opening(3, [1, 2, 3]))
+  assert.deepEqual(await again, { since: 3, hasMore: false })
+  await flush()
+
+  const seqsAfterResume = sink.sent
+    .filter((frame) => frame.t === 'ev')
+    .map((frame) => (frame.t === 'ev' ? frame.seq : 0))
+  assert.deepEqual(seqsAfterResume, [1, 2, 3, 3], '补发的那条 3 只出现一次；快照里的 1..3 全被跳过')
+  assert.deepEqual(
+    buffer.tailFrom('sid_1', 2)?.map((item) => item.seq),
+    [3],
+    '补发过的内容仍在缓冲里（裁剪权在手机手里）',
   )
 })
 

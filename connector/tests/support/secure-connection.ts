@@ -131,7 +131,7 @@ export async function start(
           source: options.sessionSource,
           send: (out) => {
             if (wired === null || wired.state !== 'serving') return 'closed'
-            const body = JSON.stringify(out.payload)
+            const body = out.body
             const frame =
               out.t === 'ev'
                 ? { v: 1 as const, t: 'ev' as const, sid: out.sid, seq: out.seq, box: body }

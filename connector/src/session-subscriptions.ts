@@ -34,12 +34,18 @@
 import { sessionAddress, type SessionFrame } from './dsh/sessions.js'
 import type { SessionAddress } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { ChannelLogger } from './observability.js'
+import type { SessionBuffer } from './session-buffer.js'
 import { createSubscriptions, type SendOutcome, type Subscriptions } from './subscriptions.js'
 
-/** 出站帧：`ev` 带会话序号，`live` 带流 id 与修订号（两者都是通道自己的编号体系）。 */
+/**
+ * 出站帧：`ev` 带会话序号，`live` 带流 id 与修订号（两者都是通道自己的编号体系）。
+ *
+ * `body` 是**已经序列化好的载荷**，出帧与增量缓冲共用同一个串：
+ * 各序列化一次的话，每个事件都要多走一遍 `JSON.stringify`（而事件是高频的）。
+ */
 export type SessionOutbound =
-  | { sid: string; t: 'ev'; seq: number; payload: unknown }
-  | { sid: string; t: 'live'; stream: number; rev: number; payload: unknown }
+  | { sid: string; t: 'ev'; seq: number; body: string }
+  | { sid: string; t: 'live'; stream: number; rev: number; body: string }
 
 /** 会话流：与 `SessionsPort.follow` 同形（收窄成这一层真正用到的方法）。 */
 export interface SessionFollowSource {
@@ -53,6 +59,13 @@ export interface SessionSubscriptionsOptions {
   source: SessionFollowSource
   send: (frame: SessionOutbound) => SendOutcome
   waitWritable: () => Promise<void>
+  /**
+   * 增量缓冲（契约 §5.5）。给了它，重订就能走**增量**而不是每次灌一份快照。
+   *
+   * 每条出站的 `ev` 都会记进去（**发之前**记：宁可重发，不可丢），
+   * 而裁剪只发生在全部配对设备 `persisted` 覆盖过之后（那是缓冲自己的规矩）。
+   */
+  buffer?: SessionBuffer
   log?: ChannelLogger
 }
 
@@ -89,6 +102,14 @@ interface Expanded {
   anchor?: SessionSubscriptionReply
 }
 
+/**
+ * 内部流的一帧：上游帧，或**缓冲里补发的那一段**。
+ *
+ * 补发帧只有序列化好的 `body`（缓冲就是这么存的，省一次解析）——
+ * 于是"重订走增量"不需要把 JSON 再解析回对象。
+ */
+type SessionStreamFrame = SessionFrame | { kind: 'buffered'; seq: number; body: string }
+
 export function createSessionSubscriptions(
   options: SessionSubscriptionsOptions,
 ): SessionSubscriptions {
@@ -98,6 +119,7 @@ export function createSessionSubscriptions(
    */
   const streams = new Map<string, number>()
   let nextStream = 1
+  const buffer = options.buffer
 
   const streamIdOf = (attemptId: string): number => {
     const existing = streams.get(attemptId)
@@ -108,15 +130,24 @@ export function createSessionSubscriptions(
     return id
   }
 
-  const core: Subscriptions<SessionFrame, SessionSubscriptionReply, SessionOutbound> =
+  const core: Subscriptions<SessionStreamFrame, SessionSubscriptionReply, SessionOutbound> =
     createSubscriptions({
-      send: options.send,
+      send: (out) => {
+        // **发之前**记进缓冲：崩在"发了没记"之间会少一段，而崩在"记了没发"之间
+        // 只是重订时多补发一条（手机按 seq 幂等）—— 两害相权取前者。
+        if (out.t === 'ev') buffer?.record(out.sid, { seq: out.seq, body: out.body })
+        return options.send(out)
+      },
       waitWritable: options.waitWritable,
       ...(options.log === undefined ? {} : { log: options.log }),
     })
 
   /** 把一条上游帧展开成若干出站帧（纯函数，便于单测）。 */
-  function expand(sid: string, frame: SessionFrame): Expanded {
+  function expand(sid: string, frame: SessionStreamFrame): Expanded {
+    if (frame.kind === 'buffered') {
+      // 缓冲里补发的一段：`body` 已经是最终载荷，直接用。
+      return { out: [{ sid, t: 'ev', seq: frame.seq, body: frame.body }] }
+    }
     switch (frame.kind) {
       case 'opening':
         return {
@@ -126,12 +157,12 @@ export function createSessionSubscriptions(
             sid,
             t: 'ev' as const,
             seq: record.event.seq,
-            payload: record.event,
+            body: JSON.stringify(record.event),
           })),
         }
       case 'event':
         return {
-          out: [{ sid, t: 'ev', seq: frame.event.seq, payload: frame.event }],
+          out: [{ sid, t: 'ev', seq: frame.event.seq, body: JSON.stringify(frame.event) }],
         }
       case 'live': {
         const stream = streamIdOf(frame.frame.attemptId)
@@ -144,7 +175,7 @@ export function createSessionSubscriptions(
                   t: 'live',
                   stream,
                   rev: 0,
-                  payload: { type: 'start', turn: frame.frame.turn, step: frame.frame.step },
+                  body: JSON.stringify({ type: 'start', turn: frame.frame.turn, step: frame.frame.step }),
                 },
               ],
             }
@@ -157,7 +188,7 @@ export function createSessionSubscriptions(
                   stream,
                   // `index` 是尝试内递增的块号：正好满足手机侧 `rev == last + 1` 的追加判据。
                   rev: frame.frame.index,
-                  payload: { type: 'chunk', time: frame.frame.time, chunk: frame.frame.chunk },
+                  body: JSON.stringify({ type: 'chunk', time: frame.frame.time, chunk: frame.frame.chunk }),
                 },
               ],
             }
@@ -169,7 +200,7 @@ export function createSessionSubscriptions(
                   t: 'live',
                   stream,
                   rev: frame.frame.index,
-                  payload: { type: 'end', outcome: frame.frame.outcome },
+                  body: JSON.stringify({ type: 'end', outcome: frame.frame.outcome }),
                 },
               ],
             }
@@ -186,13 +217,41 @@ export function createSessionSubscriptions(
     subscribe(input) {
       return core.start({
         key: input.sid,
-        open: (signal) =>
-          options.source.follow(
+        open: async function* (signal) {
+          // **增量优先**：缓冲里覆盖得到 `since` 时，先补发那一段，
+          // 不必让手机重新吃一份完整快照（快照只在覆盖不到时才出现）。
+          let lastSeq = input.since ?? 0
+          const replay = input.since === undefined ? undefined : buffer?.tailFrom(input.sid, input.since)
+          if (replay !== undefined) {
+            for (const event of replay) {
+              lastSeq = event.seq
+              yield { kind: 'buffered', seq: event.seq, body: event.body }
+            }
+          }
+
+          for await (const frame of options.source.follow(
             { address: sessionAddress(input.dshSessionId), assistantStream: true },
             signal,
-          ),
+          )) {
+            // 快照里的补课事件可能与刚补发的那段重叠（宿主不知道我们手里有什么）：
+            // 按 seq 去重，**同一个 seq 绝不发两遍**。
+            if (frame.kind === 'opening') {
+              const records = frame.records.filter((record) => record.event.seq > lastSeq)
+              const highest = records.at(-1)
+              if (highest !== undefined) lastSeq = highest.event.seq
+              yield { ...frame, records }
+              continue
+            }
+            if (frame.kind === 'event') {
+              if (frame.event.seq <= lastSeq) continue
+              lastSeq = frame.event.seq
+            }
+            yield frame
+          }
+        },
         outOf: (frame) => expand(input.sid, frame).out,
-        anchorOf: (frame) => (frame.kind === 'opening' ? expand(input.sid, frame).anchor : undefined),
+        anchorOf: (frame) =>
+          frame.kind === 'opening' ? expand(input.sid, frame).anchor : undefined,
         // 会话流没有终止帧：它一直推到手机退订或连接断开。
         isTerminal: () => false,
         // 中断**不补** error 帧（会话内容有持久副本，重订即自愈）——见文件头第四条。
