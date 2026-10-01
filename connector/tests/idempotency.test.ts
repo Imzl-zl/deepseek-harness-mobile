@@ -10,7 +10,6 @@ import { test } from 'node:test'
 
 import { createIdempotency, DEDUPE_CAPACITY, DEDUPE_SWEEP_LIMIT, DEDUPE_TTL_MS } from '../src/idempotency.js'
 import type { ResponseEnvelope } from '../src/protocol/methods.js'
-import { ProtocolError } from '../src/protocol/errors.js'
 import { createMemoryDedupeRows } from './support/dedupe-rows.js'
 
 /** 让出一次微任务队列：等前一步的 await 链推进到下一步。 */
@@ -105,7 +104,7 @@ test('失败不进表：handler **回了失败**就是"没生效"，清掉 pendi
   assert.equal(calls, 2, '失败之后必须允许重来')
 })
 
-test('执行抛异常：pending 留在表里，重发**被拒**（结果未知时绝不重放）', async () => {
+test('执行抛异常：pending 留在表里（结果未知的痕迹），重发**按未生效重来**', async () => {
   const rows = createMemoryDedupeRows()
   const idempotency = createIdempotency({ rows })
 
@@ -116,21 +115,20 @@ test('执行抛异常：pending 留在表里，重发**被拒**（结果未知�
       }),
     /炸了/,
   )
-  // 抛异常与"结构化失败"不同：我们**不知道**那次写有没有生效，所以不能当没发生过。
+  // 抛异常与"结构化失败"不同：我们**不知道**那次写有没有生效，所以 pending 要留在表里。
   assert.equal(rows.get('k1')?.status, 'pending', 'pending 是"结果未知"的痕迹')
   assert.equal(idempotency.inFlight, 0, '抛了也要把飞行表收干净，否则这个键永远合流到一个失败的 promise')
 
+  // 但重发是**允许**的：下游认得出重复（`sessionController.prompt` 会查会话事件日志，
+  // `commands.ts:602-614`），所以重发要么被下游去重、要么真的补上那次没生效的写。
   let calls = 0
-  await assert.rejects(
-    () =>
-      idempotency.run('k1', () => {
-        calls += 1
-        return Promise.resolve({ ok: true, result: null })
-      }),
-    (error: unknown) => error instanceof ProtocolError && error.code === 'internal',
-    '停在 pending 的键不许重放：宁可让手机刷新，也不制造第二条消息',
-  )
-  assert.equal(calls, 0, '被拒时绝不能执行')
+  const envelope = await idempotency.run('k1', () => {
+    calls += 1
+    return Promise.resolve({ ok: true, result: '补上的' })
+  })
+  assert.deepEqual(envelope, { ok: true, result: '补上的' })
+  assert.equal(calls, 1, '重发要真的执行（安全性由下游的幂等判据兜住）')
+  assert.equal(rows.get('k1')?.status, 'done', '重发成功之后改写成 done')
 })
 
 test('两阶段顺序：先落盘 pending，执行前表里就有痕迹', async () => {
@@ -190,7 +188,7 @@ test('pending 落盘失败：**拒绝这次写操作**，不进入执行阶段�
   assert.equal(idempotency.inFlight, 0, '飞行表要收干净')
 })
 
-test('结果落盘失败：应答照回，但该键停在 pending —— 重发被拒，而不是被重放', async () => {
+test('结果落盘失败：应答照回，该键停在 pending，重发按未生效重来（由下游去重兜住）', async () => {
   const warnings: string[] = []
   const rows = createMemoryDedupeRows()
   let puts = 0
@@ -199,8 +197,9 @@ test('结果落盘失败：应答照回，但该键停在 pending —— 重发�
       ...rows,
       put: (key, value) => {
         puts += 1
-        // 第一次（pending）成功，第二次（done）失败。
-        if (puts > 1) return Promise.reject(new Error('磁盘满了'))
+        // **只让第二次（写 done）失败**：第三次（重发的 begin）必须成功，
+        // 否则测的就变成"落盘失败拒绝执行"那条了。
+        if (puts === 2) return Promise.reject(new Error('磁盘满了'))
         rows.map.set(key, value)
         return Promise.resolve()
       },
@@ -219,11 +218,10 @@ test('结果落盘失败：应答照回，但该键停在 pending —— 重发�
   assert.equal(warnings.length, 1, '结果写不进去要留声')
   assert.equal(rows.get('k1')?.status, 'pending', '停在 pending 是"结果未知"的痕迹')
 
-  await assert.rejects(
-    () => idempotency.run('k1', job.execute),
-    (error: unknown) => error instanceof ProtocolError && error.code === 'internal',
-  )
-  assert.equal(job.calls(), 1, '停在 pending 的键不许再执行一次')
+  const again = await idempotency.run('k1', job.execute)
+  assert.deepEqual(again, { ok: true, result: { accepted: true } })
+  assert.equal(job.calls(), 2, '重发真的执行；"会不会变成第二条消息"由下游的 requestId 判据负责')
+  assert.equal(rows.get('k1')?.status, 'done', '重发成功之后 pending 被补成 done')
 })
 
 test('惰性过期：过期条目按未命中处理（清扫是有界的，正确性不能靠它）', async () => {

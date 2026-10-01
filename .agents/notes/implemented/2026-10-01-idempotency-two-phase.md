@@ -1,6 +1,9 @@
 # Agent Note: 幂等改成两阶段 —— 契约说"不得先执行再记录"，而我上一版正是那么做的
 
 Status: implemented（取代 `.agents/notes/archived/2026-10-01-idempotency-wiring.md`）
+> **局部更新**：本篇"键停在 `pending` 时 fail-closed 拒绝重发"这条判断已被
+> `2026-10-01-idempotency-pending-resend.md` 取代（下游真认得出重复：`prompt` 会扫会话事件日志，
+> `commands.ts:602-614`，所以重发是安全的）。**两阶段写入顺序与"落盘失败即拒绝执行"仍然成立。**
 
 ## Problem
 

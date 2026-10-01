@@ -37,7 +37,7 @@
  */
 import type { DedupeEntry } from './store/index.js'
 import type { ChannelLogger } from './observability.js'
-import { ProtocolError, isErrorCode } from './protocol/errors.js'
+import { isErrorCode } from './protocol/errors.js'
 import type { ResponseEnvelope } from './protocol/methods.js'
 
 /** 去重表容量上界（契约 §8.1 / §10）。 */
@@ -224,14 +224,20 @@ export function createIdempotency(options: IdempotencyOptions): Idempotency {
       /**
        * 行停在 `pending` 且本进程没有在飞 = **上一次执行的结果未知**（进程崩在②与③之间）。
        *
-       * 这时**不能重发**：那条写操作可能已经生效，而我们没有任何痕迹能区分。
-       * 契约 §5.6 说这种情况要向 DSH 核对（该 requestId 是否已随 `user/message`
-       * 落在会话日志里）—— 那是下一步；在核对落地之前，这里**拒绝**（fail-closed）：
-       * 宁可让手机刷新一次，也不制造第二条消息。
+       * 这种情况**按"未生效"处理并重发**（契约 §5.6 的原话），依据是下游真的认得出重复：
+       * `sessionController.prompt` 会查 `hasPromptRequest`，而它除了看 `inbox.nextTurn` / `nextStep`，
+       * 还扫 **`agent.session.snapshotEvents()`**（会话事件日志，
+       * `packages/api/session-controller/src/commands.ts:602-614`）——
+       * 会话被加载/重放之后，上一次那条 `user/message` 的 `rpcId` 就在里面，
+       * 于是重发得到 `{ accepted: true }` 而**不会**产生第二条消息。
+       *
+       * 所以这里**不再拒绝**（第 14 轮那版 fail-closed 的代价白付了：明明重发是安全的，
+       * 却让用户刷新后手动重发）。核对（问 DSH 要结论）留作**省一次重发的优化**，不是安全前提。
        */
       if (cached !== undefined && cached.status === 'pending' && cached.at >= now() - ttlMs) {
-        log?.warn(`幂等键停在 pending：上一次执行结果未知，拒绝重发（请刷新会话）`, { requestId })
-        throw new ProtocolError('internal', '上一次写操作的结果未知：请刷新会话后再试')
+        log?.debug(`幂等键停在 pending：按未生效重发（下游认得出重复：DSH 会查会话日志）`, {
+          requestId,
+        })
       }
 
       const promise = (async (): Promise<ResponseEnvelope> => {
