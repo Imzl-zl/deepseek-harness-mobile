@@ -49,6 +49,18 @@ export interface RateLimiter {
   sweep(): number
 }
 
+/**
+ * 隔多少次取用做一次自清。
+ *
+ * 为什么要自清：`take` 会为**每个见过的身份**建桶，而"见过的身份"没有上界
+ * （扫端口的人可以编出无数个）；桶本身很小，但表会长。自清而不是定时器，
+ * 与"惰性补充"同一个理由：**不引入后台任务**。
+ *
+ * 取 64：一次自清扫全表，所以这个值决定"摊销到每次取用的扫描成本"。
+ * 64 时每次取用摊到 1/64 次扫描 —— 在限流这种每秒几十次的路径上可以忽略。
+ */
+const SWEEP_EVERY = 64
+
 export function createRateLimiter(options: RateLimitOptions): RateLimiter {
   const now = options.now ?? (() => Date.now())
   const capacity = options.capacity
@@ -56,6 +68,21 @@ export function createRateLimiter(options: RateLimitOptions): RateLimiter {
 
   /** `key → { tokens, at }`：`at` 是上次结算时刻（惰性补充，不靠定时器）。 */
   const buckets = new Map<string, { tokens: number; at: number }>()
+  /** 取用计数：每 `SWEEP_EVERY` 次做一次自清（见该常量的说明）。 */
+  let takes = 0
+
+  const sweep = (): number => {
+    const at = now()
+    let removed = 0
+    for (const [key, bucket] of buckets) {
+      const refilled = Math.min(capacity, bucket.tokens + (at - bucket.at) * refillPerMs)
+      if (refilled >= capacity) {
+        buckets.delete(key)
+        removed += 1
+      }
+    }
+    return removed
+  }
 
   return {
     get size() {
@@ -63,6 +90,11 @@ export function createRateLimiter(options: RateLimitOptions): RateLimiter {
     },
 
     take(key) {
+      // 自清：`take` 会为每个见过的身份建桶，而"见过的身份"没有上界（扫描者能编出无数个）。
+      // 每 SWEEP_EVERY 次做一次全表扫描 —— 摊销到单次取用上可以忽略（见常量说明）。
+      takes += 1
+      if (takes % SWEEP_EVERY === 0) sweep()
+
       const at = now()
       const bucket = buckets.get(key) ?? { tokens: capacity, at }
       // 惰性补充：从上次结算到现在按速率加点，**封顶在容量**（否则闲置越久越能突发）。
@@ -82,17 +114,6 @@ export function createRateLimiter(options: RateLimitOptions): RateLimiter {
       return { allowed: true, retryAfterMs: 0 }
     },
 
-    sweep() {
-      const at = now()
-      let removed = 0
-      for (const [key, bucket] of buckets) {
-        const refilled = Math.min(capacity, bucket.tokens + (at - bucket.at) * refillPerMs)
-        if (refilled >= capacity) {
-          buckets.delete(key)
-          removed += 1
-        }
-      }
-      return removed
-    },
+    sweep,
   }
 }

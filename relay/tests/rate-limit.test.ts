@@ -67,6 +67,25 @@ test('拒绝也要结算补充量（否则重试时间会算错）', () => {
   assert.equal(limiter.take('dev-1').allowed, true, '满 1000ms 时补回 1 个')
 })
 
+test('自清：取用足够多次之后，空闲桶会自己消失（不必等外部调用 sweep）', () => {
+  // 容量 1、补充极快：于是"上一个身份"的桶很快就补满 = 与从没出现过等价。
+  const { limiter, advance } = setup({ capacity: 1, refillPerSecond: 1_000 })
+  limiter.take('dev-1')
+  assert.equal(limiter.size, 1)
+
+  advance(100)
+  // 64 次取用触发一次自清（`SWEEP_EVERY`）：用同一个身份刷，避免新建桶干扰观察。
+  for (let i = 0; i < 64; i += 1) limiter.take('dev-1')
+  assert.equal(limiter.size, 1, '只剩正在用的这个桶：空闲的 dev-1 旧桶已被清掉')
+
+  // 反证：如果不自清，下面的身份们会一直留在表里。
+  for (let i = 0; i < 10; i += 1) limiter.take(`idle-${i}`)
+  assert.equal(limiter.size, 11)
+  advance(100)
+  for (let i = 0; i < 64; i += 1) limiter.take('dev-1')
+  assert.equal(limiter.size, 1, '十个空闲身份也在下一次自清里消失')
+})
+
 test('sweep：完全补满的桶与"从没出现过"等价，可以清掉', () => {
   const { limiter, advance } = setup({ capacity: 2, refillPerSecond: 1 })
   limiter.take('dev-1')
