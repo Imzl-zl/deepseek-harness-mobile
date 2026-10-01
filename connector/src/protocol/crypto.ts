@@ -170,6 +170,119 @@ export interface HandshakeDerivation {
   kB2A: string
 }
 
+/** X25519 原始公钥（32 字节）的 SPKI 前缀。 */
+const X25519_SPKI_PREFIX = Buffer.from('302a300506032b656e032100', 'hex')
+/** Ed25519 原始公钥（32 字节）的 SPKI 前缀。 */
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex')
+
+/**
+ * 从 32 字节原始公钥构造 `KeyObject`。
+ *
+ * 线上传的是**裸公钥**（`hello` / `hello-ack` 里的 `ephPubA` / `ephPubB`），
+ * 而 `node:crypto` 只接受 DER/PEM —— 所以两端都必须做这层包装，且包装必须一致。
+ * 少了这一层，`diffieHellman` 会直接抛，症状是"握手莫名其妙失败"。
+ */
+export function publicKeyFrom(curve: Curve, hex: string): KeyObject {
+  const raw = fromHex(hex)
+  if (raw.length !== 32) throw new Error(`${curve} 公钥必须是 32 字节，收到 ${raw.length}`)
+  return createPublicKey({
+    key: Buffer.concat([curve === 'x25519' ? X25519_SPKI_PREFIX : ED25519_SPKI_PREFIX, raw]),
+    format: 'der',
+    type: 'spki',
+  })
+}
+
+export interface SessionKeyInput {
+  /**
+   * 本端在握手里的角色。**这个参数是必需的，不是冗余信息**：
+   * `ss1` 的定义是「发起方临时 × 应答方静态」，而同一个 DH 表达式
+   * `DH(自己的临时, 对端的静态)` 在两侧算出的分别是 `ss1` 与 `ss2`。
+   * 不告诉函数角色，就无从决定拼接顺序 —— 而顺序错了不会报错，
+   * 只会让两侧主密钥不同（症状：握手看起来走完，AEAD 永远解不开）。
+   */
+  role: 'initiator' | 'responder'
+  /** 自己的静态私钥。 */
+  ownStaticPrivate: KeyObject
+  /** 自己的临时私钥（**每连接新生成**）。 */
+  ownEphemeralPrivate: KeyObject
+  /** 对端的静态公钥（电脑侧从设备表按 `devId` 查出来；手机侧从配对结果拿到）。 */
+  peerStaticPublicHex: string
+  /** 对端的临时公钥（来自对端的握手帧）。 */
+  peerEphemeralPublicHex: string
+  nonceA: string
+  nonceB: string
+  info: string
+  pairingId: string
+}
+
+export interface SessionKeys {
+  ss1: string
+  ss2: string
+  ss3: string
+  master: string
+  /** 手机 → 电脑方向的 AEAD 密钥。 */
+  kA2B: string
+  /** 电脑 → 手机方向。 */
+  kB2A: string
+}
+
+/**
+ * 会话密钥派生（契约 §4.1）—— **两侧各自调用这一个函数**。
+ *
+ * 这是握手能成立的关键：发起方与应答方手上的材料不同（各自的私钥 + 对方的公钥），
+ * 但三份共享密钥算出来必须一样。三份的定义是**角色相关**的：
+ *
+ * ```text
+ * ss1 = 发起方临时 × 应答方静态        // 手机 eph × 电脑 static
+ * ss2 = 发起方静态 × 应答方临时        // 手机 static × 电脑 eph
+ * ss3 = 双方临时                       // 与角色无关
+ * ```
+ *
+ * 所以本函数必须知道 `role`：两侧各自算的是「自己的临时 × 对端的静态」，而它
+ * 在发起方是 `ss1`、在应答方是 `ss2`。顺序反了不会报错，只会让两侧派生出不同的
+ * 主密钥 —— 这正是 `tests/session-keys.test.ts` 的「双侧派生」用例要拦的东西。
+ *
+ * 方向约定（`kA2B` / `kB2A`）只与 `nonceA||nonceB` 的顺序有关，与角色无关，
+ * 所以两侧必须用同一个顺序，否则会派生出互为反向的两把密钥。
+ */
+export function deriveSessionKeys(input: SessionKeyInput): SessionKeys {
+  /** 自己的临时 × 对端的静态。 */
+  const ephOwnStaticPeer = diffieHellman({
+    privateKey: input.ownEphemeralPrivate,
+    publicKey: publicKeyFrom('x25519', input.peerStaticPublicHex),
+  })
+  /** 自己的静态 × 对端的临时。 */
+  const staticOwnEphPeer = diffieHellman({
+    privateKey: input.ownStaticPrivate,
+    publicKey: publicKeyFrom('x25519', input.peerEphemeralPublicHex),
+  })
+  /** 双方临时（与角色无关）。 */
+  const ephEph = diffieHellman({
+    privateKey: input.ownEphemeralPrivate,
+    publicKey: publicKeyFrom('x25519', input.peerEphemeralPublicHex),
+  })
+
+  // 发起方：`ephOwnStaticPeer` 就是 ss1。应答方：它其实是 ss2（对调前两位）。
+  const [ss1Raw, ss2Raw] = input.role === 'initiator'
+    ? [ephOwnStaticPeer, staticOwnEphPeer]
+    : [staticOwnEphPeer, ephOwnStaticPeer]
+
+  const ikm = Buffer.concat([ss1Raw, ss2Raw, ephEph])
+  const salt = Buffer.concat([fromHex(input.nonceA), fromHex(input.nonceB)])
+  const master = Buffer.from(
+    hkdfSync('sha256', ikm, salt, Buffer.from(`${input.info}|${input.pairingId}`, 'utf8'), MASTER_KEY_BYTES),
+  )
+
+  return {
+    ss1: toHex(ss1Raw),
+    ss2: toHex(ss2Raw),
+    ss3: toHex(ephEph),
+    master: toHex(master),
+    kA2B: toHex(master.subarray(0, 32)),
+    kB2A: toHex(master.subarray(32, 64)),
+  }
+}
+
 /**
  * 握手密钥派生（契约 §4.1）。三份共享密钥缺一不可：
  * `ss1` = 手机临时 × 电脑静态、`ss2` = 手机静态 × 电脑临时、`ss3` = 双方临时。
