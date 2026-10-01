@@ -38,7 +38,7 @@
 | `node app/tools/verify-platform-boundary.mjs` | 17 项(含 13 条规则自检):多端边界与 `Platform.isOhos` 禁令 |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
 | `cd connector && pnpm exec tsc --noEmit` | connector 类型检查(改 `connector/src/**` 后必跑) |
-| `cd connector && pnpm test` | connector 全套 **228 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**49 项**),外加握手驱动 / 封箱 / 流控 / 任务帧 / 订阅骨架 / 方法面 / 幂等 / 四个 DSH 适配器 / 连接级 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
+| `cd connector && pnpm test` | connector 全套 **235 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**49 项**),外加握手驱动 / 封箱 / 流控 / 任务帧 / 订阅骨架 / 方法面 / 幂等 / 四个 DSH 适配器 / 连接级 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
 | `cd connector && pnpm build` | 产出 `lib/index.js` + `lib/index.d.ts`(装进 profile 的那份产物) |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker`;跑法见 `tools.md` |
 
