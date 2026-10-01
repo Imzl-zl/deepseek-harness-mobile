@@ -122,3 +122,125 @@ test('拒绝与异常：reject → rejected；端口抛错 → **unavailable** �
   assert.equal(failed.warnings.length, 1, '失败不能无声无息')
   assert.match(failed.warnings[0] ?? '', /fail-closed/)
 })
+
+interface QuestionCaptured {
+  questions?: (request: never, next: () => Promise<unknown>) => Promise<unknown>
+}
+
+/** 提问通道的架子：与审批同一个假 ctx（只是抓另一个事件）。 */
+function setupQuestions(patch: { mode?: string; sid?: string | null } = {}) {
+  const handlers: QuestionCaptured = {}
+  const calls: { prompt: Record<string, unknown>; signal: unknown }[] = []
+  const warnings: string[] = []
+  let disposals = 0
+
+  const ctx = {
+    on: (event: string, handler: unknown) => {
+      if (event === 'user-questions/request') handlers.questions = handler as QuestionCaptured['questions']
+      return () => {
+        disposals += 1
+      }
+    },
+  }
+
+  const off = registerInteractions(ctx as never, {
+    port: {
+      askApproval: () => Promise.reject(new Error('本用例不涉及审批')),
+      askQuestion: (prompt: unknown, signal?: AbortSignal) => {
+        calls.push({ prompt: prompt as unknown as Record<string, unknown>, signal })
+        return Promise.resolve({ answers: [] })
+      },
+    },
+    takeover: {
+      mode: () => patch.mode ?? 'always',
+      devices: () => [{ id: 'dev-1', online: true, pairedAt: 1 }] as never,
+      sidOf: () => (patch.sid === null ? undefined : (patch.sid ?? 'sid_1')),
+    },
+    log: { warn: (message: string) => warnings.push(message) },
+  } as never)
+
+  const run = async (input: Record<string, unknown>) => {
+    const handler = handlers.questions
+    assert.ok(handler !== undefined, 'registerInteractions 应当注册 user-questions/request')
+    return handler(input as never, () => Promise.resolve('from-desktop'))
+  }
+  return { run, calls, warnings, disposals: () => disposals, off }
+}
+
+const questionRequest = (patch: Record<string, unknown> = {}) => ({
+  agent: { id: 'dsh-session-1' },
+  questions: [{ header: '选一个', question: '继续吗', options: [] }],
+  wait: { callId: 'call-9', timed: true },
+  signal: new AbortController().signal,
+  ...patch,
+})
+
+test('提问：无 agent 的请求不接管；接管时 prompt 逐字段映射，且 **计划审查走提问通道**', async () => {
+  const noAgent = setupQuestions()
+  assert.equal(
+    await noAgent.run({ ...questionRequest(), agent: undefined }),
+    'from-desktop',
+    '无 agent 的请求走 unscoped dispatch，不归本桥接管',
+  )
+  assert.deepEqual(noAgent.calls, [], '不接管时绝不打扰手机')
+
+  const { run, calls } = setupQuestions()
+  const original = questionRequest({
+    questions: [
+      { header: '计划', question: '批准吗', options: [], intent: { kind: 'plan-review', approve: 'yes' } },
+    ],
+  })
+  await run(original)
+
+  const call = calls[0]
+  assert.ok(call !== undefined)
+  assert.equal(call.prompt['sid'], 'sid_1')
+  assert.equal(call.prompt['dshSessionId'], 'dsh-session-1')
+  assert.equal(call.prompt['callId'], 'call-9')
+  assert.equal(call.prompt['timed'], true)
+  assert.deepEqual(
+    call.prompt['planReview'],
+    { approve: 'yes' },
+    '计划审查的判别靠 intent.kind（它走提问通道而不是审批）—— 漏了它，手机就看不到"批准计划"那个按钮',
+  )
+  assert.equal(call.signal, original.signal, 'signal 同样是原对象')
+})
+
+test('提问端口抛错：**照原样抛**（绝不用空答案伪装成"用户全跳过"）', async () => {
+  const handlers: QuestionCaptured = {}
+  const warnings: string[] = []
+  const ctx = {
+    on: (event: string, handler: unknown) => {
+      if (event === 'user-questions/request') handlers.questions = handler as QuestionCaptured['questions']
+      return () => {}
+    },
+  }
+  registerInteractions(ctx as never, {
+    port: {
+      askApproval: () => Promise.reject(new Error('无关')),
+      askQuestion: () => Promise.reject(new Error('手机那边断了')),
+    },
+    takeover: {
+      mode: () => 'always',
+      devices: () => [{ id: 'dev-1', online: true, pairedAt: 1 }] as never,
+      sidOf: () => 'sid_1',
+    },
+    log: { warn: (message: string) => warnings.push(message) },
+  } as never)
+
+  const handler = handlers.questions
+  assert.ok(handler !== undefined)
+  await assert.rejects(
+    () => handler(questionRequest() as never, () => Promise.resolve('from-desktop')),
+    /手机那边断了/,
+    '返回空答案会被 batch 校验与定时工具误判成"用户跳过了" —— 提问侧必须抛',
+  )
+  assert.match(warnings[0] ?? '', /不用空答案伪装/)
+})
+
+test('disposer 同时注销两个 answerer（少一个就留下一条指向手机的悬挂通道）', () => {
+  const { disposals, off } = setupQuestions()
+  assert.equal(disposals(), 0, '注册阶段不该调用 disposer')
+  off()
+  assert.equal(disposals(), 2, 'approval 与 questions 两个通道都要注销')
+})
