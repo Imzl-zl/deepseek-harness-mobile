@@ -5,14 +5,15 @@
 
 ## 下一步(新会话从这里开始)
 
-**目标**:把方法面铺开 —— 先补**幂等表接线**(写操作的安全前提),再补 `session.list` / `session.page` 这类手机首页真正要用的方法。
+**目标**:让方法面长出手机首页真正要用的两个方法 —— `session.list` / `session.page`(需要新接 `sessionQuery`)。
 
 **开工顺序**:
 
-1. **幂等表接线**(§5.6 / I8):`protocol/dedupe.ts` + `store/` 的 `dedupe` 表都在,缺的是"带 `requestId` 的请求 → claim → 执行 → 落结果 → 重发命中即回上次结果"这条路径。它是 `session.prompt` 这类**写操作**的前置(不然断线重发就是第二条消息)。
-2. **`session.list` / `session.page`**:需要新接 `sessionQuery`(`listSessions(signal)` 给 `SessionRecord[]`,按最新在前)—— 注意会话标题来自 DSH 的另一个面,先把"别名 + 时间 + live/persisted"这三样如实报出去,标题单开一轮。
-3. **配对流程(§12.1)**:二维码 / 配对码 → 写设备记录(含 `pairingId`)与手机侧凭据。没有它就**没有设备行**,`peerOf` 恒返回 undefined,握手一律 `protocol/not-paired` —— 真机联调的最后一块空白。
-4. **`relay/` 产品化**与**手机端 Dart**(后者前置:先装 Flutter SDK)。
+1. **接 `sessionQuery`**(可选服务,服务键已在契约 §7 列出):`listSessions(signal)` 给 `SessionRecord[]`(最新在前,`{ header, live, persisted }`)。凡是出现在通道上的会话都要先经 `alias.ensure(sessionId)` 拿到 `sid`(契约 §5.1:中继只见 `sid`)。
+2. **`session.list`**:先把**别名 + 时间 + live/persisted**三样如实报出去(它们都来自 DSH 的权威字段);会话标题来自另一个面(`sessionTitle` 服务),单开一轮,不要先编一个假标题字段。
+3. **带键方法**(`session.prompt` 优先):幂等管道已就绪,接它时**逐个复核下游幂等保障**(DSH 侧按 `requestId` 去重/天然幂等/`interaction/not-pending` 守卫),因为幂等笔记里的安全论证依赖这份清单。
+4. **配对流程(§12.1)**:二维码 / 配对码 → 写设备记录(含 `pairingId`)与手机侧凭据。没有它就**没有设备行**,`peerOf` 恒返回 undefined,握手一律 `protocol/not-paired` —— 真机联调的最后一块空白。
+5. **`relay/` 产品化**与**手机端 Dart**(后者前置:先装 Flutter SDK)。
 
 协议本身已定稿,**不需要再决策**;`docs/subsystems/remote-channel.md` 是唯一规格源,`protocol/fixtures/` 与 `protocol/vectors/` 是它的可执行部分。
 
@@ -37,7 +38,7 @@
 | `node app/tools/verify-platform-boundary.mjs` | 17 项(含 13 条规则自检):多端边界与 `Platform.isOhos` 禁令 |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
 | `cd connector && pnpm exec tsc --noEmit` | connector 类型检查(改 `connector/src/**` 后必跑) |
-| `cd connector && pnpm test` | connector 全套 **132 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**49 项**),外加握手驱动 / 封箱 / 流控 / 方法面 / 连接级 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
+| `cd connector && pnpm test` | connector 全套 **145 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**49 项**),外加握手驱动 / 封箱 / 流控 / 方法面 / 幂等 / 连接级 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
 | `cd connector && pnpm build` | 产出 `lib/index.js` + `lib/index.d.ts`(装进 profile 的那份产物) |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker`;跑法见 `tools.md` |
 
@@ -67,7 +68,7 @@
 - **业务帧的封箱已落地**:`protocol/box.ts` —— 除握手三帧与 `presence` 外**每帧都封箱**(控制帧封空载荷:`fc` 在 AAD 里,不认证就等于让未认证的数字驱动重放窗口),箱 = `base64url(密文‖tag)`,**重放窗口只在认证通过后推进**。封箱是连接层出帧/收帧的单一收口(`write` 里"分配 `fc`"与"封箱"紧挨着),上层看到的 `box` 永远是明文;`secure` 把握手与密码器绑成一个对象,配了就不可能明文上线。证据:连接级 e2e 用**手机侧独立实现**(自己拼 nonce/AAD/容器,不 import `box.ts`)双向跑通,篡改/重放/缺 box 三种形状各有关连接的错误码。取舍见 `.agents/notes/implemented/2026-10-01-business-frame-sealing.md`。
 - **流控已接线**:W=128 窗口 + "收到即回 `credit`";`credit` 的 `fc` 是它自己的序号、**被确认的序号在箱里**(`{"ack":N}`,累计确认,QUIC 同形),`credit` 自己不再回 `credit`;满窗**只压可补的两类**(`ev`/`live`)—— 压 `res` 会死锁;暂停不是丢弃(队列里的帧等 `credit` 到达再放)。取舍与被否方案见 `.agents/notes/implemented/2026-10-01-flow-control-wiring.md`。
 - **方法面已接线,2/22 个方法可用**:`src/method-face.ts`(解信封 → 分发 → 封 `res`,从不抛、从不碰 `fc`/封箱,返回值收窄成 `ResFrame`)+ `src/handlers.ts`(**"实现了什么"的唯一出处**:`repo.info` 报的就是这张表的键)。已实现 `repo.info`(协议版本 / 能力位 / 别名版本 / 方法清单)与 `devices.list`;其余一律回 `connector/unsupported`。取舍与被否方案见 `.agents/notes/implemented/2026-10-01-method-face-wiring.md`。
-- **幂等表未接线**:`protocol/dedupe.ts` 与 `store/` 的 `dedupe` 表都已就绪,但写操作还没有"命中即回上次结果"的路径(§5.6 / I8 的最后一段)。
+- **幂等已接线(但还没被真实方法用到)**:`src/idempotency.ts` —— 只记成功、失败不进表;同键并发**合流**(只执行一次);崩溃窗口里重放执行(带键的四个方法各有下游保障);表无定时器,**TTL 靠惰性过期兜正确性**(读到过期条目即当未命中),空间回收是**有界清扫**(单次 500 条 —— 域表写入走单写链,一次一万条删除会让挂载卡几十秒)。方法面只对 `IDEMPOTENT_METHODS` 生效(只读方法带键也不进表)。**注意:那四个带键方法(`session.prompt` / `interaction.respond` / `settings.update` / `credentials.set|unset`)都还没实现**,所以本轮交付的是管道 + 判据,e2e 用的是假 handler。取舍与被否方案(含"为什么不像 Stripe 那样连失败也记")见 `.agents/notes/implemented/2026-10-01-idempotency-wiring.md`。
 - **`session.list` 未实现**:需要新接 `sessionQuery`(服务键已在契约 §7 列出);`devices.revoke` 需要写存储 + 清在线会话,两者都留到各自轮次。
 - **配对流程未实现**(§12.1):二维码 / 配对码 → 写设备记录(含 `pairingId`)。没有它就没有设备行,`peerOf` 恒 undefined、握手一律 `protocol/not-paired`。
 - **`relay/`(中转)与 `app/`(手机端)的代码都还没开始**,后者前置是先装 Flutter SDK。
@@ -82,6 +83,10 @@
 - 当前最挡路的一条:CDP 端口可能要换 —— 9222 被日常 Chrome 占用,9400 也可能被上一轮遗留的 headless Chrome 占着,开新端口前先探 `/json/version`。
 
 ## 最近活跃窗口
+
+- 2026-10-01 幂等接线(本轮):把 I8 的最后一段接上 —— 新增 `src/idempotency.ts`(只记成功、失败不进表;同键并发**合流**成一次执行;崩溃窗口里重放执行而不是 fail-closed;收敛点取挂载与超容量两处),方法面只对 `IDEMPOTENT_METHODS` 生效(只读方法带键也不进表),`index.ts` 从 `dedupe` 表建它并在挂载时先 `prune()` 一次。三处定案各有被否方案:① 为什么不像 Stripe 那样"连失败也记"(会把瞬时故障变成 24h 死路,而带键的四个方法各有下游保障 —— 这份清单必须随新方法复核);② 为什么不写 `pending` 行做 fail-closed(桥接单进程,重放安全,而 pending 行永远读不到);③ 为什么并发同键给确定答复而不是 409(执行就在本进程里)。**如实记:那四个带键方法都还没实现**,所以本轮交付的是管道 + 判据。证据:`pnpm test` **145 项**、`tsc` 0、`pnpm build`、三条 protocol 门禁 486/26/49、多端边界 17;三处变异 ㉕㉖㉗ 逐条命中(㉖ 让 e2e 的 I8 用例红 —— 真实重发被算了两次)。
+
+- 2026-10-01 方法面接线:第一次让手机能"问一句、拿一句" —— 新增 `src/method-face.ts`(解信封 → `dispatch` → 封 `res`;从不抛、从不分配 `fc`/封箱,返回值收窄成 `ResFrame`)与 `src/handlers.ts`(**"实现了什么"的唯一出处**,`repo.info` 报的就是这张表的键),已实现 `repo.info` 与 `devices.list`。三处定案:`res` 必须回带 `id`/`sid`、帧头与信封的 `ok` 只在 `resFrame()` 里同时写一次、能力位与已实现方法是两件事。取舍见 `.agents/notes/implemented/2026-10-01-method-face-wiring.md`。
 
 - 2026-10-01 方法面接线(本轮):第一次让手机能"问一句、拿一句" —— 新增 `src/method-face.ts`(解信封 → `dispatch` → 封 `res`;**从不抛**、**从不分配 `fc`/封箱**,返回值收窄成 `ResFrame`)与 `src/handlers.ts`(**"实现了什么"的唯一出处**,`repo.info` 报的就是这张表的键),已实现 `repo.info` 与 `devices.list`,其余回 `connector/unsupported`;`index.ts` 的收帧分支把 `req` 交给它,应答走同一条出帧路径(发不出去会 `metrics + log`,不静默丢弃)。三处定案:`res` 必须回带 `id`/`sid`(关联一断手机永远等不到回应)、帧头与信封的 `ok` 只在 `resFrame()` 里同时写一次、能力位(`caps`:服务在不在)与已实现方法(`methods`:我们接没接上)是两件事。证据:`pnpm test` **132 项**、`tsc` 0、`pnpm build`、三条 protocol 门禁 486/26/49、多端边界 17;三处变异 ㉒㉓㉔ 逐条命中(其中 ㉓ 证明"结构化错误不关连接"这条判据是真的)。
 

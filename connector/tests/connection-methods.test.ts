@@ -12,8 +12,10 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { createHandlers } from '../src/handlers.js'
+import { createIdempotency } from '../src/idempotency.js'
 import { waitFor } from './support/peer.js'
 import { phoneOpenBox, phoneSealBox } from './support/phone.js'
+import { createMemoryDedupeRows } from './support/dedupe-rows.js'
 import { completeHandshake, start, type Fixture } from './support/secure-connection.js'
 import type { SessionKeys } from '../src/protocol/crypto.js'
 
@@ -119,6 +121,38 @@ test('端到端：载荷不是 JSON → protocol/bad-frame 信封，连接同样
   assert.equal(res.ok, false)
   assert.equal(res.envelope['code'], 'protocol/bad-frame')
   assert.equal(f.connection.state, 'serving')
+})
+
+test('端到端：同一个幂等键重发 → 只执行一次，第二次回上次的结果（I8）', async (t) => {
+  const rows = createMemoryDedupeRows()
+  let calls = 0
+  const f = await start(t, {
+    handlers: {
+      'session.prompt': () => {
+        calls += 1
+        return { accepted: true, nth: calls }
+      },
+    },
+    idempotency: createIdempotency({ rows }),
+  })
+  f.connection.start()
+  await waitFor('进入 handshake', () => f.connection.state === 'handshake')
+  const keys = await completeHandshake(f)
+
+  const payload = '{"method":"session.prompt","requestId":"p1","params":{"text":"你好"}}'
+  // 手机的"重发"：同一个 requestId，两个不同的 fc（新的一帧）。
+  sendRequest(f, keys, 0, 'req_eeeeeeeeeeee', payload)
+  await waitFor('第一个应答到达', () => f.peer.received.filter((frame) => frame.t === 'res').length === 1)
+  sendRequest(f, keys, 1, 'req_ffffffffffff', payload)
+  await waitFor('第二个应答到达', () => f.peer.received.filter((frame) => frame.t === 'res').length === 2)
+
+  assert.equal(calls, 1, '同一个幂等键只能生效一次 —— 否则就是第二条消息')
+  const first = responseOf(f, keys, 0)
+  const second = responseOf(f, keys, 1)
+  assert.equal(first.id, 'req_eeeeeeeeeeee')
+  assert.equal(second.id, 'req_ffffffffffff', '重发的应答回的是**这次**的 id')
+  assert.deepEqual(second.envelope, first.envelope, '内容与第一次相同（命中即回上次结果）')
+  assert.equal(rows.size, 1, '表里只留一行')
 })
 
 test('端到端：连着问两件事，两个应答各自对得上自己的 id', async (t) => {

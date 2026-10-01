@@ -21,6 +21,7 @@ import {
   type HandshakeEstablishment,
 } from '../../src/protocol/handshake-driver.js'
 import type { MethodHandler, MethodName } from '../../src/protocol/methods.js'
+import type { Idempotency } from '../../src/idempotency.js'
 import { createMethodFace } from '../../src/method-face.js'
 import { createConnection, type Connection } from '../../src/transport/connection.js'
 import { startPeer, waitFor, type Peer } from './peer.js'
@@ -53,7 +54,11 @@ export interface Fixture {
 /** 起对端 + 连接，并注册清理。 */
 export async function start(
   t: Cleanup,
-  options: { handlers?: Partial<Record<MethodName, MethodHandler>> } = {},
+  options: {
+    handlers?: Partial<Record<MethodName, MethodHandler>>
+    /** 给了它就装幂等执行（与 `index.ts` 的装配一致）。 */
+    idempotency?: Idempotency
+  } = {},
 ): Promise<Fixture> {
   const pc = deriveIdentity(PC_SEED)
   const phoneIdentity = deriveIdentity(PHONE_SEED)
@@ -73,7 +78,12 @@ export async function start(
   const closes: { code: number; reason: string }[] = []
   /** 给了 handlers 才装方法面 —— 握手与流控那两组用例不需要它。 */
   const face =
-    options.handlers === undefined ? null : createMethodFace({ handlers: options.handlers })
+    options.handlers === undefined
+      ? null
+      : createMethodFace({
+          handlers: options.handlers,
+          ...(options.idempotency === undefined ? {} : { idempotency: options.idempotency }),
+        })
 
   const peer = await startPeer()
   const connection = createConnection({

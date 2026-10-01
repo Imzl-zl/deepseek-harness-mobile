@@ -23,11 +23,14 @@ import type { WireFrame } from './protocol/frame.js'
 import {
   createDispatcher,
   decodeRequest,
+  isMethod,
+  requiresIdempotencyKey,
   type DispatchContext,
   type MethodHandler,
   type MethodName,
   type ResponseEnvelope,
 } from './protocol/methods.js'
+import type { Idempotency } from './idempotency.js'
 import type { OutboundFrame } from './transport/connection.js'
 
 /**
@@ -41,6 +44,11 @@ export type ResFrame = Extract<OutboundFrame, { t: 'res' }>
 export interface MethodFaceOptions {
   /** 已实现的方法；表里没有的回 `connector/unsupported`。 */
   handlers: Partial<Record<MethodName, MethodHandler>>
+  /**
+   * 幂等执行（契约 §5.6）。**只对带幂等键的方法生效**（`IDEMPOTENT_METHODS`）：
+   * 只读方法带键也不进表 —— 用一次缓存住的列表去回答第二次读，是拿旧数据糊弄人。
+   */
+  idempotency?: Idempotency
   /** 分发失败时的留声点。默认静默（测试与无人值守装配用）。 */
   onError?: (message: string, detail?: unknown) => void
 }
@@ -79,6 +87,7 @@ export function resFrame(
 
 export function createMethodFace(options: MethodFaceOptions): MethodFace {
   const dispatcher = createDispatcher(options.handlers)
+  const idempotency = options.idempotency
   const warn = options.onError
 
   return {
@@ -90,7 +99,16 @@ export function createMethodFace(options: MethodFaceOptions): MethodFace {
 
       try {
         const request = decodeRequest(frame.box)
-        const envelope = await dispatcher.dispatch(request, context)
+        const execute = (): Promise<ResponseEnvelope> => dispatcher.dispatch(request, context)
+        // 幂等只挂**带键的方法**：只有它们承诺"重发不会产生第二次效果"（I8）。
+        // 键存在但不是带键方法（比如手机给只读方法塞了一个）→ 不进表，照常执行。
+        const envelope =
+          idempotency !== undefined &&
+          request.requestId !== undefined &&
+          isMethod(request.method) &&
+          requiresIdempotencyKey(request.method)
+            ? await idempotency.run(request.requestId, execute)
+            : await execute()
         return resFrame(frame, envelope)
       } catch (error) {
         // 走到这里只可能是**载荷本身**坏了（不是 JSON / 缺 method）—— `dispatch` 从不抛。

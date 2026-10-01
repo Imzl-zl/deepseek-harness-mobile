@@ -51,6 +51,7 @@ import { createHandshakeDriver } from './protocol/handshake-driver.js'
 import { createBoxCodec } from './protocol/box.js'
 import { createHandlers } from './handlers.js'
 import { createMethodFace } from './method-face.js'
+import { createIdempotency, type DedupeRows } from './idempotency.js'
 import { mount, type LifecycleStep } from './lifecycle.js'
 import { METRIC, createChannelLogger, createMetrics, type ChannelLogger, type ChannelMetrics } from './observability.js'
 import { createAliases, type Aliases } from './alias.js'
@@ -114,6 +115,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
     get(key: string): DeviceRecord | undefined
     keys(): Iterable<string>
   } | null = null
+  /** 幂等表（`core` 域的 `dedupe` 表）。写在库里的行要参与 §5.6 的"命中即回上次结果"。 */
+  let dedupeRows: DedupeRows | null = null
   /** 本机身份（§4.1）。在 `load-identity` 之前是 null，`start-transport` 之前必然已就绪。 */
   let identity: Identity | null = null
   /** 本机标识：进 `hello-ack` 的 `pcId`，因而参与 transcript。 */
@@ -228,6 +231,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         // 别名：先对账两个方向再用 —— 崩在两次 put 之间的残留在这一步被清掉，
         // 否则残缺的 by_sid 会让入站 sid 校验失败，或让 ensure 重复分配别名。
         devicesTable = core.table('devices')
+        dedupeRows = core.table('dedupe')
         aliases = createAliases(
           { bySid: core.table('by_sid'), bySession: core.table('by_session') },
           { initialVersion: migrated.aliasVersion },
@@ -293,6 +297,15 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
 
         // 方法面：先建 handler 表（`repo.info` 报的就是这张表的键），再交给方法面接线。
         // 两者都在这一步构造：它们依赖 `open-store`/`publish-service` 的产物，且**每次挂载一套**。
+        // 幂等表在挂载时先收敛一次：TTL（24h）与容量（10000）在契约里是硬约束，
+        // 而它没有定时器 —— 收敛点就取"挂载"与"超容量"两处。
+        const idempotency =
+          dedupeRows === null ? null : createIdempotency({ rows: dedupeRows, log: logger })
+        if (idempotency !== null) {
+          const removed = await idempotency.prune()
+          if (removed > 0) logger.debug(`幂等表挂载时收敛：清掉 ${removed} 条过期/超容条目`)
+        }
+
         const methodFace = createMethodFace({
           handlers: createHandlers({
             caps: () => readCaps(ctx),
@@ -313,6 +326,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
                     ]
                   }),
           }),
+          ...(idempotency === null ? {} : { idempotency }),
           onError: (message, detail) => logger.warn(message, detail),
         })
         logger.debug(`方法面已就绪：${methodFace.implemented.length} 个方法`, {

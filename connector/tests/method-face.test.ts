@@ -9,8 +9,10 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { createMethodFace, resFrame } from '../src/method-face.js'
+import { createIdempotency } from '../src/idempotency.js'
 import type { WireFrame } from '../src/protocol/frame.js'
 import type { MethodHandler } from '../src/protocol/methods.js'
+import { createMemoryDedupeRows } from './support/dedupe-rows.js'
 
 const req = (box: string, extra: { id?: string; sid?: string } = {}): WireFrame => ({
   v: 1,
@@ -109,6 +111,49 @@ test('不归方法面管的帧：返回 null，不制造应答', async () => {
   ] as WireFrame[]) {
     assert.equal(await face.handle(frame), null)
   }
+})
+
+test('幂等：带键的方法重发只执行一次，第二次回上次的结果', async () => {
+  const rows = createMemoryDedupeRows()
+  let calls = 0
+  const face = createMethodFace({
+    handlers: {
+      'session.prompt': () => {
+        calls += 1
+        return { accepted: true, nth: calls }
+      },
+    },
+    idempotency: createIdempotency({ rows }),
+  })
+
+  const payload = '{"method":"session.prompt","requestId":"p1"}'
+  const first = await face.handle(req(payload))
+  const second = await face.handle(req(payload))
+
+  assert.ok(first !== null && second !== null)
+  assert.equal(calls, 1, '同一个键重发不能执行第二次 —— 那正是 I8 要防的"第二条消息"')
+  assert.deepEqual(JSON.parse(second.box), JSON.parse(first.box))
+})
+
+test('幂等：只读方法带键也不进表（用旧数据回答第二次读是糊弄人）', async () => {
+  const rows = createMemoryDedupeRows()
+  let calls = 0
+  const face = createMethodFace({
+    handlers: {
+      'session.list': () => {
+        calls += 1
+        return { sessions: [], nth: calls }
+      },
+    },
+    idempotency: createIdempotency({ rows }),
+  })
+
+  const payload = '{"method":"session.list","requestId":"k1"}'
+  await face.handle(req(payload))
+  await face.handle(req(payload))
+
+  assert.equal(calls, 2, '只读方法每次都该真的去读')
+  assert.equal(rows.size, 0, '不该为只读方法写幂等行')
 })
 
 test('implemented：报的是表里真有的方法', () => {
