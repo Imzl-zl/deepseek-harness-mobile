@@ -16,6 +16,7 @@ import { WIRE_VERSION } from '../src/protocol/frame.js'
 import type { Caps } from '../src/dsh/caps.js'
 import type { JobControlPort, JobsPort } from '../src/dsh/jobs.js'
 import type { JobSubscriptions } from '../src/job-subscriptions.js'
+import type { SessionPager } from '../src/session-page.js'
 import type { SessionSubscriptions } from '../src/session-subscriptions.js'
 import { createFakeAliases } from './support/fake-aliases.js'
 
@@ -190,6 +191,7 @@ function fakeSessionSubscriptions(
     subscribe: (input) =>
       Promise.resolve({ since: input.since ?? 0, hasMore: false }),
     unsubscribe: () => true,
+    cursorOf: () => undefined,
     stopAll: () => {},
     active: 0,
     ...overrides,
@@ -244,6 +246,81 @@ test('session.subscribe / unsubscribe：参数与别名不合规就回结构化�
   const without = build()
   assert.equal('session.subscribe' in without, false)
   assert.equal('session.unsubscribe' in without, false)
+})
+
+/** 会话翻页端口：默认回空页。 */
+function fakePager(overrides: Partial<SessionPager> = {}): SessionPager {
+  return {
+    page: (input) => Promise.resolve({ items: [], hasMore: false, throughSeq: input.beforeSeq ?? 0 }),
+    refetch: ({ seq }) => Promise.resolve({ record: { event: { seq } } as never }),
+    ...overrides,
+  }
+}
+
+test('session.page：参数原样递下去（水位由翻页层从订阅面的缓存里取）', async () => {
+  const seen: unknown[] = []
+  const handlers = build({
+    aliases: preloadedAliases(),
+    sessionPager: fakePager({
+      page: (input) => {
+        seen.push(input)
+        return Promise.resolve({ items: [], hasMore: true, throughSeq: 42 })
+      },
+    }),
+  })
+  const handler = handlers['session.page']
+  assert.ok(handler !== undefined)
+
+  assert.deepEqual(await handler({ sid: 'sid_dsh-1' }, {}), {
+    items: [],
+    hasMore: true,
+    throughSeq: 42,
+  })
+  assert.deepEqual(seen[0], { sid: 'sid_dsh-1', dshSessionId: 'dsh-1' }, '没给的可选参数就不带')
+
+  await handler({ sid: 'sid_dsh-1', beforeSeq: 10, maxMessages: 20 }, {})
+  assert.deepEqual(seen[1], {
+    sid: 'sid_dsh-1',
+    dshSessionId: 'dsh-1',
+    beforeSeq: 10,
+    maxMessages: 20,
+  })
+})
+
+test('session.page / session.refetch：下标与条数必须是非负整数；refetch 的 seq 必填', async () => {
+  const handlers = build({ aliases: preloadedAliases(), sessionPager: fakePager() })
+  const page = handlers['session.page']
+  const refetch = handlers['session.refetch']
+  assert.ok(page !== undefined && refetch !== undefined)
+
+  for (const key of ['beforeSeq', 'maxMessages']) {
+    for (const value of [-1, 1.5, '10', null, true]) {
+      await assert.rejects(
+        async () => page({ sid: 'sid_dsh-1', [key]: value }, {}),
+        (error: unknown) => error instanceof ProtocolError && error.code === 'protocol/bad-frame',
+        `${key}=${String(value)} 应当被拒`,
+      )
+    }
+  }
+  for (const value of [undefined, -1, 2.5, '3']) {
+    await assert.rejects(
+      async () => refetch({ sid: 'sid_dsh-1', seq: value }, {}),
+      (error: unknown) => error instanceof ProtocolError && error.code === 'protocol/bad-frame',
+      `seq=${String(value)} 应当被拒`,
+    )
+  }
+  assert.deepEqual(await refetch({ sid: 'sid_dsh-1', seq: 9 }, {}), {
+    record: { event: { seq: 9 } },
+  })
+
+  await assert.rejects(
+    async () => page({ sid: 'sid_nobody' }, {}),
+    (error: unknown) => error instanceof ProtocolError && error.code === 'session/not-found',
+  )
+
+  const without = build()
+  assert.equal('session.page' in without, false)
+  assert.equal('session.refetch' in without, false)
 })
 
 test('job.follow：把 sid 与 DSH 会话 id 都交给注册表，并回它给出来的起点', async () => {

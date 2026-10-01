@@ -59,6 +59,7 @@ import type { JobRegistry } from '@deepseek-ai/dsh-jobs'
 import { createJobsPort, createJobControlPort, type JobControlService } from './dsh/jobs.js'
 import { createJobSubscriptions } from './job-subscriptions.js'
 import { createSessionBuffer } from './session-buffer.js'
+import { createSessionPager } from './session-page.js'
 import { createSessionSubscriptions } from './session-subscriptions.js'
 import { createSessionsAdapter } from './dsh/sessions.js'
 import type { DeviceRecord } from './store/index.js'
@@ -376,12 +377,20 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           log: logger,
         })
 
+        // 翻页的水位来自订阅面的开启帧缓存（契约 §5.3：	hroughSeq 必须出自开启帧）。
+        const sessionPager = createSessionPager({
+          sessions: createSessionsAdapter(ctx.sessionController),
+          cursorOf: (sid) => sessionSubscriptions.cursorOf(sid),
+          log: logger,
+        })
+
         const methodFace = createMethodFace({
           handlers: createHandlers({
             caps: () => readCaps(ctx),
             aliasVersion: () => aliases?.version ?? 0,
             sessions: createSessionsAdapter(ctx.sessionController),
             sessionSubscriptions,
+            sessionPager,
             // 任务服务是**可选**的（`caps.ts` 的 OPTIONAL_SERVICES）：缺了就不挂 `job.*`，
             // 手机侧看到的是"这个方法不存在"，而不是一个会回错的按钮。
             ...(ctx.get('jobs') === undefined

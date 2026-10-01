@@ -91,6 +91,14 @@ export interface SessionSubscriptions {
   }): Promise<SessionSubscriptionReply>
   /** 终止一个会话订阅。返回是否真的有一个在跑。 */
   unsubscribe(sid: string): boolean
+  /**
+   * 该会话**最后一次**开启帧给出的基线水位（契约 §5.3：`session.page` 的 `throughSeq` 必须来自它）。
+   *
+   * **退订之后仍然记着**：手机收起会话面板、或断线重连之前想翻历史时，
+   * 手里没有活跃订阅但水位还是知道的 —— 用一个稍旧的切点翻更早的历史是安全的
+   * （它只会少算新事件，不会算错旧事件）。进程重启后自然为空，那时回 `undefined`。
+   */
+  cursorOf(sid: string): number | undefined
   /** 终止全部（连接离开服务态、插件卸载）。 */
   stopAll(): void
   readonly active: number
@@ -120,6 +128,8 @@ export function createSessionSubscriptions(
   const streams = new Map<string, number>()
   let nextStream = 1
   const buffer = options.buffer
+  /** `sid → 最后一次开启帧的水位`（`session.page` 的 `throughSeq` 来源）。 */
+  const cursors = new Map<string, number>()
 
   const streamIdOf = (attemptId: string): number => {
     const existing = streams.get(attemptId)
@@ -250,8 +260,12 @@ export function createSessionSubscriptions(
           }
         },
         outOf: (frame) => expand(input.sid, frame).out,
-        anchorOf: (frame) =>
-          frame.kind === 'opening' ? expand(input.sid, frame).anchor : undefined,
+        anchorOf: (frame) => {
+          const expanded = expand(input.sid, frame)
+          // 顺手记住水位：`session.page` 要用它当 `throughSeq`（退订后也留着）。
+          if (expanded.anchor !== undefined) cursors.set(input.sid, expanded.anchor.since)
+          return expanded.anchor
+        },
         // 会话流没有终止帧：它一直推到手机退订或连接断开。
         isTerminal: () => false,
         // 中断**不补** error 帧（会话内容有持久副本，重订即自愈）——见文件头第四条。
@@ -262,6 +276,10 @@ export function createSessionSubscriptions(
 
     unsubscribe(sid) {
       return core.stop(sid)
+    },
+
+    cursorOf(sid) {
+      return cursors.get(sid)
     },
 
     stopAll() {

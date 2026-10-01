@@ -24,6 +24,7 @@ import type { MethodHandler, MethodName } from './protocol/methods.js'
 import type { Caps } from './dsh/caps.js'
 import type { JobControlPort, JobsPort } from './dsh/jobs.js'
 import type { JobSubscriptions } from './job-subscriptions.js'
+import type { SessionPager } from './session-page.js'
 import type { SessionSubscriptions } from './session-subscriptions.js'
 import type { SessionSummaryRow } from './dsh/sessions.js'
 
@@ -90,6 +91,13 @@ export interface HandlerDeps {
    * 但**机制共用同一个骨架**（背压、承诺兑现、跟连接活）——见 `subscriptions.ts`。
    */
   sessionSubscriptions?: SessionSubscriptions
+  /**
+   * 会话翻页与单条目补取（`session.page` / `session.refetch`）。
+   *
+   * 与订阅分开传是因为它的水位**来自订阅面的开启帧缓存**（契约 §5.3 要求 `throughSeq`
+   * 必须出自开启帧）——装配时把 `cursorOf` 接到订阅面上（见 `index.ts`）。
+   */
+  sessionPager?: SessionPager
 }
 
 export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, MethodHandler>> {
@@ -127,6 +135,21 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
     const value = paramOf(params, key)
     if (typeof value !== 'string' || value === '') {
       throw new ProtocolError('protocol/bad-frame', `${key} 必填`)
+    }
+    return value
+  }
+
+  /**
+   * 取一个可选的非负整数参数（`since` / `beforeSeq` / `maxMessages` / `seq` 这一类）。
+   *
+   * 负数、小数、非数字一律 `protocol/bad-frame`：它们都是**下标或条数**，
+   * 接受一个不合法的值只会让它一路走到 DSH 里再以更难懂的方式失败。
+   */
+  function optionalCount(params: unknown, key: string): number | undefined {
+    const value = paramOf(params, key)
+    if (value === undefined) return undefined
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+      throw new ProtocolError('protocol/bad-frame', `${key} 必须是非负整数`)
     }
     return value
   }
@@ -216,6 +239,32 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       const sid = requireSid(params)
       requireSession(sid)
       return { stopped: subscriptions.unsubscribe(sid) }
+    }
+  }
+
+  if (deps.sessionPager !== undefined) {
+    const pager = deps.sessionPager
+    handlers['session.page'] = async (params) => {
+      const sid = requireSid(params)
+      const dshSessionId = requireSession(sid)
+      const beforeSeq = optionalCount(params, 'beforeSeq')
+      const maxMessages = optionalCount(params, 'maxMessages')
+      return pager.page({
+        sid,
+        dshSessionId,
+        ...(beforeSeq === undefined ? {} : { beforeSeq }),
+        ...(maxMessages === undefined ? {} : { maxMessages }),
+      })
+    }
+
+    handlers['session.refetch'] = (params) => {
+      const sid = requireSid(params)
+      const dshSessionId = requireSession(sid)
+      const seq = optionalCount(params, 'seq')
+      if (seq === undefined) {
+        throw new ProtocolError('protocol/bad-frame', 'seq 必填')
+      }
+      return pager.refetch({ sid, dshSessionId, seq })
     }
   }
 
