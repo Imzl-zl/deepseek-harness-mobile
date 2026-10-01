@@ -34,7 +34,18 @@ export const KNOWN_FRAME_TYPES = [
 
 const KNOWN: ReadonlySet<string> = new Set(KNOWN_FRAME_TYPES)
 
-/** 编码一帧。**超限直接抛**，不给调用方"先发了再说"的机会。 */
+/** 帧分隔符。契约 §3 说的是**行级** UTF-8 JSON，所以分隔符由编解码层负责。 */
+export const FRAME_DELIMITER = '\n'
+
+/**
+ * 编码一帧，**带行分隔符**。
+ *
+ * 分隔符必须在编码侧加上：它对端（`createLineSplitter`）是按行切分的，
+ * 少一个换行就会被当成"半行"一直缓冲下去 —— 而症状是**对端永远收不到帧**，
+ * 不是报错。（这个 bug 真的发生过一次，是端到端测试逼出来的。）
+ *
+ * 超限直接抛，不给调用方"先发了再说"的机会。
+ */
 export function encodeFrame(frame: WireFrame): string {
   const line = JSON.stringify(frame)
   const bytes = Buffer.byteLength(line, 'utf8')
@@ -44,7 +55,7 @@ export function encodeFrame(frame: WireFrame): string {
       `帧 ${bytes} 字节超过上限 ${MAX_FRAME_BYTES}（类型 ${frame.t}）`,
     )
   }
-  return line
+  return line + FRAME_DELIMITER
 }
 
 export type DecodeResult =
@@ -126,7 +137,11 @@ export function assertHandshakePhase(frame: WireFrame, handshakeDone: boolean): 
  * 行级分帧：把 TCP/WS 分片拼回完整的行。
  *
  * WebSocket 的消息边界本身是一帧，但按行切更稳：将来换 TCP 或加压缩都不会退化。
- * 超限的行会在**拼完之前**就被拦掉，避免一个不走空格的攻击者把内存吃光。
+ * **前提是发送方带上了分隔符**（`encodeFrame` 会带）；漏了的话这一侧会一直等
+ * "半行"，直到超过 8 MiB 才以 `protocol/bad-frame` 报出来 —— 是有声音的失败，
+ * 不是静默挂死。
+ *
+ * 超限的未闭合行会在**拼完之前**就被拦掉，避免一个不走空格的攻击者把内存吃光。
  */
 export function createLineSplitter(): (chunk: string) => string[] {
   let buffer = ''
@@ -136,7 +151,7 @@ export function createLineSplitter(): (chunk: string) => string[] {
       buffer = ''
       throw new ProtocolError('protocol/bad-frame', '未闭合的行超过单帧上限')
     }
-    const lines = buffer.split('\n')
+    const lines = buffer.split(FRAME_DELIMITER)
     // 最后一段可能是半行，留到下一片。
     buffer = lines.pop() ?? ''
     return lines.filter((line) => line.trim() !== '')

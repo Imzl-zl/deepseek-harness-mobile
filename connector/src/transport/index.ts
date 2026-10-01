@@ -41,6 +41,16 @@ export {
 } from './batch.js'
 
 export {
+  createConnection,
+  type Connection,
+  type ConnectionLogger,
+  type ConnectionOptions,
+  type DialSocket,
+  type OutboundFrame,
+} from './connection.js'
+
+export {
+  FRAME_DELIMITER,
   HANDSHAKE_FRAME_TYPES,
   KNOWN_FRAME_TYPES,
   assertHandshakePhase,
