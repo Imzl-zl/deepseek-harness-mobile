@@ -36,6 +36,8 @@ app/lib/
 
 ## 2. 关键类型(签名级)
 
+**出帧一律以 `\n` 结尾**(§3 的行级分帧):分帧器只在读到换行时交出一帧,漏掉它的表现是「两侧都正常、对端什么都没收到」。Dart 侧因此在唯一的出帧口(`encodeFrame`)补换行,别让调用点各自记得。
+
 ```dart
 // core/sync_client.dart —— 连接与订阅的唯一 owner
 abstract class SyncClient {
