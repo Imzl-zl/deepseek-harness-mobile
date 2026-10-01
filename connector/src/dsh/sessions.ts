@@ -120,6 +120,9 @@ export interface SessionSummaryRow {
  */
 const NEVER_ABORTS = new AbortController().signal
 
+/** 用户消息里的一段内容（文本或内联图片）。**类型留在 `dsh/` 内**，上层只 import 这个名字。 */
+export type PromptPart = PromptContentPart
+
 export interface SessionsPort {
   /**
    * 会话清单（按活动排序）。

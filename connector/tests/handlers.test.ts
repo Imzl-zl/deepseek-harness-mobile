@@ -70,7 +70,7 @@ function build(overrides: Partial<Parameters<typeof createHandlers>[0]> = {}) {
     aliasVersion: () => 7,
     devices: () => [],
     // 会话面的替身：`list` 给 DSH 权威行，`aliases` 两个方向都给（`job.list` 要反解）。
-    sessions: { list: () => Promise.resolve([]) },
+    sessions: { list: () => Promise.resolve([]), prompt: () => Promise.resolve({ accepted: true }) },
     aliases: createFakeAliases(),
     ...overrides,
   })
@@ -93,7 +93,7 @@ test('repo.info：协议版本、能力位、别名版本，以及**表的键**'
   assert.equal(info.aliasVersion, 7)
   // 报的必须是"表里真有的方法"：加一个 handler 就自动多一行，删一个就自动少一行。
   assert.deepEqual(info.methods, Object.keys(handlers).sort())
-  assert.deepEqual(info.methods, ['devices.list', 'repo.info', 'session.list'])
+  assert.deepEqual(info.methods, ['devices.list', 'repo.info', 'session.list', 'session.prompt'])
 })
 
 test('job.kill：转达受理与否，并把 jobId 交给宿主门面', () => {
@@ -165,6 +165,7 @@ test('两种任务能力可以独立缺失：只列不停 / 都没有', () => {
     'job.list',
     'repo.info',
     'session.list',
+    'session.prompt',
   ])
 
   const neither = build()
@@ -246,6 +247,58 @@ test('session.subscribe / unsubscribe：参数与别名不合规就回结构化�
   const without = build()
   assert.equal('session.subscribe' in without, false)
   assert.equal('session.unsubscribe' in without, false)
+})
+
+test('session.prompt：参数递下去，回 { accepted }', async () => {
+  const seen: unknown[][] = []
+  const handlers = build({
+    aliases: preloadedAliases(),
+    sessions: {
+      list: () => Promise.resolve([]),
+      prompt: (...args: unknown[]) => {
+        seen.push(args)
+        return Promise.resolve({ accepted: true })
+      },
+    } as never,
+  })
+  const handler = handlers['session.prompt']
+  assert.ok(handler !== undefined)
+
+  const content = [{ type: 'text', text: '你好' }]
+  assert.deepEqual(await handler({ sid: 'sid_dsh-1', content }, { requestId: 'req_1' }), {
+    accepted: true,
+  })
+  assert.deepEqual(seen[0], ['dsh-1', 'req_1', content, 'queue'], '默认排队')
+
+  await handler({ sid: 'sid_dsh-1', content, mode: 'steer' }, { requestId: 'req_2' })
+  assert.equal(seen[1]?.[3], 'steer', 'mode 原样传下去（它决定"插队"还是"排队"）')
+})
+
+test('session.prompt：requestId / content / mode 的形状不合规就回 protocol/bad-frame', async () => {
+  const handlers = build({ aliases: preloadedAliases() })
+  const handler = handlers['session.prompt']
+  assert.ok(handler !== undefined)
+  const base = { sid: 'sid_dsh-1', content: [{ type: 'text', text: 'x' }] }
+  const withKey = { requestId: 'req_1' }
+
+  for (const patch of [
+    { content: undefined },
+    { content: [] },
+    { content: 'not-an-array' },
+    { content: [{}] },
+    { content: ['x'] },
+    { mode: 'later' },
+  ]) {
+    await assert.rejects(
+      async () => handler({ ...base, ...patch }, withKey),
+      (error: unknown) => error instanceof ProtocolError && error.code === 'protocol/bad-frame',
+      `${JSON.stringify(patch)} 应当被拒`,
+    )
+  }
+  await assert.rejects(
+    async () => handler({ ...base, sid: 'sid_nobody' }, withKey),
+    (error: unknown) => error instanceof ProtocolError && error.code === 'session/not-found',
+  )
 })
 
 /** 会话翻页端口：默认回空页。 */
@@ -480,7 +533,7 @@ test('可选服务缺了：`job.*` 干脆不在表里（能力位与能力清单
   // `repo.info` 报的是表的键，所以能力位自动跟着走 —— 手机侧看到的是"没这个方法"，
   // 而不是一个会被点开、然后回错的按钮。
   const info = handlers_info(withoutJobs)
-  assert.deepEqual(info.methods, ['devices.list', 'repo.info', 'session.list'])
+  assert.deepEqual(info.methods, ['devices.list', 'repo.info', 'session.list', 'session.prompt'])
 
   const withJobs = build({ jobs: fakeJobs() })
   assert.equal('job.list' in withJobs, true)
@@ -489,6 +542,7 @@ test('可选服务缺了：`job.*` 干脆不在表里（能力位与能力清单
     'job.list',
     'repo.info',
     'session.list',
+    'session.prompt',
   ])
 })
 
@@ -500,6 +554,7 @@ test('session.list：逐字段映射，别名在方法面合成，**DSH 会话 i
           { dshSessionId: 'dsh-1', updatedAt: 200, running: true, blank: false, subagent: false, cwd: '/repo/a' },
           { dshSessionId: 'dsh-2', updatedAt: 100, running: false, blank: true, subagent: true },
         ]),
+      prompt: () => Promise.resolve({ accepted: true }),
     },
   })
   const handler = handlers['session.list']
@@ -530,6 +585,7 @@ test('session.list：并发分配别名（不同会话互不影响）', async ()
             subagent: false,
           })),
         ),
+      prompt: () => Promise.resolve({ accepted: true }),
     },
     aliases: {
       ...createFakeAliases(),

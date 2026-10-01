@@ -39,6 +39,8 @@ const CAPS = {
 function fixtureHandlers(
   subscriptions: JobSubscriptions | null = null,
   sessionSubscriptions: SessionSubscriptions | null = null,
+  /** 数一数真实的 `session.prompt` 被调用了几次（I8 的证据）。 */
+  promptBox?: { count: number },
 ) {
   return createHandlers({
     caps: () => ({ ...CAPS }),
@@ -56,6 +58,10 @@ function fixtureHandlers(
             cwd: '/repo/a',
           },
         ]),
+      prompt: () => {
+        if (promptBox !== undefined) promptBox.count += 1
+        return Promise.resolve({ accepted: true })
+      },
     },
     aliases: createFakeAliases({
       // 别名是**不透明的**：刻意不把 DSH 会话 id 编进去，否则"id 不过线"的断言会失去意义
@@ -161,7 +167,7 @@ test('端到端：手机问 repo.info，电脑侧回一个可解的 res（id 对
   assert.deepEqual(info.caps, CAPS, '能力位要在结果里（手机据此置灰按钮）')
   assert.deepEqual(
     info.methods,
-    ['devices.list', 'job.kill', 'job.list', 'repo.info', 'session.list'],
+    ["devices.list", 'job.kill', 'job.list', 'repo.info', 'session.list', 'session.prompt'],
     '实现了哪些方法也由同一张表报出',
   )
 })
@@ -527,6 +533,46 @@ test('端到端：手机订会话 —— 快照补课事件逐条 ev、assistant
   assert.deepEqual(responseOf(f, keys, 2).envelope['result'], { stopped: true })
   assert.equal(streams[0]?.signal.aborted, true, '退订必须真的中止会话流')
   assert.equal(f.sessionSubscriptions?.active, 0)
+})
+
+test('端到端：同一条消息重发 —— 真方法面 + 真幂等只让它入队一次（I8）', async (t) => {
+  // 这条用例与上一轮那条"假 handler"的区别：这里走的是**真的** `session.prompt` 方法
+  // （真的参数校验、真的信封、真的 `IDEMPOTENT_METHODS` 判定），只有最底下的 DSH 端口是替身。
+  const rows = createMemoryDedupeRows()
+  const promptBox = { count: 0 }
+  const f = await start(t, {
+    handlers: () => fixtureHandlers(null, null, promptBox),
+    idempotency: createIdempotency({ rows }),
+  })
+  f.connection.start()
+  await waitFor('进入 handshake', () => f.connection.state === 'handshake')
+  const keys = await completeHandshake(f)
+
+  sendRequest(f, keys, 0, 'req_uuuuuuuuuuuu', '{"method":"session.list"}')
+  await waitFor('收到会话清单', () => f.peer.received.some((frame) => frame.t === 'res'))
+  const sid = String(
+    (responseOf(f, keys, 0).envelope['result'] as { sessions: { sid: string }[] }).sessions[0]?.sid,
+  )
+
+  const payload = JSON.stringify({
+    method: 'session.prompt',
+    requestId: 'req-prompt-1',
+    params: { sid, content: [{ type: 'text', text: '你好' }] },
+  })
+  // 手机的"重发"：同一个 requestId，两个不同的 fc（新的一帧）。
+  sendRequest(f, keys, 1, 'req_vvvvvvvvvvvv', payload)
+  await waitFor('第一个应答到达', () => f.peer.received.filter((frame) => frame.t === 'res').length >= 2)
+  sendRequest(f, keys, 2, 'req_wwwwwwwwwwww', payload)
+  await waitFor('第二个应答到达', () => f.peer.received.filter((frame) => frame.t === 'res').length >= 3)
+
+  assert.equal(promptBox.count, 1, '同一个幂等键只能入队一次 —— 否则就是第二条消息')
+  assert.deepEqual(responseOf(f, keys, 1).envelope['result'], { accepted: true })
+  assert.deepEqual(
+    responseOf(f, keys, 2).envelope,
+    responseOf(f, keys, 1).envelope,
+    '第二个应答是**重放**上次的结果（内容相同、id 是这一次的）',
+  )
+  assert.equal(responseOf(f, keys, 2).id, 'req_wwwwwwwwwwww')
 })
 
 test('端到端：连着问两件事，两个应答各自对得上自己的 id', async (t) => {

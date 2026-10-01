@@ -26,7 +26,7 @@ import type { JobControlPort, JobsPort } from './dsh/jobs.js'
 import type { JobSubscriptions } from './job-subscriptions.js'
 import type { SessionPager } from './session-page.js'
 import type { SessionSubscriptions } from './session-subscriptions.js'
-import type { SessionSummaryRow } from './dsh/sessions.js'
+import type { PromptPart, SessionSummaryRow, SessionsPort } from './dsh/sessions.js'
 
 /** 设备清单里的一行。**不含公钥** —— 手机不需要别人的公钥，少发一个字段就少一处泄漏面。 */
 export interface DeviceRow {
@@ -59,7 +59,13 @@ export interface HandlerDeps {
    * （缺了它插件根本不挂载），所以不存在"这个端口不在"的生产形态；
    * 把它写成可选只会多一条永远不会被走到的错误分支。
    */
-  sessions: { list(signal?: AbortSignal): Promise<readonly SessionSummaryRow[]> }
+  /**
+   * 会话面（**收窄成这一层真正用到的方法**：`list` 与 `prompt`）。
+   *
+   * `sessionController` 是本插件的必需服务（缺了它插件根本不挂载），所以不存在"这个端口不在"
+   * 的生产形态；把它写成可选只会多一条永远不会被走到的错误分支。
+   */
+  sessions: Pick<SessionsPort, 'list' | 'prompt'>
   aliases: AliasPort
   /**
    * 后台任务（可选服务）。
@@ -164,6 +170,26 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       : undefined
   }
 
+  /**
+   * 取 `content`：非空数组，每一项是带 `type` 的对象。
+   *
+   * 只做**形状**校验：具体是文本还是图片、图片能不能被当前模型接受，是 DSH 的判据
+   * （它会回 `session/attachment-invalid` 之类；我们的错误码表是封闭的，那些归 `internal`，
+   * 但**消息原样透传** —— 用户照样看得到"模型不支持图片输入"）。
+   */
+  function requireContent(params: unknown): readonly PromptPart[] {
+    const value = paramOf(params, 'content')
+    if (!Array.isArray(value) || value.length === 0) {
+      throw new ProtocolError('protocol/bad-frame', 'content 必须是非空数组')
+    }
+    for (const part of value) {
+      if (typeof part !== 'object' || part === null || typeof (part as { type?: unknown }).type !== 'string') {
+        throw new ProtocolError('protocol/bad-frame', 'content 的每一项都必须是带 type 的对象')
+      }
+    }
+    return value as readonly PromptPart[]
+  }
+
   const handlers: Partial<Record<MethodName, MethodHandler>> = {
     'devices.list': () => ({
       devices: deps.devices().map((row) => ({
@@ -173,6 +199,32 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
         revoked: row.revoked,
       })),
     }),
+
+    'session.prompt': async (params, context) => {
+      const dshSessionId = requireSession(requireSid(params))
+      // **`requestId` 在请求顶层**（不是 `params` 里），方法面把它放进上下文递进来 ——
+      // 而且 `IDEMPOTENT_METHODS` 的键强制在**分发之前**就查过了（§5.6），所以这里一定拿得到。
+      const requestId = context.requestId
+      if (requestId === undefined || requestId === '') {
+        throw new ProtocolError('protocol/bad-frame', 'requestId 必填：写操作必须带幂等键')
+      }
+      const content = requireContent(params)
+      const mode = paramOf(params, 'mode')
+      if (mode !== undefined && mode !== 'queue' && mode !== 'steer') {
+        throw new ProtocolError('protocol/bad-frame', 'mode 必须是 queue 或 steer')
+      }
+      // **幂等键就是 `requestId`**：方法面按 `IDEMPOTENT_METHODS` 把它包进两阶段管道
+      // （先落盘 pending → 执行 → 成功写 done），所以这里只管把参数递下去。
+      // DSH 自己也按 `rpcId` 去重（会扫会话事件日志，`commands.ts:602-614`）——
+      // 两层叠起来：同一条消息不会因为重发变成两条，也不会因为桥接重启而丢。
+      const { accepted } = await deps.sessions.prompt(
+        dshSessionId,
+        requestId,
+        content,
+        mode === 'steer' ? 'steer' : 'queue',
+      )
+      return { accepted }
+    },
 
     'session.list': async () => {
       const rows = await deps.sessions.list()
