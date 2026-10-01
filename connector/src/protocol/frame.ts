@@ -194,6 +194,22 @@ export function isHandshakeFrameType(type: string): boolean {
 }
 
 /**
+ * 是不是配对帧。
+ *
+ * 与 `isHandshakeFrameType` 并列存在（而不是合并成一个 `isPlaintextFrame`），
+ * 因为两者在**连接层的行为不同**：握手帧走驱动器的入口，配对帧走上层的 `onFrame`
+ * （那时还没有身份，谁都没法判它"属于哪个设备"）。同一条判据只有一处集合。
+ */
+export function isPairingFrameType(type: string): boolean {
+  return (PAIRING_FRAME_TYPES as readonly string[]).includes(type)
+}
+
+/** 密钥建立**之前**就能出现的明文帧（握手三帧 + 配对两帧）：不盖 `fc`、不封箱。 */
+export function isPreKeysPlaintextFrame(type: string): boolean {
+  return isHandshakeFrameType(type) || isPairingFrameType(type)
+}
+
+/**
  * 取一帧的 AAD 字段（契约 §3 的规范化输入）。
  *
  * 与 `wireRoutingOf` 同一个形状：**缺字段就不放进对象**，交给 `aadOf` 用空串占位 ——

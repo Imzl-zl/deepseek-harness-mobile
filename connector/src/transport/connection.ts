@@ -31,7 +31,16 @@
  */
 import { ProtocolError } from '../protocol/errors.js'
 import { createSendCounter, type SendCounter, type SessionKeys } from '../protocol/crypto.js'
-import { aadFieldsOf, hasBox, isHandshakeFrameType, needsBox, type FrameType, type WireFrame } from '../protocol/frame.js'
+import {
+  aadFieldsOf,
+  hasBox,
+  isHandshakeFrameType,
+  isPairingFrameType,
+  isPreKeysPlaintextFrame,
+  needsBox,
+  type FrameType,
+  type WireFrame,
+} from '../protocol/frame.js'
 import { pausable } from '../protocol/flow.js'
 import {
   createSendWindow,
@@ -179,6 +188,13 @@ export interface Connection {
    */
   whenWritable(type: FrameType): Promise<void>
   /**
+   * 配对帧的出帧入口（**收窄**：只接受 `pair` / `pair-ack`）。
+   *
+   * 与握手帧同一个理由：`send()` 在 `serving` 之前恒为 `false`，而配对帧必须在握手**之前**出去。
+   * **不放宽 `send()`** —— 那等于给"握手期发业务帧"开口子。配对帧也不盖 `fc`（§3 的形状里没有它）。
+   */
+  sendPairingFrame(frame: WireFrame): void
+  /**
    * 手动宣告握手完成。**只在不配 `secure` 的装配里可用**（测试与手工调试）——
    * 配了 `secure` 时握手结论只能来自驱动器：手动调用等于绕过两道校验。
    */
@@ -319,7 +335,7 @@ export function createConnection(options: ConnectionOptions): Connection {
     // 窗口检查在**分配 `fc` 之前**：没发出去的帧不该消耗序号，否则窗口算术会把没上线的帧也算进去。
     if (!window.canSend(frame.t)) return false
     try {
-      const handshakeFrame = isHandshakeFrameType(frame.t)
+      const handshakeFrame = isPreKeysPlaintextFrame(frame.t)
       const wire = handshakeFrame
         ? (frame as WireFrame)
         : ({ ...frame, fc: counter.next() } as WireFrame)
@@ -369,6 +385,21 @@ export function createConnection(options: ConnectionOptions): Connection {
   const sendHandshakeFrame = (frame: WireFrame): void => {
     if (!isHandshakeFrame(frame)) {
       log?.warn(`握手中试图发送非握手帧 ${frame.t}，已拒绝`)
+      return
+    }
+    write(frame)
+  }
+
+  /**
+   * 配对帧的出帧入口（**同样收窄**：只接受 `pair` / `pair-ack`）。
+   *
+   * 与 `sendHandshakeFrame` 同一个理由：`send()` 在 `serving` 之前恒为 `false`，
+   * 而配对帧必须在握手**之前**就能出去。**不放宽 `send()`** —— 那等于给"握手期发业务帧"开口子。
+   * 配对帧与握手帧一样**不盖 `fc`**（它们的线上形状里没有这个字段，§3）。
+   */
+  const sendPairingFrame = (frame: WireFrame): void => {
+    if (!isPairingFrameType(frame.t)) {
+      log?.warn(`配对路径试图发送非配对帧 ${frame.t}，已拒绝`)
       return
     }
     write(frame)
@@ -601,6 +632,8 @@ export function createConnection(options: ConnectionOptions): Connection {
       }
       return write(frame)
     },
+
+    sendPairingFrame,
 
     whenWritable(type) {
       if (machine.acceptsBusinessFrames && window.canSend(type)) return Promise.resolve()
