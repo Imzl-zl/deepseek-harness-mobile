@@ -47,7 +47,13 @@ export interface PairingOffer {
 }
 
 export interface PairingRequest {
-  readonly code: string
+  /**
+   * **配对码的哈希**（sha256 十六进制），不是码本身。
+   *
+   * 请求要经过中转（§12.1 第 2 步），而中转的表里存的正是 `code_hash` ——
+   * 让中转看到码等于让它自己配上一台设备。码只出现在二维码里（带外路径，只有扫它的手机看得见）。
+   */
+  readonly codeHash: string
   readonly devPubEd: string
   readonly devPubDh: string
   readonly name: string
@@ -98,14 +104,28 @@ const base64url = (bytes: Uint8Array | Buffer): string => Buffer.from(bytes).toS
 const sha256Hex = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex')
 
 /**
- * 由配对码派生 `pairingId`（契约 §12.1 的固定定义）。
+ * 配对码的哈希（**两端共用这一个定义**：手机算出来放进请求，电脑侧算出来与待用码比对）。
+ *
+ * 用 sha256 十六进制而不是 base64url：它要出现在请求 JSON 里，十六进制是最不容易被
+ * 各种 JSON 编码习惯改写的形状（配对失败最难查的一种就是"两边算的其实是同一个值，
+ * 但一端多了一层 base64 包装"）。
+ */
+export function pairingCodeHash(code: string): string {
+  return sha256Hex(code)
+}
+
+/**
+ * 由**配对码的哈希**派生 `pairingId`（契约 §12.1 的固定定义）。
+ *
+ * 输入取哈希而不是码本身：电脑侧出码后只需要在内存里留哈希（码本身不保留），
+ * 而手机手里有码、自己算一次哈希就得到同一个输入。
  *
  * 用 HKDF 而不是裸哈希：**域名分隔**（`info`）让这一个 128 位秘密可以安全地派生出多个用途的
  * 输出而不互相牵连 —— 这里只要一个，但参数与密钥派生（§4.1）保持同一种做法，
  * 免得将来有人顺手把两个用途的输出互换。
  */
-export function pairingIdOf(code: string): string {
-  const derived = hkdfSync('sha256', Buffer.from(code, 'utf8'), Buffer.alloc(0), PAIRING_ID_INFO, 32)
+export function pairingIdOf(codeHash: string): string {
+  const derived = hkdfSync('sha256', Buffer.from(codeHash, 'utf8'), Buffer.alloc(0), PAIRING_ID_INFO, 32)
   return base64url(Buffer.from(derived))
 }
 
@@ -162,13 +182,13 @@ export function createPairing(options: PairingOptions): Pairing {
         pending = null
         return { rejected: 'expired' }
       }
-      if (sha256Hex(request.code) !== pending.codeHash) return { rejected: 'mismatch' }
+      if (request.codeHash !== pending.codeHash) return { rejected: 'mismatch' }
 
       // 一次性：**先消费再落记录**。反过来的话，落记录失败会留下一个"用过了但没配上"的码，
       // 而操作者只能重新出码 —— 那还不如让它当场失效。
       pending = null
 
-      const pairingId = pairingIdOf(request.code)
+      const pairingId = pairingIdOf(request.codeHash)
       const devId = deviceIdOf(request)
       const at = now()
       return {

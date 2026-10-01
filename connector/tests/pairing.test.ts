@@ -10,6 +10,7 @@ import { test } from 'node:test'
 import {
   PAIRING_TTL_MS,
   createPairing,
+  pairingCodeHash,
   pairingIdOf,
   sasOf,
 } from '../src/pairing.js'
@@ -34,7 +35,8 @@ function setup(patch: { now?: () => number } = {}) {
 }
 
 const request = (code: string) => ({
-  code,
+  // 请求里带的是**哈希**（码本身只在二维码里，见契约 §12.1）
+  codeHash: pairingCodeHash(code),
   devPubEd: 'c'.repeat(64),
   devPubDh: 'd'.repeat(64),
   name: '我的手机',
@@ -67,8 +69,8 @@ test('accept：码对得上就落设备记录，并给出由配对码派生的 p
   assert.equal(accepted.device.dhPubHex, 'd'.repeat(64))
   assert.equal(
     accepted.device.pairingId,
-    pairingIdOf(offer.code),
-    'pairingId 必须由配对码派生（两端各算一次，算不一样就握不上手）',
+    pairingIdOf(pairingCodeHash(offer.code)),
+    'pairingId 必须由配对码的哈希派生（两端各算一次，算不一样就握不上手）',
   )
   assert.equal(accepted.device.devId.length > 0, true)
   assert.match(accepted.sas, /^\d{6}$/, 'SAS 是 6 位数字（补零）')
@@ -114,6 +116,7 @@ test('pairingId / SAS：同一个输入永远同一个输出，且换一边公�
   assert.equal(pairingIdOf('code-1'), pairingIdOf('code-1'))
   assert.notEqual(pairingIdOf('code-1'), pairingIdOf('code-2'))
   assert.equal(pairingIdOf('code-1').length, 43, '32 字节 base64url')
+  assert.equal(pairingCodeHash('code-1').length, 64, '码哈希是 sha256 十六进制')
 
   assert.equal(sasOf(PC_ED, 'c'.repeat(64)), sasOf(PC_ED, 'c'.repeat(64)))
   assert.notEqual(
