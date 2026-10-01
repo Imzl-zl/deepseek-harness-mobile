@@ -30,8 +30,14 @@ export interface RateLimitOptions {
 
 export interface RateLimitDecision {
   allowed: boolean
-  /** 被拒时告知客户端"多少毫秒后可以再试"（HTTP 上对应 `Retry-After`）。 */
-  retryAfterMs: number
+  /**
+   * 被拒时告知客户端"多少毫秒后可以再试"（HTTP 上对应 `Retry-After`）。
+   *
+   * **`null` 表示"不会自行恢复"**：`refillPerSecond: 0` 是合法配置（硬配额），
+   * 此时桶永不补充。注意不能返回 `Infinity` —— `JSON.stringify` 会把它写成 `null`，
+   * 而客户端分不清"无限久"与"字段缺失"（这正是本条类型存在的理由）。
+   */
+  retryAfterMs: number | null
 }
 
 export interface RateLimiter {
@@ -64,8 +70,12 @@ export function createRateLimiter(options: RateLimitOptions): RateLimiter {
       if (refilled < 1) {
         // 被拒时**也要写回**（把补充量结算掉），否则下次判断会重复补同一段时间。
         buckets.set(key, { tokens: refilled, at })
-        const retryAfterMs = Math.ceil((1 - refilled) / refillPerMs)
-        options.log?.debug(`限流：${key} 被拒，约 ${retryAfterMs}ms 后可再试`)
+        // 零补充（硬配额）时**如实回 `null`**（"不会自行恢复"），而不是 `Infinity`：
+        // 后者过 JSON 会变成 `null` 或 `undefined`，与"字段缺失"混淆（见类型的说明）。
+        const retryAfterMs = refillPerMs === 0 ? null : Math.ceil((1 - refilled) / refillPerMs)
+        options.log?.debug(
+          `限流：${key} 被拒${retryAfterMs === null ? '（该身份不会自行恢复，需要加容量或换配置）' : `，约 ${retryAfterMs}ms 后可再试`}`,
+        )
         return { allowed: false, retryAfterMs }
       }
       buckets.set(key, { tokens: refilled - 1, at })

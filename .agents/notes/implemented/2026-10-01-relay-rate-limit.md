@@ -1,6 +1,25 @@
 # Agent Note: 中转移流 —— 令牌桶（还没有调用方，接线在下一轮）
 
-Status: implemented（`relay/src/rate-limit.ts` + 5 条用例）· **HTTP 面已接线**（`server`/`main` 的配置装配仍未做）
+Status: implemented（`relay/src/rate-limit.ts` + 5 条用例）· **HTTP 面与 server 均已接线**
+
+## 零补充（硬配额）逼出的一个问题（同日）
+
+一条"真服务器上的限流"用例两次没过，第三次我按自己写下的做法**不再过滤输出**，一次就看到了真正原因：
+
+```
+AssertionError: false !== true   at ...:45:10   ← assert.equal(body.retryAfterMs > 0, true)
+```
+
+`refillPerSecond: 0`（硬配额，合法配置）时，实现算出的 `retryAfterMs` 是 `Math.ceil(1 / 0) = Infinity`，
+而 **`JSON.stringify` 把 `Infinity` 写成 `null`** → 客户端拿到 `retryAfterMs: null`，
+**分不清"无限久"与"字段缺失"**。这不是测试的错，是实现的错。
+
+修法：`RateLimitDecision.retryAfterMs` 的类型改成 **`number | null`**，`null` 的语义写清楚 ——
+"**不会自行恢复**（需要加容量或换配置）"；零补充时如实回 `null`，并在日志里说同一件事。
+`http-face` 的 `rateLimit` 端口类型随之放宽。
+
+**这一轮最值得记的不是修法，而是我上一轮的错**：我先用 `grep` 过滤输出、在"取不到细节"的情况下
+靠判断硬改了一次，白花一轮。规则：**排查失败先看完整输出，再决定过滤什么。**
 
 ## 接线进展（同日）
 

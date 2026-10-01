@@ -52,7 +52,7 @@ export interface HttpFaceOptions {
    * 未认证的洪水（拿错令牌刷）**不在这里**处理：那时还没有身份，桶键无处安放 ——
    * 那属于边缘/前置治理（反代限流、连接数上限）。
    */
-  rateLimit?: (key: string) => { allowed: boolean; retryAfterMs: number }
+  rateLimit?: (key: string) => { allowed: boolean; retryAfterMs: number | null }
   log?: ChannelLogger
 }
 
