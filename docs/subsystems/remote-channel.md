@@ -153,7 +153,8 @@ seed(32B, 存系统安全存储)
 手机 → 电脑   confirm   { box: { sigA, transcriptHash[0..8) } }              ← 即第一条业务帧
 ```
 
-- `transcript` = `dsh-mobile/v1|hello|hello-ack` 两帧 `box` 明文的规范拼接(字节序固定);`sigB = Ed25519_sign(idSignB, transcript)`,`sigA` 同理。
+- `transcript` = 两帧里**参与签名的字段**的规范拼接(**不含签名本身**):`dsh-mobile/v1|hello|ephPubA|devId|nonceA|hello-ack|ephPubB|pcId|nonceB`(字节序固定)。`sigB = Ed25519_sign(idSignB, transcript)`,`sigA` 同理。
+  - **为什么不是"两帧 `box` 明文的拼接"**:`sigB` 就在 hello-ack 的 `box` 里(`{ ephPubB, pcId, nonceB, sigB }`),签一段包含 `sigB` 自身的字节是**循环定义** —— 不存在能自洽的取值(实测:用占位签名算 transcript 再回填,对端拿真实帧必然验不过)。所以被签的是**除签名外的字段**,签名字段不参与拼接。握手的 `box` 本来就只是编码容器、不是保密手段,把签名留在箱内不损失保密性。
 - 共享密钥:
   ```text
   ss1 = X25519(ephPrivA, idDhPubB)     // 手机临时 × 电脑静态
