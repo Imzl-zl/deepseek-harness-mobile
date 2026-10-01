@@ -5,15 +5,15 @@
 
 ## 下一步(新会话从这里开始)
 
-**目标**:先查清 `persisted` 水位的可信来源,再接 `session.page` —— 两者合起来才让手机的会话视图"可用"。
+**目标**:接 `session.page`,再定"缓冲何时释放",然后接带键的写方法(`session.prompt`)。
 
 **开工顺序**:
 
-1. **`persisted` 水位**:手机侧的"水位已对齐"依赖它,所以它是会话功能可用性的前置。已核实的线索:session store 的约定是"持久化是插件的事:订阅 `session/event`、在 `session/flush` 上 drain"(`packages/core/session/src/index.ts:3-4,82-86`);`SessionPersistenceSnapshot` 只有不透明 `revision` 与可选 `eventCount`/`sizeBytes`(`packages/session/session-persistence/src/index.ts:50-59`)。**要查的是**:`session/flush` 之后能不能拿到"已落盘到哪个 seq"(活的 `Session` 是否有该水位、或 `eventCount` 是否就等于 seq)——查不到就写「未找到」,不许猜。
-2. **`session.page`**:用开启帧的 `cursor` 当 `throughSeq`(§5.3 明说),向后翻页;大结果走 `chunk` 路径(§5.3 的 64 KiB 上限)。注意与订阅的配合:手机先 `subscribe` 拿到 `{since, hasMore}`,再按需 `page`。
+1. **`session.page`**:用开启帧的 `cursor` 当 `throughSeq`(§5.3 明说),向后翻页;大结果走 `chunk` 路径(§5.3 的 64 KiB 上限)。注意手机的顺序:先 `subscribe` 拿到 `{since, hasMore}`,`hasMore` 为真时才 `page`。
+2. **缓冲的释放时机**(§5.3:unsubscribe 之后"可释放该会话缓冲,**仍需等 persisted**"):现在**不释放**(只在卸载时随进程消失)。要定的是"全部配对设备都确认过当前水位之后释放",以及"释放后再被订阅怎么办"(重开 → 宿主给快照,这正是快照路径存在的意义)。**想清楚再动,别顺手加一个 `forget`。**
 3. **带键的写方法**(`session.prompt` 优先):幂等管道与"下游幂等保障清单"都在(见幂等笔记),接它时逐个复核。
 4. **配对流程(§12.1)**:二维码/配对码 → 设备记录(含 `pairingId`)与手机侧凭据 —— 真机联调最后一块空白。
-5. **`relay/` 产品化**与**手机端 Dart**(后者前置:先装 Flutter SDK)。
+5. **`relay/` 产品化**(它还要实现 §5.5 的重放窗口裁剪)与**手机端 Dart**(后者前置:先装 Flutter SDK)。
 
 协议本身已定稿,**不需要再决策**;`docs/subsystems/remote-channel.md` 是唯一规格源,`protocol/fixtures/` 与 `protocol/vectors/` 是它的可执行部分。
 
@@ -38,7 +38,7 @@
 | `node app/tools/verify-platform-boundary.mjs` | 17 项(含 13 条规则自检):多端边界与 `Platform.isOhos` 禁令 |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
 | `cd connector && pnpm exec tsc --noEmit` | connector 类型检查(改 `connector/src/**` 后必跑) |
-| `cd connector && pnpm test` | connector 全套 **206 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**49 项**),外加握手驱动 / 封箱 / 流控 / 任务帧 / 订阅骨架 / 方法面 / 幂等 / 四个 DSH 适配器 / 连接级 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
+| `cd connector && pnpm test` | connector 全套 **215 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**49 项**),外加握手驱动 / 封箱 / 流控 / 任务帧 / 订阅骨架 / 方法面 / 幂等 / 四个 DSH 适配器 / 连接级 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
 | `cd connector && pnpm build` | 产出 `lib/index.js` + `lib/index.d.ts`(装进 profile 的那份产物) |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker`;跑法见 `tools.md` |
 
@@ -87,6 +87,10 @@
 - 当前最挡路的一条:CDP 端口可能要换 —— 9222 被日常 Chrome 占用,9400 也可能被上一轮遗留的 headless Chrome 占着,开新端口前先探 `/json/version`。
 
 ## 最近活跃窗口
+
+- 2026-10-01 会话增量缓冲(本轮):**更正上一轮的一条欠账** —— "`persisted` 水位来源未查清"是**我把方向读反了**:契约 §5.5 写的是 `persisted {sid,seq}` 由**手机落盘后**发出,电脑侧据此裁剪增量缓冲。真正的缺口是:电脑侧没有增量缓冲(重订只能每次灌完整快照)、入站 `persisted` 落进 `default` **被当成"电脑侧方向的帧"告警**、§5.5 的两条硬约束没实现。本轮落地 `src/session-buffer.ts`(每会话一段、16 MiB/10000 条、**裁剪点 = 全部配对设备水位的最小值**、未确认永不裁、超限时先"只允许快照";设备身份**只来自握手**因为帧内容可以撒谎;`record` 在 `send` **之前**——宁可重发不可缺段),并让重订**优先走增量**(补发缓冲那一段 + 跳过快照里重复的 seq)。被否方案见笔记(单一水位会裁掉慢的那台需要的区间;按"已发出"裁剪混淆了"发了"与"写下去了";有洞时给残缺增量会让手机**永远停在旧内容上**且自己发现不了)。测试抓到真缺陷:`tailFrom` 第一版只查头部连续性,`1,2,5` 从 1 开始会返回 `[2,5]`(中间少了 3、4)。证据:`pnpm test` **215 项**、`tsc` 0、`pnpm build`、三条 protocol 门禁 486/26/49、多端边界 17;缓冲 8 条单测 + 会话订阅新增 1 条,变异(去掉快照去重)1 项红。取舍见 `.agents/notes/implemented/2026-10-01-session-incremental-buffer.md`。
+
+- 2026-10-01 会话订阅接通:方法面 **9/22**。**抽出订阅骨架** `src/subscriptions.ts`(键/开流/帧展开/起点/终止帧由调用方给,机制只有一处),任务输出与会话订阅各自变成薄层;重构时旧测试一条不改地绿,其中一条还抓到我把"宿主抛错"与"有序结束却没终止帧"合并成同一条 tail 帧。会话面四处定案:快照补课事件**逐条**发、`live.stream` **电脑侧分配且只增不减**、`rev` 用宿主的 `index`、**中断不补 error 帧**(会话有持久副本、重订即自愈;任务输出的 ring 会淘汰,所以那边补)。取舍见 `.agents/notes/implemented/2026-10-01-session-subscriptions.md`。
 
 - 2026-10-01 会话订阅接通(本轮):方法面 **9/22**。先**抽出订阅骨架** `src/subscriptions.ts`(键/开流/帧展开/起点/终止帧由调用方给,机制只有一处:满窗压一帧、承诺必兑现、收尾只清自己那一格、终止只靠 abort),任务输出与会话订阅各自变成薄层——重构时**旧测试一条不改地绿**,其中一条还抓到我把"宿主抛错"与"有序结束却没终止帧"合并成同一条 tail 帧(两者给手机显示的话不同 → 骨架加 `onError` 分开)。会话面四处定案:① 开启快照的 `records` **逐条展开成 `ev`**(少发一条就是恢复时丢一条事件),应答回 `{since: 游标, hasMore}`;② `live.stream` **由电脑侧分配**且**只增不减**(手机判据是"号变大 ⇒ 换流");③ `rev` 用宿主的 `index`(正好满足手机侧 `+1` 追加,不必自造修订号);④ **中断不补 `error` 帧**——与任务输出刻意相反,因为会话内容有持久副本、重订即自愈,而任务输出的 ring 会淘汰。证据:`pnpm test` **206 项**、`tsc` 0、`pnpm build`、三条 protocol 门禁 486/26/49、多端边界 17;三处变异 (54)(55)(56) 命中(含 e2e)。**如实记两处欠账**:① **`persisted` 水位的来源尚未查清**(已核实:`SessionPersistenceSnapshot` 只有不透明 `revision`,没有 seq;session store 的约定是"订阅 `session/event`、在 `session/flush` 上 drain",见 `packages/core/session/src/index.ts:3-4,82-86`)——手机侧的"水位已对齐"依赖它,**不许猜**;② `session.page` 未做。取舍见 `.agents/notes/implemented/2026-10-01-session-subscriptions.md`。
 

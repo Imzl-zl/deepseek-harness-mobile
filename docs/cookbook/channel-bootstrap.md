@@ -132,8 +132,14 @@ dsh plugin --profile <name> add <connector 本地路径>
 开启快照的补课事件**逐条**发)/ `job.list` / `job.kill`(走宿主的人发起门面)/
 `job.follow` + `job.unfollow`(任务输出订阅);**缺服务的部署里这些方法根本不在表里**
 (`job.*` 要 `jobs` 与 `jobController`)。其余回 `connector/unsupported`。
-**已知缺口(手机视图还不可用)**:`persisted` 水位(手机的"水位已对齐"依赖它)与 `session.page`
-都还没做,`session.prompt` 也未接。
+**已知缺口(手机视图还差一半)**:`session.page` 未做(手机的"往上翻历史"走不了),
+`session.prompt` 也未接;`persisted` 的处理已落地(见下)。
+方法面当前 **9/22**:`repo.info` / `devices.list` / `session.list`(不含标题 —— 该面不返回标题,
+契约 §5.7 已写明)/ `session.subscribe` + `session.unsubscribe`(会话事件与流式输出;开启快照的
+补课事件**逐条**发;重订优先走增量缓冲)/ `job.list` / `job.kill` / `job.follow` / `job.unfollow`;
+**缺服务的部署里这些方法根本不在表里**(`job.*` 要 `jobs` 与 `jobController`)。
+入站 `persisted`(手机报落盘水位)已接:电脑侧据此裁剪每个会话的增量缓冲,
+**只有全部配对设备都确认过的区间才裁**(§5.5)。
 所以下面 5.1 的"发一句 / 回一句"还差:上面的三个缺口 + 能产出设备行的配对流程(§12.1)。
 
 5.1 先用 Tailscale 直连做第一跳(契约 §14.6 的顺序):
