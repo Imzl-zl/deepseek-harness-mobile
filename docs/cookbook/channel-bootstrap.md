@@ -127,20 +127,21 @@ dsh plugin --profile <name> add <connector 本地路径>
 **接线到哪一步了**(真机联调前先看这一句):连接层已经完整 —— 三帧握手、会话密钥、
 每一种业务帧的 AEAD 封箱/解封、§4.3 的流控(W=128、收到即回 `credit`、满窗只压 `ev`/`live`),
 连接级 e2e 用手机侧的**独立实现**双向跑通过;方法面与 §5.6 的幂等管道也在。
-方法面当前 **9/22**:`repo.info` / `devices.list` / `session.list`(会话清单,不含标题 ——
+方法面当前 **12/22**:`repo.info` / `devices.list` / `session.list`(会话清单,不含标题 ——
 该面不返回标题,契约 §5.7 已写明)/ `session.subscribe` + `session.unsubscribe`(会话事件与流式输出;
-开启快照的补课事件**逐条**发)/ `job.list` / `job.kill`(走宿主的人发起门面)/
-`job.follow` + `job.unfollow`(任务输出订阅);**缺服务的部署里这些方法根本不在表里**
-(`job.*` 要 `jobs` 与 `jobController`)。其余回 `connector/unsupported`。
-**已知缺口(手机视图还差一半)**:`session.page` 未做(手机的"往上翻历史"走不了),
-`session.prompt` 也未接;`persisted` 的处理已落地(见下)。
-方法面当前 **9/22**:`repo.info` / `devices.list` / `session.list`(不含标题 —— 该面不返回标题,
-契约 §5.7 已写明)/ `session.subscribe` + `session.unsubscribe`(会话事件与流式输出;开启快照的
-补课事件**逐条**发;重订优先走增量缓冲)/ `job.list` / `job.kill` / `job.follow` / `job.unfollow`;
+开启快照的补课事件**逐条**发)/ `session.page` + `session.refetch`(往上翻历史;超阈值的条目换成
+`refetch` 标记,由手机按需补取)/ `session.prompt`(发消息;幂等键 `requestId` 走请求顶层)/
+`job.list` / `job.kill`(走宿主的人发起门面)/ `job.follow` + `job.unfollow`(任务输出订阅);
 **缺服务的部署里这些方法根本不在表里**(`job.*` 要 `jobs` 与 `jobController`)。
+其余回 `connector/unsupported`。
+配对(§12.1)在代码层面已闭合:电脑侧出码(斜杠命令 `dsh-mobile-pair`,**登记不成就绝不出码**)
+→ 手机带 `codeHash` 换票 → 经中转转发 → 电脑侧校验并落设备行 → 明文回执;
+`relay/` 已可运行(`node relay/src/main.ts --config <json>`,配置里只放令牌摘要)。
+**已知缺口**:带密钥的三方链路(手机替身带票连中转 + 握手)还没有 e2e —— 那是"真机发一句"
+在代码层面的最后一段;手机端 Dart 客户端尚未落地。
 入站 `persisted`(手机报落盘水位)已接:电脑侧据此裁剪每个会话的增量缓冲,
 **只有全部配对设备都确认过的区间才裁**(§5.5)。
-所以下面 5.1 的"发一句 / 回一句"还差:上面的三个缺口 + 能产出设备行的配对流程(§12.1)。
+所以下面 5.1 的"发一句 / 回一句"还差:上面的缺口 + 手机端客户端本身。
 
 5.1 先用 Tailscale 直连做第一跳(契约 §14.6 的顺序):
 
