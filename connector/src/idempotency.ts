@@ -37,7 +37,7 @@
  */
 import type { DedupeEntry } from './store/index.js'
 import type { ChannelLogger } from './observability.js'
-import { isErrorCode } from './protocol/errors.js'
+import { ProtocolError, isErrorCode } from './protocol/errors.js'
 import type { ResponseEnvelope } from './protocol/methods.js'
 
 /** 去重表容量上界（契约 §8.1 / §10）。 */
@@ -121,6 +121,18 @@ export function createIdempotency(options: IdempotencyOptions): Idempotency {
   /** 同键并发合流：**执行只发生一次**，两边拿到同一个应答。 */
   const inFlight = new Map<string, Promise<ResponseEnvelope>>()
 
+  /**
+   * ① 先落盘 `pending` 标记（契约 §5.6 的两阶段写入）。
+   *
+   * **写不进去就拒绝这次写操作**：不进入执行阶段。理由很直接 ——
+   * 一次"执行了但没记下"的写操作，在崩溃之后没有任何痕迹能证明它发生过，
+   * 而重发就会变成第二条消息。
+   */
+  const begin = async (requestId: string): Promise<void> => {
+    await rows.put(requestId, { at: now(), status: 'pending' })
+  }
+
+  /** ③ 成功后改写为 `done` + 结果。 */
   const remember = async (requestId: string, envelope: ResponseEnvelope): Promise<void> => {
     try {
       await rows.put(requestId, {
@@ -131,9 +143,19 @@ export function createIdempotency(options: IdempotencyOptions): Idempotency {
       // 超容量才收敛：每次写都扫一遍 10000 行不值得。
       if (rows.size > capacity) await prune()
     } catch (error) {
-      // 记不住不等于这次操作没生效：应答照回，只是"重发会被再执行一次"。
-      // 所以这里**留声**而不是静默 —— 它是可观测的降级，不是隐藏的失败。
-      log?.warn('幂等表写入失败：这次应答照回，但重发会再执行一次', error)
+      // 执行已经生效，改不回去：应答照回，但**这一行会停在 `pending`** ——
+      // 于是手机重发时会拿到"结果未知"而不是被再执行一次（宁可让它刷新，也不制造第二条消息）。
+      log?.warn('幂等表结果写入失败：应答照回，但该键会停在 pending（重发将被拒绝）', error)
+    }
+  }
+
+  /** 执行**已知没有生效**（handler 回了失败）：清掉 pending，让重发可以真的重来。 */
+  const abandon = async (requestId: string): Promise<void> => {
+    try {
+      await rows.delete(requestId)
+    } catch (error) {
+      // 删不掉只是留一个 pending：重发会被拒（安全方向的降级），留声即可。
+      log?.warn('幂等表 pending 清理失败（重发会被拒绝，直到 TTL 过期）', error)
     }
   }
 
@@ -199,9 +221,25 @@ export function createIdempotency(options: IdempotencyOptions): Idempotency {
         return running
       }
 
+      /**
+       * 行停在 `pending` 且本进程没有在飞 = **上一次执行的结果未知**（进程崩在②与③之间）。
+       *
+       * 这时**不能重发**：那条写操作可能已经生效，而我们没有任何痕迹能区分。
+       * 契约 §5.6 说这种情况要向 DSH 核对（该 requestId 是否已随 `user/message`
+       * 落在会话日志里）—— 那是下一步；在核对落地之前，这里**拒绝**（fail-closed）：
+       * 宁可让手机刷新一次，也不制造第二条消息。
+       */
+      if (cached !== undefined && cached.status === 'pending' && cached.at >= now() - ttlMs) {
+        log?.warn(`幂等键停在 pending：上一次执行结果未知，拒绝重发（请刷新会话）`, { requestId })
+        throw new ProtocolError('internal', '上一次写操作的结果未知：请刷新会话后再试')
+      }
+
       const promise = (async (): Promise<ResponseEnvelope> => {
+        // 两阶段的顺序**不得调换**（§5.6）：先落盘，再执行。
+        await begin(requestId)
         const envelope = await execute()
         if (envelope.ok) await remember(requestId, envelope)
+        else await abandon(requestId)
         return envelope
       })()
       inFlight.set(requestId, promise)

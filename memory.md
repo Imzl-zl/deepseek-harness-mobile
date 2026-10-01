@@ -38,7 +38,7 @@
 | `node app/tools/verify-platform-boundary.mjs` | 17 项(含 13 条规则自检):多端边界与 `Platform.isOhos` 禁令 |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
 | `cd connector && pnpm exec tsc --noEmit` | connector 类型检查(改 `connector/src/**` 后必跑) |
-| `cd connector && pnpm test` | connector 全套 **223 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**49 项**),外加握手驱动 / 封箱 / 流控 / 任务帧 / 订阅骨架 / 方法面 / 幂等 / 四个 DSH 适配器 / 连接级 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
+| `cd connector && pnpm test` | connector 全套 **225 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**49 项**),外加握手驱动 / 封箱 / 流控 / 任务帧 / 订阅骨架 / 方法面 / 幂等 / 四个 DSH 适配器 / 连接级 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
 | `cd connector && pnpm build` | 产出 `lib/index.js` + `lib/index.d.ts`(装进 profile 的那份产物) |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker`;跑法见 `tools.md` |
 
@@ -72,7 +72,7 @@
 - **`session.list` 已落地**:清单取自 `sessionController.list`(权威、**已按活动排序**、且是已有必需服务),**不带标题**(该面不返回标题;`session-title` 读的是活的 `Session`,落盘-only 拿不到 → 契约 §5.7 那一行已改写明);别名在方法面合成,给手机的行**逐字段构造**(DSH 会话 id 绝不过线,e2e 有断言)。取舍与欠账见 `.agents/notes/implemented/2026-10-01-session-list-wiring.md`。
 - **任务输出的传输底座已就位(订阅注册表与方法还没写)**:新增帧类型 `job`(`{v,t,sid,fc,box}`,无 `seq`)—— 契约术语表把 `live` 的 `stream` 定死为「assistant 尝试的流 id」,而手机对 `rev` 的读法是「跳跃即丢流」,任务输出的推进量却是**字节偏移**(会跳号),复用会让手机丢掉正在渲染的 assistant 文本。载荷三帧**照宿主 `jobController.follow` 一对一**(`opened`/`output`/`status`,宿主已做 100 ms 合并与 64 KiB 限帧),另加一帧 `error`(宿主出错就是抛,而设计要求手机显式渲染中断)。**满窗恢复信号 `connection.whenWritable(type)`** 已补(任务输出是第一个由调用方驱动的可补流;此前 `send` 回 `false` 后没有任何"窗口空了"的通知)。**顺带修掉一处两个真值源**:`protocol/frame.ts` 的 `FRAME_TYPES` 旧清单(8 项,含化石 `'ack'`)与 codec 的 13 项清单已漂移,现在真值只有 `frame.ts` 一份。取舍见 `.agents/notes/implemented/2026-10-01-job-output-transport-shape.md`。
 - **订阅过滤的真缺陷已修**:`jobs` 的无主事件有**两种形状**(`job.owner` 与事件自己的 `owner`),旧过滤只排前一种,导致无主任务的 `output` 插进每个会话的流。取舍与被否方案见 `.agents/notes/implemented/2026-10-01-jobs-event-owner-shapes.md`。
-- **幂等已接线(但还没被真实方法用到)**:`src/idempotency.ts` —— 只记成功、失败不进表;同键并发**合流**(只执行一次);崩溃窗口里重放执行(带键的四个方法各有下游保障);表无定时器,**TTL 靠惰性过期兜正确性**(读到过期条目即当未命中),空间回收是**有界清扫**(单次 500 条 —— 域表写入走单写链,一次一万条删除会让挂载卡几十秒)。方法面只对 `IDEMPOTENT_METHODS` 生效(只读方法带键也不进表)。**注意:那四个带键方法(`session.prompt` / `interaction.respond` / `settings.update` / `credentials.set|unset`)都还没实现**,所以本轮交付的是管道 + 判据,e2e 用的是假 handler。取舍与被否方案(含"为什么不像 Stripe 那样连失败也记")见 `.agents/notes/implemented/2026-10-01-idempotency-wiring.md`。
+- **幂等已按契约改成两阶段(写方法还没接)**:`src/idempotency.ts` —— ① 先落盘 `pending` → ② 执行 → ③ 成功改写 `done` + 结果;**`pending` 落盘失败即拒绝该写操作,不进入执行**(§5.6 原文"不得先执行再记录")。失败分两类:handler **回失败**=我们知道没生效 → 清掉 `pending`,重发可重来;handler **抛异常**/结果落盘失败=**我们不知道** → 行停在 `pending`,重发被拒(`internal` + 提示刷新)。同键并发**合流**;TTL 靠**惰性过期**兜正确性、空间回收**有界清扫**(单次 500 条)。方法面只对 `IDEMPOTENT_METHODS` 生效。**仍未做**:启动**核对**(§5.6:向 DSH 核对 `pending` 键是否已落进会话日志;要先定去重行是否落 `sid` = 落盘格式变更 + 迁移)与 `session.prompt` 本身 —— 那四个带键方法都还没实现。取舍见 `.agents/notes/implemented/2026-10-01-idempotency-two-phase.md`(它取代了 `archived/2026-10-01-idempotency-wiring.md` 里"崩溃窗口重放"的结论)。
 - **`session.list` 未实现**:需要新接 `sessionQuery`(服务键已在契约 §7 列出);`devices.revoke` 需要写存储 + 清在线会话,两者都留到各自轮次。
 - **配对流程未实现**(§12.1):二维码 / 配对码 → 写设备记录(含 `pairingId`)。没有它就没有设备行,`peerOf` 恒 undefined、握手一律 `protocol/not-paired`。
 - **`relay/`(中转)与 `app/`(手机端)的代码都还没开始**,后者前置是先装 Flutter SDK。
@@ -87,6 +87,8 @@
 - 当前最挡路的一条:CDP 端口可能要换 —— 9222 被日常 Chrome 占用,9400 也可能被上一轮遗留的 headless Chrome 占着,开新端口前先探 `/json/version`。
 
 ## 最近活跃窗口
+
+- 2026-10-01 幂等改成两阶段(本轮):接第一个**写方法**之前复核契约 §5.6,发现我第 3 轮的实现与它**相反** —— 规格明写"① 先落盘 `in-flight` → ② 执行 → ③ 成功改写 `done`;**不得先执行再记录**;落盘失败即**拒绝该写操作**",而我当时是"执行 → 成功才记、不写 pending、落盘失败照回应答"。当时那条论证("四个带键方法重复执行都安全")**不是错的但很脆**:它依赖一份会腐化的清单,而且有一个真实漏洞 —— **桥接与 DSH 都重启**之后,那次"执行了但没记下"的写操作两边都没痕迹,重发就是第二条消息。本轮按契约改:F**pending 落盘失败 → 拒绝执行**;handler **回失败**(知道没生效)→ 清 pending 让重发重来;handler **抛异常** / 结果落盘失败(不知道)→ 行停在 pending、重发被拒(fail-closed,宁可让手机刷新也不制造第二条消息)。旧笔记已按规则标注取代并移入 `archived/`。证据:`pnpm test` **225 项**、`tsc` 0、三条 protocol 门禁 486/26/49、多端边界 17;幂等 13 条(含新增"两阶段顺序:执行那一刻表里已有 pending")。取舍见 `.agents/notes/implemented/2026-10-01-idempotency-two-phase.md`。
 
 - 2026-10-01 会话增量缓冲(本轮):**更正上一轮的一条欠账** —— "`persisted` 水位来源未查清"是**我把方向读反了**:契约 §5.5 写的是 `persisted {sid,seq}` 由**手机落盘后**发出,电脑侧据此裁剪增量缓冲。真正的缺口是:电脑侧没有增量缓冲(重订只能每次灌完整快照)、入站 `persisted` 落进 `default` **被当成"电脑侧方向的帧"告警**、§5.5 的两条硬约束没实现。本轮落地 `src/session-buffer.ts`(每会话一段、16 MiB/10000 条、**裁剪点 = 全部配对设备水位的最小值**、未确认永不裁、超限时先"只允许快照";设备身份**只来自握手**因为帧内容可以撒谎;`record` 在 `send` **之前**——宁可重发不可缺段),并让重订**优先走增量**(补发缓冲那一段 + 跳过快照里重复的 seq)。被否方案见笔记(单一水位会裁掉慢的那台需要的区间;按"已发出"裁剪混淆了"发了"与"写下去了";有洞时给残缺增量会让手机**永远停在旧内容上**且自己发现不了)。测试抓到真缺陷:`tailFrom` 第一版只查头部连续性,`1,2,5` 从 1 开始会返回 `[2,5]`(中间少了 3、4)。证据:`pnpm test` **215 项**、`tsc` 0、`pnpm build`、三条 protocol 门禁 486/26/49、多端边界 17;缓冲 8 条单测 + 会话订阅新增 1 条,变异(去掉快照去重)1 项红。取舍见 `.agents/notes/implemented/2026-10-01-session-incremental-buffer.md`。
 
