@@ -201,12 +201,15 @@ seed(32B, 存系统安全存储)
 - `itemId` 由事件自身推导,规则固定:
   | 事件 | itemId |
   |---|---|
-  | `user/message` / `system/message` / `assistant/message` | `m:<turn>:<step>:<kind>` |
+  | 带消息的事件(`user/message` / `system/message` / `developer/message` / `assistant/message`) | `m:<messageId>` |
   | `tool/call` / `tool/result` | `t:<callId>` |
-  | 审批 / 提问的审计对 | `i:<callId>`(ask 与 outcome 同一 id,outcome 覆盖 ask → 天然表达"已决定") |
+  | 审批审计对(`approval/asked` / `approval/decided`) | `i:<data.id>`(两个事件共用同一个 `id`,outcome 覆盖 ask → 天然表达"已决定";`packages/interaction/user-approval/src/index.ts:225,232`) |
+  | 提问 | **没有专属审计事件**,条目身份落在上面两行:提问本身是 `tool/call`(`t:<callId>`),回答是带 `source.kind='user-question-reply'` 的 `user/message`(`m:<messageId>`)。DSH 自己的提问状态就是这么折出来的:`packages/interaction/user-questions/src/projection.ts:247,260,295` |
   | 任务 | `j:<owner>:<jobId>:<startedAt>`(`JobId` 由进程内计数器生成、跨重启重用,`packages/jobs/jobs-local/src/index.ts:229-231`) |
   | 子代理 | `s:<childSessionId>` |
   | 其它 | `<type>:<seq>`(兜底,**仅**用于没有更稳定身份的事件) |
+
+  带消息的事件**不保证 `<turn>:<step>:<kind>` 唯一**:`user/message` 是非约束事件——它可出现在 turn 之外,且同一个 turn 里可以有任意多条(直接提问、`agent.inject()` 注入的上下文、goal 续跑轮次,`packages/core/session/src/types.ts:302-308`);不变量校验对它只有裸 `break`,而 `system/message` 与 `tool/call` 都必须 `requireOpenStep`(`packages/core/session/src/invariant.ts:127,150,153`)。所以身份取消息自己的 `MessageId`——它是「跨每个表示边界保持的稳定身份」(`packages/llm/llm/src/message.ts:139-148`,铸点 `:226` 为一次性 `randomUUID`),而崩溃尾回合的合成 closer 用的是**确定性** id `${cause.kind}-tool-result-${callId}-${seq}`(`packages/core/session/src/repair.ts:169`),所以 §5.1 里"同一 `seq` 经两条读路径各出现一次"不会让 itemId 漂移。取舍见 `.agents/notes/implemented/2026-10-01-itemid-derivation.md`。
 
 ### 5.3 大对象
 
@@ -339,10 +342,13 @@ claim(请求) :=
 
 ## 7. 任务、子代理与能力位
 
-- 任务投影取 `ctx.jobs`(`list` / `readAt` / `kill` / `events.subscribe`,`packages/jobs/jobs/src/index.ts:100-192`);**桥接必须按 owner 过滤**(`list` 会把无主任务并进每个会话)。
-- 状态机照抄:`running | stopping | completed | killed | failed`;停止是"请求",要等 `settled` 事件,不做乐观更新。
-- 列表用整集帧(生命周期提交合并 `flushMs` 后一帧);**输出追加不刷新列表**。
-- 子代理取 `ctx.subagents.listChildren` / `listDescendants`(`packages/subagent/subagent/src/index.ts:374,393`);`activity` 只表达"会话是否驻留",不表达持久结局。
+- 任务投影取 `ctx.jobs`(`list:117` / `read:136` / `readAt:148` / `kill:160` / `events.subscribe`,`packages/jobs/jobs/src/index.ts`)。
+- **owner 过滤是必须项,且有两个反直觉点**:`list(caller)` 返回的是「该会话自己的 job」**∪「全部无主 job」**(`packages/jobs/jobs-local/src/index.ts:308`),所以桥接要"严格属于本会话"的行必须自己再排掉 `owner === undefined`;而**不传 caller 只返回无主 job**(`packages/jobs/jobs/src/index.ts:113-114`),不是全集。同理 `events.subscribe({ owner: S })` 也会收到无主 job 的事件(`jobs-local/src/events.ts:85`)——按会话分桶时无主任务会同时出现在所有会话里。
+- `owner` 无主时是**键整个缺失**,不是一个 `undefined` 值(`jobs-local/src/index.ts:420` 的 spread 写法),跨 JSON 后要用 `'owner' in job` 判断。
+- 状态机照抄:`running | stopping | completed | killed | failed`(`packages/jobs/jobs/src/view.ts:19`);停止是"请求",要等 `settled` 事件(`types.ts:206-218`,带 `cause` 与 `awaited`),不做乐观更新。`kill` 对处于 `stopping` 的 job **会再次调用 producer 的 `cancel`**(`jobs-local/src/index.ts:458-468`),别假设只调一次;`reason` 只在终态为 `killed` 时并入 `detail`,否则丢弃(`:584-590`)。
+- **读输出只能用 `readAt(id, from, caller)`,绝不能用 `read`**:`read` 会把**模型的** `modelCursor` 推到 `total`(`jobs-local/src/index.ts:444-456`),等于吃掉模型本该看到的输出;终态首读还会把环形缓冲裁到 settled cap。`readAt` 的 caller 是**第三个**参数,省略时只有无主 job 可读。必须处理 `lossy` 与 `gapBefore`(live 只保 256 KiB、settle 后 16 KiB),静默拼接会伪造输出。
+- `output` 事件**不带 payload**(`types.ts:219-226`),观察方据自己的游标调度一次 `readAt`;而且 `ctx.jobs.events` **没有任何合并窗口**,append 一次发一次(`jobs-local/src/index.ts:523-524`)——桥接必须自己节流。`flushMs`(100 ms,`observeFlushMs`)与"输出追加不刷新列表"**都是 `dsh-api-job-controller` 的行为**(`packages/api/job-controller/src/index.ts:29`、`src/rows.ts:36-40`),不在 `ctx.jobs` 里。
+- 子代理取 `ctx.subagents.listChildren` / `listDescendants`(`packages/subagent/subagent/src/index.ts:374,393`,行号已核实准确)。`activity` 取值是 **`'running' | 'inactive'`**,只表达"会话是否驻留",不表达持久结局(`subagent/src/control-types.ts:26-33`)——已收工的子代理同样是 `inactive`,与"从未成功/崩溃"不可区分,要区分必须叠加 `subagentTiming.lastTurnCompleted`。**`listChildren` 的行里没有 `activity`**,只有 `listDescendants` 的行才有;后者是联合类型,`kind:'diagnostic'` 的行只有 `reason`,没有 `activity`/`mode`/`label`(`control-types.ts:53-70`)。这两个方法**没有 `@Remote`**,浏览器侧调不到,转发到手机需自建 Remote 或改读 `subagentCatalog` 投影。
 - **能力位**:`repo.info` 返回 `caps`,由"服务是否存在"决定(`configuration.ts:17-18` 以 `ctx.get('sessionController')` 的有无决定只读);手机据此置灰按钮,不用错误码试探。
 
 ---

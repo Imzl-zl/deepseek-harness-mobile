@@ -60,7 +60,7 @@
 ## 进行中 / 未完成
 
 - **`protocol/` 已落地**:16 条 fixtures + 参考实现 + 三个校验脚本(fixtures / loopback / vectors)。参考实现**不是产品代码**,两侧(TS 插件 / Dart 手机端)要各写一遍,对着同一批 fixtures 跑。
-- **`connector/` 第 1–3 步完成**:工程形态 + 骨架 + **协议层实现**。`src/protocol/` 是产品代码(frame / items / dedupe / recovery / takeover);中转与手机侧只作**测试替身**(`tests/support/relay.ts` + 测试内的手机侧),不进 `src/`。判据全过:`tsc --noEmit` 退出 0、`pnpm build` 产出 `lib/index.js` 且入口可真加载、`pnpm test` **16 条 fixture 全绿且断言数 = 486**(与参考侧相等)。取舍见 `.agents/notes/implemented/2026-10-01-connector-protocol-port.md`。**DSH 适配层(第 4 步)未开始。**
+- **`connector/` 第 1–3 步完成**:工程形态 + 骨架 + **协议层实现**。`src/protocol/` 是产品代码(frame / items / dedupe / recovery / takeover);中转与手机侧只作**测试替身**(`tests/support/relay.ts` + 测试内的手机侧),不进 `src/`。判据全过:`tsc --noEmit` 退出 0、`pnpm build` 产出 `lib/index.js` 且入口可真加载、`pnpm test` **16 条 fixture 全绿且断言数 = 486**(与参考侧相等)。取舍见 `.agents/notes/implemented/2026-10-01-connector-protocol-port.md`。**DSH 适配层(第 4 步)进行中**:`src/dsh/interactions.ts` 已落地(同进程直连 waterfall,不走 `$events` Remote 流;失败 fail-closed 且留痕);`sessions` / `jobs` / `subagents` / `settings` / `caps` 五个适配器待接。
 - **`relay/` 与 `app/` 的代码都还没开始。**
 - **协议六条已定稿并进 fixtures**:live 流式帧、快照水位与分页、待审批的持久投影、流控窗口(ack 兼信用)、接收端 seen-seq、审批仲裁判定表——对应 fixture `10`–`16`。
 - **审批接管已定**(不再是产品决策):默认 `foreground` 档——App 前台**且**已订阅该会话才 claim,否则 delegate 给桌面;`always` / `never` 可选;claim 后看护超时 10 min 按 fail-closed 结束。判定表可执行(fixture `16`)。
