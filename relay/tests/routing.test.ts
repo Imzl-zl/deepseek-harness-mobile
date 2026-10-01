@@ -31,7 +31,8 @@ test('路由视图只取 t / sid / seq —— 载荷与方法名进不了这一�
   })
 
   const view = routingViewOf(raw)
-  assert.deepEqual(view, { t: 'req', sid: 'sid_1', seq: 7 })
+  // `id` 在可见字段里（契约 §1 的 I10 扩容）：配对帧没有 `sid`，回执只能靠它找回来。
+  assert.deepEqual(view, { t: 'req', sid: 'sid_1', seq: 7, id: 'r1' })
   assert.equal(JSON.stringify(view).includes('session.prompt'), false, '方法名不许进路由视图')
   assert.equal(JSON.stringify(view).includes('机密'), false, '载荷不许进路由视图')
 })

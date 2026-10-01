@@ -49,7 +49,9 @@ export function isKnownFrameType(value: unknown): value is FrameType {
  * 这是中转与载荷之间唯一的接口：它返回 `{t, sid, seq}`，**丢弃其余一切**。
  * 想越界读载荷，就必须绕过这个函数 —— 而它没有给出任何回传载荷的口子。
  */
-export function routingViewOf(raw: string): { t: FrameType; sid: string; seq: number } | undefined {
+export function routingViewOf(
+  raw: string,
+): { t: FrameType; sid: string; seq: number; id?: string } | undefined {
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
@@ -61,5 +63,8 @@ export function routingViewOf(raw: string): { t: FrameType; sid: string; seq: nu
   if (!isKnownFrameType(record['t'])) return undefined
   const sid = typeof record['sid'] === 'string' ? record['sid'] : ''
   const seq = typeof record['seq'] === 'number' ? record['seq'] : 0
-  return { t: record['t'], sid, seq }
+  // `id` 也在可见字段里（契约 §1 的 I10）：配对帧没有 `sid`，回执只能靠它找回来 ——
+  // 它是**不透明的关联标记**，不携带任何内容信息。
+  const id = typeof record['id'] === 'string' ? record['id'] : undefined
+  return { t: record['t'], sid, seq, ...(id === undefined ? {} : { id }) }
 }

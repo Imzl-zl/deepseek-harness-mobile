@@ -29,6 +29,8 @@ export interface RoutingView {
   t: FrameType
   sid: string
   seq: number
+  /** 帧头里的**不透明关联标记**（配对帧靠它回程；I10 把它也列进可见字段）。 */
+  id?: string
 }
 
 /** 一帧 + 它从哪来（中转自己的记账，不下发给对端）。 */
@@ -47,8 +49,12 @@ export interface RoutingOptions {
 export const DEFAULT_WINDOW_FRAMES = 1000
 
 export interface Routing {
-  /** 电脑侧发来一帧：学到 sid 归属，转给订阅了它的设备，并记进各设备的窗口。 */
-  fromConnector(connectorId: string, frame: RoutedFrame): void
+  /**
+   * 电脑侧发来一帧：学到 sid 归属，转给订阅了它的设备，并记进各设备的窗口。
+   *
+   * @returns 该投递的设备 id（**调用方负责按"这些设备还在不在"过滤** —— 本层不认识连接）。
+   */
+  fromConnector(connectorId: string, frame: RoutedFrame): readonly string[]
   /**
    * 设备发来一帧。
    *
@@ -94,7 +100,7 @@ export function createRouting(options: RoutingOptions = {}): Routing {
       if (listeners === undefined) {
         // 没有设备在听：**仍然记归属**（设备稍后连上来要按 since 补），但不记窗口 ——
         // 没人缺这一段，记了只是白占内存。
-        return
+        return []
       }
       // 有序帧才进窗口（`ev` / `persisted`）：无序帧没有"补齐"的语义。
       const ordered = frame.view.t === 'ev' || frame.view.t === 'persisted'
@@ -110,6 +116,8 @@ export function createRouting(options: RoutingOptions = {}): Routing {
         }
         windows.set(key, window)
       }
+      // 把"该投给谁"交给调用方：本层不认识连接，只知道谁在听。
+      return [...listeners]
     },
 
     fromDevice(deviceId, frame) {
