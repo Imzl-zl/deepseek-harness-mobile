@@ -16,6 +16,7 @@ import { createIdempotency } from '../src/idempotency.js'
 import { waitFor } from './support/peer.js'
 import { phoneOpenBox, phoneSealBox } from './support/phone.js'
 import { createMemoryDedupeRows } from './support/dedupe-rows.js'
+import { createFakeAliases } from './support/fake-aliases.js'
 import { completeHandshake, start, type Fixture } from './support/secure-connection.js'
 import type { SessionKeys } from '../src/protocol/crypto.js'
 
@@ -48,10 +49,29 @@ function fixtureHandlers() {
           },
         ]),
     },
-    aliases: {
+    aliases: createFakeAliases({
       // 别名是**不透明的**：刻意不把 DSH 会话 id 编进去，否则"id 不过线"的断言会失去意义
       // （拿一个含 id 的 sid 去查 `includes(id)`，永远为真）。
-      ensure: (id) => Promise.resolve(id === 'dsh-1' ? 'sid_0123456789abcd' : 'sid_ffffffffffff'),
+      sidFor: (dshSessionId) => (dshSessionId === 'dsh-1' ? 'sid_0123456789abcd' : 'sid_ffffffffffff'),
+    }),
+    jobs: {
+      listOwnedBy: (dshSessionId) =>
+        dshSessionId === 'dsh-1'
+          ? [
+              {
+                id: 'j1',
+                kind: 'shell',
+                label: '构建',
+                status: 'running',
+                progress: '2/5',
+                startedAt: 10,
+                outputTotal: 42,
+              },
+            ]
+          : [],
+      kill: () => 'requested',
+      readOutput: () => ({ chunks: [], next: 0, lossy: false }),
+      subscribe: () => () => {},
     },
   })
 }
@@ -107,7 +127,11 @@ test('端到端：手机问 repo.info，电脑侧回一个可解的 res（id 对
   assert.equal(info.protocol, 1)
   assert.equal(info.aliasVersion, 7)
   assert.deepEqual(info.caps, CAPS, '能力位要在结果里（手机据此置灰按钮）')
-  assert.deepEqual(info.methods, ['devices.list', 'repo.info', 'session.list'], '实现了哪些方法也由同一张表报出')
+  assert.deepEqual(
+    info.methods,
+    ['devices.list', 'job.list', 'repo.info', 'session.list'],
+    '实现了哪些方法也由同一张表报出',
+  )
 })
 
 test('端到端：方法不存在 → ok:false 的 connector/unsupported，且**连接留着**', async (t) => {
@@ -194,6 +218,38 @@ test('端到端：同一个幂等键重发 → 只执行一次，第二次回上
   assert.equal(second.id, 'req_ffffffffffff', '重发的应答回的是**这次**的 id')
   assert.deepEqual(second.envelope, first.envelope, '内容与第一次相同（命中即回上次结果）')
   assert.equal(rows.size, 1, '表里只留一行')
+})
+
+test('端到端：手机问 job.list —— sid 反解回会话，未知 sid 回 session/not-found 且连接留着', async (t) => {
+  const f = await start(t, { handlers: fixtureHandlers() })
+  f.connection.start()
+  await waitFor('进入 handshake', () => f.connection.state === 'handshake')
+  const keys = await completeHandshake(f)
+
+  // 真实流程就是这样：先列会话拿到 sid，再拿它问任务。
+  // （顺带是一道活的门槛：**别名没分配过就反解不出来**，跳过列会话直接问 `job.list` 会得到 not-found。）
+  sendRequest(f, keys, 0, 'req_gggggggggggg', '{"method":"session.list"}')
+  await waitFor('收到会话清单', () => f.peer.received.some((frame) => frame.t === 'res'))
+  const sessions = responseOf(f, keys, 0)
+  const sid = (sessions.envelope['result'] as { sessions: { sid: string }[] }).sessions[0]?.sid
+  assert.equal(sid, 'sid_0123456789abcd')
+
+  sendRequest(f, keys, 1, 'req_hhhhhhhhhhhh', `{"method":"job.list","params":{"sid":"${String(sid)}"}}`)
+  await waitFor('收到第二个 res', () => f.peer.received.filter((frame) => frame.t === 'res').length === 2)
+  const listed = responseOf(f, keys, 1)
+  assert.equal(listed.ok, true)
+  assert.deepEqual((listed.envelope['result'] as { jobs: unknown[] }).jobs, [
+    { id: 'j1', kind: 'shell', label: '构建', status: 'running', startedAt: 10, outputTotal: 42, progress: '2/5' },
+  ])
+
+  // 未知别名：回结构化错误，连接留着（§9）—— 手机据此把那个会话从列表移除。
+  sendRequest(f, keys, 2, 'req_iiiiiiiiiiii', '{"method":"job.list","params":{"sid":"sid_nobody"}}')
+  await waitFor('收到第三个 res', () => f.peer.received.filter((frame) => frame.t === 'res').length === 3)
+  const missing = responseOf(f, keys, 2)
+  assert.equal(missing.ok, false)
+  assert.equal(missing.envelope['code'], 'session/not-found')
+  assert.equal(f.connection.state, 'serving')
+  assert.deepEqual(f.closes, [])
 })
 
 test('端到端：连着问两件事，两个应答各自对得上自己的 id', async (t) => {

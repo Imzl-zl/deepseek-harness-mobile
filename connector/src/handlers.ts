@@ -19,8 +19,10 @@
  * 只该看到 `sid`（§5.1）。
  */
 import { WIRE_VERSION } from './protocol/frame.js'
+import { ProtocolError } from './protocol/errors.js'
 import type { MethodHandler, MethodName } from './protocol/methods.js'
 import type { Caps } from './dsh/caps.js'
+import type { JobsPort } from './dsh/jobs.js'
 import type { SessionSummaryRow } from './dsh/sessions.js'
 
 /** 设备清单里的一行。**不含公钥** —— 手机不需要别人的公钥，少发一个字段就少一处泄漏面。 */
@@ -30,6 +32,14 @@ export interface DeviceRow {
   pairedAt: number
   /** 是否已吊销（电脑侧删公钥）。 */
   revoked: boolean
+}
+
+/** 别名端口（契约 §5.1）：手机与中继都只见 `sid`，所以两个方向都要。 */
+export interface AliasPort {
+  /** 会话 → 别名（首次调用会分配并落盘）。 */
+  ensure(dshSessionId: string): Promise<string>
+  /** 别名 → 会话；不认识的别名返回 `undefined`（调用方据此回 `session/not-found`）。 */
+  sessionOf(sid: string): string | undefined
 }
 
 export interface HandlerDeps {
@@ -47,11 +57,42 @@ export interface HandlerDeps {
    * 把它写成可选只会多一条永远不会被走到的错误分支。
    */
   sessions: { list(signal?: AbortSignal): Promise<readonly SessionSummaryRow[]> }
-  /** 别名分配：手机与中继都只见 `sid`（契约 §5.1）。 */
-  aliases: { ensure(dshSessionId: string): Promise<string> }
+  aliases: AliasPort
+  /**
+   * 后台任务（可选服务）。
+   *
+   * **缺了就干脆不挂 `job.*` 方法**，而不是挂上去再回 `connector/unsupported`：
+   * `repo.info` 报的是 handler 表的键，于是"本机没有 jobs 服务"这件事
+   * 与"这个方法没实现"在手机侧是同一种表现（按钮置灰），而电脑侧少一条永远走不到的分支。
+   */
+  jobs?: JobsPort
 }
 
 export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, MethodHandler>> {
+  /**
+   * 把一个 `sid` 反解回 DSH 会话 id（契约 §5.1：手机与中继只见 `sid`）。
+   *
+   * **别名不认识时不许当"没有数据"处理**：回一个空列表等于对手机撒谎
+   * （"这个会话没有任务"），而事实是"我不认识这个会话"。所以回 `session/not-found`
+   * ——§3.1 给它的客户端行为就是「从列表移除」，正是这里该发生的事。
+   */
+  const requireSession = (sid: unknown): string => {
+    if (typeof sid !== 'string' || sid === '') {
+      throw new ProtocolError('protocol/bad-frame', 'sid 必填')
+    }
+    const dshSessionId = deps.aliases.sessionOf(sid)
+    if (dshSessionId === undefined) {
+      throw new ProtocolError('session/not-found', `未知的会话别名：${sid}`)
+    }
+    return dshSessionId
+  }
+
+  /** 取 `params.sid`（形状不对留给 `requireSession` 报 `protocol/bad-frame`）。 */
+  const sidOf = (params: unknown): unknown =>
+    typeof params === 'object' && params !== null
+      ? (params as Record<string, unknown>)['sid']
+      : undefined
+
   const handlers: Partial<Record<MethodName, MethodHandler>> = {
     'devices.list': () => ({
       devices: deps.devices().map((row) => ({
@@ -81,6 +122,27 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
         })),
       }
     },
+  }
+
+  // 可选服务的方法**按需挂**：表里没有它，`repo.info` 自然也不会报它（契约 §7 的能力位模型）。
+  if (deps.jobs !== undefined) {
+    const jobs = deps.jobs
+    handlers['job.list'] = (params) => {
+      const dshSessionId = requireSession(sidOf(params))
+      return {
+        jobs: jobs.listOwnedBy(dshSessionId).map((row) => ({
+          id: row.id,
+          kind: row.kind,
+          label: row.label,
+          status: row.status,
+          startedAt: row.startedAt,
+          outputTotal: row.outputTotal,
+          ...(row.progress === undefined ? {} : { progress: row.progress }),
+          ...(row.detail === undefined ? {} : { detail: row.detail }),
+          ...(row.finishedAt === undefined ? {} : { finishedAt: row.finishedAt }),
+        })),
+      }
+    }
   }
 
   // `repo.info` 最后挂：它报的 `methods` 就是这张表的键，所以它必须看得见全部兄弟。

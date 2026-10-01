@@ -55,6 +55,8 @@ import { createIdempotency, type DedupeRows } from './idempotency.js'
 import { mount, type LifecycleStep } from './lifecycle.js'
 import { METRIC, createChannelLogger, createMetrics, type ChannelLogger, type ChannelMetrics } from './observability.js'
 import { createAliases, type Aliases } from './alias.js'
+import type { JobRegistry } from '@deepseek-ai/dsh-jobs'
+import { createJobsPort } from './dsh/jobs.js'
 import { createSessionsAdapter } from './dsh/sessions.js'
 import type { DeviceRecord } from './store/index.js'
 import { coreDomain, initialMeta, migrateMeta, windowsDomain } from './store/index.js'
@@ -312,6 +314,11 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             caps: () => readCaps(ctx),
             aliasVersion: () => aliases?.version ?? 0,
             sessions: createSessionsAdapter(ctx.sessionController),
+            // 任务服务是**可选**的（`caps.ts` 的 OPTIONAL_SERVICES）：缺了就不挂 `job.*`，
+            // 手机侧看到的是"这个方法不存在"，而不是一个会回错的按钮。
+            ...(ctx.get('jobs') === undefined
+              ? {}
+              : { jobs: createJobsPort(ctx.get('jobs') as JobRegistry) }),
             aliases: {
               ensure: (dshSessionId) => {
                 if (aliases === null) {
@@ -320,6 +327,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
                 }
                 return aliases.ensure(dshSessionId)
               },
+              sessionOf: (sid) => aliases?.sessionOf(sid),
             },
             devices: () =>
               devicesTable === null

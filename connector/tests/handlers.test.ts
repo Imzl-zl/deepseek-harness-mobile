@@ -10,9 +10,30 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { createHandlers } from '../src/handlers.js'
+import { createHandlers, type HandlerDeps } from '../src/handlers.js'
+import { ProtocolError } from '../src/protocol/errors.js'
 import { WIRE_VERSION } from '../src/protocol/frame.js'
 import type { Caps } from '../src/dsh/caps.js'
+import type { JobsPort } from '../src/dsh/jobs.js'
+import { createFakeAliases } from './support/fake-aliases.js'
+
+/** 什么都不做的任务端口；只用它来"挂着 `job.*`"。 */
+function fakeJobs(overrides: Partial<JobsPort> = {}): JobsPort {
+  return {
+    listOwnedBy: () => [],
+    kill: () => 'requested',
+    readOutput: () => ({ chunks: [], next: 0, lossy: false }),
+    subscribe: () => () => {},
+    ...overrides,
+  }
+}
+
+/** 取 `repo.info` 报出来的方法清单。 */
+function handlers_info(handlers: Partial<Record<string, unknown>>): { methods: string[] } {
+  const info = handlers['repo.info'] as (() => { methods: string[] }) | undefined
+  if (info === undefined) throw new Error('repo.info 不在表里')
+  return info()
+}
 
 const CAPS: Caps = {
   sessions: true,
@@ -30,9 +51,9 @@ function build(overrides: Partial<Parameters<typeof createHandlers>[0]> = {}) {
     caps: () => CAPS,
     aliasVersion: () => 7,
     devices: () => [],
-    // 会话面的替身：`list` 给 DSH 权威行，`aliases` 给通道自己的别名。
+    // 会话面的替身：`list` 给 DSH 权威行，`aliases` 两个方向都给（`job.list` 要反解）。
     sessions: { list: () => Promise.resolve([]) },
-    aliases: { ensure: (id) => Promise.resolve(`sid_${id}`) },
+    aliases: createFakeAliases(),
     ...overrides,
   })
 }
@@ -55,6 +76,100 @@ test('repo.info：协议版本、能力位、别名版本，以及**表的键**'
   // 报的必须是"表里真有的方法"：加一个 handler 就自动多一行，删一个就自动少一行。
   assert.deepEqual(info.methods, Object.keys(handlers).sort())
   assert.deepEqual(info.methods, ['devices.list', 'repo.info', 'session.list'])
+})
+
+test('job.list：sid 反解回会话，逐字段映射任务行', async () => {
+  const aliases = createFakeAliases()
+  const sid = await aliases.ensure('dsh-1')
+  const asked: string[] = []
+
+  const handlers = build({
+    aliases,
+    jobs: {
+      listOwnedBy: (dshSessionId) => {
+        asked.push(dshSessionId)
+        return [
+          {
+            id: 'j1',
+            kind: 'shell',
+            label: '构建',
+            status: 'running',
+            progress: '2/5',
+            startedAt: 10,
+            outputTotal: 42,
+          },
+          {
+            id: 'j2',
+            kind: 'shell',
+            label: '测试',
+            status: 'completed',
+            detail: 'ok',
+            startedAt: 5,
+            finishedAt: 20,
+            outputTotal: 7,
+          },
+        ]
+      },
+      kill: () => 'requested',
+      readOutput: () => ({ chunks: [], next: 0, lossy: false }),
+      subscribe: () => () => {},
+    },
+  })
+  const handler = handlers['job.list']
+  assert.ok(handler !== undefined)
+
+  const listed = (await handler({ sid }, {})) as { jobs: Record<string, unknown>[] }
+  assert.deepEqual(asked, ['dsh-1'], '手机给的是 sid，适配器要的是 DSH 会话 id')
+  assert.deepEqual(listed.jobs, [
+    { id: 'j1', kind: 'shell', label: '构建', status: 'running', startedAt: 10, outputTotal: 42, progress: '2/5' },
+    { id: 'j2', kind: 'shell', label: '测试', status: 'completed', startedAt: 5, outputTotal: 7, detail: 'ok', finishedAt: 20 },
+  ])
+  assert.equal('owner' in (listed.jobs[0] ?? {}), false, '归属是电脑侧的内部事实，不必下发')
+})
+
+test('job.list：别名不认识 → session/not-found（绝不回空列表）', async () => {
+  const handlers = build({ jobs: fakeJobs() })
+  const handler = handlers['job.list']
+  assert.ok(handler !== undefined)
+
+  // 回空列表等于对手机撒谎（"这个会话没有任务"），而事实是"我不认识这个会话"。
+  await assert.rejects(
+    // 用 async 包一层：handler 是同步函数，抛错发生在 Promise.resolve 之前。
+    async () => handler({ sid: 'sid_nobody' }, {}),
+    (error: unknown) => error instanceof ProtocolError && error.code === 'session/not-found',
+  )
+})
+
+test('job.list：sid 缺失或形状不对 → protocol/bad-frame', async () => {
+  const handlers = build({ jobs: fakeJobs() })
+  const handler = handlers['job.list']
+  assert.ok(handler !== undefined)
+
+  for (const params of [undefined, {}, { sid: '' }, { sid: 42 }, 'nope']) {
+    await assert.rejects(
+      async () => handler(params, {}),
+      (error: unknown) => error instanceof ProtocolError && error.code === 'protocol/bad-frame',
+      `${JSON.stringify(params)} 应当被拒`,
+    )
+  }
+})
+
+test('可选服务缺了：`job.*` 干脆不在表里（能力位与能力清单同源）', async () => {
+  const withoutJobs = build()
+  assert.equal('job.list' in withoutJobs, false, '没有 jobs 服务就不该挂这个方法')
+  // `repo.info` 报的是表的键，所以能力位自动跟着走 —— 手机侧看到的是"没这个方法"，
+  // 而不是一个会被点开、然后回错的按钮。
+  const info = handlers_info(withoutJobs)
+  assert.deepEqual(info.methods, ['devices.list', 'repo.info', 'session.list'])
+
+  const withJobs = build({ jobs: fakeJobs() })
+  assert.equal('job.list' in withJobs, true)
+  assert.deepEqual(handlers_info(withJobs).methods, [
+    'devices.list',
+    'job.list',
+    'repo.info',
+    'session.list',
+  ])
 })
 
 test('session.list：逐字段映射，别名在方法面合成，**DSH 会话 id 不过线**', async () => {
@@ -97,6 +212,7 @@ test('session.list：并发分配别名（不同会话互不影响）', async ()
         ),
     },
     aliases: {
+      ...createFakeAliases(),
       ensure: (id) => {
         seen.push(id)
         return Promise.resolve(`sid_${id}`)
