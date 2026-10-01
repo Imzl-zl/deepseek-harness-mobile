@@ -136,6 +136,12 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         refuse(socket, 401, 'Unauthorized')
         return
       }
+      // **升级也限流**：它比换票贵得多（一条长连、一份内存状态、一次密码学握手）。
+      // 少了这一处，换票被限住之后转手猛刷升级即可绕过 —— 由 `tests/upgrade-rate-limit.test.ts` 钉住。
+      if (!limiter.take(caller.id).allowed) {
+        refuse(socket, 429, 'Too Many Requests')
+        return
+      }
       wss.handleUpgrade(request, socket, head, (ws) => {
         accept(ws, 'connector', caller.id)
       })
@@ -147,6 +153,12 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
       if (deviceId === undefined) {
         // 票不对/过期/用过：这时还什么都没有交换，回状态码然后断开即可。
         refuse(socket, 401, 'Unauthorized')
+        return
+      }
+      // 同样在升级处限流，键是**身份**而不是票。被拒的那一次**会消耗掉票** ——
+      // 这是有意的：那次尝试确实发生了，客户端要重试就重新换票。
+      if (!limiter.take(deviceId).allowed) {
+        refuse(socket, 429, 'Too Many Requests')
         return
       }
       wss.handleUpgrade(request, socket, head, (ws) => {
