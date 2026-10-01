@@ -25,6 +25,7 @@
 import { readFile } from 'node:fs/promises'
 
 import { createDigestAuthenticator, type TokenDigest } from './digest-auth.ts'
+import { appendTokenToConfig, issueToken } from './issue-token.ts'
 import { startRelay } from './server.ts'
 
 interface RelayConfig {
@@ -47,6 +48,26 @@ if (configPath === undefined) {
 
 const raw = await readFile(configPath, 'utf8')
 const config = JSON.parse(raw) as RelayConfig
+
+// 签发模式：`--issue-token <device|connector> <id>` —— 生成令牌、把**摘要**写进配置、
+// 把令牌打印一次。它**必须能在 `tokens` 为空时运行**（否则没有办法引导第一台设备）。
+const issueArgs = process.argv.includes('--issue-token')
+  ? process.argv.slice(process.argv.indexOf('--issue-token') + 1, process.argv.indexOf('--issue-token') + 3)
+  : []
+if (issueArgs.length === 2) {
+  const [kind, id] = issueArgs as [string, string]
+  if (kind !== 'device' && kind !== 'connector') {
+    console.error('签发类型的取值是 device 或 connector')
+    process.exit(2)
+  }
+  const issued = issueToken({ kind, id })
+  const tokens = await appendTokenToConfig(configPath, { kind, id, hash: issued.hash })
+  console.log(`已签发 ${kind} 令牌（id=${id}）。摘要已写进 ${configPath}（现在 ${tokens.length} 条）。`)
+  console.log('令牌**只显示这一次**，请立刻交给对端：')
+  console.log(issued.token)
+  process.exit(0)
+}
+
 const entries = config.tokens ?? []
 if (entries.length === 0) {
   console.error('配置里没有 tokens：中转起来也无人能连上（只放摘要，不放明文令牌）')
