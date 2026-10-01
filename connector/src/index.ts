@@ -49,6 +49,8 @@ import type { TakeoverDevice, TakeoverMode } from './protocol/takeover.js'
 import type { WireFrame } from './protocol/frame.js'
 import { createHandshakeDriver } from './protocol/handshake-driver.js'
 import { createBoxCodec } from './protocol/box.js'
+import { createHandlers } from './handlers.js'
+import { createMethodFace } from './method-face.js'
 import { mount, type LifecycleStep } from './lifecycle.js'
 import { METRIC, createChannelLogger, createMetrics, type ChannelLogger, type ChannelMetrics } from './observability.js'
 import { createAliases, type Aliases } from './alias.js'
@@ -108,7 +110,10 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
    * 一律走可选链，而不是假设它们已就绪。
    */
   let aliases: Aliases | null = null
-  let devicesTable: { get(key: string): DeviceRecord | undefined } | null = null
+  let devicesTable: {
+    get(key: string): DeviceRecord | undefined
+    keys(): Iterable<string>
+  } | null = null
   /** 本机身份（§4.1）。在 `load-identity` 之前是 null，`start-transport` 之前必然已就绪。 */
   let identity: Identity | null = null
   /** 本机标识：进 `hello-ack` 的 `pcId`，因而参与 transcript。 */
@@ -286,6 +291,34 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           throw new Error('start-transport 在身份就绪前被调用：装配顺序有误')
         }
 
+        // 方法面：先建 handler 表（`repo.info` 报的就是这张表的键），再交给方法面接线。
+        // 两者都在这一步构造：它们依赖 `open-store`/`publish-service` 的产物，且**每次挂载一套**。
+        const methodFace = createMethodFace({
+          handlers: createHandlers({
+            caps: () => readCaps(ctx),
+            aliasVersion: () => aliases?.version ?? 0,
+            devices: () =>
+              devicesTable === null
+                ? []
+                : [...devicesTable.keys()].flatMap((id) => {
+                    const record = devicesTable?.get(id)
+                    if (record === undefined) return []
+                    return [
+                      {
+                        id,
+                        name: record.name,
+                        pairedAt: record.pairedAt,
+                        revoked: record.revokedAt !== undefined,
+                      },
+                    ]
+                  }),
+          }),
+          onError: (message, detail) => logger.warn(message, detail),
+        })
+        logger.debug(`方法面已就绪：${methodFace.implemented.length} 个方法`, {
+          methods: [...methodFace.implemented],
+        })
+
         const next = createConnection({
           url: relayUrl ?? '',
           // Node 22+ 自带全局 WebSocket；不引第三方客户端。
@@ -335,13 +368,26 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             case 'pong':
             case 'credit':
             case 'presence':
-              // 保活计时已在 connection 内部按「任一方向有帧」重置；这里无需再动作。
+              // 保活与流控记账已在 connection 内部处理；这里无需再动作。
+              return
+            case 'req':
+              // 方法面。**异步**：handler 可能要等 DSH 服务，而收帧路径不能阻塞
+              // （同一条 socket 上还有 `credit` / 保活要走）。
+              void methodFace.handle(frame).then((response) => {
+                if (response === null) return
+                // 发不出去就留声：手机在等这个 `res`，静默丢弃会变成"永远转圈"。
+                if (!next.send(response)) {
+                  metrics.increment(METRIC.rejectedFrames)
+                  logger.warn(`应答 ${frame.id} 没发出去（连接不在服务态或窗口拒绝）`)
+                }
+              })
               return
             default:
-              // **不静默丢弃**：方法面未实现时，手机端会看到"发出去但没回应"，
-              // 而电脑侧一片安静 —— 那是最难查的一类故障。
+              // **不静默丢弃**：手机端会看到"发出去但没回应"，而电脑侧一片安静 ——
+              // 那是最难查的一类故障。`res` / `ev` / `live` / `persisted` 都是电脑侧发出的方向，
+              // 从手机收到它们说明对端跑错了协议。
               metrics.increment(METRIC.rejectedFrames)
-              logger.warn(`收到尚未实现的方法面帧：${frame.t}（契约 §5.7 未落地）`)
+              logger.warn(`收到电脑侧方向的帧：${frame.t}（手机不该发这个）`)
           }
         }
 

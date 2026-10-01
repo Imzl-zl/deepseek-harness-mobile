@@ -20,6 +20,8 @@ import {
   createHandshakeDriver,
   type HandshakeEstablishment,
 } from '../../src/protocol/handshake-driver.js'
+import type { MethodHandler, MethodName } from '../../src/protocol/methods.js'
+import { createMethodFace } from '../../src/method-face.js'
 import { createConnection, type Connection } from '../../src/transport/connection.js'
 import { startPeer, waitFor, type Peer } from './peer.js'
 import { createPhone, type Phone } from './phone.js'
@@ -49,7 +51,10 @@ export interface Fixture {
 }
 
 /** 起对端 + 连接，并注册清理。 */
-export async function start(t: Cleanup): Promise<Fixture> {
+export async function start(
+  t: Cleanup,
+  options: { handlers?: Partial<Record<MethodName, MethodHandler>> } = {},
+): Promise<Fixture> {
   const pc = deriveIdentity(PC_SEED)
   const phoneIdentity = deriveIdentity(PHONE_SEED)
   const phone = createPhone({
@@ -66,6 +71,9 @@ export async function start(t: Cleanup): Promise<Fixture> {
   const established: HandshakeEstablishment[] = []
   const frames: WireFrame[] = []
   const closes: { code: number; reason: string }[] = []
+  /** 给了 handlers 才装方法面 —— 握手与流控那两组用例不需要它。 */
+  const face =
+    options.handlers === undefined ? null : createMethodFace({ handlers: options.handlers })
 
   const peer = await startPeer()
   const connection = createConnection({
@@ -89,7 +97,15 @@ export async function start(t: Cleanup): Promise<Fixture> {
       createCipher: (keys) => createBoxCodec({ keys, role: 'responder' }),
     },
     onEstablished: (result) => established.push(result),
-    onFrame: (frame) => frames.push(frame),
+    onFrame: (frame) => {
+      frames.push(frame)
+      // 与 `index.ts` 的装配一致：`req` 归方法面，应答走同一条出帧路径（由连接层分配 `fc` 与封箱）。
+      if (face !== null && frame.t === 'req') {
+        void face.handle(frame).then((response) => {
+          if (response !== null) connection.send(response)
+        })
+      }
+    },
     heartbeatMs: 5_000,
     batchMs: 30,
   })
