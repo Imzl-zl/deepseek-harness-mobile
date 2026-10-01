@@ -197,6 +197,77 @@ test(
   assert.equal(frames.find((frame) => frame.t === 'req')?.id, 'r1', '原样转发（中转不解载荷、不改帧头）')
 })
 
+test('往返：设备发一句 → 连接器收到并回一句 → 设备收到（真 socket，中继两向都过）', async (t) => {
+  const deviceToken = 'device-token-1'
+  const relay = await startRelayProcess(t, [
+    { kind: 'connector', id: 'conn-1', token: TOKEN },
+    { kind: 'device', id: 'dev-1', token: deviceToken },
+  ])
+  const httpBase = `http://127.0.0.1:${relay.port}`
+  const wsBase = `ws://127.0.0.1:${relay.port}`
+
+  // 连接器侧：真连接层（明文通道模式 —— 本用例测路由，不测密码学），收到 `req` 就回 `res`。
+  const received: { t?: string; id?: string; sid?: string }[] = []
+  const connection = createConnection({
+    url: `${wsBase}/ws/connector`,
+    dial: (url) =>
+      new WebSocket(url, { headers: { authorization: `Bearer ${TOKEN}` } } as never) as never,
+    onFrame: (frame) => {
+      const typed = frame as { t?: string; id?: string; sid?: string }
+      received.push(typed)
+      if (typed.t === 'req') {
+        // 产品里这一步是方法面（真 handler 表）；这里只回一个最小应答，验证**反向路由**。
+        connection.send({ v: 1, t: 'res', id: typed.id ?? '', sid: typed.sid ?? '', ok: true, box: '{}' })
+      }
+    },
+  })
+  t.after(() => connection.stop())
+  connection.start()
+  await waitFor('连接器进入服务态', () => connection.state === 'serving' || connection.state === 'handshake')
+  connection.markHandshakeDone()
+  await waitFor('连接器可发帧', () => connection.state === 'serving')
+
+  // 出码登记 → 换票
+  const codeHash = 'hash-b'
+  await fetch(`${httpBase}/pairing/register`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ codeHash }),
+  })
+  const ticketed = await fetch(`${httpBase}/ws-ticket`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${deviceToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ codeHash }),
+  })
+  const { ticket } = (await ticketed.json()) as { ticket: string }
+
+  // 连接器先发一帧：中继据此学到这个 sid 归它。
+  connection.send({ v: 1, t: 'res', id: 'warm', sid: 'sid_2', ok: true, box: 'x' })
+
+  const device = new WebSocket(`${wsBase}/ws/device?ticket=${encodeURIComponent(ticket)}`)
+  t.after(() => device.close())
+  await new Promise<void>((resolve, reject) => {
+    device.onopen = () => resolve()
+    device.onerror = () => reject(new Error('设备带票升级失败'))
+  })
+
+  const deviceLines: string[] = []
+  device.onmessage = (event) => deviceLines.push(String((event as { data: unknown }).data))
+
+  // 设备发一句（**必须以 `\n` 结尾**：行级分帧，见笔记）
+  device.send(`${JSON.stringify({ v: 1, t: 'req', id: 'r2', sid: 'sid_2', fc: 0, box: '{}' })}\n`)
+
+  // 连接器收到 → 回一句 → 设备收到（反向路由靠"设备是这个 sid 的听众"）
+  await waitFor('连接器收到 req', () => received.some((frame) => frame.t === 'req'))
+  await waitFor('设备收到 res', () => deviceLines.some((line) => line.includes('"t":"res"')))
+  const back = deviceLines.find((line) => line.includes('"t":"res"'))
+  assert.ok(back !== undefined)
+  const parsed = JSON.parse(back.trim()) as { t: string; id: string; sid: string }
+  assert.equal(parsed.t, 'res')
+  assert.equal(parsed.id, 'r2', '应答的 id 与请求相同（手机据此配对请求与应答）')
+  assert.equal(parsed.sid, 'sid_2')
+})
+
 test('入口配错就在**启动时**失败：没有 tokens 直接退出（不留下"起来了但都 401"的中转）', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-relay-bad-'))
   const configPath = join(dir, 'relay.config.json')
