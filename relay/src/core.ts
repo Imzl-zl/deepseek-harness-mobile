@@ -78,8 +78,8 @@ export function createRelayCore(options: RelayCoreOptions = {}): RelayCore {
   const devices = new Set<string>()
   /** 设备此刻绑给哪台连接器（来自 ticket 认领）。 */
   const binding = new Map<string, string>()
-  /** `pair` 帧的 `id` → 发起它的设备（`pair-ack` 靠它回程）。 */
-  const pairingByRequestId = new Map<string, string>()
+  /** `id` → 发起它的设备。**所有没有 `sid` 的帧**都靠它找回程（配对与握手都在其中）。 */
+  const noSidByRequestId = new Map<string, string>()
   /** 设备侧帧的丢弃计数（未知 `sid`、坏行、没有归属）。 */
   let dropped = 0
 
@@ -124,8 +124,8 @@ export function createRelayCore(options: RelayCoreOptions = {}): RelayCore {
       devices.delete(deviceId)
       binding.delete(deviceId)
       routing.forgetDevice(deviceId)
-      for (const [requestId, owner] of pairingByRequestId) {
-        if (owner === deviceId) pairingByRequestId.delete(requestId)
+      for (const [requestId, owner] of noSidByRequestId) {
+        if (owner === deviceId) noSidByRequestId.delete(requestId)
       }
     },
 
@@ -152,12 +152,13 @@ export function createRelayCore(options: RelayCoreOptions = {}): RelayCore {
 
       if (from.kind === 'connector') {
         if (!connectors.has(from.id)) return drop('来源连接器不在线', { id: from.id })
-        if (view.t === 'pair-ack') {
-          // 没有 `sid`：靠 `id` 回到发起配对的那台设备（I10 把 `id` 列为可见字段的原因）。
+        if (view.sid === '') {
+          // **电脑侧没有 `sid` 的回帧**（`pair-ack` / `hello-ack` / `confirm`…）靠 `id` 回到发起方。
+          // 与设备侧对称：两边都没有 `sid` 可言时，`id` 是唯一的关联凭据（I10 把它列为可见字段）。
           const requestId = view.id ?? ''
-          const deviceId = pairingByRequestId.get(requestId)
-          if (deviceId === undefined) return drop('pair-ack 找不到对应设备', { requestId })
-          pairingByRequestId.delete(requestId)
+          const deviceId = noSidByRequestId.get(requestId)
+          if (deviceId === undefined) return drop(`${view.t} 找不到对应设备`, { requestId })
+          noSidByRequestId.delete(requestId)
           return devices.has(deviceId) ? [{ to: deviceId, raw }] : drop('目标设备已断开', { deviceId })
         }
         const targets = routing.fromConnector(from.id, frame)
@@ -165,13 +166,19 @@ export function createRelayCore(options: RelayCoreOptions = {}): RelayCore {
       }
 
       if (!devices.has(from.id)) return drop('来源设备不在线', { id: from.id })
-      if (view.t === 'pair') {
+      if (view.sid === '') {
+        // **没有 `sid` 的帧一律按 ticket 绑定路由**（配对请求、握手三帧、保活…）：
+        // 它们在会话存在**之前**就要能到电脑侧，而归属于 `sid` 的那张表是按会话学的 ——
+        // 帮不上它们。少了这条，设备的第一帧 `hello` 会被丢弃，表现是"配好了却永远握不上手"。
         const connectorId = binding.get(from.id)
         if (connectorId === undefined) return drop('设备还没有配对归属（未换 ticket）', { id: from.id })
-        // 记住是**哪台设备**发的这个 `id`，回执才能找回来。
+        // 记住是**哪台设备**发的这个 `id`：电脑侧的回执（`pair-ack` / `hello-ack` / `confirm`）
+        // 同样没有 `sid`，只能靠 `id` 找回发起方 —— 这正是 I10 把 `id` 列为可见字段的原因。
         const requestId = view.id ?? ''
-        pairingByRequestId.set(requestId, from.id)
-        return connectors.has(connectorId) ? [{ to: connectorId, raw }] : drop('配对归属的连接器已断开', { connectorId })
+        if (requestId !== '') noSidByRequestId.set(requestId, from.id)
+        return connectors.has(connectorId)
+          ? [{ to: connectorId, raw }]
+          : drop('绑定到的连接器已断开', { connectorId })
       }
       const connectorId = routing.fromDevice(from.id, frame)
       if (connectorId === undefined) return drop('这个 sid 还没有归属', { sid: view.sid })
