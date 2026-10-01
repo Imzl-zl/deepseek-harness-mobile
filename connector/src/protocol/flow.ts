@@ -40,12 +40,13 @@ export function consumesCredit(t: FrameType): boolean {
 /**
  * 满窗时该压住哪些帧。
  *
- * `ev` / `live` 是可补的（`ev` 有重放窗口与快照兜底，`live` 本来就允许丢）；
- * `res` 是对端在等的应答，`credit` / `persisted` 是正确性依赖的水位 —— 压住它们
+ * **可补的三类**:`ev` 有重放窗口与快照兜底、`live` 会被持久事件替换、
+ * `job` 可以按 `from` 重订(宿主 ring 里还留着的那些字节)。
+ * 而 `res` 是对端在等的应答，`credit` / `persisted` 是正确性依赖的水位 —— 压住它们
  * 会同时压住对方的推进。
  */
 export function pausable(t: FrameType): boolean {
-  return t === 'ev' || t === 'live'
+  return t === 'ev' || t === 'live' || t === 'job'
 }
 
 /**

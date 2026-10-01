@@ -31,7 +31,8 @@
  */
 import { ProtocolError } from '../protocol/errors.js'
 import { createSendCounter, type SendCounter, type SessionKeys } from '../protocol/crypto.js'
-import { aadFieldsOf, hasBox, isHandshakeFrameType, needsBox, type WireFrame } from '../protocol/frame.js'
+import { aadFieldsOf, hasBox, isHandshakeFrameType, needsBox, type FrameType, type WireFrame } from '../protocol/frame.js'
+import { pausable } from '../protocol/flow.js'
 import {
   createSendWindow,
   decodeCredit,
@@ -57,9 +58,8 @@ import {
 import { createKeepalive, type Keepalive } from './keepalive.js'
 import { createConnectionMachine, type ConnectionState } from './state.js'
 
-/** 参与攒批的帧类型 —— 即可补的那两类（与 `flow.ts` 的 `pausable` 同一集合）。 */
-const BATCHED_FRAME_TYPES: ReadonlySet<string> = new Set(['ev', 'live'])
-
+/** 参与攒批的帧类型 —— **就是"可暂停"的那几类**，判据只有 `flow.ts` 的 `pausable` 一处。 */
+const isBatched = (type: FrameType): boolean => pausable(type)
 /** 能把联合的每个成员各自 `Omit`（内置 `Omit` 会把联合塌成一个）。 */
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 
@@ -163,6 +163,22 @@ export interface Connection {
    */
   send(frame: OutboundFrame): boolean
   /**
+   * 等一次"窗口又有空位"（§4.3 的暂停-恢复）。
+   *
+   * 为什么需要它：`send` 满窗时**不接受**那一帧（如实回 `false`），于是发送方必须把它**压住**
+   * —— 而"什么时候可以再发"只有本层知道（`credit` 到达、且 `window` 释放）。没有这个信号，
+   * 由调用方驱动的可补流（任务输出是第一个）就只能靠轮询或者干脆丢帧，两条都不对：
+   * 轮询白烧定时器，丢帧则违背"暂停不是丢弃"。
+   *
+   * **一定会被兑现**：窗口释放时兑现；连接离开服务态时也兑现
+   * （否则等在这里的发送方会永远挂着）—— 兑现后重试 `send` 会得到 `false`，
+   * 调用方据此收工。
+   *
+   * 为什么要它（任务输出是第一个由调用方驱动的可补流）：
+   * `.agents/notes/implemented/2026-10-01-job-output-transport-shape.md`
+   */
+  whenWritable(type: FrameType): Promise<void>
+  /**
    * 手动宣告握手完成。**只在不配 `secure` 的装配里可用**（测试与手工调试）——
    * 配了 `secure` 时握手结论只能来自驱动器：手动调用等于绕过两道校验。
    */
@@ -188,6 +204,9 @@ export function createConnection(options: ConnectionOptions): Connection {
   const batcher: Batcher<OutboundFrame> = createBatcher(
     options.batchMs === undefined ? {} : { flushMs: options.batchMs },
   )
+
+  /** 等在"窗口有空位"上的发送方（`whenWritable`）。连接离开服务态时一并兑现。 */
+  const writableWaiters: Array<() => void> = []
 
   /**
    * 发送计数器。**每次建连都换一个新的** —— 契约 §4.2：每连接换密钥，`fc` 从 0 重数。
@@ -215,7 +234,16 @@ export function createConnection(options: ConnectionOptions): Connection {
     if (machine.state === to) return
     const from = machine.state
     machine.to(to)
+    // 离开服务态时**兑现**所有等在"窗口有空位"上的发送方：否则它们会永远挂着。
+    // 兑现后它们重试 `send`，会拿到 `false`（不在服务态）并据此收工。
+    if (from === 'serving' && to !== 'serving') notifyWritable()
     options.onStateChange?.(from, to)
+  }
+
+  /** 窗口又空出来了：唤醒等在 `whenWritable` 上的发送方（§4.3 的暂停-恢复）。 */
+  const notifyWritable = (): void => {
+    const waiters = writableWaiters.splice(0)
+    for (const resolve of waiters) resolve()
   }
 
   // ---- 定时器 ----
@@ -365,6 +393,9 @@ export function createConnection(options: ConnectionOptions): Connection {
       if (window.unacked < before) {
         // 窗口刚松开：被压住的可补帧立刻放出去，不等下一个攒批窗口。
         drainBatch()
+        // 并唤醒等在 `whenWritable` 上的发送方 —— 由调用方驱动的可补流（任务输出）
+        // 靠这个信号继续，而不是靠轮询。
+        notifyWritable()
       }
     }
 
@@ -562,13 +593,20 @@ export function createConnection(options: ConnectionOptions): Connection {
     send(frame) {
       if (!machine.acceptsBusinessFrames) return false
       // 满窗时对可补帧如实回 `false`：这一帧**没有被接受**，调用方据此暂停（§4.3）。
-      // 其余帧不受窗口限制（压住 `res` 会死锁），所以这一条只可能拦下 `ev` / `live`。
+      // 其余帧不受窗口限制（压住 `res` 会死锁），所以这一条只可能拦下 `ev` / `live` / `job`。
       if (!window.canSend(frame.t)) return false
-      if (BATCHED_FRAME_TYPES.has(frame.t)) {
+      if (isBatched(frame.t)) {
         batcher.push(frame, estimateBytes(frame), now())
         return true
       }
       return write(frame)
+    },
+
+    whenWritable(type) {
+      if (machine.acceptsBusinessFrames && window.canSend(type)) return Promise.resolve()
+      return new Promise<void>((resolve) => {
+        writableWaiters.push(resolve)
+      })
     },
 
     markHandshakeDone() {

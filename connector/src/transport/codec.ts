@@ -12,6 +12,7 @@
  *    限制字符集后拼串结果与两端 JSON 转义习惯无关。
  */
 import {
+  FRAME_TYPES,
   HANDSHAKE_FRAME_TYPES,
   ID_PATTERN,
   MAX_FRAME_BYTES,
@@ -24,23 +25,13 @@ import { ProtocolError } from '../protocol/errors.js'
 /**
  * 已知帧类型（契约 §3 的联合）。
  *
- * 握手帧的判据（谁明文、谁要密钥）**不在这里**，在 `protocol/frame.ts`：
- * 那是帧的语义，而本文件只管"线上这一行怎么解"。
+ * **真值不在本文件**：清单在 `protocol/frame.ts` 的 `FRAME_TYPES`，**唯一一份**。
+ * 这里只沿用对外的名字 —— 此前两份各自维护过，而它们确实漂移了：
+ * 那份旧的 8 项清单里还留着 `credit` 之前的化石 `'ack'`，且缺 `job` / `persisted` / 握手三帧，
+ * 于是 `RoutingView.t` 与 `window.canSend()` 看到的类型集合比实际小。
+ * 握手帧的判据（谁明文、谁要密钥）同样在 `protocol/frame.ts`：那是帧的语义，本文件只管"线上这一行怎么解"。
  */
-export const KNOWN_FRAME_TYPES = [
-  'hello',
-  'hello-ack',
-  'confirm',
-  'ping',
-  'pong',
-  'credit',
-  'req',
-  'res',
-  'ev',
-  'live',
-  'persisted',
-  'presence',
-] as const
+export const KNOWN_FRAME_TYPES = FRAME_TYPES
 
 const KNOWN: ReadonlySet<string> = new Set(KNOWN_FRAME_TYPES)
 

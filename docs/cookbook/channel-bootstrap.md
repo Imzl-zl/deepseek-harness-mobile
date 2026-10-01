@@ -130,9 +130,11 @@ dsh plugin --profile <name> add <connector 本地路径>
 方法面当前 **5/22**:`repo.info` / `devices.list` / `session.list`(会话清单,不含标题 ——
 该面不返回标题,契约 §5.7 已写明)/ `job.list`(任务清单)/ `job.kill`(停止,走宿主的人发起门面);
 **缺服务的部署里这些方法根本不在表里**(`job.list` 要 `jobs`、`job.kill` 要 `jobController`)。
+任务输出的**传输底座**已就位(帧类型 `job` 与满窗恢复信号),但订阅注册表与
+`job.follow` / `job.unfollow` 两个方法还没接,所以手机暂时看不到任务输出。
 其余回 `connector/unsupported`。
-所以下面 5.1 的"发一句 / 回一句"还差:任务输出订阅(`job.follow`/`unfollow`)、
-会话订阅与翻页(`session.subscribe`/`page`,要 `follow` 的 `cursor` 与订阅生命周期)、
+所以下面 5.1 的"发一句 / 回一句"还差:任务输出订阅、会话订阅与翻页
+(`session.subscribe`/`page`,要 `follow` 的 `cursor` 与订阅生命周期)、
 带键的写方法(`session.prompt` 等)、以及能产出设备行的配对流程(§12.1)。
 
 5.1 先用 Tailscale 直连做第一跳(契约 §14.6 的顺序):

@@ -29,7 +29,11 @@ function fakeJobs(overrides: Partial<JobsPort> = {}): JobsPort {
 
 /** 任务控制端口：默认受理，可注入失败。 */
 function fakeJobControl(overrides: Partial<JobControlPort> = {}): JobControlPort {
-  return { kill: () => 'requested', ...overrides }
+  return {
+    kill: () => 'requested',
+    follow: () => (async function* () {})(),
+    ...overrides,
+  }
 }
 
 /** 已经分配过别名的替身（`sid_dsh-1` → `dsh-1`），供需要反解的方法用。 */

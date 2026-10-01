@@ -31,6 +31,17 @@
 
 - **会话别名 `sid`**:电脑侧为每个 DSH 会话分配的**不透明路由标识**(16 字节随机,base64url)。它与 DSH 的 session id 解耦,中继据此索引重放窗口,无法关联外部信息。
 - **流 `stream`**:一次 assistant 尝试对应的实时输出流 id(电脑侧分配,会话内单调)。
+- **`job` 帧**:任务输出的**订阅流**(契约 §5.3)。它与 `live` 一样是易变流(不占 `seq`、不进重放窗口、不参与 ack、恢复时不回带),但**刻意是另一种帧类型**而不是复用 `live`:
+  - `live` 的两个数字字段(`stream` / `rev`)已被 assistant 流占满,而手机侧对它们的读法是硬性的 —— `rev == last + 1` 追加、`rev` 跳跃即**丢流**(见 `app-channel-client.md` §2.2)。任务输出的"修订号"是**输出字节偏移**(会跳号),塞进去会让手机把 assistant 的流丢弃;
+  - 给同一个字段第二个含义,正是 `credit` 那一处已经否掉的做法(§4.3)。
+  - 载荷形状(`box` 里,明文经 AEAD)**三帧,照宿主 `jobController.follow` 的 `opened` / `output` / `status` 一对一**:
+    ```ts
+    type JobOutput =
+      | { kind: 'opened'; jobId: string; job: JobRow; from: number }   // from = 第一帧 output 的起点
+      | { kind: 'output'; jobId: string; chunks: JobChunkOut[]; next: number; lossy?: true }
+      | { kind: 'status'; jobId: string; job: JobRow }                 // 结算且 drain 完之后一帧,然后流结束
+    ```
+    `JobRow` 与 `job.list` 的行**同形状**(不含 `owner` —— DSH 会话 id 不过线);`JobChunkOut` 是 `{ at, text, channel?, gapBefore? }`(`channel` ∈ `stdout` / `stderr` / `log`)。
 - **看护超时**:桥接代为应答期间等待手机回答的上限。
 
 ---
@@ -94,6 +105,7 @@ type Frame =
   | { v: 1; t: 'res';  id: string; sid?: string; fc: number; ok: false; box: string }
   | { v: 1; t: 'ev';   sid: string; seq: number; fc: number; box: string }
   | { v: 1; t: 'live'; sid: string; stream: number; rev: number; fc: number; box: string }
+  | { v: 1; t: 'job';  sid: string; fc: number; box: string }
   | { v: 1; t: 'persisted'; sid: string; seq: number; fc: number; box: string }
   // 投影:在线态(明文,中继可转发)
   | { v: 1; t: 'presence'; computer: 'online' | 'offline'; app?: 'foreground' | 'background' }
@@ -193,7 +205,8 @@ seed(32B, 存系统安全存储)
 ### 4.3 流控
 
 - 发送方维护 `unacked`(已发未收 `credit` 的帧数),上限 **W = 128 帧**;达到上限即**暂停**发送(不是丢弃)。
-  暂停的**只有可补的两类**(`ev` / `live`)—— 其余帧是对端在等的应答(`res`)或正确性依赖的水位(`persisted`)与信用(`credit`),
+  暂停的**只有可补的三类**(`ev` / `live` / `job`)—— 它们都能靠重连补齐(`ev` 有重放窗口与快照、`live` 被持久事件替换、`job` 可按 `from` 重订);
+  其余帧是对端在等的应答(`res`)或正确性依赖的水位(`persisted`)与信用(`credit`),
   压住它们会死锁:手机在等 `res`,而 `res` 因为窗口满发不出去。`ping` / `pong` 不占额度。
 - 接收方**每收到一帧立即回 `credit`**(不要求落盘)—— 这是**连接层信用**,与会话层的落盘水位是两件事。
   - **`credit` 的 `fc` 是它自己的帧序号,被确认的序号在箱里**:`box = {"ack": N}` 表示"我已收到 `[0, N]`"(累计确认;单 TCP 流保序,所以不需要区间集合)。
@@ -236,6 +249,10 @@ seed(32B, 存系统安全存储)
 - 单个条目的封箱后字节 > **1 MiB**:不推内容,推 `refetch { itemId }`,由手机按需拉取(同一方法复用)。
 - 图片以 base64 内联进入 `assistant/message`(`packages/api/session-controller/src/types.ts:89-97`),因此大图的条目天然走 refetch 路径。
 - 任务输出**按需订阅**:展开即 `job.follow`,收起即 `job.unfollow`;截断沿用 DSH 规格(每帧 64 KiB / ring 256 KiB / 客户端尾 128 KiB / 结算后 ring 裁到 16 KiB,见 `../channel-review-notes.md` §2.7)。
+  - 电脑侧**不自己写观察循环**:`jobController.follow` 已经做好了合并与限帧(100 ms 合并、64 KiB 单帧上限,`packages/api/job-controller/src/index.ts:29,32,90-96` 的 `observeJobOutput`),插件只把它输出的三帧映射成 `job` 帧(见"术语"里的载荷形状)并转发。
+  - **每个 `(sid, jobId)` 至多一个订阅**:`job.follow` 对同一个任务重复调用是幂等的(返回当前起点),带**不同** `from` 时先终止旧订阅再起新的 —— 否则两路宿主流会同时把同一段输出推给手机,而手机只能看到重复。
+  - **订阅跟着连接活**:手机断线即全部终止(它重连后自己按 `from` 重订),`job.unfollow` 与连接断开走同一套清理。
+  - 手机侧必须**显式渲染** `gapBefore`(较早输出已丢弃)与宿主流错误两种提示,不做静默拼接(`../plugin-and-jobs-notes.md` §B.4)。
 
 ### 5.4 恢复协议
 
@@ -304,7 +321,8 @@ type SyncSnapshot = {
 | `session.refetch` | 手机→电脑 | — | 取单个大条目 |
 | `interaction.respond` | 手机→电脑 | `i:<callId>:<decision>` | 审批 / 提问 / 计划审查的应答 |
 | `interaction.list` | 手机→电脑 | — | 待处理集合(从日志重建,§6.3) |
-| `job.list` / `job.follow` / `job.unfollow` | 手机→电脑 | — | 任务投影与输出流 |
+| `job.list` | 手机→电脑 | — | 任务投影(严格属于该会话的行) |
+| `job.follow` / `job.unfollow` | 手机→电脑 | — | 任务输出订阅:`follow({sid, jobId, from?})` → `{from}`(第一帧 output 的起点);同一个 `(sid, jobId)` 重复 follow 幂等,带不同 `from` 则先终止旧订阅。`unfollow({sid, jobId})` → `{stopped}` |
 | `job.kill` | 手机→电脑 | — | **走宿主的人类发起门面**(`jobController.kill`):归属围栏由注册表判(`未知任务` 与 `不属于这个会话` **都**归 `job/not-found`),取消原因写宿主的 `cancelled by the user` —— 于是手机点停止与桌面点停止在模型眼里是同一件事。返回 `{ outcome: 'requested' \| 'already-finished' }`,**落终态等 `settled` 事件,不做乐观更新** |
 | `settings.describe` / `settings.update` | 手机→电脑 | `requestId` | 读写设置(密钥面见下) |
 | `credentials.set` / `credentials.unset` | 手机→电脑 | `requestId` | **单向写面**,无读方法 |
@@ -313,7 +331,7 @@ type SyncSnapshot = {
 | `sync.hello` | 手机→电脑 | — | §5.4 的恢复握手 |
 | `repo.info` | 手机→电脑 | — | 版本、能力位、别名→会话元的映射版本 |
 
-事件(电脑→手机):`ev`(会话事件)、`live`(流式)、`job.output`(任务输出,订阅式)、`presence`(在线态/前台态)、`pending.changed`(待处理集合变化)。
+事件(电脑→手机):`ev`(会话事件)、`live`(流式)、`job`(任务输出,订阅式,§5.3)、`presence`(在线态/前台态)、`pending.changed`(待处理集合变化)。
 
 两条跨方法的规则:
 

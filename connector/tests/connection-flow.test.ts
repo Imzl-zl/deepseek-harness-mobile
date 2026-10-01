@@ -154,3 +154,76 @@ test('端到端：满窗时 res 照发（压住它会死锁）', async (t) => {
     '满窗时 persisted 必须照发',
   )
 })
+
+test('whenWritable：有空位立刻兑现；满窗时挂起，窗口松开才兑现（§4.3 的恢复信号）', { timeout: 60_000 }, async (t) => {
+  const f = await start(t)
+  f.connection.start()
+  await waitFor('进入 handshake', () => f.connection.state === 'handshake')
+  const keys = await completeHandshake(f)
+
+  // 有空位：立刻兑现（调用方据此不必先暂停）。
+  await f.connection.whenWritable('job')
+
+  for (let seq = 1; seq <= SEND_WINDOW_FRAMES; seq += 1) {
+    f.connection.send({ v: 1, t: 'ev', sid: 'sid_0123456789ab', seq, box: `{"n":${seq}}` })
+  }
+  await waitFor('窗口被塞满', () => f.peer.received.filter((frame) => frame.t === 'ev').length >= SEND_WINDOW_FRAMES)
+  assert.equal(
+    f.connection.send({ v: 1, t: 'job', sid: 'sid_0123456789ab', box: '{}' }),
+    false,
+    '满窗时 job 也必须被拒绝（它与 ev / live 同类）',
+  )
+
+  let resumed = false
+  const pending = f.connection.whenWritable('job').then(() => {
+    resumed = true
+  })
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.equal(resumed, false, '满窗时不该兑现')
+
+  // 手机确认到 127 → 窗口松开 → 挂在上面等的那一方必须被唤醒。
+  sendSealed(f, keys, { t: 'credit', fc: 0 }, '{"ack":127}')
+  // **有界等待**：不能只 `await pending` —— 那条路会在连接最终关闭时也被兑现
+  // （mutation 抓出来过：少了窗口松开的唤醒，用例照样"绿"，只是绿在"连接死了"上，
+  // 而且要多等十几秒）。窗口松开的兑现必须是**立刻**的。
+  const wokeInTime = await Promise.race([
+    pending.then(() => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+  ])
+  assert.equal(wokeInTime, true, '窗口松开必须立刻兑现，而不是等连接最终关闭')
+  assert.equal(resumed, true)
+  assert.equal(f.connection.state, 'serving', '唤醒必须发生在连接还活着的时候')
+  assert.equal(
+    f.connection.send({ v: 1, t: 'job', sid: 'sid_0123456789ab', box: '{}' }),
+    true,
+    '醒来之后这一帧应当能被接受（这才叫"窗口又空了"）',
+  )
+})
+
+test('whenWritable：连接离开服务态时也必须兑现（否则发送方永远挂着）', { timeout: 60_000 }, async (t) => {
+  const f = await start(t)
+  f.connection.start()
+  await waitFor('进入 handshake', () => f.connection.state === 'handshake')
+  await completeHandshake(f)
+
+  for (let seq = 1; seq <= SEND_WINDOW_FRAMES; seq += 1) {
+    f.connection.send({ v: 1, t: 'ev', sid: 'sid_0123456789ab', seq, box: `{"n":${seq}}` })
+  }
+  await waitFor('窗口被塞满', () => f.peer.received.filter((frame) => frame.t === 'ev').length >= SEND_WINDOW_FRAMES)
+
+  let resumed = false
+  const pending = f.connection.whenWritable('job').then(() => {
+    resumed = true
+  })
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.equal(resumed, false, '构造前提：这一刻是满窗的')
+
+  f.connection.stop()
+  // 有界等待：不设超时地 `await pending` 会一直挂着（那也是一种失败，但要等 60 秒才看得出来）。
+  const wokeInTime = await Promise.race([
+    pending.then(() => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+  ])
+  assert.equal(wokeInTime, true, '离开服务态也必须兑现：兑现后重试 send 会拿到 false，调用方据此收工')
+  assert.equal(resumed, true)
+})

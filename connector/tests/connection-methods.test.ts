@@ -79,6 +79,7 @@ function fixtureHandlers() {
         if (jobId === 'j-foreign') throw new ProtocolError('job/not-found', '不属于这个会话')
         return jobId === 'j-done' ? 'already-finished' : 'requested'
       },
+      follow: () => (async function* () {})(),
     },
   })
 }

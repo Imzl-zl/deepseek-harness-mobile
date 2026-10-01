@@ -14,8 +14,14 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import type { JobEvent, JobRegistry, JobView } from '@deepseek-ai/dsh-jobs'
+import type { JobOutputFrame } from '../src/protocol/job-output.js'
 
-import { createJobControlPort, createJobsPort } from '../src/dsh/jobs.js'
+import {
+  createJobControlPort,
+  createJobsPort,
+  type JobControlService,
+  type JobFollowFrameLike,
+} from '../src/dsh/jobs.js'
 import { ProtocolError } from '../src/protocol/errors.js'
 
 /** DSH 的 `JobId` 是 branded 类型；测试里把普通字符串标成它。 */
@@ -32,6 +38,16 @@ const view = (patch: Omit<Partial<JobView>, 'id'> & { id: string }): JobView =>
     id: jobId(patch.id),
   }) as JobView
 
+/** 任务控制服务的替身：`kill` 与 `follow` 都在（端口两个方法都是必需的）。 */
+function fakeControl(
+  overrides: Partial<JobControlService> = {},
+): JobControlService {
+  return {
+    kill: () => ({ outcome: 'requested' }),
+    follow: () => (async function* () {})(),
+    ...overrides,
+  }
+}
 function fakeRegistry(overrides: Record<string, unknown>): JobRegistry {
   return overrides as unknown as JobRegistry
 }
@@ -96,20 +112,22 @@ test('readOutput：走 readAt（非消耗式），caller 是第三个参数，lo
 
 test('jobControl.kill：走宿主的人类发起门面，只把 job/not-found 转成协议码', () => {
   const calls: unknown[] = []
-  const port = createJobControlPort({
-    kill: (request) => {
-      calls.push(request)
-      if (request.jobId === 'j-foreign') {
-        // 门面把「未知任务」与「不属于这个会话」**都**归成这一个码（注释原文
-        // "the client renders one story"）—— 这里如实转达，不自己再判一次。
-        const error = new Error('job not found') as Error & { code?: string }
-        error.code = 'job/not-found'
-        throw error
-      }
-      if (request.jobId === 'j-boom') throw new Error('producer 的 cancel 抛了')
-      return { outcome: request.jobId === 'j-done' ? 'already-finished' : 'requested' }
-    },
-  })
+  const port = createJobControlPort(
+    fakeControl({
+      kill: (request) => {
+        calls.push(request)
+        if (request.jobId === 'j-foreign') {
+          // 门面把「未知任务」与「不属于这个会话」**都**归成这一个码（注释原文
+          // "the client renders one story"）—— 这里如实转达，不自己再判一次。
+          const error = new Error('job not found') as Error & { code?: string }
+          error.code = 'job/not-found'
+          throw error
+        }
+        if (request.jobId === 'j-boom') throw new Error('producer 的 cancel 抛了')
+        return { outcome: request.jobId === 'j-done' ? 'already-finished' : 'requested' }
+      },
+    }),
+  )
 
   assert.equal(port.kill('sess-1', 'j1'), 'requested')
   assert.equal(port.kill('sess-1', 'j-done'), 'already-finished')
@@ -128,6 +146,103 @@ test('jobControl.kill：走宿主的人类发起门面，只把 job/not-found �
   assert.throws(
     () => port.kill('sess-1', 'j-boom'),
     (error: unknown) => !(error instanceof ProtocolError),
+  )
+})
+
+test('jobControl.follow：宿主三帧映射成载荷，且**不把 JobView 整个转发**（owner 不过线）', async () => {
+  const hostFrames: JobFollowFrameLike[] = [
+    { type: 'opened', job: view({ id: 'j1', owner: { id: 'sess-1' } as never }), from: 0 },
+    {
+      type: 'output',
+      chunks: [
+        { at: 0, text: '构建中', channel: 'stdout' },
+        { at: 9, text: '丢了前面的', gapBefore: true },
+      ],
+      next: 30,
+      lossy: true,
+    },
+    {
+      type: 'status',
+      job: view({ id: 'j1', status: 'completed', finishedAt: 99, owner: { id: 'sess-1' } as never }),
+    },
+  ]
+  const requests: unknown[] = []
+  const port = createJobControlPort(
+    fakeControl({
+      follow: (request) => {
+        requests.push(request)
+        return (async function* () {
+          for (const frame of hostFrames) yield frame
+        })()
+      },
+    }),
+  )
+
+  const seen: JobOutputFrame[] = []
+  for await (const frame of port.follow(
+    { dshSessionId: 'sess-1', jobId: 'j1', from: 4 },
+    new AbortController().signal,
+  )) {
+    seen.push(frame)
+  }
+
+  assert.deepEqual(requests, [{ sessionId: 'sess-1', jobId: 'j1', from: 4 }], 'from 只在给了的时候带')
+  assert.deepEqual(seen, [
+    {
+      kind: 'opened',
+      jobId: 'j1',
+      from: 0,
+      job: { id: 'j1', kind: 'shell', label: 'j1', status: 'running', startedAt: 0, outputTotal: 0 },
+    },
+    {
+      kind: 'output',
+      jobId: 'j1',
+      next: 30,
+      lossy: true,
+      chunks: [
+        { at: 0, text: '构建中', channel: 'stdout' },
+        { at: 9, text: '丢了前面的', gapBefore: true },
+      ],
+    },
+    {
+      kind: 'status',
+      jobId: 'j1',
+      job: {
+        id: 'j1',
+        kind: 'shell',
+        label: 'j1',
+        status: 'completed',
+        startedAt: 0,
+        outputTotal: 0,
+        finishedAt: 99,
+      },
+    },
+  ])
+  // `JobView` 带着 `owner`（DSH 会话 id），绝不能跟着三帧过线。
+  assert.equal(JSON.stringify(seen).includes('sess-1'), false, 'DSH 会话 id 泄漏了')
+})
+
+test('jobControl.follow：宿主的 job/not-found 也转成协议码（与 kill 同一条纪律）', async () => {
+  const port = createJobControlPort(
+    fakeControl({
+      follow: () => {
+        const error = new Error('unknown job') as Error & { code?: string }
+        error.code = 'job/not-found'
+        throw error
+      },
+    }),
+  )
+
+  await assert.rejects(
+    async () => {
+      for await (const _frame of port.follow(
+        { dshSessionId: 'sess-1', jobId: 'j-missing' },
+        new AbortController().signal,
+      )) {
+        // 不该有帧
+      }
+    },
+    (error: unknown) => error instanceof ProtocolError && error.code === 'job/not-found',
   )
 })
 

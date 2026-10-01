@@ -77,7 +77,7 @@ abstract class Outbox {
 |---|---|---|
 | `cold` | 未订阅 | 只显示本地缓存,顶部显示"未连接/未同步" |
 | `recovering` | 收到恢复应答 | 增量:直接 upsert;快照:进分页拼接,期间 `ev` 只缓存不渲染 |
-| `live` | 水位已对齐 | 渲染 `ev` 与 `live`;`ev` 落盘后才发 `persisted` |
+| `live` | 水位已对齐 | 渲染 `ev` / `live` / `job`;`ev` 落盘后才发 `persisted` |
 | `stale` | 出现空洞 / 收到 `snapshotRequired` | 立即回 `recovering`,UI 保持旧内容不闪空 |
 | `offline` | 连接断 | 停止发 `persisted`;`outbox` 挂起;展示离线态 |
 
@@ -85,11 +85,13 @@ abstract class Outbox {
 
 ### 2.2 流式渲染(`live` 帧)
 
+- **先按帧类型分派**:assistant 流走 `live`,任务输出走 `job`(契约 §3 的术语表说明了两者为什么**不能**共用一个帧类型:任务输出的"修订号"是字节偏移,会跳号,而这里的累加器把跳号读成"丢流")。
 - 每会话一个 `LiveAccumulator`:`{stream, rev, text}`。收到 `live`:
   - `stream` 变大 ⇒ 换流(上一次尝试结束),重置累加器;
   - `rev == last + 1` ⇒ 追加;`rev` 跳跃 ⇒ **丢弃该流已累积内容并停止渲染**,等持久 `assistant/message` 到达(自愈,不请求重传);
 - UI 侧节流到 **每 16 ms 一帧**(把 50–100 ms 的批量再合并成屏幕帧);文本用 `Text.rich` + 段级缓存,不重建整棵子树。
 - 持久事件到达时**替换**累加器内容(以持久为准,避免"流式与最终文本不一致")。
+- **任务输出(`job` 帧)不走累加器**:按 `jobId` 各自维护一个尾部缓冲(客户端尾 128 KiB),`kind: 'output'` 追加、`kind: 'status'` 收口;**`gapBefore` 与流错误必须显式渲染**(不做静默拼接,见 `../plugin-and-jobs-notes.md` §B.4)。
 
 ---
 

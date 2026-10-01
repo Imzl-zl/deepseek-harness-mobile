@@ -24,22 +24,27 @@
 import type { JobChunk, JobEvent, JobRegistry, JobView } from '@deepseek-ai/dsh-jobs'
 
 import { ProtocolError } from '../protocol/errors.js'
+import type { JobChunkOut, JobOutputFrame, JobRowView } from '../protocol/job-output.js'
 
-/** 任务行。字段取自 `JobView`（`packages/jobs/jobs/src/view.ts:65-100`）。 */
-export interface JobRow {
-  id: string
-  kind: string
-  label: string
-  status: JobView['status']
-  progress?: string
-  detail?: string
-  startedAt: number
-  finishedAt?: number
-  /** 已产出的总字节数；正文要另走 `readOutput`（`view.ts:99`）。 */
-  outputTotal: number
+/**
+ * 任务行。字段取自 `JobView`（`packages/jobs/jobs/src/view.ts:65-100`）。
+ *
+ * 形状定义在协议层（`protocol/job-output.ts` 的 `JobRowView`）而不是这里：
+ * 它与 `job.list` 的响应、以及 `job` 帧里 `opened` / `status` 两帧带的任务投影**是同一个形状**，
+ * 三处各写一份必然会漂移。适配器只负责把 DSH 的 `JobView` 映射成它（**逐字段**，绝不 spread）。
+ */
+export type JobRow = JobRowView
+
+function toChunkOut(chunk: JobChunk): JobChunkOut {
+  return {
+    at: chunk.at,
+    text: chunk.text,
+    ...(chunk.channel === undefined ? {} : { channel: chunk.channel }),
+    ...(chunk.gapBefore === undefined ? {} : { gapBefore: chunk.gapBefore }),
+  }
 }
 
-function toRow(view: JobView): JobRow {
+function toRow(view: JobView): JobRowView {
   return {
     id: view.id,
     kind: view.kind,
@@ -145,12 +150,34 @@ export interface JobControlPort {
    *   伪装成 job-not-found（`:120-122`）。
    */
   kill(dshSessionId: string, jobId: string): 'requested' | 'already-finished'
+
+  /**
+   * 打开一个任务的输出订阅（契约 §5.3）。
+   *
+   * **不自己写观察循环**：`jobController.follow` 已经做好了合并与限帧
+   * （`packages/api/job-controller/src/index.ts:29,32` 的 100 ms / 64 KiB，
+   * 观察循环在 `src/observe.ts`），本方法只把它的三帧映射成通道的载荷。
+   * **调用方持有 `signal` 的生命周期**：中止即终止宿主流。
+   *
+   * @throws {ProtocolError} `job/not-found`：任务不存在，或不属于这个会话。
+   */
+  follow(
+    request: { dshSessionId: string; jobId: string; from?: number },
+    signal: AbortSignal,
+  ): AsyncIterable<JobOutputFrame>
 }
 
 /** `JobController` 里我们真正用到的那一面（收窄成端口，便于脱离 DSH 测试）。 */
 export interface JobControlService {
   kill(request: { sessionId: unknown; jobId: unknown }): { outcome: 'requested' | 'already-finished' }
+  follow(request: { sessionId?: unknown; jobId: unknown; from?: number }, signal: AbortSignal): AsyncIterable<JobFollowFrameLike>
 }
+
+/** 宿主 follow 流的三帧（`packages/api/job-controller/src/types.ts:62-92`）。 */
+export type JobFollowFrameLike =
+  | { type: 'opened'; job: JobView; from: number }
+  | { type: 'output'; chunks: readonly JobChunk[]; next: number; lossy?: true }
+  | { type: 'status'; job: JobView }
 
 /** 宿主错误对象上的 `code`（`RemoteError` 带它；这里只结构化地读，不依赖它的类型）。 */
 function errorCodeOf(error: unknown): string | undefined {
@@ -158,16 +185,55 @@ function errorCodeOf(error: unknown): string | undefined {
   return typeof code === 'string' ? code : undefined
 }
 
+/** 宿主把「未知任务」与「不属于这个会话」都归成这一个码（`:114-119`）。 */
+function asNotFound<T>(work: () => T): T {
+  try {
+    return work()
+  } catch (error) {
+    if (errorCodeOf(error) === 'job/not-found') {
+      throw new ProtocolError('job/not-found', '任务不存在，或不属于这个会话')
+    }
+    throw error
+  }
+}
+
 export function createJobControlPort(controller: JobControlService): JobControlPort {
   return {
     kill(dshSessionId, jobId) {
-      try {
-        return controller.kill({ sessionId: dshSessionId, jobId }).outcome
-      } catch (error) {
-        if (errorCodeOf(error) === 'job/not-found') {
-          throw new ProtocolError('job/not-found', `任务 ${jobId} 不存在，或不属于这个会话`)
+      return asNotFound(() => controller.kill({ sessionId: dshSessionId, jobId }).outcome)
+    },
+
+    async *follow(request, signal) {
+      const frames = asNotFound(() =>
+        controller.follow(
+          {
+            sessionId: request.dshSessionId,
+            jobId: request.jobId,
+            ...(request.from === undefined ? {} : { from: request.from }),
+          },
+          signal,
+        ),
+      )
+      // 逐帧映射，**不 spread 宿主的帧**：`JobView` 带着 `owner`（DSH 会话 id），
+      // 而它绝不能过线（§5.1 的别名纪律）。
+      for await (const frame of frames) {
+        switch (frame.type) {
+          case 'opened':
+            yield { kind: 'opened', jobId: request.jobId, job: toRow(frame.job), from: frame.from }
+            break
+          case 'output':
+            yield {
+              kind: 'output',
+              jobId: request.jobId,
+              chunks: frame.chunks.map(toChunkOut),
+              next: frame.next,
+              ...(frame.lossy === undefined ? {} : { lossy: frame.lossy }),
+            }
+            break
+          case 'status':
+            yield { kind: 'status', jobId: request.jobId, job: toRow(frame.job) }
+            break
         }
-        throw error
       }
     },
   }

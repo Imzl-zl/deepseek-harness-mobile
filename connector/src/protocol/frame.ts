@@ -14,8 +14,29 @@
  */
 import { randomBytes } from 'node:crypto'
 
-/** 线上帧类型。 */
-export const FRAME_TYPES = ['req', 'res', 'ev', 'live', 'ack', 'presence', 'ping', 'pong'] as const
+/**
+ * 线上帧类型 —— **唯一一份**。
+ *
+ * 编解码的白名单、中转的路由视图、窗口算术全都从它取。此前这里只列了 8 项、
+ * 且带着一个化石 `'ack'`（那是 `credit` 之前的旧设计），而编解码那边另有一份 13 项的清单 ——
+ * 两份必然会漂移：`RoutingView.t` 与 `canSend()` 看到的类型集合比实际小，
+ * 新增帧类型时也只改一处。（`ack` 作为**字段**仍存在于 `credit` 的载荷里，与帧类型无关。）
+ */
+export const FRAME_TYPES = [
+  'hello',
+  'hello-ack',
+  'confirm',
+  'ping',
+  'pong',
+  'credit',
+  'req',
+  'res',
+  'ev',
+  'live',
+  'job',
+  'persisted',
+  'presence',
+] as const
 
 export type FrameType = (typeof FRAME_TYPES)[number]
 
@@ -98,6 +119,7 @@ export type WireFrame =
   | { v: 1; t: 'res'; id: string; sid?: string; fc: number; ok: false; box: string }
   | { v: 1; t: 'ev'; sid: string; seq: number; fc: number; box: string }
   | { v: 1; t: 'live'; sid: string; stream: number; rev: number; fc: number; box: string }
+  | { v: 1; t: 'job'; sid: string; fc: number; box: string }
   | { v: 1; t: 'persisted'; sid: string; seq: number; fc: number; box: string }
   | { v: 1; t: 'presence'; computer: 'online' | 'offline'; app?: 'foreground' | 'background' }
 
