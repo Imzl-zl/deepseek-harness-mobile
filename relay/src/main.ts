@@ -32,6 +32,13 @@ interface RelayConfig {
   port?: number
   host?: string
   tokens?: TokenDigest[]
+  /**
+   * 限流参数（§12 的"按设备限流与审计"）。
+   *
+   * 不配就用 `server.ts` 的默认值（容量 60 / 每秒补 6）——**默认生效**，
+   * 因为一个默认敞开的转发器是隐患；配了就按配置来，启动时会打印生效值。
+   */
+  rateLimit?: { capacity: number; refillPerSecond: number }
 }
 
 function argValue(name: string): string | undefined {
@@ -98,6 +105,8 @@ const relay = await startRelay({
   port: config.port ?? 8787,
   host: config.host ?? '127.0.0.1',
   authenticate,
+  // 配置里给了就用它，没给就用 `server.ts` 的默认值（默认生效，见那里的说明）。
+  ...(config.rateLimit === undefined ? {} : { rateLimit: config.rateLimit }),
   // 中转必须**留声**：它只转发与记账，出问题时（投递目标不在、丢弃、认证被拒）
   // 日志是唯一的线索。级别用 debug 之外的 info/warn，默认就能看见。
   log: {

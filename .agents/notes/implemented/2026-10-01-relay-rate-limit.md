@@ -1,6 +1,14 @@
 # Agent Note: 中转移流 —— 令牌桶（还没有调用方，接线在下一轮）
 
-Status: implemented（`relay/src/rate-limit.ts` + 8 条用例）· **HTTP 面与 server 均已接线**
+Status: implemented（`relay/src/rate-limit.ts` + 8 条用例）· **HTTP 面、server 与配置文件三处均已接线**
+
+## 配置可配（同日补）
+
+`server.ts` 的默认值让限流**默认生效**，但那也意味着操作者**调不了它** —— 两轮前我在笔记里写
+"参数仍可由 `startRelay` 覆盖"，对测试成立，**对 CLI 不成立**（配置文件里没有这个字段）。
+补上：`RelayConfig.rateLimit?: {capacity, refillPerSecond}` → 传给 `startRelay`；
+不配就用默认值。验证方式是**真跑一次**：配置里写 `capacity 5 / 1 每秒`，
+启动行打印出 `限流生效：每身份容量 5，补充 1/秒`（与配置一致）。
 
 ## 自清（同日补）
 
