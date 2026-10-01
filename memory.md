@@ -5,12 +5,12 @@
 
 ## 下一步(新会话从这里开始)
 
-**目标**:把会话面往上推一档 —— 先给 `jobs`/`subagents`/`settings` 补测试(装配前提),再决定 `session.page` / `session.subscribe` 的接法。
+**目标**:接 `job.list`(把本轮补齐的任务适配器装配起来),再往上做会话订阅与翻页。
 
 **开工顺序**:
 
-1. **补三份适配器的测试**(`src/dsh/jobs.ts` / `subagents.ts` / `settings.ts`):它们至今零覆盖,而装配它们的前一步必须是有测试。`jobs` 的坑最密(`readAt` vs `read`、无主 job、`kill` 会二次 cancel),值得先补。
-2. **`job.list`(方法)**:接上 `jobs` 适配器 —— 它不需要订阅,是最干净的第二个数据面方法。
+1. **`job.list`**:`jobs.listOwnedBy(sid → dshSessionId)` 已就绪且已测;handler 要先把 `sid` **反解**成 DSH 会话 id(`aliases.sessionOf(sid)`)—— 这是通道里第一次走"从 sid 回到会话"的方向,顺手要定"sid 不认识时回什么"(不能回空列表,那是撒谎;应回 `session/not-found` 一类)。
+2. **`job.follow` / `job.unfollow` / `job.kill`**:订阅式输出(`subscribe` 已测,含无主过滤)与停止(`kill` 返回受理与否、落终态等 `settled`)。`job.kill` 不带幂等键,但"重复点停止"的真实语义要按 §7 核一遍。
 3. **会话订阅与翻页**(`session.subscribe` / `session.page` / `session.unsubscribe`):要 `follow` 的开启帧 `cursor` 当基线水位、要订阅生命周期与 `ev`/`live` 出帧路径,比 `list` 复杂一档,值得单独一轮。
 4. **配对流程(§12.1)**:二维码 / 配对码 → 写设备记录(含 `pairingId`)与手机侧凭据。没有它就**没有设备行**,`peerOf` 恒返回 undefined,握手一律 `protocol/not-paired` —— 真机联调的最后一块空白。
 5. **`relay/` 产品化**与**手机端 Dart**(后者前置:先装 Flutter SDK)。
@@ -38,7 +38,7 @@
 | `node app/tools/verify-platform-boundary.mjs` | 17 项(含 13 条规则自检):多端边界与 `Platform.isOhos` 禁令 |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
 | `cd connector && pnpm exec tsc --noEmit` | connector 类型检查(改 `connector/src/**` 后必跑) |
-| `cd connector && pnpm test` | connector 全套 **155 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**49 项**),外加握手驱动 / 封箱 / 流控 / 方法面 / 幂等 / 会话适配器 / 连接级 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
+| `cd connector && pnpm test` | connector 全套 **166 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**49 项**),外加握手驱动 / 封箱 / 流控 / 方法面 / 幂等 / 四个 DSH 适配器 / 连接级 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
 | `cd connector && pnpm build` | 产出 `lib/index.js` + `lib/index.d.ts`(装进 profile 的那份产物) |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker`;跑法见 `tools.md` |
 
@@ -69,7 +69,8 @@
 - **流控已接线**:W=128 窗口 + "收到即回 `credit`";`credit` 的 `fc` 是它自己的序号、**被确认的序号在箱里**(`{"ack":N}`,累计确认,QUIC 同形),`credit` 自己不再回 `credit`;满窗**只压可补的两类**(`ev`/`live`)—— 压 `res` 会死锁;暂停不是丢弃(队列里的帧等 `credit` 到达再放)。取舍与被否方案见 `.agents/notes/implemented/2026-10-01-flow-control-wiring.md`。
 - **方法面已接线,3/22 个方法可用**:`src/method-face.ts`(解信封 → 分发 → 封 `res`,从不抛、从不碰 `fc`/封箱,返回值收窄成 `ResFrame`)+ `src/handlers.ts`(**"实现了什么"的唯一出处**:`repo.info` 报的就是这张表的键)。已实现 `repo.info` / `devices.list` / `session.list`;其余一律回 `connector/unsupported`。取舍见 `.agents/notes/implemented/2026-10-01-method-face-wiring.md`。
 - **`session.list` 已落地**:清单取自 `sessionController.list`(权威、**已按活动排序**、且是已有必需服务),**不带标题**(该面不返回标题;`session-title` 读的是活的 `Session`,落盘-only 拿不到 → 契约 §5.7 那一行已改写明);别名在方法面合成,给手机的行**逐字段构造**(DSH 会话 id 绝不过线,e2e 有断言)。取舍与欠账见 `.agents/notes/implemented/2026-10-01-session-list-wiring.md`。
-- **`dsh/` 适配器有三份零测试**:`jobs` / `subagents` / `settings` 还没被任何测试覆盖(只有 `sessions` 本轮补上、`caps`/`identity` 早有)。**装配它们之前必须先补测试** —— 否则第一次装配就是第一次运行。
+- **`dsh/` 适配器测试已补齐 5/6**:`sessions` / `jobs` / `subagents` / `settings` 四份本轮全部有测试(此前的缺口),只剩 `interactions.ts` 没补(它是审批/提问的注册器接线,靠 `registerInteractions` 的调用面覆盖)。**装配任何适配器之前必须先有它的测试**,这条已从声明变成事实。
+- **订阅过滤的真缺陷已修**:`jobs` 的无主事件有**两种形状**(`job.owner` 与事件自己的 `owner`),旧过滤只排前一种,导致无主任务的 `output` 插进每个会话的流。取舍与被否方案见 `.agents/notes/implemented/2026-10-01-jobs-event-owner-shapes.md`。
 - **幂等已接线(但还没被真实方法用到)**:`src/idempotency.ts` —— 只记成功、失败不进表;同键并发**合流**(只执行一次);崩溃窗口里重放执行(带键的四个方法各有下游保障);表无定时器,**TTL 靠惰性过期兜正确性**(读到过期条目即当未命中),空间回收是**有界清扫**(单次 500 条 —— 域表写入走单写链,一次一万条删除会让挂载卡几十秒)。方法面只对 `IDEMPOTENT_METHODS` 生效(只读方法带键也不进表)。**注意:那四个带键方法(`session.prompt` / `interaction.respond` / `settings.update` / `credentials.set|unset`)都还没实现**,所以本轮交付的是管道 + 判据,e2e 用的是假 handler。取舍与被否方案(含"为什么不像 Stripe 那样连失败也记")见 `.agents/notes/implemented/2026-10-01-idempotency-wiring.md`。
 - **`session.list` 未实现**:需要新接 `sessionQuery`(服务键已在契约 §7 列出);`devices.revoke` 需要写存储 + 清在线会话,两者都留到各自轮次。
 - **配对流程未实现**(§12.1):二维码 / 配对码 → 写设备记录(含 `pairingId`)。没有它就没有设备行,`peerOf` 恒 undefined、握手一律 `protocol/not-paired`。
@@ -85,6 +86,10 @@
 - 当前最挡路的一条:CDP 端口可能要换 —— 9222 被日常 Chrome 占用,9400 也可能被上一轮遗留的 headless Chrome 占着,开新端口前先探 `/json/version`。
 
 ## 最近活跃窗口
+
+- 2026-10-01 适配器测试补齐 + 修掉订阅过滤缺陷(本轮):给 `jobs`/`subagents`/`settings` 三份**零测试**的适配器补上测试(共 11 条),补的过程中**读类型读出真缺陷** —— `jobs` 的无主事件有**两种形状**(`registered`/`progress`/`settled` 等把任务放在 `event.job` 里,而 `output` 把 `owner` 放在**事件自己**身上),旧过滤只排前一种,于是无主任务的输出会插进**每一个**会话的流(手机清单里看不到它,只能丢弃或造幽灵任务)。修法是把无主判定统一成一条(缺键即无主),并由测试同时钉住两种形状。证据:`pnpm test` **166 项**、`tsc` 0、三条 protocol 门禁 486/26/49、多端边界 17;六处变异 ㉜–㊲ 命中,其中 ㊲ **第一次的变异是错的**(把诊断行原样展开语义没变,自然全绿),换成真实失效形状后立刻命中 —— 教训:**变异必须改变语义,不只是改变写法**。取舍见 `.agents/notes/implemented/2026-10-01-jobs-event-owner-shapes.md`。
+
+- 2026-10-01 session.list 落地:手机首页要的第一个数据面方法通了。三处定案(各查过源码):① 清单取自 **`sessionController.list`**(权威、已按活动排序、且是已有必需服务);② **不带标题**(该面不返回标题;`session-title` 读的是活的 `Session`,落盘-only 拿不到)→ 契约 §5.7 那一行已改写;③ **别名在方法面合成**,给手机的行逐字段构造(DSH 会话 id 绝不过线)。顺带修掉 `alias.ensure` 同会话并发会各分一个别名的隐患(现在合流)。还补上了 `sessions` 适配器的测试 —— 那是 `dsh/` 四份适配器的**第一份**。取舍见 `.agents/notes/implemented/2026-10-01-session-list-wiring.md`。
 
 - 2026-10-01 session.list 落地(本轮):手机首页要的第一个数据面方法通了。三处定案(各查过源码,不猜):① 清单取自 **`sessionController.list`**(权威、已按活动排序、且是已有必需服务 —— 不必为它新接 `sessionQuery`);② **不带标题**(该面不返回标题;`session-title` 读的是活的 `Session` 对象,落盘-only 会话拿不到;投影里只有 `blank`/`lastPromptAt`)—— 契约 §5.7 那一行已改写,手机用 `cwd` 末段 + 相对时间兜底;③ **别名在方法面合成**,适配器只做 DSH 映射,给手机的行逐字段构造。顺带修掉一个并发隐患:`alias.ensure` 同会话并发会各分一个别名(留下孤儿 `bySid`),现在合流。**还补上了 `sessions` 适配器的测试 —— `src/dsh/` 下此前四份适配器零测试,这是第一次真正装配其中一个。** 证据:`pnpm test` **155 项**、`tsc` 0、`pnpm build`、三条 protocol 门禁 486/26/49、多端边界 17;三处变异 ㉙㉚㉛ 命中,其中 ㉛ **第一次全绿**,追出"替身把 `put` 写成同步改内存、抹掉了真实域表'先落盘再改内存'的 await 边界"这个测试保真度问题(教训已进 `tools.md`)。
 

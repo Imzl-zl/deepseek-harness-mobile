@@ -106,8 +106,17 @@ export function createJobsPort(jobs: JobRegistry): JobsPort {
     subscribe(dshSessionId, listener) {
       // `subscribe(filter, listener): () => void`（`jobs/src/types.ts:243-253`）。
       return jobs.events.subscribe({ owner: dshSessionId as never }, (event) => {
-        // `owner` 无主时是**键整个缺失**，不是 undefined 值（`jobs-local/src/index.ts:420`）。
-        if (event.type !== 'output' && 'job' in event && event.job.owner === undefined) return
+        // **无主要有两种形状**：`registered` / `progress` / `stopping` / `removed` / `settled`
+        // 把任务放在 `event.job` 里，而 `output` 把 `owner` 放在**事件自己**身上
+        // （`jobs/src/types.ts:200-226`）。`owner` 无主时是**键整个缺失**，不是 undefined 值
+        // （`jobs-local/src/index.ts:420`），所以两条路都按"缺键即无主"判。
+        //
+        // 漏掉 `output` 那一路的后果：无主任务的输出会插进**每一个**会话的订阅流，
+        // 而手机侧在清单里看不到那个任务（`listOwnedBy` 已经把它排掉了）——
+        // 表现是"收到一段没有出处、也不属于任何会话的输出"。
+        const unowned =
+          event.type === 'output' ? event.owner === undefined : event.job.owner === undefined
+        if (unowned) return
         listener(event)
       })
     },
