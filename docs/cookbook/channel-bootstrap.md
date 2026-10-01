@@ -126,11 +126,11 @@ dsh plugin --profile <name> add <connector 本地路径>
 
 **接线到哪一步了**(真机联调前先看这一句):连接层已经完整 —— 三帧握手、会话密钥、
 每一种业务帧的 AEAD 封箱/解封、§4.3 的流控(W=128、收到即回 `credit`、满窗只压 `ev`/`live`),
-连接级 e2e 用手机侧的**独立实现**双向跑通过。方法面已接线(§5.6 的幂等管道也在),但
-**只接上 2/22 个方法**(`repo.info` / `devices.list`,两个都不带幂等键 —— 带键的四个方法
-一个都还没实现),其余回 `connector/unsupported`;配对流程(§12.1)也未落地。
-所以下面 5.1 的"发一句 / 回一句"还差:会话面方法(要先接 `sessionQuery`)、
-带键的写方法(`session.prompt` 等)、以及能产出设备行的配对流程。
+连接级 e2e 用手机侧的**独立实现**双向跑通过;方法面与 §5.6 的幂等管道也在。
+方法面当前 **3/22**:`repo.info` / `devices.list` / `session.list`(会话清单,不含标题 ——
+该面不返回标题,契约 §5.7 已写明),其余回 `connector/unsupported`。
+所以下面 5.1 的"发一句 / 回一句"还差:会话订阅与翻页(`session.subscribe`/`page`,要 `follow`
+的 `cursor` 与订阅生命周期)、带键的写方法(`session.prompt` 等)、以及能产出设备行的配对流程(§12.1)。
 
 5.1 先用 Tailscale 直连做第一跳(契约 §14.6 的顺序):
 

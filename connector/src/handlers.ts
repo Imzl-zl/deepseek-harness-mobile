@@ -11,10 +11,17 @@
  *
  * 手机置灰按钮靠的是后者，所以 `repo.info` 报的是**表的键**，而不是一份手抄的清单 ——
  * 手抄的清单会在下一次加方法时忘掉同步，而症状是"按钮能点但永远转圈"。
+ *
+ * ## 每个方法只做"映射 + 组合"
+ *
+ * 权威数据来自 DSH，别名之类**通道自己的概念**在这一层合成，且**逐字段构造给手机的行**：
+ * 任何 `spread` 都会让将来 DSH 新增的字段（比如会话 id）悄悄过线，而中继与手机
+ * 只该看到 `sid`（§5.1）。
  */
 import { WIRE_VERSION } from './protocol/frame.js'
 import type { MethodHandler, MethodName } from './protocol/methods.js'
 import type { Caps } from './dsh/caps.js'
+import type { SessionSummaryRow } from './dsh/sessions.js'
 
 /** 设备清单里的一行。**不含公钥** —— 手机不需要别人的公钥，少发一个字段就少一处泄漏面。 */
 export interface DeviceRow {
@@ -32,6 +39,16 @@ export interface HandlerDeps {
   aliasVersion: () => number
   /** 已配对设备（含已吊销的，便于手机显示"这台已被移除"）。 */
   devices: () => readonly DeviceRow[]
+  /**
+   * 会话清单（DSH 权威行，已按活动排序）。
+   *
+   * 依赖是**必需**的而不是可选的：`sessionController` 是本插件的必需服务
+   * （缺了它插件根本不挂载），所以不存在"这个端口不在"的生产形态；
+   * 把它写成可选只会多一条永远不会被走到的错误分支。
+   */
+  sessions: { list(signal?: AbortSignal): Promise<readonly SessionSummaryRow[]> }
+  /** 别名分配：手机与中继都只见 `sid`（契约 §5.1）。 */
+  aliases: { ensure(dshSessionId: string): Promise<string> }
 }
 
 export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, MethodHandler>> {
@@ -44,6 +61,26 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
         revoked: row.revoked,
       })),
     }),
+
+    'session.list': async () => {
+      const rows = await deps.sessions.list()
+      // 别名可以**并发**分配：不同会话之间互不影响，同一个会话则由 `ensure` 自己合流
+      // （见 `alias.ts` 的说明）。逐字段构造给手机的行，**不 spread** ——
+      // `dshSessionId` 绝不能过线（中继与手机只见 `sid`）。
+      const assigned = await Promise.all(
+        rows.map(async (row) => ({ row, sid: await deps.aliases.ensure(row.dshSessionId) })),
+      )
+      return {
+        sessions: assigned.map(({ row, sid }) => ({
+          sid,
+          updatedAt: row.updatedAt,
+          running: row.running,
+          blank: row.blank,
+          subagent: row.subagent,
+          ...(row.cwd === undefined ? {} : { cwd: row.cwd }),
+        })),
+      }
+    },
   }
 
   // `repo.info` 最后挂：它报的 `methods` 就是这张表的键，所以它必须看得见全部兄弟。

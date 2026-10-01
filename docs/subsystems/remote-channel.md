@@ -212,6 +212,7 @@ seed(32B, 存系统安全存储)
 
 - **`seq` 直接取 DSH 会话事件自带的序号**:会话内单调、从 0 连续、永不重编号(`packages/core/session/src/types.ts:493-500`)。
 - **`sid` 是电脑侧分配的不透明别名**(§1 术语),桥接持久维护 `sid ↔ dshSessionId` 映射。中继只看到 `sid`。
+  - **别名不得由会话 id 派生**(不透明才谈得上"中继只见别名");分配时要对**同一个会话的并发分配合流**,否则两次并发会各分一个别名,其中一个成为孤儿。
 - **`seq` 不是内容 ID**:崩溃尾回合的 closer 由冷读在内存合成(`packages/session-query/session-query/src/cold-read.ts:16-17`),其 `seq` 基准为 `last.seq + closers.length + 1`(`packages/core/session/src/repair.ts:89`);会话恢复后同一算法的 closer 落盘(`packages/core/agent-loop/src/index.ts:855-856`)。→ 同一个 `seq` 会经两条读路径各出现一次、**内容相同**:按 `seq` 去重是必须项,但不得用"同 seq 不同内容"判冲突。
 
 ### 5.2 条目与身份
@@ -294,7 +295,7 @@ type SyncSnapshot = {
 
 | 方法 | 方向 | 幂等键 | 说明 |
 |---|---|---|---|
-| `session.list` | 手机→电脑 | — | 会话清单(含别名、标题、状态、最近活动) |
+| `session.list` | 手机→电脑 | — | 会话清单(别名 + 最近活动 + 状态)。取自 `sessionController.list`(`packages/api/session-controller/src/index.ts:251-254`,已按活动排序);**标题不在这里** —— 该面不返回标题,标题由 `session-title` 提供、且它读的是**活的 `Session` 对象**(落盘-only 的会话拿不到),所以清单先不含标题,手机用 `cwd` 末段 + 相对时间兜底 |
 | `session.subscribe` | 手机→电脑 | — | 开始推送该会话的 `ev` / `live`;带 `since` 即同时完成恢复 |
 | `session.unsubscribe` | 手机→电脑 | — | 停止推送;桥接可释放该会话缓冲(仍需等 persisted) |
 | `session.page` | 手机→电脑 | — | 历史翻页(按消息对齐,用 DSH `page()`) |

@@ -73,6 +73,40 @@ export function createAliases(store: AliasStore, options: AliasOptions = {}): Al
   const randomBytes = options.randomBytes ?? ((size: number) => nodeRandomBytes(size))
 
   let version = options.initialVersion ?? 0
+  /**
+   * 同一个会话正在分配别名时，后来的调用**合流到同一个 promise**。
+   *
+   * 没有它会怎样：`ensure` 的第一步是"内存里查不到就分配"，两个并发调用都查不到 →
+   * 各自生成一个 `sid` → 各自写 `bySession`（后写者赢）与 `bySid`（两条都留下）。
+   * 结果是**同一个会话有两个别名**，其中一个成了孤儿（`reconcile` 能清，但手机可能已经看到过它），
+   * 而"一个会话两个 sid"正是别名机制要防的事。
+   *
+   * 触发路径真实存在：`session.list` 与将来的 `session.subscribe` 并发时就会撞上。
+   * 合流的做法与幂等执行（`src/idempotency.ts`）一致：执行只发生一次。
+   */
+  const inFlight = new Map<string, Promise<string>>()
+
+  const allocate = async (dshSessionId: string): Promise<string> => {
+    for (let attempt = 0; attempt < MAX_ALLOC_ATTEMPTS; attempt += 1) {
+      const sid = newSid(randomBytes)
+      // 别名要过 AAD 的字符集要求；base64url 天然满足，但这里是唯一的生成点，
+      // 断言一次比让它在握手时才炸要好。
+      if (!ID_PATTERN.test(sid)) {
+        throw new Error(`生成的别名不符合 AAD 字符集：${sid}`)
+      }
+      // 撞了别的会话就重来。128 位随机下几乎不可能，但"同一别名指向两个会话"
+      // 会让手机端拿到错会话的帧 —— 代价不对称，值得查。
+      if (store.bySid.get(sid) !== undefined) continue
+
+      // 先写权威方向：崩在中间只会留下"有 sid 无回指"（可被 reconcile 清掉），
+      // 而不是"有会话无 sid"（会导致重复分配别名）。
+      await store.bySession.put(dshSessionId, sid)
+      await store.bySid.put(sid, dshSessionId)
+      version += 1
+      return sid
+    }
+    throw new Error(`连续 ${MAX_ALLOC_ATTEMPTS} 次都没分到未被占用的别名`)
+  }
 
   return {
     sidOf(dshSessionId) {
@@ -87,25 +121,16 @@ export function createAliases(store: AliasStore, options: AliasOptions = {}): Al
       const existing = store.bySession.get(dshSessionId)
       if (existing !== undefined) return existing
 
-      for (let attempt = 0; attempt < MAX_ALLOC_ATTEMPTS; attempt += 1) {
-        const sid = newSid(randomBytes)
-        // 别名要过 AAD 的字符集要求；base64url 天然满足，但这里是唯一的生成点，
-        // 断言一次比让它在握手时才炸要好。
-        if (!ID_PATTERN.test(sid)) {
-          throw new Error(`生成的别名不符合 AAD 字符集：${sid}`)
-        }
-        // 撞了别的会话就重来。128 位随机下几乎不可能，但"同一别名指向两个会话"
-        // 会让手机端拿到错会话的帧 —— 代价不对称，值得查。
-        if (store.bySid.get(sid) !== undefined) continue
+      const running = inFlight.get(dshSessionId)
+      if (running !== undefined) return running
 
-        // 先写权威方向：崩在中间只会留下"有 sid 无回指"（可被 reconcile 清掉），
-        // 而不是"有会话无 sid"（会导致重复分配别名）。
-        await store.bySession.put(dshSessionId, sid)
-        await store.bySid.put(sid, dshSessionId)
-        version += 1
-        return sid
+      const promise = allocate(dshSessionId)
+      inFlight.set(dshSessionId, promise)
+      try {
+        return await promise
+      } finally {
+        inFlight.delete(dshSessionId)
       }
-      throw new Error(`连续 ${MAX_ALLOC_ATTEMPTS} 次都没分到未被占用的别名`)
     },
 
     async reconcile() {

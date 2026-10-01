@@ -17,6 +17,11 @@ function table(initial: Record<string, string> = {}): AliasTable {
   return {
     get: (key) => map.get(key),
     put: async (key, value) => {
+      // **时序必须忠实**：真实域表的写入走单写链，是"先落盘 → 再改内存"
+      // （`store/index.ts` 引的 `packages/storage/storage-domain/src/domain.ts:263-270`）。
+      // 这个 await 边界正是并发 `ensure` 撞车的窗口 —— 替身若在这里同步改内存，
+      // 并发用例就永远撞不上，等于没测（变异校验抓出过这一点）。
+      await Promise.resolve()
       map.set(key, value)
     },
     delete: async (key) => map.delete(key),
@@ -106,4 +111,26 @@ test('版本可以从持久化的 meta 读回来', () => {
     { randomBytes: seqRandom, initialVersion: 7 },
   )
   assert.equal(aliases.version, 7)
+})
+
+test('ensure：同一会话**并发**调用合流成一个 sid（否则会分配出两个）', async () => {
+  // 真实触发路径：`session.list` 与将来的 `session.subscribe` 并发时会撞上同一个会话。
+  // 不合流的话，两个调用都在内存里查不到 → 各生成一个 sid → 各写一遍，
+  // 结果是同一个会话有两个别名（`bySid` 里多一个孤儿），而那正是别名机制要防的事。
+  const bySid = table()
+  const bySession = table()
+  const aliases = createAliases({ bySid, bySession }, { randomBytes: seqRandom })
+
+  const [a, b, c] = await Promise.all([
+    aliases.ensure('sess-1'),
+    aliases.ensure('sess-1'),
+    aliases.ensure('sess-1'),
+  ])
+
+  assert.equal(a, b)
+  assert.equal(b, c)
+  assert.equal(aliases.sessionOf(a), 'sess-1')
+  assert.equal(aliases.version, 1, '只该分配一次')
+  const pointing = [...bySid.keys()].filter((sid) => bySid.get(sid) === 'sess-1')
+  assert.deepEqual(pointing, [a], '反向表里不能留下第二个指向同一会话的孤儿条目')
 })

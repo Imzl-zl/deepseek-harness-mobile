@@ -55,6 +55,7 @@ import { createIdempotency, type DedupeRows } from './idempotency.js'
 import { mount, type LifecycleStep } from './lifecycle.js'
 import { METRIC, createChannelLogger, createMetrics, type ChannelLogger, type ChannelMetrics } from './observability.js'
 import { createAliases, type Aliases } from './alias.js'
+import { createSessionsAdapter } from './dsh/sessions.js'
 import type { DeviceRecord } from './store/index.js'
 import { coreDomain, initialMeta, migrateMeta, windowsDomain } from './store/index.js'
 import { createConnection, type Connection } from './transport/connection.js'
@@ -310,6 +311,16 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           handlers: createHandlers({
             caps: () => readCaps(ctx),
             aliasVersion: () => aliases?.version ?? 0,
+            sessions: createSessionsAdapter(ctx.sessionController),
+            aliases: {
+              ensure: (dshSessionId) => {
+                if (aliases === null) {
+                  // 步骤顺序由 `lifecycle.ts` 保证：`open-store` 一定先跑过。
+                  throw new Error('别名表尚未就绪：装配顺序有误')
+                }
+                return aliases.ensure(dshSessionId)
+              },
+            },
             devices: () =>
               devicesTable === null
                 ? []

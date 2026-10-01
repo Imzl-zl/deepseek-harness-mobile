@@ -83,7 +83,52 @@ export interface PageRequest {
   maxMessages?: number
 }
 
+/**
+ * 会话清单里的一行（契约 §5.7 的 `session.list`）。
+ *
+ * **刻意不带别名**：别名（`sid`）是**通道的概念**，中继只见 `sid`、手机只见 `sid`，
+ * 而本层只做 DSH 的映射 —— 分配别名的动作留给方法面（那里同时握着别名表）。
+ *
+ * 也**刻意没有标题**：`sessionController.list()` 不带标题（`SessionSummary` 只有
+ * `sessionId` / `updatedAt` / `running` / `blank` / `origin` / `cwd` 等），
+ * 标题在 `session-title` 那一边，而那个服务读的是**活的 `Session` 对象** ——
+ * 对"只存在于落盘里的会话"拿不到。详见 `.agents/notes/implemented/2026-10-01-session-list-wiring.md`。
+ */
+export interface SessionSummaryRow {
+  /**
+   * DSH 的会话 id。**不要发给手机**（中继只见 `sid`）；它只在本进程内用来换别名。
+   * 方法面必须逐字段构造给手机的行走，不要 spread 这一行。
+   */
+  dshSessionId: string
+  /** 最近活动时间；清单**已按它排序**（权威自己排的，本层不再排一遍）。 */
+  updatedAt: number
+  /** 当前是否有轮次在跑。 */
+  running: boolean
+  /** 还没有任何轮次（新建会话）。 */
+  blank: boolean
+  /** 子代理的子会话（`origin === 'subagent'`）—— 手机可以选择折叠，本层不替它决定。 */
+  subagent: boolean
+  cwd?: string
+}
+
+/**
+ * 不参与的取消信号。
+ *
+ * `SessionController.list` 的签名要求一个 `AbortSignal`，而方法面这一层没有请求级的信号
+ * （手机没有"取消这次列表"的方法）。用一个永不中止的信号，比每次现造一个 `AbortController`
+ * 再丢掉更直白。
+ */
+const NEVER_ABORTS = new AbortController().signal
+
 export interface SessionsPort {
+  /**
+   * 会话清单（按活动排序）。
+   *
+   * 取自 `SessionController.list`（`packages/api/session-controller/src/index.ts:251-254`，
+   * 注释原文「visible Session rows … ordered by activity」）—— **不要去列落盘目录**：
+   * 那会绕过 DSH 的可见性判定，还会把子代理会话混进用户的清单。
+   */
+  list(signal?: AbortSignal): Promise<readonly SessionSummaryRow[]>
   /** 打开实时流。**调用方持有 signal 的生命周期**；中止即关闭订阅。 */
   follow(
     request: { address: SessionAddress; assistantStream?: true },
@@ -139,6 +184,20 @@ function mapFrame(frame: SessionFollowFrame): SessionFrame | undefined {
 
 export function createSessionsAdapter(controller: SessionController): SessionsPort {
   return {
+    async list(signal) {
+      const value = await controller.list({}, signal ?? NEVER_ABORTS)
+      // 逐字段映射，**不 spread**：将来 DSH 在 `SessionSummary` 上加字段时，
+      // 它会自动被挡在门外，而不是悄悄跟着这一行发到中继与手机上。
+      return value.items.map((item) => ({
+        dshSessionId: item.sessionId,
+        updatedAt: item.updatedAt,
+        running: item.running,
+        blank: item.blank,
+        subagent: item.origin === 'subagent',
+        ...(item.cwd === undefined ? {} : { cwd: item.cwd }),
+      }))
+    },
+
     async *follow(request, signal) {
       // `follow(request, signal): AsyncIterable<SessionFollowFrame>`（`index.ts:480`）。
       const stream = controller.follow(

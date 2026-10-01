@@ -35,6 +35,24 @@ function fixtureHandlers() {
     caps: () => ({ ...CAPS }),
     aliasVersion: () => 7,
     devices: () => [{ id: 'dev-1', name: '我的手机', pairedAt: 1000, revoked: false }],
+    sessions: {
+      list: () =>
+        Promise.resolve([
+          {
+            dshSessionId: 'dsh-1',
+            updatedAt: 200,
+            running: false,
+            blank: false,
+            subagent: false,
+            cwd: '/repo/a',
+          },
+        ]),
+    },
+    aliases: {
+      // 别名是**不透明的**：刻意不把 DSH 会话 id 编进去，否则"id 不过线"的断言会失去意义
+      // （拿一个含 id 的 sid 去查 `includes(id)`，永远为真）。
+      ensure: (id) => Promise.resolve(id === 'dsh-1' ? 'sid_0123456789abcd' : 'sid_ffffffffffff'),
+    },
   })
 }
 
@@ -89,7 +107,7 @@ test('端到端：手机问 repo.info，电脑侧回一个可解的 res（id 对
   assert.equal(info.protocol, 1)
   assert.equal(info.aliasVersion, 7)
   assert.deepEqual(info.caps, CAPS, '能力位要在结果里（手机据此置灰按钮）')
-  assert.deepEqual(info.methods, ['devices.list', 'repo.info'], '实现了哪些方法也由同一张表报出')
+  assert.deepEqual(info.methods, ['devices.list', 'repo.info', 'session.list'], '实现了哪些方法也由同一张表报出')
 })
 
 test('端到端：方法不存在 → ok:false 的 connector/unsupported，且**连接留着**', async (t) => {
@@ -121,6 +139,29 @@ test('端到端：载荷不是 JSON → protocol/bad-frame 信封，连接同样
   assert.equal(res.ok, false)
   assert.equal(res.envelope['code'], 'protocol/bad-frame')
   assert.equal(f.connection.state, 'serving')
+})
+
+test('端到端：手机问 session.list，拿到的是 sid（DSH 会话 id 不过线）', async (t) => {
+  const f = await start(t, { handlers: fixtureHandlers() })
+  f.connection.start()
+  await waitFor('进入 handshake', () => f.connection.state === 'handshake')
+  const keys = await completeHandshake(f)
+
+  sendRequest(f, keys, 0, 'req_gggggggggggg', '{"method":"session.list"}')
+  await waitFor('收到 res', () => f.peer.received.some((frame) => frame.t === 'res'))
+
+  const res = responseOf(f, keys)
+  assert.equal(res.ok, true)
+  const rows = (res.envelope['result'] as { sessions: Record<string, unknown>[] }).sessions
+  assert.equal(rows.length, 1)
+  const row = rows[0]
+  assert.ok(row !== undefined)
+  assert.equal(row['sid'], 'sid_0123456789abcd', '手机只见别名')
+  assert.equal(row['updatedAt'], 200)
+  assert.equal(row['cwd'], '/repo/a')
+  // 中继与手机都只见 sid：DSH 的会话 id 绝不能出现在线上载荷里。
+  assert.equal(JSON.stringify(res.envelope).includes('dsh-1'), false, 'DSH 会话 id 泄漏了')
+  assert.equal('dshSessionId' in row, false)
 })
 
 test('端到端：同一个幂等键重发 → 只执行一次，第二次回上次的结果（I8）', async (t) => {
