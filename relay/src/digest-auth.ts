@@ -24,6 +24,13 @@ export interface TokenDigest {
   id: string
   /** `sha256(令牌)` 的十六进制。 */
   hash: string
+  /**
+   * 吊销时间（§12 的中转表里就是 `revoked_at`：**软吊销**，行留着）。
+   *
+   * 留着而不是删掉，是为了将来能把"你被吊销了"与"这个令牌没见过"分开告诉设备
+   * （今天两者都是 401 —— 那是有意的：对客户端来说下一步动作相同）。
+   */
+  revokedAt?: number
 }
 
 const digestOf = (token: string): string => createHash('sha256').update(token, 'utf8').digest('hex')
@@ -43,6 +50,8 @@ export interface DigestAuthenticator {
 export function createDigestAuthenticator(entries: readonly TokenDigest[]): DigestAuthenticator {
   const table = new Map<string, Authenticated>()
   for (const entry of entries) {
+    // **已吊销的摘要不进表**：它留在配置里是为了可辨识，不是为了还能用。
+    if (entry.revokedAt !== undefined) continue
     // 同一条摘要不该出现两次（配置写重了）：后一条覆盖前一条会让"谁是谁"变得看运气。
     if (table.has(entry.hash)) {
       throw new Error(`令牌摘要表里有重复条目（${entry.hash.slice(0, 8)}…）：拒绝启动，先修配置`)

@@ -25,7 +25,7 @@
 import { readFile } from 'node:fs/promises'
 
 import { createDigestAuthenticator, type TokenDigest } from './digest-auth.ts'
-import { appendTokenToConfig, issueToken } from './issue-token.ts'
+import { appendTokenToConfig, issueToken, revokeTokenInConfig } from './issue-token.ts'
 import { startRelay } from './server.ts'
 
 interface RelayConfig {
@@ -69,6 +69,25 @@ if (issueArgs.length === 2) {
 }
 
 const entries = config.tokens ?? []
+
+// 吊销模式：`--revoke-token <device|connector> <id>`（软吊销：行留着、标 `revokedAt`）。
+if (process.argv.includes('--revoke-token')) {
+  const index = process.argv.indexOf('--revoke-token')
+  const [kind, id] = process.argv.slice(index + 1, index + 3) as [string, string]
+  if ((kind !== 'device' && kind !== 'connector') || id === undefined) {
+    console.error('用法: --revoke-token <device|connector> <id>')
+    process.exit(2)
+  }
+  const { tokens, revoked } = await revokeTokenInConfig(configPath, { kind, id })
+  if (!revoked) {
+    // "我吊销的那个到底在不在"要能被脚本分辨出来 —— 静默成功会让拼错的 id 看起来没事。
+    console.error(`配置里没有 ${kind} ${id} 的摘要：什么都没改`)
+    process.exit(2)
+  }
+  console.log(`已吊销 ${kind} 令牌（id=${id}）。行留在配置里（软吊销），现在 ${tokens.length} 条。`)
+  process.exit(0)
+}
+
 if (entries.length === 0) {
   console.error('配置里没有 tokens：中转起来也无人能连上（只放摘要，不放明文令牌）')
   process.exit(2)

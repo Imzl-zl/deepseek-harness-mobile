@@ -35,6 +35,8 @@ export interface TokenConfigEntry {
   kind: 'device' | 'connector'
   id: string
   hash: string
+  /** 吊销时间（§12 的 `revoked_at`：**软吊销**）。见 `digest-auth.ts` 的说明。 */
+  revokedAt?: number
 }
 
 export function issueToken(
@@ -65,4 +67,34 @@ export async function appendTokenToConfig(
   const tokens = [...kept, entry]
   await writeFile(configPath, `${JSON.stringify({ ...config, tokens }, null, 2)}\n`, 'utf8')
   return tokens
+}
+
+/**
+ * 吊销一条令牌（软吊销：行留着、标上 `revokedAt`）。
+ *
+ * 保留原行而不是删掉，有两个理由：
+ * 1. §12 的中转表就是这个形状（`revoked_at`），而"删掉"会让审计线索消失
+ *    （"这个身份曾经存在过、某时刻被吊销"是有用的事实）；
+ * 2. 将来可以把"你被吊销了"与"这个令牌没见过"分开告诉设备 —— 今天两者都是 401，
+ *    因为对客户端来说下一步动作相同，但**能力**留着比补回来便宜。
+ *
+ * @returns 吊销后的完整条目列表；身份不存在时原样返回（不报错 —— 幂等比"告诉你没这条"更有用）。
+ */
+export async function revokeTokenInConfig(
+  configPath: string,
+  spec: TokenKind,
+  now: number = Date.now(),
+): Promise<{ tokens: TokenConfigEntry[]; revoked: boolean }> {
+  const raw = await readFile(configPath, 'utf8')
+  const config = JSON.parse(raw) as { tokens?: TokenConfigEntry[] }
+  const tokens = (config.tokens ?? []).map((entry) => {
+    if (entry.kind !== spec.kind || entry.id !== spec.id) return entry
+    // 已经吊销过就保留原时间（幂等：重复执行不刷新吊销时刻）。
+    return entry.revokedAt === undefined ? { ...entry, revokedAt: now } : entry
+  })
+  const revoked = tokens.some(
+    (entry) => entry.kind === spec.kind && entry.id === spec.id && entry.revokedAt !== undefined,
+  )
+  await writeFile(configPath, `${JSON.stringify({ ...config, tokens }, null, 2)}\n`, 'utf8')
+  return { tokens, revoked }
 }
