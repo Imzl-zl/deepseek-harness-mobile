@@ -63,8 +63,8 @@
 ## 5. 验证、入口与关键路径
 
 - 语法检查:`node --check <file>`(原型 `app.js` / `interactions.js` / `tools/*.mjs`)。
-- 通道协议验证(不需要浏览器/手机/公网):`node protocol/verify-fixtures.mjs`(16 条 fixture / 486 项:恢复只有"增量或快照"两种结果)、`node protocol/verify-loopback.mjs`(26 项三角色回环,含中转清空后重启)、`node protocol/verify-vectors.mjs`(39 项跨端密码学向量:握手派生 + 设备身份 + transcript 拼串与签名 + AEAD 往返 + 篡改拒绝)。**改 `protocol/` 后三条都必须全绿**;改断言时补一次变异校验(做法见 `tools.md`)。
-- connector 验证(pnpm 工程,细则见 `tools.md`):`cd connector; pnpm exec tsc --noEmit`、`pnpm build`、`pnpm test`(当前 97 项;**fixtures 断言数须 = 486、向量须 = 39**,与参考侧相等)。**改 `connector/src/**` 后必须跑。**
+- 通道协议验证(不需要浏览器/手机/公网):`node protocol/verify-fixtures.mjs`(16 条 fixture / 486 项:恢复只有"增量或快照"两种结果)、`node protocol/verify-loopback.mjs`(26 项三角色回环,含中转清空后重启)、`node protocol/verify-vectors.mjs`(49 项跨端密码学向量:握手派生 + 设备身份 + transcript 拼串与签名 + AEAD 与箱容器 + 篡改拒绝)。**改 `protocol/` 后三条都必须全绿**;改断言时补一次变异校验(做法见 `tools.md`)。
+- connector 验证(pnpm 工程,细则见 `tools.md`):`cd connector; pnpm exec tsc --noEmit`、`pnpm build`、`pnpm test`(当前 111 项;**fixtures 断言数须 = 486、向量须 = 49**,与参考侧相等)。**改 `connector/src/**` 后必须跑。**
 - 多端边界校验(不需要 Flutter 工程):`node app/tools/verify-platform-boundary.mjs` —— 6 条规则扫 `app/lib` 与 `app/packages`,自带 13 条规则自检(细则见 `tools.md`)。**改 `app/lib/` 或 `app/packages/` 后必须跑。**
 - 浏览器验证(独立 headless,不碰日常浏览器):`pwsh -File mock/proto/tools/cdp.ps1 -Port 9400`,然后
   `$env:CDP_URL='http://127.0.0.1:9400'; $env:NO_PROXY='127.0.0.1,localhost'` 再跑对应脚本。

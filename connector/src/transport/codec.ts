@@ -11,22 +11,22 @@
  * 4. `id` / `sid` 限于 ASCII 安全字符集 `[A-Za-z0-9_-]`：AAD 是把字段拼串再哈希，
  *    限制字符集后拼串结果与两端 JSON 转义习惯无关。
  */
-import { ID_PATTERN, MAX_FRAME_BYTES, WIRE_VERSION, type WireFrame } from '../protocol/frame.js'
+import {
+  HANDSHAKE_FRAME_TYPES,
+  ID_PATTERN,
+  MAX_FRAME_BYTES,
+  WIRE_VERSION,
+  isHandshakeFrameType,
+  type WireFrame,
+} from '../protocol/frame.js'
 import { ProtocolError } from '../protocol/errors.js'
 
 /**
- * 握手阶段的帧类型。未完成握手的连接只接受这些。
+ * 已知帧类型（契约 §3 的联合）。
  *
- * `confirm` 必须在列内：它是 §4.1 的**第三条**握手消息（手机 → 电脑），
- * 而应答方要收到它才能判定握手完成。漏了它的症状是"手机永远停在握手"——
- * 电脑侧看起来一切正常，只是把 confirm 当成业务帧拒掉并断开。
- *
- * 为什么它是独立的帧类型（而不是"塞进第一条业务帧"）见
- * `.agents/notes/implemented/2026-10-01-handshake-third-frame.md`
+ * 握手帧的判据（谁明文、谁要密钥）**不在这里**，在 `protocol/frame.ts`：
+ * 那是帧的语义，而本文件只管"线上这一行怎么解"。
  */
-export const HANDSHAKE_FRAME_TYPES = ['hello', 'hello-ack', 'confirm'] as const
-
-/** 已知帧类型（契约 §3 的联合）。 */
 export const KNOWN_FRAME_TYPES = [
   'hello',
   'hello-ack',
@@ -146,17 +146,12 @@ export function assertHandshakePhase(frame: WireFrame, handshakeDone: boolean): 
 /**
  * 是不是握手帧。
  *
- * 导出的理由：连接层要用**同一个**判据决定「这一帧交给握手驱动器还是交给上层」、
- * 「驱动器允许写哪些帧」，以及「这一帧要不要盖 `fc`」。三处各写一遍就会漂移，
- * 而漂移的表现是某一类帧在某个阶段悄悄走错路。
+ * 实现直接转给协议层的 `isHandshakeFrameType`：**判据只有一处**，
+ * 连接层用它决定「交给握手驱动器还是交给上层」「要不要盖 `fc`」「要不要封箱」。
+ * 本文件留这个别名只是为了让读 codec 的人不必跳文件。
  */
 export function isHandshakeFrame(frame: WireFrame): boolean {
   return isHandshakeFrameType(frame.t)
-}
-
-/** 同上，但只需要帧类型字符串（线上解码前、或从 `OutboundFrame` 判断时用）。 */
-export function isHandshakeFrameType(type: string): boolean {
-  return (HANDSHAKE_FRAME_TYPES as readonly string[]).includes(type)
 }
 
 /**

@@ -13,7 +13,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { deriveHandshake, deriveIdentity, seal, signTranscript, keyPairFrom, transcriptOf } from './vectors-core.mjs'
+import { deriveHandshake, deriveIdentity, packBox, seal, signTranscript, keyPairFrom, transcriptOf } from './vectors-core.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const OUT = join(HERE, '..', 'vectors')
@@ -89,13 +89,13 @@ const cases = [
 ]
 const vectors = cases.map((c) => {
   const sealed = seal({ keyHex: key, fc: c.fc, aadFields: c.aad, plaintext: c.plaintext })
-  return { ...c, key, ciphertext: sealed.ciphertextHex, tag: sealed.tagHex }
+  return { ...c, key, ciphertext: sealed.ciphertextHex, tag: sealed.tagHex, box: packBox(sealed) }
 })
 
 const aead = {
   _generated: 'node protocol/tools/gen-vectors.mjs',
-  spec: 'remote-channel.md §3(AAD 规范化)与 §4.2(nonce = fc 的 96 位大端)',
-  note: '含 nonce 复用禁令的对照:同一 fc 不同明文必须产生不同密文,且 AAD 任一字段变化都必须解密失败',
+  spec: 'remote-channel.md §3(AAD 规范化、箱的容器格式)与 §4.2(nonce = fc 的 96 位大端)',
+  note: '含 nonce 复用禁令的对照:同一 fc 不同明文必须产生不同密文,且 AAD 任一字段变化都必须解密失败;`box` 是线上容器(base64url(密文‖tag)),必须能解开回同一组密文与标签',
   vectors,
   tamper: [
     { name: '改 AAD 的 seq', vectorIndex: 0, patch: { seq: 2 }, expect: 'auth-failure' },

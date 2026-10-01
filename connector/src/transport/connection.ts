@@ -18,14 +18,21 @@
  *    而 `send()` 在 `serving` 之前恒为 `false` —— 所以给驱动器单独开一条**只放握手帧**的路径，
  *    而不是把 `send()` 的门禁放宽（那等于给"握手期发业务帧"开口子）。
  *    另外握手帧**不盖 `fc`**：它们的线上形状里没有这个字段（§3）。
+ * 5. **封箱是出帧路径上的一个收口**（`write`）。`fc` 在这里分配、又正是 nonce 的来源，
+ *    所以"分配 `fc`"与"用这个 `fc` 封箱"必须紧挨着 —— 分开写迟早出现"封的时候用了另一个 `fc`"
+ *    或"同一个 `fc` 封两次"（后者直接破 AEAD）。**配了 `secure` 却拿不出密码器时宁可不发**：
+ *    明文上线是唯一不可接受的选项。不配 `secure` 的连接则是**明文通道模式**（测试与 fixtures
+ *    词汇层用它，那里的 `box` 本来就是可逆占位），`box` 原样透传。
  *
  * 时间、随机数、定时器全部注入，所以测试能用真实的短周期跑完整条链路。
  *
- * 握手如何接上 `markHandshakeDone` 见 `.agents/notes/implemented/2026-10-01-handshake-on-connection.md`
+ * 握手如何接上 `markHandshakeDone` 见 `.agents/notes/implemented/2026-10-01-handshake-on-connection.md`，
+ * 封箱与重放窗口的顺序见 `.agents/notes/implemented/2026-10-01-business-frame-sealing.md`
  */
 import { ProtocolError } from '../protocol/errors.js'
-import { createSendCounter, type SendCounter } from '../protocol/crypto.js'
-import type { WireFrame } from '../protocol/frame.js'
+import { createSendCounter, type SendCounter, type SessionKeys } from '../protocol/crypto.js'
+import { aadFieldsOf, hasBox, isHandshakeFrameType, needsBox, type WireFrame } from '../protocol/frame.js'
+import type { BoxCodec } from '../protocol/box.js'
 import type {
   HandshakeDriver,
   HandshakeEstablishment,
@@ -39,7 +46,6 @@ import {
   decodeFrame,
   encodeFrame,
   isHandshakeFrame,
-  isHandshakeFrameType,
 } from './codec.js'
 import { createKeepalive, type Keepalive } from './keepalive.js'
 import { createConnectionMachine, type ConnectionState } from './state.js'
@@ -50,6 +56,21 @@ const BATCHED_FRAME_TYPES: ReadonlySet<string> = new Set(['ev', 'live'])
 /** 能把联合的每个成员各自 `Omit`（内置 `Omit` 会把联合塌成一个）。 */
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 
+/** 认证标签字节数（与 `protocol/box.ts` 的 `TAG_BYTES` 同一个值）。 */
+const TAG_BYTES = 16
+
+/**
+ * 封箱之后 `box` 会有多大（字节，含 JSON 引号）。
+ *
+ * 箱是 `base64url(密文 ‖ tag)`，所以体积是 `4*ceil((n+16)/3)`。攒批的 4 KiB 阈值虽然
+ * 是个**软触发**，但 base64 会把载荷放大 1/3 —— 拿明文长度去估会让"攒够 4 KiB"实际
+ * 发出去 5.4 KiB。这一点误差比 `fc` 的位数差更能改变行为，所以这里算上。
+ */
+function sealedBoxBytes(plaintextBytes: number): number {
+  const raw = plaintextBytes + TAG_BYTES
+  return Math.ceil(raw / 3) * 4 + 2
+}
+
 /**
  * 估算一个待发帧的线上字节数。
  *
@@ -58,7 +79,11 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
  * 而它服务的 4 KiB 阈值是个**软触发**，这点误差不改变行为。
  */
 function estimateBytes(frame: OutboundFrame): number {
-  return Buffer.byteLength(JSON.stringify({ ...frame, fc: 0 }), 'utf8')
+  if (!needsBox(frame.t)) return Buffer.byteLength(JSON.stringify({ ...frame, fc: 0 }), 'utf8')
+  const plaintext = 'box' in frame ? Buffer.byteLength(frame.box, 'utf8') : 0
+  // 头按 `box: ''` 估，再加上封箱后的字节数 —— 箱的体积只跟明文长度有关。
+  const header = Buffer.byteLength(JSON.stringify({ ...frame, fc: 0, box: '' }), 'utf8')
+  return header + sealedBoxBytes(plaintext)
 }
 
 /**
@@ -88,15 +113,23 @@ export interface ConnectionOptions {
   url: string
   /** 拨号器。生产传 `(url) => new WebSocket(url)`,测试传自己的桩。 */
   dial: (url: string) => DialSocket
-  /** 收到一帧（已过解码与握手门禁，且**已过握手阶段**）。 */
+  /** 收到一帧（已过解码、握手门禁与**解箱**；`box` 里是明文载荷）。 */
   onFrame: (frame: WireFrame, now: number) => void
   /**
-   * 握手驱动（契约 §4.1）。**每次建连调一次工厂**，拿到该连接的握手会话。
+   * 安全会话：握手 + 封箱（契约 §4.1 / §4.2）。**两者绑在一个对象里**，
+   * 因为"握手谈出密钥"与"用密钥封箱"是同一条链路的上下半段 —— 允许只配一半，
+   * 等于允许一个"握手过了但帧是明文"的连接。
    *
-   * 不传时连接停在 `handshake`，由上层自己调 `markHandshakeDone()`
-   * （只有测试与"还没接驱动"的装配会这么做）。
+   * 不配时连接停在 `handshake`（由上层手动 `markHandshakeDone()`），`box` **原样透传** ——
+   * 那是**明文通道模式**：测试与 `protocol/fixtures` 的词汇层用它（那里的 `box` 是可逆占位，
+   * 不是密文，见 `protocol/frame.ts` 的说明）。产品装配必须配 `secure`。
    */
-  handshake?: HandshakeDriver
+  secure?: {
+    /** **每次建连调一次工厂**，拿到该连接的握手会话。 */
+    handshake: HandshakeDriver
+    /** 握手成功后用它建该连接的箱密码器。每次建连都会重新调用。 */
+    createCipher(keys: SessionKeys): BoxCodec
+  }
   /** 握手成功：会话密钥交给上层（方法面要用它对 `box` 做 AEAD）。 */
   onEstablished?: (result: HandshakeEstablishment) => void
   onStateChange?: (from: ConnectionState, to: ConnectionState) => void
@@ -123,10 +156,8 @@ export interface Connection {
    */
   send(frame: OutboundFrame): boolean
   /**
-   * 手动宣告握手完成。
-   *
-   * **只在没有配 `handshake` 驱动时使用**：配了驱动时，`serving` 由驱动器
-   * 在两道校验都过了之后自己推进（`established`），手动调用等于绕过校验。
+   * 手动宣告握手完成。**只在不配 `secure` 的装配里可用**（测试与手工调试）——
+   * 配了 `secure` 时握手结论只能来自驱动器：手动调用等于绕过两道校验。
    */
   markHandshakeDone(): void
   readonly state: ConnectionState
@@ -166,6 +197,8 @@ export function createConnection(options: ConnectionOptions): Connection {
   let handshakeDone = false
   /** 本次连接的握手会话（每次建连换一个）。 */
   let session: HandshakeSession | null = null
+  /** 本次连接的箱密码器。**每连接换一把密钥**，所以建连时必须清空（§4.2）。 */
+  let cipher: BoxCodec | null = null
 
   const log = options.log
 
@@ -184,7 +217,7 @@ export function createConnection(options: ConnectionOptions): Connection {
     const run = (): void => {
       if (stopped) return
       const action = keepalive.tick(now())
-      if (action.kind === 'ping') write({ v: 1, t: 'ping' })
+      if (action.kind === 'ping') write({ v: 1, t: 'ping', box: '' })
       else if (action.kind === 'half-open') {
         // 半开：TCP 不会报错，只能自己判。关掉 socket，剩下的交给 onclose 统一收口。
         log?.warn('判定为半开连接，关闭并重连', { silentMs: action.silentMs })
@@ -214,12 +247,19 @@ export function createConnection(options: ConnectionOptions): Connection {
   // ---- 收发 ----
 
   /**
-   * 直接写出一帧，**由本层分配 `fc`**。
+   * 直接写出一帧，**由本层分配 `fc`，并在同一个地方封箱**。
    *
-   * 不做状态判断 —— 调用方负责。`fc` 在这里统一盖上，所以调用方传什么都不影响正确性。
+   * 不做状态判断 —— 调用方负责。两个"只在这里做"的理由：
    *
-   * **握手帧不盖 `fc`**：它们的线上形状里没有这个字段（§3），凭空加一个既浪费计数值，
-   * 又让线上帧与契约的形状不一致 —— 而形状不一致的帧会被对端的严格校验当成坏帧。
+   * - **`fc` 在这里统一盖上**，所以调用方传什么都不影响正确性；握手帧不盖（§3）。
+   * - **封箱紧挨着 `fc` 分配**：`fc` 正是 nonce 的来源，"分配"与"封箱"分开写迟早
+   *   出现封的时候用了另一个 `fc`，或者同一个 `fc` 封两次 —— 后者直接破 AEAD。
+   *   调用方（上层）看到的 `box` 永远是**明文载荷**，密封是这一层的事。
+   *
+   * **没有密码器就绝不发**需要封箱的帧：丢掉并留声，而不是明文发出去（§3 只有
+   * 握手三帧与 `presence` 是明文）。这条只在配了 `secure` 时生效 —— 不配 `secure` 的
+   * 连接**本来就是明文通道**（测试与 fixtures 的词汇层用它），那种模式下 `box` 原样透传。
+   * 两种模式的区分是"配不配 `secure`"，不是某个分支里的隐式判断。
    *
    * 写出去也算「有动静」（§2.2 的半开判据是**任一方向**），所以这里重置空闲计时 ——
    * **除了 `ping`**：它是探针本身，`keepalive.tick()` 已经为它重置过，再重置一次会把
@@ -229,9 +269,34 @@ export function createConnection(options: ConnectionOptions): Connection {
   const write = (frame: OutboundFrame): void => {
     if (socket === null) return
     try {
-      const wire = isHandshakeFrameType(frame.t)
+      const handshakeFrame = isHandshakeFrameType(frame.t)
+      const wire = handshakeFrame
         ? (frame as WireFrame)
         : ({ ...frame, fc: counter.next() } as WireFrame)
+
+      if (!handshakeFrame && needsBox(wire.t)) {
+        if (!hasBox(wire)) {
+          // `needsBox` 说该封箱，联合里却没有这个字段 —— 契约与类型漂移了。
+          // 静默发出去就是明文上线，所以这里吵。
+          throw new ProtocolError('internal', `${wire.t} 需要封箱，但帧里没有 box 字段`)
+        }
+        if (cipher === null) {
+          if (options.secure !== undefined) {
+            // 配了 `secure` 却拿不出密码器：只可能是"握手已过但密码器没装上"这类装配错误。
+            // 宁可不发，也不明文上线。
+            log?.warn(`还没有会话密钥，${wire.t} 帧不发（配了 secure 的连接不允许明文帧）`)
+            return
+          }
+          // 明文通道模式（未配 `secure`）：`box` 原样透传。
+          socket.send(encodeFrame(wire))
+          if (frame.t !== 'ping') keepalive.onFrame(now())
+          return
+        }
+        socket.send(encodeFrame({ ...wire, box: cipher.sealFrame(wire, wire.box) }))
+        if (frame.t !== 'ping') keepalive.onFrame(now())
+        return
+      }
+
       socket.send(encodeFrame(wire))
       if (frame.t !== 'ping') keepalive.onFrame(now())
     } catch (error) {
@@ -255,10 +320,11 @@ export function createConnection(options: ConnectionOptions): Connection {
   const handleFrame = (frame: WireFrame): void => {
     // 任何一帧都算「有动静」：收与发都重置空闲计时（§2.2 的半开判据是"任一方向"）。
     keepalive.onFrame(now())
+    // 门禁先于解箱：握手期根本没有密钥，业务帧要在**碰密码学之前**就被拦掉。
     assertHandshakePhase(frame, handshakeDone)
 
     if (!handshakeDone) {
-      // 没有驱动时不拦：那种装配（测试）自己掌握握手进度，`onFrame` 是它唯一的入口。
+      // 没有驱动器时不拦：那种装配（测试）自己掌握握手进度，`onFrame` 是它唯一的入口。
       if (session !== null && isHandshakeFrame(frame)) session.onFrame(frame)
       else options.onFrame(frame, now())
       return
@@ -267,6 +333,17 @@ export function createConnection(options: ConnectionOptions): Connection {
       // 握手已完成还来握手帧：重复投递或重放。**忽略并留声**，不回错误帧 ——
       // 回了就等于告诉对端"我这条连接还处在握手期"。
       log?.warn(`握手已完成，忽略握手帧 ${frame.t}`)
+      return
+    }
+    if (cipher !== null && needsBox(frame.t)) {
+      if (!hasBox(frame)) {
+        // 对端发来一个"该封箱却没有 box"的帧。绝不能放它过去：跳过解箱就等于
+        // 跳过认证与重放守卫，伪造的 `credit` 会直接改状态。
+        throw new ProtocolError('protocol/bad-frame', `${frame.t} 帧缺少 box`)
+      }
+      // 解箱失败会抛（认证失败 → bad-frame；fc 不单调 → replay），由调用方关连接。
+      // 上层的 `box` 一律是**明文载荷**：加密只存在于这一层。
+      options.onFrame({ ...frame, box: cipher.openFrame(frame, frame.box) }, now())
       return
     }
     options.onFrame(frame, now())
@@ -315,7 +392,7 @@ export function createConnection(options: ConnectionOptions): Connection {
 
   /**
    * 进 `serving`。**两个调用者语义不同**：
-   * 驱动器在两道校验都过了之后调（`established`），或没有驱动器时上层手动调。
+   * 驱动器在两道校验都过了之后调（`established`），或没有配 `secure` 时上层手动调。
    * 两处都经这里，是为了让"进 serving 要重置退避"这条只写一遍。
    */
   const enterServing = (): void => {
@@ -328,9 +405,10 @@ export function createConnection(options: ConnectionOptions): Connection {
   const connect = (): void => {
     if (stopped) return
     transition('connecting')
-    // 每次建连都换分帧器**与计数器** —— 新连接新密钥，`fc` 从 0 重数（§4.2）。
+    // 每次建连都换分帧器**、计数器与密码器** —— 新连接新密钥，`fc` 从 0 重数（§4.2）。
     splitter = createLineSplitter()
     counter = createSendCounter()
+    cipher = null
     handshakeDone = false
     session = null
 
@@ -341,11 +419,15 @@ export function createConnection(options: ConnectionOptions): Connection {
       if (stopped) return
       // 鉴权在 WSS 建立时已完成（ticket / 连接器令牌，§2.2），下一步就是 §4.1 的握手。
       transition('handshake')
+      const secure = options.secure
       session =
-        options.handshake?.({
+        secure?.handshake({
           send: sendHandshakeFrame,
           established: (result) => {
             // 到这里说明 `verifySignature` 与 `verifyConfirm` 都过了。
+            // **先把密码器装上再进 serving**：顺序反了就会有一小段"已经在服务但发不出帧"的窗口，
+            // 而那一小段里的每一帧都会被 `write` 丢掉（宁丢不发明文）。
+            cipher = secure.createCipher(result.keys)
             enterServing()
             options.onEstablished?.(result)
           },
@@ -373,6 +455,8 @@ export function createConnection(options: ConnectionOptions): Connection {
       socket = null
       session?.dispose()
       session = null
+      // 密钥属于这条连接：断开即作废，避免下一条连接误用上一把（§4.2）。
+      cipher = null
       if (stopped) return
       transition('closed')
       const delay = backoff.next()
@@ -423,6 +507,13 @@ export function createConnection(options: ConnectionOptions): Connection {
     },
 
     markHandshakeDone() {
+      if (options.secure !== undefined) {
+        // 配了 `secure` 时握手结论只能来自驱动器（两道校验都过）。手动调用等于绕过它们，
+        // 而绕过之后 `cipher` 仍然是 null —— 那样连一帧都发不出去，所以这里直接吵。
+        throw new Error(
+          '配了 secure 的连接不接受手动 markHandshakeDone：serving 只能由握手驱动器推进',
+        )
+      }
       enterServing()
     },
 

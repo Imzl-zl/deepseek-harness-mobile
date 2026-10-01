@@ -56,6 +56,30 @@ export function open({ keyHex, fc, aadFields, ciphertextHex, tagHex }) {
   return Buffer.concat([decipher.update(unb(ciphertextHex)), decipher.final()]).toString('utf8')
 }
 
+/** 认证标签长度。 */
+export const TAG_BYTES = 16
+
+/**
+ * 箱的容器格式（契约 §3）：`base64url(密文 ‖ tag)`，无填充。
+ *
+ * 它是**线上格式的一部分**，所以和曲线/AEAD 一样进向量：两端各自拼一遍再比对 ——
+ * 各写各的容器（一个用十六进制、一个带分隔符）在单侧测试里都是绿的，
+ * 只有真机互通时才断，而那时的症状是"解不开"。
+ */
+export function packBox({ ciphertextHex, tagHex }) {
+  return Buffer.concat([unb(ciphertextHex), unb(tagHex)]).toString('base64url')
+}
+
+/** 箱 → 密文与标签。长度不足即抛（调用方按 `protocol/bad-frame` 处理）。 */
+export function unpackBox(box) {
+  const raw = Buffer.from(box, 'base64url')
+  if (raw.length < TAG_BYTES) throw new Error(`箱只有 ${raw.length} 字节，不足一个认证标签`)
+  return {
+    ciphertextHex: raw.subarray(0, raw.length - TAG_BYTES).toString('hex'),
+    tagHex: raw.subarray(raw.length - TAG_BYTES).toString('hex'),
+  }
+}
+
 /** 握手密钥派生（契约 §4.1）：X3DH 骨架，含 eph×eph ⇒ 前向保密。 */
 export function deriveHandshake(input) {
   const A = keyPairFrom('x25519', input.seedA)

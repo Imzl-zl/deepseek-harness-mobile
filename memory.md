@@ -5,13 +5,13 @@
 
 ## 下一步(新会话从这里开始)
 
-**目标**:让通道真的能收发业务帧 —— 也就是「方法面 + 业务帧 AEAD」这一层。
+**目标**:让手机真的能"发一句、收到一句" —— 也就是**方法面 + 流控**这一层。
 
 **开工顺序**:
 
-1. **业务帧封箱/解封**(`box` 的 AEAD 往返):两侧已有密钥与 `fc` 计数器,但 `req` / `res` / `ev` / `live` 的 `box` 目前没人加解密。落点应在连接层之上、方法面之下,并用连接级 e2e 证明「手机封、电脑开」。
-2. **方法面 handler**:`protocol/methods.ts` 的 22 个方法名与分发骨架已就绪(幂等键强制、分发器不抛);逐个接上 `src/dsh/` 的适配器。当前一律回 `connector/unsupported`。
-3. **配对流程(§12.1)**:二维码 / 配对码 → 写设备记录(含 `pairingId`)与手机侧凭据。没有它就**没有设备行**,`peerOf` 恒返回 undefined,握手一律 `protocol/not-paired` —— 这是当前离"真机发一句"最近的一块空白。
+1. **流控接线**(§4.3):`flow.ts` 的 W=128 发送窗口与"收到即回 `credit`"还没接到收发路径上。它是方法面之前该做的事 —— 没有它,一次大回复会把对端缓冲打满。
+2. **方法面 handler**:`protocol/methods.ts` 的 22 个方法名与分发骨架已就绪(幂等键强制、分发器不抛);逐个接上 `src/dsh/` 的适配器(`req` → dispatch → `res`,按 `id` 关联)。当前一律回 `connector/unsupported`。
+3. **配对流程(§12.1)**:二维码 / 配对码 → 写设备记录(含 `pairingId`)与手机侧凭据。没有它就**没有设备行**,`peerOf` 恒返回 undefined,握手一律 `protocol/not-paired` —— 这是离"真机发一句"最近的一块空白。
 4. **`relay/` 产品化**与**手机端 Dart**(后者前置:先装 Flutter SDK)。
 
 协议本身已定稿,**不需要再决策**;`docs/subsystems/remote-channel.md` 是唯一规格源,`protocol/fixtures/` 与 `protocol/vectors/` 是它的可执行部分。
@@ -33,11 +33,11 @@
 |---|---|
 | `node protocol/verify-fixtures.mjs` | 16 条 fixture / 486 项断言:恢复只有"增量或快照"两种结果;快照带水位与分页;待审批可从日志重建;live 帧不入账 |
 | `node protocol/verify-loopback.mjs` | 26 项:手机 ⇄ 中转 ⇄ 电脑侧桥接回环,含"中转状态清空后重启仍收敛"与强制走桥接分支的 `5b` |
-| `node protocol/verify-vectors.mjs` | 39 项:跨端密码学向量(握手派生 10 + 设备身份 5 + 拼串与签名 3 + AEAD 往返 15 + 篡改 3);改 `protocol/tools/` 后必跑 |
+| `node protocol/verify-vectors.mjs` | 49 项:跨端密码学向量(握手派生 13 + 设备身份 5 + 拼串与签名 3 + AEAD 与箱容器 25 + 篡改 3);改 `protocol/tools/` 后必跑 |
 | `node app/tools/verify-platform-boundary.mjs` | 17 项(含 13 条规则自检):多端边界与 `Platform.isOhos` 禁令 |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
 | `cd connector && pnpm exec tsc --noEmit` | connector 类型检查(改 `connector/src/**` 后必跑) |
-| `cd connector && pnpm test` | connector 全套 **97 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**39 项**),外加握手驱动 / 连接级握手 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
+| `cd connector && pnpm test` | connector 全套 **111 项**:跑 `protocol/fixtures`(16 条 / **486 项断言**)与 `protocol/vectors`(**49 项**),外加握手驱动 / 封箱 / 连接级 e2e / 身份落点 / 分层校验(断言数与参考侧不等就是抄漏了) |
 | `cd connector && pnpm build` | 产出 `lib/index.js` + `lib/index.d.ts`(装进 profile 的那份产物) |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker`;跑法见 `tools.md` |
 
@@ -55,6 +55,7 @@
 - **connector 工程形态** → 独立 pnpm 工程(**不是** DSH workspace 成员,最终以 npm bundle 装进 profile)、`packageManager` 钉 `pnpm@11.13.0`、十三个 DSH 版本(10 dev + 3 peer)全钉 `0.2.0-rc.2` 精确版、兼容性**只看 `peerDependencies`**(不匹配会被静默跳过,写 `engines.dsh` 无效)、`src/protocol/` 不得 import DSH 类型。取舍与被否方案见 `.agents/notes/implemented/2026-10-01-connector-workspace-shape.md`。
 - **握手的具体形状**(已定,不要再改):三帧都是**独立的帧类型**(`hello` / `hello-ack` / `confirm`),`box` 是明文编码容器、不带 `fc`/`sid`;transcript 从字段拼(`dsh-mobile/v1|hello|ephPubA|devId|nonceA|hello-ack|ephPubB|pcId|nonceB`,不含签名);发起方永远是手机,电脑侧只做应答方;`serving` 只能由"两道校验都过"推进。契约 §2.2 / §3 / §4.1 是唯一出处,取舍见 `.agents/notes/implemented/2026-10-01-handshake-third-frame.md` 与 `...-handshake-on-connection.md`。
 - **电脑侧身份与配对标识的落点**(已定):主种子进 `ctx.credentials` 具名记录面(`dsh-mobile-connector/identity`,grant 载荷,首启生成、读不懂即抛错不覆盖);`pairingId` 随设备记录持久化(§8.1)。取舍与被否方案见 `.agents/notes/implemented/2026-10-01-connector-identity-home.md`。
+- **帧的认证边界**(已定):只有握手三帧与 `presence` 明文,其余每种帧(含 `ping`/`pong`/`credit`/`persisted`)都封箱;箱容器 = `base64url(密文‖tag)`;重放窗口**先验后进**;`needsBox(t)` 是"该不该封箱"的唯一判据。取舍与被否方案见 `.agents/notes/implemented/2026-10-01-business-frame-sealing.md`。
 
 ## 进行中 / 未完成
 
@@ -63,7 +64,8 @@
 - **握手真的跑在连接上**:连接进 `handshake` 即启动注入的驱动器(**只做应答方**),`hello-ack` 走一条**只放握手帧**的出帧路径,两道校验都过才进 `serving` 并把会话密钥交给上层。证据是连接级 e2e:真 WebSocket + 手机侧独立替身,两侧派生的密钥能用同一把 `kA2B` 往返。取舍见 `.agents/notes/implemented/2026-10-01-handshake-on-connection.md`。
 - **规格本轮补了两处洞**(均先改 `remote-channel.md` 再改代码):① `confirm` 从"帧联合里根本没有"变成 §3 里的第三个握手帧,同时删掉 §4.1 中"即第一条业务帧""第一帧能解开即确认"这两句与 §2.2 硬冲突的话;② `pairingId` 进 §8.1 设备记录(否则每次重连算不出 `master`)。取舍见 `...-handshake-third-frame.md` 与 `...-connector-identity-home.md`。
 - **电脑侧身份种子有落点了**:`ctx.credentials` 具名记录面(`dsh-mobile-connector/identity`,grant 载荷),首启生成一次、读不懂就抛错**绝不覆盖**;`credentials` 因此从可选升为必需服务。**未实测**:真实 `credentials-local` 上的写入(记录面语义由单测覆盖,服务存在性由 `--dump-config` 证实)。
-- **业务帧还没加解密**:`req` / `res` / `ev` / `live` 的 `box` 目前没人做 AEAD 封箱 —— 会话密钥已派生但**没有消费者**。这是下一块。
+- **业务帧的封箱已落地**:`protocol/box.ts` —— 除握手三帧与 `presence` 外**每帧都封箱**(控制帧封空载荷:`fc` 在 AAD 里,不认证就等于让未认证的数字驱动重放窗口),箱 = `base64url(密文‖tag)`,**重放窗口只在认证通过后推进**。封箱是连接层出帧/收帧的单一收口(`write` 里"分配 `fc`"与"封箱"紧挨着),上层看到的 `box` 永远是明文;`secure` 把握手与密码器绑成一个对象,配了就不可能明文上线。证据:连接级 e2e 用**手机侧独立实现**(自己拼 nonce/AAD/容器,不 import `box.ts`)双向跑通,篡改/重放/缺 box 三种形状各有关连接的错误码。取舍见 `.agents/notes/implemented/2026-10-01-business-frame-sealing.md`。
+- **流控未接线**:`flow.ts` 的 W=128 发送窗口与"收到即回 `credit`"还没有接到收发路径上(帧已经能封箱,但没人管额度)。
 - **方法面 handler 未实现**:`protocol/methods.ts` 的 22 个封闭方法名 + 分发骨架(幂等键强制、分发器不抛)已就绪,但每个方法当前都回 `connector/unsupported`。
 - **配对流程未实现**(§12.1):二维码 / 配对码 → 写设备记录(含 `pairingId`)。没有它就没有设备行,`peerOf` 恒 undefined、握手一律 `protocol/not-paired`。
 - **`relay/`(中转)与 `app/`(手机端)的代码都还没开始**,后者前置是先装 Flutter SDK。
@@ -78,6 +80,10 @@
 - 当前最挡路的一条:CDP 端口可能要换 —— 9222 被日常 Chrome 占用,9400 也可能被上一轮遗留的 headless Chrome 占着,开新端口前先探 `/json/version`。
 
 ## 最近活跃窗口
+
+- 2026-10-01 业务帧封箱(本轮):把 `box` 的 AEAD 补上,并修掉它暴露的三处问题 —— ① `ping`/`pong`/`credit`/`persisted` 带 `fc` 却没有 `box`(未认证的数字直接驱动重放窗口,`credit`/`persisted` 还可被中继伪造改状态)→ 除握手三帧与 `presence` 外一律封箱;② 箱的容器格式没定义 → 定为 `base64url(密文‖tag)` 并**进向量**(5 条 AEAD 各加容器与容器往返两项,39 → **49 项**);③ `crypto.open` 把 `node:crypto` 裸错误漏给协议层 → 认证失败转 `protocol/bad-frame`。实现:`protocol/box.ts`(方向映射 + 容器 + 重放守卫"先验后进" + 同一 `fc` 不许封两次的绊线)、连接层 `secure` 把握手与密码器绑成一个对象、`needsBox`/`hasBox` 两个判据收敛到协议层一处。证据:`pnpm test` **111 项**、`tsc` 0、`pnpm build` 出产物、三条 protocol 门禁 486/26/49、多端边界 17、图标 98;四处变异校验 ⑯⑰⑱⑲ 逐条命中(见 `tools.md`)。
+
+- 2026-10-01 握手接线:把「握手的发帧与状态推进」接到 `transport/connection.ts` —— 新增 `protocol/handshake-driver.ts`(应答方状态机:hello → 签 hello-ack → 验 confirm → 派生)、连接层给它一条**只放握手帧**的出帧路径并把握手帧路由进去、成功后由 `established` 推进 `serving` 并把密钥交给上层;新增 `dsh/identity.ts`(身份种子落凭据记录面),设备记录补 `pairingId`(schema v1→v2),`credentials` 升为必需服务。**顺带修掉三处漂移**:① `confirm` 在帧联合里根本不存在;② 跨端向量签的还是旧 transcript 定义(33 → **39 项**);③ `write()` 发帧不重置空闲计时。取舍见 `.agents/notes/implemented/2026-10-01-handshake-on-connection.md`、`...-handshake-third-frame.md`、`...-connector-identity-home.md`。
 
 - 2026-10-01 握手接线(本轮):把「握手的发帧与状态推进」接到 `transport/connection.ts` —— 新增 `protocol/handshake-driver.ts`(应答方状态机:hello → 签 hello-ack → 验 confirm → 派生)、连接层给它一条**只放握手帧**的出帧路径并把握手帧路由进去、成功后由 `established` 推进 `serving` 并把密钥交给上层;新增 `dsh/identity.ts`(身份种子落凭据记录面)与 `protocol/deriveIdentity`,设备记录补 `pairingId`(schema v1→v2),`credentials` 升为必需服务。**顺带修掉三处漂移**:① `confirm` 在帧联合里根本不存在(补进 §3 与握手期白名单);② 跨端向量签的还是旧 transcript 定义(改成从字段重拼再重签,并补设备身份向量,33 → **39 项**);③ `write()` 发帧不重置空闲计时,与 §2.2「任一方向」相悖(改成"发帧也重置,`ping` 除外")。门禁:三条 protocol 脚本全绿(486 / 26 / 39)、`pnpm test` **97 项**、`tsc` 0、`pnpm build` 出产物、多端边界 17 项、图标 98;三处变异校验 ⑬⑭⑮ 逐条命中预期(见 `tools.md`)。取舍见 `.agents/notes/implemented/2026-10-01-handshake-on-connection.md`、`...-handshake-third-frame.md`、`...-connector-identity-home.md`。
 

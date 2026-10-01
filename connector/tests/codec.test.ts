@@ -18,7 +18,7 @@ import {
   isHandshakeFrame,
 } from '../src/transport/codec.js'
 
-const ping = (fc: number): WireFrame => ({ v: 1, t: 'ping', fc })
+const ping = (fc: number): WireFrame => ({ v: 1, t: 'ping', fc, box: '' })
 
 test('帧 id：生成点产出的东西必须过得了自己的字符集校验', () => {
   // `newFrameId` 与 `ID_PATTERN` 放在同一个文件就是为了这条：分开写迟早出现
@@ -48,7 +48,7 @@ test('isHandshakeFrame：握手帧的判据只有一处', () => {
 test('编码：往返一致，超限直接抛', () => {
   const frame = ping(7)
   // 编码侧必须带行分隔符 —— 契约 §3 是"行级"JSON，漏了它对端会一直当半行缓冲。
-  assert.equal(encodeFrame(frame), '{"v":1,"t":"ping","fc":7}\n')
+  assert.equal(encodeFrame(frame), '{"v":1,"t":"ping","fc":7,"box":""}\n')
   assert.deepEqual(decodeFrame(encodeFrame(frame)), { kind: 'frame', frame })
 
   // 超限不给"先发了再说"的机会。

@@ -68,6 +68,20 @@ interface AeadCodec {
   setAAD(buffer: NodeJS.ArrayBufferView, options?: unknown): unknown
 }
 
+/**
+ * 解密侧用到的那几个方法。
+ *
+ * 同样的理由：`@types/node` 把 `chacha20-poly1305` 的 `Decipheriv` 拆成了专门的接口，
+ * 而通用的 `ReturnType<typeof createDecipheriv>` 上**没有** `setAuthTag`。
+ * 与其给类型系统塞假参数，不如把"我们真正用到的形状"写出来。
+ */
+interface AeadDecipher {
+  setAAD(buffer: NodeJS.ArrayBufferView, options?: unknown): unknown
+  setAuthTag(tag: NodeJS.ArrayBufferView): unknown
+  update(data: NodeJS.ArrayBufferView): Buffer
+  final(): Buffer
+}
+
 export interface KeyPair {
   readonly privateKey: KeyObject
   /** 32 字节原始公钥的十六进制。 */
@@ -125,8 +139,20 @@ export function seal(input: {
 }
 
 /**
- * 解封。**AAD 或 `fc` 不匹配时抛错** —— 这正是 nonce 与 AAD 规则的负向证据，
- * 调用方不得把异常吞成"内容为空"（那等于把篡改当成合法帧）。
+ * 解封。**AAD 或 `fc` 不匹配时抛 `protocol/bad-frame`** —— 这正是 nonce 与 AAD 规则的
+ * 负向证据，调用方不得把异常吞成"内容为空"（那等于把篡改当成合法帧）。
+ *
+ * 两段错误处理刻意分开：
+ *
+ * - **初始化失败**（密钥/nonce 形状不对）→ 抛普通 `Error`：那些值是我们自己算出来的，
+ *   出错说明本地装配有问题，不是对端的错；
+ * - **解密失败** → `ProtocolError('protocol/bad-frame')`：这一帧来自对端且不该被接受。
+ *   不包这一层的话，`node:crypto` 的 `Unsupported state or unable to authenticate data`
+ *   会原样漏到协议层调用方 —— 调用方只能靠 `instanceof ProtocolError` 判类型，
+ *   于是认证失败会被当成"未知内部错误"，而这正是**闭合错误码**要避免的（§3.1）。
+ *
+ * 为什么错误码的正确性只有单测能盯住，见
+ * `.agents/notes/implemented/2026-10-01-business-frame-sealing.md`
  */
 export function open(input: {
   keyHex: string
@@ -135,16 +161,32 @@ export function open(input: {
   ciphertextHex: string
   tagHex: string
 }): string {
-  const decipher = createDecipheriv(AEAD_ALGORITHM, fromHex(input.keyHex), nonceOf(input.fc), {
-    authTagLength: AEAD_TAG_BYTES,
-  })
-  // 见 `AeadCodec` 的说明：解密侧尤其不能塞 plaintextLength。
-  ;(decipher as unknown as AeadCodec).setAAD(aadOf(input.aadFields))
-  decipher.setAuthTag(fromHex(input.tagHex))
-  return Buffer.concat([
-    decipher.update(fromHex(input.ciphertextHex)),
-    decipher.final(),
-  ]).toString('utf8')
+  let decipher: AeadDecipher
+  try {
+    decipher = createDecipheriv(
+      AEAD_ALGORITHM,
+      fromHex(input.keyHex),
+      nonceOf(input.fc),
+      { authTagLength: AEAD_TAG_BYTES },
+    ) as unknown as AeadDecipher
+  } catch (error) {
+    throw new Error(`AEAD 无法初始化（密钥或 nonce 形状不对）：${String(error)}`)
+  }
+
+  try {
+    // 见 `AeadCodec` 的说明：解密侧尤其不能塞 plaintextLength。
+    decipher.setAAD(aadOf(input.aadFields))
+    decipher.setAuthTag(fromHex(input.tagHex))
+    return Buffer.concat([
+      decipher.update(fromHex(input.ciphertextHex)),
+      decipher.final(),
+    ]).toString('utf8')
+  } catch (error) {
+    throw new ProtocolError(
+      'protocol/bad-frame',
+      `解箱失败（AAD、fc 或密文不符）：${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
 }
 
 export interface HandshakeInput {

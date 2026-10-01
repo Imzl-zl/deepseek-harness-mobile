@@ -48,6 +48,7 @@ import { registerInteractions, type RemoteInteractionPort } from './dsh/interact
 import type { TakeoverDevice, TakeoverMode } from './protocol/takeover.js'
 import type { WireFrame } from './protocol/frame.js'
 import { createHandshakeDriver } from './protocol/handshake-driver.js'
+import { createBoxCodec } from './protocol/box.js'
 import { mount, type LifecycleStep } from './lifecycle.js'
 import { METRIC, createChannelLogger, createMetrics, type ChannelLogger, type ChannelMetrics } from './observability.js'
 import { createAliases, type Aliases } from './alias.js'
@@ -290,26 +291,28 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           // Node 22+ 自带全局 WebSocket；不引第三方客户端。
           dial: (url) => new WebSocket(url) as never,
           log: logger,
-          handshake: createHandshakeDriver({
-            identity: { dh: local.keys.dh, signSeedHex: local.keys.signSeedHex },
-            pcId: connectorId,
-            peerOf: (devId) => {
-              const record = devicesTable?.get(devId)
-              // 未配对、已吊销、查不到一律 undefined：对手机都是同一件事（§3.1 的 not-paired）。
-              if (record === undefined || record.revokedAt !== undefined) return undefined
-              return {
-                edPubHex: record.edPub,
-                dhPubHex: record.dhPub,
-                pairingId: record.pairingId,
-              }
-            },
-          }),
-          onEstablished: ({ devId, keys }) => {
+          secure: {
+            handshake: createHandshakeDriver({
+              identity: { dh: local.keys.dh, signSeedHex: local.keys.signSeedHex },
+              pcId: connectorId,
+              peerOf: (devId) => {
+                const record = devicesTable?.get(devId)
+                // 未配对、已吊销、查不到一律 undefined：对手机都是同一件事（§3.1 的 not-paired）。
+                if (record === undefined || record.revokedAt !== undefined) return undefined
+                return {
+                  edPubHex: record.edPub,
+                  dhPubHex: record.dhPub,
+                  pairingId: record.pairingId,
+                }
+              },
+            }),
+            // 电脑侧永远是应答方（`responder` = B）：`kA2B` 解入站、`kB2A` 封出站。
+            // 映射写在协议层一处，写反了不会报错、只会两侧都解不开（§4.1 的教训）。
+            createCipher: (keys) => createBoxCodec({ keys, role: 'responder' }),
+          },
+          onEstablished: ({ devId }) => {
             metrics.increment(METRIC.handshakesEstablished)
             logger.info(`握手完成：设备 ${devId} 已建立端到端会话`)
-            // 方法面落地前，会话密钥没有消费者（业务帧的 AEAD 封箱是下一步）。
-            // 如实写在这里：**现在这条通道还发不出业务帧**，不是"已经在加密通信了"。
-            void keys
           },
           onStateChange: (from, to) => {
             metrics.increment(METRIC.stateTransitions)
@@ -326,8 +329,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         const handleFrame = (frame: WireFrame): void => {
           switch (frame.t) {
             case 'ping':
-              // 连接层保活。回 pong 让对端不必等超时。
-              next.send({ v: 1, t: 'pong' })
+              // 连接层保活。回 pong 让对端不必等超时。空载荷也要封箱（§3）。
+              next.send({ v: 1, t: 'pong', box: '' })
               return
             case 'pong':
             case 'credit':

@@ -1,7 +1,7 @@
 {
   "_generated": "node protocol/tools/gen-vectors.mjs",
-  "spec": "remote-channel.md §3(AAD 规范化)与 §4.2(nonce = fc 的 96 位大端)",
-  "note": "含 nonce 复用禁令的对照:同一 fc 不同明文必须产生不同密文,且 AAD 任一字段变化都必须解密失败",
+  "spec": "remote-channel.md §3(AAD 规范化、箱的容器格式)与 §4.2(nonce = fc 的 96 位大端)",
+  "note": "含 nonce 复用禁令的对照:同一 fc 不同明文必须产生不同密文,且 AAD 任一字段变化都必须解密失败;`box` 是线上容器(base64url(密文‖tag)),必须能解开回同一组密文与标签",
   "vectors": [
     {
       "name": "ev 帧 fc=0",
@@ -17,7 +17,8 @@
       "plaintext": "{\"itemId\":\"m:1:1:assistant\",\"text\":\"你好\"}",
       "key": "fbe7991d750593cade056b62d119de0c38dfb87610e52d1781ff39fa04b5e41b",
       "ciphertext": "a836333838bc3f24f5fd62bbe36b12ffecaa40bafaef11c4e62e1472cd9116611788bdf650d9d5d0d70f7f76",
-      "tag": "f84954eb809c172a4f502cc61bbea8d8"
+      "tag": "f84954eb809c172a4f502cc61bbea8d8",
+      "box": "qDYzODi8PyT1_WK742sS_-yqQLr67xHE5i4Ucs2RFmEXiL32UNnV0NcPf3b4SVTrgJwXKk9QLMYbvqjY"
     },
     {
       "name": "ev 帧 fc=1(seq 递增)",
@@ -33,7 +34,8 @@
       "plaintext": "{\"itemId\":\"m:1:2:assistant\",\"text\":\"世界\"}",
       "key": "fbe7991d750593cade056b62d119de0c38dfb87610e52d1781ff39fa04b5e41b",
       "ciphertext": "892c84a3ca639b51fb677666986eeb2c001196b27812b396407296068e4a781f8d565c611838f48da3b208b7",
-      "tag": "ce07cc071a19f10ee256a34bf0361e08"
+      "tag": "ce07cc071a19f10ee256a34bf0361e08",
+      "box": "iSyEo8pjm1H7Z3ZmmG7rLAARlrJ4ErOWQHKWBo5KeB-NVlxhGDj0jaOyCLfOB8wHGhnxDuJWo0vwNh4I"
     },
     {
       "name": "req 帧(无 sid/seq)",
@@ -49,7 +51,8 @@
       "plaintext": "{\"method\":\"session.prompt\",\"params\":{\"requestId\":\"req_0123456789ab\"}}",
       "key": "fbe7991d750593cade056b62d119de0c38dfb87610e52d1781ff39fa04b5e41b",
       "ciphertext": "9b8e08dd12bc051ecc95a61272240f01f71747e31ade9e44c2eaefe030eb78ba0b65ee88405fd68806cbf1ab1667ac115dd94925da0e8f4ed2544d852f3436cf0fe46955dc",
-      "tag": "789abcb8a498a725cb5e34b80f3a4f84"
+      "tag": "789abcb8a498a725cb5e34b80f3a4f84",
+      "box": "m44I3RK8BR7MlaYSciQPAfcXR-Ma3p5Ewurv4DDreLoLZe6IQF_WiAbL8asWZ6wRXdlJJdoOj07SVE2FLzQ2zw_kaVXceJq8uKSYpyXLXjS4DzpPhA"
     },
     {
       "name": "live 帧(易变流)",
@@ -65,7 +68,8 @@
       "plaintext": "{\"stream\":1,\"rev\":7,\"delta\":\"流式\"}",
       "key": "fbe7991d750593cade056b62d119de0c38dfb87610e52d1781ff39fa04b5e41b",
       "ciphertext": "a02b10cee22e16be347e345d1d0f10cde397ac189698a5de533740c2fe277cb4d1ab265cc9",
-      "tag": "4524f8612146a0416a32f158de66a1d7"
+      "tag": "4524f8612146a0416a32f158de66a1d7",
+      "box": "oCsQzuIuFr40fjRdHQ8QzeOXrBiWmKXeUzdAwv4nfLTRqyZcyUUk-GEhRqBBajLxWN5modc"
     },
     {
       "name": "空载荷",
@@ -81,7 +85,8 @@
       "plaintext": "",
       "key": "fbe7991d750593cade056b62d119de0c38dfb87610e52d1781ff39fa04b5e41b",
       "ciphertext": "",
-      "tag": "be698e3024eea620add23a70be0545b0"
+      "tag": "be698e3024eea620add23a70be0545b0",
+      "box": "vmmOMCTupiCt0jpwvgVFsA"
     }
   ],
   "tamper": [

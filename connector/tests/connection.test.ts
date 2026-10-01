@@ -98,7 +98,7 @@ test('端到端：出站帧的 fc 单调递增（重放防护的前提）', asyn
   // 一旦有重复或回退，对端会按 `protocol/replay` 直接拒绝（§4.2）。
   // 调用方故意传一个会被覆盖的 `fc`，证明分配权确实在连接层。
   for (let i = 0; i < 5; i += 1) {
-    assert.equal(connection.send({ v: 1, t: 'credit', fc: 99 }), true)
+    assert.equal(connection.send({ v: 1, t: 'credit', fc: 99, box: '' }), true)
   }
   await waitFor('服务端收到 5 帧', () => peer.received.length >= 5)
 
@@ -126,7 +126,7 @@ test('端到端：ev 攒批后到达，控制帧立刻到达', async (t) => {
   connection.markHandshakeDone()
 
   // 控制帧立刻走。
-  connection.send({ v: 1, t: 'credit' })
+  connection.send({ v: 1, t: 'credit', box: '' })
   await waitFor('控制帧立刻到达', () => peer.received.length === 1)
 
   // ev 进攒批窗口，不该立刻出现。
@@ -172,7 +172,7 @@ test('端到端：链路被掐断后退避重连，stop 之后不再重连', asy
   // 重连后 fc 必须从 0 重数 —— 新连接新密钥（§4.2）。
   connection.markHandshakeDone()
   peer.received.length = 0
-  connection.send({ v: 1, t: 'credit' })
+  connection.send({ v: 1, t: 'credit', box: '' })
   await waitFor('新连接上的帧到达', () => peer.received.length > 0)
   assert.equal(
     fcOf(peer.received.at(-1)),
@@ -237,7 +237,7 @@ test('端到端：发帧也重置空闲计时（半开判据是「任一方向�
   // 而契约 §2.2 写的是「任一方向」。
   const until = Date.now() + 300
   while (Date.now() < until) {
-    assert.equal(connection.send({ v: 1, t: 'credit' }), true)
+    assert.equal(connection.send({ v: 1, t: 'credit', box: '' }), true)
     await new Promise((resolve) => setTimeout(resolve, 15))
     assert.equal(connection.state, 'serving', '发帧期间不该被判半开')
   }

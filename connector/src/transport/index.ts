@@ -48,16 +48,24 @@ export {
 
 export {
   FRAME_DELIMITER,
-  HANDSHAKE_FRAME_TYPES,
   KNOWN_FRAME_TYPES,
   assertHandshakePhase,
   createLineSplitter,
   decodeFrame,
   encodeFrame,
   isHandshakeFrame,
-  isHandshakeFrameType,
   type DecodeResult,
 } from './codec.js'
+
+/** 帧的语义判据（谁明文、谁要密钥）在协议层，这里只做转发，方便通道侧的调用点就近取。 */
+export {
+  HANDSHAKE_FRAME_TYPES,
+  aadFieldsOf,
+  hasBox,
+  isHandshakeFrameType,
+  needsBox,
+  type BoxedFrame,
+} from '../protocol/frame.js'
 
 export {
   HALF_OPEN_PERIODS,

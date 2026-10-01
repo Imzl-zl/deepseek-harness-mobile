@@ -7,7 +7,7 @@
  * 1. 从固定输入重算握手派生（含 ss1/ss2/ss3、master、kA2B/kB2A）并与向量比对；
  * 2. 重算设备身份（主种子 → Ed25519 / X25519 两把长期密钥）；
  * 3. **从字段重拼 transcript** 并重签 —— 只重签存好的那串字节拦不住"顺序写反"；
- * 4. 重算每条 AEAD 向量（含解密往返），再跑篡改用例：改 AAD 或改 fc 都必须解密失败。
+ * 4. 重算每条 AEAD 向量（含解密往返与**线上容器**），再跑篡改用例：改 AAD 或改 fc 都必须解密失败。
  *
  * 两侧实现（connector 用 TS、手机端用 Dart）各自跑同一批向量；任何一侧对不上，
  * 说明该侧的曲线/HKDF/AEAD/AAD 规范化与契约不一致。
@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { deriveHandshake, deriveIdentity, seal, open, signTranscript, keyPairFrom, transcriptOf } from './tools/vectors-core.mjs'
+import { deriveHandshake, deriveIdentity, packBox, seal, open, signTranscript, keyPairFrom, transcriptOf, unpackBox } from './tools/vectors-core.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const VECTORS = join(HERE, 'vectors')
@@ -57,12 +57,20 @@ const recomputedSig = signTranscript(sig.signerEdSeed, rebuilt)
 check(recomputedSig === sig.sig, 'handshake 签名', `向量 ${sig.sig}，重算 ${recomputedSig}`)
 check(keyPairFrom('ed25519', sig.signerEdSeed).pubHex.length === 64, '签名公钥必须是 32 字节')
 
-// ---- 4. AEAD 往返 ----
+// ---- 4. AEAD 往返 + 线上容器 ----
 const aead = JSON.parse(readFileSync(join(VECTORS, 'aead.json'), 'utf8'))
 for (const v of aead.vectors) {
   const again = seal({ keyHex: v.key, fc: v.fc, aadFields: v.aad, plaintext: v.plaintext })
   check(again.ciphertextHex === v.ciphertext, `${v.name}: 密文`, `向量 ${v.ciphertext.slice(0, 24)}…，重算 ${again.ciphertextHex.slice(0, 24)}…`)
   check(again.tagHex === v.tag, `${v.name}: 认证标签`)
+  // 容器也是线上格式的一部分：两端各拼一遍再比对，避免"各写各的、真机才断"。
+  check(packBox(again) === v.box, `${v.name}: 箱容器`, `向量 ${v.box.slice(0, 24)}…，重算 ${packBox(again).slice(0, 24)}…`)
+  const unpacked = unpackBox(v.box)
+  check(
+    unpacked.ciphertextHex === v.ciphertext && unpacked.tagHex === v.tag,
+    `${v.name}: 容器往返`,
+    `解出 ${unpacked.ciphertextHex.slice(0, 16)}… / ${unpacked.tagHex.slice(0, 16)}…`,
+  )
   const back = open({ keyHex: v.key, fc: v.fc, aadFields: v.aad, ciphertextHex: v.ciphertext, tagHex: v.tag })
   check(back === v.plaintext, `${v.name}: 解密往返`, `得到 ${JSON.stringify(back).slice(0, 40)}`)
 }

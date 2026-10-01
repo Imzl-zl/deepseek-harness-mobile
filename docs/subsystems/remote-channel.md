@@ -80,21 +80,21 @@
 ```ts
 /** 明文头只保留路由、补课与密码学需要的最小字段;方法名、事件类型与内容全在密封载荷里。 */
 type Frame =
-  // 连接层:握手与保活
+  // 连接层:握手(明文,密钥尚未建立)
   | { v: 1; t: 'hello';       id: string; box: string }
   | { v: 1; t: 'hello-ack';   id: string; box: string }
   | { v: 1; t: 'confirm';     id: string; box: string }
-  | { v: 1; t: 'ping';        fc: number }
-  | { v: 1; t: 'pong';        fc: number }
-  // 连接层:流控信用(收到即回,不要求落盘)
-  | { v: 1; t: 'credit';      fc: number }
+  // 连接层:保活与流控信用(空载荷也要封箱,理由见下)
+  | { v: 1; t: 'ping';        fc: number; box: string }
+  | { v: 1; t: 'pong';        fc: number; box: string }
+  | { v: 1; t: 'credit';      fc: number; box: string }
   // 会话层:请求 / 应答 / 事件 / 落盘水位
   | { v: 1; t: 'req';  id: string; sid?: string; fc: number; box: string }
   | { v: 1; t: 'res';  id: string; sid?: string; fc: number; ok: true;  box: string }
   | { v: 1; t: 'res';  id: string; sid?: string; fc: number; ok: false; box: string }
   | { v: 1; t: 'ev';   sid: string; seq: number; fc: number; box: string }
   | { v: 1; t: 'live'; sid: string; stream: number; rev: number; fc: number; box: string }
-  | { v: 1; t: 'persisted'; sid: string; seq: number; fc: number }
+  | { v: 1; t: 'persisted'; sid: string; seq: number; fc: number; box: string }
   // 投影:在线态(明文,中继可转发)
   | { v: 1; t: 'presence'; computer: 'online' | 'offline'; app?: 'foreground' | 'background' }
 ```
@@ -103,7 +103,11 @@ type Frame =
 
 - **`fc` 是发送方向该连接的帧计数器**,从 0 开始,每发一帧 +1(含 `ping` / `credit`)。它是 nonce 与重放防护的唯一来源(§4.2)。握手三帧(`hello` / `hello-ack` / `confirm`)不带 `fc` —— 它们是明文且发生在密钥建立之前,盖一个计数器值只会让线上帧与本文的形状不一致。
 - **`box` = AEAD 密文**,内含方法名 / 事件类型 / 载荷。**`res ok:false` 的错误也封箱**,明文只留帧类型。
-  **例外是握手三帧**(`hello` / `hello-ack` / `confirm`):它们的 `box` 是**明文编码容器**(契约 §4.1)——此刻两侧还没有可用的会话密钥,而这三帧正是用来建立它的。
+- **唯一的明文例外是握手三帧与 `presence`**:前者发生在密钥建立之前(那时没有可用密钥),后者由中继合成(§9)因而中继必须能原样转发。**其余每一种帧都带 `box`,包括 `ping` / `pong` / `credit` / `persisted` 这些"没有内容"的控制帧** —— 它们的载荷是空串,封箱买到的不是保密而是**认证**:
+  - `fc` 出现在 AAD 里,不认证就等于让**未认证的数字直接驱动重放窗口**:注入一帧 `credit{fc: 10^9}` 会把守卫推高,此后所有合法帧都被判成重放(§4.2)。
+  - `credit` 与 `persisted` 都会改变对端状态(放宽发送窗口 / 允许裁剪增量缓冲),未经认证的状态变更就是可被中继伪造的状态变更。
+  - 代价是每个控制帧多 16 字节认证标签 + 一次加解密,对 60 s 一次的心跳与逐帧 `credit` 都可忽略。
+- **`box` 的容器格式**:`base64url(密文 ‖ 16 字节 tag)`,无填充(密文长度由总长减 16 得出,不需要额外分隔符)。选 base64url 而不是十六进制:十六进制会把载荷体积翻倍,而 8 MiB 单帧上限是按编码后的行算的 —— 翻倍等于把可用载荷预算砍半。
 - **AAD 规范化**(两端必须字节一致):
   ```text
   aad = v "|" t "|" id "|" sid "|" seq "|" fc
@@ -181,6 +185,7 @@ seed(32B, 存系统安全存储)
 - **nonce = 12 字节 = `fc` 的 96 位大端表示**,`fc` 从 0 开始、每帧 +1、**不重用**。
 - 不使用随机 nonce:唯一性由计数器保证,不需要 `Random.secure()`(每帧一次系统调用),也不受随机数质量影响。
 - **重放防护(连接层)**:接收方维护 `maxFc`;`fc < maxFc` 即 `protocol/replay` 并断开(`fc == maxFc` 只可能来自重复投递,同样拒绝)。因为握手每连接换密钥,重放旧连接的帧必然解不开。
+  - **顺序是硬规则:先验签,后推进**。只有在 AEAD 校验通过之后才允许把 `maxFc` 推到该帧的 `fc` —— 否则任何未认证的 `fc` 都能替对端"提前"推进窗口,把后续合法帧全判成重放(表现为连接被自己人反复关闭)。先解开再进门,顺序反过来就没有第二条防线。
 - **乱序**:本层不允许乱序(单 TCP 流本来就保序);任何乱序都视为攻击或故障。
 - **算法**:`AEAD = ChaCha20-Poly1305`(默认)。选它的理由:①在 `cryptography_flutter` 的平台加速清单内(Android/iOS 走系统实现);②96 位 nonce 在计数器方案下足够(不需要 XChaCha20 的 192 位随机空间);③纯 Dart 回退也可用。
   - 备选 `AES-GCM`:同一 nonce 规则、同一密钥派生,只换一行常量。鸿蒙侧若实测 AES 明显更快(ARMv8 加密扩展),按 §10 的基准切换,**协议不变**。
@@ -490,6 +495,8 @@ job-settled        后台任务终结     turn-failed       轮次异常结束
 | 会话被删除 / 压缩 | `snapshot` / `no-session` | 该会话消失或刷新为最新基线 |
 | 时钟异常(两端偏差) | 协议不依赖两端时钟;仅推送合并与 TTL 用电脑侧时钟 | 无感 |
 | 中继被攻破 | 只拿到 `sid` / `seq` / `fc` 与密文 | 无法读内容;设备可吊销 |
+| 密文被篡改 / 认证失败 | `protocol/bad-frame`,关闭并重连(重连即换密钥与计数器) | 短暂"连接中";不会把篡改当合法帧 |
+| `fc` 违反单调(重放) | `protocol/replay`,关闭并重连 | 同上;重放窗口**只在验签通过后**推进(§4.2) |
 | DSH 侧日志被裁剪 | 待处理集合随快照刷新 | 极老的悬空项可能看不到 |
 
 ---

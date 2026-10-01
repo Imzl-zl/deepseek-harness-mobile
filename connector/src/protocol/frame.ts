@@ -90,15 +90,15 @@ export type WireFrame =
   | { v: 1; t: 'hello'; id: string; box: string }
   | { v: 1; t: 'hello-ack'; id: string; box: string }
   | { v: 1; t: 'confirm'; id: string; box: string }
-  | { v: 1; t: 'ping'; fc: number }
-  | { v: 1; t: 'pong'; fc: number }
-  | { v: 1; t: 'credit'; fc: number }
+  | { v: 1; t: 'ping'; fc: number; box: string }
+  | { v: 1; t: 'pong'; fc: number; box: string }
+  | { v: 1; t: 'credit'; fc: number; box: string }
   | { v: 1; t: 'req'; id: string; sid?: string; fc: number; box: string }
   | { v: 1; t: 'res'; id: string; sid?: string; fc: number; ok: true; box: string }
   | { v: 1; t: 'res'; id: string; sid?: string; fc: number; ok: false; box: string }
   | { v: 1; t: 'ev'; sid: string; seq: number; fc: number; box: string }
   | { v: 1; t: 'live'; sid: string; stream: number; rev: number; fc: number; box: string }
-  | { v: 1; t: 'persisted'; sid: string; seq: number; fc: number }
+  | { v: 1; t: 'persisted'; sid: string; seq: number; fc: number; box: string }
   | { v: 1; t: 'presence'; computer: 'online' | 'offline'; app?: 'foreground' | 'background' }
 
 export function wireRoutingOf(frame: WireFrame): WireRoutingView {
@@ -107,6 +107,68 @@ export function wireRoutingOf(frame: WireFrame): WireRoutingView {
   if ('seq' in frame && frame.seq !== undefined) view.seq = frame.seq
   if ('fc' in frame && frame.fc !== undefined) view.fc = frame.fc
   return view
+}
+
+/**
+ * 这一帧是不是**必须封箱**的（契约 §3）。
+ *
+ * 只有两类例外：握手三帧（密钥还没建立）与 `presence`（由中继合成，它必须能原样转发）。
+ * 其余每种帧都带 `box` —— **包括 `ping` / `pong` / `credit` / `persisted` 这些"没有内容"的
+ * 控制帧**：它们的载荷是空串，封箱买到的不是保密而是**认证**。
+ *
+ * 判据只写在这里：连接层要用它决定"发之前封什么、收之后解什么"，还要用它决定
+ * "没有密钥时哪些帧根本不许发"。三处各写一遍迟早漂移，而漂移的表现是某一类帧悄悄明文上线。
+ *
+ * 为什么控制帧也要封箱见 `.agents/notes/implemented/2026-10-01-business-frame-sealing.md`
+ */
+export function needsBox(type: string): boolean {
+  if (type === 'presence') return false
+  return !isHandshakeFrameType(type)
+}
+
+/** 带 `box` 字段的帧（握手三帧 + 除 `presence` 外的全部）。 */
+export type BoxedFrame = Extract<WireFrame, { box: string }>
+
+/**
+ * 这一帧有没有 `box` 字段（类型收窄用）。
+ *
+ * 存在的理由：`needsBox(t)` 只是"应该封箱"，`hasBox` 才是"真的有这个字段"。
+ * 两者之间一旦出现漂移（比如某个类型要封箱、联合却忘了加字段），
+ * 症状是**它被明文发出去**或**跳过解箱与重放守卫** —— 都是静默的。所以调用方
+ * 两个判据都要过：`needsBox` 决定"要不要封"，`hasBox` 决定"字段在不在"。
+ */
+export function hasBox(frame: WireFrame): frame is BoxedFrame {
+  return 'box' in frame && typeof frame.box === 'string'
+}
+
+/**
+ * 握手帧的类型集合（契约 §3/§4.1 的明文例外之一）。
+ *
+ * 定义在协议层：这是**帧的语义**（谁明文、谁要密钥），不是通道实现细节；
+ * 通道层只负责"按这个判据放行/拒绝"，不再自己维护一份。
+ */
+export const HANDSHAKE_FRAME_TYPES = ['hello', 'hello-ack', 'confirm'] as const
+
+const HANDSHAKE_TYPE_SET: ReadonlySet<string> = new Set(HANDSHAKE_FRAME_TYPES)
+
+/** 同上，只要类型字符串（`OutboundFrame` 与解码前都只有类型可用）。 */
+export function isHandshakeFrameType(type: string): boolean {
+  return HANDSHAKE_TYPE_SET.has(type)
+}
+
+/**
+ * 取一帧的 AAD 字段（契约 §3 的规范化输入）。
+ *
+ * 与 `wireRoutingOf` 同一个形状：**缺字段就不放进对象**，交给 `aadOf` 用空串占位 ——
+ * 这样"缺字段"只有一种表达，不会出现 `undefined` 与 `''` 两种写法在两端各算一遍。
+ */
+export function aadFieldsOf(frame: WireFrame): AadFields {
+  const fields: AadFields = { v: frame.v, t: frame.t }
+  if ('id' in frame && frame.id !== undefined) fields.id = frame.id
+  if ('sid' in frame && frame.sid !== undefined) fields.sid = frame.sid
+  if ('seq' in frame && frame.seq !== undefined) fields.seq = frame.seq
+  if ('fc' in frame && frame.fc !== undefined) fields.fc = frame.fc
+  return fields
 }
 
 /**

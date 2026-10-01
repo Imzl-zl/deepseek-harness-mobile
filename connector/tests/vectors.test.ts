@@ -2,10 +2,10 @@
  * 跑 `protocol/vectors`（跨端密码学互操作）。
  *
  * 这是 `protocol/verify-vectors.mjs` 在 connector 侧的对应物，判据逐条对齐：
- * 重算握手派生 → 重算设备身份 → **重拼 transcript 并重签** → 重算 AEAD 并做解密往返
+ * 重算握手派生 → 重算设备身份 → **重拼 transcript 并重签** → 重算 AEAD（含**箱容器**与解密往返）
  * → 跑篡改用例（改 AAD 或改 `fc` 必须解密失败）。
  *
- * **断言数必须与参考侧一致（39）**：数量对不上说明移植时漏了断言。
+ * **断言数必须与参考侧一致（49）**：数量对不上说明移植时漏了断言。
  *
  * 为什么本层单独要一批向量：协议 fixtures 有意不测加密（那边的 `seal` 是可逆占位），
  * 而两侧实现各自实现 X25519 / Ed25519 / HKDF / AEAD 时极易漂移 —— 漂移的表现是
@@ -18,6 +18,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { deriveHandshake, deriveIdentity, keyPairFrom, open, seal, signTranscript } from '../src/protocol/crypto.js'
+import { packBox, unpackBox } from '../src/protocol/box.js'
 import type { AadFields } from '../src/protocol/frame.js'
 import { transcriptFromFields } from '../src/protocol/handshake-frames.js'
 
@@ -25,7 +26,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const VECTORS = join(HERE, '..', '..', 'protocol', 'vectors')
 
 /** `verify-vectors.mjs` 的断言总数。两侧实现跑同一批向量，这个数必须相等。 */
-const REFERENCE_CHECK_COUNT = 39
+const REFERENCE_CHECK_COUNT = 49
 
 /* fixtures/vectors 是运行期读入的动态 JSON，形状由 gen-vectors 保证。 */
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -99,7 +100,7 @@ test('跨端密码学向量：握手派生 + AEAD 往返 + 篡改拒绝，断言
     '签名公钥必须是 32 字节',
   )
 
-  // ---- 2. AEAD 往返 ----
+  // ---- 4. AEAD 往返 + 线上容器 ----
   const aead: Json = JSON.parse(readFileSync(join(VECTORS, 'aead.json'), 'utf8'))
   for (const v of aead.vectors as Json[]) {
     const again = seal({
@@ -114,6 +115,18 @@ test('跨端密码学向量：握手派生 + AEAD 往返 + 篡改拒绝，断言
       `向量 ${String(v.ciphertext).slice(0, 24)}…，重算 ${again.ciphertextHex.slice(0, 24)}…`,
     )
     check(again.tagHex === v.tag, `${v.name}: 认证标签`)
+    // 容器也是线上格式的一部分：两端各拼一遍再比对，避免"各写各的、真机才断"。
+    check(
+      packBox(again) === v.box,
+      `${v.name}: 箱容器`,
+      `向量 ${String(v.box).slice(0, 24)}…，重算 ${packBox(again).slice(0, 24)}…`,
+    )
+    const unpacked = unpackBox(v.box as string)
+    check(
+      unpacked.ciphertextHex === v.ciphertext && unpacked.tagHex === v.tag,
+      `${v.name}: 容器往返`,
+      `解出 ${unpacked.ciphertextHex.slice(0, 16)}… / ${unpacked.tagHex.slice(0, 16)}…`,
+    )
     const back = open({
       keyHex: v.key,
       fc: v.fc,
@@ -124,7 +137,7 @@ test('跨端密码学向量：握手派生 + AEAD 往返 + 篡改拒绝，断言
     check(back === v.plaintext, `${v.name}: 解密往返`, `得到 ${JSON.stringify(back).slice(0, 40)}`)
   }
 
-  // ---- 3. 篡改用例必须失败 ----
+  // ---- 5. 篡改用例必须失败 ----
   for (const t of aead.tamper as Json[]) {
     const v = (aead.vectors as Json[])[t.vectorIndex]
     const aadFields = { ...(v.aad as AadFields), ...(t.patch ?? {}) } as AadFields

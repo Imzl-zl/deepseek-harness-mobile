@@ -16,7 +16,8 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 
-import { deriveIdentity, open, seal, signTranscript } from '../src/protocol/crypto.js'
+import { deriveIdentity, open, seal, signTranscript, type SessionKeys } from '../src/protocol/crypto.js'
+import { createBoxCodec } from '../src/protocol/box.js'
 import type { AadFields, WireFrame } from '../src/protocol/frame.js'
 import {
   createHandshakeDriver,
@@ -26,7 +27,7 @@ import { encodeConfirm, parseHelloAck, transcriptFromFields } from '../src/proto
 import { transcriptHashOf } from '../src/protocol/handshake.js'
 import { createConnection, type Connection } from '../src/transport/connection.js'
 import { startPeer, waitFor, type Peer } from './support/peer.js'
-import { createPhone, type Phone } from './support/phone.js'
+import { createPhone, phoneOpenBox, phoneSealBox, type Phone } from './support/phone.js'
 
 const sha256 = (data: Buffer): Buffer => createHash('sha256').update(data).digest()
 
@@ -82,19 +83,23 @@ async function start(t: Cleanup): Promise<Fixture> {
   const connection = createConnection({
     url: peer.url,
     dial: (target) => new WebSocket(target) as never,
-    handshake: createHandshakeDriver({
-      identity: { dh: pc.dh, signSeedHex: pc.signSeedHex },
-      pcId: PC_ID,
-      peerOf: (devId) =>
-        devId === DEV_ID
-          ? {
-              edPubHex: phoneIdentity.sign.publicKeyHex,
-              dhPubHex: phoneIdentity.dh.publicKeyHex,
-              pairingId: PAIRING,
-            }
-          : undefined,
-      timeoutMs: 2_000,
-    }),
+    secure: {
+      handshake: createHandshakeDriver({
+        identity: { dh: pc.dh, signSeedHex: pc.signSeedHex },
+        pcId: PC_ID,
+        peerOf: (devId) =>
+          devId === DEV_ID
+            ? {
+                edPubHex: phoneIdentity.sign.publicKeyHex,
+                dhPubHex: phoneIdentity.dh.publicKeyHex,
+                pairingId: PAIRING,
+              }
+            : undefined,
+        timeoutMs: 2_000,
+      }),
+      // 电脑侧 = 应答方：`kA2B` 解入站、`kB2A` 封出站。
+      createCipher: (keys) => createBoxCodec({ keys, role: 'responder' }),
+    },
     onEstablished: (result) => established.push(result),
     onFrame: (frame) => frames.push(frame),
     heartbeatMs: 5_000,
@@ -140,6 +145,15 @@ function sendConfirm(f: Fixture, box: string): void {
   f.peer.send({ v: 1, t: 'confirm', id: 'c1', box })
 }
 
+/** 走完三帧，返回手机侧独立派生出来的会话密钥。 */
+async function completeHandshake(f: Fixture): Promise<SessionKeys> {
+  sendHello(f)
+  const accepted = f.phone.acceptAck(await waitHelloAck(f))
+  sendConfirm(f, accepted.confirmBox)
+  await waitFor('进入 serving', () => f.connection.state === 'serving')
+  return accepted.keys
+}
+
 test('端到端：走完三帧进入 serving，两侧密钥同一把且真的能用', async (t) => {
   const f = await start(t)
   f.connection.start()
@@ -181,7 +195,7 @@ test('端到端：走完三帧进入 serving，两侧密钥同一把且真的能
   )
 
   // ---- 握手帧不占 `fc`：握手后第一帧业务帧必须还是 0 ----
-  assert.equal(f.connection.send({ v: 1, t: 'credit' }), true)
+  assert.equal(f.connection.send({ v: 1, t: 'credit', box: '' }), true)
   await waitFor('业务帧到达', () => f.peer.received.some((frame) => frame.t === 'credit'))
   const credit = f.peer.received.find((frame) => frame.t === 'credit')
   assert.ok(credit !== undefined && 'fc' in credit)
@@ -247,6 +261,122 @@ test('端到端：没配驱动器时连接停在 handshake，业务帧发不出�
 
   connection.start()
   await waitFor('进入 handshake', () => connection.state === 'handshake')
-  assert.equal(connection.send({ v: 1, t: 'credit' }), false, '握手期业务帧发不出去')
+  assert.equal(connection.send({ v: 1, t: 'credit', box: '' }), false, '握手期业务帧发不出去')
   assert.equal(peer.received.length, 0, '没配驱动器时电脑侧不会主动发握手帧')
+})
+
+// ---------------------------------------------------------------------------
+// 业务帧的封箱与解封（契约 §3、§4.2）
+//
+// 手机侧用的是 `support/phone.ts` 里**自己那份**实现（直接拿 node:crypto 拼 nonce 与
+// AAD、自己拼 base64url 容器），不 import 产品的 `box.ts`。所以下面每条都在验证
+// "两个独立实现能不能对上"，而不只是"我自己和自己对得上"。
+// ---------------------------------------------------------------------------
+
+test('端到端：手机封、电脑解 —— 上层拿到的是明文载荷', async (t) => {
+  const f = await start(t)
+  f.connection.start()
+  await waitFor('进入 handshake', () => f.connection.state === 'handshake')
+  const keys = await completeHandshake(f)
+
+  const header = { t: 'req', fc: 0, id: 'req_0123456789ab', sid: 'sid_0123456789ab' }
+  f.peer.send({
+    v: 1,
+    t: 'req',
+    id: header.id,
+    sid: header.sid,
+    fc: header.fc,
+    box: phoneSealBox({ keys, header, plaintext: '{"method":"repo.info"}' }),
+  })
+
+  await waitFor('上层收到业务帧', () => f.frames.length > 0)
+  const got = f.frames[0]
+  assert.ok(got !== undefined && got.t === 'req')
+  // 上层看到的 `box` 是**明文**：加密只存在于连接层。
+  assert.equal(got.box, '{"method":"repo.info"}')
+  assert.equal(got.id, header.id)
+})
+
+test('端到端：电脑封、手机解 —— 出站帧在线上确实是密文', async (t) => {
+  const f = await start(t)
+  f.connection.start()
+  await waitFor('进入 handshake', () => f.connection.state === 'handshake')
+  const keys = await completeHandshake(f)
+
+  const plaintext = '{"itemId":"m:1:1:assistant","text":"你好"}'
+  assert.equal(
+    f.connection.send({ v: 1, t: 'ev', sid: 'sid_0123456789ab', seq: 7, box: plaintext }),
+    true,
+  )
+  await waitFor('对端收到 ev', () => f.peer.received.some((frame) => frame.t === 'ev'))
+
+  const ev = f.peer.received.find((frame) => frame.t === 'ev')
+  assert.ok(ev !== undefined && ev.t === 'ev')
+  // 线上不是明文（否则加密就是摆设）。
+  assert.equal(ev.box.includes('你好'), false, '线上不该出现明文')
+  // 手机侧用自己的实现解开：AAD 字段序、方向密钥、容器格式三者必须都对得上。
+  assert.equal(
+    phoneOpenBox({
+      keys,
+      header: { t: 'ev', fc: ev.fc, sid: ev.sid, seq: ev.seq },
+      box: ev.box,
+    }),
+    plaintext,
+  )
+})
+
+test('端到端：密文被改一个字符 → 关连接（protocol/bad-frame）', async (t) => {
+  const f = await start(t)
+  f.connection.start()
+  await waitFor('进入 handshake', () => f.connection.state === 'handshake')
+  const keys = await completeHandshake(f)
+  f.watchClose()
+
+  const header = { t: 'req', fc: 0, id: 'req_0123456789ab' }
+  const box = phoneSealBox({ keys, header, plaintext: '{"method":"repo.info"}' })
+  const tampered = `${box.slice(0, 5)}${box[5] === 'A' ? 'B' : 'A'}${box.slice(6)}`
+  f.peer.send({ v: 1, t: 'req', id: header.id, fc: header.fc, box: tampered })
+
+  await waitFor('连接被关闭', () => f.closes.length > 0)
+  assert.equal(f.closes[0]?.code, 4002)
+  assert.equal(f.closes[0]?.reason, 'protocol/bad-frame')
+  assert.deepEqual(f.frames, [], '被篡改的帧绝不能交给上层')
+})
+
+test('端到端：同一帧重放 → 关连接（protocol/replay）', async (t) => {
+  const f = await start(t)
+  f.connection.start()
+  await waitFor('进入 handshake', () => f.connection.state === 'handshake')
+  const keys = await completeHandshake(f)
+
+  const header = { t: 'req', fc: 0, id: 'req_0123456789ab' }
+  const frame = {
+    v: 1 as const,
+    t: 'req' as const,
+    id: header.id,
+    fc: header.fc,
+    box: phoneSealBox({ keys, header, plaintext: '{"method":"repo.info"}' }),
+  }
+  f.peer.send(frame)
+  await waitFor('第一帧被交给上层', () => f.frames.length === 1)
+
+  f.watchClose()
+  f.peer.send(frame)
+  await waitFor('连接被关闭', () => f.closes.length > 0)
+  assert.equal(f.closes[0]?.reason, 'protocol/replay')
+  assert.equal(f.frames.length, 1, '重放的那一帧不该再交给上层')
+})
+
+test('端到端：该封箱的帧缺 box → 关连接（不许跳过认证）', async (t) => {
+  const f = await start(t)
+  f.connection.start()
+  await waitFor('进入 handshake', () => f.connection.state === 'handshake')
+  await completeHandshake(f)
+  f.watchClose()
+
+  // 伪造的 `credit` 若被放行，就等于跳过认证与重放守卫直接改状态（§4.3 的发送窗口）。
+  f.peer.send({ v: 1, t: 'credit', fc: 0 })
+  await waitFor('连接被关闭', () => f.closes.length > 0)
+  assert.equal(f.closes[0]?.reason, 'protocol/bad-frame')
+  assert.deepEqual(f.frames, [])
 })
