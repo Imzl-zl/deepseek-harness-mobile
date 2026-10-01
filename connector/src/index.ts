@@ -43,7 +43,10 @@ import type { Context } from '@deepseek-ai/cordis'
 
 import { type ConnectorConfig, Config } from './config.js'
 import { REQUIRED_SERVICES, readCaps, type Caps } from './dsh/caps.js'
+import { deriveIdentity } from './protocol/crypto.js'
 import { loadOrCreateIdentity, type Identity } from './dsh/identity.js'
+import { createPairing } from './pairing.js'
+import { createPairingEndpoint } from './pairing-endpoint.js'
 import { registerInteractions, type RemoteInteractionPort } from './dsh/interactions.js'
 import type { TakeoverDevice, TakeoverMode } from './protocol/takeover.js'
 import type { WireFrame } from './protocol/frame.js'
@@ -129,6 +132,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
   let devicesTable: {
     get(key: string): DeviceRecord | undefined
     keys(): Iterable<string>
+    /** 配对成功要写设备行（§12.1 第 3 步）—— 这是**唯一**新增设备的路径。 */
+    put(key: string, value: DeviceRecord): Promise<void>
   } | null = null
   /** 幂等表（`core` 域的 `dedupe` 表）。写在库里的行要参与 §5.6 的"命中即回上次结果"。 */
   let dedupeRows: DedupeRows | null = null
@@ -384,6 +389,37 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           log: logger,
         })
 
+        // 配对（§12.1）：核心 + 端点。二维码里的公钥由**主种子派生**（`Identity` 只存种子）。
+        // `putDevice` 落 `devices` 表 —— 那是**唯一**新增设备的路径；配对成功后握手才认得出这台设备。
+        // 出码入口（斜杠命令）与出码时的中转登记是下一步，本步只保证"手机带码回来能配上"。
+        const pcIdentity = deriveIdentity(local.masterSeed)
+        const pairingCore = createPairing({
+          // 二维码里的地址：**中转地址**（契约 §2 的拓扑里手机连的是中转）。
+          relayUrl: relayUrl ?? '',
+          pcPubEd: pcIdentity.sign.publicKeyHex,
+          pcPubDh: pcIdentity.dh.publicKeyHex,
+        })
+        const pairingEndpoint = createPairingEndpoint({
+          pairing: pairingCore,
+          putDevice: async (devId, row) => {
+            if (devicesTable === null) {
+              throw new Error('devices 表尚未就绪：装配顺序有误')
+            }
+            // 字段名在这一层对齐（配对的设备行叫 `edPubHex`，域表叫 `edPub`）。
+            await devicesTable.put(devId, {
+              edPub: row.edPubHex,
+              dhPub: row.dhPubHex,
+              name: row.name,
+              pairedAt: row.pairedAt,
+              pairingId: row.pairingId,
+            })
+          },
+          reply: ({ id, payload }) => {
+            next.sendPairingFrame({ v: 1, t: 'pair-ack', id, box: JSON.stringify(payload) })
+          },
+          log: logger,
+        })
+
         const methodFace = createMethodFace({
           handlers: createHandlers({
             caps: () => readCaps(ctx),
@@ -501,6 +537,12 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
                   logger.debug(`增量缓冲裁剪：${frame.sid} 裁掉 ${removed} 条（设备 ${currentDeviceId} 确认到 ${frame.seq}）`)
                 }
               }
+              return
+            case 'pair':
+              // 配对（§12.1 第 3 步）：**在密钥建立之前**到达，所以连接层把它直接交到这里。
+              // 校验 → 落设备行 → 明文回执，全在 `pairingEndpoint` 里（产品与 fixture 共用一处）。
+              // 注意：它**不是**方法面方法（没有 `sid`、不经 `req`），所以不能走 `methodFace`。
+              void pairingEndpoint.handle({ id: frame.id, box: frame.box })
               return
             case 'req':
               // 方法面。**异步**：handler 可能要等 DSH 服务，而收帧路径不能阻塞
