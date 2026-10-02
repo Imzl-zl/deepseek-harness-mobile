@@ -82,7 +82,7 @@ connector/
 │   ├── transport/   出站 WSS:退避、心跳、半开、攒批、拨号接线
 │   ├── store/       ctx.storage domain KV + schema 迁移(§1.4)
 │   ├── push/        摘要生成与 60 s 合并,投递给中转
-│   └── 根部         入口装配 / 配置 / 生命周期顺序引擎 / 日志与指标
+│   └── 根部         挂载级装配 / 每连接装配 / 配置 / 生命周期顺序引擎 / 日志与指标
 └── tests/           跑 protocol/fixtures 与 protocol/vectors(与 Dart 侧同一批)
 ```
 
@@ -99,6 +99,7 @@ mount
  ├─ 发布服务 ctx.provide('dshMobileConnector', api)     ← 手机端能力门控读它
  ├─ 注册 answerer(TakeoverGate 判定,见 §1.5)
  ├─ load-identity:取(或首次生成)本机身份种子(§12.1)
+ ├─ 装每连接的活物:createConnectionScope(port, deps)(见下"装配分层")
  ├─ transport.start():出站连接(退避)→ 握手(§4.1 三帧)→ serving
  └─ 订阅策略:只为"手机已订阅的会话"建立 follow
 
@@ -112,6 +113,26 @@ dispose
 - **订阅是显式的**:`session.subscribe` 才建立 `follow`;`session.unsubscribe` 关闭它。不订阅 50 个会话(每个 follow 都是 DSH 侧的开销)。
 - **基线快照用 `page()` 分页构造,不重开 `follow`**:`page()` 本身按消息对齐、有页预算、冷安全(`packages/api/session-controller/src/history.ts:77-112`),正好对应契约 §5.4 的 `cursor = "b:<beforeSeq>"`;重开 follow 会多建一个订阅并触发 promote 路径。
 - **不读会话落盘文件**(格式为 v4 且仍在演进,见 `../channel-review-notes.md` §2.7):一律走服务层。
+
+#### 装配分层:挂载级 vs 每连接
+
+一次挂载可以有**多条连接**(直连拓扑下每条手机 socket 一条)。分界只有一条判据:
+**构造物是否需要"往某一条连接里出帧"**。
+
+| 层级 | 构造物 | 位置 |
+|---|---|---|
+| 挂载级(每挂载一份) | 配置与校验、`store.open()`、`ctx.provide('dshMobileConnector')`、answerer 注册、本机身份、会话与任务适配器、幂等表、配对核心、出码命令、**增量缓冲** | `src/index.ts` |
+| 每连接(每条 socket 一份) | 入站帧处理、方法面与处理器表、会话订阅、任务输出订阅、翻页器、配对端点 | `src/connection-scope.ts` 的 `createConnectionScope(port, deps)` |
+
+- **`deps` 全是挂载级的,`port` 是每连接唯一的输入**。窄端口的成员集合是 `ConnectionPort`(4 个):
+  `send` / `sendPairingFrame` / `whenWritable` / `state`。加第 5 个会被
+  `tests/connection-surface.test.ts` 拦下(扫源码断言恰好这 4 个)。
+- **每次连接的订阅断连即终止**(连接离开 `serving` 时);`connection-scope.ts` 的 `servingEnded`
+  也作废该连接的已认证设备身份 —— 水位按设备记(§5.5),而身份只能来自握手。
+- **增量缓冲是挂载级的**:它的存在理由是断线重连后按 `since` 接着收,跟着连接走会退化成每次灌快照;
+  裁剪点是"全部配对设备水位的最小值"(`remote-channel.md` §5.5),而设备横跨连接。
+  连接离开服务态**不**清缓冲 —— 未确认区间留到该设备重新确认,或超限转为"只走快照"
+  (上界 10000 条 / 16 MiB)。
 
 ### 1.4 存储(`ctx.storage` domain KV)
 

@@ -163,13 +163,13 @@ export interface ConnectionOptions {
  *
  * 它把一条**实测结论**固化成类型：`index.ts` 的 `start-transport` 里所有每连接的构造物
  * （处理器表 / 订阅 / 增量缓冲 / 分页器 / 配对端点）合计只通过这 4 个成员碰连接
- * （实测 9 处调用，见 `.agents/notes/proposed/2026-10-01-per-connection-scope-is-an-extraction.md`）。
- * 因此"按连接装配"是一次**搬家**而不是重构：把那段构造搬进 `createConnectionScope(port, deps)` 即可。
+ * （实测 9 处调用，见 `.agents/notes/implemented/2026-10-01-per-connection-scope-is-an-extraction.md`）。
+ * 因此"按连接装配"是一次**搬家**而不是重构：那段构造现在就在
+ * `connection-scope.ts` 的 `createConnectionScope(port, deps)` 里，`port` 即本类型。
  *
- * 这个类型现在还没有调用方 —— 但声明它本身就有用：
+ * 这个类型的两个用处：
  * - 成员名写错或将来从 `Connection` 里删掉任何一个，`tsc` 会**在这里**报错；
- * - 抽取落地时，它就是 `createConnectionScope` 的第一个参数；
- * - 加第 5 个成员时，`tests/connection-surface.test.ts`（读 `index.ts` 的运行时门禁）会先红。
+ * - 加第 5 个成员时，`tests/connection-surface.test.ts`（读源码的运行时门禁）会先红。
  */
 export type ConnectionPort = Pick<
   Connection,

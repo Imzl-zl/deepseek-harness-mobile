@@ -25,9 +25,11 @@
  * `credentials` 从"可选"升成了必需服务（`caps.ts` 有 cite）：电脑侧身份种子存在凭据 seam 里，
  * 没有它连握手都构造不出来 —— 把这种前提当可选项，只会得到一个永远握不了手的空壳。
  *
- * **方法面（契约 §5.7）尚未实现**：本节只处理连接层的四类帧（`ping` / `pong` /
- * `credit` / `presence`），其余帧按「未实现」**显式告警并计数**，不静默丢弃 ——
- * 静默丢弃会让手机端看到"请求发出去了但永远没有回应"，而电脑侧一片安静。
+ * **本文件只管"挂载级"的装配**（一条连接一份的东西都不在这里）：入站帧的处理、方法面、
+ * 会话订阅、配对端点全是**每连接**的，装配在 `connection-scope.ts` 的
+ * `createConnectionScope(port, deps)` 里 —— `port` 就是"每条 socket 各一份"的那条缝。
+ * 为什么这条缝只有 4 个成员、以及哪些构造物**不**该跟着连接走（增量缓冲），见那个文件与
+ * `.agents/notes/implemented/2026-10-01-per-connection-scope-is-an-extraction.md`。
  *
  * 用到的 cordis 宿主接口（路径相对 DSH checkout 根）：
  *
@@ -46,27 +48,28 @@ import { REQUIRED_SERVICES, readCaps, type Caps } from './dsh/caps.js'
 import { deriveIdentity } from './protocol/crypto.js'
 import { loadOrCreateIdentity, type Identity } from './dsh/identity.js'
 import { PAIRING_TTL_MS, createPairing } from './pairing.js'
-import { createPairingEndpoint } from './pairing-endpoint.js'
+import type { PairedDeviceRow } from './pairing-endpoint.js'
 import { readRelayToken } from './dsh/relay-token.js'
 import { createPairingRegistrar } from './pairing-register.js'
 import { offerForScanning } from './pairing-offer.js'
 import { registerInteractions, type RemoteInteractionPort } from './dsh/interactions.js'
 import type { TakeoverDevice, TakeoverMode } from './protocol/takeover.js'
-import type { WireFrame } from './protocol/frame.js'
 import { createHandshakeDriver } from './protocol/handshake-driver.js'
 import { createBoxCodec } from './protocol/box.js'
-import { createHandlers } from './handlers.js'
-import { createMethodFace } from './method-face.js'
+import type { WireFrame } from './protocol/frame.js'
+import type { HandlerDeps } from './handlers.js'
 import { createIdempotency, type DedupeRows } from './idempotency.js'
+import {
+  createConnectionScope,
+  type ConnectionScope,
+  type ConnectionScopeDeps,
+} from './connection-scope.js'
 import { mount, type LifecycleStep } from './lifecycle.js'
 import { METRIC, createChannelLogger, createMetrics, type ChannelLogger, type ChannelMetrics } from './observability.js'
 import { createAliases, type Aliases } from './alias.js'
 import type { JobRegistry } from '@deepseek-ai/dsh-jobs'
 import { createJobsPort, createJobControlPort, type JobControlService } from './dsh/jobs.js'
-import { createJobSubscriptions } from './job-subscriptions.js'
 import { createSessionBuffer } from './session-buffer.js'
-import { createSessionPager } from './session-page.js'
-import { createSessionSubscriptions } from './session-subscriptions.js'
 import { createSessionsAdapter } from './dsh/sessions.js'
 import type { DeviceRecord } from './store/index.js'
 import { coreDomain, initialMeta, migrateMeta, windowsDomain } from './store/index.js'
@@ -117,13 +120,9 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
   let closeStore: (() => Promise<void>) | null = null
   let connection: Connection | null = null
   /**
-   * 当前这条连接的**已认证设备**（来自握手）。
-   *
-   * 增量缓冲的裁剪水位是**按设备**记的（契约 §5.5 要求"全部配对设备都确认"），
-   * 所以入站 `persisted` 必须知道它来自哪台设备 —— 身份只能来自握手，不能来自帧内容
-   * （帧里的字段是手机自己报的，可以撒谎）。
+   * 这条连接的**已认证设备**由 `connection-scope.ts` 记着（增量缓冲的水位按设备记，
+   * 契约 §5.5）—— 它是每连接的状态，所以不放在这里。
    */
-  let currentDeviceId: string | null = null
   let unregisterInteractions: (() => void) | null = null
 /** 出码命令的注销（ctx.commands.register 返回的就是它）。 */
 let unregisterPairingCommand: (() => void) | null = null
@@ -322,8 +321,10 @@ let unregisterPairingCommand: (() => void) | null = null
           throw new Error('start-transport 在身份就绪前被调用：装配顺序有误')
         }
 
-        // 方法面：先建 handler 表（`repo.info` 报的就是这张表的键），再交给方法面接线。
-        // 两者都在这一步构造：它们依赖 `open-store`/`publish-service` 的产物，且**每次挂载一套**。
+        // 下面这一段全是**挂载级**的东西：与"有几条连接"无关，一条也不该按连接重建。
+        // 每连接的装配物（方法面 / 订阅 / 翻页器 / 配对端点）在 `connection-scope.ts` 里，
+        // 由 `createConnectionScope(next, scopeDeps)` 按连接建一次。
+
         // 幂等表在挂载时先收敛一次：TTL（24h）与容量（10000）在契约里是硬约束，
         // 而它没有定时器 —— 收敛点就取"挂载"与"超容量"两处。
         const idempotency =
@@ -338,24 +339,13 @@ let unregisterPairingCommand: (() => void) | null = null
           ctx.get('jobController') === undefined
             ? null
             : createJobControlPort(ctx.get('jobController') as JobControlService)
-        // 输出订阅：注册表要"往连接里出帧"，而连接在这一步里已由 `next` 代表。
-        // 出帧三态在这里归一：不在服务态 → `'closed'`（别发了）；满窗 → `'paused'`（等窗口）。
-        const jobSubscriptions =
-          jobControl === null
-            ? null
-            : createJobSubscriptions({
-                source: jobControl,
-                send: (sid, output) => {
-                  if (next.state !== 'serving') return 'closed'
-                  return next.send({ v: 1, t: 'job', sid, box: JSON.stringify(output) })
-                    ? 'sent'
-                    : 'paused'
-                },
-                waitWritable: () => next.whenWritable('job'),
-                log: logger,
-              })
 
-        // 增量缓冲：每个被订阅的会话一段，裁剪权在手机手里（全部配对设备确认过才裁）。
+        // 会话面适配器是纯闭包、无状态 —— 挂载时建一次，订阅流与翻页共用同一个。
+        const sessions = createSessionsAdapter(ctx.sessionController)
+
+        // 增量缓冲（§5.5）：每个被订阅的会话一段，裁剪权在手机手里（全部配对设备确认过才裁）。
+        // **挂载级**：它的存在理由就是"断线重连后按 `since` 接着收"，跟着连接走会退化成每次灌快照
+        //（完整理由见 `connection-scope.ts` 的文件头）。
         const sessionBuffer = createSessionBuffer({
           pairedDevices: () =>
             devicesTable === null
@@ -364,41 +354,8 @@ let unregisterPairingCommand: (() => void) | null = null
           log: logger,
         })
 
-        // 会话订阅：与任务输出**同一套骨架**（背压、承诺兑现、跟连接活），
-        // 两处只在"键怎么取、开启帧怎么展开、有没有终止帧"上不同。
-        const sessionSubscriptions = createSessionSubscriptions({
-          source: createSessionsAdapter(ctx.sessionController),
-          buffer: sessionBuffer,
-          send: (out) => {
-            if (next.state !== 'serving') return 'closed'
-            const body = out.body
-            const frame =
-              out.t === 'ev'
-                ? { v: 1 as const, t: 'ev' as const, sid: out.sid, seq: out.seq, box: body }
-                : {
-                    v: 1 as const,
-                    t: 'live' as const,
-                    sid: out.sid,
-                    stream: out.stream,
-                    rev: out.rev,
-                    box: body,
-                  }
-            return next.send(frame) ? 'sent' : 'paused'
-          },
-          waitWritable: () => next.whenWritable('ev'),
-          log: logger,
-        })
-
-        // 翻页的水位来自订阅面的开启帧缓存（契约 §5.3：	hroughSeq 必须出自开启帧）。
-        const sessionPager = createSessionPager({
-          sessions: createSessionsAdapter(ctx.sessionController),
-          cursorOf: (sid) => sessionSubscriptions.cursorOf(sid),
-          log: logger,
-        })
-
-        // 配对（§12.1）：核心 + 端点。二维码里的公钥由**主种子派生**（`Identity` 只存种子）。
+        // 配对（§12.1）：核心由**主种子派生**（`Identity` 只存种子），与哪条连接无关。
         // `putDevice` 落 `devices` 表 —— 那是**唯一**新增设备的路径；配对成功后握手才认得出这台设备。
-        // 出码入口（斜杠命令）与出码时的中转登记是下一步，本步只保证"手机带码回来能配上"。
         const pcIdentity = deriveIdentity(local.masterSeed)
         const pairingCore = createPairing({
           // 二维码里的地址：**中转地址**（契约 §2 的拓扑里手机连的是中转）。
@@ -406,26 +363,19 @@ let unregisterPairingCommand: (() => void) | null = null
           pcPubEd: pcIdentity.sign.publicKeyHex,
           pcPubDh: pcIdentity.dh.publicKeyHex,
         })
-        const pairingEndpoint = createPairingEndpoint({
-          pairing: pairingCore,
-          putDevice: async (devId, row) => {
-            if (devicesTable === null) {
-              throw new Error('devices 表尚未就绪：装配顺序有误')
-            }
-            // 字段名在这一层对齐（配对的设备行叫 `edPubHex`，域表叫 `edPub`）。
-            await devicesTable.put(devId, {
-              edPub: row.edPubHex,
-              dhPub: row.dhPubHex,
-              name: row.name,
-              pairedAt: row.pairedAt,
-              pairingId: row.pairingId,
-            })
-          },
-          reply: ({ id, payload }) => {
-            next.sendPairingFrame({ v: 1, t: 'pair-ack', id, box: JSON.stringify(payload) })
-          },
-          log: logger,
-        })
+        /** 字段名在这一层对齐（配对的设备行叫 `edPubHex`，域表叫 `edPub`）。 */
+        const putDevice = async (devId: string, row: PairedDeviceRow): Promise<void> => {
+          if (devicesTable === null) {
+            throw new Error('devices 表尚未就绪：装配顺序有误')
+          }
+          await devicesTable.put(devId, {
+            edPub: row.edPubHex,
+            dhPub: row.dhPubHex,
+            name: row.name,
+            pairedAt: row.pairedAt,
+            pairingId: row.pairingId,
+          })
+        }
 
         // 出码入口：一条斜杠命令。**登记不成就不出码**（`offerForScanning` 的判断），
         // 否则操作者会拿到一张扫了也配不上的二维码，而失败面出现在手机侧。
@@ -450,56 +400,82 @@ let unregisterPairingCommand: (() => void) | null = null
           })
         }
 
-        const methodFace = createMethodFace({
-          handlers: createHandlers({
-            caps: () => readCaps(ctx),
-            aliasVersion: () => aliases?.version ?? 0,
-            sessions: createSessionsAdapter(ctx.sessionController),
-            sessionSubscriptions,
-            sessionPager,
-            // 任务服务是**可选**的（`caps.ts` 的 OPTIONAL_SERVICES）：缺了就不挂 `job.*`，
-            // 手机侧看到的是"这个方法不存在"，而不是一个会回错的按钮。
-            ...(ctx.get('jobs') === undefined
-              ? {}
-              : { jobs: createJobsPort(ctx.get('jobs') as JobRegistry) }),
-            ...(jobControl === null ? {} : { jobControl }),
-            ...(jobSubscriptions === null ? {} : { jobSubscriptions }),
-            aliases: {
-              ensure: (dshSessionId) => {
-                if (aliases === null) {
-                  // 步骤顺序由 `lifecycle.ts` 保证：`open-store` 一定先跑过。
-                  throw new Error('别名表尚未就绪：装配顺序有误')
-                }
-                return aliases.ensure(dshSessionId)
-              },
-              sessionOf: (sid) => aliases?.sessionOf(sid),
+        /**
+         * 方法面的挂载级依赖。**每连接的那三个端口不在这里** ——
+         * `createHandlers` 的 deps 类型上已经不收它们（见 `ConnectionScopeDeps.handlers`）。
+         */
+        const handlerDeps: ConnectionScopeDeps['handlers'] = {
+          caps: () => readCaps(ctx),
+          aliasVersion: () => aliases?.version ?? 0,
+          sessions,
+          // 任务服务是**可选**的（`caps.ts` 的 OPTIONAL_SERVICES）：缺了就不挂 `job.*`，
+          // 手机侧看到的是"这个方法不存在"，而不是一个会回错的按钮。
+          ...(ctx.get('jobs') === undefined
+            ? {}
+            : { jobs: createJobsPort(ctx.get('jobs') as JobRegistry) }),
+          ...(jobControl === null ? {} : { jobControl }),
+          aliases: {
+            ensure: (dshSessionId) => {
+              if (aliases === null) {
+                // 步骤顺序由 `lifecycle.ts` 保证：`open-store` 一定先跑过。
+                throw new Error('别名表尚未就绪：装配顺序有误')
+              }
+              return aliases.ensure(dshSessionId)
             },
-            devices: () =>
-              devicesTable === null
-                ? []
-                : [...devicesTable.keys()].flatMap((id) => {
-                    const record = devicesTable?.get(id)
-                    if (record === undefined) return []
-                    return [
-                      {
-                        id,
-                        name: record.name,
-                        pairedAt: record.pairedAt,
-                        revoked: record.revokedAt !== undefined,
-                      },
-                    ]
-                  }),
-          }),
-          ...(idempotency === null ? {} : { idempotency }),
-          onError: (message, detail) => logger.warn(message, detail),
-        })
-        logger.debug(`方法面已就绪：${methodFace.implemented.length} 个方法`, {
-          methods: [...methodFace.implemented],
-        })
+            sessionOf: (sid) => aliases?.sessionOf(sid),
+          },
+          devices: () =>
+            devicesTable === null
+              ? []
+              : [...devicesTable.keys()].flatMap((id) => {
+                  const record = devicesTable?.get(id)
+                  if (record === undefined) return []
+                  return [
+                    {
+                      id,
+                      name: record.name,
+                      pairedAt: record.pairedAt,
+                      revoked: record.revokedAt !== undefined,
+                    },
+                  ]
+                }),
+        }
+
+        /**
+         * 每连接装配的输入。**拨号路径与将来的监听面共用这一份** ——
+         * 一条 socket 一份的是 `port`，不是这里的东西。
+         */
+        const scopeDeps: ConnectionScopeDeps = {
+          logger,
+          metrics,
+          handlers: handlerDeps,
+          sessions,
+          buffer: sessionBuffer,
+          jobControl,
+          pairing: pairingCore,
+          putDevice,
+          idempotency,
+        }
 
         // 连接器令牌（§12.2）：**拨号与出码登记共用同一个值**，所以在这一步开头读一次。
         // 读不到就**大声失败**（`readRelayToken` 的契约）：起来一个连不上中转的插件没有意义。
         const relayToken = await readRelayToken(ctx.credentials, relayTokenSecretRef ?? '')
+
+        /**
+         * 每连接的装配产物。
+         *
+         * **必须在 `next.start()` 之前赋值**：`start()` 会同步推进状态（`idle → connecting`），
+         * 而下面的回调那时已经在用 `scope` —— 顺序反了会静默丢掉第一条状态回调。
+         * 回调里的 `scopeOf()` 因此不是防御性写法，而是**装配顺序的断言**：
+         * 走到"还没赋值"这条路上只可能是装配写错了（与 `lifecycle.ts` 的其他几处同一个口径）。
+         */
+        let scope: ConnectionScope | null = null
+        const scopeOf = (): ConnectionScope => {
+          if (scope === null) {
+            throw new Error('连接在每连接装配就绪前就开始收帧/迁状态：装配顺序有误')
+          }
+          return scope
+        }
 
         const next = createConnection({
           url: relayUrl ?? '',
@@ -536,77 +512,23 @@ let unregisterPairingCommand: (() => void) | null = null
           },
           onEstablished: ({ devId }) => {
             metrics.increment(METRIC.handshakesEstablished)
-            currentDeviceId = devId
             logger.info(`握手完成：设备 ${devId} 已建立端到端会话`)
+            scopeOf().deviceEstablished(devId)
           },
           onStateChange: (from, to) => {
             metrics.increment(METRIC.stateTransitions)
             if (to === 'connecting') metrics.increment(METRIC.connects)
             logger.debug(`连接状态 ${from} → ${to}`)
-            // 连接一离开服务态，任务输出与会话订阅全部终止：手机这一侧收不到任何东西，
-            // 让它重连后自己按 `from` / `since` 重订（宿主流不会为断了的连接白跑）。
-            if (from === 'serving' && to !== 'serving') {
-              jobSubscriptions?.stopAll()
-              sessionSubscriptions.stopAll()
-              // 连接没了，"这台设备"的身份也就不再成立：不留下一个可能张冠李戴的水位。
-              currentDeviceId = null
-            }
+            if (from === 'serving' && to !== 'serving') scopeOf().servingEnded()
           },
           onFrame: (frame: WireFrame) => {
             metrics.increment(METRIC.inboundFrames)
-            handleFrame(frame)
+            scopeOf().handleFrame(frame)
           },
         })
         connection = next
 
-        const handleFrame = (frame: WireFrame): void => {
-          switch (frame.t) {
-            case 'ping':
-              // 连接层保活。回 pong 让对端不必等超时。空载荷也要封箱（§3）。
-              next.send({ v: 1, t: 'pong', box: '' })
-              return
-            case 'pong':
-            case 'credit':
-            case 'presence':
-              // 保活与流控记账已在 connection 内部处理；这里无需再动作。
-              return
-            case 'persisted':
-              // 手机说"这条 seq 之前的我都写进本地库了"（契约 §5.3 / §5.5）。
-              // 据此推进这台设备的落盘水位；等**全部配对设备**都覆盖过才允许裁掉缓冲头部 ——
-              // 快的那台确认了不代表慢的那台也收到了。
-              if (currentDeviceId !== null) {
-                const removed = sessionBuffer.ack(frame.sid, currentDeviceId, frame.seq)
-                if (removed > 0) {
-                  logger.debug(`增量缓冲裁剪：${frame.sid} 裁掉 ${removed} 条（设备 ${currentDeviceId} 确认到 ${frame.seq}）`)
-                }
-              }
-              return
-            case 'pair':
-              // 配对（§12.1 第 3 步）：**在密钥建立之前**到达，所以连接层把它直接交到这里。
-              // 校验 → 落设备行 → 明文回执，全在 `pairingEndpoint` 里（产品与 fixture 共用一处）。
-              // 注意：它**不是**方法面方法（没有 `sid`、不经 `req`），所以不能走 `methodFace`。
-              void pairingEndpoint.handle({ id: frame.id, box: frame.box })
-              return
-            case 'req':
-              // 方法面。**异步**：handler 可能要等 DSH 服务，而收帧路径不能阻塞
-              // （同一条 socket 上还有 `credit` / 保活要走）。
-              void methodFace.handle(frame).then((response) => {
-                if (response === null) return
-                // 发不出去就留声：手机在等这个 `res`，静默丢弃会变成"永远转圈"。
-                if (!next.send(response)) {
-                  metrics.increment(METRIC.rejectedFrames)
-                  logger.warn(`应答 ${frame.id} 没发出去（连接不在服务态或窗口拒绝）`)
-                }
-              })
-              return
-            default:
-              // **不静默丢弃**：手机端会看到"发出去但没回应"，而电脑侧一片安静 ——
-              // 那是最难查的一类故障。`res` / `ev` / `live` / `persisted` 都是电脑侧发出的方向，
-              // 从手机收到它们说明对端跑错了协议。
-              metrics.increment(METRIC.rejectedFrames)
-              logger.warn(`收到电脑侧方向的帧：${frame.t}（手机不该发这个）`)
-          }
-        }
+        scope = createConnectionScope(next, scopeDeps)
 
         next.start()
         abort.signal.addEventListener('abort', () => {

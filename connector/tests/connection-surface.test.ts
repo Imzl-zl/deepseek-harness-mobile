@@ -1,13 +1,12 @@
 /**
  * "每连接状态"耦合面的门禁（第 66 轮的测量，笔记见
- * `.agents/notes/proposed/2026-10-01-per-connection-scope-is-an-extraction.md`）。
+ * `.agents/notes/implemented/2026-10-01-per-connection-scope-is-an-extraction.md`）。
  *
- * 这条门禁存在的理由：抽取（把每连接的构造物搬进 `createConnectionScope(port, deps)`）**还没做**，
- * 而它的规模完全取决于"那条缝有多宽"。如果在这之前有人往 `start-transport` 里再加一处
- * `next.xxx`，抽取的规模就悄悄变大 —— 而那种变化不会让任何测试变红。
+ * 这条门禁存在的理由：每连接的构造物只允许通过**一个窄端口**碰连接，而"顺手多要一个能力"
+ * 不会让任何行为用例变红 —— 它只会让那条缝悄悄变宽，直到"按连接装配"再也搬不动。
  *
- * 所以把测量**写成断言**：耦合面必须恰好是这 4 个成员。加第 5 个时它会红，
- * 而红的时候正好提醒"顺手把它一起纳入 port"（那是抽取要用的窄端口）。
+ * 所以把测量**写成断言**：耦合面必须恰好是这 4 个成员（`ConnectionPort`）。
+ * 加第 5 个时它会红，而红的时候正好提醒"要么纳入窄端口，要么说明这里真的需要更多能力"。
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -16,25 +15,31 @@ import { test } from 'node:test'
 /** 第 66 轮实测出来的耦合面（去重后的成员名）。 */
 const EXPECTED = ['send', 'sendPairingFrame', 'state', 'whenWritable'] as const
 
-test('start-transport 与连接之间的耦合面恰好是这 4 个成员（抽取的规模不许悄悄变大）', () => {
-  const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')
+/**
+ * 扫描范围是**两处**，缺一不可：
+ *
+ * - `index.ts` —— 连接的持有者与生命周期（`next.start()`）；
+ * - `connection-scope.ts` —— 每连接装配物所在处（抽取之后，成员访问都在这里）。
+ *
+ * 只扫一处的话门禁会"看起来通过"：抽取前只数 `index.ts`，抽取后它就一个成员也数不到了
+ *（旧版扫的是 `next.` 与 `port.` 两条路，那是搬家**进行中**的形状）。
+ */
+const SCANNED = ['../src/index.ts', '../src/connection-scope.ts'] as const
 
-  // 统计**两条路**上的成员访问：
-  // - `next.` —— 直接碰连接（迁移前的主力）；
-  // - `port.` —— 迁移后走窄端口 `ConnectionPort`（类型见 `src/transport/connection.ts`）。
-  // 只数一条路的话，迁移过程中门禁会"看起来通过"（调用点已经搬走），
-  // 而新增的第 5 个成员从另一条路悄悄进来 —— 那正是这条门禁要挡的事。
+test('每连接装配与连接之间的耦合面恰好是这 4 个成员（这条缝不许悄悄变宽）', () => {
   const members = new Set<string>()
-  for (const match of source.matchAll(/\b(?:next|port)\.([A-Za-z_$][\w$]*)/g)) {
-    const member = match[1]
-    // 正则的捕获组在类型上是 `string | undefined`（`noUncheckedIndexedAccess`）——
-    // 这一行是我第 72 轮重写时**漏掉**的：漏了它 `tsc` 就红，而当时我只跑了用例
-    // （tsx 剥类型**不做检查**），于是红了两轮才被全量门禁扫出来。
-    if (member === undefined) continue
-    // `next.start()` 是**连接自己的生命周期**（不属于"每连接状态"的耦合面）；
-    // `port.start()` 不该存在（窄端口里没有它）——所以这里只豁免 next 的那一个。
-    if (member === 'start' && match[0].startsWith('next.')) continue
-    members.add(member)
+  for (const file of SCANNED) {
+    const source = readFileSync(new URL(file, import.meta.url), 'utf8')
+    for (const match of source.matchAll(/\b(?:next|port)\.([A-Za-z_$][\w$]*)/g)) {
+      const member = match[1]
+      // 正则的捕获组在类型上是 `string | undefined`（`noUncheckedIndexedAccess`）——
+      // 漏了这个判断 `tsc` 会红，而 `tsx` 剥类型**不做检查**，于是红了两轮才被发现。
+      if (member === undefined) continue
+      // `next.start()` 是**连接自己的生命周期**（不属于"每连接状态"的耦合面）；
+      // `port.start()` 不该存在（窄端口里没有它）——所以这里只豁免 next 的那一个。
+      if (member === 'start' && match[0].startsWith('next.')) continue
+      members.add(member)
+    }
   }
 
   assert.deepEqual(
