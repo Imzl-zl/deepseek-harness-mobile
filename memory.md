@@ -8,21 +8,16 @@
 **当前里程碑**:远程通道的**代码链路已全线打通**(配对 → 换票 → 经中继握手 → AEAD 双向业务帧,
 在真进程 + 真 socket 上被测);剩下的是**产品化装配、手机端与真机联调**。
 
-1. **执行"每连接状态的抽取"**(下一步第一件事,规模已量化:移动约 150 行、改 9 个调用点、加一个类型;
-   窄端口 = `Pick<Connection,'send'|'sendPairingFrame'|'whenWritable'|'state'>`)。把 `index.ts` 的
-   `start-transport` 里那段每连接构造物(处理器表 / 订阅 / 增量缓冲 / 分页器 / 配对端点)搬进
-   `createConnectionScope(port, deps)`;拨号路径行为不变,将来监听路径每条 socket 各调一次即可支持多设备。
-   方案、"我此前为什么误判成重构"、以及两侧门禁都在
-   `.agents/notes/proposed/2026-10-01-per-connection-scope-is-an-extraction.md`。
-2. **桥接监听面**(直连拓扑用;前置是 1):接受 WSS 连接并交给连接层 —— 需要 `ws` 进连接器的
+1. **桥接监听面**(直连拓扑用;**前置的每连接装配抽取已完成**,`connection-scope.ts` 的
+   `createConnectionScope(port, deps)` 就是那条缝):接受 WSS 连接并交给连接层 —— 需要 `ws` 进连接器的
    **运行时**依赖(连接器现在只拨号,用 Node 自带客户端)。已有 `attach(socket)`(接进来的连接
-   进握手且**不自愈**)。
-3. **手机端 Dart 客户端**(需先装 Flutter SDK):规格侧已备好,尤其 §3 的**行尾 `\n`**
+   进握手且**不自愈**)。已知未解决:两条连接订阅同一会话时同一批 `seq` 被各记一次,缓冲的 `record`
+   只收严格递增 → 后记的被拒并留声(语义没错,是噪音),需在订阅面上做会话级去重。
+2. **手机端 Dart 客户端**(需先装 Flutter SDK):规格侧已备好,尤其 §3 的**行尾 `\n`**
    (漏了的表现是"两侧都正常、对端什么都没收到")、§4 握手、§5.6 幂等、§12 配对。
-4. **真机联调**与 `docs/cookbook/channel-bootstrap.md` 第 5 节实跑(Tailscale 可达性、WSS 证书)。
-5. **中转多实例**:限流 / 一次性票 / 配对登记 / 路由窗口目前都是**进程内状态**;§12 的完整形态
-   要求外部化,那是一件独立的事。
-6. 其余未实现面:插件面板、本机运行模式、goals·schedule·todos 三个远端动作(见 `docs/`)。
+3. **真机联调**与 `docs/cookbook/channel-bootstrap.md` 第 5 节实跑(Tailscale 可达性、WSS 证书)。
+4. **中转多实例**:限流 / 一次性票 / 配对登记 / 路由窗口目前都是**进程内状态**;§12 的完整形态要求外部化。
+5. 其余未实现面:插件面板、本机运行模式、goals·schedule·todos 三个远端动作(见 `docs/`)。
 
 **做完的样子(验收)**:真机上发一句、收到一句;幂等重发不产生第二条;两条路径(Tailscale 直连 / 中转)
 跑同一组用例都成立。
@@ -49,7 +44,7 @@
 | `node app/tools/verify-platform-boundary.mjs` | **17 项**(含 13 条规则自检) |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
 | `cd connector && pnpm exec tsc --noEmit` | connector 类型检查(**改任何 `.ts` 都要跑** —— 有两次只跑用例没跑它,红了没发现) |
-| `cd connector && pnpm test` | connector 全套 **273 项**(含 fixtures 486 / 向量 49 的相等断言) |
+| `cd connector && pnpm test` | connector 全套 **275 项**(含 fixtures 486 / 向量 49 的相等断言) |
 | `cd connector && pnpm build` | 产出装进 profile 的那份产物 |
 | `cd relay && pnpm typecheck && node --test` | relay 类型检查 + **62 条** |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker` |
@@ -89,7 +84,7 @@
 - **`relay/` 已可运行**:路由核心 / 配对登记 / 中转大脑 / 一次性票 / HTTP 面 / 令牌签发与吊销 / 限流 /
   可运行入口 / 配置样例。**已实测**:带密钥三方链路(真进程 + 真 socket)、设备经中转到连接器、往返。
 - **配对链闭合**:出码(带登记)→ 换票 → 经中转转发 → 电脑侧落设备行 → 明文回执。
-- **未做**:上面"下一步"的 1–6(抽取 / 监听面 / Dart / 真机 / 多实例 / 其余面);
+- **未做**:上面"下一步"的 1–5(监听面 / Dart / 真机 / 多实例 / 其余面);
   幂等的启动核对;中转的令牌签发目前靠 CLI(库还没落地)。
 - **profile 侧已起步**:专用 profile `dsh-mobile-test` 里插件装成 `link:` 并进了 `bundles`;
   `--dump-config` 证实三个必需服务在树里都有提供者。**真机连通未做。**
@@ -122,3 +117,4 @@
   (我的断言口径错,而**差点为坏检查去改对的代码** —— 教训:断言红的时候先直接读源码确认,再决定改哪边)。
 - 方法论沉淀:**"这是个大改动"应该先量再下**(一次 grep 数调用点、去重成员,把"重构"与"搬家"分开);
   **先把判定抽成纯函数,适配器剩下的就只是翻译**("需要 DSH 替身才能测"往往可以避免)。
+- **每连接装配抽取落地**:量出那条缝只有 4 个成员 / 9 处调用,"重构"降级成搬家;落地时**没照搬清单** —— 读代码后把增量缓冲改判为挂载级(照搬会让恢复语义静默退化成快照)。教训:理由写在代码里,清单错了就改清单。

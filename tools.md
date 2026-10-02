@@ -50,7 +50,7 @@
   - `cd connector; pnpm install` —— 装依赖,**必须 0 退出**(见 Pitfalls 的构建脚本闸)
   - `pnpm exec tsc --noEmit` —— 类型检查(开工步骤第 2 步的判据)
   - `pnpm build` —— tsdown 产出 `lib/index.js` + `lib/index.d.ts`,即装进 profile 的那份产物;路径对齐靠 `connector/tsdown.config.ts`
-  - `pnpm test` —— 跑 `protocol/fixtures` 与 `protocol/vectors`,外加握手/封箱/流控/任务帧/订阅骨架/方法面/幂等/四个 DSH 适配器/连接/身份等接线用例(当前 **273 项**;其中 fixtures 的断言数须与 `verify-fixtures.mjs` 的 486 一致、向量的与 `verify-vectors.mjs` 的 49 一致)
+  - `pnpm test` —— 跑 `protocol/fixtures` 与 `protocol/vectors`,外加握手/封箱/流控/任务帧/订阅骨架/每连接装配/方法面/幂等/四个 DSH 适配器/连接/身份等接线用例(当前 **275 项**;其中 fixtures 的断言数须与 `verify-fixtures.mjs` 的 486 一致、向量的与 `verify-vectors.mjs` 的 49 一致)
     - **这一行是项数的唯一出处**(`AGENTS.md` §5 特意不在此处复述,就是为了只留一处)。改测试后同步它。
       它已经**静默漂移过一次**(245 → 273):当时用 shell 的 `.Replace` 更新,没匹配上就**什么都不做** ✗ ——
       所以改这行用编辑工具,改完跑一次 `pnpm test` 对一下数。
