@@ -17,12 +17,32 @@ const SCAN_DIRS = ['app/lib', 'app/packages']
 /** 各端实现包的后缀；UI 不允许 import 它们。 */
 const IMPL_SUFFIX = /import\s+['"][^'"]*_(ios|android|ohos)\//
 
+/**
+ * 纯 Dart 层禁用的库，**匹配 import / export 指令本身**，不匹配正文。
+ *
+ * 为什么不能直接 grep 正文：这几条规则的意图是"不许**引入**平台库"
+ * （见每条规则的 `why`），而正文里出现 `dart:io` 的字样往往是**在说明这条规则**
+ * —— 例如 `core/frame.dart` 的文件头写着「不许 import `dart:io`」。
+ * 按正文匹配会把这种说明判成违规，等于**惩罚把规则写进代码**，
+ * 而下一批 core/ 文件每一个都会想提这件事。所以这里只认真正的 import/export 行。
+ *
+ * 顺带天然放过注释：注释行以 `//` / `///` 开头，`^\s*` 之后接不上 `import`。
+ */
+const FORBIDDEN_IMPORT =
+  /^[ \t]*(?:import|export)\s+['"](?:dart:io|package:flutter\/(?:services|widgets|material)\.dart)['"]/m
+
+/** 取第一条匹配，用于报错信息里显示"命中了什么"。 */
+function firstForbiddenImport(content) {
+  const found = FORBIDDEN_IMPORT.exec(content)
+  return found ? found[0].trim() : null
+}
+
 const RULES = [
   {
     id: 'core-no-platform-import',
     why: '纯 Dart 层出现平台 import，纯 Dart 单测立刻不可写',
     appliesTo: (p) => /^app\/lib\/(core|data|model)\//.test(p),
-    match: (content) => firstMatch(content, /dart:io|package:flutter\/(services|widgets|material)\.dart/g),
+    match: (content) => firstForbiddenImport(content),
   },
   {
     id: 'ui-no-impl-import',
@@ -34,7 +54,7 @@ const RULES = [
     id: 'ui-no-platform-import',
     why: 'UI 里出现 dart:io，说明平台细节漏进了界面层',
     appliesTo: (p) => /^app\/lib\/ui\//.test(p),
-    match: (content) => firstMatch(content, /dart:io/g),
+    match: (content) => firstForbiddenImport(content),
   },
   {
     id: 'branch-whitelist',
@@ -62,6 +82,28 @@ const RULES = [
 const SELF_TEST = [
   { rule: 'core-no-platform-import', path: 'app/lib/core/transport.dart', content: "import 'dart:io';", shouldFail: true },
   { rule: 'core-no-platform-import', path: 'app/lib/core/transport.dart', content: "import 'package:flutter/foundation.dart';", shouldFail: false },
+  // **说明这条规则的注释不算违规**：正则只认 import/export 指令本身。
+  // 少了这两条样本，规则会退化成"按正文 grep"，而那样会惩罚把规则写进代码
+  // （真实踩到：core/frame.dart 的文件头写了「不许 import `dart:io`」就被判违规）。
+  {
+    rule: 'core-no-platform-import',
+    path: 'app/lib/core/transport.dart',
+    content: '/// 本文件是纯 Dart：不许 import `dart:io` 或 `package:flutter/material.dart`。\nimport \'dart:convert\';',
+    shouldFail: false,
+  },
+  {
+    rule: 'core-no-platform-import',
+    path: 'app/lib/core/transport.dart',
+    content: '// 见 docs：core 层禁 dart:io\nimport \'dart:typed_data\';',
+    shouldFail: false,
+  },
+  // 但**真的 import** 必须拦住，哪怕前面有注释。
+  {
+    rule: 'core-no-platform-import',
+    path: 'app/lib/core/transport.dart',
+    content: '/// 说明\nimport \'dart:io\';\n',
+    shouldFail: true,
+  },
   { rule: 'ui-no-impl-import', path: 'app/lib/ui/chat.dart', content: "import '../../packages/secure_store_ohos/secure_store_ohos.dart';", shouldFail: true },
   { rule: 'ui-no-impl-import', path: 'app/lib/ui/chat.dart', content: "import '../../packages/secure_store/secure_store.dart';", shouldFail: false },
   { rule: 'ui-no-platform-import', path: 'app/lib/ui/chat.dart', content: "import 'dart:io';", shouldFail: true },
