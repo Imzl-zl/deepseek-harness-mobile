@@ -132,12 +132,32 @@ typedef SendEntry = Future<bool> Function(OutboxEntry entry);
 
 /// 写操作待发队列（契约 §5.6）。
 class Outbox {
-  Outbox({required OutboxStore store, required SendEntry send})
+  Outbox({required OutboxStore store, SendEntry? send})
     : _store = store,
       _send = send;
 
   final OutboxStore _store;
-  final SendEntry _send;
+
+  SendEntry? _send;
+
+  /// 装上出帧口。**由 `SyncClient` 在构造自己之后调**。
+  ///
+  /// ## 为什么是"先建队列、后装出帧口"而不是构造时传
+  ///
+  /// 两者互相需要：队列要客户端才能发帧，而客户端要队列才能处理写操作 ——
+  /// 构造期传就成环了。而**绕开它的常见做法（构造时传一个假实现）已经踩过**：
+  /// 装配点写了 `send: (_) async => false`，于是 `flush()` 永远返回 `offline`、
+  /// **队列里每一条都永远发不出去**，而症状只是"订阅了但收不到数据"——
+  /// 没有任何报错（`offline` 是合法返回值）。
+  ///
+  /// 所以出帧口是**可缺省的**：缺省时 [flush] 如实返回 [FlushOutcome.offline]
+  /// （而不是假装发成功），而装上去这个动作是显式的、只在一处发生。
+  void attachSender(SendEntry send) => _send = send;
+
+  /// 是否已装出帧口（诊断与启动自检用）。
+  ///
+  /// **生产装配必须让它为真**：为假意味着"能入队但永远发不出去"。
+  bool get hasSender => _send != null;
 
   /// 内存镜像（按入队顺序）。落盘是权威，它只是避免每次 `flush` 都读一遍盘。
   final List<OutboxEntry> _pending = [];
@@ -180,8 +200,12 @@ class Outbox {
   /// 没收到的话重连后由 `persisted`/快照收敛（那是会话层的事，不是队列的）。
   Future<FlushOutcome> flush() async {
     while (_pending.isNotEmpty) {
+      final send = _send;
+      // **没装出帧口就如实说"发不出去"**（而不是假装发成功）。
+      // 假装成功会让调用方把队列项删掉 —— 那等于**静默丢掉一次写操作**。
+      if (send == null) return FlushOutcome.offline;
       final entry = _pending.first;
-      final sent = await _send(entry);
+      final sent = await send(entry);
       if (!sent) return FlushOutcome.offline;
       await _store.remove(entry.requestId);
       _pending.removeAt(0);

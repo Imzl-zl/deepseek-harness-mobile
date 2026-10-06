@@ -39,8 +39,8 @@
 - 图标集校验(不需要浏览器):`node mock/proto/tools/verify-icons.cjs`
 - **手机端 `app/`(Flutter 工程;`flutter` 装在 `D:\soft\flutter`,已进用户 PATH)**:
   - **版本闸门:锁 Flutter `3.41.9`**(上界由鸿蒙 fork 定,`app-platform-boundaries.md` §4)。当前上游 stable 是 3.47.6,**不许装** —— Dart SDK 版本决定语言特性,升上去等接鸿蒙时要回改一大片。自带 Dart 3.11.5。
-  - `cd app; flutter test` —— 跑 `test/`,当前 **158 项**:core 单测 53 + 连接层 59(状态机/退避/心跳半开/箱与握手/接线 e2e/outbox/LiveAccumulator/断连拒绝在途请求) + 平台层 6(真 socket) + 配对 6(跨端向量:SAS/pairingId/codeHash/deviceId) + 图标 11(含**数像素**证明真的画出来) + 界面 3 + 跨端向量 16 + fixtures 三角色回放 1
-  - `cd app; flutter test integration_test/ -d emulator-5554` —— **真机/模拟器组**(当前 2 项):验 `flutter_secure_storage` 真的落到设备密钥库。**纯单测做不了这个**(插件在 Dart VM 里没有实现,调用会抛 `MissingPluginException`)。需要 `ANDROID_HOME`/`JAVA_HOME` 都在环境里,否则报 `Could not locate aapt`
+  - `cd app; flutter test` —— 跑 `test/`,当前 **196 项**:core 单测 53 + 连接层 59(状态机/退避/心跳半开/箱与握手/接线 e2e/outbox/LiveAccumulator/断连拒绝在途请求/落盘与 persisted) + 平台层 6(真 socket) + 配对 6(跨端向量:SAS/pairingId/codeHash/deviceId) + 图标 11(含**数像素**证明真的画出来) + **本地库 28(同一套断言在 sqflite 与内存实现上各跑一遍)** + 装配不变量 5 + 界面 3 + 跨端向量 16 + fixtures 三角色回放 1
+  - `cd app; flutter test integration_test/ -d emulator-5554` —— **真机/模拟器组**(当前 4 项):验 `flutter_secure_storage` 真的落到设备密钥库(2)+ `sqflite` 在**设备原生 SQLite** 上建表/落盘/重开还在(2)。**纯单测做不了这个**(插件在 Dart VM 里没有实现,调用会抛 `MissingPluginException`;而单测里的 sqflite 走 ffi,不是同一个驱动)。需要 `ANDROID_HOME`/`JAVA_HOME` 都在环境里,否则报 `Could not locate aapt`
   - `cd app; dart analyze --fatal-infos lib test integration_test` —— **社区口径的静态检查**(比 `flutter analyze` 严:把 info 也当失败)。0 问题才算干净
   - `cd app; dart format --output=none --set-exit-if-changed lib test integration_test` —— **Dart 社区硬规范**(Flutter CI 一直拿它当门禁)。`--set-exit-if-changed` 是判据,不是"看一眼"
   - `node app/tools/gen-pairing-vectors.mjs` —— **重新生成配对向量**(调真实的 `connector/src/pairing.ts`)。改了配对派生规则后必须重跑,否则 fixture 与实际实现脱节

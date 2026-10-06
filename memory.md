@@ -20,7 +20,7 @@
 [✅] platform/ 凭据安全存储(pairing_store.dart,主种子进 Keystore;真机 integration_test 验)
 [✅] model/ + data/(领域模型、事件投影、条目表、应用级状态)
 [✅] ui/ 配对页 + 会话列表 + 对话页(安卓模拟器实跑截图见 docs/shots/)
-[  ] data/store.dart(sqflite 本地库 —— 现在条目只在内存,重启即空)
+[✅] data/store.dart(sqflite 本地库:条目/水位/迁移;两个实现同一套断言)
 [  ] ui/adaptive/(系统紧耦合控件的平台惯例层)
 [  ] 三端能力包(secure_store_* / notify / live_surface / keepalive)
 [  ] 相机扫码(增量,加在 pairing_page 上)
@@ -69,9 +69,9 @@
 | `node protocol/verify-fixtures.mjs` | 16 条 fixture / **486 项断言** |
 | `node protocol/verify-loopback.mjs` | **26 项**:手机 ⇄ 中转 ⇄ 桥接回环(含中转清空后重启) |
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量(改 `protocol/tools/` 后必跑) |
-| `node app/tools/verify-platform-boundary.mjs` | **113 项**(含 22 条规则自检 + 扫描 31 个 Dart 文件;含 `no-material-icons`) |
-| `cd app && flutter test` | **158 项**(core 53 + 连接层 59 + 平台层 6 + 配对 6 + **图标 11** + 界面 3 + 向量 16 + fixtures 回放 1 + 其它) |
-| `cd app && flutter test integration_test/pairing_flow_test.dart -d emulator-5554` | **2 项**(真机验安全存储:纯单测验不了插件) |
+| `node app/tools/verify-platform-boundary.mjs` | **117 项**(含 22 条规则自检 + 扫描 33 个 Dart 文件;含 `no-material-icons`) |
+| `cd app && flutter test` | **196 项**(core 53 + 连接层 59 + 平台层 6 + 配对 6 + 图标 11 + **本地库 28** + 装配 5 + 界面 3 + 向量 16 + fixtures 回放 1 + 其它) |
+| `cd app && flutter test integration_test/ -d emulator-5554` | **4 项**(真机:安全存储 2 + 本地库 2)。**纯单测验不了插件** |
 | `cd app && dart analyze --fatal-infos lib test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test` | 0 文件需重排(Dart 社区硬规范) |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
@@ -142,7 +142,32 @@
 
 ## 最近活跃窗口(2026-10-01 起)
 
-- **手机端图标用 DSH 的(2026-10-02)**:我在写 UI 时**随手用了 11 个 Material 图标**
+- **手机端本地库落地(2026-10-02)**:接线时挖出**两个"说了谎"的缺口**,都没有可见症状:
+  - **`persisted` 一直在说谎**:契约 §5.3 要求"`ev` 落盘后才发 `persisted`",而实现只调了
+    一次**内存**的 `commit` 就发帧 —— **没有任何落盘**。后果不是崩溃,而是
+    **重启后那段数据永久丢失**(电脑按水位裁掉了那边的缓冲)。修法:`SyncClientDeps` 加
+    **窄接口** `ItemPersister`(不是 `ItemStore` —— core 不该认识表和序列化),
+    **落盘成功后才发**;失败则不发、水位不前进(重连时电脑重发那一段,幂等安全)。
+    落盘用一条 `_persistChain` **串行**:并发落盘 + "水位取最大"的实现会让水位倒退。
+  - **出帧队列从来没发过任何东西**:装配点写的是 `send: (_) async => false` ⇒
+    `flush()` 永远返回 `offline` ⇒ 队列里每一条都永远发不出去,而 `offline` 是合法返回值
+    ⇒ **没有任何异常**。量了全仓 `Outbox(` 共 9 处构造,**每一处都传的是桩**。
+    根因是**循环依赖**(队列要客户端发帧,客户端要队列处理写操作),而"构造时传假的"是
+    绕开环的常见做法。修法:`Outbox.send` 可缺省 + `attachSender` 由 `SyncClient` 自己装,
+    并加 `hasSender` 供启动自检。
+  - **schema 三端同源**:`storeSchemaVersion` + `storeMigrations` 定义在 `data/store.dart`
+    (纯 Dart),`platform/sqflite_item_store.dart` **只负责执行**、不许自己写 `ALTER TABLE`。
+    分叉点在**驱动**,不在**格式**。
+  - **准入判据**:`test/store_contract_test.dart` 用**同一套断言**(14 条)在 sqflite 与内存
+    实现上各跑一遍 —— 第一次跑就抓到了 sqflite 那份起不来库的问题。
+    `test/assembly_invariants_test.dart` 用结构断言钉住"装配点不许退回假实现"。
+  - **一处如实记录**:`assembly_invariants_test` 的第一版是**空转的** ——
+    正则里的 `.` 不匹配换行(装配点那个 `Outbox(...)` 跨三行),变异校验时它照样通过。
+    改成按配对括号取调用文本后才真的有效。**结构断言也要变异校验**。
+  - **设备验证**:`flutter test integration_test/ -d emulator-5554` **4 项全过**
+    (安全存储 2 + 本地库 2,含"关掉再打开数据还在")。
+  - 见 `.agents/notes/implemented/2026-10-02-mobile-local-store.md`。
+- **手机端图标用 DSH 的(2026-10-02,同批)**:我在写 UI 时**随手用了 11 个 Material 图标**
   (`Icons.refresh`/`Icons.send`/…),这破坏了项目硬规则"图标只有一个来源"。修法与要点:
   - **机生成**:`app/tools/extract-dsh-icons-dart.mjs` 读 `mock/proto/icons.js`(**与原型同一份**)
     产出 `app/lib/theme/dsh_icons.dart`(98 个)。Dart 侧实现写在 `app/tools/dsh_icons.template.dart`

@@ -121,6 +121,12 @@ abstract interface class SyncClientProbe {
   /// 它值得暴露：**被拒绝的请求数是"这次断连伤到了什么"的唯一证据**。
   /// 没有它，一次断连只留下"连接状态变了"，而"有几个请求被取消"无从得知。
   int? get lastRejectedCalls;
+
+  /// 上一次落盘失败；没失败过是 `null`。
+  ///
+  /// 它值得暴露，理由同上但更严重：**落盘失败的表现是"数据少了一段"**，
+  /// 而不是任何用户可见的错误。没有这个字段，那条失败只留在日志里。
+  Object? get lastPersistError;
 }
 
 /// 一次会话更新（`sessionUpdates` 的元素）。
@@ -201,6 +207,30 @@ class SessionEvent {
   final Object? data;
 }
 
+/// **落盘缝**：把一批事件交给本地库，成功后返回。
+///
+/// ## 为什么是窄接口，而不是直接用 `ItemStore`
+///
+/// `core/` 不该知道"条目怎么存、有几张表、schema 几版" —— 那些是 `data/` 的事。
+/// 它只需要一个承诺：**"返回了，就说明这批在盘上了"**。
+///
+/// 这也让 `core/` 的单测不必起数据库：给一个记账用的假实现即可。
+///
+/// ## 契约（实现必须满足）
+///
+/// 1. **返回即落盘**。抛错即表示没落盘，调用方**不会**发 `persisted`。
+/// 2. **幂等**：同一批写两次等价于一次（崩溃后重放是预期行为，§5.3）。
+/// 3. **水位与内容同一个事务**（§5.3）：不能出现"水位到了 10、条目只到 7" ——
+///    那个状态无法自愈（重连时手机会说"我到 10 了"，电脑就不再补 8~10）。
+abstract interface class ItemPersister {
+  /// 提交一批事件与随之推进的水位。
+  Future<void> persist({
+    required String sid,
+    required List<SessionEvent> events,
+    required int seq,
+  });
+}
+
 /// `SyncClient` 需要的一切。全部注入，所以它可以脱离真机测试。
 class SyncClientDeps {
   const SyncClientDeps({
@@ -209,6 +239,7 @@ class SyncClientDeps {
     required this.box,
     required this.outbox,
     required this.session,
+    this.persistence,
     this.keepalive,
     this.backoff,
     this.now,
@@ -230,6 +261,17 @@ class SyncClientDeps {
 
   /// 本地会话状态（接收规则、快照拼接、水位）。
   final DeviceSession session;
+
+  /// **落盘缝**（契约 §5.3：`persisted` 只在落盘成功后发）。
+  ///
+  /// `null` = 不落盘，此时 `persisted` 发的是"我处理完了"而不是"它在盘上了" ——
+  /// **那在生产里是不可接受的**（水位超前于内容 ⇒ 崩溃后那段数据永久丢失，
+  /// 因为电脑收到水位就裁掉了那边的缓冲）。
+  /// 所以生产装配必须给；`null` 只给"不关心崩溃恢复"的单测用。
+  ///
+  /// 它是个**窄接口**而不是 `ItemStore`：`core/` 不需要知道条目怎么存、
+  /// 存几张表 —— 它只需要"把这批交出去，成功后告诉我"。
+  final ItemPersister? persistence;
 
   /// 心跳与半开判定。不给则用默认周期。
   final Keepalive? keepalive;

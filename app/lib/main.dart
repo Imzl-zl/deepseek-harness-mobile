@@ -28,7 +28,9 @@ import 'core/recovery.dart';
 import 'core/sync_client.dart' hide AppState;
 import 'core/sync_client_impl.dart';
 import 'data/app_model.dart';
+import 'data/store.dart';
 import 'platform/pairing_store.dart';
+import 'platform/sqflite_item_store.dart';
 import 'platform/websocket_transport.dart';
 import 'theme/dsh_theme.dart';
 import 'ui/pairing_page.dart';
@@ -130,6 +132,11 @@ class _DshMobileAppState extends State<DshMobileApp> {
 ///
 /// 这是全项目唯一一处"知道用哪个实现"的地方（见文件头）。
 Future<AppModel> _assemble(PairedCredentials credentials) async {
+  // 本地库：**先开库再装配**。条目与水位都落在这里（契约 §8.3 的 schema
+  // 定义在 `data/store.dart`，驱动是 sqflite —— 三端同源、只有驱动分叉）。
+  final store = SqfliteItemStore();
+  await store.open();
+
   // 身份：从主种子派生两把长期密钥（契约 §4.1）。
   // 只存一个 secret —— 三端安全存储才统一得起来（`app-platform-boundaries.md` §5）。
   final identity = await deriveIdentity(credentials.masterSeedHex);
@@ -165,8 +172,15 @@ Future<AppModel> _assemble(PairedCredentials credentials) async {
         newFrameIdHex: () => newFrameId(randomBytes(frameIdBytes)),
       ),
       box: (keys) => BoxCodec(keys: keys, role: HandshakeRole.initiator),
-      outbox: Outbox(store: InMemoryOutboxStore(), send: (_) async => false),
+      // 发件箱与本地库**都落到真正的库上**。
+      //
+      // 出帧口不在这里传 —— 只有 `SyncClient` 知道"帧怎么发"（要过流控、
+      // 走 `_write`、带 `fc`），所以它在自己构造完之后装上（见
+      // `Outbox.attachSender` 的说明：装配点传假实现会让队列**永远发不出去**
+      // 而没有任何报错）。
+      outbox: Outbox(store: SqfliteOutboxStore(store)),
       session: DeviceSession(),
+      persistence: StoreItemPersister(store),
     ),
   );
 

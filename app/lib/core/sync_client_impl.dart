@@ -55,6 +55,22 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       if (!_stateController.isClosed) _stateController.add(to);
       _onStateChanged(from, to);
     });
+    // **把出帧口装到队列上**（§5.6）。
+    //
+    // 这里而不是装配点：只有本类知道"帧怎么发"（要过流控窗口、走 `_write`、
+    // 带上 `fc`）。装配点曾经传一个假实现（`send: (_) async => false`），
+    // 后果是**队列里每一条都永远发不出去**，而症状只是"订阅了但收不到数据" ——
+    // 没有任何报错（`offline` 是合法返回值）。见 `Outbox.attachSender` 的说明。
+    _deps.outbox.attachSender((entry) async {
+      if (!_machine.acceptsBusinessFrames) return false;
+      return _sendFrame({
+        'v': wireVersion,
+        't': 'req',
+        'id': entry.requestId,
+        // 写操作走**带幂等键**的信封（§5.6）：电脑侧据此去重，重发安全。
+        'box': encodeRequestEnvelope(entry.method, entry.params),
+      });
+    });
   }
 
   final SyncClientDeps _deps;
@@ -449,8 +465,27 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       ),
     );
     // **落盘后才发 `persisted`**（§5.3）：水位永不超过落盘内容。
-    _sendPersisted(sid, seq);
+    //
+    // 这一步是**异步**的（要落盘），而 `_dispatch` 是同步的 —— 所以不 `await`，
+    // 由 `_sendPersisted` 自己在落盘完成后发帧。顺序由 `_persistChain` 串起来
+    // （见那一处：落盘必须**按到达顺序**做，否则水位会倒退）。
+    _sendPersisted(sid, event, seq);
   }
+
+  /// 落盘的串行链。
+  ///
+  /// ## 为什么必须串行
+  ///
+  /// 事件逐条到达，而落盘是异步的。若并发落盘，两次 `commit` 的完成顺序可能与
+  /// 到达顺序不同 —— 而 `commit` 会把水位**取最大**。
+  /// 于是"后到的先写完"不会出错，但"先到的后写完"会让**先发出去的 `persisted`
+  /// 带了较大的 seq**，之后那批较小的又被写一次（幂等，无害）。
+  ///
+  /// 真正的风险是反过来的：若实现是"覆盖水位"而不是"取最大"，
+  /// 并发会让水位**倒退**，而电脑已经按较大的水位裁过缓冲了 —— 那段数据永久丢失。
+  ///
+  /// 所以这里串起来，**让 `core/` 不依赖存储实现的那个细节**。
+  Future<void> _persistChain = Future<void>.value();
 
   void _onLive(Map<String, Object?> frame, String plaintext) {
     final sid = frame['sid'];
@@ -486,9 +521,46 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     );
   }
 
-  void _sendPersisted(String sid, int seq) {
-    // 落盘之后才发（`DeviceSession.commit` 是"渲染/落盘完成"的信号）。
-    _deps.session.commit(sid, seq);
+  /// 把一条事件落盘，**成功后**才发 `persisted`。
+  ///
+  /// ## 这一步是本文件里最容易写成谎话的地方
+  ///
+  /// 契约 §5.3 的原文是"`ev` 落盘后才发 `persisted`"。
+  /// 早先的实现在这里只调了一次内存里的 `commit` 就发帧 ——
+  /// 于是**水位是假的**：手机告诉电脑"我到 `seq` 了"，
+  /// 电脑据此裁掉那边的增量缓冲，而手机其实什么都没存。
+  /// 后果不是当次崩溃，而是**重启后那段数据永久丢失**（源头已经裁掉了）。
+  ///
+  /// ## 落盘失败怎么办
+  ///
+  /// **不发 `persisted`**，并把错误如实抛给上层（记进诊断面）。
+  /// 不发是对的：水位不前进，电脑就会在重连时重发那一段（幂等，安全）。
+  /// 而"落盘失败还发 persisted"是最糟的选择 —— 它把可恢复的失败变成了数据丢失。
+  void _sendPersisted(String sid, SessionEvent event, int seq) {
+    final persister = _deps.persistence;
+    if (persister == null) {
+      // 没有落盘缝：发的是"我处理完了"，**不是**"它在盘上了"。
+      // 这只在不关心崩溃恢复的单测里成立（`SyncClientDeps.persistence` 的说明）。
+      _deps.session.commit(sid, seq);
+      _persistedFrame(sid, seq);
+      return;
+    }
+
+    // 串到链尾：落盘按到达顺序做（见 `_persistChain` 的说明）。
+    _persistChain = _persistChain
+        .then((_) async {
+          await persister.persist(sid: sid, events: [event], seq: seq);
+          // **成功之后**才提交本地水位并发帧。
+          _deps.session.commit(sid, seq);
+          _persistedFrame(sid, seq);
+        })
+        .catchError((Object error) {
+          // 落盘失败：水位不前进、不发帧。如实记进诊断面（不是静默吞掉）。
+          _lastPersistError = error;
+        });
+  }
+
+  void _persistedFrame(String sid, int seq) {
     _sendFrame({
       'v': wireVersion,
       't': 'persisted',
@@ -779,6 +851,12 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   /// 上一次收口时被拒绝的在途请求数（诊断用）。
   int? _lastRejectedCalls;
 
+  /// 上一次落盘失败（诊断用；`null` = 没失败过）。
+  ///
+  /// 它值得暴露：**落盘失败的表现是"数据少了一段"，而不是任何可见的错误** ——
+  /// 没有这个字段，那条失败只留在日志里（而日志会被冲掉）。
+  Object? _lastPersistError;
+
   /// 诊断面（测试与日志用）。
   @override
   ProtocolException? get lastProtocolError => _lastProtocolError;
@@ -794,6 +872,10 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   /// 上一次连接收口时被拒绝的在途请求数；没收口过是 `null`。
   @override
   int? get lastRejectedCalls => _lastRejectedCalls;
+
+  /// 上一次落盘失败；没失败过是 `null`。
+  @override
+  Object? get lastPersistError => _lastPersistError;
 
   // -------------------------------------------------------------------------
   // 供测试观察的帧收集（生产里 UI 不读这些）

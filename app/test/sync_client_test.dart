@@ -117,6 +117,19 @@ class FakeClock {
   int get pending => _pending.length;
 }
 
+/// `buildDeps` 的返回类型。
+///
+/// 它本来是个匿名记录类型，而匿名记录类型没法写进函数签名 ——
+/// 那让"接收一套 deps 的辅助函数"必须把五个字段重抄一遍（且抄错不报错）。
+/// 起个名字就解决了，且它让测试签名的意图一眼可见。
+typedef Harness = ({
+  SyncClientDeps deps,
+  FakeTransport transport,
+  FakeClock clock,
+  DeviceSession session,
+  InMemoryOutboxStore store,
+});
+
 void main() {
   late KeyPair phoneStatic;
   late KeyPair pcDh;
@@ -139,7 +152,7 @@ void main() {
     DeviceSession session,
     InMemoryOutboxStore store,
   })
-  buildDeps({bool failConnect = false}) {
+  buildDeps({bool failConnect = false, ItemPersister? persistence}) {
     final transport = FakeTransport(failConnect: failConnect);
     final clock = FakeClock();
     final session = DeviceSession();
@@ -170,6 +183,7 @@ void main() {
       box: (keys) => BoxCodec(keys: keys, role: HandshakeRole.initiator),
       outbox: Outbox(store: store, send: (_) async => false),
       session: session,
+      persistence: persistence,
       keepalive: Keepalive(heartbeat: 60000, periods: 2),
       backoff: Backoff(random: () => 0.5),
       now: clock.now,
@@ -532,6 +546,135 @@ void main() {
       await client.close();
     });
 
+    group('落盘与 persisted（契约 §5.3：水位永不超过落盘内容）', () {
+      /// 造一帧真的 `ev`（电脑侧封箱）。
+      Future<void> feedEvent(
+        Harness f,
+        int seq, {
+        required String itemId,
+        int? fc,
+      }) async {
+        final keys = await sessionKeysFor(f.transport);
+        final pc = BoxCodec(keys: keys, role: HandshakeRole.responder);
+        final event = <String, Object?>{
+          'type': 'assistant/message',
+          'seq': seq,
+          'time': 1000 + seq,
+          'data': {
+            'message': {'id': itemId},
+          },
+        };
+        final frame = <String, Object?>{
+          'v': 1,
+          't': 'ev',
+          'sid': 's1',
+          'seq': seq,
+          // **`fc` 必须逐帧递增**：收帧侧有重放守卫（契约 §4.2），
+          // 重复的 `fc` 会被判成重放并关连接 —— 第一版固定写 0，
+          // 连发三帧时第三帧就把连接关了（症状是
+          // `Bad state: Cannot add event after closing`，指向的是测试工具而不是真因）。
+          'fc': fc ?? (seq - 1),
+          'box': '',
+        };
+        final box = await pc.sealFrame(frame, jsonEncode(event));
+        f.transport.feed('${jsonEncode({...frame, 'box': box})}\n');
+        await pump();
+      }
+
+      /// `persisted` 帧（按 `seq`）。
+      List<int> persistedSeqs(Harness f) => f.transport.sentFrames
+          .where((frame) => frame['t'] == 'persisted')
+          .map((frame) => frame['seq']! as int)
+          .toList();
+
+      test('持久事件**落盘之后**才发 persisted，且带的是原样的 seq', () async {
+        final persister = _RecordingPersister();
+        final f = buildDeps(persistence: persister);
+        final client = createSyncClient(f.deps);
+        await client.start();
+        await answerHello(f.transport);
+
+        await feedEvent(f, 1, itemId: 'm1');
+        await pump();
+
+        expect(persister.calls.length, 1, reason: '应落盘一次');
+        expect(persister.calls.single.sid, 's1');
+        expect(persister.calls.single.seq, 1);
+        expect(persister.calls.single.events.single.itemId, 'm:m1');
+        expect(persistedSeqs(f), [1], reason: '落盘成功后才发 persisted');
+
+        await client.close();
+      });
+
+      test('**落盘失败就不发 persisted**（水位不前进 ⇒ 重连时电脑会重发）', () async {
+        // 这是本组最重要的一条。发出去的 persisted 会让电脑**裁掉那边的增量缓冲**，
+        // 而手机其实没存 —— 后果是重启后那段数据**永久丢失**（源头已经裁掉了）。
+        // 所以"落盘失败还发 persisted"是最糟的选择：把可恢复的失败变成数据丢失。
+        final persister = _RecordingPersister(failWith: StateError('磁盘满了'));
+        final f = buildDeps(persistence: persister);
+        final client = createSyncClient(f.deps);
+        await client.start();
+        await answerHello(f.transport);
+
+        await feedEvent(f, 1, itemId: 'm1');
+        await pump();
+
+        expect(persister.calls.length, 1, reason: '它确实尝试了落盘');
+        expect(
+          persistedSeqs(f),
+          isEmpty,
+          reason: '落盘失败绝不能发 persisted —— 水位超前于内容 = 数据永久丢失',
+        );
+        // 但本地水位也不该前进（否则重连时手机会说"我到 1 了"）。
+        expect(f.session.sinceOf('s1'), 0, reason: '本地水位不该前进');
+        // 失败要如实记下来（问题是"数据少了一段"，没有别的可见症状）。
+        expect((client as SyncClientProbe).lastPersistError, isStateError);
+
+        await client.close();
+      });
+
+      test('多条事件按**到达顺序**落盘（水位不会倒退）', () async {
+        // 落盘是异步的：若并发做，完成顺序可能与到达顺序不同，
+        // 而水位"取最大"—— 那会让先发出去的 persisted 带较大的 seq。
+        // 串行链保证顺序，且让 `core/` 不依赖存储实现的那个细节。
+        final persister = _RecordingPersister(delayMs: 5);
+        final f = buildDeps(persistence: persister);
+        final client = createSyncClient(f.deps);
+        await client.start();
+        await answerHello(f.transport);
+
+        await feedEvent(f, 1, itemId: 'm1');
+        await feedEvent(f, 2, itemId: 'm2');
+        await feedEvent(f, 3, itemId: 'm3');
+        // 等串行链跑完（每条 5 ms 延迟）。
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        await pump();
+
+        expect(persister.calls.map((c) => c.seq).toList(), [
+          1,
+          2,
+          3,
+        ], reason: '落盘必须按到达顺序');
+        expect(persistedSeqs(f), [1, 2, 3], reason: 'persisted 也按顺序');
+
+        await client.close();
+      });
+
+      test('没有落盘缝时仍发 persisted（只给不关心崩溃恢复的单测）', () async {
+        final f = buildDeps();
+        final client = createSyncClient(f.deps);
+        await client.start();
+        await answerHello(f.transport);
+
+        await feedEvent(f, 1, itemId: 'm1');
+        await pump();
+
+        expect(persistedSeqs(f), [1]);
+
+        await client.close();
+      });
+    });
+
     test('ev 载荷缺 type / 不是对象 → 关连接（不是静默丢弃）', () async {
       final f = buildDeps();
       final client = createSyncClient(f.deps);
@@ -560,18 +703,65 @@ void main() {
   });
 
   group('写操作与幂等（契约 §5.6）', () {
-    test('subscribe 先落盘再发送（顺序反了崩溃窗口会丢写操作）', () async {
+    test('subscribe 先落盘再发送，且真的发出去了', () async {
       final f = buildDeps();
       final client = createSyncClient(f.deps);
       await client.start();
       await answerHello(f.transport);
 
       await client.subscribe('s1', since: 7);
-      // 落盘里有这一条（幂等键在）。
+      // `_sendFrame` 是**同步返回、异步封箱**的（它 `unawaited` 了 sealFrame），
+      // 所以"发出去了"要等一轮事件循环才看得到。
+      await pump();
+
+      // 出帧口必须装上（没装就永远发不出去，而 `flush` 只会如实说 offline）。
+      expect(
+        f.deps.outbox.hasSender,
+        isTrue,
+        reason: 'SyncClient 构造时应把出帧口装到队列上',
+      );
+
+      // **真的发出去了**：这一条曾经是假的 —— 装配点传了
+      // `send: (_) async => false`，于是 `flush()` 永远返回 `offline`、
+      // 队列里每一条都永远发不出去，而症状只是"订阅了但收不到数据"。
+      final requests = f.transport.sentFrames
+          .where((frame) => frame['t'] == 'req')
+          .toList();
+      expect(
+        requests.length,
+        1,
+        reason:
+            'subscribe 应发出一帧 req（当前状态 ${client.state}，'
+            '已发帧类型 ${f.transport.sentFrames.map((x) => x['t']).toList()}）',
+      );
+      expect(
+        requests.single['box'],
+        isNot(isEmpty),
+        reason: '写操作要带幂等键的信封（电脑侧据此去重，重发安全）',
+      );
+
+      // 发出之后从队列里移除（电脑侧已收到）。
+      expect(await f.store.load(), isEmpty, reason: '已发出的不该留在待发队列里');
+
+      await client.close();
+    });
+
+    test('离线时**不发送**，条目留在队列里等重连', () async {
+      // 这条守的是 FIFO 队列的本意：发不出去时既不能丢，也不能假装发成功。
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      // 不 start：连接不在服务态。
+      await client.subscribe('s1', since: 7);
+
+      expect(
+        f.transport.sentFrames.where((frame) => frame['t'] == 'req'),
+        isEmpty,
+        reason: '不在服务态就不该发出去',
+      );
       final stored = await f.store.load();
-      expect(stored.length, 1);
+      expect(stored.length, 1, reason: '发不出去要留在队列里（不许丢）');
       expect(stored.single.method, 'session.subscribe');
-      expect(stored.single.requestId.isNotEmpty, isTrue);
+      expect((f.deps.outbox).pending, 1);
 
       await client.close();
     });
@@ -835,4 +1025,40 @@ class _FailingStore implements OutboxStore {
 
   @override
   Future<void> clear() async {}
+}
+
+/// 记账用的落盘缝（测"persisted 只在落盘成功后发"）。
+///
+/// 它不真存东西 —— 这一层的被测对象是**调用时序**（什么时候发 `persisted`），
+/// 而"真的存进去了没有"由 `store_contract_test.dart` 用真 SQLite 钉住。
+class _RecordingPersister implements ItemPersister {
+  _RecordingPersister({this.failWith, this.delayMs = 0});
+
+  /// 给了就让每次落盘抛这个错（测"失败不发 persisted"）。
+  ///
+  /// 类型是 `Object`：真实落盘失败可能是 `Exception`（IO）也可能是 `Error`
+  /// （比如 sqflite 的 `DatabaseException`），而这一层要能表达两种。
+  final Object? failWith;
+
+  /// 每次落盘的延迟（测"串行链"时需要它把顺序问题放大）。
+  final int delayMs;
+
+  final List<({String sid, List<SessionEvent> events, int seq})> calls = [];
+
+  @override
+  Future<void> persist({
+    required String sid,
+    required List<SessionEvent> events,
+    required int seq,
+  }) async {
+    calls.add((sid: sid, events: events, seq: seq));
+    if (delayMs > 0) {
+      await Future<void>.delayed(Duration(milliseconds: delayMs));
+    }
+    final failure = failWith;
+    // 这个假实现**故意**抛给定的东西（可能是 Error 也可能是 Exception，
+    // 两种在真实落盘里都会出现）。所以这里明确压掉那条 lint。
+    // ignore: only_throw_errors
+    if (failure != null) throw failure;
+  }
 }
