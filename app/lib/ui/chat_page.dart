@@ -39,9 +39,12 @@ import '../data/app_model.dart';
 import '../model/chat_item.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
+import '../theme/dsh_theme.dart';
 import 'chat_turns.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_composer.dart';
+import 'dsh_diff.dart';
+import 'side_pane.dart';
 
 /// 聊天页。
 class ChatPage extends StatefulWidget {
@@ -79,6 +82,19 @@ class _ChatPageState extends State<ChatPage> {
   int _tab = 0;
   bool _sending = false;
   final List<PendingAttachment> _attachments = [];
+
+  /// 右抽屉是否打开（竖屏手机上它是**全屏页**，见 `side_pane.dart` 文件头）。
+  bool _sideOpen = false;
+  SidePanel _sidePanel = SidePanel.file;
+
+  /// 文件面板的分段（差异 / 文件）。
+  ///
+  /// **不是 `final`**：`dart fix` 曾因为"只有读、没有写"把它改成 `final`，
+  /// 而那时还没有分段控件。现在要切换 tab，必须可变。
+  int _fileTab = 0;
+
+  /// 展开了哪些任务行。
+  final Set<String> _openJobs = {'j1'};
 
   @override
   void initState() {
@@ -128,88 +144,335 @@ class _ChatPageState extends State<ChatPage> {
     return ListenableBuilder(
       listenable: widget.app,
       builder: (context, _) {
-        final items = widget.app.items;
-        final sid = widget.app.currentSid;
-        return Scaffold(
-          backgroundColor: DshColors.bgBase,
-          drawer: widget.drawer,
-          // 左缘跟手拖出的宽度（原型 `.edge--open` 手势带）。
-          // 用 `Drawer` 自带的边缘拖动而不是自写手势：它已经处理了
-          // "拖动中遮罩透明度""松手回弹"这些细节。
-          drawerEdgeDragWidth: 32,
-          appBar: ChatAppBar(
-            title: widget.app.currentTitle ?? 'DSH',
-            onOpenDrawer: widget.onOpenDrawer,
-            onNewSession: widget.onNewSession,
-            statusText: widget.paired ? null : '未连接',
-            statusIcon: widget.paired ? 'loading' : 'warningTriangle',
-            statusIsWarn: !widget.paired,
-            onStatusTap: widget.onConnect,
-          ),
-          body: Column(
-            children: [
-              DshSegmented(
-                labels: const ['对话', '轨迹'],
-                index: _tab,
-                onChanged: (i) => setState(() => _tab = i),
-              ),
-              Expanded(
-                child: _tab == 0
-                    ? _ChatTab(
-                        app: widget.app,
-                        items: items,
-                        paired: widget.paired,
-                        onOpenDrawer: widget.onOpenDrawer,
-                        onConnect: widget.onConnect,
-                      )
-                    : const _TrajectoryTab(),
-              ),
-              // ---- 底部：dock + 输入栏 + 统计条 ----
-              Container(
-                color: DshColors.sidebar,
-                padding: EdgeInsets.only(
-                  bottom: MediaQuery.of(context).padding.bottom + 6,
-                ),
-                child: Column(
-                  children: [
-                    DshComposer(
-                      controller: _input,
-                      attachments: _attachments,
-                      // 模型名与推理等级：接上 `repo.info` 之后从真数据来，
-                      // 现在给占位（界面上看得出是占位：写的是"未连接"）。
-                      modelName: widget.paired ? 'claude-opus' : '未连接',
-                      reasoningLabel: '高',
-                      accessMode: AccessMode.workspaceWrite,
-                      sending: _sending,
-                      enabled: widget.paired && sid != null,
-                      onSend: _send,
-                      onAttach: () => setState(
-                        () => _attachments.add(
-                          const PendingAttachment(name: '新增文件.txt'),
-                        ),
-                      ),
-                      onPickModel: () {},
-                      onPickAccess: () {},
-                      onRemoveAttachment: (item) =>
-                          setState(() => _attachments.remove(item)),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: DshStatsBar(
-                        turnText: items.isEmpty
-                            ? null
-                            : '第 1 轮 · ${items.length} 步',
-                        usageText: items.isEmpty ? null : '302K · 缓存 0%',
-                        contextPercent: items.isEmpty ? null : 3,
-                      ),
-                    ),
-                  ],
+        return Stack(
+          children: [
+            // 主界面（聊天页）。
+            _mainScaffold(context),
+            // ---- 右抽屉：一个抽屉三个面板（竖屏手机上它是全屏页）----
+            if (_sideOpen)
+              Positioned.fill(
+                child: GestureDetector(
+                  // 点遮罩关闭（原型 `.side-scrim { opacity:.45 }`）。
+                  onTap: _closeSide,
+                  child: Container(color: Colors.black.withValues(alpha: 0.45)),
                 ),
               ),
-            ],
-          ),
+            if (_sideOpen)
+              Positioned.fill(
+                child: SidePane(
+                  header: _sideHeader(),
+                  panel: _sidePanel,
+                  onPanelChanged: (p) => setState(() => _sidePanel = p),
+                  onClose: _closeSide,
+                  fileBody: _fileBody(),
+                  fileActions: _fileActions(),
+                  jobs: _previewJobs(),
+                  subs: _previewSubs(),
+                  runningJobs: _previewJobs().where((j) => j.isLive).length,
+                  runningSubs: _previewSubs().where((j) => j.isLive).length,
+                  onToggleJob: (job) => setState(() {
+                    if (!_openJobs.remove(job.id)) _openJobs.add(job.id);
+                  }),
+                  // 停止：任务面板里最常见的那件事。**不传它就永远没有停止按钮**
+                  //（渲染条件里有 `onStop != null`）—— 第一版就漏了传，
+                  // 截图里运行中的任务旁边空着。
+                  onStopJob: (job) => _toast('停止 ${job.label}'),
+                  openJobIds: _openJobs,
+                ),
+              ),
+          ],
         );
       },
+    );
+  }
+
+  /// 主界面（聊天页本体）。
+  ///
+  /// 单独成方法而不是嵌在 `build` 里：嵌着时那个 `Stack` 会深到
+  /// **括号数不清**（实测改出过语法错误）。一层一个方法，
+  /// 读代码时也不必同时记住"我在 Stack 的第几个孩子里"。
+  Widget _mainScaffold(BuildContext context) {
+    final items = widget.app.items;
+    final sid = widget.app.currentSid;
+    return Scaffold(
+      backgroundColor: DshColors.bgBase,
+      drawer: widget.drawer,
+      // 左缘跟手拖出的宽度（原型 `.edge--open` 手势带）。
+      // 用 `Drawer` 自带的边缘拖动而不是自写手势：它已经处理了
+      // "拖动中遮罩透明度""松手回弹"这些细节。
+      drawerEdgeDragWidth: 32,
+      appBar: ChatAppBar(
+        title: widget.app.currentTitle ?? 'DSH',
+        onOpenDrawer: widget.onOpenDrawer,
+        onNewSession: widget.onNewSession,
+        // 状态位：有后台任务显任务（点它开右抽屉），否则不显示。
+        // 原型：*"有任务显任务,否则显文件变更;点它开右抽屉"*。
+        statusText: _statusText(),
+        statusIcon: _statusIcon(),
+        statusIsWarn: !widget.paired,
+        onStatusTap: _openSide,
+      ),
+      body: Column(
+        children: [
+          DshSegmented(
+            labels: const ['对话', '轨迹'],
+            index: _tab,
+            onChanged: (i) => setState(() => _tab = i),
+          ),
+          Expanded(
+            child: _tab == 0
+                ? _ChatTab(
+                    app: widget.app,
+                    items: items,
+                    paired: widget.paired,
+                    onOpenDrawer: widget.onOpenDrawer,
+                    onConnect: widget.onConnect,
+                  )
+                : const _TrajectoryTab(),
+          ),
+          // ---- 底部：dock + 输入栏 + 统计条 ----
+          Container(
+            color: DshColors.sidebar,
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).padding.bottom + 6,
+            ),
+            child: Column(
+              children: [
+                DshComposer(
+                  controller: _input,
+                  attachments: _attachments,
+                  // 模型名与推理等级：接上 `repo.info` 之后从真数据来，
+                  // 现在给占位（界面上看得出是占位：写的是"未连接"）。
+                  modelName: _hasData ? 'claude-opus' : '未连接',
+                  reasoningLabel: '高',
+                  accessMode: AccessMode.workspaceWrite,
+                  sending: _sending,
+                  enabled: _hasData && sid != null,
+                  onSend: _send,
+                  onAttach: () => setState(
+                    () => _attachments.add(
+                      const PendingAttachment(name: '新增文件.txt'),
+                    ),
+                  ),
+                  onPickModel: () {},
+                  onPickAccess: () {},
+                  onRemoveAttachment: (item) =>
+                      setState(() => _attachments.remove(item)),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: DshStatsBar(
+                    turnText: items.isEmpty
+                        ? null
+                        : '第 1 轮 · ${items.length} 步',
+                    usageText: items.isEmpty ? null : '302K · 缓存 0%',
+                    contextPercent: items.isEmpty ? null : 3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // 右抽屉（文件 / 任务 / 子代理）
+  // ---------------------------------------------------------------------------
+
+  /// 状态位的文字：有后台任务显任务，否则显文件变更（原型注释）。
+  String? _statusText() {
+    // **看示例数据时也当"有数据"** —— 否则示例模式下一半界面是死的
+    //（状态位点不开右抽屉），而示例数据存在的意义正是"看看它长什么样"。
+    if (!_hasData) return '未连接';
+    final live = _previewJobs().where((j) => j.isLive).length;
+    if (live > 0) return '$live 任务运行中';
+    return null;
+  }
+
+  /// 是否有"可看的数据"（真连上了，或在看示例）。
+  bool get _hasData => widget.paired || widget.app.isPreview;
+
+  String _statusIcon() => _hasData ? 'loading' : 'warningTriangle';
+
+  void _openSide() {
+    if (!_hasData) {
+      widget.onConnect?.call();
+      return;
+    }
+    setState(() => _sideOpen = true);
+  }
+
+  void _closeSide() => setState(() => _sideOpen = false);
+
+  SideHeader _sideHeader() => switch (_sidePanel) {
+    SidePanel.file => const SideHeader(
+      title: 'chat_page.dart',
+      subtitle: 'app/lib/ui/chat_page.dart',
+      added: 128,
+      removed: 46,
+    ),
+    SidePanel.jobs => const SideHeader(title: '后台任务'),
+    SidePanel.subs => const SideHeader(title: '子代理'),
+  };
+
+  Widget? _fileBody() {
+    if (_sidePanel != SidePanel.file) return null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 文件页的分段（差异 ⇄ 文件）—— 原型注释：
+        // *"不做左右滑:diff 自身要横滑看长行"*。
+        DshSegmented(
+          labels: const ['差异', '文件'],
+          index: _fileTab,
+          onChanged: (i) => setState(() => _fileTab = i),
+        ),
+        _fileTab == 0
+            ? const DshDiff(sampleDiff)
+            : const DshCodeLines(sampleFileLines),
+      ],
+    );
+  }
+
+  Widget? _fileActions() {
+    if (_sidePanel != SidePanel.file) return null;
+    return Row(
+      children: [
+        _FileAction(icon: 'copy', label: '复制路径', onTap: () => _toast('复制路径')),
+        const SizedBox(width: 8),
+        _FileAction(
+          icon: 'rightUp',
+          label: '在电脑打开',
+          onTap: () => _toast('在电脑打开'),
+        ),
+        const SizedBox(width: 8),
+        _FileAction(
+          icon: 'share',
+          label: '分享',
+          filled: true,
+          onTap: () => _toast('分享'),
+        ),
+      ],
+    );
+  }
+
+  void _toast(String what) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$what 还没接上数据')));
+  }
+
+  /// **示例任务**（数据照 `mock/proto/app.js` 的 `JOBS`）。
+  ///
+  /// 占位：真的任务要等 `job.follow` / `job` 帧那条通路接上。
+  /// 有它是一个**可见的接口契约**：这一屏该显示什么，看这里就够。
+  static List<SideJob> _previewJobs() => const [
+    SideJob(
+      id: 'j1',
+      kind: 'pwsh',
+      label: 'flutter build apk --debug',
+      state: 'running',
+      statusText: '构建中 · 电脑端执行',
+      durationText: '02:14',
+      output:
+          "Running Gradle task 'assembleDebug'...\n"
+          'Resolving dependencies...\n'
+          '> Task :app:compileFlutterBuildDebug\n'
+          '(构建在电脑端进行，手机只看进度)',
+    ),
+    SideJob(
+      id: 'j5',
+      kind: 'pwsh',
+      label: 'node protocol/verify-fixtures.mjs',
+      state: 'completed',
+      statusText: '已完成',
+      durationText: '00:03',
+      output: 'ALL CHECKS PASSED — 486 项断言，16 条 fixture',
+    ),
+    SideJob(
+      id: 'j7',
+      kind: 'bash',
+      label: 'rm -rf build/ && flutter clean',
+      state: 'running',
+      statusText: '等待审批',
+      durationText: '00:41',
+    ),
+  ];
+
+  /// **示例子代理**（数据照 `mock/proto/app.js` 的 `SUBS`）。
+  static List<SideJob> _previewSubs() => const [
+    SideJob(
+      id: 's1',
+      kind: 'agent',
+      label: 'Extract DSH icon paths',
+      state: 'completed',
+      statusText: '已完成',
+      durationText: '08:57',
+      output: '98 个图标 · 验证脚本全 PASS',
+    ),
+    SideJob(
+      id: 's2',
+      kind: 'agent',
+      label: 'Research rikkahub standalone mode',
+      state: 'completed',
+      statusText: '已完成',
+      durationText: '12:20',
+      output: '本机运行模式调研：三条路径，见 docs/standalone-mode-notes.md',
+    ),
+  ];
+}
+
+/// 文件面板底部的动作按钮（`.btn--out` / `.btn--fill`）。
+class _FileAction extends StatelessWidget {
+  const _FileAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.filled = false,
+  });
+
+  final String icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool filled;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Material(
+        color: filled ? DshColors.layer3 : Colors.transparent,
+        borderRadius: BorderRadius.circular(DshRadius.md),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Container(
+            height: 38,
+            alignment: Alignment.center,
+            decoration: filled
+                ? null
+                : BoxDecoration(
+                    borderRadius: BorderRadius.circular(DshRadius.md),
+                    border: Border.all(color: DshColors.layer3),
+                  ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                DshIcon(icon, size: 14, color: DshColors.labelSecondary),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    color: DshColors.labelSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -382,6 +645,98 @@ class _EmptyChat extends StatelessWidget {
     );
   }
 }
+
+/// **示例 diff**（数据照 `mock/proto/app.js` 的 `FILES["app/lib/ui/chat_page.dart"]`）。
+///
+/// 它是**占位**：真的 diff 要等 `session.diff` 那条数据通路接上。
+/// 放在这里而不是 `preview_data.dart`：它是"这一屏长什么样"的样例，
+/// 与"会话里有哪些消息"不是一类。
+const List<DiffLine> sampleDiff = [
+  DiffLine.hunk(
+    '@@ -112,9 +112,14 @@ class _ChatPageState extends State<ChatPage> {',
+  ),
+  DiffLine(
+    kind: DiffKind.context,
+    oldLine: 112,
+    newLine: 112,
+    text: '  @override',
+  ),
+  DiffLine(
+    kind: DiffKind.context,
+    oldLine: 113,
+    newLine: 113,
+    text: '  Widget build(BuildContext context) {',
+  ),
+  DiffLine(kind: DiffKind.del, oldLine: 114, text: '    return Scaffold('),
+  DiffLine(
+    kind: DiffKind.del,
+    oldLine: 115,
+    text: '      body: SessionListView(active: _active),',
+  ),
+  DiffLine(
+    kind: DiffKind.del,
+    oldLine: 116,
+    text: '      bottomNavigationBar: const DshNavBar(),',
+  ),
+  DiffLine(kind: DiffKind.del, oldLine: 117, text: '    );'),
+  DiffLine(
+    kind: DiffKind.add,
+    newLine: 114,
+    text: '    return ModalNavigationDrawer(',
+  ),
+  DiffLine(
+    kind: DiffKind.add,
+    newLine: 115,
+    text: '      drawer: const SessionDrawer(),',
+  ),
+  DiffLine(kind: DiffKind.add, newLine: 116, text: '      child: Scaffold('),
+  DiffLine(
+    kind: DiffKind.add,
+    newLine: 117,
+    text: '        appBar: DshAppBar(',
+  ),
+  DiffLine(
+    kind: DiffKind.add,
+    newLine: 118,
+    text: '          leading: const DrawerButton(),',
+  ),
+  DiffLine(
+    kind: DiffKind.add,
+    newLine: 119,
+    text: '          title: Text(_session.title),',
+  ),
+  DiffLine(kind: DiffKind.add, newLine: 120, text: '        ),'),
+  DiffLine(
+    kind: DiffKind.add,
+    newLine: 121,
+    text: '        body: ChatView(turns: _turns),',
+  ),
+  DiffLine(kind: DiffKind.add, newLine: 122, text: '      ),'),
+  DiffLine(kind: DiffKind.add, newLine: 123, text: '    );'),
+  DiffLine(kind: DiffKind.context, oldLine: 118, newLine: 124, text: '  }'),
+];
+
+/// **示例文件内容**（"文件"那个 tab）。
+const List<String> sampleFileLines = [
+  'class _ChatPageState extends State<ChatPage> {',
+  '  final _input = TextEditingController();',
+  '  int _tab = 0;',
+  '',
+  '  @override',
+  '  Widget build(BuildContext context) {',
+  '    return ModalNavigationDrawer(',
+  '      drawer: const SessionDrawer(),',
+  '      child: Scaffold(',
+  '        appBar: DshAppBar(',
+  '          leading: const DrawerButton(),',
+  '          title: Text(_session.title),',
+  '        ),',
+  '        body: ChatView(turns: _turns),',
+  '      ),',
+  '    );',
+  '  }',
+  '}',
+];
 
 /// 轨迹页签 —— **占位**（照原型是甘特图 + 账本列表，那是独立一块）。
 ///

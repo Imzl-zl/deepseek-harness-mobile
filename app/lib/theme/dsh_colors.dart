@@ -48,6 +48,11 @@ abstract final class DshColors {
   static const fileDiffAddMarker = Color(0xFF41C977);
   static const fileDiffDelBg = Color(0xFF3C1F1B);
   static const fileDiffDelMarker = Color(0xFFFA423E);
+  // 行号槽的底色（原型 `--fadd-gutter: #132016` / `--fdel-gutter: #28130e`）。
+  // **它比正文底更深**：这是 diff 的读法 —— 眼睛沿左边缘扫就能定位增删，
+  // 而不必逐行读正文。少了这一列，长 diff 会变成一片同色的墙。
+  static const fileDiffAddGutter = Color(0xFF132016);
+  static const fileDiffDelGutter = Color(0xFF28130E);
 
   /// 分隔线:在层上叠白,alpha 常用 0.06 / 0.12 / 0.16 / 0.20。
   static Color border([double alpha = 0.12]) =>
