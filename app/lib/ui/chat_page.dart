@@ -46,6 +46,7 @@ import 'dsh_composer.dart';
 import 'dsh_diff.dart';
 import 'dsh_sheet.dart';
 import 'side_pane.dart';
+import 'takeover.dart';
 
 /// 聊天页。
 class ChatPage extends StatefulWidget {
@@ -106,22 +107,35 @@ class _ChatPageState extends State<ChatPage> {
   /// 每次开风险门都从 `false` 起（`_showRiskGate` 里重置）。
   bool _riskAcked = false;
 
+  /// 输入栏接管（审批 / 提问 / 计划）。
+  final TakeoverController _takeover = TakeoverController();
+
   @override
   void initState() {
     super.initState();
     // 输入框有内容才亮发送键 —— `TextField` 的 `onChanged` 不触发本层重建，
     // 所以手动挂一个监听（否则发送键永远灰着）。
     _input.addListener(_onInputChanged);
+    // 权限档与接管队列联动：**完全权限下审批不入队**（原型 `enqueue` 的
+    // 同一条逻辑 —— 那是"已授权"的结果，不是绕过）。
+    _takeover.addListener(_onTakeoverChanged);
   }
 
-  void _onInputChanged() => setState(() {});
+  void _onTakeoverChanged() {
+    _takeover.fullAccess = _accessMode == AccessMode.fullAccess;
+    if (mounted) setState(() {});
+  }
 
   @override
   void dispose() {
+    _takeover.removeListener(_onTakeoverChanged);
+    _takeover.dispose();
     _input.removeListener(_onInputChanged);
     _input.dispose();
     super.dispose();
   }
+
+  void _onInputChanged() => setState(() {});
 
   /// 发一句。
   ///
@@ -240,7 +254,7 @@ class _ChatPageState extends State<ChatPage> {
                   )
                 : const _TrajectoryTab(),
           ),
-          // ---- 底部：dock + 输入栏 + 统计条 ----
+          // ---- 底部：接管卡 + 输入栏 + 统计条 ----
           Container(
             color: DshColors.sidebar,
             padding: EdgeInsets.only(
@@ -248,6 +262,11 @@ class _ChatPageState extends State<ChatPage> {
             ),
             child: Column(
               children: [
+                // **接管卡在输入栏上方**：它接管的是"下一步做什么"，
+                // 而输入栏仍然是最后一行（用户随时能看到自己在哪打字）。
+                // 原型是把输入栏整块换掉 —— 手机上并排更省高度，
+                // 且不会让用户以为"输入框不见了"。
+                TakeoverPanel(controller: _takeover),
                 DshComposer(
                   controller: _input,
                   attachments: _attachments,
@@ -576,6 +595,9 @@ class _ChatPageState extends State<ChatPage> {
       (icon: 'code', label: '新建终端', desc: '桌面端 Ctrl+`'),
       (icon: 'globe', label: '浏览器', desc: '桌面端 Ctrl+T'),
       (icon: 'checklist', label: '后台任务', desc: '看运行中的命令与输出'),
+      // 原型底栏有一个「演示」入口（`data-act="demo"`）。这里照做：
+      // 接管卡**只有真的有待办才出现**，而"看看它长什么样"需要一个入口。
+      (icon: 'shield', label: '演示：接管输入栏', desc: '审批 / 提问 / 计划长什么样'),
     ];
     unawaited(
       showDshSheet<void>(
@@ -591,14 +613,17 @@ class _ChatPageState extends State<ChatPage> {
                 selected: false,
                 onTap: () {
                   Navigator.of(context).pop();
-                  if (item.label == '附件') {
-                    setState(
-                      () => _attachments.add(
-                        const PendingAttachment(name: '新增文件.txt'),
-                      ),
-                    );
-                  } else {
-                    _toast(item.label);
+                  switch (item.label) {
+                    case '附件':
+                      setState(
+                        () => _attachments.add(
+                          const PendingAttachment(name: '新增文件.txt'),
+                        ),
+                      );
+                    case '演示：接管输入栏':
+                      _enqueueDemoTakeovers();
+                    default:
+                      _toast(item.label);
                   }
                 },
               ),
@@ -606,6 +631,53 @@ class _ChatPageState extends State<ChatPage> {
         ),
       ),
     );
+  }
+
+  /// 装三个演示接管（审批 / 提问 / 计划），让"接管长什么样"可见。
+  ///
+  /// 队列是**瀑布**（一次只处理队首），所以三个会依次出现。
+  void _enqueueDemoTakeovers() {
+    setState(() {
+      _takeover.enqueue(
+        const TakeoverItem(
+          key: 'demo-approval',
+          kind: TakeoverKind.approval,
+          toolName: 'bash',
+          title: '工具 bash 请求越权执行',
+          detail:
+              'rm -rf build/ && flutter clean\n\n'
+              '只读 / 工作区内修改模式下，越权操作要你确认；\n'
+              '完全权限模式下这一步不会出现（那是"已授权"的结果）。',
+        ),
+      );
+      _takeover.enqueue(
+        const TakeoverItem(
+          key: 'demo-question',
+          kind: TakeoverKind.question,
+          header: 'DSH 想确认一件事',
+          title: '拆连接层的资源束时，要不要顺手把「在途请求」也一起拆出去？',
+          options: [
+            TakeoverOption(
+              label: '一起拆（推荐）',
+              description: '它俩生命周期不同：资源束每连接换一份，在途请求要跨重连保留',
+              recommended: true,
+            ),
+            TakeoverOption(label: '先只拆资源束', description: '改动更小，但在途请求那个缺口会留着'),
+          ],
+        ),
+      );
+      _takeover.enqueue(
+        const TakeoverItem(
+          key: 'demo-plan',
+          kind: TakeoverKind.plan,
+          title: '把侧抽屉的「任务」面板接上 job 帧',
+          detail:
+              '1. 展开时 `job.follow`，收起时 `job.unfollow`\n'
+              '2. 把三帧映射成 SideJob\n'
+              '3. 停止走 `job.stop`，两步确认',
+        ),
+      );
+    });
   }
 
   /// **示例任务**（数据照 `mock/proto/app.js` 的 `JOBS`）。
