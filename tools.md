@@ -39,7 +39,7 @@
 - 图标集校验(不需要浏览器):`node mock/proto/tools/verify-icons.cjs`
 - **手机端 `app/`(Flutter 工程;`flutter` 装在 `D:\soft\flutter`,已进用户 PATH)**:
   - **版本闸门:锁 Flutter `3.41.9`**(上界由鸿蒙 fork 定,`app-platform-boundaries.md` §4)。当前上游 stable 是 3.47.6,**不许装** —— Dart SDK 版本决定语言特性,升上去等接鸿蒙时要回改一大片。自带 Dart 3.11.5。
-  - `cd app; flutter test` —— 跑 `test/`,当前 **147 项**:core 单测 53 + 连接层 59(状态机/退避/心跳半开/箱与握手/接线 e2e/outbox/LiveAccumulator/断连拒绝在途请求) + 平台层 6(真 socket) + 配对 6(跨端向量:SAS/pairingId/codeHash/deviceId) + 界面 3 + 跨端向量 16 + fixtures 三角色回放 1
+  - `cd app; flutter test` —— 跑 `test/`,当前 **158 项**:core 单测 53 + 连接层 59(状态机/退避/心跳半开/箱与握手/接线 e2e/outbox/LiveAccumulator/断连拒绝在途请求) + 平台层 6(真 socket) + 配对 6(跨端向量:SAS/pairingId/codeHash/deviceId) + 图标 11(含**数像素**证明真的画出来) + 界面 3 + 跨端向量 16 + fixtures 三角色回放 1
   - `cd app; flutter test integration_test/ -d emulator-5554` —— **真机/模拟器组**(当前 2 项):验 `flutter_secure_storage` 真的落到设备密钥库。**纯单测做不了这个**(插件在 Dart VM 里没有实现,调用会抛 `MissingPluginException`)。需要 `ANDROID_HOME`/`JAVA_HOME` 都在环境里,否则报 `Could not locate aapt`
   - `cd app; dart analyze --fatal-infos lib test integration_test` —— **社区口径的静态检查**(比 `flutter analyze` 严:把 info 也当失败)。0 问题才算干净
   - `cd app; dart format --output=none --set-exit-if-changed lib test integration_test` —— **Dart 社区硬规范**(Flutter CI 一直拿它当门禁)。`--set-exit-if-changed` 是判据,不是"看一眼"
@@ -69,6 +69,14 @@
       它已经**静默漂移过一次**(245 → 273):当时用 shell 的 `.Replace` 更新,没匹配上就**什么都不做** ✗ ——
       所以改这行用编辑工具,改完跑一次 `pnpm test` 对一下数。
 - 图标重新抽取(DSH 升级后):`node mock/proto/tools/extract-dsh-icons.mjs`
+- **图标只有一个来源**(硬规则):DSH 的 98 个图标 → `mock/proto/icons.js`(机生成) → **同一份**产出 Flutter 侧 `app/lib/theme/dsh_icons.dart`。
+  - 重新生成 Dart 侧:`node app/tools/extract-dsh-icons-dart.mjs`。**改 DSH 图标后必须重跑**(先跑上面那条,再跑这条)。
+  - Dart 侧实现写在 `app/tools/dsh_icons.template.dart`(带 `@@…@@` 占位符的普通 Dart 文件)。**不要把它写成 JS 模板字符串** —— Dart 文档注释里全是反引号,塞进模板字符串会直接语法错误(踩过)。
+  - **`ui/` 层禁止 `Icons.*`**(Material 图标),有门禁 `no-material-icons` 拦着(只扫 `app/lib/ui/`)。要用图标就 `DshIcon('<DSH 名字>', color: …)`。
+  - 三个坑(都已由生成器处理,改生成器前先看):
+    ① **颜色在编译期替换**:98 个图标全用 `currentColor`,而 `flutter_svg` 对它支持有缺口(flutter/flutter#158680、dnfield/flutter_svg#31)→ 生成期换成字面色值;
+    ② **按默认尺寸烘焙**:`%%E:strokeWidth + 3%%` 这类表达式在 size 变化时会算出**不同几何**(实测 `treeCorner` 的 `x="8"` → size=20 时变成 `x="16"`)→ 所以只换根节点 `width`/`height`,缩放交给 `viewBox`;
+    ③ **只换根节点那三个属性**:`archiveOff` 的默认尺寸是 16,而它坐标里有 **6 处** `="16"`(含 `<mask>` 与 `<rect>` 的几何值),全换会让 SVG 非法、图标静默画不出。
 - 关键入口:`mock/proto/index.html`(原型唯一入口);`app/lib/theme/dsh_theme.dart`(Flutter 主题)
 - 直连监听面(契约 §14.6 第一跳;设计见 `docs/subsystems/connector-and-relay.md` §1.7):配置 `listenPort`(**默认 `0` = 不监听**)+ `listenHost`(默认 `127.0.0.1`);代码 `connector/src/transport/listener.ts`。
   - **`ws` 是运行时依赖**(本插件唯一一个,`dependencies` 里);它只在配了 `listenPort` 时才被 import,但**产物里是顶层 `import`**(tsdown 外部化,不按需加载)—— 所以装进 profile 时 `ws` 必须装得上,否则 `lib/index.js` 直接加载失败。

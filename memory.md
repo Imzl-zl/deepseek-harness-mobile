@@ -69,8 +69,8 @@
 | `node protocol/verify-fixtures.mjs` | 16 条 fixture / **486 项断言** |
 | `node protocol/verify-loopback.mjs` | **26 项**:手机 ⇄ 中转 ⇄ 桥接回环(含中转清空后重启) |
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量(改 `protocol/tools/` 后必跑) |
-| `node app/tools/verify-platform-boundary.mjs` | **104 项**(含 18 条规则自检 + 扫描 30 个 Dart 文件) |
-| `cd app && flutter test` | **147 项**(core 53 + 连接层 59 + 平台层 6 + 配对 6 + 界面 3 + 向量 16 + fixtures 回放 1 + 其它) |
+| `node app/tools/verify-platform-boundary.mjs` | **113 项**(含 22 条规则自检 + 扫描 31 个 Dart 文件;含 `no-material-icons`) |
+| `cd app && flutter test` | **158 项**(core 53 + 连接层 59 + 平台层 6 + 配对 6 + **图标 11** + 界面 3 + 向量 16 + fixtures 回放 1 + 其它) |
 | `cd app && flutter test integration_test/pairing_flow_test.dart -d emulator-5554` | **2 项**(真机验安全存储:纯单测验不了插件) |
 | `cd app && dart analyze --fatal-infos lib test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test` | 0 文件需重排(Dart 社区硬规范) |
@@ -142,7 +142,25 @@
 
 ## 最近活跃窗口(2026-10-01 起)
 
-- **手机端配对落地(2026-10-02)**:此前 App 是个空壳(`BootstrapConfig` 是占位值 → 只能显示
+- **手机端图标用 DSH 的(2026-10-02)**:我在写 UI 时**随手用了 11 个 Material 图标**
+  (`Icons.refresh`/`Icons.send`/…),这破坏了项目硬规则"图标只有一个来源"。修法与要点:
+  - **机生成**:`app/tools/extract-dsh-icons-dart.mjs` 读 `mock/proto/icons.js`(**与原型同一份**)
+    产出 `app/lib/theme/dsh_icons.dart`(98 个)。Dart 侧实现写在 `app/tools/dsh_icons.template.dart`
+    —— **不要把它写成 JS 模板字符串**(Dart 注释里全是反引号,会直接语法错误)。
+  - **不做图标字体**:`archiveOff` 用 `<mask>`(斜杠是挖空的)、`compact`/`folderOpen` 用 `opacity`、
+    多数是描边 —— 字体表达不了这三样。所以走 `flutter_svg`。
+  - **颜色在编译期替换**(不留给 `currentColor`):98 个全用它,而 `flutter_svg` 对它支持有缺口
+    (flutter/flutter#158680、dnfield/flutter_svg#31)。
+  - **按默认尺寸烘焙**:`%%E:` 表达式在 size 变化时算出**不同几何**(实测 `treeCorner` 的 `x="8"`
+    → size=20 时 `x="16"`),所以只换根节点 `width`/`height`,缩放交给 `viewBox`。
+    **只换根节点那三个属性** —— `archiveOff` 坐标里有 6 处 `="16"`,全换会让 SVG 非法。
+  - **门禁 `no-material-icons`**(只扫 `app/lib/ui/`,且**去掉注释后**才匹配):
+    变异校验证实把 `send` 换回 `Icons.send` 立刻红。
+  - **测试要数像素**:`flutter_svg` 解析失败**不抛异常**(画成空白)。
+    变异校验证实:让 `svg()` 返回"合法但空"的 SVG 时,**"无异常"那条照样通过**,
+    只有"数非透明像素"那条红了 —— 这就是弱证据与硬证据的区别。
+  - 见 `.agents/notes/implemented/2026-10-02-mobile-dsh-icons.md`。
+- **手机端配对落地(2026-10-02,同批)**:此前 App 是个空壳(`BootstrapConfig` 是占位值 → 只能显示
   "连不上")。现在整条链通了:**配对页 → 派生 `pairingId`/SAS → 主种子进系统安全存储 →
   建连**。三条要害:
   - **派生规则"算错了却不报错"**,所以用**跨端向量**钉住:`app/tools/gen-pairing-vectors.mjs`

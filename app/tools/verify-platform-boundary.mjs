@@ -55,6 +55,25 @@ function firstUiForbiddenImport(content) {
   return found ? found[0].trim() : null
 }
 
+/**
+ * 在**去掉了注释**的源码里找第一个匹配。
+ *
+ * 用于"某符号的**用法**"这类规则（如 `Icons.*`）。与"只认 import 指令"是同一个道理：
+ * **说明为什么不用它**是好代码，而按正文 grep 会让规则惩罚把理由写下来的人。
+ * 本项目在 `core-no-platform-import` 上踩过同一个坑（见那条规则的注释）。
+ *
+ * 去掉的是 `//…` 行注释与 `/*…*\/` 块注释。**不去字符串**：
+ * 那需要真正的词法分析，而这里的规则只关心"有没有真的用这个符号" ——
+ * 字符串里写 `Icons.send` 不是用法，但它极罕见，且真出现时多报一次比漏报安全。
+ */
+function firstCodeUse(content, pattern) {
+  const withoutComments = content
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/[^\n]*/g, ' ')
+  const found = pattern.exec(withoutComments)
+  return found ? found[0].trim() : null
+}
+
 const RULES = [
   {
     id: 'core-no-platform-import',
@@ -85,6 +104,14 @@ const RULES = [
     why: 'CPF 官方 FAQ：Platform.isOhos 会导致 flutter run / build har / attach 失败，鸿蒙判断必须用 defaultTargetPlatform',
     appliesTo: () => true,
     match: (content) => firstMatch(content, /Platform\.isOhos/g),
+  },
+  {
+    id: 'no-material-icons',
+    why: '图标只有一个来源（DSH 的 98 个图标，见 lib/theme/dsh_icons.dart）。'
+      + '用 Icons.* 等于从 Material 借图标，而原型与 App 会长得不一样 —— '
+      + '项目硬规则是「改基线要同步改落地端，不允许两边各自漂移」。',
+    appliesTo: (p) => /^app\/lib\/ui\//.test(p),
+    match: (content) => firstCodeUse(content, /(?<![\w.])Icons\.[A-Za-z_]\w*/g),
   },
   {
     id: 'fallback-not-in-release',
@@ -130,6 +157,15 @@ const SELF_TEST = [
   // 结果是每个 UI 文件都报"平台细节漏进了界面层"（实测踩到，见 `.agents/notes/`）。
   { rule: 'ui-no-platform-import', path: 'app/lib/ui/chat.dart', content: "import 'package:flutter/material.dart';", shouldFail: false },
   { rule: 'ui-no-platform-import', path: 'app/lib/ui/chat.dart', content: "import 'package:flutter/widgets.dart';", shouldFail: false },
+  // 图标只有一个来源：`Icons.*` 是 Material 的图标，UI 层不许用。
+  { rule: 'no-material-icons', path: 'app/lib/ui/chat.dart', content: 'icon: const Icon(Icons.send),', shouldFail: true },
+  { rule: 'no-material-icons', path: 'app/lib/ui/chat.dart', content: "DshIcon('send', color: DshColors.onAccent)", shouldFail: false },
+  // **注释里提到 `Icons.*` 不算违规**：说明"为什么不用它"是好事，
+  // 按正文 grep 会让规则惩罚把理由写下来的人（`core-no-platform-import` 踩过同一个坑）。
+  { rule: 'no-material-icons', path: 'app/lib/ui/chat.dart', content: '// 不用 Icons.send，图标只有一个来源', shouldFail: false },
+  // 但别的层可以用（`platform/` 将来可能有自己的原生图标需求）——
+  // 这条规则的适用范围就是 UI 层，不该外溢。
+  { rule: 'no-material-icons', path: 'app/lib/platform/registry.dart', content: 'const Icon(Icons.send)', shouldFail: false },
   { rule: 'branch-whitelist', path: 'app/lib/ui/chat.dart', content: 'if (Platform.isAndroid) {}', shouldFail: true },
   { rule: 'branch-whitelist', path: 'app/lib/ui/adaptive/switcher.dart', content: 'if (Platform.isIOS) {}', shouldFail: false },
   { rule: 'no-platform-isohos', path: 'app/packages/notify_ohos/lib/notify_ohos.dart', content: 'if (Platform.isOhos) {}', shouldFail: true },

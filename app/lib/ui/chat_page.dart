@@ -23,6 +23,7 @@ import 'package:flutter/material.dart';
 import '../../data/app_model.dart';
 import '../../model/chat_item.dart';
 import '../../theme/dsh_colors.dart';
+import '../../theme/dsh_icons.dart';
 import '../../theme/dsh_theme.dart';
 
 /// 对话页。
@@ -247,18 +248,17 @@ class _ToolRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (icon, color) = switch (status) {
-      ToolCallStatus.running => (Icons.autorenew, DshColors.roleTool),
-      ToolCallStatus.completed => (
-        Icons.check_circle_outline,
-        DshColors.roleContext,
-      ),
-      ToolCallStatus.failed => (Icons.error_outline, DshColors.error),
+      // 用 DSH 的图标而不是 Material：同一件事（工具在跑 / 成了 / 失败）
+      // 在原型与 App 里该长得一样，而"图标只有一个来源"是项目硬规则。
+      ToolCallStatus.running => ('loading', DshColors.roleTool),
+      ToolCallStatus.completed => ('checkCircle', DshColors.roleContext),
+      ToolCallStatus.failed => ('warningTriangle', DshColors.error),
     };
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
-          Icon(icon, size: 14, color: color),
+          DshIcon(icon, size: 14, color: color),
           const SizedBox(width: 6),
           Text(
             name,
@@ -309,8 +309,9 @@ class _ApprovalRow extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(
-            decided ? Icons.check : Icons.shield_outlined,
+          DshIcon(
+            // `shield` 是 DSH 的审批语义图标；已决定就换成 `check`。
+            decided ? 'check' : 'shield',
             size: 14,
             color: decided ? DshColors.labelTertiary : DshColors.roleTool,
           ),
@@ -433,7 +434,7 @@ class _Composer extends StatelessWidget {
                       color: DshColors.onAccent,
                     ),
                   )
-                : const Icon(Icons.send, size: 18),
+                : const DshIcon('send', size: 18, color: DshColors.onAccent),
           ),
         ],
       ),

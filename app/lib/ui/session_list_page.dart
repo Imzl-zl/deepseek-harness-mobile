@@ -20,6 +20,7 @@ import 'package:flutter/material.dart';
 import '../../data/app_model.dart';
 import '../../model/chat_item.dart';
 import '../../theme/dsh_colors.dart';
+import '../../theme/dsh_icons.dart';
 import '../../theme/dsh_theme.dart';
 import 'chat_page.dart';
 
@@ -62,8 +63,8 @@ class _SessionListPageState extends State<SessionListPage> {
               _ConnectionChip(state: widget.app.connection),
               IconButton(
                 tooltip: '刷新',
-                onPressed: () => widget.app.refreshSessions(),
-                icon: const Icon(Icons.refresh),
+                onPressed: () => unawaited(widget.app.refreshSessions()),
+                icon: const DshIcon('refresh', color: DshColors.labelPrimary),
               ),
             ],
           ),
@@ -103,8 +104,12 @@ class _EmptyBody extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              error == null ? Icons.forum_outlined : Icons.cloud_off,
+            // **两种空用两个图标分开**：`newChat`（真没有会话，动作是"去建一个"）
+            // 与 `warningTriangle`（取不到，动作是"检查连接"）。
+            // DSH 图标集里没有"云断开"那个语义 —— 用它的告警三角形，
+            // 而不是从 Material 借一个（那会破坏"图标只有一个来源"）。
+            DshIcon(
+              error == null ? 'newChat' : 'warningTriangle',
               size: 48,
               color: DshColors.labelTertiary,
             ),
@@ -164,8 +169,8 @@ class _SessionTile extends StatelessWidget {
       ),
       trailing: session.pendingCount > 0
           ? _Badge(count: session.pendingCount)
-          : const Icon(
-              Icons.chevron_right,
+          : const DshIcon(
+              'chevronRight',
               size: 20,
               color: DshColors.labelTertiary,
             ),

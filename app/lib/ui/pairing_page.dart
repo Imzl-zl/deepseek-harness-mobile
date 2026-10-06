@@ -31,6 +31,7 @@ import '../core/errors.dart';
 import '../core/frame.dart';
 import '../core/pairing.dart';
 import '../theme/dsh_colors.dart';
+import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 
 /// 配对完成的结果（交给装配点去建连）。
@@ -255,7 +256,7 @@ class _ErrorBox extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.error_outline, size: 16, color: DshColors.error),
+          const DshIcon('warningTriangle', size: 16, color: DshColors.error),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -316,8 +317,8 @@ class _ConfirmCard extends StatelessWidget {
                 onPressed: () => unawaited(
                   Clipboard.setData(ClipboardData(text: result.sas)),
                 ),
-                icon: const Icon(
-                  Icons.copy,
+                icon: const DshIcon(
+                  'copy',
                   size: 16,
                   color: DshColors.labelTertiary,
                 ),
