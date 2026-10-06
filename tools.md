@@ -51,12 +51,17 @@
   - `cd connector; pnpm install` —— 装依赖,**必须 0 退出**(见 Pitfalls 的构建脚本闸)
   - `pnpm exec tsc --noEmit` —— 类型检查(开工步骤第 2 步的判据)
   - `pnpm build` —— tsdown 产出 `lib/index.js` + `lib/index.d.ts`,即装进 profile 的那份产物;路径对齐靠 `connector/tsdown.config.ts`
-  - `pnpm test` —— 跑 `protocol/fixtures` 与 `protocol/vectors`,外加握手/封箱/流控/任务帧/订阅骨架/每连接装配/方法面/幂等/四个 DSH 适配器/连接/身份等接线用例(当前 **275 项**;其中 fixtures 的断言数须与 `verify-fixtures.mjs` 的 486 一致、向量的与 `verify-vectors.mjs` 的 49 一致)
+  - `pnpm test` —— 跑 `protocol/fixtures` 与 `protocol/vectors`,外加握手/封箱/流控/任务帧/订阅骨架/每连接装配/方法面/幂等/四个 DSH 适配器/连接/身份/直连监听面等接线用例(当前 **285 项**;其中 fixtures 的断言数须与 `verify-fixtures.mjs` 的 486 一致、向量的与 `verify-vectors.mjs` 的 49 一致)
     - **这一行是项数的唯一出处**(`AGENTS.md` §5 特意不在此处复述,就是为了只留一处)。改测试后同步它。
       它已经**静默漂移过一次**(245 → 273):当时用 shell 的 `.Replace` 更新,没匹配上就**什么都不做** ✗ ——
       所以改这行用编辑工具,改完跑一次 `pnpm test` 对一下数。
 - 图标重新抽取(DSH 升级后):`node mock/proto/tools/extract-dsh-icons.mjs`
 - 关键入口:`mock/proto/index.html`(原型唯一入口);`app/lib/theme/dsh_theme.dart`(Flutter 主题)
+- 直连监听面(契约 §14.6 第一跳;设计见 `docs/subsystems/connector-and-relay.md` §1.7):配置 `listenPort`(**默认 `0` = 不监听**)+ `listenHost`(默认 `127.0.0.1`);代码 `connector/src/transport/listener.ts`。
+  - **`ws` 是运行时依赖**(本插件唯一一个,`dependencies` 里);它只在配了 `listenPort` 时才被 import,但**产物里是顶层 `import`**(tsdown 外部化,不按需加载)—— 所以装进 profile 时 `ws` 必须装得上,否则 `lib/index.js` 直接加载失败。
+  - TLS **不在插件里终结**(Tailscale `tailscale serve` / 反向代理);手机侧始终拨 `wss://`。
+  - 鉴权就是握手本身:未配对设备在 `hello` 处被拒(关闭码 `4003`),监听面没有第二层令牌。
+  - 起监听面的用例用 `port: 0`(系统分配),所以不受固定端口占用影响;`startListener` 的 `port: 0` 是"随便给一个口",**不是**"不监听"(那是装配层按配置判断的)
 - 只读参考源码:DSH `D:\sudy\github\deepseek-harness`;Agents-Anywhere `D:\sudy\github\Agents-Anywhere`;rikkahub `D:\sudy\github\rikkahub`
 - DSH 侧高信号入口(只读):
   - 开发者文档 <https://deepseek-harness.github.io/deepseek-harness/reference/> —— 子系统 `reference/subsystems/web-server`、`web-client`、`client-modules`;另有 `develop/basic/`、`guide/quickstart`
@@ -117,4 +122,6 @@
 - **`engines.dsh` 不参与任何判定**:DSH 插件兼容性看 `peerDependencies` 对 `@deepseek-ai/dsh*` 的范围,不匹配会**静默跳过**并记入 `skippedBundles`(`packages/util/package-manifest/README.md:93`、`packages/boot/app-boot/src/plugin-compatibility.ts:68`);写 `engines.dsh` 既不报错也不拦截
 - **DSH 引用行号会漂移**:改文档时顺手核对被引行是否仍指向该内容(已发生过 §7.5 密钥原则从 :313 漂到 :366)。
 - **本仓库内的路径必须从 `import.meta.url` 派生,不许写死盘符**(`node mock/proto/tools/verify-tool-paths.mjs` 会拦):环境从 `C:\sudy` 搬到 `D:\sudy` 后,11 个 CDP 脚本里写死的 `file:///C:/.../index.html` 让整组浏览器门禁**静默全红** —— 脚本照常跑完、照常打印 JSON,红的原因是路径而不是代码(最坏的一种红:看起来像回归)。同理 `OUT` 不要写成 `'mock/proto/shots'`(那是依赖 cwd 的第二种硬编码)。参考仓库路径的单一来源是 `AGENTS.md` §5 与 `tools.md`。取舍见 `.agents/notes/implemented/2026-10-02-paths-must-be-derived-not-hardcoded.md`
+- **`start()` 起的周期任务,`attach()` 也得起 —— 否则接受来的连接是"能连上但收不到东西"**:`createConnection` 的两个周期任务(攒批 flush、保活判定)原本只在 `start()` 里起,而接受路径走 `attach()`。少了它们的表现是**静默的**:`send({t:'ev'})` 照样回 `true`,而那一帧进了 batcher 就再没人 flush(可攒批的 `ev`/`live`/`job` **一条都出不去**),`keepalive.tick()` 不被调用则**半开永远判不出来**(连接死了也不收口)。修法是抽一个**幂等**的 `startTimers()`,两条路共用(`attach` 可被调多次,重复起定时器会漏掉旧的)。教训:**"这段接线已经就绪"要读代码确认,不能从测试通过反推** —— `connection-accept.test.ts` 当时有 2 条断言全绿,但它们碰不到定时器。见 `.agents/notes/implemented/2026-10-02-listener-face.md`
+- **同一批 `seq` 被多条连接各记一次是正常形态,不是告警**:监听面下每台设备各自从自己的水位订阅同一会话,各自都会把同一段事件推给增量缓冲;缓冲只留一份(拒绝重复)是**对的**,但**不能用 `warn` 播报** —— 每台设备每批事件刷一行会把真正的告警淹掉。判据是"这件事会不会在正常运行时反复发生":会,就 `debug`。别为它加去重表(那是把正常形态当成故障处理)
 - 血泪史条目见 `docs/postmortem/`;此处只留结论。

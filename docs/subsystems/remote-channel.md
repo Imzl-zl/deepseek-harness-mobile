@@ -56,6 +56,11 @@
 
 两跳都是手机侧 / 电脑侧**主动连出**:不需要公网 IP、不需要内网穿透、不需要端口映射。中转不主动拨入。
 
+**直连拓扑**(契约 §14.6 的第一跳):手机与电脑在同一 Tailscale 网络时,手机直接连电脑侧桥接,
+不经中转。桥接此时**接受**连接而不是拨号(同一套握手与封箱),监听面见
+`connector-and-relay.md` §1.7。两条路径跑同一组用例,所以协议层不为拓扑分叉 —— 差别只在
+"谁发起 TCP" 与 "中转在不在中间"。
+
 ### 2.1 电脑侧形态(硬性前提,已核实)
 
 - **必须是 npm bundle**(包清单声明 `dsh.bundle.patch`),**不能**是动态 Cordis 包:后者跑在 `node:vm` 沙箱里,`setInterval` / `fetch` / `require` 被 trap 成抛错(`packages/extensions/cordis-host-runner/src/sandbox.ts:2-7,68-80`),开不出长连接。

@@ -153,6 +153,11 @@ dsh plugin --profile <name> add <connector 本地路径>
 
 判据:发一句 / 回一句跑通。
 
+电脑侧**接受连接**的那一半已就绪(`docs/subsystems/connector-and-relay.md` §1.7):配 `listenPort`
+即监听,每 accept 一条就装配一次;TLS 由 Tailscale(`tailscale serve`)或反向代理终结,插件只监听明文 WS。
+代码侧已用手机替身在真 socket 上跑通握手与双向 AEAD(`connector/tests/listener.test.ts`),
+缺的是手机端本身与真机可达性。
+
 5.2 接上中转后**复跑同一组用例**(契约 §14.2 的回环在真实中转下也要过)。
 
 ---

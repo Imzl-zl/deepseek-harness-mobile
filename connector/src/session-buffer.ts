@@ -138,8 +138,17 @@ export function createSessionBuffer(options: SessionBufferOptions): SessionBuffe
       const last = entry.events.at(-1)
       const lastSeq = last === undefined ? entry.trimmedTo : last.seq
       if (event.seq <= lastSeq) {
-        // 同一个 seq 记两次会让重订时重放两条；倒退的 seq 更糟（手机侧会当成跳跃丢流）。
-        options.log?.warn(`增量缓冲拒绝了非递增的 seq：${sid} 收到 ${event.seq}（上一条 ${lastSeq}）`)
+        // **幂等无操作，不是错误。** 缓冲只留一份，而同一批 `seq` 会被多条连接各记一次 ——
+        // 那是正常形态，不是异常：监听面下每台设备各自从自己的水位订阅同一会话，
+        // 各自都会把同一段事件推过来（第一台记下，后面的都是这一支）。
+        // 缓冲只留一份是对的（重订时不能重放两条）；**但这里不能 `warn`** ——
+        // 每台设备每来一批事件刷一行，会把真正的告警淹掉。
+        // 倒退的 seq（`event.seq < lastSeq`）走同一支：缓冲是追加式的，插不进更旧的那段，
+        // 覆盖不到时 `tailFrom` 会要求快照 —— 那是安全的退化。
+        // 为什么这里刻意**不是** `warn`：见 `.agents/notes/implemented/2026-10-02-listener-face.md`。
+        options.log?.debug(
+          `增量缓冲跳过重复的 seq：${sid} 收到 ${event.seq}（上一条 ${lastSeq}）`,
+        )
         return
       }
       entry.events.push(event)

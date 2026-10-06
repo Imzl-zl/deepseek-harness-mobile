@@ -5,19 +5,19 @@
 
 ## 下一步(新会话从这里开始)
 
-**当前里程碑**:远程通道的**代码链路已全线打通**(配对 → 换票 → 经中继握手 → AEAD 双向业务帧,
-在真进程 + 真 socket 上被测);剩下的是**产品化装配、手机端与真机联调**。
+**当前里程碑**:远程通道的**代码链路已全线打通**,且**两条路径都通**(直连监听面 / 经中转);
+剩下的是**手机端 Dart 客户端与真机联调**。
 
-1. **桥接监听面**(直连拓扑用;**前置的每连接装配抽取已完成**,`connection-scope.ts` 的
-   `createConnectionScope(port, deps)` 就是那条缝):接受 WSS 连接并交给连接层 —— 需要 `ws` 进连接器的
-   **运行时**依赖(连接器现在只拨号,用 Node 自带客户端)。已有 `attach(socket)`(接进来的连接
-   进握手且**不自愈**)。已知未解决:两条连接订阅同一会话时同一批 `seq` 被各记一次,缓冲的 `record`
-   只收严格递增 → 后记的被拒并留声(语义没错,是噪音),需在订阅面上做会话级去重。
-2. **手机端 Dart 客户端**(需先装 Flutter SDK):规格侧已备好,尤其 §3 的**行尾 `\n`**
-   (漏了的表现是"两侧都正常、对端什么都没收到")、§4 握手、§5.6 幂等、§12 配对。
-3. **真机联调**与 `docs/cookbook/channel-bootstrap.md` 第 5 节实跑(Tailscale 可达性、WSS 证书)。
-4. **中转多实例**:限流 / 一次性票 / 配对登记 / 路由窗口目前都是**进程内状态**;§12 的完整形态要求外部化。
-5. 其余未实现面:插件面板、本机运行模式、goals·schedule·todos 三个远端动作(见 `docs/`)。
+1. **手机端 Dart 客户端**(需先装 Flutter SDK;`flutter test` 即可,安卓 SDK 只有上真机才要):
+   规格侧已备好,尤其 §3 的**行尾 `\n`**(漏了的表现是"两侧都正常、对端什么都没收到")、§4 握手、
+   §5.6 幂等、§12 配对。落地顺序按 `docs/cookbook/channel-bootstrap.md` §6:
+   `core/`(frame/crypto/recovery/items,纯 Dart 零平台依赖)→ `test/fixtures_test.dart` 跑同一批
+   `protocol/fixtures` → `test/crypto_vectors_test.dart` 跑 `protocol/vectors` → 三端能力包最后接。
+   判据:第 2、3 步在**没有 UI、没有平台代码**的情况下全绿。
+2. **真机联调**与 `docs/cookbook/channel-bootstrap.md` §5 实跑(Tailscale 可达性、WSS 证书)。
+   代码侧两条路径都通了(直连监听面 / 中转),缺的是 Dart 客户端与真机验证。
+3. **中转多实例**:限流 / 一次性票 / 配对登记 / 路由窗口目前都是**进程内状态**;§12 的完整形态要求外部化。
+4. 其余未实现面:插件面板、本机运行模式、goals·schedule·todos 三个远端动作(见 `docs/`)。
 
 **做完的样子(验收)**:真机上发一句、收到一句;幂等重发不产生第二条;两条路径(Tailscale 直连 / 中转)
 跑同一组用例都成立。
@@ -46,7 +46,7 @@
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
 | `node mock/proto/tools/verify-tool-paths.mjs` | 工具脚本不许硬编码盘符(2 条规则 / 14 个脚本) |
 | `cd connector && pnpm exec tsc --noEmit` | connector 类型检查(**改任何 `.ts` 都要跑** —— 有两次只跑用例没跑它,红了没发现) |
-| `cd connector && pnpm test` | connector 全套 **275 项**(含 fixtures 486 / 向量 49 的相等断言) |
+| `cd connector && pnpm test` | connector 全套 **285 项**(含 fixtures 486 / 向量 49 的相等断言) |
 | `cd connector && pnpm build` | 产出装进 profile 的那份产物 |
 | `cd relay && pnpm typecheck && node --test` | relay 类型检查 + **62 条** |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker` |
@@ -85,8 +85,14 @@
   其余回 `connector/unsupported`。处理器表的键是"实现了什么"的唯一出处。
 - **`relay/` 已可运行**:路由核心 / 配对登记 / 中转大脑 / 一次性票 / HTTP 面 / 令牌签发与吊销 / 限流 /
   可运行入口 / 配置样例。**已实测**:带密钥三方链路(真进程 + 真 socket)、设备经中转到连接器、往返。
+- **直连监听面已落地**(2026-10-02):`connector/src/transport/listener.ts`;配置 `listenPort`
+  (**默认 `0` = 不监听**)+ `listenHost`。每 accept 一条就 `makeConnection(dial)` 装配一次,
+  与拨号路径共用同一个工厂。`ws` 因此成为**本插件第一个运行时依赖**。
+  TLS 由外部终结(Tailscale / 反向代理),鉴权就是握手本身(未配对 → 关闭码 4003)。
+  **同批修掉一个既有静默 bug**:`attach()` 原来没起 `start()` 的两个周期任务(攒批 flush / 保活判定)
+  —— 表现是"接受来的连接能连上、能握手,但可攒批的帧一条都发不出去,且半开永远判不出来"。
 - **配对链闭合**:出码(带登记)→ 换票 → 经中转转发 → 电脑侧落设备行 → 明文回执。
-- **未做**:上面"下一步"的 1–5(监听面 / Dart / 真机 / 多实例 / 其余面);
+- **未做**:上面"下一步"的 1–4(Dart / 真机 / 多实例 / 其余面);
   幂等的启动核对;中转的令牌签发目前靠 CLI(库还没落地)。
 - **profile 侧已起步**:专用 profile `dsh-mobile-test` 里插件装成 `link:` 并进了 `bundles`;
   `--dump-config` 证实三个必需服务在树里都有提供者。**真机连通未做。**
@@ -105,6 +111,13 @@
 
 ## 最近活跃窗口(2026-10-01 起)
 
+- **直连监听面(2026-10-02)**:三个岔口一次收口 —— `ws` 进运行时依赖、`attach()` 补上周期任务、
+  去重噪音降级为 `debug`。**先量再下**这条纪律第三次生效:落地前先读 `attach()` 的代码,
+  发现它少了 `start()` 的两个定时器(既有静默 bug,原有 2 条断言碰不到它),先复现再修。
+  另一处"清单错了就改清单":`per-connection-scope` 那篇的代价段写着"需要在订阅面上做会话级去重",
+  读代码后改判为**不需要去重表**(两条连接各记同一批 `seq` 是正常形态,缓冲只留一份是对的),
+  只把日志从 `warn` 降为 `debug`。三处变异校验各自变红。取舍见
+  `.agents/notes/implemented/2026-10-02-listener-face.md`(两篇 `proposed/` 因此归档)。
 - **环境搬迁修复(2026-10-02)**:开发环境从 `C:\sudy` 搬到 `D:\sudy`(三个只读参考仓库都在 D 盘)。
   搬盘让仓库内 22 个文件写死的 `C:\sudy\...` 全部失效,其中 **11 个 CDP 脚本的 `PAGE` 指向不存在的
   file:// URL → 整组浏览器门禁静默全红**(脚本照常跑完、照常打印 JSON)。修法=路径一律从

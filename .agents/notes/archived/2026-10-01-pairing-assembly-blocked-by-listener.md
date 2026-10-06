@@ -1,6 +1,22 @@
 # Agent Note: 出码入口的 API 已查清，但装配前撞上一个真障碍：桥接只会拨号
 
-Status: proposed（`src/pairing.ts` 与 `src/pairing-endpoint.ts` 已就绪；**产品装配被一个架构缺口挡住**）
+Status: archived（2026-10-02 被 `implemented/2026-10-02-listener-face.md` 取代：最后一项"监听面本身"已落地。
+本篇结论不改，只作历史记录）
+
+> 取代者：`.agents/notes/implemented/2026-10-02-listener-face.md`
+>
+> 本篇 §进展 列的 4 项里，2–4 项当时已完成，第 1 项（监听面本身）在 2026-10-02 完成 ——
+> 于是"配对装配被挡住"这个结论彻底失效。
+>
+> 它仍然有两条**当时查清、现在还在用**的事实（不要因为归档就当它没价值）：
+> 1. `commands.register` 的 API 形状与 `CommandResult` 的两种结果
+>    （`packages/interaction/commands/src/index.ts:285`、`types.ts:34-43`）；
+> 2. `devices` 表用 `edPub` / `dhPub`，而 `pairing.ts` 的设备行用 `edPubHex` / `dhPubHex` ——
+>    **拼写不同，装配时要逐字段映射**（"顺手 spread 一下"会踩）。
+>
+> 另外它 §选 2 之前必须知道的一件事 那张"拨号 vs 接受"的表是对的，但**漏了一行**：
+> 接受来的连接还需要**起定时器**（攒批 flush 与保活判定）—— 那一条当时没看出来，
+> 落地时才发现 `attach()` 少了它，见取代者那篇的 Problem 第二节。
 
 ## 查证到的事实（都不再需要猜）
 

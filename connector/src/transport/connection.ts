@@ -289,6 +289,28 @@ export function createConnection(options: ConnectionOptions): Connection {
 
   // ---- 定时器 ----
 
+  /**
+   * 起两个周期任务：攒批 flush 与保活判定。
+   *
+   * **拨号与接受两条路都要起**（`start()` 与 `attach()` 都调它）—— 只在 `start()` 里起的版本
+   * 让接受来的连接永远发不出可攒批的帧（`ev` / `live` / `job` 会一直留在 batcher 里，
+   * 而 `send()` 照样回 `true`），也永远判不出半开。症状是"连上了、握手也过了，
+   * 但事件一条都收不到"，两边看起来都正常。
+   *
+   * 幂等：`attach()` 可以在一条连接上被调多次（每次换一条 socket），重复起定时器会漏掉旧的。
+   *
+   * 为什么"只在 `start()` 里起"是个**静默 bug**（以及怎么被抓到的），见
+   * `.agents/notes/implemented/2026-10-02-listener-face.md`。
+   */
+  const startTimers = (): void => {
+    cancelTick?.()
+    cancelFlush?.()
+    cancelTick = null
+    cancelFlush = null
+    scheduleTick()
+    scheduleFlush()
+  }
+
   const scheduleTick = (): void => {
     // 判定周期取心跳的 1/4：够密，又不必为每次判定设一个精确到毫秒的闹钟。
     const period = Math.max(10, Math.round((heartbeatMs ?? 60_000) / 4))
@@ -585,6 +607,9 @@ export function createConnection(options: ConnectionOptions): Connection {
     window = createSendWindow()
     handshakeDone = false
     session = null
+    // **定时器要跟着起**：接受路径不走 `start()`，少了这一步就永远发不出可攒批的帧、
+    // 也判不出半开（见 `startTimers` 的说明）。
+    startTimers()
     wireSocket(socket, { alreadyOpen: true, heals: false })
   }
 
@@ -660,9 +685,7 @@ export function createConnection(options: ConnectionOptions): Connection {
   return {
     start() {
       if (stopped) return
-      cancelTick = null
-      scheduleTick()
-      scheduleFlush()
+      startTimers()
       connect()
     },
 

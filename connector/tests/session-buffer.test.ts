@@ -87,13 +87,33 @@ test('连续性：中间有洞就要求快照，而不是把洞补成"没有新�
   )
 })
 
-test('非递增的 seq 不记并留声（重复记会让重订时重放两条）', () => {
+test('重复的 seq 是**幂等无操作**：两条连接订阅同一会话时不会各记一次、也不刷告警', () => {
+  const { buffer, warnings } = setup()
+  // 两条连接（监听面：两台设备）各自从水位 0 订阅同一会话，各自拿到同一批事件。
+  // 第一台记下来，第二台的同一批 seq 必须**静默**当成"已经有了"。
+  buffer.record('sid_1', event(1))
+  buffer.record('sid_1', event(1))
+  buffer.record('sid_1', event(2))
+  buffer.record('sid_1', event(2))
+  assert.equal(buffer.stats.frames, 2, '缓冲里只留一份（重复记会让重订时重放两条）')
+  assert.deepEqual(
+    buffer.tailFrom('sid_1', 0)?.map((item) => item.seq),
+    [1, 2],
+  )
+  assert.deepEqual(warnings, [], '并发订阅是正常形态，不是告警（原来的实现每条刷一次 warn）')
+})
+
+test('倒退的 seq 也不记、也不告警（缓冲是追加式的，插不进更旧的那段）', () => {
   const { buffer, warnings } = setup()
   buffer.record('sid_1', event(5))
-  buffer.record('sid_1', event(5))
+  // 另一条连接从更旧的水位追上来：它手里有 1..5，而我们只有 5。
+  // 缓冲不能把 1..4 插到 5 前面（结构是追加式的）—— 覆盖不到时 `tailFrom` 会要求快照，
+  // 那是安全的退化，所以这里不记是对的、也不是异常。
   buffer.record('sid_1', event(4))
+  buffer.record('sid_1', event(1))
   assert.equal(buffer.stats.frames, 1)
-  assert.equal(warnings.length, 2, '两次都该留声（静默丢弃最难查）')
+  assert.deepEqual(warnings, [])
+  assert.equal(buffer.tailFrom('sid_1', 0), undefined, '覆盖不到就要求快照（不是"没有新事件"）')
 })
 
 test('超限：先按已确认的部分裁；裁不动才置位"只允许快照"', () => {

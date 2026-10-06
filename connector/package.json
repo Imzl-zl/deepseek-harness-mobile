@@ -50,13 +50,13 @@
     "@types/ws": "8.18.1",
     "tsdown": "0.22.14",
     "tsx": "4.21.0",
-    "typescript": "5.9.3",
-    "ws": "8.18.3"
+    "typescript": "5.9.3"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
   "dependencies": {
+    "ws": "8.18.3",
     "zod": "4.6.5"
   }
 }

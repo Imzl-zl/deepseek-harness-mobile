@@ -18,6 +18,14 @@ export interface ConnectorConfig {
   relayUrl: Volatile<string | undefined>
   /** 连接器令牌的凭据引用;本体走 ctx.credentials,不进配置文件。 */
   relayTokenRef: Volatile<string | undefined>
+  /**
+   * **直连拓扑**的监听端口(契约 §14.6 的第一跳)。`0` = 不监听(只走中转)。
+   *
+   * 默认 0 而不是某个固定端口:不配置就等于这个功能不存在,而不是"监听了但没人用"。
+   */
+  listenPort: Volatile<number>
+  /** 监听地址。默认只在本机;直连要走 tailnet 时显式写那个地址。 */
+  listenHost: Volatile<string>
   /** 允许配对的设备数。 */
   deviceLimit: Volatile<number>
   /** 审批接管档位,判定表见契约 §6.2。 */
@@ -39,6 +47,9 @@ export interface ConnectorConfig {
 export const Config = z.object({
   relayUrl: z.string().volatile(),
   relayTokenRef: z.string().role('credential-ref').volatile(),
+  // `0` = 关。范围到 65535;`.min(0)` 允许"显式关掉"这个写法。
+  listenPort: z.number().step(1).min(0).max(65535).default(0).volatile(),
+  listenHost: z.string().default('127.0.0.1').volatile(),
   deviceLimit: z.number().step(1).min(1).default(8).volatile(),
   approvalTakeover: z.union([z.const('never'), z.const('foreground'), z.const('always')]).default('foreground').volatile(),
   approvalWatchdogMin: z.number().step(1).min(1).default(10).volatile(),

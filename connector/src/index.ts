@@ -10,7 +10,7 @@
  * 3 publish-service     ctx.provide('dshMobileConnector', api) ← 手机端能力门控读它
  * 4 register-answerers  审批与提问的 claim-or-delegate（§6.2）
  * 5 load-identity       取（或首次生成）本机身份种子（§12.1）
- * 6 start-transport     出站 WSS，并把 §4.1 的握手交给驱动器
+ * 6 start-transport     出站 WSS，并把 §4.1 的握手交给驱动器；配了 `listenPort` 时**同时**起直连监听面
  * ```
  *
  * 两处刻意的选择：
@@ -73,7 +73,8 @@ import { createSessionBuffer } from './session-buffer.js'
 import { createSessionsAdapter } from './dsh/sessions.js'
 import type { DeviceRecord } from './store/index.js'
 import { coreDomain, initialMeta, migrateMeta, windowsDomain } from './store/index.js'
-import { createConnection, type Connection } from './transport/connection.js'
+import { createConnection, type Connection, type DialSocket } from './transport/connection.js'
+import { startListener, type Listener } from './transport/listener.js'
 
 export const name = 'dsh-mobile-connector'
 
@@ -110,15 +111,21 @@ interface Assembly {
    */
   relayUrl: string | undefined
   relayTokenSecretRef: string | undefined
+  /** 直连监听面（§1.7）：`0` = 不监听。同样是挂载时取一次快照。 */
+  listenPort: number
+  listenHost: string
   /** 接管档位（契约 §6.2）。同样是挂载时取一次快照。 */
   approvalTakeover: TakeoverMode
 }
 
 function buildSteps(assembly: Assembly): LifecycleStep[] {
-  const { ctx, relayUrl, relayTokenSecretRef, approvalTakeover, logger, metrics, abort } = assembly
+  const { ctx, relayUrl, relayTokenSecretRef, listenPort, listenHost, approvalTakeover, logger, metrics, abort } =
+    assembly
 
   let closeStore: (() => Promise<void>) | null = null
   let connection: Connection | null = null
+  /** 直连监听面（§1.7）。只有配了 `listenPort` 才非空。 */
+  let listener: Listener | null = null
   /**
    * 这条连接的**已认证设备**由 `connection-scope.ts` 记着（增量缓冲的水位按设备记，
    * 契约 §5.5）—— 它是每连接的状态，所以不放在这里。
@@ -464,79 +471,131 @@ let unregisterPairingCommand: (() => void) | null = null
         /**
          * 每连接的装配产物。
          *
-         * **必须在 `next.start()` 之前赋值**：`start()` 会同步推进状态（`idle → connecting`），
-         * 而下面的回调那时已经在用 `scope` —— 顺序反了会静默丢掉第一条状态回调。
-         * 回调里的 `scopeOf()` 因此不是防御性写法，而是**装配顺序的断言**：
+         * **必须在 `next.start()` / `attach()` 之前赋值**：两者都会**同步**推进状态
+         * （`idle → connecting`），而下面的回调那时已经在用 `scope` —— 顺序反了会静默丢掉
+         * 第一条状态回调。回调里的 `scopeOf()` 因此不是防御性写法，而是**装配顺序的断言**：
          * 走到"还没赋值"这条路上只可能是装配写错了（与 `lifecycle.ts` 的其他几处同一个口径）。
+         *
+         * 抽成工厂是因为**拨号与接受两条路各要一份**（监听面每 accept 一条就调一次）。
+         * 两者共用同一份 `scopeDeps`，差别只有 `dial`：接受来的连接没有拨号目标。
          */
-        let scope: ConnectionScope | null = null
-        const scopeOf = (): ConnectionScope => {
-          if (scope === null) {
-            throw new Error('连接在每连接装配就绪前就开始收帧/迁状态：装配顺序有误')
+        const makeConnection = (dial: (url: string) => DialSocket): Connection => {
+          let scope: ConnectionScope | null = null
+          const scopeOf = (): ConnectionScope => {
+            if (scope === null) {
+              throw new Error('连接在每连接装配就绪前就开始收帧/迁状态：装配顺序有误')
+            }
+            return scope
           }
-          return scope
+
+          const made = createConnection({
+            url: relayUrl ?? '',
+            dial,
+            log: logger,
+            secure: {
+              handshake: createHandshakeDriver({
+                identity: { dh: local.keys.dh, signSeedHex: local.keys.signSeedHex },
+                pcId: connectorId,
+                peerOf: (devId) => {
+                  const record = devicesTable?.get(devId)
+                  // 未配对、已吊销、查不到一律 undefined：对手机都是同一件事（§3.1 的 not-paired）。
+                  if (record === undefined || record.revokedAt !== undefined) return undefined
+                  return {
+                    edPubHex: record.edPub,
+                    dhPubHex: record.dhPub,
+                    pairingId: record.pairingId,
+                  }
+                },
+              }),
+              // 电脑侧永远是应答方（`responder` = B）：`kA2B` 解入站、`kB2A` 封出站。
+              // 映射写在协议层一处，写反了不会报错、只会两侧都解不开（§4.1 的教训）。
+              createCipher: (keys) => createBoxCodec({ keys, role: 'responder' }),
+            },
+            onEstablished: ({ devId }) => {
+              metrics.increment(METRIC.handshakesEstablished)
+              logger.info(`握手完成：设备 ${devId} 已建立端到端会话`)
+              scopeOf().deviceEstablished(devId)
+            },
+            onStateChange: (from, to) => {
+              metrics.increment(METRIC.stateTransitions)
+              if (to === 'connecting') metrics.increment(METRIC.connects)
+              logger.debug(`连接状态 ${from} → ${to}`)
+              if (from === 'serving' && to !== 'serving') scopeOf().servingEnded()
+            },
+            onFrame: (frame: WireFrame) => {
+              metrics.increment(METRIC.inboundFrames)
+              scopeOf().handleFrame(frame)
+            },
+          })
+
+          // 赋值必须在返回之前：调用方拿到它就会 `start()` / `attach()`。
+          scope = createConnectionScope(made, scopeDeps)
+          return made
         }
 
-        const next = createConnection({
-          url: relayUrl ?? '',
-          // Node 22+ 自带全局 WebSocket；不引第三方客户端。
-          //
-          // **连接器令牌走升级头的 `Authorization`**（§2.2）：实测 Node 的全局 `WebSocket`
-          // 支持第二参数传 options 对象（undici 的非标准扩展，见笔记），所以这里能带头 ——
-          // 三参数形式与裸调用都收不到（服务端只会看到 `(none)`）。
-          // 令牌在装配时读一次（`readRelayToken` 不缓存，但**每次拨号都由同一个连接对象发起**，
-          // 于是运行期换令牌需要重连 —— 这是可接受的：换令牌本来就意味着换一次连接）。
-          dial: (url) =>
+        /**
+         * 拨号连接：连中转。**自愈** —— 断开后退避重连 `relayUrl`。
+         *
+         * Node 22+ 自带全局 WebSocket；不引第三方客户端。
+         *
+         * **连接器令牌走升级头的 `Authorization`**（§2.2）：实测 Node 的全局 `WebSocket`
+         * 支持第二参数传 options 对象（undici 的非标准扩展，见笔记），所以这里能带头 ——
+         * 三参数形式与裸调用都收不到（服务端只会看到 `(none)`）。
+         * 令牌在装配时读一次（`readRelayToken` 不缓存，但**每次拨号都由同一个连接对象发起**，
+         * 于是运行期换令牌需要重连 —— 这是可接受的：换令牌本来就意味着换一次连接）。
+         */
+        const dialed = makeConnection(
+          (url) =>
             new WebSocket(url, {
               headers: { authorization: `Bearer ${relayToken}` },
             } as never) as never,
-          log: logger,
-          secure: {
-            handshake: createHandshakeDriver({
-              identity: { dh: local.keys.dh, signSeedHex: local.keys.signSeedHex },
-              pcId: connectorId,
-              peerOf: (devId) => {
-                const record = devicesTable?.get(devId)
-                // 未配对、已吊销、查不到一律 undefined：对手机都是同一件事（§3.1 的 not-paired）。
-                if (record === undefined || record.revokedAt !== undefined) return undefined
-                return {
-                  edPubHex: record.edPub,
-                  dhPubHex: record.dhPub,
-                  pairingId: record.pairingId,
-                }
-              },
-            }),
-            // 电脑侧永远是应答方（`responder` = B）：`kA2B` 解入站、`kB2A` 封出站。
-            // 映射写在协议层一处，写反了不会报错、只会两侧都解不开（§4.1 的教训）。
-            createCipher: (keys) => createBoxCodec({ keys, role: 'responder' }),
-          },
-          onEstablished: ({ devId }) => {
-            metrics.increment(METRIC.handshakesEstablished)
-            logger.info(`握手完成：设备 ${devId} 已建立端到端会话`)
-            scopeOf().deviceEstablished(devId)
-          },
-          onStateChange: (from, to) => {
-            metrics.increment(METRIC.stateTransitions)
-            if (to === 'connecting') metrics.increment(METRIC.connects)
-            logger.debug(`连接状态 ${from} → ${to}`)
-            if (from === 'serving' && to !== 'serving') scopeOf().servingEnded()
-          },
-          onFrame: (frame: WireFrame) => {
-            metrics.increment(METRIC.inboundFrames)
-            scopeOf().handleFrame(frame)
-          },
-        })
-        connection = next
+        )
+        connection = dialed
+        dialed.start()
 
-        scope = createConnectionScope(next, scopeDeps)
+        /**
+         * 直连监听面（§1.7）。**只有配置里 `listenPort` 非 0 才起**，否则一行都不做 ——
+         * 于是"没配监听"与"不监听"是同一件事，不是两套代码路径。
+         *
+         * 每 accept 一条就 `makeConnection` 一次：方法面 / 订阅 / 翻页器 / 配对端点都是
+         * **每连接**的，两条共用一份会串台（第二台手机连上了但收不到事件）。
+         */
+        if (listenPort !== 0) {
+          listener = await startListener({
+            port: listenPort,
+            host: listenHost,
+            log: logger,
+            accept: () => {
+              const accepted = makeConnection(() => {
+                // 接受来的连接没有拨号目标：`attach()` 用 `heals: false` 收口，
+                // 所以这个拨号器**不该被调到**。真被调到说明装配错了 —— 抛，不静默拨号。
+                throw new Error('接受来的连接没有拨号目标：不该走到 dial')
+              })
+              return {
+                port: accepted,
+                attach: (socket) => accepted.attach(socket as DialSocket),
+                stop: () => accepted.stop(),
+              }
+            },
+          })
+        }
 
-        next.start()
         abort.signal.addEventListener('abort', () => {
+          void listener?.close().catch((error: unknown) => {
+            logger.warn('关闭直连监听面时出错（已接受的连接可能没全收干净）', error)
+          })
+          listener = null
           connection?.stop()
           connection = null
         })
       },
       undo() {
+        // 先停监听面：不再接受新连接，再收已接受的（它们的连接由监听面自己 stop）。
+        // 收口失败只留声：卸载是尽力而为（`lifecycle.ts`），这里抛会盖住后面的步骤。
+        void listener?.close().catch((error: unknown) => {
+          logger.warn('关闭直连监听面时出错（已接受的连接可能没全收干净）', error)
+        })
+        listener = null
         connection?.stop()
         connection = null
       },
@@ -551,6 +610,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const relayUrl = config.relayUrl.get()
   const relayTokenSecretRef = config.relayTokenRef.get()
   const approvalTakeover = config.approvalTakeover.get()
+  const listenPort = config.listenPort.get()
+  const listenHost = config.listenHost.get()
 
   ctx.effect(() => {
     const abort = new AbortController()
@@ -561,6 +622,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         ctx,
         relayUrl,
         relayTokenSecretRef,
+        listenPort,
+        listenHost,
         approvalTakeover,
         logger,
         metrics,

@@ -41,6 +41,12 @@
     // `describe({ redactSecrets: true })` 这个选项名,见
     // .agents/notes/implemented/2026-10-01-connector-settings-adapter.md
   },
+  "dependencies": {
+    // 本插件**唯一**的运行时依赖。监听面要一个 WS 服务端,而 Node 22 的全局
+    // `WebSocket` 只有客户端(没有服务端实现)。`ws` 是纯 JS、无原生依赖。
+    // 它只在 `listenPort` 配置时才被 import —— 见 .agents/notes/implemented/2026-10-02-listener-face.md
+    "ws": "8.18.3"
+  },
   "engines": { "node": "^22.19.0 || >=24.0.0" }
 }
 ```
@@ -63,6 +69,8 @@
 |---|---|---|
 | `relayUrl` | — | 中转地址(wss) |
 | `relayTokenRef` | — | 连接器令牌的凭据引用(本体走 `ctx.credentials`) |
+| `listenPort` | 0(不监听) | **直连拓扑**的监听端口;`0` = 关(只走中转,行为与不监听完全一致) |
+| `listenHost` | `127.0.0.1` | 监听地址。直连要走 Tailscale 时显式写 tailnet 地址;默认只在本机 |
 | `deviceLimit` | 8 | 允许配对的设备数 |
 | `approvalTakeover` | `'foreground'` | `never` / `foreground` / `always`(契约 §6.2) |
 | `approvalWatchdogMin` | 10 | 看护超时(分钟) |
@@ -79,7 +87,7 @@ connector/
 ├── src/
 │   ├── protocol/    帧与 AAD(§3)、密码学与握手(§4)、流控(§4.3)、恢复(§5.4)、itemId(§5.2)、幂等(§5.6)、错误码(§3.1)
 │   ├── dsh/         薄适配层:只做映射,不重建语义(§2.2 适配表)
-│   ├── transport/   出站 WSS:退避、心跳、半开、攒批、拨号接线
+│   ├── transport/   出站 WSS:退避、心跳、半开、攒批、拨号接线;以及直连监听面(listener.ts,可选)
 │   ├── store/       ctx.storage domain KV + schema 迁移(§1.4)
 │   ├── push/        摘要生成与 60 s 合并,投递给中转
 │   └── 根部         挂载级装配 / 每连接装配 / 配置 / 生命周期顺序引擎 / 日志与指标
@@ -101,11 +109,13 @@ mount
  ├─ load-identity:取(或首次生成)本机身份种子(§12.1)
  ├─ 装每连接的活物:createConnectionScope(port, deps)(见下"装配分层")
  ├─ transport.start():出站连接(退避)→ 握手(§4.1 三帧)→ serving
+ ├─ 监听面(仅当 listenPort 配置时):每 accept 一条就装配一次,交给 attach(socket)
  └─ 订阅策略:只为"手机已订阅的会话"建立 follow
 
 dispose
  ├─ 停止接受新请求 → 等待在途请求(min(请求超时, 5 s))
  ├─ flush:缓冲落盘(不丢已 ack 的窗口)+ 去重表落盘
+ ├─ 监听面停止接受 + 关闭已接受的连接
  ├─ transport.stop():发 close,关闭 WS
  └─ store.close()
 ```
@@ -172,6 +182,26 @@ function shouldClaim(req: ApprovalRequestEvent, state: TakeoverState): boolean {
 - 桥接 → 中转:`wss /ws/connector`,连接器令牌鉴权;推送投递用 `POST /push/dispatch`(桥接只送**摘要**,不送内容)。
 - 摘要生成在电脑侧、合并也在电脑侧(同会话同类型 60 s 折叠);中转看不懂内容。
 - 中转不可达时:桥接保持退避重连,业务不受影响(手机也连不上,双向都不通)。
+
+### 1.7 直连监听面(可选,与中转并存)
+
+契约 §14.6 的验收顺序是"先 Tailscale 直连跑通,再切中转复跑同一组用例",所以桥接要能**接受**连接,
+而不只是拨号。两件事在实现上分开:
+
+- **拨号**(`relayUrl`):桥接主动连中转。断开后**自愈**(退避重连)。
+- **接受**(`listenPort`):手机直连桥接。**不自愈** —— 接受来的连接没有拨号目标,
+  重新接受一条是监听面的职责;让它去拨 `relayUrl` 的症状是"监听模式下桥接莫名其妙连去中转"。
+
+两者共用同一套**每连接装配**(`createConnectionScope`),所以"多设备"自然成立:每 accept 一条就装配一次。
+`listenPort` 未配置或为 `0` 时**完全不监听**,行为与只有拨号时逐字一致。
+
+**TLS 不在插件里终结。** 插件只监听明文 WS,由外部终结 TLS(Tailscale 用 `tailscale serve`,
+自建则反向代理;与 §2.5 中转的部署口径一致)。三条理由:证书续期是部署侧的事、插件不该持有私钥、
+且这样插件里**没有一条"跳过 TLS"的分支**可被误开。手机侧始终拨 `wss://`,契约 §2 的两跳都成立。
+
+监听面**不做应用层鉴权** —— 鉴权就是 §4.1 的握手本身:未配对的设备在 `hello` 处被拒
+(`protocol/not-paired`)。这是有意的:在监听面上再加一层令牌,会得到两套"谁能连"的判据,
+而它们迟早会不一致(且第二套没有契约依据)。
 
 ---
 
@@ -248,7 +278,7 @@ relay/
 | 1 | `protocol/` 扩展(前 7 条 fixture + 向量 + 参考实现) | `verify-fixtures` / `verify-loopback` / 向量 全绿 |
 | 2 | `connector/` 骨架(工程形态 + store + 空协议层) | 装进 profile 后 `dsh plugin list` 可见,未跳过 |
 | 3 | `protocol/` ↔ `connector/src/protocol` 对齐 | fixtures 在 connector 侧跑绿 |
-| 4 | 真机连通(Tailscale 直连) | 发一句 / 回一句 |
+| 4 | 真机连通(Tailscale 直连) | 发一句 / 回一句(前置:§1.7 的监听面;真机部分待手机端 Dart 落地) |
 | 5 | 会话只读(列表 / 对话 / 轨迹) | 手机看到与桌面一致 |
 | 6 | 可操作(发消息 / 打断 / 插话) | 幂等重发不产生第二条 |
 | 7 | 交互(审批 / 提问 / 计划审查)+ 仲裁三档 | 三档行为与契约 §6.2 一致 |
