@@ -40,6 +40,17 @@ dependencies:
   # **不要**加 cryptography_flutter：它把调用委托给系统 API，纯 Dart 单测里没有那些 API。
   cryptography: ^2.9.0
 
+  # WebSocket 客户端。**Dart 官方包**（publisher = tools.dart.dev，dart-lang/http 仓），
+  # 它把 `dart:io` 的 WebSocket 包成跨平台 StreamChannel。
+  # 用它而不是直接用 `dart:io` 的 WebSocket：
+  #   ① 跨平台（web 端有 HtmlWebSocketChannel，将来要看 web 调试时不用换实现）；
+  #   ② `closeCode` / `closeReason` / `ready` 是**结构化**的，
+  #      而裸 WebSocket 要靠自己挂 onclose 事件再解析；
+  #   ③ 官方维护、1.6k likes / 11M downloads。
+  # 已核实它支持 `headers`（连接器令牌走 `Authorization: Bearer`）与 `connectTimeout`
+  # （见 IOWebSocketChannel.connect 的签名）。
+  web_socket_channel: ^3.0.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

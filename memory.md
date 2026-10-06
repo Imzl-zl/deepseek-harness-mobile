@@ -15,7 +15,7 @@
 [✅] 装 Flutter SDK(3.41.9) + flutter create + cryptography
 [✅] core/ 会话层(frame/crypto/handshake/items/recovery/flow)—— 两批规格全绿
 [✅] core/ 连接层(errors/connection/keepalive/transport/box/handshake_driver/outbox/sync_client)
-[  ] platform/ 的真实 ChannelTransport(dart:io 的 WebSocket;core/ 只留缝)
+[✅] platform/ 的真实 ChannelTransport(web_socket_channel 的 io 入口 + 6 项真 socket 用例)
 [  ] data/ + model/(DTO、sqflite store、会话模型)
 [  ] ui/ 逐屏(可在 Windows 桌面跑:flutter run -d windows,不需要模拟器/真机)
 [  ] 三端能力包(secure_store_* / notify / live_surface / keepalive)
@@ -64,7 +64,7 @@
 | `node protocol/verify-fixtures.mjs` | 16 条 fixture / **486 项断言** |
 | `node protocol/verify-loopback.mjs` | **26 项**:手机 ⇄ 中转 ⇄ 桥接回环(含中转清空后重启) |
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量(改 `protocol/tools/` 后必跑) |
-| `node app/tools/verify-platform-boundary.mjs` | **40 项**(含 16 条规则自检 + 扫描 9 个 Dart 文件) |
+| `node app/tools/verify-platform-boundary.mjs` | **40 项**(含 16 条规则自检 + 扫描 21 个 Dart 文件) |
 | `cd app && flutter test` | **132 项**(core 53 + 连接层 59 + 向量 16 + fixtures 回放 1 + smoke 1) |
 | `cd app && dart analyze --fatal-infos lib test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test` | 0 文件需重排(Dart 社区硬规范) |
@@ -136,6 +136,24 @@
 
 ## 最近活跃窗口(2026-10-01 起)
 
+- **手机端平台层落地 + 选型查一手来源(2026-10-02)**:`lib/platform/websocket_transport.dart`
+  首次落地(真实 WSS)。**三处选型都查了一手来源**,不是想当然:
+  - **WebSocket 用 `web_socket_channel`(Dart 官方包)**,但**必须用 `IOWebSocketChannel.connect`**
+    —— 跨平台的 `WebSocketChannel.connect` **不接受 `headers`**(核实了 3.0.3 源码的签名),
+    而契约 §2.2 要求令牌走 `Authorization` 升级头(不进 URL)。代价如实记录:这一层因此 **io 专有**。
+  - **`pingInterval` 传 `null`(关掉)**:契约 §2.2 有自己的心跳与半开判定,而它依据的是
+    **业务帧**的收发时刻;让协议层再发一套 ping 会多出一路**不受我们控制**的保活流量。
+  - **随机源删掉自己包的 `_SecureSource` 与手写 LCG**(后者用 `DateTime.now()` 播种 =
+    **隐藏的时钟依赖**),改用 `cryptography` 的 `SecureRandom.system`。
+  - **本地存储定 `sqflite`**(核实 CPF-Flutter 的 `flutter_sqflite` 有 **`br_3.41_dev`** 分支,
+    正好对应本仓锁的 3.41 线;`drift`/`realm` 不在适配清单里)。
+  - **读包源码找到一个真根因**:建连失败后**卡死** —— `sink.close()` 的 Future **永远不完成**,
+    因为 `AdapterWebSocketChannel` 只在 `webSocketFuture.then(...)` 里订阅内部流,
+    而连不上时那段**从不执行**(走 `onError` 分支,只关 local sink)。症状极具误导性:
+    3 s 的 `connectTimeout` 变成 30 s 的测试超时。修法:清场是礼节,`unawaited(...)` 不等它。
+  - 教训沉淀:**"库的 Future 永远不完成"只能读源码确认,不能从签名推断**;
+    **本仓三个参考仓库一个 `.dart` 都没有**,Flutter 侧只能查 pub.dev 文档 + 已安装包的源码。
+  见 `.agents/notes/implemented/2026-10-02-mobile-platform-layer-sourcing.md`。
 - **手机端连接层拆分(2026-10-02,同批)**:`sync_client_impl.dart` 971 行,先量三个候选簇再决定 ——
   ① 每连接状态 6 字段 **33 处引用**、且建连/断连**各写一遍同一个重置清单** → 收成
   `ConnectionResources`(该拆);② 在途请求表既无超时、断连也不清 → 收成 `CallRegistry`

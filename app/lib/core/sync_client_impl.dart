@@ -20,8 +20,6 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
-import 'dart:typed_data';
 
 import 'call_registry.dart';
 import 'connection.dart';
@@ -103,21 +101,7 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       });
 
   String _newId() =>
-      _deps.newId?.call() ?? newFrameId(_randomBytes(frameIdBytes));
-
-  /// 系统随机字节。
-  ///
-  /// 用 `Random.secure()`（系统调用）—— 帧 `id` 与 `requestId` 都是 bearer 凭据级别的随机，
-  /// 不能用可预测的伪随机。
-  Uint8List _randomBytes(int length) {
-    final out = Uint8List(length);
-    for (var i = 0; i < length; i += 1) {
-      out[i] = _secure.nextInt(256);
-    }
-    return out;
-  }
-
-  static final _secure = _SecureSource();
+      _deps.newId?.call() ?? newFrameId(randomBytes(frameIdBytes));
 
   @override
   ConnectionState get state => _machine.state;
@@ -885,13 +869,6 @@ Object? _jsonDecode(String text) {
 /// `sync_client` 的 `call` 用的请求信封编码（`method` / `params` / `requestId` 顶层）。
 String encodeRequestEnvelope(String method, Map<String, Object?> params) =>
     jsonEncode({'method': method, 'params': params});
-
-/// 系统安全随机源。
-class _SecureSource {
-  final _random = Random.secure();
-
-  int nextInt(int max) => _random.nextInt(max);
-}
 
 /// 每会话的流式累加器（`app-channel-client.md` §2.2）。
 ///

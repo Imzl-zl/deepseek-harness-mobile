@@ -18,7 +18,10 @@
 library;
 
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
+
+import 'package:cryptography/cryptography.dart' show SecureRandom;
 
 import 'errors.dart';
 
@@ -329,3 +332,21 @@ class LineSplitter {
 /// 而它的症状是 AAD 拼串两端不一致 —— 表现为"解不开"，不是"字段非法"。
 String newFrameId(Uint8List randomBytes) =>
     base64Url.encode(randomBytes).replaceAll('=', '');
+
+/// 密码学安全的随机字节。
+///
+/// 用 `cryptography` 包的 [SecureRandom.system]（它就是 `Random.secure()`，
+/// 但由**维护中的包**提供，而不是我们自己包一层）—— 帧 `id`、`requestId` 与
+/// 配对码都是 bearer 凭据级别的随机，不能用可预测的伪随机。
+///
+/// 不自造随机源：本项目早先写过一层 `Random.secure()` 的包装类，
+/// 它没有任何附加价值（一个方法、转发一次），只是多一个要维护的东西。
+Uint8List randomBytes(int length) {
+  final out = Uint8List(length);
+  for (var i = 0; i < length; i += 1) {
+    out[i] = _secureRandom.nextInt(256);
+  }
+  return out;
+}
+
+final Random _secureRandom = SecureRandom.system;

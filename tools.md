@@ -39,7 +39,7 @@
 - 图标集校验(不需要浏览器):`node mock/proto/tools/verify-icons.cjs`
 - **手机端 `app/`(Flutter 工程;`flutter` 装在 `D:\soft\flutter`,已进用户 PATH)**:
   - **版本闸门:锁 Flutter `3.41.9`**(上界由鸿蒙 fork 定,`app-platform-boundaries.md` §4)。当前上游 stable 是 3.47.6,**不许装** —— Dart SDK 版本决定语言特性,升上去等接鸿蒙时要回改一大片。自带 Dart 3.11.5。
-  - `cd app; flutter test` —— 跑 `test/`,当前 **132 项**:core 单测 53 + 连接层 59(状态机/退避/心跳半开/箱与握手/接线 e2e/outbox/LiveAccumulator/断连拒绝在途请求) + 跨端向量 16 + fixtures 三角色回放 1 + `flutter create` 自带 smoke 1
+  - `cd app; flutter test` —— 跑 `test/`,当前 **138 项**:core 单测 53 + 连接层 59(状态机/退避/心跳半开/箱与握手/接线 e2e/outbox/LiveAccumulator/断连拒绝在途请求) + 跨端向量 16 + fixtures 三角色回放 1 + `flutter create` 自带 smoke 1
   - `cd app; dart analyze --fatal-infos lib test` —— **社区口径的静态检查**(比 `flutter analyze` 严:把 info 也当失败)。0 问题才算干净
   - `cd app; dart format --output=none --set-exit-if-changed lib test` —— **Dart 社区硬规范**(Flutter CI 一直拿它当门禁)。`--set-exit-if-changed` 是判据,不是"看一眼"
   - `cd app; flutter pub get` —— 装依赖(`cryptography` 是唯一的非 SDK 依赖)
@@ -149,4 +149,8 @@
 - **`StreamSubscription.cancel()` 返回的 Future 只表示"清理完成",不表示"还会收事件"**:调用 `cancel()` 的那一刻起事件就不再投递了,所以**收口路径不该 `await` 它**。实测踩过:把每连接资源的 `dispose()` 写成 `await subscription.cancel()`,于是"资源已死"与"状态已 closed"之间多了一个 `await` 窗口 —— 而收口路径全在事件回调里,任何一条都可能在那个窗口里被再次触发,结果是**退避计时器起点漂移**(一条重连用例因此失败,不是崩溃,是时序漂)。修法:同步 `dispose()` + `unawaited(cancel().catchError(...))`
 - **"整体作废"比"每个加超时"更准确**:在途请求遇到断连要**立刻以错误结束**,否则调用方的 `await` 永远不返回(UI 表现是"转圈转到天荒地老",用户只能杀 App)。两种做法都能让它返回,但**客户端动作不同**:连接级拒绝 → `relay/offline` → "退避重试"(请求本身没问题);每请求超时 → "超时重试"(而请求可能已经在电脑侧执行了)。用连接级拒绝,而且它不需要每请求一个定时器
 - **测试"永远挂着"这类 bug 时,断言要在触发前挂好**:`expectLater(pending, throwsA(...))` 必须写在"断开"**之前** —— 否则那个错误 Future 在 Dart 里会被当成未处理异常直接报出来,测试红在断言之前,看起来像"bug 没修"。变异校验时它红的方式很典型:**挂 30 s 后超时**(正是"永远不返回"的症状)
+- **库的 `Future` "永远不完成"这类前提,只能读源码确认,不能从签名推断**:实测踩过 —— `web_socket_channel` 的 `channel.sink.close()` 返回 `Future<void>`,签名看起来完全正常,但**建连失败时它永远不完成**。根因(读 `adapter_web_socket_channel.dart` 得到):`AdapterWebSocketChannel` 只在 `webSocketFuture.then(...)` 里订阅内部流,而连不上时那段**从不执行**(走 `onError` 分支:只 `addError` + 关闭 **local** sink,**从不订阅 foreign sink**)。症状极具误导性:**3 s 的 `connectTimeout` 变成 30 s 的测试超时**,报错指向"测试超时"而不是"连不上"。修法:清场是礼节,`unawaited(...)` 发出去、不等它
+- **选型要有可核实的一手依据,不能"想当然"**:本仓的三个参考仓库(`rikkahub` / `Agents-Anywhere` / `deepseek-harness`)**一个 `.dart` 文件都没有**(实测),所以 Flutter 侧的"参考成熟设计"只能查 pub.dev 文档 + **已安装包的源码**(`<pub-cache>/<包>-<版本>/lib/`)。实测差点选错的一例:跨平台的 `WebSocketChannel.connect` **不接受 `headers`**(`static WebSocketChannel connect(Uri uri, {Iterable<String>? protocols})`),而契约要求连接器令牌走 `Authorization` 升级头 —— 要迁就它就得改协议,方向反了;正确做法是用 `IOWebSocketChannel.connect`(它收 `headers`),并**如实记下代价**(这一层因此 io 专有)。纪律:**新依赖在 `pubspec.yaml` 注释里写明"核实了哪个签名/哪个能力"**,关键行为补一条真 socket 用例
+- **删掉没有附加价值的包装层**:我自己包过一层只有一个方法的 `_SecureSource`(转发 `Random.secure()`),还手写过 LCG(用 `DateTime.now()` 播种 —— **隐藏的时钟依赖**,测试随时钟漂移)。两者都是"想当然"的产物。标准库与 `cryptography` 包里就有现成的(`Random`、`SecureRandom.system`),用它
+- **手机端依赖现状**(每个都在 `pubspec.yaml` 注释里写了"为什么"):`cryptography`(纯 Dart 密码学)、`web_socket_channel`(Dart 官方 WebSocket,1.6k likes;用 `IOWebSocketChannel.connect` 因为**只有它收 headers**)。**本地存储定 `sqflite`**:已核实 CPF-Flutter 的 `flutter_sqflite` 有 **`br_3.41_dev` 分支**(正好对应本仓锁的 3.41 线),而 `drift` / `realm` 不在适配清单里
 - 血泪史条目见 `docs/postmortem/`;此处只留结论。
