@@ -15,10 +15,15 @@
 [✅] 装 Flutter SDK(3.41.9) + flutter create + cryptography
 [✅] core/ 会话层(frame/crypto/handshake/items/recovery/flow)—— 两批规格全绿
 [✅] core/ 连接层(errors/connection/keepalive/transport/box/handshake_driver/outbox/sync_client)
-[✅] platform/ 的真实 ChannelTransport(web_socket_channel 的 io 入口 + 6 项真 socket 用例)
-[  ] data/ + model/(DTO、sqflite store、会话模型)
-[  ] ui/ 逐屏(可在 Windows 桌面跑:flutter run -d windows,不需要模拟器/真机)
+[✅] core/ 配对(pairing.dart:二维码解析 + pairingId/SAS/codeHash 派生,跨端向量钉住)
+[✅] platform/ 真实 ChannelTransport(web_socket_channel 的 io 入口 + 6 项真 socket 用例)
+[✅] platform/ 凭据安全存储(pairing_store.dart,主种子进 Keystore;真机 integration_test 验)
+[✅] model/ + data/(领域模型、事件投影、条目表、应用级状态)
+[✅] ui/ 配对页 + 会话列表 + 对话页(安卓模拟器实跑截图见 docs/shots/)
+[  ] data/store.dart(sqflite 本地库 —— 现在条目只在内存,重启即空)
+[  ] ui/adaptive/(系统紧耦合控件的平台惯例层)
 [  ] 三端能力包(secure_store_* / notify / live_surface / keepalive)
+[  ] 相机扫码(增量,加在 pairing_page 上)
 [  ] 真机联调(前置:上面整条链 + 直连的两个缺口)
 ```
 
@@ -64,8 +69,9 @@
 | `node protocol/verify-fixtures.mjs` | 16 条 fixture / **486 项断言** |
 | `node protocol/verify-loopback.mjs` | **26 项**:手机 ⇄ 中转 ⇄ 桥接回环(含中转清空后重启) |
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量(改 `protocol/tools/` 后必跑) |
-| `node app/tools/verify-platform-boundary.mjs` | **96 项**(含 18 条规则自检 + 扫描 27 个 Dart 文件) |
-| `cd app && flutter test` | **141 项**(core 53 + 连接层 59 + 平台层 6 + 界面 3 + 向量 16 + fixtures 回放 1 + 其它) |
+| `node app/tools/verify-platform-boundary.mjs` | **104 项**(含 18 条规则自检 + 扫描 30 个 Dart 文件) |
+| `cd app && flutter test` | **147 项**(core 53 + 连接层 59 + 平台层 6 + 配对 6 + 界面 3 + 向量 16 + fixtures 回放 1 + 其它) |
+| `cd app && flutter test integration_test/pairing_flow_test.dart -d emulator-5554` | **2 项**(真机验安全存储:纯单测验不了插件) |
 | `cd app && dart analyze --fatal-infos lib test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test` | 0 文件需重排(Dart 社区硬规范) |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
@@ -136,7 +142,32 @@
 
 ## 最近活跃窗口(2026-10-01 起)
 
-- **手机端平台层落地 + 选型查一手来源(2026-10-02)**:`lib/platform/websocket_transport.dart`
+- **手机端配对落地(2026-10-02)**:此前 App 是个空壳(`BootstrapConfig` 是占位值 → 只能显示
+  "连不上")。现在整条链通了:**配对页 → 派生 `pairingId`/SAS → 主种子进系统安全存储 →
+  建连**。三条要害:
+  - **派生规则"算错了却不报错"**,所以用**跨端向量**钉住:`app/tools/gen-pairing-vectors.mjs`
+    **调真实的 `connector/src/pairing.ts`** 产期望值(不是我在 Dart 里重写一遍再对拍 ——
+    那只能证明"我两次写的一样")。最易错的一处:`pairingId` 的 `ikm` 是
+    **码的哈希的 UTF-8 字节**,不是码本身(两者各自自洽,**只在两端互连时暴露**);
+    变异校验证实改错立刻红。
+  - **电脑公钥只有一个入口** `PairingOffer.fromQrPayload`(契约 §12.1 硬规则),代码里
+    没有任何"从网络读公钥"的路径。
+  - **主种子进系统密钥库**(契约 §12.2 明令**绝不回落成明文 preferences**)。
+    用 `flutter_secure_storage`(安卓 Keystore + AES-GCM/RSA-OAEP;
+    **v11 的 `AndroidOptions` 已无 `encryptedSharedPreferences`** —— 写它是编译错误)。
+    **鸿蒙那端它不够**(契约要求自写 platform channel 接 HUKS),等鸿蒙开工按
+    `packages/secure_store_ohos` 做,接口不变。
+  - 相机扫码**暂不做**:属三端能力包(三套权限+相机 API),而粘贴**功能等价**
+    (二维码里就是一段 JSON)、零权限、**可测**。扫码作为增量加在 `pairing_page.dart` 上。
+  - 见 `.agents/notes/implemented/2026-10-02-mobile-pairing.md`。
+- **手机端安卓跑通(2026-10-02,同批)**:`model/` + `data/` + `ui/` 三层落地,
+  `flutter build apk --debug` + 模拟器实机截图验证(见 `docs/shots/`)。接线时挖出一个真缺口:
+  **`core/` 解析了事件却把 `type`/`data` 丢了**(`SessionDelta.items` 只有 itemId/text/seq),
+  逼上层从空的 text 里猜事件类型 → 改成带 `SessionEvent`(身份推导留 core,
+  原始载荷给上层),并把流式与持久在**类型上**分开(`events` vs `liveText`)。
+  另修:`verify-platform-boundary.mjs` 的 `ui-no-platform-import` 曾与 core 共用禁用表
+  (含 `material.dart`)→ **每个 UI 文件都误报**;改成 ui 只拦 `dart:io` 并补两条自检。
+- **手机端平台层 + 选型查一手来源(2026-10-02,同批)**:`lib/platform/websocket_transport.dart`
   首次落地(真实 WSS)。**三处选型都查了一手来源**,不是想当然:
   - **WebSocket 用 `web_socket_channel`(Dart 官方包)**,但**必须用 `IOWebSocketChannel.connect`**
     —— 跨平台的 `WebSocketChannel.connect` **不接受 `headers`**(核实了 3.0.3 源码的签名),

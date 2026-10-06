@@ -39,9 +39,12 @@
 - 图标集校验(不需要浏览器):`node mock/proto/tools/verify-icons.cjs`
 - **手机端 `app/`(Flutter 工程;`flutter` 装在 `D:\soft\flutter`,已进用户 PATH)**:
   - **版本闸门:锁 Flutter `3.41.9`**(上界由鸿蒙 fork 定,`app-platform-boundaries.md` §4)。当前上游 stable 是 3.47.6,**不许装** —— Dart SDK 版本决定语言特性,升上去等接鸿蒙时要回改一大片。自带 Dart 3.11.5。
-  - `cd app; flutter test` —— 跑 `test/`,当前 **141 项**:core 单测 53 + 连接层 59(状态机/退避/心跳半开/箱与握手/接线 e2e/outbox/LiveAccumulator/断连拒绝在途请求) + 跨端向量 16 + fixtures 三角色回放 1 + `flutter create` 自带 smoke 1
-  - `cd app; dart analyze --fatal-infos lib test` —— **社区口径的静态检查**(比 `flutter analyze` 严:把 info 也当失败)。0 问题才算干净
-  - `cd app; dart format --output=none --set-exit-if-changed lib test` —— **Dart 社区硬规范**(Flutter CI 一直拿它当门禁)。`--set-exit-if-changed` 是判据,不是"看一眼"
+  - `cd app; flutter test` —— 跑 `test/`,当前 **147 项**:core 单测 53 + 连接层 59(状态机/退避/心跳半开/箱与握手/接线 e2e/outbox/LiveAccumulator/断连拒绝在途请求) + 平台层 6(真 socket) + 配对 6(跨端向量:SAS/pairingId/codeHash/deviceId) + 界面 3 + 跨端向量 16 + fixtures 三角色回放 1
+  - `cd app; flutter test integration_test/ -d emulator-5554` —— **真机/模拟器组**(当前 2 项):验 `flutter_secure_storage` 真的落到设备密钥库。**纯单测做不了这个**(插件在 Dart VM 里没有实现,调用会抛 `MissingPluginException`)。需要 `ANDROID_HOME`/`JAVA_HOME` 都在环境里,否则报 `Could not locate aapt`
+  - `cd app; dart analyze --fatal-infos lib test integration_test` —— **社区口径的静态检查**(比 `flutter analyze` 严:把 info 也当失败)。0 问题才算干净
+  - `cd app; dart format --output=none --set-exit-if-changed lib test integration_test` —— **Dart 社区硬规范**(Flutter CI 一直拿它当门禁)。`--set-exit-if-changed` 是判据,不是"看一眼"
+  - `node app/tools/gen-pairing-vectors.mjs` —— **重新生成配对向量**(调真实的 `connector/src/pairing.ts`)。改了配对派生规则后必须重跑,否则 fixture 与实际实现脱节
+  - `node app/tools/make-pairing-qr.mjs` —— 出一份**真的**二维码载荷(给模拟器喂数据/手工排查用)
   - `cd app; flutter pub get` —— 装依赖(`cryptography` 是唯一的非 SDK 依赖)
   - `cd app; flutter run -d windows` —— **桌面调试**。本机 VS 18 + MSVC + Windows SDK 齐全,所以 UI 与状态机**不需要模拟器、不需要真机**
   - lint 规则集在 `app/analysis_options.yaml`,**每条都写了它针对的具体失败模式**(不是"更严格就好");改它要连注释一起改
@@ -165,4 +168,7 @@
   - **坑**:`.properties` 里冒号只需**一个**反斜杠(`https\://…`)。写成 `https\\://` 会报 `URISyntaxException: Illegal character in scheme name at index 5` —— 那是 Java properties 的转义规则,不是 URL 语法。
 - **界面层必须能 `import 'package:flutter/material.dart'`**:`verify-platform-boundary.mjs` 的 `ui-no-platform-import` 规则**只拦 `dart:io`**。它曾与 `core-no-platform-import` 共用同一张禁用表(那张表含 `material.dart`),结果是**每个 UI 文件都误报**"平台细节漏进了界面层"。已有两条自检钉住(`material.dart`/`widgets.dart` 在 `ui/` 下必须**不**失败),改这条规则前先看那两条。
 - **Dart 里 `ConnectionState` / `AppState` 有同名冲突**:Flutter 的 `material.dart` 也导出 `ConnectionState`(那是 `AsyncSnapshot` 的 none/waiting/active/done),与我们 core 的连接状态机同名。解法:UI/测试里 `import 'package:flutter/material.dart' hide ConnectionState;`。同理 `core.AppState`(前后台)与数据层的应用级状态不能同名 —— 后者已改名 `AppModel`(在 `data/app_model.dart`)。
+- **真机验插件是必需的,不是可选的**:`flutter_secure_storage` 这类**平台插件**在纯 Dart 单测里没有实现 —— 调用会抛 `MissingPluginException`,而"写进内存的假实现永远返回成功"。所以"密钥到底有没有落到 Keystore"只有 `integration_test` 跑在设备上才能回答。做法:`flutter test integration_test/xxx_test.dart -d emulator-5554`(记得 `ANDROID_HOME`/`JAVA_HOME` 在环境里,否则报 `Could not locate aapt`)。
+- **`adb shell input text` 不能输入引号**(实测报 `no closing quote`),所以**满是引号的 JSON 没法手工灌进输入框**。要往设备上的输入框喂数据,用 `integration_test` 的 `enterText`。
+- **widget 测试的默认视口比真机大**:模拟器是 320×640,而确认按钮落在 y=646 —— `tap` 打不中并报 `would not hit test on the specified widget`。做法:先 `await tester.ensureVisible(finder)` 再点。**这同时是对真机可用性的检查**:小屏上够不着的按钮是真问题。
 - 血泪史条目见 `docs/postmortem/`;此处只留结论。
