@@ -15,3 +15,6 @@ Desktop.ini
 # connector:依赖与构建产物(构建脚本见 connector/tsdown.config.ts)
 connector/node_modules/
 connector/lib/
+
+# relay:依赖(独立 pnpm 工程,不需要构建,所以没有产物目录)
+relay/node_modules/
