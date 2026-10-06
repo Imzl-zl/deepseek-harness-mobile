@@ -212,6 +212,70 @@ void main() {
     expect(opened, 1);
   });
 
+  testWidgets('接管：审批 → 提问 → 计划 依次出现（队列是瀑布）', (tester) async {
+    final app = AppModel(client: _FakeClient());
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: DshTheme.dark(),
+        home: ChatPage(
+          app: app,
+          paired: false,
+          onOpenDrawer: () {},
+          onNewSession: () {},
+          drawer: const Drawer(child: SizedBox()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('看示例数据'));
+    await tester.pumpAndSettle();
+    await app.openSession('preview-1');
+    await tester.pumpAndSettle();
+
+    // 从 ＋ 菜单进"演示：接管输入栏"。
+    await tester.tap(find.byTooltip('添加文件或调用指令'));
+    await tester.pumpAndSettle();
+    // **先滚到它再点**：菜单现在有 6 项，最后一项在 320×640 上落在 y≈707，
+    // 超出屏幕（`tap` 报 "would not hit test"）。这与配对页那个确认按钮
+    // 是同一类问题 —— 小屏上够不着就得滚。
+    await tester.ensureVisible(find.text('演示：接管输入栏'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('演示：接管输入栏'));
+    await tester.pumpAndSettle();
+
+    // **队首是审批**（瀑布：一次只处理一个）。
+    expect(find.text('等待审批'), findsOneWidget);
+    expect(find.text('允许一次'), findsOneWidget);
+    expect(find.text('等待回答'), findsNothing, reason: '队列是瀑布 —— 提问不该和审批同时出现');
+
+    // 点"允许一次" → 换提问。
+    await tester.tap(find.text('允许一次'));
+    await tester.pumpAndSettle();
+    expect(find.text('等待回答'), findsOneWidget);
+    expect(find.text('一起拆'), findsOneWidget);
+    // 推荐是独立徽标（不在标签里）。
+    expect(find.text('推荐'), findsOneWidget);
+
+    // 未回答时提交无效。
+    await tester.tap(find.text('提交'));
+    await tester.pumpAndSettle();
+    expect(find.text('等待回答'), findsOneWidget, reason: '没答就不该走');
+
+    // 选一个再提交 → 换计划。
+    await tester.tap(find.text('先只拆资源束'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('提交'));
+    await tester.pumpAndSettle();
+    expect(find.text('等待确认计划'), findsOneWidget);
+    expect(find.text('同意执行'), findsOneWidget);
+
+    // 同意 → 三个都答完，接管卡消失（输入栏回来）。
+    await tester.tap(find.text('同意执行'));
+    await tester.pumpAndSettle();
+    expect(find.text('等待确认计划'), findsNothing);
+    expect(find.byType(DshComposer), findsOneWidget);
+  });
+
   testWidgets('输入栏在示例模式下可用（＋ 能加附件）', (tester) async {
     final app = AppModel(client: _FakeClient());
     await tester.pumpWidget(

@@ -332,33 +332,51 @@ class _TakeoverPanelState extends State<TakeoverPanel> {
         if (widget.controller.phase == TakeoverPhase.minimized) {
           return const SizedBox.shrink();
         }
-        return Container(
-          // 接管卡从下往上浮入 —— 用 `AnimatedSize` 而不是硬切。
-          margin: const EdgeInsets.fromLTRB(8, 0, 8, 6),
-          decoration: BoxDecoration(
-            color: DshColors.layer1,
-            borderRadius: BorderRadius.circular(DshRadius.lg),
-            border: Border.all(
-              color: switch (item.kind) {
-                // 审批是"要你拿主意"的事 —— 告警色边框。
-                TakeoverKind.approval => DshColors.roleTool,
-                TakeoverKind.plan => DshColors.businessBlue,
-                TakeoverKind.question => DshColors.layer2,
-              },
-            ),
+        // **整张卡有高度上限**：它和输入栏、统计条同在一个 `Column` 里，
+        // 而消息列表是 `Expanded` —— 卡片不设上限就会把那个 `Column` 撑爆
+        //（实测在 800×544 上报 `RenderFlex overflowed by 9.0 pixels`）。
+        return ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.5,
           ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _Strip(controller: widget.controller, item: item),
-              _Body(controller: widget.controller, item: item, input: _input),
-              _Actions(
-                controller: widget.controller,
-                item: item,
-                input: _input,
+          child: Container(
+            // 接管卡从下往上浮入 —— 用 `AnimatedSize` 而不是硬切。
+            margin: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+            decoration: BoxDecoration(
+              color: DshColors.layer1,
+              borderRadius: BorderRadius.circular(DshRadius.lg),
+              border: Border.all(
+                color: switch (item.kind) {
+                  // 审批是"要你拿主意"的事 —— 告警色边框。
+                  TakeoverKind.approval => DshColors.roleTool,
+                  TakeoverKind.plan => DshColors.businessBlue,
+                  TakeoverKind.question => DshColors.layer2,
+                },
               ),
-            ],
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              // 三个部分（顶条 / 主体 / 动作）在高度受限时，**主体先让位**
+              //（它内部已经可滚），顶条与动作行必须完整可见 ——
+              // 用户最需要的恰恰是那两个按钮。
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _Strip(controller: widget.controller, item: item),
+                Flexible(
+                  child: _Body(
+                    controller: widget.controller,
+                    item: item,
+                    input: _input,
+                  ),
+                ),
+                _Actions(
+                  controller: widget.controller,
+                  item: item,
+                  input: _input,
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -445,8 +463,15 @@ class _Body extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ConstrainedBox(
-      // 明细可以很长（审批的 diff），给个上限并让它自己滚。
-      constraints: const BoxConstraints(maxHeight: 240),
+      // **明细可以很长（审批的 diff、多题的选项），但整张卡必须有上限**。
+      //
+      // 它和输入栏、统计条同在一个 `Column` 里，而消息列表是 `Expanded` ——
+      // 卡片不设上限时会把那个 `Column` 撑爆：实测在 800×544 上报
+      // `RenderFlex overflowed by 9.0 pixels on the bottom`（黄黑条）。
+      // 上限取屏幕的 45%：既能看清明细，也保证输入栏永远在视口内。
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.45,
+      ),
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
         child: Column(

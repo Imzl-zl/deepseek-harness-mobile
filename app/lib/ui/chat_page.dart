@@ -121,8 +121,24 @@ class _ChatPageState extends State<ChatPage> {
     _takeover.addListener(_onTakeoverChanged);
   }
 
+  /// 切权限档（**唯一的入口**）。
+  ///
+  /// ## 为什么要收成一个方法
+  ///
+  /// 原先两处 `setState(() => _accessMode = …)` 各自赋值，而**接管队列的
+  /// `fullAccess` 只在接管自己 notify 时才同步** —— 于是"切到完全权限"之后，
+  /// 审批**照样入队**（那个标志还是旧的）。
+  ///
+  /// 这条 bug 不会崩、不会报错，只会让"完全权限下不再逐次确认"这句话变成假的。
+  /// 收成一个方法之后，"改权限"与"同步给接管"必然一起发生。
+  void _setAccessMode(AccessMode mode) {
+    setState(() {
+      _accessMode = mode;
+      _takeover.fullAccess = mode == AccessMode.fullAccess;
+    });
+  }
+
   void _onTakeoverChanged() {
-    _takeover.fullAccess = _accessMode == AccessMode.fullAccess;
     if (mounted) setState(() {});
   }
 
@@ -504,7 +520,7 @@ class _ChatPageState extends State<ChatPage> {
                   if (m.mode.isWarn) {
                     unawaited(_showRiskGate(m.mode));
                   } else {
-                    setState(() => _accessMode = m.mode);
+                    _setAccessMode(m.mode);
                   }
                 },
               ),
@@ -579,7 +595,7 @@ class _ChatPageState extends State<ChatPage> {
           filled: true,
           onPressed: () {
             if (!_riskAcked) return; // 没勾就不生效（门仍开着）
-            setState(() => _accessMode = mode);
+            _setAccessMode(mode);
             Navigator.of(context).pop();
           },
         ),
@@ -658,7 +674,11 @@ class _ChatPageState extends State<ChatPage> {
           title: '拆连接层的资源束时，要不要顺手把「在途请求」也一起拆出去？',
           options: [
             TakeoverOption(
-              label: '一起拆（推荐）',
+              // **标签里不写"（推荐）"**：原型会把它剥出来单独渲染成徽标
+              //（`label.replace(/[（(]推荐[)）]/g, '')`）。
+              // 我第一版把"（推荐）"写进了标签，于是界面上同时出现
+              // 标签里的括号与独立徽标 —— 重复了。
+              label: '一起拆',
               description: '它俩生命周期不同：资源束每连接换一份，在途请求要跨重连保留',
               recommended: true,
             ),
