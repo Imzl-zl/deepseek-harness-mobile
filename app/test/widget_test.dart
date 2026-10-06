@@ -68,12 +68,74 @@ class FakeClient implements SyncClient {
   }
 }
 
-Widget _wrap(AppModel app) => MaterialApp(
-  theme: DshTheme.dark(),
-  home: SessionListPage(app: app),
-);
+Widget _wrap(AppModel app, {bool paired = true, VoidCallback? onConnect}) =>
+    MaterialApp(
+      theme: DshTheme.dark(),
+      home: SessionListPage(app: app, paired: paired, onConnect: onConnect),
+    );
 
 void main() {
+  testWidgets('没配对时**界面照常显示**，只多一条"去配对"提示', (tester) async {
+    // 这一条守的是一个设计错误：早先的写法是"没配对就把整个界面换成配对页"，
+    // 于是用户打开 App 只看得到一张配对表单，**看不到任何界面**。
+    // 界面不该被连接状态挡住 —— 它不依赖电脑，只依赖数据。
+    var tappedConnect = false;
+    await tester.pumpWidget(
+      _wrap(
+        AppModel(client: FakeClient()),
+        paired: false,
+        onConnect: () => tappedConnect = true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 提示条在，且说的是"还没连"而不是"还没有会话"（三种空要分开）。
+    expect(find.textContaining('还没连电脑'), findsWidgets);
+    expect(find.text('还没有会话'), findsNothing);
+    // 界面**在**（标题栏是会话页的），不是配对页。
+    expect(find.text('会话'), findsOneWidget);
+    expect(find.text('配对'), findsNothing);
+
+    // "去配对"能点。
+    await tester.tap(find.text('去配对'));
+    await tester.pump();
+    expect(tappedConnect, isTrue);
+  });
+
+  testWidgets('"看示例数据"装上示例并**标明是示例**', (tester) async {
+    // 这一条守的是"没连电脑也能看看界面长什么样"这条需求 ——
+    // 而示例必须是**显式且看得出**的（不然会以为连上了）。
+    final app = AppModel(client: FakeClient());
+    await tester.pumpWidget(_wrap(app, paired: false));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('看示例数据'));
+    await tester.pumpAndSettle();
+
+    expect(app.isPreview, isTrue);
+    // 每个标题都带 `（示例）` 前缀。
+    expect(find.textContaining('（示例）'), findsWidgets);
+    // 还有一条横幅再说一遍（用户可能没注意标题）。
+    expect(find.text('示例数据（不是真实会话）'), findsOneWidget);
+    // 三屏各自的难点都在（列表、对话、长文本）。
+    expect(find.textContaining('重构连接层'), findsOneWidget);
+  });
+
+  testWidgets('清掉示例后回到"还没连电脑"（不残留）', (tester) async {
+    final app = AppModel(client: FakeClient());
+    await tester.pumpWidget(_wrap(app, paired: false));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('看示例数据'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('清掉'));
+    await tester.pumpAndSettle();
+
+    expect(app.isPreview, isFalse);
+    expect(app.sessions, isEmpty);
+    expect(find.textContaining('还没连电脑'), findsWidgets);
+  });
+
   testWidgets('空列表说"还没有会话"（真没有 ≠ 请求失败）', (tester) async {
     await tester.pumpWidget(_wrap(AppModel(client: FakeClient())));
     await tester.pumpAndSettle();

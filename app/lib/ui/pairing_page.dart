@@ -61,11 +61,18 @@ class PairingPage extends StatefulWidget {
   const PairingPage({
     super.key,
     required this.onPaired,
+    this.onCancel,
     this.deviceName = '我的手机',
   });
 
   /// 配对成功时回调（上层负责落盘与建连）。
   final Future<void> Function(PairingResult result) onPaired;
+
+  /// 取消返回（`null` = 这是必经页、退不出去）。
+  ///
+  /// 它的存在本身就是一条设计决定：**配对不是"没配对就挡在这里"的门**，
+  /// 而是用户主动进来的一步 —— 所以能退出去看界面。
+  final VoidCallback? onCancel;
 
   /// 设备名（电脑侧用它显示"哪台设备"）。
   final String deviceName;
@@ -134,6 +141,18 @@ class _PairingPageState extends State<PairingPage> {
         backgroundColor: DshColors.sidebar,
         foregroundColor: DshColors.labelPrimary,
         title: const Text('配对'),
+        // 能退回去看界面（配对是**主动的一步**，不是必经的门）。
+        leading: widget.onCancel == null
+            ? null
+            : IconButton(
+                tooltip: '返回',
+                onPressed: widget.onCancel,
+                icon: const DshIcon(
+                  'chevronLeft',
+                  size: 20,
+                  color: DshColors.labelPrimary,
+                ),
+              ),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),

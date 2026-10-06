@@ -27,6 +27,7 @@ import 'core/outbox.dart';
 import 'core/recovery.dart';
 import 'core/sync_client.dart' hide AppState;
 import 'core/sync_client_impl.dart';
+import 'core/transport.dart';
 import 'data/app_model.dart';
 import 'data/store.dart';
 import 'platform/pairing_store.dart';
@@ -49,11 +50,17 @@ class DshMobileApp extends StatefulWidget {
 }
 
 class _DshMobileAppState extends State<DshMobileApp> {
-  /// 配对结果（`null` = 还没配对）。它是"要不要显示配对页"的唯一依据。
+  /// 配对结果（`null` = 还没配对）。
+  ///
+  /// **它不再是"要不要显示界面"的依据** —— 没配对也进主界面（见 `_boot`）。
+  /// 它只决定"要不要去连"。
   PairedCredentials? _credentials;
 
   AppModel? _app;
   bool _booting = true;
+
+  /// 是否停在配对页（用户主动进来的，不是"没配对就挡在这里"）。
+  bool _pairing = false;
 
   @override
   void initState() {
@@ -64,21 +71,37 @@ class _DshMobileAppState extends State<DshMobileApp> {
   Future<void> _boot() async {
     final saved = await PairingStore.load();
     if (!mounted) return;
-    // **已配对就直接进列表**：重新配对会换 `pairingId`，
-    // 而电脑侧记的是旧的那个 —— 表现为"这台设备不见了"。
-    if (saved != null) {
-      final app = await _assemble(saved);
+    if (saved == null) {
+      // **没配对也进主界面**。
+      //
+      // 早先的写法是"没配对就显示配对页"，而那让"这一版做出来是什么样"
+      // 无法回答 —— 用户打开 App 只看得到一张配对表单，看不到任何界面。
+      // 界面本来就该能看：它不依赖电脑，只依赖数据。
+      //
+      // 所以：没有凭据时**建一个不连的客户端**（`client` 存在但不 start），
+      // 界面照常渲染（会话列表会是空的，用户还能点"看示例数据"）。
+      final app = await _assembleWithoutCredentials();
       if (!mounted) return;
       setState(() {
-        _credentials = saved;
         _app = app;
         _booting = false;
       });
-      await app.start();
       return;
     }
-    setState(() => _booting = false);
+    final app = await _assemble(saved);
+    if (!mounted) return;
+    setState(() {
+      _credentials = saved;
+      _app = app;
+      _booting = false;
+    });
+    await app.start();
   }
+
+  /// 进配对页（**用户主动**：`没配对`时的入口按钮，或设置里"重新配对"）。
+  void _openPairing() => setState(() => _pairing = true);
+
+  void _closePairing() => setState(() => _pairing = false);
 
   Future<void> _onPaired(PairingResult result) async {
     final credentials = PairedCredentials(
@@ -96,6 +119,7 @@ class _DshMobileAppState extends State<DshMobileApp> {
     setState(() {
       _credentials = credentials;
       _app = app;
+      _pairing = false;
     });
     await app.start();
   }
@@ -121,11 +145,95 @@ class _DshMobileAppState extends State<DshMobileApp> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     final app = _app;
-    if (app == null || _credentials == null) {
-      return PairingPage(onPaired: _onPaired);
+    if (app == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    return SessionListPage(app: app);
+    // 配对页是**用户主动进来的**（点"连电脑"），不是"没配对就挡在这里"。
+    if (_pairing) {
+      return PairingPage(onPaired: _onPaired, onCancel: _closePairing);
+    }
+    return SessionListPage(
+      app: app,
+      paired: _credentials != null,
+      onConnect: _openPairing,
+      onUnpaired: _resetPairing,
+    );
   }
+
+  /// 清掉配对（换设备 / 连不上时重来）。
+  Future<void> _resetPairing() async {
+    await PairingStore.clear();
+    if (!mounted) return;
+    final app = await _assembleWithoutCredentials();
+    if (!mounted) return;
+    setState(() {
+      _credentials = null;
+      _app = app;
+    });
+  }
+}
+
+/// 没配对时的**装配**：客户端存在但**不连**（没有可信的电脑身份就没法连）。
+///
+/// 它让界面照常可用 —— 会话列表是空的、能点"看示例数据"、能进各屏。
+/// 这比"没配对就只显示一张配对表"有用得多：**界面不该被连接状态挡住**。
+///
+/// ## 为什么这里能复用真装配的零件
+///
+/// 因为那些零件**本来就不需要凭据**：本地库、发件箱、落盘缝都与电脑无关。
+/// 只有"握手 ↔ 谁"需要电脑公钥，而这里给一个**不存在的对端**
+/// （空串公钥、空配对标识）—— 它连不上任何真实的电脑，但**也不会被用到**：
+/// 本函数不调 `start()`，而"连"只有一个触发点（配对成功后那一处）。
+Future<AppModel> _assembleWithoutCredentials() async {
+  final store = SqfliteItemStore();
+  await store.open();
+  return AppModel(
+    client: createSyncClient(
+      SyncClientDeps(
+        // 没东西可连：一个永远建不起来的传输（它不会被用到）。
+        transport: _UnpairedTransport(),
+        handshake: createHandshakeDriver(
+          identity: HandshakeIdentity(
+            // 临时的本机身份（不落盘、不进安全存储）：**它不是设备身份**，
+            // 只为了让驱动能构造出来。真身份来自配对后的主种子。
+            staticKeys: await x25519FromSeed('00' * 32),
+            signSeedHex: '00' * 32,
+            devId: 'unpaired',
+          ),
+          peer: const PeerIdentity(
+            pcSignPubHex: '',
+            pcDhPubHex: '',
+            pcId: '',
+            pairingId: '',
+          ),
+          newEphemeralSeedHex: () => toHex(randomBytes(32)),
+          newNonceHex: () => toHex(randomBytes(32)),
+          newFrameIdHex: () => newFrameId(randomBytes(frameIdBytes)),
+        ),
+        box: (keys) => BoxCodec(keys: keys, role: HandshakeRole.initiator),
+        outbox: Outbox(store: SqfliteOutboxStore(store)),
+        session: DeviceSession(),
+        persistence: StoreItemPersister(store),
+      ),
+    ),
+  );
+}
+
+/// 没配对时的占位传输：**永远连不上**，而它不该被调用。
+///
+/// 它如实抛错（而不是静默成功）—— 若哪天有人误调了 `start()`，
+/// 这条错误会立刻指出来，而不是留下一个"看着像连上了"的假状态。
+class _UnpairedTransport implements ChannelTransport {
+  @override
+  Future<Stream<TransportEvent>> connect() async {
+    throw const TransportException('还没配对：没有可信的电脑身份，无法建连');
+  }
+
+  @override
+  bool send(String line) => false;
+
+  @override
+  Future<void> close() async {}
 }
 
 /// **装配**：把 `core/` 的零件接到一起，产出可用的 `AppModel`。

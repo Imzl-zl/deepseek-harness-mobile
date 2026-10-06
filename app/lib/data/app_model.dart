@@ -28,6 +28,7 @@ import '../core/connection.dart';
 import '../core/errors.dart';
 import '../core/sync_client.dart';
 import '../model/chat_item.dart';
+import 'preview_data.dart';
 import 'projection.dart';
 import 'session_store.dart';
 
@@ -84,6 +85,54 @@ class AppModel extends ChangeNotifier {
 
   /// 当前会话的变更流（UI 用它做**区块级**重建，而不是整页 setState）。
   Stream<List<ChatItem>> changesOf(String sid) => _storeOf(sid).changes;
+
+  /// 是否是示例数据（界面上要能看出来，见 `preview_data.dart` 的文件头）。
+  bool get isPreview => _isPreview;
+  bool _isPreview = false;
+
+  /// 装上示例数据，让"没连电脑也能看看界面长什么样"。
+  ///
+  /// **只在用户点了那个入口时调**：它不是错误路径的回退，
+  /// 也不是"没数据就自动填" —— 那会让人以为连上了。
+  ///
+  /// 它**不写库**（不经 `ItemStore`）：退出重进就没了，不会永远占着真实列表。
+  void loadPreview() {
+    if (_disposed) return;
+    _isPreview = true;
+    final sessions = <SessionSummary>[];
+    for (final preview in previewSessions) {
+      final store = _storeOf(preview.sid);
+      store.replaceAll(preview.items);
+      // 标题带 `（示例）` 前缀：**任何一屏都看得出它不是真的**。
+      sessions.add(
+        SessionSummary(
+          sid: preview.sid,
+          title: '（示例）${preview.title}',
+          updatedAt: preview.updatedAt,
+          itemCount: preview.items.length,
+          pendingCount: preview.items
+              .whereType<ApprovalItem>()
+              .where((a) => !a.decided)
+              .length,
+        ),
+      );
+    }
+    _sessions = sessions;
+    _lastError = null;
+    notifyListeners();
+  }
+
+  /// 清掉示例数据（真的连上时要清，免得混在真实列表里）。
+  void clearPreview() {
+    if (!_isPreview) return;
+    _isPreview = false;
+    for (final preview in previewSessions) {
+      // 不等它：`dispose` 只是关一个广播控制器（见 `SessionStore.dispose`）。
+      unawaited(_stores.remove(preview.sid)?.dispose());
+    }
+    _sessions = const [];
+    if (!_disposed) notifyListeners();
+  }
 
   /// 启动：连通道。
   Future<void> start() async {

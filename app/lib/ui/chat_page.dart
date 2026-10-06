@@ -25,6 +25,7 @@ import '../../model/chat_item.dart';
 import '../../theme/dsh_colors.dart';
 import '../../theme/dsh_icons.dart';
 import '../../theme/dsh_theme.dart';
+import 'dsh_markdown.dart';
 
 /// 对话页。
 class ChatPage extends StatefulWidget {
@@ -217,13 +218,14 @@ class _MessageBubble extends StatelessWidget {
                 color: isUser ? DshColors.accentBlue : DshColors.layer1,
                 borderRadius: BorderRadius.circular(DshRadius.md),
               ),
-              child: SelectableText(
+              // **走 Markdown 渲染，不是纯文本**：DSH 的助手回复是 Markdown
+              //（代码块、列表、加粗都常见），而纯 `Text` 会把 ```` ```dart ````
+              // 原样显示成三个反引号 —— 两端看起来就完全不一样了。
+              //
+              // 系统消息也走它：它同样可能是 Markdown（比如折叠摘要）。
+              child: DshMarkdown(
                 text,
-                style: TextStyle(
-                  fontSize: 13,
-                  height: 20 / 13,
-                  color: isUser ? DshColors.onAccent : DshColors.labelPrimary,
-                ),
+                baseColor: isUser ? DshColors.onAccent : DshColors.labelPrimary,
               ),
             ),
           ),
@@ -319,9 +321,14 @@ class _ApprovalRow extends StatelessWidget {
           Expanded(
             child: Text(
               title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
-                color: DshColors.labelPrimary,
+                // **已决定的要弱化**：它不再是待办。
+                // 第一版固定用 `labelPrimary`，于是"已决定"和"待审批"
+                // 一样醒目 —— 用户会以为还有事要做（那是靠看示例数据发现的）。
+                color: decided
+                    ? DshColors.labelSecondary
+                    : DshColors.labelPrimary,
               ),
             ),
           ),
@@ -350,6 +357,13 @@ class _LiveBar extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       color: DshColors.layer1,
+      // 流式文本**不渲染 Markdown**，只做纯文本。
+      //
+      // 理由是 §4 的性能对策：流式每来一段就重排，而 Markdown 解析 + 排版
+      // 比纯文本贵一个量级；而"正在生成的半句话"本来也**不是完整 Markdown**
+      //（```` ``` ```` 刚写了一半，解析出来只会闪烁）。
+      // 收尾时持久 `assistant/message` 到达，那时才走完整的 Markdown 渲染
+      //（`data/projection.dart` 的"以持久为准"）。
       child: Text(
         text,
         maxLines: 3,
