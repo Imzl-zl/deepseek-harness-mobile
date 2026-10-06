@@ -88,8 +88,15 @@ Status: proposed（`src/pairing.ts` 与 `src/pairing-endpoint.ts` 已就绪；**
 **仍然缺的**（剩下的是装配，不是机制）：
 1. **监听面本身**：一个接受 WSS 连接并把它交给 `attach` 的地方（`ws` 的 `WebSocketServer` +
    与 `createConnection` 的接线），以及它在生命周期里的位置（与拨号互斥还是并存）。
-2. **产品的出码入口**：`ctx.commands.register` 那条命令（API 已查清，见上）。
-3. **端点装配**：把 `pairingEndpoint` 接进 `index.ts` 的 `handleFrame`（`case 'pair'`）与
-   `devices` 表写入（注意 `edPubHex` → `edPub` 的字段改名）。
-4. **`pair` → 握手 → `session.prompt` 的本机回环 e2e**：接受路径上把整条链路跑通
-   （不需要 Tailscale，先把同一台机器上的"配对 → 发送"证出来）。
+   —— **这一条至今未做**（`connector/src` 无 `WebSocketServer` / `listen`，`ws` 仍在 devDependencies）。
+2. ~~**产品的出码入口**~~ **已完成**：`index.ts:396` 注册了斜杠命令 `dsh-mobile-pair`。
+3. ~~**端点装配**~~ **已完成**：`connection-scope.ts:174` 建 `createPairingEndpoint`，
+   `:236` 的 `case 'pair'` 与 `:238` 调它（`edPubHex` → `edPub` 的字段映射也做了）。
+4. ~~**`pair` → 握手 → `session.prompt` 的本机回环 e2e**~~ **已完成**：
+   `connector/tests/relay-keyed-three-party.test.ts`（带密钥的三方链路，真签名 + 真 AEAD）。
+
+> **本节 2–4 项已落地，本笔记的"被挡住"结论因此失效** —— 实际路径是先做 `relay/`
+> （下面的路 1），三方链路 e2e 已过。**唯一仍有效的是第 1 项**（监听面）。
+> 本笔记保留作为决策过程记录（它查清的 `commands.register` API、设备行字段拼写差异
+> 仍然是装配时的依据），但**不要再按它判断"配对装配没做"**。
+
