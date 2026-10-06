@@ -49,10 +49,30 @@ const List<String> frameTypes = <String>[
 ];
 
 /// 握手三帧（明文例外之一，契约 §4.1）。定义在协议层：这是**帧的语义**。
-const List<String> handshakeFrameTypes = <String>['hello', 'hello-ack', 'confirm'];
+const List<String> handshakeFrameTypes = <String>[
+  'hello',
+  'hello-ack',
+  'confirm',
+];
 
 /// 配对两帧。**同握手帧一样是明文**，理由也一样：配对发生在密钥建立**之前**。
 const List<String> pairingFrameTypes = <String>['pair', 'pair-ack'];
+
+/// 从一帧取 AAD 字段（契约 §3 的规范化输入）。
+///
+/// **缺字段就不放进 map**，交给 [aadOf] 用空串占位 —— 这样"缺字段"只有一种表达，
+/// 不会出现 `null` 与 `''` 两种写法在两端各算一遍（那是"解不开"的经典成因）。
+///
+/// 与电脑侧 `connector/src/protocol/frame.ts` 的 `aadFieldsOf` 对应，
+/// 后者被 `box.ts:132,147` 用在封箱/解箱路径上。
+AadFields aadFieldsOf(Map<String, Object?> frame) => AadFields(
+  v: (frame['v'] as num?)?.toInt() ?? wireVersion,
+  t: '${frame['t']}',
+  id: frame['id']?.toString(),
+  sid: frame['sid']?.toString(),
+  seq: frame['seq'],
+  fc: frame['fc'],
+);
 
 /// `id` / `sid` 限定的 ASCII 安全字符集（契约 §3）。
 ///
@@ -116,24 +136,33 @@ class AadFields {
     this.fc,
   });
 
-  final int v;
-  final String t;
-  final String? id;
-  final String? sid;
-
-  /// 数字或空串。契约的规范化里"缺"与"空串"等价。
-  final Object? seq;
-  final Object? fc;
-
   /// 从 JSON 反序列化（向量的 `aad` 字段就是它的形状）。
   factory AadFields.fromJson(Map<String, Object?> json) => AadFields(
-        v: (json['v'] as num?)?.toInt() ?? wireVersion,
-        t: json['t'] as String,
-        id: json['id']?.toString(),
-        sid: json['sid']?.toString(),
-        seq: json['seq'],
-        fc: json['fc'],
-      );
+    v: (json['v'] as num?)?.toInt() ?? wireVersion,
+    t: json['t'] as String,
+    id: json['id']?.toString(),
+    sid: json['sid']?.toString(),
+    seq: json['seq'],
+    fc: json['fc'],
+  );
+
+  /// 帧版本。缺省取 [wireVersion]。
+  final int v;
+
+  /// 帧类型（[frameTypes] 之一）。
+  final String t;
+
+  /// 帧头 `id`；没有 `id` 的帧为 `null`（规范化时空串）。
+  final String? id;
+
+  /// 会话别名；没有 `sid` 的帧为 `null`（规范化时空串）。
+  final String? sid;
+
+  /// 会话修订号，或空串。契约的规范化里"缺"与"空串"等价。
+  final Object? seq;
+
+  /// 连接级帧计数器，或空串。同上。
+  final Object? fc;
 }
 
 /// 数字 → 契约要求的十进制字符串：**无前导零、无小数点**。
@@ -255,7 +284,10 @@ DecodeResult decodeFrame(String line) {
     final value = parsed[key];
     if (value == null) continue;
     if (value is! String || !idPattern.hasMatch(value)) {
-      throw ProtocolException('protocol/bad-frame', '$key 不是 ASCII 安全字符集：$value');
+      throw ProtocolException(
+        'protocol/bad-frame',
+        '$key 不是 ASCII 安全字符集：$value',
+      );
     }
   }
 
@@ -266,10 +298,16 @@ DecodeResult decodeFrame(String line) {
 ///
 /// 做成显式函数而不是散在收帧分支里 ——「业务帧在握手前到达」是**攻击面**
 /// （对端可能在密钥还没协商好时就想塞业务数据），值得一个能被测试直接点名的判据。
-void assertHandshakePhase(Map<String, Object?> frame, {required bool handshakeDone}) {
+void assertHandshakePhase(
+  Map<String, Object?> frame, {
+  required bool handshakeDone,
+}) {
   if (handshakeDone) return;
   final type = frame['t'];
-  if (type is String && (isHandshakeFrameType(type) || isPairingFrameType(type))) return;
+  if (type is String &&
+      (isHandshakeFrameType(type) || isPairingFrameType(type))) {
+    return;
+  }
   throw ProtocolException(
     'protocol/bad-frame',
     '握手未完成时收到 $type 帧：本阶段只接受 ${[...handshakeFrameTypes, ...pairingFrameTypes].join(' / ')}',
@@ -305,4 +343,5 @@ class LineSplitter {
 /// 与 [idPattern] 放在同一个文件：**字符集约束与生成点是同一件事的两端**。
 /// 分开写就会出现手拼 id 的代码（base64 而非 base64url 会带 `+` `/` `=`），
 /// 而它的症状是 AAD 拼串两端不一致 —— 表现为"解不开"，不是"字段非法"。
-String newFrameId(Uint8List randomBytes) => base64Url.encode(randomBytes).replaceAll('=', '');
+String newFrameId(Uint8List randomBytes) =>
+    base64Url.encode(randomBytes).replaceAll('=', '');

@@ -130,12 +130,13 @@ class DeviceSession {
   DeviceSession({
     Map<String, int>? since,
     Map<String, Map<String, String>>? items,
-  })  : _since = <String, int>{...?since},
-        _items = <String, Map<String, String>>{
-          for (final entry in (items ?? const <String, Map<String, String>>{}).entries)
-            entry.key: <String, String>{...entry.value},
-        },
-        _received = <String, int>{...?since};
+  }) : _since = <String, int>{...?since},
+       _items = <String, Map<String, String>>{
+         for (final entry
+             in (items ?? const <String, Map<String, String>>{}).entries)
+           entry.key: <String, String>{...entry.value},
+       },
+       _received = <String, int>{...?since};
 
   /// 手机侧「已落盘」的游标（`persisted` 报的就是它）。
   final Map<String, int> _since;
@@ -166,10 +167,12 @@ class DeviceSession {
   Map<String, int> get received => Map<String, int>.unmodifiable(_received);
 
   /// 某会话的可见条目（itemId → text）。
-  Map<String, String> itemsOf(String sid) => Map<String, String>.unmodifiable(_items[sid] ?? const {});
+  Map<String, String> itemsOf(String sid) =>
+      Map<String, String>.unmodifiable(_items[sid] ?? const {});
 
   /// 某会话当前的瞬时事实。
-  TransientFacts transientOf(String sid) => Map<String, Object?>.unmodifiable(_transient[sid] ?? const {});
+  TransientFacts transientOf(String sid) =>
+      Map<String, Object?>.unmodifiable(_transient[sid] ?? const {});
 
   /// 该会话的落盘水位。
   int sinceOf(String sid) => _since[sid] ?? 0;
@@ -183,7 +186,11 @@ class DeviceSession {
   void receive(String sid, String itemId, String text, int seq) {
     final snapshot = _snapshots[sid];
     if (snapshot != null) {
-      snapshot.buffered[itemId] = ItemRecord(itemId: itemId, text: text, seq: seq);
+      snapshot.buffered[itemId] = ItemRecord(
+        itemId: itemId,
+        text: text,
+        seq: seq,
+      );
       return;
     }
     _upsert(sid, itemId, text, seq);
@@ -232,7 +239,10 @@ class DeviceSession {
     }
 
     // 快照：分页期间不落盘、不渲染；每页都累积，期间到达的 ev 一律缓存。
-    final state = _snapshots.putIfAbsent(sid, () => _SnapshotState(answer.asOfSeq ?? 0));
+    final state = _snapshots.putIfAbsent(
+      sid,
+      () => _SnapshotState(answer.asOfSeq ?? 0),
+    );
     state.asOfSeq = answer.asOfSeq ?? state.asOfSeq;
     for (final item in answer.items) {
       state.acc[item.itemId] = item;
@@ -314,13 +324,22 @@ RecoveryOutcome decideRecovery({
   required WindowState window,
 }) {
   if (latest == null) {
-    return (outcome: RecoveryOutcome.snapshot, reason: SnapshotReason.noSession);
+    return (
+      outcome: RecoveryOutcome.snapshot,
+      reason: SnapshotReason.noSession,
+    );
   }
   if (since > latest) {
-    return (outcome: RecoveryOutcome.snapshot, reason: SnapshotReason.revisionNewer);
+    return (
+      outcome: RecoveryOutcome.snapshot,
+      reason: SnapshotReason.revisionNewer,
+    );
   }
   if (since < window.trimmedTo || !window.covered) {
-    return (outcome: RecoveryOutcome.snapshot, reason: SnapshotReason.windowMissed);
+    return (
+      outcome: RecoveryOutcome.snapshot,
+      reason: SnapshotReason.windowMissed,
+    );
   }
   return (outcome: RecoveryOutcome.delta, reason: null);
 }

@@ -64,8 +64,9 @@
 | `node protocol/verify-loopback.mjs` | **26 项**:手机 ⇄ 中转 ⇄ 桥接回环(含中转清空后重启) |
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量(改 `protocol/tools/` 后必跑) |
 | `node app/tools/verify-platform-boundary.mjs` | **40 项**(含 16 条规则自检 + 扫描 9 个 Dart 文件) |
-| `cd app && flutter test` | **18 项**(跨端向量 16 + fixtures 三角色回放 1 + smoke 1) |
-| `cd app && flutter analyze` | 0 问题 |
+| `cd app && flutter test` | **71 项**(core 单测 53 + 跨端向量 16 + fixtures 回放 1 + smoke 1) |
+| `cd app && dart analyze --fatal-infos lib test` | 0 问题(比 `flutter analyze` 严) |
+| `cd app && dart format --output=none --set-exit-if-changed lib test` | 0 文件需重排(Dart 社区硬规范) |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
 | `node mock/proto/tools/verify-tool-paths.mjs` | 工具脚本不许硬编码盘符(2 条规则 / 14 个脚本) |
 | `cd connector && pnpm exec tsc --noEmit` | connector 类型检查(**改任何 `.ts` 都要跑** —— 有两次只跑用例没跑它,红了没发现) |
@@ -145,6 +146,19 @@
   应答方的 `ss1` 实际等于 `ss2`,而**主密钥仍然正确**(所以握手"看起来成功"),
   只有"双侧派生"那两条断言能抓到。见 `.agents/notes/implemented/2026-10-02-mobile-core-crypto-choice.md`。
   同批修掉边界门禁的一个误报(两条 import 规则原本按正文 grep,把"说明规则的注释"判成违规)。
+- **按社区规范收口(2026-10-02,同批)**:
+  - **`dart format`** 是 Dart 社区硬规范(Flutter CI 一直当门禁),接入后 10 个文件不合规 → 全量重排。
+  - **`dart analyze --fatal-infos`**(比 `flutter analyze` 严:info 也当失败)→ 0 问题。
+  - **lint 规则集写进 `app/analysis_options.yaml`,每条注明它针对的具体失败模式** ——
+    `public_member_api_docs` **刻意不开**:实测本层每个函数与类型都已有文档,缺的 66 处
+    全是字段/构造器,一开只会长出复述字段名的噪音(注释里写了理由,不是"懒得加")。
+  - **补 `core_units_test.dart`(53 项)**:此前 26 个公开符号**没有任何测试**
+    (`itemIdOf` / `needsBox` / `assertHandshakePhase` / `decideRecovery` / `SendWindow` /
+    握手三帧编解码 / `verifySignature` / `verifyConfirm` …)。这些是"写错也不会让
+    已有两批规格变红"的判据(向量比的是值、fixtures 比的是端到端结论)。
+  - **同批抓到一个真 bug**:`verifySignature` 里 `fromHex` 在 try 之外,坏十六进制会漏出
+    `protocol/bad-frame` —— 而手机按错误码分派动作(`not-paired` = 回配对页,
+    `bad-frame` = 重试),报错类别错了**用户永远卡在重试上**。已归一,并补坏输入用例。
 - **直连监听面(2026-10-02)**:三个岔口一次收口 —— `ws` 进运行时依赖、`attach()` 补上周期任务、
   去重噪音降级为 `debug`。**先量再下**这条纪律第三次生效:落地前先读 `attach()` 的代码,
   发现它少了 `start()` 的两个定时器(既有静默 bug,原有 2 条断言碰不到它),先复现再修。

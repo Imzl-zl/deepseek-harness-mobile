@@ -223,10 +223,7 @@ Future<String> open({
       aad: aadOf(aadFields),
     );
   } on SecretBoxAuthenticationError catch (error) {
-    throw ProtocolException(
-      'protocol/bad-frame',
-      '解箱失败（AAD、fc 或密文不符）：$error',
-    );
+    throw ProtocolException('protocol/bad-frame', '解箱失败（AAD、fc 或密文不符）：$error');
   }
   return utf8.decode(clear);
 }
@@ -239,8 +236,10 @@ Future<String> open({
 ///
 /// 注意**不要**用 `SecretBox.concatenation()`：那个是 `nonce ‖ 密文 ‖ tag`，
 /// 而我们的 nonce 由 `fc` 派生、**不上线**。
-String packBox(SealedBox box) =>
-    base64UrlNoPad(<int>[...fromHex(box.ciphertextHex), ...fromHex(box.tagHex)]);
+String packBox(SealedBox box) => base64UrlNoPad(<int>[
+  ...fromHex(box.ciphertextHex),
+  ...fromHex(box.tagHex),
+]);
 
 /// 箱 → 密文与标签。长度不足即抛（调用方按 `protocol/bad-frame` 处理）。
 SealedBox unpackBox(String box) {
@@ -408,11 +407,13 @@ Future<SessionKeys> deriveSessionKeys({
     keyPair: ownEphemeralPrivate,
     remotePublicKey: peerStatic,
   );
+
   /// 自己的静态 × 对端的临时。含义同上，与上一条恰好互补。
   final staticOwnEphPeer = await _x25519.sharedSecretKey(
     keyPair: ownStaticPrivate,
     remotePublicKey: peerEphemeral,
   );
+
   /// 双方临时（与角色无关）。
   final ephEph = await _x25519.sharedSecretKey(
     keyPair: ownEphemeralPrivate,
@@ -426,10 +427,12 @@ Future<SessionKeys> deriveSessionKeys({
   // **角色调整**：协议里的 `ss1` 定义是「发起方临时 × 应答方静态」，
   // 所以应答方要把上面两条对调。调整后的 `ss1`/`ss2` 才是**绝对**协议值，
   // 也才是这个函数该返回的东西（返回位置值会让应答方的 `ss1` 变成 `ss2`）。
-  final ss1Bytes =
-      role == HandshakeRole.initiator ? ephOwnStaticPeerBytes : staticOwnEphPeerBytes;
-  final ss2Bytes =
-      role == HandshakeRole.initiator ? staticOwnEphPeerBytes : ephOwnStaticPeerBytes;
+  final ss1Bytes = role == HandshakeRole.initiator
+      ? ephOwnStaticPeerBytes
+      : staticOwnEphPeerBytes;
+  final ss2Bytes = role == HandshakeRole.initiator
+      ? staticOwnEphPeerBytes
+      : ephOwnStaticPeerBytes;
 
   final ikm = <int>[...ss1Bytes, ...ss2Bytes, ...ss3Bytes];
   final salt = <int>[...fromHex(nonceA), ...fromHex(nonceB)];
@@ -472,7 +475,26 @@ Future<void> verifySignature({
   required String signatureHex,
   required String role,
 }) async {
-  final publicBytes = fromHex(publicKeyHex);
+  // **整段都归一到 `protocol/not-paired`**：`fromHex` 对坏十六进制抛的是
+  // `protocol/bad-frame`，但"公钥/签名的字节不对"与"验签不过"对手机是同一件事
+  // （这一端不是我以为的那一端，该回配对页）。让 `bad-frame` 从这里漏出去，
+  // 会让手机把"设备身份不对"归到"这一帧格式不对"—— 两件事的下一步动作完全不同
+  // （一个回配对页，一个重试），报错类别错了用户就永远卡在重试上。
+  //
+  // 实现上不用 `try/on ProtocolException/rethrow`：那样会把 `fromHex` 的 `bad-frame`
+  // 一起放行（`ProtocolException` 是同一个类型）。所以这里显式只认 `not-paired`。
+  final List<int> publicBytes;
+  final List<int> signatureBytes;
+  try {
+    publicBytes = fromHex(publicKeyHex);
+    signatureBytes = fromHex(signatureHex);
+  } on ProtocolException catch (error) {
+    throw ProtocolException(
+      'protocol/not-paired',
+      '$role 的公钥或签名不是合法十六进制：${error.message}',
+    );
+  }
+
   if (publicBytes.length != rawKeyBytes) {
     throw ProtocolException(
       'protocol/not-paired',
@@ -485,12 +507,12 @@ Future<void> verifySignature({
     ok = await _ed25519.verify(
       transcript,
       signature: Signature(
-        fromHex(signatureHex),
+        signatureBytes,
         publicKey: SimplePublicKey(publicBytes, type: KeyPairType.ed25519),
       ),
     );
   } catch (error) {
-    // 构造公钥/签名失败也归到"不是我以为的那一端"，不暴露内部分支。
+    // 构造公钥失败也归到"不是我以为的那一端"，不暴露内部分支。
     throw ProtocolException('protocol/not-paired', '$role 验签无法进行：$error');
   }
 

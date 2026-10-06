@@ -39,10 +39,12 @@
 - 图标集校验(不需要浏览器):`node mock/proto/tools/verify-icons.cjs`
 - **手机端 `app/`(Flutter 工程;`flutter` 装在 `D:\soft\flutter`,已进用户 PATH)**:
   - **版本闸门:锁 Flutter `3.41.9`**(上界由鸿蒙 fork 定,`app-platform-boundaries.md` §4)。当前上游 stable 是 3.47.6,**不许装** —— Dart SDK 版本决定语言特性,升上去等接鸿蒙时要回改一大片。自带 Dart 3.11.5。
-  - `cd app; flutter test` —— 跑 `test/`,当前 **18 项**:跨端密码学向量 16 + fixtures 三角色回放 1 + `flutter create` 自带的 smoke 1
-  - `cd app; flutter analyze` —— 静态检查(0 问题才算干净)
+  - `cd app; flutter test` —— 跑 `test/`,当前 **71 项**:core 单测 53 + 跨端向量 16 + fixtures 三角色回放 1 + `flutter create` 自带 smoke 1
+  - `cd app; dart analyze --fatal-infos lib test` —— **社区口径的静态检查**(比 `flutter analyze` 严:把 info 也当失败)。0 问题才算干净
+  - `cd app; dart format --output=none --set-exit-if-changed lib test` —— **Dart 社区硬规范**(Flutter CI 一直拿它当门禁)。`--set-exit-if-changed` 是判据,不是"看一眼"
   - `cd app; flutter pub get` —— 装依赖(`cryptography` 是唯一的非 SDK 依赖)
   - `cd app; flutter run -d windows` —— **桌面调试**。本机 VS 18 + MSVC + Windows SDK 齐全,所以 UI 与状态机**不需要模拟器、不需要真机**
+  - lint 规则集在 `app/analysis_options.yaml`,**每条都写了它针对的具体失败模式**(不是"更严格就好");改它要连注释一起改
   - 新增依赖前先看 `.agents/notes/implemented/2026-10-02-mobile-core-crypto-choice.md` 的选型闸门
 - 工具脚本路径门禁(不需要浏览器):`node mock/proto/tools/verify-tool-paths.mjs` —— 扫 `mock/proto/tools/*.mjs`,2 条规则:禁 `file:///` + 盘符的字面量、禁 `C:\sudy` / `C:/sudy`(旧环境根)。**本仓库内的路径必须从 `import.meta.url` 派生**;理由与代价见 `.agents/notes/implemented/2026-10-02-paths-must-be-derived-not-hardcoded.md`(一次搬盘让 11 个脚本的 `PAGE` 全部指向不存在的 URL,而门禁是**静默全红**:脚本照常跑完、照常打印 JSON)
 - 起独立 headless Chrome(不碰日常浏览器,默认端口 9400):`pwsh -File mock/proto/tools/cdp.ps1 -Port 9400`
@@ -136,4 +138,6 @@
 - **`cryptography` 的 `SecretBox.concatenation()` 拼的是 `nonce ‖ 密文 ‖ mac`,而我们的容器是 `base64url(密文 ‖ tag)`(nonce 不上线,它由 `fc` 派生)**:用错的话单侧测试全绿、真机才断(症状"解不开")。箱容器必须手工拼,并且**进向量断言**(`箱容器` / `容器往返` 两条)—— 这正是"各写各的容器在单侧测试里都是绿的"要防的
 - **`flutter create` 会覆盖 `lib/main.dart` 与 `test/widget_test.dart`,但不碰 `lib/theme/`**:在已有 `app/` 上跑 `flutter create .` 之前先确认主题层没被改(本项目跑完两个主题文件原样保留)。另外它生成的 90 个文件(三端脚手架)必须入库,否则 `flutter run` 起不来
 - **fixtures 的 `snapshotPageSize` 必须读,不能写死**:替身里把页大小写成 100 会让"分页"永远只走一页,于是 `hasMore` / 续页 / **分页期间的并发增量**全都测不到 —— 而 fixture 12 就是专门测这个的(它给的是 2)。表现是"没有进行中的快照"抛错或静默少断言
+- **`protocol/not-paired` 与 `protocol/bad-frame` 的边界要**整段**收口,不能让解析层的错误漏出去**:手机按错误码决定下一步 —— `not-paired` 是"清除本地凭据、回配对页",`bad-frame` 是"这一帧格式不对、重试"。实测踩过:`verifySignature` 里 `fromHex(publicKeyHex)` 原本在 try **之外**,于是"公钥不是合法十六进制"漏出 `bad-frame`,把"设备身份不对"报成了"帧格式不对" —— **用户就永远卡在重试上**。修法不是 `try/on ProtocolException/rethrow`(那会把 `fromHex` 的 `bad-frame` 一起放行,**因为它是同一个异常类型**),而是显式把它翻译成 `not-paired`。教训:凡是"按错误码分派动作"的地方,要有一条**坏输入**的用例(合法十六进制但长度不对、奇数长度、非十六进制字符各一条)
+- **Dart 社区的两条硬规范要在改完就跑,别攒着**:`dart format --output=none --set-exit-if-changed lib test`(Flutter CI 一直拿它当门禁)与 `dart analyze --fatal-infos lib test`(比 `flutter analyze` 严)。实测:`dart format` 会**重排 `if` 的花括号**,于是它能把一条**被 lint 拦下的写法**暴露出来(`curly_braces_in_flow_control_structures`)—— 所以顺序是先 format 再 analyze,反了会看到"刚改完又冒出新问题"
 - 血泪史条目见 `docs/postmortem/`;此处只留结论。

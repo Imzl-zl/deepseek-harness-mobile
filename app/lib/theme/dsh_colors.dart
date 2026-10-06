@@ -29,7 +29,9 @@ abstract final class DshColors {
   // ---- 角色 / 徽标(时间线)----
   static const roleContext = Color(0xFF22C55E);
   static const roleContextBg = Color(0xFF233C2C);
-  static const roleAssistant = Color(0xFF9E7BAA); // ≈ lerp(accentBlue, error, .4)
+  static const roleAssistant = Color(
+    0xFF9E7BAA,
+  ); // ≈ lerp(accentBlue, error, .4)
   static const roleTool = Color(0xFFDD8629);
   static const roleToolBg = Color(0xFF27241F);
   static const error = Color(0xFFF25A5A);

@@ -17,7 +17,11 @@ class LogEntry {
 
 /// 快照 / 增量里对外暴露的条目视图。
 class ItemRecord {
-  const ItemRecord({required this.itemId, required this.text, required this.seq});
+  const ItemRecord({
+    required this.itemId,
+    required this.text,
+    required this.seq,
+  });
 
   final String itemId;
   final String text;
@@ -28,16 +32,19 @@ class ItemRecord {
 ///
 /// [log] 是持久事件日志（含已被 trim 出内存缓冲的那些，故顺序信息取自它）；
 /// [items] 是当前条目表（itemId → text）。
-List<ItemRecord> orderedItems(
-  List<LogEntry> log,
-  Map<String, String> items,
-) {
+List<ItemRecord> orderedItems(List<LogEntry> log, Map<String, String> items) {
   final lastSeqOf = <String, int>{};
   for (final entry in log) {
     lastSeqOf[entry.itemId] = entry.seq;
   }
   final records = items.entries
-      .map((e) => ItemRecord(itemId: e.key, text: e.value, seq: lastSeqOf[e.key] ?? 0))
+      .map(
+        (e) => ItemRecord(
+          itemId: e.key,
+          text: e.value,
+          seq: lastSeqOf[e.key] ?? 0,
+        ),
+      )
       .toList();
   records.sort((a, b) => a.seq - b.seq);
   return records;
@@ -63,8 +70,7 @@ const Set<String> _messageEvents = <String>{
   'assistant/message',
 };
 
-Object? _fieldOf(Object? value, String key) =>
-    value is Map ? value[key] : null;
+Object? _fieldOf(Object? value, String key) => value is Map ? value[key] : null;
 
 String? _nonEmptyString(Object? value) =>
     (value is String && value.isNotEmpty) ? value : null;
@@ -101,9 +107,13 @@ String itemIdOf(EventLike event) {
 
   if (type == 'tool/result') {
     // 结果与调用共用同一个 itemId，靠 `toolCallId` 配对。
-    final callId = _nonEmptyString(_fieldOf(_fieldOf(data, 'message'), 'toolCallId'));
+    final callId = _nonEmptyString(
+      _fieldOf(_fieldOf(data, 'message'), 'toolCallId'),
+    );
     if (callId == null) {
-      throw StateError('tool/result(seq=$seq) 缺少 message.toolCallId：无法与 tool/call 配对');
+      throw StateError(
+        'tool/result(seq=$seq) 缺少 message.toolCallId：无法与 tool/call 配对',
+      );
     }
     return 't:$callId';
   }

@@ -32,7 +32,9 @@ Directory _repoRoot() {
     if (parent.path == dir.path) break;
     dir = parent;
   }
-  throw StateError('找不到仓库根（含 protocol/vectors 的那一层），当前目录 ${Directory.current.path}');
+  throw StateError(
+    '找不到仓库根（含 protocol/vectors 的那一层），当前目录 ${Directory.current.path}',
+  );
 }
 
 Map<String, Object?> _readVector(String name) {
@@ -95,11 +97,7 @@ void main() {
       expect(asInitiator.kB2A, asResponder.kB2A, reason: 'kB2A 同上');
 
       for (final key in const ['ss1', 'ss2', 'ss3', 'master', 'kA2B', 'kB2A']) {
-        expect(
-          asInitiator.toMap()[key],
-          expected[key],
-          reason: '$key（发起方视角）',
-        );
+        expect(asInitiator.toMap()[key], expected[key], reason: '$key（发起方视角）');
         // **两侧都必须等于向量值**：`ss1`/`ss2` 是**角色调整后**的绝对协议值
         // （`ss1` = 发起方临时 × 应答方静态），不是"自己的临时 × 对端的静态"。
         // 把位置当编号的实现在这里红 —— 而它派生的主密钥仍然是对的，
@@ -116,10 +114,18 @@ void main() {
       final input = handshake['input']! as Map<String, Object?>;
       final keys = await deriveSessionKeys(
         role: HandshakeRole.initiator,
-        ownStaticPrivate: (await x25519FromSeed(input['seedA']! as String)).keyPair,
-        ownEphemeralPrivate: (await x25519FromSeed(input['ephSeedA']! as String)).keyPair,
-        peerStaticPublicHex: (await x25519FromSeed(input['seedB']! as String)).publicKeyHex,
-        peerEphemeralPublicHex: (await x25519FromSeed(input['ephSeedB']! as String)).publicKeyHex,
+        ownStaticPrivate: (await x25519FromSeed(
+          input['seedA']! as String,
+        )).keyPair,
+        ownEphemeralPrivate: (await x25519FromSeed(
+          input['ephSeedA']! as String,
+        )).keyPair,
+        peerStaticPublicHex: (await x25519FromSeed(
+          input['seedB']! as String,
+        )).publicKeyHex,
+        peerEphemeralPublicHex: (await x25519FromSeed(
+          input['ephSeedB']! as String,
+        )).publicKeyHex,
         nonceA: input['nonceA']! as String,
         nonceB: input['nonceB']! as String,
         info: input['info']! as String,
@@ -127,8 +133,16 @@ void main() {
       );
       expect(keys.ss1 == keys.ss2, isFalse, reason: 'ss1 与 ss2 相同说明角色顺序写错了');
       expect(keys.ss2 == keys.ss3, isFalse);
-      expect(keys.master.substring(0, 64), keys.kA2B, reason: 'master 前 32 字节必须是 kA2B');
-      expect(keys.master.substring(64), keys.kB2A, reason: 'master 后 32 字节必须是 kB2A');
+      expect(
+        keys.master.substring(0, 64),
+        keys.kA2B,
+        reason: 'master 前 32 字节必须是 kA2B',
+      );
+      expect(
+        keys.master.substring(64),
+        keys.kB2A,
+        reason: 'master 后 32 字节必须是 kB2A',
+      );
     });
   });
 
@@ -162,7 +176,10 @@ void main() {
         reason: '顺序是协议的一部分：换顺序不会报错，只会让两侧算出不同的 transcript',
       );
 
-      final sig = await signTranscript(signature['signerEdSeed']! as String, rebuilt);
+      final sig = await signTranscript(
+        signature['signerEdSeed']! as String,
+        rebuilt,
+      );
       expect(sig, signature['sig'], reason: 'Ed25519 是确定性签名，重签必须得到同一个值');
     });
   });
@@ -191,7 +208,11 @@ void main() {
         expect(packBox(sealed), v['box'], reason: '$name: 箱容器');
 
         final unpacked = unpackBox(v['box']! as String);
-        expect(unpacked.ciphertextHex, v['ciphertext'], reason: '$name: 容器往返（密文）');
+        expect(
+          unpacked.ciphertextHex,
+          v['ciphertext'],
+          reason: '$name: 容器往返（密文）',
+        );
         expect(unpacked.tagHex, v['tag'], reason: '$name: 容器往返（标签）');
 
         final back = await open(
@@ -213,11 +234,17 @@ void main() {
       for (final entry in tamper) {
         final t = entry! as Map<String, Object?>;
         final name = t['name']! as String;
-        final v = vectors[(t['vectorIndex']! as num).toInt()]! as Map<String, Object?>;
-        final baseAad = Map<String, Object?>.from(v['aad']! as Map<String, Object?>);
+        final v =
+            vectors[(t['vectorIndex']! as num).toInt()]!
+                as Map<String, Object?>;
+        final baseAad = Map<String, Object?>.from(
+          v['aad']! as Map<String, Object?>,
+        );
         final patch = t['patch'] as Map<String, Object?>?;
         if (patch != null) baseAad.addAll(patch);
-        final fc = t['fc'] == null ? (v['fc']! as num).toInt() : (t['fc']! as num).toInt();
+        final fc = t['fc'] == null
+            ? (v['fc']! as num).toInt()
+            : (t['fc']! as num).toInt();
 
         await expectLater(
           open(
@@ -228,7 +255,11 @@ void main() {
             tagHex: v['tag']! as String,
           ),
           throwsA(
-            isA<ProtocolException>().having((e) => e.code, 'code', 'protocol/bad-frame'),
+            isA<ProtocolException>().having(
+              (e) => e.code,
+              'code',
+              'protocol/bad-frame',
+            ),
           ),
           reason: '$name 必须解密失败（认证失败要转成协议错误码，不能让包的裸异常漏出去）',
         );
@@ -253,12 +284,24 @@ void main() {
       // 同一帧重放。
       expect(
         () => guard.accept(1),
-        throwsA(isA<ProtocolException>().having((e) => e.code, 'code', 'protocol/replay')),
+        throwsA(
+          isA<ProtocolException>().having(
+            (e) => e.code,
+            'code',
+            'protocol/replay',
+          ),
+        ),
       );
       // 更旧的帧。
       expect(
         () => guard.accept(0),
-        throwsA(isA<ProtocolException>().having((e) => e.code, 'code', 'protocol/replay')),
+        throwsA(
+          isA<ProtocolException>().having(
+            (e) => e.code,
+            'code',
+            'protocol/replay',
+          ),
+        ),
       );
       // 跳跃是允许的（乱序由上层判，这一层只管单调）。
       guard.accept(10);
@@ -268,21 +311,36 @@ void main() {
 
   group('AAD 规范化（§3）', () {
     test('缺字段用空串占位，两种写法等价', () {
-      final omitted = aadOf(const AadFields(t: 'ev', sid: 'sid_1', seq: 1, fc: 0));
-      final explicit = aadOf(const AadFields(t: 'ev', id: '', sid: 'sid_1', seq: 1, fc: 0));
+      final omitted = aadOf(
+        const AadFields(t: 'ev', sid: 'sid_1', seq: 1, fc: 0),
+      );
+      final explicit = aadOf(
+        const AadFields(t: 'ev', id: '', sid: 'sid_1', seq: 1, fc: 0),
+      );
       expect(toHex(omitted), toHex(explicit), reason: '「缺」与「空串」必须规范化成同一个串');
       expect(utf8.decode(omitted), '1|ev||sid_1|1|0');
     });
 
     test('数字是十进制无前导零、无小数点', () {
-      expect(utf8.decode(aadOf(const AadFields(t: 'ev', seq: 0, fc: 0))), '1|ev|||0|0');
-      expect(utf8.decode(aadOf(const AadFields(t: 'ev', seq: 12345, fc: 7))), '1|ev|||12345|7');
+      expect(
+        utf8.decode(aadOf(const AadFields(t: 'ev', seq: 0, fc: 0))),
+        '1|ev|||0|0',
+      );
+      expect(
+        utf8.decode(aadOf(const AadFields(t: 'ev', seq: 12345, fc: 7))),
+        '1|ev|||12345|7',
+      );
     });
   });
 
   group('行级分帧（§3）', () {
     test('encodeFrame 必须带换行 —— 漏了的表现是"对端什么都没收到"', () {
-      final encoded = encodeFrame(<String, Object?>{'v': 1, 't': 'ping', 'fc': 0, 'box': ''});
+      final encoded = encodeFrame(<String, Object?>{
+        'v': 1,
+        't': 'ping',
+        'fc': 0,
+        'box': '',
+      });
       expect(encoded.endsWith('\n'), isTrue, reason: '分隔符由编解码层负责，不是调用方');
       expect(encoded, '{"v":1,"t":"ping","fc":0,"box":""}\n');
     });
@@ -316,16 +374,34 @@ void main() {
     test('解码：版本不符 / 非法 JSON / id 字符集不合法都要抛', () {
       expect(
         () => decodeFrame('{"v":2,"t":"ping"}'),
-        throwsA(isA<ProtocolException>().having((e) => e.code, 'code', 'protocol/unsupported-version')),
+        throwsA(
+          isA<ProtocolException>().having(
+            (e) => e.code,
+            'code',
+            'protocol/unsupported-version',
+          ),
+        ),
       );
       expect(
         () => decodeFrame('not json'),
-        throwsA(isA<ProtocolException>().having((e) => e.code, 'code', 'protocol/bad-frame')),
+        throwsA(
+          isA<ProtocolException>().having(
+            (e) => e.code,
+            'code',
+            'protocol/bad-frame',
+          ),
+        ),
       );
       // `id` 是 AAD 的组成部分：放进去一个需要转义的字符，两端 AAD 就可能不同。
       expect(
         () => decodeFrame('{"v":1,"t":"req","id":"a+b/c=","fc":0,"box":""}'),
-        throwsA(isA<ProtocolException>().having((e) => e.code, 'code', 'protocol/bad-frame')),
+        throwsA(
+          isA<ProtocolException>().having(
+            (e) => e.code,
+            'code',
+            'protocol/bad-frame',
+          ),
+        ),
       );
     });
 
@@ -347,13 +423,13 @@ void main() {
 /// 测试用的便捷视图：把 [SessionKeys] 转成与向量同名的 map。
 extension on SessionKeys {
   Map<String, String> toMap() => {
-        'ss1': ss1,
-        'ss2': ss2,
-        'ss3': ss3,
-        'master': master,
-        'kA2B': kA2B,
-        'kB2A': kB2A,
-      };
+    'ss1': ss1,
+    'ss2': ss2,
+    'ss3': ss3,
+    'master': master,
+    'kA2B': kA2B,
+    'kB2A': kB2A,
+  };
 }
 
 /// [IdentityKeys] 的 Ed25519 种子（产品代码里叫 `signSeedHex`，向量里叫 `edSeed`）。

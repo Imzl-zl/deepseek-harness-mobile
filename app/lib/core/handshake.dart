@@ -37,7 +37,9 @@ const int _hex64 = 128; // 64 字节
 const int _hex8 = 16; // 8 字节
 
 String _hex(Object? value, String field, int length) {
-  if (value is! String || value.length != length || !RegExp(r'^[0-9a-fA-F]+$').hasMatch(value)) {
+  if (value is! String ||
+      value.length != length ||
+      !RegExp(r'^[0-9a-fA-F]+$').hasMatch(value)) {
     throw ProtocolException(
       'protocol/bad-frame',
       '$field 必须是 ${length ~/ 2} 字节的十六进制',
@@ -130,7 +132,9 @@ Uint8List transcriptFromFields(Object hello, [HelloAckFields? ack]) {
     pcId = '${hello['pcId']}';
     nonceB = '${hello['nonceB']}';
   } else {
-    throw ArgumentError('transcriptFromFields 需要 (HelloFields, HelloAckFields) 或一个字段 map');
+    throw ArgumentError(
+      'transcriptFromFields 需要 (HelloFields, HelloAckFields) 或一个字段 map',
+    );
   }
 
   return Uint8List.fromList(
@@ -151,53 +155,59 @@ Uint8List transcriptFromFields(Object hello, [HelloAckFields? ack]) {
 }
 
 HelloFields _checkHello(HelloFields input) => HelloFields(
-      ephPubA: _hex(input.ephPubA, 'ephPubA', _hex32),
-      devId: _id(input.devId, 'devId'),
-      nonceA: _hex(input.nonceA, 'nonceA', _hex32),
-    );
+  ephPubA: _hex(input.ephPubA, 'ephPubA', _hex32),
+  devId: _id(input.devId, 'devId'),
+  nonceA: _hex(input.nonceA, 'nonceA', _hex32),
+);
 
 HelloAckFields _checkHelloAck(HelloAckFields input) => HelloAckFields(
-      ephPubB: _hex(input.ephPubB, 'ephPubB', _hex32),
-      pcId: _id(input.pcId, 'pcId'),
-      nonceB: _hex(input.nonceB, 'nonceB', _hex32),
-    );
+  ephPubB: _hex(input.ephPubB, 'ephPubB', _hex32),
+  pcId: _id(input.pcId, 'pcId'),
+  nonceB: _hex(input.nonceB, 'nonceB', _hex32),
+);
 
 ConfirmFields _checkConfirm(ConfirmFields input) => ConfirmFields(
-      sigA: _hex(input.sigA, 'sigA', _hex64),
-      transcriptHash: _hex(input.transcriptHash, 'transcriptHash', _hex8),
-    );
+  sigA: _hex(input.sigA, 'sigA', _hex64),
+  transcriptHash: _hex(input.transcriptHash, 'transcriptHash', _hex8),
+);
 
 /// 编码 `hello`（返回 `box` 里的字符串）。
-String encodeHello(HelloFields fields) => jsonEncode(_checkHello(fields).toJson());
+String encodeHello(HelloFields fields) =>
+    jsonEncode(_checkHello(fields).toJson());
 
 /// 编码 `hello-ack`。
 String encodeHelloAck(HelloAckFields fields, String sigB) => jsonEncode({
-      ..._checkHelloAck(fields).toJson(),
-      'sigB': _hex(sigB, 'sigB', _hex64),
-    });
+  ..._checkHelloAck(fields).toJson(),
+  'sigB': _hex(sigB, 'sigB', _hex64),
+});
 
 /// 编码 `confirm`。
-String encodeConfirm(ConfirmFields fields) => jsonEncode(_checkConfirm(fields).toJson());
+String encodeConfirm(ConfirmFields fields) =>
+    jsonEncode(_checkConfirm(fields).toJson());
 
 /// 解析 `hello`。
 HelloFields parseHello(String box) {
   final raw = _unbox(box, 'hello');
-  return _checkHello(HelloFields(
-    ephPubA: '${raw['ephPubA']}',
-    devId: '${raw['devId']}',
-    nonceA: '${raw['nonceA']}',
-  ));
+  return _checkHello(
+    HelloFields(
+      ephPubA: '${raw['ephPubA']}',
+      devId: '${raw['devId']}',
+      nonceA: '${raw['nonceA']}',
+    ),
+  );
 }
 
 /// 解析 `hello-ack`（含 `sigB`）。
 ({HelloAckFields fields, String sigB}) parseHelloAck(String box) {
   final raw = _unbox(box, 'hello-ack');
   return (
-    fields: _checkHelloAck(HelloAckFields(
-      ephPubB: '${raw['ephPubB']}',
-      pcId: '${raw['pcId']}',
-      nonceB: '${raw['nonceB']}',
-    )),
+    fields: _checkHelloAck(
+      HelloAckFields(
+        ephPubB: '${raw['ephPubB']}',
+        pcId: '${raw['pcId']}',
+        nonceB: '${raw['nonceB']}',
+      ),
+    ),
     sigB: _hex(raw['sigB'], 'sigB', _hex64),
   );
 }
@@ -205,31 +215,33 @@ HelloFields parseHello(String box) {
 /// 解析 `confirm`。
 ConfirmFields parseConfirm(String box) {
   final raw = _unbox(box, 'confirm');
-  return _checkConfirm(ConfirmFields(
-    sigA: '${raw['sigA']}',
-    transcriptHash: '${raw['transcriptHash']}',
-  ));
+  return _checkConfirm(
+    ConfirmFields(
+      sigA: '${raw['sigA']}',
+      transcriptHash: '${raw['transcriptHash']}',
+    ),
+  );
 }
 
 extension on HelloFields {
   Map<String, Object?> toJson() => {
-        'ephPubA': ephPubA,
-        'devId': devId,
-        'nonceA': nonceA,
-      };
+    'ephPubA': ephPubA,
+    'devId': devId,
+    'nonceA': nonceA,
+  };
 }
 
 extension on HelloAckFields {
   Map<String, Object?> toJson() => {
-        'ephPubB': ephPubB,
-        'pcId': pcId,
-        'nonceB': nonceB,
-      };
+    'ephPubB': ephPubB,
+    'pcId': pcId,
+    'nonceB': nonceB,
+  };
 }
 
 extension on ConfirmFields {
   Map<String, Object?> toJson() => {
-        'sigA': sigA,
-        'transcriptHash': transcriptHash,
-      };
+    'sigA': sigA,
+    'transcriptHash': transcriptHash,
+  };
 }

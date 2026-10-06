@@ -26,7 +26,12 @@ import 'package:dsh_mobile/core/recovery.dart';
 
 /// 桥接侧的一帧：`t` / `sid` / `seq` 是路由头，`box` 是不透明内容。
 class BridgeFrame {
-  const BridgeFrame({required this.sid, required this.seq, required this.itemId, required this.text});
+  const BridgeFrame({
+    required this.sid,
+    required this.seq,
+    required this.itemId,
+    required this.text,
+  });
 
   final String sid;
   final int seq;
@@ -34,7 +39,8 @@ class BridgeFrame {
   final String text;
 
   /// 与电脑侧 `seal` 同一个形状（fixtures 词汇层的 `seal` 是**可逆占位**，不是加密）。
-  String get box => jsonEncode(<String, Object?>{'itemId': itemId, 'text': text});
+  String get box =>
+      jsonEncode(<String, Object?>{'itemId': itemId, 'text': text});
 }
 
 /// 快照分页的结果。
@@ -65,8 +71,10 @@ class _Session {
 
 /// 电脑侧桥接的替身（契约 §5 的**权威侧**）。
 class FakeBridge {
-  FakeBridge({Map<String, Map<String, String>> initial = const {}, int snapshotPageSize = 100})
-      : _pageSize = snapshotPageSize {
+  FakeBridge({
+    Map<String, Map<String, String>> initial = const {},
+    int snapshotPageSize = 100,
+  }) : _pageSize = snapshotPageSize {
     for (final entry in initial.entries) {
       for (final item in entry.value.entries) {
         append(entry.key, item.key, item.value);
@@ -85,7 +93,12 @@ class FakeBridge {
 
   _Session _ensure(String sid) => _sessions.putIfAbsent(sid, () => _Session());
 
-  BridgeFrame _record(_Session session, String sid, String itemId, String text) {
+  BridgeFrame _record(
+    _Session session,
+    String sid,
+    String itemId,
+    String text,
+  ) {
     final seq = session.next;
     session.next += 1;
     final entry = LogEntry(seq: seq, itemId: itemId, text: text);
@@ -109,14 +122,25 @@ class FakeBridge {
 
   /// 审批 / 提问的 ask：进日志，同时进「当前待处理」。
   BridgeFrame ask(String sid, String callId, [Object? payload]) {
-    final frame = append(sid, 'i:$callId', jsonEncode(<String, Object?>{'kind': 'ask', 'payload': payload ?? <String, Object?>{}}));
+    final frame = append(
+      sid,
+      'i:$callId',
+      jsonEncode(<String, Object?>{
+        'kind': 'ask',
+        'payload': payload ?? <String, Object?>{},
+      }),
+    );
     _ensure(sid).pending[callId] = payload;
     return frame;
   }
 
   /// outcome：同 itemId 覆盖 ask，并从待处理集合移除。
   BridgeFrame answer(String sid, String callId, Object? decision) {
-    final frame = append(sid, 'i:$callId', jsonEncode(<String, Object?>{'kind': 'outcome', 'decision': decision}));
+    final frame = append(
+      sid,
+      'i:$callId',
+      jsonEncode(<String, Object?>{'kind': 'outcome', 'decision': decision}),
+    );
     _ensure(sid).pending.remove(callId);
     return frame;
   }
@@ -165,17 +189,25 @@ class FakeBridge {
 
   BridgeFrame frameAt(String sid, int seq) {
     final session = _sessions[sid];
-    final entry = session?.frames.where((f) => f.seq == seq).firstOrNull ??
+    final entry =
+        session?.frames.where((f) => f.seq == seq).firstOrNull ??
         session?.log.where((f) => f.seq == seq).firstOrNull;
     if (entry == null) throw StateError('没有 seq=$seq 的帧（sid=$sid）');
-    return BridgeFrame(sid: sid, seq: entry.seq, itemId: entry.itemId, text: entry.text);
+    return BridgeFrame(
+      sid: sid,
+      seq: entry.seq,
+      itemId: entry.itemId,
+      text: entry.text,
+    );
   }
 
-  Map<String, String> itemsOf(String sid) =>
-      Map<String, String>.from(_sessions[sid]?.items ?? const <String, String>{});
+  Map<String, String> itemsOf(String sid) => Map<String, String>.from(
+    _sessions[sid]?.items ?? const <String, String>{},
+  );
 
-  TransientFacts transientOf(String sid) =>
-      Map<String, Object?>.from(_sessions[sid]?.transient ?? const <String, Object?>{});
+  TransientFacts transientOf(String sid) => Map<String, Object?>.from(
+    _sessions[sid]?.transient ?? const <String, Object?>{},
+  );
 
   void setTransient(String sid, TransientFacts patch) {
     final session = _ensure(sid);
@@ -186,7 +218,9 @@ class FakeBridge {
   void trim(String sid, int upto) {
     final session = _ensure(sid);
     if (upto > session.trimmedUpto) session.trimmedUpto = upto;
-    session.frames = session.frames.where((f) => f.seq > session.trimmedUpto).toList();
+    session.frames = session.frames
+        .where((f) => f.seq > session.trimmedUpto)
+        .toList();
   }
 
   SnapshotPage _pageOf(List<ItemRecord> all, int asOfSeq) {
@@ -208,7 +242,10 @@ class FakeBridge {
     final snapshot = session.snapshot;
     if (snapshot == null) throw StateError('没有进行中的快照（sid=$sid）');
     final before = int.parse(snapshot.cursor.substring(2));
-    final all = orderedItems(session.log, session.items).where((item) => item.seq <= before).toList();
+    final all = orderedItems(
+      session.log,
+      session.items,
+    ).where((item) => item.seq <= before).toList();
     final page = _pageOf(all, snapshot.asOfSeq);
     final reason = snapshot.reason;
     session.snapshot = page.hasMore
@@ -245,7 +282,9 @@ class FakeBridge {
     }
     final latest = session.next - 1;
     if (since > latest || since < session.trimmedUpto) {
-      final reason = since > latest ? SnapshotReason.revisionNewer : SnapshotReason.windowMissed;
+      final reason = since > latest
+          ? SnapshotReason.revisionNewer
+          : SnapshotReason.windowMissed;
       final page = _pageOf(orderedItems(session.log, session.items), latest);
       session.snapshot = page.hasMore
           ? (asOfSeq: latest, cursor: page.cursor ?? '', reason: reason)
@@ -286,7 +325,12 @@ class FakeBridge {
 
 /// 中转侧的一帧：路由视图 + 不透明内容。
 class RelayFrame {
-  const RelayFrame({required this.t, required this.sid, required this.seq, required this.box});
+  const RelayFrame({
+    required this.t,
+    required this.sid,
+    required this.seq,
+    required this.box,
+  });
 
   final String t;
   final String sid;
@@ -312,7 +356,9 @@ class FakeRelay {
     final list = _windows.putIfAbsent(frame.sid, () => <RelayFrame>[]);
     // 路由视图与内容分开存：中转只读 routing，box 原样搬运。
     routingKeysSeen.add(<String>['t', 'sid', 'seq']);
-    list.add(RelayFrame(t: 'ev', sid: frame.sid, seq: frame.seq, box: frame.box));
+    list.add(
+      RelayFrame(t: 'ev', sid: frame.sid, seq: frame.seq, box: frame.box),
+    );
     while (list.length > windowSize) {
       list.removeAt(0);
     }
