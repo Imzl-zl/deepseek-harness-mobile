@@ -834,20 +834,46 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   }
 }
 
-/// 从 `ev` 的解箱载荷取一条条目（`itemId` 由事件自身推导，§5.2）。
+/// 从 `ev` 的解箱载荷取一条条目。
+///
+/// ## 载荷是**真实的 DSH 会话事件**，不是 fixtures 的 `{itemId, text}`
+///
+/// 实测（`connector/src/session-subscriptions.ts:170,175`）：电脑侧封的是
+/// `JSON.stringify(record.event)` —— 而 `record.event` 是 DSH 的 `SessionWireEvent`：
+///
+/// ```ts
+/// { type: string, seq: number, time: number, data: JsonValue }   // types.ts
+/// ```
+///
+/// 而 `protocol/fixtures` 的词汇层用的是 `{itemId, text}`（见 `connector/src/protocol/recovery.ts:144`）
+/// —— 那是**可逆占位**，不是线上形状。两者不能混：按 fixture 形状解析真实流量会在
+/// 第一个事件上就抛"缺少 itemId"。
+///
+/// 所以 `itemId` 走 [itemIdOf]（契约 §5.2 的推导表，不变量 I9），
+/// 而"要显示什么文本"是**渲染层**的事（它认识 `type` 与 `data`）——
+/// 这一层只负责"这一条属于哪个 itemId"，不发明文本投影。
 ItemRecord _itemFromPayload(String plaintext, int seq) {
   final parsed = _jsonDecode(plaintext);
   if (parsed is! Map) {
     throw const ProtocolException(ErrorCode.badFrame, 'ev 载荷必须是 JSON 对象');
   }
-  final data = Map<String, Object?>.from(parsed);
-  // 电脑侧封的是 `{itemId, text}`（见 `recovery.dart` 的 `record`）。
-  final itemId = data['itemId'];
-  final text = data['text'];
-  if (itemId is! String || itemId.isEmpty) {
-    throw const ProtocolException(ErrorCode.badFrame, 'ev 载荷缺少 itemId');
+  final event = Map<String, Object?>.from(parsed);
+  final type = event['type'];
+  if (type is! String || type.isEmpty) {
+    throw const ProtocolException(ErrorCode.badFrame, 'ev 载荷缺少 type');
   }
-  return ItemRecord(itemId: itemId, text: text is String ? text : '', seq: seq);
+  final eventSeq = event['seq'];
+  final itemId = itemIdOf(
+    EventLike(
+      type: type,
+      seq: eventSeq is int ? eventSeq : seq,
+      data: event['data'],
+    ),
+  );
+  // `text` 留空：条目内容由渲染层从 `data` 投影（这一层不认识 `type` 的语义）。
+  // 传空串而不是把整个 JSON 塞进去 —— 后者会让"文本"变成一段原始事件，
+  // 而任何一处误用都不会报错，只会显示得很怪。
+  return ItemRecord(itemId: itemId, text: '', seq: seq);
 }
 
 Object? _jsonDecode(String text) {

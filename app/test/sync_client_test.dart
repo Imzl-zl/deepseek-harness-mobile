@@ -219,6 +219,27 @@ void main() {
     await pump();
   }
 
+  /// 复算会话密钥（测试扮演电脑侧要用它封箱）。
+  ///
+  /// 材料全在测试手里且固定（种子、nonce、pairingId 都是注入的），所以复算一遍即可 ——
+  /// **不重新实现协议**，只是把电脑侧该算的那一次算出来（`role: responder`）。
+  Future<SessionKeys> sessionKeysFor(FakeTransport transport) async {
+    final helloFrame = transport.frameOf('hello');
+    expect(helloFrame, isNotNull, reason: '要先有 hello 才能复算');
+    final hello = parseHello(helloFrame!['box']! as String);
+    return deriveSessionKeys(
+      role: HandshakeRole.responder,
+      ownStaticPrivate: pcDh.keyPair,
+      ownEphemeralPrivate: (await x25519FromSeed('e5' * 32)).keyPair,
+      peerStaticPublicHex: phoneStatic.publicKeyHex,
+      peerEphemeralPublicHex: hello.ephPubA,
+      nonceA: hello.nonceA,
+      nonceB: '22' * 32,
+      info: keyInfo,
+      pairingId: 'pair-1',
+    );
+  }
+
   group('连接与握手（契约 §2.2、§4.1）', () {
     test('start → connecting → handshake，并发出 hello', () async {
       final f = buildDeps();
@@ -416,6 +437,76 @@ void main() {
       f.transport.feed('${jsonEncode({'v': 1, 't': 'credit', 'fc': 0})}\n');
       await Future<void>.delayed(Duration.zero);
       expect(f.transport.closeCount, greaterThan(0), reason: '缺 box 必须关连接');
+
+      await client.close();
+    });
+
+    test('ev 的载荷是**真实 DSH 事件**（不是 fixtures 的 {itemId,text}）', () async {
+      // 实测电脑侧封的是 `JSON.stringify(record.event)`，而它是
+      // `{type, seq, time, data}`（`connector/src/session-subscriptions.ts:170,175`）。
+      // fixtures 词汇层的 `{itemId, text}` 是**可逆占位**，不是线上形状 ——
+      // 按 fixture 形状解析真实流量会在第一个事件上就抛"缺少 itemId"。
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      final deltas = <SessionDelta>[];
+      client.sessionUpdates('s1').listen(deltas.add);
+
+      await client.start();
+      await answerHello(f.transport);
+      final keys = await sessionKeysFor(f.transport);
+      // 电脑侧封一帧真实的 `assistant/message` 事件。
+      final pc = BoxCodec(keys: keys, role: HandshakeRole.responder);
+      final event = {
+        'type': 'assistant/message',
+        'seq': 3,
+        'time': 1234,
+        'data': {
+          'message': {'id': 'msg-7'},
+        },
+      };
+      const frame = <String, Object?>{
+        'v': 1,
+        't': 'ev',
+        'sid': 's1',
+        'seq': 3,
+        'fc': 0,
+        'box': '',
+      };
+      final box = await pc.sealFrame(frame, jsonEncode(event));
+      f.transport.feed('${jsonEncode({...frame, 'box': box})}\n');
+      await pump();
+
+      expect(deltas, isNotEmpty, reason: '真实形状的事件必须被解析出来');
+      // `itemId` 由事件自身推导（§5.2）：`assistant/message` → `m:<message.id>`。
+      expect(deltas.last.items.single.itemId, 'm:msg-7');
+      // 文本留空：这一层不认识 `type` 的语义，内容投影归渲染层。
+      expect(deltas.last.items.single.text, '');
+
+      await client.close();
+    });
+
+    test('ev 载荷缺 type / 不是对象 → 关连接（不是静默丢弃）', () async {
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+      final keys = await sessionKeysFor(f.transport);
+
+      final pc = BoxCodec(keys: keys, role: HandshakeRole.responder);
+      const frame = <String, Object?>{
+        'v': 1,
+        't': 'ev',
+        'sid': 's1',
+        'seq': 1,
+        'fc': 0,
+        'box': '',
+      };
+      // 没有 `type` 的载荷：读不出 itemId，必须吵而不是静默丢。
+      final box = await pc.sealFrame(frame, jsonEncode({'seq': 1}));
+      f.transport.feed('${jsonEncode({...frame, 'box': box})}\n');
+      await pump();
+
+      expect(f.transport.closeCount, greaterThan(0));
 
       await client.close();
     });
