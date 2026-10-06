@@ -110,6 +110,9 @@ class AppModel extends ChangeNotifier {
   void loadPreview() {
     if (_disposed) return;
     _isPreview = true;
+    // 把示例数据里的**相对锚点**换算成真时间戳（见 `preview_data.dart` 的说明）：
+    // 不换算的话它们会被算成 1970 年，全落进抽屉的「更早」那一组。
+    final anchor = DateTime.now().millisecondsSinceEpoch;
     final sessions = <SessionSummary>[];
     for (final preview in previewSessions) {
       final store = _storeOf(preview.sid);
@@ -119,7 +122,7 @@ class AppModel extends ChangeNotifier {
         SessionSummary(
           sid: preview.sid,
           title: '（示例）${preview.title}',
-          updatedAt: preview.updatedAt,
+          updatedAt: anchor + preview.updatedAt,
           itemCount: preview.items.length,
           pendingCount: preview.items
               .whereType<ApprovalItem>()

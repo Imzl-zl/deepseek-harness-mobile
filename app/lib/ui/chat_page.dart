@@ -44,6 +44,7 @@ import 'chat_turns.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_composer.dart';
 import 'dsh_diff.dart';
+import 'dsh_sheet.dart';
 import 'side_pane.dart';
 
 /// 聊天页。
@@ -95,6 +96,15 @@ class _ChatPageState extends State<ChatPage> {
 
   /// 展开了哪些任务行。
   final Set<String> _openJobs = {'j1'};
+
+  /// 当前访问模式（原型默认"工作区内可改"）。
+  AccessMode _accessMode = AccessMode.workspaceWrite;
+
+  /// 风险门里的勾选态。
+  ///
+  /// **不跨次残留**（§7.10 表格："关掉后重开，勾选态不残留"）——
+  /// 每次开风险门都从 `false` 起（`_showRiskGate` 里重置）。
+  bool _riskAcked = false;
 
   @override
   void initState() {
@@ -245,17 +255,13 @@ class _ChatPageState extends State<ChatPage> {
                   // 现在给占位（界面上看得出是占位：写的是"未连接"）。
                   modelName: _hasData ? 'claude-opus' : '未连接',
                   reasoningLabel: '高',
-                  accessMode: AccessMode.workspaceWrite,
+                  accessMode: _accessMode,
                   sending: _sending,
                   enabled: _hasData && sid != null,
                   onSend: _send,
-                  onAttach: () => setState(
-                    () => _attachments.add(
-                      const PendingAttachment(name: '新增文件.txt'),
-                    ),
-                  ),
-                  onPickModel: () {},
-                  onPickAccess: () {},
+                  onAttach: _showAttachSheet,
+                  onPickModel: _showModelSheet,
+                  onPickAccess: _showAccessSheet,
                   onRemoveAttachment: (item) =>
                       setState(() => _attachments.remove(item)),
                 ),
@@ -267,6 +273,11 @@ class _ChatPageState extends State<ChatPage> {
                         : '第 1 轮 · ${items.length} 步',
                     usageText: items.isEmpty ? null : '302K · 缓存 0%',
                     contextPercent: items.isEmpty ? null : 3,
+                    // 三个统计各自弹一个 sheet（原型 `sheet-stats` /
+                    // `sheet-usage` / `sheet-context`）。
+                    onTapTurn: _showStatsSheet,
+                    onTapUsage: _showUsageSheet,
+                    onTapContext: _showContextSheet,
                   ),
                 ),
               ],
@@ -362,6 +373,239 @@ class _ChatPageState extends State<ChatPage> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text('$what 还没接上数据')));
+  }
+
+  // ---------------------------------------------------------------------------
+  // sheet 体系（照原型的 `sheet-*` action）
+  // ---------------------------------------------------------------------------
+
+  /// `sheet-stats`：会话统计。数值照原型。
+  void _showStatsSheet() => showDshSheet<void>(
+    context: context,
+    title: '会话统计',
+    body: const Column(
+      children: [
+        DshKeyValue(label: '模型用时', value: '12.4', unit: 's'),
+        DshKeyValue(label: '工具用时', value: '3.8', unit: 's'),
+        DshKeyValue(label: '首 token (TTFT)', value: '420', unit: 'ms'),
+        DshKeyValue(label: '输出速度', value: '516', unit: 'tok/s'),
+        DshKeyValue(label: '轮次 / 步数', value: '1 / 3'),
+      ],
+    ),
+  );
+
+  /// `sheet-usage`：Token 用量。
+  void _showUsageSheet() => showDshSheet<void>(
+    context: context,
+    title: 'Token 用量',
+    body: const Column(
+      children: [
+        DshKeyValue(label: '缓存命中', value: '0%'),
+        DshKeyValue(label: '未缓存输入', value: '12,480'),
+        DshKeyValue(label: '缓存读取', value: '289,120'),
+        DshKeyValue(label: '缓存写入', value: '0'),
+        DshKeyValue(label: '输出', value: '1,204'),
+        DshKeyValue(label: '合计', value: '302,804'),
+      ],
+    ),
+  );
+
+  /// `sheet-context`：上下文已用 N% —— **三段用量条**是这一屏的重点。
+  void _showContextSheet() {
+    const meter = DshContextMeter(
+      systemTokens: 7200,
+      toolTokens: 10100,
+      messageTokens: 2600,
+      limitTokens: 1000000,
+    );
+    unawaited(
+      showDshSheet<void>(
+        context: context,
+        title: '上下文已用 ${meter.percent}%',
+        body: meter,
+      ),
+    );
+  }
+
+  /// 模型选择（§7.9 的行结构）。
+  void _showModelSheet() {
+    const models = [
+      (name: 'claude-opus', tags: ['图片', '工具', '推理'], selected: true),
+      (name: 'claude-sonnet', tags: ['图片', '工具'], selected: false),
+      (name: 'gpt-5-codex', tags: ['工具'], selected: false),
+      (name: 'deepseek-v4.1-flash', tags: ['纯文本', '工具'], selected: false),
+    ];
+    unawaited(
+      showDshSheet<void>(
+        context: context,
+        title: '选择模型',
+        body: Column(
+          children: [
+            for (final m in models)
+              DshPickerRow(
+                name: m.name,
+                tags: m.tags,
+                selected: m.selected,
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _toast('切到 ${m.name}');
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 权限选择（三档 + 完全权限的**风险确认门**，§7.10）。
+  ///
+  /// §7.10 的硬规则："未授权 → 绝不生效"。
+  /// 所以完全权限那一档**不是直接切**，而是先弹风险门、要勾选
+  /// "我已了解风险"才能启用。
+  void _showAccessSheet() {
+    const modes = [
+      (mode: AccessMode.readOnly, desc: '只能看，不能改任何文件'),
+      (mode: AccessMode.workspaceWrite, desc: '可在工作区内改文件，越权要审批'),
+      (mode: AccessMode.fullAccess, desc: '不再逐次审批 —— 危险'),
+    ];
+    unawaited(
+      showDshSheet<void>(
+        context: context,
+        title: '访问模式',
+        body: Column(
+          children: [
+            for (final m in modes)
+              DshPickerRow(
+                name: m.mode.label,
+                tags: [m.desc],
+                icon: m.mode.icon,
+                selected: m.mode == _accessMode,
+                onTap: () {
+                  Navigator.of(context).pop();
+                  if (m.mode.isWarn) {
+                    unawaited(_showRiskGate(m.mode));
+                  } else {
+                    setState(() => _accessMode = m.mode);
+                  }
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 完全权限的**风险确认门**：必须勾选才生效（§7.10）。
+  ///
+  /// 勾选态**不跨次残留**（§7.10 表格里"关掉后重开，勾选态不残留"）——
+  /// 所以开门的动作里先把它清掉，而不是依赖"新建 widget 就自然是 false"
+  ///（那在 widget 被复用时就不成立了）。
+  Future<void> _showRiskGate(AccessMode mode) {
+    _riskAcked = false;
+    return showDshSheet<void>(
+      context: context,
+      title: '启用${mode.label}？',
+      body: StatefulBuilder(
+        builder: (context, setSheetState) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '这一档下，DSH 执行越权操作时不再问你。'
+              '误操作（删文件、改工作区外的东西）不会被拦。',
+              style: TextStyle(
+                fontSize: 13,
+                height: 20 / 13,
+                color: DshColors.labelSecondary,
+              ),
+            ),
+            const SizedBox(height: 12),
+            InkWell(
+              onTap: () => setSheetState(() => _riskAcked = !_riskAcked),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: Checkbox(
+                      value: _riskAcked,
+                      onChanged: (v) =>
+                          setSheetState(() => _riskAcked = v ?? false),
+                      activeColor: DshColors.roleTool,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      '我已了解风险',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: DshColors.labelPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      // **勾选后"启用"才可点** —— 未授权绝不生效。
+      actions: [
+        DshSheetAction(
+          label: '取消',
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        DshSheetAction(
+          label: '启用',
+          filled: true,
+          onPressed: () {
+            if (!_riskAcked) return; // 没勾就不生效（门仍开着）
+            setState(() => _accessMode = mode);
+            Navigator.of(context).pop();
+          },
+        ),
+      ],
+    );
+  }
+
+  /// `＋` 菜单（对应桌面端的快捷键入口）。
+  void _showAttachSheet() {
+    const items = [
+      (icon: 'paperclip', label: '附件', desc: '图片、文档、PDF'),
+      (icon: 'folderOpen', label: '工作区文件', desc: '桌面端 Ctrl+P'),
+      (icon: 'code', label: '新建终端', desc: '桌面端 Ctrl+`'),
+      (icon: 'globe', label: '浏览器', desc: '桌面端 Ctrl+T'),
+      (icon: 'checklist', label: '后台任务', desc: '看运行中的命令与输出'),
+    ];
+    unawaited(
+      showDshSheet<void>(
+        context: context,
+        title: '添加',
+        body: Column(
+          children: [
+            for (final item in items)
+              DshPickerRow(
+                name: item.label,
+                tags: [item.desc],
+                icon: item.icon,
+                selected: false,
+                onTap: () {
+                  Navigator.of(context).pop();
+                  if (item.label == '附件') {
+                    setState(
+                      () => _attachments.add(
+                        const PendingAttachment(name: '新增文件.txt'),
+                      ),
+                    );
+                  } else {
+                    _toast(item.label);
+                  }
+                },
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// **示例任务**（数据照 `mock/proto/app.js` 的 `JOBS`）。

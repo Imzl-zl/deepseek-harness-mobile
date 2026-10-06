@@ -40,11 +40,23 @@ class PreviewSession {
 }
 
 /// 示例会话列表。三屏各自的难点都覆盖到了。
-final List<PreviewSession> previewSessions = <PreviewSession>[
-  const PreviewSession(
+///
+/// ## `updatedAt` 是**相对值**，不是绝对时间戳
+///
+/// 这里的 `updatedAt`（500 / 400 / 300）是**"距今多少秒"的锚点**，
+/// 由 `AppModel.loadPreview()` 加上当前时刻换算成真时间戳。
+///
+/// 为什么不写死绝对时间戳：抽屉按今天 / 昨天 / 更早分组，而写死的小数字
+/// 会被算成"1970 年"，于是三个会话全落进「更早」（实测踩到）。
+/// 也不能在这里调 `DateTime.now()` —— 那会让这个 `const` 列表变成
+/// 非 const，且同一个值每帧都不同。
+const List<PreviewSession> previewSessions = <PreviewSession>[
+  PreviewSession(
     sid: 'preview-1',
     title: '重构连接层',
-    updatedAt: 500,
+    // **相对当前时刻的偏移（毫秒）**：`-3 分钟` 让它落在抽屉的「今天」。
+    // 三个会话分属今天 / 昨天 / 更早，好让分组本身也能被看到。
+    updatedAt: -3 * 60 * 1000,
     items: <ChatItem>[
       MessageItem(
         itemId: 'p1-u1',
@@ -90,10 +102,11 @@ final List<PreviewSession> previewSessions = <PreviewSession>[
       ),
     ],
   ),
-  const PreviewSession(
+  PreviewSession(
     sid: 'preview-2',
     title: '图标为什么不用字体',
-    updatedAt: 400,
+    // 昨天那一组。
+    updatedAt: -26 * 60 * 60 * 1000,
     items: <ChatItem>[
       MessageItem(
         itemId: 'p2-u1',
@@ -139,10 +152,11 @@ final List<PreviewSession> previewSessions = <PreviewSession>[
       ),
     ],
   ),
-  const PreviewSession(
+  PreviewSession(
     sid: 'preview-3',
     title: '超长文本与代码块',
-    updatedAt: 300,
+    // 「更早」那一组。
+    updatedAt: -5 * 24 * 60 * 60 * 1000,
     items: <ChatItem>[
       MessageItem(
         itemId: 'p3-u1',

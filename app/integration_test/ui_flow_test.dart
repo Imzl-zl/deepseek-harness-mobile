@@ -106,18 +106,100 @@ void main() {
     expect(find.byType(SidePane), findsNothing);
   });
 
-  testWidgets('示例模式下能开会话抽屉（☰）', (tester) async {
+  testWidgets('统计条三项各自弹 sheet（上下文的是三段用量条）', (tester) async {
     final app = AppModel(client: _FakeClient());
-    var opened = false;
     await tester.pumpWidget(
       MaterialApp(
         theme: DshTheme.dark(),
         home: ChatPage(
           app: app,
           paired: false,
-          // 真装配里这个回调打开外层 `Scaffold` 的 drawer；
-          // 这里只验"点得到、回调被调到"（抽屉本体由 main.dart 装）。
-          onOpenDrawer: () => opened = true,
+          onOpenDrawer: () {},
+          onNewSession: () {},
+          drawer: const Drawer(child: SizedBox()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('看示例数据'));
+    await tester.pumpAndSettle();
+    // 打开第一个示例会话（统计条要有会话才显示）。
+    await app.openSession('preview-1');
+    await tester.pumpAndSettle();
+
+    // 三项统计都在。
+    expect(find.textContaining('第 1 轮'), findsOneWidget);
+    expect(find.textContaining('302K'), findsOneWidget);
+
+    // 点"上下文"那一项 → 三段用量条 + 图例（照原型 `sheet-context`）。
+    await tester.tap(find.text('3%'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('上下文已用'), findsOneWidget);
+    expect(find.text('系统提示词'), findsOneWidget);
+    expect(find.text('工具定义'), findsOneWidget);
+    expect(find.text('对话消息'), findsOneWidget);
+    // `19900 / 1000000` → `19.9K / 1M`。
+    expect(find.text('19.9K / 1M'), findsOneWidget);
+
+    // 关掉，再点"会话统计"那一项 → 五个 kv。
+    Navigator.of(tester.element(find.text('系统提示词'))).pop();
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('第 1 轮'));
+    await tester.pumpAndSettle();
+    expect(find.text('会话统计'), findsOneWidget);
+    expect(find.text('首 token (TTFT)'), findsOneWidget);
+    expect(find.text('输出速度'), findsOneWidget);
+    Navigator.of(tester.element(find.text('会话统计'))).pop();
+    await tester.pumpAndSettle();
+
+    // 再点"Token 用量" → 六行。
+    await tester.tap(find.textContaining('302K'));
+    await tester.pumpAndSettle();
+    expect(find.text('Token 用量'), findsOneWidget);
+    expect(find.text('缓存读取'), findsOneWidget);
+    expect(find.text('合计'), findsOneWidget);
+  });
+
+  testWidgets('＋ 菜单：五项都在，选"附件"才加进来', (tester) async {
+    final app = AppModel(client: _FakeClient());
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: DshTheme.dark(),
+        home: ChatPage(
+          app: app,
+          paired: false,
+          onOpenDrawer: () {},
+          onNewSession: () {},
+          drawer: const Drawer(child: SizedBox()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('看示例数据'));
+    await tester.pumpAndSettle();
+    await app.openSession('preview-1');
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('添加文件或调用指令'));
+    await tester.pumpAndSettle();
+    for (final label in ['附件', '工作区文件', '新建终端', '浏览器', '后台任务']) {
+      expect(find.text(label), findsOneWidget, reason: '菜单缺「$label」');
+    }
+    await tester.tap(find.text('附件'));
+    await tester.pumpAndSettle();
+    expect(find.text('新增文件.txt'), findsOneWidget);
+  });
+
+  testWidgets('☰ 与空态按钮都能开抽屉（回调被调到）', (tester) async {
+    final app = AppModel(client: _FakeClient());
+    var opened = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: DshTheme.dark(),
+        home: ChatPage(
+          app: app,
+          paired: false,
+          onOpenDrawer: () => opened += 1,
           onNewSession: () {},
           drawer: const Drawer(child: SizedBox()),
         ),
@@ -127,7 +209,7 @@ void main() {
 
     await tester.tap(find.byTooltip('打开会话抽屉'));
     await tester.pumpAndSettle();
-    expect(opened, isTrue);
+    expect(opened, 1);
   });
 
   testWidgets('输入栏在示例模式下可用（＋ 能加附件）', (tester) async {

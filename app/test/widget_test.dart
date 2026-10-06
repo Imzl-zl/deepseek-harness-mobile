@@ -210,7 +210,13 @@ void main() {
       await tester.pumpWidget(_wrap(app));
       await tester.pumpAndSettle();
 
+      // `＋` 现在开**菜单**（照原型：附件 / 工作区文件 / 新建终端 / 浏览器 / 后台任务），
+      // 从菜单里选"附件"才加进来。第一版直接点了 `＋` 就断言附件出现 ——
+      // 那时 `＋` 是直接加附件，没有菜单。
       await tester.tap(find.byTooltip('添加文件或调用指令'));
+      await tester.pumpAndSettle();
+      expect(find.text('添加'), findsOneWidget);
+      await tester.tap(find.text('附件'));
       await tester.pumpAndSettle();
 
       expect(find.text('新增文件.txt'), findsOneWidget);

@@ -162,62 +162,74 @@ class _DshMobileAppState extends State<DshMobileApp> {
     if (_pairing) {
       return PairingPage(onPaired: _onPaired, onCancel: _closePairing);
     }
-    // 打开会话的入口在抽屉里 —— 它要能 `Navigator.pop` 关自己，
-    // 所以用 `GlobalKey<ScaffoldState>` 而不是把 drawer 塞进 ChatPage 内部。
-    return ChatPage(
-      key: _chatKey,
-      app: app,
-      paired: _credentials != null,
-      onConnect: _openPairing,
-      onOpenDrawer: () => _chatKey.currentState?.openDrawer(),
-      onNewSession: _newSession,
-      drawer: SessionDrawer(
-        sections: _drawerSections(app),
-        connection: DrawerConnection(
-          name: _credentials == null ? '未配对' : '我的电脑',
-          detail: _credentials == null
-              ? '还没连电脑 · 点这里去配对'
-              : _connectionDetail(app.connection),
-          platform: _credentials == null ? '' : 'DSH',
-          online: app.connection == ConnectionStateView.serving,
-        ),
-        footItems: [
-          DrawerFootItem(
-            icon: 'folderClose',
-            label: '文件',
-            onTap: () => _notYet('文件页'),
-          ),
-          DrawerFootItem(
-            icon: 'archive',
-            label: '归档',
-            onTap: () => _notYet('归档列表'),
-          ),
-          DrawerFootItem(icon: 'sparkle', label: '示例', onTap: app.loadPreview),
-          DrawerFootItem(
-            icon: 'clock',
-            label: '自动化',
-            onTap: () => _notYet('自动化任务'),
-          ),
-          DrawerFootItem(
-            icon: 'settings',
-            label: '设置',
-            onTap: () => _notYet('设置'),
-          ),
-        ],
+    // **抽屉必须跟着 `AppModel` 重建**。
+    //
+    // 这一层原先直接 `_drawerSections(app)` 取一次列表就完事 —— 而
+    // `AppModel` 是 `ChangeNotifier`：会话列表、连接状态、示例数据
+    // 都靠 `notifyListeners()` 通知。不监听它就等于**列表永远停在首帧**：
+    // 真实会话拉回来了、示例数据装上了，抽屉里却还是"还没有会话"。
+    //（实测踩到：装了示例数据，`ChatPage` 里有内容，抽屉里是空的。）
+    return ListenableBuilder(
+      listenable: app,
+      builder: (context, _) => ChatPage(
+        key: _chatKey,
+        app: app,
+        paired: _credentials != null,
+        onConnect: _openPairing,
+        onOpenDrawer: () => _chatKey.currentState?.openDrawer(),
         onNewSession: _newSession,
-        onOpenSession: (session) {
-          unawaited(Navigator.of(context).maybePop());
-          unawaited(app.openSession(session.sid));
-        },
-        // 点连接状态行 → 已配对时给"重新配对 / 断开"的选择，没配对上配对页。
-        onClose: () {
-          if (_credentials == null) {
+        drawer: SessionDrawer(
+          sections: _drawerSections(app),
+          connection: DrawerConnection(
+            name: _credentials == null ? '未配对' : '我的电脑',
+            detail: _credentials == null
+                ? '还没连电脑 · 点这里去配对'
+                : _connectionDetail(app.connection),
+            platform: _credentials == null ? '' : 'DSH',
+            online: app.connection == ConnectionStateView.serving,
+          ),
+          footItems: [
+            DrawerFootItem(
+              icon: 'folderClose',
+              label: '文件',
+              onTap: () => _notYet('文件页'),
+            ),
+            DrawerFootItem(
+              icon: 'archive',
+              label: '归档',
+              onTap: () => _notYet('归档列表'),
+            ),
+            DrawerFootItem(
+              icon: 'sparkle',
+              label: '示例',
+              onTap: app.loadPreview,
+            ),
+            DrawerFootItem(
+              icon: 'clock',
+              label: '自动化',
+              onTap: () => _notYet('自动化任务'),
+            ),
+            DrawerFootItem(
+              icon: 'settings',
+              label: '设置',
+              onTap: () => _notYet('设置'),
+            ),
+          ],
+          onNewSession: _newSession,
+          onOpenSession: (session) {
             unawaited(Navigator.of(context).maybePop());
-            _openPairing();
-            return;
-          }
-          unawaited(_showConnectionSheet());
-        },
+            unawaited(app.openSession(session.sid));
+          },
+          // 点连接状态行 → 已配对时给"重新配对 / 断开"的选择，没配对上配对页。
+          onClose: () {
+            if (_credentials == null) {
+              unawaited(Navigator.of(context).maybePop());
+              _openPairing();
+              return;
+            }
+            unawaited(_showConnectionSheet());
+          },
+        ),
       ),
     );
   }
