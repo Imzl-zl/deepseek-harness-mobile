@@ -560,8 +560,8 @@ DSH 右侧有一条**轮次导航轨**(`ui-chat/TurnNavigator.tsx`):每一轮一
 操作步骤、精确验证命令与完成判据见 `cookbook/channel-bootstrap.md`。
 
 1. **交互基线**(已完成):`mock/proto/` 可运行原型 + 验证脚本,覆盖抽屉、文件预览、授权接管、输入栏、任务与子代理。
-2. **协议规格与回环**(已完成):`protocol/` 的 9 条 fixtures + 参考实现 + 两个校验脚本(恢复只有两种结果、三角色回环、**中转状态清空后重启仍能收敛**)。
-3. **电脑侧插件骨架**(下一步):`connector/` 做成 npm bundle,数据取自 DSH 已有服务(`sessionController.follow/page/prompt/cancel`、`approval`、`userQuestions`、`ctx.jobs`),对着同一批 fixtures 跑。**工程形态照参考插件的形状定**:`dsh.bundle.patch` 指向 4 行 `cordis.patch.yml`(`insert: [{ id, name, config }]`),`peerDependencies` 对 `@deepseek-ai/dsh*` 用精确版本(兼容性判据是它,不是 `engines.dsh`),`engines` 只写 node,DSH 各包(`0.2.0-rc.1` 线)以 devDependencies 供类型检查;本仓库当前没有 `package.json`。
+2. **协议规格与回环**(已完成):`protocol/` 的 16 条 fixtures + 参考实现 + 三个校验脚本(恢复只有两种结果、三角色回环、**中转状态清空后重启仍能收敛**、跨端密码学向量)。
+3. **电脑侧插件骨架**(已完成):`connector/` 做成 npm bundle,数据取自 DSH 已有服务(`sessionController.follow/page/prompt/cancel`、`approval`、`userQuestions`、`ctx.jobs`),对着同一批 fixtures 跑(275 项全绿)。**工程形态照参考插件的形状定**:`dsh.bundle.patch` 指向 4 行 `cordis.patch.yml`(`insert: [{ id, name, config }]`),`peerDependencies` 对 `@deepseek-ai/dsh*` 用精确版本(兼容性判据是它,不是 `engines.dsh`),`engines` 只写 node,DSH 各包(`0.2.0-rc.2` 线)以 devDependencies 供类型检查。
 4. **连通验证**:Tailscale 直连真机,跑通"发一句/回一句"。
 5. **Flutter 骨架 + 主题**:把 §5 token 与原型交互在 Dart 复刻骨架,一屏 Demo 对比原型验收还原度。**前置:先装 Flutter SDK**(本机 PATH 上没有)。
 6. **只读会话**:接通道,手机看会话列表 + 对话 + 轨迹(不可发)。

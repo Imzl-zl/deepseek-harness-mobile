@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const CDP = process.env.CDP_URL || "http://127.0.0.1:9400";
-const PAGE = process.env.PAGE_URL || "file:///C:/sudy/myproject/dsh-mobile/mock/proto/index.html";
+const PAGE = process.env.PAGE_URL || new URL("../index.html", import.meta.url).href;
 const OUT = join(dirname(fileURLToPath(import.meta.url)), "..", "shots");
 mkdirSync(OUT, { recursive: true });
 

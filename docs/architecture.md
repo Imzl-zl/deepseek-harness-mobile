@@ -10,8 +10,8 @@
 
 电脑侧事实来源:
 
-- DSH 源码:`C:\sudy\github\deepseek-harness`。
-- AA bridge/connector:`C:\sudy\github\Agents-Anywhere`。
+- DSH 源码:`D:\sudy\github\deepseek-harness`。
+- AA bridge/connector:`D:\sudy\github\Agents-Anywhere`。
 - 本机运行模式调研与 provider 密钥策略见 `standalone-mode-notes.md`。
 
 ## 子系统索引

@@ -56,7 +56,7 @@ Matrix `/sync` 的 `limited: true` 表示"扣下了一部分事件但仍返回�
 
 本方案的取舍点因此是可验证的:**内容不进中继**、**中继无状态**(运维面小一个数量级)、**两侧均主动连出**(零公网暴露)。
 
-另有一处能力差异已核实:参考实现把 `origin === 'subagent'` 的会话**隐藏**(`C:\sudy\github\Agents-Anywhere\dsh-bridge-next\src\host\dsh-runtime\visibility.ts:11`;`native.ts:231` 对不可见会话直接抛 `SESSION_NOT_FOUND`,一手);本方案把后台任务与子代理投影成一等条目,属于净增能力。
+另有一处能力差异已核实:参考实现把 `origin === 'subagent'` 的会话**隐藏**(`D:\sudy\github\Agents-Anywhere\dsh-bridge-next\src\host\dsh-runtime\visibility.ts:11`;`native.ts:231` 对不可见会话直接抛 `SESSION_NOT_FOUND`,一手);本方案把后台任务与子代理投影成一等条目,属于净增能力。
 
 ### 1.6 参数落点与主流一致
 

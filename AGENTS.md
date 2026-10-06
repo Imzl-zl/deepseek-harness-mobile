@@ -15,11 +15,12 @@
 - 语言/运行时:原型 = 纯浏览器 JS/CSS/HTML(无构建步骤、无 npm 依赖);App = Dart / Flutter(仅主题层已落地)。
 - 主要技术栈:Flutter(目标 iOS / 安卓 / 鸿蒙 OHOS fork);原型用原生 DOM + 手写手势。
 - 版本控制:git;远端 `github.com/Imzl-zl/deepseek-harness-mobile`(`main`)。`mock/proto/shots/`(生成物,约 9 MB)与 `setup-collaboration-files.backup/` 不入库。
-- 配置根目录:无(本仓库无 `package.json` / `pubspec.yaml` / CI 配置;`app/` 尚无 Flutter 工程文件)。
+- 配置根目录:`connector/` 与 `relay/` 是两个独立 pnpm 工程(各有 `package.json` + `pnpm-lock.yaml`,都不是 DSH workspace 成员);`app/` 尚无 Flutter 工程文件(`pubspec.yaml` 未建);本仓库**没有 CI**。
 - 标准验证命令(完整清单、断言条数与截图命令见 §5 与 `tools.md`):
   - `node protocol/verify-fixtures.mjs` / `verify-loopback.mjs` / `verify-vectors.mjs` —— 通道协议(不需要浏览器)
   - `node app/tools/verify-platform-boundary.mjs` —— 多端边界(不需要 Flutter 工程)
   - `node mock/proto/tools/verify-icons.cjs` —— 图标集完整性(不需要浏览器)
+  - `node mock/proto/tools/verify-tool-paths.mjs` —— 工具脚本不许硬编码盘符(不需要浏览器)
   - `pwsh -File mock/proto/tools/cdp.ps1` 起 headless Chrome,再设 `CDP_URL` / `NO_PROXY` 后跑 `verify-*.mjs`
   - `node --check mock/proto/app.js`(以及 `interactions.js`、`tools/*.mjs`)
 
@@ -73,7 +74,7 @@
   - 也可用 chrome-devtools MCP 直接驱动**已打开**的 `mock/proto/index.html` 做交互式排查(断言口径同 `verify-*.mjs`)。注意它连的是日常浏览器,而上面这条走独立 headless;**门禁以 headless 那组为准**。
 - 关键入口:`mock/proto/index.html`(原型唯一入口);`app/lib/theme/dsh_theme.dart`(Flutter 主题入口)。
 - 图标机生成:`node mock/proto/tools/extract-dsh-icons.mjs`(DSH 升级后重跑,勿手改产物)。
-- 参考源码(只读,勿改):DSH `C:\sudy\github\deepseek-harness`;Agents-Anywhere `C:\sudy\github\Agents-Anywhere`;rikkahub `C:\sudy\github\rikkahub`。
+- 参考源码(只读,勿改):DSH `D:\sudy\github\deepseek-harness`;Agents-Anywhere `D:\sudy\github\Agents-Anywhere`;rikkahub `D:\sudy\github\rikkahub`。
 
 ## 6. 项目特定规则
 

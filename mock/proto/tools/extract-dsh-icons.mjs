@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const OUT_FILE = resolve(HERE, '..', 'icons.js')
 
-const DSH = 'C:/sudy/github/deepseek-harness'
+const DSH = process.env.DSH_SOURCE || 'D:/sudy/github/deepseek-harness'
 const ICONS_TSX = `${DSH}/packages/client/ui-primitives/src/icons/index.tsx`
 const SHARED_TSX = `${DSH}/packages/client/ui-primitives/src/icons/shared-artwork.tsx`
 const PERMISSION_TSX = `${DSH}/packages/client/ui-primitives/src/PermissionIcon.tsx`

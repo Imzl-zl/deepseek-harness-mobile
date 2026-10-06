@@ -1,9 +1,9 @@
 # DSH 设置项 → 手机端 搬运清单
 
 > 目的:核对并修正 `docs/design-and-tech-plan.md` §7.5 的设置项清单,产出逐项处置。
-> 方法:**只读源码**,未修改 `C:\sudy\github\deepseek-harness` 下任何文件。
-> 证据约定:路径相对 DSH 仓库根(即 `C:\sudy\github\deepseek-harness\`);中文文案**照抄** `locales.ts`,不改写。
-> 找不到证据的显式写「未找到」。bridge 能力核对对象:`C:\sudy\github\Agents-Anywhere`。
+> 方法:**只读源码**,未修改 `D:\sudy\github\deepseek-harness` 下任何文件。
+> 证据约定:路径相对 DSH 仓库根(即 `D:\sudy\github\deepseek-harness\`);中文文案**照抄** `locales.ts`,不改写。
+> 找不到证据的显式写「未找到」。bridge 能力核对对象:`D:\sudy\github\Agents-Anywhere`。
 
 ---
 
@@ -150,7 +150,7 @@
 
 ### 7.2 需要下发到电脑的(附 bridge 核对)
 
-**当前 `dsh-bridge` 1.0 已实现的方法**(`C:\sudy\github\Agents-Anywhere\dsh-bridge\src\bridge-service.ts:292-426`):
+**当前 `dsh-bridge` 1.0 已实现的方法**(`D:\sudy\github\Agents-Anywhere\dsh-bridge\src\bridge-service.ts:292-426`):
 `initialize`、`runtime.getConfig`、`runtime.getCapabilities`、`catalog.listModels`、`catalog.listPermissions`、`session.list`、`session.getSnapshot`、`session.getState`、`session.getNotices`、`session.getCapabilities`、`session.createAndStart`、`session.startTurn`、`session.steer`、`session.interrupt`、`session.updateSelections`、`session.listCommands`、`session.executeCommand`、`session.respondInteraction`、`ping`。
 
 **⚠️ 契约与实现有落差,选型前必须确认用哪一份**:

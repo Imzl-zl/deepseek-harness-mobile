@@ -1,6 +1,6 @@
 # 本机运行模式（Standalone Mode）调研与设计草案
 
-> 调研对象：开源安卓 AI 聊天 App **rikkahub**（本地克隆 `C:\sudy\github\rikkahub`，Kotlin + Jetpack Compose）。
+> 调研对象：开源安卓 AI 聊天 App **rikkahub**（本地克隆 `D:\sudy\github\rikkahub`，Kotlin + Jetpack Compose）。
 > 方法：**只读代码**，未修改任何文件。所有事实均给 `相对路径:行号`（相对 rikkahub 仓库根）。
 > 结论若找不到证据，显式写「未找到」，不做推测。
 > 目的：为 `dsh-mobile` 增加第二条路线——**手机不连电脑、自己就能跑**的 AI 客户端模式，与现有「遥控 DSH」模式共存于同一 App。

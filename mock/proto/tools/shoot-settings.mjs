@@ -3,10 +3,11 @@
    再 CDP_URL=http://127.0.0.1:9410 node mock/proto/tools/shoot-settings.mjs */
 import { setTimeout as sleep } from 'node:timers/promises'
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 const CDP = process.env.CDP_URL || 'http://127.0.0.1:9410'
-const PAGE = process.env.PAGE_URL || 'file:///C:/sudy/myproject/dsh-mobile/mock/proto/index.html'
-const OUT = 'mock/proto/shots'
+const PAGE = process.env.PAGE_URL || new URL('../index.html', import.meta.url).href
+const OUT = fileURLToPath(new URL('../shots', import.meta.url))
 mkdirSync(OUT, { recursive: true })
 async function target() {
   for (let i = 0; i < 60; i++) {

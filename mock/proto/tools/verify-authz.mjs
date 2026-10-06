@@ -4,7 +4,7 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 
 const CDP = process.env.CDP_URL || 'http://127.0.0.1:9400'
-const PAGE = process.env.PAGE_URL || 'file:///C:/sudy/myproject/dsh-mobile/mock/proto/index.html'
+const PAGE = process.env.PAGE_URL || new URL('../index.html', import.meta.url).href
 
 async function target() {
   for (let i = 0; i < 60; i++) {

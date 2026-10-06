@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const CDP = process.env.CDP_URL || 'http://127.0.0.1:9400'
-const PAGE = process.env.PAGE_URL || 'file:///C:/sudy/myproject/dsh-mobile/mock/proto/index.html'
+const PAGE = process.env.PAGE_URL || new URL('../index.html', import.meta.url).href
 const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'shots')
 mkdirSync(OUT, { recursive: true })
 
@@ -102,7 +102,7 @@ await evalJs(async () => {
   q('#sideScrim').click(); await new Promise(r => setTimeout(r, 450))
   const T = window.Takeovers
   while (T.pending) T.dequeue()
-  T.enqueue({ kind: 'approval', toolName: 'bash', detailHtml: '<div class="tk-cmd"><span class="dim">$</span> rm -rf build/ && flutter clean\n<span class="dim">cwd</span> C:\\\\sudy\\\\myproject\\\\dsh-mobile\\\\app</div>' })
+  T.enqueue({ kind: 'approval', toolName: 'bash', detailHtml: '<div class="tk-cmd"><span class="dim">$</span> rm -rf build/ && flutter clean\n<span class="dim">cwd</span> D:\\\\sudy\\\\myproject\\\\dsh-mobile\\\\app</div>' })
   await new Promise(r => setTimeout(r, 500))
 })
 await shot('05-approval-takeover.png')

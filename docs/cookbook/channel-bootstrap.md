@@ -10,7 +10,7 @@
 ## 0. 开工前先确认基线是绿的
 
 ```powershell
-cd C:\sudy\myproject\dsh-mobile
+cd D:\sudy\myproject\dsh-mobile
 node protocol/verify-fixtures.mjs          # 期望:ALL CHECKS PASSED — 486 项断言，16 条 fixture
 node protocol/verify-loopback.mjs          # 期望:ALL CHECKS PASSED — 26 项断言
 node app/tools/verify-platform-boundary.mjs # 期望:ALL CHECKS PASSED — 17 项

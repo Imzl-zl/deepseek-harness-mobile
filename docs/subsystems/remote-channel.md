@@ -404,7 +404,7 @@ claim(请求) :=
   - 判定**必须用 `ctx.get('<key>')`**:裸读 `ctx.sessionController` 在服务缺失或尚未就绪时是**抛异常**(`vendor/cordis/src/reflect.ts:144`、`:159-161`),而 `ctx.get('拼错的键')` 又永远静默返回 undefined(`:237-243`)——两头都不报错,所以服务键要在 `apply` 里自带一次断言与健康上报。
   - 可用的服务键与定义处:`sessions`(`packages/core/session/src/index.ts:953`)、`sessionController`(`packages/api/session-controller/src/index.ts:136`)、`sessionQuery`(`packages/session-query/session-query/src/index.ts:106`)、`approval`(`packages/interaction/user-approval/src/index.ts:156`)、`userQuestions`(`packages/interaction/user-questions/src/index.ts:85`)、`jobs`(`packages/jobs/jobs/src/index.ts:93`)、`schedule`(`packages/schedule/schedule/src/index.ts:121`)、`subagents`(`packages/subagent/subagent/src/index.ts:215`)、`settings`(`packages/settings/settings/src/index.ts:231`)、`credentials`(`packages/credentials/credentials/src/index.ts:172`)、`storageDomain`(`packages/storage/storage-domain/src/index.ts:37`)。
   - **`inject = [...]` 里写了不存在的服务 = fiber 永远 PENDING,无异常、无日志、无 UI 报错**(`vendor/cordis/src/fiber.ts:611-623`、`:625-639`)。这是纯静默降级口子:必需服务才写 `inject`,可选能力一律 `ctx.get` 读出来当能力位。
-  - 参考实现用同一模式,但注意它的判定文件在 **bridge 仓库**、不是 DSH 源码:`C:\sudy\github\Agents-Anywhere\dsh-bridge-next\src\host\dsh-runtime\configuration.ts:17-18`。引用时标明来源,别混成 `packages/...`。
+  - 参考实现用同一模式,但注意它的判定文件在 **bridge 仓库**、不是 DSH 源码:`D:\sudy\github\Agents-Anywhere\dsh-bridge-next\src\host\dsh-runtime\configuration.ts:17-18`。引用时标明来源,别混成 `packages/...`。
 
 ---
 

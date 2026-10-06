@@ -696,7 +696,7 @@ window.Takeovers = (() => {
         kind: "approval",
         toolName: "bash",
         detailHtml: `<div class="tk-cmd"><span class="dim">$</span> rm -rf build/ && flutter clean
-<span class="dim">cwd</span> C:\\sudy\\myproject\\dsh-mobile\\app</div>
+<span class="dim">cwd</span> D:\\sudy\\myproject\\dsh-mobile\\app</div>
 <div class="tk-detail" style="margin-top:8px">只读 / 工作区内修改模式下,工作区外的删除与外部命令都要你确认。</div>`,
       });
       enqueue({

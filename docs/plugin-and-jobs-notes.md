@@ -1,6 +1,6 @@
 # DSH 插件体系 与 后台任务(ui-jobs) — 移动端视角源码调查
 
-调查对象：`C:\sudy\github\deepseek-harness`（只读，未修改任何文件）。
+调查对象：`D:\sudy\github\deepseek-harness`（只读，未修改任何文件）。
 调查视角：**手机/移动端要控制电脑上的 DSH**。
 每条事实都带 `相对路径:行号`；查不到的写「未找到」，不猜。
 

@@ -1,6 +1,6 @@
 # 电脑侧桥接与中转:落地设计
 
-契约见 `remote-channel.md`(本文件只写"怎么落",不重复协议定义)。参考实现对照:`C:\sudy\github\Agents-Anywhere\dsh-bridge-next`(只读)。
+契约见 `remote-channel.md`(本文件只写"怎么落",不重复协议定义)。参考实现对照:`D:\sudy\github\Agents-Anywhere\dsh-bridge-next`(只读)。
 
 ---
 

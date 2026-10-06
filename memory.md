@@ -28,8 +28,9 @@
   `sqflite` / `cryptography` 之前必须先装 SDK。协议层与多端边界门禁全是 Node,不受影响。
 - `connector/` 与 `relay/` 是**两个独立 pnpm 工程**(都不是 DSH workspace 成员);本仓库**没有 CI**。
   - `connector/`:插件,产物 `lib/index.js` 装进 profile;导入写 `.js`(tsdown 打包)。
-  - `relay/`:独立服务,**不需要构建**;导入写 `.ts`(跑在 Node 的类型剥离下,`node --test` 零依赖
-    即可跑测试)。**别把两者的导入风格"顺手统一"** —— 运行时不同。
+  - `relay/`:独立服务,**不需要构建**;导入写 `.ts`(跑在 Node 的类型剥离下,`node --test` 直接跑测试)。
+    **`ws` 是运行时依赖,必须先 `pnpm install`**(`tests/server.test.ts` 起真服务器,缺它直接
+    `ERR_MODULE_NOT_FOUND`)。**别把两者的导入风格"顺手统一"** —— 运行时不同。
 - 仓库是 git 仓库,远端 `github.com/Imzl-zl/deepseek-harness-mobile`;`mock/proto/shots/`(生成物)
   与 `setup-collaboration-files.backup/` 不入库。
 - `app/` 只有主题层;交互基线原型 `mock/proto/` 是唯一可运行的完整形态。
@@ -43,6 +44,7 @@
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量(改 `protocol/tools/` 后必跑) |
 | `node app/tools/verify-platform-boundary.mjs` | **17 项**(含 13 条规则自检) |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
+| `node mock/proto/tools/verify-tool-paths.mjs` | 工具脚本不许硬编码盘符(2 条规则 / 14 个脚本) |
 | `cd connector && pnpm exec tsc --noEmit` | connector 类型检查(**改任何 `.ts` 都要跑** —— 有两次只跑用例没跑它,红了没发现) |
 | `cd connector && pnpm test` | connector 全套 **275 项**(含 fixtures 486 / 向量 49 的相等断言) |
 | `cd connector && pnpm build` | 产出装进 profile 的那份产物 |
@@ -101,8 +103,14 @@
 - 提交信息里避免 **反引号**(pwsh 会当 Unicode 转义,整条命令在解析阶段就失败)。
 - CDP 端口可能要换:开新端口前先探 `/json/version`。
 
-## 最近活跃窗口(2026-10-01 一天内推进的浓缩)
+## 最近活跃窗口(2026-10-01 起)
 
+- **环境搬迁修复(2026-10-02)**:开发环境从 `C:\sudy` 搬到 `D:\sudy`(三个只读参考仓库都在 D 盘)。
+  搬盘让仓库内 22 个文件写死的 `C:\sudy\...` 全部失效,其中 **11 个 CDP 脚本的 `PAGE` 指向不存在的
+  file:// URL → 整组浏览器门禁静默全红**(脚本照常跑完、照常打印 JSON)。修法=路径一律从
+  `import.meta.url` 派生,并新增门禁 `verify-tool-paths.mjs`(注入硬编码即红,已变异校验)。
+  同批把 `relay/node_modules`(673 文件)移出版本库、修正 `relay` 需先 `pnpm install`(`ws` 是运行时
+  依赖)等文档漂移。取舍见 `.agents/notes/implemented/2026-10-02-paths-must-be-derived-not-hardcoded.md`。
 - **规格与协议层(轮 1–16)**:契约定稿 + `protocol/` 可执行规格(16 fixture / 486 断言、49 向量、
   26 回环);connector 从零到方法面 12/22,握手、封箱、流控、订阅骨架、幂等管道逐个落地。
 - **配对与三方链路(轮 32–52)**:**里程碑** —— 手机替身带票连中转 → **经中继握手**(真签名/真 transcript)
