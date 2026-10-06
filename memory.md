@@ -64,8 +64,8 @@
 | `node protocol/verify-fixtures.mjs` | 16 条 fixture / **486 项断言** |
 | `node protocol/verify-loopback.mjs` | **26 项**:手机 ⇄ 中转 ⇄ 桥接回环(含中转清空后重启) |
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量(改 `protocol/tools/` 后必跑) |
-| `node app/tools/verify-platform-boundary.mjs` | **40 项**(含 16 条规则自检 + 扫描 21 个 Dart 文件) |
-| `cd app && flutter test` | **132 项**(core 53 + 连接层 59 + 向量 16 + fixtures 回放 1 + smoke 1) |
+| `node app/tools/verify-platform-boundary.mjs` | **96 项**(含 18 条规则自检 + 扫描 27 个 Dart 文件) |
+| `cd app && flutter test` | **141 项**(core 53 + 连接层 59 + 平台层 6 + 界面 3 + 向量 16 + fixtures 回放 1 + 其它) |
 | `cd app && dart analyze --fatal-infos lib test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test` | 0 文件需重排(Dart 社区硬规范) |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |

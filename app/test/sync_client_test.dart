@@ -517,10 +517,17 @@ void main() {
       await pump();
 
       expect(deltas, isNotEmpty, reason: '真实形状的事件必须被解析出来');
+      final received = deltas.last.events.single;
       // `itemId` 由事件自身推导（§5.2）：`assistant/message` → `m:<message.id>`。
-      expect(deltas.last.items.single.itemId, 'm:msg-7');
-      // 文本留空：这一层不认识 `type` 的语义，内容投影归渲染层。
-      expect(deltas.last.items.single.text, '');
+      expect(received.itemId, 'm:msg-7');
+      // **`type` 与 `data` 必须原样带上**：上层（`data/projection.dart`）靠它们
+      // 决定"渲染成什么"。解析时丢掉它们，等于逼上层从 `text` 里猜事件类型。
+      expect(received.type, 'assistant/message', reason: 'type 不能被丢掉');
+      expect((received.data! as Map)['message'], {
+        'id': 'msg-7',
+      }, reason: 'data 不能被丢掉（内容投影归上层）');
+      // 时刻也带上了（DSH 事件自带 `time`）。
+      expect(received.time, 1234);
 
       await client.close();
     });

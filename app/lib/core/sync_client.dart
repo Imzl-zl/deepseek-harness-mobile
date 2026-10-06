@@ -32,7 +32,6 @@ import 'connection.dart';
 import 'crypto.dart';
 import 'errors.dart';
 import 'handshake_driver.dart';
-import 'items.dart';
 import 'keepalive.dart';
 import 'outbox.dart';
 import 'recovery.dart';
@@ -125,10 +124,22 @@ abstract interface class SyncClientProbe {
 }
 
 /// 一次会话更新（`sessionUpdates` 的元素）。
+///
+/// ## 为什么带的是**事件**而不是"条目"
+///
+/// 最初的版本只带 `ItemRecord`（`itemId` / `text` / `seq`），而那是**不够的** ——
+/// 实测接线时才发现：`data/projection.dart` 要把事件投影成界面条目，
+/// 而它需要事件的 `type` 与 `data`（"这是消息还是工具调用？内容是哪个字段？"）。
+/// 只带 `text` 等于在 `core/` 里就把语义丢了，而那正是"UI 层各自去猜事件类型"的开端。
+///
+/// 所以这里带 [SessionEvent]：**原始事件 + 已推导的 `itemId`**。
+/// `itemId` 的推导留在 `core/`（契约 §5.2 的规则只有一处），
+/// 而"渲染成什么"交给上层 —— 分工就在这条线上。
 class SessionDelta {
   const SessionDelta({
     required this.sid,
-    required this.items,
+    this.events = const [],
+    this.liveText,
     required this.transient,
     this.outcome,
     this.reason,
@@ -136,8 +147,19 @@ class SessionDelta {
 
   final String sid;
 
-  /// 这一批变化的条目（增量：新到的那几条；快照收口：整表）。
-  final List<ItemRecord> items;
+  /// 这一批**持久**事件（`ev` 帧）。快照收口时是整表。
+  final List<SessionEvent> events;
+
+  /// 当前**流式**文本（`live` 帧累加器的内容）；`null` = 这一批没有流式更新。
+  ///
+  /// 它**不在 [events] 里**，因为两者是不同性质的东西（契约 §3 的术语表）：
+  /// 持久事件有稳定的 `itemId` 与会话 `seq`，而流式 chunk 没有 ——
+  /// 它只属于"当前这次 assistant 尝试"，会被随后到达的持久
+  /// `assistant/message` **整体替换**（`app-channel-client.md` §2.2：以持久为准）。
+  ///
+  /// 混进 [events] 会让 UI 需要"从 itemId 猜这是不是流式内容"，而那个判据
+  /// 迟早写歪；分开之后"持久"与"流式"在类型上就是两件事。
+  final String? liveText;
 
   /// 瞬时事实（不变量 I4：每次恢复都无条件回带）。
   final TransientFacts transient;
@@ -147,6 +169,36 @@ class SessionDelta {
 
   /// 快照原因（仅 `outcome == snapshot` 时有）。
   final SnapshotReason? reason;
+}
+
+/// 一条会话事件：**原始载荷 + 已推导的身份**。
+///
+/// 刻意不叫 `ItemRecord` 了 —— 那个名字描述的是"条目"，而这里装的是**事件**。
+/// 两者在 `ev` 帧上恰好一一对应，但语义不同（条目是 upsert 后的结果，
+/// 事件是产生它的输入）。名字混用会让后来者以为"同一件事有两个类型"。
+class SessionEvent {
+  const SessionEvent({
+    required this.itemId,
+    required this.type,
+    required this.seq,
+    required this.time,
+    required this.data,
+  });
+
+  /// 稳定身份（契约 §5.2 推导，不变量 I9）。
+  final String itemId;
+
+  /// DSH 事件类型（`user/message` / `tool/call` / …）。
+  final String type;
+
+  /// 会话修订号（DSH 的 `seq`）。
+  final int seq;
+
+  /// 事件时刻（DSH 的 `time`；缺失时取 `seq`）。
+  final int time;
+
+  /// 事件载荷（原始 JSON 对象，**不由 `core/` 解释**）。
+  final Object? data;
 }
 
 /// `SyncClient` 需要的一切。全部注入，所以它可以脱离真机测试。

@@ -84,9 +84,24 @@ app/
 
 ## 4. 版本闸门
 
-- **三端共用一条 Flutter 版本线,上界由鸿蒙 fork 决定**:CPF-Flutter 当前最新稳定线基于上游 **3.41.9**(`3.41.10-ohos-1.0.1`),3.35 线为上一档(3.35.7);其规划表把 3.44 排在 2026/09、3.47 排在 2026/12(页面自标"预估",且 3.44 截至 2026-10 仍只有 canary `3.44.9+ohos-0.0.1-canary1`)。**不允许 iOS/安卓单独升到更新版本**——否则 Dart 侧 import 会分叉。
+**闸门按"当前在做的端"定,不按"将来要做的端"定。**
+
+- **在只做安卓的阶段**(当前):可跟随上游最新 stable。理由:Flutter 在安卓是一等公民,
+  没有理由为了一个还没开工的端把安卓拖在旧版本上。
+- **鸿蒙开工时**再重估"三端是否共用一条线"。那时才需要下面的约束:
+  - 参考实现 CPF-Flutter 的稳定线(**2026-10-02 核实**):3.41 线(`3.41.10-ohos-1.0.1`)、
+    3.35 线(`3.35.7`)、**3.44 线(`oh-3.44.9-dev`,分支已建)**;另有第二条独立适配线
+    oh-flutter 宣称做到 3.47.5 的"0day 适配"。
+  - **未核实即不可依赖**:oh-flutter 那条自称**只覆盖 debug 档**(profile/release 仅过构建期校验)、
+    **只覆盖一台机型**(ALN-AL00 / OpenHarmony 7.0.0.105 / API 26 / arm64),
+    且 `flutter upgrade` 未适配。它自己的原话:"构建通过在真机上跑得好,中间隔着比很多人想象的要大"。
+  - 若那时决定鸿蒙用 ArkTS 原生,则本闸门对鸿蒙不适用,**iOS/安卓可各自跟随上游**。
 - **禁止 `Platform.isOhos`**:CPF 官方 FAQ 明确它会**导致 `flutter run` / `flutter build har` / `flutter attach` 失败**。判断鸿蒙一律用 `defaultTargetPlatform == TargetPlatform.ohos`;若同一份代码还要能用上游 SDK 编译,用 `Platform.operatingSystem == 'ohos'`(明确不是 `Platform.isOhos`)。此条有门禁(§6)。
-- **Flutter 3.47 起 Material / Cupertino 已拆成独立包**(`material_ui` / `cupertino_ui`),而鸿蒙 fork 是否包含该拆分**未找到证据** → 这也是"锁一条版本线"的第二个理由。
+- **Flutter 3.47 起 Material / Cupertino 拆成独立包**(`material_ui` / `cupertino_ui`,
+  官方迁移指南 `docs.flutter.dev/release/breaking-changes/material-ui-and-cupertino-ui`)。
+  只做安卓时按官方指南迁移即可;三端共用一条线时,还须确认鸿蒙 fork 是否包含该拆分。
+
+理由与被否方案见 `.agents/notes/implemented/2026-10-02-android-first-milestone.md`。
 
 ## 5. 已知缺口(必须自己处理)
 

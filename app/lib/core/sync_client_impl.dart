@@ -432,13 +432,19 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       return;
     }
     // 解出的载荷就是一条事件（`itemId` 由事件自身推导，§5.2）。
-    final item = _itemFromPayload(plaintext, seq);
-    _deps.session.receive(sid, item.itemId, item.text, seq);
+    final event = _eventFromPayload(plaintext, seq);
+    // 本地会话状态只需要"哪一条到了"（它做去重、水位与快照拼接）。
+    //
+    // 第三个参数是"文本"，而**连接层拿不到文本** —— 文本要从事件的 `data` 投影出来，
+    // 那是 `data/projection.dart` 的事（它认识 `type` 的语义，这一层不认识）。
+    // 传空串是如实的：这一层不知道内容，只知道序号。会话状态用它做的也只有
+    // "去重 / 水位 / 空洞计数"三件事，都与文本无关。
+    _deps.session.receive(sid, event.itemId, '', seq);
     _emit(
       sid,
       SessionDelta(
         sid: sid,
-        items: [item],
+        events: [event],
         transient: _deps.session.transientOf(sid),
       ),
     );
@@ -472,7 +478,9 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       sid,
       SessionDelta(
         sid: sid,
-        items: const [],
+        // **流式文本走 `liveText`，不进 `events`**：它没有稳定 itemId，
+        // 且会被随后的持久 `assistant/message` 整体替换（见 `SessionDelta.liveText`）。
+        liveText: acc.text,
         transient: _deps.session.transientOf(sid),
       ),
     );
@@ -832,9 +840,11 @@ class _SyncClient implements SyncClient, SyncClientProbe {
 /// 第一个事件上就抛"缺少 itemId"。
 ///
 /// 所以 `itemId` 走 [itemIdOf]（契约 §5.2 的推导表，不变量 I9），
-/// 而"要显示什么文本"是**渲染层**的事（它认识 `type` 与 `data`）——
-/// 这一层只负责"这一条属于哪个 itemId"，不发明文本投影。
-ItemRecord _itemFromPayload(String plaintext, int seq) {
+/// 而"这条事件渲染成什么"是**上层**的事（它认识 `type` 与 `data`）——
+/// 这一层只负责"这一条属于哪个 itemId"，**并把原始 `type`/`data` 原样带上**，
+/// 而不是在解析时就把它们丢掉（丢掉会让上层只能从 `text` 里猜，那是"UI 各自解释事件"
+/// 的开端 —— 接线时实测踩到过）。
+SessionEvent _eventFromPayload(String plaintext, int seq) {
   final parsed = _jsonDecode(plaintext);
   if (parsed is! Map) {
     throw const ProtocolException(ErrorCode.badFrame, 'ev 载荷必须是 JSON 对象');
@@ -845,17 +855,18 @@ ItemRecord _itemFromPayload(String plaintext, int seq) {
     throw const ProtocolException(ErrorCode.badFrame, 'ev 载荷缺少 type');
   }
   final eventSeq = event['seq'];
+  final resolvedSeq = eventSeq is int ? eventSeq : seq;
   final itemId = itemIdOf(
-    EventLike(
-      type: type,
-      seq: eventSeq is int ? eventSeq : seq,
-      data: event['data'],
-    ),
+    EventLike(type: type, seq: resolvedSeq, data: event['data']),
   );
-  // `text` 留空：条目内容由渲染层从 `data` 投影（这一层不认识 `type` 的语义）。
-  // 传空串而不是把整个 JSON 塞进去 —— 后者会让"文本"变成一段原始事件，
-  // 而任何一处误用都不会报错，只会显示得很怪。
-  return ItemRecord(itemId: itemId, text: '', seq: seq);
+  final time = event['time'];
+  return SessionEvent(
+    itemId: itemId,
+    type: type,
+    seq: resolvedSeq,
+    time: time is int ? time : resolvedSeq,
+    data: event['data'],
+  );
 }
 
 Object? _jsonDecode(String text) {

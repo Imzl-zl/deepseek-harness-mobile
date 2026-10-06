@@ -10,21 +10,40 @@
 app/lib/
 ├── core/                        纯 Dart,零平台依赖(verify-platform-boundary 会拦)
 │   ├── frame.dart               帧编解码 + AAD 规范化(契约 §3)
+│   ├── errors.dart              封闭错误表与客户端动作(契约 §3.1)
 │   ├── crypto.dart              握手、HKDF、AEAD、fc 计数器(契约 §4)
+│   ├── handshake.dart           三帧握手的字段与 transcript 拼串(契约 §4.1)
+│   ├── handshake_driver.dart    发起方握手驱动(手机恒为发起方)
+│   ├── box.dart                 箱容器编解码(角色定向、nonce 绊线)
+│   ├── connection.dart          连接状态机与退避(契约 §2.2)
+│   ├── keepalive.dart           心跳与半开判定(60 s / 2 周期)
 │   ├── flow.dart                流控窗口与 credit 回执(契约 §4.3)
 │   ├── recovery.dart            恢复判定、快照分页与拼接(契约 §5.4)
 │   ├── items.dart               itemId 推导与 upsert(契约 §5.2)
 │   ├── outbox.dart              写操作待发队列(幂等键驱动)
-│   └── sync_client.dart         连接状态机(契约 §2.2)+ 订阅管理
+│   ├── transport.dart           ChannelTransport 接口(交出**原始片**,分帧归 frame.dart)
+│   └── sync_client.dart         连接状态机 + 订阅管理(接口与 SessionDelta)
+│       sync_client_impl.dart    上述接口的实现
+│       connection_resources.dart 每连接资源束(建/废各一处)
+│       call_registry.dart       在途请求表(断连即整体拒绝)
 ├── data/
-│   ├── dto/                     与 protocol/fixtures 字段一一对应的 DTO
-│   ├── store.dart               ← 接口(sqflite 实现在 platform/)
-│   ├── secure_store.dart        ← 接口(三端实现见 §5)
-│   └── push_registry.dart       ← 接口(推送令牌登记)
-├── model/                       session / item / job / pending / connection
+│   ├── projection.dart          事件 → 界面条目的**唯一**投影(唯一认识事件语义处)
+│   ├── session_store.dart       条目表(upsert-only、按 seq 排序、通知合并)
+│   ├── app_model.dart           应用级状态(ChangeNotifier),UI 的唯一数据入口
+│   ├── store.dart               ← 接口(sqflite 实现在 platform/)【未落地】
+│   ├── secure_store.dart        ← 接口(三端实现见 §5)【未落地】
+│   └── push_registry.dart       ← 接口(推送令牌登记)【未落地】
+├── model/                       领域模型(ChatItem sealed:消息/工具/审批/其它)
 ├── ui/                          逐屏(消费 model,不认识帧)
+│   ├── session_list_page.dart   会话列表(空态与失败态分开)
+│   └── chat_page.dart           对话页(气泡/工具行/审批行/输入栏)
 └── platform/                    唯一装配点:选择各能力实现
+    └── websocket_transport.dart 真实 WSS(`IOWebSocketChannel`,令牌走升级头)
 ```
+
+**`data/projection.dart` 是事件语义的唯一归宿**:`core/` 只推导 `itemId`
+(契约 §5.2)并把原始 `type`/`data` 原样带上,由这一处决定"渲染成什么"。
+UI 一旦开始认事件类型,同一件事就会在两个地方各写一遍。
 
 规则(由 `node app/tools/verify-platform-boundary.mjs` 强制):
 

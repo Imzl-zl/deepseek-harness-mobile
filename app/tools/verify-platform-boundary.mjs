@@ -31,9 +31,27 @@ const IMPL_SUFFIX = /import\s+['"][^'"]*_(ios|android|ohos)\//
 const FORBIDDEN_IMPORT =
   /^[ \t]*(?:import|export)\s+['"](?:dart:io|package:flutter\/(?:services|widgets|material)\.dart)['"]/m
 
+/**
+ * `ui/` 禁用的库：**只有 `dart:io`**。
+ *
+ * 界面层当然要 `package:flutter/material.dart` —— 那是它的语言。
+ * 它不该碰的是 `dart:io`：那意味着某个屏自己开了 socket 或读了文件，
+ * 而这类事属于 `platform/` 或能力包。平台**分支**由 `branch-whitelist` 单独管。
+ *
+ * 两条曾经共用 `FORBIDDEN_IMPORT`，结果是**每个 UI 文件都误报**
+ * "平台细节漏进了界面层" —— 而 Material 正是 UI 该用的东西。
+ */
+const UI_FORBIDDEN_IMPORT = /^[ \t]*(?:import|export)\s+['"]dart:io['"]/m
+
 /** 取第一条匹配，用于报错信息里显示"命中了什么"。 */
 function firstForbiddenImport(content) {
   const found = FORBIDDEN_IMPORT.exec(content)
+  return found ? found[0].trim() : null
+}
+
+/** `ui/` 专用：只拦 `dart:io`（见 `UI_FORBIDDEN_IMPORT` 的说明）。 */
+function firstUiForbiddenImport(content) {
+  const found = UI_FORBIDDEN_IMPORT.exec(content)
   return found ? found[0].trim() : null
 }
 
@@ -52,9 +70,9 @@ const RULES = [
   },
   {
     id: 'ui-no-platform-import',
-    why: 'UI 里出现 dart:io，说明平台细节漏进了界面层',
+    why: 'UI 里出现 dart:io，说明某个屏自己开了 socket 或读了文件（该走 platform/ 或能力包）',
     appliesTo: (p) => /^app\/lib\/ui\//.test(p),
-    match: (content) => firstForbiddenImport(content),
+    match: (content) => firstUiForbiddenImport(content),
   },
   {
     id: 'branch-whitelist',
@@ -107,6 +125,11 @@ const SELF_TEST = [
   { rule: 'ui-no-impl-import', path: 'app/lib/ui/chat.dart', content: "import '../../packages/secure_store_ohos/secure_store_ohos.dart';", shouldFail: true },
   { rule: 'ui-no-impl-import', path: 'app/lib/ui/chat.dart', content: "import '../../packages/secure_store/secure_store.dart';", shouldFail: false },
   { rule: 'ui-no-platform-import', path: 'app/lib/ui/chat.dart', content: "import 'dart:io';", shouldFail: true },
+  // **界面层必须能 import Material** —— 那是它写 UI 的语言。
+  // 缺这条自检时，`ui/` 的规则误用了 core 的禁用表（那张表含 material.dart），
+  // 结果是每个 UI 文件都报"平台细节漏进了界面层"（实测踩到，见 `.agents/notes/`）。
+  { rule: 'ui-no-platform-import', path: 'app/lib/ui/chat.dart', content: "import 'package:flutter/material.dart';", shouldFail: false },
+  { rule: 'ui-no-platform-import', path: 'app/lib/ui/chat.dart', content: "import 'package:flutter/widgets.dart';", shouldFail: false },
   { rule: 'branch-whitelist', path: 'app/lib/ui/chat.dart', content: 'if (Platform.isAndroid) {}', shouldFail: true },
   { rule: 'branch-whitelist', path: 'app/lib/ui/adaptive/switcher.dart', content: 'if (Platform.isIOS) {}', shouldFail: false },
   { rule: 'no-platform-isohos', path: 'app/packages/notify_ohos/lib/notify_ohos.dart', content: 'if (Platform.isOhos) {}', shouldFail: true },
