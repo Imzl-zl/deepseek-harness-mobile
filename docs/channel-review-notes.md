@@ -77,6 +77,27 @@ Apple 官方:静默推送在用户强杀 App 后由系统丢弃;受设备级 ene
 
 `protocol/fixtures/` 是唯一规格源、两侧各跑一遍、参考实现只作行为基准不作产品代码;`verify-loopback.mjs` 把三角色真实接线,并覆盖"中转状态清空后重启仍收敛";改断言必须做变异校验。这套做法在同类项目里罕见(见 §7 的实测)。
 
+### 1.9 三端维护策略:业界两种做法都在,分界线是"有多少平台原生的活"
+
+调研四个已上架鸿蒙的真实产品(2026-10 查证),它们选了**相反**的路,且各自都有理由:
+
+| 产品 | 做法 | 关键事实 |
+|---|---|---|
+| 微信 | **各端各自维护**(鸿蒙用 ArkTS 重写) | 腾讯官方原话:鸿蒙是全新框架,"过去十几年积累的功能**无法直接迁移,必须从零重写**";专设"鸿蒙移动端开发中心"满建制团队,内部目标"对齐甚至超过 iOS" |
+| 小红书 | **各端各自维护**(鸿蒙用 ArkTS 原生) | 2023-08 签约首批鸿蒙开发,华为**驻厂工程师**每日共同攻关;产出行业第一份鸿蒙开发指南 |
+| 海底捞 | **一套 Flutter 代码** | 2024-06 启动 → 09 首版上架 → 2025-01 全量商用;华为团队全程技术支持 |
+| 锅圈云铺 | **一套 Flutter 代码** | **一个人两个月**完成适配并上架,拿到鸿蒙激励金 |
+
+**必须拆穿的术语**:"一次开发,多端部署"是华为对**鸿蒙生态内部**多设备(手机/平板/手表/车机)的说法(ArkUI 自适应布局 + 断点体系),**不是**跨 iOS/安卓/鸿蒙。小红书在 iOS/安卓/鸿蒙三端**仍然各写各的**。
+
+**分界线**:看 App 有多少必须碰系统底层的活。微信(支付、音视频、小程序运行时)重写比适配划算且养得起团队;锅圈/海底捞(商品、订单、列表、表单)纯 Dart 直接跑,只有少数插件要换。
+
+**"跨平台搞定"的真实代价**(海底捞清单,与本项目文档的预判高度一致):Flutter 版本要**降级**做 API 适配;三方库逐个换鸿蒙适配版(`dependency_overrides`);未适配的库要**自己用 ArkTS 重写插件**;字体渲染差异逐端校准;ArkUI 与 Flutter 引擎的**帧率同步**问题。
+
+**对本项目的结论**:dsh-mobile 属于锅圈/海底捞那一类 —— 消息流、列表、Markdown、时间线都是纯 Dart 能覆盖的,碰原生的只有**推送 / 安全存储 / 长连接保活**三块,而这三块正是 `subsystems/app-platform-boundaries.md` 的"按能力切包"要解决的。锅圈案例(一人两月)的坑与本文档的预判一致(换插件、`dependency_overrides`、权限需同步配 `config.json`、禁用硬编码尺寸)。海底捞"降级 Flutter 版本"这条,是 §5 版本闸门锁死一条线的**外部实证**。
+
+**证据等级**:四个案例均为**转述**(各自官方/媒体稿,附 URL 见 §9),其中微信"必须从零重写"与海底捞适配清单为腾讯/华为官方口径。
+
 ---
 
 ## 2. 通道协议的关键事实(实现前必须知道)
@@ -235,7 +256,8 @@ Apple 官方:静默推送在用户强杀 App 后由系统丢弃;受设备级 ene
 
 | 项 | 事实 | 等级 |
 |---|---|---|
-| 鸿蒙 Flutter 版本线 | 稳定 tag 形如 `3.41.10-ohos-X.X.X`(基于上游 3.41.9)与 `3.35.8-ohos-X.X.X`(基于 3.35.7);规划表:3.35 滞后 7 个月,3.41/3.44/3.47 各 4 个月 | 一手(CPF-Flutter README) |
+| 鸿蒙 Flutter 版本线 | 当前最新稳定线基于上游 **3.41.9**(tag `3.41.10-ohos-1.0.1` / `3.41.9+ohos-1.0.2`,同一条线两种命名);上一档 3.35.7(`3.35.8-ohos-1.0.4`);规划表:3.35 滞后 7 个月,3.41/3.44/3.47 各 4 个月。**3.44 截至 2026-10 仍无稳定版**,只有 canary `3.44.9+ohos-0.0.1-canary1`(2026-08-21),而 3.41/3.35/3.27 三线在 2026-09-24 均有新 tag → 规划表的"3.44 于 2026/09 发布"**未兑现** | 一手(CPF-Flutter docs 仓 `OrganizationDescription.md` + AtomGit API v5 tags) |
+| 鸿蒙 Flutter 维护方 | **CPF-Flutter 团队**(OpenHarmony 跨平台框架 PMC 下属 **Flutter SIG** 主导的开放社区组织),**不是华为内部团队**;旧组织 `openharmony-tpc` / `openharmony-sig` / `OpenHarmony-Flutter` 已整体迁入并**全面停更**。同生态另有 `oh-flutter` / `hxa-flutter` 两个社区补三方库 | 一手(CPF-Flutter docs 仓原文:"由 CPF-Flutter 团队维护") |
 | 鸿蒙安全存储 | 适配清单收录 `flutter_secure_storage` 的 ohos fork;其实现在公开说明中未见 HUKS 相关描述,不能据此推断密钥由 HUKS 保护 → 满足密钥要求时须自写 platform channel 接 HUKS | 一手(清单)+ 转述(实现) |
 | Dart build hooks / native assets 在 OHOS | ohos 工具链调用时抛 `FormatException: The OS "ohos" is not known`(PR 仍 open);替代路径:`flutter create -t plugin_ffi --platforms ohos` + `ohos/build-profile.json5` 的 `externalNativeOptions`,或预编译 so 打进 har | 转述(dart-lang/native PR #3409),实现前建议复跑 |
 | 鸿蒙推送 | 未申请「通知消息自分类权益」时**单设备每日 2 条**(5 条仅持证新闻类),超发丢弃;后台消息不唤醒进程 | 转述(华为官方文档);聚合推送(极光)数据面仍走 Push Kit,绕不过频控 |
@@ -324,7 +346,7 @@ node mock/proto/tools/verify-icons.cjs     # 98 图标
 
 ### P2
 
-13. 鸿蒙版本线锁 `3.41.10-ohos-X.X.X`
+13. 鸿蒙版本线锁 3.41(当前稳定 tag `3.41.10-ohos-1.0.1`,2026-08-17;3.44 尚无稳定版,见 §5)
 14. 渲染层选型(替代已 discontinued 的 `flutter_markdown`);三端"像素一致"改口径
 15. 中转的备案/合规/成本预案进风险表
 16. 长期候选:QUIC 连接迁移(消掉"切网必重连")、直连优先 + 中继兜底
@@ -333,9 +355,9 @@ node mock/proto/tools/verify-icons.cjs     # 98 图标
 
 ## 9. 证据等级与未找到项
 
-**一手(本次直接读到原文/源码)**:RFC 5382 REQ-5;Tailscale 官方博客;libQuotient #232 及其作者回复;pub.dev `cryptography` 页;CPF-Flutter README 版本规划表;§2 表格中标注"一手"的 DSH 源码行;参考插件 `dsh-bridge-next` 的 `package.json` 与 `cordis.patch.yml`(其形状:`dsh.bundle.patch` + `peerDependencies` 用精确版本 `@deepseek-ai/cordis 4.0.4` / `@deepseek-ai/dsh-typert-protocol 0.2.0-rc.1` / `@deepseek-ai/schemastery 3.18.4`,`engines` 只写 node,DSH 各包以 `0.2.0-rc.1` 作为 devDependencies 供类型检查;接入文件只有 4 行 `insert`)。
+**一手(本次直接读到原文/源码)**:RFC 5382 REQ-5;Tailscale 官方博客;libQuotient #232 及其作者回复;pub.dev `cryptography` 页;CPF-Flutter docs 仓 `OrganizationDescription.md`(版本规划表、稳定版表、维护方表述)与 AtomGit API v5 的 tags/branches(§5 的版本线与"3.44 无稳定版"结论由此得出);§2 表格中标注"一手"的 DSH 源码行;参考插件 `dsh-bridge-next` 的 `package.json` 与 `cordis.patch.yml`(其形状:`dsh.bundle.patch` + `peerDependencies` 用精确版本 `@deepseek-ai/cordis 4.0.4` / `@deepseek-ai/dsh-typert-protocol 0.2.0-rc.1` / `@deepseek-ai/schemastery 3.18.4`,`engines` 只写 node,DSH 各包以 `0.2.0-rc.1` 作为 devDependencies 供类型检查;接入文件只有 4 行 `insert`)。
 
-**转述(附 URL,未逐字复核)**:JMAP RFC 8620 §5.2 与 IMAP RFC 7162;EMQX 会话过期与队列默认值;Signal/Syncthing/WebRTC/Node ws 等生态参数;NetPiculet(SIGCOMM 2011)超时分布;华为 HUKS/Push Kit 文档;Apple 静默推送与 Secure Enclave 文档;Android 前台服务限制;小米/vivo 厂商规则;Impeller 与 `flutter_markdown` 状态;`dart-lang/native` PR #3409;Agents-Anywhere 的 server 架构文档与其 `e2ee` 检索结果。
+**转述(附 URL,未逐字复核)**:JMAP RFC 8620 §5.2 与 IMAP RFC 7162;EMQX 会话过期与队列默认值;Signal/Syncthing/WebRTC/Node ws 等生态参数;NetPiculet(SIGCOMM 2011)超时分布;华为 HUKS/Push Kit 文档;Apple 静默推送与 Secure Enclave 文档;Android 前台服务限制;小米/vivo 厂商规则;Impeller 与 `flutter_markdown` 状态;`dart-lang/native` PR #3409;Agents-Anywhere 的 server 架构文档与其 `e2ee` 检索结果;**§1.9 的四个鸿蒙上架案例**(微信 <https://m.mydrivers.com/newsview/1057612.html>、小红书 <https://www.geekpark.net/news/330773>、海底捞 <https://www.cnblogs.com/HarmonyOS5/p/19023040>、锅圈云铺 <https://ost.51cto.com/posts/37697>)。
 
 **未找到**:微信与 Telegram 的官方心跳值(方案 §8 引用的"微信 5 分钟"缺一手来源);FCM 大陆不可用的官方条文;`specialUse` 需 Play 审核与 Android 12+ 后台启动前台服务的官方条文;vivo 运营消息时段限制的官方正文;XChaCha20-Poly1305 的手机端吞吐一手数据;`ws` 默认 `maxPayload` 的本机复核(依赖未安装,按库文档值计)。
 

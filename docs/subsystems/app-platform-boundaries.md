@@ -84,7 +84,7 @@ app/
 
 ## 4. 版本闸门
 
-- **三端共用一条 Flutter 版本线,上界由鸿蒙 fork 决定**:CPF-Flutter 当前稳定分支基于上游 **3.35.7**,其规划表把 3.44 排在 2026/09、3.47 排在 2026/12(页面自标"预估")。**不允许 iOS/安卓单独升到更新版本**——否则 Dart 侧 import 会分叉。
+- **三端共用一条 Flutter 版本线,上界由鸿蒙 fork 决定**:CPF-Flutter 当前最新稳定线基于上游 **3.41.9**(`3.41.10-ohos-1.0.1`),3.35 线为上一档(3.35.7);其规划表把 3.44 排在 2026/09、3.47 排在 2026/12(页面自标"预估",且 3.44 截至 2026-10 仍只有 canary `3.44.9+ohos-0.0.1-canary1`)。**不允许 iOS/安卓单独升到更新版本**——否则 Dart 侧 import 会分叉。
 - **禁止 `Platform.isOhos`**:CPF 官方 FAQ 明确它会**导致 `flutter run` / `flutter build har` / `flutter attach` 失败**。判断鸿蒙一律用 `defaultTargetPlatform == TargetPlatform.ohos`;若同一份代码还要能用上游 SDK 编译,用 `Platform.operatingSystem == 'ohos'`(明确不是 `Platform.isOhos`)。此条有门禁(§6)。
 - **Flutter 3.47 起 Material / Cupertino 已拆成独立包**(`material_ui` / `cupertino_ui`),而鸿蒙 fork 是否包含该拆分**未找到证据** → 这也是"锁一条版本线"的第二个理由。
 

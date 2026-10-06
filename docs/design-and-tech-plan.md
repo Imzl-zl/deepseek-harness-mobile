@@ -69,12 +69,12 @@ DSH 桌面是宽屏、鼠标 hover、信息密集。移动端**皮肤跟 DSH,交
 
 | 维度 | 结论 |
 |---|---|
-| 覆盖三端 | 一套 Dart 代码 → iOS / 安卓 / 鸿蒙。鸿蒙走华为维护的 Flutter OHOS fork(`flutter_flutter` ohos)。 |
+| 覆盖三端 | 一套 Dart 代码 → iOS / 安卓 / 鸿蒙。鸿蒙走 CPF-Flutter 维护的 Flutter OHOS fork(`flutter_flutter`,由 OpenHarmony 跨平台框架 PMC 下属 Flutter SIG 主导的开放社区组织)。 |
 | 体验 | 自绘引擎(Skia/Impeller),120fps,三端视觉规格一致(渲染后端不同:鸿蒙由 `buildinfo.json5` 控制、模拟器不支持 Vulkan),复杂时间线/甘特/流式动画好控。 |
 | 已排除 | RN+RNOH(鸿蒙滞后上游、三方库仅约 205/368 适配)、uni-app(复杂 UI 天花板)、纯原生三端(3 套代码维护不起)、WebView 薄壳(手感将就)。 |
 | 代价 | DSH 的 Markdown/代码高亮/时间线/甘特要用 Dart 重写。**用第 5 节抽出的真实 token + 组件规格**保证"重写=换语言,不是重设计"。 |
 
-**鸿蒙现实**:纯血鸿蒙(HarmonyOS NEXT/5)不兼容安卓 APK,是独立 ArkTS/ArkUI 栈 → 原生安卓覆盖不了,必须跨平台框架。SDK 已从 OpenHarmony-SIG 迁至 **CPF-Flutter**(gitcode),稳定版本按 tag 发布:`3.41.10-ohos-X.X.X`(基于上游 3.41.9)与 `3.35.8-ohos-X.X.X`(基于 3.35.7)等,其规划滞后 4 个月(3.35 线为 7 个月)→ **锁 `3.41.10-ohos-X.X.X`**;三方库选型以 CPF-Flutter 的适配清单为闸门,详见 `subsystems/remote-channel.md`。另外 **Dart build hooks(native assets)在 OHOS 上不可用**,需要原生库时走 `plugin_ffi` + `externalNativeOptions` 或预编译 so。
+**鸿蒙现实**:纯血鸿蒙(HarmonyOS NEXT/5)不兼容安卓 APK,是独立 ArkTS/ArkUI 栈 → 原生安卓覆盖不了,必须跨平台框架。SDK 在 **CPF-Flutter**(AtomGit,由 Flutter SIG 主导;旧组织 `openharmony-tpc` / `openharmony-sig` / `OpenHarmony-Flutter` 已整体迁入并停更),稳定版本按 tag 发布,当前最新稳定线基于上游 **3.41.9**(`3.41.10-ohos-1.0.1` / `3.41.9+ohos-1.0.2`),其规划滞后 4 个月(3.35 线为 7 个月)→ **锁 3.41 线**;三方库选型以 CPF-Flutter 的适配清单为闸门,详见 `subsystems/remote-channel.md`。**注意 tag 有两种命名格式并存**(`3.41.10-ohos-1.0.1` 与 `3.41.9+ohos-1.0.2` 是同一条线),写依赖时按实际存在的 tag 为准。另外 **Dart build hooks(native assets)在 OHOS 上不可用**,需要原生库时走 `plugin_ffi` + `externalNativeOptions` 或预编译 so。
 
 ---
 
@@ -583,7 +583,7 @@ DSH 右侧有一条**轮次导航轨**(`ui-chat/TurnNavigator.tsx`):每一轮一
 - **推送必须由常在线的一方发出**:电脑侧桥接不在线时不会有任何通知;电脑关机 = 手机只能看已缓存部分。
 - **通道前提**(逐条见 `subsystems/remote-channel.md` §11):插件自开长连接与持久化**已确认可行**(必须是 npm bundle,不能用动态 Cordis 包;**兼容性判据是 `peerDependencies` 而非 `engines.dsh`**);DSH 的会话 `seq` 可直接当修订号、`sessionController` 可由插件直调、心跳取 60 秒均已确认。仍待定的是**审批 waterfall 的仲裁路径**(桌面与手机同时可答,claim 会挡住下游)与鸿蒙端的自写范围(设备私钥 channel / 本地库 / 推送)。
 - **推送的触达能力被平台政策封顶**:iOS 被强杀后只能靠用户点通知(静默推送会被丢弃);安卓大陆 FCM 不可用、须走厂商通道并接受分类报备与模板(小米 2026-07-01 起私信须带 `channel_id` + 模板 ID,vivo 运营消息仅 7:00–23:00 可下发);鸿蒙未申请"通知消息自分类权益"时**单设备每日 2 条**(5 条仅持证新闻类),超发直接丢弃,且聚合推送(极光等)数据面仍走系统 Push Kit、**绕不过该频控**。→ 能承诺的是"打开 App 后状态一定正确",不是"审批必达手机";鸿蒙端只做关键节点通知。
-- **鸿蒙 Flutter fork**:非上游主线,版本跟随华为节奏(稳定线 `3.41.10-ohos-X.X.X` 滞后上游 4 个月,3.35 线 7 个月,见 §3);**设备安全存储必须自写 platform channel 接 HUKS**(适配表里的 secure storage fork 无 HUKS 说明,不能当作已解决);推送只能走 Push Kit(未申请自分类权益时单设备每日 2 条);`sqlite3` / `drift` 无适配,本地库只能选 sqflite 或 realm;**Dart build hooks 在 OHOS 不可用**(需要原生库时走 `plugin_ffi` + `externalNativeOptions`)→ 三端同期交付仍有真实风险,落地路线第 13 步已把它排在最后。
+- **鸿蒙 Flutter fork**:非上游主线,版本跟随 CPF-Flutter / Flutter SIG 节奏(当前稳定线基于上游 3.41.9,滞后 4 个月;3.35 线 7 个月,见 §3);**设备安全存储必须自写 platform channel 接 HUKS**(适配表里的 secure storage fork 无 HUKS 说明,不能当作已解决);推送只能走 Push Kit(未申请自分类权益时单设备每日 2 条);`sqlite3` / `drift` 无适配,本地库只能选 sqflite 或 realm;**Dart build hooks 在 OHOS 不可用**(需要原生库时走 `plugin_ffi` + `externalNativeOptions`)→ 三端同期交付仍有真实风险,落地路线第 13 步已把它排在最后。
 - **阴影 token 缺失**:DSH elevation 在上游 `deepsuite`,需量取或索取,否则阴影只能近似。
 - **助手紫/渐变**:DSH 是 `color-mix` 运行时算,移动端用近似常量,验收时对比微调。
 - **改电脑设置是 DSH 有意关闭的路径**:非 loopback 客户端持久化降级 `memory`、写被拒;我们靠"桥接是插件、有完整 ctx"绕过,需承担升级被影响的可能(见 §7.5)。
