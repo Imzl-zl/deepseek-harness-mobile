@@ -5,37 +5,40 @@
 
 ## 下一步(新会话从这里开始)
 
-**当前里程碑**:远程通道的**电脑侧代码链路已全线打通**,且**两条路径都通**(直连监听面 / 经中转);
-**手机端一行 Dart 都还没写**,所以整条链路**从未被两端同时跑过** —— 现在只有"电脑侧 + 手机替身"。
+**当前里程碑**:电脑侧两条路径都通(直连监听面 / 经中转);**手机端 `core/` 已落地并跑绿两批外部规格**
+(跨端密码学向量 16 项 + fixtures 三角色回放 494 项断言);**两端尚未在真 socket 上互连过** ——
+下一步是 `data/`+`model/` 与 `sync_client`。
 
-**手机端是一条长链,真机在它的末端**(不是下一步):
+**手机端剩下的链**(真机仍在末端):
 
 ```text
-装 Flutter SDK → 建 Flutter 工程(app/ 现在连 pubspec.yaml 都没有,只有主题层两个 dart 文件)
-  → core/(纯 Dart,能跑 fixtures/vectors)   ← 判据在这一步就能拿到,不需要 UI
-  → data/ + model/ → ui/(逐屏) → 三端能力包(安全存储/推送/保活) → 真机
+[✅] 装 Flutter SDK(3.41.9) + flutter create + cryptography
+[✅] core/(frame/crypto/handshake/items/recovery/flow)—— 纯 Dart,两批规格全绿
+[  ] core/sync_client.dart(连接状态机 + 订阅管理;要真 transport)
+[  ] data/ + model/(DTO、store 接口、会话模型)
+[  ] ui/ 逐屏(可在 Windows 桌面跑:flutter run -d windows,不需要模拟器/真机)
+[  ] 三端能力包(secure_store_* / notify / live_surface / keepalive)
+[  ] 真机联调(前置:上面整条链 + 直连的两个缺口)
 ```
 
-1. **手机端 Dart 客户端**(需先装 Flutter SDK;`flutter test` 即可,安卓 SDK 只有到最后上真机才要):
-   规格侧已备好,尤其 §3 的**行尾 `\n`**(漏了的表现是"两侧都正常、对端什么都没收到")、§4 握手、
-   §5.6 幂等、§12 配对。落地顺序按 `docs/cookbook/channel-bootstrap.md` §6:
-   `core/`(frame/crypto/recovery/items,纯 Dart 零平台依赖)→ `test/fixtures_test.dart` 跑同一批
-   `protocol/fixtures` → `test/crypto_vectors_test.dart` 跑 `protocol/vectors` → 三端能力包最后接。
-   判据:第 2、3 步在**没有 UI、没有平台代码**的情况下全绿。
-   **这是当前唯一的"零进度"部分,也是后面所有事的闸门。**
-   **开工提示词已备好:`docs/prompts/mobile-core-prompt.md`**(含版本闸门、已核实的本机环境、
-   fixtures/vectors 的真实形状、以及"不用真机也能调"的分层答案)。
+1. **手机端 `core/` 剩下的那一层 + 上层**(工程已建、六层已绿;见上面的链):
+   下一步是 `core/sync_client.dart`(连接状态机 + 订阅管理,要真 transport)、`data/`+`model/`、
+   然后 `ui/` 逐屏。**`ui/` 能在 Windows 桌面上跑起来**(`flutter run -d windows`)——
+   本机 VS 18 + MSVC + Windows SDK 齐全,**不需要模拟器、不需要真机**。
+   规格:`docs/subsystems/app-channel-client.md`(§2 关键类型、§2.1 状态机、§6 UI 接线点、§7 测试策略)。
+   **开工提示词:`docs/prompts/mobile-core-prompt.md`**(含版本闸门、本机环境、fixtures/vectors 的真实形状)。
    **Flutter 版本闸门:锁 `3.41.9`(上界由鸿蒙 fork 定),不要装当前 stable 3.47.6。**
-2. **直连拓扑的两个缺口**(手机端做完后要补;"两条路径都通"的拦路石):
+2. **直连拓扑的两个缺口**(直连真机联调前必须补;"两条路径都通"的拦路石):
    - **`relayUrl` 是挂载硬前置**:`connector/src/index.ts:217-225` 的 `validate-config` 里,
      `relayUrl` / `relayTokenRef` 为空就**抛错拒绝挂载** —— 所以"纯直连、不配中转"目前挂不起来。
    - **二维码里的地址永远是中转**:`pairing.ts:170` 写的是 `relay: options.relayUrl`,
      而 `index.ts:369` 传的也是 `relayUrl`;直连需要的是**电脑自己的地址**。
-   两条都只影响"直连真机联调",不影响 `core/`(纯 Dart 单测)。
+   两条都只影响"直连真机联调",不影响已落地的 `core/`(纯 Dart 单测)。
 3. **中转多实例**:限流 / 一次性票 / 配对登记 / 路由窗口目前都是**进程内状态**;§12 的完整形态要求外部化。
 4. 其余未实现面:插件面板、本机运行模式、goals·schedule·todos 三个远端动作(见 `docs/`)。
 5. **真机联调**(Tailscale 可达性、WSS 证书、锁屏与强杀)——
-   **前置是上面第 1 条整条链**:没有 App 就没有东西能装到真机上。现在做不了,也不该被当成"下一步"。
+   **前置是上面第 1 条整条链**:没有 UI 就没有东西能装到真机上。现在做不了,也不该被当成"下一步"。
+   只有三件事真机不可替代(三端专属表达 / 推送锁屏强杀 / force-stop),且属**验收**不属开发。
 
 **做完的样子(验收)**:真机上发一句、收到一句;幂等重发不产生第二条;两条路径(Tailscale 直连 / 中转)
 跑同一组用例都成立。—— 这些都**要等手机端落地**才谈得上。
@@ -60,7 +63,9 @@
 | `node protocol/verify-fixtures.mjs` | 16 条 fixture / **486 项断言** |
 | `node protocol/verify-loopback.mjs` | **26 项**:手机 ⇄ 中转 ⇄ 桥接回环(含中转清空后重启) |
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量(改 `protocol/tools/` 后必跑) |
-| `node app/tools/verify-platform-boundary.mjs` | **17 项**(含 13 条规则自检) |
+| `node app/tools/verify-platform-boundary.mjs` | **40 项**(含 16 条规则自检 + 扫描 9 个 Dart 文件) |
+| `cd app && flutter test` | **18 项**(跨端向量 16 + fixtures 三角色回放 1 + smoke 1) |
+| `cd app && flutter analyze` | 0 问题 |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
 | `node mock/proto/tools/verify-tool-paths.mjs` | 工具脚本不许硬编码盘符(2 条规则 / 14 个脚本) |
 | `cd connector && pnpm exec tsc --noEmit` | connector 类型检查(**改任何 `.ts` 都要跑** —— 有两次只跑用例没跑它,红了没发现) |
@@ -110,7 +115,7 @@
   **同批修掉一个既有静默 bug**:`attach()` 原来没起 `start()` 的两个周期任务(攒批 flush / 保活判定)
   —— 表现是"接受来的连接能连上、能握手,但可攒批的帧一条都发不出去,且半开永远判不出来"。
 - **配对链闭合**:出码(带登记)→ 换票 → 经中转转发 → 电脑侧落设备行 → 明文回执。
-- **未做**:上面"下一步"的 1–4(Dart 客户端 / 多实例 / 其余面 / 真机联调 —— 最后一项被第 1 条整条链挡住);
+- **未做**:上面"下一步"的 1–5(手机端上层 / 直连缺口 / 多实例 / 其余面 / 真机);
   幂等的启动核对;中转的令牌签发目前靠 CLI(库还没落地)。
 - **profile 侧已起步**:专用 profile `dsh-mobile-test` 里插件装成 `link:` 并进了 `bundles`;
   `--dump-config` 证实三个必需服务在树里都有提供者。**只验到"能挂载",没验过"能连上"** ——
@@ -130,6 +135,16 @@
 
 ## 最近活跃窗口(2026-10-01 起)
 
+- **手机端 `core/` 已落地(2026-10-02)**:Flutter `3.41.9`(版本闸门:上界由鸿蒙 fork 定,
+  当前 stable 3.47.6 不许装)装到 `D:\soft\flutter`;`flutter create` 建出工程(90 文件,
+  含 windows 端 —— **桌面调试用**,本机 VS 18 齐全,不需要模拟器/真机);依赖只有 `cryptography`。
+  六层 `app/lib/core/`:frame / crypto / handshake / items / recovery / flow,**纯 Dart 零平台依赖**。
+  判据:`test/crypto_vectors_test.dart` **16 项**(与 TS 侧逐字节相同的已知答案)+
+  `test/fixtures_test.dart` **16 条 fixture / 494 项断言**(三角色回放;桥接与中转是 `test/support/` 替身)。
+  抓到一个真 bug:`deriveSessionKeys` 最初返回**位置值**而当协议编号用 ——
+  应答方的 `ss1` 实际等于 `ss2`,而**主密钥仍然正确**(所以握手"看起来成功"),
+  只有"双侧派生"那两条断言能抓到。见 `.agents/notes/implemented/2026-10-02-mobile-core-crypto-choice.md`。
+  同批修掉边界门禁的一个误报(两条 import 规则原本按正文 grep,把"说明规则的注释"判成违规)。
 - **直连监听面(2026-10-02)**:三个岔口一次收口 —— `ws` 进运行时依赖、`attach()` 补上周期任务、
   去重噪音降级为 `debug`。**先量再下**这条纪律第三次生效:落地前先读 `attach()` 的代码,
   发现它少了 `start()` 的两个定时器(既有静默 bug,原有 2 条断言碰不到它),先复现再修。
