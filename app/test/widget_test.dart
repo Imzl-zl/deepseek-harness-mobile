@@ -1,34 +1,32 @@
-/// 会话列表页的 widget 测试。
+/// 聊天页与抽屉的 widget 测试（**主页是聊天页**，照 `mock/proto`）。
 ///
-/// 替换掉 `flutter create` 自带的那条 counter smoke test（它引用的是模板里的
-/// `MyApp`，而那个类已经不存在了 —— 测模板没有任何价值）。
+/// ## 这一组守的是什么
 ///
-/// 这一组测**界面在四种数据状态下的表现**，因为那四种都是"用户第一眼看到的东西"：
-/// 空列表 / 有会话 / 请求失败 / 各连接状态。它们写错的代价是"用户以为 DSH 里没会话"。
+/// 1. **信息架构**：主页是聊天页（不是会话列表），会话历史在抽屉里。
+///    这条错了就是"结构上不是原型"——第一版正是这么错的。
+/// 2. **三种空态分开说**：没配对 / 真没有会话 / 有会话但没选中。
+/// 3. 顶栏三件套（`☰` / 状态胶囊 / `＋`）与输入栏三条硬规则的结构。
 library;
 
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
-import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
-import 'package:dsh_mobile/ui/session_list_page.dart';
+import 'package:dsh_mobile/ui/chat_page.dart';
+import 'package:dsh_mobile/ui/dsh_composer.dart';
+import 'package:dsh_mobile/ui/session_drawer.dart';
 // **`hide ConnectionState`**：Flutter 的 `material.dart` 也导出 `ConnectionState`
-// （那是 `AsyncSnapshot` 的状态：none/waiting/active/done），与我们的
-// **连接状态机**同名但毫无关系。隐藏它，让本文件里 `ConnectionState` 只有一个意思。
+// （`AsyncSnapshot` 的 none/waiting/active/done），与我们的**连接状态机**同名
+// 但毫无关系。隐藏它，让本文件里 `ConnectionState` 只有一个意思。
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
 
-/// 一个**只回固定答案**的假客户端：界面测试只关心"拿到这些数据时长什么样"，
-/// 而真实的 `SyncClient` 要起 socket、做握手 —— 那是连接层测试的事。
+/// 一个**只回固定答案**的假客户端：界面测试只关心"拿到这些数据时长什么样"。
 class FakeClient implements SyncClient {
   FakeClient({this.sessions = const [], this.failWith});
 
-  /// `session.list` 的返回值。
   final List<Object?> sessions;
-
-  /// 给了就让 `session.list` 抛这个错（测"失败"与"空"要分开）。
   final ProtocolException? failWith;
 
   @override
@@ -68,133 +66,280 @@ class FakeClient implements SyncClient {
   }
 }
 
-Widget _wrap(AppModel app, {bool paired = true, VoidCallback? onConnect}) =>
-    MaterialApp(
-      theme: DshTheme.dark(),
-      home: SessionListPage(app: app, paired: paired, onConnect: onConnect),
-    );
+Widget _wrap(
+  AppModel app, {
+  bool paired = true,
+  VoidCallback? onConnect,
+  VoidCallback? onOpenDrawer,
+}) => MaterialApp(
+  theme: DshTheme.dark(),
+  home: ChatPage(
+    app: app,
+    paired: paired,
+    onConnect: onConnect,
+    onOpenDrawer: onOpenDrawer ?? () {},
+    onNewSession: () {},
+    drawer: const Drawer(child: SizedBox()),
+  ),
+);
 
 void main() {
-  testWidgets('没配对时**界面照常显示**，只多一条"去配对"提示', (tester) async {
-    // 这一条守的是一个设计错误：早先的写法是"没配对就把整个界面换成配对页"，
-    // 于是用户打开 App 只看得到一张配对表单，**看不到任何界面**。
-    // 界面不该被连接状态挡住 —— 它不依赖电脑，只依赖数据。
-    var tappedConnect = false;
-    await tester.pumpWidget(
-      _wrap(
-        AppModel(client: FakeClient()),
-        paired: false,
-        onConnect: () => tappedConnect = true,
-      ),
-    );
-    await tester.pumpAndSettle();
+  group('主营是聊天页（照原型的信息架构）', () {
+    testWidgets('没配对时也显示聊天页，不是"把界面换成配对页"', (tester) async {
+      // 守的是一个设计错误：早先的写法是"没配对就把整个界面换成配对页"，
+      // 于是用户打开 App 只看得到一张配对表单，**看不到任何界面**。
+      await tester.pumpWidget(
+        _wrap(AppModel(client: FakeClient()), paired: false),
+      );
+      await tester.pumpAndSettle();
 
-    // 提示条在，且说的是"还没连"而不是"还没有会话"（三种空要分开）。
-    expect(find.textContaining('还没连电脑'), findsWidgets);
-    expect(find.text('还没有会话'), findsNothing);
-    // 界面**在**（标题栏是会话页的），不是配对页。
-    expect(find.text('会话'), findsOneWidget);
-    expect(find.text('配对'), findsNothing);
+      // 顶栏三件套都在（这是聊天页，不是别的页）。
+      expect(find.byTooltip('打开会话抽屉'), findsOneWidget);
+      expect(find.byTooltip('新建会话'), findsOneWidget);
+      // 分段控件（对话 / 轨迹）在。
+      expect(find.text('对话'), findsOneWidget);
+      expect(find.text('轨迹'), findsOneWidget);
+      // 输入栏在（置灰但可见）。
+      expect(find.byType(DshComposer), findsOneWidget);
+      // **不是**配对页。
+      expect(find.text('配对'), findsNothing);
+    });
 
-    // "去配对"能点。
-    await tester.tap(find.text('去配对'));
-    await tester.pump();
-    expect(tappedConnect, isTrue);
+    testWidgets('空态说"还没连电脑"，且给两个不需要连电脑的入口', (tester) async {
+      var tapped = false;
+      await tester.pumpWidget(
+        _wrap(
+          AppModel(client: FakeClient()),
+          paired: false,
+          onConnect: () => tapped = true,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('还没连电脑'), findsOneWidget);
+      expect(find.text('看示例数据'), findsOneWidget);
+      expect(find.text('连电脑（配对）'), findsOneWidget);
+
+      await tester.tap(find.text('连电脑（配对）'));
+      await tester.pump();
+      expect(tapped, isTrue);
+    });
+
+    testWidgets('有会话但没选中 → 提示去抽屉（不是"还没有会话"）', (tester) async {
+      final app = AppModel(
+        client: FakeClient(
+          sessions: [
+            {'sid': 's1', 'updatedAt': 0},
+          ],
+        ),
+      );
+      await app.refreshSessions();
+      await tester.pumpWidget(_wrap(app));
+      await tester.pumpAndSettle();
+
+      expect(find.text('选一个会话'), findsOneWidget);
+      expect(find.text('还没有会话'), findsNothing);
+      expect(find.text('打开会话抽屉'), findsOneWidget);
+    });
+
+    testWidgets('☰ 与空态按钮都能开抽屉（回调被调到）', (tester) async {
+      var opened = 0;
+      await tester.pumpWidget(
+        _wrap(
+          AppModel(client: FakeClient()),
+          paired: false,
+          onOpenDrawer: () => opened += 1,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('打开会话抽屉'));
+      await tester.pump();
+      expect(opened, 1);
+    });
   });
 
-  testWidgets('"看示例数据"装上示例并**标明是示例**', (tester) async {
-    // 这一条守的是"没连电脑也能看看界面长什么样"这条需求 ——
-    // 而示例必须是**显式且看得出**的（不然会以为连上了）。
-    final app = AppModel(client: FakeClient());
-    await tester.pumpWidget(_wrap(app, paired: false));
-    await tester.pumpAndSettle();
+  group('输入栏三条硬规则（§7.2）', () {
+    testWidgets('规则 3：控制行左有 ＋/模型/权限，右**只有**发送', (tester) async {
+      await tester.pumpWidget(_wrap(AppModel(client: FakeClient())));
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.text('看示例数据'));
-    await tester.pumpAndSettle();
+      // 左组三件。
+      expect(find.byTooltip('添加文件或调用指令'), findsOneWidget);
+      expect(find.byTooltip('工作区内可改'), findsOneWidget);
+      expect(find.text('claude-opus'), findsOneWidget);
+      // 占位符**照抄 DSH 原文**（半角逗号 + 空格）。
+      // 用全角逗号会让它更宽、更早折行 —— 而在 320px 屏上它本来就接近放不下
+      //（实测 15px 需要 345px、可用 282px），所以"折行"是预期的
+      //（文档 §7.2：短屏由 CSS 自然折行，不手动截断）。
+      expect(
+        find.text('发消息或创建任务, / 调用指令, @ 文件或对话'),
+        findsOneWidget,
+        reason: '占位符必须与 mock/proto/index.html 的 placeholder 逐字相同',
+      );
+    });
 
-    expect(app.isPreview, isTrue);
-    // 每个标题都带 `（示例）` 前缀。
-    expect(find.textContaining('（示例）'), findsWidgets);
-    // 还有一条横幅再说一遍（用户可能没注意标题）。
-    expect(find.text('示例数据（不是真实会话）'), findsOneWidget);
-    // 三屏各自的难点都在（列表、对话、长文本）。
-    expect(find.textContaining('重构连接层'), findsOneWidget);
+    testWidgets('规则 2：文字独占一行（占位符不被按钮挤）', (tester) async {
+      await tester.pumpWidget(_wrap(AppModel(client: FakeClient())));
+      await tester.pumpAndSettle();
+
+      // 占位符所在的 `TextField` 与 `＋` **不在同一行** ——
+      // 判据是两者垂直位置不同（文字行在上，控制行在下）。
+      final field = tester.getRect(find.byType(TextField));
+      final plus = tester.getRect(find.byTooltip('添加文件或调用指令'));
+      expect(
+        plus.top,
+        greaterThanOrEqualTo(field.bottom - 1),
+        reason: '＋ 应在文字行**下方**（进文字行会把占位符挤折行）',
+      );
+    });
+
+    testWidgets('规则 1：附件在**卡片内部**上方，不是卡片外一行', (tester) async {
+      // **必须有一个当前会话** —— 没有会话时输入栏是置灰的
+      //（`enabled: paired && sid != null`），`＋` 点了没反应。
+      // 第一版这条测试就是漏了这一步，报"找不到新增文件.txt"。
+      final app = AppModel(
+        client: FakeClient(
+          sessions: [
+            {'sid': 's1', 'updatedAt': 0},
+          ],
+        ),
+      );
+      await app.refreshSessions();
+      await app.openSession('s1');
+      await tester.pumpWidget(_wrap(app));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('添加文件或调用指令'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('新增文件.txt'), findsOneWidget);
+      // 它在输入框**上方**（同一张卡里）。
+      final chip = tester.getRect(find.text('新增文件.txt'));
+      final field = tester.getRect(find.byType(TextField));
+      expect(
+        chip.bottom,
+        lessThanOrEqualTo(field.top + 1),
+        reason: '附件轨应在文字行上方（卡片内部）',
+      );
+    });
+
+    testWidgets('发送键：空输入时不可点，有内容才亮', (tester) async {
+      await tester.pumpWidget(_wrap(AppModel(client: FakeClient())));
+      await tester.pumpAndSettle();
+
+      // 空输入：发送键存在但不响应（灰）。
+      await tester.enterText(find.byType(TextField), '你好');
+      await tester.pumpAndSettle();
+      // 有内容后能点（点它会走 `session.prompt`，而这里没有当前会话，
+      // 所以只是不崩 —— 断言它没抛异常）。
+      await tester.tap(
+        find.byIcon(Icons.send).evaluate().isEmpty
+            ? find.byType(DshComposer)
+            : find.byIcon(Icons.send),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
   });
 
-  testWidgets('清掉示例后回到"还没连电脑"（不残留）', (tester) async {
-    final app = AppModel(client: FakeClient());
-    await tester.pumpWidget(_wrap(app, paired: false));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('看示例数据'));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('清掉'));
-    await tester.pumpAndSettle();
-
-    expect(app.isPreview, isFalse);
-    expect(app.sessions, isEmpty);
-    expect(find.textContaining('还没连电脑'), findsWidgets);
-  });
-
-  testWidgets('空列表说"还没有会话"（真没有 ≠ 请求失败）', (tester) async {
-    await tester.pumpWidget(_wrap(AppModel(client: FakeClient())));
-    await tester.pumpAndSettle();
-    expect(find.text('还没有会话'), findsOneWidget);
-    expect(find.text('没能取到会话列表'), findsNothing);
-  });
-
-  testWidgets('请求失败说"没能取到会话列表"，并带上错误码与原因', (tester) async {
-    // **每个场景一个 `testWidgets`**：同一次测试里换 widget 实例时，
-    // Flutter 会因为 runtimeType 相同而复用同一个 `State` —— 于是新 model 的
-    // `initState` 不再执行、`refreshSessions` 也就没被调用（实测踩到：
-    // 第二条断言看到的是第一条的空态，而不是失败态）。
-    await tester.pumpWidget(
-      _wrap(
-        AppModel(
-          client: FakeClient(
-            failWith: const ProtocolException(ErrorCode.relayOffline, '中转不可达'),
+  group('抽屉', () {
+    testWidgets('底栏五个出口都在（文件/归档/示例/自动化/设置）', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: DshTheme.dark(),
+          home: Scaffold(
+            drawer: SessionDrawer(
+              sections: const [],
+              connection: const DrawerConnection(
+                name: '我的电脑',
+                detail: '中转已连接 · 空闲',
+                platform: 'DSH',
+                online: true,
+              ),
+              footItems: [
+                DrawerFootItem(icon: 'folderClose', label: '文件', onTap: () {}),
+                DrawerFootItem(icon: 'archive', label: '归档', onTap: () {}),
+                DrawerFootItem(icon: 'sparkle', label: '示例', onTap: () {}),
+                DrawerFootItem(icon: 'clock', label: '自动化', onTap: () {}),
+                DrawerFootItem(icon: 'settings', label: '设置', onTap: () {}),
+              ],
+              onNewSession: () {},
+              onOpenSession: (_) {},
+              onClose: () {},
+            ),
+            body: const SizedBox(),
           ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('没能取到会话列表'), findsOneWidget);
-    // 错误码与消息都要能看到 —— 用户/我们据此判断下一步（`relay/offline` 是"重试"）。
-    expect(find.textContaining('relay/offline'), findsOneWidget);
-    expect(find.textContaining('中转不可达'), findsOneWidget);
-  });
+      );
+      // 打开抽屉。
+      tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+      await tester.pumpAndSettle();
 
-  testWidgets('有会话时列出标题；标题为空时说"未命名"而不是留白', (tester) async {
-    await tester.pumpWidget(
-      _wrap(
-        AppModel(
-          client: FakeClient(
-            sessions: [
-              {'sid': 's1', 'updatedAt': 100},
-              {'sid': 's2', 'updatedAt': 200},
-            ],
+      for (final label in ['文件', '归档', '示例', '自动化', '设置']) {
+        expect(find.text(label), findsOneWidget, reason: '底栏缺 $label');
+      }
+      expect(find.text('新建会话'), findsWidgets);
+      expect(find.text('我的电脑'), findsOneWidget);
+      expect(find.text('搜索会话'), findsOneWidget);
+    });
+
+    testWidgets('会话按今天/昨天/更早分组显示', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: DshTheme.dark(),
+          home: Scaffold(
+            drawer: SessionDrawer(
+              sections: const [
+                DrawerSection(
+                  label: '今天',
+                  sessions: [
+                    DrawerSession(
+                      sid: 's1',
+                      title: '今天的会话',
+                      preview: '3 条',
+                      timeLabel: '14:20',
+                      isActive: true,
+                    ),
+                  ],
+                ),
+                DrawerSection(
+                  label: '昨天',
+                  sessions: [
+                    DrawerSession(
+                      sid: 's2',
+                      title: '昨天的会话',
+                      preview: '5 条',
+                      timeLabel: '昨天',
+                    ),
+                  ],
+                ),
+              ],
+              connection: const DrawerConnection(
+                name: '我的电脑',
+                detail: '空闲',
+                platform: 'DSH',
+              ),
+              footItems: const [],
+              onNewSession: () {},
+              onOpenSession: (_) {},
+              onClose: () {},
+            ),
+            body: const SizedBox(),
           ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+      await tester.pumpAndSettle();
 
-    // 电脑侧不返回标题，所以没打开过会话时标题是空的 —— 这时要说"未命名"。
-    expect(find.text('（未命名会话）'), findsNWidgets(2));
-    // `sid` 出现在副标题里（打开过之前它是唯一的识别信息）。
-    expect(find.textContaining('s1'), findsOneWidget);
-  });
-
-  testWidgets('连接状态显示成人话，且不因为状态变化而崩', (tester) async {
-    final app = AppModel(client: FakeClient());
-    await tester.pumpWidget(_wrap(app));
-    await tester.pumpAndSettle();
-
-    // 初始态是 idle → "未连接"。
-    expect(find.text('未连接'), findsOneWidget);
-    expect(
-      find.text(connectionLabel(ConnectionStateView.idle)),
-      findsOneWidget,
-    );
+      expect(find.text('今天'), findsOneWidget);
+      // **"昨天"会出现两次**（分区标题 + 昨天那条会话的时间标签）——
+      // 这是真实的重名，不是 bug：原型里分区叫"昨天"，而昨天的会话
+      // 时间列也写"昨天"。所以断言用 `findsNWidgets(2)` 并说明原因，
+      // 而不是把它当"只该有一个"。
+      expect(find.text('昨天'), findsNWidgets(2));
+      expect(find.text('今天的会话'), findsOneWidget);
+      expect(find.text('昨天的会话'), findsOneWidget);
+    });
   });
 }

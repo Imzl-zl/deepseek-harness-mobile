@@ -1,40 +1,74 @@
-/// 会话详情 · 对话页（`design-and-tech-plan.md` §7 的"对话"）。
+/// 聊天页 —— **主页**（照 `mock/proto/index.html` 的 `section.page--chat`）。
 ///
-/// ## 接线（`app-channel-client.md` §6 的接线表）
+/// ## 这是主页，不是"会话详情"
 ///
-/// - 条目：`AppState.items`（本地条目表的只读快照）
-/// - 流式：`AppState.liveText`（正在生成的这段）
-/// - 输入栏：走 `outbox`（写操作先落盘再发，幂等键保证重发安全）
+/// `design-and-tech-plan.md` §6：**主屏 = 当前会话**（聊天页），
+/// 会话历史在左侧抽屉。我第一版做成了"会话列表当主页"，
+/// 那是文档明确否掉的"列表优先 + 底部导航"结构。
 ///
-/// ## 两条渲染纪律
+/// ## 结构（自上而下，照原型）
 ///
-/// 1. **UI 永不闪空**：快照恢复期间保留旧 items（`stale → recovering` 时不清表）。
-///    这一页的做法是**只读 store 的当前快照**，而 store 在快照分页收口前不替换内容
-///    （`data/session_store.dart`）—— 所以"不闪空"是数据层的性质，不是这一页的特判。
-/// 2. **不整页 setState**：列表用 `StreamBuilder` 绑 store 的变更流，
-///    于是只有列表子树重建。整页 `setState` 会让输入栏也跟着重建 —— 而那正是
-///    "打字打到一半被重建"这类毛病的来源。
+/// ```
+/// ┌──────────────────────────────────────┐
+/// │ ☰  标题(超长省略)  ⑵任务运行中  ⊕   │  ChatAppBar
+/// │ [对话]      轨迹                     │  DshSegmented
+/// │──────────────────────────────────────│
+/// │  用户气泡(右)                        │  UserTurn
+/// │  助手:头像 + 名字 + Markdown          │  AssistantTurn
+/// │  ▸ 工具卡片(可展开)                   │  ToolCard
+/// │──────────────────────────────────────│
+/// │ ┌──────────────────────────────────┐ │  DshComposer
+/// │ │ 附件轨(有才出现)                  │ │
+/// │ │ 输入消息…                        │ │
+/// │ │ ＋ 模型·等级 权限            ↑   │ │
+/// │ └──────────────────────────────────┘ │
+/// │ ⏱1轮·3步 🗄302K ◔3%                 │  DshStatsBar
+/// └──────────────────────────────────────┘
+/// ```
+///
+/// ## 空态
+///
+/// 没会话时显示空态 + "打开抽屉"提示（用户选的方案）。
 library;
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../data/app_model.dart';
-import '../../model/chat_item.dart';
-import '../../theme/dsh_colors.dart';
-import '../../theme/dsh_icons.dart';
-import '../../theme/dsh_theme.dart';
-import 'dsh_markdown.dart';
+import '../data/app_model.dart';
+import '../model/chat_item.dart';
+import '../theme/dsh_colors.dart';
+import '../theme/dsh_icons.dart';
+import 'chat_turns.dart';
+import 'dsh_app_bar.dart';
+import 'dsh_composer.dart';
 
-/// 对话页。
+/// 聊天页。
 class ChatPage extends StatefulWidget {
-  const ChatPage({super.key, required this.app, required this.sid});
+  const ChatPage({
+    super.key,
+    required this.app,
+    required this.onOpenDrawer,
+    required this.onNewSession,
+    required this.drawer,
+    this.paired = true,
+    this.onConnect,
+  });
 
   final AppModel app;
 
-  /// 会话别名。
-  final String sid;
+  /// 顶栏 `☰`（由外层打开抽屉 —— 抽屉要盖住整个 Scaffold，所以归外层管）。
+  final VoidCallback onOpenDrawer;
+
+  final VoidCallback onNewSession;
+
+  /// 抽屉本体（外层 `Scaffold.drawer`）。
+  final Widget drawer;
+
+  /// 是否已配对（没配对时输入栏置灰、状态胶囊说"未连接"）。
+  final bool paired;
+
+  final VoidCallback? onConnect;
 
   @override
   State<ChatPage> createState() => _ChatPageState();
@@ -42,43 +76,45 @@ class ChatPage extends StatefulWidget {
 
 class _ChatPageState extends State<ChatPage> {
   final _input = TextEditingController();
-  final _scroll = ScrollController();
+  int _tab = 0;
   bool _sending = false;
+  final List<PendingAttachment> _attachments = [];
 
   @override
   void initState() {
     super.initState();
-    // 打开会话：订阅它（`since: 0` = 本地没有水位，电脑侧会给快照）。
-    // `unawaited`：`initState` 不能是 async，而打开会话的失败由 `AppModel`
-    // 记进 `lastError`（界面从那里显示），不需要在这里等。
-    unawaited(widget.app.openSession(widget.sid));
+    // 输入框有内容才亮发送键 —— `TextField` 的 `onChanged` 不触发本层重建，
+    // 所以手动挂一个监听（否则发送键永远灰着）。
+    _input.addListener(_onInputChanged);
   }
+
+  void _onInputChanged() => setState(() {});
 
   @override
   void dispose() {
+    _input.removeListener(_onInputChanged);
     _input.dispose();
-    _scroll.dispose();
     super.dispose();
   }
 
   /// 发一句。
   ///
   /// **幂等键在入队时生成**（契约 §5.6）：重发复用同一个 —— 换键等于换了一次新消息。
-  /// 这就是"点了发送但没反应，又点一次"不会变成两条的原因。
   Future<void> _send() async {
     final text = _input.text.trim();
-    if (text.isEmpty || _sending) return;
+    final sid = widget.app.currentSid;
+    if (text.isEmpty || _sending || sid == null) return;
     setState(() => _sending = true);
     try {
       final requestId = 'p-${DateTime.now().microsecondsSinceEpoch}';
       await widget.app.client.call<void>('session.prompt', {
-        'sid': widget.sid,
+        'sid': sid,
         'text': text,
       }, requestId: requestId);
       _input.clear();
+      if (mounted) setState(() => _attachments.clear());
     } catch (error) {
       if (!mounted) return;
-      // **如实报错**：吞掉会让用户以为发出去了。
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('发送失败：$error')));
@@ -89,368 +125,294 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: DshColors.bgBase,
-      appBar: AppBar(
-        backgroundColor: DshColors.sidebar,
-        foregroundColor: DshColors.labelPrimary,
-        title: Text(
-          widget.app.sessions
-                  .where((s) => s.sid == widget.sid)
-                  .firstOrNull
-                  ?.title ??
-              '会话',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            // 只绑 store 的变更流：列表重建不影响输入栏。
-            child: StreamBuilder<List<ChatItem>>(
-              stream: widget.app.changesOf(widget.sid),
-              initialData: widget.app.items,
-              builder: (context, snapshot) {
-                final items = snapshot.data ?? const <ChatItem>[];
-                if (items.isEmpty) {
-                  return const _WaitingBody();
-                }
-                return ListView.builder(
-                  controller: _scroll,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  itemCount: items.length,
-                  itemBuilder: (context, index) =>
-                      _ItemView(item: items[index]),
-                );
-              },
-            ),
+    return ListenableBuilder(
+      listenable: widget.app,
+      builder: (context, _) {
+        final items = widget.app.items;
+        final sid = widget.app.currentSid;
+        return Scaffold(
+          backgroundColor: DshColors.bgBase,
+          drawer: widget.drawer,
+          // 左缘跟手拖出的宽度（原型 `.edge--open` 手势带）。
+          // 用 `Drawer` 自带的边缘拖动而不是自写手势：它已经处理了
+          // "拖动中遮罩透明度""松手回弹"这些细节。
+          drawerEdgeDragWidth: 32,
+          appBar: ChatAppBar(
+            title: widget.app.currentTitle ?? 'DSH',
+            onOpenDrawer: widget.onOpenDrawer,
+            onNewSession: widget.onNewSession,
+            statusText: widget.paired ? null : '未连接',
+            statusIcon: widget.paired ? 'loading' : 'warningTriangle',
+            statusIsWarn: !widget.paired,
+            onStatusTap: widget.onConnect,
           ),
-          // 流式文本单独一行显示在输入栏上方（它没有稳定 itemId，不进列表）。
-          if (widget.app.liveText != null && widget.app.liveText!.isNotEmpty)
-            _LiveBar(text: widget.app.liveText!),
-          _Composer(controller: _input, sending: _sending, onSend: _send),
-        ],
-      ),
+          body: Column(
+            children: [
+              DshSegmented(
+                labels: const ['对话', '轨迹'],
+                index: _tab,
+                onChanged: (i) => setState(() => _tab = i),
+              ),
+              Expanded(
+                child: _tab == 0
+                    ? _ChatTab(
+                        app: widget.app,
+                        items: items,
+                        paired: widget.paired,
+                        onOpenDrawer: widget.onOpenDrawer,
+                        onConnect: widget.onConnect,
+                      )
+                    : const _TrajectoryTab(),
+              ),
+              // ---- 底部：dock + 输入栏 + 统计条 ----
+              Container(
+                color: DshColors.sidebar,
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(context).padding.bottom + 6,
+                ),
+                child: Column(
+                  children: [
+                    DshComposer(
+                      controller: _input,
+                      attachments: _attachments,
+                      // 模型名与推理等级：接上 `repo.info` 之后从真数据来，
+                      // 现在给占位（界面上看得出是占位：写的是"未连接"）。
+                      modelName: widget.paired ? 'claude-opus' : '未连接',
+                      reasoningLabel: '高',
+                      accessMode: AccessMode.workspaceWrite,
+                      sending: _sending,
+                      enabled: widget.paired && sid != null,
+                      onSend: _send,
+                      onAttach: () => setState(
+                        () => _attachments.add(
+                          const PendingAttachment(name: '新增文件.txt'),
+                        ),
+                      ),
+                      onPickModel: () {},
+                      onPickAccess: () {},
+                      onRemoveAttachment: (item) =>
+                          setState(() => _attachments.remove(item)),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: DshStatsBar(
+                        turnText: items.isEmpty
+                            ? null
+                            : '第 1 轮 · ${items.length} 步',
+                        usageText: items.isEmpty ? null : '302K · 缓存 0%',
+                        contextPercent: items.isEmpty ? null : 3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
 
-/// 还没收到任何条目时的提示。
-class _WaitingBody extends StatelessWidget {
-  const _WaitingBody();
+/// 对话页签（消息流）。
+class _ChatTab extends StatelessWidget {
+  const _ChatTab({
+    required this.app,
+    required this.items,
+    required this.paired,
+    required this.onOpenDrawer,
+    this.onConnect,
+  });
+
+  final AppModel app;
+  final List<ChatItem> items;
+  final bool paired;
+  final VoidCallback onOpenDrawer;
+  final VoidCallback? onConnect;
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-          SizedBox(height: 12),
-          Text(
-            '正在同步…',
-            style: TextStyle(fontSize: 13, color: DshColors.labelTertiary),
-          ),
-        ],
-      ),
+    if (items.isEmpty) {
+      return _EmptyChat(
+        paired: paired,
+        hasSessions: app.sessions.isNotEmpty,
+        onOpenDrawer: onOpenDrawer,
+        onConnect: onConnect,
+        onPreview: app.loadPreview,
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      itemCount: items.length,
+      itemBuilder: (context, index) => _TurnView(item: items[index]),
     );
   }
 }
 
-/// 一条条目的渲染（**按类型分派**，这是 UI 层唯一需要识别类型的地方）。
-class _ItemView extends StatelessWidget {
-  const _ItemView({required this.item});
+/// 一条条目 → 对应的渲染组件（**按类型分派**）。
+class _TurnView extends StatelessWidget {
+  const _TurnView({required this.item});
 
   final ChatItem item;
 
   @override
   Widget build(BuildContext context) {
-    // sealed class ⇒ 这个 switch 是穷尽的，加一种条目时编译器会在这里报错
-    //（而不是让新类型静默渲染成空白）。
+    // sealed class ⇒ 这个 switch 是穷尽的：加一种条目时编译器会在**这里**报错，
+    // 而不是让新类型静默渲染成空白。
     return switch (item) {
-      MessageItem(:final role, :final text) => _MessageBubble(
-        role: role,
-        text: text,
-      ),
-      ToolCallItem(:final name, :final status, :final summary) => _ToolRow(
+      MessageItem(:final role, :final text) => switch (role) {
+        MessageRole.user => UserTurn(text),
+        MessageRole.assistant => AssistantTurn(text: text),
+        MessageRole.system => SystemTurn(text),
+      },
+      ToolCallItem(:final name, :final status, :final summary) => ToolCard(
         name: name,
         status: status,
-        summary: summary,
+        argument: summary,
       ),
-      ApprovalItem(:final title, :final decided) => _ApprovalRow(
-        title: title,
-        decided: decided,
+      ApprovalItem(:final title, :final decided) => TakeoverHint(
+        icon: decided ? 'check' : 'shield',
+        name: decided ? 'approval' : 'approval',
+        argument: title,
+        statusText: decided ? '已决定' : '等待审批',
       ),
       OtherItem() => const SizedBox.shrink(),
     };
   }
 }
 
-/// 消息气泡。
-class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.role, required this.text});
-
-  final MessageRole role;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final isUser = role == MessageRole.user;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: isUser
-            ? MainAxisAlignment.end
-            : MainAxisAlignment.start,
-        children: [
-          Flexible(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: isUser ? DshColors.accentBlue : DshColors.layer1,
-                borderRadius: BorderRadius.circular(DshRadius.md),
-              ),
-              // **走 Markdown 渲染，不是纯文本**：DSH 的助手回复是 Markdown
-              //（代码块、列表、加粗都常见），而纯 `Text` 会把 ```` ```dart ````
-              // 原样显示成三个反引号 —— 两端看起来就完全不一样了。
-              //
-              // 系统消息也走它：它同样可能是 Markdown（比如折叠摘要）。
-              child: DshMarkdown(
-                text,
-                baseColor: isUser ? DshColors.onAccent : DshColors.labelPrimary,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 工具调用一行。
-class _ToolRow extends StatelessWidget {
-  const _ToolRow({
-    required this.name,
-    required this.status,
-    required this.summary,
-  });
-
-  final String name;
-  final ToolCallStatus status;
-  final String summary;
-
-  @override
-  Widget build(BuildContext context) {
-    final (icon, color) = switch (status) {
-      // 用 DSH 的图标而不是 Material：同一件事（工具在跑 / 成了 / 失败）
-      // 在原型与 App 里该长得一样，而"图标只有一个来源"是项目硬规则。
-      ToolCallStatus.running => ('loading', DshColors.roleTool),
-      ToolCallStatus.completed => ('checkCircle', DshColors.roleContext),
-      ToolCallStatus.failed => ('warningTriangle', DshColors.error),
-    };
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: [
-          DshIcon(icon, size: 14, color: color),
-          const SizedBox(width: 6),
-          Text(
-            name,
-            style: TextStyle(
-              fontSize: 12,
-              color: color,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          if (summary.isNotEmpty) ...[
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                summary,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: DshColors.labelTertiary,
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-/// 审批一行。
-class _ApprovalRow extends StatelessWidget {
-  const _ApprovalRow({required this.title, required this.decided});
-
-  final String title;
-  final bool decided;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: DshColors.layer2,
-        borderRadius: BorderRadius.circular(DshRadius.sm),
-        border: Border.all(
-          color: decided ? DshColors.layer3 : DshColors.roleTool,
-        ),
-      ),
-      child: Row(
-        children: [
-          DshIcon(
-            // `shield` 是 DSH 的审批语义图标；已决定就换成 `check`。
-            decided ? 'check' : 'shield',
-            size: 14,
-            color: decided ? DshColors.labelTertiary : DshColors.roleTool,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              title,
-              style: TextStyle(
-                fontSize: 13,
-                // **已决定的要弱化**：它不再是待办。
-                // 第一版固定用 `labelPrimary`，于是"已决定"和"待审批"
-                // 一样醒目 —— 用户会以为还有事要做（那是靠看示例数据发现的）。
-                color: decided
-                    ? DshColors.labelSecondary
-                    : DshColors.labelPrimary,
-              ),
-            ),
-          ),
-          Text(
-            decided ? '已决定' : '待审批',
-            style: TextStyle(
-              fontSize: 11,
-              color: decided ? DshColors.labelTertiary : DshColors.roleTool,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 流式文本条。
-class _LiveBar extends StatelessWidget {
-  const _LiveBar({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      color: DshColors.layer1,
-      // 流式文本**不渲染 Markdown**，只做纯文本。
-      //
-      // 理由是 §4 的性能对策：流式每来一段就重排，而 Markdown 解析 + 排版
-      // 比纯文本贵一个量级；而"正在生成的半句话"本来也**不是完整 Markdown**
-      //（```` ``` ```` 刚写了一半，解析出来只会闪烁）。
-      // 收尾时持久 `assistant/message` 到达，那时才走完整的 Markdown 渲染
-      //（`data/projection.dart` 的"以持久为准"）。
-      child: Text(
-        text,
-        maxLines: 3,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 12, color: DshColors.roleAssistant),
-      ),
-    );
-  }
-}
-
-/// 输入栏。
+/// 空态（原型没有这一屏 —— 因为原型永远有会话；但真实 App 第一次打开是空的）。
 ///
-/// **三条硬规则**（`AGENTS.md` §6 / 方案 §7.2）：文字独占一行；
-/// 控制行左组（这里是发送）在右。附件与模型选择属于后续增量，这里先留结构。
-class _Composer extends StatelessWidget {
-  const _Composer({
-    required this.controller,
-    required this.sending,
-    required this.onSend,
+/// 三句话分开说（**这是本页最有价值的一段文案**）：
+/// 没配对 / 真没有会话 / 有会话但没选中。
+class _EmptyChat extends StatelessWidget {
+  const _EmptyChat({
+    required this.paired,
+    required this.hasSessions,
+    required this.onOpenDrawer,
+    required this.onPreview,
+    this.onConnect,
   });
 
-  final TextEditingController controller;
-  final bool sending;
-  final VoidCallback onSend;
+  final bool paired;
+  final bool hasSessions;
+  final VoidCallback onOpenDrawer;
+  final VoidCallback onPreview;
+  final VoidCallback? onConnect;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: DshColors.sidebar,
-      padding: EdgeInsets.only(
-        left: 12,
-        right: 12,
-        top: 8,
-        bottom: 8 + MediaQuery.of(context).padding.bottom,
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Expanded(
-            child: TextField(
-              controller: controller,
-              minLines: 1,
-              maxLines: 5,
-              style: const TextStyle(
-                fontSize: 13,
-                color: DshColors.labelPrimary,
-              ),
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: '发消息…',
-                hintStyle: const TextStyle(
-                  fontSize: 13,
-                  color: DshColors.labelTertiary,
+    final (icon, title, detail) = !paired
+        ? ('globe', '还没连电脑', '界面可以先看。要看到真实会话，得先配对（在电脑上出码）。')
+        : hasSessions
+        ? ('panelLeft', '选一个会话', '会话历史在左侧抽屉里。')
+        : ('newChat', '还没有会话', '在电脑上用 DSH 开一个，它会出现在抽屉里。');
+    return SingleChildScrollView(
+      // **必须可滚**：320×640 上"图标 + 三行字 + 三个按钮"放不下，
+      // 会报 `BOTTOM OVERFLOWED BY 20 PIXELS`（实测踩到）。
+      // 用 `Center` + `SingleChildScrollView` 而不是纯 `Center`：
+      // 内容放得下时居中，放不下时可滚 —— 两个诉求都要满足。
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          minHeight: MediaQuery.of(context).size.height * 0.5,
+        ),
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DshIcon(icon, size: 48, color: DshColors.labelTertiary),
+                const SizedBox(height: 16),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    color: DshColors.labelSecondary,
+                  ),
                 ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
+                const SizedBox(height: 8),
+                Text(
+                  detail,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: DshColors.labelTertiary,
+                  ),
                 ),
-                filled: true,
-                fillColor: DshColors.layer1,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(DshRadius.md),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-              onSubmitted: (_) => onSend(),
-            ),
-          ),
-          const SizedBox(width: 8),
-          IconButton.filled(
-            onPressed: sending ? null : onSend,
-            style: IconButton.styleFrom(
-              backgroundColor: DshColors.accentBlue,
-              foregroundColor: DshColors.onAccent,
-            ),
-            icon: sending
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
+                const SizedBox(height: 24),
+                // 两个入口都不需要连电脑。
+                if (hasSessions || paired)
+                  FilledButton.icon(
+                    onPressed: onOpenDrawer,
+                    icon: const DshIcon(
+                      'panelLeft',
+                      size: 14,
                       color: DshColors.onAccent,
                     ),
-                  )
-                : const DshIcon('send', size: 18, color: DshColors.onAccent),
+                    label: const Text('打开会话抽屉'),
+                  ),
+                if (!paired) ...[
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: onPreview,
+                    icon: const DshIcon(
+                      'sparkle',
+                      size: 14,
+                      color: DshColors.labelSecondary,
+                    ),
+                    label: const Text('看示例数据'),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton(
+                    onPressed: onConnect,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: DshColors.accentBlue,
+                      foregroundColor: DshColors.onAccent,
+                    ),
+                    child: const Text('连电脑（配对）'),
+                  ),
+                ],
+              ],
+            ),
           ),
-        ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 轨迹页签 —— **占位**（照原型是甘特图 + 账本列表，那是独立一块）。
+///
+/// 如实做成占位而不是假装有：写"还没做"比画一张假图好 ——
+/// 后者会被当成"已经能用了"。
+class _TrajectoryTab extends StatelessWidget {
+  const _TrajectoryTab();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            DshIcon('gauge', size: 40, color: DshColors.labelTertiary),
+            SizedBox(height: 12),
+            Text(
+              '轨迹还没做',
+              style: TextStyle(fontSize: 14, color: DshColors.labelSecondary),
+            ),
+            SizedBox(height: 6),
+            Text(
+              '原型里是甘特图 + 按时间排的账本列表（上下文/助手/工具/错误）。\n'
+              '它依赖 `session.trajectory` 的数据，那是独立一块。',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: DshColors.labelTertiary),
+            ),
+          ],
+        ),
       ),
     );
   }

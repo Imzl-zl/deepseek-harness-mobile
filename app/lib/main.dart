@@ -30,12 +30,16 @@ import 'core/sync_client_impl.dart';
 import 'core/transport.dart';
 import 'data/app_model.dart';
 import 'data/store.dart';
+import 'model/chat_item.dart';
 import 'platform/pairing_store.dart';
 import 'platform/sqflite_item_store.dart';
 import 'platform/websocket_transport.dart';
+import 'theme/dsh_colors.dart';
+import 'theme/dsh_icons.dart';
 import 'theme/dsh_theme.dart';
+import 'ui/chat_page.dart';
 import 'ui/pairing_page.dart';
-import 'ui/session_list_page.dart';
+import 'ui/session_drawer.dart';
 
 void main() {
   runApp(const DshMobileApp());
@@ -50,6 +54,12 @@ class DshMobileApp extends StatefulWidget {
 }
 
 class _DshMobileAppState extends State<DshMobileApp> {
+  /// 聊天页的 key —— 用来从外面开抽屉（`openDrawer`）。
+  ///
+  /// 抽屉要盖住整个 `Scaffold`（含顶栏），所以它必须是聊天页 `Scaffold`
+  /// 的 `drawer`；而"谁来开它"是外层的事（顶栏的 `☰`、空态的按钮）。
+  final _chatKey = GlobalKey<ScaffoldState>();
+
   /// 配对结果（`null` = 还没配对）。
   ///
   /// **它不再是"要不要显示界面"的依据** —— 没配对也进主界面（见 `_boot`）。
@@ -152,12 +162,181 @@ class _DshMobileAppState extends State<DshMobileApp> {
     if (_pairing) {
       return PairingPage(onPaired: _onPaired, onCancel: _closePairing);
     }
-    return SessionListPage(
+    // 打开会话的入口在抽屉里 —— 它要能 `Navigator.pop` 关自己，
+    // 所以用 `GlobalKey<ScaffoldState>` 而不是把 drawer 塞进 ChatPage 内部。
+    return ChatPage(
+      key: _chatKey,
       app: app,
       paired: _credentials != null,
       onConnect: _openPairing,
-      onUnpaired: _resetPairing,
+      onOpenDrawer: () => _chatKey.currentState?.openDrawer(),
+      onNewSession: _newSession,
+      drawer: SessionDrawer(
+        sections: _drawerSections(app),
+        connection: DrawerConnection(
+          name: _credentials == null ? '未配对' : '我的电脑',
+          detail: _credentials == null
+              ? '还没连电脑 · 点这里去配对'
+              : _connectionDetail(app.connection),
+          platform: _credentials == null ? '' : 'DSH',
+          online: app.connection == ConnectionStateView.serving,
+        ),
+        footItems: [
+          DrawerFootItem(
+            icon: 'folderClose',
+            label: '文件',
+            onTap: () => _notYet('文件页'),
+          ),
+          DrawerFootItem(
+            icon: 'archive',
+            label: '归档',
+            onTap: () => _notYet('归档列表'),
+          ),
+          DrawerFootItem(icon: 'sparkle', label: '示例', onTap: app.loadPreview),
+          DrawerFootItem(
+            icon: 'clock',
+            label: '自动化',
+            onTap: () => _notYet('自动化任务'),
+          ),
+          DrawerFootItem(
+            icon: 'settings',
+            label: '设置',
+            onTap: () => _notYet('设置'),
+          ),
+        ],
+        onNewSession: _newSession,
+        onOpenSession: (session) {
+          unawaited(Navigator.of(context).maybePop());
+          unawaited(app.openSession(session.sid));
+        },
+        // 点连接状态行 → 已配对时给"重新配对 / 断开"的选择，没配对上配对页。
+        onClose: () {
+          if (_credentials == null) {
+            unawaited(Navigator.of(context).maybePop());
+            _openPairing();
+            return;
+          }
+          unawaited(_showConnectionSheet());
+        },
+      ),
     );
+  }
+
+  /// 连接状态行的详情（换设备 / 断开重配）。
+  ///
+  /// 它必须有：否则**配错了就出不来** —— 手机认的是配对那一刻的电脑公钥，
+  /// 而重配对会换 `pairingId`（电脑侧记的是旧的那个）。没有这条出路时，
+  /// 用户只能卸载重装。
+  Future<void> _showConnectionSheet() async {
+    unawaited(Navigator.of(context).maybePop());
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: DshColors.layer1,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const DshIcon(
+                'refresh',
+                size: 18,
+                color: DshColors.labelSecondary,
+              ),
+              title: const Text('重新配对（换一台电脑）'),
+              subtitle: const Text('会清掉本机凭据，需要重新扫码'),
+              onTap: () => Navigator.of(context).pop('repair'),
+            ),
+            ListTile(
+              leading: const DshIcon('trash', size: 18, color: DshColors.error),
+              title: const Text('断开并清掉凭据'),
+              onTap: () => Navigator.of(context).pop('clear'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    await _resetPairing();
+    if (!mounted) return;
+    if (action == 'repair') _openPairing();
+  }
+
+  /// 新建会话：DSH 里会话由电脑侧建，所以这里走 `session.create`。
+  ///
+  /// **没配对时不做假动作**：直接提示去配对 —— 而不是造一个本地空会话
+  ///（那会在抽屉里留下一个永远发不出消息的条目）。
+  void _newSession() {
+    unawaited(Navigator.of(context).maybePop());
+    if (_credentials == null) {
+      _openPairing();
+      return;
+    }
+    unawaited(
+      _app!.createSession().catchError(
+        (Object error) => _notYet('新建会话（$error）'),
+      ),
+    );
+  }
+
+  void _notYet(String what) {
+    unawaited(Navigator.of(context).maybePop());
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$what 还没做')));
+  }
+
+  static String _connectionDetail(ConnectionStateView state) => switch (state) {
+    ConnectionStateView.serving => '中转已连接 · 空闲',
+    ConnectionStateView.backoff => '重连中…',
+    ConnectionStateView.connecting => '连接中…',
+    ConnectionStateView.handshaking => '握手中…',
+    _ => '未连接',
+  };
+
+  /// 会话按"今天 / 昨天 / 更早"分组（原型 `.dsec`）。
+  List<DrawerSection> _drawerSections(AppModel app) {
+    final now = DateTime.now();
+    final today = <DrawerSession>[];
+    final yesterday = <DrawerSession>[];
+    final earlier = <DrawerSession>[];
+    for (final s in app.sessions) {
+      final at = DateTime.fromMillisecondsSinceEpoch(s.updatedAt);
+      final days = DateTime(
+        now.year,
+        now.month,
+        now.day,
+      ).difference(DateTime(at.year, at.month, at.day)).inDays;
+      final row = DrawerSession(
+        sid: s.sid,
+        title: s.title.isEmpty ? '（未命名会话）' : s.title,
+        preview: s.itemCount == 0 ? s.sid : '${s.itemCount} 条',
+        timeLabel: _relativeTime(days, at),
+        isActive: s.sid == app.currentSid,
+      );
+      if (days <= 0) {
+        today.add(row);
+      } else if (days == 1) {
+        yesterday.add(row);
+      } else {
+        earlier.add(row);
+      }
+    }
+    return [
+      if (today.isNotEmpty) DrawerSection(label: '今天', sessions: today),
+      if (yesterday.isNotEmpty) DrawerSection(label: '昨天', sessions: yesterday),
+      if (earlier.isNotEmpty) DrawerSection(label: '更早', sessions: earlier),
+    ];
+  }
+
+  static String _relativeTime(int days, DateTime at) {
+    if (days <= 0) {
+      final h = at.hour.toString().padLeft(2, '0');
+      final m = at.minute.toString().padLeft(2, '0');
+      return '$h:$m';
+    }
+    if (days == 1) return '昨天';
+    if (days < 7) return '$days 天前';
+    return '${at.month}/${at.day}';
   }
 
   /// 清掉配对（换设备 / 连不上时重来）。

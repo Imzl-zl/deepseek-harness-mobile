@@ -77,6 +77,17 @@ class AppModel extends ChangeNotifier {
   /// 当前会话 id。
   String? get currentSid => _currentSid;
 
+  /// 当前会话的标题（顶栏用）；没有选中会话或推不出标题时返回 `null`。
+  ///
+  /// **电脑侧不返回标题**（契约 §5.7），所以标题由本地从条目推导
+  /// （`deriveTitle`）—— 这也是 DSH 桌面端的做法。
+  String? get currentTitle {
+    final sid = _currentSid;
+    if (sid == null) return null;
+    final title = _storeOf(sid).title;
+    return title.isEmpty ? null : title;
+  }
+
   /// 连接状态（界面视图）。
   ConnectionStateView get connection => _connection;
 
@@ -173,6 +184,34 @@ class AppModel extends ChangeNotifier {
       _lastError = error;
       if (!_disposed) notifyListeners();
     }
+  }
+
+  /// 新建会话。
+  ///
+  /// **会话由电脑侧建**（它才是会话的 owner），所以这里走 `session.create`，
+  /// 然后把新 sid 加进列表并打开它。
+  ///
+  /// 它走 `outbox`（带幂等键的写操作）：点了两次不会建出两个会话 ——
+  /// 重发复用同一个 `requestId`，电脑侧去重。
+  Future<void> createSession() async {
+    final result = await client.call<Object?>(
+      'session.create',
+      const {},
+      requestId: 'new-${DateTime.now().microsecondsSinceEpoch}',
+    );
+    final sid = result is Map ? result['sid'] : null;
+    if (sid is! String || sid.isEmpty) {
+      throw const ProtocolException(
+        ErrorCode.internal,
+        '新建会话没有返回 sid（电脑侧实现不对？）',
+      );
+    }
+    _sessions = [
+      SessionSummary(sid: sid, title: '', updatedAt: 0),
+      ..._sessions.where((s) => s.sid != sid),
+    ];
+    if (!_disposed) notifyListeners();
+    await openSession(sid);
   }
 
   /// 打开一个会话：订阅它，并把条目喂给 store。
