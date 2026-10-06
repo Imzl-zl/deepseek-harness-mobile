@@ -23,9 +23,9 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'box.dart';
+import 'call_registry.dart';
 import 'connection.dart';
-import 'crypto.dart';
+import 'connection_resources.dart';
 import 'errors.dart';
 import 'flow.dart';
 import 'frame.dart';
@@ -69,24 +69,19 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   /// 每会话的更新流（广播：UI 多个部件要听同一会话）。
   final Map<String, StreamController<SessionDelta>> _sessionControllers = {};
 
-  /// 在途请求（`req.id` → 完成器）。应答到达时按 `id` 兑现。
-  final Map<String, Completer<Object?>> _pendingCalls = {};
+  /// 在途请求表（`req.id` → 完成器）。应答到达时按 `id` 兑现。
+  ///
+  /// **它不跟着连接资源一起换**：旧 `id` 绝不能被新连接的应答兑现
+  /// （那是上一条连接的请求）。所以由连接状态的迁移驱动它的作废 ——
+  /// 见 `call_registry.dart` 的文件头。
+  final CallRegistry _calls = CallRegistry();
 
-  /// 每连接的箱密码器。**每次建连换一把密钥**，所以建连时必须清空（§4.2）。
-  BoxCodec? _box;
-
-  /// 每连接的握手会话。
-  HandshakeSession? _handshake;
-
-  /// 每连接的传输事件订阅。
-  StreamSubscription<TransportEvent>? _subscription;
-
-  /// 每连接的发送计数器与流控窗口（`fc` 从 0 重数）。
-  SendCounter _counter = SendCounter();
-  SendWindow _window = SendWindow();
-
-  /// 每连接的行分帧器。
-  LineSplitter _splitter = LineSplitter();
+  /// **每连接**的资源束（密码器 / 握手会话 / 收帧订阅 / 计数器 / 窗口 / 分帧器）。
+  ///
+  /// 收成一个对象而不是六个字段：它们的生命周期完全相同，而原先
+  /// `_connect()` 与 `_enterClosed()` 里**各写一遍同一个清单** —— 两份迟早不一致，
+  /// 漏掉任何一项都是静默 bug（见 `connection_resources.dart` 的文件头）。
+  ConnectionResources _res = ConnectionResources();
 
   /// 退避计时器的取消函数。
   void Function()? _cancelBackoff;
@@ -159,12 +154,8 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   Future<void> _connect() async {
     if (_closed) return;
     _machine.to(ConnectionState.connecting);
-    // 每次建连都换分帧器、计数器、窗口与密码器 —— 新连接新密钥，`fc` 从 0 重数（§4.2）。
-    _splitter = LineSplitter();
-    _counter = SendCounter();
-    _window = SendWindow();
-    _box = null;
-    _handshake = null;
+    // 每次建连换**一整份**每连接资源（新密钥、新计数器、新分帧器）—— §4.2。
+    _res = ConnectionResources();
 
     final Stream<TransportEvent> events;
     try {
@@ -175,22 +166,26 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       return;
     }
 
-    _subscription = events.listen(
-      _onTransportEvent,
-      onError: (Object error) => _enterClosed(),
-      cancelOnError: false,
+    _res.attachSubscription(
+      events.listen(
+        _onTransportEvent,
+        onError: (Object error) => _enterClosed(),
+        cancelOnError: false,
+      ),
     );
 
     // WSS 建好了 → 进握手态，并把握手驱动装上（**它会立刻发出 hello**）。
     _machine.to(ConnectionState.handshake);
-    _handshake = _deps.handshake(
-      HandshakeContext(
-        send: _sendPreKeysFrame,
-        established: _onEstablished,
-        failed: (reason, error) {
-          _failHandshake(reason, error);
-        },
-        schedule: _schedule,
+    _res.attachHandshake(
+      _deps.handshake(
+        HandshakeContext(
+          send: _sendPreKeysFrame,
+          established: _onEstablished,
+          failed: (reason, error) {
+            _failHandshake(reason, error);
+          },
+          schedule: _schedule,
+        ),
       ),
     );
     _startTicking();
@@ -200,7 +195,7 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     if (_closed) return;
     // **先装密码器再进 serving**：顺序反了就会有一小段"已在服务但发不出帧"的窗口，
     // 而那一小段里的每一帧都会被丢掉（宁丢不发明文）。
-    _box = _deps.box(result.keys);
+    _res.attachBox(_deps.box(result.keys));
     // 握手成功要重置退避：否则下次掉线会从上次积累的大间隔开始等。
     _backoff.reset();
     _machine.to(ConnectionState.serving);
@@ -220,7 +215,7 @@ class _SyncClient implements SyncClient, SyncClientProbe {
         // **拼行在这里做，不在传输层**：分隔符规则只有一个 owner（编解码层）。
         final List<String> lines;
         try {
-          lines = _splitter(chunk);
+          lines = _res.split(chunk);
         } on ProtocolException catch (error) {
           _protocolFailure(error);
           return;
@@ -271,7 +266,7 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     // 握手帧：交给驱动器（握手完成后不该再来，来了就是重放/重复投递）。
     if (isHandshakeFrameType(type)) {
       if (_machine.isAnyOf([ConnectionState.handshake])) {
-        _handshake?.onFrame(frame);
+        _res.handshake?.onFrame(frame);
       }
       return;
     }
@@ -301,7 +296,7 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       _protocolFailure(ProtocolException(ErrorCode.badFrame, '$type 帧缺少 box'));
       return;
     }
-    final codec = _box;
+    final codec = _res.box;
     if (codec == null) {
       _protocolFailure(
         const ProtocolException(ErrorCode.internal, '还没有会话密钥就收到了业务帧'),
@@ -369,28 +364,12 @@ class _SyncClient implements SyncClient, SyncClientProbe {
 
     if (frame['t'] == 'credit') {
       final box = frame['box'];
-      final ack = decodeCredit(box is String ? box : '');
-      final before = _window.unacked;
-      _window.onCredit(ack);
-      if (_window.unacked < before) {
-        // 窗口刚松开：被压住的可补帧可以继续发了（这里只唤醒等待者）。
-        _notifyWritable();
-      }
+      _res.onCredit(decodeCredit(box is String ? box : ''));
     }
 
     // 收到的每一帧都立刻回 credit。`credit` 自己除外 —— 否则两端互刷 ack 停不下来。
     if (elicitsCredit('${frame['t']}')) {
       _sendFrame({'v': wireVersion, 't': 'credit', 'box': encodeCredit(fc)});
-    }
-  }
-
-  final List<void Function()> _writableWaiters = [];
-
-  void _notifyWritable() {
-    final waiters = List.of(_writableWaiters);
-    _writableWaiters.clear();
-    for (final resolve in waiters) {
-      resolve();
     }
   }
 
@@ -403,14 +382,20 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     if (!_machine.acceptsBusinessFrames) return false;
     final type = '${frame['t']}';
     // 满窗时对可补帧如实回 `false`：这一帧**没有被接受**，调用方据此暂停（§4.3）。
-    if (!_window.canSend(type)) return false;
+    //
+    // 手机侧目前恒为 `true`：它只发 `req` / `res` / `credit` / `persisted` / `ping`，
+    // 而 §4.3 只压"可补"的 `ev` / `live` / `job` —— 手机一个都不发。
+    // 保留这个判定是因为契约是**双向**的：将来手机要发 `job` 控制帧时它就该起作用。
+    // （原先这里还配了一套 `_writableWaiters` 唤醒机制，但**没有任何生产者**
+    //  —— 那是照搬电脑侧的设计，已删；需要时随"手机发可补帧"一起加。）
+    if (!_res.canSend(type)) return false;
 
-    final codec = _box;
+    final codec = _res.box;
     // `fc` 的分配与封箱必须紧挨着（见文件头）。分配前先看窗口 —— 没发出去的帧
     // 不该消耗序号，否则窗口算术会把没上线的帧也算进去。
-    final fc = _counter.next();
+    final fc = _res.nextFc();
     final wire = <String, Object?>{...frame, 'fc': fc};
-    _window.onSent(fc, type);
+    _res.onSent(fc, type);
 
     if (codec == null) {
       // 配了 secure 却拿不出密码器：只可能是"握手已过但密码器没装上"这类装配错误。
@@ -524,19 +509,22 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   void _resolveCall(Map<String, Object?> frame, String plaintext) {
     final id = frame['id'];
     if (id is! String) return;
-    final completer = _pendingCalls.remove(id);
-    if (completer == null) return; // 迟到或重复的应答：忽略。
 
     final ok = frame['ok'];
     if (ok != true) {
       // 失败也是**正常应答**，不是断连理由（§9）。错误码来自封闭表。
-      final code = _errorCodeOf(plaintext);
-      completer.completeError(
-        ProtocolException(code, _errorMessageOf(plaintext)),
+      _calls.resolve(
+        id,
+        result: null,
+        error: ProtocolException(
+          _errorCodeOf(plaintext),
+          _errorMessageOf(plaintext),
+        ),
       );
       return;
     }
-    completer.complete(_resultOf(plaintext));
+    // 迟到或重复的应答：`resolve` 返回 false，忽略即可（不是错误）。
+    _calls.resolve(id, result: _resultOf(plaintext));
   }
 
   ErrorCode _errorCodeOf(String plaintext) {
@@ -636,8 +624,7 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       throw const ProtocolException(ErrorCode.relayOffline, '连接不在服务态');
     }
     final id = _newId();
-    final completer = Completer<Object?>();
-    _pendingCalls[id] = completer;
+    final completer = _calls.register(id);
     final sent = _sendFrame({
       'v': wireVersion,
       't': 'req',
@@ -645,7 +632,8 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       'box': encodeRequestEnvelope(method, params),
     });
     if (!sent) {
-      _pendingCalls.remove(id);
+      // 发送失败要**撤销登记**：否则表里留一个永远不兑现的条目。
+      _calls.unregister(id);
       throw const ProtocolException(ErrorCode.relayOffline, '发送失败：连接不可用或窗口满');
     }
     return await completer.future as T;
@@ -674,23 +662,16 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     _cancelBackoff = null;
     _cancelTick?.call();
     _cancelTick = null;
-    _handshake?.dispose();
-    _handshake = null;
-    await _subscription?.cancel();
-    _subscription = null;
+    // 每连接资源一次作废（握手会话 / 密码器 / 收帧订阅）。
+    _res.dispose();
     await _deps.transport.close();
     for (final controller in _sessionControllers.values) {
       await controller.close();
     }
     _sessionControllers.clear();
-    for (final completer in _pendingCalls.values) {
-      if (!completer.isCompleted) {
-        completer.completeError(
-          const ProtocolException(ErrorCode.internal, '客户端已关闭'),
-        );
-      }
-    }
-    _pendingCalls.clear();
+    // 关闭时也要拒掉在途请求（同 `_enterClosed`，但错误码不同：
+    // 这里是"客户端被关了"，不是"连接断了" —— 前者不该再重试）。
+    _calls.failAll(const ProtocolException(ErrorCode.internal, '客户端已关闭'));
     await _stateController.close();
   }
 
@@ -699,10 +680,6 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   // -------------------------------------------------------------------------
 
   void _onStateChanged(ConnectionState from, ConnectionState to) {
-    if (from == ConnectionState.serving && to != ConnectionState.serving) {
-      // 离开服务态：唤醒所有等在"窗口有空位"上的发送方（否则它们永远挂着）。
-      _notifyWritable();
-    }
     if (to == ConnectionState.closed && !_closed) {
       // 连接结束 → 进退避 → 到点且前台才重连（§2.2：只在 App 前台重连）。
       _machine.to(ConnectionState.backoff);
@@ -756,15 +733,25 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     unawaited(_deps.transport.close());
   }
 
+  /// 收口到 `closed`：作废每连接资源，并让状态机走它自己的白名单。
+  ///
+  /// **同步**（`_res.dispose()` 是同步的）：收口路径全在事件回调里，
+  /// 中间多一个 `await` 窗口就会让退避起点漂移（见 `connection_resources.dart`
+  /// 的 `dispose` 说明 —— 那条是被一条重连用例逼出来的）。
   void _enterClosed() {
-    _handshake?.dispose();
-    _handshake = null;
-    // 密钥属于这条连接：断开即作废，避免下一条连接误用上一把（§4.2）。
-    _box = null;
-    unawaited(_subscription?.cancel());
-    _subscription = null;
+    _res.dispose();
     _cancelTick?.call();
     _cancelTick = null;
+    // **在途请求必须被拒绝**，否则调用方的 `await` 永远不返回
+    //（断连是常态，这条路必然走到 —— 见 `call_registry.dart` 的文件头）。
+    // 错误码用 `relay/offline`：它对应的客户端动作是"退避重试"，
+    // 而不是 `internal` 的"记日志重试"—— 前者知道这是连接问题。
+    final rejected = _calls.failAll(
+      const ProtocolException(ErrorCode.relayOffline, '连接已断开，在途请求被取消'),
+    );
+    if (rejected > 0) {
+      _lastRejectedCalls = rejected;
+    }
     if (_machine.isAnyOf([
       ConnectionState.connecting,
       ConnectionState.handshake,
@@ -797,6 +784,9 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   /// 判定为半开时已沉默多久（诊断用）。
   int? _lastHalfOpenSilentMs;
 
+  /// 上一次收口时被拒绝的在途请求数（诊断用）。
+  int? _lastRejectedCalls;
+
   /// 诊断面（测试与日志用）。
   @override
   ProtocolException? get lastProtocolError => _lastProtocolError;
@@ -804,6 +794,14 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   /// 判定为半开时已沉默多久；没判过是 `null`。
   @override
   int? get lastHalfOpenSilentMs => _lastHalfOpenSilentMs;
+
+  /// 当前在途请求数。
+  @override
+  int get pendingCalls => _calls.pending;
+
+  /// 上一次连接收口时被拒绝的在途请求数；没收口过是 `null`。
+  @override
+  int? get lastRejectedCalls => _lastRejectedCalls;
 
   // -------------------------------------------------------------------------
   // 供测试观察的帧收集（生产里 UI 不读这些）

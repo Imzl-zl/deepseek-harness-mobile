@@ -39,7 +39,7 @@
 - 图标集校验(不需要浏览器):`node mock/proto/tools/verify-icons.cjs`
 - **手机端 `app/`(Flutter 工程;`flutter` 装在 `D:\soft\flutter`,已进用户 PATH)**:
   - **版本闸门:锁 Flutter `3.41.9`**(上界由鸿蒙 fork 定,`app-platform-boundaries.md` §4)。当前上游 stable 是 3.47.6,**不许装** —— Dart SDK 版本决定语言特性,升上去等接鸿蒙时要回改一大片。自带 Dart 3.11.5。
-  - `cd app; flutter test` —— 跑 `test/`,当前 **128 项**:core 单测 53 + 连接层 57(状态机/退避/心跳半开/箱与握手/接线 e2e/outbox/LiveAccumulator) + 跨端向量 16 + fixtures 三角色回放 1 + `flutter create` 自带 smoke 1
+  - `cd app; flutter test` —— 跑 `test/`,当前 **132 项**:core 单测 53 + 连接层 59(状态机/退避/心跳半开/箱与握手/接线 e2e/outbox/LiveAccumulator/断连拒绝在途请求) + 跨端向量 16 + fixtures 三角色回放 1 + `flutter create` 自带 smoke 1
   - `cd app; dart analyze --fatal-infos lib test` —— **社区口径的静态检查**(比 `flutter analyze` 严:把 info 也当失败)。0 问题才算干净
   - `cd app; dart format --output=none --set-exit-if-changed lib test` —— **Dart 社区硬规范**(Flutter CI 一直拿它当门禁)。`--set-exit-if-changed` 是判据,不是"看一眼"
   - `cd app; flutter pub get` —— 装依赖(`cryptography` 是唯一的非 SDK 依赖)
@@ -145,4 +145,8 @@
 - **一次性迁移脚本要带"命中数断言",而且断言不止一种**:`app/tools/migrate-error-codes.mjs` 是本项目第一个这种脚本(27 处替换),它两次拦住了真问题 —— ① 我按 `Select-String` 的输出数命中数(每行只报第一个匹配),期望值偏小 → 脚本拒绝写盘;② 正则没吞掉原逗号,替换后留下 `ErrorCode.x,,`(数量是对的,**数量守卫拦不住**) → 补了一条"改完不许出现 `,,`"的兜底断言。教训:**机械替换的数量断言只能证明"改了几处",不能证明"改对了"**,要再加一条针对残渣形状的断言
 - **注入的定时器在回调末尾"无条件续期"是个静默 bug**:`_startTicking` 的 `run()` 原本在末尾无条件重排下一次 tick,而半开路径会调 `_enterClosed()`(它取消了 tick 并可能已进退避)→ 那个"该死了"的定时器继续跑,在 `_connect()` 的 `await` 中途再调一次 `_enterClosed()`,把状态从 `connecting` 推到 `closed`,于是 `await` 回来后的 `to(handshake)` 变成**非法迁移**(实测报错 `backoff → handshake`)。修法:续期前判断 `_closed || _cancelTick == null`。**判据是测试给的**:推进 4 个心跳周期后状态机抛错
 - **`core/` 的异步边界:测试要"把事件循环跑到静默"再断言**:从种子建密钥对、验签、派生、封箱**全是 `Future`**(`cryptography` 的 API 如此),所以"`start()` 返回"不等于"`hello` 已发出"。真实客户端是长活的、那一拍无所谓;测试需要一个 `pump()` 辅助(若干次 `Future.delayed(Duration.zero)`),否则断言会看到空列表而误判成"没实现"
+- **拆分的信号是"重复的清单"与"缺失的所有者",不是"文件太长"**:实测 `sync_client_impl.dart` 971 行时量了三个候选簇 —— ① 每连接状态 6 字段 **33 处引用**,而且 `_connect()` 与 `_enterClosed()` **各写一遍同一个重置清单**(→ 该拆:收成 `ConnectionResources`);② 在途请求表既无超时、断连也不清(→ 该拆:收成 `CallRegistry`,顺带修掉"调用方永远不返回");③ 订阅面只有 **17 处引用**、没有重复清单(→ **不拆**:拆它只是搬家,收益是"看起来整齐",代价是多一层间接)。结论:尺寸限制属于 linter,不属于人的判断;**先量引用数与"有没有第二份清单",再决定拆不拆**
+- **`StreamSubscription.cancel()` 返回的 Future 只表示"清理完成",不表示"还会收事件"**:调用 `cancel()` 的那一刻起事件就不再投递了,所以**收口路径不该 `await` 它**。实测踩过:把每连接资源的 `dispose()` 写成 `await subscription.cancel()`,于是"资源已死"与"状态已 closed"之间多了一个 `await` 窗口 —— 而收口路径全在事件回调里,任何一条都可能在那个窗口里被再次触发,结果是**退避计时器起点漂移**(一条重连用例因此失败,不是崩溃,是时序漂)。修法:同步 `dispose()` + `unawaited(cancel().catchError(...))`
+- **"整体作废"比"每个加超时"更准确**:在途请求遇到断连要**立刻以错误结束**,否则调用方的 `await` 永远不返回(UI 表现是"转圈转到天荒地老",用户只能杀 App)。两种做法都能让它返回,但**客户端动作不同**:连接级拒绝 → `relay/offline` → "退避重试"(请求本身没问题);每请求超时 → "超时重试"(而请求可能已经在电脑侧执行了)。用连接级拒绝,而且它不需要每请求一个定时器
+- **测试"永远挂着"这类 bug 时,断言要在触发前挂好**:`expectLater(pending, throwsA(...))` 必须写在"断开"**之前** —— 否则那个错误 Future 在 Dart 里会被当成未处理异常直接报出来,测试红在断言之前,看起来像"bug 没修"。变异校验时它红的方式很典型:**挂 30 s 后超时**(正是"永远不返回"的症状)
 - 血泪史条目见 `docs/postmortem/`;此处只留结论。

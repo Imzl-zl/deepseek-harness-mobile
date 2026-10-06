@@ -334,6 +334,46 @@ void main() {
 
       await client.close();
     });
+
+    test('重连后心跳状态是**新的**（旧连接的沉默不能算到新连接头上）', () async {
+      // 这条守的是一个真 bug：`Keepalive` 持每连接状态（`_lastFrameAt`），
+      // 而它只在构造时建一次、`_connect()` **不重置它**。
+      //
+      // 时序要算准才暴露得出来（第一次写这条用例时算错了，它"通过"了但什么都没验到）：
+      // 心跳 60 s、半开阈值 120 s、判定周期 15 s。
+      // - t=60 s：发过一次 ping（它重置了 `_lastFrameAt`），此后 `_pingedInThisIdle`
+      //   挡住新 ping，于是沉默开始累积；
+      // - t=178 s：沉默 118 s（**还差 2 s 到阈值**，所以这时断开是合法的 ——
+      //   真到 120 s 的话半开早就把它关了）；
+      // - 断开 + 退避 1 s → t=179 s 重连，`_startTicking()` 取消旧 tick 并重排到 t=194 s；
+      // - t=194 s 那次 tick：**不重置**的话沉默算成 134 s ≥ 120 s → 立刻判半开
+      //   （症状是"刚重连上就被踢"，然后退避→重连→再被踢，抖个不停）。
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+      expect(client.state, ConnectionState.serving);
+
+      f.clock.advance(178000);
+      f.transport.dropFromPeer();
+      await pump();
+      expect(client.state, ConnectionState.backoff);
+
+      f.clock.advance(1000); // 退避到点 → 重连
+      await pump();
+      expect(client.state, ConnectionState.handshake, reason: '重连应进握手');
+
+      // 新连接的一个判定周期：沉默只该从**重连那一刻**算（15 s < 120 s）。
+      f.clock.advance(15000);
+      await pump();
+      expect(
+        client.state,
+        ConnectionState.handshake,
+        reason: '旧连接沉默的 118 s 不能算到新连接头上（否则刚连上就被踢）',
+      );
+
+      await client.close();
+    });
   });
 
   group('心跳与半开（契约 §2.2、§9）', () {
@@ -567,6 +607,51 @@ void main() {
         ),
       );
       expect((await f.store.load()), isEmpty, reason: '只读方法不该进待发队列');
+
+      await client.close();
+    });
+
+    test('在途请求遇到断连**必须被拒绝**，不能永远挂着', () async {
+      // 这条守的是一个真缺口：`_pendingCalls` 既没有超时，`_enterClosed()` 也不清它。
+      // 后果：连接在请求在途时断掉，调用方的 `await` **永远不返回** ——
+      // 而 UI 的表现是"转圈转到天荒地老"，用户只能杀掉 App。
+      // 断连是常态（§2.1 明写"重连是常态，不是异常路径"），所以这条路必然走到。
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+      expect(client.state, ConnectionState.serving);
+
+      // 发一个不带幂等键的调用（走即时请求路径），不等它。
+      final pending = client.call<Object?>('repo.info', const {});
+      await pump();
+      expect(
+        f.transport.sentFrames.any((x) => x['t'] == 'req'),
+        isTrue,
+        reason: '请求应已发出',
+      );
+
+      // **先挂上断言，再断开**：`pending` 会以错误完成，而 Dart 在"没有处理者的
+      // 错误 Future"上是直接报未处理异常（测试会红在断言之前，看起来像 bug 没修）。
+      final rejected = expectLater(
+        pending,
+        throwsA(
+          isA<ProtocolException>().having(
+            (e) => e.code,
+            'code',
+            ErrorCode.relayOffline,
+          ),
+        ),
+        reason: '断连时在途请求要被拒绝（否则调用方永远等不到）',
+      );
+
+      // 对端断开。
+      f.transport.dropFromPeer();
+      await pump();
+      await rejected;
+
+      // 诊断面：被拒绝的条数要如实记下来（"这次断连伤到了什么"的唯一证据）。
+      expect((client as SyncClientProbe).lastRejectedCalls, 1);
 
       await client.close();
     });

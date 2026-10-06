@@ -113,6 +113,15 @@ abstract interface class SyncClientProbe {
 
   /// 判定为半开时已沉默多久；没判过是 `null`。
   int? get lastHalfOpenSilentMs;
+
+  /// 当前在途请求数（UI 可据此显示"正在等待应答"）。
+  int get pendingCalls;
+
+  /// 上一次连接收口时被拒绝的在途请求数；没收口过是 `null`。
+  ///
+  /// 它值得暴露：**被拒绝的请求数是"这次断连伤到了什么"的唯一证据**。
+  /// 没有它，一次断连只留下"连接状态变了"，而"有几个请求被取消"无从得知。
+  int? get lastRejectedCalls;
 }
 
 /// 一次会话更新（`sessionUpdates` 的元素）。

@@ -65,7 +65,7 @@
 | `node protocol/verify-loopback.mjs` | **26 项**:手机 ⇄ 中转 ⇄ 桥接回环(含中转清空后重启) |
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量(改 `protocol/tools/` 后必跑) |
 | `node app/tools/verify-platform-boundary.mjs` | **40 项**(含 16 条规则自检 + 扫描 9 个 Dart 文件) |
-| `cd app && flutter test` | **128 项**(core 53 + 连接层 57 + 向量 16 + fixtures 回放 1 + smoke 1) |
+| `cd app && flutter test` | **132 项**(core 53 + 连接层 59 + 向量 16 + fixtures 回放 1 + smoke 1) |
 | `cd app && dart analyze --fatal-infos lib test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test` | 0 文件需重排(Dart 社区硬规范) |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
@@ -136,6 +136,19 @@
 
 ## 最近活跃窗口(2026-10-01 起)
 
+- **手机端连接层拆分(2026-10-02,同批)**:`sync_client_impl.dart` 971 行,先量三个候选簇再决定 ——
+  ① 每连接状态 6 字段 **33 处引用**、且建连/断连**各写一遍同一个重置清单** → 收成
+  `ConnectionResources`(该拆);② 在途请求表既无超时、断连也不清 → 收成 `CallRegistry`
+  (**该拆,而且顺带修掉一个真缺口**:连接在请求在途时断掉,调用方的 `await` **永远不返回** ——
+  断连是常态,所以 UI 会永久转圈;修法是"连接级拒绝",错误码 `relay/offline`);
+  ③ 订阅面只有 **17 处引用**、没有重复清单 → **不拆**(拆它只是搬家)。
+  顺带删掉 15 行死代码 `_writableWaiters`(手机侧只发 `req`/`res`/`credit`/`persisted`/`ping`,
+  而 §4.3 只压可补的 `ev`/`live`/`job` —— 手机一个都不发,所以那套唤醒机制没有生产者)。
+  **如实记录:`sync_client_impl.dart` 没有变短(971 → 969 行)** —— 这次拆分的收益是
+  **正确性**(两处真耦合 + 一个真缺口),不是行数。
+  另一处**验证了但没有 bug**:怀疑 `Keepalive` 不随连接重置会让"旧连接的沉默算到新连接头上",
+  两版用例都通过 —— 原因是 `hello` 经 `_write` 会重置它(隐式耦合,留作观察)。
+  见 `.agents/notes/implemented/2026-10-02-mobile-connection-layer-split.md`。
 - **手机端连接层落地(2026-10-02)**:`core/` 补齐 errors / connection / keepalive / transport /
   box / handshake_driver / outbox / sync_client(实现 900 余行)。
   **测试 71 → 128 项**:最难在真机复现的四类场景(断连 / 退避 / 半开 / 握手失败)
