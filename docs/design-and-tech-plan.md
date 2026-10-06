@@ -500,8 +500,8 @@ DSH 右侧有一条**轮次导航轨**(`ui-chat/TurnNavigator.tsx`):每一轮一
 1. **交互基线**(已完成):`mock/proto/` 可运行原型 + 验证脚本,覆盖抽屉、文件预览、授权接管、输入栏、任务与子代理。
 2. **协议规格与回环**(已完成):`protocol/` 的 16 条 fixtures + 参考实现 + 三个校验脚本(恢复只有两种结果、三角色回环、**中转状态清空后重启仍能收敛**、跨端密码学向量)。
 3. **电脑侧插件骨架**(已完成):`connector/` 做成 npm bundle,数据取自 DSH 已有服务(`sessionController.follow/page/prompt/cancel`、`approval`、`userQuestions`、`ctx.jobs`),对着同一批 fixtures 跑(275 项全绿)。**工程形态照参考插件的形状定**:`dsh.bundle.patch` 指向 4 行 `cordis.patch.yml`(`insert: [{ id, name, config }]`),`peerDependencies` 对 `@deepseek-ai/dsh*` 用精确版本(兼容性判据是它,不是 `engines.dsh`),`engines` 只写 node,DSH 各包(`0.2.0-rc.2` 线)以 devDependencies 供类型检查。
-4. **连通验证**:Tailscale 直连真机,跑通"发一句/回一句"。
-5. **Flutter 骨架 + 主题**:把 §5 token 与原型交互在 Dart 复刻骨架,一屏 Demo 对比原型验收还原度。**前置:先装 Flutter SDK**(本机 PATH 上没有)。
+4. **连通验证**:**分两件事**。① 传输层连通:目前只有**测试替身**(`connector/tests/support/phone.ts`)在真 socket 上跑通过,**仓库里没有任何可运行的客户端**;要真跑一次得先写一个临时客户端(纯 Node,不碰 Flutter,比手机端小得多)。② *真机*跑通"发一句/回一句"——**前置是第 5 步整条链**,没有 App 就没有东西能发起握手。本条排在第 5 步之前只表示"验证手段先备好",**不表示它先完成**。
+5. **Flutter 工程 + 骨架 + 主题**:先 `flutter create` 建出工程(`app/` 只有主题层,连 `pubspec.yaml` 都没有),再把 §5 token 与原型交互在 Dart 复刻骨架,一屏 Demo 对比原型验收还原度。**前置:先装 Flutter SDK**。**这是当前唯一"零进度"的部分,也是第 4 步②与所有手机端工作的闸门。**
 6. **只读会话**:接通道,手机看会话列表 + 对话 + 轨迹(不可发)。
 7. **可操作**:发消息 / 打断 / 插话 / 提问与审批回应。
 8. **后台任务面板**:投影 `ctx.jobs`(清单 + 状态 + 按需输出流 + 停止 + 清空为本地隐藏)。

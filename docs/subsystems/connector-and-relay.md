@@ -278,7 +278,7 @@ relay/
 | 1 | `protocol/` 扩展(前 7 条 fixture + 向量 + 参考实现) | `verify-fixtures` / `verify-loopback` / 向量 全绿 |
 | 2 | `connector/` 骨架(工程形态 + store + 空协议层) | 装进 profile 后 `dsh plugin list` 可见,未跳过 |
 | 3 | `protocol/` ↔ `connector/src/protocol` 对齐 | fixtures 在 connector 侧跑绿 |
-| 4 | 真机连通(Tailscale 直连) | 发一句 / 回一句(前置:§1.7 的监听面;真机部分待手机端 Dart 落地) |
+| 4 | 真机连通(Tailscale 直连) | 发一句 / 回一句。**前置:监听面(§1.7,已完成)+ 手机端整条链**——没有 App 就没有东西能发起握手 |
 | 5 | 会话只读(列表 / 对话 / 轨迹) | 手机看到与桌面一致 |
 | 6 | 可操作(发消息 / 打断 / 插话) | 幂等重发不产生第二条 |
 | 7 | 交互(审批 / 提问 / 计划审查)+ 仲裁三档 | 三档行为与契约 §6.2 一致 |

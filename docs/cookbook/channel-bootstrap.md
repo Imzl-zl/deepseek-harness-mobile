@@ -113,7 +113,7 @@ pnpm test
 
 ---
 
-## 5. 装进 profile 并在真机上跑通
+## 5. 装进 profile(挂载验证);真机连通要等第 6 步整条链做完
 
 ```powershell
 # 1) 装插件(以 DSH CLI 实际帮助为准)
@@ -124,7 +124,11 @@ dsh plugin --profile <name> add <connector 本地路径>
 
 判据:插件出现在清单里且**未被记入 `skippedBundles`**;若被跳过,99% 是 peer 版本不匹配。
 
-**接线到哪一步了**(真机联调前先看这一句):连接层已经完整 —— 三帧握手、会话密钥、
+**这一节能验到的是"能挂载",不是"能连通"。** `--dump-config` 只证明服务在树里有提供者;
+真正连上要等**第 6 步的手机端**落地 —— 没有 App,就没有任何一端能发起握手。
+本节的"跑通"是第 6 步之后的验收项,不是现在可做的一步。
+
+**接线到哪一步了**(看这一句就够):连接层已经完整 —— 三帧握手、会话密钥、
 每一种业务帧的 AEAD 封箱/解封、§4.3 的流控(W=128、收到即回 `credit`、满窗只压 `ev`/`live`),
 连接级 e2e 用手机侧的**独立实现**双向跑通过;方法面与 §5.6 的幂等管道也在。
 方法面当前 **12/22**:`repo.info` / `devices.list` / `session.list`(会话清单,不含标题 ——
@@ -143,7 +147,9 @@ dsh plugin --profile <name> add <connector 本地路径>
 入站 `persisted`(手机报落盘水位)已接:电脑侧据此裁剪每个会话的增量缓冲,
 **只有全部配对设备都确认过的区间才裁**(§5.5)。
 
-所以下面 5.1 的"发一句 / 回一句"**只差手机端客户端本身**(Dart 尚未落地)。
+所以下面 5.1 的"发一句 / 回一句"缺的**不是"客户端本身"这一件事,而是第 6 节整条链**
+(建工程 → `core/` → `data/`/`model/` → `ui/` → 能力包)。**第 5 节现在做不完**,
+它的"跑通"是第 6 节之后的验收项 —— 写在这里是为了留下**判据与顺序**,不是让人现在去跑。
 
 5.1 先用 Tailscale 直连做第一跳(契约 §14.6 的顺序):
 
@@ -151,27 +157,42 @@ dsh plugin --profile <name> add <connector 本地路径>
 手机(或笔记本上的临时客户端) ⇄ Tailscale ⇄ 电脑侧 connector
 ```
 
-判据:发一句 / 回一句跑通。
+判据:发一句 / 回一句跑通(前置:第 6 节的手机端)。
 
 电脑侧**接受连接**的那一半已就绪(`docs/subsystems/connector-and-relay.md` §1.7):配 `listenPort`
 即监听,每 accept 一条就装配一次;TLS 由 Tailscale(`tailscale serve`)或反向代理终结,插件只监听明文 WS。
-代码侧已用手机替身在真 socket 上跑通握手与双向 AEAD(`connector/tests/listener.test.ts`),
-缺的是手机端本身与真机可达性。
+`connector/tests/listener.test.ts` 已用手机替身在真 socket 上跑通握手与双向 AEAD ——
+**但那证明的是"电脑侧 + 替身",不是"两端跑通"**:替身是照契约重写的第二份 TS 实现,
+真正的互操作要等 Dart 侧跑同一批 `protocol/vectors`(第 6 节第 3 步)。
 
 5.2 接上中转后**复跑同一组用例**(契约 §14.2 的回环在真实中转下也要过)。
 
 ---
 
-## 6. 手机端(前置:先装 Flutter SDK)
+## 6. 手机端(前置:装 Flutter SDK **并建出工程**)
 
-`memory.md` 记录本机 PATH 上没有 Flutter/Dart。装好后再开工,按 `../subsystems/app-channel-client.md`:
+`memory.md` 记录本机 PATH 上没有 Flutter/Dart。`app/` 目前**只有主题层**(`lib/theme/` 两个
+dart 文件),**连 `pubspec.yaml` 都没有** —— 所以第一步是"建工程",不是"往现有工程里加代码":
+
+```powershell
+cd app
+flutter create --platforms=ios,android .   # 建出 pubspec.yaml 与各端目录
+flutter test                               # 确认空工程能跑
+```
+
+再按 `../subsystems/app-channel-client.md` 的 §1 分层落地(顺序即依赖方向):
 
 1. `core/` 先写 `frame` / `crypto` / `recovery` / `items`(纯 Dart,零平台依赖);
 2. `test/fixtures_test.dart` 跑同一批 `protocol/fixtures`;
 3. `test/crypto_vectors_test.dart` 跑 `protocol/vectors/`(跨端互操作);
-4. 三端能力包(`secure_store_*`)最后接。
+4. `data/` + `model/`(DTO、store 接口、会话模型);
+5. `ui/` 逐屏(`design-and-tech-plan.md` §7)+ `platform/` 装配点;
+6. 三端能力包(`secure_store_*` / `notify` / `live_surface` / `keepalive`)最后接。
 
 判据:第 2、3 步在**没有 UI、没有平台代码**的情况下全绿——这正是 `core/` 零平台依赖的意义。
+**这两步是全仓当前性价比最高的一步**:它们不需要 UI、不需要平台代码、不需要真机,
+而且一旦跑绿,"协议两侧互操作"这件事才算真的有了证据(第 5 节的替身不算)。
+**第 5 节的真机连通要等本节第 4、5 步**(有 UI 能发起握手);安卓 SDK 也只有到那时才需要。
 
 ---
 
