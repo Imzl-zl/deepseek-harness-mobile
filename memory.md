@@ -5,25 +5,26 @@
 
 ## 下一步(新会话从这里开始)
 
-**当前里程碑**:电脑侧两条路径都通(直连监听面 / 经中转);**手机端 `core/` 已落地并跑绿两批外部规格**
-(跨端密码学向量 16 项 + fixtures 三角色回放 494 项断言);**两端尚未在真 socket 上互连过** ——
-下一步是 `data/`+`model/` 与 `sync_client`。
+**当前里程碑**:电脑侧两条路径都通(直连监听面 / 经中转);**手机端 `core/` 全部落地**
+(会话层 + 连接层,`flutter test` **128 项**全绿);**两端尚未在真 socket 上互连过** ——
+下一步是 `data/`+`model/`,然后是 `ui/`。
 
 **手机端剩下的链**(真机仍在末端):
 
 ```text
 [✅] 装 Flutter SDK(3.41.9) + flutter create + cryptography
-[✅] core/(frame/crypto/handshake/items/recovery/flow)—— 纯 Dart,两批规格全绿
-[  ] core/sync_client.dart(连接状态机 + 订阅管理;要真 transport)
-[  ] data/ + model/(DTO、store 接口、会话模型)
+[✅] core/ 会话层(frame/crypto/handshake/items/recovery/flow)—— 两批规格全绿
+[✅] core/ 连接层(errors/connection/keepalive/transport/box/handshake_driver/outbox/sync_client)
+[  ] platform/ 的真实 ChannelTransport(dart:io 的 WebSocket;core/ 只留缝)
+[  ] data/ + model/(DTO、sqflite store、会话模型)
 [  ] ui/ 逐屏(可在 Windows 桌面跑:flutter run -d windows,不需要模拟器/真机)
 [  ] 三端能力包(secure_store_* / notify / live_surface / keepalive)
 [  ] 真机联调(前置:上面整条链 + 直连的两个缺口)
 ```
 
-1. **手机端 `core/` 剩下的那一层 + 上层**(工程已建、六层已绿;见上面的链):
-   下一步是 `core/sync_client.dart`(连接状态机 + 订阅管理,要真 transport)、`data/`+`model/`、
-   然后 `ui/` 逐屏。**`ui/` 能在 Windows 桌面上跑起来**(`flutter run -d windows`)——
+1. **手机端剩下的层**:`platform/` 的真实 `ChannelTransport`(用 `dart:io` 的 `WebSocket`;
+   `core/` 只留缝,实现归装配点)→ `data/`+`model/` → `ui/` 逐屏。
+   **`ui/` 能在 Windows 桌面上跑起来**(`flutter run -d windows`)——
    本机 VS 18 + MSVC + Windows SDK 齐全,**不需要模拟器、不需要真机**。
    规格:`docs/subsystems/app-channel-client.md`(§2 关键类型、§2.1 状态机、§6 UI 接线点、§7 测试策略)。
    **开工提示词:`docs/prompts/mobile-core-prompt.md`**(含版本闸门、本机环境、fixtures/vectors 的真实形状)。
@@ -64,7 +65,7 @@
 | `node protocol/verify-loopback.mjs` | **26 项**:手机 ⇄ 中转 ⇄ 桥接回环(含中转清空后重启) |
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量(改 `protocol/tools/` 后必跑) |
 | `node app/tools/verify-platform-boundary.mjs` | **40 项**(含 16 条规则自检 + 扫描 9 个 Dart 文件) |
-| `cd app && flutter test` | **71 项**(core 单测 53 + 跨端向量 16 + fixtures 回放 1 + smoke 1) |
+| `cd app && flutter test` | **128 项**(core 53 + 连接层 57 + 向量 16 + fixtures 回放 1 + smoke 1) |
 | `cd app && dart analyze --fatal-infos lib test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test` | 0 文件需重排(Dart 社区硬规范) |
 | `node mock/proto/tools/verify-icons.cjs` | 原型图标集(改 `mock/proto/` 后必跑) |
@@ -116,8 +117,7 @@
   **同批修掉一个既有静默 bug**:`attach()` 原来没起 `start()` 的两个周期任务(攒批 flush / 保活判定)
   —— 表现是"接受来的连接能连上、能握手,但可攒批的帧一条都发不出去,且半开永远判不出来"。
 - **配对链闭合**:出码(带登记)→ 换票 → 经中转转发 → 电脑侧落设备行 → 明文回执。
-- **未做**:上面"下一步"的 1–5(手机端上层 / 直连缺口 / 多实例 / 其余面 / 真机);
-  幂等的启动核对;中转的令牌签发目前靠 CLI(库还没落地)。
+- **未做**:上面"下一步"的 1–5(手机端上层 / 直连缺口 / 多实例 / 其余面 / 真机);  幂等的启动核对;中转的令牌签发目前靠 CLI(库还没落地)。
 - **profile 侧已起步**:专用 profile `dsh-mobile-test` 里插件装成 `link:` 并进了 `bundles`;
   `--dump-config` 证实三个必需服务在树里都有提供者。**只验到"能挂载",没验过"能连上"** ——
   那要等手机端落地。
@@ -136,7 +136,19 @@
 
 ## 最近活跃窗口(2026-10-01 起)
 
-- **手机端 `core/` 已落地(2026-10-02)**:Flutter `3.41.9`(版本闸门:上界由鸿蒙 fork 定,
+- **手机端连接层落地(2026-10-02)**:`core/` 补齐 errors / connection / keepalive / transport /
+  box / handshake_driver / outbox / sync_client(实现 900 余行)。
+  **测试 71 → 128 项**:最难在真机复现的四类场景(断连 / 退避 / 半开 / 握手失败)
+  现在都由**假传输**在毫秒内驱动(`ChannelTransport` 是注入的缝,`core/` 仍是纯 Dart)。
+  两处判断值得记:
+  - **错误码从字符串换成枚举** —— 因为报错类别决定下一步动作,而字符串拼错会**静默降级**
+    (`'protocol/bad-fram'` → `internal`)。切法是"自己构造用枚举、对端给的走 `fromWire`"。
+  - **`SyncClient` 的诊断面拆成 `SyncClientProbe`** —— UI 不该看到帧列表(会诱使它自己解析帧)。
+  迁移用了**带命中数断言的一次性脚本**,它两次拦住真问题(期望值数错、正则留下 `,,` 残渣)。
+  测试抓到一个真 bug:注入的定时器在回调末尾**无条件续期**,于是"该死了"的 tick
+  在 `_connect()` 的 `await` 中途把状态推成 `closed`,回来后的 `to(handshake)` 变成非法迁移。
+  见 `.agents/notes/implemented/2026-10-02-mobile-connection-layer.md`。
+- **手机端 `core/` 会话层(2026-10-02)**:Flutter `3.41.9`(版本闸门:上界由鸿蒙 fork 定,
   当前 stable 3.47.6 不许装)装到 `D:\soft\flutter`;`flutter create` 建出工程(90 文件,
   含 windows 端 —— **桌面调试用**,本机 VS 18 齐全,不需要模拟器/真机);依赖只有 `cryptography`。
   六层 `app/lib/core/`:frame / crypto / handshake / items / recovery / flow,**纯 Dart 零平台依赖**。

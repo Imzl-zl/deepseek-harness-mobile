@@ -18,6 +18,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dsh_mobile/core/crypto.dart';
+import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/flow.dart';
 import 'package:dsh_mobile/core/frame.dart';
 import 'package:dsh_mobile/core/handshake.dart';
@@ -208,7 +209,7 @@ void main() {
             isA<ProtocolException>().having(
               (e) => e.code,
               'code',
-              'protocol/bad-frame',
+              ErrorCode.badFrame,
             ),
           ),
           reason: '$type 不该在握手期出现',
@@ -390,7 +391,7 @@ void main() {
           isA<ProtocolException>().having(
             (e) => e.code,
             'code',
-            'protocol/bad-frame',
+            ErrorCode.badFrame,
           ),
         ),
       );
@@ -515,7 +516,7 @@ void main() {
           isA<ProtocolException>().having(
             (e) => e.code,
             'code',
-            'protocol/not-paired',
+            ErrorCode.notPaired,
           ),
         ),
       );
@@ -550,7 +551,7 @@ void main() {
           isA<ProtocolException>().having(
             (e) => e.code,
             'code',
-            'protocol/not-paired',
+            ErrorCode.notPaired,
           ),
         ),
       );
@@ -566,7 +567,7 @@ void main() {
           isA<ProtocolException>().having(
             (e) => e.code,
             'code',
-            'protocol/not-paired',
+            ErrorCode.notPaired,
           ),
         ),
       );
@@ -582,7 +583,7 @@ void main() {
           isA<ProtocolException>().having(
             (e) => e.code,
             'code',
-            'protocol/not-paired',
+            ErrorCode.notPaired,
           ),
         ),
       );
@@ -607,7 +608,7 @@ void main() {
             isA<ProtocolException>().having(
               (e) => e.code,
               'code',
-              'protocol/not-paired',
+              ErrorCode.notPaired,
             ),
           ),
           reason: '公钥 "$bad" 不是合法十六进制，仍必须报 not-paired',
@@ -625,7 +626,7 @@ void main() {
           isA<ProtocolException>().having(
             (e) => e.code,
             'code',
-            'protocol/not-paired',
+            ErrorCode.notPaired,
           ),
         ),
       );
@@ -656,7 +657,7 @@ void main() {
           isA<ProtocolException>().having(
             (e) => e.code,
             'code',
-            'protocol/bad-frame',
+            ErrorCode.badFrame,
           ),
         ),
       );
@@ -835,7 +836,7 @@ void main() {
           isA<ProtocolException>().having(
             (e) => e.code,
             'code',
-            'protocol/unsupported-version',
+            ErrorCode.unsupportedVersion,
           ),
         ),
       );
@@ -862,7 +863,7 @@ void main() {
             isA<ProtocolException>().having(
               (e) => e.code,
               'code',
-              'protocol/bad-frame',
+              ErrorCode.badFrame,
             ),
           ),
           reason: 'id=$bad 不是 ASCII 安全字符集',

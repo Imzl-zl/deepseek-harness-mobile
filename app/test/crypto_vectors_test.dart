@@ -16,6 +16,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dsh_mobile/core/crypto.dart';
+import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/frame.dart';
 import 'package:dsh_mobile/core/handshake.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -258,7 +259,7 @@ void main() {
             isA<ProtocolException>().having(
               (e) => e.code,
               'code',
-              'protocol/bad-frame',
+              ErrorCode.badFrame,
             ),
           ),
           reason: '$name 必须解密失败（认证失败要转成协议错误码，不能让包的裸异常漏出去）',
@@ -288,7 +289,7 @@ void main() {
           isA<ProtocolException>().having(
             (e) => e.code,
             'code',
-            'protocol/replay',
+            ErrorCode.replay,
           ),
         ),
       );
@@ -299,7 +300,7 @@ void main() {
           isA<ProtocolException>().having(
             (e) => e.code,
             'code',
-            'protocol/replay',
+            ErrorCode.replay,
           ),
         ),
       );
@@ -378,7 +379,7 @@ void main() {
           isA<ProtocolException>().having(
             (e) => e.code,
             'code',
-            'protocol/unsupported-version',
+            ErrorCode.unsupportedVersion,
           ),
         ),
       );
@@ -388,7 +389,7 @@ void main() {
           isA<ProtocolException>().having(
             (e) => e.code,
             'code',
-            'protocol/bad-frame',
+            ErrorCode.badFrame,
           ),
         ),
       );
@@ -399,7 +400,7 @@ void main() {
           isA<ProtocolException>().having(
             (e) => e.code,
             'code',
-            'protocol/bad-frame',
+            ErrorCode.badFrame,
           ),
         ),
       );

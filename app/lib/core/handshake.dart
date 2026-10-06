@@ -27,6 +27,7 @@ library;
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'errors.dart';
 import 'frame.dart';
 
 /// transcript 的固定前缀。改动它等于改协议版本。
@@ -41,7 +42,7 @@ String _hex(Object? value, String field, int length) {
       value.length != length ||
       !RegExp(r'^[0-9a-fA-F]+$').hasMatch(value)) {
     throw ProtocolException(
-      'protocol/bad-frame',
+      ErrorCode.badFrame,
       '$field 必须是 ${length ~/ 2} 字节的十六进制',
     );
   }
@@ -50,7 +51,7 @@ String _hex(Object? value, String field, int length) {
 
 String _id(Object? value, String field) {
   if (value is! String || !idPattern.hasMatch(value)) {
-    throw ProtocolException('protocol/bad-frame', '$field 必须是 ASCII 安全字符集');
+    throw ProtocolException(ErrorCode.badFrame, '$field 必须是 ASCII 安全字符集');
   }
   return value;
 }
@@ -60,10 +61,10 @@ Map<String, Object?> _unbox(String box, String field) {
   try {
     payload = jsonDecode(box);
   } catch (error) {
-    throw ProtocolException('protocol/bad-frame', '$field 无法解析：$error');
+    throw ProtocolException(ErrorCode.badFrame, '$field 无法解析：$error');
   }
   if (payload is! Map<String, Object?>) {
-    throw ProtocolException('protocol/bad-frame', '$field 必须是 JSON 对象');
+    throw ProtocolException(ErrorCode.badFrame, '$field 必须是 JSON 对象');
   }
   return payload;
 }

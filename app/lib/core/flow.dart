@@ -14,7 +14,7 @@ library;
 
 import 'dart:convert';
 
-import 'frame.dart';
+import 'errors.dart';
 
 /// 已发未 credit 的帧数上限（契约 §4.3）。
 const int sendWindowFrames = 128;
@@ -50,11 +50,11 @@ int decodeCredit(String box) {
   try {
     parsed = jsonDecode(box);
   } catch (error) {
-    throw ProtocolException('protocol/bad-frame', 'credit 载荷不是合法 JSON：$error');
+    throw ProtocolException(ErrorCode.badFrame, 'credit 载荷不是合法 JSON：$error');
   }
   final ack = parsed is Map ? parsed['ack'] : null;
   if (ack is! int || ack < 0) {
-    throw ProtocolException('protocol/bad-frame', 'credit.ack 必须是非负整数，收到 $ack');
+    throw ProtocolException(ErrorCode.badFrame, 'credit.ack 必须是非负整数，收到 $ack');
   }
   return ack;
 }

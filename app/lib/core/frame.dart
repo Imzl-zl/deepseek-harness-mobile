@@ -20,6 +20,8 @@ library;
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'errors.dart';
+
 /// 帧版本。对端版本不支持即 `protocol/unsupported-version`（契约 §3.1）。
 const int wireVersion = 1;
 
@@ -82,21 +84,6 @@ final RegExp idPattern = RegExp(r'^[A-Za-z0-9_-]+$');
 
 /// 帧 `id` 的长度（契约 §3：16 字节 base64url）。
 const int frameIdBytes = 16;
-
-/// 协议错误码（契约 §3.1 的封闭表里本层用到的几个）。
-///
-/// 与电脑侧的 `ProtocolError` 对应：调用方按 `code` 分类，
-/// 而不是按异常类型 —— 两端的异常类型体系不同，错误码才是协议的一部分。
-class ProtocolException implements Exception {
-  ProtocolException(this.code, this.message);
-
-  /// 契约 §3.1 的错误码（如 `protocol/bad-frame`）。
-  final String code;
-  final String message;
-
-  @override
-  String toString() => 'ProtocolException($code): $message';
-}
 
 /// 是不是握手帧。
 bool isHandshakeFrameType(String type) => handshakeFrameTypes.contains(type);
@@ -176,7 +163,7 @@ String _decimal(Object? value) {
   if (value is double && value == value.truncateToDouble()) {
     return value.truncate().toString();
   }
-  throw ProtocolException('protocol/bad-frame', 'AAD 的数字字段必须是整数：$value');
+  throw ProtocolException(ErrorCode.badFrame, 'AAD 的数字字段必须是整数：$value');
 }
 
 /// AAD 规范化：`v "|" t "|" id "|" sid "|" seq "|" fc`（契约 §3）。
@@ -206,7 +193,7 @@ String encodeFrame(Map<String, Object?> frame) {
   final bytes = utf8.encode(line).length;
   if (bytes > maxFrameBytes) {
     throw ProtocolException(
-      'protocol/bad-frame',
+      ErrorCode.badFrame,
       '帧 $bytes 字节超过上限 $maxFrameBytes（类型 ${frame['t']}）',
     );
   }
@@ -246,30 +233,30 @@ class UnsupportedFrame extends DecodeResult {
 DecodeResult decodeFrame(String line) {
   final bytes = utf8.encode(line).length;
   if (bytes > maxFrameBytes) {
-    throw ProtocolException('protocol/bad-frame', '收到 $bytes 字节的帧，超过上限');
+    throw ProtocolException(ErrorCode.badFrame, '收到 $bytes 字节的帧，超过上限');
   }
 
   final Object? parsed;
   try {
     parsed = jsonDecode(line);
   } catch (error) {
-    throw ProtocolException('protocol/bad-frame', '不是合法 JSON：$error');
+    throw ProtocolException(ErrorCode.badFrame, '不是合法 JSON：$error');
   }
   if (parsed is! Map<String, Object?>) {
-    throw ProtocolException('protocol/bad-frame', '帧必须是 JSON 对象');
+    throw const ProtocolException(ErrorCode.badFrame, '帧必须是 JSON 对象');
   }
 
   if (parsed['v'] != wireVersion) {
     // 版本不认识就别猜语义 —— 直接告诉对端升级。
     throw ProtocolException(
-      'protocol/unsupported-version',
+      ErrorCode.unsupportedVersion,
       '帧版本 ${parsed['v']} 不受支持',
     );
   }
 
   final type = parsed['t'];
   if (type is! String) {
-    throw ProtocolException('protocol/bad-frame', '帧缺少 t');
+    throw const ProtocolException(ErrorCode.badFrame, '帧缺少 t');
   }
 
   if (!frameTypes.contains(type)) {
@@ -284,10 +271,7 @@ DecodeResult decodeFrame(String line) {
     final value = parsed[key];
     if (value == null) continue;
     if (value is! String || !idPattern.hasMatch(value)) {
-      throw ProtocolException(
-        'protocol/bad-frame',
-        '$key 不是 ASCII 安全字符集：$value',
-      );
+      throw ProtocolException(ErrorCode.badFrame, '$key 不是 ASCII 安全字符集：$value');
     }
   }
 
@@ -309,7 +293,7 @@ void assertHandshakePhase(
     return;
   }
   throw ProtocolException(
-    'protocol/bad-frame',
+    ErrorCode.badFrame,
     '握手未完成时收到 $type 帧：本阶段只接受 ${[...handshakeFrameTypes, ...pairingFrameTypes].join(' / ')}',
   );
 }
@@ -329,7 +313,7 @@ class LineSplitter {
     _buffer += chunk;
     if (utf8.encode(_buffer).length > maxFrameBytes) {
       _buffer = '';
-      throw ProtocolException('protocol/bad-frame', '未闭合的行超过单帧上限');
+      throw const ProtocolException(ErrorCode.badFrame, '未闭合的行超过单帧上限');
     }
     final lines = _buffer.split(frameDelimiter);
     // 最后一段可能是半行，留到下一片。

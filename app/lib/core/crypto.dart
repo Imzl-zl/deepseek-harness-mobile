@@ -26,6 +26,7 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 
+import 'errors.dart';
 import 'frame.dart';
 
 /// 会话密钥派生的 `info` 前缀（契约 §4.1）。实际传给 HKDF 的是
@@ -70,13 +71,13 @@ String toHex(List<int> bytes) {
 /// 小写十六进制 → 字节。奇数长度或非十六进制字符即抛。
 Uint8List fromHex(String hex) {
   if (hex.length.isOdd) {
-    throw ProtocolException('protocol/bad-frame', '十六进制长度必须是偶数：${hex.length}');
+    throw ProtocolException(ErrorCode.badFrame, '十六进制长度必须是偶数：${hex.length}');
   }
   final out = Uint8List(hex.length ~/ 2);
   for (var i = 0; i < out.length; i += 1) {
     final byte = int.tryParse(hex.substring(i * 2, i * 2 + 2), radix: 16);
     if (byte == null) {
-      throw ProtocolException('protocol/bad-frame', '不是合法十六进制：$hex');
+      throw ProtocolException(ErrorCode.badFrame, '不是合法十六进制：$hex');
     }
     out[i] = byte;
   }
@@ -223,7 +224,7 @@ Future<String> open({
       aad: aadOf(aadFields),
     );
   } on SecretBoxAuthenticationError catch (error) {
-    throw ProtocolException('protocol/bad-frame', '解箱失败（AAD、fc 或密文不符）：$error');
+    throw ProtocolException(ErrorCode.badFrame, '解箱失败（AAD、fc 或密文不符）：$error');
   }
   return utf8.decode(clear);
 }
@@ -246,7 +247,7 @@ SealedBox unpackBox(String box) {
   final raw = base64UrlToBytes(box);
   if (raw.length < aeadTagBytes) {
     throw ProtocolException(
-      'protocol/bad-frame',
+      ErrorCode.badFrame,
       '箱只有 ${raw.length} 字节，不足一个认证标签',
     );
   }
@@ -490,14 +491,14 @@ Future<void> verifySignature({
     signatureBytes = fromHex(signatureHex);
   } on ProtocolException catch (error) {
     throw ProtocolException(
-      'protocol/not-paired',
+      ErrorCode.notPaired,
       '$role 的公钥或签名不是合法十六进制：${error.message}',
     );
   }
 
   if (publicBytes.length != rawKeyBytes) {
     throw ProtocolException(
-      'protocol/not-paired',
+      ErrorCode.notPaired,
       '$role 的 Ed25519 公钥应为 $rawKeyBytes 字节，收到 ${publicBytes.length}',
     );
   }
@@ -513,12 +514,12 @@ Future<void> verifySignature({
     );
   } catch (error) {
     // 构造公钥失败也归到"不是我以为的那一端"，不暴露内部分支。
-    throw ProtocolException('protocol/not-paired', '$role 验签无法进行：$error');
+    throw ProtocolException(ErrorCode.notPaired, '$role 验签无法进行：$error');
   }
 
   if (!ok) {
     throw ProtocolException(
-      'protocol/not-paired',
+      ErrorCode.notPaired,
       '$role 的签名对不上 transcript（中继可能替换了公钥）',
     );
   }
@@ -544,7 +545,7 @@ Future<void> verifyConfirm({
   final expected = await transcriptHashOf(transcript);
   if (transcriptHash != expected) {
     throw ProtocolException(
-      'protocol/not-paired',
+      ErrorCode.notPaired,
       'confirm 的 transcriptHash 不匹配（期望 $expected，收到 $transcriptHash）',
     );
   }
@@ -581,10 +582,10 @@ class ReplayGuard {
   /// 接受一个 `fc`；重放或重复投递时抛 `protocol/replay`。
   void accept(int fc) {
     if (fc < 0) {
-      throw ProtocolException('protocol/bad-frame', 'fc 必须是非负整数，收到 $fc');
+      throw ProtocolException(ErrorCode.badFrame, 'fc 必须是非负整数，收到 $fc');
     }
     if (fc <= _maxFc) {
-      throw ProtocolException('protocol/replay', 'fc=$fc 不大于已见最大 $_maxFc');
+      throw ProtocolException(ErrorCode.replay, 'fc=$fc 不大于已见最大 $_maxFc');
     }
     _maxFc = fc;
   }

@@ -39,7 +39,7 @@
 - 图标集校验(不需要浏览器):`node mock/proto/tools/verify-icons.cjs`
 - **手机端 `app/`(Flutter 工程;`flutter` 装在 `D:\soft\flutter`,已进用户 PATH)**:
   - **版本闸门:锁 Flutter `3.41.9`**(上界由鸿蒙 fork 定,`app-platform-boundaries.md` §4)。当前上游 stable 是 3.47.6,**不许装** —— Dart SDK 版本决定语言特性,升上去等接鸿蒙时要回改一大片。自带 Dart 3.11.5。
-  - `cd app; flutter test` —— 跑 `test/`,当前 **71 项**:core 单测 53 + 跨端向量 16 + fixtures 三角色回放 1 + `flutter create` 自带 smoke 1
+  - `cd app; flutter test` —— 跑 `test/`,当前 **128 项**:core 单测 53 + 连接层 57(状态机/退避/心跳半开/箱与握手/接线 e2e/outbox/LiveAccumulator) + 跨端向量 16 + fixtures 三角色回放 1 + `flutter create` 自带 smoke 1
   - `cd app; dart analyze --fatal-infos lib test` —— **社区口径的静态检查**(比 `flutter analyze` 严:把 info 也当失败)。0 问题才算干净
   - `cd app; dart format --output=none --set-exit-if-changed lib test` —— **Dart 社区硬规范**(Flutter CI 一直拿它当门禁)。`--set-exit-if-changed` 是判据,不是"看一眼"
   - `cd app; flutter pub get` —— 装依赖(`cryptography` 是唯一的非 SDK 依赖)
@@ -140,4 +140,8 @@
 - **fixtures 的 `snapshotPageSize` 必须读,不能写死**:替身里把页大小写成 100 会让"分页"永远只走一页,于是 `hasMore` / 续页 / **分页期间的并发增量**全都测不到 —— 而 fixture 12 就是专门测这个的(它给的是 2)。表现是"没有进行中的快照"抛错或静默少断言
 - **`protocol/not-paired` 与 `protocol/bad-frame` 的边界要**整段**收口,不能让解析层的错误漏出去**:手机按错误码决定下一步 —— `not-paired` 是"清除本地凭据、回配对页",`bad-frame` 是"这一帧格式不对、重试"。实测踩过:`verifySignature` 里 `fromHex(publicKeyHex)` 原本在 try **之外**,于是"公钥不是合法十六进制"漏出 `bad-frame`,把"设备身份不对"报成了"帧格式不对" —— **用户就永远卡在重试上**。修法不是 `try/on ProtocolException/rethrow`(那会把 `fromHex` 的 `bad-frame` 一起放行,**因为它是同一个异常类型**),而是显式把它翻译成 `not-paired`。教训:凡是"按错误码分派动作"的地方,要有一条**坏输入**的用例(合法十六进制但长度不对、奇数长度、非十六进制字符各一条)
 - **Dart 社区的两条硬规范要在改完就跑,别攒着**:`dart format --output=none --set-exit-if-changed lib test`(Flutter CI 一直拿它当门禁)与 `dart analyze --fatal-infos lib test`(比 `flutter analyze` 严)。实测:`dart format` 会**重排 `if` 的花括号**,于是它能把一条**被 lint 拦下的写法**暴露出来(`curly_braces_in_flow_control_structures`)—— 所以顺序是先 format 再 analyze,反了会看到"刚改完又冒出新问题"
+- **`core/` 里"错误码"必须是枚举,不能是字符串** —— 因为**报错类别决定下一步动作**。电脑侧(`connector/src/protocol/errors.ts`)的 `ProtocolError` 收 `string` 再归一(不在封闭表里就降级成 `internal`):那条归一化是**为对端给的码**设计的,但用在**我们自己构造**的码上时,`'protocol/bad-fram'`(少个 e)会**静默变成 `internal`** —— 编译通过、测试可能也过,只是类别变了。实测踩过:`not-paired` 被报成 `bad-frame`,而两者的动作是"清除凭据回配对页"与"重试",**报错类别错了用户就永远卡在重试上**。Dart 侧的切法:**自己构造用枚举**(拼错即编译错误)、**对端给的走 `ErrorCode.fromWire`**(未知归 `internal`)。新增错误码要改**两边**(TS 表 + Dart 枚举),目前没有门禁盯这件事
+- **一次性迁移脚本要带"命中数断言",而且断言不止一种**:`app/tools/migrate-error-codes.mjs` 是本项目第一个这种脚本(27 处替换),它两次拦住了真问题 —— ① 我按 `Select-String` 的输出数命中数(每行只报第一个匹配),期望值偏小 → 脚本拒绝写盘;② 正则没吞掉原逗号,替换后留下 `ErrorCode.x,,`(数量是对的,**数量守卫拦不住**) → 补了一条"改完不许出现 `,,`"的兜底断言。教训:**机械替换的数量断言只能证明"改了几处",不能证明"改对了"**,要再加一条针对残渣形状的断言
+- **注入的定时器在回调末尾"无条件续期"是个静默 bug**:`_startTicking` 的 `run()` 原本在末尾无条件重排下一次 tick,而半开路径会调 `_enterClosed()`(它取消了 tick 并可能已进退避)→ 那个"该死了"的定时器继续跑,在 `_connect()` 的 `await` 中途再调一次 `_enterClosed()`,把状态从 `connecting` 推到 `closed`,于是 `await` 回来后的 `to(handshake)` 变成**非法迁移**(实测报错 `backoff → handshake`)。修法:续期前判断 `_closed || _cancelTick == null`。**判据是测试给的**:推进 4 个心跳周期后状态机抛错
+- **`core/` 的异步边界:测试要"把事件循环跑到静默"再断言**:从种子建密钥对、验签、派生、封箱**全是 `Future`**(`cryptography` 的 API 如此),所以"`start()` 返回"不等于"`hello` 已发出"。真实客户端是长活的、那一拍无所谓;测试需要一个 `pump()` 辅助(若干次 `Future.delayed(Duration.zero)`),否则断言会看到空列表而误判成"没实现"
 - 血泪史条目见 `docs/postmortem/`;此处只留结论。
