@@ -191,53 +191,14 @@ dsh-mobile/
 | 文件 diff 删行:底 / 行号槽 / 标记 | `#3C1F1B` / `#28130E` / `#FA423E` |
 | 工具行 +N/−M 统计 | 增=绿标记,删=红标记 |
 
-### 5.7 Flutter 落地(`lib/theme/dsh_colors.dart` 草图)
+### 5.7 Flutter 落地
 
-```dart
-class DshColors {
-  static const bgBase       = Color(0xFF151517);
-  static const sidebar      = Color(0xFF1B1B1C);
-  static const layer1       = Color(0xFF232324); // 卡片/面板
-  static const layer2       = Color(0xFF2C2C2E);
-  static const layer3       = Color(0xFF353638);
-  static const menuSurface  = Color(0xFF43454A);
+**落地代码即真值,本节不抄第二份**:色板在 `app/lib/theme/dsh_colors.dart`(`DshColors`),
+圆角 / 排版 / 等宽栈在 `app/lib/theme/dsh_theme.dart`(`DshRadius` / `DshTheme` / `dshMonoFallback`)。
+两者按 §5.1–§5.6 的 token 落地,各有 `design-platform.css` 的来源注释。
 
-  static const labelPrimary   = Color(0xFFF9FAFB);
-  static const labelSecondary = Color(0xFFCFD3D6);
-  static const labelTertiary  = Color(0xFFADB2B8);
-  static const labelCaption   = Color(0xFF81858C);
-  static const onAccent       = Color(0xFF0F1115);
-
-  static const accentBlue   = Color(0xFF5686FE);
-  static const businessBlue = Color(0xFF7AAAFF);
-
-  // 角色/甘特
-  static const roleContext  = Color(0xFF22C55E);
-  static const roleContextBg= Color(0xFF233C2C);
-  static const roleAssistant= Color(0xFF9E7BAA); // ≈ lerp(accentBlue, error, .4)
-  static const roleTool     = Color(0xFFDD8629);
-  static const roleToolBg   = Color(0xFF27241F);
-  static const error        = Color(0xFFF25A5A);
-
-  // diff(代码变更,深色)
-  static const codeDiffAdd   = Color(0x1F22C55E); // 绿 @12%
-  static const codeDiffDel   = Color(0x1FF25A5A); // 红 @12%
-  static const fileDiffAddBg = Color(0xFF1F3124);
-  static const fileDiffAddMk = Color(0xFF41C977);
-  static const fileDiffDelBg = Color(0xFF3C1F1B);
-  static const fileDiffDelMk = Color(0xFFFA423E);
-
-  // 上下文分段
-  static const ctxSystem    = Color(0xFFADB2B8);
-  static const ctxTools     = Color(0xFFA78BFA);
-  static const ctxMessages  = Color(0xFF4D93F8);
-
-  // 分隔线(在 layer 上叠白)
-  static Color border(double a) => Color.fromRGBO(255,255,255,a); // .06/.12/.16/.20
-}
-
-class DshRadius { static const xs=4.0, sm=8.0, md=12.0, lg=16.0, xl=20.0, panel=28.0; }
-```
+**改色板改 Dart 文件,不要改本文档** —— 按 `docs/AGENTS.md`「严禁人肉手抄生成物」,
+本节只留指针,不复制代码(副本必然与代码漂移)。
 
 ---
 
@@ -503,41 +464,18 @@ DSH 右侧有一条**轮次导航轨**(`ui-chat/TurnNavigator.tsx`):每一轮一
 
 **已在本文覆盖**:ui-conversation/ui-chat(对话)、ui-trajectory(轨迹/甘特)、ui-tool(工具行)、ui-deliverables(diff/交付物预览)、ui-attachment(图片)、ui-theme(主题)、ui-primitives(基础组件)、ui-settings*/ui-plugin-manager/ui-permission-presets/ui-agent-preset(设置/模型/插件)。
 
-**必补(控制类必需,之前漏了)**:
-| 包 | 界面 | 移动端 |
-|---|---|---|
-| ★ ui-approval | 工具/权限审批 | 待审批卡 + 推送,允许/拒绝(远程控制核心) |
-| ★ ui-user-questions | Agent 提问(ask_user_question) | 输入区上方插卡回答 / 推送打开 |
-| ★ ui-model-selection | 会话内模型 + 权限模式切换 | 输入栏上的模型选择器 |
-| ★ ui-plan | 计划审查(plan review) | 计划卡:批准/修改/继续 |
-| ★ ui-conversation composer | 输入、排队(queue dock)、打断/steering | 输入栏 + 排队消息 + 运行中打断 |
+**★ 控制类必需**(之前漏了,是远程控制的核心):
+`ui-approval`(工具/权限审批)→ 待审批卡 + 推送,允许/拒绝;
+`ui-user-questions`(Agent 提问)→ 输入区上方插卡回答;
+`ui-model-selection`(会话内模型 + 权限模式)→ 输入栏模型选择器;
+`ui-plan`(计划审查)→ 计划卡:批准/修改/继续;
+`ui-conversation composer`(输入/排队/打断)→ 输入栏 + 排队消息 + 运行中打断。
 
-**功能面(逐步补)**:
-| 包 | 界面 | 移动端 |
-|---|---|---|
-| ○ ui-goal | 目标(create_goal) | 目标卡/面板,查看与推进 |
-| ○ ui-jobs | 后台任务 | **右侧抽屉的「任务」面板**(见 §7.8):一行/两行两种行规格照源码;停止两段式(running → stopping → 终态),不乐观更新;不做"重试" |
-| ○ ui-subagent | 子代理 | **右侧抽屉的「子代理」面板**,与任务同一套行样式 |
-| ○ ui-schedule / ui-input-trigger | 定时任务 / 触发器(webhook/github/schedule) | 任务管理页 + 触发来源标记 |
-| ○ ui-commands | 斜杠命令 / 命令面板 | 输入栏 "/" 唤起命令 |
-| ○ ui-skill | 技能 | 技能列表 / 调用展示 |
-| ○ ui-workflow-run | 工作流运行 | 运行进度/结果 |
-| ○ ui-reference | @ 引用(文件/路径) | 输入区 @ 引用选择 |
-| ○ ui-message-feedback | 消息点赞/反馈 | 消息操作里加反馈 |
-| ○ ui-settings-web-search | 联网搜索设置 | 设置项 |
-| ○ ui-workspace / ui-directory-picker | 工作区 / 选目录(新建会话选 cwd) | 新建会话流程选项目目录 |
-| ○ connection | 连接状态 | 复用为"中转连接/设备在线"状态(§7.1) |
+**○ 功能面**(逐步补):`ui-goal` 目标卡;`ui-jobs` 与 `ui-subagent` → **右侧抽屉的「任务」「子代理」面板**(行规格照源码,停止两段式不乐观更新,不做重试);`ui-schedule`/`ui-input-trigger` 任务管理页 + 触发来源标记;`ui-commands` 输入栏 "/" 唤起;`ui-skill` 技能列表;`ui-workflow-run` 运行进度;`ui-reference` @ 引用;`ui-message-feedback` 消息反馈;`ui-settings-web-search` 设置项;`ui-workspace`/`ui-directory-picker` 新建会话选目录;`connection` 复用为"中转连接/设备在线"状态。
 
-**侧栏族(桌面侧栏 → 手机全屏页/sheet,按 bridge 能力上)**:
-| 包 | 界面 | 移动端 |
-|---|---|---|
-| △ ui-sidebar-files | 文件浏览 | 文件页(浏览/预览/上传下载) |
-| △ ui-sidebar-terminal | 终端 | 终端页(交互式) |
-| △ ui-sidebar-documentpreview | 文档预览 | 全屏预览页 |
-| △ ui-sidebar-browser | 内置浏览器(网页链接) | 应用内 WebView / 系统浏览器(按"网页链接打开方式") |
-| △ ui-sidebar-right | 右侧栏(引导/指南) | 帮助/引导页 |
+**△ 侧栏族**(桌面侧栏 → 手机全屏页/sheet,按 bridge 能力上):`ui-sidebar-files` 文件页、`ui-sidebar-terminal` 终端页、`ui-sidebar-documentpreview` 全屏预览、`ui-sidebar-browser` 应用内 WebView 或系统浏览器、`ui-sidebar-right` 帮助/引导页。
 
-**基建(不单独做界面)**:ui-layout / ui-dockkit / ui-slots / ui-renderer / ui-session / ui-open-in-app / ui-brand-official / product-analytics / store / hmr / modules / resources / locale / shortcuts / file-upload / web。其中 **ui-renderer** 是内容渲染基座(Markdown/代码)= 我们的渲染层;**file-upload** = 附件上传能力。
+**基建(不单独做界面)**:`ui-layout` / `ui-dockkit` / `ui-slots` / `ui-renderer` / `ui-session` / `ui-open-in-app` / `ui-brand-official` / `product-analytics` / `store` / `hmr` / `modules` / `resources` / `locale` / `shortcuts` / `file-upload` / `web`。其中 **`ui-renderer`** 是内容渲染基座(Markdown/代码)= 我们的渲染层;**`file-upload`** = 附件上传能力。
 
 ## 9. 协议与桥接面
 
@@ -593,38 +531,25 @@ DSH 右侧有一条**轮次导航轨**(`ui-chat/TurnNavigator.tsx`):每一轮一
 
 ## 12. 插件与后台任务(手机端边界,已查实)
 
-依据:`docs/plugin-and-jobs-notes.md`(每条带 DSH 源码 `路径:行号`)。
+**逐条依据(带 DSH 源码 `路径:行号`)见 `docs/plugin-and-jobs-notes.md`**;本节只定边界结论。
 
-**后台任务(ui-jobs)—— 放右侧抽屉,不在对话流里铺开**:
-
-- 任务/子代理的明细在**右侧抽屉**(§7.8),会话里只留一行提示("2 个后台任务运行中 · flutter build apk --debug");默认展开会吃掉半屏,已否决。
-- 状态机照抄:`running | stopping | completed | killed | failed`;中文文案 `运行中/正在停止/已完成/已取消/已失败`。
-- 行规格照源码分两种:**进行中两行**(标签 / kind+detail+时长)、**已结束一行**(kind+标签+状态+时长)。`JobView` 没有独立 command 字段,命令就是 `label`。
-- 停止是**行尾图标按钮 + 二次点击"确认停止"**(按钮变宽成红色胶囊,3 秒自动解除),不是整宽按钮;先落 `stopping` 等权威帧,**不乐观更新**。
-- 运行中提醒只数 `running|stopping`,用整集帧;**不要**用输出流做提醒(安静省电)。
-- "清空"是客户端本地隐藏,**不要**承诺删除(没有对应 RPC);**不做"重试"**(`job` 命名空间没有该接口)。
-- 详情展开即订阅输出流、收起即停;截断要在 UI 上说明:每帧 64 KiB / ring 256 KiB / 客户端尾 128 KiB,且**任务结算后 DSH 侧只留 16 KiB**。
+**后台任务(ui-jobs)—— 放右侧抽屉,不在对话流里铺开**:明细在右侧抽屉(§7.8),会话里只留一行提示。状态机照抄 `running | stopping | completed | killed | failed`;行规格分进行中两行 / 已结束一行。停止是**行尾图标按钮 + 二次点击确认**,先落 `stopping` 等权威帧、**不乐观更新**。"清空"只是客户端本地隐藏(**不承诺删除**),**不做"重试"**(无该接口)。详情展开即订阅输出流、收起即停;截断阈值与"结算后 DSH 侧只留 16 KiB"见专项文档。
 
 **插件(ui-plugin-manager / ui-settings-plugin-inventory)—— 手机做不到什么**:
 
-- **不能渲染插件自己的界面。** 插件 UI = 浏览器里跑的 React 组件 + slot 注册表(宿主 `/plugins` 把 `client.js` 送进浏览器执行)。slot 拿到的是 `view: 'summary'|'page'` + `state`/`mutate` **活对象**,**没有可序列化的页面描述** —— 让手机渲染任意插件页 ≡ 在手机上跑 DSH Web 客户端。这是**架构性限制,不是工作量问题**:所以"插件那么多、页面那么多,不可能一个个适配"是对的,且通用适配在架构上不存在。
-- **但配置有一条真实的通用路径**:配置 schema 是 Schemastery `schema.toJSON()` 信封(`settings.ts:27-28` 注明可 `new Schema(json)` rehydrate),序列化结果**带 UI 元数据**(required / description / disabled / collapse / badges,`vendor/schemastery/src/index.ts:115,126,391,403-411`),客户端能 rehydrate + 按路径取节点(`ui-settings/src/client/schema.ts:39-80`)。**限制**:①只有声明 `.volatile()` 的字段会过线(`settings/src/schema.ts:33-47`);②`autoGenerate` 无任何出货客户端消费(README `:39`);③写回走路径寻址 `settings.update/replace/mutate`,不会误删手机上没拿到的 secret。
-- **三条策略**:①**不做"插件页面适配"**,只做插件管理 + 插件自定义页给「在电脑端打开」;②配置分两档 —— `volatile` 字段用自建 Schemastery 通用表单,**其余只读展示并标明"需在电脑上编辑"**;③给插件作者正路:声明 `.volatile()` + `description` 就自动进手机表单,把"能不能在手机上配"变成插件作者的显式选择。
-- 手机**可以且值得做**:只读清单 + 状态、bundle 列表、**行级(组件级)开关**、安装日志/阶段流、安装卸载(两段确认)。
-- **不该做**:静默批准 pnpm build script、安装卸载做成一次点击、在 pluginManager 里找配置读写(没有,只在 `settings.*`)。
-- **界面参考**:只读清单照 `ui-settings-plugin-inventory`(窄屏直接可用);操作子集照 `ui-plugin-manager`,但**不要搬**它的 slot 配置页宿主;**不要照** `ui-settings-plugins`(只是 tab 外壳)。
+- **不能渲染插件自己的界面**。插件 UI = 浏览器里的 React 组件 + slot 注册表,slot 拿到的是 `state`/`mutate` **活对象**,**没有可序列化的页面描述** → 让手机渲染任意插件页 ≡ 在手机上跑 DSH Web 客户端。这是**架构性限制,不是工作量问题**。
+- **但配置有一条真实通用路径**:Schemastery `schema.toJSON()` 信封带 UI 元数据,可 rehydrate;限制是只有 `.volatile()` 字段过线。→ **配置分两档**:`volatile` 用自建通用表单,其余只读并标"需在电脑上编辑"。
+- **三条策略**:不做逐插件页面适配;给插件作者正路(声明 `.volatile()` + `description` 即自动进手机表单);其余标"在电脑端打开"。
+- 手机**可做**:只读清单 + 状态、行级开关、安装日志、安装卸载(两段确认)。**不该做**:静默批准 build script、安装做成一次点击。
 
 ---
 
 ## 13. 本机运行模式(不连电脑)
 
-依据:`docs/standalone-mode-notes.md`(rikkahub 调研 + 设计草案)。
+**调研与设计草案见 `docs/standalone-mode-notes.md`**(rikkahub 对照);本节只定结论。
 
-- **定位**:同一个 App 两条路 —— ①连接电脑上的 DSH(遥控器)②**手机自己跑**(自带服务商/密钥/模型参数,形态参考 rikkahub)。首启动就要让用户选,别默认进聊天再报错。
-- **思考程度(推理档位)**:rikkahub 做成**跨 provider 统一的 7 档枚举**(`off/auto/low/medium/high/xhigh/max`,同档同时携带 `budgetTokens` 与 `effort`),UI 是一条离散滑杆,**仅当模型带 REASONING 能力才出现**;请求构造时按 provider 翻译成各家字段(OpenAI `reasoning_effort`、Anthropic `thinking.type`+`output_config.effort`、Gemini `thinkingLevel` 或 `thinkingBudget`)。
-  - **DSH 的做法不同**:档位是**按模型**的能力(`reasoning.efforts` / `defaultEffort`),触发条显示「模型名 · 推理等级」,菜单两格钻取。手机端跟随 DSH 这套(我们连的是 DSH);本机模式再退回滑杆。
-  - 风险:7 档在各家语义**不等价**(Gemini 3 用字符串、其它 Gemini 用 token 数;Claude 的 auto/high 都发 adaptive;mistral 不支持)。第一版只做兜底 `reasoning_effort` + DeepSeek/Anthropic/Gemini 白名单,并在 UI 上标注翻译可能与预期不同。
-- **附件**:rikkahub 图片走 base64 内联(无 provider Files API),**文档是本地抽文本后注入 prompt,不上传原文件**;它的 picker 允许 xlsx 但没有解析分支(二进制被当文本读)——**这个坑不要重复**。
-- **密钥**:rikkahub **完全没有加密**(明文 DataStore,备份 ZIP 明文含 Key)。**不照抄**:iOS Keychain / Android Keystore / 鸿蒙 HUKS。两模式共存时,密钥库里**绝不能出现 DSH 凭据**(§7.5:密钥不回传手机)。
-- **与本方案的关系**:本机模式的 Provider/Model/Assistant 三个数据结构见 `standalone-mode-notes.md` 的 B 节;注意 rikkahub 把采样参数(temperature/topP/maxTokens)放在 **Assistant** 上而不在 Model 上,上下文限制是**消息条数**不是 token 数。
+- **定位**:同一个 App 两条路 —— ①连接电脑上的 DSH(遥控器)②**手机自己跑**(自带服务商/密钥/模型参数)。首启动就让用户选,别默认进聊天再报错。
+- **推理档位**:rikkahub 是跨 provider 统一的 7 档枚举 + 离散滑杆;**DSH 是按模型的能力**(`reasoning.efforts`/`defaultEffort`,菜单两格钻取)。手机端**跟随 DSH 这套**;本机模式再退回滑杆。风险:7 档在各家语义**不等价** → 第一版只做兜底 `reasoning_effort` + 白名单,并在 UI 标注翻译可能与预期不同。
+- **不照抄 rikkahub 的两处**:密钥它**完全明文**(DataStore + 备份 ZIP 明文含 Key)→ 我们走 iOS Keychain / Android Keystore / 鸿蒙 HUKS;附件它把二进制当文本读 → 不要重复这个坑。
+- 两模式共存时,密钥库里**绝不能出现 DSH 凭据**(§7.5:密钥不回传手机)。
 
