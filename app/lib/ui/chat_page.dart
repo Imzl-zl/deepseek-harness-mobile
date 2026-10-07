@@ -47,6 +47,7 @@ import 'dsh_diff.dart';
 import 'dsh_sheet.dart';
 import 'side_pane.dart';
 import 'takeover.dart';
+import 'trajectory_page.dart';
 
 /// 聊天页。
 class ChatPage extends StatefulWidget {
@@ -268,7 +269,7 @@ class _ChatPageState extends State<ChatPage> {
                     onOpenDrawer: widget.onOpenDrawer,
                     onConnect: widget.onConnect,
                   )
-                : const _TrajectoryTab(),
+                : _TrajectoryTab(onTapEntry: _showTraceSheet),
           ),
           // ---- 底部：接管卡 + 输入栏 + 统计条 ----
           Container(
@@ -461,6 +462,31 @@ class _ChatPageState extends State<ChatPage> {
       ),
     );
   }
+
+  /// `sheet-traj`：点账本条目弹的详情。
+  ///
+  /// **点得动是刻意的**：账本给"形状"（时间花在哪），
+  /// 而这个 sheet 给"这一条到底是什么" —— 只有账本会让人问"那 84 毫秒干了啥"。
+  void _showTraceSheet(TraceEntry entry) => unawaited(
+    showDshSheet<void>(
+      context: context,
+      title: '轨迹条目',
+      body: Column(
+        children: [
+          DshKeyValue(label: '角色', value: entry.name),
+          DshKeyValue(label: '耗时', value: entry.took),
+          DshKeyValue(label: '结果', value: entry.summary),
+        ],
+      ),
+      actions: [
+        DshSheetAction(
+          label: '查看完整调用',
+          filled: true,
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ],
+    ),
+  );
 
   /// 模型选择（§7.9 的行结构）。
   void _showModelSheet() {
@@ -1074,37 +1100,18 @@ const List<String> sampleFileLines = [
   '}',
 ];
 
-/// 轨迹页签 —— **占位**（照原型是甘特图 + 账本列表，那是独立一块）。
+/// 轨迹页签。
 ///
-/// 如实做成占位而不是假装有：写"还没做"比画一张假图好 ——
-/// 后者会被当成"已经能用了"。
+/// 实现已搬到 `ui/trajectory_page.dart`（甘特条 + 账本列表）——
+/// 它有 300 行，留在本文件里会让"聊天页"这个文件同时装两个页面的规格。
+/// 这里只留接线：点账本条目弹 `sheet-traj`。
 class _TrajectoryTab extends StatelessWidget {
-  const _TrajectoryTab();
+  const _TrajectoryTab({required this.onTapEntry});
+
+  final void Function(TraceEntry entry) onTapEntry;
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: Padding(
-        padding: EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            DshIcon('gauge', size: 40, color: DshColors.labelTertiary),
-            SizedBox(height: 12),
-            Text(
-              '轨迹还没做',
-              style: TextStyle(fontSize: 14, color: DshColors.labelSecondary),
-            ),
-            SizedBox(height: 6),
-            Text(
-              '原型里是甘特图 + 按时间排的账本列表（上下文/助手/工具/错误）。\n'
-              '它依赖 `session.trajectory` 的数据，那是独立一块。',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: DshColors.labelTertiary),
-            ),
-          ],
-        ),
-      ),
-    );
+    return TrajectoryTab(onTapEntry: onTapEntry);
   }
 }

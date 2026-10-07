@@ -276,6 +276,53 @@ void main() {
     expect(find.byType(DshComposer), findsOneWidget);
   });
 
+  testWidgets('轨迹页：甘特四行 + 账本，点条目弹 sheet', (tester) async {
+    final app = AppModel(client: _FakeClient());
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: DshTheme.dark(),
+        home: ChatPage(
+          app: app,
+          paired: false,
+          onOpenDrawer: () {},
+          onNewSession: () {},
+          drawer: const Drawer(child: SizedBox()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('看示例数据'));
+    await tester.pumpAndSettle();
+
+    // 切到轨迹页签。
+    await tester.tap(find.text('轨迹'));
+    await tester.pumpAndSettle();
+
+    // 甘特四行（"错误"在账本里还会出现一次，所以用 findsWidgets）。
+    for (final label in ['输入', '模型', '工具', '错误']) {
+      expect(find.text(label), findsWidgets, reason: '甘特缺「$label」那一行');
+    }
+    expect(find.text('← 横滑查看完整时间轴 →'), findsOneWidget);
+
+    // 账本。
+    expect(find.text('上下文'), findsOneWidget);
+    expect(find.text('助手'), findsOneWidget);
+    expect(find.text('工具 · read'), findsOneWidget);
+
+    // 点一条 → 弹 `sheet-traj`。
+    await tester.tap(find.text('工具 · read'));
+    await tester.pumpAndSettle();
+    expect(find.text('轨迹条目'), findsOneWidget);
+    // `84 ms` 会**出现两次**：账本那一行 + sheet 里的"耗时"。
+    //（那是同一个值的两处呈现，不是 bug —— 第一版写成 findsOneWidget 就红了。）
+    expect(find.text('84 ms'), findsNWidgets(2));
+    expect(find.text('查看完整调用'), findsOneWidget);
+
+    await tester.tap(find.text('查看完整调用'));
+    await tester.pumpAndSettle();
+    expect(find.text('轨迹条目'), findsNothing);
+  });
+
   testWidgets('输入栏在示例模式下可用（＋ 能加附件）', (tester) async {
     final app = AppModel(client: _FakeClient());
     await tester.pumpWidget(
