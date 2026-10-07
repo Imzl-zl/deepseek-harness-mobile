@@ -18,3 +18,11 @@ connector/lib/
 
 # relay:依赖(独立 pnpm 工程,不需要构建,所以没有产物目录)
 relay/node_modules/
+
+# relay 的运行期配置:里面是**本机签发的令牌摘要**(不是明文,但它是这台机器的凭据表,
+# 换机器就得重签)。可读的样例是 relay.config.example.json,那条入库。
+relay/relay.config.json
+
+# 本地起服务时的临时日志(排查用)
+*.boot.log
+.connector-boot.log
