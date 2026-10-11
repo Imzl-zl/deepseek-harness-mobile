@@ -13,10 +13,12 @@
  * 自动重试反而会在中转短暂不可用时给出一个"稍后才生效"的假象。
  */
 import type { ChannelLogger } from './observability.js'
+import { relayUrlOf } from './transport/relay-url.js'
 
 export interface PairingRegistrarOptions {
   /** 连接层用的 WSS 地址（配置里的 `relayUrl`）。 */
   relayUrl: string
+  allowInsecureLocal?: boolean
   /**
    * 取连接器令牌。
    *
@@ -31,19 +33,19 @@ export interface PairingRegistrarOptions {
 }
 
 /** `wss://host/path` → `https://host`（**丢掉路径**：HTTP 端点不在 WS 的那条路径上）。 */
-export function httpBaseOf(relayUrl: string): string {
-  const url = new URL(relayUrl)
+export function httpBaseOf(relayUrl: string, allowInsecureLocal = false): string {
+  const url = relayUrlOf(relayUrl, allowInsecureLocal)
   const protocol = url.protocol === 'wss:' ? 'https:' : url.protocol === 'ws:' ? 'http:' : url.protocol
   return `${protocol}//${url.host}`
 }
 
 export function createPairingRegistrar(
   options: PairingRegistrarOptions,
-): (codeHash: string) => Promise<void> {
+): (offerId: string) => Promise<void> {
   const doFetch = options.fetchImpl ?? fetch
-  const endpoint = `${httpBaseOf(options.relayUrl)}/pairing/register`
+  const endpoint = `${httpBaseOf(options.relayUrl, options.allowInsecureLocal)}/pairing/register`
 
-  return async (codeHash) => {
+  return async (offerId) => {
     const token = await options.tokenSource()
     const response = await doFetch(endpoint, {
       method: 'POST',
@@ -51,7 +53,7 @@ export function createPairingRegistrar(
         authorization: `Bearer ${token}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ codeHash }),
+      body: JSON.stringify({ v: 2, offerId }),
     })
     if (!response.ok) {
       // 把状态码带上：401 是"令牌不对"、409 是"配对登记不可用"，两者的下一步动作不同。

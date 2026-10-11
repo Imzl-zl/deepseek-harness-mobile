@@ -7,44 +7,64 @@
       "code": "AAECAwQFBgcICQoLDA0ODw",
       "codeHash": "5d2611d5a4dd2b40b277dfdb5ecf5b49819150d7d5c62f4eef960cb0c24db20c",
       "pairingId": "vB_f0_FGOiWirrIxo5gqG10LJb76kY-y5HsERMUjTZI",
+      "pcId": "conn-1",
       "pcPubEd": "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+      "pcPubDh": "99887766554433221100ffeeddccbbaa99887766554433221100ffeeddccbbaa",
+      "offerId": "AQEBAQEBAQEBAQEBAQEBAQ",
+      "deviceName": "我的手机",
       "devPubEd": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       "devPubDh": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
       "sas": "968850",
-      "deviceId": "e50H8kBLECs8Yv7eAmCXxQ"
+      "deviceId": "e50H8kBLECs8Yv7eAmCXxQ",
+      "handshakeContext": "dsh-mobile/pairing/v2|AQEBAQEBAQEBAQEBAQEBAQ|conn-1|aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899|99887766554433221100ffeeddccbbaa99887766554433221100ffeeddccbbaa|e50H8kBLECs8Yv7eAmCXxQ|0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef|fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210|03e2c993fa2bd6691618195277f12220fb38d5636b0ac4417e8b9ac7e4b0dac9"
     },
     {
       "name": "短码",
       "code": "x",
       "codeHash": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
       "pairingId": "oZM1dOAr9F3_9BzHU27lp99NMTFO0jil3CBG2K613bE",
+      "pcId": "conn-1",
       "pcPubEd": "0000000000000000000000000000000000000000000000000000000000000000",
+      "pcPubDh": "1111111111111111111111111111111111111111111111111111111111111111",
+      "offerId": "AQEBAQEBAQEBAQEBAQEBAQ",
+      "deviceName": "我的手机",
       "devPubEd": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
       "devPubDh": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
       "sas": "627976",
-      "deviceId": "cVL5lYqYPjMT-ySY10OvHg"
+      "deviceId": "cVL5lYqYPjMT-ySY10OvHg",
+      "handshakeContext": "dsh-mobile/pairing/v2|AQEBAQEBAQEBAQEBAQEBAQ|conn-1|0000000000000000000000000000000000000000000000000000000000000000|1111111111111111111111111111111111111111111111111111111111111111|cVL5lYqYPjMT-ySY10OvHg|ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff|0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f|03e2c993fa2bd6691618195277f12220fb38d5636b0ac4417e8b9ac7e4b0dac9"
     },
     {
       "name": "含 base64url 特有字符（- 与 _）的码",
       "code": "ab-cd_ef-gh_ij",
       "codeHash": "e28ff9c47c44be8eb410165591df1e21c1a76385409396e33006e9c229b20a30",
       "pairingId": "16SKent-UOevFbl0uQOAGmPTUcs8D1518R6Eq8ZHweY",
+      "pcId": "conn-1",
       "pcPubEd": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      "pcPubDh": "feedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface",
+      "offerId": "AQEBAQEBAQEBAQEBAQEBAQ",
+      "deviceName": "我的手机",
       "devPubEd": "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe",
       "devPubDh": "13579bdf13579bdf13579bdf13579bdf13579bdf13579bdf13579bdf13579bdf",
       "sas": "943881",
-      "deviceId": "Ru7i01fgZIQAg9n2x0E39Q"
+      "deviceId": "Ru7i01fgZIQAg9n2x0E39Q",
+      "handshakeContext": "dsh-mobile/pairing/v2|AQEBAQEBAQEBAQEBAQEBAQ|conn-1|deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef|feedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface|Ru7i01fgZIQAg9n2x0E39Q|cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe|13579bdf13579bdf13579bdf13579bdf13579bdf13579bdf13579bdf13579bdf|03e2c993fa2bd6691618195277f12220fb38d5636b0ac4417e8b9ac7e4b0dac9"
     },
     {
       "name": "非 ASCII",
       "code": "配对码测试",
       "codeHash": "ae69d55638832a5fdcb400ca7862ae1aaac6d7e1056abde6882b5b7fce028b07",
       "pairingId": "MaIripulqRScunExhNS7wPh0dc0eWqe_CVn2wC75-38",
+      "pcId": "conn-1",
       "pcPubEd": "1111111111111111111111111111111111111111111111111111111111111111",
+      "pcPubDh": "2222222222222222222222222222222222222222222222222222222222222222",
+      "offerId": "AQEBAQEBAQEBAQEBAQEBAQ",
+      "deviceName": "我的手机",
       "devPubEd": "2222222222222222222222222222222222222222222222222222222222222222",
       "devPubDh": "3333333333333333333333333333333333333333333333333333333333333333",
       "sas": "812215",
-      "deviceId": "eb19f9aEs5mFfFgrG3Fy3Q"
+      "deviceId": "eb19f9aEs5mFfFgrG3Fy3Q",
+      "handshakeContext": "dsh-mobile/pairing/v2|AQEBAQEBAQEBAQEBAQEBAQ|conn-1|1111111111111111111111111111111111111111111111111111111111111111|2222222222222222222222222222222222222222222222222222222222222222|eb19f9aEs5mFfFgrG3Fy3Q|2222222222222222222222222222222222222222222222222222222222222222|3333333333333333333333333333333333333333333333333333333333333333|03e2c993fa2bd6691618195277f12220fb38d5636b0ac4417e8b9ac7e4b0dac9"
     }
   ]
 }

@@ -79,6 +79,10 @@ export interface HandshakeDriverOptions {
    * 在这里区分只会让调用方有机会把"已吊销"写成放行。
    */
   peerOf(devId: string): HandshakePeer | undefined
+  /** 配对通道的身份/用途绑定；正常业务握手不提供。 */
+  transcriptContext?: string
+  /** 配对与业务密钥必须域分离。 */
+  keyInfo?: string
   /** 握手超时（毫秒）。 */
   timeoutMs?: number
 }
@@ -169,7 +173,7 @@ export function createHandshakeDriver(options: HandshakeDriverOptions): Handshak
         nonceB,
       }
       // 两侧各拼一遍同一段字节：手机用**它自己发出的 hello 字段** + **收到的 ack 字段**。
-      const transcript = transcriptFromFields(hello, ackFields)
+      const transcript = transcriptFromFields(hello, ackFields, options.transcriptContext)
 
       context.send({
         v: 1,
@@ -220,7 +224,7 @@ export function createHandshakeDriver(options: HandshakeDriverOptions): Handshak
         peerEphemeralPublicHex: current.helloEphPubA,
         nonceA: current.nonceA,
         nonceB: current.nonceB,
-        info: KEY_INFO,
+        info: options.keyInfo ?? KEY_INFO,
         pairingId: current.peer.pairingId,
       })
 
@@ -228,11 +232,22 @@ export function createHandshakeDriver(options: HandshakeDriverOptions): Handshak
       context.established({ devId: current.devId, keys })
     }
 
-    cancelTimeout = context.schedule(() => {
-      // 对端没在时限内把三条消息走完。不发任何协议帧：对端要么已经死了，要么在等我们 ——
-      // 两种情况下关掉连接都是唯一有意义的动作。
-      fail('handshake-timeout')
-    }, timeoutMs)
+    /**
+     * 起握手超时。**只在收到 `hello` 之后调**（见下面 `onFrame` 的说明）。
+     *
+     * 幂等：重复调不会起两个表（那会让先到的那个永远取消不掉）。
+     *
+     * Note: 为什么不能在会话建好时就起表 —— 见
+     * `.agents/notes/implemented/2026-10-07-connector-self-disconnect-two-causes.md`
+     */
+    const armTimeout = (): void => {
+      if (cancelTimeout !== null || settled) return
+      cancelTimeout = context.schedule(() => {
+        // 对端没在时限内把三条消息走完。不发任何协议帧：对端要么已经死了，要么在等我们 ——
+        // 两种情况下关掉连接都是唯一有意义的动作。
+        fail('handshake-timeout')
+      }, timeoutMs)
+    }
 
     return {
       onFrame(frame) {
@@ -243,6 +258,16 @@ export function createHandshakeDriver(options: HandshakeDriverOptions): Handshak
               throw new ProtocolError('protocol/bad-frame', `握手第一步应是 hello，收到 ${frame.t}`)
             }
             acceptHello(frame)
+            // **收了 `hello` 才起超时**。
+            //
+            // 应答方的握手是**等对端上门**的（与发起方相反：发起方一建会话就发 hello）。
+            // 在会话建好时就起表的话，对端在"WSS 连上了、还没开始握手"的那段时间里
+            // 定时器照常到期 —— 于是电脑侧每 10 秒判一次超时并关掉连接。
+            //
+            // 实测症状（真机联调）：中转侧看到连接器**反复断开**，而每次断开都会
+            // 清掉它全部未认领的配对登记 —— 于是扫码换票**永远 409**，
+            // 而两端日志各自看起来都正常。未修前 7 分钟内重连 41 次。
+            armTimeout()
             return
           }
           if (frame.t !== 'confirm') {

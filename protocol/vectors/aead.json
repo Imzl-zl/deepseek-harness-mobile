@@ -16,9 +16,9 @@
       },
       "plaintext": "{\"itemId\":\"m:1:1:assistant\",\"text\":\"你好\"}",
       "key": "fbe7991d750593cade056b62d119de0c38dfb87610e52d1781ff39fa04b5e41b",
-      "ciphertext": "a836333838bc3f24f5fd62bbe36b12ffecaa40bafaef11c4e62e1472cd9116611788bdf650d9d5d0d70f7f76",
-      "tag": "f84954eb809c172a4f502cc61bbea8d8",
-      "box": "qDYzODi8PyT1_WK742sS_-yqQLr67xHE5i4Ucs2RFmEXiL32UNnV0NcPf3b4SVTrgJwXKk9QLMYbvqjY"
+      "ciphertext": "23ac43de0f90b80507cab8c7c1f14423661e053c22ba04b1a84ae6ec1d30352a0702e9f175a6f269b9b8221b",
+      "tag": "cf92cb302e3863eb0090f409a638f71e",
+      "box": "I6xD3g-QuAUHyrjHwfFEI2YeBTwiugSxqErm7B0wNSoHAunxdabyabm4IhvPksswLjhj6wCQ9AmmOPce"
     },
     {
       "name": "ev 帧 fc=1(seq 递增)",
@@ -33,9 +33,9 @@
       },
       "plaintext": "{\"itemId\":\"m:1:2:assistant\",\"text\":\"世界\"}",
       "key": "fbe7991d750593cade056b62d119de0c38dfb87610e52d1781ff39fa04b5e41b",
-      "ciphertext": "892c84a3ca639b51fb677666986eeb2c001196b27812b396407296068e4a781f8d565c611838f48da3b208b7",
-      "tag": "ce07cc071a19f10ee256a34bf0361e08",
-      "box": "iSyEo8pjm1H7Z3ZmmG7rLAARlrJ4ErOWQHKWBo5KeB-NVlxhGDj0jaOyCLfOB8wHGhnxDuJWo0vwNh4I"
+      "ciphertext": "338515fa45dbf1ef980385baaa64e21a0227efb6a2e5c0f8d17ca5f740154eb1c8456851b2d44ad15b72f44f",
+      "tag": "16241a53bf1e850a9ffcf1d5fe5b0516",
+      "box": "M4UV-kXb8e-YA4W6qmTiGgIn77ai5cD40Xyl90AVTrHIRWhRstRK0Vty9E8WJBpTvx6FCp_88dX-WwUW"
     },
     {
       "name": "req 帧(无 sid/seq)",
@@ -50,9 +50,9 @@
       },
       "plaintext": "{\"method\":\"session.prompt\",\"params\":{\"requestId\":\"req_0123456789ab\"}}",
       "key": "fbe7991d750593cade056b62d119de0c38dfb87610e52d1781ff39fa04b5e41b",
-      "ciphertext": "9b8e08dd12bc051ecc95a61272240f01f71747e31ade9e44c2eaefe030eb78ba0b65ee88405fd68806cbf1ab1667ac115dd94925da0e8f4ed2544d852f3436cf0fe46955dc",
-      "tag": "789abcb8a498a725cb5e34b80f3a4f84",
-      "box": "m44I3RK8BR7MlaYSciQPAfcXR-Ma3p5Ewurv4DDreLoLZe6IQF_WiAbL8asWZ6wRXdlJJdoOj07SVE2FLzQ2zw_kaVXceJq8uKSYpyXLXjS4DzpPhA"
+      "ciphertext": "c2b0b6624044b44f611191fd4aef67b28f1013201519ca4bac9f229a2e28d980efa67d6043f29d5d7fb85d746eb1c12183fad0084a0ee410420b43a70b42e08f67bbee42e4",
+      "tag": "c8570cb8b8347061b48ac0fe9e8f2808",
+      "box": "wrC2YkBEtE9hEZH9Su9nso8QEyAVGcpLrJ8imi4o2YDvpn1gQ_KdXX-4XXRuscEhg_rQCEoO5BBCC0OnC0Lgj2e77kLkyFcMuLg0cGG0isD-no8oCA"
     },
     {
       "name": "live 帧(易变流)",
@@ -67,9 +67,9 @@
       },
       "plaintext": "{\"stream\":1,\"rev\":7,\"delta\":\"流式\"}",
       "key": "fbe7991d750593cade056b62d119de0c38dfb87610e52d1781ff39fa04b5e41b",
-      "ciphertext": "a02b10cee22e16be347e345d1d0f10cde397ac189698a5de533740c2fe277cb4d1ab265cc9",
-      "tag": "4524f8612146a0416a32f158de66a1d7",
-      "box": "oCsQzuIuFr40fjRdHQ8QzeOXrBiWmKXeUzdAwv4nfLTRqyZcyUUk-GEhRqBBajLxWN5modc"
+      "ciphertext": "81ad6767a8dfe16c147beea72639783a8cc162fa1d4a2dde012a4da65c7df093f4c8df9355",
+      "tag": "e4b3533d30d978c03eb26afce9c5947b",
+      "box": "ga1nZ6jf4WwUe-6nJjl4OozBYvodSi3eASpNplx98JP0yN-TVeSzUz0w2XjAPrJq_OnFlHs"
     },
     {
       "name": "空载荷",
@@ -85,8 +85,8 @@
       "plaintext": "",
       "key": "fbe7991d750593cade056b62d119de0c38dfb87610e52d1781ff39fa04b5e41b",
       "ciphertext": "",
-      "tag": "be698e3024eea620add23a70be0545b0",
-      "box": "vmmOMCTupiCt0jpwvgVFsA"
+      "tag": "a796cc5de7e0d79e7297f638588e0410",
+      "box": "p5bMXefg155yl_Y4WI4EEA"
     }
   ],
   "tamper": [

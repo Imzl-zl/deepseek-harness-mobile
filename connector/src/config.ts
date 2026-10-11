@@ -16,6 +16,8 @@ import z from '@deepseek-ai/schemastery'
 export interface ConnectorConfig {
   /** 中转地址(wss)。挂载时校验存在性,故无 schema 默认值。 */
   relayUrl: Volatile<string | undefined>
+  /** 仅允许回环地址的明文联调，默认关闭；公网仍必须 WSS。 */
+  allowInsecureLocal: Volatile<boolean>
   /** 连接器令牌的凭据引用;本体走 ctx.credentials,不进配置文件。 */
   relayTokenRef: Volatile<string | undefined>
   /**
@@ -46,6 +48,7 @@ export interface ConnectorConfig {
 
 export const Config = z.object({
   relayUrl: z.string().volatile(),
+  allowInsecureLocal: z.boolean().default(false).volatile(),
   relayTokenRef: z.string().role('credential-ref').volatile(),
   // `0` = 关。范围到 65535;`.min(0)` 允许"显式关掉"这个写法。
   listenPort: z.number().step(1).min(0).max(65535).default(0).volatile(),

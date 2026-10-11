@@ -109,7 +109,11 @@ class ConfirmFields {
 ///
 /// 这个函数同时接受 [HelloFields] / [HelloAckFields] 对象与**向量的字段 map**
 /// （`protocol/vectors/handshake.json` 的 `signature.fields` 就是这个形状）。
-Uint8List transcriptFromFields(Object hello, [HelloAckFields? ack]) {
+Uint8List transcriptFromFields(
+  Object hello, [
+  HelloAckFields? ack,
+  String? context,
+]) {
   final String ephPubA;
   final String devId;
   final String nonceA;
@@ -150,6 +154,7 @@ Uint8List transcriptFromFields(Object hello, [HelloAckFields? ack]) {
         ephPubB,
         pcId,
         nonceB,
+        if (context != null) ...['context', context],
       ].join('|'),
     ),
   );

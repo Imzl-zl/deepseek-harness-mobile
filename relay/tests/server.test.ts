@@ -1,10 +1,15 @@
 /**
- * 中转服务的冒烟用例（契约 §2）：**真 HTTP + 真 WS + 真路由**。
+ * 中转服务的冒烟用例（契约 §2 / §12.1；`docs/subsystems/connector-and-relay.md` §1.6）：
+ * **真 HTTP + 真 WS + 真路由**。
  *
- * 前面 33 条用例测的是判定（零依赖、几十毫秒）；这一条测的是"接起来之后真的能转发" ——
- * 它是唯一能覆盖"凭据从哪来、升级怎么认证、投递写回哪条 socket"的证据。
+ * 前面的用例测的是判定（零依赖、几十毫秒）；这一组测的是"接起来之后真的能转发" ——
+ * 它是唯一能覆盖"凭据从哪来、升级怎么认证、控制面怎么通知、投递写回哪条 socket"的证据。
+ *
+ * v2 的连接拓扑是**三条 socket**：连接器控制面（只收 `relay.open` / `relay.close` 通知）、
+ * 手机（一条连接一个 `channelId`）、连接器为该通道另拨的数据面。
  */
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 
 import { WebSocket } from 'ws'
@@ -13,9 +18,24 @@ import { startRelay } from '../src/server.ts'
 import type { Authenticated } from '../src/http-face.ts'
 
 const TOKENS: Record<string, Authenticated> = {
-  'device-token-1': { kind: 'device', id: 'dev-1' },
   'connector-token-1': { kind: 'connector', id: 'conn-1' },
+  // 摘要表里的**设备**条目：v2 里它连不上任何一条 socket（设备凭据面在名册，见下），
+  // 留着它是为了让"凭据类型不对"这条断言仍然有意义。
+  'device-kind-token-2': { kind: 'device', id: 'dev-2' },
 }
+
+/** 设备令牌由**名册**认：它不在摘要表里，中转只知道它的摘要。 */
+const DEVICE_TOKEN = 'device-token-1'
+const ROSTER = [
+  {
+    id: 'dev-1',
+    pairingId: 'pair-1',
+    devPubEd: 'a'.repeat(64),
+    devPubDh: 'b'.repeat(64),
+    name: '我的手机',
+    tokenHash: createHash('sha256').update(DEVICE_TOKEN, 'utf8').digest('hex'),
+  },
+]
 
 const line = (frame: Record<string, unknown>): string => JSON.stringify({ v: 1, ...frame })
 const ev = (sid: string, seq: number): string => line({ t: 'ev', sid, seq, fc: seq, box: 'x' })
@@ -55,67 +75,116 @@ const open = (url: string, headers: Record<string, string> = {}): Promise<WebSoc
     ws.once('error', reject)
   })
 
-test('端到端：换票 → 两条 WS 升级 → 设备发一行 → 连接器收到（真 socket）', async (t) => {
+/**
+ * 建连**并从头收帧**：监听要在 `open` 之前挂上 ——
+ * 数据面升级那一刻就会补投暂存的首批帧，它比客户端的 `open` 事件还早。
+ */
+function connect(url: string, headers: Record<string, string> = {}): Promise<{ ws: WebSocket; lines: string[] }> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(url, { headers })
+    const lines = collect(ws)
+    ws.once('open', () => resolve({ ws, lines }))
+    ws.once('error', reject)
+  })
+}
+
+const postJson = (base: string, path: string, token: string, body: unknown) =>
+  fetch(`${base}${path}`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+test('端到端：名册 → 换票 → 控制面 relay.open → 数据面双向转发 → 断开一起消失（真 socket）', async (t) => {
   const relay = await startRelay({ port: 0, authenticate: (token) => TOKENS[token] })
   t.after(() => relay.close())
   const base = `http://127.0.0.1:${relay.port}`
   const wsBase = `ws://127.0.0.1:${relay.port}`
 
-  // 1. 连接器先连上（登记与认领都要求它在线）
-  const connector = await open(`${wsBase}/ws/connector`, {
+  // 1. 连接器先连上控制面（准入、登记与数据面都要求它在线）
+  const connector = await connect(`${wsBase}/ws/connector`, {
     authorization: 'Bearer connector-token-1',
   })
-  t.after(() => connector.close())
-  const connectorLines = collect(connector)
+  t.after(() => connector.ws.close())
+  const notices = connector.lines
 
-  // 2. 电脑侧出码登记（HTTP，连接器令牌）
-  const registered = await fetch(`${base}/pairing/register`, {
-    method: 'POST',
-    headers: { authorization: 'Bearer connector-token-1', 'content-type': 'application/json' },
-    body: JSON.stringify({ codeHash: 'hash-a' }),
-  })
-  assert.equal(registered.status, 201)
+  // 2. 电脑侧重放名册（只交摘要）：dev-1 归属 conn-1
+  const published = await postJson(base, '/devices', 'connector-token-1', { devices: ROSTER })
+  assert.equal(published.status, 201)
 
-  // 3. 手机换票（HTTP，设备令牌 + codeHash）
-  const ticketed = await fetch(`${base}/ws-ticket`, {
-    method: 'POST',
-    headers: { authorization: 'Bearer device-token-1', 'content-type': 'application/json' },
-    body: JSON.stringify({ codeHash: 'hash-a' }),
-  })
+  // 3. 手机凭**设备令牌**换票（已配对设备的重连路径）
+  const ticketed = await postJson(base, '/ws-ticket', DEVICE_TOKEN, {})
   assert.equal(ticketed.status, 201)
   const { ticket } = (await ticketed.json()) as { ticket: string }
 
-  // 4. 连接器先说一句（中转据此学到 sid 归属）
-  connector.send(ev('sid_1', 0))
-  await waitFor('中转学到归属', () => (relay.core.stats.sessions === 1 ? true : undefined))
+  // 4. 手机带票升级：中转为这次连接生成 channelId，并通过控制面通知电脑侧拨数据连接
+  const device = await connect(`${wsBase}/ws/device?ticket=${encodeURIComponent(ticket)}`)
+  t.after(() => device.ws.close())
+  const deviceLines = device.lines
+  const notice = JSON.parse(await waitFor('控制面收到 relay.open', () => notices[0])) as {
+    v: number
+    t: string
+    channelId: string
+    binding: { connectorId: string; deviceId: string; purpose: string }
+  }
+  assert.equal(notice.v, 1)
+  assert.equal(notice.t, 'relay.open')
+  assert.deepEqual(notice.binding, { connectorId: 'conn-1', deviceId: 'dev-1', purpose: 'paired' })
+  assert.equal(relay.core.channel(notice.channelId)?.connected, false, '通道已建立，数据连接还没到')
 
-  // 5. 设备带票升级，发一行 —— 它必须出现在连接器那条 socket 上
-  const device = await open(`${wsBase}/ws/device?ticket=${encodeURIComponent(ticket)}`)
-  t.after(() => device.close())
-  device.send(ev('sid_1', 1))
-  const got = await waitFor('连接器收到设备的那一行', () => connectorLines[0])
-  assert.equal(got, ev('sid_1', 1), '原样转发（中转不解载荷）')
+  // 5. 手机在电脑侧拨号**之前**先说一句：首批帧不许丢、不许乱序
+  //    （要么挂在有界缓冲里由 `attachData` 交还，要么直投 —— 两条路都合法，丢帧不合法）。
+  device.ws.send(ev('sid_1', 1))
 
-  // 6. 反过来：连接器推一行，设备收到
-  const deviceLines = collect(device)
-  connector.send(ev('sid_1', 2))
-  const back = await waitFor('设备收到连接器的那一行', () => deviceLines[0])
-  assert.equal(back, ev('sid_1', 2))
+  // 6. 电脑侧按通知拨数据面（控制面只是通知面，不承载业务帧）
+  const data = await connect(
+    `${wsBase}/ws/connector?dev=dev-1&channel=${encodeURIComponent(notice.channelId)}`,
+    { authorization: 'Bearer connector-token-1' },
+  )
+  t.after(() => data.ws.close())
+  assert.equal(
+    await waitFor('电脑侧收到手机那一句', () => data.lines[0]),
+    ev('sid_1', 1),
+    '原样转发（中转不解载荷；这一句说在数据面存在之前，靠通道的暂存缓冲交还）',
+  )
+  assert.equal(relay.core.channel(notice.channelId)?.connected, true)
+
+  // 7. 反过来：电脑侧推一行，设备收到
+  data.ws.send(ev('sid_1', 2))
+  assert.equal(await waitFor('设备收到电脑侧那一行', () => deviceLines[0]), ev('sid_1', 2))
+
+  // 8. 票是一次性的：同一张票再升级一次被拒，且不进入协议层
+  await assert.rejects(() => open(`${wsBase}/ws/device?ticket=${encodeURIComponent(ticket)}`), /401/)
+
+  // 9. 数据端断开 → 中转关掉配对的另一端，并让控制面知道那条通道结束了
+  data.ws.close()
+  assert.equal(
+    JSON.parse(await waitFor('控制面收到 relay.close', () => notices[1])).t,
+    'relay.close',
+  )
+  await waitFor('设备那端也被关掉', () => (device.ws.readyState === WebSocket.CLOSED ? true : undefined))
+  assert.equal(relay.core.channel(notice.channelId), undefined, '通道随数据面的断开一起消失')
 })
 
-test('升级认证：票不对 / 令牌不对 / 路径不对都拒掉，且不进入协议层', async (t) => {
+test('升级认证：票不对 / 令牌不对 / 凭据类型不对 / 数据面对不上通道 / 路径不对，都进不了协议层', async (t) => {
   const relay = await startRelay({ port: 0, authenticate: (token) => TOKENS[token] })
   t.after(() => relay.close())
   const wsBase = `ws://127.0.0.1:${relay.port}`
 
-  // 没票的设备：401
+  // 没票 / 票不对的设备：401
   await assert.rejects(() => open(`${wsBase}/ws/device?ticket=nope`), /401/)
+  await assert.rejects(() => open(`${wsBase}/ws/device`), /401/)
   // 没有令牌的连接器：401
   await assert.rejects(() => open(`${wsBase}/ws/connector`), /401/)
-  // 设备令牌拿来当连接器令牌：401（凭据类型不对，不是"有令牌就行"）
+  // 摘要表里的设备条目拿来当连接器令牌：401（凭据类型不对，不是"有令牌就行"）
   await assert.rejects(
-    () => open(`${wsBase}/ws/connector`, { authorization: 'Bearer device-token-1' }),
+    () => open(`${wsBase}/ws/connector`, { authorization: 'Bearer device-kind-token-2' }),
     /401/,
+  )
+  // 数据面：路径对了但那条通道不存在（或不属于它）→ 403，而不是"先连上再说"
+  await assert.rejects(
+    () => open(`${wsBase}/ws/connector?dev=dev-1&channel=nope`, { authorization: 'Bearer connector-token-1' }),
+    /403/,
   )
   // 未知路径：404
   await assert.rejects(() => open(`${wsBase}/ws/nope`), /404/)

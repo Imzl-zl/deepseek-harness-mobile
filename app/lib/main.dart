@@ -17,6 +17,7 @@ library;
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 
 import 'core/box.dart';
@@ -24,6 +25,7 @@ import 'core/crypto.dart';
 import 'core/frame.dart';
 import 'core/handshake_driver.dart';
 import 'core/outbox.dart';
+import 'core/pairing_client.dart';
 import 'core/recovery.dart';
 import 'core/sync_client.dart' hide AppState;
 import 'core/sync_client_impl.dart';
@@ -31,8 +33,10 @@ import 'core/transport.dart';
 import 'data/app_model.dart';
 import 'data/store.dart';
 import 'model/chat_item.dart';
+import 'platform/http_sender.dart';
 import 'platform/pairing_store.dart';
 import 'platform/sqflite_item_store.dart';
+import 'platform/ticketed_transport.dart';
 import 'platform/websocket_transport.dart';
 import 'theme/dsh_colors.dart';
 import 'theme/dsh_icons.dart';
@@ -54,11 +58,19 @@ class DshMobileApp extends StatefulWidget {
 }
 
 class _DshMobileAppState extends State<DshMobileApp> {
-  /// 聊天页的 key —— 用来从外面开抽屉（`openDrawer`）。
+  /// 聊天页的 key —— 用来从外面开抽屉（[ChatPageState.openDrawer]）。
   ///
   /// 抽屉要盖住整个 `Scaffold`（含顶栏），所以它必须是聊天页 `Scaffold`
   /// 的 `drawer`；而"谁来开它"是外层的事（顶栏的 `☰`、空态的按钮）。
-  final _chatKey = GlobalKey<ScaffoldState>();
+  ///
+  /// **类型必须是 `ChatPageState`，不能是 `ScaffoldState`**（踩过）：
+  /// 挂着 `GlobalKey<ScaffoldState>` 的 `ChatPage` 拿不到 `ScaffoldState`，
+  /// 于是 `currentState` **恒为 `null`**，而调用处写的是
+  /// `_chatKey.currentState?.openDrawer()` —— 那个 `?.` **静默失效**：
+  /// 点 `☰`、点空态里的"打开会话抽屉"都毫无反应，**且不报任何错**（真机实测）。
+  ///
+  /// Note: `.agents/notes/implemented/2026-10-07-three-wire-shape-mismatches.md`
+  final _chatKey = GlobalKey<ChatPageState>();
 
   /// 配对结果（`null` = 还没配对）。
   ///
@@ -122,6 +134,11 @@ class _DshMobileAppState extends State<DshMobileApp> {
       masterSeedHex: result.masterSeedHex,
       devSignPubHex: result.devSignPubHex,
       devDhPubHex: result.devDhPubHex,
+      // 这两个是**长期凭据**（之后每次重连换票用它；配对码已经用掉了）。
+      deviceToken: result.deviceToken,
+      refreshToken: result.refreshToken,
+      pcId: result.pcId,
+      devId: result.devId,
     );
     await PairingStore.save(credentials);
     final app = await _assemble(credentials);
@@ -160,7 +177,17 @@ class _DshMobileAppState extends State<DshMobileApp> {
     }
     // 配对页是**用户主动进来的**（点"连电脑"），不是"没配对就挡在这里"。
     if (_pairing) {
-      return PairingPage(onPaired: _onPaired, onCancel: _closePairing);
+      return PairingPage(
+        onPaired: _onPaired,
+        onCancel: _closePairing,
+        // 两个缝在这里注入：UI 不认识 `package:http`，也不认识 WebSocket ——
+        // 真实实现在 `platform/`，而"用哪个实现"只发生在装配点（本文件）。
+        send: _httpSender,
+        transportFor: _pairingTransport,
+        // 本机调试（`ws://127.0.0.1`）只在 debug 构建里放行：契约 §12.1 的
+        // 生产纪律是 WSS，而 release 里放行明文等于把"以为加密了"的链路走成明文。
+        allowInsecureLocal: kDebugMode,
+      );
     }
     // **抽屉必须跟着 `AppModel` 重建**。
     //
@@ -178,6 +205,9 @@ class _DshMobileAppState extends State<DshMobileApp> {
         onConnect: _openPairing,
         onOpenDrawer: () => _chatKey.currentState?.openDrawer(),
         onNewSession: _newSession,
+        // 主界面上的内联会话列表：与抽屉走**同一条**通路（`openSession`），
+        // 免得两处各写一份"点了之后怎么办"。
+        onOpenSession: (session) => unawaited(app.openSession(session.sid)),
         drawer: SessionDrawer(
           sections: _drawerSections(app),
           connection: DrawerConnection(
@@ -364,6 +394,24 @@ class _DshMobileAppState extends State<DshMobileApp> {
   }
 }
 
+/// **HTTP 缝的真实实现**（换票用）。
+///
+/// 它只在配对那一刻被调到（一次配对一次请求），所以不必常驻连接池 ——
+/// 实现里每次调用建一个短命的 client 并关掉（见 `platform/http_sender.dart`）。
+final HttpSender _httpSender = createHttpSender();
+
+/// **配对传输的真实实现**：给一条**已经拼好票**的 URL，建一条 WS。
+///
+/// 配对那条连接**用完即关**（`PairingChannel.close`）：配对是一次短交互，
+/// 完成后 App 会用正式传输重新连（那一次才是长期连接）。留着这条 socket
+/// 只会让中转上多出一条谁也不用的连接 —— 而同一个身份只该有一条。
+///
+/// 缝为什么设在这里（"URL 已拼好"，而不是"整个交换"）：URL 的形状是**协议知识**
+/// （唯一 owner 是 `core/endpoint.dart` 的 `deviceUpgradeUrl`），而"怎么拨号"才是
+/// 平台的事。缝设在更外面，就得把换票、握手、封箱在平台层再实现一遍。
+ChannelTransport _pairingTransport(String upgradeUrl) =>
+    WebSocketTransport(WebSocketTransportOptions(url: upgradeUrl));
+
 /// 没配对时的**装配**：客户端存在但**不连**（没有可信的电脑身份就没法连）。
 ///
 /// 它让界面照常可用 —— 会话列表是空的、能点"看示例数据"、能进各屏。
@@ -440,12 +488,25 @@ Future<AppModel> _assemble(PairedCredentials credentials) async {
   // 只存一个 secret —— 三端安全存储才统一得起来（`app-platform-boundaries.md` §5）。
   final identity = await deriveIdentity(credentials.masterSeedHex);
   final staticKeys = await x25519FromSeed(identity.dhSeedHex);
-  // `devId` 由本机推导（与电脑侧 `deviceIdOf` 同一算式）—— `hello` 里要带它，
-  // 而那时还没收到任何回执（见 `pairing_store.dart` 的 `deriveDeviceId`）。
-  final deviceId = await credentials.deviceId();
+  // `devId` 优先用**电脑侧给的那个**（配对回执里的权威值），
+  // 没有才本地推导（与电脑侧 `deviceIdOf` 同一算式）—— `hello` 里要带它，
+  // 而两端算得不一样的话，电脑侧会把它当成一台没见过的设备（症状是"配对成功但连不上"）。
+  final deviceId = await credentials.helloDeviceId();
 
-  final transport = WebSocketTransport(
-    WebSocketTransportOptions(url: credentials.relayUrl),
+  // 传输：**每次建连都换一张票**。
+  //
+  // 中转只接受 `/ws/device?ticket=…` 这条升级路径（拿根路径去连会得到 404，
+  // 而中转对 404 只 `log?.debug`，于是手机侧表现为"连不上、日志无原因"）；
+  // 而票是**一次性**的 —— 连接层退避后会反复重连，所以换票必须发生在每一次建连里。
+  final pairingClient = PairingClient(
+    relayUrl: credentials.relayUrl,
+    send: _httpSender,
+  );
+  final transport = TicketedWebSocketTransport(
+    endpoint: credentials.relayUrl,
+    ticket: () async => (await pairingClient.ticketByDeviceToken(
+      credentials.deviceToken,
+    )).ticket,
   );
 
   final client = createSyncClient(

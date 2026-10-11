@@ -27,8 +27,8 @@ test('帧类型清单只有一份：与契约 §3 的联合逐项相等', () => 
     'hello',
     'hello-ack',
     'confirm',
-    'pair',
-    'pair-ack',
+    'pair-commit',
+    'pair-result',
     'ping',
     'pong',
     'credit',
@@ -45,24 +45,15 @@ test('帧类型清单只有一份：与契约 §3 的联合逐项相等', () => 
   assert.equal(KNOWN_FRAME_TYPES, FRAME_TYPES, 'KNOWN_FRAME_TYPES 必须是 FRAME_TYPES 的别名，不许另起一份')
 })
 
-test('配对帧：明文（密钥还没建起来），且握手完成前**允许**通过门禁', () => {
-  // 明文：密钥建立之前没有"封箱"可言；`box` 里就是明文 JSON（载荷是配对码的**哈希**）。
-  assert.equal(needsBox('pair'), false)
-  assert.equal(needsBox('pair-ack'), false)
-  assert.equal(needsBox('req'), true, '业务帧照旧要封箱')
-
-  // 门禁：配对帧必须在握手完成**前**就能通过 —— 那正是它的用途。
-  assert.doesNotThrow(() =>
-    assertHandshakePhase({ v: 1, t: 'pair', id: 'p1', box: '{}' }, false),
-  )
-  assert.doesNotThrow(() =>
-    assertHandshakePhase({ v: 1, t: 'pair-ack', id: 'p1', box: '{}' }, false),
-  )
-  // 其余业务帧在握手完成前仍然一律拒绝（否则"未加密的业务帧"就可能溜进来）。
-  assert.throws(
-    () => assertHandshakePhase({ v: 1, t: 'req', id: 'r1', fc: 0, box: '{}' }, false),
-    /只接受/,
-  )
+test('配对 v2 帧必须封箱，而且握手完成前不能通过门禁', () => {
+  assert.equal(needsBox('pair-commit'), true)
+  assert.equal(needsBox('pair-result'), true)
+  assert.equal(needsBox('req'), true)
+  for (const t of ['pair-commit', 'pair-result'] as const) {
+    assert.throws(() => assertHandshakePhase({ v: 1, t, id: 'p1', fc: 0, box: '{}' }, false), /只接受/)
+    assert.doesNotThrow(() => assertHandshakePhase({ v: 1, t, id: 'p1', fc: 0, box: '{}' }, true))
+  }
+  assert.throws(() => assertHandshakePhase({ v: 1, t: 'req', id: 'r1', fc: 0, box: '{}' }, false), /只接受/)
 })
 
 test('可补帧集合：job 与 ev / live 同类（满窗时可暂停），res 不可暂停', () => {

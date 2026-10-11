@@ -4,4 +4,17 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+
+    <!--
+      **只在 debug 构建里放行本机明文 HTTP**（配置见 `res/xml/network_security_config.xml`）。
+
+      契约 §2 的配对链第一步是 `POST /ws-ticket`（HTTP），而本机联调时中转跑在
+      `http://127.0.0.1:8787`（`adb reverse` 接到电脑）。Android 9 起默认禁止明文，
+      于是那个请求**在应用层就被拒**，中转侧一条日志都没有 —— 症状是"配对页一直转圈"。
+
+      范围钉死在 localhost / 127.0.0.1 / 10.0.2.2，其余仍要求 TLS；
+      release 构建**不合并这份 manifest**，所以产品里没有"允许明文"这一档。
+    -->
+    <application
+        android:networkSecurityConfig="@xml/network_security_config" />
 </manifest>

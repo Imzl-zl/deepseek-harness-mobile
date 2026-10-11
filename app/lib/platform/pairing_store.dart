@@ -2,14 +2,19 @@
 ///
 /// ## 存什么、为什么
 ///
-/// 配对一次要存下四样东西，它们的**敏感度不同**，所以分开看待：
+/// 配对一次要存下这些东西，它们的**敏感度不同**，所以分开看待：
 ///
 /// | 字段 | 敏感度 | 丢了会怎样 |
 /// |---|---|---|
 /// | `masterSeedHex` | **设备身份本体**（32 字节主种子） | 电脑侧认不出这台设备，得重新配对 |
+/// | `deviceToken` | **长期凭据**（换票用它） | 连不上；而配对码是一次性的，**只能重新配对** |
+/// | `refreshToken` | 长期凭据（轮换设备令牌用） | 同上（轮换流程本期未实现，见 `device-token` 侧记录） |
 /// | `pairingId` | 配对标识（码的 HKDF 输出） | `master` 算不出来 → 连不上 |
 /// | `pcSignPubHex` / `pcDhPubHex` | 公钥 | 同上；而它**必须只来自二维码**（契约 §12.1） |
-/// | `relayUrl` | 不敏感 | 连不上 |
+/// | `relayUrl` / `pcId` / `devId` | 不敏感 | 连不上 |
+///
+/// **`deviceToken` 为什么与主种子同级**：它是设备之后**每次重连的唯一凭据**
+/// （配对码在配对那一刻就用掉了）。所以它进系统密钥库，与主种子同一条纪律。
 ///
 /// ## 为什么主种子绝不落 preferences（契约 §12.2 明令）
 ///
@@ -52,7 +57,10 @@ class PairedCredentials {
     required this.masterSeedHex,
     required this.devSignPubHex,
     required this.devDhPubHex,
+    required this.deviceToken,
+    required this.refreshToken,
     this.pcId = '',
+    this.devId = '',
   });
 
   /// 中转地址。
@@ -76,20 +84,37 @@ class PairedCredentials {
   /// 本机 X25519 静态公钥。
   final String devDhPubHex;
 
-  /// 电脑侧给本机分配的 pc 标识（握手帧里要带；配对回执里给）。
+  /// 设备令牌（**每次重连换票用它**）。配对回执给的那一次之后，中转只剩它的摘要。
+  final String deviceToken;
+
+  /// 刷新令牌（轮换设备令牌用；本期未实现轮换端点，如实记录）。
+  final String refreshToken;
+
+  /// 电脑侧给本机分配的 pc 标识（**握手 transcript 的 `pcId`**，配对回执里给）。
   ///
-  /// 空串表示"还没从配对回执里拿到" —— 那时握手会用空值，
-  /// 而 AAD 里它也参与拼串（契约 §3），所以**不可能是长期状态**。
+  /// 它**不在二维码里**：二维码只带公钥（契约 §12.1 的硬规则），
+  /// 而 `pcId` 是电脑侧在对回执时给出的。空串表示"还没拿到"。
   final String pcId;
 
-  /// 设备标识（电脑侧用 `devPubDh` 的哈希前 16 字节推导，见 `connector/src/pairing.ts`）。
+  /// 电脑侧给这台设备分配的设备 id（`hello` 里要带它）。
   ///
-  /// 这里**本地推导同一个值**，而不是等电脑侧下发：
-  /// 握手的 `hello` 里要带 `devId`，而那时还没收到任何回执。
+  /// 回执里给的是权威值（`devId`）；没有它时用 [deviceId] 本地推导同一个值。
+  final String devId;
+
+  /// 本地推导的设备标识（电脑侧用 `devPubDh` 的哈希前 16 字节推导，
+  /// 见 `connector/src/pairing.ts` 的 `deviceIdOf`）。
+  ///
+  /// 它与回执里的 `devId` **必然是同一个值**（两端同一算式）——
+  /// 留这条路径是为了"回执里没有 `devId`"的旧凭据仍能连上。
   ///
   /// 是方法而不是 getter：推导要算 sha256，而 `cryptography` 的 API 是异步的。
   /// 做成同步 getter 就得把摘要缓存进字段，而那是"同一个值有两个来源"的开端。
-  Future<String> deviceId() => deriveDeviceId(devDhPubHex);
+  Future<String> derivedDeviceId() => deriveDeviceId(devDhPubHex);
+
+  /// `hello` 里要带的设备 id：**优先用电脑侧给的那个**（它是权威），
+  /// 没有才本地推导。
+  Future<String> helloDeviceId() async =>
+      devId.isNotEmpty ? devId : derivedDeviceId();
 }
 
 /// 与电脑侧 `deviceIdOf` **逐字一致**：
@@ -120,6 +145,9 @@ abstract final class _Keys {
   static const devSignPub = 'dsh.dev_sign_pub';
   static const devDhPub = 'dsh.dev_dh_pub';
   static const pcId = 'dsh.pc_id';
+  static const devId = 'dsh.dev_id';
+  static const deviceToken = 'dsh.device_token';
+  static const refreshToken = 'dsh.refresh_token';
 }
 
 /// 配对凭据的读写。
@@ -140,8 +168,9 @@ abstract final class PairingStore {
 
   /// 读出已存的凭据；没有或不完整时返回 `null`。
   ///
-  /// **不完整就当没有**：缺任一字段都用不了（缺 `pairingId` 算不出 `master`），
-  /// 而"部分可用"会让失败发生在握手阶段 —— 那时没人会想到是存储缺字段。
+  /// **不完整就当没有**：缺任一字段都用不了（缺 `pairingId` 算不出 `master`，
+  /// 缺 `deviceToken` 换不到票），而"部分可用"会让失败发生在很后面 ——
+  /// 那时没人会想到是存储缺字段。
   static Future<PairedCredentials?> load() async {
     final values = await _storage.readAll();
     final relayUrl = values[_Keys.relayUrl];
@@ -151,6 +180,8 @@ abstract final class PairingStore {
     final masterSeed = values[_Keys.masterSeed];
     final devSignPub = values[_Keys.devSignPub];
     final devDhPub = values[_Keys.devDhPub];
+    final deviceToken = values[_Keys.deviceToken];
+    final refreshToken = values[_Keys.refreshToken];
 
     if (relayUrl == null ||
         pcSignPub == null ||
@@ -158,7 +189,9 @@ abstract final class PairingStore {
         pairingId == null ||
         masterSeed == null ||
         devSignPub == null ||
-        devDhPub == null) {
+        devDhPub == null ||
+        deviceToken == null ||
+        refreshToken == null) {
       return null;
     }
 
@@ -170,7 +203,10 @@ abstract final class PairingStore {
       masterSeedHex: masterSeed,
       devSignPubHex: devSignPub,
       devDhPubHex: devDhPub,
+      deviceToken: deviceToken,
+      refreshToken: refreshToken,
       pcId: values[_Keys.pcId] ?? '',
+      devId: values[_Keys.devId] ?? '',
     );
   }
 
@@ -189,8 +225,19 @@ abstract final class PairingStore {
       value: credentials.devSignPubHex,
     );
     await _storage.write(key: _Keys.devDhPub, value: credentials.devDhPubHex);
+    await _storage.write(
+      key: _Keys.deviceToken,
+      value: credentials.deviceToken,
+    );
+    await _storage.write(
+      key: _Keys.refreshToken,
+      value: credentials.refreshToken,
+    );
     if (credentials.pcId.isNotEmpty) {
       await _storage.write(key: _Keys.pcId, value: credentials.pcId);
+    }
+    if (credentials.devId.isNotEmpty) {
+      await _storage.write(key: _Keys.devId, value: credentials.devId);
     }
   }
 

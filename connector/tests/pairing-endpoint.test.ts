@@ -1,144 +1,84 @@
-/**
- * 配对端点的回归（契约 §12.1 第 3 步）。
- *
- * 这一层是安全边界，所以断言围着三件事：**什么时候必须拒**、**拒了要能说清原因**、
- * 以及**先落行再回执**（顺序反了的表现是"配对成功但连不上"）。
- */
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
+import { createPairing, type PairingCandidate } from '../src/pairing.js'
+import { createPairingEndpoint, type PairedDeviceRow } from '../src/pairing-endpoint.js'
 
-import { PAIRING_TTL_MS, createPairing, pairingCodeHash } from '../src/pairing.js'
-import {
-  createPairingEndpoint,
-  type PairedDeviceRow,
-  type PairingReply,
-} from '../src/pairing-endpoint.js'
-
-const PC_ED = 'a'.repeat(64)
-const PC_DH = 'b'.repeat(64)
-const DEV_ED = 'c'.repeat(64)
-const DEV_DH = 'd'.repeat(64)
-
-/** 每次调用给出不同字节，免得两次出码相同（配对用例里"旧码立刻失效"依赖它）。 */
-function varyingRandom(): (size: number) => Uint8Array {
-  let round = 0
-  return (size) => {
-    round += 1
-    return Uint8Array.from({ length: size }, (_, i) => (round * 37 + i) % 256)
-  }
-}
-
-function setup(patch: { putDevice?: (devId: string, row: PairedDeviceRow) => Promise<void> } = {}) {
-  const pairing = createPairing({
-    relayUrl: 'wss://relay.example/ws',
-    pcPubEd: PC_ED,
-    pcPubDh: PC_DH,
-    randomBytes: varyingRandom(),
-  })
-  const replies: { id: string; payload: PairingReply }[] = []
-  const rows: { devId: string; row: PairedDeviceRow }[] = []
-  /** 记录落行与回执的先后 —— 这是这一层唯一容易被写反的顺序。 */
+function setup(t: TestContext, options: { now?: () => number; putDevice?: (id: string, row: PairedDeviceRow) => Promise<void> } = {}) {
+  const pairing = createPairing({ pcId: 'pc-1', relayUrl: 'wss://relay.example', pcPubEd: 'a'.repeat(64), pcPubDh: 'b'.repeat(64), ...(options.now === undefined ? {} : { now: options.now }) })
+  const rows: PairedDeviceRow[] = []
   const order: string[] = []
-
   const endpoint = createPairingEndpoint({
-    pairing,
-    putDevice:
-      patch.putDevice ??
-      ((devId, row) => {
-        order.push('put')
-        rows.push({ devId, row })
-        return Promise.resolve()
-      }),
-    reply: (frame) => {
-      order.push('reply')
-      replies.push(frame)
-    },
+    pcId: 'pc-1', pairing,
+    putDevice: options.putDevice ?? (async (_id, row) => { order.push('put'); rows.push(row) }),
+    announce: async () => { order.push('announce') },
   })
-  return { pairing, endpoint, replies, rows, order }
+  t.after(() => endpoint.dispose())
+  const offer = pairing.offer()
+  const candidate: PairingCandidate = { offerId: offer.offerId, devPubEd: 'c'.repeat(64), devPubDh: 'd'.repeat(64), name: '我的手机' }
+  const body = (code = offer.code) => JSON.stringify({ v: 2, offerId: offer.offerId, code })
+  return { endpoint, pairing, offer, candidate, rows, order, body }
 }
 
-const body = (code: string): string =>
-  JSON.stringify({
-    codeHash: pairingCodeHash(code),
-    devPubEd: DEV_ED,
-    devPubDh: DEV_DH,
-    name: '我的手机',
-  })
-
-test('配对请求：校验通过就落设备行并回执（含 devId 与 6 位 SAS）', async () => {
-  const { pairing, endpoint, replies, rows } = setup()
-  const offer = pairing.offer()
-
-  await endpoint.handle({ id: 'p1', box: body(offer.code) })
-
-  assert.equal(rows.length, 1, '必须落一行设备记录')
-  const device = rows[0]
-  assert.ok(device !== undefined)
-  assert.equal(device.row.name, '我的手机')
-  assert.equal(device.row.edPubHex, DEV_ED)
-  assert.equal(device.row.dhPubHex, DEV_DH)
-  assert.equal(device.row.pairingId.length > 0, true, 'pairingId 要落进行里（握手要用它）')
-
-  assert.equal(replies.length, 1)
-  const payload = replies[0]?.payload
-  assert.ok(payload !== undefined && payload.ok, `应当成功，实际 ${JSON.stringify(payload)}`)
-  assert.equal(payload.devId, device.devId, '回执里的 devId 就是刚落的那个')
-  assert.match(payload.sas, /^\d{6}$/, 'SAS 是 6 位数字，用户拿它做带外核对')
+test('正确秘密与候选身份登记一行，设备记录只存令牌摘要', async (t) => {
+  const f = setup(t)
+  const result = await f.endpoint.handle(f.body(), f.candidate)
+  assert.ok(result.ok)
+  assert.equal(f.rows.length, 1)
+  const row = f.rows[0]!
+  assert.equal(row.name, f.candidate.name)
+  assert.equal(row.edPubHex, f.candidate.devPubEd)
+  assert.equal(row.dhPubHex, f.candidate.devPubDh)
+  assert.equal(row.pairingId.length, 43)
+  assert.match(row.tokenHash!, /^[0-9a-f]{64}$/)
+  assert.notEqual(row.tokenHash, result.deviceToken)
+  assert.equal(JSON.stringify(f.rows).includes(result.deviceToken), false)
+  assert.equal(result.pcId, 'pc-1')
+  assert.match(result.sas, /^\d{6}$/)
+  assert.match(result.deviceToken, /^[A-Za-z0-9_-]{22}$/)
+  assert.match(result.refreshToken, /^[A-Za-z0-9_-]{22}$/)
 })
 
-test('配对请求：先落行、后回执（顺序反了会出现"配对成功但连不上"）', async () => {
-  const { pairing, endpoint, order } = setup()
-  const offer = pairing.offer()
-  await endpoint.handle({ id: 'p1', box: body(offer.code) })
-  assert.deepEqual(order, ['put', 'reply'])
+test('成功结果必须在设备落盘和名册发布之后返回', async (t) => {
+  const f = setup(t)
+  const result = await f.endpoint.handle(f.body(), f.candidate)
+  assert.ok(result.ok)
+  f.order.push('reply')
+  assert.deepEqual(f.order, ['put', 'announce', 'reply'])
 })
 
-test('配对请求：过期 / 不对 / 已用过，都回一个用户看得懂的原因，且**从不抛**', async () => {
-  let clock = 1_000_000
-  const pairing = createPairing({
-    relayUrl: 'wss://relay.example/ws',
-    pcPubEd: PC_ED,
-    pcPubDh: PC_DH,
-    now: () => clock,
-    randomBytes: varyingRandom(),
-  })
-  const replies: PairingReply[] = []
-  const endpoint = createPairingEndpoint({
-    pairing,
-    putDevice: () => Promise.resolve(),
-    reply: (frame) => replies.push(frame.payload),
-  })
+test('过期、错误秘密与已归属另一候选都有明确拒绝结果', async (t) => {
+  let now = 1000
+  const expired = setup(t, { now: () => now })
+  now = expired.offer.expiresAt
+  const expiredResult = await expired.endpoint.handle(expired.body(), expired.candidate)
+  assert.ok(!expiredResult.ok)
+  assert.match(expiredResult.reason, /过期/)
+  assert.equal(expired.rows.length, 0)
 
-  const expired = pairing.offer()
-  clock += PAIRING_TTL_MS + 1
-  await endpoint.handle({ id: 'p1', box: body(expired.code) })
-  assert.deepEqual(replies[0], { ok: false, reason: '配对码已过期，请在电脑上重新出码' })
-
-  const fresh = pairing.offer()
-  await endpoint.handle({ id: 'p2', box: body('wrong-code') })
-  assert.deepEqual(replies[1], { ok: false, reason: '配对码不对，请核对后重试' })
-
-  await endpoint.handle({ id: 'p3', box: body(fresh.code) })
-  assert.equal(replies[2]?.ok, true)
-
-  await endpoint.handle({ id: 'p4', box: body(fresh.code) })
-  assert.deepEqual(replies[3], { ok: false, reason: '这个配对码已经用过了，请在电脑上重新出码' })
+  const f = setup(t)
+  const wrong = await f.endpoint.handle(f.body('Z'.repeat(22)), f.candidate)
+  assert.ok(!wrong.ok)
+  assert.match(wrong.reason, /不匹配/)
+  assert.equal(f.rows.length, 0)
+  assert.ok((await f.endpoint.handle(f.body(), f.candidate)).ok)
+  const consumed = await f.endpoint.handle(f.body(), { ...f.candidate, devPubEd: 'e'.repeat(64) })
+  assert.ok(!consumed.ok)
+  assert.match(consumed.reason, /另一台/)
+  assert.equal(f.rows.length, 1)
 })
 
-test('配对请求：载荷不是 JSON 只回原因，**不关连接**（配对失败不是协议错误）', async () => {
-  const { endpoint, replies } = setup()
-  await endpoint.handle({ id: 'p1', box: 'not json' })
-  assert.deepEqual(replies, [{ id: 'p1', payload: { ok: false, reason: '配对请求格式不对' } }])
+test('坏 JSON 返回配对错误而不写库', async (t) => {
+  const f = setup(t)
+  const result = await f.endpoint.handle('not json', f.candidate)
+  assert.ok(!result.ok)
+  assert.match(result.reason, /JSON/)
+  assert.equal(f.rows.length, 0)
 })
 
-test('配对请求：设备行写不进去就**不许**回 ok（否则手机拿着不存在的身份去握手）', async () => {
-  const { pairing, endpoint, replies } = setup({
-    putDevice: () => Promise.reject(new Error('磁盘满了')),
-  })
-  const offer = pairing.offer()
-  await endpoint.handle({ id: 'p1', box: body(offer.code) })
-
-  const payload = replies[0]?.payload
-  assert.equal(payload?.ok, false, '落行失败不是配对成功')
-  assert.match(payload?.ok === false ? payload.reason : '', /没能保存/)
+test('设备写库失败不能返回成功或伪称已登记', async (t) => {
+  const f = setup(t, { putDevice: async () => { throw new Error('磁盘满了') } })
+  const result = await f.endpoint.handle(f.body(), f.candidate)
+  assert.ok(!result.ok)
+  assert.equal(result.registered, false)
+  assert.match(result.reason, /未能保存/)
 })

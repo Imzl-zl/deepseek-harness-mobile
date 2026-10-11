@@ -62,6 +62,36 @@ class AppModel extends ChangeNotifier {
   /// 最近一次错误（界面显示用；`null` = 没有）。
   ProtocolException? _lastError;
 
+  /// **这条连接为什么被关掉**（来自客户端的诊断面；`null` = 没关过）。
+  ///
+  /// 必须暴露到界面：真机上出现过"列表恒空 + 反复重连"，而**两端日志都看不出原因** ——
+  /// 因为原因一直存在 `SyncClientProbe.lastProtocolError` 里，而那是"只给测试用"的字段。
+  /// 一个只给测试看的诊断面，在真机上等于没有诊断面。
+  String? get connectionDiagnosis {
+    // `SyncClientProbe` 与 `SyncClient` 是**两个独立接口**（前者是诊断面，
+    // 故意不并进产品接口 —— 免得界面层顺手去解析帧）。所以这里不能靠
+    // `is SyncClientProbe` 收窄（`client` 的静态类型是 `SyncClient`，两者无子型关系），
+    // 得显式转一次。
+    final probe = client is SyncClientProbe ? client as SyncClientProbe : null;
+    if (probe == null) return null;
+    final error = probe.lastProtocolError;
+    if (error != null) return '${error.code.wire}：${error.message}';
+    // **握手失败排在"对端关闭"之前**：它是更具体的原因 ——
+    // 握手失败也会导致连接被关，先看更具体的那一个（真机上"每 10 秒重连"就是它）。
+    final handshake = probe.lastHandshakeFailure;
+    if (handshake != null) return '握手失败（$handshake）';
+    final silent = probe.lastHalfOpenSilentMs;
+    if (silent != null) return '判为半开（沉默 ${silent}ms）';
+    // **断开但没有任何协议错误** —— 真机上"每 10 秒重连"就是这种。
+    // 关闭码与理由是唯一的线索，必须显示出来。
+    final code = probe.lastCloseCode;
+    final reason = probe.lastCloseReason;
+    if (code != null || reason != null) {
+      return '连接被关闭（code=${code ?? '无'}${reason == null ? '' : '，$reason'}）';
+    }
+    return null;
+  }
+
   StreamSubscription<ConnectionState>? _stateSub;
   final Map<String, StreamSubscription<SessionDelta>> _deltaSubs = {};
 
@@ -159,7 +189,26 @@ class AppModel extends ChangeNotifier {
   void _onConnectionChanged(ConnectionState state) {
     if (_disposed) return;
     _connection = _viewOf(state);
+    // **连上了就清掉上一次的失败**（它可能是好几轮之前那次断开留下的）。
+    //
+    // 少了这一行，界面会一边显示"拉取会话失败"一边正常收发 ——
+    // 而那句话会把排查引向一个**已经不存在**的故障（真机实测：
+    // 屏幕写着 `handshake-timeout`，中转侧却显示 hello / confirm / req 三步都正常）。
+    if (state == ConnectionState.serving) {
+      _lastError = null;
+    }
     notifyListeners();
+    // **一进服务态就拉会话列表**。
+    //
+    // 少了这一步，界面永远停在「还没有会话」—— 而那不是"电脑上真没有会话"，
+    // 是**根本没人去问过**。连上的那一刻是唯一正确的时机：
+    // 之前发请求会撞上"还没握手"，之后没有别的事件会再来一次。
+    //
+    // 拉完的结果由 `refreshSessions` 自己 `notifyListeners`，这里不等它：
+    // 收帧路径上的回调不该被一个网络往返挡住（§2.2 的状态迁移通知是同步派发的）。
+    if (state == ConnectionState.serving) {
+      unawaited(refreshSessions());
+    }
   }
 
   /// 把 `ConnectionState`（协议状态机）翻成界面视图。
@@ -183,8 +232,14 @@ class AppModel extends ChangeNotifier {
       _sessions = list;
       _lastError = null;
       if (!_disposed) notifyListeners();
-    } on ProtocolException catch (error) {
-      _lastError = error;
+    } catch (error) {
+      // **兜住所有异常，不只 `ProtocolException`**（契约 §9：失败要留声）。
+      // 只接 `ProtocolException` 的话，任何别的错（解析、类型、超时…）
+      // 都会逃逸成未处理的异步错误 —— 界面**停在空列表且不报错**，
+      // 而那正是"连上了却永远没有会话"最容易被误判成"电脑上真没有"的形态。
+      _lastError = error is ProtocolException
+          ? error
+          : ProtocolException(ErrorCode.internal, '拉取会话列表失败：$error');
       if (!_disposed) notifyListeners();
     }
   }
@@ -315,10 +370,30 @@ class AppModel extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
+  /// 解析 `session.list` 的返回。
+  ///
+  /// **形状是 `{ sessions: [...] }`，不是一个裸数组** —— 这是真机上"连上了却永远
+  /// 没有会话"的真因：这里原先只认 `List`，而电脑侧回的是对象，
+  /// 于是**每一条都被静默跳过**、列表恒为空、且不报错（用户无从分辨
+  /// "电脑上真没有会话"与"我们没看懂回复"）。
+  ///
+  /// 判据取电脑侧：`connector/src/handlers.ts` 的 `session.list` 返回
+  /// `{ sessions: [...] }`，且 `connector/tests/connection-methods.test.ts` 有多处
+  /// 按 `result.sessions[…]` 断言。**两侧只有一个真值，不能各认各的形状。**
+  ///
+  /// Note: 这条与另外两处"线上形状不一致"一起记在
+  /// `.agents/notes/implemented/2026-10-07-three-wire-shape-mismatches.md`
   static List<SessionSummary> _parseSessionList(Object? result) {
-    if (result is! List) return const [];
+    // 对象形状是权威；裸数组也认（早期的假客户端与将来的简写都可能这么给），
+    // 但**认不出就必须留声** —— 静默返回空列表正是这个 bug 藏了这么久的原因。
+    final Object? raw = switch (result) {
+      List() => result,
+      Map() => result['sessions'],
+      _ => null,
+    };
+    if (raw is! List) return const [];
     final out = <SessionSummary>[];
-    for (final entry in result) {
+    for (final entry in raw) {
       if (entry is! Map) continue;
       final sid = entry['sid'];
       if (sid is! String || sid.isEmpty) continue;

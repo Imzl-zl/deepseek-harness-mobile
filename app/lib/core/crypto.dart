@@ -16,9 +16,12 @@
 ///    ⇒ nonce 重用 ⇒ 直接破掉 AEAD。握手失败后的重试同样要重新生成。
 /// 3. **AAD 用 `frame.dart` 的 [aadOf]**，两端必须字节一致；不要在这里另拼一份。
 ///
-/// 算法已核实（`protocol/vectors/aead.json` 写死）：**ChaCha20-Poly1305**
-/// （RFC 7539 / IETF，12 字节 nonce、16 字节 tag）。Dart 侧用 `cryptography` 包的
-/// [Chacha20.poly1305Aead]，它就是 RFC 7539。
+/// 算法已核实（`protocol/vectors/aead.json` 写死）：**AES-256-GCM**
+/// （96 位 nonce、16 字节 tag）。Dart 侧用 `cryptography` 包的 [AesGcm.with256bits]。
+///
+/// **曾经是 ChaCha20-Poly1305** —— 换成 AES-GCM 的原因是**电脑侧**：
+/// Electron 的 crypto 不提供 ChaCha20（整族都没有），而插件跑在 Electron 里。
+/// 详见 [SealedBox] 上方 `_aead` 的说明。
 library;
 
 import 'dart:convert';
@@ -46,9 +49,18 @@ const int masterKeyBytes = 64;
 /// 握手签名与 DH 密钥的原始长度。
 const int rawKeyBytes = 32;
 
-/// ChaCha20-Poly1305（RFC 7539）。`cryptography` 包的默认实现是纯 Dart，
-/// 平台有实现时自动走平台 —— 两者输出一致（同一份 RFC）。
-final Chacha20 _aead = Chacha20.poly1305Aead();
+/// AEAD 算法（契约 §4.2）：**AES-256-GCM**。
+///
+/// 曾是 `Chacha20.poly1305Aead()`，被真机逼着换掉：**Electron 的 crypto 不提供
+/// `chacha20-poly1305`**（整族都没有），而电脑侧插件跑在 Electron 里 ——
+/// 症状是"握手成功、第一帧业务请求就断"。
+///
+/// Dart 这一侧两种算法都可用（`cryptography` 包都实现了），所以换它不影响手机端能力：
+/// 变的是**两端必须一致的那一个算法名**。nonce 规则、AAD 拼串、密钥派生、箱容器全都没变。
+///
+/// Note: 为什么换、以及"选型必须查电脑侧运行时"这条教训 —— 见
+/// `.agents/notes/implemented/2026-10-07-electron-lacks-chacha20.md`
+final AesGcm _aead = AesGcm.with256bits();
 
 final X25519 _x25519 = X25519();
 final Ed25519 _ed25519 = Ed25519();

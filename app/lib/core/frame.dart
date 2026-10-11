@@ -39,8 +39,8 @@ const List<String> frameTypes = <String>[
   'hello',
   'hello-ack',
   'confirm',
-  'pair',
-  'pair-ack',
+  'pair-commit',
+  'pair-result',
   'ping',
   'pong',
   'credit',
@@ -60,8 +60,12 @@ const List<String> handshakeFrameTypes = <String>[
   'confirm',
 ];
 
-/// 配对两帧。**同握手帧一样是明文**，理由也一样：配对发生在密钥建立**之前**。
-const List<String> pairingFrameTypes = <String>['pair', 'pair-ack'];
+/// 配对两帧。**它们是要封箱的**（与握手三帧不同）：配对码是这一阶段的授权秘密，
+/// 而它必须只以密文上线 —— `pair-commit` 的载荷就是 `{v: 2, offerId, code}`。
+///
+/// 反过来说：它们出现在**密钥建立之后**（受限握手走完才有这两个帧），
+/// 所以"密钥还没建立"不能当作它们明文的理由。
+const List<String> pairingFrameTypes = <String>['pair-commit', 'pair-result'];
 
 /// 从一帧取 AAD 字段（契约 §3 的规范化输入）。
 ///
@@ -92,11 +96,15 @@ const int frameIdBytes = 16;
 bool isHandshakeFrameType(String type) => handshakeFrameTypes.contains(type);
 
 /// 是不是配对帧。
+///
+/// 判据只有 [pairingFrameTypes] 一处集合；调用方按需查它，而不是各写一份字面量。
 bool isPairingFrameType(String type) => pairingFrameTypes.contains(type);
 
-/// 密钥建立**之前**就能出现的明文帧（握手三帧 + 配对两帧）：不盖 `fc`、不封箱。
-bool isPreKeysPlaintextFrame(String type) =>
-    isHandshakeFrameType(type) || isPairingFrameType(type);
+/// 密钥建立**之前**就能出现的明文帧：**只有握手三帧**。
+///
+/// 配对两帧不在其中：它们发生在受限握手**之后**、且必须封箱
+/// （`pair-commit` 的载荷就是配对码）。写错这一条的表现是配对秘密明文上线。
+bool isPreKeysPlaintextFrame(String type) => isHandshakeFrameType(type);
 
 /// 这一帧是不是**必须封箱**的（契约 §3）。
 ///
@@ -107,7 +115,6 @@ bool isPreKeysPlaintextFrame(String type) =>
 /// 判据只写在这里：发之前封什么、收之后解什么、没密钥时哪些帧根本不许发，三处共用它。
 bool needsBox(String type) {
   if (type == 'presence') return false;
-  if (isPairingFrameType(type)) return false;
   return !isHandshakeFrameType(type);
 }
 
@@ -281,23 +288,24 @@ DecodeResult decodeFrame(String line) {
   return DecodedFrame(parsed);
 }
 
-/// 握手门禁：未完成握手的连接只接受握手帧与配对帧（契约 §2.2）。
+/// 握手门禁：未完成握手的连接**只接受握手三帧**（契约 §2.2）。
 ///
 /// 做成显式函数而不是散在收帧分支里 ——「业务帧在握手前到达」是**攻击面**
 /// （对端可能在密钥还没协商好时就想塞业务数据），值得一个能被测试直接点名的判据。
+///
+/// 配对两帧**不在放行之列**：它们要封箱、且只出现在受限握手**之后**，
+/// 所以"握手没完成就收到 `pair-commit`"与收到 `req` 是同一件事。
+/// 这一条与电脑侧逐字对齐（`connector/src/transport/codec.ts:132`）。
 void assertHandshakePhase(
   Map<String, Object?> frame, {
   required bool handshakeDone,
 }) {
   if (handshakeDone) return;
   final type = frame['t'];
-  if (type is String &&
-      (isHandshakeFrameType(type) || isPairingFrameType(type))) {
-    return;
-  }
+  if (type is String && isHandshakeFrameType(type)) return;
   throw ProtocolException(
     ErrorCode.badFrame,
-    '握手未完成时收到 $type 帧：本阶段只接受 ${[...handshakeFrameTypes, ...pairingFrameTypes].join(' / ')}',
+    '握手未完成时收到 $type 帧：本阶段只接受 ${handshakeFrameTypes.join(' / ')}',
   );
 }
 

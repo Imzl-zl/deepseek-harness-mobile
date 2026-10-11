@@ -140,12 +140,14 @@ HandshakeDriver createHandshakeDriver({
   required String Function() newNonceHex,
   required String Function() newFrameIdHex,
   String info = keyInfo,
+  String? transcriptContext,
   int timeout = handshakeTimeoutMs,
 }) {
   return (context) => _InitiatorSession(
     identity: identity,
     peer: peer,
     info: info,
+    transcriptContext: transcriptContext,
     context: context,
     timeout: timeout,
     newEphemeralSeedHex: newEphemeralSeedHex,
@@ -159,6 +161,7 @@ class _InitiatorSession implements HandshakeSession {
     required this.identity,
     required this.peer,
     required this.info,
+    required this.transcriptContext,
     required this.context,
     required this.timeout,
     required this.newEphemeralSeedHex,
@@ -171,6 +174,7 @@ class _InitiatorSession implements HandshakeSession {
   final HandshakeIdentity identity;
   final PeerIdentity peer;
   final String info;
+  final String? transcriptContext;
   final HandshakeContext context;
   final int timeout;
   final String Function() newEphemeralSeedHex;
@@ -288,7 +292,16 @@ class _InitiatorSession implements HandshakeSession {
     final ack = parseHelloAck(box);
 
     // 两侧各拼一遍同一段字节：手机用**它自己发出的 hello 字段** + **收到的 ack 字段**。
-    final transcript = transcriptFromFields(helloFields, ack.fields);
+    //
+    // `transcriptContext` 是**配对用途**的绑定（正常业务为 null）：它把
+    // 「这次握手是给哪个邀请、哪个候选身份用的」钉进被签的字节里，于是中转
+    // 替换候选公钥、或把 A 设备的 confirm 挪给 B 邀请，都会在验签处失败。
+    // 电脑侧同一处见 `connector/src/protocol/handshake-driver.ts:176`。
+    final transcript = transcriptFromFields(
+      helloFields,
+      ack.fields,
+      transcriptContext,
+    );
 
     // 第一道校验：**验 sigB**。契约 §4.1 明写「中继替换公钥无法通过验签」——
     // 也就是说端到端加密的抗中间人能力完全落在这里。

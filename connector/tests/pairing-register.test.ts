@@ -22,9 +22,11 @@ function fakeFetch(status: number, body = '{}') {
 
 test('地址派生：ws→http、wss→https，并且**丢掉路径**（HTTP 端点不在 WS 那条路径上）', () => {
   assert.equal(httpBaseOf('wss://relay.example/ws'), 'https://relay.example')
-  assert.equal(httpBaseOf('ws://127.0.0.1:8787/ws?x=1'), 'http://127.0.0.1:8787')
-  // 已经很明确的 http(s) 也照原样（便于本地直连测试）
-  assert.equal(httpBaseOf('http://127.0.0.1:9000'), 'http://127.0.0.1:9000')
+  assert.equal(httpBaseOf('ws://127.0.0.1:8787/ws', true), 'http://127.0.0.1:8787')
+  assert.throws(() => httpBaseOf('ws://127.0.0.1:8787/ws'), /WSS/)
+  assert.throws(() => httpBaseOf('ws://relay.example/ws', true), /WSS/)
+  assert.throws(() => httpBaseOf('http://127.0.0.1:9000'), /WSS/)
+  assert.throws(() => httpBaseOf('wss://relay.example/ws?token=secret'), /查询参数/)
 })
 
 test('成功：POST /pairing/register，带 Bearer 令牌与 codeHash', async () => {
@@ -44,7 +46,7 @@ test('成功：POST /pairing/register，带 Bearer 令牌与 codeHash', async ()
     authorization: `Bearer ${TOKEN}`,
     'content-type': 'application/json',
   })
-  assert.deepEqual(JSON.parse(String(init?.body)), { codeHash: 'hash-a' })
+  assert.deepEqual(JSON.parse(String(init?.body)), { v: 2, offerId: 'hash-a' })
 })
 
 test('非 2xx：抛，并且把**状态码**带进消息（401 与 409 的下一步动作不同）', async () => {

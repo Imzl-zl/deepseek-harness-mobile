@@ -35,9 +35,9 @@ import {
   aadFieldsOf,
   hasBox,
   isHandshakeFrameType,
-  isPairingFrameType,
   isPreKeysPlaintextFrame,
   needsBox,
+  newFrameId,
   type FrameType,
   type WireFrame,
 } from '../protocol/frame.js'
@@ -173,7 +173,7 @@ export interface ConnectionOptions {
  */
 export type ConnectionPort = Pick<
   Connection,
-  'send' | 'sendPairingFrame' | 'whenWritable' | 'state'
+  'send' | 'whenWritable' | 'state'
 >
 
 export interface Connection {
@@ -205,13 +205,6 @@ export interface Connection {
    * `.agents/notes/implemented/2026-10-01-job-output-transport-shape.md`
    */
   whenWritable(type: FrameType): Promise<void>
-  /**
-   * 配对帧的出帧入口（**收窄**：只接受 `pair` / `pair-ack`）。
-   *
-   * 与握手帧同一个理由：`send()` 在 `serving` 之前恒为 `false`，而配对帧必须在握手**之前**出去。
-   * **不放宽 `send()`** —— 那等于给"握手期发业务帧"开口子。配对帧也不盖 `fc`（§3 的形状里没有它）。
-   */
-  sendPairingFrame(frame: WireFrame): void
   /**
    * 接管一个已经打开的 socket（监听面 accept 之后交给它）。
    *
@@ -316,8 +309,31 @@ export function createConnection(options: ConnectionOptions): Connection {
     const period = Math.max(10, Math.round((heartbeatMs ?? 60_000) / 4))
     const run = (): void => {
       if (stopped) return
-      const action = keepalive.tick(now())
-      if (action.kind === 'ping') write({ v: 1, t: 'ping', box: '' })
+      const at = now()
+      // **半开判据只在 `serving` 期间成立**（契约 §2.2 的原话："`serving` 期间
+      // 任一方向连续 2 个心跳周期无任何帧 → 视为断开"）。
+      //
+      // 少了这道门，会踩一个症状极具误导性的坑：**应答方（电脑侧）在 `serving`
+      // 之前本来就收不到任何帧** —— 它等对端发 `hello`。于是"连上中转 → 进 `handshake`
+      // → 一个帧都没有 → 两个周期后判自己半开 → 关掉一条完全健康的连接"
+      // （关闭码 4000 `half-open`）。中转侧看到的是"连接器反复断开"（每 30 秒一轮，
+      // 那是退避上界），而**每次断开都会清掉未认领的配对登记** —— 于是扫码换票
+      // 永远 409，两端日志各自看起来都正常。真机联调实测：每 30 秒一次，持续数小时。
+      //
+      // 空闲计时照旧推进（`onFrame` 在收发时都会重置它），所以进 `serving` 那一刻
+      // 的计时是正确的：那一刻之前没有帧，但那时也**不该**判半开。
+      //
+      // Note: 为什么这道门是必需的 —— 见
+      // `.agents/notes/implemented/2026-10-07-connector-self-disconnect-two-causes.md`
+      if (machine.state !== 'serving') {
+        cancelTick = schedule(run, period)
+        return
+      }
+      const action = keepalive.tick(at)
+      // `id` 是必需的（§2.2）：`pong` 没有 `sid`，中继只能靠它把应答送回这一侧。
+      // 生成器与握手帧同源（`protocol/frame.ts` 的 `newFrameId`）—— 两处各造一套
+      // 就会出现"某些帧的 id 中继认不出"这种只在真机上才发作的偏差。
+      if (action.kind === 'ping') write({ v: 1, t: 'ping', id: newFrameId(), box: '' })
       else if (action.kind === 'half-open') {
         // 半开：TCP 不会报错，只能自己判。关掉 socket，剩下的交给 onclose 统一收口。
         log?.warn('判定为半开连接，关闭并重连', { silentMs: action.silentMs })
@@ -438,21 +454,6 @@ export function createConnection(options: ConnectionOptions): Connection {
   }
 
   /**
-   * 配对帧的出帧入口（**同样收窄**：只接受 `pair` / `pair-ack`）。
-   *
-   * 与 `sendHandshakeFrame` 同一个理由：`send()` 在 `serving` 之前恒为 `false`，
-   * 而配对帧必须在握手**之前**就能出去。**不放宽 `send()`** —— 那等于给"握手期发业务帧"开口子。
-   * 配对帧与握手帧一样**不盖 `fc`**（它们的线上形状里没有这个字段，§3）。
-   */
-  const sendPairingFrame = (frame: WireFrame): void => {
-    if (!isPairingFrameType(frame.t)) {
-      log?.warn(`配对路径试图发送非配对帧 ${frame.t}，已拒绝`)
-      return
-    }
-    write(frame)
-  }
-
-  /**
    * 收帧后的流控记账（契约 §4.3）。**必须在解箱之后**：`ack` 与 `fc` 都要先被认证，
    * 否则一帧伪造的 credit 就能替对端松开窗口。
    *
@@ -551,7 +552,22 @@ export function createConnection(options: ConnectionOptions): Connection {
         handleFrame(decoded.frame)
       } catch (error) {
         const code = error instanceof ProtocolError ? error.code : 'protocol/bad-frame'
-        log?.warn(`收帧被拒（${code}），关闭连接`, error)
+        // **把原始行也带出来**：`bad-frame` 有十来个来源（超限 / 不是 JSON / 缺 t /
+        // 字符集不对 / 握手门禁 / 解箱失败…），只说"被拒"等于没说 ——
+        // 排查时只能靠猜（实测踩过：真机上连接器每 30 秒因 `bad-frame` 断开，
+        // 而日志里只有这一句，看不出是哪一种）。
+        // 截断到 500 字符：它是**别人的输入**，不该让日志被它撑爆。
+        const detail = {
+          raw: line.length > 500 ? `${line.slice(0, 500)}…` : line,
+          // **`message` 必须显式取**：`JSON.stringify(new Error('x'))` 是 `{}`
+          // （Error 的自有属性不可枚举），只打 error 等于什么都没打（实测踩过：
+          // 真机上连接器每 30 秒因 `bad-frame` 断开，而日志里的 error 是空的，
+          // 白白多花了一轮排查）。
+          message: error instanceof Error ? error.message : String(error),
+          // 握手到哪一步了 —— `bad-frame` 的两大来源（握手门禁 vs 解箱）靠它区分。
+          handshakeDone,
+        }
+        log?.warn(`收帧被拒（${code}），关闭连接`, detail)
         socket?.close(4002, code)
         return
       }
@@ -720,7 +736,6 @@ export function createConnection(options: ConnectionOptions): Connection {
       return write(frame)
     },
 
-    sendPairingFrame,
     attach,
 
     whenWritable(type) {

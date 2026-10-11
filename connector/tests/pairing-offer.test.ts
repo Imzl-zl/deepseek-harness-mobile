@@ -11,11 +11,13 @@ import { PAIRING_TTL_MS, createPairing, pairingCodeHash } from '../src/pairing.j
 import { offerForScanning } from '../src/pairing-offer.js'
 
 function setup(registerImpl?: (codeHash: string) => Promise<void>) {
+  let sequence = 0
   const pairing = createPairing({
+    pcId: 'pc-1',
     relayUrl: 'wss://relay.example/ws',
     pcPubEd: 'a'.repeat(64),
     pcPubDh: 'b'.repeat(64),
-    randomBytes: (size) => Uint8Array.from({ length: size }, (_, i) => i + 7),
+    randomBytes: (size) => Uint8Array.from({ length: size }, () => ++sequence % 256),
   })
   const registered: string[] = []
   const register =
@@ -38,7 +40,8 @@ test('登记成功才出码：命令结果里带二维码载荷（含码与电�
   assert.equal(typeof payload['code'], 'string')
 
   // 登记用的必须是**这张码的哈希**（否则中转绑不上，手机扫了也配不上）。
-  assert.deepEqual(registered, [pairingCodeHash(String(payload['code']))])
+  assert.deepEqual(registered, [payload['offerId']])
+  assert.notEqual(registered[0], pairingCodeHash(String(payload['code'])), '登记值不能充当授权校验值')
 })
 
 test('登记失败：**不出码**，回一个说明原因的结果（而不是给一张配不上的二维码）', async () => {
@@ -68,6 +71,7 @@ test('一次出码只登记一次，且用的是**这一次**的哈希（重新�
   const { pairing, register, registered } = setup()
   let round = 0
   const pairing2 = createPairing({
+    pcId: 'pc-1',
     relayUrl: 'wss://relay.example/ws',
     pcPubEd: 'a'.repeat(64),
     pcPubDh: 'b'.repeat(64),

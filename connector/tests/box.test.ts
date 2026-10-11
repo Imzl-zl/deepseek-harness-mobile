@@ -45,7 +45,8 @@ const evFrame = (fc: number, seq = 1): WireFrame => ({
   box: '',
 })
 
-const pingFrame = (fc: number): WireFrame => ({ v: 1, t: 'ping', fc, box: '' })
+// `ping` 带 `id`（§2.2）：`pong` 没有 `sid`，中继靠它回程。
+const pingFrame = (fc: number): WireFrame => ({ v: 1, t: 'ping', id: 'ping-1', fc, box: '' })
 
 test('容器：往返一致，且坏编码在本地就被拦住', () => {
   const sealed = { ciphertextHex: 'aabbcc', tagHex: 'dd'.repeat(16) }

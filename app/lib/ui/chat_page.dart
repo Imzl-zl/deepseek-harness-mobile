@@ -57,6 +57,7 @@ class ChatPage extends StatefulWidget {
     required this.onOpenDrawer,
     required this.onNewSession,
     required this.drawer,
+    this.onOpenSession,
     this.paired = true,
     this.onConnect,
   });
@@ -68,6 +69,12 @@ class ChatPage extends StatefulWidget {
 
   final VoidCallback onNewSession;
 
+  /// 打开某个会话（**主界面上的内联会话列表**用它；抽屉有自己的一条同名回调）。
+  ///
+  /// 可选：不给时内联列表点了没反应 —— 那只该出现在"只画界面"的测试里，
+  /// 真实装配点（`main.dart`）必须给。
+  final void Function(SessionSummary session)? onOpenSession;
+
   /// 抽屉本体（外层 `Scaffold.drawer`）。
   final Widget drawer;
 
@@ -77,11 +84,24 @@ class ChatPage extends StatefulWidget {
   final VoidCallback? onConnect;
 
   @override
-  State<ChatPage> createState() => _ChatPageState();
+  State<ChatPage> createState() => ChatPageState();
 }
 
-class _ChatPageState extends State<ChatPage> {
+/// **公开的**（不是 `_ChatPageState`）：外层要靠 `GlobalKey<ChatPageState>`
+/// 调 [ChatPageState.openDrawer] 打开抽屉 —— 抽屉归本页的 `Scaffold` 管，外层只能通过 key 够到它。
+///
+/// **这条是踩出来的**：先前它是私有的、且**没有 `openDrawer` 这个方法**，
+/// 而外层写的是 `_chatKey.currentState?.openDrawer()` —— 私有的 `State` 类型
+/// 让 `currentState` 的静态类型是 `State<ChatPage>`，那个 `?.` 于是**永远静默失效**：
+/// 点 `☰`、点空态里的"打开会话抽屉"都毫无反应，**且不报任何错**（真机实测）。
+///
+/// Note: 为什么这类"静默失效"要专门留一篇 —— 见
+/// `.agents/notes/implemented/2026-10-07-three-wire-shape-mismatches.md`
+class ChatPageState extends State<ChatPage> {
   final _input = TextEditingController();
+
+  /// 本页 `Scaffold` 的 key —— [openDrawer] 靠它开抽屉。
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
   int _tab = 0;
   bool _sending = false;
   final List<PendingAttachment> _attachments = [];
@@ -110,6 +130,12 @@ class _ChatPageState extends State<ChatPage> {
 
   /// 输入栏接管（审批 / 提问 / 计划）。
   final TakeoverController _takeover = TakeoverController();
+
+  /// 打开左侧会话抽屉。
+  ///
+  /// 外层用 `GlobalKey<ChatPageState>` 调它（顶栏 `☰`、空态里的"打开会话抽屉"）。
+  /// **抽屉归本页的 `Scaffold`**，所以只有这里能开它 —— 外层拿不到那个 `Scaffold`。
+  void openDrawer() => _scaffoldKey.currentState?.openDrawer();
 
   @override
   void initState() {
@@ -154,19 +180,51 @@ class _ChatPageState extends State<ChatPage> {
 
   void _onInputChanged() => setState(() {});
 
+  /// 重新拉一次会话列表，失败**要说出来**。
+  ///
+  /// 失败必须可见：空态下那几行字是用户唯一的线索来源，
+  /// "拉取失败却什么都不显示"会让人以为"电脑上真的没有会话"——
+  /// 而两者的下一步动作完全不同（一个是去电脑上开会话，一个是查连接）。
+  Future<void> _refreshSessions() async {
+    await widget.app.refreshSessions();
+    if (!mounted) return;
+    final error = widget.app.lastError;
+    if (error == null) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('拉取会话失败：${error.message}')));
+  }
+
   /// 发一句。
   ///
   /// **幂等键在入队时生成**（契约 §5.6）：重发复用同一个 —— 换键等于换了一次新消息。
+  ///
+  /// ## 参数形状（踩过）
+  ///
+  /// 电脑侧要的是 `{ sid, content }`，而 `content` 是**非空数组、每项带 `type`**
+  /// （照 DSH 的 `PromptContentPart`：文本是 `{type:'text', text}`）。
+  /// 早先这里发的是 `{ sid, text }` —— 电脑侧回 `content 必须是非空数组`，
+  /// 而那个错误只在一闪而过的 SnackBar 里，看起来就是"发了啥也没有"（真机实测）。
   Future<void> _send() async {
     final text = _input.text.trim();
     final sid = widget.app.currentSid;
-    if (text.isEmpty || _sending || sid == null) return;
+    // **没选会话就发不出去，必须说出来**：静默 `return` 会让用户以为"点了没反应"，
+    // 而那正是"我发了啥也没有"最常见的成因（真机实测）。
+    if (text.isEmpty || _sending) return;
+    if (sid == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('先在列表里选一个会话，再发消息')));
+      return;
+    }
     setState(() => _sending = true);
     try {
       final requestId = 'p-${DateTime.now().microsecondsSinceEpoch}';
       await widget.app.client.call<void>('session.prompt', {
         'sid': sid,
-        'text': text,
+        'content': [
+          {'type': 'text', 'text': text},
+        ],
       }, requestId: requestId);
       _input.clear();
       if (mounted) setState(() => _attachments.clear());
@@ -236,6 +294,7 @@ class _ChatPageState extends State<ChatPage> {
     final items = widget.app.items;
     final sid = widget.app.currentSid;
     return Scaffold(
+      key: _scaffoldKey,
       backgroundColor: DshColors.bgBase,
       drawer: widget.drawer,
       // 左缘跟手拖出的宽度（原型 `.edge--open` 手势带）。
@@ -267,6 +326,8 @@ class _ChatPageState extends State<ChatPage> {
                     items: items,
                     paired: widget.paired,
                     onOpenDrawer: widget.onOpenDrawer,
+                    onRefreshSessions: _refreshSessions,
+                    onOpenSession: widget.onOpenSession ?? (_) {},
                     onConnect: widget.onConnect,
                   )
                 : _TrajectoryTab(onTapEntry: _showTraceSheet),
@@ -846,6 +907,8 @@ class _ChatTab extends StatelessWidget {
     required this.items,
     required this.paired,
     required this.onOpenDrawer,
+    required this.onRefreshSessions,
+    required this.onOpenSession,
     this.onConnect,
   });
 
@@ -853,23 +916,137 @@ class _ChatTab extends StatelessWidget {
   final List<ChatItem> items;
   final bool paired;
   final VoidCallback onOpenDrawer;
+
+  /// 重新拉会话列表（由**有状态**的页面层实现：它能在 await 之后安全用 `context`）。
+  final VoidCallback onRefreshSessions;
+
+  /// 打开某个会话（主界面上的内联列表与抽屉共用同一条通路）。
+  final void Function(SessionSummary session) onOpenSession;
   final VoidCallback? onConnect;
 
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) {
+      // **没选中会话但电脑侧有会话：把列表直接铺在主界面上。**
+      //
+      // 这是被真机逼出来的：会话原先只存在于左侧抽屉里，而主界面是一块几乎空白的屏 ——
+      // 数据明明已经拉到了，用户却"什么都看不见"，只能靠先发现 `☰` 才能找到会话。
+      // 抽屉仍然在（它是原型的信息架构），但**主界面自己也要能选**：
+      // 一个"有数据的首页"比"让人先学会点哪"重要。
+      if (app.currentSid == null && app.sessions.isNotEmpty) {
+        return _SessionListInline(
+          sessions: app.sessions,
+          onOpen: onOpenSession,
+          onRefresh: paired ? onRefreshSessions : null,
+        );
+      }
       return _EmptyChat(
         paired: paired,
         hasSessions: app.sessions.isNotEmpty,
+        // **已经选中了会话**（只是它还没有条目）——必须与"还没选"分开说。
+        // 少了这一支，点进一个空会话会看到"选一个会话"，而用户**刚刚才选过**，
+        // 那句话会让人以为点击没生效（真机实测）。
+        selectedSid: app.currentSid,
         onOpenDrawer: onOpenDrawer,
         onConnect: onConnect,
         onPreview: app.loadPreview,
+        onRefresh: paired ? onRefreshSessions : null,
+        // 失败原因带进空态：**空列表 + 有错** 与 **空列表 + 真没有** 必须看得出区别。
+        // 连接诊断也带上：真机"列表恒空 + 反复重连"而两端日志无原因，
+        // 就是因为原因只躺在客户端的诊断字段里（详见 `AppModel.connectionDiagnosis`）。
+        errorText: app.lastError?.message ?? app.connectionDiagnosis,
       );
     }
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       itemCount: items.length,
       itemBuilder: (context, index) => _TurnView(item: items[index]),
+    );
+  }
+}
+
+/// 主界面上的会话列表（**不必先开抽屉**）。
+///
+/// 与抽屉里的那份是**同一批数据**（`AppModel.sessions`），只是摆的位置不同：
+/// 抽屉是"历史入口"，这里是"首页就该看得见的东西"。
+class _SessionListInline extends StatelessWidget {
+  const _SessionListInline({
+    required this.sessions,
+    required this.onOpen,
+    this.onRefresh,
+  });
+
+  final List<SessionSummary> sessions;
+  final void Function(SessionSummary session) onOpen;
+  final VoidCallback? onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+          child: Row(
+            children: [
+              const Text(
+                '会话',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: DshColors.labelCaption,
+                ),
+              ),
+              const Spacer(),
+              if (onRefresh != null)
+                IconButton(
+                  onPressed: onRefresh,
+                  tooltip: '重新拉取会话',
+                  iconSize: 16,
+                  visualDensity: VisualDensity.compact,
+                  color: DshColors.labelTertiary,
+                  icon: const DshIcon(
+                    'refresh',
+                    size: 16,
+                    color: DshColors.labelTertiary,
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            itemCount: sessions.length,
+            itemBuilder: (context, index) {
+              final session = sessions[index];
+              return ListTile(
+                dense: true,
+                title: Text(
+                  // 电脑侧不返回标题（契约 §5.7），没推出来之前显示占位。
+                  session.title.isEmpty ? '（未命名会话）' : session.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: DshColors.labelPrimary,
+                  ),
+                ),
+                subtitle: Text(
+                  session.sid,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: DshColors.labelTertiary,
+                  ),
+                ),
+                onTap: () => onOpen(session),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }
@@ -908,27 +1085,55 @@ class _TurnView extends StatelessWidget {
 
 /// 空态（原型没有这一屏 —— 因为原型永远有会话；但真实 App 第一次打开是空的）。
 ///
-/// 三句话分开说（**这是本页最有价值的一段文案**）：
-/// 没配对 / 真没有会话 / 有会话但没选中。
+/// 四句话分开说（**这是本页最有价值的一段文案**）：
+/// 没配对 / 真没有会话 / 有会话但没选中 / 刚连上还没拉到。
 class _EmptyChat extends StatelessWidget {
   const _EmptyChat({
     required this.paired,
     required this.hasSessions,
     required this.onOpenDrawer,
     required this.onPreview,
+    this.selectedSid,
+    this.onRefresh,
     this.onConnect,
+    this.errorText,
   });
 
   final bool paired;
   final bool hasSessions;
+
+  /// 当前选中的会话（`null` = 还没选）。**用来把"选了但还没内容"与"还没选"分开**。
+  final String? selectedSid;
   final VoidCallback onOpenDrawer;
   final VoidCallback onPreview;
+
+  /// 重新拉一次会话列表。
+  ///
+  /// **必须有个手动入口**：自动拉只在"进服务态"那一刻发生一次，
+  /// 而会话是**电脑侧**随时可以新建的 —— 用户在看手机时电脑上开了个会话，
+  /// 没有这个按钮就只能杀 App 重进（那是本页最容易被骂的一种"卡住"）。
+  final VoidCallback? onRefresh;
   final VoidCallback? onConnect;
+
+  /// 最近一次拉取失败的原因（`null` = 没失败）。**显示出来**，别让它只躺在日志里。
+  final String? errorText;
 
   @override
   Widget build(BuildContext context) {
+    // **"拉取失败"必须与"真没有会话"分开说**（`app_model.dart` 的 `lastError`）。
+    // 两者在界面上一模一样（都是空列表），而下一步动作完全不同：
+    // 一个去电脑上开会话，一个查连接/协议错误。
+    // 少了这一支，"连上了却永远没有会话"就只能靠猜 —— 实测就是这么被卡住的。
+    final error = errorText;
     final (icon, title, detail) = !paired
         ? ('globe', '还没连电脑', '界面可以先看。要看到真实会话，得先配对（在电脑上出码）。')
+        : error != null
+        ? ('warningTriangle', '拉取会话失败', error)
+        // **选中了会话但还没有条目**：这是"这个会话是空的"，不是"你还没选"。
+        // 两者在界面上都是空屏，而用户刚点过会话 —— 说"选一个会话"会让人以为点击失效
+        //（真机实测：点进会话后仍显示"选一个会话"，看起来像没点中）。
+        : selectedSid != null
+        ? ('newChat', '这个会话还没有内容', '在电脑上继续它，或直接在下面发一句。')
         : hasSessions
         ? ('panelLeft', '选一个会话', '会话历史在左侧抽屉里。')
         : ('newChat', '还没有会话', '在电脑上用 DSH 开一个，它会出现在抽屉里。');
@@ -978,6 +1183,21 @@ class _EmptyChat extends StatelessWidget {
                     ),
                     label: const Text('打开会话抽屉'),
                   ),
+                // 已配对但列表是空的：给一条"重新拉一次"的出路。
+                // 会话由电脑侧新建，而自动拉只在连上那一刻发生一次 ——
+                // 没有它，用户只能杀 App 重进。
+                if (paired && !hasSessions && onRefresh != null) ...[
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: onRefresh,
+                    icon: const DshIcon(
+                      'refresh',
+                      size: 14,
+                      color: DshColors.labelSecondary,
+                    ),
+                    label: const Text('重新拉取会话'),
+                  ),
+                ],
                 if (!paired) ...[
                   const SizedBox(height: 8),
                   OutlinedButton.icon(

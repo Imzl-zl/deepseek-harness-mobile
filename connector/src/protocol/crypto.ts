@@ -39,7 +39,28 @@ import { ProtocolError } from './errors.js'
  * `handshake-frames.ts` 的 `TRANSCRIPT_LABEL`，两处各写一遍就会漂移。
  */
 export const KEY_INFO = 'dsh-mobile/v1/keys'
-export const AEAD_ALGORITHM = 'chacha20-poly1305'
+
+/**
+ * AEAD 算法（契约 §4.2）。**AES-256-GCM，不是 ChaCha20-Poly1305。**
+ *
+ * 这条是被真机逼着改的，理由与"哪个更快"无关：
+ * **Electron 的 crypto 不提供 `chacha20-poly1305`**（整族都没有）——
+ * 而本插件跑在 Electron 里。实测 Electron 内 `getCiphers()` 只有 28 个（AES/BF/DES/RC），
+ * `createCipheriv('chacha20-poly1305', …)` 抛 `Unknown cipher`；同一个 Node 版本用
+ * stock Node 跑则有 134 个、能过。
+ *
+ * 症状极具误导性：**握手成功、第一帧业务请求就断** —— 握手只用 Ed25519 签名（不碰 AEAD），
+ * 而业务帧一封箱就炸。电脑侧表现为"连接器每 30 秒因 `protocol/bad-frame` 断开"，
+ * 手机侧表现为"连上了但列表/发送全无反应"。**所有单测与向量都跑在 stock Node 下，
+ * 因此全绿却救不了真机**（2026-10-07 的事故，见决策笔记）。
+ *
+ * 契约的其余部分一字未动：nonce 仍是 `fc` 的 96 位大端、AAD 拼串、密钥派生、
+ * 箱容器 `base64url(密文‖tag)`、标签 16 字节 —— 只有算法名与向量密文变了。
+ *
+ * Note: 为什么换算法、以及"选型必须查运行时"这条教训 —— 见
+ * `.agents/notes/implemented/2026-10-07-electron-lacks-chacha20.md`
+ */
+export const AEAD_ALGORITHM = 'aes-256-gcm'
 export const AEAD_TAG_BYTES = 16
 export const MASTER_KEY_BYTES = 64
 
@@ -57,9 +78,10 @@ const fromHex = (hex: string): Buffer => Buffer.from(hex, 'hex')
 /**
  * 只表达「能调一次 `setAAD(aad)`」的最小结构类型。
  *
- * 存在的理由：`@types/node` 把 ChaCha20-Poly1305 的 `setAAD` 声明成**必须**带
- * `{ plaintextLength }`，而那只对 CCM / OCB 有意义 —— Node 文档明说 `chacha20-poly1305`
- * 不需要它。解密侧更是填不出这个值：明文长度正是我们要解出来的东西。
+ * 存在的理由：`@types/node` 把 AEAD 的 `setAAD` 声明成**必须**带
+ * `{ plaintextLength }`，而那只对 CCM / OCB 有意义 —— GCM 与 ChaCha20-Poly1305 都不需要它
+ * （已实测：两种算法、stock Node 与 Electron 下单参调用都能正常往返）。
+ * 解密侧更是填不出这个值：明文长度正是我们要解出来的东西。
  * 参考实现（`protocol/tools/vectors-core.mjs`）同样是单参调用，运行时行为一致。
  *
  * 所以这里断言到本类型，而**不是**为了过编译塞一个假的长度值。
@@ -71,9 +93,9 @@ interface AeadCodec {
 /**
  * 解密侧用到的那几个方法。
  *
- * 同样的理由：`@types/node` 把 `chacha20-poly1305` 的 `Decipheriv` 拆成了专门的接口，
- * 而通用的 `ReturnType<typeof createDecipheriv>` 上**没有** `setAuthTag`。
- * 与其给类型系统塞假参数，不如把"我们真正用到的形状"写出来。
+ * 同样的理由：`@types/node` 把 AEAD 的 `Decipheriv` 拆成了专门的接口
+ * （`DecipherGCM` / `DecipherCCM` 等），而通用的 `ReturnType<typeof createDecipheriv>` 上
+ * **没有** `setAuthTag`。与其给类型系统塞假参数，不如把"我们真正用到的形状"写出来。
  */
 interface AeadDecipher {
   setAAD(buffer: NodeJS.ArrayBufferView, options?: unknown): unknown

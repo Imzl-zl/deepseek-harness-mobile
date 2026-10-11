@@ -28,8 +28,17 @@ export interface RelayProcess {
   port: number
   /** 子进程到目前为止的输出（排查超时时把它带进错误里）。 */
   output: () => string
+  /**
+   * **清空重启**：杀掉这个中转进程，在**同一个端口**上起一个全新的。
+   *
+   * 它是 I7（"删掉中转全部业务状态后重启，已配对设备仅凭电脑侧数据收敛"）
+   * 唯一诚实的验法：新进程里没有任何内存状态 —— 登记表、票、设备投影、归属全空。
+   * 在同一个进程里"手动清一清"测不到这条：真正会漏的正是**那些没被清掉的东西**。
+   */
+  restart(): Promise<void>
 }
 
+/** 轮询等待（失败要快、要清楚，不要挂住整个套件）。 */
 export async function waitFor(what: string, check: () => boolean, timeoutMs = 5_000): Promise<void> {
   const started = Date.now()
   while (!check()) {
@@ -38,16 +47,32 @@ export async function waitFor(what: string, check: () => boolean, timeoutMs = 5_
   }
 }
 
+/** 找一个空闲端口（起一个临时 server 让它分配，再关掉）。 */
+async function freePort(): Promise<number> {
+  const { createServer } = await import('node:net')
+  return new Promise<number>((resolve, reject) => {
+    const probe = createServer()
+    probe.once('error', reject)
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address()
+      const port = typeof address === 'object' && address !== null ? address.port : 0
+      probe.close(() => resolve(port))
+    })
+  })
+}
+
 export async function startRelayProcess(
   t: { after(fn: () => void | Promise<void>): void },
   tokens: TokenSpec[],
 ): Promise<RelayProcess> {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-relay-'))
   const configPath = join(dir, 'relay.config.json')
+  // **固定端口**（不是 0）：重启要回到同一个端口，否则连接器的 `relayUrl` 就指向别处了。
+  const port = await freePort()
   await writeFile(
     configPath,
     JSON.stringify({
-      port: 0,
+      port,
       host: '127.0.0.1',
       // 配置里**只放摘要**（§12.2）：明文令牌只存在于测试自己这一侧。
       tokens: tokens.map((entry) => ({
@@ -59,33 +84,57 @@ export async function startRelayProcess(
     'utf8',
   )
 
-  const child: ChildProcess = spawn(
-    process.execPath,
-    [join(RELAY_DIR, 'src', 'main.ts'), '--config', configPath],
-    { cwd: RELAY_DIR, stdio: ['ignore', 'pipe', 'pipe'] },
-  )
+  let child: ChildProcess | null = null
   let output = ''
-  child.stdout?.on('data', (chunk: Buffer) => {
-    output += chunk.toString('utf8')
-  })
-  child.stderr?.on('data', (chunk: Buffer) => {
-    output += chunk.toString('utf8')
-  })
 
-  t.after(async () => {
-    child.kill('SIGTERM')
+  const spawnRelay = async (): Promise<void> => {
+    // 每次都从零累积输出：重启后上一轮的日志只会干扰排查。
+    output = ''
+    const started: ChildProcess = spawn(
+      process.execPath,
+      [join(RELAY_DIR, 'src', 'main.ts'), '--config', configPath],
+      { cwd: RELAY_DIR, stdio: ['ignore', 'pipe', 'pipe'] },
+    )
+    child = started
+    started.stdout?.on('data', (chunk: Buffer) => {
+      output += chunk.toString('utf8')
+    })
+    started.stderr?.on('data', (chunk: Buffer) => {
+      output += chunk.toString('utf8')
+    })
+    await waitFor('中转打印监听地址', () => /ws:\/\/127\.0\.0\.1:(\d+)/.test(output))
+  }
+
+  const stop = async (): Promise<void> => {
+    const running = child
+    child = null
+    if (running === null) return
+    running.kill('SIGTERM')
     await new Promise<void>((resolve) => {
-      if (child.exitCode !== null) {
+      if (running.exitCode !== null) {
         resolve()
         return
       }
-      child.once('exit', () => resolve())
+      running.once('exit', () => resolve())
     })
+  }
+
+  await spawnRelay()
+
+  t.after(async () => {
+    await stop()
     await rm(dir, { recursive: true, force: true })
   })
 
-  await waitFor('中转打印监听地址', () => /ws:\/\/127\.0\.0\.1:(\d+)/.test(output))
-  const port = Number(/ws:\/\/127\.0\.0\.1:(\d+)/.exec(output)?.[1])
-  if (!Number.isFinite(port) || port <= 0) throw new Error(`没读端口：${output}`)
-  return { port, output: () => output }
+  const reported = Number(/ws:\/\/127\.0\.0\.1:(\d+)/.exec(output)?.[1])
+  if (!Number.isFinite(reported) || reported <= 0) throw new Error(`没读端口：${output}`)
+
+  return {
+    port: reported,
+    output: () => output,
+    restart: async () => {
+      await stop()
+      await spawnRelay()
+    },
+  }
 }

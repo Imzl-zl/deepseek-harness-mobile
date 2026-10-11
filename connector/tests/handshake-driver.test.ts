@@ -45,6 +45,8 @@ interface Harness {
   failures: { reason: string; error?: unknown }[]
   /** 触发注入的超时定时器。 */
   fireTimeout(): void
+  /** 当前有没有超时定时器挂着（用来断言"什么时候才该起表"）。 */
+  hasPendingTimeout(): boolean
 }
 
 function buildHarness(overrides: Partial<HandshakeDriverOptions> = {}): Harness {
@@ -92,7 +94,15 @@ function buildHarness(overrides: Partial<HandshakeDriverOptions> = {}): Harness 
     },
   })
 
-  return { session, phone, sent, established, failures, fireTimeout: () => timeout?.() }
+  return {
+    session,
+    phone,
+    sent,
+    established,
+    failures,
+    fireTimeout: () => timeout?.(),
+    hasPendingTimeout: () => timeout !== null,
+  }
 }
 
 const helloFrame = (box: string): WireFrame => ({ v: 1, t: 'hello', id: 'h1', box })
@@ -259,4 +269,25 @@ test('dispose 之后超时不再触发（连接已收，不该再报失败）', 
   h.session.dispose()
   h.fireTimeout()
   assert.deepEqual(h.failures, [])
+})
+
+test('**空闲时不该有握手超时在跑**：没有在途握手就没有可超时的东西', () => {
+  // 这一条钉的是一个真 bug（真机联调时抓到的）：超时定时器**在会话建好时就起了**，
+  // 而应答方的握手是**等 `hello` 上门**的 —— 对端在配对、还没开始握手的那段时间里，
+  // 定时器照常到期，于是电脑侧每 10 秒判一次 `handshake-timeout` 并关掉连接。
+  //
+  // 症状极难归因：中转侧看到"连接器反复断开、每次断开清掉全部未认领的配对登记"，
+  // 于是**扫码换票永远 409**（登记刚被登记就随下一次断开被清掉），
+  // 而两端的日志各自看起来都正常。实测：未修前 7 分钟内重连 41 次。
+  const h = buildHarness()
+
+  assert.equal(
+    h.hasPendingTimeout(),
+    false,
+    '还没收到 hello：不该有超时在跑（应答方是等对端上门的）',
+  )
+
+  // 收到 hello 之后才该起表：这时确实有"对端要把三帧走完"这件事在等。
+  h.session.onFrame(helloFrame(h.phone.helloBox()))
+  assert.equal(h.hasPendingTimeout(), true, '收到 hello 之后才起超时')
 })

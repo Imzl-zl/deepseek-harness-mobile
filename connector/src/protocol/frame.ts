@@ -26,8 +26,8 @@ export const FRAME_TYPES = [
   'hello',
   'hello-ack',
   'confirm',
-  'pair',
-  'pair-ack',
+  'pair-commit',
+  'pair-result',
   'ping',
   'pong',
   'credit',
@@ -99,6 +99,8 @@ export interface WireRoutingView {
   sid?: string
   seq?: number
   fc?: number
+  /** **没有 `sid` 的帧唯一的定向凭据**（§2.2）：`pong` / `hello-ack` / `pair-ack` 靠它回程。 */
+  id?: string
 }
 
 /**
@@ -113,10 +115,10 @@ export type WireFrame =
   | { v: 1; t: 'hello'; id: string; box: string }
   | { v: 1; t: 'hello-ack'; id: string; box: string }
   | { v: 1; t: 'confirm'; id: string; box: string }
-  | { v: 1; t: 'pair'; id: string; box: string }
-  | { v: 1; t: 'pair-ack'; id: string; box: string }
-  | { v: 1; t: 'ping'; fc: number; box: string }
-  | { v: 1; t: 'pong'; fc: number; box: string }
+  | { v: 1; t: 'pair-commit'; id: string; fc: number; box: string }
+  | { v: 1; t: 'pair-result'; id: string; fc: number; box: string }
+  | { v: 1; t: 'ping'; id: string; fc: number; box: string }
+  | { v: 1; t: 'pong'; id: string; fc: number; box: string }
   | { v: 1; t: 'credit'; fc: number; box: string }
   | { v: 1; t: 'req'; id: string; sid?: string; fc: number; box: string }
   | { v: 1; t: 'res'; id: string; sid?: string; fc: number; ok: true; box: string }
@@ -132,6 +134,10 @@ export function wireRoutingOf(frame: WireFrame): WireRoutingView {
   if ('sid' in frame && frame.sid !== undefined) view.sid = frame.sid
   if ('seq' in frame && frame.seq !== undefined) view.seq = frame.seq
   if ('fc' in frame && frame.fc !== undefined) view.fc = frame.fc
+  // **`id` 是"没有 `sid` 的帧"在链路上唯一的定向凭据**（§2.2）——
+  // 漏掉这一行，`pong` / `hello-ack` / `pair-ack` 在中继侧就没有回程依据，
+  // 只能被丢弃（症状见 §2.2 的 `ping`/`pong` 说明）。
+  if ('id' in frame && frame.id !== undefined) view.id = frame.id
   return view
 }
 
@@ -149,8 +155,6 @@ export function wireRoutingOf(frame: WireFrame): WireRoutingView {
  */
 export function needsBox(type: string): boolean {
   if (type === 'presence') return false
-  // 配对帧与握手帧同理：密钥还没建起来，谈"封箱"没有意义（`box` 里就是明文 JSON）。
-  if ((PAIRING_FRAME_TYPES as readonly string[]).includes(type)) return false
   return !isHandshakeFrameType(type)
 }
 
@@ -177,14 +181,8 @@ export function hasBox(frame: WireFrame): frame is BoxedFrame {
  */
 export const HANDSHAKE_FRAME_TYPES = ['hello', 'hello-ack', 'confirm'] as const
 
-/**
- * 配对帧（`pair` 请求 / `pair-ack` 回执）。
- *
- * **同握手三帧一样是明文**，理由也一样：配对发生在密钥建立**之前** —— 那时还没有可用密钥，
- * 而这些帧恰恰是用来让双方从此以后能加密的。它们只在"尚未配对完成"的连接上出现，
- * 而且**载荷里带的是配对码的哈希**（§12.1），所以即便走中转也泄露不了码本身。
- */
-export const PAIRING_FRAME_TYPES = ['pair', 'pair-ack'] as const
+/** 配对提交与结果必须在受限加密通道内传输，不属于明文握手帧。 */
+export const PAIRING_FRAME_TYPES = ['pair-commit', 'pair-result'] as const
 
 const HANDSHAKE_TYPE_SET: ReadonlySet<string> = new Set(HANDSHAKE_FRAME_TYPES)
 
@@ -204,9 +202,9 @@ export function isPairingFrameType(type: string): boolean {
   return (PAIRING_FRAME_TYPES as readonly string[]).includes(type)
 }
 
-/** 密钥建立**之前**就能出现的明文帧（握手三帧 + 配对两帧）：不盖 `fc`、不封箱。 */
+/** 只有握手三帧在密钥建立前出现；配对秘密必须封箱。 */
 export function isPreKeysPlaintextFrame(type: string): boolean {
-  return isHandshakeFrameType(type) || isPairingFrameType(type)
+  return isHandshakeFrameType(type)
 }
 
 /**

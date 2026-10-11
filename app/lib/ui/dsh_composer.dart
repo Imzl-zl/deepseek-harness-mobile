@@ -171,40 +171,51 @@ class DshComposer extends StatelessWidget {
                         onPressed: enabled ? onAttach : null,
                       ),
                       const SizedBox(width: 6),
-                      // 模型 chip：可压缩，上限 62%。
+                      // 模型 chip：可压缩，**上限 62%**（硬规则 3 的前半句）。
+                      //
+                      // 上限不能省：`Flexible` 只表示"可以被压"，不表示"最宽多少" ——
+                      // 没有上限时它会**吃满**左组剩余宽度（长模型名尤其明显），
+                      // 而原型 `#chipModel { max-width: 62% }` 是明确写了上限的。
+                      // 实测：`claude-opus · 高` 在 1080px 宽的屏上被拉成一整条，
+                      // 看起来像"模型是个很宽的选择器"，与胶囊形态不符。
                       Flexible(
-                        child: _Chip(
-                          onPressed: enabled ? onPickModel : null,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  modelName,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: DshColors.labelPrimary,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: MediaQuery.sizeOf(context).width * 0.62,
+                          ),
+                          child: _Chip(
+                            onPressed: enabled ? onPickModel : null,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    modelName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: DshColors.labelPrimary,
+                                    ),
                                   ),
                                 ),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                '· $reasoningLabel',
-                                style: const TextStyle(
-                                  fontSize: 12,
+                                const SizedBox(width: 4),
+                                Text(
+                                  '· $reasoningLabel',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: DshColors.labelCaption,
+                                  ),
+                                ),
+                                const SizedBox(width: 2),
+                                const DshIcon(
+                                  'chevronDown',
+                                  size: 12,
                                   color: DshColors.labelCaption,
                                 ),
-                              ),
-                              const SizedBox(width: 2),
-                              const DshIcon(
-                                'chevronDown',
-                                size: 12,
-                                color: DshColors.labelCaption,
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       ),

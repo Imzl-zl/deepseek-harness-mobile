@@ -48,22 +48,20 @@ import { REQUIRED_SERVICES, readCaps, type Caps } from './dsh/caps.js'
 import { deriveIdentity } from './protocol/crypto.js'
 import { loadOrCreateIdentity, type Identity } from './dsh/identity.js'
 import { PAIRING_TTL_MS, createPairing } from './pairing.js'
-import type { PairedDeviceRow } from './pairing-endpoint.js'
+import { createPairingEndpoint, type PairingEndpoint, type PairedDeviceRow } from './pairing-endpoint.js'
+import type { DeviceBinding } from '../../protocol/relay-control.mjs'
+import { createRelayLink, type RelayLink } from './transport/relay-link.js'
+import { relayUrlOf } from './transport/relay-url.js'
 import { readRelayToken } from './dsh/relay-token.js'
 import { createPairingRegistrar } from './pairing-register.js'
+import { createDevicePublisher } from './device-publish.js'
 import { offerForScanning } from './pairing-offer.js'
 import { registerInteractions, type RemoteInteractionPort } from './dsh/interactions.js'
 import type { TakeoverDevice, TakeoverMode } from './protocol/takeover.js'
-import { createHandshakeDriver } from './protocol/handshake-driver.js'
-import { createBoxCodec } from './protocol/box.js'
-import type { WireFrame } from './protocol/frame.js'
+import { createDeviceConnection } from './device-connection.js'
 import type { HandlerDeps } from './handlers.js'
 import { createIdempotency, type DedupeRows } from './idempotency.js'
-import {
-  createConnectionScope,
-  type ConnectionScope,
-  type ConnectionScopeDeps,
-} from './connection-scope.js'
+import type { ConnectionScopeDeps } from './connection-scope.js'
 import { mount, type LifecycleStep } from './lifecycle.js'
 import { METRIC, createChannelLogger, createMetrics, type ChannelLogger, type ChannelMetrics } from './observability.js'
 import { createAliases, type Aliases } from './alias.js'
@@ -73,7 +71,7 @@ import { createSessionBuffer } from './session-buffer.js'
 import { createSessionsAdapter } from './dsh/sessions.js'
 import type { DeviceRecord } from './store/index.js'
 import { coreDomain, initialMeta, migrateMeta, windowsDomain } from './store/index.js'
-import { createConnection, type Connection, type DialSocket } from './transport/connection.js'
+import type { Connection, DialSocket } from './transport/connection.js'
 import { startListener, type Listener } from './transport/listener.js'
 
 export const name = 'dsh-mobile-connector'
@@ -110,6 +108,7 @@ interface Assembly {
    * 但已经建立的连接不会自己换地址。如实写在这里，比假装支持热改要好。
    */
   relayUrl: string | undefined
+  allowInsecureLocal: boolean
   relayTokenSecretRef: string | undefined
   /** 直连监听面（§1.7）：`0` = 不监听。同样是挂载时取一次快照。 */
   listenPort: number
@@ -119,11 +118,12 @@ interface Assembly {
 }
 
 function buildSteps(assembly: Assembly): LifecycleStep[] {
-  const { ctx, relayUrl, relayTokenSecretRef, listenPort, listenHost, approvalTakeover, logger, metrics, abort } =
+  const { ctx, relayUrl, allowInsecureLocal, relayTokenSecretRef, listenPort, listenHost, approvalTakeover, logger, metrics, abort } =
     assembly
 
   let closeStore: (() => Promise<void>) | null = null
-  let connection: Connection | null = null
+  let connection: RelayLink | null = null
+  let pairingEndpoint: PairingEndpoint | null = null
   /** 直连监听面（§1.7）。只有配了 `listenPort` 才非空。 */
   let listener: Listener | null = null
   /**
@@ -219,6 +219,7 @@ let unregisterPairingCommand: (() => void) | null = null
         if (relayUrl === undefined || relayUrl === '') {
           throw new Error('relayUrl 未配置：拒绝挂载，而不是连上一个不完整的中转')
         }
+        relayUrlOf(relayUrl, allowInsecureLocal)
         if (relayTokenSecretRef === undefined || relayTokenSecretRef === '') {
           throw new Error('relayTokenRef 未配置：连接器令牌的凭据引用缺失')
         }
@@ -365,10 +366,23 @@ let unregisterPairingCommand: (() => void) | null = null
         // `putDevice` 落 `devices` 表 —— 那是**唯一**新增设备的路径；配对成功后握手才认得出这台设备。
         const pcIdentity = deriveIdentity(local.masterSeed)
         const pairingCore = createPairing({
+          pcId: connectorId,
           // 二维码里的地址：**中转地址**（契约 §2 的拓扑里手机连的是中转）。
           relayUrl: relayUrl ?? '',
           pcPubEd: pcIdentity.sign.publicKeyHex,
           pcPubDh: pcIdentity.dh.publicKeyHex,
+        })
+        /**
+         * 名册上报的**网络调用**（§8.2 / I7）。
+         *
+         * 与出码登记共用同一个 `httpBaseOf` 派生与同一个令牌读取面 ——
+         * 两者打的是同一台中转的 HTTP 面，各自写一份派生迟早会不一致。
+         */
+        const publisher = createDevicePublisher({
+          allowInsecureLocal,
+          relayUrl: relayUrl ?? '',
+          tokenSource: () => readRelayToken(ctx.credentials, relayTokenSecretRef ?? ''),
+          log: logger,
         })
         /** 字段名在这一层对齐（配对的设备行叫 `edPubHex`，域表叫 `edPub`）。 */
         const putDevice = async (devId: string, row: PairedDeviceRow): Promise<void> => {
@@ -381,7 +395,43 @@ let unregisterPairingCommand: (() => void) | null = null
             name: row.name,
             pairedAt: row.pairedAt,
             pairingId: row.pairingId,
+            // 摘要随行存住：它是"中转重启后这台设备还能回来"的唯一依据（I7）。
+            ...(row.tokenHash === undefined ? {} : { tokenHash: row.tokenHash }),
+            ...(row.refreshHash === undefined ? {} : { refreshHash: row.refreshHash }),
           })
+        }
+
+        /**
+         * 名册上报（§8.2 / I7）：把**整份**设备摘要交给中转，让它重建归属与凭据面。
+         *
+         * 两处调用：配对成功时（回执之前）与每次连上中转时（`publish-service` 之后的
+         * `onEstablished`）。前者让手机拿到的令牌立刻能用，后者让中转重启后设备能自己回来。
+         *
+         * **没有令牌摘要的行不进名册**：它认不下任何设备，报上去只是噪音 ——
+         * 而"漏报"与"报一条没用的"在中转侧是同一件事（那台设备换不到票）。
+         */
+        const publishDevices = async (): Promise<void> => {
+          const table = devicesTable
+          if (table === null) {
+            throw new Error('devices 表尚未就绪：装配顺序有误')
+          }
+          const rows = [...table.keys()].flatMap((id) => {
+            const record = table.get(id)
+            if (record === undefined || record.revokedAt !== undefined) return []
+            if (record.tokenHash === undefined) return []
+            return [
+              {
+                id,
+                pairingId: record.pairingId,
+                devPubEd: record.edPub,
+                devPubDh: record.dhPub,
+                name: record.name,
+                tokenHash: record.tokenHash,
+                ...(record.refreshHash === undefined ? {} : { refreshHash: record.refreshHash }),
+              },
+            ]
+          })
+          await publisher(rows)
         }
 
         // 出码入口：一条斜杠命令。**登记不成就不出码**（`offerForScanning` 的判断），
@@ -394,6 +444,7 @@ let unregisterPairingCommand: (() => void) | null = null
           logger.warn('commands 服务不在：`dsh-mobile-pair` 出码命令不可用')
         } else {
           const registerPairing = createPairingRegistrar({
+            allowInsecureLocal,
             relayUrl: relayUrl ?? '',
             // 令牌**现读**（`readRelayToken` 不缓存）：出码是人工动作，换令牌后立刻生效；
             // 也省得为这个只在出码时用到的值安排装配顺序。
@@ -406,7 +457,6 @@ let unregisterPairingCommand: (() => void) | null = null
             handler: () => offerForScanning({ pairing: pairingCore, register: registerPairing, log: logger }),
           })
         }
-
         /**
          * 方法面的挂载级依赖。**每连接的那三个端口不在这里** ——
          * `createHandlers` 的 deps 类型上已经不收它们（见 `ConnectionScopeDeps.handlers`）。
@@ -459,13 +509,15 @@ let unregisterPairingCommand: (() => void) | null = null
           sessions,
           buffer: sessionBuffer,
           jobControl,
-          pairing: pairingCore,
-          putDevice,
           idempotency,
         }
 
         // 连接器令牌（§12.2）：**拨号与出码登记共用同一个值**，所以在这一步开头读一次。
         // 读不到就**大声失败**（`readRelayToken` 的契约）：起来一个连不上中转的插件没有意义。
+        const enrollment = createPairingEndpoint({
+          pairing: pairingCore, pcId: connectorId, putDevice, announce: publishDevices, log: logger,
+        })
+        pairingEndpoint = enrollment
         const relayToken = await readRelayToken(ctx.credentials, relayTokenSecretRef ?? '')
 
         /**
@@ -479,59 +531,16 @@ let unregisterPairingCommand: (() => void) | null = null
          * 抽成工厂是因为**拨号与接受两条路各要一份**（监听面每 accept 一条就调一次）。
          * 两者共用同一份 `scopeDeps`，差别只有 `dial`：接受来的连接没有拨号目标。
          */
-        const makeConnection = (dial: (url: string) => DialSocket): Connection => {
-          let scope: ConnectionScope | null = null
-          const scopeOf = (): ConnectionScope => {
-            if (scope === null) {
-              throw new Error('连接在每连接装配就绪前就开始收帧/迁状态：装配顺序有误')
+        const makeConnection = (binding?: DeviceBinding): Connection => createDeviceConnection({
+          identity: pcIdentity, pcId: connectorId, pairing: pairingCore, enrollment, scope: scopeDeps,
+          ...(binding === undefined ? {} : { binding }),
+          peerOf: (devId) => {
+            const record = devicesTable?.get(devId)
+            return record === undefined || record.revokedAt !== undefined ? undefined : {
+              edPubHex: record.edPub, dhPubHex: record.dhPub, pairingId: record.pairingId,
             }
-            return scope
-          }
-
-          const made = createConnection({
-            url: relayUrl ?? '',
-            dial,
-            log: logger,
-            secure: {
-              handshake: createHandshakeDriver({
-                identity: { dh: local.keys.dh, signSeedHex: local.keys.signSeedHex },
-                pcId: connectorId,
-                peerOf: (devId) => {
-                  const record = devicesTable?.get(devId)
-                  // 未配对、已吊销、查不到一律 undefined：对手机都是同一件事（§3.1 的 not-paired）。
-                  if (record === undefined || record.revokedAt !== undefined) return undefined
-                  return {
-                    edPubHex: record.edPub,
-                    dhPubHex: record.dhPub,
-                    pairingId: record.pairingId,
-                  }
-                },
-              }),
-              // 电脑侧永远是应答方（`responder` = B）：`kA2B` 解入站、`kB2A` 封出站。
-              // 映射写在协议层一处，写反了不会报错、只会两侧都解不开（§4.1 的教训）。
-              createCipher: (keys) => createBoxCodec({ keys, role: 'responder' }),
-            },
-            onEstablished: ({ devId }) => {
-              metrics.increment(METRIC.handshakesEstablished)
-              logger.info(`握手完成：设备 ${devId} 已建立端到端会话`)
-              scopeOf().deviceEstablished(devId)
-            },
-            onStateChange: (from, to) => {
-              metrics.increment(METRIC.stateTransitions)
-              if (to === 'connecting') metrics.increment(METRIC.connects)
-              logger.debug(`连接状态 ${from} → ${to}`)
-              if (from === 'serving' && to !== 'serving') scopeOf().servingEnded()
-            },
-            onFrame: (frame: WireFrame) => {
-              metrics.increment(METRIC.inboundFrames)
-              scopeOf().handleFrame(frame)
-            },
-          })
-
-          // 赋值必须在返回之前：调用方拿到它就会 `start()` / `attach()`。
-          scope = createConnectionScope(made, scopeDeps)
-          return made
-        }
+          },
+        })
 
         /**
          * 拨号连接：连中转。**自愈** —— 断开后退避重连 `relayUrl`。
@@ -544,14 +553,17 @@ let unregisterPairingCommand: (() => void) | null = null
          * 令牌在装配时读一次（`readRelayToken` 不缓存，但**每次拨号都由同一个连接对象发起**，
          * 于是运行期换令牌需要重连 —— 这是可接受的：换令牌本来就意味着换一次连接）。
          */
-        const dialed = makeConnection(
-          (url) =>
-            new WebSocket(url, {
-              headers: { authorization: `Bearer ${relayToken}` },
-            } as never) as never,
-        )
-        connection = dialed
-        dialed.start()
+        connection = createRelayLink({
+          url: relayUrl ?? '', token: relayToken, allowInsecureLocal, log: logger,
+          onConnected: publishDevices,
+          allows: (binding) => {
+            if (binding.purpose === 'pairing') return pairingCore.allows(binding.candidate)
+            const record = devicesTable?.get(binding.deviceId)
+            return record !== undefined && record.revokedAt === undefined
+          },
+          createData: makeConnection,
+        })
+        connection.start()
 
         /**
          * 直连监听面（§1.7）。**只有配置里 `listenPort` 非 0 才起**，否则一行都不做 ——
@@ -566,11 +578,7 @@ let unregisterPairingCommand: (() => void) | null = null
             host: listenHost,
             log: logger,
             accept: () => {
-              const accepted = makeConnection(() => {
-                // 接受来的连接没有拨号目标：`attach()` 用 `heals: false` 收口，
-                // 所以这个拨号器**不该被调到**。真被调到说明装配错了 —— 抛，不静默拨号。
-                throw new Error('接受来的连接没有拨号目标：不该走到 dial')
-              })
+              const accepted = makeConnection()
               return {
                 port: accepted,
                 attach: (socket) => accepted.attach(socket as DialSocket),
@@ -587,6 +595,8 @@ let unregisterPairingCommand: (() => void) | null = null
           listener = null
           connection?.stop()
           connection = null
+          pairingEndpoint?.dispose()
+          pairingEndpoint = null
         })
       },
       undo() {
@@ -598,6 +608,8 @@ let unregisterPairingCommand: (() => void) | null = null
         listener = null
         connection?.stop()
         connection = null
+        pairingEndpoint?.dispose()
+        pairingEndpoint = null
       },
     },
   ]
@@ -608,6 +620,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const metrics = createMetrics()
   // `Volatile<T>` 是稳定引用而非普通值：取一次快照，之后不再重新读（见 `Assembly` 的说明）。
   const relayUrl = config.relayUrl.get()
+  const allowInsecureLocal = config.allowInsecureLocal.get()
   const relayTokenSecretRef = config.relayTokenRef.get()
   const approvalTakeover = config.approvalTakeover.get()
   const listenPort = config.listenPort.get()
@@ -621,6 +634,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       buildSteps({
         ctx,
         relayUrl,
+        allowInsecureLocal,
         relayTokenSecretRef,
         listenPort,
         listenHost,

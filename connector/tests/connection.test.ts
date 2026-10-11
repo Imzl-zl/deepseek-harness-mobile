@@ -266,3 +266,47 @@ test('端到端：完全空闲仍会判半开（ping 不许把空闲计时重置
   await waitFor('发出探针 ping', () => peer.received.some((f) => f.t === 'ping'))
   await waitFor('判定半开并进入退避', () => connection.state === 'backoff')
 })
+
+test('**没握手成功之前不许判半开**：那条连接还没进入服务态', async (t) => {
+  // 这一条钉的是一个真 bug（真机联调时抓到的，症状极具误导性）：
+  // 半开判据（§2.2）的前提是「`serving` 期间任一方向连续 2 个心跳周期无帧」，
+  // 而**应答方（电脑侧）在 `serving` 之前本来就收不到任何帧** —— 它等对端发 `hello`。
+  //
+  // 于是：连上中转 → 进了 `handshake` → 一个帧都没有 → 两个心跳周期后判自己半开
+  // → 关掉一条**完全健康**的连接（关闭码 4000 `half-open`）。中转侧看到的是
+  // "连接器反复断开"（每 30 秒一轮，那是退避上界），而每次断开都会清掉它
+  // 未认领的配对登记 —— 于是**扫码换票永远 409**，两端日志各自看起来都正常。
+  const peer = await startPeer()
+  const outbound: string[] = []
+  const connection = track(t, peer, (url) =>
+    createConnection({
+      url,
+      dial: (target) => new WebSocket(target) as never,
+      onFrame: () => {},
+      // 短心跳：半开阈值 = 2 × 40 = 80 ms（真机上是 2 × 60 s）。
+      heartbeatMs: 40,
+      batchMs: 30,
+      log: {
+        info: () => {},
+        warn: (message) => outbound.push(message),
+      },
+    }),
+  )
+
+  connection.start()
+  await waitFor('进入 handshake', () => connection.state === 'handshake')
+
+  // 握手没走完，且对端一个字都没发 —— 这正是应答方的正常开局。
+  // 等足 4 个心跳周期（阈值是 2 个），连接必须仍然活着。
+  await new Promise((resolve) => setTimeout(resolve, 160))
+  assert.equal(
+    connection.state,
+    'handshake',
+    '握手期不该被自己的半开判据关掉（应答方在 serving 之前收不到帧是正常的）',
+  )
+  assert.deepEqual(
+    outbound.filter((m) => m.includes('半开')),
+    [],
+    '不该出现"判定为半开连接"',
+  )
+})

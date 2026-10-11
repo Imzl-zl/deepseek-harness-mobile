@@ -134,9 +134,12 @@ dispose
 | 挂载级(每挂载一份) | 配置与校验、`store.open()`、`ctx.provide('dshMobileConnector')`、answerer 注册、本机身份、会话与任务适配器、幂等表、配对核心、出码命令、**增量缓冲** | `src/index.ts` |
 | 每连接(每条 socket 一份) | 入站帧处理、方法面与处理器表、会话订阅、任务输出订阅、翻页器、配对端点 | `src/connection-scope.ts` 的 `createConnectionScope(port, deps)` |
 
-- **`deps` 全是挂载级的,`port` 是每连接唯一的输入**。窄端口的成员集合是 `ConnectionPort`(4 个):
-  `send` / `sendPairingFrame` / `whenWritable` / `state`。加第 5 个会被
-  `tests/connection-surface.test.ts` 拦下(扫源码断言恰好这 4 个)。
+- **`deps` 全是挂载级的,`port` 是每连接唯一的输入**。窄端口的成员集合是 `ConnectionPort`(3 个):
+  `send` / `whenWritable` / `state`。加第 4 个会被 `tests/connection-surface.test.ts` 拦下
+  (扫源码断言恰好这 3 个)。
+  v1 曾有第 4 个 `sendPairingFrame`(明文配对帧的收窄入口:不封箱、不盖 `fc`、握手期也能发);
+  配对 v2 把它删了 —— `pair-commit` / `pair-result` 是受限握手**之后**的封箱帧,
+  与业务帧走同一条 `send()`(§1.6、`pairing-v2.md` §2)。
 - **每次连接的订阅断连即终止**(连接离开 `serving` 时);`connection-scope.ts` 的 `servingEnded`
   也作废该连接的已认证设备身份 —— 水位按设备记(§5.5),而身份只能来自握手。
 - **增量缓冲是挂载级的**:它的存在理由是断线重连后按 `since` 接着收,跟着连接走会退化成每次灌快照;
@@ -177,11 +180,16 @@ function shouldClaim(req: ApprovalRequestEvent, state: TakeoverState): boolean {
 - claim 后启动看护计时器;超时 / 断开 / 会话被替换 → 返回 `'unavailable'`(fail-closed)并推通知。
 - **绝不**出现"始终允许 / 本次会话允许":DSH 只认 `'allowed-once' | 'rejected'`。
 
-### 1.6 中转交互与推送
+### 1.6 每设备数据连接与控制面
 
-- 桥接 → 中转:`wss /ws/connector`,连接器令牌鉴权;推送投递用 `POST /push/dispatch`(桥接只送**摘要**,不送内容)。
-- 摘要生成在电脑侧、合并也在电脑侧(同会话同类型 60 s 折叠);中转看不懂内容。
-- 中转不可达时:桥接保持退避重连,业务不受影响(手机也连不上,双向都不通)。
+完整协议见 [首配 v2 与独立数据连接](pairing-v2.md)。
+
+- 连接器用一条 `/ws/connector` 控制连接接收设备上线/下线通知、重放名册。
+- 每次手机连接获得独立的 `channelId`，电脑为它拨 `/ws/connector?dev=<deviceId>&channel=<channelId>`；中转同时校验连接器归属和当前代次。
+- 配对候选也有独立数据连接，只允许受限配对；候选握手不能激活普通业务方法。
+- 数据帧成对转发；不按 `sid` 广播，不按请求 `id` 解复用。连接、密钥、计数器、流控和订阅一同销毁重建。
+- 推送摘要仍在电脑侧生成、合并；控制连接断开时关闭相关数据连接，双方退避后重新认证。
+
 
 ### 1.7 直连监听面(可选,与中转并存)
 

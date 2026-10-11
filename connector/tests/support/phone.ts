@@ -74,13 +74,16 @@ function phoneAad(header: PhoneFrameHeader): Buffer {
   )
 }
 
+/** 手机侧用的 AEAD 算法（**必须与产品一致**，契约 §4.2：AES-256-GCM）。 */
+const PHONE_AEAD = 'aes-256-gcm'
+
 /** 明文 → 箱：`base64url(密文 ‖ tag)`（§3）。 */
 export function phoneSealBox(input: {
   keys: SessionKeys
   header: PhoneFrameHeader
   plaintext: string
 }): string {
-  const cipher = createCipheriv('chacha20-poly1305', Buffer.from(input.keys.kA2B, 'hex'), phoneNonce(input.header.fc), {
+  const cipher = createCipheriv(PHONE_AEAD, Buffer.from(input.keys.kA2B, 'hex'), phoneNonce(input.header.fc), {
     authTagLength: 16,
   })
   ;(cipher as unknown as AeadCodec).setAAD(phoneAad(input.header))
@@ -100,7 +103,7 @@ export function phoneOpenBox(input: {
 }): string {
   const raw = Buffer.from(input.box, 'base64url')
   const decipher = createDecipheriv(
-    'chacha20-poly1305',
+    PHONE_AEAD,
     Buffer.from(input.keys.kB2A, 'hex'),
     phoneNonce(input.header.fc),
     { authTagLength: 16 },
@@ -125,6 +128,7 @@ export interface PhoneOptions {
   /** 电脑侧的 X25519 静态公钥。 */
   pcDhPubHex: string
   info?: string
+  transcriptContext?: string
 }
 
 export interface Phone {
@@ -160,7 +164,7 @@ export function createPhone(options: PhoneOptions): Phone {
 
     acceptAck(ackBox) {
       const ack = parseHelloAck(ackBox)
-      const transcript = transcriptFromFields(helloFields, ack)
+      const transcript = transcriptFromFields(helloFields, ack, options.transcriptContext)
 
       // 验电脑侧的签名：这是"中继替换公钥"唯一的落点（§4.1）。验不过就抛，测试据此断言。
       verifySignature({

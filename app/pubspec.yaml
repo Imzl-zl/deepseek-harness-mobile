@@ -56,6 +56,18 @@ dependencies:
   path: ^1.9.1
   flutter_markdown_plus: ^1.0.12
 
+  # HTTP 客户端。**只用于配对链上的两个 JSON 端点**（换票 / 报名册由电脑侧发，
+  # 手机只调换票与升级）：`POST /ws-ticket`。
+  #
+  # 选 `http`（Dart 官方包，publisher = tools.dart.dev，dart-lang/http 仓）而不是
+  # `dart:io` 的 HttpClient：它把三端实现收在一个抽象后面（io / 未来 web 调试），
+  # 且 `package:http` 的 `Client` 是可注入的缝 —— `platform/` 的实现因此能在纯 Dart
+  # 单测里被替身驱动（"401 该重配、409 该让电脑重新出码"这类判据不必等真机）。
+  #
+  # 契约 §2 的凭据都走**头**（`Authorization: Bearer`）与请求体，不走 URL ——
+  # 这一条与 WebSocket 那侧同一个理由（URL 会进日志、进代理记录）。
+  http: ^1.6.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

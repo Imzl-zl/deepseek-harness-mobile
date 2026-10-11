@@ -57,7 +57,7 @@ export interface ConfirmFields {
  * 换顺序不会报错，只会让两侧算出不同的 transcript —— 于是签名验不过，
  * 而错误信息会说是「公钥被替换」。
  */
-export function transcriptFromFields(hello: HelloFields, ack: HelloAckFields): Buffer {
+export function transcriptFromFields(hello: HelloFields, ack: HelloAckFields, context?: string): Buffer {
   return Buffer.from(
     [
       TRANSCRIPT_LABEL,
@@ -69,6 +69,7 @@ export function transcriptFromFields(hello: HelloFields, ack: HelloAckFields): B
       ack.ephPubB,
       ack.pcId,
       ack.nonceB,
+      ...(context === undefined ? [] : ['context', context]),
     ].join('|'),
     'utf8',
   )

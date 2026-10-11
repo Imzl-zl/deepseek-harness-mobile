@@ -42,15 +42,27 @@ export function aadOf({ v = 1, t, id = '', sid = '', seq = '', fc = '' }) {
   return Buffer.from([v, t, id, sid, seq, fc].join('|'), 'utf8')
 }
 
+/**
+ * AEAD 算法（契约 §4.2）。**AES-256-GCM。**
+ *
+ * 曾是 `chacha20-poly1305`，被真机逼着换掉：**Electron 的 crypto 不提供它**
+ * （整族都没有），而电脑侧插件跑在 Electron 里。症状是"握手成功、第一帧业务请求就断"。
+ *
+ * 本文件是**参考实现**，它跑在 stock Node 下（那里两种算法都有）——
+ * 所以它绿**不代表**真机能跑。这正是当初没发现问题的原因：
+ * 选型查了手机端的加速清单，却没查电脑侧的运行时。
+ */
+const AEAD = 'aes-256-gcm'
+
 export function seal({ keyHex, fc, aadFields, plaintext }) {
-  const cipher = createCipheriv('chacha20-poly1305', unb(keyHex), nonceOf(fc), { authTagLength: 16 })
+  const cipher = createCipheriv(AEAD, unb(keyHex), nonceOf(fc), { authTagLength: 16 })
   cipher.setAAD(aadOf(aadFields))
   const ct = Buffer.concat([cipher.update(Buffer.from(plaintext, 'utf8')), cipher.final()])
   return { ciphertextHex: h(ct), tagHex: h(cipher.getAuthTag()) }
 }
 
 export function open({ keyHex, fc, aadFields, ciphertextHex, tagHex }) {
-  const decipher = createDecipheriv('chacha20-poly1305', unb(keyHex), nonceOf(fc), { authTagLength: 16 })
+  const decipher = createDecipheriv(AEAD, unb(keyHex), nonceOf(fc), { authTagLength: 16 })
   decipher.setAAD(aadOf(aadFields))
   decipher.setAuthTag(unb(tagHex))
   return Buffer.concat([decipher.update(unb(ciphertextHex)), decipher.final()]).toString('utf8')

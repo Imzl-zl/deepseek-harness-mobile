@@ -95,12 +95,12 @@ abstract interface class SyncClient {
 
 /// 诊断面：**不参与产品逻辑**，只给测试与日志用。
 ///
-/// 单独一个接口而不是塞进 [SyncClient]：UI 不该看到"收到的配对帧列表"这种东西
+/// 单独一个接口而不是塞进 [SyncClient]：UI 不该看到"收到的帧列表"这种东西
 /// （它会诱使界面层自己解析帧，而那正是分层要防的）。测试按需转成这个类型。
+///
+/// **配对帧不在这里**：配对走的是自己的受限通道（`core/pairing_channel.dart`），
+/// 那条连接与业务连接不是同一条 —— 让业务客户端"顺手收集配对帧"是 v1 的旧形状。
 abstract interface class SyncClientProbe {
-  /// 收到的配对帧（配对页读它）。
-  List<Map<String, Object?>> get pairingFrames;
-
   /// 收到的任务输出帧（`(帧头, 明文)`）。
   List<(Map<String, Object?>, String)> get jobFrames;
 
@@ -112,6 +112,23 @@ abstract interface class SyncClientProbe {
 
   /// 判定为半开时已沉默多久；没判过是 `null`。
   int? get lastHalfOpenSilentMs;
+
+  /// 上一次传输关闭的码；没有过是 `null`。
+  ///
+  /// 与 [lastProtocolError] **不是一回事**：那个是"我们主动拒了一帧"，
+  /// 这个是"连接被关了"（对端关的、或本端关的）。断开的三种来源必须能分开，
+  /// 否则真机上只能看到"反复重连"而没有任何原因。
+  int? get lastCloseCode;
+
+  /// 上一次传输关闭的理由（WebSocket 的 reason 字段）；没有是 `null`。
+  String? get lastCloseReason;
+
+  /// 上一次握手失败的原因（如 `internal：handshake-timeout`）；没有是 `null`。
+  ///
+  /// **这是第四条关闭路径，也是原先唯一不留声的那条** —— 真机上"每 10 秒重连"
+  /// 正是走它（握手超时）。断开的四种来源（协议错误 / 半开 / 对端关闭 / 握手失败）
+  /// 必须能分开，否则界面上只剩"列表是空的"。
+  String? get lastHandshakeFailure;
 
   /// 当前在途请求数（UI 可据此显示"正在等待应答"）。
   int get pendingCalls;

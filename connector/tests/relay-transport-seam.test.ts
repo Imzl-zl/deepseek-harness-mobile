@@ -10,6 +10,25 @@
  *
  * 早期版本把中转当**库**导入（跨工程 import + 一个额外的 `tsconfig.e2e.json`）。
  * 那是过渡：进程形态更接近生产，而且连接器不必为了测试去解析中转的源码。已改过来。
+ *
+ * ## 为什么这里不再有"设备那一行抵达连接器"那两条
+ *
+ * 它们验的是 v1 的两种回程机制 —— **按 `sid` 广播**与**按帧头 `id` 猜回程** ——
+ * 而配对 v2 把两者都删了（`pairing-v2.md` §2：数据路径逐条双向转发，不按 `sid` 广播、
+ * 不按请求 `id` 猜回程，改为按 `channelId` 成对绑定）。
+ *
+ * 更根本的是连接粒度变了（`connector-and-relay.md` §1.6）：**每台在线设备一条数据连接**，
+ * 而数据连接由连接器收到 `relay.open` 之后自己拨。所以"一个裸 `createConnection`
+ * 从 `/ws/connector` 同时承载设备帧"这条路在 v2 里**不存在** —— 保留那两条用例
+ * 等于要求实现保留一个已删除的机制。
+ *
+ * 同一批不变量（且是 v2 的形状）在别处：
+ * - 设备帧经中转抵达连接器、反向投递、断开一起消失 → `relay/tests/server.test.ts`
+ *   （三条真 socket：控制面 / `/ws/device?ticket=` / `/ws/connector?dev=&channel=`）；
+ * - 握手与业务帧 AEAD 经中转双向成立 → `tests/pairing-e2e.test.ts`
+ *   （真中转 + `createRelayLink` + `createDeviceConnection`，含多设备与 I7 重启）。
+ *
+ * 决策笔记：`.agents/notes/implemented/2026-10-09-pairing-v2-test-migration.md`。
  */
 import assert from 'node:assert/strict'
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -116,156 +135,6 @@ test('令牌不对：升级被拒，连接层进入退避重连而不是停在�
   connection.start()
 
   await waitFor('进入退避重连', () => connection.state === 'backoff')
-})
-
-test(
-  '设备经中转抵达连接器：换票 → 升级 → 设备那一行出现在连接器的 onFrame 里',
-  async (t) => {
-  const deviceToken = 'device-token-1'
-  const relay = await startRelayProcess(t, [
-    { kind: 'connector', id: 'conn-1', token: TOKEN },
-    { kind: 'device', id: 'dev-1', token: deviceToken },
-  ])
-  const httpBase = `http://127.0.0.1:${relay.port}`
-  const wsBase = `ws://127.0.0.1:${relay.port}`
-
-  // 连接器先上线（中转的"出码登记 → 认领"要求它在线），并进服务态。
-  const frames: { t?: string; id?: string }[] = []
-  // 观测：包一层 `send`，记录**真正写到 socket 上**的字节。
-  // 这一层能一次分开两种可能：帧没出连接器（send/batcher 吞了）vs 出了但中转没收（中转侧的事）。
-  const sent: string[] = []
-  const connection = createConnection({
-    url: `${wsBase}/ws/connector`,
-    dial: (url) => {
-      const ws = new WebSocket(url, { headers: { authorization: `Bearer ${TOKEN}` } } as never) as never as {
-        send(data: string): void
-      }
-      const original = ws.send.bind(ws)
-      ws.send = (data: string) => {
-        sent.push(String(data))
-        original(data)
-      }
-      return ws as never
-    },
-    onFrame: (frame) => frames.push(frame as { t?: string; id?: string }),
-  })
-  t.after(() => connection.stop())
-  connection.start()
-  await waitFor('连接器进入握手态', () => connection.state === 'handshake')
-  // 明文通道模式：手动宣告握手完成，于是 `send` 可用（本用例不测密码学，只测转发）。
-  connection.markHandshakeDone()
-  await waitFor('连接器进入服务态', () => connection.state === 'serving')
-
-  // 出码登记（连接器令牌）→ 换票（设备令牌 + codeHash）
-  const codeHash = 'hash-a'
-  const registered = await fetch(`${httpBase}/pairing/register`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ codeHash }),
-  })
-  assert.equal(registered.status, 201)
-  const ticketed = await fetch(`${httpBase}/ws-ticket`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${deviceToken}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ codeHash }),
-  })
-  assert.equal(ticketed.status, 201)
-  const { ticket } = (await ticketed.json()) as { ticket: string }
-
-  // 连接器先说一句：中转据此学到这个 sid 归它。
-  // **用 `res` 而不是 `ev`**：`ev` 是"可攒批/可暂停"的帧（§4.3），会先在连接层的 batcher 里等
-  // 一次 flush；本用例只想验证**转发**，不想让时序掺进攒批器 —— 那属于连接层自己的测试。
-  assert.equal(connection.send({ v: 1, t: 'res', id: 'r0', sid: 'sid_1', ok: true, box: 'x' }), true)
-
-  // 设备带票升级，然后发一行 —— 它应当出现在**连接器的 onFrame** 里。
-  const device = new WebSocket(`${wsBase}/ws/device?ticket=${encodeURIComponent(ticket)}`)
-  t.after(() => device.close())
-  await new Promise<void>((resolve, reject) => {
-    device.onopen = () => resolve()
-    device.onerror = () => reject(new Error('设备带票升级失败（中转应当接受它）'))
-  })
-  // **必须补换行**：协议是行级分帧（§3），连接器侧的分帧器只在遇到 `\n` 时才交出一帧。
-  // 不补的话那一行会永远攒在分帧器里 —— 表现正是"对端什么都没收到"，而两边看起来都正常。
-  device.send(`${JSON.stringify({ v: 1, t: 'req', id: 'r1', sid: 'sid_1', fc: 0, box: '{}' })}\n`)
-
-  try {
-    await waitFor('连接器收到设备那一行', () => frames.some((frame) => frame.t === 'req'))
-  } catch (error) {
-    // 超时时把中转的输出带出来：它只转发与记账，线索都在那儿。
-    throw new Error(`${String(error)}\n中转输出：\n${relay.output()}`)
-  }
-  assert.equal(frames.find((frame) => frame.t === 'req')?.id, 'r1', '原样转发（中转不解载荷、不改帧头）')
-})
-
-test('往返：设备发一句 → 连接器收到并回一句 → 设备收到（真 socket，中继两向都过）', async (t) => {
-  const deviceToken = 'device-token-1'
-  const relay = await startRelayProcess(t, [
-    { kind: 'connector', id: 'conn-1', token: TOKEN },
-    { kind: 'device', id: 'dev-1', token: deviceToken },
-  ])
-  const httpBase = `http://127.0.0.1:${relay.port}`
-  const wsBase = `ws://127.0.0.1:${relay.port}`
-
-  // 连接器侧：真连接层（明文通道模式 —— 本用例测路由，不测密码学），收到 `req` 就回 `res`。
-  const received: { t?: string; id?: string; sid?: string }[] = []
-  const connection = createConnection({
-    url: `${wsBase}/ws/connector`,
-    dial: (url) =>
-      new WebSocket(url, { headers: { authorization: `Bearer ${TOKEN}` } } as never) as never,
-    onFrame: (frame) => {
-      const typed = frame as { t?: string; id?: string; sid?: string }
-      received.push(typed)
-      if (typed.t === 'req') {
-        // 产品里这一步是方法面（真 handler 表）；这里只回一个最小应答，验证**反向路由**。
-        connection.send({ v: 1, t: 'res', id: typed.id ?? '', sid: typed.sid ?? '', ok: true, box: '{}' })
-      }
-    },
-  })
-  t.after(() => connection.stop())
-  connection.start()
-  await waitFor('连接器进入服务态', () => connection.state === 'serving' || connection.state === 'handshake')
-  connection.markHandshakeDone()
-  await waitFor('连接器可发帧', () => connection.state === 'serving')
-
-  // 出码登记 → 换票
-  const codeHash = 'hash-b'
-  await fetch(`${httpBase}/pairing/register`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ codeHash }),
-  })
-  const ticketed = await fetch(`${httpBase}/ws-ticket`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${deviceToken}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ codeHash }),
-  })
-  const { ticket } = (await ticketed.json()) as { ticket: string }
-
-  // 连接器先发一帧：中继据此学到这个 sid 归它。
-  connection.send({ v: 1, t: 'res', id: 'warm', sid: 'sid_2', ok: true, box: 'x' })
-
-  const device = new WebSocket(`${wsBase}/ws/device?ticket=${encodeURIComponent(ticket)}`)
-  t.after(() => device.close())
-  await new Promise<void>((resolve, reject) => {
-    device.onopen = () => resolve()
-    device.onerror = () => reject(new Error('设备带票升级失败'))
-  })
-
-  const deviceLines: string[] = []
-  device.onmessage = (event) => deviceLines.push(String((event as { data: unknown }).data))
-
-  // 设备发一句（**必须以 `\n` 结尾**：行级分帧，见笔记）
-  device.send(`${JSON.stringify({ v: 1, t: 'req', id: 'r2', sid: 'sid_2', fc: 0, box: '{}' })}\n`)
-
-  // 连接器收到 → 回一句 → 设备收到（反向路由靠"设备是这个 sid 的听众"）
-  await waitFor('连接器收到 req', () => received.some((frame) => frame.t === 'req'))
-  await waitFor('设备收到 res', () => deviceLines.some((line) => line.includes('"t":"res"')))
-  const back = deviceLines.find((line) => line.includes('"t":"res"'))
-  assert.ok(back !== undefined)
-  const parsed = JSON.parse(back.trim()) as { t: string; id: string; sid: string }
-  assert.equal(parsed.t, 'res')
-  assert.equal(parsed.id, 'r2', '应答的 id 与请求相同（手机据此配对请求与应答）')
-  assert.equal(parsed.sid, 'sid_2')
 })
 
 test('入口配错就在**启动时**失败：没有 tokens 直接退出（不留下"起来了但都 401"的中转）', async (t) => {

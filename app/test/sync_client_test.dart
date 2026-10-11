@@ -400,7 +400,29 @@ void main() {
 
       // 判定周期是心跳的 1/4 = 15 s；推进 60 s 应发出 ping。
       f.clock.advance(60000);
-      expect(f.transport.sentFrames.map((f) => f['t']), contains('ping'));
+      // 封箱是异步的（`_sendFrame` 里 `unawaited(...)`），所以要放一个微任务
+      // 让那一帧真正落到发件口上 —— 否则 `sentFrames` 里还没有它。
+      await Future<void>.delayed(Duration.zero);
+      final ping = f.transport.sentFrames.firstWhere((f) => f['t'] == 'ping');
+
+      // **`ping` 必须带 `fc`**：它是要封箱的（§3），而 `fc` 是 nonce 的来源 ——
+      // 少了它，对端在解箱那一步就判 `protocol/bad-frame` 并关掉连接
+      // （真机实测：每 15 秒一轮重连，连接器日志是 `ping 帧没有 fc,不该封箱`）。
+      // 这条曾经漏过：`ping` 走的是"直接写"那条路，绕开了 `fc` 的分配点。
+      expect(
+        ping['fc'],
+        isA<int>(),
+        reason: 'ping 要封箱，就必须有 fc（否则对端解不开、判坏帧、断连）',
+      );
+
+      // **`ping` 必须带 `id`**（§2.2）：`pong` 没有 `sid`，中转只能靠 `id` 回程 ——
+      // 少了它，应答在中转侧被丢弃，探针永远等不到回复，
+      // 于是每个心跳周期都判一次半开（真机实测的 60 s 周期重连）。
+      expect(
+        ping['id'],
+        isA<String>(),
+        reason: 'ping 要能被应答送回，就必须带 id（否则中转丢弃 pong）',
+      );
 
       await client.close();
     });

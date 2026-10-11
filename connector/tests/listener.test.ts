@@ -20,7 +20,6 @@ import { test } from 'node:test'
 import { createBoxCodec } from '../src/protocol/box.js'
 import { deriveIdentity } from '../src/protocol/crypto.js'
 import { createHandshakeDriver } from '../src/protocol/handshake-driver.js'
-import { createPairing } from '../src/pairing.js'
 import { createSessionBuffer } from '../src/session-buffer.js'
 import { createConnectionScope, type ConnectionScopeDeps } from '../src/connection-scope.js'
 import { createConnection, type DialSocket } from '../src/transport/connection.js'
@@ -67,8 +66,6 @@ function makeScopeDeps(): ConnectionScopeDeps {
     },
     buffer: createSessionBuffer({ pairedDevices: () => [] }),
     jobControl: null,
-    pairing: createPairing({ relayUrl: 'wss://relay.example', pcPubEd: 'aa', pcPubDh: 'bb' }),
-    putDevice: async () => {},
     idempotency: null,
   }
 }

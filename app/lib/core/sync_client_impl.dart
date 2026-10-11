@@ -68,7 +68,12 @@ class _SyncClient implements SyncClient, SyncClientProbe {
         't': 'req',
         'id': entry.requestId,
         // 写操作走**带幂等键**的信封（§5.6）：电脑侧据此去重，重发安全。
-        'box': encodeRequestEnvelope(entry.method, entry.params),
+        // `requestId` 必须进信封顶层 —— 它是电脑侧唯一认得的幂等键。
+        'box': encodeRequestEnvelope(
+          entry.method,
+          entry.params,
+          requestId: entry.requestId,
+        ),
       });
     });
   }
@@ -162,6 +167,13 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       events = await _deps.transport.connect();
     } catch (error) {
       // 建连失败：关掉（如果还开着）并进退避。
+      //
+      // **必须记进诊断面**：这条路上原先什么都不留 —— 于是"连不上"在界面上
+      // 与"连上了但没数据"长得一模一样（都是空列表、都无错误），
+      // 而真机上**反复重连**正是走这里（换票失败、升级被拒都会抛到这里）。
+      _lastProtocolError = error is ProtocolException
+          ? error
+          : ProtocolException(ErrorCode.relayOffline, '建连失败：$error');
       _enterClosed();
       return;
     }
@@ -198,6 +210,17 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     _res.attachBox(_deps.box(result.keys));
     // 握手成功要重置退避：否则下次掉线会从上次积累的大间隔开始等。
     _backoff.reset();
+    // **连上了就把「上次为什么断」清掉**。
+    //
+    // 少了这一行，失败过一次之后那句话**永远留在界面上**（哪怕后来连上了）——
+    // 于是 App 会一边正常收发、一边显示"握手失败"，
+    // 而排查的人会去追一个**已经不存在**的故障（真机实测：屏幕上写着
+    // `handshake-timeout`，而中转侧的记录显示 hello / confirm / req 三步全都正常走完）。
+    _lastProtocolError = null;
+    _lastHandshakeFailure = null;
+    _lastCloseCode = null;
+    _lastCloseReason = null;
+    _lastHalfOpenSilentMs = null;
     _machine.to(ConnectionState.serving);
     // 连上了就把待发队列按序补发（§5.6：先落盘、连接可用时再发）。
     unawaited(_deps.outbox.flush());
@@ -205,6 +228,13 @@ class _SyncClient implements SyncClient, SyncClientProbe {
 
   void _failHandshake(ErrorCode reason, Object? error) {
     // 握手失败不计入业务重试次数（§4.1）：关掉连接，剩下的交给退避。
+    //
+    // **必须记进诊断面**：这是唯一一条原先什么都不记的关闭路径，而它恰好是
+    // 真机上"每 10 秒重连一次、两端都没有任何原因"的那一条（`handshake-timeout`
+    // 就走这里）。不记的话，界面上只剩"列表空的"，而**原因被 `reason` 参数带进来又被丢掉**。
+    _lastHandshakeFailure = error == null
+        ? reason.wire
+        : '${reason.wire}：$error';
     _closeTransport();
     _enterClosed();
   }
@@ -223,7 +253,14 @@ class _SyncClient implements SyncClient, SyncClientProbe {
         for (final line in lines) {
           _onLine(line);
         }
-      case TransportClosed():
+      case TransportClosed(:final code, :final reason):
+        // **断开本身要留声**，即使它是"正常"关闭。
+        //
+        // 这条路上原先什么都不记，于是真机上"每 10 秒重连一次"在**两端**都查不出原因：
+        // 它不是协议错误（诊断面为空）、也不是半开（还没到点），就是**对端或本端把连接关了**。
+        // 记下关闭码与理由，至少能区分"谁关的""为什么关"。
+        _lastCloseCode = code;
+        _lastCloseReason = reason;
         _enterClosed();
     }
   }
@@ -271,13 +308,11 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       return;
     }
 
-    // 配对帧：发生在密钥建立**之前**，走明文路径（这一层只把它交出去）。
-    if (isPairingFrameType(type)) {
-      _pairingFrames.add(frame);
-      return;
-    }
-
     // 业务帧：未握手就收到 = 攻击面（§2.2），一律拒并关连接。
+    //
+    // 配对两帧**也走这里**：它们是要封箱的（`pair-commit` 的载荷就是配对码），
+    // 所以在密钥建立之前出现只能是伪造或阶段搞错 —— 电脑侧同一处也是硬失败
+    // （`connector/src/transport/codec.ts:132` 的 `assertHandshakePhase`）。
     if (!_machine.acceptsBusinessFrames) {
       _protocolFailure(
         ProtocolException(ErrorCode.badFrame, '握手未完成时收到 $type 帧'),
@@ -693,7 +728,7 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       'v': wireVersion,
       't': 'req',
       'id': id,
-      'box': encodeRequestEnvelope(method, params),
+      'box': encodeRequestEnvelope(method, params, requestId: requestId),
     });
     if (!sent) {
       // 发送失败要**撤销登记**：否则表里留一个永远不兑现的条目。
@@ -772,7 +807,23 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       final action = _keepalive.tick(_now());
       switch (action) {
         case KeepalivePing():
-          _write({'v': wireVersion, 't': 'ping', 'box': ''});
+          // 走 `_sendFrame` 而**不是** `_write`：`fc` 的分配与封箱都在 `_sendFrame` 里，
+          // 而 `ping` 是要封箱的（§3）—— 直接 `_write` 会发出一帧**没有 `fc`** 的
+          // `ping`，对端在解箱那一步就把它判成 `protocol/bad-frame` 并关连接
+          // （真机实测：`ping 帧没有 fc,不该封箱`，每 15 秒一轮重连）。
+          //
+          // **`id` 也是必需的**（§2.2）：`pong` 没有 `sid`，中继只能靠 `id`
+          // 把它送回发起方 —— 不带 `id` 的话探针永远等不到应答，于是每个心跳周期
+          // 判一次半开、关掉一条健康的连接（中继日志：`丢弃一帧：ping 找不到对应设备`）。
+          //
+          // Note: 这两个缺口（缺 `fc` / 缺 `id`）与另外两处"线上形状不一致"一起记在
+          // `.agents/notes/implemented/2026-10-07-three-wire-shape-mismatches.md`
+          _sendFrame({
+            'v': wireVersion,
+            't': 'ping',
+            'id': _deps.newId?.call() ?? newFrameId(randomBytes(frameIdBytes)),
+            'box': '',
+          });
         case KeepaliveHalfOpen(:final silentMs):
           // 半开：TCP 不会报错，只能自己判。关掉 socket，剩下的交给收口统一处理。
           // `silentMs` 带进诊断面 —— 它是"判了多久才认定"的唯一证据。
@@ -845,8 +896,23 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   /// 最后一次协议错误（诊断用）。
   ProtocolException? _lastProtocolError;
 
+  /// 上一次握手失败的原因（诊断用；`null` = 没失败过）。
+  ///
+  /// **它曾经是被丢掉的那个参数**：`_failHandshake(reason, error)` 收下原因、
+  /// 然后只关连接、什么都不记 —— 于是真机上"每 10 秒重连"在两端都无迹可寻。
+  String? _lastHandshakeFailure;
+
   /// 判定为半开时已沉默多久（诊断用）。
   int? _lastHalfOpenSilentMs;
+
+  /// 上一次传输关闭的码与理由（诊断用；两者都可能为 `null`）。
+  ///
+  /// **它补的是最大的一块诊断盲区**：断开有三种来源 ——
+  /// 协议错误（`_lastProtocolError`）、判半开（`_lastHalfOpenSilentMs`）、
+  /// **以及对端/本端直接把连接关了**。前两种原先有记录，第三种什么都没有，
+  /// 而真机上"每 10 秒重连一次"恰好就是第三种：两端日志都查不出原因。
+  int? _lastCloseCode;
+  String? _lastCloseReason;
 
   /// 上一次收口时被拒绝的在途请求数（诊断用）。
   int? _lastRejectedCalls;
@@ -865,6 +931,15 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   @override
   int? get lastHalfOpenSilentMs => _lastHalfOpenSilentMs;
 
+  @override
+  int? get lastCloseCode => _lastCloseCode;
+
+  @override
+  String? get lastCloseReason => _lastCloseReason;
+
+  @override
+  String? get lastHandshakeFailure => _lastHandshakeFailure;
+
   /// 当前在途请求数。
   @override
   int get pendingCalls => _calls.pending;
@@ -881,14 +956,8 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   // 供测试观察的帧收集（生产里 UI 不读这些）
   // -------------------------------------------------------------------------
 
-  final List<Map<String, Object?>> _pairingFrames = [];
   final List<(Map<String, Object?>, String)> _jobFrames = [];
   final List<Map<String, Object?>> _presenceFrames = [];
-
-  /// 收到的配对帧（UI 的配对页读它）。
-  @override
-  List<Map<String, Object?>> get pairingFrames =>
-      List.unmodifiable(_pairingFrames);
 
   /// 收到的任务输出帧（`(帧头, 明文)`；任务面板读它）。
   @override
@@ -959,9 +1028,25 @@ Object? _jsonDecode(String text) {
   }
 }
 
-/// `sync_client` 的 `call` 用的请求信封编码（`method` / `params` / `requestId` 顶层）。
-String encodeRequestEnvelope(String method, Map<String, Object?> params) =>
-    jsonEncode({'method': method, 'params': params});
+/// `sync_client` 的 `call` 用的请求信封编码。
+///
+/// **`requestId` 在顶层**（契约 §5.7）—— 不是塞在 `params` 里。
+/// 带幂等键的方法（`session.prompt` / `interaction.respond` / 设置与凭据的写）
+/// 少了它会被电脑侧直接拒：`session.prompt 必须带 requestId（幂等键）`。
+///
+/// **这行曾经把 `requestId` 整个丢掉**（签名里压根没这个参数），
+/// 而函数上方的注释却写着"`requestId` 顶层" —— 注释说了、代码没做。
+/// 后果是真机上"发一句什么也没有"：请求到了电脑侧、被拒、错误只在一闪而过的 SnackBar 里。
+String encodeRequestEnvelope(
+  String method,
+  Map<String, Object?> params, {
+  String? requestId,
+}) => jsonEncode({
+  'method': method,
+  'params': params,
+  // null-aware 的 `?` 作用于**值**（键是字面量）：没有幂等键时不写这个字段。
+  'requestId': ?requestId,
+});
 
 /// 每会话的流式累加器（`app-channel-client.md` §2.2）。
 ///

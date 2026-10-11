@@ -1,66 +1,47 @@
-/**
- * 配对（契约 §12.1，**电脑侧那一半**）。
- *
- * 流程只有三步，而三步的顺序就是它的安全性：
- *
- * 1. **电脑侧出码**：生成一次性配对码（16 字节 base64url，5 分钟有效），把
- *    `{ relay, pcPubEd, pcPubDh, code }` 编成二维码。**只存哈希**，不存码本身 ——
- *    它是 bearer 凭据，存明文等于"谁读到库谁能配对"。
- * 2. **手机扫码后带码回来**：`{ code, devPubEd, devPubDh, name }` 经中转转给电脑侧
- *    （§12.1 第 2 步：**中转只转发与记账**）。
- * 3. **电脑侧校验并落设备记录**：码要对、没过期、没用过；然后写 `devices` 行
- *    （含由配对码算出的 `pairingId`），并把**短指纹 SAS** 回给两端做带外核对。
- *
- * ## 两个"只在电脑侧做"的判断
- *
- * - **身份判定在电脑侧**（§12.1 第 3 步的原话）。中转不参与判断，它只转发与记账；
- *   所以本文件不需要信任任何中转提供的字段。
- * - **`pairingId` 由配对码派生**（§12.1 的定义，参数已写进契约）：手机拿到二维码就能算出同一个值，
- *   电脑侧不必额外传。它随后参与握手密钥派生的 `info`（§4.1）——**两端算得不一样就握不上手**，
- *   所以派生参数必须逐字一致，不能各自发挥。
- *
- * ## 一次性是怎么保证的
- *
- * 内存里的 pending 记录 + 消费即销毁（`consumed`）。进程重启会让 pending 消失 ——
- * 那时二维码也一并作废（操作者重新出码即可），而不是留下一个无法判定用没用过的码。
- * 这比"落盘 + 靠过期时间兜"更安全：**没有"可能已被用过"的中间态**。
+/** 首配 v2：公开发现与秘密授权分离，规范见 docs/subsystems/pairing-v2.md。
+ * 决策见 .agents/notes/implemented/2026-10-08-pairing-v2-and-device-connections.md。
  */
-import { createHash, hkdfSync, randomBytes as nodeRandomBytes } from 'node:crypto'
+import { createHash, hkdfSync, randomBytes as nodeRandomBytes, timingSafeEqual } from 'node:crypto'
 
-/** 配对码长度（16 字节 = 128 位；与 `requestId` 同规格，两者都是 bearer 凭据）。 */
+export const PAIRING_VERSION = 2
 export const PAIRING_CODE_BYTES = 16
-/** 配对码有效期（契约 §12.1：5 分钟）。 */
 export const PAIRING_TTL_MS = 5 * 60 * 1000
-/** `pairingId` 派生用的域名分隔串（契约 §12.1，两端逐字一致）。 */
 export const PAIRING_ID_INFO = 'dsh-mobile/v1/pairing'
-/** 短指纹（SAS）的域名分隔串（契约 §12.1）。 */
+export const PAIRING_KEY_INFO = 'dsh-mobile/v2/pairing-keys|'
 export const SAS_INFO = 'dsh-mobile/v1/sas'
+export const MAX_DEVICE_NAME_BYTES = 256
+
+const TOKEN = /^[A-Za-z0-9_-]{22}$/
+const PUBLIC_KEY = /^[0-9a-f]{64}$/
+const ID = /^[A-Za-z0-9_-]+$/
+const base64url = (bytes: Uint8Array): string => Buffer.from(bytes).toString('base64url')
+const hash = (text: string): Buffer => createHash('sha256').update(text, 'utf8').digest()
 
 export interface PairingOffer {
-  /** 只在出码那一刻存在于内存里；**不落盘**。 */
+  readonly offerId: string
+  /** 只交给二维码，不登记到中转。 */
   readonly code: string
   readonly expiresAt: number
-  /** 二维码里那段字符串（渲染成图形是实现方的事）。 */
   readonly payload: string
-  /** 码的哈希（落盘只落它）。 */
-  readonly codeHash: string
 }
 
-export interface PairingRequest {
-  /**
-   * **配对码的哈希**（sha256 十六进制），不是码本身。
-   *
-   * 请求要经过中转（§12.1 第 2 步），而中转的表里存的正是 `code_hash` ——
-   * 让中转看到码等于让它自己配上一台设备。码只出现在二维码里（带外路径，只有扫它的手机看得见）。
-   */
-  readonly codeHash: string
+/** 由该连接的持钥证明绑定的候选；不能从 pair-commit 载荷里再取一份身份。 */
+export interface PairingCandidate {
+  readonly offerId: string
   readonly devPubEd: string
   readonly devPubDh: string
   readonly name: string
 }
 
+export interface PairingRequest {
+  readonly v: 2
+  readonly offerId: string
+  readonly code: string
+}
+
 export interface PairingAccepted {
   readonly pairingId: string
+  readonly expiresAt: number
   readonly device: {
     readonly devId: string
     readonly name: string
@@ -69,140 +50,145 @@ export interface PairingAccepted {
     readonly pairingId: string
     readonly pairedAt: number
   }
-  /** 6 位数字，两端各自算出同一个值，由用户对照（带外核对）。 */
   readonly sas: string
 }
 
-/** 配对失败的原因。分开是为了让调用方（与用户）能说清到底哪一步不对。 */
-export type PairingRejection = 'expired' | 'mismatch' | 'consumed'
+export type PairingRejection = 'expired' | 'mismatch' | 'consumed' | 'invalid'
 
 export interface PairingOptions {
-  /** 中转地址（写进二维码）。 */
   relayUrl: string
+  pcId: string
   pcPubEd: string
   pcPubDh: string
   now?: () => number
   randomBytes?: (size: number) => Uint8Array
-  /** 设备 id 怎么来（默认：设备公钥的哈希前 16 字节 base64url —— 同一把公钥重配得到同一个 id）。 */
-  deviceIdOf?: (request: PairingRequest) => string
+  deviceIdOf?: (candidate: PairingCandidate) => string
 }
 
 export interface Pairing {
-  /** 出一次码（这一步会覆盖上一次未使用的码：**永远只有一个待用码**）。 */
   offer(): PairingOffer
-  /**
-   * 校验手机带回来的配对请求。
-   *
-   * @returns 成功给出 `pairingId`、设备行与 SAS；失败给出原因（三种分得很清）。
-   */
-  accept(request: PairingRequest): PairingAccepted | { rejected: PairingRejection }
-  /** 当前有没有待用的码（自检与测试用）。 */
+  allows(candidate: PairingCandidate): boolean
+  accept(request: PairingRequest, candidate: PairingCandidate): PairingAccepted | { rejected: PairingRejection }
   readonly pending: boolean
 }
 
-const base64url = (bytes: Uint8Array | Buffer): string => Buffer.from(bytes).toString('base64url')
-const sha256Hex = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex')
-
-/**
- * 配对码的哈希（**两端共用这一个定义**：手机算出来放进请求，电脑侧算出来与待用码比对）。
- *
- * 用 sha256 十六进制而不是 base64url：它要出现在请求 JSON 里，十六进制是最不容易被
- * 各种 JSON 编码习惯改写的形状（配对失败最难查的一种就是"两边算的其实是同一个值，
- * 但一端多了一层 base64 包装"）。
- */
+/** 只作电脑侧秘密校验与已有业务 pairingId 派生，绝不再登记到中转。 */
 export function pairingCodeHash(code: string): string {
-  return sha256Hex(code)
+  return hash(code).toString('hex')
 }
 
-/**
- * 由**配对码的哈希**派生 `pairingId`（契约 §12.1 的固定定义）。
- *
- * 输入取哈希而不是码本身：电脑侧出码后只需要在内存里留哈希（码本身不保留），
- * 而手机手里有码、自己算一次哈希就得到同一个输入。
- *
- * 用 HKDF 而不是裸哈希：**域名分隔**（`info`）让这一个 128 位秘密可以安全地派生出多个用途的
- * 输出而不互相牵连 —— 这里只要一个，但参数与密钥派生（§4.1）保持同一种做法，
- * 免得将来有人顺手把两个用途的输出互换。
- */
 export function pairingIdOf(codeHash: string): string {
-  const derived = hkdfSync('sha256', Buffer.from(codeHash, 'utf8'), Buffer.alloc(0), PAIRING_ID_INFO, 32)
-  return base64url(Buffer.from(derived))
+  return base64url(Buffer.from(hkdfSync('sha256', Buffer.from(codeHash, 'utf8'), Buffer.alloc(0), PAIRING_ID_INFO, 32)))
 }
 
-/**
- * 短指纹（SAS）：`sha256(info|pcPubEd|devPubEd)` 前 4 字节 mod 10^6，补零成 6 位。
- *
- * 用**公钥**而不是密钥材料：配对还没完成时就得能显示，而公钥本来就是要给对方的东西。
- */
+/** 辅助显示，不是配对授权判据。 */
 export function sasOf(pcPubEd: string, devPubEd: string): string {
-  const digest = createHash('sha256')
-    .update(`${SAS_INFO}|${pcPubEd}|${devPubEd}`, 'utf8')
-    .digest()
-  const value = digest.readUInt32BE(0) % 1_000_000
-  return String(value).padStart(6, '0')
+  return String(hash(`${SAS_INFO}|${pcPubEd}|${devPubEd}`).readUInt32BE(0) % 1_000_000).padStart(6, '0')
+}
+
+export function deviceIdOf(candidate: Pick<PairingCandidate, 'devPubDh'>): string {
+  return base64url(hash(candidate.devPubDh).subarray(0, 16))
+}
+
+export function isPairingCandidate(value: unknown): value is PairingCandidate {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  return typeof record['offerId'] === 'string' && TOKEN.test(record['offerId'])
+    && typeof record['devPubEd'] === 'string' && PUBLIC_KEY.test(record['devPubEd'])
+    && typeof record['devPubDh'] === 'string' && PUBLIC_KEY.test(record['devPubDh'])
+    && typeof record['name'] === 'string' && record['name'].trim() !== ''
+    && Buffer.byteLength(record['name'], 'utf8') <= MAX_DEVICE_NAME_BYTES
+}
+
+/** 双端从自己的可信输入构造；中转篡改任一字段会使 transcript 签名不匹配。 */
+export function pairingHandshakeContext(
+  pc: { pcId: string; pcPubEd: string; pcPubDh: string },
+  candidate: PairingCandidate,
+): string {
+  if (!isPairingCandidate(candidate) || !ID.test(pc.pcId)
+    || !PUBLIC_KEY.test(pc.pcPubEd) || !PUBLIC_KEY.test(pc.pcPubDh)) {
+    throw new TypeError('配对认证上下文字段不合法')
+  }
+  return [
+    'dsh-mobile/pairing/v2', candidate.offerId, pc.pcId, pc.pcPubEd, pc.pcPubDh,
+    deviceIdOf(candidate), candidate.devPubEd, candidate.devPubDh, pairingCodeHash(candidate.name),
+  ].join('|')
+}
+
+function isRequest(value: unknown): value is PairingRequest {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  return record['v'] === PAIRING_VERSION
+    && typeof record['offerId'] === 'string' && TOKEN.test(record['offerId'])
+    && typeof record['code'] === 'string' && TOKEN.test(record['code'])
+    && !('codeHash' in record)
 }
 
 export function createPairing(options: PairingOptions): Pairing {
   const now = options.now ?? (() => Date.now())
   const random = options.randomBytes ?? ((size: number) => nodeRandomBytes(size))
-  const deviceIdOf =
-    options.deviceIdOf ??
-    ((request: PairingRequest) => base64url(createHash('sha256').update(request.devPubDh, 'utf8').digest().subarray(0, 16)))
-
-  /** 当前待用的码：只留哈希 + 截止时间；**码本身不保留**（出码那一刻返回给调用方就够了）。 */
-  let pending: { codeHash: string; expiresAt: number } | null = null
+  const identify = options.deviceIdOf ?? deviceIdOf
+  let current: {
+    offerId: string
+    codeHash: Buffer
+    expiresAt: number
+    candidate: string | null
+    accepted: PairingAccepted | null
+  } | null = null
 
   return {
     get pending() {
-      return pending !== null && pending.expiresAt > now()
+      return current !== null && current.expiresAt > now() && current.accepted === null
     },
 
     offer() {
+      const offerId = base64url(random(PAIRING_CODE_BYTES))
       const code = base64url(random(PAIRING_CODE_BYTES))
+      if (!TOKEN.test(offerId) || !TOKEN.test(code) || offerId === code) {
+        throw new Error('配对随机源必须生成独立的邀请与秘密')
+      }
       const expiresAt = now() + PAIRING_TTL_MS
-      pending = { codeHash: sha256Hex(code), expiresAt }
+      current = { offerId, codeHash: hash(code), expiresAt, candidate: null, accepted: null }
       return {
-        code,
-        expiresAt,
-        codeHash: pending.codeHash,
+        offerId, code, expiresAt,
         payload: JSON.stringify({
-          v: 1,
-          relay: options.relayUrl,
-          pcPubEd: options.pcPubEd,
-          pcPubDh: options.pcPubDh,
-          code,
+          v: PAIRING_VERSION, relay: options.relayUrl, pcId: options.pcId,
+          pcPubEd: options.pcPubEd, pcPubDh: options.pcPubDh, offerId, code,
         }),
       }
     },
 
-    accept(request) {
-      if (pending === null) return { rejected: 'consumed' }
-      if (pending.expiresAt <= now()) {
-        // 过期即作废：**不**留一个"可能还能用"的码。
-        pending = null
-        return { rejected: 'expired' }
+    allows(candidate) {
+      if (!isPairingCandidate(candidate) || current === null || current.expiresAt <= now()
+        || candidate.offerId !== current.offerId) return false
+      return current.candidate === null || current.candidate === pairingHandshakeContext(options, candidate)
+    },
+
+    accept(request, candidate) {
+      if (!isRequest(request) || !isPairingCandidate(candidate)) return { rejected: 'invalid' }
+      if (current === null) return { rejected: 'consumed' }
+      if (current.expiresAt <= now()) return { rejected: 'expired' }
+      if (request.offerId !== current.offerId || candidate.offerId !== current.offerId
+        || !timingSafeEqual(hash(request.code), current.codeHash)) return { rejected: 'mismatch' }
+
+      const fingerprint = pairingHandshakeContext(options, candidate)
+      if (current.accepted !== null) {
+        return current.candidate === fingerprint ? current.accepted : { rejected: 'consumed' }
       }
-      if (request.codeHash !== pending.codeHash) return { rejected: 'mismatch' }
-
-      // 一次性：**先消费再落记录**。反过来的话，落记录失败会留下一个"用过了但没配上"的码，
-      // 而操作者只能重新出码 —— 那还不如让它当场失效。
-      pending = null
-
-      const pairingId = pairingIdOf(request.codeHash)
-      const devId = deviceIdOf(request)
-      const at = now()
-      return {
+      const pairingId = pairingIdOf(current.codeHash.toString('hex'))
+      const accepted: PairingAccepted = {
         pairingId,
-        sas: sasOf(options.pcPubEd, request.devPubEd),
+        expiresAt: current.expiresAt,
+        sas: sasOf(options.pcPubEd, candidate.devPubEd),
         device: {
-          devId,
-          name: request.name,
-          edPubHex: request.devPubEd,
-          dhPubHex: request.devPubDh,
-          pairingId,
-          pairedAt: at,
+          devId: identify(candidate), name: candidate.name,
+          edPubHex: candidate.devPubEd, dhPubHex: candidate.devPubDh,
+          pairingId, pairedAt: now(),
         },
       }
+      current.candidate = fingerprint
+      current.accepted = accepted
+      return accepted
     },
   }
 }

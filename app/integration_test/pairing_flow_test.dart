@@ -12,12 +12,21 @@
 /// 而二维码载荷是 JSON（满是引号）。所以"手工粘贴 241 字符的载荷"这条路走不通 ——
 /// 这条用例用 `enterText` 直接灌进输入框，等价且可重复。
 ///
-/// 跑法（模拟器已在跑）：
+/// ## 它**不**验与电脑侧的真实交换
+///
+/// 那一半需要一台真的中转（要起进程、配令牌），属于 `connector/tests/pairing-e2e.test.ts`
+/// 的覆盖面（它用真 HTTP + 真 WS 跑完整条链）。这条用例的注入缝是**故意失败**的：
+/// 它要证明的是"配对页把失败如实显示出来"与"密钥真的落到设备安全存储"，
+/// 而这两件事都不该依赖一台在跑的中转。
+///
+/// 跑法（真机是 d61cf622）：
 /// ```
-/// flutter test integration_test/pairing_flow_test.dart -d emulator-5554
+/// flutter test integration_test/pairing_flow_test.dart -d d61cf622
 /// ```
 library;
 
+import 'package:dsh_mobile/core/pairing_client.dart';
+import 'package:dsh_mobile/core/transport.dart';
 import 'package:dsh_mobile/platform/pairing_store.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/pairing_page.dart';
@@ -25,28 +34,42 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
-/// 一份**真的**二维码载荷（由 `node app/tools/make-pairing-qr.mjs` 产出）。
+/// 一份**真的** v2 二维码载荷（由出码命令产出，形状见 `pairing-v2.md` §3）。
 ///
 /// 固定值而不是运行时生成：这条用例要验的是"App 能不能处理电脑侧真实形状的载荷"，
 /// 而固定值让失败可复现（`code` 变了不影响解析路径）。
 const _qrPayload =
-    '{"v":1,"relay":"wss://relay.example.test/ws/connector",'
+    '{"v":2,"relay":"ws://127.0.0.1:8787","pcId":"conn-1",'
     '"pcPubEd":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
     '"pcPubDh":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",'
-    '"code":"abL3sSH5gLJpTBBsqPUzJg"}';
+    '"offerId":"zyXWvUTSrqPONMLKjihgfe","code":"abL3sSH5gLJpTBBsqPUzJg"}';
+
+/// 一个**永远失败**的 HTTP 缝：这条用例不连真中转（见文件头）。
+///
+/// 它抛的是 [TransportException] —— 与真实实现"连不上中转"时同一类别，
+/// 于是页面显示的是那句"（连不上中转）"。假装成功会让下面的断言验到一个假的成功路径。
+Future<HttpResult> _refusingHttp(HttpCall call) async {
+  throw const TransportException('测试：这条用例故意不连中转');
+}
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('粘贴真载荷 → 解析 → 显示 6 位 SAS', (tester) async {
-    PairingResult? captured;
+  testWidgets('粘贴真载荷 → 真的去连电脑 → 连不上时**如实报错**（不假装成功）', (tester) async {
+    var dialed = false;
     await tester.pumpWidget(
       MaterialApp(
         theme: DshTheme.dark(),
         home: PairingPage(
-          onPaired: (result) async {
-            captured = result;
+          onPaired: (_) async {},
+          send: _refusingHttp,
+          // v2 的传输缝是"给一条已带票的 URL 建连"：换票失败时它**不该**被调到。
+          transportFor: (url) {
+            dialed = true;
+            throw const TransportException('测试：不该走到拨号这一步');
           },
+          // 本机调试的中转是明文 `ws://`：显式开启（生产只认 wss）。
+          allowInsecureLocal: true,
         ),
       ),
     );
@@ -55,42 +78,19 @@ void main() {
     await PairingStore.clear();
 
     await tester.enterText(find.byType(TextField), _qrPayload);
-    await tester.tap(find.text('解析'));
+    await tester.tap(find.text('连接电脑'));
     await tester.pumpAndSettle();
 
-    // 解析成功：出现"核对数字"那张卡。
-    expect(find.text('在电脑上核对这 6 位数字'), findsOneWidget);
-    // 6 位数字必须真的显示出来（它是用户唯一能带外核对的东西）。
-    expect(find.byType(Text), findsWidgets);
-
-    // **先滚到按钮再点**：确认卡在页面下方，而这块屏幕只有 320×640
-    // （实测：按钮中心落在 y=646，超出 640 的根节点边界 → `tap` 打不中，
-    // 报"would not hit test on the specified widget"）。
-    // 这条同时是对**真机可用性**的检查：在这么小的屏上，确认按钮需要滚动才够得着。
-    await tester.ensureVisible(find.text('数字一致，开始连接'));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('数字一致，开始连接'));
-    await tester.pumpAndSettle();
-    // 回调是 `unawaited(...)` 调的（`onPaired` 在真实装配里要落盘 + 建连，
-    // 不能阻塞 UI），所以给它一轮事件循环再断言 —— `pumpAndSettle` 只等帧，
-    // 不等一个已排队的微任务/异步链。
-    await tester.runAsync(() async {
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-    });
-    await tester.pumpAndSettle();
-
-    expect(captured, isNotNull, reason: '点确认后应回调 onPaired');
-    // SAS 是 6 位数字（含补零）。
-    expect(captured!.sas, matches(RegExp(r'^\d{6}$')));
-    expect(captured!.offer.relayUrl, 'wss://relay.example.test/ws/connector');
-    // `pairingId` 是 base64url 无填充的 32 字节。
+    // 没有中转 ⇒ 换票这一步就该失败，而**失败必须显示出来**。
+    // 早先这一页只做本地派生：它会把一张"确认卡"显示出来，让人以为配对成功了 ——
+    // 而电脑侧从来没有收到过任何请求。
     expect(
-      captured!.pairingId.length,
-      43,
-      reason: '32 字节 base64url 无填充 = 43 字符',
+      find.text('通道已就绪，等待你确认'),
+      findsNothing,
+      reason: '换票没成功就不该显示"等待确认"的身份卡',
     );
-    expect(captured!.pairingId, isNot(contains('=')));
+    expect(find.textContaining('连不上中转'), findsOneWidget);
+    expect(dialed, isFalse, reason: '没换到票就不该去拨号（那必然是一个 401）');
   });
 
   testWidgets('密钥真的落到设备安全存储，且重启后还能读回来', (tester) async {
@@ -111,21 +111,31 @@ void main() {
           '1111111111111111111111111111111111111111111111111111111111111111',
       devDhPubHex:
           '2222222222222222222222222222222222222222222222222222222222222222',
+      deviceToken: 'DEVICE-TOKEN-1',
+      refreshToken: 'REFRESH-TOKEN-1',
+      pcId: 'conn-1',
+      devId: 'dev-1',
     );
     await PairingStore.save(credentials);
 
     // 读回来：**逐字段比**（少一个字段就得重新配对，而"部分可用"会让失败
-    // 发生在握手阶段，那时没人会想到是存储缺字段）。
+    // 发生在很后面 —— 那时没人会想到是存储缺字段）。
     final loaded = await PairingStore.load();
     expect(loaded, isNotNull);
     expect(loaded!.masterSeedHex, credentials.masterSeedHex);
     expect(loaded.pairingId, credentials.pairingId);
     expect(loaded.pcSignPubHex, credentials.pcSignPubHex);
     expect(loaded.relayUrl, credentials.relayUrl);
+    // **两个令牌必须落下来**：它们是之后每次重连换票的唯一凭据
+    // （配对码是一次性的，用完就没了）。
+    expect(loaded.deviceToken, credentials.deviceToken);
+    expect(loaded.refreshToken, credentials.refreshToken);
+    expect(loaded.pcId, credentials.pcId);
+    expect(loaded.devId, credentials.devId);
 
-    // `deviceId` 是从 `devPubDh` 本地推导的（不是存的）——
-    // 它必须与电脑侧算的同一个值（跨端向量已验算法，这里验接线）。
-    expect(await loaded.deviceId(), isNotEmpty);
+    // 设备 id 优先用电脑侧给的权威值；本地推导与它必须是同一个（跨端向量已验算法）。
+    expect(await loaded.helloDeviceId(), 'dev-1');
+    expect(await loaded.derivedDeviceId(), isNotEmpty);
 
     // 收尾：清掉，免得影响下一次跑。
     await PairingStore.clear();

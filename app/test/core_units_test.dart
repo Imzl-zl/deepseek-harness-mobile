@@ -148,14 +148,22 @@ void main() {
   });
 
   group('封箱判据（契约 §3）', () {
-    test('只有握手三帧、配对两帧与 presence 是明文，其余都要封箱', () {
+    test('只有握手三帧与 presence 是明文，其余都要封箱', () {
       for (final type in handshakeFrameTypes) {
         expect(needsBox(type), isFalse, reason: '$type 是握手帧（密钥还没建立）');
         expect(isPreKeysPlaintextFrame(type), isTrue);
       }
+      // **配对两帧要封箱**：它们发生在受限握手之后，而 `pair-commit` 的载荷就是
+      // 配对码 —— 那是这一阶段唯一的授权秘密。判成明文不会让任何断言失败，
+      // 只会让秘密明文上线（v2 之前正是这个形状）。
       for (final type in pairingFrameTypes) {
-        expect(needsBox(type), isFalse, reason: '$type 是配对帧（密钥还没建立）');
-        expect(isPreKeysPlaintextFrame(type), isTrue);
+        expect(needsBox(type), isTrue, reason: '$type 必须封箱（载荷里是秘密）');
+        expect(
+          isPreKeysPlaintextFrame(type),
+          isFalse,
+          reason: '$type 不是"密钥建立之前"的帧',
+        );
+        expect(isPairingFrameType(type), isTrue);
       }
       expect(needsBox('presence'), isFalse, reason: 'presence 由中继合成，必须能原样转发');
       expect(
@@ -163,6 +171,7 @@ void main() {
         isFalse,
         reason: 'presence 不是"密钥前"的帧',
       );
+      expect(isPairingFrameType('presence'), isFalse);
     });
 
     test('控制帧**也要**封箱：买到的不是保密而是认证', () {
@@ -191,12 +200,31 @@ void main() {
   });
 
   group('握手门禁（契约 §2.2）', () {
-    test('未完成握手时只放行握手帧与配对帧', () {
-      for (final type in [...handshakeFrameTypes, ...pairingFrameTypes]) {
+    test('未完成握手时只放行握手三帧', () {
+      for (final type in handshakeFrameTypes) {
         expect(
           () => assertHandshakePhase({'t': type}, handshakeDone: false),
           returnsNormally,
           reason: '$type 在握手期必须放行',
+        );
+      }
+    });
+
+    test('配对两帧**不在放行之列**（它们要封箱，且只在握手之后）', () {
+      // 与电脑侧逐字对齐（`connector/src/transport/codec.ts:132`：
+      // 握手期只认 `HANDSHAKE_FRAME_TYPES`）。放宽这一条等于给
+      // "握手没完成就塞 pair-commit" 开一条明文路径。
+      for (final type in pairingFrameTypes) {
+        expect(
+          () => assertHandshakePhase({'t': type}, handshakeDone: false),
+          throwsA(
+            isA<ProtocolException>().having(
+              (e) => e.code,
+              'code',
+              ErrorCode.badFrame,
+            ),
+          ),
+          reason: '$type 在握手期不该被放行',
         );
       }
     });
@@ -217,7 +245,7 @@ void main() {
       }
     });
 
-    test('握手完成后不再拦（配对帧仍允许，它可能在重连后重发）', () {
+    test('握手完成后不再拦（门禁只管握手期）', () {
       expect(
         () => assertHandshakePhase({'t': 'req'}, handshakeDone: true),
         returnsNormally,
