@@ -28,13 +28,29 @@ fail-closed 桩** —— `askApproval` 记 `METRIC.failClosed` 后返回 `'rejec
 `askQuestion` 直接抛(注释:"不能返回空答案伪装成「用户全跳过」")。
 answerer 已在 `index.ts:302` 注册。**所以缺的只有这一件事:把桩换成真实现。**
 
-**真实现的形状**(设计已藏在现有代码里,照着接即可):
-- answerer claim 成功后,把 prompt 推给**那台**手机(设备 → 连接 的映射在挂载级,
-  `liveDevices` / `index.ts:195-199` 的 `takeover` 已经在用同一套);
-- 手机答 `interaction.respond`(带 `i:<callId>`)→ 在该连接上解开并 resolve answerer 的 Promise;
-- 看护/断连走 `createWatchdog`,一律 fail-closed(审批回 `reject`、提问抛错)。
-- **这是每连接的关注点**:应答要从"发问的那条连接"回来,所以 handler 属于
-  `connection-scope.ts`,挂载级只负责"把 prompt 送到哪条连接"。
+**但真实现前面还有一件更前的(2026-10-09 读源码才发现)**:`index.ts:156-162` 的注释自己写着
+`liveRegistry` **现在恒为空** —— 没有设备 presence 上报。于是完整因果链是:
+
+```text
+没人写 liveRegistry → liveDevices() 返回 [] → decideTakeover 永不 claim
+→ answerer 永远 next() 交还桌面 → 那个 fail-closed 桩根本跑不到
+```
+
+**所以"交互转手机"是三件事,必须按顺序做**:
+
+1. **presence 上报(最前面,现在完全没做)**:手机声明在线/前台/已订阅会话,连接层写进
+   `liveRegistry`。**契约里已有载体**:`sync.hello` 的 `app: 'foreground'|'background'`
+   (§5.4)就是干这个的;`online` 由连接本身表达,`subscribed` 在 `connection-scope.ts` 里
+   **本来就有**(`sessionSubscriptions`),`lastInteractedAt` 由手机每次答话时带上。
+   → 落点:`connection-scope.ts` 在鉴权完成/断开/订阅变化/sync.hello 时回调挂载级。
+2. **port 实现**:把 `index.ts:201-213` 的桩换成真实现 —— 推到 `decideTakeover` 给出的
+   **那台**手机(`takeover.ts:37` 的返回本来就带 `deviceId`,`interactions.ts:128` 现在只用了
+   `.claim` 把它丢了),等它答,看护/断连走 `interaction-face.ts` 的 `createWatchdog`,
+   一律 fail-closed。
+3. **`interaction.respond` handler**:手机答的话从**那条连接**回来,所以 handler 属于
+   `connection-scope.ts`(每连接),挂载级只负责"送到哪条连接"。
+
+**顺序不能颠倒**:没有 1,2 和 3 写了也跑不到(这是现在这个桩的真实状态)。
 
 **再往后**:手机侧 UI(输入栏接管 + 批次构造)→ 真机验证(`channel_e2e_test.dart` 之后再叠加
 交互链路)→ 方法面剩 8 个 → `ui/adaptive` / 三端能力包(鸿蒙暂缓)/ 相机扫码。
