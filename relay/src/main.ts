@@ -56,15 +56,24 @@ if (configPath === undefined) {
 const raw = await readFile(configPath, 'utf8')
 const config = JSON.parse(raw) as RelayConfig
 
-// 签发模式：`--issue-token <device|connector> <id>` —— 生成令牌、把**摘要**写进配置、
-// 把令牌打印一次。它**必须能在 `tokens` 为空时运行**（否则没有办法引导第一台设备）。
+// 签发模式：`--issue-token connector <id>` —— 生成令牌、把**摘要**写进配置、把令牌打印一次。
+// 它**必须能在 `tokens` 为空时运行**（否则没有办法引导第一台连接器）。
+//
+// **只签连接器**：设备令牌由电脑侧签发、摘要经 `POST /devices` 进名册（§8.2）。
+// 中转签设备令牌等于转发器凭空造出"我是某台设备"的凭据，正是 v2 否掉的形状。
 const issueArgs = process.argv.includes('--issue-token')
   ? process.argv.slice(process.argv.indexOf('--issue-token') + 1, process.argv.indexOf('--issue-token') + 3)
   : []
 if (issueArgs.length === 2) {
   const [kind, id] = issueArgs as [string, string]
-  if (kind !== 'device' && kind !== 'connector') {
-    console.error('签发类型的取值是 device 或 connector')
+  if (kind !== 'connector') {
+    console.error(`签发类型只支持 connector（收到 ${kind}）。`)
+    console.error('设备令牌不由中转签发：它由电脑侧生成、摘要经 POST /devices 进名册，')
+    console.error('于是中转即使被读走配置也造不出"我是某台设备"的凭据。给设备发令牌请走配对流程。')
+    process.exit(2)
+  }
+  if (id === undefined || id === '') {
+    console.error('用法: --issue-token connector <连接器 id>')
     process.exit(2)
   }
   const issued = issueToken({ kind, id })
@@ -77,12 +86,15 @@ if (issueArgs.length === 2) {
 
 const entries = config.tokens ?? []
 
-// 吊销模式：`--revoke-token <device|connector> <id>`（软吊销：行留着、标 `revokedAt`）。
+// 吊销模式：`--revoke-token connector <id>`（软吊销：行留着、标 `revokedAt`）。
+// 同样只认连接器：设备吊销走电脑侧（`devices.revoke` / 从名册里摘掉），
+// 因为名册的写入方本来就是电脑侧。
 if (process.argv.includes('--revoke-token')) {
   const index = process.argv.indexOf('--revoke-token')
   const [kind, id] = process.argv.slice(index + 1, index + 3) as [string, string]
-  if ((kind !== 'device' && kind !== 'connector') || id === undefined) {
-    console.error('用法: --revoke-token <device|connector> <id>')
+  if (kind !== 'connector' || id === undefined) {
+    console.error('用法: --revoke-token connector <连接器 id>')
+    console.error('设备吊销不走中转：名册由电脑侧写入（POST /devices），请从电脑侧摘掉那台设备。')
     process.exit(2)
   }
   const { tokens, revoked } = await revokeTokenInConfig(configPath, { kind, id })
@@ -100,7 +112,16 @@ if (entries.length === 0) {
   process.exit(2)
 }
 
-const authenticate = createDigestAuthenticator(entries)
+let authenticate: ReturnType<typeof createDigestAuthenticator>
+try {
+  authenticate = createDigestAuthenticator(entries)
+} catch (error) {
+  // 配置错就**明确失败**：带着 device 条目的中转"起来了但谁都连不上"（设备 403、
+  // 连接器可能还正常），那种半死状态比起不来难查得多。与下面"没有 tokens 直接退出"
+  // 是同一条纪律。
+  console.error(`配置里的令牌摘要表不可用：${error instanceof Error ? error.message : String(error)}`)
+  process.exit(2)
+}
 const relay = await startRelay({
   port: config.port ?? 8787,
   host: config.host ?? '127.0.0.1',

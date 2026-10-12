@@ -20,7 +20,9 @@ const EXAMPLE = new URL('../relay.config.example.json', import.meta.url)
 interface ExampleConfig {
   port: number
   host?: string
-  tokens: { kind: 'device' | 'connector'; id: string; hash: string }[]
+  // 摘要表**只放连接器令牌**：设备令牌由电脑侧签发、摘要经 POST /devices 进名册。
+  // 样例里若出现 device 条目，中转会在启动时明确拒绝（见 issue-token.test.ts 的用例）。
+  tokens: { kind: 'connector'; id: string; hash: string }[]
   rateLimit?: { capacity: number; refillPerSecond: number }
 }
 

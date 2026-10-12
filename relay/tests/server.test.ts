@@ -9,7 +9,11 @@
  * 手机（一条连接一个 `channelId`）、连接器为该通道另拨的数据面。
  */
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { WebSocket } from 'ws'
@@ -19,9 +23,6 @@ import type { Authenticated } from '../src/http-face.ts'
 
 const TOKENS: Record<string, Authenticated> = {
   'connector-token-1': { kind: 'connector', id: 'conn-1' },
-  // 摘要表里的**设备**条目：v2 里它连不上任何一条 socket（设备凭据面在名册，见下），
-  // 留着它是为了让"凭据类型不对"这条断言仍然有意义。
-  'device-kind-token-2': { kind: 'device', id: 'dev-2' },
 }
 
 /** 设备令牌由**名册**认：它不在摘要表里，中转只知道它的摘要。 */
@@ -176,9 +177,10 @@ test('升级认证：票不对 / 令牌不对 / 凭据类型不对 / 数据面�
   await assert.rejects(() => open(`${wsBase}/ws/device`), /401/)
   // 没有令牌的连接器：401
   await assert.rejects(() => open(`${wsBase}/ws/connector`), /401/)
-  // 摘要表里的设备条目拿来当连接器令牌：401（凭据类型不对，不是"有令牌就行"）
+  // 不认识的令牌（比如 v1 时代签的设备令牌）：401 —— 中转不认识它，
+  // 而它也不该被认识：设备凭据面在名册（由电脑侧写入）。
   await assert.rejects(
-    () => open(`${wsBase}/ws/connector`, { authorization: 'Bearer device-kind-token-2' }),
+    () => open(`${wsBase}/ws/connector`, { authorization: 'Bearer v1-device-token' }),
     /401/,
   )
   // 数据面：路径对了但那条通道不存在（或不属于它）→ 403，而不是"先连上再说"
@@ -188,6 +190,43 @@ test('升级认证：票不对 / 令牌不对 / 凭据类型不对 / 数据面�
   )
   // 未知路径：404
   await assert.rejects(() => open(`${wsBase}/ws/nope`), /404/)
+})
+
+test('摘要表里带 device 条目：**启动即失败**（不留下"起来了但谁都连不上"的中转）', async (t) => {
+  // 这是上面那条 401 的完整路径版：v1 的配置里常有 device 摘要条目，而 v2 的中转
+  // 认不出它（设备凭据在名册）。若照常启动，操作者看到的是"手机 403、电脑侧一切正常"，
+  // 而真因在配置里 —— 所以在这里就退出，并把原因与修法一起打印。
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-relay-devkind-'))
+  const configPath = join(dir, 'relay.config.json')
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      port: 0,
+      tokens: [
+        { kind: 'connector', id: 'conn-1', hash: 'a'.repeat(64) },
+        { kind: 'device', id: 'dev-1', hash: 'b'.repeat(64) },
+      ],
+    }),
+    'utf8',
+  )
+  t.after(() => rm(dir, { recursive: true, force: true }))
+
+  const child = spawn(
+    process.execPath,
+    [join(import.meta.dirname, '..', 'src', 'main.ts'), '--config', configPath],
+    { cwd: join(import.meta.dirname, '..'), stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+  let output = ''
+  child.stdout?.on('data', (chunk: Buffer) => {
+    output += chunk.toString('utf8')
+  })
+  child.stderr?.on('data', (chunk: Buffer) => {
+    output += chunk.toString('utf8')
+  })
+  const code = await new Promise<number | null>((resolve) => child.once('exit', (value) => resolve(value)))
+  assert.equal(code, 2, '配置里有 device 摘要条目时要以非零码退出')
+  assert.match(output, /device 条目/, '退出信息要说清是哪一条、为什么')
+  assert.match(output, /POST \/devices/, '并告诉修法：设备令牌走名册')
 })
 
 test('同一个身份再连上来：旧的被替换掉（投递不会打到僵尸 socket）', async (t) => {

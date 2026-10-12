@@ -15,12 +15,23 @@
 import { createHash, randomBytes as nodeRandomBytes } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 
+/**
+ * 令牌签发与配置读写（契约 §12.2：**中转只存摘要**）。
+ *
+ * ## 只签**连接器**令牌
+ *
+ * 设备令牌不在这里签：它由电脑侧签发、摘要经 `POST /devices` 进名册（§8.2）。
+ * 中转签设备令牌等于转发器凭空造出"我是某台设备"的凭据，正是 v2 否掉的形状
+ * （`pairing-v2.md` §1：中转只做连接路由；身份判定在电脑侧）。
+ * 所以 `TokenKind` 只收 `connector` —— 想给设备发令牌的人会在编译期就看到这句话。
+ */
+
 /** 令牌长度（16 字节 = 128 位）。 */
 export const TOKEN_BYTES = 16
 
 export interface TokenKind {
-  kind: 'device' | 'connector'
-  /** 逻辑身份：设备 id 或连接器 id。 */
+  kind: 'connector'
+  /** 逻辑身份：连接器 id。 */
   id: string
 }
 
@@ -32,7 +43,7 @@ export interface IssuedToken {
 }
 
 export interface TokenConfigEntry {
-  kind: 'device' | 'connector'
+  kind: 'connector'
   id: string
   hash: string
   /** 吊销时间（§12 的 `revoked_at`：**软吊销**）。见 `digest-auth.ts` 的说明。 */

@@ -1,11 +1,15 @@
 /** HTTP 边界：公开邀请只准入候选，正式设备仍由电脑登记的令牌认证。 */
 import { deviceIdOf, parsePairingCandidate } from '../../protocol/relay-control.mjs'
+import type { Authenticated } from './digest-auth.ts'
 import type { RelayCore } from './core.ts'
 import type { DeviceRegistry, DeviceRegistration } from './device-registry.ts'
 import type { TicketStore } from './tickets.ts'
 import type { ChannelLogger } from './logger.ts'
 
-export interface Authenticated { kind: 'device' | 'connector'; id: string }
+// 从本模块再导出一次：`Authenticated` 的唯一定义在 `digest-auth.ts`（摘要表只放连接器，
+// 于是"已认证调用方"只有一种），但调用方历来从这里 import 它。
+export type { Authenticated }
+
 export interface HttpFaceOptions {
   tickets: TicketStore
   core: RelayCore
@@ -48,14 +52,19 @@ export function createHttpFace(options: HttpFaceOptions): HttpFace {
         return { status: 201, body: { ticket: issued.ticket, expiresAt: issued.expiresAt } }
       }
 
+      // **认证顺序：先名册、后摘要表**。设备令牌只可能由电脑侧签发（摘要进名册），
+      // 连接器令牌只可能在摘要表里 —— 两者不重叠，所以顺序不影响结果；写成"先名册"
+      // 是为了让"设备凭据面在名册"这条分层不依赖别处的校验也成立。
       const token = request.token ?? ''
-      const caller = token === '' ? undefined : authenticate(token)
-      const deviceId = caller === undefined ? devices.authenticate(token) : undefined
+      const deviceId = token === '' ? undefined : devices.authenticate(token)
+      const caller = deviceId === undefined && token !== '' ? authenticate(token) : undefined
       if (caller === undefined && deviceId === undefined) return { status: 401, body: { error: 'unauthorized' } }
       const denied = limited(`${caller?.kind ?? 'device'}:${caller?.id ?? deviceId}`)
       if (denied !== undefined) return denied
 
       if (request.path === '/ws-ticket') {
+        // 走到这里的一定是连接器（摘要表只放连接器令牌）：它拿自己的令牌来换**设备**票，
+        // 属于凭据类型用错 —— 与"令牌不对"区分开，操作者才知道该换哪一张。
         if (deviceId === undefined) return { status: 403, body: { error: 'wrong-credential-kind' } }
         const connectorId = devices.connectorOf(deviceId)
         // 设备凭据有效而电脑离线不是“需要重新配对”。
@@ -65,7 +74,10 @@ export function createHttpFace(options: HttpFaceOptions): HttpFace {
         const issued = tickets.issue({ connectorId, deviceId, purpose: 'paired' })
         return { status: 201, body: { ticket: issued.ticket, expiresAt: issued.expiresAt } }
       }
-      if (caller?.kind !== 'connector') return { status: 403, body: { error: 'wrong-credential-kind' } }
+      // 下面三个端点（登记 / 名册 / 404）只有连接器能调：设备令牌换到票就去升级了，
+      // 它没有理由来调这些。这里用 `caller === undefined` 判"是不是连接器" ——
+      // 摘要表只放连接器令牌（`digest-auth.ts`），所以这个判据与 `kind === 'connector'` 等价。
+      if (caller === undefined) return { status: 403, body: { error: 'wrong-credential-kind' } }
       if (request.path === '/pairing/register') {
         const offerId = body['offerId']
         if (body['v'] !== 2 || typeof offerId !== 'string' || !/^[A-Za-z0-9_-]{22}$/.test(offerId)) {

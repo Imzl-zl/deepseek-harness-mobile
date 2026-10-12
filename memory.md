@@ -17,17 +17,17 @@
 [✅] 手机侧核:app/lib/core/pairing_channel.dart + 纯 Dart 单测(电脑侧是 Dart 替身)
 [  ] 两套独立实现的互操作:integration_test/channel_e2e_test.dart   ← 下一步(挡在下面那条前面)
 [  ] 真机:点开会话 → 订阅 → 发一句 / 回一句
-[  ] relay 三处待办(见"已知缺口")
+[  ] relay 两处待办(见"已知缺口"2、3)
 [  ] ui/adaptive/(系统紧耦合控件的平台惯例层)
 [  ] 三端能力包(secure_store_* / notify / live_surface / keepalive)
 [  ] 相机扫码(增量,加在 pairing_page 上)
 ```
 
-## 已知缺口(本轮定位,未修;有证据)
+## 已知缺口(定位过、有证据;除第 1 条外都未修)
 
-1. **`--issue-token device` 签出的令牌永远换不到票(403)**。`relay/src/http-face.ts` 只在
-   "不认识 caller"时才查名册,而 `main.ts --issue-token device` 正把 `{kind:'device'}` 写进配置摘要表
-   → 同一令牌反被 `wrong-credential-kind` 挡掉。设备凭据面在**名册**,工具面与它不一致。
+1. ~~`--issue-token device` 签的令牌换不到票(403)~~ **已修**:中转不再签发设备令牌,
+   摘要表只放连接器令牌(出现 device 条目即拒绝启动)。见
+   `.agents/notes/implemented/2026-10-09-relay-never-issues-device-tokens.md`。
 2. **首配的匿名限流桶是单一全局桶**:形状校验在取桶之后,持续约 6 请求/秒即可让所有新设备换票 429
    (约 10 s 恢复)。这与 `pairing-v2.md` §3"无效试探不能使真正的扫码设备失去授权机会"**不符**。
 3. `stats.devices` 实为**通道数**(`relay/src/core.ts`),与 §8.2 的 `devices` 表不同名同义。
@@ -65,7 +65,7 @@
 | `cd app && dart analyze --fatal-infos lib test integration_test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test integration_test` | 0 文件需重排 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **301 项** |
-| `cd relay && pnpm typecheck && pnpm test` | 类型 + **72 条** |
+| `cd relay && pnpm typecheck && pnpm test` | 类型 + **75 条** |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker` |
 | `node app/tools/gen-pairing-vectors.mjs` | 重新生成配对向量(**改了配对派生规则后必须重跑**) |
 
@@ -113,11 +113,15 @@
 
 ## 最近活跃窗口(2026-10-09)
 
-- **配对 v2 三侧收口**:relay 8 个测试文件迁到 v2 API(79→72 项,删掉的都是**已删除机制**的用例);
+- **配对 v2 三侧收口**:relay 测试迁到 v2 API(删掉的都是**已删除机制**的用例);
   connector 两条棘轮按事实更新(帧类型清单同步契约、耦合面 4→3 个成员并做变异校验),
   三条 v1 流程 e2e 因"机制已被设计删除"删除并写明替代覆盖;app 侧新增
   `core/pairing_channel.dart` + 两段式编排 + 两段式配对页,17 个静态错误与 12 条失败清零(305→340 项)。
-  见 `.agents/notes/implemented/2026-10-09-*.md`(两篇)与 `2026-10-08-pairing-v2-and-device-connections.md`。
+  见 `.agents/notes/implemented/2026-10-09-pairing-v2-test-migration.md` 与
+  `2026-10-09-app-pairing-v2-two-phase.md`、`2026-10-08-pairing-v2-and-device-connections.md`。
+- **中转不再签发设备令牌**:删掉 `--issue-token device` / `--revoke-token device`,
+  摘要表只放连接器令牌(出现 device 条目即拒绝启动),认证顺序改成先名册后摘要。75 项。
+  见 `.agents/notes/implemented/2026-10-09-relay-never-issues-device-tokens.md`。
 - **顺手清掉的死代码**:`relay/src/routing.ts` / `protocol-view.ts` + 它们的 7 条用例、
   `pendingDeviceIdOf`;仓库根的调试脚本 `check-roster.cjs`。
 - **上一轮(2026-10-07/08)**:配对链真机跑通(换票 → 升级 → `pair` → 令牌落 Keystore);

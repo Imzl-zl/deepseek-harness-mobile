@@ -6,7 +6,8 @@
 - 真值优先级:`docs/design-and-tech-plan.md`(总纲)> 三份 `docs/*-notes.md`(专项)> 可跑通的验证脚本 > 本文件。
 - 主链路:改 `mock/proto/` → 跑验证脚本 → 截图 → 同步 `app/`(Flutter 落地端)。
 - 本仓库**没有 CI**;`mock/proto/`、`protocol/`、`app/tools/` 全是显式 `node` 脚本,不存在 `npm test` 这类约定命令。**例外:`connector/` 是 pnpm 工程**(见下),它的命令走 `pnpm exec` / `pnpm test`。
-- **`relay/` 也是工程,不需要构建**:`cd relay; pnpm install; node --test` 直接跑(**72 条**)。它靠 Node 的**类型剥离**(≥22.6,本机 24.13)运行,所以**导入写 `.ts` 结尾**——Node 不做 `.js` → `.ts` 映射(写 `.js` 报 `ERR_MODULE_NOT_FOUND`,实测)。**`ws` 是运行时依赖,必须先 `pnpm install`**(`tests/server.test.ts` 起真服务器,缺 `ws` 直接 `ERR_MODULE_NOT_FOUND`);类型检查 `cd relay; pnpm typecheck`。**别把 relay 的导入"顺手统一"成连接器那样的 `.js`**:连接器是插件(要产物,tsdown 打包),中转是独立服务(直接 `node src/main.ts` 起),两者运行时不同。
+- **`relay/` 也是工程,不需要构建**:`cd relay; pnpm install; node --test` 直接跑(**75 条**)。它靠 Node 的**类型剥离**(≥22.6,本机 24.13)运行,所以**导入写 `.ts` 结尾**——Node 不做 `.js` → `.ts` 映射(写 `.js` 报 `ERR_MODULE_NOT_FOUND`,实测)。**`ws` 是运行时依赖,必须先 `pnpm install`**(`tests/server.test.ts` 起真服务器,缺 `ws` 直接 `ERR_MODULE_NOT_FOUND`);类型检查 `cd relay; pnpm typecheck`。**别把 relay 的导入"顺手统一"成连接器那样的 `.js`**:连接器是插件(要产物,tsdown 打包),中转是独立服务(直接 `node src/main.ts` 起),两者运行时不同。
+  - **令牌 CLI 只签连接器**:`--issue-token connector <id>` / `--revoke-token connector <id>`。设备令牌**不由中转签发**(电脑侧签、摘要经 `POST /devices` 进名册),所以 CLI 收到 `device` 明确退出 2;摘要表里残留 `device` 条目也**拒绝启动**。取舍见 `.agents/notes/implemented/2026-10-09-relay-never-issues-device-tokens.md`。
 - **`/ws-ticket` 有两种凭据形态**(配对 v2 的引导,见 `docs/subsystems/pairing-v2.md` §3):body 带 `v:2` + `offerId` + 候选公钥 + 设备名 = **首配**(凭**公开邀请**,无令牌;票绑候选与用途 `pairing`,带候选元数据),body 为 `{}` = **重连**(凭设备令牌;票绑名册里的真实设备 + 它的连接器)。**两种都吃限流桶,桶键都不是 IP**(候选是"匿名 + 每张邀请"两级;见 memory.md 的已知缺口 2)。**旧形状(`codeHash`)被回 426**(`pairing-version-unsupported`)。设备名册走 `POST /devices`(连接器令牌,只交**摘要**)。
 
 ## Read First

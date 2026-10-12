@@ -50,18 +50,18 @@ test('吊销：认证不再通过，但**行还留着**（软吊销，审计线�
 
 test('吊销是幂等的：重复执行不刷新吊销时刻；未知身份不报错', async () => {
   await withConfig(async (path) => {
-    const issued = issueToken({ kind: 'device', id: 'dev-1' })
-    await appendTokenToConfig(path, { kind: 'device', id: 'dev-1', hash: issued.hash })
+    const issued = issueToken({ kind: 'connector', id: 'conn-1' })
+    await appendTokenToConfig(path, { kind: 'connector', id: 'conn-1', hash: issued.hash })
 
-    await revokeTokenInConfig(path, { kind: 'device', id: 'dev-1' }, 1_000)
-    const again = await revokeTokenInConfig(path, { kind: 'device', id: 'dev-1' }, 2_000)
+    await revokeTokenInConfig(path, { kind: 'connector', id: 'conn-1' }, 1_000)
+    const again = await revokeTokenInConfig(path, { kind: 'connector', id: 'conn-1' }, 2_000)
     assert.equal(
-      again.tokens.find((entry) => entry.id === 'dev-1')?.revokedAt,
+      again.tokens.find((entry) => entry.id === 'conn-1')?.revokedAt,
       1_000,
       '第二次吊销不覆盖第一次的时刻（幂等）',
     )
 
-    const unknown = await revokeTokenInConfig(path, { kind: 'device', id: 'nobody' })
+    const unknown = await revokeTokenInConfig(path, { kind: 'connector', id: 'nobody' })
     assert.equal(unknown.revoked, false, '未知身份如实回 false，而不是抛')
     assert.equal(unknown.tokens.length, 1)
   })
