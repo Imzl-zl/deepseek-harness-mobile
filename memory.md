@@ -5,7 +5,8 @@
 
 ## 下一步(新会话从这里开始)
 
-> **开工提示词:`docs/cookbook/next-session-real-device.md`** —— 下一个会话直接用它。
+> **开工提示词:`docs/cookbook/next-session-interaction-to-phone.md`** —— 下一个会话直接用它
+> (覆盖"交互转手机"完整开发 + 真机连通;真机跑法细节见 `next-session-real-device.md`)。
 
 **当前里程碑**:配对 v2(公开邀请 + 候选身份 + 每设备一条数据连接)三侧收口完毕、门禁全绿,
 **跨实现一致性已闭环**(Dart 与 TS 产品代码真打一次握手与双向封箱)。
