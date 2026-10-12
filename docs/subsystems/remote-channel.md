@@ -498,8 +498,14 @@ claim(请求) :=
 - 提问已结束(不在 continued 集合)时 `answer` 返回 `false`(`:168`)——**不是错误**,手机据此
   把那一项标成"已过期",不要弹错误。
 - **`state` 决定走哪条路**(2026-10-09 读源码纠正,此前写反了):`continued`(调用已超时)走上面这条
-  `answer()`;`open`(阻塞中的调用还在等)走**实时**应答链 / `attachWait` 流(`index.ts:215`),
-  **那条本轮未实现也未验证** —— 所以手机**不要对 `open` 项显示"可答"**。
+  `answer()`;`open`(阻塞中的调用还在等)走**实时**应答链,而**那条本项目已实现**:
+  `connector/src/dsh/interactions.ts` 用 `ctx.on('approval/request')` 与
+  `ctx.on('user-questions/request')` 注册两个 answerer(`:118`、`:157`),claim 判据复用
+  `protocol/takeover.ts`,并把 asker 的**原** signal 透传(替换它会破坏取消语义,
+  `user-approval/src/index.ts:293-306`)。
+  **看护超时与断开不在 answerer 这一层** —— 它委托给注入的 `RemoteInteractionPort`
+  (`dsh/interactions.ts:55-69`:「实现方负责看护超时与断开,并以 fail-closed 收束」),
+  所以**看护计时器的落点是 port 实现,不是 answerer**(装配时别重复挂第二个 answerer)。
   另:空 `selected` 且无 `custom` 是**合法的「显式跳过」**(`tool-ask-user/src/timed.ts:172,179`),
   连接器不得拦截。
 - `agent` 参数是 **live root agent**(`assertLiveRoot`,`:131`):子代理里的提问手机答不了(§15 已记)。

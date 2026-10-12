@@ -7,21 +7,30 @@
 
 > **开工提示词:`docs/cookbook/next-session-real-device.md`** —— 下一个会话直接用它。
 
-**当前里程碑**:配对 v2(公开邀请 + 候选身份 + 每设备一条数据连接)在**三侧收口完毕,门禁全绿**。
-**但「第一次真机连通」仍未被验证** —— 这一轮的交付判据只是"代码与文档一致、门禁全绿"。
+**当前里程碑**:配对 v2(公开邀请 + 候选身份 + 每设备一条数据连接)三侧收口完毕、门禁全绿,
+**跨实现一致性已闭环**(Dart 与 TS 产品代码真打一次握手与双向封箱)。
+**「交互转手机」的内核已落地但未接线**;「第一次真机连通」仍未验证。
 
-真机那条链上还**没有任何一步在这个仓库里被跑过**(需要一台在跑的中转 + 装了插件的 profile + 真机):
+**下一件事(接线,别重新设计)**:`connector/src/interaction-face.ts`(投影 + `interaction.respond`
+路由 + 看护计时器)已建好、31 项单测绿,但**没有 handler、没有装配**。三件事:
 
-```text
-[✅] 协议链的电脑侧:connector/tests/pairing-e2e.test.ts(真中转 + 真握手 + 双向 AEAD + 多设备 + I7)
-[✅] 手机侧核:app/lib/core/pairing_channel.dart + 纯 Dart 单测(电脑侧是 Dart 替身)
-[  ] 两套独立实现的互操作:integration_test/channel_e2e_test.dart   ← 下一步(挡在下面那条前面)
-[  ] 真机:点开会话 → 订阅 → 发一句 / 回一句
-[  ] relay 两处待办(见"已知缺口"2、3)
-[  ] ui/adaptive/(系统紧耦合控件的平台惯例层)
-[  ] 三端能力包(secure_store_* / notify / live_surface / keepalive)
-[  ] 相机扫码(增量,加在 pairing_page 上)
-```
+1. **加 `interaction.respond` handler**(契约 §5.7 形状 `{sid, callId, answers}`,幂等键
+   `i:<callId>`),路由到 `userQuestions.answer()` —— 只覆盖 `state === 'continued'` 的提问。
+2. **实现 `RemoteInteractionPort`**(`connector/src/dsh/interactions.ts:55-69` 要求的契约):
+   看护超时 + 断开 + fail-closed。**复用 `interaction-face.ts` 的 `createWatchdog`**,
+   **不要**在 answerer 上再挂一个(waterfall 只走先注册的,另一个静默不触发)。
+3. **接线投影**:`pending.changed` / `ev` 带上待处理项,手机才能渲染。
+   `open` 态的实时路径**已经能跑**(`dsh/interactions.ts` 已注册两个 answerer),
+   缺的就是 port 实现。
+
+**再往后**:手机侧 UI(输入栏接管 + 批次构造)→ 真机验证(`channel_e2e_test.dart` 之后再叠加
+交互链路)→ 方法面剩 8 个 → `ui/adaptive` / 三端能力包(鸿蒙暂缓)/ 相机扫码。
+
+**两个待拍板的**(内核已按最稳做法实现,装配时必须表态):
+- 审批应答者取舍:正确做法是**保留 `dsh/interactions.ts` 的现有 answerer,把看护做进 port**
+  (理由见 `remote-channel.md` §6.3.1),而不是二选一。
+- `REPLY_QUEUED` / `BAD_ANSWER` 目前都映射 `interaction/not-pending`(客户端动作
+  refresh-pending 正是恢复动作);要区分就得给封闭错误表加码(契约变更)。
 
 ## 已知缺口(定位过、有证据;除第 1 条外都未修)
 
