@@ -153,6 +153,11 @@
 **当前 `dsh-bridge` 1.0 已实现的方法**(`D:\sudy\github\Agents-Anywhere\dsh-bridge\src\bridge-service.ts:292-426`):
 `initialize`、`runtime.getConfig`、`runtime.getCapabilities`、`catalog.listModels`、`catalog.listPermissions`、`session.list`、`session.getSnapshot`、`session.getState`、`session.getNotices`、`session.getCapabilities`、`session.createAndStart`、`session.startTurn`、`session.steer`、`session.interrupt`、`session.updateSelections`、`session.listCommands`、`session.executeCommand`、`session.respondInteraction`、`ping`。
 
+> **别把这份清单与我们的契约方法表混起来**:上面是 **Agents-Anywhere 的 bridge**(另一个项目)的方法面,
+> 命名与形状都由它自己定;我们的通道方法在 `subsystems/remote-channel.md` §5.7,且已逐条标注
+> **DSH 侧的真实依据**。两者的 `session.*` 只是名字像,不是同一套东西
+> (例如 bridge 的 `session.respondInteraction` 对应我们契约里没有独立方法的审批/提问投影)。
+
 **⚠️ 契约与实现有落差,选型前必须确认用哪一份**:
 - `contracts/dsh-bridge/1.0/schemas/request.schema.json:11-20` 的 `method` 枚举里**有** `catalog.listAgentPresets`,但 `dsh-bridge/src/bridge-service.ts` 的 switch 里**没有**这个 case —— 它只实现在另一个包 `dsh-bridge-next/src/host/dsh-runtime/router.ts:108`。
 - 契约里也**有** `runtime.sync.subscribe`/`ack`/`unsubscribe`/`refresh`(`request.schema.json:13`),但当前 `dsh-bridge` 源码 grep `runtime.sync` **零命中** —— 该能力同样只在 `dsh-bridge-next`(`contracts/dsh-bridge/1.0/README.md:100-164` 描述的正是 next 的实现)。

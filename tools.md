@@ -92,6 +92,9 @@
 - DSH 侧高信号入口(只读):
   - 开发者文档 <https://deepseek-harness.github.io/deepseek-harness/reference/> —— 子系统 `reference/subsystems/web-server`、`web-client`、`client-modules`;另有 `develop/basic/`、`guide/quickstart`
   - 架构决策笔记金矿 `D:\sudy\github\deepseek-harness\.agents\notes\archived\architecture\`:`2026-07-19-gui-layering-and-rpc-protocol`(GUI 分层与 RPC 协议)、`2026-07-23-unified-session-query-service`(统一会话查询服务)、`2026-07-25-web-command-surfaces-and-assembly`(命令面与装配)、`2026-07-25-web-input-machine-and-slash-pipeline`(输入状态机与 slash 流水线)、`2026-07-28-user-settings-seam`(用户设置缝)。每篇都带 `.zh.md`
+  - **交互层(审批/提问/计划审查,2026-10-09 核实)**:`packages/interaction/user-approval/src/index.ts:215` 的 `request()` 与 `:267` 的 `decide()`(无限等 + signal 竞速 + 迟到丢弃 + fail-closed);`packages/interaction/user-questions/src/index.ts:187`(回答成为 `answer_to_pending_question` 用户消息)、`src/types.ts:26`(plan-review 意图);`packages/interaction/tool-ask-user/src/timed.ts:103`(计时提问默认 120 s、`-1` 无限等、超时转 pending)
+  - **方法面与设置/凭据**:`packages/api/session-controller/src/commands.ts:105`(`create`)、`:311`(`prompt`,自带 requestId 幂等);`packages/api/settings-controller/src/index.ts:98,116`(`describe` 默认脱敏 / `update`);`packages/api/settings-controller/src/credentials.ts:83,100,113`(`describe`/`set`/`unset`)
+  - **web server 的 TLS 与升级路由**:`packages/host/webserver/src/index.ts:13`(`node:https`)、`:55-61`(`WebUpgradeRoute`)、`:68-94`(`TlsConfig`,读不到即拒绝初始化)
 
 ## Patterns
 

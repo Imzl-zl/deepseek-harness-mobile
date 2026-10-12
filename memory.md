@@ -31,7 +31,15 @@
 2. **首配的匿名限流桶是单一全局桶**:形状校验在取桶之后,持续约 6 请求/秒即可让所有新设备换票 429
    (约 10 s 恢复)。这与 `pairing-v2.md` §3"无效试探不能使真正的扫码设备失去授权机会"**不符**。
 3. `stats.devices` 实为**通道数**(`relay/src/core.ts`),与 §8.2 的 `devices` 表不同名同义。
-4. 刷新令牌轮换未实现;电脑侧没有 `session.create`(「新建会话」必然失败)。
+
+## 范围决定(2026-10-09,别再当缺口)
+
+见 `.agents/notes/implemented/2026-10-09-token-and-scope-decisions.md`:
+
+- **刷新令牌轮换不做**:设备令牌长期有效 + 手动吊销;`refresh_hash` 只落不用。
+- **中转不做多实例**:单实例 + I7 重启收敛就是个人工具的形态。
+- **鸿蒙暂缓**(不是放弃):Flutter 3.41.9 版本锁继续保留,OHOS 适配/HUKS/推送全部暂停;
+  `docs/` 里既有的鸿蒙一手调研原样保留。
 
 ## 前置事实(会卡住实施)
 
@@ -95,12 +103,21 @@
 - **方法面 12/22**:`repo.info` / `devices.list` / `session.list` / `session.subscribe` /
   `session.unsubscribe` / `session.page` / `session.refetch` / `session.prompt` / `job.list` /
   `job.kill` / `job.follow` / `job.unfollow`;其余回 `connector/unsupported`。
-  **处理器表的键是"实现了什么"的唯一出处**。
+  **处理器表的键是"实现了什么"的唯一出处**;契约 §5.7 的方法表已逐条标注 DSH 侧依据。
+- **DSH 侧能力已核实(2026-10-09 读源码)**:`session.create` **存在**
+  (`packages/api/session-controller/src/commands.ts:105`)——此前 memory 说"电脑侧没有它"是错的,
+  那说的是我们的处理器表没实现;`settings.describe`/`update`(`settings-controller/src/index.ts:98,116`)、
+  `credentials.set/unset/describe`(`settings-controller/src/credentials.ts:83,100,113`)都在;
+  **`interaction.*` / `push.*` / `devices.revoke` 在 DSH 里不存在**——审批与提问是
+  `packages/interaction/` 下三个服务且以会话事件为真值(`remote-channel.md` §6.3.1 有逐条出处)。
 - **`relay/` 已可运行**:路由核心(按通道绑定)/ 配对登记 / 一次性票 / HTTP 面 / 令牌签发与软吊销 /
   限流 / 设备名册 / 可运行入口 / 配置样例。
 - **直连监听面已落地**:`connector/src/transport/listener.ts`;`listenPort` 默认 `0` = 不监听。
-- **剩下的缺口**:见上面"已知缺口";另有直连拓扑的两个前置(二维码里的地址永远是中转)、
-  中转多实例(限流/票/名册仍是进程内状态)、插件面板 / 本机运行模式 / goals·schedule·todos 未做。
+  **注意**:DSH 自己的 web server 原生支持 TLS 与 WS 升级路由
+  (`packages/host/webserver/src/index.ts:13` 的 `node:https`、`:55-61` 的 `WebUpgradeRoute`),
+  所以"TLS 必须在外部终结"这个旧假设**待重新评估**——直连拓扑可能要改成"注册升级路由"。
+- **剩下的缺口**:见上面"已知缺口"2、3;另有插件面板 / 本机运行模式 / goals·schedule·todos 未做;
+  三端能力包(鸿蒙暂缓后,iOS/安卓两端仍要做)。
 
 ## 仍需注意
 

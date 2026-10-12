@@ -336,19 +336,19 @@ type SyncSnapshot = {
 | `session.unsubscribe` | 手机→电脑 | — | 停止推送;桥接可释放该会话缓冲(仍需等 persisted) |
 | `session.page` | 手机→电脑 | — | 历史翻页(按消息对齐,用 DSH `page()`) |
 | `session.prompt` | 手机→电脑 | `requestId` | **参数是 `{ sid, content, mode? }`**,不是 `{ sid, text }`。`content` 必须是**非空数组**,每项带 `type`(照 DSH 的 `PromptContentPart`:文本是 `{type:'text', text}`)。**形状以电脑侧为准** —— 它与 DSH 的 `sessionController.prompt` 同构,手机侧没有第二条真值。`mode: 'queue' \| 'steer'` |
+| `interaction.respond` | 手机→电脑 | `i:<callId>:<decision>` | 审批 / 提问 / 计划审查的应答。**它是会话内的投影,不是独立查询**(见 §6.3) |
 | `session.cancel` | 手机→电脑 | — | 取消当前轮次但保留待处理收件箱 |
 | `session.refetch` | 手机→电脑 | — | 取单个大条目 |
-| `interaction.respond` | 手机→电脑 | `i:<callId>:<decision>` | 审批 / 提问 / 计划审查的应答 |
-| `interaction.list` | 手机→电脑 | — | 待处理集合(从日志重建,§6.3) |
 | `job.list` | 手机→电脑 | — | 任务投影(严格属于该会话的行) |
 | `job.follow` / `job.unfollow` | 手机→电脑 | — | 任务输出订阅:`follow({sid, jobId, from?})` → `{from}`(第一帧 output 的起点);同一个 `(sid, jobId)` 重复 follow 幂等,带不同 `from` 则先终止旧订阅。`unfollow({sid, jobId})` → `{stopped}` |
 | `job.kill` | 手机→电脑 | — | **走宿主的人类发起门面**(`jobController.kill`):归属围栏由注册表判(`未知任务` 与 `不属于这个会话` **都**归 `job/not-found`),取消原因写宿主的 `cancelled by the user` —— 于是手机点停止与桌面点停止在模型眼里是同一件事。返回 `{ outcome: 'requested' \| 'already-finished' }`,**落终态等 `settled` 事件,不做乐观更新** |
 | `settings.describe` / `settings.update` | 手机→电脑 | `requestId` | 读写设置(密钥面见下) |
-| `credentials.set` / `credentials.unset` | 手机→电脑 | `requestId` | **单向写面**,无读方法 |
-| `devices.list` / `devices.revoke` | 手机→电脑 | — | 设备管理(吊销 = 电脑侧删公钥) |
-| `push.configure` | 手机→电脑 | — | 推送档位(rich / doorbell)与令牌登记 |
+| `credentials.set` / `credentials.unset` | 手机→电脑 | `requestId` | **单向写面**,无读方法。DSH 侧是 `settings-controller/src/credentials.ts:100` 的 `set(ref, value)` 与 `:113` 的 `unset(ref)`;`value` 是明文(§7.5 的"改密钥只发新值"由此天然成立),而读面 `describe`(:83)**默认脱敏**(`redactSecrets`) |
+| `devices.list` | 手机→电脑 | — | 设备管理。**吊销不是方法**:名册的写入方本来就是电脑侧,吊销 = 不再把该设备报进名册 + 本地标 `revokedAt`(§8.2) |
 | `sync.hello` | 手机→电脑 | — | §5.4 的恢复握手 |
 | `repo.info` | 手机→电脑 | — | 版本、能力位、别名→会话元的映射版本 |
+| `session.create` | 手机→电脑 | `requestId` | 新建会话。**DSH 支持**(`session-controller/src/commands.ts:105` 的 `create(request)` 与 `src/index.ts:281`);本期**未实现**,实现时照 DSH 的 `SessionCreateRequest` 形状 |
+| `push.configure` | 手机→电脑 | — | 推送档位(rich / doorbell)与令牌登记。**DSH 没有任何推送面**(全仓无 `push.*` 方法),所以它纯是本契约的自拟面,且依赖没开工的三端能力包(§10) |
 
 事件(电脑→手机):`ev`(会话事件)、`live`(流式)、`job`(任务输出,订阅式,§5.3)、`presence`(在线态/前台态)、`pending.changed`(待处理集合变化)。
 
@@ -391,17 +391,62 @@ claim(请求) :=
 - **产品文案必须如实**:手机接管期间审批不在电脑上出现;要恢复桌面接管,把开关设为 `never` 或让 App 退到后台(`foreground` 档下会自动 delegate)。
 - 演进(不在第一版):桥接可带一个 DSH 客户端插件,在桌面界面显示"手机接管中",避免用户误以为审批没弹。
 
+#### 6.2.1 这套仲裁已经解决了"迟到即丢弃"
+
+§6.3.1 说审批在 DSH 侧"迟到应答被构造性丢弃",而本节的设计**正是对它的补偿**,两者不矛盾:
+
+- **看护计时器(默认 10 min)就是那个宽超时**。桥接在 claim 之后自己计时,超时即主动返回
+  `unavailable`,**不把决定留给 DSH 的 signal 竞速** —— 于是"用户 3 分钟后才答"这件事被桥接
+  提前收口,迟到的回答自然落在"已返回 outcome 之后",与 `:371` 的丢弃语义一致,不会出现
+  "半个回合悬着等一个永不到达的应答"。
+- 因此**审批转手机在技术上是成立的**,§6.4 的"本期只转提问"是**范围选择**(先把有迟到语义的
+  提问转通),不是"审批转不了"。要做的时候按本节实现即可,不需要新设计。
+- 反过来,**提问转手机反而没有看护计时器**(它是 fire-and-forget 的投影),超时由 DSH 自己转
+  pending —— 所以手机上提问项不置灰(§6.4)。
+
 ### 6.3 待处理集合
 
-- **来源是日志,不是内存**:ask 与 outcome 成对落盘,悬空即"有 ask、无 outcome"。桥接启动 / 重连时重放日志尾部重建集合,`interaction.list` 返回它。
+- **来源是日志,不是内存**:ask 与 outcome 成对落盘,悬空即"有 ask、无 outcome"。桥接启动 / 重连时重放日志尾部重建集合。
+- **它没有独立查询方法**:待处理集合是**会话事件的投影**,随 `ev` 帧一起到手机(§5.7 因此没有 `interaction.list`)。要"拉一次当前集合"就 `session.subscribe` 带 `since` —— 恢复语义已经把这件事做完了。
 - 集合是**持久条目的投影**(I4):有 itemId(`i:<callId>`)、进快照、upsert;不随连接态变化。
 - 重建的边界要如实写进产品:只覆盖持久日志里的事件;日志被裁剪或会话被替换时,集合随基线快照刷新。
+
+#### 6.3.1 审批与提问在 DSH 侧的真实机制(2026-10-09 读源码核实)
+
+结论先说:**DSH 没有 `interaction.*` 方法名**;审批与提问是 `packages/interaction/` 下三个服务,且都以**会话事件**为真值。下表是方法表 (§5.7) 与 DSH 实现的对应关系。
+
+| 我们的方法 | DSH 侧真实机制 | 出处 |
+|---|---|---|
+| `interaction.respond`(审批) | `ctx.approval.request()` 挂起,等应答链(`ctx.waterfall('approval/request')`)给出 `ApprovalOutcome` | `packages/interaction/user-approval/src/index.ts:215`、`:281` |
+| `interaction.respond`(提问) | `ctx.userQuestions.ask(...)` / `askTimed(...)`;迟到的回答成为一条 `answer_to_pending_question` 用户消息 | `packages/interaction/user-questions/src/index.ts:187-191` |
+| 计划审查 | 提问的一种意图:`AskUserQuestionIntent.kind === 'plan-review'`,带 `approve` 文案 | `packages/interaction/user-questions/src/types.ts:26` |
+
+三条**对实现有直接影响**的源码事实:
+
+1. **审批无限等,除非 signal 取消**。`decide()` 在 `signal === undefined` 时直接返回那个 Promise(`user-approval/src/index.ts:293`),没有超时;有 signal 时是竞速,`abort` 赢 → `'cancelled'`。**迟到的应答被构造性丢弃**(`:303` 原话 the late answer is discarded by construction)。
+2. **fail-closed 是硬规则**:应答链兜底 `'unavailable'`(`:283`),任何应答者抛错或返回野值都归一成它(`:288,291`);`'never'` 策略在 dispatch **之前**就返回 `'rejected'`(`:275`),以防后注册的 `prepend` 听众破坏这个承诺(`:270-274`)。
+3. **提问可以超时转 pending,且迟到的回答有定义良好的语义**。计时形态默认 120 s(`tool-ask-user/src/timed.ts:103`),超时不失败而是返回 `{pending: true, callId, message}`(`:156-165`、`:198`),其中 `message` 明说"This is pending, not a skipped answer… The user can still answer"(`:39-42`);`timeout: -1` 则无限等(`:147`、`:203`)。
+
+**由此得到的手机端设计约束**(写进 §6.4):
+
+- **提问/计划审查适合转手机** —— 迟到响应有明确语义(成为用户消息),用户几分钟后才答不会破坏协议。
+- **审批转手机要处理"迟到即丢弃"** —— 手机上用户很少秒回。**但 §6.2 的看护计时器(默认 10 min)
+  正是对它的补偿**:桥接自己计时、超时主动返回 `unavailable`,不把决定留给 DSH 的 signal 竞速
+  (见 §6.2.1)。所以审批转手机技术上也成立,§6.4 的"本期只转提问"是范围选择,不是不能做。
 
 ### 6.4 手机端表达
 
 - 审批 / 提问**接管输入栏**(见 `design-and-tech-plan.md` §7.2、§7.8),不占顶栏状态位。
-- 动作集合:审批只有「允许一次」「拒绝」;提问按 DSH 给出的选项;计划审查只有「同意执行」「要求修改」(非 approve 一律视为拒绝)。
-- 计划审查的 `detail` 是计划全文,`intent.kind === 'plan-review'`。
+- **本期只转提问与计划审查,审批留桌面**。理由不是"审批转不了"(见 §6.2.1:看护计时器就是补偿),
+  而是范围选择:先把有明确迟到语义的提问转通,审批等看护计时器实现后再开。因此输入栏只有提问的
+  选项卡与计划审查的「同意执行 / 要求修改」;审批的「允许一次 / 拒绝」**暂不出现**,
+  而不是显示一个答了可能被丢弃的按钮。
+- 提问按 DSH 给出的选项(`AskUserQuestionItem`,`user-questions/src/types.ts:38`);计划审查只有
+  「同意执行」「要求修改」(非 approve 一律视为拒绝),`detail` 是计划全文,
+  `intent.kind === 'plan-review'`(`:26`)。
+- 迟到的回答**允许**:提问超时转 pending 后用户仍可答,回答以 `answer_to_pending_question`
+  用户消息的形式送达(`user-questions/src/index.ts:191`)。所以手机上的待处理项**不因为
+  "看起来超时了"而置灰**。
 
 ---
 
@@ -469,6 +514,7 @@ window(sid, seq, frame_routing_json, box, received_at)      -- 有界:1000 条/�
 
 - `window` 是**缓存**:允许被清空;清空后正确性不变(I7)。
 - 令牌只存摘要;配对秘密只存哈希(而**哈希也不登记**);公开邀请一次性、5 分钟有效。
+- **`refresh_hash` 只落不用**。刷新令牌的**轮换流程本期不做**(决定见 `.agents/notes/implemented/2026-10-09-token-and-scope-decisions.md`):设备令牌长期有效,轮换等于重新扫码。代价如实说:设备令牌泄露后在手动吊销前一直有效;补偿是吊销可用(电脑侧不再把该设备报进名册 + 本地标 `revoked_at`)。因此这一列是"为将来的轮换留的落点",不是"今天会用的机制"。
 - **`devices` 是归属的真值**(不是内存里的 ticket 绑定表):设备重连要能自己回来,所以"这台设备属于哪台连接器"
   必须落在它上面。行的写入方是**电脑侧**(`POST /devices`,只交摘要与公钥),不是中转自己算出来的。
 - **本期实现如实记录**:`devices` 的落点仍是**进程内表**;I7 靠**电脑侧每次连上中转时重放名册**重建,
@@ -487,7 +533,7 @@ outbox(request_id PK, method, payload_json, created_at)      -- 待重发的写�
 meta(k, v)                                                    -- schema 版本、别名映射版本
 ```
 
-- 主种子与刷新令牌进系统安全存储(§12.2),**不进 sqflite**。
+- 主种子与设备令牌进系统安全存储(§12.2),**不进 sqflite**。刷新令牌一并存下但本期不用(§8.2)。
 - 敏感字段(payload 内的正文)按字段级加密;数据库本身依赖系统级文件加密(三端默认开启)。
 
 ---
@@ -685,3 +731,8 @@ job-settled        后台任务终结     turn-failed       轮次异常结束
 - 鸿蒙端不做"跑动中进度"表达,只做关键节点通知。
 - 子代理里的提问**手机答不了**(DSH 要求 live root agent,`user-questions` 的 `assertLiveRoot`)。
 - 待处理集合只覆盖持久日志里的事件;日志被裁剪或会话被替换时随快照刷新。
+- **审批的"迟到即丢弃"依赖桥接的看护计时器兜底**。DSH 在 signal 中止后丢弃迟到应答
+  (`user-approval/src/index.ts:303`),而手机上用户几分钟后才答是常态。补偿是 §6.2 的看护计时器
+  (默认 10 min,超时主动返回 `unavailable`)—— 所以"转审批"要求看护计时器**已实现**;
+  在它上线前,手机上只转提问与计划审查(§6.4),不留一个答了可能被丢弃的按钮。
+- **`session.create` / `push.configure` 未实现**,方法表里已标注 DSH 侧依据与自拟面。`push.configure` 额外依赖没开工的三端能力包(§10),在能力包落地前它对手机是不可见的能力位。

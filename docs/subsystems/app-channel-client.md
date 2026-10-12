@@ -169,7 +169,7 @@ app/packages/
 | 会话详情 · 轨迹 | items 内的 step/usage 投影(与对话同一份 items,不额外请求) |
 | 状态 chip → 三个 sheet | 同一 items 的统计投影(本地算,不请求) |
 | 右抽屉(文件 / 任务 / 子代理) | items 的 tool/diff 投影 + `job.list` / `job.follow` 订阅流 |
-| 审批 / 提问接管输入栏 | `interaction.list` + 推送打开;应答走 `outbox`(`i:<callId>:<decision>`) |
+| 审批 / 提问接管输入栏 | 待处理项随 `ev` 帧到达(**没有 `interaction.list`**,见 `remote-channel.md` §6.3);本期只转**提问与计划审查**,审批等看护计时器实现后再开(§6.2.1) |
 | 设置页 | `repo.info` 的 `caps` 决定可用性;`settings.*` / `credentials.set\|unset` |
 | 设备与连接状态 | `presence` + 本地 `ConnectionState` |
 
