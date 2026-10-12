@@ -497,8 +497,11 @@ claim(请求) :=
   `BAD_ANSWER`);已回答过再答抛 `REPLY_QUEUED`(`:172-174`)。
 - 提问已结束(不在 continued 集合)时 `answer` 返回 `false`(`:168`)——**不是错误**,手机据此
   把那一项标成"已过期",不要弹错误。
-- 所以手机上待处理项的**置灰条件**是"`answer` 返回 false 或 `state === 'continued''",
-  不是"看起来超时了"(§6.4)。
+- **`state` 决定走哪条路**(2026-10-09 读源码纠正,此前写反了):`continued`(调用已超时)走上面这条
+  `answer()`;`open`(阻塞中的调用还在等)走**实时**应答链 / `attachWait` 流(`index.ts:215`),
+  **那条本轮未实现也未验证** —— 所以手机**不要对 `open` 项显示"可答"**。
+  另:空 `selected` 且无 `custom` 是**合法的「显式跳过」**(`tool-ask-user/src/timed.ts:172,179`),
+  连接器不得拦截。
 - `agent` 参数是 **live root agent**(`assertLiveRoot`,`:131`):子代理里的提问手机答不了(§15 已记)。
 
 三条**对实现有直接影响**的源码事实:

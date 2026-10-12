@@ -207,6 +207,28 @@ function shouldClaim(req: ApprovalRequestEvent, state: TakeoverState): boolean {
 自建则反向代理;与 §2.5 中转的部署口径一致)。三条理由:证书续期是部署侧的事、插件不该持有私钥、
 且这样插件里**没有一条"跳过 TLS"的分支**可被误开。手机侧始终拨 `wss://`,契约 §2 的两跳都成立。
 
+**为什么不去注册 DSH 自己的 web server**(2026-10-09 读过 `packages/host/webserver` 后的结论,
+完整取舍见 `.agents/notes/implemented/2026-10-09-direct-listener-keeps-own-socket.md`):
+
+DSH 的 `WebServer` 服务**允许插件注册升级路由**(`ctx.get('webServer').registerUpgrade({path, handler})`,
+`packages/host/webserver/src/index.ts:349-355`;先例:`packages/experimental/inspector/src/host/plugin.ts:111`、
+`packages/api/gateway/src/index.ts:249`)。但换过去要付三笔代价,本期都不值得:
+
+1. **TLS 是监听器级的,插件碰不到** —— 由 DSH 启动参数 `--tls-cert` / `--tls-key` 决定
+   (`packages/bundle/web-app/src/startup.ts:79-80`),开了就是**整个 3080 端口**(SPA + `/api` 桥 +
+   我们这条路由)一起上 TLS;
+2. **绑定地址也是监听器级的,且默认回环**(`packages/bundle/web-app/cordis.patch.yml:183`)——
+   要让手机从 tailnet 连进来得显式 `--host <具体 IP>`,**那会把 DSH 的浏览器面一起暴露到那个网段**。
+   现在的 `listener.ts` 只暴露我们自己一个端口,`listenHost` 还能由插件自己选,攻击面小一个量级;
+3. **没有先例**:DSH 代码库里没有一个插件「在 upgrade handler 里完整实现一次 WebSocket 服务端握手」
+   (inspector 是裸 pipe 到上游,gateway 用自己的 mux),我们的 `ws` + `noServer` 方案会是第一个。
+
+另两条工程事实:upgrade 只支持**精确路径**(未命中直接 `socket.destroy()`,**没有 HTTP 错误码**),
+重复路径**硬抛** `webserver: duplicate upgrade route`(`:350-352`),disposer 要插件自己收。
+
+**什么时候该重新考虑**:当直连要成为**主路径**(不再走中转)、且使用者本来就在跑带 TLS 的
+DSH web server 时。届时按上面三笔代价逐条复核对价。
+
 监听面**不做应用层鉴权** —— 鉴权就是 §4.1 的握手本身:未配对的设备在 `hello` 处被拒
 (`protocol/not-paired`)。这是有意的:在监听面上再加一层令牌,会得到两套"谁能连"的判据,
 而它们迟早会不一致(且第二套没有契约依据)。

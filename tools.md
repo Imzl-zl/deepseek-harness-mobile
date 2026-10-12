@@ -100,7 +100,9 @@
   - 架构决策笔记金矿 `D:\sudy\github\deepseek-harness\.agents\notes\archived\architecture\`:`2026-07-19-gui-layering-and-rpc-protocol`(GUI 分层与 RPC 协议)、`2026-07-23-unified-session-query-service`(统一会话查询服务)、`2026-07-25-web-command-surfaces-and-assembly`(命令面与装配)、`2026-07-25-web-input-machine-and-slash-pipeline`(输入状态机与 slash 流水线)、`2026-07-28-user-settings-seam`(用户设置缝)。每篇都带 `.zh.md`
   - **交互层(审批/提问/计划审查,2026-10-09 核实)**:`packages/interaction/user-approval/src/index.ts:215` 的 `request()` 与 `:267` 的 `decide()`(无限等 + signal 竞速 + 迟到丢弃 + fail-closed);`packages/interaction/user-questions/src/index.ts:187`(回答成为 `answer_to_pending_question` 用户消息)、`src/types.ts:26`(plan-review 意图);`packages/interaction/tool-ask-user/src/timed.ts:103`(计时提问默认 120 s、`-1` 无限等、超时转 pending)
   - **方法面与设置/凭据**:`packages/api/session-controller/src/commands.ts:105`(`create`)、`:311`(`prompt`,自带 requestId 幂等);`packages/api/settings-controller/src/index.ts:98,116`(`describe` 默认脱敏 / `update`);`packages/api/settings-controller/src/credentials.ts:83,100,113`(`describe`/`set`/`unset`)
-  - **web server 的 TLS 与升级路由**:`packages/host/webserver/src/index.ts:13`(`node:https`)、`:55-61`(`WebUpgradeRoute`)、`:68-94`(`TlsConfig`,读不到即拒绝初始化)
+  - **web server 的 TLS 与升级路由**:`packages/host/webserver/src/index.ts:13`(`node:https`)、`:55-61`(`WebUpgradeRoute`)、`:68-94`(`TlsConfig`,读不到即拒绝初始化)、`:349-355`(`registerUpgrade` 返回 disposer)、`:461`(upgrade **只精确匹配**,未命中直接 `socket.destroy()`,**没有 HTTP 错误码**)、`:350-352`(重复路径**硬抛** `duplicate upgrade route`)。
+    - **插件能注册升级路由**(服务键 `'webServer'`,`:302` 的 `super(ctx,'webServer')`;先例:`packages/experimental/inspector/src/host/plugin.ts:111`、`packages/api/gateway/src/index.ts:249`)。
+    - **但 TLS 与绑定地址都是监听器级的,插件碰不到**:TLS 由启动参数 `--tls-cert`/`--tls-key` 决定(`packages/bundle/web-app/src/startup.ts:79-80`),绑定默认回环(`packages/bundle/web-app/cordis.patch.yml:183`)—— 要用它就得把 DSH 的浏览器面一起暴露出去。**本项目的直连监听面因此继续自起监听**,取舍见 `.agents/notes/implemented/2026-10-09-direct-listener-keeps-own-socket.md`。
 
 ## Patterns
 
