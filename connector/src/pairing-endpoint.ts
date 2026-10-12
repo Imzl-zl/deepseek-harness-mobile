@@ -16,7 +16,6 @@ export interface PairedDeviceRow {
   pairingId: string
   pairedAt: number
   tokenHash?: string
-  refreshHash?: string
 }
 export interface PairingEndpointOptions {
   issueCredentials?: () => Promise<IssuedDeviceTokens>
@@ -64,7 +63,6 @@ export function createPairingEndpoint(options: PairingEndpointOptions): PairingE
           pairingId: accepted.pairingId,
           pairedAt: accepted.device.pairedAt,
           tokenHash: tokenHashOf(credentials.deviceToken),
-          refreshHash: tokenHashOf(credentials.refreshToken),
         })
         state.registered = true
       }

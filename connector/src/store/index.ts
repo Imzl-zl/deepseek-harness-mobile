@@ -69,8 +69,6 @@ const deviceSchema = z.object({
    * 这是如实的结果，不是静默降级。
    */
   tokenHash: z.string().optional(),
-  /** 刷新令牌的摘要（同上；刷新流程见 `device-token.ts` 的如实记录）。 */
-  refreshHash: z.string().optional(),
   /** 吊销时间；存在即已吊销（电脑侧删除公钥）。 */
   revokedAt: z.number().optional(),
 })

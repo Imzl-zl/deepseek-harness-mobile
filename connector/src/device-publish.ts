@@ -36,8 +36,6 @@ export interface DeviceRegistration {
   name: string
   /** `sha256(设备令牌)` 的十六进制。 */
   tokenHash: string
-  /** `sha256(刷新令牌)` 的十六进制；没有刷新令牌时缺席。 */
-  refreshHash?: string
 }
 
 export interface DevicePublisherOptions {

@@ -397,7 +397,6 @@ let unregisterPairingCommand: (() => void) | null = null
             pairingId: row.pairingId,
             // 摘要随行存住：它是"中转重启后这台设备还能回来"的唯一依据（I7）。
             ...(row.tokenHash === undefined ? {} : { tokenHash: row.tokenHash }),
-            ...(row.refreshHash === undefined ? {} : { refreshHash: row.refreshHash }),
           })
         }
 
@@ -427,7 +426,6 @@ let unregisterPairingCommand: (() => void) | null = null
                 devPubDh: record.dhPub,
                 name: record.name,
                 tokenHash: record.tokenHash,
-                ...(record.refreshHash === undefined ? {} : { refreshHash: record.refreshHash }),
               },
             ]
           })

@@ -36,7 +36,9 @@
 
 见 `.agents/notes/implemented/2026-10-09-token-and-scope-decisions.md`:
 
-- **刷新令牌轮换不做**:设备令牌长期有效 + 手动吊销;`refresh_hash` 只落不用。
+- **刷新令牌轮换不做**:设备令牌长期有效 + 手动吊销;刷新令牌仍是签给手机的本机凭据,
+  但**摘要不再上报中转**(`refresh_hash` 已从名册协议删掉 —— 多存一份没人读的摘要
+  只会让人以为轮换已实现)。
 - **中转不做多实例**:单实例 + I7 重启收敛就是个人工具的形态。
 - **鸿蒙暂缓**(不是放弃):Flutter 3.41.9 版本锁继续保留,OHOS 适配/HUKS/推送全部暂停;
   `docs/` 里既有的鸿蒙一手调研原样保留。
@@ -100,13 +102,14 @@
 
 ## 进行中 / 未完成
 
-- **方法面 12/21**:`repo.info` / `devices.list` / `session.list` / `session.subscribe` /
+- **方法面 12/20**:`repo.info` / `devices.list` / `session.list` / `session.subscribe` /
   `session.unsubscribe` / `session.page` / `session.refetch` / `session.prompt` / `job.list` /
   `job.kill` / `job.follow` / `job.unfollow`;其余回 `connector/unsupported`。
   **处理器表的键是"实现了什么"的唯一出处**;契约 §5.7 的方法表已逐条标注 DSH 侧依据。
-  **21 的来历**:原 22 删掉 `interaction.list`(待处理集合是会话事件的投影,没有独立查询)与
-  `devices.revoke`(吊销不是方法:名册写入方本来就是电脑侧),加入 `session.create`(DSH 原生)。
-  改这个数会同时触发 `tests/method-name-table.test.ts` 与 `tests/methods.test.ts` 两条门禁。
+  **20 的来历**:原 22 删掉 `interaction.list`(待处理集合是投影,没有独立查询)、
+  `devices.revoke`(吊销不是方法:名册写入方本来就是电脑侧)、`push.configure`(推送本期不做),
+  加入 `session.create`(DSH 原生)。`METHODS` 与契约**逐字对应**——契约外的方法不该被
+  `isMethod` 放行(那会让"不存在"看起来像"没实现")。
 - **错误码表 30 个**(15 协议层 + 15 DSH 宿主层),两边(TS `ERROR_TABLE` / Dart `ErrorCode`)
   **逐字一致**,由 `tests/error-table-parity.test.ts` 断言(做过变异校验:改一个动作即红并点名)。
   **宿主层漏码的后果是被归一化降级成 `internal`** → 用户对着永远重试也不好的操作反复点;

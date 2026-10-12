@@ -114,10 +114,8 @@ function parseRegistrations(value: unknown): DeviceRegistration[] | undefined {
     if (typeof id !== 'string' || id === '' || typeof tokenHash !== 'string' || tokenHash === ''
       || typeof pairingId !== 'string' || typeof devPubEd !== 'string' || typeof devPubDh !== 'string') return undefined
     const name = record['name']
-    const refreshHash = record['refreshHash']
     rows.push({
       id, tokenHash, pairingId, devPubEd, devPubDh, name: typeof name === 'string' ? name : '',
-      ...(typeof refreshHash === 'string' && refreshHash !== '' ? { refreshHash } : {}),
     })
   }
   return rows

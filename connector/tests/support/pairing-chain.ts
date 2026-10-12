@@ -52,7 +52,7 @@ export async function startChain(t: Cleanup): Promise<Chain> {
   const publish = async (): Promise<void> => {
     await publisher([...devices].map(([id, row]) => ({
       id, name: row.name, pairingId: row.pairingId, devPubEd: row.edPubHex, devPubDh: row.dhPubHex,
-      tokenHash: row.tokenHash!, ...(row.refreshHash === undefined ? {} : { refreshHash: row.refreshHash }),
+      tokenHash: row.tokenHash!,
     })))
     published += 1
   }

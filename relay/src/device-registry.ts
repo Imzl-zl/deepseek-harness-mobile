@@ -58,8 +58,6 @@ export interface DeviceRegistration {
   name: string
   /** `sha256(设备令牌)` 的十六进制。 */
   tokenHash: string
-  /** `sha256(刷新令牌)` 的十六进制；没有刷新令牌时缺席。 */
-  refreshHash?: string
   /** 归属：这台设备属于哪台连接器（由来报名册的那条连接决定）。 */
   connectorId?: string
   revokedAt?: number
@@ -84,8 +82,6 @@ export interface DeviceRegistry {
   authenticate(token: string): string | undefined
   /** 某设备归哪台连接器。**只有电脑侧报过名的设备才有归属**。 */
   connectorOf(deviceId: string): string | undefined
-  /** 刷新令牌对应的设备（§12.2 的 `refresh_hash`）。 */
-  deviceOfRefreshToken(token: string): string | undefined
   /** 连接器断开：它的设备失去归属（但**行留着** —— 设备要靠令牌自己回来）。 */
   detachConnector(connectorId: string): number
   /** 观测：行数、有归属的行数。 */
@@ -101,8 +97,6 @@ export function createDeviceRegistry(options: DeviceRegistryOptions = {}): Devic
   const rows = new Map<string, DeviceRegistration>()
   /** `token_hash → 设备 id`（换票的最热路径，单独一张索引）。 */
   const byToken = new Map<string, string>()
-  /** `refresh_hash → 设备 id`。 */
-  const byRefresh = new Map<string, string>()
 
   return {
     get stats() {
@@ -119,18 +113,9 @@ export function createDeviceRegistry(options: DeviceRegistryOptions = {}): Devic
         if (row.tokenHash === '') continue
         const previous = rows.get(row.id)
         // 换令牌 = 同一 id 换摘要：旧摘要必须**立刻失效**，否则"换令牌"等于"多一把钥匙"。
-        // 两张索引都要清 —— 只清一张会让旧刷新令牌继续可用。
-        if (previous !== undefined) {
-          byToken.delete(previous.tokenHash)
-          if (previous.refreshHash !== undefined) byRefresh.delete(previous.refreshHash)
-        }
+        if (previous !== undefined) byToken.delete(previous.tokenHash)
         rows.set(row.id, { ...row, connectorId })
         byToken.set(row.tokenHash, row.id)
-        // 空串不是摘要：写进索引会让"没有刷新令牌"与"刷新令牌是空串"混成一条，
-        // 而那张索引的键在设备之间共享 —— 一台设备就能把另一台的条目顶掉。
-        if (row.refreshHash !== undefined && row.refreshHash !== '') {
-          byRefresh.set(row.refreshHash, row.id)
-        }
         accepted += 1
       }
       if (accepted > 0) {
@@ -154,11 +139,6 @@ export function createDeviceRegistry(options: DeviceRegistryOptions = {}): Devic
       return row.connectorId
     },
 
-    deviceOfRefreshToken(token) {
-      if (token === '') return undefined
-      return byRefresh.get(hashOf(token))
-    },
-
     detachConnector(connectorId) {
       let cleared = 0
       for (const [id, row] of rows) {
@@ -175,7 +155,6 @@ export function createDeviceRegistry(options: DeviceRegistryOptions = {}): Devic
           devPubDh: row.devPubDh,
           name: row.name,
           tokenHash: row.tokenHash,
-          ...(row.refreshHash === undefined ? {} : { refreshHash: row.refreshHash }),
           ...(row.revokedAt === undefined ? {} : { revokedAt: row.revokedAt }),
         }
         rows.set(id, rest)

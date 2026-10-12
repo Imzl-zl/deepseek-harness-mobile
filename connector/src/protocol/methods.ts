@@ -14,6 +14,16 @@
 import { isErrorCode, ProtocolError, type ErrorCode } from './errors.js'
 
 /** 契约 §5.7 的方法表。顺序与文档一致，便于对照。 */
+/**
+ * 契约 §5.7 的方法表。**与契约逐字对应**(顺序也一致,便于对照)。
+ *
+ * 契约里没有的,这里也不要有:`isMethod` 放行一个契约外的方法,分发器只会回
+ * `connector/unsupported`——那会让"这个方法不存在"看起来像"这个方法还没实现",
+ * 而手机上多一个必然失败的按钮。所以 2026-10-09 把三个已从契约删掉的名字
+ * 一并清了出去:`interaction.list`(待处理集合是投影,没有独立查询)、
+ * `devices.revoke`(吊销不是方法,名册写入方本来就是电脑侧)、
+ * `push.configure`(推送本期不做,调不通)。
+ */
 export const METHODS = [
   'session.create',
   'session.list',
@@ -24,7 +34,6 @@ export const METHODS = [
   'session.cancel',
   'session.refetch',
   'interaction.respond',
-  'interaction.list',
   'job.list',
   'job.follow',
   'job.unfollow',
@@ -34,8 +43,6 @@ export const METHODS = [
   'credentials.set',
   'credentials.unset',
   'devices.list',
-  'devices.revoke',
-  'push.configure',
   'sync.hello',
   'repo.info',
 ] as const

@@ -302,6 +302,13 @@ seed(32B, 存系统安全存储)
 
 ### 5.4 恢复协议
 
+> **为什么不是"把 `sync.hello` 并进 `session.subscribe`"**(2026-10-09 评估过):
+> `subscribe(sid, since)` 是**单会话**的增量入口,而 `sync.hello` 做的是两件它做不到的事 ——
+> ① **一次声明整份订阅集**(手机回到前台时要恢复的是"所有会话",不是一个);
+> ② **上报前后台态**(连接层据此决定要不要发心跳,§9)。所以它不是重复的入口,
+> 而是"批量订阅 + 应用态声明"。真要合并,得让 `subscribe` 变成可变参数的批量形态,
+> 再把应用态塞到同一个调用里 —— 那是**把两件事耦进一个方法**,比现在更难读。
+
 ```ts
 type SyncHello = { sessions: Array<{ sid: string; since: number }>; app: 'foreground' | 'background' };
 
@@ -375,7 +382,10 @@ type SyncSnapshot = {
 | `sync.hello` | 手机→电脑 | — | §5.4 的恢复握手 |
 | `repo.info` | 手机→电脑 | — | 版本、能力位、别名→会话元的映射版本 |
 | `session.create` | 手机→电脑 | `requestId` | 新建会话。**DSH 支持**(`session-controller/src/commands.ts:105` 的 `create(request)` 与 `src/index.ts:281`);本期**未实现**,实现时照 DSH 的 `SessionCreateRequest` 形状 |
-| `push.configure` | 手机→电脑 | — | 推送档位(rich / doorbell)与令牌登记。**DSH 没有任何推送面**(全仓无 `push.*` 方法),所以它纯是本契约的自拟面,且依赖没开工的三端能力包(§10) |
+
+**没有 `push.configure`**（刻意不声明）。推送本期不做——正确性靠"回前台补课"(I6),
+主链路不依赖它。等三端能力包(§10)落地后**再**把它加进方法表;今天声明一个
+调不通的方法,只会让手机侧多一个必然失败的按钮。
 
 事件(电脑→手机):`ev`(会话事件)、`live`(流式)、`job`(任务输出,订阅式,§5.3)、`presence`(在线态/前台态)、`pending.changed`(待处理集合变化)。
 
@@ -585,14 +595,19 @@ dsh_mobile_takeover  表 takeover    { devId: { mode, lastInteractedAt } }
 
 ```text
 pairings(id, pcPubEd, pcPubDh, code_hash, expires_at, consumed_at)
-devices(id, pairing_id, dev_pub_ed, dev_pub_dh, name, token_hash, refresh_hash, revoked_at)
+devices(id, pairing_id, dev_pub_ed, dev_pub_dh, name, token_hash, revoked_at)
 push_tokens(device_id, platform, token, app_id, updated_at)
 window(sid, seq, frame_routing_json, box, received_at)      -- 有界:1000 条/会话 或 30 min
 ```
 
 - `window` 是**缓存**:允许被清空;清空后正确性不变(I7)。
 - 令牌只存摘要;配对秘密只存哈希(而**哈希也不登记**);公开邀请一次性、5 分钟有效。
-- **`refresh_hash` 只落不用**。刷新令牌的**轮换流程本期不做**(决定见 `.agents/notes/implemented/2026-10-09-token-and-scope-decisions.md`):设备令牌长期有效,轮换等于重新扫码。代价如实说:设备令牌泄露后在手动吊销前一直有效;补偿是吊销可用(电脑侧不再把该设备报进名册 + 本地标 `revoked_at`)。因此这一列是"为将来的轮换留的落点",不是"今天会用的机制"。
+- **刷新令牌的摘要不在名册里**。轮换流程本期不做(决定见
+  `.agents/notes/implemented/2026-10-09-token-and-scope-decisions.md`):设备令牌长期有效,
+  轮换等于重新扫码。代价如实说:设备令牌泄露后在手动吊销前一直有效;补偿是吊销可用
+  (电脑侧不再把该设备报进名册 + 本地标 `revoked_at`)。刷新令牌本身仍会签给手机并存进
+  安全存储——它是**本机凭据**,只是不上中转(中转多存一份没有人读的摘要,只会让人以为
+  轮换已经实现)。
 - **`devices` 是归属的真值**(不是内存里的 ticket 绑定表):设备重连要能自己回来,所以"这台设备属于哪台连接器"
   必须落在它上面。行的写入方是**电脑侧**(`POST /devices`,只交摘要与公钥),不是中转自己算出来的。
 - **本期实现如实记录**:`devices` 的落点仍是**进程内表**;I7 靠**电脑侧每次连上中转时重放名册**重建,
@@ -813,4 +828,6 @@ job-settled        后台任务终结     turn-failed       轮次异常结束
   (`user-approval/src/index.ts:303`),而手机上用户几分钟后才答是常态。补偿是 §6.2 的看护计时器
   (默认 10 min,超时主动返回 `unavailable`)—— 所以"转审批"要求看护计时器**已实现**;
   在它上线前,手机上只转提问与计划审查(§6.4),不留一个答了可能被丢弃的按钮。
-- **`session.create` / `push.configure` 未实现**。`session.create` 的 DSH 依据与请求形状见 §5.8(照形状透传即可);`push.configure` 是**自拟面且依赖没开工的三端能力包**(§10),本期不做推送——正确性靠"回前台补课"(I6),主链路不依赖它。
+- **`session.create` 未实现**。DSH 依据与请求形状见 §5.8(照形状透传即可)。
+  **推送本期不做**,所以方法表里**没有** `push.configure`——正确性靠"回前台补课"(I6),
+  主链路不依赖它;等三端能力包(§10)落地后再加进方法表。
