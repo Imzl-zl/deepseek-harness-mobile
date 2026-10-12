@@ -74,7 +74,7 @@
 | `cd app && flutter test` | **340 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test integration_test` | 0 文件需重排 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **303 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **304 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **75 条** |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker` |
 | `node app/tools/gen-pairing-vectors.mjs` | 重新生成配对向量(**改了配对派生规则后必须重跑**) |
@@ -114,6 +114,10 @@
   **逐字一致**,由 `tests/error-table-parity.test.ts` 断言(做过变异校验:改一个动作即红并点名)。
   **宿主层漏码的后果是被归一化降级成 `internal`** → 用户对着永远重试也不好的操作反复点;
   2026-10-09 就真的漏了 15 个(`session/agent-busy` 等),已补并加了两道一致性门禁。
+- **跨实现一致性已闭环**:`connector/tests/cross-language-handshake.test.ts` 让 Dart 与 TS 的
+  **产品代码**真打一次握手 + 双向封箱,比对派生的密钥与解开的明文(做过变异校验:
+  换掉 Dart 侧 transcript 字段顺序即红)。这是此前完全缺失的一类证据 ——
+  两套独立实现各自自洽不等于能互通,而分歧的症状是"验签失败 / 解不开"。
 - **DSH 侧能力已核实(2026-10-09 读源码)**:`session.create` **存在**
   (`packages/api/session-controller/src/commands.ts:105`)——此前 memory 说"电脑侧没有它"是错的,
   那说的是我们的处理器表没实现;`settings.describe`/`update`(`settings-controller/src/index.ts:98,116`)、
