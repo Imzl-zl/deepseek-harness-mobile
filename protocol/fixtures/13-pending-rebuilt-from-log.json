@@ -7,7 +7,7 @@
   "steps": [
     { "op": "ask", "sid": "s1", "callId": "c1", "payload": { "tool": "bash" } },
     { "op": "ask", "sid": "s1", "callId": "c2", "payload": { "tool": "write" } },
-    { "op": "answer", "sid": "s1", "callId": "c1", "decision": "allowed-once" },
+    { "op": "answer", "sid": "s1", "callId": "c1", "answers": [{ "id": "q1", "selected": ["允许一次"] }] },
     { "op": "hello" },
     { "op": "ack", "sid": "s1" },
     { "op": "bridgeRestart", "keepDedupe": true },

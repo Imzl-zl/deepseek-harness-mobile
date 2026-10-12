@@ -280,7 +280,7 @@ test('16 条 fixtures 在 connector 侧跑绿，且断言数与 verify-fixtures.
           break
         }
         case 'answer': {
-          relay.put(bridge.answer(step.sid, step.callId, step.decision))
+          relay.put(bridge.answer(step.sid, step.callId, step.answers))
           break
         }
         case 'rebuildPending': {

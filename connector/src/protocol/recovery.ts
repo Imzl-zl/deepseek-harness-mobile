@@ -185,8 +185,19 @@ export function createBridge(
       return frame
     },
 
-    answer(sid, callId, decision) {
-      const frame = append(sid, `i:${callId}`, JSON.stringify({ kind: 'outcome', decision }))
+    /**
+     * 提问 / 计划审查的 outcome：**答案批次**,与 DSH 的 `AskUserQuestionAnswer` 同形
+     * (`{ answers: [{ id, selected[], custom? }] }`)。
+     *
+     * 为什么是批次而不是一个「决策」:一次 `ask` 可以带多个问题,每个可能多选、还可能带
+     * 自由文本;标量决策带不下这些。而「计划审查」在 DSH 侧只是问题的一个展示标签
+     * (`intent.kind === 'plan-review'`,且注释明说 "an intent changes presentation only,
+     * never the protocol"),**答案编码与普通提问完全一样** —— 于是一个批次形状覆盖
+     * 审批 / 提问 / 计划审查三种,不需要决策枚举,也不需要为计划审查单开一条路。
+     * 同 itemId 覆盖 ask,并从待处理集合移除。
+     */
+    answer(sid, callId, answers) {
+      const frame = append(sid, `i:${callId}`, JSON.stringify({ kind: 'outcome', answers }))
       ensure(sid).pending.delete(callId)
       return frame
     },

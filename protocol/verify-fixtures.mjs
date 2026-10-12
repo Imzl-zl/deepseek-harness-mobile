@@ -228,7 +228,7 @@ function runFixture(file, fx) {
         break
       }
       case 'answer': {
-        relay.put(bridge.answer(step.sid, step.callId, step.decision))
+        relay.put(bridge.answer(step.sid, step.callId, step.answers))
         break
       }
       case 'rebuildPending': {

@@ -363,7 +363,7 @@ type SyncSnapshot = {
 | `session.unsubscribe` | 手机→电脑 | — | 停止推送;桥接可释放该会话缓冲(仍需等 persisted) |
 | `session.page` | 手机→电脑 | — | 历史翻页(按消息对齐,用 DSH `page()`) |
 | `session.prompt` | 手机→电脑 | `requestId` | **参数是 `{ sid, content, mode? }`**,不是 `{ sid, text }`。`content` 必须是**非空数组**,每项带 `type`(照 DSH 的 `PromptContentPart`:文本是 `{type:'text', text}`)。**形状以电脑侧为准** —— 它与 DSH 的 `sessionController.prompt` 同构,手机侧没有第二条真值。`mode: 'queue' \| 'steer'` |
-| `interaction.respond` | 手机→电脑 | `i:<callId>:<decision>` | 审批 / 提问 / 计划审查的应答。**它是会话内的投影,不是独立查询**(见 §6.3) |
+| `interaction.respond` | 手机→电脑 | `i:<callId>` | 提问 / 计划审查的**答案批次**:`{ sid, callId, answers: [{ id, selected[], custom? }] }`。形状与 DSH 的 `AskUserQuestionAnswer` **逐字一致**,不另造决策枚举(§6.3.1) |
 | `session.cancel` | 手机→电脑 | — | 取消当前轮次但保留待处理收件箱 |
 | `session.refetch` | 手机→电脑 | — | 取单个大条目 |
 | `job.list` | 手机→电脑 | — | 任务投影(严格属于该会话的行) |
@@ -481,11 +481,14 @@ claim(请求) :=
                      → 该消息同时是投影里"这个问题已关闭"的记录
 ```
 
-- 入参 `answer` 是**完整批次**:每个问题恰好一项(`index.ts:178-185` 校验,少一项/多一项都抛
+- `answerBatch` 就是契约 §5.7 里 `interaction.respond` 的 `answers` 字段,**原样转发**,
+  连接器不做翻译(翻译层就是漂移层)。
+- 入参是**完整批次**:每个问题恰好一项(`index.ts:178-185` 校验,少一项/多一项都抛
   `BAD_ANSWER`);已回答过再答抛 `REPLY_QUEUED`(`:172-174`)。
 - 提问已结束(不在 continued 集合)时 `answer` 返回 `false`(`:168`)——**不是错误**,手机据此
   把那一项标成"已过期",不要弹错误。
-- 所以手机上待处理项的**置灰条件**是"`answer` 返回 false",不是"看起来超时了"(§6.4)。
+- 所以手机上待处理项的**置灰条件**是"`answer` 返回 false 或 `state === 'continued''",
+  不是"看起来超时了"(§6.4)。
 - `agent` 参数是 **live root agent**(`assertLiveRoot`,`:131`):子代理里的提问手机答不了(§15 已记)。
 
 三条**对实现有直接影响**的源码事实:
@@ -504,16 +507,24 @@ claim(请求) :=
 ### 6.4 手机端表达
 
 - 审批 / 提问**接管输入栏**(见 `design-and-tech-plan.md` §7.2、§7.8),不占顶栏状态位。
-- **本期只转提问与计划审查,审批留桌面**。理由不是"审批转不了"(见 §6.2.1:看护计时器就是补偿),
-  而是范围选择:先把有明确迟到语义的提问转通,审批等看护计时器实现后再开。因此输入栏只有提问的
-  选项卡与计划审查的「同意执行 / 要求修改」;审批的「允许一次 / 拒绝」**暂不出现**,
-  而不是显示一个答了可能被丢弃的按钮。
-- 提问按 DSH 给出的选项(`AskUserQuestionItem`,`user-questions/src/types.ts:38`);计划审查只有
-  「同意执行」「要求修改」(非 approve 一律视为拒绝),`detail` 是计划全文,
-  `intent.kind === 'plan-review'`(`:26`)。
+- **一个答案批次形状覆盖全部三种交互**——这是 DSH 的原生设计,不是我们的简化:
+  `AskUserQuestionItem` 带一个可选 `intent` 标签,而 DSH 的注释明说
+  *"an intent changes presentation only, never the protocol"*
+  (`packages/interaction/user-questions/src/types.ts:17-22`)。所以:
+  - **提问**:按 DSH 给出的选项(`options`),可多选(`multiSelect`),可填自由文本(`custom`);
+  - **计划审查**:同一个形状,只是 `intent.kind === 'plan-review'` 且带一个 `approve` 标签。
+    **通过与否由 DSH 的规则决定**:`selected` 里有那个 `approve` 标签就是同意,其余一律拒绝
+    (`types.ts:28-30` 原话 "every other option declines it")—— 手机端**不自己判**,
+    也就不需要一套「同意执行 / 要求修改」的私有词汇;
+  - **审批**:同理走批次;`allowed-once` 只是其中一个选项标签。
+- **没有「始终允许 / 本次会话允许」**这类动作:DSH 的 outcome 词汇表是封闭的,
+  唯一授权值是 `allowed-once`(`user-approval/src/types.ts:32`)。要"本会话不再问"
+  只能改会话级策略,且必须明确标注它是"关闭该会话全部审批"。
+- `state` 字段(`'open' | 'continued'`,`user-questions/src/types.ts:72`)告诉手机这一项还能不能答:
+  `open` 可以答;`continued` 只能作为新一轮的用户消息到达 —— 手机据此置灰,
+  **不因为"看起来超时了"而置灰**。
 - 迟到的回答**允许**:提问超时转 pending 后用户仍可答,回答以 `answer_to_pending_question`
-  用户消息的形式送达(`user-questions/src/index.ts:191`)。所以手机上的待处理项**不因为
-  "看起来超时了"而置灰**。
+  用户消息的形式送达(`user-questions/src/index.ts:191`)。
 
 ---
 
