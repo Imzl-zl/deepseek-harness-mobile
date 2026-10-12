@@ -359,6 +359,31 @@ type SyncSnapshot = {
 - **凡宿主已有"人发起"门面的操作,一律走门面,不在插件里复述它的语义**(`job.kill` 是第一个):
   门面里的取消原因、归属围栏与错误码映射都是宿主的,自己抄一遍会在 DSH 改词时**静默分叉**。
 
+### 5.8 未实现方法的 DSH 依据与落地路径(2026-10-09 逐条核实)
+
+已实现的 12 个见连接器处理器表(它是"实现了什么"的唯一出处)。下面是**剩下 10 个**的核实结果:
+每一条都标了 DSH 是否原生支持、出处,以及落地方式。**结论:没有一项需要等外部条件。**
+
+| 方法 | DSH 原生? | 出处 | 落地路径 |
+|---|---|---|---|
+| `session.create` | **是** | `session-controller/src/types.ts:288`(`{workspaceId?, cwd?, sessionId?, agentPreset?}`)、`:296`(返回 `{sessionId, agentPreset?}`) | 照形状透传;手机端只给 `cwd` 与可选 `agentPreset` |
+| `settings.describe` | **是** | `settings-controller/src/index.ts:98` | 透传。它默认 `redactSecrets: true`(`:103`)——**密钥值天然不回传**,§7.5 由此成立 |
+| `settings.update` | **是** | `settings-controller/src/index.ts:116` | 走 `write` 通道,带 `expectedRevision` 乐观锁(`:121`) |
+| `credentials.set` | **是** | `settings-controller/src/credentials.ts:100` | 单向写。`value` 是明文(`:26` 的 `min(1)`)——"改密钥只发新值"由此天然成立 |
+| `credentials.unset` | **是** | 同上 `:113` | 单向写 |
+| `credentials.describe` | **是** | 同上 `:83` | 读面,默认脱敏 |
+| `interaction.respond`(提问) | **是** | `user-questions/src/index.ts:164` 的 `answer(agent, callId, answer)`,**带 `@Remote`**;内部 `agent.steer()` 注入(`:200`) | 手机 → 连接器 → `ctx.get('userQuestions').answer()`。**不发明协议**;错误有 `BAD_ANSWER` / `REPLY_QUEUED`(`:160-174`) |
+| `interaction.respond`(审批) | **是** | `'approval/request'` 是 cordis **waterfall 事件**(`user-approval/src/types.ts:78-92`) | 连接器 `ctx.on('approval/request', …)` 挂应答者,claim 或 `next()` delegate;配 §6.2 的看护计时器 |
+| `sync.hello` | 自拟 | — | 连接器自己回的恢复握手,不依赖 DSH |
+| `push.configure` | **DSH 没有**(全仓无 `push.*`) | — | **本期不做**:契约 I6 本就是"推送只敲门、正确性靠回前台补课",主链路不依赖推送。等三端能力包(§10)落地后作为增量再加;届时由连接器直接对接 FCM/APNs,仍不需要 DSH 支持 |
+
+**顺带核实到的两个原生能力**(省掉原本要做的设计):
+
+- `userQuestions.attachWait`(`user-questions/src/index.ts:215`,`@Remote({mode:'stream'})`)——客户端可挂一个**等待流**,超时由客户端决定并自动转 pending。手机端可做"实时等回答"而不必轮询。
+- `askTimed`(同上 `:229`)——前台等待的首次结算由客户端决定(`ASK_TIMED_OUT` → pending)。DSH 已处理好超时语义。
+
+**因此没有阻塞项**:需要 DSH 的全都有现成接口;不需要 DSH 的本就是我们自己的存储面或恢复握手。
+
 ---
 
 ## 6. 交互层:审批、提问、计划审查
@@ -420,6 +445,21 @@ claim(请求) :=
 | `interaction.respond`(审批) | `ctx.approval.request()` 挂起,等应答链(`ctx.waterfall('approval/request')`)给出 `ApprovalOutcome` | `packages/interaction/user-approval/src/index.ts:215`、`:281` |
 | `interaction.respond`(提问) | `ctx.userQuestions.ask(...)` / `askTimed(...)`;迟到的回答成为一条 `answer_to_pending_question` 用户消息 | `packages/interaction/user-questions/src/index.ts:187-191` |
 | 计划审查 | 提问的一种意图:`AskUserQuestionIntent.kind === 'plan-review'`,带 `approve` 文案 | `packages/interaction/user-questions/src/types.ts:26` |
+
+**提问转手机的完整路径(原生,不发明协议)**:
+
+```text
+手机答完 → 连接器 → ctx.get('userQuestions').answer(agent, callId, answerBatch)
+                     → 服务把答案 steer 成一条 source 为 user-question-reply 的用户消息
+                     → 该消息同时是投影里"这个问题已关闭"的记录
+```
+
+- 入参 `answer` 是**完整批次**:每个问题恰好一项(`index.ts:178-185` 校验,少一项/多一项都抛
+  `BAD_ANSWER`);已回答过再答抛 `REPLY_QUEUED`(`:172-174`)。
+- 提问已结束(不在 continued 集合)时 `answer` 返回 `false`(`:168`)——**不是错误**,手机据此
+  把那一项标成"已过期",不要弹错误。
+- 所以手机上待处理项的**置灰条件**是"`answer` 返回 false",不是"看起来超时了"(§6.4)。
+- `agent` 参数是 **live root agent**(`assertLiveRoot`,`:131`):子代理里的提问手机答不了(§15 已记)。
 
 三条**对实现有直接影响**的源码事实:
 
@@ -735,4 +775,4 @@ job-settled        后台任务终结     turn-failed       轮次异常结束
   (`user-approval/src/index.ts:303`),而手机上用户几分钟后才答是常态。补偿是 §6.2 的看护计时器
   (默认 10 min,超时主动返回 `unavailable`)—— 所以"转审批"要求看护计时器**已实现**;
   在它上线前,手机上只转提问与计划审查(§6.4),不留一个答了可能被丢弃的按钮。
-- **`session.create` / `push.configure` 未实现**,方法表里已标注 DSH 侧依据与自拟面。`push.configure` 额外依赖没开工的三端能力包(§10),在能力包落地前它对手机是不可见的能力位。
+- **`session.create` / `push.configure` 未实现**。`session.create` 的 DSH 依据与请求形状见 §5.8(照形状透传即可);`push.configure` 是**自拟面且依赖没开工的三端能力包**(§10),本期不做推送——正确性靠"回前台补课"(I6),主链路不依赖它。

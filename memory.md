@@ -112,10 +112,11 @@
   `packages/interaction/` 下三个服务且以会话事件为真值(`remote-channel.md` §6.3.1 有逐条出处)。
 - **`relay/` 已可运行**:路由核心(按通道绑定)/ 配对登记 / 一次性票 / HTTP 面 / 令牌签发与软吊销 /
   限流 / 设备名册 / 可运行入口 / 配置样例。
-- **直连监听面已落地**:`connector/src/transport/listener.ts`;`listenPort` 默认 `0` = 不监听。
-  **注意**:DSH 自己的 web server 原生支持 TLS 与 WS 升级路由
+- **直连监听面已落地,但形态待重估**:`connector/src/transport/listener.ts`(`listenPort` 默认 `0` = 不监听)。
+  **2026-10-09 发现**:DSH 自己的 web server 原生支持 TLS 与 WS 升级路由
   (`packages/host/webserver/src/index.ts:13` 的 `node:https`、`:55-61` 的 `WebUpgradeRoute`),
-  所以"TLS 必须在外部终结"这个旧假设**待重新评估**——直连拓扑可能要改成"注册升级路由"。
+  所以"TLS 必须在外部终结"这个旧假设**不成立**,直连拓扑可能要改成"注册升级路由到 DSH 的
+  web server"——若成立,`listener.ts` 自己起监听的那部分应废除。**未决,动它前先读上面两处**。
 - **剩下的缺口**:见上面"已知缺口"2、3;另有插件面板 / 本机运行模式 / goals·schedule·todos 未做;
   三端能力包(鸿蒙暂缓后,iOS/安卓两端仍要做)。
 
