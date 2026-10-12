@@ -7,10 +7,24 @@
  *
  * 每个码都带一个 `clientAction`，把「客户端该怎么办」与码一起定死；它同时是产品文案的
  * 依据，避免各端自己解释同一个码。
+ *
+ * ## 表里有两类码，别混
+ *
+ * 1. **协议层**（`protocol/*`、`relay/*`、`connector/*`、`rate-limited`）—— 连接自己的事，
+ *    动作是连接级的（重连 / 回配对页 / 退避）。
+ * 2. **宿主层**（`session/*`、`settings/*`、`credentials/*`、`gateway/*`、`workspace/*`、
+ *    `agent-preset/*`、`job/*`）—— DSH 真实返回的码，**原样进表**。它们描述"这一次操作
+ *    为什么没成"，动作是操作级的（置灰 / 刷新 / 退避 / 显示原文）。
+ *
+ * 第 2 类**必须收全**：漏一个的后果不是"走 default"，而是被下面的归一化降级成
+ * `internal` → `log-and-retry` → 用户对着一个永远重试也不好的操作反复点。
+ * 本仓已经栽过一次（`not-paired` 被报成 `bad-frame`，用户卡在重试上）。
+ * 可达码由 `protocol/tools/dsh-error-codes.mjs` 从 DSH 源码机械抽出，`pnpm test` 里断言覆盖。
  */
 
 /** 码 → 客户端行为。行为取值是封闭的，见下面 `ClientAction`。 */
 export const ERROR_TABLE = {
+  // ---- 协议层:连接自己的事 ----
   'protocol/unsupported-version': 'upgrade-required',
   'protocol/not-paired': 're-pair',
   'protocol/revoked': 're-pair',
@@ -26,6 +40,27 @@ export const ERROR_TABLE = {
   'relay/offline': 'show-offline',
   'connector/unsupported': 'disable',
   internal: 'log-and-retry',
+
+  // ---- 宿主层:DSH 在这些方法上真实返回的码(2026-10-09 逐条读源码核实) ----
+  // 会话面(session-controller/src/commands.ts、history.ts、list.ts)
+  'session/agent-busy': 'backoff-retry', // :372 电脑正忙着，稍后重发
+  'session/model-unavailable': 'disable-and-annotate', // :381 先去选模型
+  'session/attachment-invalid': 'disable-and-annotate', // :370,:421 这个附件发不出去
+  'session/steer-unavailable': 'refresh-pending', // :478 轮次已变，排队项作废
+  'session/queue-item-not-found': 'refresh-pending', // :455,:474 那一项已不在队列
+  'session/writer-held': 'backoff-retry', // :536 写者被占，稍后
+  'session/conflict': 'disable-and-annotate', // :546 预设等冲突
+  // 新建会话(commands.ts:107,114)
+  'workspace/not-found': 'disable-and-annotate',
+  'agent-preset/conflict': 'disable-and-annotate',
+  // 网关面(gateway/src/index.ts、settings-controller/src/index.ts)
+  'gateway/bad-request': 'report-defect', // 我们发的参数宿主不认 = 我们的缺陷
+  'gateway/cancelled': 'reconnect-once', // 调用被中止，等价于连接层的事
+  'gateway/internal': 'backoff-retry', // 宿主内部错，稍后
+  // 设置与凭据(settings-controller/src/index.ts:267、credentials.ts)
+  'settings/rejected': 'disable-and-annotate',
+  'settings/conflict': 'refresh-settings', // expectedRevision 过期，重新 describe 再改
+  'credential/rejected': 'disable-and-annotate',
 } as const
 
 export type ErrorCode = keyof typeof ERROR_TABLE
@@ -44,8 +79,10 @@ export type ClientAction =
   | 'refresh-pending'
   | 'refresh-jobs'
   | 'disable-and-annotate'
+  | 'refresh-settings'
   | 'show-offline'
   | 'disable'
+  | 'report-defect'
   | 'log-and-retry'
 
 export const ERROR_CODES = Object.keys(ERROR_TABLE) as readonly ErrorCode[]

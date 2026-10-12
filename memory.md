@@ -72,7 +72,7 @@
 | `cd app && flutter test` | **340 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test integration_test` | 0 文件需重排 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **301 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **303 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **75 条** |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker` |
 | `node app/tools/gen-pairing-vectors.mjs` | 重新生成配对向量(**改了配对派生规则后必须重跑**) |
@@ -100,10 +100,17 @@
 
 ## 进行中 / 未完成
 
-- **方法面 12/22**:`repo.info` / `devices.list` / `session.list` / `session.subscribe` /
+- **方法面 12/21**:`repo.info` / `devices.list` / `session.list` / `session.subscribe` /
   `session.unsubscribe` / `session.page` / `session.refetch` / `session.prompt` / `job.list` /
   `job.kill` / `job.follow` / `job.unfollow`;其余回 `connector/unsupported`。
   **处理器表的键是"实现了什么"的唯一出处**;契约 §5.7 的方法表已逐条标注 DSH 侧依据。
+  **21 的来历**:原 22 删掉 `interaction.list`(待处理集合是会话事件的投影,没有独立查询)与
+  `devices.revoke`(吊销不是方法:名册写入方本来就是电脑侧),加入 `session.create`(DSH 原生)。
+  改这个数会同时触发 `tests/method-name-table.test.ts` 与 `tests/methods.test.ts` 两条门禁。
+- **错误码表 30 个**(15 协议层 + 15 DSH 宿主层),两边(TS `ERROR_TABLE` / Dart `ErrorCode`)
+  **逐字一致**,由 `tests/error-table-parity.test.ts` 断言(做过变异校验:改一个动作即红并点名)。
+  **宿主层漏码的后果是被归一化降级成 `internal`** → 用户对着永远重试也不好的操作反复点;
+  2026-10-09 就真的漏了 15 个(`session/agent-busy` 等),已补并加了两道一致性门禁。
 - **DSH 侧能力已核实(2026-10-09 读源码)**:`session.create` **存在**
   (`packages/api/session-controller/src/commands.ts:105`)——此前 memory 说"电脑侧没有它"是错的,
   那说的是我们的处理器表没实现;`settings.describe`/`update`(`settings-controller/src/index.ts:98,116`)、

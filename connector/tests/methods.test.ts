@@ -19,19 +19,23 @@ import {
 } from '../src/protocol/methods.js'
 
 test('方法表：封闭集，幂等键标记与契约 §5.7 的表一致', () => {
-  assert.equal(METHODS.length, 22, '方法数变了要同步契约 §5.7 的表')
+  assert.equal(METHODS.length, 23, '方法数变了要同步契约 §5.7 的表')
   assert.equal(new Set(METHODS).size, METHODS.length, '方法名不能重复')
 
   // §5.7 的「幂等键」列非空的恰好这几个。
+  // `session.create` 也在内:它可能被重发(新建会话这一按尤其容易),而重复创建会得到
+  // 两个会话 —— 那正是幂等键要防的。
   assert.deepEqual([...IDEMPOTENT_METHODS].sort(), [
     'credentials.set',
     'credentials.unset',
     'interaction.respond',
+    'session.create',
     'session.prompt',
     'settings.update',
   ])
   assert.equal(requiresIdempotencyKey('session.list'), false)
   assert.equal(requiresIdempotencyKey('session.prompt'), true)
+  assert.equal(requiresIdempotencyKey('session.create'), true)
 
   assert.equal(isMethod('session.list'), true)
   assert.equal(isMethod('session.typo'), false)

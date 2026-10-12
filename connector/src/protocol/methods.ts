@@ -15,6 +15,7 @@ import { isErrorCode, ProtocolError, type ErrorCode } from './errors.js'
 
 /** 契约 §5.7 的方法表。顺序与文档一致，便于对照。 */
 export const METHODS = [
+  'session.create',
   'session.list',
   'session.subscribe',
   'session.unsubscribe',
@@ -50,6 +51,7 @@ const METHOD_SET: ReadonlySet<string> = new Set(METHODS)
  * 自己组装 —— 这里只要求**必须带**一个键。
  */
 export const IDEMPOTENT_METHODS: ReadonlySet<MethodName> = new Set([
+  'session.create',
   'session.prompt',
   'interaction.respond',
   'settings.update',

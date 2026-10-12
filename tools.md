@@ -67,7 +67,8 @@
   - `cd connector; pnpm install` —— 装依赖,**必须 0 退出**(见 Pitfalls 的构建脚本闸)
   - `pnpm exec tsc --noEmit` —— 类型检查(开工步骤第 2 步的判据)
   - `pnpm build` —— tsdown 产出 `lib/index.js` + `lib/index.d.ts`,即装进 profile 的那份产物;路径对齐靠 `connector/tsdown.config.ts`
-  - `pnpm test` —— 跑 `protocol/fixtures` 与 `protocol/vectors`,外加握手/封箱/流控/任务帧/订阅骨架/每连接装配/方法面/幂等/四个 DSH 适配器/连接/身份/直连监听面等接线用例(当前 **301 项**;其中 fixtures 的断言数须与 `verify-fixtures.mjs` 的 486 一致、向量的与 `verify-vectors.mjs` 的 49 一致)
+  - `pnpm test` —— 跑 `protocol/fixtures` 与 `protocol/vectors`,外加握手/封箱/流控/任务帧/订阅骨架/每连接装配/方法面/幂等/四个 DSH 适配器/连接/身份/直连监听面等接线用例(当前 **303 项**;其中 fixtures 的断言数须与 `verify-fixtures.mjs` 的 486 一致、向量的与 `verify-vectors.mjs` 的 49 一致)
+    - **错误码有四个门禁,改表会同时红**:`tests/error-table-parity.test.ts`(TS `ERROR_TABLE` 与 Dart `ErrorCode` 逐字一致,**做过变异校验**)、`tests/error-code-table.test.ts`(契约 §3.1 与代码一致)、`tests/flow.test.ts`(封闭 + 满射 + 未知码归一,数必须 30)、`tests/methods.test.ts`(方法数 23 与幂等键集合)。**宿主层漏一个码的后果是被降级成 `internal`** → 用户对着永远重试也不好的操作反复点(2026-10-09 真漏过 15 个)。
     - **`tests/pairing-e2e.test.ts` 是配对链的验收判据**:真中转**子进程** + 真 HTTP + 真 WS,跑完"出码 → 凭**公开邀请**换候选票 → 升级 → 受限握手(`pairingKeyInfo` + 上下文进 transcript)→ `pair-commit`(密文里是秘密)→ `pair-result`(密文里是令牌)→ 凭令牌换票 → 升级 → 真握手 → 双向 AEAD",外加 I7(中转**真的换进程重启**后只凭名册收敛)与敌对中转反例(替换候选公钥 / 拿公开邀请或旧 `codeHash` 授权)。它用的夹具是 `tests/support/pairing-chain.ts`(TS 写的手机替身)。
     - `tests/support/relay-process.ts` 的 `port` 是**自己探的空闲端口**而不是 `0`:I7 要能把中转**杀掉并在同一个端口上重起**,`0` 会让第二轮换一个端口、于是连接器的 `relayUrl` 指向别处。
     - **这一行是项数的唯一出处**(`AGENTS.md` §5 特意不在此处复述,就是为了只留一处)。改测试后同步它。

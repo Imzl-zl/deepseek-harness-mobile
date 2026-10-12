@@ -159,6 +159,33 @@ type Frame =
 | `connector/unsupported` | 能力不存在(方法未实现) | 按钮置灰 |
 | `internal` | 未归类错误 | 上报日志,可重试 |
 
+**宿主层错误码**——DSH 在这些方法上真实返回的码(2026-10-09 逐条读 `packages/` 源码核实,
+出处见 `connector/src/protocol/errors.ts` 的逐行注释)。它们描述"**这一次操作**为什么没成",
+所以漏一个的后果不是"走 default",而是被归一化降级成 `internal` → 用户对着一个
+永远重试也不好的操作反复点。本仓已经栽过一次(`not-paired` 被报成 `bad-frame`)。
+
+| 码 | 含义 | 客户端行为 |
+|---|---|---|
+| `session/agent-busy` | 电脑正忙着,prompt 被拒 | 退避后重发(文案要说"电脑正忙") |
+| `session/model-unavailable` | 还没选可用模型 | 发送前置灰并注明 |
+| `session/attachment-invalid` | 附件不被当前模型接受 | 去掉那个附件 |
+| `session/steer-unavailable` | 当前轮次已不能 steer | 刷新待处理(排队项作废) |
+| `session/queue-item-not-found` | 排队项已不在队列 | 刷新待处理 |
+| `session/writer-held` | 会话被别的写者占着 | 退避后重试 |
+| `session/conflict` | 预设等冲突 | 置灰并注明 |
+| `workspace/not-found` | 新建会话时 workspace 不存在 | 置灰并注明 |
+| `agent-preset/conflict` | agent 预设冲突 | 置灰并注明 |
+| `gateway/bad-request` | **我们发的参数宿主不认 = 我们的缺陷** | 响亮失败并记录,**不让用户重试** |
+| `gateway/cancelled` | 调用被中止 | 重连一次 |
+| `gateway/internal` | 宿主内部错 | 退避后重试 |
+| `settings/rejected` | 设置被拒 | 置灰并注明 |
+| `settings/conflict` | `expectedRevision` 过期 | 重新 describe 再改 |
+| `credential/rejected` | 凭据被拒 | 置灰并注明 |
+
+两边表(TS `ERROR_TABLE` 与 Dart `ErrorCode`)**逐字一致**,由
+`connector/tests/error-table-parity.test.ts` 断言;契约与代码一致由
+`connector/tests/error-code-table.test.ts` 断言。
+
 ---
 
 ## 4. 连接层:握手、密钥、计数器、流控

@@ -52,18 +52,39 @@ enum ClientAction {
   /// 这一项在电脑侧只读：置灰并标注原因（不要反复试）。
   disableAndAnnotate,
 
+  /// 设置写在 revision 上过期了：重新 describe 再改（不要拿旧 patch 重发）。
+  refreshSettings,
+
   /// 中转不可达：展示离线态。
   showOffline,
 
   /// 电脑侧不支持这个能力：置灰（能力位模型的延伸）。
   disable,
 
+  /// **我们自己的缺陷**：参数被宿主拒（`gateway/bad-request`）。原样显示并记录，
+  /// 绝不让用户重试 —— 重试只会同样失败，而用户会以为是网络问题。
+  reportDefect,
+
   /// 未归类：记日志并重试。
   logAndRetry,
 }
 
 /// 封闭错误码表。`wire` 是线上字符串（契约 §3.1 的原样拼写）。
+///
+/// ## 表里有两类码，别混
+///
+/// 1. **协议层**（`protocol/*`、`relay/*`、`connector/*`、`rate-limited`）—— 连接自己的事，
+///    动作是连接级的（重连 / 回配对页 / 退避）。
+/// 2. **宿主层**（`session/*`、`settings/*`、`credentials/*`、`gateway/*`、`workspace/*`、
+///    `agent-preset/*`）—— DSH 真实返回的码，描述"这一次操作为什么没成"。
+///
+/// 第 2 类**必须收全**：漏一个不会"走 default"，而是被 [fromWire] 归成 [internal]
+/// → `logAndRetry` → 用户对着一个永远重试也不好的操作反复点。本仓栽过一次
+/// （`not-paired` 被报成 `bad-frame`，用户卡在重试上）。
+/// 与电脑侧 `connector/src/protocol/errors.ts` 的 `ERROR_TABLE` **逐字一致**，
+/// 由 `connector/tests/error-table-parity.test.ts` 断言两边相等。
 enum ErrorCode {
+  // ---- 协议层 ----
   unsupportedVersion(
     'protocol/unsupported-version',
     ClientAction.upgradeRequired,
@@ -81,6 +102,65 @@ enum ErrorCode {
   settingsReadOnly('settings/read-only', ClientAction.disableAndAnnotate),
   relayOffline('relay/offline', ClientAction.showOffline),
   connectorUnsupported('connector/unsupported', ClientAction.disable),
+
+  // ---- 宿主层:DSH 在这些方法上真实返回的码(2026-10-09 逐条读源码核实) ----
+  /// 电脑正忙着（`session-controller/src/commands.ts:372`）：稍后重发。
+  sessionAgentBusy('session/agent-busy', ClientAction.backoffRetry),
+
+  /// 还没选模型（`:381`）：发送前置灰并提示。
+  sessionModelUnavailable(
+    'session/model-unavailable',
+    ClientAction.disableAndAnnotate,
+  ),
+
+  /// 附件不被当前模型接受（`:370,:421`）：去掉那个附件。
+  sessionAttachmentInvalid(
+    'session/attachment-invalid',
+    ClientAction.disableAndAnnotate,
+  ),
+
+  /// 当前轮次已不能 steer（`:478`）：排队项作废，刷新待处理。
+  sessionSteerUnavailable(
+    'session/steer-unavailable',
+    ClientAction.refreshPending,
+  ),
+
+  /// 排队项已不在队列（`:455,:474`）：刷新待处理。
+  sessionQueueItemNotFound(
+    'session/queue-item-not-found',
+    ClientAction.refreshPending,
+  ),
+
+  /// 会话被别的写者占着（`:536`）：稍后。
+  sessionWriterHeld('session/writer-held', ClientAction.backoffRetry),
+
+  /// 预设等冲突（`:546`）：这次建不出来，标注原因。
+  sessionConflict('session/conflict', ClientAction.disableAndAnnotate),
+
+  /// 新建会话时 workspace 不存在（`commands.ts:114`）。
+  workspaceNotFound('workspace/not-found', ClientAction.disableAndAnnotate),
+
+  /// agent 预设冲突（`commands.ts:539`）。
+  agentPresetConflict('agent-preset/conflict', ClientAction.disableAndAnnotate),
+
+  /// 我们发的参数宿主不认（`commands.ts:107` 等）= **我们的缺陷**，
+  /// 要响亮失败并记录，绝不是让用户重试。
+  gatewayBadRequest('gateway/bad-request', ClientAction.reportDefect),
+
+  /// 调用被中止：等价于连接层的事。
+  gatewayCancelled('gateway/cancelled', ClientAction.reconnectOnce),
+
+  /// 宿主内部错：稍后。
+  gatewayInternal('gateway/internal', ClientAction.backoffRetry),
+
+  /// 设置被拒（`settings-controller/src/index.ts:267`）。
+  settingsRejected('settings/rejected', ClientAction.disableAndAnnotate),
+
+  /// `expectedRevision` 过期（设置冲突）：重新 describe 再改。
+  settingsConflict('settings/conflict', ClientAction.refreshSettings),
+
+  /// 凭据被拒（`settings-controller/src/credentials.ts`）。
+  credentialRejected('credential/rejected', ClientAction.disableAndAnnotate),
 
   /// 兜底：**任何不在表里的码都归这里**（封闭表的纪律）。
   internal('internal', ClientAction.logAndRetry);
