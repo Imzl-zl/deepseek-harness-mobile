@@ -23,6 +23,19 @@
    `open` 态的实时路径**已经能跑**(`dsh/interactions.ts` 已注册两个 answerer),
    缺的就是 port 实现。
 
+**`port` 现在是什么(2026-10-09 读 `index.ts` 确认)**:`index.ts:201-213` 是一个**故意的
+fail-closed 桩** —— `askApproval` 记 `METRIC.failClosed` 后返回 `'reject'`,
+`askQuestion` 直接抛(注释:"不能返回空答案伪装成「用户全跳过」")。
+answerer 已在 `index.ts:302` 注册。**所以缺的只有这一件事:把桩换成真实现。**
+
+**真实现的形状**(设计已藏在现有代码里,照着接即可):
+- answerer claim 成功后,把 prompt 推给**那台**手机(设备 → 连接 的映射在挂载级,
+  `liveDevices` / `index.ts:195-199` 的 `takeover` 已经在用同一套);
+- 手机答 `interaction.respond`(带 `i:<callId>`)→ 在该连接上解开并 resolve answerer 的 Promise;
+- 看护/断连走 `createWatchdog`,一律 fail-closed(审批回 `reject`、提问抛错)。
+- **这是每连接的关注点**:应答要从"发问的那条连接"回来,所以 handler 属于
+  `connection-scope.ts`,挂载级只负责"把 prompt 送到哪条连接"。
+
 **再往后**:手机侧 UI(输入栏接管 + 批次构造)→ 真机验证(`channel_e2e_test.dart` 之后再叠加
 交互链路)→ 方法面剩 8 个 → `ui/adaptive` / 三端能力包(鸿蒙暂缓)/ 相机扫码。
 
