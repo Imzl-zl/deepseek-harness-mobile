@@ -183,6 +183,9 @@ class ChatPageState extends State<ChatPage> {
           );
         }
       case InteractionSettled(:final itemId):
+        // **不带 sid**：收束要全桶找。迟到的 `approval/decided` 可能属于
+        // **另一个**会话（用户在 A 里的时候 B 的审批在电脑上被答了）——
+        // 限定当前桶会让 B 的卡片永远挂着。
         _takeover.settle(itemId);
     }
   }
@@ -303,6 +306,10 @@ class ChatPageState extends State<ChatPage> {
 
   @override
   Widget build(BuildContext context) {
+    // **切会话 = 换待处理桶**（DSH 的待处理是 per-session 的）。
+    // 放在 build 里而不是某个点击回调：切会话的路径有两条（抽屉、内联列表），
+    // 漏一条就会"切过去了但卡片没换"。控制器内部幂等，重复设不通知。
+    _takeover.setCurrentSid(widget.app.currentSid);
     return ListenableBuilder(
       listenable: widget.app,
       builder: (context, _) {

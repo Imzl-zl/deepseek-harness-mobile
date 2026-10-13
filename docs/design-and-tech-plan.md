@@ -437,6 +437,14 @@ DSH 右侧有一条**轮次导航轨**(`ui-chat/TurnNavigator.tsx`):每一轮一
 - **已否决**:左抽屉里再放一个「任务」入口去开右抽屉 —— 两个抽屉互相跳没有道理;也否决了在对话流里内联铺开任务明细(占屏)。
 - 审批 / 提问**接管输入栏**(§7.8 之外的 composer takeover),本来就在眼前,**不占顶栏状态位**。
 
+**多会话并行:一个会话一队**(2026-10-13 对齐 DSH 原生):
+
+- DSH 的待处理是 **per-session** 的:`PendingApproval` / `PendingQuestion` 都带 `sessionId`,注册进**那个会话**的 composer(`packages/client/ui-session/src/client/index.ts:391`、`ui-approval/src/client/contract/slots.ts:101`),scope 不到会话就 `next()` 不接(`ui-approval/src/client/index.ts:43-44`)。电脑上并行开着几个会话时,每个会话各有各的待处理,**切到哪个会话就处理哪个**。
+- 手机侧同构:`TakeoverController` 按 sid 分桶,当前会话显示该会话的队首(一次只处理队首的瀑布语义不变);切会话 = 换桶,另一个会话的待处理不插到眼前、也不丢。
+- 跨会话必须可见,否则用户没有理由知道要切:① 会话行副标题显示「N 个待处理」(本地从投影数,`AppModel`);② 本会话输入栏空着时,显示一行「其他会话还有待处理,去会话列表切换」。
+- 同一会话多个待处理的先后照 DSH 的确定性优先级,**大的赢**:计划审查 2 > 提问 1 > 审批 0(`ui-user-questions/src/client/index.ts:372`、`ui-approval/src/client/index.ts:89`)。**不自己发明"审批最急"**。
+- 收束(电脑侧答了 / 会话被替换)**不带 sid、全桶找**:迟到事件可能属于另一个会话,限定当前桶会让那张卡永远挂着。
+
 **为什么不做第二个独立页**:同一件事两个入口 + 换页没有到位反馈,用户会以为没做(已发生并被指出)。抽屉的切换必须有明确反馈:tab 高亮 + 计数徽标 + 标题随面板变。
 
 ## 8. DSH → 移动端 组件对照表

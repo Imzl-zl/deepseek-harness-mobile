@@ -20,10 +20,22 @@
 /// 3. **回答在途时按钮禁用**（`item.busy`）：不只是防重复提交，
 ///    也是给用户"它在处理"的反馈（原型把状态点换成转圈）。
 ///
-/// ## 收成一队，一次只处理队首
+/// ## 队列按**会话**分桶（2026-10-13，对齐 DSH 原生）
 ///
-/// 原型的注释：`const queue = [] // 待处理队列(瀑布:一次只处理队首)`。
-/// 不铺成列表是因为审批要**逐个看**（一次批准五件事等于没看）。
+/// DSH 的待处理是 per-session 的：`PendingApproval` / `PendingQuestion` 都带
+/// `sessionId`，注册进**那个会话**的 composer（`ui-session/src/client/index.ts:391`、
+/// `ui-approval/src/client/contract/slots.ts:101`）。电脑上并行开着几个会话时，
+/// 每个会话各有各的待处理，用户切到哪个会话就处理哪个。
+///
+/// 我们这边同构：**一个会话一队，一次只处理队首**（不铺成列表是因为审批要
+/// 逐个看 —— 一次批准五件事等于没看）。切会话 = 换桶，另一个会话的待处理
+/// 既不会插到眼前，也不会丢。跨会话的"还有几个在等"由会话行角标表达
+/// （`SessionSummary.pendingCount`），否则用户不知道别的会话有东西等他。
+///
+/// 同一会话多个待处理的先后照 DSH 的确定性优先级，**大的赢**：
+/// 计划审查 2 > 提问 1 > 审批 0（`ui-user-questions/src/client/index.ts:372`、
+/// `ui-approval/src/client/index.ts:89`）。**不自己发明"审批最急"** ——
+/// 那是 DSH 已经定过的次序。
 ///
 /// ## 类型在 `model/interaction.dart`
 ///
@@ -72,8 +84,16 @@ enum TakeoverPhase {
 /// 输入栏接管的**状态机**（`ChangeNotifier`）。
 ///
 /// 它只管"现在轮到谁、答到哪一步"；渲染在 [TakeoverPanel]。
+///
+/// **一个会话一队**（见文件头"队列按会话分桶"）：`_bySid` 是桶，
+/// [_currentSid] 决定当前看哪一桶。没有当前会话时（列表页）任何桶都不可见，
+/// 但项**不会丢** —— 切回去还在。
 class TakeoverController extends ChangeNotifier {
-  final List<InteractionItem> _queue = [];
+  /// 待处理桶：`sid → 该会话的队`（每队内部按 DSH 的优先级排序）。
+  final Map<String, List<InteractionItem>> _bySid = {};
+
+  /// 当前会话（`null` = 在列表页，看不到任何卡片）。
+  String? _currentSid;
 
   /// 当前题号（提问可能有多个问题）。
   int _questionIndex = 0;
@@ -106,9 +126,39 @@ class TakeoverController extends ChangeNotifier {
   /// （`interaction/not-pending`，客户端动作是"刷新待处理列表"）。
   Future<void> Function(InteractionAnswer answer)? onAnswer;
 
-  List<InteractionItem> get queue => List.unmodifiable(_queue);
+  /// 当前看哪个会话的队。**切会话就换桶**（DSH 的待处理本来就是 per-session）。
+  void setCurrentSid(String? sid) {
+    if (sid == _currentSid) return;
+    _currentSid = sid;
+    _questionIndex = 0;
+    _minimized = false;
+    notifyListeners();
+  }
 
-  InteractionItem? get active => _queue.isEmpty ? null : _queue.first;
+  /// 当前会话。
+  String? get currentSid => _currentSid;
+
+  /// 当前会话的队（只读快照）。
+  List<InteractionItem> get queue => List.unmodifiable(_queueOf(_currentSid));
+
+  InteractionItem? get active =>
+      _queueOf(_currentSid).isEmpty ? null : _queueOf(_currentSid).first;
+
+  List<InteractionItem> _queueOf(String? sid) =>
+      sid == null ? const [] : (_bySid[sid] ?? const []);
+
+  /// 某个会话还有几个待处理（会话行角标用；`null` 会话回 0）。
+  int pendingCountOf(String? sid) => _queueOf(sid).length;
+
+  /// **别的**会话还有几个待处理（顶栏/空态提示用）。
+  int pendingElsewhere() {
+    var total = 0;
+    for (final entry in _bySid.entries) {
+      if (entry.key == _currentSid) continue;
+      total += entry.value.length;
+    }
+    return total;
+  }
 
   TakeoverPhase get phase {
     if (_minimized) return TakeoverPhase.minimized;
@@ -136,41 +186,67 @@ class TakeoverController extends ChangeNotifier {
   /// 元素是 `(key, 回执文案)`。
   final List<({String key, String text})> receipts = [];
 
-  /// 入队一个事件。
+  /// 入队一个事件。**按它自己的 `sid` 进桶** —— 当前不在看的会话也照收，
+  /// 切回去就看见（DSH 的待处理本来就是 per-session 的）。
   ///
   /// **`fullAccess` 下的审批不入队**（原型 `enqueue` 的同一条逻辑）——
   /// 返回 `false` 表示"没入队"，调用方据此提示。
   bool enqueue(InteractionItem item) {
     if (item.kind == InteractionKind.approval && fullAccess) return false;
+    final bucket = _bySid.putIfAbsent(item.sid, () => <InteractionItem>[]);
     // 同一个 key 不重复入队（收起后重新打开走的是"取消最小化"而不是再入一次）。
-    if (_queue.any((i) => i.itemId == item.itemId)) {
-      _minimized = false;
-      notifyListeners();
+    if (bucket.any((i) => i.itemId == item.itemId)) {
+      if (item.sid == _currentSid) {
+        _minimized = false;
+        notifyListeners();
+      }
       return true;
     }
-    _queue.add(item);
-    if (item.kind == InteractionKind.question) {
+    bucket.add(item);
+    // **同桶按 DSH 的确定性优先级排**（大的赢：计划 2 > 提问 1 > 审批 0）。
+    // 稳定排序：同优先级保持到达顺序（先来先处理）。
+    final ordered = List<InteractionItem>.of(bucket)
+      ..sort((a, b) => _precedence(b).compareTo(_precedence(a)));
+    _bySid[item.sid] = ordered;
+    if (item.sid == _currentSid) {
       _questionIndex = 0;
+      _minimized = false;
     }
-    _minimized = false;
     notifyListeners();
     return true;
   }
+
+  /// 待处理优先级（照 DSH：`ui-user-questions/.../index.ts:372` 的
+  /// `plan-review ? 2 : 1`，`ui-approval/.../index.ts:89` 的 `() => 0`）。
+  static int _precedence(InteractionItem item) => switch (item.kind) {
+    InteractionKind.plan => 2,
+    InteractionKind.question => 1,
+    InteractionKind.approval => 0,
+  };
 
   /// 收束一个待处理项（电脑侧已经决定了 / 已经答过了）。
   ///
   /// 返回是否真的撤掉了一个。**撤掉的不是队首也没关系**：一次迟到的
   /// `approval/decided` 可能排在别的待处理项后面。
-  bool settle(String itemId) {
-    final index = _queue.indexWhere((i) => i.itemId == itemId);
-    if (index < 0) return false;
-    _queue.removeAt(index);
-    if (index == 0) {
-      _minimized = false;
-      _questionIndex = 0;
+  bool settle(String itemId, {String? sid}) {
+    // 有 sid 就只翻那个桶；没有就全桶找（迟到事件的 sid 一定带，但调用方
+    // 偷懒只给 itemId 时也该工作）。
+    final keys = sid == null ? _bySid.keys.toList() : <String>[sid];
+    for (final key in keys) {
+      final bucket = _bySid[key];
+      if (bucket == null) continue;
+      final index = bucket.indexWhere((i) => i.itemId == itemId);
+      if (index < 0) continue;
+      bucket.removeAt(index);
+      if (bucket.isEmpty) _bySid.remove(key);
+      if (index == 0 && key == _currentSid) {
+        _minimized = false;
+        _questionIndex = 0;
+      }
+      notifyListeners();
+      return true;
     }
-    notifyListeners();
-    return true;
+    return false;
   }
 
   /// 收起（对话流里留一行提示，卡片消失但**没被回答**）。
@@ -280,7 +356,7 @@ class TakeoverController extends ChangeNotifier {
       text: '计划回执 · ${item.title} · ${approved ? '同意执行' : '要求修改'}',
     ));
     _busy = false;
-    settle(item.itemId);
+    settle(item.itemId, sid: item.sid);
   }
 
   Future<void> _settleApproval(String outcome, String label) async {
@@ -308,7 +384,7 @@ class TakeoverController extends ChangeNotifier {
       text: '审批回执 · ${item.toolName} · $label（$outcome）',
     ));
     _busy = false;
-    settle(item.itemId);
+    settle(item.itemId, sid: item.sid);
   }
 
   /// 显式跳过当前这一题（原型 `skipQuestion`）。
@@ -360,7 +436,7 @@ class TakeoverController extends ChangeNotifier {
     ];
     receipts.add((key: item.itemId, text: '已回答 · ${all.join(' / ')}'));
     _busy = false;
-    settle(item.itemId);
+    settle(item.itemId, sid: item.sid);
   }
 
   /// 把答复交给注入的出口。**没有出口时只记回执**（演示模式）。
@@ -398,7 +474,13 @@ class _TakeoverPanelState extends State<TakeoverPanel> {
       listenable: widget.controller,
       builder: (context, _) {
         final item = widget.controller.active;
-        if (item == null) return const SizedBox.shrink();
+        // **别的会话还有待处理**：本会话空着也要说一声，否则用户不知道
+        // 电脑那边还有事在等他（切过去才看得见，而他没有理由知道要切）。
+        if (item == null) {
+          final elsewhere = widget.controller.pendingElsewhere();
+          if (elsewhere == 0) return const SizedBox.shrink();
+          return const _ElsewhereHint();
+        }
         // **收起时要真的收掉**：`minimize()` 只改 phase，卡片本身仍会被
         // 构建 —— 不看 phase 的话"收起"按钮点了没反应
         //（队列没减、卡片还在）。收起的语义是"对话流里留一行可点回来的提示"，
@@ -454,6 +536,38 @@ class _TakeoverPanelState extends State<TakeoverPanel> {
           ),
         );
       },
+    );
+  }
+}
+
+/// "别的会话还有待处理"的一行提示（本会话的输入栏空着时显示）。
+///
+/// 它**不抢输入栏**：只是一行可点的提示，点了也切不过去（切会话要走列表）——
+/// 所以它只负责"告诉你还有事"，不假装能处理。
+class _ElsewhereHint extends StatelessWidget {
+  const _ElsewhereHint();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: DshColors.layer2,
+        borderRadius: BorderRadius.circular(DshRadius.md),
+      ),
+      child: const Row(
+        children: [
+          DshIcon('queue', size: 14, color: DshColors.labelSecondary),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '其他会话还有待处理，去会话列表切换',
+              style: TextStyle(fontSize: 12, color: DshColors.labelSecondary),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -20,6 +20,9 @@ class _FakeClient implements SyncClient {
 
   final List<String> called = [];
 
+  /// `session.list` 的返回值（测试给；不给就回空）。
+  Object? onList;
+
   /// 最后一次调用的参数（钉**载荷形状**）。
   Map<String, Object?>? lastParams;
 
@@ -64,6 +67,7 @@ class _FakeClient implements SyncClient {
     called.add(method);
     lastParams = params;
     lastRequestId = requestId;
+    if (method == 'session.list') return onList as T;
     return null as T;
   }
 }
@@ -179,5 +183,48 @@ void main() {
 
     final answers = client.lastParams!['answers'] as List;
     expect(answers.single, {'id': 'q1', 'selected': <String>[]});
+  });
+
+  test('会话行的待处理数从本地投影算（多会话时靠它知道切去哪）', () async {
+    // 2026-10-13：待处理改成 per-session（对齐 DSH），于是"别的会话还有几个
+    // 在等"必须能在列表里看见 —— 否则用户没有理由知道要切。
+    // 这个数**本地算**（不指望 session.list 带），判据就是推一条
+    // approval/asked 进去、拉一次列表，看那一行的 pendingCount。
+    final client = _FakeClient();
+    final app = AppModel(client: client);
+    addTearDown(app.dispose);
+
+    // session.list 先给出两行。
+    client.onList = const {
+      'sessions': [
+        {'sid': 'sid-A', 'updatedAt': 2, 'running': false, 'blank': true},
+        {'sid': 'sid-B', 'updatedAt': 1, 'running': false, 'blank': true},
+      ],
+    };
+    await app.refreshSessions();
+    expect(app.sessions.map((s) => s.pendingCount), [
+      0,
+      0,
+    ], reason: '还没有任何事件时两个会话都是 0');
+
+    // 只往 sid-B 推一条审批。
+    await app.openSession('sid-B');
+    await _emit(
+      app,
+      client,
+      'sid-B',
+      type: 'approval/asked',
+      seq: 5,
+      data: const {
+        'id': 'ap-9',
+        'toolName': 'bash',
+        'callId': 'call-9',
+        'reason': '要删文件',
+      },
+    );
+    await app.refreshSessions();
+    final byId = {for (final s in app.sessions) s.sid: s};
+    expect(byId['sid-B']!.pendingCount, 1, reason: 'B 有一个未决审批');
+    expect(byId['sid-A']!.pendingCount, 0, reason: 'A 不该被 B 的事件影响');
   });
 }

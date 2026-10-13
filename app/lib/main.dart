@@ -360,7 +360,13 @@ class _DshMobileAppState extends State<DshMobileApp> {
       final row = DrawerSession(
         sid: s.sid,
         title: s.title.isEmpty ? '（未命名会话）' : s.title,
-        preview: s.itemCount == 0 ? s.sid : '${s.itemCount} 条',
+        // **待处理数进副标题**：多会话并行时，用户靠它知道该切去哪个会话
+        // （DSH 的待处理是 per-session 的，切过去才看得见）。
+        preview: [
+          if (s.pendingCount > 0) '${s.pendingCount} 个待处理',
+          if (s.itemCount > 0) '${s.itemCount} 条',
+          if (s.pendingCount == 0 && s.itemCount == 0) s.sid,
+        ].join(' · '),
         timeLabel: _relativeTime(days, at),
         isActive: s.sid == app.currentSid,
       );

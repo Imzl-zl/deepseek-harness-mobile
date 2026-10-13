@@ -278,7 +278,13 @@ class AppModel extends ChangeNotifier {
     try {
       final result = await client.call<Object?>('session.list', const {});
       final list = _parseSessionList(result);
-      _sessions = list;
+      // **待处理数本地算**：从每个会话已落地的条目里数未决审批/提问。
+      // 不指望 `session.list` 带它 —— 那是跨请求的汇总，而投影就在手里。
+      // 多会话并行时，用户靠这个数知道该切去哪个会话（DSH 的待处理是
+      // per-session 的，切过去才看得见）。
+      _sessions = [
+        for (final s in list) s.copyWith(pendingCount: _pendingCountOf(s.sid)),
+      ];
       _lastError = null;
       if (!_disposed) notifyListeners();
     } catch (error) {
@@ -291,6 +297,18 @@ class AppModel extends ChangeNotifier {
           : ProtocolException(ErrorCode.internal, '拉取会话列表失败：$error');
       if (!_disposed) notifyListeners();
     }
+  }
+
+  /// 某个会话此刻有几个**未决**待处理（审批/提问，从本地投影数）。
+  ///
+  /// 与 UI 层 `TakeoverController` 的桶同源而未连通：那里管"输入栏显示哪个"，
+  /// 这里管"列表里告诉用户有几个"。**故意不合成一个** —— 数据层不认识 UI 状态机。
+  int _pendingCountOf(String sid) {
+    var count = 0;
+    for (final item in _storeOf(sid).items) {
+      if (item is ApprovalItem && !item.decided) count += 1;
+    }
+    return count;
   }
 
   /// 新建会话。
