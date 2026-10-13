@@ -24,84 +24,35 @@
 ///
 /// 原型的注释：`const queue = [] // 待处理队列(瀑布:一次只处理队首)`。
 /// 不铺成列表是因为审批要**逐个看**（一次批准五件事等于没看）。
+///
+/// ## 类型在 `model/interaction.dart`
+///
+/// `InteractionItem` 一族是**会话事件的投影**（契约 §6.3），所以归领域层；
+/// 本文件只留状态机（`TakeoverController`）与渲染。这里 re-export 它们，
+/// 免得每个调用方都要同时认识两个文件。
 library;
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../model/interaction.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 
-/// 待接管的事件的种类。
-enum TakeoverKind {
-  /// 工具越权，等审批（拒绝 / 允许一次）。
-  approval,
-
-  /// 模型提问（选项 + 自定义答案）。
-  question,
-
-  /// 计划，等同意执行 / 要求修改。
-  plan,
-}
-
-/// 一个问题里的选项。
-class TakeoverOption {
-  const TakeoverOption({
-    required this.label,
-    this.description,
-    this.recommended = false,
-  });
-
-  final String label;
-
-  /// 选项的补充说明（原型 `.opt-desc`：显示在标签**下面**）。
-  final String? description;
-
-  /// 是否标"推荐"（原型 `.badge-rec` 徽标）。
-  ///
-  /// 原型的做法值得注意：**"（推荐）"是从标签里剥出来的**，
-  /// 单独渲染成徽标 —— 于是标签本身干净，而徽标位置固定。
-  final bool recommended;
-}
-
-/// 一个待接管的事件。
-class TakeoverItem {
-  const TakeoverItem({
-    required this.key,
-    required this.kind,
-    this.title = '',
-    this.detail = '',
-    this.toolName = '',
-    this.header = '',
-    this.options = const [],
-    this.multiSelect = false,
-  });
-
-  /// 稳定 key（关掉卡片后要能重新打开同一个）。
-  final String key;
-
-  final TakeoverKind kind;
-
-  /// 标题（审批是"工具 X 请求越权执行"或 `reason`）。
-  final String title;
-
-  /// 明细（审批是 diff / 命令预览之类）。
-  final String detail;
-
-  /// 工具名（回执里要写）。
-  final String toolName;
-
-  /// 提问的小标题（原型 `.tk-eyebrow`）。
-  final String header;
-
-  /// 选项（提问用；审批用不到）。
-  final List<TakeoverOption> options;
-
-  /// 是否多选。
-  final bool multiSelect;
-}
+export '../model/interaction.dart'
+    show
+        InteractionAnswer,
+        InteractionAnswerItem,
+        InteractionItem,
+        InteractionKind,
+        InteractionOpened,
+        InteractionOption,
+        InteractionQuestion,
+        InteractionSettled,
+        InteractionSignal,
+        approvalAllowLabel;
 
 /// 阶段（决定卡片长什么样）。
 enum TakeoverPhase {
@@ -122,16 +73,25 @@ enum TakeoverPhase {
 ///
 /// 它只管"现在轮到谁、答到哪一步"；渲染在 [TakeoverPanel]。
 class TakeoverController extends ChangeNotifier {
-  final List<TakeoverItem> _queue = [];
+  final List<InteractionItem> _queue = [];
 
   /// 当前题号（提问可能有多个问题）。
   int _questionIndex = 0;
 
-  /// 每题的选择（多选用 `Set`，单选只留一个）。
+  /// 每题的选择（多选用 `Set`，单选只留一个）。**按问题 id 记**，不按 item 记 ——
+  /// 一次提问可以有多个问题，而它们的草稿必须各自独立（原型 `qs.drafts[q.id]`）。
   final Map<String, Set<String>> _selected = {};
 
   /// 每题的自定义答案。
   final Map<String, String> _custom = {};
+
+  /// 被**显式跳过**的问题（原型 `qs.skipped[q.id]`）。
+  ///
+  /// 为什么要单独记：空 `selected` 且无 `custom` 是**合法的「显式跳过」**
+  /// （DSH `tool-ask-user/src/timed.ts:172,179` 的输出 schema 原文
+  /// "Empty with no custom means the user explicitly skipped this question"），
+  /// 它与"还没答"是两件事 —— 后者不该让提交可点，前者应该。
+  final Set<String> _skipped = {};
 
   bool _busy = false;
   bool _minimized = false;
@@ -139,9 +99,16 @@ class TakeoverController extends ChangeNotifier {
   /// 当前权限档（决定审批是否入队）。
   bool fullAccess = false;
 
-  List<TakeoverItem> get queue => List.unmodifiable(_queue);
+  /// 答复出口（`interaction.respond`）。**装配时注入**：控制器不认识 `AppModel`，
+  /// 于是"答一次"在单测里可以只断言产出了什么批次，而不必起一个假客户端。
+  ///
+  /// 返回的 Future 完成 = 电脑侧已接受；抛错 = 那一项已经不在待处理集合里
+  /// （`interaction/not-pending`，客户端动作是"刷新待处理列表"）。
+  Future<void> Function(InteractionAnswer answer)? onAnswer;
 
-  TakeoverItem? get active => _queue.isEmpty ? null : _queue.first;
+  List<InteractionItem> get queue => List.unmodifiable(_queue);
+
+  InteractionItem? get active => _queue.isEmpty ? null : _queue.first;
 
   TakeoverPhase get phase {
     if (_minimized) return TakeoverPhase.minimized;
@@ -155,6 +122,15 @@ class TakeoverController extends ChangeNotifier {
   /// 当前题号。
   int get questionIndex => _questionIndex;
 
+  /// 当前这一题（多题时按题号走；单题时就是第一题）。
+  InteractionQuestion? get currentQuestion {
+    final item = active;
+    if (item == null) return null;
+    if (item.questions.isEmpty) return null;
+    final index = _questionIndex.clamp(0, item.questions.length - 1);
+    return item.questions[index];
+  }
+
   /// 答完的事件（回执要落进对话流）。
   ///
   /// 元素是 `(key, 回执文案)`。
@@ -164,19 +140,35 @@ class TakeoverController extends ChangeNotifier {
   ///
   /// **`fullAccess` 下的审批不入队**（原型 `enqueue` 的同一条逻辑）——
   /// 返回 `false` 表示"没入队"，调用方据此提示。
-  bool enqueue(TakeoverItem item) {
-    if (item.kind == TakeoverKind.approval && fullAccess) return false;
+  bool enqueue(InteractionItem item) {
+    if (item.kind == InteractionKind.approval && fullAccess) return false;
     // 同一个 key 不重复入队（收起后重新打开走的是"取消最小化"而不是再入一次）。
-    if (_queue.any((i) => i.key == item.key)) {
+    if (_queue.any((i) => i.itemId == item.itemId)) {
       _minimized = false;
       notifyListeners();
       return true;
     }
     _queue.add(item);
-    if (item.kind == TakeoverKind.question) {
+    if (item.kind == InteractionKind.question) {
       _questionIndex = 0;
     }
     _minimized = false;
+    notifyListeners();
+    return true;
+  }
+
+  /// 收束一个待处理项（电脑侧已经决定了 / 已经答过了）。
+  ///
+  /// 返回是否真的撤掉了一个。**撤掉的不是队首也没关系**：一次迟到的
+  /// `approval/decided` 可能排在别的待处理项后面。
+  bool settle(String itemId) {
+    final index = _queue.indexWhere((i) => i.itemId == itemId);
+    if (index < 0) return false;
+    _queue.removeAt(index);
+    if (index == 0) {
+      _minimized = false;
+      _questionIndex = 0;
+    }
     notifyListeners();
     return true;
   }
@@ -195,12 +187,21 @@ class TakeoverController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 选中 / 取消一个选项。
-  void toggleOption(String optionLabel) {
+  /// 上一题 / 下一题（多题向导，原型 `qs.index`）。
+  void goToQuestion(int index) {
     final item = active;
     if (item == null || _busy) return;
-    final picked = _selected.putIfAbsent(item.key, () => <String>{});
-    if (item.multiSelect) {
+    if (index < 0 || index >= item.questions.length) return;
+    _questionIndex = index;
+    notifyListeners();
+  }
+
+  /// 选中 / 取消一个选项。
+  void toggleOption(String optionLabel) {
+    final question = currentQuestion;
+    if (question == null || _busy) return;
+    final picked = _selected.putIfAbsent(question.id, () => <String>{});
+    if (question.multiSelect) {
       if (!picked.remove(optionLabel)) picked.add(optionLabel);
     } else {
       // 单选：再点同一个是取消（否则选错了没法退回"未选"）。
@@ -212,26 +213,34 @@ class TakeoverController extends ChangeNotifier {
           ..add(optionLabel);
       }
     }
+    // 选了东西就不再是"跳过"—— 两个状态互斥。
+    _skipped.remove(question.id);
     notifyListeners();
   }
 
   /// 当前选中的选项。
-  Set<String> get selected => _selected[active?.key] ?? const <String>{};
+  Set<String> get selected =>
+      _selected[currentQuestion?.id] ?? const <String>{};
 
   /// 当前的自定义答案。
-  String get custom => _custom[active?.key] ?? '';
+  String get custom => _custom[currentQuestion?.id] ?? '';
 
   /// 写入自定义答案。
   void setCustom(String text) {
-    final item = active;
-    if (item == null || _busy) return;
-    _custom[item.key] = text;
+    final question = currentQuestion;
+    if (question == null || _busy) return;
+    _custom[question.id] = text;
+    _skipped.remove(question.id);
     notifyListeners();
   }
 
-  /// 已回答（选了选项或写了自定义）——
-  /// 决定"下一题/提交"是否可点（照原型的 `answered`）。
-  bool get answered => selected.isNotEmpty || custom.trim().isNotEmpty;
+  /// 当前这一题是否已被**显式跳过**。
+  bool get skipped => _skipped.contains(currentQuestion?.id);
+
+  /// 已回答（选了选项、写了自定义、或显式跳过）——
+  /// 决定"下一题/提交"是否可点（照原型的 `answered`，但把跳过算进去）。
+  bool get answered =>
+      selected.isNotEmpty || custom.trim().isNotEmpty || skipped;
 
   /// 审批：拒绝。
   Future<void> reject() => _settleApproval('rejected', '已拒绝');
@@ -239,63 +248,128 @@ class TakeoverController extends ChangeNotifier {
   /// 审批：**允许一次**（`allowed-once`，不是权限变更）。
   Future<void> allowOnce() => _settleApproval('allowed-once', '允许一次');
 
+  /// 计划的两种结局。`approveLabel` 由 DSH 给（`intent.approve`），
+  /// 手机不自己判"哪个标签算同意"—— 那正是契约 §6.4 的要求。
+  Future<void> settlePlan({required bool approved}) async {
+    final item = active;
+    if (item == null || _busy) return;
+    final label = item.approveLabel;
+    if (approved && (label == null || label.isEmpty)) {
+      // 没有同意标签就没法编码"同意"：那说明这条计划不是 DSH 的计划审查，
+      // 而是别的什么。如实失败，而不是随便挑一个选项顶替。
+      receipts.add((key: item.itemId, text: '计划回执 · 缺少同意标签，未能提交'));
+      notifyListeners();
+      return;
+    }
+    _busy = true;
+    notifyListeners();
+    final answer = InteractionAnswer(
+      sid: item.sid,
+      itemId: item.itemId,
+      callId: item.callId,
+      answers: [
+        InteractionAnswerItem(
+          id: item.questions.isEmpty ? item.callId : item.questions.first.id,
+          selected: approved ? <String>[label!] : const <String>[],
+        ),
+      ],
+    );
+    await _submit(answer);
+    receipts.add((
+      key: item.itemId,
+      text: '计划回执 · ${item.title} · ${approved ? '同意执行' : '要求修改'}',
+    ));
+    _busy = false;
+    settle(item.itemId);
+  }
+
   Future<void> _settleApproval(String outcome, String label) async {
     final item = active;
     if (item == null || _busy) return;
     _busy = true;
     notifyListeners();
-    // 原型是 `setTimeout(..., 420)` 的拟真延迟。这里不假装有网络：
-    // 真实现里这一步是 `interaction.respond` 的 await。
-    await Future<void>.delayed(const Duration(milliseconds: 120));
+    // 审批的答案是"选中的标签里有没有 `allowed-once`"：空 `selected` = 显式跳过 = 拒绝。
+    final answer = InteractionAnswer(
+      sid: item.sid,
+      itemId: item.itemId,
+      callId: item.callId,
+      answers: [
+        InteractionAnswerItem(
+          id: item.callId,
+          selected: outcome == 'allowed-once'
+              ? <String>[approvalAllowLabel]
+              : const <String>[],
+        ),
+      ],
+    );
+    await _submit(answer);
     receipts.add((
-      key: item.key,
+      key: item.itemId,
       text: '审批回执 · ${item.toolName} · $label（$outcome）',
     ));
     _busy = false;
-    _dequeue();
+    settle(item.itemId);
   }
 
-  /// 计划：同意执行 / 要求修改。
-  Future<void> settlePlan({required bool approved}) async {
-    final item = active;
-    if (item == null || _busy) return;
-    _busy = true;
-    notifyListeners();
-    await Future<void>.delayed(const Duration(milliseconds: 120));
-    receipts.add((
-      key: item.key,
-      text: '计划回执 · ${item.title} · ${approved ? '同意执行' : '要求修改'}',
-    ));
-    _busy = false;
-    _dequeue();
-  }
-
-  /// 提问：下一题 / 提交。
+  /// 显式跳过当前这一题（原型 `skipQuestion`）。
   ///
-  /// 最后一题提交时把答案整理成回执；**未回答的题不会被跳过** ——
+  /// **空答案是合法跳过**，不是"没答"：DSH 的输出 schema 明说
+  /// "Empty with no custom means the user explicitly skipped this question"。
+  /// 拦截它等于把合法答案变成失败。
+  void skipQuestion() {
+    final question = currentQuestion;
+    if (question == null || _busy) return;
+    _skipped.add(question.id);
+    _selected.remove(question.id);
+    _custom.remove(question.id);
+    notifyListeners();
+  }
+
+  /// 提问：下一题 / 提交（原型 `continueFlow`）。
+  ///
+  /// 最后一题提交时把**每一题**的答案整理成一个批次；未回答的题不会被跳过 ——
   /// 调用方（`answered`）保证按钮不可点。
   Future<void> submitQuestion() async {
     final item = active;
     if (item == null || _busy || !answered) return;
-    if (_questionIndex < 0) return;
-    // 有多题时逐题走（原型 `qs.index`）。这里只有一题的模型，
-    // 多题的推进留给真正接上 `ask_user_question` 时做 ——
-    // 如实记录，而不是假装支持。
+    if (_questionIndex < item.questions.length - 1) {
+      _questionIndex += 1;
+      notifyListeners();
+      return;
+    }
     _busy = true;
     notifyListeners();
-    await Future<void>.delayed(const Duration(milliseconds: 120));
-    final all = {...selected};
-    if (custom.trim().isNotEmpty) all.add(custom.trim());
-    receipts.add((key: item.key, text: '已回答 · ${all.join(' / ')}'));
+    final answer = InteractionAnswer(
+      sid: item.sid,
+      itemId: item.itemId,
+      callId: item.callId,
+      answers: [
+        for (final question in item.questions)
+          InteractionAnswerItem(
+            id: question.id,
+            selected: <String>[...?_selected[question.id]],
+            custom: _custom[question.id]?.trim().isNotEmpty == true
+                ? _custom[question.id]!.trim()
+                : null,
+          ),
+      ],
+    );
+    await _submit(answer);
+    final all = <String>[
+      for (final question in item.questions) ...?_selected[question.id],
+    ];
+    receipts.add((key: item.itemId, text: '已回答 · ${all.join(' / ')}'));
     _busy = false;
-    _dequeue();
+    settle(item.itemId);
   }
 
-  void _dequeue() {
-    _queue.removeAt(0);
-    _minimized = false;
-    _questionIndex = 0;
-    notifyListeners();
+  /// 把答复交给注入的出口。**没有出口时只记回执**（演示模式）。
+  ///
+  /// 失败**不吞**：`interaction/not-pending` 要让调用方看见，否则用户以为答成功了。
+  Future<void> _submit(InteractionAnswer answer) async {
+    final send = onAnswer;
+    if (send == null) return;
+    await send(answer);
   }
 }
 
@@ -348,9 +422,9 @@ class _TakeoverPanelState extends State<TakeoverPanel> {
               border: Border.all(
                 color: switch (item.kind) {
                   // 审批是"要你拿主意"的事 —— 告警色边框。
-                  TakeoverKind.approval => DshColors.roleTool,
-                  TakeoverKind.plan => DshColors.businessBlue,
-                  TakeoverKind.question => DshColors.layer2,
+                  InteractionKind.approval => DshColors.roleTool,
+                  InteractionKind.plan => DshColors.businessBlue,
+                  InteractionKind.question => DshColors.layer2,
                 },
               ),
             ),
@@ -389,20 +463,20 @@ class _Strip extends StatelessWidget {
   const _Strip({required this.controller, required this.item});
 
   final TakeoverController controller;
-  final TakeoverItem item;
+  final InteractionItem item;
 
   @override
   Widget build(BuildContext context) {
     final label = switch (item.kind) {
-      TakeoverKind.approval => '等待审批',
-      TakeoverKind.question => '等待回答',
-      TakeoverKind.plan => '等待确认计划',
+      InteractionKind.approval => '等待审批',
+      InteractionKind.question => '等待回答',
+      InteractionKind.plan => '等待确认计划',
     };
     // 审批与计划用告警/业务色，提问是中性的。
     final tone = switch (item.kind) {
-      TakeoverKind.approval => DshColors.roleTool,
-      TakeoverKind.plan => DshColors.businessBlue,
-      TakeoverKind.question => DshColors.labelSecondary,
+      InteractionKind.approval => DshColors.roleTool,
+      InteractionKind.plan => DshColors.businessBlue,
+      InteractionKind.question => DshColors.labelSecondary,
     };
     return Container(
       color: DshColors.layer2,
@@ -457,11 +531,15 @@ class _Body extends StatelessWidget {
   });
 
   final TakeoverController controller;
-  final TakeoverItem item;
+  final InteractionItem item;
   final TextEditingController input;
 
   @override
   Widget build(BuildContext context) {
+    // **多题时按当前题渲染**（原型 `qs.index`）：一次提问可以有 1..N 个问题，
+    // 铺成一屏长表单会让用户漏答，而逐个走正是 DSH 桌面端 `QuestionComposer` 的形状。
+    final question = controller.currentQuestion;
+    final multi = item.questions.length > 1;
     return ConstrainedBox(
       // **明细可以很长（审批的 diff、多题的选项），但整张卡必须有上限**。
       //
@@ -477,9 +555,9 @@ class _Body extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (item.header.isNotEmpty) ...[
+            if (question != null && question.header != null) ...[
               Text(
-                item.header,
+                question.header!,
                 style: const TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
@@ -489,7 +567,7 @@ class _Body extends StatelessWidget {
               const SizedBox(height: 4),
             ],
             Text(
-              item.title,
+              question?.question ?? item.title,
               style: const TextStyle(
                 fontSize: 14,
                 height: 21 / 14,
@@ -497,7 +575,7 @@ class _Body extends StatelessWidget {
                 color: DshColors.labelPrimary,
               ),
             ),
-            if (item.detail.isNotEmpty) ...[
+            if (question?.detail != null || item.detail.isNotEmpty) ...[
               const SizedBox(height: 10),
               Container(
                 width: double.infinity,
@@ -508,7 +586,7 @@ class _Body extends StatelessWidget {
                   border: Border.all(color: DshColors.layer2),
                 ),
                 child: Text(
-                  item.detail,
+                  question?.detail ?? item.detail,
                   style: const TextStyle(
                     fontFamily: 'monospace',
                     fontSize: 12,
@@ -518,19 +596,37 @@ class _Body extends StatelessWidget {
                 ),
               ),
             ],
-            if (item.options.isNotEmpty) ...[
+            if (multi) ...[
+              const SizedBox(height: 8),
+              Text(
+                '第 ${controller.questionIndex + 1} / ${item.questions.length} 题',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: DshColors.labelTertiary,
+                ),
+              ),
+            ],
+            // **计划不渲染选项行**：它的两个动作（要求修改 / 同意执行）就是决策面，
+            // 再把 DSH 给的两个标签铺成选项等于让用户在同一次决定上点两处
+            // （原型 `planHtml` 也只有正文 + 两个按钮）。
+            if (question != null &&
+                item.kind != InteractionKind.plan &&
+                question.options.isNotEmpty) ...[
               const SizedBox(height: 12),
-              for (var i = 0; i < item.options.length; i += 1)
+              for (var i = 0; i < question.options.length; i += 1)
                 _OptionRow(
                   index: i,
-                  option: item.options[i],
-                  multiSelect: item.multiSelect,
-                  selected: controller.selected.contains(item.options[i].label),
+                  option: question.options[i],
+                  multiSelect: question.multiSelect,
+                  selected: controller.selected.contains(
+                    question.options[i].label,
+                  ),
                   disabled: controller.busy,
-                  onTap: () => controller.toggleOption(item.options[i].label),
+                  onTap: () =>
+                      controller.toggleOption(question.options[i].label),
                 ),
             ],
-            if (item.kind == TakeoverKind.question) ...[
+            if (question != null) ...[
               const SizedBox(height: 10),
               _CustomAnswer(controller: controller, input: input),
             ],
@@ -563,7 +659,7 @@ class _OptionRow extends StatelessWidget {
   });
 
   final int index;
-  final TakeoverOption option;
+  final InteractionOption option;
   final bool multiSelect;
   final bool selected;
   final bool disabled;
@@ -685,14 +781,31 @@ class _OptionRow extends StatelessWidget {
 }
 
 /// 自定义答案那一行（`.opt` + 内联输入框）。
-class _CustomAnswer extends StatelessWidget {
+///
+/// **有状态**：多题时每题一个草稿，而输入框是共用的一个 `TextEditingController`。
+/// 换题必须把框里的文字换成那一题的草稿 —— 否则用户会在第二题的输入框里看到
+/// 第一题写过的东西，而提交出去的是第二题的（空）草稿。
+class _CustomAnswer extends StatefulWidget {
   const _CustomAnswer({required this.controller, required this.input});
 
   final TakeoverController controller;
   final TextEditingController input;
 
   @override
+  State<_CustomAnswer> createState() => _CustomAnswerState();
+}
+
+class _CustomAnswerState extends State<_CustomAnswer> {
+  String? _questionId;
+
+  @override
   Widget build(BuildContext context) {
+    final questionId = widget.controller.currentQuestion?.id;
+    if (questionId != _questionId) {
+      _questionId = questionId;
+      // 直接改 `text` 而不是重建 controller：重建会让输入框在每次击键后失焦。
+      widget.input.text = widget.controller.custom;
+    }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
@@ -705,9 +818,9 @@ class _CustomAnswer extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: TextField(
-              controller: input,
-              enabled: !controller.busy,
-              onChanged: controller.setCustom,
+              controller: widget.input,
+              enabled: !widget.controller.busy,
+              onChanged: widget.controller.setCustom,
               style: const TextStyle(
                 fontSize: 13.5,
                 color: DshColors.labelPrimary,
@@ -738,7 +851,7 @@ class _Actions extends StatelessWidget {
   });
 
   final TakeoverController controller;
-  final TakeoverItem item;
+  final InteractionItem item;
   final TextEditingController input;
 
   @override
@@ -748,7 +861,7 @@ class _Actions extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
       child: switch (item.kind) {
         // 审批：拒绝 / **允许一次**（不是"允许" —— 一次就是一次）。
-        TakeoverKind.approval => Row(
+        InteractionKind.approval => Row(
           children: [
             Expanded(
               child: _Button(
@@ -766,7 +879,7 @@ class _Actions extends StatelessWidget {
             ),
           ],
         ),
-        TakeoverKind.plan => Row(
+        InteractionKind.plan => Row(
           children: [
             Expanded(
               child: _Button(
@@ -788,18 +901,37 @@ class _Actions extends StatelessWidget {
             ),
           ],
         ),
-        // 提问：**未回答时提交不可点**（原型 `answered` 那个判据）。
-        TakeoverKind.question => _Button(
-          label: '提交',
-          filled: true,
-          onPressed: (busy || !controller.answered)
-              ? null
-              : () {
-                  input.clear();
-                  // 不等它：提交是"发出去"就完事，卡片会在
-                  // `submitQuestion` 内部 `notifyListeners` 后自己消失。
-                  unawaited(controller.submitQuestion());
-                },
+        // 提问：跳过 + **未回答时提交不可点**（原型 `answered` 那个判据）。
+        // 最后一题的按钮写"提交"，中间题写"下一题"（原型 `last ? '提交' : '下一题'`）。
+        InteractionKind.question => Row(
+          children: [
+            SizedBox(
+              width: 76,
+              child: _Button(
+                label: '跳过',
+                onPressed: busy || controller.skipped
+                    ? null
+                    : controller.skipQuestion,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _Button(
+                label: controller.questionIndex == item.questions.length - 1
+                    ? '提交'
+                    : '下一题',
+                filled: true,
+                onPressed: (busy || !controller.answered)
+                    ? null
+                    : () {
+                        input.clear();
+                        // 不等它：提交是"发出去"就完事，卡片会在
+                        // `submitQuestion` 内部 `notifyListeners` 后自己消失。
+                        unawaited(controller.submitQuestion());
+                      },
+              ),
+            ),
+          ],
         ),
       },
     );

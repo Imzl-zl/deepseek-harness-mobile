@@ -152,6 +152,8 @@ class SessionSummary {
     required this.updatedAt,
     this.itemCount = 0,
     this.pendingCount = 0,
+    this.running = false,
+    this.model,
   });
 
   /// 会话别名（电脑侧分配的不透明 id，契约 §5.1）。
@@ -167,18 +169,66 @@ class SessionSummary {
   /// 待处理（审批 / 提问）计数，UI 用来显示角标。
   final int pendingCount;
 
+  /// 电脑侧此刻是否有轮次在跑（`session.list` 的 `running`）。
+  ///
+  /// 它不是装饰：**给一个正在跑的会话发消息会被 DSH 排到下一个轮次**
+  /// （`sessionController.prompt` 走 `agent.followup`，`commands.ts:365`），
+  /// 于是"发出去"与"电脑侧看到"之间隔着一整个轮次。要立刻看到反应的
+  /// 发送方（如真机联调里那条审批探针）必须先挑一个空闲的。
+  final bool running;
+
+  /// 这个会话**下一次**将用的模型（`session.list` 的 `model`）。
+  ///
+  /// 来自 DSH 的 `modelSelection` 投影（`next ?? lastUsed`），
+  /// 见 `connector/src/dsh/models.ts`。**`null` 就是"不知道"** ——
+  /// 新建会话、或投影还没落时电脑侧也不说，这时界面显示"未选择"，
+  /// 而不是猜一个把"看起来连着"当成"连着"。
+  final ModelRef? model;
+
   SessionSummary copyWith({
     String? title,
     int? updatedAt,
     int? itemCount,
     int? pendingCount,
+    bool? running,
+    ModelRef? model,
   }) => SessionSummary(
     sid: sid,
     title: title ?? this.title,
     updatedAt: updatedAt ?? this.updatedAt,
     itemCount: itemCount ?? this.itemCount,
     pendingCount: pendingCount ?? this.pendingCount,
+    running: running ?? this.running,
+    model: model ?? this.model,
   );
+}
+
+/// 一次模型选择：provider 路由 + 该路由下的模型 id（effort 可选）。
+///
+/// 与 DSH 的 `ModelSelection` 逐字一致（`packages/api/session-controller/src/types.ts`）——
+/// **不翻译**：手机上显示的名字要能和电脑侧对上，翻译一层就多一处会漂移的地方。
+class ModelRef {
+  const ModelRef({
+    required this.provider,
+    required this.model,
+    this.reasoningEffort,
+  });
+
+  final String provider;
+  final String model;
+
+  /// 推理等级（DSH 的 `ReasoningEffortId`）；省道跟随 provider 默认。
+  final String? reasoningEffort;
+
+  /// 界面上显示的那个名字。**用 model id** 而不是 provider 名：
+  /// 同一个模型可能挂在多条路由下（`deepseek-official` 与 `deepseek-account`
+  /// 都有 `deepseek-flash`），用户认的是模型，不是路由。
+  String get label => model;
+
+  @override
+  String toString() =>
+      'ModelRef($provider/$model'
+      '${reasoningEffort == null ? '' : ', effort=$reasoningEffort'})';
 }
 
 /// 连接状态在界面上的说法（把 `ConnectionState` 翻成人话）。

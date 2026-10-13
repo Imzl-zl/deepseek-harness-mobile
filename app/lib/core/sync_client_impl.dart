@@ -111,6 +111,45 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   AppState _appState = AppState.foreground;
   bool _closed = false;
 
+  /// **已声明的订阅集**（`sid → since`）。它跟着连接活：断开即清空，
+  /// 重连后由 `sync.hello` 整份重新声明（契约 §5.4）。
+  ///
+  /// 为什么由本类记着而不是问 UI：UI 打开哪个会话是它的事，而"这条连接声明了哪些会话"
+  /// 是连接的状态 —— 断线之后 UI 不会再调一次 `subscribe`（用户没有重新点开），
+  /// 于是恢复只能由持有连接的这一层发起。
+  final Map<String, int> _declared = <String, int>{};
+
+  /// `sync.hello` 的载荷（契约 §5.4）：前后台态 + 整份订阅集。
+  ///
+  /// **`app` 是必须的**：电脑侧据此判定"用户是否正看着手机"，而 `foreground` 档的
+  /// 审批接管判据正是"前台且已订阅该会话"。少了它，手机上永远收不到审批。
+  Map<String, Object?> _helloParams() => <String, Object?>{
+    'app': _appState == AppState.foreground ? 'foreground' : 'background',
+    'sessions': <Object?>[
+      for (final entry in _declared.entries)
+        <String, Object?>{'sid': entry.key, 'since': entry.value},
+    ],
+  };
+
+  /// 发一次 `sync.hello`（恢复握手 + 应用态声明，契约 §5.4）。
+  ///
+  /// **不等应答**：应答里的恢复内容手机不用（增量与快照走订阅流，
+  /// `sync.hello` 只是"批量订阅 + 应用态声明"的入口）。而"紧接着可能就要断开"
+  /// 的场景必须等它真的写出去，所以这里等的是**写**，不是 `res`。
+  ///
+  /// 被拒时（例如某个 `sid` 已经不存在）的后果是"电脑侧不知道手机在前台"——
+  /// 于是审批继续在桌面上答。那是**安全**的方向，且下一次回前台还会再发一次
+  /// （契约 §9 的兜底），所以这里不把错误往上传。
+  Future<bool> _sendHello() async {
+    if (!_machine.acceptsBusinessFrames) return false;
+    return _sendFrameWritten({
+      'v': wireVersion,
+      't': 'req',
+      'id': _newId(),
+      'box': encodeRequestEnvelope('sync.hello', _helloParams()),
+    });
+  }
+
   int _now() => _deps.now?.call() ?? DateTime.now().millisecondsSinceEpoch;
 
   /// 定时器注入点。默认用真 `Timer`（`Timer.cancel` 就是那个"取消函数"）。
@@ -224,6 +263,9 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     _machine.to(ConnectionState.serving);
     // 连上了就把待发队列按序补发（§5.6：先落盘、连接可用时再发）。
     unawaited(_deps.outbox.flush());
+    // **进服务态就声明一次 `sync.hello`**：它是恢复握手 + 前后台态声明（契约 §5.4）。
+    // 断线期间 UI 不会重新 `subscribe`（用户没有重新点开），所以恢复只能在这里发起。
+    unawaited(_sendHello());
   }
 
   void _failHandshake(ErrorCode reason, Object? error) {
@@ -357,9 +399,17 @@ class _SyncClient implements SyncClient, SyncClientProbe {
 
   void _handleOpened(Map<String, Object?> frame, String plaintext) {
     final type = frame['t'];
-    // 流控记账在**解箱之后**：`credit` 的 ack 必须先被认证，
-    // 否则一帧伪造的 credit 就能替对端松开窗口（§4.3）。
-    _accountFlow(frame);
+    // **流控记账要用解箱后的那一帧**。
+    //
+    // 曾经这里直接把 `frame` 递给 `_accountFlow`，而 `frame['box']` 还是**密文** ——
+    // 于是 `decodeCredit` 拿到密文并抛 `credit 载荷不是合法 JSON`，
+    // 整条连接被 `_protocolFailure` 关掉。症状极有误导性：**握手成功、随即断线**，
+    // 而电脑侧一条日志都没有（真机实测：`serving` 之后 20 ms 就 `closed`）。
+    //
+    // 电脑侧同一处是对的（`connector/src/transport/connection.ts` 的
+    // `const opened = { ...frame, box: cipher.openFrame(...) }`，两份都从它取）——
+    // 这就是"两侧各写一遍"的代价：一侧改了另一侧不会红。
+    _accountFlow(<String, Object?>{...frame, 'box': plaintext});
 
     switch (type) {
       case 'res':
@@ -413,8 +463,22 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   // -------------------------------------------------------------------------
 
   /// 发一帧业务帧。**只有 `serving` 时可用**（`fc` 在这里分配，与封箱紧挨着）。
+  ///
+  /// @returns `false` = 这一帧**没有被接受**（不在服务态、满窗、或没有密码器）。
   bool _sendFrame(Map<String, Object?> frame) {
-    if (!_machine.acceptsBusinessFrames) return false;
+    final prepared = _prepareFrame(frame);
+    if (prepared == null) return false;
+    unawaited(_sealAndWrite(prepared));
+    return true;
+  }
+
+  /// 准备一帧：过服务态与窗口、分配 `fc`、记账。返回 `null` 表示没被接受。
+  ///
+  /// 与 {@link _sealAndWrite} 分开是**为了能只等"写出去"而不等应答**：
+  /// `sync.hello` 这种声明帧需要"发出去就好"（紧接着可能就要断开），
+  /// 而 `call()` 要等 `res`。合成一个口就只剩"等应答"一种形状。
+  Map<String, Object?>? _prepareFrame(Map<String, Object?> frame) {
+    if (!_machine.acceptsBusinessFrames) return null;
     final type = '${frame['t']}';
     // 满窗时对可补帧如实回 `false`：这一帧**没有被接受**，调用方据此暂停（§4.3）。
     //
@@ -423,37 +487,65 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     // 保留这个判定是因为契约是**双向**的：将来手机要发 `job` 控制帧时它就该起作用。
     // （原先这里还配了一套 `_writableWaiters` 唤醒机制，但**没有任何生产者**
     //  —— 那是照搬电脑侧的设计，已删；需要时随"手机发可补帧"一起加。）
-    if (!_res.canSend(type)) return false;
-
-    final codec = _res.box;
+    if (!_res.canSend(type)) return null;
+    if (_res.box == null) {
+      // 配了 secure 却拿不出密码器：只可能是"握手已过但密码器没装上"这类装配错误。
+      // 宁可不发，也不明文上线。
+      return null;
+    }
     // `fc` 的分配与封箱必须紧挨着（见文件头）。分配前先看窗口 —— 没发出去的帧
     // 不该消耗序号，否则窗口算术会把没上线的帧也算进去。
     final fc = _res.nextFc();
-    final wire = <String, Object?>{...frame, 'fc': fc};
     _res.onSent(fc, type);
+    return <String, Object?>{...frame, 'fc': fc};
+  }
 
-    if (codec == null) {
-      // 配了 secure 却拿不出密码器：只可能是"握手已过但密码器没装上"这类装配错误。
-      // 宁可不发，也不明文上线。
+  /// 封箱并写出。返回 `false` 表示封箱失败（那一帧没出去）。
+  Future<bool> _sealAndWrite(Map<String, Object?> wire) async {
+    final codec = _res.box;
+    if (codec == null) return false;
+    // **封箱之前记一份明文请求**：线上 `box` 是密文，事后无从知道发过哪个方法
+    // （诊断面因此完全瞎掉）。记在这是唯一能拿到明文的位置。
+    if ('${wire['t']}' == 'req') _recordRequest('${wire['box'] ?? ''}');
+    try {
+      final box = await codec.sealFrame(wire, '${wire['box'] ?? ''}');
+      _write(<String, Object?>{...wire, 'box': box});
+      return true;
+    } catch (error) {
+      // 封箱失败（比如 nonce 绊线）：这一帧不发，并吵一声。
+      _protocolFailure(
+        error is ProtocolException
+            ? error
+            : ProtocolException(ErrorCode.internal, '封箱失败：$error'),
+      );
       return false;
     }
+  }
 
-    unawaited(
-      codec
-          .sealFrame(wire, '${frame['box'] ?? ''}')
-          .then((box) {
-            _write(<String, Object?>{...wire, 'box': box});
-          })
-          .catchError((Object error) {
-            // 封箱失败（比如 nonce 绊线）：这一帧不发，并吵一声。
-            _protocolFailure(
-              error is ProtocolException
-                  ? error
-                  : ProtocolException(ErrorCode.internal, '封箱失败：$error'),
-            );
-          }),
-    );
-    return true;
+  /// 已发出的请求信封（**明文**，封箱前抄下来的）。有界：只留最近 64 条。
+  final List<Map<String, Object?>> _sentRequests = <Map<String, Object?>>[];
+
+  void _recordRequest(String envelopeText) {
+    try {
+      final parsed = jsonDecode(envelopeText);
+      if (parsed is Map) {
+        _sentRequests.add(Map<String, Object?>.from(parsed));
+        if (_sentRequests.length > 64) _sentRequests.removeAt(0);
+      }
+    } catch (_) {
+      // 记不下来的信封不影响发送；诊断面少一条而已。
+    }
+  }
+
+  /// 发一帧业务帧并**等它写出去**（不等应答）。
+  ///
+  /// 给"声明类"帧用：`sync.hello` 的应答内容手机不用（恢复内容走订阅流），
+  /// 但"紧接着要断开"的场景必须等它真的写出去，否则 `_disconnect()`
+  /// 会把还没封箱的那一帧连同连接一起丢掉。
+  Future<bool> _sendFrameWritten(Map<String, Object?> frame) async {
+    final prepared = _prepareFrame(frame);
+    if (prepared == null) return false;
+    return _sealAndWrite(prepared);
   }
 
   /// 发握手帧或配对帧（**不盖 `fc`**：它们的线上形状里没有这个字段，§3）。
@@ -669,6 +761,7 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   @override
   Future<void> subscribe(String sid, {required int since}) async {
     // 订阅是一次**写操作**（电脑侧要为它建立 follow），所以走 outbox：先落盘再发。
+    _declared[sid] = since;
     final requestId = _newId();
     await _deps.outbox.enqueue(
       OutboxEntry(
@@ -683,6 +776,7 @@ class _SyncClient implements SyncClient, SyncClientProbe {
 
   @override
   Future<void> unsubscribe(String sid) async {
+    _declared.remove(sid);
     final requestId = _newId();
     await _deps.outbox.enqueue(
       OutboxEntry(
@@ -740,9 +834,15 @@ class _SyncClient implements SyncClient, SyncClientProbe {
 
   @override
   Future<void> setAppState(AppState next) async {
+    final previous = _appState;
     _appState = next;
     _keepalive.setForeground(next == AppState.foreground);
     if (next == AppState.background) {
+      // **先声明退到后台，再断开**：电脑侧的 `foreground` 档接管判据是"前台且已订阅"，
+      // 声明过之后即使断开慢了一步，审批也不会继续推给一台已经退到后台的手机。
+      if (previous != next && _machine.acceptsBusinessFrames) {
+        await _sendHello();
+      }
       // 切后台主动断开并停表（§2.2）：三端都不做后台长连接（§13）。
       await _disconnect();
     } else if (_machine.isAnyOf([
@@ -951,6 +1051,15 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   /// 上一次落盘失败；没失败过是 `null`。
   @override
   Object? get lastPersistError => _lastPersistError;
+
+  /// 已声明的订阅集（`sync.hello` 的输入）。
+  @override
+  Map<String, int> get declaredSessions => Map.unmodifiable(_declared);
+
+  /// 已发出的请求信封（**明文**；线上的 `box` 是密文，事后无从知道发过哪个方法）。
+  @override
+  List<Map<String, Object?>> get sentRequests =>
+      List.unmodifiable(_sentRequests);
 
   // -------------------------------------------------------------------------
   // 供测试观察的帧收集（生产里 UI 不读这些）

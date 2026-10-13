@@ -16,8 +16,15 @@
 /// 也就是说：**本文件只做"读事件内容"，不做"算身份"**。
 library;
 
+import 'dart:convert';
+
 import '../core/items.dart';
 import '../model/chat_item.dart';
+import '../model/interaction.dart';
+
+/// `ask_user_question` 的工具名（DSH：
+/// `packages/interaction/user-questions/src/projection.ts:28` 的 `ASK_USER_QUESTION_TOOL`）。
+const String askUserQuestionTool = 'ask_user_question';
 
 /// 把一条 DSH 会话事件投影成界面条目。
 ///
@@ -79,12 +86,16 @@ ChatProjection projectEvent({
   }
 
   if (type == 'approval/asked') {
+    final toolName = stringField(data, 'toolName') ?? '工具';
+    final reason = stringField(data, 'reason');
     return ChatProjection.item(
       ApprovalItem(
         itemId: itemId,
         seq: seq,
         updatedAt: time,
-        title: stringField(data, 'title') ?? stringField(data, 'kind') ?? '待审批',
+        // 与接管卡同一套措辞（`interactionSignalOf`）：有 reason 照它说，
+        // 否则"工具 X 请求越权执行"。两处各写一份必然漂移。
+        title: reason ?? '工具 $toolName 请求越权执行',
         decided: false,
       ),
     );
@@ -96,9 +107,9 @@ ChatProjection projectEvent({
         itemId: itemId,
         seq: seq,
         updatedAt: time,
-        title: stringField(data, 'title') ?? '审批',
+        title: stringField(data, 'toolName') ?? '审批',
         decided: true,
-        decision: stringField(data, 'decision') ?? stringField(data, 'outcome'),
+        decision: stringField(data, 'outcome'),
       ),
     );
   }
@@ -218,8 +229,190 @@ String? stringField(Object? value, String key) {
   return field is String && field.isNotEmpty ? field : null;
 }
 
-/// 从首条用户消息推导会话标题（**电脑侧不返回标题**，见 `SessionSummary.title`）。
+/// 同 [stringField]，但名字更短（内部大量使用）。
+String? nonEmptyString(Object? value) =>
+    (value is String && value.isNotEmpty) ? value : null;
+
+// ---------------------------------------------------------------------------
+// 交互投影（契约 §6.3：待处理集合是会话事件的投影）
+// ---------------------------------------------------------------------------
+
+/// 把一条 DSH 会话事件投影成**交互信号**（开一个待处理项 / 收束一个）。
 ///
+/// ## 为什么待处理项从事件来，而不是电脑侧另推一份
+///
+/// 契约 §6.3 的原话："待处理集合是**会话事件的投影**，随 `ev` 帧一起到手机"，
+/// 而这不是比喻 —— 审批的 ask 在 DSH 侧就是一条 `approval/asked` 会话事件
+/// （`packages/interaction/user-approval/src/index.ts:225`，`request()` 在
+/// dispatch 之前 append）；提问的 ask 是 `ask_user_question` 的 `tool/call`。
+/// 于是手机不需要第二种推送通道，也不会有"两份待处理集合对不上"的问题。
+///
+/// ## 三类事件、三种收束
+///
+/// | 事件 | 信号 |
+/// |---|---|
+/// | `approval/asked` | 开（**带 `callId` 才开**，见下） |
+/// | `approval/decided` | 收束（同 `i:<id>` 覆盖） |
+/// | `tool/call`（`ask_user_question`） | 开 |
+/// | `tool/result` / 迟到的 `user-question-reply` | 收束 |
+///
+/// ## 没有 `callId` 的审批**不开卡**
+///
+/// 连接器的应答者要求 `request.callId !== undefined` 才 claim（没有稳定身份就
+/// 交还桌面，`connector/src/dsh/interactions.ts`）。于是没有 `callId` 的审批
+/// **本来就会在电脑上答** —— 在手机上摆一张答不了的卡是对用户说谎。
+///
+/// Note: 为什么计划审查按提问渲染（`intent` 不进会话事件）——
+/// 见 `.agents/notes/implemented/2026-10-10-interaction-to-phone-chain.md`。
+///
+/// @returns `null` = 这条事件与交互无关（绝大多数事件都是）。
+InteractionSignal? interactionSignalOf({
+  required String type,
+  required int seq,
+  required Object? data,
+}) {
+  if (type == 'approval/asked') {
+    // `callId` 是可选的（`user-approval/src/index.ts:228`）；没有它手机答不了。
+    final callId = nonEmptyString(fieldOf(data, 'callId'));
+    if (callId == null) return null;
+    final approvalId = nonEmptyString(fieldOf(data, 'id'));
+    if (approvalId == null) return null;
+    final toolName = nonEmptyString(fieldOf(data, 'toolName')) ?? '工具';
+    final reason = nonEmptyString(fieldOf(data, 'reason'));
+    return InteractionOpened(
+      InteractionItem(
+        itemId: 'i:$approvalId',
+        sid: '',
+        callId: callId,
+        kind: InteractionKind.approval,
+        toolName: toolName,
+        // 有 reason 就照它说；否则退回"工具 X 请求越权执行"（照 DSH 桌面的措辞）。
+        title: reason ?? '工具 $toolName 请求越权执行',
+      ),
+    );
+  }
+
+  if (type == 'approval/decided') {
+    final approvalId = nonEmptyString(fieldOf(data, 'id'));
+    if (approvalId == null) return null;
+    return InteractionSettled('i:$approvalId');
+  }
+
+  if (type == 'tool/call') {
+    if (nonEmptyString(fieldOf(data, 'name')) != askUserQuestionTool) {
+      return null;
+    }
+    final callId = nonEmptyString(fieldOf(data, 'callId'));
+    if (callId == null) return null;
+    final questions = _questionsOf(fieldOf(data, 'arguments'));
+    if (questions.isEmpty) return null;
+    final first = questions.first;
+    return InteractionOpened(
+      InteractionItem(
+        itemId: 't:$callId',
+        sid: '',
+        callId: callId,
+        kind: InteractionKind.question,
+        title: first.question,
+        header: first.header ?? '',
+        detail: first.detail ?? '',
+        options: first.options,
+        multiSelect: first.multiSelect,
+        questions: questions,
+      ),
+    );
+  }
+
+  if (type == 'tool/result') {
+    // 结果与调用共用同一个 itemId（`core/items.dart` 的配对规则）。
+    final callId = nonEmptyString(
+      fieldOf(fieldOf(data, 'message'), 'toolCallId'),
+    );
+    if (callId == null) return null;
+    return InteractionSettled('t:$callId');
+  }
+
+  if (type == 'user/message') {
+    // 迟到的答复：DSH 把它 steer 成一条 `source.kind='user-question-reply'` 的
+    // 用户消息，而那条消息同时是投影里"这个问题已关闭"的记录
+    // （`user-questions/src/index.ts:186-191`）。
+    final source = fieldOf(data, 'source');
+    if (nonEmptyString(fieldOf(source, 'kind')) != 'user-question-reply') {
+      return null;
+    }
+    final callId = nonEmptyString(fieldOf(source, 'callId'));
+    if (callId == null) return null;
+    return InteractionSettled('t:$callId');
+  }
+
+  return null;
+}
+
+/// 从 `ask_user_question` 的**工具参数**里读出问题清单。
+///
+/// 形状照 DSH 的 `toolArgumentsSchema`（`user-questions/src/projection.ts:43-53`）：
+/// `arguments` 是**JSON 字符串**，里层是 `{questions: [{id, question, header?, options?, multi_select?}]}`。
+/// 注意字段名是 **snake_case 的 `multi_select`**（模型看到的形状），
+/// 而应答链上的 `AskUserQuestionItem` 是 camelCase 的 `multiSelect` —— 两处形状不同，
+/// 照错的那个会让多选永远读成单选。
+///
+/// **读不懂就返回空表**：那是模型的坏参数，工具根本没被调用过，没有卡可显示
+/// （DSH 同一处也是 `return null`，`projection.ts:142-144`）。
+List<InteractionQuestion> _questionsOf(Object? arguments) {
+  if (arguments is! String || arguments.isEmpty) return const [];
+  Object? parsed;
+  try {
+    parsed = jsonDecode(arguments);
+  } catch (_) {
+    return const [];
+  }
+  final raw = fieldOf(parsed, 'questions');
+  if (raw is! List) return const [];
+  final out = <InteractionQuestion>[];
+  for (final entry in raw) {
+    final id = nonEmptyString(fieldOf(entry, 'id'));
+    final question = nonEmptyString(fieldOf(entry, 'question'));
+    // 缺 id 就没法把答案配对回去（契约 §5.7 的批次要按 id 对上），
+    // 缺题干就没什么可显示的 —— 两种都跳过这个问题，而不是摆一张空卡。
+    if (id == null || question == null) continue;
+    final rawOptions = fieldOf(entry, 'options');
+    final options = <InteractionOption>[];
+    if (rawOptions is List) {
+      for (final option in rawOptions) {
+        final label = nonEmptyString(fieldOf(option, 'label'));
+        if (label == null) continue;
+        options.add(
+          InteractionOption(
+            label: label,
+            description: nonEmptyString(fieldOf(option, 'description')),
+            // **"（推荐）"从标签里剥出来**单独做徽标（照原型）：标签本身干净，
+            // 徽标位置固定。DSH 的选项没有 recommended 字段，这是从文案里剥的。
+            recommended: _recommendedOf(label),
+          ),
+        );
+      }
+    }
+    out.add(
+      InteractionQuestion(
+        id: id,
+        question: question,
+        detail: nonEmptyString(fieldOf(entry, 'detail')),
+        header: nonEmptyString(fieldOf(entry, 'header')),
+        options: options,
+        multiSelect: fieldOf(entry, 'multi_select') == true,
+      ),
+    );
+  }
+  return out;
+}
+
+/// 标签里带"（推荐）"就算推荐（剥掉它再显示）。
+bool _recommendedOf(String label) {
+  final stripped = label.replaceAll(RegExp(r'[（(]推荐[)）]'), '');
+  return stripped != label;
+}
+
+/// 从首条用户消息推导会话标题（**电脑侧不返回标题**，见 `SessionSummary.title`）。
 /// DSH 桌面端也是这么做的：标题是本地投影，不是服务端字段。
 /// 推导规则保持极简（首条用户消息的前若干字）——复杂的标题生成该由模型做，
 /// 而不是由客户端猜。

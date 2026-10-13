@@ -131,6 +131,9 @@ class ChatPageState extends State<ChatPage> {
   /// 输入栏接管（审批 / 提问 / 计划）。
   final TakeoverController _takeover = TakeoverController();
 
+  /// 交互信号订阅（会话事件 → 接管队列）。
+  StreamSubscription<InteractionSignal>? _interactionSub;
+
   /// 打开左侧会话抽屉。
   ///
   /// 外层用 `GlobalKey<ChatPageState>` 调它（顶栏 `☰`、空态里的"打开会话抽屉"）。
@@ -146,6 +149,60 @@ class ChatPageState extends State<ChatPage> {
     // 权限档与接管队列联动：**完全权限下审批不入队**（原型 `enqueue` 的
     // 同一条逻辑 —— 那是"已授权"的结果，不是绕过）。
     _takeover.addListener(_onTakeoverChanged);
+    // **真实交互接进接管队列**：待处理项是会话事件的投影（契约 §6.3），
+    // 于是"对话流里有一条审批"与"输入栏上有一张审批卡"不可能对不上。
+    _interactionSub = widget.app.interactions.listen(_onInteractionSignal);
+    // 答复出口：控制器不认识 `AppModel`，所以在这一层把"答一次"接到
+    // `interaction.respond` 上（装配点才知道用哪个实现）。
+    // **没配对时不接**：那意味着没有电脑可答，而接一个必然失败的出口只会
+    // 让演示入口（`＋` → 演示接管）每次都被报成"已过期"。
+    _syncAnswerOutlet();
+  }
+
+  @override
+  void didUpdateWidget(ChatPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 配对状态是构造参数：配对上之后出口才该出现（见 `initState` 里同一句）。
+    if (oldWidget.paired != widget.paired) _syncAnswerOutlet();
+  }
+
+  void _syncAnswerOutlet() {
+    _takeover.onAnswer = widget.paired ? _onTakeoverAnswer : null;
+  }
+
+  /// 交互信号 → 接管队列。
+  void _onInteractionSignal(InteractionSignal signal) {
+    if (!mounted) return;
+    switch (signal) {
+      case InteractionOpened(:final item):
+        if (!_takeover.enqueue(item)) {
+          // 完全权限下审批不入队（原型同一条逻辑）—— 如实提示，不静默丢弃。
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('完全权限下不再逐步确认：${item.toolName} 直接执行')),
+          );
+        }
+      case InteractionSettled(:final itemId):
+        _takeover.settle(itemId);
+    }
+  }
+
+  /// 把一次答复发给电脑（契约 §5.7 的 `interaction.respond`）。
+  ///
+  /// **失败不吞**：`interaction/not-pending` 说明这一项已经不在待处理集合里
+  /// （电脑侧答过了、或会话被替换），用户该看到"已过期"而不是以为答成功了。
+  Future<void> _onTakeoverAnswer(InteractionAnswer answer) async {
+    try {
+      await widget.app.respondInteraction(answer);
+    } on Exception catch (error) {
+      // 结构化错误（`ProtocolException`）与其它异常都走这条：它们对用户是同一件事 ——
+      // "这一项没能答上去"。而 `interaction/not-pending` 的客户端动作正是
+      // "刷新待处理列表"，所以顺手把那一项从队列里撤掉。
+      if (!mounted) return;
+      _takeover.settle(answer.itemId);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('这一项已过期：$error')));
+    }
   }
 
   /// 切权限档（**唯一的入口**）。
@@ -173,6 +230,7 @@ class ChatPageState extends State<ChatPage> {
   void dispose() {
     _takeover.removeListener(_onTakeoverChanged);
     _takeover.dispose();
+    unawaited(_interactionSub?.cancel());
     _input.removeListener(_onInputChanged);
     _input.dispose();
     super.dispose();
@@ -348,10 +406,10 @@ class ChatPageState extends State<ChatPage> {
                 DshComposer(
                   controller: _input,
                   attachments: _attachments,
-                  // 模型名与推理等级：接上 `repo.info` 之后从真数据来，
-                  // 现在给占位（界面上看得出是占位：写的是"未连接"）。
-                  modelName: _hasData ? 'claude-opus' : '未连接',
-                  reasoningLabel: '高',
+                  // 模型名与推理等级：**从真投影来**（见 `_modelLabel`）。
+                  // 推理等级同样不写死：模型自带 effort 时显示它，否则显示"默认"。
+                  modelName: _modelLabel,
+                  reasoningLabel: _reasoningLabel,
                   accessMode: _accessMode,
                   sending: _sending,
                   enabled: _hasData && sid != null,
@@ -402,7 +460,38 @@ class ChatPageState extends State<ChatPage> {
   /// 是否有"可看的数据"（真连上了，或在看示例）。
   bool get _hasData => widget.paired || widget.app.isPreview;
 
+  /// 输入栏上显示的模型名。
+  ///
+  /// **从真投影来**（`SessionSummary.model`，源头是 DSH 的 `modelSelection` 投影，
+  /// 见 `connector/src/dsh/models.ts`）。这里曾经写死 `'claude-opus'`，
+  /// 于是手机上显示的模型与电脑侧真实状态毫无关系 —— 用户看到的"模型"是个谎言。
+  ///
+  /// 三个档次，按证据从强到弱：
+  /// ① 电脑侧说了 → 显示那个模型 id；
+  /// ② 电脑侧没说（`null`）但连着 → "未选择"（**不猜**）；
+  /// ③ 没连着 → "未连接"。
+  String get _modelLabel {
+    if (!_hasData) return '未连接';
+    final sid = widget.app.currentSid;
+    if (sid == null) return '未选择';
+    final model = widget.app.sessionOf(sid)?.model;
+    return model?.label ?? '未选择';
+  }
+
   String _statusIcon() => _hasData ? 'loading' : 'warningTriangle';
+
+  /// 推理等级的文字。
+  ///
+  /// 也**不写死**（原来是 `'高'`）：电脑侧给了 effort 就显示它，没给就显示"默认" ——
+  /// "默认"是实话（DSH 的 `reasoning` 带 `defaultEffort`，见
+  /// `packages/api/session-controller/src/catalog.ts`），编一个等级才是谎。
+  String get _reasoningLabel {
+    if (!_hasData) return '默认';
+    final sid = widget.app.currentSid;
+    if (sid == null) return '默认';
+    final effort = widget.app.sessionOf(sid)?.model?.reasoningEffort;
+    return effort ?? '默认';
+  }
 
   void _openSide() {
     if (!_hasData) {
@@ -742,9 +831,11 @@ class ChatPageState extends State<ChatPage> {
   void _enqueueDemoTakeovers() {
     setState(() {
       _takeover.enqueue(
-        const TakeoverItem(
-          key: 'demo-approval',
-          kind: TakeoverKind.approval,
+        const InteractionItem(
+          itemId: 'demo-approval',
+          sid: 'preview-1',
+          callId: 'demo-call-approval',
+          kind: InteractionKind.approval,
           toolName: 'bash',
           title: '工具 bash 请求越权执行',
           detail:
@@ -754,34 +845,59 @@ class ChatPageState extends State<ChatPage> {
         ),
       );
       _takeover.enqueue(
-        const TakeoverItem(
-          key: 'demo-question',
-          kind: TakeoverKind.question,
+        const InteractionItem(
+          itemId: 'demo-question',
+          sid: 'preview-1',
+          callId: 'demo-call-question',
+          kind: InteractionKind.question,
           header: 'DSH 想确认一件事',
           title: '拆连接层的资源束时，要不要顺手把「在途请求」也一起拆出去？',
-          options: [
-            TakeoverOption(
-              // **标签里不写"（推荐）"**：原型会把它剥出来单独渲染成徽标
-              //（`label.replace(/[（(]推荐[)）]/g, '')`）。
-              // 我第一版把"（推荐）"写进了标签，于是界面上同时出现
-              // 标签里的括号与独立徽标 —— 重复了。
-              label: '一起拆',
-              description: '它俩生命周期不同：资源束每连接换一份，在途请求要跨重连保留',
-              recommended: true,
+          questions: [
+            InteractionQuestion(
+              id: 'demo-q1',
+              header: 'DSH 想确认一件事',
+              question: '拆连接层的资源束时，要不要顺手把「在途请求」也一起拆出去？',
+              options: [
+                InteractionOption(
+                  // **标签里不写"（推荐）"**：原型会把它剥出来单独渲染成徽标
+                  //（`label.replace(/[（(]推荐[)）]/g, '')`）。
+                  // 我第一版把"（推荐）"写进了标签，于是界面上同时出现
+                  // 标签里的括号与独立徽标 —— 重复了。
+                  label: '一起拆',
+                  description: '它俩生命周期不同：资源束每连接换一份，在途请求要跨重连保留',
+                  recommended: true,
+                ),
+                InteractionOption(
+                  label: '先只拆资源束',
+                  description: '改动更小，但在途请求那个缺口会留着',
+                ),
+              ],
             ),
-            TakeoverOption(label: '先只拆资源束', description: '改动更小，但在途请求那个缺口会留着'),
           ],
         ),
       );
       _takeover.enqueue(
-        const TakeoverItem(
-          key: 'demo-plan',
-          kind: TakeoverKind.plan,
+        const InteractionItem(
+          itemId: 'demo-plan',
+          sid: 'preview-1',
+          callId: 'demo-call-plan',
+          kind: InteractionKind.plan,
           title: '把侧抽屉的「任务」面板接上 job 帧',
-          detail:
-              '1. 展开时 `job.follow`，收起时 `job.unfollow`\n'
-              '2. 把三帧映射成 SideJob\n'
-              '3. 停止走 `job.stop`，两步确认',
+          approveLabel: '同意执行',
+          questions: [
+            InteractionQuestion(
+              id: 'demo-call-plan',
+              question: '把侧抽屉的「任务」面板接上 job 帧',
+              detail:
+                  '1. 展开时 `job.follow`，收起时 `job.unfollow`\n'
+                  '2. 把三帧映射成 SideJob\n'
+                  '3. 停止走 `job.stop`，两步确认',
+              options: [
+                InteractionOption(label: '同意执行'),
+                InteractionOption(label: '要求修改'),
+              ],
+            ),
+          ],
         ),
       );
     });

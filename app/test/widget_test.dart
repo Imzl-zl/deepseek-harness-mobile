@@ -247,7 +247,12 @@ void main() {
       // 左组三件。
       expect(find.byTooltip('添加文件或调用指令'), findsOneWidget);
       expect(find.byTooltip('工作区内可改'), findsOneWidget);
-      expect(find.text('claude-opus'), findsOneWidget);
+      // 模型 chip **显示真状态**：没选中会话时电脑侧也说不出模型，
+      // 于是显示"未选择"。这里曾经写死 `'claude-opus'`，与电脑侧真实状态毫无关系
+      // （源头见 `connector/src/dsh/models.ts` 的文件头）。
+      expect(find.text('未选择'), findsOneWidget);
+      // 没选中会话：模型 chip 显示"未选择"。
+      expect(find.text('未选择'), findsOneWidget);
       // 占位符**照抄 DSH 原文**（半角逗号 + 空格）。
       // 用全角逗号会让它更宽、更早折行 —— 而在 320px 屏上它本来就接近放不下
       //（实测 15px 需要 345px、可用 282px），所以"折行"是预期的
@@ -456,6 +461,57 @@ void main() {
       expect(app.sessions, isNotEmpty, reason: '拉回来的会话要进模型');
     });
 
+    testWidgets('模型 chip 显示电脑侧那个模型，不是写死的占位', (tester) async {
+      // 守的是一个真 bug：`chat_page.dart` 里 `modelName: 'claude-opus'` 是**写死的**，
+      // 于是手机上显示的模型与电脑侧真实状态毫无关系。现在接的是 DSH 的
+      // `modelSelection` 投影（`connector/src/dsh/models.ts`），这一条钉住
+      // "电脑侧说什么，手机就显示什么"。
+      final client = _StatefulFakeClient(
+        sessions: [
+          {
+            'sid': 's1',
+            'itemCount': 1,
+            'updatedAt': 1,
+            'running': false,
+            // 形状与 DSH 的 `ModelSelection` 逐字一致。
+            'model': {'provider': 'lightvela-free', 'model': 'auto'},
+          },
+          {
+            'sid': 's2',
+            'itemCount': 1,
+            'updatedAt': 2,
+            'running': true,
+            // 这台没有 model 字段：电脑侧也说不出模型（新会话 / 投影还没落）。
+          },
+        ],
+      );
+      final app = AppModel(client: client);
+      await app.start();
+      await tester.pumpWidget(_wrap(app));
+      await tester.pumpAndSettle();
+      client.emit(ConnectionState.serving);
+      await tester.pumpAndSettle();
+
+      // 有模型的那台：显示模型 id。
+      await app.openSession('s1');
+      await tester.pumpAndSettle();
+      expect(
+        find.text('auto'),
+        findsOneWidget,
+        reason: '电脑侧给了模型就必须显示它 —— 写死占位等于对用户说谎',
+      );
+      expect(find.text('未选择'), findsNothing, reason: '已经有了还显示"未选择"，说明投影没接上');
+
+      // 没模型的那台：显示"未选择"，**不猜**。
+      await app.openSession('s2');
+      await tester.pumpAndSettle();
+      expect(
+        find.text('未选择'),
+        findsOneWidget,
+        reason: '电脑侧没说就别猜 —— 猜一个就是把"看起来连着"当成"连着"',
+      );
+    });
+
     testWidgets('已配对但列表为空：给"重新拉取会话"的出路，且失败要显示', (tester) async {
       // 会话由**电脑侧**随时新建，而自动拉只在进服务态那一次 ——
       // 没有手动入口，用户只能杀 App 重进（真机上就是这么被卡住的）。
@@ -501,7 +557,7 @@ void main() {
       await tester.pumpAndSettle();
 
       final chatPage = tester.widget<ChatPage>(find.byType(ChatPage));
-      // 用超长名字重建输入栏（夹具的 `modelName` 是页面里写死的占位值）。
+      // 用超长名字重建输入栏（直接喂 `DshComposer`，不经过页面的真数据链路）。
       await tester.pumpWidget(
         MaterialApp(
           theme: DshTheme.dark(),

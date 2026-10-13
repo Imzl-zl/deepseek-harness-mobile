@@ -15,6 +15,7 @@ import 'package:dsh_mobile/core/box.dart';
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/crypto.dart';
 import 'package:dsh_mobile/core/errors.dart';
+import 'package:dsh_mobile/core/flow.dart';
 import 'package:dsh_mobile/core/handshake.dart';
 import 'package:dsh_mobile/core/handshake_driver.dart';
 import 'package:dsh_mobile/core/keepalive.dart';
@@ -216,7 +217,11 @@ void main() {
     String? overrideSig,
   }) async {
     await pump(); // 等 `hello` 真的发出去
-    final helloFrame = transport.frameOf('hello');
+    // **最后一帧** hello：重连之后会有多帧，而要答的是**当前这条连接**发的那一帧
+    // （答早了的那一帧只会让旧连接白等，症状是"重连后再也进不了 serving"）。
+    final helloFrame = transport.sentFrames
+        .where((f) => f['t'] == 'hello')
+        .lastOrNull;
     expect(helloFrame, isNotNull, reason: '手机必须先发 hello');
     final hello = parseHello(helloFrame!['box']! as String);
     final ackFields = HelloAckFields(
@@ -233,8 +238,94 @@ void main() {
     await pump();
   }
 
+  group('sync.hello：恢复握手 + 前后台态声明（契约 §5.4、§6.2）', () {
+    test('进服务态就声明一次：app=foreground， sessions 是已声明的订阅集', () async {
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+      await pump();
+
+      final probe = client as SyncClientProbe;
+      final hello = probe.sentRequests.singleWhere(
+        (envelope) => envelope['method'] == 'sync.hello',
+      );
+      expect(hello['params'], {
+        'app': 'foreground',
+        'sessions': <Object?>[],
+      }, reason: '还没订阅任何会话：声明空集，而前后台态必须如实报');
+      // `sync.hello` 不带幂等键（它不是写操作）—— 电脑侧的分发器会因此放过它。
+      expect(hello['requestId'], isNull);
+
+      await client.close();
+    });
+
+    test('订阅集跟着声明走：subscribe 记下来，unsubscribe 摘掉', () async {
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+      final probe = client as SyncClientProbe;
+
+      await client.subscribe('s1', since: 7);
+      await client.subscribe('s2', since: 0);
+      await client.unsubscribe('s1');
+      expect(probe.declaredSessions, {'s2': 0});
+
+      // 断线重连之后**由连接层**重新声明整份订阅集（UI 不会重新点开会话）。
+      f.transport.dropFromPeer();
+      await pump();
+      expect(client.state, ConnectionState.backoff);
+      f.clock.advance(1000);
+      await pump();
+      await answerHello(f.transport);
+      await pump();
+
+      final hellos = probe.sentRequests
+          .where((envelope) => envelope['method'] == 'sync.hello')
+          .toList();
+      expect(hellos.length, 2, reason: '每次进服务态都声明一次');
+      expect(hellos.last['params'], {
+        'app': 'foreground',
+        'sessions': <Object?>[
+          {'sid': 's2', 'since': 0},
+        ],
+      }, reason: '恢复要的是"所有会话"，不是一个');
+
+      await client.close();
+    });
+
+    test('切后台：先声明 app=background 并**等它写出去**，再断开', () async {
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+      await client.subscribe('s1', since: 3);
+      final probe = client as SyncClientProbe;
+
+      await client.setAppState(AppState.background);
+      expect(client.state, ConnectionState.idle);
+
+      final hellos = probe.sentRequests
+          .where((envelope) => envelope['method'] == 'sync.hello')
+          .toList();
+      expect(hellos.length, 2, reason: '进服务态一次、切后台一次');
+      expect(
+        hellos.last['params'],
+        {
+          'app': 'background',
+          'sessions': <Object?>[
+            {'sid': 's1', 'since': 3},
+          ],
+        },
+        reason: '退到后台也要如实声明 —— 电脑侧的 foreground 档据此停止把审批推给手机',
+      );
+
+      await client.close();
+    });
+  });
+
   /// 复算会话密钥（测试扮演电脑侧要用它封箱）。
-  ///
   /// 材料全在测试手里且固定（种子、nonce、pairingId 都是注入的），所以复算一遍即可 ——
   /// **不重新实现协议**，只是把电脑侧该算的那一次算出来（`role: responder`）。
   Future<SessionKeys> sessionKeysFor(FakeTransport transport) async {
@@ -517,6 +608,48 @@ void main() {
       await client.close();
     });
 
+    test('**封了箱的** credit 必须被解开后记账（曾把密文喂给 decodeCredit）', () async {
+      // 这条守的是一个真 bug（2026-10-13 真机实测）：`_handleOpened` 把**还没解箱的**
+      // `frame` 递给 `_accountFlow`，于是 `decodeCredit` 拿到密文并抛
+      // `credit 载荷不是合法 JSON` → `_protocolFailure` → 关连接。
+      //
+      // 症状极有误导性：**握手成功、随即断线**（真机上 `serving` 之后 20 ms 就 closed），
+      // 而电脑侧一条日志都没有。上面那条"缺 box"的用例抓不到它 ——
+      // 它喂的帧压根没有箱，走的是另一条分支。
+      //
+      // 电脑侧同一处是对的（`connection.ts` 的 `opened` 两份都从它取）；
+      // 两侧各写一遍，一侧改了另一侧不会红。
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+      expect(client.state, ConnectionState.serving);
+
+      final keys = await sessionKeysFor(f.transport);
+      final codec = BoxCodec(keys: keys, role: HandshakeRole.responder);
+      // 电脑侧回一个**真封箱**的 credit（确认到 fc=0）。
+      final sealed = await codec.sealFrame({
+        'v': 1,
+        't': 'credit',
+        'fc': 0,
+      }, encodeCredit(0));
+      f.transport.feed(
+        '${jsonEncode({'v': 1, 't': 'credit', 'fc': 0, 'box': sealed})}\n',
+      );
+      await pump();
+
+      expect(
+        client.state,
+        ConnectionState.serving,
+        reason:
+            '封了箱的 credit 必须被解开后记账；把密文喂给 decodeCredit 会关连接'
+            '（诊断：${(client as SyncClientProbe).lastProtocolError?.message ?? '无'}）',
+      );
+      expect(f.transport.closeCount, 0, reason: '这一帧不该关连接');
+
+      await client.close();
+    });
+
     test('ev 的载荷是**真实 DSH 事件**（不是 fixtures 的 {itemId,text}）', () async {
       // 实测电脑侧封的是 `JSON.stringify(record.event)`，而它是
       // `{type, seq, time, data}`（`connector/src/session-subscriptions.ts:170,175`）。
@@ -746,21 +879,36 @@ void main() {
       // **真的发出去了**：这一条曾经是假的 —— 装配点传了
       // `send: (_) async => false`，于是 `flush()` 永远返回 `offline`、
       // 队列里每一条都永远发不出去，而症状只是"订阅了但收不到数据"。
-      final requests = f.transport.sentFrames
-          .where((frame) => frame['t'] == 'req')
+      //
+      // 按**方法名**数而不是按帧数：进服务态时还会发一帧 `sync.hello`
+      // （契约 §5.4 的恢复握手 + 前后台态声明）。线上的 `box` 是密文，
+      // 所以这里读诊断面上的明文信封（`SyncClientProbe.sentRequests`）。
+      final probe = client as SyncClientProbe;
+      final methods = probe.sentRequests
+          .map((envelope) => envelope['method'])
           .toList();
       expect(
-        requests.length,
+        methods.where((m) => m == 'session.subscribe').length,
         1,
-        reason:
-            'subscribe 应发出一帧 req（当前状态 ${client.state}，'
-            '已发帧类型 ${f.transport.sentFrames.map((x) => x['t']).toList()}）',
+        reason: 'subscribe 应发出一帧 session.subscribe req（当前状态 ${client.state}）',
       );
       expect(
-        requests.single['box'],
-        isNot(isEmpty),
+        methods.where((m) => m == 'sync.hello').length,
+        1,
+        reason: '进服务态必须声明一次 sync.hello（否则电脑侧不知道手机在前台）',
+      );
+      final subscribe = probe.sentRequests.singleWhere(
+        (envelope) => envelope['method'] == 'session.subscribe',
+      );
+      expect(
+        subscribe['requestId'],
+        isNotEmpty,
         reason: '写操作要带幂等键的信封（电脑侧据此去重，重发安全）',
       );
+      expect(subscribe['params'], {
+        'sid': 's1',
+        'since': 7,
+      }, reason: 'sid 与水位原样递下去');
 
       // 发出之后从队列里移除（电脑侧已收到）。
       expect(await f.store.load(), isEmpty, reason: '已发出的不该留在待发队列里');

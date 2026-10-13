@@ -68,6 +68,9 @@ abstract interface class SyncClient {
   /// 订阅一个会话。
   ///
   /// [since] 是手机手里的水位（本地库的落盘水位）。电脑侧据此决定给增量还是快照。
+  ///
+  /// 订阅集会跟着连接走：每次进服务态都用 `sync.hello` 把它**整份**重新声明一次
+  /// （契约 §5.4：手机回到前台时要恢复的是"所有会话"，不是一个）。
   Future<void> subscribe(String sid, {required int since});
 
   /// 退订一个会话。
@@ -144,6 +147,19 @@ abstract interface class SyncClientProbe {
   /// 它值得暴露，理由同上但更严重：**落盘失败的表现是"数据少了一段"**，
   /// 而不是任何用户可见的错误。没有这个字段，那条失败只留在日志里。
   Object? get lastPersistError;
+
+  /// 已声明的订阅集（`sid → since`）—— `sync.hello` 会把它整份重新声明（契约 §5.4）。
+  ///
+  /// 暴露给测试与诊断：**断线之后 UI 不会重新 `subscribe`**（用户没有重新点开），
+  /// 于是"恢复"只能由持有连接的这一层发起。看不到这份声明，就无法断言它真的发过。
+  Map<String, int> get declaredSessions;
+
+  /// 已发出的请求信封（**明文**）。
+  ///
+  /// 线上的 `box` 是密文，于是"我们到底发过哪个方法"在诊断面上完全看不出来 ——
+  /// 而这一类问题（订阅发了但电脑不认、幂等键漏了）只能靠它查。记在封箱之前，
+  /// 所以它是真发出去的那些（最多最近 64 条）。
+  List<Map<String, Object?>> get sentRequests;
 }
 
 /// 一次会话更新（`sessionUpdates` 的元素）。

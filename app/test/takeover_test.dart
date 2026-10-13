@@ -21,20 +21,30 @@ import 'package:dsh_mobile/ui/takeover.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
 
-TakeoverItem approval(String key, {String tool = 'bash'}) => TakeoverItem(
-  key: key,
-  kind: TakeoverKind.approval,
+InteractionItem approval(String key, {String tool = 'bash'}) => InteractionItem(
+  itemId: key,
+  sid: 'sid-1',
+  callId: 'call-$key',
+  kind: InteractionKind.approval,
   toolName: tool,
   title: '工具 $tool 请求越权执行',
 );
 
-TakeoverItem question(String key) => TakeoverItem(
-  key: key,
-  kind: TakeoverKind.question,
+InteractionItem question(String key) => InteractionItem(
+  itemId: key,
+  sid: 'sid-1',
+  callId: 'call-$key',
+  kind: InteractionKind.question,
   title: '选哪个？',
-  options: const [
-    TakeoverOption(label: '甲'),
-    TakeoverOption(label: '乙', description: '乙的说明'),
+  questions: const [
+    InteractionQuestion(
+      id: 'q1',
+      question: '选哪个？',
+      options: [
+        InteractionOption(label: '甲'),
+        InteractionOption(label: '乙', description: '乙的说明'),
+      ],
+    ),
   ],
 );
 
@@ -54,7 +64,7 @@ void main() {
       final c = TakeoverController();
       c.enqueue(approval('a1'));
       c.enqueue(approval('a2'));
-      expect(c.active?.key, 'a1');
+      expect(c.active?.itemId, 'a1');
       expect(c.queue.length, 2);
     });
 
@@ -63,7 +73,7 @@ void main() {
       c.enqueue(approval('a1'));
       c.enqueue(approval('a2'));
       await c.allowOnce();
-      expect(c.active?.key, 'a2');
+      expect(c.active?.itemId, 'a2');
       expect(c.queue.length, 1);
     });
 
@@ -75,7 +85,6 @@ void main() {
       expect(c.queue.length, 1);
       expect(c.phase, TakeoverPhase.active, reason: '重入同一个 key 应顺带恢复显示');
     });
-
     test('空队列时 phase 是 idle（输入栏正常）', () {
       expect(TakeoverController().phase, TakeoverPhase.idle);
     });
@@ -109,7 +118,7 @@ void main() {
       c.enqueue(approval('a1'));
       await c.allowOnce();
       c.enqueue(approval('a2'));
-      expect(c.active?.key, 'a2', reason: '第二次仍要排队等授权');
+      expect(c.active?.itemId, 'a2', reason: '第二次仍要排队等授权');
       expect(c.phase, TakeoverPhase.active);
     });
   });
@@ -128,7 +137,13 @@ void main() {
       expect(c.enqueue(question('q1')), isTrue);
       expect(
         c.enqueue(
-          const TakeoverItem(key: 'p1', kind: TakeoverKind.plan, title: '计划'),
+          const InteractionItem(
+            itemId: 'p1',
+            sid: 'sid-1',
+            callId: 'call-p1',
+            kind: InteractionKind.plan,
+            title: '计划',
+          ),
         ),
         isTrue,
       );
@@ -159,14 +174,22 @@ void main() {
     test('多选可以同时选两个', () {
       final c = TakeoverController();
       c.enqueue(
-        const TakeoverItem(
-          key: 'q1',
-          kind: TakeoverKind.question,
+        const InteractionItem(
+          itemId: 'q1',
+          sid: 'sid-1',
+          callId: 'call-q1',
+          kind: InteractionKind.question,
           title: '多选',
-          multiSelect: true,
-          options: [
-            TakeoverOption(label: '甲'),
-            TakeoverOption(label: '乙'),
+          questions: [
+            InteractionQuestion(
+              id: 'q1',
+              question: '多选',
+              multiSelect: true,
+              options: [
+                InteractionOption(label: '甲'),
+                InteractionOption(label: '乙'),
+              ],
+            ),
           ],
         ),
       );
@@ -225,13 +248,174 @@ void main() {
     });
   });
 
+  group('答复出口（`interaction.respond`，契约 §5.7）', () {
+    test('审批"允许一次"发的是 `allowed-once` 标签；"拒绝"发空 selected', () async {
+      // 标签本身用**字面值**断（下面那条），这里断的是行为。
+      expect(approvalAllowLabel, 'allowed-once', reason: '跨端契约的那个字符串');
+      final sent = <InteractionAnswer>[];
+      final c = TakeoverController()
+        ..onAnswer = (answer) async => sent.add(answer);
+
+      c.enqueue(approval('a1'));
+      await c.allowOnce();
+      expect(sent.single.callId, 'call-a1');
+      expect(sent.single.answers.single.id, 'call-a1');
+      expect(
+        sent.single.answers.single.selected,
+        // **字面值，不 import 常量**：这条断言钉的是"跨端契约的那个字符串"，
+        // 用同一个常量来断等于恒真（改常量两边一起改，红不了）。
+        const ['allowed-once'],
+        reason: 'DSH 的 outcome 词汇表里唯一授权值是 allowed-once',
+      );
+
+      c.enqueue(approval('a2'));
+      await c.reject();
+      expect(
+        sent.last.answers.single.selected,
+        isEmpty,
+        reason: '空 selected 且无 custom 是合法的「显式跳过」，对审批就是拒绝',
+      );
+    });
+
+    test('提问的答案批次**原样转发**：每个问题恰好一项', () async {
+      final sent = <InteractionAnswer>[];
+      final c = TakeoverController()
+        ..onAnswer = (answer) async => sent.add(answer);
+      c.enqueue(
+        const InteractionItem(
+          itemId: 'q1',
+          sid: 'sid-1',
+          callId: 'call-q1',
+          kind: InteractionKind.question,
+          title: '两题',
+          questions: [
+            InteractionQuestion(
+              id: 'scope',
+              question: '选范围',
+              multiSelect: true,
+              options: [
+                InteractionOption(label: '全部'),
+                InteractionOption(label: '只读'),
+              ],
+            ),
+            InteractionQuestion(id: 'note', question: '补充'),
+          ],
+        ),
+      );
+
+      // 第一题：多选两个。
+      c.toggleOption('全部');
+      c.toggleOption('只读');
+      await c.submitQuestion();
+      expect(c.questionIndex, 1, reason: '还有一题：提交键在这一题上是"下一题"');
+
+      // 第二题：自定义答案。
+      c.setCustom('  别碰生产库  ');
+      await c.submitQuestion();
+
+      expect(sent.length, 1, reason: '一批答案一次发出去，不是每题一发');
+      final batch = sent.single;
+      expect(batch.answers.length, 2, reason: '每个问题恰好一项（DSH 的 BAD_ANSWER 判据）');
+      expect(batch.answers[0].id, 'scope');
+      expect(batch.answers[0].selected, ['全部', '只读']);
+      expect(batch.answers[1].id, 'note');
+      // 自定义答案**去掉首尾空白**再发（否则电脑侧收到的是带空格的"答案"）。
+      expect(batch.answers[1].custom, '别碰生产库');
+      expect(c.queue, isEmpty);
+    });
+
+    test('显式跳过：空 selected 且无 custom 也照样提交', () async {
+      final sent = <InteractionAnswer>[];
+      final c = TakeoverController()
+        ..onAnswer = (answer) async => sent.add(answer);
+      c.enqueue(question('q1'));
+
+      c.skipQuestion();
+      expect(c.answered, isTrue, reason: '跳过是合法的回答，不是"没答"');
+      await c.submitQuestion();
+      expect(sent.single.answers.single.selected, isEmpty);
+      expect(sent.single.answers.single.custom, isNull);
+    });
+
+    test('计划：同意执行发的是 DSH 给的 approveLabel', () async {
+      final sent = <InteractionAnswer>[];
+      final c = TakeoverController()
+        ..onAnswer = (answer) async => sent.add(answer);
+      c.enqueue(
+        const InteractionItem(
+          itemId: 'p1',
+          sid: 'sid-1',
+          callId: 'call-p1',
+          kind: InteractionKind.plan,
+          title: '一个计划',
+          approveLabel: 'Approve plan',
+          questions: [
+            InteractionQuestion(
+              id: 'plan-1',
+              question: '一个计划',
+              options: [
+                InteractionOption(label: 'Approve plan'),
+                InteractionOption(label: 'Keep planning'),
+              ],
+            ),
+          ],
+        ),
+      );
+
+      await c.settlePlan(approved: true);
+      expect(sent.single.answers.single.selected, ['Approve plan']);
+
+      c.enqueue(
+        const InteractionItem(
+          itemId: 'p2',
+          sid: 'sid-1',
+          callId: 'call-p2',
+          kind: InteractionKind.plan,
+          title: '又一个计划',
+          approveLabel: 'Approve plan',
+          questions: [
+            InteractionQuestion(
+              id: 'plan-2',
+              question: '又一个计划',
+              options: [
+                InteractionOption(label: 'Approve plan'),
+                InteractionOption(label: 'Keep planning'),
+              ],
+            ),
+          ],
+        ),
+      );
+      await c.settlePlan(approved: false);
+      expect(sent.last.answers.single.selected, isEmpty, reason: '其余一律拒绝');
+    });
+
+    test('没有出口时不发也不崩（演示模式）', () async {
+      final c = TakeoverController()..enqueue(approval('a1'));
+      await c.allowOnce();
+      expect(c.queue, isEmpty);
+      expect(c.receipts.single.text, contains('allowed-once'));
+    });
+
+    test('`settle` 撤掉的可以不是队首（迟到的 decided 排在别的待处理项后面）', () {
+      final c = TakeoverController()
+        ..enqueue(approval('a1'))
+        ..enqueue(approval('a2'));
+      expect(c.settle('i:a2'), isFalse, reason: 'itemId 对不上就不动');
+      expect(c.settle('a2'), isTrue);
+      expect(c.active?.itemId, 'a1');
+      expect(c.queue.length, 1);
+    });
+  });
+
   group('界面', () {
     testWidgets('审批卡显示标题、明细与两个按钮', (tester) async {
       final c = TakeoverController();
       c.enqueue(
-        const TakeoverItem(
-          key: 'a1',
-          kind: TakeoverKind.approval,
+        const InteractionItem(
+          itemId: 'a1',
+          sid: 'sid-1',
+          callId: 'call-a1',
+          kind: InteractionKind.approval,
           toolName: 'bash',
           title: '工具 bash 请求越权执行',
           detail: 'rm -rf build/',
@@ -285,11 +469,19 @@ void main() {
     testWidgets('推荐是**徽标**且从标签里剥出来了', (tester) async {
       final c = TakeoverController();
       c.enqueue(
-        const TakeoverItem(
-          key: 'q1',
-          kind: TakeoverKind.question,
+        const InteractionItem(
+          itemId: 'q1',
+          sid: 'sid-1',
+          callId: 'call-q1',
+          kind: InteractionKind.question,
           title: '选哪个？',
-          options: [TakeoverOption(label: '一起拆', recommended: true)],
+          questions: [
+            InteractionQuestion(
+              id: 'q1',
+              question: '选哪个？',
+              options: [InteractionOption(label: '一起拆', recommended: true)],
+            ),
+          ],
         ),
       );
       await tester.pumpWidget(_wrap(c));
@@ -305,7 +497,24 @@ void main() {
     testWidgets('计划：两个按钮是"要求修改 / 同意执行"', (tester) async {
       final c = TakeoverController();
       c.enqueue(
-        const TakeoverItem(key: 'p1', kind: TakeoverKind.plan, title: '一个计划'),
+        const InteractionItem(
+          itemId: 'p1',
+          sid: 'sid-1',
+          callId: 'call-p1',
+          kind: InteractionKind.plan,
+          title: '一个计划',
+          approveLabel: '同意执行',
+          questions: [
+            InteractionQuestion(
+              id: 'plan-1',
+              question: '一个计划',
+              options: [
+                InteractionOption(label: '同意执行'),
+                InteractionOption(label: '要求修改'),
+              ],
+            ),
+          ],
+        ),
       );
       await tester.pumpWidget(_wrap(c));
       await tester.pumpAndSettle();

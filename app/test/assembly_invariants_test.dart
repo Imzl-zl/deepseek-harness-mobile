@@ -133,4 +133,26 @@ void main() {
     expect(source.contains('SqfliteOutboxStore(store)'), isTrue);
     expect(source.contains('StoreItemPersister(store)'), isTrue);
   });
+
+  test('PairingClient 与 PairingPage 用同一个明文放行判据', () {
+    // **这条守的是一个真 bug**（2026-10-13 真机实测）：`PairingPage` 放了明文，
+    // 于是配对成功；而装配里的 `PairingClient` 没放，于是**换不到票** ——
+    // 症状正是文档里那句"码认了、票换不了"，而两端日志都看不出原因。
+    //
+    // 两处必须是同一个判据（`kDebugMode`）：放行的范围是"debug 构建的本机回环"，
+    // 不是"某个调用点忘了"。
+    final client = _callTextOf(source, 'PairingClient(');
+    expect(client, isNotNull, reason: '装配点应有 PairingClient(...) 调用');
+    expect(
+      client!.contains('allowInsecureLocal: kDebugMode'),
+      isTrue,
+      reason: '换票也必须放行本机明文；只放 PairingPage 会出现"配对成功但永远换不到票"',
+    );
+    // 反向也钉：别把放行写成无条件 true（那会让 release 也走明文）。
+    expect(
+      client.contains('allowInsecureLocal: true'),
+      isFalse,
+      reason: 'release 构建不允许明文（契约 §2：手机侧恒为 wss）',
+    );
+  });
 }

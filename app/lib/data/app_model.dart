@@ -28,6 +28,7 @@ import '../core/connection.dart';
 import '../core/errors.dart';
 import '../core/sync_client.dart';
 import '../model/chat_item.dart';
+import '../model/interaction.dart';
 import 'preview_data.dart';
 import 'projection.dart';
 import 'session_store.dart';
@@ -95,10 +96,31 @@ class AppModel extends ChangeNotifier {
   StreamSubscription<ConnectionState>? _stateSub;
   final Map<String, StreamSubscription<SessionDelta>> _deltaSubs = {};
 
+  /// 交互信号流（契约 §6.3：待处理集合是会话事件的投影）。
+  ///
+  /// **广播**流：UI 的接管队列要听，会话列表的角标也要听。
+  final StreamController<InteractionSignal> _interactions =
+      StreamController<InteractionSignal>.broadcast();
+
   bool _disposed = false;
+
+  /// 交互信号（开一个待处理项 / 收束一个）。
+  Stream<InteractionSignal> get interactions => _interactions.stream;
 
   /// 会话列表（只读快照）。
   List<SessionSummary> get sessions => _sessions;
+
+  /// 按别名取一个会话；没有就 `null`。
+  ///
+  /// 输入栏的模型名走它（`chat_page.dart` 的 `_modelLabel`）——
+  /// 直接从 `sessions` 里 `firstWhereOrNull` 会让"当前会话不在列表里"变成一个异常，
+  /// 而那是正常情况（刚 `openSession` 一个还没被 `session.list` 刷到的会话）。
+  SessionSummary? sessionOf(String sid) {
+    for (final s in _sessions) {
+      if (s.sid == sid) return s;
+    }
+    return null;
+  }
 
   /// 当前会话的条目（只读快照；没打开会话时是空表）。
   List<ChatItem> get items =>
@@ -314,19 +336,31 @@ class AppModel extends ChangeNotifier {
     // **持久事件** → 投影成界面条目 → upsert。
     // 一次恢复可能带一批：`upsertAll` 内部把通知合并成一次。
     if (delta.events.isNotEmpty) {
-      store.upsertAll(
-        delta.events
-            .map(
-              (event) => projectEvent(
-                type: event.type,
-                seq: event.seq,
-                data: event.data,
-                time: event.time,
-              ),
-            )
-            .where((projection) => projection.isItem)
-            .map((projection) => projection.item!),
-      );
+      final items = <ChatItem>[];
+      for (final event in delta.events) {
+        items.add(
+          projectEvent(
+            type: event.type,
+            seq: event.seq,
+            data: event.data,
+            time: event.time,
+          ).item!,
+        );
+        // **交互信号与条目投影同源**：两者读同一个事件，于是"对话流里有一条审批"
+        // 与"输入栏上有一张审批卡"不可能对不上。
+        final signal = interactionSignalOf(
+          type: event.type,
+          seq: event.seq,
+          data: event.data,
+        );
+        if (signal is InteractionOpened) {
+          // 信号要带上 `sid`（投影层不认识会话别名，那是这一层的事）。
+          _interactions.add(InteractionOpened(_withSid(signal.item, sid)));
+        } else if (signal is InteractionSettled) {
+          _interactions.add(signal);
+        }
+      }
+      store.upsertAll(items);
     }
 
     // **流式文本** → 单独的槽位（UI 从它读"正在生成的这段"）。
@@ -350,6 +384,45 @@ class AppModel extends ChangeNotifier {
 
   SessionStore _storeOf(String sid) =>
       _stores.putIfAbsent(sid, () => SessionStore(sid));
+
+  /// 把投影出来的待处理项补上 `sid`（投影层不认识会话别名，那是这一层的事）。
+  static InteractionItem _withSid(InteractionItem item, String sid) =>
+      InteractionItem(
+        itemId: item.itemId,
+        sid: sid,
+        callId: item.callId,
+        kind: item.kind,
+        title: item.title,
+        detail: item.detail,
+        toolName: item.toolName,
+        header: item.header,
+        options: item.options,
+        multiSelect: item.multiSelect,
+        questions: item.questions,
+        approveLabel: item.approveLabel,
+      );
+
+  /// 把一次答复发给电脑（契约 §5.7 的 `interaction.respond`）。
+  ///
+  /// **答案批次原样转发**，一个字段都不翻译：翻译层就是漂移层（契约 §6.3.1）。
+  /// 幂等键是 `i:<callId>`（§5.7 的表），所以重复点两次不会变成两次授权。
+  ///
+  /// 失败**照原样抛**：调用方（接管卡）要据此把那一项标成"已过期"，
+  /// 而吞掉它会让用户以为答成功了 —— 答案从未进入会话。
+  Future<void> respondInteraction(InteractionAnswer answer) async {
+    await client.call<Object?>('interaction.respond', <String, Object?>{
+      'sid': answer.sid,
+      'callId': answer.callId,
+      'answers': <Object?>[
+        for (final item in answer.answers)
+          <String, Object?>{
+            'id': item.id,
+            'selected': item.selected,
+            if (item.custom != null) 'custom': item.custom,
+          },
+      ],
+    }, requestId: 'i:${answer.callId}');
+  }
 
   void _touchSummary(String sid, SessionStore store) {
     final index = _sessions.indexWhere((s) => s.sid == sid);
@@ -403,10 +476,36 @@ class AppModel extends ChangeNotifier {
           sid: sid,
           title: '',
           updatedAt: (entry['updatedAt'] as num?)?.toInt() ?? 0,
+          // 电脑侧一直在发（`connector/src/handlers.ts` 的 `session.list`），
+          // 只是手机侧此前丢掉了它 —— 而"这个会话正在跑"决定了新消息会不会被排队。
+          running: entry['running'] == true,
+          // 当前模型：来自 DSH 的 `modelSelection` 投影（`connector/src/dsh/models.ts`）。
+          // **认不出就不给**（`null`），界面显示"未选择"—— 猜一个就是把
+          // "看起来连着"当成"连着"。
+          model: _parseModelRef(entry['model']),
         ),
       );
     }
     return out;
+  }
+
+  /// 解析 `session.list` 行里的 `model` 字段。
+  ///
+  /// 形状与 DSH 的 `ModelSelection` 逐字一致（`{provider, model, reasoningEffort?}`）。
+  /// 字段不齐就当没有 —— 一个缺 `model` 的 `ModelRef` 显示不出来，
+  /// 而硬填一个空串会让界面显示一个空的模型名。
+  static ModelRef? _parseModelRef(Object? raw) {
+    if (raw is! Map) return null;
+    final provider = raw['provider'];
+    final model = raw['model'];
+    if (provider is! String || provider.isEmpty) return null;
+    if (model is! String || model.isEmpty) return null;
+    final effort = raw['reasoningEffort'];
+    return ModelRef(
+      provider: provider,
+      model: model,
+      reasoningEffort: effort is String && effort.isNotEmpty ? effort : null,
+    );
   }
 
   /// 释放（**幂等**）。
@@ -419,6 +518,7 @@ class AppModel extends ChangeNotifier {
       unawaited(sub.cancel());
     }
     _deltaSubs.clear();
+    unawaited(_interactions.close());
     for (final store in _stores.values) {
       unawaited(store.dispose());
     }

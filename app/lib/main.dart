@@ -501,6 +501,14 @@ Future<AppModel> _assemble(PairedCredentials credentials) async {
   final pairingClient = PairingClient(
     relayUrl: credentials.relayUrl,
     send: _httpSender,
+    // **明文联调放行必须与 PairingPage 用同一个判据**。
+    //
+    // 少了它，配对成功也换不到票：`PairingClient` 默认拒绝 `ws://`
+    // （`core/pairing_client.dart` 的 `allowInsecureLocal` 默认 false），
+    // 而症状正是"码认了、票换不了"—— 真机实测踩到（2026-10-13）。
+    // 这是明文放行的**第三处**：另两处是 Android 的
+    // `network_security_config.xml` 与 `PairingPage.allowInsecureLocal`。
+    allowInsecureLocal: kDebugMode,
   );
   final transport = TicketedWebSocketTransport(
     endpoint: credentials.relayUrl,
