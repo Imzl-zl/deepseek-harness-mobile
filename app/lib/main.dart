@@ -436,6 +436,9 @@ Future<AppModel> _assembleWithoutCredentials() async {
   final store = SqfliteItemStore();
   await store.open();
   return AppModel(
+    // 偏好走同一个库的 `meta` 表（`MetaPreferences` 包一层窄缝）——
+    // 发送模式这类"穿过协议"的偏好必须落盘，重启后还是用户选的那个。
+    prefs: MetaPreferences(store),
     client: createSyncClient(
       SyncClientDeps(
         // 没东西可连：一个永远建不起来的传输（它不会被用到）。
@@ -561,5 +564,9 @@ Future<AppModel> _assemble(PairedCredentials credentials) async {
     ),
   );
 
-  return AppModel(client: client);
+  return AppModel(
+    // 偏好走同一个库的 `meta` 表（见 `_assembleWithoutCredentials` 同一处）。
+    prefs: MetaPreferences(store),
+    client: client,
+  );
 }

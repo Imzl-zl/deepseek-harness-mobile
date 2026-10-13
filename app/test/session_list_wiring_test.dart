@@ -128,6 +128,52 @@ void main() {
 
       expect(app.sessions.map((s) => s.sid), ['sid_CCCC']);
     });
+
+    test('running 与 blank 都要解析（挑靶子靠它们，丢了就会叫醒别人的会话）', () async {
+      // `blank` = 从没被 agent 跑过（`connector/src/dsh/sessions.ts` 的原话）。
+      // 连接器一直在发这两个字段，而手机侧此前把 blank 丢掉了 —— 于是
+      // "挑一个空闲会话当靶子"只能按 `!running` 挑，挑到的是**刚被别人跑完
+      // 一轮**的会话，把探针投进去会把那个 agent 唤醒（2026-10-13 真机两次踩到）。
+      final client = _FakeClient(
+        onCall: (method, params) => {
+          'sessions': [
+            {'sid': 'sid_running', 'updatedAt': 1000, 'running': true},
+            {
+              'sid': 'sid_blank',
+              'updatedAt': 900,
+              'running': false,
+              'blank': true,
+            },
+            {
+              'sid': 'sid_idle_used',
+              'updatedAt': 800,
+              'running': false,
+              'blank': false,
+            },
+          ],
+        },
+      );
+      final app = AppModel(client: client);
+
+      await app.refreshSessions();
+
+      final byId = {for (final s in app.sessions) s.sid: s};
+      expect(byId['sid_running']!.running, isTrue);
+      expect(byId['sid_blank']!.blank, isTrue);
+      expect(byId['sid_idle_used']!.blank, isFalse);
+      // 默认值也得对：老连接器/老 fixture 不发 blank 时不能默认成 true。
+      final legacy = AppModel(
+        client: _FakeClient(
+          onCall: (method, params) => {
+            'sessions': [
+              {'sid': 'sid_legacy', 'updatedAt': 1},
+            ],
+          },
+        ),
+      );
+      await legacy.refreshSessions();
+      expect(legacy.sessions.single.blank, isFalse);
+    });
   });
 
   group('两种"空"必须分得开', () {

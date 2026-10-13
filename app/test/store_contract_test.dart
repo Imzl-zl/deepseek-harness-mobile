@@ -81,6 +81,11 @@ class _TempDirStore implements ItemStore {
   Future<int> prune(String sid, {int keep = 500}) =>
       _inner.prune(sid, keep: keep);
   @override
+  Future<String?> readMeta(String key) => _inner.readMeta(key);
+  @override
+  Future<void> writeMeta(String key, String value) =>
+      _inner.writeMeta(key, value);
+  @override
   Future<void> clear() => _inner.clear();
   @override
   Future<void> close() async {

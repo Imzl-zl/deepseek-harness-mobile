@@ -356,6 +356,7 @@ class DshPickerRow extends StatelessWidget {
     this.tags = const [],
     this.icon,
     this.trailing,
+    this.enabled = true,
   });
 
   /// 名称（占满剩余宽度）。
@@ -373,63 +374,73 @@ class DshPickerRow extends StatelessWidget {
   /// 右侧勾位**之后**的额外内容（比如"需在电脑上编辑"的注记）。
   final Widget? trailing;
 
+  /// 这一行能不能选。`false` 时置灰且点不动 —— 用于"这个选项此刻不成立"
+  /// （如插话只在会话正在跑时可选），而不是靠 onTap 里再报错。
+  final bool enabled;
+
+  /// 禁用行的空动作（[InkWell] 的 onTap 非空；置灰由 opacity 表达）。
+  static void _noop() {}
+
   @override
   Widget build(BuildContext context) {
     final iconName = icon;
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 11),
-        child: Row(
-          children: [
-            if (iconName != null) ...[
-              DshIcon(iconName, size: 18, color: DshColors.labelSecondary),
-              const SizedBox(width: 10),
-            ],
-            // 名称 + 其下标签组（**第二行**，不是第三列）。
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: DshColors.labelPrimary,
+    return Opacity(
+      opacity: enabled ? 1 : 0.45,
+      child: InkWell(
+        onTap: enabled ? onTap : _noop,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 11),
+          child: Row(
+            children: [
+              if (iconName != null) ...[
+                DshIcon(iconName, size: 18, color: DshColors.labelSecondary),
+                const SizedBox(width: 10),
+              ],
+              // 名称 + 其下标签组（**第二行**，不是第三列）。
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: DshColors.labelPrimary,
+                      ),
                     ),
-                  ),
-                  if (tags.isNotEmpty) ...[
-                    const SizedBox(height: 5),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      children: [for (final tag in tags) _Tag(tag)],
-                    ),
+                    if (tags.isNotEmpty) ...[
+                      const SizedBox(height: 5),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [for (final tag in tags) _Tag(tag)],
+                      ),
+                    ],
                   ],
-                ],
-              ),
-            ),
-            if (trailing != null) ...[const SizedBox(width: 8), trailing!],
-            const SizedBox(width: 10),
-            // 勾位**恒占位**（`flex: 0 0 16px`）——
-            // 用 `Visibility(maintainSize:)` 而不是 `if (selected)`。
-            SizedBox(
-              width: 16,
-              child: Visibility(
-                visible: selected,
-                maintainSize: true,
-                maintainAnimation: true,
-                maintainState: true,
-                child: const DshIcon(
-                  'check',
-                  size: 16,
-                  color: DshColors.accentBlue,
                 ),
               ),
-            ),
-          ],
+              if (trailing != null) ...[const SizedBox(width: 8), trailing!],
+              const SizedBox(width: 10),
+              // 勾位**恒占位**（`flex: 0 0 16px`）——
+              // 用 `Visibility(maintainSize:)` 而不是 `if (selected)`。
+              SizedBox(
+                width: 16,
+                child: Visibility(
+                  visible: selected,
+                  maintainSize: true,
+                  maintainAnimation: true,
+                  maintainState: true,
+                  child: const DshIcon(
+                    'check',
+                    size: 16,
+                    color: DshColors.accentBlue,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

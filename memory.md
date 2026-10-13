@@ -10,7 +10,8 @@
 
 **当前里程碑**:**「审批 / 提问 / 计划审查转到手机」整条链已接线**;两处小改已完成
 (① 步骤 ④ 等待窗口调到 `_waitForModel` 档;② lifecycle observer 挂上,前后台态自此
-真的报给连接)。门禁全绿:connector **369** / relay **75** / app **372** / 平台边界 **186**。
+真的报给连接)。**发送模式(排队/插话)已照搬 DSH 二选一并放进入控区**(2026-10-13)。
+门禁全绿:connector **369** / relay **75** / app **382** / 平台边界 **189**。
 **唯一没过的:真机审批回合** —— 2026-10-13 自动跑过两次,都卡在最后一跳,证据与仪器
 见 cookbook 的「真机两次尝试」一节;下次直接从那里接。
 
@@ -140,9 +141,9 @@ disposed)"从外部**分不开** —— 用例已加仪器把这两类分开(探
 | `node protocol/verify-fixtures.mjs` | 16 条 fixture / **486 项断言** |
 | `node protocol/verify-loopback.mjs` | **26 项**:手机 ⇄ 中转 ⇄ 桥接回环 |
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量 |
-| `node app/tools/verify-platform-boundary.mjs` | **186 项**(22 条规则自检 + 扫 52 个 Dart 文件) |
+| `node app/tools/verify-platform-boundary.mjs` | **189 项**(22 条规则自检 + 扫 53 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 原型图标集 / 工具脚本不许硬编码盘符 |
-| `cd app && flutter test` | **372 项** |
+| `cd app && flutter test` | **382 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test integration_test` | 0 文件需重排 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **369 项** |

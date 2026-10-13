@@ -14,6 +14,8 @@ import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
+import 'package:dsh_mobile/model/send_mode.dart';
+import 'package:dsh_mobile/theme/dsh_icons.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/chat_page.dart';
 import 'package:dsh_mobile/ui/dsh_composer.dart';
@@ -30,6 +32,12 @@ class FakeClient implements SyncClient {
 
   final List<Object?> sessions;
   final ProtocolException? failWith;
+
+  /// 被调过的方法名（按顺序）——用来断言"到底问没问过"。
+  final List<String> calls = <String>[];
+
+  /// 最后一次调用的参数（发送模式等"带了什么"的判据）。
+  Map<String, Object?>? lastParams;
 
   @override
   ConnectionState get state => ConnectionState.idle;
@@ -61,6 +69,8 @@ class FakeClient implements SyncClient {
     Map<String, Object?> params, {
     String? requestId,
   }) async {
+    calls.add(method);
+    lastParams = params;
     final failure = failWith;
     if (failure != null) throw failure;
     // **形状照电脑侧**：`{ sessions: [...] }`（`connector/src/handlers.ts`）。
@@ -332,6 +342,67 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets('发送带上当前发送模式（默认排队，切插话后带 steer）', (tester) async {
+      // DSH 原生的二选一"繁忙时的发送行为"（排队 / 插话）：我们这边一个方法
+      // 带 `mode` 参数（`connector/src/handlers.ts` 的 `session.prompt` 收
+      // `'queue' | 'steer'`）。**不带这个字段电脑侧也按 queue 走**，所以这条
+      // 用例守的是"用户切了插话，那句话真的以 steer 发出去"—— 少了它，
+      // 界面上选了插话而线上还是排队，用户看不出任何差别。
+      final client = FakeClient();
+      final app = AppModel(client: client);
+      await app.openSession('sid_send');
+      await tester.pumpWidget(_wrap(app));
+      await tester.pumpAndSettle();
+
+      // 发送键是 `DshIcon('paperPlane')`（不是 Material 图标），所以按
+      // 图标**名**找，不用 `find.byIcon(Icons.send)`。
+      Finder sendButton() =>
+          find.byWidgetPredicate((w) => w is DshIcon && w.name == 'paperPlane');
+      await tester.enterText(find.byType(TextField), '你好');
+      await tester.pumpAndSettle();
+      await tester.tap(sendButton());
+      await tester.pumpAndSettle();
+
+      expect(client.calls, contains('session.prompt'));
+      expect(client.lastParams!['mode'], 'queue', reason: '默认排队发送');
+
+      // 切到插话再发一条：线上值要跟着变。
+      await app.setSendMode(SendMode.steer);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '第二句');
+      await tester.pumpAndSettle();
+      await tester.tap(sendButton());
+      await tester.pumpAndSettle();
+
+      expect(client.lastParams!['mode'], 'steer', reason: '切了插话就要以 steer 发');
+    });
+
+    testWidgets('窄屏(360px)下控制行不溢出：第四个图标没挤走任何东西', (tester) async {
+      // 2026-10-13 控制行加了"发送模式"图标（第 4 个控件）。默认 800px 宽的
+      // 测试窗口下看不出来，而常见安卓机宽 360px：62% 的模型 chip + 38(＋)
+      // + 34×2(权限/模式) + 38(发送) 加间距会超。所以这条按**真机宽度**量。
+      // 判据取"没有 overflow 异常"：Flutter 的 RenderFlex 溢出会作为异常
+      // 冒到 `takeException()`，比量坐标更接近用户看到的样子。
+      final view = tester.view;
+      view.physicalSize = const Size(360, 800);
+      view.devicePixelRatio = 1;
+      addTearDown(() {
+        view.resetPhysicalSize();
+        view.resetDevicePixelRatio();
+      });
+
+      await tester.pumpWidget(_wrap(AppModel(client: FakeClient())));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull, reason: '360px 宽下控制行不许溢出');
+      // 发送键必须完整在卡片里（右边缘不越界）。
+      final card = tester.getRect(find.byType(DshComposer));
+      final send = tester.getRect(
+        find.byWidgetPredicate((w) => w is DshIcon && w.name == 'paperPlane'),
+      );
+      expect(send.right, lessThanOrEqualTo(card.right));
+    });
   });
 
   group('抽屉', () {
@@ -569,11 +640,13 @@ void main() {
                   'claude-opus-a-very-long-model-name-that-would-fill-the-row',
               reasoningLabel: '高',
               accessMode: AccessMode.workspaceWrite,
+              sendMode: SendMode.queue,
               sending: false,
               onSend: () {},
               onAttach: () {},
               onPickModel: () {},
               onPickAccess: () {},
+              onPickSendMode: () {},
               onRemoveAttachment: (_) {},
             ),
           ),

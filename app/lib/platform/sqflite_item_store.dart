@@ -170,6 +170,29 @@ class SqfliteItemStore implements ItemStore {
   }
 
   @override
+  Future<String?> readMeta(String key) async {
+    final db = _requireDb;
+    final rows = await db.query(
+      'meta',
+      columns: <String>['v'],
+      where: 'k = ?',
+      whereArgs: <Object?>[key],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['v'] as String?;
+  }
+
+  @override
+  Future<void> writeMeta(String key, String value) async {
+    final db = _requireDb;
+    await db.insert('meta', <String, Object?>{
+      'k': key,
+      'v': value,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  @override
   Future<void> clear() async {
     final db = _requireDb;
     await db.transaction((txn) async {
@@ -265,6 +288,7 @@ class SqfliteOutboxStore implements OutboxStore {
 class InMemoryItemStore implements ItemStore {
   final Map<String, Map<String, StoredItem>> _items = {};
   final Map<String, int> _cursors = {};
+  final Map<String, String> _meta = {};
   bool _open = false;
 
   @override
@@ -324,10 +348,23 @@ class InMemoryItemStore implements ItemStore {
   }
 
   @override
+  Future<String?> readMeta(String key) async {
+    _requireOpen();
+    return _meta[key];
+  }
+
+  @override
+  Future<void> writeMeta(String key, String value) async {
+    _requireOpen();
+    _meta[key] = value;
+  }
+
+  @override
   Future<void> clear() async {
     _requireOpen();
     _items.clear();
     _cursors.clear();
+    _meta.clear();
   }
 
   @override

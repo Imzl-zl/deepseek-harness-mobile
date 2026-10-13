@@ -153,6 +153,7 @@ class SessionSummary {
     this.itemCount = 0,
     this.pendingCount = 0,
     this.running = false,
+    this.blank = false,
     this.model,
   });
 
@@ -177,6 +178,14 @@ class SessionSummary {
   /// 发送方（如真机联调里那条审批探针）必须先挑一个空闲的。
   final bool running;
 
+  /// 还没有任何轮次（`session.list` 的 `blank`，电脑侧原样过线）。
+  ///
+  /// 它的判据是"这个会话从没被 agent 跑过"（`connector/src/dsh/sessions.ts`：
+  /// blank = 还没有任何轮次）。**挑靶子时要它**：只按 `!running` 挑会挑到
+  /// "刚被别的 agent 跑完一轮"的会话，而那种会话的 agent 随时可能又被唤起
+  /// （真机联调两次就这么把别人的空会话叫醒过）。
+  final bool blank;
+
   /// 这个会话**下一次**将用的模型（`session.list` 的 `model`）。
   ///
   /// 来自 DSH 的 `modelSelection` 投影（`next ?? lastUsed`），
@@ -191,6 +200,7 @@ class SessionSummary {
     int? itemCount,
     int? pendingCount,
     bool? running,
+    bool? blank,
     ModelRef? model,
   }) => SessionSummary(
     sid: sid,
@@ -199,6 +209,7 @@ class SessionSummary {
     itemCount: itemCount ?? this.itemCount,
     pendingCount: pendingCount ?? this.pendingCount,
     running: running ?? this.running,
+    blank: blank ?? this.blank,
     model: model ?? this.model,
   );
 }

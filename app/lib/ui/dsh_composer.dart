@@ -6,11 +6,14 @@
 ///    卡片外会被状态行和输入框夹住，视觉上像"被顶上去的一块"。
 /// 2. **文字独占一行**，`＋` 和发送键**不进文字行** ——
 ///    否则占位符被迫折行、模型名被截成 `claude-...`。
-/// 3. **控制行左一组（`＋` / 模型·等级 / 权限图标），右边只有发送键**。
+/// 3. **控制行左一组（`＋` / 模型·等级 / 权限图标 / 发送模式图标），右边只有发送键**。
 ///    **这是有意偏离 DSH 桌面**：桌面把模型放 `.trailing`（右侧）和发送键一组；
 ///    手机主流是左侧集中、右侧单发送。
-///    模型 chip 可压缩（上限 62%），权限 34px 恒宽 ——
-///    保证长模型名不挤走权限图标或发送键。
+///    模型 chip 可压缩（上限 62%），权限与发送模式各 34px 恒宽 ——
+///    保证长模型名不挤走这两个图标或发送键。
+///    发送模式（排队 / 插话）是 2026-10-13 补的第四个控件：DSH 原生就有这个
+///    二选一（"繁忙时的发送行为"），而它**只在会话正在跑时才有区别**，是发送
+///    当下的选择 —— 放进行控区而不是以后的设置页，理由见 `model/send_mode.dart`。
 ///
 /// ## 统计条在输入卡片**下面**
 ///
@@ -20,6 +23,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../model/send_mode.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
@@ -60,11 +64,13 @@ class DshComposer extends StatelessWidget {
     required this.modelName,
     required this.reasoningLabel,
     required this.accessMode,
+    required this.sendMode,
     required this.sending,
     required this.onSend,
     required this.onAttach,
     required this.onPickModel,
     required this.onPickAccess,
+    required this.onPickSendMode,
     required this.onRemoveAttachment,
     this.enabled = true,
   });
@@ -81,6 +87,9 @@ class DshComposer extends StatelessWidget {
 
   final AccessMode accessMode;
 
+  /// 发送模式（排队 / 插话，DSH 的"繁忙时的发送行为"）。
+  final SendMode sendMode;
+
   final bool sending;
 
   /// 是否可输入（没连电脑/没会话时置灰）。
@@ -90,6 +99,9 @@ class DshComposer extends StatelessWidget {
   final VoidCallback onAttach;
   final VoidCallback onPickModel;
   final VoidCallback onPickAccess;
+
+  /// 打开发送模式二选一。
+  final VoidCallback onPickSendMode;
   final void Function(PendingAttachment item) onRemoveAttachment;
 
   @override
@@ -226,6 +238,19 @@ class DshComposer extends StatelessWidget {
                         tooltip: accessMode.label,
                         isWarn: accessMode.isWarn,
                         onPressed: enabled ? onPickAccess : null,
+                      ),
+                      const SizedBox(width: 6),
+                      // 发送模式图标：与权限并列的第二个 34px 恒宽图标。
+                      //
+                      // 它是 DSH 的"繁忙时的发送行为"二选一（排队 / 插话，
+                      // 见 `model/send_mode.dart`），决定这句话在会话忙时
+                      // 排到下一个轮次还是插进当前轮次。放进行控区而不是
+                      // 设置页：它**只在会话正在跑时才有区别**，是发送当下的
+                      // 选择，不是装完就不动的偏好。
+                      _IconChip(
+                        icon: sendMode.icon,
+                        tooltip: sendMode.label,
+                        onPressed: enabled ? onPickSendMode : null,
                       ),
                     ],
                   ),

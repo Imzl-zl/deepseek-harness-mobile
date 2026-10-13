@@ -37,6 +37,7 @@ import 'package:flutter/material.dart';
 
 import '../data/app_model.dart';
 import '../model/chat_item.dart';
+import '../model/send_mode.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
@@ -278,11 +279,15 @@ class ChatPageState extends State<ChatPage> {
     setState(() => _sending = true);
     try {
       final requestId = 'p-${DateTime.now().microsecondsSinceEpoch}';
+      // **带上发送模式**（排队 / 插话）：DSH 原生二选一，我们这边一个方法
+      // 带 `mode` 参数（`connector/src/handlers.ts` 的 `session.prompt`）。
+      // 不给这个字段时电脑侧按默认的 queue 走 —— 与本文默认值一致。
       await widget.app.client.call<void>('session.prompt', {
         'sid': sid,
         'content': [
           {'type': 'text', 'text': text},
         ],
+        'mode': widget.app.sendMode.wire,
       }, requestId: requestId);
       _input.clear();
       if (mounted) setState(() => _attachments.clear());
@@ -411,12 +416,14 @@ class ChatPageState extends State<ChatPage> {
                   modelName: _modelLabel,
                   reasoningLabel: _reasoningLabel,
                   accessMode: _accessMode,
+                  sendMode: widget.app.sendMode,
                   sending: _sending,
                   enabled: _hasData && sid != null,
                   onSend: _send,
                   onAttach: _showAttachSheet,
                   onPickModel: _showModelSheet,
                   onPickAccess: _showAccessSheet,
+                  onPickSendMode: _showSendModeSheet,
                   onRemoveAttachment: (item) =>
                       setState(() => _attachments.remove(item)),
                 ),
@@ -698,6 +705,44 @@ class ChatPageState extends State<ChatPage> {
                   } else {
                     _setAccessMode(m.mode);
                   }
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 发送模式二选一（DSH 的"繁忙时的发送行为"：排队 / 插话）。
+  ///
+  /// **插话那一项在会话没在跑时禁用**：DSH 的文案就是"仅运行中可插话发送"
+  /// （`locales.ts:365`），而轮次已变时 DSH 回 `session/steer-unavailable`。
+  /// 禁用而不是"点了再报错"—— 报错只会让用户以为发失败了。
+  void _showSendModeSheet() {
+    final sid = widget.app.currentSid;
+    final running = sid == null
+        ? false
+        : widget.app.sessionOf(sid)?.running ?? false;
+    unawaited(
+      showDshSheet<void>(
+        context: context,
+        title: '繁忙时的发送行为',
+        body: Column(
+          children: [
+            for (final mode in SendMode.values)
+              DshPickerRow(
+                name: mode.label,
+                tags: [
+                  mode == SendMode.queue ? '排到下一个轮次（默认）' : '插进当前轮次，立刻生效',
+                  if (mode == SendMode.steer && !running)
+                    '仅运行中可插话发送 —— 这个会话此刻没在跑',
+                ],
+                icon: mode.icon,
+                selected: mode == widget.app.sendMode,
+                enabled: mode != SendMode.steer || running,
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(widget.app.setSendMode(mode));
                 },
               ),
           ],

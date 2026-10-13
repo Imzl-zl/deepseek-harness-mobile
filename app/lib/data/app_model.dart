@@ -29,9 +29,11 @@ import '../core/errors.dart';
 import '../core/sync_client.dart';
 import '../model/chat_item.dart';
 import '../model/interaction.dart';
+import '../model/send_mode.dart';
 import 'preview_data.dart';
 import 'projection.dart';
 import 'session_store.dart';
+import 'store.dart';
 
 /// 应用级状态。
 ///
@@ -45,10 +47,13 @@ import 'session_store.dart';
 /// 所以按职责命名：`AppState` 留给协议层（契约里已经这么叫），
 /// 这里叫 `AppModel`（"界面要读的那份应用模型"）。
 class AppModel extends ChangeNotifier {
-  AppModel({required this.client});
+  AppModel({required this.client, PreferenceStore? prefs}) : _prefs = prefs;
 
   /// 通道客户端（连接 / 订阅 / 写操作的唯一 owner）。
   final SyncClient client;
+
+  /// 偏好缝（`meta` 表的窄接口）；`null` = 不落盘（测试 / 未装配）。
+  final PreferenceStore? _prefs;
 
   final Map<String, SessionStore> _stores = {};
 
@@ -204,8 +209,30 @@ class AppModel extends ChangeNotifier {
   Future<void> start() async {
     _stateSub = client.connection.listen(_onConnectionChanged);
     _connection = _viewOf(client.state);
+    // **先把落盘的发送模式读回来**：它决定发 prompt 时带哪个 `mode`，
+    // 重启后要还是用户选的那个。读不到（没存过 / 存了个不认识的值）
+    // 就保持默认的排队 —— 与 DSH 的默认一致，也不猜。
+    final stored = await _prefs?.read(kSendModeKey);
+    final restored = SendMode.fromWire(stored);
+    if (restored != null) _sendMode = restored;
     notifyListeners();
     await client.start();
+  }
+
+  /// 落盘的 meta 键：发送模式。**契约两端共用的字符串**，改动等于作废用户的偏好。
+  static const String kSendModeKey = 'send_mode';
+
+  SendMode _sendMode = SendMode.queue;
+
+  /// 当前的发送模式（排队 / 插话）。
+  SendMode get sendMode => _sendMode;
+
+  /// 切发送模式。**落盘**（见 [kSendModeKey]）；同一个值重复切是空操作。
+  Future<void> setSendMode(SendMode mode) async {
+    if (_disposed || mode == _sendMode) return;
+    _sendMode = mode;
+    notifyListeners();
+    await _prefs?.write(kSendModeKey, mode.wire);
   }
 
   void _onConnectionChanged(ConnectionState state) {
@@ -479,6 +506,10 @@ class AppModel extends ChangeNotifier {
           // 电脑侧一直在发（`connector/src/handlers.ts` 的 `session.list`），
           // 只是手机侧此前丢掉了它 —— 而"这个会话正在跑"决定了新消息会不会被排队。
           running: entry['running'] == true,
+          // 从没被 agent 跑过（`connector/src/handlers.ts` 的 `session.list` 一直在发）。
+          // **挑靶子时要它**：只按 `!running` 挑会挑到"刚被别的 agent 跑完一轮"的
+          // 会话，而那种会话随时可能又被唤起（真机联调两次叫醒别人的会话）。
+          blank: entry['blank'] == true,
           // 当前模型：来自 DSH 的 `modelSelection` 投影（`connector/src/dsh/models.ts`）。
           // **认不出就不给**（`null`），界面显示"未选择"—— 猜一个就是把
           // "看起来连着"当成"连着"。

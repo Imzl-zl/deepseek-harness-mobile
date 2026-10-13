@@ -104,11 +104,47 @@ abstract interface class ItemStore {
   /// 清理某会话超出 `keep` 的旧条目（契约 §5.3 的淘汰）。
   Future<int> prune(String sid, {int keep = 500});
 
+  /// 读一个 `meta` 值（`meta` 表的 k/v）。没有这个键时返回 `null`。
+  ///
+  /// 它给"UI 偏好"用：有些偏好**穿过协议**（决定调哪个方法、带什么参数），
+  /// 所以必须落盘。只存内存的话，重启就回默认值，而用户看不出自己的选择
+  /// 为什么莫名其妙没了。
+  Future<String?> readMeta(String key);
+
+  /// 写一个 `meta` 值（upsert）。
+  Future<void> writeMeta(String key, String value);
+
   /// 清空（配对失效 / 换设备时用）。
   Future<void> clear();
 
   /// 关闭（**幂等**）。
   Future<void> close();
+}
+
+/// 偏好缝（窄）：一个字符串偏好的读写。
+///
+/// 为什么不是直接用 [ItemStore]：`AppModel` 不该认识整张库 —— 它只要
+/// "记住一个选择"。装配点把 [ItemStore] 的 `meta` 表包成这个缝传进来
+/// （见 [MetaPreferences]），于是 `AppModel` 的测试给一个内存假实现即可。
+abstract interface class PreferenceStore {
+  /// 读一个偏好。没有这个键时返回 `null`（= 用默认值）。
+  Future<String?> read(String key);
+
+  /// 写一个偏好（upsert）。
+  Future<void> write(String key, String value);
+}
+
+/// 把 [ItemStore] 的 `meta` 表包成 [PreferenceStore]。
+class MetaPreferences implements PreferenceStore {
+  MetaPreferences(this._store);
+
+  final ItemStore _store;
+
+  @override
+  Future<String?> read(String key) => _store.readMeta(key);
+
+  @override
+  Future<void> write(String key, String value) => _store.writeMeta(key, value);
 }
 
 /// 把 `core/` 的落盘缝接到本地库上。

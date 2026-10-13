@@ -387,9 +387,16 @@ void main() {
     // 判据与步骤 ⑤ 相同：只往**空闲**会话里发；清单要**重新拉**，步骤 ② 那份的
     // `running` 已经过期。
     await app.refreshSessions();
+    // **优先挑"从没被 agent 跑过"的空会话**（`blank`），挑不到再退到任意空闲。
+    //
+    // 为什么不能只按 `!running` 挑：最新那条"空闲"往往是**刚被别的 agent
+    // 跑完一轮**的会话，把探针投进去会把那个 agent 唤醒（2026-10-13 真机两次
+    // 都踩到：一次投进另一个 agent 的会话、一次投进一个刚建的空会话）。
+    // `blank` 是电脑侧的原话（`connector/src/dsh/sessions.ts`：还没有任何轮次）。
+    final blankIdle = app.sessions.where((s) => !s.running && s.blank).toList();
     final idle = app.sessions.where((s) => !s.running).toList();
     expect(idle, isNotEmpty, reason: '至少要有空闲会话可当探针目标（否则这一步没法验）');
-    final sid = idle.first.sid;
+    final sid = (blankIdle.isNotEmpty ? blankIdle.first : idle.first).sid;
     expect(
       sid,
       matches(RegExp(r'^[A-Za-z0-9_-]+$')),
@@ -485,14 +492,18 @@ void main() {
     //    的 turn 后面，`approval/asked` 一直不出现，卡永远等不到。
     //    空闲判据取电脑侧给的 `running`（`session.list` 一直在发它）：
     //    **必须重新拉一次清单**，步骤 ② 那份是发标记之前拉的，`running` 已经过期。
+    // ④ **候选里 `blank`（从没被 agent 跑过）的排前面**，理由同步骤 ②：
+    //    只按 `!running` 挑会挑到刚被别人跑完一轮的会话，把探针投进去会把
+    //    那个 agent 唤醒（2026-10-13 真机两次都踩到）。
     await app.refreshSessions();
     expect(app.lastError, isNull, reason: '挑审批目标前要重新拉清单；失败：${app.lastError}');
+    final pool = app.sessions.where((s) => s.sid != sid && !s.running).toList();
+    final candidates = <String>[
+      ...pool.where((s) => s.blank).map((s) => s.sid),
+      ...pool.where((s) => !s.blank).map((s) => s.sid),
+    ];
     String? approvalSid;
-    for (final candidate
-        in app.sessions
-            .where((s) => s.sid != sid && !s.running)
-            .take(8)
-            .map((s) => s.sid)) {
+    for (final candidate in candidates.take(8)) {
       await app.openSession(candidate);
       final quiet = await _waitForQuiet(tester, () => app.items.length);
       final dirty = app.items.any((i) => i is ApprovalItem && !i.decided);
