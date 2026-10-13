@@ -6,8 +6,11 @@
 
 ## 任务
 
-把「审批转手机」在**真机**上跑完最后一跳,然后补一个已定位的产品缺口。
-代码已接线、三侧门禁全绿、根因已修;**剩下的是两处小改 + 一次真机验证**。
+把「审批转手机」在**真机**上跑完最后一跳。
+
+两处小改(测试等待窗口 + lifecycle observer)已在 2026-10-13 完成并复跑门禁全绿;
+**剩下的是真机验证这一件事**:起服务 → 出码 → 跑 `interaction_real_device_test.dart`
+→ 按下面的判据验收。
 
 ## 当前状态(2026-10-13,全部有证据)
 
@@ -16,10 +19,10 @@
 | 门禁 | 数字 |
 |---|---|
 | `node protocol/verify-fixtures.mjs` / `loopback` / `vectors` | 486 / 26 / 49 |
-| `node app/tools/verify-platform-boundary.mjs` | 185 |
+| `node app/tools/verify-platform-boundary.mjs` | 186 |
 | `cd connector; pnpm exec tsc --noEmit && pnpm build && pnpm test` | **369** |
 | `cd relay; pnpm typecheck && pnpm test` | **75** |
-| `cd app; flutter test` / `dart analyze --fatal-infos` / `dart format` | **367** / 0 / 0 |
+| `cd app; flutter test` / `dart analyze --fatal-infos` / `dart format` | **372** / 0 / 0 |
 
 真机(USB,小米 23113RKC6C / Android 16,序列号 `d61cf622`)**已验到**:
 两段配对 → 建连 → 握手 → `sync.hello`(`app:'foreground'`)→ `session.list` 拿到真会话 →
@@ -71,26 +74,30 @@ adb -s d61cf622 shell svc power stayon true
 **改过 `connector/src/**` 必须先 `pnpm build`**(真加载的是 `lib/index.js`)。
 **跑完把自己起的进程杀干净。**
 
-## 要做的两件事
+## 两处小改(2026-10-13 已完成,别当未修)
 
 ### ① 测试侧:步骤 ④ 的等待窗口
 
-`app/integration_test/interaction_real_device_test.dart` 步骤 ④ 用 `_waitFor` 的
-**默认 30 秒**等 `user/message` 回读,而 `session.prompt` 是**排队写** ——
-会话正在跑轮次时走 `agent.followup`(`session-controller/src/commands.ts` 的 prompt 分支),
+`app/integration_test/interaction_real_device_test.dart` 步骤 ④ 原用 `_waitFor` 的
+默认 30 秒等 `user/message` 回读,而 `session.prompt` 是排队写 —— 会话正在跑轮次时走
+`agent.followup`(`packages/api/session-controller/src/commands.ts` 的 prompt 分支),
 `user/message` 要等当前轮次结束才落盘。免费渠道一个轮次轻易超 30 秒。
 
-**修法(二选一或都做)**:挑一个 `running == false` 的会话(`session.list` 一直在发它);
-或把这一步的窗口调到 `_waitForModel` 那一档。**别猜模型会不会回** ——
-判据仍然是"电脑侧确实受理了"这个事实。
+**已改**:这一步改用 `_waitForModel`(3 分钟)档;挑空闲会话的既有逻辑保留(只降概率,
+不是保证)。**判据没动**:电脑侧确实受理了,不等模型回什么。
 
-### ② 产品侧:补 lifecycle observer
+### ② 产品侧:lifecycle observer
 
-`setAppState` 在 `app/lib` 里**没有任何调用点** ⇒ `_keepalive.setForeground(true)`
-从没被执行过,心跳可能一直走在后台节拍上。`core/sync_client.dart:55` 的注释本来就写了
-"装配点决定何时开始,前台/后台决定要不要维持"—— observer 本来就该在那条路上。
-做法:在装配点挂 `WidgetsBindingObserver`,`didChangeAppLifecycleState` 调
-`setAppState(...)`,并按现有约定补用例。
+`setAppState` 曾在 `app/lib` 里没有任何调用点 ⇒ 客户端从构造起就以为自己在**前台**:
+`sync.hello` 恒报 `foreground`(电脑侧 `foreground` 档于是把审批继续推给退到后台的手机),
+后台也维持连接与心跳(违反 §2.2 / §13 / §9),契约 §6.3.1 那句"退到后台自动 delegate"
+是断的。
+
+**已改**:装配点(`app/lib/main.dart` 的根 State)挂 `AppStateReporter`
+(`app/lib/platform/app_state_reporter.dart`),`didChangeAppLifecycleState` 调
+`setAppState`;**只把 `resumed` 算前台,其余(inactive/paused/hidden/detached)
+fail-closed 报后台**。取舍、被否方案与代价见
+`.agents/notes/implemented/2026-10-13-app-lifecycle-observer.md`。
 
 ## 跑通之后的验收判据
 

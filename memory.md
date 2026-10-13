@@ -5,12 +5,13 @@
 
 ## 下一步(新会话从这里开始)
 
-> **开工提示词:`docs/cookbook/next-session-interaction-to-phone.md`** —— 下一个会话直接用它
-> (真机跑法 + 免费渠道 + 成本纪律 + 要做的两件事 + 三个排查坑)。
+> **上一个会话的收尾**:`docs/cookbook/next-session-interaction-to-phone.md` 里列的两处小改
+> 都已完成(① 步骤 ④ 的等待窗口调到 `_waitForModel` 档;② 补上 lifecycle observer),
+> 门禁全绿。**剩下唯一一件事:真机跑完审批回合**(跑法、免费渠道、成本纪律见该 cookbook)。
 
 **当前里程碑**:**「审批 / 提问 / 计划审查转到手机」整条链已接线,并在真机上验证到
 「发一句 / 回一句」**(USB 真机:小米 23113RKC6C / Android 16;用例跑到倒数第二条)。
-三侧门禁全绿:connector **369** / relay **75** / app **367** / 平台边界 **185**。
+三侧门禁全绿:connector **369** / relay **75** / app **372** / 平台边界 **186**。
 
 **真机上抓出并修掉的四个 bug**(都只在真机暴露,细节见两篇决策笔记):
 ① profile 补丁漏 `allowInsecureLocal` → 连接器**从不拨线**(什么都没发生);
@@ -55,12 +56,17 @@
 (实测 `pm list packages` 里没有它)。所以仪表里那两条
 `onclose code=4000 reason=channel closed` 是装卸 App 造成的,**不是连接莫名中断**;
 我曾把"两次 onclose 的间隔"误当成连接存活时长 —— **没打时间戳的两个事件,间隔没有意义**。
-**还剩两条**:
-1. **测试侧**:步骤 ④ 用 `_waitFor` 的默认 30 秒窗口等 `user/message` 回读,
-   而 `session.prompt` 是排队写(会话在跑轮次时走 `agent.followup`)—— 免费渠道一个轮次
-   轻易超 30 秒。**修法**:挑 `running == false` 的会话,或把窗口调到 `_waitForModel` 档。
-2. **产品侧真缺口**:`setAppState` 在 `app/lib` 里**没有任何调用点** ⇒
-   `_keepalive.setForeground(true)` 从没执行过,心跳可能一直走在后台节拍上。
+**两条都已修**(2026-10-13):
+1. ~~测试侧:步骤 ④ 用 `_waitFor` 的默认 30 秒窗口等 `user/message` 回读~~
+   —— 窗口调到 `_waitForModel` 档。`session.prompt` 走 `agent.followup` 插
+   `next-turn`(`packages/api/session-controller/src/commands.ts` 的 prompt 分支),
+   会话在跑轮次时那条 `user/message` 要等当前轮次结束才落盘;挑空闲会话只降低概率,
+   不是保证。判据不变:电脑侧确实受理了。
+2. ~~产品侧:`setAppState` 在 `app/lib` 里没有任何调用点~~ —— 装配点挂了
+   `AppStateReporter`(`app/lib/platform/app_state_reporter.dart`),
+   `didChangeAppLifecycleState` 调 `setAppState`;**只把 `resumed` 当前台,
+   其余 fail-closed 报后台**。契约 §6.3.1 那句"退到后台自动 delegate"自此真的成立。
+   取舍与被否方案见 `.agents/notes/implemented/2026-10-13-app-lifecycle-observer.md`。
 
 **模型/状态显示已对齐 DSH 真值**(2026-10-13):手机上原来的模型名是**写死的** `'claude-opus'`
 外加一份手抄的四个模型列表,与电脑侧毫无关系。现在接 DSH 原生的两条通道:
@@ -154,12 +160,12 @@
 | `node protocol/verify-fixtures.mjs` | 16 条 fixture / **486 项断言** |
 | `node protocol/verify-loopback.mjs` | **26 项**:手机 ⇄ 中转 ⇄ 桥接回环 |
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量 |
-| `node app/tools/verify-platform-boundary.mjs` | **185 项**(22 条规则自检 + 扫 51 个 Dart 文件) |
+| `node app/tools/verify-platform-boundary.mjs` | **186 项**(22 条规则自检 + 扫 52 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 原型图标集 / 工具脚本不许硬编码盘符 |
-| `cd app && flutter test` | **366 项** |
+| `cd app && flutter test` | **372 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test integration_test` | 0 文件需重排 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **363 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **369 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **75 条** |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker` |
 | `node app/tools/gen-pairing-vectors.mjs` | 重新生成配对向量(**改了配对派生规则后必须重跑**) |

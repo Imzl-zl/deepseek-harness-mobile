@@ -33,6 +33,7 @@ import 'core/transport.dart';
 import 'data/app_model.dart';
 import 'data/store.dart';
 import 'model/chat_item.dart';
+import 'platform/app_state_reporter.dart';
 import 'platform/http_sender.dart';
 import 'platform/pairing_store.dart';
 import 'platform/sqflite_item_store.dart';
@@ -84,9 +85,16 @@ class _DshMobileAppState extends State<DshMobileApp> {
   /// 是否停在配对页（用户主动进来的，不是"没配对就挡在这里"）。
   bool _pairing = false;
 
+  /// 前后台态的上报者（契约 §2.2、§9）。
+  ///
+  /// 它跟着根 State 活，而客户端跟着 [_app] 活 —— 所以报的是"当前那个"
+  /// （重新配对会换 `AppModel`，observer 只注册一次）。
+  late final AppStateReporter _reporter = AppStateReporter(() => _app?.client);
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(_reporter);
     unawaited(_boot());
   }
 
@@ -153,6 +161,7 @@ class _DshMobileAppState extends State<DshMobileApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(_reporter);
     _app?.dispose();
     super.dispose();
   }

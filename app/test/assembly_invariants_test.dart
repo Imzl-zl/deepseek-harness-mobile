@@ -155,4 +155,38 @@ void main() {
       reason: 'release 构建不允许明文（契约 §2：手机侧恒为 wss）',
     );
   });
+
+  test('根 State 挂着前后台态上报者（否则 setAppState 永远不被调用）', () {
+    // **这条守的是一个真缺口**（2026-10-13 定位）：`setAppState` 在 `app/lib` 里
+    // 没有任何产品调用点，客户端从构造起就以为自己在**前台** —— 心跳照走、
+    // `sync.hello` 恒报 foreground，电脑侧 `foreground` 档于是把审批继续推给一部
+    // 已经退到后台的手机（契约 §6.3.1 的"退到后台自动 delegate"是断的），
+    // 而后台长连接也违反 §2.2 / §13。
+    // 装配点少接一根线**不报错**，所以这里断言形状。映射与派发由
+    // `app_state_reporter_test.dart` 行为用例钉，本文只守"挂了没有"。
+    expect(
+      source.contains('AppStateReporter'),
+      isTrue,
+      reason: '装配点要创建上报者（platform/app_state_reporter.dart）',
+    );
+    expect(
+      source.contains('WidgetsBinding.instance.addObserver(_reporter)'),
+      isTrue,
+      reason: '不注册 = observer 永远收不到态变化，与没有它一样',
+    );
+    expect(
+      source.contains('WidgetsBinding.instance.removeObserver(_reporter)'),
+      isTrue,
+      reason: 'dispose 不摘 = 往一个已经 close 的客户端上继续写',
+    );
+    // 客户端必须**现取**：`_app` 会被换掉（重新配对 / 清凭据都重建 AppModel），
+    // 持有一个就会在换掉之后往旧的（已 close 的）上报 —— 无声的空转。
+    final reporter = _callTextOf(source, 'AppStateReporter(');
+    expect(reporter, isNotNull, reason: '装配点应有 AppStateReporter(...) 调用');
+    expect(
+      reporter!.contains('_app?.client'),
+      isTrue,
+      reason: '上报目标要现取当前那个客户端，不能持有一个不放',
+    );
+  });
 }

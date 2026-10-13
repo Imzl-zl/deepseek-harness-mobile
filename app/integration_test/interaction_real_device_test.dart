@@ -379,7 +379,17 @@ void main() {
     expect(sent, isNotEmpty, reason: 'session.prompt 必须真的发出去（带幂等键的信封）');
     expect(sent.last['requestId'], isNotEmpty, reason: '写操作必须带幂等键（§5.6）');
 
-    final gotEcho = await _waitFor(tester, () async => echoed.isCompleted);
+    // **窗口按"电脑侧跑完一整个模型回合"给，不用默认 30 秒**：
+    // `session.prompt` 走 `agent.followup`
+    // （`packages/api/session-controller/src/commands.ts` 的 prompt 分支，`:365`），
+    // 而 followup 插的是 `next-turn`
+    // （`packages/core/agent-loop/src/agent.ts:163` 的 `followup → send(…, 'next-turn', …)`）——
+    // 会话正在跑轮次时，这条 `user/message` 要等**当前轮次结束**才落盘。
+    // 步骤 ② 挑空闲会话只是降低撞上在跑轮次的概率（清单拉到发探针之间仍可能起轮次），
+    // 不是保证；免费渠道一个轮次轻易超过 30 秒。
+    // **判据不变**：电脑侧确实受理了（那句话作为 `user/message` 回到手机），
+    // 不等模型回什么。
+    final gotEcho = await _waitForModel(tester, () async => echoed.isCompleted);
     expect(gotEcho, isTrue, reason: '发出去的那句必须作为 user/message 回到手机（否则电脑侧没受理）');
     await echoSub.cancel();
     await sub.cancel();
