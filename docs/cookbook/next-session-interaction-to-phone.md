@@ -1,148 +1,128 @@
-# 新会话提示词:把「交互转手机」做到真机连通
+# 新会话提示词:跑通真机审批回合 + 补 lifecycle observer
 
-> 复制下面 `---` 之间的全部内容到新会话。
+> 复制下面 `---` 之间的全部内容到新会话。**这个会话已经很长且充满误判,新会话从这份开始。**
 
 ---
 
 ## 任务
 
-把**审批 / 提问 / 计划审查转到手机**这条链做完,并做出**第一次真机连通**。
-这是本项目从"能看会话列表"变成"能遥控电脑"的那一步。
+把「审批转手机」在**真机**上跑完最后一跳,然后补一个已定位的产品缺口。
+代码已接线、三侧门禁全绿、根因已修;**剩下的是两处小改 + 一次真机验证**。
 
-## 已经做好的(不要重做)
+## 当前状态(2026-10-13,全部有证据)
 
-三侧门禁**全绿**,且跨实现一致性已闭环:
+三侧门禁**全绿**:
 
 | 门禁 | 数字 |
 |---|---|
 | `node protocol/verify-fixtures.mjs` / `loopback` / `vectors` | 486 / 26 / 49 |
-| `node app/tools/verify-platform-boundary.mjs` | 182 |
-| `cd connector; pnpm exec tsc --noEmit && pnpm build && pnpm test` | **335** |
+| `node app/tools/verify-platform-boundary.mjs` | 185 |
+| `cd connector; pnpm exec tsc --noEmit && pnpm build && pnpm test` | **369** |
 | `cd relay; pnpm typecheck && pnpm test` | **75** |
-| `cd app; flutter test` / `dart analyze --fatal-infos` / `dart format` | **340** / 0 / 0 |
+| `cd app; flutter test` / `dart analyze --fatal-infos` / `dart format` | **367** / 0 / 0 |
 
-**已完成(有证据,别重做)**:
-- 配对 v2 三侧收口(公开邀请 + 候选身份 + 每设备一条数据连接),`connector/tests/pairing-e2e.test.ts` 绿
-- **跨实现一致性**:`connector/tests/cross-language-handshake.test.ts` 让 Dart 与 TS 的**产品代码**
-  真打一次握手 + 双向封箱,比对派生的密钥与解开的明文(做过变异校验)
-- 错误码表补齐(15 个 DSH 宿主层码)+ 跨端一致性门禁
-- `connector/src/interaction-face.ts`(**已建好,31 项单测绿,但没接线**):
-  待处理投影 / `interaction.respond` 校验与路由 / `createWatchdog` 看护计时器
-- `connector/src/dsh/interactions.ts`(**已接线**):两个 answerer 已注册(`index.ts:302`)
-- 契约 §5.7/§6 已按 DSH 源码核实并改正(含"空答案是合法跳过"、`open`/`continued` 两条路)
+真机(USB,小米 23113RKC6C / Android 16,序列号 `d61cf622`)**已验到**:
+两段配对 → 建连 → 握手 → `sync.hello`(`app:'foreground'`)→ `session.list` 拿到真会话 →
+`session.subscribe` 后 `ev` 流进来 → `session.prompt` 发出去的那句**作为 `user/message`
+回到手机** → **`等待审批` 卡片画在手机输入栏上** → 点「允许一次」→ `interaction.respond`
+带对 `callId` / `requestId: 'i:<callId>'` / 字面值 `"allowed-once"` → 卡片收束 →
+**`approval/decided` 确实回来了**(这证明 prepend 修复有效,应答者真被问到了)。
 
-## 三个必须按顺序做的步骤(**顺序不能颠倒**)
+**根因已在上一轮修掉**:`askApproval` 曾在"呈示不了"时 `return 'reject'`,
+于是一个 outcome 同时代表"用户点了拒绝"和"手机不在线 / 看护断了" ——
+**在替用户做一个他没做过的决定**(真机那条 tool result 写着
+*"the user rejected … so stop and explain"*,而用户什么都没点)。
+已改成抛,由 `interactions.ts` 归一成 `'unavailable'`。
+**原生依据与取舍**:`.agents/notes/implemented/2026-10-13-approval-must-not-fake-rejection.md`
+(参照 `packages/client/ui-approval/src/client/index.ts` 的 `answerApproval` 三个出口)。
 
-读 `index.ts:156-162` 会发现完整因果链:
+## 免费渠道(不花用户钱)
 
-```text
-没人写 liveRegistry → liveDevices() 返回 [] → decideTakeover 永不 claim
-→ answerer 永远 next() 交还桌面 → index.ts:201-213 那个 fail-closed 桩根本跑不到
-```
+`~/.dsh/profiles/dsh-mobile-test/cordis.patch.yml` 里已配好 `llm-pi-ai` 手写 route
+(`lightvela-free`,`auto` 实际落到 `glm-5.3-flash`),`agent-default-model` 也指过去了。
+**key 不落仓库** —— 启动 profile 时 export `LIGHTVELA_API_KEY=...`(值向用户要)。
+配法见 `tools.md` 的「真机联调的免费渠道」。**不要配 `maxTokens`**(context 1M,pi-ai 对不写的字段用渠道上限)。
 
-所以现在那个"审批转手机"的桩**不是"会拒绝",是"永远不触发"**。
+## 成本纪律(拿钱换来的,务必遵守)
 
-### ① presence 上报(最前面,现在完全没做,两侧的活)
+`--profile` **只隔进程/插件/端口**;`~/.dsh/.credentials.yaml`、`~/.dsh/sessions/`、
+`~/.dsh/storages/` **全是全局共用**。所以"起个测试 profile"给不了任何隔离感。
+**规矩**:不另起 profile;专用会话走「问 → 建 → 跑 → 用户确认后删」四步;
+每次跑之前报一句"这次约几个轮次"并拿到准。现在有免费渠道,这条 mainly 是别污染用户的会话列表。
 
-- **手机侧**:实现 `sync.hello`,带 `app: 'foreground' | 'background'`(契约 §5.4 已有这个字段,
-  Dart 侧没实现)。`online` 由连接本身表达;`lastInteractedAt` 由手机每次答话时带上。
-- **连接器侧**:`connection-scope.ts` 在四个时机回调挂载级 —— 鉴权完成 / 断开 /
-  订阅变化 / 收到 `sync.hello`,写进 `index.ts:163` 的 `liveRegistry`。
-  `subscribed` 在 `connection-scope.ts` 里**本来就有**(`sessionSubscriptions`),别另建一套。
-- **验收**:`liveDevices()` 不再恒为空;`decideTakeover` 第一次真的能 claim;
-  那个桩第一次**真的被触发**(此时它返回 `reject` 才是设计生效)。
-
-### ② port 实现(把 index.ts:201-213 的桩换掉)
-
-- "推给哪台手机"**现成就有**:`protocol/takeover.ts:37` 的返回本来就带 `deviceId`,
-  `dsh/interactions.ts:128` 现在只用了 `.claim` 把它丢了 —— 先用起来。
-- 看护 / 断连**复用** `interaction-face.ts` 的 `createWatchdog`,**不要**在 answerer 上
-  再挂一个(waterfall 只走先注册的,另一个静默不触发)。
-- fail-closed:审批回 `reject`,提问抛错(**绝不返回空答案伪装成"用户全跳过"**)。
-- **落点是挂载级**:它负责"把 prompt 送到哪条连接"。
-
-### ③ `interaction.respond` handler(每连接)
-
-- 手机答的话要从**发问的那条连接**回来,所以 handler 属于 `connection-scope.ts`。
-- 契约 §5.7 形状:`{ sid, callId, answers: [{id, selected[], custom?}] }`,幂等键 `i:<callId>`,
-  **答案批次原样转发**(连接器不翻译,翻译层就是漂移层)。
-- 路由到 `ctx.get('userQuestions').answer(agent, callId, batch)` ——
-  **只覆盖 `state === 'continued'` 的提问**;`open`(调用还在等)走实时应答链,已经能跑。
-- 空 `selected` 且无 `custom` 是**合法的「显式跳过」**(`tool-ask-user/src/timed.ts:172,179`),
-  **不得拦截**。提问已结束 `answer()` 返回 `false` → 映射 `interaction/not-pending`,不是崩溃。
-
-### ④ 手机侧 UI 与真机
-
-- 输入栏接管(审批 / 提问 / 计划审查):照 `mock/proto/` 原型,形状见契约 §6.4。
-- 真机:`docs/cookbook/next-session-real-device.md` 有完整跑法(adb reverse / stayon /
-  base64 二维码 / 起 relay 与 profile)。
-- **交付判据**:真机上"点开会话 → 收到审批 → 手机上答 → 电脑侧继续"+"发一句 / 回一句"。
-
-## 前置事实(会卡住实施)
-
-- Flutter **3.41.9 / Dart 3.11.5 已装好,版本锁死**(上界由鸿蒙 fork 定,不许升)。
-  Android 构建要 `ANDROID_HOME='D:\soft\android-sdk'` 与
-  `JAVA_HOME='C:\Program Files\Eclipse Adoptium\jdk-21.0.9.10-hotspot'`。
-- 本机联调编排:中转 `cd relay; node src/main.ts --config relay.config.json`(**改 `relay/src/**`
-  必须重启**);电脑侧 `dsh --profile dsh-mobile-test --no-open --port 8099`(**不碰用户日常 GUI
-  的 19387**;**改 `connector/src/**` 必须先 `pnpm build`**,真加载的是 `lib/index.js`);
-  **重启前确认没有旧进程残留**(两个进程抢同一身份会让中转不停顶掉旧连接)。
-- `connector/` 与 `relay/` 是两个独立 pnpm 工程,都不是 DSH workspace 成员,本仓库**没有 CI**。
-  两处导入风格不同、**别顺手统一**:connector 写 `.js`(tsdown 打包),relay 直接跑 `.ts`。
-
-## 门禁(每次改完都要全绿)
+## 起服务(照抄)
 
 ```powershell
-node protocol/verify-fixtures.mjs            # 486
-node protocol/verify-loopback.mjs            # 26
-node protocol/verify-vectors.mjs             # 49
-node app/tools/verify-platform-boundary.mjs  # 182
-node mock/proto/tools/verify-icons.cjs; node mock/proto/tools/verify-tool-paths.mjs
-cd connector; pnpm exec tsc --noEmit; pnpm build; pnpm test      # 335+
-cd relay; pnpm typecheck; pnpm test                              # 75
-cd app; flutter test; dart analyze --fatal-infos lib test integration_test
-cd app; dart format --output=none --set-exit-if-changed lib test integration_test
+# 1) 中继(改过 relay/src/** 必须重启;它没有构建步骤)
+cd relay; node src/main.ts --config relay.config.json
+
+# 2) profile(带免费渠道的 key)
+$env:LIGHTVELA_API_KEY = '<向用户要>'
+dsh --profile dsh-mobile-test --no-open --port 8099
+
+# 3) 真机
+adb -s d61cf622 reverse tcp:8787 tcp:8787
+adb -s d61cf622 shell svc power stayon true
+
+# 4) 出码:Web UI 里对**一个现成的空闲会话**跑 `/dsh-mobile-pair`
+#    (POST /api/commands/execute,信封形状见 tools.md;不要为此新建会话)
 ```
 
-**改断言必须做一次变异校验**(故意破坏不变量,确认**恰好**那一条红)。
-**绝不允许削弱测试让它变绿。**
+**改过 `connector/src/**` 必须先 `pnpm build`**(真加载的是 `lib/index.js`)。
+**跑完把自己起的进程杀干净。**
 
-## 踩过的坑(别再踩)
+## 要做的两件事
 
-1. **改源码只用编辑工具,不用 shell 字符串替换** —— shell 出错是静默的,本仓被这个坑写空过
-   源文件两次。提交前必看 `git status` 完整清单,重点看**意外的文件**。
-2. **`dart run` 首次跑要编译 + build hooks(20-30 s)**,且 `dart` 是 `.bat` shim ——
-   Node spawn 它必须 `shell: true`,否则报 `ENOENT`(看着像没装 Dart)。
-   被 kill 的测试作业**不会带走子进程**,下一个 `dart run` 会静默等构建锁 ——
-   挂住先清孤儿:见 `tools.md` 的 Pitfalls。
-3. **DSH 服务键只在源码里核实过,没在活宿主里跑过**:`userQuestions` / `approval` 是否真叫这个,
-   `answer()` 的真行为,全部依据源码 + DSH 自己的 spec。**接完先跑一次真宿主再信。**
-4. **两条 answerer 不能同时挂**:waterfall 只走先注册的那个,另一个静默不触发。
-   看护属于 `RemoteInteractionPort`,不属于 answerer。
-5. **空答案不是错误**:`selected` 空且无 `custom` = 用户显式跳过,原样转发。
-6. 真机两个坑:屏幕灭掉 = 引擎暂停(用例挂住且无原因)⇒ `adb shell svc power stayon true`;
-   明文 HTTP 要在 debug 构建放行(`network_security_config.xml` + `PairingPage.allowInsecureLocal`
-   **两处都要开**)。
+### ① 测试侧:步骤 ④ 的等待窗口
 
-## 范围决定(已定,别再讨论)
+`app/integration_test/interaction_real_device_test.dart` 步骤 ④ 用 `_waitFor` 的
+**默认 30 秒**等 `user/message` 回读,而 `session.prompt` 是**排队写** ——
+会话正在跑轮次时走 `agent.followup`(`session-controller/src/commands.ts` 的 prompt 分支),
+`user/message` 要等当前轮次结束才落盘。免费渠道一个轮次轻易超 30 秒。
 
-- **刷新令牌轮换不做**:设备令牌长期有效 + 手动吊销;刷新令牌是本机凭据,摘要不上中转。
-- **中转不做多实例**:单实例 + I7 重启收敛就是个人工具的形态。
-- **鸿蒙暂缓**(不是放弃):Flutter 版本锁继续保留;OHOS 适配 / HUKS / 推送全部暂停。
-- **直连监听面继续自起监听**,不改用 DSH 的 `registerUpgrade`(取舍见
-  `.agents/notes/implemented/2026-10-09-direct-listener-keeps-own-socket.md`)。
+**修法(二选一或都做)**:挑一个 `running == false` 的会话(`session.list` 一直在发它);
+或把这一步的窗口调到 `_waitForModel` 那一档。**别猜模型会不会回** ——
+判据仍然是"电脑侧确实受理了"这个事实。
 
-## 已知缺口(不挡路,但别当已修)
+### ② 产品侧:补 lifecycle observer
 
-1. 首配的匿名限流桶是**单一全局桶**,刷约 6 请求/秒可让所有新设备换票 429(约 10 s 恢复),
-   与 `pairing-v2.md` §3 的要求不符。修法:把形状校验挪到取桶之前。
-2. `relay/src/core.ts` 的 `stats.devices` 实为**通道数**(观测量,低危)。
+`setAppState` 在 `app/lib` 里**没有任何调用点** ⇒ `_keepalive.setForeground(true)`
+从没被执行过,心跳可能一直走在后台节拍上。`core/sync_client.dart:55` 的注释本来就写了
+"装配点决定何时开始,前台/后台决定要不要维持"—— observer 本来就该在那条路上。
+做法:在装配点挂 `WidgetsBindingObserver`,`didChangeAppLifecycleState` 调
+`setAppState(...)`,并按现有约定补用例。
+
+## 跑通之后的验收判据
+
+1. 电脑侧 `approval/decided` 的 outcome 是 **`allowed-once`**(不是 `unavailable`);
+2. 那条越权命令真的跑出结果(`tool/result` 带 `dsh-probe-ok`);
+3. 连续重连 N 次都成立 —— 别把"重启后第一次成功"当能力。
+
+## 排查时的三个坑(都已写进 `tools.md`,别重踩)
+
+1. **读会话日志必须按帧解压**:`~/.dsh/sessions/**/session.v4.jsonl.zstd` 是逐帧追加的
+   zstd,Node 的 zlib **只解第一帧**(61 KB 只解出 211 字符)。按帧魔术字 `0x28B52FFD` 切段。
+2. **`ctx.logger` 到不了 stdout,`console.error` 能**;`appendFileSync` 被 DSH 沙箱挡。
+   **所以"日志没生成"不是"代码没跑到"的证据。**
+3. **`flutter test integration_test` 跑完会卸载 App** —— 仪表里看到的 `onclose`
+   可能是装卸造成的,**没有时间戳的两个事件,间隔什么都不说明**(上一轮就这样把一个
+   42 秒的装卸周期误读成"连接莫名中断",白绕一轮)。
+
+## 还没做的(别当已修)
+
+- **模型切换**:`session/select-model` 会顺手 `saveSelection` 回写**全局默认**,
+  波及用户日常 profile,所以本期只读不写。
+- **模型 picker 接真目录**:`session/modelCatalog` 已在连接器侧接好(`dsh/models.ts`),
+  手机侧显示的名字已是真值,但 picker 列表还是手抄的。
+- 方法面剩 8 个未接(`session.create` / `session.cancel` / `settings.*` / `credentials.*` /
+  `devices.revoke` / `push.configure`)。
+- `always` 档下没订阅该会话的手机看不到卡片(看护超时后 fail-closed)。
 
 ## 相关文档(改之前先读)
 
-- `docs/subsystems/remote-channel.md` §5.7(方法表)/ §6(交互层,已按源码改正)
-- `docs/subsystems/pairing-v2.md`、`connector-and-relay.md` §1.7(直连)
-- `memory.md`(当前状态 + 三步依赖链)、`tools.md`(命令与 Pitfalls)
-- `.agents/notes/implemented/2026-10-09-*.md`(本轮五篇决策笔记)
+- `.agents/notes/implemented/2026-10-10-interaction-to-phone-chain.md` —— 整条链的取舍
+- `.agents/notes/implemented/2026-10-13-answerer-must-be-prepended.md` —— 应答者必须 prepend
+- `.agents/notes/implemented/2026-10-13-approval-must-not-fake-rejection.md` —— 上一轮修的根因
+- `tools.md` / `memory.md` —— 命令、坑点、当前状态
 
-非平凡改动**必须留决策笔记**(`.agents/notes/`),与代码**同批提交**。
+---

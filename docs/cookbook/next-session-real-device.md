@@ -16,10 +16,10 @@
 | 门禁 | 数字 |
 |---|---|
 | `node protocol/verify-fixtures.mjs` / `loopback` / `vectors` | 486 / 26 / 49 |
-| `node app/tools/verify-platform-boundary.mjs` | 182 |
-| `cd app; flutter test` | **340** |
-| `cd connector; pnpm exec tsc --noEmit && pnpm build && pnpm test` | **301** |
-| `cd relay; pnpm typecheck && pnpm test` | **72** |
+| `node app/tools/verify-platform-boundary.mjs` | 185 |
+| `cd app; flutter test` | **364** |
+| `cd connector; pnpm exec tsc --noEmit && pnpm build && pnpm test` | **361** |
+| `cd relay; pnpm typecheck && pnpm test` | **75** |
 
 **电脑侧那条链已经有端到端证据**:`connector/tests/pairing-e2e.test.ts` 用真中转 + 真握手 +
 真 AEAD 跑通了「握手不授权 → 确认才登记 → 令牌只在密文里 → 换票后双向 AEAD → 多设备互不干扰 →
@@ -76,7 +76,7 @@ flutter test integration_test/channel_e2e_test.dart -d <真机序列号> `
 node protocol/verify-fixtures.mjs            # 486 项
 node protocol/verify-loopback.mjs            # 26 项
 node protocol/verify-vectors.mjs             # 49 项
-node app/tools/verify-platform-boundary.mjs  # 182 项
+node app/tools/verify-platform-boundary.mjs  # 185 项
 node mock/proto/tools/verify-icons.cjs; node mock/proto/tools/verify-tool-paths.mjs
 cd connector; pnpm exec tsc --noEmit; pnpm build; pnpm test
 cd relay; pnpm typecheck; pnpm test

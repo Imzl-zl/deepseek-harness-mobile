@@ -6,61 +6,107 @@
 ## 下一步(新会话从这里开始)
 
 > **开工提示词:`docs/cookbook/next-session-interaction-to-phone.md`** —— 下一个会话直接用它
-> (覆盖"交互转手机"完整开发 + 真机连通;真机跑法细节见 `next-session-real-device.md`)。
+> (真机跑法 + 免费渠道 + 成本纪律 + 要做的两件事 + 三个排查坑)。
 
-**当前里程碑**:配对 v2(公开邀请 + 候选身份 + 每设备一条数据连接)三侧收口完毕、门禁全绿,
-**跨实现一致性已闭环**(Dart 与 TS 产品代码真打一次握手与双向封箱)。
-**「交互转手机」的内核已落地但未接线**;「第一次真机连通」仍未验证。
+**当前里程碑**:**「审批 / 提问 / 计划审查转到手机」整条链已接线,并在真机上验证到
+「发一句 / 回一句」**(USB 真机:小米 23113RKC6C / Android 16;用例跑到倒数第二条)。
+三侧门禁全绿:connector **369** / relay **75** / app **367** / 平台边界 **185**。
 
-**下一件事(接线,别重新设计)**:`connector/src/interaction-face.ts`(投影 + `interaction.respond`
-路由 + 看护计时器)已建好、31 项单测绿,但**没有 handler、没有装配**。三件事:
+**真机上抓出并修掉的四个 bug**(都只在真机暴露,细节见两篇决策笔记):
+① profile 补丁漏 `allowInsecureLocal` → 连接器**从不拨线**(什么都没发生);
+② `main.dart` 的 `PairingClient` 漏同一个字段 → **配对成功但换不到票**;
+③ `_handleOpened` 把**密文**喂给 `_accountFlow` → `credit 载荷不是合法 JSON` →
+**握手成功 20 ms 后断线**;
+④ **两个交互应答者没带 `{ prepend: true }`** → DSH 的桌面转发监听器
+(`packages/api/remotes/src/index.ts:57-75`,浏览器一连上就注册、自己不答就不放行)
+排在前面 → **审批永远挂在 `approval/asked`,手机答了也无处可落**。
+**④ 是「审批转手机」最后一跳的真因**,已修 + 有专属回归用例 + 变异校验。
 
-1. **加 `interaction.respond` handler**(契约 §5.7 形状 `{sid, callId, answers}`,幂等键
-   `i:<callId>`),路由到 `userQuestions.answer()` —— 只覆盖 `state === 'continued'` 的提问。
-2. **实现 `RemoteInteractionPort`**(`connector/src/dsh/interactions.ts:55-69` 要求的契约):
-   看护超时 + 断开 + fail-closed。**复用 `interaction-face.ts` 的 `createWatchdog`**,
-   **不要**在 answerer 上再挂一个(waterfall 只走先注册的,另一个静默不触发)。
-3. **接线投影**:`pending.changed` / `ev` 带上待处理项,手机才能渲染。
-   `open` 态的实时路径**已经能跑**(`dsh/interactions.ts` 已注册两个 answerer),
-   缺的就是 port 实现。
+**唯一还没过的**:`审批通过后电脑侧必须真的继续`。**2026-10-13 用免费渠道复跑,拿到了决定性证据**:
 
-**`port` 现在是什么(2026-10-09 读 `index.ts` 确认)**:`index.ts:201-213` 是一个**故意的
-fail-closed 桩** —— `askApproval` 记 `METRIC.failClosed` 后返回 `'reject'`,
-`askQuestion` 直接抛(注释:"不能返回空答案伪装成「用户全跳过」")。
-answerer 已在 `index.ts:302` 注册。**所以缺的只有这一件事:把桩换成真实现。**
+- 免费渠道(`llm-pi-ai` 手写 route,配法见 `tools.md`)下模型**照话了**:
+  `tool/call` 就是提示词里那条 `Set-Content -Path C:/Windows/Temp/dsh-probe.txt …`,
+  还自带 `sandbox_permissions: danger-full-access`;
+- `approval/asked` 落了,`callId` 正确;
+- **`approval/decided` 在 322 毫秒后回来,outcome 是 `rejected`**;
+- 手机连接诊断是**空**(不是协议错误),轮次也正常继续到了 step 3。
 
-**但真实现前面还有一件更前的(2026-10-09 读源码才发现)**:`index.ts:156-162` 的注释自己写着
-`liveRegistry` **现在恒为空** —— 没有设备 presence 上报。于是完整因果链是:
+322ms 远快于人手点按(测试轮询一步就 200ms)、也远快于看护的 10 分钟超时,
+所以只可能是 `askApproval` 的两条快速 fail-closed 之一:**进端口时设备已被判定离线**,
+或**看护立刻被 `disconnect()`**。而 `rank()` 是过滤 `online === true` 的
+(`protocol/takeover.ts:47`),claim 那一刻设备确实在线 —— 所以是 **claim 之后
+~300ms 内 presence 记录没了**,即 `presence.offline(devId)` 被触发
+(只可能来自 `servingEnded`,也就是数据面断开)。
 
-```text
-没人写 liveRegistry → liveDevices() 返回 [] → decideTakeover 永不 claim
-→ answerer 永远 next() 交还桌面 → 那个 fail-closed 桩根本跑不到
-```
+**根因已找到并修掉**(2026-10-13):`askApproval` 在"呈示不了"时 `return 'reject'`,
+于是 `'rejected'` 既代表"用户点了拒绝"、又代表"手机不在线 / 看护断了" ——
+**我们在替用户做一个他没做过的决定**。证据:真机上 `approval/decided` 在 **322ms** 后
+回来 `rejected`(远快于人手点按与 10 分钟看护),而那条 tool result 说的是
+*"the user rejected … so stop and explain instead of working around it"* ——
+用户什么都没有点。又因为本应答者是 prepend 的,我们一 reject,桌面永远问不到。
+**原生参照**:`packages/client/ui-approval/src/client/index.ts` 的 `answerApproval`
+只有三个出口 —— 用户答了(`answer`)、我呈示不了(`delegate → next()`)、
+我的寿命结束了(`abort → 抛`)。`'rejected'` 在原生语义里**只**是用户决定
+(`contract/slots.ts` 的 `ApprovalDecision = 'allowed-once' | 'rejected'`)。
+**已改成抛**(与提问侧 `askQuestion` 一致),由 `interactions.ts` 的 catch 归一成
+`'unavailable'` —— 模型收到"没人能答"而不是"用户拒绝了",前者它可以重试。
+取舍与被否方案见 `.agents/notes/implemented/2026-10-13-approval-must-not-fake-rejection.md`。
+**顺带更正一个误判**(已写进 `tools.md`):`flutter test integration_test` 跑完会**卸载 App**
+(实测 `pm list packages` 里没有它)。所以仪表里那两条
+`onclose code=4000 reason=channel closed` 是装卸 App 造成的,**不是连接莫名中断**;
+我曾把"两次 onclose 的间隔"误当成连接存活时长 —— **没打时间戳的两个事件,间隔没有意义**。
+**还剩两条**:
+1. **测试侧**:步骤 ④ 用 `_waitFor` 的默认 30 秒窗口等 `user/message` 回读,
+   而 `session.prompt` 是排队写(会话在跑轮次时走 `agent.followup`)—— 免费渠道一个轮次
+   轻易超 30 秒。**修法**:挑 `running == false` 的会话,或把窗口调到 `_waitForModel` 档。
+2. **产品侧真缺口**:`setAppState` 在 `app/lib` 里**没有任何调用点** ⇒
+   `_keepalive.setForeground(true)` 从没执行过,心跳可能一直走在后台节拍上。
 
-**所以"交互转手机"是三件事,必须按顺序做**:
+**模型/状态显示已对齐 DSH 真值**(2026-10-13):手机上原来的模型名是**写死的** `'claude-opus'`
+外加一份手抄的四个模型列表,与电脑侧毫无关系。现在接 DSH 原生的两条通道:
+`session/modelCatalog`(目录,原样过线)+ `modelSelection` 投影(每会话当前模型)。
+连接器新增 `session.modelCatalog` 方法、`session.list` 的行带 `model` 字段;
+手机侧 `SessionSummary.model` + `chat_page.dart` 的 `_modelLabel` / `_reasoningLabel`。
+**拿不到就显示"未选择",不猜。** 见 `connector/src/dsh/models.ts` 的文件头。
+**还没做**:模型**切换**（`session/select-model` 会回写全局默认,本期只读不写）、
+模型 picker 接真目录（现在还是手抄列表）。
+**改 `connector/src/**` 必须先 `pnpm build`**(真加载的是 `lib/index.js`)。
 
-1. **presence 上报(最前面,现在完全没做)**:手机声明在线/前台/已订阅会话,连接层写进
-   `liveRegistry`。**契约里已有载体**:`sync.hello` 的 `app: 'foreground'|'background'`
-   (§5.4)就是干这个的;`online` 由连接本身表达,`subscribed` 在 `connection-scope.ts` 里
-   **本来就有**(`sessionSubscriptions`),`lastInteractedAt` 由手机每次答话时带上。
-   → 落点:`connection-scope.ts` 在鉴权完成/断开/订阅变化/sync.hello 时回调挂载级。
-2. **port 实现**:把 `index.ts:201-213` 的桩换成真实现 —— 推到 `decideTakeover` 给出的
-   **那台**手机(`takeover.ts:37` 的返回本来就带 `deviceId`,`interactions.ts:128` 现在只用了
-   `.claim` 把它丢了),等它答,看护/断连走 `interaction-face.ts` 的 `createWatchdog`,
-   一律 fail-closed。
-3. **`interaction.respond` handler**:手机答的话从**那条连接**回来,所以 handler 属于
-   `connection-scope.ts`(每连接),挂载级只负责"送到哪条连接"。
+## 真机联调的成本纪律(2026-10-13 立规,拿钱换来的)
 
-**顺序不能颠倒**:没有 1,2 和 3 写了也跑不到(这是现在这个桩的真实状态)。
+**根因**:`--profile dsh-mobile-test` **只隔进程/插件/端口**;
+`~/.dsh/.credentials.yaml`、`~/.dsh/sessions/`、`~/.dsh/storages/` **全是全局共用**。
+所以"起个测试 profile"给不了任何隔离感 —— 在里面建会话、发 prompt,
+一样记在用户的官方账号上,并且污染他的会话列表(截图里那些"未分组"就是这么来的)。
+一次 `interaction_real_device_test.dart` 至少 2 个模型轮次(标记回显 + 审批探针),
+此前无人授权地跑了十几轮。
 
-**再往后**:手机侧 UI(输入栏接管 + 批次构造)→ 真机验证(`channel_e2e_test.dart` 之后再叠加
-交互链路)→ 方法面剩 8 个 → `ui/adaptive` / 三端能力包(鸿蒙暂缓)/ 相机扫码。
+**规矩(下次照做,别问第二遍)**:
+1. **不另起测试 profile**。就用用户当前在用的那个渠道/进程 —— profile 只隔进程,
+   不隔账号,多起一个只是多一层"我在沙箱里"的错觉。
+2. **不撒着用他的现成会话**。测试的挑选过滤(`!running` + 无未决审批)会逐个消耗
+   用户的真实会话,还在里面留标记和未决审批 —— 比专用会话更糟。
+3. **要一个专用会话,但要走"问 → 建 → 跑 → 删"四步**:跑之前问用户要不要建;
+   建一个(名字带 `[可删]`、带上分组,别再是"未分组");测试只往这一个里发 prompt;
+   **跑完由用户确认后删掉**——删除是破坏性操作,不擅自做。
+4. **每次跑之前报一句"这次约 2 个轮次"**,拿到准再跑。
+5. **跑完把自己起的进程杀干净**(profile + 中继),别留着继续计费。
 
-**两个待拍板的**(内核已按最稳做法实现,装配时必须表态):
-- 审批应答者取舍:正确做法是**保留 `dsh/interactions.ts` 的现有 answerer,把看护做进 port**
-  (理由见 `remote-channel.md` §6.3.1),而不是二选一。
-- `REPLY_QUEUED` / `BAD_ANSWER` 目前都映射 `interaction/not-pending`(客户端动作
-  refresh-pending 正是恢复动作);要区分就得给封闭错误表加码(契约变更)。
+**注意"没有免费会话"**:第五步的审批探针必须 `session.prompt` 让模型跑一条越权命令,
+这是真金白银的轮次 —— 不管在哪个会话里发都花用户的钱。"不建新会话"只少污染列表,
+省不了钱。想零成本就只有不跑(代价见上:prepend 在活宿主里的效果没验过)。
+
+**已经付出的代价**(未删,要清由用户定):`~/.dsh/sessions/` 下若干
+"dsh-mobile 真机联调"会话,散在多个工作区目录里。
+
+**如果哪天想让它免费**:链路的逻辑已由 `connector/tests/interaction-chain.test.ts`
+(纯 Node、零成本)覆盖;真机用例只剩"宿主接线"这一件事(应答者 prepend 顺序、
+真实 claim、真实 settle)。要再压缩成本,方向是让宿主侧不靠模型就产出一次
+`approval/asked` —— 目前没找到非模型路径,所以只能靠"问清了再跑"。
+
+**方法面剩 8 个**:`session.create` / `session.cancel` / `settings.describe` / `settings.update` /
+`credentials.set` / `credentials.unset` / `devices.revoke` 不做 / `push.configure` 本期不做。
+再往后:`ui/adaptive` / 三端能力包(鸿蒙暂缓)/ 相机扫码。
 
 ## 已知缺口(定位过、有证据;除第 1 条外都未修)
 
@@ -108,12 +154,12 @@ answerer 已在 `index.ts:302` 注册。**所以缺的只有这一件事:把桩�
 | `node protocol/verify-fixtures.mjs` | 16 条 fixture / **486 项断言** |
 | `node protocol/verify-loopback.mjs` | **26 项**:手机 ⇄ 中转 ⇄ 桥接回环 |
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量 |
-| `node app/tools/verify-platform-boundary.mjs` | **182 项**(22 条规则自检 + 扫 50 个 Dart 文件) |
+| `node app/tools/verify-platform-boundary.mjs` | **185 项**(22 条规则自检 + 扫 51 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 原型图标集 / 工具脚本不许硬编码盘符 |
-| `cd app && flutter test` | **340 项** |
+| `cd app && flutter test` | **366 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test integration_test` | 0 文件需重排 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **304 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **363 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **75 条** |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker` |
 | `node app/tools/gen-pairing-vectors.mjs` | 重新生成配对向量(**改了配对派生规则后必须重跑**) |
@@ -184,18 +230,21 @@ answerer 已在 `index.ts:302` 注册。**所以缺的只有这一件事:把桩�
 - **别把"重启后的第一次成功"当能力**;判据要包含"连续重连 N 次都成立"。
 - **提交信息里避免反引号**(pwsh 会当 Unicode 转义,整条命令在解析阶段就失败)。
 
-## 最近活跃窗口(2026-10-09)
+## 最近活跃窗口(2026-10-13)
 
-- **配对 v2 三侧收口**:relay 测试迁到 v2 API(删掉的都是**已删除机制**的用例);
-  connector 两条棘轮按事实更新(帧类型清单同步契约、耦合面 4→3 个成员并做变异校验),
-  三条 v1 流程 e2e 因"机制已被设计删除"删除并写明替代覆盖;app 侧新增
-  `core/pairing_channel.dart` + 两段式编排 + 两段式配对页,17 个静态错误与 12 条失败清零(305→340 项)。
-  见 `.agents/notes/implemented/2026-10-09-pairing-v2-test-migration.md` 与
-  `2026-10-09-app-pairing-v2-two-phase.md`、`2026-10-08-pairing-v2-and-device-connections.md`。
-- **中转不再签发设备令牌**:删掉 `--issue-token device` / `--revoke-token device`,
-  摘要表只放连接器令牌(出现 device 条目即拒绝启动),认证顺序改成先名册后摘要。75 项。
-  见 `.agents/notes/implemented/2026-10-09-relay-never-issues-device-tokens.md`。
-- **顺手清掉的死代码**:`relay/src/routing.ts` / `protocol-view.ts` + 它们的 7 条用例、
-  `pendingDeviceIdOf`;仓库根的调试脚本 `check-roster.cjs`。
-- **上一轮(2026-10-07/08)**:配对链真机跑通(换票 → 升级 → `pair` → 令牌落 Keystore);
-  之后 GPT 那一轮把它整体改成 v2 但没收口(实现改了、调用方与文档没跟上),本轮接上。
+- **「交互转手机」整链接线 + 真机验证到「手机答审批」**:presence 上报
+  (`connector/src/presence.ts`,四个时机回调)→ `sync.hello`(批量订阅 + 前后台态)→
+  `decideTakeover` 第一次真的 claim → `interaction-claims.ts`(看护 + 断开 + fail-closed)
+  替换掉那个**永远跑不到**的桩 → `interaction.respond`(每连接)收束在途 claim /
+  路由到 `userQuestions.answer`。手机侧:`sync.hello` 上报 + 输入栏接管接真实事件 +
+  多题向导 + 显式跳过。见 `.agents/notes/implemented/2026-10-10-interaction-to-phone-chain.md`。
+- **真机验证到「手机答审批」**:`app/integration_test/interaction_real_device_test.dart`
+  跑到倒数一条断言;卡片出现、答复形状、收束全绿。
+- **第三轮推翻了一个误判**:Node 的 zstd 解压**只解第一帧**,而 DSH 会话文件是**逐帧追加**的 ——
+  按帧魔术字 `0x28B52FFD` 重解后确认**模型照话了**、`approval/asked` 落了、
+  但**没有 `approval/decided`**(应答者从未返回)。这是当前唯一未解的真问题。
+- **三个真机才暴露的 bug 已修**:连接器从不拨号(profile 漏 `allowInsecureLocal`)、
+  配对成功但换不到票(`main.dart` 的 `PairingClient` 漏同一个字段,已加结构断言)、
+  握手成功 20 ms 后断线(`_handleOpened` 把密文喂给 `_accountFlow`,已加回归用例 + 变异校验)。
+- **上一轮(2026-10-09/10)**:配对 v2 三侧收口、错误码表补齐、跨实现一致性闭环;
+  relay 不再签发设备令牌;直连监听面继续自起监听(关箱)。

@@ -370,7 +370,7 @@ type SyncSnapshot = {
 | `session.unsubscribe` | 手机→电脑 | — | 停止推送;桥接可释放该会话缓冲(仍需等 persisted) |
 | `session.page` | 手机→电脑 | — | 历史翻页(按消息对齐,用 DSH `page()`) |
 | `session.prompt` | 手机→电脑 | `requestId` | **参数是 `{ sid, content, mode? }`**,不是 `{ sid, text }`。`content` 必须是**非空数组**,每项带 `type`(照 DSH 的 `PromptContentPart`:文本是 `{type:'text', text}`)。**形状以电脑侧为准** —— 它与 DSH 的 `sessionController.prompt` 同构,手机侧没有第二条真值。`mode: 'queue' \| 'steer'` |
-| `interaction.respond` | 手机→电脑 | `i:<callId>` | 提问 / 计划审查的**答案批次**:`{ sid, callId, answers: [{ id, selected[], custom? }] }`。形状与 DSH 的 `AskUserQuestionAnswer` **逐字一致**,不另造决策枚举(§6.3.1) |
+| `interaction.respond` | 手机→电脑 | `i:<callId>` | 提问 / 计划审查的**答案批次**:`{ sid, callId, answers: [{ id, selected[], custom? }] }`。形状与 DSH 的 `AskUserQuestionAnswer` **逐字一致**,不另造决策枚举(§6.3.1)。**同一个入口也收束在途的审批 claim**:分叉点不在方法名上,而在"这一项是不是一次在途 claim"(§6.2 的判定只有端口知道);审批的"允许一次"编码成 `selected` 含 DSH 的 outcome 值 `allowed-once`(`user-approval/src/types.ts:32`),空 `selected` 且无 `custom` = 拒绝 |
 | `session.cancel` | 手机→电脑 | — | 取消当前轮次但保留待处理收件箱 |
 | `session.refetch` | 手机→电脑 | — | 取单个大条目 |
 | `job.list` | 手机→电脑 | — | 任务投影(严格属于该会话的行) |
@@ -379,7 +379,7 @@ type SyncSnapshot = {
 | `settings.describe` / `settings.update` | 手机→电脑 | `requestId` | 读写设置(密钥面见下) |
 | `credentials.set` / `credentials.unset` | 手机→电脑 | `requestId` | **单向写面**,无读方法。DSH 侧是 `settings-controller/src/credentials.ts:100` 的 `set(ref, value)` 与 `:113` 的 `unset(ref)`;`value` 是明文(§7.5 的"改密钥只发新值"由此天然成立),而读面 `describe`(:83)**默认脱敏**(`redactSecrets`) |
 | `devices.list` | 手机→电脑 | — | 设备管理。**吊销不是方法**:名册的写入方本来就是电脑侧,吊销 = 不再把该设备报进名册 + 本地标 `revokedAt`(§8.2) |
-| `sync.hello` | 手机→电脑 | — | §5.4 的恢复握手 |
+| `sync.hello` | 手机→电脑 | — | §5.4 的恢复握手。**两个职责**:① 一次声明整份订阅集(手机回到前台时要恢复的是"所有会话",不是一个;断线之后 UI 不会重新 `subscribe`,所以恢复由持有连接的这一层发起);② 上报前后台态(`app`)。每个声明的会话都走同一个 `session.subscribe` 的订阅面,不另起一套恢复语义;失败语义与它逐字一致(一个别名未知就整票失败并回 `session/not-found`) |
 | `repo.info` | 手机→电脑 | — | 版本、能力位、别名→会话元的映射版本 |
 | `session.create` | 手机→电脑 | `requestId` | 新建会话。**DSH 支持**(`session-controller/src/commands.ts:105` 的 `create(request)` 与 `src/index.ts:281`);本期**未实现**,实现时照 DSH 的 `SessionCreateRequest` 形状 |
 
@@ -387,7 +387,13 @@ type SyncSnapshot = {
 主链路不依赖它。等三端能力包(§10)落地后**再**把它加进方法表;今天声明一个
 调不通的方法,只会让手机侧多一个必然失败的按钮。
 
-事件(电脑→手机):`ev`(会话事件)、`live`(流式)、`job`(任务输出,订阅式,§5.3)、`presence`(在线态/前台态)、`pending.changed`(待处理集合变化)。
+事件(电脑→手机):`ev`(会话事件)、`live`(流式)、`job`(任务输出,订阅式,§5.3)、`presence`(在线态/前台态)。
+
+**没有 `pending.changed` 帧**。§6.3 的待处理集合是**会话事件的投影**,随 `ev` 一起到手机 ——
+审批的 ask 就是一条 `approval/asked` 会话事件(`user-approval/src/index.ts:225`),
+提问的 ask 是 `ask_user_question` 的 `tool/call`。电脑侧不另推一份集合:
+两份集合必然对不上,而对不上的症状是"电脑在等审批、手机上什么都没有"。
+代价如实在 §6.2:`always` 档下一个没订阅该会话的手机看不到卡片,看护会走到超时并 fail-closed。
 
 两条跨方法的规则:
 
@@ -444,12 +450,15 @@ claim(请求) :=
 ```
 
 - **开关三档**,存手机本地并同步到桥接:`never`(只通知,审批仍在桌面答)/ `foreground`(**默认**)/ `always`。
-- 默认取 `foreground` 的理由:不改变桌面既有行为(用户离开手机时审批照常在电脑上弹),同时"用户正看着手机"这条最常见的远程场景不被破坏。判定输入(App 前台态 + 订阅关系)都由已认证设备上报,可测。
+- 默认取 `foreground` 的理由:不改变桌面既有行为(用户离开手机时审批照常在电脑上弹),同时"用户正看着手机"这条最常见的远程场景不被破坏。判定输入(App 前台态 + 订阅关系)都由已认证设备上报,可测。上报载体是 `sync.hello`
+(§5.4 的 `app` 字段)+ 连接本身(在线)+ 订阅集变化;电脑侧记在 `connector/src/presence.ts`,
+断开即整条作废(订阅集属于那条连接)。
 - **多设备并列时的确定性选择**:取"最近一次与该会话交互过的前台设备";若并列,取配对时间最早者。实现必须按此顺序,便于测试。
 - **claim 之后**(桥接已独占该请求,桌面看不到——这是 DSH 既有语义,与"两个浏览器同时打开"同构):
   - 把请求推给手机;启动**看护计时器**(默认 **10 min**,可配)。
-  - 手机应答 → 返回对应 outcome;立刻回 `pending.changed`。
-  - 看护超时 / 手机断开 / 会话被替换 → 返回 **`unavailable`(fail-closed,绝不静默放行)**,并推一条"审批在手机上未被处理"的通知。
+  - 手机应答 → 返回对应 outcome;待处理项随下一条 `ev` 收敛(`approval/decided` 覆盖 `approval/asked`,§5.2)。
+  - 看护超时 / 手机断开 / 会话被替换 → 返回 **`unavailable`(fail-closed,绝不静默放行)**,并留一条"审批在手机上未被处理"的记录。
+    **本期只有日志与指标两条出口**:"推一条通知"需要一种电脑→手机的推送帧,而本期没有(见 §5.7 末尾)。
 - **产品文案必须如实**:手机接管期间审批不在电脑上出现;要恢复桌面接管,把开关设为 `never` 或让 App 退到后台(`foreground` 档下会自动 delegate)。
 - 演进(不在第一版):桥接可带一个 DSH 客户端插件,在桌面界面显示"手机接管中",避免用户误以为审批没弹。
 
@@ -470,6 +479,7 @@ claim(请求) :=
 
 - **来源是日志,不是内存**:ask 与 outcome 成对落盘,悬空即"有 ask、无 outcome"。桥接启动 / 重连时重放日志尾部重建集合。
 - **它没有独立查询方法**:待处理集合是**会话事件的投影**,随 `ev` 帧一起到手机(§5.7 因此没有 `interaction.list`)。要"拉一次当前集合"就 `session.subscribe` 带 `since` —— 恢复语义已经把这件事做完了。
+- 电脑侧**不另推一份集合**:审批的 ask 是 `approval/asked` 会话事件、提问的 ask 是 `ask_user_question` 的 `tool/call`,手机从事件投影。两份集合必然对不上(§5.7 末尾)。
 - 集合是**持久条目的投影**(I4):有 itemId(`i:<callId>`)、进快照、upsert;不随连接态变化。
 - 重建的边界要如实写进产品:只覆盖持久日志里的事件;日志被裁剪或会话被替换时,集合随基线快照刷新。
 
@@ -544,6 +554,11 @@ claim(请求) :=
   **不因为"看起来超时了"而置灰**。
 - 迟到的回答**允许**:提问超时转 pending 后用户仍可答,回答以 `answer_to_pending_question`
   用户消息的形式送达(`user-questions/src/index.ts:191`)。
+- **计划审查按提问渲染**:DSH 的 `intent` 只活在应答链的请求对象上,**不进会话事件**
+  (`user-questions/src/projection.ts:148-161` 的 `questionsOf` 不映射 `intent`),于是从事件流里
+  看不出这是计划审查。手机因此渲染通用提问流 —— 那正是 DSH 自己的投影的行为,而
+  *"an intent changes presentation only, never the protocol"*(`types.ts:17-22`)保证答案编码
+  完全相同:`selected` 里有那个 `approve` 标签就是同意,其余一律拒绝。
 
 ---
 
@@ -597,6 +612,10 @@ dsh_mobile_takeover  表 takeover    { devId: { mode, lastInteractedAt } }
 - **`pairingId` 必须随设备一起持久化**:它就是 §12.1 的「配对标识」(配对码的 HKDF 输出),参与 §4.1 的 `info`。每次重连都要用它重算 `master`,所以两端都得存住 —— 手机在安全存储,电脑侧在设备记录里。
 - `aliasVersion` 是 `repo.info` 要报的「别名→会话元映射版本」(§5.7);`connTokenSecretRef` 是连接器令牌的凭据引用,**令牌本体走 `ctx.credentials` 具名记录面**(`credentialKey('<包名>','<id>')`)。
 - `takeover` 表存每个设备的接管档位与最近交互时间,是 §6.2 仲裁判定的输入。
+  **本期实现如实记录**:仲裁的**瞬时**输入(在线、前台、已订阅)只在内存里
+  (`connector/src/presence.ts`),进程重启即清零、重连后由连接层重新上报;
+  `mode` 是挂载级配置快照(§6.2),`lastInteractedAt` 同样不落盘 ——
+  它只喂仲裁排序的一个并列判据,重启后从零开始不影响正确性。落盘的那一张表留作将来的落点。
 - schema 版本与迁移写在 `meta.schema`;**不使用** DSH 的会话落盘格式(v4 且仍在演进,见 `../channel-review-notes.md` §2.7)。
 - **storage domain 本身没有迁移函数**:介质格式的演进靠声明 —— `version` + `compatibleVersions` + `layout` + `invalidRecords`(`packages/storage/storage-domain/src/spec.ts:35-72`);**业务** schema 的逐代迁移要自己按 `meta.schema` 做。两个号互相独立。
 
