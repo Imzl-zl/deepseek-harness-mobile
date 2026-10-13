@@ -99,7 +99,7 @@ adb -s d61cf622 shell svc power stayon true
 fail-closed 报后台**。取舍、被否方案与代价见
 `.agents/notes/implemented/2026-10-13-app-lifecycle-observer.md`。
 
-## 真机三次尝试(2026-10-13;第三次根因已确定,差最后一修)
+## 真机三次尝试(2026-10-13;第三次把失败点缩到很小,根因待确认)
 
 三次都是**全自动**跑的(二维码由浏览器自动化在 Web UI 里跑 `/dsh-mobile-pair` 取得,
 不用人贴;tools.md 里"信封形状见 tools.md"是过期引用,那条路没走通)。
@@ -110,28 +110,35 @@ fail-closed 报后台**。取舍、被否方案与代价见
 | 第二次(15:37) | ✅ 过了(15:38:45 落成 `user/message`,dedupe 有 `done`) | ❌ 探针没落点 |
 | 第三次(23:20) | ✅ 过了 | ❌ 探针落盘了但**卡片没出现** |
 
-**第三次是决定性的,根因已确定**:仪器打出
+**第三次把失败点缩到很小**:仪器打出
 `探针已受理但审批卡没出现 / connection=serving / closeCode=null / send 返回值全 true`,
 而按帧解压靶子会话日志看到:探针的 `user/message` **落盘了**(所以④过),
 但那条会话里**只有起标题的请求,没有 `turn/start`、没有 `tool/call`、没有
-`approval/asked`** —— agent 从来没跑起来。再查:那个会话的工作区
-`C:\Users\zhanglu\.ssh-server` **目录已不存在**。
+`approval/asked`** —— agent 从来没跑。**前两次的"零痕迹"同此:不是帧丢失,
+也不是连接器拒收**(第三次证明了这一点)。
 
-> **DSH 的行为(不是我们的 bug)**:对工作区已失效的会话,`session.prompt` 照常把
-> `user/message` 落盘(④的回读判据因此满足),但 agent 永远起不来、轮次从不启动,
-> 于是永远等不到 `approval/asked`。全程零错误、零痕迹 —— 手机侧连接健康、
-> `send` 全 true、连接器 dedupe 也有 `done`。前两轮的"零痕迹"谜案同此:
-> **不是帧丢失,也不是连接器拒收**。
+**一条被撤回的误判**(别再照着查):我曾以为那个靶子会话的"工作区已失效"
+(`C:\Users\zhanglu\.ssh-server` 不存在)——**路径查错了**。目录名里的
+`.ssh-server` 是转义形式,真实 `cwd` 是 `C:\Users\zhanglu\.ssh\server`,
+**它存在**。
 
-**修法(下一步,未做)**:`connector/src/handlers.ts` 的 `session.list` 把 `cwd`
-一起过线(DSH 的 `SessionSummaryRow` 本来就有这个字段),手机侧 `SessionSummary`
-收下它;真机用例挑靶子时加"`cwd` 目录存在"的判据。产品上也该显示会话属于哪个
-工作区(多会话并行时用户靠它分辨)。
+**待确认的真正线索**:那条靶子会话的 `model/selection` 是
+`stepfun / step-5-preview`(**不是测试 profile 的免费渠道** `lightvela-free`)。
+合理怀疑:blank 靶子会话沿用自己存着的模型选择,而测试 profile 里没配那条渠道
+→ agent 起不来。**下一步先验证这个**:要么挑靶子时要求"模型是当前 profile 的
+渠道",要么让靶子会话用免费渠道(注意 `session/select-model` 会回写全局默认,
+不能直接用)。
 
 **靶子会话放哪**(2026-10-13 立规矩):专用目录 `D:\sudy\myproject\dsh-mobile-test`
-已建好(空目录);在 Web UI 侧边栏点「添加工作区」选它、起名如 `dsh-mobile-联调`。
-**以后真机测试的会话只建在这个工作区**,不再散落到用户的工作区或「未分组」。
-历次遗留已清理:未分组里 18 个测试会话全部归档,用户的 10 个真实会话未动。
+已建好,用户已在 Web UI 加好同名工作区。**以后真机测试的会话只建在这个工作区**,
+不再散落到用户的工作区或「未分组」。
+
+**「未分组」已清空**(2026-10-13):它 = 工作区未注册的 4 个 C 盘目录
+(DesktopPet 6、lawy 10、`.ssh\server` 1、`Desktop\公众号` 9,共 26 个会话,
+15.4 MB)。用户确认 C 盘项目都已搬到 D 盘、这些是失效残留,已整目录删除。
+**教训**:别把"未分组"当测试垃圾堆 —— 里面绝大多数是用户其他项目的会话;
+先按 `cwd` 归类列清单再动手。靶子只放 `dsh-mobile-test` 工作区,就不会再产生这种
+分不清的残留。
 
 **用例已装仪器**(纯测试改动,见 `.agents/notes/implemented/2026-10-13-probe-must-echo-before-card.md`):
 
