@@ -5,13 +5,14 @@
 
 ## 下一步(新会话从这里开始)
 
-> **上一个会话的收尾**:`docs/cookbook/next-session-interaction-to-phone.md` 里列的两处小改
-> 都已完成(① 步骤 ④ 的等待窗口调到 `_waitForModel` 档;② 补上 lifecycle observer),
-> 门禁全绿。**剩下唯一一件事:真机跑完审批回合**(跑法、免费渠道、成本纪律见该 cookbook)。
+> **开工提示词:`docs/cookbook/next-session-interaction-to-phone.md`** —— 下一个会话直接用它
+> (真机跑法 + 免费渠道 + 成本纪律 + 两次尝试的完整证据 + 已装好的仪器)。
 
-**当前里程碑**:**「审批 / 提问 / 计划审查转到手机」整条链已接线,并在真机上验证到
-「发一句 / 回一句」**(USB 真机:小米 23113RKC6C / Android 16;用例跑到倒数第二条)。
-三侧门禁全绿:connector **369** / relay **75** / app **372** / 平台边界 **186**。
+**当前里程碑**:**「审批 / 提问 / 计划审查转到手机」整条链已接线**;两处小改已完成
+(① 步骤 ④ 等待窗口调到 `_waitForModel` 档;② lifecycle observer 挂上,前后台态自此
+真的报给连接)。门禁全绿:connector **369** / relay **75** / app **372** / 平台边界 **186**。
+**唯一没过的:真机审批回合** —— 2026-10-13 自动跑过两次,都卡在最后一跳,证据与仪器
+见 cookbook 的「真机两次尝试」一节;下次直接从那里接。
 
 **真机上抓出并修掉的四个 bug**(都只在真机暴露,细节见两篇决策笔记):
 ① profile 补丁漏 `allowInsecureLocal` → 连接器**从不拨线**(什么都没发生);
@@ -23,50 +24,29 @@
 排在前面 → **审批永远挂在 `approval/asked`,手机答了也无处可落**。
 **④ 是「审批转手机」最后一跳的真因**,已修 + 有专属回归用例 + 变异校验。
 
-**唯一还没过的**:`审批通过后电脑侧必须真的继续`。**2026-10-13 用免费渠道复跑,拿到了决定性证据**:
+**已修根的四个 bug**(细节见两篇决策笔记,都只在真机暴露):
+① profile 补丁漏 `allowInsecureLocal` → 连接器**从不拨线**(什么都没发生);
+② `main.dart` 的 `PairingClient` 漏同一个字段 → **配对成功但换不到票**;
+③ `_handleOpened` 把**密文**喂给 `_accountFlow` → `credit 载荷不是合法 JSON` →
+**握手成功 20 ms 后断线**;
+④ **两个交互应答者没带 `{ prepend: true }`** → DSH 的桌面转发监听器
+(`packages/api/remotes/src/index.ts:57-75`,浏览器一连上就注册、自己不答就不放行)
+排在前面 → **审批永远挂在 `approval/asked`,手机答了也无处可落**。
+⑤ `askApproval` 曾在"呈示不了"时 `return 'reject'`,**替用户做一个他没做过的决定**
+(真机 322ms 回 `rejected`,而用户什么都没点)—— 已改成抛,由 `interactions.ts`
+归一成 `'unavailable'`。见 `.agents/notes/implemented/2026-10-13-approval-must-not-fake-rejection.md`。
 
-- 免费渠道(`llm-pi-ai` 手写 route,配法见 `tools.md`)下模型**照话了**:
-  `tool/call` 就是提示词里那条 `Set-Content -Path C:/Windows/Temp/dsh-probe.txt …`,
-  还自带 `sandbox_permissions: danger-full-access`;
-- `approval/asked` 落了,`callId` 正确;
-- **`approval/decided` 在 322 毫秒后回来,outcome 是 `rejected`**;
-- 手机连接诊断是**空**(不是协议错误),轮次也正常继续到了 step 3。
-
-322ms 远快于人手点按(测试轮询一步就 200ms)、也远快于看护的 10 分钟超时,
-所以只可能是 `askApproval` 的两条快速 fail-closed 之一:**进端口时设备已被判定离线**,
-或**看护立刻被 `disconnect()`**。而 `rank()` 是过滤 `online === true` 的
-(`protocol/takeover.ts:47`),claim 那一刻设备确实在线 —— 所以是 **claim 之后
-~300ms 内 presence 记录没了**,即 `presence.offline(devId)` 被触发
-(只可能来自 `servingEnded`,也就是数据面断开)。
-
-**根因已找到并修掉**(2026-10-13):`askApproval` 在"呈示不了"时 `return 'reject'`,
-于是 `'rejected'` 既代表"用户点了拒绝"、又代表"手机不在线 / 看护断了" ——
-**我们在替用户做一个他没做过的决定**。证据:真机上 `approval/decided` 在 **322ms** 后
-回来 `rejected`(远快于人手点按与 10 分钟看护),而那条 tool result 说的是
-*"the user rejected … so stop and explain instead of working around it"* ——
-用户什么都没有点。又因为本应答者是 prepend 的,我们一 reject,桌面永远问不到。
-**原生参照**:`packages/client/ui-approval/src/client/index.ts` 的 `answerApproval`
-只有三个出口 —— 用户答了(`answer`)、我呈示不了(`delegate → next()`)、
-我的寿命结束了(`abort → 抛`)。`'rejected'` 在原生语义里**只**是用户决定
-(`contract/slots.ts` 的 `ApprovalDecision = 'allowed-once' | 'rejected'`)。
-**已改成抛**(与提问侧 `askQuestion` 一致),由 `interactions.ts` 的 catch 归一成
-`'unavailable'` —— 模型收到"没人能答"而不是"用户拒绝了",前者它可以重试。
-取舍与被否方案见 `.agents/notes/implemented/2026-10-13-approval-must-not-fake-rejection.md`。
-**顺带更正一个误判**(已写进 `tools.md`):`flutter test integration_test` 跑完会**卸载 App**
-(实测 `pm list packages` 里没有它)。所以仪表里那两条
-`onclose code=4000 reason=channel closed` 是装卸 App 造成的,**不是连接莫名中断**;
-我曾把"两次 onclose 的间隔"误当成连接存活时长 —— **没打时间戳的两个事件,间隔没有意义**。
-**两条都已修**(2026-10-13):
-1. ~~测试侧:步骤 ④ 用 `_waitFor` 的默认 30 秒窗口等 `user/message` 回读~~
-   —— 窗口调到 `_waitForModel` 档。`session.prompt` 走 `agent.followup` 插
-   `next-turn`(`packages/api/session-controller/src/commands.ts` 的 prompt 分支),
-   会话在跑轮次时那条 `user/message` 要等当前轮次结束才落盘;挑空闲会话只降低概率,
-   不是保证。判据不变:电脑侧确实受理了。
-2. ~~产品侧:`setAppState` 在 `app/lib` 里没有任何调用点~~ —— 装配点挂了
-   `AppStateReporter`(`app/lib/platform/app_state_reporter.dart`),
-   `didChangeAppLifecycleState` 调 `setAppState`;**只把 `resumed` 当前台,
-   其余 fail-closed 报后台**。契约 §6.3.1 那句"退到后台自动 delegate"自此真的成立。
-   取舍与被否方案见 `.agents/notes/implemented/2026-10-13-app-lifecycle-observer.md`。
+**当前卡点(2026-10-13 两轮真机,完整证据见 cookbook「真机两次尝试」)**:审批探针
+发出去后没有任何落点 —— 帧离开手机(诊断面有明文信封),连接器 dedupe 表无这一条
+(`begin()` 是分发**之前**落盘的,所以"无行"= 没到分发层,或被拒后 `abandon()` 删行),
+任何会话日志里都没有探针文本。④ 的 marker 回读第二次已过(链路本身通),⑤ 的探针
+两次都没落点;"帧真丢了"与"到了但被拒(如 `session/not-found`:挑到的会话 agent 已
+disposed)"从外部**分不开** —— 用例已加仪器把这两类分开(探针先等自己的回读再等
+卡片、失败点打全诊断、传输层记 `send()` 返回值)。取舍见
+`.agents/notes/implemented/2026-10-13-probe-must-echo-before-card.md`。
+**另一条已定位的环境因素**:步骤 ②/⑤ 按"最近活动的空闲会话"挑靶子,现在活跃会话
+全是其他 agent 的 —— 第二次的 marker 落进一个 15:00 建的空会话,把里面的 agent
+唤醒了(它自行跑完一轮只读排查后结束)。挑号规则是已知隐患,本期未改。
 
 **模型/状态显示已对齐 DSH 真值**(2026-10-13):手机上原来的模型名是**写死的** `'claude-opus'`
 外加一份手抄的四个模型列表,与电脑侧毫无关系。现在接 DSH 原生的两条通道:

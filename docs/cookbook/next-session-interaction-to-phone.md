@@ -99,6 +99,40 @@ adb -s d61cf622 shell svc power stayon true
 fail-closed 报后台**。取舍、被否方案与代价见
 `.agents/notes/implemented/2026-10-13-app-lifecycle-observer.md`。
 
+## 真机两次尝试(2026-10-13,都未通过;证据都在,下次直接从这接)
+
+两次都是**全自动**跑的(二维码由浏览器自动化在 Web UI 里跑 `/dsh-mobile-pair` 取得,
+不用人贴;tools.md 里"信封形状见 tools.md"是过期引用,那条路没走通)。
+
+| | ④ marker 回读 | ⑤ 审批卡 |
+|---|---|---|
+| 第一次(15:33) | ❌ 3 分钟没回读 | 没跑到 |
+| 第二次(15:37) | ✅ 过了(15:38:45 落成 `user/message`,连接器 dedupe 有 `done` 行) | ❌ 探针没落点 |
+
+**两次失败是同一种形状**:帧离开了手机(诊断面有明文信封),连接器侧零痕迹
+(dedupe 表没有这一条——而 `begin()` 是分发**之前**就落盘的),任何会话日志里
+都没有探针文本。而 `session.prompt` 失败时连接器会删掉 pending 行,所以
+"帧真丢了"与"到了但被拒(如 `session/not-found`:挑到的会话 agent 已 disposed)"
+从外部**分不开**。
+
+**两条已定位的环境因素**(不是代码 bug):
+
+1. 步骤 ②/⑤ 按"最近活动的空闲会话"挑靶子,现在活跃会话全是其他 agent 的 ——
+   第二次的 marker 就落进了一个 15:00 建的空会话,把里面的 agent 唤醒了
+   (它跑了一轮只读排查后自行结束)。挑号规则是已知隐患,本期未改。
+2. 免费渠道(`lightvela-free`)当天有过 `PI_AI_ERROR` 抖动,但复跑时是好的 ——
+   不是卡点。
+
+**用例已加仪器**(纯测试改动,见 `.agents/notes/implemented/2026-10-13-probe-must-echo-before-card.md`):
+
+- 审批探针发出后**先等它自己的 `user/message` 回读**,再等卡片 —— 两类失败分开;
+- 两个失败点都打 `_dumpDiagnostics`(连接态/关闭码/半开/已发方法序列);
+- 传输包了 `_RecordingTransport`,记每次 `send()` 的返回值 —— 分开"帧没出手机"
+  与"帧死在路上"(`core/_write` 把这个返回值丢掉了,是产品侧未修的静默窟窿)。
+
+**下次跑之前先看**:`send 返回值`最后一条是不是 `false`;连接器 dedupe 表有没有
+`real-device-approval-*` 行(有 pending = 到了没执行完;没有 = 没到或被删)。
+
 ## 跑通之后的验收判据
 
 1. 电脑侧 `approval/decided` 的 outcome 是 **`allowed-once`**(不是 `unavailable`);

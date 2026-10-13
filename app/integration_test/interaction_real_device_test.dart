@@ -76,6 +76,65 @@ String get _qrPayload {
 ChannelTransport _pairingTransport(String upgradeUrl) =>
     WebSocketTransport(WebSocketTransportOptions(url: upgradeUrl));
 
+/// 记下每次 `send` 的返回值（2026-10-13 真机排查用）。
+///
+/// 为什么需要它：`core/_write` 把 `transport.send()` 的返回值丢掉了，而
+/// "socket 没收下这一帧"与"发成功了"在诊断面上完全一样。包一层就能分开
+/// "帧没出手机"（`send` 回 `false`）与"帧死在路上"（连接后来才断）。
+class _RecordingTransport implements ChannelTransport {
+  _RecordingTransport(this._inner);
+
+  final ChannelTransport _inner;
+
+  /// 按调用顺序的 `send` 返回值。
+  final List<bool> results = <bool>[];
+
+  @override
+  bool send(String line) {
+    final ok = _inner.send(line);
+    results.add(ok);
+    return ok;
+  }
+
+  @override
+  Future<Stream<TransportEvent>> connect() => _inner.connect();
+
+  @override
+  Future<void> close() => _inner.close();
+}
+
+/// 失败时把两端状态一次打全（2026-10-13 真机排查用）。
+///
+/// 它要分开的两种失败：**帧没出手机**（传输的 `send` 回 `false`）与
+/// **帧死在路上**（连接后来才断、或电脑侧把请求拒了）。`core/_write` 把
+/// `send()` 的返回值丢掉了，所以没有 [_RecordingTransport] 这一层，
+/// "帧没出手机"与"发成功了"在诊断面上完全一样。
+void _dumpDiagnostics(
+  String stage,
+  String sid,
+  AppModel app,
+  SyncClientProbe probe,
+  _RecordingTransport recorder,
+) {
+  debugPrint('=== $stage ===');
+  debugPrint(
+    'sid=$sid  connection=${app.connection}  诊断=${app.connectionDiagnosis}',
+  );
+  debugPrint(
+    'closeCode=${probe.lastCloseCode}  closeReason=${probe.lastCloseReason}',
+  );
+  debugPrint(
+    'handshakeFailure=${probe.lastHandshakeFailure}  '
+    'halfOpenSilentMs=${probe.lastHalfOpenSilentMs}',
+  );
+  debugPrint(
+    'protocolError=${probe.lastProtocolError}  pendingCalls=${probe.pendingCalls}  '
+    'rejectedCalls=${probe.lastRejectedCalls}',
+  );
+  debugPrint('send 返回值(按序)=${recorder.results}');
+  debugPrint('已发方法(按序)=${probe.sentRequests.map((e) => e['method']).toList()}');
+}
+
 /// 真网络 + `pump` 交替地等一个条件成立。
 ///
 /// 两者缺一不可：只在 `runAsync` 里等，组件树不重建（`find` 永远看到点击前那一帧）；
@@ -235,14 +294,21 @@ void main() {
       // `assembly_invariants_test.dart` 钉住的那条）。
       allowInsecureLocal: true,
     );
+    // **带记录的传输**：2026-10-13 真机排查用。`core/_write` 把 `send()` 的返回值
+    // 丢掉了（帧封箱之后才交出去），而"socket 没收下这一帧"与"发成功了"在诊断面上
+    // 长得一模一样。包一层把每次 send 的返回值记下来，失败时就能分开
+    // "帧没出手机"与"帧死在路上"。
+    final recorder = _RecordingTransport(
+      TicketedWebSocketTransport(
+        endpoint: credentials.relayUrl,
+        ticket: () async => (await pairingClient.ticketByDeviceToken(
+          credentials.deviceToken,
+        )).ticket,
+      ),
+    );
     final client = createSyncClient(
       SyncClientDeps(
-        transport: TicketedWebSocketTransport(
-          endpoint: credentials.relayUrl,
-          ticket: () async => (await pairingClient.ticketByDeviceToken(
-            credentials.deviceToken,
-          )).ticket,
-        ),
+        transport: recorder,
         handshake: createHandshakeDriver(
           identity: HandshakeIdentity(
             staticKeys: staticKeys,
@@ -390,6 +456,9 @@ void main() {
     // **判据不变**：电脑侧确实受理了（那句话作为 `user/message` 回到手机），
     // 不等模型回什么。
     final gotEcho = await _waitForModel(tester, () async => echoed.isCompleted);
+    if (!gotEcho) {
+      _dumpDiagnostics('回读失败', sid, app, probe, recorder);
+    }
     expect(gotEcho, isTrue, reason: '发出去的那句必须作为 user/message 回到手机（否则电脑侧没受理）');
     await echoSub.cancel();
     await sub.cancel();
@@ -509,10 +578,38 @@ void main() {
           'real-device-approval-${DateTime.now().microsecondsSinceEpoch}',
     );
 
+    // **先等探针自己作为 `user/message` 落回来**（与步骤 ④ 同一个判据），
+    // 再等卡片。理由：`session.prompt` 是"发了不等结果"的幂等写，被拒时
+    // （例如挑到的会话 agent 已 disposed → `session/not-found`）手机上**没有任何
+    // 信号**，而连接器会把 pending 行删掉、不留痕迹。跳过这一步直接等卡片，
+    // "prompt 没被受理"与"模型没调工具"会一起表现成"等了 3 分钟没有卡"，
+    // 分不开（2026-10-13 真机就这么白跑过两轮）。
+    final probeEcho = Completer<void>();
+    final probeEchoSub = client.sessionUpdates(targetSid).listen((delta) {
+      for (final event in delta.events) {
+        if (jsonEncode(event.data).contains('dsh-probe.txt') &&
+            !probeEcho.isCompleted) {
+          probeEcho.complete();
+        }
+      }
+    });
+    final probeEchoed = await _waitForModel(
+      tester,
+      () async => probeEcho.isCompleted,
+    );
+    if (!probeEchoed) _dumpDiagnostics('审批探针没有落回来', sid, app, probe, recorder);
+    expect(
+      probeEchoed,
+      isTrue,
+      reason: '审批探针必须被电脑侧受理（作为 user/message 落回来），否则卡片永远等不到',
+    );
+    await probeEchoSub.cancel();
+
     final gotCard = await _waitForModel(
       tester,
       () async => opened.isCompleted || find.text('等待审批').evaluate().isNotEmpty,
     );
+    if (!gotCard) _dumpDiagnostics('探针已受理但审批卡没出现', sid, app, probe, recorder);
     expect(
       gotCard,
       isTrue,
