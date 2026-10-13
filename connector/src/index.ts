@@ -57,6 +57,11 @@ import { createPairingRegistrar } from './pairing-register.js'
 import { createDevicePublisher } from './device-publish.js'
 import { offerForScanning } from './pairing-offer.js'
 import { registerInteractions, type RemoteInteractionPort } from './dsh/interactions.js'
+import { createQuestionFaceDeps } from './dsh/questions.js'
+import { createModelFace } from './dsh/models.js'
+import { createDevicePresence } from './presence.js'
+import { createInteractionPort } from './interaction-claims.js'
+import { createInteractionFace } from './interaction-face.js'
 import type { TakeoverDevice, TakeoverMode } from './protocol/takeover.js'
 import { createDeviceConnection } from './device-connection.js'
 import type { HandlerDeps } from './handlers.js'
@@ -154,43 +159,26 @@ let unregisterPairingCommand: (() => void) | null = null
   let connectorId = ''
 
   /**
-   * 已认证设备的**瞬时**状态（在线、前台、已订阅、最近交互）。
+   * 已认证设备的**瞬时**状态（在线、前台、已订阅、最近交互）—— 契约 §6.2 仲裁判定的输入。
    *
-   * 持久部分（身份、配对时间）在设备表里；这一份由连接层在设备完成鉴权后写入。
-   * **现在恒为空** —— 设备鉴权与 presence 上报还没落地，所以 answerer 仍然不会 claim。
-   * 但原因从"别名查不到"变成了"还没有设备在线"，这是正确的中间状态，不是缺陷。
+   * 真值在 `presence.ts`，由连接层在四个时机写进来：鉴权完成 / 断开 / 订阅变化 /
+   * 收到 `sync.hello`。在它接线之前，完整因果链是
+   * 「没人写 liveRegistry → `liveDevices()` 恒空 → `decideTakeover` 永不 claim →
+   * answerer 永远 `next()` 交还桌面 → 端口根本跑不到」—— 所以这一步是整条链的地基。
+   *
+   * 持久部分（身份、配对时间、吊销标记）在 `devices` 表里；这一份进程重启即清零，
+   * 重连后由连接层重新上报。
    */
-  const liveRegistry = new Map<
-    string,
-    {
-      online: boolean
-      foreground: boolean
-      subscribed: string[]
-      lastInteractedAt?: Record<string, number>
-    }
-  >()
+  const presence = createDevicePresence({
+    // **连接层认证过不等于授权过**：没配过对、或已吊销的设备一律不参与仲裁。
+    // 这条过滤只在 `presence.ts` 的 `devices()` 里做一次。
+    pairedAtOf: (devId) => {
+      const record = devicesTable?.get(devId)
+      return record === undefined || record.revokedAt !== undefined ? undefined : record.pairedAt
+    },
+  })
 
-  const liveDevices = (): readonly TakeoverDevice[] => {
-    const table = devicesTable
-    if (table === null) return []
-    const rows: TakeoverDevice[] = []
-    for (const [id, live] of liveRegistry) {
-      const record = table.get(id)
-      // **连接层认证过不等于授权过**：没配过对、或已吊销的设备一律不参与仲裁。
-      if (record === undefined || record.revokedAt !== undefined) continue
-      rows.push({
-        id,
-        pairedAt: record.pairedAt,
-        online: live.online,
-        foreground: live.foreground,
-        subscribed: live.subscribed,
-        ...(live.lastInteractedAt === undefined
-          ? {}
-          : { lastInteractedAt: live.lastInteractedAt }),
-      })
-    }
-    return rows
-  }
+  const liveDevices = (): readonly TakeoverDevice[] => presence.devices()
 
   const takeover = {
     mode: (): TakeoverMode => approvalTakeover,
@@ -198,18 +186,32 @@ let unregisterPairingCommand: (() => void) | null = null
     sidOf: (dshSessionId: string): string | undefined => aliases?.sidOf(dshSessionId),
   }
 
+  /**
+   * 交互端口（契约 §6.2）：把审批 / 提问送到仲裁选出的那条连接，并看护到人类回答
+   * 或 fail-closed。
+   *
+   * 待处理项**不在这里推送** —— 它乘会话事件流（`approval/asked` 与 `ask_user_question`
+   * 的 `tool/call` 本来就是 DSH 的会话事件，见 `interaction-claims.ts` 的文件头）。
+   * 本端口只负责"选中哪条连接、看护多久、答复怎么回来"。
+   *
+   * 未处理记录目前只有**日志与指标**两条出口：契约 §6.2 说的"推一条通知"需要一种
+   * 电脑→手机的推送帧，而本期没有（`pending.changed` 在 §5.7 的事件表里、却不是帧类型）。
+   * 如实记成指标 + warn，不假装通知已送达。
+   */
+  const interactionPort = createInteractionPort({
+    presence,
+    onUnhandled: (record) => {
+      metrics.increment(METRIC.failClosed)
+      logger.warn('交互在手机上未被处理，已按 fail-closed 收束', record)
+    },
+  })
+  metrics.gauge(METRIC.pendingInteractions, interactionPort.pending)
+
   const port: RemoteInteractionPort = {
-    async askApproval(prompt, signal) {
-      logger.debug('审批转手机（方法面未实现，按 fail-closed 收束）', { sid: prompt.sid })
-      metrics.increment(METRIC.failClosed)
-      void signal
-      return 'reject'
-    },
-    async askQuestion(prompt) {
-      metrics.increment(METRIC.failClosed)
-      void prompt
-      throw new Error('提问方法面尚未实现：不能返回空答案伪装成「用户全跳过」')
-    },
+    askApproval: (prompt, deviceId, signal) =>
+      interactionPort.askApproval(prompt, deviceId, signal),
+    askQuestion: (prompt, deviceId, signal) =>
+      interactionPort.askQuestion(prompt, deviceId, signal),
   }
 
   return [
@@ -497,6 +499,48 @@ let unregisterPairingCommand: (() => void) | null = null
         }
 
         /**
+         * 提问 / 计划审查的内核（契约 §6.3）。
+         *
+         * **只在 `userQuestions` 服务在的时候挂**：缺了它，`interaction.respond` 就不该出现
+         * 在 `repo.info` 的 `methods` 里（手机据此置灰按钮，而不是点下去永远转圈）。
+         *
+         * `settleClaim` 接的是端口的在途表：一次 `open` 提问被应答链堵着时，
+         * 答复从这条路回到那个 `await`，而不是走 DSH 的 `answer()`（那个只认 `continued`）。
+         */
+        const questionFace =
+          ctx.get('userQuestions') === undefined
+            ? null
+            : createInteractionFace({
+                ...createQuestionFaceDeps(ctx, {
+                  sessionOf: (sid) => aliases?.sessionOf(sid),
+                }),
+                settleClaim: (sid, callId, answers) =>
+                  interactionPort.settleClaim(sid, callId, answers),
+              })
+        if (questionFace !== null) {
+          handlerDeps.interaction = questionFace
+        }
+
+        /**
+         * 模型目录与每会话当前模型。
+         *
+         * 判据用 `ctx.get('sessionController')` 而不是某个业务服务：目录是它发的
+         * （`@Remote('modelCatalog')`），每会话当前模型走 `modelSelection` 投影，
+         * 而投影要经 `agents` 才够得着 live `Session`。三个键任一缺席就整块不挂 ——
+         * `repo.info` 的 `methods` 里也就没有 `session.modelCatalog`，
+         * `session.list` 的行里没有 `model` 字段（契约 §7 的能力位模型）。
+         */
+        const modelsFace =
+          ctx.get('sessionController') === undefined ||
+          ctx.get('sessionProjections') === undefined ||
+          ctx.get('agents') === undefined
+            ? null
+            : createModelFace(ctx, { sessionOf: (sid) => aliases?.sessionOf(sid) })
+        if (modelsFace !== null) {
+          handlerDeps.models = modelsFace
+        }
+
+        /**
          * 每连接装配的输入。**拨号路径与将来的监听面共用这一份** ——
          * 一条 socket 一份的是 `port`，不是这里的东西。
          */
@@ -508,6 +552,9 @@ let unregisterPairingCommand: (() => void) | null = null
           buffer: sessionBuffer,
           jobControl,
           idempotency,
+          // presence 上报面（挂载级的那一份）。方法面拿到的 `connection.deviceId()`
+          // 由 `createConnectionScope` 自己构造，所以这里只需要 sink 本身。
+          presence,
         }
 
         // 连接器令牌（§12.2）：**拨号与出码登记共用同一个值**，所以在这一步开头读一次。

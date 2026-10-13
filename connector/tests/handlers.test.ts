@@ -193,6 +193,7 @@ function fakeSessionSubscriptions(
       Promise.resolve({ since: input.since ?? 0, hasMore: false }),
     unsubscribe: () => true,
     cursorOf: () => undefined,
+    sids: () => [],
     stopAll: () => {},
     active: 0,
     ...overrides,
@@ -622,4 +623,144 @@ test('devices.list：含已吊销的，且不泄漏公钥', async () => {
   for (const device of listed.devices) {
     assert.equal('edPub' in device || 'dhPub' in device, false, '公钥不该出现在给手机的清单里')
   }
+})
+
+/** presence 上报面的替身：把每次调用记下来。 */
+function fakePresence() {
+  const calls: { what: string; devId: string; sid?: string; state?: string; sids?: readonly string[] }[] = []
+  return {
+    calls,
+    sink: {
+      online: (devId: string) => calls.push({ what: 'online', devId }),
+      offline: (devId: string) => calls.push({ what: 'offline', devId }),
+      app: (devId: string, state: string) => calls.push({ what: 'app', devId, state }),
+      subscriptions: (devId: string, sids: readonly string[]) =>
+        calls.push({ what: 'subscriptions', devId, sids }),
+      interacted: (devId: string, sid: string) => calls.push({ what: 'interacted', devId, sid }),
+    },
+  }
+}
+
+test('sync.hello：一次声明整份订阅集 + 前后台态，恢复语义复用 session.subscribe', async () => {
+  const seen: unknown[] = []
+  const presence = fakePresence()
+  const handlers = build({
+    aliases: preloadedAliases(),
+    sessionSubscriptions: fakeSessionSubscriptions({
+      subscribe: (input) => {
+        seen.push(input)
+        return Promise.resolve({ since: input.since ?? 0, hasMore: input.since === undefined })
+      },
+    }),
+    connection: { deviceId: () => 'dev-1', presence: presence.sink },
+  })
+  const handler = handlers['sync.hello']
+  assert.ok(handler !== undefined)
+
+  const reply = (await handler(
+    {
+      app: 'foreground',
+      sessions: [{ sid: 'sid_dsh-1', since: 12 }, { sid: 'sid_dsh-1' }],
+    },
+    {},
+  )) as { app: string; sessions: { sid: string; since: number; hasMore: boolean }[] }
+
+  assert.equal(reply.app, 'foreground')
+  assert.deepEqual(reply.sessions, [
+    { sid: 'sid_dsh-1', since: 12, hasMore: false },
+    { sid: 'sid_dsh-1', since: 0, hasMore: true },
+  ])
+  assert.deepEqual(
+    seen,
+    [
+      { sid: 'sid_dsh-1', dshSessionId: 'dsh-1', since: 12 },
+      { sid: 'sid_dsh-1', dshSessionId: 'dsh-1' },
+    ],
+    '每个声明的会话都走同一个订阅面：不另起一套恢复语义',
+  )
+  // **前后台态在订阅之前上报**：反了会出现一段"已订阅但仍判不在前台"的窗口
+  // （那段时间里审批会被让回桌面）。
+  assert.deepEqual(presence.calls, [
+    { what: 'app', devId: 'dev-1', state: 'foreground' },
+  ])
+})
+
+test('sync.hello：app / sessions 形状不合规 → protocol/bad-frame；别名未知 → session/not-found', async () => {
+  const handlers = build({
+    aliases: preloadedAliases(),
+    sessionSubscriptions: fakeSessionSubscriptions(),
+    connection: { deviceId: () => null, presence: fakePresence().sink },
+  })
+  const handler = handlers['sync.hello']
+  assert.ok(handler !== undefined)
+
+  for (const params of [
+    { sessions: [] },
+    { app: 'foreground' },
+    { app: 'visible', sessions: [] },
+    { app: 'foreground', sessions: {} },
+    { app: 'foreground', sessions: [{}] },
+    { app: 'foreground', sessions: [{ sid: '' }] },
+    { app: 'foreground', sessions: [{ sid: 'sid_dsh-1', since: -1 }] },
+  ]) {
+    await assert.rejects(
+      async () => handler(params, {}),
+      (error: unknown) => error instanceof ProtocolError && error.code === 'protocol/bad-frame',
+      `${JSON.stringify(params)} 应当被拒`,
+    )
+  }
+
+  await assert.rejects(
+    async () => handler({ app: 'foreground', sessions: [{ sid: 'sid_nobody' }] }, {}),
+    (error: unknown) => error instanceof ProtocolError && error.code === 'session/not-found',
+    '与 session.subscribe 逐字一致：一个别名未知就整票失败，客户端动作正是「从列表移除」',
+  )
+})
+
+test('interaction.respond：内核照常被调，并记 lastInteractedAt（时间戳由连接器盖）', () => {
+  const presence = fakePresence()
+  const seen: unknown[] = []
+  const handlers = build({
+    aliases: preloadedAliases(),
+    interaction: {
+      pendingOf: () => [],
+      respond: (params) => {
+        seen.push(params)
+        return { itemId: 'i:call-1' }
+      },
+    },
+    connection: { deviceId: () => 'dev-1', presence: presence.sink },
+  })
+  const handler = handlers['interaction.respond']
+  assert.ok(handler !== undefined)
+
+  const answers = [{ id: 'call-1', selected: ['allowed-once'] }]
+  assert.deepEqual(handler({ sid: 'sid_dsh-1', callId: 'call-1', answers }, {}), {
+    itemId: 'i:call-1',
+  })
+  // 分叉点在内核里（它问一次 settleClaim），处理器不替它决定这是审批还是提问。
+  assert.deepEqual(seen, [{ sid: 'sid_dsh-1', callId: 'call-1', answers }])
+  // **lastInteractedAt 由连接器盖**：客户端时钟会漂，而这个值只喂仲裁排序的并列判据。
+  assert.deepEqual(presence.calls, [{ what: 'interacted', devId: 'dev-1', sid: 'sid_dsh-1' }])
+})
+
+test('interaction.respond / sync.hello 的能力缺失时整个方法不出现（能力位模型）', () => {
+  const bare = build()
+  assert.equal('interaction.respond' in bare, false)
+  assert.equal('sync.hello' in bare, false)
+
+  const full = build({
+    sessionSubscriptions: fakeSessionSubscriptions(),
+    interaction: { pendingOf: () => [], respond: () => ({ itemId: 'i:x' }) },
+  })
+  assert.deepEqual(handlers_info(full).methods, [
+    'devices.list',
+    'interaction.respond',
+    'repo.info',
+    'session.list',
+    'session.prompt',
+    'session.subscribe',
+    'session.unsubscribe',
+    'sync.hello',
+  ])
 })

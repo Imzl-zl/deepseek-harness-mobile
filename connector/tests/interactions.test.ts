@@ -29,7 +29,7 @@ function setup(patch: {
   askApproval?: () => Promise<'allow-once' | 'reject'>
 } = {}) {
   const handlers: Captured = {}
-  const calls: { prompt: Record<string, unknown>; signal: unknown }[] = []
+  const calls: { prompt: Record<string, unknown>; deviceId: unknown; signal: unknown }[] = []
   const warnings: string[] = []
   let nextCalled = 0
 
@@ -42,8 +42,8 @@ function setup(patch: {
 
   registerInteractions(ctx as never, {
     port: {
-      askApproval: (prompt: unknown, signal?: AbortSignal) => {
-        calls.push({ prompt: prompt as unknown as Record<string, unknown>, signal })
+      askApproval: (prompt: unknown, deviceId: unknown, signal?: AbortSignal) => {
+        calls.push({ prompt: prompt as unknown as Record<string, unknown>, deviceId, signal })
         return (patch.askApproval ?? (() => Promise.resolve('allow-once' as const)))()
       },
       askQuestion: () => Promise.reject(new Error('本用例不涉及提问')),
@@ -107,6 +107,9 @@ test('接管：prompt 逐字段来自 DSH 请求，且 **signal 就是原对象*
   assert.equal(call.prompt['reason'], '要删文件')
   assert.deepEqual(call.prompt['displayReason'], { en: 'delete a file' })
   assert.equal(call.signal, original.signal, 'signal 必须是原对象：取消语义整个挂在它上面')
+  // **deviceId 必须来自仲裁的返回**（`protocol/takeover.ts:78` 的 `winner.id`）。
+  // 丢掉它就只有"接管了"而不知道推给谁 —— 端口会退化成"等一个永远不来的回答"。
+  assert.equal(call.deviceId, 'dev-1', '推送目标是仲裁选出的那台设备，不是端口自己再挑')
 })
 
 test('拒绝与异常：reject → rejected；端口抛错 → **unavailable** 且留声', async () => {
@@ -130,7 +133,7 @@ interface QuestionCaptured {
 /** 提问通道的架子：与审批同一个假 ctx（只是抓另一个事件）。 */
 function setupQuestions(patch: { mode?: string; sid?: string | null } = {}) {
   const handlers: QuestionCaptured = {}
-  const calls: { prompt: Record<string, unknown>; signal: unknown }[] = []
+  const calls: { prompt: Record<string, unknown>; deviceId: unknown; signal: unknown }[] = []
   const warnings: string[] = []
   let disposals = 0
 
@@ -146,8 +149,8 @@ function setupQuestions(patch: { mode?: string; sid?: string | null } = {}) {
   const off = registerInteractions(ctx as never, {
     port: {
       askApproval: () => Promise.reject(new Error('本用例不涉及审批')),
-      askQuestion: (prompt: unknown, signal?: AbortSignal) => {
-        calls.push({ prompt: prompt as unknown as Record<string, unknown>, signal })
+      askQuestion: (prompt: unknown, deviceId: unknown, signal?: AbortSignal) => {
+        calls.push({ prompt: prompt as unknown as Record<string, unknown>, deviceId, signal })
         return Promise.resolve({ answers: [] })
       },
     },
@@ -219,8 +222,7 @@ test('提问端口抛错：**照原样抛**（绝不用空答案伪装成"用户
     port: {
       askApproval: () => Promise.reject(new Error('无关')),
       askQuestion: () => Promise.reject(new Error('手机那边断了')),
-    },
-    takeover: {
+    },    takeover: {
       mode: () => 'always',
       devices: () => [{ id: 'dev-1', online: true, pairedAt: 1 }] as never,
       sidOf: () => 'sid_1',

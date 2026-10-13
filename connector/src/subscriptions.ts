@@ -84,6 +84,8 @@ export interface Subscriptions<Frame, Anchor, Out> {
   stop(key: string): boolean
   /** 终止全部（连接离开服务态、插件卸载）。 */
   stopAll(): void
+  /** 当前订阅的键（订阅集变化要能通报给 presence，契约 §6.2）。 */
+  keys(): readonly string[]
   /** 当前订阅数（指标与测试用）。 */
   readonly active: number
 }
@@ -223,6 +225,10 @@ export function createSubscriptions<Frame, Anchor, Out>(
         entry.controller.abort()
         settle(entry, new ProtocolError('internal', '订阅已终止'))
       }
+    },
+
+    keys() {
+      return [...entries.keys()]
     },
   }
 }

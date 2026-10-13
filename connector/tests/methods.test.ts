@@ -19,7 +19,7 @@ import {
 } from '../src/protocol/methods.js'
 
 test('方法表：封闭集，幂等键标记与契约 §5.7 的表一致', () => {
-  assert.equal(METHODS.length, 20, '方法数变了要同步契约 §5.7 的表')
+  assert.equal(METHODS.length, 21, '方法数变了要同步契约 §5.7 的表')
   assert.equal(new Set(METHODS).size, METHODS.length, '方法名不能重复')
 
   // §5.7 的「幂等键」列非空的恰好这几个。

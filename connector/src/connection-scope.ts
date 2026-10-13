@@ -13,9 +13,40 @@ import { createSessionSubscriptions } from './session-subscriptions.js'
 import { METRIC, type ChannelLogger, type ChannelMetrics } from './observability.js'
 import type { Idempotency } from './idempotency.js'
 import type { SessionBuffer } from './session-buffer.js'
+import type { DeviceAppState } from './presence.js'
 import type { WireFrame } from './protocol/frame.js'
 import { ProtocolError } from './protocol/errors.js'
 import type { ConnectionPort } from './transport/connection.js'
+
+/**
+ * 设备瞬时状态的上报面（契约 §6.2 仲裁判定的输入）。
+ *
+ * 实现是挂载级的 `presence.ts`；这里只持有窄接口，于是"每连接装配"不认识挂载级的状态表。
+ */
+export interface DevicePresenceSink {
+  /** 设备完成鉴权、连接进入服务态。 */
+  online(devId: string): void
+  /** 连接离开服务态。 */
+  offline(devId: string): void
+  /** 手机声明前后台态（`sync.hello`）。 */
+  app(devId: string, state: DeviceAppState): void
+  /** 订阅集整体覆盖。 */
+  subscriptions(devId: string, sids: readonly string[]): void
+  /** 手机在这个会话上答了一次话。 */
+  interacted(devId: string, sid: string, at: number): void
+}
+
+/**
+ * **每连接**才能回答的问题："这条连接是哪台设备"。
+ *
+ * 由本文件自己构造（`deviceId` 本来就是它的状态），方法面与 `sync.hello` /
+ * `interaction.respond` 通过它拿到设备身份与 presence 上报面。
+ */
+export interface ConnectionIdentity {
+  /** 这条连接当前服务的设备；未完成鉴权（或已结束服务）时是 `null`。 */
+  deviceId(): string | null
+  presence: DevicePresenceSink
+}
 
 export interface ConnectionScopeDeps {
   logger: ChannelLogger
@@ -25,6 +56,12 @@ export interface ConnectionScopeDeps {
   buffer: SessionBuffer
   jobControl: JobControlPort | null
   idempotency: Idempotency | null
+  /**
+   * 本连接的 presence 上报面（实现是挂载级的 `presence.ts`）。**可缺**：只为
+   * "不需要 presence 的装配"留的口子（例如只测方法面的用例）。缺了 `sync.hello`
+   * 仍然能答，只是不上报前后台态。
+   */
+  presence?: DevicePresenceSink
 }
 export interface PairingScope {
   candidate: PairingCandidate
@@ -64,12 +101,29 @@ export function createConnectionScope(
       return port.send(frame) ? 'sent' : 'paused'
     },
     waitWritable: () => port.whenWritable('ev'), log: logger,
+    // **订阅变化就上报 presence**：`foreground` 档的 claim 判据是"前台且已订阅该 sid"，
+    // 而订阅集只有这一处是权威（`sessionSubscriptions` 自己的 entries）。
+    onChange: (sids) => {
+      const devId = deviceId
+      if (devId !== null) deps.presence?.subscriptions(devId, sids)
+    },
   })
   const sessionPager = createSessionPager({ sessions: deps.sessions, cursorOf: (sid) => sessionSubscriptions.cursorOf(sid), log: logger })
+  /**
+   * 本连接的设备身份窗口。**由这里构造而不是外面传进来**：`deviceId` 本来就是本作用域的
+   * 状态（`deviceEstablished` 写、`servingEnded` 清），让外面持有一个 getter 只会多一处
+   * 可能与真实状态不一致的副本。
+   */
+  const identity: ConnectionIdentity | undefined =
+    deps.presence === undefined ? undefined : { deviceId: () => deviceId, presence: deps.presence }
   const methodFace = createMethodFace({
     handlers: createHandlers({
       ...deps.handlers, sessionSubscriptions, sessionPager,
       ...(jobSubscriptions === null ? {} : { jobSubscriptions }),
+      // 两个**每连接**才答得了的方法面（`sync.hello` 要上报前后台态、
+      // `interaction.respond` 要记 lastInteractedAt 并可能收束在途 claim）：
+      // 它们需要"这条连接是哪台设备"，而那只有本作用域知道。
+      ...(identity === undefined ? {} : { connection: identity }),
     }),
     ...(deps.idempotency === null ? {} : { idempotency: deps.idempotency }),
     onError: (message, detail) => logger.warn(message, detail),
@@ -79,6 +133,9 @@ export function createConnectionScope(
     deviceEstablished(devId) {
       if (pairing !== undefined) throw new Error('配对候选不能激活普通业务身份')
       deviceId = devId
+      // 鉴权完成 = 这台设备在线了。**前台态此时仍为 false**（还没收到 `sync.hello`），
+      // 于是一个刚连上的设备不会被 `foreground` 档误判成"用户正看着手机"。
+      deps.presence?.online(devId)
     },
     pairingEstablished() {
       if (pairing === undefined) throw new Error('普通设备连接不能激活配对通道')
@@ -87,6 +144,9 @@ export function createConnectionScope(
     servingEnded() {
       generation += 1
       pairingReady = false
+      // 断开 = 这台设备下线。**整条记录作废**（订阅集属于这条连接）——
+      // 见 `presence.ts` 的 `offline`。
+      if (deviceId !== null) deps.presence?.offline(deviceId)
       deviceId = null
       jobSubscriptions?.stopAll()
       sessionSubscriptions.stopAll()

@@ -35,6 +35,10 @@ export const REQUIRED_SERVICES = ['sessionController', 'storageDomain', 'credent
 
 /**
  * **可选**能力。缺了只是对应功能置灰，不该让插件不加载，所以**不写进 `inject`**。
+ *
+ * 这份清单还是**服务键的登记处**：`dsh/` 下任何 `ctx.get('<键>')` 都必须在这里出现过，
+ * 否则 `tests/layering.test.ts` 的 `service-key-registered` 会红 —— 那条规则盯的是
+ * "拼错一个键就是一个永远 false 的能力位，且没有任何报错"。
  */
 export const OPTIONAL_SERVICES = [
   'approval',
@@ -42,6 +46,15 @@ export const OPTIONAL_SERVICES = [
   'jobs',
   'subagents',
   'settings',
+  // 提问面的两个只读依赖（`dsh/questions.ts`）：`agents` 用来把会话 id 换成 live root agent，
+  // `sessionProjections` 用来读 `userQuestions` 投影。两者都**不**决定能力位
+  // （能力位看 `userQuestions`），缺了只是提问应答回 not-pending。
+  'agents',
+  'sessionProjections',
+  // 模型面（`dsh/models.ts`）：`sessionController` 发目录（`@Remote('modelCatalog')`），
+  // 另外两个键用来读 `modelSelection` 投影。三者都**不**决定能力位 ——
+  // 缺了只是 `session.modelCatalog` 不出现、`session.list` 的行里没有 `model` 字段。
+  'sessionController',
 ] as const
 
 /** 通道对外公布的能力位。 */

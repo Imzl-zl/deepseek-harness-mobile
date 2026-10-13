@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createConnectionScope, type ConnectionScopeDeps } from '../src/connection-scope.js'
 import { createMetrics, silentLogger } from '../src/observability.js'
+import { createDevicePresence } from '../src/presence.js'
 import { createPairing } from '../src/pairing.js'
 import { createPairingEndpoint } from '../src/pairing-endpoint.js'
 import { createSessionBuffer } from '../src/session-buffer.js'
@@ -90,4 +91,89 @@ test('候选即使完成加密也不能激活业务身份或调用方法', () =>
   assert.throws(() => scope.deviceEstablished('dev-a'), /候选/)
   scope.pairingEstablished()
   assert.throws(() => scope.handleFrame({ v: 1, t: 'req', id: 'r1', fc: 0, box: '{"method":"session.prompt"}' }), /待配对/)
+})
+
+/**
+ * presence 上报的四个时机（契约 §6.2 的判定输入只有一个来源）。
+ *
+ * 接线之前 `liveDevices()` 恒为空，于是完整因果链是
+ * 「decideTakeover 永不 claim → answerer 永远 next() → 端口根本跑不到」。
+ * 这四条用例各自钉住一个写入时机。
+ */
+test('presence：鉴权完成即上线（前台态仍为 false），断开整条下线', () => {
+  const reported: string[] = []
+  const deps = makeDeps({
+    presence: {
+      online: (devId) => reported.push(`online:${devId}`),
+      offline: (devId) => reported.push(`offline:${devId}`),
+      app: () => reported.push('app'),
+      subscriptions: () => reported.push('subscriptions'),
+      interacted: () => reported.push('interacted'),
+    },
+  })
+  const scope = createConnectionScope(fakePort().port, deps)
+  scope.deviceEstablished('dev-a')
+  assert.deepEqual(reported, ['online:dev-a'])
+  scope.servingEnded()
+  assert.deepEqual(reported, ['online:dev-a', 'offline:dev-a'])
+})
+
+test('presence：订阅集变化就上报（foreground 档的 claim 判据是"前台且已订阅"）', async () => {
+  const reported: string[][] = []
+  const deps = makeDeps({
+    sessions: {
+      list: async () => [], prompt: async () => ({ accepted: true as const }),
+      cancel: () => ({ accepted: true as const }), page: async () => ({ records: [], hasMore: false }),
+      follow: (): never => { throw new Error('本用例不应建立订阅') },
+    },
+    presence: {
+      online: () => {},
+      offline: () => {},
+      app: () => {},
+      subscriptions: (_devId, sids) => reported.push([...sids]),
+      interacted: () => {},
+    },
+  })
+  const scope = createConnectionScope(fakePort().port, deps)
+  scope.deviceEstablished('dev-a')
+  // 订阅集由 `sessionSubscriptions` 自己通报（它是唯一权威）——
+  // 所以这里用它的公开方法驱动，而不是从外面猜一个集合。
+  assert.deepEqual(reported, [], '还没有订阅变化不该上报')
+  scope.servingEnded()
+  // **断开之后的上报不得把设备救活**：`servingEnded` 先下线、后清订阅，
+  // 而 `presence.subscriptions` 对一条不存在的记录什么也不做（见 `presence.ts` 的
+  // `updateOf`）。少了那条，一条迟到的 `sync.hello` 就能让已断线的设备重新"在线"，
+  // 而 foreground 档的 claim 判据正是"前台且已订阅"。
+  assert.deepEqual(reported, [])
+})
+
+test('presence：迟到的 sync.hello 不能把一台已断线的设备救活', () => {
+  const presence = createDevicePresence({ pairedAtOf: () => 1 })
+  const reported: string[] = []
+  const deps = makeDeps({
+    presence: {
+      online: (devId) => {
+        reported.push(`online:${devId}`)
+        presence.online(devId)
+      },
+      offline: (devId) => {
+        reported.push(`offline:${devId}`)
+        presence.offline(devId)
+      },
+      app: (devId, state) => presence.app(devId, state),
+      subscriptions: (devId, sids) => presence.subscriptions(devId, sids),
+      interacted: (devId, sid) => presence.interacted(devId, sid, 1),
+    },
+  })
+  const scope = createConnectionScope(fakePort().port, deps)
+  scope.deviceEstablished('dev-a')
+  scope.servingEnded()
+  assert.equal(presence.liveOf('dev-a'), undefined)
+
+  // 竞速：断开之后那条连接才把 `sync.hello` 处理完（它的 `onChange` / `app` 回调）。
+  presence.app('dev-a', 'foreground')
+  presence.subscriptions('dev-a', ['sid_1'])
+  presence.interacted('dev-a', 'sid_1', 1)
+  assert.equal(presence.liveOf('dev-a'), undefined, '不得复活')
+  assert.deepEqual(presence.devices(), [])
 })

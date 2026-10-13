@@ -21,6 +21,10 @@
  * `approval/request` 应答者，但它没有看护计时器 —— 而契约 §15 明确「转审批要求看护
  * 计时器已实现」。本文件的 `registerApprovalAnswerer` 是带看护的版本；两者同时挂上去，
  * waterfall 只会走到先注册的那个，另一个永远不触发（且不报错），所以装配要显式取舍。
+ *
+ * **若将来切到本文件的 `registerApprovalAnswerer`，必须把 `{ prepend: true }` 一起搬过去** ——
+ * 否则它会被 DSH 的桌面转发监听器（`packages/api/remotes/src/index.ts:57-75`）挡住，
+ * 审批永远问不到我们。见 `.agents/notes/implemented/2026-10-13-answerer-must-be-prepended.md`。
  */
 import { ProtocolError, clientActionOf, type ClientAction, type ErrorCode } from './protocol/errors.js'
 import { decideTakeover, type TakeoverDevice, type TakeoverMode } from './protocol/takeover.js'
@@ -227,6 +231,22 @@ export interface InteractionFaceDeps {
    * 返回 `undefined` 表示这个会话当前没有投影快照可读。
    */
   projectionOf(sid: string): QuestionProjection | undefined
+  /**
+   * **在途 claim 的收束面**（装配层接 `interaction-claims.ts` 的在途表）。
+   *
+   * 契约 §5.7 只有一个应答入口，而 §6.3.1 的两条路径在 DSH 侧共用答案批次这一种形状 ——
+   * 所以分叉点不在方法名上，而在"这一项是不是一次在途的 claim"（在途审批，或
+   * `open` 态被应答链堵着的提问）。那个判据只有挂载级的端口知道（它握着 claim 与看护），
+   * 因此作为钩子注在这里。
+   *
+   * 在**形状校验之后**调用（那时 `sid` / `callId` / `answers` 都已确认合法），
+   * 在投影比对与 `agentOf` 之前：审批项不在 `userQuestions` 投影里，
+   * 走投影比对只会被跳过，而 `agentOf` 对子代理会话的拒绝对审批是错的
+   * （审批的 live root 判据在 DSH 的应答链里，不在这里）。
+   *
+   * @returns `true` = 这一项已作为在途 claim 的答复收束，不要再走提问路由。
+   */
+  settleClaim?(sid: string, callId: string, answers: readonly AnswerItem[]): boolean
   log?: InteractionLogger
 }
 
@@ -236,6 +256,10 @@ export interface InteractionFace {
   /**
    * `interaction.respond` 的校验与路由。**失败抛 `ProtocolError`**（分发器把它转成
    * `ok:false` 信封，结构化错误不关连接，契约 §9）；成功返回该项的 `itemId`。
+   *
+   * 两条目的地：**在途 claim**（{@link InteractionFaceDeps.settleClaim} 认下它）
+   * 与 **`continued` 提问**（路由到 DSH 的 `userQuestions.answer`）。`open` 提问不走这里 ——
+   * 它由实时应答链（`dsh/interactions.ts` 的 answerer）处理。
    *
    * @param params - 封箱后解出来的原始载荷，**不可信**，逐个字段校验。
    */
@@ -301,6 +325,14 @@ export function createInteractionFace(deps: InteractionFaceDeps): InteractionFac
           throw new ProtocolError('protocol/bad-frame', '答案项必须形如 { id, selected[], custom? }')
         }
         items.push(raw)
+      }
+
+      // ---- 在途 claim？先问端口 ----
+      // 形状已合法，可以安全地把批次交给它。端口答"是"就此收束：
+      // 审批的词汇表映射（哪个标签等于 `allowed-once`）与看护都在端口那一侧，
+      // 内核不认识审批（`interaction-face.ts` 只承载提问语义）。
+      if (deps.settleClaim?.(sid, callId, items) === true) {
+        return { itemId: itemIdOf(callId) }
       }
 
       // ---- 批次 vs 提问：投影认得这个 call 时才先判一遍 ----

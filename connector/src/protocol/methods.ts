@@ -33,6 +33,9 @@ export const METHODS = [
   'session.prompt',
   'session.cancel',
   'session.refetch',
+  // 模型目录：只读。手机据此建选择器，显示的名字与电脑侧同一份真值
+  // （DSH 的 `session/modelCatalog`，见 `dsh/models.ts` 的文件头）。
+  'session.modelCatalog',
   'interaction.respond',
   'job.list',
   'job.follow',

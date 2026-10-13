@@ -66,6 +66,14 @@ export interface SessionSubscriptionsOptions {
    * 而裁剪只发生在全部配对设备 `persisted` 覆盖过之后（那是缓冲自己的规矩）。
    */
   buffer?: SessionBuffer
+  /**
+   * 订阅集**变化之后**调用（带当前全部 `sid`）。
+   *
+   * 它是 presence 的输入（契约 §6.2：`foreground` 档的 claim 判据是"前台且已订阅该 sid"）。
+   * 挂在这是而不是读取点轮询：订阅集只有三个变更点（`subscribe` / `unsubscribe` / `stopAll`），
+   * 三处各通报一次比让读取方猜"什么时候变了"可靠。
+   */
+  onChange?: (sids: readonly string[]) => void
   log?: ChannelLogger
 }
 
@@ -99,6 +107,8 @@ export interface SessionSubscriptions {
    * （它只会少算新事件，不会算错旧事件）。进程重启后自然为空，那时回 `undefined`。
    */
   cursorOf(sid: string): number | undefined
+  /** 当前订阅的会话集（presence 的输入，契约 §6.2 的"已订阅该 sid"判据）。 */
+  sids(): readonly string[]
   /** 终止全部（连接离开服务态、插件卸载）。 */
   stopAll(): void
   readonly active: number
@@ -130,6 +140,11 @@ export function createSessionSubscriptions(
   const buffer = options.buffer
   /** `sid → 最后一次开启帧的水位`（`session.page` 的 `throughSeq` 来源）。 */
   const cursors = new Map<string, number>()
+
+  /** 订阅集变了就通报（presence 的唯一输入）。 */
+  const announce = (): void => {
+    options.onChange?.(core.keys())
+  }
 
   const streamIdOf = (attemptId: string): number => {
     const existing = streams.get(attemptId)
@@ -225,7 +240,7 @@ export function createSessionSubscriptions(
     },
 
     subscribe(input) {
-      return core.start({
+      const ready = core.start({
         key: input.sid,
         open: async function* (signal) {
           // **增量优先**：缓冲里覆盖得到 `since` 时，先补发那一段，
@@ -272,18 +287,31 @@ export function createSessionSubscriptions(
         // 幂等：`since` 没给或就是当前水位 → 复用；给了不同的 → 换流（手机明确要求从别处恢复）。
         reuse: (anchor) => input.since === undefined || input.since === anchor.since,
       })
+      // **订阅集变了就通报**。放在 `core.start` 之后而不是开启帧到达之后：
+      // 判据是"手机声明了要订这个会话"，而"开启帧什么时候到"是上游的节奏。
+      // 反过来的话，一段"已声明但还没 anchor"的窗口里 foreground 档会判它没订阅。
+      announce()
+      return ready
     },
 
     unsubscribe(sid) {
-      return core.stop(sid)
+      const stopped = core.stop(sid)
+      announce()
+      return stopped
     },
 
     cursorOf(sid) {
       return cursors.get(sid)
     },
 
+    /** 当前订阅的会话集（presence 与测试用）。 */
+    sids() {
+      return core.keys()
+    },
+
     stopAll() {
       core.stopAll()
+      announce()
     },
   }
 }

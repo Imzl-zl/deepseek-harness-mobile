@@ -95,6 +95,7 @@ const SELF_TEST: Sample[] = [
   { rule: 'dsh-cites-evidence', path: 'dsh/jobs.ts', content: 'const x = 1 // 按印象写的', shouldFail: true },
   { rule: 'service-key-registered', path: 'dsh/jobs.ts', content: "ctx.get('jobs')", shouldFail: false },
   { rule: 'service-key-registered', path: 'dsh/jobs.ts', content: "ctx.get('jobb')", shouldFail: true },
+  { rule: 'service-key-registered', path: 'dsh/models.ts', content: "ctx.get('sessionController')", shouldFail: false },
   // `ctx.effect` / `ctx.on` 是 cordis 成员，不该被当成未登记的服务键
   { rule: 'service-key-registered', path: 'dsh/jobs.ts', content: 'ctx.effect(() => {})', shouldFail: false },
 ]

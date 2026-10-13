@@ -27,6 +27,9 @@ import type { JobSubscriptions } from './job-subscriptions.js'
 import type { SessionPager } from './session-page.js'
 import type { SessionSubscriptions } from './session-subscriptions.js'
 import type { PromptPart, SessionSummaryRow, SessionsPort } from './dsh/sessions.js'
+import type { ConnectionIdentity } from './connection-scope.js'
+import type { InteractionFace } from './interaction-face.js'
+import type { ModelFace } from './dsh/models.js'
 
 /** 设备清单里的一行。**不含公钥** —— 手机不需要别人的公钥，少发一个字段就少一处泄漏面。 */
 export interface DeviceRow {
@@ -104,6 +107,28 @@ export interface HandlerDeps {
    * 必须出自开启帧）——装配时把 `cursorOf` 接到订阅面上（见 `index.ts`）。
    */
   sessionPager?: SessionPager
+  /**
+   * **每连接**才能回答的两个问题：这条连接是哪台设备、它的 presence 上报面在哪。
+   *
+   * 由 `connection-scope.ts` 在方法面装配时注入（握手完成前 `deviceId()` 返回 `null`）。
+   * 缺了就只是没有 presence 上报 —— 方法面本身照常工作。
+   */
+  connection?: ConnectionIdentity
+  /**
+   * 提问 / 计划审查的内核（投影 + `interaction.respond` 的校验与路由）。
+   *
+   * **可选**：`userQuestions` 服务不在时（`caps.questions === false`）干脆不挂这个方法，
+   * 让 `repo.info` 自然也不报它 —— 与 `job.*` 同一个理由（契约 §7 的能力位模型）。
+   */
+  interaction?: InteractionFace
+  /**
+   * 模型目录与每会话当前模型（`session.modelCatalog` 与 `session.list` 的 `model` 字段）。
+   *
+   * **可选**：`sessionController` / `sessionProjections` / `agents` 任一不在时
+   * （`caps.models === false`）不挂这个方法，`repo.info` 自然也不报它 ——
+   * 与 `job.*`、`interaction.respond` 同一个理由（契约 §7 的能力位模型）。
+   */
+  models?: ModelFace
 }
 
 export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, MethodHandler>> {
@@ -241,10 +266,30 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
           running: row.running,
           blank: row.blank,
           subagent: row.subagent,
+          // **当前模型从真投影来**，不是占位：`modelSelection` 的 `next ?? lastUsed`
+          // （`dsh/models.ts`）。取不到就**不给这个字段** —— 手机显示"未选择"，
+          // 而不是猜一个把"看起来连着"当成"连着"。
+          ...(deps.models === undefined
+            ? {}
+            : (() => {
+                const model = deps.models.modelOf(sid)
+                return model === undefined ? {} : { model }
+              })()),
           ...(row.cwd === undefined ? {} : { cwd: row.cwd }),
         })),
       }
     },
+  }
+
+  // 模型目录：与 `job.*` / `interaction.respond` 一样按能力位挂（契约 §7）。
+  if (deps.models !== undefined) {
+    handlers['session.modelCatalog'] = async () => {
+      const catalog = await deps.models!.catalog()
+      // 目录拿不到就**明说**，不给空数组：空数组会被手机读成"没有可用模型"，
+      // 而真实原因可能是某个 provider 的 key 没配。
+      if (catalog === undefined) return { available: false }
+      return { available: true, catalog }
+    }
   }
 
   // 可选服务的方法**按需挂**：表里没有它，`repo.info` 自然也不会报它（契约 §7 的能力位模型）。
@@ -291,6 +336,98 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       const sid = requireSid(params)
       requireSession(sid)
       return { stopped: subscriptions.unsubscribe(sid) }
+    }
+
+    /**
+     * `sync.hello`：恢复握手 + **前后台态声明**（契约 §5.4、§6.2）。
+     *
+     * 它与 `session.subscribe` 的分工（§5.4 的评估原文）：`subscribe(sid, since)` 是
+     * **单会话**增量入口，而 `sync.hello` 做两件它做不到的事 —— ① 一次声明整份订阅集
+     * （手机回到前台时要恢复的是"所有会话"，不是一个）；② 上报前后台态。
+     *
+     * 所以它**不另起一套恢复语义**：每个声明的会话都走同一个
+     * `sessionSubscriptions.subscribe`（增量优先、缓冲补发、开启帧水位全在同一处），
+     * 本方法只做"批量入口 + 应用态声明"。翻译层就是漂移层，批量入口也不例外。
+     *
+     * 失败语义与 `session.subscribe` **逐字一致**（一个别名未知就整票失败并回
+     * `session/not-found`）：它的客户端动作正是「从列表移除」，对一条过期声明是对的；
+     * 而"部分成功"会让同一个操作有两种失败形状，那是漂移的口子。
+     */
+    handlers['sync.hello'] = async (params) => {
+      const app = paramOf(params, 'app')
+      if (app !== 'foreground' && app !== 'background') {
+        throw new ProtocolError('protocol/bad-frame', 'sync.hello 的 app 必须是 foreground 或 background')
+      }
+      const raw = paramOf(params, 'sessions')
+      if (!Array.isArray(raw)) {
+        throw new ProtocolError('protocol/bad-frame', 'sync.hello 的 sessions 必须是数组')
+      }
+      const declared: { sid: string; since?: number }[] = []
+      for (const entry of raw) {
+        if (typeof entry !== 'object' || entry === null) {
+          throw new ProtocolError('protocol/bad-frame', 'sessions 的每一项必须是对象')
+        }
+        const record = entry as Record<string, unknown>
+        const sid = record['sid']
+        if (typeof sid !== 'string' || sid === '') {
+          throw new ProtocolError('protocol/bad-frame', 'sessions 的每一项都要带 sid')
+        }
+        const since = record['since']
+        if (since !== undefined && (typeof since !== 'number' || !Number.isSafeInteger(since) || since < 0)) {
+          throw new ProtocolError('protocol/bad-frame', 'since 必须是非负整数')
+        }
+        declared.push({ sid, ...(since === undefined ? {} : { since }) })
+      }
+
+      // **前后台态在订阅之前上报**：`foreground` 档的 claim 判据是"前台且已订阅该 sid"，
+      // 顺序反了会出现一段"已订阅但仍判不在前台"的窗口（审批被让回桌面）。
+      const connection = deps.connection
+      const devId = connection?.deviceId() ?? null
+      if (connection !== undefined && devId !== null) {
+        connection.presence.app(devId, app)
+      }
+
+      const sessions: { sid: string; since: number; hasMore: boolean }[] = []
+      for (const item of declared) {
+        const dshSessionId = requireSession(item.sid)
+        const reply = await subscriptions.subscribe({
+          sid: item.sid,
+          dshSessionId,
+          ...(item.since === undefined ? {} : { since: item.since }),
+        })
+        sessions.push({ sid: item.sid, since: reply.since, hasMore: reply.hasMore })
+      }
+      return { app, sessions }
+    }
+  }
+
+  if (deps.interaction !== undefined) {
+    const face = deps.interaction
+    /**
+     * `interaction.respond`：提问 / 计划审查的答案批次，**也收束在途的审批 claim**。
+     *
+     * 为什么一个方法对两个目的地：契约 §5.7 只定义了这一个应答入口，而
+     * §6.3.1 的两条路径在 DSH 侧本来就是同一个形状（答案批次）。分叉点不在方法名上，
+     * 而在"这一项是不是一次在途的审批 claim"—— 那个判据只有挂载级的端口知道，
+     * 所以它作为 {@link InteractionFaceDeps.settleApproval} 注进内核，
+     * 在形状校验之后、路由到 DSH 之前问一次。
+     *
+     * `lastInteractedAt` 记在**这里**而不是内核里：它需要"哪台设备说的"，
+     * 而那是每连接的知识。时间戳由**连接器**盖（不信任手机时钟 ——
+     * 这个值只喂仲裁排序的一个并列判据，客户端时钟漂移会让排序随设备漂）。
+     */
+    handlers['interaction.respond'] = (params) => {
+      // 只读 peek，不做校验：形状判据全在内核里（那里才是唯一一处），
+      // 这里只为"哪台设备在哪个会话上答了话"取一个键。取不到就不记，不报错。
+      const peeked = typeof params === 'object' && params !== null
+        ? (params as Record<string, unknown>)['sid']
+        : undefined
+      const connection = deps.connection
+      const devId = connection?.deviceId() ?? null
+      if (connection !== undefined && devId !== null && typeof peeked === 'string' && peeked !== '') {
+        connection.presence.interacted(devId, peeked, Date.now())
+      }
+      return face.respond(params)
     }
   }
 
