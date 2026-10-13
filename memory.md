@@ -38,17 +38,18 @@
 (真机 322ms 回 `rejected`,而用户什么都没点)—— 已改成抛,由 `interactions.ts`
 归一成 `'unavailable'`。见 `.agents/notes/implemented/2026-10-13-approval-must-not-fake-rejection.md`。
 
-**当前卡点(2026-10-13 两轮真机,完整证据见 cookbook「真机两次尝试」)**:审批探针
-发出去后没有任何落点 —— 帧离开手机(诊断面有明文信封),连接器 dedupe 表无这一条
-(`begin()` 是分发**之前**落盘的,所以"无行"= 没到分发层,或被拒后 `abandon()` 删行),
-任何会话日志里都没有探针文本。④ 的 marker 回读第二次已过(链路本身通),⑤ 的探针
-两次都没落点;"帧真丢了"与"到了但被拒(如 `session/not-found`:挑到的会话 agent 已
-disposed)"从外部**分不开** —— 用例已加仪器把这两类分开(探针先等自己的回读再等
-卡片、失败点打全诊断、传输层记 `send()` 返回值)。取舍见
-`.agents/notes/implemented/2026-10-13-probe-must-echo-before-card.md`。
-**另一条已定位的环境因素**:步骤 ②/⑤ 按"最近活动的空闲会话"挑靶子,现在活跃会话
-全是其他 agent 的 —— 第二次的 marker 落进一个 15:00 建的空会话,把里面的 agent
-唤醒了(它自行跑完一轮只读排查后结束)。挑号规则是已知隐患,本期未改。
+**当前卡点(2026-10-13 三次真机,第三次根因已确定)**:审批探针发出去后卡片不出现。
+**根因**:靶子会话的工作区目录已不存在(`C:\Users\zhanglu\.ssh-server` 被删)——
+DSH 照常把 `user/message` 落盘(所以④的回读判据满足),但那个会话的 agent 永远
+起不来、轮次从不启动,于是永远等不到 `approval/asked`。**全程零痕迹**:手机侧
+连接 serving、`send` 全 true、连接器 dedupe 也有 `done`。前两次的"零痕迹"同此,
+**不是帧丢失也不是拒收**。
+**修法(未做)**:`connector/src/handlers.ts` 的 `session.list` 把 `cwd` 过线,
+手机侧 `SessionSummary` 收下,真机用例挑靶子加"cwd 存在"判据。
+**另一条已定位的环境因素**:步骤 ②/⑤ 挑靶子会叫醒别人的 agent 会话 —— 现已优先
+挑 `blank`(从没跑过)的会话缓解;彻底办法是靶子只建在专用工作区
+`D:\sudy\myproject\dsh-mobile-test`(目录已建,工作区待用户在 Web UI 添加)。
+完整证据见 cookbook「真机三次尝试」。
 
 **模型/状态显示已对齐 DSH 真值**(2026-10-13):手机上原来的模型名是**写死的** `'claude-opus'`
 外加一份手抄的四个模型列表,与电脑侧毫无关系。现在接 DSH 原生的两条通道:

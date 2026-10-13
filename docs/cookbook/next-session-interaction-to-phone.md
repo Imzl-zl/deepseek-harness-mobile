@@ -99,39 +99,51 @@ adb -s d61cf622 shell svc power stayon true
 fail-closed 报后台**。取舍、被否方案与代价见
 `.agents/notes/implemented/2026-10-13-app-lifecycle-observer.md`。
 
-## 真机两次尝试(2026-10-13,都未通过;证据都在,下次直接从这接)
+## 真机三次尝试(2026-10-13;第三次根因已确定,差最后一修)
 
-两次都是**全自动**跑的(二维码由浏览器自动化在 Web UI 里跑 `/dsh-mobile-pair` 取得,
+三次都是**全自动**跑的(二维码由浏览器自动化在 Web UI 里跑 `/dsh-mobile-pair` 取得,
 不用人贴;tools.md 里"信封形状见 tools.md"是过期引用,那条路没走通)。
 
 | | ④ marker 回读 | ⑤ 审批卡 |
 |---|---|---|
 | 第一次(15:33) | ❌ 3 分钟没回读 | 没跑到 |
-| 第二次(15:37) | ✅ 过了(15:38:45 落成 `user/message`,连接器 dedupe 有 `done` 行) | ❌ 探针没落点 |
+| 第二次(15:37) | ✅ 过了(15:38:45 落成 `user/message`,dedupe 有 `done`) | ❌ 探针没落点 |
+| 第三次(23:20) | ✅ 过了 | ❌ 探针落盘了但**卡片没出现** |
 
-**两次失败是同一种形状**:帧离开了手机(诊断面有明文信封),连接器侧零痕迹
-(dedupe 表没有这一条——而 `begin()` 是分发**之前**就落盘的),任何会话日志里
-都没有探针文本。而 `session.prompt` 失败时连接器会删掉 pending 行,所以
-"帧真丢了"与"到了但被拒(如 `session/not-found`:挑到的会话 agent 已 disposed)"
-从外部**分不开**。
+**第三次是决定性的,根因已确定**:仪器打出
+`探针已受理但审批卡没出现 / connection=serving / closeCode=null / send 返回值全 true`,
+而按帧解压靶子会话日志看到:探针的 `user/message` **落盘了**(所以④过),
+但那条会话里**只有起标题的请求,没有 `turn/start`、没有 `tool/call`、没有
+`approval/asked`** —— agent 从来没跑起来。再查:那个会话的工作区
+`C:\Users\zhanglu\.ssh-server` **目录已不存在**。
 
-**两条已定位的环境因素**(不是代码 bug):
+> **DSH 的行为(不是我们的 bug)**:对工作区已失效的会话,`session.prompt` 照常把
+> `user/message` 落盘(④的回读判据因此满足),但 agent 永远起不来、轮次从不启动,
+> 于是永远等不到 `approval/asked`。全程零错误、零痕迹 —— 手机侧连接健康、
+> `send` 全 true、连接器 dedupe 也有 `done`。前两轮的"零痕迹"谜案同此:
+> **不是帧丢失,也不是连接器拒收**。
 
-1. 步骤 ②/⑤ 按"最近活动的空闲会话"挑靶子,现在活跃会话全是其他 agent 的 ——
-   第二次的 marker 就落进了一个 15:00 建的空会话,把里面的 agent 唤醒了
-   (它跑了一轮只读排查后自行结束)。挑号规则是已知隐患,本期未改。
-2. 免费渠道(`lightvela-free`)当天有过 `PI_AI_ERROR` 抖动,但复跑时是好的 ——
-   不是卡点。
+**修法(下一步,未做)**:`connector/src/handlers.ts` 的 `session.list` 把 `cwd`
+一起过线(DSH 的 `SessionSummaryRow` 本来就有这个字段),手机侧 `SessionSummary`
+收下它;真机用例挑靶子时加"`cwd` 目录存在"的判据。产品上也该显示会话属于哪个
+工作区(多会话并行时用户靠它分辨)。
 
-**用例已加仪器**(纯测试改动,见 `.agents/notes/implemented/2026-10-13-probe-must-echo-before-card.md`):
+**靶子会话放哪**(2026-10-13 立规矩):专用目录 `D:\sudy\myproject\dsh-mobile-test`
+已建好(空目录);在 Web UI 侧边栏点「添加工作区」选它、起名如 `dsh-mobile-联调`。
+**以后真机测试的会话只建在这个工作区**,不再散落到用户的工作区或「未分组」。
+历次遗留已清理:未分组里 18 个测试会话全部归档,用户的 10 个真实会话未动。
 
-- 审批探针发出后**先等它自己的 `user/message` 回读**,再等卡片 —— 两类失败分开;
+**用例已装仪器**(纯测试改动,见 `.agents/notes/implemented/2026-10-13-probe-must-echo-before-card.md`):
+
+- 审批探针发出后**先等它自己的 `user/message` 回读**,再等卡片 —— 两类失败分开
+  (第三次就是靠它把"没落盘"和"落盘了但 agent 没跑"分开的);
 - 两个失败点都打 `_dumpDiagnostics`(连接态/关闭码/半开/已发方法序列);
 - 传输包了 `_RecordingTransport`,记每次 `send()` 的返回值 —— 分开"帧没出手机"
   与"帧死在路上"(`core/_write` 把这个返回值丢掉了,是产品侧未修的静默窟窿)。
 
-**下次跑之前先看**:`send 返回值`最后一条是不是 `false`;连接器 dedupe 表有没有
-`real-device-approval-*` 行(有 pending = 到了没执行完;没有 = 没到或被删)。
+**下次跑之前先看**:诊断里 `sid=` 打的是 **marker 会话**(不是靶子,排查时按
+`by_sid` 反查靶子);靶子会话日志里有没有 `turn/start` / `tool/call` /
+`approval/asked` 三个事件;工作区目录还在不在。
 
 ## 跑通之后的验收判据
 
