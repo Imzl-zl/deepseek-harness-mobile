@@ -72,7 +72,7 @@
      - **"帧到没到连接器"的离线判据**:`~/.dsh/storages/dsh_mobile_core.json` 的 `dedupe` 表。`idempotency.ts` 的 `begin()` 在**分发之前**落 `pending`、成功改 `done`、失败 `abandon()` **删行** —— 所以"没有这一条"= 没到分发层,或到了被拒(如 `session/not-found`),两者从外部**分不开**;要分开靠手机侧仪器(见 cookbook)。`by_sid`/`by_session` 是别名表(无时间戳),`devices` 是设备名册。
      - **会话日志按帧解压的魔术字是文件序 `28 B5 2F FD`**(zstd 帧魔数 `0xFD2FB528` 的小端)。写反成 `FD 2F B5 28` 会一帧都找不到、解出 0 字符,而表现像"文件是空的"。
      - **真机靶子会话的工作区必须存在**(2026-10-13 拿三轮真机换的):DSH 对工作区已失效的会话,`session.prompt` 照常落 `user/message`(**④的回读判据因此满足**),但 agent 永远不起轮次 —— 没有 `turn/start` / `tool/call` / `approval/asked`,全程零错误。判据:靶子会话的 `cwd` 目录还在不在(下一步把 `cwd` 过线,见 cookbook)。
-     - **真机测试会话只建在专用工作区** `D:\sudy\myproject\dsh-mobile-test`(目录已建;Web UI 侧边栏「添加工作区」选它)。别散落到用户工作区或「未分组」—— 2026-10-13 从「未分组」归档了 18 个历次遗留。
+     - **真机测试会话只建在专用工作区** `D:\sudy\myproject\dsh-mobile-test`,别散落到用户其他工作区。
     - **⚠ 这条用例花用户的钱,跑之前必须问**(2026-10-13 事故):`--profile dsh-mobile-test` **只隔进程/插件/端口**,`~/.dsh/.credentials.yaml`、`~/.dsh/sessions/`、`~/.dsh/storages/` **全是全局共用**。所以"起个测试 profile"给不了任何隔离感 —— 在里面建会话、发 prompt,一样记在用户的官方账号上,并且污染他的会话列表。**规矩:不另起 profile;专用会话走「问 → 建 → 跑 → 用户确认后删」四步;每次跑之前报一句"这次约 2 个轮次",拿到准再跑。** 详见 `memory.md` 的「真机联调的成本纪律」。
   - `cd app; dart analyze --fatal-infos lib test integration_test` —— **社区口径的静态检查**(比 `flutter analyze` 严:把 info 也当失败)。0 问题才算干净
   - `cd app; dart format --output=none --set-exit-if-changed lib test integration_test` —— **Dart 社区硬规范**(Flutter CI 一直拿它当门禁)。`--set-exit-if-changed` 是判据,不是"看一眼"
