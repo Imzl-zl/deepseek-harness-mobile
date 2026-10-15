@@ -33,10 +33,19 @@ class TokenUsage {
   int get totalInput =>
       uncachedInputTokens + cacheReadTokens + cacheWriteTokens;
 
-  /// 缓存命中率（0..1）。**没有输入时是 null** —— 除零会得到 NaN，
+  /// **计费输入**：三个互不重叠的 prompt 侧桶之和。
+  ///
+  /// 与 Web 的 `billedInputTokens` 逐字一致
+  /// （`packages/client/ui-chat/src/client/chat/StatsPills.tsx:118-120`）——
+  /// 缓存命中率的分母是它，**不含输出**：输出不计入"输入侧命中"。
+  /// 手机原来把 `outputTokens` 也算进分母，于是同一个会话在手机与 Web 上
+  /// 显示两个不同的命中率（真机实测：手机 97% / Web 99%）。
+  int get billedInput => totalInput;
+
+  /// 缓存命中率（0..1）。**没有计费输入时是 null** —— 除零会得到 NaN，
   /// 而那会一路传到界面上显示成一个 `NaN%`。
   double? get cacheHitRate {
-    final total = totalInput + outputTokens;
+    final total = billedInput;
     if (total == 0) return null;
     return cacheReadTokens / total;
   }
@@ -46,12 +55,19 @@ class TokenUsage {
 }
 
 /// 会话统计（DSH 的 `sessionStats` 投影）。
+///
+/// 字段与投影的 `viewSchema` 逐字对应
+/// （`packages/session/session-stats/src/projection.ts:72-81`）：
+/// `turns` / `steps` / `llmMs` / `toolMs` / `ttftMs` / `ttftSteps` /
+/// `decodeMs` / `decodeTokens`。后两个是**输出速率**的唯一来源。
 class SessionStats {
   const SessionStats({
     required this.turns,
     required this.steps,
     required this.llmMs,
     required this.toolMs,
+    this.decodeMs = 0,
+    this.decodeTokens = 0,
   });
 
   final int turns;
@@ -63,20 +79,85 @@ class SessionStats {
   /// 工具耗时（毫秒）。
   final int toolMs;
 
+  /// 解码总耗时（毫秒）—— 速率的**分母**。
+  final int decodeMs;
+
+  /// 解码出的 token 总数 —— 速率的**分子**。
+  final int decodeTokens;
+
   /// `第 N 轮 · M 步`。**轮次为 0 时返回 null** —— 界面该显示空态，
   /// 而不是"第 0 轮"（那会让用户以为轮次没在数）。
   String? get turnLabel {
     if (turns <= 0) return null;
     return '第 $turns 轮 · $steps 步';
   }
+
+  /// 输出速率（tok/s）。**算法与 Web 逐字一致**：
+  /// `decodeTokens / (decodeMs / 1000)`
+  /// （`packages/client/ui-chat/src/client/chat/StatsPills.tsx:166-170`）。
+  ///
+  /// `decodeMs` 为 0（还没有任何一步解码完）时给 null —— 除零会得到
+  /// `Infinity`，显示成 `Inf tok/s` 比不显示更糟。
+  double? get tokensPerSecond {
+    if (decodeMs <= 0 || decodeTokens <= 0) return null;
+    return decodeTokens / (decodeMs / 1000);
+  }
 }
 
 /// 上下文占用压力（DSH 的 `contextPressure` 投影）。
+///
+/// 字段与投影的 wire view 对应
+/// （`packages/llm/token-meter/src/usage-projection.ts:67-75`）：
+/// `pressureTokens?` / `projectedTokens?` / `contextWindow?`。
 class ContextPressure {
-  const ContextPressure({this.pressureTokens, this.projectedTokens});
+  const ContextPressure({
+    this.pressureTokens,
+    this.projectedTokens,
+    this.contextWindow,
+  });
 
   final int? pressureTokens;
   final int? projectedTokens;
+
+  /// 路由容量（分母）。**没有它就算不出百分比** —— 只给 token 数时
+  /// "占了多少"是无解的问题。
+  final int? contextWindow;
+
+  /// 占用读数：百分比 + 用量 + 窗口。**算法与 Web 逐字一致**：
+  /// `usedTokens = projectedTokens ?? pressureTokens`，
+  /// `percent = min(100, round(used / window * 100))`
+  /// （`packages/client/ui-conversation/src/client/context-occupancy.ts:15-25`）。
+  ///
+  /// 分子或分母任一缺失就是 `null`（Web 的 `ContextMeter` 同样此时不渲染）。
+  ContextOccupancy? get occupancy {
+    final used = projectedTokens ?? pressureTokens;
+    final window = contextWindow;
+    if (used == null || window == null || window <= 0) return null;
+    final percent = (used / window * 100).round();
+    return ContextOccupancy(
+      percent: percent > 100 ? 100 : percent,
+      usedTokens: used,
+      contextWindow: window,
+    );
+  }
+}
+
+/// 上下文占用读数（照 Web 的 `ContextOccupancy`）。
+class ContextOccupancy {
+  const ContextOccupancy({
+    required this.percent,
+    required this.usedTokens,
+    required this.contextWindow,
+  });
+
+  /// 0..100 的整数百分比。
+  final int percent;
+
+  /// 占用的 token 数（`projectedTokens` 优先）。
+  final int usedTokens;
+
+  /// 路由容量。
+  final int contextWindow;
 }
 
 /// 把 token 数格式化成 `302K` / `1.2M`。

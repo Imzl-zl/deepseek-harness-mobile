@@ -103,6 +103,7 @@ class PairingPage extends StatefulWidget {
     this.onCancel,
     this.deviceName = '我的手机',
     this.allowInsecureLocal = false,
+    this.notice,
   });
 
   /// 配对成功时回调（上层负责落盘与建连）。
@@ -129,6 +130,14 @@ class PairingPage extends StatefulWidget {
   /// 放行的地址，换票与升级时也必须放行（否则会出现"码认了、票换不了"的裂缝）。
   /// 生产为 `false`：明文只在显式开启的本机调试里可用（`pairing-v2.md` §3）。
   final bool allowInsecureLocal;
+
+  /// 顶部常驻的一句话（**为什么会被送到这一页**）。
+  ///
+  /// 身份不被认（换票被拒 → `notPaired`）时，装配层把原因带到这里 ——
+  /// 用 SnackBar 是不够的：它 4 秒就消失，而用户是被**自动送到**这一页的，
+  /// 看到时那句话可能已经没了，于是又回到"为什么让我重新扫码"。
+  /// 手动点"重新配对"也给一句（"已清掉本机凭据"），两条路同一字段。
+  final String? notice;
 
   @override
   State<PairingPage> createState() => _PairingPageState();
@@ -320,6 +329,40 @@ class _PairingPageState extends State<PairingPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // **为什么会被送到这一页**：常驻，不随 SnackBar 消失。
+          if (widget.notice != null) ...[
+            Container(
+              key: const Key('pairing-notice'),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: DshColors.layer1,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: DshColors.error),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const DshIcon(
+                    'warningTriangle',
+                    size: 18,
+                    color: DshColors.error,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      widget.notice!,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        height: 1.5,
+                        color: DshColors.labelPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
           const _Step(index: 1, text: '在电脑上执行出码命令，得到二维码（5 分钟内有效、一次性）'),
           const _Step(index: 2, text: '扫二维码，或把内容粘贴到下面'),
           const _Step(index: 3, text: '核对电脑身份；确认之后，配对码才会发出去'),

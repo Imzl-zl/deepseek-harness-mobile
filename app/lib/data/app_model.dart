@@ -196,6 +196,11 @@ class AppModel extends ChangeNotifier {
   }
 
   /// 会话统计（`sessionStats` 投影）。
+  ///
+  /// 字段与投影的 wire view 逐字对应
+  /// （`packages/session/session-stats/src/projection.ts:72-81`）——
+  /// `decodeMs` / `decodeTokens` 是输出速率的唯一来源，缺了它
+  /// 手机就算不出 Web 上那个 `75 tok/s`。
   SessionStats? get sessionStats {
     final raw = _projections?['sessionStats'];
     if (raw is! Map) return null;
@@ -204,23 +209,43 @@ class AppModel extends ChangeNotifier {
       steps: _intOf(raw['steps']),
       llmMs: _intOf(raw['llmMs']),
       toolMs: _intOf(raw['toolMs']),
+      decodeMs: _intOf(raw['decodeMs']),
+      decodeTokens: _intOf(raw['decodeTokens']),
     );
   }
 
-  /// 上下文占用压力（`contextPressure` 投影）。两个字段都没有就是 `null`。
+  /// 上下文占用压力（`contextPressure` 投影）。三个字段都没有就是 `null`。
+  ///
+  /// `contextWindow` 是**分母**：没有它"占了多少"无解，而 Web 的
+  /// `ContextMeter` 同样在只有分子时不渲染。
   ContextPressure? get contextPressure {
     final raw = _projections?['contextPressure'];
     if (raw is! Map) return null;
     final pressure = raw['pressureTokens'];
     final projected = raw['projectedTokens'];
-    if (pressure is! num && projected is! num) return null;
+    final window = raw['contextWindow'];
+    if (pressure is! num && projected is! num && window is! num) return null;
     return ContextPressure(
       pressureTokens: pressure is num ? pressure.toInt() : null,
       projectedTokens: projected is num ? projected.toInt() : null,
+      contextWindow: window is num ? window.toInt() : null,
     );
   }
 
   static int _intOf(Object? value) => value is num ? value.toInt() : 0;
+
+  /// 从 `session.list` 行的**投影提示**里取标题。
+  ///
+  /// 形状：`{kind, asOfSeq, values: {title: '...', ...}}`
+  /// （DSH `SessionProjectionHints`，`list.ts:291-312` 产出）。
+  /// 认不出就给空串 —— 由 [SessionSummary.displayTitle] 按 DSH 的链继续退。
+  static String _titleHintOf(Object? raw) {
+    if (raw is! Map) return '';
+    final values = raw['values'];
+    if (values is! Map) return '';
+    final title = values['title'];
+    return title is String && title.isNotEmpty ? title : '';
+  }
 
   // ---- 权限档（`permission.catalog` 目录 + `permissions` 投影的当前值）----
 
@@ -1106,11 +1131,14 @@ class AppModel extends ChangeNotifier {
       if (entry is! Map) continue;
       final sid = entry['sid'];
       if (sid is! String || sid.isEmpty) continue;
-      // 标题不在服务端字段里（契约 §5.7），先留空，由 store 推导后覆盖。
+      // **标题从行的投影提示来**：`projections.values.title`。
+      // 这是 DSH 自己的列表标题来源（`list.ts:291-312` 的 hints，Web 读同一个），
+      // 冷行（从没打开过的会话）也有值。取不到才留空，由 [SessionSummary.displayTitle]
+      // 按 DSH 的链退到项目目录名、再退到 sid。
       out.add(
         SessionSummary(
           sid: sid,
-          title: '',
+          title: _titleHintOf(entry['projections']),
           updatedAt: (entry['updatedAt'] as num?)?.toInt() ?? 0,
           // 电脑侧一直在发（`connector/src/handlers.ts` 的 `session.list`），
           // 只是手机侧此前丢掉了它 —— 而"这个会话正在跑"决定了新消息会不会被排队。

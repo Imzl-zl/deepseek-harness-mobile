@@ -68,8 +68,25 @@ Map<String, Object?> _fullProjections() => {
     'cacheReadTokens': 40000,
     'cacheWriteTokens': 500,
   },
-  'sessionStats': {'turns': 3, 'steps': 12, 'llmMs': 4200, 'toolMs': 800},
-  'contextPressure': {'pressureTokens': 41000, 'projectedTokens': 44000},
+  // `decodeMs` / `decodeTokens` 是输出速率的唯一来源
+  // （`packages/session/session-stats/src/projection.ts:72-81`）。
+  // 750 tok / 10 s = 75 tok/s（与 Web 截图同量级）。
+  'sessionStats': {
+    'turns': 3,
+    'steps': 12,
+    'llmMs': 4200,
+    'toolMs': 800,
+    'ttftMs': 300,
+    'ttftSteps': 12,
+    'decodeMs': 10000,
+    'decodeTokens': 750,
+  },
+  // `contextWindow` 是百分比的分母（`usage-projection.ts:67-75`）。
+  'contextPressure': {
+    'pressureTokens': 41000,
+    'projectedTokens': 44000,
+    'contextWindow': 128000,
+  },
 };
 
 void main() {
@@ -98,15 +115,39 @@ void main() {
     final usage = app.tokenUsage!;
     expect(usage.uncachedInputTokens, 1000);
     expect(usage.cacheReadTokens, 40000);
-    // 40000 / (41700 + 200) ≈ 0.951
-    expect(usage.cacheHitRate! > 0.94 && usage.cacheHitRate! < 0.96, isTrue);
-    // 41700 / 1000 = 41.7 → ≥10 所以取整成 `42K`（与原来的 `302K` 同格式）。
+    // **分母是计费输入（不含输出）**：40000 / (1000 + 40000 + 500) ≈ 0.9639。
+    // 与 Web 的 `billedInputTokens` 逐字一致
+    // （`packages/client/ui-chat/src/client/chat/StatsPills.tsx:118-120`）——
+    // 手机原来把 outputTokens 也算进分母，同一个会话两个端显示两个命中率。
+    expect(usage.cacheHitRate! > 0.96 && usage.cacheHitRate! < 0.97, isTrue);
+    // 41500 / 1000 = 41.5 → ≥10 所以取整成 `42K`（与原来的 `302K` 同格式）。
     expect(usage.totalLabel, '42K');
 
     final stats = app.sessionStats!;
     expect(stats.turns, 3);
     expect(stats.steps, 12);
     expect(stats.turnLabel, '第 3 轮 · 12 步');
+    // **输出速率**：decodeTokens / (decodeMs / 1000) = 750 / 10 = 75 tok/s
+    // （与 Web 的 `decodeSpeed` 同一公式，`StatsPills.tsx:166-170`）。
+    expect(stats.tokensPerSecond, 75);
+    // 解码还没开始时不给速率（除零会得到 Infinity，比不显示更糟）。
+    expect(
+      const SessionStats(
+        turns: 1,
+        steps: 1,
+        llmMs: 0,
+        toolMs: 0,
+      ).tokensPerSecond,
+      isNull,
+    );
+
+    // **上下文占用**：(projectedTokens ?? pressureTokens) / contextWindow
+    // = 44000 / 128000 ≈ 34%（与 Web 的 `contextOccupancy` 逐字一致，
+    // `context-occupancy.ts:15-25`）。
+    final occupancy = app.contextPressure!.occupancy!;
+    expect(occupancy.percent, 34);
+    expect(occupancy.usedTokens, 44000);
+    expect(occupancy.contextWindow, 128000);
     app.dispose();
   });
 

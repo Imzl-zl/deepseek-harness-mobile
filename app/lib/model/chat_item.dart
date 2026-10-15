@@ -202,7 +202,38 @@ class SessionSummary {
   /// 它是给"挑靶子"用的：一个工作区已失效的会话，`session.prompt` 照常落
   /// `user/message`，而它的 agent 永远不起轮次（全程零痕迹），所以拿它当靶子
   /// 会等到超时也看不到任何反应。
+  ///
+  /// 它还是**标题链的第二级**：见 [displayTitle]。
   final String? cwd;
+
+  /// 展示用标题。**链与 DSH 的 `displayTitleOf` 逐字一致**：
+  /// 持久标题 → **项目目录名** → 会话 id
+  /// （`packages/api/session-controller/src/client/sessions/service.ts:116-127`，
+  /// 原注释 "Human-facing label: durable title, project basename, then session id"）。
+  ///
+  /// 手机的第一级是**本地从首条用户消息推导的标题**（`deriveTitle`）——
+  /// 持久标题在 `title` 投影里，而投影缝要一个**活的 Session 对象**
+  /// （`packages/session/session-projection/src/index.ts:320-328`），
+  /// 连接器为"只存在于落盘里的会话"取不到，所以列表行退回目录名。
+  ///
+  /// 2026-10-15 真机实测：这里原来直接显示"（未命名会话）"—— 而 Web 上
+  /// 同一个会话有名字，差别就在第二级（目录名）被整个跳过了。
+  String get displayTitle {
+    if (title.isNotEmpty) return title;
+    final base = _basenameOf(cwd);
+    if (base != null) return base;
+    return sid;
+  }
+
+  /// 路径的最后一段（Windows 反斜杠与 POSix 斜杠都认）。空路径给 `null`。
+  static String? _basenameOf(String? path) {
+    if (path == null) return null;
+    final segments = path
+        .split(RegExp(r'[\\/]'))
+        .where((segment) => segment.isNotEmpty);
+    if (segments.isEmpty) return null;
+    return segments.last;
+  }
 
   SessionSummary copyWith({
     String? title,

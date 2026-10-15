@@ -13,7 +13,9 @@ import 'dart:async';
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/job.dart';
+import 'package:dsh_mobile/core/pairing_client.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
+import 'package:dsh_mobile/core/transport.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/model/permission.dart';
 import 'package:dsh_mobile/model/send_mode.dart';
@@ -22,6 +24,7 @@ import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/chat_page.dart';
 import 'package:dsh_mobile/ui/dsh_app_bar.dart';
 import 'package:dsh_mobile/ui/dsh_composer.dart';
+import 'package:dsh_mobile/ui/pairing_page.dart';
 import 'package:dsh_mobile/ui/session_drawer.dart';
 // **`hide ConnectionState`**：Flutter 的 `material.dart` 也导出 `ConnectionState`
 // （`AsyncSnapshot` 的 none/waiting/active/done），与我们的**连接状态机**同名
@@ -31,10 +34,13 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// 一个**只回固定答案**的假客户端：界面测试只关心"拿到这些数据时长什么样"。
 class FakeClient implements SyncClient {
-  FakeClient({this.sessions = const [], this.failWith});
+  FakeClient({this.sessions = const [], this.failWith, this.projections});
 
   final List<Object?> sessions;
   final ProtocolException? failWith;
+
+  /// `session.projections` 的应答（统计条三个值的来源）。默认不给。
+  final Map<String, Object?>? projections;
 
   /// 被调过的方法名（按顺序）——用来断言"到底问没问过"。
   final List<String> calls = <String>[];
@@ -83,6 +89,8 @@ class FakeClient implements SyncClient {
     // 假客户端若回一个裸数组，就会**掩盖**"真机回对象、而界面只认数组"
     // 这类形状不一致 —— 那正是列表在真机上恒为空的原因，且它不报错。
     if (method == 'session.list') return {'sessions': sessions} as T;
+    // 统计条的三个投影（`session.projections`）。**形状照连接器拆信封后的 `values`**。
+    if (method == 'session.projections') return projections as T;
     return null as T;
   }
 }
@@ -824,6 +832,111 @@ void main() {
       await tester.tap(find.text('连电脑（配对）'));
       await tester.pump();
       expect(connect, 1, reason: '未配对时 1 次点击即回到配对入口');
+    });
+  });
+
+  // 议题 2 的「人话提示」：身份被拒后被**自动送到**配对页，那句"为什么"必须
+  // **常驻**——SnackBar 4 秒就消失，用户看到时已经不解释了（2026-10-15 真机
+  // 第一版正是 SnackBar，截图里那句话已经没了）。
+  group('配对页的「为什么」横幅', () {
+    Future<HttpResult> send(HttpCall call) => throw StateError('渲染不该触发换票');
+    ChannelTransport transportFor(String upgradeUrl) =>
+        throw StateError('渲染不该建传输');
+
+    Widget page({String? notice}) => MaterialApp(
+      theme: DshTheme.dark(),
+      home: PairingPage(
+        onPaired: (_) async {},
+        send: send,
+        transportFor: transportFor,
+        notice: notice,
+      ),
+    );
+
+    testWidgets('有 notice：横幅常驻，且不顶替原来的步骤', (tester) async {
+      const why = '这台电脑已不再认可本机（可能已停用，或凭据已失效）。请重新扫码配对。';
+      await tester.pumpWidget(page(notice: why));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pairing-notice')), findsOneWidget);
+      expect(find.text(why), findsOneWidget);
+      expect(
+        find.text('扫二维码，或把内容粘贴到下面'),
+        findsOneWidget,
+        reason: '横幅是补充，不是把原来的步骤顶掉',
+      );
+    });
+
+    testWidgets('没有 notice：不出现横幅（主动进来的那一侧）', (tester) async {
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pairing-notice')), findsNothing);
+      expect(find.text('扫二维码，或把内容粘贴到下面'), findsOneWidget);
+    });
+  });
+
+  // 统计条三项：轮次/步数 + **输出速率**、用量 + 缓存命中、**上下文占用**。
+  // 后两项是 2026-10-15 真机对比 Web 截图后补的 —— 手机原来一个都没有
+  // （`decodeMs`/`decodeTokens`/`contextWindow` 三个字段根本没解析）。
+  group('统计条：三项都与 Web 同公式', () {
+    testWidgets('三条都从投影来：轮步 + tok/s、用量 + 缓存、上下文百分比', (tester) async {
+      final app = AppModel(
+        client: FakeClient(
+          sessions: const [
+            {'sid': 's1', 'updatedAt': 1},
+          ],
+          projections: const {
+            'tokenUsage': {
+              'uncachedInputTokens': 1000,
+              'outputTokens': 200,
+              'cacheReadTokens': 40000,
+              'cacheWriteTokens': 500,
+            },
+            'sessionStats': {
+              'turns': 3,
+              'steps': 12,
+              'llmMs': 4200,
+              'toolMs': 800,
+              'decodeMs': 10000,
+              'decodeTokens': 750,
+            },
+            'contextPressure': {
+              'pressureTokens': 41000,
+              'projectedTokens': 44000,
+              'contextWindow': 128000,
+            },
+          },
+        ),
+      );
+      await app.refreshSessions();
+      await app.openSession('s1');
+      await tester.pumpWidget(_wrap(app));
+      await tester.pumpAndSettle();
+
+      // 轮次步数 + 输出速率（750 tok / 10 s = 75 tok/s，照 Web 的 decodeSpeed）。
+      expect(find.text('第 3 轮 · 12 步 · 75 tok/s'), findsOneWidget);
+      // 用量 + 缓存命中（分母是计费输入，不含输出：40000 / 41500 ≈ 96%）。
+      expect(find.text('42K · 缓存 96%'), findsOneWidget);
+      // 上下文占用（44000 / 128000 ≈ 34%）。
+      expect(find.text('34%'), findsOneWidget);
+    });
+
+    testWidgets('投影读不到：三条整条不显示（不猜数字）', (tester) async {
+      final app = AppModel(
+        client: FakeClient(
+          sessions: const [
+            {'sid': 's1', 'updatedAt': 1},
+          ],
+        ),
+      );
+      await app.refreshSessions();
+      await app.openSession('s1');
+      await tester.pumpWidget(_wrap(app));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('tok/s'), findsNothing);
+      expect(find.textContaining('缓存'), findsNothing);
     });
   });
 }

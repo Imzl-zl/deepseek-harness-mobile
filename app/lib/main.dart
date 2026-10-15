@@ -89,6 +89,9 @@ class _DshMobileAppState extends State<DshMobileApp> {
   /// 是否停在配对页（用户主动进来的，不是"没配对就挡在这里"）。
   bool _pairing = false;
 
+  /// 配对页顶部横幅的一句话（**为什么会被送到这一页**）；主动进来时为 `null`。
+  String? _pairingNotice;
+
   /// 前后台态的上报者（契约 §2.2、§9）。
   ///
   /// 它跟着根 State 活，而客户端跟着 [_app] 活 —— 所以报的是"当前那个"
@@ -146,7 +149,13 @@ class _DshMobileAppState extends State<DshMobileApp> {
   }
 
   /// 进配对页（**用户主动**：`没配对`时的入口按钮，或设置里"重新配对"）。
-  void _openPairing() => setState(() => _pairing = true);
+  ///
+  /// 主动进来时**没有"为什么"**，所以把横幅清掉 —— 留着上一次的原因会让人
+  /// 以为"我刚又被拒了一次"。
+  void _openPairing() => setState(() {
+    _pairing = true;
+    _pairingNotice = null;
+  });
 
   void _closePairing() => setState(() => _pairing = false);
 
@@ -223,6 +232,9 @@ class _DshMobileAppState extends State<DshMobileApp> {
         // 本机调试（`ws://127.0.0.1`）只在 debug 构建里放行：契约 §12.1 的
         // 生产纪律是 WSS，而 release 里放行明文等于把"以为加密了"的链路走成明文。
         allowInsecureLocal: kDebugMode,
+        // **为什么会被送到这一页**：常驻横幅（身份被拒 / 手动重配各一句话）。
+        // 不用 SnackBar：它 4 秒就消失，而用户是被自动送到这里的。
+        notice: _pairingNotice,
       );
     }
     // **抽屉必须跟着 `AppModel` 重建**。
@@ -332,12 +344,15 @@ class _DshMobileAppState extends State<DshMobileApp> {
   ///
   /// `ConnectionRecovery.openPairing` 缝接到这里。旧客户端已终态停摆
   /// （换票被拒 → 不重连），后台换掉它；前台立刻进配对页。
+  ///
+  /// 那句话走**配对页顶部的常驻横幅**（`PairingPage.notice`）而不是 SnackBar：
+  /// 用户是被自动送到这一页的，SnackBar 4 秒就没了，看到时已经不解释"为什么"。
   void _enterPairing(String message) {
     unawaited(_reassembleUnpaired());
-    _openPairing();
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    setState(() {
+      _pairingNotice = message;
+      _pairing = true;
+    });
   }
 
   /// 如实上报一个连接层处理不了的终态错误（`ConnectionRecovery.report` 缝）。
@@ -396,7 +411,7 @@ class _DshMobileAppState extends State<DshMobileApp> {
       ).difference(DateTime(at.year, at.month, at.day)).inDays;
       final row = DrawerSession(
         sid: s.sid,
-        title: s.title.isEmpty ? '（未命名会话）' : s.title,
+        title: s.displayTitle,
         // **待处理数进副标题**：多会话并行时，用户靠它知道该切去哪个会话
         // （DSH 的待处理是 per-session 的，切过去才看得见）。
         preview: [

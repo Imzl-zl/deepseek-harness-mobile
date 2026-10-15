@@ -493,12 +493,25 @@ class ChatPageState extends State<ChatPage> {
   // ---------------------------------------------------------------------------
 
   /// `第 N 轮 · M 步`；轮次为 0 或读不到就是 `null`（整条不显示）。
-  String? get _turnText => widget.app.sessionStats?.turnLabel;
+  ///
+  /// 有解码数据时**把输出速率拼在同一格里**，照 Web 的
+  /// `1 turns 1 steps · 20 tok/s`（`StatsPills.tsx:166-170,242-243`）——
+  /// 手机原来只显示轮次步数，速率那一项整个丢了。
+  String? get _turnText {
+    final stats = widget.app.sessionStats;
+    final base = stats?.turnLabel;
+    if (base == null) return null;
+    final tps = stats?.tokensPerSecond;
+    if (tps == null) return base;
+    return '$base · ${tps.round()} tok/s';
+  }
 
   /// `302K · 缓存 42%`；读不到用量就是 `null`。
   ///
-  /// **缓存率为 null 时不拼那半句**：没有输入时算不出命中率，
+  /// **缓存率为 null 时不拼那半句**：没有计费输入时算不出命中率，
   /// 而显示 `缓存 0%` 会让用户以为"缓存坏了"，其实只是这一轮还没花 token。
+  /// 分母用 `billedInput`（未缓存 + 缓存读 + 缓存写），与 Web 逐字一致 ——
+  /// 手机原来把输出也算进去，同一个会话两个端显示两个命中率。
   String? get _usageText {
     final usage = widget.app.tokenUsage;
     if (usage == null) return null;
@@ -507,18 +520,13 @@ class ChatPageState extends State<ChatPage> {
     return '${usage.totalLabel} · 缓存 ${(hit * 100).round()}%';
   }
 
-  /// 上下文占用百分比。**没有窗口上限时给不出百分比** ——
-  /// `contextPressure` 只给 token 数，而"占了多少"要知道分母。
-  /// 所以这里只能从压力投影的 `projectedTokens` 反推，推不出就 `null`。
-  int? get _contextPercent {
-    final pressure = widget.app.contextPressure;
-    if (pressure == null) return null;
-    // `pressureTokens` 是"当前已占用"，`projectedTokens` 是" projected 到本轮结束"。
-    // 百分比要有分母，而投影不给窗口大小 —— 所以**只在两者都有时**给一个
-    // "相对上一次的增量占比"没有意义，干脆不给。
-    // 真实做法是等连接器把模型目录的 contextWindow 一起带过来（§7.9 的 picker）。
-    return null;
-  }
+  /// 上下文占用百分比。**算法与 Web 逐字一致**：
+  /// `projectedTokens ?? pressureTokens` 除以 `contextWindow`
+  /// （`packages/client/ui-conversation/src/client/context-occupancy.ts:15-25`）。
+  ///
+  /// 投影**本来就给窗口大小**（`contextWindow` 在 wire view 里）——
+  /// 手机原来没解析它，于是这里只能返回 null，那一格整个不显示。
+  int? get _contextPercent => widget.app.contextPressure?.occupancy?.percent;
 
   // ---------------------------------------------------------------------------
   // 右抽屉（文件 / 任务 / 子代理）
@@ -1401,8 +1409,9 @@ class _SessionListInline extends StatelessWidget {
               return ListTile(
                 dense: true,
                 title: Text(
-                  // 电脑侧不返回标题（契约 §5.7），没推出来之前显示占位。
-                  session.title.isEmpty ? '（未命名会话）' : session.title,
+                  // 标题链照 DSH：持久标题 → 项目目录名 → 会话 id
+                  // （`SessionSummary.displayTitle`，service.ts:116-127）。
+                  session.displayTitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -1410,15 +1419,13 @@ class _SessionListInline extends StatelessWidget {
                     color: DshColors.labelPrimary,
                   ),
                 ),
-                subtitle: Text(
-                  session.sid,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: DshColors.labelTertiary,
-                  ),
-                ),
+                subtitle: () {
+                  // 副标题显示**模型**，不再显示 sid：标题按 DSH 的链会退到 sid
+                  // （`displayTitle`），再显示一遍 sid 就是同一行里同一个字符串。
+                  // Web 的列表行同样不显示原始会话 id。
+                  final model = session.model?.label;
+                  return model == null ? null : Text(model);
+                }(),
                 onTap: () => onOpen(session),
               );
             },
