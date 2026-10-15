@@ -294,11 +294,11 @@ DSH 照常把 `user/message` 落盘(所以④的回读判据满足),但那个会
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量 |
 | `node app/tools/verify-platform-boundary.mjs` | **215 项**(22 条规则自检 + 扫 61 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 原型图标集 / 工具脚本不许硬编码盘符 |
-| `cd app && flutter test` | **497 项** |
+| `cd app && flutter test` | **501 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test integration_test` | 0 文件需重排 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **444 项** |
-| `cd relay && pnpm typecheck && pnpm test` | 类型 + **75 条** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **445 项** |
+| `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker` |
 | `node app/tools/gen-pairing-vectors.mjs` | 重新生成配对向量(**改了配对派生规则后必须重跑**) |
 
