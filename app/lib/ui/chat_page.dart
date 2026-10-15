@@ -532,17 +532,26 @@ class ChatPageState extends State<ChatPage> {
   // 右抽屉（文件 / 任务 / 子代理）
   // ---------------------------------------------------------------------------
 
-  /// 状态位的文字：有后台任务显任务，否则显连接状态（原型注释）。
+  /// 状态位的文字。
+  ///
+  /// 顺序照原型 §7.8,再加一层"连接异常优先":
+  /// 1. **连接不在服务态且已配对** → 连接状态（`重连中…` 等）。它是**可点的出路**，
+  ///    必须常在 —— 否则议题 3 的「≤2 步走到重新配对」没有落点。
+  /// 2. 有后台任务 → `N 任务运行中`（琥珀）。
+  /// 3. 已配对且在服务态 → `已连接`。**不返回 null**：状态位是右抽屉（文件/任务/
+  ///    子代理）的入口，基线规定它可点；返回 null 会让整个 pill 消失，右bar 就只剩
+  ///    sheet 里一条路。文件变更那一档**不显示**：手机的文件面还没接
+  ///    （`workspace-files`），显示"0 个文件变更"是把"没接"说成"没有"。
   String? _statusText() {
     // **看示例数据时也当"有数据"** —— 否则示例模式下一半界面是死的
     //（状态位点不开右抽屉），而示例数据存在的意义正是"看看它长什么样"。
     if (!_hasData) return '未连接';
+    if (widget.paired && widget.app.connection != ConnectionStateView.serving) {
+      return connectionLabel(widget.app.connection);
+    }
     final live = _jobsFor(widget.app.currentSid).where((j) => j.isLive).length;
     if (live > 0) return '$live 任务运行中';
-    // **已配对时常驻连接状态**：顶栏连接状态位必须一直在，否则"重新配对"
-    // 在"已配对 + 无运行任务"下没有 ≤2 步的落点（议题 3 的判据）。
-    // 未配对（仅示例预览）时不常驻 —— 那条路走空态的「连电脑（配对）」。
-    if (widget.paired) return connectionLabel(widget.app.connection);
+    if (widget.paired) return '已连接';
     return null;
   }
 
@@ -582,14 +591,24 @@ class ChatPageState extends State<ChatPage> {
     return effort ?? '默认';
   }
 
-  /// 顶栏连接状态位的点击（议题 3）。
+  /// 顶栏状态位的点击。
   ///
-  /// - **没配对**：去配对页（原有行为，空态的「连电脑（配对）」同义）。
-  /// - **已配对**：弹连接操作 sheet（含「重新配对（换一台电脑）」），
-  ///   而不是直接开右抽屉 —— 否则"重新配对"在已配对时没有 ≤2 步的落点。
+  /// - **没配对**：去配对页（空态的「连电脑（配对）」同义）。
+  /// - **已配对但连接不在服务态**：弹连接操作 sheet（含「重新配对」）——
+  ///   这正是用户最需要出路的时刻，也是议题 3「≤2 步」的落点。
+  /// - **已配对且在服务态**：**开右抽屉**（原型基线行为：状态位本就是右抽屉的入口，
+  ///   `docs/design-and-tech-plan.md` §7.8）。否则为了重配入口把状态位整个占掉，
+  ///   右bar(文件/任务/子代理)就只剩 sheet 里一条路 —— 而正常使用时那里才该一步到。
+  ///
+  /// 这条切分写在设计文档的有意偏离里：连接态只在**异常时**占位，serving 时
+  /// 把位置还给基线规定的内容。
   void _onStatusTap() {
     if (!widget.paired) {
       widget.onConnect?.call();
+      return;
+    }
+    if (widget.app.connection == ConnectionStateView.serving) {
+      openSide();
       return;
     }
     _showConnectionActionsSheet();

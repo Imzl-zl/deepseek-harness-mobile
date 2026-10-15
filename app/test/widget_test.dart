@@ -26,6 +26,7 @@ import 'package:dsh_mobile/ui/dsh_app_bar.dart';
 import 'package:dsh_mobile/ui/dsh_composer.dart';
 import 'package:dsh_mobile/ui/pairing_page.dart';
 import 'package:dsh_mobile/ui/session_drawer.dart';
+import 'package:dsh_mobile/ui/side_pane.dart';
 // **`hide ConnectionState`**：Flutter 的 `material.dart` 也导出 `ConnectionState`
 // （`AsyncSnapshot` 的 none/waiting/active/done），与我们的**连接状态机**同名
 // 但毫无关系。隐藏它，让本文件里 `ConnectionState` 只有一个意思。
@@ -937,6 +938,50 @@ void main() {
 
       expect(find.textContaining('tok/s'), findsNothing);
       expect(find.textContaining('缓存'), findsNothing);
+    });
+  });
+
+  // 顶栏状态位的点击分工：**serving 时开右抽屉**（基线行为，右bar 的入口），
+  // **不在服务态时弹连接操作 sheet**（议题 3 的 ≤2 步出路）。
+  // 2026-10-15 曾把状态位整个占给重配入口，右bar 只剩 sheet 里一条路 ——
+  // 用户原话"web 右边有个侧栏,手机右边也可以做一个"。
+  group('顶栏状态位:serving 开右bar,异常出连接 sheet', () {
+    testWidgets('serving:点状态位开右侧抽屉(右bar 一步可达)', (tester) async {
+      final client = _StatefulFakeClient(
+        sessions: [
+          {'sid': 's1', 'itemCount': 3, 'updatedAt': 1},
+        ],
+      );
+      final app = AppModel(client: client);
+      await app.start();
+      await tester.pumpWidget(_wrap(app, paired: true));
+      await tester.pumpAndSettle();
+      client.emit(ConnectionState.serving);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SidePane), findsNothing, reason: '右抽屉还没开');
+
+      await tester.tap(find.byType(DshStatusPill));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byType(SidePane),
+        findsOneWidget,
+        reason: 'serving 时状态位必须是右抽屉的入口(原型 §7.8)',
+      );
+      expect(find.text('重新配对（换一台电脑）'), findsNothing);
+    });
+
+    testWidgets('不在服务态:点状态位弹连接操作 sheet(≤2 步出路)', (tester) async {
+      final app = AppModel(client: FakeClient());
+      await tester.pumpWidget(_wrap(app, paired: true));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(DshStatusPill));
+      await tester.pumpAndSettle();
+
+      expect(find.text('重新配对（换一台电脑）'), findsOneWidget);
+      expect(find.text('打开侧面板'), findsOneWidget);
     });
   });
 }

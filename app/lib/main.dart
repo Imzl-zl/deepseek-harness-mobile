@@ -280,11 +280,10 @@ class _DshMobileAppState extends State<DshMobileApp> {
               label: '归档',
               onTap: () => _notYet('归档列表'),
             ),
-            DrawerFootItem(
-              icon: 'sparkle',
-              label: '示例',
-              onTap: app.loadPreview,
-            ),
+            // 标签与图标**照原型基线**（`mock/proto/index.html:487` 的「演示」+ `play`）——
+            // 手机上原来写「示例」+ `sparkle`，与基线漂移，看起来像自己加的功能。
+            // 它是手机自己的演示数据（DSH 没有对应物），所以更要照基线的叫法。
+            DrawerFootItem(icon: 'play', label: '演示', onTap: app.loadPreview),
             DrawerFootItem(
               icon: 'clock',
               label: '自动化',

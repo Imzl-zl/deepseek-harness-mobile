@@ -294,7 +294,7 @@ DSH 照常把 `user/message` 落盘(所以④的回读判据满足),但那个会
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量 |
 | `node app/tools/verify-platform-boundary.mjs` | **215 项**(22 条规则自检 + 扫 61 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 原型图标集 / 工具脚本不许硬编码盘符 |
-| `cd app && flutter test` | **501 项** |
+| `cd app && flutter test` | **503 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test integration_test` | 0 文件需重排 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **445 项** |
