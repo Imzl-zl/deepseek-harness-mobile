@@ -9,7 +9,7 @@
  *
  * 所以归属要有落点，落点就是这张表 —— 它同时是"设备令牌能不能换到票"的判据。
  *
- * ## 三条纪律
+ * ## 四条纪律
  *
  * 1. **只存摘要**（§12.2）：`token_hash` / `refresh_hash` 是 `sha256(令牌)` 的十六进制，
  *    明文令牌**从不出现在中转的任何形态里**。换票时算一次哈希再查表 —— 与
@@ -18,6 +18,11 @@
  *    "身份判定由电脑侧做，中转只转发与记账"）。
  * 3. **同一 `id` 覆盖**：那正是"重新配对/换令牌"的形状（`appendTokenToConfig` 对
  *    连接器令牌也是同一条：否则旧令牌仍然有效 —— 那是"吊销不了"的形状）。
+ * 4. **名册是全量快照，差集即删除**：电脑侧每次上报都是**整份**（`device-publish.ts`
+ *    的文件头原话："空名册也要报……少报这一次会让中转留着一份过期的归属"），所以
+ *    "上次报到、这次没报到"的行必须消失。只增不减的话，电脑侧删掉/吊销一台设备之后
+ *    它在中转层**还换得到票** —— 2026-10-15 真机实测到这条：手机因此通过换票、
+ *    死在连接器握手（close 4003），表现是无限"重连中…"，而两端的日志都没有原因。
  *
  * ## 本期落点如实记录
  *
@@ -71,6 +76,9 @@ export interface DeviceRegistry {
   /**
    * 电脑侧报名册：用 `(id, tokenHash)` 认下一行，并把归属记到 `connectorId`。
    *
+   * **全量快照，差集即删除**（纪律 4）：`rows` 是这台连接器这一次报到的整份名册，
+   * 上次报到而这次没报到的行会被删掉 —— 包括**空名册**（"这台电脑上没有设备了"）。
+   *
    * @returns 认下几行。
    */
   register(connectorId: string, rows: readonly DeviceRegistration[]): number
@@ -97,6 +105,37 @@ export function createDeviceRegistry(options: DeviceRegistryOptions = {}): Devic
   const rows = new Map<string, DeviceRegistration>()
   /** `token_hash → 设备 id`（换票的最热路径，单独一张索引）。 */
   const byToken = new Map<string, string>()
+  /**
+   * `连接器 → 它上次报到的设备 id 集`。
+   *
+   * 名册是全量快照，所以差集（上次有、这次没有）就是要删的行。这张表要**跨
+   * `detachConnector` 存活**：连接器断开时行留着、归属清掉，但它回来时报一份
+   * 更短的名册时，仍然要能算出"哪些行过期了"—— 否则断开一次就让过期的行复活。
+   */
+  const published = new Map<string, Set<string>>()
+
+  /**
+   * 删掉"这台连接器上次报到、这次没报到"的行，返回删了几行。
+   *
+   * **只删自己的行**：归属已经是别的连接器的（被它覆盖过）不动 —— 多连接器部署时
+   * 一份短名册不该把别人的设备抹掉。归属为空（`detachConnector` 清掉的）算自己的：
+   * 那正是"断开前报过、回来时报少了"的形状。
+   */
+  const dropUnpublished = (connectorId: string, next: ReadonlySet<string>): number => {
+    const previous = published.get(connectorId)
+    if (previous === undefined) return 0
+    let pruned = 0
+    for (const id of previous) {
+      if (next.has(id)) continue
+      const row = rows.get(id)
+      if (row === undefined) continue
+      if (row.connectorId !== undefined && row.connectorId !== connectorId) continue
+      byToken.delete(row.tokenHash)
+      rows.delete(id)
+      pruned += 1
+    }
+    return pruned
+  }
 
   return {
     get stats() {
@@ -107,10 +146,12 @@ export function createDeviceRegistry(options: DeviceRegistryOptions = {}): Devic
 
     register(connectorId, incoming) {
       let accepted = 0
+      const next = new Set<string>()
       for (const row of incoming) {
         // 首配那一跳的临时身份**永不落表**（它不是设备，只是让 `pair` 能进门）。
         if (isPendingDevice(row.id)) continue
         if (row.tokenHash === '') continue
+        next.add(row.id)
         const previous = rows.get(row.id)
         // 换令牌 = 同一 id 换摘要：旧摘要必须**立刻失效**，否则"换令牌"等于"多一把钥匙"。
         if (previous !== undefined) byToken.delete(previous.tokenHash)
@@ -118,8 +159,16 @@ export function createDeviceRegistry(options: DeviceRegistryOptions = {}): Devic
         byToken.set(row.tokenHash, row.id)
         accepted += 1
       }
+      // **差集即删除**（纪律 4）：上次报到、这次没报到的行必须消失。
+      // 只增不减的话，电脑侧删掉/吊销一台设备后它在中转层还换得到票 ——
+      // 2026-10-15 真机实测到这条（手机通过换票、死在连接器握手，无限"重连中…"）。
+      const pruned = dropUnpublished(connectorId, next)
+      published.set(connectorId, next)
       if (accepted > 0) {
         log?.debug(`名册已更新：${accepted} 行（共 ${rows.size} 台，归属 ${connectorId}）`)
+      }
+      if (pruned > 0) {
+        log?.debug(`名册已收敛：连接器 ${connectorId} 去掉 ${pruned} 行（共 ${rows.size} 台）`)
       }
       return accepted
     },
@@ -148,6 +197,8 @@ export function createDeviceRegistry(options: DeviceRegistryOptions = {}): Devic
         // 用解构重建而不是 `{ ...row, connectorId: undefined }`：后者在
         // `exactOptionalPropertyTypes` 下**类型不通过**（可选属性不能显式赋 undefined），
         // 而它恰好也是更准确的语义 —— "没有归属"就是没有这个字段。
+        // **`published` 不清**：连接器回来时报一份更短的名册时，还要靠它算差集
+        // （纪律 4）—— 清掉就等于"断开一次，过期的行又复活"。
         const rest: DeviceRegistration = {
           id: row.id,
           pairingId: row.pairingId,

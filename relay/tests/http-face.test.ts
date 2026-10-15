@@ -208,12 +208,42 @@ test('名册：连接器报名册 → 201，且那台设备**立刻**换得到�
     method: 'POST',
     path: '/devices',
     token: 'connector-token-1',
-    body: { devices: [rosterRow('dev-2', 'token-2')] },
+    // **整份名册**：`setup()` 里那台也要一起报 —— 名册是全量快照，
+    // 差集即删除（见 `device-registry.test.ts` 的收敛用例）。
+    body: { devices: [rosterRow(DEVICE_ID, DEVICE_TOKEN), rosterRow('dev-2', 'token-2')] },
   })
   assert.equal(registered.status, 201)
-  assert.equal((registered.body as { accepted: number }).accepted, 1)
+  assert.equal((registered.body as { accepted: number }).accepted, 2)
   assert.equal(devices.stats.devices, 2)
   assert.equal(face.handle(ticketByToken('token-2')).status, 201)
+  assert.equal(face.handle(ticketByToken(DEVICE_TOKEN)).status, 201, '原来那台还在')
+})
+
+test('名册是全量快照：这次没报到的行被收敛，那台设备**再也换不到票**', () => {
+  const { devices, face } = setup()
+  const pruned = face.handle({
+    method: 'POST',
+    path: '/devices',
+    token: 'connector-token-1',
+    body: { devices: [rosterRow('dev-2', 'token-2')] },
+  })
+  assert.equal(pruned.status, 201)
+  assert.equal(devices.stats.devices, 1, 'setup 那台被收敛掉了')
+  assert.equal(face.handle(ticketByToken(DEVICE_TOKEN)).status, 401, '电脑侧删了它，中转就不该再认')
+  assert.equal(face.handle(ticketByToken('token-2')).status, 201)
+})
+
+test('空名册也报：那正是"这台电脑上没有设备了"', () => {
+  const { devices, face } = setup()
+  const cleared = face.handle({
+    method: 'POST',
+    path: '/devices',
+    token: 'connector-token-1',
+    body: { devices: [] },
+  })
+  assert.equal(cleared.status, 201)
+  assert.equal(devices.stats.devices, 0, '旧的收敛干净')
+  assert.equal(face.handle(ticketByToken(DEVICE_TOKEN)).status, 401)
 })
 
 test('名册形状不对 → 400（**不静默跳过坏行**：少一台设备的症状是那台再也连不上）', () => {
