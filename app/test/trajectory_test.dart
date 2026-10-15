@@ -11,6 +11,14 @@
 ///    时间轴要有稳定刻度，跟着屏宽变会让两张截图没法对比。
 /// 3. **账本条目点得动**（弹 `sheet-traj`）：甘特给"形状"，账本给"明细"，
 ///    而明细要能展开 —— 否则"那 84 毫秒干了啥"没人答得上。
+///
+/// ## 2026-10-15：示例数据已删，数据由用例自己给
+///
+/// 原来这些用例**不传 `rows` / `entries`**，靠 widget 里的 `_sampleRows` /
+/// `_sampleEntries` 兜底 —— 于是"删掉假数据"这个动作会让它们全红，
+/// 而红的原因是"示例没了"，不是"功能坏了"。
+/// 现在每条用例自己构造数据（这本来就是这个 widget 该有的用法），
+/// 另有一条专钉"不传数据时是空态"。
 library;
 
 import 'package:dsh_mobile/theme/dsh_colors.dart';
@@ -19,6 +27,44 @@ import 'package:dsh_mobile/ui/trajectory_page.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
 
+/// 四条甘特行（四类各一条，颜色照角色色）。
+const _rows = <GanttRow>[
+  GanttRow(label: '输入', color: DshColors.businessBlue, spans: []),
+  GanttRow(label: '模型', color: DshColors.roleAssistant, spans: []),
+  GanttRow(label: '工具', color: DshColors.roleTool, spans: []),
+  GanttRow(label: '错误', color: DshColors.error, spans: []),
+];
+
+/// 四条账本条目（四类各一条）。
+const _entries = <TraceEntry>[
+  TraceEntry(
+    kind: TraceKind.context,
+    name: '上下文',
+    took: '120 ms',
+    summary: '系统提示词 + 工具定义注入，含 4 个 MCP server',
+  ),
+  TraceEntry(
+    kind: TraceKind.assistant,
+    name: '助手',
+    took: '12.4 s',
+    summary: '我先快速看一下现有导航实现，再决定改哪几个文件。',
+  ),
+  TraceEntry(
+    kind: TraceKind.tool,
+    name: '工具 · read',
+    took: '84 ms',
+    summary: 'rikkahub/…/ChatPage.kt → 741 行',
+    mono: true,
+  ),
+  TraceEntry(
+    kind: TraceKind.error,
+    name: '错误',
+    took: '1.2 s',
+    summary: 'flutter analyze: unused_import（已自动修复）',
+    mono: true,
+  ),
+];
+
 Widget _wrap(Widget child) => MaterialApp(
   theme: DshTheme.dark(),
   home: Scaffold(body: child),
@@ -26,7 +72,9 @@ Widget _wrap(Widget child) => MaterialApp(
 
 void main() {
   testWidgets('甘特四行都在（输入 / 模型 / 工具 / 错误）', (tester) async {
-    await tester.pumpWidget(_wrap(const TrajectoryTab()));
+    await tester.pumpWidget(
+      _wrap(const TrajectoryTab(rows: _rows, entries: _entries)),
+    );
     await tester.pumpAndSettle();
 
     for (final label in ['输入', '模型', '工具', '错误']) {
@@ -38,7 +86,9 @@ void main() {
 
   testWidgets('甘特的时间轴是**固定 640px**（不是跟屏宽）', (tester) async {
     // 原型 `.gantt-in { width:640px }`：刻度要稳定。
-    await tester.pumpWidget(_wrap(const TrajectoryTab()));
+    await tester.pumpWidget(
+      _wrap(const TrajectoryTab(rows: _rows, entries: _entries)),
+    );
     await tester.pumpAndSettle();
 
     final track = tester
@@ -48,7 +98,9 @@ void main() {
   });
 
   testWidgets('账本四类条目都在，且**色条是语义色**', (tester) async {
-    await tester.pumpWidget(_wrap(const TrajectoryTab()));
+    await tester.pumpWidget(
+      _wrap(const TrajectoryTab(rows: _rows, entries: _entries)),
+    );
     await tester.pumpAndSettle();
 
     // 四类的名字都在。
@@ -76,7 +128,13 @@ void main() {
   testWidgets('点账本条目回调（接线到 sheet-traj）', (tester) async {
     TraceEntry? tapped;
     await tester.pumpWidget(
-      _wrap(TrajectoryTab(onTapEntry: (e) => tapped = e)),
+      _wrap(
+        TrajectoryTab(
+          rows: _rows,
+          entries: _entries,
+          onTapEntry: (e) => tapped = e,
+        ),
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -86,7 +144,9 @@ void main() {
   });
 
   testWidgets('工具那一类的摘要用等宽（它是路径/命令）', (tester) async {
-    await tester.pumpWidget(_wrap(const TrajectoryTab()));
+    await tester.pumpWidget(
+      _wrap(const TrajectoryTab(rows: _rows, entries: _entries)),
+    );
     await tester.pumpAndSettle();
 
     final summary = tester.widget<Text>(
@@ -96,7 +156,9 @@ void main() {
   });
 
   testWidgets('长摘要最多两行（`.lg .r2 { line-clamp:2 }`）', (tester) async {
-    await tester.pumpWidget(_wrap(const TrajectoryTab()));
+    await tester.pumpWidget(
+      _wrap(const TrajectoryTab(rows: _rows, entries: _entries)),
+    );
     await tester.pumpAndSettle();
 
     final summary = tester.widget<Text>(
@@ -105,17 +167,34 @@ void main() {
     expect(summary.maxLines, 2);
   });
 
-  testWidgets('可以传自己的数据（不是只用示例）', (tester) async {
+  testWidgets('**不传数据是空态**，不造一份假的', (tester) async {
+    // 2026-10-15 删掉 `_sampleRows` / `_sampleEntries` 兜底后新增的一条。
+    // 假轨迹看起来和真轨迹一模一样，用户无法分辨 —— 所以"没有"就必须
+    // 显示成"没有"，并且说清数据从哪来。
+    await tester.pumpWidget(_wrap(const TrajectoryTab()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('还没有轨迹'), findsOneWidget);
+    // `turnOutline` 在长文案里，不是独立的 Text —— 用 contains。
+    expect(
+      find.textContaining('turnOutline'),
+      findsOneWidget,
+      reason: '要说清数据来源',
+    );
+    // 一条示例都不该出现。
+    for (final name in ['上下文', '助手', '工具 · read']) {
+      expect(find.text(name), findsNothing, reason: '$name 是示例数据');
+    }
+  });
+
+  testWidgets('只传一半数据也渲染（不因为缺一半就整页空）', (tester) async {
     await tester.pumpWidget(
       _wrap(
         const TrajectoryTab(
-          rows: [
-            GanttRow(label: '输入', color: DshColors.businessBlue, spans: []),
-          ],
           entries: [
             TraceEntry(
               kind: TraceKind.assistant,
-              name: '只有一条',
+              name: '只有账本',
               took: '1 s',
               summary: '摘要',
             ),
@@ -124,8 +203,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('只有一条'), findsOneWidget);
-    // 示例数据不该出现。
-    expect(find.text('工具 · read'), findsNothing);
+    expect(find.text('只有账本'), findsOneWidget);
+    expect(find.text('还没有轨迹'), findsNothing);
   });
 }

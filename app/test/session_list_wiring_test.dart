@@ -10,6 +10,7 @@ import 'dart:convert';
 
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/errors.dart';
+import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/core/sync_client_impl.dart'
     show encodeRequestEnvelope;
@@ -41,6 +42,9 @@ class _FakeClient implements SyncClient {
 
   @override
   Future<void> close() async {}
+
+  @override
+  Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
 
   @override
   Future<void> subscribe(String sid, {required int since}) async {}
@@ -82,7 +86,13 @@ void main() {
 
       await app.refreshSessions();
 
-      expect(client.called, ['session.list']);
+      // **只挑 `session.list` 那几条比**：`refreshSessions` 现在也会顺带拉一次
+      // `session.modelCatalog`（模型目录与会话清单同源但不同周期）。
+      // 断言完整序列会让这条用例在每次加一个"顺带拉的东西"时都红一次 ——
+      // 而它要钉的是**清单的解析形状**，不是调用顺序。
+      expect(client.called.where((m) => m == 'session.list').toList(), [
+        'session.list',
+      ]);
       expect(
         app.sessions.map((s) => s.sid),
         ['J-AQFoAKdDuro5HLhhaaOw'],
@@ -107,7 +117,13 @@ void main() {
 
       await app.refreshSessions();
 
-      expect(client.called, ['session.list']);
+      // **只挑 `session.list` 那几条比**：`refreshSessions` 现在也会顺带拉一次
+      // `session.modelCatalog`（模型目录与会话清单同源但不同周期）。
+      // 断言完整序列会让这条用例在每次加一个"顺带拉的东西"时都红一次 ——
+      // 而它要钉的是**清单的解析形状**，不是调用顺序。
+      expect(client.called.where((m) => m == 'session.list').toList(), [
+        'session.list',
+      ]);
       expect(
         app.sessions.map((s) => s.sid),
         ['sid_AAAA', 'sid_BBBB'],
@@ -174,6 +190,35 @@ void main() {
       await legacy.refreshSessions();
       expect(legacy.sessions.single.blank, isFalse);
     });
+
+    test('cwd 要解析（按工作区挑靶子靠它，丢了就只能满清单挑）', () async {
+      // `cwd` 连接器一直在发（`connector/src/handlers.ts` 的 `session.list`），
+      // 而手机侧此前把它丢掉了 —— 于是"靶子必须在专用工作区"这条判据无从表达，
+      // 只能满清单挑，2026-10-13 真机两次就这么把探针投进用户的其他会话。
+      final client = _FakeClient(
+        onCall: (method, params) => {
+          'sessions': [
+            {
+              'sid': 'sid_with_cwd',
+              'updatedAt': 1000,
+              'cwd': r'D:\sudy\myproject\dsh-mobile-test',
+            },
+            // 老连接器 / 落盘里没有 cwd 的会话：**null**，不是空串。
+            {'sid': 'sid_no_cwd', 'updatedAt': 900},
+            // 空串同样当没有：空串会让"按工作区匹配"静默失败。
+            {'sid': 'sid_empty_cwd', 'updatedAt': 800, 'cwd': ''},
+          ],
+        },
+      );
+      final app = AppModel(client: client);
+
+      await app.refreshSessions();
+
+      final byId = {for (final s in app.sessions) s.sid: s};
+      expect(byId['sid_with_cwd']!.cwd, r'D:\sudy\myproject\dsh-mobile-test');
+      expect(byId['sid_no_cwd']!.cwd, isNull);
+      expect(byId['sid_empty_cwd']!.cwd, isNull);
+    });
   });
 
   group('两种"空"必须分得开', () {
@@ -238,7 +283,14 @@ void main() {
       }, requestId: 'p-1');
 
       // 直接断言"电脑侧会不会接受这个形状"：`content` 非空且每项带 type。
-      expect(client.called, ['session.prompt']);
+      //
+      // **只挑 `session.prompt` 那几条比**：`openSession` 现在也会拉一次
+      // `job.list`（点开会话就刷任务清单），断言完整序列会让这条用例
+      // 在每次加一个"点开会话顺便做的事"时都红一次 —— 而它要钉的是
+      // **prompt 的载荷形状**,不是调用顺序。
+      expect(client.called.where((m) => m == 'session.prompt').toList(), [
+        'session.prompt',
+      ]);
       final params = client.lastParams!;
       expect(params.containsKey('text'), isFalse, reason: '不能发 {sid, text}');
       final content = params['content'];

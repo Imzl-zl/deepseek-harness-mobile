@@ -19,9 +19,12 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('换票失败要如实抛，不静默降级', () {
-    test('换票被拒：抛 TransportException，且带着原始错误信息', () async {
+    test('换票被拒：抛 TransportException，带原始错误信息与错误码', () async {
       // **允许连接层按退避重试**是对的处置；但错误信息必须能分辨
       // "凭据不对"与"网络不通" —— 否则 401 会被当成网络问题查半天。
+      //
+      // **错误码必须带上**（议题 2 的真因）：丢码 = 连接层把"身份不被认"
+      // 与"中转不可达"看成一回事 → 永远退避重连 → 用户卡在"重连中…"。
       final transport = TicketedWebSocketTransport(
         endpoint: 'ws://127.0.0.1:1',
         ticket: () async => throw const ProtocolException(
@@ -33,10 +36,35 @@ void main() {
       await expectLater(
         transport.connect(),
         throwsA(
+          isA<TransportException>()
+              .having(
+                (e) => e.message,
+                'message',
+                allOf(contains('换票失败'), contains('401')),
+              )
+              .having((e) => e.code, 'code', ErrorCode.notPaired),
+        ),
+      );
+    });
+
+    test('429 限流：透传 rateLimited 码（**不是** notPaired，连接层会退避）', () async {
+      // 限流是"稍后重试"，不是"永久失败"—— 两者客户端动作不同
+      // （`backoffRetry` vs `rePair`），所以码必须分开透传。
+      final transport = TicketedWebSocketTransport(
+        endpoint: 'ws://127.0.0.1:1',
+        ticket: () async => throw const ProtocolException(
+          ErrorCode.rateLimited,
+          '换票被拒（HTTP 429）',
+        ),
+      );
+
+      await expectLater(
+        transport.connect(),
+        throwsA(
           isA<TransportException>().having(
-            (e) => e.message,
-            'message',
-            allOf(contains('换票失败'), contains('401')),
+            (e) => e.code,
+            'code',
+            ErrorCode.rateLimited,
           ),
         ),
       );

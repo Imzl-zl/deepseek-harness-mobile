@@ -29,6 +29,7 @@ import 'flow.dart';
 import 'frame.dart';
 import 'handshake_driver.dart';
 import 'items.dart';
+import 'job.dart';
 import 'keepalive.dart';
 import 'outbox.dart';
 import 'sync_client.dart';
@@ -186,6 +187,11 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   @override
   Future<void> start() async {
     if (_closed) return;
+    // **终态不重连**：身份不被认（换票被拒）后，机器停在 `closed` 等上层重新配对
+    // （装配点会换一个新客户端）。这里再 `start()` 只会又拿到同一个 401；
+    // 且 `closed → connecting` 是**非法迁移**（`setAppState(foreground)` 会在
+    // 终态后把 `closed` 当"该重连"调到这里）—— 直接挡掉，两条都避掉。
+    if (_lastConnectWasTerminal) return;
     if (_machine.isAnyOf([
       ConnectionState.serving,
       ConnectionState.handshake,
@@ -210,9 +216,15 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       // **必须记进诊断面**：这条路上原先什么都不留 —— 于是"连不上"在界面上
       // 与"连上了但没数据"长得一模一样（都是空列表、都无错误），
       // 而真机上**反复重连**正是走这里（换票失败、升级被拒都会抛到这里）。
-      _lastProtocolError = error is ProtocolException
-          ? error
-          : ProtocolException(ErrorCode.relayOffline, '建连失败：$error');
+      //
+      // **身份不被认（notPaired / revoked）是终态，不进退避**：换票被拒说明
+      // 这台电脑已不再认可本机（停用 / 凭据失效 / 名册里没有），退避重连只会
+      // 每次都拿到同一个 401，用户永远卡在"重连中…"。这种情况由上层
+      // （装配点，经 AppModel → ConnectionRecovery）清掉本地凭据并回配对页；
+      // 连接层只负责"不重连 + 留声"，不认识平台、也不导航。
+      final exception = _connectFailure(error);
+      _lastProtocolError = exception;
+      _lastConnectWasTerminal = exception.clientAction == ClientAction.rePair;
       _enterClosed();
       return;
     }
@@ -242,6 +254,22 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     _startTicking();
   }
 
+  /// 把一次建连失败翻成协议错误，**保留换票被拒的错误码**。
+  ///
+  /// `TicketedWebSocketTransport` / `EndpointTransport` 把 `ProtocolException`
+  /// 的码塞进 `TransportException.code`（否则 401 会被当成网络问题，用户永远
+  /// 卡在退避重连上 —— 议题 2 的真因）。这里把它还原成 `ProtocolException`，
+  /// 让 `clientAction` 可判。纯网络类失败归 `relay/offline`（照旧退避）。
+  ProtocolException _connectFailure(Object error) {
+    if (error is ProtocolException) return error;
+    if (error is TransportException) {
+      final code = error.code;
+      // 带码的传输错误（换票被拒等）：保留码与原文，让 clientAction 可判。
+      if (code != null) return ProtocolException(code, error.message);
+    }
+    return ProtocolException(ErrorCode.relayOffline, '建连失败：$error');
+  }
+
   void _onEstablished(HandshakeEstablishment result) {
     if (_closed) return;
     // **先装密码器再进 serving**：顺序反了就会有一小段"已在服务但发不出帧"的窗口，
@@ -260,6 +288,8 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     _lastCloseCode = null;
     _lastCloseReason = null;
     _lastHalfOpenSilentMs = null;
+    // 连上了：这条连接不再是"终态停摆"（下次掉线按正常退避判）。
+    _lastConnectWasTerminal = false;
     _machine.to(ConnectionState.serving);
     // 连上了就把待发队列按序补发（§5.6：先落盘、连接可用时再发）。
     unawaited(_deps.outbox.flush());
@@ -420,6 +450,7 @@ class _SyncClient implements SyncClient, SyncClientProbe {
         _onLive(frame, plaintext);
       case 'job':
         _jobFrames.add((frame, plaintext));
+        _emitJobFrame(frame, plaintext);
       case 'credit':
       case 'ping':
       case 'pong':
@@ -868,6 +899,8 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       await controller.close();
     }
     _sessionControllers.clear();
+    // 任务帧流也收口：不关的话 UI 上的订阅会挂在一个已死的客户端上。
+    await _jobUpdates.close();
     // 关闭时也要拒掉在途请求（同 `_enterClosed`，但错误码不同：
     // 这里是"客户端被关了"，不是"连接断了" —— 前者不该再重试）。
     _calls.failAll(const ProtocolException(ErrorCode.internal, '客户端已关闭'));
@@ -879,7 +912,9 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   // -------------------------------------------------------------------------
 
   void _onStateChanged(ConnectionState from, ConnectionState to) {
-    if (to == ConnectionState.closed && !_closed) {
+    // **终态不进退避**：身份不被认（`_lastConnectWasTerminal`）时，连接停在这里
+    // 等上层清凭据回配对页；自动退避只会每次都拿到同一个 401（议题 2）。
+    if (to == ConnectionState.closed && !_closed && !_lastConnectWasTerminal) {
       // 连接结束 → 进退避 → 到点且前台才重连（§2.2：只在 App 前台重连）。
       _machine.to(ConnectionState.backoff);
       final delay = _backoff.next();
@@ -1023,6 +1058,13 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   /// 没有这个字段，那条失败只留在日志里（而日志会被冲掉）。
   Object? _lastPersistError;
 
+  /// 上一次建连失败是否是**终态**（身份不被认，不再退避重连）。
+  ///
+  /// 见 [_onStateChanged] 的守卫与 `SyncClientProbe.lastConnectWasTerminal`。
+  /// 只在 [_connect] 的失败分支按 `clientAction == rePair` 置位，
+  /// 握手成功（[_onEstablished]）时复位。
+  bool _lastConnectWasTerminal = false;
+
   /// 诊断面（测试与日志用）。
   @override
   ProtocolException? get lastProtocolError => _lastProtocolError;
@@ -1052,6 +1094,10 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   @override
   Object? get lastPersistError => _lastPersistError;
 
+  /// 上一次建连失败是否是终态（身份不被认，不再退避重连）。
+  @override
+  bool get lastConnectWasTerminal => _lastConnectWasTerminal;
+
   /// 已声明的订阅集（`sync.hello` 的输入）。
   @override
   Map<String, int> get declaredSessions => Map.unmodifiable(_declared);
@@ -1068,15 +1114,40 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   final List<(Map<String, Object?>, String)> _jobFrames = [];
   final List<Map<String, Object?>> _presenceFrames = [];
 
+  final StreamController<JobFrame> _jobUpdates =
+      StreamController<JobFrame>.broadcast();
+
   /// 收到的任务输出帧（`(帧头, 明文)`；任务面板读它）。
   @override
   List<(Map<String, Object?>, String)> get jobFrames =>
       List.unmodifiable(_jobFrames);
 
+  /// 任务输出帧流（已解析成 `core/job.dart` 的类型）。
+  @override
+  Stream<JobFrame> get jobUpdates => _jobUpdates.stream;
+
   /// 收到的 `presence` 帧（设备与连接状态读它）。
   @override
   List<Map<String, Object?>> get presenceFrames =>
       List.unmodifiable(_presenceFrames);
+
+  void _emitJobFrame(Map<String, Object?> frame, String plaintext) {
+    // 解析只在这里发生一次：UI 拿类型，不拿明文。
+    // **解析失败不当协议错误**：一帧解不动就断连接太狠，而这帧只是任务输出。
+    // 但也不静默丢 —— 转成 `JobError` 让任务面板显示"这一帧没解出来"。
+    // `late final`：两个分支各赋一次，Dart 的定值分析对 try/catch 保守，
+    // 用 `final` 会报"只能设一次"。
+    late final JobFrame parsed;
+    try {
+      parsed = parseJobFrame(plaintext);
+    } on FormatException catch (error) {
+      parsed = JobError(
+        jobId: '${frame['id'] ?? ''}',
+        message: '任务帧解不开：$error',
+      );
+    }
+    if (!_jobUpdates.isClosed) _jobUpdates.add(parsed);
+  }
 
   void _emit(String sid, SessionDelta delta) {
     final controller = _sessionControllers[sid];

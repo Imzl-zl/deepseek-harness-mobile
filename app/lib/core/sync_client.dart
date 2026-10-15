@@ -32,6 +32,7 @@ import 'connection.dart';
 import 'crypto.dart';
 import 'errors.dart';
 import 'handshake_driver.dart';
+import 'job.dart';
 import 'keepalive.dart';
 import 'outbox.dart';
 import 'recovery.dart';
@@ -85,6 +86,14 @@ abstract interface class SyncClient {
     Map<String, Object?> params, {
     String? requestId,
   });
+
+  /// 任务输出帧流（`job` 帧，契约 §5.3）。**广播流**：任务面板与角标都要听。
+  ///
+  /// 取代 `SyncClientProbe.jobFrames` 那个列表 —— 它是没有任何消费者的死 API，
+  /// 而任务面板接不上正是因为它：让 UI 自己解析明文 JSON，等于让
+  /// "帧里是什么"有第二个答案。解析只发生在 `sync_client_impl`（那里本来就有明文），
+  /// UI 拿到的是 `core/job.dart` 的 `sealed class JobFrame`。
+  Stream<JobFrame> get jobUpdates;
 
   /// 前后台切换。
   Future<void> setAppState(AppState state);
@@ -147,6 +156,16 @@ abstract interface class SyncClientProbe {
   /// 它值得暴露，理由同上但更严重：**落盘失败的表现是"数据少了一段"**，
   /// 而不是任何用户可见的错误。没有这个字段，那条失败只留在日志里。
   Object? get lastPersistError;
+
+  /// 上一次建连失败是否是**终态**（身份不被认，连接层**不再退避重连**）。
+  ///
+  /// 与 [lastProtocolError] 合起来看：`true` 时上层该按那个错误的
+  /// `clientAction` 处置（当前只有 `rePair`：清本地凭据 + 回配对页），
+  /// 而不是等连接层自己退避 —— 退避对"电脑不认本机"毫无意义，
+  /// 只会每次都拿到同一个 401，用户永远卡在"重连中…"（议题 2）。
+  ///
+  /// `false` = 连接层会自行退避重连，上层无动作。
+  bool get lastConnectWasTerminal;
 
   /// 已声明的订阅集（`sid → since`）—— `sync.hello` 会把它整份重新声明（契约 §5.4）。
   ///

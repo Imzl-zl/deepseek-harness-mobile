@@ -23,6 +23,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../model/permission.dart';
 import '../model/send_mode.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
@@ -36,25 +37,6 @@ class PendingAttachment {
   final String icon;
 }
 
-/// 访问模式（`.chip--icon` 的三种档）。
-///
-/// 数值与命名照 `docs/settings-porting-notes.md` / 原型：
-/// 只读 / 工作区内可改 / 完全权限。**完全权限用告警色**（`is-warn`），
-/// 让"当前是危险档"一眼可见。
-enum AccessMode {
-  readOnly('permissionReadOnly', '只读'),
-  workspaceWrite('permissionWorkspaceWrite', '工作区内可改'),
-  fullAccess('permissionFullAccess', '完全权限');
-
-  const AccessMode(this.icon, this.label);
-
-  final String icon;
-  final String label;
-
-  /// 是否该用告警色（危险档）。
-  bool get isWarn => this == AccessMode.fullAccess;
-}
-
 /// 输入栏（含附件轨 + 文字行 + 控制行）。
 class DshComposer extends StatelessWidget {
   const DshComposer({
@@ -63,7 +45,7 @@ class DshComposer extends StatelessWidget {
     required this.attachments,
     required this.modelName,
     required this.reasoningLabel,
-    required this.accessMode,
+    required this.access,
     required this.sendMode,
     required this.sending,
     required this.onSend,
@@ -85,7 +67,12 @@ class DshComposer extends StatelessWidget {
   /// 推理等级（`· 高`）。
   final String reasoningLabel;
 
-  final AccessMode accessMode;
+  /// 当前权限档的展示值（图标 + 文案 + 是否告警色）。
+  ///
+  /// **从电脑侧真值来**（`permissions` 投影的 `currentValue`，经
+  /// `model/permission.dart` 的 `permissionChipOf` 归一）—— 曾经这里是
+  /// 一个三档手抄枚举，点完只改本地字段，与电脑侧无关。
+  final PermissionChip access;
 
   /// 发送模式（排队 / 插话，DSH 的"繁忙时的发送行为"）。
   final SendMode sendMode;
@@ -234,9 +221,9 @@ class DshComposer extends StatelessWidget {
                       const SizedBox(width: 6),
                       // 权限图标：**34px 恒宽**（硬规则 3 的后半句）。
                       _IconChip(
-                        icon: accessMode.icon,
-                        tooltip: accessMode.label,
-                        isWarn: accessMode.isWarn,
+                        icon: access.icon,
+                        tooltip: access.label,
+                        isWarn: access.warn,
                         onPressed: enabled ? onPickAccess : null,
                       ),
                       const SizedBox(width: 6),

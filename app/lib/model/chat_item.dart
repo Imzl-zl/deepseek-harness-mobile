@@ -155,6 +155,7 @@ class SessionSummary {
     this.running = false,
     this.blank = false,
     this.model,
+    this.cwd,
   });
 
   /// 会话别名（电脑侧分配的不透明 id，契约 §5.1）。
@@ -194,6 +195,15 @@ class SessionSummary {
   /// 而不是猜一个把"看起来连着"当成"连着"。
   final ModelRef? model;
 
+  /// 会话的工作区目录（`session.list` 的 `cwd`）。
+  ///
+  /// 电脑侧一直在发（`connector/src/handlers.ts` 的 `session.list`），**取不到就是
+  /// `null`** —— 老连接器或落盘里没有 `cwd` 的会话都不发这个字段。界面不显示它，
+  /// 它是给"挑靶子"用的：一个工作区已失效的会话，`session.prompt` 照常落
+  /// `user/message`，而它的 agent 永远不起轮次（全程零痕迹），所以拿它当靶子
+  /// 会等到超时也看不到任何反应。
+  final String? cwd;
+
   SessionSummary copyWith({
     String? title,
     int? updatedAt,
@@ -202,6 +212,7 @@ class SessionSummary {
     bool? running,
     bool? blank,
     ModelRef? model,
+    String? cwd,
   }) => SessionSummary(
     sid: sid,
     title: title ?? this.title,
@@ -211,6 +222,7 @@ class SessionSummary {
     running: running ?? this.running,
     blank: blank ?? this.blank,
     model: model ?? this.model,
+    cwd: cwd ?? this.cwd,
   );
 }
 

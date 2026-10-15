@@ -22,14 +22,18 @@ library;
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show ChangeNotifier, listEquals;
 
 import '../core/connection.dart';
+import '../core/endpoint.dart';
 import '../core/errors.dart';
+import '../core/job.dart';
 import '../core/sync_client.dart';
 import '../model/chat_item.dart';
 import '../model/interaction.dart';
+import '../model/permission.dart';
 import '../model/send_mode.dart';
+import '../model/session_stats.dart';
 import 'preview_data.dart';
 import 'projection.dart';
 import 'session_store.dart';
@@ -47,13 +51,400 @@ import 'store.dart';
 /// 所以按职责命名：`AppState` 留给协议层（契约里已经这么叫），
 /// 这里叫 `AppModel`（"界面要读的那份应用模型"）。
 class AppModel extends ChangeNotifier {
-  AppModel({required this.client, PreferenceStore? prefs}) : _prefs = prefs;
+  AppModel({
+    required this.client,
+    PreferenceStore? prefs,
+    List<Endpoint> endpoints = const [],
+    this.onEndpointsChanged,
+    this.onConnectionTerminated,
+  }) : _prefs = prefs,
+       _endpoints = List<Endpoint>.of(endpoints);
 
   /// 通道客户端（连接 / 订阅 / 写操作的唯一 owner）。
   final SyncClient client;
 
   /// 偏好缝（`meta` 表的窄接口）；`null` = 不落盘（测试 / 未装配）。
   final PreferenceStore? _prefs;
+
+  /// 端点表变了之后落盘（装配层注入：`PairingStore.saveEndpoints`）。
+  ///
+  /// **在这里而不是在 `AppModel` 里直接写存储**：`data/` 不认识 `platform/`
+  /// （`verify-platform-boundary.mjs` 的 `core-no-platform-import` 管的是 `core/`，
+  /// 但同一条纪律在 `data/` 上更要守 —— 它要能在纯 Dart 单测里跑）。
+  final Future<void> Function(List<Endpoint>)? onEndpointsChanged;
+
+  /// 连接**终态**失败时呈递一次那个协议错误（身份不被认 → 清凭据回配对页）。
+  ///
+  /// 装配点（`main.dart`）把它接到 `ConnectionRecovery.onTerminated` ——
+  /// 那是 `ClientAction` 的**唯一执行处**。这里只负责"识别出连接层已终态停摆、
+  /// 并把那个错误呈递一次"，不认识平台、不导航、也不自己判 `notPaired`。
+  ///
+  /// 网络类失败（`relay/offline` 等）不到这里：连接层会自行退避重连。
+  final void Function(ProtocolException error)? onConnectionTerminated;
+
+  /// 本连接周期是否已呈递过终态失败（避免重复触发重新配对）。
+  bool _connectionTerminatedSurfaced = false;
+
+  /// 有序端点表。**序即偏好**：`connect()` 按这个顺序拨，第一个通的赢。
+  ///
+  /// 它的所有者是这里（界面要读、设置页要改），而拨号方
+  /// （`platform/transport_factory.dart` 经 `EndpointTransport`）每次
+  /// `connect()` 现读它 —— 所以"发现了一条直连"立刻生效，不用重启 App。
+  List<Endpoint> get endpoints => _endpoints;
+  List<Endpoint> _endpoints;
+
+  /// 当前拨通的那个端点（`null` = 还没连上）。
+  ///
+  /// 由装配层把 `EndpointTransport.onActivated` 接到这里。
+  Endpoint? get activeEndpoint => _activeEndpoint;
+  Endpoint? _activeEndpoint;
+
+  /// 报一次"这条连接走的是哪个端点"。
+  void reportActiveEndpoint(Endpoint endpoint) {
+    if (_activeEndpoint?.id == endpoint.id) return;
+    _activeEndpoint = endpoint;
+    notifyListeners();
+  }
+
+  /// 把连接器自报的端点并进表里（`endpoint.describe` 的结果）。
+  ///
+  /// **合并而不是覆盖**：覆盖会抹掉用户手动排的偏好序，而连接器某次少报一个
+  /// （例如直连刚好在重启）就把手机里的条目删了。规则见 `core/endpoint.dart`
+  /// 的 `mergeEndpoints` —— 已知的原位更新，未知的按 kind 插。
+  Future<void> mergeDiscoveredEndpoints(List<Endpoint> discovered) async {
+    final merged = mergeEndpoints(_endpoints, discovered);
+    if (merged.length == _endpoints.length &&
+        merged.every((e) => _endpoints.contains(e))) {
+      return; // 没有变化：不落盘、不通知（否则每次重连都会写一次存储）
+    }
+    _endpoints = merged;
+    notifyListeners();
+    await onEndpointsChanged?.call(merged);
+  }
+
+  /// 手动挑一个端点当首选（设置页用）。**只改顺序，不删条目**。
+  Future<void> preferEndpoint(Endpoint endpoint) async {
+    final index = _endpoints.indexWhere((e) => e.id == endpoint.id);
+    if (index < 0) return;
+    final reordered = <Endpoint>[
+      _endpoints[index],
+      ..._endpoints.where((e) => e.id != endpoint.id),
+    ];
+    if (listEquals(reordered, _endpoints)) return;
+    _endpoints = reordered;
+    notifyListeners();
+    await onEndpointsChanged?.call(reordered);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 会话投影（`session.projections`，契约 §5.7）—— 一个方法打开全部只读面
+  // ---------------------------------------------------------------------------
+
+  /// 最近一次读到的投影值包（`null` = 还没读过 / 读不到）。
+  ///
+  /// **原样存，不挑字段**：投影的 `viewSchema` 是 zod `.strict()`，
+  /// 连接器那侧"挑着发"就要预先知道全部键 —— 而那正是会漂移的清单。
+  /// 各面按需从这里取，认不出就不给。
+  Map<String, Object?>? _projections;
+
+  Map<String, Object?>? get projections => _projections;
+
+  /// 读一次投影。**点开会话时调**（与 `refreshJobs` 同一步）。
+  ///
+  /// 失败只留声：投影读不到时那些只读面显示空态，而"整个会话打不开"更糟。
+  Future<void> refreshProjections(String sid) async {
+    try {
+      final result = await client.call<Object?>('session.projections', {
+        'sid': sid,
+      });
+      if (_disposed || result is! Map) return;
+      // JSON 解出来是 `Map<dynamic, dynamic>`，逐字段转型成我们要的形状 ——
+      // **不整体 cast**：那会把"键不是字符串"这种畸形数据一起带进来，
+      // 而后者的症状是取字段时抛 `noSuchMethod`，很难定位。
+      _projections = {
+        for (final entry in result.entries)
+          if (entry.key is String) entry.key as String: entry.value,
+      };
+      // 子智能体从同一个投影包里取（`subagentCatalog` 键）。
+      _subagents[sid] = parseSubagentCatalog(result);
+      notifyListeners();
+    } catch (error) {
+      // **兜住所有异常，不只 `ProtocolException`**（与 `refreshSessions` 同一条纪律）：
+      // 解析出错 / 类型不对 / 超时都只该让"这一批只读面显示空态"，
+      // 逃逸成未处理的异步错误会让 `openSession` 半途而废 ——
+      // 症状是"会话打开了但统计条/权限档永远空着且不报错"。
+      _lastError = error is ProtocolException
+          ? error
+          : ProtocolException(ErrorCode.internal, '读取会话投影失败：$error');
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  // ---- 统计条（`tokenUsage` / `contextPressure` / `sessionStats` 三个投影）----
+
+  /// token 用量。**认不出就是 null**，不猜 —— 猜一个就是把
+  /// "看起来连着"当成"连着"。
+  TokenUsage? get tokenUsage {
+    final raw = _projections?['tokenUsage'];
+    if (raw is! Map) return null;
+    return TokenUsage(
+      uncachedInputTokens: _intOf(raw['uncachedInputTokens']),
+      outputTokens: _intOf(raw['outputTokens']),
+      cacheReadTokens: _intOf(raw['cacheReadTokens']),
+      cacheWriteTokens: _intOf(raw['cacheWriteTokens']),
+    );
+  }
+
+  /// 会话统计（`sessionStats` 投影）。
+  SessionStats? get sessionStats {
+    final raw = _projections?['sessionStats'];
+    if (raw is! Map) return null;
+    return SessionStats(
+      turns: _intOf(raw['turns']),
+      steps: _intOf(raw['steps']),
+      llmMs: _intOf(raw['llmMs']),
+      toolMs: _intOf(raw['toolMs']),
+    );
+  }
+
+  /// 上下文占用压力（`contextPressure` 投影）。两个字段都没有就是 `null`。
+  ContextPressure? get contextPressure {
+    final raw = _projections?['contextPressure'];
+    if (raw is! Map) return null;
+    final pressure = raw['pressureTokens'];
+    final projected = raw['projectedTokens'];
+    if (pressure is! num && projected is! num) return null;
+    return ContextPressure(
+      pressureTokens: pressure is num ? pressure.toInt() : null,
+      projectedTokens: projected is num ? projected.toInt() : null,
+    );
+  }
+
+  static int _intOf(Object? value) => value is num ? value.toInt() : 0;
+
+  // ---- 权限档（`permission.catalog` 目录 + `permissions` 投影的当前值）----
+
+  /// 权限预设目录（`permission.catalog`，原样过线）。
+  ///
+  /// **拿不到就是 null** —— 手机显示"拿不到目录"，不摆三档手抄的名字
+  /// （2026-10-15 之前输入栏的权限档正是三个写死的枚举值）。
+  /// 预设表是**部署可配**的（DSH `bundle/base/cordis.patch.yml:262-271`），
+  /// 手抄一份就是第二份真值。
+  PermissionCatalog? get permissionCatalog => _permissionCatalog;
+
+  PermissionCatalog? _permissionCatalog;
+
+  /// 当前会话的权限档（`permissions` 投影的 `currentValue`）。
+  ///
+  /// **认不出就是 null**：投影没注册（这台电脑没装权限插件）与
+  /// "这一帧没有这个键"是同一件事，而正确表现都是"不知道"——
+  /// 界面显示空态，不猜一个档位。
+  String? get permissionValue {
+    final sid = _currentSid;
+    if (sid == null) return null;
+    return parsePermissionValue(_projections);
+  }
+
+  /// 存一份预设目录（连接器 `permission.catalog` 的应答）。
+  void setPermissionCatalog(PermissionCatalog? catalog) {
+    _permissionCatalog = catalog;
+    notifyListeners();
+  }
+
+  /// 切这个会话的权限预设。**与 Web 同一条写路径**：
+  /// DSH 的 `/permission <档位>` 斜杠命令
+  /// （`packages/interaction/permission-presets/src/index.ts:255-276`，
+  /// DSH 注释原话 "the one write path a web client uses"），Web 侧经
+  /// `remote.commands.execute` 调它
+  /// （`packages/client/ui-permission-presets/src/client/index.ts:126`）。
+  ///
+  /// 切完立刻重读一次投影：当前值在 `permissions` 投影里，
+  /// 而投影只在打开会话时拉过一次 —— 不重读就要等下次开会话才变。
+  ///
+  /// @returns 电脑侧的结论；`null` = 这次调用没成功（原因在 [lastError]）。
+  Future<PermissionSwitch?> switchPermission(String preset) async {
+    final sid = _currentSid;
+    if (sid == null) return null;
+    try {
+      final result = await client.call<Object?>(
+        'permission.switch',
+        {'sid': sid, 'preset': preset},
+        requestId: 'perm-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      final switched = parsePermissionSwitch(result);
+      if (switched == null || _disposed) return null;
+      if (switched.succeeded) await refreshProjections(sid);
+      return switched;
+    } catch (error) {
+      // **兜住所有异常，不只 `ProtocolException`**（与 `refreshSessions`
+      // 同一条纪律）：解析出错 / 形状不对 / 超时都不该逃逸成未处理的异步错误。
+      _lastError = error is ProtocolException
+          ? error
+          : ProtocolException(ErrorCode.internal, '切换权限档失败：$error');
+      if (!_disposed) notifyListeners();
+      return null;
+    }
+  }
+
+  // ---- 子智能体（`subagentCatalog` 投影）----
+
+  final Map<String, List<SubagentRow>> _subagents = {};
+
+  /// 子智能体列表。**空表就是没有**，不造假的 —— 2026-10-15 之前这里是
+  /// 两条写死的示例（`Extract DSH icon paths` 等）。
+  List<SubagentRow> subagentsOf(String sid) =>
+      List.unmodifiable(_subagents[sid] ?? const []);
+
+  // ---------------------------------------------------------------------------
+  // 后台任务（契约 §7 的 job.* / §5.3 的 job 帧）
+  // ---------------------------------------------------------------------------
+
+  /// 当前会话的后台任务（按 sid 分桶：切会话看的是那一会话的任务）。
+  final Map<String, List<JobRow>> _jobs = {};
+
+  /// 正在订阅的任务（`sid` → `jobId` 集合）。展开时 follow、收起时 unfollow。
+  final Map<String, Set<String>> _followedJobs = {};
+
+  /// 每个任务已收到的输出（`jobId` → 文本）。**只追加，不重排** ——
+  /// 输出是日志，重排会让"读到这里"失去意义。
+  final Map<String, StringBuffer> _jobOutput = {};
+
+  /// 任务帧流出问题（订阅中断 / 帧解不开）时给界面的一句话。
+  final Map<String, String> _jobErrors = {};
+
+  List<JobRow> jobsOf(String sid) => List.unmodifiable(_jobs[sid] ?? const []);
+
+  /// 某个任务已收到的输出文本（没有订阅过就是空串）。
+  String jobOutput(String jobId) => _jobOutput[jobId]?.toString() ?? '';
+
+  /// 某个任务的订阅问题；`null` = 没问题。
+  String? jobError(String jobId) => _jobErrors[jobId];
+
+  bool isJobFollowed(String sid, String jobId) =>
+      _followedJobs[sid]?.contains(jobId) ?? false;
+
+  /// 拉一次任务清单。**只在进服务态与切会话时调** —— 它是一次性快照，
+  /// 后续变化走 `job` 帧的 `status`。
+  Future<void> refreshJobs(String sid) async {
+    // **先建桶再早退**：`job` 帧不带 sid，只能靠"这个会话有桶"归位。
+    // 桶不存在时帧会被丢 —— 而表现是"任务在跑但没有输出"，最难查的那类。
+    _jobs.putIfAbsent(sid, () => <JobRow>[]);
+    final result = await client.call<Object?>('job.list', {'sid': sid});
+    if (_disposed || result is! Map) return;
+    final raw = result['jobs'];
+    if (raw is! List) return;
+    _jobs[sid] = [
+      for (final entry in raw)
+        if (entry is Map) _jobRowFromJson(entry),
+    ];
+    notifyListeners();
+  }
+
+  /// 展开一个任务：订阅它的输出流。
+  ///
+  /// **幂等**：同一个 `(sid, jobId)` 重复 follow 由电脑侧合流，但本地也要挡一次，
+  /// 否则 UI 上会出现"点了两下、输出翻倍"。
+  Future<void> followJob(String sid, String jobId) async {
+    final followed = _followedJobs.putIfAbsent(sid, () => <String>{});
+    if (!followed.add(jobId)) return;
+    _jobOutput.putIfAbsent(jobId, StringBuffer.new);
+    _jobErrors.remove(jobId);
+    try {
+      await client.call<Object?>('job.follow', {'sid': sid, 'jobId': jobId});
+    } on ProtocolException catch (error) {
+      // 订阅没开成：把本地标记撤掉，否则 UI 会显示"已订阅"却永远没有输出。
+      followed.remove(jobId);
+      _jobErrors[jobId] = error.message;
+      notifyListeners();
+    }
+  }
+
+  /// 收起一个任务：退订。
+  Future<void> unfollowJob(String sid, String jobId) async {
+    _followedJobs[sid]?.remove(jobId);
+    try {
+      await client.call<Object?>('job.unfollow', {'sid': sid, 'jobId': jobId});
+    } on ProtocolException catch (error) {
+      _jobErrors[jobId] = error.message;
+    }
+    notifyListeners();
+  }
+
+  /// 停一个任务。**走宿主的人类发起门面**，返回电脑侧的结论。
+  Future<String?> killJob(String sid, String jobId) async {
+    try {
+      final result = await client.call<Object?>('job.kill', {
+        'sid': sid,
+        'jobId': jobId,
+      });
+      return result is Map && result['outcome'] is String
+          ? result['outcome'] as String
+          : null;
+    } on ProtocolException catch (error) {
+      _jobErrors[jobId] = error.message;
+      notifyListeners();
+      return null;
+    }
+  }
+
+  /// 把一条 `job` 帧应用到状态。**只认四种 kind**（`core/job.dart` 的 sealed 类），
+  /// 漏一种编译期就红。
+  void _applyJobFrame(JobFrame frame) {
+    switch (frame) {
+      case JobOpened(:final row):
+        _applyJobRow(row);
+        _jobOutput.putIfAbsent(row.id, StringBuffer.new);
+        _jobErrors.remove(row.id);
+      case JobOutput(:final jobId, :final chunks, :final lossy):
+        final buffer = _jobOutput.putIfAbsent(jobId, StringBuffer.new);
+        for (final chunk in chunks) {
+          if (chunk.gapBefore) {
+            buffer.write('…（较早的输出已被淘汰）\n');
+          }
+          buffer.write(chunk.text);
+        }
+        if (lossy) {
+          _jobErrors[jobId] = '部分输出已丢失（保留窗口之外）';
+        }
+      case JobStatus(:final row):
+        _applyJobRow(row);
+      case JobError(:final jobId, :final message):
+        _jobErrors[jobId] = message;
+    }
+    notifyListeners();
+  }
+
+  void _applyJobRow(JobRow row) {
+    // 按 sid 归桶：帧本身不带 sid，所以用"当前会话 + 已订阅"推。
+    // 更稳的做法是让电脑侧在帧里带 sid —— 那是契约变更，本期不做；
+    // 而 `job.follow` 是按 sid 订阅的，所以只有那个会话会收到这些帧。
+    for (final entry in _jobs.entries) {
+      final index = entry.value.indexWhere((j) => j.id == row.id);
+      if (index >= 0) {
+        entry.value[index] = row;
+        notifyListeners();
+        return;
+      }
+    }
+    // 没见过这个任务：归到"最近一个刷过清单的会话"。没有会话可归就丢弃 ——
+    // 硬塞进一个错误的会话比丢一帧更糟（用户会以为那个会话有任务）。
+    if (_jobs.isEmpty) return;
+    final sid = _jobs.keys.last;
+    _jobs[sid] = [..._jobs[sid]!, row];
+    notifyListeners();
+  }
+
+  static JobRow _jobRowFromJson(Map entry) => JobRow(
+    id: entry['id'] is String ? entry['id'] as String : '',
+    kind: entry['kind'] is String ? entry['kind'] as String : '',
+    label: entry['label'] is String ? entry['label'] as String : '',
+    status: entry['status'] is String ? entry['status'] as String : 'running',
+    startedAt: (entry['startedAt'] as num?)?.toInt() ?? 0,
+    outputTotal: (entry['outputTotal'] as num?)?.toInt() ?? 0,
+    progress: entry['progress'] is String ? entry['progress'] as String : null,
+    detail: entry['detail'] is String ? entry['detail'] as String : null,
+    finishedAt: (entry['finishedAt'] as num?)?.toInt(),
+  );
 
   final Map<String, SessionStore> _stores = {};
 
@@ -99,6 +490,7 @@ class AppModel extends ChangeNotifier {
   }
 
   StreamSubscription<ConnectionState>? _stateSub;
+  StreamSubscription<JobFrame>? _jobSub;
   final Map<String, StreamSubscription<SessionDelta>> _deltaSubs = {};
 
   /// 交互信号流（契约 §6.3：待处理集合是会话事件的投影）。
@@ -130,6 +522,84 @@ class AppModel extends ChangeNotifier {
   /// 当前会话的条目（只读快照；没打开会话时是空表）。
   List<ChatItem> get items =>
       _currentSid == null ? const [] : _storeOf(_currentSid!).items;
+
+  // ---- 模型（`session/modelCatalog` + `modelSelection` 投影）----
+
+  /// 模型目录（`session/modelCatalog`，原样过线）。
+  ///
+  /// **拿不到就是 null** —— 手机显示"未选择"，不手抄第二份名单
+  /// （2026-10-15 之前 picker 里是四个写死的模型名）。
+  List<ModelRef>? get modelCatalog => _modelCatalog;
+  List<ModelRef>? _modelCatalog;
+
+  /// 当前会话的模型（`modelSelection` 投影，`next ?? lastUsed`）。
+  ModelRef? get currentModel {
+    final sid = _currentSid;
+    if (sid == null) return null;
+    return sessionOf(sid)?.model;
+  }
+
+  /// 存一份模型目录（连接器 `session/modelCatalog` 的应答）。
+  void setModelCatalog(List<ModelRef> catalog) {
+    _modelCatalog = List.unmodifiable(catalog);
+    notifyListeners();
+  }
+
+  /// 切这个会话的模型。**与 Web 用同一个 DSH 方法**（`session/select-model`），
+  /// 没有第二套接口 —— 已核实 Web 侧调的就是它
+  /// （`packages/client/ui-model-selection/src/client/directory.ts:98`）。
+  ///
+  /// 语义（`packages/core/agent-default-model/src/index.ts:82-94` + README）：
+  /// ① **当前会话**立即生效（README: "Session-specific selection takes
+  ///    precedence in the consumer"）；
+  /// ② **以后新建的** agent 默认用它；没有 configEditor 时这步是 no-op；
+  /// ③ **不改别的会话**。
+  /// 所以"新会话默认跟随"是 Web 一直有的行为，不是副作用。
+  ///
+  /// @returns 电脑侧归一后的选择（可能与请求略有出入，如补上默认 effort）
+  Future<ModelRef?> selectModel({
+    required String provider,
+    required String model,
+    String? reasoningEffort,
+  }) async {
+    final sid = _currentSid;
+    if (sid == null) return null;
+    try {
+      final result = await client.call<Object?>(
+        'session.select-model',
+        {
+          'sid': sid,
+          'provider': provider,
+          'model': model,
+          // 显式 `if` 而不是 null-aware element（`?key: value`）：后者的 key
+          // 取的是**值的字符串形式**而不是标识符 —— 实测展开成 `high: high`
+          // 而不是 `reasoningEffort: high`（2026-10-15 踩到）。`dart analyze`
+          // 会反过来建议改用那个语法（`use_null_aware_elements`），别听它的。
+          // ignore: use_null_aware_elements
+          if (reasoningEffort != null) 'reasoningEffort': reasoningEffort,
+        },
+        requestId: 'sel-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      if (_disposed || result is! Map) return null;
+      final selected = result['selected'];
+      if (selected is! Map) return null;
+      // 切完立刻重拉一次清单：`session.list` 的行带 `model` 字段，
+      // 而输入栏的模型名走的是它。不拉就要等下一次自然刷新才变。
+      await refreshSessions();
+      return ModelRef(
+        provider: selected['provider'] is String
+            ? selected['provider'] as String
+            : provider,
+        model: selected['model'] is String
+            ? selected['model'] as String
+            : model,
+      );
+    } on ProtocolException catch (error) {
+      _lastError = error;
+      if (!_disposed) notifyListeners();
+      return null;
+    }
+  }
 
   /// 当前会话 id。
   String? get currentSid => _currentSid;
@@ -208,6 +678,8 @@ class AppModel extends ChangeNotifier {
   /// 启动：连通道。
   Future<void> start() async {
     _stateSub = client.connection.listen(_onConnectionChanged);
+    // 任务输出帧：任务面板与角标都听它。**广播流**，所以这里只订一份。
+    _jobSub = client.jobUpdates.listen(_applyJobFrame);
     _connection = _viewOf(client.state);
     // **先把落盘的发送模式读回来**：它决定发 prompt 时带哪个 `mode`，
     // 重启后要还是用户选的那个。读不到（没存过 / 存了个不认识的值）
@@ -245,6 +717,24 @@ class AppModel extends ChangeNotifier {
     // 屏幕写着 `handshake-timeout`，中转侧却显示 hello / confirm / req 三步都正常）。
     if (state == ConnectionState.serving) {
       _lastError = null;
+      // 连上了：重置"已呈递终态"标记（下一次真掉线再按需呈递）。
+      _connectionTerminatedSurfaced = false;
+    }
+    // **身份不被认是终态**：连接层确认"不再退避重连"后，把那个终态协议错误
+    // 呈递给上层**一次**（`onConnectionTerminated` → `ConnectionRecovery`）。
+    // 这里只读连接层的 `lastConnectWasTerminal` 事实，不自己判 `notPaired` ——
+    // 真正的"错误码 → 客户端动作 → 副作用"只在装配层那一处。
+    if (state == ConnectionState.closed && !_connectionTerminatedSurfaced) {
+      final probe = client is SyncClientProbe
+          ? client as SyncClientProbe
+          : null;
+      if (probe != null && probe.lastConnectWasTerminal) {
+        final error = probe.lastProtocolError;
+        if (error != null) {
+          _connectionTerminatedSurfaced = true;
+          onConnectionTerminated?.call(error);
+        }
+      }
     }
     notifyListeners();
     // **一进服务态就拉会话列表**。
@@ -257,8 +747,42 @@ class AppModel extends ChangeNotifier {
     // 收帧路径上的回调不该被一个网络往返挡住（§2.2 的状态迁移通知是同步派发的）。
     if (state == ConnectionState.serving) {
       unawaited(refreshSessions());
+      // **一进服务态就问一次"你还在哪些地址"**。
+      //
+      // 这是"局域网直连"能自愈的唯一时机：连接器只在**连上之后**才说得出自己
+      // 绑在哪个 IP 上（`endpoint.describe`），而手机此前可能存着一个过期地址
+      // （DHCP 换 IP、切 WiFi）。经中转连上→问到新地址→下次直连就用新的。
+      //
+      // 失败只留声，不打断主链：拿不到端点表不影响已经建立的这条连接，
+      // 而下一次重连会再问一次。
+      unawaited(_discoverEndpoints());
     }
   }
+
+  /// 拉一次 `endpoint.describe` 并并进端点表。
+  ///
+  /// **没有这个方法时静默返回**（老连接器没有它）—— 那时端点表就是配对时那一条，
+  /// 行为与这个功能之前完全一致。这不是"猜一个默认值"，而是能力不存在。
+  Future<void> _discoverEndpoints() async {
+    if (_discovering) return;
+    _discovering = true;
+    try {
+      final result = await client.call<Object?>('endpoint.describe', const {});
+      final discovered = parseEndpointList(result);
+      if (discovered.isEmpty) return;
+      await mergeDiscoveredEndpoints(discovered);
+    } on ProtocolException catch (error) {
+      // 方法不存在 / 能力没开：老连接器的正常形态，不当故障。
+      if (error.code != ErrorCode.connectorUnsupported) {
+        _lastError = error;
+        notifyListeners();
+      }
+    } finally {
+      _discovering = false;
+    }
+  }
+
+  bool _discovering = false;
 
   /// 把 `ConnectionState`（协议状态机）翻成界面视图。
   static ConnectionStateView _viewOf(ConnectionState state) => switch (state) {
@@ -296,6 +820,60 @@ class AppModel extends ChangeNotifier {
           ? error
           : ProtocolException(ErrorCode.internal, '拉取会话列表失败：$error');
       if (!_disposed) notifyListeners();
+    }
+
+    // 模型目录：**与会话清单同源但不同周期** —— 它很少变，所以跟清单一起拉。
+    // 失败只留声：拿不到目录时 picker 说"拿不到"，而不是弹四个假名字。
+    await _refreshModelCatalog();
+    // 权限预设目录同理（进程级，与会话无关）。失败只留声：
+    // 拿不到时权限 sheet 说"拿不到目录"，而不是摆三档手抄的名字。
+    await _refreshPermissionCatalog();
+  }
+
+  Future<void> _refreshPermissionCatalog() async {
+    try {
+      final result = await client.call<Object?>('permission.catalog', const {});
+      if (_disposed) return;
+      // **认不出就给 null**（`parsePermissionCatalog` 对 `available != true`
+      // 与形状不对都返回 null）：界面据此说"拿不到目录"，
+      // 而不是把"电脑侧没给"显示成"这台电脑没有预设"。
+      setPermissionCatalog(parsePermissionCatalog(result));
+    } catch (_) {
+      // **兜住所有异常** —— 与 `_refreshModelCatalog` 同一条纪律。
+      // 目录是附属信息，不该把"拉不到权限目录"升级成"会话列表也失败了"。
+    }
+  }
+
+  Future<void> _refreshModelCatalog() async {
+    try {
+      final result = await client.call<Object?>(
+        'session.modelCatalog',
+        const {},
+      );
+      if (_disposed || result is! Map) return;
+      if (result['available'] != true) return;
+      final catalog = result['catalog'];
+      if (catalog is! List) return;
+      final out = <ModelRef>[];
+      for (final group in catalog) {
+        if (group is! Map) continue;
+        final provider = group['provider'];
+        if (provider is! String) continue;
+        final models = group['models'];
+        if (models is! List) continue;
+        for (final m in models) {
+          if (m is! Map) continue;
+          final id = m['id'] ?? m['model'];
+          if (id is! String || id.isEmpty) continue;
+          out.add(ModelRef(provider: provider, model: id));
+        }
+      }
+      setModelCatalog(out);
+    } catch (_) {
+      // **兜住所有异常，不只 `ProtocolException`** —— 与 `refreshSessions`
+      // 同一条纪律。目录是附属信息：解析出错 / 类型不对 / 超时都不该逃逸成
+      // 未处理的异步错误，更不该把"拉不到模型目录"升级成"会话列表也失败了"。
+      // picker 自己会说"拿不到"。
     }
   }
 
@@ -358,6 +936,19 @@ class AppModel extends ChangeNotifier {
       _lastError = error;
       if (!_disposed) notifyListeners();
     }
+
+    // 点开会话就拉一次任务清单：任务面板在这一屏里，而清单是**一次性快照**，
+    // 后续变化走 `job` 帧的 `status`。失败只留声 —— 任务面板空着比
+    // 整个会话打不开更可接受，而那正是"拉清单失败就抛"的后果。
+    try {
+      await refreshJobs(sid);
+    } on ProtocolException catch (error) {
+      _lastError = error;
+      if (!_disposed) notifyListeners();
+    }
+
+    // 同一批只读面（统计条 / 轨迹 / 子智能体 / 交付物 / 权限档）走同一个投影读。
+    await refreshProjections(sid);
   }
 
   /// 关闭当前会话（退订）。
@@ -532,6 +1123,11 @@ class AppModel extends ChangeNotifier {
           // **认不出就不给**（`null`），界面显示"未选择"—— 猜一个就是把
           // "看起来连着"当成"连着"。
           model: _parseModelRef(entry['model']),
+          // 工作区目录：电脑侧一直在发（`connector/src/handlers.ts` 的 `session.list`）。
+          // **认不出就不给**（`null`）—— 空串会让"按工作区挑靶子"静默匹配失败。
+          cwd: entry['cwd'] is String && (entry['cwd'] as String).isNotEmpty
+              ? entry['cwd'] as String
+              : null,
         ),
       );
     }
@@ -563,6 +1159,7 @@ class AppModel extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
     unawaited(_stateSub?.cancel());
+    unawaited(_jobSub?.cancel());
     for (final sub in _deltaSubs.values) {
       unawaited(sub.cancel());
     }

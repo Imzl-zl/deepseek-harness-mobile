@@ -11,6 +11,7 @@
 library;
 
 import 'package:dsh_mobile/core/connection.dart';
+import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/platform/app_state_reporter.dart';
 // **`hide ConnectionState`**：`widgets.dart` 也导出 `ConnectionState`
@@ -63,6 +64,9 @@ class _RecordingClient implements SyncClient {
 
   @override
   Future<void> close() async => throw UnimplementedError('本用例只该调 setAppState');
+
+  @override
+  Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
 }
 
 void main() {

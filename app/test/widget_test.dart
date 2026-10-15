@@ -12,12 +12,15 @@ import 'dart:async';
 
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/errors.dart';
+import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
+import 'package:dsh_mobile/model/permission.dart';
 import 'package:dsh_mobile/model/send_mode.dart';
 import 'package:dsh_mobile/theme/dsh_icons.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/chat_page.dart';
+import 'package:dsh_mobile/ui/dsh_app_bar.dart';
 import 'package:dsh_mobile/ui/dsh_composer.dart';
 import 'package:dsh_mobile/ui/session_drawer.dart';
 // **`hide ConnectionState`**：Flutter 的 `material.dart` 也导出 `ConnectionState`
@@ -53,6 +56,9 @@ class FakeClient implements SyncClient {
 
   @override
   Future<void> close() async {}
+
+  @override
+  Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
 
   @override
   Future<void> subscribe(String sid, {required int since}) async {}
@@ -120,6 +126,9 @@ class _StatefulFakeClient implements SyncClient {
   }
 
   @override
+  Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
+
+  @override
   Future<void> subscribe(String sid, {required int since}) async {}
 
   @override
@@ -149,6 +158,7 @@ Widget _wrap(
   AppModel app, {
   bool paired = true,
   VoidCallback? onConnect,
+  VoidCallback? onRePair,
   VoidCallback? onOpenDrawer,
 }) => MaterialApp(
   theme: DshTheme.dark(),
@@ -156,6 +166,7 @@ Widget _wrap(
     app: app,
     paired: paired,
     onConnect: onConnect,
+    onRePair: onRePair,
     onOpenDrawer: onOpenDrawer ?? () {},
     onNewSession: () {},
     drawer: const Drawer(child: SizedBox()),
@@ -256,7 +267,12 @@ void main() {
 
       // 左组三件。
       expect(find.byTooltip('添加文件或调用指令'), findsOneWidget);
-      expect(find.byTooltip('工作区内可改'), findsOneWidget);
+      // 权限 chip 的 tooltip 是**当前档位**。没选中会话时电脑侧也说不出档位，
+      // 于是是"未知"—— 这里曾经断言 `'工作区内可改'`，那是一个**写死的默认值**：
+      // 手机在不知道自己权限的情况下对用户声称"工作区内可改"。
+      // 2026-10-15 权限档改接电脑侧真值（`permissions` 投影）之后，
+      // "不知道"就必须显示成不知道。
+      expect(find.byTooltip('未知'), findsOneWidget);
       // 模型 chip **显示真状态**：没选中会话时电脑侧也说不出模型，
       // 于是显示"未选择"。这里曾经写死 `'claude-opus'`，与电脑侧真实状态毫无关系
       // （源头见 `connector/src/dsh/models.ts` 的文件头）。
@@ -639,7 +655,11 @@ void main() {
               modelName:
                   'claude-opus-a-very-long-model-name-that-would-fill-the-row',
               reasoningLabel: '高',
-              accessMode: AccessMode.workspaceWrite,
+              access: const PermissionChip(
+                icon: 'permissionWorkspaceWrite',
+                label: '工作区内可改',
+                warn: false,
+              ),
               sendMode: SendMode.queue,
               sending: false,
               onSend: () {},
@@ -733,6 +753,77 @@ void main() {
         findsOneWidget,
         reason: 'openDrawer() 必须真的把抽屉打开（真机上这里曾经完全没反应）',
       );
+    });
+  });
+
+  // 议题 3 的硬判据：**任何界面状态下，从根界面出发 ≤2 次点击走到"重新配对"**。
+  // 三个代表状态各钉一条（写不成断言不算做完）：
+  //   ① 已配对 + 有会话：顶栏状态位 → 连接 sheet → 重新配对（2 次）。
+  //   ② 已配对 + 空态：空态"重新配对"按钮（1 次）。
+  //   ③ 未配对：空态"连电脑（配对）"（1 次，回配对页）。
+  group('议题 3：任何状态 ≤2 次点击走到"重新配对"', () {
+    testWidgets('① 已配对 + 有会话：状态位 → sheet → 重新配对（2 次点击）', (tester) async {
+      final app = AppModel(
+        client: FakeClient(
+          sessions: [
+            {'sid': 's1', 'updatedAt': 1},
+          ],
+        ),
+      );
+      await app.refreshSessions();
+      var rePair = 0;
+      await tester.pumpWidget(
+        _wrap(app, paired: true, onRePair: () => rePair += 1),
+      );
+      await tester.pumpAndSettle();
+
+      // 第 1 次点击：顶栏连接状态位（已配对时常驻，点它开连接操作 sheet）。
+      expect(
+        find.byType(DshStatusPill),
+        findsOneWidget,
+        reason: '已配对时连接状态位必须常驻，否则重配没有 ≤2 步的落点',
+      );
+      await tester.tap(find.byType(DshStatusPill));
+      await tester.pumpAndSettle();
+      expect(find.text('重新配对（换一台电脑）'), findsOneWidget);
+      expect(find.text('打开侧面板'), findsOneWidget);
+
+      // 第 2 次点击：sheet 里的"重新配对"。
+      await tester.tap(find.text('重新配对（换一台电脑）'));
+      await tester.pumpAndSettle();
+      expect(rePair, 1, reason: '从根界面 2 次点击必须触发重新配对');
+    });
+
+    testWidgets('② 已配对 + 空态：空态"重新配对"按钮 1 次点击直达', (tester) async {
+      final app = AppModel(client: FakeClient());
+      var rePair = 0;
+      await tester.pumpWidget(
+        _wrap(app, paired: true, onRePair: () => rePair += 1),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('还没有会话'), findsOneWidget);
+      // 空态下"重新配对（换一台电脑）"是唯一的（此刻没有开 sheet），点它直达。
+      expect(find.text('重新配对（换一台电脑）'), findsOneWidget);
+      await tester.tap(find.text('重新配对（换一台电脑）'));
+      await tester.pumpAndSettle();
+      expect(rePair, 1, reason: '空态下 1 次点击即触发重新配对');
+    });
+
+    testWidgets('③ 未配对：空态"连电脑（配对）"1 次点击进配对', (tester) async {
+      var connect = 0;
+      await tester.pumpWidget(
+        _wrap(
+          AppModel(client: FakeClient()),
+          paired: false,
+          onConnect: () => connect += 1,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('连电脑（配对）'));
+      await tester.pump();
+      expect(connect, 1, reason: '未配对时 1 次点击即回到配对入口');
     });
   });
 }

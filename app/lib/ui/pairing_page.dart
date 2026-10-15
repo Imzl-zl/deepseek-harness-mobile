@@ -49,6 +49,7 @@ import '../core/transport.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
+import 'qr_scan_page.dart';
 
 /// 配对完成的结果（交给装配点去落盘与建连）。
 class PairingResult {
@@ -160,6 +161,21 @@ class _PairingPageState extends State<PairingPage> {
     if (attempt != null) unawaited(attempt.cancel());
     _input.dispose();
     super.dispose();
+  }
+
+  /// 扫码：把摄像头取到的二维码内容**原样交给 [_connect] 那条链**。
+  ///
+  /// 为什么不另写一条配对路径：扫码改的只是"载荷从哪来"(摄像头 vs 剪贴板),
+  /// 后面的换票 / 升级 / 受限握手 / 确认 / 落盘**完全同一套**。
+  /// 另写一条就等于让"配对怎么走"有两个答案,而它们迟早不一致。
+  Future<void> _scan() async {
+    final scanned = await Navigator.of(
+      context,
+    ).push<String>(MaterialPageRoute(builder: (_) => const QrScanPage()));
+    // `null` = 用户按返回退出取景;空串 = 扫到了但不是我们要的载荷。
+    if (scanned == null || scanned.isEmpty) return;
+    _input.text = scanned;
+    await _connect();
   }
 
   /// 第一段：解析二维码 → 换票 → 带票升级 → 受限握手。**不发秘密。**
@@ -305,9 +321,37 @@ class _PairingPageState extends State<PairingPage> {
         padding: const EdgeInsets.all(16),
         children: [
           const _Step(index: 1, text: '在电脑上执行出码命令，得到二维码（5 分钟内有效、一次性）'),
-          const _Step(index: 2, text: '把二维码内容粘贴到下面，点"连接电脑"'),
+          const _Step(index: 2, text: '扫二维码，或把内容粘贴到下面'),
           const _Step(index: 3, text: '核对电脑身份；确认之后，配对码才会发出去'),
           const SizedBox(height: 12),
+          // **扫码是首选入口**，粘贴是兜底。
+          //
+          // 为什么扫码在前：二维码本来就在电脑屏幕上，摄像头对着就完事；
+          // 而那段 JSON 有 290 字节（含两把 64 字符公钥），手打既容易错
+          // 也没法"扫"。深链拉起（二维码编码 dshmobile:// URL、系统相机扫完
+          // 唤起 App）被否：用户已经在 App 里了，切去系统相机再切回来是多两次
+          // 上下文切换，见
+          // `.agents/notes/implemented/2026-10-14-pairing-scans-in-app.md`
+          FilledButton.icon(
+            onPressed: _busy || attempt != null ? null : _scan,
+            style: FilledButton.styleFrom(
+              backgroundColor: DshColors.accentBlue,
+              foregroundColor: DshColors.onAccent,
+            ),
+            icon: const DshIcon(
+              // **必须是 DSH 图标集里的名字**：`dsh_icons.dart` 查不到键就抛，
+              // 而那个 ErrorWidget 会把本页的输入框与按钮**挤出屏幕** ——
+              // 2026-10-15 真机上就这样整个配对页变成一块红（当时写的是
+              // `cameraScan`，集合里没有它）。判据由
+              // `mock/proto/tools/verify-icons.cjs` 的"app/lib 引用的图标都存在"
+              // 那条守着。
+              'inspect',
+              size: 16,
+              color: DshColors.onAccent,
+            ),
+            label: const Text('扫一扫'),
+          ),
+          const SizedBox(height: 8),
           TextField(
             controller: _input,
             minLines: 3,

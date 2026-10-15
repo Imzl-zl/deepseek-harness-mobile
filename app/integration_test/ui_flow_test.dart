@@ -17,6 +17,7 @@ library;
 
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/errors.dart';
+import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
@@ -39,6 +40,8 @@ class _FakeClient implements SyncClient {
   Future<void> setAppState(AppState state) async {}
   @override
   Future<void> close() async {}
+  @override
+  Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
   @override
   Future<void> subscribe(String sid, {required int since}) async {}
   @override

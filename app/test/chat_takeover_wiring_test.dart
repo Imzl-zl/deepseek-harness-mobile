@@ -16,6 +16,7 @@ library;
 
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/errors.dart';
+import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
@@ -36,6 +37,9 @@ class _FakeClient implements SyncClient {
   Future<void> setAppState(AppState state) async {}
   @override
   Future<void> close() async {}
+
+  @override
+  Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
   @override
   Future<void> subscribe(String sid, {required int since}) async {}
   @override
@@ -48,6 +52,105 @@ class _FakeClient implements SyncClient {
     Map<String, Object?> params, {
     String? requestId,
   }) async => throw const ProtocolException(ErrorCode.relayOffline, '测试里不连');
+}
+
+/// 权限链的假电脑：给真目录、真切换、真投影回读。
+///
+/// **为什么要单独一个**：`_FakeClient` 对一切都回 `relayOffline`，
+/// 于是权限 sheet 只会说"拿不到目录"。而"切了权限档，接管队列真的跟着变"
+/// 这条接线要**走完整条链**才验得到：目录 → sheet → `permission.switch`
+/// → 电脑侧落新值 → 重读投影 → chip 与接管队列都变。
+///
+/// 形状照 DSH 的 base 配置（`packages/bundle/base/cordis.patch.yml:262-271`）：
+/// 三个预设、`name` 没配所以 DSH 回显键本身（`optionOf`，`permission-presets/src/index.ts:389`）。
+class _PermissionFakeClient implements SyncClient {
+  /// 电脑侧的当前档位（切换后由本假身改它，模拟 DSH 落盘 + 投影更新）。
+  String current = 'workspace-write';
+
+  /// 收到过哪些切换（断言用）。
+  final List<String> switched = <String>[];
+
+  @override
+  ConnectionState get state => ConnectionState.serving;
+  @override
+  Stream<ConnectionState> get connection => const Stream.empty();
+  @override
+  Future<void> start() async {}
+  @override
+  Future<void> setAppState(AppState state) async {}
+  @override
+  Future<void> close() async {}
+  @override
+  Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
+  @override
+  Future<void> subscribe(String sid, {required int since}) async {}
+  @override
+  Future<void> unsubscribe(String sid) async {}
+  @override
+  Stream<SessionDelta> sessionUpdates(String sid) => const Stream.empty();
+
+  @override
+  Future<T> call<T>(
+    String method,
+    Map<String, Object?> params, {
+    String? requestId,
+  }) async {
+    switch (method) {
+      case 'permission.catalog':
+        final catalog = <String, Object?>{
+          'available': true,
+          'catalog': <String, Object?>{
+            'options': <Object?>[
+              <String, Object?>{'value': 'read-only', 'name': 'read-only'},
+              <String, Object?>{
+                'value': 'workspace-write',
+                'name': 'workspace-write',
+              },
+              <String, Object?>{
+                'value': 'danger-full-access',
+                'name': 'danger-full-access',
+                'description': 'Full file access without approval prompts.',
+              },
+            ],
+            'defaultOptions': <Object?>[
+              <String, Object?>{'value': 'read-only', 'name': 'read-only'},
+              <String, Object?>{
+                'value': 'workspace-write',
+                'name': 'workspace-write',
+              },
+              <String, Object?>{
+                'value': 'danger-full-access',
+                'name': 'danger-full-access',
+              },
+            ],
+            'defaultPreset': 'workspace-write',
+          },
+        };
+        return catalog as T;
+      case 'permission.switch':
+        final preset = params['preset'];
+        switched.add(preset is String ? preset : '');
+        current = preset is String ? preset : current;
+        final reply = <String, Object?>{
+          'matched': true,
+          'execution': <String, Object?>{
+            'commandId': 'cmd-1-1',
+            'result': <String, Object?>{
+              'kind': 'success',
+              'text': 'preset $preset',
+            },
+          },
+        };
+        return reply as T;
+      case 'session.projections':
+        final projections = <String, Object?>{
+          'permissions': <String, Object?>{'currentValue': current},
+        };
+        return projections as T;
+      default:
+        throw const ProtocolException(ErrorCode.relayOffline, '测试里不连');
+    }
+  }
 }
 
 Future<void> _pumpChat(WidgetTester tester) async {
@@ -72,6 +175,35 @@ Future<void> _pumpChat(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+/// 用权限假电脑起一页聊天（目录 / 切换 / 投影都真）。
+Future<(AppModel, _PermissionFakeClient)> _pumpChatWithPermission(
+  WidgetTester tester,
+) async {
+  final client = _PermissionFakeClient();
+  final app = AppModel(client: client);
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: DshTheme.dark(),
+      home: ChatPage(
+        app: app,
+        paired: false,
+        onOpenDrawer: () {},
+        onNewSession: () {},
+        drawer: const Drawer(child: SizedBox()),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('看示例数据'));
+  await tester.pumpAndSettle();
+  await app.openSession('preview-1');
+  await tester.pumpAndSettle();
+  // 目录随 `refreshSessions` 一起拉（与 `session.modelCatalog` 同一条纪律）。
+  await app.refreshSessions();
+  await tester.pumpAndSettle();
+  return (app, client);
+}
+
 /// 走 `＋` 菜单 → "演示：接管输入栏"。
 Future<void> _enqueueDemo(WidgetTester tester) async {
   await tester.tap(find.byTooltip('添加文件或调用指令'));
@@ -81,6 +213,16 @@ Future<void> _enqueueDemo(WidgetTester tester) async {
   await tester.ensureVisible(find.text('演示：接管输入栏'));
   await tester.pumpAndSettle();
   await tester.tap(find.text('演示：接管输入栏'));
+  await tester.pumpAndSettle();
+}
+
+/// 把浮在底部的 SnackBar 放完（默认 4 s 自动消失）。
+///
+/// 切换权限档成功后有一句 toast，而它**正盖在输入栏上方** ——
+/// 不等它走掉，下一个 `tap('＋')` 会"would not hit test"。
+/// 用 `pump(duration)` 推进假时钟，让那个计时器真的到点。
+Future<void> _drainSnackBars(WidgetTester tester) async {
+  await tester.pump(const Duration(seconds: 5));
   await tester.pumpAndSettle();
 }
 
@@ -155,9 +297,16 @@ void main() {
     // §7.10：完全权限下审批不再逐次确认 —— 那是"已授权"的**结果**。
     // 这一条在接管层有用例，这里验的是**接线**：切了权限档，
     // 聊天页里的接管队列真的跟着变了。
-    await _pumpChat(tester);
+    //
+    // **走完整条链**（目录 → sheet → `permission.switch` → 电脑侧落值 →
+    // 重读投影）：权限档的真值在电脑侧，手机不再持有本地副本，
+    // 所以这条接线只能这样验。曾经这里点的是一个写死的三档枚举。
+    final (app, client) = await _pumpChatWithPermission(tester);
 
-    // 先切到完全权限（走权限 sheet + 风险门）。
+    // 还没切：电脑侧说是 workspace-write。
+    expect(find.byTooltip('工作区内可改'), findsOneWidget);
+
+    // 走权限 sheet + 风险门切到完全权限。
     await tester.tap(find.byTooltip('工作区内可改'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('完全权限'));
@@ -168,6 +317,17 @@ void main() {
     await tester.tap(find.text('启用'));
     await tester.pumpAndSettle();
 
+    expect(client.switched, [
+      'danger-full-access',
+    ], reason: '切预设必须真的发到电脑侧，而不是只改本地字段');
+    expect(
+      app.permissionValue,
+      'danger-full-access',
+      reason: '当前档位来自 `permissions` 投影，切换后要重读',
+    );
+    expect(find.byTooltip('完全权限'), findsOneWidget);
+
+    await _drainSnackBars(tester);
     await _enqueueDemo(tester);
 
     // 审批被跳过 ⇒ 队首是计划（优先级仍高于提问）。

@@ -4,6 +4,9 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<!-- 配对页"扫一扫"要用摄像头。iOS 上不写这一条，请求权限会直接崩。 -->
+	<key>NSCameraUsageDescription</key>
+	<string>扫描电脑上的配对二维码，把电脑添加为可信设备。</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

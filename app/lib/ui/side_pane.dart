@@ -289,7 +289,9 @@ class SidePane extends StatelessWidget {
                   jobs: subs,
                   openIds: openJobIds,
                   onToggle: onToggleJob,
-                  emptyText: '没有子代理。',
+                  // 空态说清数据来源：2026-10-15 之前这里**无条件**显示两条
+                  // 写死的示例子代理，而用户无法分辨哪个是真的。
+                  emptyText: '没有子智能体（数据来自会话投影 subagentCatalog）。',
                 ),
               },
             ),

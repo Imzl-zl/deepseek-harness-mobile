@@ -21,8 +21,10 @@
 ///
 /// 换票失败**不静默降级成"连根路径试试"**：那会得到一个必然的 404，
 /// 而症状与"没护照就去登机"一样 —— 错误信息指向连接失败，真因是凭据。
-/// 抛出的 [TransportException] 会让连接层进退避重连（那是正确的处置：
-/// 中转临时不可用时退避重试，凭据错了则每次都如实报同一个错）。
+/// 抛出的 [TransportException] **带上原始错误码**，让连接层区分两类失败：
+/// 中转临时不可达（`rateLimited` 等）→ 退避重试；身份不被认
+/// （`notPaired`/`revoked`）→ **一次性终态**，交上层清凭据回配对页，
+/// 不进退避（议题 2：否则用户永远卡在"重连中…"）。
 ///
 /// Note: 为什么每次建连都要换票、为什么用设备令牌换 —— 见
 /// `.agents/notes/implemented/2026-10-02-pairing-bootstrap-and-device-binding.md`
@@ -64,9 +66,16 @@ class TicketedWebSocketTransport implements ChannelTransport {
       value = await ticket();
     } on ProtocolException catch (error) {
       // 换票被拒（401 凭据不对 / 409 登记不可用 / 429 限流）：
-      // 归成传输层错误，让连接层按退避重试。**带上原始信息** ——
-      // "换票失败"与"连不上"在日志里必须能分开，否则 401 会被当成网络问题查半天。
-      throw TransportException('换票失败：${error.message}');
+      // 归成传输层错误，但**带上原始错误码**（`error.code`）。
+      //
+      // 丢掉码是议题 2 的真因：连接层于是只会在"网络失败"和"身份不被认"之间
+      // 看成一回事，进退避重连，永远转圈。带上码之后，连接层能按
+      // `code.clientAction` 区分 —— `notPaired`/`revoked` 是**一次性终态**
+      // （清凭据 + 回配对页），`rateLimited`/网络类才退避重试。
+      //
+      // **仍带上原始信息**："换票失败"与"连不上"在日志里必须能分开，
+      // 否则 401 会被当成网络问题查半天。
+      throw TransportException('换票失败：${error.message}', code: error.code);
     }
     final transport = WebSocketTransport(
       WebSocketTransportOptions(

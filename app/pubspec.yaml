@@ -40,6 +40,15 @@ dependencies:
   # **不要**加 cryptography_flutter：它把调用委托给系统 API，纯 Dart 单测里没有那些 API。
   cryptography: ^2.9.0
 
+  # 配对页"扫一扫"：摄像头取景 + 二维码解码。
+  # 选型：`mobile_scanner` 安卓走 ML Kit、iOS 走 AVFoundation，一个包覆盖两端。
+  # **不引 camera + 手写解码**：那是两个依赖加一整个 Reed-Solomon 解码器，
+  # 而"扫一个二维码"没有需要自定义的残留逻辑。
+  # 鸿蒙它不支持，而鸿蒙本就暂缓（见 memory.md 的范围决定）。
+  # 被否的"深链拉起"方案（二维码编码 dshmobile:// URL、系统相机扫完唤起 App）
+  # 见 .agents/notes/implemented/2026-10-14-pairing-scans-in-app.md
+  mobile_scanner: ^7.1.0
+
   # WebSocket 客户端。**Dart 官方包**（publisher = tools.dart.dev，dart-lang/http 仓），
   # 它把 `dart:io` 的 WebSocket 包成跨平台 StreamChannel。
   # 用它而不是直接用 `dart:io` 的 WebSocket：

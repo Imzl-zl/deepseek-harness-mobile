@@ -110,21 +110,30 @@ class GanttRow {
 }
 
 /// 轨迹页。
+///
+/// **没有示例数据兜底**：`rows` / `entries` 为 null 时显示空态，不造一份假的。
+/// 2026-10-15 之前这里是 `_sampleRows` / `_sampleEntries` 兜底，而调用方
+/// （`chat_page.dart` 的 `_TrajectoryTab`）从不传真数据 —— 于是轨迹页
+/// **常驻假数据**，用户无法分辨。真数据通路是 `turnOutline` 投影
+/// （`session.projections`，契约 §5.7）。
 class TrajectoryTab extends StatelessWidget {
   const TrajectoryTab({super.key, this.rows, this.entries, this.onTapEntry});
 
-  /// 甘特的行；`null` = 用示例数据。
+  /// 甘特的行；`null` / 空 = 空态（不造假的）。
   final List<GanttRow>? rows;
 
-  /// 账本条目的行；`null` = 用示例数据。
+  /// 账本条目的行；`null` / 空 = 空态（不造假的）。
   final List<TraceEntry>? entries;
 
   final void Function(TraceEntry entry)? onTapEntry;
 
   @override
   Widget build(BuildContext context) {
-    final ganttRows = rows ?? _sampleRows;
-    final traceEntries = entries ?? _sampleEntries;
+    final ganttRows = rows ?? const [];
+    final traceEntries = entries ?? const [];
+    if (ganttRows.isEmpty && traceEntries.isEmpty) {
+      return const _EmptyTrajectory();
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -405,74 +414,41 @@ class _Chip extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// 示例数据（照 `mock/proto/index.html` 的轨迹页）
+// 空态
 //
-// 它是**占位**：真的轨迹要等 `session.trajectory` 那条数据通路接上。
-// 放在这里而不是单独一个文件：它是"这一屏长什么样"的样例。
+// **没有示例数据兜底**（2026-10-15 删）。真数据通路是 `turnOutline` 投影
+// （`session.projections`，契约 §5.7）；没接上之前说"还没接"，
+// 不造一份假的 —— 假轨迹看起来和真轨迹一模一样，用户无法分辨。
 // ---------------------------------------------------------------------------
 
-const List<GanttRow> _sampleRows = [
-  GanttRow(
-    label: '输入',
-    color: DshColors.businessBlue,
-    spans: [GanttSpan(startPercent: 0, widthPercent: 9)],
-  ),
-  GanttRow(
-    label: '模型',
-    color: DshColors.roleAssistant,
-    spans: [
-      GanttSpan(startPercent: 9, widthPercent: 14, opacity: 0.5),
-      GanttSpan(startPercent: 23, widthPercent: 26),
-      GanttSpan(startPercent: 64, widthPercent: 18, opacity: 0.6),
-    ],
-  ),
-  GanttRow(
-    label: '工具',
-    color: DshColors.roleTool,
-    spans: [
-      GanttSpan(startPercent: 49, widthPercent: 7),
-      GanttSpan(startPercent: 57, widthPercent: 6),
-    ],
-  ),
-  GanttRow(
-    label: '错误',
-    color: DshColors.error,
-    spans: [GanttSpan(startPercent: 82, widthPercent: 3)],
-  ),
-];
+/// 轨迹页的空态。
+class _EmptyTrajectory extends StatelessWidget {
+  const _EmptyTrajectory();
 
-const List<TraceEntry> _sampleEntries = [
-  TraceEntry(
-    kind: TraceKind.context,
-    name: '上下文',
-    took: '120 ms',
-    summary: '系统提示词 + 工具定义注入，含 4 个 MCP server',
-  ),
-  TraceEntry(
-    kind: TraceKind.assistant,
-    name: '助手',
-    took: '12.4 s',
-    summary: '我先快速看一下现有导航实现，再决定改哪几个文件。',
-  ),
-  TraceEntry(
-    kind: TraceKind.tool,
-    name: '工具 · read',
-    took: '84 ms',
-    summary: 'rikkahub/…/ChatPage.kt → 741 行',
-    mono: true,
-  ),
-  TraceEntry(
-    kind: TraceKind.tool,
-    name: '工具 · edit',
-    took: '310 ms',
-    summary: 'app/lib/ui/chat_page.dart +128 −46',
-    mono: true,
-  ),
-  TraceEntry(
-    kind: TraceKind.error,
-    name: '错误',
-    took: '1.2 s',
-    summary: 'flutter analyze: unused_import（已自动修复）',
-    mono: true,
-  ),
-];
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            DshIcon('gauge', size: 40, color: DshColors.labelTertiary),
+            SizedBox(height: 16),
+            Text(
+              '还没有轨迹',
+              style: TextStyle(fontSize: 15, color: DshColors.labelSecondary),
+            ),
+            SizedBox(height: 8),
+            Text(
+              '电脑侧跑完一轮后，这里会显示这一轮的时间轴与每一步的耗时。\n'
+              '数据来自会话投影 turnOutline。',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: DshColors.labelTertiary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

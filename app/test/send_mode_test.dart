@@ -9,6 +9,7 @@ library;
 
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/errors.dart';
+import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/data/store.dart';
@@ -36,6 +37,9 @@ class _IdleClient implements SyncClient {
 
   @override
   Future<void> close() async {}
+
+  @override
+  Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
 
   @override
   ConnectionState get state => ConnectionState.idle;

@@ -28,10 +28,15 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// 假的传输：把发出去的行记下来，并允许测试"从对端"注入行。
 class FakeTransport implements ChannelTransport {
-  FakeTransport({this.failConnect = false});
+  FakeTransport({this.failConnect = false, this.failConnectWith});
 
   /// 连接建立是否失败（测退避用）。
   bool failConnect;
+
+  /// 建连时抛一个**带错误码**的传输错误（测"换票被拒 → 终态不进退避"）。
+  ///
+  /// 优先于 [failConnect]：给了它就抛它（如 `TransportException(..., code: notPaired)`）。
+  final TransportException? failConnectWith;
 
   final List<String> sent = [];
   StreamController<TransportEvent>? _controller;
@@ -45,6 +50,8 @@ class FakeTransport implements ChannelTransport {
   @override
   Future<Stream<TransportEvent>> connect() async {
     connectCount += 1;
+    final coded = failConnectWith;
+    if (coded != null) throw coded;
     if (failConnect) throw const TransportException('连不上');
     _controller = StreamController<TransportEvent>();
     return _controller!.stream;
@@ -153,8 +160,15 @@ void main() {
     DeviceSession session,
     InMemoryOutboxStore store,
   })
-  buildDeps({bool failConnect = false, ItemPersister? persistence}) {
-    final transport = FakeTransport(failConnect: failConnect);
+  buildDeps({
+    bool failConnect = false,
+    TransportException? failConnectWith,
+    ItemPersister? persistence,
+  }) {
+    final transport = FakeTransport(
+      failConnect: failConnect,
+      failConnectWith: failConnectWith,
+    );
     final clock = FakeClock();
     final session = DeviceSession();
     final store = InMemoryOutboxStore();
@@ -406,6 +420,70 @@ void main() {
       f.clock.advance(600);
       await Future<void>.delayed(Duration.zero);
       expect(f.transport.connectCount, 2);
+
+      await client.close();
+    });
+
+    test('换票被拒（notPaired）→ **终态停摆**：不进 backoff、不重连', () async {
+      // 议题 2：设备被停用/删除后，中转 `/ws-ticket` 回 401 → 传输层带
+      // `notPaired` 码抛出（`TicketedWebSocketTransport` / `EndpointTransport`）。
+      // 连接层必须把它当**一次性终态**：停在 closed、不退避、不重连 ——
+      // 否则每次都拿到同一个 401，用户永远卡在"重连中…"（用户原话）。
+      final f = buildDeps(
+        failConnectWith: const TransportException(
+          '换票失败：换票被拒（HTTP 401）',
+          code: ErrorCode.notPaired,
+        ),
+      );
+      final client = createSyncClient(f.deps);
+      await client.start();
+
+      expect(
+        client.state,
+        ConnectionState.closed,
+        reason: '终态：停在 closed，不进 backoff',
+      );
+      expect(f.transport.connectCount, 1);
+
+      // 时钟走到天涯海角也不该重连（对比上面那条：网络失败会重连）。
+      f.clock.advance(120000);
+      await Future<void>.delayed(Duration.zero);
+      expect(f.transport.connectCount, 1, reason: '身份不被认时退避重连毫无意义，绝不重连');
+
+      final probe = client as SyncClientProbe;
+      expect(probe.lastConnectWasTerminal, isTrue);
+      expect(probe.lastProtocolError?.code, ErrorCode.notPaired);
+
+      // 终态后直接回前台（机器还在 `closed`）：`setAppState(foreground)` 会把 closed
+      // 当"该重连"调 `start()` → 若无守卫会走 `closed → connecting`（**非法迁移，会炸**）。
+      // 守卫挡掉它：不重连、不抛（这行 await 若抛即红）。
+      await client.setAppState(AppState.foreground);
+      await Future<void>.delayed(Duration.zero);
+      expect(f.transport.connectCount, 1, reason: '终态客户端回前台也不重连、不炸');
+
+      await client.close();
+    });
+
+    test('换票被限流（429 → rateLimited）→ **照旧退避重试**，不是终态', () async {
+      // 议题 2 的对照面：限流是"稍后重试"，不是"永久失败"。连接层必须把它
+      // 与 notPaired 分开 —— 退避重连、不清凭据、不回配对页。
+      final f = buildDeps(
+        failConnectWith: const TransportException(
+          '换票失败：换票被拒（HTTP 429）',
+          code: ErrorCode.rateLimited,
+        ),
+      );
+      final client = createSyncClient(f.deps);
+      await client.start();
+
+      expect(client.state, ConnectionState.backoff, reason: '限流进退避，不是终态');
+      final probe = client as SyncClientProbe;
+      expect(probe.lastConnectWasTerminal, isFalse, reason: '限流不是终态');
+
+      // 到点重连（对比终态：绝不重连）。
+      f.clock.advance(1100);
+      await Future<void>.delayed(Duration.zero);
+      expect(f.transport.connectCount, 2, reason: '限流照旧退避后重连');
 
       await client.close();
     });

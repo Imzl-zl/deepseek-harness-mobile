@@ -8,8 +8,11 @@
 ///    日志里没有原因"——中转对未知路径只回 404 并 `log?.debug`。根地址带路径
 ///    （配置里常见的 `/ws/connector`，那是**电脑侧拨号**用的那条）时必须丢掉路径，
 ///    否则拼出 `/ws/connector/ws/device`。
-/// 2. **生产必须 WSS**：明文只在显式开启的本机调试里放行。放行范围写宽了不会报错，
-///    只会让"以为加密了"的链路真的走明文。
+/// 2. **生产必须 WSS**：明文只在显式开启的**非公网**调试里放行。放行范围写宽了
+///    不会报错，只会让"以为加密了"的链路真的走明文。
+///
+/// 端点作为一等公民的那部分（`Endpoint` / `mergeEndpoints` / 私网判定）
+/// 在 `endpoint_switching_test.dart`。
 library;
 
 import 'package:dsh_mobile/core/endpoint.dart';
@@ -65,12 +68,14 @@ void main() {
       );
     });
 
-    test('显式开启本机调试后，回环 ws 才放行', () {
+    test('显式开启本机调试后，非公网 ws 才放行', () {
       expect(
         checkedRelayUri('ws://127.0.0.1:8787', allowInsecureLocal: true).host,
         '127.0.0.1',
       );
-      // 明文放行**只**给回环：给一台公网主机就是真的走明文了。
+      // 明文放行只给**非公网**地址（回环 / 私网 / CGNAT / link-local / ULA）：
+      // 给一台公网主机就是真的走明文了。范围从"仅回环"扩到私网的取舍见
+      // `.agents/notes/implemented/2026-10-14-endpoint-switching-lan-direct.md`。
       expect(
         () => checkedRelayUri('ws://relay.example', allowInsecureLocal: true),
         throwsA(isA<ProtocolException>()),

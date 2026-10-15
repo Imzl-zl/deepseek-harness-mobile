@@ -35,16 +35,18 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/job.dart';
 import '../data/app_model.dart';
 import '../model/chat_item.dart';
+import '../model/permission.dart';
 import '../model/send_mode.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 import 'chat_turns.dart';
+import 'connection_actions_sheet.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_composer.dart';
-import 'dsh_diff.dart';
 import 'dsh_sheet.dart';
 import 'side_pane.dart';
 import 'takeover.dart';
@@ -61,6 +63,8 @@ class ChatPage extends StatefulWidget {
     this.onOpenSession,
     this.paired = true,
     this.onConnect,
+    this.onRePair,
+    this.onDisconnect,
   });
 
   final AppModel app;
@@ -83,6 +87,14 @@ class ChatPage extends StatefulWidget {
   final bool paired;
 
   final VoidCallback? onConnect;
+
+  /// 「重新配对（换一台电脑）」：清掉本机凭据 + 回配对页（装配层注入）。
+  ///
+  /// 议题 3 的落点：顶栏连接状态位、空态出路两处点它都经连接操作 sheet 确认。
+  final VoidCallback? onRePair;
+
+  /// 「断开并清掉凭据」但**不**进配对页（装配层注入；聊天页自己不给这个入口）。
+  final VoidCallback? onDisconnect;
 
   @override
   State<ChatPage> createState() => ChatPageState();
@@ -118,10 +130,11 @@ class ChatPageState extends State<ChatPage> {
   int _fileTab = 0;
 
   /// 展开了哪些任务行。
-  final Set<String> _openJobs = {'j1'};
-
-  /// 当前访问模式（原型默认"工作区内可改"）。
-  AccessMode _accessMode = AccessMode.workspaceWrite;
+  /// 展开着的任务（UI 的展开态；订阅状态以电脑侧为准）。
+  ///
+  /// **不预展开任何一个**：早先写死 `{'j1'}` 会让第一屏就显示一个
+  /// 不存在任务的输出 —— 而那是示例数据时代的遗留。
+  final Set<String> _openJobs = <String>{};
 
   /// 风险门里的勾选态。
   ///
@@ -140,6 +153,12 @@ class ChatPageState extends State<ChatPage> {
   /// 外层用 `GlobalKey<ChatPageState>` 调它（顶栏 `☰`、空态里的"打开会话抽屉"）。
   /// **抽屉归本页的 `Scaffold`**，所以只有这里能开它 —— 外层拿不到那个 `Scaffold`。
   void openDrawer() => _scaffoldKey.currentState?.openDrawer();
+
+  /// 打开右侧抽屉（文件 / 任务 / 子代理）。
+  ///
+  /// 连接操作 sheet 的「打开侧面板」经它落（那一条原来直接挂在顶栏状态位上，
+  /// 现在状态位改弹连接操作 sheet，"打开侧面板"降为 sheet 里的一个选项）。
+  void openSide() => setState(() => _sideOpen = true);
 
   @override
   void initState() {
@@ -209,21 +228,23 @@ class ChatPageState extends State<ChatPage> {
     }
   }
 
-  /// 切权限档（**唯一的入口**）。
+  /// 把电脑侧的真值同步给接管队列（**每次 build 调，幂等**）。
   ///
-  /// ## 为什么要收成一个方法
+  /// ## 为什么放在 build 里
   ///
-  /// 原先两处 `setState(() => _accessMode = …)` 各自赋值，而**接管队列的
-  /// `fullAccess` 只在接管自己 notify 时才同步** —— 于是"切到完全权限"之后，
-  /// 审批**照样入队**（那个标志还是旧的）。
+  /// 权限档的真值在电脑侧（`permissions` 投影），手机不再持有本地副本 ——
+  /// 于是"改权限"与"同步给接管"必须是同一件事的两面，而不是两个各自赋值的地方。
+  /// 历史上正是两处 `setState(() => _accessMode = …)` 各自赋值，
+  /// 而接管队列的 `fullAccess` 只在接管自己 notify 时才同步，于是"切到完全权限"
+  /// 之后审批**照样入队**（那个标志还是旧的）—— 不崩、不报错，
+  /// 只会让"完全权限下不再逐次确认"这句话变成假的。
   ///
-  /// 这条 bug 不会崩、不会报错，只会让"完全权限下不再逐次确认"这句话变成假的。
-  /// 收成一个方法之后，"改权限"与"同步给接管"必然一起发生。
-  void _setAccessMode(AccessMode mode) {
-    setState(() {
-      _accessMode = mode;
-      _takeover.fullAccess = mode == AccessMode.fullAccess;
-    });
+  /// 与 `_takeover.setCurrentSid` 同一个口径：控制器内部重复设不通知。
+  ///
+  /// **取不到当前值时按"不是完全权限"算**：那是保守侧 —— 宁可多问一次，
+  /// 也不要因为"不知道"就跳过审批。
+  void _syncTakeoverAccess() {
+    _takeover.fullAccess = widget.app.permissionValue == fullAccessPreset;
   }
 
   void _onTakeoverChanged() {
@@ -310,6 +331,9 @@ class ChatPageState extends State<ChatPage> {
     // 放在 build 里而不是某个点击回调：切会话的路径有两条（抽屉、内联列表），
     // 漏一条就会"切过去了但卡片没换"。控制器内部幂等，重复设不通知。
     _takeover.setCurrentSid(widget.app.currentSid);
+    _syncTakeoverAccess();
+    // 任务清单按会话取；`sid` 为 null（列表页）时给空表。
+    final jobsSid = widget.app.currentSid;
     return ListenableBuilder(
       listenable: widget.app,
       builder: (context, _) {
@@ -335,17 +359,15 @@ class ChatPageState extends State<ChatPage> {
                   onClose: _closeSide,
                   fileBody: _fileBody(),
                   fileActions: _fileActions(),
-                  jobs: _previewJobs(),
-                  subs: _previewSubs(),
-                  runningJobs: _previewJobs().where((j) => j.isLive).length,
-                  runningSubs: _previewSubs().where((j) => j.isLive).length,
-                  onToggleJob: (job) => setState(() {
-                    if (!_openJobs.remove(job.id)) _openJobs.add(job.id);
-                  }),
+                  jobs: _jobsFor(jobsSid),
+                  subs: _subsFor(),
+                  runningJobs: _jobsFor(jobsSid).where((j) => j.isLive).length,
+                  runningSubs: _subsFor().where((j) => j.isLive).length,
+                  onToggleJob: (job) => _toggleJob(job),
                   // 停止：任务面板里最常见的那件事。**不传它就永远没有停止按钮**
                   //（渲染条件里有 `onStop != null`）—— 第一版就漏了传，
                   // 截图里运行中的任务旁边空着。
-                  onStopJob: (job) => _toast('停止 ${job.label}'),
+                  onStopJob: (job) => _stopJob(job),
                   openJobIds: _openJobs,
                 ),
               ),
@@ -380,7 +402,7 @@ class ChatPageState extends State<ChatPage> {
         statusText: _statusText(),
         statusIcon: _statusIcon(),
         statusIsWarn: !widget.paired,
-        onStatusTap: _openSide,
+        onStatusTap: _onStatusTap,
       ),
       body: Column(
         children: [
@@ -399,6 +421,8 @@ class ChatPageState extends State<ChatPage> {
                     onRefreshSessions: _refreshSessions,
                     onOpenSession: widget.onOpenSession ?? (_) {},
                     onConnect: widget.onConnect,
+                    // 已配对时给空态一条"重新配对"的出路（议题 3，1 步直达）。
+                    onRePair: widget.paired ? widget.onRePair : null,
                   )
                 : _TrajectoryTab(onTapEntry: _showTraceSheet),
           ),
@@ -422,7 +446,10 @@ class ChatPageState extends State<ChatPage> {
                   // 推理等级同样不写死：模型自带 effort 时显示它，否则显示"默认"。
                   modelName: _modelLabel,
                   reasoningLabel: _reasoningLabel,
-                  accessMode: _accessMode,
+                  access: permissionChipOf(
+                    value: widget.app.permissionValue,
+                    catalog: widget.app.permissionCatalog,
+                  ),
                   sendMode: widget.app.sendMode,
                   sending: _sending,
                   enabled: _hasData && sid != null,
@@ -437,11 +464,15 @@ class ChatPageState extends State<ChatPage> {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   child: DshStatsBar(
-                    turnText: items.isEmpty
-                        ? null
-                        : '第 1 轮 · ${items.length} 步',
-                    usageText: items.isEmpty ? null : '302K · 缓存 0%',
-                    contextPercent: items.isEmpty ? null : 3,
+                    // **三条都从真投影来**（`session.projections` 的
+                    // `sessionStats` / `tokenUsage` / `contextPressure`）。
+                    // 2026-10-15 之前这里是写死的 `第 1 轮 · N 步` /
+                    // `302K · 缓存 0%` / `3%` —— 与电脑侧毫无关系，
+                    // 而用户无法分辨哪个是真的。**拿不到就整条不显示**，
+                    // 不猜一个数字把"看起来连着"当成"连着"。
+                    turnText: _turnText,
+                    usageText: _usageText,
+                    contextPercent: _contextPercent,
                     // 三个统计各自弹一个 sheet（原型 `sheet-stats` /
                     // `sheet-usage` / `sheet-context`）。
                     onTapTurn: _showStatsSheet,
@@ -458,16 +489,52 @@ class ChatPageState extends State<ChatPage> {
   }
 
   // ---------------------------------------------------------------------------
+  // 统计条（三条都从 `session.projections` 来）
+  // ---------------------------------------------------------------------------
+
+  /// `第 N 轮 · M 步`；轮次为 0 或读不到就是 `null`（整条不显示）。
+  String? get _turnText => widget.app.sessionStats?.turnLabel;
+
+  /// `302K · 缓存 42%`；读不到用量就是 `null`。
+  ///
+  /// **缓存率为 null 时不拼那半句**：没有输入时算不出命中率，
+  /// 而显示 `缓存 0%` 会让用户以为"缓存坏了"，其实只是这一轮还没花 token。
+  String? get _usageText {
+    final usage = widget.app.tokenUsage;
+    if (usage == null) return null;
+    final hit = usage.cacheHitRate;
+    if (hit == null) return usage.totalLabel;
+    return '${usage.totalLabel} · 缓存 ${(hit * 100).round()}%';
+  }
+
+  /// 上下文占用百分比。**没有窗口上限时给不出百分比** ——
+  /// `contextPressure` 只给 token 数，而"占了多少"要知道分母。
+  /// 所以这里只能从压力投影的 `projectedTokens` 反推，推不出就 `null`。
+  int? get _contextPercent {
+    final pressure = widget.app.contextPressure;
+    if (pressure == null) return null;
+    // `pressureTokens` 是"当前已占用"，`projectedTokens` 是" projected 到本轮结束"。
+    // 百分比要有分母，而投影不给窗口大小 —— 所以**只在两者都有时**给一个
+    // "相对上一次的增量占比"没有意义，干脆不给。
+    // 真实做法是等连接器把模型目录的 contextWindow 一起带过来（§7.9 的 picker）。
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
   // 右抽屉（文件 / 任务 / 子代理）
   // ---------------------------------------------------------------------------
 
-  /// 状态位的文字：有后台任务显任务，否则显文件变更（原型注释）。
+  /// 状态位的文字：有后台任务显任务，否则显连接状态（原型注释）。
   String? _statusText() {
     // **看示例数据时也当"有数据"** —— 否则示例模式下一半界面是死的
     //（状态位点不开右抽屉），而示例数据存在的意义正是"看看它长什么样"。
     if (!_hasData) return '未连接';
-    final live = _previewJobs().where((j) => j.isLive).length;
+    final live = _jobsFor(widget.app.currentSid).where((j) => j.isLive).length;
     if (live > 0) return '$live 任务运行中';
+    // **已配对时常驻连接状态**：顶栏连接状态位必须一直在，否则"重新配对"
+    // 在"已配对 + 无运行任务"下没有 ≤2 步的落点（议题 3 的判据）。
+    // 未配对（仅示例预览）时不常驻 —— 那条路走空态的「连电脑（配对）」。
+    if (widget.paired) return connectionLabel(widget.app.connection);
     return null;
   }
 
@@ -507,12 +574,29 @@ class ChatPageState extends State<ChatPage> {
     return effort ?? '默认';
   }
 
-  void _openSide() {
-    if (!_hasData) {
+  /// 顶栏连接状态位的点击（议题 3）。
+  ///
+  /// - **没配对**：去配对页（原有行为，空态的「连电脑（配对）」同义）。
+  /// - **已配对**：弹连接操作 sheet（含「重新配对（换一台电脑）」），
+  ///   而不是直接开右抽屉 —— 否则"重新配对"在已配对时没有 ≤2 步的落点。
+  void _onStatusTap() {
+    if (!widget.paired) {
       widget.onConnect?.call();
       return;
     }
-    setState(() => _sideOpen = true);
+    _showConnectionActionsSheet();
+  }
+
+  /// 弹连接操作 sheet（议题 3 的唯一形状，三处入口共用）。
+  void _showConnectionActionsSheet() {
+    unawaited(
+      showConnectionActionsSheet(
+        context,
+        onRePair: () => widget.onRePair?.call(),
+        onOpenSide: openSide,
+        onDisconnect: () => widget.onDisconnect?.call(),
+      ),
+    );
   }
 
   void _closeSide() => setState(() => _sideOpen = false);
@@ -541,8 +625,8 @@ class ChatPageState extends State<ChatPage> {
           onChanged: (i) => setState(() => _fileTab = i),
         ),
         _fileTab == 0
-            ? const DshDiff(sampleDiff)
-            : const DshCodeLines(sampleFileLines),
+            ? const _EmptyFilePane(kind: 'diff')
+            : const _EmptyFilePane(kind: 'file'),
       ],
     );
   }
@@ -653,27 +737,107 @@ class ChatPageState extends State<ChatPage> {
   );
 
   /// 模型选择（§7.9 的行结构）。
+  ///
+  /// **2026-10-15 删掉四个手抄的模型名**。原来是
+  /// `claude-opus` / `claude-sonnet` / `gpt-5-codex` / `deepseek-v4.1-flash`
+  /// 四个写死的名字，`selected` 也写死（第一个恒为 true），点完只弹 toast
+  /// **不切任何东西**。
+  ///
+  /// 现在的来源：
+  /// - **读**：`session/modelCatalog`（连接器已接，`dsh/models.ts`）。
+  ///   手机上显示的名字与电脑侧**同一份真值**，不手抄第二份。
+  /// - **写**：`session/select-model` —— **与 Web 用同一个 DSH 方法**
+  ///   （已核实 Web 侧调的就是它，
+  ///   `packages/client/ui-model-selection/src/client/directory.ts:98`）。
+  ///   语义：**当前会话**立即生效、**以后新建的**会话默认跟随、
+  ///   **不改别的会话**（`packages/core/agent-default-model/src/index.ts:82-94`）。
+  ///   所以"新会话默认跟随"是 Web 一直有的行为，不是副作用。
   void _showModelSheet() {
-    const models = [
-      (name: 'claude-opus', tags: ['图片', '工具', '推理'], selected: true),
-      (name: 'claude-sonnet', tags: ['图片', '工具'], selected: false),
-      (name: 'gpt-5-codex', tags: ['工具'], selected: false),
-      (name: 'deepseek-v4.1-flash', tags: ['纯文本', '工具'], selected: false),
-    ];
+    final catalog = widget.app.modelCatalog;
+    if (catalog == null || catalog.isEmpty) {
+      _toast('拿不到模型目录：电脑侧没有返回 session/modelCatalog');
+      return;
+    }
     unawaited(
       showDshSheet<void>(
         context: context,
         title: '选择模型',
         body: Column(
           children: [
-            for (final m in models)
+            for (final m in catalog)
               DshPickerRow(
-                name: m.name,
-                tags: m.tags,
-                selected: m.selected,
+                name: m.model,
+                tags: [m.provider],
+                selected: m.model == widget.app.currentModel?.model,
+                onTap: () => _switchModel(m),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 切模型。**失败要如实说** —— 静默失败会让用户以为"点了没反应"，
+  /// 而那正是这一版之前的样子（点完只弹一个"切到 X"的 toast）。
+  Future<void> _switchModel(ModelRef model) async {
+    Navigator.of(context).pop();
+    final picked = await widget.app.selectModel(
+      provider: model.provider,
+      model: model.model,
+    );
+    if (!mounted) return;
+    if (picked == null) {
+      _toast('切换失败：${widget.app.lastError?.message ?? '电脑侧没有给结论'}');
+      return;
+    }
+    _toast('已切到 ${picked.model}');
+  }
+
+  /// 权限选择（**目录来自电脑侧** + 完全权限的**风险确认门**，§7.10）。
+  ///
+  /// ## 名单为什么不再手抄
+  ///
+  /// 2026-10-15 之前这里是三档写死的枚举（只读 / 工作区内可改 / 完全权限），
+  /// 点完只改本地字段、与电脑侧无关。而 DSH 的预设表是**部署可配的**
+  /// （`packages/bundle/base/cordis.patch.yml:262-271`）—— 电脑上加一个预设、
+  /// 改一个名字，手抄的那份就对不上了。所以清单走 `permission.catalog`
+  /// （连接器透传 DSH 的 `@Remote('catalog')`，
+  /// `packages/interaction/permission-presets/src/index.ts:292`），
+  /// **显示的名字与说明与电脑侧同一份真值**。
+  ///
+  /// §7.10 的硬规则："未授权 → 绝不生效"。所以带风险门的那一档
+  /// **不是直接切**，而是先弹风险门、要勾选"我已了解风险"才能启用。
+  /// 判据照 Web 客户端：`danger-full-access` 与 `auto`
+  /// （`ui-permission-presets/src/client/presentation.ts:4,7`）。
+  void _showAccessSheet() {
+    final catalog = widget.app.permissionCatalog;
+    if (catalog == null || catalog.options.isEmpty) {
+      _toast('拿不到权限预设目录：电脑侧没有返回 permission.catalog');
+      return;
+    }
+    final current = widget.app.permissionValue;
+    unawaited(
+      showDshSheet<void>(
+        context: context,
+        title: '访问模式',
+        body: Column(
+          children: [
+            for (final option in catalog.options)
+              DshPickerRow(
+                name: displayPresetName(option),
+                // 说明来自 host（`PresetOption.description`）；没有就不给这一行
+                // 标签 —— 自己编一句就会在 DSH 改词时静默分叉。
+                tags: [if (option.description != null) option.description!],
+                icon:
+                    KnownPreset.of(option.value)?.icon ?? neutralPermissionIcon,
+                selected: option.value == current,
                 onTap: () {
                   Navigator.of(context).pop();
-                  _toast('切到 ${m.name}');
+                  if (option.needsRiskGate) {
+                    unawaited(_showRiskGate(option));
+                  } else {
+                    unawaited(_switchPermission(option));
+                  }
                 },
               ),
           ],
@@ -682,42 +846,29 @@ class ChatPageState extends State<ChatPage> {
     );
   }
 
-  /// 权限选择（三档 + 完全权限的**风险确认门**，§7.10）。
+  /// 切权限档。**失败要如实说** —— 静默失败会让用户以为"点了没反应"，
+  /// 而那正是这一版之前的样子（点完只改一个本地字段）。
   ///
-  /// §7.10 的硬规则："未授权 → 绝不生效"。
-  /// 所以完全权限那一档**不是直接切**，而是先弹风险门、要勾选
-  /// "我已了解风险"才能启用。
-  void _showAccessSheet() {
-    const modes = [
-      (mode: AccessMode.readOnly, desc: '只能看，不能改任何文件'),
-      (mode: AccessMode.workspaceWrite, desc: '可在工作区内改文件，越权要审批'),
-      (mode: AccessMode.fullAccess, desc: '不再逐次审批 —— 危险'),
-    ];
-    unawaited(
-      showDshSheet<void>(
-        context: context,
-        title: '访问模式',
-        body: Column(
-          children: [
-            for (final m in modes)
-              DshPickerRow(
-                name: m.mode.label,
-                tags: [m.desc],
-                icon: m.mode.icon,
-                selected: m.mode == _accessMode,
-                onTap: () {
-                  Navigator.of(context).pop();
-                  if (m.mode.isWarn) {
-                    unawaited(_showRiskGate(m.mode));
-                  } else {
-                    _setAccessMode(m.mode);
-                  }
-                },
-              ),
-          ],
-        ),
-      ),
-    );
+  /// 三种"没切上"必须分开说：电脑侧没有结论 / 电脑上没有 `/permission` 命令 /
+  /// 电脑侧回了 error（预设名不对，原文照显）。
+  Future<void> _switchPermission(PermissionPreset option) async {
+    final result = await widget.app.switchPermission(option.value);
+    if (!mounted) return;
+    if (result == null) {
+      _toast('切换失败：${widget.app.lastError?.message ?? '电脑侧没有给结论'}');
+      return;
+    }
+    if (!result.matched) {
+      _toast('这台电脑上没有 /permission 命令，切不了');
+      return;
+    }
+    if (result.kind == 'error') {
+      // DSH 的原文（如 `unknown preset "yolo" (available: …)`）——
+      // 那是电脑侧权威的措辞，自己抄一份就会静默分叉。
+      _toast(result.text ?? '电脑侧拒绝了这个预设');
+      return;
+    }
+    _toast(result.text ?? '已切到 ${option.name}');
   }
 
   /// 发送模式二选一（DSH 的"繁忙时的发送行为"：排队 / 插话）。
@@ -763,11 +914,11 @@ class ChatPageState extends State<ChatPage> {
   /// 勾选态**不跨次残留**（§7.10 表格里"关掉后重开，勾选态不残留"）——
   /// 所以开门的动作里先把它清掉，而不是依赖"新建 widget 就自然是 false"
   ///（那在 widget 被复用时就不成立了）。
-  Future<void> _showRiskGate(AccessMode mode) {
+  Future<void> _showRiskGate(PermissionPreset option) {
     _riskAcked = false;
     return showDshSheet<void>(
       context: context,
-      title: '启用${mode.label}？',
+      title: '启用${option.name}？',
       body: StatefulBuilder(
         builder: (context, setSheetState) => Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -823,7 +974,7 @@ class ChatPageState extends State<ChatPage> {
           filled: true,
           onPressed: () {
             if (!_riskAcked) return; // 没勾就不生效（门仍开着）
-            _setAccessMode(mode);
+            unawaited(_switchPermission(option));
             Navigator.of(context).pop();
           },
         ),
@@ -955,64 +1106,118 @@ class ChatPageState extends State<ChatPage> {
     });
   }
 
-  /// **示例任务**（数据照 `mock/proto/app.js` 的 `JOBS`）。
+  /// 展开 / 收起一个任务：**展开即订阅输出，收起即退订**。
   ///
-  /// 占位：真的任务要等 `job.follow` / `job` 帧那条通路接上。
-  /// 有它是一个**可见的接口契约**：这一屏该显示什么，看这里就够。
-  static List<SideJob> _previewJobs() => const [
-    SideJob(
-      id: 'j1',
-      kind: 'pwsh',
-      label: 'flutter build apk --debug',
-      state: 'running',
-      statusText: '构建中 · 电脑端执行',
-      durationText: '02:14',
-      output:
-          "Running Gradle task 'assembleDebug'...\n"
-          'Resolving dependencies...\n'
-          '> Task :app:compileFlutterBuildDebug\n'
-          '(构建在电脑端进行，手机只看进度)',
-    ),
-    SideJob(
-      id: 'j5',
-      kind: 'pwsh',
-      label: 'node protocol/verify-fixtures.mjs',
-      state: 'completed',
-      statusText: '已完成',
-      durationText: '00:03',
-      output: 'ALL CHECKS PASSED — 486 项断言，16 条 fixture',
-    ),
-    SideJob(
-      id: 'j7',
-      kind: 'bash',
-      label: 'rm -rf build/ && flutter clean',
-      state: 'running',
-      statusText: '等待审批',
-      durationText: '00:41',
-    ),
-  ];
+  /// 与 `job.follow` / `job.unfollow` 一对一。本地也维护 `_openJobs`
+  /// （UI 的展开态），但**订阅状态以电脑侧为准** —— 本地那个只是为了让
+  /// 箭头立刻转向，不等一个网络往返。
+  Future<void> _toggleJob(SideJob job) async {
+    final sid = widget.app.currentSid;
+    if (sid == null) return;
+    final opening = _openJobs.add(job.id);
+    setState(() {});
+    if (opening) {
+      await widget.app.followJob(sid, job.id);
+    } else {
+      await widget.app.unfollowJob(sid, job.id);
+    }
+  }
 
-  /// **示例子代理**（数据照 `mock/proto/app.js` 的 `SUBS`）。
-  static List<SideJob> _previewSubs() => const [
-    SideJob(
-      id: 's1',
-      kind: 'agent',
-      label: 'Extract DSH icon paths',
-      state: 'completed',
-      statusText: '已完成',
-      durationText: '08:57',
-      output: '98 个图标 · 验证脚本全 PASS',
-    ),
-    SideJob(
-      id: 's2',
-      kind: 'agent',
-      label: 'Research rikkahub standalone mode',
-      state: 'completed',
-      statusText: '已完成',
-      durationText: '12:20',
-      output: '本机运行模式调研：三条路径，见 docs/standalone-mode-notes.md',
-    ),
-  ];
+  /// 停一个任务。**走 `job.kill`**（宿主的人类发起门面），
+  /// 结论由电脑侧给（`requested` / `already-finished`）。
+  ///
+  /// 不做乐观更新：落终态要等 `status` 帧（`docs/plugin-and-jobs-notes.md` §B.4）。
+  Future<void> _stopJob(SideJob job) async {
+    final sid = widget.app.currentSid;
+    if (sid == null) return;
+    final outcome = await widget.app.killJob(sid, job.id);
+    if (!mounted) return;
+    _toast(switch (outcome) {
+      'requested' => '已请求停止 ${job.label}',
+      'already-finished' => '${job.label} 已经结束了',
+      _ => '停止失败：电脑侧没有给结论',
+    });
+  }
+
+  /// 当前会话的后台任务（`core/job.dart` 的 `JobRow` → 侧抽屉的 `SideJob`）。
+  ///
+  /// 映射只在这里发生一次：UI 不认识 `job.list` 的 JSON，
+  /// `AppModel` 也不认识 `SideJob` 长什么样。
+  List<SideJob> _jobsFor(String? sid) {
+    final rows = widget.app.jobsOf(sid ?? '');
+    return [
+      for (final row in rows)
+        SideJob(
+          id: row.id,
+          kind: row.kind,
+          label: row.label,
+          state: row.status,
+          statusText: row.statusText,
+          durationText: _jobDuration(row),
+          // 输出只在展开时才有意义，但**无脑全给**更简单：侧抽屉自己按
+          // `openJobIds` 决定显不显示。少一个"什么时候该给"的判断。
+          output: widget.app.jobOutput(row.id),
+          gapNote: widget.app.jobError(row.id),
+        ),
+    ];
+  }
+
+  /// 任务时长（`02:14`）。**从电脑侧的时间戳算，不从手机本地计时** ——
+  /// 手机上的计时在锁屏/后台时会停，而任务一直在电脑上跑。
+  String _jobDuration(JobRow row) {
+    final end = row.finishedAt ?? DateTime.now().millisecondsSinceEpoch;
+    final seconds = ((end - row.startedAt) / 1000).floor();
+    final m = (seconds ~/ 60).toString().padLeft(2, '0');
+    final s = (seconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  /// 子智能体列表（`core/job.dart` 的 `SubagentRow` → 侧抽屉的 `SideJob`）。
+  ///
+  /// 映射只在这里发生一次：UI 不认识 `subagentCatalog` 投影的 JSON。
+  List<SideJob> _subsFor() {
+    final rows = widget.app.subagentsOf(widget.app.currentSid ?? '');
+    return [
+      for (final row in rows)
+        SideJob(
+          id: row.id,
+          kind: 'agent',
+          label: row.displayLabel,
+          state: row.status,
+          statusText: row.statusText,
+          durationText: _subDuration(row),
+          output: '',
+        ),
+    ];
+  }
+
+  /// 子智能体时长。与 `_jobDuration` 同一条纪律：**从电脑侧时间戳算**，
+  /// 不从手机本地计时（锁屏/后台时手机会停）。
+  String _subDuration(SubagentRow row) {
+    final end = row.finishedAt ?? DateTime.now().millisecondsSinceEpoch;
+    final seconds = ((end - row.startedAt) / 1000).floor();
+    final m = (seconds ~/ 60).toString().padLeft(2, '0');
+    final s = (seconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  /// 子智能体面板的内容。
+  ///
+  /// **2026-10-15 删掉假数据**。原来是两条写死的示例子代理
+  /// （`Extract DSH icon paths` / `Research rikkahub standalone mode`），
+  /// 状态文字带「· 示例」—— 标记是有，但它**无条件**出现在面板里，
+  /// 真连上了也照显示。
+  ///
+  /// 真数据通路**已经找到了**（上一轮我判成"阻塞"是找错了门）：
+  /// `subagentCatalog` 投影（`packages/subagent/subagent/src/catalog.ts:122`）
+  /// 经 `session.projections` 读；写面有 `SubagentRuntime` 的
+  /// `@Remote('prompt')` 与 `@Remote('interruptByParent')`
+  /// （`packages/subagent/subagent/src/index.ts:445,512`）。
+  /// 接线见 `.agents/notes/proposed/2026-10-15-phone-surface-inventory.md`。
+  ///
+  /// 面板内容由 `SidePane` 的 `subs` 参数给（`_subsFor()`），空列表由
+  /// `SidePane` 的 `emptyText` 渲染 —— 不另造一份空态，那会让
+  /// "没有子智能体"有两个说法。
 }
 
 /// 文件面板底部的动作按钮（`.btn--out` / `.btn--fill`）。
@@ -1078,6 +1283,7 @@ class _ChatTab extends StatelessWidget {
     required this.onRefreshSessions,
     required this.onOpenSession,
     this.onConnect,
+    this.onRePair,
   });
 
   final AppModel app;
@@ -1091,6 +1297,9 @@ class _ChatTab extends StatelessWidget {
   /// 打开某个会话（主界面上的内联列表与抽屉共用同一条通路）。
   final void Function(SessionSummary session) onOpenSession;
   final VoidCallback? onConnect;
+
+  /// 已配对时空态的"重新配对（换一台电脑）"出路（议题 3）。未配对为 `null`。
+  final VoidCallback? onRePair;
 
   @override
   Widget build(BuildContext context) {
@@ -1117,6 +1326,7 @@ class _ChatTab extends StatelessWidget {
         selectedSid: app.currentSid,
         onOpenDrawer: onOpenDrawer,
         onConnect: onConnect,
+        onRePair: onRePair,
         onPreview: app.loadPreview,
         onRefresh: paired ? onRefreshSessions : null,
         // 失败原因带进空态：**空列表 + 有错** 与 **空列表 + 真没有** 必须看得出区别。
@@ -1264,6 +1474,7 @@ class _EmptyChat extends StatelessWidget {
     this.selectedSid,
     this.onRefresh,
     this.onConnect,
+    this.onRePair,
     this.errorText,
   });
 
@@ -1282,6 +1493,9 @@ class _EmptyChat extends StatelessWidget {
   /// 没有这个按钮就只能杀 App 重进（那是本页最容易被骂的一种"卡住"）。
   final VoidCallback? onRefresh;
   final VoidCallback? onConnect;
+
+  /// 已配对时的"重新配对（换一台电脑）"出路（议题 3，1 步直达）。未配对为 `null`。
+  final VoidCallback? onRePair;
 
   /// 最近一次拉取失败的原因（`null` = 没失败）。**显示出来**，别让它只躺在日志里。
   final String? errorText;
@@ -1366,6 +1580,21 @@ class _EmptyChat extends StatelessWidget {
                     label: const Text('重新拉取会话'),
                   ),
                 ],
+                // 已配对：给一条"重新配对（换一台电脑）"的出路（议题 3 ——
+                // 任何状态 ≤2 步走到重新配对）。设备被停用/要换电脑时，
+                // 用户停在空态也能**一步**直达，不必先想起 ☰。
+                if (paired && onRePair != null) ...[
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: onRePair,
+                    icon: const DshIcon(
+                      'refresh',
+                      size: 14,
+                      color: DshColors.labelSecondary,
+                    ),
+                    label: const Text('重新配对（换一台电脑）'),
+                  ),
+                ],
                 if (!paired) ...[
                   const SizedBox(height: 8),
                   OutlinedButton.icon(
@@ -1396,97 +1625,62 @@ class _EmptyChat extends StatelessWidget {
   }
 }
 
-/// **示例 diff**（数据照 `mock/proto/app.js` 的 `FILES["app/lib/ui/chat_page.dart"]`）。
+/// 文件面板的空态（差异 / 文件两个 tab 共用）。
 ///
-/// 它是**占位**：真的 diff 要等 `session.diff` 那条数据通路接上。
-/// 放在这里而不是 `preview_data.dart`：它是"这一屏长什么样"的样例，
-/// 与"会话里有哪些消息"不是一类。
-const List<DiffLine> sampleDiff = [
-  DiffLine.hunk(
-    '@@ -112,9 +112,14 @@ class _ChatPageState extends State<ChatPage> {',
-  ),
-  DiffLine(
-    kind: DiffKind.context,
-    oldLine: 112,
-    newLine: 112,
-    text: '  @override',
-  ),
-  DiffLine(
-    kind: DiffKind.context,
-    oldLine: 113,
-    newLine: 113,
-    text: '  Widget build(BuildContext context) {',
-  ),
-  DiffLine(kind: DiffKind.del, oldLine: 114, text: '    return Scaffold('),
-  DiffLine(
-    kind: DiffKind.del,
-    oldLine: 115,
-    text: '      body: SessionListView(active: _active),',
-  ),
-  DiffLine(
-    kind: DiffKind.del,
-    oldLine: 116,
-    text: '      bottomNavigationBar: const DshNavBar(),',
-  ),
-  DiffLine(kind: DiffKind.del, oldLine: 117, text: '    );'),
-  DiffLine(
-    kind: DiffKind.add,
-    newLine: 114,
-    text: '    return ModalNavigationDrawer(',
-  ),
-  DiffLine(
-    kind: DiffKind.add,
-    newLine: 115,
-    text: '      drawer: const SessionDrawer(),',
-  ),
-  DiffLine(kind: DiffKind.add, newLine: 116, text: '      child: Scaffold('),
-  DiffLine(
-    kind: DiffKind.add,
-    newLine: 117,
-    text: '        appBar: DshAppBar(',
-  ),
-  DiffLine(
-    kind: DiffKind.add,
-    newLine: 118,
-    text: '          leading: const DrawerButton(),',
-  ),
-  DiffLine(
-    kind: DiffKind.add,
-    newLine: 119,
-    text: '          title: Text(_session.title),',
-  ),
-  DiffLine(kind: DiffKind.add, newLine: 120, text: '        ),'),
-  DiffLine(
-    kind: DiffKind.add,
-    newLine: 121,
-    text: '        body: ChatView(turns: _turns),',
-  ),
-  DiffLine(kind: DiffKind.add, newLine: 122, text: '      ),'),
-  DiffLine(kind: DiffKind.add, newLine: 123, text: '    );'),
-  DiffLine(kind: DiffKind.context, oldLine: 118, newLine: 124, text: '  }'),
-];
+/// **2026-10-15 删掉假 diff**：原来是 `sampleDiff` / `sampleFileLines`
+/// 两份写死的样例，而调用方**无条件**传给 `DshDiff` / `DshCodeLines` ——
+/// 于是真连上了打开文件抽屉，也会看到一段本项目 `chat_page.dart` 的假 diff，
+/// **没有任何"示例"标记**。这是假数据里最坏的一处：它冒充真数据。
+///
+/// 真数据通路：`deliverables` 投影（diff）+ `workspace-files` 的
+/// `read` / `list`（文件树与内容）。接上之前说"还没接"，不造假的。
+class _EmptyFilePane extends StatelessWidget {
+  const _EmptyFilePane({required this.kind});
 
-/// **示例文件内容**（"文件"那个 tab）。
-const List<String> sampleFileLines = [
-  'class _ChatPageState extends State<ChatPage> {',
-  '  final _input = TextEditingController();',
-  '  int _tab = 0;',
-  '',
-  '  @override',
-  '  Widget build(BuildContext context) {',
-  '    return ModalNavigationDrawer(',
-  '      drawer: const SessionDrawer(),',
-  '      child: Scaffold(',
-  '        appBar: DshAppBar(',
-  '          leading: const DrawerButton(),',
-  '          title: Text(_session.title),',
-  '        ),',
-  '        body: ChatView(turns: _turns),',
-  '      ),',
-  '    );',
-  '  }',
-  '}',
-];
+  /// `diff` / `file`。
+  final String kind;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDiff = kind == 'diff';
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            DshIcon(
+              isDiff ? 'deliverDoc' : 'folderClose',
+              size: 40,
+              color: DshColors.labelTertiary,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              isDiff ? '还没有改动' : '还没有文件内容',
+              style: const TextStyle(
+                fontSize: 15,
+                color: DshColors.labelSecondary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              isDiff
+                  ? '电脑侧这一轮改了什么，会在这里列成差异。\n'
+                        '数据来自会话投影 deliverables。'
+                  : '在电脑上选中一个文件，这里显示它的内容。\n'
+                        '数据来自 workspace-files 的 read / list。',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 12,
+                color: DshColors.labelTertiary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 /// 轨迹页签。
 ///

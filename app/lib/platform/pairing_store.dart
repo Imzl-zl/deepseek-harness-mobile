@@ -12,6 +12,12 @@
 /// | `pairingId` | 配对标识（码的 HKDF 输出） | `master` 算不出来 → 连不上 |
 /// | `pcSignPubHex` / `pcDhPubHex` | 公钥 | 同上；而它**必须只来自二维码**（契约 §12.1） |
 /// | `relayUrl` / `pcId` / `devId` | 不敏感 | 连不上 |
+/// | `endpoints` | **不敏感**（路由表，非秘密） | 连不上；而它会随连接器自报刷新 |
+///
+/// **端点表为什么单独一列**：它不是凭据，是"能从哪些地址拨到这台电脑"的有序表
+/// （序即偏好）。与凭据同批保存只是图省事 —— 它的刷新频率高得多（每次经中转
+/// 连上都会拉一次 `endpoint.describe`），所以另开一个只写它的入口
+/// （[PairingStore.saveEndpoints]），免得每次刷新都把主种子重写一遍。
 ///
 /// **`deviceToken` 为什么与主种子同级**：它是设备之后**每次重连的唯一凭据**
 /// （配对码在配对那一刻就用掉了）。所以它进系统密钥库，与主种子同一条纪律。
@@ -46,6 +52,7 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../core/crypto.dart';
+import '../core/endpoint.dart';
 
 /// 配对得到的凭据（**值类型**：可安全地在各层之间传递，它不是秘密的"容器"）。
 class PairedCredentials {
@@ -59,12 +66,22 @@ class PairedCredentials {
     required this.devDhPubHex,
     required this.deviceToken,
     required this.refreshToken,
+    this.endpoints = const [],
     this.pcId = '',
     this.devId = '',
   });
 
   /// 中转地址。
+  ///
+  /// **它只是"配对那一刻走的那条中转"**，不是拨号的唯一依据 ——
+  /// 拨号看 [endpoints]（有序端点表，序即偏好）。留着这个字段是因为
+  /// 配对回执给的就是它，而它是端点表的种子。
   final String relayUrl;
+
+  /// 有序端点表。**序即偏好**：`connect()` 按这个顺序拨，第一个通的赢。
+  ///
+  /// 空列表表示"只有配对时那一条中转"（老凭据迁移后的形状）。
+  final List<Endpoint> endpoints;
 
   /// 电脑侧 Ed25519 公钥（**只来自二维码**，契约 §12.1 硬规则）。
   final String pcSignPubHex;
@@ -138,6 +155,7 @@ Future<String> deriveDeviceId(String devDhPubHex) async {
 /// 安全存储的键（**前缀化**：同一个存储里将来还会有别的键）。
 abstract final class _Keys {
   static const relayUrl = 'dsh.relay_url';
+  static const endpoints = 'dsh.endpoints';
   static const pcSignPub = 'dsh.pc_sign_pub';
   static const pcDhPub = 'dsh.pc_dh_pub';
   static const pairingId = 'dsh.pairing_id';
@@ -171,6 +189,11 @@ abstract final class PairingStore {
   /// **不完整就当没有**：缺任一字段都用不了（缺 `pairingId` 算不出 `master`，
   /// 缺 `deviceToken` 换不到票），而"部分可用"会让失败发生在很后面 ——
   /// 那时没人会想到是存储缺字段。
+  ///
+  /// **端点表的一次性迁移**：2026-10-14 之前存的凭据只有 `dsh.relay_url`，
+  /// 没有 `dsh.endpoints`。那时拨号地址就是 relayUrl 一个，所以从它造一条
+  /// relay 端点即可 —— 这不是"猜一个默认值"，而是把旧形状读成新形状。
+  /// 下次 `save` 就落成端点表，迁移只发生一次。
   static Future<PairedCredentials?> load() async {
     final values = await _storage.readAll();
     final relayUrl = values[_Keys.relayUrl];
@@ -205,14 +228,45 @@ abstract final class PairingStore {
       devDhPubHex: devDhPub,
       deviceToken: deviceToken,
       refreshToken: refreshToken,
+      endpoints: _decodeEndpoints(values[_Keys.endpoints], relayUrl),
       pcId: values[_Keys.pcId] ?? '',
       devId: values[_Keys.devId] ?? '',
     );
   }
 
+  /// 解端点表。缺表时从 `relayUrl` 造一条 relay 端点（一次性迁移，见 [load]）。
+  ///
+  /// **解不出的条目直接丢**：一个拨不出去的端点会让整条链在很后面才失败，
+  /// 而那时没人会想到是存储里躺着一条废条目。
+  static List<Endpoint> _decodeEndpoints(String? raw, String relayUrl) {
+    if (raw == null || raw.isEmpty) {
+      return [Endpoint(kind: EndpointKind.relay, url: relayUrl, label: '中转')];
+    }
+    final List<dynamic> decoded;
+    try {
+      decoded = jsonDecode(raw) as List<dynamic>;
+    } on FormatException {
+      return [Endpoint(kind: EndpointKind.relay, url: relayUrl, label: '中转')];
+    }
+    final out = <Endpoint>[];
+    for (final entry in decoded) {
+      final endpoint = endpointFromJson(entry);
+      if (endpoint != null) out.add(endpoint);
+    }
+    // 整表都解不出来时退回迁移形状：空表会让 `EndpointTransport` 抛
+    // "没有可拨的端点"，而用户看到的是"连不上"而不是"存储坏了"。
+    return out.isEmpty
+        ? [Endpoint(kind: EndpointKind.relay, url: relayUrl, label: '中转')]
+        : out;
+  }
+
   /// 写入凭据（**先写全部再算成功**：半份凭据比没有更糟）。
   static Future<void> save(PairedCredentials credentials) async {
     await _storage.write(key: _Keys.relayUrl, value: credentials.relayUrl);
+    await _storage.write(
+      key: _Keys.endpoints,
+      value: jsonEncode(credentials.endpoints.map(endpointToJson).toList()),
+    );
     await _storage.write(key: _Keys.pcSignPub, value: credentials.pcSignPubHex);
     await _storage.write(key: _Keys.pcDhPub, value: credentials.pcDhPubHex);
     await _storage.write(key: _Keys.pairingId, value: credentials.pairingId);
@@ -239,6 +293,18 @@ abstract final class PairingStore {
     if (credentials.devId.isNotEmpty) {
       await _storage.write(key: _Keys.devId, value: credentials.devId);
     }
+  }
+
+  /// 只更新端点表。
+  ///
+  /// **不重写整份凭据**：端点表的刷新频率远高于凭据（每次经中转连上都会拉一次
+  /// `endpoint.describe`），而主种子与设备令牌也在同一批键里 —— 每次刷新都把
+  /// 它们重写一遍，既浪费也给"写一半"多一次机会。
+  static Future<void> saveEndpoints(List<Endpoint> endpoints) async {
+    await _storage.write(
+      key: _Keys.endpoints,
+      value: jsonEncode(endpoints.map(endpointToJson).toList()),
+    );
   }
 
   /// 清空（吊销 / 重新配对时用）。

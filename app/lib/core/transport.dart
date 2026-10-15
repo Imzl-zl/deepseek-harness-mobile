@@ -19,6 +19,8 @@ library;
 
 import 'dart:async';
 
+import 'errors.dart';
+
 /// 一条连接的生命周期事件。
 sealed class TransportEvent {
   const TransportEvent();
@@ -65,10 +67,28 @@ abstract interface class ChannelTransport {
 }
 
 /// 传输层错误（连接建立失败、发送失败）。
+///
+/// ## 为什么带 [code]
+///
+/// 换票被拒（`protocol/not-paired` 等）发生在**建连之前**，而它是身份问题、
+/// 不是网络问题。若只抛一句 `TransportException('换票失败…')`，连接层会把它
+/// 和"中转不可达"看成一回事 → 进退避重连 → 每次都拿到同一个 401，
+/// 用户永远卡在"重连中…"（议题 2 的真因：`TicketedWebSocketTransport`
+/// 原先就把 `ProtocolException` 的码丢在了这里）。
+///
+/// 带上 [code] 后，连接层能按 `code.clientAction` 区分：
+/// `rePair` 是**一次性终态**（不进退避，交给上层清凭据回配对页），
+/// 其余照旧退避重试。
 class TransportException implements Exception {
-  const TransportException(this.message);
+  const TransportException(this.message, {this.code});
 
   final String message;
+
+  /// 建连失败对应的协议错误码（换票被拒等）；`null` = 纯网络类失败。
+  ///
+  /// 它来自被丢掉的 `ProtocolException.code`（见文件头）—— 传输层只搬码，
+  /// 不解释它。
+  final ErrorCode? code;
 
   @override
   String toString() => 'TransportException: $message';
