@@ -130,6 +130,80 @@ ok(
   'permission glyphs keep their own DSH paths',
 )
 
+/* 12. 落地端（app/lib）引用的图标名都必须存在
+ *
+ * 为什么单独一条：第 10 条只覆盖**原型**需要的名字，而 Flutter 落地端是另一批
+ * 调用点。`DshIcon('<名字>')` 查不到键会**抛**，Flutter 把它渲染成一块巨大的
+ * ErrorWidget —— 2026-10-15 真机上 `pairing_page.dart` 写了集合里没有的
+ * `cameraScan`，于是整个配对页变成一块红，输入框与按钮被挤出屏幕，
+ * 症状是"配对页坏了"而不是"少一个图标"。**原型与落地端不允许各自漂移**
+ * （`mock/proto/AGENTS.md`），所以这条按同一份 `I.names` 卡两边。
+ *
+ * 正则允许 `(` 与名字之间有**空白和注释**：Dart 侧常写成
+ * `const DshIcon(\n  'name',\n  size: 16,\n)`，而名字前面还可能有解释性注释
+ * （`pairing_page.dart` 就有一段"为什么必须是集合里的名字"的注释）。
+ * 假设：`DshIcon(` 之后第一个字符串字面量就是图标名 —— 现有调用点都满足
+ * （`size` / `color` 是数字与常量，不是字符串）。
+ */
+{
+  const fs = require('node:fs')
+  const path = require('node:path')
+  const APP_LIB = path.resolve(__dirname, '..', '..', '..', 'app', 'lib')
+  if (!fs.existsSync(APP_LIB)) {
+    ok(true, 'app/lib 不存在（跳过落地端引用检查）')
+  } else {
+    /** 去掉 Dart 注释：`//` 到行尾、`/* … *​/` 跨行。**必须先做** ——
+     *  否则注释里的括号会打乱括号配对，注释里的字符串会被当成参数。 */
+    const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ')
+
+    /** 收集一份源码里所有 `DshIcon( … )` 自己那段中的第一个字符串字面量。
+     *
+     * 用**括号配对**而不是"向后看 N 字符"：后者会把同一文件里别的控件的
+     * `fontFamily: 'monospace'` 算进来（实测误报），而 N 取大了误报、取小了
+     * 漏掉带长注释的调用点（也实测过：第一版正则只允许空白，于是刚修的那个
+     * bug 形状——名字前有注释——静默漏检，门禁看起来是通过的）。
+     */
+    const iconNamesIn = (src) => {
+      const out = new Set()
+      const clean = stripComments(src)
+      const re = /DshIcon\(/g
+      let m
+      while ((m = re.exec(clean)) !== null) {
+        let depth = 1
+        let i = m.index + m[0].length
+        while (i < clean.length && depth > 0) {
+          const c = clean[i]
+          if (c === '(') depth += 1
+          else if (c === ')') depth -= 1
+          i += 1
+        }
+        const inner = clean.slice(m.index + m[0].length, i - 1)
+        const sm = inner.match(/'([a-zA-Z][a-zA-Z0-9]*)'/)
+        if (sm !== null && sm[1] !== undefined) out.add(sm[1])
+      }
+      return out
+    }
+
+    const referenced = new Set()
+    const walk = (dir) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name)
+        if (entry.isDirectory()) walk(full)
+        else if (entry.name.endsWith('.dart')) {
+          for (const name of iconNamesIn(fs.readFileSync(full, 'utf8'))) referenced.add(name)
+        }
+      }
+    }
+    walk(APP_LIB)
+    const missing = [...referenced].filter((n) => !I.names.includes(n)).sort()
+    ok(
+      missing.length === 0,
+      `app/lib 引用的 ${referenced.size} 个图标名都在集合里`,
+      missing.join(', '),
+    )
+  }
+}
+
 console.log(`\nnames (${I.names.length}): ${I.names.join(' ')}`)
 console.log(fails.length ? `\n${fails.length} FAILED: ${fails.join(' | ')}` : '\nALL CHECKS PASSED')
 process.exit(fails.length ? 1 : 0)

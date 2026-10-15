@@ -97,12 +97,20 @@ const out = await evalJs(async () => {
   res.gate = { permSheet, gateTitle: q('.sheet-h') ? q('.sheet-h').textContent.trim() : null, ack: !!q('[data-gate="ack"]') }
   if (q('.sheet')) { q('.sheet-scrim').click(); await sleep(400) }
 
-  // 5) 侧抽屉:过渡 + 遮罩 + 关闭
+  // 5) 侧抽屉:点顶栏连接状态位 → 先弹「连接操作」sheet(表头含"连接"),
+  //    再由 sheet 里的「打开侧面板」开右抽屉。原侧抽屉断言(过渡/遮罩/面板集合/关闭)一条不少。
   const cs = getComputedStyle(q('#pageSide'))
-  q('#statusPill').click(); await sleep(60)
+  q('#statusPill').click(); await sleep(320)
+  const connSheet = q('.sheet')
+  const connSheetOpen = !!connSheet && !!(q('.sheet-h') && q('.sheet-h').textContent.includes('连接'))
+  const openSideBtn = connSheet ? [...connSheet.querySelectorAll('.sitem')].find(b => b.textContent.includes('打开侧面板')) : null
+  if (openSideBtn) openSideBtn.click()
+  await sleep(60)
   const mid = getComputedStyle(q('#pageSide')).transform
   await sleep(500)
   res.side = {
+    connSheetOpen,
+    openSideFromSheet: !!openSideBtn,
     transition: cs.transitionProperty + ' ' + cs.transitionDuration,
     animatedMidway: mid !== 'none' && mid !== '',
     scrimOn: q('#sideScrim').classList.contains('is-on'),

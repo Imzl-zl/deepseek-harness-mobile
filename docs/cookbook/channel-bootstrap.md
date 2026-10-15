@@ -131,12 +131,17 @@ dsh plugin --profile <name> add <connector 本地路径>
 **接线到哪一步了**(看这一句就够):连接层已经完整 —— 三帧握手、会话密钥、
 每一种业务帧的 AEAD 封箱/解封、§4.3 的流控(W=128、收到即回 `credit`、满窗只压 `ev`/`live`),
 连接级 e2e 用手机侧的**独立实现**双向跑通过;方法面与 §5.6 的幂等管道也在。
-方法面当前 **12/22**:`repo.info` / `devices.list` / `session.list`(会话清单,不含标题 ——
-该面不返回标题,契约 §5.7 已写明)/ `session.subscribe` + `session.unsubscribe`(会话事件与流式输出;
+方法面当前 **15/24**:`repo.info` / `devices.list` / `session.list`(会话清单,不含标题 ——
+该面不返回标题,契约 §5.7 已写明)/ `session.create`(新建会话)/ `session.subscribe` + `session.unsubscribe`(会话事件与流式输出;
 开启快照的补课事件**逐条**发)/ `session.page` + `session.refetch`(往上翻历史;超阈值的条目换成
 `refetch` 标记,由手机按需补取)/ `session.prompt`(发消息;幂等键 `requestId` 走请求顶层)/
-`job.list` / `job.kill`(走宿主的人发起门面)/ `job.follow` + `job.unfollow`(任务输出订阅);
-**缺服务的部署里这些方法根本不在表里**(`job.*` 要 `jobs` 与 `jobController`)。
+`session.modelCatalog`(模型目录,只读)/ `session.select-model`(切模型,与 Web 同一个 DSH 方法)/
+**`session.projections`**(一个方法打开全部只读面:
+统计 / 轨迹 / 子智能体 / 交付物 / 权限档 / 待办 / 目标 / 计划 …)/
+`job.list` / `job.kill`(走宿主的人发起门面)/
+`job.follow` + `job.unfollow`(任务输出订阅)/ `endpoint.describe`(端点自报:中转 + 局域网直连);
+**缺服务的部署里这些方法根本不在表里**(`job.*` 要 `jobs` 与 `jobController`;
+`endpoint.describe` 要配了 `listenPort` 且监听面起得来;`session.projections` 要 `sessionProjections`)。
 其余回 `connector/unsupported`。
 配对(§12.1)在代码层面已闭合:电脑侧出码(斜杠命令 `dsh-mobile-pair`,**登记不成就绝不出码**)
 → 手机带 `codeHash` 换票 → 经中转转发 → 电脑侧校验并落设备行 → 明文回执;

@@ -437,6 +437,8 @@ DSH 右侧有一条**轮次导航轨**(`ui-chat/TurnNavigator.tsx`):每一轮一
 - **已否决**:左抽屉里再放一个「任务」入口去开右抽屉 —— 两个抽屉互相跳没有道理;也否决了在对话流里内联铺开任务明细(占屏)。
 - 审批 / 提问**接管输入栏**(§7.8 之外的 composer takeover),本来就在眼前,**不占顶栏状态位**。
 
+> **有意偏离(2026-10-15)**:顶栏状态位在**已配对**时常驻显示**连接状态**,点它弹「连接操作」sheet(重新配对 / 打开侧面板 / 取消),而不是上面规定的"有任务显任务、否则显文件变更;点它开右抽屉"。**原因**:规定的内容在 app 里从未实现,而硬判据是"任何状态下用户两步内走到重新配对"(原唯一路径抽屉连接行要 3 步)。**代价**:任务/文件变更暂时不在状态位上(仍可经「打开侧面板」进右抽屉);等计数接进状态位时,连接态改为仅非 serving 时常驻。取舍见 `.agents/notes/implemented/2026-10-15-connection-terminal-failure-goes-to-pairing.md`。
+
 **多会话并行:一个会话一队**(2026-10-13 对齐 DSH 原生):
 
 - DSH 的待处理是 **per-session** 的:`PendingApproval` / `PendingQuestion` 都带 `sessionId`,注册进**那个会话**的 composer(`packages/client/ui-session/src/client/index.ts:391`、`ui-approval/src/client/contract/slots.ts:101`),scope 不到会话就 `next()` 不接(`ui-approval/src/client/index.ts:43-44`)。电脑上并行开着几个会话时,每个会话各有各的待处理,**切到哪个会话就处理哪个**。
@@ -551,6 +553,8 @@ DSH 右侧有一条**轮次导航轨**(`ui-chat/TurnNavigator.tsx`):每一轮一
 - **但配置有一条真实通用路径**:Schemastery `schema.toJSON()` 信封带 UI 元数据,可 rehydrate;限制是只有 `.volatile()` 字段过线。→ **配置分两档**:`volatile` 用自建通用表单,其余只读并标"需在电脑上编辑"。
 - **三条策略**:不做逐插件页面适配;给插件作者正路(声明 `.volatile()` + `description` 即自动进手机表单);其余标"在电脑端打开"。
 - 手机**可做**:只读清单 + 状态、行级开关、安装日志、安装卸载(两段确认)。**不该做**:静默批准 build script、安装做成一次点击。
+
+> **有意偏离 DSH 插件管理器范式(2026-10-15)**:电脑侧设备管理面支持**行首 checkbox + 顶部浮现操作栏的多选删除**(DSH 插件管理器逐行开关 + 逐个确认、无多选)。**原因**:真机联调会攒几十行"配对过、连过一次、再没连过"的记录,挑几台删是真实场景;不选"编辑模式"是因为多选是临时动作,模式切换会改变整个列表的交互语义。**其余仍照 DSH 范式**:停用/启用一对布尔端点(照 `setBundleEnabled`)、启用不确认、硬删走页面内命名确认对话框(照 `confirmUninstall`,不用 `window.confirm`)、失败带原因。取舍见 `.agents/notes/implemented/2026-10-15-device-admin-face-dsh-house-style.md`。
 
 ---
 

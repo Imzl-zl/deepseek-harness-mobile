@@ -12,6 +12,26 @@
 
 ## Read First
 
+- **要给插件做 UI？先查 `reference/subsystems/slots`，别另起网页**。
+  插件往 DSH 界面里贡献 UI 的机制是 **Slots**（`ctx.slots.inject(key, …)` +
+  `ctx.slots.register(…, Component)`），第三方插件与官方 `ui-*` 包走同一套。
+  常用入口：`plugins.bundle.config`（以 npm 包名为键，渲染在「插件」页本组合包详情页）、
+  `settings.general.item`、`sidebar.right.pane.tab`、`conversation.input.*`。
+  浏览器半侧是包根手写的 `client.js`（`window.__ModuleLoader__.load({id, factory})`
+  闭包工厂格式，React 从模块表 `require`，见 `templates/decoration/client.js`）；
+  共享 tsdown 预设在 DSH 仓库里，我们这个独立工程用不了。
+  **反面教训（2026-10-15 踩了）**：看到 `experimental/inspector` 用
+  `ctx.webServer.register({kind:'prefix'})` 起独立路由，就以偏概全地认为"插件 UI = 独立网页"，
+  做了个 `/dsh-mobile/`。inspector 是自起路由的调试工具，不是插件 UI 的正道。
+- **DSH 开发者文档站（先查它，再读源码，最后才逆向）**：  <https://deepseek-harness.github.io/deepseek-harness/reference/>（中文，`/en/reference/` 英文）。
+  子系统逐篇在 `reference/subsystems/`，与 `packages/` 一一对应：
+  `permission-presets` / `commands` / `typert` / `session-projection` / `approval` /
+  `sandbox` / `plan` / `user-questions` / `web-server` / `web-client` / `client-modules` /
+  `session` / `settings` / `credentials` / `workspace` / `jobs` / `subagent` / `terminal`。
+  另 `reference/api-gateway`、`reference/cordis-api/*`、`reference/cookbook/*`（加 package /
+  tool / settings card）、`develop/basic/`（第一个插件）。
+  **`web_fetch` 拿不到这个站**（hostname 被解析到非公共 IP，实测报错）——
+  用已连的 Chrome 开一个 `isolatedContext` 页面读。完整目录见本节末尾的链接清单。
 - `docs/design-and-tech-plan.md` —— 设计与技术基线(冲突时以它为准)
 - `docs/subsystems/remote-channel.md` + `docs/channel-review-notes.md` —— 通道契约与评审(后者含 DSH 行号、待补六条、实测数据)
 - `docs/subsystems/connector-and-relay.md` + `docs/subsystems/app-channel-client.md` —— 电脑侧/中转与手机端的落地设计
@@ -31,7 +51,7 @@
   5. `no-platform-isohos`:全仓禁 `Platform.isOhos`(会导致 `flutter run` / `build har` / `attach` 失败,鸿蒙判断用 `defaultTargetPlatform`)
   6. `fallback-not-in-release`:`app/lib/platform/registry.dart` 引用兜底实现(`InMemory` / `NullPush` / `Noop`)必须带 `kDebugMode` 守卫
 
-  **两条 import 规则只认 `import` / `export` 指令本身,不按正文 grep** —— 否则文件头那句「不许 import `dart:io`」会被自己判成违规(等于惩罚把规则写进代码)。自带规则自检 **22** 条,所以 `lib/` 还没代码时也不是空转(当前输出:`规则自检 22 条 + 扫描 53 个 Dart 文件` = **189 项**)
+  **两条 import 规则只认 `import` / `export` 指令本身,不按正文 grep** —— 否则文件头那句「不许 import `dart:io`」会被自己判成违规(等于惩罚把规则写进代码)。自带规则自检 **22** 条,所以 `lib/` 还没代码时也不是空转(当前输出:`规则自检 22 条 + 扫描 61 个 Dart 文件` = **215 项**)
 - 通道协议验证(不需要浏览器/手机/公网):`node protocol/verify-fixtures.mjs` —— 16 条 fixture / 486 项断言(两种结果规则、快照水位与分页、待审批重建、live 帧不入账);`node protocol/verify-loopback.mjs` —— 26 项,手机 ⇄ 中转 ⇄ 电脑侧桥接回环(含"中转状态清空后重启"与强制走桥接分支的 `5b`)。改 `protocol/` 后两条必须全绿;`DSH_DEBUG=1` 可打印每条恢复应答
 - 变异校验(验证断言不是恒真,不碰仓库):把 `protocol/` 复制到临时目录后注入,再跑两个脚本。**参考侧实测基线**:① `reference/relay.mjs` 去掉 `seq !== expected` → fixtures 红(仅 `07`);② `reference/bridge.mjs` 的 `hello` 返回空 `transient` → fixtures 红(`09`)**且回环红(`5b`)**;③ `reference/takeover.mjs` 去掉"前台且订阅"过滤 → fixtures 红(6 条,`16`)
   - **connector 侧实测基线**(直接改 `connector/src/protocol/` 后 `git checkout --` 还原,同法可复用):④ `recovery.ts` 的 `hello` delta 返回空 `transient` → 2 项红,全在 `09`;⑤ `takeover.ts` 去掉"前台且订阅"过滤 → 6 项红,全在 `16`;⑥ `crypto.ts` 的 `deriveHandshake` 从 `ikm` 去掉 `ss3`(破坏前向保密)→ vector 测试 3 项红,恰好是 `master` / `kA2B` / `kB2A`(断言数不变);⑦ `transport/keepalive.ts` 把 `halfOpenAfterMs` 设成 `Infinity`(关掉半开检测)→ 2 项红,恰好是那两条断言半开的保活用例;⑧ `lifecycle.ts` 的 `unwind` 改成"遇错即停"(不再收集)→ 1 项红,恰好是「dispose 尽力而为」那条;⑨ `transport/codec.ts` 的 `assertHandshakePhase` 直接 `return`(拆掉握手门禁)→ 1 项红,恰好是「握手门禁」那条;⑩ `protocol/methods.ts` 把幂等键强制那条 `if` 短路成 `if (false)` → 1 项红,恰好是「漏键时在分发前被拦」;⑪ `alias.ts` 的 `reconcile` 开头加 `if (true) return 0`(变空操作)→ 2 项红,恰好是那两条构造"崩在中间"状态的用例(而「干净状态」那条正确地仍通过);⑫ `protocol/handshake.ts` 的 `verifySignature` 开头加 `if (true) return`(验签永远通过)→ 3 项红,恰好是三条断言"该拒"的用例(而「正确签名通过」那条正确地仍通过);⑬ `transport/codec.ts` 的 `HANDSHAKE_FRAME_TYPES` 去掉 `'confirm'` → **4 项红**:`isHandshakeFrame` 判据、握手门禁、连接级 e2e 两条(而驱动器单测正确地仍全绿 —— 门禁是连接层的职责,不归驱动器);⑭ `protocol/handshake-driver.ts` 里 `verifySignature(...)` 换成 `void 0`(验签永远通过)→ 2 项红,恰好是「签名是别人签的」与「伪造 confirm 的 e2e」两条,而"正确签名通过"的两条仍绿;⑮ `transport/connection.ts` 的 `write()` 去掉 `frame.t !== 'ping'` 这个例外(让心跳也重置空闲计时)→ 1 项红,恰好是「完全空闲仍会判半开」那条 —— 而它红的方式是**超时**:半开再也判不出来;⑯ `protocol/box.ts` 的 `openFrame` 把 `guard.accept(fc)` 提到解箱之前(守卫先于认证推进)→ 6 项红,含「先验后进:伪造的 fc 推不动重放窗口」与 e2e 那条「同一帧重放」;⑰ `transport/connection.ts` 的 `handleFrame` 里把 `cipher !== null && needsBox(...)` 短路成 `false &&`(永不收箱)→ 4 项红:手机封电脑解、篡改、重放、缺 box 四条 e2e;⑱ `protocol/box.ts` 把方向映射写死成 `kA2B`/`kB2A`(不再按角色)→ 7 项红,含两个方向的 e2e(而"同向自解"的用例正确地仍绿);⑲ `protocol/crypto.ts` 的 `open` 去掉 `ProtocolError` 包装(让 node:crypto 的裸错误漏出去)→ **2 项红,全在单测**(`AAD 绑定`、`先验后进` 断言的是错误码),而 e2e 的篡改用例**仍绿** —— 因为连接层把非协议错误统一按 `protocol/bad-frame` 关闭,分不出类型。这条正好说明:**错误码的正确性只有单测能盯住**;⑳ `protocol/flow.ts` 的 `canSend` 去掉优先级例外(满窗时连 `res` 也压住)→ 2 项红:「满窗时 res 照发」e2e 与流控单测;㉑ `transport/connection.ts` 的 `accountFlow` 里把 `if (elicitsCredit(frame.t))` 改成 `if (true)`(连 `credit` 也回执)→ 1 项红,恰好是「credit 自己不再回 credit」那条。**㉑ 第一次跑时是全绿的**:当时这条规则被"早返回 + 谓词"写了两遍、谓词是死逻辑;改成两个并列 `if` 后,同一个变异立刻命中。结论:**变异不红时先怀疑测试或重复逻辑,而不是记一笔"覆盖不到"**;㉒ `method-face.ts` 的 `resFrame` 把 `id` 写成固定值(不回带请求 id)→ 4 项红(两条 e2e + 单测两条),关联一断手机就永远等不到回应;㉓ `method-face.ts` 的解信封 try/catch 改成 `throw`(载荷错误直接抛)→ 2 项红:单测「载荷坏」与 e2e「载荷不是 JSON」—— 而且 e2e 那条红的方式是**连接被关**,正好证明"结构化错误不关连接"这条判据是真的;㉔ `handlers.ts` 的 `repo.info` 把 `methods` 写死成 `['repo.info']`(手抄清单)→ 2 项红:单测「报的必须是表的键」与 e2e 那条;㉕ `idempotency.ts` 去掉 `if (envelope.ok)` 判断(失败也记进表)→ 1 项红,恰好是「失败不进表:第二次仍会真的执行」;㉖ `idempotency.ts` 的 `rows.get(requestId)` 恒当未命中(不查缓存)→ 4 项红:两条单测 + 方法面那条 + **e2e 的 I8 用例**(真实重发被算了两次);㉗ `method-face.ts` 去掉 `requiresIdempotencyKey` 判断(只读方法也进表)→ 1 项红,恰好是「只读方法带键也不进表」;㉘ `idempotency.ts` 的惰性过期判断改成 `if (false)`(过期条目照旧当命中)→ 1 项红,恰好是「惰性过期:过期条目按未命中处理」;㉙ `dsh/sessions.ts` 的 `list` 改成 `{ ...item }`(spread 整个 DSH 行)→ 1 项红,恰好是「只映射该映射的字段」;㉚ `handlers.ts` 的 `session.list` 改成 `{ sid, ...row }`(把适配器行整个发出去)→ 2 项红:单测那条与 e2e 的「DSH 会话 id 不过线」;㉛ `alias.ts` 的 `ensure` 去掉同键合流 → 1 项红,恰好是「并发 ensure 合流成一个 sid」。**㉛ 第一次跑时全绿**:不是用例没写,而是替身不忠实 —— 内存表的 `put` 被写成同步改内存,而真实域表是"先落盘、再改内存"(单写链),那个 await 边界正是并发撞车的窗口。给替身补上这个边界后同一变异立刻命中。教训:**测并发的替身必须保留真实介质的时序特征**;㉜ `dsh/jobs.ts` 的 `listOwnedBy` 去掉"排掉无主"的 filter → 1 项红;㉝ `dsh/jobs.ts` 的 `readAt(id, from, caller)` 把 caller 与 from 对调 → 1 项红;㉞ `dsh/jobs.ts` 的 subscribe 恢复成旧的 output 放行(无主 output 不排)→ 1 项红,恰好是「无主事件两种形状都要排掉」——**这条变异保护的正是本轮修掉的那个真缺陷**;㉟ `dsh/settings.ts` 的 `describe()` 不传 `redactSecrets` → 1 项红,恰好是「必须传 redactSecrets」;㊱ `dsh/settings.ts` 的 `setField` 改用 `replace` → 1 项红,恰好是「绝不走 replace」;㊲ `dsh/subagents.ts` 去掉 `kind === 'diagnostic'` 分支(让诊断行走 child 分支)→ 1 项红,恰好是「联合拍平」那条。**㊲ 第一次的变异是错的**:把诊断行原样展开(`{...entry, parentId, depth}`)语义没变,自然全绿 —— 换成真实失效形状(诊断行带 undefined 的 child 字段)后立刻命中。教训:**变异必须改变语义,不只是改变写法**;**还有第三种"绿得不是地方":用例可能被别的路径满足** —— 「窗口松开必须唤醒」的第一版是 `await pending` + 断言 `resumed === true`,而 ㊼ 变异**没让它红**(它跑了 16 秒,被**连接自己断开**时的另一处兑现唤醒,断言照样成立)。修法:**有界等待**(`Promise.race` 500 ms)+ 断言唤醒发生在连接**还活着**时(`state === 'serving'`,且醒来后重发那一帧要被接受),改完同一个变异 0.9 秒内精确红。三次同类教训的共同点:**证据本身要被质疑** —— 断言要表达"我关心的那条机制",而不是"最后有没有个好结果"㊳ `handlers.ts` 的 `requireSession` 未知别名不再抛错(返回空串)→ 2 项红(单测 + e2e 的 not-found);㊴ `handlers.ts` 去掉 `sid` 形状检查 → 1 项红,恰好是「sid 缺失或形状不对 → bad-frame」;㊵ `handlers.ts` 的 `if (deps.jobs !== undefined)` 改成 `if (true)`(缺服务也挂 `job.list`)→ 2 项红,含「可选服务缺了:`job.*` 干脆不在表里」;㊶ `dsh/jobs.ts` 的 `createJobControlPort` 不再把 `job/not-found` 转成协议码 → 1 项红(适配器那条);㊷ 把**一切**错误都伪装成 `job/not-found` → 1 项红,恰好是「producer 的取消抛错不得伪装」—— 这条正是宿主注释里那句 "instead of masquerading as job-not-found";㊸ `handlers.ts` 去掉 `jobId` 形状校验 → 1 项红;㊹ `handlers.ts` 用 `deps.jobs` 的存在与否来挂 `job.kill`(把两种能力混成一种)→ 5 项红,含「两种任务能力可以独立缺失」。㊺ `protocol/frame.ts` 的 `FRAME_TYPES` 去掉 `'job'` → 1 项红(清单与契约逐项相等那条);㊻ `flow.ts` 的 `pausable` 去掉 `'job'`(不再可暂停/攒批)→ 3 项红(含「满窗时 job 也必须被拒绝」);㊼ `connection.ts` 窗口松开处不再 `notifyWritable()` → 1 项红(0.9 s 内——见下面那条教训);㊽ `connection.ts` 离开服务态处不再 `notifyWritable()` → 1 项红(0.76 s);㊾ `job-subscriptions.ts` 去掉 `follow` 的幂等分支(每次重开流)→ 1 项红(「同一个任务重复 follow 不重开流」);㊿ `job-subscriptions.ts` 的 `finally` 去掉 `if (isCurrent())`(无条件清表)→ 1 项红(「换起点」那条 —— 新订阅被旧循环收尾时误删);(51) `job-subscriptions.ts` 卡在 `waitWritable` 时不再检查 `aborted` → 1 项红(「卡在满窗等待时被收起」);(52) `handlers.ts` 去掉 `from` 形状校验 → 1 项红;(53) `tests/support/secure-connection.ts` 去掉离开服务态时的 `stopAll()` → 1 项红(e2e「连接断开时任务输出订阅全停」)。**另有两条变异没红并被正确处理**:`job-subscriptions.ts` 的**外层**"是不是当前订阅"判据删掉后无红 —— 追查发现它不可达(替换/收起/停止三个入口都会 abort,而迭代器在 `next()` 里就中止),按"不留不可达防御代码"删除,并把承重的 `finally` 判据与"卡在满窗时被收起"补成会红的用例。(54) `session-subscriptions.ts` 开启快照的 `records` 不再展开成 `ev`(补课事件静默丢掉)→ 2 项红(单测 + e2e);(55) `session-subscriptions.ts` 的 `streamIdOf` 一律返回 1(换尝试不换流号)→ 1 项红;(56) `handlers.ts` 去掉 `since` 形状校验 → 1 项红。**另有一条在重构中被测试抓住的语义合并**:抽订阅骨架时,"宿主抛错"与"有序结束却没终止帧"被合并成同一条 tail 帧,而两者给手机显示的话不同 —— 骨架因此加了 `onError`,与 `onEndWithoutTerminal` 分开(这就是"重构时旧测试不许改"的价值)。④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳㉑㉒㉓㉔㉕㉖㉗㉘㉙㉚㉛㉜㉝㉞㉟㊱㊲㊳㊴㊵㊶㊷㊸㊹㊺㊻㊼㊽㊾㊿(51)(52)(53) 与参考侧基线 ②③ **逐条对上**。
@@ -40,7 +60,7 @@
 - 图标集校验(不需要浏览器):`node mock/proto/tools/verify-icons.cjs`
 - **手机端 `app/`(Flutter 工程;`flutter` 装在 `D:\soft\flutter`,已进用户 PATH)**:
   - **版本闸门:锁 Flutter `3.41.9`**(上界由鸿蒙 fork 定,`app-platform-boundaries.md` §4)。当前上游 stable 是 3.47.6,**不许装** —— Dart SDK 版本决定语言特性,升上去等接鸿蒙时要回改一大片。自带 Dart 3.11.5。
-  - `cd app; flutter test` —— 跑 `test/`,当前 **390 项**:core 单测(含封箱判据/握手门禁/恢复判定等)+ 连接层(状态机/退避/心跳半开/箱与握手/接线 e2e/outbox/LiveAccumulator/断连拒绝在途请求/落盘与 persisted)+ 平台层(真 socket)+ 配对(跨端向量:SAS/pairingId/设备标识/**握手上下文**)+ **配对客户端(状态码 → `ClientAction`,含 426 → 升级)** + **候选身份与上下文形状** + **配对通道 9(真驱动一个电脑侧替身:握手两帧、秘密只在密文里、`fc` 从 0 起、`pong` 回显)** + **配对编排(两段:确认前不发秘密)** + **带票传输(换票失败如实抛)** + **地址边界(升级 URL 形状 / 只认 wss)** + 图标(含**数像素**)+ **本地库(同一套断言在 sqflite 与内存实现上各跑一遍)** + 装配不变量 + 界面 + 跨端向量 + fixtures 三角色回放 + **`sync.hello`(前后台态 + 订阅集声明,含重连后由连接层重新声明)** + **交互投影(`approval/asked` 的 callId 判据、`ask_user_question` 的 snake_case `multi_select`、"（推荐）"剥离子、两条收束路)** + **接管答复(`interaction.respond` 的载荷形状、显式跳过、计划 approveLabel)** + **跨层:事件 → 交互信号 → 答复** + **封了箱的 credit 必须被解开后记账(曾把密文喂给 decodeCredit)** + **前后台态上报(`platform/app_state_reporter.dart`:五个生命周期态只有 `resumed` 算前台、摘掉 observer 后不再上报、客户端换掉后报新的那个;`tester.binding.handleAppLifecycleStateChanged` 驱动,因为生命周期事件只从 `WidgetsBinding` 来)** + **发送模式(`model/send_mode.dart`:线上值↔枚举、偏好落盘与重启恢复、切模式写盘不重复通知、盘上怪值保持默认;widget 层钉"发送真的带了 mode")** + **多会话待处理(`ui/takeover.dart`:一会话一队、切桶不丢、优先级照 DSH 计划2>提问1>审批0、迟到收束不带 sid 全桶找、跨会话提示行;`interaction_wiring_test` 钉会话行待处理数从本地投影算)**
+  - `cd app; flutter test` —— 跑 `test/`,当前 **497 项**:core 单测(含封箱判据/握手门禁/恢复判定等)+ 连接层(状态机/退避/心跳半开/箱与握手/接线 e2e/outbox/LiveAccumulator/断连拒绝在途请求/落盘与 persisted)+ 平台层(真 socket)+ 配对(跨端向量:SAS/pairingId/设备标识/**握手上下文**)+ **配对客户端(状态码 → `ClientAction`,含 426 → 升级)** + **候选身份与上下文形状** + **配对通道 9(真驱动一个电脑侧替身:握手两帧、秘密只在密文里、`fc` 从 0 起、`pong` 回显)** + **配对编排(两段:确认前不发秘密)** + **带票传输(换票失败如实抛)** + **地址边界(升级 URL 形状 / 只认 wss)** + 图标(含**数像素**)+ **本地库(同一套断言在 sqflite 与内存实现上各跑一遍)** + 装配不变量 + 界面 + 跨端向量 + fixtures 三角色回放 + **`sync.hello`(前后台态 + 订阅集声明,含重连后由连接层重新声明)** + **交互投影(`approval/asked` 的 callId 判据、`ask_user_question` 的 snake_case `multi_select`、"（推荐）"剥离子、两条收束路)** + **接管答复(`interaction.respond` 的载荷形状、显式跳过、计划 approveLabel)** + **跨层:事件 → 交互信号 → 答复** + **封了箱的 credit 必须被解开后记账(曾把密文喂给 decodeCredit)** + **前后台态上报(`platform/app_state_reporter.dart`:五个生命周期态只有 `resumed` 算前台、摘掉 observer 后不再上报、客户端换掉后报新的那个;`tester.binding.handleAppLifecycleStateChanged` 驱动,因为生命周期事件只从 `WidgetsBinding` 来)** + **发送模式(`model/send_mode.dart`:线上值↔枚举、偏好落盘与重启恢复、切模式写盘不重复通知、盘上怪值保持默认;widget 层钉"发送真的带了 mode")** + **多会话待处理(`ui/takeover.dart`:一会话一队、切桶不丢、优先级照 DSH 计划2>提问1>审批0、迟到收束不带 sid 全桶找、跨会话提示行;`interaction_wiring_test` 钉会话行待处理数从本地投影算)** + **权限档(`model/permission.dart` + `permission_test.dart`:目录/当前值/切换三种结论各自解析,展示映射不硬套内置档;`chat_takeover_wiring_test` 走完整条链——目录 → sheet → `permission.switch` → 电脑侧落值 → 重读投影 → chip 与接管队列都变)**
   - **`flutter test integration_test/` 跑完会卸载 App**（实测：跑完 `adb shell pm list packages`
     里没有 `com.example.dsh_mobile`）。两个后果：① 手机的 sqflite 被清 ⇒ `since = 0` ⇒
     连接器把**整段历史**重放给手机，于是手机会先答到上一轮留下的作废审批上
@@ -64,7 +84,26 @@
     - `llm-pi-ai` 是 DSH 的通用 OpenAI 兼容适配器,base bundle 里**挂载但零路由**,路由由 profile 补丁或 `llm-pi-ai` settings 段提供(字段表见 `packages/llm/llm-pi-ai/src/index.ts` 顶部的 yaml 示例)。
     - 密钥走 `apiKeyEnv` 引用:**值写启动环境变量,不写配置文件**(与 `llm-deepseek-api-key/src/index.ts:22-33` 同一条解析顺序:先 credentials,后启动环境)。
     - `auto` 实际落到 `glm-5.3-flash`,是 reasoning 模型 —— `maxTokens` 给小了会直接 length 截断、一个工具调用都发不出来,所以配到 32768。
-    - **不要用 `session/select-model` 切渠道**:它会顺手 `ctx.agentDefaultModel.saveSelection(...)`(`packages/api/session-controller/src/commands.ts` 的 selectModel 分支)把选择写回默认模型,那是全局可见的。
+    - **`session/select-model` 就是 Web 用的那一个,手机照用即可**。已核实 Web 侧
+      (`packages/client/ui-model-selection/src/client/directory.ts:98`)调的正是
+      `sessions.selectModel({sessionId, provider, model, reasoningEffort})`,
+      **没有第二套接口**。
+      语义(`packages/core/agent-default-model/src/index.ts:82-94` + README):
+      ① `agents.selectForNextRequest` 让**当前会话**立即生效(README: "Session-specific
+      selection takes precedence in the consumer");
+      ② `saveSelection` 让**以后新建的 agent** 默认跟随(`currentSelection()` 的用途);
+      ③ 没有 `configEditor` 时 `saveSelection` **直接 no-op**;
+      ④ **不改别的会话**。
+      所以"新会话默认跟随"是 Web 一直有的行为,是特性不是泄漏。
+      **连带一个 Dart 坑**:请求体里的可选字段用显式 `if (x != null) 'k': x`,
+      **不要**用 null-aware element `?x: x` —— 后者的 key 取**值的字符串形式**,
+      实测展开成 `high: high` 而不是 `reasoningEffort: high`;而 `dart analyze` 会
+      反过来建议改过去(`use_null_aware_elements`),别听。见
+      `app/lib/data/app_model.dart` 里那条 ignore 注释。
+      所以"副作用"只是"新会话默认跟随",**不是**改别的人的会话 —— 这是 Web 的行为,是特性。
+      **2026-10-15 更正**:我曾把这条写成"不要用,会写回全局默认",那是把**测试纪律**
+      (测试 profile 与日常 profile 共用 `~/.dsh/`,在测试 profile 里切会污染用户日常默认)
+      错升成了**产品约束**。产品上手机遥控的是用户自己的电脑,照 Web 做即可。
   - `cd app; flutter test integration_test/ -d <序列号>` —— **真机组**:验 `flutter_secure_storage` 真的落到设备密钥库(2)+ `sqflite` 在**设备原生 SQLite** 上建表/落盘/重开还在(2)。**纯单测做不了这个**(插件在 Dart VM 里没有实现,调用会抛 `MissingPluginException`;而单测里的 sqflite 走 ffi,不是同一个驱动)。需要 `ANDROID_HOME`/`JAVA_HOME` 都在环境里,否则报 `Could not locate aapt`
     - 另外几条**需要真中转 + 真机**、不给前置就自动跳过:`integration_test/channel_e2e_test.dart`(两段配对 → 令牌落 Keystore)、`integration_test/pairing_flow_test.dart`(连不上时如实报错 + 密钥库往返)、**`integration_test/interaction_real_device_test.dart`**(交互链:两段配对 → 建连 → `sync.hello` → `session.list` → 订阅收 `ev` → 发一句并作为 `user/message` 回到手机 → 审批回合;凭据在结尾自己清掉)。跑法与二维码出处见 `docs/cookbook/next-session-interaction-to-phone.md`
     - **明文放行有四处**,少一处静默不通(都只在 debug / 本机回环):① Android `app/src/debug/res/xml/network_security_config.xml`;② `PairingPage.allowInsecureLocal`;③ `main.dart` 里 `PairingClient` 的 `allowInsecureLocal`(漏了 = "码认了、票换不了",已由 `assembly_invariants_test.dart` 钉住);④ profile `cordis.patch.yml` 里连接器的 `allowInsecureLocal`(漏了 = "连接器从不拨线、什么都没发生";该文件在 `~/.dsh/` 下、被 gitignore,换机器要重配)
@@ -83,6 +122,17 @@
   - lint 规则集在 `app/analysis_options.yaml`,**每条都写了它针对的具体失败模式**(不是"更严格就好");改它要连注释一起改
   - 新增依赖前先看 `.agents/notes/implemented/2026-10-02-mobile-core-crypto-choice.md` 的选型闸门
 - 工具脚本路径门禁(不需要浏览器):`node mock/proto/tools/verify-tool-paths.mjs` —— 扫 `mock/proto/tools/*.mjs`,2 条规则:禁 `file:///` + 盘符的字面量、禁 `C:\sudy` / `C:/sudy`(旧环境根)。**本仓库内的路径必须从 `import.meta.url` 派生**;理由与代价见 `.agents/notes/implemented/2026-10-02-paths-must-be-derived-not-hardcoded.md`(一次搬盘让 11 个脚本的 `PAGE` 全部指向不存在的 URL,而门禁是**静默全红**:脚本照常跑完、照常打印 JSON)
+- **adb 无法往 MIUI 的第三方输入法里注入长字符串**（2026-10-15 实测，白绕了半小时）：
+  这台设备（`d61cf622`，Android 16）只装了三个第三方输入法（百度/讯飞/搜狗），**没有 AOSP 键盘**。
+  `adb shell input text '<330 字节 JSON>'` 会被输入法当成**一个词组做组合输入**：`{`、`"` 被丢弃，
+  `:` 被改成 ` : `（中英混排自动加空格），最终输入框里只剩 `v : 2`。
+  切换输入法更糟：讯飞首次启用会弹用户协议并把 App 挤后台。
+  **结论：需要输入长文本（配对码、URL、token）时，走"出码 → 用户长按粘贴"，不要跟 adb 斗。**
+  可点的按钮/页面切换照常用 `adb shell input tap <x> <y>`（坐标从 `screencap` 截图估，
+  Flutter 的 `uiautomator dump` 拿不到语义树，实测全是空 `text`）。
+  **连带一个产品缺陷（未修）**：`app/lib/ui/pairing_page.dart` 的配对码 `TextField` 没有关
+  输入法联想（`enableSuggestions` / `autocorrect`），所以**用户手动打字**那段 JSON 也会被
+  中英混排加空格破坏（`:` → ` : `）。粘贴不受影响，但"手打"这条路现在是坏的。
 - 起独立 headless Chrome(不碰日常浏览器,默认端口 9400):`pwsh -File mock/proto/tools/cdp.ps1 -Port 9400`
 - 设环境后跑验证:`$env:CDP_URL='http://127.0.0.1:9400'; $env:NO_PROXY='127.0.0.1,localhost'`
   - `node mock/proto/tools/verify-proto.mjs` —— 布局与交互(顺序、控件位置、搜索过滤、动画、遮罩)
@@ -97,8 +147,10 @@
   - `cd connector; pnpm install` —— 装依赖,**必须 0 退出**(见 Pitfalls 的构建脚本闸)
   - `pnpm exec tsc --noEmit` —— 类型检查(开工步骤第 2 步的判据)
   - `pnpm build` —— tsdown 产出 `lib/index.js` + `lib/index.d.ts`,即装进 profile 的那份产物;路径对齐靠 `connector/tsdown.config.ts`
-  - `pnpm test` —— 跑 `protocol/fixtures` 与 `protocol/vectors`,外加握手/封箱/流控/任务帧/订阅骨架/每连接装配/方法面/幂等/四个 DSH 适配器/连接/身份/直连监听面等接线用例(当前 **369 项**;其中 fixtures 的断言数须与 `verify-fixtures.mjs` 的 486 一致、向量的与 `verify-vectors.mjs` 的 49 一致)
-    - **错误码有四个门禁,改表会同时红**:`tests/error-table-parity.test.ts`(TS `ERROR_TABLE` 与 Dart `ErrorCode` 逐字一致,**做过变异校验**)、`tests/error-code-table.test.ts`(契约 §3.1 与代码一致)、`tests/flow.test.ts`(封闭 + 满射 + 未知码归一,数必须 30)、`tests/methods.test.ts`(方法数 23 与幂等键集合)。**宿主层漏一个码的后果是被降级成 `internal`** → 用户对着永远重试也不好的操作反复点(2026-10-09 真漏过 15 个)。
+  - `pnpm test` —— 跑 `protocol/fixtures` 与 `protocol/vectors`,外加握手/封箱/流控/任务帧/订阅骨架/每连接装配/方法面/幂等/四个 DSH 适配器/连接/身份/直连监听面等接线用例(当前 **444 项**;其中 fixtures 的断言数须与 `verify-fixtures.mjs` 的 486 一致、向量的与 `verify-vectors.mjs` 的 49 一致)
+    - **错误码有四个门禁,改表会同时红**:`tests/error-table-parity.test.ts`(TS `ERROR_TABLE` 与 Dart `ErrorCode` 逐字一致,**做过变异校验**)、`tests/error-code-table.test.ts`(契约 §3.1 与代码一致)、`tests/flow.test.ts`(封闭 + 满射 + 未知码归一,数必须 30)、`tests/methods.test.ts`(方法数 **24** 与幂等键集合)。**宿主层漏一个码的后果是被降级成 `internal`** → 用户对着永远重试也不好的操作反复点(2026-10-09 真漏过 15 个)。
+  - **方法数这一行静默漂移过一次**:`tools.md` 写着 23 而测试断言 21,两边都不对也没人发现 —— 因为这条只是文档,红了也不会指向它。2026-10-14 校准成 22,2026-10-15 加 `session.projections` 后是 23,同日加 `session.select-model` 后是 24,同日再加 `permission.catalog` 与 `permission.switch` 后是 **26**(契约封闭集的真实规模;已接 21,差额 5 个是契约列了没实现的)。**改方法表必须同改这里、契约 §5.7 与 `memory.md` 的"方法面 x/26"三处。**
+  - **`method-name-table.test.ts` 的正则必须含连字符**:方法名如 `session.select-model` 带 `-`,而 `[\w.]` 不含它 —— 于是被截成 `session.select`(一个不存在的名字),新方法**静默漏检**而门禁看起来通过(2026-10-15 实测踩到)。字符类要写 `[\w-]`。
     - **`tests/cross-language-handshake.test.ts` 是唯一一条"两边产品代码真打一次"的用例**:Dart 侧跑 `app/tool/cross_initiator.dart`(真 `createHandshakeDriver` + 真 `BoxCodec`),TS 侧跑真 `createHandshakeDriver` + 真 `createBoxCodec`,通过 stdio 一行一帧地交换,比对**双方派生的密钥**与**双向解开的明文**。它守的是"transcript 拼串 / HKDF 输入 / AAD 规范化 / 箱容器"四件事在两边逐字节一致 —— 这类分歧**单测抓不到**(两边各自自洽),症状是"验签失败 / 箱解不开",而错误信息会说"公钥被替换"。
       - **已做变异校验**:把 Dart 侧 `transcriptFromFields` 的字段顺序换掉 → 红(TS 侧收不到 confirm → 超时),证明它不是恒真。
       - **Windows 上两个坑**:① `dart` 是 `flutter\bin\dart.bat` shim,Node 拒绝直接 spawn `.bat`(报 `spawn dart ENOENT`,看着像没装 Dart)→ 必须 `shell: true`;② `dart run` 的 `Running build hooks…` 前缀**不带换行**,会和第一帧挤在同一行 → 读取要从第一个 `{` 开始解析,不能整行跳过。
@@ -119,6 +171,20 @@
     ② **按默认尺寸烘焙**:`%%E:strokeWidth + 3%%` 这类表达式在 size 变化时会算出**不同几何**(实测 `treeCorner` 的 `x="8"` → size=20 时变成 `x="16"`)→ 所以只换根节点 `width`/`height`,缩放交给 `viewBox`;
     ③ **只换根节点那三个属性**:`archiveOff` 的默认尺寸是 16,而它坐标里有 **6 处** `="16"`(含 `<mask>` 与 `<rect>` 的几何值),全换会让 SVG 非法、图标静默画不出。
 - 关键入口:`mock/proto/index.html`(原型唯一入口);`app/lib/theme/dsh_theme.dart`(Flutter 主题)
+- **局域网直连（同一 WiFi，2026-10-14）**：连接器本来就有直连监听面，默认关着。三步开起来：
+  1. profile 补丁里给连接器配 `listenPort: <端口>` + `listenHost: '0.0.0.0'`
+     （`0.0.0.0` = 所有网卡，可拨地址由 `os.networkInterfaces()` 枚举后**自报**给手机）；
+  2. 手机侧**什么都不用做**：连上之后 `AppModel` 自动拉一次 `endpoint.describe`，
+     发现到的直连地址按"direct 先于 relay"并进端点表并落盘，下次拨号就用它；
+  3. 拨号失败自动换下一个端点（中转是保底），**不降权** —— 否则出一次门就再也回不到直连。
+  - **配对凭据与端点无关**：`PairedCredentials` 十一个字段里只有 `relayUrl` 跟地址有关，
+    其余全是握手与换票用的。所以换端点**不重扫码、不重新派生密钥**。
+  - **明文 `ws://` 的放行范围从"仅回环"扩到"回环/私网/CGNAT/link-local/ULA"**
+    （`core/endpoint.dart` 的 `isPrivateOrLoopback`）。代价是同网段的人看得见帧的
+    大小与时序（元数据），但**不能伪装任一端** —— 握手是双向 Ed25519 + X3DH + AEAD，
+    电脑公钥配对时钉死。**公网仍强制 `wss`，这条不放宽。**
+  - 取舍与被否方案（二维码带 direct / mDNS / 手填 IP / 塞进 `sync.hello`）见
+    `.agents/notes/implemented/2026-10-14-endpoint-switching-lan-direct.md`。
 - 直连监听面(契约 §14.6 第一跳;设计见 `docs/subsystems/connector-and-relay.md` §1.7):配置 `listenPort`(**默认 `0` = 不监听**)+ `listenHost`(默认 `127.0.0.1`);代码 `connector/src/transport/listener.ts`。
   - **`ws` 是运行时依赖**(本插件唯一一个,`dependencies` 里);它只在配了 `listenPort` 时才被 import,但**产物里是顶层 `import`**(tsdown 外部化,不按需加载)—— 所以装进 profile 时 `ws` 必须装得上,否则 `lib/index.js` 直接加载失败。
   - TLS **不在插件里终结**(Tailscale `tailscale serve` / 反向代理);手机侧始终拨 `wss://`。
@@ -126,6 +192,19 @@
   - 起监听面的用例用 `port: 0`(系统分配),所以不受固定端口占用影响;`startListener` 的 `port: 0` 是"随便给一个口",**不是**"不监听"(那是装配层按配置判断的)
 - 只读参考源码:DSH `D:\sudy\github\deepseek-harness`;Agents-Anywhere `D:\sudy\github\Agents-Anywhere`;rikkahub `D:\sudy\github\rikkahub`
 - DSH 侧高信号入口(只读):
+  - **Typert 远程调用的两条铁律**(`reference/subsystems/typert`,2026-10-15 补 —— 之前是试出来的):
+    ① **线上 args 的键不一定等于源码参数名**:`InvocationParameterDescriptor` 同时有
+    `name`(源码参数名)与 `wire`(线上键),`source: 'lookup'` 的参数在线上被换成 wire identity。
+    实例:`commands.execute(agent: Agent, …)` 的源码参数叫 `agent`,线上键是 **`agentId`**
+    (传 `agent` 会回 `gateway/arguments-invalid: missing "agentId"; unexpected "agent"`)。
+    ② **取消信号绝不进 args**(它在业务参数之后注入),所以 `signal` 不用传。
+  - **在电脑侧跑一条 DSH 斜杠命令**(2026-10-15 补,替代"在 Web UI 输入框里跟补全菜单斗"):
+    `POST http://127.0.0.1:<port>/api/<服务键>/<方法>`,`content-type: application/json`,体
+    `{"type":"client-request","rpcId":"<任意>","method":"<服务键>/<方法>","payload":{"args":{…}}}`
+    —— 应答 `{"type":"server-response","rpcId":…,"result":{"ok":true,"value":…}}`。
+    鉴权走浏览器 cookie(先打开一次带 `?token=` 的页面),所以在**已认证的页面里 fetch** 最省事;
+    PowerShell 直连会 401。实例见 `.agents/notes/` 与本节的 Typert 两条。
+    `payload` 少包一层 `args` 会回 `gateway/internal: Remote payload must contain exactly one plain-object args field`。
   - 开发者文档 <https://deepseek-harness.github.io/deepseek-harness/reference/> —— 子系统 `reference/subsystems/web-server`、`web-client`、`client-modules`;另有 `develop/basic/`、`guide/quickstart`
   - 架构决策笔记金矿 `D:\sudy\github\deepseek-harness\.agents\notes\archived\architecture\`:`2026-07-19-gui-layering-and-rpc-protocol`(GUI 分层与 RPC 协议)、`2026-07-23-unified-session-query-service`(统一会话查询服务)、`2026-07-25-web-command-surfaces-and-assembly`(命令面与装配)、`2026-07-25-web-input-machine-and-slash-pipeline`(输入状态机与 slash 流水线)、`2026-07-28-user-settings-seam`(用户设置缝)。每篇都带 `.zh.md`
   - **交互层(审批/提问/计划审查,2026-10-09 核实)**:`packages/interaction/user-approval/src/index.ts:215` 的 `request()` 与 `:267` 的 `decide()`(无限等 + signal 竞速 + 迟到丢弃 + fail-closed);`packages/interaction/user-questions/src/index.ts:187`(回答成为 `answer_to_pending_question` 用户消息)、`src/types.ts:26`(plan-review 意图);`packages/interaction/tool-ask-user/src/timed.ts:103`(计时提问默认 120 s、`-1` 无限等、超时转 pending)

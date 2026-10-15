@@ -26,6 +26,7 @@
 | `standalone-mode-notes.md` | 本机运行模式(不连电脑)调研与设计草案 |
 | `subsystems/remote-channel.md` | 远程通道子系统规范:信封、配对与鉴权、端到端加密、修订号与恢复语义、存储边界、推送与前台优化 |
 | `channel-review-notes.md` | 远程通道方案评审:优越性对照、DSH 侧关键事实与行号、协议待补六条、平台侧事实、可复现实测与证据等级 |
+| `mobile-surface-roadmap.md` | 移动端界面接线路线图:不变量(手机=Web 的接口透传,不重新设计)、三扇门、全景清单、接线顺序、单方法接线清单、已知陷阱 |
 | `subsystems/connector-and-relay.md` | 电脑侧桥接与中转的落地设计:工程配置与版本基线、目录与生命周期、存储 schema、中转接口与限流、里程碑 |
 | `subsystems/app-channel-client.md` | 手机端通道客户端设计:core 分层与签名、连接/订阅状态机、渲染性能对策、三端能力包、UI 接线点、测试策略 |
 | `cookbook/channel-bootstrap.md` | 开工实操:从零到真机连通的编号步骤与精确验证命令 |

@@ -1394,30 +1394,18 @@
     },
   ];
 
-  /* 顶栏状态位:有后台任务 → 任务状态(琥珀);没有 → 文件变更(中性)。
-     点它开右侧抽屉:有任务先进任务面板,否则进文件面板。 */
+  /* 顶栏状态位:已配对时常驻显示**连接状态**(与抽屉连接行同一语气,如「中转已连接 · 空闲」),
+     点它弹「连接操作」sheet(重新配对 / 打开侧面板 / 取消),不再直接开右抽屉。
+     **有意偏离** docs §7.8「有任务显任务、否则显文件变更;点它开右抽屉」——见该节偏离说明。 */
   function renderStatusPill() {
     const pill = $("#statusPill");
     if (!pill) return;
-    const live = JOBS.filter(isLive).length;
-    const changed = Object.keys(FILES).filter(
-      (p) => FILES[p].status && FILES[p].status !== "unchanged"
-    ).length;
-    if (live) {
-      pill.className = "statuspill is-warn";
-      pill.innerHTML =
-        ic("checklist", 13) +
-        `<span class="tx"><b class="n">${live}</b> 任务运行中</span>`;
-      pill.dataset.panel = "jobs";
-      pill.setAttribute("aria-label", live + " 个后台任务运行中,查看详情");
-    } else {
-      pill.className = "statuspill";
-      pill.innerHTML =
-        ic("edit", 13) +
-        `<span class="tx">${changed} 个文件变更</span>`;
-      pill.dataset.panel = "file";
-      pill.setAttribute("aria-label", changed + " 个文件有变更,查看差异");
-    }
+    pill.className = "statuspill";
+    pill.innerHTML = ic("link", 13) + `<span class="tx">中转已连接 · 空闲</span>`;
+    /* data-act 仍是 status-open;dataset.panel 的语义已从"开哪个侧面板"脱出——
+       点它改弹连接 sheet,"打开侧面板"降为 sheet 里的选项,这里只作状态标记,不再选面板。 */
+    pill.dataset.panel = "conn";
+    pill.setAttribute("aria-label", "连接状态:中转已连接 · 空闲,查看连接操作");
   }
 
   function renderJobs() {
@@ -3109,7 +3097,37 @@
         closeSide();
         break;
       case "status-open":
-        openSide(t.dataset.panel === "jobs" ? "jobs" : "file");
+        /* 点顶栏连接状态位 → 弹「连接操作」sheet(议题 3):重新配对 / 打开侧面板 / 取消。
+           不再是直接开右抽屉——"打开侧面板"降为 sheet 里的一个选项(见 docs §7.8 偏离)。
+           重新配对是演示动作,走 data-act="toast"(照本文件现有 toast 演示项先例);
+           取消 / 点遮罩关闭。原型永远有会话、没有空态,故无空态那枚「重新配对」按钮。 */
+        openSheet({
+          title: "连接操作",
+          size: "half",
+          body: `
+            <button class="sitem" data-act="toast" data-msg="演示:重新配对会清掉本机凭据,回扫码页(真实动作需 bridge)"><span class="i">${ic(
+              "refresh",
+              16
+            )}</span><span class="m">重新配对(换一台电脑)<span class="s">会清掉本机凭据,需要重新扫码</span></span></button>
+            <button class="sitem" data-act="conn-open-side"><span class="i">${ic(
+              "panelLeft",
+              16
+            )}</span><span class="m">打开侧面板</span></button>
+            <button class="sitem" data-act="conn-cancel"><span class="m">取消</span></button>`,
+        });
+        break;
+      case "conn-open-side":
+        /* 从连接 sheet 里开右抽屉:.sheet-host(z:25)盖在 .page--side(z:12)之上,
+           所以不能像 jobs-all 那样只 openSide(那会把连接 sheet 留在 side 之上);
+           也不能先 closeSheet() 再 openSide()——closeSheet() 的 history.back() 是异步的,
+           会和 side 的 pushState 竞态把 side 误关(AGENTS.md 层规则)。
+           照 settings-open/tasks-open 的处理:先**同步**摘掉 sheet 层
+           (closeLayer("sheet", true):拆 DOM + 出栈,不再 history.back),再开 side 层。 */
+        if (topLayer() && topLayer().kind === "sheet") closeLayer("sheet", true);
+        openSide("file");
+        break;
+      case "conn-cancel":
+        closeSheet();
         break;
       case "side-jobs":
         openSide("jobs");

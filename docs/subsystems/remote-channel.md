@@ -145,7 +145,7 @@ type Frame =
 |---|---|---|
 | `protocol/unsupported-version` | 对端帧版本不支持 | 提示升级,停止重试 |
 | `protocol/not-paired` | 未配对或配对已撤销 | 回到配对页 |
-| `protocol/revoked` | 设备已被吊销(电脑侧删除公钥) | 清除本地凭据,回到配对页 |
+| `protocol/revoked` | 设备已被吊销(电脑侧删除公钥) | 清除本地凭据,回到配对页。**当前无生产者**:连接器把"未配对 / 已停用 / 查不到"合并成 `protocol/not-paired`(`connector/src/protocol/handshake-driver.ts`),实际路径见 §11 故障矩阵 |
 | `protocol/bad-frame` | 帧不合法(含握手前发业务帧) | 关闭并重连一次 |
 | `protocol/replay` | 重放或乱序(连接层) | 关闭并重连(重连即换新密钥与计数器) |
 | `rate-limited` | 触发限流 | 退避重试 |
@@ -373,6 +373,11 @@ type SyncSnapshot = {
 | `interaction.respond` | 手机→电脑 | `i:<callId>` | 提问 / 计划审查的**答案批次**:`{ sid, callId, answers: [{ id, selected[], custom? }] }`。形状与 DSH 的 `AskUserQuestionAnswer` **逐字一致**,不另造决策枚举(§6.3.1)。**同一个入口也收束在途的审批 claim**:分叉点不在方法名上,而在"这一项是不是一次在途 claim"(§6.2 的判定只有端口知道);审批的"允许一次"编码成 `selected` 含 DSH 的 outcome 值 `allowed-once`(`user-approval/src/types.ts:32`),空 `selected` 且无 `custom` = 拒绝 |
 | `session.cancel` | 手机→电脑 | — | 取消当前轮次但保留待处理收件箱 |
 | `session.refetch` | 手机→电脑 | — | 取单个大条目 |
+| `session.modelCatalog` | 手机→电脑 | — | **只读**的模型目录(按 provider 分组 + 每档 reasoning effort + 部署默认值)。形状与 DSH 的 `modelCatalog` 逐字一致,手机据此建选择器 —— 显示的名字与电脑侧同一份真值,不手抄第二份。**拿不到就明说**(`{available:false}`),不给空数组:空数组会被读成"没有可用模型",而真实原因可能是某个 provider 的 key 没配 |
+| `session.select-model` | 手机→电脑 | `requestId` | 切这个会话的模型。**与 Web 用同一个 DSH 方法**(`session-controller` 的 `selectModel`),已核实 Web 侧调的就是它(`packages/client/ui-model-selection/src/client/directory.ts:98`)—— 没有第二套接口。语义(`packages/core/agent-default-model/src/index.ts:82-94` + README):① `agents.selectForNextRequest` 让**当前会话**立即生效(README 原文 "Session-specific selection takes precedence in the consumer");② `saveSelection` 让**以后新建的 agent** 默认用它,且没有 `configEditor` 时是 **no-op**;③ **不改别的会话**。"新会话默认跟随"是 Web 一直有的行为,不是副作用 |
+| `session.projections` | 手机→电脑 | — | **一个方法打开全部只读面**。DSH 的 `@Remote('projections')`(`session-controller/src/index.ts:506`)请求体只有 `{sessionId}`,返回**所有已注册投影的当前值**。已核实的键含 `modelSelection` / `permissions` / `subagentCatalog` / `deliverables` / `tokenUsage` / `contextPressure` / `sessionStats` / `turnOutline` / `todos` / `goal` / `plan` / `inbox` / `title` / `workingDirectory` / `agentPreset` / `userQuestions`。**为什么不是每面一个方法**:再开 N 个等于把 DSH 已有的投影面翻译一遍,而"翻译层就是漂移层"——投影改一个字段要跟着改 N 处;只透传这一个口,形状变了只改一处解析。按 `sessionProjections` 能力位挂(缺了方法不出现)。代价是一次响应一大包(20+ 键),若实测太大退路是"只读需要的键",但那要动契约 |
+| `permission.catalog` | 手机→电脑 | — | **只读**的权限预设清单。**与 Web 同一个 DSH 方法**：`permissionPresets.catalog()`（`@Remote('catalog')`，`packages/interaction/permission-presets/src/index.ts:292`），形状是 `PermissionCatalog = {options, defaultOptions, defaultPreset}`（`types.ts:26-33`），每项 `{value, name, description?}`。**预设表是部署可配的**（`packages/bundle/base/cordis.patch.yml:262-271` 配了 `read-only` / `workspace-write` / `danger-full-access`），所以名单只能从电脑侧取 —— 手机手抄一份就是第二份真值，电脑上加一个预设手机上永远看不到。拿不到就回 `{available:false}`，**不给空数组**（空数组会被读成"没有可用预设"）。按 `permissionPresets` 能力位挂 |
+| `permission.switch` | 手机→电脑 | `requestId` | 切这个会话的权限预设。**写路径是 DSH 的 `/permission <档位>` 斜杠命令**（注册在 `permission-presets/src/index.ts:255-276`；DSH 注释原话 "the one write path a web client uses" 在 `:252-254`），经 `commands.execute` 调它（`interaction/commands/src/index.ts:360` 的 `@Remote`，方法体 `:361`）。**与 Web 同一条路径**：Web 侧 `live.command('/permission ' + preset)`（`packages/client/ui-permission-presets/src/client/index.ts:126`）落到 `remote.commands.execute(sessionId, line, [])`（`session-controller/src/client/sessions/session.ts:388`）。回 `{matched, execution?}`：`matched:false` 是 DSH 回 `undefined`（这台电脑没有 `/permission` 命令，与 Web 的推导逐字一致，`session.ts:390`），`execution` 是 DSH 的 `{commandId, result}` 原样过线 —— 预设名不对时 `result.kind==='error'` 且带 DSH 的原文，手机照显示。**当前值不走这个方法读**：它在 `permissions` 投影的 `{currentValue}`（`permission-presets/src/index.ts:237-244`），随 `session.projections` 到手机。**为什么不放通用的 `command.execute`**：方法名是封闭集、每个方法对应手机上一个看得见的动作；通用命令面会让手机调到移动端没有形态的命令（`/compact`、`/export`、各插件自带的），而 `CommandResult` 只有 `{kind,text}`（`interaction/commands/src/types.ts:34-41`），副作用发生了手机上既呈现不了也撤不回来 |
 | `job.list` | 手机→电脑 | — | 任务投影(严格属于该会话的行) |
 | `job.follow` / `job.unfollow` | 手机→电脑 | — | 任务输出订阅:`follow({sid, jobId, from?})` → `{from}`(第一帧 output 的起点);同一个 `(sid, jobId)` 重复 follow 幂等,带不同 `from` 则先终止旧订阅。`unfollow({sid, jobId})` → `{stopped}` |
 | `job.kill` | 手机→电脑 | — | **走宿主的人类发起门面**(`jobController.kill`):归属围栏由注册表判(`未知任务` 与 `不属于这个会话` **都**归 `job/not-found`),取消原因写宿主的 `cancelled by the user` —— 于是手机点停止与桌面点停止在模型眼里是同一件事。返回 `{ outcome: 'requested' \| 'already-finished' }`,**落终态等 `settled` 事件,不做乐观更新** |
@@ -380,8 +385,9 @@ type SyncSnapshot = {
 | `credentials.set` / `credentials.unset` | 手机→电脑 | `requestId` | **单向写面**,无读方法。DSH 侧是 `settings-controller/src/credentials.ts:100` 的 `set(ref, value)` 与 `:113` 的 `unset(ref)`;`value` 是明文(§7.5 的"改密钥只发新值"由此天然成立),而读面 `describe`(:83)**默认脱敏**(`redactSecrets`) |
 | `devices.list` | 手机→电脑 | — | 设备管理。**吊销不是方法**:名册的写入方本来就是电脑侧,吊销 = 不再把该设备报进名册 + 本地标 `revokedAt`(§8.2) |
 | `sync.hello` | 手机→电脑 | — | §5.4 的恢复握手。**两个职责**:① 一次声明整份订阅集(手机回到前台时要恢复的是"所有会话",不是一个;断线之后 UI 不会重新 `subscribe`,所以恢复由持有连接的这一层发起);② 上报前后台态(`app`)。每个声明的会话都走同一个 `session.subscribe` 的订阅面,不另起一套恢复语义;失败语义与它逐字一致(一个别名未知就整票失败并回 `session/not-found`) |
+| `endpoint.describe` | 手机→电脑 | — | **端点自报**:当前可拨的地址表(`{ endpoints: [{kind,url,label?}] }`,`kind` ∈ `relay`/`direct`)。没有直连监听面时这个方法**不出现**(能力位 `caps.direct` 为 false),而不是挂上去回 `connector/unsupported`。手机据此建"连接方式"列表,并在 IP 变了之后自愈 —— 顺序即偏好(`direct` 先于 `relay`)。取舍与被否方案(二维码字段 / mDNS / 手填 / 塞进 `sync.hello`)见 `.agents/notes/implemented/2026-10-14-endpoint-switching-lan-direct.md` |
 | `repo.info` | 手机→电脑 | — | 版本、能力位、别名→会话元的映射版本 |
-| `session.create` | 手机→电脑 | `requestId` | 新建会话。**DSH 支持**(`session-controller/src/commands.ts:105` 的 `create(request)` 与 `src/index.ts:281`);本期**未实现**,实现时照 DSH 的 `SessionCreateRequest` 形状 |
+| `session.create` | 手机→电脑 | `requestId` | 新建会话。**与 Web 同一个 DSH 方法**(`session-controller/src/index.ts:280`,请求形状 `{workspaceId?, cwd?, sessionId?, agentPreset?}`,回 `{sessionId, agentPreset?}`)。**`workspaceId` / `cwd` 都不传**:手机侧不知道电脑有哪些工作区(那要另接 `workspace-controller`),而不传时 DSH 用它自己的当前工作区 —— 与 Web 点"新建会话"一致;硬传一个猜的比不传更糟。**只在给了参数时才进请求体**:DSH 对缺省字段有自己的默认,塞空串会被当成"显式选空" |
 
 **没有 `push.configure`**（刻意不声明）。推送本期不做——正确性靠"回前台补课"(I6),
 主链路不依赖它。等三端能力包(§10)落地后**再**把它加进方法表;今天声明一个
@@ -404,21 +410,19 @@ type SyncSnapshot = {
 
 ### 5.8 未实现方法的 DSH 依据与落地路径(2026-10-09 逐条核实)
 
-已实现的 12 个见连接器处理器表(它是"实现了什么"的唯一出处)。下面是**剩下 10 个**的核实结果:
-每一条都标了 DSH 是否原生支持、出处,以及落地方式。**结论:没有一项需要等外部条件。**
+已实现的 21 个见连接器处理器表(它是"实现了什么"的唯一出处)。§5.7 的封闭集是 **26** 个方法名,
+差额是下面这 **5 个**契约列了、连接器还没接的。每一条都标了 DSH 是否原生支持、出处与落地方式。
+**结论:没有一项需要等外部条件。**
 
 | 方法 | DSH 原生? | 出处 | 落地路径 |
 |---|---|---|---|
-| `session.create` | **是** | `session-controller/src/types.ts:288`(`{workspaceId?, cwd?, sessionId?, agentPreset?}`)、`:296`(返回 `{sessionId, agentPreset?}`) | 照形状透传;手机端只给 `cwd` 与可选 `agentPreset` |
-| `settings.describe` | **是** | `settings-controller/src/index.ts:98` | 透传。它默认 `redactSecrets: true`(`:103`)——**密钥值天然不回传**,§7.5 由此成立 |
-| `settings.update` | **是** | `settings-controller/src/index.ts:116` | 走 `write` 通道,带 `expectedRevision` 乐观锁(`:121`) |
+| `session.cancel` | **是** | `session-controller/src/index.ts:472` 的 `@Remote('cancel')`(`cancel(request)` → `commands.cancel`),请求形状 `{sessionId}` | 照形状透传。语义是"取消当前轮次但**保留待处理收件箱**"(`:467-470` 的注释原话)——与 `session.prompt` 的排队/插话是同一块队列面 |
+| `settings.describe` | **是** | `settings-controller/src/index.ts:97` 的 `@Remote` | 透传。它默认 `redactSecrets: true`(`:103`)——**密钥值天然不回传**,§7.5 由此成立。入口是 42 项搬运清单(`docs/settings-porting-notes.md`) |
+| `settings.update` | **是** | 同上 `:115` 的 `@Remote` | 走 `write` 通道,带 `expectedRevision` 乐观锁(`:121`);过期回 `settings/conflict`(§3.1 的客户端动作是"重新 describe 再改") |
 | `credentials.set` | **是** | `settings-controller/src/credentials.ts:100` | 单向写。`value` 是明文(`:26` 的 `min(1)`)——"改密钥只发新值"由此天然成立 |
 | `credentials.unset` | **是** | 同上 `:113` | 单向写 |
-| `credentials.describe` | **是** | 同上 `:83` | 读面,默认脱敏 |
-| `interaction.respond`(提问) | **是** | `user-questions/src/index.ts:164` 的 `answer(agent, callId, answer)`,**带 `@Remote`**;内部 `agent.steer()` 注入(`:200`) | 手机 → 连接器 → `ctx.get('userQuestions').answer()`。**不发明协议**;错误有 `BAD_ANSWER` / `REPLY_QUEUED`(`:160-174`) |
-| `interaction.respond`(审批) | **是** | `'approval/request'` 是 cordis **waterfall 事件**(`user-approval/src/types.ts:78-92`) | 连接器 `ctx.on('approval/request', …)` 挂应答者,claim 或 `next()` delegate;配 §6.2 的看护计时器 |
-| `sync.hello` | 自拟 | — | 连接器自己回的恢复握手,不依赖 DSH |
-| `push.configure` | **DSH 没有**(全仓无 `push.*`) | — | **本期不做**:契约 I6 本就是"推送只敲门、正确性靠回前台补课",主链路不依赖推送。等三端能力包(§10)落地后作为增量再加;届时由连接器直接对接 FCM/APNs,仍不需要 DSH 支持 |
+
+(`push.configure` 为什么不声明见 §5.7 表后那段。)
 
 **顺带核实到的两个原生能力**(省掉原本要做的设计):
 
@@ -572,6 +576,7 @@ claim(请求) :=
 - `output` 事件**不带 payload**(`types.ts:219-226`),观察方据自己的游标调度一次 `readAt`;而且 `ctx.jobs.events` **没有任何合并窗口**,append 一次发一次(`jobs-local/src/index.ts:523-524`)——桥接必须自己节流。`flushMs`(100 ms,`observeFlushMs`)与"输出追加不刷新列表"**都是 `dsh-api-job-controller` 的行为**(`packages/api/job-controller/src/index.ts:29`、`src/rows.ts:36-40`),不在 `ctx.jobs` 里。
 - 子代理取 `ctx.subagents.listChildren` / `listDescendants`(`packages/subagent/subagent/src/index.ts:374,393`,行号已核实准确)。`activity` 取值是 **`'running' | 'inactive'`**,只表达"会话是否驻留",不表达持久结局(`subagent/src/control-types.ts:26-33`)——已收工的子代理同样是 `inactive`,与"从未成功/崩溃"不可区分,要区分必须叠加 `subagentTiming.lastTurnCompleted`。**`listChildren` 的行里没有 `activity`**,只有 `listDescendants` 的行才有;后者是联合类型,`kind:'diagnostic'` 的行只有 `reason`,没有 `activity`/`mode`/`label`(`control-types.ts:53-70`)。这两个方法**没有 `@Remote`**,浏览器侧调不到,转发到手机需自建 Remote 或改读 `subagentCatalog` 投影。
 - **能力位**:`repo.info` 返回 `caps`,由"服务是否存在"决定;手机据此置灰按钮,不用错误码试探。
+  - `caps.direct` 是唯一一个**不由服务存在性**决定的能力位:它看连接器的直连监听面起没起来(配了 `listenPort` 且绑定成功)。理由是"这条路存在吗"与"某个 DSH 服务在不在"是两件事 —— 端口被占时监听面起不来,那时必须报 false,否则手机上会多一个必然拨不通的"同一网络"。
   - 判定**必须用 `ctx.get('<key>')`**:裸读 `ctx.sessionController` 在服务缺失或尚未就绪时是**抛异常**(`vendor/cordis/src/reflect.ts:144`、`:159-161`),而 `ctx.get('拼错的键')` 又永远静默返回 undefined(`:237-243`)——两头都不报错,所以服务键要在 `apply` 里自带一次断言与健康上报。
   - 可用的服务键与定义处:`sessions`(`packages/core/session/src/index.ts:953`)、`sessionController`(`packages/api/session-controller/src/index.ts:136`)、`sessionQuery`(`packages/session-query/session-query/src/index.ts:106`)、`approval`(`packages/interaction/user-approval/src/index.ts:156`)、`userQuestions`(`packages/interaction/user-questions/src/index.ts:85`)、`jobs`(`packages/jobs/jobs/src/index.ts:93`)、`schedule`(`packages/schedule/schedule/src/index.ts:121`)、`subagents`(`packages/subagent/subagent/src/index.ts:215`)、`settings`(`packages/settings/settings/src/index.ts:231`)、`credentials`(`packages/credentials/credentials/src/index.ts:172`)、`storageDomain`(`packages/storage/storage-domain/src/index.ts:37`)。
   - **`inject = [...]` 里写了不存在的服务 = fiber 永远 PENDING,无异常、无日志、无 UI 报错**(`vendor/cordis/src/fiber.ts:611-623`、`:625-639`)。这是纯静默降级口子:必需服务才写 `inject`,可选能力一律 `ctx.get` 读出来当能力位。
@@ -698,7 +703,7 @@ job-settled        后台任务终结     turn-failed       轮次异常结束
 | 去重表 | 10000 条 / TTL 24 h | 覆盖"断线重发"的真实时间尺度 |
 | 审批看护超时 | 10 min | 覆盖"看一眼手机再决定"的合理上限;超时 fail-closed |
 | 任务输出 | 订阅式,每帧 64 KiB | 照 DSH `DEFAULT_OBSERVE_MAX_FRAME_BYTES` |
-| 设备上限 | 每电脑 8 台 | 每设备一把密钥 ⇒ 吊销粒度小;超过应重配而非堆积 |
+| 设备上限 | 不设上限 | 每设备一把密钥 ⇒ 吊销粒度小;重新配对即新身份,记录随用户主动重配而增加,清理走管理面 |
 | 别名长度 | 16 字节 base64url | AAD 字符集要求 + 不可关联 |
 | AEAD | AES-256-GCM | **Electron 不提供 ChaCha20-Poly1305**(见 §4.2 的说明);两运行时都有 + 纯 Dart 可用 |
 
@@ -717,7 +722,7 @@ job-settled        后台任务终结     turn-failed       轮次异常结束
 | 中转不可达 | 手机显示离线;后台只依赖推送 | 无法操作,直到中继恢复 |
 | DSH 升级导致插件被跳过 | `skippedBundles` | 手机显示"插件未加载",需升级 connector |
 | 手机重装 / 换机 | 无本地历史;重新配对或恢复既有设备身份(若种子已备份) | 需要重新同步;新设备需重新配对 |
-| 设备被吊销 | `protocol/revoked` | 清除凭据,回到配对页 |
+| 设备被吊销 / 记录被删 | 换票被拒(401,中转不区分原因)→ `protocol/not-paired` | 手机清凭据、回配对页,写明"这台电脑已不再认可本机,请重新扫码";不退避重连 |
 | 会话被删除 / 压缩 | `snapshot` / `no-session` | 该会话消失或刷新为最新基线 |
 | 时钟异常(两端偏差) | 协议不依赖两端时钟;仅推送合并与 TTL 用电脑侧时钟 | 无感 |
 | 中继被攻破 | 只拿到 `sid` / `seq` / `fc` 与密文 | 无法读内容;设备可吊销 |
@@ -856,6 +861,5 @@ job-settled        后台任务终结     turn-failed       轮次异常结束
   (`user-approval/src/index.ts:303`),而手机上用户几分钟后才答是常态。补偿是 §6.2 的看护计时器
   (默认 10 min,超时主动返回 `unavailable`)—— 所以"转审批"要求看护计时器**已实现**;
   在它上线前,手机上只转提问与计划审查(§6.4),不留一个答了可能被丢弃的按钮。
-- **`session.create` 未实现**。DSH 依据与请求形状见 §5.8(照形状透传即可)。
   **推送本期不做**,所以方法表里**没有** `push.configure`——正确性靠"回前台补课"(I6),
   主链路不依赖它;等三端能力包(§10)落地后再加进方法表。
