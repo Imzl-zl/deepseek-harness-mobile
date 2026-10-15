@@ -352,6 +352,13 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
                 return model === undefined ? {} : { model }
               })()),
           ...(row.cwd === undefined ? {} : { cwd: row.cwd }),
+          // **投影提示原样透送**：`projections.values.title` 就是列表标题，
+          // Web 的列表行读的是同一个东西（`list.ts:291-312` 的 hints）。
+          // 冷行（从没打开过的会话）也有值 —— DSH 为它读持久缓存。
+          // 手机据此显示标题；取不到时它自己按 DSH 的链退到目录名、再退到 sid。
+          ...(row.projections === undefined
+            ? {}
+            : { projections: row.projections }),
         })),
       }
     },

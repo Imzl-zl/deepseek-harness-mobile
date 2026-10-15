@@ -856,6 +856,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       (error: unknown) => {
         // 挂载失败要吵：静默半挂的插件会让手机端一直连不上而电脑侧没有线索。
         logger.error('挂载失败，通道未启动', error)
+        // `ctx.logger` 的输出到不了 CLI stdout（实测，见 tools.md 的 Pitfalls），
+        // 而"半挂"的症状正是"端点 404、没有任何报错"—— 所以这里必须同时用
+        // **能出来的那个出口**，与 `admin/mount.ts` 同一个模式。
+        console.error('[dsh-mobile] 挂载失败，通道未启动：', error)
       },
     )
 

@@ -93,6 +93,13 @@ export interface PageRequest {
  * `sessionId` / `updatedAt` / `running` / `blank` / `origin` / `cwd` 等），
  * 标题在 `session-title` 那一边，而那个服务读的是**活的 `Session` 对象** ——
  * 对"只存在于落盘里的会话"拿不到。详见 `.agents/notes/implemented/2026-10-01-session-list-wiring.md`。
+ *
+ * **但行自带投影提示**：`SessionSummary.projections`（`types.ts:189`）是
+ * `{kind: 'cached' | 'sequenced', asOfSeq, values}`，`values` 里**带着 `title`**
+ * （`list.ts:291-312`：活行取 sequenced 快照，冷行读持久缓存，甚至
+ * `cachedPredecessorTitle`）—— 这正是 Web 列表标题的来源
+ * （`client/sessions/manager.ts:678` 的 `applyListBlock`）。所以标题**不用猜也不用
+ * 从首条消息推导**：原样透传这个提示，手机按 `values.title` 取。
  */
 export interface SessionSummaryRow {
   /**
@@ -109,6 +116,13 @@ export interface SessionSummaryRow {
   /** 子代理的子会话（`origin === 'subagent'`）—— 手机可以选择折叠，本层不替它决定。 */
   subagent: boolean
   cwd?: string
+  /**
+   * 这一行的**投影提示**（DSH `SessionSummary.projections` 原样透传）。
+   *
+   * `values` 里带着 `title` 等全部 wire 投影值 —— Web 的列表标题就从这来
+   * （`list.ts:291-312`）。**原样透传，不挑键**：挑一次就是第二份会漂的清单。
+   */
+  projections?: { kind: string; asOfSeq: number; values: Record<string, unknown> }
 }
 
 /**
@@ -239,6 +253,17 @@ export function createSessionsAdapter(controller: SessionController): SessionsPo
         blank: item.blank,
         subagent: item.origin === 'subagent',
         ...(item.cwd === undefined ? {} : { cwd: item.cwd }),
+        // **投影提示原样透传**：`values.title` 就是列表标题（Web 同源）。
+        // 冷行（没打开过的会话）也有 —— DSH 为它读持久缓存，见 `list.ts:301-305`。
+        ...(item.projections === undefined
+          ? {}
+          : {
+              projections: {
+                kind: item.projections.kind,
+                asOfSeq: item.projections.asOfSeq,
+                values: item.projections.values as Record<string, unknown>,
+              },
+            }),
       }))
     },
 

@@ -32,9 +32,14 @@ const summary = (patch: Partial<SessionSummary> & { sessionId: SessionSummary['s
     running: false,
     blank: false,
     // 故意多塞几个 DSH 会有的字段：映射必须**逐字段**，不能把它们带过线。
-    projections: { sessionListMetadata: { blank: false, lastPromptAt: 1 } },
+    formatStatus: 'current',
+    parentSessionId: sid('parent'),
     ...patch,
   }) as SessionSummary
+
+/** 行的投影提示：DSH `SessionProjectionHints` 的真形状（`list.ts:321-329`）。 */
+const hints = (values: Record<string, unknown>) =>
+  ({ kind: 'cached', asOfSeq: 7, values }) as SessionSummary['projections']
 
 test('list：只映射该映射的字段，子代理从 origin 推出，cwd 缺了就不出现', async () => {
   const adapter = createSessionsAdapter(
@@ -59,9 +64,39 @@ test('list：只映射该映射的字段，子代理从 origin 推出，cwd 缺�
   // 权威自己的顺序就是清单顺序（已按活动排序）—— 本层不再排一遍。
   assert.equal(rows[0]?.dshSessionId, 'a')
   for (const row of rows) {
-    assert.equal('agentAvailable' in row, false, 'DSH 的其他字段不该被 spread 过来')
-    assert.equal('projections' in row, false)
+    // DSH 的**其他**字段不该被 spread 过来（投影提示是唯一例外，见下一条用例）。
+    assert.equal('agentAvailable' in row, false)
+    assert.equal('formatStatus' in row, false)
+    assert.equal('parentSessionId' in row, false)
+    assert.equal('origin' in row, false)
   }
+})
+
+test('list：投影提示原样透传 —— values.title 就是列表标题（Web 同源）', async () => {
+  const adapter = createSessionsAdapter(
+    fakeController({
+      list: () =>
+        Promise.resolve({
+          items: [
+            summary({
+              sessionId: sid('a'),
+              projections: hints({ title: '重构连接层', tokenUsage: { outputTokens: 3 } }),
+            }),
+            // 没有提示的行**不给这个字段**（不是给个空对象）：手机按 DSH 的链继续退。
+            summary({ sessionId: sid('b') }),
+          ],
+        }),
+    }),
+  )
+
+  const rows = await adapter.list()
+  assert.deepEqual(rows[0]?.projections, {
+    kind: 'cached',
+    asOfSeq: 7,
+    values: { title: '重构连接层', tokenUsage: { outputTokens: 3 } },
+  })
+  // **不挑键**：title 与 tokenUsage 一起过线，挑一次就是第二份会漂的清单。
+  assert.equal('projections' in (rows[1] ?? {}), false, '没有提示就不给这个字段')
 })
 
 test('list：不传信号时用一个永不中止的信号（不能因此不传）', async () => {
