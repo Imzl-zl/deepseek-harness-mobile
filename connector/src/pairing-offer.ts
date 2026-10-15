@@ -10,7 +10,7 @@
  * 于是它可以脱离 DSH 与网络测（登记做成端口）。
  */
 import type { ChannelLogger } from './observability.js'
-import { PAIRING_TTL_MS, type Pairing } from './pairing.js'
+import { PAIRING_TTL_MS, type Pairing, type PairingOffer } from './pairing.js'
 
 export interface PairingOfferDeps {
   pairing: Pairing
@@ -26,21 +26,45 @@ export interface PairingOfferDeps {
 /** 命令结果（与 DSH 的 `CommandResult` 同形；这里不 import 它，免得这一层依赖 DSH）。 */
 export type OfferResult = { kind: 'success'; text: string } | { kind: 'error'; text: string }
 
+/**
+ * 斜杠命令那一侧：把出码核心的结果翻译成 `CommandResult`。
+ *
+ * 与管理页面**共用 `issuePairingOffer`**（"登记不成就不出码"只有一条规则），
+ * 差别只在失败怎么呈现：命令只能回文本，所以 catch 成 `{kind:'error'}`；
+ * 管理页面那边让它抛，由 Connection 的桥接归一成 500 + 消息。
+ */
 export async function offerForScanning(deps: PairingOfferDeps): Promise<OfferResult> {
+  try {
+    const offer = await issuePairingOffer(deps)
+    const minutes = Math.round(PAIRING_TTL_MS / 60_000)
+    return {
+      kind: 'success',
+      text: `手机扫码配对（${minutes} 分钟内有效，一次性）：\n${offer.payload}`,
+    }
+  } catch (error) {
+    return { kind: 'error', text: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/**
+ * 出码核心：**先登记到中转，再交出 offer**。
+ *
+ * 斜杠命令（`offerForScanning`）与管理页面（`admin/`）共用这一个判断 ——
+ * "登记不成就不出码"是一条规则，写两份就会有一处先腐化。
+ *
+ * @returns 已登记的 offer（含 `payload` 与 `expiresAt`）。
+ * @throws 登记失败：调用方各自把失败呈现给它的用户（命令回 error 文本，页面回 500）。
+ */
+export async function issuePairingOffer(deps: PairingOfferDeps): Promise<PairingOffer> {
   const offer = deps.pairing.offer()
   try {
     await deps.register(offer.offerId)
   } catch (error) {
     deps.log?.warn('配对登记失败：拒绝出码（否则会给出扫了也配不上的二维码）', error)
-    return {
-      kind: 'error',
-      text: '没能把这次配对登记到中转：请检查中转是否在运行、连接器令牌是否有效。这次没有出码，重新执行即可。',
-    }
+    throw new Error(
+      '没能把这次配对登记到中转：请检查中转是否在运行、连接器令牌是否有效。这次没有出码，重新执行即可。',
+    )
   }
   deps.log?.info(`已出码并登记到中转（${Math.round((offer.expiresAt - Date.now()) / 1000)} 秒内有效）`)
-  // 码**只在这里出现**：它进操作者眼前的二维码，不落盘、不进日志。
-  // 有效期**从常量算**，不写死数字：写死的话，改 `PAIRING_TTL_MS` 会留下一句撒谎的提示
-  //（操作者按它安排时间，而码已经过期了）。
-  const minutes = Math.round(PAIRING_TTL_MS / 60_000)
-  return { kind: 'success', text: `手机扫码配对（${minutes} 分钟内有效，一次性）：\n${offer.payload}` }
+  return offer
 }

@@ -10,6 +10,8 @@
  * 2. **两条连接各走各的** —— 每 accept 一条就装配一次；串台的表现是"第二台手机收不到事件"。
  * 3. **卸载时收口** —— 停止接受并关掉已接受的连接（否则插件卸载后还挂着 socket）。
  * 4. **接受来的连接不自愈** —— 它没有拨号目标（`dial` 在这里做成抛错，走了就直接红）。
+ * 5. **可拨地址是实际绑定的那个** —— `listener.urls` 枚举非内部网卡，而不是把配置里
+ *    写的 `host` 原样报出去（配 `0.0.0.0` 时后者根本不是可拨地址）。
  *
  * "要不要监听"由装配层按配置判断（`listenPort === 0` 时不调 `startListener`），
  * 所以本文件不测那条分支 —— 它由 `config.ts` 的默认值与 `index.ts` 的 `if` 表达。
@@ -39,6 +41,7 @@ const CAPS: Caps = {
   subagents: false,
   settings: false,
   credentials: true,
+  direct: false,
 }
 
 /** 本套用例不建立订阅；被调到就是装配写错了。 */
@@ -53,7 +56,12 @@ function makeScopeDeps(): ConnectionScopeDeps {
     handlers: {
       caps: () => CAPS,
       aliasVersion: () => 0,
-      sessions: { list: async () => [], prompt: async () => ({ accepted: true as const }) },
+      sessions: {
+        list: async () => [],
+        prompt: async () => ({ accepted: true as const }),
+        selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+        create: async () => ({ sessionId: 'dsh-new' }),
+      },
       aliases: { ensure: async () => 's1', sessionOf: () => undefined },
       devices: () => [],
     },
@@ -63,6 +71,8 @@ function makeScopeDeps(): ConnectionScopeDeps {
       page: async () => ({ records: [], hasMore: false }),
       prompt: async () => ({ accepted: true as const }),
       cancel: () => ({ accepted: true as const }),
+      selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+      create: async () => ({ sessionId: 'dsh-new' }),
     },
     buffer: createSessionBuffer({ pairedDevices: () => [] }),
     jobControl: null,
@@ -257,8 +267,44 @@ test('两条连接各走各的：每 accept 一条装配一次，帧不串台', 
   assert.equal(b.lines.length, before, 'B 什么都没收到，却收到了 A 的 pong')
 })
 
-test('卸载时收口：停止接受并关掉已接受的连接', async (t) => {
-  const { listener, made } = await startTracking(t, makeScopeDeps())
+test('可拨地址：绑回环时只有它自己（内部地址不过线）', async (t) => {
+  const { listener } = await startTracking(t, makeScopeDeps())
+  assert.deepEqual(
+    listener.urls.map((u) => u.url),
+    [`ws://127.0.0.1:${listener.port}`],
+    '绑 127.0.0.1 时可拨地址就是它 —— 手机不在本机，报内部网卡没有意义',
+  )
+})
+
+test('可拨地址：绑通配时枚举非内部网卡，且不带 127.x', async (t) => {
+  const pc = deriveIdentity(PC_SEED)
+  const listener = await startListener({
+    port: 0,
+    host: '0.0.0.0',
+    accept: () => {
+      const accepted = makeAccepted(makeScopeDeps(), pc)
+      return {
+        port: accepted.connection,
+        attach: (socket) => accepted.connection.attach(socket as DialSocket),
+        stop: () => accepted.connection.stop(),
+      }
+    },
+  })
+  t.after(() => listener.close())
+
+  const urls = listener.urls.map((u) => u.url)
+  assert.ok(urls.length > 0, '这台机器至少有了一块非内部网卡，否则下面全无意义')
+  for (const url of urls) {
+    assert.ok(url.startsWith('ws://'), `${url} 要是 ws:// 形状`)
+    assert.ok(url.endsWith(`:${listener.port}`), `${url} 要带实际端口（port:0 时是系统分的）`)
+    assert.ok(!url.includes('127.'), `${url} 是内部地址，拨不进来`);
+    assert.ok(!url.includes('169.254.'), `${url} 是 link-local，没有作用域 id 拨不进来`)
+  }
+  // 去重：同一块网卡的多个地址不该产生重复条目。
+  assert.equal(new Set(urls).size, urls.length, '可拨地址不许重复')
+})
+
+test('卸载时收口：停止接受并关掉已接受的连接', async (t) => {  const { listener, made } = await startTracking(t, makeScopeDeps())
   const session = await handshakeAsPhone(`ws://127.0.0.1:${listener.port}`, phoneFor(seed(0xc3), seed(0xd4)))
   await waitFor('握手完成', () => made[0]?.established.length === 1)
   assert.equal(listener.active, 1)

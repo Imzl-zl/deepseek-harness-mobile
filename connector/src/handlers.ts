@@ -30,6 +30,9 @@ import type { PromptPart, SessionSummaryRow, SessionsPort } from './dsh/sessions
 import type { ConnectionIdentity } from './connection-scope.js'
 import type { InteractionFace } from './interaction-face.js'
 import type { ModelFace } from './dsh/models.js'
+import type { EndpointsPort } from './endpoints.js'
+import type { ProjectionsPort } from './dsh/projections.js'
+import type { PermissionFace } from './dsh/permissions.js'
 
 /** 设备清单里的一行。**不含公钥** —— 手机不需要别人的公钥，少发一个字段就少一处泄漏面。 */
 export interface DeviceRow {
@@ -56,6 +59,34 @@ export interface HandlerDeps {
   /** 已配对设备（含已吊销的，便于手机显示"这台已被移除"）。 */
   devices: () => readonly DeviceRow[]
   /**
+   * 端点自报（**没有监听面时不给**）。
+   *
+   * 与 `jobs` 同一条纪律：缺了就干脆不挂 `endpoint.describe`，而不是挂上去再回
+   * `connector/unsupported` —— `repo.info` 报的是 handler 表的键，于是
+   * "这台没开直连"与"这个方法没实现"在手机侧是同一种表现（按钮置灰），
+   * 而电脑侧少一条永远走不到的分支。
+   */
+  endpoints?: EndpointsPort
+  /**
+   * 会话投影读取面（**没有 `sessionProjections` 服务时不给**）。
+   *
+   * 与 `endpoints` 同一条纪律：缺了就干脆不挂 `session.projections`，
+   * 而不是挂上去再回 `connector/unsupported` —— `repo.info` 报的是 handler
+   * 表的键，于是"这台没有投影服务"与"这个方法没实现"在手机侧是同一种表现
+   * （按钮置灰），而电脑侧少一条永远走不到的分支。
+   */
+  projections?: ProjectionsPort
+  /**
+   * 权限预设（**三个服务键同时在场才给**：`permissionPresets` / `commands` / `agents`）。
+   *
+   * 与 `projections` 同一条纪律：缺了就干脆不挂 `permission.catalog` 与
+   * `permission.switch`，而不是挂上去再回 `connector/unsupported` ——
+   * `repo.info` 报的是 handler 表的键，于是"这台没有权限服务"与"这个方法没实现"
+   * 在手机侧是同一种表现（控件隐藏），而电脑侧少一条永远走不到的分支。
+   * 为什么是三个键，见 `dsh/permissions.ts` 的文件头。
+   */
+  permissions?: PermissionFace
+  /**
    * 会话清单（DSH 权威行，已按活动排序）。
    *
    * 依赖是**必需**的而不是可选的：`sessionController` 是本插件的必需服务
@@ -68,7 +99,7 @@ export interface HandlerDeps {
    * `sessionController` 是本插件的必需服务（缺了它插件根本不挂载），所以不存在"这个端口不在"
    * 的生产形态；把它写成可选只会多一条永远不会被走到的错误分支。
    */
-  sessions: Pick<SessionsPort, 'list' | 'prompt'>
+  sessions: Pick<SessionsPort, 'list' | 'prompt' | 'selectModel' | 'create'>
   aliases: AliasPort
   /**
    * 后台任务（可选服务）。
@@ -251,6 +282,51 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       return { accepted }
     },
 
+    // 切模型：**与 Web 同一个 DSH 方法**（见 `dsh/sessions.ts` 的 `selectModel` 注释）。
+    // 带幂等键 —— 切模型是用户指令，重发不该切两次。
+    // 方法名带连字符，所以是**字符串 key**（`'session.select-model':`）而不是点号。
+    'session.select-model': async (params, context) => {
+      const dshSessionId = requireSession(requireSid(params))
+      const provider = requireString(params, 'provider')
+      const model = requireString(params, 'model')
+      const effort = paramOf(params, 'reasoningEffort')
+      if (effort !== undefined && typeof effort !== 'string') {
+        throw new ProtocolError('protocol/bad-frame', 'reasoningEffort 必须是字符串')
+      }
+      return deps.sessions.selectModel({
+        sessionId: dshSessionId,
+        provider,
+        model,
+        ...(effort === undefined ? {} : { reasoningEffort: effort }),
+      })
+    },
+
+    // 新建会话。**与 Web 同一个 DSH 方法**（见 `dsh/sessions.ts` 的 `create` 注释）。
+    // 带幂等键 —— 点了两次不该建出两个会话。
+    // `workspaceId` / `cwd` 都**不透传**：手机不知道电脑有哪些工作区，
+    // 而 DSH 对缺省字段有自己的当前工作区（与 Web 点"新建会话"一致）。
+    // 硬传一个猜的值比不传更糟。
+    // 取舍见 `.agents/notes/implemented/2026-10-15-session-create.md`。
+    'session.create': async (params) => {
+      // 先收窄成 `string | undefined`，再展开 —— 直接展开 `unknown` 过不了类型。
+      const str = (key: string): string | undefined => {
+        const value = paramOf(params, key)
+        if (value === undefined) return undefined
+        if (typeof value !== 'string') {
+          throw new ProtocolError('protocol/bad-frame', `${key} 必须是字符串`)
+        }
+        return value
+      }
+      const workspaceId = str('workspaceId')
+      const cwd = str('cwd')
+      const agentPreset = str('agentPreset')
+      return deps.sessions.create({
+        ...(workspaceId === undefined ? {} : { workspaceId }),
+        ...(cwd === undefined ? {} : { cwd }),
+        ...(agentPreset === undefined ? {} : { agentPreset }),
+      })
+    },
+
     'session.list': async () => {
       const rows = await deps.sessions.list()
       // 别名可以**并发**分配：不同会话之间互不影响，同一个会话则由 `ensure` 自己合流
@@ -289,6 +365,52 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       // 而真实原因可能是某个 provider 的 key 没配。
       if (catalog === undefined) return { available: false }
       return { available: true, catalog }
+    }
+  }
+
+  // 端点自报：与 `job.*` / `interaction.respond` 一样按能力位挂（契约 §7）。
+  // 缺了 `endpoints` 时 `endpoint.describe` 不出现 —— 手机侧看到的是
+  // "这个方法不存在"，而不是一个回 `unsupported` 的按钮。
+  if (deps.endpoints !== undefined) {
+    handlers['endpoint.describe'] = () => deps.endpoints!.describe()
+  }
+
+  // 会话投影：一个方法打开全部只读面（见 `dsh/projections.ts` 的文件头）。
+  // **按能力位挂**：缺 `sessionProjections` 服务时这个方法不出现 ——
+  // 与 `job.*` 同一条纪律（手机侧看到"不存在"而不是一个必然失败的按钮）。
+  if (deps.projections !== undefined) {
+    handlers['session.projections'] = (params) => {
+      const dshSessionId = requireSession(requireSid(params))
+      return deps.projections!.of(dshSessionId)
+    }
+  }
+
+  // 权限预设：清单与写路径都按能力位挂（`dsh/permissions.ts` 的文件头列了三个服务键）。
+  if (deps.permissions !== undefined) {
+    const permissions = deps.permissions
+    handlers['permission.catalog'] = async () => {
+      const catalog = await permissions.catalog()
+      // 与 `session.modelCatalog` 同一条纪律：拿不到就**明说**，不给空数组 ——
+      // 空数组会被手机读成"没有可用预设"，而真实原因可能是这个部署没配预设表。
+      if (catalog === undefined) return { available: false }
+      return { available: true, catalog }
+    }
+
+    // 切权限。**带幂等键**（`IDEMPOTENT_METHODS`）—— 分发前就拦，所以这里一定拿得到，
+    // 不需要再查一遍（与 `session.select-model` 同一个口径）。
+    handlers['permission.switch'] = async (params) => {
+      const sid = requireSid(params)
+      requireSession(sid)
+      const preset = requireString(params, 'preset')
+      // 边界校验：`preset` 被拼进 `/permission <preset>` 这条命令行。
+      // 已核实 DSH 的 `parseCommand` 只把命令名之后的所有内容当 `rawInput`
+      // （`interaction/commands/src/index.ts:125-132`），所以换行**变不成第二条命令**；
+      // 但空串与首尾空白必须在这里拦掉：空串会让 DSH 回"当前预设是 X"
+      // （`permission-presets/src/index.ts:266-268`），那是一次**假的切换成功**。
+      if (preset.trim() === '' || preset !== preset.trim()) {
+        throw new ProtocolError('protocol/bad-frame', 'preset 必须是非空且不带首尾空白的字符串')
+      }
+      return permissions.switchTo(sid, preset)
     }
   }
 

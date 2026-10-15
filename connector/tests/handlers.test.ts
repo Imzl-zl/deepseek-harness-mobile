@@ -62,6 +62,7 @@ const CAPS: Caps = {
   subagents: false,
   settings: true,
   credentials: true,
+  direct: false,
 }
 
 function build(overrides: Partial<Parameters<typeof createHandlers>[0]> = {}) {
@@ -70,7 +71,12 @@ function build(overrides: Partial<Parameters<typeof createHandlers>[0]> = {}) {
     aliasVersion: () => 7,
     devices: () => [],
     // 会话面的替身：`list` 给 DSH 权威行，`aliases` 两个方向都给（`job.list` 要反解）。
-    sessions: { list: () => Promise.resolve([]), prompt: () => Promise.resolve({ accepted: true }) },
+    sessions: {
+      list: () => Promise.resolve([]),
+      prompt: () => Promise.resolve({ accepted: true }),
+      selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+      create: async () => ({ sessionId: 'dsh-new' }),
+    },
     aliases: createFakeAliases(),
     ...overrides,
   })
@@ -93,7 +99,14 @@ test('repo.info：协议版本、能力位、别名版本，以及**表的键**'
   assert.equal(info.aliasVersion, 7)
   // 报的必须是"表里真有的方法"：加一个 handler 就自动多一行，删一个就自动少一行。
   assert.deepEqual(info.methods, Object.keys(handlers).sort())
-  assert.deepEqual(info.methods, ['devices.list', 'repo.info', 'session.list', 'session.prompt'])
+  assert.deepEqual(info.methods, [
+    'devices.list',
+    'repo.info',
+    'session.create',
+'session.list',
+    'session.prompt',
+    'session.select-model',
+  ])
 })
 
 test('job.kill：转达受理与否，并把 jobId 交给宿主门面', () => {
@@ -164,8 +177,10 @@ test('两种任务能力可以独立缺失：只列不停 / 都没有', () => {
     'devices.list',
     'job.list',
     'repo.info',
-    'session.list',
+    'session.create',
+'session.list',
     'session.prompt',
+    'session.select-model',
   ])
 
   const neither = build()
@@ -260,6 +275,8 @@ test('session.prompt：参数递下去，回 { accepted }', async () => {
         seen.push(args)
         return Promise.resolve({ accepted: true })
       },
+      selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+      create: async () => ({ sessionId: 'dsh-new' }),
     } as never,
   })
   const handler = handlers['session.prompt']
@@ -534,7 +551,14 @@ test('可选服务缺了：`job.*` 干脆不在表里（能力位与能力清单
   // `repo.info` 报的是表的键，所以能力位自动跟着走 —— 手机侧看到的是"没这个方法"，
   // 而不是一个会被点开、然后回错的按钮。
   const info = handlers_info(withoutJobs)
-  assert.deepEqual(info.methods, ['devices.list', 'repo.info', 'session.list', 'session.prompt'])
+  assert.deepEqual(info.methods, [
+    'devices.list',
+    'repo.info',
+    'session.create',
+'session.list',
+    'session.prompt',
+    'session.select-model',
+  ])
 
   const withJobs = build({ jobs: fakeJobs() })
   assert.equal('job.list' in withJobs, true)
@@ -542,8 +566,10 @@ test('可选服务缺了：`job.*` 干脆不在表里（能力位与能力清单
     'devices.list',
     'job.list',
     'repo.info',
-    'session.list',
+    'session.create',
+'session.list',
     'session.prompt',
+    'session.select-model',
   ])
 })
 
@@ -556,6 +582,8 @@ test('session.list：逐字段映射，别名在方法面合成，**DSH 会话 i
           { dshSessionId: 'dsh-2', updatedAt: 100, running: false, blank: true, subagent: true },
         ]),
       prompt: () => Promise.resolve({ accepted: true }),
+      selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+      create: async () => ({ sessionId: 'dsh-new' }),
     },
   })
   const handler = handlers['session.list']
@@ -587,6 +615,8 @@ test('session.list：并发分配别名（不同会话互不影响）', async ()
           })),
         ),
       prompt: () => Promise.resolve({ accepted: true }),
+      selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+      create: async () => ({ sessionId: 'dsh-new' }),
     },
     aliases: {
       ...createFakeAliases(),
@@ -757,8 +787,10 @@ test('interaction.respond / sync.hello 的能力缺失时整个方法不出现�
     'devices.list',
     'interaction.respond',
     'repo.info',
-    'session.list',
+    'session.create',
+'session.list',
     'session.prompt',
+    'session.select-model',
     'session.subscribe',
     'session.unsubscribe',
     'sync.hello',

@@ -17,12 +17,14 @@ function fakePort() {
 function makeDeps(overrides: Partial<ConnectionScopeDeps> = {}): ConnectionScopeDeps {
   const sessions = {
     list: async () => [], prompt: async () => ({ accepted: true as const }), cancel: () => ({ accepted: true as const }),
+    selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+    create: async () => ({ sessionId: 'dsh-new' }),
     page: async () => ({ records: [], hasMore: false }), follow: (): never => { throw new Error('本用例不应建立订阅') },
   }
   return {
     logger: silentLogger, metrics: createMetrics(), sessions,
     handlers: {
-      caps: () => ({ sessions: true, storage: true, approval: false, questions: false, jobs: false, subagents: false, settings: false, credentials: true }),
+      caps: () => ({ sessions: true, storage: true, approval: false, questions: false, jobs: false, subagents: false, settings: false, credentials: true, direct: false }),
       aliasVersion: () => 0, sessions, aliases: { ensure: async () => 's1', sessionOf: () => undefined }, devices: () => [],
     },
     buffer: createSessionBuffer({ pairedDevices: () => [] }), jobControl: null, idempotency: null, ...overrides,
@@ -124,6 +126,8 @@ test('presence：订阅集变化就上报（foreground 档的 claim 判据是"�
     sessions: {
       list: async () => [], prompt: async () => ({ accepted: true as const }),
       cancel: () => ({ accepted: true as const }), page: async () => ({ records: [], hasMore: false }),
+      selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+      create: async () => ({ sessionId: 'dsh-new' }),
       follow: (): never => { throw new Error('本用例不应建立订阅') },
     },
     presence: {

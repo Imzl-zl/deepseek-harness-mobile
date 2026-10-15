@@ -20,10 +20,13 @@
  * 两处都**不复制字段**：投影的线格式（`view: state => ({lastUsed, next})`）与目录的
  * 分组形状原样过线，手机侧按同一份投影渲染。抄一遍就多一处会漂移的地方。
  *
- * Note: 为什么不调 `session/select-model` 让手机切模型 —— 那个命令会顺手把选择
- * `saveSelection` 回**全局默认**（`commands.ts` 的 selectModel 分支）。手机切模型
- * 应该只影响自己那个会话，所以本期**只读不写**；写入留到有"按会话写、不回写默认"
- * 的原生入口时再说。
+ * Note: 切模型的**写**路径不在这里 —— 它在 `dsh/sessions.ts` 的 `selectModel`
+ * （`session/select-model`，与 Web 同一个 DSH 方法）。本文件只负责"读"。
+ * 曾经这里写着"`selectModel` 会把选择写回全局默认，所以本期只读不写"——
+ * **那个结论是错的，已翻案**：写回的是"以后新建的 agent 默认跟随"，
+ * 而那是 Web 一直有的行为（`agent-default-model/src/index.ts:82-94` + README），
+ * 不是副作用。错在把一条**测试纪律**（测试 profile 与日常 profile 共用 `~/.dsh/`）
+ * 错升成了**产品约束**。完整翻案见 `memory.md` 的"模型切换翻案"。
  */
 import type { Context } from '@deepseek-ai/cordis'
 

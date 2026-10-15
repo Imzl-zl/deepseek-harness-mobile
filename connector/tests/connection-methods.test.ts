@@ -34,6 +34,7 @@ const CAPS = {
   subagents: false,
   settings: false,
   credentials: true,
+  direct: false,
 } as const
 
 function fixtureHandlers(
@@ -62,6 +63,8 @@ function fixtureHandlers(
         if (promptBox !== undefined) promptBox.count += 1
         return Promise.resolve({ accepted: true })
       },
+      selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+      create: async () => ({ sessionId: 'dsh-new' }),
     },
     aliases: createFakeAliases({
       // 别名是**不透明的**：刻意不把 DSH 会话 id 编进去，否则"id 不过线"的断言会失去意义
@@ -167,7 +170,16 @@ test('端到端：手机问 repo.info，电脑侧回一个可解的 res（id 对
   assert.deepEqual(info.caps, CAPS, '能力位要在结果里（手机据此置灰按钮）')
   assert.deepEqual(
     info.methods,
-    ["devices.list", 'job.kill', 'job.list', 'repo.info', 'session.list', 'session.prompt'],
+    [
+      'devices.list',
+      'job.kill',
+      'job.list',
+      'repo.info',
+      'session.create',
+      'session.list',
+      'session.prompt',
+      'session.select-model',
+    ],
     '实现了哪些方法也由同一张表报出',
   )
 })

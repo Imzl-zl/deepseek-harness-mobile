@@ -45,6 +45,8 @@ import type { Context } from '@deepseek-ai/cordis'
 
 import { type ConnectorConfig, Config } from './config.js'
 import { REQUIRED_SERVICES, readCaps, type Caps } from './dsh/caps.js'
+import { createEndpointsPort } from './endpoints.js'
+import { createProjectionsPort } from './dsh/projections.js'
 import { deriveIdentity } from './protocol/crypto.js'
 import { loadOrCreateIdentity, type Identity } from './dsh/identity.js'
 import { PAIRING_TTL_MS, createPairing } from './pairing.js'
@@ -55,10 +57,14 @@ import { relayUrlOf } from './transport/relay-url.js'
 import { readRelayToken } from './dsh/relay-token.js'
 import { createPairingRegistrar } from './pairing-register.js'
 import { createDevicePublisher } from './device-publish.js'
-import { offerForScanning } from './pairing-offer.js'
+import { offerForScanning, issuePairingOffer } from './pairing-offer.js'
+import { pairingQrSvg } from './pairing-qr.js'
+import { mountAdminFace } from './admin/mount.js'
+import { createDeviceAdmin, type DeviceTablePort } from './admin/device-admin.js'
 import { registerInteractions, type RemoteInteractionPort } from './dsh/interactions.js'
 import { createQuestionFaceDeps } from './dsh/questions.js'
 import { createModelFace } from './dsh/models.js'
+import { createPermissionFace } from './dsh/permissions.js'
 import { createDevicePresence } from './presence.js'
 import { createInteractionPort } from './interaction-claims.js'
 import { createInteractionFace } from './interaction-face.js'
@@ -74,7 +80,6 @@ import type { JobRegistry } from '@deepseek-ai/dsh-jobs'
 import { createJobsPort, createJobControlPort, type JobControlService } from './dsh/jobs.js'
 import { createSessionBuffer } from './session-buffer.js'
 import { createSessionsAdapter } from './dsh/sessions.js'
-import type { DeviceRecord } from './store/index.js'
 import { coreDomain, initialMeta, migrateMeta, windowsDomain } from './store/index.js'
 import type { Connection, DialSocket } from './transport/connection.js'
 import { startListener, type Listener } from './transport/listener.js'
@@ -91,6 +96,29 @@ const DEFAULT_CONNECTOR_ID = 'local'
 
 /** 只有必需服务进 `inject`；可选能力走 `ctx.get`（见文件头）。 */
 export const inject: string[] = [...REQUIRED_SERVICES]
+
+/**
+ * 设备行的展示排序：**此刻对操作者的意义从高到低**。
+ *
+ * 1. 在线的（用户正在用的那台）—— 永远在最上面；
+ * 2. 前台优先于后台；
+ * 3. 最近交互过的；
+ * 4. 最近配对的（并列时用它打破平手，让列表稳定）。
+ *
+ * 为什么排这一步：真机联调会攒下几十行"配对过、连过一次、再没连过"的设备
+ * （2026-10-15 攒到 31 行）。不排的话用户那台埋在中间，而上面全是测试残留。
+ */
+function compareDevicesForDisplay(
+  a: { online: boolean; foreground: boolean; lastInteractedAt?: number; pairedAt: number },
+  b: { online: boolean; foreground: boolean; lastInteractedAt?: number; pairedAt: number },
+): number {
+  if (a.online !== b.online) return a.online ? -1 : 1
+  if (a.foreground !== b.foreground) return a.foreground ? -1 : 1
+  const aSeen = a.lastInteractedAt ?? 0
+  const bSeen = b.lastInteractedAt ?? 0
+  if (aSeen !== bSeen) return bSeen - aSeen
+  return b.pairedAt - a.pairedAt
+}
 
 /** 发布给宿主的服务面。手机端的能力门控读 `caps()`。 */
 export interface ConnectorService {
@@ -138,6 +166,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
   let unregisterInteractions: (() => void) | null = null
 /** 出码命令的注销（ctx.commands.register 返回的就是它）。 */
 let unregisterPairingCommand: (() => void) | null = null
+/** 管理面 RPC（`/api/dsh-mobile/*`）的注销。**不用 ctx.effect**，理由见 `admin/mount.ts`。 */
+let unregisterAdminFace: (() => void) | null = null
 
   /** 设备状态与档位。真值在 store 里，这里给出 transport 需要的读取面。 */
   /**
@@ -145,12 +175,13 @@ let unregisterPairingCommand: (() => void) | null = null
    * 一律走可选链，而不是假设它们已就绪。
    */
   let aliases: Aliases | null = null
-  let devicesTable: {
-    get(key: string): DeviceRecord | undefined
-    keys(): Iterable<string>
-    /** 配对成功要写设备行（§12.1 第 3 步）—— 这是**唯一**新增设备的路径。 */
-    put(key: string, value: DeviceRecord): Promise<void>
-  } | null = null
+  /**
+   * `core` 域的 `devices` 表。
+   *
+   * 形状（含运行时才有、类型没跟上的 `delete`）见 `admin/device-admin.ts` 的
+   * `DeviceTablePort`；设备管理面的三个写操作全在那里，本文件只把表与在线集接上。
+   */
+  let devicesTable: DeviceTablePort | null = null
   /** 幂等表（`core` 域的 `dedupe` 表）。写在库里的行要参与 §5.6 的"命中即回上次结果"。 */
   let dedupeRows: DedupeRows | null = null
   /** 本机身份（§4.1）。在 `load-identity` 之前是 null，`start-transport` 之前必然已就绪。 */
@@ -289,7 +320,10 @@ let unregisterPairingCommand: (() => void) | null = null
       name: 'publish-service',
       run() {
         const service: ConnectorService = {
-          caps: () => readCaps(ctx),
+          // `direct` 能力位看**监听面起没起来**，不是看配置里写没写：
+          // 端口被占时 `startListener` 会抛，那时这一项必须是 false，
+          // 否则手机上会多一个必然拨不通的"同一网络"。
+          caps: () => readCaps(ctx, { direct: listener !== null }),
           metrics: () => metrics.snapshot(),
         }
         // `provide` 返回一个 disposer；挂到 ctx.effect 上让它随 fiber 回收。
@@ -434,37 +468,137 @@ let unregisterPairingCommand: (() => void) | null = null
           await publisher(rows)
         }
 
+        // 出码的**登记面**（`offerId` → 中转）。斜杠命令与管理页面共用同一个实例 ——
+        // 两处各建一个的话，"令牌换了哪边先生效"会有两个答案。
+        const registerPairing = createPairingRegistrar({
+          allowInsecureLocal,
+          relayUrl: relayUrl ?? '',
+          // 令牌**现读**（`readRelayToken` 不缓存）：出码是人工动作，换令牌后立刻生效；
+          // 也省得为这个只在出码时用到的值安排装配顺序。
+          tokenSource: () => readRelayToken(ctx.credentials, relayTokenSecretRef ?? ''),
+          log: logger,
+        })
+        /**
+         * 出码：登记 → 生成二维码 SVG。
+         *
+         * **斜杠命令与管理面板共用同一个出码核心**（`issuePairingOffer`）——
+         * "登记不成就不出码"这条规则只有一份。命令那一侧只能回文本
+         * （DSH 的 `CommandResult` 没有图片出口，已核实
+         * `packages/interaction/commands/src/types.ts:34`），所以二维码
+         * 由插件面板承载；斜杠命令仍留着，方便在终端里直接出码。
+         */
+        const offerPairing = async (): Promise<{
+          svg: string
+          expiresAt: number
+        }> => {
+          // 结构化拿 offer，**不从命令文本里解析** —— 那等于解析自己刚拼的字符串。
+          const offer = await issuePairingOffer({
+            pairing: pairingCore,
+            register: registerPairing,
+            log: logger,
+          })
+          // **payload 不返回**：它含两把公钥，而浏览器只负责画图。
+          // 公钥只在服务端生成 SVG 时用一次（`admin/routes.ts` 的 `offer` 注释）。
+          const svg = await pairingQrSvg(offer.payload)
+          return { svg, expiresAt: offer.expiresAt }
+        }
+
         // 出码入口：一条斜杠命令。**登记不成就不出码**（`offerForScanning` 的判断），
         // 否则操作者会拿到一张扫了也配不上的二维码，而失败面出现在手机侧。
         const commands = ctx.get('commands') as
           | { register(definition: unknown): () => void }
           | undefined
         if (commands === undefined) {
-          // `commands` 不在服务清单里时插件仍能工作（配对靠别的方式触发），所以只留声。
-          logger.warn('commands 服务不在：`dsh-mobile-pair` 出码命令不可用')
+          // `commands` 不在服务清单里时插件仍能工作（配对靠管理页面触发），所以只留声。
+          logger.warn('commands 服务不在：`dsh-mobile-pair` 出码命令不可用（管理页面仍可出码）')
         } else {
-          const registerPairing = createPairingRegistrar({
-            allowInsecureLocal,
-            relayUrl: relayUrl ?? '',
-            // 令牌**现读**（`readRelayToken` 不缓存）：出码是人工动作，换令牌后立刻生效；
-            // 也省得为这个只在出码时用到的值安排装配顺序。
-            tokenSource: () => readRelayToken(ctx.credentials, relayTokenSecretRef ?? ''),
-            log: logger,
-          })
           unregisterPairingCommand = commands.register({
             name: 'dsh-mobile-pair',
             description: `生成手机配对二维码（一次性、${Math.round(PAIRING_TTL_MS / 60_000)} 分钟有效）`,
             handler: () => offerForScanning({ pairing: pairingCore, register: registerPairing, log: logger }),
           })
         }
+
+        // 插件面板的四个 RPC（`/api/dsh-mobile/{status,pair,devices/enabled,devices/remove}`）。
+        // UI 在 DSH 界面里（浏览器半侧 `client.js` 注册 `plugins.bundle.config` slot），
+        // 不另起网页路由 —— 理由与生命周期见 `admin/mount.ts` 的文件头。
+        //
+        // **设备行按"此刻对操作者的意义"排**：在线的 > 最近交互的 > 最近配对的。
+        // 排序放在服务端：客户端只管渲染，而"怎么算更有意义"是电脑侧该定的。
+        // （真机联调会攒下几十行"配对过、连过一次、再没连过"的行 ——
+        //  2026-10-15 攒到 31 行，操作者要在最上面看到自己那台。）
+        //
+        // **三个写操作全在 `device-admin.ts`**：停用/启用、多选删、按状态删。
+        // 抽出去是为了让"解禁要把 `revokedAt` 从行上拿掉""在线豁免按形状生效"这两条
+        // 不变量有单测可钉（2026-10-15 事故后最不能错的两条）。
+        const deviceAdmin = createDeviceAdmin({
+          tableOf: () => devicesTable,
+          onlineIds: () => new Set(presence.devices().filter((row) => row.online).map((row) => row.id)),
+          publish: publishDevices,
+        })
+        unregisterAdminFace =
+          mountAdminFace(ctx, {
+            caps: () => readCaps(ctx, { direct: listener !== null }),
+            metrics: () => metrics.snapshot(),
+            relayUrl: () => relayUrl ?? null,
+            devices: () => {
+              if (devicesTable === null) return []
+              const live = presence.devices()
+              const liveOf = new Map(live.map((row) => [row.id, row]))
+              return [...devicesTable.keys()].flatMap((id) => {
+                const record = devicesTable?.get(id)
+                if (record === undefined) return []
+                const present = liveOf.get(id)
+                const lastInteractedAt = present?.lastInteractedAt
+                return [
+                  {
+                    id,
+                    name: record.name,
+                    pairedAt: record.pairedAt,
+                    revoked: record.revokedAt !== undefined,
+                    online: present?.online ?? false,
+                    foreground: present?.foreground ?? false,
+                    ...(lastInteractedAt === undefined
+                      ? {}
+                      : { lastInteractedAt: Math.max(0, ...Object.values(lastInteractedAt)) }),
+                  },
+                ]
+              }).sort(compareDevicesForDisplay)
+            },
+          offer: offerPairing,
+          // 停用/启用：一对布尔（照 DSH `setBundleEnabled` 的形状）。
+          setEnabled: (devId, enabled) => deviceAdmin.setEnabled(devId, enabled),
+          // 真删除（把行从表里抹掉）：多选与按状态共用 `device-admin.ts` 的同一条
+          // `purge`，差别只在"要不要跳过在线的"这个开关 —— **按形状生效**：
+          // 按状态批量绝不碰在线的（隐式人口，2026-10-15 事故的危险来源），
+          // 显式点名的 id 可以删在线的（操作者的明确目标）。见 device-admin.ts 不变量 2。
+          remove: (devIds) => deviceAdmin.remove(devIds),
+          removeScope: (scope) => deviceAdmin.removeScope(scope),
+          log: logger.info,
+        }) ?? null
         /**
          * 方法面的挂载级依赖。**每连接的那三个端口不在这里** ——
          * `createHandlers` 的 deps 类型上已经不收它们（见 `ConnectionScopeDeps.handlers`）。
          */
         const handlerDeps: ConnectionScopeDeps['handlers'] = {
-          caps: () => readCaps(ctx),
+          caps: () => readCaps(ctx, { direct: listener !== null }),
           aliasVersion: () => aliases?.version ?? 0,
           sessions,
+          // 端点自报：**没有监听面就不给**（`endpoint.describe` 于是不出现）。
+          // 它现取 `listener`：监听面在后面的 `start-transport` 步才起，
+          // 而这个 deps 对象在挂载时就构造好了。
+          ...(listenPort === 0
+            ? {}
+            : {
+                endpoints: createEndpointsPort({
+                  relayUrl,
+                  listenerOf: () => listener,
+                }),
+              }),
+          // 会话投影：**按能力位挂**（`sessionProjections` 服务在不在）。
+          ...(ctx.get('sessionProjections') === undefined
+            ? {}
+            : { projections: createProjectionsPort(ctx.sessionController) }),
           // 任务服务是**可选**的（`caps.ts` 的 OPTIONAL_SERVICES）：缺了就不挂 `job.*`，
           // 手机侧看到的是"这个方法不存在"，而不是一个会回错的按钮。
           ...(ctx.get('jobs') === undefined
@@ -538,6 +672,28 @@ let unregisterPairingCommand: (() => void) | null = null
             : createModelFace(ctx, { sessionOf: (sid) => aliases?.sessionOf(sid) })
         if (modelsFace !== null) {
           handlerDeps.models = modelsFace
+        }
+
+        /**
+         * 权限预设：目录（`permissionPresets.catalog()`）+ 写路径（`/permission <档位>`）。
+         *
+         * 判据是**三个服务键同时在场**：`permissionPresets` 发目录，
+         * `commands` 跑那条斜杠命令，`agents` 把会话 id 换成它要的 live root agent。
+         * 任一个缺席就整块不挂 —— `repo.info` 的 `methods` 里也就没有
+         * `permission.catalog` / `permission.switch`，手机侧照 DSH 的规则
+         * **隐藏控件**（`permission-presets/src/types.ts:58-59`：键缺席即无此能力），
+         * 而不是摆一个点下去必然失败的按钮。三个键都在 `bundle/base` 里
+         * （`cordis.patch.yml:260` 注册 `@deepseek-ai/dsh-permission-presets`），
+         * 所以真实部署下这是一整块能力，不会出现"能读不能写"的半挂状态。
+         */
+        const permissionFace =
+          ctx.get('permissionPresets') === undefined ||
+          ctx.get('commands') === undefined ||
+          ctx.get('agents') === undefined
+            ? null
+            : createPermissionFace(ctx, { sessionOf: (sid) => aliases?.sessionOf(sid) })
+        if (permissionFace !== null) {
+          handlerDeps.permissions = permissionFace
         }
 
         /**
@@ -638,6 +794,8 @@ let unregisterPairingCommand: (() => void) | null = null
             logger.warn('关闭直连监听面时出错（已接受的连接可能没全收干净）', error)
           })
           listener = null
+          unregisterAdminFace?.()
+          unregisterAdminFace = null
           connection?.stop()
           connection = null
           pairingEndpoint?.dispose()
@@ -651,6 +809,8 @@ let unregisterPairingCommand: (() => void) | null = null
           logger.warn('关闭直连监听面时出错（已接受的连接可能没全收干净）', error)
         })
         listener = null
+        unregisterAdminFace?.()
+        unregisterAdminFace = null
         connection?.stop()
         connection = null
         pairingEndpoint?.dispose()

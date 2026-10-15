@@ -63,13 +63,15 @@ export async function startChain(t: Cleanup): Promise<Chain> {
   const sessions = {
     list: async () => [], page: async () => ({ records: [], hasMore: false }),
     prompt: async () => ({ accepted: true as const }), cancel: () => ({ accepted: true as const }),
+    selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+    create: async () => ({ sessionId: 'dsh-new' }),
     follow: (): never => { throw new Error('本用例不应建立 DSH 订阅') },
   }
   const scope: ConnectionScopeDeps = {
     logger, metrics: createMetrics(), sessions,
     buffer: createSessionBuffer({ pairedDevices: () => [...devices.keys()] }), jobControl: null, idempotency: null,
     handlers: {
-      caps: () => ({ sessions: true, storage: true, approval: false, questions: false, jobs: false, subagents: false, settings: false, credentials: true }),
+      caps: () => ({ sessions: true, storage: true, approval: false, questions: false, jobs: false, subagents: false, settings: false, credentials: true, direct: false }),
       aliasVersion: () => 1, sessions, aliases: { ensure: async () => 's1', sessionOf: () => undefined },
       devices: () => [...devices].map(([id, row]) => ({ id, name: row.name, pairedAt: row.pairedAt, revoked: false })),
     },

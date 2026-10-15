@@ -36,6 +36,28 @@ export const METHODS = [
   // 模型目录：只读。手机据此建选择器，显示的名字与电脑侧同一份真值
   // （DSH 的 `session/modelCatalog`，见 `dsh/models.ts` 的文件头）。
   'session.modelCatalog',
+  // 切这个会话的模型。**与 Web 用同一个 DSH 方法**（`session/select-model`），
+  // 没有第二套接口 —— 已核实 Web 侧调的就是它
+  // （`packages/client/ui-model-selection/src/client/directory.ts:98`）。
+  // 语义见 `dsh/sessions.ts` 的 `selectModel` 注释：当前会话立即生效、
+  // 以后新建的 agent 默认跟随、**不改别的会话**。
+  'session.select-model',
+  // 会话投影：**一个方法打开全部只读面**（模型选择 / 权限档 / 子智能体目录 /
+  // 交付物 / token 用量 / 统计 / 轨迹 / 待办 / 目标 / 计划 …）。
+  // 为什么不是每面一个方法，见 `dsh/projections.ts` 的文件头。
+  'session.projections',
+  // 权限预设清单（只读）。**与 Web 同一个 DSH 方法**：
+  // `permissionPresets.catalog()`（`@Remote('catalog')`，
+  // `packages/interaction/permission-presets/src/index.ts:292`）。
+  // 预设表是**部署可配**的（`bundle/base/cordis.patch.yml:262-271`），
+  // 所以名单只能从电脑侧取，手抄一份就是第二份真值。
+  'permission.catalog',
+  // 切这个会话的权限预设。写路径是 DSH 的 `/permission <档位>` 斜杠命令
+  // （`permission-presets/src/index.ts:255-276`，DSH 注释原话
+  // "the one write path a web client uses"），Web 侧经
+  // `remote.commands.execute` 调它（`ui-permission-presets/src/client/index.ts:126`）。
+  // 当前值不走这个方法读 —— 它在 `permissions` 投影里，随 `session.projections` 到手机。
+  'permission.switch',
   'interaction.respond',
   'job.list',
   'job.follow',
@@ -46,6 +68,9 @@ export const METHODS = [
   'credentials.set',
   'credentials.unset',
   'devices.list',
+  // 端点自报：当前可拨的地址表（中转 + 局域网直连）。只读。
+  // 手机据此建"连接方式"列表，并在 IP 变了之后自愈 —— 详见 `endpoints.ts` 的文件头。
+  'endpoint.describe',
   'sync.hello',
   'repo.info',
 ] as const
@@ -64,6 +89,10 @@ const METHOD_SET: ReadonlySet<string> = new Set(METHODS)
 export const IDEMPOTENT_METHODS: ReadonlySet<MethodName> = new Set([
   'session.create',
   'session.prompt',
+  'session.select-model',
+  // 切权限是用户指令：重发不该落两条 `command/run` / `command/done`
+  // 生命周期事件，也不该把预设应用两遍。
+  'permission.switch',
   'interaction.respond',
   'settings.update',
   'credentials.set',

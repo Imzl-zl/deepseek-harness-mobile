@@ -19,7 +19,15 @@ import {
 } from '../src/protocol/methods.js'
 
 test('方法表：封闭集，幂等键标记与契约 §5.7 的表一致', () => {
-  assert.equal(METHODS.length, 21, '方法数变了要同步契约 §5.7 的表')
+  // 2026-10-15 加 `session.projections` 后是 23，同日加 `permission.catalog` 与
+  // `permission.switch`（权限切换：读预设目录 + 写 `/permission <档位>`）后是 25。
+  // **这个数是契约 §5.7 的表与 `tools.md` 的同步闸**：加了方法不改这里就会红，
+  // 而它红的方式是"数不对"，所以改它必须同时改契约那一行。
+  // 2026-10-15 加 `session.projections` 后是 23，同日加 `permission.catalog` 与
+  // `permission.switch`（权限切换：读预设目录 + 写 `/permission <档位>`）后是 25。
+  // **这个数是契约 §5.7 的表与 `tools.md` 的同步闸**：加了方法不改这里就会红，
+  // 而它红的方式是"数不对"，所以改它必须同时改契约那一行。
+  assert.equal(METHODS.length, 26, '方法数变了要同步契约 §5.7 的表')
   assert.equal(new Set(METHODS).size, METHODS.length, '方法名不能重复')
 
   // §5.7 的「幂等键」列非空的恰好这几个。
@@ -29,13 +37,20 @@ test('方法表：封闭集，幂等键标记与契约 §5.7 的表一致', () =
     'credentials.set',
     'credentials.unset',
     'interaction.respond',
+    // 切权限是用户指令：重发不该落两条 command/run 生命周期事件。
+    'permission.switch',
     'session.create',
     'session.prompt',
+    // 切模型是用户指令：重发不该切两次。
+    'session.select-model',
     'settings.update',
   ])
   assert.equal(requiresIdempotencyKey('session.list'), false)
   assert.equal(requiresIdempotencyKey('session.prompt'), true)
   assert.equal(requiresIdempotencyKey('session.create'), true)
+  assert.equal(requiresIdempotencyKey('session.select-model'), true)
+  assert.equal(requiresIdempotencyKey('permission.switch'), true)
+  assert.equal(requiresIdempotencyKey('permission.catalog'), false, '读方法不带幂等键')
 
   assert.equal(isMethod('session.list'), true)
   assert.equal(isMethod('session.typo'), false)

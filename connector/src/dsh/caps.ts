@@ -55,6 +55,18 @@ export const OPTIONAL_SERVICES = [
   // 另外两个键用来读 `modelSelection` 投影。三者都**不**决定能力位 ——
   // 缺了只是 `session.modelCatalog` 不出现、`session.list` 的行里没有 `model` 字段。
   'sessionController',
+  // 权限面（`dsh/permissions.ts`）：`permissionPresets` 发预设目录
+  // （`@Remote('catalog')`），`commands` 跑 `/permission <档位>` 这条写路径，
+  // `agents` 把会话 id 换成写路径要的 live root agent。三者都**不**决定能力位 ——
+  // 缺了只是 `permission.catalog` / `permission.switch` 不出现，
+  // 手机上那个权限控件照 DSH 的规则隐藏（`permission-presets/src/types.ts:58-59`）。
+  'permissionPresets',
+  'commands',
+  // 投影面（`dsh/projections.ts`）：`sessionController` 的 `@Remote('projections')`
+  // 经 `sessionProjections` 服务折叠。缺了只是 `session.projections` 不出现 ——
+  // 手机上那些只读面（统计 / 轨迹 / 子智能体 / 交付物 / 权限档）显示空态，
+  // 而不是一个必然失败的按钮。
+  'sessionProjections',
 ] as const
 
 /** 通道对外公布的能力位。 */
@@ -75,11 +87,19 @@ export interface Caps {
   settings: boolean
   /** 凭据面（手机侧只有设置页的密钥写面）。**必需服务**，所以通常为 true。 */
   credentials: boolean
+  /**
+   * 局域网直连可拨（配了 `listenPort` 且监听面真的起来了）。
+   *
+   * 它**不是**"能不能连"——中转一直都在。它是"直连这条路存在吗"：
+   * 手机上据此决定要不要显示"同一网络"这一项，而不是让用户点一个
+   * 必然拨不通的地址。
+   */
+  direct: boolean
 }
 
 const present = (ctx: Context, name: string): boolean => ctx.get(name) !== undefined
 
-export function readCaps(ctx: Context): Caps {
+export function readCaps(ctx: Context, options: { direct: boolean } = { direct: false }): Caps {
   return {
     sessions: present(ctx, 'sessionController'),
     storage: present(ctx, 'storageDomain'),
@@ -89,6 +109,7 @@ export function readCaps(ctx: Context): Caps {
     subagents: present(ctx, 'subagents'),
     settings: present(ctx, 'settings'),
     credentials: present(ctx, 'credentials'),
+    direct: options.direct,
   }
 }
 

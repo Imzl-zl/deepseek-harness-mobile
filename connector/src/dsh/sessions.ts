@@ -153,6 +153,47 @@ export interface SessionsPort {
   ): Promise<{ accepted: true }>
   /** 取消当前 turn。注意它**不接受 signal**（`index.ts:457`）。 */
   cancel(sessionId: string): { accepted: true }
+  /**
+   * 切这个会话的模型。**与 Web 用同一个 DSH 方法**，没有第二套接口 ——
+   * 已核实 Web 侧调的就是它
+   * （`packages/client/ui-model-selection/src/client/directory.ts:98` 的
+   * `sessions.selectModel({sessionId, provider, model, reasoningEffort})`）。
+   *
+   * 语义（`packages/core/agent-default-model/src/index.ts:82-94` + 其 README）：
+   * 1. `agents.selectForNextRequest` 让**当前会话**立即生效
+   *    （README 原文 "Session-specific selection takes precedence in the consumer"）；
+   * 2. 默认模型服务把选择写进 profile 的 entry，让**以后新建的 agent** 默认用它
+   *    （`currentSelection()` 的用途）；没有 configEditor 时这一步是 **no-op**；
+   * 3. **不改别的会话** —— 每个会话各保持自己选的。
+   *
+   * 所以"新会话默认跟随"不是副作用，是 Web 一直有的行为。
+   *
+   * Note: 注释里不写 `ctx.<服务键>` 字样 —— `tests/layering.test.ts` 的
+   * `service-key-registered` 规则按文本扫，会把注释里的键当成未登记的服务键。
+   */
+  selectModel(request: {
+    sessionId: string
+    provider: string
+    model: string
+    reasoningEffort?: string
+  }): Promise<{ selected: { provider: string; model: string; reasoningEffort?: string } }>
+  /**
+   * 新建会话（或显式采用一个给定 id）。
+   *
+   * **与 Web 用同一个 DSH 方法**：`SessionController.create`
+   * （`packages/api/session-controller/src/index.ts:280`，请求形状
+   * `{workspaceId?, cwd?, sessionId?, agentPreset?}`，回 `{sessionId, agentPreset?}`）。
+   *
+   * `workspaceId` / `cwd` **都不传**：手机侧不知道电脑有哪些工作区
+   * （那要另接 `workspace-controller`），而不传时 DSH 用它自己的当前工作区 ——
+   * 与 Web 上点"新建会话"的行为一致。硬传一个猜的工作区比不传更糟。
+   */
+  create(request?: {
+    workspaceId?: string
+    cwd?: string
+    sessionId?: string
+    agentPreset?: string
+  }): Promise<{ sessionId: string; agentPreset?: string }>
 }
 
 /**
@@ -240,6 +281,37 @@ export function createSessionsAdapter(controller: SessionController): SessionsPo
 
     cancel(sessionId) {
       return controller.cancel({ sessionId: sessionId as DshSessionId })
+    },
+
+    async selectModel(request) {
+      // 类型收窄在这一处：`sessionId` 是 branded 类型，本层对外只说 string。
+      // `reasoningEffort` 缺省时**不进请求体** —— DSH 的 `selectModel` 对缺省
+      // 字段走 adapter 默认，塞一个空串会被当成"显式选空"而拒。
+      return controller.selectModel({
+        sessionId: request.sessionId as DshSessionId,
+        provider: request.provider,
+        model: request.model,
+        ...(request.reasoningEffort === undefined
+          ? {}
+          : { reasoningEffort: request.reasoningEffort as never }),
+      })
+    },
+
+    create(request) {
+      // 全部字段可选，且**只在给了时才进请求体**：DSH 对缺省字段有自己的
+      // 默认（当前工作区 / 默认预设），塞空串会被当成"显式选空"。
+      return controller.create({
+        ...(request?.workspaceId === undefined
+          ? {}
+          : { workspaceId: request.workspaceId as never }),
+        ...(request?.cwd === undefined ? {} : { cwd: request.cwd }),
+        ...(request?.sessionId === undefined
+          ? {}
+          : { sessionId: request.sessionId as DshSessionId }),
+        ...(request?.agentPreset === undefined
+          ? {}
+          : { agentPreset: request.agentPreset }),
+      })
     },
   }
 }

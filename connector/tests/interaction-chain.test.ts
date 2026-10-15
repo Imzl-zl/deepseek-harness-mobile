@@ -51,6 +51,8 @@ function harness() {
     sessions: {
       list: async () => [],
       prompt: async () => ({ accepted: true as const }),
+      selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+      create: async () => ({ sessionId: 'dsh-new' }),
       cancel: () => ({ accepted: true as const }),
       page: async () => ({ records: [], hasMore: false }),
       follow: source.follow,
@@ -63,9 +65,15 @@ function harness() {
       caps: () => ({
         sessions: true, storage: true, approval: true, questions: true,
         jobs: false, subagents: false, settings: false, credentials: true,
+        direct: false,
       }),
       aliasVersion: () => 0,
-      sessions: { list: async () => [], prompt: async () => ({ accepted: true as const }) },
+      sessions: {
+        list: async () => [],
+        prompt: async () => ({ accepted: true as const }),
+        selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+        create: async () => ({ sessionId: 'dsh-new' }),
+      },
       aliases: {
         ensure: async (id: string) => `sid_${id}`,
         sessionOf: (sid: string) => (sid === 'sid_dsh-1' ? 'dsh-1' : undefined),

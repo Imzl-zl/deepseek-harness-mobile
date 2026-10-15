@@ -28,6 +28,8 @@
  *
  * 取舍与被否方案：`.agents/notes/implemented/2026-10-02-listener-face.md`
  */
+import { networkInterfaces } from 'node:os'
+
 import { WebSocketServer, type WebSocket } from 'ws'
 
 import type { ConnectionPort } from './connection.js'
@@ -66,12 +68,78 @@ export interface ListenerOptions {
   log?: ChannelLogger
 }
 
+/** 一个可拨地址（带给人看的名字）。 */
+export interface DialableUrl {
+  readonly url: string
+  readonly label: string
+}
+
 export interface Listener {
   /** 实际监听的端口（`port: 0` 时由系统分配）。 */
   readonly port: number
   /** 当前活着的被接受连接数。 */
   readonly active: number
+  /**
+   * **实际可拨**的地址（`ws://<ip>:<port>`），已滤掉内部地址、已去重。
+   *
+   * 为什么不直接用配置里的 `host`：配 `0.0.0.0` 时它不是一个可拨地址，
+   * 而手机要的是"往哪拨"。所以这里按 `host` 是不是通配地址分两支：
+   * 通配 → 枚举非内部网卡；具体地址 → 就用它。
+   */
+  readonly urls: readonly DialableUrl[]
   close(): Promise<void>
+}
+
+/// 通配地址：配了它就意味着"所有网卡"，可拨地址要另行枚举。
+const WILDCARD_HOSTS = new Set(['', '0.0.0.0', '::', '[::]'])
+
+/**
+ * 算出这个监听面的可拨地址。
+ *
+ * 每条带上网卡名 —— 手机上显示"同一网络(Wi-Fi)"比显示一个 IP 有用，
+ * 而切网卡时列表自己变（这正是"发现"的意义）。
+ */
+function dialableUrls(host: string, port: number): { url: string; label: string }[] {
+  const base = WILDCARD_HOSTS.has(host) ? null : normalizeHost(host)
+  const out: { url: string; label: string }[] = []
+  const seen = new Set<string>()
+
+  const push = (address: string, label: string): void => {
+    // IPv6 要括起来：`ws://[fe80::1]:8788`，否则端口会被当成地址的一部分。
+    const wrapped = address.includes(':') && !address.startsWith('[')
+      ? `[${address}]`
+      : address
+    const url = `ws://${wrapped}:${port}`
+    if (seen.has(url)) return
+    seen.add(url)
+    out.push({ url, label })
+  }
+
+  if (base !== null) {
+    push(base, host)
+    return out
+  }
+
+  for (const [name, entries] of Object.entries(networkInterfaces())) {
+    // `Object.entries` 的值类型是 `T | undefined`（TS 的索引签名语义）——
+    // 运行时不会缺，但类型上要收窄，否则就是在骗编译器。
+    if (entries === undefined) continue
+    for (const entry of entries) {
+      // **内部地址不过线**：`127.0.0.1` 拨不进来（手机不在本机），
+      // 而把它报出去会让手机上多一条永远拨不通的端点。
+      if (entry.internal) continue
+      // 只要 IPv4 与 IPv6 的全球/本地地址；link-local 的 IPv6 需要作用域 id
+      // （`fe80::1%eth0`），URL 里带 `%` 会被当成转义，所以跳过。
+      if (entry.family === 'IPv6' && entry.address.toLowerCase().startsWith('fe80')) continue
+      push(entry.address, name)
+    }
+  }
+  return out
+}
+
+/// 去掉 IPv6 字面量的方括号（`[::]` → `::`），其余原样。
+function normalizeHost(host: string): string {
+  return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host
 }
 
 /**
@@ -125,12 +193,19 @@ export async function startListener(options: ListenerOptions): Promise<Listener>
 
   const address = server.address()
   const bound = typeof address === 'object' && address !== null ? address.port : options.port
-  log?.info(`直连监听面已就绪：ws://${options.host ?? '127.0.0.1'}:${bound}（TLS 由外部终结）`)
+  const urls = dialableUrls(options.host ?? '127.0.0.1', bound)
+  log?.info(
+    `直连监听面已就绪：${urls.map((u) => u.url).join(' / ') || 'ws://' + (options.host ?? '127.0.0.1') + ':' + bound}`
+    + '（TLS 由外部终结）',
+  )
 
   return {
     port: bound,
     get active() {
       return connections.size
+    },
+    get urls() {
+      return urls
     },
     async close() {
       for (const accepted of connections) {
