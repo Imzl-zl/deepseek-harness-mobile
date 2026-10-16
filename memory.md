@@ -83,17 +83,19 @@ protocol 486·26·49 / 原型图标与路径门禁。
 **唯一没过的:真机审批回合的自动用例** —— 卡在二维码 5 分钟有效 vs Gradle 构建 15-20 分钟;
 手动链路已通(见上)。
 
-## 方法面 21/26(2026-10-15)
+## 方法面 21/27(2026-10-15)
 
 `repo.info` / `devices.list` / `session.list` / `session.create` / `session.subscribe` /
 `session.unsubscribe` / `session.page` / `session.refetch` / `session.prompt` / `job.list` /
 `job.kill` / `job.follow` / `job.unfollow` / `endpoint.describe` / `session.projections` /
 `session.select-model` / `interaction.respond` / `sync.hello` /
-**`permission.catalog`** / **`permission.switch`** / `session.modelCatalog`。
+**`permission.catalog`** / **`permission.switch`** / `session.modelCatalog` /
+**`workspace.list`**(会话列表按工作区分组)。
 
-**契约封闭集 26**,差额 5 个是契约列了没实现的:`session.cancel` / `settings.describe` /
-`settings.update` / `credentials.set` / `credentials.unset`(依据见契约 §5.8)。
-**三处计数必须同步**:`tools.md` 的方法数、契约 §5.7 的表、本行的"x/26"。
+**契约封闭集 27**,差额 6 个是契约列了没实现的:`session.cancel` / `settings.describe` /
+`settings.update` / `credentials.set` / `credentials.unset` / `workspace.list`(依据见契约 §5.8;
+`workspace.list` 已实现并挂在 `workspaceController` 能力位上,差额里去掉它)。
+**三处计数必须同步**:`tools.md` 的方法数、契约 §5.7 的表、本行的"x/27"。
 
 **模型切换翻案(2026-10-15)**:我曾写"`session/select-model` 有全局副作用,不要用"——
 **错了**。核实:Web 调的就是这一个方法(`packages/client/ui-model-selection/src/client/directory.ts:98`),
@@ -325,10 +327,10 @@ DSH 照常把 `user/message` 落盘(所以④的回读判据满足),但那个会
 
 ## 进行中 / 未完成
 
-- **方法面 21/26**(见上面"方法面 21/26"一节,那里是当前清单)。
+- **方法面 21/27**(见上面"方法面 21/27"一节,那里是当前清单)。
   **处理器表的键是"实现了什么"的唯一出处**;契约 §5.7 的方法表已逐条标注 DSH 侧依据。
   `METHODS` 与契约**逐字对应**——契约外的方法不该被 `isMethod` 放行(那会让"不存在"看起来像"没实现")。
-  **三个计数必须同步**:`tools.md` 的方法数、契约 §5.7 的表、本节的"x/26"。
+  **三个计数必须同步**:`tools.md` 的方法数、契约 §5.7 的表、本节的"x/27"。
   **26 的来历**:原 22 删掉 `interaction.list`(待处理集合是投影,没有独立查询)、
   `devices.revoke`(吊销不是方法:名册写入方本来就是电脑侧)、`push.configure`(推送本期不做),
   加入 `session.create`(DSH 原生)与 `endpoint.describe`(端点自报,2026-10-14);
