@@ -153,13 +153,20 @@ connector `pnpm exec tsc --noEmit` + `pnpm build` + `pnpm test` 445 /
 
 ## D. 环境与坑
 
-- 测试 profile:`node <npx 缓存>/@deepseek-ai/dsh/lib/bin.js --profile dsh-mobile-test --no-open --port 8099`
-  (**别用用户日常的 19387**)。中继:`cd relay; node src/main.ts --config relay.config.json`(8787)。
+- **开工前先起服务**:test profile 与中继都会退后台,会话一切换就可能掉。
+  掉了的症状是手机报"连接被拒绝"(`relay/offline`)并开始退避 —— 那是**正确行为**,
+  别误判成 bug。起法:
+  `node <npx 缓存>/@deepseek-ai/dsh/lib/bin.js --profile dsh-mobile-test --no-open --port 8099`
+  (**别用用户日常的 19387**);`cd relay; node src/main.ts --config relay.config.json`(8787)。
+  本会话收尾时两者都已停(8099 / 8787 无监听),新会话要自己起。
+- **动 Flutter UI / 手势 / 布局前,先 `node app/tools/flutter-api.mjs <符号>` 查本机 SDK 源码**
+  (项目军规新增的一条:`Flutter 行为不许猜`,引用写 `packages/flutter/lib/src/...:行号`;
+  查不到按 `tools.md`「Flutter 行为查证」那张表的顺序继续,最后才是真机实测)。
+  本轮四条全都要动 UI,所以这条会一直被用到。
 - 连接器改了 `src/` 必须 `cd connector; pnpm build`(插件加载 `lib/index.js` 的 junction),
   再重启 profile。
 - 真机:`adb install -r` 后 `adb shell monkey -p com.example.dsh_mobile -c android.intent.category.LAUNCHER 1`。
-- **`adb reverse tcp:8787 tcp:8787` 不随 USB 重插保留** —— 掉了手机报"连接被拒绝"
-  (那时它正确地退避,别误判成 bug)。
+- **`adb reverse tcp:8787 tcp:8787` 不随 USB 重插保留** —— 掉了手机报"连接被拒绝"。
 - **`adb shell input tap` 点不开会话行 / chip**,但 `input swipe` 能滚列表、☰(60,128)能开抽屉。
   "chip 有没有出现"这类验证要么先解决驱动方式,要么明确说"未验证"——
   **不许把成本转嫁给用户**。
