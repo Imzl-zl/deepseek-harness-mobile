@@ -402,6 +402,14 @@ class ChatPageState extends State<ChatPage> {
         statusText: _statusText(),
         statusIcon: _statusIcon(),
         statusIsWarn: !widget.paired,
+        // **连接中 / 握手中 / 重连中转圈**：静止的加载图标会被读成"卡住了"
+        // （2026-10-15 真机反馈）。「连接不上」是结论,不转。
+        statusSpin: switch (widget.app.connection) {
+          ConnectionStateView.connecting ||
+          ConnectionStateView.handshaking ||
+          ConnectionStateView.backoff => true,
+          _ => false,
+        },
         onStatusTap: _onStatusTap,
       ),
       body: Column(
@@ -622,6 +630,11 @@ class ChatPageState extends State<ChatPage> {
         onRePair: () => widget.onRePair?.call(),
         onOpenSide: openSide,
         onDisconnect: () => widget.onDisconnect?.call(),
+        // **已经放弃自动重连时才给「重试连接」**：再试一轮，不清凭据。
+        // `client.start()` 会清掉放弃标记并把退避表带回起点。
+        onRetry: widget.app.connection == ConnectionStateView.gaveUp
+            ? () => unawaited(widget.app.client.start())
+            : null,
       ),
     );
   }

@@ -231,4 +231,7 @@ class _RecoveryFakeClient implements SyncClient, SyncClientProbe {
 
   @override
   bool get lastConnectWasTerminal => _terminal;
+
+  @override
+  bool get lastConnectGaveUp => false;
 }

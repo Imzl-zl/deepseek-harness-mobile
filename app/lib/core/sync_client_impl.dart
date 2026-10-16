@@ -192,6 +192,12 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     // 且 `closed → connecting` 是**非法迁移**（`setAppState(foreground)` 会在
     // 终态后把 `closed` 当"该重连"调到这里）—— 直接挡掉，两条都避掉。
     if (_lastConnectWasTerminal) return;
+    // **放弃过的手动重试**：用户点了「重试连接」到这里 —— 清掉放弃标记并把
+    // 退避表回到起点，否则下一次 closed 会立刻又判 exhausted。
+    if (_connectGaveUp) {
+      _connectGaveUp = false;
+      _backoff.reset();
+    }
     if (_machine.isAnyOf([
       ConnectionState.serving,
       ConnectionState.handshake,
@@ -290,6 +296,10 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     _lastHalfOpenSilentMs = null;
     // 连上了：这条连接不再是"终态停摆"（下次掉线按正常退避判）。
     _lastConnectWasTerminal = false;
+    // 连上了：放弃标记与退避表都回到起点（否则下次掉线会从大间隔开始，
+    // 甚至立刻又判 exhausted）。
+    _connectGaveUp = false;
+    _backoff.reset();
     _machine.to(ConnectionState.serving);
     // 连上了就把待发队列按序补发（§5.6：先落盘、连接可用时再发）。
     unawaited(_deps.outbox.flush());
@@ -917,6 +927,14 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     if (to == ConnectionState.closed && !_closed && !_lastConnectWasTerminal) {
       // 连接结束 → 进退避 → 到点且前台才重连（§2.2：只在 App 前台重连）。
       _machine.to(ConnectionState.backoff);
+      // **失败太多次就放弃**：电脑关机 / 中转挂了时，无限重连意味着用户永远看着
+      // 一个转圈的东西，而没有任何结论（2026-10-15 真机反馈："我电脑关机了,
+      // 早上来了,手机一直重连,没有说重连多久连不上然后就停止"）。
+      // 放弃后界面说「连接不上」+ 给手动重试；下一次回前台仍会再试一轮（§2.2）。
+      if (_backoff.exhausted) {
+        _connectGaveUp = true;
+        return;
+      }
       final delay = _backoff.next();
       _cancelBackoff = _schedule(() {
         _cancelBackoff = null;
@@ -1065,6 +1083,11 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   /// 握手成功（[_onEstablished]）时复位。
   bool _lastConnectWasTerminal = false;
 
+  /// 连续失败太多次、已经停止自动重连（见 `_onStateChanged`）。
+  ///
+  /// 界面据此说「连接不上」并给手动重试；`start()` 会清掉它。
+  bool _connectGaveUp = false;
+
   /// 诊断面（测试与日志用）。
   @override
   ProtocolException? get lastProtocolError => _lastProtocolError;
@@ -1097,6 +1120,9 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   /// 上一次建连失败是否是终态（身份不被认，不再退避重连）。
   @override
   bool get lastConnectWasTerminal => _lastConnectWasTerminal;
+
+  @override
+  bool get lastConnectGaveUp => _connectGaveUp;
 
   /// 已声明的订阅集（`sync.hello` 的输入）。
   @override

@@ -34,6 +34,7 @@ import '../model/interaction.dart';
 import '../model/permission.dart';
 import '../model/send_mode.dart';
 import '../model/session_stats.dart';
+import '../model/workspace.dart';
 import 'preview_data.dart';
 import 'projection.dart';
 import 'session_store.dart';
@@ -705,7 +706,7 @@ class AppModel extends ChangeNotifier {
     _stateSub = client.connection.listen(_onConnectionChanged);
     // 任务输出帧：任务面板与角标都听它。**广播流**，所以这里只订一份。
     _jobSub = client.jobUpdates.listen(_applyJobFrame);
-    _connection = _viewOf(client.state);
+    _connection = _viewOf(client.state, client);
     // **先把落盘的发送模式读回来**：它决定发 prompt 时带哪个 `mode`，
     // 重启后要还是用户选的那个。读不到（没存过 / 存了个不认识的值）
     // 就保持默认的排队 —— 与 DSH 的默认一致，也不猜。
@@ -734,7 +735,7 @@ class AppModel extends ChangeNotifier {
 
   void _onConnectionChanged(ConnectionState state) {
     if (_disposed) return;
-    _connection = _viewOf(state);
+    _connection = _viewOf(state, client);
     // **连上了就清掉上一次的失败**（它可能是好几轮之前那次断开留下的）。
     //
     // 少了这一行，界面会一边显示"拉取会话失败"一边正常收发 ——
@@ -810,14 +811,28 @@ class AppModel extends ChangeNotifier {
   bool _discovering = false;
 
   /// 把 `ConnectionState`（协议状态机）翻成界面视图。
-  static ConnectionStateView _viewOf(ConnectionState state) => switch (state) {
-    ConnectionState.idle => ConnectionStateView.idle,
-    ConnectionState.connecting => ConnectionStateView.connecting,
-    ConnectionState.handshake => ConnectionStateView.handshaking,
-    ConnectionState.serving => ConnectionStateView.serving,
-    ConnectionState.backoff => ConnectionStateView.backoff,
-    ConnectionState.closed => ConnectionStateView.closed,
-  };
+  /// 协议状态 → 界面视图。
+  ///
+  /// **多一个输入：客户端本身**。因为「连接不上」这一档不是协议状态 ——
+  /// core 的状态机停在 `backoff`，是界面根据"连接层是否已放弃自动重连"
+  /// （`SyncClientProbe.lastConnectGaveUp`）推出来的。事实仍然只有一个来源
+  /// （连接层），这里只做映射。
+  static ConnectionStateView _viewOf(ConnectionState state, SyncClient client) {
+    if (state == ConnectionState.backoff) {
+      final probe = client is SyncClientProbe
+          ? client as SyncClientProbe
+          : null;
+      if (probe?.lastConnectGaveUp ?? false) return ConnectionStateView.gaveUp;
+    }
+    return switch (state) {
+      ConnectionState.idle => ConnectionStateView.idle,
+      ConnectionState.connecting => ConnectionStateView.connecting,
+      ConnectionState.handshake => ConnectionStateView.handshaking,
+      ConnectionState.serving => ConnectionStateView.serving,
+      ConnectionState.backoff => ConnectionStateView.backoff,
+      ConnectionState.closed => ConnectionStateView.closed,
+    };
+  }
 
   /// 拉会话列表（`session.list`）。
   ///
@@ -853,6 +868,9 @@ class AppModel extends ChangeNotifier {
     // 权限预设目录同理（进程级，与会话无关）。失败只留声：
     // 拿不到时权限 sheet 说"拿不到目录"，而不是摆三档手抄的名字。
     await _refreshPermissionCatalog();
+    // 工作区清单：会话列表**按它分组**（Web 的侧栏就是 工作区 → 会话）。
+    // 失败只留声：拿不到时列表退回不分组，而不是按 `cwd` 猜一个分组。
+    await refreshWorkspaces();
   }
 
   Future<void> _refreshPermissionCatalog() async {
@@ -867,6 +885,57 @@ class AppModel extends ChangeNotifier {
       // **兜住所有异常** —— 与 `_refreshModelCatalog` 同一条纪律。
       // 目录是附属信息，不该把"拉不到权限目录"升级成"会话列表也失败了"。
     }
+  }
+
+  /// 拉一次工作区清单（会话列表按它分组）。
+  ///
+  /// **拿不到就留空**（`_workspaces` 空列表）：界面退回不分组。按 `cwd` 猜分组
+  /// 是第二份真值 —— `cwd` 与工作区不是一对一，猜错比不分组更难查。
+  /// 方法不存在（老连接器 / 没装 `workspaceController`）与读取失败都走这条：
+  /// 分组是增强，不是正确性前提。
+  Future<void> refreshWorkspaces() async {
+    try {
+      final result = await client.call<Object?>('workspace.list', const {});
+      if (_disposed) return;
+      _workspaces = _parseWorkspaces(result);
+      if (!_disposed) notifyListeners();
+    } catch (_) {
+      // 附属信息：不把"拉不到工作区"升级成"会话列表也失败了"。
+    }
+  }
+
+  /// 工作区分组（**空列表 = 不分组**）。
+  List<WorkspaceGroup> get workspaces => _workspaces;
+  List<WorkspaceGroup> _workspaces = const [];
+
+  /// 解析 `workspace.list`。认不出就给空列表（不分组）。
+  static List<WorkspaceGroup> _parseWorkspaces(Object? result) {
+    if (result is! Map) return const [];
+    final rows = result['workspaces'];
+    if (rows is! List) return const [];
+    final out = <WorkspaceGroup>[];
+    for (final row in rows) {
+      if (row is! Map) continue;
+      final id = row['workspaceId'];
+      final title = row['title'];
+      final ids = row['sessionIds'];
+      if (id is! String || id.isEmpty) continue;
+      if (title is! String || title.isEmpty) continue;
+      if (ids is! List) continue;
+      out.add(
+        WorkspaceGroup(
+          workspaceId: id,
+          title: title,
+          path: row['path'] is String ? row['path'] as String : '',
+          // 只收非空串：一个空 sid 会让"这个会话属于谁"对不上。
+          sessionIds: ids
+              .whereType<String>()
+              .where((s) => s.isNotEmpty)
+              .toList(),
+        ),
+      );
+    }
+    return out;
   }
 
   Future<void> _refreshModelCatalog() async {

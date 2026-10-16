@@ -296,6 +296,10 @@ String connectionLabel(ConnectionStateView state) => switch (state) {
   ConnectionStateView.serving => '已连接',
   ConnectionStateView.backoff => '重连中…',
   ConnectionStateView.closed => '已断开',
+
+  /// 连续失败太多次、已停止自动重连。**给结论，不给转圈**：
+  /// 电脑关机 / 中转挂着时，用户该看到"连不上"，而不是一个永远在转的东西。
+  ConnectionStateView.gaveUp => '连接不上',
 };
 
 /// 连接状态的**界面视图**。
@@ -321,4 +325,11 @@ enum ConnectionStateView {
 
   /// 已断开（等待重连或用户操作）。
   closed,
+
+  /// 连续失败太多次，**已停止自动重连**（界面给结论 + 手动重试）。
+  ///
+  /// 它不是一个协议状态：core 的状态机停在 `backoff`，这一档是界面根据
+  /// "连接层是否已放弃"推出来的。所以映射写在 `AppModel._viewOf` 里，
+  /// 而这里只负责文案。
+  gaveUp,
 }

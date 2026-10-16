@@ -140,10 +140,26 @@ const double backoffJitter = 0.2;
 ///
 /// 另一条纪律在调用方：**只在 App 前台重连**；切后台要主动断开并停表（§2.2）。
 /// 本类不判断前台态，只负责「下一次该等多久」。
+///
+/// ## 为什么会放弃（[exhausted]）
+///
+/// 电脑关机、断网、中转挂了时，无限重连意味着**用户永远看着一个转圈的东西**，
+/// 而没有任何"连不上"的结论 —— 2026-10-15 真机反馈："我电脑关机了,早上来了,
+/// 手机一直重连,没有说重连多久连不上然后就停止"。
+/// 所以连续失败到 [maxAttempts] 次就停：界面给结论（「连接不上」）+ 一个手动重试，
+/// 而下一次回前台（§2.2）仍然会再试一轮。
 class Backoff {
-  Backoff({double Function()? random}) : _random = random ?? _defaultRandom;
+  Backoff({double Function()? random, this.maxAttempts = defaultMaxAttempts})
+    : _random = random ?? _defaultRandom;
+
+  /// 连续失败多少次就放弃。10 次的累计等待约 3 分钟
+  /// （1+2+4+8+16+30×5 ≈ 181 s，抖动前后同量级）。
+  static const int defaultMaxAttempts = 10;
 
   final double Function() _random;
+
+  /// 放弃阈值（注入是为了测试）。
+  final int maxAttempts;
   int _attempt = 0;
 
   /// 生产用的随机源。
@@ -181,4 +197,10 @@ class Backoff {
 
   /// 已经连续失败多少次。
   int get attempt => _attempt;
+
+  /// 是否已经该放弃：连续失败到 [maxAttempts] 次。
+  ///
+  /// 调用方据此**停止排下一轮**，改为让界面说「连接不上」并给手动重试 ——
+  /// 而不是永远转圈（见类文档的「为什么会放弃」）。
+  bool get exhausted => _attempt >= maxAttempts;
 }

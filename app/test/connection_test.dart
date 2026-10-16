@@ -133,6 +133,37 @@ void main() {
         expect(value, inInclusiveRange(0, 30000));
       }
     });
+
+    test('连续失败到阈值就放弃：电脑关机时不该永远转圈', () {
+      // 2026-10-15 真机反馈："我电脑关机了,早上来了,手机一直重连,
+      // 没有说重连多久连不上然后就停止,提示连接不上啥的"。
+      final backoff = Backoff(random: () => 0.5);
+      expect(backoff.exhausted, isFalse, reason: '一次都没失败不该判放弃');
+      for (var i = 0; i < Backoff.defaultMaxAttempts - 1; i += 1) {
+        backoff.next();
+        expect(backoff.exhausted, isFalse, reason: '第 ${i + 1} 次失败还在容忍范围内');
+      }
+      backoff.next();
+      expect(backoff.attempt, Backoff.defaultMaxAttempts);
+      expect(backoff.exhausted, isTrue, reason: '到阈值必须放弃,让界面给结论');
+    });
+
+    test('阈值可注入：测试不必真等 3 分钟', () {
+      final backoff = Backoff(random: () => 0.5, maxAttempts: 2);
+      backoff.next();
+      expect(backoff.exhausted, isFalse);
+      backoff.next();
+      expect(backoff.exhausted, isTrue);
+    });
+
+    test('reset 同时清掉放弃标记（否则手动重试后会立刻又判放弃）', () {
+      final backoff = Backoff(random: () => 0.5, maxAttempts: 1);
+      backoff.next();
+      expect(backoff.exhausted, isTrue);
+      backoff.reset();
+      expect(backoff.exhausted, isFalse);
+      expect(backoff.next(), 1000, reason: '间隔也回到起点');
+    });
   });
 
   group('心跳与半开（契约 §2.2、§9）', () {

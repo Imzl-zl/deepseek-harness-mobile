@@ -21,6 +21,8 @@
 /// 在设置页是 `chevronLeft`"这类不一致悄悄出现。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../theme/dsh_colors.dart';
@@ -72,13 +74,14 @@ class DshAppBarButton extends StatelessWidget {
 /// 两种内容（照原型）：**有后台任务显任务**，否则显文件变更。
 /// 它是"会话现在在忙什么"的唯一常驻信号 —— 所以哪怕为空也占位
 /// （不占位的话标题会随内容左右跳）。
-class DshStatusPill extends StatelessWidget {
+class DshStatusPill extends StatefulWidget {
   const DshStatusPill({
     super.key,
     required this.text,
     required this.onPressed,
     this.icon = 'loading',
     this.isWarn = false,
+    this.spin = false,
   });
 
   final String text;
@@ -88,9 +91,77 @@ class DshStatusPill extends StatelessWidget {
   /// 告警色（比如任务失败、有越权操作待批）。
   final bool isWarn;
 
+  /// 图标是否**转圈**。
+  ///
+  /// 连接中 / 重连中必须转：一个静止的加载图标会被读成"卡住了"
+  /// （2026-10-15 真机反馈："右上角这个重连,他有个图标,但是不转圈,
+  /// 我都以为卡住了"）。静止的图标传达的是"没有在动"，而不是"在等"。
+  final bool spin;
+
+  @override
+  State<DshStatusPill> createState() => _DshStatusPillState();
+}
+
+class _DshStatusPillState extends State<DshStatusPill>
+    with SingleTickerProviderStateMixin {
+  /// **只在真的要转圈时才建**。
+  ///
+  /// 两个坑都踩过：`late final` 懒建会在 `dispose` 里第一次触发创建（元素已
+  /// deactivate，造 ticker 直接抛）；无条件建则让一个不转的胶囊也挂着一个
+  /// 常驻 ticker，跨用例不停就会污染后面的测试。
+  AnimationController? _controller;
+
+  void _startSpin() {
+    _controller ??= AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 1),
+    );
+    // `repeat()` 回 `TickerFuture`，这里不关心它何时完成。
+    unawaited(_controller!.repeat());
+  }
+
+  void _stopSpin() => _controller?.stop();
+
+  /// 取（必要时建）转圈控制器。**只在 `spin` 为真时被调**，
+  /// 所以不转的胶囊不会挂 ticker；`repeat()` 的 future 不关心完成。
+  AnimationController _spinController() {
+    final existing = _controller;
+    if (existing != null) return existing;
+    final created = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 1),
+    );
+    _controller = created;
+    unawaited(created.repeat());
+    return created;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.spin) _startSpin();
+  }
+
+  @override
+  void didUpdateWidget(DshStatusPill oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.spin == oldWidget.spin) return;
+    if (widget.spin) {
+      _startSpin();
+    } else {
+      _stopSpin();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final color = isWarn ? DshColors.roleTool : DshColors.labelSecondary;
+    final color = widget.isWarn ? DshColors.roleTool : DshColors.labelSecondary;
     return ConstrainedBox(
       // `max-width: 42vw`：标题优先，胶囊不能把标题挤没。
       constraints: BoxConstraints(
@@ -98,21 +169,27 @@ class DshStatusPill extends StatelessWidget {
         minHeight: 30,
       ),
       child: Material(
-        color: isWarn ? DshColors.roleToolBg : DshColors.layer2,
+        color: widget.isWarn ? DshColors.roleToolBg : DshColors.layer2,
         borderRadius: BorderRadius.circular(15),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: onPressed,
+          onTap: widget.onPressed,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                DshIcon(icon, size: 13, color: color),
+                if (widget.spin)
+                  RotationTransition(
+                    turns: _spinController(),
+                    child: DshIcon(widget.icon, size: 13, color: color),
+                  )
+                else
+                  DshIcon(widget.icon, size: 13, color: color),
                 const SizedBox(width: 5),
                 Flexible(
                   child: Text(
-                    text,
+                    widget.text,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 12, color: color),
@@ -137,6 +214,7 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.statusText,
     this.statusIcon = 'loading',
     this.statusIsWarn = false,
+    this.statusSpin = false,
     this.onStatusTap,
   });
 
@@ -152,6 +230,13 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String? statusText;
   final String statusIcon;
   final bool statusIsWarn;
+
+  /// 状态位图标是否**转圈**（连接中 / 握手中 / 重连中）。
+  ///
+  /// 由调用方按连接状态给：静止的加载图标会被读成"卡住了"
+  /// （2026-10-15 真机反馈："他有个图标,但是不转圈,我都以为卡住了"）。
+  /// 「连接不上」不转 —— 那是结论,不是等待。
+  final bool statusSpin;
   final VoidCallback? onStatusTap;
 
   @override
@@ -192,6 +277,9 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
               text: status,
               icon: statusIcon,
               isWarn: statusIsWarn,
+              // 转圈由调用方按**连接状态**决定（连接中 / 握手中 / 重连中），
+              // 不是按告警色 —— 「未连接」不需要转,「连接不上」是结论也不转。
+              spin: statusSpin,
               onPressed: onStatusTap ?? () {},
             ),
           ],

@@ -37,6 +37,7 @@ import 'data/app_model.dart';
 import 'data/connection_recovery.dart';
 import 'data/store.dart';
 import 'model/chat_item.dart';
+import 'model/workspace.dart';
 import 'platform/app_state_reporter.dart';
 import 'platform/http_sender.dart';
 import 'platform/pairing_store.dart';
@@ -395,44 +396,52 @@ class _DshMobileAppState extends State<DshMobileApp> {
     _ => '未连接',
   };
 
-  /// 会话按"今天 / 昨天 / 更早"分组（原型 `.dsec`）。
+  /// 会话按**工作区**分组（Web 的侧栏就是 工作区 → 该项目下的会话）。
+  ///
+  /// 顺序照电脑侧给的顺序（`workspace.list` 的行序即偏好）；不属于任何工作区的
+  /// 会话进「未分组」—— 那是如实的兜底，不是错误。拿不到工作区清单时
+  /// （`app.workspaces` 为空）整份退回**不分组**，而不是按 `cwd` 猜。
+  ///
+  /// 2026-10-15 之前这里按"今天 / 昨天 / 更早"分 —— 项目一多就得在时间里翻会话，
+  /// 而 Web 的结构是"先选项目再看它的会话"。
   List<DrawerSection> _drawerSections(AppModel app) {
     final now = DateTime.now();
-    final today = <DrawerSession>[];
-    final yesterday = <DrawerSession>[];
-    final earlier = <DrawerSession>[];
-    for (final s in app.sessions) {
-      final at = DateTime.fromMillisecondsSinceEpoch(s.updatedAt);
-      final days = DateTime(
-        now.year,
-        now.month,
-        now.day,
-      ).difference(DateTime(at.year, at.month, at.day)).inDays;
-      final row = DrawerSession(
-        sid: s.sid,
-        title: s.displayTitle,
-        // **待处理数进副标题**：多会话并行时，用户靠它知道该切去哪个会话
-        // （DSH 的待处理是 per-session 的，切过去才看得见）。
-        preview: [
-          if (s.pendingCount > 0) '${s.pendingCount} 个待处理',
-          if (s.itemCount > 0) '${s.itemCount} 条',
-          if (s.pendingCount == 0 && s.itemCount == 0) s.sid,
-        ].join(' · '),
-        timeLabel: _relativeTime(days, at),
-        isActive: s.sid == app.currentSid,
-      );
-      if (days <= 0) {
-        today.add(row);
-      } else if (days == 1) {
-        yesterday.add(row);
-      } else {
-        earlier.add(row);
-      }
-    }
+    DrawerSession rowOf(SessionSummary s) => DrawerSession(
+      sid: s.sid,
+      title: s.displayTitle,
+      // **待处理数进副标题**：多会话并行时，用户靠它知道该切去哪个会话
+      // （DSH 的待处理是 per-session 的，切过去才看得见）。
+      preview: [
+        if (s.pendingCount > 0) '${s.pendingCount} 个待处理',
+        if (s.itemCount > 0) '${s.itemCount} 条',
+        if (s.pendingCount == 0 && s.itemCount == 0) s.sid,
+      ].join(' · '),
+      timeLabel: _relativeTime(
+        DateTime(
+          now.year,
+          now.month,
+          now.day,
+        ).difference(DateTime.fromMillisecondsSinceEpoch(s.updatedAt)).inDays,
+        DateTime.fromMillisecondsSinceEpoch(s.updatedAt),
+      ),
+      isActive: s.sid == app.currentSid,
+    );
+
+    final bySid = {for (final s in app.sessions) s.sid: s};
+    // **分组规则只有一份**（模型层的纯函数 `bucketSessionsByWorkspace`）——
+    // 抽屉与内联列表都用它,免得两处各写一遍"谁进哪个桶"。
     return [
-      if (today.isNotEmpty) DrawerSection(label: '今天', sessions: today),
-      if (yesterday.isNotEmpty) DrawerSection(label: '昨天', sessions: yesterday),
-      if (earlier.isNotEmpty) DrawerSection(label: '更早', sessions: earlier),
+      for (final bucket in bucketSessionsByWorkspace(
+        app.sessions.map((s) => s.sid).toList(),
+        app.workspaces,
+      ))
+        DrawerSection(
+          label: bucket.label,
+          sessions: [
+            for (final sid in bucket.sessionIds)
+              if (bySid[sid] case final session?) rowOf(session),
+          ],
+        ),
     ];
   }
 

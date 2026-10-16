@@ -167,6 +167,13 @@ abstract interface class SyncClientProbe {
   /// `false` = 连接层会自行退避重连，上层无动作。
   bool get lastConnectWasTerminal;
 
+  /// 连续失败太多次，连接层**已经停止自动重连**。
+  ///
+  /// 电脑关机 / 中转挂了时，无限重避意味着用户永远看着一个转圈的东西而没有结论
+  /// （2026-10-15 真机反馈）。到阈值就停：界面说「连接不上」+ 给手动重试，
+  /// 下一次回前台仍会再试一轮。
+  bool get lastConnectGaveUp;
+
   /// 已声明的订阅集（`sid → since`）—— `sync.hello` 会把它整份重新声明（契约 §5.4）。
   ///
   /// 暴露给测试与诊断：**断线之后 UI 不会重新 `subscribe`**（用户没有重新点开），
