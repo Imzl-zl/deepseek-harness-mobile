@@ -16,6 +16,8 @@ import { fileURLToPath } from 'node:url'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const OUT_FILE = resolve(HERE, '..', 'icons.js')
 
+// allow-hardcoded-path: DSH 参考源码的**默认**位置（可用 DSH_SOURCE 覆盖）；
+// 本仓文档（根 AGENTS.md §5、tools.md）同样按绝对路径写死它，两边保持一致。
 const DSH = process.env.DSH_SOURCE || 'D:/sudy/github/deepseek-harness'
 const ICONS_TSX = `${DSH}/packages/client/ui-primitives/src/icons/index.tsx`
 const SHARED_TSX = `${DSH}/packages/client/ui-primitives/src/icons/shared-artwork.tsx`

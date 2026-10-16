@@ -42,6 +42,38 @@
 - `.agents/notes/AGENTS.md` —— 决策笔记不变量
 - `memory.md` —— 当前状态快照
 
+## Flutter 行为查证（"别猜"的机械入口）
+
+**改 Flutter 的 UI / 手势 / 布局前，先查本机 SDK 源码**，引用写 `packages/flutter/lib/src/...:行号`
+（与 DSH 的 `packages/...:行号` 同一条纪律）。2026-10-16 那轮抽屉/手势就是没先查，绕了三条弯路。
+
+```powershell
+node app/tools/flutter-api.mjs --version        # 本机 3.41.9 stable（Dart 3.11.5）
+node app/tools/flutter-api.mjs DrawerController # 找类/方法/字段
+node app/tools/flutter-api.mjs edgeDragWidth --ctx 4
+node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
+```
+
+- 脚本自己从 `FLUTTER_ROOT` 或 `where flutter` 找 SDK 根（**不硬编码盘符**，`verify-tool-paths.mjs` 会拦）；
+  `--all` 连顶层导出一起搜；命中会带上方的 `///` 文档注释。
+- 例：`node app/tools/flutter-api.mjs edgeDragWidth --limit 5` 一次就能看到
+  `drawer.dart:341/410/658` 与 **`scaffold.dart:2952`、`:2979`** —— 左 `drawer` 与右 `endDrawer`
+  **都**吃 `drawerEdgeDragWidth`（这正是"右下抽屉能不能跟手拖"的答案，别猜）。
+
+**查不到时的顺序**（框架外的行为以真机实测为准）：
+
+| 顺序 | 源 | 怎么用 |
+|---|---|---|
+| ① | 本机 SDK 源码 | `node app/tools/flutter-api.mjs <符号>`（版本确定、逐行可引） |
+| ② | `api.flutter.dev` 类文档 | `firecrawl_scrape` 抓（页面里 "View source code" 直链到同一份源码的行号） |
+| ③ | `docs.flutter.dev` 专题 | 约束/布局/性能这类"为什么"（同样用 firecrawl） |
+| ④ | flutter/flutter 的 issue / PR | 已知坑（例：系统手势与选择手柄冲突 PR #192713） |
+| ⑤ | **真机实测** | ROM 手势、输入法、权限这类文档不保证的行为 —— `adb` 量，数据写进决策笔记 |
+
+**MCP 现状**（2026-10-16 实测）：`deepwiki` 对 flutter/flutter **不可用**（被 Vercel 人机校验挡住，返回验证页）；
+`firecrawl`（api.flutter.dev ✓）、`exa`、`chrome-devtools` 可用；`serena` 可以指向 Flutter SDK 做符号级导航，
+但它当前激活的是用户另一个项目（`CraftAgent`），**切换会影响那个会话**，所以默认不动它。
+
 ## Tools
 
 - 多端边界校验(不需要 Flutter 工程):`node app/tools/verify-platform-boundary.mjs` —— 扫描 `app/lib` 与 `app/packages`,共 6 条规则:  1. `core-no-platform-import`:`app/lib/{core,data,model}` 禁 `dart:io` 与 `package:flutter/{services,widgets,material}.dart`(否则纯 Dart 单测写不了)
@@ -121,7 +153,7 @@
   - `cd app; flutter run -d windows` —— **桌面调试**。本机 VS 18 + MSVC + Windows SDK 齐全,所以 UI 与状态机**不需要模拟器、不需要真机**
   - lint 规则集在 `app/analysis_options.yaml`,**每条都写了它针对的具体失败模式**(不是"更严格就好");改它要连注释一起改
   - 新增依赖前先看 `.agents/notes/implemented/2026-10-02-mobile-core-crypto-choice.md` 的选型闸门
-- 工具脚本路径门禁(不需要浏览器):`node mock/proto/tools/verify-tool-paths.mjs` —— 扫 `mock/proto/tools/*.mjs`,2 条规则:禁 `file:///` + 盘符的字面量、禁 `C:\sudy` / `C:/sudy`(旧环境根)。**本仓库内的路径必须从 `import.meta.url` 派生**;理由与代价见 `.agents/notes/implemented/2026-10-02-paths-must-be-derived-not-hardcoded.md`(一次搬盘让 11 个脚本的 `PAGE` 全部指向不存在的 URL,而门禁是**静默全红**:脚本照常跑完、照常打印 JSON)
+- 工具脚本路径门禁(不需要浏览器):`node mock/proto/tools/verify-tool-paths.mjs` —— 扫 `mock/proto/tools/*.mjs` **与 `app/tools/*.mjs`**(2026-10-16 起,共 19 个),**3 条规则**:① 禁 `file:///` + 盘符的字面量;② 禁 `C:\sudy` / `C:/sudy`(旧环境根);③ **禁任何盘符字面量**(`\b[A-Za-z]:[\\/]`)—— 确实需要写死的那两处(`extract-dsh-icons.mjs` 的 DSH 默认路径、`shoot.mjs` 截图夹具里的假 cwd)在**紧挨着的上方注释块**里标 `allow-hardcoded-path: <原因>` 豁免,**例外必须显式**(变异校验过:去掉标记立刻红)。**本仓库内的路径必须从 `import.meta.url` 派生**;理由与代价见 `.agents/notes/implemented/2026-10-02-paths-must-be-derived-not-hardcoded.md`(一次搬盘让 11 个脚本的 `PAGE` 全部指向不存在的 URL,而门禁是**静默全红**:脚本照常跑完、照常打印 JSON)
 - **adb 无法往 MIUI 的第三方输入法里注入长字符串**（2026-10-15 实测，白绕了半小时）：
   这台设备（`d61cf622`，Android 16）只装了三个第三方输入法（百度/讯飞/搜狗），**没有 AOSP 键盘**。
   `adb shell input text '<330 字节 JSON>'` 会被输入法当成**一个词组做组合输入**：`{`、`"` 被丢弃，

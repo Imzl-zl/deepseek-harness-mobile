@@ -104,6 +104,8 @@ await evalJs(async () => {
   q('#sideScrim').click(); await new Promise(r => setTimeout(r, 450))
   const T = window.Takeovers
   while (T.pending) T.dequeue()
+  // allow-hardcoded-path: 这里是**截图夹具里的假 cwd 文本**（给审批卡做样子），
+  // 不参与任何文件 I/O —— 写死盘符只是为了截图里像真机输出。
   T.enqueue({ kind: 'approval', toolName: 'bash', detailHtml: '<div class="tk-cmd"><span class="dim">$</span> rm -rf build/ && flutter clean\n<span class="dim">cwd</span> D:\\\\sudy\\\\myproject\\\\dsh-mobile\\\\app</div>' })
   await new Promise(r => setTimeout(r, 500))
 })

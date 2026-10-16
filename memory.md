@@ -82,6 +82,10 @@ connection-terminal-failure-goes-to-pairing,device-admin-face-dsh-house-style}.m
   (DSH 的判据已记下:冻结除末尾两块以外的块)、归档的撤销 toast。
 - **原型同步**:`mock/proto` 同一批改了(顶栏点 + 右抽屉按钮 + 计数 chip 行 + 代码块工具条),
   `verify-proto` 新增三段断言(topbar / codeBlock),authz 18 / settings 27 / tasks 53 全绿。
+- **新增"别猜 Flutter"的机械入口**(2026-10-16,用户点名"完全在瞎猜"):`node app/tools/flutter-api.mjs <符号>`
+  直接查**本机 SDK 源码**(3.41.9,逐行可引),`tools.md` 有「Flutter 行为查证」那张顺序表
+  (SDK 源码 → api.flutter.dev → docs.flutter.dev → issue/PR → **真机实测**),根 `AGENTS.md` §6 已立成规则。
+  顺带实测:`deepwiki` MCP 对 flutter/flutter 不可用(被 Vercel 校验挡),`firecrawl` 抓 api.flutter.dev 可用。
 
 ## 假数据清理(2026-10-15,一类清光)
 
