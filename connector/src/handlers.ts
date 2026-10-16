@@ -32,6 +32,7 @@ import type { InteractionFace } from './interaction-face.js'
 import type { ModelFace } from './dsh/models.js'
 import type { EndpointsPort } from './endpoints.js'
 import type { ProjectionsPort } from './dsh/projections.js'
+import type { WorkspacesPort } from './dsh/workspaces.js'
 import type { PermissionFace } from './dsh/permissions.js'
 
 /** 设备清单里的一行。**不含公钥** —— 手机不需要别人的公钥，少发一个字段就少一处泄漏面。 */
@@ -109,6 +110,14 @@ export interface HandlerDeps {
    * 与"这个方法没实现"在手机侧是同一种表现（按钮置灰），而电脑侧少一条永远走不到的分支。
    */
   jobs?: JobsPort
+  /**
+   * 工作区面（可选服务 `workspaceController`）。
+   *
+   * **缺了就不挂 `workspace.list`**：手机的会话列表退回不分组 —— 那是如实的降级。
+   * 不按 `cwd` 猜分组：`cwd` 与工作区不是一对一（多个工作区可以指向同一个目录），
+   * 猜的那份就是第二份真值。
+   */
+  workspaces?: WorkspacesPort
   /**
    * 任务控制（可选服务 `jobController`，由 `dsh-web-app` 提供，base 里没有）。
    *
@@ -376,8 +385,7 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
   }
 
   // 端点自报：与 `job.*` / `interaction.respond` 一样按能力位挂（契约 §7）。
-  // 缺了 `endpoints` 时 `endpoint.describe` 不出现 —— 手机侧看到的是
-  // "这个方法不存在"，而不是一个回 `unsupported` 的按钮。
+  // 缺了 `endpoints` 时 `endpoint.describe` 不出现 —— 手机侧看到的是  // "这个方法不存在"，而不是一个回 `unsupported` 的按钮。
   if (deps.endpoints !== undefined) {
     handlers['endpoint.describe'] = () => deps.endpoints!.describe()
   }
@@ -389,6 +397,29 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
     handlers['session.projections'] = (params) => {
       const dshSessionId = requireSession(requireSid(params))
       return deps.projections!.of(dshSessionId)
+    }
+  }
+
+  // 工作区面：会话列表**按它分组**（Web 的侧栏就是 工作区 → 会话）。
+  // **按能力位挂**：缺 `workspaceController` 时这个方法不出现，手机的列表
+  // 退回不分组 —— 如实降级，而不是按 `cwd` 猜一个分组。
+  if (deps.workspaces !== undefined) {
+    handlers['workspace.list'] = async () => {
+      const snapshot = await deps.workspaces!.list()
+      // **会话 id 换成手机见的 sid**：`WorkspaceView.sessionIds` 是 DSH 的 id，
+      // 而中继与手机只见 `sid`（与 `session.list` 同一条纪律）。
+      // 换不动就不进那一行 —— 一个 DSH id 漏到手机上，分组就永远对不上。
+      const workspaces = await Promise.all(
+        snapshot.workspaces.map(async (row) => ({
+          workspaceId: row.workspaceId,
+          title: row.title,
+          path: row.path,
+          sessionIds: await Promise.all(
+            row.sessionIds.map((dshSessionId) => deps.aliases.ensure(dshSessionId)),
+          ),
+        })),
+      )
+      return { workspaces, archivedSessionIds: snapshot.archivedSessionIds }
     }
   }
 

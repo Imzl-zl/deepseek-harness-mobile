@@ -80,6 +80,8 @@ import type { JobRegistry } from '@deepseek-ai/dsh-jobs'
 import { createJobsPort, createJobControlPort, type JobControlService } from './dsh/jobs.js'
 import { createSessionBuffer } from './session-buffer.js'
 import { createSessionsAdapter } from './dsh/sessions.js'
+import { createWorkspacesPort } from './dsh/workspaces.js'
+import type { WorkspaceController } from '@deepseek-ai/dsh-api-workspace-controller'
 import { coreDomain, initialMeta, migrateMeta, windowsDomain } from './store/index.js'
 import type { Connection, DialSocket } from './transport/connection.js'
 import { startListener, type Listener } from './transport/listener.js'
@@ -604,6 +606,17 @@ let unregisterAdminFace: (() => void) | null = null
           ...(ctx.get('jobs') === undefined
             ? {}
             : { jobs: createJobsPort(ctx.get('jobs') as JobRegistry) }),
+          // 工作区面（会话列表按它分组）：同样是可选服务。缺了就不挂
+          // `workspace.list`，手机的列表退回**不分组**—— 那是如实的降级，
+          // 而不是按 `cwd` 猜一个分组（`cwd` 与工作区不是一对一，
+          // 猜的那份会漂）。
+          ...(ctx.get('workspaceController') === undefined
+            ? {}
+            : {
+                workspaces: createWorkspacesPort(
+                  ctx.get('workspaceController') as WorkspaceController,
+                ),
+              }),
           ...(jobControl === null ? {} : { jobControl }),
           aliases: {
             ensure: (dshSessionId) => {

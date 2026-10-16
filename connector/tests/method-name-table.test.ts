@@ -1,13 +1,13 @@
 /**
- * 方法名的两侧一致性：**实现了的方法必须写在契约 §5.7 里**，且契约定义了恰好 26 个方法名。
+ * 方法名的两侧一致性：**实现了的方法必须写在契约 §5.7 里**，且契约定义了恰好 27 个方法名。
  *
  * 为什么值得：
  * - 处理器表的键就是"手机看到的方法名"（`repo.info` 报的就是这张表的键）。**打错一个字母**
  *   不会报错，只会让那个方法在手机侧**不存在** —— 表现是"按钮点了没反应"。
  * - "26" 这个数字被 `memory.md`、cookbook 与契约多处引用（当前 17/26）。把它变成断言，
- *   那些文字里的"X/26"就不会悄悄失真。
+ *   那些文字里的"X/27"就不会悄悄失真。
  *
- * 允许的差异是**有意的**：契约列全量（26），实现是子集（当前 17）——所以断言是**包含**关系，
+ * 允许的差异是**有意的**：契约列全量（27），实现是子集（当前 17）——所以断言是**包含**关系，
  *   不是相等：`connector/unsupported` 正是为"契约有、实现没有"准备的回执。
  *
  * **口径只取表格第一列**：早先按"整节里所有反引号的 `x.y`"数，于是 `caps.direct`
@@ -30,16 +30,17 @@ function section57(markdown: string): string {
   return next === -1 ? rest : rest.slice(0, next + 3)
 }
 
-test('实现的方法名都在契约 §5.7 里，且契约定义了恰好 26 个方法（"X/26" 不会悄悄失真）', () => {
-  // **26 是"方法名"数,不是表行数**:契约那张表一行可以写两个方法
+test('实现的方法名都在契约 §5.7 里，且契约定义了恰好 27 个方法（"X/27" 不会悄悄失真）', () => {
+  // **27 是"方法名"数,不是表行数**:契约那张表一行可以写两个方法
   // （`job.follow` / `job.unfollow`、`settings.describe` / `settings.update`、
   // `credentials.set` / `credentials.unset`）—— 行数更少。
   //
-  // **26 的来历**:2026-10-14 加 `endpoint.describe`(端点自报),
+  // **27 的来历**:2026-10-14 加 `endpoint.describe`(端点自报),
   // 2026-10-15 加 `session.projections`(一个方法打开全部只读面)、
   // `session.select-model`(切模型,**与 Web 同一个 DSH 方法**)与
   // `permission.catalog` / `permission.switch`(权限切换:读预设目录 + 写 `/permission <档位>`)。
-  // 每次变动都要同步 `memory.md` 里的"X/26"、`tools.md` 的方法数与契约那一行。
+  // 2026-10-15 晚加 `workspace.list`(会话列表按工作区分组)。
+  // 每次变动都要同步 `memory.md` 里的"X/27"、`tools.md` 的方法数与契约那一行。
   const declared = new Set<string>()
   for (const line of section57(readFileSync(CONTRACT, 'utf8')).split('\n')) {
     if (!line.trimStart().startsWith('|')) continue
@@ -63,7 +64,7 @@ test('实现的方法名都在契约 §5.7 里，且契约定义了恰好 26 个
     if (method !== undefined) implemented.add(method)
   }
 
-  assert.equal(declared.size, 26, `契约 §5.7 定义了 26 个方法名，实际 ${declared.size} —— 改表就要同步引用它的文档`)
+  assert.equal(declared.size, 27, `契约 §5.7 定义了 27 个方法名，实际 ${declared.size} —— 改表就要同步引用它的文档`)
   assert.equal(implemented.size > 0, true, '没能从 handlers.ts 抽出任何方法名 —— 先修解析口径，别当成通过')
 
   const stray = [...implemented].filter((method) => !declared.has(method)).sort()

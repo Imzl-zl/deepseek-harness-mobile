@@ -20,14 +20,12 @@ import {
 
 test('方法表：封闭集，幂等键标记与契约 §5.7 的表一致', () => {
   // 2026-10-15 加 `session.projections` 后是 23，同日加 `permission.catalog` 与
-  // `permission.switch`（权限切换：读预设目录 + 写 `/permission <档位>`）后是 25。
+  // `permission.switch`（权限切换：读预设目录 + 写 `/permission <档位>`）后是 25，
+  // 加 `session.select-model` 与 `session.modelCatalog` 后是 26。
+  // 2026-10-15 晚加 `workspace.list`（会话列表按工作区分组）后是 **27**。
   // **这个数是契约 §5.7 的表与 `tools.md` 的同步闸**：加了方法不改这里就会红，
   // 而它红的方式是"数不对"，所以改它必须同时改契约那一行。
-  // 2026-10-15 加 `session.projections` 后是 23，同日加 `permission.catalog` 与
-  // `permission.switch`（权限切换：读预设目录 + 写 `/permission <档位>`）后是 25。
-  // **这个数是契约 §5.7 的表与 `tools.md` 的同步闸**：加了方法不改这里就会红，
-  // 而它红的方式是"数不对"，所以改它必须同时改契约那一行。
-  assert.equal(METHODS.length, 26, '方法数变了要同步契约 §5.7 的表')
+  assert.equal(METHODS.length, 27, '方法数变了要同步契约 §5.7 的表')
   assert.equal(new Set(METHODS).size, METHODS.length, '方法名不能重复')
 
   // §5.7 的「幂等键」列非空的恰好这几个。

@@ -384,6 +384,7 @@ type SyncSnapshot = {
 | `settings.describe` / `settings.update` | 手机→电脑 | `requestId` | 读写设置(密钥面见下) |
 | `credentials.set` / `credentials.unset` | 手机→电脑 | `requestId` | **单向写面**,无读方法。DSH 侧是 `settings-controller/src/credentials.ts:100` 的 `set(ref, value)` 与 `:113` 的 `unset(ref)`;`value` 是明文(§7.5 的"改密钥只发新值"由此天然成立),而读面 `describe`(:83)**默认脱敏**(`redactSecrets`) |
 | `devices.list` | 手机→电脑 | — | 设备管理。**吊销不是方法**:名册的写入方本来就是电脑侧,吊销 = 不再把该设备报进名册 + 本地标 `revokedAt`(§8.2) |
+| `workspace.list` | 手机→电脑 | — | **只读**的工作区清单 + 每个工作区的会话 id(会话列表按它分组)。形状与 DSH 的 `WorkspaceView` 逐字一致(`packages/api/workspace-controller/src/types.ts:18-30`)。"会话属于哪个工作区"只存在于这一侧 —— `SessionSummary` 里**没有** `workspaceId`(`types.ts:177-190`),所以照 Web 分组只能读这里;按 `cwd` 猜是第二份真值。按能力位挂:缺 `workspaceController` 时方法不出现,手机退回不分组。写入(改名 / 移动会话 / 归档)是电脑侧操作,本期不做 |
 | `sync.hello` | 手机→电脑 | — | §5.4 的恢复握手。**两个职责**:① 一次声明整份订阅集(手机回到前台时要恢复的是"所有会话",不是一个;断线之后 UI 不会重新 `subscribe`,所以恢复由持有连接的这一层发起);② 上报前后台态(`app`)。每个声明的会话都走同一个 `session.subscribe` 的订阅面,不另起一套恢复语义;失败语义与它逐字一致(一个别名未知就整票失败并回 `session/not-found`) |
 | `endpoint.describe` | 手机→电脑 | — | **端点自报**:当前可拨的地址表(`{ endpoints: [{kind,url,label?}] }`,`kind` ∈ `relay`/`direct`)。没有直连监听面时这个方法**不出现**(能力位 `caps.direct` 为 false),而不是挂上去回 `connector/unsupported`。手机据此建"连接方式"列表,并在 IP 变了之后自愈 —— 顺序即偏好(`direct` 先于 `relay`)。取舍与被否方案(二维码字段 / mDNS / 手填 / 塞进 `sync.hello`)见 `.agents/notes/implemented/2026-10-14-endpoint-switching-lan-direct.md` |
 | `repo.info` | 手机→电脑 | — | 版本、能力位、别名→会话元的映射版本 |
@@ -410,7 +411,7 @@ type SyncSnapshot = {
 
 ### 5.8 未实现方法的 DSH 依据与落地路径(2026-10-09 逐条核实)
 
-已实现的 21 个见连接器处理器表(它是"实现了什么"的唯一出处)。§5.7 的封闭集是 **26** 个方法名,
+已实现的 21 个见连接器处理器表(它是"实现了什么"的唯一出处)。§5.7 的封闭集是 **27** 个方法名,
 差额是下面这 **5 个**契约列了、连接器还没接的。每一条都标了 DSH 是否原生支持、出处与落地方式。
 **结论:没有一项需要等外部条件。**
 

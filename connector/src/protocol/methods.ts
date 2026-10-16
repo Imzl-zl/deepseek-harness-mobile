@@ -68,6 +68,12 @@ export const METHODS = [
   'credentials.set',
   'credentials.unset',
   'devices.list',
+  // 工作区面：会话列表**按它分组**。Web 的侧栏是 工作区(项目) → 该项目下的会话，
+  // 而"会话属于哪个工作区"只存在于 `WorkspaceView.sessionIds`
+  // （`packages/api/workspace-controller/src/types.ts:18-30`）——
+  // `SessionSummary` 里**没有** workspaceId，所以手机要照 Web 分组只能读这里。
+  // 只读；写入（改名 / 移动会话 / 归档）是电脑侧的操作，本期不做。
+  'workspace.list',
   // 端点自报：当前可拨的地址表（中转 + 局域网直连）。只读。
   // 手机据此建"连接方式"列表，并在 IP 变了之后自愈 —— 详见 `endpoints.ts` 的文件头。
   'endpoint.describe',
