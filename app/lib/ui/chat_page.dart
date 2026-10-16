@@ -40,6 +40,7 @@ import '../data/app_model.dart';
 import '../model/chat_item.dart';
 import '../model/permission.dart';
 import '../model/send_mode.dart';
+import '../model/workspace.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
@@ -584,7 +585,20 @@ class ChatPageState extends State<ChatPage> {
     return model?.label ?? '未选择';
   }
 
-  String _statusIcon() => _hasData ? 'loading' : 'warningTriangle';
+  /// 状态位图标**跟着连接状态走**,不是"有数据就用 loading"。
+  ///
+  /// 2026-10-15 真机反馈:"已连接怎么还有个圈圈图标?" —— `loading` 那个图标
+  /// 本身就是个圈箭头,静止也像在转。所以:
+  /// - 已连接 → `link`(就是连上了,没有在等什么);
+  /// - 连接中 / 握手中 / 重连中 → `loading`(配 `statusSpin` 转圈);
+  /// - 其余(未连接 / 连接不上)→ `warningTriangle`。
+  String _statusIcon() => switch (widget.app.connection) {
+    ConnectionStateView.serving => 'link',
+    ConnectionStateView.connecting ||
+    ConnectionStateView.handshaking ||
+    ConnectionStateView.backoff => 'loading',
+    _ => 'warningTriangle',
+  };
 
   /// 推理等级的文字。
   ///
@@ -1355,6 +1369,8 @@ class _ChatTab extends StatelessWidget {
           sessions: app.sessions,
           onOpen: onOpenSession,
           onRefresh: paired ? onRefreshSessions : null,
+          // **同一套工作区分组**（与抽屉共用 `bucketSessionsByWorkspace`）。
+          workspaces: app.workspaces,
         );
       }
       return _EmptyChat(
@@ -1385,21 +1401,79 @@ class _ChatTab extends StatelessWidget {
 
 /// 主界面上的会话列表（**不必先开抽屉**）。
 ///
-/// 与抽屉里的那份是**同一批数据**（`AppModel.sessions`），只是摆的位置不同：
-/// 抽屉是"历史入口"，这里是"首页就该看得见的东西"。
+/// 与抽屉里的那份是**同一批数据**（`AppModel.sessions`）、**同一套分组规则**
+/// （`bucketSessionsByWorkspace`），只是摆的位置不同：抽屉是"历史入口"，
+/// 这里是"首页就该看得见的东西"。
 class _SessionListInline extends StatelessWidget {
   const _SessionListInline({
     required this.sessions,
     required this.onOpen,
     this.onRefresh,
+    this.workspaces = const [],
   });
 
   final List<SessionSummary> sessions;
   final void Function(SessionSummary session) onOpen;
   final VoidCallback? onRefresh;
 
+  /// 工作区分组（`AppModel.workspaces`）。**空 = 不分组**，与抽屉同一规则。
+  final List<WorkspaceGroup> workspaces;
+
   @override
   Widget build(BuildContext context) {
+    // **分组规则只有一份**（模型层的纯函数）—— 抽屉与这里都用它。
+    // 2026-10-15 只改了抽屉，主界面这份还是平的，真机上一眼看出来了。
+    final buckets = bucketSessionsByWorkspace(
+      sessions.map((s) => s.sid).toList(),
+      workspaces,
+    );
+    final bySid = {for (final s in sessions) s.sid: s};
+    // 分组后是"组头 + 行"的扁平序列：给 ListView 用。
+    final rows = <Widget>[];
+    for (final bucket in buckets) {
+      rows.add(
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+          child: Text(
+            bucket.label,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: DshColors.labelCaption,
+            ),
+          ),
+        ),
+      );
+      for (final sid in bucket.sessionIds) {
+        final session = bySid[sid];
+        if (session == null) continue;
+        rows.add(
+          ListTile(
+            dense: true,
+            title: Text(
+              // 标题链照 DSH：持久标题 → 项目目录名 → 会话 id
+              // （`SessionSummary.displayTitle`，service.ts:116-127）。
+              session.displayTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 14,
+                color: DshColors.labelPrimary,
+              ),
+            ),
+            subtitle: () {
+              // 副标题显示**模型**，不再显示 sid：标题按 DSH 的链会退到 sid
+              // （`displayTitle`），再显示一遍 sid 就是同一行里同一个字符串。
+              // Web 的列表行同样不显示原始会话 id。
+              final model = session.model?.label;
+              return model == null ? null : Text(model);
+            }(),
+            onTap: () => onOpen(session),
+          ),
+        );
+      }
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1435,32 +1509,8 @@ class _SessionListInline extends StatelessWidget {
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            itemCount: sessions.length,
-            itemBuilder: (context, index) {
-              final session = sessions[index];
-              return ListTile(
-                dense: true,
-                title: Text(
-                  // 标题链照 DSH：持久标题 → 项目目录名 → 会话 id
-                  // （`SessionSummary.displayTitle`，service.ts:116-127）。
-                  session.displayTitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: DshColors.labelPrimary,
-                  ),
-                ),
-                subtitle: () {
-                  // 副标题显示**模型**，不再显示 sid：标题按 DSH 的链会退到 sid
-                  // （`displayTitle`），再显示一遍 sid 就是同一行里同一个字符串。
-                  // Web 的列表行同样不显示原始会话 id。
-                  final model = session.model?.label;
-                  return model == null ? null : Text(model);
-                }(),
-                onTap: () => onOpen(session),
-              );
-            },
+            itemCount: rows.length,
+            itemBuilder: (context, index) => rows[index],
           ),
         ),
       ],
