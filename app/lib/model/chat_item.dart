@@ -340,7 +340,13 @@ ConnectionSummary connectionSummary({
   required EndpointAttempt? Function(Endpoint) attemptOf,
 }) {
   if (state != ConnectionStateView.serving || active == null) {
-    return (line: connectionLabel(state), note: null);
+    // 没连上：给状态名；**端点表里每一条都拨不通时补一句诊断** ——
+    // 那是"电脑不在线 / 换了网络地址"与"正在重连"的唯一区分，而空态与
+    // 连接 sheet 都靠它说人话（议题：连接方式选择器第 3 步）。
+    return (
+      line: connectionLabel(state),
+      note: _allFailedNote(endpoints, attemptOf),
+    );
   }
   final line = '当前连接：${endpointLine(active)}';
   // 当前就走第一位：没有"为什么没走首选"可解释。
@@ -358,6 +364,20 @@ ConnectionSummary connectionSummary({
     line: line,
     note: '${endpointKindLabel(preferred.kind)} ${preferred.url} 拨不通$reason',
   );
+}
+
+/// 端点表里**每一条**都有失败记录时的一句诊断；否则 `null`（不猜）。
+///
+/// 有"从没拨过"的端点时不说"都拨不通"—— 那可能是刚启动、第一轮还没跑完。
+String? _allFailedNote(
+  List<Endpoint> endpoints,
+  EndpointAttempt? Function(Endpoint) attemptOf,
+) {
+  if (endpoints.isEmpty) return null;
+  for (final endpoint in endpoints) {
+    if (attemptOf(endpoint)?.ok != false) return null;
+  }
+  return '${endpoints.length} 个端点都拨不通（电脑可能不在线，或换了网络地址）';
 }
 
 /// 连接状态的**界面视图**。

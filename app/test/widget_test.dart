@@ -38,13 +38,25 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// 一个**只回固定答案**的假客户端：界面测试只关心"拿到这些数据时长什么样"。
 class FakeClient implements SyncClient {
-  FakeClient({this.sessions = const [], this.failWith, this.projections});
+  FakeClient({
+    this.sessions = const [],
+    this.failWith,
+    this.projections,
+    ConnectionState? state,
+  }) : _state = state;
 
   final List<Object?> sessions;
   final ProtocolException? failWith;
 
   /// `session.projections` 的应答（统计条三个值的来源）。默认不给。
   final Map<String, Object?>? projections;
+
+  /// 连接状态（`null` = 保持历史上的 idle 默认：多数界面用例不关心连接）。
+  ///
+  /// 要测"服务态下的空态措辞"时传 `ConnectionState.serving` 并 `app.start()` ——
+  /// 否则 `AppModel._connection` 停在 idle，空态会走"没连上"那一支
+  /// （2026-10-16 起它优先于"还没有会话"）。
+  final ConnectionState? _state;
 
   /// 被调过的方法名（按顺序）——用来断言"到底问没问过"。
   final List<String> calls = <String>[];
@@ -53,7 +65,7 @@ class FakeClient implements SyncClient {
   Map<String, Object?>? lastParams;
 
   @override
-  ConnectionState get state => ConnectionState.idle;
+  ConnectionState get state => _state ?? ConnectionState.idle;
 
   @override
   Stream<ConnectionState> get connection => const Stream.empty();
@@ -746,12 +758,17 @@ void main() {
       // 守的是真机上"点了会话看起来没生效"：`items` 为空时一律走空态，
       // 而空态对"已选中但会话是空的"仍然说"选一个会话" ——
       // 用户**刚刚才点过**，那句话让人以为点击失败（实测）。
+      //
+      // **先让它进入服务态**：2026-10-16 起"配对但没连上"优先于这一支
+      // （那才是真实现状），而本条要测的正是"连上了、会话是空的"这一种。
       final client = _StatefulFakeClient(
         sessions: [
           {'sid': 's1', 'updatedAt': 1},
         ],
       );
       final app = AppModel(client: client);
+      client.emit(ConnectionState.serving);
+      await app.start();
       await tester.pumpWidget(_wrap(app));
       await tester.pumpAndSettle();
 
@@ -850,7 +867,9 @@ void main() {
     });
 
     testWidgets('② 已配对 + 空态：空态"重新配对"按钮 1 次点击直达', (tester) async {
-      final app = AppModel(client: FakeClient());
+      // 服务态下"还没有会话"（没连上时优先说连接，见 chat_empty_state_test）。
+      final app = AppModel(client: FakeClient(state: ConnectionState.serving));
+      await app.start();
       var rePair = 0;
       await tester.pumpWidget(
         _wrap(app, paired: true, onRePair: () => rePair += 1),

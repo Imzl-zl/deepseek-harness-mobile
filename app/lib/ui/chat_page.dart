@@ -1410,6 +1410,15 @@ class _ChatTab extends StatelessWidget {
         // 连接诊断也带上：真机"列表恒空 + 反复重连"而两端日志无原因，
         // 就是因为原因只躺在客户端的诊断字段里（详见 `AppModel.connectionDiagnosis`）。
         errorText: app.lastError?.message ?? app.connectionDiagnosis,
+        // **没连上时头条说连接**（配对照常显示"还没连电脑"）：全部端点拨不通时
+        // 带上"N 个端点都拨不通（电脑可能不在线，或换了网络地址）"。
+        connectionState: app.connection,
+        connectionNote: connectionSummary(
+          state: app.connection,
+          active: app.activeEndpoint,
+          endpoints: app.endpoints,
+          attemptOf: app.attemptOf,
+        ).note,
       );
     }
     // **`reverse: true`**：进入会话时**落在最新一条**（列表底部），与 Web 一致 ——
@@ -1770,6 +1779,8 @@ class _EmptyChat extends StatelessWidget {
     this.onConnect,
     this.onRePair,
     this.errorText,
+    this.connectionState,
+    this.connectionNote,
   });
 
   final bool paired;
@@ -1794,6 +1805,18 @@ class _EmptyChat extends StatelessWidget {
   /// 最近一次拉取失败的原因（`null` = 没失败）。**显示出来**，别让它只躺在日志里。
   final String? errorText;
 
+  /// 连接状态。**配对但没连上时，空态说"连不上"而不是"还没有会话"** ——
+  /// 两者在界面上都是空屏，而下一步动作完全不同（重连/重配 vs 去电脑上开会话）。
+  /// 2026-10-16 实测：电脑换地址后全部端点拨不通，空态却显示"还没有会话"，
+  /// 用户被引向一个根本不存在的动作。
+  ///
+  /// Note: 为什么稳定锚点（Tailscale / 稳定中转主机）不给代码做分支 ——
+  /// 见 `.agents/notes/implemented/2026-10-16-endpoint-failure-diagnosis-and-stable-anchor.md`。
+  final ConnectionStateView? connectionState;
+
+  /// 连接诊断（`connectionSummary` 的 note；如"N 个端点都拨不通…"）。
+  final String? connectionNote;
+
   @override
   Widget build(BuildContext context) {
     // **"拉取失败"必须与"真没有会话"分开说**（`app_model.dart` 的 `lastError`）。
@@ -1801,8 +1824,21 @@ class _EmptyChat extends StatelessWidget {
     // 一个去电脑上开会话，一个查连接/协议错误。
     // 少了这一支，"连上了却永远没有会话"就只能靠猜 —— 实测就是这么被卡住的。
     final error = errorText;
+    // **连接没通是比"拉取失败"更前面的一支**：那时的 `lastError` 往往是
+    // 连接层的错（握手超时之类），说成"拉取会话失败"会把排查引向会话列表。
+    // 连接状态当头条，协议错误/诊断退为详情行。
+    final disconnected =
+        paired &&
+        connectionState != null &&
+        connectionState != ConnectionStateView.serving;
     final (icon, title, detail) = !paired
         ? ('globe', '还没连电脑', '界面可以先看。要看到真实会话，得先配对（在电脑上出码）。')
+        : disconnected
+        ? (
+            'warningTriangle',
+            connectionLabel(connectionState!),
+            connectionNote ?? error ?? '连上之后，会话列表会自动出现。',
+          )
         : error != null
         ? ('warningTriangle', '拉取会话失败', error)
         // **选中了会话但还没有条目**：这是"这个会话是空的"，不是"你还没选"。

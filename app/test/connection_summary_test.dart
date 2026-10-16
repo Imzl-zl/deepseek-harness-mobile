@@ -51,6 +51,38 @@ void main() {
     expect(result.note, isNull);
   });
 
+  test('**每一条端点都拨不通**：诊断跟上（电脑不在线/换了地址的唯一提示）', () {
+    // 这是"换 WiFi / 电脑换 IP"在空态与连接 sheet 里的说法。
+    final result = summary(
+      state: ConnectionStateView.gaveUp,
+      active: null,
+      attempts: {
+        _direct.id: const EndpointAttempt(ok: false, reason: '连接超时'),
+        _relay.id: const EndpointAttempt(ok: false, reason: '连接超时'),
+      },
+    );
+    expect(result.line, '连接不上');
+    expect(result.note, '2 个端点都拨不通（电脑可能不在线，或换了网络地址）');
+  });
+
+  test('有端点从没拨过：不说"都拨不通"（可能是刚启动还没跑完一轮）', () {
+    final result = summary(
+      state: ConnectionStateView.backoff,
+      active: null,
+      attempts: {_direct.id: const EndpointAttempt(ok: false, reason: '连接超时')},
+    );
+    expect(result.note, isNull, reason: '没拨过的那条让"都拨不通"不成立');
+  });
+
+  test('没连上且端点表为空：没有诊断可说', () {
+    final result = summary(
+      state: ConnectionStateView.gaveUp,
+      active: null,
+      endpoints: const [],
+    );
+    expect(result.note, isNull);
+  });
+
   test('当前就走首选：不提"为什么"', () {
     final result = summary(active: _direct);
     expect(result.line, '当前连接：直连 · ws://192.168.2.43:8790');
