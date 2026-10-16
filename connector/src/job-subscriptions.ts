@@ -91,6 +91,14 @@ export function createJobSubscriptions(
               signal,
             ),
           outOf: (frame) => [{ sid: input.sid, output: frame }],
+          // **给行盖上 sid**：`job` 帧本身不带会话，手机只能猜"这个任务归哪个桶"，
+          // 而猜错的后果是"正在看的会话不显示后台任务 chip、别的会话凭空多一个"
+          // （2026-10-15 真机：先开 A 再开 B，B 里新起的任务被归到 A）。
+          // 订阅本来就按 (sid, jobId) 建，所以这里盖的 sid 不可能错。
+          transform: (frame) =>
+            frame.kind === 'opened' || frame.kind === 'status'
+              ? { ...frame, job: { ...frame.job, sid: input.sid } }
+              : frame,
           anchorOf: (frame) => (frame.kind === 'opened' ? frame.from : undefined),
           isTerminal: (frame) => frame.kind === 'status',
           onEndWithoutTerminal: () => ({

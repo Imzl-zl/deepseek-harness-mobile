@@ -391,12 +391,23 @@ test('端到端：手机订任务输出 —— 三帧解得出，unfollow 停流
   await waitFor('收到输出帧', () => f.peer.received.filter((frame) => frame.t === 'job').length >= 2)
 
   // 手机侧用自己的封箱实现解开这些帧（两端独立实现能对上，才算真的通了）。
+  // **`job.sid` 是连接器盖的**：`job` 帧不带会话，手机此前只能猜"归哪个桶"，
+  // 猜错的后果是"正在看的会话不显示后台任务 chip、别的会话凭空多一个"
+  // （2026-10-15 真机：先开 A 再开 B，B 里新起的任务被归到 A）。
   assert.deepEqual(jobPayloadsOf(f, keys), [
     {
       kind: 'opened',
       jobId: 'j1',
       from: 0,
-      job: { id: 'j1', kind: 'shell', label: '构建', status: 'running', startedAt: 10, outputTotal: 0 },
+      job: {
+        id: 'j1',
+        kind: 'shell',
+        label: '构建',
+        status: 'running',
+        startedAt: 10,
+        outputTotal: 0,
+        sid,
+      },
     },
     { kind: 'output', jobId: 'j1', chunks: [{ at: 0, text: '编译中…', channel: 'stdout' }], next: 12 },
   ])

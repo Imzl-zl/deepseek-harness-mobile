@@ -64,6 +64,15 @@ export interface SubscriptionSpec<Frame, Anchor, Out> {
    * 返回 `false` 表示先终止旧的再起新的。
    */
   reuse?(anchor: Anchor): boolean
+  /**
+   * 出站前改一帧。**给"调用方才知道、而上游帧没带"的信息盖章**用 ——
+   * 任务输出用它把 `sid` 盖到行上（`job` 帧不带会话，手机只能猜归哪个桶，
+   * 猜错就"正在看的会话不显示 chip、别的会话凭空多一个"）。
+   *
+   * 之所以放在骨架而不是各订阅自己拼 `outOf`：盖的这件事与"一帧变几帧"无关，
+   * 而每个订阅各写一遍就等于把"帧可能缺字段"这件事复制 N 份。
+   */
+  transform?(frame: Frame): Frame
 }
 
 export interface SubscriptionsOptions<Out> {
@@ -120,7 +129,8 @@ export function createSubscriptions<Frame, Anchor, Out>(
     let sawTerminal = false
 
     try {
-      for await (const frame of spec.open(entry.controller.signal)) {
+      for await (const raw of spec.open(entry.controller.signal)) {
+        const frame = spec.transform === undefined ? raw : spec.transform(raw)
         const anchor = spec.anchorOf(frame)
         if (anchor !== undefined && !entry.settled) {
           entry.anchor = anchor

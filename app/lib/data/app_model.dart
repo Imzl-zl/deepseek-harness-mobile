@@ -441,23 +441,33 @@ class AppModel extends ChangeNotifier {
   }
 
   void _applyJobRow(JobRow row) {
-    // 按 sid 归桶：帧本身不带 sid，所以用"当前会话 + 已订阅"推。
-    // 更稳的做法是让电脑侧在帧里带 sid —— 那是契约变更，本期不做；
-    // 而 `job.follow` 是按 sid 订阅的，所以只有那个会话会收到这些帧。
+    // **帧上带了 sid 就按它归桶**（连接器盖的）：这是唯一可靠的归属信息，
+    // 猜的代价是"正在看的会话不显示 chip、别的会话凭空多一个"。
+    //
+    // 2026-10-15 之前的做法是 `_jobs.keys.last`（地图插入序）——用户先开 A 再开 B，
+    // B 里新起的任务被归到 A，于是**正在看的 B 看不到后台任务**。
+    // 只有老连接器（帧不带 sid）才退回"当前会话"，且只在它的桶已存在时归。
+    final targetSid = row.sid ?? _currentSid;
+    if (targetSid != null && _jobs.containsKey(targetSid)) {
+      final bucket = _jobs[targetSid]!;
+      final index = bucket.indexWhere((j) => j.id == row.id);
+      _jobs[targetSid] = index >= 0
+          ? [...bucket..[index] = row]
+          : [...bucket, row];
+      notifyListeners();
+      return;
+    }
+    // 全局更新：任务在**任何**已建桶的会话里都同步（同 id 覆盖）。
+    // 这是为了"用户在 A 看任务、B 也开过"时状态不分裂 —— 但不新建桶
+    // （硬塞进一个错误的会话比丢一帧更糟）。
     for (final entry in _jobs.entries) {
       final index = entry.value.indexWhere((j) => j.id == row.id);
       if (index >= 0) {
-        entry.value[index] = row;
+        _jobs[entry.key] = [...entry.value..[index] = row];
         notifyListeners();
         return;
       }
     }
-    // 没见过这个任务：归到"最近一个刷过清单的会话"。没有会话可归就丢弃 ——
-    // 硬塞进一个错误的会话比丢一帧更糟（用户会以为那个会话有任务）。
-    if (_jobs.isEmpty) return;
-    final sid = _jobs.keys.last;
-    _jobs[sid] = [..._jobs[sid]!, row];
-    notifyListeners();
   }
 
   static JobRow _jobRowFromJson(Map entry) => JobRow(
@@ -470,6 +480,9 @@ class AppModel extends ChangeNotifier {
     progress: entry['progress'] is String ? entry['progress'] as String : null,
     detail: entry['detail'] is String ? entry['detail'] as String : null,
     finishedAt: (entry['finishedAt'] as num?)?.toInt(),
+    // 帧路径上连接器盖的 sid（`job` 帧不带会话，归桶靠它）。
+    // `job.list` 的行不带 —— 那次本来就知道是哪个会话。
+    sid: entry['sid'] is String ? entry['sid'] as String : null,
   );
 
   final Map<String, SessionStore> _stores = {};

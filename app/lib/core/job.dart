@@ -32,6 +32,7 @@ class JobRow {
     this.progress,
     this.detail,
     this.finishedAt,
+    this.sid,
   });
 
   final String id;
@@ -53,6 +54,17 @@ class JobRow {
 
   final String? progress;
   final String? detail;
+
+  /// 这个任务属于哪个会话（**手机见的 sid**）。
+  ///
+  /// 连接器在帧上盖的（`connector/src/job-subscriptions.ts` 的 `transform`）——
+  /// `job` 帧本身不带会话，手机此前只能猜"归哪个桶"，猜错的后果是
+  /// "正在看的会话不显示后台任务 chip、别的会话凭空多一个"
+  /// （2026-10-15 真机：先开 A 再开 B，B 里新起的任务被归到 A）。
+  ///
+  /// `null` = 这帧没有出处（老连接器 / 无主任务）：调用方据此决定**要不要**猜，
+  /// 而不是把空串当键。
+  final String? sid;
 
   /// 还在跑（含正在停）—— UI 据此分"实时 / 已结束"两组。
   bool get isLive => status == 'running' || status == 'stopping';

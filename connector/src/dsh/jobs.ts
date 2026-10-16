@@ -77,6 +77,10 @@ export interface JobsPort {
    * 内部再用 owner 过滤一次：`{ owner: S }` 的过滤器同样会收到**无主任务**的事件
    * （`jobs-local/src/events.ts:85` 的 `ownerId !== undefined` 短路），
    * 不过滤的话无主任务会同时出现在所有会话里。
+   *
+   * **不在这里盖 sid**：给手机的帧走 `jobControl.follow`（宿主的"人发起"门面），
+   * 而那条路的 sid 盖在 `job-subscriptions.ts` 的 `transform` 里 —— 订阅本来就按
+   * `(sid, jobId)` 建，那里盖不可能错。这条缝只服务直接用 `JobsPort` 的调用方。
    */
   subscribe(dshSessionId: string, listener: (event: JobEvent) => void): () => void
 }

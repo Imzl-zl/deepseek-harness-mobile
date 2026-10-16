@@ -45,6 +45,11 @@ export interface JobChunkOut {
  *
  * 与 `job.list` 的**同一形状**（同一个投影函数产出），并且**不含 `owner`**：
  * 那是 DSH 的会话 id，中继与手机只见 `sid`（§5.1）。
+ *
+ * **但带 `sid`**：`job` 帧（`opened` / `status`）本身不带会话，手机只能猜"这个任务
+ * 归哪个会话"—— 2026-10-15 真机上猜错的那次：用户先开 A 再开 B，B 里新起的任务被
+ * 归到 A，于是**正在看的 B 不显示后台任务 chip**，A 反而凭空多一个。
+ * 连接器本来就握着别名表（`owner` → `sid`），所以这件事由它做，手机不猜。
  */
 export interface JobRowView {
   id: string
@@ -57,6 +62,8 @@ export interface JobRowView {
   finishedAt?: number
   /** 已产出的总字节数；正文走 `output` 帧。 */
   outputTotal: number
+  /** 这个任务属于哪个会话（**手机见的 sid**）。帧路径上靠它归桶。 */
+  sid?: string
 }
 
 /** 一条任务输出订阅上会出现的四种载荷（job 帧的 ox）。 */

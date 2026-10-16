@@ -167,6 +167,71 @@ void main() {
     app.dispose();
   });
 
+  // **回归 2026-10-15 真机 bug**：帧上带 sid 时按它归桶，而不是按地图插入序猜。
+  // 旧实现是 `_jobs.keys.last` —— 它的致命场景是 A → B → **再回 A**：
+  // A 的桶早就建过（再开不会重新插入），插入序末位仍是 B，于是 A 里新起的任务
+  // 被归给 B。用户正在看 A，**A 不显示后台任务 chip**，B 反而凭空多一个。
+  // 表现与"电脑侧没这个任务"一模一样，所以它值得一条专门的钉子。
+  test('帧带 sid 就按 sid 归桶（不是按开过谁猜）', () async {
+    final client = _JobClient(onCall: (m, p) => null);
+    final app = AppModel(client: client);
+    await app.start();
+    // A → B → 回 A：旧实现在这一刻把新任务归给 B。
+    await app.openSession('sid_A');
+    await app.openSession('sid_B');
+    await app.openSession('sid_A');
+
+    client.push(
+      const JobOpened(
+        jobId: 'j9',
+        row: JobRow(
+          id: 'j9',
+          kind: 'pwsh',
+          label: 'flutter build apk',
+          status: 'running',
+          startedAt: 1000,
+          outputTotal: 0,
+          sid: 'sid_A',
+        ),
+        from: 0,
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(app.jobsOf('sid_A').map((j) => j.id), [
+      'j9',
+    ], reason: '正在看的会话必须收到这个任务，否则 chip 不显示');
+    expect(app.jobsOf('sid_B'), isEmpty, reason: 'B 不该凭空多一个任务');
+    app.dispose();
+  });
+
+  test('老连接器（帧不带 sid）：退回归到当前会话', () async {
+    final client = _JobClient(onCall: (m, p) => null);
+    final app = AppModel(client: client);
+    await app.start();
+    await app.openSession('sid_A');
+    await app.openSession('sid_B');
+
+    client.push(
+      const JobOpened(
+        jobId: 'j8',
+        row: JobRow(
+          id: 'j8',
+          kind: 'pwsh',
+          label: 'x',
+          status: 'running',
+          startedAt: 1000,
+          outputTotal: 0,
+        ),
+        from: 0,
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(app.jobsOf('sid_B').map((j) => j.id), ['j8']);
+    app.dispose();
+  });
+
   test('`output` 帧：按序追加，`gapBefore` 显式提示（不许静默拼接）', () async {
     final client = _JobClient(onCall: (m, p) => null);
     final app = AppModel(client: client);
