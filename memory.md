@@ -28,7 +28,14 @@
 即可被同 WiFi 的手机直连;手机连上后自动 `endpoint.describe` 发现地址并按"direct 先于 relay"
 并入端点表,换端点**不重扫码**(配对凭据与地址无关)。取舍见
 `.agents/notes/implemented/2026-10-14-endpoint-switching-lan-direct.md`。
-**还没做**:手机设置页的端点列表 UI(`AppModel` 已把 `endpoints`/`activeEndpoint`/`preferEndpoint` 备齐)。
+**2026-10-16:真机改走无线直连并验证**(用户否掉"插线联调")——profile 的 `cordis.patch.yml` 从
+`listenPort: 0` 改成 `8790` + `listenHost: 0.0.0.0`,`caps.direct` 必须回 `true`;
+`adb reverse` 只用于**一次性引导**(端点表里的 direct 是连上之后才学到的)。
+硬证据:撤掉 USB 通道后重启 App,电脑侧仍看到 `192.168.2.43:8790 ← 192.168.2.29:39170 ESTABLISHED`。
+取舍、两个静默失败(`adb reverse` 僵尸条目 / 编辑工具写 `~/.dsh/**` 不落盘)见
+`.agents/notes/implemented/2026-10-16-lan-direct-enabled.md`;
+**还没做**:①手机设置页的端点列表 UI(`AppModel` 已把 `endpoints`/`activeEndpoint`/`preferEndpoint` 备齐);
+②让 relay 也局域网可达 + 重新配对,使"引导"本身也无线(电脑换 IP / 手机换 WiFi 时不必插线)。
 
 **后台任务已接上**(2026-10-15):删掉三条假任务(含假的 `flutter build apk` 输出),
 改读 `job.list` + `job` 帧流;展开 `job.follow` / 收起 `job.unfollow` / 停止 `job.kill`,

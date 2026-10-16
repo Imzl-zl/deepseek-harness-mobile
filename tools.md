@@ -140,6 +140,20 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
     - 另外几条**需要真中转 + 真机**、不给前置就自动跳过:`integration_test/channel_e2e_test.dart`(两段配对 → 令牌落 Keystore)、`integration_test/pairing_flow_test.dart`(连不上时如实报错 + 密钥库往返)、**`integration_test/interaction_real_device_test.dart`**(交互链:两段配对 → 建连 → `sync.hello` → `session.list` → 订阅收 `ev` → 发一句并作为 `user/message` 回到手机 → 审批回合;凭据在结尾自己清掉)。跑法与二维码出处见 `docs/cookbook/next-session-interaction-to-phone.md`
     - **明文放行有四处**,少一处静默不通(都只在 debug / 本机回环):① Android `app/src/debug/res/xml/network_security_config.xml`;② `PairingPage.allowInsecureLocal`;③ `main.dart` 里 `PairingClient` 的 `allowInsecureLocal`(漏了 = "码认了、票换不了",已由 `assembly_invariants_test.dart` 钉住);④ profile `cordis.patch.yml` 里连接器的 `allowInsecureLocal`(漏了 = "连接器从不拨线、什么都没发生";该文件在 `~/.dsh/` 下、被 gitignore,换机器要重配)
      - **配对二维码可以全自动出**(2026-10-13 实测):profile 起来后用 chrome-devtools MCP 打开 `http://127.0.0.1:8099/?token=<启动日志里那个>`,在任一空闲会话的输入框敲 `/dsh-mobile-pair` 回车,再从页面文本里正则抓 `\{"v":2.*?\}`。**cookbook 里"信封形状见 tools.md"是过期引用 —— `POST /api/commands/execute` 的 RPC 信封没被逆向出来,别在那上面花时间。** 二维码一次性、5 分钟有效;历史会话里会堆着一片过期二维码,取**最后一条**。
+     - **无线局域网直连(2026-10-16 打通并真机验证)**:目标是"手机不插线也能连"。要三件一起对:
+       1. profile 的 `cordis.patch.yml`(在 `~/.dsh/profiles/dsh-mobile-test/`,**gitignore,换机器要重配**)里连接器开直连监听面:`listenPort: 8790` + **`listenHost: 0.0.0.0`**(默认 `127.0.0.1` = 手机连不进来,见 `connector/src/config.ts:54-55`);
+       2. 重启 profile 后**验证监听面真的起来了**:`Get-NetTCPConnection -State Listen -LocalPort 8790` 应显示 `0.0.0.0`,并且连接器自己的状态面 `caps.direct` 必须是 `true` ——
+          `$t='<启动日志里那个 token>'; Invoke-WebRequest "http://127.0.0.1:8099/?token=$t" -SessionVariable sess; (Invoke-RestMethod http://127.0.0.1:8099/api/dsh-mobile/status -WebSession $sess).caps.direct`
+          (`caps.direct` 按"监听面起没起来"算,不是按配置里写没写 —— `connector/src/index.ts:326-333`);
+       3. **手机侧要一次引导**:端点表里 `direct` 那条是连上之后 `endpoint.describe` 才学到的(`connector/src/endpoints.ts:48-60`,direct 先于 relay),所以第一次得先经 relay 连上 —— 那条是环回 `ws://127.0.0.1:8787`,靠 `adb reverse`。
+          引导完再把 `adb reverse --remove-all` 撤掉、重开 App,它就会改用直连(学到的地址已落盘)。
+       **验收判据(硬证据,不看界面)**:电脑侧出现 `192.168.2.43:8790 ← 192.168.2.29:39170 ESTABLISHED`(`netstat -ano | Select-String ':8790'`),即手机 WiFi 地址连进来;顺带把防火墙也一起证了。
+       手机侧可先自测两条路:`adb shell 'curl -m 5 -sS -o /dev/null -w "%{http_code}" http://192.168.2.43:8790/'` → **426 = 通**(WS 端点对普通 GET 的答复),`http://192.168.2.43:8787/` 超时 = relay 只绑了回环(正常)。
+     - **⚠ `adb reverse` 会留僵尸条目**(2026-10-16 踩了半小时):adb daemon 重启(USB 重插/`adb kill-server`)之后,`adb reverse --list` **照样显示那条映射**,但手机上根本没人监听(`adb shell netstat -ltnp | grep 8787` 为空、`curl 127.0.0.1:8787` 报 Could not connect)。
+       判据与修法:`adb reverse --remove-all` 再 `adb reverse tcp:8787 tcp:8787`,然后**从手机侧** `curl` 验证(`-w "%{http_code}"` → 405 = 中继在应答)。**别信 `--list`**。
+     - **⚠ `~/.dsh/**` 这类工作区外的文件,编辑工具会"报成功但不落盘"**(2026-10-16 踩了半小时):`edit` 返回 Updated file,mtime 和内容纹丝不动。
+       判据:改完立刻 `Get-Content` 回读 + 看 `(Get-Item $f).LastWriteTime`。修法:用 shell 写(PowerShell/Node),写完**必回读**;改前先 `Copy-Item` 备份。
+       今天就是它让"配置没生效"伪装成"连接器不读配置",白查了三轮(relay 未起 / volatile 覆盖 / 插件没装)。
      - **"帧到没到连接器"的离线判据**:`~/.dsh/storages/dsh_mobile_core.json` 的 `dedupe` 表。`idempotency.ts` 的 `begin()` 在**分发之前**落 `pending`、成功改 `done`、失败 `abandon()` **删行** —— 所以"没有这一条"= 没到分发层,或到了被拒(如 `session/not-found`),两者从外部**分不开**;要分开靠手机侧仪器(见 cookbook)。`by_sid`/`by_session` 是别名表(无时间戳),`devices` 是设备名册。
      - **会话日志按帧解压的魔术字是文件序 `28 B5 2F FD`**(zstd 帧魔数 `0xFD2FB528` 的小端)。写反成 `FD 2F B5 28` 会一帧都找不到、解出 0 字符,而表现像"文件是空的"。
      - **真机靶子会话的工作区必须存在**(2026-10-13 拿三轮真机换的):DSH 对工作区已失效的会话,`session.prompt` 照常落 `user/message`(**④的回读判据因此满足**),但 agent 永远不起轮次 —— 没有 `turn/start` / `tool/call` / `approval/asked`,全程零错误。判据:靶子会话的 `cwd` 目录还在不在(下一步把 `cwd` 过线,见 cookbook)。
