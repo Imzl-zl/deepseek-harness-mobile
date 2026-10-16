@@ -53,6 +53,7 @@ class EndpointTransport implements ChannelTransport {
     required this.endpointsOf,
     required this.factory,
     this.onActivated,
+    this.onAttempt,
   });
 
   /// 当前端点表。
@@ -65,6 +66,15 @@ class EndpointTransport implements ChannelTransport {
   /// 只报事实，不改表：表的所有权在调用方。用来让界面显示"当前走哪条"。
   /// **可后设**（装配时 `AppModel` 还没建出来，见 `main.dart` 的 `_assemble`）。
   void Function(Endpoint endpoint)? onActivated;
+
+  /// 某个端点**试过了**（拨通或失败）时回调。只报事实，不改表。
+  ///
+  /// 与 [onActivated] 的分工：那个只报"赢了哪个"，这个报"每个试过的结局" ——
+  /// 设置页的"通不通"与"为什么走了中转"都要后者（回落时 active 是中转，
+  /// 而用户关心的是"直连怎么没了"）。失败也报：**一次拨不通是下一轮
+  /// "通不通"的唯一证据**，连接层退避重连时每一轮都会重报。
+  /// **可后设**（同 [onActivated]）。
+  void Function(Endpoint endpoint, EndpointAttempt attempt)? onAttempt;
 
   ChannelTransport? _active;
 
@@ -100,12 +110,20 @@ class EndpointTransport implements ChannelTransport {
         _active = transport;
         _activeEndpoint = endpoint;
         onActivated?.call(endpoint);
+        onAttempt?.call(endpoint, const EndpointAttempt(ok: true));
         return stream;
       } on TransportException catch (error) {
         // **终态错误不再换端点**：身份不被认（换票被拒 → `notPaired`）时，
         // 换下一个端点只会把"为什么连不上"弄丢 —— 直连要到握手处才失败，
         // reason 变成 close 4003，而 401 那个"电脑不认本机"的信号会被掩盖。
         // 直接把它抛出去，让连接层判终态（不进退避、交上层回配对页）。
+        //
+        // 终态也照旧报一次拨号结果：它是事实（这一轮确实没通），
+        // 而设置页要能显示"为什么这条连不上"。
+        onAttempt?.call(
+          endpoint,
+          EndpointAttempt(ok: false, reason: error.message),
+        );
         if (error.code?.clientAction == ClientAction.rePair) rethrow;
         // 其余：拨不通是该换下一条。别的异常（工厂里的 bug）照旧抛出去 ——
         // 吞掉它会让"代码写错了"表现成"网络不通"。

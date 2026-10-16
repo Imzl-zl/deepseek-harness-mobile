@@ -15,12 +15,19 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../model/chat_item.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
+import 'connection_summary_block.dart';
 
 /// 弹出连接操作 sheet。取消（点遮罩 / 「取消」行）不触发任何动作。
+///
+/// [connection] 是顶部的「当前连接」块（连接方式选择器第 1 步：一眼能看
+/// "走的哪条"，不用进设置）。**它只表事实、不可点** —— 改偏好的入口在
+/// 设置页的端点列表（那边列得出全部端点）。
 Future<void> showConnectionActionsSheet(
   BuildContext context, {
+  required ConnectionSummary connection,
   required VoidCallback onRePair,
   VoidCallback? onOpenSide,
   VoidCallback? onDisconnect,
@@ -33,6 +40,7 @@ Future<void> showConnectionActionsSheet(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          ConnectionSummaryBlock(connection: connection),
           // 「重试连接」只在**已经放弃自动重连**时给：那是"再试一轮"，
           // 与「重新配对（换一台电脑）」是两件事 —— 前者不动物料，后者清凭据。
           if (onRetry != null)

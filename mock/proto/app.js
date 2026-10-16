@@ -2524,9 +2524,14 @@
         intro: "设备连接、版本与电脑端配置入口。",
         body: `
           <section class="settings-detail-group"><h3>连接</h3><div class="settings-card">
-            ${settingsControl("我的电脑", "Windows · 中转已连接 · 空闲", '<span class="settings-badge">在线</span>')}
+            ${settingsControl("我的电脑", "Windows · 直连已连接 · 空闲", '<span class="settings-badge">在线</span>')}
             ${settingsControl("设备管理", "配对、吊销与切换设备", settingsArrow())}
           </div></section>
+          <section class="settings-detail-group"><h3>连接方式</h3><div class="settings-card">
+            <div class="settings-provider"><span class="provider-mark">${ic("link", 18)}</span><span class="provider-copy"><strong>直连</strong><span>ws://192.168.2.43:8790 · 同一 WiFi</span><span>当前连接</span></span><span class="settings-badge">首选</span></div>
+            <div class="settings-provider" data-act="toast" data-msg="演示:已把中转设为首选,下次重连生效"><span class="provider-mark">${ic("globe", 18)}</span><span class="provider-copy"><strong>中转</strong><span>ws://192.168.2.43:8787 · 保底通道</span><span>直连不可用时自动走它</span></span><span class="settings-badge">设为首选</span></div>
+          </div>
+          <p class="settings-note">排在第一位的先拨,拨不通自动顺延;点一行把它设为首选,下次重连生效。端点只是地址、不含凭据 —— 换端点不重扫码。</p></section>
           <section class="settings-detail-group"><h3>应用</h3><div class="settings-card">
             ${settingsControl("当前版本", "手机 App;电脑端 DSH 版本需 bridge", '<span class="settings-badge">0.1.0</span>')}
             ${settingsControl("打开电脑端配置文件", "由电脑上的原生编辑器打开", '<button class="settings-badge" data-act="toast" data-msg="已请求电脑端打开配置文件">打开</button>')}
@@ -3185,6 +3190,10 @@
           title: "连接操作",
           size: "half",
           body: `
+            <div class="sitem"><span class="i">${ic(
+              "link",
+              16
+            )}</span><span class="m">当前连接:直连 · ws://192.168.2.43:8790</span></div>
             <button class="sitem" data-act="toast" data-msg="演示:重新配对会清掉本机凭据,回扫码页(真实动作需 bridge)"><span class="i">${ic(
               "refresh",
               16

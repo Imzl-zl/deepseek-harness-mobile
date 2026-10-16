@@ -21,6 +21,8 @@
 /// 所以：**事件 → 条目的投影只在这一处**，UI 只读投影结果。
 library;
 
+import '../core/endpoint.dart';
+
 /// 一条会话条目在界面上长什么样。
 ///
 /// **不可变**：UI 用它做 `==` 比较来决定要不要重建（Flutter 的重建成本主要在
@@ -313,6 +315,50 @@ String connectionLabel(ConnectionStateView state) => switch (state) {
   /// 电脑关机 / 中转挂着时，用户该看到"连不上"，而不是一个永远在转的东西。
   ConnectionStateView.gaveUp => '连接不上',
 };
+
+/// 端点种类在界面上的说法（连接 sheet、设置页共用，**只有这一套**）。
+String endpointKindLabel(EndpointKind kind) =>
+    kind == EndpointKind.direct ? '直连' : '中转';
+
+/// 一个端点的一行式描述：`直连 · ws://192.168.2.43:8790`。
+String endpointLine(Endpoint endpoint) =>
+    '${endpointKindLabel(endpoint.kind)} · ${endpoint.url}';
+
+/// 当前连接的**两行式描述**（连接 sheet 与设置页共用）。
+///
+/// - [ConnectionSummary.line]：没连上时是状态（[connectionLabel]），连上了是
+///   `当前连接：<端点>`；
+/// - [ConnectionSummary.note]：非空时解释"为什么没走首选"—— 那是"换 WiFi /
+///   电脑换 IP 后直连失效、自动回落中转"的唯一提示，否则它只会安静重连，
+///   用户看着"已连接"不知道自己在走保底通道（议题：连接方式选择器第 3 步）。
+typedef ConnectionSummary = ({String line, String? note});
+
+ConnectionSummary connectionSummary({
+  required ConnectionStateView state,
+  required Endpoint? active,
+  required List<Endpoint> endpoints,
+  required EndpointAttempt? Function(Endpoint) attemptOf,
+}) {
+  if (state != ConnectionStateView.serving || active == null) {
+    return (line: connectionLabel(state), note: null);
+  }
+  final line = '当前连接：${endpointLine(active)}';
+  // 当前就走第一位：没有"为什么没走首选"可解释。
+  if (endpoints.isEmpty || endpoints.first.id == active.id) {
+    return (line: line, note: null);
+  }
+  final preferred = endpoints.first;
+  final attempt = attemptOf(preferred);
+  // 首选没拨过、或上次是通的：说不出原因，就不编一个。
+  if (attempt == null || attempt.ok) return (line: line, note: null);
+  final reason = attempt.reason?.isNotEmpty == true
+      ? '（${attempt.reason}）'
+      : '';
+  return (
+    line: line,
+    note: '${endpointKindLabel(preferred.kind)} ${preferred.url} 拨不通$reason',
+  );
+}
 
 /// 连接状态的**界面视图**。
 ///

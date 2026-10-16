@@ -184,6 +184,32 @@ List<Endpoint> mergeEndpoints(
   return merged;
 }
 
+/// 一次**拨号**的结果（`EndpointTransport` 每试一个端点报一次）。
+///
+/// 它是**事实的记录，不是状态的推断**：`ok = false` 只说明"这一轮没拨通"，
+/// 而端点会不会恢复是另一件事 —— 所以 `endpoint_transport.dart` 据此**不降权**
+/// （失败过的端点下一轮仍在原位置）。设置页的"通不通"读它；
+/// **没有拨号记录就没有结论**，不猜、也不主动探测。
+class EndpointAttempt {
+  const EndpointAttempt({required this.ok, this.reason});
+
+  /// 这一轮拨通了（WS 已建立；握手还没开始）。
+  final bool ok;
+
+  /// 拨不通的原因（`ok = true` 时为 `null`）。
+  final String? reason;
+
+  @override
+  bool operator ==(Object other) =>
+      other is EndpointAttempt && other.ok == ok && other.reason == reason;
+
+  @override
+  int get hashCode => Object.hash(ok, reason);
+
+  @override
+  String toString() => 'EndpointAttempt(${ok ? 'ok' : 'fail'}, $reason)';
+}
+
 /// 主机是不是"非公网"（回环 / 私网 / CGNAT / link-local / ULA）。
 ///
 /// 明文 `ws://` 只允许这一类；公网必须 `wss`（契约 §2）。

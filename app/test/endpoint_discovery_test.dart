@@ -220,4 +220,68 @@ void main() {
     expect(notifications, afterFirst, reason: '同一个端点不该再通知一次');
     app.dispose();
   });
+
+  // -------------------------------------------------------------------------
+  // 拨号结果记账（`attemptOf` / `reportEndpointAttempt`）
+  // -------------------------------------------------------------------------
+
+  test('拨号结果按端点 id 记账，界面据此显示"通不通"', () async {
+    final app = await serving(onCall: (method, _) => null);
+
+    app.reportEndpointAttempt(
+      _direct,
+      const EndpointAttempt(ok: false, reason: '连不上'),
+    );
+    app.reportEndpointAttempt(_relay, const EndpointAttempt(ok: true));
+
+    expect(app.attemptOf(_direct)?.ok, isFalse);
+    expect(app.attemptOf(_direct)?.reason, '连不上');
+    expect(app.attemptOf(_relay)?.ok, isTrue);
+    app.dispose();
+  });
+
+  test('没拨过的端点没有结论：attemptOf 是 null（不猜）', () async {
+    final app = await serving(onCall: (method, _) => null);
+    expect(app.attemptOf(_direct), isNull);
+    app.dispose();
+  });
+
+  test('同一个拨号结果不重复通知（退避重连每轮都会重报）', () async {
+    final app = await serving(onCall: (method, _) => null);
+    app.reportEndpointAttempt(
+      _direct,
+      const EndpointAttempt(ok: false, reason: '连不上'),
+    );
+    var notifications = 0;
+    app.addListener(() => notifications++);
+
+    app.reportEndpointAttempt(
+      _direct,
+      const EndpointAttempt(ok: false, reason: '连不上'),
+    );
+    expect(notifications, 0, reason: '结果没变不该通知，否则界面每隔几秒重建一次');
+
+    app.reportEndpointAttempt(_direct, const EndpointAttempt(ok: true));
+    expect(notifications, 1, reason: '结果变了要通知');
+    app.dispose();
+  });
+
+  test('换端点不抹掉拨号记录：记录按 url 认，不在表里的地址也有据可查', () async {
+    // 手动 prefer 只改顺序不删条目，而记录是跨连接保留的 ——
+    // 直连恢复后"拨通过"要能更新掉之前那条"拨不通"。
+    final app = await serving(
+      onCall: (method, _) => null,
+      endpoints: const [_direct, _relay],
+    );
+
+    app.reportEndpointAttempt(
+      _direct,
+      const EndpointAttempt(ok: false, reason: '超时'),
+    );
+    await app.preferEndpoint(_relay);
+
+    expect(app.endpoints.first, _relay, reason: 'prefer 只改顺序');
+    expect(app.attemptOf(_direct)?.reason, '超时', reason: '记录不因重排丢失');
+    app.dispose();
+  });
 }

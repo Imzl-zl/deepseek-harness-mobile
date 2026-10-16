@@ -57,11 +57,13 @@ void main() {
     List<Endpoint> endpoints, {
     Set<String> failing = const {},
     void Function(Endpoint)? onActivated,
+    void Function(Endpoint, EndpointAttempt)? onAttempt,
   }) {
     log = <Endpoint>[];
     return EndpointTransport(
       endpointsOf: () => endpoints,
       onActivated: onActivated,
+      onAttempt: onAttempt,
       factory: (endpoint) {
         log.add(endpoint);
         return _FakeTransport(
@@ -164,6 +166,70 @@ void main() {
   test('没有端点：如实抛，不静默', () async {
     final transport = build(const []);
     await expectLater(transport.connect(), throwsA(isA<TransportException>()));
+  });
+
+  // -------------------------------------------------------------------------
+  // 拨号结果上报（`onAttempt`）—— 设置页"通不通"的唯一数据来源
+  // -------------------------------------------------------------------------
+
+  test('拨通了：onAttempt 报 ok=true', () async {
+    final attempts = <(Endpoint, EndpointAttempt)>[];
+    final transport = build([
+      direct,
+      relay,
+    ], onAttempt: (e, a) => attempts.add((e, a)));
+
+    await transport.connect();
+
+    expect(attempts, [
+      (direct, const EndpointAttempt(ok: true)),
+    ], reason: '只有拨通的那个端点该被报 ok');
+  });
+
+  test('回落时：失败的那个带原因报出，赢的那个报 ok', () async {
+    // 这是"为什么走了中转"的判据：没有失败记录，界面只会显示
+    // "当前连接：中转"，用户不知道直连怎么没了。
+    final attempts = <(Endpoint, EndpointAttempt)>[];
+    final transport = build(
+      [direct, relay],
+      failing: {direct.url},
+      onAttempt: (e, a) => attempts.add((e, a)),
+    );
+
+    await transport.connect();
+
+    expect(attempts.map((r) => r.$1.url), [direct.url, relay.url]);
+    expect(attempts[0].$2.ok, isFalse);
+    expect(attempts[0].$2.reason, contains('拨不通 ${direct.url}'));
+    expect(attempts[1].$2.ok, isTrue);
+  });
+
+  test('终态错误也报拨号结果（它是事实），然后照旧抛出', () async {
+    final attempts = <(Endpoint, EndpointAttempt)>[];
+    final transport = EndpointTransport(
+      endpointsOf: () => [relay, direct],
+      onAttempt: (e, a) => attempts.add((e, a)),
+      factory: (endpoint) => _FakeTransport(
+        endpoint,
+        failWith: endpoint.kind == EndpointKind.relay
+            ? const TransportException(
+                '换票失败：换票被拒（HTTP 401）',
+                code: ErrorCode.notPaired,
+              )
+            : null,
+      ),
+    );
+
+    await expectLater(transport.connect(), throwsA(isA<TransportException>()));
+    expect(attempts, hasLength(1));
+    expect(attempts.single.$2.ok, isFalse);
+    expect(attempts.single.$2.reason, contains('401'));
+  });
+
+  test('没拨过（没调 connect）就没有记录：不猜', () async {
+    final attempts = <(Endpoint, EndpointAttempt)>[];
+    build([direct], onAttempt: (e, a) => attempts.add((e, a)));
+    expect(attempts, isEmpty);
   });
 
   test('**终态错误不再换端点**：换票被拒（notPaired）直接抛出并保留码', () async {

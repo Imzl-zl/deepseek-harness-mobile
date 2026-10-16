@@ -137,6 +137,25 @@ class AppModel extends ChangeNotifier {
     await onEndpointsChanged?.call(reordered);
   }
 
+  /// 每个端点**最近一次拨号**的结果（端点 id = url → 结果）。
+  ///
+  /// 由传输层报事实（`EndpointTransport.onAttempt`，装配在 `main.dart`），
+  /// 这里只记账。设置页的"通不通"读它：**没有记录就没有结论** ——
+  /// 不猜，也不为了显示去主动探测（探测是第二条拨号路径，
+  /// 会让"通不通"取决于探测时机而不是真实拨号）。
+  final Map<String, EndpointAttempt> _endpointAttempts = {};
+
+  EndpointAttempt? attemptOf(Endpoint endpoint) =>
+      _endpointAttempts[endpoint.id];
+
+  /// 记一次拨号结果。**同一个结果不重复通知**：退避重连时每一轮都会把
+  /// 所有端点重报一遍，不判重会让界面每隔几秒重建一次。
+  void reportEndpointAttempt(Endpoint endpoint, EndpointAttempt attempt) {
+    if (_endpointAttempts[endpoint.id] == attempt) return;
+    _endpointAttempts[endpoint.id] = attempt;
+    notifyListeners();
+  }
+
   // ---------------------------------------------------------------------------
   // 会话投影（`session.projections`，契约 §5.7）—— 一个方法打开全部只读面
   // ---------------------------------------------------------------------------

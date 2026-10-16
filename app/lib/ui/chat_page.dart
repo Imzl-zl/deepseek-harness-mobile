@@ -653,6 +653,14 @@ class ChatPageState extends State<ChatPage> {
     unawaited(
       showConnectionActionsSheet(
         context,
+        // 「当前连接」块（连接方式选择器第 1 步）：与设置页顶部同一块、
+        // 同一套说法（`connectionSummary`）。
+        connection: connectionSummary(
+          state: widget.app.connection,
+          active: widget.app.activeEndpoint,
+          endpoints: widget.app.endpoints,
+          attemptOf: widget.app.attemptOf,
+        ),
         onRePair: () => widget.onRePair?.call(),
         onOpenSide: openSide,
         onDisconnect: () => widget.onDisconnect?.call(),

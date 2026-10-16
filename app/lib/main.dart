@@ -51,6 +51,7 @@ import 'ui/chat_page.dart';
 import 'ui/connection_actions_sheet.dart';
 import 'ui/pairing_page.dart';
 import 'ui/session_drawer.dart';
+import 'ui/settings_page.dart';
 
 void main() {
   runApp(const DshMobileApp());
@@ -267,7 +268,7 @@ class _DshMobileAppState extends State<DshMobileApp> {
             name: _credentials == null ? '未配对' : '我的电脑',
             detail: _credentials == null
                 ? '还没连电脑 · 点这里去配对'
-                : _connectionDetail(app.connection),
+                : _connectionDetail(app.connection, app.activeEndpoint),
             platform: _credentials == null ? '' : 'DSH',
             online: app.connection == ConnectionStateView.serving,
           ),
@@ -294,7 +295,7 @@ class _DshMobileAppState extends State<DshMobileApp> {
             DrawerFootItem(
               icon: 'settings',
               label: '设置',
-              onTap: () => _notYet('设置'),
+              onTap: () => _openSettings(app),
             ),
           ],
           onNewSession: _newSession,
@@ -316,6 +317,20 @@ class _DshMobileAppState extends State<DshMobileApp> {
           },
         ),
       ),
+    );
+  }
+
+  /// 打开设置页（抽屉底栏「设置」）。
+  ///
+  /// **先收抽屉再 push**：与 `_openArchive` 同一条 —— 全屏页盖着开着的抽屉
+  /// 会留下幽灵层。本期设置页只有「连接方式」一组（端点选择器），
+  /// 其余分组按 `docs/settings-porting-notes.md` 还没搬，**不摆占位行**。
+  void _openSettings(AppModel app) {
+    unawaited(Navigator.of(context).maybePop());
+    unawaited(
+      Navigator.of(
+        context,
+      ).push(MaterialPageRoute<void>(builder: (_) => SettingsPage(app: app))),
     );
   }
 
@@ -362,8 +377,18 @@ class _DshMobileAppState extends State<DshMobileApp> {
   /// 共用一个 sheet，不各画一份）。抽屉这条路保留，不影响既有用户。
   Future<void> _showConnectionSheet() async {
     unawaited(Navigator.of(context).maybePop());
+    final app = _app;
+    if (app == null) return;
     await showConnectionActionsSheet(
       context,
+      // 「当前连接」块（连接方式选择器第 1 步）：走的哪条 + 为什么没走首选。
+      // 与设置页顶部、聊天页顶栏入口同一块同一套说法（`connectionSummary`）。
+      connection: connectionSummary(
+        state: app.connection,
+        active: app.activeEndpoint,
+        endpoints: app.endpoints,
+        attemptOf: app.attemptOf,
+      ),
       onRePair: _repair,
       onOpenSide: () => _chatKey.currentState?.openSide(),
       onDisconnect: () => unawaited(_resetPairing()),
@@ -425,8 +450,18 @@ class _DshMobileAppState extends State<DshMobileApp> {
     ).showSnackBar(SnackBar(content: Text('$what 还没做')));
   }
 
-  static String _connectionDetail(ConnectionStateView state) => switch (state) {
-    ConnectionStateView.serving => '中转已连接 · 空闲',
+  /// 抽屉连接行的详情（换设备 / 断开重配）。
+  ///
+  /// **"走的哪条"从 `activeEndpoint` 来，不再写死"中转"**：局域网直连落地后
+  /// （2026-10-16 无线验证）日常走的就是直连，写死的那句每一条连接都是错的。
+  /// 说法与连接 sheet / 设置页同源（`endpointKindLabel`）。
+  static String _connectionDetail(
+    ConnectionStateView state,
+    Endpoint? active,
+  ) => switch (state) {
+    ConnectionStateView.serving => active == null
+        ? '已连接 · 空闲'
+        : '${endpointKindLabel(active.kind)}已连接 · 空闲',
     ConnectionStateView.backoff => '重连中…',
     ConnectionStateView.connecting => '连接中…',
     ConnectionStateView.handshaking => '握手中…',
@@ -730,5 +765,8 @@ Future<AppModel> _assemble(
   // 拨通了就报给界面：设置页据此显示"当前走哪条"。**只报事实** ——
   // 表的所有权在 `AppModel`，传输层不写它。
   transport.onActivated = app.reportActiveEndpoint;
+  // 每个端点试过的结局也报给界面：设置页的"通不通"与"为什么走了中转"
+  // （连接方式选择器第 3 步）都读它。同样只报事实。
+  transport.onAttempt = app.reportEndpointAttempt;
   return app;
 }

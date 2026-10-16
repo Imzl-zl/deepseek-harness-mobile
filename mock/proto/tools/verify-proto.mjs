@@ -110,6 +110,9 @@ const out = await evalJs(async () => {
   await sleep(500)
   res.side = {
     connSheetOpen,
+    // 连接 sheet 顶部的「当前连接」行(连接方式选择器第 1 步,2026-10-16):
+    // 一眼能看"走的哪条",不用进设置。
+    connSheetShowsCurrent: connSheet ? connSheet.textContent.includes('当前连接') : false,
     sheetHasOpenSide: !!openSideBtn,
     openedByRightEdge: q('#pageSide').classList.contains('is-in'),
     // 右抽屉开着 → 右边那条手势带与"棒棒"整条收起(用户:"侧滑之后棒要消失")。

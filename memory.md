@@ -37,8 +37,10 @@ relay 的 `relay.config.json` 也改成 `host: 0.0.0.0`,并把 `relayUrl` 指向
 (`isPrivateOrLoopback`,已扩到私网/CGNAT/link-local/ULA)漂了一次,导致私网地址被校验器拒;
 现已对齐并用同一批地址钉住(`connector/tests/relay-url-nonpublic.test.ts`,25 条)。
 取舍见 `.agents/notes/implemented/2026-10-16-relay-plaintext-criterion-aligned.md`;
-**还没做**:①手机设置页的端点列表 UI(`AppModel` 已把 `endpoints`/`activeEndpoint`/`preferEndpoint` 备齐);
-②电脑换 IP / 手机换 WiFi 后要重新出码(管理面 `POST /api/dsh-mobile/pair`,不建会话不花 token)。
+**2026-10-16 已做**:手机端「连接方式」选择器落地(连接 sheet 顶部「当前连接」块 +
+设置页端点全量列表 + 换 WiFi 后直连失效的提示),取舍见
+`.agents/notes/implemented/2026-10-16-endpoint-chooser-ui.md`;
+**还没做**:电脑换 IP / 手机换 WiFi 后要重新出码(管理面 `POST /api/dsh-mobile/pair`,不建会话不花 token)。
 
 **后台任务已接上**(2026-10-15):删掉三条假任务(含假的 `flutter build apk` 输出),
 改读 `job.list` + `job` 帧流;展开 `job.follow` / 收起 `job.unfollow` / 停止 `job.kill`,
@@ -336,14 +338,14 @@ DSH 照常把 `user/message` 落盘(所以④的回读判据满足),但那个会
 | `node protocol/verify-fixtures.mjs` | 16 条 fixture / **486 项断言** |
 | `node protocol/verify-loopback.mjs` | **26 项**:手机 ⇄ 中转 ⇄ 桥接回环 |
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量 |
-| `node app/tools/verify-platform-boundary.mjs` | **228 项**(22 条规则自检 + 扫 64 个 Dart 文件) |
+| `node app/tools/verify-platform-boundary.mjs` | **244 项**(22 条规则自检 + 扫 68 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 原型图标集 / 工具脚本不许硬编码盘符 |
-| `cd app && flutter test` | **535 项** |
+| `cd app && flutter test` | **572 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test integration_test` | 0 文件需重排 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **452 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
-| CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(27) / `verify-tasks`(53) / `verify-picker` |
+| CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(28) / `verify-tasks`(53) / `verify-picker` |
 | `node app/tools/gen-pairing-vectors.mjs` | 重新生成配对向量(**改了配对派生规则后必须重跑**) |
 
 **项数的唯一出处是 `tools.md`**;**改断言必须做一次变异校验**(故意破坏不变量,确认**恰好**那一条红)。

@@ -123,6 +123,14 @@ const result = await evaluate(async () => {
   pass('关于连接页', q('#settingsTitle').textContent.trim() === '关于与连接')
   pass('关于页版本行区分两端版本',
     document.body.textContent.includes('当前版本') && document.body.textContent.includes('电脑端 DSH 版本需 bridge'))
+  // 连接方式(端点选择器,2026-10-16):两条端点都在 —— 直连(当前/首选)与中转(保底)。
+  // **两条都显示是定案的**:它们是两种配置,而"当前正走的那条"必须出现在列表里,
+  // 否则自动回落中转时用户管不着自己正在用的端点(决策笔记见 implemented/2026-10-16)。
+  pass('关于页含连接方式两组端点(直连当前 / 中转保底)',
+    document.body.textContent.includes('连接方式')
+    && document.body.textContent.includes('ws://192.168.2.43:8790')
+    && document.body.textContent.includes('保底通道')
+    && document.body.textContent.includes('换端点不重扫码'))
   q('[data-act="settings-close"]').click(); await sleep(520)
   pass('关闭设置回到聊天', !q('#pageSettings').classList.contains('is-in') && !PROTO.layers.includes('settings'))
   pass('无运行期错误', out.errors.length === 0, out.errors.join(' | '))
