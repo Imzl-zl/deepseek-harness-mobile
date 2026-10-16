@@ -221,6 +221,54 @@ void main() {
     });
   });
 
+  // **回归 2026-10-15 真机**："列表里名字对了,但我点进去会话名字又变了"。
+  // 根因是**两个真值源**:列表走 DSH 的展示链(投影提示 → 目录名 → sid),
+  // 而 `currentTitle` 只读本地从条目推导的标题。同一个人会话两个名字。
+  group('标题只有一个真值源（列表与顶栏同一条链）', () {
+    test('投影提示里有持久标题:列表与顶栏都用它', () async {
+      final client = _FakeClient(
+        onCall: (method, params) => {
+          'sessions': [
+            {
+              'sid': 's1',
+              'updatedAt': 1,
+              'projections': {
+                'kind': 'cached',
+                'asOfSeq': 1,
+                'values': {'title': '重构连接层'},
+              },
+              'cwd': r'D:\sudy\github\dsh-mobile',
+            },
+          ],
+        },
+      );
+      final app = AppModel(client: client);
+      await app.refreshSessions();
+      await app.openSession('s1');
+
+      expect(app.sessions.single.displayTitle, '重构连接层');
+      expect(app.currentTitle, '重构连接层', reason: '顶栏与列表必须是同一个名字,否则用户以为点错了会话');
+      app.dispose();
+    });
+
+    test('投影里没有标题:两级都退到项目目录名', () async {
+      final client = _FakeClient(
+        onCall: (method, params) => {
+          'sessions': [
+            {'sid': 's1', 'updatedAt': 1, 'cwd': r'D:\sudy\github\dsh-mobile'},
+          ],
+        },
+      );
+      final app = AppModel(client: client);
+      await app.refreshSessions();
+      await app.openSession('s1');
+
+      expect(app.sessions.single.displayTitle, 'dsh-mobile');
+      expect(app.currentTitle, 'dsh-mobile');
+      app.dispose();
+    });
+  });
+
   group('两种"空"必须分得开', () {
     test('真没有会话：空列表 + 没有错误', () async {
       final client = _FakeClient(onCall: (method, params) => {'sessions': []});

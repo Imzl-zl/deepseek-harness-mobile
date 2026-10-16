@@ -643,15 +643,23 @@ class AppModel extends ChangeNotifier {
   /// 当前会话 id。
   String? get currentSid => _currentSid;
 
-  /// 当前会话的标题（顶栏用）；没有选中会话或推不出标题时返回 `null`。
+  /// 当前会话的标题（顶栏用）。
   ///
-  /// **电脑侧不返回标题**（契约 §5.7），所以标题由本地从条目推导
-  /// （`deriveTitle`）—— 这也是 DSH 桌面端的做法。
+  /// **与列表用同一条链**（[SessionSummary.displayTitle]，DSH 的
+  /// `displayTitleOf`：持久标题 → 项目目录名 → 会话 id）。
+  ///
+  /// 2026-10-15 之前这里只读**本地从条目推导**的标题（`deriveTitle`）——
+  /// 于是同一个人会话在列表里叫 A、点进顶栏叫 B（真机反馈："名字对了,
+  /// 但我点进去会话名字又变了"）。两个真值源必然漂，所以现在只认一条：
+  /// 投影提示里的持久标题优先，本地推导只在前两者都拿不到时兜底。
   String? get currentTitle {
     final sid = _currentSid;
     if (sid == null) return null;
-    final title = _storeOf(sid).title;
-    return title.isEmpty ? null : title;
+    final summary = _sessions.where((s) => s.sid == sid).firstOrNull;
+    final fromSummary = summary?.displayTitle;
+    if (fromSummary != null && fromSummary.isNotEmpty) return fromSummary;
+    final local = _storeOf(sid).title;
+    return local.isEmpty ? null : local;
   }
 
   /// 连接状态（界面视图）。
