@@ -1,7 +1,7 @@
 /// 右抽屉（`ui/side_pane.dart` + `ui/dsh_diff.dart`）的回归。
 ///
 /// 照 `mock/proto` 的 `section.page--side`：**一个抽屉三个面板**
-/// （文件 / 任务 / 子代理），竖屏手机上它是全屏页。
+/// （文件 / 任务 / 子智能体），竖屏手机上它是全屏页。
 ///
 /// 这组守三件事：
 /// 1. 三个面板都在，tab 上的计数徽标**只在 >0 时显示**；
@@ -56,12 +56,12 @@ SidePane _pane({
 
 void main() {
   group('右抽屉', () {
-    testWidgets('三个面板 tab 都在（文件 / 任务 / 子代理）', (tester) async {
+    testWidgets('三个面板 tab 都在（文件 / 任务 / 子智能体）', (tester) async {
       await tester.pumpWidget(_wrap(_pane()));
       await tester.pumpAndSettle();
       expect(find.text('文件'), findsOneWidget);
       expect(find.text('任务'), findsOneWidget);
-      expect(find.text('子代理'), findsOneWidget);
+      expect(find.text('子智能体'), findsOneWidget);
     });
 
     testWidgets('计数徽标**只在 >0 时显示**（原型 `hidden` 逻辑）', (tester) async {

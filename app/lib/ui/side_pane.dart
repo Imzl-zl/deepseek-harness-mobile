@@ -1,4 +1,4 @@
-/// 右抽屉 —— **一个抽屉，三个面板**（文件 / 任务 / 子代理）。
+/// 右抽屉 —— **一个抽屉，三个面板**（文件 / 任务 / 子智能体）。
 ///
 /// 照 `mock/proto/index.html` 的 `section.page--side` 与 `styles.css`。
 ///
@@ -32,7 +32,7 @@ import '../theme/dsh_theme.dart';
 enum SidePanel {
   file('文件', 'deliverDoc'),
   jobs('任务', 'loading'),
-  subs('子代理', 'users');
+  subs('子智能体', 'users');
 
   const SidePanel(this.label, this.icon);
 
@@ -60,7 +60,7 @@ class SideHeader {
   final int? removed;
 }
 
-/// 任务 / 子代理行（`.jrow`）。
+/// 任务 / 子智能体行（`.jrow`）。
 ///
 /// 两种形态（原型注释：*"进行中:两行；已结束:一行"*）：
 /// - 进行中：`label` 一行 + `kind 状态` 一行，右侧时长；
@@ -79,7 +79,7 @@ class SideJob {
 
   final String id;
 
-  /// 命令或子代理名（等宽字体）。
+  /// 命令或子智能体名（等宽字体）。
   final String label;
 
   /// `pwsh` / `bash` / …（工具色、等宽）。
@@ -290,7 +290,7 @@ class SidePane extends StatelessWidget {
                   openIds: openJobIds,
                   onToggle: onToggleJob,
                   // 空态说清数据来源：2026-10-15 之前这里**无条件**显示两条
-                  // 写死的示例子代理，而用户无法分辨哪个是真的。
+                  // 写死的示例子智能体，而用户无法分辨哪个是真的。
                   emptyText: '没有子智能体（数据来自会话投影 subagentCatalog）。',
                 ),
               },
@@ -332,7 +332,7 @@ class _FilePanel extends StatelessWidget {
   }
 }
 
-/// 任务 / 子代理面板。
+/// 任务 / 子智能体面板。
 class _JobPanel extends StatelessWidget {
   const _JobPanel({
     required this.jobs,

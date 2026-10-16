@@ -155,11 +155,25 @@ class ChatPageState extends State<ChatPage> {
   /// **抽屉归本页的 `Scaffold`**，所以只有这里能开它 —— 外层拿不到那个 `Scaffold`。
   void openDrawer() => _scaffoldKey.currentState?.openDrawer();
 
-  /// 打开右侧抽屉（文件 / 任务 / 子代理）。
+  /// 打开右侧抽屉（文件 / 任务 / 子智能体）。
   ///
   /// 连接操作 sheet 的「打开侧面板」经它落（那一条原来直接挂在顶栏状态位上，
   /// 现在状态位改弹连接操作 sheet，"打开侧面板"降为 sheet 里的一个选项）。
   void openSide() => setState(() => _sideOpen = true);
+
+  /// 打开右抽屉并**直接落在指定面板**（chip 行用：点子智能体就开到子智能体）。
+  ///
+  /// 与 [openSide] 的差别只在"落哪"，开合动作是同一个 —— 否则"从 chip 点开"
+  /// 与"从状态位点开"会是两条路径，而它们本该一致。
+  void _openSidePanel(SidePanel panel) {
+    setState(() {
+      _sidePanel = panel;
+      _sideOpen = true;
+    });
+  }
+
+  /// 当前会话的 id（任务与子智能体都按它取）。**空串 = 没有选中会话**。
+  String get _jobsSid => widget.app.currentSid ?? '';
 
   @override
   void initState() {
@@ -413,8 +427,29 @@ class ChatPageState extends State<ChatPage> {
         },
         onStatusTap: _onStatusTap,
       ),
+      // **子智能体 / 后台任务 chip 行**：照 DSH Web 的头部chip
+      // （`ui-subagent` 的 `{count} 个子智能体`、`ui-jobs` 的
+      // `{count} 个后台任务运行中`）—— **有才显示，没有就整行不占位**。
+      // 点它开右抽屉对应面板：手机上不放下拉菜单（手指点不中小目标），
+      // 而右抽屉本来就是这三个面板的家，且能原路关回来。
       body: Column(
         children: [
+          // **各算一次**:`_subsFor()` / `_jobsFor()` 要走投影映射,
+          // count 与 running 分两次调就是同一份数据算两遍(每帧两次)。
+          Builder(
+            builder: (context) {
+              final subs = _subsFor();
+              final jobs = _jobsFor(_jobsSid);
+              return _LiveChipsRow(
+                subagentCount: subs.length,
+                subagentRunning: subs.where((j) => j.isLive).length,
+                jobCount: jobs.length,
+                jobRunning: jobs.where((j) => j.isLive).length,
+                onTapSubagents: () => _openSidePanel(SidePanel.subs),
+                onTapJobs: () => _openSidePanel(SidePanel.jobs),
+              );
+            },
+          ),
           DshSegmented(
             labels: const ['对话', '轨迹'],
             index: _tab,
@@ -538,7 +573,7 @@ class ChatPageState extends State<ChatPage> {
   int? get _contextPercent => widget.app.contextPressure?.occupancy?.percent;
 
   // ---------------------------------------------------------------------------
-  // 右抽屉（文件 / 任务 / 子代理）
+  // 右抽屉（文件 / 任务 / 子智能体）
   // ---------------------------------------------------------------------------
 
   /// 状态位的文字。
@@ -548,7 +583,7 @@ class ChatPageState extends State<ChatPage> {
   ///    必须常在 —— 否则议题 3 的「≤2 步走到重新配对」没有落点。
   /// 2. 有后台任务 → `N 任务运行中`（琥珀）。
   /// 3. 已配对且在服务态 → `已连接`。**不返回 null**：状态位是右抽屉（文件/任务/
-  ///    子代理）的入口，基线规定它可点；返回 null 会让整个 pill 消失，右bar 就只剩
+  ///    子智能体）的入口，基线规定它可点；返回 null 会让整个 pill 消失，右bar 就只剩
   ///    sheet 里一条路。文件变更那一档**不显示**：手机的文件面还没接
   ///    （`workspace-files`），显示"0 个文件变更"是把"没接"说成"没有"。
   String? _statusText() {
@@ -620,7 +655,7 @@ class ChatPageState extends State<ChatPage> {
   ///   这正是用户最需要出路的时刻，也是议题 3「≤2 步」的落点。
   /// - **已配对且在服务态**：**开右抽屉**（原型基线行为：状态位本就是右抽屉的入口，
   ///   `docs/design-and-tech-plan.md` §7.8）。否则为了重配入口把状态位整个占掉，
-  ///   右bar(文件/任务/子代理)就只剩 sheet 里一条路 —— 而正常使用时那里才该一步到。
+  ///   右bar(文件/任务/子智能体)就只剩 sheet 里一条路 —— 而正常使用时那里才该一步到。
   ///
   /// 这条切分写在设计文档的有意偏离里：连接态只在**异常时**占位，serving 时
   /// 把位置还给基线规定的内容。
@@ -663,7 +698,7 @@ class ChatPageState extends State<ChatPage> {
       removed: 46,
     ),
     SidePanel.jobs => const SideHeader(title: '后台任务'),
-    SidePanel.subs => const SideHeader(title: '子代理'),
+    SidePanel.subs => const SideHeader(title: '子智能体'),
   };
 
   Widget? _fileBody() {
@@ -1257,7 +1292,7 @@ class ChatPageState extends State<ChatPage> {
 
   /// 子智能体面板的内容。
   ///
-  /// **2026-10-15 删掉假数据**。原来是两条写死的示例子代理
+  /// **2026-10-15 删掉假数据**。原来是两条写死的示例子智能体
   /// （`Extract DSH icon paths` / `Research rikkahub standalone mode`），
   /// 状态文字带「· 示例」—— 标记是有，但它**无条件**出现在面板里，
   /// 真连上了也照显示。
@@ -1395,6 +1430,151 @@ class _ChatTab extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       itemCount: items.length,
       itemBuilder: (context, index) => _TurnView(item: items[index]),
+    );
+  }
+}
+
+/// 头部 chip 行:**子智能体 / 后台任务**的计数,照 DSH Web 的头部chip。
+///
+/// - **有才显示**:两类都为 0 时整行不占位(返回 `SizedBox.shrink()`),
+///   不是显示"0 个子智能体"—— 那是把"没有"说成"有一个空的"。
+/// - **文案逐字照 Web**:`{count} 个子智能体` / `{count} 个子智能体,正在运行`
+///   (`ui-subagent/src/client/locales.ts:36-39`)、`{count} 个后台任务运行中` /
+///   `{count} 个后台任务`(`ui-jobs/src/client/locales.ts:8-11`)。
+/// - **点它开右抽屉对应面板**:手机不放下拉菜单(手指点不中小目标),
+///   而右抽屉本来就是这三个面板的家,且能原路关回来。
+class _LiveChipsRow extends StatelessWidget {
+  const _LiveChipsRow({
+    required this.subagentCount,
+    required this.subagentRunning,
+    required this.jobCount,
+    required this.jobRunning,
+    required this.onTapSubagents,
+    required this.onTapJobs,
+  });
+
+  final int subagentCount;
+  final int subagentRunning;
+  final int jobCount;
+  final int jobRunning;
+  final VoidCallback onTapSubagents;
+  final VoidCallback onTapJobs;
+
+  @override
+  Widget build(BuildContext context) {
+    final chips = <Widget>[
+      if (subagentCount > 0)
+        _LiveChip(
+          count: subagentCount,
+          running: subagentRunning,
+          noun: '个子智能体',
+          runningSuffix: '，正在运行',
+          icon: 'users',
+          onTap: onTapSubagents,
+        ),
+      if (jobCount > 0)
+        _LiveChip(
+          count: jobCount,
+          running: jobRunning,
+          noun: '个后台任务',
+          runningSuffix: '运行中',
+          icon: 'checklist',
+          onTap: onTapJobs,
+        ),
+    ];
+    if (chips.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 2),
+      child: Row(
+        children: [
+          for (final chip in chips) ...[chip, const SizedBox(width: 8)],
+        ],
+      ),
+    );
+  }
+}
+
+/// chip 文案。**逐字照 DSH Web**,不自己发明:
+/// `{count} 个子智能体` / `{count} 个子智能体,正在运行`
+/// (`ui-subagent/src/client/locales.ts:36-39`)、`{count} 个后台任务运行中` /
+/// `{count} 个后台任务`(`ui-jobs/src/client/locales.ts:8-11`)。
+///
+/// 抽成纯函数是为了让"措辞与 Web 一致"这条有单测可钉 —— 2026-10-15 手机上
+/// 写成"子代理",与 DSH 的"子智能体"是两个词,用户一眼看出来不是同一个东西。
+///
+/// **`{count}` 与量词之间有一个空格**:Web 的模板就是 `'{count} 个子智能体'`
+/// （`locales.ts:36`),少这个空格就不算逐字一致。
+String liveChipLabel({
+  required int count,
+  required int running,
+  required String noun,
+  required String runningSuffix,
+}) {
+  return running > 0 ? '$count $noun$runningSuffix' : '$count $noun';
+}
+
+/// 一枚 chip：`N 个 X`(运行中时换后缀)。**运行中的那枚用告警色**，
+/// 与 Web 的任务 chip 同一条纪律:用户该一眼看见"有东西在跑"。
+class _LiveChip extends StatelessWidget {
+  const _LiveChip({
+    required this.count,
+    required this.running,
+    required this.noun,
+    required this.runningSuffix,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final int count;
+  final int running;
+  final String noun;
+  final String runningSuffix;
+  final String icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final live = running > 0;
+    final label = liveChipLabel(
+      count: count,
+      running: running,
+      noun: noun,
+      runningSuffix: runningSuffix,
+    );
+    return Material(
+      color: live ? DshColors.roleToolBg : DshColors.layer2,
+      borderRadius: BorderRadius.circular(14),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DshIcon(
+                icon,
+                size: 13,
+                color: live ? DshColors.roleTool : DshColors.labelSecondary,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: live ? DshColors.roleTool : DshColors.labelSecondary,
+                ),
+              ),
+              const SizedBox(width: 2),
+              DshIcon(
+                'chevronRight',
+                size: 12,
+                color: live ? DshColors.roleTool : DshColors.labelTertiary,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

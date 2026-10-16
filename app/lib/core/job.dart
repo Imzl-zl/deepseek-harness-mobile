@@ -36,7 +36,7 @@ class JobRow {
 
   final String id;
 
-  /// 命令或子代理名（等宽字体显示）。
+  /// 命令或子智能体名（等宽字体显示）。
   final String label;
 
   /// `pwsh` / `bash` / …
