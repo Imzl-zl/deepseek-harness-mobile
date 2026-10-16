@@ -61,10 +61,13 @@ connection-terminal-failure-goes-to-pairing,device-admin-face-dsh-house-style}.m
 交接笔记 `.agents/notes/proposed/2026-10-15-mobile-topbar-status-and-rendering-handoff.md` 的四条,
 按「先探 DSH 原生能力 → 列方案 → 动代码」的顺序做完,每条都留了 `packages/...:行号` 的出处:
 
-- **顶栏**:文字胶囊 → **连接状态点**(绿 / 转圈 / 红,形状与颜色照 `StateDot`;点它弹连接操作 sheet);
-  **右抽屉入口搬到自己那个按钮**(`panelLeft` 镜像,照 DSH 的 `ExpandButton`);标题**限宽 220px、
-  字号 14px / w500**(都照 DSH 的 `.crumb`,14px 是用户追问"会话名字不能小点"后回到 Web 那个值)。
-  取舍见 `.agents/notes/implemented/2026-10-16-topbar-connection-dot-and-title-cap.md`。
+- **顶栏与抽屉**(2026-10-16 三轮定稿):顶栏 = **☰ 左抽屉 / 标题(≤220px,14px,w500) / ● 连接状态点 / ⊕ 新建**;
+  两个抽屉都是**原生 Drawer**(左 `drawer`、右 `endDrawer`),**两边都能从最外缘跟手拖出**
+  (`drawerEdgeDragWidth: 32`);右边只有一条 **4×40 的棒棒**当标识,右抽屉开着时它消失。
+  与**系统返回手势**的冲突用官方 `View.setSystemGestureExclusionRects`(Android 10+,上限 200dp/边)
+  解决 —— 只排除上半屏 192dp,下半屏留给系统(`app/lib/platform/gesture_exclusion.dart` + `MainActivity.kt`,
+  真机验过:最外缘 ≈2dp 能开抽屉、下半屏仍是系统返回)。
+  取舍与实测见 `.agents/notes/implemented/2026-10-16-topbar-connection-dot-and-title-cap.md`。
 - **计数 chip**:口径改回 DSH —— 后台任务报**在跑的个数**,子智能体报**总数** + 一枚转圈点
   ("正在运行"那句只在 aria 里);不再整枚变琥珀;`Row` → `Wrap`(两枚两位数 chip 在 360px 必然溢出)。
   见 `.agents/notes/implemented/2026-10-16-chip-counts-read-dsh-formulas.md`。

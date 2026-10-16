@@ -98,20 +98,22 @@ const out = await evalJs(async () => {
   if (q('.sheet')) { q('.sheet-scrim').click(); await sleep(400) }
 
   // 5) 顶栏:● 连接状态点 → 先弹「连接操作」sheet(表头含"连接");关掉 sheet 后
-  //    ▷ 右抽屉按钮(sideOpen)**一步**开右抽屉。原侧抽屉断言(过渡/遮罩/面板集合/关闭)一条不少。
+  //    走**右缘把手**(上半屏往左划)一步开右抽屉。原侧抽屉断言(过渡/遮罩/面板集合/关闭)一条不少。
   const cs = getComputedStyle(q('#pageSide'))
   q('#statusDot').click(); await sleep(320)
   const connSheet = q('.sheet')
   const connSheetOpen = !!connSheet && !!(q('.sheet-h') && q('.sheet-h').textContent.includes('连接'))
   const openSideBtn = connSheet ? [...connSheet.querySelectorAll('.sitem')].find(b => b.textContent.includes('打开侧面板')) : null
   if (q('.sheet-scrim')) { q('.sheet-scrim').click(); await sleep(400) }   // 关掉连接 sheet
-  q('#sideOpen').click(); await sleep(60)
+  PROTO.openSideByEdge(); await sleep(60)
   const mid = getComputedStyle(q('#pageSide')).transform
   await sleep(500)
   res.side = {
     connSheetOpen,
     sheetHasOpenSide: !!openSideBtn,
-    openedByTopButton: q('#pageSide').classList.contains('is-in'),
+    openedByRightEdge: q('#pageSide').classList.contains('is-in'),
+    // 右抽屉开着 → 右边那条手势带与"棒棒"整条收起(用户:"侧滑之后棒要消失")。
+    edgeHiddenWhileOpen: getComputedStyle(q('#edgeSide')).display === 'none',
     transition: cs.transitionProperty + ' ' + cs.transitionDuration,
     animatedMidway: mid !== 'none' && mid !== '',
     scrimOn: q('#sideScrim').classList.contains('is-on'),
@@ -119,11 +121,25 @@ const out = await evalJs(async () => {
   }
   q('#sideScrim').click(); await sleep(450)
   res.side.closedByScrim = !q('#pageSide').classList.contains('is-in')
+  res.side.edgeBackAfterClose = getComputedStyle(q('#edgeSide')).display !== 'none'
 
   // 6) 顶栏限宽 + 计数 chip 行(2026-10-16):标题 ≤ 220px(照 DSH 的 .crumb),
   //    chip 行有才显示,文案与计数口径照 DSH(子智能体报总数、后台任务报在跑数)。
   res.topbar = {
     titleWidth: Math.round(q('.appbar .ttl').getBoundingClientRect().width),
+    // 顶栏:左侧 ☰(抽屉入口) / ● 连接状态点 / ⊕ 新建;两边手势带贴最边缘、上半屏 192。
+    appbarButtons: [...q('.appbar').querySelectorAll('button')].map(b => b.dataset.act || b.className),
+    edgeBands: ['#edgeOpen', '#edgeSide'].map(sel => {
+      const e = q(sel)
+      const r = e.getBoundingClientRect()
+      return {
+        sel,
+        width: Math.round(r.width),
+        height: Math.round(r.height),
+        left: Math.round(r.left),
+        stick: !!e.querySelector('.edge-stick'),
+      }
+    }),
     chipsHidden: q('#liveChips').hidden,
     chips: [...q('#liveChips').querySelectorAll('.livechip')].map(b => ({
       text: b.textContent.trim(),

@@ -50,6 +50,7 @@ import 'dsh_app_bar.dart';
 import 'dsh_composer.dart';
 import 'dsh_sheet.dart';
 import 'dsh_state_dot.dart';
+import 'edge_stick.dart';
 import 'side_pane.dart';
 import 'takeover.dart';
 import 'trajectory_page.dart';
@@ -121,7 +122,9 @@ class ChatPageState extends State<ChatPage> {
   bool _sending = false;
   final List<PendingAttachment> _attachments = [];
 
-  /// 右抽屉是否打开（竖屏手机上它是**全屏页**，见 `side_pane.dart` 文件头）。
+  /// 右抽屉是否打开。**不驱动渲染**（抽屉本体是 `Scaffold.endDrawer`，
+  /// 由 Flutter 自己管开合）——它只决定右缘那条"棒棒"要不要显示，
+  /// 由 `onEndDrawerChanged` 同步过来。
   bool _sideOpen = false;
   SidePanel _sidePanel = SidePanel.file;
 
@@ -158,19 +161,19 @@ class ChatPageState extends State<ChatPage> {
 
   /// 打开右侧抽屉（文件 / 任务 / 子智能体）。
   ///
-  /// 连接操作 sheet 的「打开侧面板」经它落（那一条原来直接挂在顶栏状态位上，
-  /// 现在状态位改弹连接操作 sheet，"打开侧面板"降为 sheet 里的一个选项）。
-  void openSide() => setState(() => _sideOpen = true);
+  /// 连接操作 sheet 的「打开侧面板」与 chip 行都经它落。
+  /// **它就是 `Scaffold.openEndDrawer()`** —— 原生抽屉自带跟手拖出与遮罩关闭，
+  /// 自己维护一个 `_sideOpen` 布尔值只会多出一套会跟原生状态漂移的真值。
+  /// （`_sideOpen` 现在**只用来决定右缘那条棒棒的显隐**，由
+  /// `onEndDrawerChanged` 同步，不再驱动渲染。）
+  void openSide() => _scaffoldKey.currentState?.openEndDrawer();
 
   /// 打开右抽屉并**直接落在指定面板**（chip 行用：点子智能体就开到子智能体）。
   ///
-  /// 与 [openSide] 的差别只在"落哪"，开合动作是同一个 —— 否则"从 chip 点开"
-  /// 与"从状态位点开"会是两条路径，而它们本该一致。
+  /// 面板状态在抽屉**之外**（它决定抽屉里显示哪一页），所以先设面板再开抽屉。
   void _openSidePanel(SidePanel panel) {
-    setState(() {
-      _sidePanel = panel;
-      _sideOpen = true;
-    });
+    setState(() => _sidePanel = panel);
+    openSide();
   }
 
   /// 当前会话的 id（任务与子智能体都按它取）。**空串 = 没有选中会话**。
@@ -355,36 +358,18 @@ class ChatPageState extends State<ChatPage> {
       builder: (context, _) {
         return Stack(
           children: [
-            // 主界面（聊天页）。
-            _mainScaffold(context),
-            // ---- 右抽屉：一个抽屉三个面板（竖屏手机上它是全屏页）----
-            if (_sideOpen)
+            // 主界面（聊天页）。两个抽屉都是**原生 Drawer**（在 Scaffold 里）：
+            // 左 = `drawer`、右 = `endDrawer`，两条边都能**跟手**拖出
+            //（`Scaffold.drawerEdgeDragWidth` + `endDrawerEnableOpenDragGesture`），
+            // 遮罩、回弹、拖拽关闭全由 Flutter 管 —— 不自己画第二套。
+            _mainScaffold(context, jobsSid: jobsSid),
+            // ---- 右缘那条"棒棒"：右抽屉的标识（能侧滑的提示）----
+            // **抽屉开着时它消失**（用户原话："侧滑之后棒要消失"）：
+            // 那时右侧抽屉已经在眼前，再留一条标识只会挡着它。
+            if (!_sideOpen)
               Positioned.fill(
-                child: GestureDetector(
-                  // 点遮罩关闭（原型 `.side-scrim { opacity:.45 }`）。
-                  onTap: _closeSide,
-                  child: Container(color: Colors.black.withValues(alpha: 0.45)),
-                ),
-              ),
-            if (_sideOpen)
-              Positioned.fill(
-                child: SidePane(
-                  header: _sideHeader(),
-                  panel: _sidePanel,
-                  onPanelChanged: (p) => setState(() => _sidePanel = p),
-                  onClose: _closeSide,
-                  fileBody: _fileBody(),
-                  fileActions: _fileActions(),
-                  jobs: _jobsFor(jobsSid),
-                  subs: _subsFor(),
-                  runningJobs: _jobsFor(jobsSid).where((j) => j.isLive).length,
-                  runningSubs: _subsFor().where((j) => j.isLive).length,
-                  onToggleJob: (job) => _toggleJob(job),
-                  // 停止：任务面板里最常见的那件事。**不传它就永远没有停止按钮**
-                  //（渲染条件里有 `onStop != null`）—— 第一版就漏了传，
-                  // 截图里运行中的任务旁边空着。
-                  onStopJob: (job) => _stopJob(job),
-                  openJobIds: _openJobs,
+                child: DshRightEdgeStick(
+                  topInset: 56 + MediaQuery.of(context).padding.top,
                 ),
               ),
           ],
@@ -398,20 +383,22 @@ class ChatPageState extends State<ChatPage> {
   /// 单独成方法而不是嵌在 `build` 里：嵌着时那个 `Stack` 会深到
   /// **括号数不清**（实测改出过语法错误）。一层一个方法，
   /// 读代码时也不必同时记住"我在 Stack 的第几个孩子里"。
-  Widget _mainScaffold(BuildContext context) {
+  Widget _mainScaffold(BuildContext context, {required String? jobsSid}) {
     final items = widget.app.items;
     final sid = widget.app.currentSid;
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: DshColors.bgBase,
       drawer: widget.drawer,
-      // 左缘跟手拖出的宽度（原型 `.edge--open` 手势带）。
-      // 用 `Drawer` 自带的边缘拖动而不是自写手势：它已经处理了
-      // "拖动中遮罩透明度""松手回弹"这些细节。
+      // **跟手**：两条边都用 Flutter 自带的边缘拖动（左 `drawer`、右 `endDrawer`）——
+      // 手指拖多少抽屉走多少，松手按位置/速度决定开还是回弹，全由 `DrawerController` 管
+      // （`material/drawer.dart` 的 `_move` / `_settle`）。自己写第二套只会更差。
+      // 与**系统返回手势**的冲突不靠"把手往里躲"，而是把这上半屏 192dp 从系统返回里
+      // 排除掉（`platform/gesture_exclusion.dart`，官方 `setSystemGestureExclusionRects`）。
       drawerEdgeDragWidth: 32,
       appBar: ChatAppBar(
         title: widget.app.currentTitle ?? 'DSH',
-        onOpenDrawer: widget.onOpenDrawer,
+        onOpenDrawer: openDrawer,
         onNewSession: widget.onNewSession,
         // **连接状态点**（原来是文字胶囊）：绿=服务中 / 转圈=连接中·握手中·重连中 /
         // 红=其余。形状与颜色照 DSH 的 `StateDot`（出处见 `dsh_state_dot.dart`），
@@ -419,11 +406,37 @@ class ChatPageState extends State<ChatPage> {
         connectionState: dotStateOf(widget.app.connection),
         connectionTooltip: _connectionTooltip(),
         onConnectionTap: _onStatusTap,
-        // **右抽屉入口**搬到这里（原来挂在状态位上：serving 时点状态位开右抽屉）。
-        // 与 DSH 一致：右面板入口是 header 角落的**独立按钮**
-        // （`ui-sidebar-right/src/client/index.ts:238-239`），与连接指示器无关。
-        onOpenSide: openSide,
       ),
+      // ---- 右抽屉：一个抽屉三个面板（竖屏手机上它是整屏）----
+      // 用 `endDrawer` 而不是自绘遮罩：右缘**跟手**拖出、拖拽/点遮罩关闭、
+      // 以及"开着时棒棒消失"的开关（`onEndDrawerChanged`）全都是原生行为。
+      endDrawer: Drawer(
+        width: MediaQuery.of(context).size.width,
+        backgroundColor: DshColors.bgBase,
+        child: SidePane(
+          header: _sideHeader(),
+          panel: _sidePanel,
+          onPanelChanged: (p) => setState(() => _sidePanel = p),
+          onClose: _closeSide,
+          fileBody: _fileBody(),
+          fileActions: _fileActions(),
+          jobs: _jobsFor(jobsSid),
+          subs: _subsFor(),
+          runningJobs: _jobsFor(jobsSid).where((j) => j.isLive).length,
+          runningSubs: _subsFor().where((j) => j.isLive).length,
+          onToggleJob: (job) => _toggleJob(job),
+          // 停止：任务面板里最常见的那件事。**不传它就永远没有停止按钮**
+          //（渲染条件里有 `onStop != null`）—— 第一版就漏了传，
+          // 截图里运行中的任务旁边空着。
+          onStopJob: (job) => _stopJob(job),
+          openJobIds: _openJobs,
+        ),
+      ),
+      onEndDrawerChanged: (open) {
+        // 右缘那条棒棒的显隐跟着它走（开着就收起来）。
+        if (_sideOpen == open) return;
+        setState(() => _sideOpen = open);
+      },
       // **子智能体 / 后台任务 chip 行**：照 DSH Web 的头部chip
       // （`ui-subagent` 的 `{count} 个子智能体`、`ui-jobs` 的
       // `{count} 个后台任务运行中`）—— **有才显示，没有就整行不占位**。
@@ -652,7 +665,7 @@ class ChatPageState extends State<ChatPage> {
     );
   }
 
-  void _closeSide() => setState(() => _sideOpen = false);
+  void _closeSide() => _scaffoldKey.currentState?.closeEndDrawer();
 
   SideHeader _sideHeader() => switch (_sidePanel) {
     SidePanel.file => const SideHeader(

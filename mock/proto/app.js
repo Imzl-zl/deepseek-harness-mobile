@@ -256,6 +256,38 @@
     });
   }
 
+  /* 右缘手势带(2026-10-16):往左划**跟手**拖出右抽屉。
+     与左缘同一条纪律:贴最边缘、只占上半屏(下半屏留给系统返回)。
+     "跟手"= 拖动时抽屉跟着手指平移(临时去掉 CSS 过渡),松手按拖过 40% 或甩速决定开/回弹。
+     抽屉开着时这条带子被 `#app.file-open .edge--side{display:none}` 整条收起来
+     (那条"棒棒"也就跟着消失 —— 用户原话"侧滑之后棒要消失")。 */
+  const edgeSide = $("#edgeSide");
+  if (edgeSide) {
+    const sideW = () => sidePage.offsetWidth || 1;
+    onDrag(edgeSide, {
+      axis: "x",
+      threshold: 4,
+      start: () => !sidePage.classList.contains("is-in"),
+      begin: () => {
+        sidePage.classList.add("is-in");
+        sidePage.style.transition = "none";
+      },
+      move: (e, g) => {
+        const p = clamp(-g.dx / sideW(), 0, 1);
+        sidePage.style.transform = `translate3d(${(1 - p) * 100}%,0,0)`;
+        sidePage.style.opacity = String(0.35 + 0.65 * p);
+      },
+      end: (e, g) => {
+        const p = -g.dx / sideW();
+        sidePage.style.transition = "";
+        sidePage.style.transform = "";
+        sidePage.style.opacity = "";
+        if (p > 0.4 || g.vx < -0.45) openSide("file");
+        else sidePage.classList.remove("is-in");
+      },
+    });
+  }
+
   let drawerDragging = false;
   onDrag(drawer, {
     axis: "x",
@@ -3140,7 +3172,7 @@
         closeSide();
         break;
       case "side-open":
-        /* 顶栏 ▷ 右抽屉入口(§7.8):与连接 sheet 里的 conn-open-side 是同一条路,
+        /* 右缘把手(§7.8):与连接 sheet 里的 conn-open-side 是同一条路,
            只是不再经过 sheet —— 入口本身就该一步到。 */
         openSide("file");
         break;
@@ -3462,6 +3494,53 @@
 
   window.PROTO = {
     drawer: D,
+    /* 验证脚本用:走"左缘侧滑"这条**真实入口**开抽屉 —— 顶栏的 ☰ 在 2026-10-16 去掉了,
+       入口只剩手势,所以断言不能再去点一个按钮。事件形状与 shoot.mjs 里那次拖拽一致。 */
+    openDrawerByEdge: () => {
+      const edge = $("#edgeOpen");
+      if (!edge) return;
+      const mk = (t, x, y) =>
+        edge.dispatchEvent(
+          new PointerEvent(t, {
+            pointerId: 7,
+            pointerType: "touch",
+            isPrimary: true,
+            bubbles: true,
+            cancelable: true,
+            clientX: x,
+            clientY: y,
+            buttons: t === "pointerup" ? 0 : 1,
+          })
+        );
+      // 带子在最边缘(x∈[0,32]),所以起手点取 4。
+      mk("pointerdown", 4, 200);
+      mk("pointermove", 140, 200);
+      mk("pointermove", 280, 200);
+      mk("pointerup", 280, 200);
+    },
+    /* 同上,走**右缘把手**开右抽屉(往左划)。 */
+    openSideByEdge: () => {
+      const edge = $("#edgeSide");
+      if (!edge) return;
+      const mk = (t, x, y) =>
+        edge.dispatchEvent(
+          new PointerEvent(t, {
+            pointerId: 8,
+            pointerType: "touch",
+            isPrimary: true,
+            bubbles: true,
+            cancelable: true,
+            clientX: x,
+            clientY: y,
+            buttons: t === "pointerup" ? 0 : 1,
+          })
+        );
+      // 右边同样在最边缘:390 宽的视口里,带子在 x∈[358,390]。
+      mk("pointerdown", 386, 200);
+      mk("pointermove", 270, 200);
+      mk("pointermove", 140, 200);
+      mk("pointerup", 140, 200);
+    },
     openSheet,
     closeSheet,
     openFile,

@@ -54,7 +54,8 @@ await capture('20-dock-goal-todo.png')
 await run(async () => {
   const sleep = ms => new Promise(r => setTimeout(r, ms))
   document.querySelector('[data-act="todo-toggle"]').click(); await sleep(150)
-  document.querySelector('[data-act="drawer-open"]').click(); await sleep(500)
+  // 顶栏的 ☰ 在 2026-10-16 去掉了：左抽屉走左缘侧滑（PROTO 里那条就是真实手势）。
+  PROTO.openDrawerByEdge(); await sleep(500)
 })
 await capture('21-drawer-foot.png')
 

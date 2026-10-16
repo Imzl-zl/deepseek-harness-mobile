@@ -16,12 +16,11 @@
     <!-- ---------------------------------------------------------- 会话页 -->
     <section class="page page--chat" id="pageChat">
       <header class="appbar">
+        <!-- 顶栏左侧是 ☰(图标就该在顶栏左侧)。两个抽屉都还能**从边跟手拖出**:
+             左 = .edge--open,右 = .edge--side(上面那条小棒棒是"这侧能划"的标识)。 -->
         <button class="ib" data-act="drawer-open" data-icon="panelLeft" aria-label="打开会话抽屉"></button>
         <h1 class="ttl">手机端控制电脑DSH方案</h1>
-        <!-- 顶栏四件各做一件事(§7.8):●=连接状态点(点它弹连接操作 sheet),
-             ▷=右抽屉入口(panelLeft 镜像,照 DSH 的 ExpandButton),⊕=新建会话 -->
         <button class="statusdot" id="statusDot" data-act="status-open" aria-label="连接状态"></button>
-        <button class="ib ib--mirror" id="sideOpen" data-act="side-open" data-icon="panelLeft" aria-label="打开右侧面板"></button>
         <button class="ib" data-act="new-session" data-icon="newChat" aria-label="新建会话"></button>
       </header>
 
@@ -506,8 +505,14 @@
     </div>
   </aside>
 
-  <!-- 左缘手势带:开抽屉 / 文件页返回 -->
+  <!-- 边手势带(2026-10-16):**最边缘**、**上半屏**(192px)往内划,跟手拖出对应抽屉。
+       左边**没有图标**(入口是顶栏的 ☰);右边只有一条**棒棒**当"能划"的标识,
+       **抽屉开着时它整条消失**(#app.file-open 那条规则)。
+       下半屏刻意不铺 —— 那是系统返回的地盘(真机实测:下半屏划一下 App 退到桌面,正是我们要的)。 -->
   <div class="edge edge--open" id="edgeOpen"></div>
+  <div class="edge edge--side" id="edgeSide">
+    <span class="edge-stick" aria-hidden="true"></span>
+  </div>
   <div class="edge edge--back" id="edgeBack"></div>
 
   <!-- ============================================================ sheet / lightbox -->

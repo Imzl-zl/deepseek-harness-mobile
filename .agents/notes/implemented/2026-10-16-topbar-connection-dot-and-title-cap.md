@@ -50,7 +50,26 @@ Status: implemented
    390/360px 下都排得下，`Wrap` 只是放不下时的兜底 —— 由 `app/test/live_chips_row_test.dart` 钉住
    （390/360 一行、12+12 时才换行、任何一档都不溢出）。
 
-## Alternatives considered
+## 追加（同日，用户第二轮反馈）
+
+用户原话："左侧有个侧栏标志也不好看，去掉，左侧上半部分侧滑进入（进入就是和 web 端的左侧的
+那个按钮一样，有很多东西在这显示，你自己看源码）会话标题字体小点，大小设置好，超过就省略"。
+
+- **顶栏的 `☰` 去掉**：顶栏只剩 `标题 / ● / ▷ / ⊕`。左抽屉的入口改成**左缘侧滑** ——
+  这不是新发明：原型基线本来就有 `.edge--open` 手势带（`left:0; top:56px+safe; width:20px`，
+  拖过 40% 或快速甩才开，`mock/proto/app.js:244-257`），App 侧对应
+  `Scaffold.drawerEdgeDragWidth`（20 → 40：指针能精确停在 20px 里，拇指不行）。
+  - 顺带核对过用户在括号里说的那件事：Web 左侧栏（`ui-sidebar/src/client/SidebarRoot.tsx:199-313`）
+    从上到下 = 品牌行（展开时点它=新建会话）+ **新建会话**按钮 + **全局面板行**
+    （`sidebar.panellist`）+ **工作区/会话浏览区**（`sidebar.workspaces`：section 头 + 搜索 +
+    分组列表 + 工作区对话框）+ 底部（`sidebar.footer.action` + `sidebar.settings`）。
+    手机抽屉已经有搜索 / 工作区分组列表 / 连接行 / 底栏五项 / 新建会话；缺的是品牌行（手机不需要）
+    与全局面板行（终端 / 插件那类，方案 §13 的 C 类不做）。
+- **字号回到 Web 的 14px / w500**：见上一条 Decision 3 的补充（原 16/600 是手机自己长出来的）。
+- **代价与连带改动**：`@data-act="drawer-open"` 那个按钮在各处被引用（`verify-settings` /
+  `verify-tasks` / `shoot*.mjs`），全部改成走**真实手势**（`PROTO.openDrawerByEdge`，
+  `mock/proto/app.js` 里新加），这样"入口"这件事仍然被验证脚本覆盖，而不是从断言里消失。
+  设计文档 §7.1 的顶栏描述同步改了。
 
 1. **什么都不做**（继续文字胶囊）。
    - 最强的理由：改动面最小，且"已连接"文字最直白。
@@ -67,6 +86,44 @@ Status: implemented
 4. **点状态点时区分 serving（开右抽屉）与异常（弹 sheet）**（原有分法）。
    - 为何被否：右抽屉入口搬到自己的按钮之后，这个分叉只剩副作用 —— 一个点做两件事，
      用户点绿点时预期是"看连接"，却弹出右抽屉。
+
+## 追加二（同日晚）：抽屉入口定稿 —— 顶栏 ☰ + 两边跟手拖 + 右边一条棒棒
+
+用户第三次纠正（原话）："**那个图标怎么在侧边？正常不是在顶栏左侧？** 右边的侧滑可以加一个
+之前那个棒棒啊，**侧滑之后棒要消失**啊，还要**侧滑能不能跟手**？跟手移动？"
+
+被否的是我第二轮那版：把 `☰` 挪到屏幕左缘当"把手"、两边铺透明手势带、**不跟手**（划到位才开）。
+定稿：
+
+1. **`☰` 回到顶栏左侧**（`dsh_app_bar.dart`）—— 图标就该在顶栏，这是常识，不该自创形态。
+2. **两个抽屉都用原生 Drawer，两边都跟手**：左 = `Scaffold.drawer`、右 = `Scaffold.endDrawer`
+   （`chat_page.dart` 直接把 `SidePane` 装进 `endDrawer`，不再自绘遮罩 + `Positioned.fill`），
+   `drawerEdgeDragWidth: 32`。跟手 / 回弹 / 遮罩关闭 / 拖拽关闭全是 `DrawerController` 的
+   `_move` / `_settle`（`material/drawer.dart:667-709`）—— **自己写的第二套只会更差**。
+3. **右边不加图标，只有一条棒棒**（`ui/edge_stick.dart`：4×40、`IgnorePointer` 不抢触摸）；
+   **右抽屉开着时整条消失**（`onEndDrawerChanged` 同步 `_sideOpen`；原型侧同样
+   `#app.file-open .edge--side{display:none}`）。
+4. **与系统返回的冲突用官方 API 解决**（这次查了资料，不是猜）：
+   `View.setSystemGestureExclusionRects` / `Window.setSystemGestureExclusionRects`（Android 10+），
+   声明"这两块边别抢"。出处：Android Developers《Gesture Navigation: handling gesture conflicts (III)》，
+   <https://medium.com/androiddevelopers/gesture-navigation-handling-gesture-conflicts-8ee9c2665c69>
+   （**限制**：每条边最多 200dp 总高度，超了只认最靠下的那段 ⇒ 带子高度钉 192dp）。
+   实现：`app/lib/platform/gesture_exclusion.dart`（换算 + 通道）+ `MainActivity.kt`
+   （`setRects` → `window.decorView.systemGestureExclusionRects`）。
+
+**真机实测（小米 `d61cf622`，Android 16，DPR 2.625）**：
+
+| 起手位置 | 结果 |
+|---|---|
+| ≈2dp（最外缘），**不报**排除 | 系统返回吃掉：**App 退回桌面**（`mCurrentFocus=com.miui.home`） |
+| ≈2dp，**报了**排除（本版） | 抽屉正常开出 ✓（左缘 x=5、右缘 x=1070 都验过） |
+| **下半屏**（y≈610dp） | 仍归系统返回（App 退回桌面）—— **我们没抢它的活** ✓ |
+| 顶栏 `☰` 点一下 | 左抽屉打开 ✓ |
+| 右缘拖出后 | 右抽屉（整屏）打开，**棒棒消失** ✓ |
+
+**弯路（留着，别再犯）**：① 把手内缩 36dp 躲系统 —— 用户否了（"把这个标记移动到里面了"）；
+② 自写"划到位才开"的手势带 —— 既不跟手，又与原生 Drawer 抢状态；
+③ 用 `KEYCODE_BACK` 关抽屉来测 —— 会把 App 一起退掉，测出来的现象是假的。
 
 ## Consequences
 

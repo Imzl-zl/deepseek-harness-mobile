@@ -121,7 +121,8 @@ const main = await evalJs(async () => {
   pass('任务清单可收起', !q('#todoDock .todo-list'))
 
   /* ---------------------------------------------------------- 入口 + 列表 */
-  q('[data-act="drawer-open"]').click(); await sleep(460)
+  /* 顶栏的 ☰ 在 2026-10-16 去掉了：左抽屉走左缘侧滑（PROTO 里那条就是真实手势）。 */
+  PROTO.openDrawerByEdge(); await sleep(460)
   const foot = q('.drawer-foot')
   const footItems = [...foot.children]
   pass('左抽屉有自动化任务入口', !!q('.drawer-foot [data-act="tasks-open"]'))
@@ -225,7 +226,8 @@ const main = await evalJs(async () => {
   q('[data-act="tasks-close"]').click(); await sleep(560)
   pass('关闭页面回到聊天且层栈清空',
     !q('#pageTasks').classList.contains('is-in') && PROTO.layers.length === 0, PROTO.layers.join('>'))
-  q('[data-act="drawer-open"]').click(); await sleep(520)
+  /* 入口是左缘侧滑（见上）；这里断言"划一下真的开了"。 */
+  PROTO.openDrawerByEdge(); await sleep(520)
   pass('左抽屉仍可正常打开', PROTO.layers.join('>') === 'drawer' && PROTO.drawer.p === 1, PROTO.layers.join('>'))
   q('#scrim').click(); await sleep(560)
   pass('收起抽屉后层栈清空', PROTO.layers.length === 0 && PROTO.drawer.p === 0, PROTO.layers.join('>'))
@@ -250,7 +252,7 @@ const narrow = await evalJs(async () => {
     range.selectNodeContents(node)
     return range.getClientRects().length
   }
-  q('[data-act="drawer-open"]').click(); await sleep(500)
+  PROTO.openDrawerByEdge(); await sleep(500)
   const foot = q('.drawer-foot')
   const items = [...foot.children]
   return {

@@ -206,7 +206,7 @@ dsh-mobile/
 
 不是"列表优先 + 底部导航",而是成熟 AI 聊天 App 的主流结构(rikkahub `ChatPage.kt` 用 `ModalNavigationDrawer`):
 
-- **主屏 = 当前会话**(聊天页)。顶栏:☰ 开抽屉 / 标题 / ＋ 新建。
+- **主屏 = 当前会话**(聊天页)。顶栏:**☰ 左抽屉 / 标题 / ● 连接状态点 / ⊕ 新建**。两个抽屉**都还能从边跟手拖出**:左缘 `drawer`、右缘 `endDrawer`(`Scaffold.drawerEdgeDragWidth: 32`);右缘另有一条 4×40 的**棒棒**当"这侧能划"的标识,**右抽屉开着时它消失**。与**系统返回手势**的冲突用官方 `View.setSystemGestureExclusionRects`(API 29+)解决 —— 只排除左右各 32×192dp 的**上半屏**边带(`platform/gesture_exclusion.dart`),下半屏整条留给系统。
 - **左侧抽屉** = 会话历史(搜索/切换/归档/删除)+ 新建 + 设备与中转连接状态 + 进入 设置/文件/终端。大屏(横屏/平板)用**永久抽屉**常驻左侧。
 - **归档面**(2026-10-16 接上 `workspace.archive` / `unarchive` + 抽屉底栏「归档」):归档过的会话**默认不列**(照 Web 的默认过滤档,`ui-workspace/src/client/tree.ts:247-248`);它们在底栏「归档」那张列表里,行上只有「取消归档」——已归档的**不能直接打开**(DSH 同一条:`toast.archivedNotOpenable`)。左滑归档一个**还在跑**的会话时宿主会拒(`workspace/session-active`),界面弹「停止并归档」(照 Web 的门,`ui-workspace/src/client/index.ts:190-208`)。
 - 文件 / 终端 / 设置 是从抽屉进入的**独立页**(NavHost 路由),不并排硬塞。
@@ -231,7 +231,7 @@ dsh-mobile/
 ### 7.2 会话详情 · 对话
 ```
 ┌──────────────────────────┐
-│ ☰  标题(≤220,超长省略) ● ▷ ⊕ │  顶栏四件各做一件事:●=连接状态点,▷=右抽屉,⊕=新会话
+│ 标题(≤220,14px,超长省略) ● ⊕ │  顶栏三件:标题 / ● 连接状态点 / ⊕ 新会话(☰ 在最左)
 │ [对话]   轨迹            │  顶部分段(对应 conversation.view: chat/trajectory)
 │  用户气泡(右)            │
 │  助手:Markdown + 代码块  │  复用 DSH 渲染规格
@@ -413,7 +413,7 @@ DSH 右侧有一条**轮次导航轨**(`ui-chat/TurnNavigator.tsx`):每一轮一
 
 ```
 ┌──────────────────────────────┐
-│ ☰  会话标题(≤220,超长省略) ● ▷ ⊕ │  顶栏四件各做一件事(§7.8)
+│ ☰  会话标题(≤220,14px,超长省略) ● ⊕ │  顶栏:☰ 左抽屉 / ● 连接状态点 / ⊕ 新建(§7.8)
 ├──────────────────────────────┤
 │ ›  chat_page.dart        ⋯   │  抽屉抬头:标题随面板变;+N/−M 只对文件有意义
 │ [文件] [任务 ②] [子代理 ①]    │  面板切换(计数徽标只在有运行中时出现)
@@ -433,14 +433,21 @@ DSH 右侧有一条**轮次导航轨**(`ui-chat/TurnNavigator.tsx`):每一轮一
 
 **入口只有一个,而且不跨抽屉**:
 
-- **顶栏四个位置各做一件事**(2026-10-16 校准;"旧状态位"分法见下方偏离说明):
+- **顶栏三件 + 两条边**(2026-10-16 定稿;"旧状态位"分法见下方偏离说明):
+  - `☰` **左抽屉**(图标在**顶栏左侧** —— 用户纠正过我把它移到屏幕边缘那一版):
+    点它开;也能从**左缘跟手拖出**(原生 `drawer` + `drawerEdgeDragWidth`)。
   - `●` **连接状态点**:服务中=绿点、连接中/握手中/重连中=转圈、其余(未连接/已断开/连接不上)=红点。
     形状与颜色照 DSH `ui-primitives/src/StateDot.tsx:44-77` 与 `StateDot.module.css:1-45`(10px 槽里画 6px 核;转圈 14px、1.5s 匀速);三档语义照
     `ui-primitives/src/ConnectionIndicator.tsx:7-11`。**点它弹「连接操作」sheet**(重试 / 重新配对 / 打开侧面板 / 断开)——
     照 DSH 的按钮语义:`ConnectionIndicator` 的异常/重连态本身就是"立即重连"按钮(`:75-81`)。
-  - `▷` **右抽屉入口**:`panelLeft` 镜像的独立按钮。DSH 的右面板入口同样与连接指示器无关
-    (`ui-sidebar-right/src/client/index.ts:238-239` 的 `conversation.session.header.corner` 席位)。
-  - `☰` 左抽屉 / `＋` 新建会话不变。
+  - `⊕` 新建会话。
+  - **右边不加图标**:右缘一条 **4×40 的棒棒**(`ui/edge_stick.dart`)当"这侧能划"的标识,
+    从**右缘跟手拖出**右抽屉(原生 `endDrawer`);**右抽屉开着时棒棒整条消失**。
+- **与系统返回手势的冲突:用官方排除 API**,不是把把手往里挪 ——
+  `platform/gesture_exclusion.dart` 把左右各 32×192dp 的**上半屏**边带报给
+  `View.setSystemGestureExclusionRects`(Android 10+;限制**每条边最多 200dp**,
+  见 <https://medium.com/androiddevelopers/gesture-navigation-handling-gesture-conflicts-8ee9c2665c69>)。
+  上半屏归我们、**下半屏整条留给系统返回**(真机实测:下半屏划一下 App 退到桌面,正是要的)。
 - **标题限宽 `220px`、字号 `14px` / 粗细 `w500`**(都照 DSH 的 `.crumb`:`max-width:220px; font-size:14px; line-height:20px`,当前那条是 `w500`,`ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139`):
   标题可省略,但**不许吃掉整行**。子智能体 / 后台任务计数走**自己那一行**(`_LiveChipsRow`,顶栏之下、对话·轨迹分段之上;常态一行,放不下才换行),
   与标题**不争同一条宽度** —— 结构上等价于 DSH header 的 `.headerActions{flex:none}` band(`:156-161`)。
@@ -449,7 +456,7 @@ DSH 右侧有一条**轮次导航轨**(`ui-chat/TurnNavigator.tsx`):每一轮一
 - 审批 / 提问**接管输入栏**(§7.8 之外的 composer takeover),本来就在眼前,**不占顶栏**。
 
 > **有意偏离(2026-10-16)**:①**计数 chip 不与标题同行**(Web 把计数放在 header 同一行的 actions band):360~390px 上
-> `☰`+`●`+`▷`+`⊕` 已占约 164px,两枚两位数 chip 约 250px,标题将无位可放 —— 所以手机上让计数**另起一行**。
+> `☰`+`●`+`⊕` 已占约 124px,两枚两位数 chip 约 250px,标题将无位可放 —— 所以手机上让计数**另起一行**。
 > ②**连接正常时仍显示绿点**(Web 的连接指示器只在异常 / 重连 / 刚恢复三态出现,正常时什么都不显示):用户明确要求"显示个绿点啥的就行",
 > 且手机没有第二个地方能一眼确认连线。**代价**:顶栏常驻一个 10px 的点。取舍见
 > `.agents/notes/implemented/2026-10-16-topbar-connection-dot-and-title-cap.md`。

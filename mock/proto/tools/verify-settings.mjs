@@ -49,7 +49,8 @@ const result = await evaluate(async () => {
   await sleep(300)
   try {
 
-  q('[data-act="drawer-open"]').click(); await sleep(450)
+  // 顶栏的 ☰ 在 2026-10-16 去掉了：左抽屉走左缘侧滑（PROTO 里那条就是真实手势）。
+  PROTO.openDrawerByEdge(); await sleep(450)
   q('[data-act="settings-open"]').click(); await sleep(520)
   pass('设置页打开', q('#pageSettings').classList.contains('is-in'))
   pass('首页标题', q('#settingsTitle').textContent.trim() === '设置')

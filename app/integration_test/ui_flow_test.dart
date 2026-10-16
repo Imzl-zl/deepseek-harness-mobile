@@ -193,26 +193,27 @@ void main() {
     expect(find.text('新增文件.txt'), findsOneWidget);
   });
 
-  testWidgets('☰ 与空态按钮都能开抽屉（回调被调到）', (tester) async {
+  testWidgets('左缘侧滑能开抽屉（顶栏没有 ☰，这是左抽屉的入口）', (tester) async {
     final app = AppModel(client: _FakeClient());
-    var opened = 0;
     await tester.pumpWidget(
       MaterialApp(
         theme: DshTheme.dark(),
         home: ChatPage(
           app: app,
           paired: false,
-          onOpenDrawer: () => opened += 1,
+          onOpenDrawer: () {},
           onNewSession: () {},
-          drawer: const Drawer(child: SizedBox()),
+          drawer: const Drawer(child: Text('抽屉内容')),
         ),
       ),
     );
     await tester.pumpAndSettle();
+    expect(find.text('抽屉内容'), findsNothing, reason: '还没划');
 
-    await tester.tap(find.byTooltip('打开会话抽屉'));
+    // 与原型 `.edge--open` 手势带同一位置：左缘、顶栏之下。
+    await tester.dragFrom(const Offset(2, 300), const Offset(300, 0));
     await tester.pumpAndSettle();
-    expect(opened, 1);
+    expect(find.text('抽屉内容'), findsOneWidget, reason: '左缘侧滑必须能开抽屉');
   });
 
   testWidgets('接管：审批 → 提问 → 计划 依次出现（队列是瀑布）', (tester) async {

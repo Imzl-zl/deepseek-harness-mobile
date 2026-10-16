@@ -26,6 +26,7 @@ import 'package:dsh_mobile/ui/chat_page.dart';
 import 'package:dsh_mobile/ui/dsh_app_bar.dart';
 import 'package:dsh_mobile/ui/dsh_composer.dart';
 import 'package:dsh_mobile/ui/dsh_state_dot.dart';
+import 'package:dsh_mobile/ui/edge_stick.dart';
 import 'package:dsh_mobile/ui/pairing_page.dart';
 import 'package:dsh_mobile/ui/session_drawer.dart';
 import 'package:dsh_mobile/ui/side_pane.dart';
@@ -194,8 +195,15 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // 顶栏三件套都在（这是聊天页，不是别的页）。
-      expect(find.byTooltip('打开会话抽屉'), findsOneWidget);
+      // 顶栏的控件都在（这是聊天页，不是别的页）：☰ 左抽屉 + ● 连接状态点 + ⊕ 新建。
+      expect(
+        find.descendant(
+          of: find.byType(ChatAppBar),
+          matching: find.byType(DshAppBarButton),
+        ),
+        findsNWidgets(2),
+        reason: '顶栏左侧 ☰ 与右侧 ⊕（图标就该在顶栏左侧 —— 用户 2026-10-16 纠正）',
+      );
       expect(find.byTooltip('新建会话'), findsOneWidget);
       // 分段控件（对话 / 轨迹）在。
       expect(find.text('对话'), findsOneWidget);
@@ -250,24 +258,59 @@ void main() {
         reason: '主界面必须直接看得见会话，而不是让人先找到 ☰',
       );
       expect(find.text('还没有会话'), findsNothing);
-      // 抽屉入口仍然在（它没被删掉，只是不再是**唯一**的入口）。
-      expect(find.byTooltip('打开会话抽屉'), findsOneWidget);
+      // 抽屉入口在顶栏左侧的 ☰（也能从左缘跟手拖出）。
+      expect(
+        find.descendant(
+          of: find.byType(ChatAppBar),
+          matching: find.byType(DshAppBarButton),
+        ),
+        findsNWidgets(2),
+        reason: '顶栏只有 ☰ 与 ⊕',
+      );
     });
 
-    testWidgets('☰ 与空态按钮都能开抽屉（回调被调到）', (tester) async {
+    testWidgets('左缘上半屏往内划能开抽屉（顶栏不放入口之后它是主入口）', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: DshTheme.dark(),
+          home: ChatPage(
+            app: AppModel(client: FakeClient()),
+            paired: true,
+            onOpenDrawer: () {},
+            onNewSession: () {},
+            drawer: const Drawer(child: Text('抽屉内容')),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('抽屉内容'), findsNothing, reason: '还没划');
+
+      // 与原型 `.edge--open` 手势带同一个位置：左缘**最边缘**、上半屏。
+      // （把手贴边；与系统返回的冲突用 `setSystemGestureExclusionRects` 解决。）
+      await tester.dragFrom(const Offset(2, 200), const Offset(300, 0));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('抽屉内容'),
+        findsOneWidget,
+        reason: '左缘侧滑必须能开抽屉 —— ☰ 去掉之后它是唯一入口',
+      );
+    });
+
+    testWidgets('空态那枚「打开会话抽屉」按钮仍然调得到回调', (tester) async {
       var opened = 0;
       await tester.pumpWidget(
         _wrap(
           AppModel(client: FakeClient()),
-          paired: false,
+          paired: true,
           onOpenDrawer: () => opened += 1,
         ),
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('打开会话抽屉'));
+      await tester.tap(find.text('打开会话抽屉'));
       await tester.pump();
-      expect(opened, 1);
+      expect(opened, 1, reason: '空态里的按钮是侧滑之外的备用入口，不能跟着 ☰ 一起失效');
     });
   });
 
@@ -698,7 +741,7 @@ void main() {
     });
   });
 
-  group('回归：抽屉真的能开（真机上点 ☰ 与"打开会话抽屉"都没反应）', () {
+  group('回归：抽屉的打开缝真的通（真机上曾经完全没反应）', () {
     testWidgets('选中了空会话：说"这个会话还没有内容"，不说"选一个会话"', (tester) async {
       // 守的是真机上"点了会话看起来没生效"：`items` 为空时一律走空态，
       // 而空态对"已选中但会话是空的"仍然说"选一个会话" ——
@@ -730,7 +773,8 @@ void main() {
       //  ① `ChatPage` 的 State 是私有的、**没有 `openDrawer`**，
       //  ② key 的类型还写成了 `GlobalKey<ScaffoldState>`（挂不到 `ChatPage` 上）。
       // 两条叠起来让 `currentState` 恒为 `null`、`?.` 静默吞掉 ——
-      // 点 `☰`、点空态里的按钮都毫无反应，**且不报任何错**（真机实测）。
+      // 空态里那枚按钮、以及外层任何"打开抽屉"的调用都毫无反应，**且不报任何错**（真机实测）。
+      // 顶栏的 ☰ 在 2026-10-16 已去掉（改左缘侧滑），但这道缝还在用（空态按钮）。
       final key = GlobalKey<ChatPageState>();
       await tester.pumpWidget(
         MaterialApp(
@@ -975,7 +1019,7 @@ void main() {
       );
     });
 
-    testWidgets('右抽屉按钮一步开 SidePane', (tester) async {
+    testWidgets('右缘上半屏往左划一步开 SidePane（右侧不加图标）', (tester) async {
       final app = AppModel(
         client: FakeClient(
           sessions: [
@@ -988,12 +1032,13 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(SidePane), findsNothing);
-      await tester.tap(find.byTooltip('打开右侧面板（文件 / 任务 / 子智能体）'));
+      // 顶栏与右缘都**不放图标**（用户："右侧侧滑不加图标"）：只有划。
+      await tester.dragFrom(const Offset(798, 200), const Offset(-260, 0));
       await tester.pumpAndSettle();
       expect(
         find.byType(SidePane),
         findsOneWidget,
-        reason: '右抽屉必须有自己的一步入口（原入口挂在状态位上）',
+        reason: '右抽屉必须有一步入口（原来挂在状态位、后来在顶栏、现在是右缘侧滑）',
       );
     });
 
@@ -1024,6 +1069,83 @@ void main() {
     });
   });
 
+  // 抽屉入口（2026-10-16 第三轮定稿，用户逐条纠正出来的）：
+  // - **左边**：顶栏左侧的 `☰`（图标就该在顶栏左侧）+ 从屏幕左缘**跟手**拖出；
+  // - **右边**：不加图标，只有一条**棒棒**当标识（`ui/edge_stick.dart`），
+  //   从右缘**跟手**拖出；**右抽屉开着时那条棒棒消失**。
+  // 两个抽屉都是原生 Drawer（`drawer` / `endDrawer`），跟手/回弹/遮罩全由 Flutter 管。
+  // 与系统返回的冲突用 `setSystemGestureExclusionRects` 解决（上半屏 192dp，
+  // `platform/gesture_exclusion.dart`），不是把棒棒往里挪。
+  group('抽屉入口：顶栏 ☰ + 左缘跟手拖；右侧棒棒 + 右缘跟手拖', () {
+    Widget page() => MaterialApp(
+      theme: DshTheme.dark(),
+      home: ChatPage(
+        app: AppModel(client: FakeClient()),
+        paired: true,
+        onOpenDrawer: () {},
+        onNewSession: () {},
+        drawer: const Drawer(child: Text('抽屉内容')),
+      ),
+    );
+
+    testWidgets('顶栏左侧 ☰ 点一下开左抽屉', (tester) async {
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+      expect(find.text('抽屉内容'), findsNothing, reason: '还没点');
+
+      await tester.tap(find.byTooltip('打开会话抽屉'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('抽屉内容'), findsOneWidget);
+    });
+
+    testWidgets('左缘拖一下也能开（原生跟手拖动）', (tester) async {
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+
+      await tester.dragFrom(const Offset(2, 200), const Offset(300, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('抽屉内容'), findsOneWidget);
+    });
+
+    testWidgets('顶栏只有 ☰ 与 ⊕ 两个按钮（右边不加图标）', (tester) async {
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+
+      final buttons = find.descendant(
+        of: find.byType(ChatAppBar),
+        matching: find.byType(DshAppBarButton),
+      );
+      expect(buttons, findsNWidgets(2), reason: '☰ + ⊕');
+      expect(
+        find.byTooltip('打开右侧面板（文件 / 任务 / 子智能体）'),
+        findsNothing,
+        reason: '用户点名"右侧侧滑不加图标"',
+      );
+    });
+
+    testWidgets('右缘拖一下开右抽屉；**棒棒在它开着时消失**', (tester) async {
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byType(DshRightEdgeStick),
+        findsOneWidget,
+        reason: '右抽屉关着时，右缘那条"能划"的棒棒要在',
+      );
+
+      await tester.dragFrom(const Offset(798, 200), const Offset(-300, 0));
+      await tester.pumpAndSettle();
+      expect(find.byType(SidePane), findsOneWidget, reason: '右缘拖动开右抽屉');
+
+      expect(
+        find.byType(DshRightEdgeStick),
+        findsNothing,
+        reason: '用户原话："侧滑之后棒要消失啊" —— 抽屉开着时它还挡在那，纯属碍事',
+      );
+    });
+  });
+
   // 顶栏标题**限宽**：数值照 DSH 的 `.crumb{max-width:220px}`
   // （`ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139`）。
   // 用户原话："web 屏幕大能显示很多,手机屏小,你需要限制大小,给子智能体,
@@ -1039,12 +1161,11 @@ void main() {
           connectionState: DshStateDotState.done,
           connectionTooltip: '连接状态：已连接（点按查看连接操作）',
           onConnectionTap: () {},
-          onOpenSide: () {},
         ),
       ),
     );
 
-    testWidgets('长标题被限到 220px，四个位置一个不少', (tester) async {
+    testWidgets('长标题被限到 220px；顶栏只剩标题 + 状态点 + 新建', (tester) async {
       const long = '手机端控制电脑DSH方案与顶栏布局';
       await tester.pumpWidget(bar(long * 6));
       await tester.pumpAndSettle();
@@ -1064,9 +1185,15 @@ void main() {
         FontWeight.w500,
         reason: '照 `.crumbCurrent` 的 w500',
       );
-      expect(find.byTooltip('打开会话抽屉'), findsOneWidget);
+      // 顶栏：☰（左抽屉）+ ●（连接状态点）+ ⊕（新建）。
+      // **右边没有抽屉图标** —— 用户："右侧侧滑不加图标啊"，右边只有那条跟手侧滑的棒棒。
+      expect(find.byTooltip('打开会话抽屉'), findsOneWidget, reason: '☰ 在顶栏左侧');
+      expect(
+        find.byTooltip('打开右侧面板（文件 / 任务 / 子智能体）'),
+        findsNothing,
+        reason: '右边不加图标（右缘侧滑 + 棒棒标识）',
+      );
       expect(find.byType(DshConnectionDotButton), findsOneWidget);
-      expect(find.byTooltip('打开右侧面板（文件 / 任务 / 子智能体）'), findsOneWidget);
       expect(find.byTooltip('新建会话'), findsOneWidget);
     });
 

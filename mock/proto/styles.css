@@ -2563,14 +2563,34 @@ button:focus-visible {
 
 /* ============================================================ 左缘手势带
    抽屉打开 / 文件页返回的可靠命中区;避开顶栏按钮,高度从 appbar 下沿开始。 */
+/* 边手势带：贴**最边缘**、只占**上半屏** 192px（与 App 的边带一致，也是 Android
+   "每条边最多排除 200dp"的上限内）。与系统返回的冲突在 App 侧用
+   `setSystemGestureExclusionRects` 解决；原型跑在浏览器里，页面本身没有这个 API，
+   所以这里只保证"位置与高度"和 App 一致。 */
 .edge {
   position: absolute;
   left: 0;
   top: calc(56px + var(--safe-t));
-  bottom: 0;
-  width: 20px;
+  height: 192px;
+  width: 32px;
   z-index: 6;
   touch-action: none;
+}
+/* 右边那条"棒棒"：告诉用户这一侧能划。**不是按钮**（右边不加图标），
+   只有 4×40 的一小条；右抽屉开着时连它一起藏起来（`#app.file-open` 那条规则）。 */
+.edge-stick {
+  position: absolute;
+  right: 3px;
+  top: 35%;
+  width: 4px;
+  height: 40px;
+  border-radius: 2px;
+  background: var(--layer3);
+  pointer-events: none;
+}
+.edge--side {
+  left: auto;
+  right: 0;
 }
 .edge--back {
   left: auto;
@@ -2579,6 +2599,10 @@ button:focus-visible {
 }
 #app.file-open .edge--back {
   display: block;
+}
+/* 右抽屉开着：右边那条手势带与棒棒一起收起来（留着只会在抽屉上挡一层）。 */
+#app.file-open .edge--side {
+  display: none;
 }
 
 /* ============================================================ toast */

@@ -151,24 +151,25 @@ class DshConnectionDotButton extends StatelessWidget {
 /// （`ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139`）——
 /// 同一条"标题可以省略，但不许吃掉整行"的规矩。用户原话：
 /// *"手机屏小,你需要限制大小,给子智能体,后台任务,这些留位置"*。
-/// 390px 竖屏下，`☰ + 状态点 + 右抽屉 + ＋` 之后正好还放得下 220。
+/// 390px 竖屏下，`● 连接状态点 + ⊕ 新建` 之后还富余 220 以上。
 const double kDshTitleMaxWidth = 220;
 
 /// 聊天页顶栏。
 ///
 /// ```
-/// ┌──────────────────────────────────────────┐
-/// │ ☰  标题(≤220,超长省略)    ●   ▷   ⊕      │  height: 56px + safe-top
-/// └──────────────────────────────────────────┘
+/// ┌──────────────────────────────────────┐
+/// │ ☰  标题(≤220,14px,超长省略)      ●  ⊕   │  height: 56px + safe-top
+/// └──────────────────────────────────────┘
 /// ```
 ///
-/// 每个位置只做一件事，**不互相抢占**（DSH 的分法：`.titleCluster{flex:1;min-width:0}`
-/// 与 `.headerActions{flex:none}`，`ConversationRoot.module.css:83-89`、`:156-161`）：
+/// 顶栏左侧是 `☰`（照 DSH Web 的 sidebar toggle：`ui-sidebar/src/client/SidebarRoot.tsx:178-197`
+/// 的 `IconPanelLeftOutlineRegular`）—— **图标就该在顶栏左侧**，这是用户 2026-10-16 纠正的：
+/// 我曾把它移到屏幕左缘当"把手"，那是自创的形态。
 ///
-/// - `☰` 开左抽屉；`＋` 新建会话；
-/// - `●` 连接状态点 —— 点它弹**连接操作** sheet（重试 / 重新配对 / 断开）；
-/// - `▷` **右抽屉入口**（`panelLeft` 镜像，照 DSH `ExpandButton` 的同一招）——
-///   它原来是挂在状态位上的，状态位缩成点之后必须有自己的席位。
+/// 左抽屉同时支持**从屏幕左缘跟手拖出**（`Scaffold.drawerEdgeDragWidth`，Flutter 自带的
+/// 跟手拖动）；右抽屉（`SidePane`）走 `Scaffold.endDrawer`，从右缘跟手拖出，
+/// 右缘那条**棒棒**是它的标识（抽屉开着时消失）。与系统返回手势的冲突用
+/// `platform/gesture_exclusion.dart` 解决（只排除上半屏 192dp）。
 class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   const ChatAppBar({
     super.key,
@@ -178,12 +179,11 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
     required this.connectionState,
     required this.connectionTooltip,
     required this.onConnectionTap,
-    required this.onOpenSide,
   });
 
   final String title;
 
-  /// `☰` —— 主入口（会话抽屉）。
+  /// `☰` —— 左抽屉（会话历史）。
   final VoidCallback onOpenDrawer;
 
   /// `＋` —— 新建会话。
@@ -197,9 +197,6 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String connectionTooltip;
 
   final VoidCallback onConnectionTap;
-
-  /// 打开右抽屉（文件 / 任务 / 子智能体）。
-  final VoidCallback onOpenSide;
 
   @override
   Size get preferredSize => const Size.fromHeight(56);
@@ -248,12 +245,6 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
             state: connectionState,
             tooltip: connectionTooltip,
             onPressed: onConnectionTap,
-          ),
-          DshAppBarButton(
-            icon: 'panelLeft',
-            mirrorX: true,
-            tooltip: '打开右侧面板（文件 / 任务 / 子智能体）',
-            onPressed: onOpenSide,
           ),
           DshAppBarButton(
             icon: 'newChat',

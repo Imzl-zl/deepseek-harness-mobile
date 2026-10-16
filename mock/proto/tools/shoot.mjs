@@ -91,9 +91,9 @@ await shot('03-drawer-search.png')
 await evalJs(async () => {
   const q = s => document.querySelector(s)
   q('#scrim').click(); await new Promise(r => setTimeout(r, 450))
-  // 顶栏 ▷ 右抽屉按钮一步进入(2026-10-16 起右抽屉入口是自己的按钮,
-  // 连接状态点只弹「连接操作」sheet —— 见 app.js 的 side-open / status-open)
-  q('#sideOpen').click(); await new Promise(r => setTimeout(r, 500))
+  // 右缘把手(上半屏往左划)一步进入(2026-10-16:顶栏不再放抽屉入口,
+// 连接状态点只弹「连接操作」sheet —— 见 app.js 的 side-open / status-open)
+  PROTO.openSideByEdge(); await new Promise(r => setTimeout(r, 500))
   const tab = q('.stab[data-panel="jobs"]'); if (tab && !tab.classList.contains('is-on')) { tab.click(); await new Promise(r => setTimeout(r, 400)) }
 })
 await shot('04-side-jobs.png')
