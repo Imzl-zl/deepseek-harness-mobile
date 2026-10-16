@@ -156,6 +156,25 @@ void main() {
     );
   });
 
+  test('端点拨号结果与当前端点都接上了（漏接 = 设置页状态永远"还没试过"）', () {
+    // 连接方式选择器的两条线，漏接**都不报错**：
+    // - `onAttempt`：传输层每试一个端点报一次结局。漏了它，
+    //   `AppModel.attemptOf` 恒为 null，设置页四档状态永远停在"还没试过"，
+    //   而真实拨号每一轮都在发生（症状是"直连明明拨不通却不显示"）。
+    // - `onActivated`：当前走哪条。漏了它，连接 sheet 与设置页顶部
+    //   没有"当前连接"可显示（`connectionSummary` 只能给状态名）。
+    expect(
+      source.contains('transport.onAttempt = app.reportEndpointAttempt'),
+      isTrue,
+      reason: '拨号结果是"通不通"与"为什么走了中转"的唯一数据来源',
+    );
+    expect(
+      source.contains('transport.onActivated = app.reportActiveEndpoint'),
+      isTrue,
+      reason: '"当前走哪条"走同一根线；漏了连接 sheet 只剩状态名',
+    );
+  });
+
   test('根 State 挂着前后台态上报者（否则 setAppState 永远不被调用）', () {
     // **这条守的是一个真缺口**（2026-10-13 定位）：`setAppState` 在 `app/lib` 里
     // 没有任何产品调用点，客户端从构造起就以为自己在**前台** —— 心跳照走、

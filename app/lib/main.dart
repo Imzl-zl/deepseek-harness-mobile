@@ -459,9 +459,8 @@ class _DshMobileAppState extends State<DshMobileApp> {
     ConnectionStateView state,
     Endpoint? active,
   ) => switch (state) {
-    ConnectionStateView.serving => active == null
-        ? '已连接 · 空闲'
-        : '${endpointKindLabel(active.kind)}已连接 · 空闲',
+    ConnectionStateView.serving =>
+      active == null ? '已连接 · 空闲' : '${endpointKindLabel(active.kind)}已连接 · 空闲',
     ConnectionStateView.backoff => '重连中…',
     ConnectionStateView.connecting => '连接中…',
     ConnectionStateView.handshaking => '握手中…',
