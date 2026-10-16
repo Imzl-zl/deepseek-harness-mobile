@@ -30,12 +30,15 @@
 `.agents/notes/implemented/2026-10-14-endpoint-switching-lan-direct.md`。
 **2026-10-16:真机改走无线直连并验证**(用户否掉"插线联调")——profile 的 `cordis.patch.yml` 从
 `listenPort: 0` 改成 `8790` + `listenHost: 0.0.0.0`,`caps.direct` 必须回 `true`;
-`adb reverse` 只用于**一次性引导**(端点表里的 direct 是连上之后才学到的)。
-硬证据:撤掉 USB 通道后重启 App,电脑侧仍看到 `192.168.2.43:8790 ← 192.168.2.29:39170 ESTABLISHED`。
-取舍、两个静默失败(`adb reverse` 僵尸条目 / 编辑工具写 `~/.dsh/**` 不落盘)见
-`.agents/notes/implemented/2026-10-16-lan-direct-enabled.md`;
+relay 的 `relay.config.json` 也改成 `host: 0.0.0.0`,并把 `relayUrl` 指向 `ws://192.168.2.43:8787/ws/connector`
+(**引导通道也无线**:二维码里的 `relay:` 取自该配置,`connector/src/pairing.ts:155`)。
+硬证据:冷启动后电脑侧仍稳定 `192.168.2.43:8790 ← 192.168.2.29:41138 ESTABLISHED`,连接器改拨局域网 relay。
+**为此改了一处真代码**:`relay-url.ts` 的明文判据原来只认 loopback,与手机侧
+(`isPrivateOrLoopback`,已扩到私网/CGNAT/link-local/ULA)漂了一次,导致私网地址被校验器拒;
+现已对齐并用同一批地址钉住(`connector/tests/relay-url-nonpublic.test.ts`,25 条)。
+取舍见 `.agents/notes/implemented/2026-10-16-relay-plaintext-criterion-aligned.md`;
 **还没做**:①手机设置页的端点列表 UI(`AppModel` 已把 `endpoints`/`activeEndpoint`/`preferEndpoint` 备齐);
-②让 relay 也局域网可达 + 重新配对,使"引导"本身也无线(电脑换 IP / 手机换 WiFi 时不必插线)。
+②电脑换 IP / 手机换 WiFi 后要重新出码(管理面 `POST /api/dsh-mobile/pair`,不建会话不花 token)。
 
 **后台任务已接上**(2026-10-15):删掉三条假任务(含假的 `flutter build apk` 输出),
 改读 `job.list` + `job` 帧流;展开 `job.follow` / 收起 `job.unfollow` / 停止 `job.kill`,
