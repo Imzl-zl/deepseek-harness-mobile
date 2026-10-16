@@ -419,7 +419,39 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
           ),
         })),
       )
-      return { workspaces, archivedSessionIds: snapshot.archivedSessionIds }
+      // **归档清单同样要换别名**：它与 `sessionIds` 是同一份载荷里的两种 id 约定 ——
+      // 只换一半，手机就会拿到一串它不认识的 DSH id，"已归档"这一档永远对不上。
+      const archivedSessionIds = await Promise.all(
+        snapshot.archivedSessionIds.map((dshSessionId) => deps.aliases.ensure(dshSessionId)),
+      )
+      return { workspaces, archivedSessionIds }
+    }
+
+    // 归档 / 取消归档。**写路径就这两个**，各自带幂等键（`IDEMPOTENT_METHODS`）：
+    // 归档是用户指令，重发不该落两次（虽然宿主侧幂等，但指令层不该靠它兜）。
+    // 归档运行中的会话会被宿主拒（`workspace/session-active`）——
+    // 那是**信息**不是故障：Web 因此弹"停止并归档"对话，带 `stopActivity` 重试
+    // （`ui-workspace/src/client/index.ts:190-208`）。这里照同一条，把开关过线。
+    handlers['workspace.archive'] = async (params) => {
+      const sid = requireSid(params)
+      const dshSessionId = requireSession(sid)
+      const stopActivity = paramOf(params, 'stopActivity') === true
+      const archived = await deps.workspaces!.archive(dshSessionId, stopActivity)
+      return {
+        archivedSessionIds: await Promise.all(
+          archived.map((id) => deps.aliases.ensure(id)),
+        ),
+      }
+    }
+
+    handlers['workspace.unarchive'] = async (params) => {
+      const dshSessionId = requireSession(requireSid(params))
+      const archived = await deps.workspaces!.unarchive(dshSessionId)
+      return {
+        archivedSessionIds: await Promise.all(
+          archived.map((id) => deps.aliases.ensure(id)),
+        ),
+      }
     }
   }
 

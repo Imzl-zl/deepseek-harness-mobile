@@ -86,11 +86,21 @@ void main() {
   group('会话可见性(照 DSH Web 的 sessionVisible)', () {
     test('子智能体的子会话不列', () {
       expect(
-        sessionVisible(subagent: true, blank: false, isCurrent: false),
+        sessionVisible(
+          subagent: true,
+          blank: false,
+          isCurrent: false,
+          archived: false,
+        ),
         isFalse,
       );
       expect(
-        sessionVisible(subagent: true, blank: false, isCurrent: true),
+        sessionVisible(
+          subagent: true,
+          blank: false,
+          isCurrent: true,
+          archived: false,
+        ),
         isFalse,
         reason: 'Web 的判据是 origin,与是否当前无关',
       );
@@ -98,11 +108,21 @@ void main() {
 
     test('blank(从没跑过)且不是当前会话的不列', () {
       expect(
-        sessionVisible(subagent: false, blank: true, isCurrent: false),
+        sessionVisible(
+          subagent: false,
+          blank: true,
+          isCurrent: false,
+          archived: false,
+        ),
         isFalse,
       );
       expect(
-        sessionVisible(subagent: false, blank: true, isCurrent: true),
+        sessionVisible(
+          subagent: false,
+          blank: true,
+          isCurrent: true,
+          archived: false,
+        ),
         isTrue,
         reason: '正在看的那个 blank 会话要留着,否则用户刚点开就没了',
       );
@@ -110,12 +130,47 @@ void main() {
 
     test('普通会话照常列', () {
       expect(
-        sessionVisible(subagent: false, blank: false, isCurrent: false),
+        sessionVisible(
+          subagent: false,
+          blank: false,
+          isCurrent: false,
+          archived: false,
+        ),
         isTrue,
       );
       expect(
-        sessionVisible(subagent: false, blank: false, isCurrent: true),
+        sessionVisible(
+          subagent: false,
+          blank: false,
+          isCurrent: true,
+          archived: false,
+        ),
         isTrue,
+      );
+    });
+
+    // 归档的默认不列 —— 照 Web 的默认过滤档(`ArchivedFilter === 'default'`):
+    // `case 'default': return !archived.has(session.id)`(`tree.ts:247-248`)。
+    // **归档优先于其他判据**:归档的当前会话也不列(它已经不在列表里了)。
+    test('已归档的不列(哪怕是当前会话)', () {
+      expect(
+        sessionVisible(
+          subagent: false,
+          blank: false,
+          isCurrent: false,
+          archived: true,
+        ),
+        isFalse,
+      );
+      expect(
+        sessionVisible(
+          subagent: false,
+          blank: false,
+          isCurrent: true,
+          archived: true,
+        ),
+        isFalse,
+        reason: '归档不是"藏起来但还开着"——Web 连当前会话也照样过滤',
       );
     });
   });

@@ -550,6 +550,10 @@ button:focus-visible {
 .appbar .ttl {
   flex: 1 1 auto;
   min-width: 0;
+  /* 标题硬上限 220px(照 DSH 的 .crumb{max-width:220px},
+     ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139):
+     标题可省略,但不许吃掉整行 —— 给右侧的点/右抽屉/新建留位置。 */
+  max-width: 220px;
   font-size: 17px;
   font-weight: 600;
   white-space: nowrap;
@@ -557,40 +561,85 @@ button:focus-visible {
   text-overflow: ellipsis;
   padding-left: 2px;
 }
-/* 顶栏状态位:任务/文件变更的常驻入口,点它开右侧抽屉。
-   固定宽度,不吃标题、不被标题挤走。 */
-.statuspill {
+/* 顶栏连接状态点(§7.8):服务中=绿点 / 连接中=转圈 / 其余=红点。
+   形状照 DSH 的 StateDot:10px 槽里画 6px 核(StateDot.module.css:1-15);
+   点本身 30px,给手指留够目标。**它只做连接的事**,点它弹「连接操作」sheet。 */
+.statusdot {
   flex: none;
+  position: relative;
+  width: 30px;
+  height: 30px;
+  margin-right: 2px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+}
+.statusdot::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.statusdot:active {
+  background: var(--hover);
+}
+.statusdot.is-off::after {
+  background: var(--err);
+}
+/* 计数 chip 行(§7.8):顶栏之下的独立一行,子智能体 / 后台任务的计数。
+   有才显示(JS 里 hidden);多枚 chip **换行排**,不横滚 —— 藏起来的计数等于没有计数。 */
+.livechips {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 12px 2px;
+}
+.livechips[hidden] {
+  display: none;
+}
+.livechip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  max-width: 42vw;
-  min-height: 30px;
-  padding: 0 10px;
-  margin-right: 2px;
-  border-radius: 15px;
-  background: var(--layer1);
-  border: 1px solid var(--l1);
-  color: var(--on2);
-  font-size: 11.5px;
-  white-space: nowrap;
-  overflow: hidden;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 14px;
+  background: var(--layer2);
+  color: var(--on3);
+  font-size: 12px;
 }
-.statuspill:active {
-  background: var(--hover);
+.livechip:active {
+  background: var(--active);
 }
-.statuspill .tx {
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* chip 前导槽里的"在跑"信号:DSH 的任务触发条就是一枚转圈点
+   (JobListAction.tsx:534 的 `<StateDot state="ongoing">`),这里用同出自 DSH 图标集的
+   `loading` 那条弧旋转,周期照 StateDot 的 1.5s(StateDot.module.css:44)。 */
+.livechip-dot {
+  display: inline-flex;
+  color: var(--on3);
+  animation: livechip-spin 1.5s linear infinite;
 }
-.statuspill.is-warn {
-  background: var(--warn-bg);
-  border-color: transparent;
-  color: var(--warn);
+@keyframes livechip-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
-.statuspill .n {
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+@media (prefers-reduced-motion: reduce) {
+  .livechip-dot {
+    animation: none;
+  }
+}
+/* 右抽屉入口:DSH 的 ExpandButton 用左侧栏图标的镜像
+   (ui-sidebar-right/src/client/shell/ExpandButton.tsx:13-14),图标集里只有 panelLeft,
+   所以镜像它 —— 不新增字形。 */
+.ib--mirror svg {
+  transform: scaleX(-1);
 }
 .appbar .sub {
   font-size: 11px;
@@ -1334,15 +1383,30 @@ button:focus-visible {
 .code-h .cp {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
   min-height: 32px;
   padding: 0 10px;
   border-radius: 16px;
   color: var(--on3);
 }
+.code-h .cp--icon {
+  width: 32px;
+  padding: 0;
+}
+/* 工具按钮组靠右:标签在左,按钮在右(DSH 的 `.heading` / `.actions` 同分法,
+   CodeToolbar.tsx:42-59)。 */
+.code-h .codegrp {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
 .code-h .cp:active {
   background: var(--hover);
 }
+/* 代码块**默认自动换行**(照 DSH `CodeBlock.tsx:157` 的 `useState(true)`);
+   点自动换行开关后给 `.is-nowrap`,那才是横滚(DSH 的 `data-code-wrap=false` 那一档)。 */
 .code pre {
   margin: 0;
   padding: 13px 14px;
@@ -1350,6 +1414,13 @@ button:focus-visible {
   font-family: var(--mono);
   font-size: 12.5px;
   line-height: 20px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: hidden;
+}
+.code.is-nowrap pre {
+  white-space: pre;
+  word-break: normal;
   overflow-x: auto;
 }
 .tk-k {

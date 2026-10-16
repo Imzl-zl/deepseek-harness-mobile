@@ -55,6 +55,9 @@ export const ERROR_TABLE = {
   'agent-preset/conflict': 'disable-and-annotate',
   // 网关面(gateway/src/index.ts、settings-controller/src/index.ts)
   'gateway/bad-request': 'report-defect', // 我们发的参数宿主不认 = 我们的缺陷
+  // 归档面(workspace-controller/src/commands.ts:172-178)：会话还有在跑的活动，
+  // 归档被拒。**不是故障** —— 手机据此弹"停止并归档"，带 `stopActivity` 重试。
+  'workspace/session-active': 'disable-and-annotate',
   'gateway/cancelled': 'reconnect-once', // 调用被中止，等价于连接层的事
   'gateway/internal': 'backoff-retry', // 宿主内部错，稍后
   // 设置与凭据(settings-controller/src/index.ts:267、credentials.ts)

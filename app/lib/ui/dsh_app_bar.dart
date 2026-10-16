@@ -21,12 +21,11 @@
 /// 在设置页是 `chevronLeft`"这类不一致悄悄出现。
 library;
 
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
+import 'dsh_state_dot.dart';
 
 /// 顶栏上的一个图标按钮（`.ib`）。
 ///
@@ -38,6 +37,7 @@ class DshAppBarButton extends StatelessWidget {
     required this.onPressed,
     this.tooltip,
     this.size = 18,
+    this.mirrorX = false,
   });
 
   /// DSH 图标名（必须是 [DshIcons.names] 里的一员）。
@@ -46,6 +46,14 @@ class DshAppBarButton extends StatelessWidget {
   final VoidCallback? onPressed;
   final String? tooltip;
   final double size;
+
+  /// 把图标**水平镜像**再画。
+  ///
+  /// 只有右抽屉按钮用：DSH 那个按钮的图形就是左侧栏图标的镜像
+  /// （`ui-sidebar-right/src/client/shell/ExpandButton.tsx:13-14` 原注释
+  /// "The glyph is the left sidebar's collapse icon mirrored"），
+  /// 而图标集里只有 `panelLeft` 一个面板图标 —— 镜像它，不新增字形。
+  final bool mirrorX;
 
   @override
   Widget build(BuildContext context) {
@@ -59,7 +67,16 @@ class DshAppBarButton extends StatelessWidget {
         child: InkWell(
           onTap: onPressed,
           child: Center(
-            child: DshIcon(icon, size: size, color: DshColors.labelSecondary),
+            child: mirrorX
+                ? Transform.flip(
+                    flipX: true,
+                    child: DshIcon(
+                      icon,
+                      size: size,
+                      color: DshColors.labelSecondary,
+                    ),
+                  )
+                : DshIcon(icon, size: size, color: DshColors.labelSecondary),
           ),
         ),
       ),
@@ -69,134 +86,58 @@ class DshAppBarButton extends StatelessWidget {
   }
 }
 
-/// 顶栏中段的状态胶囊（`.statuspill`）。
+/// 顶栏上的**连接状态点**（可点）。
 ///
-/// 两种内容（照原型）：**有后台任务显任务**，否则显文件变更。
-/// 它是"会话现在在忙什么"的唯一常驻信号 —— 所以哪怕为空也占位
-/// （不占位的话标题会随内容左右跳）。
-class DshStatusPill extends StatefulWidget {
-  const DshStatusPill({
+/// ## 为什么是点，不是文字胶囊
+///
+/// 原型原来是 `.statuspill`（文字："已连接" / "重连中…"）。手机顶栏宽度有限，
+/// 一行里要塞 `☰ 标题 状态 右抽屉 ＋`，文字状态位把标题挤到只剩一半；
+/// 而 DSH Web 那边**连接正常时根本不显示指示器**（`ConnectionIndicator` 只在
+/// 异常/重连/刚恢复三态出现，`ui-primitives/src/ConnectionIndicator.tsx:29-45`）。
+///
+/// 所以这里取中间形态：**点缩小成状态点**（形状与颜色照 DSH 的 `StateDot`，
+/// 见 `dsh_state_dot.dart`），文字退进 tooltip。
+///
+/// ## 点它做什么（照 DSH 的按钮语义）
+///
+/// DSH 的异常/重连指示器**本身就是"立即重连"按钮**
+/// （`ConnectionIndicator.tsx:75-81`：`onClick={onReconnect}`）。
+/// 手机上把"点它"统一成**连接操作 sheet**：重试连接 / 重新配对 / 打开侧面板 / 断开。
+/// 这样"任何状态 ≤2 步走到重新配对"的硬判据仍然成立（点 1 → sheet 里选 1），
+/// 而右抽屉的入口移交给了隔壁那个独立按钮（见 [ChatAppBar.onOpenSide]）。
+class DshConnectionDotButton extends StatelessWidget {
+  const DshConnectionDotButton({
     super.key,
-    required this.text,
+    required this.state,
+    required this.tooltip,
     required this.onPressed,
-    this.icon = 'loading',
-    this.isWarn = false,
-    this.spin = false,
   });
 
-  final String text;
+  /// 点的语义（由调用方按连接状态映射）。
+  final DshStateDotState state;
+
+  /// tooltip / 无障碍名。文案由 `model/chat_item.dart` 的 `connectionLabel` 给，
+  /// 不在这里另写一套说法。
+  final String tooltip;
+
   final VoidCallback onPressed;
-  final String icon;
-
-  /// 告警色（比如任务失败、有越权操作待批）。
-  final bool isWarn;
-
-  /// 图标是否**转圈**。
-  ///
-  /// 连接中 / 重连中必须转：一个静止的加载图标会被读成"卡住了"
-  /// （2026-10-15 真机反馈："右上角这个重连,他有个图标,但是不转圈,
-  /// 我都以为卡住了"）。静止的图标传达的是"没有在动"，而不是"在等"。
-  final bool spin;
-
-  @override
-  State<DshStatusPill> createState() => _DshStatusPillState();
-}
-
-class _DshStatusPillState extends State<DshStatusPill>
-    with SingleTickerProviderStateMixin {
-  /// **只在真的要转圈时才建**。
-  ///
-  /// 两个坑都踩过：`late final` 懒建会在 `dispose` 里第一次触发创建（元素已
-  /// deactivate，造 ticker 直接抛）；无条件建则让一个不转的胶囊也挂着一个
-  /// 常驻 ticker，跨用例不停就会污染后面的测试。
-  AnimationController? _controller;
-
-  void _startSpin() {
-    _controller ??= AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 1),
-    );
-    // `repeat()` 回 `TickerFuture`，这里不关心它何时完成。
-    unawaited(_controller!.repeat());
-  }
-
-  void _stopSpin() => _controller?.stop();
-
-  /// 取（必要时建）转圈控制器。**只在 `spin` 为真时被调**，
-  /// 所以不转的胶囊不会挂 ticker；`repeat()` 的 future 不关心完成。
-  AnimationController _spinController() {
-    final existing = _controller;
-    if (existing != null) return existing;
-    final created = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 1),
-    );
-    _controller = created;
-    unawaited(created.repeat());
-    return created;
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.spin) _startSpin();
-  }
-
-  @override
-  void didUpdateWidget(DshStatusPill oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.spin == oldWidget.spin) return;
-    if (widget.spin) {
-      _startSpin();
-    } else {
-      _stopSpin();
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
-    final color = widget.isWarn ? DshColors.roleTool : DshColors.labelSecondary;
-    return ConstrainedBox(
-      // `max-width: 42vw`：标题优先，胶囊不能把标题挤没。
-      constraints: BoxConstraints(
-        maxWidth: MediaQuery.of(context).size.width * 0.42,
-        minHeight: 30,
-      ),
-      child: Material(
-        color: widget.isWarn ? DshColors.roleToolBg : DshColors.layer2,
-        borderRadius: BorderRadius.circular(15),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: widget.onPressed,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (widget.spin)
-                  RotationTransition(
-                    turns: _spinController(),
-                    child: DshIcon(widget.icon, size: 13, color: color),
-                  )
-                else
-                  DshIcon(widget.icon, size: 13, color: color),
-                const SizedBox(width: 5),
-                Flexible(
-                  child: Text(
-                    widget.text,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12, color: color),
-                  ),
-                ),
-              ],
-            ),
+    return Tooltip(
+      message: tooltip,
+      child: SizedBox(
+        // 与 `DshAppBarButton` 同尺寸的触摸目标（38×38）——点只有 10~14px，
+        // 直接点它等于让手指去戳一个 1/4 圆钮大小的东西。
+        width: 38,
+        height: 38,
+        child: Material(
+          color: Colors.transparent,
+          shape: const CircleBorder(),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onPressed,
+            child: Center(child: DshStateDot(state)),
           ),
         ),
       ),
@@ -204,18 +145,40 @@ class _DshStatusPillState extends State<DshStatusPill>
   }
 }
 
+/// 顶栏标题的**硬上限**。
+///
+/// 数值照 DSH 的 `.crumb { max-width: 220px }`
+/// （`ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139`）——
+/// 同一条"标题可以省略，但不许吃掉整行"的规矩。用户原话：
+/// *"手机屏小,你需要限制大小,给子智能体,后台任务,这些留位置"*。
+/// 390px 竖屏下，`☰ + 状态点 + 右抽屉 + ＋` 之后正好还放得下 220。
+const double kDshTitleMaxWidth = 220;
+
 /// 聊天页顶栏。
+///
+/// ```
+/// ┌──────────────────────────────────────────┐
+/// │ ☰  标题(≤220,超长省略)    ●   ▷   ⊕      │  height: 56px + safe-top
+/// └──────────────────────────────────────────┘
+/// ```
+///
+/// 每个位置只做一件事，**不互相抢占**（DSH 的分法：`.titleCluster{flex:1;min-width:0}`
+/// 与 `.headerActions{flex:none}`，`ConversationRoot.module.css:83-89`、`:156-161`）：
+///
+/// - `☰` 开左抽屉；`＋` 新建会话；
+/// - `●` 连接状态点 —— 点它弹**连接操作** sheet（重试 / 重新配对 / 断开）；
+/// - `▷` **右抽屉入口**（`panelLeft` 镜像，照 DSH `ExpandButton` 的同一招）——
+///   它原来是挂在状态位上的，状态位缩成点之后必须有自己的席位。
 class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   const ChatAppBar({
     super.key,
     required this.title,
     required this.onOpenDrawer,
     required this.onNewSession,
-    this.statusText,
-    this.statusIcon = 'loading',
-    this.statusIsWarn = false,
-    this.statusSpin = false,
-    this.onStatusTap,
+    required this.connectionState,
+    required this.connectionTooltip,
+    required this.onConnectionTap,
+    required this.onOpenSide,
   });
 
   final String title;
@@ -226,25 +189,23 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   /// `＋` —— 新建会话。
   final VoidCallback onNewSession;
 
-  /// 状态胶囊的文字；`null` = 不显示胶囊。
-  final String? statusText;
-  final String statusIcon;
-  final bool statusIsWarn;
+  /// 连接状态点的语义（由调用方按 `ConnectionStateView` 映射）。
+  final DshStateDotState connectionState;
 
-  /// 状态位图标是否**转圈**（连接中 / 握手中 / 重连中）。
-  ///
-  /// 由调用方按连接状态给：静止的加载图标会被读成"卡住了"
-  /// （2026-10-15 真机反馈："他有个图标,但是不转圈,我都以为卡住了"）。
-  /// 「连接不上」不转 —— 那是结论,不是等待。
-  final bool statusSpin;
-  final VoidCallback? onStatusTap;
+  /// 状态点的 tooltip：文案来自 `model/chat_item.dart` 的 `connectionLabel` ——
+  /// **同一个状态只有一套说法**（抽屉连接行、设置页、这里共用）。
+  final String connectionTooltip;
+
+  final VoidCallback onConnectionTap;
+
+  /// 打开右抽屉（文件 / 任务 / 子智能体）。
+  final VoidCallback onOpenSide;
 
   @override
   Size get preferredSize => const Size.fromHeight(56);
 
   @override
   Widget build(BuildContext context) {
-    final status = statusText;
     return Container(
       color: DshColors.sidebar,
       padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top),
@@ -258,32 +219,38 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
             onPressed: onOpenDrawer,
           ),
           const SizedBox(width: 2),
-          // `flex:1` + `min-width:0`：标题长了省略，且**不挤走右侧**。
+          // 两件事都要：`Expanded` 把右簇钉在右边（否则右簇跟着标题长度漂），
+          // `ConstrainedBox` 给标题**上限**（否则长标题吃光整行）。
           Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: DshColors.labelPrimary,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: kDshTitleMaxWidth),
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: DshColors.labelPrimary,
+                  ),
+                ),
               ),
             ),
           ),
-          if (status != null) ...[
-            const SizedBox(width: 6),
-            DshStatusPill(
-              text: status,
-              icon: statusIcon,
-              isWarn: statusIsWarn,
-              // 转圈由调用方按**连接状态**决定（连接中 / 握手中 / 重连中），
-              // 不是按告警色 —— 「未连接」不需要转,「连接不上」是结论也不转。
-              spin: statusSpin,
-              onPressed: onStatusTap ?? () {},
-            ),
-          ],
           const SizedBox(width: 2),
+          DshConnectionDotButton(
+            state: connectionState,
+            tooltip: connectionTooltip,
+            onPressed: onConnectionTap,
+          ),
+          DshAppBarButton(
+            icon: 'panelLeft',
+            mirrorX: true,
+            tooltip: '打开右侧面板（文件 / 任务 / 子智能体）',
+            onPressed: onOpenSide,
+          ),
           DshAppBarButton(
             icon: 'newChat',
             tooltip: '新建会话',

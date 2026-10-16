@@ -36,6 +36,21 @@ abstract final class DshColors {
   static const roleToolBg = Color(0xFF27241F);
   static const error = Color(0xFFF25A5A);
 
+  // ---- 状态点(照 DSH `ui-primitives` 的 `StateDot`)----
+  //
+  // 三个 token 取暗色块(`design-platform.css` 的 `body[data-ds-dark-theme]`,:284 起):
+  // `--dsw-alias-state-success-primary`=green-500(:371)、
+  // `--dsw-alias-state-error-primary`=red-400(:368)、
+  // `--dsw-alias-state-idle-primary`=neutral-600(:370)。
+  // `ongoing`(转圈)不用这三个:DSH 用 `--dsw-alias-label-tertiary`(StateDot.module.css:39)。
+  //
+  // 与上面的 `roleContext` 是**同值不同 token**:一个是时间线角色徽标,一个是状态点。
+  // 分成两个常量是刻意的 —— DSH 升级换掉其中一个时,另一个不该跟着变。
+  static const stateSuccess = Color(0xFF22C55E); // green-500
+  static const stateError = Color(0xFFF25A5A); // red-400
+  static const stateIdle = Color(0xFF545557); // neutral-600
+  static const stateWarn = Color(0xFFF59E0B); // amber-500(:375)
+
   // ---- 上下文用量分段 ----
   static const ctxSystem = Color(0xFFADB2B8);
   static const ctxTools = Color(0xFFA78BFA);

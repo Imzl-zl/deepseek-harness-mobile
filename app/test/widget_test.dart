@@ -17,6 +17,7 @@ import 'package:dsh_mobile/core/pairing_client.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/core/transport.dart';
 import 'package:dsh_mobile/data/app_model.dart';
+import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/model/permission.dart';
 import 'package:dsh_mobile/model/send_mode.dart';
 import 'package:dsh_mobile/theme/dsh_icons.dart';
@@ -24,6 +25,7 @@ import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/chat_page.dart';
 import 'package:dsh_mobile/ui/dsh_app_bar.dart';
 import 'package:dsh_mobile/ui/dsh_composer.dart';
+import 'package:dsh_mobile/ui/dsh_state_dot.dart';
 import 'package:dsh_mobile/ui/pairing_page.dart';
 import 'package:dsh_mobile/ui/session_drawer.dart';
 import 'package:dsh_mobile/ui/side_pane.dart';
@@ -786,13 +788,13 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // 第 1 次点击：顶栏连接状态位（已配对时常驻，点它开连接操作 sheet）。
+      // 第 1 次点击：顶栏连接状态点（常驻，点它弹连接操作 sheet）。
       expect(
-        find.byType(DshStatusPill),
+        find.byType(DshConnectionDotButton),
         findsOneWidget,
-        reason: '已配对时连接状态位必须常驻，否则重配没有 ≤2 步的落点',
+        reason: '连接状态点必须常驻，否则重配没有 ≤2 步的落点',
       );
-      await tester.tap(find.byType(DshStatusPill));
+      await tester.tap(find.byType(DshConnectionDotButton));
       await tester.pumpAndSettle();
       expect(find.text('重新配对（换一台电脑）'), findsOneWidget);
       expect(find.text('打开侧面板'), findsOneWidget);
@@ -941,12 +943,13 @@ void main() {
     });
   });
 
-  // 顶栏状态位的点击分工：**serving 时开右抽屉**（基线行为，右bar 的入口），
-  // **不在服务态时弹连接操作 sheet**（议题 3 的 ≤2 步出路）。
-  // 2026-10-15 曾把状态位整个占给重配入口，右bar 只剩 sheet 里一条路 ——
-  // 用户原话"web 右边有个侧栏,手机右边也可以做一个"。
-  group('顶栏状态位:serving 开右bar,异常出连接 sheet', () {
-    testWidgets('serving:点状态位开右侧抽屉(右bar 一步可达)', (tester) async {
+  // 顶栏**连接状态点**：一个点只做一件事 —— 弹连接操作 sheet（**含 serving**）。
+  // 照 DSH 的按钮语义（`ui-primitives/src/ConnectionIndicator.tsx:75-81`：异常/重连
+  // 指示器本身就是"立即重连"按钮）。**右抽屉入口搬到自己那个按钮上** ——
+  // DSH 同分法：右面板入口是 header 角落的 `ExpandButton`，与连接指示器无关
+  // （`ui-sidebar-right/src/client/index.ts:238-239`）。
+  group('顶栏：连接状态点只做连接的事，右抽屉有自己的按钮', () {
+    testWidgets('serving：点状态点弹连接 sheet（不再抢右抽屉）', (tester) async {
       final client = _StatefulFakeClient(
         sessions: [
           {'sid': 's1', 'itemCount': 3, 'updatedAt': 1},
@@ -961,27 +964,142 @@ void main() {
 
       expect(find.byType(SidePane), findsNothing, reason: '右抽屉还没开');
 
-      await tester.tap(find.byType(DshStatusPill));
-      await tester.pumpAndSettle();
-
-      expect(
-        find.byType(SidePane),
-        findsOneWidget,
-        reason: 'serving 时状态位必须是右抽屉的入口(原型 §7.8)',
-      );
-      expect(find.text('重新配对（换一台电脑）'), findsNothing);
-    });
-
-    testWidgets('不在服务态:点状态位弹连接操作 sheet(≤2 步出路)', (tester) async {
-      final app = AppModel(client: FakeClient());
-      await tester.pumpWidget(_wrap(app, paired: true));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byType(DshStatusPill));
+      await tester.tap(find.byType(DshConnectionDotButton));
       await tester.pumpAndSettle();
 
       expect(find.text('重新配对（换一台电脑）'), findsOneWidget);
-      expect(find.text('打开侧面板'), findsOneWidget);
+      expect(
+        find.byType(SidePane),
+        findsNothing,
+        reason: '点状态点只弹连接 sheet；右抽屉有自己的按钮',
+      );
+    });
+
+    testWidgets('右抽屉按钮一步开 SidePane', (tester) async {
+      final app = AppModel(
+        client: FakeClient(
+          sessions: [
+            {'sid': 's1', 'updatedAt': 1},
+          ],
+        ),
+      );
+      await app.refreshSessions();
+      await tester.pumpWidget(_wrap(app, paired: true));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SidePane), findsNothing);
+      await tester.tap(find.byTooltip('打开右侧面板（文件 / 任务 / 子智能体）'));
+      await tester.pumpAndSettle();
+      expect(
+        find.byType(SidePane),
+        findsOneWidget,
+        reason: '右抽屉必须有自己的一步入口（原入口挂在状态位上）',
+      );
+    });
+
+    testWidgets('点跟着连接状态变：服务中=绿点，重连中=转圈', (tester) async {
+      final client = _StatefulFakeClient(
+        sessions: [
+          {'sid': 's1', 'updatedAt': 1},
+        ],
+      );
+      final app = AppModel(client: client);
+      await app.start();
+      await tester.pumpWidget(_wrap(app, paired: true));
+      await tester.pumpAndSettle();
+
+      DshStateDotState dot() =>
+          tester.widget<DshStateDot>(find.byType(DshStateDot)).state;
+
+      client.emit(ConnectionState.serving);
+      await tester.pumpAndSettle();
+      expect(dot(), DshStateDotState.done, reason: '服务中画绿点');
+
+      client.emit(ConnectionState.backoff);
+      // **不能用 `pumpAndSettle`**：转圈是一个永不结束的动画（1.5s 循环），
+      // settle 会一直等下去 —— 超时而不是失败。推进两帧看状态就够。
+      await tester.pump();
+      await tester.pump();
+      expect(dot(), DshStateDotState.ongoing, reason: '重连中画转圈');
+    });
+  });
+
+  // 顶栏标题**限宽**：数值照 DSH 的 `.crumb{max-width:220px}`
+  // （`ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139`）。
+  // 用户原话："web 屏幕大能显示很多,手机屏小,你需要限制大小,给子智能体,
+  // 后台任务,这些留位置"。
+  group('顶栏标题限宽与计数 chip 的席位', () {
+    Widget bar(String title) => MaterialApp(
+      theme: DshTheme.dark(),
+      home: Scaffold(
+        appBar: ChatAppBar(
+          title: title,
+          onOpenDrawer: () {},
+          onNewSession: () {},
+          connectionState: DshStateDotState.done,
+          connectionTooltip: '连接状态：已连接（点按查看连接操作）',
+          onConnectionTap: () {},
+          onOpenSide: () {},
+        ),
+      ),
+    );
+
+    testWidgets('长标题被限到 220px，四个位置一个不少', (tester) async {
+      const long = '手机端控制电脑DSH方案与顶栏布局';
+      await tester.pumpWidget(bar(long * 6));
+      await tester.pumpAndSettle();
+
+      final title = tester.getRect(find.text(long * 6));
+      expect(
+        title.width,
+        lessThanOrEqualTo(kDshTitleMaxWidth + 0.5),
+        reason: '标题上限 $kDshTitleMaxWidth（照 DSH `.crumb` 的 max-width:220px）',
+      );
+      expect(find.byTooltip('打开会话抽屉'), findsOneWidget);
+      expect(find.byType(DshConnectionDotButton), findsOneWidget);
+      expect(find.byTooltip('打开右侧面板（文件 / 任务 / 子智能体）'), findsOneWidget);
+      expect(find.byTooltip('新建会话'), findsOneWidget);
+    });
+
+    testWidgets('360px 长标题：不溢出', (tester) async {
+      final view = tester.view;
+      view.physicalSize = const Size(360, 800);
+      view.devicePixelRatio = 1;
+      addTearDown(() {
+        view.resetPhysicalSize();
+        view.resetDevicePixelRatio();
+      });
+
+      await tester.pumpWidget(bar('手机端控制电脑DSH方案与顶栏布局' * 6));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull, reason: '360px 宽下顶栏不许溢出');
+    });
+
+    testWidgets('状态点语义：7 个连接状态各归哪一档', (tester) async {
+      expect(dotStateOf(ConnectionStateView.serving), DshStateDotState.done);
+      for (final state in const [
+        ConnectionStateView.connecting,
+        ConnectionStateView.handshaking,
+        ConnectionStateView.backoff,
+      ]) {
+        expect(
+          dotStateOf(state),
+          DshStateDotState.ongoing,
+          reason: '$state 在等，必须转（静止会被读成"卡住了"）',
+        );
+      }
+      for (final state in const [
+        ConnectionStateView.idle,
+        ConnectionStateView.closed,
+        ConnectionStateView.gaveUp,
+      ]) {
+        expect(
+          dotStateOf(state),
+          DshStateDotState.error,
+          reason: '$state 需要用户做点什么',
+        );
+      }
     });
   });
 }

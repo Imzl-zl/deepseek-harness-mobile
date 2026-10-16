@@ -174,10 +174,7 @@ class AppModel extends ChangeNotifier {
       // 解析出错 / 类型不对 / 超时都只该让"这一批只读面显示空态"，
       // 逃逸成未处理的异步错误会让 `openSession` 半途而废 ——
       // 症状是"会话打开了但统计条/权限档永远空着且不报错"。
-      _lastError = error is ProtocolException
-          ? error
-          : ProtocolException(ErrorCode.internal, '读取会话投影失败：$error');
-      if (!_disposed) notifyListeners();
+      _recordError('读取会话投影失败', error);
     }
   }
 
@@ -304,10 +301,7 @@ class AppModel extends ChangeNotifier {
     } catch (error) {
       // **兜住所有异常，不只 `ProtocolException`**（与 `refreshSessions`
       // 同一条纪律）：解析出错 / 形状不对 / 超时都不该逃逸成未处理的异步错误。
-      _lastError = error is ProtocolException
-          ? error
-          : ProtocolException(ErrorCode.internal, '切换权限档失败：$error');
-      if (!_disposed) notifyListeners();
+      _recordError('切换权限档失败', error);
       return null;
     }
   }
@@ -877,10 +871,7 @@ class AppModel extends ChangeNotifier {
       // 只接 `ProtocolException` 的话，任何别的错（解析、类型、超时…）
       // 都会逃逸成未处理的异步错误 —— 界面**停在空列表且不报错**，
       // 而那正是"连上了却永远没有会话"最容易被误判成"电脑上真没有"的形态。
-      _lastError = error is ProtocolException
-          ? error
-          : ProtocolException(ErrorCode.internal, '拉取会话列表失败：$error');
-      if (!_disposed) notifyListeners();
+      _recordError('拉取会话列表失败', error);
     }
 
     // 模型目录：**与会话清单同源但不同周期** —— 它很少变，所以跟清单一起拉。
@@ -919,6 +910,10 @@ class AppModel extends ChangeNotifier {
       final result = await client.call<Object?>('workspace.list', const {});
       if (_disposed) return;
       _workspaces = _parseWorkspaces(result);
+      // 归档集与工作区分组**同一份应答**（`workspace.list` 带 `archivedSessionIds`）——
+      // 分两次解析会让"列表看过一眼、归档集还是旧的"。
+      final archived = _parseArchivedIds(result);
+      if (archived != null) _archivedSids = archived;
       if (!_disposed) notifyListeners();
     } catch (_) {
       // 附属信息：不把"拉不到工作区"升级成"会话列表也失败了"。
@@ -928,6 +923,92 @@ class AppModel extends ChangeNotifier {
   /// 工作区分组（**空列表 = 不分组**）。
   List<WorkspaceGroup> get workspaces => _workspaces;
   List<WorkspaceGroup> _workspaces = const [];
+
+  /// 已归档的会话 sid 集合（`workspace.list` 的 `archivedSessionIds`）。
+  ///
+  /// 它是**列表可见性的第三个判据**（`sessionVisible`，照 DSH Web 的默认过滤档
+  /// `ui-workspace/src/client/tree.ts:247-248`）。归档不是删除：手机在「归档」
+  /// 列表里列它们，取消归档就回原位。
+  Set<String> get archivedSids => _archivedSids;
+  Set<String> _archivedSids = const {};
+
+  /// 已归档的会话行（顺序照会话列表，不另排）。
+  List<SessionSummary> get archivedSessions => [
+    for (final s in sessions)
+      if (_archivedSids.contains(s.sid)) s,
+  ];
+
+  /// 归档一个会话。
+  ///
+  /// - **不带 `stopActivity`**：有活动在跑的会话会被宿主拒（`workspace/session-active`）——
+  ///   那是**信息**不是故障。调用方据此弹「停止并归档」（DSH 的 Web 就是这样：
+  ///   `ui-workspace/src/client/index.ts:190-208`），带 `stopActivity: true` 重发。
+  /// - 成功时把应答里的**归档全集**落进 [archivedSids]（宿主的应答就是权威值，
+  ///   不本地猜）。
+  ///
+  /// @returns 成功与否；失败原因在 [lastError]（`code` 是 `workspace/session-active`
+  /// 时该走"停止并归档"）。
+  Future<bool> archiveSession(String sid, {bool stopActivity = false}) async {
+    try {
+      final result = await client.call<Object?>(
+        'workspace.archive',
+        {
+          'sid': sid,
+          // 只在真的要停时才带这个键：DSH 判的是 `=== true`，
+          // 塞一个 false 进去是另一种语义（见 `dsh/workspaces.ts` 的注释）。
+          if (stopActivity) 'stopActivity': true,
+        },
+        requestId: 'arc-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      _applyArchiveSet(result);
+      return true;
+    } catch (error) {
+      _recordError('归档失败', error);
+      return false;
+    }
+  }
+
+  /// 取消归档（**宿主侧幂等**：没归档过的 id 也成功）。
+  Future<bool> unarchiveSession(String sid) async {
+    try {
+      final result = await client.call<Object?>(
+        'workspace.unarchive',
+        {'sid': sid},
+        requestId: 'unarc-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      _applyArchiveSet(result);
+      return true;
+    } catch (error) {
+      _recordError('取消归档失败', error);
+      return false;
+    }
+  }
+
+  /// 落归档全集。**认不出就不动**：一个有损的解析会让"哪条是归档的"错位，
+  /// 而错位的表现只是"列表里少了一条"，最难查的那类。
+  void _applyArchiveSet(Object? result) {
+    final ids = _parseArchivedIds(result);
+    if (ids == null || _disposed) return;
+    _archivedSids = ids;
+    notifyListeners();
+  }
+
+  /// 记一次失败（与 `switchPermission` 同一条纪律：**兜住所有异常**，
+  /// 不只 `ProtocolException`，别让形状不对 / 超时逃逸成未处理的异步错误）。
+  void _recordError(String what, Object error) {
+    _lastError = error is ProtocolException
+        ? error
+        : ProtocolException(ErrorCode.internal, '$what：$error');
+    if (!_disposed) notifyListeners();
+  }
+
+  /// 解析归档全集（`{archivedSessionIds: [...]}`）；**形状不认识给 `null`**。
+  static Set<String>? _parseArchivedIds(Object? result) {
+    if (result is! Map) return null;
+    final ids = result['archivedSessionIds'];
+    if (ids is! List) return null;
+    return ids.whereType<String>().where((s) => s.isNotEmpty).toSet();
+  }
 
   /// 解析 `workspace.list`。认不出就给空列表（不分组）。
   static List<WorkspaceGroup> _parseWorkspaces(Object? result) {

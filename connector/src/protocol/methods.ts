@@ -72,8 +72,14 @@ export const METHODS = [
   // 而"会话属于哪个工作区"只存在于 `WorkspaceView.sessionIds`
   // （`packages/api/workspace-controller/src/types.ts:18-30`）——
   // `SessionSummary` 里**没有** workspaceId，所以手机要照 Web 分组只能读这里。
-  // 只读；写入（改名 / 移动会话 / 归档）是电脑侧的操作，本期不做。
+  // 只读；写入（改名 / 移动会话）仍不做。归档与取消归档**是例外**：
+  // 手机上有它们的位置（抽屉左滑归档 + 归档列表里取消归档），宿主侧缝也齐全
+  // （`workspace-controller/src/index.ts:154-166` 的两个 `@Remote`）。
   'workspace.list',
+  // 归档 / 取消归档。`stopActivity` 见 `dsh/workspaces.ts` 的注释：不带它时
+  // 有活动在跑的会话会被拒（`workspace/session-active`），带上才停活动。
+  'workspace.archive',
+  'workspace.unarchive',
   // 端点自报：当前可拨的地址表（中转 + 局域网直连）。只读。
   // 手机据此建"连接方式"列表，并在 IP 变了之后自愈 —— 详见 `endpoints.ts` 的文件头。
   'endpoint.describe',
@@ -103,6 +109,9 @@ export const IDEMPOTENT_METHODS: ReadonlySet<MethodName> = new Set([
   'settings.update',
   'credentials.set',
   'credentials.unset',
+  // 归档是用户指令：重发不该落两次（宿主侧幂等，但指令层不靠它兜）。
+  'workspace.archive',
+  'workspace.unarchive',
 ])
 
 export function isMethod(value: unknown): value is MethodName {

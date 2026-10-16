@@ -21,7 +21,10 @@
  * 而本期只解决"列表能按工作区分组"。增量留白是如实的：工作区改名/新加工作区
  * 要等下一次读取。
  */
-import type { WorkspaceController } from '@deepseek-ai/dsh-api-workspace-controller'
+import type { WorkspaceArchiveSessionRequest, WorkspaceController } from '@deepseek-ai/dsh-api-workspace-controller'
+
+/** DSH 的会话 id 类型（`SessionId` 是带品牌的字符串，跨界要显式转一次）。 */
+type DshSessionId = WorkspaceArchiveSessionRequest['sessionId']
 
 /** 一个工作区（通道 §5.7 的 `workspace.list` 行）。 */
 export interface WorkspaceRow {
@@ -40,9 +43,21 @@ export interface WorkspacesSnapshot {
   archivedSessionIds: readonly string[]
 }
 
-/** 工作区读取面（**收窄成这一层真正用到的方法**）。 */
+/** 工作区读取面 + 两个归档写方法（**收窄成这一层真正用到的方法**）。 */
 export interface WorkspacesPort {
   list(): Promise<WorkspacesSnapshot>
+  /**
+   * 归档一个会话，返回**归档全集**（DSH id）。
+   *
+   * `stopActivity` 的语义照 DSH：**不带**它时，有在跑的轮次/子智能体/后台任务的会话
+   * 会被拒（`workspace/session-active`）；带上它，宿主先请求停掉那些活动
+   * （`packages/api/workspace-controller/src/types.ts:115-125`、
+   * `commands.ts:162-183`）。Web 的"停止并归档"对话框走的就是带它的那条
+   * （`ui-workspace/src/client/index.ts:205-208`）。
+   */
+  archive(sessionId: string, stopActivity: boolean): Promise<readonly string[]>
+  /** 取消归档。**幂等**：没归档过的 id 也成功（DSH `commands.ts:185-195` 的原注释）。 */
+  unarchive(sessionId: string): Promise<readonly string[]>
 }
 
 /**
@@ -81,6 +96,23 @@ export function createWorkspacesPort(
         clearTimeout(timer)
         abort.abort()
       }
+    },
+
+    async archive(sessionId, stopActivity) {
+      const value = await controller.archiveSession({
+        sessionId: sessionId as DshSessionId,
+        // 缺省时**不进请求体**：DSH 的语义是"不带就是不带"
+        // （`commands.ts:164-167` 判的是 `=== true`）。
+        ...(stopActivity ? { stopActivity: true } : {}),
+      })
+      return value.archivedSessionIds.map(String)
+    },
+
+    async unarchive(sessionId) {
+      const value = await controller.unarchiveSession({
+        sessionId: sessionId as DshSessionId,
+      })
+      return value.archivedSessionIds.map(String)
     },
   }
 }

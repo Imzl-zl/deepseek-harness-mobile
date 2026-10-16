@@ -174,6 +174,7 @@ type Frame =
 | `session/writer-held` | 会话被别的写者占着 | 退避后重试 |
 | `session/conflict` | 预设等冲突 | 置灰并注明 |
 | `workspace/not-found` | 新建会话时 workspace 不存在 | 置灰并注明 |
+| `workspace/session-active` | 归档不被接受:会话还有在跑的活动(轮次 / 子智能体 / 后台任务) | **弹"停止并归档"**,带 `stopActivity` 重发;不是报错了事 |
 | `agent-preset/conflict` | agent 预设冲突 | 置灰并注明 |
 | `gateway/bad-request` | **我们发的参数宿主不认 = 我们的缺陷** | 响亮失败并记录,**不让用户重试** |
 | `gateway/cancelled` | 调用被中止 | 重连一次 |
@@ -384,7 +385,9 @@ type SyncSnapshot = {
 | `settings.describe` / `settings.update` | 手机→电脑 | `requestId` | 读写设置(密钥面见下) |
 | `credentials.set` / `credentials.unset` | 手机→电脑 | `requestId` | **单向写面**,无读方法。DSH 侧是 `settings-controller/src/credentials.ts:100` 的 `set(ref, value)` 与 `:113` 的 `unset(ref)`;`value` 是明文(§7.5 的"改密钥只发新值"由此天然成立),而读面 `describe`(:83)**默认脱敏**(`redactSecrets`) |
 | `devices.list` | 手机→电脑 | — | 设备管理。**吊销不是方法**:名册的写入方本来就是电脑侧,吊销 = 不再把该设备报进名册 + 本地标 `revokedAt`(§8.2) |
-| `workspace.list` | 手机→电脑 | — | **只读**的工作区清单 + 每个工作区的会话 id(会话列表按它分组)。形状与 DSH 的 `WorkspaceView` 逐字一致(`packages/api/workspace-controller/src/types.ts:18-30`)。"会话属于哪个工作区"只存在于这一侧 —— `SessionSummary` 里**没有** `workspaceId`(`types.ts:177-190`),所以照 Web 分组只能读这里;按 `cwd` 猜是第二份真值。按能力位挂:缺 `workspaceController` 时方法不出现,手机退回不分组。写入(改名 / 移动会话 / 归档)是电脑侧操作,本期不做 |
+| `workspace.list` | 手机→电脑 | — | **只读**的工作区清单 + 每个工作区的会话 id(会话列表按它分组) + **已归档会话清单** `archivedSessionIds`。形状与 DSH 的 `WorkspaceView` 逐字一致(`packages/api/workspace-controller/src/types.ts:18-30`、`:152-157` 的基线带归档集)。"会话属于哪个工作区"只存在于这一侧 —— `SessionSummary` 里**没有** `workspaceId`(`types.ts:177-190`),所以照 Web 分组只能读这里;按 `cwd` 猜是第二份真值。**归档清单与会话 id 一起过别名**(同一份载荷里两种 id 约定只换一半,手机就永远对不上)。按能力位挂:缺 `workspaceController` 时方法不出现,手机退回不分组 |
+| `workspace.archive` | 手机→电脑 | `requestId` | 归档一个会话。DSH 的 `WorkspaceController.archiveSession`(`packages/api/workspace-controller/src/index.ts:154`,请求 `{sessionId, stopActivity?}`,`types.ts:115-125`)——**与 Web 同一个方法**(Web 点归档就是调它,`ui-workspace/src/client/navigation.ts:300`)。不带 `stopActivity` 时,有活动的会话被拒为 `workspace/session-active`(§3.1);Web 由"停止并归档"对话框带 `true` 重发(`ui-workspace/src/client/index.ts:190-208`),手机照同一条。返回**归档全集**(`{archivedSessionIds}`,id 已换成手机见的 `sid`) |
+| `workspace.unarchive` | 手机→电脑 | `requestId` | 取消归档。DSH 的 `unarchiveSession`(`index.ts:164`)。**幂等**:没归档过的 id 也成功(`commands.ts:185-195` 原注释)。同样回归档全集 |
 | `sync.hello` | 手机→电脑 | — | §5.4 的恢复握手。**两个职责**:① 一次声明整份订阅集(手机回到前台时要恢复的是"所有会话",不是一个;断线之后 UI 不会重新 `subscribe`,所以恢复由持有连接的这一层发起);② 上报前后台态(`app`)。每个声明的会话都走同一个 `session.subscribe` 的订阅面,不另起一套恢复语义;失败语义与它逐字一致(一个别名未知就整票失败并回 `session/not-found`) |
 | `endpoint.describe` | 手机→电脑 | — | **端点自报**:当前可拨的地址表(`{ endpoints: [{kind,url,label?}] }`,`kind` ∈ `relay`/`direct`)。没有直连监听面时这个方法**不出现**(能力位 `caps.direct` 为 false),而不是挂上去回 `connector/unsupported`。手机据此建"连接方式"列表,并在 IP 变了之后自愈 —— 顺序即偏好(`direct` 先于 `relay`)。取舍与被否方案(二维码字段 / mDNS / 手填 / 塞进 `sync.hello`)见 `.agents/notes/implemented/2026-10-14-endpoint-switching-lan-direct.md` |
 | `repo.info` | 手机→电脑 | — | 版本、能力位、别名→会话元的映射版本 |
@@ -540,7 +543,7 @@ claim(请求) :=
 
 ### 6.4 手机端表达
 
-- 审批 / 提问**接管输入栏**(见 `design-and-tech-plan.md` §7.2、§7.8),不占顶栏状态位。
+- 审批 / 提问**接管输入栏**(见 `design-and-tech-plan.md` §7.2、§7.8),不占顶栏。
 - **一个答案批次形状覆盖全部三种交互**——这是 DSH 的原生设计,不是我们的简化:
   `AskUserQuestionItem` 带一个可选 `intent` 标签,而 DSH 的注释明说
   *"an intent changes presentation only, never the protocol"*

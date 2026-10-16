@@ -91,10 +91,9 @@ await shot('03-drawer-search.png')
 await evalJs(async () => {
   const q = s => document.querySelector(s)
   q('#scrim').click(); await new Promise(r => setTimeout(r, 450))
-  q('#statusPill').click(); await new Promise(r => setTimeout(r, 350))
-  // 顶栏状态位改弹「连接操作」sheet;右抽屉改经 sheet 的「打开侧面板」进入(见 app.js status-open)
-  const openSide = [...document.querySelectorAll('.sheet .sitem')].find(b => b.textContent.includes('打开侧面板'))
-  if (openSide) { openSide.click(); await new Promise(r => setTimeout(r, 500)) }
+  // 顶栏 ▷ 右抽屉按钮一步进入(2026-10-16 起右抽屉入口是自己的按钮,
+  // 连接状态点只弹「连接操作」sheet —— 见 app.js 的 side-open / status-open)
+  q('#sideOpen').click(); await new Promise(r => setTimeout(r, 500))
   const tab = q('.stab[data-panel="jobs"]'); if (tab && !tab.classList.contains('is-on')) { tab.click(); await new Promise(r => setTimeout(r, 400)) }
 })
 await shot('04-side-jobs.png')

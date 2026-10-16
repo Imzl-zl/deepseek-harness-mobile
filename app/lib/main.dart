@@ -46,6 +46,7 @@ import 'platform/ticketed_transport.dart';
 import 'platform/transport_factory.dart';
 import 'platform/websocket_transport.dart';
 import 'theme/dsh_theme.dart';
+import 'ui/archive_sheet.dart';
 import 'ui/chat_page.dart';
 import 'ui/connection_actions_sheet.dart';
 import 'ui/pairing_page.dart';
@@ -279,7 +280,7 @@ class _DshMobileAppState extends State<DshMobileApp> {
             DrawerFootItem(
               icon: 'archive',
               label: '归档',
-              onTap: () => _notYet('归档列表'),
+              onTap: () => unawaited(_openArchive()),
             ),
             // 标签与图标**照原型基线**（`mock/proto/index.html:487` 的「演示」+ `play`）——
             // 手机上原来写「示例」+ `sparkle`，与基线漂移，看起来像自己加的功能。
@@ -301,6 +302,9 @@ class _DshMobileAppState extends State<DshMobileApp> {
             unawaited(Navigator.of(context).maybePop());
             unawaited(app.openSession(session.sid));
           },
+          // 左滑归档（原型基线的行动作）。`workspace.archive` 是 2026-10-16 接上的
+          // ——此前这个参数一直是死的（没人传），所以货架上没有归档这条路。
+          onArchive: (session) => unawaited(_archiveFromDrawer(session)),
           // 点连接状态行 → 已配对时给"重新配对 / 断开"的选择，没配对上配对页。
           onClose: () {
             if (_credentials == null) {
@@ -313,6 +317,39 @@ class _DshMobileAppState extends State<DshMobileApp> {
         ),
       ),
     );
+  }
+
+  /// 打开归档列表（抽屉底栏「归档」）。
+  ///
+  /// 先收抽屉再弹 sheet —— 与 `_showConnectionSheet` 同一条：sheet 盖开着抽屉
+  /// 会留下一个幽灵层（原型里那条 `closeLayer("sheet", true)` 的教训），
+  /// 手机上则表现为"关掉 sheet 后抽屉还开着"。
+  Future<void> _openArchive() async {
+    final app = _app;
+    if (app == null) return;
+    unawaited(Navigator.of(context).maybePop());
+    await showArchiveSheet(
+      context,
+      app: app,
+      onUnarchive: (sid) => app.unarchiveSession(sid),
+    );
+  }
+
+  /// 归档一个会话（抽屉行左滑的动作）。
+  ///
+  /// **"还在跑"不是错误**：会话有在跑的轮次 / 子智能体 / 后台任务时，
+  /// 宿主回 `workspace/session-active`（`workspace-controller/src/commands.ts:172-178`）——
+  /// 那是信息，不是故障。照 Web 的同一条（`ui-workspace/src/client/index.ts:190-208`）：
+  /// 弹「停止并归档」确认，用户点了才带 `stopActivity` 重发。
+  Future<void> _archiveFromDrawer(DrawerSession session) async {
+    final app = _app;
+    if (app == null) return;
+    if (await app.archiveSession(session.sid)) return;
+    if (!mounted) return;
+    if (app.lastError?.code != ErrorCode.workspaceSessionActive) return;
+    if (!await confirmStopAndArchive(context, title: session.title)) return;
+    if (!mounted) return;
+    await app.archiveSession(session.sid, stopActivity: true);
   }
 
   /// 抽屉连接行的详情（换设备 / 断开重配）。
@@ -416,6 +453,9 @@ class _DshMobileAppState extends State<DshMobileApp> {
             subagent: s.subagent,
             blank: s.blank,
             isCurrent: s.sid == app.currentSid,
+            // 已归档的默认不列（照 Web 的默认过滤档）——
+            // 它们在自己的「归档」列表里，取消归档就回原位。
+            archived: app.archivedSids.contains(s.sid),
           ),
         )
         .toList();

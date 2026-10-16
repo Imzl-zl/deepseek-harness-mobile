@@ -18,10 +18,17 @@
       <header class="appbar">
         <button class="ib" data-act="drawer-open" data-icon="panelLeft" aria-label="打开会话抽屉"></button>
         <h1 class="ttl">手机端控制电脑DSH方案</h1>
-        <!-- 状态位:有后台任务显示任务状态,没有就显示文件变更;点它弹右侧抽屉 -->
-        <button class="statuspill" id="statusPill" data-act="status-open" aria-label="会话状态"></button>
+        <!-- 顶栏四件各做一件事(§7.8):●=连接状态点(点它弹连接操作 sheet),
+             ▷=右抽屉入口(panelLeft 镜像,照 DSH 的 ExpandButton),⊕=新建会话 -->
+        <button class="statusdot" id="statusDot" data-act="status-open" aria-label="连接状态"></button>
+        <button class="ib ib--mirror" id="sideOpen" data-act="side-open" data-icon="panelLeft" aria-label="打开右侧面板"></button>
         <button class="ib" data-act="new-session" data-icon="newChat" aria-label="新建会话"></button>
       </header>
+
+      <!-- 计数 chip 行(§7.8):子智能体 / 后台任务计数,**有才显示**(没有整行不占位),
+           点它开右抽屉对应面板。手机放不下 Web 那种"与标题同行"的 header band,
+           所以另起一行(有意偏离见 §7.8)。 -->
+      <div class="livechips" id="liveChips" hidden></div>
 
       <div class="seg" id="mainSeg" role="tablist">
         <span class="seg-ind"></span>
@@ -53,10 +60,15 @@
                     <li>长按消息 / 长按列表行 → 底部 sheet</li>
                   </ul>
 
-                  <div class="code">
+                  <div class="code" id="sampleCode">
                     <div class="code-h">
                       <span>dart · chat_page.dart</span>
-                      <button class="cp" data-act="copy-code" data-copy="ModalNavigationDrawer(drawer: const SessionDrawer(), child: ...)"><span data-icon="copy" data-icon-size="14"></span>复制</button>
+                      <span class="codegrp">
+                        <!-- 自动换行开关:照 DSH 的 CodeToolbar(CodeBlock.tsx:157 默认换行,
+                             图标在 nowrapFill / wrapFill 之间切)。 -->
+                        <button class="cp cp--icon" id="codeWrap" data-act="code-wrap" aria-label="取消自动换行" title="取消自动换行"><span data-icon="nowrapFill" data-icon-size="14"></span></button>
+                        <button class="cp cp--icon" data-act="copy-code" data-copy="ModalNavigationDrawer(drawer: const SessionDrawer(), child: ...)" aria-label="复制" title="复制"><span data-icon="copy" data-icon-size="14"></span></button>
+                      </span>
                     </div>
 <pre><span class="tk-c">// DSH 配色 → M3,导航换成 M3 抽屉</span>
 <span class="tk-k">final</span> scheme = <span class="tk-f">ColorScheme</span>.dark(

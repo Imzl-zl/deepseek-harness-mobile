@@ -97,20 +97,21 @@ const out = await evalJs(async () => {
   res.gate = { permSheet, gateTitle: q('.sheet-h') ? q('.sheet-h').textContent.trim() : null, ack: !!q('[data-gate="ack"]') }
   if (q('.sheet')) { q('.sheet-scrim').click(); await sleep(400) }
 
-  // 5) 侧抽屉:点顶栏连接状态位 → 先弹「连接操作」sheet(表头含"连接"),
-  //    再由 sheet 里的「打开侧面板」开右抽屉。原侧抽屉断言(过渡/遮罩/面板集合/关闭)一条不少。
+  // 5) 顶栏:● 连接状态点 → 先弹「连接操作」sheet(表头含"连接");关掉 sheet 后
+  //    ▷ 右抽屉按钮(sideOpen)**一步**开右抽屉。原侧抽屉断言(过渡/遮罩/面板集合/关闭)一条不少。
   const cs = getComputedStyle(q('#pageSide'))
-  q('#statusPill').click(); await sleep(320)
+  q('#statusDot').click(); await sleep(320)
   const connSheet = q('.sheet')
   const connSheetOpen = !!connSheet && !!(q('.sheet-h') && q('.sheet-h').textContent.includes('连接'))
   const openSideBtn = connSheet ? [...connSheet.querySelectorAll('.sitem')].find(b => b.textContent.includes('打开侧面板')) : null
-  if (openSideBtn) openSideBtn.click()
-  await sleep(60)
+  if (q('.sheet-scrim')) { q('.sheet-scrim').click(); await sleep(400) }   // 关掉连接 sheet
+  q('#sideOpen').click(); await sleep(60)
   const mid = getComputedStyle(q('#pageSide')).transform
   await sleep(500)
   res.side = {
     connSheetOpen,
-    openSideFromSheet: !!openSideBtn,
+    sheetHasOpenSide: !!openSideBtn,
+    openedByTopButton: q('#pageSide').classList.contains('is-in'),
     transition: cs.transitionProperty + ' ' + cs.transitionDuration,
     animatedMidway: mid !== 'none' && mid !== '',
     scrimOn: q('#sideScrim').classList.contains('is-on'),
@@ -118,6 +119,35 @@ const out = await evalJs(async () => {
   }
   q('#sideScrim').click(); await sleep(450)
   res.side.closedByScrim = !q('#pageSide').classList.contains('is-in')
+
+  // 6) 顶栏限宽 + 计数 chip 行(2026-10-16):标题 ≤ 220px(照 DSH 的 .crumb),
+  //    chip 行有才显示,文案与计数口径照 DSH(子智能体报总数、后台任务报在跑数)。
+  res.topbar = {
+    titleWidth: Math.round(q('.appbar .ttl').getBoundingClientRect().width),
+    chipsHidden: q('#liveChips').hidden,
+    chips: [...q('#liveChips').querySelectorAll('.livechip')].map(b => ({
+      text: b.textContent.trim(),
+      aria: b.getAttribute('aria-label'),
+      spinning: !!b.querySelector('.livechip-dot'),
+      opens: b.dataset.act,
+    })),
+  }
+
+  // 7) 代码块工具条(2026-10-16):默认自动换行,点开关才横滚 ——
+  //    照 DSH 的 CodeBlock(`CodeBlock.tsx:157` 的 `useState(true)`)。
+  const codeBox = q('#sampleCode')
+  const wrapBtn = q('#codeWrap')
+  if (codeBox && wrapBtn) {
+    codeBox.classList.remove('is-nowrap')
+    const wrappedDefault = getComputedStyle(codeBox.querySelector('pre')).whiteSpace
+    wrapBtn.click(); await sleep(120)
+    res.codeBlock = {
+      wrappedDefault,
+      togglesToNowrap: codeBox.classList.contains('is-nowrap'),
+      wrapLabelAfter: wrapBtn.getAttribute('aria-label'),
+    }
+    wrapBtn.click(); await sleep(120)   // 还原:下次跑时状态不残留
+  }
 
   res.layers = PROTO.layers
   return res

@@ -1394,27 +1394,69 @@
     },
   ];
 
-  /* 顶栏状态位:已配对时常驻显示**连接状态**(与抽屉连接行同一语气,如「中转已连接 · 空闲」),
-     点它弹「连接操作」sheet(重新配对 / 打开侧面板 / 取消),不再直接开右抽屉。
-     **有意偏离** docs §7.8「有任务显任务、否则显文件变更;点它开右抽屉」——见该节偏离说明。 */
-  function renderStatusPill() {
-    const pill = $("#statusPill");
-    if (!pill) return;
-    pill.className = "statuspill";
-    pill.innerHTML = ic("link", 13) + `<span class="tx">中转已连接 · 空闲</span>`;
-    /* data-act 仍是 status-open;dataset.panel 的语义已从"开哪个侧面板"脱出——
-       点它改弹连接 sheet,"打开侧面板"降为 sheet 里的选项,这里只作状态标记,不再选面板。 */
-    pill.dataset.panel = "conn";
-    pill.setAttribute("aria-label", "连接状态:中转已连接 · 空闲,查看连接操作");
+  /* 顶栏连接状态点(§7.8):一档 = 一个点(服务中绿 / 连接中转圈 / 其余红),
+     点它弹「连接操作」sheet(重新配对 / 打开侧面板 / 取消)。
+     右抽屉的入口是**隔壁那个独立按钮**(data-act="side-open")—— DSH 的右面板入口
+     同样是 header 角落的独立席位(ui-sidebar-right 的 ExpandButton),与连接指示器无关。
+     形状照 DSH 的 StateDot:10px 槽里画 6px 核(StateDot.module.css:1-15)。
+     原型是静态演示,永远画"服务中"这一档;`.is-off` 是"没连上"那一档。 */
+  function renderStatusDot() {
+    const dot = $("#statusDot");
+    if (!dot) return;
+    dot.className = "statusdot";
+    dot.setAttribute("aria-label", "连接状态:中转已连接 · 空闲,点按查看连接操作");
+  }
+
+  /* 计数 chip 行(§7.8):子智能体 / 后台任务计数,**有才显示**,点它开右抽屉对应面板。
+     文案与**计数口径**逐字照 DSH Web:`{count} 个子智能体`(报总数,在跑另画转圈点)、
+     `{count} 个后台任务运行中`(报**在跑的个数**)/ `{count} 个后台任务`。出处:
+     ui-subagent/src/client/locales.ts:36-39 + SubagentHeaderLineage.tsx:679-711;
+     ui-jobs/src/client/locales.ts:8-11 + JobListAction.tsx:450-453。 */
+  function renderLiveChips() {
+    const box = $("#liveChips");
+    if (!box) return;
+    const liveSubs = SUBS.filter((s) => s.state === "running").length;
+    const liveJobs = JOBS.filter(isLive).length;
+    const spin = `<span class="livechip-dot" data-icon="loading" data-icon-size="14"></span>`;
+    const chips = [];
+    if (SUBS.length) {
+      const aria = liveSubs
+        ? `${liveSubs} 个子智能体,正在运行`
+        : `${SUBS.length} 个子智能体`;
+      chips.push(
+        `<button class="livechip" data-act="subs-all" aria-label="${aria}">` +
+          (liveSubs ? spin : `<span data-icon="users" data-icon-size="13"></span>`) +
+          `<span>${SUBS.length} 个子智能体</span>` +
+          `<span data-icon="chevronRight" data-icon-size="12"></span></button>`
+      );
+    }
+    if (JOBS.length) {
+      const label = liveJobs
+        ? `${liveJobs} 个后台任务运行中`
+        : `${JOBS.length} 个后台任务`;
+      chips.push(
+        `<button class="livechip" data-act="jobs-all" aria-label="${label}">` +
+          (liveJobs
+            ? spin
+            : `<span data-icon="checklist" data-icon-size="13"></span>`) +
+          `<span>${label}</span>` +
+          `<span data-icon="chevronRight" data-icon-size="12"></span></button>`
+      );
+    }
+    box.innerHTML = chips.join("");
+    box.hidden = chips.length === 0;
+    paintIcons(box);
   }
 
   function renderJobs() {
-    /* 运行中提醒只走顶栏状态位(renderStatusPill):只数 running|stopping,
-       用整集帧,不订阅输出流,也不在输入栏常驻 chip */
+    /* 运行中提醒走**计数 chip 行**(renderLiveChips)与任务面板:只数 running|stopping,
+       用整集帧,不订阅输出流,也不在输入栏常驻。顶栏只剩一个连接状态点(它不表任务);
+       这里仍重画点,是因为点与 chip 同批刷新。 */
     if (jobsList) jobsList.innerHTML = jobsHtml();
     paintIcons(jobsList);
     bindJobRows();
-    renderStatusPill();
+    renderStatusDot();
+    renderLiveChips();
     /* 侧抽屉 tab 上的运行中计数 */
     const tj = $("#tabJobsN");
     if (tj) {
@@ -1475,6 +1517,7 @@
       ts.hidden = running === 0;
       ts.textContent = String(running);
     }
+    renderLiveChips();
   }
 
   function bindJobRows() {
@@ -3096,6 +3139,11 @@
       case "side-close":
         closeSide();
         break;
+      case "side-open":
+        /* 顶栏 ▷ 右抽屉入口(§7.8):与连接 sheet 里的 conn-open-side 是同一条路,
+           只是不再经过 sheet —— 入口本身就该一步到。 */
+        openSide("file");
+        break;
       case "status-open":
         /* 点顶栏连接状态位 → 弹「连接操作」sheet(议题 3):重新配对 / 打开侧面板 / 取消。
            不再是直接开右抽屉——"打开侧面板"降为 sheet 里的一个选项(见 docs §7.8 偏离)。
@@ -3316,6 +3364,24 @@
         navigator.clipboard && navigator.clipboard.writeText(t.dataset.copy || "");
         toast("已复制");
         break;
+      case "code-wrap": {
+        /* 代码块自动换行开关(照 DSH 的 CodeToolbar):**默认换行**,
+           点一下给 `.is-nowrap`(那时才横滚),图标与 aria/title 跟着换。
+           对应 App 侧 `dsh_markdown.dart` 的 `_DshCodeBlock`。 */
+        const box = t.closest(".code");
+        if (!box) break;
+        const nowrap = box.classList.toggle("is-nowrap");
+        const label = nowrap ? "自动换行" : "取消自动换行";
+        t.setAttribute("aria-label", label);
+        t.setAttribute("title", label);
+        const icon = t.querySelector("[data-icon]");
+        if (icon) {
+          icon.dataset.icon = nowrap ? "wrapFill" : "nowrapFill";
+          paintIcons(t);
+        }
+        haptic();
+        break;
+      }
       case "load-more":
         fileView.querySelector(".trunc") &&
           (fileView.querySelector(".trunc").innerHTML =
@@ -3371,8 +3437,9 @@
       closeSheet,
       setNeed() {
         /* 审批 / 提问是"接管输入栏"的,本来就在眼前,不占顶栏。
-           顶栏状态位只表达"后台在跑什么 / 改了什么",见 renderStatusPill。 */
-        renderStatusPill();
+           顶栏只剩连接状态点(renderStatusDot);"后台在跑什么"在 chip 行与任务面板。 */
+        renderStatusDot();
+        renderLiveChips();
       },
       onPermission: paintPerm,
       appendNode(html) {

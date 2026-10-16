@@ -49,6 +49,7 @@ import 'connection_actions_sheet.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_composer.dart';
 import 'dsh_sheet.dart';
+import 'dsh_state_dot.dart';
 import 'side_pane.dart';
 import 'takeover.dart';
 import 'trajectory_page.dart';
@@ -412,20 +413,16 @@ class ChatPageState extends State<ChatPage> {
         title: widget.app.currentTitle ?? 'DSH',
         onOpenDrawer: widget.onOpenDrawer,
         onNewSession: widget.onNewSession,
-        // 状态位：有后台任务显任务（点它开右抽屉），否则不显示。
-        // 原型：*"有任务显任务,否则显文件变更;点它开右抽屉"*。
-        statusText: _statusText(),
-        statusIcon: _statusIcon(),
-        statusIsWarn: !widget.paired,
-        // **连接中 / 握手中 / 重连中转圈**：静止的加载图标会被读成"卡住了"
-        // （2026-10-15 真机反馈）。「连接不上」是结论,不转。
-        statusSpin: switch (widget.app.connection) {
-          ConnectionStateView.connecting ||
-          ConnectionStateView.handshaking ||
-          ConnectionStateView.backoff => true,
-          _ => false,
-        },
-        onStatusTap: _onStatusTap,
+        // **连接状态点**（原来是文字胶囊）：绿=服务中 / 转圈=连接中·握手中·重连中 /
+        // 红=其余。形状与颜色照 DSH 的 `StateDot`（出处见 `dsh_state_dot.dart`），
+        // 文字退进 tooltip —— 顶栏一行五个位置，文字状态位会把标题挤没。
+        connectionState: dotStateOf(widget.app.connection),
+        connectionTooltip: _connectionTooltip(),
+        onConnectionTap: _onStatusTap,
+        // **右抽屉入口**搬到这里（原来挂在状态位上：serving 时点状态位开右抽屉）。
+        // 与 DSH 一致：右面板入口是 header 角落的**独立按钮**
+        // （`ui-sidebar-right/src/client/index.ts:238-239`），与连接指示器无关。
+        onOpenSide: openSide,
       ),
       // **子智能体 / 后台任务 chip 行**：照 DSH Web 的头部chip
       // （`ui-subagent` 的 `{count} 个子智能体`、`ui-jobs` 的
@@ -576,28 +573,17 @@ class ChatPageState extends State<ChatPage> {
   // 右抽屉（文件 / 任务 / 子智能体）
   // ---------------------------------------------------------------------------
 
-  /// 状态位的文字。
+  /// 顶栏状态点画成哪一档，**由 `dotStateOf` 一处决定**
+  /// （`ui/dsh_state_dot.dart`，与 DSH 的 `ConnectionIndicator` 三态同义）。
   ///
-  /// 顺序照原型 §7.8,再加一层"连接异常优先":
-  /// 1. **连接不在服务态且已配对** → 连接状态（`重连中…` 等）。它是**可点的出路**，
-  ///    必须常在 —— 否则议题 3 的「≤2 步走到重新配对」没有落点。
-  /// 2. 有后台任务 → `N 任务运行中`（琥珀）。
-  /// 3. 已配对且在服务态 → `已连接`。**不返回 null**：状态位是右抽屉（文件/任务/
-  ///    子智能体）的入口，基线规定它可点；返回 null 会让整个 pill 消失，右bar 就只剩
-  ///    sheet 里一条路。文件变更那一档**不显示**：手机的文件面还没接
-  ///    （`workspace-files`），显示"0 个文件变更"是把"没接"说成"没有"。
-  String? _statusText() {
-    // **看示例数据时也当"有数据"** —— 否则示例模式下一半界面是死的
-    //（状态位点不开右抽屉），而示例数据存在的意义正是"看看它长什么样"。
-    if (!_hasData) return '未连接';
-    if (widget.paired && widget.app.connection != ConnectionStateView.serving) {
-      return connectionLabel(widget.app.connection);
-    }
-    final live = _jobsFor(widget.app.currentSid).where((j) => j.isLive).length;
-    if (live > 0) return '$live 任务运行中';
-    if (widget.paired) return '已连接';
-    return null;
-  }
+  /// 这里原来返回的是**文字**（`已连接` / `N 任务运行中`）：文字状态位在 390px
+  /// 顶栏上把标题挤到 `max-width: 42vw`；而任务计数在 chip 行里本来就另算了一遍 ——
+  /// 同一件事两处各算一次就是第二个真值源，所以这一条改成"只表连接、不管任务"。
+
+  /// 状态点的说法。文案来自 [connectionLabel] —— **同一个状态只有一套说法**
+  /// （抽屉连接行、设置页、顶栏共用），不在这里另写一套。
+  String _connectionTooltip() =>
+      '连接状态：${connectionLabel(widget.app.connection)}（点按查看连接操作）';
 
   /// 是否有"可看的数据"（真连上了，或在看示例）。
   bool get _hasData => widget.paired || widget.app.isPreview;
@@ -620,21 +606,6 @@ class ChatPageState extends State<ChatPage> {
     return model?.label ?? '未选择';
   }
 
-  /// 状态位图标**跟着连接状态走**,不是"有数据就用 loading"。
-  ///
-  /// 2026-10-15 真机反馈:"已连接怎么还有个圈圈图标?" —— `loading` 那个图标
-  /// 本身就是个圈箭头,静止也像在转。所以:
-  /// - 已连接 → `link`(就是连上了,没有在等什么);
-  /// - 连接中 / 握手中 / 重连中 → `loading`(配 `statusSpin` 转圈);
-  /// - 其余(未连接 / 连接不上)→ `warningTriangle`。
-  String _statusIcon() => switch (widget.app.connection) {
-    ConnectionStateView.serving => 'link',
-    ConnectionStateView.connecting ||
-    ConnectionStateView.handshaking ||
-    ConnectionStateView.backoff => 'loading',
-    _ => 'warningTriangle',
-  };
-
   /// 推理等级的文字。
   ///
   /// 也**不写死**（原来是 `'高'`）：电脑侧给了 effort 就显示它，没给就显示"默认" ——
@@ -648,24 +619,17 @@ class ChatPageState extends State<ChatPage> {
     return effort ?? '默认';
   }
 
-  /// 顶栏状态位的点击。
+  /// 顶栏状态点的点击。
   ///
-  /// - **没配对**：去配对页（空态的「连电脑（配对）」同义）。
-  /// - **已配对但连接不在服务态**：弹连接操作 sheet（含「重新配对」）——
-  ///   这正是用户最需要出路的时刻，也是议题 3「≤2 步」的落点。
-  /// - **已配对且在服务态**：**开右抽屉**（原型基线行为：状态位本就是右抽屉的入口，
-  ///   `docs/design-and-tech-plan.md` §7.8）。否则为了重配入口把状态位整个占掉，
-  ///   右bar(文件/任务/子智能体)就只剩 sheet 里一条路 —— 而正常使用时那里才该一步到。
-  ///
-  /// 这条切分写在设计文档的有意偏离里：连接态只在**异常时**占位，serving 时
-  /// 把位置还给基线规定的内容。
+  /// **统一弹连接操作 sheet**（重试连接 / 重新配对 / 打开侧面板 / 断开）：
+
+  /// - **没配对** → 去配对页（与空态的「连电脑（配对）」同义）；
+  /// - **已配对** → sheet。**不再按"serving 时开右抽屉"分叉**：右抽屉入口已经搬到
+  ///   自己那个按钮上（`ChatAppBar.onOpenSide`），一个点只做一件事；
+  ///   而"任何状态 ≤2 步走到重新配对"的硬判据照旧成立（点 1 → sheet 里选 1）。
   void _onStatusTap() {
     if (!widget.paired) {
       widget.onConnect?.call();
-      return;
-    }
-    if (widget.app.connection == ConnectionStateView.serving) {
-      openSide();
       return;
     }
     _showConnectionActionsSheet();
@@ -1403,6 +1367,7 @@ class _ChatTab extends StatelessWidget {
         return _SessionListInline(
           sessions: app.sessions,
           onOpen: onOpenSession,
+          archived: app.archivedSids,
           onRefresh: paired ? onRefreshSessions : null,
           // **同一套工作区分组**（与抽屉共用 `bucketSessionsByWorkspace`）。
           workspaces: app.workspaces,
@@ -1440,13 +1405,12 @@ class _ChatTab extends StatelessWidget {
   }
 }
 
-/// 头部 chip 行:**子智能体 / 后台任务**的计数,照 DSH Web 的头部chip。
+/// 头部 chip 行:**子智能体 / 后台任务**的计数,照 DSH Web 的 header chip。
 ///
 /// - **有才显示**:两类都为 0 时整行不占位(返回 `SizedBox.shrink()`),
 ///   不是显示"0 个子智能体"—— 那是把"没有"说成"有一个空的"。
-/// - **文案逐字照 Web**:`{count} 个子智能体` / `{count} 个子智能体,正在运行`
-///   (`ui-subagent/src/client/locales.ts:36-39`)、`{count} 个后台任务运行中` /
-///   `{count} 个后台任务`(`ui-jobs/src/client/locales.ts:8-11`)。
+/// - **计数与文案逐字照 Web**(2026-10-16 校准,见下方两个纯函数):
+///   子智能体报**总数**、在跑就画一枚转圈点;后台任务在跑时报**在跑的个数**。
 /// - **点它开右抽屉对应面板**:手机不放下拉菜单(手指点不中小目标),
 ///   而右抽屉本来就是这三个面板的家,且能原路关回来。
 class _LiveChipsRow extends StatelessWidget {
@@ -1471,19 +1435,20 @@ class _LiveChipsRow extends StatelessWidget {
     final chips = <Widget>[
       if (subagentCount > 0)
         _LiveChip(
-          count: subagentCount,
+          label: subagentChipLabel(subagentCount),
+          aria: subagentChipAria(
+            total: subagentCount,
+            running: subagentRunning,
+          ),
           running: subagentRunning,
-          noun: '个子智能体',
-          runningSuffix: '，正在运行',
           icon: 'users',
           onTap: onTapSubagents,
         ),
       if (jobCount > 0)
         _LiveChip(
-          count: jobCount,
+          label: jobChipLabel(live: jobRunning, total: jobCount),
+          aria: jobChipLabel(live: jobRunning, total: jobCount),
           running: jobRunning,
-          noun: '个后台任务',
-          runningSuffix: '运行中',
           icon: 'checklist',
           onTap: onTapJobs,
         ),
@@ -1491,93 +1456,109 @@ class _LiveChipsRow extends StatelessWidget {
     if (chips.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 2),
-      child: Row(
-        children: [
-          for (final chip in chips) ...[chip, const SizedBox(width: 8)],
-        ],
-      ),
+      // **换行，不横滚**：Web 那边这两枚 chip 在 header 的 actions band 里
+      // （`headerActions{flex:none}`），桌面宽度够；手机上两枚两位数 chip
+      // （"12 个后台任务运行中" 已经是 190px 级）在 360px 上**一定会溢出**。
+      // 用 `Wrap` 而不是横向滚动：藏起来的计数等于没有计数。
+      child: Wrap(spacing: 8, runSpacing: 6, children: chips),
     );
   }
 }
 
-/// chip 文案。**逐字照 DSH Web**,不自己发明:
-/// `{count} 个子智能体` / `{count} 个子智能体,正在运行`
-/// (`ui-subagent/src/client/locales.ts:36-39`)、`{count} 个后台任务运行中` /
-/// `{count} 个后台任务`(`ui-jobs/src/client/locales.ts:8-11`)。
+/// 子智能体 chip 的**可见**文案:`{count} 个子智能体`(总数)。
 ///
-/// 抽成纯函数是为了让"措辞与 Web 一致"这条有单测可钉 —— 2026-10-15 手机上
-/// 写成"子代理",与 DSH 的"子智能体"是两个词,用户一眼看出来不是同一个东西。
+/// 与 DSH 逐字一致:`SubagentHeaderLineage.tsx:710` 用的就是 `count.total`
+/// （`{count} 个子智能体`,`ui-subagent/src/client/locales.ts:36-37`）,
+/// **总数后面不带"正在运行"** —— 在跑与否由前面那枚转圈点表达(`:705-708`)。
+/// `{count} 个子智能体，正在运行`(`:38-39`)是 **aria-label** 那一份(`:679-680`),
+/// 见 [subagentChipAria]。
 ///
-/// **`{count}` 与量词之间有一个空格**:Web 的模板就是 `'{count} 个子智能体'`
-/// （`locales.ts:36`),少这个空格就不算逐字一致。
-String liveChipLabel({
-  required int count,
-  required int running,
-  required String noun,
-  required String runningSuffix,
-}) {
-  return running > 0 ? '$count $noun$runningSuffix' : '$count $noun';
-}
+/// 2026-10-16 之前这里把两句合成了可见文案("3 个子智能体，正在运行"),
+/// 于是手机上的字与 Web 上的字不一致 —— 探索原生时的发现,见决策笔记。
+String subagentChipLabel(int total) => '$total 个子智能体';
 
-/// 一枚 chip：`N 个 X`(运行中时换后缀)。**运行中的那枚用告警色**，
-/// 与 Web 的任务 chip 同一条纪律:用户该一眼看见"有东西在跑"。
+/// 子智能体 chip 的无障碍名:在跑时报**在跑的个数**,否则报总数(`:679-680`)。
+String subagentChipAria({required int total, required int running}) =>
+    running > 0 ? '$running 个子智能体，正在运行' : subagentChipLabel(total);
+
+/// 后台任务 chip 的文案:**在跑报在跑的个数**,没有在跑的才报总数。
+///
+/// 与 DSH 逐字一致(`JobListAction.tsx:450-453`):
+/// `liveRows.length > 0` → `count.live`(`{count} 个后台任务运行中`),count 取**在跑数**;
+/// 否则 → `count.idle`(`{count} 个后台任务`),count 取可见总数。
+/// 模板见 `ui-jobs/src/client/locales.ts:8-11`。
+///
+/// 2026-10-16 之前这里把"总数 + 运行中"拼在一起("5 个后台任务运行中",
+/// 哪怕只有 1 个在跑)—— 数出来的数比 Web 大,是同一个真值源的第二个算法。
+String jobChipLabel({required int live, required int total}) =>
+    live > 0 ? '$live 个后台任务运行中' : '$total 个后台任务';
+
+/// 一枚 chip。前导槽:在跑 → **转圈点**(DSH 的 `triggerDot` /
+/// `activitySlot`,即"有东西在跑"的原生信号),否则 → 图标。
+///
+/// **不再用告警色**:DSH 的触发条是 `label-tertiary` 文字 + 转圈点
+/// (`JobListAction.module.css:10`、`:29-31`),没有"整枚变琥珀"这一说 ——
+/// 那是 2026-10-15 我们自己加的。
 class _LiveChip extends StatelessWidget {
   const _LiveChip({
-    required this.count,
+    required this.label,
+    required this.aria,
     required this.running,
-    required this.noun,
-    required this.runningSuffix,
     required this.icon,
     required this.onTap,
   });
 
-  final int count;
+  /// 可见文案(与 Web 逐字一致,见 [subagentChipLabel] / [jobChipLabel])。
+  final String label;
+
+  /// 无障碍名。**与可见文案分开**:子智能体那枚的"正在运行"只在这里。
+  final String aria;
+
+  /// 在跑的个数;> 0 时前导槽画转圈点。
   final int running;
-  final String noun;
-  final String runningSuffix;
+
+  /// 不在跑时前导槽里的图标(手机没有 hover,图标是"这是哪一类"的唯一线索)。
   final String icon;
+
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final live = running > 0;
-    final label = liveChipLabel(
-      count: count,
-      running: running,
-      noun: noun,
-      runningSuffix: runningSuffix,
-    );
-    return Material(
-      color: live ? DshColors.roleToolBg : DshColors.layer2,
-      borderRadius: BorderRadius.circular(14),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DshIcon(
-                icon,
-                size: 13,
-                color: live ? DshColors.roleTool : DshColors.labelSecondary,
-              ),
-              const SizedBox(width: 5),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: live ? DshColors.roleTool : DshColors.labelSecondary,
+    return Semantics(
+      label: aria,
+      button: true,
+      child: Material(
+        color: DshColors.layer2,
+        borderRadius: BorderRadius.circular(14),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (live)
+                  const DshStateDot(DshStateDotState.ongoing)
+                else
+                  DshIcon(icon, size: 13, color: DshColors.labelSecondary),
+                const SizedBox(width: 5),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: DshColors.labelTertiary,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 2),
-              DshIcon(
-                'chevronRight',
-                size: 12,
-                color: live ? DshColors.roleTool : DshColors.labelTertiary,
-              ),
-            ],
+                const SizedBox(width: 2),
+                const DshIcon(
+                  'chevronRight',
+                  size: 12,
+                  color: DshColors.labelTertiary,
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1594,6 +1575,7 @@ class _SessionListInline extends StatelessWidget {
   const _SessionListInline({
     required this.sessions,
     required this.onOpen,
+    required this.archived,
     this.onRefresh,
     this.workspaces = const [],
   });
@@ -1601,6 +1583,10 @@ class _SessionListInline extends StatelessWidget {
   final List<SessionSummary> sessions;
   final void Function(SessionSummary session) onOpen;
   final VoidCallback? onRefresh;
+
+  /// 已归档的 sid（`AppModel.archivedSids`）。**默认不列**，见 `sessionVisible`
+  /// ——归档不是删除：它们在抽屉底栏「归档」那张列表里，取消归档即回原位。
+  final Set<String> archived;
 
   /// 工作区分组（`AppModel.workspaces`）。**空 = 不分组**，与抽屉同一规则。
   final List<WorkspaceGroup> workspaces;
@@ -1615,6 +1601,7 @@ class _SessionListInline extends StatelessWidget {
             subagent: s.subagent,
             blank: s.blank,
             isCurrent: false,
+            archived: archived.contains(s.sid),
           ),
         )
         .toList();

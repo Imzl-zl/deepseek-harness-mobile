@@ -135,7 +135,7 @@ abstract class Outbox {
 | 流式更新触发整段重排 | 累加器 16 ms 节流 + 段级缓存;不用 `SelectableText` 包整段(开销大) |
 | 大对象(base64 图片、diff)阻塞 UI | >1 MiB 走 `refetch`;JSON 解码放 `compute`;图片走 `Image.memory` + 缓存,不逐帧解码 |
 | 代码高亮开销 | 只在条目首次可见时高亮一次并缓存 token 结果;不随流式每帧重算 |
-| 长 Markdown | 分块渲染(按段落切),选一个维护中的 markdown 包(见 §7 待选项) |
+| 长 Markdown | **不做段落切分**:查过 DSH,它也没有正文虚拟化/按段切,只在**流式期间冻结除末尾两块以外的块**(`packages/client/ui-chat/src/client/conversation-nodes/incremental.ts:9,38` 的 `UNSTABLE_TAIL_BLOCKS = 2`)⇒ 手机侧照同一条做"流式只重排末尾" |
 
 ---
 
@@ -188,8 +188,9 @@ app/packages/
 | UI | widget test 覆盖"UI 永不闪空"与流式替换;真机验收锁屏与强杀 |
 | 边界 | `node app/tools/verify-platform-boundary.mjs` |
 
-**未决的第三方选型**(需要做决定,但不阻塞开工):
+**选型现状(2026-10-16 校准)**:
 
-- Markdown 渲染:`flutter_markdown` 已 discontinued ⇒ 候选 `flutter_markdown_plus` / `gpt_markdown` / `streamdown`;选型闸门与加密/本地库一致:**鸿蒙适配清单里有条目 + 纯 Dart**(纯 Dart 包不受清单限制)。
-- 代码高亮:`highlight`(纯 Dart)或 `shiki` 的 Dart 移植;要求可缓存、可后台预热。
+- Markdown 渲染:**已定** `flutter_markdown_plus`(唯一传递依赖 `markdown`,Dart 团队维护;`flutter_markdown` 已 discontinued)。选型表与理由见 `app/lib/ui/dsh_markdown.dart` 文件头。
+- 代码块:**已照 DSH 的 `CodeBlock` / `CodeToolbar` 落地**头部工具条(语言标签 / 自动换行 / 复制;默认自动换行),见同文件。**仍未做**:语法高亮 —— 候选 `highlight`(纯 Dart);接的时候照 DSH 的三条纪律:**只支持 ts/bash/json**、**首次进入视口才高亮一次并缓存**、未知语言退纯文本(`packages/client/ui-primitives/src/markdown/highlight.ts:42,17`、`useViewportHighlighting.ts:48`)。
+- 数学公式:**不做**。DSH 支持 `$…$` 与 ```` ```math ```` 围栏(KaTeX),手机侧没有纯 Dart 的等价物,而它是独立一块(不属"把 Markdown 渲染出来")。如实记在 `dsh_markdown.dart` 文件末。
 - 图片:`cached_network_image` 不适用(内容不来自网络),用 `Image.memory` + 自建 LRU。

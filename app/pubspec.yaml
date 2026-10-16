@@ -65,6 +65,12 @@ dependencies:
   path: ^1.9.1
   flutter_markdown_plus: ^1.0.12
 
+  # Markdown 的 AST 类型（`md.Element`）。**不是新依赖**：它本来就在树里
+  # （`flutter_markdown_plus` 的直接依赖，lock 里 7.3.1）；这里只是**显式声明** ——
+  # `dsh_markdown.dart` 要用 `MarkdownElementBuilder` 接管代码块
+  # （`pre` 标签的渲染），而那个接口的签名带 `md.Element`，不显式声明就没法合法 import。
+  markdown: ^7.3.1
+
   # HTTP 客户端。**只用于配对链上的两个 JSON 端点**（换票 / 报名册由电脑侧发，
   # 手机只调换票与升级）：`POST /ws-ticket`。
   #

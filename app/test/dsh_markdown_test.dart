@@ -21,6 +21,7 @@ import 'package:dsh_mobile/theme/dsh_colors.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/dsh_markdown.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Future<void> _pump(
@@ -117,5 +118,70 @@ void main() {
     await _pump(tester, '你好', baseColor: DshColors.onAccent);
     expect(tester.takeException(), isNull);
     expect(find.textContaining('你好'), findsOneWidget);
+  });
+
+  // 代码块的头部工具条：照 DSH `ui-primitives` 的 `CodeBlock` / `CodeToolbar`
+  // （`CodeBlock.tsx:157,168,195-208`、`CodeToolbar.tsx:38-61`）。
+  // 这三条守的是"工具条真的能用"：默认自动换行、按钮能切、复制真的进了剪贴板。
+  group('代码块：语言标签 + 自动换行 + 复制', () {
+    Finder horizontalScroll() => find.byWidgetPredicate(
+      (w) => w is SingleChildScrollView && w.scrollDirection == Axis.horizontal,
+    );
+
+    testWidgets('头部两个按钮都在；没接高亮前语言标签是"代码块"', (tester) async {
+      await _pump(tester, '看这段：\n\n```dart\nvoid main() {}\n```\n');
+      expect(
+        find.text('代码块'),
+        findsOneWidget,
+        reason:
+            'CodeToolbar.tsx:44 是 supportsHighlighting(lang) ? lang : codeLabel',
+      );
+      expect(find.byTooltip('取消自动换行'), findsOneWidget, reason: '默认已换行');
+      expect(find.byTooltip('自动换行'), findsNothing);
+      expect(find.byTooltip('复制'), findsOneWidget);
+    });
+
+    testWidgets('默认自动换行；关掉之后正文进横向滚动区', (tester) async {
+      await _pump(tester, '```dart\nvoid main() {}\n```\n');
+      expect(
+        horizontalScroll(),
+        findsNothing,
+        reason: 'CodeBlock.tsx:157 的默认是 wrapped = true，不该出现横滚',
+      );
+
+      await tester.tap(find.byTooltip('取消自动换行'));
+      await tester.pumpAndSettle();
+
+      expect(horizontalScroll(), findsOneWidget);
+      expect(find.byTooltip('自动换行'), findsOneWidget, reason: '按钮切回"恢复换行"');
+    });
+
+    testWidgets('复制：代码进剪贴板，按钮 1 秒内变"复制成功"', (tester) async {
+      final calls = <MethodCall>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        calls.add(call);
+        return null;
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+      );
+
+      await _pump(tester, '```dart\nvoid main() {}\n```\n');
+      await tester.tap(find.byTooltip('复制'));
+      await tester.pumpAndSettle();
+
+      final setData = calls
+          .where((call) => call.method == 'Clipboard.setData')
+          .toList();
+      expect(setData, hasLength(1), reason: '点一次复制只该有一次写剪贴板');
+      expect(
+        (setData.single.arguments as Map)['text'],
+        'void main() {}',
+        reason: '复制的是代码本身（尾随换行不算内容）',
+      );
+      expect(find.byTooltip('复制成功'), findsOneWidget);
+    });
   });
 }

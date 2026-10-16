@@ -140,6 +140,14 @@ enum ErrorCode {
   /// 新建会话时 workspace 不存在（`commands.ts:114`）。
   workspaceNotFound('workspace/not-found', ClientAction.disableAndAnnotate),
 
+  /// 归档被拒：会话还有在跑的活动（轮次 / 子智能体 / 后台任务）
+  /// （`workspace-controller/src/commands.ts:172-178`）。**不是故障**：
+  /// 手机据此弹「停止并归档」，带 `stopActivity` 重发。
+  workspaceSessionActive(
+    'workspace/session-active',
+    ClientAction.disableAndAnnotate,
+  ),
+
   /// agent 预设冲突（`commands.ts:539`）。
   agentPresetConflict('agent-preset/conflict', ClientAction.disableAndAnnotate),
 

@@ -37,17 +37,23 @@ typedef WorkspaceBucket = ({String label, List<String> sessionIds});
 ///    Web 同样不列；2026-10-15 真机对比:Web 的 anatomy-test 3 条,手机 4 条,
 ///    多的那条就是子智能体会话）;
 /// 2. `blank`（从没被 agent 跑过）且**不是当前会话**的**不列**;
-/// 3. 已归档的默认不列（本期没有归档面，所以这条先不实现 —— 连接器也还没给
-///    归档清单，`workspace.list` 的 `archivedSessionIds` 已经在路上）。
+/// 3. 已归档的默认不列 —— 照 Web 的默认过滤档(`ArchivedFilter === 'default'`)
+///    的 `case 'default': return !archived.has(session.id)`
+///    (`tree.ts:247-248`;归档集来自 `workspace.list` 的 `archivedSessionIds`)。
+///    **归档不是删除**:手机上它们在「归档」列表里,取消归档就回到原位
+///    (Web 的原注释:`archived sessions … their accounting slots remain either way
+///    so unarchiving restores position`,`tree.ts:234-236`)。
 ///
 /// 连接器一直在发 `subagent` / `blank` 两个标志（`connector/src/dsh/sessions.ts`），
-/// 缺的只是手机这一侧的过滤。
+/// 归档集则由 `workspace.list` 给（`archivedSessionIds`，同样过别名）。
 bool sessionVisible({
   required bool subagent,
   required bool blank,
   required bool isCurrent,
+  required bool archived,
 }) {
   if (subagent) return false;
+  if (archived) return false;
   if (blank && !isCurrent) return false;
   return true;
 }
