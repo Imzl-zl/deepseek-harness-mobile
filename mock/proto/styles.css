@@ -554,8 +554,11 @@ button:focus-visible {
      ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139):
      标题可省略,但不许吃掉整行 —— 给右侧的点/右抽屉/新建留位置。 */
   max-width: 220px;
-  font-size: 17px;
-  font-weight: 600;
+  /* 14px / w500:照 DSH Web 的 .crumb(font-size:14px; line-height:20px,
+     当前那条 crumbCurrent 是 w500)。手机原来 17/600,比 Web 大一档也更重
+     —— 2026-10-16 用户点名"会话名字不能小点"。 */
+  font-size: 14px;
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

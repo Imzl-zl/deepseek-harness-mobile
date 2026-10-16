@@ -441,8 +441,8 @@ DSH 右侧有一条**轮次导航轨**(`ui-chat/TurnNavigator.tsx`):每一轮一
   - `▷` **右抽屉入口**:`panelLeft` 镜像的独立按钮。DSH 的右面板入口同样与连接指示器无关
     (`ui-sidebar-right/src/client/index.ts:238-239` 的 `conversation.session.header.corner` 席位)。
   - `☰` 左抽屉 / `＋` 新建会话不变。
-- **标题限宽 `220px`**(照 DSH 的 `.crumb{max-width:220px}`,`ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139`):
-  标题可省略,但**不许吃掉整行**。子智能体 / 后台任务计数走**自己那一行**(`_LiveChipsRow`,顶栏之下、对话·轨迹分段之上;多枚 chip 换行排),
+- **标题限宽 `220px`、字号 `14px` / 粗细 `w500`**(都照 DSH 的 `.crumb`:`max-width:220px; font-size:14px; line-height:20px`,当前那条是 `w500`,`ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139`):
+  标题可省略,但**不许吃掉整行**。子智能体 / 后台任务计数走**自己那一行**(`_LiveChipsRow`,顶栏之下、对话·轨迹分段之上;常态一行,放不下才换行),
   与标题**不争同一条宽度** —— 结构上等价于 DSH header 的 `.headerActions{flex:none}` band(`:156-161`)。
 - 文件变更那一档**仍未接**(手机的文件面没接 `workspace-files`);显示"0 个文件变更"是把"没接"说成"没有"。
 - **已否决**:左抽屉里再放一个「任务」入口去开右抽屉 —— 两个抽屉互相跳没有道理;也否决了在对话流里内联铺开任务明细(占屏)。

@@ -1055,6 +1055,15 @@ void main() {
         lessThanOrEqualTo(kDshTitleMaxWidth + 0.5),
         reason: '标题上限 $kDshTitleMaxWidth（照 DSH `.crumb` 的 max-width:220px）',
       );
+      // 字号与字重也照 Web 的 `.crumb`（14px / w500）—— 2026-10-16 真机反馈
+      // "会话名字不能小点"，而原来的 16 / w600 比 Web 大一档也更重。
+      final style = tester.widget<Text>(find.text(long * 6)).style;
+      expect(style?.fontSize, 14, reason: '照 `.crumb` 的 font-size:14px');
+      expect(
+        style?.fontWeight,
+        FontWeight.w500,
+        reason: '照 `.crumbCurrent` 的 w500',
+      );
       expect(find.byTooltip('打开会话抽屉'), findsOneWidget);
       expect(find.byType(DshConnectionDotButton), findsOneWidget);
       expect(find.byTooltip('打开右侧面板（文件 / 任务 / 子智能体）'), findsOneWidget);

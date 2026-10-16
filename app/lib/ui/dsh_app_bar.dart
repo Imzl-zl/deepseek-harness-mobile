@@ -230,9 +230,13 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
+                  // **14px / w500：照 DSH Web 的 `.crumb`**（`ConversationRoot.module.css:125-139`
+                  // 的 `font-size: 14px; line-height: 20px`，当前那条 `crumbCurrent` 是 w500）。
+                  // 手机原来写 16 / w600 —— 比 Web 大一档、更重，用户点了名：
+                  // "会话名字不能小点"（2026-10-16 真机反馈）。
                   style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
                     color: DshColors.labelPrimary,
                   ),
                 ),

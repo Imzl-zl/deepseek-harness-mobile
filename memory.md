@@ -62,8 +62,9 @@ connection-terminal-failure-goes-to-pairing,device-admin-face-dsh-house-style}.m
 按「先探 DSH 原生能力 → 列方案 → 动代码」的顺序做完,每条都留了 `packages/...:行号` 的出处:
 
 - **顶栏**:文字胶囊 → **连接状态点**(绿 / 转圈 / 红,形状与颜色照 `StateDot`;点它弹连接操作 sheet);
-  **右抽屉入口搬到自己那个按钮**(`panelLeft` 镜像,照 DSH 的 `ExpandButton`);标题**限宽 220px**
-  (照 DSH 的 `.crumb`)。取舍见 `.agents/notes/implemented/2026-10-16-topbar-connection-dot-and-title-cap.md`。
+  **右抽屉入口搬到自己那个按钮**(`panelLeft` 镜像,照 DSH 的 `ExpandButton`);标题**限宽 220px、
+  字号 14px / w500**(都照 DSH 的 `.crumb`,14px 是用户追问"会话名字不能小点"后回到 Web 那个值)。
+  取舍见 `.agents/notes/implemented/2026-10-16-topbar-connection-dot-and-title-cap.md`。
 - **计数 chip**:口径改回 DSH —— 后台任务报**在跑的个数**,子智能体报**总数** + 一枚转圈点
   ("正在运行"那句只在 aria 里);不再整枚变琥珀;`Row` → `Wrap`(两枚两位数 chip 在 360px 必然溢出)。
   见 `.agents/notes/implemented/2026-10-16-chip-counts-read-dsh-formulas.md`。

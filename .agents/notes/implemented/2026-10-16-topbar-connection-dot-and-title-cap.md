@@ -38,11 +38,17 @@ Status: implemented
      （`shell/ExpandButton.tsx:13-14`），与连接指示器没有任何关系。
    - 于是"点状态位开右抽屉"这条**临时**安排（2026-10-15 为 ≥2 步重配让路的产物）退役，
      两个入口互不抢占。
-3. **标题限宽 `220px`**，数值照 DSH 的 `.crumb { max-width: 220px }`
-   （`ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139`）。
+3. **标题限宽 `220px` + 字号 `14px` / `w500`**，两个数都照 DSH 的 `.crumb`
+   （`ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139`：`max-width: 220px;
+   font-size: 14px; line-height: 20px`，当前那条 `crumbCurrent` 是 `w500`）。
    结构上 `Expanded`（右簇钉在右边）+ 内层 `ConstrainedBox(maxWidth: 220)`（标题吃不掉整行）。
+   - 字号是**用户追问后补的**（原话"会话名字不能小点"）：手机原来写 16 / w600，
+     比 Web 大一档也更重 —— 直接回到 Web 的 14 / w500，不自己取中间值。
 4. 子智能体 / 后台任务计数保持**自己那一行**（`_LiveChipsRow`），并把 `Row` 改成 `Wrap`
    —— 两枚两位数 chip（"12 个子智能体，正在运行"是 190px 级）在 360px 上必然溢出。
+   **常态是一行**：口径改回 DSH 之后文案变短（"3 个子智能体" + "1 个后台任务运行中" ≈ 240px），
+   390/360px 下都排得下，`Wrap` 只是放不下时的兜底 —— 由 `app/test/live_chips_row_test.dart` 钉住
+   （390/360 一行、12+12 时才换行、任何一档都不溢出）。
 
 ## Alternatives considered
 
