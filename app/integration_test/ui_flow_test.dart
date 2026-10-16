@@ -193,7 +193,7 @@ void main() {
     expect(find.text('新增文件.txt'), findsOneWidget);
   });
 
-  testWidgets('左缘侧滑能开抽屉（顶栏没有 ☰，这是左抽屉的入口）', (tester) async {
+  testWidgets('左缘跟手拖 / 顶栏 ☰ 都能开抽屉', (tester) async {
     final app = AppModel(client: _FakeClient());
     await tester.pumpWidget(
       MaterialApp(
@@ -210,10 +210,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('抽屉内容'), findsNothing, reason: '还没划');
 
-    // 与原型 `.edge--open` 手势带同一位置：左缘、顶栏之下。
+    // 左缘最外缘往右拖：原生 `Drawer` 的**跟手**拖动（`drawerEdgeDragWidth: 32`）。
     await tester.dragFrom(const Offset(2, 300), const Offset(300, 0));
     await tester.pumpAndSettle();
-    expect(find.text('抽屉内容'), findsOneWidget, reason: '左缘侧滑必须能开抽屉');
+    expect(find.text('抽屉内容'), findsOneWidget, reason: '左缘跟手拖必须能开抽屉');
+
+    // 关掉，再用顶栏 ☰ 开一次 —— 两条入口都要通。
+    await tester.tap(find.byTooltip('打开会话抽屉'));
+    await tester.pumpAndSettle();
+    expect(find.text('抽屉内容'), findsOneWidget, reason: '顶栏 ☰ 也要能开');
   });
 
   testWidgets('接管：审批 → 提问 → 计划 依次出现（队列是瀑布）', (tester) async {
