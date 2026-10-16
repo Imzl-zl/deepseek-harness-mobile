@@ -29,6 +29,29 @@ class WorkspaceGroup {
 /// 一桶:分组标签 + 属于它的 sid。
 typedef WorkspaceBucket = ({String label, List<String> sessionIds});
 
+/// 一个会话在列表里**可不可见**。
+///
+/// **规则逐条照 DSH Web 的 `sessionVisible`**
+/// （`packages/client/ui-workspace/src/client/tree.ts:238-255`）:
+/// 1. `origin === 'subagent'` 的**不列**（子智能体的子会话不是用户的历史条目，
+///    Web 同样不列；2026-10-15 真机对比:Web 的 anatomy-test 3 条,手机 4 条,
+///    多的那条就是子智能体会话）;
+/// 2. `blank`（从没被 agent 跑过）且**不是当前会话**的**不列**;
+/// 3. 已归档的默认不列（本期没有归档面，所以这条先不实现 —— 连接器也还没给
+///    归档清单，`workspace.list` 的 `archivedSessionIds` 已经在路上）。
+///
+/// 连接器一直在发 `subagent` / `blank` 两个标志（`connector/src/dsh/sessions.ts`），
+/// 缺的只是手机这一侧的过滤。
+bool sessionVisible({
+  required bool subagent,
+  required bool blank,
+  required bool isCurrent,
+}) {
+  if (subagent) return false;
+  if (blank && !isCurrent) return false;
+  return true;
+}
+
 /// 把会话按工作区分桶。**纯函数**——分组规则只有这一份,抽屉与内联列表都用它。
 ///
 /// 规则:

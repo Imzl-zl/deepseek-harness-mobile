@@ -1216,6 +1216,10 @@ class AppModel extends ChangeNotifier {
           // **挑靶子时要它**：只按 `!running` 挑会挑到"刚被别的 agent 跑完一轮"的
           // 会话，而那种会话随时可能又被唤起（真机联调两次叫醒别人的会话）。
           blank: entry['blank'] == true,
+          // 子智能体的子会话：**列表可见性的一条判据**（DSH Web 同样不列它，
+          // `ui-workspace/src/client/tree.ts:244`）。连接器一直在发这个标志，
+          // 手机此前没解析 —— 真机上于是多列一行（Web 3 条 / 手机 4 条）。
+          subagent: entry['subagent'] == true,
           // 当前模型：来自 DSH 的 `modelSelection` 投影（`connector/src/dsh/models.ts`）。
           // **认不出就不给**（`null`），界面显示"未选择"—— 猜一个就是把
           // "看起来连着"当成"连着"。

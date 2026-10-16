@@ -78,4 +78,45 @@ void main() {
       expect(labelsOf(buckets), ['A']);
     });
   });
+
+  // 列表可见性:**逐条照 DSH Web 的 sessionVisible**
+  // (`packages/client/ui-workspace/src/client/tree.ts:238-255`)。
+  // 2026-10-15 真机对比:Web 的 anatomy-test 3 条、手机 4 条 ——
+  // 多的那条是子智能体会话,而连接器一直在发 `subagent` 标志,是手机没解析也没用。
+  group('会话可见性(照 DSH Web 的 sessionVisible)', () {
+    test('子智能体的子会话不列', () {
+      expect(
+        sessionVisible(subagent: true, blank: false, isCurrent: false),
+        isFalse,
+      );
+      expect(
+        sessionVisible(subagent: true, blank: false, isCurrent: true),
+        isFalse,
+        reason: 'Web 的判据是 origin,与是否当前无关',
+      );
+    });
+
+    test('blank(从没跑过)且不是当前会话的不列', () {
+      expect(
+        sessionVisible(subagent: false, blank: true, isCurrent: false),
+        isFalse,
+      );
+      expect(
+        sessionVisible(subagent: false, blank: true, isCurrent: true),
+        isTrue,
+        reason: '正在看的那个 blank 会话要留着,否则用户刚点开就没了',
+      );
+    });
+
+    test('普通会话照常列', () {
+      expect(
+        sessionVisible(subagent: false, blank: false, isCurrent: false),
+        isTrue,
+      );
+      expect(
+        sessionVisible(subagent: false, blank: false, isCurrent: true),
+        isTrue,
+      );
+    });
+  });
 }

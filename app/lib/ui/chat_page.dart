@@ -1426,7 +1426,13 @@ class _ChatTab extends StatelessWidget {
         errorText: app.lastError?.message ?? app.connectionDiagnosis,
       );
     }
+    // **`reverse: true`**：进入会话时**落在最新一条**（列表底部），与 Web 一致 ——
+    // 2026-10-15 真机反馈:"dsh web 你进入会话是最新的消息,就是消息最下面,
+    // APP 是最上面我要滑动多少次啊?"。
+    // `reverse` 而不是"打开后 scrollToEnd":前者让**首帧**就在底部,不做二次布局,
+    // 也不依赖 items 是否已经落全(恢复中的分页期间同样停在最新那端)。
     return ListView.builder(
+      reverse: true,
       padding: const EdgeInsets.symmetric(horizontal: 16),
       itemCount: items.length,
       itemBuilder: (context, index) => _TurnView(item: items[index]),
@@ -1601,13 +1607,24 @@ class _SessionListInline extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // **可见性规则逐条照 DSH Web**（`sessionVisible`）:子智能体的子会话不列、
+    // blank 除当前外不列。与抽屉同一条规则 —— 两边看到的必须是同一份列表。
+    final visible = sessions
+        .where(
+          (s) => sessionVisible(
+            subagent: s.subagent,
+            blank: s.blank,
+            isCurrent: false,
+          ),
+        )
+        .toList();
     // **分组规则只有一份**（模型层的纯函数）—— 抽屉与这里都用它。
     // 2026-10-15 只改了抽屉，主界面这份还是平的，真机上一眼看出来了。
     final buckets = bucketSessionsByWorkspace(
-      sessions.map((s) => s.sid).toList(),
+      visible.map((s) => s.sid).toList(),
       workspaces,
     );
-    final bySid = {for (final s in sessions) s.sid: s};
+    final bySid = {for (final s in visible) s.sid: s};
     // 分组后是"组头 + 行"的扁平序列：给 ListView 用。
     final rows = <Widget>[];
     for (final bucket in buckets) {

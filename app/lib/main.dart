@@ -406,6 +406,19 @@ class _DshMobileAppState extends State<DshMobileApp> {
   /// 而 Web 的结构是"先选项目再看它的会话"。
   List<DrawerSection> _drawerSections(AppModel app) {
     final now = DateTime.now();
+    // **可见性规则逐条照 DSH Web**（`model/workspace.dart` 的 `sessionVisible`）:
+    // 子智能体的子会话不列、从没跑过的 blank 除当前外不列。
+    // 2026-10-15 真机对比:Web 的 anatomy-test 3 条,手机 4 条 —— 多的那条
+    // 就是子智能体会话,而连接器一直在发 `subagent` 标志,是手机没用。
+    final visible = app.sessions
+        .where(
+          (s) => sessionVisible(
+            subagent: s.subagent,
+            blank: s.blank,
+            isCurrent: s.sid == app.currentSid,
+          ),
+        )
+        .toList();
     DrawerSession rowOf(SessionSummary s) => DrawerSession(
       sid: s.sid,
       title: s.displayTitle,
@@ -432,7 +445,7 @@ class _DshMobileAppState extends State<DshMobileApp> {
     // 抽屉与内联列表都用它,免得两处各写一遍"谁进哪个桶"。
     return [
       for (final bucket in bucketSessionsByWorkspace(
-        app.sessions.map((s) => s.sid).toList(),
+        visible.map((s) => s.sid).toList(),
         app.workspaces,
       ))
         DrawerSection(

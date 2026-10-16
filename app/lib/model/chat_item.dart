@@ -154,6 +154,7 @@ class SessionSummary {
     this.pendingCount = 0,
     this.running = false,
     this.blank = false,
+    this.subagent = false,
     this.model,
     this.cwd,
   });
@@ -185,7 +186,18 @@ class SessionSummary {
   /// blank = 还没有任何轮次）。**挑靶子时要它**：只按 `!running` 挑会挑到
   /// "刚被别的 agent 跑完一轮"的会话，而那种会话的 agent 随时可能又被唤起
   /// （真机联调两次就这么把别人的空会话叫醒过）。
+  ///
+  /// 它还是**列表可见性**的一条判据：DSH Web 的 `sessionVisible`
+  /// （`ui-workspace/src/client/tree.ts:245`）把 blank 且非当前的会话藏掉。
   final bool blank;
+
+  /// 子智能体的子会话（`origin === 'subagent'`，电脑侧原样过线）。
+  ///
+  /// **列表里不列它**：DSH Web 的 `sessionVisible` 同样 `return false`
+  /// （`tree.ts:244`）。2026-10-15 真机对比：Web 的 anatomy-test 3 条、
+  /// 手机 4 条，多的那条就是子智能体会话 —— 连接器一直在发这个标志，
+  /// 是手机侧没解析也没用。
+  final bool subagent;
 
   /// 这个会话**下一次**将用的模型（`session.list` 的 `model`）。
   ///
