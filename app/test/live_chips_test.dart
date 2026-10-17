@@ -13,7 +13,7 @@
 /// `JobListAction.tsx:450-453`。
 library;
 
-import 'package:dsh_mobile/ui/chat_page.dart';
+import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

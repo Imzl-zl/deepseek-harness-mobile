@@ -1,6 +1,17 @@
 # Agent Note: 顶栏状态位缩成「圆点 + 独立右抽屉按钮」，标题限宽 220px
 
-Status: implemented
+Status: archived
+
+Superseded by: `.agents/notes/implemented/2026-10-17-topbar-single-row-and-stats-scroll.md`
+
+取代范围：**决定 3（标题限宽 220px / 字号 14px）、决定 4（子智能体与后台任务计数另起一行）
+与备选 3（"把计数 chip 搬进顶栏同一行"被否）** 这三处已被取代 —— 新篇把计数 chip 做成
+「图标 + 计数」放进顶栏同一行，标题随之收窄到 140px / 13px，那一整行撤销。
+当年否掉"同一行"的前提是**全文本** chip（两枚 250dp 级）；换成图标 + 计数后前提不成立。
+本篇**其余结论仍然有效**：连接状态点的形状/颜色/三档语义（照 DSH 的 `StateDot` +
+`ConnectionIndicator`）、点它弹「连接操作」sheet、"任何状态 ≤2 步走到重新配对"，
+以及"与系统返回手势的冲突用官方 `setSystemGestureExclusionRects`（上半屏 192dp）"那一段
+连同它的真机实测表。**下面的结论原文不改** —— 它记录了当时为什么那么想。
 
 ## Problem
 

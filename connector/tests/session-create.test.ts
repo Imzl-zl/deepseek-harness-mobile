@@ -75,12 +75,16 @@ test('给了的参数原样过线，没给的一个都不补', async () => {
   const seen: unknown[][] = []
   const handlers = build(seen)
 
+  // hero 上选工作区 / 模式之后"开一个新任务"走的就是这两个字段
+  // （`.agents/notes/implemented/2026-10-17-blank-session-hero.md`）：
+  // 选预设**不走** `agentPresets.select`，因为那条路对跑过一轮的会话会拒
+  // （`agent-preset/locked`），而这里带上去根本不会碰到那条限制。
   await handlers['session.create']!(
-    { workspaceId: 'ws-1', agentPreset: 'plan' },
+    { workspaceId: 'ws-1', agentPreset: 'standard' },
     {},
   )
 
-  assert.deepEqual(seen[0]![0], { workspaceId: 'ws-1', agentPreset: 'plan' })
+  assert.deepEqual(seen[0]![0], { workspaceId: 'ws-1', agentPreset: 'standard' })
 })
 
 test('非字符串字段：protocol/bad-frame，不去问 DSH', async () => {

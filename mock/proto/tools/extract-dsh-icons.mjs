@@ -22,12 +22,17 @@ const DSH = process.env.DSH_SOURCE || 'D:/sudy/github/deepseek-harness'
 const ICONS_TSX = `${DSH}/packages/client/ui-primitives/src/icons/index.tsx`
 const SHARED_TSX = `${DSH}/packages/client/ui-primitives/src/icons/shared-artwork.tsx`
 const PERMISSION_TSX = `${DSH}/packages/client/ui-primitives/src/PermissionIcon.tsx`
+const FISH_TSX = `${DSH}/packages/client/ui-primitives/src/FishLogo.tsx`
 
 /** Exports whose source name does not follow the icon-naming rule. */
 const EXPLICIT_NAMES = {
   PermissionIconReadOnly: 'permissionReadOnly',
   PermissionIconWorkspaceWrite: 'permissionWorkspaceWrite',
   PermissionIconFullAccess: 'permissionFullAccess',
+  // The naming rule would yield `permissionIconAutoReview` — the *component* name, not the
+  // permission's. All four permission glyphs are one family, so they all carry the short
+  // form; a caller guessing the odd one out gets an assert-failing ErrorWidget, not a warning.
+  PermissionIconAutoReview: 'permissionAutoReview',
 }
 
 const STROKE_CONSTS = { ICON_REGULAR_STROKE: 1, ICON_MEDIUM_STROKE: 1.3 }
@@ -120,7 +125,7 @@ function parseDefs(src, file) {
   const reArrow = /^(?:export )?const ([A-Za-z0-9_]+)(?::[^=]*)? = \(([^)]*)\) => /gm
   let m
   while ((m = reArrow.exec(src))) record(m[1], m[2], arrowBody(src, m.index + m[0].length), m.index)
-  const reFn = /^(?:export )?function ([A-Za-z0-9_]+)\(([^)]*)\)(?::[^{]*)?\{\s*/gm
+  const reFn = /^(?:export )?function ([A-Za-z0-9_]+)\(([^)]*)\)\s*(?::[^{]*)?\{\s*/gm
   while ((m = reFn.exec(src))) {
     const brace = m.index + m[0].lastIndexOf('{')
     const block = src.slice(brace + 1, matchBalanced(src, brace))
@@ -182,6 +187,15 @@ function jsxToSvg(jsx, ctx) {
   let s = jsx
 
   s = s.replace(/d=\{SHIELD_OUTLINE_PATH\}/g, `d="${SHIELD_PATH}"`)
+  s = s.replace(/d=\{FISH_LOGO_PATH\}/g, `d="${FISH_PATH}"`)
+  // FishLogo 的 viewBox 是模板串（`0 0 ${…width} ${…height}`），那对花括号会让下面
+  // 通用的 `={…}` 改写无从下手（表达式里又嵌了 `{}`）——所以在这里按源码常量整条换掉。
+  s = s.replace(
+    /viewBox=\{`0 0 \$\{FISH_LOGO_VIEWBOX\.width\} \$\{FISH_LOGO_VIEWBOX\.height\}`\}/g,
+    `viewBox="0 0 ${FISH_VIEWBOX.width} ${FISH_VIEWBOX.height}"`,
+  )
+  s = s.replace(/FISH_LOGO_VIEWBOX\.width/g, FISH_VIEWBOX.width)
+  s = s.replace(/FISH_LOGO_VIEWBOX\.height/g, FISH_VIEWBOX.height)
   s = s.replace(/mask=\{`url\(#\$\{maskId\}\)`\}/g, 'mask="url(#%%UID%%)"')
 
   // attribute names first, so expression bodies stay untouched
@@ -210,7 +224,9 @@ function jsxToSvg(jsx, ctx) {
   const vb = /viewBox="([^"]+)"/.exec(s)
   if (!vb) throw new Error(`no viewBox in ${ctx}`)
   if (!/width="(%%SIZE%%|%%E:[^"]+%%)"/.test(s)) throw new Error(`no size-driven width in ${ctx}`)
-  if (!/height="%%SIZE%%"/.test(s)) throw new Error(`no size-driven height in ${ctx}`)
+  // 高度可以是 `%%SIZE%%`（正方形）或一条按尺寸算的表达式（FishLogo 按 23.16:17.04 算高度）；
+  // 两种都是"高度由尺寸决定"，写死数字的高度才是要拦的那种。
+  if (!/height="(%%SIZE%%|%%E:[^"]+%%)"/.test(s)) throw new Error(`no size-driven height in ${ctx}`)
   return { svg: s, viewBox: vb[1] }
 }
 
@@ -219,6 +235,7 @@ function jsxToSvg(jsx, ctx) {
 const iconsSrc = readFileSync(ICONS_TSX, 'utf8')
 const sharedSrc = readFileSync(SHARED_TSX, 'utf8')
 const permissionSrc = readFileSync(PERMISSION_TSX, 'utf8')
+const fishSrc = readFileSync(FISH_TSX, 'utf8')
 
 const SHIELD_PATH = (() => {
   const m = /export const SHIELD_OUTLINE_PATH = '([^']+)'/.exec(iconsSrc)
@@ -226,10 +243,23 @@ const SHIELD_PATH = (() => {
   return m[1]
 })()
 
+const FISH_PATH = (() => {
+  const m = /export const FISH_LOGO_PATH = '([^']+)'/.exec(fishSrc)
+  if (!m) throw new Error('FISH_LOGO_PATH not found in FishLogo.tsx')
+  return m[1]
+})()
+
+const FISH_VIEWBOX = (() => {
+  const m = /export const FISH_LOGO_VIEWBOX = \{ width: ([0-9.]+), height: ([0-9.]+) \}/.exec(fishSrc)
+  if (!m) throw new Error('FISH_LOGO_VIEWBOX not found in FishLogo.tsx')
+  return { width: m[1], height: m[2] }
+})()
+
 const defs = new Map([
   ...parseDefs(sharedSrc, 'shared-artwork.tsx'),
   ...parseDefs(iconsSrc, 'index.tsx'),
   ...parseDefs(permissionSrc, 'PermissionIcon.tsx'),
+  ...parseDefs(fishSrc, 'FishLogo.tsx'),
 ])
 
 const cache = new Map()
@@ -304,6 +334,39 @@ for (const { src, file, re } of WRAPPER_SOURCES) {
   }
 }
 
+/* Artworks the set exports as a component of its own, with no IconXxx Regular/Medium
+ * wrapper around them. One canonical name each — the component name, lower-cased,
+ * same rule as the wrapped icons.
+ *
+ * FishLogo is the only one today: it is the brand mark the blank-session hero leads
+ * with (DSH `EmptyHero.tsx:104-105` renders it at 34px). It has to come through this
+ * extractor rather than be hand-copied, because it is the one artwork whose root is
+ * `fill="none"` with the colour on the <path> — a hand copy drifts from DSH silently.
+ *
+ * Note: 为什么不手抄进 Dart 模板、以及解析器那个空格缺口 —— 见
+ * `.agents/notes/implemented/2026-10-17-icon-pipeline-fish-and-format-stability.md`。
+ */
+const DIRECT_ARTWORKS = [
+  { component: 'FishLogo', file: 'FishLogo.tsx' },
+]
+for (const { component, file } of DIRECT_ARTWORKS) {
+  const re = new RegExp(`^export function ${component}\\(`, 'm')
+  const m = re.exec(fishSrc)
+  if (!m) throw new Error(`direct artwork ${component} not found in ${file}`)
+  const def = defs.get(component)
+  if (!def) throw new Error(`direct artwork ${component} has no parsed definition in ${file}`)
+  records.push({
+    exportName: component,
+    weight: 'Regular',
+    raw: component,
+    base: component,
+    explicit: undefined,
+    art: resolveArt(component),
+    line: lineOf(fishSrc, m.index),
+    file,
+  })
+}
+
 const lowerFirst = (s) => s[0].toLowerCase() + s.slice(1)
 
 /* name assignment, with explicit handling of the two collisions in the set */
@@ -347,12 +410,13 @@ const REQUIRED = [
   'link', 'rightUp', 'download', 'api', 'browse', 'plan', 'queue', 'goal', 'skill', 'compact', 'pin',
   'pinFill', 'treeCorner', 'loading', 'gauge', 'slidersTwo', 'alarmClock', 'checklist', 'workspaceTree',
   'flatList', 'projectAdd', 'user', 'users', 'edit', 'light', 'dark', 'followsystem',
+  'fishLogo',
 ]
 const missing = REQUIRED.filter((n) => !byName.has(n))
 if (missing.length) throw new Error(`required icon names missing from extract: ${missing.join(', ')}`)
 
 /* permission glyphs live in PermissionIcon.tsx, not in icons/index.tsx */
-const PERMISSIONS = ['permissionReadOnly', 'permissionWorkspaceWrite', 'permissionFullAccess']
+const PERMISSIONS = ['permissionReadOnly', 'permissionWorkspaceWrite', 'permissionFullAccess', 'permissionAutoReview']
 const missingPermissions = PERMISSIONS.filter((n) => !byName.has(n))
 if (missingPermissions.length) throw new Error(`permission icons missing from extract: ${missingPermissions.join(', ')}`)
 
@@ -366,6 +430,7 @@ const GOLDEN = {
   folderClose: [16, '0 0 16 16'], nowrap: [16, '0 0 16 16'],
   permissionReadOnly: [16, '0 0 16 16'], permissionWorkspaceWrite: [16, '0 0 16 16'],
   permissionFullAccess: [16, '0 0 16 16'],
+  fishLogo: [24, '0 0 23.16 17.04'],
 }
 for (const [name, [size, vb]] of Object.entries(GOLDEN)) {
   const rec = byName.get(name)
@@ -389,7 +454,8 @@ const header = `/*!
  * Source (read-only; DSH sources were not modified):
  *   packages/client/ui-primitives/src/icons/index.tsx          (${countLines(iconsSrc)} lines)
  *   packages/client/ui-primitives/src/icons/shared-artwork.tsx (${countLines(sharedSrc)} lines)
- *   packages/client/ui-primitives/src/PermissionIcon.tsx       (${countLines(permissionSrc)} lines; permissionReadOnly / permissionWorkspaceWrite / permissionFullAccess)
+ *   packages/client/ui-primitives/src/PermissionIcon.tsx       (${countLines(permissionSrc)} lines; ${PERMISSIONS.join(' / ')})
+ *   packages/client/ui-primitives/src/FishLogo.tsx             (${countLines(fishSrc)} lines; fishLogo — brand mark, no IconXxx wrapper)
  *   packages/client/ui-primitives/src/icons/props.ts           (IconProps: size?, className?)
  * Extracted: ${today}
  * Regenerate: node mock/proto/tools/extract-dsh-icons.mjs

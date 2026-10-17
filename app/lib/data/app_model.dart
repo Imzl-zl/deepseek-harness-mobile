@@ -29,6 +29,7 @@ import '../core/endpoint.dart';
 import '../core/errors.dart';
 import '../core/job.dart';
 import '../core/sync_client.dart';
+import '../model/agent_preset.dart';
 import '../model/chat_item.dart';
 import '../model/interaction.dart';
 import '../model/model_catalog.dart';
@@ -1094,6 +1095,84 @@ class AppModel extends ChangeNotifier {
     // 工作区清单：会话列表**按它分组**（Web 的侧栏就是 工作区 → 会话）。
     // 失败只留声：拿不到时列表退回不分组，而不是按 `cwd` 猜一个分组。
     await refreshWorkspaces();
+    // Agent 预设目录（hero 上那枚模式 chip 的名字来源）。同样只留声：
+    // 拿不到时 chip 说"拿不到目录"，而不是摆一份手抄的四个内置预设。
+    await _refreshAgentPresets();
+    // **落到 blank 会话上**（照 DSH 的 `reuseOrCreateBlank`，见该方法的注释）。
+    await _openBlankSessionIfUnselected();
+  }
+
+  /// 没有选中会话时，落到"那个 blank 会话"上。
+  ///
+  /// ## 为什么要有这一步
+  ///
+  /// DSH Web 的首页**不是"没有会话"，是"已有会话但它是 blank"**
+  /// （`ui-conversation/src/client/skeleton/ConversationMainPanel.tsx:41-43` 的
+  /// `hero` 两个来源，实际走的是后者：`shellPhase === 'blank' && openState === 'open'`），
+  /// 而那个 blank 会话是**工作区连上时被急切创建**的
+  /// （`ui-workspace/src/client/navigation.ts:195-205` 的 `reuseOrCreateBlank()`）。
+  /// 手机这边没有这一步 —— 于是"连上电脑后落到的第一屏"是**列表**，
+  /// 而那个 blank 会话因为 `sessionVisible`（`ui-workspace/src/client/tree.ts:245`）
+  /// 把"blank 且非当前"藏掉，用户在手机上根本看不到它、也就永远看不到 hero。
+  ///
+  /// 所以：**选中它**（不新建 —— 电脑侧已经有一个了，`session.create` 只会多造一个）。
+  /// 挑不到 blank 时就什么都不做：那时列表是空的或全是跑过的会话，
+  /// 主界面照旧显示内联列表 / 空态，与 DSH 的"冷启动没有会话"同一个形态。
+  ///
+  /// Note: 为什么必须有这一步（blank 会话在列表里是藏起来的）与被否方案 —— 见
+  /// `.agents/notes/implemented/2026-10-17-blank-session-hero.md`。
+  Future<void> _openBlankSessionIfUnselected() async {
+    if (_disposed || _isPreview) return;
+    if (_currentSid != null) return;
+    final blank = _sessions.where((s) => s.blank && !s.subagent).firstOrNull;
+    if (blank == null) return;
+    await openSession(blank.sid);
+  }
+
+  Future<void> _refreshAgentPresets() async {
+    try {
+      final result = await client.call<Object?>('agentPresets.list', const {});
+      if (_disposed) return;
+      // **认不出就给 `available:false`**（`parseAgentPresetRoster` 对
+      // `available != true` 与形状不对都这么回）：界面据此说"拿不到预设目录"，
+      // 而不是把"电脑侧没给"显示成"这台电脑一个预设都没有"。
+      _agentPresetRoster = parseAgentPresetRoster(result);
+      if (!_disposed) notifyListeners();
+    } catch (_) {
+      // **兜住所有异常** —— 与 `_refreshPermissionCatalog` 同一条纪律：
+      // 目录是附属信息，不该把"拉不到预设目录"升级成"会话列表也失败了"。
+    }
+  }
+
+  /// Agent 预设目录（`agentPresets.list`）；没拉过是 `null`。
+  AgentPresetRoster? get agentPresetRoster => _agentPresetRoster;
+  AgentPresetRoster? _agentPresetRoster;
+
+  /// 当前会话跑的是哪个预设（`agentPreset` 投影的 `string | null`）。
+  ///
+  /// **`null` 就是"这个会话没记过预设"**（老会话，或这台电脑没有预设服务）——
+  /// 界面退回"按目录里的默认项显示"或显示 id，不猜一个档。
+  String? get agentPresetValue {
+    if (_currentSid == null) return null;
+    return parseAgentPresetValue(_projections);
+  }
+
+  /// 当前会话归属的工作区；`null` = 清单里没有它（或清单还没到）。
+  WorkspaceGroup? get currentWorkspace {
+    final sid = _currentSid;
+    if (sid == null) return null;
+    return workspaceGroupOf(sid, _workspaces);
+  }
+
+  /// 当前会话是不是 blank（"从没被 agent 跑过"）。
+  ///
+  /// 用它决定主界面显示 hero 还是空态。**会话不在列表里时是 `false`**
+  /// （刚 `session.create` 出来、`session.list` 还没刷到时）—— 那时宁可少显示一次 hero，
+  /// 也不要把"不知道"当成"blank"（DSH 对不知道的字段一律不给，同一条纪律）。
+  bool get currentIsBlank {
+    final sid = _currentSid;
+    if (sid == null) return false;
+    return sessionOf(sid)?.blank ?? false;
   }
 
   Future<void> _refreshPermissionCatalog() async {
@@ -1293,12 +1372,26 @@ class AppModel extends ChangeNotifier {
   ///
   /// 它走 `outbox`（带幂等键的写操作）：点了两次不会建出两个会话 ——
   /// 重发复用同一个 `requestId`，电脑侧去重。
-  Future<void> createSession() async {
-    final result = await client.call<Object?>(
-      'session.create',
-      const {},
-      requestId: 'new-${DateTime.now().microsecondsSinceEpoch}',
-    );
+  ///
+  /// [workspaceId] / [agentPreset] 是 hero 上那两枚 chip 的选择：
+  /// **不给就一个字段都不塞**（DSH 对缺省字段有自己的当前工作区与默认预设，
+  /// 见 `connector/src/handlers.ts` 的 `session.create`）——
+  /// 硬传一个猜的值比不传更糟。
+  ///
+  /// 选预设走这里而不是 `agentPresets.select`：后者对**跑过一轮**的会话会拒
+  /// （`agent-preset/locked`，`agent-preset-registry/src/index.ts:351`），
+  /// 而建会话时带上根本不会碰到那条限制。取舍见
+  /// `.agents/notes/implemented/2026-10-17-blank-session-hero.md`。
+  Future<void> createSession({String? workspaceId, String? agentPreset}) async {
+    final result = await client.call<Object?>('session.create', {
+      // 显式 `if` 而不是 null-aware element（`?key: value`）：后者的 key
+      // 取的是**值的字符串形式**而不是标识符（2026-10-15 踩到，
+      // 详见 `selectModel` 的注释）。`dart analyze` 会反过来建议改过去，别听。
+      // ignore: use_null_aware_elements
+      if (workspaceId != null) 'workspaceId': workspaceId,
+      // ignore: use_null_aware_elements
+      if (agentPreset != null) 'agentPreset': agentPreset,
+    }, requestId: 'new-${DateTime.now().microsecondsSinceEpoch}');
     final sid = result is Map ? result['sid'] : null;
     if (sid is! String || sid.isEmpty) {
       throw const ProtocolException(

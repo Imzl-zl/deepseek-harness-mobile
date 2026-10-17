@@ -400,6 +400,31 @@ String endpointKindLabel(EndpointKind kind) =>
 String endpointLine(Endpoint endpoint) =>
     '${endpointKindLabel(endpoint.kind)} · ${endpoint.url}';
 
+/// 子智能体 chip 的**可见**文案：`{count} 个子智能体`（总数）。
+///
+/// 与 DSH 逐字一致：`SubagentHeaderLineage.tsx:710` 用的就是 `count.total`
+/// （`{count} 个子智能体`，`ui-subagent/src/client/locales.ts:36-37`），
+/// **总数后面不带"正在运行"** —— 在跑与否由前面那枚转圈点表达（`:705-708`）。
+/// `{count} 个子智能体，正在运行`（`:38-39`）是 **aria-label** 那一份（`:679-680`），
+/// 见 [subagentChipAria]。
+///
+/// 放 model 层而不是某一屏里：顶栏 chip 的可见文案与 aria 是**同一个真值源**，
+/// 两处各写一份必然漂（2026-10-16 就漂过一次）。
+String subagentChipLabel(int total) => '$total 个子智能体';
+
+/// 子智能体 chip 的无障碍名：在跑时报**在跑的个数**，否则报总数（`:679-680`）。
+String subagentChipAria({required int total, required int running}) =>
+    running > 0 ? '$running 个子智能体，正在运行' : subagentChipLabel(total);
+
+/// 后台任务 chip 的文案：**在跑报在跑的个数**，没有在跑的才报总数。
+///
+/// 与 DSH 逐字一致（`JobListAction.tsx:450-453`）：
+/// `liveRows.length > 0` → `count.live`（`{count} 个后台任务运行中`），count 取**在跑数**；
+/// 否则 → `count.idle`（`{count} 个后台任务`），count 取可见总数。
+/// 模板见 `ui-jobs/src/client/locales.ts:8-11`。
+String jobChipLabel({required int live, required int total}) =>
+    live > 0 ? '$live 个后台任务运行中' : '$total 个后台任务';
+
 /// 当前连接的**两行式描述**（连接 sheet 与设置页共用）。
 ///
 /// - [ConnectionSummary.line]：没连上时是状态（[connectionLabel]），连上了是

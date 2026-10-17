@@ -126,10 +126,17 @@ const out = await evalJs(async () => {
   res.side.closedByScrim = !q('#pageSide').classList.contains('is-in')
   res.side.edgeBackAfterClose = getComputedStyle(q('#edgeSide')).display !== 'none'
 
-  // 6) 顶栏限宽 + 计数 chip 行(2026-10-16):标题 ≤ 220px(照 DSH 的 .crumb),
-  //    chip 行有才显示,文案与计数口径照 DSH(子智能体报总数、后台任务报在跑数)。
+  // 6) 顶栏**一行**(2026-10-17):标题 ≤ 140px / 13px(形态同 DSH 的 .crumb,
+  //    手机收窄一档),计数 chip **与标题同一行**(DSH 的 header actions band,
+  //    ConversationSession.tsx:127-129),只显"图标 + 计数"、全文本退进 aria/title,
+  //    有才显示。计数口径照 DSH:子智能体报总数、后台任务报在跑数。
+  const ttl = q('.appbar .ttl')
+  const ttlRect = ttl.getBoundingClientRect()
+  const chipRects = [...q('#liveChips').querySelectorAll('.livechip')]
+    .map(b => b.getBoundingClientRect())
   res.topbar = {
-    titleWidth: Math.round(q('.appbar .ttl').getBoundingClientRect().width),
+    titleWidth: Math.round(ttlRect.width),
+    titleFontSize: getComputedStyle(ttl).fontSize,
     // 顶栏:左侧 ☰(抽屉入口) / ● 连接状态点 / ⊕ 新建;两边手势带贴最边缘、上半屏 192。
     appbarButtons: [...q('.appbar').querySelectorAll('button')].map(b => b.dataset.act || b.className),
     edgeBands: ['#edgeOpen', '#edgeSide'].map(sel => {
@@ -144,12 +151,32 @@ const out = await evalJs(async () => {
       }
     }),
     chipsHidden: q('#liveChips').hidden,
+    chipsInAppBar: !!q('.appbar #liveChips'),
+    // "同一行"的判据是**纵向中心对齐**（顶栏 `align-items: center`）——
+    // 不用"落在标题的矩形里"：标题是一行 13px 文字（约 16px 高），
+    // 而 chip 是 28px 的胶囊，包含关系永远不成立。
+    chipsSameRowAsTitle: chipRects.every(r =>
+      Math.abs((r.top + r.bottom) / 2 - (ttlRect.top + ttlRect.bottom) / 2) <= 4),
     chips: [...q('#liveChips').querySelectorAll('.livechip')].map(b => ({
       text: b.textContent.trim(),
       aria: b.getAttribute('aria-label'),
       spinning: !!b.querySelector('.livechip-dot'),
       opens: b.dataset.act,
     })),
+  }
+
+  // 6b) 统计条:单行 + 横向滚动(2026-10-17 定案)。
+  //     不滚的 Row 会把末项**整块裁掉**(2026-10-17 前"上下文百分比不显示"就是这么来的),
+  //     换行又让"哪一项掉到第二行"随数字漂;横滚时读数滑得到。
+  const stats = q('.stats')
+  const statRects = [...stats.querySelectorAll('.stat')].map(s => s.getBoundingClientRect())
+  res.stats = {
+    flexWrap: getComputedStyle(stats).flexWrap,
+    overflowX: getComputedStyle(stats).overflowX,
+    oneRow: statRects.every(r => Math.abs(r.top - statRects[0].top) < 1),
+    allVisible: statRects.every(r => r.width > 0 && r.height > 0),
+    overflows: stats.scrollWidth > stats.clientWidth,
+    turnText: (q('#statTurn')?.textContent || '').trim(),
   }
 
   // 7) 代码块工具条(2026-10-16):默认自动换行,点开关才横滚 ——
@@ -168,9 +195,117 @@ const out = await evalJs(async () => {
     wrapBtn.click(); await sleep(120)   // 还原:下次跑时状态不残留
   }
 
+  // 8) 新会话页(blank)的 hero(2026-10-17 定案)。**放在最后**:它会把 `#msgs` 藏起来,
+  //    而前面几段要量消息流里的东西。
+  //    DSH 的"刚连上落到的第一屏"是**已有会话但它是 blank**
+  //    (`ConversationMainPanel.tsx:41-43`),不是空态;手机端落到 blank 会话就显示 hero。
+  const heroEl = q('#convHero')
+  const hiddenByDefault = heroEl.hidden
+  const normalPlaceholder = q('#input').placeholder
+  q('[data-act="new-session"]').click()
+  await sleep(220)
+  const heroRect = heroEl.getBoundingClientRect()
+  const composerRect = q('.composer').getBoundingClientRect()
+  const hchips = [...heroEl.querySelectorAll('.hchip')].map(c => {
+    const r = c.getBoundingClientRect()
+    const fish = heroEl.querySelector('.hero-fish svg')
+    return {
+      label: (c.querySelector('.lbl') || {}).textContent?.trim(),
+      height: Math.round(r.height),
+      top: Math.round(r.top),
+      left: Math.round(r.left),
+      opens: c.dataset.act,
+      _fish: fish ? fish.getBoundingClientRect().width : 0,
+    }
+  })
+  const fishRect = heroEl.querySelector('.hero-fish svg')
+  res.hero = {
+    hiddenByDefault,
+    visible: !heroEl.hidden,
+    // blank 期没有内容区(DSH 的 `DefaultConversationViews.tsx:32` 直接 return null)
+    msgsHidden: q('#msgs').hidden,
+    placeholder: q('#input').placeholder,
+    headline: (heroEl.querySelector('.hero-ttl') || {}).textContent?.trim(),
+    badge: (heroEl.querySelector('.hero-badge') || {}).textContent?.trim(),
+    fishWidth: fishRect ? Math.round(fishRect.getBoundingClientRect().width) : 0,
+    titleFontSize: getComputedStyle(q('.hero-ttl')).fontSize,
+    badgeFontFamily: getComputedStyle(q('.hero-badge')).fontFamily,
+    chips: hchips.map(({ _fish, ...rest }) => rest),
+    // 两枚 chip **同一行**(DSH 的 `.heroWorkspaceRow`,AgentPresetSeat 与它同形)
+    chipsSameRow: hchips.length === 2 && Math.abs(hchips[0].top - hchips[1].top) <= 1,
+    // hero 在输入卡片**上方** —— 与 DSH 的 composerStack(标题 → chip 行 → 卡片)同一个叠法
+    aboveComposer: Math.round(heroRect.bottom) <= Math.round(composerRect.top) + 1,
+  }
+  // 两枚 chip 各自开一个选择器;选完名字要真的变(点了没反应 = 假入口)
+  q('#heroPreset').click(); await sleep(200)
+  const presetRows = [...document.querySelectorAll('.sitem[data-act="hero-preset-set"]')]
+  res.hero.presetSheetRows = presetRows.map(b => b.querySelector('.m').firstChild.textContent.trim())
+  if (presetRows.length > 1) { presetRows[presetRows.length - 1].click(); await sleep(220) }
+  res.hero.presetLabelAfter = (q('#heroPresetLabel') || {}).textContent?.trim()
+  q('#heroWorkspace').click(); await sleep(200)
+  const wsRows = [...document.querySelectorAll('.sitem[data-act="hero-workspace-set"]')]
+  res.hero.workspaceSheetRows = wsRows.map(b => b.querySelector('.m').firstChild.textContent.trim())
+  if (wsRows.length > 1) { wsRows[wsRows.length - 1].click(); await sleep(220) }
+  res.hero.workspaceLabelAfter = (q('#heroWorkspaceLabel') || {}).textContent?.trim()
+  // 打开一行**有内容的**会话 = 离开 blank 那一屏(真机同理:hero 让位给消息流)
+  const drawerBtn = q('[data-act="drawer-open"]')
+  if (drawerBtn) { drawerBtn.click(); await sleep(300) }
+  const drow = q('#dlist .drow')
+  if (drow) { drow.click(); await sleep(300) }
+  res.hero.placeholderAfterOpen = q('#input').placeholder
+  res.hero.visibleAfterOpen = !q('#convHero').hidden
+  res.hero.normalPlaceholder = normalPlaceholder
+
   res.layers = PROTO.layers
   return res
 })
 
+// 有断言的判据:探针跑完要**自己说不合格**,否则"跑过了"看起来永远像"没问题"。
+// 断言口径与 app/test/{widget,topbar_chips,stats_bar_layout}_test.dart 同源。
+const failures = []
+const check = (ok, label) => { if (!ok) failures.push(label) }
+
+check(out.errors.length === 0, `页面无 JS 错误（${out.errors.join(' / ')}）`)
+check(out.topbar.titleWidth <= 140, `标题限宽 ≤140（实测 ${out.topbar.titleWidth}px）`)
+check(out.topbar.titleFontSize === '13px', `标题字号 13px（实测 ${out.topbar.titleFontSize}）`)
+check(out.topbar.chipsInAppBar, '计数 chip 在顶栏里（不是另起一行）')
+check(out.topbar.chipsSameRowAsTitle, '计数 chip 与标题同一行')
+check(out.topbar.chips.every(c => !/个(子智能体|后台任务)/.test(c.text)), 'chip 可见文案只有计数（全文本退进 aria）')
+check(out.topbar.chips.every(c => /个(子智能体|后台任务)/.test(c.aria || '')), 'chip 的 aria 带 DSH 的全文本')
+check(out.stats.flexWrap === 'nowrap', `统计条单行（flex-wrap: ${out.stats.flexWrap}）`)
+check(out.stats.oneRow, '三项读数排在同一行')
+check(out.stats.overflowX === 'auto', `统计条可横滚（overflow-x: ${out.stats.overflowX}）`)
+check(out.stats.allVisible, '三项读数都渲染出来了（不是被裁成 0 宽）')
+check(!/^第/.test(out.stats.turnText), `轮次格逐字照 DSH 的 stats.counts（实测 "${out.stats.turnText}"）`)
+
+// 新会话页(blank)的 hero。口径与 app/test/conversation_hero_test.dart 同源。
+check(out.hero.hiddenByDefault, '默认不显示 hero（演示会话是有内容的，blank 才显示）')
+check(out.hero.visible, '按 ⊕ 新建 → 落到 blank 会话 → 显示 hero')
+check(out.hero.msgsHidden, 'blank 期没有内容区（DSH DefaultConversationViews.tsx:32 返回 null）')
+check(out.hero.placeholder === '描述你想要构建的内容, / 调用指令, @ 文件或对话',
+  `占位符是 placeholder.hero 那句（实测 "${out.hero.placeholder}"）`)
+check(out.hero.headline === '探索未至之境', `标题逐字照 hero.headline（实测 "${out.hero.headline}"）`)
+check(out.hero.badge === '预览版', `徽标逐字照 hero.preview（实测 "${out.hero.badge}"）`)
+check(Math.round(out.hero.fishWidth) === 34, `鱼宽 34（DSH EmptyHero.tsx:104-105，实测 ${out.hero.fishWidth}）`)
+check(out.hero.titleFontSize === '24px', `标题 24px（触屏重算，实测 ${out.hero.titleFontSize}）`)
+check(/mono|SF Mono/i.test(out.hero.badgeFontFamily), `徽标用等宽字体（实测 ${out.hero.badgeFontFamily}）`)
+check(out.hero.chips.length === 2, `两枚 chip（工作区 + 模式，实测 ${out.hero.chips.length}）`)
+check(out.hero.chips.every(c => c.height >= 44), `chip 高 ≥44（可点下限，实测 ${out.hero.chips.map(c => c.height).join('/')}）`)
+check(out.hero.chipsSameRow, '两枚 chip 同一行（AgentPresetSeat 与 workspace 同形）')
+check(out.hero.aboveComposer, 'hero 在输入卡片上方（DSH composerStack 的叠法）')
+check(out.hero.presetSheetRows.length === 4, `预设选择器列出四档（实测 ${out.hero.presetSheetRows.join('/')}）`)
+check(out.hero.presetLabelAfter === '创造模式', `选完预设 chip 的名字真的变（实测 "${out.hero.presetLabelAfter}"）`)
+check(out.hero.workspaceLabelAfter === 'deepseek-harness', `选完工作区 chip 的名字真的变（实测 "${out.hero.workspaceLabelAfter}"）`)
+check(out.hero.visibleAfterOpen === false, '打开有内容的会话 → 离开 blank 那一屏')
+check(out.hero.placeholderAfterOpen === out.hero.normalPlaceholder, '离开 hero 后占位符换回普通那句')
+
 console.log(JSON.stringify(out, null, 2))
 ws.close()
+
+if (failures.length) {
+  console.error(`\nFAIL — ${failures.length} 条不合格:`)
+  for (const f of failures) console.error('  ✗ ' + f)
+  process.exit(1)
+}
+console.log(`\nALL CHECKS PASSED — 顶栏与统计条 ${13} 项 + 新会话页 hero ${18} 项`)
+

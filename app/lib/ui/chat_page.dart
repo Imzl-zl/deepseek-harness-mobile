@@ -35,8 +35,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/errors.dart';
 import '../core/job.dart';
 import '../data/app_model.dart';
+import '../model/agent_preset.dart';
 import '../model/chat_item.dart';
 import '../model/model_catalog.dart';
 import '../model/permission.dart';
@@ -49,6 +51,7 @@ import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 import 'chat_turns.dart';
 import 'connection_actions_sheet.dart';
+import 'conversation_hero.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_composer.dart';
 import 'dsh_sheet.dart';
@@ -179,9 +182,6 @@ class ChatPageState extends State<ChatPage> {
     setState(() => _sidePanel = panel);
     openSide();
   }
-
-  /// 当前会话的 id（任务与子智能体都按它取）。**空串 = 没有选中会话**。
-  String get _jobsSid => widget.app.currentSid ?? '';
 
   @override
   void initState() {
@@ -390,6 +390,14 @@ class ChatPageState extends State<ChatPage> {
   Widget _mainScaffold(BuildContext context, {required String? jobsSid}) {
     final items = widget.app.items;
     final sid = widget.app.currentSid;
+    // **各算一次**：`_subsFor()` / `_jobsFor()` 要走投影映射，而顶栏那两枚计数
+    // chip 与右抽屉三个面板读的是**同一份**。原来 drawer 与 chip 行各调两遍
+    // （每帧四遍），chip 行还用 `_jobsSid`（`currentSid ?? ''`）而 drawer 用参数 ——
+    // 两者虽然等价（`_jobsFor` 里 `sid ?? ''`），但没有理由留两个来源。
+    final subs = _subsFor();
+    final jobs = _jobsFor(jobsSid);
+    final runningSubs = subs.where((j) => j.isLive).length;
+    final runningJobs = jobs.where((j) => j.isLive).length;
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: DshColors.bgBase,
@@ -410,6 +418,16 @@ class ChatPageState extends State<ChatPage> {
         connectionState: dotStateOf(widget.app.connection),
         connectionTooltip: _connectionTooltip(),
         onConnectionTap: _onStatusTap,
+        // **计数 chip 与标题同一行**（照 DSH Web header 的 actions band，
+        // `ConversationSession.tsx:127-129`）—— **有才显示，没有就整枚不占位**。
+        // 点它开右抽屉对应面板：手机上不放下拉菜单（手指点不中小目标），
+        // 而右抽屉本来就是这三个面板的家，且能原路关回来。
+        subagentCount: subs.length,
+        subagentRunning: runningSubs,
+        jobCount: jobs.length,
+        jobRunning: runningJobs,
+        onTapSubagents: () => _openSidePanel(SidePanel.subs),
+        onTapJobs: () => _openSidePanel(SidePanel.jobs),
       ),
       // ---- 右抽屉：一个抽屉三个面板（竖屏手机上它是整屏）----
       // 用 `endDrawer` 而不是自绘遮罩：右缘**跟手**拖出、拖拽/点遮罩关闭、
@@ -424,10 +442,10 @@ class ChatPageState extends State<ChatPage> {
           onClose: _closeSide,
           fileBody: _fileBody(),
           fileActions: _fileActions(),
-          jobs: _jobsFor(jobsSid),
-          subs: _subsFor(),
-          runningJobs: _jobsFor(jobsSid).where((j) => j.isLive).length,
-          runningSubs: _subsFor().where((j) => j.isLive).length,
+          jobs: jobs,
+          subs: subs,
+          runningJobs: runningJobs,
+          runningSubs: runningSubs,
           onToggleJob: (job) => _toggleJob(job),
           // 停止：任务面板里最常见的那件事。**不传它就永远没有停止按钮**
           //（渲染条件里有 `onStop != null`）—— 第一版就漏了传，
@@ -441,29 +459,8 @@ class ChatPageState extends State<ChatPage> {
         if (_sideOpen == open) return;
         setState(() => _sideOpen = open);
       },
-      // **子智能体 / 后台任务 chip 行**：照 DSH Web 的头部chip
-      // （`ui-subagent` 的 `{count} 个子智能体`、`ui-jobs` 的
-      // `{count} 个后台任务运行中`）—— **有才显示，没有就整行不占位**。
-      // 点它开右抽屉对应面板：手机上不放下拉菜单（手指点不中小目标），
-      // 而右抽屉本来就是这三个面板的家，且能原路关回来。
       body: Column(
         children: [
-          // **各算一次**:`_subsFor()` / `_jobsFor()` 要走投影映射,
-          // count 与 running 分两次调就是同一份数据算两遍(每帧两次)。
-          Builder(
-            builder: (context) {
-              final subs = _subsFor();
-              final jobs = _jobsFor(_jobsSid);
-              return _LiveChipsRow(
-                subagentCount: subs.length,
-                subagentRunning: subs.where((j) => j.isLive).length,
-                jobCount: jobs.length,
-                jobRunning: jobs.where((j) => j.isLive).length,
-                onTapSubagents: () => _openSidePanel(SidePanel.subs),
-                onTapJobs: () => _openSidePanel(SidePanel.jobs),
-              );
-            },
-          ),
           DshSegmented(
             labels: const ['对话', '轨迹'],
             index: _tab,
@@ -476,6 +473,10 @@ class ChatPageState extends State<ChatPage> {
                     items: items,
                     paired: widget.paired,
                     autoOpenToolDetail: _autoOpenToolDetail,
+                    isBlank: widget.app.currentIsBlank,
+                    // hero 的两枚 chip 都要开 sheet / 建会话，所以**由页面层建**
+                    // （`_ChatTab` 是纯展示的，拿不到那些方法）。
+                    hero: _buildHero(),
                     onOpenDrawer: widget.onOpenDrawer,
                     onRefreshSessions: _refreshSessions,
                     onOpenSession: widget.onOpenSession ?? (_) {},
@@ -517,6 +518,13 @@ class ChatPageState extends State<ChatPage> {
                   sendMode: widget.app.sendMode,
                   sending: _sending,
                   enabled: _hasData && sid != null,
+                  // **hero 上换一套占位文案**（DSH 的 `placeholder.hero`，
+                  // `locales.ts:23`）：那一屏的动作是"开一个新任务"。
+                  // 只在真的显示了 hero 时才换 —— 与 `_ChatTab` 用同一个判据，
+                  // 免得出现"文案说开新任务、屏幕却是空态"。
+                  hintText: _heroVisible
+                      ? kComposerHintHero
+                      : kComposerHintDefault,
                   // 运行中且没有草稿时，主键是"停止"（照 Web 的 primaryStops）。
                   running: _running,
                   onStop: _stop,
@@ -1204,6 +1212,150 @@ class ChatPageState extends State<ChatPage> {
   /// **不是直接切**，而是先弹风险门、要勾选"我已了解风险"才能启用。
   /// 判据照 Web 客户端：`danger-full-access` 与 `auto`
   /// （`ui-permission-presets/src/client/presentation.ts:4,7`）。
+  // ---- 新会话页（hero）：两枚 chip 的取值与写路径 ----
+  //
+  // 取舍（为什么选预设走 `session.create` 而不是 `agentPresets.select`）见
+  // `.agents/notes/implemented/2026-10-17-blank-session-hero.md`。
+
+  /// hero 现在真的显示着吗。**与 `_ChatTab` 必须同一条判据** ——
+  /// 两处不一致就会出现"占位文案说开新任务、屏幕却是空态"。
+  bool get _heroVisible {
+    if (!widget.app.currentIsBlank) return false;
+    return !(widget.paired &&
+        widget.app.connection != ConnectionStateView.serving);
+  }
+
+  /// 建这一屏的 hero（chip 的点击要开 sheet / 建会话，只有页面层拿得到那些方法）。
+  Widget _buildHero() {
+    final app = widget.app;
+    final sid = app.currentSid;
+    final roster = app.agentPresetRoster;
+    // 目录拿不到时整枚 chip 是占位态（`null` → 「选择工作区」那句同款占位）。
+    final presetId = app.agentPresetValue ?? roster?.defaultId;
+    return ConversationHero(
+      // 标签链照 DSH（`ConversationContent.tsx:89-108`），纯函数在
+      // `model/workspace.dart` 里，有单测钉住五级。
+      workspaceLabel: workspaceChipLabel(
+        workspacesReady: app.workspaces.isNotEmpty,
+        sessionWorkspaceTitle: app.currentWorkspace?.title,
+        cwd: sid == null ? null : app.sessionOf(sid)?.cwd,
+      ),
+      presetLabel: (roster == null || presetId == null)
+          ? null
+          : roster.displayNameOf(presetId),
+      workspaceTooltip: app.currentWorkspace?.path,
+      presetTooltip: _presetTooltip(roster, presetId),
+      onPickWorkspace: _showWorkspacePicker,
+      onPickPreset: _showPresetPicker,
+    );
+  }
+
+  String? _presetTooltip(AgentPresetRoster? roster, String? id) {
+    if (roster == null || id == null) return null;
+    for (final option in roster.options) {
+      if (option.id == id) {
+        return option.displayDescription ?? kNoPresetDescription;
+      }
+    }
+    return null;
+  }
+
+  /// 工作区选择器。
+  ///
+  /// **语义照 DSH**：切工作区 = **立刻落一个该工作区的 blank 会话**
+  /// （`ConversationContent.tsx:119-131` 的 `onPick` → `navigation.ts:220-230`），
+  /// 不是"只记住选择"。手机走 `session.create({workspaceId})`：
+  /// 那是既有的方法（`session.create` 一直收 `workspaceId`），不需要新方法面。
+  void _showWorkspacePicker() {
+    final app = widget.app;
+    final groups = app.workspaces;
+    if (groups.isEmpty) {
+      // 与权限目录同一条纪律：拿不到就**明说**，不摆一个空选择器。
+      _toast('拿不到工作区清单：电脑侧没有返回 workspace.list');
+      return;
+    }
+    final current = app.currentWorkspace?.workspaceId;
+    unawaited(
+      showDshSheet<void>(
+        context: context,
+        title: '工作区',
+        body: Column(
+          children: [
+            for (final group in groups)
+              DshPickerRow(
+                name: group.title,
+                tags: [if (group.path.isNotEmpty) group.path],
+                selected: group.workspaceId == current,
+                onTap: () {
+                  Navigator.of(context).pop();
+                  // 选中的就是当前那个：什么都不做（点一下不该多出一个 blank 会话）。
+                  if (group.workspaceId == current) return;
+                  unawaited(_startSession(workspaceId: group.workspaceId));
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 模式（Agent 预设）选择器。**只有 blank 会话上有这一屏**，
+  /// 所以写路径不必碰"跑过就锁"那条限制（见 `_startSession`）。
+  void _showPresetPicker() {
+    final app = widget.app;
+    final roster = app.agentPresetRoster;
+    if (roster == null || !roster.available || roster.options.isEmpty) {
+      _toast('拿不到 Agent 预设目录：电脑侧没有返回 agentPresets.list');
+      return;
+    }
+    final current = app.agentPresetValue ?? roster.defaultId;
+    unawaited(
+      showDshSheet<void>(
+        context: context,
+        title: 'Agent 预设',
+        body: Column(
+          children: [
+            for (final option in roster.options)
+              DshPickerRow(
+                name: option.displayName,
+                // 说明来自电脑侧（`AgentPresetRow.description`）；没有就不给这一行 ——
+                // 自己编一句会在 DSH 改词时静默分叉。
+                tags: [option.displayDescription ?? kNoPresetDescription],
+                icon: 'agentPreset',
+                selected: option.id == current,
+                onTap: () {
+                  Navigator.of(context).pop();
+                  if (option.id == current) return;
+                  unawaited(_startSession(agentPreset: option.id));
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// hero 上的一次选择 = **开一个新任务**（照 DSH `AgentPresetSeat.tsx:4-9` 的立场：
+  /// 这个选择只在会话开始前成立，所以它就该发生在"开新任务"这个动作上）。
+  ///
+  /// **为什么不用 `agentPresets.select`**：它对跑过一轮的会话会拒
+  /// （`agent-preset/locked`，`agent-preset-registry/src/index.ts:351`），
+  /// 而建会话时把 `agentPreset` 带上根本不会碰到那条限制；代价是每次换选择
+  /// 会多一个 blank 会话（blank 的两边都不列，且 DSH 的 `reuseOrCreateBlank`
+  /// 以后会复用它）。取舍见决策笔记。
+  Future<void> _startSession({String? workspaceId, String? agentPreset}) async {
+    try {
+      await widget.app.createSession(
+        workspaceId: workspaceId,
+        agentPreset: agentPreset,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      // **失败要如实说**：静默失败会让用户以为"点了没反应"。
+      _toast('开新任务失败：${error is ProtocolException ? error.message : error}');
+    }
+  }
+
   void _showAccessSheet() {
     final catalog = widget.app.permissionCatalog;
     if (catalog == null || catalog.options.isEmpty) {
@@ -1696,6 +1848,8 @@ class _ChatTab extends StatelessWidget {
     required this.onOpenDrawer,
     required this.onRefreshSessions,
     required this.onOpenSession,
+    required this.hero,
+    this.isBlank = false,
     this.onConnect,
     this.onRePair,
     this.autoOpenToolDetail = false,
@@ -1705,6 +1859,16 @@ class _ChatTab extends StatelessWidget {
   final List<ChatItem> items;
   final bool paired;
   final VoidCallback onOpenDrawer;
+
+  /// 当前会话是不是 blank（"从没被 agent 跑过"）。
+  ///
+  /// 用它选那一屏：**blank 会话 = DSH 的新会话页**（见 [ConversationHero] 的文件头）。
+  /// 判据来自 `session.list` 的 `blank` 字段，不是本地推导。
+  final bool isBlank;
+
+  /// blank 时显示的 hero（由**有状态**的页面层建：chip 的点击要能开 sheet / 建会话）。
+  /// 显示与否由 [isBlank] 与连接状态决定 —— 所以这里没有"空 hero"这一支。
+  final Widget hero;
 
   /// 重新拉会话列表（由**有状态**的页面层实现：它能在 await 之后安全用 `context`）。
   final VoidCallback onRefreshSessions;
@@ -1722,6 +1886,16 @@ class _ChatTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) {
+      // **blank 会话先走 hero**（DSH 的首页就是这一屏，见 `ConversationHero` 的文件头）。
+      //
+      // 位置在"内联列表"之前：blank 会话本来就被 `sessionVisible` 从列表里藏掉
+      // （`tree.ts:245`），所以它既不是列表的一行、也不该落到"还没有内容"那种空态上。
+      // **连接断掉时不显示** —— 那时 hero 上的两枚 chip 点了都要建会话，
+      // 而电脑不在线；空态的头条（"连不上"）才是那一刻该说的话。
+      final disconnected =
+          paired && app.connection != ConnectionStateView.serving;
+      if (isBlank && !disconnected) return hero;
+
       // **没选中会话但电脑侧有会话：把列表直接铺在主界面上。**
       //
       // 这是被真机逼出来的：会话原先只存在于左侧抽屉里，而主界面是一块几乎空白的屏 ——
@@ -1778,167 +1952,6 @@ class _ChatTab extends StatelessWidget {
       itemCount: items.length,
       itemBuilder: (context, index) =>
           _TurnView(item: items[index], autoOpenDetail: autoOpenToolDetail),
-    );
-  }
-}
-
-/// 头部 chip 行:**子智能体 / 后台任务**的计数,照 DSH Web 的 header chip。
-///
-/// - **有才显示**:两类都为 0 时整行不占位(返回 `SizedBox.shrink()`),
-///   不是显示"0 个子智能体"—— 那是把"没有"说成"有一个空的"。
-/// - **计数与文案逐字照 Web**(2026-10-16 校准,见下方两个纯函数):
-///   子智能体报**总数**、在跑就画一枚转圈点;后台任务在跑时报**在跑的个数**。
-/// - **点它开右抽屉对应面板**:手机不放下拉菜单(手指点不中小目标),
-///   而右抽屉本来就是这三个面板的家,且能原路关回来。
-class _LiveChipsRow extends StatelessWidget {
-  const _LiveChipsRow({
-    required this.subagentCount,
-    required this.subagentRunning,
-    required this.jobCount,
-    required this.jobRunning,
-    required this.onTapSubagents,
-    required this.onTapJobs,
-  });
-
-  final int subagentCount;
-  final int subagentRunning;
-  final int jobCount;
-  final int jobRunning;
-  final VoidCallback onTapSubagents;
-  final VoidCallback onTapJobs;
-
-  @override
-  Widget build(BuildContext context) {
-    final chips = <Widget>[
-      if (subagentCount > 0)
-        _LiveChip(
-          label: subagentChipLabel(subagentCount),
-          aria: subagentChipAria(
-            total: subagentCount,
-            running: subagentRunning,
-          ),
-          running: subagentRunning,
-          icon: 'users',
-          onTap: onTapSubagents,
-        ),
-      if (jobCount > 0)
-        _LiveChip(
-          label: jobChipLabel(live: jobRunning, total: jobCount),
-          aria: jobChipLabel(live: jobRunning, total: jobCount),
-          running: jobRunning,
-          icon: 'checklist',
-          onTap: onTapJobs,
-        ),
-    ];
-    if (chips.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 6, 12, 2),
-      // **换行，不横滚**：Web 那边这两枚 chip 在 header 的 actions band 里
-      // （`headerActions{flex:none}`），桌面宽度够；手机上两枚两位数 chip
-      // （"12 个后台任务运行中" 已经是 190px 级）在 360px 上**一定会溢出**。
-      // 用 `Wrap` 而不是横向滚动：藏起来的计数等于没有计数。
-      child: Wrap(spacing: 8, runSpacing: 6, children: chips),
-    );
-  }
-}
-
-/// 子智能体 chip 的**可见**文案:`{count} 个子智能体`(总数)。
-///
-/// 与 DSH 逐字一致:`SubagentHeaderLineage.tsx:710` 用的就是 `count.total`
-/// （`{count} 个子智能体`,`ui-subagent/src/client/locales.ts:36-37`）,
-/// **总数后面不带"正在运行"** —— 在跑与否由前面那枚转圈点表达(`:705-708`)。
-/// `{count} 个子智能体，正在运行`(`:38-39`)是 **aria-label** 那一份(`:679-680`),
-/// 见 [subagentChipAria]。
-///
-/// 2026-10-16 之前这里把两句合成了可见文案("3 个子智能体，正在运行"),
-/// 于是手机上的字与 Web 上的字不一致 —— 探索原生时的发现,见决策笔记。
-String subagentChipLabel(int total) => '$total 个子智能体';
-
-/// 子智能体 chip 的无障碍名:在跑时报**在跑的个数**,否则报总数(`:679-680`)。
-String subagentChipAria({required int total, required int running}) =>
-    running > 0 ? '$running 个子智能体，正在运行' : subagentChipLabel(total);
-
-/// 后台任务 chip 的文案:**在跑报在跑的个数**,没有在跑的才报总数。
-///
-/// 与 DSH 逐字一致(`JobListAction.tsx:450-453`):
-/// `liveRows.length > 0` → `count.live`(`{count} 个后台任务运行中`),count 取**在跑数**;
-/// 否则 → `count.idle`(`{count} 个后台任务`),count 取可见总数。
-/// 模板见 `ui-jobs/src/client/locales.ts:8-11`。
-///
-/// 2026-10-16 之前这里把"总数 + 运行中"拼在一起("5 个后台任务运行中",
-/// 哪怕只有 1 个在跑)—— 数出来的数比 Web 大,是同一个真值源的第二个算法。
-String jobChipLabel({required int live, required int total}) =>
-    live > 0 ? '$live 个后台任务运行中' : '$total 个后台任务';
-
-/// 一枚 chip。前导槽:在跑 → **转圈点**(DSH 的 `triggerDot` /
-/// `activitySlot`,即"有东西在跑"的原生信号),否则 → 图标。
-///
-/// **不再用告警色**:DSH 的触发条是 `label-tertiary` 文字 + 转圈点
-/// (`JobListAction.module.css:10`、`:29-31`),没有"整枚变琥珀"这一说 ——
-/// 那是 2026-10-15 我们自己加的。
-class _LiveChip extends StatelessWidget {
-  const _LiveChip({
-    required this.label,
-    required this.aria,
-    required this.running,
-    required this.icon,
-    required this.onTap,
-  });
-
-  /// 可见文案(与 Web 逐字一致,见 [subagentChipLabel] / [jobChipLabel])。
-  final String label;
-
-  /// 无障碍名。**与可见文案分开**:子智能体那枚的"正在运行"只在这里。
-  final String aria;
-
-  /// 在跑的个数;> 0 时前导槽画转圈点。
-  final int running;
-
-  /// 不在跑时前导槽里的图标(手机没有 hover,图标是"这是哪一类"的唯一线索)。
-  final String icon;
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final live = running > 0;
-    return Semantics(
-      label: aria,
-      button: true,
-      child: Material(
-        color: DshColors.layer2,
-        borderRadius: BorderRadius.circular(14),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (live)
-                  const DshStateDot(DshStateDotState.ongoing)
-                else
-                  DshIcon(icon, size: 13, color: DshColors.labelSecondary),
-                const SizedBox(width: 5),
-                Text(
-                  label,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: DshColors.labelTertiary,
-                  ),
-                ),
-                const SizedBox(width: 2),
-                const DshIcon(
-                  'chevronRight',
-                  size: 12,
-                  color: DshColors.labelTertiary,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

@@ -1,6 +1,18 @@
 # Agent Note: 统计条逐字对齐 Web（`{total} tok · 缓存命中 {percent}%`）+  Wrap 布局 + 三个 sheet 接真投影
 
-Status: implemented
+Status: archived
+
+Superseded by: `.agents/notes/implemented/2026-10-17-topbar-single-row-and-stats-scroll.md`
+
+取代范围：**只有决定 3 里的"`Row` → `Wrap`（放不下换行）"这一处** ——
+新篇改成**单行 + 横向滚动**（用户 2026-10-17 定案："就一行，超出得可以滚动查看"）。
+本篇**其余结论仍然有效**：文案与合计逐字照 Web、`formatCacheHitPercent` 的移植
+（部分命中绝不显示成 100）、上下文 chip 的 14px 小环、三个 sheet 全部接真投影、
+以及 `简洁` 档的口径。**下面的结论原文不改** —— 它记录了当时为什么那么想，
+以及备选里"把三项塞进横滚容器"当初为什么被否（理由是"读数被藏到屏幕外"；
+新篇区分了**被裁掉**与**滑得到**，并把这个取舍交回用户定）。
+另：本篇决定 1 写的 `{turns} 轮 {steps} 步` 是对的，但代码当时落成了
+`第 {turns} 轮 · {steps} 步` —— 新篇一并改正。
 
 ## Problem
 

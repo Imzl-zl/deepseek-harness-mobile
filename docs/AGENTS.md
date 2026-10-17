@@ -31,6 +31,7 @@
 | `subsystems/app-channel-client.md` | 手机端通道客户端设计:core 分层与签名、连接/订阅状态机、渲染性能对策、三端能力包、UI 接线点、测试策略 |
 | `cookbook/channel-bootstrap.md` | 开工实操:从零到真机连通的编号步骤与精确验证命令 |
 | `subsystems/app-platform-boundaries.md` | 手机端多端边界:核心零平台分支、三个能力包、可机械判定的边界规则与校验命令 |
+| `subsystems/blank-session-hero.md` | 新会话页(blank 会话的 hero):落到这一屏的条件、结构、三样数据与标签链、写路径、有意偏离、验证 |
 
 ## 引用纪律
 

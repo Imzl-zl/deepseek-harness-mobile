@@ -24,10 +24,10 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('98 个图标都在（与 mock/proto/icons.js 同一份来源）', () {
+  test('100 个图标都在（与 mock/proto/icons.js 同一份来源）', () {
     // 数字变了要去 `mock/proto/tools/extract-dsh-icons.mjs` 看是不是 DSH 升级了，
     // 而不是把这里改掉。
-    expect(DshIcons.names.length, 98);
+    expect(DshIcons.names.length, 100);
     // 名字升序且无重复（升序是抽取器保证的，重复说明表坏了）。
     final sorted = List<String>.from(DshIcons.names)..sort();
     expect(DshIcons.names, sorted, reason: '名字应升序');
@@ -66,7 +66,7 @@ void main() {
     expect(
       svg.contains('currentColor'),
       isFalse,
-      reason: '不能把 currentColor 留给渲染器 —— 98 个图标全用它，赌不起',
+      reason: '不能把 currentColor 留给渲染器 —— 100 个图标全用它，赌不起',
     );
     final hex = (DshColors.accentBlue.toARGB32() & 0xFFFFFF)
         .toRadixString(16)
@@ -85,10 +85,14 @@ void main() {
     expect(DshIcons.defaultSizeOf('archive'), 20);
   });
 
-  test('非正方形图标保住比例（`treeCorner` 是 8×10）', () {
+  test('非正方形图标保住比例（`treeCorner` 是 8×10，`fishLogo` 是 23.16×17.04）', () {
     // 一律按正方形画会把它拉变形。这条钉住"比例被传递了"。
     expect(DshIcons.aspectOf('treeCorner'), closeTo(10 / 8, 0.0001));
     expect(DshIcons.aspectOf('send'), 1);
+    // `fishLogo` 是唯一一个**两个方向都不是整数**的：比例 0.7357… 不是 2/3 之类的整齐值，
+    // 所以"四舍五入成一个好看的数"会在这里露馅。
+    expect(DshIcons.defaultSizeOf('fishLogo'), 24);
+    expect(DshIcons.aspectOf('fishLogo'), closeTo(17.04 / 23.16, 0.0001));
   });
 
   test('显式尺寸覆盖默认值', () {
@@ -134,8 +138,16 @@ void main() {
     //
     // 挑这几个是因为它们各用一种"字体表达不了、只能靠 SVG"的特性：
     // `archiveOff` 用 `<mask>`（斜杠是挖空出来的）、`compact` 用 `opacity`、
-    // `send` 是纯描边、`treeCorner` 是 8×10 的非正方形。
-    for (final name in ['archiveOff', 'compact', 'send', 'treeCorner']) {
+    // `send` 是纯描边、`treeCorner` 是 8×10 的非正方形、
+    // **`fishLogo` 是唯一一块纯填充剪影**（颜色挂在 `<path>` 上、根节点 `fill="none"`）——
+    // 它要是被当成"又一个描边图标"处理，画出来会是一片空白，而这里数的就是像素。
+    for (final name in [
+      'archiveOff',
+      'compact',
+      'send',
+      'treeCorner',
+      'fishLogo',
+    ]) {
       final painted = await _paintedPixels(tester, name);
       expect(
         painted,
@@ -155,7 +167,7 @@ void main() {
     expect(red, isNot(equals(blue)), reason: '换色后位图必须变 —— 否则说明颜色没进 SVG');
   });
 
-  testWidgets('98 个图标全部能构建（一次全过一遍,防"只有常用的那几个是好的"）', (tester) async {
+  testWidgets('100 个图标全部能构建（一次全过一遍,防"只有常用的那几个是好的"）', (tester) async {
     final broken = <String>[];
     for (final name in DshIcons.names) {
       await tester.pumpWidget(

@@ -5,8 +5,13 @@
 
 ## 下一步(新会话从这里开始)
 
-> **开工提示词:`docs/cookbook/next-session-interaction-to-phone.md`** —— 下一个会话直接用它
-> (真机跑法 + 免费渠道 + 成本纪律 + 两次尝试的完整证据 + 已装好的仪器)。
+> **开工提示词:`docs/cookbook/next-session-home-and-rendering.md`** —— 它的四条里
+> **前两条(统计条横滚 / 顶栏收成一行)与第三条(连接后那一屏 = DSH 新会话页)
+> 都已落地并全绿**,剩下的是**第四条:④ 会话渲染对齐 DSH**。
+> 那份任务书里 ④ 的调研结论(带 `packages/...:行号`)照旧可用;
+> **③ 的落地结论已移到 `docs/subsystems/blank-session-hero.md` 与
+> `.agents/notes/implemented/2026-10-17-blank-session-hero.md`**,别再从任务书里读 ③。
+> 旧的那份 `next-session-interaction-to-phone.md` 任务已完成,**别再照它跑**。
 
 **当前里程碑**:**「审批 / 提问 / 计划审查转到手机」整条链已接线**;两处小改已完成
 (① 步骤 ④ 等待窗口调到 `_waitForModel` 档;② lifecycle observer 挂上,前后台态自此
@@ -118,7 +123,7 @@ model-catalog-real-shape-and-effort,stats-bar-aligns-web-and-real-sheets,
 queue-dock-and-cancel-landed,conversation-rendering-fills-dsh-gaps,
 settings-page-v1-four-groups}.md`。
 
-**门禁**:app flutter test **644** / analyze 0 / format 0 / 平台边界 258 /
+**门禁**:app flutter test **654** / analyze 0 / format 0 / 平台边界 258 /
 connector tsc 0 + build + test **516** / protocol 486·26·49 /
 CDP: proto·authz 18·settings 28·tasks 53·picker 全绿。
 
@@ -146,7 +151,7 @@ CDP: proto·authz 18·settings 28·tasks 53·picker 全绿。
   记账,不会假掉线;单条重启失败(端口被占)带原因回界面(400)。
 - **弹框宽度 520→760px** 已在上一轮改完(`client.js` 的 `S.fixedBox`),本轮只验收。
 - 契约同步:`pairing-v2.md` §1/§5/§6/§7、`remote-channel.md` §11/§12、
-  `connector-and-relay.md` §1.3。**方法面仍 25/30**(管理面端点不进 §5.7)。
+  `connector-and-relay.md` §1.3。**方法面 27/31**(管理面端点不进 §5.7)。
 
 **2026-10-17 真机验证(全过,证据如下)**:
 - **替换**:设备表 6 条同名行 → 管理面清掉 5 条陈旧行(留在线那条)→ 手机重配 →
@@ -163,6 +168,82 @@ CDP: proto·authz 18·settings 28·tasks 53·picker 全绿。
   (GET /transport 是基础路由,看起来正常,点"停止"才 404)。已把 `mountAdminFace` 移到
   传输 section 之后 + 源码顺序断言(`admin-face.test.ts`)。connector 测试 **516**。
 
+## 2026-10-17 深夜:顶栏收成一行 + 统计条改单行横滚
+
+用户一轮提了四条界面问题,先说"东西很多,可以先调研一下"。**先调研、再问一个阻塞问题、再动手**:
+三条并行子代理读了 DSH / rikkahub / DEEIX-Chat(结论:后两个**都不是 Flutter** —— rikkahub 是
+Kotlin/Compose、DEEIX-Chat 是 Next.js,没有一行能直接搬,只有架构与阈值可搬)。
+
+**这一批做完的是前两条**(后两条「连接后首页 = DSH 的 blank 会话 hero」与「会话渲染差距」已调研完、未动代码):
+
+- **统计条换行的真因是"排不下",不是"字号大"**:Flutter 实测三枚 chip 合计 **632.6dp**,
+  而真机 411.4dp 屏可用只有 **391.4dp** —— 差 **237dp**;缩字号/缩间距全做完也只能省约 71dp。
+  用户在「砍一项读数」与「两行」之外选了第三条:**单行 + 横向滚动**(原话"就一行,超出得可以
+  滚动查看明白不?点击不受影响啊")。`Wrap` → 横向 `SingleChildScrollView` + `Row`。
+- **真机文案偏离**:DSH 原文是 `{turns} 轮 {steps} 步`(`locale.ts:77`),
+  手机写成 `第 {turns} 轮 · {steps} 步` —— 电脑端此刻显示的正是 `5 轮 73 步 · 77 tok/s`。已改回。
+- **顶栏收成一行**:标题 `14→13px`、上限 `220→140px`、图标 `18→16`;**子智能体 / 后台任务
+  计数 chip 进顶栏**(DSH 本来就这么放),取「图标 + 计数」,全文本(DSH 原文)退进 aria/tooltip;
+  那一整行撤销,省下约 34dp 对话高度。顺带修掉一个真 bug:**那行 chip 被 `Column` 的默认
+  `crossAxisAlignment: center` 居中**成了一枚悬在屏幕中间的胶囊(用户"咋看着不是很好看"的真因)。
+- 顺带:`_subsFor()`/`_jobsFor()` 每帧从 4 次变 1 次,并消掉 `_jobsSid` 这第二个来源;
+  三个 chip 文案函数移到 `model/chat_item.dart`(顶栏与页面共用一份说法)。
+- **原型同步**(基线不许两边漂):`mock/proto` 的 appbar 一行、`.stats` 横滚、文案。
+  顺手把 `verify-proto.mjs` 从"只采 JSON、从不断言"补成**13 项断言**。
+- 笔记:`.agents/notes/implemented/2026-10-17-topbar-single-row-and-stats-scroll.md`;
+  被取代的两篇移入 `archived/` 并标了「取代范围」(`2026-10-16-topbar-connection-dot-and-title-cap`、
+  `2026-10-17-stats-bar-aligns-web-and-real-sheets`)。
+
+**门禁**:app flutter test **654** / analyze 0 / format 0 / 平台边界 258 /
+CDP: proto **13**·authz 18·settings 28·tasks 53·picker 全绿。
+**未做**:真机截图验收 —— 手机装上了新构建(`adb install -r`,firstInstallTime 未变),
+但**连接器直连监听面没起**(8790 无监听)、4 个端点全拨不通,拿不到带数据的画面;
+改用 golden 按真机尺寸(411.43×914)出图确认了结构(顶栏一行、统计条一行)。
+
+## 2026-10-17 深夜(第二批):任务 ③「连接后那一屏 = DSH 的新会话页」
+
+任务书 `docs/cookbook/next-session-home-and-rendering.md` 里四条反馈的**后两条**,
+本轮做的是 ③(④ 会话渲染对齐 DSH 仍未动)。**先调研(结论已在任务书里)、再与用户确认顺序**才开始。
+
+- **真因不是"少画了几个控件",是落点不对**:DSH 的首页由 **blank** 决定而不是由
+  "有没有会话"决定(`ConversationMainPanel.tsx:41-43`),那个 blank 会话由工作区连上时
+  急切创建(`navigation.ts:195-205`);而 blank 会话在列表里**是藏起来的**
+  (`tree.ts:245`)。手机两条都没有 ⇒ 这一屏在手机上等于不存在。现在
+  `AppModel._openBlankSessionIfUnselected()` 在每次 `refreshSessions` 之后
+  **选中**(不新建)第一个 blank 且非子智能体的会话。挑不到就什么都不做,原行为不变。
+- **hero 一块**:`app/lib/ui/conversation_hero.dart`(鱼 + 「探索未至之境」+ 预览版徽标 +
+  工作区 chip + 模式 chip)。桌面尺度按触屏重算:标题 26→**24**(手机刻度顶格)、
+  chip 高 28→**44**(`kMinInteractiveDimensionCupertino`,Flutter SDK 源码引在文件头)、
+  卡片不设 712–952px 上限;鱼 34 不变(它是标记不是文字);hover 游动不做(触屏没有 hover)。
+  占位符换 `placeholder.hero` 那句(与普通那句只差前半句,都是半角逗号)。
+- **两枚 chip 的取值各有出处**:工作区 = `workspace.list` 的归属(会话行**没有**
+  `workspaceId`),标签链五级照 `ConversationContent.tsx:89-108`,**第 4 级"清单到了但没归属
+  → 占位、绝不拿已删目录名顶上"有单测钉住**;模式 = `agentPreset` 投影(`string | null`)。
+- **写路径:建会话时带,不用 `agentPresets.select`**。后者是 Web 走的那条
+  (`seat-store.ts:230`),但对跑过一轮的会话会拒(`agent-preset/locked`)。
+  手机走 `session.create({workspaceId, agentPreset})` —— `SessionCreateRequest` 本来就收这两个字段。
+  **方法面 30→31,唯一增量是只读的 `agentPresets.list`**(连接器 `dsh/agent-presets.ts`,
+  名单**整包透传、不在连接器过滤** `broken`:选择器与管理页用的是 Web 的两份规则)。
+  代价:每换一次选择留一个 blank 会话(两边都不列,DSH 的 `reuseOrCreateBlank` 以后会复用)。
+- **顺带把图标集重新对齐 DSH(98→100)**:鱼不在集合里 → 给抽取器加了一条**独立来源**
+  (`DIRECT_ARTWORKS`,没有 `IconXxx` wrapper 的 artwork);重跑才发现 DSH 的
+  `PermissionIcon.tsx` 已从 92 行长到 119 行、多了一个 `permissionAutoReview`。
+  三处工具链缺口一起修了(决策笔记见下):解析器漏"无返回类型注解"的函数写法、
+  **Dart 产物不是格式稳定的**(第 99/100 个图标当场让 `dart format` 门禁红,
+  而红在一个"不许手改"的生成文件上 → 生成器现在**产出后自己跑 `dart format`**)、
+  抽方法名的正则服务名段写成 `[a-z]+` 导致驼峰服务名**整条匹配不上**。
+- **原型同步**:`#convHero` + `styles.css` 的 hero 一节 + `app.js` 的 `setBlankSession`
+  (⊕ 新建 → 落 blank;点抽屉里一行会话 → 离开这一屏),`verify-proto.mjs`
+  从 13 项补到 **31 项**(hero 18 项:显示条件、藏内容区、占位符、标题/徽标逐字、
+  鱼宽 34、标题 24px、徽标等宽、chip 高与同行、两个选择器选完名字真的变)。
+- **门禁**:app **685** / analyze 0 / format 0 / 平台边界 **266** / connector **522** /
+  CDP: proto **31**·authz 18·settings 28·tasks 53·picker 全绿。
+- **笔记**:`.agents/notes/implemented/2026-10-17-{blank-session-hero,
+  icon-pipeline-fish-and-format-stability}.md`;规格进
+  `docs/subsystems/blank-session-hero.md`(总纲预算已满,只在 §7.2 留指针)。
+- **未做**:④ 会话渲染对齐 DSH(任务书里那一整块);真机验收 —— 与上一批同一个卡点
+  (电脑侧 8790 没监听),证据是单测 + CDP 原型 + 真机尺寸 golden,没有带数据的真机画面。
+
 ## 2026-10-16:四条议题一轮做完(顶栏 / 计数 / 渲染 / 归档)
 
 交接笔记 `.agents/notes/proposed/2026-10-15-mobile-topbar-status-and-rendering-handoff.md` 的四条,
@@ -174,7 +255,9 @@ CDP: proto·authz 18·settings 28·tasks 53·picker 全绿。
   与**系统返回手势**的冲突用官方 `View.setSystemGestureExclusionRects`(Android 10+,上限 200dp/边)
   解决 —— 只排除上半屏 192dp,下半屏留给系统(`app/lib/platform/gesture_exclusion.dart` + `MainActivity.kt`,
   真机验过:最外缘 ≈2dp 能开抽屉、下半屏仍是系统返回)。
-  取舍与实测见 `.agents/notes/implemented/2026-10-16-topbar-connection-dot-and-title-cap.md`。
+  取舍与实测见 `.agents/notes/archived/2026-10-16-topbar-connection-dot-and-title-cap.md`
+  (该篇的标题限宽与"计数另起一行"已被
+  `.agents/notes/implemented/2026-10-17-topbar-single-row-and-stats-scroll.md` 取代)。
 - **计数 chip**:口径改回 DSH —— 后台任务报**在跑的个数**,子智能体报**总数** + 一枚转圈点
   ("正在运行"那句只在 aria 里);不再整枚变琥珀;`Row` → `Wrap`(两枚两位数 chip 在 360px 必然溢出)。
   见 `.agents/notes/implemented/2026-10-16-chip-counts-read-dsh-formulas.md`。
@@ -221,7 +304,7 @@ protocol 486·26·49 / 原型图标与路径门禁。
 **唯一没过的:真机审批回合的自动用例** —— 卡在二维码 5 分钟有效 vs Gradle 构建 15-20 分钟;
 手动链路已通(见上)。
 
-## 方法面 25/30(2026-10-17 校准)
+## 方法面 27/31(2026-10-17 校准)
 
 `repo.info` / `devices.list` / `session.list` / `session.create` / `session.subscribe` /
 `session.unsubscribe` / `session.page` / `session.refetch` / `session.prompt` / `job.list` /
@@ -229,13 +312,16 @@ protocol 486·26·49 / 原型图标与路径门禁。
 `session.select-model` / `interaction.respond` / `sync.hello` /
 **`permission.catalog`** / **`permission.switch`** / `session.modelCatalog` /
 **`workspace.list`**(会话列表按工作区分组)/ `workspace.archive` / `workspace.unarchive` /
-**`session.updateQueue`**(排队项编辑/删除/插话)/ **`session.cancel`**(打断当前轮次)。
+**`session.updateQueue`**(排队项编辑/删除/插话)/ **`session.cancel`**(打断当前轮次)/
+**`agentPresets.list`**(Agent 预设目录,只读 —— hero 上那枚模式 chip 的名字来源)。
 
-**契约封闭集 30**,差额 4 个是契约列了没实现的:`settings.describe` /
+**契约封闭集 31、实现 27**,差额 4 个是契约列了没实现的:`settings.describe` /
 `settings.update` / `credentials.set` / `credentials.unset`(依据见契约 §5.8)。
-**这三个数是从代码里数出来的**(`METHODS` 数组 + `handlers.ts` 的两种注册形态),
-不是抄的 —— 2026-10-15 之前这里写过 26/27/21 三个互相矛盾的数字。
-**三处计数必须同步**:`tools.md` 的方法数、契约 §5.7 的表、本行的"x/30"。
+**这两个数是从代码里数出来的**(`METHODS` 数组 + `handlers.ts` 的**两种**注册形态:
+对象字面量键 `'x.y': async (…) =>` 与赋值 `handlers['x.y'] = …`),不是抄的 ——
+2026-10-15 之前这里写过 26/27/21 三个互相矛盾的数字,2026-10-17 又错成"30(实现 25)":
+30 减 4 明明是 26,**两个数一起写就会一起错**,所以照上面那句数,别靠减。
+**三处计数必须同步**:`tools.md` 的方法数、契约 §5.7 的表、本行的"x/31"。
 
 **模型切换翻案(2026-10-15)**:我曾写"`session/select-model` 有全局副作用,不要用"——
 **错了**。核实:Web 调的就是这一个方法(`packages/client/ui-model-selection/src/client/directory.ts:98`),
@@ -435,14 +521,14 @@ DSH 照常把 `user/message` 落盘(所以④的回读判据满足),但那个会
 | `node protocol/verify-fixtures.mjs` | 16 条 fixture / **486 项断言** |
 | `node protocol/verify-loopback.mjs` | **26 项**:手机 ⇄ 中转 ⇄ 桥接回环 |
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量 |
-| `node app/tools/verify-platform-boundary.mjs` | **258 项**(22 条规则自检 + 扫 72 个 Dart 文件) |
-| `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 原型图标集 / 工具脚本不许硬编码盘符 |
-| `cd app && flutter test` | **641 项** |
+| `node app/tools/verify-platform-boundary.mjs` | **266 项**(22 条规则自检 + 扫 74 个 Dart 文件) |
+| `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 原型图标集(**100 个**) / 工具脚本不许硬编码盘符(19 个) |
+| `cd app && flutter test` | **685 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test integration_test` | 0 文件需重排 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **481 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **522 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
-| CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(28) / `verify-tasks`(53) / `verify-picker` |
+| CDP 浏览器组 | `verify-proto`(**31** = 顶栏与统计条 13 + 新会话页 hero 18) / `verify-authz`(18) / `verify-settings`(28) / `verify-tasks`(53) / `verify-picker` |
 | `node app/tools/gen-pairing-vectors.mjs` | 重新生成配对向量(**改了配对派生规则后必须重跑**) |
 
 **项数的唯一出处是 `tools.md`**;**改断言必须做一次变异校验**(故意破坏不变量,确认**恰好**那一条红)。
@@ -468,17 +554,18 @@ DSH 照常把 `user/message` 落盘(所以④的回读判据满足),但那个会
 
 ## 进行中 / 未完成
 
-- **方法面 25/30**(见上面"方法面 25/30"一节,那里是当前清单)。
+- **方法面 27/31**(见上面"方法面 27/31"一节,那里是当前清单)。
   **处理器表的键是"实现了什么"的唯一出处**;契约 §5.7 的方法表已逐条标注 DSH 侧依据。
   `METHODS` 与契约**逐字对应**——契约外的方法不该被 `isMethod` 放行(那会让"不存在"看起来像"没实现")。
-  **三个计数必须同步**:`tools.md` 的方法数、契约 §5.7 的表、本节的"x/30"。
+  **三个计数必须同步**:`tools.md` 的方法数、契约 §5.7 的表、本节的"x/31"。
   **⚠ 那条"26"的来历已作废**(2026-10-16):原 22 删掉 `interaction.list`(待处理集合是投影,没有独立查询)、
   `devices.revoke`(吊销不是方法:名册写入方本来就是电脑侧)、`push.configure`(推送本期不做),
   加入 `session.create`(DSH 原生)与 `endpoint.describe`(端点自报,2026-10-14);
   2026-10-15 加 `session.projections`、`session.select-model`、`session.modelCatalog`、
   `permission.catalog`、`permission.switch`、`workspace.list`;
   2026-10-16 加 `workspace.archive` / `workspace.unarchive`(归档面)后是 **29**;
-  2026-10-17 加 `session.updateQueue`(排队面)与 `session.cancel`(打断)后是 **30**。
+  2026-10-17 加 `session.updateQueue`(排队面)与 `session.cancel`(打断)后是 **30**,
+  同日再加 `agentPresets.list`(Agent 预设目录,只读)后是 **31**。
   数法:`node -e` 从 `METHODS` 与 `handlers.ts` 里数(两处口径见 `.agents/notes/implemented/2026-10-16-archive-surface-and-alias-fix.md`)。
 - **错误码表 31 个**(15 协议层 + 16 DSH 宿主层),两边(TS `ERROR_TABLE` / Dart `ErrorCode`)
   **逐字一致**,由 `tests/error-table-parity.test.ts` 断言(做过变异校验:改一个动作即红并点名)。

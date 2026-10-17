@@ -37,6 +37,65 @@
     });
   }
 
+  /* ---------------------------------------------------------- 新会话页(blank)的 hero
+     DSH 那边"刚连上落到的第一屏"**不是空态,是"已有会话但它是 blank"**
+     (`ui-conversation/src/client/skeleton/ConversationMainPanel.tsx:41-43` 的 hero
+     两个来源,实际走后者),而那个 blank 会话是工作区连上时被急切创建的
+     (`ui-workspace/src/client/navigation.ts:195-205` 的 `reuseOrCreateBlank`)。
+
+     所以原型里这一屏由**会话是 blank** 这个状态决定,不是另做一个页面:
+       · `#convHero` 显示、`#msgs` 藏起来(blank 会话没有内容区 —— DSH 的
+         `DefaultConversationViews.tsx:32` 在 blank 期直接 `return null`);
+       · 输入框占位符换成 `placeholder.hero` 那句(`locales.ts:23`);
+       · 两枚 chip 的值就是电脑侧那两个投影(工作区归属 / `agentPreset`)。
+     真机上这两枚 chip 的选择走 `session.create({workspaceId, agentPreset})`(建新任务),
+     原型同样只改演示值 —— 它没有电脑侧。
+     Note: 为什么写路径不用 agentPresets.select —— 见
+     .agents/notes/implemented/2026-10-17-blank-session-hero.md */
+  const HERO_PH = "描述你想要构建的内容, / 调用指令, @ 文件或对话";
+  const NORMAL_PH = "发消息或创建任务, / 调用指令, @ 文件或对话";
+  /* 演示数据:与手机侧 hero 上那两枚 chip 同源(工作区来自 `workspace.list`,
+     预设来自 `agentPresets.list`)——内置四档的名字照 DSH 的本地化字典
+     (`ui-agent-preset/src/client/locales.ts:95-102`)。 */
+  const HERO_WORKSPACES = [
+    { id: "w-dsh-mobile", name: "dsh-mobile", path: "D:\\sudy\\myproject\\dsh-mobile" },
+    { id: "w-dsh", name: "deepseek-harness", path: "D:\\sudy\\github\\deepseek-harness" },
+  ];
+  const HERO_PRESETS = [
+    { id: "standard", name: "标准模式", desc: "处理代码、文件和资料，适合大多数任务。Agent 会按需使用检索、编辑和终端等工具。" },
+    { id: "ptc", name: "PTC 模式", desc: "包含标准模式的所有能力，更适合批量调用工具，并对结果进行筛选、整理、去重、统计或汇总的任务。" },
+    { id: "minimal", name: "极简模式", desc: "Agent 仅使用终端工具完成任务，适合测试和对比其基础表现。" },
+    { id: "cordis", name: "创造模式", desc: "用对话定制 DSH：让 Agent 编写插件，添加新功能或界面；也能组合工具和提示词，创建自己的模式。" },
+  ];
+  let heroWorkspace = HERO_WORKSPACES[0].id;
+  let heroPreset = "standard";
+
+  function setBlankSession(on) {
+    const hero = $("#convHero");
+    const msgs = $("#msgs");
+    const field = $("#input");
+    if (hero) hero.hidden = !on;
+    if (msgs) msgs.hidden = on;
+    if (field) field.placeholder = on ? HERO_PH : NORMAL_PH;
+    document.body.classList.toggle("is-blank", on);
+    renderHeroChips();
+  }
+
+  function renderHeroChips() {
+    const ws = $("#heroWorkspaceLabel");
+    const ps = $("#heroPresetLabel");
+    const wsRow = HERO_WORKSPACES.find((w) => w.id === heroWorkspace);
+    const psRow = HERO_PRESETS.find((p) => p.id === heroPreset);
+    if (ws) ws.textContent = wsRow ? wsRow.name : "选择工作区";
+    if (ps) ps.textContent = psRow ? psRow.name : "选择预设";
+    /* 有名字才是"开着"的文件夹(照 `EmptyHero.tsx:55-57` 的 folderClose/folderOpen)。 */
+    const wsIcon = $("#heroWorkspace") && $("#heroWorkspace").querySelector("[data-icon]");
+    if (wsIcon) {
+      wsIcon.dataset.icon = wsRow ? "folderOpen" : "folderClose";
+      wsIcon.innerHTML = ic(wsIcon.dataset.icon, 16);
+    }
+  }
+
   /* ---------------------------------------------------------- 手势底座
      axis 自动判定:横划归 JS,竖划交还浏览器滚动。
      start() 返回 false 表示这一笔不归我们管。 */
@@ -383,6 +442,9 @@
   });
   $("#dlist") &&
     $("#dlist").addEventListener("click", (e) => {
+      /* 点一行会话 = 打开它 —— 打开的是**有内容的**会话,所以离开 blank 那一屏。
+         (真机上同理:blank 会话之外的会话一打开,hero 就让位给消息流。) */
+      if (e.target.closest(".drow")) setBlankSession(false);
       if (openRow && !e.target.closest(".drow-wrap")) closeRow(openRow);
     });
 
@@ -1490,7 +1552,7 @@
       state: "completed",
       dur: 537,
       status: "已完成",
-      out: "98 个图标 · 验证脚本 37 项全 PASS",
+      out: "100 个图标 · 验证脚本 37 项全 PASS",
     },
     {
       id: "s2",
@@ -1524,11 +1586,15 @@
     dot.setAttribute("aria-label", "连接状态:中转已连接 · 空闲,点按查看连接操作");
   }
 
-  /* 计数 chip 行(§7.8):子智能体 / 后台任务计数,**有才显示**,点它开右抽屉对应面板。
-     文案与**计数口径**逐字照 DSH Web:`{count} 个子智能体`(报总数,在跑另画转圈点)、
+  /* 计数 chip(§7.8):子智能体 / 后台任务计数,**有才显示**,点它开右抽屉对应面板。
+     **在顶栏那一行里、与标题同行** —— DSH 的 header actions band 就是这个形态
+     (ConversationSession.tsx:127-129),所以只显"图标 + 计数":全文本放不下
+     (单枚 `3 个子智能体` 实测 137.8dp,而顶栏留给「标题 + chip」的只有 285.4dp)。
+     计数口径与**全文本**仍逐字照 DSH:`{count} 个子智能体`(报总数,在跑另画转圈点)、
      `{count} 个后台任务运行中`(报**在跑的个数**)/ `{count} 个后台任务`。出处:
      ui-subagent/src/client/locales.ts:36-39 + SubagentHeaderLineage.tsx:679-711;
-     ui-jobs/src/client/locales.ts:8-11 + JobListAction.tsx:450-453。 */
+     ui-jobs/src/client/locales.ts:8-11 + JobListAction.tsx:450-453。
+     全文本退进 aria-label 与 title。 */
   function renderLiveChips() {
     const box = $("#liveChips");
     if (!box) return;
@@ -1541,10 +1607,9 @@
         ? `${liveSubs} 个子智能体,正在运行`
         : `${SUBS.length} 个子智能体`;
       chips.push(
-        `<button class="livechip" data-act="subs-all" aria-label="${aria}">` +
+        `<button class="livechip" data-act="subs-all" aria-label="${aria}" title="${aria}">` +
           (liveSubs ? spin : `<span data-icon="users" data-icon-size="13"></span>`) +
-          `<span>${SUBS.length} 个子智能体</span>` +
-          `<span data-icon="chevronRight" data-icon-size="12"></span></button>`
+          `<span>${SUBS.length}</span></button>`
       );
     }
     if (JOBS.length) {
@@ -1552,12 +1617,11 @@
         ? `${liveJobs} 个后台任务运行中`
         : `${JOBS.length} 个后台任务`;
       chips.push(
-        `<button class="livechip" data-act="jobs-all" aria-label="${label}">` +
+        `<button class="livechip" data-act="jobs-all" aria-label="${label}" title="${label}">` +
           (liveJobs
             ? spin
             : `<span data-icon="checklist" data-icon-size="13"></span>`) +
-          `<span>${label}</span>` +
-          `<span data-icon="chevronRight" data-icon-size="12"></span></button>`
+          `<span>${liveJobs || JOBS.length}</span></button>`
       );
     }
     box.innerHTML = chips.join("");
@@ -3122,8 +3186,65 @@
         renderTodoDock();
         break;
       case "new-session":
-        toast("已请求电脑端新建会话");
+        /* 手机上按 ⊕ 走 `session.create` 再打开它 —— 新会话是 blank,
+           于是落到**新会话页**(hero)。原型照同一条:切到 blank 状态。 */
+        setBlankSession(true);
+        toast("已新建会话(blank)—— 这一屏就是 DSH 的新会话页");
         break;
+      case "hero-workspace":
+        openSheet({
+          title: "工作区",
+          size: "half",
+          body:
+            HERO_WORKSPACES.map(
+              (w) => `<button class="sitem" data-act="hero-workspace-set" data-ws="${w.id}">
+                <span class="i">${ic("folderOpen", 16)}</span>
+                <span class="m">${w.name}<span class="s">${w.path}</span></span>
+                ${heroWorkspace === w.id ? '<span class="ck">✓</span>' : ""}
+              </button>`
+            ).join("") +
+            /* 与手机同一条纪律:拿不到清单就**明说**,不摆一个空选择器
+               (真机走 `workspace.list`,缺 `workspaceController` 时方法不出现)。 */
+            `<p class="opt-desc" style="padding:10px 12px 0">
+              切工作区 = 立刻落到该工作区的 blank 会话(DSH navigation.ts:220-230),
+              不是只记住选择。手机上这一步走 session.create({workspaceId})。</p>`,
+        });
+        break;
+      case "hero-workspace-set": {
+        heroWorkspace = t.dataset.ws;
+        renderHeroChips();
+        closeSheet(true);
+        const picked = HERO_WORKSPACES.find((w) => w.id === heroWorkspace);
+        toast(`已在新任务里切到「${picked ? picked.name : heroWorkspace}」`);
+        break;
+      }
+      case "hero-preset":
+        openSheet({
+          title: "Agent 预设",
+          size: "half",
+          body:
+            HERO_PRESETS.map(
+              (p) => `<button class="sitem" data-act="hero-preset-set" data-preset="${p.id}">
+                <span class="i">${ic("agentPreset", 16)}</span>
+                <span class="m">${p.name}<span class="s">${p.desc}</span></span>
+                ${heroPreset === p.id ? '<span class="ck">✓</span>' : ""}
+              </button>`
+            ).join("") +
+            /* 立场照 DSH 的 `AgentPresetSeat.tsx:4-9`:这个选择只在会话开始前成立,
+               "跑过一轮的会话"上没有它。 */
+            `<p class="opt-desc" style="padding:10px 12px 0">
+              预设只在任务开始前可选 —— 会话跑过一轮后组合就固定了
+              (DSH 会回 agent-preset/locked)。手机上选它 = 带 agentPreset 建一个新任务。</p>`,
+        });
+        break;
+      case "hero-preset-set": {
+        heroPreset = t.dataset.preset;
+        renderHeroChips();
+        closeSheet(true);
+        const picked = HERO_PRESETS.find((p) => p.id === heroPreset);
+        toast(`已在新任务里切到「${picked ? picked.name : heroPreset}」`);
+        break;
+      }
       case "open-file":
         openFile(t.dataset.file, t.dataset.state);
         break;

@@ -37,6 +37,22 @@ class PendingAttachment {
   final String icon;
 }
 
+/// 普通会话的输入框占位符。
+///
+/// **照抄 DSH 原文**（`packages/client/ui-conversation/src/client/locales.ts:20`
+/// 的 `placeholder.default`）：半角逗号 + 空格（`任务, / 调用`），不是全角逗号。
+/// 全角逗号更宽 —— 在 320px 屏上会让这段**更早折行**，
+/// 而它本来就已接近放不下（实测 15px 需 345px、可用 282px）。
+/// 文档 §7.2 写明"短屏由 CSS 自然折行，**不手动截断**"。
+const String kComposerHintDefault = '发消息或创建任务, / 调用指令, @ 文件或对话';
+
+/// **新会话页（hero）的占位符**，与普通会话只差前半句
+/// （`locales.ts:23` 的 `placeholder.hero`）。
+///
+/// 两套文案都是半角逗号；DSH 在 hero 变体上把它换成"描述你想要构建的内容"，
+/// 因为那一屏的动作是"开一个新任务"而不是"接着说"。
+const String kComposerHintHero = '描述你想要构建的内容, / 调用指令, @ 文件或对话';
+
 /// 输入栏（含附件轨 + 文字行 + 控制行）。
 class DshComposer extends StatelessWidget {
   const DshComposer({
@@ -57,7 +73,11 @@ class DshComposer extends StatelessWidget {
     this.enabled = true,
     this.running = false,
     this.onStop,
+    this.hintText = kComposerHintDefault,
   });
+
+  /// 占位符。默认是普通会话那句；hero（blank 会话）传 [kComposerHintHero]。
+  final String hintText;
 
   final TextEditingController controller;
 
@@ -148,20 +168,15 @@ class DshComposer extends StatelessWidget {
                 fontSize: 15,
                 color: DshColors.labelPrimary,
               ),
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 isDense: true,
                 border: InputBorder.none,
-                // **照抄 DSH 原文**（`mock/proto/index.html` 的 `placeholder`）：
-                // 半角逗号 + 空格（`任务, / 调用`），不是全角逗号。
-                // 全角逗号更宽 —— 在 320px 屏上会让这段**更早折行**，
-                // 而它本来就已接近放不下（实测 15px 需 345px、可用 282px）。
-                // 文档 §7.2 写明"短屏由 CSS 自然折行，**不手动截断**"。
-                hintText: '发消息或创建任务, / 调用指令, @ 文件或对话',
-                hintStyle: TextStyle(
+                hintText: hintText,
+                hintStyle: const TextStyle(
                   fontSize: 15,
                   color: DshColors.labelTertiary,
                 ),
-                contentPadding: EdgeInsets.symmetric(
+                contentPadding: const EdgeInsets.symmetric(
                   horizontal: 4,
                   vertical: 8,
                 ),
@@ -508,16 +523,24 @@ class _SendButton extends StatelessWidget {
 ///
 /// 三项（照 Web 的 composer dock，`ui-conversation/src/client/skeleton/InputBar.tsx:520-525`：
 /// `conversation.composer.dock` 槽 = 排队条 + 统计 pill + ContextMeter）：
-/// `⏱ 第 N 轮 · M 步 · X tok/s` / `🗄 302K tok · 缓存命中 96%` / `◔ 96%`。
+/// `⏱ N 轮 M 步 · X tok/s` / `🗄 302K tok · 缓存命中 96%` / `◔ 96%`。
 /// 每项可点（弹 sheet）。
 ///
-/// ## 布局为什么是 `Wrap` 不是 `Row`（2026-10-17 真机反馈）
+/// ## 布局：**单行 + 横向滚动**（2026-10-17 用户定案）
 ///
 /// 三项的宽度都随数字变：轮次从 1 到十几、token 从 3 位到 4 位、
-/// 百分比从 1 位到 3 位。`Row` 在总宽超屏时**把末项整块裁掉**
-/// （release 里没有溢出条纹，只是看不见）—— 真机上"上下文百分比不显示"
-/// 正是这么来的：前两项一长，第三项被挤出屏幕。
-/// `Wrap` 放不下就换行，没有"被藏起来的读数"。
+/// 百分比从 1 位到 3 位。真机（1080×2400 @420dpi = **411.4dp**）实测三项合计
+/// **632.6dp**，而可用宽度只有 **391.4dp** —— 差 237dp。
+///
+/// 走过的两条路都不对：
+/// - `Row`（无滚动）：超屏时把末项**整块裁掉**（release 里没有溢出条纹，
+///   只是看不见）—— 真机"上下文百分比不显示"就是这么来的；
+/// - `Wrap`：放不下就换行，但**哪一项掉到第二行随数字漂**，同一条统计条
+///   时高时低，看着像布局坏了。
+///
+/// 横滚与前者不同：读数**滑得到**，不是被裁掉。代价是"没滑之前看不全"，
+/// 这是用户明确接受的取舍。取舍见
+/// `.agents/notes/implemented/2026-10-17-topbar-single-row-and-stats-scroll.md`。
 class DshStatsBar extends StatelessWidget {
   const DshStatsBar({
     super.key,
@@ -539,30 +562,44 @@ class DshStatsBar extends StatelessWidget {
   final VoidCallback? onTapUsage;
   final VoidCallback? onTapContext;
 
+  /// 相邻两枚 chip 之间的距离。
+  static const double _gap = 6;
+
   @override
   Widget build(BuildContext context) {
     if (turnText == null && usageText == null && contextPercent == null) {
       // 三项都没有时**整条不显示** —— 空条会白占一行高度。
       return const SizedBox.shrink();
     }
+    final chips = <Widget>[
+      if (turnText != null)
+        _StatChip(icon: 'gauge', text: turnText!, onTap: onTapTurn),
+      if (usageText != null)
+        _StatChip(icon: 'database', text: usageText!, onTap: onTapUsage),
+      if (contextPercent != null)
+        _StatChip(
+          leading: _ContextRing(percent: contextPercent!),
+          text: '$contextPercent%',
+          onTap: onTapContext,
+        ),
+    ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 6, 2, 0),
-      child: Wrap(
-        spacing: 6,
-        runSpacing: 6,
-        children: [
-          if (turnText != null)
-            _StatChip(icon: 'gauge', text: turnText!, onTap: onTapTurn),
-          if (usageText != null) ...[
-            _StatChip(icon: 'database', text: usageText!, onTap: onTapUsage),
+      // `SingleChildScrollView` 的 viewport 撑满可用宽度，于是整条**从左边起**排
+      // （`Wrap` 会收缩到内容宽、再被外层 `Column` 居中，一枚 chip 时看着悬在中间）。
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        // **点击不受影响**：横滑由滚动的拖动识别器接管，原地按一下仍归 chip 的
+        // `InkWell`（手势竞技场按"有没有移动"分派）。`stats_bar_layout_test.dart`
+        // 用例真点一次钉住这条。
+        child: Row(
+          children: [
+            for (var i = 0; i < chips.length; i += 1) ...[
+              if (i > 0) const SizedBox(width: _gap),
+              chips[i],
+            ],
           ],
-          if (contextPercent != null)
-            _StatChip(
-              leading: _ContextRing(percent: contextPercent!),
-              text: '$contextPercent%',
-              onTap: onTapContext,
-            ),
-        ],
+        ),
       ),
     );
   }
@@ -673,20 +710,18 @@ class _StatChip extends StatelessWidget {
                 const SizedBox(width: 4),
               ],
               if (leading != null) ...[leading!, const SizedBox(width: 4)],
-              // **可压缩是最后防线**：`Wrap` 已经保证"放不下就换行"，
-              // 而系统大字缩放 / 超长文本仍可能让单项超过屏宽 ——
-              // 那时省略号比溢出裁切好（溢出在 release 里是静默看不见）。
-              Flexible(
-                child: Text(
-                  text,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  // **11px**：这三项的数字都会变宽（四位数 token、三位数
-                  // 百分比、十几轮），字号大一点就把同行挤爆。
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: DshColors.labelCaption,
-                  ),
+              // **不压缩**：横滚容器给的是**无界宽度**，`Flexible` 在这里会直接
+              // 抛 `RenderFlex children have non-zero flex but incoming width
+              // constraints are unbounded`；而"放不下"这件事已经归滚动管了 ——
+              // 单项再长也只是多滑一点，不会被裁掉。
+              Text(
+                text,
+                maxLines: 1,
+                // **11px**：这三项的数字都会变宽（四位数 token、三位数
+                // 百分比、十几轮），字号大一点就得多滑一下。
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: DshColors.labelCaption,
                 ),
               ),
             ],

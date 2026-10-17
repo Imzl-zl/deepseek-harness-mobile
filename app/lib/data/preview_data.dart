@@ -113,7 +113,7 @@ const List<PreviewSession> previewSessions = <PreviewSession>[
         seq: 1,
         updatedAt: 100,
         role: MessageRole.user,
-        text: '这 98 个图标直接做成图标字体不是更省事吗？',
+        text: '这 100 个图标直接做成图标字体不是更省事吗？',
       ),
       MessageItem(
         itemId: 'p2-a1',
@@ -125,7 +125,7 @@ const List<PreviewSession> previewSessions = <PreviewSession>[
             '1. `archiveOff` 的斜杠是 `<mask>` **挖空**出来的 —— 去掉它就是另一个图标；\n'
             '2. `compact` / `folderOpen` 靠 `opacity` 同色两层叠出层次；\n'
             '3. 250 个 `<path>` 里大部分是**描边**，混着填充。\n\n'
-            '所以走 SVG 渲染。代价是一个依赖，收益是 98 个图标一个都不走样。',
+            '所以走 SVG 渲染。代价是一个依赖，收益是 100 个图标一个都不走样。',
       ),
       ToolCallItem(
         itemId: 'p2-t1',
@@ -148,7 +148,7 @@ const List<PreviewSession> previewSessions = <PreviewSession>[
         updatedAt: 400,
         name: 'Write',
         status: ToolCallStatus.completed,
-        summary: 'lib/theme/dsh_icons.dart（98 个图标）',
+        summary: 'lib/theme/dsh_icons.dart（100 个图标）',
       ),
     ],
   ),

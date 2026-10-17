@@ -174,4 +174,91 @@ void main() {
       );
     });
   });
+
+  group('工作区 chip 的标签链（hero，照 ConversationContent.tsx:89-108）', () {
+    test('刚选过的那个优先（pending 压过会话归属）', () {
+      expect(
+        workspaceChipLabel(
+          pendingTitle: '刚要切过去的',
+          workspacesReady: true,
+          sessionWorkspaceTitle: '当前归属',
+          cwd: '/repo/current',
+        ),
+        '刚要切过去的',
+        reason: '第 1 级：pendingWorkspace 是"用户刚点的那个"，比旧归属更新',
+      );
+    });
+
+    test('会话有归属就用它（第 3 级）', () {
+      expect(
+        workspaceChipLabel(
+          workspacesReady: true,
+          sessionWorkspaceTitle: 'dsh-mobile',
+          cwd: '/repo/elsewhere',
+        ),
+        'dsh-mobile',
+      );
+    });
+
+    test('清单还没到：用 cwd 的目录名顶一下（第 4 级）', () {
+      expect(
+        workspaceChipLabel(
+          workspacesReady: false,
+          cwd: r'D:\sudy\myproject\dsh-mobile',
+        ),
+        'dsh-mobile',
+        reason: '清单刷新期间用目录名顶上，免得标题闪一下',
+      );
+      expect(
+        workspaceChipLabel(workspacesReady: false, cwd: '/repo/trailing/'),
+        'trailing',
+        reason: '尾部分隔符要先去掉（workspaceTitleOf 逐字移植 DSH）',
+      );
+    });
+
+    test('清单没到且 cwd 为空 → 占位（不画一个空名字的 chip）', () {
+      expect(workspaceChipLabel(workspacesReady: false, cwd: null), isNull);
+      expect(workspaceChipLabel(workspacesReady: false, cwd: ''), isNull);
+    });
+
+    test('**清单到了但没有归属 → 占位，绝不拿已删目录的名字顶上**', () {
+      // 这是整条链里唯一有安全性的一条：工作区已从侧栏删掉、而会话的 `cwd`
+      // 还指着那个目录。用 `cwd` 兜底会让用户以为那个工作区还活着。
+      expect(
+        workspaceChipLabel(
+          workspacesReady: true,
+          sessionWorkspaceTitle: null,
+          cwd: r'D:\sudy\myproject\deleted-workspace',
+        ),
+        isNull,
+        reason: '清单是权威：它说没有归属，就不能退回目录名',
+      );
+    });
+
+    test('workspaceTitleOf 两种分隔符都认，纯分隔符回空串', () {
+      // **期望值是把 DSH 的那个函数原样跑一遍拿到的**，不是我按语义推的：
+      // 我第一版写 `workspaceTitleOf(r'D:\') == ''` 就错了 —— DSH 的注释说
+      // "empty string for a separator-only path"，指的是 `'/'` / `'\'` 这种
+      // **整条都是分隔符**的路径；`'D:\'` 去尾后还剩 `'D:'`，最后一段就是它。
+      expect(workspaceTitleOf(r'D:\a\b\c'), 'c');
+      expect(workspaceTitleOf('/a/b/c'), 'c');
+      expect(workspaceTitleOf('/a/b/c/'), 'c');
+      expect(workspaceTitleOf('C:/x/y/'), 'y', reason: '混用分隔符也认');
+      expect(workspaceTitleOf('/'), '');
+      expect(workspaceTitleOf(r'\'), '');
+      expect(workspaceTitleOf(''), '');
+      expect(workspaceTitleOf(r'D:\'), 'D:', reason: '不是"纯分隔符"—— 去尾后还剩 D:');
+      expect(workspaceTitleOf('plain'), 'plain');
+    });
+
+    test('归属只认 sessionIds（不按 cwd 猜）', () {
+      final groups = [
+        ws('w1', 'dsh-mobile', ['s1']),
+        ws('w2', 'deepseek-harness', ['s2']),
+      ];
+      expect(workspaceGroupOf('s2', groups)?.workspaceId, 'w2');
+      expect(workspaceGroupOf('s9', groups), isNull);
+      expect(workspaceGroupOf('s1', const []), isNull);
+    });
+  });
 }

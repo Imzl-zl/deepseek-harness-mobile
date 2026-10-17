@@ -34,6 +34,7 @@ import type { EndpointsPort } from './endpoints.js'
 import type { ProjectionsPort } from './dsh/projections.js'
 import type { WorkspacesPort } from './dsh/workspaces.js'
 import type { PermissionFace } from './dsh/permissions.js'
+import type { AgentPresetsFace } from './dsh/agent-presets.js'
 
 /** 设备清单里的一行。**不含公钥** —— 手机不需要别人的公钥，少发一个字段就少一处泄漏面。 */
 export interface DeviceRow {
@@ -87,6 +88,15 @@ export interface HandlerDeps {
    * 为什么是三个键，见 `dsh/permissions.ts` 的文件头。
    */
   permissions?: PermissionFace
+  /**
+   * Agent 预设目录（**`agentPresets` 服务不在时不给**）。
+   *
+   * 与 `permissions` 同一条纪律：缺了就干脆不挂 `agentPresets.list`，
+   * 而不是挂上去再回 `connector/unsupported` —— `repo.info` 报的是 handler 表的键，
+   * 于是"这台没有预设服务"与"这个方法没实现"在手机侧同一种表现（chip 说拿不到目录）。
+   * **只挂读**：选预设走 `session.create({agentPreset})`，不需要这个方法面。
+   */
+  agentPresets?: AgentPresetsFace
   /**
    * 会话清单（DSH 权威行，已按活动排序）。
    *
@@ -541,6 +551,18 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
   }
 
   // 可选服务的方法**按需挂**：表里没有它，`repo.info` 自然也不会报它（契约 §7 的能力位模型）。
+  // Agent 预设：只有目录这一个读面（写路径是 `session.create({agentPreset})`）。
+  if (deps.agentPresets !== undefined) {
+    const presets = deps.agentPresets
+    handlers['agentPresets.list'] = async () => {
+      const roster = await presets.roster()
+      // 与 `permission.catalog` 同一条纪律：拿不到就**明说**，不给空数组 ——
+      // 空数组会被手机读成"这个部署一个预设都没有"，而真实原因可能是服务没起来。
+      if (roster === undefined) return { available: false }
+      return { available: true, roster }
+    }
+  }
+
   if (deps.jobs !== undefined) {
     const jobs = deps.jobs
     handlers['job.list'] = (params) => {

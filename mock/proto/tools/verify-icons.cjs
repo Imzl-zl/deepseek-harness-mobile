@@ -107,12 +107,13 @@ const required = ['panelLeft', 'newChat', 'search', 'settings', 'ellipsis', 'plu
   'database', 'data', 'code', 'inspect', 'sparkle', 'send', 'paperPlane', 'stopFill', 'folderClose', 'folderOpen',
   'wrapLines', 'nowrap', 'compareSplit', 'fullscreen', 'share', 'link', 'rightUp', 'download', 'api', 'browse', 'plan',
   'queue', 'goal', 'skill', 'compact', 'pin', 'pinFill', 'treeCorner', 'loading', 'gauge', 'slidersTwo', 'alarmClock',
-  'checklist', 'workspaceTree', 'flatList', 'projectAdd', 'user', 'users', 'edit', 'light', 'dark', 'followsystem']
+  'checklist', 'workspaceTree', 'flatList', 'projectAdd', 'user', 'users', 'edit', 'light', 'dark', 'followsystem',
+  'fishLogo']
 const absent = required.filter((n) => !I.names.includes(n))
 ok(absent.length === 0, `all ${required.length} requested names exist`, absent.join(', '))
 
 /* 11. the permission glyphs extracted from PermissionIcon.tsx */
-const permissions = ['permissionReadOnly', 'permissionWorkspaceWrite', 'permissionFullAccess']
+const permissions = ['permissionReadOnly', 'permissionWorkspaceWrite', 'permissionFullAccess', 'permissionAutoReview']
 const missingPermissions = permissions.filter((n) => !I.names.includes(n))
 ok(missingPermissions.length === 0, `permission icons present (${permissions.join(', ')})`, missingPermissions.join(', '))
 for (const name of permissions) {
@@ -130,7 +131,43 @@ ok(
   'permission glyphs keep their own DSH paths',
 )
 
-/* 12. 落地端（app/lib）引用的图标名都必须存在
+/* 12. the brand mark (FishLogo.tsx) — the one artwork that is not stroke-drawn
+ *
+ * 它和另外 99 个的差别是**结构性**的，所以单列一节：整套图标是描边画的（根节点
+ * `fill="none"` + 子元素 `stroke="currentColor"`），而鱼是一块**填充的剪影** ——
+ * 根 `fill="none"` 但颜色挂在 `<path fill="currentColor">` 上，全图没有一根 stroke。
+ * 这两点任一条被"顺手统一"掉，鱼就会静默变成一块黑或干脆不显示。
+ * 高度是**按 23.16:17.04 算出来的表达式**（`%%E:`），不是正方形 —— 也不是常量。
+ */
+{
+  const fish = I.svg('fishLogo')
+  ok(I.names.includes('fishLogo'), 'fishLogo is in the set (FishLogo.tsx is a source of its own)')
+  ok(
+    fish.includes('viewBox="0 0 23.16 17.04"') && fish.includes('fill="none"'),
+    'fishLogo keeps the native 0 0 23.16 17.04 viewBox and root fill=none',
+  )
+  ok(
+    /<path d="M22\.9168 1\.43018/.test(fish) && fish.includes('fill="currentColor"'),
+    'fishLogo keeps its DSH path and carries the colour on the <path>',
+  )
+  ok(!/\bstroke(-width)?=/.test(fish), 'fishLogo has no stroke attribute at all (pure filled silhouette)')
+  ok((fish.match(/<path /g) || []).length === 1, `fishLogo is a single path (got ${(fish.match(/<path /g) || []).length})`)
+  ok(widthOf(fish) === '24', `fishLogo default width 24 (got ${widthOf(fish)})`)
+  // 24 * 17.04 / 23.16 —— 不是 24，所以"默认尺寸 = 正方形"这个假设在这里第一次不成立。
+  const defaultHeight = (fish.match(/\bheight="([0-9.]+)"/) || [])[1]
+  ok(
+    defaultHeight !== undefined && Math.abs(Number(defaultHeight) - (24 * 17.04) / 23.16) < 1e-9,
+    `fishLogo default height follows the 23.16:17.04 ratio (got ${defaultHeight})`,
+  )
+  const fish34 = I.svg('fishLogo', { size: 34 })
+  const h34 = Number((fish34.match(/\bheight="([0-9.]+)"/) || [])[1])
+  ok(
+    widthOf(fish34) === '34' && Math.abs(h34 - (34 * 17.04) / 23.16) < 1e-9,
+    `fishLogo size override 34 -> height ${(34 * 17.04) / 23.16} (got ${h34})`,
+  )
+}
+
+/* 13. 落地端（app/lib）引用的图标名都必须存在
  *
  * 为什么单独一条：第 10 条只覆盖**原型**需要的名字，而 Flutter 落地端是另一批
  * 调用点。`DshIcon('<名字>')` 查不到键会**抛**，Flutter 把它渲染成一块巨大的

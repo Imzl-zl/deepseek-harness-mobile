@@ -23,6 +23,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../model/chat_item.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import 'dsh_state_dot.dart';
@@ -36,7 +37,7 @@ class DshAppBarButton extends StatelessWidget {
     required this.icon,
     required this.onPressed,
     this.tooltip,
-    this.size = 18,
+    this.size = 16,
     this.mirrorX = false,
   });
 
@@ -145,26 +146,115 @@ class DshConnectionDotButton extends StatelessWidget {
   }
 }
 
+/// 顶栏上的**计数 chip**（子智能体 / 后台任务）。
+///
+/// ## 为什么是"图标 + 计数"，没有文字
+///
+/// DSH Web 把这两枚放在 header 的 actions band 里，是**全文本**的
+/// （`ui-subagent` 的 `{count} 个子智能体`、`ui-jobs` 的 `{count} 个后台任务运行中`，
+/// `ui-conversation/src/client/skeleton/ConversationSession.tsx:127-129`）。
+/// 手机放不下：411.4dp 屏上顶栏留给「标题 + chip」的只有 285.4dp，而
+/// 单枚全文本 chip 实测 **137.8dp** / **174.5dp**（`topbar_chips_test.dart` 里记着这两个数）。
+///
+/// 所以手机上留**形态**（同一行、可点、在跑时画转圈点），把**全文本退进
+/// aria/tooltip** —— 文案仍与 DSH 逐字一致，只是不再占顶栏宽度。
+/// 取舍见 `.agents/notes/implemented/2026-10-17-topbar-single-row-and-stats-scroll.md`。
+class DshCountChip extends StatelessWidget {
+  const DshCountChip({
+    super.key,
+    required this.count,
+    required this.running,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  /// 显示的数字（子智能体报总数、后台任务在跑时报在跑数 —— 由调用方按
+  /// `subagentChipLabel` / `jobChipLabel` 算好，这里不重算一遍）。
+  final int count;
+
+  /// 在跑的个数；> 0 时前导槽画转圈点（DSH 的 `activitySlot`）。
+  final int running;
+
+  /// 不在跑时前导槽里的图标（触屏没有 hover，图标是"这是哪一类"的唯一线索）。
+  final String icon;
+
+  /// aria / tooltip：与 DSH 逐字一致的那句全文本。
+  final String label;
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final live = running > 0;
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        label: label,
+        button: true,
+        child: Material(
+          color: DshColors.layer2,
+          borderRadius: BorderRadius.circular(12),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: SizedBox(
+              // 28 高：与状态点、`＋` 这些 38px 触摸目标同处一行时不吃高度。
+              height: 28,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (live)
+                      const DshStateDot(DshStateDotState.ongoing)
+                    else
+                      DshIcon(icon, size: 13, color: DshColors.labelSecondary),
+                    const SizedBox(width: 5),
+                    Text(
+                      '$count',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: DshColors.labelTertiary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 顶栏标题的**硬上限**。
 ///
-/// 数值照 DSH 的 `.crumb { max-width: 220px }`
-/// （`ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139`）——
-/// 同一条"标题可以省略，但不许吃掉整行"的规矩。用户原话：
-/// *"手机屏小,你需要限制大小,给子智能体,后台任务,这些留位置"*。
-/// 390px 竖屏下，`● 连接状态点 + ⊕ 新建` 之后还富余 220 以上。
-const double kDshTitleMaxWidth = 220;
+/// DSH 的 `.crumb { max-width: 220px }`
+/// （`ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139`）
+/// 是**桌面**尺度：那边 header 的计数 chip 与标题同行、宽屏放得下。
+/// 手机上同一行还要塞两枚计数 chip（`☰`+`●`+`⊕` 已占 126dp），
+/// 所以按同一形态**收窄一档**到 140 —— 标题仍可省略，但给 chip 让出位置。
+/// 411.4dp 屏上的账：126（按钮）+ 140（标题）+ 100（两枚 chip）≈ 366，留 45dp 余量。
+const double kDshTitleMaxWidth = 140;
 
 /// 聊天页顶栏。
 ///
 /// ```
-/// ┌──────────────────────────────────────┐
-/// │ ☰  标题(≤220,14px,超长省略)      ●  ⊕   │  height: 56px + safe-top
-/// └──────────────────────────────────────┘
+/// ┌────────────────────────────────────────────┐
+/// │ ☰  标题(≤140,13px,省略)  👥3 ☑2   ●   ⊕  │  height: 56px + safe-top
+/// └────────────────────────────────────────────┘
 /// ```
 ///
 /// 顶栏左侧是 `☰`（照 DSH Web 的 sidebar toggle：`ui-sidebar/src/client/SidebarRoot.tsx:178-197`
 /// 的 `IconPanelLeftOutlineRegular`）—— **图标就该在顶栏左侧**，这是用户 2026-10-16 纠正的：
 /// 我曾把它移到屏幕左缘当"把手"，那是自创的形态。
+///
+/// **计数 chip 与标题同一行**（2026-10-17）：DSH 就是把子智能体 / 后台任务放在 header 的
+/// actions band 里；手机原来让它们**另起一行**，因为按全文本 chip 算，360~390px 上确实放不下。
+/// 换成图标 + 计数后每枚约 50dp，同一条宽度够用了 —— 于是那一行撤销，省下约 34dp 的对话高度。
 ///
 /// 左抽屉同时支持**从屏幕左缘跟手拖出**（`Scaffold.drawerEdgeDragWidth`，Flutter 自带的
 /// 跟手拖动）；右抽屉（`SidePane`）走 `Scaffold.endDrawer`，从右缘跟手拖出，
@@ -179,6 +269,12 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
     required this.connectionState,
     required this.connectionTooltip,
     required this.onConnectionTap,
+    this.subagentCount = 0,
+    this.subagentRunning = 0,
+    this.jobCount = 0,
+    this.jobRunning = 0,
+    this.onTapSubagents,
+    this.onTapJobs,
   });
 
   final String title;
@@ -197,6 +293,18 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String connectionTooltip;
 
   final VoidCallback onConnectionTap;
+
+  /// 子智能体总数 / 在跑数；`0` = 不显示这枚 chip。
+  final int subagentCount;
+  final int subagentRunning;
+
+  /// 后台任务总数 / 在跑数；`0` = 不显示这枚 chip。
+  final int jobCount;
+  final int jobRunning;
+
+  /// 点 chip 开右抽屉对应面板。**为 `null` 时那枚 chip 不可点**（只读计数）。
+  final VoidCallback? onTapSubagents;
+  final VoidCallback? onTapJobs;
 
   @override
   Size get preferredSize => const Size.fromHeight(56);
@@ -217,7 +325,8 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
           ),
           const SizedBox(width: 2),
           // 两件事都要：`Expanded` 把右簇钉在右边（否则右簇跟着标题长度漂），
-          // `ConstrainedBox` 给标题**上限**（否则长标题吃光整行）。
+          // `ConstrainedBox` 给标题**上限**（否则长标题吃光整行、把计数 chip
+          // 挤到没位置）。
           Expanded(
             child: Align(
               alignment: Alignment.centerLeft,
@@ -227,12 +336,12 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  // **14px / w500：照 DSH Web 的 `.crumb`**（`ConversationRoot.module.css:125-139`
-                  // 的 `font-size: 14px; line-height: 20px`，当前那条 `crumbCurrent` 是 w500）。
-                  // 手机原来写 16 / w600 —— 比 Web 大一档、更重，用户点了名：
-                  // "会话名字不能小点"（2026-10-16 真机反馈）。
+                  // **13px / w500**：形态照 DSH Web 的 `.crumb`
+                  // （`ConversationRoot.module.css:125-139` 的
+                  // `font-size: 14px; line-height: 20px`，当前那条是 w500），
+                  // 手机上收窄一档 —— 同一行还要放两枚计数 chip。
                   style: const TextStyle(
-                    fontSize: 14,
+                    fontSize: 13,
                     fontWeight: FontWeight.w500,
                     color: DshColors.labelPrimary,
                   ),
@@ -241,6 +350,32 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
             ),
           ),
           const SizedBox(width: 2),
+          // **计数 chip**：有才显示（0 时整枚不占位，不是显示"0 个子智能体"）。
+          // 文案（全文本那句）走 `subagentChipLabel` / `jobChipLabel`，
+          // 与 Web 逐字一致，只是退进了 aria/tooltip。
+          if (subagentCount > 0) ...[
+            DshCountChip(
+              count: subagentCount,
+              running: subagentRunning,
+              icon: 'users',
+              label: subagentChipAria(
+                total: subagentCount,
+                running: subagentRunning,
+              ),
+              onTap: onTapSubagents ?? () {},
+            ),
+            const SizedBox(width: 4),
+          ],
+          if (jobCount > 0) ...[
+            DshCountChip(
+              count: jobRunning > 0 ? jobRunning : jobCount,
+              running: jobRunning,
+              icon: 'checklist',
+              label: jobChipLabel(live: jobRunning, total: jobCount),
+              onTap: onTapJobs ?? () {},
+            ),
+            const SizedBox(width: 4),
+          ],
           DshConnectionDotButton(
             state: connectionState,
             tooltip: connectionTooltip,

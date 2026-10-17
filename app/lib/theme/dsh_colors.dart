@@ -26,6 +26,22 @@ abstract final class DshColors {
   static const hover = Color(0x14FFFFFF); // 白 ~8%
   static const active = Color(0x24FFFFFF); // 白 ~14%
 
+  // ---- 新会话页（hero）用到的两个 token ----
+  //
+  // 「预览版」徽标（`HeroShell.module.css:62-76`）的底色与文字色。
+  // 两者都是**别名 token**，暗色块里的解析链是
+  // `--dsw-alias-state-business-tertiary → --dsw-static-deepseek-800 = rgb(52, 65, 91)`
+  // （`design-platform.css:359` → `:32/:113`）与
+  // `--dsw-alias-label-primary-bluish → --dsw-static-neutral-bluish-50 = rgb(249, 250, 251)`
+  // （`:336` → `:64/:145`）。
+  //
+  // `labelPrimaryBluish` 与上面的 `labelPrimary` **同值不同 token** ——
+  // 与 `roleContext` / `stateSuccess` 那一对同一个道理：DSH 换掉其中一个时，
+  // 另一个不该跟着变。徽标的描边用 `interactive-bg-hover`，暗色块里就是
+  // `rgba(255,255,255,0.08)`（`:331`），即上面的 `hover`，所以不再复制一份。
+  static const stateBusinessTertiary = Color(0xFF34415B);
+  static const labelPrimaryBluish = Color(0xFFF9FAFB);
+
   // ---- 角色 / 徽标(时间线)----
   static const roleContext = Color(0xFF22C55E);
   static const roleContextBg = Color(0xFF233C2C);

@@ -24,7 +24,7 @@
 //
 // ## 为什么颜色在这里字符串替换，而不是让 SVG 用 `currentColor`
 //
-// 98 个图标**全部**用 `currentColor`，而 `flutter_svg` 对它支持有已知缺口
+// 所有图标**全部**用 `currentColor`，而 `flutter_svg` 对它支持有已知缺口
 // （flutter/flutter#158680、dnfield/flutter_svg#31）。
 // 与其赌渲染器行为，不如在**编译期**就换成真实色值：
 // 代价是一次字符串替换，收益是"颜色一定生效"这件事不再依赖第三方实现细节。
@@ -59,7 +59,7 @@ const Map<String, _IconArt> _art = <String, _IconArt>{
 @@ART@@
 };
 
-/// DSH 图标集：98 个图标的**唯一**来源（与原型同一份）。
+/// DSH 图标集：全部图标的**唯一**来源（与原型同一份）。
 ///
 /// 用法：
 /// ```dart

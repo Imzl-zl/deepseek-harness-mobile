@@ -20,14 +20,15 @@
              左 = .edge--open,右 = .edge--side(上面那条小棒棒是"这侧能划"的标识)。 -->
         <button class="ib" data-act="drawer-open" data-icon="panelLeft" aria-label="打开会话抽屉"></button>
         <h1 class="ttl">手机端控制电脑DSH方案</h1>
+        <!-- 计数 chip(§7.8):子智能体 / 后台任务计数,**有才显示**(没有整枚不占位),
+             点它开右抽屉对应面板。与标题**同一行** —— DSH 就是这么放的(header 的
+             actions band,ConversationSession.tsx:127-129);手机放不下全文本 chip,
+             故只显"图标 + 计数",全文本(DSH 原文)退进 aria/tooltip。
+             内容由 app.js 的 renderLiveChips 填。 -->
+        <div class="livechips" id="liveChips" hidden></div>
         <button class="statusdot" id="statusDot" data-act="status-open" aria-label="连接状态"></button>
         <button class="ib" data-act="new-session" data-icon="newChat" aria-label="新建会话"></button>
       </header>
-
-      <!-- 计数 chip 行(§7.8):子智能体 / 后台任务计数,**有才显示**(没有整行不占位),
-           点它开右抽屉对应面板。手机放不下 Web 那种"与标题同行"的 header band,
-           所以另起一行(有意偏离见 §7.8)。 -->
-      <div class="livechips" id="liveChips" hidden></div>
 
       <div class="seg" id="mainSeg" role="tablist">
         <span class="seg-ind"></span>
@@ -40,6 +41,30 @@
 
           <!-- ============ 对话 ============ -->
           <div class="pg">
+            <!-- 新会话页(blank 会话)的 hero —— DSH Web 的 HeroShell + heroWorkspaceRow。
+                 位置:与 .scroll 并列、在它之后,靠 margin-top:auto 贴到输入栏上方 ——
+                 与 DSH 的 composerStack(标题 → chip 行 → 输入卡片)同一个叠法。
+                 数据都在(工作区归属 / agentPreset 投影),见 app.js 的 setBlankSession。
+                 桌面尺度按触屏重算:标题 26→24,chip 高 28→44(可点下限),卡片不设 712px 上限。 -->
+            <div class="hero" id="convHero" hidden>
+              <div class="hero-head">
+                <span class="hero-fish" data-icon="fishLogo" data-icon-size="34" aria-hidden="true"></span>
+                <span class="hero-ttl">探索未至之境</span>
+                <span class="hero-badge">预览版</span>
+              </div>
+              <div class="hero-chips">
+                <button class="hchip" id="heroWorkspace" data-act="hero-workspace">
+                  <span data-icon="folderOpen" data-icon-size="16"></span>
+                  <span class="lbl" id="heroWorkspaceLabel">dsh-mobile</span>
+                  <span class="cap" data-icon="chevronDown" data-icon-size="12"></span>
+                </button>
+                <button class="hchip" id="heroPreset" data-act="hero-preset">
+                  <span data-icon="agentPreset" data-icon-size="16"></span>
+                  <span class="lbl" id="heroPresetLabel">标准模式</span>
+                  <span class="cap" data-icon="chevronDown" data-icon-size="12"></span>
+                </button>
+              </div>
+            </div>
             <div class="scroll" id="msgs">
 
               <div class="turn turn--u">
@@ -266,12 +291,13 @@
           </div>
         </div>
         <!-- dock 在输入卡片**之后**(DSH InputBar.tsx:499):统计与上下文挂在卡片下方,不顶输入框。
-             文案与 Web 逐字一致:`{total} tok · 缓存命中 {percent}%`(locale.ts:78 的 stats.cacheHit、
-             message.turnUsage.count);轮次格 `{turns} 轮 {steps} 步 · {tps} tok/s`(StatsPills.tsx:244)。
-             **放得下才不换行**:三项宽度都随数字变(四位数 token / 三位数百分比),
-             溢出就换行 —— 横滚会把读数藏到屏幕外(真机 2026-10-17:"上下文百分比不显示")。 -->
+             **单行 + 横向滚动**:三项宽度都随数字变(四位数 token / 三位数百分比 / 十几轮),
+             411dp 真机上合计 632.6dp 而可用只有 391.4dp —— 不滚的 Row 会把末项整块裁掉,
+             换行又让"哪一项掉到第二行"随数字漂;横滚时读数滑得到,点击不受影响。
+             轮次格逐字照 Web 的 `{turns} 轮 {steps} 步 · {tps} tok/s`
+             (locale.ts:77 的 `stats.counts` + StatsPills.tsx:244)—— **没有「第」**。 -->
         <div class="stats">
-          <button class="stat" data-act="sheet-stats" id="statTurn"><span data-icon="gauge" data-icon-size="13"></span> 第 1 轮 · 3 步 · 20 tok/s</button>
+          <button class="stat" data-act="sheet-stats" id="statTurn"><span data-icon="gauge" data-icon-size="13"></span> 1 轮 3 步 · 20 tok/s</button>
           <button class="stat" data-act="sheet-usage"><span data-icon="database" data-icon-size="13"></span> 302K tok · 缓存命中 96%</button>
           <button class="stat" data-act="sheet-context"><span class="ring"></span> 34%</button>
         </div>

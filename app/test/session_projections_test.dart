@@ -9,7 +9,7 @@
 /// 所以这里钉的不只是"能显示真值"，而是：
 /// 1. 形状认不出时**整条不显示**，不猜数字；
 /// 2. 缓存率算不出（没有输入）时**不拼那半句**，不显示 `缓存 0%`；
-/// 3. 轮次为 0 时不说"第 0 轮"。
+/// 3. 轮次为 0 时不说"0 轮"。
 library;
 
 import 'dart:async';
@@ -128,7 +128,7 @@ void main() {
     final stats = app.sessionStats!;
     expect(stats.turns, 3);
     expect(stats.steps, 12);
-    expect(stats.turnLabel, '第 3 轮 · 12 步');
+    expect(stats.turnLabel, '3 轮 12 步');
     // **输出速率**：decodeTokens / (decodeMs / 1000) = 750 / 10 = 75 tok/s
     // （与 Web 的 `decodeSpeed` 同一公式，`StatsPills.tsx:166-170`）。
     expect(stats.tokensPerSecond, 75);
@@ -181,7 +181,7 @@ void main() {
     await app.openSession('sid_A');
 
     expect(app.tokenUsage, isNull);
-    // `turns` 不是数字时按 0 算，于是 `turnLabel` 是 null（不说"第 0 轮"）。
+    // `turns` 不是数字时按 0 算，于是 `turnLabel` 是 null（不说"0 轮 0 步"）。
     expect(app.sessionStats!.turnLabel, isNull);
     expect(app.contextPressure, isNull);
     app.dispose();

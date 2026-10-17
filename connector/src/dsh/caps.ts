@@ -67,6 +67,11 @@ export const OPTIONAL_SERVICES = [
   // 手机上那些只读面（统计 / 轨迹 / 子智能体 / 交付物 / 权限档）显示空态，
   // 而不是一个必然失败的按钮。
   'sessionProjections',
+  // Agent 预设目录（`dsh/agent-presets.ts`）：`agentPresets.remoteExportList()`
+  // （`@Remote('list')`）。缺了只是 `agentPresets.list` 不出现 ——
+  // 手机 hero 上那枚模式 chip 退回"拿不到目录"，而不是摆一份手抄的四个内置预设。
+  // 写路径不需要它：新建会话时带 `agentPreset` 走的是 `session.create`。
+  'agentPresets',
 ] as const
 
 /** 通道对外公布的能力位。 */

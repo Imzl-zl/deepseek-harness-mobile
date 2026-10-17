@@ -5,6 +5,58 @@
 /// 只有 `sessionIds` 被连接器换成了**手机见的 sid**。
 library;
 
+/// 路径的最后一段（显示用）。**逐字移植 DSH 的 `workspaceTitleOf`**
+/// （`packages/util/workspace-path/src/index.ts:58-62`）：去掉尾部所有分隔符，
+/// 再从最后一个 `/` 或 `\` 之后取。
+///
+/// 边界照抄、不改：只有**整条都是分隔符**的路径（`'/'`、`'\'`、空串）回空串；
+/// `'D:\'` 去掉尾部分隔符后还剩 `'D:'`，所以它回 `'D:'`
+/// （DSH 的文档注释说的 "separator-only" 指的是前者 —— 我按语义推时写错过一次，
+/// 期望值是把它原样跑一遍拿到的）。
+///
+/// 为什么抄这一份而不是 `p.split(...)`：分隔符**两种都要认** ——
+/// 手机连的电脑可能是 Windows，路径里就是 `\`。
+String workspaceTitleOf(String path) {
+  var end = path.length;
+  while (end > 0 && (path[end - 1] == '/' || path[end - 1] == '\\')) {
+    end -= 1;
+  }
+  final trimmed = path.substring(0, end);
+  final cut = trimmed.lastIndexOf('/');
+  final cutBack = trimmed.lastIndexOf('\\');
+  final separator = cut > cutBack ? cut : cutBack;
+  return trimmed.substring(separator + 1);
+}
+
+/// 工作区 chip 的标签（`null` = 占位「选择工作区」）。
+///
+/// **链逐条照 DSH 的 `ConversationContent.tsx:89-108`**，注释里的五级也照抄：
+/// 1. 刚选过的工作区（`pendingTitle`）→ 它的标题；
+/// 2. 冷启动、还没有会话 → 占位（调用方根本不显示 chip，所以这里不建模）；
+/// 3. 这个 blank 会话的工作区在清单里 → 它的标题；
+/// 4. 清单**还没到** → 用 `cwd` 的目录名顶一下，免得刷新时标题闪一下（空 `cwd` → 占位）；
+/// 5. 清单**到了但没有归属**（比如已从侧栏删掉）→ 占位，
+///    **绝不拿已删目录的名字通过 `cwd` 顶上**。
+///
+/// "清单到了没有"在这里就是 `workspacesReady`（手机侧 = `workspace.list` 拿到过
+/// 一份非空清单）。第 5 条是这条链里唯一有安全性的一条：一个被删掉的工作区目录
+/// 还在会话的 `cwd` 里躺着，用它当标题会让用户以为它还活着。
+String? workspaceChipLabel({
+  String? pendingTitle,
+  required bool workspacesReady,
+  String? sessionWorkspaceTitle,
+  String? cwd,
+}) {
+  if (pendingTitle != null && pendingTitle.isNotEmpty) return pendingTitle;
+  if (sessionWorkspaceTitle != null && sessionWorkspaceTitle.isNotEmpty) {
+    return sessionWorkspaceTitle;
+  }
+  if (workspacesReady) return null;
+  if (cwd == null || cwd.isEmpty) return null;
+  final base = workspaceTitleOf(cwd);
+  return base.isNotEmpty ? base : cwd;
+}
+
 /// 工作区分组。
 class WorkspaceGroup {
   const WorkspaceGroup({
@@ -28,6 +80,18 @@ class WorkspaceGroup {
 
 /// 一桶:分组标签 + 属于它的 sid。
 typedef WorkspaceBucket = ({String label, List<String> sessionIds});
+
+/// 某个会话归属的工作区；`null` = 这份清单里没有它（清单为空时也回 `null`）。
+///
+/// 判据是 `WorkspaceView.sessionIds`（不是 `cwd`）—— 手机侧的会话行里
+/// **没有** `workspaceId`（契约 §5.7 的 `workspace.list` 那一行），
+/// 所以这是唯一的归属来源。
+WorkspaceGroup? workspaceGroupOf(String sid, List<WorkspaceGroup> groups) {
+  for (final group in groups) {
+    if (group.sessionIds.contains(sid)) return group;
+  }
+  return null;
+}
 
 /// 一个会话在列表里**可不可见**。
 ///

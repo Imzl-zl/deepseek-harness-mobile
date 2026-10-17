@@ -993,7 +993,9 @@ void main() {
       await tester.pumpAndSettle();
 
       // 轮次步数 + 输出速率（750 tok / 10 s = 75 tok/s，照 Web 的 decodeSpeed）。
-      expect(find.text('第 3 轮 · 12 步 · 75 tok/s'), findsOneWidget);
+      // 文案逐字照 Web 的 `stats.counts` = `{turns} 轮 {steps} 步`（`locale.ts:77`）：
+      // **没有「第」、两个数之间没有 `·`** —— 电脑端显示的就是 `5 轮 73 步 · 77 tok/s`。
+      expect(find.text('3 轮 12 步 · 75 tok/s'), findsOneWidget);
       // 用量 + 缓存命中（分母是计费输入，不含输出：40000 / 41500 ≈ 96%）。
       // 文案与 Web 逐字一致：`{count} tok · 缓存命中 {percent}%`
       // （`locale.ts:78` 的 `stats.cacheHit`；合计 = 41500 + 200 = 41700 → 41.7K）。
@@ -1002,10 +1004,11 @@ void main() {
       expect(find.text('34%'), findsOneWidget);
     });
 
-    testWidgets('统计条换行不裁切：四位数也能整条看得见', (tester) async {
-      // 2026-10-17 真机反馈："数字变四位数那怎么办？"—— 旧的 `Row` 布局
-      // 在总宽超屏时把第三项（上下文百分比）整块裁掉，release 里没有溢出
-      // 条纹，只是看不见。`Wrap` 放不下就换行，读数不许被藏起来。
+    testWidgets('统计条横滚不裁切：四位数也滑得到', (tester) async {
+      // 2026-10-17 真机反馈："数字变四位数那怎么办？"—— `Row` 布局在总宽超屏时
+      // 把第三项（上下文百分比）**整块裁掉**（release 里没有溢出条纹，只是看不见）。
+      // 现在是**单行 + 横向滚动**：读数一开始可能在视口外，但**滑得到**。
+      // 判据因此是两段：① 三项都在；② 左滑之后第三项真的进了视口。
       await tester.binding.setSurfaceSize(const Size(320, 640));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final app = AppModel(
@@ -1041,10 +1044,25 @@ void main() {
       await tester.pumpWidget(_wrap(app));
       await tester.pumpAndSettle();
 
-      // 三项都必须在：370K tok 那一项很长，换行后第三项照样渲染。
-      expect(find.text('第 12 轮 · 345 步 · 75 tok/s'), findsOneWidget);
+      // 三项都必须在：370K tok 那一项很长，320px 上整条装不下。
+      expect(find.text('12 轮 345 步 · 75 tok/s'), findsOneWidget);
       expect(find.text('370K tok · 缓存命中 66%'), findsOneWidget);
-      expect(find.text('34%'), findsOneWidget);
+      final last = find.text('34%');
+      expect(last, findsOneWidget);
+      expect(
+        tester.getTopLeft(last).dx,
+        greaterThanOrEqualTo(320),
+        reason: '三项合计宽于 320px，第三项一开始就在视口右边',
+      );
+
+      // **滑得到**：这一条才是"没被裁掉"的判据（`Row` 时代它永远出不来）。
+      await tester.drag(find.byType(DshStatsBar), const Offset(-400, 0));
+      await tester.pumpAndSettle();
+      expect(
+        tester.getTopLeft(last).dx,
+        lessThan(320),
+        reason: '左滑之后第三项必须进入视口 —— 藏起来不等于滑不到',
+      );
       expect(tester.takeException(), isNull);
     });
 
@@ -1225,12 +1243,20 @@ void main() {
     });
   });
 
-  // 顶栏标题**限宽**：数值照 DSH 的 `.crumb{max-width:220px}`
-  // （`ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139`）。
-  // 用户原话："web 屏幕大能显示很多,手机屏小,你需要限制大小,给子智能体,
-  // 后台任务,这些留位置"。
+  // 顶栏**一行**：标题限宽 + 两枚计数 chip（子智能体 / 后台任务）与它同一行。
+  // 形态照 DSH 的 `.crumb`（`max-width:220px; font-size:14px; line-height:20px`，
+  // `ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139`）
+  // 与 header 的 actions band（`ConversationSession.tsx:127-129`）——
+  // 手机按同形态**收窄一档**（标题 140 / 13px；chip 取图标 + 计数），
+  // 因为 411dp 屏上留给「标题 + chip」的只有 285.4dp，而全文本 chip 单枚就 137.8dp。
   group('顶栏标题限宽与计数 chip 的席位', () {
-    Widget bar(String title) => MaterialApp(
+    Widget bar(
+      String title, {
+      int subagents = 0,
+      int runningSubagents = 0,
+      int jobs = 0,
+      int runningJobs = 0,
+    }) => MaterialApp(
       theme: DshTheme.dark(),
       home: Scaffold(
         appBar: ChatAppBar(
@@ -1240,11 +1266,17 @@ void main() {
           connectionState: DshStateDotState.done,
           connectionTooltip: '连接状态：已连接（点按查看连接操作）',
           onConnectionTap: () {},
+          subagentCount: subagents,
+          subagentRunning: runningSubagents,
+          jobCount: jobs,
+          jobRunning: runningJobs,
+          onTapSubagents: () {},
+          onTapJobs: () {},
         ),
       ),
     );
 
-    testWidgets('长标题被限到 220px；顶栏只剩标题 + 状态点 + 新建', (tester) async {
+    testWidgets('长标题被限到 140px、13px/w500', (tester) async {
       const long = '手机端控制电脑DSH方案与顶栏布局';
       await tester.pumpWidget(bar(long * 6));
       await tester.pumpAndSettle();
@@ -1253,12 +1285,12 @@ void main() {
       expect(
         title.width,
         lessThanOrEqualTo(kDshTitleMaxWidth + 0.5),
-        reason: '标题上限 $kDshTitleMaxWidth（照 DSH `.crumb` 的 max-width:220px）',
+        reason: '标题上限 $kDshTitleMaxWidth（同 DSH `.crumb` 的形态，手机收窄一档）',
       );
-      // 字号与字重也照 Web 的 `.crumb`（14px / w500）—— 2026-10-16 真机反馈
-      // "会话名字不能小点"，而原来的 16 / w600 比 Web 大一档也更重。
+      // 字号与字重同源 `.crumb`（14px / w500），手机收窄一档到 13 ——
+      // 同一行还要放两枚计数 chip。
       final style = tester.widget<Text>(find.text(long * 6)).style;
-      expect(style?.fontSize, 14, reason: '照 `.crumb` 的 font-size:14px');
+      expect(style?.fontSize, 13, reason: '同 `.crumb` 形态，手机收窄一档');
       expect(
         style?.fontWeight,
         FontWeight.w500,
@@ -1276,7 +1308,70 @@ void main() {
       expect(find.byTooltip('新建会话'), findsOneWidget);
     });
 
-    testWidgets('360px 长标题：不溢出', (tester) async {
+    testWidgets('计数 chip 与标题同一行；文案与计数口径照 DSH', (tester) async {
+      await tester.pumpWidget(
+        bar('会话标题', subagents: 3, runningSubagents: 2, jobs: 5, runningJobs: 2),
+      );
+      // **不能用 `pumpAndSettle`**：在跑的 chip 会画一枚永不结束的转圈点，
+      // settle 会一直等下去（是超时，不是断言失败）。
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // **按图标取 chip**，不按 tooltip 文案取：子智能体那枚的 aria 在"有在跑的"
+      // 时会变成 `N 个子智能体，正在运行`，按文案找会随数据漂。
+      final chips = tester
+          .widgetList<DshCountChip>(find.byType(DshCountChip))
+          .toList();
+      expect(chips, hasLength(2), reason: '两类计数都 > 0，应当正好两枚');
+      final sub = chips.firstWhere((c) => c.icon == 'users');
+      final job = chips.firstWhere((c) => c.icon == 'checklist');
+
+      // 文案（aria/tooltip）与 Web 逐字一致：子智能体报**总数**、在跑报**在跑数**；
+      // 后台任务在跑时报 `{count} 个后台任务运行中`、count 取**在跑数**。
+      expect(sub.label, '2 个子智能体，正在运行');
+      expect(sub.count, 3, reason: '子智能体那枚显示的是**总数**');
+      expect(job.label, '2 个后台任务运行中');
+      expect(job.count, 2, reason: '后台任务那枚显示的是**在跑数**');
+
+      // **同一行**的判据是纵向中心相等 —— 这才是"顶栏一行"。
+      final titleMid = tester.getRect(find.text('会话标题')).center.dy;
+      expect(
+        tester.getRect(find.byWidget(sub)).center.dy,
+        titleMid,
+        reason: '计数 chip 与标题同一行',
+      );
+      expect(tester.getRect(find.byWidget(job)).center.dy, titleMid);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('计数为 0：整枚不占位（不说"0 个子智能体"）', (tester) async {
+      await tester.pumpWidget(bar('会话标题'));
+      await tester.pumpAndSettle();
+      expect(find.byType(DshCountChip), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('真机宽度 411dp + 两位数计数 + 长标题：不溢出', (tester) async {
+      final view = tester.view;
+      // 真机逻辑宽度：1080px ÷ (420dpi ÷ 160) = 411.43dp。
+      view.physicalSize = const Size(1080 / (420 / 160), 900);
+      view.devicePixelRatio = 1;
+      addTearDown(() {
+        view.resetPhysicalSize();
+        view.resetDevicePixelRatio();
+      });
+
+      await tester.pumpWidget(
+        bar('手机端控制电脑DSH方案与顶栏布局' * 6, subagents: 12, jobs: 12, runningJobs: 12),
+      );
+      // 在跑的 chip 有永不结束的转圈点 —— 只能推帧，不能 settle。
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(tester.takeException(), isNull, reason: '真机宽度下顶栏不许溢出');
+    });
+
+    testWidgets('360px 长标题 + 两枚两位数 chip：不溢出', (tester) async {
       final view = tester.view;
       view.physicalSize = const Size(360, 800);
       view.devicePixelRatio = 1;
@@ -1285,8 +1380,12 @@ void main() {
         view.resetDevicePixelRatio();
       });
 
-      await tester.pumpWidget(bar('手机端控制电脑DSH方案与顶栏布局' * 6));
-      await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        bar('手机端控制电脑DSH方案与顶栏布局' * 6, subagents: 12, jobs: 12, runningJobs: 12),
+      );
+      // 同上：转圈点让 settle 永远等不到。
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
 
       expect(tester.takeException(), isNull, reason: '360px 宽下顶栏不许溢出');
     });

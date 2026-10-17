@@ -17,7 +17,8 @@
  * 带 `@@…@@` 占位符）。**不把 Dart 源码写成 JS 模板字符串**：
  * Dart 的文档注释里全是反引号，塞进模板字符串会直接语法错误（踩过）。
  */
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -107,7 +108,7 @@ for (const name of I.names) {
 
   let body = baked.body
 
-  // `currentColor` -> 占位色。**全部 98 个都只用 currentColor**（已核实：
+  // `currentColor` -> 占位色。**全部图标都只用 currentColor**（已核实：
   // 没有任何一个用非主题色的 fill/stroke）。但 `<mask>` 里面的 white/black
   // 是**亮度掩码的几何值**（不是主题色），所以先摘出来、替换完再放回去。
   const masks = []
@@ -163,6 +164,59 @@ if (leftover) throw new Error(`模板里还有没填的占位符：${leftover[0]
 
 mkdirSync(dirname(OUT_FILE), { recursive: true })
 writeFileSync(OUT_FILE, out, 'utf8')
+
+/**
+ * **产出之后立刻 `dart format` 它。**
+ *
+ * 为什么这一步不能省（2026-10-17 实测）：生成器每个图标写**一行**
+ * `'名': _IconArt(size, aspect, r'''<svg …/>'''),`，而 `dart format` 对
+ * **其中一部分**会拆成多行（判据是格式化器自己的，跟字符串有多长不是简单关系：
+ * 同样形状的两条，一条被拆、一条没被拆）。于是"生成器跑完"与"格式门禁绿"
+ * 是两件事 —— 98 个图标那版恰好一条都不用拆，所以这个缺口一直没露出来；
+ * 加上第 99、100 个（`fishLogo` / `permissionAutoReview`）当场就红了。
+ *
+ * 结果是**产物与门禁互相打架**：谁重跑一次生成器，谁就得手动补一次
+ * `dart format`，忘了就在 `dart format --set-exit-if-changed` 上红，
+ * 而红的位置指向一个"不该手改"的生成文件。所以格式化必须**在管线里**。
+ *
+ * 找不到 dart 就**大声失败**：产出一个过不了门禁的文件比不产出更糟。
+ *
+ * Note: 这个缺口是怎么露出来的、被否的替代方案（人工补一步 / 把格式化器的换行启发式
+ * 抄进 JS）—— 见 `.agents/notes/implemented/2026-10-17-icon-pipeline-fish-and-format-stability.md`。
+ */
+function dartExecutable() {
+  const fromEnv = process.env.FLUTTER_ROOT
+  const candidates = []
+  if (fromEnv) candidates.push(join(fromEnv, 'bin', process.platform === 'win32' ? 'dart.bat' : 'dart'))
+  try {
+    const which = process.platform === 'win32' ? 'where' : 'which'
+    const found = execFileSync(which, ['flutter'], { encoding: 'utf8' }).split(/\r?\n/)[0].trim()
+    // `<root>/bin/flutter(.bat)` → `<root>/bin/dart(.bat)`
+    candidates.push(join(dirname(found), process.platform === 'win32' ? 'dart.bat' : 'dart'))
+  } catch {
+    /* 落到 PATH 上的 dart */
+  }
+  candidates.push('dart')
+  for (const candidate of candidates) {
+    if (candidate === 'dart' || existsSync(candidate)) return candidate
+  }
+  return 'dart'
+}
+
+const dart = dartExecutable()
+try {
+  // Windows 上 `dart` 是 `.bat` shim，Node 拒绝直接 spawn（报 ENOENT，
+  // 看着像"没装 Dart"）—— 必须 shell: true（同一条坑见 `tools.md` 的跨语言握手）。
+  execFileSync(dart, ['format', OUT_FILE], {
+    encoding: 'utf8',
+    shell: process.platform === 'win32',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+} catch (error) {
+  console.error(`dart format 失败（${dart}）：${String(error.stdout ?? '')}${String(error.stderr ?? '')}`)
+  console.error('产出一个过不了格式门禁的文件没有意义 —— 先修好 dart，再重跑本脚本。')
+  process.exit(2)
+}
 
 console.log(`dsh_icons.dart written: ${OUT_FILE}`)
 console.log(`  icons             : ${entries.length}`)

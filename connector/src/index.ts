@@ -74,6 +74,7 @@ import { registerInteractions, type RemoteInteractionPort } from './dsh/interact
 import { createQuestionFaceDeps } from './dsh/questions.js'
 import { createModelFace } from './dsh/models.js'
 import { createPermissionFace } from './dsh/permissions.js'
+import { createAgentPresetsFace } from './dsh/agent-presets.js'
 import { createDevicePresence } from './presence.js'
 import { createInteractionPort } from './interaction-claims.js'
 import { createInteractionFace } from './interaction-face.js'
@@ -756,6 +757,19 @@ let unregisterAdminFace: (() => void) | null = null
             : createPermissionFace(ctx, { sessionOf: (sid) => aliases?.sessionOf(sid) })
         if (permissionFace !== null) {
           handlerDeps.permissions = permissionFace
+        }
+
+        /**
+         * Agent 预设目录（只读）。判据是**一个服务键**：`agentPresets` 就是发名单的那个
+         * （`@Remote('list')`，`@deepseek-ai/dsh-agent-preset-registry`）。
+         * 缺席就整块不挂 —— `repo.info` 的 `methods` 里也就没有 `agentPresets.list`，
+         * 手机 hero 上那枚模式 chip 说"拿不到目录"，而不是摆一份手抄的四个内置预设。
+         *
+         * **写路径不在这里**：选预设走已经存在的 `session.create({agentPreset})`，
+         * 所以这一块只有一个读方法（理由见 `dsh/agent-presets.ts` 的文件头）。
+         */
+        if (ctx.get('agentPresets') !== undefined) {
+          handlerDeps.agentPresets = createAgentPresetsFace(ctx)
         }
 
         /**

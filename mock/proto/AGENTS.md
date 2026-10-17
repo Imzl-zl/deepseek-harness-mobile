@@ -21,7 +21,7 @@
 | `styles.css` | 设计 token 与组件样式 |
 | `app.js` | 手势 / 抽屉 / sheet / 文件页 / 任务 / 输入栏 |
 | `interactions.js` | 输入栏接管(审批 / 提问 / 计划) |
-| `icons.js` | 98 个 DSH 图标(机生成,勿手改) |
+| `icons.js` | 100 个 DSH 图标(机生成,勿手改) |
 | `tools/` | 抽取器与验证脚本 |
 | `shots/` | 截图产物(不入库,由 `shoot*.mjs` 重新生成) |
 

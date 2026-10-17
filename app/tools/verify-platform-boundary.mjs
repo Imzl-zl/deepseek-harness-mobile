@@ -107,7 +107,7 @@ const RULES = [
   },
   {
     id: 'no-material-icons',
-    why: '图标只有一个来源（DSH 的 98 个图标，见 lib/theme/dsh_icons.dart）。'
+    why: '图标只有一个来源（DSH 的 100 个图标，见 lib/theme/dsh_icons.dart）。'
       + '用 Icons.* 等于从 Material 借图标，而原型与 App 会长得不一样 —— '
       + '项目硬规则是「改基线要同步改落地端，不允许两边各自漂移」。',
     appliesTo: (p) => /^app\/lib\/ui\//.test(p),

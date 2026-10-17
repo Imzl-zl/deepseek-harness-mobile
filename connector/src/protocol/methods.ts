@@ -63,6 +63,13 @@ export const METHODS = [
   // `remote.commands.execute` 调它（`ui-permission-presets/src/client/index.ts:126`）。
   // 当前值不走这个方法读 —— 它在 `permissions` 投影里，随 `session.projections` 到手机。
   'permission.switch',
+  // Agent 预设目录（只读）。**与 Web 同一个 DSH 方法**：
+  // `agentPresets.remoteExportList()`（`@Remote('list')`，
+  // `packages/preset/agent-preset-registry/src/index.ts:194-198`），
+  // 返回 `{presets:[{id, name?, description?, isDefault, broken?}]}`（`types.ts:8-25`）。
+  // 手机 hero 上那枚模式 chip 读它 —— 部署可以自己声明预设，所以名单只能从电脑侧取。
+  // **只加读不加写**：选预设走 `session.create({agentPreset})`（见 `dsh/agent-presets.ts`）。
+  'agentPresets.list',
   'interaction.respond',
   'job.list',
   'job.follow',

@@ -17,7 +17,9 @@
 ///
 /// Note: 文案/合计/命中率与 Web 逐字一致的原因（含"部分命中绝不显示成
 /// 100"那条）—— 见
-/// .agents/notes/implemented/2026-10-17-stats-bar-aligns-web-and-real-sheets.md
+/// .agents/notes/archived/2026-10-17-stats-bar-aligns-web-and-real-sheets.md
+/// （该篇的 Wrap 布局部分已被
+/// .agents/notes/implemented/2026-10-17-topbar-single-row-and-stats-scroll.md 取代）。
 library;
 
 /// token 用量（DSH 的 `tokenUsage` 投影）。
@@ -109,14 +111,16 @@ class SessionStats {
   /// 解码出的 token 总数 —— 速率的**分子**。
   final int decodeTokens;
 
-  /// `第 N 轮 · M 步`。**轮次为 0 时返回 null** —— 界面该显示空态，
-  /// 而不是"第 0 轮"（那会让用户以为轮次没在数）。
+  /// `N 轮 M 步`。**轮次为 0 时返回 null** —— 界面该显示空态，
+  /// 而不是"0 轮 0 步"（那会让用户以为轮次没在数）。
   ///
   /// 与 Web 逐字一致：`t('stats.counts', {turns, steps})` = `{turns} 轮 {steps} 步`
-  /// （`ui-chat/src/client/locale.ts:77`）。
+  /// （`ui-chat/src/client/locale.ts:77`）。**没有「第」、两个数之间没有 `·`** ——
+  /// 电脑端此刻显示的就是 `5 轮 73 步 · 77 tok/s`；这里多印一个「第」和一个
+  /// 分隔点，同一个会话在两端就是两个字符串（2026-10-17 真机对照查出）。
   String? get turnLabel {
     if (turns <= 0) return null;
-    return '第 $turns 轮 · $steps 步';
+    return '$turns 轮 $steps 步';
   }
 
   /// 平均 TTFT（毫秒）；没有记录过就是 null。

@@ -22,6 +22,10 @@
   --accent: #5686fe;
   --blue: #7aaaff; /* business-primary / link */
   --on-accent: #0f1115;
+  /* `--dsw-alias-state-business-tertiary`:暗色块解析成 `--dsw-static-deepseek-800`
+     = rgb(52,65,91)(`design-platform.css:359` → `:32/:113`)。
+     新会话页的「预览版」徽标底就是它(与 `DshColors.stateBusinessTertiary` 同值同源)。 */
+  --biz3: #34415b;
 
   /* 角色 */
   --ctx: #22c55e;
@@ -550,14 +554,13 @@ button:focus-visible {
 .appbar .ttl {
   flex: 1 1 auto;
   min-width: 0;
-  /* 标题硬上限 220px(照 DSH 的 .crumb{max-width:220px},
-     ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139):
-     标题可省略,但不许吃掉整行 —— 给右侧的点/右抽屉/新建留位置。 */
-  max-width: 220px;
-  /* 14px / w500:照 DSH Web 的 .crumb(font-size:14px; line-height:20px,
-     当前那条 crumbCurrent 是 w500)。手机原来 17/600,比 Web 大一档也更重
-     —— 2026-10-16 用户点名"会话名字不能小点"。 */
-  font-size: 14px;
+  /* 标题硬上限 140px:形态照 DSH 的 .crumb(max-width:220px,
+     ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139),
+     手机**收窄一档** —— 同一行还要放两枚计数 chip(☰ + ● + ⊕ 已占 126px,
+     全文本 chip 单枚 137.8dp 放不下,故 chip 取图标 + 计数)。 */
+  max-width: 140px;
+  /* 13px / w500:同 .crumb 的 font-size:14px / line-height:20px,手机收窄一档。 */
+  font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -594,14 +597,17 @@ button:focus-visible {
 .statusdot.is-off::after {
   background: var(--err);
 }
-/* 计数 chip 行(§7.8):顶栏之下的独立一行,子智能体 / 后台任务的计数。
-   有才显示(JS 里 hidden);多枚 chip **换行排**,不横滚 —— 藏起来的计数等于没有计数。 */
+/* 计数 chip(§7.8):**顶栏那一行里**的两枚,子智能体 / 后台任务的计数,有才显示
+   (JS 里 hidden)。与标题同行、靠右 —— DSH 的 header actions band
+   (ConversationSession.tsx:127-129)就是这个形态。手机放不下 DSH 的全文本 chip
+   (单枚 137.8dp,而顶栏留给「标题 + chip」的只有 285.4dp),故只显**图标 + 计数**,
+   全文本(DSH 原文)退进 aria/tooltip。
+   取舍见 .agents/notes/implemented/2026-10-17-topbar-single-row-and-stats-scroll.md。 */
 .livechips {
   flex: none;
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 6px 12px 2px;
+  align-items: center;
+  gap: 4px;
 }
 .livechips[hidden] {
   display: none;
@@ -610,12 +616,14 @@ button:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 10px;
+  height: 28px;
+  padding: 0 8px;
   border: none;
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--layer2);
   color: var(--on3);
   font-size: 12px;
+  font-weight: 600;
 }
 .livechip:active {
   background: var(--active);
@@ -2033,15 +2041,25 @@ button:focus-visible {
 }
 
 /* dock:统计 pill 在输入卡片**下方**(照 DSH `.dock`,InputBar.tsx:499),
-   居中排列、薄;点开对应 bottom sheet(方案 §7.4)。
-   **换行不横滚**:三项宽度都随数字变(四位数 token、三位数百分比、十几轮),
-   横滚会把读数藏到屏幕外(2026-10-17 真机:"上下文百分比不显示"就是这么来的)。 */
+   点开对应 bottom sheet(方案 §7.4)。
+   **单行 + 横向滚动**:三项宽度都随数字变(四位数 token、三位数百分比、十几轮),
+   411dp 真机上合计 **632.6dp** 而可用只有 **391.4dp**。无滚动的 `Row` 会把末项
+   **整块裁掉**(2026-10-17 前"上下文百分比不显示"就是这么来的),`Wrap` 换行又让
+   "哪一项掉到第二行"随数字漂。横滚时读数**滑得到**,chip 的点击不受影响
+   (滑动阈值与点击由浏览器/手势竞技场分开)。
+   取舍见 .agents/notes/implemented/2026-10-17-topbar-single-row-and-stats-scroll.md。 */
 .stats {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
   gap: 6px;
   padding: 6px 2px 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.stats::-webkit-scrollbar {
+  display: none;
 }
 .stat {
   flex: none;
@@ -3299,6 +3317,104 @@ button:focus-visible {
   color: var(--warn);
   font-size: 11px;
   font-weight: 600;
+}
+
+/* ============================================================ 新会话页(blank)的 hero
+   DSH Web 的新会话页:`HeroShell`(鱼 + 标题 + 预览版徽标)+ `.heroWorkspaceRow`
+   (工作区 chip + 模式 chip),输入卡片在它们下面 —— 三者是**一个 stack**
+   (`ConversationContent.tsx:163-170` 的 composerStack,gap 12)。
+
+   尺寸来源与触屏重算(桌面值 → 手机值,理由写在 `app/lib/ui/conversation_hero.dart` 文件头):
+     · 标题 26/32 w500(`HeroShell.module.css:41-43`) → **24/32**(手机排版刻度顶格)
+     · 鱼宽 34(`EmptyHero.tsx:104-105`) → **34 不变**(它是标记不是文字)
+     · chip `min-height:28px`(`:157`) → **44**(`kMinInteractiveDimensionCupertino`)
+     · 卡片 `max-width` 712–952px(`ConversationRoot.module.css:384-389`) → **不设上限**
+   鱼和标题之间的 10、chip 内 gap 4、chip 行左缩进 8 都照 DSH 原值。 */
+.hero {
+  /* 贴在输入栏上方:`.scroll` 藏起来时它是唯一的孩子,`margin-top:auto` 把它压到底。 */
+  margin-top: auto;
+  padding: 0 16px 12px;
+}
+.hero[hidden] {
+  display: none !important;
+}
+.hero-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  column-gap: 10px;
+  row-gap: 6px;
+  color: var(--on);
+}
+.hero-fish {
+  display: inline-flex;
+  flex: none;
+  /* 鱼是唯一**填充剪影**的图标(根 fill=none、颜色在 path 上),颜色跟着 color 走。 */
+  color: var(--on);
+}
+.hero-ttl {
+  font-size: 24px;
+  line-height: 32px;
+  font-weight: 500;
+  color: var(--on);
+}
+/* 「预览版」徽标:**无条件渲染**(`EmptyHero.tsx:155`),等宽字体 + 全圆胶囊。
+   `corner-shape: round` 在 Flutter 里没有对应物,这里用 `border-radius:999px` —— 本形状就是全圆。 */
+.hero-badge {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 1px 7px;
+  border: 0.5px solid var(--hover);
+  border-radius: 999px;
+  background: var(--biz3);
+  color: var(--on);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.hero-chips {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* `.workspaceRow { padding-left: 8px }`(`HeroShell.module.css:145`)——与卡片左内边对齐。 */
+  padding: 12px 0 0 8px;
+  min-width: 0;
+}
+/* 工作区 chip 与模式 chip **同形**(`AgentPresetSeat.module.css:1-2` 的注释:
+   "Geometry mirrors HeroShell's .workspace so the two read as one row")。 */
+.hchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  height: 44px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--on);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.hchip:hover {
+  background: var(--hover);
+}
+.hchip .lbl {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hchip .cap {
+  display: inline-flex;
+  flex: none;
+  color: var(--cap);
 }
 
 /* ============================================================ 输入区

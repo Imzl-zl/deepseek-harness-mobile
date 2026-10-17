@@ -230,20 +230,20 @@ dsh-mobile/
 
 ### 7.2 会话详情 · 对话
 ```
-┌──────────────────────────┐
-│ 标题(≤220,14px,超长省略) ● ⊕ │  顶栏三件:标题 / ● 连接状态点 / ⊕ 新会话(☰ 在最左)
-│ [对话]   轨迹            │  顶部分段(对应 conversation.view: chat/trajectory)
-│  用户气泡(右)            │
-│  助手:Markdown + 代码块  │  复用 DSH 渲染规格
-│  ▸ 工具 glob …(折叠卡)   │  工具调用默认折叠
-│──────────────────────────│
-│ ┌──────────────────────┐ │
-│ │ [附件轨(有附件才出现)] │ │  ★ 附件在输入卡片**内部**上方
-│ │ 输入消息…             │ │  ★ 文字独占一行
-│ │ ＋ 模型·等级 权限   ↑ │ │  ★ 左一组 / 右只有发送(手机主流,偏离桌面)
-│ └──────────────────────┘ │
-│ ⏱1轮·3步 🗄302K ◔3%     │  dock:统计在输入卡片**下面**(DSH InputBar.tsx:499),点弹 sheet(7.4)
-└──────────────────────────┘
+┌──────────────────────────────┐
+│ 标题(≤140,13px,省略) 👥3 ☑2 ● ⊕ │ 顶栏一行:☰ / 标题 / 计数 chip / ● / ⊕
+│ [对话]   轨迹                │  顶部分段(对应 conversation.view: chat/trajectory)
+│  用户气泡(右)                │
+│  助手:Markdown + 代码块      │  复用 DSH 渲染规格
+│  ▸ 工具 glob …(折叠卡)       │  工具调用默认折叠
+│──────────────────────────────│
+│ ┌──────────────────────────┐ │
+│ │ [附件轨(有附件才出现)]     │ │  ★ 附件在输入卡片**内部**上方
+│ │ 输入消息…                 │ │  ★ 文字独占一行
+│ │ ＋ 模型·等级 权限      ↑ │ │  ★ 左一组 / 右只有发送(手机主流,偏离桌面)
+│ └──────────────────────────┘ │
+│ ⏱1轮 3步·20tok/s 🗄302K… ◔3% │  dock:统计在输入卡片**下面**(DSH InputBar.tsx:499),
+└──────────────────────────────┘  一行横滚(滑得到、不换行),点弹 sheet(7.4)
 ```
 
 **输入区的三条硬规则**(踩过坑,写死):
@@ -254,7 +254,7 @@ dsh-mobile/
    - **这是有意偏离 DSH 桌面结构**:桌面 `InputBar` 把模型放在 `.trailing`(右侧),和发送键一组;手机上主流是左侧集中、右侧单发送,所以不照抄。
    - 模型 chip 可压缩(名字长了省略号,上限 62%),权限与发送模式各是 34px 恒宽图标 —— 保证**长模型名不会挤走这两个图标或发送键**(窄屏 360px 有用例钉不溢出)。
    - 权限名字与说明进 aria-label/title;**完全权限 / Auto review 用告警色**(`is-warn`)一眼看出当前是危险档。
-   - 后台任务不常驻输入栏,只看顶栏下方的计数 chip 行(§7.8)。
+   - 后台任务不常驻输入栏,只看顶栏那一行里的计数 chip(§7.8)。
 
 **发送模式图标**(2026-10-13 补的第四个控件):DSH 原生就有"繁忙时的发送行为"二选一 —— 排队发送 / 插话发送(`packages/client/ui-conversation/src/client/locales.ts:73-76`,存 Host,决定调 `session.startTurn` 还是 `session.steer`)。我们这边一个方法带 `mode` 参数(`connector/src/handlers.ts` 的 `session.prompt` 收 `'queue'|'steer'`),所以**不扩方法面,照搬二选一**。**放进行控区而不是(还没做的)设置页**:它只在会话正在跑轮次时才有区别,是发送当下的选择;插话那一项在会话没在跑时**禁用**(DSH 文案"仅运行中可插话发送",`locales.ts:365`),不是"点了再报错"。偏好落 `meta` 表(`AppModel.kSendModeKey`),重启后还是用户选的那个。
 
@@ -279,6 +279,13 @@ dsh-mobile/
 - 轮次跑到一半插进去的用户消息带「插话」标(判据逐字移植 DSH `SteeringHistory`)。
 
 **动效**(容易漏,记在这):右抽屉是"抽屉",必须有位移+遮罩过渡 —— 过渡挂在 `.page--side`(`transform/opacity 0.3s cubic-bezier(.4,0,.2,1)`),背后压一层 `.side-scrim`(点它关闭);抽屉内切换面板用轻微横向淡入;输入栏接管卡从下往上浮入。**只做位移不做遮罩、或忘了挂过渡,都会变成"啪一下"**。
+
+**blank 会话 = DSH 的新会话页(hero)**(2026-10-17 落地):连上电脑后落到那个 blank 会话时,
+对话区换成鱼 + 「探索未至之境」+ 预览版徽标 + 工作区 chip + 模式 chip,输入框占位符换成
+`placeholder.hero` 那句(`ui-conversation/src/client/locales.ts:23`)。**只有这一屏** ——
+左/右侧栏、插件页、设置页、内嵌浏览器仍然只在电脑上。规格(尺寸的触屏重算、工作区标签链、
+预设显示名与只读判据、写路径为何是 `session.create({agentPreset})`)见
+`subsystems/blank-session-hero.md`;它与空态的分界是一句话:**blank 会话 → hero,其余空屏 → 原来的空态**。
 
 ### 7.9 选择类列表的行结构(别自己发明第三列)
 
@@ -345,8 +352,9 @@ dsh-mobile/
 文案与 Web 逐字一致:用量 pill 是 `{total} tok · 缓存命中 {percent}%`
 (`locale.ts:78` 的 `stats.cacheHit`;合计 = `billedInput + output`,`StatsPills.tsx:295`);
 命中率用 Web 的 `formatCacheHitPercent`(**部分命中绝不四舍五入成 100**,补小数位直到诚实)。
-布局是 `Wrap` 不是 `Row`:三项宽度都随数字变(四位数 token、三位数百分比),`Row` 超屏时会把
-末项**整块裁掉**(release 里没有溢出条纹,只是看不见——真机"上下文百分比不显示"正是这么来的)。
+布局是**单行 + 横向滚动**:三项宽度都随数字变(四位数 token、三位数百分比、十几轮),
+411dp 真机上合计 **632.6dp**、可用仅 **391.4dp** —— 换行会让"哪一项掉到第二行"随数字漂,
+而缩字号最多省约 71dp,填不平 237dp 的差。横滚时读数**滑得到**(不是被裁掉),chip 的点击不受影响。
 上下文 chip 带 14px 小环(照 `ContextMeter.tsx:119-129`)。`简洁` 档(性能与用量偏好)只留
 速率与缓存命中两个读数(Web 的 `usePerformanceUsage === 'compact'`)。
 
@@ -444,7 +452,7 @@ DSH 右侧有一条**轮次导航轨**(`ui-chat/TurnNavigator.tsx`):每一轮一
 
 ```
 ┌──────────────────────────────┐
-│ ☰  会话标题(≤220,14px,超长省略) ● ⊕ │  顶栏:☰ 左抽屉 / ● 连接状态点 / ⊕ 新建(§7.8)
+│ ☰ 会话标题(≤140,13px,省略) 👥3 ☑2 ● ⊕ │  顶栏一行(§7.8)
 ├──────────────────────────────┤
 │ ›  chat_page.dart        ⋯   │  抽屉抬头:标题随面板变;+N/−M 只对文件有意义
 │ [文件] [任务 ②] [子代理 ①]    │  面板切换(计数徽标只在有运行中时出现)
@@ -479,18 +487,22 @@ DSH 右侧有一条**轮次导航轨**(`ui-chat/TurnNavigator.tsx`):每一轮一
   `View.setSystemGestureExclusionRects`(Android 10+;限制**每条边最多 200dp**,
   见 <https://medium.com/androiddevelopers/gesture-navigation-handling-gesture-conflicts-8ee9c2665c69>)。
   上半屏归我们、**下半屏整条留给系统返回**(真机实测:下半屏划一下 App 退到桌面,正是要的)。
-- **标题限宽 `220px`、字号 `14px` / 粗细 `w500`**(都照 DSH 的 `.crumb`:`max-width:220px; font-size:14px; line-height:20px`,当前那条是 `w500`,`ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139`):
-  标题可省略,但**不许吃掉整行**。子智能体 / 后台任务计数走**自己那一行**(`_LiveChipsRow`,顶栏之下、对话·轨迹分段之上;常态一行,放不下才换行),
-  与标题**不争同一条宽度** —— 结构上等价于 DSH header 的 `.headerActions{flex:none}` band(`:156-161`)。
+- **标题限宽 `140px`、字号 `13px` / `粗细 w500`** —— 形态照 DSH 的 `.crumb`
+  (`max-width:220px; font-size:14px; line-height:20px`,`ui-conversation/src/client/skeleton/ConversationRoot.module.css:125-139`),
+  手机按同形态**收窄一档**,好把计数 chip 放进同一条宽度里。标题可省略,但**不许吃掉整行**。
+- **子智能体 / 后台任务计数是顶栏同一行里的两枚 chip**,结构同 DSH header 的 actions band
+  (`ConversationSession.tsx:127-129` 的 `conversation.session.header.actions`,由 `ui-subagent` / `ui-jobs` 注册)。
+  手机放不下 DSH 的**全文本** chip(`3 个子智能体` 137.8dp、`2 个后台任务运行中` 174.5dp,
+  而顶栏留给标题 + chip 的只有 285.4dp),故 chip 取**图标 + 计数**(每枚约 57dp),全文本退进 aria/tooltip;
+  点它照旧开右抽屉对应面板。
 - 文件变更那一档**仍未接**(手机的文件面没接 `workspace-files`);显示"0 个文件变更"是把"没接"说成"没有"。
 - **已否决**:左抽屉里再放一个「任务」入口去开右抽屉 —— 两个抽屉互相跳没有道理;也否决了在对话流里内联铺开任务明细(占屏)。
 - 审批 / 提问**接管输入栏**(§7.8 之外的 composer takeover),本来就在眼前,**不占顶栏**。
 
-> **有意偏离(2026-10-16)**:①**计数 chip 不与标题同行**(Web 把计数放在 header 同一行的 actions band):360~390px 上
-> `☰`+`●`+`⊕` 已占约 124px,两枚两位数 chip 约 250px,标题将无位可放 —— 所以手机上让计数**另起一行**。
-> ②**连接正常时仍显示绿点**(Web 的连接指示器只在异常 / 重连 / 刚恢复三态出现,正常时什么都不显示):用户明确要求"显示个绿点啥的就行",
-> 且手机没有第二个地方能一眼确认连线。**代价**:顶栏常驻一个 10px 的点。取舍见
-> `.agents/notes/implemented/2026-10-16-topbar-connection-dot-and-title-cap.md`。
+> **有意偏离(2026-10-16)**:**连接正常时仍显示绿点**(Web 的连接指示器只在异常 / 重连 / 刚恢复三态出现,正常时什么都不显示):
+> 用户明确要求"显示个绿点啥的就行",且手机没有第二个地方能一眼确认连线。**代价**:顶栏常驻一个 10px 的点。
+> 取舍见 `.agents/notes/archived/2026-10-16-topbar-connection-dot-and-title-cap.md`
+> 与 `.agents/notes/implemented/2026-10-17-topbar-single-row-and-stats-scroll.md`。
 
 **多会话并行:一个会话一队**(2026-10-13 对齐 DSH 原生):
 
