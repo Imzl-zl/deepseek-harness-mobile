@@ -612,50 +612,21 @@ let unregisterAdminFace: (() => void) | null = null
           onlineIds: () => new Set(presence.devices().filter((row) => row.online).map((row) => row.id)),
           publish: publishDevices,
         })
-        unregisterAdminFace =
-          mountAdminFace(ctx, {
-            caps: () => readCaps(ctx, { direct: listener !== null }),
-            metrics: () => metrics.snapshot(),
-            relayUrl: () => relayUrl ?? null,
-            // 启停开关：**按通道**（两个方式两个开关，2026-10-17 用户要求）。
-            // 停传输时管理面照常工作（出码、设备管理都不依赖它）。
-            channels: () => transportChannels?.channels() ?? [],
-            setChannel: (id, running) => setTransportChannel(id, running),
-            devices: () => {
-              if (devicesTable === null) return []
-              const live = presence.devices()
-              const liveOf = new Map(live.map((row) => [row.id, row]))
-              return [...devicesTable.keys()].flatMap((id) => {
-                const record = devicesTable?.get(id)
-                if (record === undefined) return []
-                const present = liveOf.get(id)
-                const lastInteractedAt = present?.lastInteractedAt
-                return [
-                  {
-                    id,
-                    name: record.name,
-                    pairedAt: record.pairedAt,
-                    revoked: record.revokedAt !== undefined,
-                    online: present?.online ?? false,
-                    foreground: present?.foreground ?? false,
-                    ...(lastInteractedAt === undefined
-                      ? {}
-                      : { lastInteractedAt: Math.max(0, ...Object.values(lastInteractedAt)) }),
-                  },
-                ]
-              }).sort(compareDevicesForDisplay)
-            },
-          offer: offerPairing,
-          // 停用/启用：一对布尔（照 DSH `setBundleEnabled` 的形状）。
-          setEnabled: (devId, enabled) => deviceAdmin.setEnabled(devId, enabled),
-          // 真删除（把行从表里抹掉）：多选与按状态共用 `device-admin.ts` 的同一条
-          // `purge`，差别只在"要不要跳过在线的"这个开关 —— **按形状生效**：
-          // 按状态批量绝不碰在线的（隐式人口，2026-10-15 事故的危险来源），
-          // 显式点名的 id 可以删在线的（操作者的明确目标）。见 device-admin.ts 不变量 2。
-          remove: (devIds) => deviceAdmin.remove(devIds),
-          removeScope: (scope) => deviceAdmin.removeScope(scope),
-          log: logger.info,
-        }) ?? null
+        // 插件面板的 RPC（`/api/dsh-mobile/*`）在**传输section 之后**才挂 ——
+        // 按通道生成的起停路由要在 `transportChannels` 注册表存在之后才能生成
+        // （2026-10-17 真机抓到的装配顺序 bug：挂早了 channels() 还是空，
+        //  4 个 POST 路由根本不注册，而 GET /transport 是基础路由、看起来正常）。
+        // UI 在 DSH 界面里（浏览器半侧 `client.js` 注册 slot），不另起网页路由 ——
+        // 理由与生命周期见 `admin/mount.ts` 的文件头。
+        //
+        // **设备行按"此刻对操作者的意义"排**：在线的 > 最近交互的 > 最近配对的。
+        // 排序放在服务端：客户端只管渲染，而"怎么算更有意义"是电脑侧该定的。
+        // （真机联调会攒下几十行"配对过、连过一次、再没连过"的行 ——
+        //  2026-10-15 攒到 31 行，操作者要在最上面看到自己那台。）
+        //
+        // **三个写操作全在 `device-admin.ts`**：停用/启用、多选删、按状态删。
+        // 抽出去是为了让"解禁要把 `revokedAt` 从行上拿掉""在线豁免按形状生效"这两条
+        // 不变量有单测可钉（2026-10-15 事故后最不能错的两条）。
         /**
          * 方法面的挂载级依赖。**每连接的那三个端口不在这里** ——
          * `createHandlers` 的 deps 类型上已经不收它们（见 `ConnectionScopeDeps.handlers`）。
@@ -976,6 +947,56 @@ let unregisterAdminFace: (() => void) | null = null
         ])
 
         await transportStart()
+
+        // 插件面板的 RPC（`/api/dsh-mobile/{status,pair,transport,devices/*}`）。
+        // **必须在 `transportChannels` 创建之后**：按通道生成的起停路由
+        // （`POST /transport/{id}/{start,stop}`）在挂载时一次性生成，挂早了
+        // `channels()` 还是空数组 —— 2026-10-17 真机实测到这个顺序 bug
+        // （4 个 POST 路由 404，而 GET /transport 是基础路由、看起来一切正常）。
+        // 停传输时管理面照常工作（出码、设备管理都不依赖它）。
+        unregisterAdminFace =
+          mountAdminFace(ctx, {
+            caps: () => readCaps(ctx, { direct: listener !== null }),
+            metrics: () => metrics.snapshot(),
+            relayUrl: () => relayUrl ?? null,
+            // 启停开关：**按通道**（两个方式两个开关，2026-10-17 用户要求）。
+            channels: () => transportChannels?.channels() ?? [],
+            setChannel: (id, running) => setTransportChannel(id, running),
+            devices: () => {
+              if (devicesTable === null) return []
+              const live = presence.devices()
+              const liveOf = new Map(live.map((row) => [row.id, row]))
+              return [...devicesTable.keys()].flatMap((id) => {
+                const record = devicesTable?.get(id)
+                if (record === undefined) return []
+                const present = liveOf.get(id)
+                const lastInteractedAt = present?.lastInteractedAt
+                return [
+                  {
+                    id,
+                    name: record.name,
+                    pairedAt: record.pairedAt,
+                    revoked: record.revokedAt !== undefined,
+                    online: present?.online ?? false,
+                    foreground: present?.foreground ?? false,
+                    ...(lastInteractedAt === undefined
+                      ? {}
+                      : { lastInteractedAt: Math.max(0, ...Object.values(lastInteractedAt)) }),
+                  },
+                ]
+              }).sort(compareDevicesForDisplay)
+            },
+            offer: offerPairing,
+            // 停用/启用：一对布尔（照 DSH `setBundleEnabled` 的形状）。
+            setEnabled: (devId, enabled) => deviceAdmin.setEnabled(devId, enabled),
+            // 真删除（把行从表里抹掉）：多选与按状态共用 `device-admin.ts` 的同一条
+            // `purge`，差别只在"要不要跳过在线的"这个开关 —— **按形状生效**：
+            // 按状态批量绝不碰在线的（隐式人口，2026-10-15 事故的危险来源），
+            // 显式点名的 id 可以删在线的（操作者的明确目标）。见 device-admin.ts 不变量 2。
+            remove: (devIds) => deviceAdmin.remove(devIds),
+            removeScope: (scope) => deviceAdmin.removeScope(scope),
+            log: logger.info,
+          }) ?? null
 
         abort.signal.addEventListener('abort', () => {
           void transportStop?.()

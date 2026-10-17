@@ -405,6 +405,24 @@ test('删除：devIds 与 scope 都缺 → 400，不碰 remove', async () => {
   assert.equal(called, false)
 })
 
+test('装配顺序：管理面挂在通道注册表创建之后（2026-10-17 真机抓到的 404）', () => {
+  // 按通道生成的起停路由是**挂载时一次性生成**的（`createAdminRoutes` 调
+  // `deps.channels()` 那一次）。`mountAdminFace` 若早于 `createTransportChannels`，
+  // 那时的 `channels()` 还是空数组 —— 4 个 POST 路由根本不注册，而
+  // GET /transport 是基础路由、面板看起来一切正常，点"停止"才 404。
+  // 真机实测到这条，所以用源码顺序断言钉住（装配接错不报错，是本项目
+  // 反复出现的一类故障，Dart 侧同形状的守卫在 `assembly_invariants_test.dart`）。
+  const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')
+  const registry = source.indexOf('transportChannels = createTransportChannels')
+  const mount = source.indexOf('mountAdminFace(ctx')
+  assert.ok(registry > 0, 'index.ts 应创建通道注册表')
+  assert.ok(mount > 0, 'index.ts 应挂管理面')
+  assert.ok(
+    registry < mount,
+    '注册表必须先于管理面挂载 —— 否则按通道的起停路由生成时通道列表是空的',
+  )
+})
+
 test('没有独立网页这一路：管理面的 UI 在插件面板里，不另起路由', () => {
   // 2026-10-15 删掉过一版 `ctx.webServer.register({kind:'prefix'})` 的内联 HTML。
   // 删的理由：与插件面板功能完全重复，且它并不额外起进程（同在 DSH 的 web server 上），

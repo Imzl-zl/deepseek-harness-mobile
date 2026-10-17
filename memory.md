@@ -119,7 +119,7 @@ queue-dock-and-cancel-landed,conversation-rendering-fills-dsh-gaps,
 settings-page-v1-four-groups}.md`。
 
 **门禁**:app flutter test **644** / analyze 0 / format 0 / 平台边界 258 /
-connector tsc 0 + build + test **515** / protocol 486·26·49 /
+connector tsc 0 + build + test **516** / protocol 486·26·49 /
 CDP: proto·authz 18·settings 28·tasks 53·picker 全绿。
 
 ## 2026-10-17 晚:连接器三个设计问题落地(设备记录单位 / 传输分开关 / 弹框宽度)
@@ -147,6 +147,21 @@ CDP: proto·authz 18·settings 28·tasks 53·picker 全绿。
 - **弹框宽度 520→760px** 已在上一轮改完(`client.js` 的 `S.fixedBox`),本轮只验收。
 - 契约同步:`pairing-v2.md` §1/§5/§6/§7、`remote-channel.md` §11/§12、
   `connector-and-relay.md` §1.3。**方法面仍 25/30**(管理面端点不进 §5.7)。
+
+**2026-10-17 真机验证(全过,证据如下)**:
+- **替换**:设备表 6 条同名行 → 管理面清掉 5 条陈旧行(留在线那条)→ 手机重配 →
+  **仍是 1 条**,`pairedAt=1792204446204` 精确保留(只有替换路径会这样;旧构建会写
+  新时间且留 2 条)。手机在线+前台,凭据换新。
+- **分开关(socket 级)**:停 direct ⇒ `0.0.0.0:8790` LISTENING 消失、两条直连
+  TIME_WAIT、relay 拨号(127.0.0.1:8787)不动、手机改走 relay
+  (`192.168.110.79:8787 ← 192.168.110.28:49982`)、`caps.direct=false`;停 relay ⇒
+  拨号全 TIME_WAIT、手机 offline;起 relay → 拨号恢复;起 direct → 监听恢复、
+  手机从 direct 重连(`110.79:8790 ← 110.28:38040`)。两条通道各自 200 + 回执带真值。
+- **弹框**:实测 dialog 宽 **760px**,五列设备表不挤(截图在 Temp)。
+- **真机抓到并已修的装配顺序 bug**:管理面原先挂在 `createTransportChannels` 之前,
+  按通道生成的 4 个 POST 路由在 `channels()` 还是空数组时生成 ⇒ 根本没注册
+  (GET /transport 是基础路由,看起来正常,点"停止"才 404)。已把 `mountAdminFace` 移到
+  传输 section 之后 + 源码顺序断言(`admin-face.test.ts`)。connector 测试 **516**。
 
 ## 2026-10-16:四条议题一轮做完(顶栏 / 计数 / 渲染 / 归档)
 
