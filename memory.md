@@ -2,626 +2,134 @@
 
 > 本文件是**当前状态快照** + 最近活跃窗口,允许覆盖更新。**不做流水追加** —— 历史属于 git 与 `.agents/notes/`。
 > 决策与取舍见 `.agents/notes/`,稳定规律与坑点见 `tools.md`,现状事实见 `docs/`。
+> 已落地的批次只在文末留一行索引,细节回 git 与笔记找。
 
 ## 下一步(新会话从这里开始)
 
-> **开工提示词:`docs/cookbook/next-session-home-and-rendering.md`** —— 它的四条里
-> **前两条(统计条横滚 / 顶栏收成一行)与第三条(连接后那一屏 = DSH 新会话页)
-> 都已落地并全绿**,剩下的是**第四条:④ 会话渲染对齐 DSH**。
-> 那份任务书里 ④ 的调研结论(带 `packages/...:行号`)照旧可用;
-> **③ 的落地结论已移到 `docs/subsystems/blank-session-hero.md` 与
+> **开工提示词:`docs/cookbook/next-session-acceptance-and-rendering.md`** ——
+> 它的四条里**前两条与 ③ 都已落地并全绿**(commit `6a9249b`),剩下两件事:
+> **① 真机验收**(用户刚换局域网;①②③ 还没有一张带数据的真机画面)、
+> **② ④ 会话渲染对齐 DSH**。④ 的调研结论(带 `packages/...:行号`)照旧可用;
+> **③ 的落地结论在 `docs/subsystems/blank-session-hero.md` 与
 > `.agents/notes/implemented/2026-10-17-blank-session-hero.md`**,别再从任务书里读 ③。
 > 旧的那份 `next-session-interaction-to-phone.md` 任务已完成,**别再照它跑**。
 
-**当前里程碑**:**「审批 / 提问 / 计划审查转到手机」整条链已接线**;两处小改已完成
-(① 步骤 ④ 等待窗口调到 `_waitForModel` 档;② lifecycle observer 挂上,前后台态自此
-真的报给连接)。**发送模式(排队/插话)已照搬 DSH 二选一并放进入控区**;**
-待处理已改成 per-session(一会话一队)**,并发会话可切换着答,跨会话有角标与提示行。
-**权限切换已接**(2026-10-15):读 `permission.catalog`(DSH 的
-`permissionPresets.catalog()`,`@Remote('catalog')`)+ 写 `permission.switch`
-(经 DSH 的 `/permission <档位>` 命令,与 Web 同一条路径);手机上三档手抄已删。
-顺带修掉一个只在生产里发作的 bug:`session.projections` 把 DSH 的
-`{kind, asOfSeq, values}` 信封原样透传,手机于是**一个投影键都取不到**
-(统计条/上下文环/子智能体/权限档全空态),而单测全绿 —— 替身绕开了信封。
-
-**2026-10-14:真机已连通**(App 装在小米 `d61cf622` 上,手机上看得到电脑上的真实会话、
-内容、统计条,电脑侧的审批**真的推到了手机上**)。顺带定位到"审批卡不出现"的真因:
-靶子会话在 `danger-full-access` 档(`approval/policy: never`)→ 审批**根本不问**,
-探针直接跑成功。见 `.agents/notes/implemented/2026-10-14-approval-probe-needs-ask-policy.md`。
-
-**2026-10-14:局域网直连已落地**(端点是一等公民)。连接器配 `listenPort` + `listenHost: '0.0.0.0'`
-即可被同 WiFi 的手机直连;手机连上后自动 `endpoint.describe` 发现地址并按"direct 先于 relay"
-并入端点表,换端点**不重扫码**(配对凭据与地址无关)。取舍见
-`.agents/notes/implemented/2026-10-14-endpoint-switching-lan-direct.md`。
-**2026-10-16:真机改走无线直连并验证**(用户否掉"插线联调")——profile 的 `cordis.patch.yml` 从
-`listenPort: 0` 改成 `8790` + `listenHost: 0.0.0.0`,`caps.direct` 必须回 `true`;
-relay 的 `relay.config.json` 也改成 `host: 0.0.0.0`,并把 `relayUrl` 指向 `ws://192.168.2.43:8787/ws/connector`
-(**引导通道也无线**:二维码里的 `relay:` 取自该配置,`connector/src/pairing.ts:155`)。
-硬证据:冷启动后电脑侧仍稳定 `192.168.2.43:8790 ← 192.168.2.29:41138 ESTABLISHED`,连接器改拨局域网 relay。
-**为此改了一处真代码**:`relay-url.ts` 的明文判据原来只认 loopback,与手机侧
-(`isPrivateOrLoopback`,已扩到私网/CGNAT/link-local/ULA)漂了一次,导致私网地址被校验器拒;
-现已对齐并用同一批地址钉住(`connector/tests/relay-url-nonpublic.test.ts`,25 条)。
-取舍见 `.agents/notes/implemented/2026-10-16-relay-plaintext-criterion-aligned.md`;
-**2026-10-16 已做**:手机端「连接方式」选择器落地(连接 sheet 顶部「当前连接」块 +
-设置页端点全量列表 + 换 WiFi 后直连失效的提示),取舍见
-`.agents/notes/implemented/2026-10-16-endpoint-chooser-ui.md`;
-**全部端点失效时说准了**(2026-10-16):空态头条说连接状态 + "N 个端点都拨不通
-(电脑可能不在线,或换了网络地址)",不再把"拨不通"演成"还没有会话";出路照旧是
-空态/连接 sheet 的「重新配对」。见
-`.agents/notes/implemented/2026-10-16-endpoint-failure-diagnosis-and-stable-anchor.md`;
-**要"电脑换 IP 无感"是部署选择,不是代码缺口**:正道是让 relayUrl 指向不随电脑 IP
-变的地址(Tailscale 两端,代码已放行 CGNAT 直连;或把中转搬去局域网稳定主机)。
-手机换到外网同理,只有两端可达的汇合点能救,重新出码救不了(二维码里的 relay
-还是那个局域网地址)。UDP 广播发现已评估并否掉(只救同网段 + AP 隔离静默失效)。
-
-**后台任务已接上**(2026-10-15):删掉三条假任务(含假的 `flutter build apk` 输出),
-改读 `job.list` + `job` 帧流;展开 `job.follow` / 收起 `job.unfollow` / 停止 `job.kill`,
-与连接器侧一一对应。`core/job.dart` 把帧类型化(`sealed class JobFrame`),
-**取代了那个没有任何消费者的死 API `SyncClientProbe.jobFrames`** —— 任务面板
-接不上正是因为它。12 条专属测试 + 变异校验。
-
-**仍没接**:管理页面(二维码唯一出口,DSH 的 `CommandResult` 只有 text 没有图片出口)。
-设计见 `.agents/notes/proposed/2026-10-15-wire-up-the-four-unwired-surfaces.md`。
-(模型选择写路径与权限切换**已接**,见上面的当前里程碑。)
-
-**2026-10-15 晚:设备身份 / 失效恢复 / 重配入口 / 管理面四件事闭环**(取舍见
-`.agents/notes/implemented/2026-10-15-{new-identity-per-pairing-is-intentional,
-connection-terminal-failure-goes-to-pairing,device-admin-face-dsh-house-style}.md`):
-
-- **身份**:每次配对新身份是**有意设计**(停用终态 + 重扫换新覆盖泄露场景);契约 §10 的
-  "每电脑 8 台"改成"不设上限"(从来没有代码 enforce,硬拒会把用户锁在门外)。
-- **失效恢复**:换票 401 的 `notPaired` 码一路透传到连接层 → 一次性终态(不退避、不重连)
-  → `ClientAction` 的**唯一执行处** `ConnectionRecovery` 清凭据 + 回配对页 + 人话提示。
-  协议不动(中转今天把"被停用/令牌失效/没见过"都回 401,`relay/src/issue-token.ts:89`)。
-  遗留:握手层 close 4003 与 `protocol/revoked` 帧两条兜底路径仍走退避,未收口。
-- **重配入口**:顶栏连接状态位已配对时常驻、点它弹连接操作 sheet;空态 paired 有 1 步直达;
-  判据"任何状态 ≤2 步"写成 widget 断言。**与设计文档规定的"任务/文件变更"冲突,已记为有意偏离**。
-- **管理面**(电脑侧插件面板):停用/启用一对布尔端点(照 DSH `setBundleEnabled`)、删除支持
-  单选 + 多选、`offline` scope 删除、确认对话框改页面内(不用 `window.confirm`)且必带后果。
-  事故复盘 `docs/postmortem/2026-10-15-offline-batch-hard-delete-nuked-own-phone.md`。
-
-## 2026-10-17:对照 DSH 源码把手机端各项接上(标题/统计/排队/渲染/设置)
-
-用户真机反馈五条,全部先读 DSH 源码再动手,每条有 `packages/...:行号` 出处:
-
-- **会话标题只有一个真值源**:`_touchSummary` 原来每条 delta 都用**本地推导标题**
-  (首条用户消息前 30 字)覆盖电脑侧标题 —— 选中会话名字就变的真因(2026-10-16
-  修的只是 `currentTitle` 读侧)。同一处重建还把 model/running/blank/subagent/cwd
-  掉成默认值。现在 `_touchSummary` 只换计数(`SessionSummary.withCounters`),
-  标题经 `title` 投影 + `session/title` 事件落地,本地推导整条删除。
-  回归用例用**能推 delta 的假客户端** + 真实事件形状(此前假客户端恒回空流,
-  这条链在单测里从未跑过)。
-- **模型目录在生产里一次都没解析成功过**:解析器认的是臆想形状
-  `List<{provider, models}>`,而 DSH `buildModelCatalog` 返回
-  `{default, routableProviders, groups, failures}`(顶层是对象)——
-  与 2026-10-15 投影信封同一类 bug(替身复现的不是真形状)。
-  现在按真形状解析 + 推理等级二级 sheet(照 Web ModelSelect 的 drill)+
-  切模型带 effort。
-- **统计条逐字对齐 Web**:`{total} tok · 缓存命中 {percent}%`(原 `302K · 缓存 96%`)、
-  合计改 `billedInput + output`;`Row` → `Wrap`(原布局把上下文百分比**整块裁掉**,
-  真机"百分比不显示"就是这么来的)+ 字号 12→11;三个 sheet 从**写死的假数**
-  改成真投影数据;`formatCacheHitPercent` 逐字移植 Web(部分命中绝不显示成 100,
-  向量表照抄 Web spec)。
-- **排队条 + 插话 + 打断落地**:新方法 `session.updateQueue`(编辑/删除/插话,
-  与 Web 排队 dock 同一个 DSH 方法)与 `session.cancel`;队列读 `inbox` 投影;
-  主键运行中且空草稿时是停止(照 Web `primaryStops`)。**方法面 29→30**,
-  契约列了没实现的只剩 settings.describe/update、credentials.set/unset 四个。
-- **会话渲染补齐四样**:reasoning 思考过程(原来混进正文)、附件计数、
-  工具结果明细(原来恒空)、插话标记(逐字移植 DSH `SteeringHistory`);
-  **一条坏事件不再炸掉整批**(原来一个 StateError 让整个 delta 丢失 ——
-  "会话打开了但一条都不渲染"的故障模式)。
-- **设置页落四组**:通用(工作步骤展示/性能与用量/繁忙时发送,全部落手机本地、
-  有意偏离 DSH)/ 模型(只读 + 拉取失败的 provider)/ 连接方式/ 关于与连接。
-  账号、内置插件、Agent 预设不进本版(都要先扩连接器方法面,摆占位行是假入口)。
-  顺带修掉 `_toast` 把所有 SnackBar 缀上"还没接上数据"的谎话
-  ("已切到 X 还没接上数据")。
-
-原型 `mock/proto` 同批同步:统计文案对齐 Web + 换行不横滚、新增排队条
-(计数头 + 三个动作)。决策笔记五篇在
-`.agents/notes/implemented/2026-10-17-{session-title-single-source-of-truth,
-model-catalog-real-shape-and-effort,stats-bar-aligns-web-and-real-sheets,
-queue-dock-and-cancel-landed,conversation-rendering-fills-dsh-gaps,
-settings-page-v1-four-groups}.md`。
-
-**门禁**:app flutter test **654** / analyze 0 / format 0 / 平台边界 258 /
-connector tsc 0 + build + test **516** / protocol 486·26·49 /
-CDP: proto·authz 18·settings 28·tasks 53·picker 全绿。
-
-## 2026-10-17 晚:连接器三个设计问题落地(设备记录单位 / 传输分开关 / 弹框宽度)
-
-用户真机反馈三条,全部先读 DSH 源码再动手,取舍各有一篇决策笔记:
-
-- **同一台手机重复扫码不再攒行**(`.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`):
-  二维码是**一次性交互凭证**,设备身份(密钥对)是配对行为的产物;重新配对时手机在
-  `pair-commit` 密文里自报旧 `previousPairingId`(**行定位符,不是凭据** —— 授权仍是
-  二维码秘密),电脑侧据此**替换旧行**(换密钥/换令牌/换 pairingId,保留首次 `pairedAt`)。
-  没有旧行(首配/凭据丢过/被清理)才写新行;停用的旧行也允许被替换(重新扫码就是恢复路径)。
-  先删旧行再写新行(崩中间只是"这次没成",不攒行)。协议侧只加一个**可选**字段,
-  fixture/向量无漂移(486·26·49 不变)。手机侧缝:`main.dart` 的 `previousPairingIdOf`
-  (凭据在时现算,被"重新配对"清掉之前抓快照),确认卡多一行"会替换那条记录"。
-- **传输面按方式分开关**(`.agents/notes/implemented/2026-10-17-transport-channels-registry.md`):
-  `transport/channels.ts` 通道注册表(relay 中转拨号 / direct 直连监听,各自 start/stop/running),
-  服务面 `channels()`/`setChannel()`;管理面 `GET /api/dsh-mobile/transport` +
-  `POST /api/dsh-mobile/transport/{id}/{start,stop}`(**路由按注册表生成** —— 加第三种
-  方式不改管理面与 UI 形状,`admin-face.test.ts` 用三通道注册表钉住);UI 每通道一个开关 +
-  「全部启动/全部停止」(批量是 UI 顺序调用,不设服务端批量端点)。连带效应已查清并写进笔记:
-  停 direct ⇒ `caps.direct` 转 false、`endpoint.describe` 不再报 direct,但手机已学到的
-  端点不删(`mergeEndpoints` 只增),重连先试直连失败再回落 relay(设置页显示"拨不通+原因");
-  停 relay 不碰已接受的直连,停 direct 由 `listener.close()` 收已接受连接;presence 按连接
-  记账,不会假掉线;单条重启失败(端口被占)带原因回界面(400)。
-- **弹框宽度 520→760px** 已在上一轮改完(`client.js` 的 `S.fixedBox`),本轮只验收。
-- 契约同步:`pairing-v2.md` §1/§5/§6/§7、`remote-channel.md` §11/§12、
-  `connector-and-relay.md` §1.3。**方法面 27/31**(管理面端点不进 §5.7)。
-
-**2026-10-17 真机验证(全过,证据如下)**:
-- **替换**:设备表 6 条同名行 → 管理面清掉 5 条陈旧行(留在线那条)→ 手机重配 →
-  **仍是 1 条**,`pairedAt=1792204446204` 精确保留(只有替换路径会这样;旧构建会写
-  新时间且留 2 条)。手机在线+前台,凭据换新。
-- **分开关(socket 级)**:停 direct ⇒ `0.0.0.0:8790` LISTENING 消失、两条直连
-  TIME_WAIT、relay 拨号(127.0.0.1:8787)不动、手机改走 relay
-  (`192.168.110.79:8787 ← 192.168.110.28:49982`)、`caps.direct=false`;停 relay ⇒
-  拨号全 TIME_WAIT、手机 offline;起 relay → 拨号恢复;起 direct → 监听恢复、
-  手机从 direct 重连(`110.79:8790 ← 110.28:38040`)。两条通道各自 200 + 回执带真值。
-- **弹框**:实测 dialog 宽 **760px**,五列设备表不挤(截图在 Temp)。
-- **真机抓到并已修的装配顺序 bug**:管理面原先挂在 `createTransportChannels` 之前,
-  按通道生成的 4 个 POST 路由在 `channels()` 还是空数组时生成 ⇒ 根本没注册
-  (GET /transport 是基础路由,看起来正常,点"停止"才 404)。已把 `mountAdminFace` 移到
-  传输 section 之后 + 源码顺序断言(`admin-face.test.ts`)。connector 测试 **516**。
-
-## 2026-10-17 深夜:顶栏收成一行 + 统计条改单行横滚
-
-用户一轮提了四条界面问题,先说"东西很多,可以先调研一下"。**先调研、再问一个阻塞问题、再动手**:
-三条并行子代理读了 DSH / rikkahub / DEEIX-Chat(结论:后两个**都不是 Flutter** —— rikkahub 是
-Kotlin/Compose、DEEIX-Chat 是 Next.js,没有一行能直接搬,只有架构与阈值可搬)。
-
-**这一批做完的是前两条**(后两条「连接后首页 = DSH 的 blank 会话 hero」与「会话渲染差距」已调研完、未动代码):
-
-- **统计条换行的真因是"排不下",不是"字号大"**:Flutter 实测三枚 chip 合计 **632.6dp**,
-  而真机 411.4dp 屏可用只有 **391.4dp** —— 差 **237dp**;缩字号/缩间距全做完也只能省约 71dp。
-  用户在「砍一项读数」与「两行」之外选了第三条:**单行 + 横向滚动**(原话"就一行,超出得可以
-  滚动查看明白不?点击不受影响啊")。`Wrap` → 横向 `SingleChildScrollView` + `Row`。
-- **真机文案偏离**:DSH 原文是 `{turns} 轮 {steps} 步`(`locale.ts:77`),
-  手机写成 `第 {turns} 轮 · {steps} 步` —— 电脑端此刻显示的正是 `5 轮 73 步 · 77 tok/s`。已改回。
-- **顶栏收成一行**:标题 `14→13px`、上限 `220→140px`、图标 `18→16`;**子智能体 / 后台任务
-  计数 chip 进顶栏**(DSH 本来就这么放),取「图标 + 计数」,全文本(DSH 原文)退进 aria/tooltip;
-  那一整行撤销,省下约 34dp 对话高度。顺带修掉一个真 bug:**那行 chip 被 `Column` 的默认
-  `crossAxisAlignment: center` 居中**成了一枚悬在屏幕中间的胶囊(用户"咋看着不是很好看"的真因)。
-- 顺带:`_subsFor()`/`_jobsFor()` 每帧从 4 次变 1 次,并消掉 `_jobsSid` 这第二个来源;
-  三个 chip 文案函数移到 `model/chat_item.dart`(顶栏与页面共用一份说法)。
-- **原型同步**(基线不许两边漂):`mock/proto` 的 appbar 一行、`.stats` 横滚、文案。
-  顺手把 `verify-proto.mjs` 从"只采 JSON、从不断言"补成**13 项断言**。
-- 笔记:`.agents/notes/implemented/2026-10-17-topbar-single-row-and-stats-scroll.md`;
-  被取代的两篇移入 `archived/` 并标了「取代范围」(`2026-10-16-topbar-connection-dot-and-title-cap`、
-  `2026-10-17-stats-bar-aligns-web-and-real-sheets`)。
-
-**门禁**:app flutter test **654** / analyze 0 / format 0 / 平台边界 258 /
-CDP: proto **13**·authz 18·settings 28·tasks 53·picker 全绿。
-**未做**:真机截图验收 —— 手机装上了新构建(`adb install -r`,firstInstallTime 未变),
-但**连接器直连监听面没起**(8790 无监听)、4 个端点全拨不通,拿不到带数据的画面;
-改用 golden 按真机尺寸(411.43×914)出图确认了结构(顶栏一行、统计条一行)。
-
-## 2026-10-17 深夜(第二批):任务 ③「连接后那一屏 = DSH 的新会话页」
-
-任务书 `docs/cookbook/next-session-home-and-rendering.md` 里四条反馈的**后两条**,
-本轮做的是 ③(④ 会话渲染对齐 DSH 仍未动)。**先调研(结论已在任务书里)、再与用户确认顺序**才开始。
-
-- **真因不是"少画了几个控件",是落点不对**:DSH 的首页由 **blank** 决定而不是由
-  "有没有会话"决定(`ConversationMainPanel.tsx:41-43`),那个 blank 会话由工作区连上时
-  急切创建(`navigation.ts:195-205`);而 blank 会话在列表里**是藏起来的**
-  (`tree.ts:245`)。手机两条都没有 ⇒ 这一屏在手机上等于不存在。现在
-  `AppModel._openBlankSessionIfUnselected()` 在每次 `refreshSessions` 之后
-  **选中**(不新建)第一个 blank 且非子智能体的会话。挑不到就什么都不做,原行为不变。
-- **hero 一块**:`app/lib/ui/conversation_hero.dart`(鱼 + 「探索未至之境」+ 预览版徽标 +
-  工作区 chip + 模式 chip)。桌面尺度按触屏重算:标题 26→**24**(手机刻度顶格)、
-  chip 高 28→**44**(`kMinInteractiveDimensionCupertino`,Flutter SDK 源码引在文件头)、
-  卡片不设 712–952px 上限;鱼 34 不变(它是标记不是文字);hover 游动不做(触屏没有 hover)。
-  占位符换 `placeholder.hero` 那句(与普通那句只差前半句,都是半角逗号)。
-- **两枚 chip 的取值各有出处**:工作区 = `workspace.list` 的归属(会话行**没有**
-  `workspaceId`),标签链五级照 `ConversationContent.tsx:89-108`,**第 4 级"清单到了但没归属
-  → 占位、绝不拿已删目录名顶上"有单测钉住**;模式 = `agentPreset` 投影(`string | null`)。
-- **写路径:建会话时带,不用 `agentPresets.select`**。后者是 Web 走的那条
-  (`seat-store.ts:230`),但对跑过一轮的会话会拒(`agent-preset/locked`)。
-  手机走 `session.create({workspaceId, agentPreset})` —— `SessionCreateRequest` 本来就收这两个字段。
-  **方法面 30→31,唯一增量是只读的 `agentPresets.list`**(连接器 `dsh/agent-presets.ts`,
-  名单**整包透传、不在连接器过滤** `broken`:选择器与管理页用的是 Web 的两份规则)。
-  代价:每换一次选择留一个 blank 会话(两边都不列,DSH 的 `reuseOrCreateBlank` 以后会复用)。
-- **顺带把图标集重新对齐 DSH(98→100)**:鱼不在集合里 → 给抽取器加了一条**独立来源**
-  (`DIRECT_ARTWORKS`,没有 `IconXxx` wrapper 的 artwork);重跑才发现 DSH 的
-  `PermissionIcon.tsx` 已从 92 行长到 119 行、多了一个 `permissionAutoReview`。
-  三处工具链缺口一起修了(决策笔记见下):解析器漏"无返回类型注解"的函数写法、
-  **Dart 产物不是格式稳定的**(第 99/100 个图标当场让 `dart format` 门禁红,
-  而红在一个"不许手改"的生成文件上 → 生成器现在**产出后自己跑 `dart format`**)、
-  抽方法名的正则服务名段写成 `[a-z]+` 导致驼峰服务名**整条匹配不上**。
-- **原型同步**:`#convHero` + `styles.css` 的 hero 一节 + `app.js` 的 `setBlankSession`
-  (⊕ 新建 → 落 blank;点抽屉里一行会话 → 离开这一屏),`verify-proto.mjs`
-  从 13 项补到 **31 项**(hero 18 项:显示条件、藏内容区、占位符、标题/徽标逐字、
-  鱼宽 34、标题 24px、徽标等宽、chip 高与同行、两个选择器选完名字真的变)。
-- **门禁**:app **685** / analyze 0 / format 0 / 平台边界 **266** / connector **522** /
-  CDP: proto **31**·authz 18·settings 28·tasks 53·picker 全绿。
-- **笔记**:`.agents/notes/implemented/2026-10-17-{blank-session-hero,
-  icon-pipeline-fish-and-format-stability}.md`;规格进
-  `docs/subsystems/blank-session-hero.md`(总纲预算已满,只在 §7.2 留指针)。
-- **未做**:④ 会话渲染对齐 DSH(任务书里那一整块);真机验收 —— 与上一批同一个卡点
-  (电脑侧 8790 没监听),证据是单测 + CDP 原型 + 真机尺寸 golden,没有带数据的真机画面。
-
-## 2026-10-16:四条议题一轮做完(顶栏 / 计数 / 渲染 / 归档)
-
-交接笔记 `.agents/notes/proposed/2026-10-15-mobile-topbar-status-and-rendering-handoff.md` 的四条,
-按「先探 DSH 原生能力 → 列方案 → 动代码」的顺序做完,每条都留了 `packages/...:行号` 的出处:
-
-- **顶栏与抽屉**(2026-10-16 三轮定稿):顶栏 = **☰ 左抽屉 / 标题(≤220px,14px,w500) / ● 连接状态点 / ⊕ 新建**;
-  两个抽屉都是**原生 Drawer**(左 `drawer`、右 `endDrawer`),**两边都能从最外缘跟手拖出**
-  (`drawerEdgeDragWidth: 32`);右边只有一条 **4×40 的棒棒**当标识,右抽屉开着时它消失。
-  与**系统返回手势**的冲突用官方 `View.setSystemGestureExclusionRects`(Android 10+,上限 200dp/边)
-  解决 —— 只排除上半屏 192dp,下半屏留给系统(`app/lib/platform/gesture_exclusion.dart` + `MainActivity.kt`,
-  真机验过:最外缘 ≈2dp 能开抽屉、下半屏仍是系统返回)。
-  取舍与实测见 `.agents/notes/archived/2026-10-16-topbar-connection-dot-and-title-cap.md`
-  (该篇的标题限宽与"计数另起一行"已被
-  `.agents/notes/implemented/2026-10-17-topbar-single-row-and-stats-scroll.md` 取代)。
-- **计数 chip**:口径改回 DSH —— 后台任务报**在跑的个数**,子智能体报**总数** + 一枚转圈点
-  ("正在运行"那句只在 aria 里);不再整枚变琥珀;`Row` → `Wrap`(两枚两位数 chip 在 360px 必然溢出)。
-  见 `.agents/notes/implemented/2026-10-16-chip-counts-read-dsh-formulas.md`。
-- **消息渲染**:**不引入 HTML 渲染** —— DSH 自己就把消息里的原始 HTML 当纯文本
-  (`markdown/render.tsx:333-335`),正文也没有虚拟化;代码块补上 DSH 的头部工具条
-  (语言 / 自动换行 / 复制)。见 `.agents/notes/implemented/2026-10-16-message-body-stays-gfm-markdown.md`。
-- **归档**:`workspace.archive` / `workspace.unarchive` 接上(方法面 27→29、错误码 30→31),
-  **归档集与会话 id 一起过别名**(修掉一个只在生产发作的 bug),底栏「归档」不再是空桩、
-  抽屉左滑归档真的通到电脑。见 `.agents/notes/implemented/2026-10-16-archive-surface-and-alias-fix.md`。
-- **没做**(说清原因):语法高亮(独立一块,纪律已写进 `dsh_markdown.dart` 与
-  `app-channel-client.md` §7)、数学公式(没有纯 Dart 等价物)、流式"只重排末尾"
-  (DSH 的判据已记下:冻结除末尾两块以外的块)、归档的撤销 toast。
-- **原型同步**:`mock/proto` 同一批改了(顶栏点 + 右抽屉按钮 + 计数 chip 行 + 代码块工具条),
-  `verify-proto` 新增三段断言(topbar / codeBlock),authz 18 / settings 27 / tasks 53 全绿。
-- **新增"别猜 Flutter"的机械入口**(2026-10-16,用户点名"完全在瞎猜"):`node app/tools/flutter-api.mjs <符号>`
-  直接查**本机 SDK 源码**(3.41.9,逐行可引),`tools.md` 有「Flutter 行为查证」那张顺序表
-  (SDK 源码 → api.flutter.dev → docs.flutter.dev → issue/PR → **真机实测**),根 `AGENTS.md` §6 已立成规则。
-  顺带实测:`deepwiki` MCP 对 flutter/flutter 不可用(被 Vercel 校验挡),`firecrawl` 抓 api.flutter.dev 可用。
-
-## 假数据清理(2026-10-15,一类清光)
-
-**一类(无条件假数据,真连上也照演)—— 全部清掉**:
-
-| 位置 | 原来 | 现在 |
-|---|---|---|
-| 文件面板 | `sampleDiff` / `sampleFileLines` 无条件显示,假 diff 冒充真数据 | `_EmptyFilePane` 空态 + 说清数据来源 |
-| 轨迹页 | `_sampleRows` / `_sampleEntries` 兜底,调用方从不传真数据 → 常驻假数据 | 空态;`test/trajectory_test.dart` 改成**自己构造数据** |
-| 子智能体 | 两条写死示例(`Extract DSH icon paths` 等),无条件显示 | 接 `subagentCatalog` 投影;空态由 `SidePane.emptyText` 渲染 |
-| 模型 picker | 四个手抄模型名 + 点完只 toast | 接 `session/modelCatalog`;点了说清"切换本期未接" |
-| 统计条 | 写死 `302K · 缓存 0%` / `3%` | 接 `tokenUsage` / `sessionStats` |
-
-**顺带修掉两个自己造的问题**:① `_refreshModelCatalog` 只接 `ProtocolException`,
-别的异常会逃逸(与 `refreshSessions` 的"兜住所有异常"纪律不一致);
-② `session_list_wiring_test.dart` 断言完整调用序列,加一个"顺带拉的方法"就红 ——
-改成只比被测方法(与 `job.list` 那次同一个毛病)。
-
-**二类(用户显式触发,保留)**:`preview_data.dart` 的「看示例数据」按钮 + 「演示：接管输入栏」。
-
-**新测试**:`subagent_panel_test.dart`(5 条)、`session_projections_test.dart`(8 条)、
-`job_panel_test.dart`(12 条)。
-
-门禁全绿:connector **403** / relay **75** / app **484** / 平台边界 **207** /
-protocol 486·26·49 / 原型图标与路径门禁。
-**唯一没过的:真机审批回合的自动用例** —— 卡在二维码 5 分钟有效 vs Gradle 构建 15-20 分钟;
-手动链路已通(见上)。
-
-## 方法面 27/31(2026-10-17 校准)
-
-`repo.info` / `devices.list` / `session.list` / `session.create` / `session.subscribe` /
-`session.unsubscribe` / `session.page` / `session.refetch` / `session.prompt` / `job.list` /
-`job.kill` / `job.follow` / `job.unfollow` / `endpoint.describe` / `session.projections` /
-`session.select-model` / `interaction.respond` / `sync.hello` /
-**`permission.catalog`** / **`permission.switch`** / `session.modelCatalog` /
-**`workspace.list`**(会话列表按工作区分组)/ `workspace.archive` / `workspace.unarchive` /
-**`session.updateQueue`**(排队项编辑/删除/插话)/ **`session.cancel`**(打断当前轮次)/
-**`agentPresets.list`**(Agent 预设目录,只读 —— hero 上那枚模式 chip 的名字来源)。
-
-**契约封闭集 31、实现 27**,差额 4 个是契约列了没实现的:`settings.describe` /
-`settings.update` / `credentials.set` / `credentials.unset`(依据见契约 §5.8)。
-**这两个数是从代码里数出来的**(`METHODS` 数组 + `handlers.ts` 的**两种**注册形态:
-对象字面量键 `'x.y': async (…) =>` 与赋值 `handlers['x.y'] = …`),不是抄的 ——
-2026-10-15 之前这里写过 26/27/21 三个互相矛盾的数字,2026-10-17 又错成"30(实现 25)":
-30 减 4 明明是 26,**两个数一起写就会一起错**,所以照上面那句数,别靠减。
-**三处计数必须同步**:`tools.md` 的方法数、契约 §5.7 的表、本行的"x/31"。
-
-**模型切换翻案(2026-10-15)**:我曾写"`session/select-model` 有全局副作用,不要用"——
-**错了**。核实:Web 调的就是这一个方法(`packages/client/ui-model-selection/src/client/directory.ts:98`),
-没有第二套接口;`agent-default-model/src/index.ts:82-94` + README 的语义是
-**当前会话立即生效 / 以后新建的 agent 默认跟随 / 不改别的会话**,且没有 configEditor 时
-第二步是 no-op。所以"新会话默认跟随"是 Web 一直有的行为,不是副作用。
-**错在哪**:把一条**测试纪律**(测试 profile 与日常 profile 共用 `~/.dsh/`)错升成了**产品约束**。
-
-**`session.projections` 是打开全部只读面的那把钥匙**:DSH 的 `@Remote('projections')`
-(`packages/api/session-controller/src/index.ts:506`)请求体只有 `{sessionId}`,
-返回**所有已注册投影的当前值**。已核实的键含 `modelSelection` / `permissions` /
-`subagentCatalog` / `deliverables` / `tokenUsage` / `contextPressure` / `sessionStats` /
-`turnOutline` / `todos` / `goal` / `plan` / `inbox` / `title` / `workingDirectory` /
-`agentPreset` / `userQuestions`。**为什么不是每面一个方法**见 `connector/src/dsh/projections.ts` 文件头。
-
-**投影信封(2026-10-15 修)**:DSH 那个方法的返回类型是 `SessionProjectionValue` 联合
-(`session-controller/src/index.ts:507`)—— `null` 或 `{kind, asOfSeq, values}`。
-**手机要的是 `values`**;连接器曾把整个信封透传,于是手机拿到的 Map 的键是
-`kind`/`asOfSeq`/`values`,`tokenUsage` / `permissions` / `subagentCatalog`
-**一个都取不到** —— 统计条、上下文环、子智能体面板、权限档在生产里全是空态,
-而单测全绿(替身直接返回 `values` 映射,绕开了信封)。修在
-`connector/src/dsh/projections.ts` 的 `valuesOf`;回归用例在
-`connector/tests/session-projections.test.ts`(假控制器现在复现 DSH 的真实形状)。
-
-## 手机端能显示 DSH 哪些面(2026-10-15 清点,设计见 proposed 笔记)
-
-**已接**:会话流/历史/发送/取消、审批/提问/计划审查、后台任务(全四条)、
-统计条(`tokenUsage`/`sessionStats`)、模型名与切换、**权限档(读目录 + 切档)**、
-端点切换、配对扫码。
-
-**一个方法就能读(A 类,按"消掉多少假数据"排)**:统计条✅ / 子智能体(`subagentCatalog`,
-另有 `@Remote('prompt')` 与 `interruptByParent` 可写)/ 轨迹(`turnOutline`)/
-diff 与交付物(`deliverables`)/ 待办(`todos`)/ 目标与计划(`goal`/`plan`)。
-
-**有独立 `@Remote`,要各自接(B 类)**:文件树(`workspace-files` 的 read/list/changes)、
-模型目录(`llm.listProviders` + `listConfigurableProviders`)、工作区(`workspace-controller`)、
-设置(`settings-controller` 五个方法)、终端(`terminal-controller` 十个 + 两个 stream)、
-账号(`account-controller`)。
-
-**手机上不做(C 类)**:桌面聊天/会话完整形态、目录选择器、唤起电脑应用、插件管理、
-内嵌浏览器/Office 预览、快捷键/窗口管理、workflow/schedule/skill、实验性功能。
-
-**阻塞的:没有。** 上一轮我把子智能体判成阻塞是**找错了门** —— 只看了
-`subagents.listChildren/listDescendants`(无 `@Remote`),没看投影。
-`SubagentRuntime` 本身是 `TypertRemoteService`,读面在 `subagentCatalog` 投影里。
-
-## 四个"看着接了其实没接"的面(2026-10-15 清点,设计见 proposed 笔记)
-
-> 四件**都已接完**(见上面的当前里程碑)。表留着,因为"当初卡在哪"是这段代码唯一的来处。
-
-| 面 | App 现状(清点时) | DSH 原生能力 | 结论 |
-|---|---|---|---|
-| 模型选择 | 4 个写死名字 + 点完只 toast(`chat_page.dart:657`) | `session/modelCatalog` 已接;写用 `session/select-model` | 读已好;**写该用,且"写回全局默认"是测试纪律不是产品边界**(已核实 session 本地效果 `agents.selectForNextRequest` 是内部方法,插件拿不到,副作用躲不开) |
-| 权限切换 | 只改本地 `_accessMode`(`chat_page.dart:222`) | 读 `permissionPresets.catalog()`(是 `@Remote`);写 `ctx.commands.execute('/permission …')`(DSH 注释原话"the one write path") | **可接,不新增方法** |
-| 后台任务 | 3 条写死示例(`chat_page.dart:962`) | `job.list/follow/unfollow/kill` **连接器全已实现**,App 一次没调 | **纯接线活,零 DSH 侧改动** |
-| 子智能体 | 无 UI 无方法 | `subagents.listChildren/listDescendants` 存在但**无 `@Remote`**,浏览器与手机都调不到 | **本期做不了**(要改 DSH 源码,本项目只读它);UI 上不出现这一项 |
-
-**二维码必须有个界面承载,但"界面"≠"另起一个网页"**:DSH 的 `CommandResult` 只有
-`{kind:'success',text?}`/`{kind:'error',text}`(已核实 `interaction/commands/src/types.ts:34`),
-没有图片出口 —— 所以斜杠命令吐不出二维码图。
-**2026-10-15 更正**:据此推出的"必须自服务一个页面"是**错的推理**(以 inspector 一个特例
-以偏概全)。插件往 DSH 界面里贡献 UI 的机制是 **Slots**,入口是
-`plugins.bundle.config`(以 npm 包名为键,渲染在「插件」页的本组合包详情页),
-第三方插件与官方 `ui-*` 包走同一套 `ctx.slots.inject/register`。
-现已落地:浏览器半侧 `connector/client.js`(手写 `window.__ModuleLoader__.load`
-闭包工厂格式,React 从模块表 require)。
-独立网页 `/dsh-mobile/` **已删**(2026-10-15):它与插件面板功能重复,且不起额外进程
-(`webServer.register` 只是往 DSH 已有的 server 挂第二条路由),留着只有维护代价。
-`connector/src/pairing-qr.ts` 已接线,并有真 round-trip 测试。
-
-**真机上抓出并修掉的四个 bug**(都只在真机暴露,细节见两篇决策笔记):
-① profile 补丁漏 `allowInsecureLocal` → 连接器**从不拨线**(什么都没发生);
-② `main.dart` 的 `PairingClient` 漏同一个字段 → **配对成功但换不到票**;
-③ `_handleOpened` 把**密文**喂给 `_accountFlow` → `credit 载荷不是合法 JSON` →
-**握手成功 20 ms 后断线**;
-④ **两个交互应答者没带 `{ prepend: true }`** → DSH 的桌面转发监听器
-(`packages/api/remotes/src/index.ts:57-75`,浏览器一连上就注册、自己不答就不放行)
-排在前面 → **审批永远挂在 `approval/asked`,手机答了也无处可落**。
-**④ 是「审批转手机」最后一跳的真因**,已修 + 有专属回归用例 + 变异校验。
-
-**已修根的四个 bug**(细节见两篇决策笔记,都只在真机暴露):
-① profile 补丁漏 `allowInsecureLocal` → 连接器**从不拨线**(什么都没发生);
-② `main.dart` 的 `PairingClient` 漏同一个字段 → **配对成功但换不到票**;
-③ `_handleOpened` 把**密文**喂给 `_accountFlow` → `credit 载荷不是合法 JSON` →
-**握手成功 20 ms 后断线**;
-④ **两个交互应答者没带 `{ prepend: true }`** → DSH 的桌面转发监听器
-(`packages/api/remotes/src/index.ts:57-75`,浏览器一连上就注册、自己不答就不放行)
-排在前面 → **审批永远挂在 `approval/asked`,手机答了也无处可落**。
-⑤ `askApproval` 曾在"呈示不了"时 `return 'reject'`,**替用户做一个他没做过的决定**
-(真机 322ms 回 `rejected`,而用户什么都没点)—— 已改成抛,由 `interactions.ts`
-归一成 `'unavailable'`。见 `.agents/notes/implemented/2026-10-13-approval-must-not-fake-rejection.md`。
-
-**当前卡点(2026-10-13 三次真机,第三次根因已确定)**:审批探针发出去后卡片不出现。
-**根因**:靶子会话的工作区目录已不存在(`C:\Users\zhanglu\.ssh-server` 被删)——
-DSH 照常把 `user/message` 落盘(所以④的回读判据满足),但那个会话的 agent 永远
-起不来、轮次从不启动,于是永远等不到 `approval/asked`。**全程零痕迹**:手机侧
-连接 serving、`send` 全 true、连接器 dedupe 也有 `done`。前两次的"零痕迹"同此,
-**不是帧丢失也不是拒收**。
-**修法(未做)**:`connector/src/handlers.ts` 的 `session.list` 把 `cwd` 过线,
-手机侧 `SessionSummary` 收下,真机用例挑靶子加"cwd 存在"判据。
-**另一条已定位的环境因素**:步骤 ②/⑤ 挑靶子会叫醒别人的 agent 会话 —— 现已优先
-挑 `blank`(从没跑过)的会话缓解;彻底办法是靶子只建在专用工作区
-`D:\sudy\myproject\dsh-mobile-test`(目录已建,工作区待用户在 Web UI 添加)。
-完整证据见 cookbook「真机三次尝试」。
-
-**模型/状态显示已对齐 DSH 真值**(2026-10-13):手机上原来的模型名是**写死的** `'claude-opus'`
-外加一份手抄的四个模型列表,与电脑侧毫无关系。现在接 DSH 原生的两条通道:
-`session/modelCatalog`(目录,原样过线)+ `modelSelection` 投影(每会话当前模型)。
-连接器新增 `session.modelCatalog` 方法、`session.list` 的行带 `model` 字段;
-手机侧 `SessionSummary.model` + `chat_page.dart` 的 `_modelLabel` / `_reasoningLabel`。
-**拿不到就显示"未选择",不猜。** 见 `connector/src/dsh/models.ts` 的文件头。
-**还没做**:模型**切换**（`session/select-model` 会回写全局默认,本期只读不写）、
-模型 picker 接真目录（现在还是手抄列表）。
-**改 `connector/src/**` 必须先 `pnpm build`**(真加载的是 `lib/index.js`)。
-
-## 真机联调的成本纪律(2026-10-13 立规,拿钱换来的)
-
-**根因**:`--profile dsh-mobile-test` **只隔进程/插件/端口**;
-`~/.dsh/.credentials.yaml`、`~/.dsh/sessions/`、`~/.dsh/storages/` **全是全局共用**。
-所以"起个测试 profile"给不了任何隔离感 —— 在里面建会话、发 prompt,
-一样记在用户的官方账号上,并且污染他的会话列表(截图里那些"未分组"就是这么来的)。
-一次 `interaction_real_device_test.dart` 至少 2 个模型轮次(标记回显 + 审批探针),
-此前无人授权地跑了十几轮。
-
-**规矩(下次照做,别问第二遍)**:
-1. **不另起测试 profile**。就用用户当前在用的那个渠道/进程 —— profile 只隔进程,
-   不隔账号,多起一个只是多一层"我在沙箱里"的错觉。
-2. **不撒着用他的现成会话**。测试的挑选过滤(`!running` + 无未决审批)会逐个消耗
-   用户的真实会话,还在里面留标记和未决审批 —— 比专用会话更糟。
-3. **要一个专用会话,但要走"问 → 建 → 跑 → 删"四步**:跑之前问用户要不要建;
-   建一个(名字带 `[可删]`、带上分组,别再是"未分组");测试只往这一个里发 prompt;
-   **跑完由用户确认后删掉**——删除是破坏性操作,不擅自做。
-4. **每次跑之前报一句"这次约 2 个轮次"**,拿到准再跑。
-5. **跑完把自己起的进程杀干净**(profile + 中继),别留着继续计费。
-
-**注意"没有免费会话"**:第五步的审批探针必须 `session.prompt` 让模型跑一条越权命令,
-这是真金白银的轮次 —— 不管在哪个会话里发都花用户的钱。"不建新会话"只少污染列表,
-省不了钱。想零成本就只有不跑(代价见上:prepend 在活宿主里的效果没验过)。
-
-**已经付出的代价**(未删,要清由用户定):`~/.dsh/sessions/` 下若干
-"dsh-mobile 真机联调"会话,散在多个工作区目录里。
-
-**如果哪天想让它免费**:链路的逻辑已由 `connector/tests/interaction-chain.test.ts`
-(纯 Node、零成本)覆盖;真机用例只剩"宿主接线"这一件事(应答者 prepend 顺序、
-真实 claim、真实 settle)。要再压缩成本,方向是让宿主侧不靠模型就产出一次
-`approval/asked` —— 目前没找到非模型路径,所以只能靠"问清了再跑"。
-
-**方法面剩 4 个**:`settings.describe` / `settings.update` /
-`credentials.set` / `credentials.unset`(依据见契约 §5.8;`session.create`、
-`session.cancel`、`session.updateQueue` 已接)。
-`devices.revoke` 不做 / `push.configure` 本期不做。
-再往后:`ui/adaptive` / 三端能力包(鸿蒙暂缓)/ 相机扫码。
-
-## 已知缺口(定位过、有证据;除第 1 条外都未修)
-
-1. ~~`--issue-token device` 签的令牌换不到票(403)~~ **已修**:中转不再签发设备令牌,
-   摘要表只放连接器令牌(出现 device 条目即拒绝启动)。见
-   `.agents/notes/implemented/2026-10-09-relay-never-issues-device-tokens.md`。
-2. **首配的匿名限流桶是单一全局桶**:形状校验在取桶之后,持续约 6 请求/秒即可让所有新设备换票 429
-   (约 10 s 恢复)。这与 `pairing-v2.md` §3"无效试探不能使真正的扫码设备失去授权机会"**不符**。
-3. `stats.devices` 实为**通道数**(`relay/src/core.ts`),与 §8.2 的 `devices` 表不同名同义。
-
-## 范围决定(2026-10-09,别再当缺口)
-
-见 `.agents/notes/implemented/2026-10-09-token-and-scope-decisions.md`:
-
-- **刷新令牌轮换不做**:设备令牌长期有效 + 手动吊销;刷新令牌仍是签给手机的本机凭据,
-  但**摘要不再上报中转**(`refresh_hash` 已从名册协议删掉 —— 多存一份没人读的摘要
-  只会让人以为轮换已实现)。
-- **中转不做多实例**:单实例 + I7 重启收敛就是个人工具的形态。
-- **鸿蒙暂缓**(不是放弃):Flutter 3.41.9 版本锁继续保留,OHOS 适配/HUKS/推送全部暂停;
-  `docs/` 里既有的鸿蒙一手调研原样保留。
+## 当前能力(都已在真机上跑通过一次)
+
+- **会话面**:流 / 历史 / 发送 / 取消 / 排队(编辑·删除·插话)/ 插话与打断。
+- **交互转手机**:审批 / 提问 / 计划审查,per-session 待处理队列,跨会话角标与提示行。
+- **只读面**:统计条、模型名与切换、权限档(读目录+切档)、Agent 预设目录、后台任务(全四条)、
+  子智能体目录、端点切换、配对扫码、归档。
+- **连接**:中转 + 局域网直连,端点按"direct 先于 relay"自愈,换端点不重扫码。
+- **新会话页(③)**:连上后落到 blank 会话 → hero(鱼 + 标题 + 预览版徽标 + 两枚 chip)。
+
+## 三条仍然有用的教训(都是"替身复现的不是真形状"这一类)
+
+1. **投影信封**:`session.projections` 回的是 `null | {kind, asOfSeq, values}`,**手机要 `values`**。
+   连接器曾整包透传 ⇒ 统计条/权限档/子智能体在生产里全空态而单测全绿(修在
+   `connector/src/dsh/projections.ts` 的 `valuesOf`)。**新接任何投影面先问"替身回的是真形状吗"。**
+2. **模型目录**:DSH 的 `buildModelCatalog` 返回**对象**(`{default, routableProviders, groups, failures}`)
+   不是数组;解析器认错形状 ⇒ 生产里一次都没解析成功过。
+3. **`session/select-model` 没有"不能写"的约束**:Web 调的就是它
+   (`ui-model-selection/src/client/directory.ts:98`),语义是"当前会话立即生效 / 以后新建的默认跟随 /
+   不改别的会话"。我曾把**测试纪律**(测试 profile 与日常 profile 共用 `~/.dsh/`)错升成产品约束。
+
+## 真机联调的成本纪律(立过规,别问第二遍)
+
+- `--profile` **只隔进程/插件/端口**;`~/.dsh/{.credentials.yaml,sessions,storages}` **全局共用**。
+  **不另起测试 profile**;要专用会话走「问 → 建(名字带 `[可删]`)→ 跑 → 用户确认后删」。
+- **每次跑之前报一句"这次约几个轮次"并拿到准** —— 审批探针要模型真跑一条越权命令,花的是用户的钱。
+- 装 App 一律 `flutter build apk --debug` + `adb install -r`;`flutter install` 与
+  `flutter test integration_test/` **都会先卸载旧 App**,配对凭据在私有目录里,一卸全没。
+- 屏幕灭掉 = Flutter 引擎暂停(用例报"did not complete"且没有原因)⇒ `adb shell svc power stayon true`。
 
 ## 前置事实(会卡住实施)
 
-- **Flutter 3.41.9 / Dart 3.11.5 已装好**(版本**锁死**:上界由鸿蒙 fork 定)。
-  Android 构建需要 `ANDROID_HOME='D:\soft\android-sdk'` 与
-  `JAVA_HOME='C:\Program Files\Eclipse Adoptium\jdk-21.0.9.10-hotspot'`。
-- **真机联调的两个坑**(集成用例文件头也写了):屏幕灭掉 = Flutter 引擎暂停(用例报
-  "did not complete"且**没有原因**)⇒ `adb shell svc power stayon true`;Android 9 起**默认禁明文
-  HTTP**,放行范围钉在 debug 构建的 `network_security_config.xml`,Dart 侧对应开关是
-  `PairingPage.allowInsecureLocal`(**两处都要开**,否则"码认了、票换不了")。
-- **本机联调的服务编排**:中转 `cd relay; node src/main.ts --config relay.config.json`,
-  **改了 `relay/src/**` 必须重启它**;电脑侧 `dsh --profile dsh-mobile-test --no-open --port 8099`
-  (**不碰用户日常 GUI 的 19387**),**改了 `connector/src/**` 必须先 `pnpm build`**;
-  **重启 profile 前确认没有旧进程残留**(两个进程抢同一身份会让中转不停"新连接顶掉旧连接")。
-- `connector/` 与 `relay/` 是**两个独立 pnpm 工程**(都不是 DSH workspace 成员);本仓库**没有 CI**。
-  **两处导入风格不同、别"顺手统一"**:connector 写 `.js`(tsdown 打包),relay 直接跑 `.ts`。
-  `relay` 的 `ws` 是**运行时依赖**,须先 `pnpm install`。
-- 仓库是 git 仓库,远端 `github.com/Imzl-zl/deepseek-harness-mobile`;
-  `mock/proto/shots/`(生成物)与 `setup-collaboration-files.backup/` 不入库。
+- **Flutter 3.41.9 / Dart 3.11.5 已装好且版本锁死**(上界由鸿蒙 fork 定)。Android 构建要
+  `ANDROID_HOME='D:\soft\android-sdk'` + `JAVA_HOME='C:\Program Files\Eclipse Adoptium\jdk-21.0.9.10-hotspot'`。
+- 明文 HTTP 放行有**四处**,少一处静默不通:Android `network_security_config.xml`(debug)、
+  `PairingPage.allowInsecureLocal`、`main.dart` 的 `PairingClient`、profile `cordis.patch.yml`。
+- **无线直连三件一起对**(换过局域网就要重看):profile 补丁 `listenPort: 8790` + `listenHost: '0.0.0.0'`、
+  `Get-NetTCPConnection -State Listen -LocalPort 8790` 显示 `0.0.0.0`、连接器状态面 `caps.direct === true`。
+  判据与"换 IP 无感是部署选择不是代码缺口"见 `tools.md` 的「无线局域网直连」。
+- `connector/` 与 `relay/` 是**两个独立 pnpm 工程**;导入风格不同、别顺手统一
+  (connector 写 `.js` 因 tsdown 打包,relay 直接跑 `.ts`)。`relay` 的 `ws` 须先 `pnpm install`。
+- 本仓库**没有 CI**;`mock/proto/shots/` 与 `setup-collaboration-files.backup/` 不入库。
+## 方法面 27/31
+
+契约封闭集 **31**、实现 **27**,差额 4 个是契约列了没实现的:`settings.describe` /
+`settings.update` / `credentials.set` / `credentials.unset`(依据见契约 §5.8)。
+
+**这两个数从代码里数,不靠减**(30 减 4 明明是 26,而文档曾写成"30(实现 25)"—— 两个数一起写就会一起错)。
+数法:`METHODS` 数组 + `handlers.ts` 的**两种**注册形态(对象字面量键 `'x.y': async (…) =>`
+与赋值 `handlers['x.y'] = …`),只数前者会漏掉大半。**三处必须同步**:`tools.md` 的方法数、
+契约 §5.7 的表、这里的"x/31"。
+
+**`session.projections` 是打开全部只读面的那把钥匙**:请求体只有 `{sessionId}`,返回所有已注册投影的当前值。
+已核实的键:`modelSelection` / `permissions` / `subagentCatalog` / `deliverables` / `tokenUsage` /
+`contextPressure` / `sessionStats` / `turnOutline` / `todos` / `goal` / `plan` / `inbox` /
+`title` / `workingDirectory` / `agentPreset` / `userQuestions`。
+## 已定案的契约(实施时按这个写,不要重新发明)
+
+细则在 `docs/subsystems/` 各篇,这里只列**最容易重新发明错的**:
+
+- **配对 v2**(`pairing-v2.md`):公开邀请与秘密分离、候选不是设备、**用户确认前不发秘密**。
+- **一条连接只服务一台设备**:握手/AEAD 密钥/`fc`(nonce 唯一来源)/重放窗口全是每设备状态。
+- **帧的认证边界**:只有握手三帧与 `presence` 明文;`needsBox(t)` 是唯一判据。
+- **首配两段**:`beginPairing()`(秘密未发)→ 用户确认 → `commit(code)`。
+- **AEAD**:AES-256-GCM(Electron 的 crypto 没有 `chacha20-poly1305`);nonce 是 `fc` 的 96 位大端。
+- **中转的可见面**:只读 `sid`/`seq`/`fc`/帧类型/帧头 `id`;方法名与载荷不可见。
+- **幂等**:两阶段(落盘 `pending` → 执行 → 改 `done`);**落盘失败即拒绝该写操作**;`requestId` 在信封顶层。
+- **密钥**:API 密钥值不回传手机,改密钥只发新值。
+## 已知缺口(定位过、有证据,都未修)
+
+1. **首配的匿名限流桶是单一全局桶**:形状校验在取桶之后,持续约 6 请求/秒即可让所有新设备换票 429
+   (约 10 s 恢复)。这与 `pairing-v2.md` §3"无效试探不能使真正的扫码设备失去授权机会"不符。
+2. `stats.devices` 实为**通道数**(`relay/src/core.ts`),与 §8.2 的 `devices` 表不同名同义。
+3. 握手层 close 4003 与 `protocol/revoked` 帧两条兜底路径仍走退避,未收口。
+4. `pairing_page.dart` 的配对码 `TextField` 没关输入法联想,**用户手打**那段 JSON 会被破坏(粘贴不受影响)。
+
+## 范围决定(别再当缺口)
+
+- **刷新令牌轮换不做** / **中转不做多实例**(单实例 + I7 重启收敛就是个人工具的形态)。
+- **鸿蒙暂缓**(不是放弃):Flutter 版本锁保留,OHOS 适配/HUKS/推送全部暂停。
+- **插件不做"逐插件页面适配"**(架构上不存在通用渲染):只做清单/状态/启停/安装日志 + `volatile`
+  字段通用表单。**别自己从零做通用 schema 渲染器** —— DSH 两次否决过。
+- **管理页面不做**:二维码唯一出口,DSH 的 `CommandResult` 只有 text 没有图片出口。
+- **手机上不做(C 类)**:目录选择器、唤起电脑应用、内嵌浏览器/Office 预览、快捷键/窗口管理、
+  workflow/schedule/skill、实验性功能。
 
 ## 门禁(改代码后必须全绿)
 
 | 命令 | 覆盖 |
 |---|---|
-| `node protocol/verify-fixtures.mjs` | 16 条 fixture / **486 项断言** |
-| `node protocol/verify-loopback.mjs` | **26 项**:手机 ⇄ 中转 ⇄ 桥接回环 |
-| `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量 |
+| `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **266 项**(22 条规则自检 + 扫 74 个 Dart 文件) |
-| `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 原型图标集(**100 个**) / 工具脚本不许硬编码盘符(19 个) |
+| `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 原型图标集(**100 个**)/ 工具脚本不许硬编码盘符(19 个) |
 | `cd app && flutter test` | **685 项** |
-| `cd app && dart analyze --fatal-infos lib test integration_test` | 0 问题(比 `flutter analyze` 严) |
-| `cd app && dart format --output=none --set-exit-if-changed lib test integration_test` | 0 文件需重排 |
+| `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **522 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
 | CDP 浏览器组 | `verify-proto`(**31** = 顶栏与统计条 13 + 新会话页 hero 18) / `verify-authz`(18) / `verify-settings`(28) / `verify-tasks`(53) / `verify-picker` |
-| `node app/tools/gen-pairing-vectors.mjs` | 重新生成配对向量(**改了配对派生规则后必须重跑**) |
 
 **项数的唯一出处是 `tools.md`**;**改断言必须做一次变异校验**(故意破坏不变量,确认**恰好**那一条红)。
 
-## 已定案的契约(实施时按这个写,不要重新发明)
+## 仍未注意就会翻车的
 
-- **配对 v2** → `docs/subsystems/pairing-v2.md`(唯一规格源):公开邀请与秘密分离、候选不是设备、
-  受限通道只允许保活/流控与 `pair-commit`、**用户确认前不发秘密**。
-- **远程通道** → `docs/subsystems/remote-channel.md`(§3 帧类型含 `pair-commit`/`pair-result`,
-  §12.1 已改写为 v2)。可执行部分是 `protocol/fixtures/` + `protocol/vectors/`。
-- **连接粒度**(硬约束):**一条连接只服务一台设备**;经中转时每台在线设备各拨一条数据连接
-  (`/ws/connector?dev=&channel=`),控制面另有一条(`/ws/connector`)。理由:握手/AEAD 密钥/
-  `fc`(nonce 唯一来源)/重放窗口**全是每设备状态**。
-- **帧的认证边界**:只有握手三帧与 `presence` 明文,**配对两帧封箱**(`pair-commit` 的载荷就是秘密);
-  `needsBox(t)` 是唯一判据;**握手门禁只放行握手三帧**(与电脑侧 `transport/codec.ts` 逐字对齐)。
-- **首配两段**(手机侧):`beginPairing()`(换票 → 升级 → 受限握手,秘密未发)→ 用户确认 →
-  `commit(code)`(发 `pair-commit`,收 `pair-result`)。
-- **AEAD**:AES-256-GCM(Electron 的 crypto 没有 `chacha20-poly1305`);nonce 仍是 `fc` 的 96 位大端。
-- **中转的可见面**(I10):只读 `sid` / `seq` / `fc` / 帧类型 / 帧头 `id`;方法名与载荷一律不可见。
-- **幂等**:两阶段(先落盘 `pending` → 执行 → 成功改 `done`);**落盘失败即拒绝该写操作**。
-  **`requestId` 在请求信封顶层**。
-- **密钥**:API 密钥值不回传手机,改密钥只发新值。
-
-## 进行中 / 未完成
-
-- **方法面 27/31**(见上面"方法面 27/31"一节,那里是当前清单)。
-  **处理器表的键是"实现了什么"的唯一出处**;契约 §5.7 的方法表已逐条标注 DSH 侧依据。
-  `METHODS` 与契约**逐字对应**——契约外的方法不该被 `isMethod` 放行(那会让"不存在"看起来像"没实现")。
-  **三个计数必须同步**:`tools.md` 的方法数、契约 §5.7 的表、本节的"x/31"。
-  **⚠ 那条"26"的来历已作废**(2026-10-16):原 22 删掉 `interaction.list`(待处理集合是投影,没有独立查询)、
-  `devices.revoke`(吊销不是方法:名册写入方本来就是电脑侧)、`push.configure`(推送本期不做),
-  加入 `session.create`(DSH 原生)与 `endpoint.describe`(端点自报,2026-10-14);
-  2026-10-15 加 `session.projections`、`session.select-model`、`session.modelCatalog`、
-  `permission.catalog`、`permission.switch`、`workspace.list`;
-  2026-10-16 加 `workspace.archive` / `workspace.unarchive`(归档面)后是 **29**;
-  2026-10-17 加 `session.updateQueue`(排队面)与 `session.cancel`(打断)后是 **30**,
-  同日再加 `agentPresets.list`(Agent 预设目录,只读)后是 **31**。
-  数法:`node -e` 从 `METHODS` 与 `handlers.ts` 里数(两处口径见 `.agents/notes/implemented/2026-10-16-archive-surface-and-alias-fix.md`)。
-- **错误码表 31 个**(15 协议层 + 16 DSH 宿主层),两边(TS `ERROR_TABLE` / Dart `ErrorCode`)
-  **逐字一致**,由 `tests/error-table-parity.test.ts` 断言(做过变异校验:改一个动作即红并点名)。
-  **宿主层漏码的后果是被归一化降级成 `internal`** → 用户对着永远重试也不好的操作反复点;
-  2026-10-09 就真的漏了 15 个(`session/agent-busy` 等),已补并加了两道一致性门禁。
-- **跨实现一致性已闭环**:`connector/tests/cross-language-handshake.test.ts` 让 Dart 与 TS 的
-  **产品代码**真打一次握手 + 双向封箱,比对派生的密钥与解开的明文(做过变异校验:
-  换掉 Dart 侧 transcript 字段顺序即红)。这是此前完全缺失的一类证据 ——
-  两套独立实现各自自洽不等于能互通,而分歧的症状是"验签失败 / 解不开"。
-- **DSH 侧能力已核实(2026-10-09 读源码)**:`session.create` **存在**
-  (`packages/api/session-controller/src/commands.ts:105`)——此前 memory 说"电脑侧没有它"是错的,
-  那说的是我们的处理器表没实现;`settings.describe`/`update`(`settings-controller/src/index.ts:98,116`)、
-  `credentials.set/unset/describe`(`settings-controller/src/credentials.ts:83,100,113`)都在;
-  **`interaction.*` / `push.*` / `devices.revoke` 在 DSH 里不存在**——审批与提问是
-  `packages/interaction/` 下三个服务且以会话事件为真值(`remote-channel.md` §6.3.1 有逐条出处)。
-- **`relay/` 已可运行**:路由核心(按通道绑定)/ 配对登记 / 一次性票 / HTTP 面 / 令牌签发与软吊销 /
-  限流 / 设备名册 / 可运行入口 / 配置样例。
-- **直连监听面已落地,形态已定案**:`connector/src/transport/listener.ts`(`listenPort` 默认 `0` = 不监听),
-  **继续自起监听,不改用 DSH 的 `registerUpgrade`**。2026-10-09 读过 `packages/host/webserver`:
-  插件**能**注册升级路由,但 TLS 与绑定地址都是**监听器级**的(插件碰不到),切过去会把 DSH 的
-  浏览器面一起暴露到 tailnet,且没有"在 upgrade handler 里完整实现 WS 服务端握手"的先例。
-  完整取舍与"什么时候该重新考虑"见
-  `.agents/notes/implemented/2026-10-09-direct-listener-keeps-own-socket.md` 与
-  `connector-and-relay.md` §1.7。**这个问题已关箱,不必重调研。**
-- **剩下的缺口**:见上面"已知缺口"2、3;另有插件面板 / 本机运行模式 / goals·schedule·todos 未做;
-  三端能力包(鸿蒙暂缓后,iOS/安卓两端仍要做)。
-
-## 仍需注意
-
-- **先查 DSH 开发者文档站，再读源码，最后才逆向**：
-  <https://deepseek-harness.github.io/deepseek-harness/reference/>（子系统逐篇在
-  `reference/subsystems/`）。`web_fetch` 拿不到它（hostname 被解析到非公共 IP），
-  用已连的 Chrome 开 `isolatedContext` 读。2026-10-15 我在**已经装着这个插件的机器上**
-  试错三次才摸到 Typert 的 args 规则，而文档里写着——完整位置与两条铁律见 `tools.md` 的 Read First。
-- **稳定坑点的唯一出处是 `tools.md` → Pitfalls**;本文件不复制一份。
-- **改源码只用编辑工具,不用 shell 字符串替换** —— shell 出错是静默的
-  (曾把源文件写空、造出空文件、让一处计数**静默漂移 28 条**;本轮又差点用 `-replace` 改测试文件)。
-- **`dart format` 会重排文件**,之后再编辑同一文件要重新读一遍(编辑工具会因"文件变过"拒绝)。
+- **改源码只用编辑工具,不用 shell 字符串替换** —— shell 出错是静默的(曾把源文件写空、造出空文件、
+  让一处计数静默漂移 28 条)。
+- **`dart format` 会重排文件**,之后再编辑同一文件要**重新读一遍**(编辑工具会因"文件变过"拒绝)。
 - **别把"重启后的第一次成功"当能力**;判据要包含"连续重连 N 次都成立"。
-- **提交信息里避免反引号**(pwsh 会当 Unicode 转义,整条命令在解析阶段就失败)。
+- **提交信息里避免反引号**(pwsh 会当 Unicode 转义,整条命令在解析阶段失败);长消息写临时文件用 `git commit -F`。
+- **提交前看 `git status` 完整清单**,重点是意外的文件(空的、消失的、没见过的新文件)。
+- 先查 DSH 开发者文档站再读源码最后才逆向;`web_fetch` 拿不到它,用已连的 Chrome 开 `isolatedContext` 读。
+- **稳定坑点的唯一出处是 `tools.md` → Pitfalls**;本文件不复制一份。
 
-## 最近活跃窗口(2026-10-13)
+## 已落地批次索引(细节回 git 与 `.agents/notes/`)
 
-- **「交互转手机」整链接线 + 真机验证到「手机答审批」**:presence 上报
-  (`connector/src/presence.ts`,四个时机回调)→ `sync.hello`(批量订阅 + 前后台态)→
-  `decideTakeover` 第一次真的 claim → `interaction-claims.ts`(看护 + 断开 + fail-closed)
-  替换掉那个**永远跑不到**的桩 → `interaction.respond`(每连接)收束在途 claim /
-  路由到 `userQuestions.answer`。手机侧:`sync.hello` 上报 + 输入栏接管接真实事件 +
-  多题向导 + 显式跳过。见 `.agents/notes/implemented/2026-10-10-interaction-to-phone-chain.md`。
-- **真机验证到「手机答审批」**:`app/integration_test/interaction_real_device_test.dart`
-  跑到倒数一条断言;卡片出现、答复形状、收束全绿。
-- **第三轮推翻了一个误判**:Node 的 zstd 解压**只解第一帧**,而 DSH 会话文件是**逐帧追加**的 ——
-  按帧魔术字 `0x28B52FFD` 重解后确认**模型照话了**、`approval/asked` 落了、
-  但**没有 `approval/decided`**(应答者从未返回)。这是当前唯一未解的真问题。
-- **三个真机才暴露的 bug 已修**:连接器从不拨号(profile 漏 `allowInsecureLocal`)、
-  配对成功但换不到票(`main.dart` 的 `PairingClient` 漏同一个字段,已加结构断言)、
-  握手成功 20 ms 后断线(`_handleOpened` 把密文喂给 `_accountFlow`,已加回归用例 + 变异校验)。
-- **上一轮(2026-10-09/10)**:配对 v2 三侧收口、错误码表补齐、跨实现一致性闭环;
-  relay 不再签发设备令牌;直连监听面继续自起监听(关箱)。
+- `6a9249b` 顶栏收成一行 + 统计条单行横滚 + 任务 ③ 新会话页 hero + 图标集对齐 DSH(98→100)
+  —— 同批还修了三个工具链缺口:抽取器解析漏一种函数写法、Dart 图标产物不是格式稳定的
+  (生成器现在自己跑 `dart format`)、抽方法名的正则服务名段漏驼峰。
+- 更早:交互转手机整链 / 端点切换与局域网直连 / 归档面 / 排队与打断 / 设置页四组 /
+  标题单一真值源 / 模型目录真形状 / 统计条对齐 Web / 设备身份与失效恢复 / 传输分开关 /
+  假数据清理 / 配对 v2 三侧收口。**每篇都有决策笔记,别在这里复述。**
