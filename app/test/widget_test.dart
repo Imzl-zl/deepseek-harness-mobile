@@ -255,7 +255,15 @@ void main() {
       final app = AppModel(
         client: FakeClient(
           sessions: [
-            {'sid': 's1', 'updatedAt': 0},
+            {
+              'sid': 's1',
+              'updatedAt': 0,
+              'projections': {
+                'kind': 'cached',
+                'asOfSeq': 1,
+                'values': {'title': '第一个会话'},
+              },
+            },
           ],
         ),
       );
@@ -265,7 +273,7 @@ void main() {
 
       // 会话条目**在主界面上可见**（不必先开抽屉）。
       expect(
-        find.text('s1'),
+        find.text('第一个会话'),
         findsOneWidget,
         reason: '主界面必须直接看得见会话，而不是让人先找到 ☰',
       );
@@ -488,7 +496,11 @@ void main() {
   });
 
   group('抽屉', () {
-    testWidgets('底栏五个出口都在（文件/归档/示例/自动化/设置）', (tester) async {
+    testWidgets('底栏出口都在（文件/归档/设置——演示与自动化已删）', (tester) async {
+      // 「演示」「自动化」2026-10-16 删除：一个是配对后就没用的示例数据入口，
+      // 一个是 C 类（schedule/skill 不上手机）的死桩。删除的理由与代价见
+      // `.agents/notes/implemented/2026-10-16-drawer-foot-drops-demo-and-automation.md`。
+      // 本用例守的是"传进来的项都渲染"，具体哪几项由装配点（main.dart）定。
       await tester.pumpWidget(
         MaterialApp(
           theme: DshTheme.dark(),
@@ -497,15 +509,13 @@ void main() {
               sections: const [],
               connection: const DrawerConnection(
                 name: '我的电脑',
-                detail: '中转已连接 · 空闲',
+                detail: '直连已连接 · 空闲',
                 platform: 'DSH',
                 online: true,
               ),
               footItems: [
                 DrawerFootItem(icon: 'folderClose', label: '文件', onTap: () {}),
                 DrawerFootItem(icon: 'archive', label: '归档', onTap: () {}),
-                DrawerFootItem(icon: 'sparkle', label: '示例', onTap: () {}),
-                DrawerFootItem(icon: 'clock', label: '自动化', onTap: () {}),
                 DrawerFootItem(icon: 'settings', label: '设置', onTap: () {}),
               ],
               onNewSession: () {},
@@ -520,9 +530,11 @@ void main() {
       tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
       await tester.pumpAndSettle();
 
-      for (final label in ['文件', '归档', '示例', '自动化', '设置']) {
+      for (final label in ['文件', '归档', '设置']) {
         expect(find.text(label), findsOneWidget, reason: '底栏缺 $label');
       }
+      expect(find.text('演示'), findsNothing, reason: '演示入口已删');
+      expect(find.text('自动化'), findsNothing, reason: '自动化是 C 类死桩，已删');
       expect(find.text('新建会话'), findsWidgets);
       expect(find.text('我的电脑'), findsOneWidget);
       expect(find.text('搜索会话'), findsOneWidget);
@@ -983,9 +995,57 @@ void main() {
       // 轮次步数 + 输出速率（750 tok / 10 s = 75 tok/s，照 Web 的 decodeSpeed）。
       expect(find.text('第 3 轮 · 12 步 · 75 tok/s'), findsOneWidget);
       // 用量 + 缓存命中（分母是计费输入，不含输出：40000 / 41500 ≈ 96%）。
-      expect(find.text('42K · 缓存 96%'), findsOneWidget);
+      // 文案与 Web 逐字一致：`{count} tok · 缓存命中 {percent}%`
+      // （`locale.ts:78` 的 `stats.cacheHit`；合计 = 41500 + 200 = 41700 → 41.7K）。
+      expect(find.text('41.7K tok · 缓存命中 96%'), findsOneWidget);
       // 上下文占用（44000 / 128000 ≈ 34%）。
       expect(find.text('34%'), findsOneWidget);
+    });
+
+    testWidgets('统计条换行不裁切：四位数也能整条看得见', (tester) async {
+      // 2026-10-17 真机反馈："数字变四位数那怎么办？"—— 旧的 `Row` 布局
+      // 在总宽超屏时把第三项（上下文百分比）整块裁掉，release 里没有溢出
+      // 条纹，只是看不见。`Wrap` 放不下就换行，读数不许被藏起来。
+      await tester.binding.setSurfaceSize(const Size(320, 640));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final app = AppModel(
+        client: FakeClient(
+          sessions: const [
+            {'sid': 's1', 'updatedAt': 1},
+          ],
+          projections: const {
+            'tokenUsage': {
+              'uncachedInputTokens': 123456,
+              'outputTokens': 12345,
+              'cacheReadTokens': 234567,
+              'cacheWriteTokens': 0,
+            },
+            'sessionStats': {
+              'turns': 12,
+              'steps': 345,
+              'llmMs': 4200,
+              'toolMs': 800,
+              'decodeMs': 10000,
+              'decodeTokens': 750,
+            },
+            'contextPressure': {
+              'pressureTokens': 41000,
+              'projectedTokens': 44000,
+              'contextWindow': 128000,
+            },
+          },
+        ),
+      );
+      await app.refreshSessions();
+      await app.openSession('s1');
+      await tester.pumpWidget(_wrap(app));
+      await tester.pumpAndSettle();
+
+      // 三项都必须在：370K tok 那一项很长，换行后第三项照样渲染。
+      expect(find.text('第 12 轮 · 345 步 · 75 tok/s'), findsOneWidget);
+      expect(find.text('370K tok · 缓存命中 66%'), findsOneWidget);
+      expect(find.text('34%'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('投影读不到：三条整条不显示（不猜数字）', (tester) async {

@@ -18,10 +18,15 @@ import 'websocket_transport.dart';
 ///
 /// **分派只有这一处**：加第三种端点（蓝牙 / Tailscale-only / 云中转）
 /// 只加一个分支，不碰 `EndpointTransport`，也不碰装配点。
+///
+/// **建连超时按 kind 分档**：直连是"同一局域网"——要么毫秒级应答，要么就是
+/// 死的（手机换了网络 / 电脑改了地址），10s 的超时会让每个死地址都拖满 10 秒
+/// （2026-10-17 真机实测：三个拨不通的 IPv6 地址把冷启动拖成 30 秒）。
+/// 中转可能在公网，保留 10s。
 ChannelTransport transportFor(
   Endpoint endpoint, {
   TicketSource? ticket,
-  Duration connectTimeout = const Duration(seconds: 10),
+  Duration? connectTimeout,
 }) {
   switch (endpoint.kind) {
     case EndpointKind.relay:
@@ -35,7 +40,7 @@ ChannelTransport transportFor(
       return TicketedWebSocketTransport(
         endpoint: endpoint.url,
         ticket: source,
-        connectTimeout: connectTimeout,
+        connectTimeout: connectTimeout ?? const Duration(seconds: 10),
       );
     case EndpointKind.direct:
       // 直连面没有票、没有固定路径：鉴权就是握手本身
@@ -44,7 +49,7 @@ ChannelTransport transportFor(
       return WebSocketTransport(
         WebSocketTransportOptions(
           url: endpoint.url,
-          connectTimeout: connectTimeout,
+          connectTimeout: connectTimeout ?? const Duration(seconds: 3),
         ),
       );
   }

@@ -55,6 +55,8 @@ class DshComposer extends StatelessWidget {
     required this.onPickSendMode,
     required this.onRemoveAttachment,
     this.enabled = true,
+    this.running = false,
+    this.onStop,
   });
 
   final TextEditingController controller;
@@ -82,6 +84,15 @@ class DshComposer extends StatelessWidget {
   /// 是否可输入（没连电脑/没会话时置灰）。
   final bool enabled;
 
+  /// 会话是否正在跑（决定主键是"停止"还是"发送"，照 Web 的 `primaryStops`）。
+  final bool running;
+
+  /// 「停止」（打断当前轮次）。**running 且没有草稿时才用主键触发它** ——
+  /// 与 Web 逐字一致（`InputBar.tsx:323` 的
+  /// `primaryStops = running && (empty || blocked)`）：有草稿时主键仍然是发送，
+  /// 那句话按当前发送模式排队/插进去。
+  final VoidCallback? onStop;
+
   final VoidCallback onSend;
   final VoidCallback onAttach;
   final VoidCallback onPickModel;
@@ -93,7 +104,10 @@ class DshComposer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final canSend = enabled && !sending && controller.text.trim().isNotEmpty;
+    final hasDraft = controller.text.trim().isNotEmpty;
+    final canSend = enabled && !sending && hasDraft;
+    // **主键在运行中且没有草稿时是"停止"**（Web 的 `primaryStops`）。
+    final stops = running && !hasDraft && onStop != null;
     return Container(
       color: DshColors.sidebar,
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
@@ -243,11 +257,22 @@ class DshComposer extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 6),
-                // 右侧**只有**发送键。
+                // 右侧**只有**发送键（运行中且没草稿时它是**停止**键）。
                 _SendButton(
-                  enabled: canSend,
+                  key: const Key('composer-primary'),
+                  // **停止键不受"空草稿"门限**：它的启用判据是"有没有停止出口"
+                  // （照 Web 的 `primaryDisabled = primaryStops ? stop === undefined
+                  // : empty || disabled || …`，`InputBar.tsx:325`）——
+                  // 否则运行中正想停的时候，那颗键永远是灰的。
+                  enabled: stops || canSend,
                   sending: sending,
-                  onPressed: onSend,
+                  stops: stops,
+                  tooltip: stops
+                      ? '停止'
+                      : running
+                      ? (sendMode == SendMode.steer ? '插话发送' : '排队发送')
+                      : '发送',
+                  onPressed: stops ? (onStop ?? onSend) : onSend,
                 ),
               ],
             ),
@@ -415,24 +440,41 @@ class _IconChip extends StatelessWidget {
 }
 
 /// 发送键（`.send`：38×38、圆、accent 底）。
+///
+/// [stops] 为真时它是**停止**键（运行中且没有草稿，照 Web 的 `primaryStops`）：
+/// 同一颗纽子、同一个位置，图标从纸飞机换成停止方块 —— 用户在当前上下文中
+/// 唯一要做的那件事就是它，不另加一颗钮。
 class _SendButton extends StatelessWidget {
   const _SendButton({
+    super.key,
     required this.enabled,
     required this.sending,
     required this.onPressed,
+    this.stops = false,
+    this.tooltip,
   });
 
   final bool enabled;
   final bool sending;
+
+  /// 这一按是"停止"而不是"发送"。
+  final bool stops;
+
+  /// 无障碍名（发送 / 排队发送 / 插话发送 / 停止）。
+  final String? tooltip;
+
   final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
+    final button = SizedBox(
       width: 38,
       height: 38,
       child: Material(
-        color: enabled ? DshColors.accentBlue : DshColors.layer2,
+        // 停止键用告警底：它是"打断一次正在跑的轮次"，与普通发送区分开。
+        color: enabled
+            ? (stops ? DshColors.roleTool : DshColors.accentBlue)
+            : DshColors.layer2,
         shape: const CircleBorder(),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
@@ -448,7 +490,7 @@ class _SendButton extends StatelessWidget {
                     ),
                   )
                 : DshIcon(
-                    'paperPlane',
+                    stops ? 'stopFill' : 'paperPlane',
                     size: 18,
                     color: enabled
                         ? DshColors.onAccent
@@ -458,13 +500,24 @@ class _SendButton extends StatelessWidget {
         ),
       ),
     );
+    return tooltip == null ? button : Tooltip(message: tooltip!, child: button);
   }
 }
 
 /// 统计条（`.stats`：在输入卡片**下方**）。
 ///
-/// 三项（照原型）：`⏱ 第 1 轮 · 3 步` / `🗄 302K · 缓存 0%` / `◔ 3%`。
-/// 每项可点（弹 sheet），本版先只显示。
+/// 三项（照 Web 的 composer dock，`ui-conversation/src/client/skeleton/InputBar.tsx:520-525`：
+/// `conversation.composer.dock` 槽 = 排队条 + 统计 pill + ContextMeter）：
+/// `⏱ 第 N 轮 · M 步 · X tok/s` / `🗄 302K tok · 缓存命中 96%` / `◔ 96%`。
+/// 每项可点（弹 sheet）。
+///
+/// ## 布局为什么是 `Wrap` 不是 `Row`（2026-10-17 真机反馈）
+///
+/// 三项的宽度都随数字变：轮次从 1 到十几、token 从 3 位到 4 位、
+/// 百分比从 1 位到 3 位。`Row` 在总宽超屏时**把末项整块裁掉**
+/// （release 里没有溢出条纹，只是看不见）—— 真机上"上下文百分比不显示"
+/// 正是这么来的：前两项一长，第三项被挤出屏幕。
+/// `Wrap` 放不下就换行，没有"被藏起来的读数"。
 class DshStatsBar extends StatelessWidget {
   const DshStatsBar({
     super.key,
@@ -494,34 +547,116 @@ class DshStatsBar extends StatelessWidget {
     }
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 6, 2, 0),
-      child: Row(
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
         children: [
           if (turnText != null)
             _StatChip(icon: 'gauge', text: turnText!, onTap: onTapTurn),
           if (usageText != null) ...[
-            const SizedBox(width: 6),
             _StatChip(icon: 'database', text: usageText!, onTap: onTapUsage),
           ],
-          if (contextPercent != null) ...[
-            const SizedBox(width: 6),
-            _StatChip(text: '$contextPercent%', onTap: onTapContext),
-          ],
+          if (contextPercent != null)
+            _StatChip(
+              leading: _ContextRing(percent: contextPercent!),
+              text: '$contextPercent%',
+              onTap: onTapContext,
+            ),
         ],
       ),
     );
   }
 }
 
+/// 上下文占用小环（照 Web `ContextMeter.tsx:119-129`：14px 环 + 百分比）。
+///
+/// 底色是轨道，前景弧长按百分比走 —— 它是"还有多少余量"的一眼线索，
+/// 纯文字百分比给不出这个。
+class _ContextRing extends StatelessWidget {
+  const _ContextRing({required this.percent});
+
+  final int percent;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 13,
+      height: 13,
+      child: CustomPaint(
+        painter: _RingPainter(
+          fraction: (percent.clamp(0, 100)) / 100,
+          track: DshColors.layer3,
+          fill: DshColors.roleContext,
+        ),
+      ),
+    );
+  }
+}
+
+class _RingPainter extends CustomPainter {
+  const _RingPainter({
+    required this.fraction,
+    required this.track,
+    required this.fill,
+  });
+
+  final double fraction;
+  final Color track;
+  final Color fill;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final stroke = size.width * 0.16;
+    final rect = Rect.fromLTWH(
+      stroke / 2,
+      stroke / 2,
+      size.width - stroke,
+      size.height - stroke,
+    );
+    final trackPaint = Paint()
+      ..color = track
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke;
+    canvas.drawArc(rect, 0, 3.141592653589793 * 2, false, trackPaint);
+    if (fraction <= 0) return;
+    final fillPaint = Paint()
+      ..color = fill
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.round;
+    // 从 12 点方向开始顺时针（照 Web 的 `rotate(-90 7 7)`）。
+    canvas.drawArc(
+      rect,
+      -3.141592653589793 / 2,
+      3.141592653589793 * 2 * fraction,
+      false,
+      fillPaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_RingPainter oldDelegate) =>
+      oldDelegate.fraction != fraction ||
+      oldDelegate.track != track ||
+      oldDelegate.fill != fill;
+}
+
 class _StatChip extends StatelessWidget {
-  const _StatChip({required this.text, this.icon, this.onTap});
+  const _StatChip({required this.text, this.icon, this.leading, this.onTap});
 
   final String text;
+
+  /// 图标名（走 `DshIcon`）；与 [leading] 二选一。
   final String? icon;
+
+  /// 自绘前导（上下文环）；与 [icon] 二选一。
+  final Widget? leading;
+
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    final label = icon;
+    final iconName = icon;
     return Material(
       color: DshColors.layer1,
       borderRadius: BorderRadius.circular(999),
@@ -529,19 +664,29 @@ class _StatChip extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (label != null) ...[
-                DshIcon(label, size: 13, color: DshColors.labelCaption),
-                const SizedBox(width: 5),
+              if (iconName != null) ...[
+                DshIcon(iconName, size: 12, color: DshColors.labelCaption),
+                const SizedBox(width: 4),
               ],
-              Text(
-                text,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: DshColors.labelCaption,
+              if (leading != null) ...[leading!, const SizedBox(width: 4)],
+              // **可压缩是最后防线**：`Wrap` 已经保证"放不下就换行"，
+              // 而系统大字缩放 / 超长文本仍可能让单项超过屏宽 ——
+              // 那时省略号比溢出裁切好（溢出在 release 里是静默看不见）。
+              Flexible(
+                child: Text(
+                  text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  // **11px**：这三项的数字都会变宽（四位数 token、三位数
+                  // 百分比、十几轮），字号大一点就把同行挤爆。
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: DshColors.labelCaption,
+                  ),
                 ),
               ),
             ],

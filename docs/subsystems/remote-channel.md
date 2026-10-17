@@ -371,6 +371,7 @@ type SyncSnapshot = {
 | `session.unsubscribe` | 手机→电脑 | — | 停止推送;桥接可释放该会话缓冲(仍需等 persisted) |
 | `session.page` | 手机→电脑 | — | 历史翻页(按消息对齐,用 DSH `page()`) |
 | `session.prompt` | 手机→电脑 | `requestId` | **参数是 `{ sid, content, mode? }`**,不是 `{ sid, text }`。`content` 必须是**非空数组**,每项带 `type`(照 DSH 的 `PromptContentPart`:文本是 `{type:'text', text}`)。**形状以电脑侧为准** —— 它与 DSH 的 `sessionController.prompt` 同构,手机侧没有第二条真值。`mode: 'queue' \| 'steer'` |
+| `session.updateQueue` | 手机→电脑 | `requestId` | 变异一个**仍在排队**的消息:编辑 / 删除 / 插话。**与 Web 的排队 dock 同一个 DSH 方法**(`session-controller/src/index.ts:462-465` 的 `@Remote('updateQueue')`,实现 `commands.ts:432-479`;Web 侧 `QueueDock.tsx` 的三个行内按钮走它)。载荷 `{ sid, itemId, action }`,`action` 是 DSH 的 `QueueAction` 联合(`types.ts:167-174`):`{kind:'edit', content:[{type:'text',text}]}` / `{kind:'remove'}` / `{kind:'steer'}`。**队列内容不在这个方法里读** —— 它在 `inbox` 投影(`{'next-turn':[…], 'next-step':[…]}`,随 `session.projections` 到手机),与"待处理集合是投影"同一条纪律。`steer` 只在当前轮次正在跑时成立,否则 DSH 回 `session/steer-unavailable`(`commands.ts:477-479`);项已不在队列回 `session/queue-item-not-found` |
 | `interaction.respond` | 手机→电脑 | `i:<callId>` | 提问 / 计划审查的**答案批次**:`{ sid, callId, answers: [{ id, selected[], custom? }] }`。形状与 DSH 的 `AskUserQuestionAnswer` **逐字一致**,不另造决策枚举(§6.3.1)。**同一个入口也收束在途的审批 claim**:分叉点不在方法名上,而在"这一项是不是一次在途 claim"(§6.2 的判定只有端口知道);审批的"允许一次"编码成 `selected` 含 DSH 的 outcome 值 `allowed-once`(`user-approval/src/types.ts:32`),空 `selected` 且无 `custom` = 拒绝 |
 | `session.cancel` | 手机→电脑 | — | 取消当前轮次但保留待处理收件箱 |
 | `session.refetch` | 手机→电脑 | — | 取单个大条目 |
@@ -414,7 +415,7 @@ type SyncSnapshot = {
 
 ### 5.8 未实现方法的 DSH 依据与落地路径(2026-10-09 逐条核实)
 
-已实现的 21 个见连接器处理器表(它是"实现了什么"的唯一出处)。§5.7 的封闭集是 **27** 个方法名,
+已实现的见连接器处理器表(它是"实现了什么"的唯一出处)。§5.7 的封闭集是 **30** 个方法名,
 差额是下面这 **5 个**契约列了、连接器还没接的。每一条都标了 DSH 是否原生支持、出处与落地方式。
 **结论:没有一项需要等外部条件。**
 
@@ -726,6 +727,7 @@ job-settled        后台任务终结     turn-failed       轮次异常结束
 | 中转不可达 | 手机显示离线;后台只依赖推送 | 无法操作,直到中继恢复 |
 | DSH 升级导致插件被跳过 | `skippedBundles` | 手机显示"插件未加载",需升级 connector |
 | 手机重装 / 换机 | 无本地历史;重新配对或恢复既有设备身份(若种子已备份) | 需要重新同步;新设备需重新配对 |
+| 同一台手机重新配对 | 替换旧设备行(换密钥 / 令牌,保留 `pairedAt`),旧凭证立即失效 | 管理面不攒行;手机照常重连 |
 | 设备被吊销 / 记录被删 | 换票被拒(401,中转不区分原因)→ `protocol/not-paired` | 手机清凭据、回配对页,写明"这台电脑已不再认可本机,请重新扫码";不退避重连 |
 | 会话被删除 / 压缩 | `snapshot` / `no-session` | 该会话消失或刷新为最新基线 |
 | 时钟异常(两端偏差) | 协议不依赖两端时钟;仅推送合并与 TTL 用电脑侧时钟 | 无感 |
@@ -745,6 +747,7 @@ job-settled        后台任务终结     turn-failed       轮次异常结束
 | 重放 | 连接层 `fc` 单调 + 每连接新密钥;会话层 `seq` 去重 + 幂等键 |
 | 伪造推送 | 推送只敲门(I6);内容只在 App 内拉取 |
 | 设备失窃 | 主种子进系统安全存储(§12.2)+ 解锁/生物识别门控 + 电脑侧可吊销 |
+| 重放旧配对标识抢行 | `pairingId` 是**行定位符不是凭据**:替换的授权仍是一次性二维码秘密(要物理扫码),而能扫码者本来就能配对;效果仅是踢掉旧手机(401 → 重新配对,可恢复且在管理面可见) |
 | 中继滥用 | 配对码一次性 + 5 min;令牌只存摘要;按设备限流与审计 |
 | 大对象 DoS | 单帧上限 8 MiB + refetch 阈值 1 MiB + 流控窗口 128 帧 |
 | 电脑侧越权 | 插件只暴露方法白名单;密钥只有单向写面(`credentials.set/unset`) |
@@ -783,7 +786,7 @@ job-settled        后台任务终结     turn-failed       轮次异常结束
     ```
     中转替换候选公钥、或把 A 设备的 `confirm` 挪给 B 邀请,都会在这里验签失败(电脑侧同一处见 `connector/src/device-connection.ts`)。
   - **换票请求里没有秘密**(§3):`{ "v": 2, "offerId": "<22 字符 base64url>", "devPubEd": "<hex>", "devPubDh": "<hex>", "name": "我的手机" }` —— 秘密只在受限通道的 `pair-commit` 密文里出现,中转全程看不到它。
-  - **配对两帧要封箱**(§3):`pair-commit` 的载荷是 `{ "v": 2, "offerId": "<…>", "code": "<…>" }`,`pair-result` 的载荷是回执。v1 的明文 `pair` / `pair-ack` 已删除,旧形状被拒(`426`)。
+  - **配对两帧要封箱**(§3):`pair-commit` 的载荷是 `{ "v": 2, "offerId": "<…>", "code": "<…>", "previousPairingId": "<43 字符 base64url,可选>" }`,`pair-result` 的载荷是回执。v1 的明文 `pair` / `pair-ack` 已删除,旧形状被拒(`426`)。`previousPairingId` 是**重新配对**的手机自报的旧配对标识:电脑侧据此替换旧行(换密钥/令牌,保留首次 `pairedAt`),同一台手机不再攒行。它是**行定位符不是凭据**(授权仍是这一次的二维码秘密),只在密文里过线;规格与威胁模型见 `pairing-v2.md` §5。
   - **中转换票与路由靠公开邀请**:电脑侧出码时把 `offerId` 登记给中转(秘密**不登记**);手机换票带同一个 `offerId`,中转据此把票与那台连接器绑定,并**为这次连接生成 `channelId`**,通过控制面向电脑侧要一条数据连接(`relay.open`)。
     - **过期与断线都失效**:登记 5 分钟过期;连接器断开时它全部未认领的登记立即失效(否则设备会拿到一张指向一条已经不存在的连接的票)。
     - **设备必须先换到票才能升级**(`relay/src/server.ts` 的 `/ws/device` 要 `ticket`),受限通道也一样。

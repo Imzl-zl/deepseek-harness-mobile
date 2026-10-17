@@ -18,7 +18,7 @@
  *
  * ## 认证
  *
- * 四个端点走在 Connection 的 `/api` 共享通道上，准入**白拿**：
+ * 各端点走在 Connection 的 `/api` 共享通道上，准入**白拿**：
  * Host/Origin 栅栏 + 浏览器 cookie（`rpc-host.ts:107-117`）。
  * 所以这里不自己实现令牌 —— 自己实现只会更弱，且多一处"两个认证答案"。
  *
@@ -78,7 +78,7 @@ export function mountAdminFace(ctx: Context, deps: AdminMountDeps): (() => void)
     const disposeRoute = connection.fetch.register(route)
     disposers.push(() => void disposeRoute())
   }
-  console.error('[dsh-mobile] 管理面 RPC 已挂：/api/dsh-mobile/{status,pair,devices/enabled,devices/remove}')
+  console.error('[dsh-mobile] 管理面 RPC 已挂：/api/dsh-mobile/{status,pair,transport,devices/enabled,devices/remove}')
 
   return () => {
     // 反序清：后注册的先摘，避免摘的过程中还有请求打到一个半拆的路由。

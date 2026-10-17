@@ -38,8 +38,11 @@ import 'package:flutter/material.dart';
 import '../core/job.dart';
 import '../data/app_model.dart';
 import '../model/chat_item.dart';
+import '../model/model_catalog.dart';
 import '../model/permission.dart';
+import '../model/preferences.dart';
 import '../model/send_mode.dart';
+import '../model/session_stats.dart';
 import '../model/workspace.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
@@ -51,6 +54,7 @@ import 'dsh_composer.dart';
 import 'dsh_sheet.dart';
 import 'dsh_state_dot.dart';
 import 'edge_stick.dart';
+import 'queue_dock.dart';
 import 'side_pane.dart';
 import 'takeover.dart';
 import 'trajectory_page.dart';
@@ -471,6 +475,7 @@ class ChatPageState extends State<ChatPage> {
                     app: widget.app,
                     items: items,
                     paired: widget.paired,
+                    autoOpenToolDetail: _autoOpenToolDetail,
                     onOpenDrawer: widget.onOpenDrawer,
                     onRefreshSessions: _refreshSessions,
                     onOpenSession: widget.onOpenSession ?? (_) {},
@@ -493,6 +498,11 @@ class ChatPageState extends State<ChatPage> {
                 // 原型是把输入栏整块换掉 —— 手机上并排更省高度，
                 // 且不会让用户以为"输入框不见了"。
                 TakeoverPanel(controller: _takeover),
+                // **排队条**（DSH Web 的 `conversation.input.dock` 槽里的
+                // QueueDock）：会话正在跑时发出去的消息排进下一个轮次，
+                // 这里列出来并可编辑 / 删除 / 插话。空队列整条不占位。
+                if (sid != null)
+                  QueueDock(app: widget.app, sid: sid, running: _running),
                 DshComposer(
                   controller: _input,
                   attachments: _attachments,
@@ -507,6 +517,9 @@ class ChatPageState extends State<ChatPage> {
                   sendMode: widget.app.sendMode,
                   sending: _sending,
                   enabled: _hasData && sid != null,
+                  // 运行中且没有草稿时，主键是"停止"（照 Web 的 primaryStops）。
+                  running: _running,
+                  onStop: _stop,
                   onSend: _send,
                   onAttach: _showAttachSheet,
                   onPickModel: _showModelSheet,
@@ -546,32 +559,49 @@ class ChatPageState extends State<ChatPage> {
   // 统计条（三条都从 `session.projections` 来）
   // ---------------------------------------------------------------------------
 
-  /// `第 N 轮 · M 步`；轮次为 0 或读不到就是 `null`（整条不显示）。
+  /// `第 N 轮 · M 步 · X tok/s`；轮次为 0 或读不到就是 `null`（整条不显示）。
   ///
   /// 有解码数据时**把输出速率拼在同一格里**，照 Web 的
-  /// `1 turns 1 steps · 20 tok/s`（`StatsPills.tsx:166-170,242-243`）——
-  /// 手机原来只显示轮次步数，速率那一项整个丢了。
+  /// `1 turns 1 steps · 20 tok/s`（`StatsPills.tsx:244-245`）——
+  /// 手机原来只显示轮次步数，速率那一项整个丢了。速率数字用 Web 的
+  /// `formatTokensPerSecond`（`message-chrome.ts:71-74`：≥10 取整，<10 一位小数）。
+  ///
+  /// **简洁档只留速率**（Web 的 `usePerformanceUsage === 'compact'`：
+  /// `ActivityPill` 在 compact 下只渲染速度读数，`StatsPills.tsx:242`）。
   String? get _turnText {
     final stats = widget.app.sessionStats;
+    final tps = stats?.tokensPerSecond;
+    if (widget.app.performanceUsage == PerformanceUsage.compact) {
+      return tps == null ? null : '${formatTokensPerSecond(tps)} tok/s';
+    }
     final base = stats?.turnLabel;
     if (base == null) return null;
-    final tps = stats?.tokensPerSecond;
     if (tps == null) return base;
-    return '$base · ${tps.round()} tok/s';
+    return '$base · ${formatTokensPerSecond(tps)} tok/s';
   }
 
-  /// `302K · 缓存 42%`；读不到用量就是 `null`。
+  /// `302K tok · 缓存命中 96%`；读不到用量就是 `null`。
+  ///
+  /// **与 Web 逐字一致**（`StatsPills.tsx:288-302` 的 `UsagePill`）：
+  /// 合计 = `billedInput + output` 走 `{count} tok`，命中文字是
+  /// `t('stats.cacheHit', {percent})` = `缓存命中 {percent}%`
+  /// （`locale.ts:78`）。2026-10-17 前这里是 `302K · 缓存 96%` ——
+  /// 少一个 ` tok`、多一个"中"字之差，真机对比截图就能看出来。
+  ///
+  /// **简洁档只留缓存命中**（Web compact：`UsagePill` 只渲染命中读数，
+  /// `StatsPills.tsx:291-293`）。
   ///
   /// **缓存率为 null 时不拼那半句**：没有计费输入时算不出命中率，
-  /// 而显示 `缓存 0%` 会让用户以为"缓存坏了"，其实只是这一轮还没花 token。
-  /// 分母用 `billedInput`（未缓存 + 缓存读 + 缓存写），与 Web 逐字一致 ——
-  /// 手机原来把输出也算进去，同一个会话两个端显示两个命中率。
+  /// 而显示 `缓存命中 0%` 会让用户以为"缓存坏了"，其实只是这一轮还没花 token。
   String? get _usageText {
     final usage = widget.app.tokenUsage;
     if (usage == null) return null;
-    final hit = usage.cacheHitRate;
-    if (hit == null) return usage.totalLabel;
-    return '${usage.totalLabel} · 缓存 ${(hit * 100).round()}%';
+    final hit = usage.cacheHitText;
+    if (widget.app.performanceUsage == PerformanceUsage.compact) {
+      return hit == null ? null : '缓存命中 $hit%';
+    }
+    if (hit == null) return '${usage.totalLabel} tok';
+    return '${usage.totalLabel} tok · 缓存命中 $hit%';
   }
 
   /// 上下文占用百分比。**算法与 Web 逐字一致**：
@@ -601,6 +631,27 @@ class ChatPageState extends State<ChatPage> {
   /// 是否有"可看的数据"（真连上了，或在看示例）。
   bool get _hasData => widget.paired || widget.app.isPreview;
 
+  /// 当前会话是否正在跑（排队条的插话门 + 发送模式 sheet 的禁用判据）。
+  ///
+  /// **从电脑侧来**（`session.list` 的 `running`，`connector/src/dsh/sessions.ts`）——
+  /// 手机不自己猜"应该在跑吧"。
+  bool get _running {
+    final sid = widget.app.currentSid;
+    if (sid == null) return false;
+    return widget.app.sessionOf(sid)?.running ?? false;
+  }
+
+  /// 工具明细是否默认展开（"工作步骤展示"偏好）。
+  ///
+  /// 口径照 Web 的 `transcriptView`（`ui-chat/src/client/locale.ts:103-108` 四档）：
+  /// **完全展开**一律展开；**详细**在会话运行时展开（Web 的"运行中直接显示
+  /// 组正文"，完成后仍保留组头）；其余两档折叠、可手动展开。
+  bool get _autoOpenToolDetail {
+    final view = widget.app.transcriptView;
+    if (view == TranscriptView.fullyOpen) return true;
+    return view == TranscriptView.detailed && _running;
+  }
+
   /// 输入栏上显示的模型名。
   ///
   /// **从真投影来**（`SessionSummary.model`，源头是 DSH 的 `modelSelection` 投影，
@@ -611,12 +662,21 @@ class ChatPageState extends State<ChatPage> {
   /// ① 电脑侧说了 → 显示那个模型 id；
   /// ② 电脑侧没说（`null`）但连着 → "未选择"（**不猜**）；
   /// ③ 没连着 → "未连接"。
+  ///
+  /// 目录里有这一项时用它的**展示名**（`DeepSeek-V41-Flash`），与 Web 的
+  /// trigger 同一条链（`ModelSelect.tsx:419` 的 `model.name`）；目录里没有
+  /// （刚拉到手、模型已下线）才退到 id。
   String get _modelLabel {
     if (!_hasData) return '未连接';
     final sid = widget.app.currentSid;
     if (sid == null) return '未选择';
     final model = widget.app.sessionOf(sid)?.model;
-    return model?.label ?? '未选择';
+    if (model == null) return '未选择';
+    return widget.app.modelCatalog?.displayNameOf(
+          provider: model.provider,
+          model: model.model,
+        ) ??
+        model.label;
   }
 
   /// 推理等级的文字。
@@ -624,12 +684,20 @@ class ChatPageState extends State<ChatPage> {
   /// 也**不写死**（原来是 `'高'`）：电脑侧给了 effort 就显示它，没给就显示"默认" ——
   /// "默认"是实话（DSH 的 `reasoning` 带 `defaultEffort`，见
   /// `packages/api/session-controller/src/catalog.ts`），编一个等级才是谎。
+  /// 目录里有这一项时把 effort id 翻成展示名（照 Web 的 `effortLabel`，
+  /// `ModelSelect.tsx:122-128`）。
   String get _reasoningLabel {
     if (!_hasData) return '默认';
     final sid = widget.app.currentSid;
     if (sid == null) return '默认';
-    final effort = widget.app.sessionOf(sid)?.model?.reasoningEffort;
-    return effort ?? '默认';
+    final model = widget.app.sessionOf(sid)?.model;
+    if (model == null) return '默认';
+    final name = widget.app.modelCatalog?.effortNameOf(
+      provider: model.provider,
+      model: model.model,
+      effort: model.reasoningEffort,
+    );
+    return name != null && name.isNotEmpty ? name : '默认';
   }
 
   /// 顶栏状态点的点击。
@@ -709,78 +777,203 @@ class ChatPageState extends State<ChatPage> {
     if (_sidePanel != SidePanel.file) return null;
     return Row(
       children: [
-        _FileAction(icon: 'copy', label: '复制路径', onTap: () => _toast('复制路径')),
+        _FileAction(
+          icon: 'copy',
+          label: '复制路径',
+          onTap: () => _notWired('复制路径'),
+        ),
         const SizedBox(width: 8),
         _FileAction(
           icon: 'rightUp',
           label: '在电脑打开',
-          onTap: () => _toast('在电脑打开'),
+          onTap: () => _notWired('在电脑打开'),
         ),
         const SizedBox(width: 8),
         _FileAction(
           icon: 'share',
           label: '分享',
           filled: true,
-          onTap: () => _toast('分享'),
+          onTap: () => _notWired('分享'),
         ),
       ],
     );
   }
 
-  void _toast(String what) {
+  /// 一条普通提示（操作结论）。
+  ///
+  /// **2026-10-17 从 `_toast` 拆出来**：原来只有一个助手、且所有消息都被缀上
+  /// "还没接上数据"—— 于是"已切到 deepseek-chat"在界面上变成
+  /// "已切到 deepseek-chat 还没接上数据"，一句**谎话**（它确实切了）。
+  void _toast(String message) {
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text('$what 还没接上数据')));
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// "这个动作还没有接线"的提示。与 [_toast] 分开：结论与未接线是两件事，
+  /// 混在一个助手里必然有一个被说错。
+  void _notWired(String what) {
+    _toast('$what 还没接上数据');
   }
 
   // ---------------------------------------------------------------------------
   // sheet 体系（照原型的 `sheet-*` action）
   // ---------------------------------------------------------------------------
 
-  /// `sheet-stats`：会话统计。数值照原型。
-  void _showStatsSheet() => showDshSheet<void>(
-    context: context,
-    title: '会话统计',
-    body: const Column(
-      children: [
-        DshKeyValue(label: '模型用时', value: '12.4', unit: 's'),
-        DshKeyValue(label: '工具用时', value: '3.8', unit: 's'),
-        DshKeyValue(label: '首 token (TTFT)', value: '420', unit: 'ms'),
-        DshKeyValue(label: '输出速度', value: '516', unit: 'tok/s'),
-        DshKeyValue(label: '轮次 / 步数', value: '1 / 3'),
-      ],
-    ),
-  );
+  /// 打断当前轮次（运行中且没有草稿时，主键是它）。
+  ///
+  /// 走 `session.cancel`（与 Web 同一个 DSH 方法）。DSH 的语义是"取消当前
+  /// 轮次但**保留待处理收件箱**"—— 排队中的消息不会被这次取消丢掉。
+  /// **失败要如实说**：静默失败会让用户以为"点了没反应"。
+  Future<void> _stop() async {
+    final sid = widget.app.currentSid;
+    if (sid == null) return;
+    final ok = await widget.app.cancel(sid);
+    if (!mounted) return;
+    _toast(
+      ok ? '已请求停止' : '停止失败：${widget.app.lastError?.message ?? '电脑侧没有给结论'}',
+    );
+  }
 
-  /// `sheet-usage`：Token 用量。
-  void _showUsageSheet() => showDshSheet<void>(
-    context: context,
-    title: 'Token 用量',
-    body: const Column(
-      children: [
-        DshKeyValue(label: '缓存命中', value: '0%'),
-        DshKeyValue(label: '未缓存输入', value: '12,480'),
-        DshKeyValue(label: '缓存读取', value: '289,120'),
-        DshKeyValue(label: '缓存写入', value: '0'),
-        DshKeyValue(label: '输出', value: '1,204'),
-        DshKeyValue(label: '合计', value: '302,804'),
-      ],
-    ),
-  );
+  /// `sheet-stats`：会话统计。**数值全部来自 `sessionStats` 投影**。
+  ///
+  /// 2026-10-17 之前这里是写死的 `12.4 / 3.8 / 420 / 516 / 1 · 3` ——
+  /// 五个数一个都不来自电脑侧，而用户无法分辨。现在逐行对照 Web 的
+  /// `ActivityPill` 浮层（`StatsPills.tsx:249-277`）：**哪项没有数据就
+  /// 不摆那一行**（Web 的 `stats.llmMs > 0 && …` 同一个门）。
+  void _showStatsSheet() {
+    final stats = widget.app.sessionStats;
+    final tps = stats?.tokensPerSecond;
+    final ttft = stats?.averageTtftMs;
+    final rows = <Widget>[
+      if (stats != null && stats.llmMs > 0)
+        DshKeyValue(label: '模型用时', value: formatCompactDuration(stats.llmMs)),
+      if (stats != null && stats.toolMs > 0)
+        DshKeyValue(label: '工具用时', value: formatCompactDuration(stats.toolMs)),
+      if (ttft != null)
+        DshKeyValue(
+          label: '首 token (TTFT)',
+          value: '${ttft.round()}',
+          unit: 'ms',
+        ),
+      if (tps != null)
+        DshKeyValue(
+          label: '输出速度',
+          value: formatTokensPerSecond(tps),
+          unit: 'tok/s',
+        ),
+      if (stats != null && stats.turns > 0)
+        DshKeyValue(label: '轮次 / 步数', value: '${stats.turns} / ${stats.steps}'),
+    ];
+    unawaited(
+      showDshSheet<void>(
+        context: context,
+        title: '会话统计',
+        body: rows.isEmpty
+            ? const _SheetEmptyNote(what: '这个会话还没有计时数据')
+            : Column(children: rows),
+      ),
+    );
+  }
+
+  /// `sheet-usage`：Token 用量。**数值全部来自 `tokenUsage` 投影**。
+  ///
+  /// 行与门都对照 Web 的 `UsagePill` 浮层（`StatsPills.tsx:311-330`）：
+  /// 缓存写入为 0 时那一行不摆；合计 = 计费输入 + 输出。
+  void _showUsageSheet() {
+    final usage = widget.app.tokenUsage;
+    final hit = usage?.cacheHitText;
+    unawaited(
+      showDshSheet<void>(
+        context: context,
+        title: 'Token 用量',
+        body: usage == null
+            ? const _SheetEmptyNote(what: '这个会话还没有 token 用量')
+            : Column(
+                children: [
+                  if (hit != null) DshKeyValue(label: '缓存命中', value: '$hit%'),
+                  DshKeyValue(
+                    label: '未缓存输入',
+                    value: formatExactTokens(usage.uncachedInputTokens),
+                  ),
+                  DshKeyValue(
+                    label: '缓存读取',
+                    value: formatExactTokens(usage.cacheReadTokens),
+                  ),
+                  if (usage.cacheWriteTokens != 0)
+                    DshKeyValue(
+                      label: '缓存写入',
+                      value: formatExactTokens(usage.cacheWriteTokens),
+                    ),
+                  DshKeyValue(
+                    label: '输出',
+                    value: formatExactTokens(usage.outputTokens),
+                  ),
+                  const Divider(height: 20, color: DshColors.layer2),
+                  DshKeyValue(
+                    label: '合计',
+                    value: formatExactTokens(usage.grandTotal),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
 
   /// `sheet-context`：上下文已用 N% —— **三段用量条**是这一屏的重点。
+  ///
+  /// 分子分母来自 `contextPressure` 投影（Web 的 `contextOccupancy` 同一公式），
+  /// 三段分段来自 `contextBreakdown` 投影（启发式估算，Web 同样标 `~`）。
+  /// 2026-10-17 之前这里四个数是写死的（7200/10100/2600/1000000）。
   void _showContextSheet() {
-    const meter = DshContextMeter(
-      systemTokens: 7200,
-      toolTokens: 10100,
-      messageTokens: 2600,
-      limitTokens: 1000000,
-    );
+    final occupancy = widget.app.contextPressure?.occupancy;
+    if (occupancy == null) {
+      unawaited(
+        showDshSheet<void>(
+          context: context,
+          title: '上下文',
+          body: const _SheetEmptyNote(what: '电脑侧还没有报告上下文用量（需要至少一次请求）'),
+        ),
+      );
+      return;
+    }
+    // 有分段就画三段条；没有就只画百分比（Web 的 ContextMeter 同样此时
+    // 只有一个 total 段）。
+    final breakdown = widget.app.contextBreakdown;
+    final meter = breakdown == null
+        ? DshContextMeter(
+            systemTokens: 0,
+            toolTokens: 0,
+            messageTokens: occupancy.usedTokens,
+            limitTokens: occupancy.contextWindow,
+          )
+        : DshContextMeter(
+            systemTokens: breakdown.systemTokens,
+            toolTokens: breakdown.toolsTokens,
+            messageTokens: breakdown.messageTokens,
+            limitTokens: occupancy.contextWindow,
+          );
     unawaited(
       showDshSheet<void>(
         context: context,
         title: '上下文已用 ${meter.percent}%',
-        body: meter,
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (breakdown == null)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 12),
+                child: Text(
+                  '电脑侧没有给出三段分段，这里只显示总占用。',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: DshColors.labelTertiary,
+                  ),
+                ),
+              ),
+            meter,
+          ],
+        ),
       ),
     );
   }
@@ -810,7 +1003,7 @@ class ChatPageState extends State<ChatPage> {
     ),
   );
 
-  /// 模型选择（§7.9 的行结构）。
+  /// 模型选择（§7.9 的行结构 + DSH 的模型/推理等级两级的流动）。
   ///
   /// **2026-10-15 删掉四个手抄的模型名**。原来是
   /// `claude-opus` / `claude-sonnet` / `gpt-5-codex` / `deepseek-v4.1-flash`
@@ -820,30 +1013,144 @@ class ChatPageState extends State<ChatPage> {
   /// 现在的来源：
   /// - **读**：`session/modelCatalog`（连接器已接，`dsh/models.ts`）。
   ///   手机上显示的名字与电脑侧**同一份真值**，不手抄第二份。
+  ///   形状是 DSH `buildModelCatalog` 的返回值（`{default, routableProviders,
+  ///   groups, failures}`）——2026-10-17 修：解析器原来认的是一个臆想形状，
+  ///   目录在生产里一次都没解析成功过，详见 `model/model_catalog.dart` 文件头。
   /// - **写**：`session/select-model` —— **与 Web 用同一个 DSH 方法**
   ///   （已核实 Web 侧调的就是它，
   ///   `packages/client/ui-model-selection/src/client/directory.ts:98`）。
-  ///   语义：**当前会话**立即生效、**以后新建的**会话默认跟随、
-  ///   **不改别的会话**（`packages/core/agent-default-model/src/index.ts:82-94`）。
-  ///   所以"新会话默认跟随"是 Web 一直有的行为，不是副作用。
+  ///
+  /// ## 与 Web 的流动差异（有意偏离，触屏合理形态）
+  ///
+  /// Web 的 `ModelSelect` 是"根菜单 → 模型面板 → 推理等级面板"的 drill
+  /// （`ModelSelect.tsx:46` 的 `Pane`）；手机上是两个底部 sheet：
+  /// 点模型行 → 有推理档的模型进第二屏选等级（默认档预选，照 Web
+  /// `choices` 的构造：`reasoning.defaultEffort`），没有推理档的直接切。
+  /// 语义逐字对照 Web：选模型带 `defaultEffort`、选等级带那个 id、
+  /// "默认"只在 `defaultEffort` 缺省时才出现（`ModelSelect.tsx:129-140`）。
   void _showModelSheet() {
     final catalog = widget.app.modelCatalog;
-    if (catalog == null || catalog.isEmpty) {
+    if (catalog == null || catalog.groups.isEmpty) {
       _toast('拿不到模型目录：电脑侧没有返回 session/modelCatalog');
       return;
     }
+    final current = widget.app.currentModel;
     unawaited(
       showDshSheet<void>(
         context: context,
         title: '选择模型',
         body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            for (final m in catalog)
+            for (final group in catalog.groups) ...[
+              // 分组头（provider 名）—— Web 的根菜单同样按 provider 分组。
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 12, 4, 4),
+                child: Text(
+                  group.name,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: DshColors.labelCaption,
+                  ),
+                ),
+              ),
+              for (final entry in group.models)
+                DshPickerRow(
+                  name: entry.displayName,
+                  tags: [
+                    if (entry.description != null)
+                      entry.description!
+                    else
+                      group.name,
+                    // 有推理档的模型把档数说出来：用户据此知道点了还有下一步。
+                    if (entry.reasoning != null)
+                      '${entry.reasoning!.efforts.length} 档推理等级',
+                  ],
+                  selected:
+                      current != null &&
+                      current.provider == group.id &&
+                      current.model == entry.id,
+                  onTap: () => _pickModel(group, entry),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 点一个模型行：有推理档的进等级二级 sheet，没有的直接切。
+  Future<void> _pickModel(
+    ModelProviderGroup group,
+    ModelCatalogEntry entry,
+  ) async {
+    final reasoning = entry.reasoning;
+    if (reasoning == null) {
+      Navigator.of(context).pop();
+      await _switchModel(
+        provider: group.id,
+        model: entry.id,
+        effort: null,
+        name: entry.displayName,
+      );
+      return;
+    }
+    // 预选：当前会话正在用这个模型时用它自己的 effort，否则退到 provider 默认
+    // （Web 的 `effectiveEffort`，`ModelSelect.tsx:121`）。
+    final current = widget.app.currentModel;
+    final sameModel =
+        current != null &&
+        current.provider == group.id &&
+        current.model == entry.id;
+    final selected = reasoning.effectiveEffortOf(
+      sameModel ? current.reasoningEffort : null,
+    );
+    unawaited(
+      showDshSheet<void>(
+        context: context,
+        title: '推理等级 · ${entry.displayName}',
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // "默认"只在 provider 没有指定 defaultEffort 时出现
+            // （`ModelSelect.tsx:132-134`：有默认档时就只列各档）。
+            if (reasoning.defaultEffort == null)
               DshPickerRow(
-                name: m.model,
-                tags: [m.provider],
-                selected: m.model == widget.app.currentModel?.model,
-                onTap: () => _switchModel(m),
+                name: '默认',
+                tags: const ['跟随这个提供商的默认等级'],
+                selected: selected == null,
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(
+                    _switchModel(
+                      provider: group.id,
+                      model: entry.id,
+                      effort: null,
+                      name: entry.displayName,
+                    ),
+                  );
+                },
+              ),
+            for (final effort in reasoning.efforts)
+              DshPickerRow(
+                name: effort.name,
+                tags: [
+                  if (effort.description != null) effort.description!,
+                  if (effort.id == reasoning.defaultEffort) '提供商默认',
+                ],
+                selected: effort.id == selected,
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(
+                    _switchModel(
+                      provider: group.id,
+                      model: entry.id,
+                      effort: effort.id,
+                      name: entry.displayName,
+                    ),
+                  );
+                },
               ),
           ],
         ),
@@ -853,18 +1160,32 @@ class ChatPageState extends State<ChatPage> {
 
   /// 切模型。**失败要如实说** —— 静默失败会让用户以为"点了没反应"，
   /// 而那正是这一版之前的样子（点完只弹一个"切到 X"的 toast）。
-  Future<void> _switchModel(ModelRef model) async {
-    Navigator.of(context).pop();
+  Future<void> _switchModel({
+    required String provider,
+    required String model,
+    required String? effort,
+    required String name,
+  }) async {
     final picked = await widget.app.selectModel(
-      provider: model.provider,
-      model: model.model,
+      provider: provider,
+      model: model,
+      reasoningEffort: effort,
     );
     if (!mounted) return;
     if (picked == null) {
       _toast('切换失败：${widget.app.lastError?.message ?? '电脑侧没有给结论'}');
       return;
     }
-    _toast('已切到 ${picked.model}');
+    final effortLabel = widget.app.modelCatalog?.effortNameOf(
+      provider: picked.provider,
+      model: picked.model,
+      effort: picked.reasoningEffort,
+    );
+    _toast(
+      effortLabel == null || effortLabel.isEmpty
+          ? '已切到 $name'
+          : '已切到 $name · $effortLabel',
+    );
   }
 
   /// 权限选择（**目录来自电脑侧** + 完全权限的**风险确认门**，§7.10）。
@@ -951,10 +1272,7 @@ class ChatPageState extends State<ChatPage> {
   /// （`locales.ts:365`），而轮次已变时 DSH 回 `session/steer-unavailable`。
   /// 禁用而不是"点了再报错"—— 报错只会让用户以为发失败了。
   void _showSendModeSheet() {
-    final sid = widget.app.currentSid;
-    final running = sid == null
-        ? false
-        : widget.app.sessionOf(sid)?.running ?? false;
+    final running = _running;
     unawaited(
       showDshSheet<void>(
         context: context,
@@ -1092,7 +1410,7 @@ class ChatPageState extends State<ChatPage> {
                     case '演示：接管输入栏':
                       _enqueueDemoTakeovers();
                     default:
-                      _toast(item.label);
+                      _notWired(item.label);
                   }
                 },
               ),
@@ -1294,6 +1612,28 @@ class ChatPageState extends State<ChatPage> {
   /// "没有子智能体"有两个说法。
 }
 
+/// 统计 sheet 的空态（这一项没有数据时）。
+///
+/// **不摆零值行**：`0 秒` / `0%` 会被读成"有数据、恰好是零"，
+/// 而真相是"电脑侧还没报告"。空态把这两件事分开说。
+class _SheetEmptyNote extends StatelessWidget {
+  const _SheetEmptyNote({required this.what});
+
+  final String what;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 20),
+      child: Text(
+        what,
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 13, color: DshColors.labelTertiary),
+      ),
+    );
+  }
+}
+
 /// 文件面板底部的动作按钮（`.btn--out` / `.btn--fill`）。
 class _FileAction extends StatelessWidget {
   const _FileAction({
@@ -1358,6 +1698,7 @@ class _ChatTab extends StatelessWidget {
     required this.onOpenSession,
     this.onConnect,
     this.onRePair,
+    this.autoOpenToolDetail = false,
   });
 
   final AppModel app;
@@ -1374,6 +1715,9 @@ class _ChatTab extends StatelessWidget {
 
   /// 已配对时空态的"重新配对（换一台电脑）"出路（议题 3）。未配对为 `null`。
   final VoidCallback? onRePair;
+
+  /// 工具明细默认展开（"工作步骤展示"偏好，由页面层算好传下来）。
+  final bool autoOpenToolDetail;
 
   @override
   Widget build(BuildContext context) {
@@ -1401,6 +1745,8 @@ class _ChatTab extends StatelessWidget {
         // 少了这一支，点进一个空会话会看到"选一个会话"，而用户**刚刚才选过**，
         // 那句话会让人以为点击没生效（真机实测）。
         selectedSid: app.currentSid,
+        // 投影失败（逐条隔离后记下来的那一条）：少渲染的事件要说出来。
+        projectionFailure: app.projectionFailureOf(app.currentSid ?? ''),
         onOpenDrawer: onOpenDrawer,
         onConnect: onConnect,
         onRePair: onRePair,
@@ -1430,7 +1776,8 @@ class _ChatTab extends StatelessWidget {
       reverse: true,
       padding: const EdgeInsets.symmetric(horizontal: 16),
       itemCount: items.length,
-      itemBuilder: (context, index) => _TurnView(item: items[index]),
+      itemBuilder: (context, index) =>
+          _TurnView(item: items[index], autoOpenDetail: autoOpenToolDetail),
     );
   }
 }
@@ -1665,8 +2012,9 @@ class _SessionListInline extends StatelessWidget {
           ListTile(
             dense: true,
             title: Text(
-              // 标题链照 DSH：持久标题 → 项目目录名 → 会话 id
-              // （`SessionSummary.displayTitle`，service.ts:116-127）。
+              // 标题与顶栏、抽屉同一条链：投影提示标题 → 「未命名」
+              // （DSH 的 Web 侧栏规则，`ui-workspace/README.zh.md:32`；
+              // 判据 `tree.ts:296` 的 `sessionTitle`）。**不再退目录名 / sid**。
               session.displayTitle,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -1734,25 +2082,52 @@ class _SessionListInline extends StatelessWidget {
 
 /// 一条条目 → 对应的渲染组件（**按类型分派**）。
 class _TurnView extends StatelessWidget {
-  const _TurnView({required this.item});
+  const _TurnView({required this.item, this.autoOpenDetail = false});
 
   final ChatItem item;
+
+  /// 工具明细默认展开（"工作步骤展示"偏好）。
+  final bool autoOpenDetail;
 
   @override
   Widget build(BuildContext context) {
     // sealed class ⇒ 这个 switch 是穷尽的：加一种条目时编译器会在**这里**报错，
     // 而不是让新类型静默渲染成空白。
     return switch (item) {
-      MessageItem(:final role, :final text) => switch (role) {
-        MessageRole.user => UserTurn(text),
-        MessageRole.assistant => AssistantTurn(text: text),
-        MessageRole.system => SystemTurn(text),
-      },
-      ToolCallItem(:final name, :final status, :final summary) => ToolCard(
-        name: name,
-        status: status,
-        argument: summary,
-      ),
+      MessageItem(
+        :final role,
+        :final text,
+        :final attachmentCount,
+        :final steering,
+        :final reasoning,
+      ) =>
+        switch (role) {
+          MessageRole.user => UserTurn(
+            text,
+            attachmentCount: attachmentCount,
+            steering: steering,
+          ),
+          MessageRole.assistant => AssistantTurn(
+            text: text,
+            reasoning: reasoning,
+          ),
+          MessageRole.system => SystemTurn(text),
+        },
+      ToolCallItem(
+        :final name,
+        :final status,
+        :final summary,
+        :final detail,
+        :final diffStat,
+      ) =>
+        ToolCard(
+          name: name,
+          status: status,
+          argument: summary,
+          detail: detail,
+          diffStat: diffStat,
+          initiallyOpen: autoOpenDetail,
+        ),
       ApprovalItem(:final title, :final decided) => TakeoverHint(
         icon: decided ? 'check' : 'shield',
         name: decided ? 'approval' : 'approval',
@@ -1775,6 +2150,7 @@ class _EmptyChat extends StatelessWidget {
     required this.onOpenDrawer,
     required this.onPreview,
     this.selectedSid,
+    this.projectionFailure,
     this.onRefresh,
     this.onConnect,
     this.onRePair,
@@ -1788,6 +2164,9 @@ class _EmptyChat extends StatelessWidget {
 
   /// 当前选中的会话（`null` = 还没选）。**用来把"选了但还没内容"与"还没选"分开**。
   final String? selectedSid;
+
+  /// 投影失败的第一条原因（`null` = 没失败）。**与"真没有内容"分开说**。
+  final String? projectionFailure;
   final VoidCallback onOpenDrawer;
   final VoidCallback onPreview;
 
@@ -1849,6 +2228,12 @@ class _EmptyChat extends StatelessWidget {
         : hasSessions
         ? ('panelLeft', '选一个会话', '会话历史在左侧抽屉里。')
         : ('newChat', '还没有会话', '在电脑上用 DSH 开一个，它会出现在抽屉里。');
+    // **投影失败要与"真没有内容"分开说**：逐条隔离之后，坏事件不再炸掉
+    // 整批，但它少渲染的那几条必须让人看见 —— 否则"事件到了却没显示"
+    // 会被当成"会话里就没有这些"。
+    final failureNote = projectionFailure == null
+        ? null
+        : '有事件没能渲染：$projectionFailure';
     return SingleChildScrollView(
       // **必须可滚**：320×640 上"图标 + 三行字 + 三个按钮"放不下，
       // 会报 `BOTTOM OVERFLOWED BY 20 PIXELS`（实测踩到）。
@@ -1883,6 +2268,17 @@ class _EmptyChat extends StatelessWidget {
                     color: DshColors.labelTertiary,
                   ),
                 ),
+                if (failureNote != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    failureNote,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: DshColors.roleTool,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 24),
                 // 两个入口都不需要连电脑。
                 if (hasSessions || paired)

@@ -175,6 +175,54 @@ void main() {
     );
   });
 
+  test('配对页接了旧配对标识（漏接 = 重新配对又攒一行，且没有任何报错）', () {
+    // 2026-10-17：`previousPairingIdOf` 是"同一台手机重扫**替换**旧行"的钩子。
+    // 漏接它不报错、编译也过 —— 只是电脑侧每次重配多一行，而用户已经为
+    // "我一个手机怎么显示五个"吵过一次。取舍与威胁模型见
+    // `.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`。
+    expect(
+      source.contains('previousPairingIdOf: _previousPairingIdOf'),
+      isTrue,
+      reason: '装配点必须把旧配对标识接进配对页，否则替换退化成新增',
+    );
+    // 清凭据的缝必须先抓快照再清。直接传静态方法（`clearCredentials:
+    // PairingStore.clear`）就抓不到 —— 顺序反了快照永远是 null。
+    expect(
+      source.contains('clearCredentials: PairingStore.clear'),
+      isFalse,
+      reason: '清凭据之前必须先抓旧配对标识快照，直接传静态方法抓不到',
+    );
+  });
+
+  test('跨屏导航走 navigatorKey，不用 State 自带的 context', () {
+    // **这条守的是一个真 bug**（2026-10-16 真机实测，拿一次装配换来的）：
+    // State 的 context 在 MaterialApp **之上**，祖先里没有 Navigator ——
+    // 于是抽屉「归档」「设置」、抽屉连接行的 sheet、「文件/自动化」的 toast、
+    // 新建会话失败的提示，在真机上**全部一碰就抛**
+    // `Navigator operation requested with a context that does not include a
+    // Navigator`，而 widget 测试全绿（测试宿主挂在 Navigator 之下）。
+    // 判据是机械的：这两个调用形状在 main.dart 里一次都不许出现
+    // （注释里也不许提字面形状，免得断言被自己的注释骗过去）。
+    expect(
+      source.contains('Navigator.of(context)'),
+      isFalse,
+      reason: 'State 的 context 找不到 Navigator（真机实测全抛），必须走 navigatorKey',
+    );
+    expect(
+      source.contains('ScaffoldMessenger.of(context)'),
+      isFalse,
+      reason: 'ScaffoldMessenger 同样由 MaterialApp 在内部创建，State 的 context 找不到它',
+    );
+    // 正向也钉：MaterialApp 真的挂了这把钥匙。
+    final app = _callTextOf(source, 'MaterialApp(');
+    expect(app, isNotNull, reason: '装配点应有 MaterialApp(...) 调用');
+    expect(
+      app!.contains('navigatorKey: navigatorKey'),
+      isTrue,
+      reason: '不挂钥匙 = 上面的替代方案全部落空',
+    );
+  });
+
   test('根 State 挂着前后台态上报者（否则 setAppState 永远不被调用）', () {
     // **这条守的是一个真缺口**（2026-10-13 定位）：`setAppState` 在 `app/lib` 里
     // 没有任何产品调用点，客户端从构造起就以为自己在**前台** —— 心跳照走、

@@ -14,6 +14,8 @@ function setup(failAnnouncement = false) {
     pcId: 'pc-test', pairing,
     issueCredentials: async () => { issued += 1; return { deviceToken: 'test-device-token', refreshToken: 'test-refresh-token' } },
     putDevice: async (_id, row) => { rows.push(row) },
+    findPreviousPairing: () => null,
+    removeDevice: async () => {},
     announce: async () => {
       announcements += 1
       if (failAnnouncement && announcements === 1) throw new Error('临时离线')

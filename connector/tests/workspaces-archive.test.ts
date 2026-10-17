@@ -122,6 +122,8 @@ function build(workspaces: WorkspacesPort) {
       prompt: () => Promise.resolve({ accepted: true }),
       selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
       create: async () => ({ sessionId: 'dsh-new' }),
+      updateQueue: async () => ({ accepted: true as const }),
+      cancel: () => ({ accepted: true as const }),
     },
     aliases,
     workspaces,

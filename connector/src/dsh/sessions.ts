@@ -137,6 +137,17 @@ const NEVER_ABORTS = new AbortController().signal
 /** 用户消息里的一段内容（文本或内联图片）。**类型留在 `dsh/` 内**，上层只 import 这个名字。 */
 export type PromptPart = PromptContentPart
 
+/**
+ * 一个排队项变异（DSH `QueueAction` 联合，`session-controller/src/types.ts:167-174`）。
+ *
+ * `edit` 只收**纯文本**内容（DSH 的 `commands.ts:433-448` 自己会再校验一遍），
+ * `remove` 与 `steer` 无参数。
+ */
+export type QueueAction =
+  | { readonly kind: 'edit'; readonly content: readonly PromptPart[] }
+  | { readonly kind: 'remove' }
+  | { readonly kind: 'steer' }
+
 export interface SessionsPort {
   /**
    * 会话清单（按活动排序）。
@@ -167,6 +178,28 @@ export interface SessionsPort {
   ): Promise<{ accepted: true }>
   /** 取消当前 turn。注意它**不接受 signal**（`index.ts:457`）。 */
   cancel(sessionId: string): { accepted: true }
+  /**
+   * 变异一个**仍在排队**的消息（编辑 / 删除 / 插话）。
+   *
+   * **与 Web 用同一个 DSH 方法**：`SessionController.updateQueue`
+   * （`packages/api/session-controller/src/index.ts:462-465` 的 `@Remote('updateQueue')`，
+   * 实现 `commands.ts:432-479`）。Web 的排队 dock（`ui-conversation/src/client/queue/
+   * QueueDock.tsx` 的三个行内按钮）走的就是它：
+   * `{kind:'edit', content}` / `{kind:'remove'}` / `{kind:'steer'}`。
+   *
+   * 队列本身**不是**这个方法读的 —— 它在 `inbox` 投影里
+   * （`{'next-turn': [...], 'next-step': [...]}`，随 `session.projections` 到手机），
+   * 与"待处理集合是投影"同一条纪律。
+   *
+   * `steer` 有前置条件：只在**当前轮次正在跑**时成立，否则 DSH 回
+   * `session/steer-unavailable`（`commands.ts:477-479`）—— 那是**信息**不是故障，
+   * 手机据此刷新队列。
+   */
+  updateQueue(request: {
+    sessionId: string
+    itemId: string
+    action: QueueAction
+  }): Promise<{ accepted: true }>
   /**
    * 切这个会话的模型。**与 Web 用同一个 DSH 方法**，没有第二套接口 ——
    * 已核实 Web 侧调的就是它
@@ -306,6 +339,16 @@ export function createSessionsAdapter(controller: SessionController): SessionsPo
 
     cancel(sessionId) {
       return controller.cancel({ sessionId: sessionId as DshSessionId })
+    },
+
+    updateQueue(request) {
+      // 形状在这里收窄成 DSH 要的联合：`kind` 决定其余字段，
+      // 而 `itemId` 是 `MessageId`（branded）—— 与 `prompt` 的 `requestId` 同一处 cast。
+      return controller.updateQueue({
+        sessionId: request.sessionId as DshSessionId,
+        itemId: request.itemId as never,
+        action: request.action as never,
+      })
     },
 
     async selectModel(request) {

@@ -222,6 +222,61 @@ void main() {
   });
 
   // -------------------------------------------------------------------------
+  // 剪枝（2026-10-17 真机：三个拨不通的 IPv6 地址把冷启动拖成 30 秒）
+  // -------------------------------------------------------------------------
+
+  test('连接器不再报、且拨过的地址：失败过就删掉（表不能只增不删）', () async {
+    // IPv6 隐私地址每次轮换都是新的一条，旧的永远留在表里 ——
+    // 每个死地址一次冷启动等满超时。剪枝判据两个条件同时成立。
+    const stale = Endpoint(
+      kind: EndpointKind.direct,
+      url: 'ws://[2408:8220:711a:9444:a45e:d058:f3bf:c149]:8790',
+      label: 'Wi-Fi',
+    );
+    final persisted = <List<Endpoint>>[];
+    final app = await serving(
+      onCall: (method, _) => null,
+      endpoints: [_direct, _relay, stale],
+      persisted: persisted,
+    );
+    app.reportEndpointAttempt(
+      stale,
+      const EndpointAttempt(ok: false, reason: '建连超时（3s）'),
+    );
+
+    // 连接器这次只报这两条（stale 不在内）。
+    await app.mergeDiscoveredEndpoints(const [_direct, _relay]);
+
+    expect(app.endpoints.map((e) => e.url).toList(), [
+      _direct.url,
+      _relay.url,
+    ], reason: '不再被自报、且拨过的死地址必须删');
+    expect(persisted, hasLength(1), reason: '删了也要落盘');
+    app.dispose();
+  });
+
+  test('连接器不再报、但从没拨过：不删（可能是刚发现、还没轮到）', () async {
+    const fresh = Endpoint(
+      kind: EndpointKind.direct,
+      url: 'ws://192.168.2.99:8790',
+      label: 'Wi-Fi',
+    );
+    final app = await serving(
+      onCall: (method, _) => null,
+      endpoints: [_direct, _relay, fresh],
+    );
+
+    await app.mergeDiscoveredEndpoints(const [_direct, _relay]);
+
+    expect(
+      app.endpoints.map((e) => e.url).toList(),
+      [_direct.url, _relay.url, fresh.url],
+      reason: '没拨过的条目不删——删了就成了"覆盖"，丢用户手动排的序',
+    );
+    app.dispose();
+  });
+
+  // -------------------------------------------------------------------------
   // 拨号结果记账（`attemptOf` / `reportEndpointAttempt`）
   // -------------------------------------------------------------------------
 

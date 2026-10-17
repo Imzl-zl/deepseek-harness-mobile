@@ -265,12 +265,19 @@
             </div>
           </div>
         </div>
-        <!-- dock 在输入卡片**之后**(DSH InputBar.tsx:499):统计与上下文挂在卡片下方,不顶输入框 -->
+        <!-- dock 在输入卡片**之后**(DSH InputBar.tsx:499):统计与上下文挂在卡片下方,不顶输入框。
+             文案与 Web 逐字一致:`{total} tok · 缓存命中 {percent}%`(locale.ts:78 的 stats.cacheHit、
+             message.turnUsage.count);轮次格 `{turns} 轮 {steps} 步 · {tps} tok/s`(StatsPills.tsx:244)。
+             **放得下才不换行**:三项宽度都随数字变(四位数 token / 三位数百分比),
+             溢出就换行 —— 横滚会把读数藏到屏幕外(真机 2026-10-17:"上下文百分比不显示")。 -->
         <div class="stats">
-          <button class="stat" data-act="sheet-stats" id="statTurn"><span data-icon="gauge" data-icon-size="13"></span> 第 1 轮 · 3 步</button>
-          <button class="stat" data-act="sheet-usage"><span data-icon="database" data-icon-size="13"></span> 302K · 缓存 0%</button>
-          <button class="stat" data-act="sheet-context"><span class="ring"></span> 3%</button>
+          <button class="stat" data-act="sheet-stats" id="statTurn"><span data-icon="gauge" data-icon-size="13"></span> 第 1 轮 · 3 步 · 20 tok/s</button>
+          <button class="stat" data-act="sheet-usage"><span data-icon="database" data-icon-size="13"></span> 302K tok · 缓存命中 96%</button>
+          <button class="stat" data-act="sheet-context"><span class="ring"></span> 34%</button>
         </div>
+        <!-- 排队条(DSH Web 的 conversation.input.dock 槽 QueueDock):会话正在跑时发出去的消息
+             排进下一个轮次,这里列出来并可编辑/删除/插话。空队列整条不占位。 -->
+        <div class="qdock" id="queueDock" hidden></div>
       </footer>
     </section>
 

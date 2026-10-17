@@ -26,7 +26,7 @@ import type { JobControlPort, JobsPort } from './dsh/jobs.js'
 import type { JobSubscriptions } from './job-subscriptions.js'
 import type { SessionPager } from './session-page.js'
 import type { SessionSubscriptions } from './session-subscriptions.js'
-import type { PromptPart, SessionSummaryRow, SessionsPort } from './dsh/sessions.js'
+import type { PromptPart, QueueAction, SessionSummaryRow, SessionsPort } from './dsh/sessions.js'
 import type { ConnectionIdentity } from './connection-scope.js'
 import type { InteractionFace } from './interaction-face.js'
 import type { ModelFace } from './dsh/models.js'
@@ -100,7 +100,7 @@ export interface HandlerDeps {
    * `sessionController` 是本插件的必需服务（缺了它插件根本不挂载），所以不存在"这个端口不在"
    * 的生产形态；把它写成可选只会多一条永远不会被走到的错误分支。
    */
-  sessions: Pick<SessionsPort, 'list' | 'prompt' | 'selectModel' | 'create'>
+  sessions: Pick<SessionsPort, 'list' | 'prompt' | 'selectModel' | 'create' | 'updateQueue' | 'cancel'>
   aliases: AliasPort
   /**
    * 后台任务（可选服务）。
@@ -289,6 +289,62 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
         mode === 'steer' ? 'steer' : 'queue',
       )
       return { accepted }
+    },
+
+    // 打断：取消当前轮次但**保留待处理收件箱**。**与 Web 同一个 DSH 方法**
+    // （`session-controller/src/index.ts:472` 的 `@Remote('cancel')`）。
+    // DSH 的注释原话是"Cancel one active Agent turn without dropping its
+    // pending inbox"（`:467-470`）—— 排队中的消息不会被这一次取消丢掉，
+    // 所以它安全地当"停止"用。
+    // 不带幂等键（契约 §5.7 那一列是空的）：取消本就没有第二次副作用。
+    // Note: 排队条 / 插话 / 打断为什么是这三个方法而不是别的形态 ——
+    // 见 .agents/notes/implemented/2026-10-17-queue-dock-and-cancel-landed.md
+    'session.cancel': async (params) => {
+      const dshSessionId = requireSession(requireSid(params))
+      return deps.sessions.cancel(dshSessionId)
+    },
+
+    // 排队项变异：编辑 / 删除 / 插话。**与 Web 的排队 dock 同一个 DSH 方法**
+    // （`sessionController.updateQueue`，`@Remote('updateQueue')`，
+    // `packages/api/session-controller/src/index.ts:462-465`；实现 `commands.ts:432-479`）。
+    // 队列内容不在这个方法里 —— 它在 `inbox` 投影（随 `session.projections` 到手机），
+    // 这里只做"变异某一项"这一个动作，带幂等键（用户指令，重发不该编辑两次）。
+    'session.updateQueue': async (params, context) => {
+      const dshSessionId = requireSession(requireSid(params))
+      const requestId = context.requestId
+      if (requestId === undefined || requestId === '') {
+        throw new ProtocolError('protocol/bad-frame', 'requestId 必填：写操作必须带幂等键')
+      }
+      const itemId = requireString(params, 'itemId')
+      const action = paramOf(params, 'action')
+      if (typeof action !== 'object' || action === null) {
+        throw new ProtocolError('protocol/bad-frame', 'action 必须是对象')
+      }
+      const kind = (action as { kind?: unknown }).kind
+      if (kind !== 'edit' && kind !== 'remove' && kind !== 'steer') {
+        throw new ProtocolError('protocol/bad-frame', "action.kind 必须是 edit / remove / steer")
+      }
+      if (kind === 'edit') {
+        // 编辑只收纯文本（DSH 的 `commands.ts:433-448` 同一条：非文本块整个拒）。
+        const content = (action as { content?: unknown }).content
+        if (!Array.isArray(content) || content.length === 0) {
+          throw new ProtocolError('protocol/bad-frame', 'edit 的 content 必须是非空数组')
+        }
+        for (const part of content) {
+          if (typeof part !== 'object' || part === null || (part as { type?: unknown }).type !== 'text') {
+            throw new ProtocolError('protocol/bad-frame', 'edit 的 content 每一项都必须是 {type:"text"}')
+          }
+          const text = (part as { text?: unknown }).text
+          if (typeof text !== 'string' || text.trim() === '') {
+            throw new ProtocolError('protocol/bad-frame', 'edit 的 text 必须含非空白字符')
+          }
+        }
+      }
+      return deps.sessions.updateQueue({
+        sessionId: dshSessionId,
+        itemId,
+        action: action as QueueAction,
+      })
     },
 
     // 切模型：**与 Web 同一个 DSH 方法**（见 `dsh/sessions.ts` 的 `selectModel` 注释）。

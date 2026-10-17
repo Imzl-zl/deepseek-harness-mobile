@@ -19,7 +19,6 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
-
 import 'core/box.dart';
 import 'core/crypto.dart';
 import 'core/endpoint.dart';
@@ -95,6 +94,26 @@ class _DshMobileAppState extends State<DshMobileApp> {
   /// 配对页顶部横幅的一句话（**为什么会被送到这一页**）；主动进来时为 `null`。
   String? _pairingNotice;
 
+  /// 进配对页时上报给电脑侧的**旧配对标识**（`pair-commit` 的 `previousPairingId`）。
+  ///
+  /// 两个来源：① 凭据还在（直接进配对页）—— 现算；② 凭据刚被"重新配对 /
+  /// 断开重来"清掉 —— 清之前抓成快照。没有它，电脑侧认不出"这是同一台手机
+  /// 在换凭证"，只会又攒一行（2026-10-17 真机：一个手机扫 5 次 = 5 行）。
+  /// 取值器按二维码的 `pcId` 过滤：换一台电脑扫它是 null（那边没有旧行可替换）。
+  /// 取舍与威胁模型：`.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`。
+  String? Function(String pcId)? _previousPairingIdOf;
+
+  /// 刷新旧配对标识快照。**凭据已被清掉时不清空** —— 那正是要靠清之前的
+  /// 快照的时候（`_recovery.repair` 先清凭据、再开配对页）。
+  void _refreshRePairHint() {
+    final credentials = _credentials;
+    if (credentials == null || credentials.pairingId.isEmpty) return;
+    final pairingId = credentials.pairingId;
+    final pcId = credentials.pcId;
+    _previousPairingIdOf = (String scannedPcId) =>
+        pcId.isNotEmpty && pcId == scannedPcId ? pairingId : null;
+  }
+
   /// 前后台态的上报者（契约 §2.2、§9）。
   ///
   /// 它跟着根 State 活，而客户端跟着 [_app] 活 —— 所以报的是"当前那个"
@@ -113,7 +132,12 @@ class _DshMobileAppState extends State<DshMobileApp> {
   void initState() {
     super.initState();
     _recovery = ConnectionRecovery(
-      clearCredentials: PairingStore.clear,
+      // 清凭据**之前**先把旧配对标识抓成快照：重新配对要靠它替换电脑侧的
+      // 旧行，而清完之后手机就没有"我上次配过"的记忆了。
+      clearCredentials: () async {
+        _refreshRePairHint();
+        await PairingStore.clear();
+      },
       openPairing: _enterPairing,
       report: _reportConnectionDefect,
     );
@@ -155,10 +179,14 @@ class _DshMobileAppState extends State<DshMobileApp> {
   ///
   /// 主动进来时**没有"为什么"**，所以把横幅清掉 —— 留着上一次的原因会让人
   /// 以为"我刚又被拒了一次"。
-  void _openPairing() => setState(() {
-    _pairing = true;
-    _pairingNotice = null;
-  });
+  void _openPairing() {
+    // 直接进配对页（凭据还在）：现算旧配对标识。被清掉之后进来的走快照。
+    _refreshRePairHint();
+    setState(() {
+      _pairing = true;
+      _pairingNotice = null;
+    });
+  }
 
   void _closePairing() => setState(() => _pairing = false);
 
@@ -191,10 +219,16 @@ class _DshMobileAppState extends State<DshMobileApp> {
     final app = await _assemble(credentials, _recovery.onTerminated);
     if (!mounted) return;
     setState(() {
+      // **旧客户端必须dispose**：它持着传输层（socket）。不 dispose 就换掉，
+      // 旧连接会一直挂在电脑侧（真机实测出现过两条直连 socket 同时
+      // ESTABLISHED），用户看到的是"连接不稳定"。
+      _app?.dispose();
       _credentials = credentials;
       _app = app;
       _pairing = false;
     });
+    // 下一次重新配对要报**新**的 pairingId（旧的那一行已经被替换掉了）。
+    _refreshRePairHint();
     await app.start();
   }
 
@@ -211,9 +245,31 @@ class _DshMobileAppState extends State<DshMobileApp> {
       title: 'DSH Mobile',
       debugShowCheckedModeBanner: false,
       theme: DshTheme.dark(),
+      navigatorKey: navigatorKey,
       home: _body(),
     );
   }
+
+  /// 全局导航键。
+  ///
+  /// **为什么必须有它**：State 自己的 `context` 在 `MaterialApp` **之上**，
+  /// 它的祖先里没有 Navigator / ScaffoldMessenger（那两个都由 MaterialApp 在
+  /// **内部**创建）。所以拿 State 自带的 context 去调 `Navigator.of` 在真机上
+  /// 必抛 `Navigator operation requested with a context that does not include
+  /// a Navigator` —— 2026-10-16 真机实测：抽屉「归档」「设置」、抽屉连接行的
+  /// sheet、「文件/自动化」的 toast、新建会话失败的提示，**全部一碰就抛**，
+  /// 而 widget 测试里它们照过（测试宿主在 Navigator 之下）。所有跨屏导航与
+  /// 提示统一走这个键，不再用 State 自带的 context。
+  final navigatorKey = GlobalKey<NavigatorState>();
+
+  /// sheet / SnackBar / 对话框的宿主要它：**必须在 Navigator 之下**。
+  ///
+  /// `navigatorKey.currentContext` 是 Navigator **自己**的 context（它的祖先里
+  /// 没有 Navigator），`Navigator.of` 拿到它照抛（2026-10-16 真机实测第二轮：
+  /// 连接 sheet 就是这么挂的）。overlay 的 context 是 Navigator 的子节点，
+  /// `Navigator.of` / `ScaffoldMessenger.of` 都找得到 —— 这是用 GlobalKey 取
+  /// "路由内 context"的标准做法。
+  BuildContext get _navContext => navigatorKey.currentState!.overlay!.context;
 
   Widget _body() {
     if (_booting) {
@@ -238,6 +294,8 @@ class _DshMobileAppState extends State<DshMobileApp> {
         // **为什么会被送到这一页**：常驻横幅（身份被拒 / 手动重配各一句话）。
         // 不用 SnackBar：它 4 秒就消失，而用户是被自动送到这里的。
         notice: _pairingNotice,
+        // 旧配对标识（重新配对同一台电脑时电脑侧据此替换旧行）。
+        previousPairingIdOf: _previousPairingIdOf,
       );
     }
     // **抽屉必须跟着 `AppModel` 重建**。
@@ -283,15 +341,6 @@ class _DshMobileAppState extends State<DshMobileApp> {
               label: '归档',
               onTap: () => unawaited(_openArchive()),
             ),
-            // 标签与图标**照原型基线**（`mock/proto/index.html:487` 的「演示」+ `play`）——
-            // 手机上原来写「示例」+ `sparkle`，与基线漂移，看起来像自己加的功能。
-            // 它是手机自己的演示数据（DSH 没有对应物），所以更要照基线的叫法。
-            DrawerFootItem(icon: 'play', label: '演示', onTap: app.loadPreview),
-            DrawerFootItem(
-              icon: 'clock',
-              label: '自动化',
-              onTap: () => _notYet('自动化任务'),
-            ),
             DrawerFootItem(
               icon: 'settings',
               label: '设置',
@@ -300,7 +349,7 @@ class _DshMobileAppState extends State<DshMobileApp> {
           ],
           onNewSession: _newSession,
           onOpenSession: (session) {
-            unawaited(Navigator.of(context).maybePop());
+            unawaited(navigatorKey.currentState?.maybePop());
             unawaited(app.openSession(session.sid));
           },
           // 左滑归档（原型基线的行动作）。`workspace.archive` 是 2026-10-16 接上的
@@ -309,7 +358,7 @@ class _DshMobileAppState extends State<DshMobileApp> {
           // 点连接状态行 → 已配对时给"重新配对 / 断开"的选择，没配对上配对页。
           onClose: () {
             if (_credentials == null) {
-              unawaited(Navigator.of(context).maybePop());
+              unawaited(navigatorKey.currentState?.maybePop());
               _openPairing();
               return;
             }
@@ -326,11 +375,11 @@ class _DshMobileAppState extends State<DshMobileApp> {
   /// 会留下幽灵层。本期设置页只有「连接方式」一组（端点选择器），
   /// 其余分组按 `docs/settings-porting-notes.md` 还没搬，**不摆占位行**。
   void _openSettings(AppModel app) {
-    unawaited(Navigator.of(context).maybePop());
+    unawaited(navigatorKey.currentState?.maybePop());
     unawaited(
-      Navigator.of(
-        context,
-      ).push(MaterialPageRoute<void>(builder: (_) => SettingsPage(app: app))),
+      navigatorKey.currentState?.push(
+        MaterialPageRoute<void>(builder: (_) => SettingsPage(app: app)),
+      ),
     );
   }
 
@@ -342,9 +391,9 @@ class _DshMobileAppState extends State<DshMobileApp> {
   Future<void> _openArchive() async {
     final app = _app;
     if (app == null) return;
-    unawaited(Navigator.of(context).maybePop());
+    unawaited(navigatorKey.currentState?.maybePop());
     await showArchiveSheet(
-      context,
+      _navContext,
       app: app,
       onUnarchive: (sid) => app.unarchiveSession(sid),
     );
@@ -362,7 +411,7 @@ class _DshMobileAppState extends State<DshMobileApp> {
     if (await app.archiveSession(session.sid)) return;
     if (!mounted) return;
     if (app.lastError?.code != ErrorCode.workspaceSessionActive) return;
-    if (!await confirmStopAndArchive(context, title: session.title)) return;
+    if (!await confirmStopAndArchive(_navContext, title: session.title)) return;
     if (!mounted) return;
     await app.archiveSession(session.sid, stopActivity: true);
   }
@@ -376,11 +425,11 @@ class _DshMobileAppState extends State<DshMobileApp> {
   /// 复用 `ui/connection_actions_sheet.dart` 的同一形状（议题 3：三个入口
   /// 共用一个 sheet，不各画一份）。抽屉这条路保留，不影响既有用户。
   Future<void> _showConnectionSheet() async {
-    unawaited(Navigator.of(context).maybePop());
+    unawaited(navigatorKey.currentState?.maybePop());
     final app = _app;
     if (app == null) return;
     await showConnectionActionsSheet(
-      context,
+      _navContext,
       // 「当前连接」块（连接方式选择器第 1 步）：走的哪条 + 为什么没走首选。
       // 与设置页顶部、聊天页顶栏入口同一块同一套说法（`connectionSummary`）。
       connection: connectionSummary(
@@ -421,7 +470,7 @@ class _DshMobileAppState extends State<DshMobileApp> {
   ///
   /// **不加静默兜底**：映射不到的动作照实显示，绝不"试试看继续重连"。
   void _reportConnectionDefect(ProtocolException error) {
-    ScaffoldMessenger.of(context).showSnackBar(
+    ScaffoldMessenger.of(_navContext).showSnackBar(
       SnackBar(content: Text('连接失败：${error.code.wire}：${error.message}')),
     );
   }
@@ -431,7 +480,7 @@ class _DshMobileAppState extends State<DshMobileApp> {
   /// **没配对时不做假动作**：直接提示去配对 —— 而不是造一个本地空会话
   ///（那会在抽屉里留下一个永远发不出消息的条目）。
   void _newSession() {
-    unawaited(Navigator.of(context).maybePop());
+    unawaited(navigatorKey.currentState?.maybePop());
     if (_credentials == null) {
       _openPairing();
       return;
@@ -444,9 +493,9 @@ class _DshMobileAppState extends State<DshMobileApp> {
   }
 
   void _notYet(String what) {
-    unawaited(Navigator.of(context).maybePop());
+    unawaited(navigatorKey.currentState?.maybePop());
     ScaffoldMessenger.of(
-      context,
+      _navContext,
     ).showSnackBar(SnackBar(content: Text('$what 还没做')));
   }
 
@@ -545,6 +594,9 @@ class _DshMobileAppState extends State<DshMobileApp> {
 
   /// 清掉配对（换设备 / 连不上时重来）。
   Future<void> _resetPairing() async {
+    // 同"重新配对"：先抓旧配对标识，再清。之后扫同一台电脑的码是**替换**
+    // 旧行，不是又攒一行。
+    _refreshRePairHint();
     await PairingStore.clear();
     await _reassembleUnpaired();
   }
@@ -558,6 +610,9 @@ class _DshMobileAppState extends State<DshMobileApp> {
     final app = await _assembleWithoutCredentials(_recovery.onTerminated);
     if (!mounted) return;
     setState(() {
+      // 同 `_onPaired`：旧客户端持着传输层，换掉前必须 dispose，
+      // 否则旧连接一直挂在电脑侧（重配对 / 断开后的"幽灵连接"）。
+      _app?.dispose();
       _credentials = null;
       _app = app;
     });

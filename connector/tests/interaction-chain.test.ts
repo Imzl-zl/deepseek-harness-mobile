@@ -73,6 +73,8 @@ function harness() {
         prompt: async () => ({ accepted: true as const }),
         selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
         create: async () => ({ sessionId: 'dsh-new' }),
+        updateQueue: async () => ({ accepted: true as const }),
+        cancel: () => ({ accepted: true as const }),
       },
       aliases: {
         ensure: async (id: string) => `sid_${id}`,

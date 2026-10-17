@@ -260,6 +260,24 @@ dsh-mobile/
 
 输入框占位符用 DSH 原文:`发消息或创建任务, / 调用指令, @ 文件或对话`(短屏由 CSS 自然折行,不手动截断)。
 
+**排队条与停止键**(2026-10-17 落地,照 DSH Web 的 `conversation.input.dock` 槽):
+
+- 会话正在跑时发出去的消息排进下一个轮次,输入卡片**上方**一条排队条列出来
+  (`{n} 条排队消息` 计数头,多条时折叠),每项可**编辑 / 删除 / 插话**。
+  队列读 `inbox` 投影的 `next-turn` 段,三个动作走 `session.updateQueue`
+  (与 Web 排队 dock 同一个 DSH 方法);插话仅运行中可点(DSH 文案"仅运行中可插话发送"),
+  编辑只对纯文本项可点(DSH 的 `updateQueue` 编辑只收纯文本)。
+- **主键在运行中且没有草稿时是"停止"**(照 Web `InputBar.tsx:323` 的 `primaryStops`),
+  走 `session.cancel`("取消当前轮次但保留待处理收件箱");有草稿时主键仍是发送,
+  按当前发送模式排队/插进去。停止键**不受"空草稿"门限**(那会儿门是"有没有停止出口")。
+
+**思考过程 / 附件 / 工具明细 / 插话标**(2026-10-17 补齐,形状照真实会话日志):
+
+- 助手消息的 `{type:'reasoning'}` 块渲染成可折叠的「思考过程」(默认收起);
+- 用户消息的图片/文件块**计数显示**(读附件要 `session/attachment`,本期未接);
+- 工具卡展开区显示**结果输出预览**;`metadata.diffs` hunks 折成 +N/−M 小计;
+- 轮次跑到一半插进去的用户消息带「插话」标(判据逐字移植 DSH `SteeringHistory`)。
+
 **动效**(容易漏,记在这):右抽屉是"抽屉",必须有位移+遮罩过渡 —— 过渡挂在 `.page--side`(`transform/opacity 0.3s cubic-bezier(.4,0,.2,1)`),背后压一层 `.side-scrim`(点它关闭);抽屉内切换面板用轻微横向淡入;输入栏接管卡从下往上浮入。**只做位移不做遮罩、或忘了挂过渡,都会变成"啪一下"**。
 
 ### 7.9 选择类列表的行结构(别自己发明第三列)
@@ -314,13 +332,23 @@ dsh-mobile/
 
 ### 7.4 状态 chip → 三个底部 sheet(照搬 DSH 三浮层)
 ```
-⏱ 会话统计            🗄 Token 用量           ◔ 上下文已用  3%
+⏱ 会话统计            🗄 Token 用量           ◔ 上下文已用 34%
 模型用时  llmTime      缓存命中 cacheHit       ▓▓░░ ~32.6K/1M
 工具用时  toolTime     未缓存输入 input        系统提示词(灰)
 首token TTFT ttft      缓存读取 cacheRead      工具定义(紫)
 输出速度 TPS speed     缓存写入/输出 output    对话消息(蓝)
 ```
 桌面 popover → 手机 bottom sheet,内容与 DSH 一致(源:`StatsPills` / `TurnUsagePanel` / `ContextMeter`)。
+
+**数值全部来自投影,哪项没有数据就不摆那一行**(与 Web 的 `stats.llmMs > 0 && …` 同一个门)——
+2026-10-17 之前这三个 sheet 是写死的五个数(`12.4 / 3.8 / 420 / 516 / 1 · 3`),与电脑侧毫无关系。
+文案与 Web 逐字一致:用量 pill 是 `{total} tok · 缓存命中 {percent}%`
+(`locale.ts:78` 的 `stats.cacheHit`;合计 = `billedInput + output`,`StatsPills.tsx:295`);
+命中率用 Web 的 `formatCacheHitPercent`(**部分命中绝不四舍五入成 100**,补小数位直到诚实)。
+布局是 `Wrap` 不是 `Row`:三项宽度都随数字变(四位数 token、三位数百分比),`Row` 超屏时会把
+末项**整块裁掉**(release 里没有溢出条纹,只是看不见——真机"上下文百分比不显示"正是这么来的)。
+上下文 chip 带 14px 小环(照 `ContextMeter.tsx:119-129`)。`简洁` 档(性能与用量偏好)只留
+速率与缓存命中两个读数(Web 的 `usePerformanceUsage === 'compact'`)。
 
 ### 7.5 设置 / 模型 / 插件
 
@@ -363,6 +391,8 @@ DSH 客户端对**非 loopback** 的浏览器把持久化降级为 `memory`,该�
 
 **第一版设置页只做 5 组**:通用(含权限与 Session Log,视模式决定是否下发)、模型、内置插件、Agent 预设、关于/连接。逐组形态见下方"已落地形态"。
 
+**落地端实际落了四组**(2026-10-17):通用(工作步骤展示 / 性能与用量 / 繁忙时发送,三项全部**落手机本地**,是有意偏离)、模型(只读 + 拉取失败的 provider)、连接方式、关于与连接(App 版本 + 连接状态)。**账号 / 内置插件 / Agent 预设不进本版** —— 三者都要先扩连接器方法面(账号状态、插件清单、预设目录今天都没有查询方法),摆一行点下去只弹"还没做"的假入口比没有这一行更糟。判据 = **这一行点了真的有作用**。取舍见 `.agents/notes/implemented/2026-10-17-settings-page-v1-four-groups.md`。
+
 **导航顺序按 DSH `settings.section` 排序**:账号与余额(仅已登录时,order -10) → 通用设置(0) → 模型(10) → 内置插件(15) → Agent 预设(20)。手机额外的「关于与连接」在末尾;插件管理与自动化任务属于独立主面板,不混入设置组。依据:`packages/client/ui-settings-account/src/client/index.ts:289-296`、`ui-settings-general/src/client/index.ts:231-238`、`ui-settings-models/src/client/index.ts:138-148`、`ui-settings-plugins/src/client/index.ts:76-83`、`ui-agent-preset/src/client/index.ts:223-226`、`ui-schedule/src/client/index.ts:64-65`。
 
 **目标、任务清单和自动化任务是三种不同的会话能力**:
@@ -378,6 +408,7 @@ DSH 客户端对**非 loopback** 的浏览器把持久化降级为 `memory`,该�
 - 权限是通用设置里的一组,不是顶层设置组:「新会话默认权限」(候选不含 Auto review)与「当前会话权限」是两个设置项,前者改动仍需风险确认门;当前会话档复用输入栏盾牌的访问模式 sheet,风险门不复制第二套。依据 `ui-permission-presets/src/client/index.ts:159-165,167-174`。
 - 模型 / 内置插件 / Agent 预设 / 关于与连接四个二级页:模型只读展示当前模型与 provider(密钥只显示"已设置/不回传",添加 provider 标"需 bridge");插件为只读清单 + 运行中/unavailable,自定义页面标"电脑端编辑";预设列表 + 当前默认,配置只读;关于页给连接状态、版本(手机 App;电脑端 DSH 版本需 bridge)与配置文件入口。
 - 自动化任务页 = 独立主面板,入口在左会话抽屉底栏(DSH 侧栏面板的对应位):全部/已开启/已结束筛选 + 搜索 + 行内频率与下次计划时间;详情做规则(名称/内容)与删除确认,已结束任务整块只读;不做时间规则编辑(cron 与时区选择器)与任务运行记录(`schedule.records` 未进 bridge)。依据 `ui-schedule/src/client/TaskManagerPage.tsx:114-203`、`ui-schedule/src/client/TaskDetail.tsx:758-863`。
+- **有意偏离(2026-10-16)**:落地端(`app/`)的抽屉底栏只有 **文件 / 归档 / 设置** 三项 ——「演示」「自动化」已删。理由:自动化所属的 `schedule.*` 是范围决定里的 C 类(不上手机),留着只能给一句"还没做";演示数据对"已配对"这个主要状态没用(示例会话混进真实列表)。原型(`mock/proto`)保留五项与完整的自动化任务演示页 —— 原型是 IA 基线,展示 DSH 侧栏的完整形态,`verify-tasks.mjs` 的 53 项断言依赖它。取舍见 `.agents/notes/implemented/2026-10-16-drawer-foot-drops-demo-and-automation.md`。
 
 **不进第一版**:快捷键(无物理键盘,且录键保护是桌面原生能力)、子智能体 / Agent 循环 / 终端 / 网页搜索(属侧边栏插件面板,且需先扩 bridge)、桌面更新、预览版说明、首次引导。
 

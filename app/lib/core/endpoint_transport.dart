@@ -30,6 +30,8 @@ library;
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show debugPrint;
+
 import 'endpoint.dart';
 import 'errors.dart';
 import 'transport.dart';
@@ -105,14 +107,23 @@ class EndpointTransport implements ChannelTransport {
         lastError = error;
         continue;
       }
+      final attemptStart = DateTime.now();
       try {
         final stream = await transport.connect();
+        debugPrint(
+          '[dial] ${endpoint.kind.name} ${endpoint.url} 通 '
+          '(${DateTime.now().difference(attemptStart).inMilliseconds}ms)',
+        );
         _active = transport;
         _activeEndpoint = endpoint;
         onActivated?.call(endpoint);
         onAttempt?.call(endpoint, const EndpointAttempt(ok: true));
         return stream;
       } on TransportException catch (error) {
+        debugPrint(
+          '[dial] ${endpoint.kind.name} ${endpoint.url} 失败 '
+          '(${DateTime.now().difference(attemptStart).inMilliseconds}ms): ${error.message}',
+        );
         // **终态错误不再换端点**：身份不被认（换票被拒 → `notPaired`）时，
         // 换下一个端点只会把"为什么连不上"弄丢 —— 直连要到握手处才失败，
         // reason 变成 close 4003，而 401 那个"电脑不认本机"的信号会被掩盖。

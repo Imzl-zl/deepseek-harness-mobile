@@ -75,6 +75,79 @@ connection-terminal-failure-goes-to-pairing,device-admin-face-dsh-house-style}.m
   单选 + 多选、`offline` scope 删除、确认对话框改页面内(不用 `window.confirm`)且必带后果。
   事故复盘 `docs/postmortem/2026-10-15-offline-batch-hard-delete-nuked-own-phone.md`。
 
+## 2026-10-17:对照 DSH 源码把手机端各项接上(标题/统计/排队/渲染/设置)
+
+用户真机反馈五条,全部先读 DSH 源码再动手,每条有 `packages/...:行号` 出处:
+
+- **会话标题只有一个真值源**:`_touchSummary` 原来每条 delta 都用**本地推导标题**
+  (首条用户消息前 30 字)覆盖电脑侧标题 —— 选中会话名字就变的真因(2026-10-16
+  修的只是 `currentTitle` 读侧)。同一处重建还把 model/running/blank/subagent/cwd
+  掉成默认值。现在 `_touchSummary` 只换计数(`SessionSummary.withCounters`),
+  标题经 `title` 投影 + `session/title` 事件落地,本地推导整条删除。
+  回归用例用**能推 delta 的假客户端** + 真实事件形状(此前假客户端恒回空流,
+  这条链在单测里从未跑过)。
+- **模型目录在生产里一次都没解析成功过**:解析器认的是臆想形状
+  `List<{provider, models}>`,而 DSH `buildModelCatalog` 返回
+  `{default, routableProviders, groups, failures}`(顶层是对象)——
+  与 2026-10-15 投影信封同一类 bug(替身复现的不是真形状)。
+  现在按真形状解析 + 推理等级二级 sheet(照 Web ModelSelect 的 drill)+
+  切模型带 effort。
+- **统计条逐字对齐 Web**:`{total} tok · 缓存命中 {percent}%`(原 `302K · 缓存 96%`)、
+  合计改 `billedInput + output`;`Row` → `Wrap`(原布局把上下文百分比**整块裁掉**,
+  真机"百分比不显示"就是这么来的)+ 字号 12→11;三个 sheet 从**写死的假数**
+  改成真投影数据;`formatCacheHitPercent` 逐字移植 Web(部分命中绝不显示成 100,
+  向量表照抄 Web spec)。
+- **排队条 + 插话 + 打断落地**:新方法 `session.updateQueue`(编辑/删除/插话,
+  与 Web 排队 dock 同一个 DSH 方法)与 `session.cancel`;队列读 `inbox` 投影;
+  主键运行中且空草稿时是停止(照 Web `primaryStops`)。**方法面 29→30**,
+  契约列了没实现的只剩 settings.describe/update、credentials.set/unset 四个。
+- **会话渲染补齐四样**:reasoning 思考过程(原来混进正文)、附件计数、
+  工具结果明细(原来恒空)、插话标记(逐字移植 DSH `SteeringHistory`);
+  **一条坏事件不再炸掉整批**(原来一个 StateError 让整个 delta 丢失 ——
+  "会话打开了但一条都不渲染"的故障模式)。
+- **设置页落四组**:通用(工作步骤展示/性能与用量/繁忙时发送,全部落手机本地、
+  有意偏离 DSH)/ 模型(只读 + 拉取失败的 provider)/ 连接方式/ 关于与连接。
+  账号、内置插件、Agent 预设不进本版(都要先扩连接器方法面,摆占位行是假入口)。
+  顺带修掉 `_toast` 把所有 SnackBar 缀上"还没接上数据"的谎话
+  ("已切到 X 还没接上数据")。
+
+原型 `mock/proto` 同批同步:统计文案对齐 Web + 换行不横滚、新增排队条
+(计数头 + 三个动作)。决策笔记五篇在
+`.agents/notes/implemented/2026-10-17-{session-title-single-source-of-truth,
+model-catalog-real-shape-and-effort,stats-bar-aligns-web-and-real-sheets,
+queue-dock-and-cancel-landed,conversation-rendering-fills-dsh-gaps,
+settings-page-v1-four-groups}.md`。
+
+**门禁**:app flutter test **644** / analyze 0 / format 0 / 平台边界 258 /
+connector tsc 0 + build + test **515** / protocol 486·26·49 /
+CDP: proto·authz 18·settings 28·tasks 53·picker 全绿。
+
+## 2026-10-17 晚:连接器三个设计问题落地(设备记录单位 / 传输分开关 / 弹框宽度)
+
+用户真机反馈三条,全部先读 DSH 源码再动手,取舍各有一篇决策笔记:
+
+- **同一台手机重复扫码不再攒行**(`.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`):
+  二维码是**一次性交互凭证**,设备身份(密钥对)是配对行为的产物;重新配对时手机在
+  `pair-commit` 密文里自报旧 `previousPairingId`(**行定位符,不是凭据** —— 授权仍是
+  二维码秘密),电脑侧据此**替换旧行**(换密钥/换令牌/换 pairingId,保留首次 `pairedAt`)。
+  没有旧行(首配/凭据丢过/被清理)才写新行;停用的旧行也允许被替换(重新扫码就是恢复路径)。
+  先删旧行再写新行(崩中间只是"这次没成",不攒行)。协议侧只加一个**可选**字段,
+  fixture/向量无漂移(486·26·49 不变)。手机侧缝:`main.dart` 的 `previousPairingIdOf`
+  (凭据在时现算,被"重新配对"清掉之前抓快照),确认卡多一行"会替换那条记录"。
+- **传输面按方式分开关**(`.agents/notes/implemented/2026-10-17-transport-channels-registry.md`):
+  `transport/channels.ts` 通道注册表(relay 中转拨号 / direct 直连监听,各自 start/stop/running),
+  服务面 `channels()`/`setChannel()`;管理面 `GET /api/dsh-mobile/transport` +
+  `POST /api/dsh-mobile/transport/{id}/{start,stop}`(**路由按注册表生成** —— 加第三种
+  方式不改管理面与 UI 形状,`admin-face.test.ts` 用三通道注册表钉住);UI 每通道一个开关 +
+  「全部启动/全部停止」(批量是 UI 顺序调用,不设服务端批量端点)。连带效应已查清并写进笔记:
+  停 direct ⇒ `caps.direct` 转 false、`endpoint.describe` 不再报 direct,但手机已学到的
+  端点不删(`mergeEndpoints` 只增),重连先试直连失败再回落 relay(设置页显示"拨不通+原因");
+  停 relay 不碰已接受的直连,停 direct 由 `listener.close()` 收已接受连接;presence 按连接
+  记账,不会假掉线;单条重启失败(端口被占)带原因回界面(400)。
+- **弹框宽度 520→760px** 已在上一轮改完(`client.js` 的 `S.fixedBox`),本轮只验收。
+- 契约同步:`pairing-v2.md` §1/§5/§6/§7、`remote-channel.md` §11/§12、
+  `connector-and-relay.md` §1.3。**方法面仍 25/30**(管理面端点不进 §5.7)。
+
 ## 2026-10-16:四条议题一轮做完(顶栏 / 计数 / 渲染 / 归档)
 
 交接笔记 `.agents/notes/proposed/2026-10-15-mobile-topbar-status-and-rendering-handoff.md` 的四条,
@@ -133,20 +206,21 @@ protocol 486·26·49 / 原型图标与路径门禁。
 **唯一没过的:真机审批回合的自动用例** —— 卡在二维码 5 分钟有效 vs Gradle 构建 15-20 分钟;
 手动链路已通(见上)。
 
-## 方法面 24/29(2026-10-16 校准)
+## 方法面 25/30(2026-10-17 校准)
 
 `repo.info` / `devices.list` / `session.list` / `session.create` / `session.subscribe` /
 `session.unsubscribe` / `session.page` / `session.refetch` / `session.prompt` / `job.list` /
 `job.kill` / `job.follow` / `job.unfollow` / `endpoint.describe` / `session.projections` /
 `session.select-model` / `interaction.respond` / `sync.hello` /
 **`permission.catalog`** / **`permission.switch`** / `session.modelCatalog` /
-**`workspace.list`**(会话列表按工作区分组)。
+**`workspace.list`**(会话列表按工作区分组)/ `workspace.archive` / `workspace.unarchive` /
+**`session.updateQueue`**(排队项编辑/删除/插话)/ **`session.cancel`**(打断当前轮次)。
 
-**契约封闭集 29**,差额 5 个是契约列了没实现的:`session.cancel` / `settings.describe` /
+**契约封闭集 30**,差额 4 个是契约列了没实现的:`settings.describe` /
 `settings.update` / `credentials.set` / `credentials.unset`(依据见契约 §5.8)。
 **这三个数是从代码里数出来的**(`METHODS` 数组 + `handlers.ts` 的两种注册形态),
 不是抄的 —— 2026-10-15 之前这里写过 26/27/21 三个互相矛盾的数字。
-**三处计数必须同步**:`tools.md` 的方法数、契约 §5.7 的表、本行的"x/29"。
+**三处计数必须同步**:`tools.md` 的方法数、契约 §5.7 的表、本行的"x/30"。
 
 **模型切换翻案(2026-10-15)**:我曾写"`session/select-model` 有全局副作用,不要用"——
 **错了**。核实:Web 调的就是这一个方法(`packages/client/ui-model-selection/src/client/directory.ts:98`),
@@ -294,8 +368,9 @@ DSH 照常把 `user/message` 落盘(所以④的回读判据满足),但那个会
 真实 claim、真实 settle)。要再压缩成本,方向是让宿主侧不靠模型就产出一次
 `approval/asked` —— 目前没找到非模型路径,所以只能靠"问清了再跑"。
 
-**方法面剩 5 个**:`session.cancel` / `settings.describe` / `settings.update` /
-`credentials.set` / `credentials.unset`(依据见契约 §5.8;`session.create` 已接)。
+**方法面剩 4 个**:`settings.describe` / `settings.update` /
+`credentials.set` / `credentials.unset`(依据见契约 §5.8;`session.create`、
+`session.cancel`、`session.updateQueue` 已接)。
 `devices.revoke` 不做 / `push.configure` 本期不做。
 再往后:`ui/adaptive` / 三端能力包(鸿蒙暂缓)/ 相机扫码。
 
@@ -345,12 +420,12 @@ DSH 照常把 `user/message` 落盘(所以④的回读判据满足),但那个会
 | `node protocol/verify-fixtures.mjs` | 16 条 fixture / **486 项断言** |
 | `node protocol/verify-loopback.mjs` | **26 项**:手机 ⇄ 中转 ⇄ 桥接回环 |
 | `node protocol/verify-vectors.mjs` | **49 项**跨端密码学向量 |
-| `node app/tools/verify-platform-boundary.mjs` | **244 项**(22 条规则自检 + 扫 68 个 Dart 文件) |
+| `node app/tools/verify-platform-boundary.mjs` | **258 项**(22 条规则自检 + 扫 72 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 原型图标集 / 工具脚本不许硬编码盘符 |
-| `cd app && flutter test` | **580 项** |
+| `cd app && flutter test` | **641 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` | 0 问题(比 `flutter analyze` 严) |
 | `cd app && dart format --output=none --set-exit-if-changed lib test integration_test` | 0 文件需重排 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **452 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **481 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
 | CDP 浏览器组 | `verify-proto` / `verify-authz`(18) / `verify-settings`(28) / `verify-tasks`(53) / `verify-picker` |
 | `node app/tools/gen-pairing-vectors.mjs` | 重新生成配对向量(**改了配对派生规则后必须重跑**) |
@@ -378,16 +453,17 @@ DSH 照常把 `user/message` 落盘(所以④的回读判据满足),但那个会
 
 ## 进行中 / 未完成
 
-- **方法面 21/27**(见上面"方法面 21/27"一节,那里是当前清单)。
+- **方法面 25/30**(见上面"方法面 25/30"一节,那里是当前清单)。
   **处理器表的键是"实现了什么"的唯一出处**;契约 §5.7 的方法表已逐条标注 DSH 侧依据。
   `METHODS` 与契约**逐字对应**——契约外的方法不该被 `isMethod` 放行(那会让"不存在"看起来像"没实现")。
-  **三个计数必须同步**:`tools.md` 的方法数、契约 §5.7 的表、本节的"x/27"。
+  **三个计数必须同步**:`tools.md` 的方法数、契约 §5.7 的表、本节的"x/30"。
   **⚠ 那条"26"的来历已作废**(2026-10-16):原 22 删掉 `interaction.list`(待处理集合是投影,没有独立查询)、
   `devices.revoke`(吊销不是方法:名册写入方本来就是电脑侧)、`push.configure`(推送本期不做),
   加入 `session.create`(DSH 原生)与 `endpoint.describe`(端点自报,2026-10-14);
   2026-10-15 加 `session.projections`、`session.select-model`、`session.modelCatalog`、
   `permission.catalog`、`permission.switch`、`workspace.list`;
-  2026-10-16 加 `workspace.archive` / `workspace.unarchive`(归档面)后是 **29**。
+  2026-10-16 加 `workspace.archive` / `workspace.unarchive`(归档面)后是 **29**;
+  2026-10-17 加 `session.updateQueue`(排队面)与 `session.cancel`(打断)后是 **30**。
   数法:`node -e` 从 `METHODS` 与 `handlers.ts` 里数(两处口径见 `.agents/notes/implemented/2026-10-16-archive-surface-and-alias-fix.md`)。
 - **错误码表 31 个**(15 协议层 + 16 DSH 宿主层),两边(TS `ERROR_TABLE` / Dart `ErrorCode`)
   **逐字一致**,由 `tests/error-table-parity.test.ts` 断言(做过变异校验:改一个动作即红并点名)。

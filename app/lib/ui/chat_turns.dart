@@ -23,9 +23,21 @@ import 'dsh_markdown.dart';
 
 /// 用户消息（`.turn--u`）。
 class UserTurn extends StatelessWidget {
-  const UserTurn(this.text, {super.key});
+  const UserTurn(
+    this.text, {
+    super.key,
+    this.attachmentCount = 0,
+    this.steering = false,
+  });
 
   final String text;
+
+  /// 附件个数（图片 + 文件）。**只计数不渲染**（读附件要 `session/attachment`，
+  /// 本期未接）—— 但"带了 2 张图"这个事实必须说出来。
+  final int attachmentCount;
+
+  /// 这是一条插话（轮次跑到一半插进去的）。
+  final bool steering;
 
   @override
   Widget build(BuildContext context) {
@@ -45,22 +57,59 @@ class UserTurn extends StatelessWidget {
                 maxWidth: MediaQuery.of(context).size.width * 0.82,
               ),
               padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
-              decoration: const BoxDecoration(
-                color: DshColors.layer3,
-                borderRadius: BorderRadius.only(
+              decoration: BoxDecoration(
+                // 插话用工具色底：它是"轮次跑到一半的输入"，与开轮输入
+                // 视觉上分开（DSH Web 同样把 steering 与 user 分开成两类节点）。
+                color: steering ? DshColors.roleToolBg : DshColors.layer3,
+                borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(22),
                   topRight: Radius.circular(22),
                   bottomLeft: Radius.circular(22),
                   bottomRight: Radius.circular(6),
                 ),
               ),
-              child: Text(
-                text,
-                style: const TextStyle(
-                  fontSize: 14.5,
-                  height: 21 / 14.5,
-                  color: DshColors.labelPrimary,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  if (steering)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          DshIcon('queue', size: 11, color: DshColors.roleTool),
+                          SizedBox(width: 4),
+                          Text(
+                            '插话',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: DshColors.roleTool,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  Text(
+                    text,
+                    style: const TextStyle(
+                      fontSize: 14.5,
+                      height: 21 / 14.5,
+                      color: DshColors.labelPrimary,
+                    ),
+                  ),
+                  if (attachmentCount > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(
+                        '$attachmentCount 个附件（手机上不显示）',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: DshColors.labelTertiary,
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -72,7 +121,12 @@ class UserTurn extends StatelessWidget {
 
 /// 助手消息（`.turn.a` + `.a-head` + `.md`）。
 class AssistantTurn extends StatelessWidget {
-  const AssistantTurn({super.key, required this.text, this.modelName});
+  const AssistantTurn({
+    super.key,
+    required this.text,
+    this.modelName,
+    this.reasoning = '',
+  });
 
   final String text;
 
@@ -81,6 +135,9 @@ class AssistantTurn extends StatelessWidget {
   /// **原型有它**，而它是重要信息：同一会话里可能换过模型，
   /// 而"这段是哪個模型答的"事后无法从内容判断。
   final String? modelName;
+
+  /// 思考过程（`{type:'reasoning'}` 块；空 = 不显示）。
+  final String reasoning;
 
   @override
   Widget build(BuildContext context) {
@@ -118,8 +175,93 @@ class AssistantTurn extends StatelessWidget {
               ],
             ],
           ),
+          // **思考过程**：折叠在正文上方。默认收起 —— 它经常比正文还长，
+          // 全展开会把对话冲掉（DSH 桌面端同样把它归入"过程"分组）。
+          if (reasoning.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _ReasoningBlock(text: reasoning),
+          ],
           // `.md`：Markdown 正文（代码块、列表、加粗都渲染）。
           DshMarkdown(text),
+        ],
+      ),
+    );
+  }
+}
+
+/// 思考过程块（可折叠）。
+class _ReasoningBlock extends StatefulWidget {
+  const _ReasoningBlock({required this.text});
+
+  final String text;
+
+  @override
+  State<_ReasoningBlock> createState() => _ReasoningBlockState();
+}
+
+class _ReasoningBlockState extends State<_ReasoningBlock> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: DshColors.layer1,
+        borderRadius: BorderRadius.circular(DshRadius.md),
+        border: Border.all(color: DshColors.layer2),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: () => setState(() => _open = !_open),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                children: [
+                  const DshIcon(
+                    'sparkle',
+                    size: 13,
+                    color: DshColors.roleAssistant,
+                  ),
+                  const SizedBox(width: 6),
+                  const Text(
+                    '思考过程',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: DshColors.labelSecondary,
+                    ),
+                  ),
+                  const Spacer(),
+                  DshIcon(
+                    _open ? 'chevronDown' : 'chevronRight',
+                    size: 13,
+                    color: DshColors.labelTertiary,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_open)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: DshColors.layer2)),
+              ),
+              // 思考过程按**纯文本**渲染：它不是给用户的答案，
+              // Markdown 记号在里面只会添乱（DSH 桌面端同样按文本呈现）。
+              child: SelectableText(
+                widget.text,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  height: 20 / 12.5,
+                  color: DshColors.labelTertiary,
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -168,6 +310,7 @@ class ToolCard extends StatefulWidget {
     this.argument = '',
     this.detail = '',
     this.diffStat,
+    this.initiallyOpen = false,
   });
 
   /// 工具名（`bash` / `edit` / …）—— 等宽字体、工具色。
@@ -184,12 +327,21 @@ class ToolCard extends StatefulWidget {
   /// 变更统计（`+128 −46`）；`null` = 不显示。
   final ({int added, int removed})? diffStat;
 
+  /// 初始就是展开的（"工作步骤展示"偏好的**完全展开**档）。
+  final bool initiallyOpen;
+
   @override
   State<ToolCard> createState() => _ToolCardState();
 }
 
 class _ToolCardState extends State<ToolCard> {
   bool _open = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _open = widget.initiallyOpen;
+  }
 
   @override
   Widget build(BuildContext context) {

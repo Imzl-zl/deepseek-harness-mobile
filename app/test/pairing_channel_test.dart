@@ -149,6 +149,21 @@ void main() {
       await channel.close();
     });
 
+    test('previousPairingId 传了才进密文载荷（重新配对同一台电脑才带）', () async {
+      final (channel, pc) = await open();
+      await channel.commit(code, previousPairingId: 'x' * 43);
+
+      // 载荷里多一个字段。它经密文过线（中转只看得见帧类型与路由元数据，I10），
+      // 且**不是凭据** —— 授权仍是这一次的二维码秘密。
+      expect(pc.commitPayload, {
+        'v': 2,
+        'offerId': offer.offerId,
+        'code': code,
+        'previousPairingId': 'x' * 43,
+      });
+      await channel.close();
+    });
+
     test('回执带电脑侧给的原因时如实抛（用户要看到那句话）', () async {
       final (channel, _) = await open(
         commitFailure: <String, Object?>{

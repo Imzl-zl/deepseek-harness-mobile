@@ -165,6 +165,25 @@ void main() {
     expect(ack.refreshToken, isNotEmpty);
   });
 
+  test('重新配对：previousPairingId 经密文过去，换票请求里没有它', () async {
+    final http = _TicketRecorder();
+    final chain = await begin(http: http);
+    final attempt = attemptOf[chain.pc]!;
+
+    await attempt.commit(previousPairingId: 'x' * 43);
+
+    expect(chain.pc.commitPayload, {
+      'v': 2,
+      'offerId': offer.offerId,
+      'code': offer.code,
+      'previousPairingId': 'x' * 43,
+    });
+    // 换票那一跳是**匿名**的（此刻还没有任何凭据）：previousPairingId 只进
+    // `pair-commit` 的密文，不进 `/ws-ticket` 的 body —— 中转不该看见它。
+    final ticket = jsonDecode(http.calls.single.body!) as Map<String, Object?>;
+    expect(ticket.containsKey('previousPairingId'), isFalse);
+  });
+
   test('提交默认用二维码里那个码；显式传码是"提交错码"的场景', () async {
     final http = _TicketRecorder();
     final chain = await begin(

@@ -43,6 +43,8 @@ function build(seen: unknown[][], opts: { createShouldThrow?: boolean } = {}) {
       list: async () => [],
       prompt: async () => ({ accepted: true as const }),
       selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+      updateQueue: async () => ({ accepted: true as const }),
+      cancel: () => ({ accepted: true as const }),
       create: async (request) => {
         seen.push([request])
         if (opts.createShouldThrow) throw new Error('DSH 拒绝新建')

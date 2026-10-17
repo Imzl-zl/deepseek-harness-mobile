@@ -59,10 +59,18 @@ export async function startChain(t: Cleanup): Promise<Chain> {
   const enrollment = createPairingEndpoint({
     pairing, pcId: CONNECTOR_ID, announce: publish,
     putDevice: async (id, row) => { devices.set(id, row) },
+    findPreviousPairing: (pairingId) => {
+      for (const [id, row] of devices) {
+        if (row.pairingId === pairingId) return { devId: id, pairedAt: row.pairedAt }
+      }
+      return null
+    },
+    removeDevice: async (id) => { devices.delete(id) },
   })
   const sessions = {
     list: async () => [], page: async () => ({ records: [], hasMore: false }),
     prompt: async () => ({ accepted: true as const }), cancel: () => ({ accepted: true as const }),
+    updateQueue: async () => ({ accepted: true as const }),
     selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
     create: async () => ({ sessionId: 'dsh-new' }),
     follow: (): never => { throw new Error('本用例不应建立 DSH 订阅') },

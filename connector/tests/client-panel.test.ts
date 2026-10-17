@@ -86,16 +86,23 @@ const positionOf = (element: Element): unknown =>
  *
  * 单遍渲染足够 —— 这里不验证协调器，只验证"给定这份 status 与这份 locale，
  * 组件产出什么"。setState 直接写回 hook 槽，于是测试可以"点一下 → 重渲染 → 看结果"。
- * `useEffect` **立即跑一遍**（不比较 deps）：首渲染那个 effect 就是拉 status，
- * 不跑的话面板永远停在"未配置中转"的空态。
+ * `useEffect` **只在首渲染跑一遍**（对齐生产：deps 稳定所以 effect 只跑一次）。
+ * 早先它每遍渲染都跑，于是 `refresh()` 的 `setError('')` 会在断言前把错误清掉 ——
+ * 那是桩的保真度问题，不是产品的（生产里写失败后没有 state 变化会触发重拉）。
+ *
+ * **函数类型的 `type` 当场渲染**（`h(AdminPanel, …)` 这种组合）：真 React 会递归
+ * 渲染子组件，桩不渲染就只看到一棵"未展开"的树，断言全部落空。
  */
 function makeReact() {
   let hooks: unknown[] = []
   let index = 0
-  const createElement = (type: string, props: Record<string, unknown> | null, ...children: unknown[]): Element => ({
-    type,
-    props: { ...(props ?? {}), ...(children.length === 0 ? {} : { children: children.length === 1 ? children[0] : children }) },
-  })
+  const createElement = (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]): unknown => {
+    const merged = { ...(props ?? {}), ...(children.length === 0 ? {} : { children: children.length === 1 ? children[0] : children }) }
+    if (typeof type === 'function') {
+      return (type as (p: Record<string, unknown>) => unknown)(merged)
+    }
+    return { type, props: merged }
+  }
   return {
     createElement,
     useState(initial: unknown) {
@@ -118,8 +125,15 @@ function makeReact() {
       return fn
     },
     useEffect(fn: () => unknown) {
-      index++
-      fn()
+      // **按 hook 槽判首跑**（对齐生产：deps 稳定所以每个 effect 一辈子只跑
+      // 一次）。不能用一个全局 flag —— 外层 ConnectorPanel 的 Esc effect 会先把
+      // 它吃掉，里面 AdminPanel 的 refresh 就永远不跑了。桩每遍渲染都跑则会让
+      // 异步 `setError('')` 与断言竞态（见文件头）。
+      const at = index++
+      if (!(at in hooks)) {
+        hooks[at] = true
+        fn()
+      }
     },
     /** 重渲染：hook 槽保留（state 活着），下标归零。 */
     render(component: (props: Record<string, unknown>) => unknown, props: Record<string, unknown>): unknown {
@@ -145,45 +159,66 @@ const DEVICES = [
   { id: 'dev-gone', name: '旧手机', pairedAt: 1740000000000, revoked: true, online: false, foreground: false },
 ]
 
+/** 两条传输通道（按"方式"分开关，2026-10-17）。 */
+const CHANNELS = [
+  { id: 'relay', label: '中转拨号', running: true, detail: 'ws://127.0.0.1:8787/ws/connector' },
+  { id: 'direct', label: '直连监听', running: true, detail: '0.0.0.0:8790' },
+]
+
+/** status 与 /transport 两份读面的默认桩。 */
+const defaultFetch = (channels: unknown[] = CHANNELS) => async (url: string) =>
+  String(url).includes('/transport')
+    ? { ok: true, status: 200, json: async () => ({ channels }) }
+    : { ok: true, status: 200, json: async () => ({ relayUrl: 'ws://127.0.0.1:8787/ws/connector', devices: DEVICES }) }
+
 /** 把 `client.js` 装起来，交出「渲染函数」与「它注册的 locale 字典」。 */
 function loadClient(fetchImpl?: (url: string, init?: unknown) => unknown) {
   const source = readFileSync(CLIENT_PATH, 'utf8')
   let loaded: { factory: (require: (id: string) => unknown) => { apply: (ctx: unknown) => void } } | null = null
   const window = { __ModuleLoader__: { load: (mod: typeof loaded) => { loaded = mod } } }
   // `client.js` 只在 `askConfirm` 里碰 `document.activeElement`，桩一个就够。
-  ;(globalThis as { document?: unknown }).document = { activeElement: null }
-  // 首渲染的 effect 会拉 status；这里回一份和 `DEVICES` 一致的。
-  ;(globalThis as { fetch?: unknown }).fetch = fetchImpl ?? (async () => ({
-    ok: true,
-    status: 200,
-    json: async () => ({ relayUrl: 'ws://127.0.0.1:8787/ws/connector', devices: DEVICES }),
-  }))
+  // **addEventListener 也要桩**：ConnectorPanel 的 Esc 关闭挂在 document 上。
+  ;(globalThis as { document?: unknown }).document = {
+    activeElement: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }
+  // 首渲染的 effect 会拉 status 与 /transport；这里回一份和 `DEVICES` 一致的。
+  ;(globalThis as { fetch?: unknown }).fetch = fetchImpl ?? defaultFetch()
   new Function('window', source)(window)
   assert.ok(loaded !== null, 'client.js 必须调用 window.__ModuleLoader__.load')
 
   const react = makeReact()
+  // `react-dom` 是平台基线外部（`client/web/src/platform.ts:9`）；桩的
+  // `createPortal` 原样返回节点 —— 测试只验树，不验证挂载点。
+  const reactDom = { createPortal: (node: unknown) => node }
   let registered: { zh: Record<string, string>; en: Record<string, string> } | null = null
-  let panel: ((props: Record<string, unknown>) => unknown) | null = null
+  const panels: Array<(props: Record<string, unknown>) => unknown> = []
+  let layoutSelects: Array<string | null> = []
   const module = (loaded as unknown as {
     factory: (require: (id: string) => unknown) => {
       apply: (ctx: unknown) => void
     }
-  }).factory(() => react)
+  }).factory((id: string) => (id === 'react-dom' ? reactDom : react))
   module.apply({
     effect: (fn: () => unknown) => fn(),
     locale: { register: (_ns: string, dict: { zh: Record<string, string>; en: Record<string, string> }) => { registered = dict } },
+    layout: { selectPanel: (id: string | null) => { layoutSelects.push(id) } },
     slots: {
       // `inject(slot, factory)` 的语义是"在这个 slot 上注册"，所以要把 factory 调起来。
       inject: (_slot: string, factory: () => unknown) => factory(),
-      register: (_def: unknown, component: (props: Record<string, unknown>) => unknown) => { panel = component },
+      register: (_def: unknown, component: (props: Record<string, unknown>) => unknown) => { panels.push(component) },
     },
   })
   assert.ok(registered !== null, '必须注册 locale 字典')
-  assert.ok(panel !== null, '必须注册面板组件')
+  // 两个注册：侧边栏图标 + 主面板（弹框）。顺序即注册顺序。
+  assert.equal(panels.length, 2, '必须注册侧边栏条目与主面板两个组件')
   return {
     react,
     dict: registered as unknown as { zh: Record<string, string>; en: Record<string, string> },
-    panel: panel as unknown as (props: Record<string, unknown>) => unknown,
+    panel: panels[1] as unknown as (props: Record<string, unknown>) => unknown,
+    icon: panels[0] as unknown as (props: Record<string, unknown>) => unknown,
+    layoutSelects,
   }
 }
 
@@ -329,6 +364,122 @@ test('对话框：删除离线那台的后果句是"那台手机需要重新配�
   assert.match(dialog, /那台手机需要重新配对。/)
 })
 
+// ---- 2026-10-17：侧边栏弹框 + 传输方式分开关 + 配对时间列 ----
+
+test('注册：侧边栏条目与主面板两个组件，且都走标准槽', async () => {
+  const source = readFileSync(CLIENT_PATH, 'utf8')
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ')
+  assert.match(code, /slots\.inject\('sidebar\.panellist'/, '侧边栏条目走标准列表槽')
+  assert.match(code, /slots\.inject\('main'/, '主面板走标准 keyed 槽')
+  assert.match(code, /order:\s*5/, 'order 5：插件(0)之下、自动化任务(10)之上')
+  assert.doesNotMatch(code, /plugins\.bundle\.config/, '插件页那张卡已撤（用户明确不要那个入口）')
+})
+
+test('弹框：role=dialog + 关闭键走 selectPanel(null)（标准"回会话视图"）', async () => {
+  const selects: Array<string | null> = []
+  const close = () => selects.push(null)
+  const { react, panel, props, tree } = await mountPanel({ close })
+
+  const box = flatten(tree).find((element) => element.props['role'] === 'dialog')
+  assert.ok(box !== undefined, '主面板渲染成弹框（role=dialog）')
+  assert.equal(box?.props['aria-modal'], true)
+  assert.equal(buttonWith(tree, '关闭') !== undefined, true, '有关闭键')
+
+  const closeButton = buttonWith(tree, '关闭') as Element
+  ;(closeButton.props.onClick as () => void)()
+  assert.deepEqual(selects, [null], '关闭 = 调注入的 close（装配层接 selectPanel(null)），不自己造导航')
+  // 渲染不炸（桩的 portal 原样返回）。
+  assert.ok(allText(react.render(panel, props)).length > 0)
+})
+
+// ---- 传输方式：每个通道一个开关（2026-10-17 用户："两个方式两个开关"）----
+
+test('传输方式：每个通道一行开关，行来自 GET /transport（不写死通道 id）', async () => {
+  const { tree } = await mountPanel()
+  const text = allText(tree)
+  // 两条通道各一行：标签 + 状态 + 详情 + 自己的启停键。
+  assert.match(text, /中转拨号/)
+  assert.match(text, /直连监听/)
+  assert.equal(buttonWith(tree, '启动') , undefined, '运行中的通道给的是「停止」')
+  const stops = flatten(tree).filter((element) => element.type === 'button' && textOf(element.props.children) === '停止')
+  assert.equal(stops.length, 2, '两条在跑的通道各一个「停止」')
+  // 批量入口（同时开 / 同时关是常态）。
+  assert.equal(buttonWith(tree, '全部启动') !== undefined, true)
+  assert.equal(buttonWith(tree, '全部停止') !== undefined, true)
+})
+
+test('传输方式：电脑侧说停了，那一行的键换成「启动」', async () => {
+  const stopped = [
+    { id: 'relay', label: '中转拨号', running: false, detail: 'ws://127.0.0.1:8787/ws/connector' },
+    { id: 'direct', label: '直连监听', running: false, detail: '未配置监听端口（listenPort: 0）' },
+  ]
+  const { tree } = await mountPanel({}, defaultFetch(stopped))
+  const starts = flatten(tree).filter((element) => element.type === 'button' && textOf(element.props.children) === '启动')
+  assert.equal(starts.length, 2, '两条停着的通道各一个「启动」')
+  assert.match(allText(tree), /直连监听[\s\S]*未配置监听端口/, '未配置的通道说清原因')
+})
+
+test('传输方式：点一行的「停止」打的是 /transport/{id}/stop，跑完重拉状态', async () => {
+  const seen: string[] = []
+  const { tree } = await mountPanel({}, async (url: string) => {
+    seen.push(String(url))
+    return defaultFetch()(url)
+  })
+  // 第一行是中转拨号（在跑 ⇒ 「停止」）。
+  const stop = flatten(tree).find((element) =>
+    element.type === 'button' && textOf(element.props.children) === '停止') as Element
+  assert.ok(stop !== undefined, '在跑的通道给「停止」')
+  await (stop.props.onClick as () => Promise<void>)()
+  assert.ok(seen.includes('/api/dsh-mobile/transport/relay/stop'), `应打 relay/stop，实际 ${seen.join(',')}`)
+  // 跑完重拉了 /transport（按钮状态要从电脑侧真值来，不乐观翻转）。
+  assert.ok(seen.filter((url) => url.includes('/transport')).length >= 2, '跑完要重拉通道列表')
+})
+
+test('传输方式：加第三种方式不改 UI 形状（三个通道渲染三行）', async () => {
+  const three = [...CHANNELS, { id: 'tailscale', label: 'Tailscale', running: false, detail: '未配置' }]
+  const { tree } = await mountPanel({}, defaultFetch(three))
+  const text = allText(tree)
+  assert.match(text, /Tailscale/)
+  const stops = flatten(tree).filter((element) => element.type === 'button' && textOf(element.props.children) === '停止')
+  const starts = flatten(tree).filter((element) => element.type === 'button' && textOf(element.props.children) === '启动')
+  assert.equal(stops.length, 2, '两条在跑的给「停止」')
+  assert.equal(starts.length, 1, '停着的那条给「启动」')
+})
+
+test('传输方式：启动失败带原因显示在面板顶部（端口被占）', async () => {
+  // 直连是停着状态，点「启动」而电脑侧回 400 + 原话（端口被占）。
+  const failing = async (url: string) =>
+    String(url).endsWith('/api/dsh-mobile/transport/direct/start')
+      ? { ok: false, status: 400, json: async () => ({ ok: false, error: 'listen EADDRINUSE: address already in use 8790' }) }
+      : defaultFetch([
+        { id: 'relay', label: '中转拨号', running: true, detail: 'ws://127.0.0.1:8787/ws/connector' },
+        { id: 'direct', label: '直连监听', running: false, detail: '0.0.0.0:8790' },
+      ])(url)
+  const { react, panel, props, tree } = await mountPanel({}, failing)
+
+  const start = flatten(tree).filter((element) =>
+    element.type === 'button' && textOf(element.props.children) === '启动')[0] as Element
+  assert.ok(start !== undefined, '停着的直连给「启动」')
+  await (start.props.onClick as () => Promise<void>)()
+
+  const text = allText(react.render(panel, props))
+  assert.match(text, /启动失败：listen EADDRINUSE/, '失败要带原因，且要能被看见')
+})
+
+test('设备表有「配对于」列：同一台手机扫几次码就有几条，按配对时间认出一条', async () => {
+  const { tree } = await mountPanel()
+  const head = flatten(tree).find((element) => element.type === 'thead')
+  assert.match(textOf(head?.props.children), /配对于/, '表头有「配对于」')
+  // 第一行的配对于列是**绝对时间**（不是相对时间、也不是 '—'）——
+  // 要认出"哪条是最新那条"，相对时间给不出这个答案。
+  const firstRow = bodyRows(tree)[0] as Element
+  const cells = Array.isArray(firstRow.props.children) ? firstRow.props.children : [firstRow.props.children]
+  const pairedCell = textOf(cells[2])
+  assert.notEqual(pairedCell, '', '配对于列有内容')
+  assert.notEqual(pairedCell, '—', '配对于列不是占位符')
+  assert.match(pairedCell, /\d/, '配对于列渲染出可读的时间')
+})
+
 test('对话框：删除所选时，有在线报"其中 {s} 台在线"，无在线就不提', async () => {
   const { react, panel, props, tree } = await mountPanel()
   // 两行都勾：一台在线、一台离线。**每勾一下都要重渲染、并且重新取那一行的
@@ -385,37 +536,38 @@ test('对话框：按状态清的后果句必带"那几台手机需要重新配�
   assert.match(dialog, /在线的 1 台会跳过。那几台手机需要重新配对。/)
 })
 
-test('面板：summary 视图报未停用的台数，不报停用的', async () => {
-  const { react, panel, props } = await mountPanel({ view: 'summary' })
-  assert.equal(allText(react.render(panel, props)), '2 台设备', '卡片行数的是"能用的设备"，停用的不算')
-})
-
-test('对话框：在面板内绝对定位，不用 fixed（插件详情页的过渡可能带 transform）', async () => {
+test('弹框遮罩用 fixed（主面板是框架根级区域，没有带 transform 的祖先）', async () => {
   const { react, panel, props, tree } = await mountPanel()
-  // 面板自己是定位基准。
-  assert.equal(positionOf(tree as Element), 'relative', 'S.wrap 要有 position: relative')
+  // 2026-10-17 迁到侧边栏弹框后，定位基准从"插件页卡片"换成"主面板"——
+  // 主面板是 `main` keyed 槽的根级区域，`createPortal` 挂到 body，
+  // 没有带 transform 的祖先，fixed  therefore 安全且能盖住整页。
+  assert.equal(positionOf(tree as Element), 'fixed', '遮罩 fixed：盖住整页')
 
   const disable = buttonWith(bodyRows(tree)[0] as Element, '停用')
   assert.ok(disable !== undefined)
   ;(disable.props.onClick as () => void)()
   const shown = react.render(panel, props)
+  // 面板内的确认对话框仍用 absolute：它的基准是 S.wrap（position: relative），
+  // 盖住弹框本体就够了 —— 不需要也不该盖到整页。
   const mask = flatten(shown).find((element) => positionOf(element) === 'absolute')
-  assert.ok(mask !== undefined, '遮罩要绝对定位于面板自身')
-  // fixed 在带 transform 的祖先里会改成相对该祖先定位 —— 对话框会跑位甚至被裁。
-  assert.equal(
-    flatten(shown).some((element) => positionOf(element) === 'fixed'),
-    false,
-    '不许用 fixed：DSH「插件」页详情页有滑入过渡，很可能带 transform',
-  )
+  assert.ok(mask !== undefined, '确认对话框遮罩绝对定位于面板自身')
+  const wrap = flatten(shown).find((element) => positionOf(element) === 'relative')
+  assert.ok(wrap !== undefined, 'S.wrap 仍是定位基准')
 })
 
 test('失败必须带原因显示在面板顶部（照 DSH `停用失败：{reason}`）', async () => {
-  // status 照常成功，**写端点**回 400 + 原话；界面必须把它显示出来，
+  // status 与 /transport 照常成功，**写端点**回 400 + 原话；界面必须把它显示出来，
   // 而不是静默什么都不做。
-  const failing = async (url: string) =>
-    String(url).endsWith('/api/dsh-mobile/status')
-      ? { ok: true, status: 200, json: async () => ({ relayUrl: 'ws://127.0.0.1:8787/ws/connector', devices: DEVICES }) }
-      : { ok: false, status: 400, json: async () => ({ ok: false, error: '名册上报失败：中转不应答' }) }
+  const failing = async (url: string) => {
+    const path = String(url)
+    if (path.endsWith('/api/dsh-mobile/status')) {
+      return { ok: true, status: 200, json: async () => ({ relayUrl: 'ws://127.0.0.1:8787/ws/connector', devices: DEVICES }) }
+    }
+    if (path.endsWith('/api/dsh-mobile/transport')) {
+      return { ok: true, status: 200, json: async () => ({ channels: CHANNELS }) }
+    }
+    return { ok: false, status: 400, json: async () => ({ ok: false, error: '名册上报失败：中转不应答' }) }
+  }
   const { react, panel, props, tree } = await mountPanel({}, failing)
 
   const disable = buttonWith(bodyRows(tree)[0] as Element, '停用')
@@ -430,9 +582,12 @@ test('失败必须带原因显示在面板顶部（照 DSH `停用失败：{reas
   // 确认键跑起来是 async，等它落定。
   await flush()
 
-  const text = allText(react.render(panel, props))
-  assert.match(text, /停用失败：名册上报失败：中转不应答/, '失败要带原因，且要能被看见')
+  // **只从一棵树断言**：桩的 `useEffect` 每遍渲染都重跑（生产的 deps 稳定、
+  // 只跑一次），多渲染一遍会让 refresh 的 `setError('')` 赶上来了 —— 那是桩的
+  // 保真度问题，不是产品的。生产里写失败后没有 state 变化会触发重拉。
+  const after = react.render(panel, props)
+  assert.match(allText(after), /停用失败：名册上报失败：中转不应答/, '失败要带原因，且要能被看见')
   // 对话框已经关掉：跑起来之后不该还挂着一层遮罩。
-  assert.equal(dialogOf(react.render(panel, props)), undefined, '跑起来就关框')
+  assert.equal(dialogOf(after), undefined, '跑起来就关框')
 })
 

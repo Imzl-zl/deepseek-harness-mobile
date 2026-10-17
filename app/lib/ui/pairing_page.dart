@@ -104,6 +104,7 @@ class PairingPage extends StatefulWidget {
     this.deviceName = '我的手机',
     this.allowInsecureLocal = false,
     this.notice,
+    this.previousPairingIdOf,
   });
 
   /// 配对成功时回调（上层负责落盘与建连）。
@@ -139,6 +140,16 @@ class PairingPage extends StatefulWidget {
   /// 手动点"重新配对"也给一句（"已清掉本机凭据"），两条路同一字段。
   final String? notice;
 
+  /// **旧配对标识**的取值器：给这台电脑的 `pcId`，返回本机上次配对的
+  /// `pairingId`（没有就 `null`）。
+  ///
+  /// 重新配对（换密钥）时电脑侧靠它**替换旧行**而不是又攒一行 —— 2026-10-17
+  /// 用户："为啥每次扫都是一个新设备"。它**不是凭据**（授权仍是这一次的二维码
+  /// 秘密），只是行定位符，且只在 `pair-commit` 的密文里过线。
+  /// 装配层（`main.dart`）注入：凭据还在时现算，被"重新配对"清掉之前抓快照。
+  /// 取舍与威胁模型：`.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`。
+  final String? Function(String pcId)? previousPairingIdOf;
+
   @override
   State<PairingPage> createState() => _PairingPageState();
 }
@@ -156,6 +167,12 @@ class _PairingPageState extends State<PairingPage> {
 
   /// 本次配对生成的主种子（确认那一步之后才落盘，见 `_commit`）。
   String? _masterSeedHex;
+
+  /// 本次配对自报的**旧配对标识**（重新配对同一台电脑时非空）。
+  ///
+  /// 在 [_connect] 解析出二维码的 `pcId` 之后取一次值 —— 换一台电脑扫它是
+  /// `null`（首配，写新行）。
+  String? _previousPairingId;
 
   /// 电脑身份指纹（本地算，用来和电脑上打印的那段载荷对照）。
   String? _pcFingerprint;
@@ -202,6 +219,9 @@ class _PairingPageState extends State<PairingPage> {
         text,
         allowInsecureLocal: widget.allowInsecureLocal,
       );
+      // 旧配对标识：**只有扫的是同一台电脑**（pcId 相同）才报上去。
+      // 换一台电脑时它是 null —— 那边没有旧行可替换，报了也白报。
+      final previousPairingId = widget.previousPairingIdOf?.call(offer.pcId);
       // 设备身份：主种子 + 派生的两把公钥。主种子此刻只在本页内存里，
       // 确认并配对成功之后才进系统安全存储。
       final masterSeedHex = toHex(randomBytes(32));
@@ -226,6 +246,7 @@ class _PairingPageState extends State<PairingPage> {
       }
       setState(() {
         _masterSeedHex = masterSeedHex;
+        _previousPairingId = previousPairingId;
         _pcFingerprint = fingerprint;
         _attempt = attempt;
       });
@@ -249,7 +270,7 @@ class _PairingPageState extends State<PairingPage> {
       _busyLabel = '提交配对码…';
     });
     try {
-      final ack = await attempt.commit();
+      final ack = await attempt.commit(previousPairingId: _previousPairingId);
       final identity = attempt.identity;
       final result = PairingResult(
         offer: attempt.offer,
@@ -288,6 +309,7 @@ class _PairingPageState extends State<PairingPage> {
     setState(() {
       _attempt = null;
       _masterSeedHex = null;
+      _previousPairingId = null;
       _pcFingerprint = null;
     });
     if (attempt != null) await attempt.cancel();
@@ -444,6 +466,9 @@ class _PairingPageState extends State<PairingPage> {
               busy: _busy,
               onConfirm: _commit,
               onCancel: _cancelAttempt,
+              // 重新配对同一台电脑：把"会替换旧记录"说在确认之前 ——
+              // 用户该知道这一扫之后电脑侧少一行、而不是又多一行。
+              replacing: _previousPairingId != null,
             ),
           ],
           if (result != null) ...[
@@ -550,6 +575,7 @@ class _IdentityCard extends StatelessWidget {
     required this.busy,
     required this.onConfirm,
     required this.onCancel,
+    this.replacing = false,
   });
 
   final PairingOffer offer;
@@ -558,6 +584,11 @@ class _IdentityCard extends StatelessWidget {
   final bool busy;
   final VoidCallback onConfirm;
   final VoidCallback onCancel;
+
+  /// 这一次是**重新配对同一台电脑**（手机自报了旧配对标识）：电脑侧会
+  /// 替换旧行而不是又攒一行。确认前要说出来 —— 记录行数变化是用户看得见
+  /// 的后果（`.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`）。
+  final bool replacing;
 
   @override
   Widget build(BuildContext context) {
@@ -585,6 +616,29 @@ class _IdentityCard extends StatelessWidget {
             '确认之后，配对码才会加密发过去 —— 电脑此刻还没有这台设备的任何记录。',
             style: TextStyle(fontSize: 11, color: DshColors.labelTertiary),
           ),
+          if (replacing) ...[
+            const SizedBox(height: 8),
+            // 重新配对的后果：换新密钥与新令牌，电脑侧**替换**这台手机的旧记录
+            // （不再多一行）。这是 2026-10-17 用户"为啥每次扫都是一个新设备"
+            // 的答案在手机侧的那一半。
+            const Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                DshIcon('refresh', size: 14, color: DshColors.labelTertiary),
+                SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '本机在这台电脑上已有配对记录：这次会换新密钥并替换那条记录，'
+                    '不会新增一行。',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: DshColors.labelTertiary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 12),
           _Field(label: '电脑 ID', value: offer.pcId),
           _Field(label: '中转', value: offer.relayUrl),

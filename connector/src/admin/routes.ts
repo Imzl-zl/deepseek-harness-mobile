@@ -27,6 +27,21 @@
  * 从行上拿掉）。两个端点会让"停用"与"解禁"看起来像两件不相干的事，
  * 而它们本来就是同一件的两个值。
  *
+ * ## 传输面：按"方式"分开关，路由按通道生成
+ *
+ * 2026-10-17 用户原话：「不是有两中方式为啥就一个开关？……后面我要是再加新的方式
+ * 也就一个开关吗？」。所以传输面是**通道注册表**（`transport/channels.ts`）：
+ * `GET /transport` 列通道，`POST /transport/{id}/{start,stop}` 各停各的。
+ *
+ * **路由按 `deps.channels()` 在挂载时生成**，id 不写死在路由表里 —— Connection 的
+ * Fetch 路由是**精确路径匹配**（`rpc-host.ts:141` 的 `fetchRoutes.get(pathname)`），
+ * 没有路径参数通配。于是"加第三种方式（Tailscale / 服务器中转）"只是注册表多一个
+ * 端口，路由与 UI 开关自动跟上，**形状不变** —— 这条由
+ * `tests/admin-face.test.ts`（三个端口的注册表 ⇒ 三对路由）钉住。
+ *
+ * 批量启停（同时开 / 同时关）**不设服务端端点**：两个通道各自的成败要能分别报回
+ * 界面，一个批量端点只会把其中一个的失败藏掉。批量是 UI 的顺序调用。
+ *
  * ## 破坏性操作单独一个端点，且页面二次确认
  *
  * 停用一台设备 = 那台手机下次握手就通不过；删除 = 那台手机要重新配对。
@@ -51,6 +66,7 @@
  * 断开连接"是荒谬的。所以 `skippedOnline` 只对 scope 形状非 0。
  */
 import type { Caps } from '../dsh/caps.js'
+import type { ChannelState } from '../transport/channels.js'
 
 /**
  * Connection 的精确 Fetch 路由（`packages/client/connection/src/rpc.ts:144-153`）。
@@ -96,6 +112,15 @@ export interface AdminDeps {
   devices(): readonly AdminDeviceRow[]
   /** 当前拨向的中转地址；没有配 `relayUrl` 就是 `null`。 */
   relayUrl(): string | null
+  /**
+   * 传输通道列表（按"方式"分开关的数据源，`transport/channels.ts`）。
+   *
+   * 路由表按它生成（`/transport/{id}/{start,stop}`），所以**加一种方式不改
+   * 管理面形状**；UI 也按它渲染。见文件头「传输面」一节。
+   */
+  channels(): readonly ChannelState[]
+  /** 起或停一条传输通道。失败抛出（归一成 400 + 原因带回界面）。 */
+  setChannel(id: string, running: boolean): Promise<void>
   /**
    * 出一次配对码（**已登记到中转**）。
    *
@@ -162,14 +187,15 @@ async function bodyOf(request: Request): Promise<Record<string, unknown>> {
 const badRequest = (error: unknown): Response =>
   json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400)
 
-/** 管理面的四个端点。顺序无关，都是精确路由。路径**含 `/api` 前缀**（见接口注释）。 */
+/** 管理面的端点。顺序无关，都是精确路由。路径**含 `/api` 前缀**（见接口注释）。 */
 const STATUS_PATH = '/api/dsh-mobile/status'
 const PAIR_PATH = '/api/dsh-mobile/pair'
+const TRANSPORT_PATH = '/api/dsh-mobile/transport'
 const ENABLED_PATH = '/api/dsh-mobile/devices/enabled'
 const REMOVE_PATH = '/api/dsh-mobile/devices/remove'
 
 export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
-  return [
+  const routes: ConnectionFetchRoute[] = [
     {
       path: STATUS_PATH,
       methods: ['GET'],
@@ -183,6 +209,16 @@ export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
             devices: deps.devices(),
           }),
         ),
+    },
+
+    // 传输面：**按通道**列与停启。停 ≠ 卸载：不清凭据、不动身份，
+    // 重起时配对过的手机一条都不用重扫（2026-10-17 用户要求：连接器不能只有
+    // 命令行一种起法；同轮要求：两个方式两个开关，加第三种方式不改形状）。
+    {
+      path: TRANSPORT_PATH,
+      methods: ['GET'],
+      requestBody: 'buffered',
+      fetch: () => Promise.resolve(json({ channels: deps.channels() })),
     },
 
     {
@@ -276,4 +312,30 @@ export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
       },
     },
   ]
+
+  // 传输通道的起停端点：**按注册表生成**，id 不写死在路由表里。
+  // 加一种方式（Tailscale / 服务器中转）只是 `deps.channels()` 多一项，
+  // 这里自动多一对路由 —— 管理面形状不变（文件头「传输面」一节）。
+  for (const channel of deps.channels()) {
+    for (const running of [true, false]) {
+      routes.push({
+        path: `${TRANSPORT_PATH}/${channel.id}/${running ? 'start' : 'stop'}`,
+        methods: ['POST'],
+        requestBody: 'buffered',
+        fetch: async () => {
+          try {
+            await deps.setChannel(channel.id, running)
+          } catch (error) {
+            // 启动失败（端口被占等）必须带原因：静默失败会让操作者以为开关生效了。
+            return badRequest(error)
+          }
+          // 回执带**当时的**通道真值（不是"我以为成功了"）—— 按钮的
+          // "运行中/未运行"要从电脑侧读，不按本地点击乐观翻转。
+          return json({ ok: true, channels: deps.channels() })
+        },
+      })
+    }
+  }
+
+  return routes
 }

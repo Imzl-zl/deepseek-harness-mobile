@@ -31,7 +31,10 @@ import '../core/job.dart';
 import '../core/sync_client.dart';
 import '../model/chat_item.dart';
 import '../model/interaction.dart';
+import '../model/model_catalog.dart';
 import '../model/permission.dart';
+import '../model/preferences.dart';
+import '../model/queue_item.dart';
 import '../model/send_mode.dart';
 import '../model/session_stats.dart';
 import '../model/workspace.dart';
@@ -112,15 +115,27 @@ class AppModel extends ChangeNotifier {
   /// **合并而不是覆盖**：覆盖会抹掉用户手动排的偏好序，而连接器某次少报一个
   /// （例如直连刚好在重启）就把手机里的条目删了。规则见 `core/endpoint.dart`
   /// 的 `mergeEndpoints` —— 已知的原位更新，未知的按 kind 插。
+  ///
+  /// **合并后剪枝**：连接器不再自报、且本机拨过并失败的条目删掉。两个条件
+  /// 同时成立才删 —— ① 这次 describe 没报它（连接器是"现在有哪些地址"的
+  /// 权威）；② 本机拨过且记录是失败（没拨过的可能是刚发现、还没轮到）。
+  /// 只增不删的表会无限变长：连接器的 IPv6 隐私地址每次轮换都是新的一条，
+  /// 旧的永远留在表里（2026-10-17 真机实测：三个拨不通的 IPv6 地址，
+  /// 冷启动每个等满超时，合计 30 秒——用户原话"退出软件怎么就连不上了"）。
   Future<void> mergeDiscoveredEndpoints(List<Endpoint> discovered) async {
     final merged = mergeEndpoints(_endpoints, discovered);
-    if (merged.length == _endpoints.length &&
-        merged.every((e) => _endpoints.contains(e))) {
+    final reported = discovered.map((e) => e.id).toSet();
+    final pruned = merged.where((e) {
+      if (reported.contains(e.id)) return true; // 连接器还在报：留
+      return _endpointAttempts[e.id]?.ok != false; // 拨过且失败才删
+    }).toList();
+    if (pruned.length == _endpoints.length &&
+        pruned.every((e) => _endpoints.contains(e))) {
       return; // 没有变化：不落盘、不通知（否则每次重连都会写一次存储）
     }
-    _endpoints = merged;
+    _endpoints = pruned;
     notifyListeners();
-    await onEndpointsChanged?.call(merged);
+    await onEndpointsChanged?.call(pruned);
   }
 
   /// 手动挑一个端点当首选（设置页用）。**只改顺序，不删条目**。
@@ -187,6 +202,15 @@ class AppModel extends ChangeNotifier {
       };
       // 子智能体从同一个投影包里取（`subagentCatalog` 键）。
       _subagents[sid] = parseSubagentCatalog(result);
+      // **标题也在这个包里**（`title` 投影，DSH `session-title/src/index.ts:269-281`
+      // 的 wire view 就是 `string | null`）。它是比 `session.list` 的投影提示
+      // **更新**的那个来源：会话刚生成标题时列表提示还是旧的。
+      // 只在非空时落——空值表示"还没有标题"，不该把列表提示擦掉。
+      final title = result['title'];
+      if (title is String && title.isNotEmpty) _applySessionTitle(sid, title);
+      // 收件箱播种：插话判定要从此前的 splice 历史推出来，而投影里的
+      // next-turn / next-step 列表正是那个历史的当前值。
+      _seedInboxTracker(sid);
       notifyListeners();
     } catch (error) {
       // **兜住所有异常，不只 `ProtocolException`**（与 `refreshSessions` 同一条纪律）：
@@ -217,7 +241,8 @@ class AppModel extends ChangeNotifier {
   /// 字段与投影的 wire view 逐字对应
   /// （`packages/session/session-stats/src/projection.ts:72-81`）——
   /// `decodeMs` / `decodeTokens` 是输出速率的唯一来源，缺了它
-  /// 手机就算不出 Web 上那个 `75 tok/s`。
+  /// 手机就算不出 Web 上那个 `75 tok/s`；`ttftMs` / `ttftSteps`
+  /// 是统计 sheet 里 TTFT 那一行的来源。
   SessionStats? get sessionStats {
     final raw = _projections?['sessionStats'];
     if (raw is! Map) return null;
@@ -226,9 +251,27 @@ class AppModel extends ChangeNotifier {
       steps: _intOf(raw['steps']),
       llmMs: _intOf(raw['llmMs']),
       toolMs: _intOf(raw['toolMs']),
+      ttftMs: _intOf(raw['ttftMs']),
+      ttftSteps: _intOf(raw['ttftSteps']),
       decodeMs: _intOf(raw['decodeMs']),
       decodeTokens: _intOf(raw['decodeTokens']),
     );
+  }
+
+  /// 上下文三段分段（`contextBreakdown` 投影，wire view 就是三项）。
+  ///
+  /// **启发式估算**（DSH 的文件头原话 "Heuristic composition"）——
+  /// 界面照 Web 标 `~`。三项全 0 时当没有（那与"没有这个投影"在界面上
+  /// 同一表现：上下文 sheet 只画百分比条，不画分段图例）。
+  ContextBreakdown? get contextBreakdown {
+    final raw = _projections?['contextBreakdown'];
+    if (raw is! Map) return null;
+    final breakdown = ContextBreakdown(
+      systemTokens: _intOf(raw['systemTokens']),
+      toolsTokens: _intOf(raw['toolsTokens']),
+      messageTokens: _intOf(raw['messageTokens']),
+    );
+    return breakdown.total == 0 ? null : breakdown;
   }
 
   /// 上下文占用压力（`contextPressure` 投影）。三个字段都没有就是 `null`。
@@ -333,6 +376,104 @@ class AppModel extends ChangeNotifier {
   /// 两条写死的示例（`Extract DSH icon paths` 等）。
   List<SubagentRow> subagentsOf(String sid) =>
       List.unmodifiable(_subagents[sid] ?? const []);
+
+  /// 打断：取消当前轮次但**保留待处理收件箱**。
+  ///
+  /// 走 `session.cancel`（与 Web 同一个 DSH 方法，`@Remote('cancel')`，
+  /// `session-controller/src/index.ts:472`）。DSH 的注释原话是"Cancel one
+  /// active Agent turn without dropping its pending inbox"—— 排队中的消息
+  /// 不会被这一次取消丢掉，所以它安全地当"停止"用。
+  /// **不带幂等键**（契约 §5.7 那一列是空的）：取消没有第二次副作用。
+  ///
+  /// @returns 成功与否；失败原因在 [lastError]。
+  Future<bool> cancel(String sid) async {
+    try {
+      await client.call<Object?>('session.cancel', {'sid': sid});
+      return true;
+    } on ProtocolException catch (error) {
+      _lastError = error;
+      if (!_disposed) notifyListeners();
+      return false;
+    }
+  }
+
+  // ---- 排队消息（`inbox` 投影的 next-turn 段）----
+
+  /// 当前会话排队中的消息（**按 sid 取**：投影包是最近一次读的那个会话的）。
+  ///
+  /// 队列**不是新方法** —— 它是 `inbox` 投影的一段，随 `session.projections`
+  /// 到手机（契约 §5.7 已把 `inbox` 列进核实过的键）。插进当前轮次的
+  /// `next-step` 段不列（Web 同一条：那已经生效了，不在队列里）。
+  List<QueueItem> queueOf(String sid) {
+    if (_currentSid != sid) return const [];
+    return parseQueueItems(_projections?['inbox']);
+  }
+
+  /// 变异一个排队项（编辑 / 删除 / 插话）。
+  ///
+  /// 走 `session.updateQueue`（与 Web 排队 dock 同一个 DSH 方法）。
+  /// **成功失败都重读一次投影**：队列变化不走投影推送（它乘
+  /// `agent/inbox/spliced` 会话事件到手机，而投影只在打开会话时读一次），
+  /// 所以不重读就要等下次开会话才变。失败时重读同样必要 ——
+  /// `session/steer-unavailable` / `session/queue-item-not-found` 的语义
+  /// 正是"队列已经变了，刷新"。
+  ///
+  /// @returns 成功与否；失败原因在 [lastError]。
+  Future<bool> updateQueue(
+    String sid,
+    String itemId,
+    QueueActionKind kind, {
+    String? text,
+  }) async {
+    try {
+      await client.call<Object?>(
+        'session.updateQueue',
+        {
+          'sid': sid,
+          'itemId': itemId,
+          'action': switch (kind) {
+            QueueActionKind.edit => {
+              'kind': 'edit',
+              'content': [
+                {'type': 'text', 'text': text ?? ''},
+              ],
+            },
+            QueueActionKind.remove => {'kind': 'remove'},
+            QueueActionKind.steer => {'kind': 'steer'},
+          },
+        },
+        requestId: 'q-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      return true;
+    } on ProtocolException catch (error) {
+      _lastError = error;
+      if (!_disposed) notifyListeners();
+      return false;
+    } finally {
+      // 成功失败都重读：见方法头。`_disposed` 时 `refreshProjections` 自己早退。
+      await refreshProjections(sid);
+    }
+  }
+
+  // ---- 插话判定（DSH `SteeringHistory` 的忠实移植）----
+
+  /// 每个会话的收件箱追踪器（`sid → tracker`）。
+  ///
+  /// **为什么需要它**：一条 `user/message` 是不是"插话"（轮次跑到一半从
+  /// next-step 收件箱插进去的），只看它自己看不出来 —— 判据在它前面的
+  /// `agent/inbox/spliced` 事件里。DSH Web 用的是同一个算法
+  /// （`ui-chat/src/client/model/steering-history.ts`）：从 next-step 里
+  /// **被 claim 掉**的 id，随后作为 `user/message` 到达时就是插话。
+  final Map<String, _InboxTracker> _inboxTrackers = {};
+
+  /// 打开会话时用投影里的当前收件箱播种追踪器（否则恢复会漏掉早先的 splice）。
+  void _seedInboxTracker(String sid) {
+    final inbox = _projections?['inbox'];
+    if (inbox is! Map) return;
+    _inboxTrackers
+        .putIfAbsent(sid, () => _InboxTracker())
+        .seed(Map<String, Object?>.from(inbox));
+  }
 
   // ---------------------------------------------------------------------------
   // 后台任务（契约 §7 的 job.* / §5.3 的 job 帧）
@@ -500,7 +641,9 @@ class AppModel extends ChangeNotifier {
 
   final Map<String, SessionStore> _stores = {};
 
-  /// 会话列表（**电脑侧不返回标题**，标题由本地从条目推导 —— 见 `SessionSummary.title`）。
+  /// 会话列表。**标题只有电脑侧一个来源**：`session.list` 行的投影提示
+  /// （`projections.values.title`），打开会话后再由 `title` 投影与会话事件流里的
+  /// `session/title` 更新（见 [_applySessionTitle]）。
   List<SessionSummary> _sessions = const [];
 
   /// 当前打开的会话（`null` = 在列表页）。
@@ -577,24 +720,21 @@ class AppModel extends ChangeNotifier {
 
   // ---- 模型（`session/modelCatalog` + `modelSelection` 投影）----
 
-  /// 模型目录（`session/modelCatalog`，原样过线）。
+  /// 模型目录（`session/modelCatalog`，DSH `buildModelCatalog` 的真形状解析）。
   ///
   /// **拿不到就是 null** —— 手机显示"未选择"，不手抄第二份名单
   /// （2026-10-15 之前 picker 里是四个写死的模型名）。
-  List<ModelRef>? get modelCatalog => _modelCatalog;
-  List<ModelRef>? _modelCatalog;
+  /// 2026-10-17 修：解析器原来认的是一个臆想形状（`List<{provider, models}>`），
+  /// 而真形状是 `{default, routableProviders, groups, failures}` —— 顶层是对象，
+  /// 于是目录在生产里**一次都没解析成功过**。详见 `model/model_catalog.dart` 文件头。
+  ModelCatalog? get modelCatalog => _modelCatalog;
+  ModelCatalog? _modelCatalog;
 
   /// 当前会话的模型（`modelSelection` 投影，`next ?? lastUsed`）。
   ModelRef? get currentModel {
     final sid = _currentSid;
     if (sid == null) return null;
     return sessionOf(sid)?.model;
-  }
-
-  /// 存一份模型目录（连接器 `session/modelCatalog` 的应答）。
-  void setModelCatalog(List<ModelRef> catalog) {
-    _modelCatalog = List.unmodifiable(catalog);
-    notifyListeners();
   }
 
   /// 切这个会话的模型。**与 Web 用同一个 DSH 方法**（`session/select-model`），
@@ -658,21 +798,19 @@ class AppModel extends ChangeNotifier {
 
   /// 当前会话的标题（顶栏用）。
   ///
-  /// **与列表用同一条链**（[SessionSummary.displayTitle]，DSH 的
-  /// `displayTitleOf`：持久标题 → 项目目录名 → 会话 id）。
+  /// **与列表逐字同一条链**（[SessionSummary.displayTitle]：投影提示标题 →
+  /// 「未命名」）。顶栏与列表必须是同一个字符串——2026-10-15 的真机反馈
+  /// ("名字对了，但我点进去会话名字又变了"）就是两个真值源（列表读提示、
+  /// 顶栏读本地从条目推导的标题）各自算出不同名字。
   ///
-  /// 2026-10-15 之前这里只读**本地从条目推导**的标题（`deriveTitle`）——
-  /// 于是同一个人会话在列表里叫 A、点进顶栏叫 B（真机反馈："名字对了,
-  /// 但我点进去会话名字又变了"）。两个真值源必然漂，所以现在只认一条：
-  /// 投影提示里的持久标题优先，本地推导只在前两者都拿不到时兜底。
+  /// 2026-10-16 把最后的本地推导兜底也删了：`displayTitle` 永不为空
+  /// （最差也是「未命名」），所以"兜底"只在会话不在 `_sessions` 里时生效 ——
+  /// 而那时它给出的是一个**列表里看不见的名字**，正是分叉的由来。
+  /// 会话不在列表里（刚建还没刷新）时顶栏显示 null，由界面退到 'DSH'。
   String? get currentTitle {
     final sid = _currentSid;
     if (sid == null) return null;
-    final summary = _sessions.where((s) => s.sid == sid).firstOrNull;
-    final fromSummary = summary?.displayTitle;
-    if (fromSummary != null && fromSummary.isNotEmpty) return fromSummary;
-    final local = _storeOf(sid).title;
-    return local.isEmpty ? null : local;
+    return _sessions.where((s) => s.sid == sid).firstOrNull?.displayTitle;
   }
 
   /// 连接状态（界面视图）。
@@ -683,6 +821,15 @@ class AppModel extends ChangeNotifier {
 
   /// 当前会话的变更流（UI 用它做**区块级**重建，而不是整页 setState）。
   Stream<List<ChatItem>> changesOf(String sid) => _storeOf(sid).changes;
+
+  /// 某个会话投影失败的事件（`sid → 第一条失败的原因`）；`null` = 没失败过。
+  ///
+  /// **必须暴露到界面**：逐条隔离之后，一条坏事件不再炸掉整批，但它也不该
+  /// 无声无息地少掉 —— 空态/对话页据此说出"有 N 类事件没能渲染"，
+  /// 而不是让用户以为"会话里就没有这些"。
+  String? projectionFailureOf(String sid) => _projectionFailures[sid];
+
+  final Map<String, String> _projectionFailures = {};
 
   /// 是否是示例数据（界面上要能看出来，见 `preview_data.dart` 的文件头）。
   bool get isPreview => _isPreview;
@@ -747,6 +894,8 @@ class AppModel extends ChangeNotifier {
     final stored = await _prefs?.read(kSendModeKey);
     final restored = SendMode.fromWire(stored);
     if (restored != null) _sendMode = restored;
+    // 其余本地偏好（工作步骤展示 / 性能与用量）同一条路。
+    await _restorePreferences();
     notifyListeners();
     await client.start();
   }
@@ -765,6 +914,49 @@ class AppModel extends ChangeNotifier {
     _sendMode = mode;
     notifyListeners();
     await _prefs?.write(kSendModeKey, mode.wire);
+  }
+
+  // ---- 手机本地的界面偏好（DSH 的"纯 UI 偏好"，有意偏离存本地）----
+
+  TranscriptView _transcriptView = TranscriptView.standard;
+  PerformanceUsage _performanceUsage = PerformanceUsage.detailed;
+
+  TranscriptView get transcriptView => _transcriptView;
+  PerformanceUsage get performanceUsage => _performanceUsage;
+
+  /// 落盘的 meta 键：偏好类。**契约两端共用的字符串**，改动等于作废用户的偏好。
+  static const String kTranscriptViewKey = 'transcript_view';
+  static const String kPerformanceUsageKey = 'performance_usage';
+
+  /// 切工作步骤展示密度。落盘；同一个值重复切是空操作。
+  Future<void> setTranscriptView(TranscriptView view) async {
+    if (_disposed || view == _transcriptView) return;
+    _transcriptView = view;
+    notifyListeners();
+    await _prefs?.write(kTranscriptViewKey, view.wire);
+  }
+
+  /// 切性能与用量的详细程度。落盘；同一个值重复切是空操作。
+  Future<void> setPerformanceUsage(PerformanceUsage usage) async {
+    if (_disposed || usage == _performanceUsage) return;
+    _performanceUsage = usage;
+    notifyListeners();
+    await _prefs?.write(kPerformanceUsageKey, usage.wire);
+  }
+
+  /// 把落盘的偏好读回来（`start()` 里调一次）。
+  ///
+  /// 读不到（没存过 / 存了个不认识的值）就保持默认 —— 与发送模式同一条纪律，
+  /// **不猜**。
+  Future<void> _restorePreferences() async {
+    final transcript = TranscriptView.fromWire(
+      await _prefs?.read(kTranscriptViewKey),
+    );
+    if (transcript != null) _transcriptView = transcript;
+    final performance = PerformanceUsage.fromWire(
+      await _prefs?.read(kPerformanceUsageKey),
+    );
+    if (performance != null) _performanceUsage = performance;
   }
 
   void _onConnectionChanged(ConnectionState state) {
@@ -1066,24 +1258,14 @@ class AppModel extends ChangeNotifier {
         const {},
       );
       if (_disposed || result is! Map) return;
-      if (result['available'] != true) return;
-      final catalog = result['catalog'];
-      if (catalog is! List) return;
-      final out = <ModelRef>[];
-      for (final group in catalog) {
-        if (group is! Map) continue;
-        final provider = group['provider'];
-        if (provider is! String) continue;
-        final models = group['models'];
-        if (models is! List) continue;
-        for (final m in models) {
-          if (m is! Map) continue;
-          final id = m['id'] ?? m['model'];
-          if (id is! String || id.isEmpty) continue;
-          out.add(ModelRef(provider: provider, model: id));
-        }
-      }
-      setModelCatalog(out);
+      // **按 DSH 的真形状解析**（`{available, catalog:{default, routableProviders,
+      // groups, failures}}`，`packages/api/session-controller/src/catalog.ts:20-72`）。
+      // 认不出（含 `available: false`）就留 null —— picker 说"拿不到目录"，
+      // 而不是摆一个空列表。
+      final catalog = parseModelCatalog(result);
+      if (catalog == _modelCatalog) return;
+      _modelCatalog = catalog;
+      if (!_disposed) notifyListeners();
     } catch (_) {
       // **兜住所有异常，不只 `ProtocolException`** —— 与 `refreshSessions`
       // 同一条纪律。目录是附属信息：解析出错 / 类型不对 / 超时都不该逃逸成
@@ -1180,6 +1362,9 @@ class AppModel extends ChangeNotifier {
     }
   }
 
+  // Note: 逐条错误隔离（一条坏事件不再炸掉整批）+ 插话判定（DSH
+  // SteeringHistory 的移植）—— 见
+  // .agents/notes/implemented/2026-10-17-conversation-rendering-fills-dsh-gaps.md
   void _onDelta(String sid, SessionDelta delta) {
     if (_disposed) return;
     final store = _storeOf(sid);
@@ -1188,15 +1373,50 @@ class AppModel extends ChangeNotifier {
     // 一次恢复可能带一批：`upsertAll` 内部把通知合并成一次。
     if (delta.events.isNotEmpty) {
       final items = <ChatItem>[];
+      var inboxChanged = false;
+      final tracker = _inboxTrackers.putIfAbsent(sid, () => _InboxTracker());
       for (final event in delta.events) {
-        items.add(
-          projectEvent(
-            type: event.type,
-            seq: event.seq,
-            data: event.data,
-            time: event.time,
-          ).item!,
-        );
+        // **`session/title` 不是条目，是标题的真值**：DSH 生成/改名时落一条
+        // （`session-title/src/index.ts` 的 fold 就认这个 type）。它进条目表
+        // 只会渲染出一条莫名其妙的"其它事件"，所以在这里截住并落地成标题。
+        if (event.type == 'session/title') {
+          final title = event.data is Map ? (event.data as Map)['title'] : null;
+          if (title is String && title.isNotEmpty) {
+            _applySessionTitle(sid, title);
+          }
+          continue;
+        }
+        // **`agent/inbox/spliced` 是排队队列的变化**：消息进/出队列时落一条
+        // （真日志里常见）。条目表里它是一条不可见的"其它事件"，而**排队条
+        // 要跟着变** —— 投影不推这件事（它只在打开会话时读一次），
+        // 所以在这里记一笔，循环结束后重读投影。
+        if (event.type == 'agent/inbox/spliced') {
+          if (event.data is Map) {
+            tracker.applySplice(Map<String, Object?>.from(event.data as Map));
+          }
+          inboxChanged = true;
+          continue;
+        }
+        // **逐条投影，一条不再炸掉整批**：`itemIdOf` 对"已知类型缺身份字段"
+        // 是抛 StateError 的（契约 §5.2 的硬规则），而这里若让它逃逸，
+        // 整个 delta 的条目全部丢失 —— 症状是"会话打开了但一条消息都不渲染"，
+        // 且没有任何报错（流监听里的未处理异步错误）。失败的那条记进
+        // [_projectionFailures]，剩下的照常渲染。
+        try {
+          items.add(
+            projectEvent(
+              type: event.type,
+              seq: event.seq,
+              data: event.data,
+              time: event.time,
+              steering:
+                  event.type == 'user/message' &&
+                  tracker.claimIfSteering(event.data),
+            ).item!,
+          );
+        } on StateError catch (error) {
+          _projectionFailures[sid] = '${event.type}(seq=${event.seq})：$error';
+        }
         // **交互信号与条目投影同源**：两者读同一个事件，于是"对话流里有一条审批"
         // 与"输入栏上有一张审批卡"不可能对不上。
         final signal = interactionSignalOf(
@@ -1212,6 +1432,11 @@ class AppModel extends ChangeNotifier {
         }
       }
       store.upsertAll(items);
+      if (inboxChanged) {
+        // 队列变了：重读一次投影拿新队列（`inbox` 段）。不等它 ——
+        // 收帧路径上的回调不该被一个网络往返挡住。
+        unawaited(refreshProjections(sid));
+      }
     }
 
     // **流式文本** → 单独的槽位（UI 从它读"正在生成的这段"）。
@@ -1275,11 +1500,18 @@ class AppModel extends ChangeNotifier {
     }, requestId: 'i:${answer.callId}');
   }
 
+  // Note: 标题只有一个真值源（电脑侧），这里只换计数不重建整行 ——
+  // 见 .agents/notes/implemented/2026-10-17-session-title-single-source-of-truth.md
   void _touchSummary(String sid, SessionStore store) {
     final index = _sessions.indexWhere((s) => s.sid == sid);
-    final updated = SessionSummary(
-      sid: sid,
-      title: store.title,
+    // **只换计数，不重建整行**：标题 / 模型 / running / blank / subagent / cwd
+    // 全部是电脑侧给的身份字段，掉一个就是"点进会话名字变了、模型变未选择"。
+    // 会话不在列表里（刚建还没刷新）时给一行空壳——它随后会被
+    // `session/title` 事件或下一次 `session.list` 补上真标题。
+    final base = index >= 0
+        ? _sessions[index]
+        : SessionSummary(sid: sid, title: '', updatedAt: 0);
+    final updated = base.withCounters(
       updatedAt: store.updatedAt,
       itemCount: store.length,
       pendingCount: store.pendingCount,
@@ -1291,6 +1523,22 @@ class AppModel extends ChangeNotifier {
       next[index] = updated;
       _sessions = next;
     }
+    if (!_disposed) notifyListeners();
+  }
+
+  /// 把电脑侧给的标题落进列表行。**同一个值不重复通知**。
+  ///
+  /// 两个来源都通向这里：`session.projections` 的 `title` 投影（打开会话时读）
+  /// 与会话事件流里的 `session/title`（DSH 生成/改名时落一条，看着会话也能更新）。
+  /// 空串不落——它会把已有标题擦成「未命名」，而投影的 `null` 只表示"还没有标题"。
+  void _applySessionTitle(String sid, String title) {
+    final index = _sessions.indexWhere((s) => s.sid == sid);
+    if (index < 0) return;
+    final current = _sessions[index];
+    if (current.title == title) return;
+    final next = [..._sessions];
+    next[index] = current.withTitle(title);
+    _sessions = next;
     if (!_disposed) notifyListeners();
   }
 
@@ -1322,9 +1570,11 @@ class AppModel extends ChangeNotifier {
       final sid = entry['sid'];
       if (sid is! String || sid.isEmpty) continue;
       // **标题从行的投影提示来**：`projections.values.title`。
-      // 这是 DSH 自己的列表标题来源（`list.ts:291-312` 的 hints，Web 读同一个），
-      // 冷行（从没打开过的会话）也有值。取不到才留空，由 [SessionSummary.displayTitle]
-      // 按 DSH 的链退到项目目录名、再退到 sid。
+      // 这是 host 侧 `session.list` 行唯一的标题来源（`dsh-api-session-controller`
+      // 的 `lib/types/types.d.ts`：行只有 `projections`，没有独立的持久标题字段），
+      // Web 侧栏读的"持久标题"远程客户端拿不到——契约如此，不是将就。
+      // 取不到就留空，由 [SessionSummary.displayTitle] 显示「未命名」
+      // （DSH 的 Web 侧栏对无标题会话不用目录名兜底，`ui-workspace/README.zh.md:32`）。
       out.add(
         SessionSummary(
           sid: sid,
@@ -1392,5 +1642,79 @@ class AppModel extends ChangeNotifier {
     }
     _stores.clear();
     super.dispose();
+  }
+}
+
+/// 收件箱追踪器：从 `agent/inbox/spliced` 事件流里认出**插话**消息。
+///
+/// **逐字移植 DSH Web 的 `SteeringHistory`**
+/// （`packages/client/ui-chat/src/client/model/steering-history.ts`）：
+///
+/// - 维护 next-turn / next-step 两个列表（`splice(start, removedCount, ...inserted)`）；
+/// - 从 **next-step 被 claim 掉**（splice 的 removed 部分）的 id 进候选集；
+/// - 插入会把 id 从候选集去掉；
+/// - 随后到达的 `user/message` 带候选 id 且 `source.kind === 'user'` → 插话。
+///
+/// 为什么不猜"running 期间的用户消息就是插话"：排队发送的消息也是运行期间
+/// 到达的，而它**不是**插话（它排下一个轮次）。判据只有这一个，猜就会把
+/// 排队消息标成插话。
+class _InboxTracker {
+  final Map<String, List<String>> _lists = {
+    'next-turn': <String>[],
+    'next-step': <String>[],
+  };
+
+  final Set<String> _claimedNextStep = <String>{};
+
+  /// 用投影里的当前收件箱播种（恢复/打开会话时调一次）。
+  void seed(Map<String, Object?> inbox) {
+    for (final target in const ['next-turn', 'next-step']) {
+      final rows = inbox[target];
+      if (rows is! List) continue;
+      _lists[target] = [
+        for (final row in rows)
+          if (row is Map && row['id'] is String) row['id'] as String,
+      ];
+    }
+  }
+
+  /// 应用一条 splice 事件。
+  void applySplice(Map<String, Object?> data) {
+    final target = data['target'];
+    final start = data['start'];
+    if (target is! String || start is! int) return;
+    final list = _lists[target];
+    if (list == null) return;
+    final removedCount = data['removedCount'];
+    final count = removedCount is int ? removedCount : 0;
+    final inserted = <String>[
+      for (final item
+          in data['inserted'] is List ? data['inserted'] as List : const [])
+        if (item is Map && item['id'] is String) item['id'] as String,
+    ];
+    // 与 DSH 同一条算术：从 `start` 处删 `count` 个、插入 `inserted`。
+    final safeStart = start.clamp(0, list.length);
+    final safeEnd = (safeStart + count).clamp(safeStart, list.length);
+    final removed = list.sublist(safeStart, safeEnd);
+    list
+      ..removeRange(safeStart, safeEnd)
+      ..insertAll(safeStart, inserted);
+    // 插入的 id 不再是被 claim 的候选。
+    for (final id in inserted) {
+      _claimedNextStep.remove(id);
+    }
+    // **只有从 next-step 被 claim 掉的才是插话候选**；取消的 splice 不算。
+    if (target != 'next-step' || data['outcome'] == 'canceled') return;
+    _claimedNextStep.addAll(removed);
+  }
+
+  /// 一条 `user/message` 是不是插话（**会消费掉那个候选**，与 DSH 的 delete 同义）。
+  bool claimIfSteering(Object? data) {
+    if (data is! Map) return false;
+    final id = data['id'];
+    if (id is! String || id.isEmpty) return false;
+    if (!_claimedNextStep.remove(id)) return false;
+    final source = data['source'];
+    return source is Map && source['kind'] == 'user';
   }
 }

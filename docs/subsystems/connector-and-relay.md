@@ -108,17 +108,18 @@ mount
  ├─ 注册 answerer(TakeoverGate 判定,见 §1.5)
  ├─ load-identity:取(或首次生成)本机身份种子(§12.1)
  ├─ 装每连接的活物:createConnectionScope(port, deps)(见下"装配分层")
- ├─ transport.start():出站连接(退避)→ 握手(§4.1 三帧)→ serving
- ├─ 监听面(仅当 listenPort 配置时):每 accept 一条就装配一次,交给 attach(socket)
+ ├─ 通道注册表(transport/channels.ts):两条通道各自 start ——
+ │   中转拨号(relay-link,自愈)+ 直连监听(仅当 listenPort 配置时)
  └─ 订阅策略:只为"手机已订阅的会话"建立 follow
 
 dispose
  ├─ 停止接受新请求 → 等待在途请求(min(请求超时, 5 s))
  ├─ flush:缓冲落盘(不丢已 ack 的窗口)+ 去重表落盘
- ├─ 监听面停止接受 + 关闭已接受的连接
- ├─ transport.stop():发 close,关闭 WS
+ ├─ 两条通道各自 stop:监听面停止接受 + 关闭已接受的连接;拨号发 close
  └─ store.close()
 ```
+
+- **传输面按"方式"分开关**(`transport/channels.ts`,2026-10-17):每条通道有 id / 标签 / start / stop / running,管理面 `GET /api/dsh-mobile/transport` 列通道、`POST /api/dsh-mobile/transport/{id}/{start,stop}` 各停各的(**路由按注册表生成** —— 加第三种方式不改管理面与 UI 形状)。停一条不碰另一条:停拨号只关控制面与它的数据连接,停监听只关已接受的直连。批量启停是 UI 的顺序调用,不设服务端批量端点(两条各自的成败要能分别报回来)。
 
 - **订阅是显式的**:`session.subscribe` 才建立 `follow`;`session.unsubscribe` 关闭它。不订阅 50 个会话(每个 follow 都是 DSH 侧的开销)。
 - **基线快照用 `page()` 分页构造,不重开 `follow`**:`page()` 本身按消息对齐、有页预算、冷安全(`packages/api/session-controller/src/history.ts:77-112`),正好对应契约 §5.4 的 `cursor = "b:<beforeSeq>"`;重开 follow 会多建一个订阅并触发 promote 路径。

@@ -72,8 +72,24 @@ class _FakeArchiveClient implements SyncClient {
       case 'session.list':
         return {
               'sessions': [
-                {'sid': 's1', 'updatedAt': 30},
-                {'sid': 's2', 'updatedAt': 20},
+                {
+                  'sid': 's1',
+                  'updatedAt': 30,
+                  'projections': {
+                    'kind': 'cached',
+                    'asOfSeq': 1,
+                    'values': {'title': '第一个会话'},
+                  },
+                },
+                {
+                  'sid': 's2',
+                  'updatedAt': 20,
+                  'projections': {
+                    'kind': 'cached',
+                    'asOfSeq': 1,
+                    'values': {'title': '第二个会话'},
+                  },
+                },
               ],
             }
             as T;
@@ -204,8 +220,8 @@ void main() {
 
     // 顶部那句是 DSH 的原话（`toast.archivedNotOpenable`）。
     expect(find.text('已归档对话暂时无法查看，请取消归档后查看'), findsOneWidget);
-    expect(find.text('s2'), findsOneWidget);
-    expect(find.text('s1'), findsNothing, reason: '没归档的不该出现在这张列表里');
+    expect(find.text('第二个会话'), findsOneWidget);
+    expect(find.text('第一个会话'), findsNothing, reason: '没归档的不该出现在这张列表里');
 
     await tester.tap(find.text('取消归档'));
     await tester.pumpAndSettle();
@@ -213,7 +229,7 @@ void main() {
     expect(client.calls.last.method, 'workspace.unarchive');
     expect(client.calls.last.params, {'sid': 's2'});
     expect(
-      find.text('s2'),
+      find.text('第二个会话'),
       findsNothing,
       reason: '取消归档之后那一行当场消失（列表跟着 AppModel 变，不自己存副本）',
     );

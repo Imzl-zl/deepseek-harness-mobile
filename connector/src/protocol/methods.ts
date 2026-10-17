@@ -33,6 +33,11 @@ export const METHODS = [
   'session.prompt',
   'session.cancel',
   'session.refetch',
+  // 排队项变异：编辑 / 删除 / 插话（Web 排队 dock 的三个行内按钮）。
+  // **与 Web 同一个 DSH 方法**：`sessionController.updateQueue`
+  // （`@Remote('updateQueue')`，`session-controller/src/index.ts:462-465`）。
+  // 队列内容不在这个方法里 —— 它在 `inbox` 投影（随 `session.projections` 到手机）。
+  'session.updateQueue',
   // 模型目录：只读。手机据此建选择器，显示的名字与电脑侧同一份真值
   // （DSH 的 `session/modelCatalog`，见 `dsh/models.ts` 的文件头）。
   'session.modelCatalog',
@@ -102,6 +107,9 @@ export const IDEMPOTENT_METHODS: ReadonlySet<MethodName> = new Set([
   'session.create',
   'session.prompt',
   'session.select-model',
+  // 排队项变异是用户指令：重发不该把同一项编辑两次 / 删两次。
+  // （ steer 的重复由 DSH 自己收束 —— 项一旦离开队列就 `queue-item-not-found`。）
+  'session.updateQueue',
   // 切权限是用户指令：重发不该落两条 `command/run` / `command/done`
   // 生命周期事件，也不该把预设应用两遍。
   'permission.switch',

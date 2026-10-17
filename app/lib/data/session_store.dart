@@ -25,7 +25,6 @@ library;
 import 'dart:async';
 
 import '../model/chat_item.dart';
-import 'projection.dart';
 
 /// 一个会话的条目表。
 class SessionStore {
@@ -101,9 +100,6 @@ class SessionStore {
     await _changes.close();
   }
 
-  /// 会话标题（**推导**，不是服务端字段 —— 见 `SessionSummary.title`）。
-  String get title => deriveTitle(_sorted);
-
   /// 待处理（审批未决定）计数，UI 角标用。
   int get pendingCount =>
       _sorted.whereType<ApprovalItem>().where((a) => !a.decided).length;
@@ -127,13 +123,25 @@ class SessionStore {
   /// 只比"看得见的部分"：重放同一条事件时 `seq` 相同但 `updatedAt` 可能不同
   /// （DSH 的两个读路径给的时间戳可以差一点），而界面上没有任何区别 ——
   /// 比时间戳会让 UI 白白重建。
+  ///
+  /// **新字段必须进这里**（`detail` / `diffStat` / `attachmentCount` /
+  /// `steering` / `reasoning`）：漏一个的症状是"结果到了但展开区是空的"——
+  /// upsert 认为内容没变，于是不更新。
   static bool _sameContent(ChatItem a, ChatItem b) {
     if (a.runtimeType != b.runtimeType) return false;
     return switch ((a, b)) {
       (final MessageItem x, final MessageItem y) =>
-        x.role == y.role && x.text == y.text,
+        x.role == y.role &&
+            x.text == y.text &&
+            x.attachmentCount == y.attachmentCount &&
+            x.steering == y.steering &&
+            x.reasoning == y.reasoning,
       (final ToolCallItem x, final ToolCallItem y) =>
-        x.name == y.name && x.status == y.status && x.summary == y.summary,
+        x.name == y.name &&
+            x.status == y.status &&
+            x.summary == y.summary &&
+            x.detail == y.detail &&
+            _sameDiffStat(x.diffStat, y.diffStat),
       (final ApprovalItem x, final ApprovalItem y) =>
         x.title == y.title &&
             x.decided == y.decided &&
@@ -142,6 +150,13 @@ class SessionStore {
       _ => false,
     };
   }
+
+  static bool _sameDiffStat(
+    ({int added, int removed})? a,
+    ({int added, int removed})? b,
+  ) =>
+      (a == null && b == null) ||
+      (a != null && b != null && a.added == b.added && a.removed == b.removed);
 
   /// 打脏标记，并把通知**合并到微任务**。
   ///

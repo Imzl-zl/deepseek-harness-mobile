@@ -173,7 +173,13 @@ class PairingChannel {
   ///
   /// 返回电脑侧的回执（含设备令牌与辅助 SAS）。结果不确定时**如实抛错**，
   /// 绝不假装"没配对过" —— 断开不等于写入回滚（`pairing-v2.md` §1）。
-  Future<PairingAck> commit(String code) async {
+  ///
+  /// [previousPairingId] 是本机**上一次**配对的标识（重新配对同一台电脑时带上）：
+  /// 电脑侧据此**替换旧行**（换密钥/换令牌，配对于保留首次时刻），同一台手机
+  /// 反复扫码不再攒行。它**不是凭据** —— 授权仍是这一次的二维码秘密；它只在
+  /// 密文里过线（中转看不见，I10）。取舍与威胁模型见
+  /// `.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`。
+  Future<PairingAck> commit(String code, {String? previousPairingId}) async {
     if (_committed) {
       throw const ProtocolException(ErrorCode.internal, '这次配对已经提交过了');
     }
@@ -202,6 +208,12 @@ class PairingChannel {
         'v': pairingPayloadVersion,
         'offerId': offer.offerId,
         'code': code,
+        // 可选：重新配对时自报旧配对标识（行定位符，不是凭据）。
+        // **别听 analyze 的 `use_null_aware_elements`**：`?'k': x` 的 key 取值的
+        // 字符串形式（实测展开成 `previousPairingId: previousPairingId` 这类错键），
+        // 显式 `if` 才是对的。同一条约束见 `data/app_model.dart`。
+        // ignore: use_null_aware_elements
+        if (previousPairingId != null) 'previousPairingId': previousPairingId,
       }),
       id: id,
     );

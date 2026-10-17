@@ -120,8 +120,10 @@ void main() {
     // （`packages/client/ui-chat/src/client/chat/StatsPills.tsx:118-120`）——
     // 手机原来把 outputTokens 也算进分母，同一个会话两个端显示两个命中率。
     expect(usage.cacheHitRate! > 0.96 && usage.cacheHitRate! < 0.97, isTrue);
-    // 41500 / 1000 = 41.5 → ≥10 所以取整成 `42K`（与原来的 `302K` 同格式）。
-    expect(usage.totalLabel, '42K');
+    // pill 的合计 = 计费输入 + 输出 = 41500 + 200 = 41700 → `41.7K`
+    // （Web `StatsPills.tsx:295` 的 total；41.7 < 100 所以保留一位小数，
+    // 与 Web 的 `formatTokens` 同一批向量）。
+    expect(usage.totalLabel, '41.7K');
 
     final stats = app.sessionStats!;
     expect(stats.turns, 3);
@@ -213,11 +215,16 @@ void main() {
     expect(usage.totalLabel, '0');
   });
 
-  test('formatTokenCount：K / M 的进位', () {
+  test('formatTokenCount：K / M 的进位（与 Web 的 formatTokens 逐字一致）', () {
+    // Web `token-format.ts:9-15`：<1K 原样；K/M 下 ≥100 取整、否则一位小数
+    //（`12.2K` 而 `517K`）。2026-10-17 前手机在 [10K,100K) 直接取整，
+    // 于是 41700 显示成 `42K` 而 Web 显示 `41.7K`。
     expect(formatTokenCount(999), '999');
-    expect(formatTokenCount(1000), '1.0K');
+    expect(formatTokenCount(1000), '1K');
+    expect(formatTokenCount(12_240), '12.2K');
     expect(formatTokenCount(9500), '9.5K');
-    expect(formatTokenCount(41000), '41K');
+    expect(formatTokenCount(41_700), '41.7K');
+    expect(formatTokenCount(410_000), '410K');
     expect(formatTokenCount(1_200_000), '1.2M');
     expect(formatTokenCount(15_000_000), '15M');
   });

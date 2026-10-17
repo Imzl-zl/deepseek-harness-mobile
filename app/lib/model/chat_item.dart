@@ -53,6 +53,9 @@ class MessageItem extends ChatItem {
     required super.updatedAt,
     required this.role,
     required this.text,
+    this.attachmentCount = 0,
+    this.steering = false,
+    this.reasoning = '',
   });
 
   final MessageRole role;
@@ -60,6 +63,26 @@ class MessageItem extends ChatItem {
   /// 正文。**流式期间这里是累加器的当前内容**，持久事件到达时被整体替换
   /// （`app-channel-client.md` §2.2：以持久为准，避免"流式与最终文本不一致"）。
   final String text;
+
+  /// 附件个数（图片 + 文件块）。**只计数不渲染** —— 手机这一版不给会话消息
+  /// 传附件（读附件要 `session/attachment`，本期未接），但"这条带了 2 张图"
+  /// 这个事实要说出来，否则用户以为附件丢了。
+  final int attachmentCount;
+
+  /// 这是一条**插话**（轮次跑到一半从 next-step 收件箱插进去的用户消息）。
+  ///
+  /// 判据与 DSH Web 逐字同源（`ui-chat/src/client/model/steering-history.ts`：
+  /// `agent/inbox/spliced` 进 next-step 的 id，随后作为 `user/message` 到达）。
+  /// 界面上它是同一条右对齐气泡，只多一枚"插话"标 —— 没有它，
+  /// "我在它跑到一半时纠正了它"这件事在对话流里看不出来。
+  final bool steering;
+
+  /// 助手消息的**思考过程**（`assistant/message` 的 content 里
+  /// `{type:'reasoning', text}` 块；用户消息恒为空）。
+  ///
+  /// DSH 桌面端把它渲染成过程块（可折叠），手机同一条：折叠在正文上方，
+  /// 默认收起 —— 它经常比正文还长，全展开会把对话冲掉。
+  final String reasoning;
 }
 
 /// 消息角色（决定气泡配色与对齐）。
@@ -83,6 +106,8 @@ class ToolCallItem extends ChatItem {
     required this.name,
     required this.status,
     this.summary = '',
+    this.detail = '',
+    this.diffStat,
   });
 
   /// 工具名（如 `Read` / `Bash`）。
@@ -92,6 +117,18 @@ class ToolCallItem extends ChatItem {
 
   /// 一行摘要（参数或结果的短描述）。
   final String summary;
+
+  /// 展开后的明细（工具输出的预览，截断）。
+  ///
+  /// 2026-10-17 之前恒为空串 —— `ToolCard` 支持展开（`.tool-body`），
+  /// 而投影从不填它，于是"这个工具到底返回了什么"在手机上看不见。
+  final String detail;
+
+  /// 变更统计（`+N −M`）；`null` = 不显示。
+  ///
+  /// 从 `tool/result` 的 `metadata.diffs`  hunks 折算（DSH 的
+  /// `diff-card-model.ts:29-41` 认的就是 `{path, oldText, newText}` 这三项）。
+  final ({int added, int removed})? diffStat;
 }
 
 /// 工具调用的状态。
@@ -164,8 +201,14 @@ class SessionSummary {
   /// 会话别名（电脑侧分配的不透明 id，契约 §5.1）。
   final String sid;
 
-  /// 标题。**电脑侧不返回标题**（契约 §5.7 已写明 `session.list` 不含标题），
-  /// 所以标题由**本地**从首条用户消息推导 —— 这也是 DSH 桌面端的做法。
+  /// 标题。**唯一来源是电脑侧**：`session.list` 行的投影提示
+  /// （`projections.values.title`）或 `session.projections` 的 `title` 投影
+  /// （DSH `session-title/src/index.ts:269-281`，wire view 就是 `string | null`），
+  /// 以及会话事件流里的 `session/title` 事件（DSH 生成/改名时落一条）。
+  ///
+  /// **不从本地条目推导**：2026-10-17 前 `AppModel._touchSummary` 每次收到
+  /// delta 都用"首条用户消息前 30 字"覆盖它，于是列表里叫 A、点进会话叫 B
+  /// （真机反馈"选中会话名字就变"）。推导标题是**第二个真值源**，必然漂。
   final String title;
 
   final int updatedAt;
@@ -217,37 +260,31 @@ class SessionSummary {
   /// `user/message`，而它的 agent 永远不起轮次（全程零痕迹），所以拿它当靶子
   /// 会等到超时也看不到任何反应。
   ///
-  /// 它还是**标题链的第二级**：见 [displayTitle]。
+  /// 2026-10-16 起它**不再是标题链的一级**：DSH 的 Web 侧栏对无标题会话显示
+  /// 「未命名」而不用目录名兜底（`ui-workspace/README.zh.md:32`），手机对齐。
   final String? cwd;
 
-  /// 展示用标题。**链与 DSH 的 `displayTitleOf` 逐字一致**：
-  /// 持久标题 → **项目目录名** → 会话 id
-  /// （`packages/api/session-controller/src/client/sessions/service.ts:116-127`，
-  /// 原注释 "Human-facing label: durable title, project basename, then session id"）。
+  /// 展示用标题。链与 DSH 的**侧栏规则**一致：
+  /// 投影提示里的标题 → 「未命名」。
   ///
-  /// 手机的第一级是**本地从首条用户消息推导的标题**（`deriveTitle`）——
-  /// 持久标题在 `title` 投影里，而投影缝要一个**活的 Session 对象**
-  /// （`packages/session/session-projection/src/index.ts:320-328`），
-  /// 连接器为"只存在于落盘里的会话"取不到，所以列表行退回目录名。
+  /// DSH 的 Web 侧栏对没有标题的会话显示本地化的「未命名 / Untitled」，
+  /// **不使用目录名兜底**（`ui-workspace/README.zh.md:32`，原话
+  /// "未保存标题的历史会话显示本地化名称「未命名 / Untitled」，不使用目录名兜底"；
+  /// 判据在 `ui-workspace/src/client/tree.ts:296` 的 `sessionTitle`：
+  /// 只取存储标题，空串交给渲染层本地化）。
   ///
-  /// 2026-10-15 真机实测：这里原来直接显示"（未命名会话）"—— 而 Web 上
-  /// 同一个会话有名字，差别就在第二级（目录名）被整个跳过了。
-  String get displayTitle {
-    if (title.isNotEmpty) return title;
-    final base = _basenameOf(cwd);
-    if (base != null) return base;
-    return sid;
-  }
+  /// 2026-10-16 之前这里是 `title → 目录名 → sid`：目录名兜底让手机上出现
+  /// 一串工作区目录名当会话名（Web 上同一批会话叫"未命名"），sid 兜底更糟 ——
+  /// 一长串随机字符当名字。两级兜底全部删掉，与 Web 对齐。
+  ///
+  /// 注意：`session.list` 的行**只有投影提示**（host 侧 `SessionSummary`
+  /// 没有独立的持久标题字段，见 `dsh-api-session-controller` 的
+  /// `lib/types/types.d.ts`），所以远程客户端拿不到 Web 那个"持久标题"，
+  /// 提示标题是列表行唯一的标题来源——这不是将就，是契约。
+  String get displayTitle => title.isNotEmpty ? title : kUntitledSessionTitle;
 
-  /// 路径的最后一段（Windows 反斜杠与 POSix 斜杠都认）。空路径给 `null`。
-  static String? _basenameOf(String? path) {
-    if (path == null) return null;
-    final segments = path
-        .split(RegExp(r'[\\/]'))
-        .where((segment) => segment.isNotEmpty);
-    if (segments.isEmpty) return null;
-    return segments.last;
-  }
+  /// 没有标题的会话在列表里的显示名（照 DSH 的 `session.untitled` 本地化值）。
+  static const String kUntitledSessionTitle = '未命名';
 
   SessionSummary copyWith({
     String? title,
@@ -256,6 +293,7 @@ class SessionSummary {
     int? pendingCount,
     bool? running,
     bool? blank,
+    bool? subagent,
     ModelRef? model,
     String? cwd,
   }) => SessionSummary(
@@ -266,8 +304,46 @@ class SessionSummary {
     pendingCount: pendingCount ?? this.pendingCount,
     running: running ?? this.running,
     blank: blank ?? this.blank,
+    subagent: subagent ?? this.subagent,
     model: model ?? this.model,
     cwd: cwd ?? this.cwd,
+  );
+
+  /// 只换**易变计数**（更新时间 / 条目数 / 待处理数）。
+  ///
+  /// 存在的理由：`AppModel._touchSummary` 每条 delta 都会更新这三个数，
+  /// 而**身份字段（标题 / 模型 / running / blank / subagent / cwd）一条都不该动** ——
+  /// 2026-10-17 前那里用构造函数重建整行，身份字段全部掉成默认值，
+  /// 症状是"点进会话模型变未选择、标题变成本地推导名"。
+  SessionSummary withCounters({
+    required int updatedAt,
+    required int itemCount,
+    required int pendingCount,
+  }) => SessionSummary(
+    sid: sid,
+    title: title,
+    updatedAt: updatedAt,
+    itemCount: itemCount,
+    pendingCount: pendingCount,
+    running: running,
+    blank: blank,
+    subagent: subagent,
+    model: model,
+    cwd: cwd,
+  );
+
+  /// 只换标题（电脑侧的 `title` 投影 / `session/title` 事件落地时用）。
+  SessionSummary withTitle(String title) => SessionSummary(
+    sid: sid,
+    title: title,
+    updatedAt: updatedAt,
+    itemCount: itemCount,
+    pendingCount: pendingCount,
+    running: running,
+    blank: blank,
+    subagent: subagent,
+    model: model,
+    cwd: cwd,
   );
 }
 

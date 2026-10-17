@@ -76,6 +76,40 @@ test('多个网卡就报多条（切网卡时手机侧列表自己变）', () =>
   )
 })
 
+test('默认路由的地址排第一（顺序拨号下，错的地址在前 = 每个超时 10 秒）', () => {
+  const result = describeEndpoints({
+    relayUrl: 'wss://relay.example',
+    lanHint: '192.168.110.79',
+    listener: fakeListener([
+      { url: 'ws://192.168.40.1:8788', label: 'VMware' },
+      { url: 'ws://192.168.110.79:8788', label: 'WLAN 2' },
+      { url: 'ws://192.168.2.41:8788', label: '以太网' },
+    ]),
+  })
+  assert.deepEqual(
+    result.endpoints.filter((e) => e.kind === 'direct').map((e) => e.url),
+    [
+      'ws://192.168.110.79:8788',
+      'ws://192.168.40.1:8788',
+      'ws://192.168.2.41:8788',
+    ],
+    'hint 命中的那条排第一；其余保持原相对顺序（回落仍可按序试）',
+  )
+})
+
+test('relay 条目用实时提示：配置写环回时上报手机可达地址', () => {
+  const result = describeEndpoints({
+    relayUrl: 'ws://127.0.0.1:8787/ws/connector',
+    lanHint: '192.168.110.79',
+    listener: null,
+  })
+  assert.deepEqual(
+    result.endpoints,
+    [{ kind: 'relay', url: 'ws://192.168.110.79:8787/ws/connector', label: '中转' }],
+    '环回地址手机拨不进来；自报与二维码必须同一个答案',
+  )
+})
+
 test('中转地址为空串当没有（装配层的兜底不该变成一条假端点）', () => {
   const result = describeEndpoints({ relayUrl: '', listener: null })
   assert.deepEqual(result.endpoints, [])

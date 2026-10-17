@@ -68,9 +68,16 @@ class PairingAttempt {
   /// 提交配对码并取回执。**用完即关**：配对是短交互，之后 App 会用正式传输重新连。
   ///
   /// [code] 默认取二维码里那个 —— 只有测试才会传别的值（那是"提交错码"的场景）。
-  Future<PairingAck> commit({String? code}) async {
+  /// [previousPairingId] 是本机上一次配对的标识（重新配对同一台电脑时带上）：
+  /// 电脑侧据此替换旧行而不是又攒一行。**行定位符，不是凭据** —— 见
+  /// `pairing_channel.dart` 的 `commit` 与
+  /// `.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`。
+  Future<PairingAck> commit({String? code, String? previousPairingId}) async {
     try {
-      return await _channel.commit(code ?? offer.code);
+      return await _channel.commit(
+        code ?? offer.code,
+        previousPairingId: previousPairingId,
+      );
     } finally {
       await _channel.close();
     }

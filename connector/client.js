@@ -1,5 +1,5 @@
 /**
- * 连接器的**浏览器半侧**：DSH Web GUI 里插件页的本组合包详情面板。
+ * 连接器的**浏览器半侧**：DSH Web GUI 里「手机」入口的管理弹框。
  *
  * ## 为什么是手写的，而不是 TS + 打包
  *
@@ -15,22 +15,33 @@
  * （`src/admin/routes.ts` 与 `src/admin/device-admin.ts` 有单测），
  * 这里只做「fetch 端点 → 渲染」。
  *
- * ## 入口是哪个 slot
+ * ## 入口是哪个 slot（2026-10-17 从插件页卡迁到侧边栏弹框）
  *
- * `plugins.bundle.config`（`keyed`，scope `root`，**以 npm 包名为键**）——
- * 它渲染在 DSH「插件」页里本组合包详情页的描述与行之间
- * （`ui-plugin-manager/src/client/PluginManagerPage.tsx:735`）。
- * 先例：`packages/experimental/client-ui-voice-input/src/client/mount.ts:48-50`。
- * `plugins.item` 不走：那条 doc 明说它由官方设置页占用（`slot-catalog.ts:2173`）。
+ * 用户原话：「我之前不是说不要插件列表这个 UI？要左侧边栏的入口的弹框 UI……
+ * 你就在插件下面，工作区上面啊？点击弹框多方便？？还有这个位置别的插件可能
+ * 也会占，所以你不能硬编码，要规范，标准啊」。
+ *
+ * 所以走两个**标准槽**，一个字节的位置都不硬编码：
+ *
+ * 1. `sidebar.panellist`（列表槽，`ui-sidebar/src/client/index.ts:83` 声明）——
+ *    **order 5**：插件（`ui-plugin-manager` 的 order 0）之下、自动化任务
+ *    （`ui-schedule` 的 order 10）之上，而面板列表整体在工作区树上方，
+ *    于是正是"插件下面、工作区上面"。别的插件照样往这个槽注册、各自排序。
+ * 2. `main`（keyed 槽，`ui-layout/src/client/index.ts:73`）—— 同一个 id 的
+ *    主面板，内容画成**弹框**（`createPortal` 挂 body，点遮罩/Esc 关 =
+ *    `ctx.layout.selectPanel(null)`）。
+ *
+ * 原来的 `plugins.bundle.config`（插件页组合包详情卡）**已撤**：用户明确不要
+ * 那个入口，而同一个管理面不该有两个家。
  *
  * ## 为什么 `dsh.client` 不列 `inject`
  *
  * `inject` 的语义是"**我的 bundle 物化前，哪些包的 factory 必须先到位**"
  * （`client-modules/src/client/manifest.ts:47-48`），**不是** cordis 的服务依赖 ——
- * 后者在本文件底部 `exports.inject = ['slots', 'locale']`。
- * 本 bundle 只 `require('react')`，而 `react` / `react/jsx-runtime` 在
+ * 后者在本文件底部 `exports.inject = ['slots', 'locale', 'layout']`。
+ * 本 bundle 只 `require('react')` 与 `require('react-dom')`，而它们在
  * `client/web/src/platform.ts:8-9` 的 `PLATFORM_MODULES` 里，是 shell 共享进冻结
- * 模块表的**基线外部**，白拿。所以一个 inject 都不该列。
+ * 模块表的**基线外部**，白拿。所以一个模块表 inject 都不该列。
  * （第一版列了 `dsh-client-ui-plugin-manager`，理由是"我要往它的 slot 注册"——
  *  **那是服务依赖，不是模块表依赖，猜错了**。）
  *
@@ -47,6 +58,9 @@
  * 按操作者的任务频率自上而下：
  *
  * 1. **状态**（最高频："我的手机连上了吗"）—— 连接态 + 在线台数 + 拨向哪条路；
+ *    其下是**传输方式**：每条通道一个开关 + 「全部启动/全部停止」（2026-10-17
+ *    用户：「不是有两中方式为啥就一个开关」）。通道列表来自 `GET /transport`，
+ *    加新方式自动长一行；
  * 2. **设备**（"管理"）—— 在线的排最前；每行动作是**停用 / 启用**（可逆，一对布尔，
  *    照 DSH `setBundleEnabled(name, enabled)`）+ **删除**（硬，抹掉行）；多选走行首
  *    checkbox 与顶部浮现栏；已停用默认折叠；底部按状态清（只剩"已停用 / 全部"）；
@@ -108,18 +122,47 @@ window.__ModuleLoader__.load({
 
   factory(require) {
     const React = require('react')
+    // `react-dom` 在平台的 PLATFORM_MODULES 里（`client/web/src/platform.ts:9`），
+    // 与 react 同级的基线外部 —— 弹框用它挂到 body（主面板是根级区域，
+    // 不会被带 transform 的祖先带跑）。
+    const ReactDOM = require('react-dom')
     const h = React.createElement
     const { useCallback, useEffect, useRef, useState } = React
 
     const STATUS = '/api/dsh-mobile/status'
     const PAIR = '/api/dsh-mobile/pair'
+    const TRANSPORT = '/api/dsh-mobile/transport'
     const ENABLED = '/api/dsh-mobile/devices/enabled'
     const REMOVE = '/api/dsh-mobile/devices/remove'
+
+    /** 侧边栏条目与主面板共用的 id（标准槽用字符串键，不 branded）。 */
+    const PANEL_ID = 'dsh-mobile'
 
     const NS = 'settings.dshMobile'
     const zh = {
       title: '手机连接',
-      summary: '{n} 台设备',
+      // 侧边栏入口（`sidebar.panellist`，order 5：插件 0 之下、自动化任务 10 之上）。
+      // 走标准列表槽、带 order —— 不硬编码位置，别的插件同样注册进来各自排序。
+      entry: '手机',
+      // 传输面**按方式分开关**（2026-10-17 用户：「不是有两中方式为啥就开关？
+      // 后面我要是再加新的方式也就一个开关吗？」）。每个通道一个开关，
+      // 加新方式时这个列表自动变长（数据来自 GET /transport），不为它改形状。
+      transportTitle: '传输方式',
+      allStart: '全部启动',
+      allStop: '全部停止',
+      channelRunning: '运行中',
+      channelStopped: '未运行',
+      channelStart: '启动',
+      channelStop: '停止',
+      failedChannel: '{action}失败：{reason}',
+      transportNote: '两条通道各自独立：停一条不碰另一条。停传输不清凭据、不动身份，再启动不用重扫。',
+      close: '关闭',
+      pairedAt: '配对于',
+      // **重新配对 = 换凭证、替换旧行**（2026-10-17 用户："为啥每次扫都是一个
+      // 新设备"）：手机重新扫码时自报旧 pairingId，电脑侧按它替换同一行
+      // （换密钥/换令牌，配对于保留首次时刻）。首配（没有旧行）才写新行。
+      // 取舍：.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md
+      pairNote: '同一台手机重新扫码会替换它在这台电脑上的旧记录（换新密钥与新令牌，配对于保留首次配对的时刻）—— 记录不再随重配攒行；换一台手机或首次配对才会新增一行。',
       // 连接态（桥接拨通了吗）与设备态（这台在跑吗）是两问，用词因此不同：
       // 前者答"我的手机连上了吗"，后者照 DSH 的状态词（`locales.ts:54,63`）。
       online: '在线',
@@ -178,7 +221,24 @@ window.__ModuleLoader__.load({
     }
     const en = {
       title: 'Mobile link',
-      summary: '{n} device(s)',
+      entry: 'Phone',
+      // Per-method transport switches (2026-10-17). One switch per channel;
+      // a new method grows this list (data from GET /transport) — the shape
+      // never changes.
+      transportTitle: 'Transport',
+      allStart: 'Start all',
+      allStop: 'Stop all',
+      channelRunning: 'running',
+      channelStopped: 'stopped',
+      channelStart: 'Start',
+      channelStop: 'Stop',
+      failedChannel: 'Could not {action}: {reason}',
+      transportNote: 'The two channels are independent: stopping one leaves the other alone. Stopping transport keeps credentials and identities — a restart needs no re-pairing.',
+      close: 'Close',
+      pairedAt: 'Paired',
+      // Re-pairing REPLACES the row: the phone reports its previous pairingId,
+      // the computer swaps keys and token in place (first pairing time kept).
+      pairNote: 'Re-scanning from the same phone REPLACES its previous record on this computer (new keys and token; the first pairing time is kept) — records no longer accumulate; only a first pairing or a different phone adds a row.',
       online: 'online',
       offline: 'offline',
       running: 'running',
@@ -314,9 +374,34 @@ window.__ModuleLoader__.load({
         color: 'var(--dsw-alias-label-secondary)',
       },
       dialogFooter: { display: 'flex', justifyContent: 'flex-end', gap: 8 },
+      /** 主面板弹框的遮罩：**fixed** —— 面板是框架根级区域，没有带 transform
+       *  的祖先（插件页内嵌卡片才需要 absolute，见 `mask` 的注释）。 */
+      fixedMask: {
+        position: 'fixed', inset: 0, zIndex: 1000,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'var(--dsw-alias-bg-mask-1)',
+      },
+      fixedBox: {
+        boxSizing: 'border-box',
+        // **宽**：这个弹框里有一张五列设备表（勾选/名称/配对于/最后活跃/状态）
+        // 加一排操作钮，520px 下表格挤成一团（2026-10-17 用户原话："你这个UI
+        // 你看没搞这么窄干啥"）。留 48px 边距给小屏。
+        width: 'min(760px, calc(100vw - 48px))',
+        maxHeight: 'calc(100vh - 96px)', overflowY: 'auto',
+        background: 'var(--dsw-alias-bg-layer-2)',
+        border: '1px solid var(--dsw-alias-border-inverted)',
+        borderRadius: 10, padding: '14px 18px 18px',
+      },
+      dialogHead: {
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        gap: 12, marginBottom: 10,
+      },
     }
 
     const fmtClock = (ms) => (ms ? new Date(ms).toLocaleString() : '—')
+
+    /** 绝对时间（配对时刻）：要认出"哪条是最新那条"，相对时间不够。 */
+    const fmtWhen = fmtClock
 
     /** 相对时间：操作者关心"多久没用了"，不是"哪年哪月"。 */
     function fmtAgo(ms, t) {
@@ -342,11 +427,31 @@ window.__ModuleLoader__.load({
     /** 异常 → 一句话。失败提示里要带它，不许吞成"操作失败"。 */
     const messageOf = (caught) => (caught instanceof Error ? caught.message : String(caught))
 
-    /** 面板。`view` 由 slot 给：'summary' 是卡片行，'page' 是详情页正文。 */
+    /**
+     * 起停**一条**传输通道。**停 ≠ 卸载**：只收这一条，配对记录与凭据
+     * 原样留着，再启动时配对过的手机一条都不用重扫。
+     *
+     * 跑完必须重拉状态：按钮的"运行中/未运行"要从电脑侧的真值来，
+     * 不按本地点击记录乐观翻转 —— 起点失败时按钮会说谎。
+     */
+    const setChannel = async (id, running, refresh) => {
+      try {
+        const response = await fetch(`${TRANSPORT}/${encodeURIComponent(id)}/${running ? 'start' : 'stop'}`, { method: 'POST' })
+        const body = await response.json()
+        if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
+        await refresh()
+      } catch (caught) {
+        throw new Error(messageOf(caught))
+      }
+    }
+
+    /** 管理面板本体（状态 + 启停 + 设备 + 配对）。**只有一个视图** ——
+     *  2026-10-17 从插件页卡迁到侧边栏弹框后，'summary' 卡片行那个视图
+     *  随入口一起没了，留着就是死代码。 */
     function AdminPanel(props) {
-      const view = props.view
       const t = props.t
       const [status, setStatus] = useState(null)
+      const [channels, setChannels] = useState([])
       const [error, setError] = useState('')
       const [qr, setQr] = useState(null)
       const [busy, setBusy] = useState('')
@@ -365,10 +470,14 @@ window.__ModuleLoader__.load({
 
       const refresh = useCallback(async () => {
         try {
-          const response = await fetch(STATUS)
-          if (!response.ok) throw new Error(`${t('loadFailed')}：HTTP ${response.status}`)
-          const body = await response.json()
-          setStatus(body)
+          // **两个读面一起拉**：status 管设备与连接态，/transport 管按方式的
+          // 通道开关。只拉一个的话，另一个面永远停在空态（假数据）。
+          const [statusResponse, transportResponse] = await Promise.all([fetch(STATUS), fetch(TRANSPORT)])
+          if (!statusResponse.ok) throw new Error(`${t('loadFailed')}：HTTP ${statusResponse.status}`)
+          if (!transportResponse.ok) throw new Error(`${t('loadFailed')}：HTTP ${transportResponse.status}`)
+          setStatus(await statusResponse.json())
+          const transport = await transportResponse.json()
+          setChannels(Array.isArray(transport.channels) ? transport.channels : [])
           setError('')
         } catch (caught) {
           // **失败要留声**：静默的空面板会让人以为"没有设备"。
@@ -376,8 +485,7 @@ window.__ModuleLoader__.load({
         }
       }, [t])
 
-      // **两个 view 都拉**：summary 是卡片行，用户第一眼看到的就是它。
-      // 只给 page 拉的话，summary 永远显示"0 台设备"而实际有 N 台 —— 那是假数据。
+      // 首渲染就把状态与通道列表拉回来（面板的唯一数据源）。
       useEffect(() => { refresh() }, [refresh])
 
       // 有二维码时才需要每秒走字（倒计时）；没有就一个定时器都不挂。
@@ -391,11 +499,6 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (qr !== null && qr.expiresAt <= now) setQr(null)
       }, [qr, now])
-
-      if (view === 'summary') {
-        const count = status && status.devices ? status.devices.filter((d) => !d.revoked).length : 0
-        return h('span', null, t('summary', { n: count }))
-      }
 
       const pair = async () => {
         setBusy('pair')
@@ -490,6 +593,55 @@ window.__ModuleLoader__.load({
         if (back !== null && typeof back.focus === 'function') back.focus()
       }
 
+      /**
+       * 起停**一条**通道。失败带原因显示在面板顶部（照 DSH `停用失败：{reason}`）——
+       * 静默的失败会让人以为按钮坏了，比报错更难排查。
+       */
+      const runChannel = async (channel) => {
+        setBusy(`channel:${channel.id}`)
+        try {
+          await setChannel(channel.id, !channel.running, refresh)
+        } catch (caught) {
+          setError(t('failedChannel', {
+            action: channel.running ? t('channelStop') : t('channelStart'),
+            reason: messageOf(caught),
+          }))
+        } finally {
+          setBusy('')
+        }
+      }
+
+      /**
+       * 批量启停（用户的常态是同时开 / 同时关）。**尽力而为**：已经在目标
+       * 状态的通道跳过（不重启在跑的），失败的记下原因但继续剩下的 ——
+       * 直连没配 `listenPort` 时它起不来，而中转照样该起起来。
+       * 批量不设服务端端点：两条各自的成败要能分别看见，一个批量端点只会
+       * 把其中一个的失败藏掉（`routes.ts` 文件头）。
+       */
+      const runAll = async (running) => {
+        setBusy(`all:${running ? 'start' : 'stop'}`)
+        try {
+          let failure = null
+          for (const channel of channels) {
+            if (channel.running === running) continue
+            try {
+              await setChannel(channel.id, running, refresh)
+            } catch (caught) {
+              failure ??= caught
+            }
+          }
+          await refresh()
+          if (failure !== null) {
+            setError(t('failedChannel', {
+              action: running ? t('channelStart') : t('channelStop'),
+              reason: messageOf(failure),
+            }))
+          }
+        } finally {
+          setBusy('')
+        }
+      }
+
       // ---- 派生值：全部只由 `status` 算出来，放在动作前面，免得闭包向前引用 ----
       const devices = status && status.devices ? status.devices : []
       const live = devices.filter((d) => !d.revoked)
@@ -572,6 +724,48 @@ window.__ModuleLoader__.load({
             h('span', { style: S.label }, '拨向'),
             h('code', { style: { ...S.value, ...S.dim } }, status && status.relayUrl ? status.relayUrl : '未配置中转'),
           ),
+          // **传输方式**：每个通道一个开关（2026-10-17 用户：「不是有两中方式
+          // 为啥就一个开关？后面我要是再加新的方式也就一个开关吗？」）。
+          // 列表来自 `GET /transport` —— 加新方式这里自动长一行，不为它改形状。
+          // 取舍：.agents/notes/implemented/2026-10-17-transport-channels-registry.md
+          // 批量入口放在最上面：同时开 / 同时关是常态，单条是例外。
+          h(
+            'div',
+            { key: 'transport', style: { marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--dsw-alias-border-inverted)' } },
+            h(
+              'div',
+              { style: S.row },
+              h('span', { style: S.label }, t('transportTitle')),
+              h('span', { style: { flex: 1 } }),
+              h('button', {
+                type: 'button',
+                style: busy !== '' ? { ...S.btn, ...S.btnDisabled } : S.btn,
+                disabled: busy !== '',
+                onClick: () => runAll(true),
+              }, t('allStart')),
+              h('button', {
+                type: 'button',
+                style: busy !== '' ? { ...S.btn, ...S.btnDisabled } : S.btn,
+                disabled: busy !== '',
+                onClick: () => runAll(false),
+              }, t('allStop')),
+            ),
+            channels.map((channel) => h(
+              'div',
+              { key: channel.id, style: { ...S.row, marginTop: 6 } },
+              h('span', { style: S.dot(channel.running ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-idle-primary)') }),
+              h('span', { style: S.value }, channel.label),
+              h('span', { style: { ...S.label, flex: 1 } },
+                `${channel.running ? t('channelRunning') : t('channelStopped')} · ${channel.detail}`),
+              h('button', {
+                type: 'button',
+                style: busy === `channel:${channel.id}` ? { ...S.btn, ...S.btnDisabled } : S.btn,
+                disabled: busy !== '',
+                onClick: () => runChannel(channel),
+              }, channel.running ? t('channelStop') : t('channelStart')),
+            )),
+            h('p', { style: { ...S.label, margin: '8px 0 0', lineHeight: 1.6 } }, t('transportNote')),
+          ),
         ),
 
         // ② 设备 —— 在线的排最前（服务端已排序）；每台可停用(软)/启用(解禁)/删除(硬)
@@ -603,6 +797,10 @@ window.__ModuleLoader__.load({
                 h('thead', null, h('tr', null,
                   h('th', { style: { ...S.th, width: 28 } }, ''),
                   h('th', { style: S.th }, '名称'),
+                  // **配对于**：每次扫码都是一条新记录，用户要能认出"哪条是我现在
+                  // 这部手机"（2026-10-17 真机：同一个手机扫了 5 次，5 条同名行，
+                  //  用户问"我只有一个手机怎么显示五个"）。
+                  h('th', { style: S.th }, t('pairedAt')),
                   h('th', { style: S.th }, '最后活跃'),
                   h('th', { style: S.th }, '状态'),
                   h('th', { style: { ...S.th, textAlign: 'right' } }, ''),
@@ -619,6 +817,7 @@ window.__ModuleLoader__.load({
                     }),
                   ),
                   h('td', { style: S.td }, device.name),
+                  h('td', { style: { ...S.td, ...S.dim } }, fmtWhen(device.pairedAt, t)),
                   h('td', { style: { ...S.td, ...S.dim } }, device.revoked ? '—' : fmtAgo(device.lastInteractedAt, t)),
                   h('td', { style: S.td },
                     device.revoked
@@ -749,20 +948,119 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * 侧边栏条目图标（`sidebar.panellist` 的 owner 形状：`{size, active}`）。
+     *
+     * **内联 SVG，不 require 任何 DSH 包**：控件自己画（practices.md:35）。
+     * 形状是一部手机 + 信号弧 —— 与"手机连接"这件事对应。
+     */
+    function EntryIcon(props) {
+      const size = props.size || 18
+      const color = props.active ? 'var(--dsw-alias-label-primary)' : 'currentColor'
+      return h('svg', {
+        width: size, height: size, viewBox: '0 0 16 16', fill: 'none',
+        'aria-hidden': true, style: { color, flex: 'none' },
+      },
+        h('rect', {
+          x: 4.25, y: 1.25, width: 7.5, height: 13.5, rx: 1.75,
+          stroke: 'currentColor', strokeWidth: 1.3,
+        }),
+        h('path', { d: 'M6.75 12.15h2.5', stroke: 'currentColor', strokeWidth: 1.3, strokeLinecap: 'round' }),
+        h('path', {
+          d: 'M1.5 5.5a9 9 0 0 1 13 0M3.6 8.1a6 6 0 0 1 8.8 0',
+          stroke: 'currentColor', strokeWidth: 1.3, strokeLinecap: 'round',
+        }),
+      )
+    }
+
+    /**
+     * 主面板：**弹框**，不是页面。
+     *
+     * 2026-10-17 用户定：入口放侧边栏（插件之下、工作区之上，走标准
+     * `sidebar.panellist` 列表槽 + order，不硬编码位置），**点开是弹框** ——
+     * 管理手机连接是"看一眼 + 一两个动作"的事，不值得占掉整页。
+     *
+     * 弹框用 `createPortal` 挂到 `document.body`：主面板是框架的根级区域，
+     * 不会被带 `transform` 的祖先带跑（插件页那种内嵌卡片才需要 absolute）。
+     * 点遮罩或右上角关闭 = `selectPanel(null)`（标准"回会话视图"）。
+     */
+    function ConnectorPanel(props) {
+      const t = props.t
+      const close = props.close || (() => {})
+      // Esc 关：弹框的标准键。挂在面板上（它在挂载期间一直活着）。
+      useEffect(() => {
+        const onKey = (event) => {
+          if (event.key === 'Escape') close()
+        }
+        document.addEventListener('keydown', onKey)
+        return () => document.removeEventListener('keydown', onKey)
+      }, [close])
+
+      return ReactDOM.createPortal(
+        h('div', {
+          key: 'mask', style: S.fixedMask, onClick: close,
+        },
+          h('div', {
+            key: 'box',
+            role: 'dialog', 'aria-modal': true, 'aria-label': t('title'),
+            style: S.fixedBox,
+            onClick: (event) => event.stopPropagation(),
+          },
+            // 头：标题 + 关闭。状态与在线数在下面的状态卡里，不在这里重复一遍。
+            h('div', { style: S.dialogHead },
+              h('strong', { style: { ...S.value, fontSize: 15 } }, t('title')),
+              h('button', {
+                type: 'button', style: { ...S.btn, padding: '3px 10px' },
+                onClick: close,
+              }, t('close')),
+            ),
+            // 体：原有的管理面板（状态 + 启停 + 设备 + 配对）。
+            h(AdminPanel, { view: 'page', t }),
+            h('p', { style: { ...S.label, margin: '4px 2px 0', lineHeight: 1.6 } }, t('pairNote')),
+          ),
+        ),
+        document.body,
+      )
+    }
+
     return {
-      inject: ['slots', 'locale'],
+      inject: ['slots', 'locale', 'layout'],
 
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, { zh, en }))
-        ctx.slots.inject('plugins.bundle.config', () =>
+        // 关闭面板：标准 API（`selectPanel(null)` = 回会话视图）。
+        const closePanel = () => ctx.layout.selectPanel(null)
+        /**
+         * ① 侧边栏条目 —— 标准列表槽 `sidebar.panellist`，**order 5**：
+         * 插件（0）之下、自动化任务（10）之上，正是"插件下面、工作区上面"
+         * （面板列表整体在工作区树上方）。别的插件同样往这个槽注册、各自排序，
+         * 这里不硬编码任何位置。
+         */
+        ctx.slots.inject('sidebar.panellist', () =>
           ctx.slots.register(
             {
-              name: 'plugins.bundle.config',
-              // **键必须是本包的 npm 名**：页面按它寻址这个组合包的详情页。
-              key: '@dsh-mobile/connector',
+              name: 'sidebar.panellist',
+              id: PANEL_ID,
+              order: 5,
+              label: () => ctx.locale.bind(NS)('entry'),
               locale: NS,
             },
-            AdminPanel,
+            EntryIcon,
+          ),
+        )
+        /**
+         * ② 主面板 —— 同一个 id，点条目时框架切到它，内容画成弹框。
+         * `main` 是 keyed 槽（`ui-layout/src/client/index.ts:73`）。
+         */
+        ctx.slots.inject('main', () =>
+          ctx.slots.register(
+            {
+              name: 'main',
+              key: PANEL_ID,
+              locale: NS,
+              inject: () => ({ close: closePanel }),
+            },
+            ConnectorPanel,
           ),
         )
       },

@@ -3,17 +3,19 @@
  *
  * ## 为什么这一组值得单独钉
  *
- * 它是**操作者在浏览器里的唯一出口**：看桥接状态、出配对码、停用/启用设备、删除设备。
- * 出错的样子都很安静——路由没挂上时面板空白、端点回错 JSON，
+ * 它是**操作者在浏览器里的唯一出口**：看桥接状态、出配对码、按方式停启传输、
+ * 停用/启用设备、删除设备。出错的样子都很安静——路由没挂上时面板空白、端点回错 JSON，
  * 而"二维码出不来"在真机上表现为"手机扫不到东西"，中间隔着一整台电脑。
  *
  * 所以这里逐条钉：
- * 1. 四个端点的路径、方法、形状；
+ * 1. 各端点的路径、方法、形状；
  * 2. **出码是 POST**（GET 会被预取白烧一次性 offer）；
- * 3. **停用/启用是一对布尔端点**（照 DSH `setBundleEnabled`），未知设备 id 不当成功；
- * 4. **删除只有 `devIds` 多选与 `scope: revoked|all` 两种 body**，
+ * 3. **传输面按通道分**：`GET /transport` 列通道、`POST /transport/{id}/{start,stop}`
+ *    各停各的，且**路由按 `deps.channels()` 生成** —— 加第三种方式不改管理面形状；
+ * 4. **停用/启用是一对布尔端点**（照 DSH `setBundleEnabled`），未知设备 id 不当成功；
+ * 5. **删除只有 `devIds` 多选与 `scope: revoked|all` 两种 body**，
  *    `offline` scope 与 `allOffline` 批量吊销**不许回来**（2026-10-15 事故）；
- * 5. 二维码的载荷与 `pairing-qr.ts` 的**解码器真 round-trip**——
+ * 6. 二维码的载荷与 `pairing-qr.ts` 的**解码器真 round-trip**——
  *    期望值不是手编常量，是"编出来再解回去等于原载荷"。
  *
  * 不变量本身（解禁要把 `revokedAt` 从行上拿掉、在线的绝不删）在
@@ -59,12 +61,20 @@ const DEVICES: AdminDeviceRow[] = [
   { id: 'dev-gone', name: '旧手机', pairedAt: 1740000000000, revoked: true, online: false, foreground: false },
 ]
 
+/** 两条传输通道（2026-10-17 起按"方式"分开关）。 */
+const CHANNELS = [
+  { id: 'relay', label: '中转拨号', running: true, detail: 'ws://127.0.0.1:8787/ws/connector' },
+  { id: 'direct', label: '直连监听', running: true, detail: '0.0.0.0:8790' },
+]
+
 function deps(over: Partial<AdminDeps> = {}): AdminDeps {
   return {
     caps: () => CAPS,
     metrics: () => ({ pairedDevices: 2, failClosed: 0 }),
     devices: () => DEVICES,
     relayUrl: () => 'ws://127.0.0.1:8787/ws/connector',
+    channels: () => CHANNELS,
+    setChannel: async () => {},
     offer: async () => ({ svg: 'P', expiresAt: 123 }),
     setEnabled: async () => {},
     remove: async () => ({ removed: 0, skippedOnline: 0 }),
@@ -80,12 +90,12 @@ const routeOf = (routes: ReturnType<typeof createAdminRoutes>, path: string) => 
 }
 
 /** 用 `body` 打某个端点，省掉每处都写一遍的 Request 样板。 */
-const post = (routes: ReturnType<typeof createAdminRoutes>, path: string, body: unknown): Promise<Response> =>
+const post = (routes: ReturnType<typeof createAdminRoutes>, path: string, body?: unknown): Promise<Response> =>
   routeOf(routes, path).fetch(
     new Request(`http://x${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: typeof body === 'string' ? body : JSON.stringify(body),
+      ...(body === undefined ? {} : { body: typeof body === 'string' ? body : JSON.stringify(body) }),
     }),
   )
 
@@ -97,7 +107,7 @@ async function jsonOf(res: Response): Promise<Record<string, unknown>> {
   return body as Record<string, unknown>
 }
 
-test('四个端点：路径、方法、形状', async () => {
+test('端点：路径、方法、形状', async () => {
   const routes = createAdminRoutes(deps())
   assert.deepEqual(
     routes.map((r) => `${r.path} ${r.methods.join(',')}`).sort(),
@@ -106,6 +116,11 @@ test('四个端点：路径、方法、形状', async () => {
       '/api/dsh-mobile/devices/remove POST',
       '/api/dsh-mobile/pair POST',
       '/api/dsh-mobile/status GET',
+      '/api/dsh-mobile/transport GET',
+      '/api/dsh-mobile/transport/direct/start POST',
+      '/api/dsh-mobile/transport/direct/stop POST',
+      '/api/dsh-mobile/transport/relay/start POST',
+      '/api/dsh-mobile/transport/relay/stop POST',
     ],
   )
 
@@ -118,6 +133,9 @@ test('四个端点：路径、方法、形状', async () => {
   assert.deepEqual(body['metrics'], { pairedDevices: 2, failClosed: 0 })
   assert.equal(body['relayUrl'], 'ws://127.0.0.1:8787/ws/connector',
     '状态要说明拨向哪条路 —— 排查"连不上"时第一件事是看这个')
+  // 传输面的总布尔已走：按方式分开关后，"整条传输在不在跑"没有单一答案，
+  // 真相在 `GET /transport` 的通道列表里。留着它就是第二套会漂移的真相。
+  assert.equal(body['transportRunning'], undefined, 'status 不再回传输总布尔')
   // 设备行原样给（含已吊销的那台——页面要能显示"这台已被移除"）。
   const rows = body['devices'] as Array<Record<string, unknown>>
   assert.equal(rows.length, 3)
@@ -127,6 +145,83 @@ test('四个端点：路径、方法、形状', async () => {
   assert.equal(rows[0]?.['foreground'], true)
   assert.equal(rows[0]?.['lastInteractedAt'], 1760000600000)
   assert.equal(rows[1]?.['online'], false)
+})
+
+test('传输面：GET /transport 列通道（按"方式"分开关的唯一数据源）', async () => {
+  const routes = createAdminRoutes(deps())
+  const res = await routeOf(routes, '/api/dsh-mobile/transport').fetch(
+    new Request('http://x/api/dsh-mobile/transport'),
+  )
+  assert.equal(res.status, 200)
+  assert.deepEqual(await jsonOf(res), { channels: CHANNELS })
+})
+
+test('传输面：每条通道各自起停，回执带当时的通道真值', async () => {
+  const seen: Array<[string, boolean]> = []
+  let running = true
+  const routes = createAdminRoutes(deps({
+    setChannel: async (id, on) => { seen.push([id, on]); running = on },
+    channels: () => CHANNELS.map((channel) => ({ ...channel, running })),
+  }))
+
+  for (const [id, on] of [['direct', false], ['relay', false], ['relay', true]] as const) {
+    const res = await post(routes, `/api/dsh-mobile/transport/${id}/${on ? 'start' : 'stop'}`)
+    assert.equal(res.status, 200)
+    const body = await jsonOf(res)
+    assert.equal(body['ok'], true)
+    const channels = body['channels'] as Array<{ running: boolean }>
+    assert.equal(channels[0]?.running, on, '回执带电脑侧真值，不按本地点击乐观翻转')
+  }
+  // **两个方式两个开关**：停 direct 不碰 relay，起 relay 不碰 direct。
+  assert.deepEqual(seen, [['direct', false], ['relay', false], ['relay', true]])
+})
+
+test('传输面：起停端点一律 POST（GET 会被预取/刷新触发，那会莫名断链）', () => {
+  const routes = createAdminRoutes(deps())
+  for (const id of ['relay', 'direct']) {
+    for (const action of ['start', 'stop']) {
+      const route = routeOf(routes, `/api/dsh-mobile/transport/${id}/${action}`)
+      assert.ok(!route.methods.includes('GET'), `${id}/${action} 不许 GET`)
+    }
+  }
+})
+
+test('传输面：启动失败带原因回界面（端口被占），不当成功', async () => {
+  const routes = createAdminRoutes(deps({
+    setChannel: async () => { throw new Error('listen EADDRINUSE: address already in use 8790') },
+  }))
+  const res = await post(routes, '/api/dsh-mobile/transport/direct/start')
+  // 400 而不是 500：面板只显示 `body.error`，500 只会剩下一个没有原因的 HTTP 号。
+  assert.equal(res.status, 400)
+  const body = await jsonOf(res)
+  assert.equal(body['ok'], false)
+  assert.match(String(body['error']), /EADDRINUSE/, '原话要带回去，不许吞成"操作失败"')
+})
+
+test('传输面：路由按通道生成 —— 加第三种方式不改管理面形状', async () => {
+  // 注册表多一个端口（Tailscale / 服务器中转），路由自动多一对，
+  // 而 UI 按 `GET /transport` 枚举渲染 —— 这条是"形状不变"的机械断言。
+  const three = [...CHANNELS, { id: 'tailscale', label: 'Tailscale', running: false, detail: '未配置' }]
+  const paths = createAdminRoutes(deps({ channels: () => three })).map((route) => route.path)
+  for (const id of ['relay', 'direct', 'tailscale']) {
+    assert.ok(paths.includes(`/api/dsh-mobile/transport/${id}/start`), `${id} 的 start 路由应自动出现`)
+    assert.ok(paths.includes(`/api/dsh-mobile/transport/${id}/stop`), `${id} 的 stop 路由应自动出现`)
+  }
+})
+
+test('传输面：没有按 id 写死的路由表，旧的一把开关端点不许回来', () => {
+  // 老形状 `/transport/start` 与 `/transport/stop`（一把同时起停拨号与监听）
+  // 已删：用户明确要求"两个方式两个开关"，且加新方式时一把开关又要改形状。
+  const paths = createAdminRoutes(deps()).map((route) => route.path)
+  assert.equal(paths.includes('/api/dsh-mobile/transport/start'), false, '一把总启动不许回来')
+  assert.equal(paths.includes('/api/dsh-mobile/transport/stop'), false, '一把总停止不许回来')
+  // 没注册过的通道 id 没有路由（Connection 的 Fetch 路由是精确匹配）——
+  // 打过去是 404，而不是一个"假装成功"的 200。
+  assert.equal(
+    paths.includes('/api/dsh-mobile/transport/nope/start'),
+    false,
+    '未知通道 id 不该有路由',
+  )
 })
 
 test('出码端点：POST，回 svg 与过期时刻（不回 payload）', async () => {
@@ -321,7 +416,7 @@ test('没有独立网页这一路：管理面的 UI 在插件面板里，不另�
   const code = raw.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ')
   assert.doesNotMatch(code, /webServer/, 'mount 不该再注册页面路由')
   assert.doesNotMatch(code, /adminPageHtml/, '不该再生成 HTML')
-  // 但四个 RPC 端点必须在 —— 插件面板的数据源是它们。
+  // 但 RPC 端点必须在 —— 插件面板的数据源是它们。
   assert.match(code, /connection\.fetch\.register/)
 })
 

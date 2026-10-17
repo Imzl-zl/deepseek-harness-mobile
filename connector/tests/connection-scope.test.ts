@@ -17,6 +17,7 @@ function fakePort() {
 function makeDeps(overrides: Partial<ConnectionScopeDeps> = {}): ConnectionScopeDeps {
   const sessions = {
     list: async () => [], prompt: async () => ({ accepted: true as const }), cancel: () => ({ accepted: true as const }),
+    updateQueue: async () => ({ accepted: true as const }),
     selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
     create: async () => ({ sessionId: 'dsh-new' }),
     page: async () => ({ records: [], hasMore: false }), follow: (): never => { throw new Error('本用例不应建立订阅') },
@@ -49,7 +50,7 @@ test('两连接的 ping、业务应答和配对应答都只走自己的端口', 
   assert.deepEqual(b.sent, [])
 
   const pairing = createPairing({ pcId: 'pc-1', relayUrl: 'wss://relay.example', pcPubEd: 'a'.repeat(64), pcPubDh: 'b'.repeat(64) })
-  const endpoint = createPairingEndpoint({ pairing, pcId: 'pc-1', putDevice: async () => { throw new Error('坏 JSON 不得写库') }, announce: async () => {} })
+  const endpoint = createPairingEndpoint({ pairing, pcId: 'pc-1', putDevice: async () => { throw new Error('坏 JSON 不得写库') }, findPreviousPairing: () => null, removeDevice: async () => {}, announce: async () => {} })
   t.after(() => endpoint.dispose())
   const scopeB = createConnectionScope(b.port, deps, {
     candidate: { offerId: 'A'.repeat(22), devPubEd: 'c'.repeat(64), devPubDh: 'd'.repeat(64), name: '手机' }, endpoint,
@@ -126,6 +127,7 @@ test('presence：订阅集变化就上报（foreground 档的 claim 判据是"�
     sessions: {
       list: async () => [], prompt: async () => ({ accepted: true as const }),
       cancel: () => ({ accepted: true as const }), page: async () => ({ records: [], hasMore: false }),
+      updateQueue: async () => ({ accepted: true as const }),
       selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
       create: async () => ({ sessionId: 'dsh-new' }),
       follow: (): never => { throw new Error('本用例不应建立订阅') },

@@ -697,6 +697,91 @@
     toastT = setTimeout(() => toastEl.classList.remove("is-on"), 1800);
   }
 
+  /* ---------------------------------------------------------- 排队条(QueueDock) */
+  /* 会话正在跑时发出去的消息排进下一个轮次。数据源在真机是 `inbox` 投影的
+     next-turn 段(契约 §5.7),这里用演示数据把交互基线定下来:
+     计数头(多条时折叠)+ 行内 编辑/删除/插话。三个动作都走 session.updateQueue
+     (与 Web 排队 dock 同一个 DSH 方法)。 */
+  const queueDock = $("#queueDock");
+  const queueState = {
+    // 演示数据:两条 next-turn(一条带附件)。
+    items: [
+      { id: "q-1", text: "顺便把 README 的安装章节也更新一下", attachments: 0 },
+      { id: "q-2", text: "这是回归截图", attachments: 2 },
+    ],
+    running: true, // 插话门:仅运行中可插话发送
+    collapsed: true,
+  };
+  function renderQueueDock() {
+    if (!queueDock) return;
+    const items = queueState.items;
+    if (items.length === 0) {
+      queueDock.hidden = true;
+      queueDock.innerHTML = "";
+      return;
+    }
+    queueDock.hidden = false;
+    const single = items.length === 1;
+    const expanded = single || !queueState.collapsed;
+    const head = single
+      ? ""
+      : `<button class="qdock-head" data-qd="toggle" aria-expanded="${expanded}">
+           <span data-icon="queue" data-icon-size="14"></span>
+           <span class="grow">${items.length} 条排队消息</span>
+           <span data-icon="${expanded ? "chevronDown" : "chevronRight"}" data-icon-size="14"></span>
+         </button>`;
+    const rows = expanded
+      ? items
+          .map(
+            (it) => `
+        <div class="qdock-row" data-qd-row="${it.id}">
+          ${single ? '<span data-icon="queue" data-icon-size="14"></span>' : ""}
+          <div class="grow" style="flex:1;min-width:0">
+            <div class="qdock-preview">${escapeHtml(it.text)}</div>
+            ${it.attachments ? `<div class="qdock-attach">${it.attachments} 个附件（不随编辑发送）</div>` : ""}
+          </div>
+          <div class="qdock-acts">
+            <button class="qdock-act" data-qd="edit" data-qd-id="${it.id}" aria-label="编辑排队消息" title="编辑排队消息"${it.attachments ? " disabled title='带附件的消息编辑不了（只发文本）'" : ""}><span data-icon="listPen" data-icon-size="14"></span></button>
+            <button class="qdock-act" data-qd="remove" data-qd-id="${it.id}" aria-label="删除排队消息" title="删除排队消息"><span data-icon="closeFill" data-icon-size="14"></span></button>
+            <button class="qdock-act" data-qd="steer" data-qd-id="${it.id}" aria-label="插话发送" title="${queueState.running ? "插话发送" : "仅运行中可插话发送"}"${queueState.running ? "" : " disabled"}><span data-icon="paperPlane" data-icon-size="14"></span></button>
+          </div>
+        </div>`
+          )
+          .join("")
+      : "";
+    queueDock.innerHTML = head + rows;
+    paintIcons(queueDock);
+  }
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  if (queueDock) {
+    renderQueueDock();
+    queueDock.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-qd]");
+      if (!btn) return;
+      const act = btn.dataset.qd;
+      if (act === "toggle") {
+        queueState.collapsed = !queueState.collapsed;
+        renderQueueDock();
+        haptic();
+        return;
+      }
+      const id = btn.dataset.qdId;
+      const item = queueState.items.find((i) => i.id === id);
+      if (!item) return;
+      // 演示:三个动作只给出结论(真机走 session.updateQueue)。
+      if (act === "edit") toast("编辑排队消息（演示）");
+      if (act === "remove") {
+        queueState.items = queueState.items.filter((i) => i.id !== id);
+        renderQueueDock();
+        toast("已删除排队消息");
+      }
+      if (act === "steer") toast("已请求插话发送");
+      haptic();
+    });
+  }
+
   /* ---------------------------------------------------------- 会话页:滚动 / 长按 / 工具折叠 */
   const msgScroll = $("#msgs");
   const fabDown = $("#fabDown");

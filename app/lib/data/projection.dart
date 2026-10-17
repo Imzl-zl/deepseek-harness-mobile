@@ -31,6 +31,10 @@ const String askUserQuestionTool = 'ask_user_question';
 /// [seq] 是帧头带来的会话修订号（`ev` 帧的 `seq`）；事件自带的 `seq` 以那个为准
 /// （两者在正常路径上相同，帧头那个是兜底）。
 ///
+/// [steering] 标记这是一条插话消息（判据在 `AppModel` 的收件箱追踪里，
+/// 与 DSH Web 的 `SteeringHistory` 同源）—— 投影层自己是纯函数，
+/// 不认识跨事件的状态。
+///
 /// **未知类型不丢**：返回 [OtherItem]，而不是 `null`。
 /// 丢掉会让"事件总数与条目数对不上"这类问题无从排查，而 DSH 的事件类型会随上游增加。
 ChatProjection projectEvent({
@@ -38,19 +42,24 @@ ChatProjection projectEvent({
   required int seq,
   required Object? data,
   int time = 0,
+  bool steering = false,
 }) {
   // `itemId` 的推导只走 `core/items.dart`（契约 §5.2）：那是**唯一**一处，
   // 而它可能在已知类型缺字段时抛错（宁可让这一帧失败，也不要造一个会漂移的身份）。
   final itemId = itemIdOf(EventLike(type: type, seq: seq, data: data));
 
   if (isMessageEvent(type)) {
+    final message = messageProjectionOf(type, data);
     return ChatProjection.item(
       MessageItem(
         itemId: itemId,
         seq: seq,
         updatedAt: time,
         role: roleOfEvent(type),
-        text: textOfMessageEvent(type, data),
+        text: message.text,
+        attachmentCount: message.attachmentCount,
+        steering: steering,
+        reasoning: message.reasoning,
       ),
     );
   }
@@ -71,16 +80,22 @@ ChatProjection projectEvent({
   if (type == 'tool/result') {
     // 结果与调用**共用同一个 itemId**（靠 `toolCallId` 配对，契约 §5.2），
     // 所以它到达时是"更新已有条目"，而不是新增一条。
+    final message = fieldOf(data, 'message');
     return ChatProjection.item(
       ToolCallItem(
         itemId: itemId,
         seq: seq,
         updatedAt: time,
-        name: stringField(fieldOf(data, 'message'), 'name') ?? '工具',
+        name: stringField(message, 'name') ?? '工具',
         status: isToolError(data)
             ? ToolCallStatus.failed
             : ToolCallStatus.completed,
-        summary: summarize(fieldOf(data, 'message')),
+        summary: summarize(message),
+        // **结果正文进明细**：工具到底返回了什么，展开才看得见
+        // （`ToolCard` 的 `.tool-body` 一直是支持的，只是投影从不填）。
+        detail: toolOutputOf(message),
+        // 文件变更的 +N/−M（`metadata.diffs` hunks 折算）。
+        diffStat: diffStatOf(message),
       ),
     );
   }
@@ -156,16 +171,62 @@ MessageRole roleOfEvent(String type) => switch (type) {
   _ => MessageRole.system,
 };
 
-/// 取消息正文。
+/// 一条消息投影出来的三样东西：正文、附件数、思考过程。
+class MessageProjection {
+  const MessageProjection({
+    required this.text,
+    this.attachmentCount = 0,
+    this.reasoning = '',
+  });
+
+  final String text;
+  final int attachmentCount;
+  final String reasoning;
+}
+
+/// 取消息正文（以及附件数与思考过程）。
 ///
 /// **`user/message` 的载荷就是消息本身**，其余类型在 `data.message` 上
 /// （`core/items.dart` 的 `itemIdOf` 有同一处结构知识 —— 两处都在描述 DSH 的形状，
 /// 所以它们必须一起改；这一点在 `docs/` 里由契约 §5.2 那张表钉着）。
-String textOfMessageEvent(String type, Object? data) {
+MessageProjection messageProjectionOf(String type, Object? data) {
   final holder = type == 'user/message' ? data : fieldOf(data, 'message');
-  // DSH 的消息体是 `{id, role, content: [...]}` 形状；这里**只取纯文本块**，
+  // DSH 的消息体是 `{id, role, content: [...]}` 形状；正文**只取纯文本块**，
   // 复杂块（图片、工具调用）由渲染层按需处理 —— 这一层不做富文本投影。
-  return textOfContent(fieldOf(holder, 'content'));
+  final content = fieldOf(holder, 'content');
+  return MessageProjection(
+    text: textOfContent(content),
+    attachmentCount: attachmentCountOf(content),
+    // 助手消息的 content 里可能有 `{type:'reasoning', text}` 块
+    // （真实会话日志里就有）；用户消息没有。
+    reasoning: type == 'assistant/message' ? reasoningOf(content) : '',
+  );
+}
+
+/// content 里图片 / 文件块的个数。
+int attachmentCountOf(Object? content) {
+  if (content is! List) return 0;
+  var count = 0;
+  for (final block in content) {
+    if (block is Map) {
+      final type = block['type'];
+      if (type == 'image' || type == 'file') count += 1;
+    }
+  }
+  return count;
+}
+
+/// 助手的思考过程（content 里全部 `reasoning` 块拼接）。
+String reasoningOf(Object? content) {
+  if (content is! List) return '';
+  final buffer = StringBuffer();
+  for (final block in content) {
+    if (block is! Map) continue;
+    if (block['type'] != 'reasoning') continue;
+    final text = block['text'];
+    if (text is String) buffer.write(text);
+  }
+  return buffer.toString();
 }
 
 /// 从 DSH 的 `content` 取纯文本。
@@ -173,12 +234,16 @@ String textOfMessageEvent(String type, Object? data) {
 /// `content` 可能是字符串，也可能是块数组（`{type: 'text', text: '…'}`）。
 /// **两种都收**：DSH 的 `user/message` 历史上两种形状都出现过，
 /// 而只认一种会让另一种静默显示成空 —— 那是"消息发出去但界面是空的"这类 bug。
+///
+/// **只取 `type == 'text'` 的块**：`{type:'reasoning', text}` 也是 `text` 字段，
+/// 不按 type 滤就会把思考过程混进正文（真机日志里两种块并存）。
 String textOfContent(Object? content) {
   if (content is String) return content;
   if (content is List) {
     final buffer = StringBuffer();
     for (final block in content) {
       if (block is Map) {
+        if (block['type'] != 'text') continue;
         final text = block['text'];
         if (text is String) buffer.write(text);
       } else if (block is String) {
@@ -188,6 +253,44 @@ String textOfContent(Object? content) {
     return buffer.toString();
   }
   return '';
+}
+
+/// 工具结果的输出文本（`message.content` 的文本块，截断成明细）。
+///
+/// **截断**：一次 `ls` 可以有几十万字符，而明细是展开才看的一行区域。
+String toolOutputOf(Object? message, {int maxLength = 4000}) {
+  final text = textOfContent(fieldOf(message, 'content')).trim();
+  if (text.isEmpty) return '';
+  final single = text.replaceAll(RegExp(r'\r\n?'), '\n');
+  return single.length <= maxLength
+      ? single
+      : '${single.substring(0, maxLength)}…';
+}
+
+/// 从 `tool/result` 的 `metadata.diffs` 折算 +N/−M。
+///
+/// DSH 的 `diff-card-model.ts:29-41` 认的 hunk 形状是
+/// `{path, oldText, newText}`；这里只取**行数统计**（手机这一版不画 diff
+/// 正文，画正文是 `ui-tool` 的 DiffBlock，属于独立一块）。
+/// 按行折算：旧文本行数 = 删除，新文本行数 = 新增。
+({int added, int removed})? diffStatOf(Object? message) {
+  final diffs = fieldOf(fieldOf(message, 'metadata'), 'diffs');
+  if (diffs is! List || diffs.isEmpty) return null;
+  var added = 0;
+  var removed = 0;
+  for (final hunk in diffs) {
+    if (hunk is! Map) continue;
+    final oldText = hunk['oldText'];
+    final newText = hunk['newText'];
+    if (oldText is String && oldText.isNotEmpty) {
+      removed += oldText.split('\n').length;
+    }
+    if (newText is String && newText.isNotEmpty) {
+      added += newText.split('\n').length;
+    }
+  }
+  if (added == 0 && removed == 0) return null;
+  return (added: added, removed: removed);
 }
 
 /// 工具结果是不是失败。
@@ -410,21 +513,4 @@ List<InteractionQuestion> _questionsOf(Object? arguments) {
 bool _recommendedOf(String label) {
   final stripped = label.replaceAll(RegExp(r'[（(]推荐[)）]'), '');
   return stripped != label;
-}
-
-/// 从首条用户消息推导会话标题（**电脑侧不返回标题**，见 `SessionSummary.title`）。
-/// DSH 桌面端也是这么做的：标题是本地投影，不是服务端字段。
-/// 推导规则保持极简（首条用户消息的前若干字）——复杂的标题生成该由模型做，
-/// 而不是由客户端猜。
-String deriveTitle(List<ChatItem> items, {int maxLength = 30}) {
-  for (final item in items) {
-    if (item is MessageItem && item.role == MessageRole.user) {
-      final text = item.text.replaceAll(RegExp(r'\s+'), ' ').trim();
-      if (text.isEmpty) continue;
-      return text.length <= maxLength
-          ? text
-          : '${text.substring(0, maxLength)}…';
-    }
-  }
-  return '新会话';
 }

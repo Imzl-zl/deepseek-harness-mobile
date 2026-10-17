@@ -202,26 +202,60 @@ void main() {
     app.dispose();
   });
 
-  test('modelCatalog：按 provider 分组摊平，available=false 时不设', () async {
+  // **回归 2026-10-17 真机**：模型目录在生产里一次都没解析成功过。
+  //
+  // 根因：解析器认的是一个**臆想形状**（`List<{provider, models:[{id}]}>`），
+  // 而连接器原样过线的是 DSH `buildModelCatalog` 的返回值
+  // （`packages/api/session-controller/src/catalog.ts:20-72`）——
+  // 顶层是**对象** `{default, routableProviders, groups, failures}`，
+  // 于是 `catalog is! List` 直接静默返回，picker 永远说"拿不到目录"。
+  // 连接器自己的夹具（`connector/tests/models-face.test.ts`）从头到尾
+  // 都是真形状 —— 两边各测各的，中间那一跳没人测。
+  //
+  // 下面这条用例的形状逐字复刻连接器夹具的 `CATALOG`（那就是 DSH 的真形状）。
+  test('modelCatalog：按 DSH 真形状解析（groups/efforts/failures）', () async {
     final client = _ModelClient(
       onCall: (m, p) => m == 'session.modelCatalog'
           ? {
               'available': true,
-              'catalog': [
-                {
-                  'provider': 'lightvela-free',
-                  'models': [
-                    {'id': 'auto'},
-                    {'id': 'glm-5.3-flash'},
-                  ],
-                },
-                {
-                  'provider': 'deepseek-official',
-                  'models': [
-                    {'id': 'deepseek-chat'},
-                  ],
-                },
-              ],
+              'catalog': {
+                'default': {'provider': 'lightvela-free', 'model': 'auto'},
+                'routableProviders': ['lightvela-free', 'deepseek-official'],
+                'groups': [
+                  {
+                    'id': 'lightvela-free',
+                    'name': 'Lightvela (free)',
+                    'models': [
+                      {'id': 'auto', 'name': 'Auto'},
+                      {'id': 'glm-5.3-flash', 'name': 'GLM-5.3-Flash'},
+                    ],
+                  },
+                  {
+                    'id': 'deepseek-official',
+                    'name': 'DeepSeek',
+                    'models': [
+                      {
+                        'id': 'deepseek-flash',
+                        'name': 'DeepSeek-V41-Flash',
+                        'reasoning': {
+                          'efforts': [
+                            {'id': 'low', 'name': 'Low'},
+                            {'id': 'high', 'name': 'High'},
+                          ],
+                          'defaultEffort': 'high',
+                        },
+                      },
+                    ],
+                  },
+                ],
+                'failures': [
+                  {
+                    'id': 'broken-provider',
+                    'name': 'Broken',
+                    'message': 'API key not configured',
+                  },
+                ],
+              },
             }
           : null,
     );
@@ -229,11 +263,52 @@ void main() {
     await app.start();
     await app.refreshSessions();
 
-    expect(app.modelCatalog?.map((m) => '${m.provider}/${m.model}').toList(), [
-      'lightvela-free/auto',
-      'lightvela-free/glm-5.3-flash',
-      'deepseek-official/deepseek-chat',
+    final catalog = app.modelCatalog;
+    expect(catalog, isNotNull, reason: '真形状必须解析得出来');
+    expect(catalog!.allEntries.map((e) => e.id).toList(), [
+      'auto',
+      'glm-5.3-flash',
+      'deepseek-flash',
     ]);
+    // 展示名用目录里的 name，不是 id。
+    expect(
+      catalog.displayNameOf(
+        provider: 'deepseek-official',
+        model: 'deepseek-flash',
+      ),
+      'DeepSeek-V41-Flash',
+    );
+    // 目录里没有的（provider, model）退到 id，不猜。
+    expect(catalog.displayNameOf(provider: 'p', model: 'm'), 'm');
+    // effort 展示名：给了 id 翻成 name；没给退到 defaultEffort 的 name。
+    expect(
+      catalog.effortNameOf(
+        provider: 'deepseek-official',
+        model: 'deepseek-flash',
+        effort: 'low',
+      ),
+      'Low',
+    );
+    expect(
+      catalog.effortNameOf(
+        provider: 'deepseek-official',
+        model: 'deepseek-flash',
+        effort: null,
+      ),
+      'High',
+      reason: '没带 effort 时生效档是 provider 默认（Web 的 effectiveEffort）',
+    );
+    // 没有推理档的模型：空串（界面据此显示"默认"）。
+    expect(
+      catalog.effortNameOf(
+        provider: 'lightvela-free',
+        model: 'auto',
+        effort: null,
+      ),
+      '',
+    );
+    // 失败分组必须留着：静默丢掉 = "key 没配"在手机上毫无痕迹。
+    expect(catalog.failures.single.id, 'broken-provider');
     app.dispose();
   });
 
@@ -242,6 +317,20 @@ void main() {
       onCall: (m, p) => m == 'session.modelCatalog'
           ? {'available': true, 'catalog': 'x'}
           : null,
+    );
+    final app = AppModel(client: client);
+    await app.start();
+    await app.refreshSessions();
+    expect(app.modelCatalog, isNull);
+    app.dispose();
+  });
+
+  test('modelCatalog available=false：当没有，不摆空列表', () async {
+    // 空目录会被读成"没有可用模型"，而真实原因可能是 key 没配 ——
+    // 与连接器同一条纪律（`models-face.test.ts` 的 `{available:false}`）。
+    final client = _ModelClient(
+      onCall: (m, p) =>
+          m == 'session.modelCatalog' ? {'available': false} : null,
     );
     final app = AppModel(client: client);
     await app.start();

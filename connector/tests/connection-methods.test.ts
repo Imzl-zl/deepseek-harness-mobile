@@ -65,6 +65,8 @@ function fixtureHandlers(
       },
       selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
       create: async () => ({ sessionId: 'dsh-new' }),
+      updateQueue: async () => ({ accepted: true as const }),
+      cancel: () => ({ accepted: true as const }),
     },
     aliases: createFakeAliases({
       // 别名是**不透明的**：刻意不把 DSH 会话 id 编进去，否则"id 不过线"的断言会失去意义
@@ -175,10 +177,12 @@ test('端到端：手机问 repo.info，电脑侧回一个可解的 res（id 对
       'job.kill',
       'job.list',
       'repo.info',
+      'session.cancel',
       'session.create',
       'session.list',
       'session.prompt',
       'session.select-model',
+      'session.updateQueue',
     ],
     '实现了哪些方法也由同一张表报出',
   )

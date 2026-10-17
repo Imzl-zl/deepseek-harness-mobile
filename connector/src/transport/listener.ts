@@ -131,10 +131,25 @@ function dialableUrls(host: string, port: number): { url: string; label: string 
       // 只要 IPv4 与 IPv6 的全球/本地地址；link-local 的 IPv6 需要作用域 id
       // （`fe80::1%eth0`），URL 里带 `%` 会被当成转义，所以跳过。
       if (entry.family === 'IPv6' && entry.address.toLowerCase().startsWith('fe80')) continue
+      // **全部上报，不按网卡名过滤**：哪些地址手机拨得通，电脑侧无从得知
+      // （这台机器同时有以太网与 WiFi，还有 VMware 虚拟网卡）。过滤虚拟网卡
+      // 靠名字匹配，又脆又漏；真正的答案在**顺序**——默认路由的地址排第一
+      // （`dialableUrls` 的调用方给 `hint`），手机先拨先通，其余留作回落。
       push(entry.address, name)
     }
   }
+  // **IPv4 排在前**：手机的常见情形是同局域网 IPv4 直连，而拨号是**顺序**的 ——
+  // 2026-10-17 真机实测：这台电脑的 WiFi 网卡有三个拨不通的 IPv6 GUA
+  // （隐私扩展轮换出来的），枚举顺序把它们排在最前，手机每个等满 10s 超时，
+  // 冷启动 30 秒才连上（用户原话"退出软件怎么就连不上了"）。IPv4 先拨，
+  // 毫秒级就通；IPv6 留作回落（原生 IPv6 局域网仍然可用）。
+  out.sort((a, b) => familyRank(a.url) - familyRank(b.url))
   return out
+}
+
+/// IPv4 在前、IPv6 在后（URL 里含 `:` 且带方括号的是 IPv6 字面量）。
+function familyRank(url: string): number {
+  return url.includes('[') ? 1 : 0
 }
 
 /// 去掉 IPv6 字面量的方括号（`[::]` → `::`），其余原样。

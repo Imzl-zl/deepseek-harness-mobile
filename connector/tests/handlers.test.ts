@@ -76,6 +76,8 @@ function build(overrides: Partial<Parameters<typeof createHandlers>[0]> = {}) {
       prompt: () => Promise.resolve({ accepted: true }),
       selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
       create: async () => ({ sessionId: 'dsh-new' }),
+      updateQueue: async () => ({ accepted: true as const }),
+      cancel: () => ({ accepted: true as const }),
     },
     aliases: createFakeAliases(),
     ...overrides,
@@ -102,10 +104,12 @@ test('repo.info：协议版本、能力位、别名版本，以及**表的键**'
   assert.deepEqual(info.methods, [
     'devices.list',
     'repo.info',
+    'session.cancel',
     'session.create',
 'session.list',
     'session.prompt',
     'session.select-model',
+    'session.updateQueue',
   ])
 })
 
@@ -177,10 +181,12 @@ test('两种任务能力可以独立缺失：只列不停 / 都没有', () => {
     'devices.list',
     'job.list',
     'repo.info',
+    'session.cancel',
     'session.create',
 'session.list',
     'session.prompt',
     'session.select-model',
+    'session.updateQueue',
   ])
 
   const neither = build()
@@ -317,6 +323,112 @@ test('session.prompt：requestId / content / mode 的形状不合规就回 proto
     async () => handler({ ...base, sid: 'sid_nobody' }, withKey),
     (error: unknown) => error instanceof ProtocolError && error.code === 'session/not-found',
   )
+})
+
+test('session.cancel：把别名换成 DSH 会话 id 递下去，回 { accepted }', async () => {
+  const seen: unknown[][] = []
+  const handlers = build({
+    aliases: preloadedAliases(),
+    sessions: {
+      list: () => Promise.resolve([]),
+      prompt: () => Promise.resolve({ accepted: true }),
+      cancel: (...args: unknown[]) => {
+        seen.push(args)
+        return { accepted: true as const }
+      },
+      selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+      create: async () => ({ sessionId: 'dsh-new' }),
+    } as never,
+  })
+  const handler = handlers['session.cancel']
+  assert.ok(handler !== undefined)
+
+  assert.deepEqual(await handler({ sid: 'sid_dsh-1' }, {}), { accepted: true })
+  assert.deepEqual(seen[0], ['dsh-1'], '只递会话 id（DSH 的 cancel 就这一个参数）')
+})
+
+test('session.updateQueue：三种 action 的形状递下去，itemId 原样', async () => {
+  const seen: unknown[][] = []
+  const handlers = build({
+    aliases: preloadedAliases(),
+    sessions: {
+      list: () => Promise.resolve([]),
+      prompt: () => Promise.resolve({ accepted: true }),
+      cancel: () => ({ accepted: true as const }),
+      updateQueue: (...args: unknown[]) => {
+        seen.push(args)
+        return Promise.resolve({ accepted: true })
+      },
+      selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+      create: async () => ({ sessionId: 'dsh-new' }),
+    } as never,
+  })
+  const handler = handlers['session.updateQueue']
+  assert.ok(handler !== undefined)
+  const withKey = { requestId: 'req_q1' }
+
+  assert.deepEqual(
+    await handler({ sid: 'sid_dsh-1', itemId: 'm-1', action: { kind: 'remove' } }, withKey),
+    { accepted: true },
+  )
+  assert.deepEqual(seen[0], [
+    { sessionId: 'dsh-1', itemId: 'm-1', action: { kind: 'remove' } },
+  ])
+
+  await handler(
+    { sid: 'sid_dsh-1', itemId: 'm-2', action: { kind: 'steer' } },
+    withKey,
+  )
+  assert.deepEqual(seen[1], [
+    { sessionId: 'dsh-1', itemId: 'm-2', action: { kind: 'steer' } },
+  ])
+
+  await handler(
+    {
+      sid: 'sid_dsh-1',
+      itemId: 'm-3',
+      action: {
+        kind: 'edit',
+        content: [{ type: 'text', text: '改过的内容' }],
+      },
+    },
+    withKey,
+  )
+  assert.deepEqual(seen[2], [
+    {
+      sessionId: 'dsh-1',
+      itemId: 'm-3',
+      action: {
+        kind: 'edit',
+        content: [{ type: 'text', text: '改过的内容' }],
+      },
+    },
+  ])
+})
+
+test('session.updateQueue：形状不合规回 protocol/bad-frame', async () => {
+  const handlers = build({ aliases: preloadedAliases() })
+  const handler = handlers['session.updateQueue']
+  assert.ok(handler !== undefined)
+  const withKey = { requestId: 'req_q1' }
+  const base = { sid: 'sid_dsh-1', itemId: 'm-1' }
+
+  for (const patch of [
+    { itemId: undefined },
+    { action: undefined },
+    { action: 'remove' },
+    { action: { kind: 'later' } },
+    // 编辑只收纯文本（DSH 的 `commands.ts:433-441` 同一条）。
+    { action: { kind: 'edit', content: [] } },
+    { action: { kind: 'edit', content: [{ type: 'image' }] } },
+    { action: { kind: 'edit', content: [{ type: 'text', text: '   ' }] } },
+  ]) {
+    await assert.rejects(
+      async () => handler({ ...base, ...patch }, withKey),
+      (error: unknown) => error instanceof ProtocolError && error.code === 'protocol/bad-frame',
+      `${JSON.stringify(patch)} 应当被拒`,
+    )
+  }
 })
 
 /** 会话翻页端口：默认回空页。 */
@@ -554,10 +666,12 @@ test('可选服务缺了：`job.*` 干脆不在表里（能力位与能力清单
   assert.deepEqual(info.methods, [
     'devices.list',
     'repo.info',
+    'session.cancel',
     'session.create',
 'session.list',
     'session.prompt',
     'session.select-model',
+    'session.updateQueue',
   ])
 
   const withJobs = build({ jobs: fakeJobs() })
@@ -566,10 +680,12 @@ test('可选服务缺了：`job.*` 干脆不在表里（能力位与能力清单
     'devices.list',
     'job.list',
     'repo.info',
+    'session.cancel',
     'session.create',
 'session.list',
     'session.prompt',
     'session.select-model',
+    'session.updateQueue',
   ])
 })
 
@@ -582,6 +698,8 @@ test('session.list：逐字段映射，别名在方法面合成，**DSH 会话 i
           { dshSessionId: 'dsh-2', updatedAt: 100, running: false, blank: true, subagent: true },
         ]),
       prompt: () => Promise.resolve({ accepted: true }),
+      updateQueue: async () => ({ accepted: true as const }),
+      cancel: () => ({ accepted: true as const }),
       selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
       create: async () => ({ sessionId: 'dsh-new' }),
     },
@@ -617,6 +735,8 @@ test('session.list：并发分配别名（不同会话互不影响）', async ()
       prompt: () => Promise.resolve({ accepted: true }),
       selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
       create: async () => ({ sessionId: 'dsh-new' }),
+      updateQueue: async () => ({ accepted: true as const }),
+      cancel: () => ({ accepted: true as const }),
     },
     aliases: {
       ...createFakeAliases(),
@@ -787,12 +907,14 @@ test('interaction.respond / sync.hello 的能力缺失时整个方法不出现�
     'devices.list',
     'interaction.respond',
     'repo.info',
+    'session.cancel',
     'session.create',
 'session.list',
     'session.prompt',
     'session.select-model',
     'session.subscribe',
     'session.unsubscribe',
+    'session.updateQueue',
     'sync.hello',
   ])
 })

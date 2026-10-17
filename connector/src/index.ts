@@ -50,10 +50,19 @@ import { createProjectionsPort } from './dsh/projections.js'
 import { deriveIdentity } from './protocol/crypto.js'
 import { loadOrCreateIdentity, type Identity } from './dsh/identity.js'
 import { PAIRING_TTL_MS, createPairing } from './pairing.js'
-import { createPairingEndpoint, type PairingEndpoint, type PairedDeviceRow } from './pairing-endpoint.js'
+import { createPairingEndpoint, findPreviousPairingRow, type PairingEndpoint, type PairedDeviceRow } from './pairing-endpoint.js'
 import type { DeviceBinding } from '../../protocol/relay-control.mjs'
 import { createRelayLink, type RelayLink } from './transport/relay-link.js'
 import { relayUrlOf } from './transport/relay-url.js'
+import {
+  createTransportChannels,
+  describeChannels,
+  DIRECT_UNCONFIGURED,
+  type ChannelState,
+  type TransportChannels,
+} from './transport/channels.js'
+import { relayHintFor } from './pairing.js'
+import { defaultRouteIPv4 } from './lan-address.js'
 import { readRelayToken } from './dsh/relay-token.js'
 import { createPairingRegistrar } from './pairing-register.js'
 import { createDevicePublisher } from './device-publish.js'
@@ -126,6 +135,16 @@ function compareDevicesForDisplay(
 export interface ConnectorService {
   caps(): Caps
   metrics(): Readonly<Record<string, number>>
+  /**
+   * 传输面按"方式"分的通道列表（中转拨号 / 直连监听）。
+   *
+   * 2026-10-17 用户要求「两个方式两个开关」：原来一把 `startTransport` 同时
+   * 起停两条，加第三种方式时 UI 与管理面都要改形状；现在是**注册表**，
+   * 加一种方式只是加一个端口。见 `transport/channels.ts`。
+   */
+  channels(): readonly ChannelState[]
+  /** 起（`running: true`）或停（`running: false`）一条传输通道。 */
+  setChannel(id: string, running: boolean): Promise<void>
 }
 
 /** 装配需要的东西。抽成一个对象，便于将来按需替换某一层。 */
@@ -161,6 +180,32 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
   let pairingEndpoint: PairingEndpoint | null = null
   /** 直连监听面（§1.7）。只有配了 `listenPort` 才非空。 */
   let listener: Listener | null = null
+  /**
+   * 传输面的**通道注册表**（2026-10-17 用户要求：两个方式两个开关）。
+   * **占位器**：`start-transport` 步在 `run()` 里才把它换成真的（那时
+   * `makeConnection` 等局部物才存在）。
+   *
+   * 存在的理由是「启停开关」：插件面板上按方式各一个开关，再加一种方式
+   * （Tailscale / 服务器中转）只是加一个端口，UI 与管理面形状不变。
+   * **停传不清凭据、不动身份** —— 重新起时配对过的手机一条都不用重扫，
+   * 这是"开关"与"卸载"的区别。
+   */
+  let transportChannels: TransportChannels | null = null
+  /** 挂载与卸载用：两条通道一起起 / 一起收（用户的常态是同时开同时关）。 */
+  let transportStart: (() => Promise<void>) | null = null
+  let transportStop: (() => Promise<void>) | null = null
+  /**
+   * 本机的局域网地址（默认路由网卡的 IPv4，内核选路得来）。
+   *
+   * 二维码里的中转地址与 `endpoint.describe` 的 direct 排序都用它 ——
+   * **不枚举网卡、不认虚拟网卡名**（2026-10-17 用户点醒：只需要知道局域网）。
+   * 换 WiFi 后会变，所以出码前刷新（`refreshLanHint`），拿不到就是 `null`
+   * （调用方退回配置里的地址，不猜）。
+   */
+  let lanHint: string | null = null
+  const refreshLanHint = async (): Promise<void> => {
+    lanHint = await defaultRouteIPv4()
+  }
   /**
    * 这条连接的**已认证设备**由 `connection-scope.ts` 记着（增量缓冲的水位按设备记，
    * 契约 §5.5）—— 它是每连接的状态，所以不放在这里。
@@ -239,6 +284,21 @@ let unregisterAdminFace: (() => void) | null = null
     },
   })
   metrics.gauge(METRIC.pendingInteractions, interactionPort.pending)
+
+  /**
+   * 服务面与管理面**共用**的通道操作（带日志）。
+   *
+   * 注册表还没就绪时是 no-op：管理面在 `start-transport` 步里才挂，能调到
+   * 这个方法时注册表必然已存在（与旧的 `transportStart?.()` 占位同一个口径）。
+   */
+  const setTransportChannel = async (id: string, running: boolean): Promise<void> => {
+    const registry = transportChannels
+    if (registry === null) return
+    await registry.setChannel(id, running)
+    logger.info(
+      `传输通道${running ? '启动' : '停止'}：${id}（${describeChannels(registry.channels())}）`,
+    )
+  }
 
   const port: RemoteInteractionPort = {
     askApproval: (prompt, deviceId, signal) =>
@@ -327,6 +387,12 @@ let unregisterAdminFace: (() => void) | null = null
           // 否则手机上会多一个必然拨不通的"同一网络"。
           caps: () => readCaps(ctx, { direct: listener !== null }),
           metrics: () => metrics.snapshot(),
+          // 启停开关：`start-transport` 步跑完前注册表还是 null（那时也没有
+          // 管理面能调这两个方法 —— 管理面就在那一步里挂），如实回空列表。
+          channels: () => transportChannels?.channels() ?? [],
+          setChannel: async (id, running) => {
+            await setTransportChannel(id, running)
+          },
         }
         // `provide` 返回一个 disposer；挂到 ctx.effect 上让它随 fiber 回收。
         const dispose = ctx.provide('dshMobileConnector', service)
@@ -406,7 +472,11 @@ let unregisterAdminFace: (() => void) | null = null
         const pairingCore = createPairing({
           pcId: connectorId,
           // 二维码里的地址：**中转地址**（契约 §2 的拓扑里手机连的是中转）。
-          relayUrl: relayUrl ?? '',
+          // **出码时求值**（`relayHintFor` + 默认路由局域网地址）：电脑换 WiFi 后
+          // 二维码带的是当前地址 —— 用户不用回去改 yml 再重启 DSH
+          // （2026-10-17 真机踩到：配置里写着已不属于本机的 192.168.2.43，
+          //  手机拨存量端点全超时，而二维码再出码也还是那个死地址）。
+          relayUrl: () => relayHintFor(relayUrl ?? '', lanHint),
           pcPubEd: pcIdentity.sign.publicKeyHex,
           pcPubDh: pcIdentity.dh.publicKeyHex,
         })
@@ -493,6 +563,10 @@ let unregisterAdminFace: (() => void) | null = null
           svg: string
           expiresAt: number
         }> => {
+          // **出码前刷新局域网地址**：二维码里的中转地址必须是"手机拨得通的
+          // 当前地址"（配置里写的是环回拨号地址）。换 WiFi 之后第一次出码
+          // 就要带上新地址，否则用户扫了一个拨不通的码。
+          await refreshLanHint()
           // 结构化拿 offer，**不从命令文本里解析** —— 那等于解析自己刚拼的字符串。
           const offer = await issuePairingOffer({
             pairing: pairingCore,
@@ -543,6 +617,10 @@ let unregisterAdminFace: (() => void) | null = null
             caps: () => readCaps(ctx, { direct: listener !== null }),
             metrics: () => metrics.snapshot(),
             relayUrl: () => relayUrl ?? null,
+            // 启停开关：**按通道**（两个方式两个开关，2026-10-17 用户要求）。
+            // 停传输时管理面照常工作（出码、设备管理都不依赖它）。
+            channels: () => transportChannels?.channels() ?? [],
+            setChannel: (id, running) => setTransportChannel(id, running),
             devices: () => {
               if (devicesTable === null) return []
               const live = presence.devices()
@@ -594,10 +672,10 @@ let unregisterAdminFace: (() => void) | null = null
             : {
                 endpoints: createEndpointsPort({
                   relayUrl,
+                  lanHintOf: () => lanHint,
                   listenerOf: () => listener,
                 }),
-              }),
-          // 会话投影：**按能力位挂**（`sessionProjections` 服务在不在）。
+              }),          // 会话投影：**按能力位挂**（`sessionProjections` 服务在不在）。
           ...(ctx.get('sessionProjections') === undefined
             ? {}
             : { projections: createProjectionsPort(ctx.sessionController) }),
@@ -730,6 +808,28 @@ let unregisterAdminFace: (() => void) | null = null
         // 读不到就**大声失败**（`readRelayToken` 的契约）：起来一个连不上中转的插件没有意义。
         const enrollment = createPairingEndpoint({
           pairing: pairingCore, pcId: connectorId, putDevice, announce: publishDevices, log: logger,
+          // 重新配对的替换钩子：手机自报的 `previousPairingId` 只是**行定位符**
+          // （授权已由一次性二维码秘密完成），据此找到这台手机上一次的行。
+          // `findPreviousPairingRow` 是纯函数（`pairing-endpoint.ts`），**不按
+          // `revokedAt` 过滤** —— 重新扫码本身就是恢复路径，新行天然不带吊销标记。
+          // 取舍与威胁模型：`.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`。
+          findPreviousPairing: (pairingId) => {
+            const table = devicesTable
+            if (table === null) return null
+            return findPreviousPairingRow(
+              [...table.keys()].flatMap((id) => {
+                const record = table.get(id)
+                return record === undefined ? [] : [[id, record] as const]
+              }),
+              pairingId,
+            )
+          },
+          removeDevice: async (devId) => {
+            if (devicesTable === null) {
+              throw new Error('devices 表尚未就绪：装配顺序有误')
+            }
+            await devicesTable.delete(devId)
+          },
         })
         pairingEndpoint = enrollment
         const relayToken = await readRelayToken(ctx.credentials, relayTokenSecretRef ?? '')
@@ -757,36 +857,65 @@ let unregisterAdminFace: (() => void) | null = null
         })
 
         /**
-         * 拨号连接：连中转。**自愈** —— 断开后退避重连 `relayUrl`。
+         * 传输面的起 / 停。**在这里定义**（`makeConnection` / `pairingCore` /
+         * `publishDevices` 都是本步的局部物），装进外层占位器给服务面与管理面用。
          *
-         * Node 22+ 自带全局 WebSocket；不引第三方客户端。
+         * 停 ≠ 卸载：只收传输，**不清凭据、不动身份、不摘管理面** ——
+         * 重新起时配对过的手机一条都不用重扫。
+         * 已 accepted 的连接由监听面自己收干净。
          *
-         * **连接器令牌走升级头的 `Authorization`**（§2.2）：实测 Node 的全局 `WebSocket`
-         * 支持第二参数传 options 对象（undici 的非标准扩展，见笔记），所以这里能带头 ——
-         * 三参数形式与裸调用都收不到（服务端只会看到 `(none)`）。
-         * 令牌在装配时读一次（`readRelayToken` 不缓存，但**每次拨号都由同一个连接对象发起**，
-         * 于是运行期换令牌需要重连 —— 这是可接受的：换令牌本来就意味着换一次连接）。
+         * **按通道分**（2026-10-17 用户：「不是有两中方式为啥就一个开关」）：
+         * 每条通道各自起停，停一条不碰另一条。批量入口（同时开 / 同时关）
+         * 由 UI 顺序调用，服务端不为它单开端点 —— 两个通道各自的成败要能
+         * 分别报出来，批量端点只会把其中一个的失败藏掉。
          */
-        connection = createRelayLink({
-          url: relayUrl ?? '', token: relayToken, allowInsecureLocal, log: logger,
-          onConnected: publishDevices,
-          allows: (binding) => {
-            if (binding.purpose === 'pairing') return pairingCore.allows(binding.candidate)
-            const record = devicesTable?.get(binding.deviceId)
-            return record !== undefined && record.revokedAt === undefined
-          },
-          createData: makeConnection,
-        })
-        connection.start()
+
+        /** 通道一：中转拨号。**自愈** —— 断开后退避重连 `relayUrl`。 */
+        const startRelayChannel = async (): Promise<void> => {
+          if (connection !== null) return
+          /**
+           * Node 22+ 自带全局 WebSocket；不引第三方客户端。
+           *
+           * **连接器令牌走升级头的 `Authorization`**（§2.2）：实测 Node 的全局 `WebSocket`
+           * 支持第二参数传 options 对象（undici 的非标准扩展，见笔记），所以这里能带头 ——
+           * 三参数形式与裸调用都收不到（服务端只会看到 `(none)`）。
+           * 令牌在装配时读一次（`readRelayToken` 不缓存，但**每次拨号都由同一个连接对象发起**，
+           * 于是运行期换令牌需要重连 —— 这是可接受的：换令牌本来就意味着换一次连接）。
+           */
+          connection = createRelayLink({
+            url: relayUrl ?? '', token: relayToken, allowInsecureLocal, log: logger,
+            onConnected: publishDevices,
+            allows: (binding) => {
+              if (binding.purpose === 'pairing') return pairingCore.allows(binding.candidate)
+              const record = devicesTable?.get(binding.deviceId)
+              return record !== undefined && record.revokedAt === undefined
+            },
+            createData: makeConnection,
+          })
+          connection.start()
+        }
+        const stopRelayChannel = async (): Promise<void> => {
+          connection?.stop()
+          connection = null
+        }
 
         /**
-         * 直连监听面（§1.7）。**只有配置里 `listenPort` 非 0 才起**，否则一行都不做 ——
-         * 于是"没配监听"与"不监听"是同一件事，不是两套代码路径。
+         * 通道二：直连监听面（§1.7）。**只有配置里 `listenPort` 非 0才起**，
+         * 否则**报错**而不是静默成功 —— 静默的话界面显示"已启动"而手机上
+         * 什么都不会多出来（`caps.direct` 仍为 false）。
          *
          * 每 accept 一条就 `makeConnection` 一次：方法面 / 订阅 / 翻页器 / 配对端点都是
          * **每连接**的，两条共用一份会串台（第二台手机连上了但收不到事件）。
+         *
+         * 停它 = `listener.close()`：先停所有已接受的连接再关服务端
+         * （`tests/listener.test.ts` 的"卸载时收口"覆盖），**不碰**中转上的连接。
          */
-        if (listenPort !== 0) {
+        const startDirectChannel = async (): Promise<void> => {
+          if (listener !== null) return
+          if (listenPort === 0) throw new Error(DIRECT_UNCONFIGURED)
+          // **先解析局域网地址再起监听面**：第一次 `endpoint.describe`（手机连上后
+          // 立刻会调）要用它给 direct 排序、给中转条目算手机可达地址。
+          await refreshLanHint()
           listener = await startListener({
             port: listenPort,
             host: listenHost,
@@ -801,16 +930,57 @@ let unregisterAdminFace: (() => void) | null = null
             },
           })
         }
+        const stopDirectChannel = async (): Promise<void> => {
+          if (listener !== null) {
+            await listener.close().catch((error: unknown) => {
+              logger.warn('关闭直连监听面时出错（已接受的连接可能没全收干净）', error)
+            })
+            listener = null
+          }
+        }
+
+        transportStart = async () => {
+          await startRelayChannel()
+          await startDirectChannel()
+        }
+        transportStop = async () => {
+          // 先停监听面：不再接受新连接，再收已接受的（它们的连接由监听面自己 stop）。
+          // 收口失败只留声：卸载是尽力而为（`lifecycle.ts`），这里抛会盖住后面的步骤。
+          await stopDirectChannel()
+          await stopRelayChannel()
+        }
+
+        /**
+         * 通道注册表。**加一种方式就是往这个数组加一项** —— 管理面路由
+         * （`routes.ts` 按 `channels()` 生成 `/transport/{id}/{start,stop}`）与
+         * UI（`client.js` 按 `GET /transport` 渲染开关）自动跟上。
+         */
+        transportChannels = createTransportChannels([
+          {
+            id: 'relay',
+            label: '中转拨号',
+            running: () => connection !== null,
+            start: startRelayChannel,
+            stop: stopRelayChannel,
+            detail: () => relayUrl ?? '未配置中转',
+          },
+          {
+            id: 'direct',
+            label: '直连监听',
+            running: () => listener !== null,
+            start: startDirectChannel,
+            stop: stopDirectChannel,
+            detail: () =>
+              listenPort === 0 ? DIRECT_UNCONFIGURED : `${listenHost}:${listener?.port ?? listenPort}`,
+          },
+        ])
+
+        await transportStart()
 
         abort.signal.addEventListener('abort', () => {
-          void listener?.close().catch((error: unknown) => {
-            logger.warn('关闭直连监听面时出错（已接受的连接可能没全收干净）', error)
-          })
-          listener = null
+          void transportStop?.()
           unregisterAdminFace?.()
           unregisterAdminFace = null
-          connection?.stop()
-          connection = null
           pairingEndpoint?.dispose()
           pairingEndpoint = null
         })
@@ -818,14 +988,9 @@ let unregisterAdminFace: (() => void) | null = null
       undo() {
         // 先停监听面：不再接受新连接，再收已接受的（它们的连接由监听面自己 stop）。
         // 收口失败只留声：卸载是尽力而为（`lifecycle.ts`），这里抛会盖住后面的步骤。
-        void listener?.close().catch((error: unknown) => {
-          logger.warn('关闭直连监听面时出错（已接受的连接可能没全收干净）', error)
-        })
-        listener = null
+        void transportStop?.()
         unregisterAdminFace?.()
         unregisterAdminFace = null
-        connection?.stop()
-        connection = null
         pairingEndpoint?.dispose()
         pairingEndpoint = null
       },

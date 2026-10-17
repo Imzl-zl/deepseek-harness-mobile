@@ -61,6 +61,8 @@ function makeScopeDeps(): ConnectionScopeDeps {
         prompt: async () => ({ accepted: true as const }),
         selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
         create: async () => ({ sessionId: 'dsh-new' }),
+        updateQueue: async () => ({ accepted: true as const }),
+        cancel: () => ({ accepted: true as const }),
       },
       aliases: { ensure: async () => 's1', sessionOf: () => undefined },
       devices: () => [],
@@ -71,6 +73,7 @@ function makeScopeDeps(): ConnectionScopeDeps {
       page: async () => ({ records: [], hasMore: false }),
       prompt: async () => ({ accepted: true as const }),
       cancel: () => ({ accepted: true as const }),
+      updateQueue: async () => ({ accepted: true as const }),
       selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
       create: async () => ({ sessionId: 'dsh-new' }),
     },
@@ -302,6 +305,38 @@ test('可拨地址：绑通配时枚举非内部网卡，且不带 127.x', async
   }
   // 去重：同一块网卡的多个地址不该产生重复条目。
   assert.equal(new Set(urls).size, urls.length, '可拨地址不许重复')
+})
+
+test('可拨地址：IPv4 排在 IPv6 前（拨号是顺序的，烂 IPv6 不能堵路）', async (t) => {
+  // 2026-10-17 真机实测：这台电脑的 WiFi 网卡有三个拨不通的 IPv6 GUA
+  // （隐私扩展轮换出来的），枚举顺序把它们排在最前，手机每个等满 10s 超时，
+  // 冷启动 30 秒才连上（用户原话"退出软件怎么就连不上了"）。IPv4 先拨、
+  // 毫秒级就通；IPv6 留作回落（原生 IPv6 局域网仍然可用）。
+  const pc = deriveIdentity(PC_SEED)
+  const listener = await startListener({
+    port: 0,
+    host: '0.0.0.0',
+    accept: () => {
+      const accepted = makeAccepted(makeScopeDeps(), pc)
+      return {
+        port: accepted.connection,
+        attach: (socket) => accepted.connection.attach(socket as DialSocket),
+        stop: () => accepted.connection.stop(),
+      }
+    },
+  })
+  t.after(() => listener.close())
+
+  const families = listener.urls.map((u) => (u.url.includes('[') ? 6 : 4))
+  const firstV6 = families.indexOf(6)
+  if (firstV6 === -1) {
+    t.diagnostic('这台机器没有 IPv6 地址，排序判据空转——换一台有的再跑')
+    return
+  }
+  assert.ok(
+    families.slice(firstV6).every((f) => f === 6),
+    `IPv6 必须全部排在 IPv4 之后（实际顺序：${families.join(',')}）`,
+  )
 })
 
 test('卸载时收口：停止接受并关掉已接受的连接', async (t) => {  const { listener, made } = await startTracking(t, makeScopeDeps())

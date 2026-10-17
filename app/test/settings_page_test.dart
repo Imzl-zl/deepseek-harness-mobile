@@ -81,6 +81,12 @@ Widget _host(AppModel app) => MaterialApp(
   home: SettingsPage(app: app),
 );
 
+/// 滚到某个 widget 可见（ListView 懒加载 + 设置页有多组，端点卡在下面）。
+Future<void> _scrollTo(WidgetTester tester, Finder target) async {
+  await tester.scrollUntilVisible(target, 200);
+  await tester.pumpAndSettle();
+}
+
 void main() {
   AppModel buildApp({
     List<Endpoint> endpoints = const [_direct, _relay],
@@ -118,6 +124,9 @@ void main() {
     await tester.pumpWidget(_host(app));
     await tester.pumpAndSettle();
 
+    // 设置页比"只有连接方式"那版长了（通用/模型/关于三组在它上面）——
+    // 端点卡可能出屏，先滚到可见再点（ListView 懒加载，不滚根本找不到）。
+    await _scrollTo(tester, find.text('中转'));
     await tester.tap(find.text('中转'));
     await tester.pumpAndSettle();
 
@@ -140,6 +149,7 @@ void main() {
     await tester.pumpWidget(_host(app));
     await tester.pumpAndSettle();
 
+    await _scrollTo(tester, find.text('直连'));
     await tester.tap(find.text('直连'));
     await tester.pumpAndSettle();
 

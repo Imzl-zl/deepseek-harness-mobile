@@ -23,10 +23,11 @@ test('方法表：封闭集，幂等键标记与契约 §5.7 的表一致', () =
   // `permission.switch`（权限切换：读预设目录 + 写 `/permission <档位>`）后是 25，
   // 加 `session.select-model` 与 `session.modelCatalog` 后是 26。
   // 2026-10-15 晚加 `workspace.list`（会话列表按工作区分组）后是 **27**；
-  // 2026-10-16 加 `workspace.archive` / `workspace.unarchive`（归档面）后是 **29**。
+  // 2026-10-16 加 `workspace.archive` / `workspace.unarchive`（归档面）后是 **29**；
+  // 2026-10-17 加 `session.updateQueue`（排队项编辑 / 删除 / 插话）后是 **30**。
   // **这个数是契约 §5.7 的表与 `tools.md` 的同步闸**：加了方法不改这里就会红，
   // 而它红的方式是"数不对"，所以改它必须同时改契约那一行。
-  assert.equal(METHODS.length, 29, '方法数变了要同步契约 §5.7 的表')
+  assert.equal(METHODS.length, 30, '方法数变了要同步契约 §5.7 的表')
   assert.equal(new Set(METHODS).size, METHODS.length, '方法名不能重复')
 
   // §5.7 的「幂等键」列非空的恰好这几个。
@@ -42,6 +43,8 @@ test('方法表：封闭集，幂等键标记与契约 §5.7 的表一致', () =
     'session.prompt',
     // 切模型是用户指令：重发不该切两次。
     'session.select-model',
+    // 排队项变异是用户指令：重发不该把同一项编辑两次 / 删两次。
+    'session.updateQueue',
     'settings.update',
     // 归档与取消归档是用户指令：重发不该落两次（宿主侧也幂等，但指令层不靠它兜）。
     'workspace.archive',

@@ -222,8 +222,8 @@ void main() {
   });
 
   // **回归 2026-10-15 真机**："列表里名字对了,但我点进去会话名字又变了"。
-  // 根因是**两个真值源**:列表走 DSH 的展示链(投影提示 → 目录名 → sid),
-  // 而 `currentTitle` 只读本地从条目推导的标题。同一个人会话两个名字。
+  // 根因是**两个真值源**:列表走 DSH 的展示链,而 `currentTitle` 只读本地从条目
+  // 推导的标题。同一个人会话两个名字。
   group('标题只有一个真值源（列表与顶栏同一条链）', () {
     test('投影提示里有持久标题:列表与顶栏都用它', () async {
       final client = _FakeClient(
@@ -251,7 +251,11 @@ void main() {
       app.dispose();
     });
 
-    test('投影里没有标题:两级都退到项目目录名', () async {
+    test('投影里没有标题:显示「未命名」,不用目录名兜底', () async {
+      // 2026-10-16 对齐 DSH 的 Web 侧栏规则:`ui-workspace/README.zh.md:32`
+      // 原话"未保存标题的历史会话显示本地化名称「未命名 / Untitled」,不使用目录名兜底"。
+      // 之前这里是"退到项目目录名",于是手机上出现一串目录名当会话名,
+      // 而 Web 上同一批会话叫"未命名"——真机 2026-10-16 实测的分叉。
       final client = _FakeClient(
         onCall: (method, params) => {
           'sessions': [
@@ -263,8 +267,21 @@ void main() {
       await app.refreshSessions();
       await app.openSession('s1');
 
-      expect(app.sessions.single.displayTitle, 'dsh-mobile');
-      expect(app.currentTitle, 'dsh-mobile');
+      expect(app.sessions.single.displayTitle, '未命名');
+      expect(app.currentTitle, '未命名');
+      app.dispose();
+    });
+
+    test('会话不在列表里(刚建还没刷新):顶栏 null,不拿本地推导冒充', () async {
+      // 删掉本地推导兜底后这一条才成立:顶栏与列表永远同一个字符串,
+      // 列表里没有的会话顶栏就不编一个(界面退到 'DSH')。
+      final client = _FakeClient(onCall: (method, params) => {'sessions': []});
+      final app = AppModel(client: client);
+      await app.refreshSessions();
+      await app.openSession('s1');
+
+      expect(app.sessions, isEmpty);
+      expect(app.currentTitle, isNull);
       app.dispose();
     });
   });
@@ -398,4 +415,188 @@ void main() {
       expect(app2.lastError, isNull, reason: '这次成功了，不该再显示上次的错');
     });
   });
+
+  // **回归 2026-10-17 真机**："选中会话名字就变"（该了好几遍都没修对）。
+  //
+  // 根因不是"两处各读各的"（那是 2026-10-16 修的那半），而是
+  // `AppModel._touchSummary` **每次收到 delta 都用本地推导的标题把电脑侧标题
+  // 覆盖掉**：打开会话 → 订阅 → 快照事件到达 → 标题从"重构连接层"变成
+  // "首条用户消息前 30 字"。列表与顶栏倒是一致的——**一致地错**。
+  //
+  // 此前这条链在单测里永远不发作：假客户端的 `sessionUpdates` 恒回空流，
+  // `_touchSummary` 从未被调用过。**替身绕开的那一段正是生产发作的那一段。**
+  //
+  // 事件形状按真实会话日志逐字复刻（`~/.dsh/sessions/**/session.v4.jsonl.zstd`
+  // 按帧解压后所见）：`user/message` 的 `data` 就是消息本身（带 `id`），
+  // `assistant/message` 的消息在 `data.message` 上，`session/title` 在
+  // `data.title` 上。
+  group('打开会话后标题不许变（_touchSummary 不能覆盖电脑侧标题）', () {
+    /// 能推 delta 的假客户端：`sessionUpdates` 给一条可写入口。
+    final deltaClient = _DeltaClient(
+      onCall: (method, params) => switch (method) {
+        'session.list' => {
+          'sessions': [
+            {
+              'sid': 's1',
+              'updatedAt': 1792023957795,
+              'running': true,
+              // DSH `SessionSummary.projections` 提示的真形状。
+              'projections': {
+                'kind': 'sequenced',
+                'asOfSeq': 8,
+                'values': {'title': 'IoT 数采设备状态统计脚本'},
+              },
+              'model': {'provider': 'stepfun', 'model': 'step-5-preview'},
+              'cwd': r'C:\Users\zhanglu\Desktop\IoT',
+            },
+          ],
+        },
+        // `session.projections` 经连接器拆掉信封后，手机拿到的就是 values 映射。
+        'session.projections' => const {'title': 'IoT 数采设备状态统计脚本'},
+        _ => null,
+      },
+    );
+    late AppModel app;
+
+    setUp(() {
+      app = AppModel(client: deltaClient);
+    });
+
+    tearDown(() {
+      app.dispose();
+    });
+
+    test('快照事件到达后：标题、模型、running 一个都不能掉', () async {
+      await app.refreshSessions();
+      expect(app.sessions.single.displayTitle, 'IoT 数采设备状态统计脚本');
+
+      await app.openSession('s1');
+      // 打开会话后电脑侧把快照补课事件逐条发来（真实形状）。
+      deltaClient.emitDelta(
+        's1',
+        events: [
+          // 首条用户消息（真日志 seq=8）——旧实现就是拿它推导标题、覆盖掉真标题的。
+          _userEvent(seq: 8, text: '帮我写一个脚本：拉取所有数采设备状态并按状态分类展示'),
+          _assistantEvent(seq: 16, text: '好的，我先看一下工作区。'),
+        ],
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      final row = app.sessions.single;
+      expect(
+        row.displayTitle,
+        'IoT 数采设备状态统计脚本',
+        reason: '选中会话名字就变 = _touchSummary 用本地推导覆盖了电脑侧标题',
+      );
+      expect(app.currentTitle, 'IoT 数采设备状态统计脚本');
+      // 身份字段同样不能掉：旧实现整行重建，model/running 全部掉成默认值。
+      expect(row.model?.model, 'step-5-preview', reason: '点进会话模型不能变"未选择"');
+      expect(row.running, isTrue);
+      expect(row.cwd, r'C:\Users\zhanglu\Desktop\IoT');
+      // 计数照旧更新（这一半本来就是对的）。
+      expect(row.itemCount, 2);
+    });
+
+    test('session/title 事件：标题实时跟着电脑侧变', () async {
+      await app.refreshSessions();
+      await app.openSession('s1');
+      deltaClient.emitDelta('s1', events: [_userEvent(seq: 8, text: '第一句')]);
+      await Future<void>.delayed(Duration.zero);
+
+      // DSH 生成/改名时落一条 `session/title`（真日志 seq=14 的形状）。
+      deltaClient.emitDelta(
+        's1',
+        events: [
+          const SessionEvent(
+            itemId: 'session/title:14',
+            type: 'session/title',
+            seq: 14,
+            time: 1792023957833,
+            data: {
+              'title': '数采设备状态看板',
+              'messageSeqs': [8],
+              'source': {'kind': 'fallback'},
+            },
+          ),
+        ],
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(app.currentTitle, '数采设备状态看板');
+      expect(app.sessions.single.displayTitle, '数采设备状态看板');
+    });
+
+    test('title 投影比列表提示新：以投影为准', () async {
+      await app.refreshSessions();
+      await app.openSession('s1');
+      await Future<void>.delayed(Duration.zero);
+      // 投影里已是新标题（列表提示是旧的 cached 快照）。
+      expect(app.currentTitle, 'IoT 数采设备状态统计脚本');
+    });
+  });
 }
+
+/// 能推 delta 的假客户端：`sessionUpdates` 返回一条可写入口。
+class _DeltaClient extends _FakeClient {
+  _DeltaClient({super.onCall});
+
+  final Map<String, StreamController<SessionDelta>> _controllers = {};
+
+  void emitDelta(String sid, {required List<SessionEvent> events}) {
+    final controller = _controllers.putIfAbsent(
+      sid,
+      () => StreamController<SessionDelta>.broadcast(),
+    );
+    controller.add(
+      SessionDelta(
+        sid: sid,
+        events: events,
+        transient: const <String, Object?>{},
+      ),
+    );
+  }
+
+  @override
+  Stream<SessionDelta> sessionUpdates(String sid) => _controllers
+      .putIfAbsent(sid, () => StreamController<SessionDelta>.broadcast())
+      .stream;
+}
+
+/// 一条 `user/message` 事件（真日志形状：`data` 就是消息，带 `id`）。
+SessionEvent _userEvent({required int seq, required String text}) =>
+    SessionEvent(
+      itemId: 'm:msg-$seq',
+      type: 'user/message',
+      seq: seq,
+      time: 1792023957795,
+      data: <String, Object?>{
+        'content': [
+          {'type': 'text', 'text': text},
+        ],
+        'source': {'kind': 'user'},
+        'role': 'user',
+        'id': 'msg-$seq',
+      },
+    );
+
+/// 一条 `assistant/message` 事件（真日志形状：消息在 `data.message` 上）。
+SessionEvent _assistantEvent({required int seq, required String text}) =>
+    SessionEvent(
+      itemId: 'm:asst-$seq',
+      type: 'assistant/message',
+      seq: seq,
+      time: 1792023988752,
+      data: <String, Object?>{
+        'turn': 1,
+        'step': 1,
+        'message': <String, Object?>{
+          'role': 'assistant',
+          'content': [
+            {'type': 'text', 'text': text},
+          ],
+          'source': {'kind': 'model', 'provider': 'stepfun'},
+          'id': 'asst-$seq',
+        },
+        'stream': const [],
+      },
+    );
