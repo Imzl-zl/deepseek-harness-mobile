@@ -43,7 +43,6 @@ import '../model/chat_item.dart';
 import '../model/model_catalog.dart';
 import '../model/permission.dart';
 import '../model/preferences.dart';
-import '../model/send_mode.dart';
 import '../model/session_stats.dart';
 import '../model/workspace.dart';
 import '../theme/dsh_colors.dart';
@@ -533,7 +532,6 @@ class ChatPageState extends State<ChatPage> {
                   onAttach: _showAttachSheet,
                   onPickModel: _showModelSheet,
                   onPickAccess: _showAccessSheet,
-                  onPickSendMode: _showSendModeSheet,
                   onRemoveAttachment: (item) =>
                       setState(() => _attachments.remove(item)),
                 ),
@@ -1450,41 +1448,6 @@ class ChatPageState extends State<ChatPage> {
       return;
     }
     _toast(result.text ?? '已切到 ${option.name}');
-  }
-
-  /// 发送模式二选一（DSH 的"繁忙时的发送行为"：排队 / 插话）。
-  ///
-  /// **插话那一项在会话没在跑时禁用**：DSH 的文案就是"仅运行中可插话发送"
-  /// （`locales.ts:365`），而轮次已变时 DSH 回 `session/steer-unavailable`。
-  /// 禁用而不是"点了再报错"—— 报错只会让用户以为发失败了。
-  void _showSendModeSheet() {
-    final running = _running;
-    unawaited(
-      showDshSheet<void>(
-        context: context,
-        title: '繁忙时的发送行为',
-        body: Column(
-          children: [
-            for (final mode in SendMode.values)
-              DshPickerRow(
-                name: mode.label,
-                tags: [
-                  mode == SendMode.queue ? '排到下一个轮次（默认）' : '插进当前轮次，立刻生效',
-                  if (mode == SendMode.steer && !running)
-                    '仅运行中可插话发送 —— 这个会话此刻没在跑',
-                ],
-                icon: mode.icon,
-                selected: mode == widget.app.sendMode,
-                enabled: mode != SendMode.steer || running,
-                onTap: () {
-                  Navigator.of(context).pop();
-                  unawaited(widget.app.setSendMode(mode));
-                },
-              ),
-          ],
-        ),
-      ),
-    );
   }
 
   /// 完全权限的**风险确认门**：必须勾选才生效（§7.10）。

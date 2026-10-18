@@ -124,7 +124,6 @@ void main() {
           onAttach: () {},
           onPickModel: () {},
           onPickAccess: () {},
-          onPickSendMode: () {},
           onRemoveAttachment: (_) {},
         ),
       ),

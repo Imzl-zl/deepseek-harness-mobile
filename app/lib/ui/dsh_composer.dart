@@ -68,7 +68,6 @@ class DshComposer extends StatelessWidget {
     required this.onAttach,
     required this.onPickModel,
     required this.onPickAccess,
-    required this.onPickSendMode,
     required this.onRemoveAttachment,
     this.enabled = true,
     this.running = false,
@@ -97,6 +96,10 @@ class DshComposer extends StatelessWidget {
   final PermissionChip access;
 
   /// 发送模式（排队 / 插话，DSH 的"繁忙时的发送行为"）。
+  ///
+  /// **只用于 tooltip 文字**（"排队发送 / 插话发送"）：改它的入口在设置页
+  /// 「通用」，行控区那颗图标 2026-10-19 按用户要求移除（"设置中有，
+  /// 这个也不经常更换设置，占位置"）。
   final SendMode sendMode;
 
   final bool sending;
@@ -118,8 +121,6 @@ class DshComposer extends StatelessWidget {
   final VoidCallback onPickModel;
   final VoidCallback onPickAccess;
 
-  /// 打开发送模式二选一。
-  final VoidCallback onPickSendMode;
   final void Function(PendingAttachment item) onRemoveAttachment;
 
   @override
@@ -199,13 +200,25 @@ class DshComposer extends StatelessWidget {
                         onPressed: enabled ? onAttach : null,
                       ),
                       const SizedBox(width: 6),
-                      // 模型 chip：可压缩，**上限 62%**（硬规则 3 的前半句）。
+                      // 模型 chip：**图标 + 模型名**，可压缩、上限 62%。
                       //
                       // 上限不能省：`Flexible` 只表示"可以被压"，不表示"最宽多少" ——
                       // 没有上限时它会**吃满**左组剩余宽度（长模型名尤其明显），
                       // 而原型 `#chipModel { max-width: 62% }` 是明确写了上限的。
                       // 实测：`claude-opus · 高` 在 1080px 宽的屏上被拉成一整条，
                       // 看起来像"模型是个很宽的选择器"，与胶囊形态不符。
+                      //
+                      // **图标 + 名字而不是裸名字**（照 rikkahub 的
+                      // `ModelSelectorButton(onlyIcon = true)`，`ChatInput.kt:309-313`）：
+                      // 真机上模型名是 `step-5-preview · max` 这种 20+ 字符的 id，
+                      // 光靠文字就把左组吃掉一半；加一枚图标让"这是模型选择器"
+                      // 在名字被省略号截掉之后仍然认得出。推理等级跟在名字后面
+                      // （`· max`），它是同一个选择的第二半。
+                      //
+                      // 图标取 `database`：DSH Web 的模型触发器用的就是它
+                      // （`ui-model-selection/src/client/ModelSelect.tsx:484` 的
+                      // `IconDataOutlineRegular`，抽取进我们图标集时叫 `database`）。
+                      // **不新造字形**：`verify-icons.cjs` 只放行集合内的 100 个。
                       Flexible(
                         child: ConstrainedBox(
                           constraints: BoxConstraints(
@@ -216,6 +229,12 @@ class DshComposer extends StatelessWidget {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
+                                const DshIcon(
+                                  'database',
+                                  size: 13,
+                                  color: DshColors.labelSecondary,
+                                ),
+                                const SizedBox(width: 5),
                                 Flexible(
                                   child: Text(
                                     modelName,
@@ -255,19 +274,13 @@ class DshComposer extends StatelessWidget {
                         isWarn: access.warn,
                         onPressed: enabled ? onPickAccess : null,
                       ),
-                      const SizedBox(width: 6),
-                      // 发送模式图标：与权限并列的第二个 34px 恒宽图标。
-                      //
-                      // 它是 DSH 的"繁忙时的发送行为"二选一（排队 / 插话，
-                      // 见 `model/send_mode.dart`），决定这句话在会话忙时
-                      // 排到下一个轮次还是插进当前轮次。放进行控区而不是
-                      // 设置页：它**只在会话正在跑时才有区别**，是发送当下的
-                      // 选择，不是装完就不动的偏好。
-                      _IconChip(
-                        icon: sendMode.icon,
-                        tooltip: sendMode.label,
-                        onPressed: enabled ? onPickSendMode : null,
-                      ),
+                      // **「忙时发送」图标已移除**（2026-10-19，用户原话
+                      // "输入框下的忙时发送行为没必要吧，设置中有，这个也不经常
+                      // 更换设置，占位置"）：它是**装完就不动的偏好**，而设置页
+                      // 「通用」里一直有同一选择（`settings_page.dart` 的发送模式行）。
+                      // 运行时要改也有出路：发送键在 running 且没草稿时是**停止**键，
+                      // 有草稿时 tooltip 直接说"排队发送 / 插话发送"——
+                      // 当前模式看得见，不必再占一颗 34px 的图标位。
                     ],
                   ),
                 ),
@@ -282,6 +295,10 @@ class DshComposer extends StatelessWidget {
                   enabled: stops || canSend,
                   sending: sending,
                   stops: stops,
+                  // tooltip 里带当前发送模式（排队 / 插话）：**模式只在设置页改**，
+                  // 而行控区那颗图标已移除（2026-10-19，用户原话"设置中有，
+                  // 不经常更换，占位置"）。长按/无障碍时用户仍要知道这句话会怎样，
+                  // 而 tooltip 是它唯一的出口。
                   tooltip: stops
                       ? '停止'
                       : running
