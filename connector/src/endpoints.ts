@@ -56,13 +56,39 @@ export function describeEndpoints(input: {
   relayUrl?: string | undefined
   lanHint?: string | null
   listener?: Listener | null
+  /**
+   * 用户对**上报哪些地址**的显式表态（`url → 'hide' | 'extra'`）。
+   *
+   * 为什么需要它：监听面**按设计枚举全部非内部网卡**（`transport/listener.ts:134-138`
+   * 明确不做按网卡名过滤 —— 那"又脆又漏"）。但一台装了 VMware 的机器会因此多报
+   * 两条手机永远拨不通的 `192.168.x.1`。手机侧的同网段排序让它们不占时间，
+   * 但它们仍然占列表位置 —— 由用户点名藏掉比猜网卡名可靠。
+   *
+   * `extra` 是反向的：用户想额外上报一个地址（如 Tailscale 的 `100.x`），
+   * 它不在网卡枚举里，但确实是这台机器的一个可拨地址。
+   */
+  advertise?: ReadonlyMap<string, 'hide' | 'extra'> | undefined
 }): { endpoints: EndpointView[] } {
+  const settings = input.advertise ?? new Map<string, 'hide' | 'extra'>()
+  const hidden = new Set<string>()
+  const extra: string[] = []
+  for (const [url, kind] of settings) {
+    if (kind === 'hide') hidden.add(url)
+    else extra.push(url)
+  }
+
   const endpoints: EndpointView[] = []
-  const direct = [...(input.listener?.urls ?? [])].sort(
-    (a, b) => hintRank(a.url, input.lanHint) - hintRank(b.url, input.lanHint),
-  )
+  const direct = [...(input.listener?.urls ?? [])]
+    .filter((entry) => !hidden.has(entry.url))
+    .sort((a, b) => hintRank(a.url, input.lanHint) - hintRank(b.url, input.lanHint))
   for (const entry of direct) {
     endpoints.push({ kind: 'direct', url: entry.url, ...(entry.label === '' ? {} : { label: entry.label }) })
+  }
+  // 用户额外加的地址按字面原样上报 —— 它不在网卡枚举里，所以没有网卡名可带。
+  for (const url of extra) {
+    if (hidden.has(url)) continue
+    if (endpoints.some((endpoint) => endpoint.url === url)) continue
+    endpoints.push({ kind: 'direct', url })
   }
   if (input.relayUrl !== undefined && input.relayUrl !== '') {
     endpoints.push({
@@ -91,6 +117,8 @@ export function createEndpointsPort(deps: {
   relayUrl: string | undefined
   lanHintOf: () => string | null
   listenerOf: () => Listener | null
+  /** 用户显式藏掉 / 额外加的上报地址（现取：管理面随时可改）。 */
+  advertiseOf?: () => ReadonlyMap<string, 'hide' | 'extra'>
 }): EndpointsPort {
   return {
     describe() {
@@ -98,6 +126,7 @@ export function createEndpointsPort(deps: {
         relayUrl: deps.relayUrl,
         lanHint: deps.lanHintOf(),
         listener: deps.listenerOf(),
+        advertise: deps.advertiseOf?.(),
       })
     },
   }

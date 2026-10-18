@@ -67,6 +67,7 @@
  */
 import type { Caps } from '../dsh/caps.js'
 import type { ChannelState } from '../transport/channels.js'
+import type { AdvertiseKind, AdvertiseView } from './advertise.js'
 
 /**
  * Connection 的精确 Fetch 路由（`packages/client/connection/src/rpc.ts:144-153`）。
@@ -121,6 +122,16 @@ export interface AdminDeps {
   channels(): readonly ChannelState[]
   /** 起或停一条传输通道。失败抛出（归一成 400 + 原因带回界面）。 */
   setChannel(id: string, running: boolean): Promise<void>
+  /**
+   * 「上报哪些地址」：藏掉虚拟网卡、追加不在枚举里的地址（如 Tailscale）。
+   *
+   * 它影响的是 `endpoint.describe` 的输出 —— 也就是**手机看到哪些可拨地址**。
+   * 见 `admin/advertise.ts` 的文件头。
+   */
+  advertise: {
+    view(): AdvertiseView
+    set(url: string, kind: AdvertiseKind | 'clear'): Promise<void>
+  }
   /**
    * 出一次配对码（**已登记到中转**）。
    *
@@ -191,6 +202,7 @@ const badRequest = (error: unknown): Response =>
 const STATUS_PATH = '/api/dsh-mobile/status'
 const PAIR_PATH = '/api/dsh-mobile/pair'
 const TRANSPORT_PATH = '/api/dsh-mobile/transport'
+const ADVERTISE_PATH = '/api/dsh-mobile/advertise'
 const ENABLED_PATH = '/api/dsh-mobile/devices/enabled'
 const REMOVE_PATH = '/api/dsh-mobile/devices/remove'
 
@@ -230,6 +242,43 @@ export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
         // GET 会被预取/刷新重复触发，那会白烧一堆一次性 offer。
         const offer = await deps.offer()
         return json(offer)
+      },
+    },
+
+    // 上报地址：**看**（GET）与**改**（POST）。改是幂等的"设定表态"，不是增量命令。
+    {
+      path: ADVERTISE_PATH,
+      methods: ['GET'],
+      requestBody: 'buffered',
+      fetch: () => Promise.resolve(json(deps.advertise.view())),
+    },
+
+    {
+      path: ADVERTISE_PATH,
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: async (request: Request) => {
+        let body: Record<string, unknown>
+        try {
+          body = await bodyOf(request)
+        } catch (error) {
+          return badRequest(error)
+        }
+        const url = body['url']
+        if (typeof url !== 'string' || url === '') {
+          return badRequest(new Error('url 必填'))
+        }
+        const kind = body['kind']
+        // 三态封闭：hide（藏掉自报的）/ extra（追加一条）/ clear（回到默认）。
+        if (kind !== 'hide' && kind !== 'extra' && kind !== 'clear') {
+          return badRequest(new Error('kind 必须是 hide / extra / clear'))
+        }
+        try {
+          await deps.advertise.set(url, kind)
+        } catch (error) {
+          return badRequest(error)
+        }
+        return json({ ok: true, ...deps.advertise.view() })
       },
     },
 

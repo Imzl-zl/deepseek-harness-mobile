@@ -112,5 +112,15 @@ Status: implemented
   - `app/test/endpoint_discovery_test.dart` 的「多地点」三条与「用户管理」两条。
   - 变异校验：去掉"成功过就留着"的豁免，**恰好**「成功过的地址留着」那一条变红，
     还原后全绿。
-- 未做（下一期）：设置页的删除 / 手填 / 来源徽标 UI；PC 端的管理面
-  （隐藏虚拟网卡地址、追加要上报的地址如 Tailscale）。两者都不需要改协议。
+- 手机端 UI 已落地（`app/lib/ui/settings_page.dart`：点行开 sheet 选"设为首选 /
+  删除"、`+ 添加端点`、来源徽标跟着地址走、`已隐藏 N 条端点`可放回来）。
+- PC 端**后端**已落地：`core` 域加 `advertise` 表（key = url，值
+  `hide | extra`）、`describeEndpoints` 过滤隐藏并追加额外地址、
+  `GET/POST /api/dsh-mobile/advertise`（`kind` 是 `hide | extra | clear` 封闭三态）。
+  追加地址**只收 `ws://` + 非公网**（`assertExtraAddress`）—— 与手机侧手填同一个
+  判据，公网必须走中转。
+- **未做（下一批）**：`connector/client.js` 里那块**面板 UI**（列出网卡地址、
+  逐个藏/显示、填一条追加地址）。API 已就绪且有用例，面板只是渲染层。
+  另一条路是先用 `curl` 调 `/api/dsh-mobile/advertise` 验证行为。
+- 仍未做：真机复验"家 ⇄ 公司换 WiFi 自动连上"；`memory.md`/`tools.md` 的
+  门禁数字尚未跟上本批（flutter 707 / connector 533）。

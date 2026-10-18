@@ -118,6 +118,19 @@ const takeoverSchema = z.object({
 })
 
 /**
+ * 用户对**上报哪些端点地址**的显式表态（key = url）。
+ *
+ * - `hide`：不要再上报这个地址（典型：VMware 虚拟网卡的 `192.168.x.1`）。
+ * - `extra`：额外上报一个不在网卡枚举里的地址（典型：Tailscale 的 `100.x`）。
+ *
+ * **放在存储里而不是配置文件**：这是操作者随时会改的运行期偏好，改一次就去
+ * 改 `cordis.patch.yml` 再重启，等于让"藏掉一条垃圾地址"变成一次部署动作。
+ */
+const advertiseSchema = z.object({
+  kind: z.enum(['hide', 'extra']),
+})
+
+/**
  * 小、正确性关键、需要同步落盘的那批。
  *
  * `meta` 用 `global`（单条记录）而不是单行表 —— 后端把 global 当不透明 JSON 整体读写，
@@ -137,6 +150,8 @@ export const coreDomain = defineDomain({
     by_session: domainTable<string, string>(z.string()),
     dedupe: domainTable<string, z.infer<typeof dedupeEntrySchema>>(dedupeEntrySchema),
     takeover: domainTable<string, z.infer<typeof takeoverSchema>>(takeoverSchema),
+    /** 上报地址的显式表态（key = url）。见 `advertiseSchema`。 */
+    advertise: domainTable<string, z.infer<typeof advertiseSchema>>(advertiseSchema),
   },
 })
 
@@ -156,6 +171,7 @@ export type MetaRecord = z.infer<typeof metaSchema>
 export type DedupeEntry = z.infer<typeof dedupeEntrySchema>
 export type WindowRecord = z.infer<typeof windowSchema>
 export type TakeoverRecord = z.infer<typeof takeoverSchema>
+export type AdvertiseRecord = z.infer<typeof advertiseSchema>
 
 /** 两个域的初始 meta。首次启动时写入，之后只按 `schema` 迁移。 */
 export function initialMeta(input: {

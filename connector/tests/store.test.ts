@@ -38,7 +38,7 @@ test('存储域：域名与表名合规、版本合法', () => {
   // 两边都排序再比：这里关心的是"有哪些表"，不是声明顺序。
   assert.deepEqual(
     Object.keys(coreDomain.tables).sort(),
-    ['by_sid', 'by_session', 'dedupe', 'devices', 'takeover'].sort(),
+    ['advertise', 'by_sid', 'by_session', 'dedupe', 'devices', 'takeover'].sort(),
   )
   assert.deepEqual(Object.keys(windowsDomain.tables).sort(), ['windows'])
 })

@@ -75,6 +75,10 @@ function deps(over: Partial<AdminDeps> = {}): AdminDeps {
     relayUrl: () => 'ws://127.0.0.1:8787/ws/connector',
     channels: () => CHANNELS,
     setChannel: async () => {},
+    advertise: {
+      view: () => ({ advertised: [], hidden: [], candidates: [] }),
+      set: async () => {},
+    },
     offer: async () => ({ svg: 'P', expiresAt: 123 }),
     setEnabled: async () => {},
     remove: async () => ({ removed: 0, skippedOnline: 0 }),
@@ -112,6 +116,8 @@ test('端点：路径、方法、形状', async () => {
   assert.deepEqual(
     routes.map((r) => `${r.path} ${r.methods.join(',')}`).sort(),
     [
+      '/api/dsh-mobile/advertise GET',
+      '/api/dsh-mobile/advertise POST',
       '/api/dsh-mobile/devices/enabled POST',
       '/api/dsh-mobile/devices/remove POST',
       '/api/dsh-mobile/pair POST',
@@ -196,6 +202,84 @@ test('传输面：启动失败带原因回界面（端口被占），不当成�
   const body = await jsonOf(res)
   assert.equal(body['ok'], false)
   assert.match(String(body['error']), /EADDRINUSE/, '原话要带回去，不许吞成"操作失败"')
+})
+
+test('上报地址：GET 回视图，POST 设表态（kind 是封闭三态）', async () => {
+  const calls: [string, string][] = []
+  const routes = createAdminRoutes(
+    deps({
+      advertise: {
+        view: () => ({
+          advertised: [{ url: 'ws://192.168.1.4:8790', source: 'auto' as const }],
+          hidden: [],
+          candidates: [{ url: 'ws://192.168.1.4:8790', label: 'WLAN 2' }],
+        }),
+        set: async (url, kind) => {
+          calls.push([url, kind])
+        },
+      },
+    }),
+  )
+
+  // 这个路径有 GET 与 POST 两条：`routeOf` 只按路径取第一条，所以 POST 要
+  // **按方法挑**自己那条（真实服务器是按方法分派的，这里只是替身的局限）。
+  const postAdvertise = (body: unknown): Promise<Response> =>
+    routes
+      .find((r) => r.path === '/api/dsh-mobile/advertise' && r.methods.includes('POST'))!
+      .fetch(
+        new Request('http://x/api/dsh-mobile/advertise', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+      )
+
+  const view = await jsonOf(
+    await routeOf(routes, '/api/dsh-mobile/advertise').fetch(
+      new Request('http://x/api/dsh-mobile/advertise'),
+    ),
+  )
+  assert.equal((view['advertised'] as unknown[]).length, 1)
+  assert.equal((view['candidates'] as unknown[]).length, 1)
+
+  const ok = await postAdvertise({ url: 'ws://192.168.235.1:8790', kind: 'hide' })
+  assert.equal(ok.status, 200)
+  assert.deepEqual(calls, [['ws://192.168.235.1:8790', 'hide']])
+
+  // 三态封闭：乱写的 kind 不许落到实现里（否则"藏掉"会静默变成别的意思）。
+  for (const kind of ['remove', 'HIDE', '', 42]) {
+    const bad = await postAdvertise({ url: 'ws://192.168.235.1:8790', kind })
+    assert.equal(bad.status, 400, `kind=${String(kind)} 必须 400`)
+  }
+  assert.equal(calls.length, 1, '被拒的请求不许调 set')
+
+  // url 必填。
+  const noUrl = await postAdvertise({ kind: 'hide' })
+  assert.equal(noUrl.status, 400)
+})
+
+test('上报地址：set 抛错（如 extra 校验不过）归一成 400 并带回原话', async () => {
+  const routes = createAdminRoutes(
+    deps({
+      advertise: {
+        view: () => ({ advertised: [], hidden: [], candidates: [] }),
+        set: async () => {
+          throw new Error('直连地址必须是局域网 / 回环 / CGNAT 地址（公网请走中转）')
+        },
+      },
+    }),
+  )
+  const res = await routes
+    .find((r) => r.path === '/api/dsh-mobile/advertise' && r.methods.includes('POST'))!
+    .fetch(
+      new Request('http://x/api/dsh-mobile/advertise', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: 'ws://example.com:8790', kind: 'extra' }),
+      }),
+    )
+  assert.equal(res.status, 400)
+  assert.match(String((await jsonOf(res))['error']), /公网请走中转/, '原因不许吞掉')
 })
 
 test('传输面：路由按通道生成 —— 加第三种方式不改管理面形状', async () => {

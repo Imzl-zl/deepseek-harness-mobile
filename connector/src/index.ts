@@ -70,6 +70,11 @@ import { offerForScanning, issuePairingOffer } from './pairing-offer.js'
 import { pairingQrSvg } from './pairing-qr.js'
 import { mountAdminFace } from './admin/mount.js'
 import { createDeviceAdmin, type DeviceTablePort } from './admin/device-admin.js'
+import {
+  advertiseMapOf,
+  createAdvertiseAdmin,
+  type AdvertiseTablePort,
+} from './admin/advertise.js'
 import { registerInteractions, type RemoteInteractionPort } from './dsh/interactions.js'
 import { createQuestionFaceDeps } from './dsh/questions.js'
 import { createModelFace } from './dsh/models.js'
@@ -232,6 +237,8 @@ let unregisterAdminFace: (() => void) | null = null
   let devicesTable: DeviceTablePort | null = null
   /** 幂等表（`core` 域的 `dedupe` 表）。写在库里的行要参与 §5.6 的"命中即回上次结果"。 */
   let dedupeRows: DedupeRows | null = null
+  /** 上报地址的显式表态（`core` 域的 `advertise` 表）。 */
+  let advertiseRows: AdvertiseTablePort | null = null
   /** 本机身份（§4.1）。在 `load-identity` 之前是 null，`start-transport` 之前必然已就绪。 */
   let identity: Identity | null = null
   /** 本机标识：进 `hello-ack` 的 `pcId`，因而参与 transcript。 */
@@ -360,6 +367,9 @@ let unregisterAdminFace: (() => void) | null = null
         // 否则残缺的 by_sid 会让入站 sid 校验失败，或让 ensure 重复分配别名。
         devicesTable = core.table('devices')
         dedupeRows = core.table('dedupe')
+        // 上报地址的显式表态（藏掉虚拟网卡 / 追加 Tailscale 之类的地址）。
+        // 每次 `endpoint.describe` 现取 —— 管理面改完立刻生效，不用重启。
+        advertiseRows = core.table('advertise')
         aliases = createAliases(
           { bySid: core.table('by_sid'), bySession: core.table('by_session') },
           { initialVersion: migrated.aliasVersion },
@@ -613,6 +623,12 @@ let unregisterAdminFace: (() => void) | null = null
           onlineIds: () => new Set(presence.devices().filter((row) => row.online).map((row) => row.id)),
           publish: publishDevices,
         })
+        // 「上报哪些地址」的管理面。候选表是**网卡枚举的原始结果**（含被藏掉的），
+        // 因为界面要画的是"这台机器上都有哪些地址，各自报不报"。
+        const advertiseAdmin = createAdvertiseAdmin({
+          tableOf: () => advertiseRows,
+          candidatesOf: () => listener?.urls ?? [],
+        })
         // 插件面板的 RPC（`/api/dsh-mobile/*`）在**传输section 之后**才挂 ——
         // 按通道生成的起停路由要在 `transportChannels` 注册表存在之后才能生成
         // （2026-10-17 真机抓到的装配顺序 bug：挂早了 channels() 还是空，
@@ -646,6 +662,8 @@ let unregisterAdminFace: (() => void) | null = null
                   relayUrl,
                   lanHintOf: () => lanHint,
                   listenerOf: () => listener,
+                  // 用户藏掉 / 追加的上报地址（现取：管理面改完立刻生效）。
+                  advertiseOf: () => advertiseMapOf(advertiseRows),
                 }),
               }),          // 会话投影：**按能力位挂**（`sessionProjections` 服务在不在）。
           ...(ctx.get('sessionProjections') === undefined
@@ -975,6 +993,7 @@ let unregisterAdminFace: (() => void) | null = null
             relayUrl: () => relayUrl ?? null,
             // 启停开关：**按通道**（两个方式两个开关，2026-10-17 用户要求）。
             channels: () => transportChannels?.channels() ?? [],
+            advertise: advertiseAdmin,
             setChannel: (id, running) => setTransportChannel(id, running),
             devices: () => {
               if (devicesTable === null) return []
