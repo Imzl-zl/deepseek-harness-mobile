@@ -24,10 +24,12 @@
 /// 见 .agents/notes/implemented/2026-10-17-settings-page-v1-four-groups.md
 library;
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/endpoint.dart';
+import '../core/errors.dart';
 import '../data/app_model.dart';
 import '../model/chat_item.dart';
 import '../model/model_catalog.dart';
@@ -155,6 +157,9 @@ class SettingsPage extends StatelessWidget {
               )
             else
               _EndpointCard(app: app),
+            if (app.hiddenEndpointIds.isNotEmpty) _HiddenEndpoints(app: app),
+            const SizedBox(height: 8),
+            _AddEndpointButton(app: app),
             const _SectionTitle('关于与连接'),
             _PrefRow(
               icon: 'info',
@@ -355,8 +360,9 @@ class _EndpointNote extends StatelessWidget {
     return const Padding(
       padding: EdgeInsets.symmetric(horizontal: 4, vertical: 6),
       child: Text(
-        '排在第一位的先拨，拨不通自动顺延；点一行把它设为首选，下次重连生效。'
-        '端点只是地址、不含凭据 —— 换端点不重扫码。',
+        '拨号顺序：上次连上的那条先试 → 和你现在同一 WiFi 的次之 → 其余按这里的顺序。'
+        '所以换地点通常不用重扫码；拨不通会自动顺延。'
+        '点一行可以设为首选或删除，也可以手填一个地址。',
         style: TextStyle(fontSize: 12, color: DshColors.labelTertiary),
       ),
     );
@@ -470,10 +476,16 @@ class _EndpointRow extends StatelessWidget {
     );
   }
 
-  /// 地址行：url + 连接器自报的名字（网卡名等，没有就不显示）。
+  /// 地址行：url + 连接器自报的名字（网卡名等）+ 来源。
+  ///
+  /// **来源不单独占一列**：选择类列表的行是「名称 / 其下标签组」+ 勾位
+  /// （`AGENTS.md` §7.9），第三列会让整行在"手填/自动"之间横移。
+  /// 它属于"这个地址是什么"的一部分，所以跟着地址走。
   String _addressLine() {
-    final label = endpoint.label;
-    return label.isEmpty ? endpoint.url : '${endpoint.url} · $label';
+    final parts = <String>[endpoint.url];
+    if (endpoint.label.isNotEmpty) parts.add(endpoint.label);
+    if (endpoint.manual) parts.add('手填');
+    return parts.join(' · ');
   }
 
   /// 状态文案与颜色。**全部来自真实拨号记录**，没有记录就说"还没试过"。
@@ -488,19 +500,281 @@ class _EndpointRow extends StatelessWidget {
     return ('拨不通$reason', DshColors.error);
   }
 
+  /// 点一行 → 选动作。
+  ///
+  /// **不做成"点一下直接设首选"**：删除也得有个入口，而把它挤进同一行会破坏
+  /// 「行 = 名称/标签组 + 勾位」的版面规则。放进 sheet 之后，一行点下去仍然
+  /// 只做一件事（选），具体做哪件由 sheet 承载。
   Future<void> _onTap(BuildContext context) async {
-    if (app.endpoints.first.id == endpoint.id) {
-      _toast(context, '「${endpointKindLabel(endpoint.kind)}」已经是首选项');
+    final isFirst = app.endpoints.first.id == endpoint.id;
+    final action = await showDshSheet<String>(
+      context: context,
+      title: endpointKindLabel(endpoint.kind),
+      body: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          DshPickerRow(
+            name: '设为首选',
+            tags: [if (isFirst) '已经是首选' else '排在第一位，第一个拨它'],
+            selected: isFirst,
+            icon: 'pin',
+            enabled: !isFirst,
+            onTap: () => Navigator.of(context).pop('prefer'),
+          ),
+          DshPickerRow(
+            name: '删除这个端点',
+            tags: [endpoint.manual ? '手填的地址，删了就没了' : '删掉后连接器再报也不会加回来'],
+            selected: false,
+            icon: 'trash',
+            onTap: () => Navigator.of(context).pop('remove'),
+          ),
+        ],
+      ),
+    );
+    if (action == null || !context.mounted) return;
+
+    if (action == 'prefer') {
+      await app.preferEndpoint(endpoint);
+      if (!context.mounted) return;
+      _toast(context, '已把「${endpointKindLabel(endpoint.kind)}」设为首选，下次重连生效');
       return;
     }
-    await app.preferEndpoint(endpoint);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: DshColors.layer1,
+        title: const Text('删除这个端点？'),
+        content: Text(
+          '${_addressLine()}\n\n'
+          '这只是从这台手机上移除一条路由，不影响配对 ——'
+          '凭据还在，随时可以手填地址加回来。',
+          style: const TextStyle(fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('删除', style: TextStyle(color: DshColors.error)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await app.removeEndpoint(endpoint);
     if (!context.mounted) return;
-    _toast(context, '已把「${endpointKindLabel(endpoint.kind)}」设为首选，下次重连生效');
+    _toast(context, '已删除');
   }
 
   void _toast(BuildContext context, String message) {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+/// 「已隐藏」—— 用户删掉的自报端点。
+///
+/// **必须有个地方看得见**：删掉之后连接器每次连上都会再报它，
+/// 我们只是把它挡在表外；不显示的话用户会以为"删了但还在"，
+/// 也没法反悔。
+class _HiddenEndpoints extends StatelessWidget {
+  const _HiddenEndpoints({required this.app});
+
+  final AppModel app;
+
+  @override
+  Widget build(BuildContext context) {
+    final hidden = app.hiddenEndpointIds;
+    if (hidden.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: InkWell(
+        onTap: () async {
+          final id = await showDshSheet<String>(
+            context: context,
+            title: '已隐藏的端点（${hidden.length}）',
+            body: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final url in hidden)
+                  DshPickerRow(
+                    name: url,
+                    tags: const ['点一下放回来'],
+                    selected: false,
+                    icon: 'unarchive',
+                    onTap: () => Navigator.of(context).pop(url),
+                  ),
+              ],
+            ),
+          );
+          if (id == null) return;
+          await app.unhideEndpoint(id);
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          child: Text(
+            '已隐藏 ${hidden.length} 条端点 · 点这里放回来',
+            style: const TextStyle(
+              fontSize: 12,
+              color: DshColors.labelTertiary,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 「+ 添加端点」—— 手填一个地址。
+///
+/// ## 校验在这里，不在 `data/`
+///
+/// 允许什么地址是**安全边界**（`core/endpoint.dart` 的 `checkedRelayUri`：
+/// 公网必须 wss、明文只限非公网）。`AppModel.addManualEndpoint` 只存值 ——
+/// 两处各判一遍就会漂。
+///
+/// **直连只收 `ws://`**：电脑侧监听面刻意不终结 TLS（`connector/src/transport/
+/// listener.ts` 的"不终结 TLS"），所以直连地址就是明文；写成 `wss://` 反而拨不通。
+class _AddEndpointButton extends StatelessWidget {
+  const _AddEndpointButton({required this.app});
+
+  final AppModel app;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton.icon(
+        onPressed: () => _add(context),
+        icon: const DshIcon('plus', size: 16, color: DshColors.accentBlue),
+        label: const Text('添加端点'),
+      ),
+    );
+  }
+
+  Future<void> _add(BuildContext context) async {
+    final added = await showDialog<Endpoint>(
+      context: context,
+      builder: (context) => const _AddEndpointDialog(),
+    );
+    if (added == null || !context.mounted) return;
+    await app.addManualEndpoint(added);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('已添加，下次重连会试它')));
+  }
+}
+
+/// 填地址的小对话框（kind + url）。
+class _AddEndpointDialog extends StatefulWidget {
+  const _AddEndpointDialog();
+
+  @override
+  State<_AddEndpointDialog> createState() => _AddEndpointDialogState();
+}
+
+class _AddEndpointDialogState extends State<_AddEndpointDialog> {
+  EndpointKind _kind = EndpointKind.direct;
+  final _input = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _input.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final raw = _input.text.trim();
+    if (raw.isEmpty) {
+      setState(() => _error = '填一个地址');
+      return;
+    }
+    try {
+      // 过安全边界：公网必须 wss、明文只限非公网。
+      checkedRelayUri(raw, allowInsecureLocal: kDebugMode);
+      if (_kind == EndpointKind.direct) {
+        if (!raw.startsWith('ws://')) {
+          setState(() => _error = '直连是明文 ws://（电脑侧监听面不终结 TLS）');
+          return;
+        }
+        if (!isPrivateOrLoopback(Uri.parse(raw).host)) {
+          setState(() => _error = '直连地址必须是局域网 / 回环地址');
+          return;
+        }
+      }
+    } on ProtocolException catch (error) {
+      setState(() => _error = error.message);
+      return;
+    }
+    Navigator.of(context).pop(Endpoint(kind: _kind, url: raw));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: DshColors.layer1,
+      title: const Text('添加端点'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              for (final kind in EndpointKind.values) ...[
+                ChoiceChip(
+                  label: Text(endpointKindLabel(kind)),
+                  selected: _kind == kind,
+                  onSelected: (_) => setState(() {
+                    _kind = kind;
+                    _error = null;
+                  }),
+                ),
+                const SizedBox(width: 8),
+              ],
+            ],
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _input,
+            autofocus: true,
+            style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+            decoration: InputDecoration(
+              hintText: _kind == EndpointKind.direct
+                  ? 'ws://192.168.1.4:8790'
+                  : 'wss://relay.example.com',
+              hintStyle: const TextStyle(fontSize: 12),
+              errorText: _error,
+              errorMaxLines: 2,
+            ),
+            onChanged: (_) {
+              if (_error != null) setState(() => _error = null);
+            },
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _kind == EndpointKind.direct
+                ? '直连不走中转、不要票：填电脑侧直连监听面的地址。'
+                : '中转要换票：填中转的根地址（不带路径）。',
+            style: const TextStyle(
+              fontSize: 11,
+              color: DshColors.labelTertiary,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        TextButton(onPressed: _submit, child: const Text('添加')),
+      ],
+    );
   }
 }

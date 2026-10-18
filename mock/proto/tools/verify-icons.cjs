@@ -221,13 +221,34 @@ ok(
       return out
     }
 
+    /** 收集 `icon: '<名字>'` 这种**字符串传参**的图标名。
+     *
+     * 为什么还要这一条：图标名不只走 `DshIcon('…')`，也走控件参数
+     * （`DshPickerRow(icon: '…')` 内部才构造 `DshIcon`）。只扫构造器会**漏检**——
+     * 2026-10-18 实测：设置页写了 `icon: 'eye'`（集合里没有），
+     * 门禁却报 ALL CHECKS PASSED，而运行时 sheet 整个渲染失败、
+     * 点上去像"点了没反应"。
+     *
+     * 判据是"字符串字面量且形如标识符"，所以 `IconData` 变量之类不会误报。
+     */
+    const iconParamNamesIn = (src) => {
+      const out = new Set()
+      const clean = stripComments(src)
+      for (const m of clean.matchAll(/\bicon:\s*'([a-zA-Z][a-zA-Z0-9]*)'/g)) {
+        if (m[1] !== undefined) out.add(m[1])
+      }
+      return out
+    }
+
     const referenced = new Set()
     const walk = (dir) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name)
         if (entry.isDirectory()) walk(full)
         else if (entry.name.endsWith('.dart')) {
-          for (const name of iconNamesIn(fs.readFileSync(full, 'utf8'))) referenced.add(name)
+          const src = fs.readFileSync(full, 'utf8')
+          for (const name of iconNamesIn(src)) referenced.add(name)
+          for (const name of iconParamNamesIn(src)) referenced.add(name)
         }
       }
     }

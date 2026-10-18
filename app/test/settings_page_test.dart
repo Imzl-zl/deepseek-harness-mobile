@@ -118,7 +118,7 @@ void main() {
     addTearDown(app.dispose);
   });
 
-  testWidgets('点非首实行 → 置顶 + 落盘 + toast', (tester) async {
+  testWidgets('点非首实行 → sheet 里「设为首选」→ 置顶 + 落盘 + toast', (tester) async {
     final persisted = <List<Endpoint>>[];
     final app = buildApp(onEndpointsChanged: persisted.add);
     await tester.pumpWidget(_host(app));
@@ -130,6 +130,11 @@ void main() {
     await tester.tap(find.text('中转'));
     await tester.pumpAndSettle();
 
+    // 点一行**不再直接改顺序**：它开一个 sheet 让用户选动作。
+    // 删除也要有入口，而把它挤成第三列会破坏「名称/标签组 + 勾位」的版面规则。
+    await tester.tap(find.text('设为首选'));
+    await tester.pumpAndSettle();
+
     expect(app.endpoints.map((e) => e.url).toList(), [
       _relay.url,
       _direct.url,
@@ -139,7 +144,7 @@ void main() {
     addTearDown(app.dispose);
   });
 
-  testWidgets('点首实行 → 不动 + "已经是首选项"', (tester) async {
+  testWidgets('首选行的「设为首选」禁用，并说清已经是首选', (tester) async {
     var persisted = 0;
     final app = buildApp(
       onEndpointsChanged: (_) {
@@ -153,9 +158,12 @@ void main() {
     await tester.tap(find.text('直连'));
     await tester.pumpAndSettle();
 
+    expect(find.text('已经是首选'), findsOneWidget, reason: '说清为什么点不动');
+    await tester.tap(find.text('设为首选'));
+    await tester.pumpAndSettle();
+
     expect(app.endpoints.map((e) => e.url).toList(), [_direct.url, _relay.url]);
     expect(persisted, 0, reason: '没变化不落盘');
-    expect(find.text('「直连」已经是首选项'), findsOneWidget);
     addTearDown(app.dispose);
   });
 
@@ -217,6 +225,125 @@ void main() {
 
     expect(find.text('还没有端点。配对成功后，这里会列出可拨的地址。'), findsOneWidget);
     expect(find.text('直连'), findsNothing);
+    addTearDown(app.dispose);
+  });
+
+  // ---------------------------------------------------------------------------
+  // 管理：删除 / 手填 / 已隐藏
+  // ---------------------------------------------------------------------------
+
+  testWidgets('删自报端点：确认后从表里去掉并进隐藏集', (tester) async {
+    final app = buildApp();
+    await tester.pumpWidget(_host(app));
+    await tester.pumpAndSettle();
+
+    await _scrollTo(tester, find.text('中转'));
+    await tester.tap(find.text('中转'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除这个端点'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除'));
+    await tester.pumpAndSettle();
+
+    expect(
+      app.endpoints.map((e) => e.url),
+      isNot(contains(_relay.url)),
+      reason: '删了就该从表里消失',
+    );
+    expect(
+      app.hiddenEndpointIds,
+      contains(_relay.url),
+      reason: '自报的端点要靠隐藏集挡住，否则下次 describe 又加回来',
+    );
+    expect(find.text('已隐藏 1 条端点 · 点这里放回来'), findsOneWidget);
+    addTearDown(app.dispose);
+  });
+
+  testWidgets('删除要确认：点"取消"不动表', (tester) async {
+    final app = buildApp();
+    await tester.pumpWidget(_host(app));
+    await tester.pumpAndSettle();
+
+    await _scrollTo(tester, find.text('中转'));
+    await tester.tap(find.text('中转'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除这个端点'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    expect(app.endpoints.map((e) => e.url), contains(_relay.url));
+    expect(app.hiddenEndpointIds, isEmpty);
+    addTearDown(app.dispose);
+  });
+
+  testWidgets('手填地址：校验通过后进表并标"手填"', (tester) async {
+    final app = buildApp();
+    await tester.pumpWidget(_host(app));
+    await tester.pumpAndSettle();
+
+    await _scrollTo(tester, find.text('添加端点'));
+    await tester.tap(find.text('添加端点'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'ws://192.168.2.99:8790');
+    await tester.tap(find.text('添加'));
+    await tester.pumpAndSettle();
+
+    final added = app.endpoints.where((e) => e.url == 'ws://192.168.2.99:8790');
+    expect(added, hasLength(1));
+    expect(added.single.manual, isTrue, reason: '手填的要标来源，剪枝才豁免它');
+    expect(
+      find.text('ws://192.168.2.99:8790 · 手填'),
+      findsOneWidget,
+      reason: '来源跟着地址走，不占第三列',
+    );
+    addTearDown(app.dispose);
+  });
+
+  testWidgets('手填校验：公网明文 ws:// 被拒且说明原因', (tester) async {
+    final app = buildApp();
+    await tester.pumpWidget(_host(app));
+    await tester.pumpAndSettle();
+
+    await _scrollTo(tester, find.text('添加端点'));
+    await tester.tap(find.text('添加端点'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'ws://example.com:8790');
+    await tester.tap(find.text('添加'));
+    await tester.pumpAndSettle();
+
+    expect(
+      app.endpoints.where((e) => e.url.contains('example.com')),
+      isEmpty,
+      reason: '公网明文不许进表',
+    );
+    expect(find.textContaining('明文仅限'), findsOneWidget, reason: '要说出为什么');
+    addTearDown(app.dispose);
+  });
+
+  testWidgets('已隐藏区：点一下放回来', (tester) async {
+    final app = buildApp();
+    await tester.pumpWidget(_host(app));
+    await tester.pumpAndSettle();
+
+    await app.removeEndpoint(_relay);
+    await tester.pumpAndSettle();
+    // 设置页是懒加载 ListView：这一行在连接方式组下面，先滚到可见。
+    await _scrollTo(tester, find.text('已隐藏 1 条端点 · 点这里放回来'));
+    expect(find.text('已隐藏 1 条端点 · 点这里放回来'), findsOneWidget);
+
+    await tester.tap(find.text('已隐藏 1 条端点 · 点这里放回来'));
+    await tester.pumpAndSettle();
+    expect(find.text('已隐藏的端点（1）'), findsOneWidget, reason: '先确认 sheet 真的开了');
+    // 点标签而不是那行很长的地址：地址被 ellipsis 截断后，
+    // `tester.tap` 取其几何中心可能落在文字外（那一拍就变成点遮罩，
+    // sheet 以 null 收场 → 看起来像"点了没反应"）。
+    await tester.tap(find.text('点一下放回来'));
+    await tester.pumpAndSettle();
+
+    expect(app.hiddenEndpointIds, isEmpty);
     addTearDown(app.dispose);
   });
 }
