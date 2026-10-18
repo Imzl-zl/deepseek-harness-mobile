@@ -48,6 +48,7 @@ import '../model/workspace.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
+import 'chat_jumper.dart';
 import 'chat_turns.dart';
 import 'connection_actions_sheet.dart';
 import 'connection_summary_block.dart';
@@ -181,6 +182,25 @@ class ChatPageState extends State<ChatPage> {
   void _openSidePanel(SidePanel panel) {
     setState(() => _sidePanel = panel);
     openSide();
+  }
+
+  /// 右抽屉的宽度。
+  ///
+  /// **不铺满整屏**：留出左侧一条让下层会话露出来，这才读作"抽屉"而不是
+  /// "翻到另一页"（2026-10-19 用户原话"右侧的我感觉做成抽屉好看点"）。
+  ///
+  /// 两个宽度按面板分工（DSH 同源规则 `fullscreen ? 100vw : width`，
+  /// `ui-sidebar-right/.../SidebarRight.tsx:310`，且 manual mode 一直保留）：
+  /// - **文件面板要宽**（diff 预览两栏并排，窄了就只剩一半代码）；
+  /// - **任务 / 子智能体一行能放下**（`label + kind + 状态 + 时长`），
+  ///   窄一些让下层露得更多，抽屉感更强。
+  ///
+  /// 下限 300：再窄下去关闭按钮与行内按钮会挤成一团
+  /// （`SidePane` 顶栏是「图标 + 标题 + 三个动作钮」）。
+  double _sideDrawerWidth(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final ratio = _sidePanel == SidePanel.file ? 0.92 : 0.78;
+    return (width * ratio).clamp(300.0, width);
   }
 
   @override
@@ -429,12 +449,32 @@ class ChatPageState extends State<ChatPage> {
         onTapSubagents: () => _openSidePanel(SidePanel.subs),
         onTapJobs: () => _openSidePanel(SidePanel.jobs),
       ),
-      // ---- 右抽屉：一个抽屉三个面板（竖屏手机上它是整屏）----
+      // ---- 右抽屉：一个抽屉三个面板 ----
       // 用 `endDrawer` 而不是自绘遮罩：右缘**跟手**拖出、拖拽/点遮罩关闭、
       // 以及"开着时棒棒消失"的开关（`onEndDrawerChanged`）全都是原生行为。
+      //
+      // **宽度不再铺满整屏**（2026-10-19，用户原话"右侧的我感觉做成抽屉好看点，
+      // 因为现在这样直接换页了感觉怪怪的"）：留出左侧一条让下层会话露出来，
+      // 这才读作"抽屉"而不是"翻到另一页"。
+      //
+      // DSH 的对应规则是 `fullscreen ? 100vw : width`，且"Below 768px fullscreen
+      // is derived from viewport width"（`ui-sidebar-right/.../SidebarRight.tsx:5-7,310`）
+      // —— 手机上走全屏是它的**派生默认**，而它同时保留 manual mode。
+      // 触屏上用户要的是抽屉感，所以这里按面板给两个宽度：
+      // 文件面板（diff 预览）要宽度，任务 / 子智能体一行能放下，可以窄一些。
       endDrawer: Drawer(
-        width: MediaQuery.of(context).size.width,
+        width: _sideDrawerWidth(context),
         backgroundColor: DshColors.bgBase,
+        // 抽屉的"浮层感"：圆角 + 左边框。**宽度不再是整屏时才画** ——
+        // `SidePane.fullscreen` 的原意是"竖屏手机上铺满，去掉圆角与左边框"，
+        // 而 2026-10-19 起右侧改成真抽屉（用户原话"做成抽屉好看点"），
+        // 于是永远不当全屏画：露出的那条下层会话 + 圆角，才读作抽屉。
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(DshRadius.lg),
+            bottomLeft: Radius.circular(DshRadius.lg),
+          ),
+        ),
         child: SidePane(
           header: _sideHeader(),
           panel: _sidePanel,
@@ -452,6 +492,7 @@ class ChatPageState extends State<ChatPage> {
           // 截图里运行中的任务旁边空着。
           onStopJob: (job) => _stopJob(job),
           openJobIds: _openJobs,
+          fullscreen: false,
         ),
       ),
       onEndDrawerChanged: (open) {
@@ -1954,12 +1995,188 @@ class _ChatTab extends StatelessWidget {
     // APP 是最上面我要滑动多少次啊?"。
     // `reverse` 而不是"打开后 scrollToEnd":前者让**首帧**就在底部,不做二次布局,
     // 也不依赖 items 是否已经落全(恢复中的分页期间同样停在最新那端)。
-    return ListView.builder(
-      reverse: true,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      itemCount: items.length,
-      itemBuilder: (context, index) =>
-          _TurnView(item: items[index], autoOpenDetail: autoOpenToolDetail),
+    //
+    // **快速跳转钮浮在右侧**（rikkahub 的 `MessageJumper`）：它要一个
+    // `ScrollController` 才能跳，而 `_ChatTab` 是无状态的 —— 所以包一层
+    // 有状态的 `_ConversationFlow`（见下），控制器与 jumper 都住在那儿。
+    return _ConversationFlow(items: items, autoOpenDetail: autoOpenToolDetail);
+  }
+}
+
+/// 对话流 + 右侧快速跳转钮。
+///
+/// ## 为什么要单独一层
+///
+/// 跳转钮需要 `ScrollController` 与每条条目的 `GlobalKey` 才能跳，而
+/// `_ChatTab` 是无状态的纯展示层。把这一层拆出来，`_ChatTab` 仍然只管"显示什么"。
+///
+/// ## `reverse: true` 下的方向
+///
+/// `reverse` 列表里 **offset 0 是最新一端**，`maxScrollExtent` 是最早一端
+/// （与直觉相反）。所以：
+/// - "最新" → `animateTo(0)`；
+/// - "最早" → `animateTo(maxScrollExtent)`。
+///
+/// ## "上一条 / 下一条"按条目，且**不猜高度**
+///
+/// 一条可以占满一屏（长 diff / 长输出），按像素挪只会在这条内部滑。
+/// 而"跳到一个 index"在 Flutter 里**没有直接 API**（SDK 只有
+/// `animateTo(offset)`）。正道是官方自己的做法：
+/// `material/popup_menu.dart:997` 的
+/// `Scrollable.ensureVisible(itemKeys[selectedIndex].currentContext!)` ——
+/// **每条目一个 key，用 element 的 context 让它滚进视口**。
+/// 用"平均高度 × index"估算是猜（条目高度不定，差一点就偏出半屏），这里不用。
+class _ConversationFlow extends StatefulWidget {
+  const _ConversationFlow({required this.items, required this.autoOpenDetail});
+
+  final List<ChatItem> items;
+  final bool autoOpenDetail;
+
+  @override
+  State<_ConversationFlow> createState() => _ConversationFlowState();
+}
+
+class _ConversationFlowState extends State<_ConversationFlow> {
+  final ScrollController _scroll = ScrollController();
+
+  /// 列表自身的 key（`_firstVisibleIndex` 要拿视口顶在哪）。
+  final GlobalKey _listKey = GlobalKey();
+
+  /// 每条目的 key（`ensureVisible` 要 element，见类文档）。
+  ///
+  /// **条目数变化就重建**：留着旧的会漏掉新增条目（跳不过去），
+  /// 而 key 数量与 `items` 不一致时 `ensureVisible` 拿到 null context。
+  List<GlobalKey> _keys = const [];
+
+  /// 跳转钮的控制器（滚动监听要把"滚过了"告诉它）。
+  ///
+  /// 用回调拿而不是 `GlobalKey`：这一个实例在整棵树里唯一，而回调不必
+  /// 让父层知道私有 `State` 类型（拿到的是公开的 [ChatJumperController]）。
+  ChatJumperController? _jumper;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncKeys();
+  }
+
+  @override
+  void didUpdateWidget(_ConversationFlow old) {
+    super.didUpdateWidget(old);
+    if (!identical(widget.items, old.items)) _syncKeys();
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _syncKeys() {
+    _keys = List.generate(widget.items.length, (_) => GlobalKey());
+  }
+
+  /// 当前第一条可见条目的 index。
+  ///
+  /// `ScrollPosition` 不提供"第几条可见"（builder 模式没有这回事），
+  /// 所以从 keys 反推：**视口上缘之下的第一条**。拿不到就退 0，不猜。
+  ///
+  /// 视口上缘取自觉列表自身的 `RenderBox`（`_listKey` 挂在 `ListView` 上）：
+  /// 它的全局 dy 就是视口顶。条目的上缘由各自的 `RenderBox.localToGlobal`
+  /// 折成同一个全局坐标系后比较。**不用 `RenderAbstractViewport`** ——
+  /// 它在 `rendering` 库而 material 不重导出，引它要多一个 import，
+  /// 而这里要的只是"视口顶在哪"。
+  int get _firstVisibleIndex {
+    if (!_scroll.hasClients) return 0;
+    final listBox = _listKey.currentContext?.findRenderObject() as RenderBox?;
+    if (listBox == null || !listBox.hasSize) return 0;
+    final viewportTop = listBox.localToGlobal(Offset.zero).dy;
+    for (var i = 0; i < _keys.length; i += 1) {
+      final box = _keys[i].currentContext?.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize) continue;
+      final top = box.localToGlobal(Offset.zero).dy;
+      if (top >= viewportTop - 1) return i;
+    }
+    return 0;
+  }
+
+  /// 让某一条滚进视口（不猜高度，走官方 `ensureVisible`）。
+  ///
+  /// 它返回 `Future`（动画完成），而这里**不 await**：跳转是"发出去就不管"
+  /// 的动作，调用方（按钮回调）不等它。`unawaited` 是显式说出这件事 ——
+  /// `discarded_futures` lint 要求二选一，不能默默丢。
+  void _ensureVisible(int index) {
+    if (index < 0 || index >= _keys.length) return;
+    final context = _keys[index].currentContext;
+    if (context == null) return;
+    unawaited(
+      Scrollable.ensureVisible(
+        context,
+        alignment: 0.1,
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOut,
+      ),
+    );
+  }
+
+  /// 挪一条。[delta] 是 -1（上一条）/ +1（下一条）。
+  ///
+  /// 列表是**倒序**的，所以"上一条"= index **+1**（更早），
+  /// "下一条" = index **-1**（更新）。
+  void _step(int delta) {
+    if (widget.items.isEmpty) return;
+    _ensureVisible((_firstVisibleIndex + delta).clamp(0, _keys.length - 1));
+  }
+
+  /// 跳到某一端。[newest] 为真 = 最新一条。
+  void _edge(bool newest) {
+    if (!_scroll.hasClients) return;
+    final extent = _scroll.position.maxScrollExtent;
+    unawaited(
+      _scroll.animateTo(
+        newest ? 0.0 : extent,
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOut,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            // **滚动就显示跳转钮**（rikkahub 的 `isRecentScroll` 同源）。
+            // 返回 false = 不吞掉这个通知，别的监听者还要用。
+            _jumper?.notifyScrolled();
+            return false;
+          },
+          child: ListView.builder(
+            key: _listKey,
+            controller: _scroll,
+            reverse: true,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: widget.items.length,
+            itemBuilder: (context, index) => KeyedSubtree(
+              key: index < _keys.length ? _keys[index] : null,
+              child: _TurnView(
+                item: widget.items[index],
+                autoOpenDetail: widget.autoOpenDetail,
+              ),
+            ),
+          ),
+        ),
+        // 跳转钮：浮在右侧，滚动停下 1.5 秒后自己淡出。
+        Positioned.fill(
+          child: ChatJumper(
+            itemCount: widget.items.length,
+            onStep: _step,
+            onEdge: _edge,
+            onCreated: (controller) => _jumper = controller,
+          ),
+        ),
+      ],
     );
   }
 }
