@@ -67,6 +67,7 @@ class PairedCredentials {
     required this.deviceToken,
     required this.refreshToken,
     this.endpoints = const [],
+    this.endpointMeta = const EndpointMeta(),
     this.pcId = '',
     this.devId = '',
   });
@@ -82,6 +83,11 @@ class PairedCredentials {
   ///
   /// 空列表表示"只有配对时那一条中转"（老凭据迁移后的形状）。
   final List<Endpoint> endpoints;
+
+  /// 端点表的附属状态（记住的那条 / 隐藏集 / 成功过的集）。
+  ///
+  /// **不含秘密**（就是地址与集合），与 [endpoints] 一并落盘就够。
+  final EndpointMeta endpointMeta;
 
   /// 电脑侧 Ed25519 公钥（**只来自二维码**，契约 §12.1 硬规则）。
   final String pcSignPubHex;
@@ -156,6 +162,7 @@ Future<String> deriveDeviceId(String devDhPubHex) async {
 abstract final class _Keys {
   static const relayUrl = 'dsh.relay_url';
   static const endpoints = 'dsh.endpoints';
+  static const endpointMeta = 'dsh.endpoint_meta';
   static const pcSignPub = 'dsh.pc_sign_pub';
   static const pcDhPub = 'dsh.pc_dh_pub';
   static const pairingId = 'dsh.pairing_id';
@@ -229,9 +236,36 @@ abstract final class PairingStore {
       deviceToken: deviceToken,
       refreshToken: refreshToken,
       endpoints: _decodeEndpoints(values[_Keys.endpoints], relayUrl),
+      endpointMeta: _decodeEndpointMeta(values[_Keys.endpointMeta]),
       pcId: values[_Keys.pcId] ?? '',
       devId: values[_Keys.devId] ?? '',
     );
+  }
+
+  /// 解端点表的附属状态。缺或坏都退化成"空的记忆"（**不猜**）：
+  /// 丢的只是"上次连哪条"这类优化信息，拨号照样能work。
+  static EndpointMeta _decodeEndpointMeta(String? raw) {
+    if (raw == null || raw.isEmpty) return const EndpointMeta();
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return const EndpointMeta();
+      final remembered = decoded['remembered'];
+      final hidden = decoded['hidden'];
+      final succeeded = decoded['succeeded'];
+      return EndpointMeta(
+        rememberedEndpointUrl: remembered is String && remembered.isNotEmpty
+            ? remembered
+            : null,
+        hiddenEndpointIds: hidden is List
+            ? hidden.whereType<String>().toSet()
+            : const <String>{},
+        succeededEndpointIds: succeeded is List
+            ? succeeded.whereType<String>().toSet()
+            : const <String>{},
+      );
+    } on FormatException {
+      return const EndpointMeta();
+    }
   }
 
   /// 解端点表。缺表时从 `relayUrl` 造一条 relay 端点（一次性迁移，见 [load]）。
@@ -267,6 +301,7 @@ abstract final class PairingStore {
       key: _Keys.endpoints,
       value: jsonEncode(credentials.endpoints.map(endpointToJson).toList()),
     );
+    await saveEndpointMeta(credentials.endpointMeta);
     await _storage.write(key: _Keys.pcSignPub, value: credentials.pcSignPubHex);
     await _storage.write(key: _Keys.pcDhPub, value: credentials.pcDhPubHex);
     await _storage.write(key: _Keys.pairingId, value: credentials.pairingId);
@@ -304,6 +339,22 @@ abstract final class PairingStore {
     await _storage.write(
       key: _Keys.endpoints,
       value: jsonEncode(endpoints.map(endpointToJson).toList()),
+    );
+  }
+
+  /// 只更新端点表的附属状态（记住的那条 / 隐藏集 / 成功过的集）。
+  ///
+  /// 与 [saveEndpoints] 分开：**每次拨通都会改"记住的那条"**，
+  /// 而整张表不需要跟着重写。
+  static Future<void> saveEndpointMeta(EndpointMeta meta) async {
+    await _storage.write(
+      key: _Keys.endpointMeta,
+      value: jsonEncode(<String, Object?>{
+        if (meta.rememberedEndpointUrl != null)
+          'remembered': meta.rememberedEndpointUrl,
+        'hidden': meta.hiddenEndpointIds.toList(),
+        'succeeded': meta.succeededEndpointIds.toList(),
+      }),
     );
   }
 

@@ -72,7 +72,12 @@ enum EndpointKind {
 /// 与端点相关的秘密只有设备令牌与主种子，而它们在 [PairedCredentials] 里，
 /// 不在这里（`platform/pairing_store.dart`）。
 class Endpoint {
-  const Endpoint({required this.kind, required this.url, this.label = ''});
+  const Endpoint({
+    required this.kind,
+    required this.url,
+    this.label = '',
+    this.manual = false,
+  });
 
   final EndpointKind kind;
 
@@ -83,6 +88,14 @@ class Endpoint {
   /// 给人看的名字（"同一 WiFi" / "中转" / 网卡名）。空表示让界面自己造一个。
   final String label;
 
+  /// 用户手填的条目（不是连接器自报的）。
+  ///
+  /// **它永不被自动剪枝**：用户自己输进来的地址是他的意图，而"连接器这次没报"
+  /// 只说明电脑此刻不在那个网络 —— 家里与公司两个地址必须能同时留着。
+  ///
+  /// 剪枝规则见 `data/app_model.dart` 的 `mergeDiscoveredEndpoints`。
+  final bool manual;
+
   /// 稳定标识。**就是 url** —— 同一个地址只有一个端点。
   ///
   /// 不另设 id 字段：那会出现"两个字段谁是身份"的问题，而 url 本身已经唯一。
@@ -90,6 +103,10 @@ class Endpoint {
   /// 不是身份）—— 否则"`contains(endpoint)`"与"按 id 找"会给出不同答案，
   /// 而合并规则用的是后者。
   String get id => url;
+
+  /// 换来源标记（合并时保留已存条目的 manual 标记用）。
+  Endpoint withManual(bool manual) =>
+      Endpoint(kind: kind, url: url, label: label, manual: manual);
 
   @override
   bool operator ==(Object other) => other is Endpoint && other.url == url;
@@ -100,17 +117,21 @@ class Endpoint {
   @override
   String toString() =>
       'Endpoint(${kind.name}, $url'
-      '${label.isEmpty ? '' : ', $label'})';
+      '${label.isEmpty ? '' : ', $label'}'
+      '${manual ? ', manual' : ''})';
 }
 
 /// 端点 → JSON。**两端共用一个形状**：连接器的 `endpoint.describe` 应答
 /// 与手机的落盘用同一套键，少一处会漂移的地方。
 ///
 /// `label` 可缺：它不是身份，缺了让界面自己造一个。
+/// `manual` 只在**手机自己的落盘**里出现 —— 连接器不知道也不该知道这件事
+/// （它是"这台手机信不信这个地址"，不是"电脑有没有这个地址"）。
 Map<String, Object?> endpointToJson(Endpoint endpoint) => {
   'kind': endpoint.kind.name,
   'url': endpoint.url,
   if (endpoint.label.isNotEmpty) 'label': endpoint.label,
+  if (endpoint.manual) 'manual': true,
 };
 
 /// JSON → 端点。认不出返回 `null`（**不猜**：缺 `kind` 或 `url` 的条目
@@ -131,6 +152,7 @@ Endpoint? endpointFromJson(Object? raw) {
     kind: resolved,
     url: url,
     label: label is String ? label : '',
+    manual: raw['manual'] == true,
   );
 }
 
@@ -150,17 +172,20 @@ List<Endpoint> parseEndpointList(Object? raw) {
   return out;
 }
 
-/// 合并端点表：**已知的原位更新（顺序不动），未知的按 kind 插入。**
+/// 合并端点表：**已知的原位更新（顺序不动），未知的追加到末尾。**
 ///
 /// 为什么不是"用发现结果整份覆盖"：
 /// - 覆盖会抹掉用户手动排的偏好序（把直连放第一位是有意为之）；
 /// - 连接器某次少报一个（例如直连刚好在重启）就把手机里的条目删了，
 ///   而重新学到它要再等一次连接。
 ///
-/// 插入规则：`direct` 排在同 kind 已存条目之前、`relay` 之后 ——
-/// 即"同 kind 保持原序，direct 整体先于 relay"。这样第一次发现直连时
-/// 它自动成为首选，与"同一局域网延迟低"的意图一致；而用户一旦手动重排，
-/// 后续合并只更新字段、不再挪位。
+/// **为什么未知的追加到末尾，而不是按 kind 插队**：曾经 `direct` 被插到第一个
+/// `relay` 之前，于是"用户把中转设为首选"会在连接器报出一个**新**直连时被
+/// 悄悄挤到第二位 —— 用户的选择被自动发现冲掉了。而"同一 WiFi 优先直连"
+/// 这个意图现在由 [dialOrder] 在**拨号时**按真实网段判断，不需要靠插入位置表达。
+///
+/// 已知条目原位更新时**保留已存的 [Endpoint.manual] 标记**：用户手填的地址
+/// 被连接器也报了一次之后不能变成"自报的"，否则它会被剪枝规则误删。
 List<Endpoint> mergeEndpoints(
   List<Endpoint> stored,
   List<Endpoint> discovered,
@@ -169,19 +194,131 @@ List<Endpoint> mergeEndpoints(
   for (final fresh in discovered) {
     final index = merged.indexWhere((e) => e.id == fresh.id);
     if (index >= 0) {
-      merged[index] = fresh;
+      final kept = merged[index];
+      merged[index] = Endpoint(
+        kind: fresh.kind,
+        url: fresh.url,
+        label: fresh.label.isEmpty ? kept.label : fresh.label,
+        manual: kept.manual,
+      );
     } else {
-      // 找第一个 kind 不同的位置插在它前面：direct 插在第一个 relay 前，
-      // relay 追加到末尾。同 kind 的新条目按发现顺序追加。
-      final insertAt = merged.indexWhere((e) => e.kind != fresh.kind);
-      if (insertAt >= 0) {
-        merged.insert(insertAt, fresh);
-      } else {
-        merged.add(fresh);
-      }
+      merged.add(fresh);
     }
   }
   return merged;
+}
+
+/// 两个 IPv4 地址**前向匹配的八位组个数**（不是 IPv4 就是 0）。
+///
+/// 判"是不是同一网段"用 **>= 3（同一 /24）**，不用"同 /16"：
+/// 这台机器同时有 `192.168.1.4`（WiFi）与 `192.168.2.41`（以太网），
+/// 按 /16 会把它们判成同一网段，于是"在 WiFi 上却先去拨以太网那条" ——
+/// 正好是这套排序要避免的事。家用 / 公司分配基本都是 /24，代价可接受：
+/// 判错的只是**顺序**，那条仍然会被试到。
+int subnetScore(String myIpv4, String endpointUrl) {
+  final mine = _ipv4(myIpv4);
+  final theirs = _ipv4OfUrl(endpointUrl);
+  if (mine == null || theirs == null) return 0;
+  var score = 0;
+  for (var i = 0; i < 4; i += 1) {
+    if (mine[i] != theirs[i]) break;
+    score += 1;
+  }
+  return score;
+}
+
+/// 同一 /24 就算"同网段"（理由见 [subnetScore]）。
+bool sameSubnet(String myIpv4, String endpointUrl) =>
+    subnetScore(myIpv4, endpointUrl) >= 3;
+
+/// 拨号顺序：**记住的那条先试 → 同网段的次之 → 其余按用户排的顺序。**
+///
+/// ## 为什么是这个顺序
+///
+/// - **记住的那条先试**：同一台电脑很少换地址（DHCP 租约 / 固定分配），
+///   上次通了这次大概率还通，先试它是最省的。
+/// - **同网段的次之**：只有"记住的那条拨不通"才需要这一步 —— 换了地点
+///   （家 ⇄ 公司）时，用户列表里另一条地址正躺在**当前**这个网段里。
+///   这一步要的是 `myIpv4`，而它是**当前**的真实地址，所以换网后自动对。
+/// - **其余按用户排的顺序**：用户的手动排序在"都不是同网段"时就是唯一依据。
+///
+/// 它**不删任何条目**：排序只是尝试顺序，全试完仍然全失败才是真失败。
+///
+/// [myIpv4] 拿不到（移动网络、权限受限）时退化成"记住的 + 用户顺序" —— 不猜。
+List<Endpoint> dialOrder(
+  List<Endpoint> endpoints, {
+  String? myIpv4,
+  String? rememberedEndpointUrl,
+}) {
+  if (endpoints.length <= 1) return List<Endpoint>.of(endpoints);
+
+  Endpoint? remembered;
+  if (rememberedEndpointUrl != null) {
+    for (final endpoint in endpoints) {
+      if (endpoint.url == rememberedEndpointUrl) {
+        remembered = endpoint;
+        break;
+      }
+    }
+  }
+
+  final inSubnet = <Endpoint>[];
+  final rest = <Endpoint>[];
+  for (final endpoint in endpoints) {
+    if (remembered != null && endpoint.url == remembered.url) continue;
+    if (myIpv4 != null && sameSubnet(myIpv4, endpoint.url)) {
+      inSubnet.add(endpoint);
+    } else {
+      rest.add(endpoint);
+    }
+  }
+  return <Endpoint>[?remembered, ...inSubnet, ...rest];
+}
+
+/// 端点表的**附属状态**：拨号顺序要用的那几样路由记忆。
+///
+/// 它们与端点表分开存：每次拨通都会改"记住的那条"，而整张表不需要重写。
+/// 三者都**不含秘密**（就是地址与集合），所以落盘不需要加密存储。
+class EndpointMeta {
+  const EndpointMeta({
+    this.rememberedEndpointUrl,
+    this.hiddenEndpointIds = const {},
+    this.succeededEndpointIds = const {},
+  });
+
+  /// 上次拨通的地址（`dialOrder` 的第一优先）。
+  final String? rememberedEndpointUrl;
+
+  /// 用户藏掉的端点 id（连接器再报也不加回来）。
+  final Set<String> hiddenEndpointIds;
+
+  /// 曾经成功过的端点 id（剪枝的豁免依据）。
+  final Set<String> succeededEndpointIds;
+}
+
+/// 解出 IPv4 四段；不是 IPv4 文本时返回 `null`。
+List<int>? _ipv4(String host) {
+  final parts = host.split('.');
+  if (parts.length != 4) return null;
+  final out = <int>[];
+  for (final part in parts) {
+    if (part.isEmpty || part.length > 3) return null;
+    final value = int.tryParse(part);
+    if (value == null || value < 0 || value > 255) return null;
+    out.add(value);
+  }
+  return out;
+}
+
+/// 从端点 url 里取 IPv4（IPv6 与域名一律返回 `null` —— 不猜）。
+List<int>? _ipv4OfUrl(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null) return null;
+  var host = uri.host;
+  if (host.startsWith('[') && host.endsWith(']')) {
+    host = host.substring(1, host.length - 1);
+  }
+  return _ipv4(host);
 }
 
 /// 一次**拨号**的结果（`EndpointTransport` 每试一个端点报一次）。

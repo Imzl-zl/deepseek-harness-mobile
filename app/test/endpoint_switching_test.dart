@@ -171,17 +171,35 @@ void main() {
     });
   });
 
-  group('mergeEndpoints：已知原位更新，未知按 kind 插', () {
-    test('第一次发现直连：插在 relay 前面（同 kind 原序，direct 整体先于 relay）', () {
+  group('mergeEndpoints：已知原位更新，未知**追加到末尾**', () {
+    test('第一次发现直连：追加到末尾，不插队（用户的首选不许被冲掉）', () {
+      // 曾经 direct 被插到第一个 relay 之前 —— 于是"用户把中转设为首选"
+      // 会在连接器报出一个新直连时被悄悄挤到第二位。
+      // "同一 WiFi 优先直连"这个意图现在由 `dialOrder` 在**拨号时**按真实
+      // 网段判断（见下面的 dialOrder 组），不需要靠插入位置表达。
       final stored = [_relay('wss://relay.example', label: '中转')];
       final discovered = [
         _direct('ws://192.168.1.5:8788', label: '同一 WiFi'),
         _relay('wss://relay.example', label: '中转'),
       ];
       expect(mergeEndpoints(stored, discovered).map((e) => e.url).toList(), [
-        'ws://192.168.1.5:8788',
         'wss://relay.example',
+        'ws://192.168.1.5:8788',
       ]);
+    });
+
+    test('手填标记在合并后保留（否则它会被剪枝规则误删）', () {
+      const stored = [
+        Endpoint(
+          kind: EndpointKind.direct,
+          url: 'ws://192.168.1.5:8788',
+          manual: true,
+        ),
+      ];
+      final discovered = [_direct('ws://192.168.1.5:8788', label: '同一 WiFi')];
+      final merged = mergeEndpoints(stored, discovered);
+      expect(merged.single.manual, isTrue, reason: '连接器报了一次不等于用户没手填过');
+      expect(merged.single.label, '同一 WiFi', reason: 'label 要刷新');
     });
 
     test('已知条目只更新字段，**不挪位**（用户手排的偏好序不许被抹掉）', () {
@@ -212,15 +230,61 @@ void main() {
       ]);
     });
 
-    test('空 stored：整份采用，direct 仍先于 relay', () {
+    test('空 stored：整份采用，顺序照发现结果', () {
       final discovered = [
         _relay('wss://relay.example'),
         _direct('ws://192.168.1.5:8788'),
       ];
       expect(mergeEndpoints(const [], discovered).map((e) => e.url).toList(), [
-        'ws://192.168.1.5:8788',
         'wss://relay.example',
+        'ws://192.168.1.5:8788',
       ]);
+    });
+
+    test('dialOrder：记住的先试 → 同网段的次之 → 其余按用户顺序', () {
+      final relay = _relay('wss://relay.example');
+      final home = _direct('ws://192.168.1.5:8788');
+      final office = _direct('ws://10.0.1.9:8788');
+      final table = [relay, office, home];
+
+      // 在家：记住的是公司那条（上次在公司连的），但它拨不通 →
+      // 同网段的 home 必须排上来。
+      expect(
+        dialOrder(
+          table,
+          myIpv4: '192.168.1.29',
+          rememberedEndpointUrl: office.url,
+        ).map((e) => e.url).toList(),
+        [office.url, home.url, relay.url],
+        reason: '记住的排第一；它失败之后同网段那条紧跟',
+      );
+
+      // 拿不到本机 IP（移动网络）→ 退化成"记住的 + 用户顺序"，不猜网段。
+      expect(
+        dialOrder(
+          table,
+          rememberedEndpointUrl: office.url,
+        ).map((e) => e.url).toList(),
+        [office.url, relay.url, home.url],
+      );
+
+      // 没有记忆 → 同网段优先，其余按用户顺序。
+      expect(dialOrder(table, myIpv4: '10.0.1.44').map((e) => e.url).toList(), [
+        office.url,
+        relay.url,
+        home.url,
+      ]);
+    });
+
+    test('dialOrder：192.168.1.x 与 192.168.2.x **不算**同网段', () {
+      // 本机同时有这两块网卡（WiFi 1.x / 以太网 2.x）。按 /16 判会把它们
+      // 当成同一网段，于是"在 WiFi 上却先去拨以太网那条" —— 正是要避免的。
+      expect(sameSubnet('192.168.1.29', 'ws://192.168.1.4:8790'), isTrue);
+      expect(sameSubnet('192.168.1.29', 'ws://192.168.2.41:8790'), isFalse);
+      expect(sameSubnet('192.168.1.29', 'wss://relay.example'), isFalse);
+      expect(sameSubnet('192.168.1.29', 'ws://[::1]:8790'), isFalse);
+      expect(subnetScore('192.168.1.29', 'ws://192.168.1.4:8790'), 3);
+      expect(subnetScore('192.168.1.29', 'ws://192.168.2.41:8790'), 2);
     });
 
     test('发现结果为空：表原样不动（连接器少报不删手机里的条目）', () {

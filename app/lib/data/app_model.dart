@@ -60,10 +60,19 @@ class AppModel extends ChangeNotifier {
     required this.client,
     PreferenceStore? prefs,
     List<Endpoint> endpoints = const [],
+    String? rememberedEndpointUrl,
+    Set<String> hiddenEndpointIds = const {},
+    Set<String> succeededEndpointIds = const {},
+    Future<String?> Function()? myLanIpv4Of,
     this.onEndpointsChanged,
+    this.onEndpointsMetaChanged,
     this.onConnectionTerminated,
   }) : _prefs = prefs,
-       _endpoints = List<Endpoint>.of(endpoints);
+       _endpoints = List<Endpoint>.of(endpoints),
+       _rememberedEndpointUrl = rememberedEndpointUrl,
+       _hiddenEndpointIds = Set<String>.of(hiddenEndpointIds),
+       _succeededEndpointIds = Set<String>.of(succeededEndpointIds),
+       _myLanIpv4Of = myLanIpv4Of;
 
   /// 通道客户端（连接 / 订阅 / 写操作的唯一 owner）。
   final SyncClient client;
@@ -77,6 +86,12 @@ class AppModel extends ChangeNotifier {
   /// （`verify-platform-boundary.mjs` 的 `core-no-platform-import` 管的是 `core/`，
   /// 但同一条纪律在 `data/` 上更要守 —— 它要能在纯 Dart 单测里跑）。
   final Future<void> Function(List<Endpoint>)? onEndpointsChanged;
+
+  /// 端点表的**附属状态**变了之后落盘（记住的那条 / 隐藏集 / 成功过的集）。
+  ///
+  /// 与 [onEndpointsChanged] 分开：那几个是"表格之外的路由记忆"，
+  /// 而每次拨号成功都会改"记住的那条" —— 混在一起会让每拨一次就重写整张表。
+  final Future<void> Function(EndpointMeta)? onEndpointsMetaChanged;
 
   /// 连接**终态**失败时呈递一次那个协议错误（身份不被认 → 清凭据回配对页）。
   ///
@@ -105,10 +120,23 @@ class AppModel extends ChangeNotifier {
   Endpoint? _activeEndpoint;
 
   /// 报一次"这条连接走的是哪个端点"。
+  ///
+  /// **顺带记住它**：拨号顺序的第一优先就是"上次拨通的那条"
+  /// （见 `core/endpoint.dart` 的 `dialOrder`）。同一台电脑很少换地址，
+  /// 先试它最省 —— 而"换地点之后同网段优先"是它失败之后的第二手。
   void reportActiveEndpoint(Endpoint endpoint) {
-    if (_activeEndpoint?.id == endpoint.id) return;
+    final movedOn = _activeEndpoint?.id != endpoint.id;
     _activeEndpoint = endpoint;
+    final newlySucceeded = _succeededEndpointIds.add(endpoint.id);
+    final memoryMoved = _rememberedEndpointUrl != endpoint.url;
+    _rememberedEndpointUrl = endpoint.url;
+    if (!movedOn && !newlySucceeded && !memoryMoved) return;
     notifyListeners();
+    if (newlySucceeded || memoryMoved) {
+      unawaited(
+        onEndpointsMetaChanged?.call(endpointMeta) ?? Future<void>.value(),
+      );
+    }
   }
 
   /// 把连接器自报的端点并进表里（`endpoint.describe` 的结果）。
@@ -124,19 +152,166 @@ class AppModel extends ChangeNotifier {
   /// 旧的永远留在表里（2026-10-17 真机实测：三个拨不通的 IPv6 地址，
   /// 冷启动每个等满超时，合计 30 秒——用户原话"退出软件怎么就连不上了"）。
   Future<void> mergeDiscoveredEndpoints(List<Endpoint> discovered) async {
-    final merged = mergeEndpoints(_endpoints, discovered);
-    final reported = discovered.map((e) => e.id).toSet();
-    final pruned = merged.where((e) {
+    // 用户藏掉的条目**不再加回来**（否则设置页的"删除"删了白删）。
+    final visible = discovered
+        .where((e) => !_hiddenEndpointIds.contains(e.id))
+        .toList();
+    final merged = mergeEndpoints(_endpoints, visible);
+    final reported = visible.map((e) => e.id).toSet();
+
+    final kept = merged.where((e) {
+      if (e.manual) return true; // 用户手填的：永不自动删
       if (reported.contains(e.id)) return true; // 连接器还在报：留
-      return _endpointAttempts[e.id]?.ok != false; // 拨过且失败才删
+      // **成功过的永不删**：它只是"此刻不在那个网络"。家里那条在公司拨不通，
+      // 但它成功过 —— 回老家要靠它自动连上，而不是再扫一次码。
+      if (_succeededEndpointIds.contains(e.id)) return true;
+      // 剩下的只删"从没成功过 + 这次拨过并失败"（IPv6 轮换出来的旧地址）。
+      return _endpointAttempts[e.id]?.ok != false;
     }).toList();
-    if (pruned.length == _endpoints.length &&
-        pruned.every((e) => _endpoints.contains(e))) {
+
+    final bounded = _boundedByCap(kept, reported);
+    if (_sameEndpointTable(bounded, _endpoints)) {
       return; // 没有变化：不落盘、不通知（否则每次重连都会写一次存储）
     }
-    _endpoints = pruned;
+    _endpoints = bounded;
     notifyListeners();
-    await onEndpointsChanged?.call(pruned);
+    await onEndpointsChanged?.call(bounded);
+  }
+
+  /// 上限保险丝：条目超 [maxEndpoints] 时，从**末尾**淘汰"从没成功过、
+  /// 且不是手填"的条目。
+  ///
+  /// 为什么是末尾：新发现的端点追加在末尾，而用户手动排在前面的顺序
+  /// 是他的意图 —— 淘汰从后往前才不动它。**手填的豁免**：那是用户明确要的。
+  List<Endpoint> _boundedByCap(List<Endpoint> entries, Set<String> reported) {
+    if (entries.length <= maxEndpoints) return entries;
+    final out = List<Endpoint>.of(entries);
+    var index = out.length - 1;
+    while (out.length > maxEndpoints && index >= 0) {
+      final endpoint = out[index];
+      final evictable =
+          !endpoint.manual && !_succeededEndpointIds.contains(endpoint.id);
+      if (evictable) {
+        out.removeAt(index);
+      }
+      index -= 1;
+    }
+    // 全是"成功过"或"手填"的（不常见的极端）：宁可超限也不删用户要的。
+    return out;
+  }
+
+  /// 两张端点表是否**完全一样**（url + label + manual；顺序也算）。
+  ///
+  /// 不能用 `contains`：它只比 url，于是"label 变了""manual 标记变了"
+  /// 都会被当成"没有变化"而不落盘。
+  bool _sameEndpointTable(List<Endpoint> a, List<Endpoint> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i += 1) {
+      if (a[i].url != b[i].url ||
+          a[i].label != b[i].label ||
+          a[i].manual != b[i].manual ||
+          a[i].kind != b[i].kind) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// 上限保险丝的值。用户自己的删除总是优先于它 —— 它只防"表无限变长"。
+  static const int maxEndpoints = 12;
+
+  /// 上次拨通的端点地址（`dialOrder` 的第一优先）。
+  String? get rememberedEndpointUrl => _rememberedEndpointUrl;
+  String? _rememberedEndpointUrl;
+
+  /// 用户藏掉的端点 id（连接器再报也不加回来）。
+  Set<String> get hiddenEndpointIds =>
+      Set<String>.unmodifiable(_hiddenEndpointIds);
+  final Set<String> _hiddenEndpointIds;
+
+  /// **曾经成功过**的端点 id（不是"上次成功"，是"曾经成功"）。
+  final Set<String> _succeededEndpointIds;
+
+  /// 本机在**当前局域网**里的 IPv4（`null` = 还不知道 / 拿不到）。
+  ///
+  /// 拨号排序用它判"这条直连端点是不是和我同一网段"（`core/endpoint.dart`
+  /// 的 `dialOrder`）。**缓存着**：真实现要调 `dart:io`，而 `dialOrder`
+  /// 在同步的 `endpointsOf()` 里跑。
+  String? get myLanIpv4 => _myLanIpv4;
+  String? _myLanIpv4;
+
+  /// 读本机 LAN 地址的实现（装配层注入 `platform/lan_address.dart`；
+  /// `data/` 不认识 `dart:io`）。
+  final Future<String?> Function()? _myLanIpv4Of;
+
+  /// 刷新本机 LAN 地址。
+  ///
+  /// **在"拨不通"之后才调**（见 [reportEndpointAttempt]）：用户的原话是
+  /// "连接失败才会查下自己 IP"。平时不必付这个代价，而真正需要它的那一刻
+  /// ——换了地点、记住的那条拨不通—— 正好就是失败的那一拍。
+  Future<void> refreshMyLanIpv4() async {
+    final read = _myLanIpv4Of;
+    if (read == null) return;
+    String? next;
+    try {
+      next = await read();
+    } on Object {
+      return; // 读不到就是不知道（不猜），排序退化成"用户顺序"
+    }
+    if (next == _myLanIpv4) return;
+    _myLanIpv4 = next;
+    notifyListeners();
+  }
+
+  /// 端点表的附属状态（落盘用）。
+  EndpointMeta get endpointMeta => EndpointMeta(
+    rememberedEndpointUrl: _rememberedEndpointUrl,
+    hiddenEndpointIds: _hiddenEndpointIds,
+    succeededEndpointIds: _succeededEndpointIds,
+  );
+
+  /// 用户手填一条端点。
+  ///
+  /// **地址校验由调用方做**（设置页走 `checkedRelayUri` + `isPrivateOrLoopback`）：
+  /// `data/` 只存值，不判安全边界 —— 那是 `core/endpoint.dart` 的职责，
+  /// 而两处各判一遍就会漂。
+  Future<void> addManualEndpoint(Endpoint endpoint) async {
+    final manual = endpoint.withManual(true);
+    // 之前藏过的话，这次是用户明确要它 —— 顺手解除隐藏。
+    _hiddenEndpointIds.remove(manual.id);
+    final next = List<Endpoint>.of(_endpoints);
+    final index = next.indexWhere((e) => e.id == manual.id);
+    if (index >= 0) {
+      next[index] = manual; // 已经是它：只把标记刷成手填
+    } else {
+      next.add(manual);
+    }
+    _endpoints = next;
+    notifyListeners();
+    await onEndpointsChanged?.call(next);
+    await onEndpointsMetaChanged?.call(endpointMeta);
+  }
+
+  /// 删一条端点。
+  ///
+  /// 连接器自报的**进隐藏集**（否则下次 `describe` 又把它加回来，删了白删）；
+  /// 手填的直接从表里去掉（没有"会被报回来"的问题）。
+  Future<void> removeEndpoint(Endpoint endpoint) async {
+    final next = _endpoints.where((e) => e.id != endpoint.id).toList();
+    if (!endpoint.manual) _hiddenEndpointIds.add(endpoint.id);
+    _succeededEndpointIds.remove(endpoint.id);
+    _endpoints = next;
+    if (_rememberedEndpointUrl == endpoint.id) _rememberedEndpointUrl = null;
+    notifyListeners();
+    await onEndpointsChanged?.call(next);
+    await onEndpointsMetaChanged?.call(endpointMeta);
+  }
+
+  /// 把藏掉的端点放回来（设置页的"已隐藏"区用）。
+  Future<void> unhideEndpoint(String id) async {
+    if (!_hiddenEndpointIds.remove(id)) return;
+    notifyListeners();
+    await onEndpointsMetaChanged?.call(endpointMeta);
   }
 
   /// 手动挑一个端点当首选（设置页用）。**只改顺序，不删条目**。
@@ -170,6 +345,9 @@ class AppModel extends ChangeNotifier {
     if (_endpointAttempts[endpoint.id] == attempt) return;
     _endpointAttempts[endpoint.id] = attempt;
     notifyListeners();
+    // **拨不通才去查本机 IP**：这一拍正是"换了地点、记住的那条不通"的时刻，
+    // 而下一轮重连的 `dialOrder` 需要新网段才能把同网段那条排上来。
+    if (!attempt.ok) unawaited(refreshMyLanIpv4());
   }
 
   // ---------------------------------------------------------------------------

@@ -39,6 +39,7 @@ import 'model/chat_item.dart';
 import 'model/workspace.dart';
 import 'platform/app_state_reporter.dart';
 import 'platform/http_sender.dart';
+import 'platform/lan_address.dart';
 import 'platform/pairing_store.dart';
 import 'platform/sqflite_item_store.dart';
 import 'platform/ticketed_transport.dart';
@@ -759,12 +760,27 @@ Future<AppModel> _assemble(
         (await client.ticketByDeviceToken(credentials.deviceToken)).ticket;
   }
 
-  // 端点表**可换**：`endpoint.describe` 的发现结果写回这个列表，
-  // 而 `EndpointTransport` 每次 `connect()` 现读它 —— 所以发现立刻生效，
-  // 不用重启 App。发现**不踹掉正在用的连接**（那只影响下一次建连）。
-  final endpoints = List<Endpoint>.of(credentials.endpoints);
+  // 端点表**可换**：`endpoint.describe` 的发现结果写回 `AppModel`，
+  // 而 `EndpointTransport` 每次 `connect()` 现读它。发现**不踹掉正在用的
+  // 连接**（那只影响下一次建连）。
+  //
+  // **不能直接捕获下面那个 `endpoints` 列表**：`AppModel` 每次改动都**换一个
+  // 新 list**（`_endpoints = merged`），捕获的旧引用永远不变 —— 于是
+  // "发现了一条直连"要等重启 App 才生效（`tools.md` 那句"重开 App 它就会
+  // 改用直连"其实就是这个别名 bug 的症状，不是设计意图）。
+  // 所以这里读 `appRef`（晚绑定），并套上 `dialOrder`：
+  // **记住的那条先试 → 同网段的次之 → 其余按用户排的顺序**。
+  AppModel? appRef;
   final transport = EndpointTransport(
-    endpointsOf: () => endpoints,
+    endpointsOf: () {
+      final app = appRef;
+      final table = app?.endpoints ?? credentials.endpoints;
+      return dialOrder(
+        table,
+        myIpv4: app?.myLanIpv4,
+        rememberedEndpointUrl: app?.rememberedEndpointUrl,
+      );
+    },
     factory: (endpoint) =>
         transportFor(endpoint, ticket: ticketSourceFor(endpoint)),
   );
@@ -809,13 +825,22 @@ Future<AppModel> _assemble(
     prefs: MetaPreferences(store),
     client: client,
     // 端点表交给 `AppModel` 当所有者：界面要读、设置页要改，而上面的
-    // `EndpointTransport` 每次 `connect()` 现读**同一个 list 实例** ——
-    // 所以这里发现/改序会立刻反映到下一次拨号。
-    endpoints: endpoints,
+    // `EndpointTransport` 每次 `connect()` 经 `appRef` 现读它。
+    endpoints: credentials.endpoints,
+    // 路由记忆（上次连哪条 / 藏了哪些 / 哪些成功过）—— 它们决定拨号顺序。
+    rememberedEndpointUrl: credentials.endpointMeta.rememberedEndpointUrl,
+    hiddenEndpointIds: credentials.endpointMeta.hiddenEndpointIds,
+    succeededEndpointIds: credentials.endpointMeta.succeededEndpointIds,
+    // 本机 LAN 地址（拨号排序判"同网段"用）。拿不到就退化，不猜。
+    myLanIpv4Of: currentLanIpv4,
     onEndpointsChanged: PairingStore.saveEndpoints,
+    onEndpointsMetaChanged: PairingStore.saveEndpointMeta,
     // 连接终态失败（身份不被认）→ 清凭据回配对页。见 `_recovery`。
     onConnectionTerminated: onConnectionTerminated,
   );
+  appRef = app;
+  // 起一次：第一轮拨号就有网段可比（否则第一轮只能按用户顺序）。
+  unawaited(app.refreshMyLanIpv4());
   // 拨通了就报给界面：设置页据此显示"当前走哪条"。**只报事实** ——
   // 表的所有权在 `AppModel`，传输层不写它。
   transport.onActivated = app.reportActiveEndpoint;

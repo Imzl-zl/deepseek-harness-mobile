@@ -131,10 +131,11 @@ void main() {
       persisted: persisted,
     );
 
-    expect(app.endpoints.map((e) => e.url).toList(), [
-      'ws://192.168.1.5:8788',
-      'wss://relay.example',
-    ], reason: '第一次发现直连时它自动成为首选');
+    expect(
+      app.endpoints.map((e) => e.url).toList(),
+      ['wss://relay.example', 'ws://192.168.1.5:8788'],
+      reason: '新发现的追加到末尾 —— 用户排好的首选不许被自动发现冲掉',
+    );
     expect(persisted, hasLength(1), reason: '表变了要落盘');
     app.dispose();
   });
@@ -338,5 +339,163 @@ void main() {
     expect(app.endpoints.first, _relay, reason: 'prefer 只改顺序');
     expect(app.attemptOf(_direct)?.reason, '超时', reason: '记录不因重排丢失');
     app.dispose();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 多地点保留（家 ⇄ 公司）与用户管理
+  // ---------------------------------------------------------------------------
+
+  group('多地点：换地点不许把另一个地点的地址删掉', () {
+    test('成功过的地址留着（在家连过 → 在公司它也还在）', () async {
+      const home = Endpoint(
+        kind: EndpointKind.direct,
+        url: 'ws://192.168.1.5:8788',
+        label: 'Wi-Fi',
+      );
+      const office = Endpoint(
+        kind: EndpointKind.direct,
+        url: 'ws://10.0.1.9:8788',
+        label: '办公网',
+      );
+      final app = await serving(
+        onCall: (method, _) => method == 'endpoint.describe'
+            ? {
+                'endpoints': [
+                  {'kind': 'direct', 'url': office.url, 'label': '办公网'},
+                  {'kind': 'relay', 'url': _relay.url, 'label': '中转'},
+                ],
+              }
+            : null,
+        endpoints: const [home, _relay],
+      );
+      // 在家连过（成功过）。
+      app.reportActiveEndpoint(home);
+      // 到了公司：home 拨不通。
+      app.reportEndpointAttempt(
+        home,
+        const EndpointAttempt(ok: false, reason: 'Network is unreachable'),
+      );
+      // 公司地址被发现。
+      await app.mergeDiscoveredEndpoints(const [office, _relay]);
+
+      expect(
+        app.endpoints.map((e) => e.url),
+        contains(home.url),
+        reason: '成功过的地址只是"此刻不在那个网络"，删了回老家就得再扫码',
+      );
+      expect(app.rememberedEndpointUrl, home.url, reason: '记住上次连上的那条');
+      app.dispose();
+    });
+
+    test('手填的地址永不被自动删（哪怕从没连上、连接器也不报）', () async {
+      const manual = Endpoint(
+        kind: EndpointKind.direct,
+        url: 'ws://192.168.1.77:8788',
+        label: '手填',
+        manual: true,
+      );
+      final app = await serving(
+        onCall: (method, _) => method == 'endpoint.describe'
+            ? {
+                'endpoints': [
+                  {'kind': 'relay', 'url': _relay.url, 'label': '中转'},
+                ],
+              }
+            : null,
+        endpoints: const [manual, _relay],
+      );
+      app.reportEndpointAttempt(
+        manual,
+        const EndpointAttempt(ok: false, reason: '超时'),
+      );
+      await app.mergeDiscoveredEndpoints(const [_relay]);
+
+      expect(app.endpoints.map((e) => e.url), contains(manual.url));
+      app.dispose();
+    });
+
+    test('从没成功过、连接器也不再报、且拨过失败 → 删（IPv6 轮换垃圾）', () async {
+      const stale = Endpoint(
+        kind: EndpointKind.direct,
+        url: 'ws://[2001:db8::99]:8788',
+        label: '旧 IPv6',
+      );
+      final app = await serving(
+        onCall: (method, _) => method == 'endpoint.describe'
+            ? {
+                'endpoints': [
+                  {'kind': 'relay', 'url': _relay.url, 'label': '中转'},
+                ],
+              }
+            : null,
+        endpoints: const [stale, _relay],
+      );
+      app.reportEndpointAttempt(
+        stale,
+        const EndpointAttempt(ok: false, reason: '超时'),
+      );
+      await app.mergeDiscoveredEndpoints(const [_relay]);
+
+      expect(
+        app.endpoints.map((e) => e.url),
+        isNot(contains(stale.url)),
+        reason: '轮换出来的旧 IPv6 永远回不来，留着只会让冷启动每个等满超时',
+      );
+      app.dispose();
+    });
+  });
+
+  group('用户管理', () {
+    test('删自报端点 → 进隐藏集，下次 describe 不加回来', () async {
+      final app = await serving(
+        onCall: (method, _) => method == 'endpoint.describe'
+            ? {
+                'endpoints': [
+                  {'kind': 'direct', 'url': _direct.url, 'label': 'Wi-Fi'},
+                  {'kind': 'relay', 'url': _relay.url, 'label': '中转'},
+                ],
+              }
+            : null,
+        endpoints: const [_relay, _direct],
+      );
+      await app.removeEndpoint(_direct);
+      expect(app.endpoints.map((e) => e.url), isNot(contains(_direct.url)));
+      expect(app.hiddenEndpointIds, contains(_direct.url));
+
+      // 连接器又报了一次：不许加回来。
+      await app.mergeDiscoveredEndpoints(const [_direct, _relay]);
+      expect(
+        app.endpoints.map((e) => e.url),
+        isNot(contains(_direct.url)),
+        reason: '删了又被加回来等于删了白删',
+      );
+
+      // 用户想放回来时能放回来。
+      await app.unhideEndpoint(_direct.url);
+      await app.mergeDiscoveredEndpoints(const [_direct, _relay]);
+      expect(app.endpoints.map((e) => e.url), contains(_direct.url));
+      app.dispose();
+    });
+
+    test('手填端点：进表、标 manual、解除同名隐藏', () async {
+      final app = await serving(
+        onCall: (method, _) => null,
+        endpoints: const [_relay, _direct],
+      );
+      await app.removeEndpoint(_direct); // 自报端点删除 = 进隐藏集
+      expect(app.hiddenEndpointIds, contains(_direct.url));
+
+      await app.addManualEndpoint(
+        const Endpoint(kind: EndpointKind.direct, url: 'ws://192.168.1.5:8788'),
+      );
+      final added = app.endpoints.firstWhere((e) => e.url == _direct.url);
+      expect(added.manual, isTrue);
+      expect(
+        app.hiddenEndpointIds,
+        isNot(contains(_direct.url)),
+        reason: '用户明确要它，顺手解除隐藏',
+      );
+      app.dispose();
+    });
   });
 }
