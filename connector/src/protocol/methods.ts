@@ -51,6 +51,13 @@ export const METHODS = [
   // 交付物 / token 用量 / 统计 / 轨迹 / 待办 / 目标 / 计划 …）。
   // 为什么不是每面一个方法，见 `dsh/projections.ts` 的文件头。
   'session.projections',
+  // **跨会话用量汇总**（只读）。DSH 没有这个接口 —— `tokenUsage` 投影是
+  // 单会话的（`token-meter/src/usage-projection.ts:56-63` 的 state 是
+  // `{totals, last:{turn, step, buckets}}`），所以这一层自己聚合：
+  // 遍历 visible 会话读 `tokenUsage` 求和。聚合规则与"为什么不做本地记账 /
+  // 为什么不做推送"见 `.agents/notes/proposed/2026-10-19-cross-session-usage-summary.md`。
+  // 按 `sessionProjections` 能力位挂（缺了不出现，与 `session.projections` 同）。
+  'usage.summary',
   // 权限预设清单（只读）。**与 Web 同一个 DSH 方法**：
   // `permissionPresets.catalog()`（`@Remote('catalog')`，
   // `packages/interaction/permission-presets/src/index.ts:292`）。

@@ -91,9 +91,9 @@
 - `connector/` 与 `relay/` 是**两个独立 pnpm 工程**,导入风格不同、别顺手统一
   (connector 写 `.js` 因 tsdown 打包,relay 直接跑 `.ts`)。本仓库**没有 CI**。
 
-## 方法面 27/31
+## 方法面 27/32
 
-契约封闭集 **31**、实现 **27**,差额 4 个是契约列了没实现的:`settings.describe` /
+契约封闭集 **32**、实现 **28**,差额 4 个是契约列了没实现的:`settings.describe` /
 `settings.update` / `credentials.set` / `credentials.unset`(依据见契约 §5.8)。
 **两个数都从代码里数,不靠减**;数法见 `tools.md`(要数 `METHODS` + `handlers.ts` 的**两种**注册形态)。
 **三处必须同步**:`tools.md`、契约 §5.7 的表、这里的"x/31"。
@@ -150,7 +150,7 @@
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 43 个)/ 工具脚本不许硬编码盘符(19 个) |
 | `cd app && flutter test` | **747 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **537 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **545 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
 | CDP 浏览器组 | `verify-proto`(**31** = 顶栏与统计条 13 + 新会话页 hero 18) / `verify-authz`(18) / `verify-settings`(28) / `verify-tasks`(53) / `verify-picker` |
 

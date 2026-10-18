@@ -211,6 +211,40 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
     return dshSessionId
   }
 
+  /// 一个会话的 token 总量（`tokenUsage` 投影的 `totals`）。
+  ///
+  /// **全零也算"有值"**（返回 0，不是 null）：刚建的 blank 会话投影里
+  /// `tokenUsage` 是字段齐全但全为 0 的对象，而"用了 0" 与 "没这项" 在
+  /// 汇总里都表示"不进榜"（调用方按 `> 0` 过滤）。这里只负责把形状读对，
+  /// 不负责判断"算不算有数据"。
+  const tokenTotalOf = (tokenUsage: unknown): number => {
+    if (typeof tokenUsage !== 'object' || tokenUsage === null) return 0
+    const totals = (tokenUsage as { totals?: unknown }).totals
+    if (typeof totals !== 'object' || totals === null) return 0
+    // `totals` 的键由 DSH 定（`usage-projection.ts:40-50` 的 projectionSchema），
+    // 本层不预设键名 —— 把所有数值字段求和，认不出的形状自然得 0。
+    let sum = 0
+    for (const value of Object.values(totals as Record<string, unknown>)) {
+      if (typeof value === 'number' && Number.isFinite(value)) sum += value
+    }
+    return sum
+  }
+
+  /// 列表行的标题（**从投影提示来**，与 `session.list` 给手机的同一个来源）。
+  ///
+  /// DSH 的 host 侧 `SessionSummary` 没有独立的持久标题字段
+  /// （`dsh-api-session-controller` 的 `lib/types/types.d.ts`），标题在
+  /// `projections.values.title`（`session-title/src/index.ts:269-281`，
+  /// wire view 是 `string | null`）。**不从本地条目推导**：推导出来的标题
+  /// 是第二个真值源，必然漂（2026-10-17 真机反馈"选中会话名字就变"）。
+  /// 取不到就空串 —— 手机按 DSH 的链退到「未命名」，不在这里兜一个目录名。
+  const titleOf = (row: SessionSummaryRow): string => {
+    const values = (row.projections as { values?: unknown } | undefined)?.values
+    if (typeof values !== 'object' || values === null) return ''
+    const title = (values as Record<string, unknown>).title
+    return typeof title === 'string' ? title : ''
+  }
+
   /** 取一个非空字符串参数（`jobId` 之类）。 */
   const requireString = (params: unknown, key: string): string => {
     const value = paramOf(params, key)
@@ -475,6 +509,61 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
     handlers['session.projections'] = (params) => {
       const dshSessionId = requireSession(requireSid(params))
       return deps.projections!.of(dshSessionId)
+    }
+
+    // **跨会话用量汇总**（2026-10-19，方案见
+    // `.agents/notes/proposed/2026-10-19-cross-session-usage-summary.md`）。
+    //
+    // DSH 的 `tokenUsage` 投影是**单会话**的（`token-meter/src/usage-projection.ts:56-63`
+    // 的 state 是 `{totals, last:{turn, step, buckets}}`），没有跨会话汇总接口，
+    // 所以这一层自己聚合。
+    //
+    // ## 为什么是"遍历 visible 会话读投影"而不是连接器本地记账
+    //
+    // 本地记账只覆盖**插件在线期间**的会话，给出的数字看起来像总量其实不是 ——
+    // 那比没有更糟（项目纪律：不给看似数据的假数据）。遍历读投影拿的是
+    // DSH 的持久真值，与手机上单会话看到的那个数字同源。
+    handlers['usage.summary'] = async () => {
+      const rows = await deps.sessions.list()
+      // 别名可以**并发**分配（与 `session.list` 同一条纪律）：不同会话互不影响，
+      // 同一个会话由 `ensure` 自己合流。
+      const assigned = await Promise.all(
+        rows.map(async (row) => ({ row, sid: await deps.aliases.ensure(row.dshSessionId) })),
+      )
+      // **子智能体会话不计入**：与 `sessionVisible` 同一条规则（`ui-workspace`
+      // 的 `tree.ts:245`）—— 子智能体的用量已经含在父会话的账里，
+      // 再算一遍就是双计。
+      const visible = assigned.filter(({ row }) => !row.subagent)
+      // 逐个读投影。**并发**（彼此独立，串行会让 20 个会话等 20 个往返）；
+      // 单个会话读失败**不影响其它**（那一项按 0 计，与"没数据"区分不开是
+      // 可接受的降级 —— 总量仍然对，只是少了那一份）。
+      const usages = await Promise.all(
+        visible.map(async ({ row }) => {
+          const values = (await deps.projections!.of(row.dshSessionId)) as {
+            tokenUsage?: unknown
+          }
+          return tokenTotalOf(values.tokenUsage)
+        }),
+      )
+      const grandTotal = usages.reduce((sum, n) => sum + n, 0)
+      return {
+        sessions: visible.length,
+        grandTotalTokens: grandTotal,
+        // 逐字段构造，**不 spread** —— 且只给手机认识的 `sid`
+        // （`dshSessionId` 绝不能过线，契约 §5.1）。
+        bySession: visible
+          .map(({ row, sid }, i) => ({
+            sid,
+            // 标题从列表行的投影提示来（与 `session.list` 同一个来源）；
+            // 取不到就空串，手机自己按 DSH 的链退到「未命名」。
+            title: titleOf(row),
+            tokens: usages[i]!,
+          }))
+          // 全零的会话不进榜：一张"0 tok"的行说的是"没数据"，不是"用了 0"。
+          .filter((entry) => entry.tokens > 0)
+          .sort((a, b) => b.tokens - a.tokens)
+          .slice(0, 5),
+      }
     }
   }
 

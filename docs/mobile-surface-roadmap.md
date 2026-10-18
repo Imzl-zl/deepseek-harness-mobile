@@ -117,7 +117,7 @@
 8. **App UI**:接真数据;**同时删掉对应的假数据**,不留兜底。
 9. **测试**:`connector/tests/<名>.test.ts`(形状/校验/失败)+ `app/test/<名>_test.dart`
    (解析/空态/失败留声)。**期望值从生产代码路径取,不要在手测里重打一遍常量。**
-10. **计数与文档**:`memory.md` 的"方法面 x/31"、`tools.md` 的方法数、契约 §5.7 的表
+10. **计数与文档**:`memory.md` 的"方法面 x/32"、`tools.md` 的方法数、契约 §5.7 的表
     三处同步。
 11. **门禁**:`cd connector; pnpm exec tsc --noEmit && pnpm build && pnpm test`;
     `cd app; flutter test && dart analyze --fatal-infos lib test integration_test`;
