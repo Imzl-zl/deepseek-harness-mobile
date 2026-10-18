@@ -187,8 +187,15 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
   `:` 被改成 ` : `（中英混排自动加空格），最终输入框里只剩 `v : 2`。
   切换输入法更糟：讯飞首次启用会弹用户协议并把 App 挤后台。
   **结论：需要输入长文本（配对码、URL、token）时，走"出码 → 用户长按粘贴"，不要跟 adb 斗。**
-  可点的按钮/页面切换照常用 `adb shell input tap <x> <y>`（坐标从 `screencap` 截图估，
-  Flutter 的 `uiautomator dump` 拿不到语义树，实测全是空 `text`）。
+  可点的按钮/页面切换照常用 `adb shell input tap <x> <y>`。**坐标不要靠截图目测**
+  （2026-10-18 白点五轮）：`adb shell uiautomator dump /sdcard/ui.xml` 之后
+  `adb shell cat /sdcard/ui.xml`，**`content-desc` 与 `bounds` 都能拿到** ——
+  用 `content-desc` 找到元素、再算 `bounds="[x1,y1][x2,y2]"` 的中心
+  （例：`content-desc="连接状态：已连接（点按查看连接操作）"` 的 bounds 中心是 `920,178`，
+  而按截图目测的 `920,148` 点不动，差 30px 就完全没命中）。
+  **更正一条旧结论**：这里曾写"Flutter 的 `uiautomator dump` 拿不到语义树、全是空 `text`"——
+  `text` 确实为空（Flutter 不往 `text` 暴露文案），但 **`content-desc` 有值**，
+  而定位可点元素正好只需要它 + `bounds`。
   **连带一个产品缺陷（未修）**：`app/lib/ui/pairing_page.dart` 的配对码 `TextField` 没有关
   输入法联想（`enableSuggestions` / `autocorrect`），所以**用户手动打字**那段 JSON 也会被
   中英混排加空格破坏（`:` → ` : `）。粘贴不受影响，但"手打"这条路现在是坏的。
@@ -300,6 +307,8 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
 
 ## Pitfalls
 
+- **提交纪律三条**(2026-10-19 从 `memory.md` 归位到此处):①**提交信息里避免反引号** —— pwsh 会把它当 Unicode 转义,整条命令在**解析阶段**就失败;长消息写临时文件用 `git commit -F`。②**提交前看 `git status` 完整清单**,重点是**意外的文件**(空的、消失的、没见过的新文件)。③**别把"重启后的第一次成功"当能力** —— 判据要包含"连续重连 N 次都成立"(端点切换那条就是这么验的:3 次重连都落在同一条上)。
+- **给多替身接口加方法要给默认实现**(2026-10-18):`SyncClient` 这类接口全仓有 24 个 `implements` 替身,而 **`implements` 不继承默认方法** —— 加 `reconnect()` 时 23 个测试文件当场编译失败。做法:接口上给一个退化的默认实现(`=> start()`),真有别行为的只有实现类一处 override;或者先改接口再逐个补。**别指望 IDE 帮你找到全部替身**。
 - **帧头 `id` 与信封里的 `requestId` 是两个标识符,不许互相占用**(2026-10-17 修):出帧口曾把 `entry.requestId` 直接写进帧头 `id`。`interaction.respond` 的幂等键是 `i:<callId>`(契约 §5.7),**带冒号**,过不了 §3 的 ASCII 安全字符集(`^[A-Za-z0-9_-]+$`)—— 连接器按 `protocol/bad-frame` 拒收并**关连接**(`connector/src/transport/codec.ts:118`,收帧处 `connection.ts:539,571`),手机侧自己的 `decodeFrame` 同样拒收。表现是"点了允许一次,连接断了,队列不推进",与 `docs/postmortem/2026-09-30-approval-answer-silently-dropped.md` 的症状逐字相同(那篇归因给原型侧 `haptic()` 裸调,真机链路上这个才是根本成因)。**判据(机械)**:帧号由发送方另铸、每次重发换新的;幂等键只进信封顶层;重发判据必须是**键**而不是帧号。用连接器自己的解码器即可离线验:`i:c1 => REJECTED protocol/bad-frame`。因果与备选方案见 `.agents/notes/implemented/2026-10-17-frame-id-not-idempotency-key.md`。
 - **装进 profile 试跑的正确姿势(实测)**:
   - `dsh plugin --profile <名字> add <本地路径>` 会自动建 profile 并把包加进 `dsh.profile.bundles`(`link:` 到本地);**注意 `dsh plugin --profile x --help` 也会顺手建出 profile** —— 只想看帮助也会留下目录。
