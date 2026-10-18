@@ -211,20 +211,26 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
     return dshSessionId
   }
 
-  /// 一个会话的 token 总量（`tokenUsage` 投影的 `totals`）。
+  /// 一个会话的 token 总量（`tokenUsage` 投影的 wire 值）。
   ///
-  /// **全零也算"有值"**（返回 0，不是 null）：刚建的 blank 会话投影里
-  /// `tokenUsage` 是字段齐全但全为 0 的对象，而"用了 0" 与 "没这项" 在
-  /// 汇总里都表示"不进榜"（调用方按 `> 0` 过滤）。这里只负责把形状读对，
-  /// 不负责判断"算不算有数据"。
+  /// **wire 值是 `totals` 本身，不是 `{totals, last}`** ——
+  /// `llm/token-meter/src/usage-projection.ts:149` 的
+  /// `wire: { viewSchema: projectionSchema, view: state => state.totals }`：
+  /// 上线的就是那个 4 字段对象（`uncachedInputTokens` / `outputTokens` /
+  /// `cacheReadTokens` / `cacheWriteTokens`）。按 `{totals,…}` 读会得到
+  /// undefined ⇒ 汇总恒为 0（2026-10-19 真机复现：128 个会话全 0）。
+  ///
+  /// 两个形状都收（线上直读 + 万一将来改回带信封）：先找 `totals`，
+  /// 没有再把自己当 totals。**不预设键名** —— 全部数值字段求和，
+  /// 认不出的形状自然得 0。
   const tokenTotalOf = (tokenUsage: unknown): number => {
     if (typeof tokenUsage !== 'object' || tokenUsage === null) return 0
-    const totals = (tokenUsage as { totals?: unknown }).totals
-    if (typeof totals !== 'object' || totals === null) return 0
-    // `totals` 的键由 DSH 定（`usage-projection.ts:40-50` 的 projectionSchema），
-    // 本层不预设键名 —— 把所有数值字段求和，认不出的形状自然得 0。
+    const direct = tokenUsage as Record<string, unknown>
+    const totals = typeof direct.totals === 'object' && direct.totals !== null
+      ? (direct.totals as Record<string, unknown>)
+      : direct
     let sum = 0
-    for (const value of Object.values(totals as Record<string, unknown>)) {
+    for (const value of Object.values(totals)) {
       if (typeof value === 'number' && Number.isFinite(value)) sum += value
     }
     return sum

@@ -172,6 +172,45 @@ void describe('usage.summary 聚合规则', () => {
     assert.equal(result.bySession[0]!['sid'], ALIAS['secret-dsh-id'])
   })
 
+  void it('tokenUsage 的 wire 值是 totals 本身，不是 {totals,last}', async () => {
+    // **这条钉的是真形状**：`llm/token-meter/src/usage-projection.ts:149` 的
+    // `wire: { viewSchema: projectionSchema, view: state => state.totals }` ——
+    // 上线的就是那个 4 字段对象，外面没有 `{totals,last}` 信封。
+    // 2026-10-19 第一版按 `{totals,…}` 读，真机上 128 个会话汇总出 `0 tok`
+    // （单测全绿 —— 替手复述了实现的假设，与 memory.md 教训 1 同一类错）。
+    const handlers = createHandlers(
+      deps({
+        rows: [row('a')],
+        usageOf: () => ({
+          uncachedInputTokens: 3011324,
+          outputTokens: 530015,
+          cacheReadTokens: 78982528,
+          cacheWriteTokens: 0,
+        }),
+      }),
+    )
+    const result = (await handlers['usage.summary']!({}, {} as never)) as {
+      grandTotalTokens: number
+    }
+    assert.equal(result.grandTotalTokens, 3011324 + 530015 + 78982528)
+  })
+
+  void it('带 {totals,last} 信封的形状也认（万一线上线改回去）', async () => {
+    const handlers = createHandlers(
+      deps({
+        rows: [row('a')],
+        usageOf: () => ({
+          totals: { uncachedInputTokens: 100, outputTokens: 50 },
+          last: { turn: 1, step: 1, buckets: {} },
+        }),
+      }),
+    )
+    const result = (await handlers['usage.summary']!({}, {} as never)) as {
+      grandTotalTokens: number
+    }
+    assert.equal(result.grandTotalTokens, 150)
+  })
+
   void it('投影里没有 tokenUsage（老连接器 / 服务缺）时按 0 计，不炸', async () => {
     const handlers = createHandlers(
       deps({

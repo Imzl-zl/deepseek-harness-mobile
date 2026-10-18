@@ -24,6 +24,8 @@
 /// 见 .agents/notes/implemented/2026-10-17-settings-page-v1-four-groups.md
 library;
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -35,6 +37,7 @@ import '../model/chat_item.dart';
 import '../model/model_catalog.dart';
 import '../model/preferences.dart';
 import '../model/send_mode.dart';
+import '../model/session_stats.dart' show formatTokenCount;
 import '../model/theme_mode.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
@@ -185,6 +188,13 @@ class SettingsPage extends StatelessWidget {
               '这三项只影响这台手机的呈现，不同步到电脑（DSH 桌面把它们存在'
               '电脑上，那是跨浏览器跟随；手机只有自己看，这是有意偏离）。',
             ),
+            // **跨会话用量汇总**（`usage.summary`，只读）—— 2026-10-19 加。
+            //
+            // 单独一组而不是塞进「通用」：上面那三项是**偏好**（改了只影响这台手机），
+            // 而这一组是**电脑侧的事实**（DSH 没有跨会话汇总接口，聚合在连接器做）。
+            // 两类东西放一行会让人以为"用量也能在这台手机上改"。
+            const _SectionTitle('用量'),
+            _UsageSection(app: app),
             const _SectionTitle('模型'),
             _ModelSection(app: app),
             const _SectionTitle('连接方式'),
@@ -332,6 +342,124 @@ class _PrefNote extends StatelessWidget {
         text,
         style: TextStyle(fontSize: 11, height: 17 / 11, color: c.labelTertiary),
       ),
+    );
+  }
+}
+
+/// 用量组：跨会话汇总（只读）。
+///
+/// ## 为什么进页面就拉一次
+///
+/// 汇总是"此刻的总量"，而总量随时在变（别的客户端也在跑）——
+/// 所以**不落盘、不缓存**，每次进设置页拉一次新的。拉失败就明说
+/// （"拉不到：<原因>"），不摆 `0 tok`：那会把"没数据"说成"用了 0"。
+///
+/// ## 为什么榜上只有前 5
+///
+/// 电脑侧已经截到 5 条（契约 §5.7 的聚合规则）。这里不再截一次 ——
+/// 两处各截一遍，将来改条数要改两个地方。
+class _UsageSection extends StatefulWidget {
+  const _UsageSection({required this.app});
+
+  final AppModel app;
+
+  @override
+  State<_UsageSection> createState() => _UsageSectionState();
+}
+
+class _UsageSectionState extends State<_UsageSection> {
+  @override
+  void initState() {
+    super.initState();
+    // 进这一组就拉一次。**不等它**（`unawaited`）：拉的过程里界面先显示
+    // "正在拉"，回来了 `notifyListeners` 会触发重建。
+    unawaited(widget.app.refreshUsageSummary());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    final app = widget.app;
+    // **整页听 AppModel**：拉回来 / 拉失败都会通知。
+    return ListenableBuilder(
+      listenable: app,
+      builder: (context, _) {
+        final summary = app.usageSummary;
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (summary == null) ...[
+                // 三种"没有"分开说：正在拉 / 拉失败 / 电脑侧没有这个方法。
+                Text(
+                  app.connection == ConnectionStateView.serving
+                      ? '正在拉这台电脑的用量…'
+                      : '还没连上电脑，拉不到用量。',
+                  style: TextStyle(fontSize: 13, color: c.labelTertiary),
+                ),
+                if (app.lastError != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      '拉不到：${app.lastError!.message}',
+                      style: TextStyle(fontSize: 11, color: c.labelTertiary),
+                    ),
+                  ),
+              ] else ...[
+                // 总量一行：`这台电脑一共 249M tok`。
+                Text(
+                  '这台电脑一共 ${summary.totalLabel} tok',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: c.labelPrimary,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    '来自 ${summary.sessions} 个会话（子智能体不计入）',
+                    style: TextStyle(fontSize: 11, color: c.labelCaption),
+                  ),
+                ),
+                if (summary.bySession.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  for (final entry in summary.bySession)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              // 标题为空串时按 DSH 的链退到「未命名」
+                              // （与会话列表同一条规则，不在这里兜目录名）。
+                              entry.title.isEmpty ? '未命名' : entry.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: c.labelSecondary,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            formatTokenCount(entry.tokens),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: c.labelTertiary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 }

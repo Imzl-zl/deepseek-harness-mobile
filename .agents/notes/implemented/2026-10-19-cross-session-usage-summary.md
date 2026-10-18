@@ -98,8 +98,29 @@ A 的代价是 N 次 IPC，但 `session.list` 已经在启动时拉过，sid 是
 
 ## 仍未做
 
-**app 侧读取与呈现**（`AppModel.usageSummary` + 设置页一行或统计条一个 chip）。
-连接器已能答，手机还没问 —— 下一批按 §实施顺序 第 3 步走。
+~~**app 侧读取与呈现**~~ —— 2026-10-19 当天已补齐：`model/usage_summary.dart`
+（`UsageSummary` / `UsageEntry` + `fromWire`）+ `AppModel.refreshUsageSummary`
++ 设置页「用量」组（`_UsageSection`，进页面拉一次、不落盘）。
+**真机验证通过**：`这台电脑一共 18025M tok · 来自 128 个会话（子智能体不计入）`
++ 前 5 榜（`继续 dsh-mobile 项目…` 1152M / `docs/HANDOFF-CONTINUE…` 1050M / …）。
+
+## 一个差点漏过去的坑：wire 值是 `totals` 本身
+
+第一版 `tokenTotalOf` 按 `{totals, last}` 读（state 的形状），真机上
+**128 个会话汇总出 `0 tok`**，而单测全绿 —— 替身复述了实现的假设。
+
+真形状在 `llm/token-meter/src/usage-projection.ts:149`：
+
+```ts
+wire: { viewSchema: projectionSchema, view: state => state.totals }
+```
+
+**上线的就是那个 4 字段对象**（`uncachedInputTokens` / `outputTokens` /
+`cacheReadTokens` / `cacheWriteTokens`），外面没有信封。已改成
+"先找 `totals`，没有再把自己当 totals"（两个形状都收），并补了
+`tokenUsage 的 wire 值是 totals 本身` 这条专项用例。
+
+这与 `memory.md` 教训 1（投影信封）是同一类错：**替身必须复现真值形状**。
 
 ## 实施顺序（下一轮照这个走）
 

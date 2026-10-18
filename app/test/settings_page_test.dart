@@ -15,6 +15,7 @@ import 'dart:async';
 
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/endpoint.dart';
+import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
@@ -67,7 +68,34 @@ class _FakeClient implements SyncClient {
     String method,
     Map<String, Object?> params, {
     String? requestId,
-  }) async => throw UnimplementedError('设置页不该发方法');
+  }) async {
+    // **`usage.summary` 是设置页唯一会主动发的方法**（用量组进页面就拉一次）。
+    // 其余方法一律视为越界 —— 设置页只读端点与偏好，不该碰会话。
+    if (method == 'usage.summary') {
+      if (throwOnUsage) {
+        throw const ProtocolException(ErrorCode.internal, '电脑侧炸了');
+      }
+      return usageReply as T;
+    }
+    throw UnimplementedError('设置页不该发方法: $method');
+  }
+
+  /// `usage.summary` 的答复载荷。默认是**一个正常汇总**（两会话、一上榜）。
+  Object? usageReply = <String, Object?>{
+    'sessions': 2,
+    'grandTotalTokens': 249000000,
+    'bySession': <Object?>[
+      <String, Object?>{
+        'sid': 'sid-1',
+        'title': '插件UI与交互体验优化',
+        'tokens': 200000000,
+      },
+      <String, Object?>{'sid': 'sid-2', 'title': '', 'tokens': 49000000},
+    ],
+  };
+
+  /// 为真时 `usage.summary` 抛协议错（测"拉不到"那条路）。
+  bool throwOnUsage = false;
 }
 
 const _direct = Endpoint(
@@ -119,6 +147,46 @@ Finder _moreOf(String rowText) => find
     .first;
 
 void main() {
+  // ---------------------------------------------------------------------------
+  // 用量组（`usage.summary`，只读）
+  // ---------------------------------------------------------------------------
+
+  testWidgets('汇总拉到了：总量 + 会话数 + 前 5 榜', (tester) async {
+    final client = _FakeClient();
+    final app = AppModel(client: client, endpoints: const [_direct, _relay]);
+    addTearDown(app.dispose);
+    await tester.pumpWidget(_host(app));
+    await tester.pumpAndSettle();
+    // 用量组在「通用」之后，端点组之前 —— 它自己会在 initState 里拉一次。
+    await _scrollTo(tester, find.text('用量'));
+    await tester.pumpAndSettle();
+
+    // 总量用同一个格式化函数（`249M`），与单会话统计条一致。
+    expect(find.text('这台电脑一共 249M tok'), findsOneWidget);
+    expect(find.text('来自 2 个会话（子智能体不计入）'), findsOneWidget);
+    // 榜两行：标题为空的那个按 DSH 的链退到「未命名」。
+    expect(find.text('插件UI与交互体验优化'), findsOneWidget);
+    expect(find.text('未命名'), findsOneWidget);
+    expect(find.text('200M'), findsOneWidget);
+    expect(find.text('49M'), findsOneWidget);
+  });
+
+  testWidgets('拉不到（方法抛错）：说"拉不到"，不摆 0 tok', (tester) async {
+    final client = _FakeClient();
+    // 让替身抛协议错：汇总组要显示原因，而不是一个看起来在统计的 0。
+    client.usageReply = null;
+    client.throwOnUsage = true;
+    final app = AppModel(client: client, endpoints: const [_direct, _relay]);
+    addTearDown(app.dispose);
+    await tester.pumpWidget(_host(app));
+    await tester.pumpAndSettle();
+    await _scrollTo(tester, find.text('用量'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('拉不到'), findsWidgets);
+    expect(find.textContaining('这台电脑一共'), findsNothing);
+  });
+
   AppModel buildApp({
     List<Endpoint> endpoints = const [_direct, _relay],
     void Function(List<Endpoint>)? onEndpointsChanged,

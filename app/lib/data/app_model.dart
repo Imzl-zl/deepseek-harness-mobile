@@ -38,6 +38,7 @@ import '../model/preferences.dart';
 import '../model/queue_item.dart';
 import '../model/send_mode.dart';
 import '../model/session_stats.dart';
+import '../model/usage_summary.dart';
 import '../model/workspace.dart';
 import 'preview_data.dart';
 import 'projection.dart';
@@ -1210,6 +1211,31 @@ class AppModel extends ChangeNotifier {
     _performanceUsage = usage;
     notifyListeners();
     await _prefs?.write(kPerformanceUsageKey, usage.wire);
+  }
+
+  // ---- 跨会话用量汇总（`usage.summary`，只读）----
+
+  /// 汇总数据；`null` = 还没拉过 / 拉失败。
+  UsageSummary? get usageSummary => _usageSummary;
+  UsageSummary? _usageSummary;
+
+  /// 拉一次跨会话用量汇总。
+  ///
+  /// **只读、不落盘**：它是"此刻的总量"，而总量随时在变（别的客户端也在跑），
+  /// 落一份本地快照只会多一个会过期的第二真值源。设置页 / 统计条每次进入时拉。
+  ///
+  /// 拿不到就回 `null` 并把原因留在 [lastError]：手机显示"拉不到"，
+  /// 而不是摆一个 `0 tok` —— 那会把"没数据"说成"用了 0"。
+  Future<void> refreshUsageSummary() async {
+    try {
+      final result = await client.call<Object?>('usage.summary', const {});
+      _usageSummary = UsageSummary.fromWire(result);
+      _lastError = null;
+    } on ProtocolException catch (error) {
+      _usageSummary = null;
+      _lastError = error;
+    }
+    if (!_disposed) notifyListeners();
   }
 
   /// 读一个**通用字符串偏好**（`meta` 表的 k/v）。
