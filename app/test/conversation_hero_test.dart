@@ -36,6 +36,7 @@ class _HeroClient implements SyncClient {
     this.projections = const {},
     this.workspaces,
     this.presets,
+    this.replay = const [],
   });
 
   final List<Object?> sessions;
@@ -44,6 +45,14 @@ class _HeroClient implements SyncClient {
   /// `null` = 这台电脑没有这个方法（回 `null`，与连接器"缺服务就不挂"同形）。
   final Object? workspaces;
   final Object? presets;
+
+  /// 订阅后要推的**持久事件**（真形状用）。
+  ///
+  /// 电脑侧**每个**会话的头几条都是记账事件（`session` / `permission/preset` /
+  /// `sandbox/mode` / `approval/policy`，2026-10-17 从会话日志数出来的），
+  /// 投影成只计数、不渲染的 [OtherItem]。默认空 = 旧形状（那个形状下
+  /// `items.isEmpty` 恒真，hero 的旧判据看着一直是绿的）。
+  final List<SessionEvent> replay;
 
   final List<String> calls = [];
   final Map<String, Map<String, Object?>> paramsOf = {};
@@ -89,7 +98,11 @@ class _HeroClient implements SyncClient {
   Future<void> unsubscribe(String sid) async {}
 
   @override
-  Stream<SessionDelta> sessionUpdates(String sid) => const Stream.empty();
+  Stream<SessionDelta> sessionUpdates(String sid) => replay.isEmpty
+      ? const Stream.empty()
+      : Stream.fromIterable([
+          SessionDelta(sid: sid, events: replay, transient: const {}),
+        ]);
 
   @override
   Future<T> call<T>(
@@ -291,6 +304,102 @@ void main() {
         reason: 'DSH 在这一屏用 placeholder.hero（locales.ts:23），不是普通那句',
       );
       expect(find.text(kComposerHintDefault), findsNothing);
+    });
+
+    testWidgets('记账事件（投影成不可见的 OtherItem）不挡住 hero —— 真机形状', (tester) async {
+      // 2026-10-17 真机验收抓到的：连上后占位文案是 hero 那句，对话区却一片空白。
+      // 根因是电脑侧每个会话的头几条都是记账事件，投影成只计数、不渲染的
+      // OtherItem，于是 `items.isEmpty` 恒为假、hero 分支永不进入。
+      // **这个用例必须推真形状**：空 store 的旧用例对此一无所知。
+      final client = _HeroClient(
+        sessions: [blankRow('blank-1')],
+        presets: presetReply(),
+        replay: const [
+          SessionEvent(
+            itemId: 'session:1',
+            type: 'session',
+            seq: 1,
+            time: 1,
+            data: {},
+          ),
+          SessionEvent(
+            itemId: 'permission/preset:2',
+            type: 'permission/preset',
+            seq: 2,
+            time: 2,
+            data: {},
+          ),
+          SessionEvent(
+            itemId: 'sandbox/mode:3',
+            type: 'sandbox/mode',
+            seq: 3,
+            time: 3,
+            data: {},
+          ),
+          SessionEvent(
+            itemId: 'approval/policy:4',
+            type: 'approval/policy',
+            seq: 4,
+            time: 4,
+            data: {},
+          ),
+        ],
+      );
+      final app = AppModel(client: client);
+      unawaited(app.start());
+      client.emit(ConnectionState.serving);
+      addTearDown(app.dispose);
+      await tester.pumpWidget(host(app));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byType(ConversationHero),
+        findsOneWidget,
+        reason: '记账事件在条目表里但一条都画不出来，blank 会话仍该是 hero',
+      );
+      expect(find.text(kComposerHintHero), findsOneWidget);
+    });
+
+    testWidgets('blank 会话里出现可见条目（刚发出的消息）：渲染消息流，不进 hero', (tester) async {
+      // 与上一条互补：判据是"没有**可见**内容"，不是"blank"。
+      // 用户消息已回来、轮次还没起（电脑侧 blank 尚未翻面）时，
+      // 那一行必须看得见 —— 被 hero 盖住等于"消息发出去了却看不到"。
+      final client = _HeroClient(
+        sessions: [blankRow('blank-1')],
+        presets: presetReply(),
+        replay: const [
+          SessionEvent(
+            itemId: 'session:1',
+            type: 'session',
+            seq: 1,
+            time: 1,
+            data: {},
+          ),
+          SessionEvent(
+            itemId: 'm:msg-1',
+            type: 'user/message',
+            seq: 2,
+            time: 2,
+            // 真形状：载荷就是消息本体 `{id, content:[…]}`，正文在 text 块里。
+            data: {
+              'id': 'msg-1',
+              'role': 'user',
+              'content': [
+                {'type': 'text', 'text': '在吗'},
+              ],
+            },
+          ),
+        ],
+      );
+      final app = AppModel(client: client);
+      unawaited(app.start());
+      client.emit(ConnectionState.serving);
+      addTearDown(app.dispose);
+      await tester.pumpWidget(host(app));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ConversationHero), findsNothing);
+      expect(find.text('在吗'), findsOneWidget);
     });
 
     testWidgets('非 blank 会话：不显示 hero，也不换占位文案', (tester) async {

@@ -79,10 +79,12 @@ relay 连上,`endpoint.describe` 才会把新地址教给它并按"direct 先于
 
 ## DSH 的结构(照这个重建;行号 2026-10-17 重新核对过)
 
-**1. 三级管线**:事件 → **Node**(15 种)→ **过程组** → ViewSnapshot → 组件。
+**1. 三级管线**:事件 → **Node**(16 种渲染 kind)→ **过程组** → ViewSnapshot → 组件。
 聚合在 `packages/client/ui-conversation/src/client/conversation/assembler.ts:174`;
-业务定义在 `packages/client/ui-chat/src/client/conversation-nodes/register.ts:22-38`。
-**完整规格书是 `ui-chat/src/client/conversation-nodes/README.md`(330 行)——
+业务定义在 `packages/client/ui-chat/src/client/conversation-nodes/register.ts:22-38`
+(2026-10-17 核对:该区间是 15 条**注册语句**,含 1 个 view 构建器 + 1 个 group 定义;
+真实渲染 kind 是 **16** 个 —— message.ts 贡献 4、command.ts 贡献 2,其余各 1)。
+**完整规格书是 `ui-chat/src/client/conversation-nodes/README.md`(331 行)——
 先把它译成中文规格入 `docs/`,这是移动端最省力的真值源。**
 
 **2. 折叠四档由单一策略表决定**(`ui-chat/src/client/presentation-policy.ts:23-52`):
@@ -95,7 +97,8 @@ relay 连上,`endpoint.describe` 才会把新地址教给它并按"direct 先于
 | verbose | false | none | false | true |
 
 手机**已经有这四个设置项**(`model/preferences.dart` 的 `TranscriptView`:简洁/标准/详细/完全展开,
-文案照 `ui-chat/src/client/locale.ts:103-108`),但**只传了一个 `autoOpenToolDetail` 布尔**。
+文案照 `ui-chat/src/client/locale.ts:109-112`;任务书旧写的 `:103-108` 是标题与收起时机文案),
+但**只传了一个 `autoOpenToolDetail` 布尔**。
 把这 4×4 表直接落成 Dart 枚举,别在 UI 里散落判断。
 
 **3. 分组**(`ui-chat/src/client/conversation-nodes/process-groups.ts`):
@@ -113,27 +116,37 @@ relay 连上,`endpoint.describe` 才会把新地址教给它并按"direct 先于
 `webSearch` / `webFetch` / `subagents`(前缀 `subagent_`)/ `plan`(todo_write、create_goal、
 update_goal、get_goal)/ `questions`(ask_user_question、request_user_input)/ **其余归 `tools`**。
 分类用的是**记录下来的工具名原样**:不转小写、不剥命名空间、不按参数猜(`README.md:255`)。
-live detail 字段优先级 `README.md:310`,**截到 160 grapheme** `README.md:330`。
+分类函数名是 `activity`(`process-activity.ts:8-22`,兜底 `return 'tools'`)。
+live detail 字段优先级 `README.md:311`(22 个候选字段按序),**截到 160 grapheme** `README.md:331`。
 
-**5. 流式**:持久事件里**没有 `message/delta`**(权威定义 `core/session/src/types.ts:281`);
+**5. 流式**:持久事件里**没有 `message/delta`**(权威定义 `core/session/src/types.ts:282`
+的 `SessionEventMap`;全仓 grep `message/delta` 于 `packages/core/session` = 0 命中);
 瞬态走 `assistant/live-chunk`(`api/session-controller/src/client/contract/events.ts:7`),
-用**分数 seq** 插在持久 seq 之间(`assistant-stream.ts:88`),step 结束时被 `assistant/message`
-**整体替换**(`events.ts:181-196`)。连接器若同时转发两者,**必须实现同一条替换规则**,
+用**分数 seq** 插在持久 seq 之间
+(`api/session-controller/src/client/sessions/assistant-stream.ts:88` 与 `:158`;
+任务书旧写的 `ui-chat/.../chat/assistant-stream.ts` **不存在**),step 结束时被
+`assistant/message` **整体替换**(`events.ts:181-196` 的 `settleAssistant`;
+"同一 step"的判定是 turn+step 相等,成功 message 留到 `step/end` 才退役瞬时行)。
+连接器若同时转发两者,**必须实现同一条替换规则**,
 否则出重复气泡。Markdown 侧:**冻结除末尾两块以外的块、只重解析尾部**
 (`ui-primitives/src/markdown/incremental.ts:38` 的 `UNSTABLE_TAIL_BLOCKS = 2`),
 冻结键是**绝对源码 offset**。
 
 **6. 截断是头/尾各半 + 可全展开**(`ui-primitives/src/head-tail-cap.ts:23-27`),
-不是"只看前 N 行"。阈值现在在 `ui-tool` 的 models 里:
-`CHAT_DIFF_MAX_LINES = 9`(`ui-tool/src/client/models/diff-card-model.ts:8`)、
-`CHAT_READ_MAX_LINES = 8`(`read-card-model.ts:17`)、
-`CHAT_SEARCH_MAX_LINES = 8`(`search-card-model.ts:12`);
+不是"只看前 N 行"。阈值现在在 `ui-tool` 的 models 里(目录是 `client/tool/models/`):
+`CHAT_DIFF_MAX_LINES = 9`(`ui-tool/src/client/tool/models/diff-card-model.ts:8`)、
+`CHAT_READ_MAX_LINES = 8`(同目录 `read-card-model.ts:17`)、
+`CHAT_SEARCH_MAX_LINES = 8`(同目录 `search-card-model.ts:12`);
+primitive 各块默认 16,Chat 行覆盖成上表三值。
 **Chat 里的终端输出是 `maxLines={Infinity}`**(`ui-tool/.../tool/components/ToolRow.tsx:266`)——
-不要自作主张加折叠。**旧任务书说的「`JsonBlock` 20000 字符」本轮未找到,标「未找到」,别照抄。**
+不要自作主张加折叠。**「`JsonBlock` 20000 字符」本轮核实时仍然存在**
+(`ui-primitives/src/markdown/JsonBlock.tsx:6` 的 `MAX_CHARS = 20_000`,:26 应用),
+旧任务书写的"未找到"是错的,照 20000 用。
 
 **7. 跟随阈值 = 24**(`ui-chat/src/client/chat/use-chat-reading.ts:7` 的 `FOLLOW_THRESHOLD`,
-判定用 `+1`):上滚即失去跟随(`use-scroll-follow.ts:90-95`),触底即恢复
-(`use-chat-reading.ts:137-142`),500ms 采样防抖(同文件 `:8`),
+判定用 `+1`,即 25px 容差):上滚即失去跟随(`use-scroll-follow.ts:90-95` 的 `sample`),
+触底即恢复(`use-chat-reading.ts` 的 `onScroll :158-166`,距底 <1px 即 `followTail`;
+`restore :120-133` 同判据),500ms 采样防抖(同文件 `:8`),
 尊重 `prefers-reduced-motion`(Flutter 侧对应 `MediaQuery.disableAnimations`)。
 
 **8. 安全边界(必须照搬)**:原始 HTML **当纯文本**(`ui-primitives/src/markdown/render.tsx:333-335`,
@@ -206,7 +219,7 @@ live detail 字段优先级 `README.md:310`,**截到 160 grapheme** `README.md:3
 
 | 命令 | 当前 |
 |---|---|
-| `cd app; flutter test` | **685** |
+| `cd app; flutter test` | **687** |
 | `cd app; dart analyze --fatal-infos lib test integration_test` | 0 |
 | `cd app; dart format --output=none --set-exit-if-changed lib test integration_test` | 0 |
 | `node app/tools/verify-platform-boundary.mjs` | **266** |

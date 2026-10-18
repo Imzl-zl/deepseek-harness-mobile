@@ -8,13 +8,18 @@
  * "新建会话（...）"。这是"看着接了其实没接"的又一例：契约说了、App 侧写了
  * `AppModel.createSession()`、唯独中间那层是空的。
  *
- * 钉三件事：
+ * 钉四件事：
  * 1. **请求体只带给了的字段**：`workspaceId` / `cwd` / `agentPreset` 全可选，
  *    而 DSH 对缺省字段有自己的默认（当前工作区 / 默认预设）。塞空串会被当成
  *    "显式选空"。
  * 2. **`workspaceId` / `cwd` 不透传手机不知道的值**：手机侧不知道电脑有哪些
  *    工作区（那要另接 `workspace-controller`），硬传一个猜的比不传更糟。
- * 3. **带幂等键**：点了两次不该建出两个会话。
+ * 3. **回给手机的是别名 `sid`，不是 DSH 的 `sessionId`**：DSH 回
+ *    `{sessionId}`（`session-controller/src/commands.ts:149`），原样透传手机读不到
+ *    （真机验收：hero 选工作区后"开新任务失败：新建会话没有回 sid"），而且把
+ *    DSH 会话 id 漏过了线 —— 别名表的存在就是让中继与手机只见到 `sid`
+ *    （`dsh/sessions.ts:89`）。建完即 `ensure`，与 `session.list` 同一个表。
+ * 4. **带幂等键**：点了两次不该建出两个会话。
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -34,8 +39,8 @@ const CAPS: Caps = {
   direct: false,
 }
 
-/** 记下每次 `create` 收到的请求体。 */
-function build(seen: unknown[][], opts: { createShouldThrow?: boolean } = {}) {
+/** 记下每次 `create` 收到的请求体，以及别名分配。 */
+function build(seen: unknown[][], ensured: string[], opts: { createShouldThrow?: boolean } = {}) {
   return createHandlers({
     caps: () => CAPS,
     aliasVersion: () => 0,
@@ -52,7 +57,10 @@ function build(seen: unknown[][], opts: { createShouldThrow?: boolean } = {}) {
       },
     },
     aliases: {
-      ensure: async (id: string) => `sid_${id}`,
+      ensure: async (id: string) => {
+        ensured.push(id)
+        return `sid_${id}`
+      },
       sessionOf: () => undefined,
     },
     devices: () => [],
@@ -61,11 +69,19 @@ function build(seen: unknown[][], opts: { createShouldThrow?: boolean } = {}) {
 
 test('空参数：请求体是 {}，DSH 用它自己的当前工作区', async () => {
   const seen: unknown[][] = []
-  const handlers = build(seen)
+  const ensured: string[] = []
+  const handlers = build(seen, ensured)
 
-  const result = await handlers['session.create']!({}, {})
+  const result = (await handlers['session.create']!({}, {})) as {
+    sid?: string
+    sessionId?: string
+  }
 
-  assert.equal((result as { sessionId: string }).sessionId, 'dsh-new-1')
+  // **回给手机的是别名**：字段名是 `sid`（手机 `AppModel.createSession` 读它），
+  // 且 DSH 的 `sessionId` 一个字符都不过线。
+  assert.equal(result.sid, 'sid_dsh-new-1')
+  assert.equal(result.sessionId, undefined, 'DSH 会话 id 不许过线（别名表的纪律）')
+  assert.deepEqual(ensured, ['dsh-new-1'], '建完就要分配别名，与 session.list 同一个表')
   // **一个字段都不该塞**：手机不知道电脑的工作区与预设，
   // 而 DSH 对缺省字段有自己的默认（与 Web 点"新建会话"一致）。
   assert.deepEqual(seen[0]![0], {}, '不该替电脑猜 workspaceId / cwd / agentPreset')
@@ -73,7 +89,7 @@ test('空参数：请求体是 {}，DSH 用它自己的当前工作区', async (
 
 test('给了的参数原样过线，没给的一个都不补', async () => {
   const seen: unknown[][] = []
-  const handlers = build(seen)
+  const handlers = build(seen, [])
 
   // hero 上选工作区 / 模式之后"开一个新任务"走的就是这两个字段
   // （`.agents/notes/implemented/2026-10-17-blank-session-hero.md`）：
@@ -89,7 +105,7 @@ test('给了的参数原样过线，没给的一个都不补', async () => {
 
 test('非字符串字段：protocol/bad-frame，不去问 DSH', async () => {
   const seen: unknown[][] = []
-  const handlers = build(seen)
+  const handlers = build(seen, [])
 
   let caught: { code?: string } | undefined
   try {
@@ -102,7 +118,9 @@ test('非字符串字段：protocol/bad-frame，不去问 DSH', async () => {
 })
 
 test('DSH 侧失败：照旧抛给上层（手机弹错误，不假装建成了）', async () => {
-  const handlers = build([], { createShouldThrow: true })
+  const seen: unknown[][] = []
+  const ensured: string[] = []
+  const handlers = build(seen, ensured, { createShouldThrow: true })
 
   // 用 try/catch 而不是 `assert.rejects`：handler 的静态返回类型是
   // `Promise<unknown> | unknown`（`MethodHandler`），`assert.rejects` 只收 Promise。
@@ -113,11 +131,12 @@ test('DSH 侧失败：照旧抛给上层（手机弹错误，不假装建成了�
     caught = error as Error
   }
   assert.match(caught?.message ?? '', /DSH 拒绝新建/)
+  assert.deepEqual(ensured, [], '没建成就不该分配别名')
 })
 
 test('session.create 在封闭集里，且要幂等键', async () => {
   const seen: unknown[][] = []
-  const handlers = build(seen)
+  const handlers = build(seen, [])
   // 手机侧 `AppModel.createSession()` 用 `new-<时间戳>` 当 requestId；
   // 这里只验"这个方法确实接上了"——幂等键本身由 `idempotency.ts` 管。
   assert.equal(typeof handlers['session.create'], 'function')

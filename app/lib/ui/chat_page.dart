@@ -1885,17 +1885,28 @@ class _ChatTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (items.isEmpty) {
-      // **blank 会话先走 hero**（DSH 的首页就是这一屏，见 `ConversationHero` 的文件头）。
-      //
-      // 位置在"内联列表"之前：blank 会话本来就被 `sessionVisible` 从列表里藏掉
-      // （`tree.ts:245`），所以它既不是列表的一行、也不该落到"还没有内容"那种空态上。
-      // **连接断掉时不显示** —— 那时 hero 上的两枚 chip 点了都要建会话，
-      // 而电脑不在线；空态的头条（"连不上"）才是那一刻该说的话。
-      final disconnected =
-          paired && app.connection != ConnectionStateView.serving;
-      if (isBlank && !disconnected) return hero;
+    // **"画得出来"的条目**：[OtherItem] 只计数、不渲染（[_TurnView] 把它映射成
+    // `SizedBox.shrink`），而电脑侧**每个**会话的头几条都是 `session` /
+    // `permission/preset` / `sandbox/mode` / `approval/policy` 这些记账事件
+    // （2026-10-17 真机验收，从会话日志里数出来的），投影出来全是 OtherItem ——
+    // 所以 `items.isEmpty` 在真机上**永远为假**。拿它当"这个会话没有内容"的
+    // 判据，hero 一次都显示不出来（占位文案却照换，于是"文案说开新任务、
+    // 屏幕却是一片空白"）。判据只能是 **blank 本身**（规格
+    // `docs/subsystems/blank-session-hero.md` §5）+ 没有可见内容。
+    // 取舍见 `.agents/notes/implemented/2026-10-17-hero-never-rendered-other-items.md`。
+    final hasVisibleItems = items.any((item) => item is! OtherItem);
+    final disconnected =
+        paired && app.connection != ConnectionStateView.serving;
+    // **blank 会话先走 hero**（DSH 的首页就是这一屏，见 `ConversationHero` 的文件头）。
+    //
+    // 位置在"内联列表"之前：blank 会话本来就被 `sessionVisible` 从列表里藏掉
+    // （`tree.ts:245`），所以它既不是列表的一行、也不该落到"还没有内容"那种空态上。
+    // **连接断掉时不显示** —— 那时 hero 上的两枚 chip 点了都要建会话，
+    // 而电脑不在线；空态的头条（"连不上"）才是那一刻该说的话。
+    // 刚发出、还没起轮次的用户消息是可见条目：那时照常渲染消息流，不进 hero。
+    if (isBlank && !disconnected && !hasVisibleItems) return hero;
 
+    if (items.isEmpty) {
       // **没选中会话但电脑侧有会话：把列表直接铺在主界面上。**
       //
       // 这是被真机逼出来的：会话原先只存在于左侧抽屉里，而主界面是一块几乎空白的屏 ——

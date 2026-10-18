@@ -137,7 +137,7 @@ hero 与空态的分界,一句话:**blank 会话 → hero;其余空屏 → 原�
 | 断言组 | 命令 | 项数 |
 |---|---|---|
 | 标签链 / 目录解析 / 显示名(纯 Dart) | `cd app; flutter test test/agent_preset_test.dart test/workspace_grouping_test.dart` | 10 + 7 |
-| hero 的出现条件、两枚 chip 的写路径 | `cd app; flutter test test/conversation_hero_test.dart` | 13 |
+| hero 的出现条件、两枚 chip 的写路径 | `cd app; flutter test test/conversation_hero_test.dart` | 16 |
 | 原型布局与交互 | `node mock/proto/tools/verify-proto.mjs` | 18(该脚本共 31) |
 | 预设目录(连接器) | `cd connector; pnpm test` | `tests/agent-presets.test.ts` 6 条 |
 

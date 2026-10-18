@@ -395,11 +395,23 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       const workspaceId = str('workspaceId')
       const cwd = str('cwd')
       const agentPreset = str('agentPreset')
-      return deps.sessions.create({
+      const created = await deps.sessions.create({
         ...(workspaceId === undefined ? {} : { workspaceId }),
         ...(cwd === undefined ? {} : { cwd }),
         ...(agentPreset === undefined ? {} : { agentPreset }),
       })
+      // DSH 回的是 `{sessionId}`（`session-controller/src/commands.ts:149`），
+      // 而通道只说别名 `sid`。**原样透传有两个错**（2026-10-17 真机验收抓到：
+      // hero 上选工作区后"开新任务失败：新建会话没有回 sid"）：
+      // ① 字段名对不上，手机读不到；
+      // ② 把 DSH 会话 id 漏过了线 —— 别名表的存在就是让中继与手机只见到 `sid`
+      //    （`dsh/sessions.ts:89`），`session.list` 一向如此，只有这条写路径漏了。
+      // 建完即分配别名，与 `session.list` 的 `ensure` 同一个表，两边看到同一条。
+      const sid = await deps.aliases.ensure(created.sessionId)
+      return {
+        sid,
+        ...(created.agentPreset === undefined ? {} : { agentPreset: created.agentPreset }),
+      }
     },
 
     'session.list': async () => {
