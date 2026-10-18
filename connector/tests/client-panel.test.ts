@@ -59,7 +59,17 @@ const buttonWith = (tree: unknown, label: string): Element | undefined =>
   flatten(tree).find((element) => element.type === 'button' && textOf(element.props.children) === label)
 
 /** 按类型找控件。 */
-const inputsOf = (tree: unknown): Element[] => flatten(tree).filter((element) => element.type === 'input')
+/**
+ * 设备行的勾选框。
+ *
+ * **只认 `type === 'checkbox'`**：面板上还有别的输入框（2026-10-18 起
+ * "上报地址"那块有一个填地址的文本框）。按"是不是 input"数会把文本框
+ * 也算成一个勾选框，于是"每行行首一个勾选框"这条断言数出 3 个。
+ */
+const inputsOf = (tree: unknown): Element[] =>
+  flatten(tree).filter(
+    (element) => element.type === 'input' && (element.props.type ?? 'checkbox') === 'checkbox',
+  )
 
 /**
  * 表格的**数据行**（`tbody` 的那些 `tr`）。

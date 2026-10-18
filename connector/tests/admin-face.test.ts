@@ -116,8 +116,10 @@ test('端点：路径、方法、形状', async () => {
   assert.deepEqual(
     routes.map((r) => `${r.path} ${r.methods.join(',')}`).sort(),
     [
-      '/api/dsh-mobile/advertise GET',
-      '/api/dsh-mobile/advertise POST',
+      // **一条路由两个方法**：DSH 的 `registerFetchRoute` 按路径注册，
+      // 同 path 写两条会在挂载期抛 "already registered"（0.2.1 起校验，
+      // 0.2.0 不校验 —— 所以这条断言在升级前是绿的）。
+      '/api/dsh-mobile/advertise GET,POST',
       '/api/dsh-mobile/devices/enabled POST',
       '/api/dsh-mobile/devices/remove POST',
       '/api/dsh-mobile/pair POST',

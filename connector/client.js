@@ -132,6 +132,7 @@ window.__ModuleLoader__.load({
     const STATUS = '/api/dsh-mobile/status'
     const PAIR = '/api/dsh-mobile/pair'
     const TRANSPORT = '/api/dsh-mobile/transport'
+    const ADVERTISE = '/api/dsh-mobile/advertise'
     const ENABLED = '/api/dsh-mobile/devices/enabled'
     const REMOVE = '/api/dsh-mobile/devices/remove'
 
@@ -156,6 +157,18 @@ window.__ModuleLoader__.load({
       channelStop: '停止',
       failedChannel: '{action}失败：{reason}',
       transportNote: '两条通道各自独立：停一条不碰另一条。停传输不清凭据、不动身份，再启动不用重扫。',
+      // ---- 上报哪些地址（2026-10-18）----
+      // 监听面**按设计枚举全部非内部网卡**（`transport/listener.ts:134-138`：
+      // 过滤虚拟网卡靠名字匹配"又脆又漏"）。所以装了 VMware 的机器会多报几条
+      // 手机永远拨不通的地址 —— 由用户点名藏掉，比猜网卡名可靠。
+      advertiseTitle: '上报给手机的地址',
+      advertiseNote: '这块电脑上的地址会全部报给手机,让它挑一条拨。装了虚拟网卡(VMware / Docker)的机器会多报几条永远拨不通的 —— 在这里藏掉。也可以额外加一条不在列表里的(如 Tailscale 的 100.x)。',
+      advertiseHide: '藏掉',
+      advertiseShow: '恢复上报',
+      advertiseExtra: '手动添加',
+      advertiseAddPlaceholder: 'ws://192.168.1.4:8790',
+      advertiseAdd: '添加',
+      failedAdvertise: '改上报地址失败：{reason}',
       close: '关闭',
       pairedAt: '配对于',
       // **重新配对 = 换凭证、替换旧行**（2026-10-17 用户："为啥每次扫都是一个
@@ -234,6 +247,14 @@ window.__ModuleLoader__.load({
       channelStop: 'Stop',
       failedChannel: 'Could not {action}: {reason}',
       transportNote: 'The two channels are independent: stopping one leaves the other alone. Stopping transport keeps credentials and identities — a restart needs no re-pairing.',
+      advertiseTitle: 'Addresses reported to the phone',
+      advertiseNote: 'Every address on this computer is reported so the phone can pick one. Machines with virtual adapters (VMware / Docker) also report ones the phone can never reach — hide them here. You can also add an address that is not in the list (e.g. a Tailscale 100.x).',
+      advertiseHide: 'Hide',
+      advertiseShow: 'Report again',
+      advertiseExtra: 'added',
+      advertiseAddPlaceholder: 'ws://192.168.1.4:8790',
+      advertiseAdd: 'Add',
+      failedAdvertise: 'Could not change reported addresses: {reason}',
       close: 'Close',
       pairedAt: 'Paired',
       // Re-pairing REPLACES the row: the phone reports its previous pairingId,
@@ -445,6 +466,29 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * 设定一条"上报地址"的表态（`hide` / `extra` / `clear`）。
+     *
+     * 与服务端同一条纪律：**跑完重拉真值**，不按本地点击乐观翻转 ——
+     * 校验不过（公网地址、`wss://`）时服务端会 400，而乐观翻转会让界面
+     * 显示"已藏掉"而手机照样收到它。
+     */
+    const setAdvertise = async (url, kind, refresh) => {
+      try {
+        const response = await fetch(ADVERTISE, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ url, kind }),
+        })
+        const body = await response.json()
+        if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
+        await refresh()
+        return true
+      } catch (caught) {
+        throw new Error(messageOf(caught))
+      }
+    }
+
     /** 管理面板本体（状态 + 启停 + 设备 + 配对）。**只有一个视图** ——
      *  2026-10-17 从插件页卡迁到侧边栏弹框后，'summary' 卡片行那个视图
      *  随入口一起没了，留着就是死代码。 */
@@ -452,6 +496,8 @@ window.__ModuleLoader__.load({
       const t = props.t
       const [status, setStatus] = useState(null)
       const [channels, setChannels] = useState([])
+      const [advertise, setAdvertiseView] = useState(null)
+      const [advertiseInput, setAdvertiseInput] = useState('')
       const [error, setError] = useState('')
       const [qr, setQr] = useState(null)
       const [busy, setBusy] = useState('')
@@ -470,14 +516,28 @@ window.__ModuleLoader__.load({
 
       const refresh = useCallback(async () => {
         try {
-          // **两个读面一起拉**：status 管设备与连接态，/transport 管按方式的
-          // 通道开关。只拉一个的话，另一个面永远停在空态（假数据）。
-          const [statusResponse, transportResponse] = await Promise.all([fetch(STATUS), fetch(TRANSPORT)])
+          // **三个读面一起拉**：status 管设备与连接态，/transport 管按方式的
+          // 通道开关，/advertise 管"上报给手机哪些地址"。只拉一个的话，
+          // 另一个面永远停在空态（假数据）。
+          const [statusResponse, transportResponse, advertiseResponse] = await Promise.all([
+            fetch(STATUS), fetch(TRANSPORT), fetch(ADVERTISE),
+          ])
           if (!statusResponse.ok) throw new Error(`${t('loadFailed')}：HTTP ${statusResponse.status}`)
           if (!transportResponse.ok) throw new Error(`${t('loadFailed')}：HTTP ${transportResponse.status}`)
+          // `/advertise` **不参与硬失败**：它管的是"上报哪些地址"这一节。
+          // 读不到（旧版连接器没有这个路由 / 存储还没就绪）就只让那一节空着，
+          // 不该让设备管理与配对一起变成错误页 —— 那两个面与它无关。
           setStatus(await statusResponse.json())
           const transport = await transportResponse.json()
           setChannels(Array.isArray(transport.channels) ? transport.channels : [])
+          // **读面兜底成空表**：`candidates` 来自监听面的网卡枚举，`listenPort: 0`
+          // 时本来就是空的。直接 `.map` 会让整个面板崩成一块白。
+          const advertiseBody = advertiseResponse.ok ? await advertiseResponse.json() : {}
+          setAdvertiseView({
+            advertised: Array.isArray(advertiseBody.advertised) ? advertiseBody.advertised : [],
+            hidden: Array.isArray(advertiseBody.hidden) ? advertiseBody.hidden : [],
+            candidates: Array.isArray(advertiseBody.candidates) ? advertiseBody.candidates : [],
+          })
           setError('')
         } catch (caught) {
           // **失败要留声**：静默的空面板会让人以为"没有设备"。
@@ -642,6 +702,19 @@ window.__ModuleLoader__.load({
         }
       }
 
+      /** 藏掉 / 恢复上报 / 追加一条地址。失败带原因（不静默）。 */
+      const runAdvertise = async (url, kind) => {
+        setBusy(`advertise:${url}`)
+        try {
+          await setAdvertise(url, kind, refresh)
+          if (kind === 'extra') setAdvertiseInput('')
+        } catch (caught) {
+          setError(t('failedAdvertise', { reason: messageOf(caught) }))
+        } finally {
+          setBusy('')
+        }
+      }
+
       // ---- 派生值：全部只由 `status` 算出来，放在动作前面，免得闭包向前引用 ----
       const devices = status && status.devices ? status.devices : []
       const live = devices.filter((d) => !d.revoked)
@@ -765,6 +838,68 @@ window.__ModuleLoader__.load({
               }, channel.running ? t('channelStop') : t('channelStart')),
             )),
             h('p', { style: { ...S.label, margin: '8px 0 0', lineHeight: 1.6 } }, t('transportNote')),
+
+            // **上报给手机哪些地址**：监听面按设计枚举全部非内部网卡
+            // （`transport/listener.ts:134-138` 明确不按网卡名过滤），
+            // 装了 VMware 的机器会因此多报几条手机永远拨不通的地址。
+            // 由用户点名藏掉比猜网卡名可靠；反向也能追加一条不在枚举里的
+            // （如 Tailscale 的 100.x）。服务端校验见 `admin/advertise.ts`。
+            h(
+              'div',
+              { key: 'advertise', style: { marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--dsw-alias-border-inverted)' } },
+              h('div', { style: S.row },
+                h('span', { style: S.label }, t('advertiseTitle')),
+                h('span', { style: { flex: 1 } }),
+              ),
+              advertise === null
+                ? null
+                : advertise.candidates.map((candidate) => {
+                    const hidden = advertise.hidden.includes(candidate.url)
+                    return h('div', { key: `c:${candidate.url}`, style: { ...S.row, marginTop: 6 } },
+                      h('span', { style: S.dot(hidden ? 'var(--dsw-alias-state-idle-primary)' : 'var(--dsw-alias-state-success-primary)') }),
+                      h('span', { style: S.value }, candidate.label || candidate.url),
+                      h('span', { style: { ...S.label, flex: 1 } }, candidate.url),
+                      h('button', {
+                        type: 'button',
+                        style: busy === `advertise:${candidate.url}` ? { ...S.btn, ...S.btnDisabled } : S.btn,
+                        disabled: busy !== '',
+                        onClick: () => runAdvertise(candidate.url, hidden ? 'clear' : 'hide'),
+                      }, hidden ? t('advertiseShow') : t('advertiseHide')),
+                    )
+                  }),
+              // 手动追加的地址（不在网卡枚举里）：单独列出来，能移除。
+              advertise === null
+                ? null
+                : advertise.advertised
+                    .filter((entry) => entry.source === 'extra')
+                    .map((entry) => h('div', { key: `x:${entry.url}`, style: { ...S.row, marginTop: 6 } },
+                      h('span', { style: S.dot('var(--dsw-alias-state-success-primary)') }),
+                      h('span', { style: S.value }, t('advertiseExtra')),
+                      h('span', { style: { ...S.label, flex: 1 } }, entry.url),
+                      h('button', {
+                        type: 'button',
+                        style: busy === `advertise:${entry.url}` ? { ...S.btn, ...S.btnDisabled } : S.btn,
+                        disabled: busy !== '',
+                        onClick: () => runAdvertise(entry.url, 'clear'),
+                      }, t('remove')),
+                    )),
+              h('div', { style: { ...S.row, marginTop: 8 } },
+                h('input', {
+                  type: 'text',
+                  value: advertiseInput,
+                  placeholder: t('advertiseAddPlaceholder'),
+                  onChange: (event) => setAdvertiseInput(event.target.value),
+                  style: { flex: 1, minWidth: 0, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--dsw-alias-border-inverted)', background: 'transparent', color: 'inherit', font: 'inherit', fontSize: 12 },
+                }),
+                h('button', {
+                  type: 'button',
+                  style: busy === `advertise:${advertiseInput}` ? { ...S.btn, ...S.btnDisabled } : S.btn,
+                  disabled: busy !== '' || advertiseInput.trim() === '',
+                  onClick: () => runAdvertise(advertiseInput.trim(), 'extra'),
+                }, t('advertiseAdd')),
+              ),
+              h('p', { style: { ...S.label, margin: '8px 0 0', lineHeight: 1.6 } }, t('advertiseNote')),
+            ),
           ),
         ),
 

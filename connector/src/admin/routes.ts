@@ -245,19 +245,20 @@ export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
       },
     },
 
-    // 上报地址：**看**（GET）与**改**（POST）。改是幂等的"设定表态"，不是增量命令。
+    // 上报地址：**一条路由，按方法分支**（GET 看 / POST 改）。
+    //
+    // 不能写成两条同路径的 route —— DSH 的 `registerFetchRoute` 按路径注册，
+    // 两条**同 path** 会在挂载期抛
+    // `connection: exact Fetch route "/api/dsh-mobile/advertise" is already registered`
+    // （0.2.1 起校验；0.2.0 不校验）。而挂载异常会让连接器停在 `start-transport`
+    // 那一步，症状是"插件已加载但直连面起不来"—— 2026-10-18 升级 0.2.1 时实测。
     {
       path: ADVERTISE_PATH,
-      methods: ['GET'],
-      requestBody: 'buffered',
-      fetch: () => Promise.resolve(json(deps.advertise.view())),
-    },
-
-    {
-      path: ADVERTISE_PATH,
-      methods: ['POST'],
+      methods: ['GET', 'POST'],
       requestBody: 'buffered',
       fetch: async (request: Request) => {
+        if (request.method === 'GET') return json(deps.advertise.view())
+
         let body: Record<string, unknown>
         try {
           body = await bodyOf(request)

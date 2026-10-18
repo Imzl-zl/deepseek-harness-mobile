@@ -28,11 +28,23 @@
  */
 import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent'
 
+/**
+ * 子代理的执行形态。
+ *
+ * `external` 是 DSH **0.2.1 新增**的取值（`subagent` 包的 catalog v2：
+ * "v2 records external executions"，`catalog.d.ts` 的 `SubagentCatalogEvent` 注释）。
+ * **原样过线，不折叠成 `unknown`**：它是"这个子代理不在本机执行"这一事实，
+ * 折叠掉手机就只能说"不明"，而用户看不出"它其实是外部后端在跑"。
+ * 手机侧 `model/subagent.dart` 的枚举与 `endpointKindLabel` 同一条纪律 ——
+ * 未知取值不静默当默认值。
+ */
+export type SubagentMode = 'one-shot' | 'continuable' | 'unknown' | 'external'
+
 /** `listChildren` 的行。**没有活动态** —— 原始类型里就没有。 */
 export interface SubagentEntry {
   id: string
   createdAt: number
-  mode: 'one-shot' | 'continuable' | 'unknown'
+  mode: SubagentMode
   label?: string
 }
 
@@ -44,7 +56,7 @@ export type SubagentRow =
       parentId: string
       /** 距 root 的边数；直接子 = 1。 */
       depth: number
-      mode: 'one-shot' | 'continuable' | 'unknown'
+      mode: SubagentMode
       label?: string
       /** **只表示驻留**，不表示结局。 */
       activity: 'running' | 'inactive'
