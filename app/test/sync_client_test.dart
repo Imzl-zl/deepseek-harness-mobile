@@ -16,6 +16,7 @@ import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/crypto.dart';
 import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/flow.dart';
+import 'package:dsh_mobile/core/frame.dart' show idPattern;
 import 'package:dsh_mobile/core/handshake.dart';
 import 'package:dsh_mobile/core/handshake_driver.dart';
 import 'package:dsh_mobile/core/keepalive.dart';
@@ -250,6 +251,13 @@ void main() {
     );
     // 让异步链跑完（验签 → 派生 → 发 confirm → established）。
     await pump();
+  }
+
+  /// 最后一帧 `req` 的帧头 `id`（**帧号**，不是幂等键）。
+  String lastReqId(FakeTransport transport) {
+    final req = transport.sentFrames.where((f) => f['t'] == 'req').lastOrNull;
+    expect(req, isNotNull, reason: '这一趟必须真的发出一帧 req');
+    return req!['id'] as String;
   }
 
   group('sync.hello：恢复握手 + 前后台态声明（契约 §5.4、§6.2）', () {
@@ -1038,6 +1046,317 @@ void main() {
       await client.close();
     });
 
+    test('带幂等键的调用**拿到 res 的结果**（session.create 的真形状）', () async {
+      // 2026-10-17 真机验收抓到：hero 上选工作区后弹"开新任务失败：新建会话
+      // 没有回 sid"，而会话其实已经建成了。根因是带键路径曾直接 `return null`
+      // （原话"结果由会话流收敛"）—— 调用方确实需要结果的写永远收不到返回值。
+      // 帧的 `id` 是**另铸的帧号**（不是 requestId），`res` 回显它，所以能兑现。
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+
+      final pending = client.call<Map<String, Object?>>('session.create', {
+        'workspaceId': 'w1',
+      }, requestId: 'new-1');
+      await pump();
+      final req = f.transport.sentFrames.where((x) => x['t'] == 'req').last;
+      expect(
+        req['id'],
+        isA<String>().having((l) => l.length, 'length', greaterThan(0)),
+        reason: '出帧口的 id 必须是帧号（res 靠它配对），不能是空',
+      );
+
+      final frameId = req['id'] as String;
+      final keys = await sessionKeysFor(f.transport);
+      final pc = BoxCodec(keys: keys, role: HandshakeRole.responder);
+      final frame = <String, Object?>{
+        'v': 1,
+        't': 'res',
+        'id': frameId,
+        'ok': true,
+        'fc': 100,
+      };
+      final box = await pc.sealFrame(
+        frame,
+        jsonEncode({
+          'result': {'sid': 'sid-new'},
+        }),
+      );
+      f.transport.feed('${jsonEncode({...frame, 'box': box})}\n');
+      await pump();
+
+      expect(await pending, {'sid': 'sid-new'});
+      await client.close();
+    });
+
+    test('电脑侧拒绝（ok:false）照原样抛：respondInteraction 的"标成已过期"靠它', () async {
+      // 同一条旧路还把**拒绝**吞了：`interaction.respond` 的注释写着
+      // "失败照原样抛，调用方据此把那一项标成已过期"，而带键路径在 res 之前
+      // 就返回，电脑侧的 `interaction/not-pending` 从来到不了 App。
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+
+      final pending = client.call<void>('interaction.respond', {
+        'sid': 's1',
+        'callId': 'c1',
+        'answers': <Object?>[],
+      }, requestId: 'i:c1');
+      await pump();
+
+      final frameId = lastReqId(f.transport);
+      final keys = await sessionKeysFor(f.transport);
+      final pc = BoxCodec(keys: keys, role: HandshakeRole.responder);
+      final frame = <String, Object?>{
+        'v': 1,
+        't': 'res',
+        'id': frameId,
+        'ok': false,
+        'fc': 100,
+      };
+      final box = await pc.sealFrame(
+        frame,
+        jsonEncode({'code': 'interaction/not-pending', 'message': '已不在待处理'}),
+      );
+      // **先挂期望再喂帧**：反过来写的话，`pending` 在没有任何监听者时就以错误收场，
+      // 那几拍会被记成"无人处理的异步错误"，测试红得莫名其妙。
+      final rejected = expectLater(
+        pending,
+        throwsA(
+          isA<ProtocolException>()
+              .having((e) => e.code, 'code', ErrorCode.interactionNotPending)
+              .having((e) => e.message, 'message', '已不在待处理'),
+        ),
+      );
+      f.transport.feed('${jsonEncode({...frame, 'box': box})}\n');
+      await pump();
+      await rejected;
+
+      await client.close();
+    });
+
+    test('同键重发不建第二个等待（第二次返回 null，不挂）', () async {
+      // `interaction.respond` 用 `i:<callId>` 当幂等键，重点一次时电脑侧
+      // 去重、那个 res 归第一次的调用方 —— 再建一个完成器只会永远挂着。
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+
+      final first = client.call<Object?>('interaction.respond', {
+        'sid': 's1',
+        'callId': 'c1',
+        'answers': <Object?>[],
+      }, requestId: 'i:c1');
+      await pump();
+      final frameId = lastReqId(f.transport);
+
+      final second = await client.call<Object?>('interaction.respond', {
+        'sid': 's1',
+        'callId': 'c1',
+        'answers': <Object?>[],
+      }, requestId: 'i:c1');
+      expect(second, isNull, reason: '重发不建第二个完成器（那个 res 不会再来）');
+      await pump();
+
+      // 重发**不得再多发出一帧**：电脑侧按幂等键去重，重发等于重复执行。
+      // 判据用"帧数不增长"而不是"只有一帧"—— `sync.hello` 走的也是 `req`
+      // （见 `_sendHello`），所以这里本来就不止一帧。
+      final beforeResend = f.transport.sentFrames
+          .where((f) => f['t'] == 'req')
+          .length;
+      final afterResend = f.transport.sentFrames
+          .where((f) => f['t'] == 'req')
+          .length;
+      expect(afterResend, beforeResend, reason: '重发不得再多发出一帧');
+
+      // 第一次仍然拿到结果。
+      final keys = await sessionKeysFor(f.transport);
+      final pc = BoxCodec(keys: keys, role: HandshakeRole.responder);
+      final frame = <String, Object?>{
+        'v': 1,
+        't': 'res',
+        'id': frameId,
+        'ok': true,
+        'fc': 100,
+      };
+      final box = await pc.sealFrame(frame, jsonEncode({'result': {}}));
+      f.transport.feed('${jsonEncode({...frame, 'box': box})}\n');
+      await pump();
+      expect(await first, isNotNull);
+
+      await client.close();
+    });
+
+    test('在途的幂等写遇到断连同样被拒绝（failAll 覆盖带键路径）', () async {
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+
+      final pending = client.call<Object?>(
+        'session.create',
+        const {},
+        requestId: 'new-2',
+      );
+      await pump();
+
+      final rejected = expectLater(
+        pending,
+        throwsA(
+          isA<ProtocolException>().having(
+            (e) => e.code,
+            'code',
+            ErrorCode.relayOffline,
+          ),
+        ),
+        reason: '断连时在途的带键写也要被拒绝（否则调用方永远等不到）',
+      );
+      f.transport.dropFromPeer();
+      await pump();
+      await rejected;
+      expect((client as SyncClientProbe).lastRejectedCalls, 1);
+
+      await client.close();
+    });
+
+    test('帧头 id 与幂等键是两个标识符：业务键永不上帧头（契约 §3 / §5.6）', () async {
+      // 2026-10-17 真机验收抓到的线上缺口：出帧口曾把 `requestId` 直接写进帧头
+      // `id`。`interaction.respond` 的键是 `i:<callId>`（§5.7），带冒号，
+      // 过不了 §3 的 ASCII 安全字符集 —— 连接器按 `protocol/bad-frame` 拒收并
+      // **关连接**（`connector/src/transport/codec.ts` 的 `ID_PATTERN`，
+      // 我在连接器自己的解码器上实测过：`i:c1 => REJECTED`）。
+      // 表现是"点了允许一次，连接断了，队列不推进"。
+      //
+      // 这条钉的是**不变量本身**，所以遍历生产里出现过的全部键形状
+      // （`app/lib/data/app_model.dart` 的七处 + 契约 §5.7 的 `i:<callId>`）。
+      const keys = <String, String>{
+        'interaction.respond': 'i:call-1',
+        'permission.switch': 'perm-1',
+        'userQuestion.respond': 'q-1',
+        'workspace.archive': 'arc-1',
+        'workspace.unarchive': 'unarc-1',
+        'session.create': 'new-1',
+      };
+
+      for (final entry in keys.entries) {
+        final f = buildDeps();
+        final client = createSyncClient(f.deps);
+        await client.start();
+        await answerHello(f.transport);
+
+        final pending = client.call<Object?>(entry.key, const {
+          'sid': 's1',
+        }, requestId: entry.value);
+        await pump();
+
+        final req = f.transport.sentFrames.where((f) => f['t'] == 'req').last;
+        final frameId = req['id'] as String;
+
+        expect(
+          idPattern.hasMatch(frameId),
+          isTrue,
+          reason:
+              '${entry.key} 的帧号 "$frameId" 必须过 §3 的字符集，'
+              '否则连接器按 bad-frame 关连接',
+        );
+        expect(
+          frameId,
+          isNot(entry.value),
+          reason: '${entry.key} 的幂等键 "$entry.value" 不得写进帧头 id',
+        );
+
+        // 幂等键必须**原样出现在信封里**（§5.6：电脑侧唯一认得的键）。
+        final sessionKeys = await sessionKeysFor(f.transport);
+        final opener = BoxCodec(
+          keys: sessionKeys,
+          role: HandshakeRole.responder,
+        );
+        final envelope =
+            jsonDecode(await opener.openFrame(req, '${req['box']}'))
+                as Map<String, Object?>;
+        expect(
+          envelope['requestId'],
+          entry.value,
+          reason: '${entry.key} 的幂等键必须在信封顶层',
+        );
+
+        // 收尾：别让这个完成器挂到 tearDown。
+        final res = <String, Object?>{
+          'v': 1,
+          't': 'res',
+          'id': frameId,
+          'ok': true,
+          'fc': 100,
+        };
+        final box = await opener.sealFrame(res, jsonEncode({'result': {}}));
+        f.transport.feed('${jsonEncode({...res, 'box': box})}\n');
+        await pump();
+        expect(await pending, isNotNull);
+
+        await client.close();
+      }
+    });
+
+    test('从盘上恢复的旧行没有帧号：restore 补铸，发出的帧号仍合规', () async {
+      // `frameId` 刻意不落盘（它只关联一个活的完成器），所以升级前留下的旧行
+      // 恢复后是空帧号。空串同样过不了 §3 的字符集 —— 不补铸就是同一个 bug。
+      final store = InMemoryOutboxStore();
+      // 直接塞一行"旧行"（落盘形态里没有 frameId，见 `OutboxEntry.toJson`）。
+      await store.append(
+        const OutboxEntry(
+          requestId: 'i:legacy-1',
+          method: 'interaction.respond',
+          params: {'sid': 's1'},
+        ),
+      );
+      final outbox = Outbox(store: store, newFrameId: () => 'restored-1');
+      await outbox.restore();
+      expect(outbox.pending, 1, reason: '旧行必须被恢复，不能静默丢掉');
+
+      final sent = <OutboxEntry>[];
+      outbox.attachSender((entry) async {
+        sent.add(entry);
+        return true;
+      });
+      expect(await outbox.flush(), FlushOutcome.sent);
+      expect(sent.single.frameId, 'restored-1');
+      expect(
+        idPattern.hasMatch(sent.single.frameId),
+        isTrue,
+        reason: '补铸的帧号也要过 §3 的字符集',
+      );
+    });
+
+    test('同一幂等键重复入队：换帧号、不换键（残留行被新尝试取代）', () async {
+      // 上一次尝试抛了 `relay/offline` 之后，条目还排着队而没人等。
+      // 再点一次必须换一个新帧号（否则 res 兑的是上一个调用方），
+      // 但幂等键不能换（否则电脑侧认不出它是同一次写）。
+      final store = InMemoryOutboxStore();
+      final outbox = Outbox(store: store, newFrameId: () => 'fresh-1');
+      await outbox.enqueue(
+        const OutboxEntry(
+          requestId: 'i:c1',
+          method: 'interaction.respond',
+          params: {'sid': 's1'},
+          frameId: 'stale-1',
+        ),
+      );
+      await outbox.enqueue(
+        const OutboxEntry(
+          requestId: 'i:c1',
+          method: 'interaction.respond',
+          params: {'sid': 's1'},
+          frameId: 'fresh-1',
+        ),
+      );
+      expect(outbox.pending, 1, reason: '同一个键只有一条待发项');
+      expect(outbox.entries.single.frameId, 'fresh-1');
+      expect(outbox.entries.single.requestId, 'i:c1', reason: '键不许换');
+    });
+
     test('不带幂等键的调用在离线时直接抛（只读方法不需要落盘）', () async {
       final f = buildDeps();
       final client = createSyncClient(f.deps);
@@ -1119,26 +1438,40 @@ void main() {
       expect(outbox.pending, 0, reason: '没落盘就不能留在队列里');
     });
 
-    test('同一个幂等键重复入队是**无操作**（重发复用同一条）', () async {
+    test('同一个幂等键重复入队：只留一条，且换成新条目的帧号', () async {
       final store = InMemoryOutboxStore();
-      final sent = <String>[];
+      final sent = <OutboxEntry>[];
       final outbox = Outbox(
         store: store,
         send: (entry) async {
-          sent.add(entry.requestId);
+          sent.add(entry);
           return true;
         },
       );
-      const entry = OutboxEntry(
+      const stale = OutboxEntry(
         requestId: 'r1',
         method: 'session.prompt',
         params: {},
+        frameId: 'stale-1',
       );
-      await outbox.enqueue(entry);
-      await outbox.enqueue(entry);
-      expect(outbox.pending, 1);
+      await outbox.enqueue(stale);
+      await outbox.enqueue(
+        const OutboxEntry(
+          requestId: 'r1',
+          method: 'session.prompt',
+          params: {},
+          frameId: 'fresh-1',
+        ),
+      );
+      expect(outbox.pending, 1, reason: '同一个键只有一条待发项');
+      expect(
+        outbox.entries.single.frameId,
+        'fresh-1',
+        reason: '残留行被新尝试取代：旧帧号没人等，兑给它就是永远挂着',
+      );
+      expect(outbox.entries.single.requestId, 'r1', reason: '键不许换');
       await outbox.flush();
-      expect(sent, ['r1'], reason: '只发一次');
+      expect(sent.map((e) => e.requestId), ['r1'], reason: '只发一次');
     });
 
     test('离线时 flush 停住（不跳过继续）—— FIFO 顺序是刻意的', () async {

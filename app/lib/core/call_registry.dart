@@ -30,30 +30,47 @@ import 'errors.dart';
 
 /// 在途请求的登记与兑现。
 class CallRegistry {
-  final Map<String, Completer<Object?>> _pending = {};
+  final Map<String, _Waiting> _pending = {};
 
   /// 当前在途请求数（诊断与测试用）。
   int get pending => _pending.length;
 
   /// 登记一个在途请求，返回它的完成器。
-  Completer<Object?> register(String id) {
+  ///
+  /// [id] 是**帧头 `id`**（`res` 回显的就是它）；[requestId] 是这次写操作的
+  /// 幂等键，只在带键的写操作上有。两者分开正是因为帧头 `id` 受字符集约束、
+  /// 而幂等键的形状由业务定（`i:<callId>` 带冒号）—— 详见
+  /// `outbox.dart` 的 [OutboxEntry.frameId]。
+  Completer<Object?> register(String id, {String? requestId}) {
     final completer = Completer<Object?>();
-    _pending[id] = completer;
+    _pending[id] = _Waiting(completer, requestId);
     return completer;
   }
 
   /// 撤销登记（发送失败时调，避免留下一个永远不兑现的条目）。
   void unregister(String id) => _pending.remove(id);
 
+  /// 这个幂等键有没有人在等。
+  ///
+  /// **"同键重发不建第二个等待"靠它**：幂等写（如 `interaction.respond`
+  /// 用 `i:<callId>` 当键）被重点一次时，电脑侧按同一个键去重、那个 `res`
+  /// 归第一次的调用方 —— 再建一个完成器只会永远挂着（断连才被 `failAll` 收）。
+  ///
+  /// 判据必须是**键**而不是帧号：每次重发都会换一个新帧号，按帧号判就会漏。
+  /// 帧号与键为何是两个东西见
+  /// `.agents/notes/implemented/2026-10-17-frame-id-not-idempotency-key.md`。
+  bool isPendingRequest(String requestId) =>
+      _pending.values.any((waiting) => waiting.requestId == requestId);
+
   /// 应答到达：兑现并移除。返回 `false` 表示"没有人在等这个 id"
   /// （迟到、重复、或属于上一条连接的应答）—— 调用方据此忽略。
   bool resolve(String id, {required Object? result, ProtocolException? error}) {
-    final completer = _pending.remove(id);
-    if (completer == null) return false;
+    final waiting = _pending.remove(id);
+    if (waiting == null) return false;
     if (error != null) {
-      completer.completeError(error);
+      waiting.completer.completeError(error);
     } else {
-      completer.complete(result);
+      waiting.completer.complete(result);
     }
     return true;
   }
@@ -66,8 +83,18 @@ class CallRegistry {
     final entries = List.of(_pending.entries);
     _pending.clear();
     for (final entry in entries) {
-      if (!entry.value.isCompleted) entry.value.completeError(error);
+      if (!entry.value.completer.isCompleted) {
+        entry.value.completer.completeError(error);
+      }
     }
     return entries.length;
   }
+}
+
+/// 一个在途等待：完成器 + 它属于哪个幂等键（只读方法没有键）。
+class _Waiting {
+  const _Waiting(this.completer, this.requestId);
+
+  final Completer<Object?> completer;
+  final String? requestId;
 }

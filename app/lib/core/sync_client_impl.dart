@@ -67,7 +67,16 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       return _sendFrame({
         'v': wireVersion,
         't': 'req',
-        'id': entry.requestId,
+        // **帧号，不是幂等键**。`requestId` 只进信封顶层（§5.6 / §5.7）——
+        // 它的形状由业务定（`i:<callId>` 就带冒号），而帧头 `id` 受契约 §3 的
+        // ASCII 安全字符集约束，`res` 原样回显它。
+        //
+        // 曾经这里写 `entry.requestId`，于是业务键上了帧头：连接器按
+        // `protocol/bad-frame` 拒收并关连接（`codec.ts` 的 `ID_PATTERN`），
+        // 表现是"点了允许一次，连接断了，队列不推进"。
+        // 因果与备选方案见
+        // `.agents/notes/implemented/2026-10-17-frame-id-not-idempotency-key.md`。
+        'id': entry.frameId,
         // 写操作走**带幂等键**的信封（§5.6）：电脑侧据此去重，重发安全。
         // `requestId` 必须进信封顶层 —— 它是电脑侧唯一认得的幂等键。
         'box': encodeRequestEnvelope(
@@ -810,6 +819,7 @@ class _SyncClient implements SyncClient, SyncClientProbe {
         method: 'session.subscribe',
         params: {'sid': sid, 'since': since},
         sid: sid,
+        frameId: _newId(),
       ),
     );
     await _deps.outbox.flush();
@@ -825,6 +835,7 @@ class _SyncClient implements SyncClient, SyncClientProbe {
         method: 'session.unsubscribe',
         params: {'sid': sid},
         sid: sid,
+        frameId: _newId(),
       ),
     );
     await _deps.outbox.flush();
@@ -838,20 +849,58 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   }) async {
     // 带幂等键的调用**先落盘再发送**（§5.6）：崩溃窗口里那次写操作不能消失。
     if (requestId != null) {
-      await _deps.outbox.enqueue(
-        OutboxEntry(requestId: requestId, method: method, params: params),
-      );
-      final outcome = await _deps.outbox.flush();
+      // 判据与登记必须在**同一段同步代码**里：中间放一个 `await`（落盘）就会让
+      // 两次并发调用都通过判据，然后后一个把前一个的完成器覆盖掉 ——
+      // 被覆盖的那个调用方永远挂着（断连才被 `failAll` 收）。
+      //
+      // 判据是**幂等键**而不是帧号：每次重发都会换一个新帧号，按帧号判就会漏。
+      if (_calls.isPendingRequest(requestId)) return null as T;
+      // 帧号在落盘之前铸：调用方必须赶在 `flush()` 之前拿到它才能登记在途等待，
+      // 否则 `res` 可能早于登记到达而被当成"迟到的"丢掉。
+      final frameId = _newId();
+      final completer = _calls.register(frameId, requestId: requestId);
+      try {
+        await _deps.outbox.enqueue(
+          OutboxEntry(
+            requestId: requestId,
+            method: method,
+            params: params,
+            frameId: frameId,
+          ),
+        );
+      } catch (_) {
+        // 没落盘就不算这次写操作存在，登记也要撤。
+        _calls.unregister(frameId);
+        rethrow;
+      }
+      // 队列发出去了，但结果要等 `res`。帧头 `id` 就是上面铸的帧号，
+      // 电脑侧的 `res {id = 帧号}` 兑现它。
+      //
+      // 曾经这里直接 `return null`（原话"结果由会话流收敛"），于是
+      // **调用方确实需要结果**的写永远收不到返回值 —— 2026-10-17 真机验收：
+      // hero 上选工作区后弹"开新任务失败：新建会话没有回 sid"，而会话其实
+      // 已经建成了。同一条路还让电脑侧的**拒绝**对 App 不可见：
+      // `interaction.respond` 的注释写着"失败照原样抛，调用方据此把那一项
+      // 标成已过期"，而 `res {ok:false}` 在旧行为里直接被丢掉。
+      final FlushOutcome outcome;
+      try {
+        outcome = await _deps.outbox.flush();
+      } catch (_) {
+        _calls.unregister(frameId);
+        rethrow;
+      }
       if (outcome == FlushOutcome.offline) {
         // 离线：已落盘，等连接回来补发。这里如实抛，**不假装成功**。
+        _calls.unregister(frameId);
         throw const ProtocolException(
           ErrorCode.relayOffline,
           '离线：写操作已入队，待连接恢复后补发',
         );
       }
-      // 队列发出去了，但结果要等 `res`。这里不重复发请求（队列已经发过），
-      // 所以不建在途等待 —— 带键的写操作靠电脑侧去重，结果由会话流收敛。
-      return null as T;
+      // 连接在在途时断掉：`CallRegistry.failAll` 会拒绝这个完成器
+      // （否则调用方永远等不到），调用方退避重连后重发 —— 同一个幂等键
+      // 保证重发不会造成第二次写。
+      return await completer.future as T;
     }
 
     if (!_machine.acceptsBusinessFrames) {

@@ -8,6 +8,10 @@
 /// 2. **幂等键在入队时生成，重发复用同一个**。这是 I8 的全部依据：
 ///    电脑侧按 `requestId` 去重，所以"重发"与"重复执行"是两件事。
 ///    **重发必须复用键** —— 每次重发换一个键等于每次都是一次新操作。
+/// 3. **帧号由调用方在入队前铸**，条目带上它（见 [OutboxEntry.frameId]）。
+///    调用方必须**在 `flush()` 之前**拿到帧号才能登记在途等待：
+///    `res` 只在帧写出去之后到达，登记晚于它就等于把那一帧应答当成
+///    "迟到的"丢掉、调用方永远挂着。队列自己不铸 —— 它铸了也没人来得及登记。
 ///
 /// ## 为什么要有 `flush` 而不是"入队即发"
 ///
@@ -21,6 +25,8 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'frame.dart';
+
 /// 一条待发的写操作。
 class OutboxEntry {
   const OutboxEntry({
@@ -28,6 +34,7 @@ class OutboxEntry {
     required this.method,
     required this.params,
     this.sid,
+    this.frameId = '',
   });
 
   /// 从落盘形态恢复。
@@ -54,7 +61,24 @@ class OutboxEntry {
   }
 
   /// 幂等键（契约 §5.6）。**重发复用同一个** —— 换键等于换了一次新操作。
+  ///
+  /// **它只进信封顶层，永不上帧头**：形状由业务定（`i:<callId>` 就带冒号），
+  /// 而帧头 `id` 受契约 §3 的 ASCII 安全字符集约束。把本键写进帧头，
+  /// 连接器会按 `protocol/bad-frame` 拒收并关连接 ——
+  /// 表现是"点了允许一次，连接断了，队列不推进"。
   final String requestId;
+
+  /// 帧头 `id`：这一次 `req` / `res` 的**关联令牌**，与 [requestId] 是两个标识符。
+  ///
+  /// 发送方铸、`res` 原样回显（契约 §I10："`id` 只关联端点请求与应答"），
+  /// 所以必须满足 §3 的字符集。同一幂等键的**重发会换一个新帧号**：
+  /// 电脑侧按 `requestId` 去重后回的是**缓存的结果**，而那个 `res` 的帧头
+  /// 用的是本次请求的帧号（`connector/src/method-face.ts` 的 `resFrame`），
+  /// 所以新帧号照样能兑现。
+  ///
+  /// **不落盘**：它只关联一个**活的**完成器 —— 进程没了调用方也没了，
+  /// 旧帧号无人等待。从盘上恢复的旧行由 [Outbox.restore] 补铸。
+  final String frameId;
 
   /// 方法名（契约 §5.7 的封闭集）。
   final String method;
@@ -66,12 +90,25 @@ class OutboxEntry {
   final String? sid;
 
   /// 落盘形态（持久队列用）。
+  ///
+  /// **不含 `frameId`**：它只关联一个活的完成器，进程死了就没人等了
+  /// （见 [frameId] 的说明）。落盘形状因此与升级前逐字节相同 ——
+  /// 老行能被原样读回来，帧号在 [Outbox.restore] 补铸。
   Map<String, Object?> toJson() => {
     'requestId': requestId,
     'method': method,
     'params': params,
     if (sid != null) 'sid': sid,
   };
+
+  /// 换一个帧号（恢复旧行用）。
+  OutboxEntry copyWithFrameId(String frameId) => OutboxEntry(
+    requestId: requestId,
+    method: method,
+    params: params,
+    sid: sid,
+    frameId: frameId,
+  );
 }
 
 /// 落盘面（由 `data/` 层实现；`core/` 不认识 sqflite）。
@@ -132,13 +169,22 @@ typedef SendEntry = Future<bool> Function(OutboxEntry entry);
 
 /// 写操作待发队列（契约 §5.6）。
 class Outbox {
-  Outbox({required OutboxStore store, SendEntry? send})
-    : _store = store,
-      _send = send;
+  Outbox({
+    required OutboxStore store,
+    SendEntry? send,
+    String Function()? newFrameId,
+  }) : _store = store,
+       _send = send,
+       _newFrameId = newFrameId ?? _defaultFrameId;
 
   final OutboxStore _store;
 
   SendEntry? _send;
+
+  /// 帧号来源。**只有 [restore] 用它**（旧行没有帧号，而原调用方已随进程消失）。
+  final String Function() _newFrameId;
+
+  static String _defaultFrameId() => newFrameId(randomBytes(frameIdBytes));
 
   /// 装上出帧口。**由 `SyncClient` 在构造自己之后调**。
   ///
@@ -174,9 +220,15 @@ class Outbox {
   /// **幂等**：重复调不会重复入队（`_loaded` 之后直接返回）。
   Future<void> restore() async {
     if (_loaded) return;
-    _pending
-      ..clear()
-      ..addAll(await _store.load());
+    _pending.clear();
+    for (final entry in await _store.load()) {
+      // 旧行没有帧号（本字段不落盘，见 [OutboxEntry.frameId]）：
+      // 补铸一个。原调用方已随上一个进程消失，旧帧号无人等待，
+      // 所以这里铸新的既安全也不会漏掉任何在途等待。
+      _pending.add(
+        entry.frameId.isEmpty ? entry.copyWithFrameId(_newFrameId()) : entry,
+      );
+    }
     _loaded = true;
   }
 
@@ -184,11 +236,25 @@ class Outbox {
   ///
   /// 落盘失败即抛 —— 调用方据此拒绝这次写操作，而不是"先发了再说"。
   /// 一个没落盘的写操作在崩溃后消失，而用户以为它发出去了。
+  /// **顺序不能反**：先落盘、成功后才进内存镜像，否则落盘抛错时队列里
+  /// 留着一条盘上没有的条目（"没落盘却不能留在队列里"就是钉这个的）。
+  ///
+  /// **同一幂等键重复入队 = 用新条目替换旧条目**（不是无操作）：
+  /// 排着队而没人等的同一键只可能是上一次尝试的残留（那次抛了 `relay/offline`，
+  /// 已经把在途登记撤了）。键不变 ⇒ 电脑侧仍然去重；帧号换新 ⇒ 这次的调用方
+  /// 能被兑现。两条都换才会同时坏掉。
   Future<void> enqueue(OutboxEntry entry) async {
-    // 同一个幂等键重复入队是**无操作**：重发要复用同一条（换一条等于换了一次新操作）。
-    if (_pending.any((item) => item.requestId == entry.requestId)) return;
+    // 落盘是 upsert（`request_id` 是主键，见 `SqfliteOutboxStore.append`），
+    // 所以替换与追加在同一条语句里完成。
     await _store.append(entry); // 抛错即没落盘
-    _pending.add(entry);
+    final index = _pending.indexWhere(
+      (item) => item.requestId == entry.requestId,
+    );
+    if (index >= 0) {
+      _pending[index] = entry;
+    } else {
+      _pending.add(entry);
+    }
   }
 
   /// 按入队顺序把能发的发出去。
@@ -220,19 +286,14 @@ class Outbox {
   }
 }
 
-/// 生成一个幂等键。
+/// 生成一个幂等键（**默认形状**）。
 ///
-/// 形状照契约：16 字节 base64url（与帧 `id` 同规格，两者都是 bearer 凭据级别的随机）。
+/// 16 字节 base64url。业务也可以用自己的形状（`i:<callId>`，见 §5.7）——
+/// 那正是**不能把它写进帧头 `id`** 的原因，见 [OutboxEntry.frameId]。
 /// [randomBytes] 注入是为了让测试确定化。
 String newRequestId(List<int> randomBytes) =>
     base64Url.encode(randomBytes).replaceAll('=', '');
 
-/// 把一条待发项编成请求信封（`box` 里的 JSON）。
-///
-/// 与电脑侧 `protocol/methods.ts` 的 `RequestEnvelope` 对应：
-/// **`requestId` 在信封顶层**，不在 `params` 里（§5.7）。
-String encodeRequest(OutboxEntry entry) => jsonEncode({
-  'method': entry.method,
-  'params': entry.params,
-  if (entry.requestId.isNotEmpty) 'requestId': entry.requestId,
-});
+// 信封的编码只有一处：`sync_client_impl.dart` 的 `encodeRequestEnvelope`。
+// 这里曾经还有一份 `encodeRequest(OutboxEntry)`，与它逐字重复 ——
+// 同一份线上形状的两个编码器就是漂移源，已删。

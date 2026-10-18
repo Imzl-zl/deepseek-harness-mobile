@@ -356,11 +356,13 @@ type SyncSnapshot = {
 
 ### 5.6 幂等
 
-- 所有写操作带 `requestId`(手机生成,16 字节 base64url),映射到 DSH 的 `sessionController.prompt({ requestId })`;DSH 侧幂等无跨进程保证,所以**桥接自建去重表**。
+- 所有写操作带 `requestId`(手机生成),映射到 DSH 的 `sessionController.prompt({ requestId })`;DSH 侧幂等无跨进程保证,所以**桥接自建去重表**。
+  - **`requestId` 只活在信封里,永不上帧头**:它的形状由业务定,可以带冒号(见下条与 §5.7 的 `i:<callId>`),而帧头 `id` 受 §3 的 ASCII 安全字符集约束 —— 把业务键写进帧头,连接器会按 `bad-frame` 关连接。
+  - **帧头 `id` 是另一个标识符**:发送方铸的关联令牌,`res` 原样回显它(§I10:"`id` 只关联端点请求与应答")。两者同一个字段两种含义,正是术语表里已经否掉的做法。
 - 去重表**持久化、有界、带 TTL**:键 `requestId`,容量 10000,TTL 24 h;命中即回上次结果(不重复执行)。
 - **写入顺序是两阶段**:① 先落盘 `in-flight` 标记 → ② 执行 → ③ 成功后改写为 `done` + 结果引用。**不得先执行再记录**——那样崩溃窗口里会丢幂等。去重表写入失败(落盘报错)时**拒绝该写操作**,不进入执行阶段。
 - **重启对账**:启动时把 `in-flight` 的键逐一向 DSH 核对(该 `requestId` 是否已随 `user/message` 落在会话日志里,`packages/api/session-controller/src/commands.ts:329-335`):已生效的改写为 `done`,未生效的退回可重发。核对不出结论的键**按未生效处理并重发**——重发是安全的,DSH 侧同一 `requestId` 还会被它自己的 inbox 检查挡一次。
-- 审批与提问的应答同样带 `requestId`(形如 `i:<callId>:<decision>`),避免重复应答。
+- 审批与提问的应答同样带 `requestId`(形如 `i:<callId>`),避免重复应答。**键形状由业务定**:带冒号的键只进信封,帧头 `id` 另铸(见上)。
 
 ### 5.7 方法表
 
