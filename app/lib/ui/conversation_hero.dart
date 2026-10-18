@@ -63,17 +63,14 @@ class HeroHeadline extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
+    final c = context.dshColors;
+    return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         // `.headline { column-gap: 10px }`（`HeroShell.module.css:35`）。
-        DshIcon(
-          'fishLogo',
-          size: kHeroFishWidth,
-          color: DshColors.labelPrimary,
-        ),
-        SizedBox(width: 10),
+        DshIcon('fishLogo', size: kHeroFishWidth, color: c.labelPrimary),
+        const SizedBox(width: 10),
         Flexible(
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -89,12 +86,12 @@ class HeroHeadline extends StatelessWidget {
                     fontSize: kHeroTitleSize,
                     height: kHeroTitleHeight / kHeroTitleSize,
                     fontWeight: FontWeight.w500,
-                    color: DshColors.labelPrimary,
+                    color: c.labelPrimary,
                   ),
                 ),
               ),
-              SizedBox(width: 7),
-              HeroPreviewBadge(),
+              const SizedBox(width: 7),
+              const HeroPreviewBadge(),
             ],
           ),
         ),
@@ -116,17 +113,18 @@ class HeroPreviewBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Container(
       // `.previewBadge { margin-top: 2px }`（`:64`）—— 上标让它骑在标题右上。
       margin: const EdgeInsets.only(top: 2),
       padding: const EdgeInsets.fromLTRB(7, 1, 7, 1),
       decoration: BoxDecoration(
-        color: DshColors.stateBusinessTertiary,
+        color: c.stateBusinessTertiary,
         shape: BoxShape.rectangle,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: DshColors.hover, width: 0.5),
+        border: Border.all(color: c.hover, width: 0.5),
       ),
-      child: const Text(
+      child: Text(
         // `locales.ts:78` 的 `hero.preview`，**无条件渲染**（`EmptyHero.tsx:155`）。
         '预览版',
         style: TextStyle(
@@ -136,7 +134,7 @@ class HeroPreviewBadge extends StatelessWidget {
           fontSize: 12,
           height: 18 / 12,
           fontWeight: FontWeight.w500,
-          color: DshColors.labelPrimaryBluish,
+          color: c.labelPrimaryBluish,
         ),
       ),
     );
@@ -171,6 +169,7 @@ class HeroChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final text = label ?? '选择工作区';
     return Tooltip(
       message: tooltip ?? text,
@@ -186,7 +185,7 @@ class HeroChip extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              DshIcon(icon, size: 16, color: DshColors.labelPrimary),
+              DshIcon(icon, size: 16, color: c.labelPrimary),
               // `gap: 4px`（`:155`）。
               const SizedBox(width: 4),
               // 长名字省略，不许把 chevron 顶出去（`:185-190` 的 ellipsis）。
@@ -195,20 +194,16 @@ class HeroChip extends StatelessWidget {
                   text,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     height: 20 / 13,
                     fontWeight: FontWeight.w500,
-                    color: DshColors.labelPrimary,
+                    color: c.labelPrimary,
                   ),
                 ),
               ),
               const SizedBox(width: 4),
-              const DshIcon(
-                'chevronDown',
-                size: 12,
-                color: DshColors.labelCaption,
-              ),
+              DshIcon('chevronDown', size: 12, color: c.labelCaption),
             ],
           ),
         ),

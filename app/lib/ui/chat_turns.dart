@@ -42,6 +42,7 @@ class UserTurn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Padding(
       // `.turn { margin: 18px 0 }`
       padding: const EdgeInsets.symmetric(vertical: 18),
@@ -61,7 +62,7 @@ class UserTurn extends StatelessWidget {
               decoration: BoxDecoration(
                 // 插话用工具色底：它是"轮次跑到一半的输入"，与开轮输入
                 // 视觉上分开（DSH Web 同样把 steering 与 user 分开成两类节点）。
-                color: steering ? DshColors.roleToolBg : DshColors.layer3,
+                color: steering ? c.roleToolBg : c.layer3,
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(22),
                   topRight: Radius.circular(22),
@@ -73,19 +74,19 @@ class UserTurn extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   if (steering)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 4),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          DshIcon('queue', size: 11, color: DshColors.roleTool),
-                          SizedBox(width: 4),
+                          DshIcon('queue', size: 11, color: c.roleTool),
+                          const SizedBox(width: 4),
                           Text(
                             '插话',
                             style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
-                              color: DshColors.roleTool,
+                              color: c.roleTool,
                             ),
                           ),
                         ],
@@ -93,10 +94,10 @@ class UserTurn extends StatelessWidget {
                     ),
                   Text(
                     text,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 14.5,
                       height: 21 / 14.5,
-                      color: DshColors.labelPrimary,
+                      color: c.labelPrimary,
                     ),
                   ),
                   if (attachmentCount > 0)
@@ -104,10 +105,7 @@ class UserTurn extends StatelessWidget {
                       padding: const EdgeInsets.only(top: 6),
                       child: Text(
                         '$attachmentCount 个附件（手机上不显示）',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: DshColors.labelTertiary,
-                        ),
+                        style: TextStyle(fontSize: 11, color: c.labelTertiary),
                       ),
                     ),
                 ],
@@ -142,6 +140,7 @@ class AssistantTurn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 18),
       child: Column(
@@ -152,12 +151,12 @@ class AssistantTurn extends StatelessWidget {
             children: [
               const _AssistantAvatar(),
               const SizedBox(width: 8),
-              const Text(
+              Text(
                 '助手',
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
-                  color: DshColors.labelPrimary,
+                  color: c.labelPrimary,
                 ),
               ),
               if (modelName != null && modelName!.isNotEmpty) ...[
@@ -167,10 +166,7 @@ class AssistantTurn extends StatelessWidget {
                     '· $modelName',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: DshColors.labelCaption,
-                    ),
+                    style: TextStyle(fontSize: 12, color: c.labelCaption),
                   ),
                 ),
               ],
@@ -210,6 +206,7 @@ class _AssistantAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Container(
       width: 26,
       height: 26,
@@ -217,10 +214,10 @@ class _AssistantAvatar extends StatelessWidget {
         // `linear-gradient(135deg, #5686fe, #9e7baa)` —— 蓝到紫，
         // 与 `roleAssistant`（紫）同族。这是 DSH 的品牌识别之一，
         // 所以两个色值取自 token 而不是现编。
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [DshColors.accentBlue, DshColors.roleAssistant],
+          colors: [c.accentBlue, c.roleAssistant],
         ),
         borderRadius: BorderRadius.circular(9),
       ),
@@ -281,10 +278,11 @@ class _ToolCardState extends State<ToolCard> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final (icon, tone) = switch (widget.status) {
-      ToolCallStatus.running => ('loading', DshColors.roleTool),
-      ToolCallStatus.completed => ('check', DshColors.roleContext),
-      ToolCallStatus.failed => ('warningTriangle', DshColors.error),
+      ToolCallStatus.running => ('loading', c.roleTool),
+      ToolCallStatus.completed => ('check', c.roleContext),
+      ToolCallStatus.failed => ('warningTriangle', c.error),
     };
     final hasDetail = widget.detail.isNotEmpty;
     return Container(
@@ -292,7 +290,7 @@ class _ToolCardState extends State<ToolCard> {
       margin: const EdgeInsets.symmetric(vertical: 12),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(DshRadius.lg),
-        border: Border.all(color: DshColors.layer1),
+        border: Border.all(color: c.layer1),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
@@ -300,7 +298,7 @@ class _ToolCardState extends State<ToolCard> {
           Material(
             // `.tool-r { background: var(--tool-bg) }` —— 暖色底，
             // 与助手正文的冷色底区分开（一眼看出"这不是模型说的话"）。
-            color: DshColors.roleToolBg,
+            color: c.roleToolBg,
             child: InkWell(
               onTap: hasDetail ? () => setState(() => _open = !_open) : null,
               child: Container(
@@ -317,7 +315,7 @@ class _ToolCardState extends State<ToolCard> {
                       width: 24,
                       height: 24,
                       decoration: BoxDecoration(
-                        color: DshColors.roleTool.withValues(alpha: 0.16),
+                        color: c.roleTool.withValues(alpha: 0.16),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Center(
@@ -327,11 +325,11 @@ class _ToolCardState extends State<ToolCard> {
                     const SizedBox(width: 10),
                     Text(
                       widget.name,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'monospace',
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
-                        color: DshColors.roleTool,
+                        color: c.roleTool,
                       ),
                     ),
                     const SizedBox(width: 6),
@@ -341,10 +339,10 @@ class _ToolCardState extends State<ToolCard> {
                         widget.argument,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'monospace',
                           fontSize: 12.5,
-                          color: DshColors.labelTertiary,
+                          color: c.labelTertiary,
                         ),
                       ),
                     ),
@@ -352,19 +350,19 @@ class _ToolCardState extends State<ToolCard> {
                       const SizedBox(width: 8),
                       Text(
                         '+${widget.diffStat!.added}',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'monospace',
                           fontSize: 11,
-                          color: DshColors.fileDiffAddMarker,
+                          color: c.fileDiffAddMarker,
                         ),
                       ),
                       const SizedBox(width: 4),
                       Text(
                         '−${widget.diffStat!.removed}',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'monospace',
                           fontSize: 11,
-                          color: DshColors.fileDiffDelMarker,
+                          color: c.fileDiffDelMarker,
                         ),
                       ),
                     ],
@@ -374,10 +372,10 @@ class _ToolCardState extends State<ToolCard> {
                       AnimatedRotation(
                         turns: _open ? 0.25 : 0,
                         duration: const Duration(milliseconds: 160),
-                        child: const DshIcon(
+                        child: DshIcon(
                           'chevronRight',
                           size: 16,
-                          color: DshColors.labelTertiary,
+                          color: c.labelTertiary,
                         ),
                       ),
                     ],
@@ -392,17 +390,17 @@ class _ToolCardState extends State<ToolCard> {
               //   border-top:1px solid l1; 等宽; line-height:20 }`
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: const BoxDecoration(
-                color: DshColors.layer1,
-                border: Border(top: BorderSide(color: DshColors.layer1)),
+              decoration: BoxDecoration(
+                color: c.layer1,
+                border: Border(top: BorderSide(color: c.layer1)),
               ),
               child: Text(
                 widget.detail,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'monospace',
                   fontSize: 12.5,
                   height: 20 / 12.5,
-                  color: DshColors.labelSecondary,
+                  color: c.labelSecondary,
                 ),
               ),
             ),
@@ -432,16 +430,17 @@ class TakeoverHint extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     // 结构同 `.tool`（它本来就是 `.tool` 的一个变体），状态用告警色。
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 12),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(DshRadius.lg),
-        border: Border.all(color: DshColors.layer1),
+        border: Border.all(color: c.layer1),
       ),
       clipBehavior: Clip.antiAlias,
       child: Material(
-        color: DshColors.roleToolBg,
+        color: c.roleToolBg,
         child: InkWell(
           onTap: onTap,
           child: Container(
@@ -453,21 +452,21 @@ class TakeoverHint extends StatelessWidget {
                   width: 24,
                   height: 24,
                   decoration: BoxDecoration(
-                    color: DshColors.roleTool.withValues(alpha: 0.16),
+                    color: c.roleTool.withValues(alpha: 0.16),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Center(
-                    child: DshIcon(icon, size: 13, color: DshColors.roleTool),
+                    child: DshIcon(icon, size: 13, color: c.roleTool),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Text(
                   name,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'monospace',
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
-                    color: DshColors.roleTool,
+                    color: c.roleTool,
                   ),
                 ),
                 const SizedBox(width: 6),
@@ -476,20 +475,17 @@ class TakeoverHint extends StatelessWidget {
                     argument,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 12.5,
-                      color: DshColors.labelTertiary,
+                      color: c.labelTertiary,
                     ),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Text(
                   statusText,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: DshColors.roleTool,
-                  ),
+                  style: TextStyle(fontSize: 11, color: c.roleTool),
                 ),
               ],
             ),
@@ -566,11 +562,12 @@ class _CollapsibleNoteState extends State<_CollapsibleNote> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Container(
       decoration: BoxDecoration(
-        color: DshColors.layer1,
+        color: c.layer1,
         borderRadius: BorderRadius.circular(DshRadius.md),
-        border: Border.all(color: DshColors.layer2),
+        border: Border.all(color: c.layer2),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
@@ -584,25 +581,21 @@ class _CollapsibleNoteState extends State<_CollapsibleNote> {
                 children: [
                   // 两处共用同一个强调色（助手色）：标签行的图标是"这是过程"
                   // 的标记，不是分类 —— 分类由标签文字说。
-                  DshIcon(
-                    widget.icon,
-                    size: 13,
-                    color: DshColors.roleAssistant,
-                  ),
+                  DshIcon(widget.icon, size: 13, color: c.roleAssistant),
                   const SizedBox(width: 6),
                   Text(
                     widget.label,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
-                      color: DshColors.labelSecondary,
+                      color: c.labelSecondary,
                     ),
                   ),
                   const Spacer(),
                   DshIcon(
                     _open ? 'chevronDown' : 'chevronRight',
                     size: 13,
-                    color: DshColors.labelTertiary,
+                    color: c.labelTertiary,
                   ),
                 ],
               ),
@@ -612,17 +605,17 @@ class _CollapsibleNoteState extends State<_CollapsibleNote> {
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-              decoration: const BoxDecoration(
-                border: Border(top: BorderSide(color: DshColors.layer2)),
+              decoration: BoxDecoration(
+                border: Border(top: BorderSide(color: c.layer2)),
               ),
               // 按**纯文本**渲染：它不是给用户的答案，Markdown 记号在里面
               // 只会添乱（DSH 桌面端同样按文本呈现）。
               child: SelectableText(
                 widget.text,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12.5,
                   height: 20 / 12.5,
-                  color: DshColors.labelTertiary,
+                  color: c.labelTertiary,
                 ),
               ),
             ),

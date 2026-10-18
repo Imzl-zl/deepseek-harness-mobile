@@ -228,10 +228,11 @@ class _JumperButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Tooltip(
       message: tooltip,
       child: Material(
-        color: DshColors.layer2.withValues(alpha: 0.65),
+        color: c.layer2.withValues(alpha: 0.65),
         shape: const CircleBorder(),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
@@ -244,23 +245,19 @@ class _JumperButton extends StatelessWidget {
             // 带文字时用胶囊（宽度不变，只是圆角全圆），文字 11px 放得下两个字。
             decoration: BoxDecoration(borderRadius: BorderRadius.circular(18)),
             child: text == null
-                ? DshIcon(icon, size: 16, color: DshColors.labelSecondary)
+                ? DshIcon(icon, size: 16, color: c.labelSecondary)
                 : FittedBox(
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        DshIcon(
-                          icon,
-                          size: 12,
-                          color: DshColors.labelSecondary,
-                        ),
+                        DshIcon(icon, size: 12, color: c.labelSecondary),
                         const SizedBox(width: 2),
                         Text(
                           text!,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 11,
                             height: 1,
-                            color: DshColors.labelSecondary,
+                            color: c.labelSecondary,
                           ),
                         ),
                       ],

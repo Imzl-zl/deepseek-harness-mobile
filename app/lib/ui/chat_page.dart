@@ -408,6 +408,7 @@ class ChatPageState extends State<ChatPage> {
   /// **括号数不清**（实测改出过语法错误）。一层一个方法，
   /// 读代码时也不必同时记住"我在 Stack 的第几个孩子里"。
   Widget _mainScaffold(BuildContext context, {required String? jobsSid}) {
+    final c = context.dshColors;
     final items = widget.app.items;
     final sid = widget.app.currentSid;
     // **各算一次**：`_subsFor()` / `_jobsFor()` 要走投影映射，而顶栏那两枚计数
@@ -420,7 +421,7 @@ class ChatPageState extends State<ChatPage> {
     final runningJobs = jobs.where((j) => j.isLive).length;
     return Scaffold(
       key: _scaffoldKey,
-      backgroundColor: DshColors.bgBase,
+      backgroundColor: c.bgBase,
       drawer: widget.drawer,
       // **跟手**：两条边都用 Flutter 自带的边缘拖动（左 `drawer`、右 `endDrawer`）——
       // 手指拖多少抽屉走多少，松手按位置/速度决定开还是回弹，全由 `DrawerController` 管
@@ -464,7 +465,7 @@ class ChatPageState extends State<ChatPage> {
       // 文件面板（diff 预览）要宽度，任务 / 子智能体一行能放下，可以窄一些。
       endDrawer: Drawer(
         width: _sideDrawerWidth(context),
-        backgroundColor: DshColors.bgBase,
+        backgroundColor: c.bgBase,
         // 抽屉的"浮层感"：圆角 + 左边框。**宽度不再是整屏时才画** ——
         // `SidePane.fullscreen` 的原意是"竖屏手机上铺满，去掉圆角与左边框"，
         // 而 2026-10-19 起右侧改成真抽屉（用户原话"做成抽屉好看点"），
@@ -529,7 +530,7 @@ class ChatPageState extends State<ChatPage> {
           ),
           // ---- 底部：接管卡 + 输入栏 + 统计条 ----
           Container(
-            color: DshColors.sidebar,
+            color: c.sidebar,
             padding: EdgeInsets.only(
               bottom: MediaQuery.of(context).padding.bottom + 6,
             ),
@@ -962,6 +963,7 @@ class ChatPageState extends State<ChatPage> {
   /// 行与门都对照 Web 的 `UsagePill` 浮层（`StatsPills.tsx:311-330`）：
   /// 缓存写入为 0 时那一行不摆；合计 = 计费输入 + 输出。
   void _showUsageSheet() {
+    final c = context.dshColors;
     final usage = widget.app.tokenUsage;
     final hit = usage?.cacheHitText;
     unawaited(
@@ -990,7 +992,7 @@ class ChatPageState extends State<ChatPage> {
                     label: '输出',
                     value: formatExactTokens(usage.outputTokens),
                   ),
-                  const Divider(height: 20, color: DshColors.layer2),
+                  Divider(height: 20, color: c.layer2),
                   DshKeyValue(
                     label: '合计',
                     value: formatExactTokens(usage.grandTotal),
@@ -1007,6 +1009,7 @@ class ChatPageState extends State<ChatPage> {
   /// 三段分段来自 `contextBreakdown` 投影（启发式估算，Web 同样标 `~`）。
   /// 2026-10-17 之前这里四个数是写死的（7200/10100/2600/1000000）。
   void _showContextSheet() {
+    final c = context.dshColors;
     final occupancy = widget.app.contextPressure?.occupancy;
     if (occupancy == null) {
       unawaited(
@@ -1042,14 +1045,11 @@ class ChatPageState extends State<ChatPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (breakdown == null)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 12),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
                 child: Text(
                   '电脑侧没有给出三段分段，这里只显示总占用。',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: DshColors.labelTertiary,
-                  ),
+                  style: TextStyle(fontSize: 12, color: c.labelTertiary),
                 ),
               ),
             meter,
@@ -1110,6 +1110,7 @@ class ChatPageState extends State<ChatPage> {
   /// 语义逐字对照 Web：选模型带 `defaultEffort`、选等级带那个 id、
   /// "默认"只在 `defaultEffort` 缺省时才出现（`ModelSelect.tsx:129-140`）。
   void _showModelSheet() {
+    final c = context.dshColors;
     final catalog = widget.app.modelCatalog;
     if (catalog == null || catalog.groups.isEmpty) {
       _toast('拿不到模型目录：电脑侧没有返回 session/modelCatalog');
@@ -1129,10 +1130,10 @@ class ChatPageState extends State<ChatPage> {
                 padding: const EdgeInsets.fromLTRB(4, 12, 4, 4),
                 child: Text(
                   group.name,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
-                    color: DshColors.labelCaption,
+                    color: c.labelCaption,
                   ),
                 ),
               ),
@@ -1497,6 +1498,7 @@ class ChatPageState extends State<ChatPage> {
   /// 所以开门的动作里先把它清掉，而不是依赖"新建 widget 就自然是 false"
   ///（那在 widget 被复用时就不成立了）。
   Future<void> _showRiskGate(PermissionPreset option) {
+    final c = context.dshColors;
     _riskAcked = false;
     return showDshSheet<void>(
       context: context,
@@ -1505,13 +1507,13 @@ class ChatPageState extends State<ChatPage> {
         builder: (context, setSheetState) => Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               '这一档下，DSH 执行越权操作时不再问你。'
               '误操作（删文件、改工作区外的东西）不会被拦。',
               style: TextStyle(
                 fontSize: 13,
                 height: 20 / 13,
-                color: DshColors.labelSecondary,
+                color: c.labelSecondary,
               ),
             ),
             const SizedBox(height: 12),
@@ -1526,17 +1528,14 @@ class ChatPageState extends State<ChatPage> {
                       value: _riskAcked,
                       onChanged: (v) =>
                           setSheetState(() => _riskAcked = v ?? false),
-                      activeColor: DshColors.roleTool,
+                      activeColor: c.roleTool,
                     ),
                   ),
                   const SizedBox(width: 8),
-                  const Expanded(
+                  Expanded(
                     child: Text(
                       '我已了解风险',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: DshColors.labelPrimary,
-                      ),
+                      style: TextStyle(fontSize: 13, color: c.labelPrimary),
                     ),
                   ),
                 ],
@@ -1813,12 +1812,13 @@ class _SheetEmptyNote extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 20),
       child: Text(
         what,
         textAlign: TextAlign.center,
-        style: const TextStyle(fontSize: 13, color: DshColors.labelTertiary),
+        style: TextStyle(fontSize: 13, color: c.labelTertiary),
       ),
     );
   }
@@ -1840,9 +1840,10 @@ class _FileAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Expanded(
       child: Material(
-        color: filled ? DshColors.layer3 : Colors.transparent,
+        color: filled ? c.layer3 : Colors.transparent,
         borderRadius: BorderRadius.circular(DshRadius.md),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
@@ -1854,19 +1855,16 @@ class _FileAction extends StatelessWidget {
                 ? null
                 : BoxDecoration(
                     borderRadius: BorderRadius.circular(DshRadius.md),
-                    border: Border.all(color: DshColors.layer3),
+                    border: Border.all(color: c.layer3),
                   ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                DshIcon(icon, size: 14, color: DshColors.labelSecondary),
+                DshIcon(icon, size: 14, color: c.labelSecondary),
                 const SizedBox(width: 6),
                 Text(
                   label,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    color: DshColors.labelSecondary,
-                  ),
+                  style: TextStyle(fontSize: 12.5, color: c.labelSecondary),
                 ),
               ],
             ),
@@ -2208,6 +2206,7 @@ class _SessionListInline extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     // **可见性规则逐条照 DSH Web**（`sessionVisible`）:子智能体的子会话不列、
     // blank 除当前外不列。与抽屉同一条规则 —— 两边看到的必须是同一份列表。
     final visible = sessions
@@ -2235,10 +2234,10 @@ class _SessionListInline extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
           child: Text(
             bucket.label,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
-              color: DshColors.labelCaption,
+              color: c.labelCaption,
             ),
           ),
         ),
@@ -2256,10 +2255,7 @@ class _SessionListInline extends StatelessWidget {
               session.displayTitle,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 14,
-                color: DshColors.labelPrimary,
-              ),
+              style: TextStyle(fontSize: 14, color: c.labelPrimary),
             ),
             subtitle: () {
               // 副标题显示**模型**，不再显示 sid：标题按 DSH 的链会退到 sid
@@ -2281,12 +2277,12 @@ class _SessionListInline extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
           child: Row(
             children: [
-              const Text(
+              Text(
                 '会话',
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
-                  color: DshColors.labelCaption,
+                  color: c.labelCaption,
                 ),
               ),
               const Spacer(),
@@ -2296,12 +2292,8 @@ class _SessionListInline extends StatelessWidget {
                   tooltip: '重新拉取会话',
                   iconSize: 16,
                   visualDensity: VisualDensity.compact,
-                  color: DshColors.labelTertiary,
-                  icon: const DshIcon(
-                    'refresh',
-                    size: 16,
-                    color: DshColors.labelTertiary,
-                  ),
+                  color: c.labelTertiary,
+                  icon: DshIcon('refresh', size: 16, color: c.labelTertiary),
                 ),
             ],
           ),
@@ -2437,6 +2429,7 @@ class _EmptyChat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     // **"拉取失败"必须与"真没有会话"分开说**（`app_model.dart` 的 `lastError`）。
     // 两者在界面上一模一样（都是空列表），而下一步动作完全不同：
     // 一个去电脑上开会话，一个查连接/协议错误。
@@ -2489,33 +2482,24 @@ class _EmptyChat extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: [
-                DshIcon(icon, size: 48, color: DshColors.labelTertiary),
+                DshIcon(icon, size: 48, color: c.labelTertiary),
                 const SizedBox(height: 16),
                 Text(
                   title,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    color: DshColors.labelSecondary,
-                  ),
+                  style: TextStyle(fontSize: 15, color: c.labelSecondary),
                 ),
                 const SizedBox(height: 8),
                 Text(
                   detail,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: DshColors.labelTertiary,
-                  ),
+                  style: TextStyle(fontSize: 12, color: c.labelTertiary),
                 ),
                 if (failureNote != null) ...[
                   const SizedBox(height: 8),
                   Text(
                     failureNote,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: DshColors.roleTool,
-                    ),
+                    style: TextStyle(fontSize: 11, color: c.roleTool),
                   ),
                 ],
                 const SizedBox(height: 24),
@@ -2523,11 +2507,7 @@ class _EmptyChat extends StatelessWidget {
                 if (hasSessions || paired)
                   FilledButton.icon(
                     onPressed: onOpenDrawer,
-                    icon: const DshIcon(
-                      'panelLeft',
-                      size: 14,
-                      color: DshColors.onAccent,
-                    ),
+                    icon: DshIcon('panelLeft', size: 14, color: c.onAccent),
                     label: const Text('打开会话抽屉'),
                   ),
                 // 已配对但列表是空的：给一条"重新拉一次"的出路。
@@ -2537,11 +2517,7 @@ class _EmptyChat extends StatelessWidget {
                   const SizedBox(height: 8),
                   OutlinedButton.icon(
                     onPressed: onRefresh,
-                    icon: const DshIcon(
-                      'refresh',
-                      size: 14,
-                      color: DshColors.labelSecondary,
-                    ),
+                    icon: DshIcon('refresh', size: 14, color: c.labelSecondary),
                     label: const Text('重新拉取会话'),
                   ),
                 ],
@@ -2552,11 +2528,7 @@ class _EmptyChat extends StatelessWidget {
                   const SizedBox(height: 8),
                   OutlinedButton.icon(
                     onPressed: onRePair,
-                    icon: const DshIcon(
-                      'refresh',
-                      size: 14,
-                      color: DshColors.labelSecondary,
-                    ),
+                    icon: DshIcon('refresh', size: 14, color: c.labelSecondary),
                     label: const Text('重新配对（换一台电脑）'),
                   ),
                 ],
@@ -2564,19 +2536,15 @@ class _EmptyChat extends StatelessWidget {
                   const SizedBox(height: 8),
                   OutlinedButton.icon(
                     onPressed: onPreview,
-                    icon: const DshIcon(
-                      'sparkle',
-                      size: 14,
-                      color: DshColors.labelSecondary,
-                    ),
+                    icon: DshIcon('sparkle', size: 14, color: c.labelSecondary),
                     label: const Text('看示例数据'),
                   ),
                   const SizedBox(height: 8),
                   FilledButton(
                     onPressed: onConnect,
                     style: FilledButton.styleFrom(
-                      backgroundColor: DshColors.accentBlue,
-                      foregroundColor: DshColors.onAccent,
+                      backgroundColor: c.accentBlue,
+                      foregroundColor: c.onAccent,
                     ),
                     child: const Text('连电脑（配对）'),
                   ),
@@ -2607,6 +2575,7 @@ class _EmptyFilePane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final isDiff = kind == 'diff';
     return Center(
       child: Padding(
@@ -2617,15 +2586,12 @@ class _EmptyFilePane extends StatelessWidget {
             DshIcon(
               isDiff ? 'deliverDoc' : 'folderClose',
               size: 40,
-              color: DshColors.labelTertiary,
+              color: c.labelTertiary,
             ),
             const SizedBox(height: 16),
             Text(
               isDiff ? '还没有改动' : '还没有文件内容',
-              style: const TextStyle(
-                fontSize: 15,
-                color: DshColors.labelSecondary,
-              ),
+              style: TextStyle(fontSize: 15, color: c.labelSecondary),
             ),
             const SizedBox(height: 8),
             Text(
@@ -2635,10 +2601,7 @@ class _EmptyFilePane extends StatelessWidget {
                   : '在电脑上选中一个文件，这里显示它的内容。\n'
                         '数据来自 workspace-files 的 read / list。',
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 12,
-                color: DshColors.labelTertiary,
-              ),
+              style: TextStyle(fontSize: 12, color: c.labelTertiary),
             ),
           ],
         ),

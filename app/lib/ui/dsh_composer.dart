@@ -125,18 +125,19 @@ class DshComposer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final hasDraft = controller.text.trim().isNotEmpty;
     final canSend = enabled && !sending && hasDraft;
     // **主键在运行中且没有草稿时是"停止"**（Web 的 `primaryStops`）。
     final stops = running && !hasDraft && onStop != null;
     return Container(
-      color: DshColors.sidebar,
+      color: c.sidebar,
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
       child: Container(
         // `.composer { padding:6px 6px 6px 8px; border-radius:24px }`
         padding: const EdgeInsets.fromLTRB(8, 6, 6, 6),
         decoration: BoxDecoration(
-          color: DshColors.layer1,
+          color: c.layer1,
           borderRadius: BorderRadius.circular(24),
         ),
         child: Column(
@@ -165,18 +166,12 @@ class DshComposer extends StatelessWidget {
               enabled: enabled,
               minLines: 1,
               maxLines: 6,
-              style: const TextStyle(
-                fontSize: 15,
-                color: DshColors.labelPrimary,
-              ),
+              style: TextStyle(fontSize: 15, color: c.labelPrimary),
               decoration: InputDecoration(
                 isDense: true,
                 border: InputBorder.none,
                 hintText: hintText,
-                hintStyle: const TextStyle(
-                  fontSize: 15,
-                  color: DshColors.labelTertiary,
-                ),
+                hintStyle: TextStyle(fontSize: 15, color: c.labelTertiary),
                 contentPadding: const EdgeInsets.symmetric(
                   horizontal: 4,
                   vertical: 8,
@@ -229,10 +224,10 @@ class DshComposer extends StatelessWidget {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                const DshIcon(
+                                DshIcon(
                                   'database',
                                   size: 13,
-                                  color: DshColors.labelSecondary,
+                                  color: c.labelSecondary,
                                 ),
                                 const SizedBox(width: 5),
                                 Flexible(
@@ -240,26 +235,26 @@ class DshComposer extends StatelessWidget {
                                     modelName,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 12,
                                       fontWeight: FontWeight.w600,
-                                      color: DshColors.labelPrimary,
+                                      color: c.labelPrimary,
                                     ),
                                   ),
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
                                   '· $reasoningLabel',
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 12,
-                                    color: DshColors.labelCaption,
+                                    color: c.labelCaption,
                                   ),
                                 ),
                                 const SizedBox(width: 2),
-                                const DshIcon(
+                                DshIcon(
                                   'chevronDown',
                                   size: 12,
-                                  color: DshColors.labelCaption,
+                                  color: c.labelCaption,
                                 ),
                               ],
                             ),
@@ -324,16 +319,17 @@ class _AttachmentChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 4, 4, 4),
       decoration: BoxDecoration(
-        color: DshColors.layer2,
+        color: c.layer2,
         borderRadius: BorderRadius.circular(DshRadius.sm),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          DshIcon(item.icon, size: 13, color: DshColors.labelSecondary),
+          DshIcon(item.icon, size: 13, color: c.labelSecondary),
           const SizedBox(width: 6),
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 140),
@@ -341,22 +337,15 @@ class _AttachmentChip extends StatelessWidget {
               item.name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 12,
-                color: DshColors.labelSecondary,
-              ),
+              style: TextStyle(fontSize: 12, color: c.labelSecondary),
             ),
           ),
           const SizedBox(width: 2),
           GestureDetector(
             onTap: onRemove,
-            child: const Padding(
-              padding: EdgeInsets.all(2),
-              child: DshIcon(
-                'closeFill',
-                size: 12,
-                color: DshColors.labelTertiary,
-              ),
+            child: Padding(
+              padding: const EdgeInsets.all(2),
+              child: DshIcon('closeFill', size: 12, color: c.labelTertiary),
             ),
           ),
         ],
@@ -379,6 +368,7 @@ class _RoundIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final button = SizedBox(
       width: 38,
       height: 38,
@@ -392,9 +382,7 @@ class _RoundIconButton extends StatelessWidget {
             child: DshIcon(
               icon,
               size: 18,
-              color: onPressed == null
-                  ? DshColors.labelTertiary
-                  : DshColors.labelSecondary,
+              color: onPressed == null ? c.labelTertiary : c.labelSecondary,
             ),
           ),
         ),
@@ -413,8 +401,9 @@ class _Chip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Material(
-      color: DshColors.layer2,
+      color: c.layer2,
       borderRadius: BorderRadius.circular(16),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -446,9 +435,10 @@ class _IconChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final chip = Material(
       // 危险档用告警底（`.chip--icon.is-warn { background: var(--warn-bg) }`）。
-      color: isWarn ? DshColors.roleToolBg : DshColors.layer2,
+      color: isWarn ? c.roleToolBg : c.layer2,
       borderRadius: BorderRadius.circular(16),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -461,7 +451,7 @@ class _IconChip extends StatelessWidget {
             child: DshIcon(
               icon,
               size: 16,
-              color: isWarn ? DshColors.roleTool : DshColors.labelSecondary,
+              color: isWarn ? c.roleTool : c.labelSecondary,
             ),
           ),
         ),
@@ -499,34 +489,31 @@ class _SendButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final button = SizedBox(
       width: 38,
       height: 38,
       child: Material(
         // 停止键用告警底：它是"打断一次正在跑的轮次"，与普通发送区分开。
-        color: enabled
-            ? (stops ? DshColors.roleTool : DshColors.accentBlue)
-            : DshColors.layer2,
+        color: enabled ? (stops ? c.roleTool : c.accentBlue) : c.layer2,
         shape: const CircleBorder(),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: enabled ? onPressed : null,
           child: Center(
             child: sending
-                ? const SizedBox(
+                ? SizedBox(
                     width: 16,
                     height: 16,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: DshColors.onAccent,
+                      color: c.onAccent,
                     ),
                   )
                 : DshIcon(
                     stops ? 'stopFill' : 'paperPlane',
                     size: 18,
-                    color: enabled
-                        ? DshColors.onAccent
-                        : DshColors.labelTertiary,
+                    color: enabled ? c.onAccent : c.labelTertiary,
                   ),
           ),
         ),
@@ -633,14 +620,15 @@ class _ContextRing extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return SizedBox(
       width: 13,
       height: 13,
       child: CustomPaint(
         painter: _RingPainter(
           fraction: (percent.clamp(0, 100)) / 100,
-          track: DshColors.layer3,
-          fill: DshColors.roleContext,
+          track: c.layer3,
+          fill: c.roleContext,
         ),
       ),
     );
@@ -710,9 +698,10 @@ class _StatChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final iconName = icon;
     return Material(
-      color: DshColors.layer1,
+      color: c.layer1,
       borderRadius: BorderRadius.circular(999),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -723,7 +712,7 @@ class _StatChip extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (iconName != null) ...[
-                DshIcon(iconName, size: 12, color: DshColors.labelCaption),
+                DshIcon(iconName, size: 12, color: c.labelCaption),
                 const SizedBox(width: 4),
               ],
               if (leading != null) ...[leading!, const SizedBox(width: 4)],
@@ -736,10 +725,7 @@ class _StatChip extends StatelessWidget {
                 maxLines: 1,
                 // **11px**：这三项的数字都会变宽（四位数 token、三位数
                 // 百分比、十几轮），字号大一点就得多滑一下。
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: DshColors.labelCaption,
-                ),
+                style: TextStyle(fontSize: 11, color: c.labelCaption),
               ),
             ],
           ),
