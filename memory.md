@@ -6,15 +6,38 @@
 
 ## 下一步(新会话从这里开始)
 
-> **没有在跑的任务书。** 上一份 `next-session-acceptance-and-rendering.md` 的四条全部落地并已真机跑通,
-> **别再照它跑**;结论散在 `docs/subsystems/blank-session-hero.md` 与 `.agents/notes/`。
+> **在跑的任务书**:同一份 goal(goal-a9fd6fb1)。已落地四批并**真机验证**:
+> 渲染三缺陷照 DSH 修(`5a3aea4`)/ 输入栏去忙时发送图标 + 模型 chip 加图标
+> (`eed0d56`)/ 右抽屉改真抽屉 + 快速跳转钮 / 浅色主题三档。
+> **剩下的头号事项是浅色主题的收尾**(见待办 1)。
 
 待办:
 
-1. **换 WiFi 自动连上还没验**(用户说"换 WiFi 的再说")。代码已就位:`dialOrder`
+1. **UI 250 处 `DshColors.x` 迁到 `context.dshColors`**（浅色主题的收尾,
+   **头号事项**）。已落地:两套色板(`DshColors` 深 / `DshLightColors` 浅)+
+   `DshColorTokens`(ThemeExtension)+ 三档模式 + 设置页「通用」的主题行
+   (`theme_mode_test.dart` 17 项)。**未迁的后果已真机复现**:侧栏、队列条、
+   Markdown 等直接写 `DshColors.x` 的控件在浅色下仍是深色。
+   **迁移必须逐面做 + 每面截图对比**;别用脚本全文替换(实测会把方法体里的行
+   也改坏,19 处编译错误)。每迁一面跑一次 `verify-icons.cjs`。
+2. **发送队列 dock 已具备**（`QueueDock` 挂在接管卡与输入栏之间，编辑 / 删除 /
+   插话三个动作都在，走 `session.updateQueue`）。用户原话"运行时发送，它是会挂载
+   输入款上面有个发送队列的可以编辑，发送，删除的"—— **已实现，无需重做**。
+   真机没构造出来（adb 无法往 MIUI 输入法注入长文本，tools.md 记过），
+   下次用户自己发一句就能看到。
+2. **全局侧滑的真相**（别当缺口）：Flutter 原生抽屉**本来就是整页高**可拖
+   （`material/drawer.dart:680` 的 `height: double.infinity`），宽度由
+   `drawerEdgeDragWidth` 控制。限制在**系统返回手势**：Android 官方
+   `setSystemGestureExclusionRects` **每条边最多排除 200dp 总高度**，
+  所以只有上下半屏的边带体验有差。rikkahub 能"整页滑"是因为
+   `ModalNavigationDrawer` 只抢很窄一条边、不跟系统返回斗。
+   **结论：当前实现已是约束下的最优**，不要再试图"整页都能拖"。
+3. **用量统计汇总**：DSH 只有单会话 `tokenUsage` 投影；要汇总得在连接器加
+   一个聚合能力再传输。未做。
+4. **换 WiFi 自动连上还没验**(用户说"换 WiFi 的再说")。代码已就位:`dialOrder`
    (记住的 → 同网段 → 用户顺序)+ 成功过的地址永不删。判据:**不动手机、不扫码**自动连上。
    **只能等用户换到第二个网络时验,不要自造网络去"模拟"。**
-2. DSH 0.2.1 的 `registerFetchRoute` 开始校验同路径重复注册:同 path 的 GET/POST 必须合成
+5. DSH 0.2.1 的 `registerFetchRoute` 开始校验同路径重复注册:同 path 的 GET/POST 必须合成
    一条 `methods: ['GET','POST']`(0.2.0 时是绿的)。
 
 ## 当前能力(都已在真机上跑通过)
@@ -122,9 +145,9 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
-| `node app/tools/verify-platform-boundary.mjs` | **267 项**(22 条规则自检 + 扫 75 个 Dart 文件) |
+| `node app/tools/verify-platform-boundary.mjs` | **275 项**(22 条规则自检 + 扫 77 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 43 个)/ 工具脚本不许硬编码盘符(19 个) |
-| `cd app && flutter test` | **719 项** |
+| `cd app && flutter test` | **747 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **537 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
@@ -141,6 +164,14 @@
 
 ## 已落地批次索引(细节回 git 与 `.agents/notes/`)
 
+- **2026-10-19**(四批,均已真机验证,共 4 个提交):
+  `5a3aea4` 渲染三缺陷照 DSH 源码修(工具名不被 `tool/result` 覆盖 / 参数行按
+  `deriveSummary` / 系统消息折叠 / hero 居中)→ `eed0d56` 输入栏去掉忙时发送图标
+  + 模型 chip 改 `database` 图标优先 → 右抽屉改真抽屉(文件 92% / 任务·子智能体 78%
+  + 左圆角)+ 对话流快速跳转钮(rikkahub `MessageJumper`:最早 / 上一条 / 下一条 / 最新)
+  → 浅色主题三档(`DshLightColors` + `DshColorTokens` ThemeExtension + `ThemeController`)。
+  **`app/test/fixtures/real-session-events.json` 是真机落盘事件** —— 手写形状的
+  用例只会复述实现的假设,这是"我们以为的形状与真形状不同"的判据。
 - **2026-10-18/19**(连接与端点,9 个提交):帧头 id 与幂等键分离 → 多地点端点保留 → 端点管理 UI →
   PC 端上报地址后端 → 面板 + 0.2.1 适配 → 点名连接 → 切换/重连归位 → 拖动柄 44×44 → 全零投影收起。
   **每篇都有决策笔记,哈希回 `git log` 找。**
