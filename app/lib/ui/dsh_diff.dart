@@ -77,13 +77,14 @@ class DshDiff extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     if (lines.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.all(24),
+      return Padding(
+        padding: const EdgeInsets.all(24),
         child: Center(
           child: Text(
             '没有可显示的差异',
-            style: TextStyle(fontSize: 13, color: DshColors.labelTertiary),
+            style: TextStyle(fontSize: 13, color: c.labelTertiary),
           ),
         ),
       );
@@ -123,11 +124,12 @@ class _Gutter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final (bg, fg) = switch (line.kind) {
-      DiffKind.add => (DshColors.fileDiffAddGutter, DshColors.labelCaption),
-      DiffKind.del => (DshColors.fileDiffDelGutter, DshColors.labelCaption),
-      DiffKind.hunk => (DshColors.codeDiffAdd, DshColors.businessBlue),
-      DiffKind.context => (DshColors.bgBase, DshColors.labelCaption),
+      DiffKind.add => (c.fileDiffAddGutter, c.labelCaption),
+      DiffKind.del => (c.fileDiffDelGutter, c.labelCaption),
+      DiffKind.hunk => (c.codeDiffAdd, c.businessBlue),
+      DiffKind.context => (c.bgBase, c.labelCaption),
     };
     return Container(
       color: bg,
@@ -178,24 +180,17 @@ class _Body extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final (bg, marker, markerColor) = switch (line.kind) {
-      DiffKind.add => (
-        DshColors.fileDiffAddBg,
-        '+',
-        DshColors.fileDiffAddMarker,
-      ),
-      DiffKind.del => (
-        DshColors.fileDiffDelBg,
-        '−',
-        DshColors.fileDiffDelMarker,
-      ),
-      DiffKind.hunk => (DshColors.codeDiffAdd, '', DshColors.businessBlue),
-      DiffKind.context => (DshColors.bgBase, ' ', DshColors.labelTertiary),
+      DiffKind.add => (c.fileDiffAddBg, '+', c.fileDiffAddMarker),
+      DiffKind.del => (c.fileDiffDelBg, '−', c.fileDiffDelMarker),
+      DiffKind.hunk => (c.codeDiffAdd, '', c.businessBlue),
+      DiffKind.context => (c.bgBase, ' ', c.labelTertiary),
     };
     final textColor = switch (line.kind) {
-      DiffKind.hunk => DshColors.businessBlue,
-      DiffKind.context => DshColors.labelSecondary,
-      _ => DshColors.labelSecondary,
+      DiffKind.hunk => c.businessBlue,
+      DiffKind.context => c.labelSecondary,
+      _ => c.labelSecondary,
     };
     return Container(
       color: bg,
@@ -243,13 +238,14 @@ class DshCodeLines extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     if (lines.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.all(24),
+      return Padding(
+        padding: const EdgeInsets.all(24),
         child: Center(
           child: Text(
             '没有内容',
-            style: TextStyle(fontSize: 13, color: DshColors.labelTertiary),
+            style: TextStyle(fontSize: 13, color: c.labelTertiary),
           ),
         ),
       );
@@ -264,9 +260,9 @@ class DshCodeLines extends StatelessWidget {
             children: [
               for (var i = 0; i < lines.length; i += 1)
                 Container(
-                  color: DshColors.bgBase,
+                  color: c.bgBase,
                   height: _lineHeight,
-                  child: _Num(i + 1, color: DshColors.labelCaption),
+                  child: _Num(i + 1, color: c.labelCaption),
                 ),
             ],
           ),
@@ -278,18 +274,18 @@ class DshCodeLines extends StatelessWidget {
                 children: [
                   for (final line in lines)
                     Container(
-                      color: DshColors.bgBase,
+                      color: c.bgBase,
                       height: _lineHeight,
                       child: Padding(
                         // `.codeline .tx { padding: 0 16px 0 10px }`
                         padding: const EdgeInsets.only(left: 10, right: 16),
                         child: Text(
                           line,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'monospace',
                             fontSize: 12.5,
                             height: _lineHeight / 12.5,
-                            color: DshColors.labelSecondary,
+                            color: c.labelSecondary,
                           ),
                         ),
                       ),

@@ -58,20 +58,17 @@ class _QrScanPageState extends State<QrScanPage> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
-        foregroundColor: DshColors.labelPrimary,
+        foregroundColor: c.labelPrimary,
         title: const Text('扫一扫'),
         leading: IconButton(
           tooltip: '返回',
           onPressed: () => _finish(null),
-          icon: const DshIcon(
-            'chevronLeft',
-            size: 20,
-            color: DshColors.labelPrimary,
-          ),
+          icon: DshIcon('chevronLeft', size: 20, color: c.labelPrimary),
         ),
       ),
       body: Stack(
@@ -114,33 +111,24 @@ class _ProblemBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const DshIcon(
-              'warningTriangle',
-              size: 40,
-              color: DshColors.labelTertiary,
-            ),
+            DshIcon('warningTriangle', size: 40, color: c.labelTertiary),
             const SizedBox(height: 16),
             Text(
               title,
-              style: const TextStyle(
-                fontSize: 15,
-                color: DshColors.labelSecondary,
-              ),
+              style: TextStyle(fontSize: 15, color: c.labelSecondary),
             ),
             const SizedBox(height: 8),
             Text(
               detail,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 12,
-                color: DshColors.labelTertiary,
-              ),
+              style: TextStyle(fontSize: 12, color: c.labelTertiary),
             ),
             const SizedBox(height: 20),
             OutlinedButton(onPressed: onCancel, child: const Text('返回')),

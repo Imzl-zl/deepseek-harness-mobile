@@ -42,9 +42,10 @@ Future<void> showConnectionActionsSheet(
   /// 换一条并直接连（弹选择框的动作由调用方实现 —— 它持有 `AppModel`）。
   VoidCallback? onPickEndpoint,
 }) {
+  final c = context.dshColors;
   return showModalBottomSheet<void>(
     context: context,
-    backgroundColor: DshColors.layer1,
+    backgroundColor: c.layer1,
     builder: (context) => SafeArea(
       // **可滚动**：2026-10-18 加了「换个连接方式」「重新连接」两行之后，
       // 小屏上会 RenderFlex overflow —— 而"选项多到放不下"不该表现成

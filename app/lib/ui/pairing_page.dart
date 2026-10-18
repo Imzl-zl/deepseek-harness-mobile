@@ -327,13 +327,14 @@ class _PairingPageState extends State<PairingPage> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final attempt = _attempt;
     final result = _result;
     return Scaffold(
-      backgroundColor: DshColors.bgBase,
+      backgroundColor: c.bgBase,
       appBar: AppBar(
-        backgroundColor: DshColors.sidebar,
-        foregroundColor: DshColors.labelPrimary,
+        backgroundColor: c.sidebar,
+        foregroundColor: c.labelPrimary,
         title: const Text('配对'),
         // 能退回去看界面（配对是**主动的一步**，不是必经的门）。
         leading: widget.onCancel == null
@@ -341,11 +342,7 @@ class _PairingPageState extends State<PairingPage> {
             : IconButton(
                 tooltip: '返回',
                 onPressed: widget.onCancel,
-                icon: const DshIcon(
-                  'chevronLeft',
-                  size: 20,
-                  color: DshColors.labelPrimary,
-                ),
+                icon: DshIcon('chevronLeft', size: 20, color: c.labelPrimary),
               ),
       ),
       body: ListView(
@@ -357,26 +354,22 @@ class _PairingPageState extends State<PairingPage> {
               key: const Key('pairing-notice'),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: DshColors.layer1,
+                color: c.layer1,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: DshColors.error),
+                border: Border.all(color: c.error),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const DshIcon(
-                    'warningTriangle',
-                    size: 18,
-                    color: DshColors.error,
-                  ),
+                  DshIcon('warningTriangle', size: 18, color: c.error),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       widget.notice!,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 13,
                         height: 1.5,
-                        color: DshColors.labelPrimary,
+                        color: c.labelPrimary,
                       ),
                     ),
                   ),
@@ -400,10 +393,10 @@ class _PairingPageState extends State<PairingPage> {
           FilledButton.icon(
             onPressed: _busy || attempt != null ? null : _scan,
             style: FilledButton.styleFrom(
-              backgroundColor: DshColors.accentBlue,
-              foregroundColor: DshColors.onAccent,
+              backgroundColor: c.accentBlue,
+              foregroundColor: c.onAccent,
             ),
-            icon: const DshIcon(
+            icon: DshIcon(
               // **必须是 DSH 图标集里的名字**：`dsh_icons.dart` 查不到键就抛，
               // 而那个 ErrorWidget 会把本页的输入框与按钮**挤出屏幕** ——
               // 2026-10-15 真机上就这样整个配对页变成一块红（当时写的是
@@ -412,7 +405,7 @@ class _PairingPageState extends State<PairingPage> {
               // 那条守着。
               'inspect',
               size: 16,
-              color: DshColors.onAccent,
+              color: c.onAccent,
             ),
             label: const Text('扫一扫'),
           ),
@@ -421,20 +414,17 @@ class _PairingPageState extends State<PairingPage> {
             controller: _input,
             minLines: 3,
             maxLines: 6,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
               fontFamily: 'monospace',
-              color: DshColors.labelPrimary,
+              color: c.labelPrimary,
             ),
             decoration: InputDecoration(
               hintText:
                   '{"v":2,"relay":"wss://…","pcId":"…","pcPubEd":"…","pcPubDh":"…","offerId":"…","code":"…"}',
-              hintStyle: const TextStyle(
-                fontSize: 11,
-                color: DshColors.labelTertiary,
-              ),
+              hintStyle: TextStyle(fontSize: 11, color: c.labelTertiary),
               filled: true,
-              fillColor: DshColors.layer1,
+              fillColor: c.layer1,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(DshRadius.md),
                 borderSide: BorderSide.none,
@@ -446,8 +436,8 @@ class _PairingPageState extends State<PairingPage> {
             // 已经有一条候选通道挂着时不许再开一条（中转对同一台设备只该有一条）。
             onPressed: _busy || attempt != null ? null : _connect,
             style: FilledButton.styleFrom(
-              backgroundColor: DshColors.accentBlue,
-              foregroundColor: DshColors.onAccent,
+              backgroundColor: c.accentBlue,
+              foregroundColor: c.onAccent,
             ),
             // 文案诚实：这一步**真的会连电脑**（换票 → 升级 → 受限握手），
             // 而不是"解析一下"。用户按下去之后电脑侧会出现一行候选记录。
@@ -494,6 +484,7 @@ class _Step extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
@@ -503,26 +494,17 @@ class _Step extends StatelessWidget {
             width: 20,
             height: 20,
             alignment: Alignment.center,
-            decoration: const BoxDecoration(
-              color: DshColors.layer2,
-              shape: BoxShape.circle,
-            ),
+            decoration: BoxDecoration(color: c.layer2, shape: BoxShape.circle),
             child: Text(
               '$index',
-              style: const TextStyle(
-                fontSize: 11,
-                color: DshColors.labelSecondary,
-              ),
+              style: TextStyle(fontSize: 11, color: c.labelSecondary),
             ),
           ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               text,
-              style: const TextStyle(
-                fontSize: 13,
-                color: DshColors.labelSecondary,
-              ),
+              style: TextStyle(fontSize: 13, color: c.labelSecondary),
             ),
           ),
         ],
@@ -539,22 +521,23 @@ class _ErrorBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: DshColors.layer1,
+        color: c.layer1,
         borderRadius: BorderRadius.circular(DshRadius.sm),
-        border: Border.all(color: DshColors.error),
+        border: Border.all(color: c.error),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const DshIcon('warningTriangle', size: 16, color: DshColors.error),
+          DshIcon('warningTriangle', size: 16, color: c.error),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               message,
-              style: const TextStyle(fontSize: 12, color: DshColors.error),
+              style: TextStyle(fontSize: 12, color: c.error),
             ),
           ),
         ],
@@ -592,48 +575,46 @@ class _IdentityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: DshColors.layer1,
+        color: c.layer1,
         borderRadius: BorderRadius.circular(DshRadius.md),
-        border: Border.all(color: DshColors.layer3),
+        border: Border.all(color: c.layer3),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             '通道已就绪，等待你确认',
             style: TextStyle(
               fontSize: 13,
-              color: DshColors.labelPrimary,
+              color: c.labelPrimary,
               fontWeight: FontWeight.w600,
             ),
           ),
           const SizedBox(height: 4),
-          const Text(
+          Text(
             '下面这台电脑的身份来自你扫的二维码，网络无法替换它。'
             '确认之后，配对码才会加密发过去 —— 电脑此刻还没有这台设备的任何记录。',
-            style: TextStyle(fontSize: 11, color: DshColors.labelTertiary),
+            style: TextStyle(fontSize: 11, color: c.labelTertiary),
           ),
           if (replacing) ...[
             const SizedBox(height: 8),
             // 重新配对的后果：换新密钥与新令牌，电脑侧**替换**这台手机的旧记录
             // （不再多一行）。这是 2026-10-17 用户"为啥每次扫都是一个新设备"
             // 的答案在手机侧的那一半。
-            const Row(
+            Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                DshIcon('refresh', size: 14, color: DshColors.labelTertiary),
-                SizedBox(width: 6),
+                DshIcon('refresh', size: 14, color: c.labelTertiary),
+                const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     '本机在这台电脑上已有配对记录：这次会换新密钥并替换那条记录，'
                     '不会新增一行。',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: DshColors.labelTertiary,
-                    ),
+                    style: TextStyle(fontSize: 11, color: c.labelTertiary),
                   ),
                 ),
               ],
@@ -655,8 +636,8 @@ class _IdentityCard extends StatelessWidget {
                   style: FilledButton.styleFrom(
                     // 用 `roleContext`（token 表里那个绿）而不是自造一个色值 ——
                     // 三端的颜色只有一个来源（`dsh_colors.dart`）。
-                    backgroundColor: DshColors.roleContext,
-                    foregroundColor: DshColors.onAccent,
+                    backgroundColor: c.roleContext,
+                    foregroundColor: c.onAccent,
                   ),
                   child: const Text('确认并配对'),
                 ),
@@ -664,9 +645,7 @@ class _IdentityCard extends StatelessWidget {
               const SizedBox(width: 8),
               TextButton(
                 onPressed: busy ? null : onCancel,
-                style: TextButton.styleFrom(
-                  foregroundColor: DshColors.labelSecondary,
-                ),
+                style: TextButton.styleFrom(foregroundColor: c.labelSecondary),
                 child: const Text('取消'),
               ),
             ],
@@ -694,29 +673,30 @@ class _DoneCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: DshColors.layer1,
+        color: c.layer1,
         borderRadius: BorderRadius.circular(DshRadius.md),
-        border: Border.all(color: DshColors.layer3),
+        border: Border.all(color: c.layer3),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             '配对成功',
             style: TextStyle(
               fontSize: 13,
-              color: DshColors.labelPrimary,
+              color: c.labelPrimary,
               fontWeight: FontWeight.w600,
             ),
           ),
           const SizedBox(height: 4),
-          const Text(
+          Text(
             '电脑已经登记这台设备并签发了设备令牌。下面是这台设备的辅助指纹，'
             '与电脑侧记录里的值相同（不参与授权判定）。',
-            style: TextStyle(fontSize: 11, color: DshColors.labelTertiary),
+            style: TextStyle(fontSize: 11, color: c.labelTertiary),
           ),
           const SizedBox(height: 12),
           Row(
@@ -728,11 +708,7 @@ class _DoneCard extends StatelessWidget {
                 onPressed: () => unawaited(
                   Clipboard.setData(ClipboardData(text: result.sas)),
                 ),
-                icon: const DshIcon(
-                  'copy',
-                  size: 16,
-                  color: DshColors.labelTertiary,
-                ),
+                icon: DshIcon('copy', size: 16, color: c.labelTertiary),
               ),
             ],
           ),
@@ -747,8 +723,8 @@ class _DoneCard extends StatelessWidget {
             child: FilledButton(
               onPressed: onDone,
               style: FilledButton.styleFrom(
-                backgroundColor: DshColors.roleContext,
-                foregroundColor: DshColors.onAccent,
+                backgroundColor: c.roleContext,
+                foregroundColor: c.onAccent,
               ),
               child: const Text('完成'),
             ),
@@ -767,6 +743,7 @@ class _SasDisplay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Row(
       children: [
         for (final digit in sas.split(''))
@@ -777,15 +754,15 @@ class _SasDisplay extends StatelessWidget {
               height: 34,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: DshColors.layer2,
+                color: c.layer2,
                 borderRadius: BorderRadius.circular(DshRadius.xs),
               ),
               child: Text(
                 digit,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 18,
                   fontFamily: 'monospace',
-                  color: DshColors.labelPrimary,
+                  color: c.labelPrimary,
                 ),
               ),
             ),
@@ -804,6 +781,7 @@ class _Field extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
@@ -813,10 +791,7 @@ class _Field extends StatelessWidget {
             width: 60,
             child: Text(
               label,
-              style: const TextStyle(
-                fontSize: 11,
-                color: DshColors.labelTertiary,
-              ),
+              style: TextStyle(fontSize: 11, color: c.labelTertiary),
             ),
           ),
           Expanded(
@@ -824,10 +799,10 @@ class _Field extends StatelessWidget {
               value,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'monospace',
-                color: DshColors.labelSecondary,
+                color: c.labelSecondary,
               ),
             ),
           ),
