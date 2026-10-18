@@ -62,6 +62,7 @@ class _QueueDockState extends State<QueueDock> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final items = widget.app.queueOf(widget.sid);
     if (items.isEmpty) return const SizedBox.shrink();
     // 只有一条时**永远展开**（Web 的 `listVisible = rowCount === 1 || expanded`）——
@@ -72,9 +73,9 @@ class _QueueDockState extends State<QueueDock> {
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
       child: Container(
         decoration: BoxDecoration(
-          color: DshColors.layer1,
+          color: c.layer1,
           borderRadius: BorderRadius.circular(DshRadius.md),
-          border: Border.all(color: DshColors.layer2),
+          border: Border.all(color: c.layer2),
         ),
         clipBehavior: Clip.antiAlias,
         child: Column(
@@ -90,25 +91,21 @@ class _QueueDockState extends State<QueueDock> {
                   ),
                   child: Row(
                     children: [
-                      const DshIcon(
-                        'queue',
-                        size: 14,
-                        color: DshColors.labelSecondary,
-                      ),
+                      DshIcon('queue', size: 14, color: c.labelSecondary),
                       const SizedBox(width: 6),
                       Text(
                         '${items.length} 条排队消息',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
-                          color: DshColors.labelSecondary,
+                          color: c.labelSecondary,
                         ),
                       ),
                       const Spacer(),
                       DshIcon(
                         expanded ? 'chevronDown' : 'chevronRight',
                         size: 14,
-                        color: DshColors.labelTertiary,
+                        color: c.labelTertiary,
                       ),
                     ],
                   ),
@@ -211,15 +208,16 @@ class _QueueRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Container(
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: DshColors.layer2)),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: c.layer2)),
       ),
       padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
       child: Row(
         children: [
           if (single) ...[
-            const DshIcon('queue', size: 14, color: DshColors.labelSecondary),
+            DshIcon('queue', size: 14, color: c.labelSecondary),
             const SizedBox(width: 6),
           ],
           Expanded(
@@ -230,10 +228,10 @@ class _QueueRow extends StatelessWidget {
                   item.previewText.isEmpty ? '（空消息）' : item.previewText,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     height: 20 / 13,
-                    color: DshColors.labelPrimary,
+                    color: c.labelPrimary,
                   ),
                 ),
                 if (item.attachmentCount > 0)
@@ -241,10 +239,7 @@ class _QueueRow extends StatelessWidget {
                     padding: const EdgeInsets.only(top: 2),
                     child: Text(
                       '${item.attachmentCount} 个附件（不随编辑发送）',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: DshColors.labelTertiary,
-                      ),
+                      style: TextStyle(fontSize: 11, color: c.labelTertiary),
                     ),
                   ),
               ],
@@ -294,6 +289,7 @@ class _RowAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Tooltip(
       message: tooltip,
       child: SizedBox(
@@ -309,9 +305,7 @@ class _RowAction extends StatelessWidget {
               child: DshIcon(
                 icon,
                 size: 14,
-                color: enabled
-                    ? DshColors.labelSecondary
-                    : DshColors.labelTertiary,
+                color: enabled ? c.labelSecondary : c.labelTertiary,
               ),
             ),
           ),
@@ -344,30 +338,28 @@ class _EditQueueDialogState extends State<_EditQueueDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return AlertDialog(
-      backgroundColor: DshColors.layer1,
-      title: const Text(
+      backgroundColor: c.layer1,
+      title: Text(
         '编辑排队消息',
-        style: TextStyle(fontSize: 16, color: DshColors.labelPrimary),
+        style: TextStyle(fontSize: 16, color: c.labelPrimary),
       ),
       content: TextField(
         controller: _controller,
         autofocus: true,
         maxLines: 6,
         minLines: 3,
-        style: const TextStyle(fontSize: 14, color: DshColors.labelPrimary),
-        decoration: const InputDecoration(
+        style: TextStyle(fontSize: 14, color: c.labelPrimary),
+        decoration: InputDecoration(
           hintText: '新的内容（只发文本）',
-          hintStyle: TextStyle(fontSize: 13, color: DshColors.labelTertiary),
+          hintStyle: TextStyle(fontSize: 13, color: c.labelTertiary),
         ),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text(
-            '取消',
-            style: TextStyle(color: DshColors.labelSecondary),
-          ),
+          child: Text('取消', style: TextStyle(color: c.labelSecondary)),
         ),
         TextButton(
           // 空文本不给保存：DSH 会拒（`commands.ts:442-448`），
@@ -375,10 +367,7 @@ class _EditQueueDialogState extends State<_EditQueueDialog> {
           onPressed: _controller.text.trim().isEmpty
               ? null
               : () => Navigator.of(context).pop(_controller.text),
-          child: const Text(
-            '保存',
-            style: TextStyle(color: DshColors.accentBlue),
-          ),
+          child: Text('保存', style: TextStyle(color: c.accentBlue)),
         ),
       ],
     );

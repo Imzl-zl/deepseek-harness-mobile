@@ -125,27 +125,28 @@ class _DshStateDotState extends State<DshStateDot>
   }
 
   /// 实心态的颜色。转圈态走 `labelTertiary`（`StateDot.module.css:39`），不走这里。
-  Color get _solidColor => switch (widget.state) {
-    DshStateDotState.done => DshColors.stateSuccess,
-    DshStateDotState.warning => DshColors.stateWarn,
-    DshStateDotState.error => DshColors.stateError,
-    DshStateDotState.idle => DshColors.stateIdle,
-    DshStateDotState.ongoing => DshColors.labelTertiary,
+  ///
+  /// **色板由参数给**：这个 getter 在 State 上，拿不到 `BuildContext` 之外的
+  /// 东西；而 `context.dshColors` 要 context。所以调用方（build）传进来 ——
+  /// 与"色板只有一个真值源"不冲突，因为值仍然来自 [DshColorTokens]。
+  Color _solidColor(DshColorTokens c) => switch (widget.state) {
+    DshStateDotState.done => c.stateSuccess,
+    DshStateDotState.warning => c.stateWarn,
+    DshStateDotState.error => c.stateError,
+    DshStateDotState.idle => c.stateIdle,
+    DshStateDotState.ongoing => c.labelTertiary,
   };
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     if (widget.state == DshStateDotState.ongoing) {
       return SizedBox(
         width: 14,
         height: 14,
         child: RotationTransition(
           turns: _spinController(),
-          child: const DshIcon(
-            'loading',
-            size: 14,
-            color: DshColors.labelTertiary,
-          ),
+          child: DshIcon('loading', size: 14, color: c.labelTertiary),
         ),
       );
     }
@@ -157,7 +158,10 @@ class _DshStateDotState extends State<DshStateDot>
         child: Container(
           width: 6,
           height: 6,
-          decoration: BoxDecoration(color: _solidColor, shape: BoxShape.circle),
+          decoration: BoxDecoration(
+            color: _solidColor(c),
+            shape: BoxShape.circle,
+          ),
         ),
       ),
     );

@@ -75,16 +75,17 @@ class SettingsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     // **主题三件提成局部变量**：下面的 `builder: (context, _) => ListView(...)`
     // 是箭头函数体，而箭头体里 `widget.x` 不总被解析（实测报
     // `Undefined name 'widget'`）。提成本地变量既绕开这点，读起来也短。
     final themeMode = this.themeMode;
     final onThemeMode = this.onThemeMode;
     return Scaffold(
-      backgroundColor: DshColors.bgBase,
+      backgroundColor: c.bgBase,
       appBar: AppBar(
-        backgroundColor: DshColors.sidebar,
-        foregroundColor: DshColors.labelPrimary,
+        backgroundColor: c.sidebar,
+        foregroundColor: c.labelPrimary,
         // 图标照原型设置页的返回键（`chevronLeft`）—— 与顶栏同一套按钮，
         // 不引 Material 的默认返回箭头（那会多一套视觉）。
         leading: DshAppBarButton(
@@ -92,12 +93,12 @@ class SettingsPage extends StatelessWidget {
           tooltip: '返回',
           onPressed: () => Navigator.of(context).maybePop(),
         ),
-        title: const Text(
+        title: Text(
           '设置',
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w500,
-            color: DshColors.labelPrimary,
+            color: c.labelPrimary,
           ),
         ),
       ),
@@ -189,14 +190,14 @@ class SettingsPage extends StatelessWidget {
             const _SectionTitle('连接方式'),
             const _EndpointNote(),
             if (app.endpoints.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 4, vertical: 12),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 4,
+                  vertical: 12,
+                ),
                 child: Text(
                   '还没有端点。配对成功后，这里会列出可拨的地址。',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: DshColors.labelSecondary,
-                  ),
+                  style: TextStyle(fontSize: 13, color: c.labelSecondary),
                 ),
               )
             else
@@ -267,14 +268,15 @@ class _SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 16, 4, 2),
       child: Text(
         text,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w600,
-          color: DshColors.labelSecondary,
+          color: c.labelSecondary,
         ),
       ),
     );
@@ -297,26 +299,17 @@ class _PrefRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return ListTile(
       dense: true,
-      leading: DshIcon(icon, size: 18, color: DshColors.labelSecondary),
-      title: Text(
-        label,
-        style: const TextStyle(fontSize: 14, color: DshColors.labelPrimary),
-      ),
+      leading: DshIcon(icon, size: 18, color: c.labelSecondary),
+      title: Text(label, style: TextStyle(fontSize: 14, color: c.labelPrimary)),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            value,
-            style: const TextStyle(fontSize: 13, color: DshColors.labelCaption),
-          ),
+          Text(value, style: TextStyle(fontSize: 13, color: c.labelCaption)),
           const SizedBox(width: 4),
-          const DshIcon(
-            'chevronRight',
-            size: 14,
-            color: DshColors.labelTertiary,
-          ),
+          DshIcon('chevronRight', size: 14, color: c.labelTertiary),
         ],
       ),
       onTap: onTap,
@@ -332,15 +325,12 @@ class _PrefNote extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
       child: Text(
         text,
-        style: const TextStyle(
-          fontSize: 11,
-          height: 17 / 11,
-          color: DshColors.labelTertiary,
-        ),
+        style: TextStyle(fontSize: 11, height: 17 / 11, color: c.labelTertiary),
       ),
     );
   }
@@ -401,13 +391,14 @@ class _EndpointNote extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+    final c = context.dshColors;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
       child: Text(
         '拨号顺序：上次连上的那条先试 → 和你现在同一 WiFi 的次之 → 其余按这里的顺序。'
         '所以换地点通常不用重扫码；拨不通会自动顺延。'
         '点一行可以设为首选或删除，也可以手填一个地址。',
-        style: TextStyle(fontSize: 12, color: DshColors.labelTertiary),
+        style: TextStyle(fontSize: 12, color: c.labelTertiary),
       ),
     );
   }
@@ -420,11 +411,12 @@ class _EndpointCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final endpoints = app.endpoints;
     if (endpoints.isEmpty) return const SizedBox.shrink();
     return Container(
       decoration: BoxDecoration(
-        color: DshColors.layer1,
+        color: c.layer1,
         borderRadius: BorderRadius.circular(12),
       ),
       clipBehavior: Clip.antiAlias,
@@ -449,7 +441,7 @@ class _EndpointCard extends StatelessWidget {
           children: [
             // 分隔线画在**行前面**而不是行里：拖动时它跟着行一起走，
             // 而"行与行之间的线"是静态的。
-            if (index > 0) Divider(height: 1, color: DshColors.border()),
+            if (index > 0) Divider(height: 1, color: c.border()),
             _EndpointRow(app: app, endpoint: endpoints[index], index: index),
           ],
         ),
@@ -474,6 +466,7 @@ class _EndpointRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     // 「当前连接」只在**真的在服务态**时给：拨通记录是跨连接保留的，
     // 重连中把上一条连接的赢家标成"当前"会和顶栏/连接 sheet 的说法打架
     //（那边此时说的是"重连中…"）。同一个事实只有一套说法。
@@ -481,7 +474,7 @@ class _EndpointRow extends StatelessWidget {
         app.connection == ConnectionStateView.serving &&
         app.activeEndpoint?.id == endpoint.id;
     final isFirst = app.endpoints.first.id == endpoint.id;
-    final (status, statusColor) = _statusOf(isActive);
+    final (status, statusColor) = _statusOf(isActive, c);
     // **正在按用户点名连接**时这一行暂时不可删：连接正在进行，删掉它会让
     // 失败回落的落点消失。
     final isRequested = app.requestedEndpoint?.id == endpoint.id;
@@ -506,14 +499,14 @@ class _EndpointRow extends StatelessWidget {
             // 1/3 指甲盖大小的东西（真机上拖不动就是这个原因）。
             ReorderableDragStartListener(
               index: index,
-              child: const SizedBox(
+              child: SizedBox(
                 width: 44,
                 height: 44,
                 child: Center(
                   child: DshIcon(
                     'chevronsUpDown',
                     size: 18,
-                    color: DshColors.labelTertiary,
+                    color: c.labelTertiary,
                   ),
                 ),
               ),
@@ -521,7 +514,7 @@ class _EndpointRow extends StatelessWidget {
             DshIcon(
               endpoint.kind == EndpointKind.direct ? 'link' : 'globe',
               size: 18,
-              color: DshColors.labelSecondary,
+              color: c.labelSecondary,
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -530,20 +523,17 @@ class _EndpointRow extends StatelessWidget {
                 children: [
                   Text(
                     endpointKindLabel(endpoint.kind),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w500,
-                      color: DshColors.labelPrimary,
+                      color: c.labelPrimary,
                     ),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     _addressLine(),
                     maxLines: 2,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: DshColors.labelSecondary,
-                    ),
+                    style: TextStyle(fontSize: 12, color: c.labelSecondary),
                   ),
                   const SizedBox(height: 2),
                   Text(
@@ -558,13 +548,13 @@ class _EndpointRow extends StatelessWidget {
             SizedBox(
               width: 40,
               child: isFirst
-                  ? const Center(
+                  ? Center(
                       child: Text(
                         '首选',
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
-                          color: DshColors.accentBlue,
+                          color: c.accentBlue,
                         ),
                       ),
                     )
@@ -577,11 +567,7 @@ class _EndpointRow extends StatelessWidget {
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
                 onPressed: isRequested ? null : () => _onMore(context),
-                icon: const DshIcon(
-                  'ellipsis',
-                  size: 18,
-                  color: DshColors.labelSecondary,
-                ),
+                icon: DshIcon('ellipsis', size: 18, color: c.labelSecondary),
               ),
             ),
           ],
@@ -603,18 +589,21 @@ class _EndpointRow extends StatelessWidget {
   }
 
   /// 状态文案与颜色。**全部来自真实拨号记录**，没有记录就说"还没试过"。
-  (String, Color) _statusOf(bool isActive) {
+  ///
+  /// 色板由参数给（与 `dsh_state_dot._solidColor` 同一条理由）：
+  /// 这个方法是私有 helper，拿不到 `BuildContext`。
+  (String, Color) _statusOf(bool isActive, DshColorTokens c) {
     if (app.requestedEndpoint?.id == endpoint.id) {
-      return ('正在用这条连接…', DshColors.accentBlue);
+      return ('正在用这条连接…', c.accentBlue);
     }
-    if (isActive) return ('当前连接', DshColors.stateSuccess);
+    if (isActive) return ('当前连接', c.stateSuccess);
     final attempt = app.attemptOf(endpoint);
-    if (attempt == null) return ('还没试过', DshColors.labelCaption);
-    if (attempt.ok) return ('拨通过', DshColors.labelTertiary);
+    if (attempt == null) return ('还没试过', c.labelCaption);
+    if (attempt.ok) return ('拨通过', c.labelTertiary);
     final reason = attempt.reason?.isNotEmpty == true
         ? '：${attempt.reason}'
         : '';
-    return ('拨不通$reason', DshColors.error);
+    return ('拨不通$reason', c.error);
   }
 
   /// **点一行 = 设为首选**（只改顺序，不动当前连接）。
@@ -634,6 +623,7 @@ class _EndpointRow extends StatelessWidget {
   /// "立刻连"放在这里而不是整行：整行已经是"设首选"，两种点击意图挤在同一行
   /// 会让人不敢点（用户原话见 [_EndpointRow] 的注释）。
   Future<void> _onMore(BuildContext context) async {
+    final c = context.dshColors;
     final isActive =
         app.connection == ConnectionStateView.serving &&
         app.activeEndpoint?.id == endpoint.id;
@@ -675,7 +665,7 @@ class _EndpointRow extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: DshColors.layer1,
+        backgroundColor: c.layer1,
         title: const Text('删除这个端点？'),
         content: Text(
           '${_addressLine()}\n\n'
@@ -690,7 +680,7 @@ class _EndpointRow extends StatelessWidget {
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('删除', style: TextStyle(color: DshColors.error)),
+            child: Text('删除', style: TextStyle(color: c.error)),
           ),
         ],
       ),
@@ -746,6 +736,7 @@ class _HiddenEndpoints extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final hidden = app.hiddenEndpointIds;
     if (hidden.isEmpty) return const SizedBox.shrink();
     return Padding(
@@ -776,10 +767,7 @@ class _HiddenEndpoints extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
           child: Text(
             '已隐藏 ${hidden.length} 条端点 · 点这里放回来',
-            style: const TextStyle(
-              fontSize: 12,
-              color: DshColors.labelTertiary,
-            ),
+            style: TextStyle(fontSize: 12, color: c.labelTertiary),
           ),
         ),
       ),
@@ -804,11 +792,12 @@ class _AddEndpointButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Align(
       alignment: Alignment.centerLeft,
       child: TextButton.icon(
         onPressed: () => _add(context),
-        icon: const DshIcon('plus', size: 16, color: DshColors.accentBlue),
+        icon: DshIcon('plus', size: 16, color: c.accentBlue),
         label: const Text('添加端点'),
       ),
     );
@@ -875,8 +864,9 @@ class _AddEndpointDialogState extends State<_AddEndpointDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return AlertDialog(
-      backgroundColor: DshColors.layer1,
+      backgroundColor: c.layer1,
       title: const Text('添加端点'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -919,10 +909,7 @@ class _AddEndpointDialogState extends State<_AddEndpointDialog> {
             _kind == EndpointKind.direct
                 ? '直连不走中转、不要票：填电脑侧直连监听面的地址。'
                 : '中转要换票：填中转的根地址（不带路径）。',
-            style: const TextStyle(
-              fontSize: 11,
-              color: DshColors.labelTertiary,
-            ),
+            style: TextStyle(fontSize: 11, color: c.labelTertiary),
           ),
         ],
       ),

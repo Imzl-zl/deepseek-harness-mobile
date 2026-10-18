@@ -153,6 +153,7 @@ class SidePane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     // **必须有 `Material` 祖先**：这一层里到处是 `InkWell`，而它们要求
     // 上方有 `Material` 才能画水波与接收点击。缺了它实测报
     // `No Material widget found` —— 而那个错误是**运行时**才出现的
@@ -161,7 +162,7 @@ class SidePane extends StatelessWidget {
       color: Colors.transparent,
       child: Container(
         decoration: BoxDecoration(
-          color: DshColors.bgBase,
+          color: c.bgBase,
           // 竖屏全屏时**去掉圆角与左边框**（`#app.side-full .page--side`）。
           borderRadius: fullscreen
               ? null
@@ -169,9 +170,7 @@ class SidePane extends StatelessWidget {
                   topLeft: Radius.circular(DshRadius.panel),
                   bottomLeft: Radius.circular(DshRadius.panel),
                 ),
-          border: fullscreen
-              ? null
-              : const Border(left: BorderSide(color: DshColors.layer2)),
+          border: fullscreen ? null : Border(left: BorderSide(color: c.layer2)),
         ),
         child: Column(
           children: [
@@ -201,10 +200,10 @@ class SidePane extends StatelessWidget {
                                 header.title,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w600,
-                                  color: DshColors.labelPrimary,
+                                  color: c.labelPrimary,
                                 ),
                               ),
                               if (header.subtitle.isNotEmpty)
@@ -212,9 +211,9 @@ class SidePane extends StatelessWidget {
                                   header.subtitle,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 11,
-                                    color: DshColors.labelCaption,
+                                    color: c.labelCaption,
                                   ),
                                 ),
                             ],
@@ -223,20 +222,20 @@ class SidePane extends StatelessWidget {
                         if (header.added != null)
                           Text(
                             '+${header.added}',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontFamily: 'monospace',
                               fontSize: 12,
-                              color: DshColors.fileDiffAddMarker,
+                              color: c.fileDiffAddMarker,
                             ),
                           ),
                         if (header.removed != null) ...[
                           const SizedBox(width: 6),
                           Text(
                             '−${header.removed}',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontFamily: 'monospace',
                               fontSize: 12,
-                              color: DshColors.fileDiffDelMarker,
+                              color: c.fileDiffDelMarker,
                             ),
                           ),
                         ],
@@ -311,6 +310,7 @@ class _FilePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Column(
       children: [
         // **不要在这里套横向滚动**：`DshDiff` / `DshCodeLines` 内部已经是
@@ -321,8 +321,8 @@ class _FilePanel extends StatelessWidget {
         Expanded(child: body ?? const SizedBox.shrink()),
         if (actions != null)
           Container(
-            decoration: const BoxDecoration(
-              border: Border(top: BorderSide(color: DshColors.layer1)),
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: c.layer1)),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: actions,
@@ -352,11 +352,12 @@ class _JobPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     if (jobs.isEmpty) {
       return Center(
         child: Text(
           emptyText,
-          style: const TextStyle(fontSize: 13, color: DshColors.labelTertiary),
+          style: TextStyle(fontSize: 13, color: c.labelTertiary),
         ),
       );
     }
@@ -389,8 +390,8 @@ class _JobPanel extends StatelessWidget {
         ),
         if (actions != null)
           Container(
-            decoration: const BoxDecoration(
-              border: Border(top: BorderSide(color: DshColors.layer1)),
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: c.layer1)),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: actions,
@@ -407,12 +408,13 @@ class _JobGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Padding(
       // `.jgroup { padding:8px 12px 2px; font-size:11.5px }`
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
       child: Text(
         label,
-        style: const TextStyle(fontSize: 11.5, color: DshColors.labelCaption),
+        style: TextStyle(fontSize: 11.5, color: c.labelCaption),
       ),
     );
   }
@@ -434,6 +436,7 @@ class _JobRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Column(
       children: [
         InkWell(
@@ -443,8 +446,8 @@ class _JobRow extends StatelessWidget {
             //   border-top:1px solid l1 }`
             constraints: const BoxConstraints(minHeight: 44),
             padding: const EdgeInsets.fromLTRB(12, 8, 10, 8),
-            decoration: const BoxDecoration(
-              border: Border(top: BorderSide(color: DshColors.layer1)),
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: c.layer1)),
             ),
             child: Row(
               children: [
@@ -454,10 +457,10 @@ class _JobRow extends StatelessWidget {
                   height: 8,
                   decoration: BoxDecoration(
                     color: switch (job.state) {
-                      'running' => DshColors.roleContext,
-                      'stopping' => DshColors.roleTool,
-                      'failed' => DshColors.error,
-                      _ => DshColors.labelTertiary,
+                      'running' => c.roleContext,
+                      'stopping' => c.roleTool,
+                      'failed' => c.error,
+                      _ => c.labelTertiary,
                     },
                     shape: BoxShape.circle,
                   ),
@@ -473,10 +476,10 @@ class _JobRow extends StatelessWidget {
                               job.label,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontFamily: 'monospace',
                                 fontSize: 12.5,
-                                color: DshColors.labelPrimary,
+                                color: c.labelPrimary,
                               ),
                             ),
                             const SizedBox(height: 2),
@@ -484,10 +487,10 @@ class _JobRow extends StatelessWidget {
                               children: [
                                 Text(
                                   job.kind,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontFamily: 'monospace',
                                     fontSize: 11,
-                                    color: DshColors.roleTool,
+                                    color: c.roleTool,
                                   ),
                                 ),
                                 const SizedBox(width: 6),
@@ -496,9 +499,9 @@ class _JobRow extends StatelessWidget {
                                     job.statusText,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 11.5,
-                                      color: DshColors.labelCaption,
+                                      color: c.labelCaption,
                                     ),
                                   ),
                                 ),
@@ -514,19 +517,19 @@ class _JobRow extends StatelessWidget {
                                 job.label,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontFamily: 'monospace',
                                   fontSize: 12.5,
-                                  color: DshColors.labelSecondary,
+                                  color: c.labelSecondary,
                                 ),
                               ),
                             ),
                             const SizedBox(width: 6),
                             Text(
                               job.statusText,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 11.5,
-                                color: DshColors.labelCaption,
+                                color: c.labelCaption,
                               ),
                             ),
                           ],
@@ -536,10 +539,10 @@ class _JobRow extends StatelessWidget {
                   const SizedBox(width: 8),
                   Text(
                     job.durationText,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11,
-                      fontFeatures: [FontFeature.tabularFigures()],
-                      color: DshColors.labelCaption,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                      color: c.labelCaption,
                     ),
                   ),
                 ],
@@ -553,10 +556,10 @@ class _JobRow extends StatelessWidget {
                   AnimatedRotation(
                     turns: open ? 0.5 : 0,
                     duration: const Duration(milliseconds: 160),
-                    child: const DshIcon(
+                    child: DshIcon(
                       'chevronDown',
                       size: 14,
-                      color: DshColors.labelTertiary,
+                      color: c.labelTertiary,
                     ),
                   ),
                 ],
@@ -574,7 +577,7 @@ class _JobRow extends StatelessWidget {
             decoration: BoxDecoration(
               color: const Color(0xFF171719),
               borderRadius: BorderRadius.circular(DshRadius.md),
-              border: Border.all(color: DshColors.layer1),
+              border: Border.all(color: c.layer1),
             ),
             child: SingleChildScrollView(
               child: Column(
@@ -585,20 +588,17 @@ class _JobRow extends StatelessWidget {
                   if (job.gapNote != null) ...[
                     Text(
                       job.gapNote!,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: DshColors.labelCaption,
-                      ),
+                      style: TextStyle(fontSize: 11, color: c.labelCaption),
                     ),
                     const SizedBox(height: 4),
                   ],
                   Text(
                     job.output,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 12,
                       height: 19 / 12,
-                      color: DshColors.labelSecondary,
+                      color: c.labelSecondary,
                     ),
                   ),
                 ],
@@ -628,6 +628,7 @@ class _StopButtonState extends State<_StopButton> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Tooltip(
       // 有 tooltip 才有稳定的定位点（测试与无障碍都需要它 ——
       // 一个只有图标的按钮没有任何可读文本）。
@@ -645,9 +646,7 @@ class _StopButtonState extends State<_StopButton> {
           constraints: const BoxConstraints(minHeight: 30),
           padding: EdgeInsets.symmetric(horizontal: _armed ? 12 : 9),
           decoration: BoxDecoration(
-            color: _armed
-                ? DshColors.error.withValues(alpha: 0.9)
-                : DshColors.layer3,
+            color: _armed ? c.error.withValues(alpha: 0.9) : c.layer3,
             borderRadius: BorderRadius.circular(15),
           ),
           child: Row(
@@ -656,7 +655,7 @@ class _StopButtonState extends State<_StopButton> {
               DshIcon(
                 _armed ? 'stopFill' : 'close',
                 size: 14,
-                color: _armed ? Colors.white : DshColors.labelSecondary,
+                color: _armed ? Colors.white : c.labelSecondary,
               ),
               if (_armed) ...[
                 const SizedBox(width: 5),
@@ -689,8 +688,9 @@ class _SideTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Material(
-      color: active ? DshColors.layer3 : Colors.transparent,
+      color: active ? c.layer3 : Colors.transparent,
       borderRadius: BorderRadius.circular(17),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -706,9 +706,7 @@ class _SideTab extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: active ? FontWeight.w500 : FontWeight.w400,
-                  color: active
-                      ? DshColors.labelPrimary
-                      : DshColors.labelTertiary,
+                  color: active ? c.labelPrimary : c.labelTertiary,
                 ),
               ),
               // 计数徽标：**只在 >0 时显示**（原型 `hidden` 逻辑）。
@@ -719,16 +717,16 @@ class _SideTab extends StatelessWidget {
                   height: 16,
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   decoration: BoxDecoration(
-                    color: DshColors.roleToolBg,
+                    color: c.roleToolBg,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   alignment: Alignment.center,
                   child: Text(
                     '$count',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 10.5,
                       fontWeight: FontWeight.w600,
-                      color: DshColors.roleTool,
+                      color: c.roleTool,
                     ),
                   ),
                 ),
@@ -750,6 +748,7 @@ class _Ib extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final button = SizedBox(
       width: 38,
       height: 38,
@@ -760,7 +759,7 @@ class _Ib extends StatelessWidget {
         child: InkWell(
           onTap: onPressed,
           child: Center(
-            child: DshIcon(icon, size: 18, color: DshColors.labelSecondary),
+            child: DshIcon(icon, size: 18, color: c.labelSecondary),
           ),
         ),
       ),

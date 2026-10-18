@@ -42,20 +42,25 @@ Future<T?> showDshSheet<T>({
   required String title,
   required Widget body,
   List<Widget> actions = const [],
-}) => showModalBottomSheet<T>(
-  context: context,
-  backgroundColor: DshColors.layer1,
-  // 顶部圆角 `--r-panel` = 28（原型 sheet 用面板圆角）。
-  shape: const RoundedRectangleBorder(
-    borderRadius: BorderRadius.vertical(top: Radius.circular(DshRadius.panel)),
-  ),
-  // 最多占 80% 高：留一截能看见背后的界面，让"这是浮层"成立。
-  constraints: BoxConstraints(
-    maxHeight: MediaQuery.of(context).size.height * 0.8,
-  ),
-  builder: (context) =>
-      _SheetFrame(title: title, actions: actions, child: body),
-);
+}) {
+  final c = context.dshColors;
+  return showModalBottomSheet<T>(
+    context: context,
+    backgroundColor: c.layer1,
+    // 顶部圆角 `--r-panel` = 28（原型 sheet 用面板圆角）。
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(
+        top: Radius.circular(DshRadius.panel),
+      ),
+    ),
+    // 最多占 80% 高：留一截能看见背后的界面，让"这是浮层"成立。
+    constraints: BoxConstraints(
+      maxHeight: MediaQuery.of(context).size.height * 0.8,
+    ),
+    builder: (context) =>
+        _SheetFrame(title: title, actions: actions, child: body),
+  );
+}
 
 class _SheetFrame extends StatelessWidget {
   const _SheetFrame({
@@ -70,6 +75,7 @@ class _SheetFrame extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return SafeArea(
       top: false,
       child: Column(
@@ -83,7 +89,7 @@ class _SheetFrame extends StatelessWidget {
               height: 4,
               margin: const EdgeInsets.only(top: 8, bottom: 4),
               decoration: BoxDecoration(
-                color: DshColors.layer3,
+                color: c.layer3,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -92,10 +98,10 @@ class _SheetFrame extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
             child: Text(
               title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
-                color: DshColors.labelPrimary,
+                color: c.labelPrimary,
               ),
             ),
           ),
@@ -107,8 +113,8 @@ class _SheetFrame extends StatelessWidget {
           ),
           if (actions.isNotEmpty)
             Container(
-              decoration: const BoxDecoration(
-                border: Border(top: BorderSide(color: DshColors.layer2)),
+              decoration: BoxDecoration(
+                border: Border(top: BorderSide(color: c.layer2)),
               ),
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
               child: Row(
@@ -143,6 +149,7 @@ class DshKeyValue extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final u = unit;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 7),
@@ -151,29 +158,20 @@ class DshKeyValue extends StatelessWidget {
           Expanded(
             child: Text(
               label,
-              style: const TextStyle(
-                fontSize: 13,
-                color: DshColors.labelSecondary,
-              ),
+              style: TextStyle(fontSize: 13, color: c.labelSecondary),
             ),
           ),
           Text(
             value,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              color: DshColors.labelPrimary,
+              color: c.labelPrimary,
             ),
           ),
           if (u != null) ...[
             const SizedBox(width: 3),
-            Text(
-              u,
-              style: const TextStyle(
-                fontSize: 11,
-                color: DshColors.labelCaption,
-              ),
-            ),
+            Text(u, style: TextStyle(fontSize: 11, color: c.labelCaption)),
           ],
         ],
       ),
@@ -215,6 +213,7 @@ class DshContextMeter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     // 三段各占"上限"的比例 —— **按上限算而不是按已用算**：
     // 这样空着的部分是可见的（用户要看的正是"还剩多少"）。
     double frac(int tokens) => limitTokens == 0 ? 0 : tokens / limitTokens;
@@ -232,44 +231,32 @@ class DshContextMeter extends StatelessWidget {
                 if (systemTokens > 0)
                   Expanded(
                     flex: (frac(systemTokens) * 1000).round(),
-                    child: const ColoredBox(color: DshColors.ctxSystem),
+                    child: ColoredBox(color: c.ctxSystem),
                   ),
                 if (toolTokens > 0)
                   Expanded(
                     flex: (frac(toolTokens) * 1000).round(),
-                    child: const ColoredBox(color: DshColors.ctxTools),
+                    child: ColoredBox(color: c.ctxTools),
                   ),
                 if (messageTokens > 0)
                   Expanded(
                     flex: (frac(messageTokens) * 1000).round(),
-                    child: const ColoredBox(color: DshColors.ctxMessages),
+                    child: ColoredBox(color: c.ctxMessages),
                   ),
                 // 剩下的空格子：留一个弹性填充，把已用部分挤到左边。
                 Expanded(
                   flex: ((1 - frac(usedTokens)) * 1000).round().clamp(1, 1000),
-                  child: const ColoredBox(color: DshColors.layer3),
+                  child: ColoredBox(color: c.layer3),
                 ),
               ],
             ),
           ),
         ),
         const SizedBox(height: 12),
-        _LegendRow(
-          color: DshColors.ctxSystem,
-          label: '系统提示词',
-          tokens: systemTokens,
-        ),
-        _LegendRow(
-          color: DshColors.ctxTools,
-          label: '工具定义',
-          tokens: toolTokens,
-        ),
-        _LegendRow(
-          color: DshColors.ctxMessages,
-          label: '对话消息',
-          tokens: messageTokens,
-        ),
-        const Divider(height: 20, color: DshColors.layer2),
+        _LegendRow(color: c.ctxSystem, label: '系统提示词', tokens: systemTokens),
+        _LegendRow(color: c.ctxTools, label: '工具定义', tokens: toolTokens),
+        _LegendRow(color: c.ctxMessages, label: '对话消息', tokens: messageTokens),
+        Divider(height: 20, color: c.layer2),
         DshKeyValue(
           label: '已用 / 上限',
           value: '${_short(usedTokens)} / ${_short(limitTokens)}',
@@ -304,6 +291,7 @@ class _LegendRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
@@ -317,18 +305,12 @@ class _LegendRow extends StatelessWidget {
           Expanded(
             child: Text(
               label,
-              style: const TextStyle(
-                fontSize: 12.5,
-                color: DshColors.labelSecondary,
-              ),
+              style: TextStyle(fontSize: 12.5, color: c.labelSecondary),
             ),
           ),
           Text(
             DshContextMeter._short(tokens),
-            style: const TextStyle(
-              fontSize: 12.5,
-              color: DshColors.labelCaption,
-            ),
+            style: TextStyle(fontSize: 12.5, color: c.labelCaption),
           ),
         ],
       ),
@@ -383,6 +365,7 @@ class DshPickerRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final iconName = icon;
     return Opacity(
       opacity: enabled ? 1 : 0.45,
@@ -393,7 +376,7 @@ class DshPickerRow extends StatelessWidget {
           child: Row(
             children: [
               if (iconName != null) ...[
-                DshIcon(iconName, size: 18, color: DshColors.labelSecondary),
+                DshIcon(iconName, size: 18, color: c.labelSecondary),
                 const SizedBox(width: 10),
               ],
               // 名称 + 其下标签组（**第二行**，不是第三列）。
@@ -405,10 +388,7 @@ class DshPickerRow extends StatelessWidget {
                       name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: DshColors.labelPrimary,
-                      ),
+                      style: TextStyle(fontSize: 14, color: c.labelPrimary),
                     ),
                     if (tags.isNotEmpty) ...[
                       const SizedBox(height: 5),
@@ -432,11 +412,7 @@ class DshPickerRow extends StatelessWidget {
                   maintainSize: true,
                   maintainAnimation: true,
                   maintainState: true,
-                  child: const DshIcon(
-                    'check',
-                    size: 16,
-                    color: DshColors.accentBlue,
-                  ),
+                  child: DshIcon('check', size: 16, color: c.accentBlue),
                 ),
               ),
             ],
@@ -455,16 +431,14 @@ class _Tag extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       decoration: BoxDecoration(
-        color: DshColors.layer2,
+        color: c.layer2,
         borderRadius: BorderRadius.circular(DshRadius.xs),
       ),
-      child: Text(
-        text,
-        style: const TextStyle(fontSize: 11, color: DshColors.labelCaption),
-      ),
+      child: Text(text, style: TextStyle(fontSize: 11, color: c.labelCaption)),
     );
   }
 }
@@ -484,8 +458,9 @@ class DshSheetAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Material(
-      color: filled ? DshColors.accentBlue : Colors.transparent,
+      color: filled ? c.accentBlue : Colors.transparent,
       borderRadius: BorderRadius.circular(DshRadius.md),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -497,14 +472,14 @@ class DshSheetAction extends StatelessWidget {
               ? null
               : BoxDecoration(
                   borderRadius: BorderRadius.circular(DshRadius.md),
-                  border: Border.all(color: DshColors.layer3),
+                  border: Border.all(color: c.layer3),
                 ),
           child: Text(
             label,
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              color: filled ? DshColors.onAccent : DshColors.labelPrimary,
+              color: filled ? c.onAccent : c.labelPrimary,
             ),
           ),
         ),

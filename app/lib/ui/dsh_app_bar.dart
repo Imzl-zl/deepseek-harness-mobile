@@ -58,6 +58,7 @@ class DshAppBarButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final button = SizedBox(
       width: 38,
       height: 38,
@@ -71,13 +72,9 @@ class DshAppBarButton extends StatelessWidget {
             child: mirrorX
                 ? Transform.flip(
                     flipX: true,
-                    child: DshIcon(
-                      icon,
-                      size: size,
-                      color: DshColors.labelSecondary,
-                    ),
+                    child: DshIcon(icon, size: size, color: c.labelSecondary),
                   )
-                : DshIcon(icon, size: size, color: DshColors.labelSecondary),
+                : DshIcon(icon, size: size, color: c.labelSecondary),
           ),
         ),
       ),
@@ -186,6 +183,7 @@ class DshCountChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final live = running > 0;
     return Tooltip(
       message: label,
@@ -193,7 +191,7 @@ class DshCountChip extends StatelessWidget {
         label: label,
         button: true,
         child: Material(
-          color: DshColors.layer2,
+          color: c.layer2,
           borderRadius: BorderRadius.circular(12),
           clipBehavior: Clip.antiAlias,
           child: InkWell(
@@ -209,14 +207,14 @@ class DshCountChip extends StatelessWidget {
                     if (live)
                       const DshStateDot(DshStateDotState.ongoing)
                     else
-                      DshIcon(icon, size: 13, color: DshColors.labelSecondary),
+                      DshIcon(icon, size: 13, color: c.labelSecondary),
                     const SizedBox(width: 5),
                     Text(
                       '$count',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: DshColors.labelTertiary,
+                        color: c.labelTertiary,
                       ),
                     ),
                   ],
@@ -311,8 +309,9 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Container(
-      color: DshColors.sidebar,
+      color: c.sidebar,
       padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top),
       height: 56 + MediaQuery.of(context).padding.top,
       child: Row(
@@ -340,10 +339,10 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
                   // （`ConversationRoot.module.css:125-139` 的
                   // `font-size: 14px; line-height: 20px`，当前那条是 w500），
                   // 手机上收窄一档 —— 同一行还要放两枚计数 chip。
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
-                    color: DshColors.labelPrimary,
+                    color: c.labelPrimary,
                   ),
                 ),
               ),
@@ -411,11 +410,12 @@ class DshSegmented extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
-        color: DshColors.layer1,
+        color: c.layer1,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
@@ -432,7 +432,7 @@ class DshSegmented extends StatelessWidget {
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     // 选中项有底色滑块（未选中透明）—— 这就是 `seg-ind`。
-                    color: i == index ? DshColors.layer3 : Colors.transparent,
+                    color: i == index ? c.layer3 : Colors.transparent,
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
@@ -442,9 +442,7 @@ class DshSegmented extends StatelessWidget {
                       fontWeight: i == index
                           ? FontWeight.w600
                           : FontWeight.w400,
-                      color: i == index
-                          ? DshColors.labelPrimary
-                          : DshColors.labelSecondary,
+                      color: i == index ? c.labelPrimary : c.labelSecondary,
                     ),
                   ),
                 ),

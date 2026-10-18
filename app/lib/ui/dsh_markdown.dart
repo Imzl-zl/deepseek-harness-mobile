@@ -56,7 +56,8 @@ class DshMarkdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = baseColor ?? DshColors.labelPrimary;
+    final c = context.dshColors;
+    final color = baseColor ?? c.labelPrimary;
     final body = TextStyle(fontSize: 13, height: 20 / 13, color: color);
     return MarkdownBody(
       data: data,
@@ -78,18 +79,18 @@ class DshMarkdown extends StatelessWidget {
         code: DshTheme.mono.copyWith(
           fontSize: 12,
           color: color,
-          backgroundColor: DshColors.roleToolBg,
+          backgroundColor: c.roleToolBg,
         ),
         // 代码块：整块底色 + 圆角。**内边距不在这里** —— 代码块由
         // `_DshCodeBlock` 接管（头部工具条 + 正文），padding 归它管。
         codeblockDecoration: BoxDecoration(
-          color: DshColors.bgBase,
+          color: c.bgBase,
           borderRadius: BorderRadius.circular(DshRadius.sm),
-          border: Border.all(color: DshColors.layer3),
+          border: Border.all(color: c.layer3),
         ),
-        blockquote: body.copyWith(color: DshColors.labelSecondary),
-        blockquoteDecoration: const BoxDecoration(
-          border: Border(left: BorderSide(color: DshColors.layer3, width: 3)),
+        blockquote: body.copyWith(color: c.labelSecondary),
+        blockquoteDecoration: BoxDecoration(
+          border: Border(left: BorderSide(color: c.layer3, width: 3)),
         ),
         blockquotePadding: const EdgeInsets.only(left: 12),
         // 列表：紧凑一点（聊天里不该像文档那样疏）。
@@ -100,9 +101,9 @@ class DshMarkdown extends StatelessWidget {
         strong: body.copyWith(fontWeight: FontWeight.w600),
         em: body.copyWith(fontStyle: FontStyle.italic),
         a: body.copyWith(
-          color: DshColors.accentBlue,
+          color: c.accentBlue,
           decoration: TextDecoration.underline,
-          decorationColor: DshColors.accentBlue,
+          decorationColor: c.accentBlue,
         ),
         // 标题：DSH 的正文只有 13，标题不该大到喧宾夺主。
         h1: body.copyWith(fontSize: 18, fontWeight: FontWeight.w600),
@@ -110,18 +111,15 @@ class DshMarkdown extends StatelessWidget {
         h3: body.copyWith(fontSize: 14, fontWeight: FontWeight.w600),
         h4: body.copyWith(fontWeight: FontWeight.w600),
         h5: body.copyWith(fontWeight: FontWeight.w600),
-        h6: body.copyWith(
-          fontWeight: FontWeight.w600,
-          color: DshColors.labelSecondary,
-        ),
+        h6: body.copyWith(fontWeight: FontWeight.w600, color: c.labelSecondary),
         // 分隔线。
-        horizontalRuleDecoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: DshColors.layer3)),
+        horizontalRuleDecoration: BoxDecoration(
+          border: Border(top: BorderSide(color: c.layer3)),
         ),
         // 表格：窄屏会横向溢出，所以给边框与紧凑内边距。
         tableHead: body.copyWith(fontWeight: FontWeight.w600),
         tableBody: body,
-        tableBorder: TableBorder.all(color: DshColors.layer3, width: 1),
+        tableBorder: TableBorder.all(color: c.layer3, width: 1),
         tableCellsPadding: const EdgeInsets.symmetric(
           horizontal: 6,
           vertical: 4,
@@ -228,6 +226,7 @@ class _DshCodeBlockState extends State<_DshCodeBlock> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     // **换行与否由布局决定，不是 `softWrap`**：`SelectableText` 没有这个参数。
     // 自动换行时它拿到的是有界宽度（照常折行）；关掉换行时它被放进横向滚动区，
     // 宽度约束是无界的 —— 于是整块按内在宽度排成一行，横向滚动看。
@@ -236,7 +235,7 @@ class _DshCodeBlockState extends State<_DshCodeBlock> {
       style: DshTheme.mono.copyWith(
         fontSize: 12,
         height: 1.5,
-        color: DshColors.labelPrimary,
+        color: c.labelPrimary,
       ),
     );
     return Column(
@@ -251,10 +250,7 @@ class _DshCodeBlockState extends State<_DshCodeBlock> {
                   _languageLabel,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: DshColors.labelCaption,
-                  ),
+                  style: TextStyle(fontSize: 11, color: c.labelCaption),
                 ),
               ),
               _CodeToolButton(
@@ -299,6 +295,7 @@ class _CodeToolButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Tooltip(
       message: tooltip,
       child: SizedBox(
@@ -311,7 +308,7 @@ class _CodeToolButton extends StatelessWidget {
           child: InkWell(
             onTap: onPressed,
             child: Center(
-              child: DshIcon(icon, size: 14, color: DshColors.labelSecondary),
+              child: DshIcon(icon, size: 14, color: c.labelSecondary),
             ),
           ),
         ),

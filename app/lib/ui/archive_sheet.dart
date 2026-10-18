@@ -38,25 +38,23 @@ Future<void> showArchiveSheet(
     body: ListenableBuilder(
       listenable: app,
       builder: (context, _) {
+        final c = context.dshColors;
         final rows = app.archivedSessions;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
+            Text(
               '已归档对话暂时无法查看，请取消归档后查看',
-              style: TextStyle(fontSize: 12, color: DshColors.labelCaption),
+              style: TextStyle(fontSize: 12, color: c.labelCaption),
             ),
             const SizedBox(height: 10),
             if (rows.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 18),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 18),
                 child: Text(
                   '暂无已归档会话',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: DshColors.labelTertiary,
-                  ),
+                  style: TextStyle(fontSize: 13, color: c.labelTertiary),
                 ),
               ),
             for (final row in rows)
@@ -88,11 +86,12 @@ class _ArchiveRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          const DshIcon('archiveOff', size: 18, color: DshColors.labelTertiary),
+          DshIcon('archiveOff', size: 18, color: c.labelTertiary),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -102,15 +101,12 @@ class _ArchiveRow extends StatelessWidget {
                   session.displayTitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: DshColors.labelPrimary,
-                  ),
+                  style: TextStyle(fontSize: 14, color: c.labelPrimary),
                 ),
                 const SizedBox(height: 2),
-                const Text(
+                Text(
                   '已归档',
-                  style: TextStyle(fontSize: 11, color: DshColors.labelCaption),
+                  style: TextStyle(fontSize: 11, color: c.labelCaption),
                 ),
               ],
             ),
@@ -152,10 +148,11 @@ class _UnarchiveButtonState extends State<_UnarchiveButton> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return TextButton(
       onPressed: _busy ? null : () => _run(),
       style: TextButton.styleFrom(
-        foregroundColor: DshColors.accentBlue,
+        foregroundColor: c.accentBlue,
         padding: const EdgeInsets.symmetric(horizontal: 10),
         minimumSize: const Size(0, 36),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -175,17 +172,14 @@ Future<bool> confirmStopAndArchive(
   BuildContext context, {
   required String title,
 }) async {
+  final c = context.dshColors;
   final result = await showDshSheet<bool>(
     context: context,
     title: '停止并归档此会话？',
     body: Text(
       '“$title”仍有正在进行的工作。归档会先停止这些工作；'
       '之后可在「归档」列表里取消归档恢复会话，被停止的工作不会自动继续。',
-      style: const TextStyle(
-        fontSize: 13,
-        height: 1.6,
-        color: DshColors.labelSecondary,
-      ),
+      style: TextStyle(fontSize: 13, height: 1.6, color: c.labelSecondary),
     ),
     actions: [
       DshSheetAction(

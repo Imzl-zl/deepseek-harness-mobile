@@ -31,25 +31,36 @@ import 'package:flutter/material.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 
-/// 账本一行的种类（决定色条与图标）。
+/// 账本一行的种类（决定图标与标签）。
+///
+/// **颜色不在这里**：它运行时按亮暗取（`ThemeExtension`），而 enum 字段值是
+/// 编译期常量。所以色条走 [colorOf]（用时取），图标与标签留在这里
+/// （它们不随亮暗变）。
 enum TraceKind {
   /// 上下文注入。
-  context('info', DshColors.roleContext, '上下文'),
+  context('info', '上下文'),
 
   /// 助手。
-  assistant('sparkle', DshColors.roleAssistant, '助手'),
+  assistant('sparkle', '助手'),
 
   /// 工具调用。
-  tool('browse', DshColors.roleTool, '工具'),
+  tool('browse', '工具'),
 
   /// 错误。
-  error('warningTriangle', DshColors.error, '错误');
+  error('warningTriangle', '错误');
 
-  const TraceKind(this.icon, this.color, this.label);
+  const TraceKind(this.icon, this.label);
 
   final String icon;
-  final Color color;
   final String label;
+
+  /// 色条颜色（**用时取**，见类文档）。
+  Color colorOf(DshColorTokens c) => switch (this) {
+    TraceKind.context => c.roleContext,
+    TraceKind.assistant => c.roleAssistant,
+    TraceKind.tool => c.roleTool,
+    TraceKind.error => c.error,
+  };
 }
 
 /// 账本里的一条。
@@ -129,6 +140,7 @@ class TrajectoryTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final ganttRows = rows ?? const [];
     final traceEntries = entries ?? const [];
     if (ganttRows.isEmpty && traceEntries.isEmpty) {
@@ -152,11 +164,7 @@ class TrajectoryTab extends StatelessWidget {
                 tooltip: '搜索轨迹',
                 visualDensity: VisualDensity.compact,
                 onPressed: () {},
-                icon: const DshIcon(
-                  'search',
-                  size: 18,
-                  color: DshColors.labelSecondary,
-                ),
+                icon: DshIcon('search', size: 18, color: c.labelSecondary),
               ),
             ],
           ),
@@ -172,16 +180,13 @@ class TrajectoryTab extends StatelessWidget {
             child: Column(
               children: [
                 for (final row in ganttRows) _GanttRowView(row: row),
-                const Padding(
-                  padding: EdgeInsets.only(top: 6),
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
                   child: Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
                       '← 横滑查看完整时间轴 →',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: DshColors.labelCaption,
-                      ),
+                      style: TextStyle(fontSize: 11, color: c.labelCaption),
                     ),
                   ),
                 ),
@@ -215,6 +220,7 @@ class _GanttRowView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Padding(
       // `.grow { gap:10px; margin:7px 0 }`
       padding: const EdgeInsets.symmetric(vertical: 7),
@@ -225,10 +231,7 @@ class _GanttRowView extends StatelessWidget {
             width: 34,
             child: Text(
               row.label,
-              style: const TextStyle(
-                fontSize: 11,
-                color: DshColors.labelCaption,
-              ),
+              style: TextStyle(fontSize: 11, color: c.labelCaption),
             ),
           ),
           const SizedBox(width: 10),
@@ -244,7 +247,7 @@ class _GanttRowView extends StatelessWidget {
                       // 轨道底。
                       Container(
                         decoration: BoxDecoration(
-                          color: DshColors.layer1,
+                          color: c.layer1,
                           borderRadius: BorderRadius.circular(7),
                         ),
                       ),
@@ -285,6 +288,7 @@ class _LedgerRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -292,8 +296,8 @@ class _LedgerRow extends StatelessWidget {
         child: Container(
           // `.lg { gap:10px; padding:10px 4px; border-bottom:1px solid l1 }`
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
-          decoration: const BoxDecoration(
-            border: Border(bottom: BorderSide(color: DshColors.layer1)),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: c.layer1)),
           ),
           child: IntrinsicHeight(
             // **`IntrinsicHeight` 是必需的**：色条要"和这一行一样高"，
@@ -308,7 +312,7 @@ class _LedgerRow extends StatelessWidget {
                 Container(
                   width: 3,
                   decoration: BoxDecoration(
-                    color: entry.kind.color,
+                    color: entry.kind.colorOf(c),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -322,7 +326,7 @@ class _LedgerRow extends StatelessWidget {
                           DshIcon(
                             entry.kind.icon,
                             size: 13,
-                            color: entry.kind.color,
+                            color: entry.kind.colorOf(c),
                           ),
                           const SizedBox(width: 4),
                           Flexible(
@@ -330,10 +334,10 @@ class _LedgerRow extends StatelessWidget {
                               entry.name,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w500,
-                                color: DshColors.labelPrimary,
+                                color: c.labelPrimary,
                               ),
                             ),
                           ),
@@ -341,10 +345,10 @@ class _LedgerRow extends StatelessWidget {
                           // 耗时靠右（`.lg .tt { margin-left:auto }`）。
                           Text(
                             entry.took,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontFamily: 'monospace',
                               fontSize: 11,
-                              color: DshColors.labelCaption,
+                              color: c.labelCaption,
                             ),
                           ),
                         ],
@@ -359,19 +363,19 @@ class _LedgerRow extends StatelessWidget {
                           fontSize: 12.5,
                           height: 18 / 12.5,
                           fontFamily: entry.mono ? 'monospace' : null,
-                          color: DshColors.labelTertiary,
+                          color: c.labelTertiary,
                         ),
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(width: 8),
-                const Align(
+                Align(
                   alignment: Alignment.center,
                   child: DshIcon(
                     'chevronRight',
                     size: 16,
-                    color: DshColors.labelTertiary,
+                    color: c.labelTertiary,
                   ),
                 ),
               ],
@@ -392,21 +396,22 @@ class _Chip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Container(
       constraints: const BoxConstraints(minHeight: 32),
       padding: const EdgeInsets.symmetric(horizontal: 12),
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: on ? DshColors.layer3 : Colors.transparent,
+        color: on ? c.layer3 : Colors.transparent,
         borderRadius: BorderRadius.circular(16),
-        border: on ? null : Border.all(color: DshColors.layer2),
+        border: on ? null : Border.all(color: c.layer2),
       ),
       child: Text(
         label,
         style: TextStyle(
           fontSize: 12,
           fontWeight: on ? FontWeight.w600 : FontWeight.w400,
-          color: on ? DshColors.labelPrimary : DshColors.labelSecondary,
+          color: on ? c.labelPrimary : c.labelSecondary,
         ),
       ),
     );
@@ -427,24 +432,25 @@ class _EmptyTrajectory extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    final c = context.dshColors;
+    return Center(
       child: Padding(
-        padding: EdgeInsets.all(32),
+        padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            DshIcon('gauge', size: 40, color: DshColors.labelTertiary),
-            SizedBox(height: 16),
+            DshIcon('gauge', size: 40, color: c.labelTertiary),
+            const SizedBox(height: 16),
             Text(
               '还没有轨迹',
-              style: TextStyle(fontSize: 15, color: DshColors.labelSecondary),
+              style: TextStyle(fontSize: 15, color: c.labelSecondary),
             ),
-            SizedBox(height: 8),
+            const SizedBox(height: 8),
             Text(
               '电脑侧跑完一轮后，这里会显示这一轮的时间轴与每一步的耗时。\n'
               '数据来自会话投影 turnOutline。',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: DshColors.labelTertiary),
+              style: TextStyle(fontSize: 12, color: c.labelTertiary),
             ),
           ],
         ),

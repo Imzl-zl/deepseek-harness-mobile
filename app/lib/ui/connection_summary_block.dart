@@ -108,12 +108,13 @@ class ConnectionSummaryBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final content = Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Padding(
-          padding: EdgeInsets.only(top: 1),
-          child: DshIcon('link', size: 16, color: DshColors.labelSecondary),
+        Padding(
+          padding: const EdgeInsets.only(top: 1),
+          child: DshIcon('link', size: 16, color: c.labelSecondary),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -122,30 +123,24 @@ class ConnectionSummaryBlock extends StatelessWidget {
             children: [
               Text(
                 connection.line,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
-                  color: DshColors.labelPrimary,
+                  color: c.labelPrimary,
                 ),
               ),
               if (connection.note case final note?) ...[
                 const SizedBox(height: 4),
                 Text(
                   note,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: DshColors.labelSecondary,
-                  ),
+                  style: TextStyle(fontSize: 12, color: c.labelSecondary),
                 ),
               ],
               if (onTap != null) ...[
                 const SizedBox(height: 4),
-                const Text(
+                Text(
                   '点这里换一条 · 右边是重连',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: DshColors.labelTertiary,
-                  ),
+                  style: TextStyle(fontSize: 11, color: c.labelTertiary),
                 ),
               ],
             ],
@@ -161,19 +156,15 @@ class ConnectionSummaryBlock extends StatelessWidget {
             constraints: const BoxConstraints(),
             onPressed: reconnecting ? null : onReconnect,
             icon: reconnecting
-                ? const SizedBox(
+                ? SizedBox(
                     width: 16,
                     height: 16,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: DshColors.labelSecondary,
+                      color: c.labelSecondary,
                     ),
                   )
-                : const DshIcon(
-                    'refresh',
-                    size: 16,
-                    color: DshColors.labelSecondary,
-                  ),
+                : DshIcon('refresh', size: 16, color: c.labelSecondary),
           ),
       ],
     );
@@ -183,7 +174,7 @@ class ConnectionSummaryBlock extends StatelessWidget {
       margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: DshColors.layer2,
+        color: c.layer2,
         borderRadius: BorderRadius.circular(12),
       ),
       child: onTap == null

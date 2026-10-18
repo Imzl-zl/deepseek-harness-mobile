@@ -121,12 +121,13 @@ class _Stick extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return IgnorePointer(
       child: Container(
         width: _kStickWidth,
         height: _kStickHeight,
         decoration: BoxDecoration(
-          color: DshColors.layer3,
+          color: c.layer3,
           borderRadius: BorderRadius.circular(_kStickWidth / 2),
         ),
       ),

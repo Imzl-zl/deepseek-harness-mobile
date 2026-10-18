@@ -470,6 +470,7 @@ class _TakeoverPanelState extends State<TakeoverPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return ListenableBuilder(
       listenable: widget.controller,
       builder: (context, _) {
@@ -499,14 +500,14 @@ class _TakeoverPanelState extends State<TakeoverPanel> {
             // 接管卡从下往上浮入 —— 用 `AnimatedSize` 而不是硬切。
             margin: const EdgeInsets.fromLTRB(8, 0, 8, 6),
             decoration: BoxDecoration(
-              color: DshColors.layer1,
+              color: c.layer1,
               borderRadius: BorderRadius.circular(DshRadius.lg),
               border: Border.all(
                 color: switch (item.kind) {
                   // 审批是"要你拿主意"的事 —— 告警色边框。
-                  InteractionKind.approval => DshColors.roleTool,
-                  InteractionKind.plan => DshColors.businessBlue,
-                  InteractionKind.question => DshColors.layer2,
+                  InteractionKind.approval => c.roleTool,
+                  InteractionKind.plan => c.businessBlue,
+                  InteractionKind.question => c.layer2,
                 },
               ),
             ),
@@ -549,21 +550,22 @@ class _ElsewhereHint extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Container(
       margin: const EdgeInsets.fromLTRB(8, 0, 8, 6),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: DshColors.layer2,
+        color: c.layer2,
         borderRadius: BorderRadius.circular(DshRadius.md),
       ),
-      child: const Row(
+      child: Row(
         children: [
-          DshIcon('queue', size: 14, color: DshColors.labelSecondary),
-          SizedBox(width: 8),
+          DshIcon('queue', size: 14, color: c.labelSecondary),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
               '其他会话还有待处理，去会话列表切换',
-              style: TextStyle(fontSize: 12, color: DshColors.labelSecondary),
+              style: TextStyle(fontSize: 12, color: c.labelSecondary),
             ),
           ),
         ],
@@ -581,6 +583,7 @@ class _Strip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final label = switch (item.kind) {
       InteractionKind.approval => '等待审批',
       InteractionKind.question => '等待回答',
@@ -588,12 +591,12 @@ class _Strip extends StatelessWidget {
     };
     // 审批与计划用告警/业务色，提问是中性的。
     final tone = switch (item.kind) {
-      InteractionKind.approval => DshColors.roleTool,
-      InteractionKind.plan => DshColors.businessBlue,
-      InteractionKind.question => DshColors.labelSecondary,
+      InteractionKind.approval => c.roleTool,
+      InteractionKind.plan => c.businessBlue,
+      InteractionKind.question => c.labelSecondary,
     };
     return Container(
-      color: DshColors.layer2,
+      color: c.layer2,
       padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
       child: Row(
         children: [
@@ -624,11 +627,7 @@ class _Strip extends StatelessWidget {
             tooltip: '收起',
             visualDensity: VisualDensity.compact,
             onPressed: controller.minimize,
-            icon: const DshIcon(
-              'chevronDown',
-              size: 16,
-              color: DshColors.labelTertiary,
-            ),
+            icon: DshIcon('chevronDown', size: 16, color: c.labelTertiary),
           ),
         ],
       ),
@@ -650,6 +649,7 @@ class _Body extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     // **多题时按当前题渲染**（原型 `qs.index`）：一次提问可以有 1..N 个问题，
     // 铺成一屏长表单会让用户漏答，而逐个走正是 DSH 桌面端 `QuestionComposer` 的形状。
     final question = controller.currentQuestion;
@@ -672,21 +672,21 @@ class _Body extends StatelessWidget {
             if (question != null && question.header != null) ...[
               Text(
                 question.header!,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
-                  color: DshColors.labelCaption,
+                  color: c.labelCaption,
                 ),
               ),
               const SizedBox(height: 4),
             ],
             Text(
               question?.question ?? item.title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 height: 21 / 14,
                 fontWeight: FontWeight.w500,
-                color: DshColors.labelPrimary,
+                color: c.labelPrimary,
               ),
             ),
             if (question?.detail != null || item.detail.isNotEmpty) ...[
@@ -695,17 +695,17 @@ class _Body extends StatelessWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: DshColors.bgBase,
+                  color: c.bgBase,
                   borderRadius: BorderRadius.circular(DshRadius.sm),
-                  border: Border.all(color: DshColors.layer2),
+                  border: Border.all(color: c.layer2),
                 ),
                 child: Text(
                   question?.detail ?? item.detail,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'monospace',
                     fontSize: 12,
                     height: 19 / 12,
-                    color: DshColors.labelSecondary,
+                    color: c.labelSecondary,
                   ),
                 ),
               ),
@@ -714,10 +714,7 @@ class _Body extends StatelessWidget {
               const SizedBox(height: 8),
               Text(
                 '第 ${controller.questionIndex + 1} / ${item.questions.length} 题',
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: DshColors.labelTertiary,
-                ),
+                style: TextStyle(fontSize: 11, color: c.labelTertiary),
               ),
             ],
             // **计划不渲染选项行**：它的两个动作（要求修改 / 同意执行）就是决策面，
@@ -781,11 +778,12 @@ class _OptionRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final desc = option.description;
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
-        color: selected ? DshColors.layer2 : DshColors.layer1,
+        color: selected ? c.layer2 : c.layer1,
         borderRadius: BorderRadius.circular(DshRadius.md),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
@@ -794,9 +792,7 @@ class _OptionRow extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(DshRadius.md),
-              border: Border.all(
-                color: selected ? DshColors.accentBlue : DshColors.layer2,
-              ),
+              border: Border.all(color: selected ? c.accentBlue : c.layer2),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -806,7 +802,7 @@ class _OptionRow extends StatelessWidget {
                   width: 20,
                   height: 20,
                   decoration: BoxDecoration(
-                    color: selected ? DshColors.accentBlue : DshColors.layer3,
+                    color: selected ? c.accentBlue : c.layer3,
                     borderRadius: BorderRadius.circular(
                       multiSelect ? DshRadius.xs : 10,
                     ),
@@ -814,20 +810,14 @@ class _OptionRow extends StatelessWidget {
                   alignment: Alignment.center,
                   child: multiSelect
                       ? (selected
-                            ? const DshIcon(
-                                'check',
-                                size: 12,
-                                color: DshColors.onAccent,
-                              )
+                            ? DshIcon('check', size: 12, color: c.onAccent)
                             : const SizedBox.shrink())
                       : Text(
                           '${index + 1}',
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
-                            color: selected
-                                ? DshColors.onAccent
-                                : DshColors.labelSecondary,
+                            color: selected ? c.onAccent : c.labelSecondary,
                           ),
                         ),
                 ),
@@ -841,9 +831,9 @@ class _OptionRow extends StatelessWidget {
                           Flexible(
                             child: Text(
                               option.label,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 13.5,
-                                color: DshColors.labelPrimary,
+                                color: c.labelPrimary,
                               ),
                             ),
                           ),
@@ -855,17 +845,17 @@ class _OptionRow extends StatelessWidget {
                                 vertical: 1,
                               ),
                               decoration: BoxDecoration(
-                                color: DshColors.roleToolBg,
+                                color: c.roleToolBg,
                                 borderRadius: BorderRadius.circular(
                                   DshRadius.xs,
                                 ),
                               ),
-                              child: const Text(
+                              child: Text(
                                 '推荐',
                                 style: TextStyle(
                                   fontSize: 10,
                                   fontWeight: FontWeight.w600,
-                                  color: DshColors.roleTool,
+                                  color: c.roleTool,
                                 ),
                               ),
                             ),
@@ -876,10 +866,7 @@ class _OptionRow extends StatelessWidget {
                         const SizedBox(height: 3),
                         Text(
                           desc,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: DshColors.labelCaption,
-                          ),
+                          style: TextStyle(fontSize: 12, color: c.labelCaption),
                         ),
                       ],
                     ],
@@ -914,6 +901,7 @@ class _CustomAnswerState extends State<_CustomAnswer> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final questionId = widget.controller.currentQuestion?.id;
     if (questionId != _questionId) {
       _questionId = questionId;
@@ -924,29 +912,23 @@ class _CustomAnswerState extends State<_CustomAnswer> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(DshRadius.md),
-        border: Border.all(color: DshColors.layer2),
+        border: Border.all(color: c.layer2),
       ),
       child: Row(
         children: [
-          const DshIcon('edit', size: 14, color: DshColors.labelCaption),
+          DshIcon('edit', size: 14, color: c.labelCaption),
           const SizedBox(width: 8),
           Expanded(
             child: TextField(
               controller: widget.input,
               enabled: !widget.controller.busy,
               onChanged: widget.controller.setCustom,
-              style: const TextStyle(
-                fontSize: 13.5,
-                color: DshColors.labelPrimary,
-              ),
-              decoration: const InputDecoration(
+              style: TextStyle(fontSize: 13.5, color: c.labelPrimary),
+              decoration: InputDecoration(
                 isDense: true,
                 border: InputBorder.none,
                 hintText: '其他答案…',
-                hintStyle: TextStyle(
-                  fontSize: 13.5,
-                  color: DshColors.labelTertiary,
-                ),
+                hintStyle: TextStyle(fontSize: 13.5, color: c.labelTertiary),
               ),
             ),
           ),
@@ -1065,11 +1047,10 @@ class _Button extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final enabled = onPressed != null;
     return Material(
-      color: filled
-          ? (enabled ? DshColors.accentBlue : DshColors.layer2)
-          : Colors.transparent,
+      color: filled ? (enabled ? c.accentBlue : c.layer2) : Colors.transparent,
       borderRadius: BorderRadius.circular(DshRadius.md),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -1081,7 +1062,7 @@ class _Button extends StatelessWidget {
               ? null
               : BoxDecoration(
                   borderRadius: BorderRadius.circular(DshRadius.md),
-                  border: Border.all(color: DshColors.layer3),
+                  border: Border.all(color: c.layer3),
                 ),
           child: Text(
             label,
@@ -1089,10 +1070,8 @@ class _Button extends StatelessWidget {
               fontSize: 14,
               fontWeight: FontWeight.w500,
               color: filled
-                  ? (enabled ? DshColors.onAccent : DshColors.labelTertiary)
-                  : (enabled
-                        ? DshColors.labelPrimary
-                        : DshColors.labelTertiary),
+                  ? (enabled ? c.onAccent : c.labelTertiary)
+                  : (enabled ? c.labelPrimary : c.labelTertiary),
             ),
           ),
         ),
