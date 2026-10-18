@@ -170,6 +170,10 @@ class ContextPressure {
     final used = projectedTokens ?? pressureTokens;
     final window = contextWindow;
     if (used == null || window == null || window <= 0) return null;
+    // **用掉 0 个 token 就等于没占用**：blank 会话的投影里 `contextWindow` 有值、
+    // `used` 是 0，于是这一格会渲染 `0%` —— 而"0%"是个像数据的数字，用户会以为
+    // 在统计。没开始用就别显示（与 `chat_page.dart` 的 `_usageText` 同一条纪律）。
+    if (used == 0) return null;
     final percent = (used / window * 100).round();
     return ContextOccupancy(
       percent: percent > 100 ? 100 : percent,

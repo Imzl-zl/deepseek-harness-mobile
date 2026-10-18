@@ -605,6 +605,11 @@ class ChatPageState extends State<ChatPage> {
   String? get _usageText {
     final usage = widget.app.tokenUsage;
     if (usage == null) return null;
+    // **全零也算"没有数据"**：刚建的 blank 会话，投影里 `tokenUsage` 是一个
+    // 字段齐全但全为 0 的对象（不是 `null`），于是这一格会渲染出 `0 tok` ——
+    // 用户看到"用量 0"会以为在统计，其实一个字都没花。与上面"拿不到就整条
+    // 不显示"同一条纪律：**没数据就不要显示一个像数据的数字**。
+    if (usage.grandTotal == 0) return null;
     final hit = usage.cacheHitText;
     if (widget.app.performanceUsage == PerformanceUsage.compact) {
       return hit == null ? null : '缓存命中 $hit%';

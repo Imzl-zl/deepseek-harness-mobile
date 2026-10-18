@@ -1010,6 +1010,61 @@ void main() {
       expect(find.text('34%'), findsOneWidget);
     });
 
+    testWidgets('全零投影：统计条整条不显示（不出 `0 tok` / `0%`）', (tester) async {
+      // 2026-10-19 用户："输入框下面的没有数据的时候应该都不显示，怎么还有一个
+      // 用量在显示 0？"——blank 会话的投影**字段齐全但全为 0**（不是 null），
+      // 于是"读不到才隐藏"那条判据漏了它。
+      final app = AppModel(
+        client: FakeClient(
+          sessions: const [
+            {'sid': 's1', 'updatedAt': 1},
+          ],
+          projections: const {
+            'tokenUsage': {
+              'uncachedInputTokens': 0,
+              'outputTokens': 0,
+              'cacheReadTokens': 0,
+              'cacheWriteTokens': 0,
+            },
+            'sessionStats': {
+              'turns': 0,
+              'steps': 0,
+              'llmMs': 0,
+              'toolMs': 0,
+              'decodeMs': 0,
+              'decodeTokens': 0,
+            },
+            'contextPressure': {
+              'pressureTokens': 0,
+              'projectedTokens': 0,
+              'contextWindow': 128000,
+            },
+          },
+        ),
+      );
+      await app.refreshSessions();
+      await app.openSession('s1');
+      await tester.pumpWidget(_wrap(app));
+      await tester.pumpAndSettle();
+
+      for (final text in ['0 tok', '0%', '0 轮 0 步', '0 tok/s']) {
+        expect(
+          find.textContaining(text),
+          findsNothing,
+          reason: '没数据就不该出现「$text」这种像数据的数字',
+        );
+      }
+      // 组件本身还在 widget 树里（它自己决定渲染什么），判据是**它没占高度**。
+      final bar = find.byType(DshStatsBar);
+      if (bar.evaluate().isNotEmpty) {
+        expect(
+          tester.getSize(bar.first),
+          Size.zero,
+          reason: '三条都空时整条收起（空条会白占一行高度）',
+        );
+      }
+    });
+
     testWidgets('统计条横滚不裁切：四位数也滑得到', (tester) async {
       // 2026-10-17 真机反馈："数字变四位数那怎么办？"—— `Row` 布局在总宽超屏时
       // 把第三项（上下文百分比）**整块裁掉**（release 里没有溢出条纹，只是看不见）。

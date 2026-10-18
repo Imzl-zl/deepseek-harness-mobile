@@ -109,4 +109,36 @@ void main() {
       expect(usage.cacheHitText, isNull);
     });
   });
+
+  // 全零投影 = 没数据：blank 会话的投影字段齐全但全为 0，而"没数据"的判据
+  // 一条条都是 `null` 检查 —— 于是真机上统计条会渲染出 `0 tok` / `0%`。
+  group('全零投影 = 没数据（blank 会话不该显示 0 tok / 0%）', () {
+    test('TokenUsage 全零：grandTotal 是 0（调用方据此整格不显示）', () {
+      const zero = TokenUsage(
+        uncachedInputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      );
+      expect(zero.grandTotal, 0);
+      expect(zero.totalLabel, '0', reason: '确实是 "0" —— 所以必须在调用方拦掉');
+      expect(zero.cacheHitText, isNull);
+    });
+
+    test('ContextPressure：窗口有值但 used 为 0 → occupancy 为 null（不显示 0%）', () {
+      const pressure = ContextPressure(
+        projectedTokens: 0,
+        contextWindow: 200000,
+      );
+      expect(pressure.occupancy, isNull, reason: '没开始用就别显示 0%');
+    });
+
+    test('ContextPressure：真的用了才给百分比', () {
+      const pressure = ContextPressure(
+        projectedTokens: 3000,
+        contextWindow: 200000,
+      );
+      expect(pressure.occupancy?.percent, 2);
+    });
+  });
 }
