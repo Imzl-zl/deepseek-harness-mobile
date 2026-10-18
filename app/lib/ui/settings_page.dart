@@ -87,7 +87,9 @@ class SettingsPage extends StatelessWidget {
         builder: (context, _) => ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
           children: [
-            // 与连接 sheet 顶部同一块：这一页也能一眼看到"走的哪条、为什么"。
+            // 与连接 sheet 顶部同一块。**在设置页它是入口**：
+            // 点一下换一条并直接连（会断当前连接），右边图标只重连。
+            // 下面的队列只管排序与管理，点行不再触发重拨。
             ConnectionSummaryBlock(
               connection: connectionSummary(
                 state: app.connection,
@@ -95,6 +97,9 @@ class SettingsPage extends StatelessWidget {
                 endpoints: app.endpoints,
                 attemptOf: app.attemptOf,
               ),
+              onTap: () => pickEndpointToConnect(context, app),
+              onReconnect: () => reconnectNow(context, app),
+              reconnecting: app.connection == ConnectionStateView.connecting,
             ),
             const _SectionTitle('通用'),
             _PrefRow(
@@ -377,29 +382,56 @@ class _EndpointCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final endpoints = app.endpoints;
+    if (endpoints.isEmpty) return const SizedBox.shrink();
     return Container(
       decoration: BoxDecoration(
         color: DshColors.layer1,
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Column(
-        children: [
-          for (var i = 0; i < endpoints.length; i += 1) ...[
-            if (i > 0) Divider(height: 1, color: DshColors.border()),
-            _EndpointRow(app: app, endpoint: endpoints[i]),
+      clipBehavior: Clip.antiAlias,
+      // **可拖动排序**：队列的顺序就是自动拨号的优先级，拖比"点一下置顶"精确
+      // （用户原话："队列最好可以拖动换位置"）。
+      //
+      // `shrinkWrap` + `NeverScrollable`：这张卡嵌在外层 `ListView` 里，
+      // 它自己不该再滚 —— 否则内层滚动会吃掉外层的拖动与页面滚动。
+      child: ReorderableListView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        buildDefaultDragHandles: false,
+        itemCount: endpoints.length,
+        onReorder: (oldIndex, newIndex) async {
+          // `ReorderableListView` 的 `newIndex` 是"插入位置"，向下拖时要减一。
+          final target = newIndex > oldIndex ? newIndex - 1 : newIndex;
+          await app.moveEndpoint(oldIndex, target);
+        },
+        itemBuilder: (context, index) => Column(
+          key: ValueKey(endpoints[index].id),
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 分隔线画在**行前面**而不是行里：拖动时它跟着行一起走，
+            // 而"行与行之间的线"是静态的。
+            if (index > 0) Divider(height: 1, color: DshColors.border()),
+            _EndpointRow(app: app, endpoint: endpoints[index], index: index),
           ],
-        ],
+        ),
       ),
     );
   }
 }
 
 class _EndpointRow extends StatelessWidget {
-  const _EndpointRow({required this.app, required this.endpoint});
+  const _EndpointRow({
+    required this.app,
+    required this.endpoint,
+    required this.index,
+  });
 
   final AppModel app;
 
   final Endpoint endpoint;
+
+  /// 在队列里的位置（拖动排序用）。
+  final int index;
 
   @override
   Widget build(BuildContext context) {
@@ -410,22 +442,36 @@ class _EndpointRow extends StatelessWidget {
         app.connection == ConnectionStateView.serving &&
         app.activeEndpoint?.id == endpoint.id;
     final isFirst = app.endpoints.first.id == endpoint.id;
-    // **正在按用户点名连接**：这一行要能一眼看出"这次是它在试"。
-    final isRequested = app.requestedEndpoint?.id == endpoint.id;
     final (status, statusColor) = _statusOf(isActive);
+    // **正在按用户点名连接**时这一行暂时不可删：连接正在进行，删掉它会让
+    // 失败回落的落点消失。
+    final isRequested = app.requestedEndpoint?.id == endpoint.id;
 
     return InkWell(
-      // **点一行 = 立刻用这条连**（主操作）。
+      // **点一行 = 设为首选**（回到 2026-10-18 之前的口径）。
       //
-      // 与"设为首选"是两个功能，别混在一起：
-      // - 点这里：这一次就断开重拨，**只试它**；失败回到自动并说明原因；
-      // - 设为首选：只改自动队列的顺序，不影响当前连接。
-      // 次要动作（首选 / 删除）收进行尾的「⋯」，主操作才该是整行可点的那一个。
-      onTap: () => _connectNow(context),
+      // 曾经改成"点一行立刻重连"，用户当场否掉："当前连接点击弹框选择连接方式
+      // 直接连接就挺好啊……干嘛非要在队列上点？"——对：队列是**顺序与清单**，
+      // 在逐行点击上挂"立刻断当前连接"这种副作用，会在管理偏好时不断打断连接。
+      // 所以"换一条并立刻连"归顶部那块，「重连」归它右边的图标，这里只管顺序。
+      onTap: () => _preferThis(context),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Row(
           children: [
+            // 拖动柄：队列的顺序就是拨号优先级，**拖比"点一下置顶"精确**
+            // （用户原话："队列最好可以拖动换位置"）。
+            ReorderableDragStartListener(
+              index: index,
+              child: const Padding(
+                padding: EdgeInsets.only(right: 10),
+                child: DshIcon(
+                  'chevronsUpDown',
+                  size: 18,
+                  color: DshColors.labelTertiary,
+                ),
+              ),
+            ),
             DshIcon(
               endpoint.kind == EndpointKind.direct ? 'link' : 'globe',
               size: 18,
@@ -478,8 +524,6 @@ class _EndpointRow extends StatelessWidget {
                     )
                   : null,
             ),
-            // 次要动作入口。**不给它一个图标按钮之外的位置**：
-            // 整行是主操作，多放一个显式按钮会让两种点击意图挤在一起。
             SizedBox(
               width: 36,
               child: IconButton(
@@ -487,12 +531,10 @@ class _EndpointRow extends StatelessWidget {
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
                 onPressed: isRequested ? null : () => _onMore(context),
-                icon: DshIcon(
+                icon: const DshIcon(
                   'ellipsis',
                   size: 18,
-                  color: isRequested
-                      ? DshColors.labelCaption
-                      : DshColors.labelSecondary,
+                  color: DshColors.labelSecondary,
                 ),
               ),
             ),
@@ -529,34 +571,26 @@ class _EndpointRow extends StatelessWidget {
     return ('拨不通$reason', DshColors.error);
   }
 
-  /// **用这个端点立刻连接**（点名）。
-  ///
-  /// 失败会自动回到自动队列 —— 所以这里的 toast 要**说清发生了什么**，
-  /// 而不是只报"失败"：用户得知道"我选的那条没通，现在的连接是怎么来的"。
-  Future<void> _connectNow(BuildContext context) async {
-    if (app.onReconnect == null) {
-      _toast(context, '这条连接不支持点名拨号');
+  /// **点一行 = 设为首选**（只改顺序，不动当前连接）。
+  Future<void> _preferThis(BuildContext context) async {
+    final isFirst = app.endpoints.first.id == endpoint.id;
+    if (isFirst) {
+      _toast(context, '已经是首选');
       return;
     }
-    _toast(context, '正在用「${endpointKindLabel(endpoint.kind)}」连接…');
-    final ok = await app.useEndpointNow(endpoint);
+    await app.preferEndpoint(endpoint);
     if (!context.mounted) return;
-    if (ok) {
-      _toast(context, '已连上「${endpointKindLabel(endpoint.kind)}」');
-      return;
-    }
-    final reason = app.endpointRequestResult?.reason;
-    _toast(
-      context,
-      reason == null || reason.isEmpty
-          ? '这条没连上，已回到自动选择'
-          : '这条没连上（$reason），已回到自动选择',
-    );
+    _toast(context, '已设为首选，下次自动连接时优先');
   }
 
-  /// 行尾「⋯」：次要动作（设为首选 / 删除）。
+  /// 行尾「⋯」：把这个端点**立刻连上**，或者删掉。
+  ///
+  /// "立刻连"放在这里而不是整行：整行已经是"设首选"，两种点击意图挤在同一行
+  /// 会让人不敢点（用户原话见 [_EndpointRow] 的注释）。
   Future<void> _onMore(BuildContext context) async {
-    final isFirst = app.endpoints.first.id == endpoint.id;
+    final isActive =
+        app.connection == ConnectionStateView.serving &&
+        app.activeEndpoint?.id == endpoint.id;
     final action = await showDshSheet<String>(
       context: context,
       title: endpointKindLabel(endpoint.kind),
@@ -564,12 +598,12 @@ class _EndpointRow extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           DshPickerRow(
-            name: '设为首选',
-            tags: [if (isFirst) '已经是首选' else '排在第一位，第一个拨它'],
-            selected: isFirst,
-            icon: 'pin',
-            enabled: !isFirst,
-            onTap: () => Navigator.of(context).pop('prefer'),
+            name: '现在用这条连',
+            tags: [if (isActive) '已经在用这一条' else '会断开当前连接，只试这一条'],
+            selected: isActive,
+            icon: 'refresh',
+            enabled: !isActive,
+            onTap: () => Navigator.of(context).pop('connect'),
           ),
           DshPickerRow(
             name: '删除这个端点',
@@ -583,10 +617,12 @@ class _EndpointRow extends StatelessWidget {
     );
     if (action == null || !context.mounted) return;
 
+    if (action == 'connect') {
+      await _connectNow(context);
+      return;
+    }
     if (action == 'prefer') {
-      await app.preferEndpoint(endpoint);
-      if (!context.mounted) return;
-      _toast(context, '已把「${endpointKindLabel(endpoint.kind)}」设为首选，下次重连生效');
+      await _preferThis(context);
       return;
     }
 
@@ -617,6 +653,32 @@ class _EndpointRow extends StatelessWidget {
     await app.removeEndpoint(endpoint);
     if (!context.mounted) return;
     _toast(context, '已删除');
+  }
+
+  /// **用这个端点立刻连接**（点名）。
+  ///
+  /// 失败会自动回到自动队列 —— 所以 toast 要**说清发生了什么**，
+  /// 而不是只报"失败"：用户得知道"我选的那条没通，现在的连接是怎么来的"。
+  Future<void> _connectNow(BuildContext context) async {
+    if (app.onReconnect == null) {
+      _toast(context, '这条连接不支持点名拨号');
+      return;
+    }
+    final label = endpointKindLabel(endpoint.kind);
+    _toast(context, '正在用「$label」连接…');
+    final ok = await app.useEndpointNow(endpoint);
+    if (!context.mounted) return;
+    if (ok) {
+      _toast(context, '已连上「$label」');
+      return;
+    }
+    final reason = app.endpointRequestResult?.reason;
+    _toast(
+      context,
+      reason == null || reason.isEmpty
+          ? '这条没连上，已回到自动选择'
+          : '这条没连上（$reason），已回到自动选择',
+    );
   }
 
   void _toast(BuildContext context, String message) {

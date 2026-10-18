@@ -51,6 +51,7 @@ import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 import 'chat_turns.dart';
 import 'connection_actions_sheet.dart';
+import 'connection_summary_block.dart';
 import 'conversation_hero.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_composer.dart';
@@ -740,6 +741,19 @@ class ChatPageState extends State<ChatPage> {
         onRePair: () => widget.onRePair?.call(),
         onOpenSide: openSide,
         onDisconnect: () => widget.onDisconnect?.call(),
+        // **右上角那个点也管"换方式"与"重连"**（用户原话："页面的右上角的点
+        // 最好也可以点击切换方式重连"）。两个动作与设置页顶部块**同一份实现**：
+        // `pickEndpointToConnect` / `reconnectNow` 住在 `connection_summary_block.dart`。
+        //
+        // **必须等这个 sheet 关完再开下一个**（`pop` 之后 `await` 一拍）：
+        // 两层面板同时做退出/进入动画时，后开的那个会被前一个的 pop 带走 ——
+        // 真机上表现为"点了「换个连接方式」，面板关了、选择框没出来"。
+        onPickEndpoint: () => unawaited(
+          _afterCurrentSheet(() => pickEndpointToConnect(context, widget.app)),
+        ),
+        onReconnect: () => unawaited(
+          _afterCurrentSheet(() => reconnectNow(context, widget.app)),
+        ),
         // **已经放弃自动重连时才给「重试连接」**：再试一轮，不清凭据。
         // `client.start()` 会清掉放弃标记并把退避表带回起点。
         onRetry: widget.app.connection == ConnectionStateView.gaveUp
@@ -750,6 +764,21 @@ class ChatPageState extends State<ChatPage> {
   }
 
   void _closeSide() => _scaffoldKey.currentState?.closeEndDrawer();
+
+  /// 等当前 sheet 的退出动画走完再跑 [action]。
+  ///
+  /// 连接 sheet 的每一项都是"先 `pop` 再做事"；而"换个连接方式"要接着开**第二个**
+  /// sheet。两层动画叠在一起时，后开的那个会被前一个的 pop 一起带走 ——
+  /// 真机实测两次：面板关了、选择框没出来（看起来像点了没反应）。
+  ///
+  /// **等的是动画时长，不是"一帧"**：`Duration.zero` 只让出一次微任务，
+  /// 那时退出动画刚开始，`pop` 仍会作用到新路由上。`ModalBottomSheetRoute`
+  /// 的出场时长是 `_kMinFlingVelocity` 一档的 200ms 级别，等它走完最稳。
+  Future<void> _afterCurrentSheet(Future<void> Function() action) async {
+    await Future<void>.delayed(const Duration(milliseconds: 260));
+    if (!mounted) return;
+    await action();
+  }
 
   SideHeader _sideHeader() => switch (_sidePanel) {
     SidePanel.file => const SideHeader(

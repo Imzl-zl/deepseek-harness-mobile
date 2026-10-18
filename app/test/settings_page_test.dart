@@ -85,20 +85,30 @@ Widget _host(AppModel app) => MaterialApp(
 );
 
 /// 滚到某个 widget 可见（ListView 懒加载 + 设置页有多组，端点卡在下面）。
+///
+/// **必须指定 `scrollable`**：端点卡现在自己也是 `ReorderableListView`
+/// （`shrinkWrap` + 禁滚），页面上于是有不止一个 `Scrollable`；
+/// 不指定时会抛 `Bad state: Too many elements`。外层那个才是真正要滚的。
 Future<void> _scrollTo(WidgetTester tester, Finder target) async {
-  await tester.scrollUntilVisible(target, 200);
+  await tester.scrollUntilVisible(
+    target,
+    200,
+    scrollable: find.byType(Scrollable).first,
+  );
   await tester.pumpAndSettle();
 }
 
 /// 某一行行尾的「⋯」（次要动作入口）。
 ///
-/// 整行可点是**主操作**（立刻用这条连），所以次要动作要靠这个按钮 ——
+/// 整行可点是**设为首选**；"现在用这条连"与"删除"走这个按钮。
 /// 按行内文字先找到那一行，再取它里面的 IconButton，而不是 `.first`
 /// （`.first` 永远命中第一条，而用例要的是"中转"那一行）。
-Finder _moreOf(String rowText) => find.descendant(
-  of: find.ancestor(of: find.text(rowText), matching: find.byType(Row)).first,
-  matching: find.byTooltip('更多'),
-);
+Finder _moreOf(String rowText) => find
+    .descendant(
+      of: find.ancestor(of: find.text(rowText), matching: find.byType(Row)),
+      matching: find.byTooltip('更多'),
+    )
+    .first;
 
 void main() {
   AppModel buildApp({
@@ -131,7 +141,7 @@ void main() {
     addTearDown(app.dispose);
   });
 
-  testWidgets('点非首实行 → sheet 里「设为首选」→ 置顶 + 落盘 + toast', (tester) async {
+  testWidgets('点非首实行 → 直接设为首选（置顶 + 落盘 + toast）', (tester) async {
     final persisted = <List<Endpoint>>[];
     final app = buildApp(onEndpointsChanged: persisted.add);
     await tester.pumpWidget(_host(app));
@@ -140,12 +150,9 @@ void main() {
     // 设置页比"只有连接方式"那版长了（通用/模型/关于三组在它上面）——
     // 端点卡可能出屏，先滚到可见再点（ListView 懒加载，不滚根本找不到）。
     await _scrollTo(tester, find.text('中转'));
-    await tester.tap(_moreOf('中转'));
-    await tester.pumpAndSettle();
-
-    // 点一行现在是「立刻用它连」；次要动作走行尾的「⋯」。：它开一个 sheet 让用户选动作。
-    // 删除也要有入口，而把它挤成第三列会破坏「名称/标签组 + 勾位」的版面规则。
-    await tester.tap(find.text('设为首选'));
+    // **点行 = 设为首选**（不是"立刻连"，也不是开 sheet）：
+    // 队列管的是顺序，立刻重连归顶部那块与顶栏状态点。
+    await tester.tap(find.text('中转'));
     await tester.pumpAndSettle();
 
     expect(app.endpoints.map((e) => e.url).toList(), [
@@ -153,11 +160,11 @@ void main() {
       _direct.url,
     ], reason: '只改顺序，两条都还在');
     expect(persisted, hasLength(1), reason: '改了要落盘，重启后还是这个偏好');
-    expect(find.text('已把「中转」设为首选，下次重连生效'), findsOneWidget);
+    expect(find.text('已设为首选，下次自动连接时优先'), findsOneWidget);
     addTearDown(app.dispose);
   });
 
-  testWidgets('首选行的「设为首选」禁用，并说清已经是首选', (tester) async {
+  testWidgets('点首选行 → 不动 + 说清已经是首选', (tester) async {
     var persisted = 0;
     final app = buildApp(
       onEndpointsChanged: (_) {
@@ -168,15 +175,27 @@ void main() {
     await tester.pumpAndSettle();
 
     await _scrollTo(tester, find.text('直连'));
-    await tester.tap(_moreOf('直连'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('已经是首选'), findsOneWidget, reason: '说清为什么点不动');
-    await tester.tap(find.text('设为首选'));
+    await tester.tap(find.text('直连'));
     await tester.pumpAndSettle();
 
     expect(app.endpoints.map((e) => e.url).toList(), [_direct.url, _relay.url]);
     expect(persisted, 0, reason: '没变化不落盘');
+    expect(find.text('已经是首选'), findsOneWidget, reason: '说清为什么不动');
+    addTearDown(app.dispose);
+  });
+
+  testWidgets('行尾「⋯」里有「现在用这条连」（立刻连，与首选分开）', (tester) async {
+    final app = buildApp();
+    await tester.pumpWidget(_host(app));
+    await tester.pumpAndSettle();
+
+    await _scrollTo(tester, find.text('中转'));
+    await tester.tap(_moreOf('中转'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('现在用这条连'), findsOneWidget, reason: '立刻连的入口在这里');
+    expect(find.text('会断开当前连接，只试这一条'), findsOneWidget, reason: '要提前说清副作用');
+    expect(find.text('删除这个端点'), findsOneWidget);
     addTearDown(app.dispose);
   });
 

@@ -386,6 +386,23 @@ class AppModel extends ChangeNotifier {
     await onEndpointsMetaChanged?.call(endpointMeta);
   }
 
+  /// 拖动换位置（队列的顺序就是自动拨号的优先级）。
+  ///
+  /// 参数是**表下标**，且 [newIndex] 已经是"移动后的目标下标"（调用方负责把
+  /// `ReorderableListView` 的"插入位置"换算成它 —— 那是个 UI 框架概念，
+  /// 不该漏到这里）。越界即忽略：拖动结束时会话可能已经变了。
+  Future<void> moveEndpoint(int oldIndex, int newIndex) async {
+    if (oldIndex == newIndex) return;
+    if (oldIndex < 0 || oldIndex >= _endpoints.length) return;
+    if (newIndex < 0 || newIndex >= _endpoints.length) return;
+    final reordered = List<Endpoint>.of(_endpoints);
+    final moved = reordered.removeAt(oldIndex);
+    reordered.insert(newIndex, moved);
+    _endpoints = reordered;
+    notifyListeners();
+    await onEndpointsChanged?.call(reordered);
+  }
+
   /// 手动挑一个端点当首选（设置页用）。**只改顺序，不删条目**。
   Future<void> preferEndpoint(Endpoint endpoint) async {
     final index = _endpoints.indexWhere((e) => e.id == endpoint.id);

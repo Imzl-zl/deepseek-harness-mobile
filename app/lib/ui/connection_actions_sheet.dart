@@ -23,8 +23,11 @@ import 'connection_summary_block.dart';
 /// 弹出连接操作 sheet。取消（点遮罩 / 「取消」行）不触发任何动作。
 ///
 /// [connection] 是顶部的「当前连接」块（连接方式选择器第 1 步：一眼能看
-/// "走的哪条"，不用进设置）。**它只表事实、不可点** —— 改偏好的入口在
-/// 设置页的端点列表（那边列得出全部端点）。
+/// "走的哪条"，不用进设置）。
+///
+/// **2026-10-18 起它也是切换与重连的入口**（用户："页面的右上角的点最好也可以
+/// 点击切换方式重连"）：`onReconnect` / `onPickEndpoint` 两个回调把设置页顶部
+/// 块的两个动作也搬到这里 —— 用户不必为了"换一条"专门进设置。
 Future<void> showConnectionActionsSheet(
   BuildContext context, {
   required ConnectionSummary connection,
@@ -32,71 +35,120 @@ Future<void> showConnectionActionsSheet(
   VoidCallback? onOpenSide,
   VoidCallback? onDisconnect,
   VoidCallback? onRetry,
+
+  /// 重新拨一次（不改偏好）。
+  VoidCallback? onReconnect,
+
+  /// 换一条并直接连（弹选择框的动作由调用方实现 —— 它持有 `AppModel`）。
+  VoidCallback? onPickEndpoint,
 }) {
   return showModalBottomSheet<void>(
     context: context,
     backgroundColor: DshColors.layer1,
     builder: (context) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ConnectionSummaryBlock(connection: connection),
-          // 「重试连接」只在**已经放弃自动重连**时给：那是"再试一轮"，
-          // 与「重新配对（换一台电脑）」是两件事 —— 前者不动物料，后者清凭据。
-          if (onRetry != null)
+      // **可滚动**：2026-10-18 加了「换个连接方式」「重新连接」两行之后，
+      // 小屏上会 RenderFlex overflow —— 而"选项多到放不下"不该表现成
+      // 一块黄黑条纹。正常屏仍然按内容高度贴底。
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ConnectionSummaryBlock(
+              connection: connection,
+              // 块本身在 sheet 里**不可点**：sheet 已经展开，再点它没有去处。
+              // 两个动作在下面各有自己的一行，比"点块里某处"更好找。
+            ),
+            if (onPickEndpoint != null)
+              ListTile(
+                leading: const DshIcon(
+                  'chevronsUpDown',
+                  size: 18,
+                  color: DshColors.labelSecondary,
+                ),
+                title: const Text('换个连接方式'),
+                subtitle: const Text('选一条并立刻用它连'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  // 回调必须由**页面**的 context 实现（见下方参数说明）：
+                  // 它内部要再开一个 sheet，而这个 sheet 的 context 此刻已随路由失效。
+                  onPickEndpoint();
+                },
+              ),
+            if (onReconnect != null)
+              ListTile(
+                leading: const DshIcon(
+                  'refresh',
+                  size: 18,
+                  color: DshColors.labelSecondary,
+                ),
+                title: const Text('重新连接'),
+                subtitle: const Text('电脑侧不动，按当前方式再拨一次'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  onReconnect();
+                },
+              ),
+            // 「重试连接」只在**已经放弃自动重连**时给：那是"再试一轮"，
+            // 与「重新配对（换一台电脑）」是两件事 —— 前者不动物料，后者清凭据。
+            if (onRetry != null)
+              ListTile(
+                leading: const DshIcon(
+                  'refresh',
+                  size: 18,
+                  color: DshColors.labelSecondary,
+                ),
+                title: const Text('重试连接'),
+                subtitle: const Text('电脑侧不动，只是再试一轮'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  onRetry();
+                },
+              ),
             ListTile(
               leading: const DshIcon(
                 'refresh',
                 size: 18,
                 color: DshColors.labelSecondary,
               ),
-              title: const Text('重试连接'),
-              subtitle: const Text('电脑侧不动，只是再试一轮'),
+              title: const Text('重新配对（换一台电脑）'),
+              subtitle: const Text('会清掉本机凭据，需要重新扫码'),
               onTap: () {
                 Navigator.of(context).pop();
-                onRetry();
+                onRePair();
               },
             ),
-          ListTile(
-            leading: const DshIcon(
-              'refresh',
-              size: 18,
-              color: DshColors.labelSecondary,
-            ),
-            title: const Text('重新配对（换一台电脑）'),
-            subtitle: const Text('会清掉本机凭据，需要重新扫码'),
-            onTap: () {
-              Navigator.of(context).pop();
-              onRePair();
-            },
-          ),
-          if (onOpenSide != null)
-            ListTile(
-              leading: const DshIcon(
-                'panelLeft',
-                size: 18,
-                color: DshColors.labelSecondary,
+            if (onOpenSide != null)
+              ListTile(
+                leading: const DshIcon(
+                  'panelLeft',
+                  size: 18,
+                  color: DshColors.labelSecondary,
+                ),
+                title: const Text('打开侧面板'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  onOpenSide();
+                },
               ),
-              title: const Text('打开侧面板'),
-              onTap: () {
-                Navigator.of(context).pop();
-                onOpenSide();
-              },
-            ),
-          if (onDisconnect != null)
+            if (onDisconnect != null)
+              ListTile(
+                leading: const DshIcon(
+                  'trash',
+                  size: 18,
+                  color: DshColors.error,
+                ),
+                title: const Text('断开并清掉凭据'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  onDisconnect();
+                },
+              ),
             ListTile(
-              leading: const DshIcon('trash', size: 18, color: DshColors.error),
-              title: const Text('断开并清掉凭据'),
-              onTap: () {
-                Navigator.of(context).pop();
-                onDisconnect();
-              },
+              title: const Center(child: Text('取消')),
+              onTap: () => Navigator.of(context).pop(),
             ),
-          ListTile(
-            title: const Center(child: Text('取消')),
-            onTap: () => Navigator.of(context).pop(),
-          ),
-        ],
+          ],
+        ),
       ),
     ),
   );
