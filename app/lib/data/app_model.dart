@@ -1735,6 +1735,12 @@ class AppModel extends ChangeNotifier {
       final items = <ChatItem>[];
       var inboxChanged = false;
       final tracker = _inboxTrackers.putIfAbsent(sid, () => _InboxTracker());
+      // **本批已投影的条目**（itemId → 条目）：`tool/call` 与 `tool/result`
+      // 可能在同一个 delta 里先后到达，而 `store.upsertAll` 在循环之后才发生 ——
+      // 那时结果要找的"前一个条目"还没落表。所以前一个值按
+      // "本批优先、落表兜底"取（DSH 的 `update(context, match)` 同样是
+      // 在同一个 Context 里滚动状态，不是回到库里查）。
+      final inBatch = <String, ChatItem>{};
       for (final event in delta.events) {
         // **`session/title` 不是条目，是标题的真值**：DSH 生成/改名时落一条
         // （`session-title/src/index.ts` 的 fold 就认这个 type）。它进条目表
@@ -1763,17 +1769,22 @@ class AppModel extends ChangeNotifier {
         // 且没有任何报错（流监听里的未处理异步错误）。失败的那条记进
         // [_projectionFailures]，剩下的照常渲染。
         try {
-          items.add(
-            projectEvent(
-              type: event.type,
-              seq: event.seq,
-              data: event.data,
-              time: event.time,
-              steering:
-                  event.type == 'user/message' &&
-                  tracker.claimIfSteering(event.data),
-            ).item!,
-          );
+          final projected = projectEvent(
+            type: event.type,
+            seq: event.seq,
+            data: event.data,
+            time: event.time,
+            steering:
+                event.type == 'user/message' &&
+                tracker.claimIfSteering(event.data),
+            // **upsert 的前一个值**：`tool/result` 要靠它把工具名与参数
+            // 从 `tool/call` 继承过来（DSH `rootResult(match, previous)`，
+            // 真日志里结果消息不带名字）。投影层自己是纯函数，所以
+            // "前一个条目是什么"由这一层给。
+            previous: inBatch[event.itemId] ?? store.byId(event.itemId),
+          ).item!;
+          inBatch[event.itemId] = projected;
+          items.add(projected);
         } on StateError catch (error) {
           _projectionFailures[sid] = '${event.type}(seq=${event.seq})：$error';
         }

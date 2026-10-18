@@ -26,6 +26,23 @@ import '../model/interaction.dart';
 /// `packages/interaction/user-questions/src/projection.ts:28` 的 `ASK_USER_QUESTION_TOOL`）。
 const String askUserQuestionTool = 'ask_user_question';
 
+/// 系统提示词那一行的标签（DSH `locale.ts:116` 的 `message.systemPrompt`）。
+const String kSystemPromptLabel = '系统提示词';
+
+/// 工具名缺失时的占位（DSH 同处是空串 `''`；空串在卡片上什么也不说，
+/// 而"这是个工具但不知道是哪个"本身是信息，所以给一个明说的占位）。
+const String kUnknownToolName = '工具';
+
+/// 上下文注入行的标签：**照 DSH 的 `contextProducer`**
+/// （`conversation-nodes/event-projection.ts:60-76`）—— 有 `source.kind`
+/// 就照它说（`tool-registry` / `skill-invocation` / `agent-instructions` …），
+/// 没有说话才退回 `上下文`。DSH 对未知 kind 的原话是
+/// "keep an unknown producer visible by its durable kind"。
+String contextProducerLabel(Object? data) {
+  final kind = stringField(fieldOf(data, 'source'), 'kind');
+  return kind ?? '上下文';
+}
+
 /// 把一条 DSH 会话事件投影成界面条目。
 ///
 /// [seq] 是帧头带来的会话修订号（`ev` 帧的 `seq`）；事件自带的 `seq` 以那个为准
@@ -35,6 +52,15 @@ const String askUserQuestionTool = 'ask_user_question';
 /// 与 DSH Web 的 `SteeringHistory` 同源）—— 投影层自己是纯函数，
 /// 不认识跨事件的状态。
 ///
+/// [previous] 是**同一个 itemId 上已有的条目**（upsert 的前一个值）。
+/// 它的存在是因为 DSH 的 `tool/result` **不重复携带工具名与参数**（真日志实测：
+/// 结果消息只有 `{role, source, toolCallId, content, isError, id}`），
+/// 而名字与参数在 `tool/call` 上。DSH Web 的同一步是
+/// `conversation-nodes/tool.ts:100-118` 的 `rootResult(match, previous)`：
+/// `name: previous?.name ?? ''`、`args: previous?.args`、`call: {name, argsRaw}` ——
+/// **结果继承调用**。没有这一层继承，`tool/result` 一到达就把卡片上的
+/// `read` 覆盖成"工具"、把参数行覆盖成 JSON 键名（2026-10-19 真机复现）。
+///
 /// **未知类型不丢**：返回 [OtherItem]，而不是 `null`。
 /// 丢掉会让"事件总数与条目数对不上"这类问题无从排查，而 DSH 的事件类型会随上游增加。
 ChatProjection projectEvent({
@@ -43,6 +69,7 @@ ChatProjection projectEvent({
   required Object? data,
   int time = 0,
   bool steering = false,
+  ChatItem? previous,
 }) {
   // `itemId` 的推导只走 `core/items.dart`（契约 §5.2）：那是**唯一**一处，
   // 而它可能在已知类型缺字段时抛错（宁可让这一帧失败，也不要造一个会漂移的身份）。
@@ -60,6 +87,14 @@ ChatProjection projectEvent({
         attachmentCount: message.attachmentCount,
         steering: steering,
         reasoning: message.reasoning,
+        // 系统 / 上下文注入行的**标签**（DSH 的 `system-prompt` 与 `context`
+        // 两个节点各有一个标题行，见 `register-node-renderers.ts:45,49`）。
+        // 用户与助手消息没有它（它们有头像与名字）。
+        systemLabel: type == 'system/message'
+            ? kSystemPromptLabel
+            : type == 'developer/message'
+            ? contextProducerLabel(data)
+            : null,
       ),
     );
   }
@@ -70,9 +105,16 @@ ChatProjection projectEvent({
         itemId: itemId,
         seq: seq,
         updatedAt: time,
-        name: stringField(data, 'name') ?? '工具',
+        name: stringField(data, 'name') ?? kUnknownToolName,
         status: ToolCallStatus.running,
-        summary: summarize(data),
+        // **参数行按 DSH 的 `deriveSummary` 推**，不是把载荷摊平：
+        // 真日志里 `tool/call` 的 data 是 `{turn, step, callId, name, arguments}`，
+        // 而 `arguments` 才是参数（JSON 字符串）。摊平 data 得到的是
+        // `turn, step, callId, name, arguments` 这种键名清单（2026-10-19 真机复现）。
+        summary: toolArgumentsSummary(
+          name: stringField(data, 'name') ?? '',
+          arguments: stringField(data, 'arguments') ?? '',
+        ),
       ),
     );
   }
@@ -81,16 +123,27 @@ ChatProjection projectEvent({
     // 结果与调用**共用同一个 itemId**（靠 `toolCallId` 配对，契约 §5.2），
     // 所以它到达时是"更新已有条目"，而不是新增一条。
     final message = fieldOf(data, 'message');
+    // **继承调用那一半**（DSH `conversation-nodes/tool.ts:100-118` 的
+    // `rootResult(match, previous)`）：真日志里结果消息不带 `name` 与参数，
+    // 它们只在 `tool/call` 上。不继承就会把卡片上已经写好的名字与参数
+    // 覆盖成"工具"和 JSON 键名（2026-10-19 真机复现，见决策笔记）。
+    final call = previous is ToolCallItem ? previous : null;
+    // 结果自己带 name 时照它（部分适配器会写）；否则用调用的名字。
+    final name = stringField(message, 'name') ?? call?.name ?? kUnknownToolName;
     return ChatProjection.item(
       ToolCallItem(
         itemId: itemId,
         seq: seq,
         updatedAt: time,
-        name: stringField(message, 'name') ?? '工具',
+        name: name,
         status: isToolError(data)
             ? ToolCallStatus.failed
             : ToolCallStatus.completed,
-        summary: summarize(message),
+        // **参数摘要只用调用的那一份**：结果里没有参数，而把结果消息
+        // 摊平只会得到 `role, source, toolCallId, conten…` 这种键名清单。
+        // 历史翻页可能只落到结果（调用在窗口外），那时没有参数可显示 ——
+        // 留空，不编一个（DSH 同处：`call: previous == null ? null : …`）。
+        summary: call?.summary ?? '',
         // **结果正文进明细**：工具到底返回了什么，展开才看得见
         // （`ToolCard` 的 `.tool-body` 一直是支持的，只是投影从不填）。
         detail: toolOutputOf(message),
@@ -307,6 +360,82 @@ String summarize(Object? value, {int maxLength = 120}) {
   if (value == null) return '';
   final text = value is String ? value : _flatten(value);
   final single = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+  return single.length <= maxLength
+      ? single
+      : '${single.substring(0, maxLength)}…';
+}
+
+// ---------------------------------------------------------------------------
+// 工具参数行（照 DSH `ui-tool/.../tool-call-model.ts` 的 deriveSummary）
+// ---------------------------------------------------------------------------
+
+/// 工具名 → 行变体（DSH `TOOL_VARIANTS`，`tool-call-model.ts:45-72`）。
+///
+/// 只有**影响摘要取哪个键**的才列：`bash`/`pwsh` 取 `description` 再 `command`；
+/// `read` 系取 `path`/`file_path`/`url`；`search` 系取 `query`/`pattern`/`url`；
+/// `write`/`edit` 取 `path`/`file_path`。**未知工具走 `others`（无优先键）** ——
+/// 与 DSH 的 `classifyTool(toolName) ?? 'others'` 同一条规则。
+const Map<String, List<String>> _toolSummaryKeys = <String, List<String>>{
+  'bash': ['description', 'command'],
+  'pwsh': ['description', 'command'],
+  'read': ['path', 'file_path', 'url'],
+  'read_image': ['path', 'file_path', 'url'],
+  'web_fetch': ['path', 'file_path', 'url'],
+  'web_search': ['query', 'pattern', 'url'],
+  'grep': ['query', 'pattern', 'url'],
+  'glob': ['query', 'pattern', 'url'],
+  'write': ['path', 'file_path'],
+  'edit': ['path', 'file_path'],
+};
+
+/// 工具参数的一行摘要。
+///
+/// 逐条对照 DSH 的 `deriveSummary`（`tool-call-model.ts:227-241`）：
+///
+/// 1. `arguments` 不是合法 JSON（流式中断 / 被拒的调用原样保留）→ 取**首行**；
+/// 2. 按变体取优先键（见 [_toolSummaryKeys]）的第一个非空字符串；
+/// 3. 都没有 → 取参数里**第一个非空字符串值**（DSH 同款兜底）；
+/// 4. 参数里一个字符串都没有 → 取原始 `arguments` 的首行。
+///
+/// 第 3 条是"未知工具也能说点有意义的东西"的那一条：真日志里
+/// `tool_search` 的参数是 `{"query": "..."}`，而它不在变体表里 ——
+/// 没有第 3 条就会退到第 4 条，显示一整行 JSON。
+String toolArgumentsSummary({
+  required String name,
+  required String arguments,
+  int maxLength = 120,
+}) {
+  if (arguments.isEmpty) return '';
+  Object? parsed;
+  try {
+    parsed = jsonDecode(arguments);
+  } catch (_) {
+    // DSH 的同一条：解析失败就退回原始文本首行（不猜、不编）。
+    return _firstLine(arguments, maxLength);
+  }
+  if (parsed is! Map) return _firstLine(arguments, maxLength);
+  final keys = _toolSummaryKeys[name];
+  if (keys != null) {
+    for (final key in keys) {
+      final value = parsed[key];
+      if (value is String && value.isNotEmpty) {
+        return _firstLine(value, maxLength);
+      }
+    }
+  }
+  for (final value in parsed.values) {
+    if (value is String && value.isNotEmpty) {
+      return _firstLine(value, maxLength);
+    }
+  }
+  return _firstLine(arguments, maxLength);
+}
+
+/// 取首行并截断（DSH 的 `firstLine` + 我们的摘要上限）。
+String _firstLine(String text, int maxLength) {
+  final nl = text.indexOf('\n');
+  final line = nl == -1 ? text : text.substring(0, nl);
+  final single = line.replaceAll(RegExp(r'\s+'), ' ').trim();
   return single.length <= maxLength
       ? single
       : '${single.substring(0, maxLength)}…';

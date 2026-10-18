@@ -56,6 +56,7 @@ class MessageItem extends ChatItem {
     this.attachmentCount = 0,
     this.steering = false,
     this.reasoning = '',
+    this.systemLabel,
   });
 
   final MessageRole role;
@@ -83,6 +84,16 @@ class MessageItem extends ChatItem {
   /// DSH 桌面端把它渲染成过程块（可折叠），手机同一条：折叠在正文上方，
   /// 默认收起 —— 它经常比正文还长，全展开会把对话冲掉。
   final String reasoning;
+
+  /// 系统 / 上下文注入行的标题（`system/message` = 「系统提示词」；
+  /// `developer/message` = 生产者 kind，见 [contextProducerLabel]）。
+  ///
+  /// **只有 [MessageRole.system] 有它**：用户与助手消息靠头像与名字表意，
+  /// 而系统行在 DSH 里本来就是一个带标题的折叠行
+  /// （`register-node-renderers.ts:45,49` 的 `context` 与 `system-prompt`）。
+  /// 2026-10-19 之前这两种消息被渲染成**正文原样内联** —— 而系统提示词
+  /// 在真日志里有上万字符，于是对话流开头横着一条巨墙（真机复现）。
+  final String? systemLabel;
 }
 
 /// 消息角色（决定气泡配色与对齐）。

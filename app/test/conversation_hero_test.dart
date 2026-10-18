@@ -26,6 +26,7 @@ import 'package:dsh_mobile/theme/dsh_icons.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/chat_page.dart';
 import 'package:dsh_mobile/ui/conversation_hero.dart';
+import 'package:dsh_mobile/ui/dsh_app_bar.dart';
 import 'package:dsh_mobile/ui/dsh_composer.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
@@ -293,6 +294,44 @@ void main() {
       // 工作区 chip = 归属那个工作区的标题；模式 chip = 投影里那个预设的中文名。
       expect(find.text('dsh-mobile'), findsOneWidget);
       expect(find.text('PTC 模式'), findsOneWidget);
+    });
+
+    testWidgets('hero 在对话区里**居中**，不贴底（真机反馈"首页显示在最下面"）', (tester) async {
+      // 2026-10-19 真机截图：hero 挤在屏幕最底下、上面一大片空白。
+      // DSH 的判据是 `ConversationRoot.module.css:503-518`：
+      // "Hero phase: the composer stack … is flex-centered in the column;
+      //  composer phase docks it at the bottom" + `padding-bottom: 32px`。
+      // 所以这一条同时钉住两件事：**不贴底**（`end` 会红）与
+      // **不置顶**（`start` 会红）—— 居中偏上才是 DSH 的 hero 阶段。
+      final (_, app) = connected(
+        workspaces: workspaceReply(owningWorkspace: 'w1'),
+        presets: presetReply(),
+        projections: {'agentPreset': 'ptc'},
+      );
+      addTearDown(app.dispose);
+      await tester.pumpWidget(host(app));
+      await tester.pumpAndSettle();
+
+      final hero = tester.getRect(find.text('探索未至之境'));
+      // 对话区 = 分段控件下缘 → 输入栏上缘（hero 只在这一段里）。
+      final areaTop = tester.getRect(find.byType(DshSegmented)).bottom;
+      final areaBottom = tester.getRect(find.byType(DshComposer)).top;
+      final area = Rect.fromLTRB(0, areaTop, 800, areaBottom);
+      // 量的必须是**子控件**（标题那一行）：`Column` 默认 `mainAxisSize.max`
+      // 会撑满整个弹性区，容器的 rect 在任何对齐下都一样 —— 那是空转的断言。
+      final heroCenter = hero.center.dy;
+      final fraction = (heroCenter - area.top) / area.height;
+
+      expect(
+        fraction,
+        lessThan(0.6),
+        reason: 'hero 贴底了（fraction=$fraction）—— DSH hero 阶段是居中的',
+      );
+      expect(
+        fraction,
+        greaterThan(0.3),
+        reason: 'hero 置顶了（fraction=$fraction）—— DSH hero 阶段是居中略偏上',
+      );
     });
 
     testWidgets('占位文案换成 placeholder.hero 那句', (tester) async {

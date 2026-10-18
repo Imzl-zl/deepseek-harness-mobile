@@ -15,6 +15,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../data/projection.dart';
 import '../model/chat_item.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
@@ -190,81 +191,16 @@ class AssistantTurn extends StatelessWidget {
 }
 
 /// 思考过程块（可折叠）。
-class _ReasoningBlock extends StatefulWidget {
+///
+/// 结构与 [_CollapsibleNote] 完全相同，差别只有图标与强调色 —— 所以直接复用它。
+class _ReasoningBlock extends StatelessWidget {
   const _ReasoningBlock({required this.text});
 
   final String text;
 
   @override
-  State<_ReasoningBlock> createState() => _ReasoningBlockState();
-}
-
-class _ReasoningBlockState extends State<_ReasoningBlock> {
-  bool _open = false;
-
-  @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: DshColors.layer1,
-        borderRadius: BorderRadius.circular(DshRadius.md),
-        border: Border.all(color: DshColors.layer2),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          InkWell(
-            onTap: () => setState(() => _open = !_open),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                children: [
-                  const DshIcon(
-                    'sparkle',
-                    size: 13,
-                    color: DshColors.roleAssistant,
-                  ),
-                  const SizedBox(width: 6),
-                  const Text(
-                    '思考过程',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      color: DshColors.labelSecondary,
-                    ),
-                  ),
-                  const Spacer(),
-                  DshIcon(
-                    _open ? 'chevronDown' : 'chevronRight',
-                    size: 13,
-                    color: DshColors.labelTertiary,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (_open)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-              decoration: const BoxDecoration(
-                border: Border(top: BorderSide(color: DshColors.layer2)),
-              ),
-              // 思考过程按**纯文本**渲染：它不是给用户的答案，
-              // Markdown 记号在里面只会添乱（DSH 桌面端同样按文本呈现）。
-              child: SelectableText(
-                widget.text,
-                style: const TextStyle(
-                  fontSize: 12.5,
-                  height: 20 / 12.5,
-                  color: DshColors.labelTertiary,
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
+    return _CollapsibleNote(icon: 'sparkle', label: '思考过程', text: text);
   }
 }
 
@@ -564,22 +500,133 @@ class TakeoverHint extends StatelessWidget {
   }
 }
 
-/// 系统消息（居中、弱化）。
+/// 系统消息（`system/message` / `developer/message`）。
+///
+/// ## 为什么是折叠行而不是正文
+///
+/// 真日志里 `system/message` 是**整份系统提示词**（上万字符），
+/// `developer/message` 是上下文注入（工具目录等）。2026-10-19 之前它们被
+/// 渲染成 `SystemTurn(text)` —— 一条居中的弱化小字，于是对话流开头横着
+/// 一面巨墙（真机复现）。DSH 对这两种事件各有一个带标题的节点：
+/// `system-prompt`（`locale.ts:116` 的「系统提示词」）与 `context`
+/// （生产者 kind 当标题，`event-projection.ts:60-76`），**默认折叠**。
+///
+/// 所以这里与「思考过程」共用同一个折叠控件（[_CollapsibleNote]）——
+/// 两处的差别只有图标与标签，结构完全相同。
 class SystemTurn extends StatelessWidget {
-  const SystemTurn(this.text, {super.key});
+  const SystemTurn(this.text, {super.key, this.label});
 
+  /// 正文（展开后才看）。
   final String text;
+
+  /// 标题行文案；`null` = 「系统提示词」。
+  final String? label;
 
   @override
   Widget build(BuildContext context) {
+    final label = this.label;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Center(
-        child: Text(
-          text,
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 12, color: DshColors.labelTertiary),
-        ),
+      child: _CollapsibleNote(
+        // **图标跟标签走**，不写死一个：DSH 的 `context` 节点（上下文注入）
+        // 与 `system-prompt` 节点（系统提示词）是两行不同的东西，共用一个图标
+        // 等于把区别抹掉。`contextInjection` 是 DSH 图标集里语义最接近的那个
+        // （`verify-icons.cjs` 只放行集合内的 100 个名字）。
+        icon: label == null || label == kSystemPromptLabel
+            ? 'info'
+            : 'contextInjection',
+        label: label ?? kSystemPromptLabel,
+        text: text,
+      ),
+    );
+  }
+}
+
+/// 一个可折叠的过程行：图标 + 标签 + chevron，展开后是正文。
+///
+/// 「思考过程」与「系统提示词」用它 —— 两者结构逐字相同（图标、标签、
+/// 默认收起、展开区一条顶边），各写一份必然漂（2026-10-19 合并）。
+class _CollapsibleNote extends StatefulWidget {
+  const _CollapsibleNote({
+    required this.icon,
+    required this.label,
+    required this.text,
+  });
+
+  final String icon;
+  final String label;
+  final String text;
+
+  @override
+  State<_CollapsibleNote> createState() => _CollapsibleNoteState();
+}
+
+class _CollapsibleNoteState extends State<_CollapsibleNote> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: DshColors.layer1,
+        borderRadius: BorderRadius.circular(DshRadius.md),
+        border: Border.all(color: DshColors.layer2),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: () => setState(() => _open = !_open),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                children: [
+                  // 两处共用同一个强调色（助手色）：标签行的图标是"这是过程"
+                  // 的标记，不是分类 —— 分类由标签文字说。
+                  DshIcon(
+                    widget.icon,
+                    size: 13,
+                    color: DshColors.roleAssistant,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    widget.label,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: DshColors.labelSecondary,
+                    ),
+                  ),
+                  const Spacer(),
+                  DshIcon(
+                    _open ? 'chevronDown' : 'chevronRight',
+                    size: 13,
+                    color: DshColors.labelTertiary,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_open)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: DshColors.layer2)),
+              ),
+              // 按**纯文本**渲染：它不是给用户的答案，Markdown 记号在里面
+              // 只会添乱（DSH 桌面端同样按文本呈现）。
+              child: SelectableText(
+                widget.text,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  height: 20 / 12.5,
+                  color: DshColors.labelTertiary,
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

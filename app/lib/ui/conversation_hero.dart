@@ -222,7 +222,23 @@ class HeroChip extends StatelessWidget {
 /// **不含输入框** —— 那是页面上已有的 `DshComposer`（DSH 那边同样是
 /// `InputBar` 而不是 HeroShell 的一部分，`EmptyHero.tsx:158-160` 的注释：
 /// "The composer remains mounted outside this component"）。
-/// 所以本控件摆在对话区里、输入栏的正上方，两者之间留 12（`.stack` 的 gap）。
+///
+/// ## 为什么居中，而不是贴底
+///
+/// 2026-10-19 之前这里写的是 `mainAxisAlignment: MainAxisAlignment.end`
+/// （贴输入栏那一端），真机截图里 hero 挤在屏幕最底下、上面一大片空白 ——
+/// 用户原话"首页显示在最下面你觉得合乎常理好看吗"。
+/// DSH 的判据在 `ConversationRoot.module.css:503-518`：
+///
+/// ```css
+/// /* Hero phase: the composer stack (hero chrome + workspace row + card) is
+///    flex-centered in the column; composer phase docks it at the bottom. */
+/// .composerHero { align-self: center; padding-bottom: 32px; }
+/// ```
+///
+/// 即 **hero 阶段居中（脚注让整叠略高于真中心），composer 阶段才贴底**。
+/// 手机照抄这一条：`MainAxisAlignment.center` + 底部 32。
+/// 输入栏本身仍在屏幕最下方（它是另一个控件），不受这一处影响。
 class ConversationHero extends StatelessWidget {
   const ConversationHero({
     super.key,
@@ -249,11 +265,14 @@ class ConversationHero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      // 贴着输入栏那一端（DSH 的 stack 是"标题 → chip 行 → 卡片"，
-      // 手机把这一叠放在弹性区的底部，所以 gap 留在下面）。
-      padding: const EdgeInsets.only(bottom: 12),
+      // DSH 的 `.composerHero { padding-bottom: 32px }` —— 注释原话
+      // "Foot inside the centered box floats the stack a bit above true center"。
+      // 手机上同一个量：整叠停在弹性区里、略高于中心。
+      padding: const EdgeInsets.only(bottom: 32),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.end,
+        // **居中**（DSH hero 阶段的 `align-self: center`），不是贴底 ——
+        // 见类文档里的 CSS 出处与真机截图。
+        mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const HeroHeadline(),
