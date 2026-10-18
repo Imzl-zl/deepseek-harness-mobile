@@ -16,6 +16,7 @@
 library;
 
 import 'dart:async';
+import 'dart:ui' show PlatformDispatcher;
 
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
@@ -36,6 +37,7 @@ import 'data/app_model.dart';
 import 'data/connection_recovery.dart';
 import 'data/store.dart';
 import 'model/chat_item.dart';
+import 'model/theme_mode.dart';
 import 'model/workspace.dart';
 import 'platform/app_state_reporter.dart';
 import 'platform/http_sender.dart';
@@ -45,6 +47,7 @@ import 'platform/sqflite_item_store.dart';
 import 'platform/ticketed_transport.dart';
 import 'platform/transport_factory.dart';
 import 'platform/websocket_transport.dart';
+import 'theme/dsh_colors.dart';
 import 'theme/dsh_theme.dart';
 import 'ui/archive_sheet.dart';
 import 'ui/chat_page.dart';
@@ -65,7 +68,8 @@ class DshMobileApp extends StatefulWidget {
   State<DshMobileApp> createState() => _DshMobileAppState();
 }
 
-class _DshMobileAppState extends State<DshMobileApp> {
+class _DshMobileAppState extends State<DshMobileApp>
+    with WidgetsBindingObserver {
   /// 聊天页的 key —— 用来从外面开抽屉（[ChatPageState.openDrawer]）。
   ///
   /// 抽屉要盖住整个 `Scaffold`（含顶栏），所以它必须是聊天页 `Scaffold`
@@ -88,6 +92,16 @@ class _DshMobileAppState extends State<DshMobileApp> {
 
   AppModel? _app;
   bool _booting = true;
+
+  /// 主题真值（三档 + 当下亮暗）。
+  ///
+  /// 2026-10-19 加浅色套时引入：DSH 的 `design-platform.css` 一上来就有
+  /// 两套（浅色是 `:root`、深色是覆盖块），我们原先只落了深色。
+  /// 它是 `ChangeNotifier`，亮暗变化时 `build` 里读它决定 `MaterialApp.themeMode`。
+  final ThemeController _theme = ThemeController.restore(
+    null,
+    systemBrightness: PlatformDispatcher.instance.platformBrightness,
+  );
 
   /// 是否停在配对页（用户主动进来的，不是"没配对就挡在这里"）。
   bool _pairing = false;
@@ -144,6 +158,67 @@ class _DshMobileAppState extends State<DshMobileApp> {
     );
     WidgetsBinding.instance.addObserver(_reporter);
     unawaited(_boot());
+    // **主题偏好从盘上恢复**（与其它偏好同一条路：`meta` 表）。
+    // 读不到就"跟随系统"（DSH 默认），那一刻就用启动时读到的系统亮暗。
+    unawaited(_restoreTheme());
+  }
+
+  /// 读回主题偏好并落到控制器上。
+  ///
+  /// **失败不影响启动**：主题是装饰，拿不到就按默认走。这一点与
+  /// "连接/配对必须如实报错"不同 —— 后者拿不到用户就用不了 App。
+  Future<void> _restoreTheme() async {
+    String? stored;
+    try {
+      stored = await _readPreference(kThemeModeKey);
+    } catch (_) {
+      // 偏好读不到（库还没开 / 盘坏了）：按默认走，不阻塞启动。
+      return;
+    }
+    if (!mounted) return;
+    final restored = ThemeController.restore(
+      stored,
+      systemBrightness: PlatformDispatcher.instance.platformBrightness,
+    );
+    _theme.setMode(restored.mode);
+  }
+
+  /// 读一个字符串偏好（`meta` 表）。
+  ///
+  /// 缝由装配点给（[AppModel] 持着库），这一层不认识 sqflite。
+  Future<String?> _readPreference(String key) async {
+    final app = _app;
+    if (app == null) return null;
+    return app.readPreference(key);
+  }
+
+  /// 换主题模式并落盘。
+  ///
+  /// 设置页的那一行调它。**落盘失败不撤回内存里的选择** ——
+  /// 用户已经看到界面变了，撤回来只会更错；而下次启动会读回旧值，
+  /// 那时它自己会再变一次。
+  Future<void> setThemeMode(DshThemeMode mode) async {
+    _theme.setMode(
+      mode,
+      systemBrightness: PlatformDispatcher.instance.platformBrightness,
+    );
+    try {
+      await _app?.writePreference(kThemeModeKey, mode.wire);
+    } catch (_) {
+      // 同上：不撤回。
+    }
+  }
+
+  /// 系统亮暗变了（"跟随系统"档下要跟着变；显式选了浅/深时忽略）。
+  ///
+  /// 挂在 [WidgetsBindingObserver] 的 `didChangePlatformBrightness` 上 ——
+  /// 官方给这条路的入口（`packages/flutter/lib/src/widgets/binding.dart:346`）。
+  /// **它不带参数**，所以新的亮暗要从 `PlatformDispatcher` 自己读
+  /// （`binding.dart:341-345` 的注释说明了这一点）。
+  @override
+  void didChangePlatformBrightness() {
+    super.didChangePlatformBrightness();
+    _theme.onSystemBrightness(PlatformDispatcher.instance.platformBrightness);
   }
 
   Future<void> _boot() async {
@@ -242,12 +317,34 @@ class _DshMobileAppState extends State<DshMobileApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'DSH Mobile',
-      debugShowCheckedModeBanner: false,
-      theme: DshTheme.dark(),
-      navigatorKey: navigatorKey,
-      home: _body(),
+    // **主题变化要重建整棵树**：`MaterialApp.themeMode` 在这一层读，
+    // 而控制器是 `ChangeNotifier` —— `ListenableBuilder` 是官方给的缝
+    // （`packages/flutter/lib/src/widgets/framework.dart`）。
+    return ListenableBuilder(
+      listenable: _theme,
+      builder: (context, _) => MaterialApp(
+        title: 'DSH Mobile',
+        debugShowCheckedModeBanner: false,
+        // **主题跟着 ThemeController 换**（2026-10-19：加浅色套）。
+        //
+        // `theme` / `darkTheme` 两个都给，而 `themeMode` 由控制器决定：
+        // Flutter 的 `MaterialApp.themeMode` 正好是三档
+        // （`ThemeMode.system` / `light` / `dark`，`material/app.dart`），
+        // 与 DSH 的三档一一对应，不需要自己写分派。
+        //
+        // **两个 theme 都必须挂色板扩展**（`DshColorTokens`）：UI 经
+        // `context.dshColors` 读当下那一套，而它挂在 ThemeData 上 ——
+        // 只给一个 theme 挂扩展的话，另一个亮暗下会读到 null 退深色。
+        theme: DshTheme.light(),
+        darkTheme: DshTheme.dark(),
+        themeMode: switch (_theme.mode) {
+          DshThemeMode.system => ThemeMode.system,
+          DshThemeMode.light => ThemeMode.light,
+          DshThemeMode.dark => ThemeMode.dark,
+        },
+        navigatorKey: navigatorKey,
+        home: _body(),
+      ),
     );
   }
 
@@ -379,7 +476,13 @@ class _DshMobileAppState extends State<DshMobileApp> {
     unawaited(navigatorKey.currentState?.maybePop());
     unawaited(
       navigatorKey.currentState?.push(
-        MaterialPageRoute<void>(builder: (_) => SettingsPage(app: app)),
+        MaterialPageRoute<void>(
+          builder: (_) => SettingsPage(
+            app: app,
+            themeMode: _theme.mode,
+            onThemeMode: setThemeMode,
+          ),
+        ),
       ),
     );
   }

@@ -1212,6 +1212,20 @@ class AppModel extends ChangeNotifier {
     await _prefs?.write(kPerformanceUsageKey, usage.wire);
   }
 
+  /// 读一个**通用字符串偏好**（`meta` 表的 k/v）。
+  ///
+  /// 存在的理由：主题模式这一类偏好由 `ThemeController` 持真值
+  /// （`model/theme_mode.dart`），而它不该认识 `AppModel`；反过来
+  /// `AppModel` 也不该认识每一种偏好。所以缝是"读一个字符串 / 写一个字符串"，
+  /// 装配点（`main.dart`）把 `ThemeController` 接到这上面。
+  Future<String?> readPreference(String key) =>
+      _prefs?.read(key) ?? Future.value(null);
+
+  /// 写一个**通用字符串偏好**（upsert）。
+  Future<void> writePreference(String key, String value) async {
+    await _prefs?.write(key, value);
+  }
+
   /// 把落盘的偏好读回来（`start()` 里调一次）。
   ///
   /// 读不到（没存过 / 存了个不认识的值）就保持默认 —— 与发送模式同一条纪律，

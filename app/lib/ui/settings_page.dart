@@ -35,6 +35,7 @@ import '../model/chat_item.dart';
 import '../model/model_catalog.dart';
 import '../model/preferences.dart';
 import '../model/send_mode.dart';
+import '../model/theme_mode.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import 'connection_summary_block.dart';
@@ -53,12 +54,32 @@ const String kAppVersion = String.fromEnvironment(
 
 /// 设置页（从抽屉底栏「设置」 push 进来）。
 class SettingsPage extends StatelessWidget {
-  const SettingsPage({super.key, required this.app});
+  const SettingsPage({
+    super.key,
+    required this.app,
+    required this.themeMode,
+    required this.onThemeMode,
+  });
 
   final AppModel app;
 
+  /// 当前主题模式（三档，含"跟随系统"）。
+  final DshThemeMode themeMode;
+
+  /// 换主题。真值在 `ThemeController`（落盘 + 通知），这一层只转发。
+  ///
+  /// 返回 `Future`：切主题要**落盘**（`meta` 表），而 `_pickEnum` 的
+  /// `onPicked` 统一收 `Future<void> Function(T)`（其它偏好也都是异步落盘的）。
+  /// 用 `ValueSetter` 会让类型不匹配，也会让"落盘失败了"无处可等。
+  final Future<void> Function(DshThemeMode) onThemeMode;
+
   @override
   Widget build(BuildContext context) {
+    // **主题三件提成局部变量**：下面的 `builder: (context, _) => ListView(...)`
+    // 是箭头函数体，而箭头体里 `widget.x` 不总被解析（实测报
+    // `Undefined name 'widget'`）。提成本地变量既绕开这点，读起来也短。
+    final themeMode = this.themeMode;
+    final onThemeMode = this.onThemeMode;
     return Scaffold(
       backgroundColor: DshColors.bgBase,
       appBar: AppBar(
@@ -102,6 +123,24 @@ class SettingsPage extends StatelessWidget {
               reconnecting: app.connection == ConnectionStateView.connecting,
             ),
             const _SectionTitle('通用'),
+            // **主题（浅 / 深 / 跟随系统）** —— 2026-10-19 加。
+            //
+            // DSH 的 `design-platform.css` 一上来就有两套（浅色是 `:root`、
+            // 深色是覆盖块），我们原先只落了深色；现在补齐，入口放在
+            // "只影响这台手机的呈现"那一组里 —— 主题正是这么一类设置。
+            _PrefRow(
+              icon: 'dark',
+              label: '主题',
+              value: themeMode.label,
+              onTap: () => _pickEnum<DshThemeMode>(
+                context: context,
+                title: '主题',
+                values: DshThemeMode.values,
+                labelOf: (v) => v.label,
+                current: themeMode,
+                onPicked: onThemeMode,
+              ),
+            ),
             _PrefRow(
               icon: 'checklist',
               label: '工作步骤展示',

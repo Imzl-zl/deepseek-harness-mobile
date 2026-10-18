@@ -18,6 +18,7 @@ import 'package:dsh_mobile/core/endpoint.dart';
 import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
+import 'package:dsh_mobile/theme/dsh_colors.dart';
 import 'package:dsh_mobile/theme/dsh_icons.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/settings_page.dart';
@@ -82,7 +83,13 @@ const _relay = Endpoint(
 
 Widget _host(AppModel app) => MaterialApp(
   theme: DshTheme.dark(),
-  home: SettingsPage(app: app),
+  home: SettingsPage(
+    app: app,
+    // 主题两参：测试里用默认（跟随系统）+ 空实现。
+    // 它们不影响这一组断言的其它行（端点 / 模型 / 偏好）。
+    themeMode: DshThemeMode.system,
+    onThemeMode: (_) async {},
+  ),
 );
 
 /// 滚到某个 widget 可见（ListView 懒加载 + 设置页有多组，端点卡在下面）。
@@ -130,6 +137,11 @@ void main() {
   testWidgets('端点行按表序渲染：kind + 地址(+自报名) + 首选', (tester) async {
     final app = buildApp();
     await tester.pumpWidget(_host(app));
+    await tester.pumpAndSettle();
+
+    // 设置页比"只有连接方式"那版长了（通用/主题/模型/关于四组在它上面）——
+    // 端点卡在屏外，先滚到可见（ListView 懒加载，不滚根本找不到）。
+    await _scrollTo(tester, find.text('直连'));
     await tester.pumpAndSettle();
 
     expect(find.text('连接方式'), findsOneWidget);
@@ -257,6 +269,10 @@ void main() {
     await tester.pumpWidget(_host(app));
     await tester.pumpAndSettle();
 
+    // 端点卡在屏外（通用/主题/模型/关于四组在它上面），先滚到可见。
+    await _scrollTo(tester, find.text('当前连接'));
+    await tester.pumpAndSettle();
+
     expect(find.text('当前连接'), findsOneWidget);
     expect(find.text('拨不通：连接超时'), findsOneWidget);
     expect(find.text('拨通过'), findsOneWidget);
@@ -297,6 +313,10 @@ void main() {
   testWidgets('空端点表（没配对）：空态，不摆假行', (tester) async {
     final app = buildApp(endpoints: const []);
     await tester.pumpWidget(_host(app));
+    await tester.pumpAndSettle();
+
+    // 端点组在屏外（通用/主题/模型/关于四组在它上面），先滚到可见。
+    await _scrollTo(tester, find.text('还没有端点。配对成功后，这里会列出可拨的地址。'));
     await tester.pumpAndSettle();
 
     expect(find.text('还没有端点。配对成功后，这里会列出可拨的地址。'), findsOneWidget);
