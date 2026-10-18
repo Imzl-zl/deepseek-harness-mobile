@@ -500,5 +500,54 @@ void main() {
       );
       app.dispose();
     });
+
+    test('拖动换位置：顺序变了并落盘（顺序即自动拨号的优先级）', () async {
+      final persisted = <List<Endpoint>>[];
+      const third = Endpoint(
+        kind: EndpointKind.direct,
+        url: 'ws://192.168.1.9:8788',
+        label: '第三条',
+      );
+      final app = await serving(
+        onCall: (method, _) => null,
+        endpoints: const [_relay, _direct, third],
+        persisted: persisted,
+      );
+
+      // 把最后一条拖到最前（`ReorderableListView` 的"插入位置"已由 UI 换算成目标下标）。
+      await app.moveEndpoint(2, 0);
+
+      expect(app.endpoints.map((e) => e.url).toList(), [
+        third.url,
+        _relay.url,
+        _direct.url,
+      ], reason: '拖动的结果就是新顺序');
+      expect(persisted, hasLength(1), reason: '顺序变了要落盘，重启后还是这个顺序');
+      app.dispose();
+    });
+
+    test('拖动换位置：原地不动 / 越界一律忽略，不落盘不通知', () async {
+      final persisted = <List<Endpoint>>[];
+      var notified = 0;
+      final app = await serving(
+        onCall: (method, _) => null,
+        endpoints: const [_relay, _direct],
+        persisted: persisted,
+      );
+      app.addListener(() => notified++);
+
+      await app.moveEndpoint(0, 0); // 原地
+      await app.moveEndpoint(-1, 1); // 越界
+      await app.moveEndpoint(0, 5); // 目标越界
+      await app.moveEndpoint(9, 0); // 源越界
+
+      expect(app.endpoints.map((e) => e.url).toList(), [
+        _relay.url,
+        _direct.url,
+      ], reason: '表不该被这些非法拖动改掉');
+      expect(persisted, isEmpty, reason: '没变化不落盘');
+      expect(notified, 0, reason: '没变化不通知');
+      app.dispose();
+    });
   });
 }

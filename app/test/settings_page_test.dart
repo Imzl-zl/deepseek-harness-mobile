@@ -18,6 +18,7 @@ import 'package:dsh_mobile/core/endpoint.dart';
 import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
+import 'package:dsh_mobile/theme/dsh_icons.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/settings_page.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
@@ -196,6 +197,49 @@ void main() {
     expect(find.text('现在用这条连'), findsOneWidget, reason: '立刻连的入口在这里');
     expect(find.text('会断开当前连接，只试这一条'), findsOneWidget, reason: '要提前说清副作用');
     expect(find.text('删除这个端点'), findsOneWidget);
+    addTearDown(app.dispose);
+  });
+
+  testWidgets('拖动排序：从拖动柄把中转拖到最上，顺序真变并落盘', (tester) async {
+    final persisted = <List<Endpoint>>[];
+    final app = buildApp(
+      endpoints: const [_direct, _relay],
+      onEndpointsChanged: persisted.add,
+    );
+    await tester.pumpWidget(_host(app));
+    await tester.pumpAndSettle();
+
+    await _scrollTo(tester, find.text('中转'));
+    // 拖动柄是 `ReorderableDragStartListener` 包着的那个图标。
+    final handle = find
+        .descendant(
+          of: find.byType(ReorderableDragStartListener),
+          matching: find.byType(DshIcon),
+        )
+        .hitTestable();
+    expect(handle, findsWidgets, reason: '每行左侧要有拖动柄');
+
+    // 拖动**第二行**的柄（中转）往上越过第一行。
+    final relayRow = find.ancestor(
+      of: find.text('中转'),
+      matching: find.byType(Padding),
+    );
+    expect(relayRow, findsWidgets);
+    final source = tester.getCenter(handle.at(1));
+    final gesture = await tester.startGesture(source);
+    await tester.pump(const Duration(milliseconds: 120));
+    // 分几步移动：一次跳到位的移动在 `ReorderableListView` 里可能被判成点击。
+    for (var dy = 0; dy > -130; dy -= 26) {
+      await gesture.moveBy(Offset(0, dy == 0 ? -26 : -26));
+      await tester.pump(const Duration(milliseconds: 40));
+    }
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(app.endpoints.map((e) => e.url).toList(), [
+      _relay.url,
+      _direct.url,
+    ], reason: '拖到最上就是把那一条排到第一位（顺序即拨号优先级）');
     addTearDown(app.dispose);
   });
 

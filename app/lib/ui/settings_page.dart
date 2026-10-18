@@ -461,14 +461,21 @@ class _EndpointRow extends StatelessWidget {
           children: [
             // 拖动柄：队列的顺序就是拨号优先级，**拖比"点一下置顶"精确**
             // （用户原话："队列最好可以拖动换位置"）。
+            //
+            // **命中区 44×44**：图标本体只有 18px，而 `ReorderableDragStartListener`
+            // 的手势范围就是它的 child 尺寸 —— 直接拿图标当柄等于让手指去戳一个
+            // 1/3 指甲盖大小的东西（真机上拖不动就是这个原因）。
             ReorderableDragStartListener(
               index: index,
-              child: const Padding(
-                padding: EdgeInsets.only(right: 10),
-                child: DshIcon(
-                  'chevronsUpDown',
-                  size: 18,
-                  color: DshColors.labelTertiary,
+              child: const SizedBox(
+                width: 44,
+                height: 44,
+                child: Center(
+                  child: DshIcon(
+                    'chevronsUpDown',
+                    size: 18,
+                    color: DshColors.labelTertiary,
+                  ),
                 ),
               ),
             ),
