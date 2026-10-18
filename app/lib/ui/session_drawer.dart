@@ -141,23 +141,24 @@ class _SessionDrawerState extends State<SessionDrawer> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Drawer(
       // 宽度 `min(86%, 360px)`：留一条缝能看见背后的聊天页，
       // 让"这是浮在上面的"这件事成立。
       width: MediaQuery.of(context).size.width * 0.86 > 360
           ? 360
           : MediaQuery.of(context).size.width * 0.86,
-      backgroundColor: DshColors.sidebar,
+      backgroundColor: c.sidebar,
       // **右侧圆角 + 右边框**（`.drawer { border-right:1px solid l1;
       //   border-radius: 0 var(--r-panel) var(--r-panel) 0 }`）——
       // 少了这两样，抽屉看起来就是"整屏换了一页"，而不是"浮在聊天页上的面板"
       //（`--r-panel` = 28）。
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.only(
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.only(
           topRight: Radius.circular(DshRadius.panel),
           bottomRight: Radius.circular(DshRadius.panel),
         ),
-        side: BorderSide(color: DshColors.layer1),
+        side: BorderSide(color: c.layer1),
       ),
       child: SafeArea(
         child: Column(
@@ -172,10 +173,10 @@ class _SessionDrawerState extends State<SessionDrawer> {
                     width: 28,
                     height: 28,
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(
+                      gradient: LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
-                        colors: [DshColors.accentBlue, DshColors.roleAssistant],
+                        colors: [c.accentBlue, c.roleAssistant],
                       ),
                       borderRadius: BorderRadius.circular(9),
                     ),
@@ -184,12 +185,12 @@ class _SessionDrawerState extends State<SessionDrawer> {
                     ),
                   ),
                   const SizedBox(width: 10),
-                  const Text(
+                  Text(
                     'DSH',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
-                      color: DshColors.labelPrimary,
+                      color: c.labelPrimary,
                     ),
                   ),
                   const Spacer(),
@@ -206,24 +207,24 @@ class _SessionDrawerState extends State<SessionDrawer> {
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
               child: Material(
-                color: DshColors.accentBlue,
+                color: c.accentBlue,
                 borderRadius: BorderRadius.circular(DshRadius.md),
                 clipBehavior: Clip.antiAlias,
                 child: InkWell(
                   onTap: widget.onNewSession,
-                  child: const SizedBox(
+                  child: SizedBox(
                     height: 44,
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        DshIcon('newChat', size: 18, color: DshColors.onAccent),
-                        SizedBox(width: 8),
+                        DshIcon('newChat', size: 18, color: c.onAccent),
+                        const SizedBox(width: 8),
                         Text(
                           '新建会话',
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
-                            color: DshColors.onAccent,
+                            color: c.onAccent,
                           ),
                         ),
                       ],
@@ -246,32 +247,25 @@ class _SessionDrawerState extends State<SessionDrawer> {
                 height: 36,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 decoration: BoxDecoration(
-                  color: DshColors.layer1,
+                  color: c.layer1,
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Row(
                   children: [
-                    const DshIcon(
-                      'search',
-                      size: 15,
-                      color: DshColors.labelCaption,
-                    ),
+                    DshIcon('search', size: 15, color: c.labelCaption),
                     const SizedBox(width: 8),
                     Expanded(
                       child: TextField(
                         controller: _search,
                         onChanged: widget.onSearch,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: DshColors.labelPrimary,
-                        ),
-                        decoration: const InputDecoration(
+                        style: TextStyle(fontSize: 13, color: c.labelPrimary),
+                        decoration: InputDecoration(
                           isDense: true,
                           border: InputBorder.none,
                           hintText: '搜索会话',
                           hintStyle: TextStyle(
                             fontSize: 13,
-                            color: DshColors.labelCaption,
+                            color: c.labelCaption,
                           ),
                         ),
                       ),
@@ -284,13 +278,10 @@ class _SessionDrawerState extends State<SessionDrawer> {
             // ---- 分组会话列表 ----
             Expanded(
               child: widget.sections.isEmpty
-                  ? const Center(
+                  ? Center(
                       child: Text(
                         '还没有会话。',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: DshColors.labelTertiary,
-                        ),
+                        style: TextStyle(fontSize: 13, color: c.labelTertiary),
                       ),
                     )
                   : ListView(
@@ -301,10 +292,10 @@ class _SessionDrawerState extends State<SessionDrawer> {
                             padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
                             child: Text(
                               section.label,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
-                                color: DshColors.labelCaption,
+                                color: c.labelCaption,
                               ),
                             ),
                           ),
@@ -326,8 +317,8 @@ class _SessionDrawerState extends State<SessionDrawer> {
 
             // ---- 底栏五个出口 ----
             Container(
-              decoration: const BoxDecoration(
-                border: Border(top: BorderSide(color: DshColors.layer1)),
+              decoration: BoxDecoration(
+                border: Border(top: BorderSide(color: c.layer1)),
               ),
               padding: const EdgeInsets.symmetric(vertical: 6),
               child: Row(
@@ -344,14 +335,14 @@ class _SessionDrawerState extends State<SessionDrawer> {
                               DshIcon(
                                 item.icon,
                                 size: 18,
-                                color: DshColors.labelSecondary,
+                                color: c.labelSecondary,
                               ),
                               const SizedBox(height: 4),
                               Text(
                                 item.label,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 11,
-                                  color: DshColors.labelSecondary,
+                                  color: c.labelSecondary,
                                 ),
                               ),
                             ],
@@ -378,11 +369,12 @@ class _ConnectionRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final online = connection.online;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Material(
-        color: DshColors.layer1,
+        color: c.layer1,
         borderRadius: BorderRadius.circular(DshRadius.md),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
@@ -396,9 +388,7 @@ class _ConnectionRow extends StatelessWidget {
                   width: 8,
                   height: 8,
                   decoration: BoxDecoration(
-                    color: online
-                        ? DshColors.roleContext
-                        : DshColors.labelTertiary,
+                    color: online ? c.roleContext : c.labelTertiary,
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -409,10 +399,7 @@ class _ConnectionRow extends StatelessWidget {
                     children: [
                       Text(
                         connection.name,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: DshColors.labelPrimary,
-                        ),
+                        style: TextStyle(fontSize: 13, color: c.labelPrimary),
                       ),
                       const SizedBox(height: 2),
                       Text(
@@ -423,9 +410,7 @@ class _ConnectionRow extends StatelessWidget {
                           fontSize: 11,
                           // 离线时用告警色：**"没连上"必须显眼**，
                           // 否则用户会把"空列表"当成"DSH 里没会话"。
-                          color: online
-                              ? DshColors.labelCaption
-                              : DshColors.roleTool,
+                          color: online ? c.labelCaption : c.roleTool,
                         ),
                       ),
                     ],
@@ -433,17 +418,10 @@ class _ConnectionRow extends StatelessWidget {
                 ),
                 Text(
                   connection.platform,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: DshColors.labelCaption,
-                  ),
+                  style: TextStyle(fontSize: 11, color: c.labelCaption),
                 ),
                 const SizedBox(width: 4),
-                const DshIcon(
-                  'chevronRight',
-                  size: 16,
-                  color: DshColors.labelTertiary,
-                ),
+                DshIcon('chevronRight', size: 16, color: c.labelTertiary),
               ],
             ),
           ),
@@ -469,8 +447,9 @@ class _SessionRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     return Material(
-      color: session.isActive ? DshColors.layer2 : Colors.transparent,
+      color: session.isActive ? c.layer2 : Colors.transparent,
       borderRadius: BorderRadius.circular(DshRadius.sm),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -487,9 +466,7 @@ class _SessionRow extends StatelessWidget {
                 width: 6,
                 height: 6,
                 decoration: BoxDecoration(
-                  color: session.isActive
-                      ? DshColors.accentBlue
-                      : Colors.transparent,
+                  color: session.isActive ? c.accentBlue : Colors.transparent,
                   shape: BoxShape.circle,
                 ),
               ),
@@ -502,20 +479,14 @@ class _SessionRow extends StatelessWidget {
                       session.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: DshColors.labelPrimary,
-                      ),
+                      style: TextStyle(fontSize: 14, color: c.labelPrimary),
                     ),
                     const SizedBox(height: 3),
                     Text(
                       session.preview,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: DshColors.labelCaption,
-                      ),
+                      style: TextStyle(fontSize: 12, color: c.labelCaption),
                     ),
                   ],
                 ),
@@ -523,10 +494,7 @@ class _SessionRow extends StatelessWidget {
               const SizedBox(width: 8),
               Text(
                 session.timeLabel,
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: DshColors.labelTertiary,
-                ),
+                style: TextStyle(fontSize: 11, color: c.labelTertiary),
               ),
             ],
           ),
@@ -546,6 +514,7 @@ class _Ib extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final button = SizedBox(
       width: 38,
       height: 38,
@@ -556,7 +525,7 @@ class _Ib extends StatelessWidget {
         child: InkWell(
           onTap: onPressed,
           child: Center(
-            child: DshIcon(icon, size: 18, color: DshColors.labelSecondary),
+            child: DshIcon(icon, size: 18, color: c.labelSecondary),
           ),
         ),
       ),

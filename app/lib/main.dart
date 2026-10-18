@@ -157,10 +157,11 @@ class _DshMobileAppState extends State<DshMobileApp>
       report: _reportConnectionDefect,
     );
     WidgetsBinding.instance.addObserver(_reporter);
-    unawaited(_boot());
-    // **主题偏好从盘上恢复**（与其它偏好同一条路：`meta` 表）。
-    // 读不到就"跟随系统"（DSH 默认），那一刻就用启动时读到的系统亮暗。
-    unawaited(_restoreTheme());
+    // **主题恢复必须在 `_boot` 之后**：它要从 `AppModel` 读偏好，
+    // 而 `_app` 是 `_boot()` 建的。两条 `unawaited` 并行跑的话，
+    // 主题恢复会读到 null（`_readPreference` 在 `_app == null` 时返回 null）
+    // —— 于是用户选过的主题每次重启都被打回"跟随系统"（2026-10-19 真机复现）。
+    unawaited(_boot().then((_) => _restoreTheme()));
   }
 
   /// 读回主题偏好并落到控制器上。
