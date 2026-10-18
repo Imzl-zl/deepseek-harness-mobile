@@ -367,4 +367,58 @@ void main() {
       ),
     );
   });
+
+  // ---------------------------------------------------------------------------
+  // 点名连接（用户"用这个连"，与自动队列是两个功能）
+  // ---------------------------------------------------------------------------
+
+  group('点名连接', () {
+    test('点名的那条在表里：**只试它**，不顺延到表里的其它', () async {
+      final transport = build([direct, relay]);
+      transport.requestEndpoint(relay);
+
+      await transport.connect();
+
+      expect(log, [relay], reason: '点名就是"只试这一个"，不许偷偷顺延');
+      expect(transport.activeEndpoint, relay);
+    });
+
+    test('点名的那条**不在表里**也照样试（用户手填的 / 刚被藏的）', () async {
+      // 这是刻意的：点名是用户此刻的意图，比"表里有什么"更权威。
+      // 挡掉它会让"我刚填了地址点了连接"变成点了没反应。
+      final transport = build([direct]);
+      transport.requestEndpoint(relay);
+
+      await transport.connect();
+
+      expect(log, [relay]);
+    });
+
+    test('点名失败：如实抛，**不顺延**（回到自动是调用方的事）', () async {
+      final transport = build(
+        [direct, relay],
+        failing: {'wss://relay.example'},
+      );
+      transport.requestEndpoint(relay);
+
+      await expectLater(
+        transport.connect(),
+        throwsA(isA<TransportException>()),
+      );
+      expect(log, [relay], reason: '失败也不试 direct —— 顺延会让"我选了中转"变成"其实走了直连"');
+    });
+
+    test('清掉点名后回到自动队列（按表顺序顺延）', () async {
+      final transport = build(
+        [direct, relay],
+        failing: {'ws://192.168.1.5:8788'},
+      );
+      transport.requestEndpoint(relay);
+      transport.requestEndpoint(null);
+
+      await transport.connect();
+
+      expect(log, [direct, relay], reason: '自动队列：按顺序试到第一个通的');
+    });
+  });
 }

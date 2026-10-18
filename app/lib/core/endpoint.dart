@@ -296,6 +296,24 @@ class EndpointMeta {
   final Set<String> succeededEndpointIds;
 }
 
+/// 点名连接的结论（成功，或失败原因）。
+///
+/// 与 [EndpointAttempt] 分开：那个是"每轮拨号的账"（跨连接保留，供界面显示通不通）；
+/// 这个是"用户刚点的那一次"的结论 —— 一次点名只产生一个，用户关掉就没了。
+class EndpointRequestResult {
+  const EndpointRequestResult({
+    required this.endpoint,
+    required this.ok,
+    this.reason,
+  });
+
+  final Endpoint endpoint;
+  final bool ok;
+
+  /// 失败原因（`ok = true` 时为 `null`）。
+  final String? reason;
+}
+
 /// 解出 IPv4 四段；不是 IPv4 文本时返回 `null`。
 List<int>? _ipv4(String host) {
   final parts = host.split('.');

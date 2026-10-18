@@ -37,6 +37,10 @@ class _ProjClient implements SyncClient {
   Stream<JobFrame> get jobUpdates => _jobs.stream;
   @override
   Future<void> start() async {}
+
+  @override
+  Future<void> reconnect() => start();
+
   @override
   Future<void> setAppState(AppState state) async {}
   @override

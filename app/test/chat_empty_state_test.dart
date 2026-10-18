@@ -38,6 +38,9 @@ class _FakeClient implements SyncClient {
   Future<void> start() async {}
 
   @override
+  Future<void> reconnect() => start();
+
+  @override
   Future<void> setAppState(AppState state) async {}
 
   @override

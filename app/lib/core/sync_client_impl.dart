@@ -216,6 +216,26 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     await _connect();
   }
 
+  @override
+  Future<void> reconnect() async {
+    // **先收干净再建**：正在服务的连接必须断掉，否则新连接建起来会与它并存 ——
+    // 两套握手、两套 fc 计数器，服务端按设备只留一条（新的顶掉旧的），
+    // 本端却以为两条都活着。
+    _cancelBackoff?.call();
+    _cancelBackoff = null;
+    _closeTransport();
+    _enterClosed();
+    // `closed` 是终态，`start()` 会直接返回；恢复意图要显式回到起点。
+    // 但**终态失败（身份不被认）不复活**：那种情况该走重新配对。
+    if (_lastConnectWasTerminal) return;
+    if (_machine.isAnyOf([ConnectionState.closed, ConnectionState.backoff])) {
+      _machine.to(ConnectionState.idle);
+    }
+    _connectGaveUp = false;
+    _backoff.reset();
+    await _connect();
+  }
+
   Future<void> _connect() async {
     if (_closed) return;
     _machine.to(ConnectionState.connecting);

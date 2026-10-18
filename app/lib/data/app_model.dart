@@ -64,6 +64,8 @@ class AppModel extends ChangeNotifier {
     Set<String> hiddenEndpointIds = const {},
     Set<String> succeededEndpointIds = const {},
     Future<String?> Function()? myLanIpv4Of,
+    this.onRequestEndpoint,
+    this.onReconnect,
     this.onEndpointsChanged,
     this.onEndpointsMetaChanged,
     this.onConnectionTerminated,
@@ -269,6 +271,76 @@ class AppModel extends ChangeNotifier {
     hiddenEndpointIds: _hiddenEndpointIds,
     succeededEndpointIds: _succeededEndpointIds,
   );
+
+  // ---------------------------------------------------------------------------
+  // 点名连接（与"自动队列"是两个功能）
+  // ---------------------------------------------------------------------------
+
+  /// 用户点名的端点（`null` = 走自动队列）。界面据此显示"正在按你的选择连"。
+  Endpoint? get requestedEndpoint => _requestedEndpoint;
+  Endpoint? _requestedEndpoint;
+
+  /// 点名连接的结论（成功 / 失败原因）。`null` 表示没有结论（或已恢复正常）。
+  EndpointRequestResult? get endpointRequestResult => _requestResult;
+  EndpointRequestResult? _requestResult;
+
+  /// 设置"下一次拨号只用这个端点"。由装配层接到 `EndpointTransport.requestEndpoint`。
+  final void Function(Endpoint? endpoint)? onRequestEndpoint;
+
+  /// 立刻重拨。由装配层接到 `SyncClient.reconnect`。
+  final Future<void> Function()? onReconnect;
+
+  /// **用这个端点立刻连接**（点名连接）。
+  ///
+  /// 与"设为首选"是两件事：
+  /// - 首选项 = 自动队列的**顺序**，下次自动重连时影响优先级；
+  /// - 点名 = **这一次就只试它**，立刻断开当前连接重拨。
+  ///
+  /// **失败就回到自动**（用户原话：选了就开始连，但连不上要能自动试别的）：
+  /// 结果记进 [endpointRequestResult] 让界面说清"是因为什么"，然后清掉点名 ——
+  /// 下一轮由连接层自己的退避 + 自动队列接管，不需要用户再点一次。
+  ///
+  /// @returns 这次点名是否成功（便于界面立刻给反馈）。
+  Future<bool> useEndpointNow(Endpoint endpoint) async {
+    final request = onRequestEndpoint;
+    final reconnect = onReconnect;
+    if (request == null || reconnect == null) return false;
+
+    _requestedEndpoint = endpoint;
+    _requestResult = null;
+    // 先清掉这台的旧结论：不然界面会把上一次的失败当成这一次的。
+    _endpointAttempts.remove(endpoint.id);
+    notifyListeners();
+
+    request(endpoint);
+    try {
+      await reconnect();
+    } on Object {
+      // 重拨失败不在这里判：连接层会把失败经 `reportEndpointAttempt` 报回来，
+      // 那才是判断"通没通"的唯一依据（这里 await 到的只是"发起完了"）。
+    }
+
+    final attempt = _endpointAttempts[endpoint.id];
+    final ok = attempt?.ok == true;
+    _requestResult = EndpointRequestResult(
+      endpoint: endpoint,
+      ok: ok,
+      reason: ok ? null : attempt?.reason,
+    );
+    // **失败即回到自动**：点名只是一次性意图，不该把用户困在"只试这一个"。
+    // 成功也清：连上之后要让自动队列（记住的 / 同网段的）重新成为常态。
+    _requestedEndpoint = null;
+    request(null);
+    notifyListeners();
+    return ok;
+  }
+
+  /// 清掉点名连接的结论（用户关掉那条提示时调）。
+  void clearEndpointRequestResult() {
+    if (_requestResult == null) return;
+    _requestResult = null;
+    notifyListeners();
+  }
 
   /// 用户手填一条端点。
   ///

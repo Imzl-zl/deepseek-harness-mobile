@@ -33,6 +33,10 @@ class _FakeClient implements SyncClient {
   Stream<ConnectionState> get connection => const Stream.empty();
   @override
   Future<void> start() async {}
+
+  @override
+  Future<void> reconnect() => start();
+
   @override
   Future<void> setAppState(AppState state) async {}
   @override
@@ -76,6 +80,10 @@ class _PermissionFakeClient implements SyncClient {
   Stream<ConnectionState> get connection => const Stream.empty();
   @override
   Future<void> start() async {}
+
+  @override
+  Future<void> reconnect() => start();
+
   @override
   Future<void> setAppState(AppState state) async {}
   @override

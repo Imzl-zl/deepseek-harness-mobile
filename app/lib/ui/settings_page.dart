@@ -410,10 +410,18 @@ class _EndpointRow extends StatelessWidget {
         app.connection == ConnectionStateView.serving &&
         app.activeEndpoint?.id == endpoint.id;
     final isFirst = app.endpoints.first.id == endpoint.id;
+    // **正在按用户点名连接**：这一行要能一眼看出"这次是它在试"。
+    final isRequested = app.requestedEndpoint?.id == endpoint.id;
     final (status, statusColor) = _statusOf(isActive);
 
     return InkWell(
-      onTap: () => _onTap(context),
+      // **点一行 = 立刻用这条连**（主操作）。
+      //
+      // 与"设为首选"是两个功能，别混在一起：
+      // - 点这里：这一次就断开重拨，**只试它**；失败回到自动并说明原因；
+      // - 设为首选：只改自动队列的顺序，不影响当前连接。
+      // 次要动作（首选 / 删除）收进行尾的「⋯」，主操作才该是整行可点的那一个。
+      onTap: () => _connectNow(context),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Row(
@@ -470,6 +478,24 @@ class _EndpointRow extends StatelessWidget {
                     )
                   : null,
             ),
+            // 次要动作入口。**不给它一个图标按钮之外的位置**：
+            // 整行是主操作，多放一个显式按钮会让两种点击意图挤在一起。
+            SizedBox(
+              width: 36,
+              child: IconButton(
+                tooltip: '更多',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                onPressed: isRequested ? null : () => _onMore(context),
+                icon: DshIcon(
+                  'ellipsis',
+                  size: 18,
+                  color: isRequested
+                      ? DshColors.labelCaption
+                      : DshColors.labelSecondary,
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -490,6 +516,9 @@ class _EndpointRow extends StatelessWidget {
 
   /// 状态文案与颜色。**全部来自真实拨号记录**，没有记录就说"还没试过"。
   (String, Color) _statusOf(bool isActive) {
+    if (app.requestedEndpoint?.id == endpoint.id) {
+      return ('正在用这条连接…', DshColors.accentBlue);
+    }
     if (isActive) return ('当前连接', DshColors.stateSuccess);
     final attempt = app.attemptOf(endpoint);
     if (attempt == null) return ('还没试过', DshColors.labelCaption);
@@ -500,12 +529,33 @@ class _EndpointRow extends StatelessWidget {
     return ('拨不通$reason', DshColors.error);
   }
 
-  /// 点一行 → 选动作。
+  /// **用这个端点立刻连接**（点名）。
   ///
-  /// **不做成"点一下直接设首选"**：删除也得有个入口，而把它挤进同一行会破坏
-  /// 「行 = 名称/标签组 + 勾位」的版面规则。放进 sheet 之后，一行点下去仍然
-  /// 只做一件事（选），具体做哪件由 sheet 承载。
-  Future<void> _onTap(BuildContext context) async {
+  /// 失败会自动回到自动队列 —— 所以这里的 toast 要**说清发生了什么**，
+  /// 而不是只报"失败"：用户得知道"我选的那条没通，现在的连接是怎么来的"。
+  Future<void> _connectNow(BuildContext context) async {
+    if (app.onReconnect == null) {
+      _toast(context, '这条连接不支持点名拨号');
+      return;
+    }
+    _toast(context, '正在用「${endpointKindLabel(endpoint.kind)}」连接…');
+    final ok = await app.useEndpointNow(endpoint);
+    if (!context.mounted) return;
+    if (ok) {
+      _toast(context, '已连上「${endpointKindLabel(endpoint.kind)}」');
+      return;
+    }
+    final reason = app.endpointRequestResult?.reason;
+    _toast(
+      context,
+      reason == null || reason.isEmpty
+          ? '这条没连上，已回到自动选择'
+          : '这条没连上（$reason），已回到自动选择',
+    );
+  }
+
+  /// 行尾「⋯」：次要动作（设为首选 / 删除）。
+  Future<void> _onMore(BuildContext context) async {
     final isFirst = app.endpoints.first.id == endpoint.id;
     final action = await showDshSheet<String>(
       context: context,

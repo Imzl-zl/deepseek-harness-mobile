@@ -52,6 +52,9 @@ class _RecordingClient implements SyncClient {
       throw UnimplementedError('本用例只该调 setAppState');
 
   @override
+  Future<void> reconnect() => start();
+
+  @override
   Future<void> unsubscribe(String sid) async =>
       throw UnimplementedError('本用例只该调 setAppState');
 

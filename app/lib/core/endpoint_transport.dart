@@ -80,6 +80,17 @@ class EndpointTransport implements ChannelTransport {
 
   ChannelTransport? _active;
 
+  /// 用户点名的那个端点（`null` = 走自动队列）。
+  ///
+  /// **只影响下一次 `connect()`**：点名是"这一次就用它"，不是"以后都用它" ——
+  /// 后者是顺序（`preferEndpoint`）与顶点（`rememberedEndpointUrl`）的事。
+  /// 拨通或失败后由调用方清掉（失败即回到自动，见 `AppModel.useEndpointNow`）。
+  Endpoint? get requestedEndpoint => _requested;
+  Endpoint? _requested;
+
+  /// 点名"下一次拨号只用这个"（传 `null` 回到自动队列）。
+  void requestEndpoint(Endpoint? endpoint) => _requested = endpoint;
+
   /// 当前拨通的那个端点（`connect()` 之前是 `null`）。
   Endpoint? get activeEndpoint => _activeEndpoint;
   Endpoint? _activeEndpoint;
@@ -92,7 +103,11 @@ class EndpointTransport implements ChannelTransport {
 
     // **现读**：发现结果（`endpoint.describe`）只在连接器自报之后才有，
     // 而那之后要立刻能拨到它 —— 构造时定格就得重启 App。
-    final endpoints = endpointsOf();
+    // **点名优先**：用户指定了那一条就只试它，**不顺延** ——
+    // 顺延会让"我选了直连"变成"其实又偷偷走了中转"，而用户无从得知。
+    // 失败由上层（`AppModel.useEndpointNow`）清掉点名、回到自动并说明原因。
+    final requested = _requested;
+    final endpoints = requested != null ? [requested] : endpointsOf();
     if (endpoints.isEmpty) {
       throw const TransportException('没有可拨的端点');
     }

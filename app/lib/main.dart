@@ -833,6 +833,11 @@ Future<AppModel> _assemble(
     succeededEndpointIds: credentials.endpointMeta.succeededEndpointIds,
     // 本机 LAN 地址（拨号排序判"同网段"用）。拿不到就退化，不猜。
     myLanIpv4Of: currentLanIpv4,
+    // **点名连接**的两根线（设置页"用这个连接"用）：
+    // ① 告诉传输层"下一次只试这一条"；② 立刻断开重拨。
+    // 分开是因为传输层不认识连接层 —— 谁拨号、谁重拨，各管一段。
+    onRequestEndpoint: transport.requestEndpoint,
+    onReconnect: client.reconnect,
     onEndpointsChanged: PairingStore.saveEndpoints,
     onEndpointsMetaChanged: PairingStore.saveEndpointMeta,
     // 连接终态失败（身份不被认）→ 清凭据回配对页。见 `_recovery`。
