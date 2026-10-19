@@ -51,6 +51,7 @@ import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 import 'chat_jumper.dart';
 import 'chat_turns.dart';
+import 'collapsible_group.dart';
 import 'connection_actions_sheet.dart';
 import 'connection_summary_block.dart';
 import 'conversation_hero.dart';
@@ -2301,9 +2302,11 @@ class _ConversationFlowState extends State<_ConversationFlow> {
 /// 主界面上的会话列表（**不必先开抽屉**）。
 ///
 /// 与抽屉里的那份是**同一批数据**（`AppModel.sessions`）、**同一套分组规则**
-/// （`bucketSessionsByWorkspace`），只是摆的位置不同：抽屉是"历史入口"，
-/// 这里是"首页就该看得见的东西"。
-class _SessionListInline extends StatelessWidget {
+/// （`bucketSessionsByWorkspace`）、**同一套折叠规则**（`CollapsibleGroup`）——
+/// 2026-10-19 用户原话「这个侧边栏会话列表，人家的每个项目的会话可以折叠的，
+/// 你没有啊」。抽屉是"历史入口"，这里是"首页就该看得见的东西"，
+/// 但两边看到的必须是同一份列表。
+class _SessionListInline extends StatefulWidget {
   const _SessionListInline({
     required this.sessions,
     required this.onOpen,
@@ -2324,17 +2327,29 @@ class _SessionListInline extends StatelessWidget {
   final List<WorkspaceGroup> workspaces;
 
   @override
+  State<_SessionListInline> createState() => _SessionListInlineState();
+}
+
+class _SessionListInlineState extends State<_SessionListInline> {
+  /// 每个项目组的展开态。**缺省视为展开**（`?? true`）——
+  /// 第一次看到就展开，不要"默认全折叠"让用户以为会话少了一半。
+  ///
+  /// 与抽屉各自一份：两边是**同一个规则**的两个实例，
+  /// 但状态不该跨组件共享（抽屉开着时首页这份通常看不见）。
+  final Map<String, bool> _expanded = <String, bool>{};
+
+  @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
     // **可见性规则逐条照 DSH Web**（`sessionVisible`）:子智能体的子会话不列、
     // blank 除当前外不列。与抽屉同一条规则 —— 两边看到的必须是同一份列表。
-    final visible = sessions
+    final visible = widget.sessions
         .where(
           (s) => sessionVisible(
             subagent: s.subagent,
             blank: s.blank,
             isCurrent: false,
-            archived: archived.contains(s.sid),
+            archived: widget.archived.contains(s.sid),
           ),
         )
         .toList();
@@ -2342,51 +2357,51 @@ class _SessionListInline extends StatelessWidget {
     // 2026-10-15 只改了抽屉，主界面这份还是平的，真机上一眼看出来了。
     final buckets = bucketSessionsByWorkspace(
       visible.map((s) => s.sid).toList(),
-      workspaces,
+      widget.workspaces,
     );
     final bySid = {for (final s in visible) s.sid: s};
     // 分组后是"组头 + 行"的扁平序列：给 ListView 用。
     final rows = <Widget>[];
     for (final bucket in buckets) {
-      rows.add(
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
-          child: Text(
-            bucket.label,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: c.labelCaption,
+      // 这一组的行。**折叠时不渲染**（与 DSH 的
+      // `group.expanded ? children.map(...) : []` 同一条规则，
+      // `ui-workspace/.../WorkspaceBrowser.tsx:484`）。
+      final sessionRows = <Widget>[
+        for (final sid in bucket.sessionIds)
+          if (bySid[sid] case final session?)
+            ListTile(
+              dense: true,
+              title: Text(
+                // 标题与顶栏、抽屉同一条链：投影提示标题 → 「未命名」
+                // （DSH 的 Web 侧栏规则，`ui-workspace/README.zh.md:32`；
+                // 判据 `tree.ts:296` 的 `sessionTitle`）。**不再退目录名 / sid**。
+                session.displayTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 14, color: c.labelPrimary),
+              ),
+              subtitle: () {
+                // 副标题显示**模型**，不再显示 sid：标题按 DSH 的链会退到 sid
+                // （`displayTitle`），再显示一遍 sid 就是同一行里同一个字符串。
+                // Web 的列表行同样不显示原始会话 id。
+                final model = session.model?.label;
+                return model == null ? null : Text(model);
+              }(),
+              onTap: () => widget.onOpen(session),
             ),
+      ];
+      rows.add(
+        // **可折叠的项目组头**：与抽屉同一个 widget（`collapsible_group.dart`）。
+        CollapsibleGroup(
+          label: bucket.label,
+          expanded: _expanded[bucket.label] ?? true,
+          onToggle: () => setState(
+            () => _expanded[bucket.label] = !(_expanded[bucket.label] ?? true),
           ),
+          childCount: bucket.sessionIds.length,
+          children: sessionRows,
         ),
       );
-      for (final sid in bucket.sessionIds) {
-        final session = bySid[sid];
-        if (session == null) continue;
-        rows.add(
-          ListTile(
-            dense: true,
-            title: Text(
-              // 标题与顶栏、抽屉同一条链：投影提示标题 → 「未命名」
-              // （DSH 的 Web 侧栏规则，`ui-workspace/README.zh.md:32`；
-              // 判据 `tree.ts:296` 的 `sessionTitle`）。**不再退目录名 / sid**。
-              session.displayTitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 14, color: c.labelPrimary),
-            ),
-            subtitle: () {
-              // 副标题显示**模型**，不再显示 sid：标题按 DSH 的链会退到 sid
-              // （`displayTitle`），再显示一遍 sid 就是同一行里同一个字符串。
-              // Web 的列表行同样不显示原始会话 id。
-              final model = session.model?.label;
-              return model == null ? null : Text(model);
-            }(),
-            onTap: () => onOpen(session),
-          ),
-        );
-      }
     }
 
     return Column(
@@ -2405,9 +2420,9 @@ class _SessionListInline extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              if (onRefresh != null)
+              if (widget.onRefresh != null)
                 IconButton(
-                  onPressed: onRefresh,
+                  onPressed: widget.onRefresh,
                   tooltip: '重新拉取会话',
                   iconSize: 16,
                   visualDensity: VisualDensity.compact,

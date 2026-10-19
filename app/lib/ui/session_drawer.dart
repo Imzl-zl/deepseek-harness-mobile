@@ -29,6 +29,7 @@ import 'package:flutter/material.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
+import 'collapsible_group.dart';
 
 /// 抽屉里的一行会话。
 class DrawerSession {
@@ -132,6 +133,17 @@ class SessionDrawer extends StatefulWidget {
 
 class _SessionDrawerState extends State<SessionDrawer> {
   final _search = TextEditingController();
+
+  /// 每个项目组的展开态（`label → 展开?`）。
+  ///
+  /// **缺省视为展开**：`_expanded[key] ?? true`。第一次看到就展开，
+  /// 不要"默认全折叠"—— 那会让用户以为会话少了一半。
+  ///
+  /// **不落盘**：DSH 是 `setGroupExpanded(key, expanded)`
+  /// （`ui-workspace/.../WorkspaceBrowser.tsx:281`），手机侧一期只记
+  /// 这一次打开期间的记忆。落盘要知道每个组的稳定 key，而
+  /// `WorkspaceGroup` 没有 id（只有 `workspaceId`，见 `model/workspace.dart`）。
+  final Map<String, bool> _expanded = <String, bool>{};
 
   @override
   void dispose() {
@@ -288,28 +300,37 @@ class _SessionDrawerState extends State<SessionDrawer> {
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                       children: [
                         for (final section in widget.sections) ...[
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
-                            child: Text(
-                              section.label,
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: c.labelCaption,
-                              ),
+                          // **可折叠的项目组头**（2026-10-19 用户原话：
+                          // 「这个侧边栏会话列表，人家的每个项目的会话可以折叠的，
+                          // 你没有啊」）。形态照 DSH Web 的
+                          // `ui-workspace/src/client/rows/Rows.tsx:259-263`。
+                          CollapsibleGroup(
+                            label: section.label,
+                            expanded: _expanded[section.label] ?? true,
+                            onToggle: () => setState(
+                              () => _expanded[section.label] =
+                                  !(_expanded[section.label] ?? true),
                             ),
+                            childCount: section.sessions.length,
+                            // 当前会话在这个组里 ⇒ 折叠时也高亮
+                            // （DSH 的 `containsCurrentDescendant`）。
+                            containsCurrent: section.sessions.any(
+                              (s) => s.isActive,
+                            ),
+                            children: [
+                              for (final session in section.sessions)
+                                _SessionRow(
+                                  session: session,
+                                  onTap: () => widget.onOpenSession(session),
+                                  onArchive: widget.onArchive == null
+                                      ? null
+                                      : () => widget.onArchive!(session),
+                                  onDelete: widget.onDelete == null
+                                      ? null
+                                      : () => widget.onDelete!(session),
+                                ),
+                            ],
                           ),
-                          for (final session in section.sessions)
-                            _SessionRow(
-                              session: session,
-                              onTap: () => widget.onOpenSession(session),
-                              onArchive: widget.onArchive == null
-                                  ? null
-                                  : () => widget.onArchive!(session),
-                              onDelete: widget.onDelete == null
-                                  ? null
-                                  : () => widget.onDelete!(session),
-                            ),
                         ],
                       ],
                     ),
