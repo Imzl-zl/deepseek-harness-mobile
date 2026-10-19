@@ -18,19 +18,19 @@
 
 待办:
 
-1. **历史翻页整条链没接**（2026-10-19 查证，**有边界的独立批次**）：
-   - 电脑侧**一直在发** `hasMore`（`connector/src/session-subscriptions.ts:80-85`
-     的 `SessionSubscriptionReply`，`session.subscribe` 的回包）；
-   - 手机侧 **`SyncClient.subscribe` 返回 `Future<void>`，把回包整个丢掉**；
-   - `session.page` 手机侧**从没实现**（契约 §5.7 有它）；
-   - DSH 的默认窗口是 `DEFAULT_MAX_MESSAGES = 50`（`history.ts:38`），
-     而 Web 自己传 500（`client/sessions/session.ts:54` 的 `HISTORY_PAGE_OPTIONS`）。
-   - **后果**：手机上只有电脑侧那一个窗口，"历史上 20 轮只看到最近 3 轮"；
-     且一轮常被劈成两半（`turn/start` 落在窗口外 ⇒ 过程摘要的用时与计数取不到）。
-   - **为什么没在本轮做**：`subscribe` 改回 `SessionAnchor` 要动 **26 个测试替身**，
-     而本版不翻页的话那个 anchor 对用户可见价值为零。它该与
-     "滚到顶自动翻"的 UI 触发、`session.page` 实现、`session/window-missed`
-     的处理**同一个批次**做。
+1. **历史翻页：骨架有了，缺最后一个信号（anchor）**（2026-10-19）：
+   - ✅ `session.page` 已实现（窗口参数照 DSH Web 的 `HISTORY_PAGE_OPTIONS`：
+     `maxMessages 500` + `minMessages 50` + `minTurns 2`，按轮次边界切）；
+   - ✅ `AppModel.loadOlderHistory(sid)` 已有完整逻辑（切点取最早一条的 seq、
+     不并发翻、走同一条投影路径、`failure` 与 `hasMore` 分开）；
+   - ❌ **`hasMore` 恒为 false** —— `session.subscribe` 的回包（`{since, hasMore}`，
+     电脑侧一直在发）手机侧拿不到：它走 outbox，而 outbox 的 `res` 应答走
+     `_resolveCall`，那里只解**即时 `call`** 挂起的 future。
+   - **下一步**：给 `core/` 加一个"带 requestId 的 pending future"表，让 outbox
+     的应答能回到调用方。**不要**用"多发一次 `call`"绕过 —— 实测会双发且
+     没有 requestId，电脑侧按新订阅处理，测试直接超时。
+   - ❌ UI 触发没接（滚到顶自动翻）。
+   - 做完这些，过程摘要的"用时/计数为 0"自然就好了（`turn/start` 会进窗口）。
 2. **过程摘要的"用时/计数"在历史窗口不全时是如实的降级，不是 bug**：
    2026-10-19 真机看到 `🕐 第 12 轮 · 不到 1 秒`（渲染链路通了）——
    该轮的 `turn/start` 落在**更早且未加载的页**里。`stats` 因此只说时长、
@@ -182,15 +182,16 @@
 
 ## 已落地批次索引(细节回 git 与 `.agents/notes/`)
 
-- **2026-10-19**(十五批,共 15 个提交):渲染三缺陷照 DSH 修 → 输入栏去忙时发送图标
+- **2026-10-19**(十六批,共 16 个提交):渲染三缺陷照 DSH 修 → 输入栏去忙时发送图标
   + 模型 chip 图标优先 → 右抽屉改真抽屉 + 快速跳转钮(rikkahub `MessageJumper`)
   → 浅色主题三档 + **全部 UI 面迁完** → 跨会话用量汇总(连接器 + 手机)
   → 输入栏几何判据 + 模型 chip 按内容宽(省 65px) → **换 WiFi 自动连上已验证**(家→公司)
   → 轨迹页接 `turnOutline` → 消息流显示流式文本 → 斜杠命令卡
   (`command/run` + `command/done`) → 一轮的异常结局与模型重试（`turn/end` 的
   reason + `llm/retry`；真日志 80 条"出了什么事"）→ 一轮的过程摘要
-  （`turn-process`：用时 + 消息/工具/子智能体计数）→ **上下文压缩标记**
-  （`compaction/*`；DSH Web 节点清单至此**全部有对应呈现**）。
+  （`turn-process`）→ **上下文压缩标记**（`compaction/*`；DSH Web 节点清单至此
+  **全部有对应呈现**）→ **历史翻页骨架**（`session.page` + `loadOlderHistory`，
+  26 个测试替身收成 `FakeSyncClient` 基类）。
   **`app/test/fixtures/real-session-events.json` 是真机落盘事件** —— 手写形状的
   用例只会复述实现的假设,这是"我们以为的形状与真形状不同"的判据。
 - **2026-10-18/19**(连接与端点,9 个提交):帧头 id 与幂等键分离 → 多地点端点保留 → 端点管理 UI →
