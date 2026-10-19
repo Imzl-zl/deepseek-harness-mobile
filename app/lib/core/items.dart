@@ -125,6 +125,18 @@ String itemIdOf(EventLike event) {
     return 'i:$approvalId';
   }
 
+  if (type == 'command/run' || type == 'command/done') {
+    // run 与 done 共用同一个 id，靠 `commandId` 配对 —— 与 tool/call /
+    // tool/result 同一形状（DSH 的格式不变量逐字同源：
+    // `session-format-v3-to-v4/README.md:244` 原话
+    // "Run ids are unique; completion has a prior run"）。
+    final commandId = _nonEmptyString(_fieldOf(data, 'commandId'));
+    if (commandId == null) {
+      throw StateError('$type(seq=$seq) 缺少 commandId：无法与另一条配对');
+    }
+    return 'c:$commandId';
+  }
+
   // 规格许可的兜底：仅用于没有更稳定身份的事件类型（契约 §5.2）。
   return '$type:$seq';
 }

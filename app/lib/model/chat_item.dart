@@ -96,6 +96,57 @@ class MessageItem extends ChatItem {
   final String? systemLabel;
 }
 
+/// 一次斜杠命令（`command/run` 与 `command/done` 共用同一个 `itemId`）。
+///
+/// ## 它为什么之前不存在
+///
+/// 2026-10-19 摸到的"没有输出"之一：`command/run` / `command/done` 两个事件
+/// 在投影里**完全没有 case**，一路落到 [OtherItem]（只计数、不渲染）。
+/// 于是 `/goal`、`/compact`、`/permission` 这些用户在 Web 上能看见
+/// "命令名 + 结果文本"的卡片，在手机上**一条都没有** —— 而连接器侧
+/// `usage.summary` 的用法说明、权限切换、压缩，全都要经命令执行。
+///
+/// ## 与 [ToolCallItem] 的关系
+///
+/// 形状几乎一样（名字 + 状态 + 一行摘要 + 展开明细），但**不合并**：
+/// 工具的调用/结果靠 `toolCallId` 配对，命令靠 `commandId`；而 DSH 的
+/// 命令卡是独立的节点类型（`CommandNodeView` / `GenericCommandCard`，
+/// 与 `ToolCard` 两套样式）。合成一类会让 itemId 的推导要同时认两套键名。
+class CommandItem extends ChatItem {
+  const CommandItem({
+    required super.itemId,
+    required super.seq,
+    required super.updatedAt,
+    required this.name,
+    required this.status,
+    this.summary = '',
+    this.detail = '',
+  });
+
+  /// 命令名（如 `/goal` / `/compact` / `/permission`）。
+  ///
+  /// **带前导斜杠**：DSH 的 `command/run.name` 就是用户在输入框里敲的那串
+  /// （真日志：`goal`、`compact`），而 Web 的卡片标题显示的是
+  /// `node.name ?? t('command.title')`（`GenericCommandCard.tsx:37`）——
+  /// 手机照 DSH 的原样显示，斜杠补在前面让它读起来就是"一条命令"。
+  final String name;
+
+  /// 状态。**复用 [ToolCallStatus]**：DSH 的 `stateOf`
+  /// （`GenericCommandCard.tsx:12-15`）把 `outcome === null` 映成 running、
+  /// `outcome.kind === 'error'` 映成 error、其余 ok —— 与工具那三档逐字对应。
+  final ToolCallStatus status;
+
+  /// 一行摘要。`command/done` 到达时是**结果文本的第一行**，
+  /// 运行中是"正在执行…"（DSH 的 `t('command.running')`）。
+  final String summary;
+
+  /// 展开后的明细：`command/done.text` 全文。
+  ///
+  /// DSH 只在文本含换行时才给展开（`GenericCommandCard.tsx:40` 的
+  /// `text.includes('\n') ? text : null`）—— 单行文本已经在摘要里了。
+  final String detail;
+}
+
 /// 消息角色（决定气泡配色与对齐）。
 enum MessageRole {
   /// 用户发的。

@@ -410,6 +410,175 @@ class _ToolCardState extends State<ToolCard> {
   }
 }
 
+/// 斜杠命令卡（DSH 的 `GenericCommandCard`）。
+///
+/// ## 它为什么之前不存在
+///
+/// 2026-10-19 摸到的"没有输出"之一：`command/run` / `command/done` 在投影里
+/// 没有 case，落到 `OtherItem`（只计数、不渲染）。于是 `/goal`、`/compact`、
+/// `/permission` 这些在 Web 上有"命令名 + 结果文本"卡片的东西，在手机上
+/// **一条都没有** —— 而连接器的用法说明、权限切换、压缩全都要经命令执行。
+///
+/// ## 与 DSH 的对应
+///
+/// `packages/client/ui-chat/src/client/chat/GenericCommandCard.tsx`：
+///
+/// | DSH | 这里 |
+/// |---|---|
+/// | `title = node.name ?? t('command.title')`（`:37`） | 命令名（等宽、roleTool 色） |
+/// | `summary` 跑时是 `t('command.running')`、完成后是 `outcome.text`（`:32-34`） | 摘要一行 |
+/// | `body = text.includes('\n') ? text : null`（`:40`） | 只有含换行才给展开 |
+/// | `IconApiOutlineRegular`（`:9`） | `api` 图标（抽取进我们图标集时的名字） |
+///
+/// ## 为什么不用 [ToolCard]
+///
+/// 形状几乎一样，但**语义不同**：工具是"模型调了一个能力"，命令是"用户敲了
+/// 一条斜杠指令"。合成一类会让卡片上的措辞（"工具" vs "命令"）分叉，
+/// 而 DSH 也是两套组件（`GenericCommandCard` 与 `ToolCard`）。
+class CommandCard extends StatefulWidget {
+  const CommandCard({
+    super.key,
+    required this.name,
+    required this.status,
+    this.summary = '',
+    this.detail = '',
+    this.initiallyOpen = false,
+  });
+
+  /// 命令名（`/goal` / `/compact`）。
+  final String name;
+
+  final ToolCallStatus status;
+
+  /// 一行摘要（运行中 / 结果文本第一行）。
+  final String summary;
+
+  /// 展开后的明细（`command/done.text` 全文）。
+  final String detail;
+
+  /// 初始就是展开的（"工作步骤展示"偏好的**完全展开**档）。
+  final bool initiallyOpen;
+
+  @override
+  State<CommandCard> createState() => _CommandCardState();
+}
+
+class _CommandCardState extends State<CommandCard> {
+  bool _open = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _open = widget.initiallyOpen;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    final (icon, tone) = switch (widget.status) {
+      ToolCallStatus.running => ('loading', c.roleTool),
+      ToolCallStatus.completed => ('check', c.roleContext),
+      ToolCallStatus.failed => ('warningTriangle', c.error),
+    };
+    // **只有多行才给展开**（DSH `GenericCommandCard.tsx:40` 的
+    // `text.includes('\n') ? text : null`）：单行文本已经在摘要里了，
+    // 再给一个箭头是骗人点。
+    final hasDetail = widget.detail.contains('\n');
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(DshRadius.lg),
+        border: Border.all(color: c.layer1),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Material(
+            color: c.roleToolBg,
+            child: InkWell(
+              onTap: hasDetail ? () => setState(() => _open = !_open) : null,
+              child: Container(
+                constraints: const BoxConstraints(minHeight: 52),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 13,
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 24,
+                      height: 24,
+                      decoration: BoxDecoration(
+                        color: c.roleTool.withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Center(
+                        child: DshIcon('api', size: 13, color: tone),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      widget.name,
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: c.roleTool,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        widget.summary,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: c.labelTertiary,
+                        ),
+                      ),
+                    ),
+                    if (hasDetail) ...[
+                      const SizedBox(width: 8),
+                      AnimatedRotation(
+                        turns: _open ? 0.25 : 0,
+                        duration: const Duration(milliseconds: 160),
+                        child: DshIcon(
+                          'chevronRight',
+                          size: 16,
+                          color: c.labelTertiary,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (hasDetail && _open)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: c.layer1,
+                border: Border(top: BorderSide(color: c.layer1)),
+              ),
+              child: Text(
+                widget.detail,
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12.5,
+                  height: 20 / 12.5,
+                  color: c.labelSecondary,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 /// 审批 / 提问的**一行提示**（原型：它们不在气泡里，而是接管输入栏；
 /// 对话流里只留一行可点回来的入口）。
 class TakeoverHint extends StatelessWidget {

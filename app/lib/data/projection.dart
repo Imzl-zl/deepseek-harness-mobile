@@ -33,6 +33,15 @@ const String kSystemPromptLabel = '系统提示词';
 /// 而"这是个工具但不知道是哪个"本身是信息，所以给一个明说的占位）。
 const String kUnknownToolName = '工具';
 
+/// 命令名缺失时的占位（DSH 同处是 `t('command.title')`，即"命令"）。
+///
+/// 出现在"历史翻页只落到 `command/done`"那种窗口外情况 —— 那时名字只在
+/// 窗口外的 `command/run` 上。留一个明说的占位，不编一个 `/xxx`。
+const String kUnknownCommandName = '命令';
+
+/// 命令运行中的摘要（DSH 的 `t('command.running')`）。
+const String kCommandRunningSummary = '正在执行…';
+
 /// 上下文注入行的标签：**照 DSH 的 `contextProducer`**
 /// （`conversation-nodes/event-projection.ts:60-76`）—— 有 `source.kind`
 /// 就照它说（`tool-registry` / `skill-invocation` / `agent-instructions` …），
@@ -178,6 +187,58 @@ ChatProjection projectEvent({
         title: stringField(data, 'toolName') ?? '审批',
         decided: true,
         decision: stringField(data, 'outcome'),
+      ),
+    );
+  }
+
+  if (type == 'command/run') {
+    // 命令开始。DSH 的 `command/run` 载荷是
+    // `{commandId, name, args, source}`（真日志实测：`goal` / `/compact`）。
+    // **状态是 running**：结果要等 `command/done`（同一 itemId 覆盖）。
+    final name = stringField(data, 'name');
+    final args = stringField(data, 'args');
+    return ChatProjection.item(
+      CommandItem(
+        itemId: itemId,
+        seq: seq,
+        updatedAt: time,
+        name: name == null || name.isEmpty ? kUnknownCommandName : '/$name',
+        status: ToolCallStatus.running,
+        // 摘要带参数（DSH 的卡片标题只有命令名，参数行进摘要）——
+        // 参数可能很长（`/goal <一大段>`），截断由 UI 的 ellipsis 负责。
+        summary: args == null || args.trim().isEmpty
+            ? kCommandRunningSummary
+            : args.trim(),
+      ),
+    );
+  }
+
+  if (type == 'command/done') {
+    // 结果。DSH 的 `command/done` 载荷是 `{commandId, kind, text}`，
+    // `kind` 是 `success` / `error`（真日志实测）。
+    // **与 run 共用 itemId**（`c:$commandId`，见 `core/items.dart`）——
+    // 所以它到达时是"更新已有条目"，不是新增一条。
+    final call = previous is CommandItem ? previous : null;
+    final kind = stringField(data, 'kind');
+    final text = stringField(data, 'text');
+    return ChatProjection.item(
+      CommandItem(
+        itemId: itemId,
+        seq: seq,
+        updatedAt: time,
+        // 名字从 run 继承：`command/done` **不带 name**（真日志实测）。
+        // 历史翻页可能只落到 done（run 在窗口外）—— 那时留"命令"，
+        // 不编一个（DSH 同处：`node.name ?? t('command.title')`）。
+        name: call?.name ?? kUnknownCommandName,
+        status: kind == 'error'
+            ? ToolCallStatus.failed
+            : ToolCallStatus.completed,
+        // 摘要是结果文本的**第一行**（DSH 的 `GenericCommandCard` 把整段
+        // text 当 summary，而那是宽屏；手机上摘要只能一行）。
+        // 复用工具摘要那一个截断上限（120）—— 同一行文字，同一尺度。
+        summary: text == null ? '' : _firstLine(text, 120),
+        // 明细是全文 —— 多行时才看得见（DSH 只对含换行的文本给展开）。
+        detail: text ?? '',
       ),
     );
   }

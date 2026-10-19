@@ -2482,6 +2482,17 @@ class _TurnView extends StatelessWidget {
         argument: title,
         statusText: decided ? '已决定' : '等待审批',
       ),
+      // 斜杠命令（`command/run` + `command/done`）：DSH 的 `GenericCommandCard`。
+      // 2026-10-19 之前它落到 `OtherItem` 被丢掉，于是 `/goal` / `/compact` /
+      // `/permission` 这些在 Web 上有卡片的东西，手机上一条都没有。
+      CommandItem(:final name, :final status, :final summary, :final detail) =>
+        CommandCard(
+          name: name,
+          status: status,
+          summary: summary,
+          detail: detail,
+          initiallyOpen: autoOpenDetail,
+        ),
       OtherItem() => const SizedBox.shrink(),
     };
   }
