@@ -98,15 +98,22 @@ starts, capped at 500 messages"）做成三个常量。**按轮次边界切**，
 - 收益：`session.page` 有了实现、`loadOlderHistory` 有了完整逻辑与入口、
   窗口参数与 DSH Web 逐字一致；26 个测试替身收成一个基类
   （下次 `SyncClient` 长成员不再炸一片）；**anchor 链路通了** ——
-  `sync.hello` 的应答 → `SyncClient.hasOlderHistory` → `loadOlderHistory`。
+  `sync.hello` 的应答 → `SyncClient.hasOlderHistory` → `loadOlderHistory`；
+  **UI 触发也接上了**（滚到顶自动翻，判据抽成 `ui/load_older_trigger.dart`
+  的纯函数）。
 - 代价：`FakeSyncClient` 基类；`conversation_hero_test` 的替身要**手动**
   覆写 `subscribe`（它记 `subscribed`，默认实现不记）；
   `sync.hello` 现在也是一个"在途请求"（断连时会被 `failAll` 拒，
   两条 `lastRejectedCalls` 断言从 1 改成 2 并说明原因）。
 - 测试：`history_paging_test.dart` 3 项（没有更多不翻 / 有一页就并进来 /
   失败记原因且不把 `hasMore` 打成假）；`sync_client_test.dart` 2 项
-  （真 transport + 真封箱验 anchor 进屋 / 形状不对不当错误）。
-  **两条都做过变异验证**（把 `_absorbHelloAnchors` 改成空操作即红）。
-  `flutter test 806` 全绿。
-- **仍未验证**：UI 触发没接（滚到顶自动翻），所以**端到端还没跑过** ——
-  `loadOlderHistory` 有了全部输入，只差一个调用点。
+  （真 transport + 真封箱验 anchor 进屋 / 形状不对不当错误）；
+  `load_older_trigger_test.dart` 4 项（reverse 方向 / 正序 / 无可滚内容 /
+  `hasMore` 为假）。
+  **三处都做过变异验证**（分别把 `_absorbHelloAnchors` 改成空操作、
+  把 reverse 方向搞反，测试立刻红）。
+  `flutter test 810` 全绿。
+- **未验证**：**端到端没跑过**。装到真机后手机停在"还没连电脑"
+  （公司电脑的 DSH profile 要重新出码配对，而用户不在）。
+  三段（anchor → 翻页 → 触发）各有单测，但**一次真实的"滚到顶多出几轮"
+  要等用户重新配对后看**。

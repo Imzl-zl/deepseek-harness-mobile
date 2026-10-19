@@ -59,6 +59,7 @@ import 'dsh_markdown.dart';
 import 'dsh_sheet.dart';
 import 'dsh_state_dot.dart';
 import 'edge_stick.dart';
+import 'load_older_trigger.dart';
 import 'queue_dock.dart';
 import 'side_pane.dart';
 import 'takeover.dart';
@@ -2010,6 +2011,8 @@ class _ChatTab extends StatelessWidget {
       items: items,
       autoOpenDetail: autoOpenToolDetail,
       liveText: app.liveText,
+      // 滚到顶翻页要它（`hasOlderHistory` + `loadOlderHistory`）。
+      app: app,
     );
   }
 }
@@ -2042,6 +2045,7 @@ class _ConversationFlow extends StatefulWidget {
     required this.items,
     required this.autoOpenDetail,
     this.liveText,
+    this.app,
   });
 
   final List<ChatItem> items;
@@ -2053,6 +2057,11 @@ class _ConversationFlow extends StatefulWidget {
   /// `items.length + (liveText == null ? 0 : 1)`。持久的 `assistant/message`
   /// 到达后它自动消失（`AppModel` 不再给值）—— 那条消息整体替换它。
   final String? liveText;
+
+  /// 会话模型（滚到顶翻页要用它的 `hasOlderHistory` 与 `loadOlderHistory`）。
+  ///
+  /// `null` = 不翻页（预览 / 测试里没有真模型时）。
+  final AppModel? app;
 
   @override
   State<_ConversationFlow> createState() => _ConversationFlowState();
@@ -2075,6 +2084,44 @@ class _ConversationFlowState extends State<_ConversationFlow> {
   /// 用回调拿而不是 `GlobalKey`：这一个实例在整棵树里唯一，而回调不必
   /// 让父层知道私有 `State` 类型（拿到的是公开的 [ChatJumperController]）。
   ChatJumperController? _jumper;
+
+  /// 正在翻页（滚到顶会**连续**触发，不去重就会一次滚到发好几页）。
+  bool _paging = false;
+
+  /// 滚到顶就翻一页更早的历史（DSH Web 的 `loadOlder`，`session.ts:406`）。
+  ///
+  /// ## 为什么在 `ScrollNotification` 里判，而不是照抄 DSH 的 viewport
+  ///
+  /// DSH 有一套 virtualizer + viewport + reading 状态机（`use-chat-viewport.ts`）
+  /// 来同时管"跟随尾部 / 保持阅读位置 / 翻页锚点"。手机这一版没有虚拟列表，
+  /// `ScrollController` 一行就能判"到没到顶"—— **有意偏离**：照抄那套会把
+  /// 一个 `pixels >= maxScrollExtent` 的判断变成三百行状态机。
+  ///
+  /// ## `reverse: true` 下"顶"是 `maxScrollExtent`
+  ///
+  /// 列表倒序，offset 0 是最新一端，`maxScrollExtent` 是最早一端。
+  /// 所以滚到**历史**的那一端 = `pixels` 接近 `maxScrollExtent`。
+  void _maybeLoadOlder() {
+    final app = widget.app;
+    if (app == null || _paging) return;
+    if (!_scroll.hasClients) return;
+    final position = _scroll.position;
+    // 判据在 `ui/load_older_trigger.dart`（纯函数，可单测）——
+    // 这里只负责"把滚动位置喂进去"。
+    if (!shouldLoadOlder(
+      pixels: position.pixels,
+      maxScrollExtent: position.maxScrollExtent,
+      hasMore: app.hasOlderHistory,
+    )) {
+      return;
+    }
+    final sid = app.currentSid;
+    if (sid == null) return;
+    _paging = true;
+    // **翻完再解锁**：`loadOlderHistory` 内部还有一道并发锁（同一 sid），
+    // 这里是 UI 侧的去重 —— 少了它，一次快速滚动会排好几页。
+    unawaited(app.loadOlderHistory(sid).whenComplete(() => _paging = false));
+  }
 
   @override
   void initState() {
@@ -2174,6 +2221,13 @@ class _ConversationFlowState extends State<_ConversationFlow> {
             // **滚动就显示跳转钮**（rikkahub 的 `isRecentScroll` 同源）。
             // 返回 false = 不吞掉这个通知，别的监听者还要用。
             _jumper?.notifyScrolled();
+            // **滚到顶就翻一页更早的**（DSH Web 的 `loadOlder`）。
+            // 只在"用户主动滚"与"滚动结束"两类上判：`ScrollUpdateNotification`
+            // 是拖动/惯性，`ScrollEndNotification` 是停下来 —— 两者都到顶才算。
+            if (notification is ScrollUpdateNotification ||
+                notification is ScrollEndNotification) {
+              _maybeLoadOlder();
+            }
             return false;
           },
           child: ListView.builder(
