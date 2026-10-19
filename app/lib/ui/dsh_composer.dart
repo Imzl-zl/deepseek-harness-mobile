@@ -85,8 +85,12 @@ class DshComposer extends StatelessWidget {
 
   final String modelName;
 
-  /// 推理等级（`· 高`）。
-  final String reasoningLabel;
+  /// 推理等级（显示成 `· 高`）；**`null` = 不显示那一截**。
+  ///
+  /// 与 DSH Web 的 `effortLabel` 同一条规则（`ModelSelect.tsx:488` 的
+  /// `{effortLabel !== undefined && …}`）：没有等级就不占位。
+  /// 390px 屏上那一截约 40px，而"默认"说的是"没有信息"。
+  final String? reasoningLabel;
 
   /// 当前权限档的展示值（图标 + 文案 + 是否告警色）。
   ///
@@ -214,49 +218,80 @@ class DshComposer extends StatelessWidget {
                       // （`ui-model-selection/src/client/ModelSelect.tsx:484` 的
                       // `IconDataOutlineRegular`，抽取进我们图标集时叫 `database`）。
                       // **不新造字形**：`verify-icons.cjs` 只放行集合内的 100 个。
+                      // **`Flexible(loose)` + `Align(widthFactor: 1.0)`**（2026-10-19）：
+                      // 单 `Flexible` 不够 —— `_Chip` 里的 `Container` 在 `0..X`
+                      // 约束下会取 **X**（Flutter 的 `Container` 有界时用 biggest），
+                      // 于是 chip 仍撑满、权限 chip 不动、"省宽度"没发生。
+                      // `Align(widthFactor: 1.0)` 让 Align 的宽 = 子的宽，
+                      // 而 `Flexible(loose)` 允许它小于分配宽 —— 两者一起才收缩。
+                      // 长名字仍被这里的 maxWidth 截断（约束没丢）。
                       Flexible(
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: MediaQuery.sizeOf(context).width * 0.62,
-                          ),
-                          child: _Chip(
-                            onPressed: enabled ? onPickModel : null,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                DshIcon(
-                                  'database',
-                                  size: 13,
-                                  color: c.labelSecondary,
-                                ),
-                                const SizedBox(width: 5),
-                                Flexible(
-                                  child: Text(
-                                    modelName,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                      color: c.labelPrimary,
+                        fit: FlexFit.loose,
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          widthFactor: 1.0,
+                          child: ConstrainedBox(
+                            // 测试用锚点：量"模型 chip 实际占多宽"
+                            // （`composer_layout_test.dart` 的"无等级时更窄"那条）。
+                            key: const Key('composer-model-chip'),
+                            constraints: BoxConstraints(
+                              maxWidth: MediaQuery.sizeOf(context).width * 0.62,
+                            ),
+                            child: _Chip(
+                              onPressed: enabled ? onPickModel : null,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  DshIcon(
+                                    'database',
+                                    size: 13,
+                                    color: c.labelSecondary,
+                                  ),
+                                  const SizedBox(width: 5),
+                                  // 模型名：**`Flexible(loose)` 而不是 tight**。
+                                  //
+                                  // 2026-10-19 实测三个形态（最小复现逐层量）：
+                                  // - `Flexible`（默认 tight）→ Text 被拉到
+                                  //   "Row 宽 − 其他子宽"，而 Row 在 `0..X` 下取 X，
+                                  //   chip 从 91.25 涨到 308.75（内容宽只要 271）；
+                                  // - 裸 `Text`（无 flexible）→ Text 收到 `0..X`
+                                  //   后取 X，chip 反而涨到 529（越过 62% 上限）；
+                                  // - `Flexible(loose)` → 内容窄时不撑满、内容宽时
+                                  //   压到上限，**两个诉求同时成立**。
+                                  Flexible(
+                                    fit: FlexFit.loose,
+                                    child: Text(
+                                      modelName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: c.labelPrimary,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  '· $reasoningLabel',
-                                  style: TextStyle(
-                                    fontSize: 12,
+                                  // 推理等级：**有才显示**（连同前面的分隔点）。
+                                  // 一起条件化而不是留一个孤零零的 `·` ——
+                                  // 那会让"没有等级"显示成"· "。
+                                  if (reasoningLabel != null) ...[
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '· $reasoningLabel',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: c.labelCaption,
+                                      ),
+                                    ),
+                                  ],
+                                  const SizedBox(width: 2),
+                                  DshIcon(
+                                    'chevronDown',
+                                    size: 12,
                                     color: c.labelCaption,
                                   ),
-                                ),
-                                const SizedBox(width: 2),
-                                DshIcon(
-                                  'chevronDown',
-                                  size: 12,
-                                  color: c.labelCaption,
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
                         ),
@@ -393,6 +428,21 @@ class _RoundIconButton extends StatelessWidget {
 }
 
 /// 文字 chip（`.chip`：`min-height:32`、`border-radius:16`）。
+///
+/// ## 为什么底色用 `Container` 而不是 `Material`
+///
+/// 2026-10-19 实测（最小复现逐层加）：`Material` 天生把
+/// `constraints.maxWidth` 吃满 —— 同一结构套一层 `Material`，chip 宽从
+/// **91.3（内容宽）变成 496.0（外层上限）**，且 `Align(widthFactor: 1.0)`
+/// 救不回来（它只在该子自己不撑满时有效，而 `Material > InkWell` 链撑满）。
+///
+/// 后果是"没有推理等级时 chip 应该更窄"这条**完全失效**（用户反馈
+/// "模型占那么大"）。所以底色改用 `Container(decoration:)`（按内容宽排），
+/// 点击反馈由 `InkWell` 的水波纹改成……没有水波纹了：`InkWell` 必须有
+/// `Material` 祖辈，而这里刻意不用 `Material`。
+/// **代价是有意的** —— chip 点了立刻开 sheet，反馈是"sheet 出现了"，
+/// 而 DSH Web 的 chip 也只有 CSS transition（`ui-model-selection` 的
+/// `.trigger` 没有水波纹）。
 class _Chip extends StatelessWidget {
   const _Chip({required this.child, this.onPressed});
 
@@ -402,18 +452,28 @@ class _Chip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
-    return Material(
-      color: c.layer2,
-      borderRadius: BorderRadius.circular(16),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onPressed,
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 32),
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          alignment: Alignment.center,
-          child: child,
+    return GestureDetector(
+      onTap: onPressed,
+      // **这个 `Container` 不带 `constraints`**（2026-10-19 实测）：
+      // `BoxConstraints(minHeight: 32)` 的宽度方向是 `0..Infinity`，
+      // Container 收到 `0..上层maxWidth` 时自己的宽会取 **maxWidth** ——
+      // 最小复现里加一层带 minHeight 的 Container，chip 从 91.3 变 496.0。
+      // `min-height: 32` 改由 padding 的纵向值 + 文字行高自然达到
+      // （12px 字号 × 1.2 + 上下 padding ≈ 30，接近 32；真要精确就把
+      // minHeight 加到**调用方**那层 ConstrainedBox 上 —— 那里已有 maxWidth，
+      // 加 minHeight 不影响宽度）。
+      child: Container(
+        // **不要 `alignment`**（2026-10-19 实测，最后一处）：
+        // `Container(alignment: …)` 会让 Container **撑满父宽**再把 child 对准到
+        // 边界（探针：同结构加 `alignment` 从 398 变 496）。chip 里的内容
+        // 本来就该按内容宽排（`Row(mainAxisSize.min)`），垂直居中由
+        // `ConstrainedBox(minHeight)` + Row 的 `crossAxisAlignment` 负责。
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: c.layer2,
+          borderRadius: BorderRadius.circular(16),
         ),
+        child: child,
       ),
     );
   }

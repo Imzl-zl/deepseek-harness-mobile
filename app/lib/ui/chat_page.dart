@@ -733,25 +733,30 @@ class ChatPageState extends State<ChatPage> {
         model.label;
   }
 
-  /// 推理等级的文字。
+  /// 推理等级的文字；**`null` = 不显示那一截**。
   ///
-  /// 也**不写死**（原来是 `'高'`）：电脑侧给了 effort 就显示它，没给就显示"默认" ——
-  /// "默认"是实话（DSH 的 `reasoning` 带 `defaultEffort`，见
-  /// `packages/api/session-controller/src/catalog.ts`），编一个等级才是谎。
+  /// 也**不写死**（原来是 `'高'`）：电脑侧给了 effort 就显示它。
   /// 目录里有这一项时把 effort id 翻成展示名（照 Web 的 `effortLabel`，
-  /// `ModelSelect.tsx:122-128`）。
-  String get _reasoningLabel {
-    if (!_hasData) return '默认';
+  /// `ModelSelect.tsx:130-136`）。
+  ///
+  /// **为什么从"默认"改成 null**（2026-10-19）：DSH Web 的 `effortLabel`
+  /// 是**条件渲染**的（`ModelSelect.tsx:488` 的
+  /// `{effortLabel !== undefined && <span …>}`），而它 `undefined` 的条件是
+  /// `currentChoice === undefined`（没选模型）。我们原来在"没选模型"时显示
+  /// "默认"—— 那一截在 390px 屏上占约 40px，而"默认"说的是"没有信息"。
+  /// **没有信息就不占位**（与"拿不到就整条不显示"同一条纪律）。
+  String? get _reasoningLabel {
+    if (!_hasData) return null;
     final sid = widget.app.currentSid;
-    if (sid == null) return '默认';
+    if (sid == null) return null;
     final model = widget.app.sessionOf(sid)?.model;
-    if (model == null) return '默认';
+    if (model == null) return null;
     final name = widget.app.modelCatalog?.effortNameOf(
       provider: model.provider,
       model: model.model,
       effort: model.reasoningEffort,
     );
-    return name != null && name.isNotEmpty ? name : '默认';
+    return name != null && name.isNotEmpty ? name : null;
   }
 
   /// 顶栏状态点的点击。
