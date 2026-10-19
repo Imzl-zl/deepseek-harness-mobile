@@ -18,19 +18,17 @@
 
 待办:
 
-1. **历史翻页：骨架有了，缺最后一个信号（anchor）**（2026-10-19）：
-   - ✅ `session.page` 已实现（窗口参数照 DSH Web 的 `HISTORY_PAGE_OPTIONS`：
+1. **历史翻页：只差 UI 触发**（2026-10-24 anchor 链路已通）：
+   - ✅ `session.page` 已实现（窗口照 DSH Web 的 `HISTORY_PAGE_OPTIONS`：
      `maxMessages 500` + `minMessages 50` + `minTurns 2`，按轮次边界切）；
-   - ✅ `AppModel.loadOlderHistory(sid)` 已有完整逻辑（切点取最早一条的 seq、
-     不并发翻、走同一条投影路径、`failure` 与 `hasMore` 分开）；
-   - ❌ **`hasMore` 恒为 false** —— `session.subscribe` 的回包（`{since, hasMore}`，
-     电脑侧一直在发）手机侧拿不到：它走 outbox，而 outbox 的 `res` 应答走
-     `_resolveCall`，那里只解**即时 `call`** 挂起的 future。
-   - **下一步**：给 `core/` 加一个"带 requestId 的 pending future"表，让 outbox
-     的应答能回到调用方。**不要**用"多发一次 `call`"绕过 —— 实测会双发且
-     没有 requestId，电脑侧按新订阅处理，测试直接超时。
-   - ❌ UI 触发没接（滚到顶自动翻）。
-   - 做完这些，过程摘要的"用时/计数为 0"自然就好了（`turn/start` 会进窗口）。
+   - ✅ `AppModel.loadOlderHistory(sid)` 完整（切点取最早一条 seq、不并发翻、
+     走同一条投影路径、`failure` 与 `hasMore` 分开）；
+   - ✅ **anchor 通了**：`sync.hello` 的应答（`handlers.ts:767` 起）→
+     `SyncClient.hasOlderHistory(sid)` → `loadOlderHistory`。
+     **不是从 `session.subscribe` 拿**（那条卡在 outbox 应答回不到调用方）；
+   - ❌ **UI 触发没接**：滚到顶自动翻（DSH Web 是 `loadOlder`，
+     `session.ts:406`）。`loadOlderHistory` 有了全部输入，差一个调用点。
+   - 接上 UI 后，过程摘要的"用时/计数为 0"自然就好了（`turn/start` 会进窗口）。
 2. **过程摘要的"用时/计数"在历史窗口不全时是如实的降级，不是 bug**：
    2026-10-19 真机看到 `🕐 第 12 轮 · 不到 1 秒`（渲染链路通了）——
    该轮的 `turn/start` 落在**更早且未加载的页**里。`stats` 因此只说时长、
@@ -165,7 +163,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **278 项**(22 条规则自检 + 扫 78 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 43 个)/ 工具脚本不许硬编码盘符(19 个) |
-| `cd app && flutter test` | **800 项** |
+| `cd app && flutter test` | **806 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **547 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
