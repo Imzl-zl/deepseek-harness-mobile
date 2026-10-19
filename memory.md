@@ -13,9 +13,11 @@
 
 待办:
 
-1. **输入栏重设计**：模型 chip 已改 `database` 图标优先，但用户还提到 rikkahub
-   的输入栏"动画也挺丝滑"—— 可参考它的 `weight(1f) + horizontalScroll`
-   紧凑图标钮排布（`ChatInput.kt:295-351`）。未做。
+1. ~~**输入栏重设计**~~ **2026-10-19 已做**:模型 chip 改成按内容宽（省 65px，
+   权限 chip 左缘 562→350.75），推理等级改有条件渲染（没选模型时不显示"默认"）。
+   见 `.agents/notes/implemented/2026-10-19-model-chip-content-width-and-wifi-switch.md`。
+   **还剩**：rikkahub 的 `weight(1f)+horizontalScroll` 横滚钮组
+   （`ChatInput.kt:302-306`）—— 现在四个钮不换行，加第五个时才需要。
 2. **发送队列 dock 已具备**（`QueueDock` 挂在接管卡与输入栏之间，编辑 / 删除 /
    插话三个动作都在，走 `session.updateQueue`）。**已实现，无需重做**。
 3. **全局侧滑的真相**（别当缺口）：Flutter 原生抽屉**本来就是整页高**可拖
@@ -145,7 +147,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **278 项**(22 条规则自检 + 扫 78 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 43 个)/ 工具脚本不许硬编码盘符(19 个) |
-| `cd app && flutter test` | **749 项** |
+| `cd app && flutter test` | **752 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **547 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
