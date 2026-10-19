@@ -1841,14 +1841,29 @@ class AppModel extends ChangeNotifier {
           inboxChanged = true;
           continue;
         }
-        // **`turn/start` 只记时刻，不占条目**：它是"这一轮开始了"的边界，
-        // 而界面上的那一行是 `turn/end` 时的过程摘要（DSH 的 turn-process
-        // 也正是挂在轮次末尾，`TurnProcessNodeView.tsx:18` 还要求
-        // `turn.status === 'closed'`）。
+        // **`turn/start` 落一条不可见的记账条目**（`OtherItem`）。
+        //
+        // 它是"这一轮开始了"的边界，而界面上的那一行是 `turn/end` 时的
+        // 过程摘要（DSH 的 turn-process 也正是挂在轮次末尾，
+        // `TurnProcessNodeView.tsx:18` 要求 `turn.status === 'closed'`）。
+        //
+        // **但必须落表**：`turn/start` 与 `turn/end` 常常不在同一个 delta
+        // 批次里（翻页/快照加载时前者在更早的批次），只在本批内记一张
+        // `turnStarts` 表的话，过程摘要的用时与计数会**永远是 0** ——
+        // 2026-10-19 真机看到的现象正是"每条收口都只说'不到 1 秒'"。
+        // 落成 OtherItem 后，`_turnStatsOf` 能从 store 里翻到它。
         if (event.type == 'turn/start') {
           final turn = event.data is Map ? (event.data as Map)['turn'] : null;
           if (turn is int) {
             turnStarts[turn] = (time: event.time, seq: event.seq);
+            items.add(
+              OtherItem(
+                itemId: event.itemId,
+                seq: event.seq,
+                updatedAt: event.time,
+                eventType: 'turn/start',
+              ),
+            );
           }
           continue;
         }
@@ -1858,6 +1873,17 @@ class AppModel extends ChangeNotifier {
         // 且没有任何报错（流监听里的未处理异步错误）。失败的那条记进
         // [_projectionFailures]，剩下的照常渲染。
         try {
+          // **`turn/end` 专用的两个入参**：该轮 `turn/start` 的时刻（算用时）
+          // 与该轮已收录条目的计数。投影层是纯函数，不认识"哪些条目属于这一轮"，
+          // 所以由这一层数好给进来。
+          //
+          // **本批优先、落表兜底**：`turn/start` 与 `turn/end` 常常不在同一个
+          // delta 批次里（翻页 / 快照加载时前者在更早的批次）。只靠本批的话，
+          // 过程摘要的用时与计数会永远是 0 —— 所以本批没有就回 store 里翻
+          // 那条 `OtherItem`（`turn/start` 落表用的）。
+          final turnStart = event.type == 'turn/end'
+              ? _turnStartOf(turnStarts, store, event.data, event.seq)
+              : null;
           final projection = projectEvent(
             type: event.type,
             seq: event.seq,
@@ -1871,19 +1897,9 @@ class AppModel extends ChangeNotifier {
             // 真日志里结果消息不带名字）。投影层自己是纯函数，所以
             // "前一个条目是什么"由这一层给。
             previous: inBatch[event.itemId] ?? store.byId(event.itemId),
-            // **`turn/end` 专用的两个入参**：该轮 `turn/start` 的时刻
-            // （算用时）与该轮已收录条目的计数。投影层是纯函数，
-            // 不认识"哪些条目属于这一轮"，所以由这一层数好给进来。
-            turnStartTime: event.type == 'turn/end'
-                ? turnStarts[_turnOf(event.data)]?.time
-                : null,
+            turnStartTime: turnStart?.time,
             turnStats: event.type == 'turn/end'
-                ? _turnStatsOf(
-                    store,
-                    inBatch,
-                    turnStarts[_turnOf(event.data)]?.seq,
-                    event.seq,
-                  )
+                ? _turnStatsOf(store, inBatch, turnStart?.seq, event.seq)
                 : null,
           );
           // **`skip` 不是失败**：`turn/end` 的 completed / 用户主动 aborted
@@ -1940,6 +1956,34 @@ class AppModel extends ChangeNotifier {
   static int? _turnOf(Object? data) =>
       data is Map && data['turn'] is int ? data['turn'] as int : null;
 
+  /// 该轮 `turn/start` 的 `(time, seq)`；**本批优先、落表兜底**。
+  ///
+  /// 为什么要有兜底：`turn/start` 与 `turn/end` 常常不在同一个 delta 批次里
+  /// （翻页 / 快照加载时前者在更早的批次），那时本批那张表是空的。
+  /// 落表的那条是 `OtherItem(eventType: 'turn/start')`，所以这里靠
+  /// **seq 小于 `turn/end` 的最后一条**认它 —— 同轮只可能有一条
+  /// `turn/start`（DSH 的格式不变量：turn 号递增），所以"最后一条"就是它。
+  static ({int time, int seq})? _turnStartOf(
+    Map<int, ({int time, int seq})> turnStarts,
+    SessionStore store,
+    Object? endData,
+    int endSeq,
+  ) {
+    final turn = _turnOf(endData);
+    if (turn == null) return null;
+    final inThisBatch = turnStarts[turn];
+    if (inThisBatch != null) return inThisBatch;
+    ({int time, int seq})? found;
+    for (final item in store.items) {
+      if (item is! OtherItem || item.eventType != 'turn/start') continue;
+      if (item.seq >= endSeq) continue;
+      if (found == null || item.seq > found.seq) {
+        found = (time: item.updatedAt, seq: item.seq);
+      }
+    }
+    return found;
+  }
+
   /// 数一轮的过程统计（DSH 的 `TurnProcessSpec` 那三个计数）。
   ///
   /// ## 为什么在这里数，而不是投影层
@@ -1947,6 +1991,14 @@ class AppModel extends ChangeNotifier {
   /// 投影层是**纯函数**（只认识一条事件），而"哪些条目属于这一轮"要读条目表。
   /// DSH 同处由 turn 状态机推（`contract/turn-process.ts`），手机没有那个
   /// 状态机，但有条目表 —— 数它等价。
+  ///
+  /// ## `turn/start` 从哪儿来
+  ///
+  /// **本批优先、落表兜底**（`turnStarts` → store 里的 `OtherItem`）。
+  /// 只靠本批是不够的：`turn/start` 与 `turn/end` 常常不在同一个 delta
+  /// 批次里（翻页 / 快照加载时前者在更早的批次），那时本批那张表是空的，
+  /// 而过程摘要的用时与计数会**永远是 0**（2026-10-19 真机复现：
+  /// 每条收口都只说"不到 1 秒"）。
   ///
   /// ## 数的是什么
   ///
@@ -1957,10 +2009,10 @@ class AppModel extends ChangeNotifier {
   ///
   /// ## 区间
   ///
-  /// `[startSeq, endSeq]` —— `turn/start` 的 seq 到 `turn/end` 的 seq。
-  /// **`startSeq` 为 null 时返回全 0**（历史翻页落在窗口外）：区间不明
-  /// 就不数，与"拿不到就不显示"同一条纪律（0 项在 `TurnProcessItem.stats`
-  /// 里不列，不会摆出"0 条消息 · 0 次工具"这种噪声）。
+  /// `[turn/start.seq, turn/end.seq]`。**`turn/start` 找不到时返回全 0**
+  /// （连它都没有，说明这一轮的开始不在已加载的窗口里）——
+  /// 区间不明就不数，与"拿不到就不显示"同一条纪律（0 项在
+  /// `TurnProcessItem.stats` 里不列，不会摆出"0 条消息 · 0 次工具"）。
   static ({int messages, int tools, int subagents}) _turnStatsOf(
     SessionStore store,
     Map<String, ChatItem> inBatch,

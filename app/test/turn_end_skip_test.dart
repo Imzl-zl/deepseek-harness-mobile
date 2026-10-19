@@ -174,4 +174,85 @@ void main() {
     expect(items.whereType<TurnProcessItem>().length, 1);
     expect(app.projectionFailureOf('s1'), isNull);
   });
+
+  test('turn/start 与 turn/end 跨批：用时与计数仍取得到', () async {
+    // **这一条守 2026-10-19 真机看到的缺陷**：`turn/start` 与 `turn/end`
+    // 常常不在同一个 delta 批次里（翻页 / 快照加载时前者在更早的批次）。
+    // 只在本批内记一张表的话，过程摘要的用时与计数会**永远是 0** ——
+    // 症状是每条收口都只说"不到 1 秒"。
+    final client = _FeedClient();
+    final app = AppModel(client: client);
+    addTearDown(app.dispose);
+    await app.start();
+    await app.openSession('s1');
+
+    // 第一批：只有 turn/start（seq 1）。
+    client.emit('s1', [
+      <String, Object?>{
+        'type': 'turn/start',
+        'seq': 1,
+        'itemId': 'turn/start:1',
+        'time': 1000,
+        'data': <String, Object?>{'turn': 1},
+      },
+    ]);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    // 第二批：助手消息 + 工具调用 + turn/end（seq 5）。
+    client.emit('s1', [
+      <String, Object?>{
+        'type': 'assistant/message',
+        'seq': 2,
+        'itemId': 'm:a-1',
+        'time': 2000,
+        'data': <String, Object?>{
+          'message': <String, Object?>{
+            'id': 'a-1',
+            'role': 'assistant',
+            'content': '在的',
+          },
+        },
+      },
+      <String, Object?>{
+        'type': 'tool/call',
+        'seq': 3,
+        'itemId': 't:c-1',
+        'time': 3000,
+        'data': <String, Object?>{
+          'callId': 'c-1',
+          'name': 'read',
+          'arguments': '{"path":"a.md"}',
+        },
+      },
+      <String, Object?>{
+        'type': 'tool/call',
+        'seq': 4,
+        'itemId': 't:c-2',
+        'time': 3100,
+        'data': <String, Object?>{
+          'callId': 'c-2',
+          'name': 'subagent',
+          'arguments': '{}',
+        },
+      },
+      <String, Object?>{
+        'type': 'turn/end',
+        'seq': 5,
+        'itemId': 'e:1',
+        'time': 35000,
+        'data': <String, Object?>{
+          'turn': 1,
+          'reason': <String, Object?>{'kind': 'completed'},
+        },
+      },
+    ]);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    final process = app.items.whereType<TurnProcessItem>().single;
+    // 用时 = 35000 - 1000（`turn/start` 在上一批，靠落表那条翻到）。
+    expect(process.elapsedMs, 34000);
+    expect(process.stats, '34 秒 · 1 条消息 · 1 次工具 · 1 个子智能体');
+  });
 }
