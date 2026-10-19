@@ -152,13 +152,69 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   /// （契约 §9 的兜底），所以这里不把错误往上传。
   Future<bool> _sendHello() async {
     if (!_machine.acceptsBusinessFrames) return false;
-    return _sendFrameWritten({
+    // **登记一个在途等待再写**：`sync.hello` 的应答里带着每个会话的
+    // `{sid, since, hasMore}`（`connector/src/handlers.ts:767` 起）——
+    // 那是"还有没有更早的历史"的**批量**来源，而 `_resolveCall` 只解
+    // **登记过**的帧。以前这里直接 `_sendFrameWritten`（不等应答），
+    // 于是应答到了也被当成"迟到的"丢掉。
+    //
+    // 这不是双发：`sync.hello` 仍然只发一次，只是这次**有人等它的应答**。
+    final frameId = _newId();
+    final pending = _calls.register(frameId);
+    final written = await _sendFrameWritten({
       'v': wireVersion,
       't': 'req',
-      'id': _newId(),
+      'id': frameId,
       'box': encodeRequestEnvelope('sync.hello', _helloParams()),
     });
+    if (!written) {
+      _calls.unregister(frameId);
+      return false;
+    }
+    // 应答到了就收下 anchor。**不等它**（`_sendHello` 的调用方要的是"写出去了"，
+    // 而 anchor 是顺带的）：`unawaited` + 显式忽略 future，
+    // 让 `discarded_futures` 这条 lint 知道我们是故意的。
+    //
+    // **必须接错误分支**：连接离开服务态时 `CallRegistry.failAll` 会给这个
+    // 完成器 `completeError`（`close()` 就走那条）。`.then` 不接 onError 的话
+    // 那是个**未处理的异步错误** —— 2026-10-24 实测：26 个测试因此红，
+    // 而报错栈指向 `close()`，看起来像"关连接关坏了"。
+    unawaited(
+      pending.future
+          .then(_absorbHelloAnchors)
+          // 连接断开时完成器被 `completeError`（`close()` → `failAll`）——
+          // anchor 拿不到只是"这次不知道有没有更多"，不是错误。
+          .catchError((_) => null),
+    );
+    return true;
   }
+
+  /// 从 `sync.hello` 的应答里收下每个会话的 `hasMore`。
+  ///
+  /// 应答形状（`connector/src/handlers.ts:767` 起）：
+  /// `{sessions: [{sid, since, hasMore}]}`。**认不出就什么都不做** ——
+  /// 那只是"这次不知道有没有更多"，不是错误。
+  void _absorbHelloAnchors(Object? result) {
+    if (result is! Map) return;
+    final sessions = result['sessions'];
+    if (sessions is! List) return;
+    for (final entry in sessions) {
+      if (entry is! Map) continue;
+      final sid = entry['sid'];
+      final hasMore = entry['hasMore'];
+      if (sid is! String) continue;
+      if (hasMore is bool) _historyMore[sid] = hasMore;
+    }
+  }
+
+  @override
+  bool hasOlderHistory(String sid) => _historyMore[sid] ?? false;
+
+  /// `sid → 还有没有更早的历史`（`sync.hello` 的应答）。
+  ///
+  /// **放在 `core/` 而不是 `AppModel`**：它是连接层的知识（哪条应答带的），
+  /// 而 `AppModel` 只该问"还有没有"。缺省 `false` = "不知道"。
+  final Map<String, bool> _historyMore = <String, bool>{};
 
   int _now() => _deps.now?.call() ?? DateTime.now().millisecondsSinceEpoch;
 
@@ -875,10 +931,10 @@ class _SyncClient implements SyncClient, SyncClientProbe {
         'maxMessages': maxMessages,
         'turnWindow': {'minMessages': minMessages, 'minTurns': minTurns},
       });
-      return SessionPage(
-        events: _pageEventsOf(reply),
-        hasMore: boolFieldOf(reply, 'hasMore') ?? false,
-      );
+      // **每一页都带 `hasMore`**：翻完这一页，连接层记住还有没有更早的。
+      final more = boolFieldOf(reply, 'hasMore') ?? false;
+      _historyMore[sid] = more;
+      return SessionPage(events: _pageEventsOf(reply), hasMore: more);
     } on ProtocolException catch (error) {
       // **失败不当成"没有更多"**（契约 §3.1：`session/window-missed` 的客户端
       // 动作是重新订阅走快照）。把原因带回去，让上层决定。

@@ -1759,12 +1759,8 @@ class AppModel extends ChangeNotifier {
     });
 
     try {
-      final anchor = await client.subscribe(sid, since: since);
+      await client.subscribe(sid, since: since);
       _lastError = null;
-      // **记下"还有没有更早的历史"**：UI 滚到顶据此决定要不要翻页
-      // （契约 §3.1）。电脑侧一直在发，早期手机侧把回包丢了，
-      // 于是历史永远只有电脑侧那一个窗口。
-      _historyMore[sid] = anchor.hasMore;
     } on ProtocolException catch (error) {
       _lastError = error;
       if (!_disposed) notifyListeners();
@@ -1822,7 +1818,7 @@ class AppModel extends ChangeNotifier {
   /// 返回是否真的翻到了新条目（UI 用它决定要不要再翻一次）。
   Future<bool> loadOlderHistory(String sid) async {
     if (_loadingOlder.contains(sid)) return false;
-    if (_historyMore[sid] != true) return false;
+    if (!client.hasOlderHistory(sid)) return false;
     final store = _storeOf(sid);
     // 切点 = 当前最早一条的 seq。**没有条目时不翻**（那说明快照还没到，
     // 此时翻只会拿到同一窗口）。
@@ -1839,7 +1835,8 @@ class AppModel extends ChangeNotifier {
         if (!_disposed) notifyListeners();
         return false;
       }
-      _historyMore[sid] = page.hasMore;
+      // **翻到的页也带 `hasMore`**：电脑侧在每一页都告诉还有没有更早的。
+      // 它由连接层收着（`SyncClient.hasOlderHistory`），这里只清失败标记。
       _historyFailure.remove(sid);
       if (page.events.isEmpty) return false;
 
@@ -1867,10 +1864,13 @@ class AppModel extends ChangeNotifier {
     }
   }
 
-  /// 这个会话还有没有更早的历史（`session.subscribe` 的回包）。
+  /// 这个会话还有没有更早的历史（`sync.hello` 的应答）。
+  ///
+  /// **问连接层**：anchor 的来源是 `sync.hello` 的批量应答
+  /// （`connector/src/handlers.ts:767` 起），那里每个 sid 都带 `hasMore`。
   bool get hasOlderHistory {
     final sid = _currentSid;
-    return sid != null && _historyMore[sid] == true;
+    return sid != null && client.hasOlderHistory(sid);
   }
 
   /// 翻页失败的原因（`session/window-missed` 等）；`null` = 没失败。
@@ -1881,9 +1881,6 @@ class AppModel extends ChangeNotifier {
 
   /// 正在翻页的会话集（同一会话不并发翻 —— 两次并发会拿到同一页）。
   final Set<String> _loadingOlder = <String>{};
-
-  /// `sid → 还有没有更早的历史`（`session.subscribe` 的回包）。
-  final Map<String, bool> _historyMore = <String, bool>{};
 
   /// `sid → 翻页失败的原因`。
   final Map<String, String> _historyFailure = <String, String>{};

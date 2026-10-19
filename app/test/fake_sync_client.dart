@@ -51,6 +51,9 @@ abstract class FakeSyncClient implements SyncClient {
     int minTurns = SyncClient.kHistoryPageMinTurns,
   }) async => const SessionPage(events: [], hasMore: false);
 
+  @override
+  bool hasOlderHistory(String sid) => false;
+
   // ---- 其余成员：默认"这个用例不该调我" ----
 
   @override

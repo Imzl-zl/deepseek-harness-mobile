@@ -102,6 +102,16 @@ abstract interface class SyncClient {
     int minTurns = kHistoryPageMinTurns,
   });
 
+  /// 这个会话还有没有更早的历史。
+  ///
+  /// 来源是 `sync.hello` 的应答（`connector/src/handlers.ts:767` 起，
+  /// `{sessions: [{sid, since, hasMore}]}`）—— 那是**批量** anchor，
+  /// 而 `session.subscribe` 的单条应答手机侧不读（它走 outbox，
+  /// 见 `sync_client_impl.dart` 的 `subscribe`）。
+  ///
+  /// **没收到应答时是 `false`**：那意味着"不知道"，而不是"确定没有"。
+  bool hasOlderHistory(String sid);
+
   /// 一页历史的消息上限（照 DSH Web 的 `HISTORY_PAGE_OPTIONS.maxMessages`）。
   static const int kHistoryPageMaxMessages = 500;
 

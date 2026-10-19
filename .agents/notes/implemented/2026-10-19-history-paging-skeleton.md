@@ -1,6 +1,9 @@
 # Agent Note: 历史翻页的骨架（`session.page` + `loadOlderHistory`），anchor 留缺口
 
-Status: partial
+Status: implemented
+
+> **2026-10-24 更新**：anchor 缺口已补（见下面「补上的最后一环」），
+> 状态从 `partial` 改为 `implemented`。原文保留，因为它记着走过的错路。
 
 ## Problem
 
@@ -47,22 +50,36 @@ starts, capped at 500 messages"）做成三个常量。**按轮次边界切**，
 
 26 个测试文件改用 `extends FakeSyncClient`，删掉各自的 `subscribe` 样板。
 
-## 没做成什么（缺口，已记录）
+## 走过的错路（2026-10-19，保留作记录）
 
-**anchor 拿不到**：`session.subscribe` 走 outbox（契约 §5.6 的写操作），
-而 outbox 的语义是"发出去就好"，它的 `res` 应答走 `_resolveCall` 那条路 ——
-那里只解**即时 `call`** 挂起的 future，outbox 的 `frameId` 没有 future 在等。
+**以为 anchor 只能从 `session.subscribe` 的回包拿**，于是卡在"outbox 的应答
+回不到调用方"上，一度判定为 `partial`。
 
-**试过并回滚的做法**：在 `subscribe` 里多发一次 `call('session.subscribe')` 读回包。
-那样会**双发**（outbox 一次 + 即时一次），且第二发没有 requestId，
-电脑侧按新订阅处理 —— 测试替身直接等到超时（4 个 `sync_client_test` 红）。
-双发比拿不到 anchor 糟得多，所以回滚。
+**2026-10-24 发现错了**：anchor 有一个**更好的来源** —— `sync.hello` 的应答
+（`connector/src/handlers.ts:767` 起，`{sessions: [{sid, since, hasMore}]}`）。
+它是**批量**的（一次带所有会话），而且手机侧每次进服务态本来就会发 hello。
 
-要真拿到 anchor，得让 **outbox 的应答能回到调用方**（一个"带 requestId 的
-pending future"表）。那是 `core/` 的架构改动。
+那条路只差一件事：`_sendHello` 用的是 `_sendFrameWritten`（**不等应答**），
+所以应答到了 `_resolveCall` 也当"迟到的"丢掉。改成"先 `_calls.register` 再写"
+就通了 —— **不是双发**，hello 仍然只发一次，只是这次有人等它的应答。
 
-**因此 `hasMore` 目前恒为 `false`**，`loadOlderHistory` 不会被触发 ——
-它有了完整的实现与入口，但缺最后一个信号。**这是 partial，不是完成**。
+### 两条被这条路教训到的事
+
+1. **`.then` 必须接错误分支**：连接离开服务态时 `CallRegistry.failAll` 会给
+   完成器 `completeError`（`close()` 就走那条）。第一版只写
+   `pending.future.then(_absorbHelloAnchors)`，于是 **26 个测试红在 `close()`**，
+   报错栈指向 `call_registry.dart:87`，看起来像"关连接关坏了"。
+   实际是未处理的异步错误。加 `.catchError((_) => null)` 即好。
+2. **变异验证抓到了"测了但没测到"**：`history_paging_test.dart` 的替身直接
+   覆写 `hasOlderHistory`，所以把 `_absorbHelloAnchors` 改成空操作时测试
+   **不红** —— 真实链路（hello 应答 → `_historyMore`）没有判据。
+   补了 `sync_client_test.dart` 里两条用**真 transport + 真封箱** 的用例后才
+   真能守（那时变异立刻红）。
+
+### 仍然否掉的路线
+
+- **在 `subscribe` 里多发一次 `call('session.subscribe')` 读回包**：
+  双发 + 无 requestId，实测 4 个测试超时。否。
 
 ## Alternatives considered（否掉的）
 
@@ -80,8 +97,16 @@ pending future"表）。那是 `core/` 的架构改动。
 
 - 收益：`session.page` 有了实现、`loadOlderHistory` 有了完整逻辑与入口、
   窗口参数与 DSH Web 逐字一致；26 个测试替身收成一个基类
-  （下次 `SyncClient` 长成员不再炸一片）。
+  （下次 `SyncClient` 长成员不再炸一片）；**anchor 链路通了** ——
+  `sync.hello` 的应答 → `SyncClient.hasOlderHistory` → `loadOlderHistory`。
 - 代价：`FakeSyncClient` 基类；`conversation_hero_test` 的替身要**手动**
-  覆写 `subscribe`（它记 `subscribed`，默认实现不记）。
-- 测试：`flutter test 801` 全绿（含 4 个因双发而超时的用例恢复）。
-- **未验证**：翻页端到端没跑过（`hasMore` 恒 false，触发不了）。
+  覆写 `subscribe`（它记 `subscribed`，默认实现不记）；
+  `sync.hello` 现在也是一个"在途请求"（断连时会被 `failAll` 拒，
+  两条 `lastRejectedCalls` 断言从 1 改成 2 并说明原因）。
+- 测试：`history_paging_test.dart` 3 项（没有更多不翻 / 有一页就并进来 /
+  失败记原因且不把 `hasMore` 打成假）；`sync_client_test.dart` 2 项
+  （真 transport + 真封箱验 anchor 进屋 / 形状不对不当错误）。
+  **两条都做过变异验证**（把 `_absorbHelloAnchors` 改成空操作即红）。
+  `flutter test 806` 全绿。
+- **仍未验证**：UI 触发没接（滚到顶自动翻），所以**端到端还没跑过** ——
+  `loadOlderHistory` 有了全部输入，只差一个调用点。

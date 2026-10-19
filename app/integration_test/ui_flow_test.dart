@@ -65,6 +65,8 @@ class _FakeClient implements SyncClient {
     int minTurns = SyncClient.kHistoryPageMinTurns,
   }) async => const SessionPage(events: [], hasMore: false);
   @override
+  bool hasOlderHistory(String sid) => false;
+  @override
   Future<T> call<T>(
     String method,
     Map<String, Object?> params, {

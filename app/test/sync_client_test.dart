@@ -367,6 +367,97 @@ void main() {
     );
   }
 
+  /// **anchor 链路**（`sync.hello` 的应答 → `hasOlderHistory`）。
+  ///
+  /// 单独一个 group 是因为它要用 [sessionKeysFor] 真封箱 —— 而那是个局部函数，
+  /// 定义在文件后部（Dart 的局部函数在使用点之后声明就引用不到）。
+  group('sync.hello 的应答带 anchor（历史翻页的信号）', () {
+    test('hasMore 如实进 hasOlderHistory；没提到的 sid 留 false', () async {
+      // 这一条守的是 2026-10-24 补上的缺口：`_sendHello` 以前用
+      // `_sendFrameWritten`（**不等应答**），于是电脑侧在 hello 应答里带的
+      // `{sessions: [{sid, since, hasMore}]}`（`connector/src/handlers.ts:767` 起）
+      // **被丢掉** —— `_resolveCall` 只解登记过的帧，而那时没人在等。
+      //
+      // 表现：`hasOlderHistory` 恒 false ⇒ `loadOlderHistory` 永不翻页
+      // ⇒ "历史上 20 轮只看到最近 3 轮"。
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+      await pump();
+
+      // 电脑侧应答 hello：这个 sid 还有更早的历史。
+      // **box 要真封箱**（照下面 `写操作与幂等` 那组）：明文 jsonEncode 过不了
+      // 解箱，2026-10-24 实测那样状态直接掉 backoff。
+      final frame = <String, Object?>{
+        'v': 1,
+        't': 'res',
+        'id': lastReqId(f.transport),
+        'ok': true,
+        'fc': 100,
+      };
+      final box =
+          await BoxCodec(
+            keys: await sessionKeysFor(f.transport),
+            role: HandshakeRole.responder,
+          ).sealFrame(
+            frame,
+            jsonEncode({
+              'result': {
+                'sessions': [
+                  {'sid': 's1', 'since': 5, 'hasMore': true},
+                ],
+              },
+            }),
+          );
+      f.transport.feed('${jsonEncode({...frame, 'box': box})}\n');
+      await pump();
+
+      expect(
+        client.hasOlderHistory('s1'),
+        isTrue,
+        reason: 'hello 应答说还有更早的，就要能问出来',
+      );
+      // **没提到的 sid 留 false**：那是"不知道"，不是"确定没有"。
+      expect(client.hasOlderHistory('s-other'), isFalse);
+
+      await client.close();
+    });
+
+    test('应答认不出（形状不对）：不当错误，anchor 留 false、状态不坏', () async {
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+      await pump();
+
+      final frame = <String, Object?>{
+        'v': 1,
+        't': 'res',
+        'id': lastReqId(f.transport),
+        'ok': true,
+        'fc': 100,
+      };
+      final box =
+          await BoxCodec(
+            keys: await sessionKeysFor(f.transport),
+            role: HandshakeRole.responder,
+          ).sealFrame(
+            frame,
+            jsonEncode({
+              'result': {'sessions': 'nope'},
+            }),
+          );
+      f.transport.feed('${jsonEncode({...frame, 'box': box})}\n');
+      await pump();
+
+      expect(client.hasOlderHistory('s1'), isFalse);
+      expect(client.state, ConnectionState.serving);
+
+      await client.close();
+    });
+  });
+
   group('连接与握手（契约 §2.2、§4.1）', () {
     test('start → connecting → handshake，并发出 hello', () async {
       final f = buildDeps();
@@ -1217,7 +1308,9 @@ void main() {
       f.transport.dropFromPeer();
       await pump();
       await rejected;
-      expect((client as SyncClientProbe).lastRejectedCalls, 1);
+      // **2 不是 1**：`sync.hello` 也登记在途（它的应答带每个会话的
+      // `{sid, since, hasMore}`），断连时与这条带键写一起被拒。
+      expect((client as SyncClientProbe).lastRejectedCalls, 2);
 
       await client.close();
     });
@@ -1415,7 +1508,13 @@ void main() {
       await rejected;
 
       // 诊断面：被拒绝的条数要如实记下来（"这次断连伤到了什么"的唯一证据）。
-      expect((client as SyncClientProbe).lastRejectedCalls, 1);
+      //
+      // **是 2 不是 1**：2026-10-24 起 `sync.hello` 也登记在途等待
+      // （它的应答带着每个会话的 `{sid, since, hasMore}`，那是"还有没有更早的
+      // 历史"的唯一来源）。所以断连时被拒的是 `repo.info` 与 `sync.hello` 两条。
+      // **hello 那条不许漏** —— 它的完成器由 `_sendHello` 用 `.catchError`
+      // 接了错误分支，不会变成未处理的异步错误。
+      expect((client as SyncClientProbe).lastRejectedCalls, 2);
 
       await client.close();
     });
