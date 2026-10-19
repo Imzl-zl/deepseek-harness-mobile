@@ -47,6 +47,12 @@
    **结论：当前实现已是约束下的最优**，不要再试图"整页都能拖"。
 5. DSH 0.2.1 的 `registerFetchRoute` 开始校验同路径重复注册:同 path 的 GET/POST 必须合成
    一条 `methods: ['GET','POST']`(0.2.0 时是绿的)。
+6. **"又要扫码"先查装包，别怀疑代码**（2026-10-26 真机踩到）：
+   `adb shell dumpsys package com.example.dsh_mobile` 看
+   `firstInstallTime` 与 `lastUpdateTime` —— **相等就是被完整重装了**，
+   本地凭据随之清空。debug APK 签名与机上已有包不同时 Android 拒绝覆盖安装、
+   卸载重装，就会这样。**判据是先看那两个时间戳，再怀疑代码。**
+   （这次白查了好几轮，最后发现配对代码最后一次改动是 `d4b82d7`，与当前工作无关。）
 
 ## 当前能力(都已在真机上跑通过)
 
