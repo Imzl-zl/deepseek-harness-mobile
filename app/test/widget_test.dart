@@ -218,13 +218,15 @@ void main() {
         reason: '顶栏左侧 ☰ 与右侧 ⊕（图标就该在顶栏左侧 —— 用户 2026-10-16 纠正）',
       );
       expect(find.byTooltip('新建会话'), findsOneWidget);
-      // 分段控件（对话 / 轨迹）在。
-      expect(find.text('对话'), findsOneWidget);
-      expect(find.text('轨迹'), findsOneWidget);
       // 输入栏在（置灰但可见）。
       expect(find.byType(DshComposer), findsOneWidget);
       // **不是**配对页。
       expect(find.text('配对'), findsNothing);
+      // **「对话 / 轨迹」tab 不在**（2026-10-19 用户原话：
+      // 「没有会话的时候对话，轨迹不用显示吧，没会话你显示没用啊」）——
+      // 轨迹页读的是当前会话的事件流，没会话时它是空屏，
+      // 那一格 tab 等于在说"这里有个你点不开的东西"。
+      expect(find.text('轨迹'), findsNothing);
     });
 
     testWidgets('空态说"还没配对"，且给两个不需要连电脑的入口', (tester) async {
@@ -1122,6 +1124,25 @@ void main() {
         reason: '左滑之后第三项必须进入视口 —— 藏起来不等于滑不到',
       );
       expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('选中了会话：对话/轨迹两个 tab 都在', (tester) async {
+      // 守"没会话不显 tab"这条**不会砍过头**：选中了会话就要有两个
+      // （轨迹页有话说 —— 会话刚建、事件正在来）。
+      final app = AppModel(
+        client: FakeClient(
+          sessions: const [
+            {'sid': 's1', 'updatedAt': 1},
+          ],
+        ),
+      );
+      await app.refreshSessions();
+      await app.openSession('s1');
+      await tester.pumpWidget(_wrap(app));
+      await tester.pumpAndSettle();
+
+      expect(find.text('对话'), findsOneWidget);
+      expect(find.text('轨迹'), findsOneWidget);
     });
 
     testWidgets('投影读不到：三条整条不显示（不猜数字）', (tester) async {

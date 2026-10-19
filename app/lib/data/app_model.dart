@@ -1463,9 +1463,29 @@ class AppModel extends ChangeNotifier {
   Future<void> _openBlankSessionIfUnselected() async {
     if (_disposed || _isPreview) return;
     if (_currentSid != null) return;
-    final blank = _sessions.where((s) => s.blank && !s.subagent).firstOrNull;
+    // **找不到 blank 就什么都不做**（不是建一个）：建是 `createSession` 的事，
+    // 这里只负责"选中"。
+    final blank = await findBlankSession();
     if (blank == null) return;
-    await openSession(blank.sid);
+    await openSession(blank);
+  }
+
+  /// 现有的 blank 会话（`session.list` 的 `blank` 为真的第一个，非子智能体）。
+  ///
+  /// `null` = 这台电脑上现在没有 blank 会话（列表空 / 全是跑过的会话）。
+  ///
+  /// ## 为什么"新建会话"要先问它
+  ///
+  /// DSH Web 的 `startSession` 是 **reuse-or-create**
+  /// （`ui-sidebar/src/client/contract/slots.ts:119-121` 原话：
+  /// "with a workspace, reuse-or-create its blank session and open it"）——
+  /// 先复用现有的 blank，没有才建。而我们原先的「新建会话」直接
+  /// `session.create`，**每点一次就在电脑侧多一个会话**（用户反悔不發消息
+  /// 也留着，抽屉里慢慢堆满空会话）。
+  Future<String?> findBlankSession() async {
+    if (_disposed || _isPreview) return null;
+    final blank = _sessions.where((s) => s.blank && !s.subagent).firstOrNull;
+    return blank?.sid;
   }
 
   Future<void> _refreshAgentPresets() async {

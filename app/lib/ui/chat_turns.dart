@@ -60,9 +60,18 @@ class UserTurn extends StatelessWidget {
               ),
               padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
               decoration: BoxDecoration(
+                // **`bubble` 而不是 `layer3`**（2026-10-19 真机反馈
+                // "用户消息我刚开始一直以为渲染问题，后来才发现这个是用户消息"）：
+                // 浅色主题里 `layer1/2/3` 三条**全是纯白**（靠描边分层，
+                // 见 `dsh_colors.dart` 的 `DshLightColors`），气泡用 `layer3`
+                // 会与页面背景同色、完全看不见。DSH 因此有**专用**的
+                // `--dsw-specific-bubble`（`design-platform.css:268` 亮 =
+                // deepseek-50 `#EDF3FE`、`:386` 暗 = neutral-bluish-850
+                // `#2C2C2E`），我们照抄成 `bubble` token。
+                //
                 // 插话用工具色底：它是"轮次跑到一半的输入"，与开轮输入
-                // 视觉上分开（DSH Web 同样把 steering 与 user 分开成两类节点）。
-                color: steering ? c.roleToolBg : c.layer3,
+                // 视觉上分开（DSH Web 同样把 steering 与 user 分成两类节点）。
+                color: steering ? c.roleToolBg : c.bubble,
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(22),
                   topRight: Radius.circular(22),

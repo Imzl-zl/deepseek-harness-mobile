@@ -523,11 +523,19 @@ class ChatPageState extends State<ChatPage> {
       },
       body: Column(
         children: [
-          DshSegmented(
-            labels: const ['对话', '轨迹'],
-            index: _tab,
-            onChanged: (i) => setState(() => _tab = i),
-          ),
+          // **没选中会话时只有「对话」一个 tab**（2026-10-19 用户原话：
+          // 「没有会话的时候对话，轨迹不用显示吧，没会话你显示没用啊」）。
+          //
+          // 轨迹页读的是**当前会话**的事件流；没有会话时它是一块空屏，
+          // 而那一格 tab 等于在说"这里有个你点不开的东西"。
+          // **选中了但还没有条目时仍然显示两个**：那时轨迹页有话说
+          // （会话刚建、事件正在来）。
+          if (sid != null)
+            DshSegmented(
+              labels: const ['对话', '轨迹'],
+              index: _tab,
+              onChanged: (i) => setState(() => _tab = i),
+            ),
           Expanded(
             child: _tab == 0
                 ? _ChatTab(

@@ -441,21 +441,22 @@ class _DshMobileAppState extends State<DshMobileApp>
               label: '归档',
               onTap: () => unawaited(_openArchive()),
             ),
-            DrawerFootItem(
-              icon: 'settings',
-              label: '设置',
-              onTap: () => _openSettings(app),
-            ),
             // **用量**（2026-10-19 用户原话：「用量在侧滑窗口菜单单独页面啊，
-            // 这不是显眼，因为这个挺常用的，你藏太深了」）。
+            // 这不是显眼，因为这个挺常用的，你藏太深了」；次日又追一条
+            // 「用量应该在设置前面吧？」）。
             //
-            // 所以它是抽屉底栏的一枚，而不是设置页里的一行 —— 常用功能
-            // 放在主菜单，设置页只留不常改的偏好。点开是独立一页
-            // （`ui/usage_page.dart`：总量 + 按项目 + 按会话）。
+            // 所以它是抽屉底栏的一枚、**排在设置之前**：常用功能不该埋在
+            // 不常改的偏好后面。点开是独立一页（`ui/usage_page.dart`：
+            // 总量 + 按项目 + 按会话）。
             DrawerFootItem(
               icon: 'gauge',
               label: '用量',
               onTap: () => _openUsage(app),
+            ),
+            DrawerFootItem(
+              icon: 'settings',
+              label: '设置',
+              onTap: () => _openSettings(app),
             ),
           ],
           onNewSession: _newSession,
@@ -618,7 +619,16 @@ class _DshMobileAppState extends State<DshMobileApp>
     );
   }
 
-  /// 新建会话：DSH 里会话由电脑侧建，所以这里走 `session.create`。
+  /// 新建会话：**先复用现有的 blank，没有才建**（照 DSH 的 `reuseOrCreateBlank`）。
+  ///
+  /// `ui-sidebar/src/client/contract/slots.ts:119-121` 原话：
+  /// "with a workspace, reuse-or-create its blank session and open it;
+  ///  without one, inherit the current Session Workspace, then the recent
+  ///  Workspace, or clear into the New Session pure view when none exist."
+  ///
+  /// 我们原先直接 `session.create` —— 每点一次「新建会话」就在电脑侧多一个
+  /// 会话（用户反悔不發消息也留着）。2026-10-19 用户问「你这个新会话的逻辑
+  /// 是啥样的？和 web 的逻辑一样吗？」才发现这条差异。
   ///
   /// **没配对时不做假动作**：直接提示去配对 —— 而不是造一个本地空会话
   ///（那会在抽屉里留下一个永远发不出消息的条目）。
@@ -628,11 +638,22 @@ class _DshMobileAppState extends State<DshMobileApp>
       _openPairing();
       return;
     }
-    unawaited(
-      _app!.createSession().catchError(
-        (Object error) => _notYet('新建会话（$error）'),
-      ),
-    );
+    final app = _app;
+    if (app == null) return;
+    unawaited(() async {
+      // ① 先复用现有的 blank（**不新建**）。
+      final existing = await app.findBlankSession();
+      if (existing != null) {
+        await app.openSession(existing);
+        return;
+      }
+      // ② 没有才建。建失败照实说，不吞。
+      try {
+        await app.createSession();
+      } catch (error) {
+        _notYet('新建会话（$error）');
+      }
+    }());
   }
 
   void _notYet(String what) {

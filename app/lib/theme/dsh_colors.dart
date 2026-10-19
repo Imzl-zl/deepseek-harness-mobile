@@ -26,6 +26,13 @@ abstract final class DshColors {
   static const layer2 = Color(0xFF2C2C2E); // 抬升 bg-layer-2
   static const layer3 = Color(0xFF353638); // 最高/中性 chip bg-layer-3
   static const menu = Color(0xFF43454A); // 浮层/菜单(不透明近似)
+  /// 用户消息气泡（`--dsw-specific-bubble`，暗色 = neutral-bluish-850）。
+  ///
+  /// **不能拿 `layer3` 顶**：浅色主题里 `layer3` 与 `bgBase` **同为纯白**
+  /// （见 `DshLightColors` 的说明），气泡会与页面背景同色、完全看不见 ——
+  /// 2026-10-19 真机反馈"用户消息我刚开始一直以为渲染问题"。
+  /// DSH 因此有**专用**的一个 token（`design-platform.css:386`）。
+  static const bubble = Color(0xFF2C2C2E); // neutral-bluish-850
 
   // ---- 文字 ----
   static const labelPrimary = Color(0xFFF9FAFB);
@@ -157,6 +164,12 @@ abstract final class DshLightColors {
   static const layer2 = Color(0xFFFFFFFF); // neutral-bluish-00
   static const layer3 = Color(0xFFFFFFFF); // neutral-bluish-00
   static const menu = Color(0xFFFFFFFF); // overlay = neutral-bluish-150 近似
+  /// 用户消息气泡（`--dsw-specific-bubble`，亮色 = deepseek-50）。
+  ///
+  /// **浅色必须单独一色**：`layer1/2/3` 三条在亮色全是纯白（靠描边分层），
+  /// 而气泡靠的是**底色**—— 用 `layer3` 会让用户消息与背景同色、看不见。
+  /// 2026-10-19 真机反馈"用户消息我刚开始一直以为渲染问题"就是它。
+  static const bubble = Color(0xFFEDF3FE); // deepseek-50
 
   // ---- 文字（`:root` 的 `--dsw-alias-label-*`）----
   static const labelPrimary = Color(0xFF0F1115); // neutral-bluish-1000
@@ -242,6 +255,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     required this.layer2,
     required this.layer3,
     required this.menu,
+    required this.bubble,
     required this.labelPrimary,
     required this.labelSecondary,
     required this.labelTertiary,
@@ -286,6 +300,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
         layer2: DshColors.layer2,
         layer3: DshColors.layer3,
         menu: DshColors.menu,
+        bubble: DshColors.bubble,
         labelPrimary: DshColors.labelPrimary,
         labelSecondary: DshColors.labelSecondary,
         labelTertiary: DshColors.labelTertiary,
@@ -330,6 +345,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
         layer2: DshLightColors.layer2,
         layer3: DshLightColors.layer3,
         menu: DshLightColors.menu,
+        bubble: DshLightColors.bubble,
         labelPrimary: DshLightColors.labelPrimary,
         labelSecondary: DshLightColors.labelSecondary,
         labelTertiary: DshLightColors.labelTertiary,
@@ -371,6 +387,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
   final Color layer2;
   final Color layer3;
   final Color menu;
+  final Color bubble;
   final Color labelPrimary;
   final Color labelSecondary;
   final Color labelTertiary;
@@ -422,6 +439,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     Color? layer2,
     Color? layer3,
     Color? menu,
+    Color? bubble,
     Color? labelPrimary,
     Color? labelSecondary,
     Color? labelTertiary,
@@ -462,6 +480,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     layer2: layer2 ?? this.layer2,
     layer3: layer3 ?? this.layer3,
     menu: menu ?? this.menu,
+    bubble: bubble ?? this.bubble,
     labelPrimary: labelPrimary ?? this.labelPrimary,
     labelSecondary: labelSecondary ?? this.labelSecondary,
     labelTertiary: labelTertiary ?? this.labelTertiary,
