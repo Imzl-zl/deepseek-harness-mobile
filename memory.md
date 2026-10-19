@@ -6,19 +6,20 @@
 
 ## 下一步(新会话从这里开始)
 
-> **在跑的任务书**:同一份 goal(goal-a9fd6fb1)。已落地**十三批**并**真机验证**
-> （轨迹页那批验到 6+ 轮；流式文本、命令卡、异常结局三轮只验到单测 —— 见待办）。
+> **在跑的任务书**:同一份 goal(goal-a9fd6fb1)。已落地**十四批**并**真机验证**
+> （轨迹页那批验到 6+ 轮；其余四批评到单测，含两处**变异验证** —— 见待办）。
 >
-> **用户点名的议题已全部清零**。剩下的都是"自己摸索"摸到的 + 三个待验证项。
+> **用户点名的议题已全部清零**。剩下的都是"自己摸索"摸到的 + 待验证项。
 
 待办:
 
-1. **三件事的真机验收**（投影/渲染/接线都有单测，其中异常结局那条含**变异验证**，
-   但端到端没看到）：
+1. **四件事的真机验收**（投影/渲染/接线都有单测，其中异常结局与过程摘要两条
+   含**变异验证**，但端到端没看到 —— adb 反复被 ROM 行为打断）：
    - **流式文本**：判据是用户发一句话，正文边生成边显示。
-   - **斜杠命令卡**：判据是在有 `/goal` 或 `/compact` 的会话里看到 `/goal` 卡片。
+   - **斜杠命令卡**：判据是在有 `/goal` 或 `/compact` 的会话里看到卡片。
    - **异常结局与重试**：判据是在有错误的会话里看到"第 N 轮出错 + DSH 原文"。
-     （真日志统计：这台电脑有 80 条"出了什么事"此前完全看不见。）
+   - **过程摘要**：判据是随便开一个会话，看一轮的末尾有
+     "第 N 轮 · 用时 X · N 条消息 · N 次工具"。
 2. **用量汇总的甘特图**：现在只有账本（一轮一行）。甘特要**每步**起止，
    而 `sessionStats` 是会话级总量（llmMs/toolMs/ttftMs/decodeMs）——
    拿总量画分段只能画两条 100% 宽的段（假图）。要逐步耗时可考虑插件加投影。
@@ -141,7 +142,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **278 项**(22 条规则自检 + 扫 78 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 43 个)/ 工具脚本不许硬编码盘符(19 个) |
-| `cd app && flutter test` | **785 项** |
+| `cd app && flutter test` | **790 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **547 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
@@ -158,14 +159,15 @@
 
 ## 已落地批次索引(细节回 git 与 `.agents/notes/`)
 
-- **2026-10-19**(十三批,共 13 个提交):渲染三缺陷照 DSH 修 → 输入栏去忙时发送图标
+- **2026-10-19**(十四批,共 14 个提交):渲染三缺陷照 DSH 修 → 输入栏去忙时发送图标
   + 模型 chip 图标优先 → 右抽屉改真抽屉 + 快速跳转钮(rikkahub `MessageJumper`)
   → 浅色主题三档 + **全部 UI 面迁完** → 跨会话用量汇总(连接器 + 手机)
   → 输入栏几何判据 + 模型 chip 按内容宽(省 65px) → **换 WiFi 自动连上已验证**(家→公司)
   → 轨迹页接 `turnOutline` → 消息流显示流式文本 → 斜杠命令卡
-  (`command/run` + `command/done` 从 OtherItem 接进对话流) → **一轮的异常结局与
-  模型重试**（`turn/end` 的 reason + `llm/retry`；真日志 80 条"出了什么事"
-  此前完全看不见）。
+  (`command/run` + `command/done` 从 OtherItem 接进对话流) → 一轮的异常结局与
+  模型重试（`turn/end` 的 reason + `llm/retry`；真日志 80 条"出了什么事"
+  此前完全看不见）→ **一轮的过程摘要**（`turn-process`：用时 + 消息/工具/
+  子智能体计数，每轮一条收口）。
   **`app/test/fixtures/real-session-events.json` 是真机落盘事件** —— 手写形状的
   用例只会复述实现的假设,这是"我们以为的形状与真形状不同"的判据。
 - **2026-10-18/19**(连接与端点,9 个提交):帧头 id 与幂等键分离 → 多地点端点保留 → 端点管理 UI →
