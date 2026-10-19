@@ -70,6 +70,7 @@ class TraceEntry {
     required this.name,
     required this.took,
     required this.summary,
+    this.prompt = '',
     this.mono = false,
   });
 
@@ -78,11 +79,16 @@ class TraceEntry {
   /// 名字（`上下文` / `助手` / `工具 · read`）。
   final String name;
 
-  /// 耗时（`120 ms` / `12.4 s`）。
+  /// 耗时（`120 ms` / `12.4 s`）。**可能为空串** —— `turnOutline` 投影
+  /// 不带耗时（它只有 `turn/seq/prompt/response`），所以轮次行的这一格是空的。
+  /// 空着比编一个数字诚实。
   final String took;
 
   /// 摘要（一两行，多了截断）。
   final String summary;
+
+  /// 提问（轮次行才有：用户那句的预览）。空串 = 不显示那一行。
+  final String prompt;
 
   /// 摘要是否用等宽（工具那一类要 —— 它是路径/命令）。
   final bool mono;
@@ -354,6 +360,21 @@ class _LedgerRow extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 2),
+                      // 提问（轮次行才有）：比回复更弱一档 —— 它是"因"，
+                      // 回复是"果"，一屏里果比因重要。
+                      if (entry.prompt.isNotEmpty) ...[
+                        Text(
+                          entry.prompt,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 17 / 12,
+                            color: c.labelCaption,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                      ],
                       Text(
                         entry.summary,
                         // `.lg .r2 { -webkit-line-clamp:2 }` —— 最多两行。

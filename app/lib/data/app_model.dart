@@ -38,6 +38,7 @@ import '../model/preferences.dart';
 import '../model/queue_item.dart';
 import '../model/send_mode.dart';
 import '../model/session_stats.dart';
+import '../model/turn_outline.dart';
 import '../model/usage_summary.dart';
 import '../model/workspace.dart';
 import 'preview_data.dart';
@@ -525,6 +526,37 @@ class AppModel extends ChangeNotifier {
       decodeMs: _intOf(raw['decodeMs']),
       decodeTokens: _intOf(raw['decodeTokens']),
     );
+  }
+
+  /// 轮次大纲（`turnOutline` 投影，wire view 是 `[{turn, seq, prompt, response}]`）。
+  ///
+  /// 形状逐字对应 DSH 的 `session-turn-outline/src/projection.ts:61-75`
+  /// （`turnOutlineEntriesSchema`）。**轨迹页的账本用它**：一轮一行，
+  /// `prompt` 是用户那句的预览、`response` 是助手回复的预览。
+  ///
+  /// 拿不到（没这个投影 / 形状不对）就是空表 —— 轨迹页显示空态，
+  /// 不造一份假的（2026-10-15 删掉 `_sampleRows` 的理由）。
+  List<TurnOutlineEntry> get turnOutline {
+    final raw = _projections?['turnOutline'];
+    if (raw is! List) return const [];
+    final out = <TurnOutlineEntry>[];
+    for (final entry in raw) {
+      if (entry is! Map) continue;
+      final turn = entry['turn'];
+      final seq = entry['seq'];
+      if (turn is! int || seq is! int) continue;
+      out.add(
+        TurnOutlineEntry(
+          turn: turn,
+          seq: seq,
+          prompt: entry['prompt'] is String ? entry['prompt'] as String : '',
+          response: entry['response'] is String
+              ? entry['response'] as String
+              : '',
+        ),
+      );
+    }
+    return out;
   }
 
   /// 上下文三段分段（`contextBreakdown` 投影，wire view 就是三项）。

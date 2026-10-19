@@ -526,7 +526,7 @@ class ChatPageState extends State<ChatPage> {
                     // 已配对时给空态一条"重新配对"的出路（议题 3，1 步直达）。
                     onRePair: widget.paired ? widget.onRePair : null,
                   )
-                : _TrajectoryTab(onTapEntry: _showTraceSheet),
+                : _TrajectoryTab(app: widget.app, onTapEntry: _showTraceSheet),
           ),
           // ---- 底部：接管卡 + 输入栏 + 统计条 ----
           Container(
@@ -2619,14 +2619,38 @@ class _EmptyFilePane extends StatelessWidget {
 ///
 /// 实现已搬到 `ui/trajectory_page.dart`（甘特条 + 账本列表）——
 /// 它有 300 行，留在本文件里会让"聊天页"这个文件同时装两个页面的规格。
-/// 这里只留接线：点账本条目弹 `sheet-traj`。
+/// 这里只留接线：**把 `turnOutline` 投影喂成账本**，点条目弹 `sheet-traj`。
+///
+/// ## 为什么之前轨迹页常驻空态
+///
+/// `TrajectoryTab` 一直接收 `rows` / `entries` 两个参数，而这一层**只传了
+/// `onTapEntry`** —— 于是两个表恒为空、轨迹页永远显示"电脑侧跑完一轮后…"。
+/// 契约里 `turnOutline` 投影一直都在（`session.projections`，§5.7），
+/// 手机也早就解析了别的投影，只是从没把它接进来。
 class _TrajectoryTab extends StatelessWidget {
-  const _TrajectoryTab({required this.onTapEntry});
+  const _TrajectoryTab({required this.app, required this.onTapEntry});
 
+  final AppModel app;
   final void Function(TraceEntry entry) onTapEntry;
 
   @override
   Widget build(BuildContext context) {
-    return TrajectoryTab(onTapEntry: onTapEntry);
+    // **一轮一行**：`turnOutline` 的 wire view 是 `[{turn, seq, prompt, response}]`
+    // （DSH `session-turn-outline/src/projection.ts:61-75`）。
+    // 空表时 `TrajectoryTab` 自己显示空态，不在这里兜假数据。
+    final entries = [
+      for (final turn in app.turnOutline)
+        TraceEntry(
+          kind: TraceKind.assistant,
+          name: '第 ${turn.turn} 轮',
+          // `turnOutline` 不带耗时（只有 turn/seq/prompt/response）——
+          // 空着比编一个数字诚实。
+          took: '',
+          prompt: turn.promptLabel,
+          summary: turn.responseLabel,
+          mono: false,
+        ),
+    ];
+    return TrajectoryTab(entries: entries, onTapEntry: onTapEntry);
   }
 }
