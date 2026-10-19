@@ -2505,6 +2505,9 @@ class _TurnView extends StatelessWidget {
         message: message,
         started: started,
       ),
+      // 一轮的过程摘要（`turn/end` 时的收口行）。
+      TurnProcessItem(:final title, :final stats, :final failed) =>
+        TurnProcessRow(title: title, stats: stats, failed: failed),
     };
   }
 }

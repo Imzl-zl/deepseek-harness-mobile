@@ -99,7 +99,15 @@ TurnOutcomeItem _projectEnd(Map<String, Object?> data, {ChatItem? previous}) {
     data: data,
     previous: previous,
   );
-  return result.item as TurnOutcomeItem;
+  // `turn/end` 产出**两条**：过程摘要（每轮都有）+ 异常结局（只有异常）。
+  // 异常结局是第二条（DSH 同处两个独立节点，`register-node-renderers.ts:70-75`）。
+  return result.items.whereType<TurnOutcomeItem>().single;
+}
+
+/// 取 `turn/end` 产出的过程摘要（第一条）。
+TurnProcessItem _projectProcess(Map<String, Object?> data) {
+  final result = projectEvent(type: 'turn/end', seq: 8, data: data);
+  return result.items.whereType<TurnProcessItem>().single;
 }
 
 void main() {
@@ -126,23 +134,33 @@ void main() {
       expect(item.turn, 8);
     });
 
-    test('completed：不占条目（不是 OtherItem，是 skip）', () {
+    test('completed：只有过程摘要，没有失败行', () {
       final result = projectEvent(
         type: 'turn/end',
         seq: 8,
         data: _completedEnd,
       );
-      expect(result.item, isNull, reason: '正常结局不该占条目');
-      expect(result.skipReason, isNotNull, reason: '但要说清为什么跳过');
+      expect(
+        result.items.whereType<TurnOutcomeItem>(),
+        isEmpty,
+        reason: '正常结局没有失败行',
+      );
+      expect(
+        result.items.whereType<TurnProcessItem>().length,
+        1,
+        reason: '但每轮都有一条过程摘要（DSH 的 turn-process）',
+      );
+      expect(result.skipReason, isNull, reason: '不再是 skip');
     });
 
-    test('用户主动 aborted：不占条目（DSH 只显示"已停止的轮次摘要"）', () {
+    test('用户主动 aborted：只有过程摘要，没有失败行', () {
       final result = projectEvent(
         type: 'turn/end',
         seq: 8,
         data: _userAbortEnd,
       );
-      expect(result.item, isNull);
+      expect(result.items.whereType<TurnOutcomeItem>(), isEmpty);
+      expect(result.items.whereType<TurnProcessItem>().length, 1);
     });
 
     test('登出导致的 aborted：占条目（DSH 的 hook 判据）', () {
@@ -204,6 +222,49 @@ void main() {
     });
   });
 
+  group('一轮的过程摘要（turn-process）', () {
+    test('用时 = end.time - start.time（真日志 155890ms 那条）', () {
+      // 真日志样本：`turn/start` seq 4 time 1791270058171，
+      // `turn/end` seq 117 time 1791270214061 —— 差 155890ms。
+      final item = projectEvent(
+        type: 'turn/end',
+        seq: 117,
+        time: 1791270214061,
+        data: _completedEnd,
+        turnStartTime: 1791270058171,
+      ).items.whereType<TurnProcessItem>().single;
+      expect(item.elapsedMs, 155890);
+      expect(item.stats, '2 分 35 秒');
+    });
+
+    test('计数为 0 的项不列（不摆"0 条消息 · 0 次工具"）', () {
+      final item = _projectProcess(_completedEnd);
+      // 没有传 turnStats ⇒ 全 0 ⇒ 只说用时。
+      expect(item.stats, '不到 1 秒');
+    });
+
+    test('失败/停止时统计部分换成一句话（DSH 同处替换用时）', () {
+      final failed = _projectProcess(_errorEnd);
+      expect(failed.failed, isTrue);
+      expect(failed.stats, '失败');
+      final stopped = _projectProcess(_userAbortEnd);
+      expect(stopped.stopped, isTrue);
+      expect(stopped.stats, '已停止');
+    });
+
+    test('不足 1 秒按 1 秒说（DSH 的 Math.max(1000, …)）', () {
+      final item = projectEvent(
+        type: 'turn/end',
+        seq: 8,
+        time: 500,
+        data: _completedEnd,
+        turnStartTime: 0,
+      ).items.whereType<TurnProcessItem>().single;
+      expect(item.elapsedMs, 500);
+      expect(item.stats, '不到 1 秒');
+    });
+  });
+
   group('itemId', () {
     test('turn/end 靠 turn 号（同一轮只有一条）', () {
       expect(
@@ -255,6 +316,34 @@ void main() {
   });
 
   group('真事件 → 投影 → 渲染（三段贯通）', () {
+    testWidgets('过程摘要一行：标题 + 统计', (tester) async {
+      final item = projectEvent(
+        type: 'turn/end',
+        seq: 117,
+        time: 1791270214061,
+        data: _completedEnd,
+        turnStartTime: 1791270058171,
+        turnStats: (messages: 12, tools: 8, subagents: 1),
+      ).items.whereType<TurnProcessItem>().single;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: Scaffold(
+            body: TurnProcessRow(
+              title: item.title,
+              stats: item.stats,
+              failed: item.failed,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('第 1 轮'), findsOneWidget);
+      // 用时 + 三个计数全列（都有值）。
+      expect(find.text('2 分 35 秒 · 12 条消息 · 8 次工具 · 1 个子智能体'), findsOneWidget);
+    });
+
     testWidgets('异常结局一行：标题 + DSH 原文', (tester) async {
       final item = _projectEnd(_errorEnd);
       await tester.pumpWidget(

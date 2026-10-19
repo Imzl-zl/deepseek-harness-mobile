@@ -70,6 +70,13 @@ String contextProducerLabel(Object? data) {
 /// **结果继承调用**。没有这一层继承，`tool/result` 一到达就把卡片上的
 /// `read` 覆盖成"工具"、把参数行覆盖成 JSON 键名（2026-10-19 真机复现）。
 ///
+/// [turnStartTime] / [turnStats] 只被 `turn/end` 用（一轮的过程摘要）：
+/// 前者是同一轮 `turn/start` 的时刻（算用时），后者是该轮已收录的条目
+/// **计数**（消息 / 工具 / 子智能体）。**它们不由投影层自己推** ——
+/// 投影层是纯函数，不认识"哪些条目属于这一轮"（那要读条目表）。
+/// 调用方（`AppModel`）按 seq 区间数好给进来；给不了就留 0，
+/// 与"拿不到就不显示"同一条纪律（0 项在 [TurnProcessItem.stats] 里不列）。
+///
 /// **未知类型不丢**：返回 [OtherItem]，而不是 `null`。
 /// 丢掉会让"事件总数与条目数对不上"这类问题无从排查，而 DSH 的事件类型会随上游增加。
 ChatProjection projectEvent({
@@ -79,6 +86,8 @@ ChatProjection projectEvent({
   int time = 0,
   bool steering = false,
   ChatItem? previous,
+  int? turnStartTime,
+  ({int messages, int tools, int subagents})? turnStats,
 }) {
   // `itemId` 的推导只走 `core/items.dart`（契约 §5.2）：那是**唯一**一处，
   // 而它可能在已知类型缺字段时抛错（宁可让这一帧失败，也不要造一个会漂移的身份）。
@@ -289,18 +298,45 @@ ChatProjection projectEvent({
   }
 
   if (type == 'turn/end') {
-    // 一轮的结局。**只有异常才占条目**（DSH `turn-error.ts:36-51` 的
-    // `endFailure`：completed / blocked / forked / plugin-merged 一律无行）。
+    // 一轮结束。**这里产出两条**（DSH 同处也是两个独立节点）：
+    //
+    // 1. **过程摘要**（`turn-process`）—— 每轮都有：用时 + 消息/工具/子智能体
+    //    计数（`TurnProcessNodeView.tsx`）。这是"这一轮到底干了什么"的收口，
+    //    2026-10-19 之前手机上完全没有。
+    // 2. **异常结局**（`turn-error` / `turn-max-tokens`）—— 只有异常才有，
+    //    规则见下面每个分支（DSH `turn-error.ts:36-51` 的 `endFailure`）。
+    //
+    // 两条的 itemId 不同（`p:$turn` / `e:$turn`），所以不会互相覆盖。
     // 历史翻页可能只落到 `turn/end`（`turn/start` 在窗口外），那时
-    // `turn` 号仍在这条事件自身上，所以轮次号不依赖跨事件状态。
+    // `turn` 号仍在这条事件自身上，轮次号不依赖跨事件状态。
     final turn = intField(data, 'turn') ?? 0;
     final reason = fieldOf(data, 'reason');
     final kind = stringField(reason, 'kind');
-    if (kind == 'error') {
+    final failed = kind == 'error';
+    final stopped = kind == 'aborted' || kind == 'interrupted';
+    final process = TurnProcessItem(
+      itemId: 'p:$turn',
+      seq: seq,
+      updatedAt: time,
+      turn: turn,
+      // 用时 = `turn/end.time - turn/start.time`（DSH 同处就是这个差）。
+      // 拿不到 `turn/start`（历史翻页落在窗口外）就 0 ——
+      // `formatElapsedMs` 会把 0 说成"不到 1 秒"，与"真用了不到 1 秒"
+      // 同形。**不因此猜一个数**。
+      elapsedMs: turnStartTime == null ? 0 : time - turnStartTime,
+      messageCount: turnStats?.messages ?? 0,
+      toolCallCount: turnStats?.tools ?? 0,
+      subagentCount: turnStats?.subagents ?? 0,
+      failed: failed,
+      stopped: stopped,
+    );
+
+    if (failed) {
       // 模型侧报错：**用 DSH 的原文**（`reason.error.message`），
       // 不编一句"出错了"。真日志例：`Connection error.` / `TRANSPORT`。
       final error = fieldOf(reason, 'error');
-      return ChatProjection.item(
+      return ChatProjection.items([
+        process,
         TurnOutcomeItem(
           itemId: itemId,
           seq: seq,
@@ -310,11 +346,12 @@ ChatProjection projectEvent({
           code: stringField(error, 'code'),
           turn: turn,
         ),
-      );
+      ]);
     }
     if (kind == 'interrupted') {
       // DSH 进程在这一轮结束前退出（真日志 6 条）。
-      return ChatProjection.item(
+      return ChatProjection.items([
+        process,
         TurnOutcomeItem(
           itemId: itemId,
           seq: seq,
@@ -323,12 +360,13 @@ ChatProjection projectEvent({
           message: '电脑侧的 DSH 在这一轮结束前退出了。',
           turn: turn,
         ),
-      );
+      ]);
     }
     if (kind == 'max-tokens') {
       // 输出到达 provider 的 token 上限（真日志 3 条）——DSH 单独一条提示，
       // 不算失败行（`turn-error.ts:49` 的原注释把 max-tokens 排除在失败外）。
-      return ChatProjection.item(
+      return ChatProjection.items([
+        process,
         TurnOutcomeItem(
           itemId: itemId,
           seq: seq,
@@ -337,10 +375,10 @@ ChatProjection projectEvent({
           message: '输出到达上限，这一轮被截断。',
           turn: turn,
         ),
-      );
+      ]);
     }
     if (kind == 'aborted') {
-      // 中止。**只有登出才显示**（DSH `turn-error.ts:42-44`）：
+      // 中止。**只有登出才显示失败行**（DSH `turn-error.ts:42-44`）：
       // 用户主动取消在 Web 上只显示"已停止的轮次摘要"，没有失败行。
       // 判据是 `reason.reason.kind === 'hook'` 且 hook 名是
       // `deepseek-account/signed-out`。
@@ -348,7 +386,8 @@ ChatProjection projectEvent({
       final hook = stringField(inner, 'reason');
       if (stringField(inner, 'kind') == 'hook' &&
           hook == 'deepseek-account/signed-out') {
-        return ChatProjection.item(
+        return ChatProjection.items([
+          process,
           TurnOutcomeItem(
             itemId: itemId,
             seq: seq,
@@ -358,13 +397,13 @@ ChatProjection projectEvent({
             code: 'ACCOUNT_SIGNED_OUT',
             turn: turn,
           ),
-        );
+        ]);
       }
     }
     // completed / blocked / forked / plugin-merged / 用户主动 aborted：
-    // 不占条目。**不返回 OtherItem** —— 那会让"事件总数与条目数对不上"
-    // 的排查多一类噪声（`turn/end` 是每个轮次都有一条的高频事件）。
-    return const ChatProjection.skip('turn/end 无异常，不占条目');
+    // **只有过程摘要，没有失败行**。`turn/end` 因此不再是 skip ——
+    // 每个轮次都有一条收口（DSH 的 turn-process 也正是每轮都有）。
+    return ChatProjection.items([process]);
   }
 
   return ChatProjection.item(
@@ -372,20 +411,35 @@ ChatProjection projectEvent({
   );
 }
 
-/// 投影结果：一条条目，或"这条事件被流式累加器接管了，别渲染"。
+/// 投影结果：**零到多条**条目，或"这条事件被流式累加器接管了，别渲染"。
 ///
 /// 用一个小类型而不是 `ChatItem?`：`null` 会被读成"投影失败"，
 /// 而这里的第二种情况是**正常**的（流式 `chunk` 不进持久条目表）。
+///
+/// ## 为什么会有一个事件产出多条
+///
+/// `turn/end` 在 DSH 上是**两个独立节点**（`turn-process` 与
+/// `turn-error`，各有自己的 seq 锚点，见 `register-node-renderers.ts:70-75`）。
+/// 手机侧同一个事件也就产出两条：过程摘要（每轮都有）+ 异常结局（只有异常）。
+/// 合成一条会让"用时"与"错误原文"抢同一行。
 class ChatProjection {
-  const ChatProjection.item(ChatItem this.item) : skipReason = null;
+  /// 单条目。**不是 const 构造器** —— 它要包一个运行时构造的列表
+  /// （`const [item]` 在 `item` 是非常量时编译不过）。
+  ChatProjection.item(ChatItem item) : items = [item], skipReason = null;
 
-  const ChatProjection.skip(String this.skipReason) : item = null;
+  const ChatProjection.items(this.items) : skipReason = null;
 
-  /// 要落进条目表的条目。
-  final ChatItem? item;
+  const ChatProjection.skip(String this.skipReason) : items = const [];
+
+  /// 要落进条目表的条目（**可能多条**，按落表顺序）。
+  final List<ChatItem> items;
 
   /// 为什么不进条目表（诊断用）。
   final String? skipReason;
+
+  /// 第一条（单条目事件的便捷读法）。**多条时只给第一条** ——
+  /// 调用方要全表请读 [items]。
+  ChatItem? get item => items.isEmpty ? null : items.first;
 
   /// 是否是一条要落表的条目。
   bool get isItem => item != null;

@@ -741,6 +741,83 @@ class RetryRow extends StatelessWidget {
   }
 }
 
+/// 一轮的过程摘要（DSH 的 `TurnProcessNodeView`）。
+///
+/// ## 它为什么之前不存在
+///
+/// DSH Web 在**每一轮结束时**给一行摘要：`用时 2 分 36 秒 · 12 条消息 ·
+/// 8 次工具调用 · 1 个子智能体`。手机上没有 —— 于是一轮跑完，用户看到的
+/// 就是"又多了几屏内容"，没有"这一轮到底干了什么、花了多久"的收口。
+///
+/// ## 与 DSH 的对应
+///
+/// `TurnProcessNodeView.tsx:22-30`：
+///
+/// | DSH | 这里 |
+/// |---|---|
+/// | `elapsedMs = end.time - start.time`（`Math.max(1000, …)`） | `elapsedMs`，不足 1 秒按 1 秒 |
+/// | `stopped`（aborted/interrupted）→ `t('message.stopped')` | `已停止` |
+/// | `error` → `t('message.turnProcess.failed')` | `失败` |
+/// | 其余 → `t('message.turnProcess.took')` + duration | 时长 |
+/// | data 属性里的三个计数 | 统计部分 |
+///
+/// ## 为什么是一行而不是卡片
+///
+/// DSH 同处是一个 `<button>`（可折叠收起该轮内容），视觉上是**一行文字**。
+/// 手机这一版不做"收起该轮"（那是组级交互，而我们没有 turn 组），
+/// 所以它就是一条纯展示的行 —— 放在一轮的末尾当收口。
+class TurnProcessRow extends StatelessWidget {
+  const TurnProcessRow({
+    super.key,
+    required this.title,
+    required this.stats,
+    this.failed = false,
+  });
+
+  /// 一行标题（`第 3 轮`）。
+  final String title;
+
+  /// 统计部分（`2 分 36 秒 · 12 条消息 · 8 次工具`）。
+  final String stats;
+
+  /// 这一轮是失败收尾的（换图标与颜色）。
+  final bool failed;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    // 失败用工具色（那不是模型的错，也不是"这一轮的正常产出"），
+    // 正常收尾用最弱的说明色 —— 它是收口，不是内容。
+    final tone = failed ? c.roleTool : c.labelCaption;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        children: [
+          DshIcon(failed ? 'warningTriangle' : 'clock', size: 13, color: tone),
+          const SizedBox(width: 6),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: tone,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              stats,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: c.labelTertiary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// 审批 / 提问的**一行提示**（原型：它们不在气泡里，而是接管输入栏；
 /// 对话流里只留一行可点回来的入口）。
 class TakeoverHint extends StatelessWidget {

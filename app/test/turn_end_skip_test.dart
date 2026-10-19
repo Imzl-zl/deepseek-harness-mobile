@@ -1,17 +1,20 @@
-/// `turn/end` 的 skip 不被当成失败的回归。
+/// `turn/end` 的多条目产出不炸流监听的回归。
 ///
 /// ## 这一组守什么
 ///
 /// 2026-10-19 引入 `ChatProjection.skip` 时踩到的坑：`AppModel._onDelta`
 /// 那里写的是 `projectEvent(...).item!`，而 **`skip` 的 `item` 是 null** ——
-/// 于是每个 `turn/end`（completed / 用户主动 aborted，真日志里 891 + 53 条）
-/// 都会抛 `Null check operator used on a null value`。它是 `Error` 不是
-/// `StateError`，下面那个 `on StateError` **接不住**，直接炸掉整个流监听。
+/// 于是每个 completed 的 `turn/end`（真日志 891 条）都会抛
+/// `Null check operator used on a null value`。它是 `Error` 不是 `StateError`，
+/// 下面那个 `on StateError` **接不住**，直接炸掉整个流监听。
 ///
 /// 症状：会话打开后**一条新消息都不再进来**，且没有任何可见报错。
 ///
+/// 同一天又加了 `turn-process`（每轮一条过程摘要），于是 `turn/end` 现在
+/// **产出多条**。这一组同时守那件事：多条也要逐条落表，不能只落第一条。
+///
 /// 判据：喂一条 completed 的 `turn/end`，会话的条目表不炸、
-/// 不多条目、且**没有**记进投影失败。
+/// **用户消息与过程摘要各一条**、且**没有**记进投影失败。
 library;
 
 import 'dart:async';
@@ -116,14 +119,16 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     final items = app.items;
-    // **只有用户消息一条**：completed 不占条目。
-    expect(items.length, 1);
-    expect(items.single, isA<MessageItem>());
+    // **两条**：用户消息 + 过程摘要（`turn/end` 现在产出多条，
+    // `AppModel._onDelta` 逐条落表 —— 只落第一条的话这里会是 1）。
+    expect(items.length, 2);
+    expect(items.whereType<MessageItem>().length, 1);
+    expect(items.whereType<TurnProcessItem>().length, 1);
     // **没有记进投影失败** —— 那正是 `.item!` 抛错后被 catch 写成的东西。
     expect(app.projectionFailureOf('s1'), isNull);
   });
 
-  test('error 的 turn/end 占一条，且消息照常进', () async {
+  test('error 的 turn/end 占两条（摘要 + 失败行），且消息照常进', () async {
     final client = _FeedClient();
     final app = AppModel(client: client);
     addTearDown(app.dispose);
@@ -164,8 +169,9 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     final items = app.items;
-    expect(items.length, 2, reason: '用户消息 + 一条异常结局');
+    expect(items.length, 3, reason: '用户消息 + 过程摘要 + 一条异常结局');
     expect(items.whereType<TurnOutcomeItem>().length, 1);
+    expect(items.whereType<TurnProcessItem>().length, 1);
     expect(app.projectionFailureOf('s1'), isNull);
   });
 }

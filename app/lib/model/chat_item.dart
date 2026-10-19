@@ -288,6 +288,105 @@ class ModelRetryItem extends ChatItem {
   String get title => '重试 $retry/$maxRetries';
 }
 
+/// 一轮的过程摘要（DSH 的 `turn-process` 节点）。
+///
+/// ## 它为什么之前不存在
+///
+/// 2026-10-19 摸到：DSH Web 在**每一轮结束时**给一行摘要
+/// （`TurnProcessNodeView.tsx`）：`用时 2 分 36 秒 · 12 条消息 · 8 次工具调用 ·
+/// 1 个子智能体`，可折叠收起该轮内容。手机上没有这一行 ——
+/// 于是一轮跑完，用户看到的就是"又多了几屏内容"，没有"这一轮到底干了什么、
+/// 花了多久"的收口。
+///
+/// ## 与 DSH 的对应
+///
+/// DSH 的计数由 turn 状态机推（`contract/turn-process.ts` 的
+/// `TurnProcessSpec`：`messageCount` / `toolCallCount` / `subagentCount`），
+/// **不在事件里**。手机没有 turn 状态机，但有三处等价来源：
+///
+/// - **用时** = `turn/end.time - turn/start.time`（DSH 同处就是这个差，
+///   且 `Math.max(1000, …)` —— 不足 1 秒按 1 秒说，真日志例：155890ms）；
+/// - **消息/工具/子智能体计数** = 该轮 seq 区间内的条目（子智能体委派的判据
+///   照 DSH `isSubagentDelegationTool`：工具名是 `subagent` 或 `subagent_` 前缀，
+///   `contract/turn-process.ts:44-46`）。
+///
+/// ## 为什么不放 [TurnOutlineEntry]
+///
+/// 那个是**轮次预览**（用户问了什么、助手答了什么，来自 `turnOutline` 投影）；
+/// 这个是**过程统计**（多少条、多久）。两者都在"一轮"这个粒度上，但来源不同、
+/// 用途不同，合成一类会让"轮次"同时是预览和统计两个真值源。
+class TurnProcessItem extends ChatItem {
+  const TurnProcessItem({
+    required super.itemId,
+    required super.seq,
+    required super.updatedAt,
+    required this.turn,
+    required this.elapsedMs,
+    this.messageCount = 0,
+    this.toolCallCount = 0,
+    this.subagentCount = 0,
+    this.failed = false,
+    this.stopped = false,
+  });
+
+  /// 第几轮。
+  final int turn;
+
+  /// 这一轮用了多久（毫秒）。`turn/end.time - turn/start.time`。
+  final int elapsedMs;
+
+  /// 该轮带回复的助手消息条数。
+  final int messageCount;
+
+  /// 该轮的工具调用次数（不含子智能体委派）。
+  final int toolCallCount;
+
+  /// 该轮的子智能体委派次数。
+  final int subagentCount;
+
+  /// 这一轮是失败收尾的（`reason.kind === 'error'`）。
+  ///
+  /// DSH 同处把"失败/停止"两种结局的**用时替换成一句话**
+  /// （`TurnProcessNodeView.tsx:24-30`：`stopped` → "已停止"、
+  /// `error` → "失败"、其余才显示用时）。
+  final bool failed;
+
+  /// 这一轮是被中止/中断的（`aborted` / `interrupted`）。
+  final bool stopped;
+
+  /// 一行的标题部分：`第 3 轮`。
+  String get title => '第 $turn 轮';
+
+  /// 一行的统计部分：`2 分 36 秒 · 12 条消息 · 8 次工具 · 1 个子智能体`。
+  ///
+  /// **各项为 0 时不列**（DSH 同处也是只列有的）：一个 0 条消息 0 次工具的
+  /// 轮次（比如刚 start 就被取消）只说用时，不摆一串 0。
+  String get stats {
+    if (failed) return '失败';
+    if (stopped) return '已停止';
+    final parts = <String>[formatElapsedMs(elapsedMs)];
+    if (messageCount > 0) parts.add('$messageCount 条消息');
+    if (toolCallCount > 0) parts.add('$toolCallCount 次工具');
+    if (subagentCount > 0) parts.add('$subagentCount 个子智能体');
+    return parts.join(' · ');
+  }
+}
+
+/// 毫秒数的一行式中文时长（`2 分 35 秒` / `45 秒` / `不到 1 秒`）。
+///
+/// **与 DSH 的 `Math.max(1000, …)` 对齐**（`TurnProcessNodeView.tsx:23`）：
+/// 不足 1 秒按 1 秒算，**但不显示"0 秒"** —— 那会让人以为没跑。
+/// 0（拿不到 `turn/start`，历史翻页落在窗口外）与真的小于 1 秒
+/// 在这里同形，都说"不到 1 秒"：两者都是"这一轮很快/不知道多久"，
+/// 而编一个具体秒数是猜。
+String formatElapsedMs(int ms) {
+  if (ms < 1000) return '不到 1 秒';
+  final minutes = ms ~/ 60000;
+  final seconds = (ms % 60000) ~/ 1000;
+  if (minutes > 0) return '$minutes 分 $seconds 秒';
+  return '$seconds 秒';
+}
+
 /// 消息角色（决定气泡配色与对齐）。
 enum MessageRole {
   /// 用户发的。

@@ -1813,6 +1813,12 @@ class AppModel extends ChangeNotifier {
       // "本批优先、落表兜底"取（DSH 的 `update(context, match)` 同样是
       // 在同一个 Context 里滚动状态，不是回到库里查）。
       final inBatch = <String, ChatItem>{};
+      // **`turn/start` 的时刻与 seq**（按轮次号记）：`turn/end` 算"这一轮
+      // 用了多久"要时刻（DSH 同处 `turn.end.time - turn.start.time`），
+      // 数"这一轮有多少条消息/工具"要 seq 区间。两者都只在本批内有效 ——
+      // 跨批的 `turn/start`（历史翻页落在窗口外）让 `turn/end` 拿不到，
+      // 那时用时说"不到 1 秒"、计数为 0，而不是猜一个数。
+      final turnStarts = <int, ({int time, int seq})>{};
       for (final event in delta.events) {
         // **`session/title` 不是条目，是标题的真值**：DSH 生成/改名时落一条
         // （`session-title/src/index.ts` 的 fold 就认这个 type）。它进条目表
@@ -1835,6 +1841,17 @@ class AppModel extends ChangeNotifier {
           inboxChanged = true;
           continue;
         }
+        // **`turn/start` 只记时刻，不占条目**：它是"这一轮开始了"的边界，
+        // 而界面上的那一行是 `turn/end` 时的过程摘要（DSH 的 turn-process
+        // 也正是挂在轮次末尾，`TurnProcessNodeView.tsx:18` 还要求
+        // `turn.status === 'closed'`）。
+        if (event.type == 'turn/start') {
+          final turn = event.data is Map ? (event.data as Map)['turn'] : null;
+          if (turn is int) {
+            turnStarts[turn] = (time: event.time, seq: event.seq);
+          }
+          continue;
+        }
         // **逐条投影，一条不再炸掉整批**：`itemIdOf` 对"已知类型缺身份字段"
         // 是抛 StateError 的（契约 §5.2 的硬规则），而这里若让它逃逸，
         // 整个 delta 的条目全部丢失 —— 症状是"会话打开了但一条消息都不渲染"，
@@ -1854,16 +1871,35 @@ class AppModel extends ChangeNotifier {
             // 真日志里结果消息不带名字）。投影层自己是纯函数，所以
             // "前一个条目是什么"由这一层给。
             previous: inBatch[event.itemId] ?? store.byId(event.itemId),
+            // **`turn/end` 专用的两个入参**：该轮 `turn/start` 的时刻
+            // （算用时）与该轮已收录条目的计数。投影层是纯函数，
+            // 不认识"哪些条目属于这一轮"，所以由这一层数好给进来。
+            turnStartTime: event.type == 'turn/end'
+                ? turnStarts[_turnOf(event.data)]?.time
+                : null,
+            turnStats: event.type == 'turn/end'
+                ? _turnStatsOf(
+                    store,
+                    inBatch,
+                    turnStarts[_turnOf(event.data)]?.seq,
+                    event.seq,
+                  )
+                : null,
           );
           // **`skip` 不是失败**：`turn/end` 的 completed / 用户主动 aborted
           // 这类"没有异常就不占条目"的事件走这支（DSH 同处也是无行）。
           // 早期这里写 `.item!`，于是 skip 会抛 `null check` 错误 ——
           // 而它是 `Error` 不是 `StateError`，下面的 catch 接不住，
           // 直接炸掉整个流监听（症状：会话打开后一条新消息都不进来）。
-          final projected = projection.item;
-          if (projected == null) continue;
-          inBatch[event.itemId] = projected;
-          items.add(projected);
+          if (projection.items.isEmpty) continue;
+          // **一个事件可能产出多条**（`turn/end` 同时给过程摘要与异常结局，
+          // DSH 同处也是两个独立节点）。`inBatch` 只记单条目事件的前一个值
+          // —— 多条那几条的 id 由投影层自己定（`p:$turn` / `e:$turn`），
+          // 不参与 upsert 配对。
+          for (final projected in projection.items) {
+            inBatch[projected.itemId] = projected;
+            items.add(projected);
+          }
         } on StateError catch (error) {
           _projectionFailures[sid] = '${event.type}(seq=${event.seq})：$error';
         }
@@ -1899,6 +1935,68 @@ class AppModel extends ChangeNotifier {
     // 会话列表里的更新时间与计数跟着动。
     _touchSummary(sid, store);
   }
+
+  /// `turn/end` 载荷里的轮次号（取不到是 null）。
+  static int? _turnOf(Object? data) =>
+      data is Map && data['turn'] is int ? data['turn'] as int : null;
+
+  /// 数一轮的过程统计（DSH 的 `TurnProcessSpec` 那三个计数）。
+  ///
+  /// ## 为什么在这里数，而不是投影层
+  ///
+  /// 投影层是**纯函数**（只认识一条事件），而"哪些条目属于这一轮"要读条目表。
+  /// DSH 同处由 turn 状态机推（`contract/turn-process.ts`），手机没有那个
+  /// 状态机，但有条目表 —— 数它等价。
+  ///
+  /// ## 数的是什么
+  ///
+  /// - **消息** = 带回复的助手消息（`MessageRole.assistant`）；
+  /// - **工具** = `ToolCallItem`（不含子智能体委派）；
+  /// - **子智能体** = 工具名是 `subagent` 或 `subagent_` 前缀的调用
+  ///   （DSH `isSubagentDelegationTool`，`contract/turn-process.ts:44-46`）。
+  ///
+  /// ## 区间
+  ///
+  /// `[startSeq, endSeq]` —— `turn/start` 的 seq 到 `turn/end` 的 seq。
+  /// **`startSeq` 为 null 时返回全 0**（历史翻页落在窗口外）：区间不明
+  /// 就不数，与"拿不到就不显示"同一条纪律（0 项在 `TurnProcessItem.stats`
+  /// 里不列，不会摆出"0 条消息 · 0 次工具"这种噪声）。
+  static ({int messages, int tools, int subagents}) _turnStatsOf(
+    SessionStore store,
+    Map<String, ChatItem> inBatch,
+    int? startSeq,
+    int endSeq,
+  ) {
+    if (startSeq == null) return (messages: 0, tools: 0, subagents: 0);
+    var messages = 0;
+    var tools = 0;
+    var subagents = 0;
+    // **本批优先、落表兜底**：同一条目可能两处都有（`tool/call` 在本批、
+    // 更早的 `tool/result` 在表里），按 itemId 去重后各计一次。
+    final seen = <String>{};
+    for (final item in [...inBatch.values, ...store.items]) {
+      if (!seen.add(item.itemId)) continue;
+      if (item.seq < startSeq || item.seq > endSeq) continue;
+      if (item is MessageItem && item.role == MessageRole.assistant) {
+        messages += 1;
+      } else if (item is ToolCallItem) {
+        if (_isSubagentDelegation(item.name)) {
+          subagents += 1;
+        } else {
+          tools += 1;
+        }
+      }
+    }
+    return (messages: messages, tools: tools, subagents: subagents);
+  }
+
+  /// 这次工具调用是不是**子智能体委派**（DSH 的 `isSubagentDelegationTool`）。
+  ///
+  /// 判据逐字照 DSH（`contract/turn-process.ts:44-46`）：名字是 `subagent`
+  /// 或以 `subagent_` 开头。控制类工具（`send_message` / `list_agents`）
+  /// **不算** —— DSH 的原注释把这两类分开列。
+  static bool _isSubagentDelegation(String name) =>
+      name == 'subagent' || name.startsWith('subagent_');
 
   /// 当前会话的流式文本（`null` = 没有正在生成的流）。
   ///
