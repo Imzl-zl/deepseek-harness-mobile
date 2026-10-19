@@ -227,7 +227,7 @@ void main() {
       expect(find.text('配对'), findsNothing);
     });
 
-    testWidgets('空态说"还没连电脑"，且给两个不需要连电脑的入口', (tester) async {
+    testWidgets('空态说"还没配对"，且给两个不需要连电脑的入口', (tester) async {
       var tapped = false;
       await tester.pumpWidget(
         _wrap(
@@ -238,7 +238,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('还没连电脑'), findsOneWidget);
+      // 2026-10-26 改的字：`paired` 的含义是"手里有配对凭据"，
+      // 旧文案"还没连电脑"会被读成"从没配对过"。
+      expect(find.text('还没配对'), findsOneWidget);
+      expect(find.text('还没连电脑'), findsNothing);
       expect(find.text('看示例数据'), findsOneWidget);
       expect(find.text('连电脑（配对）'), findsOneWidget);
 

@@ -131,7 +131,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('已断开'), findsOneWidget);
-    expect(find.text('连上之后，会话列表会自动出现。'), findsOneWidget);
+    // 2026-10-26 改过这句：原来是"连上之后，会话列表会自动出现。"——
+    // 它对"有凭据但连不上"的场景没有指引（用户不知道该重连还是重配对）。
+    expect(
+      find.textContaining('先试顶栏状态点里的「重新连接」'),
+      findsOneWidget,
+      reason: '有凭据但连不上：先指重新连接，而不是重新扫码',
+    );
     expect(find.textContaining('拨不通'), findsNothing);
     addTearDown(app.dispose);
   });
@@ -147,12 +153,16 @@ void main() {
     addTearDown(app.dispose);
   });
 
-  testWidgets('没配对：照旧说"还没连电脑"', (tester) async {
+  testWidgets('没配对：说"还没配对"（不是"还没连电脑"）', (tester) async {
+    // 2026-10-26 改的字。`paired` 的实际含义是"手里有配对凭据"，
+    // 而旧文案"还没连电脑"读起来像"我从没配对过"—— 真机上就这么
+    // 把用户引去重新扫码，而真正该先试的是「重新连接」。
     final app = AppModel(client: _FakeClient());
     await tester.pumpWidget(host(app, paired: false));
     await tester.pumpAndSettle();
 
-    expect(find.text('还没连电脑'), findsOneWidget);
+    expect(find.text('还没配对'), findsOneWidget);
+    expect(find.text('还没连电脑'), findsNothing);
     expect(find.text('已断开'), findsNothing);
     addTearDown(app.dispose);
   });

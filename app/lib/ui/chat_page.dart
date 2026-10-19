@@ -2644,12 +2644,17 @@ class _EmptyChat extends StatelessWidget {
         connectionState != null &&
         connectionState != ConnectionStateView.serving;
     final (icon, title, detail) = !paired
-        ? ('globe', '还没连电脑', '界面可以先看。要看到真实会话，得先配对（在电脑上出码）。')
+        ? ('globe', '还没配对', '界面可以先看。要看到真实会话，先在电脑上出码，再扫一次。')
         : disconnected
         ? (
             'warningTriangle',
             connectionLabel(connectionState!),
-            connectionNote ?? error ?? '连上之后，会话列表会自动出现。',
+            // **有凭据但连不上**：与"没配对过"分开说。2026-10-26 真机复现 ——
+            // 手机带着配对凭据、电脑侧设备名册里也有这台，却显示"还没连电脑"，
+            // 用户被引向"重新扫码"（要电脑重新出码），而真正该先试的是
+            // 「重新连接」（电脑侧 DSH 换了网络/重启过，地址变了）。
+            // 那句话读起来像"我从没配对过"，于是排查方向整个反了。
+            connectionNote ?? error ?? '换过网络或电脑重启过？先试顶栏状态点里的「重新连接」。',
           )
         : error != null
         ? ('warningTriangle', '拉取会话失败', error)
