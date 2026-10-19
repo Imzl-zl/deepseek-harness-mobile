@@ -6,35 +6,26 @@
 
 ## 下一步(新会话从这里开始)
 
-> **在跑的任务书**:同一份 goal(goal-a9fd6fb1)。已落地**八批**并**真机验证**:
-> 渲染三缺陷照 DSH 修 / 输入栏去忙时发送图标 + 模型 chip 加图标 / 右抽屉改真抽屉
-> + 快速跳转钮 / 浅色主题三档 + **全部 UI 面迁完** / 跨会话用量汇总(连接器 + 手机)。
-> **剩下的议题**:输入栏重设计、换 WiFi 验证。
+> **在跑的任务书**:同一份 goal(goal-a9fd6fb1)。已落地**十批**并**真机验证**
+> （轨迹页那批验到 6+ 轮；流式文本只验到单测，真机没看到 —— 见待办 1）。
+>
+> **用户点名的议题已全部清零**。剩下的是"自己摸索"摸到的 + 两个待验证项。
 
 待办:
 
-1. ~~**输入栏重设计**~~ **2026-10-19 已做**:模型 chip 改成按内容宽（省 65px，
-   权限 chip 左缘 562→350.75），推理等级改有条件渲染（没选模型时不显示"默认"）。
-   见 `.agents/notes/implemented/2026-10-19-model-chip-content-width-and-wifi-switch.md`。
-   **还剩**：rikkahub 的 `weight(1f)+horizontalScroll` 横滚钮组
-   （`ChatInput.kt:302-306`）—— 现在四个钮不换行，加第五个时才需要。
-2. **发送队列 dock 已具备**（`QueueDock` 挂在接管卡与输入栏之间，编辑 / 删除 /
-   插话三个动作都在，走 `session.updateQueue`）。**已实现，无需重做**。
-3. **全局侧滑的真相**（别当缺口）：Flutter 原生抽屉**本来就是整页高**可拖
+1. **流式文本真机验收**：`live` 帧 → `AppModel.liveText` → `_LiveTurn`
+   三段都有单测，但**真机没看到**（adb input text 往 MIUI 输入法注入不稳定，
+   七次都没发送成功）。判据：用户发一句话，正文边生成边显示。
+2. **用量汇总的甘特图**：现在只有账本（一轮一行）。甘特要**每步**起止，
+   而 `sessionStats` 是会话级总量（llmMs/toolMs/ttftMs/decodeMs）——
+   拿总量画分段只能画两条 100% 宽的段（假图）。要逐步耗时可考虑插件加投影。
+3. **输入栏横滚钮组**：rikkahub 的 `weight(1f)+horizontalScroll`
+   （`ChatInput.kt:302-306`）。现在四个钮不换行，加第五个时才需要。
+4. **全局侧滑的真相**（别当缺口）：Flutter 原生抽屉**本来就是整页高**可拖
    （`material/drawer.dart:680` 的 `height: double.infinity`），宽度由
    `drawerEdgeDragWidth` 控制。限制在**系统返回手势**：Android 官方
    `setSystemGestureExclusionRects` **每条边最多排除 200dp 总高度**。
    **结论：当前实现已是约束下的最优**，不要再试图"整页都能拖"。
-4. ~~**换 WiFi 自动连上还没验**~~ **2026-10-19 已验**(用户从家到公司、换 WiFi):
-   重启 App 后 15 秒内自动连上,不扫码、不手动操作。**但有一个前提**:
-   电脑侧的 DSH 必须**已经在新网络上跑着** —— 这次一开始连不上是因为公司这台
-   电脑的 DSH 没启动(8099/8790 都没监听),手机端点表里全是家里的 `192.168.1.4`,
-   拨不通。启动 DSH 后手机从 `endpoint.describe` 的 direct 通道**学到新地址**
-   (手填的那条标签从"手填"变成"WLAN 2",说明它就是自报的那条)。
-   **另一个坑**:profile 的 `cordis.patch.yml` 里 `relayUrl` 写死了家里 IP
-   (`ws://192.168.1.4:8787`),而 `relayHintFor` 只对**环回**地址做替换
-   (`connector/src/pairing.ts:173-184`)—— 字面 IP 不会换成新网的。
-   **所以换电脑/换网络时要改配置,或只依赖 direct 自报。**
 5. DSH 0.2.1 的 `registerFetchRoute` 开始校验同路径重复注册:同 path 的 GET/POST 必须合成
    一条 `methods: ['GET','POST']`(0.2.0 时是绿的)。
 
@@ -147,7 +138,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **278 项**(22 条规则自检 + 扫 78 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 43 个)/ 工具脚本不许硬编码盘符(19 个) |
-| `cd app && flutter test` | **752 项** |
+| `cd app && flutter test` | **760 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **547 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
@@ -164,11 +155,11 @@
 
 ## 已落地批次索引(细节回 git 与 `.agents/notes/`)
 
-- **2026-10-19**(七批,均已真机验证,共 7 个提交):`5a3aea4` 渲染三缺陷照 DSH 修
-  → `eed0d56` 输入栏去忙时发送图标 + 模型 chip 加 `database` 图标 →
-  右抽屉改真抽屉 + 快速跳转钮(rikkahub `MessageJumper`)→ 浅色主题三档
-  (`DshLightColors` + `DshColorTokens` ThemeExtension + `ThemeController`)
-  → 侧栏迁移 → 对话流四件迁移 → 剩余 13 面 + 最后 4 面迁移完。
+- **2026-10-19**(十一批,共 11 个提交):渲染三缺陷照 DSH 修 → 输入栏去忙时发送图标
+  + 模型 chip 图标优先 → 右抽屉改真抽屉 + 快速跳转钮(rikkahub `MessageJumper`)
+  → 浅色主题三档 + **全部 UI 面迁完** → 跨会话用量汇总(连接器 + 手机)
+  → 输入栏几何判据 + 模型 chip 按内容宽(省 65px) → **换 WiFi 自动连上已验证**(家→公司)
+  → 轨迹页接 `turnOutline` → 消息流显示流式文本。
   **`app/test/fixtures/real-session-events.json` 是真机落盘事件** —— 手写形状的
   用例只会复述实现的假设,这是"我们以为的形状与真形状不同"的判据。
 - **2026-10-18/19**(连接与端点,9 个提交):帧头 id 与幂等键分离 → 多地点端点保留 → 端点管理 UI →
