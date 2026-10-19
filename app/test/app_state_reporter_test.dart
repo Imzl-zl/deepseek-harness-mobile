@@ -20,12 +20,13 @@ import 'package:dsh_mobile/platform/app_state_reporter.dart';
 // （同 `widget_test.dart` 的处理）。
 import 'package:flutter/widgets.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
 /// 记账用的假客户端：只记 [SyncClient.setAppState] 被调过几次、各是什么。
 ///
 /// 其余成员一律 `UnimplementedError`：这个用例里它们**不该被调到**，
 /// 真被调到了要立刻红，而不是安静地返回一个空实现把问题掩盖过去。
-class _RecordingClient implements SyncClient {
+class _RecordingClient extends FakeSyncClient {
   final List<AppState> states = <AppState>[];
 
   @override
@@ -48,7 +49,7 @@ class _RecordingClient implements SyncClient {
       throw UnimplementedError('本用例只该调 setAppState');
 
   @override
-  Future<void> subscribe(String sid, {required int since}) async =>
+  Future<SessionAnchor> subscribe(String sid, {required int since}) async =>
       throw UnimplementedError('本用例只该调 setAppState');
 
   @override

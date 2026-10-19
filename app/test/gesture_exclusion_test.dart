@@ -20,11 +20,12 @@ import 'package:dsh_mobile/ui/chat_page.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
 const _channel = MethodChannel('dsh/gesture-exclusion');
 
 /// 一个什么都不回的假客户端（这条用例只要聊天页能建起来）。
-class _QuietClient implements SyncClient {
+class _QuietClient extends FakeSyncClient {
   @override
   ConnectionState get state => ConnectionState.idle;
 
@@ -45,9 +46,6 @@ class _QuietClient implements SyncClient {
 
   @override
   Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
-
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
 
   @override
   Future<void> unsubscribe(String sid) async {}

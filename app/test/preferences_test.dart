@@ -19,8 +19,9 @@ import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/data/store.dart';
 import 'package:dsh_mobile/model/preferences.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
-class _PrefClient implements SyncClient {
+class _PrefClient extends FakeSyncClient {
   final _jobs = StreamController<JobFrame>.broadcast();
 
   @override
@@ -39,8 +40,6 @@ class _PrefClient implements SyncClient {
   Future<void> setAppState(AppState state) async {}
   @override
   Future<void> close() async {}
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
   @override
   Future<void> unsubscribe(String sid) async {}
   @override

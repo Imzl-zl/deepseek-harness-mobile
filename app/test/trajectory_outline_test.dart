@@ -24,8 +24,9 @@ import 'package:dsh_mobile/model/turn_outline.dart';
 import 'package:dsh_mobile/ui/trajectory_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
-class _OutlineClient implements SyncClient {
+class _OutlineClient extends FakeSyncClient {
   _OutlineClient(this.projections);
 
   final Map<String, Object?> projections;
@@ -46,8 +47,6 @@ class _OutlineClient implements SyncClient {
   Future<void> setAppState(AppState state) async {}
   @override
   Future<void> close() async {}
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
   @override
   Future<void> unsubscribe(String sid) async {}
   @override

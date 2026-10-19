@@ -18,8 +18,9 @@ import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
-class _FakeClient implements SyncClient {
+class _FakeClient extends FakeSyncClient {
   _FakeClient({this.onCall, List<ConnectionState> states = const []})
     : _configured = states;
 
@@ -55,9 +56,6 @@ class _FakeClient implements SyncClient {
 
   @override
   Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
-
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
 
   @override
   Future<void> unsubscribe(String sid) async {}

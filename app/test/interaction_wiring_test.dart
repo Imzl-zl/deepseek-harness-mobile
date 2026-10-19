@@ -13,8 +13,9 @@ import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/model/interaction.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
-class _FakeClient implements SyncClient {
+class _FakeClient extends FakeSyncClient {
   /// 每会话一条更新流：测试往里面推，走的正是 `AppModel` 订阅的那条真路
   /// （不给自己加测试专用入口 —— 那会验不到"真的接上了"）。
   final Map<String, StreamController<SessionDelta>> _updates = {};
@@ -55,9 +56,6 @@ class _FakeClient implements SyncClient {
 
   @override
   Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
-
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
 
   @override
   Future<void> unsubscribe(String sid) async {}

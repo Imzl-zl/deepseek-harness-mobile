@@ -29,6 +29,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
 /// 假客户端（同 `test/widget_test.dart` 那份：界面测试不关心协议）。
+///
+/// **不用 `FakeSyncClient` 基类**：那个在 `test/` 下，而 `integration_test/`
+/// 用相对路径跨目录引它会让 `dart analyze` 的继承解析出问题
+/// （`@override` 全报"不 override 任何成员"，2026-10-19 实测）。
+/// 这里自己实现全份 —— 它本来就已经实现了绝大部分。
 class _FakeClient implements SyncClient {
   @override
   ConnectionState get state => ConnectionState.idle;
@@ -45,11 +50,20 @@ class _FakeClient implements SyncClient {
   @override
   Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
   @override
-  Future<void> subscribe(String sid, {required int since}) async {}
+  Future<SessionAnchor> subscribe(String sid, {required int since}) async =>
+      const SessionAnchor(since: 0, hasMore: false);
   @override
   Future<void> unsubscribe(String sid) async {}
   @override
   Stream<SessionDelta> sessionUpdates(String sid) => const Stream.empty();
+  @override
+  Future<SessionPage> page({
+    required String sid,
+    required int beforeSeq,
+    int maxMessages = SyncClient.kHistoryPageMaxMessages,
+    int minMessages = SyncClient.kHistoryPageMinMessages,
+    int minTurns = SyncClient.kHistoryPageMinTurns,
+  }) async => const SessionPage(events: [], hasMore: false);
   @override
   Future<T> call<T>(
     String method,

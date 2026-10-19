@@ -16,9 +16,10 @@ import 'package:dsh_mobile/core/sync_client_impl.dart'
     show encodeRequestEnvelope;
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
 /// 只回固定答案的假客户端；`onCall` 让每条用例自己决定回什么、抛什么。
-class _FakeClient implements SyncClient {
+class _FakeClient extends FakeSyncClient {
   _FakeClient({this.onCall});
 
   final Object? Function(String method, Map<String, Object?> params)? onCall;
@@ -48,9 +49,6 @@ class _FakeClient implements SyncClient {
 
   @override
   Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
-
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
 
   @override
   Future<void> unsubscribe(String sid) async {}

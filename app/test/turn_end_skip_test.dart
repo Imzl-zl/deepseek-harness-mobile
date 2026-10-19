@@ -25,9 +25,10 @@ import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
 /// 能推任意事件的替身。
-class _FeedClient implements SyncClient {
+class _FeedClient extends FakeSyncClient {
   final _sessions = StreamController<SessionDelta>.broadcast();
 
   void emit(String sid, List<Map<String, Object?>> events) {
@@ -66,8 +67,6 @@ class _FeedClient implements SyncClient {
   Future<void> setAppState(AppState state) async {}
   @override
   Future<void> close() async {}
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
   @override
   Future<void> unsubscribe(String sid) async {}
   @override

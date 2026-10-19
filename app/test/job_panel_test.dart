@@ -23,9 +23,10 @@ import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
 /// 可推 `job` 帧的假客户端。
-class _JobClient implements SyncClient {
+class _JobClient extends FakeSyncClient {
   _JobClient({this.onCall});
 
   final Object? Function(String method, Map<String, Object?> params)? onCall;
@@ -52,9 +53,6 @@ class _JobClient implements SyncClient {
 
   @override
   Future<void> close() async {}
-
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
 
   @override
   Future<void> unsubscribe(String sid) async {}

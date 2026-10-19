@@ -20,9 +20,10 @@ import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/archive_sheet.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
 /// 会记住归档方法的调用、并且可以注入失败码的假客户端。
-class _FakeArchiveClient implements SyncClient {
+class _FakeArchiveClient extends FakeSyncClient {
   _FakeArchiveClient({this.archived = const [], this.failWith});
 
   /// `workspace.list` 报的归档集（手机见的 sid）。
@@ -54,9 +55,6 @@ class _FakeArchiveClient implements SyncClient {
 
   @override
   Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
-
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
 
   @override
   Future<void> unsubscribe(String sid) async {}

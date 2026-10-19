@@ -15,6 +15,7 @@ import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/data/store.dart';
 import 'package:dsh_mobile/model/send_mode.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
 /// 内存偏好（测试用；生产的实现是 `MetaPreferences` 包 `ItemStore` 的 meta 表）。
 class _MemoryPrefs implements PreferenceStore {
@@ -28,7 +29,7 @@ class _MemoryPrefs implements PreferenceStore {
 }
 
 /// 只回答 start 的假客户端（本组用例只走 `AppModel.start` 的偏好读取）。
-class _IdleClient implements SyncClient {
+class _IdleClient extends FakeSyncClient {
   @override
   Future<void> start() async {}
 
@@ -52,9 +53,6 @@ class _IdleClient implements SyncClient {
 
   @override
   Stream<SessionDelta> sessionUpdates(String sid) => const Stream.empty();
-
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
 
   @override
   Future<void> unsubscribe(String sid) async {}

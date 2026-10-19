@@ -829,7 +829,7 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   // -------------------------------------------------------------------------
 
   @override
-  Future<void> subscribe(String sid, {required int since}) async {
+  Future<SessionAnchor> subscribe(String sid, {required int since}) async {
     // 订阅是一次**写操作**（电脑侧要为它建立 follow），所以走 outbox：先落盘再发。
     _declared[sid] = since;
     final requestId = _newId();
@@ -843,6 +843,89 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       ),
     );
     await _deps.outbox.flush();
+    // **anchor 目前拿不到，用保守默认**（`hasMore: false` = "不知道有没有更多"）。
+    //
+    // 电脑侧确实在 `session.subscribe` 的应答里发 `{since, hasMore}`
+    // （`connector/src/session-subscriptions.ts:80-85`），而手机侧拿不到它：
+    // outbox 的语义是"发出去就好"，它的 `res` 应答走 [_resolveCall] 那条路，
+    // 而那里只解**即时 `call`** 挂起的 future（按帧头 `id`）——
+    // outbox 的 `frameId` 没有对应的 future 在等。
+    //
+    // **不能为此多发一次 `call`**：2026-10-19 实测那样会**双发**同一个
+    // `session.subscribe`（outbox 一次 + 即时一次），且第二发没有 requestId，
+    // 电脑侧按新订阅处理 —— 测试替身直接等到超时。双发比拿不到 anchor 糟得多。
+    //
+    // 要真拿到 anchor，得让 outbox 的应答能回到调用方（一个"带 requestId 的
+    // pending future"表）。那是 `core/` 的架构改动，见 `memory.md` 待办。
+    return const SessionAnchor(since: 0, hasMore: false);
+  }
+
+  @override
+  Future<SessionPage> page({
+    required String sid,
+    required int beforeSeq,
+    int maxMessages = SyncClient.kHistoryPageMaxMessages,
+    int minMessages = SyncClient.kHistoryPageMinMessages,
+    int minTurns = SyncClient.kHistoryPageMinTurns,
+  }) async {
+    try {
+      final reply = await call<Object?>('session.page', {
+        'sid': sid,
+        'beforeSeq': beforeSeq,
+        'maxMessages': maxMessages,
+        'turnWindow': {'minMessages': minMessages, 'minTurns': minTurns},
+      });
+      return SessionPage(
+        events: _pageEventsOf(reply),
+        hasMore: boolFieldOf(reply, 'hasMore') ?? false,
+      );
+    } on ProtocolException catch (error) {
+      // **失败不当成"没有更多"**（契约 §3.1：`session/window-missed` 的客户端
+      // 动作是重新订阅走快照）。把原因带回去，让上层决定。
+      // `ErrorCode` 是 String 的字面量联合，`name` 拿它的标识符
+      // （`session/window-missed` 这类带斜杠的用 `message` 更可读）。
+      return SessionPage(
+        events: const [],
+        hasMore: true,
+        failure: error.code.name,
+      );
+    }
+  }
+
+  /// `session.page` 的 `items` → 事件表。
+  ///
+  /// 形状（`connector/src/session-page.ts:102-111`）：
+  /// `items: [{kind:'record', record:{type:'event', event}} | {kind:'refetch', seq, bytes}]`。
+  ///
+  /// **`refetch` 项跳过**：那是"这条太大，改用 `session.refetch` 单独取"的标记
+  /// （`session-page.ts:104-107`），本身不含事件。跳过后这一页会少几条 ——
+  /// 比把标记当事件渲染成一条莫名其妙的东西好。
+  List<SessionEvent> _pageEventsOf(Object? reply) {
+    final items = reply is Map ? reply['items'] : null;
+    if (items is! List) return const [];
+    final out = <SessionEvent>[];
+    for (final item in items) {
+      if (item is! Map || item['kind'] != 'record') continue;
+      final record = item['record'];
+      if (record is! Map) continue;
+      final event = record['event'];
+      if (event is! Map) continue;
+      final type = event['type'];
+      final seq = event['seq'];
+      if (type is! String || seq is! int) continue;
+      out.add(
+        SessionEvent(
+          itemId: itemIdOf(
+            EventLike(type: type, seq: seq, data: event['data']),
+          ),
+          type: type,
+          seq: seq,
+          time: event['time'] is int ? event['time'] as int : seq,
+          data: event['data'],
+        ),
+      );
+    }
+    return out;
   }
 
   @override
@@ -1396,4 +1479,21 @@ class LiveAccumulator {
       ..clear()
       ..write(finalText);
   }
+}
+
+/// 取一个整数字段（不是 int 就是 `null`，**不收 num**）。
+///
+/// `since` 这类回包字段在契约里是明确的数字；形状不对时宁可不填
+/// （调用方有自己的兜底），也不猜。
+int? intFieldOf(Object? value, String key) {
+  if (value is! Map) return null;
+  final field = value[key];
+  return field is int ? field : null;
+}
+
+/// 取一个布尔字段（不是 bool 就是 `null`）。
+bool? boolFieldOf(Object? value, String key) {
+  if (value is! Map) return null;
+  final field = value[key];
+  return field is bool ? field : null;
 }

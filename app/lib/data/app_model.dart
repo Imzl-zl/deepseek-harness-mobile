@@ -1759,8 +1759,12 @@ class AppModel extends ChangeNotifier {
     });
 
     try {
-      await client.subscribe(sid, since: since);
+      final anchor = await client.subscribe(sid, since: since);
       _lastError = null;
+      // **记下"还有没有更早的历史"**：UI 滚到顶据此决定要不要翻页
+      // （契约 §3.1）。电脑侧一直在发，早期手机侧把回包丢了，
+      // 于是历史永远只有电脑侧那一个窗口。
+      _historyMore[sid] = anchor.hasMore;
     } on ProtocolException catch (error) {
       _lastError = error;
       if (!_disposed) notifyListeners();
@@ -1793,6 +1797,96 @@ class AppModel extends ChangeNotifier {
       // 退订失败不值得打扰用户：本地已经不再显示它了。
     }
   }
+
+  /// 往前翻一页历史（UI 滚到顶时调）。
+  ///
+  /// ## 为什么需要它
+  ///
+  /// 电脑侧只给**一个窗口**（DSH 的 `DEFAULT_MAX_MESSAGES = 50`，
+  /// `history.ts:38`），而 `session.subscribe` 的回包一直在说
+  /// "还有更早的历史"（`connector/src/session-subscriptions.ts:80-85`）。
+  /// 早期手机侧把那个回包丢了、也没有 `session.page`，于是
+  /// **"历史上明明有 20 轮，手机上只看到最近 3 轮"**。
+  ///
+  /// ## 规则照 DSH Web
+  ///
+  /// `client/sessions/session.ts:405` 的原话："Prepend one Turn-aligned page:
+  /// at least 50 messages and two Turn starts, capped at 500 messages."
+  /// 窗口参数在 `SyncClient` 的常量里（`kHistoryPage*`）。
+  ///
+  /// ## 翻到的条目怎么落
+  ///
+  /// **走与 `_onDelta` 同一条投影路径**（不是另写一份）：这样"翻页拿到的历史"
+  /// 与"订阅快照拿到的历史"渲染规则完全一致，不会两套。
+  ///
+  /// 返回是否真的翻到了新条目（UI 用它决定要不要再翻一次）。
+  Future<bool> loadOlderHistory(String sid) async {
+    if (_loadingOlder.contains(sid)) return false;
+    if (_historyMore[sid] != true) return false;
+    final store = _storeOf(sid);
+    // 切点 = 当前最早一条的 seq。**没有条目时不翻**（那说明快照还没到，
+    // 此时翻只会拿到同一窗口）。
+    final earliest = store.items.isEmpty ? null : store.items.first.seq;
+    if (earliest == null) return false;
+
+    _loadingOlder.add(sid);
+    try {
+      final page = await client.page(sid: sid, beforeSeq: earliest);
+      if (page.failure != null) {
+        // **失败不当成"没有更多"**：`session/window-missed` 的契约动作是
+        // 「重新订阅走快照」（§3.1）。这里只留声，让用户手动重进会话。
+        _historyFailure[sid] = page.failure!;
+        if (!_disposed) notifyListeners();
+        return false;
+      }
+      _historyMore[sid] = page.hasMore;
+      _historyFailure.remove(sid);
+      if (page.events.isEmpty) return false;
+
+      // 与 `_onDelta` 同一条路径：逐条投影、逐条隔离、upsert 进 store。
+      final items = <ChatItem>[];
+      for (final event in page.events) {
+        try {
+          final projected = projectEvent(
+            type: event.type,
+            seq: event.seq,
+            data: event.data,
+            time: event.time,
+            previous: store.byId(event.itemId),
+          );
+          items.addAll(projected.items);
+        } on StateError catch (error) {
+          _projectionFailures[sid] = '${event.type}(seq=${event.seq})：$error';
+        }
+      }
+      store.upsertAll(items);
+      if (!_disposed) notifyListeners();
+      return true;
+    } finally {
+      _loadingOlder.remove(sid);
+    }
+  }
+
+  /// 这个会话还有没有更早的历史（`session.subscribe` 的回包）。
+  bool get hasOlderHistory {
+    final sid = _currentSid;
+    return sid != null && _historyMore[sid] == true;
+  }
+
+  /// 翻页失败的原因（`session/window-missed` 等）；`null` = 没失败。
+  String? get historyFailure {
+    final sid = _currentSid;
+    return sid == null ? null : _historyFailure[sid];
+  }
+
+  /// 正在翻页的会话集（同一会话不并发翻 —— 两次并发会拿到同一页）。
+  final Set<String> _loadingOlder = <String>{};
+
+  /// `sid → 还有没有更早的历史`（`session.subscribe` 的回包）。
+  final Map<String, bool> _historyMore = <String, bool>{};
+
+  /// `sid → 翻页失败的原因`。
+  final Map<String, String> _historyFailure = <String, String>{};
 
   // Note: 逐条错误隔离（一条坏事件不再炸掉整批）+ 插话判定（DSH
   // SteeringHistory 的移植）—— 见

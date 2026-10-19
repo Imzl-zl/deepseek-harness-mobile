@@ -30,8 +30,9 @@ import 'package:dsh_mobile/ui/dsh_app_bar.dart';
 import 'package:dsh_mobile/ui/dsh_composer.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
-class _HeroClient implements SyncClient {
+class _HeroClient extends FakeSyncClient {
   _HeroClient({
     this.sessions = const [],
     this.projections = const {},
@@ -94,12 +95,15 @@ class _HeroClient implements SyncClient {
   Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
 
   @override
-  Future<void> subscribe(String sid, {required int since}) async {
-    subscribed.add(sid);
-  }
-
-  @override
   Future<void> unsubscribe(String sid) async {}
+
+  /// **必须自己覆写**：它记 `subscribed`（"落上去就要订阅它"那条断言靠它）。
+  /// `FakeSyncClient` 的默认实现不记，所以不能靠继承。
+  @override
+  Future<SessionAnchor> subscribe(String sid, {required int since}) async {
+    subscribed.add(sid);
+    return SessionAnchor(since: since, hasMore: false);
+  }
 
   @override
   Stream<SessionDelta> sessionUpdates(String sid) => replay.isEmpty

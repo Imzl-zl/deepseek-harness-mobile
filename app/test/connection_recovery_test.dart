@@ -18,6 +18,7 @@ import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/data/connection_recovery.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
 void main() {
   group('ConnectionRecovery：ClientAction 的唯一执行处', () {
@@ -143,7 +144,7 @@ void main() {
 /// `lastProtocolError` 判终态，所以这个替身必须**同时**实现两个接口 ——
 /// 只实现 `SyncClient` 的话 `is SyncClientProbe` 为 false，呈递逻辑会被跳过
 /// （那会让测试空转）。
-class _RecoveryFakeClient implements SyncClient, SyncClientProbe {
+class _RecoveryFakeClient extends FakeSyncClient implements SyncClientProbe {
   final _states = StreamController<ConnectionState>.broadcast();
   ConnectionState _state = ConnectionState.idle;
   ProtocolException? _lastError;
@@ -176,9 +177,6 @@ class _RecoveryFakeClient implements SyncClient, SyncClientProbe {
 
   @override
   Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
-
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
 
   @override
   Future<void> unsubscribe(String sid) async {}

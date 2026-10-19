@@ -21,8 +21,9 @@ import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/model/session_stats.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
-class _ProjClient implements SyncClient {
+class _ProjClient extends FakeSyncClient {
   _ProjClient({this.onCall});
 
   final Object? Function(String method, Map<String, Object?> params)? onCall;
@@ -45,8 +46,6 @@ class _ProjClient implements SyncClient {
   Future<void> setAppState(AppState state) async {}
   @override
   Future<void> close() async {}
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
   @override
   Future<void> unsubscribe(String sid) async {}
   @override

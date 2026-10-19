@@ -23,9 +23,10 @@ import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/ui/chat_turns.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
 /// 能推 `live` 帧的替身（`sessionUpdates` 的 `SessionDelta.liveText`）。
-class _LiveClient implements SyncClient {
+class _LiveClient extends FakeSyncClient {
   final _sessions = StreamController<SessionDelta>.broadcast();
 
   void emitLive(String sid, String text) {
@@ -53,8 +54,6 @@ class _LiveClient implements SyncClient {
   Future<void> setAppState(AppState state) async {}
   @override
   Future<void> close() async {}
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
   @override
   Future<void> unsubscribe(String sid) async {}
   @override

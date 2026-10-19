@@ -25,8 +25,9 @@ import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/ui/chat_turns.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
-class _RenderClient implements SyncClient {
+class _RenderClient extends FakeSyncClient {
   _RenderClient({this.onCall});
 
   final Object? Function(String method, Map<String, Object?> params)? onCall;
@@ -61,8 +62,6 @@ class _RenderClient implements SyncClient {
   Future<void> setAppState(AppState state) async {}
   @override
   Future<void> close() async {}
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
   @override
   Future<void> unsubscribe(String sid) async {}
   @override

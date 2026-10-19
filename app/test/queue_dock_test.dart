@@ -28,8 +28,9 @@ import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/queue_dock.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
-class _QueueClient implements SyncClient {
+class _QueueClient extends FakeSyncClient {
   _QueueClient({this.onCall});
 
   final Object? Function(String method, Map<String, Object?> params)? onCall;
@@ -52,8 +53,6 @@ class _QueueClient implements SyncClient {
   Future<void> setAppState(AppState state) async {}
   @override
   Future<void> close() async {}
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
   @override
   Future<void> unsubscribe(String sid) async {}
   @override

@@ -25,8 +25,9 @@ import 'package:dsh_mobile/ui/dsh_composer.dart';
 import 'package:dsh_mobile/ui/takeover.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
-class _FakeClient implements SyncClient {
+class _FakeClient extends FakeSyncClient {
   @override
   ConnectionState get state => ConnectionState.idle;
   @override
@@ -44,8 +45,6 @@ class _FakeClient implements SyncClient {
 
   @override
   Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
   @override
   Future<void> unsubscribe(String sid) async {}
   @override
@@ -67,7 +66,7 @@ class _FakeClient implements SyncClient {
 ///
 /// 形状照 DSH 的 base 配置（`packages/bundle/base/cordis.patch.yml:262-271`）：
 /// 三个预设、`name` 没配所以 DSH 回显键本身（`optionOf`，`permission-presets/src/index.ts:389`）。
-class _PermissionFakeClient implements SyncClient {
+class _PermissionFakeClient extends FakeSyncClient {
   /// 电脑侧的当前档位（切换后由本假身改它，模拟 DSH 落盘 + 投影更新）。
   String current = 'workspace-write';
 
@@ -90,8 +89,6 @@ class _PermissionFakeClient implements SyncClient {
   Future<void> close() async {}
   @override
   Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
   @override
   Future<void> unsubscribe(String sid) async {}
   @override

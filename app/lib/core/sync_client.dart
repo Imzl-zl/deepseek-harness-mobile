@@ -70,12 +70,46 @@ abstract interface class SyncClient {
   ///
   /// [since] 是手机手里的水位（本地库的落盘水位）。电脑侧据此决定给增量还是快照。
   ///
+  /// 返回**基线水位与"还有没有更早的历史"**（契约 §3.1：`session.subscribe` 的回包）。
+  /// `hasMore` 为真时更早的历史在电脑侧还有，UI 滚到顶要调 [page] 去翻 ——
+  /// 不翻的话，手机上只有电脑侧那一个窗口（DSH 的 `DEFAULT_MAX_MESSAGES = 50`，
+  /// `packages/api/session-controller/src/history.ts:38`），
+  /// 于是"历史上明明有 20 轮，手机上只看到最近 3 轮"。
+  ///
   /// 订阅集会跟着连接走：每次进服务态都用 `sync.hello` 把它**整份**重新声明一次
   /// （契约 §5.4：手机回到前台时要恢复的是"所有会话"，不是一个）。
-  Future<void> subscribe(String sid, {required int since});
+  Future<SessionAnchor> subscribe(String sid, {required int since});
 
   /// 退订一个会话。
   Future<void> unsubscribe(String sid);
+
+  /// 往前翻一页历史（契约 §5.7 的 `session.page`）。
+  ///
+  /// [beforeSeq] 是切点：拿**严格早于**它的那一页。翻页时传当前最早一条的 seq。
+  ///
+  /// **窗口照 DSH Web**（`client/sessions/session.ts:54` 的
+  /// `HISTORY_PAGE_OPTIONS`）：`maxMessages` 500 + `minMessages` 50 +
+  /// `minTurns` 2 —— 一页至少 50 条消息与 2 个 turn 开始，上限 500 条消息。
+  /// **按轮次边界切**，所以一轮不会被劈成两半（`history.ts:405-411`）。
+  ///
+  /// 电脑侧**不猜水位**：切点拿不到时回 `session/window-missed`（§3.1），
+  /// 那时手机该重新订阅走快照，而不是当"没有更多了"。
+  Future<SessionPage> page({
+    required String sid,
+    required int beforeSeq,
+    int maxMessages = kHistoryPageMaxMessages,
+    int minMessages = kHistoryPageMinMessages,
+    int minTurns = kHistoryPageMinTurns,
+  });
+
+  /// 一页历史的消息上限（照 DSH Web 的 `HISTORY_PAGE_OPTIONS.maxMessages`）。
+  static const int kHistoryPageMaxMessages = 500;
+
+  /// 一页历史至少要这么多条消息才肯切（照 DSH Web 的 `minMessages`）。
+  static const int kHistoryPageMinMessages = 50;
+
+  /// 一页历史至少要覆盖这么多个 turn 开始才肯切（照 DSH Web 的 `minTurns`）。
+  static const int kHistoryPageMinTurns = 2;
 
   /// 调一个方法（契约 §5.7 的封闭集）。
   ///
@@ -202,6 +236,43 @@ abstract interface class SyncClientProbe {
   /// 而这一类问题（订阅发了但电脑不认、幂等键漏了）只能靠它查。记在封箱之前，
   /// 所以它是真发出去的那些（最多最近 64 条）。
   List<Map<String, Object?>> get sentRequests;
+}
+
+/// 订阅的回包：基线水位 + "还有没有更早的历史"（契约 §3.1）。
+///
+/// 电脑侧一直在发这两个字段（`connector/src/session-subscriptions.ts:80-85` 的
+/// `SessionSubscriptionReply`），而手机侧**一度把整个回包丢掉**
+/// （`subscribe` 返回 `Future<void>`）—— 于是"还有更早的历史"这件事
+/// 手机上从来不知道，历史永远只有电脑侧那一个窗口。
+class SessionAnchor {
+  const SessionAnchor({required this.since, required this.hasMore});
+
+  /// 基线水位（开启帧的 `cursor`，**包含式**切点）。
+  final int since;
+
+  /// 还有更早的历史（为真时该调 [SyncClient.page]）。
+  final bool hasMore;
+}
+
+/// 一页历史（契约 §5.7 的 `session.page` 回包）。
+class SessionPage {
+  const SessionPage({
+    required this.events,
+    required this.hasMore,
+    this.failure,
+  });
+
+  /// 这一页的**持久**事件（按 seq 升序，严格早于请求的 `beforeSeq`）。
+  final List<SessionEvent> events;
+
+  /// 还有更早的（为真时可以用这一页最早的 seq 继续翻）。
+  final bool hasMore;
+
+  /// 翻页失败的原因（`session/window-missed` 等）；`null` = 成功。
+  ///
+  /// **不当成"没有更多"**：契约 §3.1 给 `session/window-missed` 的客户端动作是
+  /// 「重新订阅走快照」。把它当 hasMore=false 会让用户以为"历史就这么多"。
+  final String? failure;
 }
 
 /// 一次会话更新（`sessionUpdates` 的元素）。

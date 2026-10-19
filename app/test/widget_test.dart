@@ -35,9 +35,10 @@ import 'package:dsh_mobile/ui/side_pane.dart';
 // 但毫无关系。隐藏它，让本文件里 `ConnectionState` 只有一个意思。
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
 /// 一个**只回固定答案**的假客户端：界面测试只关心"拿到这些数据时长什么样"。
-class FakeClient implements SyncClient {
+class FakeClient extends FakeSyncClient {
   FakeClient({
     this.sessions = const [],
     this.failWith,
@@ -86,9 +87,6 @@ class FakeClient implements SyncClient {
   Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
 
   @override
-  Future<void> subscribe(String sid, {required int since}) async {}
-
-  @override
   Future<void> unsubscribe(String sid) async {}
 
   @override
@@ -118,7 +116,7 @@ class FakeClient implements SyncClient {
 ///
 /// 与 [FakeClient] 的差别：那个的 `connection` 是 `Stream.empty()`（界面测试只关心
 /// 静态形态），而"进服务态要不要自动拉列表"这条必须**能推出一次 `serving`** 才验得了。
-class _StatefulFakeClient implements SyncClient {
+class _StatefulFakeClient extends FakeSyncClient {
   _StatefulFakeClient({this.sessions = const [], this.failWith});
 
   final List<Object?> sessions;
@@ -157,9 +155,6 @@ class _StatefulFakeClient implements SyncClient {
 
   @override
   Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
-
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
 
   @override
   Future<void> unsubscribe(String sid) async {}

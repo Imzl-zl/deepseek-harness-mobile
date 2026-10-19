@@ -26,9 +26,10 @@ import 'package:dsh_mobile/ui/chat_page.dart';
 import 'package:dsh_mobile/ui/dsh_app_bar.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
+import 'fake_sync_client.dart';
 
 /// 只回界面需要的形状：会话行、子智能体投影、任务清单。
-class _ChipsClient implements SyncClient {
+class _ChipsClient extends FakeSyncClient {
   _ChipsClient({
     required this.subagents,
     required this.liveJobs,
@@ -61,9 +62,6 @@ class _ChipsClient implements SyncClient {
 
   @override
   Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
-
-  @override
-  Future<void> subscribe(String sid, {required int since}) async {}
 
   @override
   Future<void> unsubscribe(String sid) async {}
