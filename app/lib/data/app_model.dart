@@ -1841,7 +1841,7 @@ class AppModel extends ChangeNotifier {
         // 且没有任何报错（流监听里的未处理异步错误）。失败的那条记进
         // [_projectionFailures]，剩下的照常渲染。
         try {
-          final projected = projectEvent(
+          final projection = projectEvent(
             type: event.type,
             seq: event.seq,
             data: event.data,
@@ -1854,7 +1854,14 @@ class AppModel extends ChangeNotifier {
             // 真日志里结果消息不带名字）。投影层自己是纯函数，所以
             // "前一个条目是什么"由这一层给。
             previous: inBatch[event.itemId] ?? store.byId(event.itemId),
-          ).item!;
+          );
+          // **`skip` 不是失败**：`turn/end` 的 completed / 用户主动 aborted
+          // 这类"没有异常就不占条目"的事件走这支（DSH 同处也是无行）。
+          // 早期这里写 `.item!`，于是 skip 会抛 `null check` 错误 ——
+          // 而它是 `Error` 不是 `StateError`，下面的 catch 接不住，
+          // 直接炸掉整个流监听（症状：会话打开后一条新消息都不进来）。
+          final projected = projection.item;
+          if (projected == null) continue;
           inBatch[event.itemId] = projected;
           items.add(projected);
         } on StateError catch (error) {

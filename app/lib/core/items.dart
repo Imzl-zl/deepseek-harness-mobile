@@ -137,6 +137,31 @@ String itemIdOf(EventLike event) {
     return 'c:$commandId';
   }
 
+  if (type == 'llm/retry' || type == 'llm/retry-started') {
+    // 一条重试链：`llm/retry` 是"计划第 N 次重试"（`retry === 1` 时开始），
+    // `llm/retry-started` 是"这次真的跑起来了"。两者靠 `retryId` 配对
+    // （DSH `conversation-nodes/retry.ts:45-53`）。
+    // **同一个 retryId 下会有多条 `llm/retry`**（第 1、2、3 次各一条），
+    // 所以 id 必须带 `retry` 序号 —— 否则三次会互相覆盖，只剩最后一次。
+    final retryId = _nonEmptyString(_fieldOf(data, 'retryId'));
+    if (retryId == null) throw StateError('$type(seq=$seq) 缺少 retryId');
+    final retry = _fieldOf(data, 'retry');
+    if (retry is! int) {
+      throw StateError('$type(seq=$seq) 缺少 retry（第几次重试）');
+    }
+    return 'r:$retryId:$retry';
+  }
+
+  if (type == 'turn/end') {
+    // 一轮的结局提示。**同一轮只有一条 `turn/end`**（DSH 的格式不变量：
+    // turn 号递增，`turn/end` 与 `turn/start` 一一对应），所以 `turn` 号
+    // 就是稳定身份。`turn/start` 不占条目（它不渲染成任何东西），
+    // 因此这里不需要与它配对。
+    final turn = _fieldOf(data, 'turn');
+    if (turn is! int) throw StateError('turn/end(seq=$seq) 缺少 turn');
+    return 'e:$turn';
+  }
+
   // 规格许可的兜底：仅用于没有更稳定身份的事件类型（契约 §5.2）。
   return '$type:$seq';
 }

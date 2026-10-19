@@ -243,6 +243,130 @@ ChatProjection projectEvent({
     );
   }
 
+  if (type == 'llm/retry') {
+    // 一次计划好的重试。形状见 `model/chat_item.dart` 的 `ModelRetryItem`
+    // 文档（真日志实测：`retryId` / `turn` / `step` / `retry` /
+    // `maxRetries` / `delayMs` / `failure:{message, code}`）。
+    final retry = intField(data, 'retry');
+    final maxRetries = intField(data, 'maxRetries');
+    final failure = fieldOf(data, 'failure');
+    return ChatProjection.item(
+      ModelRetryItem(
+        itemId: itemId,
+        seq: seq,
+        updatedAt: time,
+        retry: retry ?? 0,
+        maxRetries: maxRetries ?? 0,
+        message: stringField(failure, 'message') ?? '',
+        code: stringField(failure, 'code'),
+        // `delayMs` 可能是小数（真日志：`1737.516418390792`）——
+        // 只用来显示"多久后重试"，取整即可。
+        delayMs: (fieldOf(data, 'delayMs') as num?)?.toDouble() ?? 0,
+      ),
+    );
+  }
+
+  if (type == 'llm/retry-started') {
+    // 这次重试真的跑起来了。**与 `llm/retry` 共用 itemId**
+    // （`r:$retryId:$retry`，见 `core/items.dart`）—— 所以它到达时是
+    // "更新已有条目"，不是新增一条。
+    final call = previous is ModelRetryItem ? previous : null;
+    final retry = intField(data, 'retry');
+    return ChatProjection.item(
+      ModelRetryItem(
+        itemId: itemId,
+        seq: seq,
+        updatedAt: time,
+        // 次数从 `llm/retry` 继承（`llm/retry-started` 只有 retryId + retry）。
+        retry: retry ?? call?.retry ?? 0,
+        maxRetries: call?.maxRetries ?? 0,
+        message: call?.message ?? '',
+        code: call?.code,
+        started: true,
+        delayMs: call?.delayMs ?? 0,
+      ),
+    );
+  }
+
+  if (type == 'turn/end') {
+    // 一轮的结局。**只有异常才占条目**（DSH `turn-error.ts:36-51` 的
+    // `endFailure`：completed / blocked / forked / plugin-merged 一律无行）。
+    // 历史翻页可能只落到 `turn/end`（`turn/start` 在窗口外），那时
+    // `turn` 号仍在这条事件自身上，所以轮次号不依赖跨事件状态。
+    final turn = intField(data, 'turn') ?? 0;
+    final reason = fieldOf(data, 'reason');
+    final kind = stringField(reason, 'kind');
+    if (kind == 'error') {
+      // 模型侧报错：**用 DSH 的原文**（`reason.error.message`），
+      // 不编一句"出错了"。真日志例：`Connection error.` / `TRANSPORT`。
+      final error = fieldOf(reason, 'error');
+      return ChatProjection.item(
+        TurnOutcomeItem(
+          itemId: itemId,
+          seq: seq,
+          updatedAt: time,
+          kind: TurnOutcomeKind.error,
+          message: stringField(error, 'message') ?? '',
+          code: stringField(error, 'code'),
+          turn: turn,
+        ),
+      );
+    }
+    if (kind == 'interrupted') {
+      // DSH 进程在这一轮结束前退出（真日志 6 条）。
+      return ChatProjection.item(
+        TurnOutcomeItem(
+          itemId: itemId,
+          seq: seq,
+          updatedAt: time,
+          kind: TurnOutcomeKind.interrupted,
+          message: '电脑侧的 DSH 在这一轮结束前退出了。',
+          turn: turn,
+        ),
+      );
+    }
+    if (kind == 'max-tokens') {
+      // 输出到达 provider 的 token 上限（真日志 3 条）——DSH 单独一条提示，
+      // 不算失败行（`turn-error.ts:49` 的原注释把 max-tokens 排除在失败外）。
+      return ChatProjection.item(
+        TurnOutcomeItem(
+          itemId: itemId,
+          seq: seq,
+          updatedAt: time,
+          kind: TurnOutcomeKind.maxTokens,
+          message: '输出到达上限，这一轮被截断。',
+          turn: turn,
+        ),
+      );
+    }
+    if (kind == 'aborted') {
+      // 中止。**只有登出才显示**（DSH `turn-error.ts:42-44`）：
+      // 用户主动取消在 Web 上只显示"已停止的轮次摘要"，没有失败行。
+      // 判据是 `reason.reason.kind === 'hook'` 且 hook 名是
+      // `deepseek-account/signed-out`。
+      final inner = fieldOf(reason, 'reason');
+      final hook = stringField(inner, 'reason');
+      if (stringField(inner, 'kind') == 'hook' &&
+          hook == 'deepseek-account/signed-out') {
+        return ChatProjection.item(
+          TurnOutcomeItem(
+            itemId: itemId,
+            seq: seq,
+            updatedAt: time,
+            kind: TurnOutcomeKind.signedOut,
+            message: '因为你登出了 DeepSeek 账号，这一轮停止了。',
+            code: 'ACCOUNT_SIGNED_OUT',
+            turn: turn,
+          ),
+        );
+      }
+    }
+    // completed / blocked / forked / plugin-merged / 用户主动 aborted：
+    // 不占条目。**不返回 OtherItem** —— 那会让"事件总数与条目数对不上"
+    // 的排查多一类噪声（`turn/end` 是每个轮次都有一条的高频事件）。
+    return const ChatProjection.skip('turn/end 无异常，不占条目');
+  }
+
   return ChatProjection.item(
     OtherItem(itemId: itemId, seq: seq, updatedAt: time, eventType: type),
   );
@@ -520,6 +644,17 @@ Object? fieldOf(Object? value, String key) => value is Map ? value[key] : null;
 String? stringField(Object? value, String key) {
   final field = fieldOf(value, key);
   return field is String && field.isNotEmpty ? field : null;
+}
+
+/// 取一个整数字段（非 int 返回 `null`）。
+///
+/// **不收 `num`**：JSON 解出来 `1` 是 int、`1.0` 是 double，而 DSH 的
+/// `retry` / `maxRetries` / `turn` 在 schema 里都是 `z.number().int()`
+/// （`llm/retry` 的 `retry.ts:45-48`、`turn/end` 的 turn 号）——
+/// 收到 double 说明形状变了，那时该看不出来，而不是悄悄截断。
+int? intField(Object? value, String key) {
+  final field = fieldOf(value, key);
+  return field is int ? field : null;
 }
 
 /// 同 [stringField]，但名字更短（内部大量使用）。

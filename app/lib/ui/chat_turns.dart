@@ -579,6 +579,168 @@ class _CommandCardState extends State<CommandCard> {
   }
 }
 
+/// 一轮的异常结局（DSH 的 `TurnErrorItem` / `TurnMaxTokensItem`）。
+///
+/// ## 它为什么之前不存在
+///
+/// 2026-10-19 摸到：`turn/end` 的 `reason.kind` 在投影里**完全没读**。
+/// 真日志里这台电脑的历史：`error` 71 条 + `interrupted` 6 条 +
+/// `max-tokens` 3 条 = **80 条"出了什么事"在手机上一片空白**，
+/// 用户只看到"这一轮好像没跑完"。
+///
+/// ## 与 DSH 的对应
+///
+/// `conversation-nodes/turn-error.ts:36-51` 的 `endFailure(reason)`：
+/// - `error` → `reason.error`（**DSH 的原文**，如 `Connection error.`）
+/// - `interrupted` → 固定文案（进程退出）
+/// - `aborted` + hook `signed-out` → 固定文案（登出）
+/// - 其余（completed / blocked / max-tokens / forked / plugin-merged）→ 无失败行
+///
+/// `turn-max-tokens.ts:42` 的判据是 `reason.kind === 'max-tokens'`，
+/// 而它在 DSH 里是**单独一条提示**（不算失败）。
+///
+/// ## 为什么不是卡片
+///
+/// 它不是"谁做的事"，是**一轮的结局标记**：DSH 也把它渲染成
+/// `contextRow` 那一档（一条带图标与文案的行，没有边框卡片）。
+class TurnOutcomeRow extends StatelessWidget {
+  const TurnOutcomeRow({
+    super.key,
+    required this.kind,
+    required this.message,
+    required this.title,
+  });
+
+  final TurnOutcomeKind kind;
+
+  /// 提示正文（error 用 DSH 原文，其余是固定文案）。
+  final String message;
+
+  /// 一行标题（`第 N 轮出错`）。
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    // **颜色是语义**：error 用错误色，截断用工具色（它是"到上限了"不是"坏了"），
+    // 中断/登出用告警色（那不是模型的错）。
+    final (icon, tone) = switch (kind) {
+      TurnOutcomeKind.error => ('warningTriangle', c.error),
+      TurnOutcomeKind.interrupted => ('warning', c.roleTool),
+      TurnOutcomeKind.maxTokens => ('warning', c.roleTool),
+      TurnOutcomeKind.signedOut => ('closeCircleFill', c.roleTool),
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          DshIcon(icon, size: 14, color: tone),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: tone,
+                  ),
+                ),
+                if (message.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    message,
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 17 / 12,
+                      color: c.labelTertiary,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 一次模型重试（DSH 的 `ModelRetryItem`）。
+///
+/// ## 它为什么之前不存在
+///
+/// 2026-10-19 摸到：`llm/retry` / `llm/retry-started` 也没接。真日志里
+/// 这台电脑有 10+ 条重试链。DSH Web 渲染成 `ModelRetryItem`
+/// （`MessageItem.tsx:343-346`），界面上看得到"正在重试（第 2/10 次）"，
+/// 而手机上什么都没有 —— 用户只看到"卡了半天"。
+///
+/// ## 形状（真日志实测）
+///
+/// `retryId` 配对，`retry: 1..N`、`maxRetries`、`delayMs`（可能是小数）、
+/// `failure: {message, code}`（如 `Request timed out.` / `TIMEOUT`）。
+class RetryRow extends StatelessWidget {
+  const RetryRow({
+    super.key,
+    required this.title,
+    required this.message,
+    required this.started,
+  });
+
+  /// `重试 2/10`。
+  final String title;
+
+  /// 失败原因（`failure.message`，DSH 原文）。
+  final String message;
+
+  /// 是否已经开始重试（`llm/retry-started` 到达后为真）。
+  final bool started;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          // 计划中与已开跑**图标不同**：前者是钟（在等 delay），
+          // 后者是转圈（在跑）。DSH 的 `ModelRetryItem` 也是
+          // `retryState === 'scheduled'` 时才显示"active"态。
+          DshIcon(
+            started ? 'loading' : 'alarmClock',
+            size: 14,
+            color: started ? c.roleTool : c.labelCaption,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            title,
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: started ? c.roleTool : c.labelSecondary,
+            ),
+          ),
+          if (message.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, color: c.labelTertiary),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 /// 审批 / 提问的**一行提示**（原型：它们不在气泡里，而是接管输入栏；
 /// 对话流里只留一行可点回来的入口）。
 class TakeoverHint extends StatelessWidget {

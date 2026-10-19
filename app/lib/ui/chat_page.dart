@@ -2494,6 +2494,17 @@ class _TurnView extends StatelessWidget {
           initiallyOpen: autoOpenDetail,
         ),
       OtherItem() => const SizedBox.shrink(),
+      // 一轮的异常结局（`turn/end` 的 reason）。**80 条"出了什么事"在
+      // 2026-10-19 之前完全看不见**：error 71 + interrupted 6 +
+      // max-tokens 3（真日志统计，见 `TurnOutcomeItem` 文档）。
+      TurnOutcomeItem(:final kind, :final message, :final title) =>
+        TurnOutcomeRow(kind: kind, message: message, title: title),
+      // 一次模型重试（`llm/retry` + `llm/retry-started`）。
+      ModelRetryItem(:final title, :final message, :final started) => RetryRow(
+        title: title,
+        message: message,
+        started: started,
+      ),
     };
   }
 }

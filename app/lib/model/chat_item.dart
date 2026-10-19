@@ -147,6 +147,147 @@ class CommandItem extends ChatItem {
   final String detail;
 }
 
+/// 一轮结束时的**异常提示**（DSH 的 `turn-error` / `turn-max-tokens` 节点）。
+///
+/// ## 它为什么之前不存在
+///
+/// 2026-10-19 摸到的"没看到的问题"之一：`turn/end` 的 `reason.kind` 在投影里
+/// **完全没有读**。真日志里这台电脑的历史有：
+///
+/// | `reason.kind` | 条数 | DSH Web 显示什么 |
+/// |---|---|---|
+/// | `completed` | 891 | 无 |
+/// | `aborted` | 53 | 只有 hook `signed-out` 才显示 |
+/// | `interrupted` | 6 | "DSH 进程在这一轮结束前退出了" |
+/// | `error` | 71 | `reason.error.message`（原文） |
+/// | `max-tokens` | 3 | "输出到达上限被截断" |
+///
+/// 于是 **80 条"出了什么事"在手机上一片空白** —— 用户只看到"这一轮好像没跑完"。
+///
+/// ## 与 DSH 的对应
+///
+/// `conversation-nodes/turn-error.ts:36-51` 的 `endFailure(reason)`：
+/// `error` 取 `reason.error`；`aborted` **仅当** hook 是
+/// `deepseek-account/signed-out` 才给一条；`interrupted` 给固定文案；
+/// completed / blocked / **max-tokens** / forked / plugin-merged 一律无失败行
+/// （max-tokens 由 `turn-max-tokens` 单独一条提示）。
+///
+/// `turn-max-tokens.ts:42` 的判据就是 `reason.kind === 'max-tokens'`。
+///
+/// ## 为什么不并入 [MessageItem]
+///
+/// 它不是谁"说"的话，是**一轮的结局标记**：没有头像、没有气泡，
+/// 在 DSH 里也是一条独立的行（`contextRow` 那一档）。并入消息会让
+/// "谁说的"这件事多一个假角色。
+class TurnOutcomeItem extends ChatItem {
+  const TurnOutcomeItem({
+    required super.itemId,
+    required super.seq,
+    required super.updatedAt,
+    required this.kind,
+    this.message = '',
+    this.code,
+    this.turn = 0,
+  });
+
+  /// 结局种类（决定图标与颜色）。
+  final TurnOutcomeKind kind;
+
+  /// 提示正文。**error 用 DSH 的原文**（`reason.error.message`），
+  /// 其余两类是固定文案（DSH 同处也是固定文案）。
+  final String message;
+
+  /// 机器可读的错误码（`TRANSPORT` / `TIMEOUT` / `ACCOUNT_SIGNED_OUT` …）。
+  /// `null` = 没有（`interrupted` 就没有）。
+  final String? code;
+
+  /// 第几轮（`turn/end.data.turn`）。
+  final int turn;
+
+  /// 一行标题（`第 N 轮出错` / `第 N 轮被截断`）。
+  String get title => switch (kind) {
+    TurnOutcomeKind.error => '第 $turn 轮出错',
+    TurnOutcomeKind.interrupted => '第 $turn 轮中断',
+    TurnOutcomeKind.maxTokens => '第 $turn 轮被截断',
+    TurnOutcomeKind.signedOut => '第 $turn 轮停止',
+  };
+}
+
+/// 一轮的异常结局种类。
+enum TurnOutcomeKind {
+  /// 模型侧报错（`reason.kind === 'error'`）。
+  error,
+
+  /// DSH 进程在这一轮结束前退出（`reason.kind === 'interrupted'`）。
+  interrupted,
+
+  /// 输出到达 provider 的 token 上限（`reason.kind === 'max-tokens'`）。
+  maxTokens,
+
+  /// 用户登出 DeepSeek 账号导致停止（`aborted` + hook `signed-out`）。
+  signedOut,
+}
+
+/// 一次模型重试（`llm/retry` 与 `llm/retry-started` 共用同一个 `itemId`）。
+///
+/// ## 它为什么之前不存在
+///
+/// 2026-10-19 摸到：`llm/retry` / `llm/retry-started` 也没接。真日志里
+/// 这台电脑有 10+ 条重试链（`retryId` 配对，`retry: 1..N`、`maxRetries`、
+/// `delayMs`、`failure: {message, code}`）。DSH Web 把它渲染成
+/// `ModelRetryItem`（`MessageItem.tsx:343-346`）—— 重试中用户看到的是
+/// "正在重试（第 2/10 次）"，而手机上什么都没有。
+///
+/// ## 形状（真日志实测）
+///
+/// ```json
+/// {"type":"llm/retry","data":{
+///    "retryId":"18ac36dd-…","turn":1,"step":292,
+///    "provider":"new","mode":"normal",
+///    "retry":1,"maxRetries":10,"delayMs":1737.5,
+///    "failure":{"message":"Request timed out.","code":"TIMEOUT"}}}
+/// {"type":"llm/retry-started","data":{"retryId":"18ac36dd-…","retry":1}}
+/// ```
+///
+/// 配对规则：`retryId`（`conversation-nodes/retry.ts:45-53`）——
+/// `retry === 1` 是 start，之后是同一条的 update。
+class ModelRetryItem extends ChatItem {
+  const ModelRetryItem({
+    required super.itemId,
+    required super.seq,
+    required super.updatedAt,
+    required this.retry,
+    required this.maxRetries,
+    required this.message,
+    this.code,
+    this.started = false,
+    this.delayMs = 0,
+  });
+
+  /// 第几次重试（从 1 开始）。
+  final int retry;
+
+  /// 上限（`maxRetries`）。
+  final int maxRetries;
+
+  /// 失败原因（`failure.message`，DSH 原文）。
+  final String message;
+
+  /// 失败码（`failure.code`，如 `TIMEOUT`）。
+  final String? code;
+
+  /// 是否已经开始重试（`llm/retry-started` 到达后为真）。
+  ///
+  /// 之前是"计划好还没跑"（`retryState: 'scheduled'`），之后是"在跑了"。
+  final bool started;
+
+  /// 计划延迟（毫秒）。`delayMs` 可能是小数（真日志：`1737.516…`）。
+  final double delayMs;
+
+  /// 一行标题：`重试 2/10`。
+  String get title => '重试 $retry/$maxRetries';
+}
+
 /// 消息角色（决定气泡配色与对齐）。
 enum MessageRole {
   /// 用户发的。
