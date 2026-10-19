@@ -32,6 +32,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -428,9 +429,26 @@ class ChatPageState extends State<ChatPage> {
       // **跟手**：两条边都用 Flutter 自带的边缘拖动（左 `drawer`、右 `endDrawer`）——
       // 手指拖多少抽屉走多少，松手按位置/速度决定开还是回弹，全由 `DrawerController` 管
       // （`material/drawer.dart` 的 `_move` / `_settle`）。自己写第二套只会更差。
-      // 与**系统返回手势**的冲突不靠"把手往里躲"，而是把这上半屏 192dp 从系统返回里
-      // 排除掉（`platform/gesture_exclusion.dart`，官方 `setSystemGestureExclusionRects`）。
-      drawerEdgeDragWidth: 32,
+      //
+      // **拖出区是 `min(屏宽 28%, 64px)`，不是默认的 20px + 安全区**
+      // （2026-10-19 用户原话：「rikkahub 也是 APP 端 agent，人家是整个页面
+      // 侧滑都可以，我觉得他这个是好啊，体验很好」）。`Drawer` 的判定是
+      // **水平**拖拽，与消息列表的**垂直**滚动不冲突
+      // （`material/drawer.dart:657-665` 的 `dragAreaWidth` 可由
+      // `edgeDragWidth` 指定；默认只有 20px + padding）。
+      //
+      // **两条上限，都是实测撞出来的**：
+      // - **64px 硬顶**：320px 窄屏上 28% = 89.6px，会把底部**统计条的横滑**
+      //   抢走（`16 轮 650 步 · 338M tok · 缓存命中 97%` 那一行四枚 chip，
+      //   横滑是为"四位数也滑得到"专门做的 ——
+      //   `app/test/widget_test.dart` 的"统计条横滚不裁切"）。窄屏上
+      //   64px 已经是从左缘起手的全部空间。
+      // - **28% 比例顶**：宽屏上 64px 太窄，仍是"从最边缘起手"。
+      //   两者取小，于是窄屏 64px、宽屏 28%。
+      drawerEdgeDragWidth: math.min(
+        MediaQuery.of(context).size.width * 0.28,
+        64,
+      ),
       appBar: ChatAppBar(
         title: widget.app.currentTitle ?? 'DSH',
         onOpenDrawer: openDrawer,

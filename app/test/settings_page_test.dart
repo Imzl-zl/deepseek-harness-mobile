@@ -149,40 +149,35 @@ void main() {
   // 用量组（`usage.summary`，只读）
   // ---------------------------------------------------------------------------
 
-  testWidgets('汇总拉到了：总量 + 会话数 + 前 5 榜', (tester) async {
-    final client = _FakeClient();
-    final app = AppModel(client: client, endpoints: const [_direct, _relay]);
+  // ---------------------------------------------------------------------------
+  // 用量不在设置页（2026-10-19 搬到侧滑抽屉底栏）
+  // ---------------------------------------------------------------------------
+
+  testWidgets('设置页不再摆用量入口（它搬到侧滑抽屉底栏了）', (tester) async {
+    // 用户 2026-10-19 原话：「用量在侧滑窗口菜单单独页面啊，这不是显眼，
+    // 因为这个挺常用的，你藏太深了」。所以它是**抽屉底栏的一枚**
+    // （`main.dart` 的 `DrawerFootItem`），点开独立页（`ui/usage_page.dart`）；
+    // 设置页只留不常改的偏好。
+    //
+    // 这一条守的是"别又长回来"：设置页出现「用量」就是放回深洞里了。
+    final app = AppModel(
+      client: _FakeClient(),
+      endpoints: const [_direct, _relay],
+    );
     addTearDown(app.dispose);
     await tester.pumpWidget(_host(app));
     await tester.pumpAndSettle();
-    // 用量组在「通用」之后，端点组之前 —— 它自己会在 initState 里拉一次。
-    await _scrollTo(tester, find.text('用量'));
-    await tester.pumpAndSettle();
 
-    // 总量用同一个格式化函数（`249M`），与单会话统计条一致。
-    expect(find.text('这台电脑一共 249M tok'), findsOneWidget);
-    expect(find.text('来自 2 个会话（子智能体不计入）'), findsOneWidget);
-    // 榜两行：标题为空的那个按 DSH 的链退到「未命名」。
-    expect(find.text('插件UI与交互体验优化'), findsOneWidget);
-    expect(find.text('未命名'), findsOneWidget);
-    expect(find.text('200M'), findsOneWidget);
-    expect(find.text('49M'), findsOneWidget);
-  });
+    // **不滚动就断言**：用量若在，它会在「通用」组附近（设置页中部），
+    // 而 ListView 懒加载 —— 滚过头反而把它回收了。先查当前位置没有。
+    expect(find.text('用量'), findsNothing);
+    expect(find.text('249M'), findsNothing);
 
-  testWidgets('拉不到（方法抛错）：说"拉不到"，不摆 0 tok', (tester) async {
-    final client = _FakeClient();
-    // 让替身抛协议错：汇总组要显示原因，而不是一个看起来在统计的 0。
-    client.usageReply = null;
-    client.throwOnUsage = true;
-    final app = AppModel(client: client, endpoints: const [_direct, _relay]);
-    addTearDown(app.dispose);
-    await tester.pumpWidget(_host(app));
+    // 再滚到底，确认设置页该有的还在（端点组在最后）。
+    // **只往下滚不滚回**：`scrollUntilVisible` 是单向的，往回滚要另写。
+    await _scrollTo(tester, find.text('关于与连接'));
     await tester.pumpAndSettle();
-    await _scrollTo(tester, find.text('用量'));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('拉不到'), findsWidgets);
-    expect(find.textContaining('这台电脑一共'), findsNothing);
+    expect(find.text('关于与连接'), findsOneWidget);
   });
 
   AppModel buildApp({

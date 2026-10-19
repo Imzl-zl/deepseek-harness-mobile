@@ -55,6 +55,7 @@ import 'ui/connection_actions_sheet.dart';
 import 'ui/pairing_page.dart';
 import 'ui/session_drawer.dart';
 import 'ui/settings_page.dart';
+import 'ui/usage_page.dart';
 
 void main() {
   runApp(const DshMobileApp());
@@ -445,6 +446,17 @@ class _DshMobileAppState extends State<DshMobileApp>
               label: '设置',
               onTap: () => _openSettings(app),
             ),
+            // **用量**（2026-10-19 用户原话：「用量在侧滑窗口菜单单独页面啊，
+            // 这不是显眼，因为这个挺常用的，你藏太深了」）。
+            //
+            // 所以它是抽屉底栏的一枚，而不是设置页里的一行 —— 常用功能
+            // 放在主菜单，设置页只留不常改的偏好。点开是独立一页
+            // （`ui/usage_page.dart`：总量 + 按项目 + 按会话）。
+            DrawerFootItem(
+              icon: 'gauge',
+              label: '用量',
+              onTap: () => _openUsage(app),
+            ),
           ],
           onNewSession: _newSession,
           onOpenSession: (session) {
@@ -482,6 +494,32 @@ class _DshMobileAppState extends State<DshMobileApp>
             app: app,
             themeMode: _theme.mode,
             onThemeMode: setThemeMode,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 打开用量页（抽屉底栏「用量」）。
+  ///
+  /// **先收抽屉再 push**，与 `_openSettings` / `_openArchive` 同一条：
+  /// 全屏页盖着开着的抽屉会留下幽灵层。
+  ///
+  /// 进页面前先拉一次：汇总是"此刻的总量"，随时在变，**不落盘不缓存**
+  /// （`AppModel.refreshUsageSummary`）。
+  void _openUsage(AppModel app) {
+    unawaited(navigatorKey.currentState?.maybePop());
+    unawaited(app.refreshUsageSummary());
+    unawaited(
+      navigatorKey.currentState?.push(
+        MaterialPageRoute<void>(
+          builder: (_) => UsagePage(
+            summary: app.usageSummary,
+            failure: app.lastError?.message,
+            onOpenSession: (sid) {
+              unawaited(navigatorKey.currentState?.maybePop());
+              unawaited(app.openSession(sid));
+            },
           ),
         ),
       ),
