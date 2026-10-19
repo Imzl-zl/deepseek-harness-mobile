@@ -47,12 +47,17 @@
    **结论：当前实现已是约束下的最优**，不要再试图"整页都能拖"。
 5. DSH 0.2.1 的 `registerFetchRoute` 开始校验同路径重复注册:同 path 的 GET/POST 必须合成
    一条 `methods: ['GET','POST']`(0.2.0 时是绿的)。
-6. **"又要扫码"先查装包，别怀疑代码**（2026-10-26 真机踩到）：
-   `adb shell dumpsys package com.example.dsh_mobile` 看
-   `firstInstallTime` 与 `lastUpdateTime` —— **相等就是被完整重装了**，
-   本地凭据随之清空。debug APK 签名与机上已有包不同时 Android 拒绝覆盖安装、
-   卸载重装，就会这样。**判据是先看那两个时间戳，再怀疑代码。**
-   （这次白查了好几轮，最后发现配对代码最后一次改动是 `d4b82d7`，与当前工作无关。）
+6. **"又要扫码"先分清是"首次安装"还是"被重装"**（2026-10-26 真机踩到，
+   **第一次判断错了，已修正**）：
+   `adb shell dumpsys package com.example.dsh_mobile` 看两个时间戳：
+   - `firstInstallTime == lastUpdateTime` ⇒ **这是首次安装**（这一版从没在
+     这台手机上配对过）。**不是"被重装清数据"** —— 我第一次就这么判错了，
+     还写进了笔记。`adb install -r` 实测是保住 `firstInstallTime` 的
+     （重装后 lastUpdate 变、firstInstall 不变）。
+   - `firstInstallTime` **变了**（比上次记的晚）⇒ 那才是被卸载重装过。
+   - **判据**：先跟**上一次装包时记下的** `firstInstallTime` 比，别只看两个字段相等。
+     （`tools.md:96` 那条"never `flutter install`"仍然成立，它防的是**同一份
+     凭据被卸掉**；这里说的是"换个装包/换台手机时本来就没有凭据"。）
 
 ## 当前能力(都已在真机上跑通过)
 
