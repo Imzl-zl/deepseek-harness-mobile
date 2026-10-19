@@ -55,6 +55,7 @@ import 'connection_summary_block.dart';
 import 'conversation_hero.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_composer.dart';
+import 'dsh_markdown.dart';
 import 'dsh_sheet.dart';
 import 'dsh_state_dot.dart';
 import 'edge_stick.dart';
@@ -2002,7 +2003,14 @@ class _ChatTab extends StatelessWidget {
     // **快速跳转钮浮在右侧**（rikkahub 的 `MessageJumper`）：它要一个
     // `ScrollController` 才能跳，而 `_ChatTab` 是无状态的 —— 所以包一层
     // 有状态的 `_ConversationFlow`（见下），控制器与 jumper 都住在那儿。
-    return _ConversationFlow(items: items, autoOpenDetail: autoOpenToolDetail);
+    // **流式文本**（`AppModel.liveText`）也喂进去：生成过程中它一直在变，
+    // 而持久的 `assistant/message` 要等这一步结束才落。不显示它，用户发一句话后
+    // 要盯着"什么都没有"等到整步跑完（2026-10-19 摸到的"没有输出"实时版）。
+    return _ConversationFlow(
+      items: items,
+      autoOpenDetail: autoOpenToolDetail,
+      liveText: app.liveText,
+    );
   }
 }
 
@@ -2030,10 +2038,21 @@ class _ChatTab extends StatelessWidget {
 /// **每条目一个 key，用 element 的 context 让它滚进视口**。
 /// 用"平均高度 × index"估算是猜（条目高度不定，差一点就偏出半屏），这里不用。
 class _ConversationFlow extends StatefulWidget {
-  const _ConversationFlow({required this.items, required this.autoOpenDetail});
+  const _ConversationFlow({
+    required this.items,
+    required this.autoOpenDetail,
+    this.liveText,
+  });
 
   final List<ChatItem> items;
   final bool autoOpenDetail;
+
+  /// 流式文本；`null` = 没有正在生成的流。
+  ///
+  /// 它是**虚拟尾条目**：没有稳定 itemId（不进 store），所以列表数是
+  /// `items.length + (liveText == null ? 0 : 1)`。持久的 `assistant/message`
+  /// 到达后它自动消失（`AppModel` 不再给值）—— 那条消息整体替换它。
+  final String? liveText;
 
   @override
   State<_ConversationFlow> createState() => _ConversationFlowState();
@@ -2125,7 +2144,9 @@ class _ConversationFlowState extends State<_ConversationFlow> {
   /// 挪一条。[delta] 是 -1（上一条）/ +1（下一条）。
   ///
   /// 列表是**倒序**的，所以"上一条"= index **+1**（更早），
-  /// "下一条" = index **-1**（更新）。
+  /// "下一条" = index **-1**（更新）。index 0 可能是**流式尾条目**
+  /// （没有 key，`ensureVisible` 拿不到 element）—— 那时这一步是空操作，
+  /// 不猜一个位置。
   void _step(int delta) {
     if (widget.items.isEmpty) return;
     _ensureVisible((_firstVisibleIndex + delta).clamp(0, _keys.length - 1));
@@ -2160,20 +2181,33 @@ class _ConversationFlowState extends State<_ConversationFlow> {
             controller: _scroll,
             reverse: true,
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: widget.items.length,
-            itemBuilder: (context, index) => KeyedSubtree(
-              key: index < _keys.length ? _keys[index] : null,
-              child: _TurnView(
-                item: widget.items[index],
-                autoOpenDetail: widget.autoOpenDetail,
-              ),
-            ),
+            // **+1 是流式尾条目**（虚拟，没有 itemId）。
+            itemCount: widget.items.length + (widget.liveText == null ? 0 : 1),
+            itemBuilder: (context, index) {
+              // `reverse: true` 下 index 0 是**最新**一端，所以流式条目在 index 0，
+              // 持久条目从 1 开始（`widget.items[index - 1]`）。
+              if (widget.liveText != null && index == 0) {
+                return KeyedSubtree(
+                  key: const ValueKey('live'),
+                  child: _LiveTurn(widget.liveText!),
+                );
+              }
+              final itemIndex = widget.liveText == null ? index : index - 1;
+              return KeyedSubtree(
+                key: itemIndex < _keys.length ? _keys[itemIndex] : null,
+                child: _TurnView(
+                  item: widget.items[itemIndex],
+                  autoOpenDetail: widget.autoOpenDetail,
+                ),
+              );
+            },
           ),
         ),
         // 跳转钮：浮在右侧，滚动停下 1.5 秒后自己淡出。
+        // `itemCount` 含流式尾条目 —— 它与持久条目一样"可跳"。
         Positioned.fill(
           child: ChatJumper(
-            itemCount: widget.items.length,
+            itemCount: widget.items.length + (widget.liveText == null ? 0 : 1),
             onStep: _step,
             onEdge: _edge,
             onCreated: (controller) => _jumper = controller,
@@ -2316,6 +2350,84 @@ class _SessionListInline extends StatelessWidget {
 }
 
 /// 一条条目 → 对应的渲染组件（**按类型分派**）。
+/// 流式尾条目：正在生成的助手文本。
+///
+/// ## 它为什么是"虚拟条目"
+///
+/// `AppModel.liveText` 没有稳定 itemId（它是累加器的当前内容，会被随后的
+/// 持久 `assistant/message` **整体替换**）—— 所以不进 store、不当 ChatItem，
+/// 只在列表末尾多占一格。
+///
+/// ## 与 DSH Web 的对应
+///
+/// Web 的 `AssistantNodeView` 在流式期间就是同一条：头像 + 名字 + 正在增长的
+/// Markdown（`ui-chat/src/client/chat/AssistantNodeView.tsx`）。手机同一条。
+///
+/// ## 为什么要显示它
+///
+/// 2026-10-19 摸到：`AppModel.liveText` 有 getter，而 **UI 从不读它** ——
+/// 用户发一句话后要盯着"什么都没有"等到整步跑完。这正是"没有输出"的**实时版**：
+/// 最终会显示，但生成过程中不显示。
+class _LiveTurn extends StatelessWidget {
+  const _LiveTurn(this.text);
+
+  /// 正在生成的文本（`AppModel.liveText`）。
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 头像 + 「助手」—— 与 `AssistantTurn` 同一套（照原型 `.a-head`）。
+          Row(
+            children: [
+              Container(
+                width: 26,
+                height: 26,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [DshColors.accentBlue, DshColors.roleAssistant],
+                  ),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: const Center(
+                  child: DshIcon('sparkle', size: 14, color: Colors.white),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '助手',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: c.labelPrimary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // **正在生成的正文**（Markdown，与持久消息同一套渲染）。
+          // 空文本时给一行占位 —— 那表示"这一步开始了但还没有文本"
+          // （可能在等工具结果），说"正在生成"比一片白诚实。
+          if (text.isEmpty)
+            Text(
+              '正在生成…',
+              style: TextStyle(fontSize: 13, color: c.labelTertiary),
+            )
+          else
+            DshMarkdown(text),
+        ],
+      ),
+    );
+  }
+}
+
 class _TurnView extends StatelessWidget {
   const _TurnView({required this.item, this.autoOpenDetail = false});
 
