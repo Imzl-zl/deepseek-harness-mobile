@@ -406,9 +406,89 @@ ChatProjection projectEvent({
     return ChatProjection.items([process]);
   }
 
+  if (type == 'compaction/start' ||
+      type == 'compaction/summary' ||
+      type == 'compaction/end') {
+    // 一次自动压缩。三条事件共用同一个 itemId（`x:$compactionId`，
+    // 见 `core/items.dart`），所以它们是"同一条目被更新三次"。
+    //
+    // **只有 `compaction/summary` 带内容**（摘要与被压掉的计数）；
+    // `start` / `end` 只是生命周期边界（DSH 的 `compactSummary` 也只认
+    // summary 与 checkpoint，`command.ts:101-121`）。
+    //
+    // **手动 `/compact` 不走这里**：DSH 的 `match` 对带 `sourceCommandId`
+    // 的返回 null（`compaction.ts:42`），那种由命令卡呈现。所以这里
+    // 见到 `sourceCommandId` 就跳过（不是失败）。
+    if (stringField(data, 'sourceCommandId') != null) {
+      return const ChatProjection.skip('手动 /compact 由命令卡呈现');
+    }
+    final call = previous is CompactionItem ? previous : null;
+    if (type != 'compaction/summary' && call == null) {
+      // start / end 而前面没有 summary：这一条没有可显示的内容。
+      return const ChatProjection.skip('压缩生命周期边界，无内容');
+    }
+    return ChatProjection.item(
+      CompactionItem(
+        itemId: itemId,
+        seq: seq,
+        updatedAt: time,
+        // 摘要从 summary 继承（start / end 不带）。
+        summary: type == 'compaction/summary'
+            ? _compactSummaryText(data)
+            : call?.summary ?? '',
+        // 两个计数照 DSH 的 `compactSummary`：**只认形状可信的值**。
+        shadowedItemCount: type == 'compaction/summary'
+            ? _shadowedItemCount(data)
+            : call?.shadowedItemCount,
+        shadowedTokenCount: type == 'compaction/summary'
+            ? _shadowedTokenCount(data)
+            : call?.shadowedTokenCount,
+      ),
+    );
+  }
+
   return ChatProjection.item(
     OtherItem(itemId: itemId, seq: seq, updatedAt: time, eventType: type),
   );
+}
+
+/// `compaction/summary.data.summary` 里 text 块的拼接（DSH `command.ts:107-111`）。
+///
+/// 只认 `type === 'text'` 的块；其它类型（图片等）跳过而不是摊平。
+/// 空串 = 没有可显示的摘要。
+String _compactSummaryText(Object? data) {
+  final blocks = fieldOf(data, 'summary');
+  if (blocks is! List) return '';
+  final buffer = StringBuffer();
+  for (final block in blocks) {
+    if (block is! Map) continue;
+    if (block['type'] != 'text') continue;
+    final text = block['text'];
+    if (text is String) buffer.write(text);
+  }
+  return buffer.toString().trim();
+}
+
+/// 被替换掉的条目数（`shadowedSeqs.length`）。
+///
+/// **DSH 的判据更严**（`command.ts:113-115`）：`shadowedSeqs` 必须是数组、
+/// 且**每个元素都是安全非负整数**，否则整项作 null。不数一个可能不准的数。
+int? _shadowedItemCount(Object? data) {
+  final seqs = fieldOf(data, 'shadowedSeqs');
+  if (seqs is! List) return null;
+  for (final seq in seqs) {
+    if (seq is! int || seq < 0) return null;
+  }
+  return seqs.length;
+}
+
+/// 被压掉的 token 数（`shadowedTokenCount`）。
+///
+/// 同样只认安全非负整数（DSH `command.ts:117-120`）。
+int? _shadowedTokenCount(Object? data) {
+  final count = fieldOf(data, 'shadowedTokenCount');
+  if (count is! int || count < 0) return null;
+  return count;
 }
 
 /// 投影结果：**零到多条**条目，或"这条事件被流式累加器接管了，别渲染"。

@@ -2508,6 +2508,11 @@ class _TurnView extends StatelessWidget {
       // 一轮的过程摘要（`turn/end` 时的收口行）。
       TurnProcessItem(:final title, :final stats, :final failed) =>
         TurnProcessRow(title: title, stats: stats, failed: failed),
+      // 一次上下文压缩（`compaction/*` 三条事件）。
+      CompactionItem(:final summary, :final stats) => CompactionRow(
+        summary: summary,
+        stats: stats,
+      ),
     };
   }
 }

@@ -22,6 +22,7 @@
 library;
 
 import '../core/endpoint.dart';
+import 'session_stats.dart' show formatTokenCount;
 
 /// 一条会话条目在界面上长什么样。
 ///
@@ -385,6 +386,79 @@ String formatElapsedMs(int ms) {
   final seconds = (ms % 60000) ~/ 1000;
   if (minutes > 0) return '$minutes 分 $seconds 秒';
   return '$seconds 秒';
+}
+
+/// 一次上下文压缩（DSH 的 `compaction` 节点）。
+///
+/// ## 它为什么之前不存在
+///
+/// 2026-10-19 顺着 DSH Web 节点清单摸到的第五个（也是最后一个）缺口。
+/// DSH Web 在压缩落定时显示一条**检查点标记**（`CompactionItem`）：
+/// 摘要 + 被替换掉的条目数 + 被压掉的 token 数。手机上没有 ——
+/// 于是"这一轮之后，之前的对话被总结成一段摘要替换掉了"这件事在手机侧
+/// **完全不可见**，而它影响后续**所有**轮次（模型从此只看摘要，不看原文）。
+///
+/// ## 真形状（`compaction/summary`，真日志实测）
+///
+/// ```json
+/// {"type":"compaction/summary","seq":4718,"data":{
+///    "compactionId":"324ce65d-…",
+///    "summary":[{"type":"text","text":"## Primary Request and Intent\n…"}],
+///    "shadowedSeqs":[8,9,10,…,4619,…],
+///    "shadowedTokenCount":604975,
+///    "provider":"…","model":"…","maxTokens":…,"usage":{…}}}
+/// ```
+///
+/// 真例：**604975 个 token 被压掉**（本会话自己就有一条）。
+///
+/// ## 与 DSH 的对应
+///
+/// `conversation-nodes/command.ts:101-131` 的 `compactSummary(match, checkpoint)`：
+/// - `summary` = `data.summary` 里 `type === 'text'` 的块**拼接**（空 = 没有）；
+/// - `shadowedItemCount` = `shadowedSeqs.length`（**要求每个元素都是安全整数**，
+///   否则整项作 null —— 不数一个可能不准的数）；
+/// - `shadowedTokenCount` = `data.shadowedTokenCount`（同样要求安全非负整数）。
+///
+/// ## 为什么单独一类
+///
+/// 它既不是消息、不是工具、不是命令、不是轮次结局。它是**上下文面的一个
+/// checkpoint**：DSH 也是独立节点（`register-node-renderers.ts:69`），
+/// 而配对键是 `compactionId`（与 `tool/call` 的 `toolCallId`、命令的
+/// `commandId` 同级的第三种身份）。
+class CompactionItem extends ChatItem {
+  const CompactionItem({
+    required super.itemId,
+    required super.seq,
+    required super.updatedAt,
+    required this.summary,
+    this.shadowedItemCount,
+    this.shadowedTokenCount,
+  });
+
+  /// 压缩摘要（`summary` 里的 text 块拼接）。空串 = 没有摘要。
+  final String summary;
+
+  /// 被替换掉的条目数（`shadowedSeqs.length`）；`null` = 形状不可信，不显示。
+  final int? shadowedItemCount;
+
+  /// 被压掉的 token 数；`null` = 同上。
+  final int? shadowedTokenCount;
+
+  /// 一行标题。
+  static const String kTitle = '已压缩上下文';
+
+  /// 一行的统计部分：`替换 142 条 · 压掉 605K tok`。
+  ///
+  /// **两项都可能没有**（形状不可信）—— 那时只说标题，
+  /// 不摆"替换 0 条"。
+  String get stats {
+    final parts = <String>[];
+    final items = shadowedItemCount;
+    if (items != null) parts.add('替换 $items 条');
+    final tokens = shadowedTokenCount;
+    if (tokens != null) parts.add('压掉 ${formatTokenCount(tokens)} tok');
+    return parts.join(' · ');
+  }
 }
 
 /// 消息角色（决定气泡配色与对齐）。

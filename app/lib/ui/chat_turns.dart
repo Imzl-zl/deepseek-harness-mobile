@@ -741,6 +741,118 @@ class RetryRow extends StatelessWidget {
   }
 }
 
+/// 一次上下文压缩的标记（DSH 的 `CompactionItem`）。
+///
+/// ## 它为什么之前不存在
+///
+/// 2026-10-19 摸到的最后一个缺口：`compaction/*` 三个事件完全没接。
+/// DSH Web 在压缩落定时显示一条检查点（摘要 + 替换条目数 + 压掉的 token），
+/// 手机上没有 —— 于是"之前的对话被总结成一段摘要替换掉了"这件事
+/// **完全不可见**，而它影响后续**所有**轮次。
+///
+/// ## 与 DSH 的对应
+///
+/// `conversation-nodes/command.ts:101-131` 的 `compactSummary`：
+/// 摘要 = text 块拼接；两个计数只认形状可信的值。这里照做，
+/// 显示成一行（标题 + 统计），摘要正文可展开。
+class CompactionRow extends StatefulWidget {
+  const CompactionRow({super.key, required this.summary, required this.stats});
+
+  /// 压缩摘要（text 块拼接）；空串 = 没有。
+  final String summary;
+
+  /// 统计部分（`替换 142 条 · 压掉 605K tok`）；空串 = 两项都没有。
+  final String stats;
+
+  @override
+  State<CompactionRow> createState() => _CompactionRowState();
+}
+
+class _CompactionRowState extends State<CompactionRow> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    final hasSummary = widget.summary.isNotEmpty;
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        // 助手色的极淡底：它是"模型看到的世界在这里换了"，
+        // 不是错误、也不是工具。
+        color: c.roleAssistant.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(DshRadius.md),
+        border: Border.all(color: c.roleAssistant.withValues(alpha: 0.24)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: hasSummary ? () => setState(() => _open = !_open) : null,
+            child: Row(
+              children: [
+                DshIcon('compact', size: 14, color: c.roleAssistant),
+                const SizedBox(width: 8),
+                Text(
+                  CompactionItem.kTitle,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: c.roleAssistant,
+                  ),
+                ),
+                if (widget.stats.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      widget.stats,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 11.5,
+                        color: c.labelTertiary,
+                      ),
+                    ),
+                  ),
+                ],
+                if (hasSummary) ...[
+                  const SizedBox(width: 8),
+                  AnimatedRotation(
+                    turns: _open ? 0.25 : 0,
+                    duration: const Duration(milliseconds: 160),
+                    child: DshIcon(
+                      'chevronRight',
+                      size: 14,
+                      color: c.labelTertiary,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (hasSummary && _open) ...[
+            const SizedBox(height: 8),
+            // 摘要正文。**不用 Markdown**：它本身就是给模型看的压缩稿，
+            // 原样等宽显示更接近"这是什么"的真相。
+            Text(
+              widget.summary,
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 11.5,
+                height: 17 / 11.5,
+                color: c.labelSecondary,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 /// 一轮的过程摘要（DSH 的 `TurnProcessNodeView`）。
 ///
 /// ## 它为什么之前不存在
