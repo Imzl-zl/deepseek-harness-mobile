@@ -18,12 +18,24 @@
 
 待办:
 
-1. **过程摘要的"用时/计数"在历史窗口不全时是如实的降级，不是 bug**：
-   2026-10-19 真机看到 `🕐 第 12 轮 · 不到 1 秒`（没有计数）——
-   因为该轮的 `turn/start` 落在**更早且未加载的页**里，`_turnStartOf` 的兜底
-   只能翻 store 中**已加载**的条目。`stats` 因此只说时长、不摆"0 条消息"
-   （`TurnProcessItem.stats` 只列有的项）。**别去"修"它** —— 编一个用时或
-   编一个计数才是错。要真数，得让翻页把 `turn/start` 也加载进来。
+1. **历史翻页整条链没接**（2026-10-19 查证，**有边界的独立批次**）：
+   - 电脑侧**一直在发** `hasMore`（`connector/src/session-subscriptions.ts:80-85`
+     的 `SessionSubscriptionReply`，`session.subscribe` 的回包）；
+   - 手机侧 **`SyncClient.subscribe` 返回 `Future<void>`，把回包整个丢掉**；
+   - `session.page` 手机侧**从没实现**（契约 §5.7 有它）；
+   - DSH 的默认窗口是 `DEFAULT_MAX_MESSAGES = 50`（`history.ts:38`），
+     而 Web 自己传 500（`client/sessions/session.ts:54` 的 `HISTORY_PAGE_OPTIONS`）。
+   - **后果**：手机上只有电脑侧那一个窗口，"历史上 20 轮只看到最近 3 轮"；
+     且一轮常被劈成两半（`turn/start` 落在窗口外 ⇒ 过程摘要的用时与计数取不到）。
+   - **为什么没在本轮做**：`subscribe` 改回 `SessionAnchor` 要动 **26 个测试替身**，
+     而本版不翻页的话那个 anchor 对用户可见价值为零。它该与
+     "滚到顶自动翻"的 UI 触发、`session.page` 实现、`session/window-missed`
+     的处理**同一个批次**做。
+2. **过程摘要的"用时/计数"在历史窗口不全时是如实的降级，不是 bug**：
+   2026-10-19 真机看到 `🕐 第 12 轮 · 不到 1 秒`（渲染链路通了）——
+   该轮的 `turn/start` 落在**更早且未加载的页**里。`stats` 因此只说时长、
+   不摆"0 条消息"（`TurnProcessItem.stats` 只列有的项）。**别去"修"它** ——
+   编一个用时或编一个计数才是错。第 1 条做完，这里自然就好了。
 2. **剩下四件事的真机验收**（投影/渲染/接线都有单测，其中三处含**变异验证**）：
    - **流式文本**：判据是用户发一句话，正文边生成边显示。
    - **斜杠命令卡**：判据是在有 `/goal` 或 `/compact` 的会话里看到卡片。
