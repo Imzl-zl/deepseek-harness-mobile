@@ -143,14 +143,41 @@ class DshComposer extends StatelessWidget {
     // **主键在运行中且没有草稿时是"停止"**（Web 的 `primaryStops`）。
     final stops = running && !hasDraft && onStop != null;
     return Container(
-      color: c.sidebar,
+      // **底色是页面底色，不是 `sidebar`**（2026-10-20 用户反馈
+      // "会话页面和输入框背景这一块设计不和谐"）。
+      //
+      // DSH 的输入栏 `.root` **没有声明背景**（`InputBar.module.css:2-11`：
+      // 只有 `padding`），卡片直接坐在页面底色上、靠 `box-shadow` 浮起来。
+      // 我们原来给它垫了一条 `c.sidebar` 灰带 —— 于是底部像一个**独立的栏**，
+      // 与上面的会话区断开。真机量到的正是这样：
+      // 页面 `#FFFFFF` / 灰带 `#F1F3F5` / 卡内 `#FFFFFF`。
+      color: c.bgBase,
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
       child: Container(
         // `.composer { padding:6px 6px 6px 8px; border-radius:24px }`
         padding: const EdgeInsets.fromLTRB(8, 6, 6, 6),
         decoration: BoxDecoration(
-          color: c.layer1,
+          // **`composer` 而不是 `layer1`**：DSH 用的是专用 token
+          // `--dsw-specific-input-major`（`InputBar.module.css:62`）。
+          // 亮色下它也是白 —— 所以"看得见"靠下面那层阴影，不是底色差。
+          color: c.composer,
           borderRadius: BorderRadius.circular(24),
+          // **`elevation-soft`**（`gradient-shadow-text.css:33,38-39`）：
+          //   0 0 0 0.5px <border-l2>,
+          //   0 4px 16px rgba(0,0,0,0.03),
+          //   0 0 24px  rgba(0,0,0,0.03)
+          // 第一层是**发丝环**：DSH 的 `.card` 明确写 `border: 0`，并注释
+          // "描边由 elevation 发丝线画，不占布局"（`InputBar.module.css:55-63`）。
+          // 少这三层，白卡在白底上就是一块看不出来的白。
+          boxShadow: [
+            BoxShadow(color: c.borderL2, spreadRadius: 0.5),
+            const BoxShadow(
+              color: Color(0x08000000),
+              blurRadius: 16,
+              offset: Offset(0, 4),
+            ),
+            const BoxShadow(color: Color(0x08000000), blurRadius: 24),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

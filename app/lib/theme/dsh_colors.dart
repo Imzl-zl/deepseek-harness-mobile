@@ -34,6 +34,18 @@ abstract final class DshColors {
   /// DSH 因此有**专用**的一个 token（`design-platform.css:386`）。
   static const bubble = Color(0xFF2C2C2E); // neutral-bluish-850
 
+  /// 输入栏卡片的底色（`--dsw-specific-input-major`，暗色 = neutral-bluish-850）。
+  ///
+  /// DSH 的输入栏用的是**专用** token（`design-platform.css:387`），
+  /// 不是 `bg-layer-1` —— 因为它要"浮在会话之上"，与页面底色是两个角色。
+  static const composer = Color(0xFF2C2C2E); // neutral-bluish-850
+
+  /// 描边第 2 档（`--dsw-alias-border-l2`，暗色 = 白 12%）。
+  ///
+  /// 输入栏卡片的 0.5px 发丝环用它（`InputBar.module.css:60` 的
+  /// `--dsw-elevation-stroke-color: var(--dsw-alias-border-l2)`）。
+  static const borderL2 = Color(0x1FFFFFFF); // rgba(255,255,255,0.12)
+
   // ---- 文字 ----
   static const labelPrimary = Color(0xFFF9FAFB);
   static const labelSecondary = Color(0xFFCFD3D6);
@@ -171,6 +183,16 @@ abstract final class DshLightColors {
   /// 2026-10-19 真机反馈"用户消息我刚开始一直以为渲染问题"就是它。
   static const bubble = Color(0xFFEDF3FE); // deepseek-50
 
+  /// 输入栏卡片的底色（`--dsw-specific-input-major`，亮色 = neutral-bluish-00）。
+  ///
+  /// 亮色下它**也是白**（`design-platform.css:269`）—— 所以"卡片看得见"
+  /// 靠的不是底色差，而是 `boxShadow` 那层 `elevation-soft`
+  /// （`InputBar.module.css:62-63`）。**只改底色是改不出来的。**
+  static const composer = Color(0xFFFFFFFF); // neutral-bluish-00
+
+  /// 描边第 2 档（`--dsw-alias-border-l2`，亮色 = 黑 10%）。
+  static const borderL2 = Color(0x1A000000); // rgba(0,0,0,0.1)
+
   // ---- 文字（`:root` 的 `--dsw-alias-label-*`）----
   static const labelPrimary = Color(0xFF0F1115); // neutral-bluish-1000
   static const labelSecondary = Color(0xFF61666B); // neutral-bluish-700
@@ -256,6 +278,8 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     required this.layer3,
     required this.menu,
     required this.bubble,
+    required this.composer,
+    required this.borderL2,
     required this.labelPrimary,
     required this.labelSecondary,
     required this.labelTertiary,
@@ -301,6 +325,8 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
         layer3: DshColors.layer3,
         menu: DshColors.menu,
         bubble: DshColors.bubble,
+        composer: DshColors.composer,
+        borderL2: DshColors.borderL2,
         labelPrimary: DshColors.labelPrimary,
         labelSecondary: DshColors.labelSecondary,
         labelTertiary: DshColors.labelTertiary,
@@ -346,6 +372,8 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
         layer3: DshLightColors.layer3,
         menu: DshLightColors.menu,
         bubble: DshLightColors.bubble,
+        composer: DshLightColors.composer,
+        borderL2: DshLightColors.borderL2,
         labelPrimary: DshLightColors.labelPrimary,
         labelSecondary: DshLightColors.labelSecondary,
         labelTertiary: DshLightColors.labelTertiary,
@@ -388,6 +416,8 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
   final Color layer3;
   final Color menu;
   final Color bubble;
+  final Color composer;
+  final Color borderL2;
   final Color labelPrimary;
   final Color labelSecondary;
   final Color labelTertiary;
@@ -440,6 +470,8 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     Color? layer3,
     Color? menu,
     Color? bubble,
+    Color? composer,
+    Color? borderL2,
     Color? labelPrimary,
     Color? labelSecondary,
     Color? labelTertiary,
@@ -481,6 +513,8 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     layer3: layer3 ?? this.layer3,
     menu: menu ?? this.menu,
     bubble: bubble ?? this.bubble,
+    composer: composer ?? this.composer,
+    borderL2: borderL2 ?? this.borderL2,
     labelPrimary: labelPrimary ?? this.labelPrimary,
     labelSecondary: labelSecondary ?? this.labelSecondary,
     labelTertiary: labelTertiary ?? this.labelTertiary,
