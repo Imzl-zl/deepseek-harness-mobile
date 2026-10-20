@@ -21,11 +21,20 @@
    - 附件：`＋` → 照片/拍照 → 相册/相机 → 芯片 → 发送后气泡旁显示附件计数。
    - 历史翻页：滚到顶多出几轮，且过程摘要开始显示真实用时与计数。
 2. **「上传文件」** —— 形状已查清，开工单在
-   `.agents/notes/proposed/2026-10-20-file-upload-shape.md`。
+   `.agents/notes/proposed/2026-10-20-file-upload-shape.md`（含 **rikkahub 的参考实现**：
+   SAF 选 → 托管存储 → 按 id 引用，与我们"选 → 上传拿回执 → 按 receiptId 引用"同构，
+   **差异只在"拷贝归谁"**：它自己保管副本，我们的副本在 DSH 宿主）。
+   DSH 侧入口已确认：`packages/client/file-upload/src/index.ts:105` 的
+   `upload`（还挂着 `@Remote('upload')`）与 `:118` 的
+   `uploadStream({sessionId, data, name?})`，返回值含 `receiptId`。
    卡点：`@deepseek-ai/dsh-client-file-upload` **不在连接器依赖里**
    （要加就得动 lockfile / 私有 registry），所以端口用**结构化类型**照抄形状；
    共 8 个触达点（caps 键 / `Caps` 字段 / `dsh/` 端口 / handler / 依赖注入 /
    方法表 / 契约文档 / 两边测试）。**别半截提交**。
+3. **会话页渲染的剩余问题**（用户 2026-10-20 晚：「我看你的会话页面渲染
+   还有一部分问题是吧？」）：**尚未系统排查**，下一步就做这个。
+   已知的相邻事实：Markdown 靠 `flutter_markdown_plus`（默认 `gitHubFlavored`），
+   见 `.agents/notes/implemented/2026-10-20-markdown-coverage-and-inline-html.md`。
 
 别当缺口（定案，别再试）:
 
@@ -37,6 +46,17 @@
 - **用量甘特图**要**每步**起止，而 `sessionStats` 是会话级总量 ——
   拿总量画分段只能画出假图。要做得先加投影。
 - **输入栏横滚钮组**只在加第五个钮时才需要（现在四个不换行）。
+
+## 2026-10-20 晚上这一批（用户 5 条反馈）
+
+- **空态文字不居中**：`Center(Text(...))` 缺 `textAlign.center` —— 折行后左对齐。
+- **底部漏一条 `sidebar` 色**：输入区外层 `Container` 还是 `c.sidebar`，而它下面有
+  `padding.bottom + 6`；输入栏内部早已改 `bgBase` ⇒ 灰带被挤进底部那条缝里。
+- **系统栏跟主题**：`SystemUiOverlayStyle` + `AnnotatedRegion`（`targetSdk 36` 时
+  `SystemUiMode` 被系统忽略，靠 overlay style 配透明）。
+- **行内 HTML 归一**：`normalizeInlineHtml`（`<br>/<b>/<i>/<code>` → Markdown，
+  代码块内一字不动）。GFM 警示块 `> [!NOTE]` **没改**，只记录事实。
+  见 `.agents/notes/implemented/2026-10-20-{empty-state-and-bottom-strip,markdown-coverage-and-inline-html}.md`。
 
 ## 附件与图片（做过的，别重做）
 
@@ -204,7 +224,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **300 项**(22 条规则自检 + 扫 84 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 43 个)/ 工具脚本不许硬编码盘符(19 个) |
-| `cd app && flutter test` | **888 项** |
+| `cd app && flutter test` | **895 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **550 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
