@@ -38,17 +38,34 @@ const Set<String> kSupportedImageMediaTypes = {
   'image/gif',
 };
 
-/// 一张图**原始字节**的上限（超过就拒收，不发出去）。
+/// **单张**图片原始字节的上限（一张就顶满整帧的情形）。
 ///
-/// **算出来的**：契约 §40 与 `connector/src/transport/codec.ts:53,77` 规定
-/// **单帧上限 8 MiB**，超了接收侧 `protocol/bad-frame` **并关闭连接**。
-/// 图片在线上过两次 1.33 倍膨胀（JSON 里的 base64 + `box` 的 base64url），
-/// 一帧 ≈ **1.78 ×** 原始字节 ⇒ 3 MiB × 1.78 ≈ 5.3 MiB，留足余量。
-///
-/// 原生侧（`MainActivity.encodeForTransport`）已经会先压到这个预算之内；
-/// **这里再查一次**是因为"压失败了却照样发出去"的后果不是一条错误，
-/// 而是**整条连接断掉** —— 那种失败比"这张图发不出去"严重得多。
+/// 推导见 [kMaxTotalImageBytesForMessage]：一帧 ≈ **1.78 ×** 原始字节
+/// （JSON 的 base64 ×1.33，`box` 的 base64url 再 ×1.33）。
+/// 原生侧（`MainActivity.encodeForTransport`）会先把超标的图压下来；
+/// **这里再查一次**是因为"压失败了却照样发"的后果不是一条错误，
+/// 而是**整条连接断掉**。
 const int kMaxImageBytesForTransport = 3 * 1024 * 1024;
+
+/// **一条消息**里所有图片原始字节的合计上限。
+///
+/// **为什么是"合计"而不是"每张"**：整条 `content`（所有图片 + 文本）
+/// 只占**一帧**。按每张卡 3 MiB 的话，两张 3 MiB 的图就是 6 MiB 原始字节
+/// ≈ **10.7 MB 的帧** —— 照样撞 8 MiB 上限、照样断连接。
+/// 2026-10-20 自查时发现第一版就是这个错（预算给在了单张上）。
+///
+/// 判决上限 **8 MiB** 出自契约 §40 / `connector/src/transport/codec.ts:53,77`；
+/// 3 MiB × 1.78 ≈ 5.3 MiB，留 2.7 MiB 余量。
+const int kMaxTotalImageBytesForMessage = 3 * 1024 * 1024;
+
+/// 再加 [incoming] 字节的图，这条消息还塞得进一帧吗？
+///
+/// **纯函数**（可单测）：`already` 是这条消息里现有图片的原始字节合计。
+/// 判据是**合计**，不是"单张是否超标" —— 整条 content 只占一帧。
+bool fitsMessageBudget({required int already, required int incoming}) {
+  if (incoming < 0 || already < 0) return false;
+  return already + incoming <= kMaxTotalImageBytesForMessage;
+}
 
 /// 选图的来源。
 enum PhotoSource {

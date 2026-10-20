@@ -66,6 +66,7 @@ class PickedImagePart {
     required this.mediaType,
     required this.data,
     this.name = '',
+    this.byteCount = 0,
   });
 
   final String mediaType;
@@ -74,6 +75,13 @@ class PickedImagePart {
   final String data;
 
   final String name;
+
+  /// 原始字节数 —— **判"一条消息的合计有没有超一帧"用**
+  /// （`kMaxTotalImageBytesForMessage`）。
+  ///
+  /// 为什么不在 `toWire` 里用 base64 长度反算：那只是估算（末尾填充），
+  /// 而"合计超没超"是要下判断的事，估出来的数判断不了。
+  final int byteCount;
 
   /// 发出去的那一段载荷。
   Map<String, Object?> toWire() => {

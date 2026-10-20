@@ -149,6 +149,27 @@ if (text.isEmpty || _sending) return;              // _send() 也只看文字
 `photo_attachment_test.dart` 新增一条（空文本 + 一张图 → content 里**没有**
 text part）。**一处变异验证**：把 `canSend` 退回只看文字 → 1 条红。
 
+## 又一处"只差一层"：预算给在了单张上，而整条 content 只占一帧
+
+**8 MiB 单帧上限**（契约 §40 / `connector/src/transport/codec.ts:53,77`，
+超了接收侧 `protocol/bad-frame` **并关闭连接**）之后，第一版把
+**每张图**的预算定在 3 MiB。但 —— **整条 `content`（所有图片 + 文本）
+只占一帧**。所以两张 3 MiB 的图 = 6 MiB 原始字节 ≈ **10.7 MB 的帧**，
+照样断连接。
+
+修法：
+
+- Dart：`kMaxTotalImageBytesForMessage = 3 MiB` + 纯函数
+  `fitsMessageBudget({already, incoming})` —— 判据是**合计**；
+  `_pickPhoto` 加图前先算现有图片的合计，超了就**不加**并说清原因；
+- 原生：单张阈值从 3 MiB 收到 **1.5 MiB**、重编码目标从 1.5 收到 **1 MiB**
+  —— 这样压过的图 ≤1 MiB，一条消息能放几张。
+
+**这一类错误的形状**（两次踩到，值得记住）：
+"我算了一层膨胀，漏了第二层"（base64 → 漏 box 的 base64url）；
+"我按单个对象算了预算，漏了它们共用一帧"。
+**自查的问法是**：这个值在线上最终会被**哪一帧**承载？那一帧里还有谁？
+
 ## Alternatives considered（否掉的）
 
 - **引 `image_picker` / `file_picker`**：把"鸿蒙能不能编过"交给别人的发布节奏；

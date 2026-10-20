@@ -36,20 +36,25 @@ class MainActivity : FlutterActivity() {
     private val photoChannelName = "dsh/photo-picker"
 
     /**
-     * 原始图片字节的预算。
+     * 单张图片**原样通过**的字节阈值。
      *
      * **算出来的，不是估的**：契约 §40 / `connector/src/transport/codec.ts:53,77`
      * 规定**单帧上限 8 MiB**（超了接收侧 `protocol/bad-frame` **并关闭连接**）。
-     * 图片在线上要过两次 1.33 倍膨胀（JSON 的 base64 + `box` 的 base64url），
-     * 一帧 ≈ **1.78 ×** 原始字节 ⇒ 3 MiB × 1.78 ≈ 5.3 MiB，留 2.7 MiB 余量。
+     * 二进制载荷在线上要过两次 1.33 倍膨胀（JSON 的 base64 + `box` 的 base64url），
+     * 一帧 ≈ **1.78 ×** 原始字节。
+     *
+     * 而**一条消息的所有图片合起来只占一帧**，所以单张的阈值必须远小于
+     * 整条消息的预算（3 MiB）：取 **1.5 MiB** —— 这样压过的图 ≤1 MiB，
+     * 一条消息能放几张（Dart 侧 `fitsMessageBudget` 按合计放行）。
+     * 单张给 3 MiB 是 2026-10-20 自查前的错：两张就 6 MiB ≈ 10.7 MB 的帧。
      */
-    private val MAX_RAW_IMAGE_BYTES = 3 * 1024 * 1024
+    private val MAX_RAW_IMAGE_BYTES = 1536 * 1024
 
     /** 重编码时的最长边。按"主流视觉模型按 ~1.5k 像素切块"取。 */
     private val MAX_IMAGE_EDGE = 1600
 
-    /** 重编码目标字节（1.5 MiB × 1.78 ≈ 2.7 MiB，离 8 MiB 很远）。 */
-    private val TARGET_IMAGE_BYTES = 1536 * 1024
+    /** 重编码目标字节（1 MiB × 1.78 ≈ 1.8 MiB/张，3 张 ≈ 5.3 MiB，仍在一帧之内）。 */
+    private val TARGET_IMAGE_BYTES = 1024 * 1024
 
     /** 选图（相册）请求的 requestCode。 */
     private val pickGalleryRequest = 4711
@@ -337,11 +342,12 @@ class MainActivity : FlutterActivity() {
      * **再乘 1.33** ⇒ **一帧 ≈ 1.78N**。
      *
      * 所以 `N = 5 MB` 的手机照片 ≈ **8.9 MB 的帧** —— 直接把连接打断。
-     * 取原始字节预算 **3 MiB**（3 × 1.78 ≈ 5.3 MiB，余 2.7 MiB）。
+     * 单张阈值取 1.5 MiB（见 [MAX_RAW_IMAGE_BYTES]），**整条消息的合计**
+     * 由 Dart 侧的 `fitsMessageBudget` 守在 3 MiB。
      *
      * ## 小图原样过
      *
-     * 只有超预算才重编码：那样 PNG 的透明与 GIF 的动画都保住了
+     * 只有超阈值才重编码：那样 PNG 的透明与 GIF 的动画都保住了
      * （重编码只能出 JPEG，会丢透明）。
      *
      * **尺寸目标**不是 DSH 的 `maxImageDimension`（那是部署解析的、手机不知道），

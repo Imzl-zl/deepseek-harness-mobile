@@ -137,6 +137,40 @@ void main() {
     });
   });
 
+  group('一条消息的图片预算（按**合计**，不是按每张）', () {
+    test('合计没超：收', () {
+      // 整条 content 只占**一帧**，所以判据必须是合计。
+      expect(fitsMessageBudget(already: 0, incoming: 1024), isTrue);
+      expect(
+        fitsMessageBudget(
+          already: kMaxTotalImageBytesForMessage ~/ 2,
+          incoming: kMaxTotalImageBytesForMessage ~/ 2,
+        ),
+        isTrue,
+        reason: '正好等于上限要收',
+      );
+    });
+
+    test('**合计超了就拒**（两张各 2 MiB ⇒ 4 MiB ⇒ 约 7.1 MB 帧，贴上限）', () {
+      // 第一版把预算给在"每张"上（3 MiB）：两张 3 MiB 的图 = 6 MiB 原始字节
+      // ≈ **10.7 MB 的帧** —— 照样撞 8 MiB、照样断连接。
+      expect(
+        fitsMessageBudget(already: kMaxTotalImageBytesForMessage, incoming: 1),
+        isFalse,
+      );
+      expect(
+        fitsMessageBudget(already: 2 * 1024 * 1024, incoming: 2 * 1024 * 1024),
+        isFalse,
+        reason: '4 MiB 合计 × 1.78 ≈ 7.1 MB 帧，已经贴近上限，不许再收',
+      );
+    });
+
+    test('负数当非法（不静默当 0）', () {
+      expect(fitsMessageBudget(already: -1, incoming: 10), isFalse);
+      expect(fitsMessageBudget(already: 10, incoming: -1), isFalse);
+    });
+  });
+
   group('pickPhoto：平台没有 / 原生报错 / 权限被拒，各有各的结果', () {
     test('没接通道（桌面 / 单测）→ unavailable', () async {
       final result = await pickPhoto(

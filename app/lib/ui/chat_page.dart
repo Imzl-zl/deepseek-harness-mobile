@@ -1685,7 +1685,25 @@ class ChatPageState extends State<ChatPage> {
     final result = await pickPhoto(source: source);
     if (!mounted) return;
     switch (result) {
-      case PhotoPicked(:final mediaType, :final data, :final name):
+      case PhotoPicked(
+        :final mediaType,
+        :final data,
+        :final name,
+        :final byteCount,
+      ):
+        // **按"这条消息的合计"判，不是"这一张"**：整条 content 只占一帧，
+        // 两张 3 MiB 的图就是 6 MiB 原始字节 ≈ 10.7 MB 的帧（撞 8 MiB 就断连接）。
+        final already = _attachments
+            .where((item) => !item.isInert)
+            .fold<int>(0, (sum, item) => sum + (item.image?.byteCount ?? 0));
+        if (!fitsMessageBudget(already: already, incoming: byteCount)) {
+          _toast(
+            '这条消息的图片合计超过 '
+            '${(kMaxTotalImageBytesForMessage / 1024 / 1024).round()} MB 了：'
+            '先发出去，或者换小一点的图',
+          );
+          return;
+        }
         setState(
           () => _attachments.add(
             PendingAttachment(
@@ -1697,6 +1715,7 @@ class ChatPageState extends State<ChatPage> {
                 mediaType: mediaType,
                 data: data,
                 name: name,
+                byteCount: byteCount,
               ),
             ),
           ),
