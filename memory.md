@@ -52,9 +52,17 @@
       `.agents/notes/proposed/2026-10-19-session-page-feedback-research.md`
       的「第 10 条」。**`＋` 里那个假附件已拔掉**
       （`implemented/2026-10-20-remove-fake-attachment.md`）。
-11. **会话页与输入栏背景"不和谐"**：用户没说具体是哪一处。
-    已由 `bubble` token 部分回答（气泡曾是隐形的那块），
-    **但"输入栏背景"那一处仍未确认 —— 问清再动，别猜**。
+11. ~~**会话页与输入栏背景"不和谐"**~~ **2026-10-20 量出来并修掉**。
+    真机像素：`#FFFFFF`(会话区) → **`#F1F3F5`(输入栏外面那条灰带)** →
+    `#FFFFFF`(卡内)。所以是两件事叠起来：① 输入栏垫了 `c.sidebar` 灰带
+    （底部像独立的栏、与上面断开）；② 卡片 `layer1`（亮色也纯白）**且无阴影**，
+    在白底上隐形。**关键事实**：DSH 的 `--dsw-specific-input-major` 亮色
+    **也是白**（`design-platform.css:269`）—— 看得见**完全靠 `elevation-soft`
+    那层阴影**（`InputBar.module.css:62-63`），**只改底色改不出来**。
+    已补 `composer` / `borderL2` token + 三层 `boxShadow`（发丝环
+    `spreadRadius:0.5` + 两层模糊），外层底色改 `bgBase`。
+    见 `.agents/notes/implemented/2026-10-20-composer-elevation-soft.md`。
+    **唯一剩下的视觉疑点**：顶栏那条 `#F1F3F5` 灰带（用户没提，未动）。
 2. **剩下四件事的真机验收**（投影/渲染/接线都有单测，其中三处含**变异验证**）：
    - **流式文本**：判据是用户发一句话，正文边生成边显示。
    - **斜杠命令卡**：判据是在有 `/goal` 或 `/compact` 的会话里看到卡片。
