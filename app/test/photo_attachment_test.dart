@@ -99,7 +99,7 @@ void main() {
       }
     });
 
-    test('原生没给 byteCount：按 base64 长度估一个（只作显示）', () {
+    test('原生没给 byteCount：按 base64 长度估一个', () {
       final result =
           parsePhotoPickReply({
                 'mediaType': 'image/png',
@@ -108,6 +108,32 @@ void main() {
               as PhotoPicked;
       expect(result.byteCount, 6);
       expect(result.name, '', reason: '没给名字就空串，不编一个');
+    });
+
+    test('**超大就拒收**（发出去会撞 8 MiB 单帧上限、把连接关掉）', () {
+      // 契约 §40 / `codec.ts:53,77`：单帧上限 8 MiB，超了接收侧
+      // `protocol/bad-frame` **并关闭连接**。图片在线上过两次 1.33 倍膨胀
+      // （JSON base64 + box 的 base64url）⇒ 一帧 ≈ 1.78 × 原始字节。
+      //
+      // 所以"压失败了却照样发"的后果不是一条错误，是整条连接断掉 ——
+      // 那种失败比"这张图发不出去"严重得多。
+      final tooBig = parsePhotoPickReply(
+        _nativeReply(byteCount: kMaxImageBytesForTransport + 1),
+      );
+      expect(tooBig, isA<PhotoPickTooLarge>());
+      expect(
+        (tooBig as PhotoPickTooLarge).byteCount,
+        kMaxImageBytesForTransport + 1,
+      );
+    });
+
+    test('正好等于上限：收（不是"超过才拒"）', () {
+      expect(
+        parsePhotoPickReply(
+          _nativeReply(byteCount: kMaxImageBytesForTransport),
+        ),
+        isA<PhotoPicked>(),
+      );
     });
   });
 

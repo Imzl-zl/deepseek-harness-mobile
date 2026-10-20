@@ -5,6 +5,8 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
@@ -15,6 +17,7 @@ import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import kotlin.concurrent.thread
@@ -31,6 +34,22 @@ import kotlin.concurrent.thread
 class MainActivity : FlutterActivity() {
     private val gestureChannelName = "dsh/gesture-exclusion"
     private val photoChannelName = "dsh/photo-picker"
+
+    /**
+     * 原始图片字节的预算。
+     *
+     * **算出来的，不是估的**：契约 §40 / `connector/src/transport/codec.ts:53,77`
+     * 规定**单帧上限 8 MiB**（超了接收侧 `protocol/bad-frame` **并关闭连接**）。
+     * 图片在线上要过两次 1.33 倍膨胀（JSON 的 base64 + `box` 的 base64url），
+     * 一帧 ≈ **1.78 ×** 原始字节 ⇒ 3 MiB × 1.78 ≈ 5.3 MiB，留 2.7 MiB 余量。
+     */
+    private val MAX_RAW_IMAGE_BYTES = 3 * 1024 * 1024
+
+    /** 重编码时的最长边。按"主流视觉模型按 ~1.5k 像素切块"取。 */
+    private val MAX_IMAGE_EDGE = 1600
+
+    /** 重编码目标字节（1.5 MiB × 1.78 ≈ 2.7 MiB，离 8 MiB 很远）。 */
+    private val TARGET_IMAGE_BYTES = 1536 * 1024
 
     /** 选图（相册）请求的 requestCode。 */
     private val pickGalleryRequest = 4711
@@ -273,13 +292,15 @@ class MainActivity : FlutterActivity() {
             result.error("read-failed", "拿不到选中的图片", null)
             return
         }
-        // 读字节要离开 UI 线程（一张几 MB 的图会卡帧）。
+        // 读字节要离开 UI 线程（一张几 MB 的图会卡帧，压缩更慢）。
         thread(name = "dsh-photo-read") {
             try {
-                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                val raw = contentResolver.openInputStream(uri)?.use { it.readBytes() }
                     ?: throw IOException("打不开选中的图片")
-                val mediaType = contentResolver.getType(uri)
+                val declared = contentResolver.getType(uri)
                     ?: if (camera) "image/jpeg" else "image/png"
+                // **过大就先压**（否则会撞 8 MiB 单帧上限，见 encodeForTransport 的说明）。
+                val (bytes, mediaType) = encodeForTransport(raw, declared)
                 val payload = mapOf(
                     "mediaType" to mediaType,
                     "data" to Base64.encodeToString(bytes, Base64.NO_WRAP),
@@ -289,11 +310,104 @@ class MainActivity : FlutterActivity() {
                 // 临时文件读完即删（它只是 `EXTRA_OUTPUT` 的落盘中转）。
                 captureFile?.delete()
                 runOnUiThread { result.success(payload) }
+            } catch (error: ImageTooLarge) {
+                captureFile?.delete()
+                runOnUiThread { result.error("image-too-large", error.message, null) }
             } catch (error: Exception) {
                 captureFile?.delete()
                 runOnUiThread { result.error("read-failed", error.message, null) }
             }
         }
+    }
+
+    /** 原图超过通路上限时抛它（Dart 侧会显示成一句人话）。 */
+    private class ImageTooLarge(message: String) : Exception(message)
+
+    /**
+     * 把一张图压到"整帧塞得进 8 MiB"的尺寸。
+     *
+     * ## 为什么必须压（这是算出来的，不是保险起见）
+     *
+     * 契约 §40 与 `connector/src/transport/codec.ts:53,77`：**单帧上限 8 MiB**，
+     * 超了发送侧不得发出、接收侧收下即 `protocol/bad-frame` **并关闭连接**。
+     *
+     * 而图片在线上要过**两次** 1.33 倍膨胀：
+     * 原始字节 `N` → JSON 里的 base64 `1.33N` → 密文 ≈ `1.33N`
+     * → `box` 的 base64url（`协议 §132`：`base64url(密文 ‖ 16 字节 tag)`）
+     * **再乘 1.33** ⇒ **一帧 ≈ 1.78N**。
+     *
+     * 所以 `N = 5 MB` 的手机照片 ≈ **8.9 MB 的帧** —— 直接把连接打断。
+     * 取原始字节预算 **3 MiB**（3 × 1.78 ≈ 5.3 MiB，余 2.7 MiB）。
+     *
+     * ## 小图原样过
+     *
+     * 只有超预算才重编码：那样 PNG 的透明与 GIF 的动画都保住了
+     * （重编码只能出 JPEG，会丢透明）。
+     *
+     * **尺寸目标**不是 DSH 的 `maxImageDimension`（那是部署解析的、手机不知道），
+     * 而是"能塞进我们自己的帧"这个**已知**约束；1600 像素的最长边另按
+     * "主流视觉模型按 ~1.5k 切块"取，属于我们自己的选择，不是猜 DSH 的限额。
+     */
+    private fun encodeForTransport(
+        raw: ByteArray,
+        declared: String,
+    ): Pair<ByteArray, String> {
+        if (raw.size <= MAX_RAW_IMAGE_BYTES) return raw to declared
+        // 只读图片头拿尺寸，不分配像素。
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            // 解不了（HEIC 之类）却又超大：**如实报错**，绝不发一个超限的帧。
+            throw ImageTooLarge("这张图 ${raw.size / 1024} KB，太大且这台设备压不了")
+        }
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= MAX_IMAGE_EDGE) {
+            sample *= 2
+        }
+        val decoded = BitmapFactory.decodeByteArray(
+            raw,
+            0,
+            raw.size,
+            BitmapFactory.Options().apply { inSampleSize = sample },
+        ) ?: throw ImageTooLarge("这张图压不了（解码失败）")
+
+        var edge = MAX_IMAGE_EDGE
+        var quality = 85
+        var out = compressJpeg(scaleDown(decoded, edge), quality)
+        while (out.size > TARGET_IMAGE_BYTES) {
+            if (quality > 45) {
+                quality -= 20
+            } else if (edge > 640) {
+                edge = edge * 3 / 4
+                quality = 75
+            } else {
+                break
+            }
+            out = compressJpeg(scaleDown(decoded, edge), quality)
+        }
+        // 循环里反复用 `decoded` 做源，所以到这里才回收（`createScaledBitmap`
+        // 可能返回同一个对象，判一下再 recycle）。
+        decoded.recycle()
+        if (out.size > MAX_RAW_IMAGE_BYTES) {
+            throw ImageTooLarge("这张图压到 ${out.size / 1024} KB 仍然太大")
+        }
+        return out to "image/jpeg"
+    }
+
+    /** 最长边缩到 [edge] 以内（已经更小就原样回）。 */
+    private fun scaleDown(bitmap: Bitmap, edge: Int): Bitmap {
+        val longest = maxOf(bitmap.width, bitmap.height)
+        if (longest <= edge) return bitmap
+        val ratio = edge.toFloat() / longest
+        val width = maxOf(1, (bitmap.width * ratio).toInt())
+        val height = maxOf(1, (bitmap.height * ratio).toInt())
+        return Bitmap.createScaledBitmap(bitmap, width, height, true)
+    }
+
+    private fun compressJpeg(bitmap: Bitmap, quality: Int): ByteArray {
+        val stream = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)
+        return stream.toByteArray()
     }
 
     /** `content://` 的显示名（取不到给空串，不编一个）。 */

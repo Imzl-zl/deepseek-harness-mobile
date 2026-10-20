@@ -38,6 +38,18 @@ const Set<String> kSupportedImageMediaTypes = {
   'image/gif',
 };
 
+/// 一张图**原始字节**的上限（超过就拒收，不发出去）。
+///
+/// **算出来的**：契约 §40 与 `connector/src/transport/codec.ts:53,77` 规定
+/// **单帧上限 8 MiB**，超了接收侧 `protocol/bad-frame` **并关闭连接**。
+/// 图片在线上过两次 1.33 倍膨胀（JSON 里的 base64 + `box` 的 base64url），
+/// 一帧 ≈ **1.78 ×** 原始字节 ⇒ 3 MiB × 1.78 ≈ 5.3 MiB，留足余量。
+///
+/// 原生侧（`MainActivity.encodeForTransport`）已经会先压到这个预算之内；
+/// **这里再查一次**是因为"压失败了却照样发出去"的后果不是一条错误，
+/// 而是**整条连接断掉** —— 那种失败比"这张图发不出去"严重得多。
+const int kMaxImageBytesForTransport = 3 * 1024 * 1024;
+
 /// 选图的来源。
 enum PhotoSource {
   /// 系统相册 / 照片选择器（**不需要任何权限**）。
@@ -95,6 +107,15 @@ class PhotoPickUnsupportedType extends PhotoPickResult {
   final String mediaType;
 }
 
+/// 选到了，但**太大**，发出去会撞 8 MiB 单帧上限（那会断连接）。
+///
+/// 正常情况下原生侧已经压过，这里兜的是"压失败/没压"的意外。
+class PhotoPickTooLarge extends PhotoPickResult {
+  const PhotoPickTooLarge(this.byteCount);
+
+  final int byteCount;
+}
+
 /// 选图失败（读字节出错等）。[reason] 是原生给的原话。
 class PhotoPickFailed extends PhotoPickResult {
   const PhotoPickFailed(this.reason);
@@ -134,15 +155,21 @@ PhotoPickResult parsePhotoPickReply(Object? reply) {
   }
   final name = reply['name'];
   final byteCount = reply['byteCount'];
+  // 原生给了就用它，没给按 base64 长度估（`4/3` 取整；`data` 是规范 base64，
+  // 所以 `length * 3 / 4` 就是原始字节数）。
+  final bytes = byteCount is int && byteCount >= 0
+      ? byteCount
+      : (data.length * 3) ~/ 4;
+  // **超大就拒收**：发出去会撞 8 MiB 单帧上限，接收侧会
+  // `protocol/bad-frame` 并关连接 —— 那比"这张图发不出去"严重得多。
+  if (bytes > kMaxImageBytesForTransport) {
+    return PhotoPickTooLarge(bytes);
+  }
   return PhotoPicked(
     mediaType: mediaType.toLowerCase(),
     data: data,
     name: name is String ? name : '',
-    // 原生给了就用它，没给按 base64 长度估（`4/3` 取整；只是显示用的提示，
-    // 不参与任何判断）。
-    byteCount: byteCount is int && byteCount >= 0
-        ? byteCount
-        : (data.length * 3) ~/ 4,
+    byteCount: bytes,
   );
 }
 

@@ -1714,6 +1714,12 @@ class ChatPageState extends State<ChatPage> {
       case PhotoPickUnsupportedType(:final mediaType):
         // 明确说出"哪种不发" —— DSH 只认 png/jpeg/webp/gif。
         _toast('这个格式发不出去（$mediaType）：只支持 PNG / JPEG / WebP / GIF');
+      case PhotoPickTooLarge(:final byteCount):
+        // **不能发**：撞 8 MiB 单帧上限会让整条连接被关掉。
+        _toast(
+          '这张图太大（${(byteCount / 1024 / 1024).toStringAsFixed(1)} MB）：'
+          '换一张小一点的',
+        );
       case PhotoPickFailed(:final reason):
         _toast('选图失败：$reason');
     }
