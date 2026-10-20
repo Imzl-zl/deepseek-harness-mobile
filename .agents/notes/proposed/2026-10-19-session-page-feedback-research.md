@@ -155,19 +155,54 @@ DSH 的形态（`packages/client/ui-chat/src/client/chat/`）：
   只有「最新一轮且以回复结尾」与「最新一条 user 消息」常显，其余 hover/focus 才显；
   无悬停设备恒显。**手机无悬停 ⇒ 一律常显**。
 
-## 第 10 条：上传弹框（调研已完成，待实现）
+## 第 10 条：上传弹框（**已查清形状，但卡在管线**）
 
-rikkahub 的形态：
-- `＋` 按钮 → `ChatFilesPickerSheet`，是 **`ModalBottomSheet`**
-  （`ui/pages/chat/ChatPage.kt:567`），内容 `ui/components/ai/FilesPicker.kt:121-145`。
-- 选项（`FlowRow`）：**拍照**（`Camera01`）/ **照片**（`Image02`）/
-  视频（`Video01`，仅 Google provider）/ 音频（`MusicNote03`，同上）/
-  **上传文件**（`Files02`）/ 语音模式（仅 ASR 支持时）。
-  每个是 `BigIconTextButton`（`:501-534`）：图标装在 `surfaceContainer` 圆角 8dp 的
-  Surface 里（`padding h32 v16`），文案在下、`bodySmall`。
-- 动作实现在 `ChatAttachmentPicker.kt`（相机 `TakePicture()`、
-  图片/视频/音频 `GetMultipleContents()`、文件 `OpenMultipleDocuments()` + 白名单校验）。
-- 我们当前 `＋` 只有"添加文件或调用指令"的占位（`_notWired`），**没有弹框**。
+### 我们这边缺什么（2026-10-20 确认）
+
+- `connector/src` 里 `attachment` **只出现在错误码表**，没有任何上传通路。
+- `＋` 菜单的「附件」原先加的是一个**假附件**（`PendingAttachment('新增文件.txt')`），
+  而 `_send()` 的 `content` 只有文本块 —— **发送时被静默丢弃**。
+  已在 `implemented/2026-10-20-remove-fake-attachment.md` 里移除那一行。
+
+### DSH 的 part 形状（权威，`packages/api/session-controller/src/types.ts:90-98`）
+
+```ts
+export type PromptContentPart =
+  | { readonly type: 'text'; readonly text: string }
+  | { readonly type: 'image'; readonly mediaType: ImageMediaType
+      readonly data: string; readonly name?: string }
+  | { readonly type: 'file'; readonly receiptId: Branded<'file-upload-receipt-id'> }
+```
+
+原注释（`:86-89`）：**"Browser-submitted prompt content; the Host promotes image
+bytes to durable references. File parts carry the opaque receipt returned by a
+preceding `uploadFile` call on the same Session."**
+
+所以：
+
+| 想要 | 可行？ | 说明 |
+|---|---|---|
+| **图片 / 拍照** | **可以** | 内联 base64 直发，不需要先上传 |
+| **上传文件** | **不行** | 要一次 `uploadFile` 先拿 `receiptId`，那是另一个方法面 |
+
+`ImageMediaType` = `'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'`
+（`packages/attachment/attachment/src/types.ts:8`）。
+
+### 还差的两件（真做之前必须解决）
+
+1. **限额是"部署解析"的，手机不知道**：`ImageAttachmentLimits`
+   （`packages/attachment/attachment/src/types.ts:74-82`）有
+   `maxImageBytes` / `maxImagesPerMessage` / `maxMessageImageBytes` /
+   `maxImagePixels` / `maxImageDimension` / `mediaTypes`。
+   要真做，得先有一个**读限额的方法**（或在 `repo.info` 里带出来）。
+   **不许自己拍一个数** —— 猜错就是"发出去被电脑侧拒，而手机上看着像成功了"。
+2. **选图/拍照要一个新依赖**（picker）。按项目纪律，pubspec 注释里要写明
+   "核实了哪个签名/哪个能力"。
+
+### 结论
+
+**这是独立一项**（附件管线），不是"补一张 sheet"。sheet 本身几分钟，
+但没有 1 与 2 它只能是一排加假芯片的按钮 —— 而那正是刚拔掉的东西。
 
 ## 未决
 
