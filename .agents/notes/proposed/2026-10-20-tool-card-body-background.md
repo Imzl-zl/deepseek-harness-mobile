@@ -53,8 +53,15 @@ DSH 的 `packages/client/ui-tool/src/client/tool/components/ToolDetails.module.c
 | `color` | 代码块底色 | `--dsw-alias-markdown-code-block`（**本仓也没有，要加**） |
 | `font` | `--dsw-font-xs-13`（13px 小字） | 同上 |
 
-两个新 token 的值要照 `design-platform.css` 查（`border-l1` 与
-`markdown-code-block` 各有明暗两份），**不许估**。
+两个新 token 的值已查好（`design-platform.css`，**照抄，不许估**）：
+
+| token | 亮色 | 暗色 |
+|---|---|---|
+| `borderL1`（`--dsw-alias-border-l1`） | `rgba(0,0,0,0.04)` = `0x0A000000`（`:185`） | `rgba(255,255,255,0.06)` = `0x0FFFFFFF`（`:303`） |
+| `codeBlock`（`--dsw-alias-markdown-code-block`） | `neutral-bluish-50` = `rgb(249,250,251)` = `0xFFF9FAFB`（`:230` → `:64`） | `neutral-bluish-900` = `rgb(27,27,28)` = `0xFF1B1B1C`（`:348` → `:73`） |
+
+⚠️ 注意 `borderL1` 比 `borderL2`（0.12/0.10）**更淡** —— 它是"最细一档"，
+别拿 `borderL2` 顶替，那样边框明显重了。
 
 ## 为什么这次仍然没改
 
