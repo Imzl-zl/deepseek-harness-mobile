@@ -1673,16 +1673,18 @@ class ChatPageState extends State<ChatPage> {
   }
 
   /// `＋` 菜单（对应桌面端的快捷键入口）。
-  /// 选一张照片并挂到输入栏（**这条链是真的**：字节会随 prompt 发出去）。
+  /// 选一张照片（相册或拍照）并挂到输入栏（**这条链是真的**：字节会随
+  /// prompt 发出去）。
   ///
-  /// 原生侧是 Android 系统照片选择器（`dsh/photo-picker`，见
-  /// `platform/photo_picker.dart` 与 `MainActivity.kt`）—— **不申请任何权限**。
+  /// 原生侧见 `platform/photo_picker.dart` 与 `MainActivity.kt`：
+  /// 相册走系统照片选择器（**不申请权限**）；拍照要 CAMERA
+  /// （本 App 已为扫一扫声明了它，所以必须已授予才发得了 intent）。
   ///
-  /// 四种结果**分别说话**，不把它们混成"没反应"：
+  /// 五种结果**分别说话**，不把它们混成"没反应"：
   /// 取消 → 什么都不做；平台没有 → 直说；类型不支持 → 说清是哪种；
-  /// 失败 → 显示原生的原话。混在一起正是"点了没反应"最难查的那种。
-  Future<void> _pickPhoto() async {
-    final result = await pickPhoto();
+  /// **权限被拒 → 说去哪里开**；失败 → 显示原生的原话。
+  Future<void> _pickPhoto(PhotoSource source) async {
+    final result = await pickPhoto(source: source);
     if (!mounted) return;
     switch (result) {
       case PhotoPicked(:final mediaType, :final data, :final name):
@@ -1705,7 +1707,12 @@ class ChatPageState extends State<ChatPage> {
         // **用户取消不是错误**，一句话都不说。
         break;
       case PhotoPickUnavailable(:final reason):
-        _toast('这台设备上没有可用的相册选择器：$reason');
+        _toast(
+          '这台设备上没有可用的${source == PhotoSource.camera ? '相机' : '相册选择器'}：$reason',
+        );
+      case PhotoPickPermissionDenied(:final reason):
+        // 恢复动作是"去系统设置里开"，与"重试"不是一回事。
+        _toast('$reason —— 到系统的应用设置里允许相机后，再点一次拍照');
       case PhotoPickUnsupportedType(:final mediaType):
         // 明确说出"哪种不发" —— DSH 只认 png/jpeg/webp/gif。
         _toast('这个格式发不出去（$mediaType）：只支持 PNG / JPEG / WebP / GIF');
@@ -1726,6 +1733,7 @@ class ChatPageState extends State<ChatPage> {
     // （`types.ts:98`），来自一次 `uploadFile` —— 那是另一个方法面，
     // 本仓未接。摆一个加假芯片的入口就是 2026-10-20 刚拔掉的那处。
     const items = [
+      (icon: 'paperclip', label: '拍照', desc: '用相机拍一张，随消息发出去'),
       (icon: 'paperclip', label: '照片', desc: '从相册选一张，随消息发出去'),
       (icon: 'folderOpen', label: '工作区文件', desc: '桌面端 Ctrl+P'),
       (icon: 'code', label: '新建终端', desc: '桌面端 Ctrl+`'),
@@ -1750,7 +1758,9 @@ class ChatPageState extends State<ChatPage> {
                 onTap: () {
                   Navigator.of(context).pop();
                   if (item.label == '照片') {
-                    unawaited(_pickPhoto());
+                    unawaited(_pickPhoto(PhotoSource.gallery));
+                  } else if (item.label == '拍照') {
+                    unawaited(_pickPhoto(PhotoSource.camera));
                   } else if (item.label == '演示：接管输入栏') {
                     _enqueueDemoTakeovers();
                   } else {

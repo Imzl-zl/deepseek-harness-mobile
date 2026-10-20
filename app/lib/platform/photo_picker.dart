@@ -38,6 +38,19 @@ const Set<String> kSupportedImageMediaTypes = {
   'image/gif',
 };
 
+/// 选图的来源。
+enum PhotoSource {
+  /// 系统相册 / 照片选择器（**不需要任何权限**）。
+  gallery,
+
+  /// 拍照。
+  ///
+  /// **它要 CAMERA 权限**：本 App 已经为配对页的扫一扫声明了 CAMERA，
+  /// 而 Android 的规矩是"一旦声明，`ACTION_IMAGE_CAPTURE` 就要求它已授予"
+  /// （否则 `SecurityException`）。原生侧会先查、没授予就申请。
+  camera,
+}
+
 /// 选图的结果。
 sealed class PhotoPickResult {
   const PhotoPickResult();
@@ -89,6 +102,16 @@ class PhotoPickFailed extends PhotoPickResult {
   final String reason;
 }
 
+/// 拍照要相机权限，而用户没给（或拒了）。
+///
+/// **单独一种而不是并进 [PhotoPickFailed]**：恢复动作不同 ——
+/// 这个要去系统设置里开权限，[reason] 只是原生的原话。
+class PhotoPickPermissionDenied extends PhotoPickResult {
+  const PhotoPickPermissionDenied(this.reason);
+
+  final String reason;
+}
+
 /// 把原生回的那一包解析成结果。**纯函数**（单测直接喂各种形状）。
 ///
 /// 认不出的形状一律 [PhotoPickFailed]：那是"原生实现与这边的约定不符"，
@@ -123,19 +146,34 @@ PhotoPickResult parsePhotoPickReply(Object? reply) {
   );
 }
 
-/// 拉起系统照片选择器。
+/// 通道调用的注入点（只为测试）。参数是 `(method, args)`。
+typedef PhotoPickInvoker =
+    Future<Object?> Function(String method, Map<String, Object?> args);
+
+/// 拉起相册或相机，拿一张图。
 ///
-/// [invoke] 只为测试注入（默认走真通道）。**取消**与**平台没有**都回确定的
-/// 结果类型，不抛异常 —— 调用方按类型分支，不必 try/catch。
-Future<PhotoPickResult> pickPhoto({Future<Object?> Function()? invoke}) async {
-  final call = invoke ?? () => _channel.invokeMethod<Object?>('pickImage');
+/// [invoke] 只为测试注入（默认走真通道）。**取消**、**平台没有**、
+/// **权限被拒**都回确定的结果类型，不抛异常 —— 调用方按类型分支，
+/// 不必 try/catch。
+Future<PhotoPickResult> pickPhoto({
+  PhotoSource source = PhotoSource.gallery,
+  PhotoPickInvoker? invoke,
+}) async {
+  final call =
+      invoke ?? (method, args) => _channel.invokeMethod<Object?>(method, args);
   try {
-    return parsePhotoPickReply(await call());
+    return parsePhotoPickReply(
+      await call('pickImage', {'source': source.name}),
+    );
   } on MissingPluginException {
     // 单测 / 桌面 / 未接这个通道的平台：如实说"没接"。
     return const PhotoPickUnavailable('这个平台没有接选图通道');
   } on PlatformException catch (error) {
-    // 原生明确报的错（`unavailable` / `read-failed` / `busy`）—— 照它的原话。
+    // 原生明确报的错 —— 照它的原话，但把"权限"单独分出来
+    // （它的恢复动作是进系统设置，不是重试）。
+    if (error.code == 'camera-permission') {
+      return PhotoPickPermissionDenied(error.message ?? error.code);
+    }
     return PhotoPickFailed(error.message ?? error.code);
   }
 }

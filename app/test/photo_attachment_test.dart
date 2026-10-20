@@ -111,26 +111,62 @@ void main() {
     });
   });
 
-  group('pickPhoto：平台没有 / 原生报错，各有各的结果', () {
+  group('pickPhoto：平台没有 / 原生报错 / 权限被拒，各有各的结果', () {
     test('没接通道（桌面 / 单测）→ unavailable', () async {
       final result = await pickPhoto(
-        invoke: () async => throw MissingPluginException('no impl'),
+        invoke: (_, _) async => throw MissingPluginException('no impl'),
       );
       expect(result, isA<PhotoPickUnavailable>());
     });
 
     test('原生报错 → failed，且带原生的原话', () async {
       final result = await pickPhoto(
-        invoke: () async =>
+        invoke: (_, _) async =>
             throw PlatformException(code: 'read-failed', message: '打不开选中的图片'),
       );
       expect(result, isA<PhotoPickFailed>());
       expect((result as PhotoPickFailed).reason, '打不开选中的图片');
     });
 
+    test('**相机权限被拒单独一种**（恢复动作是进系统设置，不是重试）', () async {
+      final result = await pickPhoto(
+        source: PhotoSource.camera,
+        invoke: (_, _) async => throw PlatformException(
+          code: 'camera-permission',
+          message: '没有相机权限，拍不了照',
+        ),
+      );
+      expect(result, isA<PhotoPickPermissionDenied>());
+      expect((result as PhotoPickPermissionDenied).reason, '没有相机权限，拍不了照');
+    });
+
     test('成功路径：注入的调用结果被解析', () async {
-      final result = await pickPhoto(invoke: () async => _nativeReply());
+      final result = await pickPhoto(invoke: (_, _) async => _nativeReply());
       expect(result, isA<PhotoPicked>());
+    });
+
+    test('来源真的传下去了（gallery / camera 各自的名字）', () async {
+      // 这条钉的是"接口通了但参数没传"这类错：原生侧按 `source` 分叉，
+      // 漏传就会永远走相册 —— 而"点拍照打开了相册"很难被察觉。
+      final seen = <Map<String, Object?>>[];
+      await pickPhoto(
+        invoke: (method, args) async {
+          expect(method, 'pickImage');
+          seen.add(args);
+          return _nativeReply();
+        },
+      );
+      await pickPhoto(
+        source: PhotoSource.camera,
+        invoke: (_, args) async {
+          seen.add(args);
+          return _nativeReply();
+        },
+      );
+      expect(seen, [
+        {'source': 'gallery'},
+        {'source': 'camera'},
+      ]);
     });
   });
 

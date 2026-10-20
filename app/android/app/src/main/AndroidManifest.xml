@@ -33,6 +33,21 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- 拍照用的临时文件出口（`ACTION_IMAGE_CAPTURE` 在 API 24+ 必须收
+             `content://` 的 EXTRA_OUTPUT）。只暴露 `cacheDir/dsh_photo/`，
+             见 res/xml/dsh_file_paths.xml。
+             `authorities` 用 `${applicationId}` 后缀 —— 它由 Gradle 按构建类型
+             代换，debug / release 不会撞到一个授权名上 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.dshfileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/dsh_file_paths" />
+        </provider>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

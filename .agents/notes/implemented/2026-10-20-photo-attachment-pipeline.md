@@ -93,6 +93,35 @@ FlutterActivity.java`），拿不到 `registerForActivityResult` ⇒ 用
 那一枚（`ui-primitives/src/icons/index.tsx` 只有 folder 系列），
 而图标集是机生成的、不许手写 —— 用已有的"附件"字形 + 文案说清。
 
+### 5. 「拍照」也做了 —— 但它比相册麻烦，因为**本 App 已经声明了 CAMERA**
+
+`AndroidManifest.xml:4` 早就为**配对页的扫一扫**声明了 `CAMERA`。
+而 Android 的规矩是（`MediaStore.ACTION_IMAGE_CAPTURE` 官方文档原话）：
+
+> If your app declares the `CAMERA` permission, then `ACTION_IMAGE_CAPTURE`
+> requires that permission to be granted, otherwise a `SecurityException`
+> is thrown.
+
+所以拍照**必须先有权限**：`startCameraPick` 先 `checkSelfPermission`，
+没授予就 `requestPermissions` 并挂起回包，`onRequestPermissionsResult`
+里授予了才发 intent、否则回 `camera-permission` 错误（Dart 侧单独一种结果
+`PhotoPickPermissionDenied` —— 它的恢复动作是"去系统设置开"，不是重试）。
+
+`EXTRA_OUTPUT` 走 **`FileProvider`**（`cacheDir/dsh_photo/`）：
+- API 24+ 给 `file://` 会抛 `FileUriExposedException`，必须 `content://`；
+- 所以加了 `res/xml/dsh_file_paths.xml`（**只暴露那一个子目录**）、
+  清单里一个 `<provider>`（`authorities="${applicationId}.dshfileprovider"`，
+  用 `${applicationId}` 让 debug/release 不撞名）；
+- 另外给了 `clipData = ClipData.newRawUri(...)` —— 有些机型只认 clipData 里的授权；
+- 临时文件**读完即删**（它只是 `EXTRA_OUTPUT` 的落盘中转）。
+
+**新增了一个 Gradle 依赖**（本仓第一个手写 Android 依赖）：
+`implementation("androidx.core:core:1.13.1")` —— `FileProvider` 在它里面，
+Flutter 的 embedding 不带。取 1.13.1 而不是最新：与
+`flutter.compileSdkVersion`（36）兼容的常用稳定版，不追新
+（追新只会让"下次构建能不能过"变成运气问题）。
+**实测构建通过**（`flutter build apk --debug` 成功，装机启动无异常）。
+
 ## Alternatives considered（否掉的）
 
 - **引 `image_picker` / `file_picker`**：把"鸿蒙能不能编过"交给别人的发布节奏；

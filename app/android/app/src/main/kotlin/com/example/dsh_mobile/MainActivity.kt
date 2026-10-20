@@ -1,16 +1,21 @@
 package com.example.dsh_mobile
 
+import android.Manifest
 import android.app.Activity
+import android.content.ClipData
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.util.Base64
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 import java.io.IOException
 import kotlin.concurrent.thread
 
@@ -27,11 +32,17 @@ class MainActivity : FlutterActivity() {
     private val gestureChannelName = "dsh/gesture-exclusion"
     private val photoChannelName = "dsh/photo-picker"
 
-    /** 选图请求的 requestCode（与本文件其它 startActivityForResult 区分）。 */
-    private val pickImageRequest = 4711
+    /** 选图（相册）请求的 requestCode。 */
+    private val pickGalleryRequest = 4711
+
+    /** 拍照请求的 requestCode。 */
+    private val takePictureRequest = 4713
+
+    /** 相机权限请求的 requestCode。 */
+    private val cameraPermissionRequest = 4712
 
     /**
-     * 选图期间挂起的回包。
+     * 选图/拍照期间挂起的回包。
      *
      * `FlutterActivity` 继承 `android.app.Activity`（不是 `ComponentActivity`），
      * 所以拿不到 `registerForActivityResult`；只能走
@@ -39,6 +50,12 @@ class MainActivity : FlutterActivity() {
      * `MethodChannel.Result` 存一下（它只能被调用一次）。
      */
     private var pendingPick: MethodChannel.Result? = null
+
+    /** 这次是相册还是拍照（决定回包怎么读）。 */
+    private var pendingCamera = false
+
+    /** 拍照写进这个临时文件；读完即删。 */
+    private var pendingCaptureFile: File? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -90,24 +107,34 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * 选一张图，回 `{mediaType, data(base64), name, byteCount}`；用户取消回 `null`。
+     * 选一张图（相册或拍照），回
+     * `{mediaType, data(base64), name, byteCount}`；用户取消回 `null`。
      *
-     * ## 为什么用系统照片选择器，而不是自造相册
+     * ## 相册：系统照片选择器，**不申请权限**
      *
-     * - **API 33+ 用 `MediaStore.ACTION_PICK_IMAGES`**：系统照片选择器，
+     * - API 33+ 用 `MediaStore.ACTION_PICK_IMAGES`：系统照片选择器，
      *   **不需要任何权限**（Google 明确说它取代 `READ_MEDIA_IMAGES`），
      *   而且只把用户选中的那一张交给我们。
-     * - API 33 以下退到 `ACTION_GET_CONTENT`：走 SAF，同样**不需要权限**。
+     * - API 33 以下退 `ACTION_GET_CONTENT`：走 SAF，同样**不需要权限**。
      *
-     * **两条路都不申请权限**，所以这份实现里没有 `requestPermissions`，
-     * `AndroidManifest.xml` 也没有多加任何权限 —— 少一个用户会被弹窗打扰的地方。
+     * ## 拍照：**必须先有 CAMERA**
+     *
+     * 这一点容易漏：`AndroidManifest.xml` **已经为配对页的扫一扫声明了
+     * `CAMERA`**（那是另一个功能）。而 Android 的规矩是 ——
+     * **一旦应用声明了 CAMERA 权限，`ACTION_IMAGE_CAPTURE` 就要求它已授予**，
+     * 否则抛 `SecurityException`
+     * （MediaStore.ACTION_IMAGE_CAPTURE 的官方文档原话）。
+     * 所以这里先查、没授予就申请，授予了才发 intent。
+     *
+     * `EXTRA_OUTPUT` 走 `FileProvider`（`cacheDir/dsh_photo/`）：
+     * API 24+ 给 `file://` 会抛 `FileUriExposedException`。
      *
      * ## 为什么把字节读成 base64 回给 Dart
      *
      * DSH 的 `PromptContentPart` 图片就是这样：
      * `{type:'image', mediaType, data(base64), name?}`
      * （`packages/api/session-controller/src/types.ts:90-98`，内联直发、
-     * 不需要先上传）。而且 `content://` 的读权限只在这段回调窗口内有效 ——
+     * 不需要先上传）。而 `content://` 的读权限只在这段回调窗口内有效 ——
      * 立刻读完，不留 URI 生命周期的坑。
      *
      * **媒体类型原样回**（不在这里过滤）：DSH 只认 png/jpeg/webp/gif，
@@ -118,25 +145,15 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "pickImage" -> {
+                        val source = call.argument<String>("source") ?: "gallery"
                         if (pendingPick != null) {
                             result.error("busy", "上一次选图还没返回", null)
                             return@setMethodCallHandler
                         }
-                        pendingPick = result
-                        val intent = if (Build.VERSION.SDK_INT >= 33) {
-                            Intent(MediaStore.ACTION_PICK_IMAGES).apply { type = "image/*" }
+                        if (source == "camera") {
+                            startCameraPick(result)
                         } else {
-                            Intent(Intent.ACTION_GET_CONTENT).apply {
-                                type = "image/*"
-                                addCategory(Intent.CATEGORY_OPENABLE)
-                            }
-                        }
-                        try {
-                            startActivityForResult(intent, pickImageRequest)
-                        } catch (error: Exception) {
-                            // 设备上没有能处理这个 intent 的 Activity（少见，但如实回）。
-                            pendingPick = null
-                            result.error("unavailable", error.message, null)
+                            startGalleryPick(result)
                         }
                     }
                     else -> result.notImplemented()
@@ -144,19 +161,116 @@ class MainActivity : FlutterActivity() {
             }
     }
 
-    @Deprecated("FlutterActivity 继承 Activity，拿不到 registerForActivityResult")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode != pickImageRequest) {
-            super.onActivityResult(requestCode, resultCode, data)
+    private fun startGalleryPick(result: MethodChannel.Result) {
+        pendingPick = result
+        pendingCamera = false
+        val intent = if (Build.VERSION.SDK_INT >= 33) {
+            Intent(MediaStore.ACTION_PICK_IMAGES).apply { type = "image/*" }
+        } else {
+            Intent(Intent.ACTION_GET_CONTENT).apply {
+                type = "image/*"
+                addCategory(Intent.CATEGORY_OPENABLE)
+            }
+        }
+        launch(intent, pickGalleryRequest, result)
+    }
+
+    /**
+     * 拍照。**权限先行** —— 见 [registerPhotoPicker] 的说明：
+     * 声明了 CAMERA 之后，没授予就发 `ACTION_IMAGE_CAPTURE` 会抛
+     * `SecurityException`。
+     */
+    private fun startCameraPick(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED
+        ) {
+            // 先把回包存着，权限回来之后再决定发 intent 还是报错。
+            pendingPick = result
+            pendingCamera = true
+            requestPermissions(arrayOf(Manifest.permission.CAMERA), cameraPermissionRequest)
+            return
+        }
+        launchCamera(result)
+    }
+
+    private fun launchCamera(result: MethodChannel.Result) {
+        pendingPick = result
+        pendingCamera = true
+        val dir = File(cacheDir, "dsh_photo").apply { mkdirs() }
+        val file = File(dir, "capture-${System.currentTimeMillis()}.jpg")
+        pendingCaptureFile = file
+        val uri = FileProvider.getUriForFile(this, "$packageName.dshfileprovider", file)
+        val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+            putExtra(MediaStore.EXTRA_OUTPUT, uri)
+            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            // 有些机型只认 clipData 里的授权（社区踩过的坑），一起给上。
+            clipData = ClipData.newRawUri("", uri)
+        }
+        launch(intent, takePictureRequest, result)
+    }
+
+    private fun launch(intent: Intent, requestCode: Int, result: MethodChannel.Result) {
+        try {
+            startActivityForResult(intent, requestCode)
+        } catch (error: Exception) {
+            // 设备上没有能处理这个 intent 的 Activity（少见，但如实回）。
+            pendingPick = null
+            pendingCaptureFile = null
+            result.error("unavailable", error.message, null)
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        if (requestCode != cameraPermissionRequest) {
+            super.onRequestPermissionsResult(requestCode, permissions, grantResults)
             return
         }
         val result = pendingPick
         pendingPick = null
         if (result == null) return
-        val uri: Uri? = data?.data
-        if (resultCode != Activity.RESULT_OK || uri == null) {
+        val granted = grantResults.isNotEmpty() &&
+            grantResults[0] == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            launchCamera(result)
+        } else {
+            // **不静默**：Dart 侧会把它显示成一句人话。
+            result.error("camera-permission", "没有相机权限，拍不了照", null)
+        }
+    }
+
+    @Deprecated("FlutterActivity 继承 Activity，拿不到 registerForActivityResult")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode != pickGalleryRequest && requestCode != takePictureRequest) {
+            super.onActivityResult(requestCode, resultCode, data)
+            return
+        }
+        val result = pendingPick
+        pendingPick = null
+        val camera = pendingCamera
+        val captureFile = pendingCaptureFile
+        pendingCaptureFile = null
+        if (result == null) return
+
+        if (resultCode != Activity.RESULT_OK) {
             // 用户取消：**不是错误**，回 null，Dart 侧静默什么都不做。
+            captureFile?.delete()
             result.success(null)
+            return
+        }
+
+        // 相册给 URI，拍照给临时文件（`EXTRA_OUTPUT` 写进去的）。
+        val uri: Uri? = if (camera) {
+            captureFile?.let { FileProvider.getUriForFile(this, "$packageName.dshfileprovider", it) }
+        } else {
+            data?.data
+        }
+        if (uri == null) {
+            captureFile?.delete()
+            result.error("read-failed", "拿不到选中的图片", null)
             return
         }
         // 读字节要离开 UI 线程（一张几 MB 的图会卡帧）。
@@ -164,14 +278,19 @@ class MainActivity : FlutterActivity() {
             try {
                 val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
                     ?: throw IOException("打不开选中的图片")
+                val mediaType = contentResolver.getType(uri)
+                    ?: if (camera) "image/jpeg" else "image/png"
                 val payload = mapOf(
-                    "mediaType" to (contentResolver.getType(uri) ?: "image/png"),
+                    "mediaType" to mediaType,
                     "data" to Base64.encodeToString(bytes, Base64.NO_WRAP),
-                    "name" to displayName(uri),
+                    "name" to if (camera) "" else displayName(uri),
                     "byteCount" to bytes.size,
                 )
+                // 临时文件读完即删（它只是 `EXTRA_OUTPUT` 的落盘中转）。
+                captureFile?.delete()
                 runOnUiThread { result.success(payload) }
             } catch (error: Exception) {
+                captureFile?.delete()
                 runOnUiThread { result.error("read-failed", error.message, null) }
             }
         }

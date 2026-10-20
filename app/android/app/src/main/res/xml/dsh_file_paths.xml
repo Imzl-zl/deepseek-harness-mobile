@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 拍照的临时落盘位置。
+         `ACTION_IMAGE_CAPTURE` 在 API 24+ **必须**给一个 `content://` 的
+         `EXTRA_OUTPUT`（给 `file://` 会抛 FileUriExposedException），
+         所以相机应用要能往这个目录写一个文件 —— 由 FileProvider 授权。
+         只暴露 `cacheDir/dsh_photo/` 这一层：临时照片用完即删，
+         不给别的目录开口子。 -->
+    <cache-path name="dsh_photo" path="dsh_photo/" />
+</paths>

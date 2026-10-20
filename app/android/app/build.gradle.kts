@@ -42,3 +42,16 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // `androidx.core.content.FileProvider` —— 拍照要用它把
+    // `cacheDir/dsh_photo/` 下的临时文件授权给相机应用写
+    // （`ACTION_IMAGE_CAPTURE` 在 API 24+ 必须收 `content://` 的 EXTRA_OUTPUT，
+    // 给 `file://` 会抛 FileUriExposedException）。
+    //
+    // 这是本仓**唯一**手写的 Android 依赖：Flutter 的 embedding 不带
+    // `androidx.core` 的 provider 部分，所以显式声明。版本取 1.13.1 ——
+    // 与 `flutter.compileSdkVersion`（36）兼容的常用稳定版；不追最新，
+    // 追新只会让"下次构建能不能过"变成运气问题。
+    implementation("androidx.core:core:1.13.1")
+}
