@@ -149,6 +149,20 @@ void main() {
         'contextInjection',
       );
     });
+
+    // 上下文行的生产者显示在标题后的分隔点之后（`ContextInjectionRow.tsx:63-69`）。
+    testWidgets('上下文行带生产者标签', (tester) async {
+      await pump(
+        tester,
+        const SystemTurn(
+          'Current runtime context. …',
+          label: '上下文注入',
+          hint: 'runtime-context',
+        ),
+      );
+      expect(find.text('上下文注入'), findsOneWidget);
+      expect(find.text('runtime-context'), findsOneWidget);
+    });
   });
 
   group('表格：宽表要有横向出路', () {

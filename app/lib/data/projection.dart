@@ -30,6 +30,17 @@ const String askUserQuestionTool = 'ask_user_question';
 /// 系统提示词那一行的标签（DSH `locale.ts:116` 的 `message.systemPrompt`）。
 const String kSystemPromptLabel = '系统提示词';
 
+/// 上下文注入行的标题（DSH `ui-chat/src/client/locale.ts:126` 的
+/// `message.contextInjection` = `上下文注入`）。
+///
+/// **它不是** [contextProducerLabel]：标题说"这是注入"，生产者（`runtime-context`
+/// 之类）渲染在标题后面的分隔点之后（`ContextInjectionRow.tsx:57,63-69`）。
+const String kContextInjectionLabel = '上下文注入';
+
+/// 一条 `user/message` 的 `source.kind`；没有 `source` 时 `null`。
+String? contextSourceKind(Object? data) =>
+    stringField(fieldOf(data, 'source'), 'kind');
+
 /// 工具名缺失时的占位（DSH 同处是空串 `''`；空串在卡片上什么也不说，
 /// 而"这是个工具但不知道是哪个"本身是信息，所以给一个明说的占位）。
 const String kUnknownToolName = '工具';
@@ -127,22 +138,50 @@ ChatProjection projectEvent({
 
   if (isMessageEvent(type)) {
     final message = messageProjectionOf(type, data);
+    // **"谁说的话"由 `source.kind` 决定，不是事件类型**（2026-10-20 真机 + 真日志）。
+    //
+    // DSH 把运行时上下文、技能目录、时间快照都记成 `user/message`：
+    //
+    // ```json
+    // {"type":"user/message","seq":9,"data":{"content":[...],
+    //   "source":{"kind":"runtime-context","form":"snapshot",...}}}
+    // ```
+    //
+    // 而 DSH Web 的判据是 `source.kind !== 'user'` ⇒ **上下文节点**
+    // （`ui-chat/src/client/conversation-nodes/message.ts:79`），渲染成
+    // `ContextInjectionRow` 那种折叠行，不是用户气泡。手机上照抄这一条：
+    // 否则一段"Current runtime context…"会冒充用户说过的话（真机上就是这样，
+    // 一条会话里冒出三条"用户消息"）。
+    //
+    // **缺 `source` 时按用户消息处理**（`source.kind == null`）：那是 v3 时代的形状，
+    // 把它当上下文会**藏掉真人说的话** —— 两个方向的错法里，这一边更坏。
+    final contextKind = type == 'user/message' ? contextSourceKind(data) : null;
+    final isContext = contextKind != null && contextKind != 'user';
     return ChatProjection.item(
       MessageItem(
         itemId: itemId,
         seq: seq,
         updatedAt: time,
-        role: roleOfEvent(type),
+        role: isContext ? MessageRole.system : roleOfEvent(type),
         text: message.text,
         attachmentCount: message.attachmentCount,
         steering: steering,
         reasoning: message.reasoning,
         usage: message.usage,
-        // 系统 / 上下文注入行的**标签**（DSH 的 `system-prompt` 与 `context`
+        // 系统 / 上下文注入行的**标题**（DSH 的 `system-prompt` 与 `context`
         // 两个节点各有一个标题行，见 `register-node-renderers.ts:45,49`）。
         // 用户与助手消息没有它（它们有头像与名字）。
         systemLabel: type == 'system/message'
             ? kSystemPromptLabel
+            : type == 'developer/message'
+            ? kContextInjectionLabel
+            : isContext
+            ? kContextInjectionLabel
+            : null,
+        // 上下文行的**生产者**（`runtime-context` / `skill-catalog` / …），
+        // 渲染在标题后面那个分隔点之后（DSH `ContextInjectionRow.tsx:63-69`）。
+        systemHint: isContext
+            ? contextProducerLabel(data)
             : type == 'developer/message'
             ? contextProducerLabel(data)
             : null,

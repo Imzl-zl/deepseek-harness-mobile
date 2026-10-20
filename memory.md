@@ -6,35 +6,28 @@
 
 ## 下一步(新会话从这里开始)
 
-> 用户列表（13 项）与 2026-10-19/20 的 11 条追加反馈，**除「上传文件」全部落地**，
-> 大部分已真机验过。细节一律回 `.agents/notes/`（因果取舍）与 git（变迁），
-> 这里只留**还没做的**与**容易被误当缺口的定案**。
+> 2026-10-20 晚这一轮把「渲染清单」清完了（1/3/5/6/7 改，2/4/8 判定不改），
+> 并用 `DSH_HOME` 隔离实例做了**一次真机全测**。清单与逐条证据在
+> `.agents/notes/proposed/2026-10-20-rendering-issues-todo.md`（第 9、10 条是
+> 真机当场新发现的两条）；取舍与行号在
+> `.agents/notes/implemented/2026-10-20-render-alignment-to-dsh-spec.md`。
 
-待办:
+待办（按顺序）:
 
-1. **端到端验收（要配对，我这边做不了）**。下面几处都有单测、其中三处含
-   **变异验证**，缺的只是真机看一眼：
-   - 流式文本：发一句，正文边生成边显示。
-   - 斜杠命令卡：有 `/goal` 或 `/compact` 的会话里出现卡片。
-   - 异常结局与重试：有错误的会话里显示"第 N 轮出错 + DSH 原文"。
-   - 压缩标记：发生过压缩的会话显示"已压缩上下文 · 替换 N 条 · 压掉 N tok"。
-   - 附件：`＋` → 照片/拍照 → 相册/相机 → 芯片 → 发送后气泡旁显示附件计数。
-   - 历史翻页：滚到顶多出几轮，且过程摘要开始显示真实用时与计数。
-2. **「上传文件」** —— 形状已查清，开工单在
-   `.agents/notes/proposed/2026-10-20-file-upload-shape.md`（含 **rikkahub 的参考实现**：
-   SAF 选 → 托管存储 → 按 id 引用，与我们"选 → 上传拿回执 → 按 receiptId 引用"同构，
-   **差异只在"拷贝归谁"**：它自己保管副本，我们的副本在 DSH 宿主）。
-   DSH 侧入口已确认：`packages/client/file-upload/src/index.ts:105` 的
-   `upload`（还挂着 `@Remote('upload')`）与 `:118` 的
-   `uploadStream({sessionId, data, name?})`，返回值含 `receiptId`。
-   卡点：`@deepseek-ai/dsh-client-file-upload` **不在连接器依赖里**
-   （要加就得动 lockfile / 私有 registry），所以端口用**结构化类型**照抄形状；
-   共 8 个触达点（caps 键 / `Caps` 字段 / `dsh/` 端口 / handler / 依赖注入 /
-   方法表 / 契约文档 / 两边测试）。**别半截提交**。
-3. **会话页渲染的剩余问题** —— **已把 9 条清单写进
-   `.agents/notes/proposed/2026-10-20-rendering-issues-todo.md`**
-   （每条标了证据状态：已截图确认 / 只读代码未比对 / 未验）。
-   新会话从那份清单开工；`proposed/next-session-prompt.md` 是给用户复制的提示词。
+1. **轮组（turn/step 分组 + 折叠过程）** —— 用户当场指出 Web 与 App 结构不同：
+   Web 是 `已完成，用时 X ⌃` 一个可展开的轮组，组内分 `已完成分析`/`执行了命令`，
+   上下文注入与思考/工具都在组里；手机是平铺。这不是样式差，是**少了一层结构**
+   （做法与代价见清单第 9 条）。
+2. **`ask_user_question` 未计时提问答不了** —— 用户当场指出"提问报错"。
+   我们的连接器在 `request.wait?.callId` 缺失时 fail-closed 抛出
+   （`connector/src/interaction-claims.ts:255`），而 DSH 的 `wait` 对 indefinite
+   提问**本来就没有**（`packages/interaction/user-questions/src/types.ts:140-145`）。
+   做法见清单第 10 条。
+3. **隔离实例验收剩下的两条**（本轮没跑到）：附件（`＋`→照片→芯片→发送→附件计数）、
+   历史翻页（滚到顶多出几轮）。
+4. **「上传文件」** —— 开工单在
+   `.agents/notes/proposed/2026-10-20-file-upload-shape.md`（DSH 侧入口
+   `packages/client/file-upload/src/index.ts:105,118`；共 8 个触达点，**别半截提交**）。
 
 别当缺口（定案，别再试）:
 
@@ -46,17 +39,25 @@
 - **用量甘特图**要**每步**起止，而 `sessionStats` 是会话级总量 ——
   拿总量画分段只能画出假图。要做得先加投影。
 - **输入栏横滚钮组**只在加第五个钮时才需要（现在四个不换行）。
+- **会话流里 `user/message` 不一定是人说的**：运行时上下文 / 技能目录 / 时间快照
+  都是 `user/message`，靠 `source.kind === 'user'` 区分（DSH
+  `conversation-nodes/message.ts:79`）。这条已修，别再按事件类型认角色。
 
-## 2026-10-20 晚上这一批（用户 5 条反馈）
+## 2026-10-20 晚上这一轮（渲染对齐 + 隔离实例全测）
 
-- **空态文字不居中**：`Center(Text(...))` 缺 `textAlign.center` —— 折行后左对齐。
-- **底部漏一条 `sidebar` 色**：输入区外层 `Container` 还是 `c.sidebar`，而它下面有
-  `padding.bottom + 6`；输入栏内部早已改 `bgBase` ⇒ 灰带被挤进底部那条缝里。
-- **系统栏跟主题**：`SystemUiOverlayStyle` + `AnnotatedRegion`（`targetSdk 36` 时
-  `SystemUiMode` 被系统忽略，靠 overlay style 配透明）。
-- **行内 HTML 归一**：`normalizeInlineHtml`（`<br>/<b>/<i>/<code>` → Markdown，
-  代码块内一字不动）。GFM 警示块 `> [!NOTE]` **没改**，只记录事实。
-  见 `.agents/notes/implemented/2026-10-20-{empty-state-and-bottom-strip,markdown-coverage-and-inline-html}.md`。
+- **正文 13/20 → 14/24**（13 是次要档，不是正文）；标题字号表照 DSH。
+- **工具卡正文**换成 `.ioCard`/`.ioSection`/`.ioText`（11/16 等宽、上限 150、内滚）。
+- **折叠行**（思考 / 系统提示词 / 上下文注入 / 斜杠命令）按 `DisclosureRow` 重写：
+  行高 36（触屏偏离）、标题 13、`label-tertiary`、去卡片；思考正文是 compact Markdown
+  且收起时显示首行摘要，系统提示词/上下文是 11/16 等宽的 141px 滚动区。
+- **斜杠命令卡**不再是工具卡形状：disclosure 行 + 代码正文（上限 260）。
+- **宽表**：`IntrinsicColumnWidth` 拿到横向滚动（真机验过：六列可左右滑）。
+- **围栏扫描**：`~~~`/四反引号/未闭合都按 CommonMark 处理（原来会改写围栏内源码）。
+- **会话流方向修好**：`reverse: true` 下列表下标要倒着取 `items`（原来是**整段倒排**，
+  最新在最上、进入会话落在最早一条）。
+- **上下文注入不再冒充用户消息**（`source.kind` 判据）。
+- **键盘弹起时接管卡不再撑爆底部**（上限按"可用高度"算，扣掉 `viewInsets.bottom`）。
+
 
 ## 附件与图片（做过的，别重做）
 
@@ -230,7 +231,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **300 项**(22 条规则自检 + 扫 84 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 43 个)/ 工具脚本不许硬编码盘符(19 个) |
-| `cd app && flutter test` | **895 项** |
+| `cd app && flutter test` | **917 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **550 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |

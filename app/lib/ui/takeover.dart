@@ -450,6 +450,22 @@ class TakeoverController extends ChangeNotifier {
 }
 
 /// 接管卡（原型 `.tk`）。
+///
+/// ## 高度上限按**可用高度**算，不是屏幕高度
+///
+/// 2026-10-20 真机：审批卡 + 输入栏 + 键盘同时在场时底部报
+/// `BOTTOM OVERFLOWED BY 79 PIXELS`。原因是上限用了
+/// `MediaQuery.size.height * 0.45` —— 那是**整窗高度**，而键盘弹起后
+/// 留给"接管卡 + 输入栏"的高度只剩一小半。扣掉 `viewInsets.bottom` 才是
+/// 真正可用的高度（`Scaffold` 会按它压缩 body）。
+///
+/// [fraction] 是占可用高度的比例：整张卡 0.5、卡内正文 0.45
+/// （正文那一层外面还有卡片自身的 margin / 边框，取小一点才不会把外框顶满）。
+double takeoverMaxHeightFor(BuildContext context, {double fraction = 0.5}) {
+  final media = MediaQuery.of(context);
+  return (media.size.height - media.viewInsets.bottom) * fraction;
+}
+
 class TakeoverPanel extends StatefulWidget {
   const TakeoverPanel({super.key, required this.controller});
 
@@ -493,9 +509,7 @@ class _TakeoverPanelState extends State<TakeoverPanel> {
         // 而消息列表是 `Expanded` —— 卡片不设上限就会把那个 `Column` 撑爆
         //（实测在 800×544 上报 `RenderFlex overflowed by 9.0 pixels`）。
         return ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.5,
-          ),
+          constraints: BoxConstraints(maxHeight: takeoverMaxHeightFor(context)),
           child: Container(
             // 接管卡从下往上浮入 —— 用 `AnimatedSize` 而不是硬切。
             margin: const EdgeInsets.fromLTRB(8, 0, 8, 6),
@@ -660,9 +674,9 @@ class _Body extends StatelessWidget {
       // 它和输入栏、统计条同在一个 `Column` 里，而消息列表是 `Expanded` ——
       // 卡片不设上限时会把那个 `Column` 撑爆：实测在 800×544 上报
       // `RenderFlex overflowed by 9.0 pixels on the bottom`（黄黑条）。
-      // 上限取屏幕的 45%：既能看清明细，也保证输入栏永远在视口内。
+      // 上限取**可用高度**（扣掉键盘）的 45%：既能看清明细，也保证输入栏永远在视口内。
       constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.45,
+        maxHeight: takeoverMaxHeightFor(context, fraction: 0.45),
       ),
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),

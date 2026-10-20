@@ -137,4 +137,64 @@ void main() {
       expect(item.systemLabel, isNull, reason: '用户消息没有系统行标签');
     });
   });
+
+  // 2026-10-20 隔离实例真日志（`$DSH_HOME/sessions/.../session.v4.jsonl.zstd`）：
+  // 运行时上下文 / 技能目录 / 时间快照**都是 `user/message`**，靠 `source.kind`
+  // 区分。DSH Web 的判据是 `source.kind !== 'user'` ⇒ 上下文节点
+  // （`ui-chat/src/client/conversation-nodes/message.ts:79`）。
+  group('真形状：上下文注入也是 user/message（按 source.kind 认角色）', () {
+    Map<String, Object?> injected(String kind) => {
+      'type': 'user/message',
+      'seq': 9,
+      'time': 1792500680000,
+      'data': {
+        'content': [
+          {'type': 'text', 'text': 'Current runtime context. …'},
+        ],
+        'source': {'kind': kind, 'form': 'snapshot'},
+        'role': 'user',
+        'id': 'msg-ctx',
+      },
+    };
+
+    test('runtime-context → 上下文注入行，不是用户气泡', () {
+      final item = _project(injected('runtime-context')) as MessageItem;
+      expect(item.role, MessageRole.system);
+      expect(item.systemLabel, kContextInjectionLabel);
+      expect(item.systemHint, 'runtime-context');
+    });
+
+    test('skill-catalog / time-context 同样归到上下文行', () {
+      for (final kind in ['skill-catalog', 'time-context']) {
+        final item = _project(injected(kind)) as MessageItem;
+        expect(item.role, MessageRole.system, reason: kind);
+        expect(item.systemHint, kind, reason: kind);
+      }
+    });
+
+    test('source.kind == user 才是人打的字', () {
+      final item = _project(injected('user')) as MessageItem;
+      expect(item.role, MessageRole.user);
+      expect(item.systemLabel, isNull);
+      expect(item.systemHint, isNull);
+    });
+
+    test('没有 source（v3 形状）按用户消息处理 —— 不许把真人说的话藏起来', () {
+      final item =
+          _project({
+                'type': 'user/message',
+                'seq': 3,
+                'time': 1792500680000,
+                'data': {
+                  'content': [
+                    {'type': 'text', 'text': '老日志里的一句人话'},
+                  ],
+                  'id': 'msg-legacy',
+                },
+              })
+              as MessageItem;
+      expect(item.role, MessageRole.user);
+      expect(item.systemLabel, isNull);
+    });
+  });
 }

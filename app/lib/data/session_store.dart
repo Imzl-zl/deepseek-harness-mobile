@@ -165,7 +165,8 @@ class SessionStore {
             x.attachmentCount == y.attachmentCount &&
             x.steering == y.steering &&
             x.reasoning == y.reasoning &&
-            x.systemLabel == y.systemLabel,
+            x.systemLabel == y.systemLabel &&
+            x.systemHint == y.systemHint,
       (final ToolCallItem x, final ToolCallItem y) =>
         x.name == y.name &&
             x.status == y.status &&

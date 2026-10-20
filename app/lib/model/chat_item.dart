@@ -139,6 +139,7 @@ class MessageItem extends ChatItem {
     this.steering = false,
     this.reasoning = '',
     this.systemLabel,
+    this.systemHint,
     this.usage,
   });
 
@@ -177,6 +178,16 @@ class MessageItem extends ChatItem {
   /// 2026-10-19 之前这两种消息被渲染成**正文原样内联** —— 而系统提示词
   /// 在真日志里有上万字符，于是对话流开头横着一条巨墙（真机复现）。
   final String? systemLabel;
+
+  /// 上下文行的**生产者**（`runtime-context` / `skill-catalog` / `time-context` …），
+  /// 渲染在标题后面的分隔点之后；`null` = 不显示。
+  ///
+  /// 2026-10-20 真机发现：DSH 把运行时上下文、技能目录、时间快照都记成
+  /// `user/message`，只有 `source.kind === 'user'` 才是人打的字
+  /// （`ui-chat/src/client/conversation-nodes/message.ts:79`）。原来我们按事件类型
+  /// 认角色 ⇒ 这些注入在手机上**冒充用户消息**（一条会话里冒出三条气泡）。
+  /// 判据与标签见 `projection.dart` 的 `contextSourceKind` / `kContextInjectionLabel`。
+  final String? systemHint;
 
   /// 这条助手消息那一次请求的 token 用量；`null` = 事件没带（老日志 / 用户消息）。
   ///

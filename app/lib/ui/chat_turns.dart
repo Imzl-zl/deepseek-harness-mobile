@@ -1283,13 +1283,16 @@ class TakeoverHint extends StatelessWidget {
 /// 思考是 compact Markdown，这两种是代码字体的 141px 滚动区
 /// （`ui-chat/src/client/chat/ContextInjectionRow.module.css:50-64`）。
 class SystemTurn extends StatelessWidget {
-  const SystemTurn(this.text, {super.key, this.label});
+  const SystemTurn(this.text, {super.key, this.label, this.hint});
 
   /// 正文（展开后才看）。
   final String text;
 
   /// 标题行文案；`null` = 「系统提示词」。
   final String? label;
+
+  /// 标题后那个分隔点之后的**生产者**（`runtime-context` 之类）；`null` = 不显示。
+  final String? hint;
 
   @override
   Widget build(BuildContext context) {
@@ -1311,6 +1314,7 @@ class SystemTurn extends StatelessWidget {
             : 'contextInjection',
         label: label ?? kSystemPromptLabel,
         text: text,
+        collapsedPreview: hint ?? '',
       ),
     );
   }

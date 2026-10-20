@@ -77,6 +77,38 @@ Status: proposed（**清单，不是决定**；每条都写了"证据状态"，�
    不是 DSH 的行为，我们不该做。我们的偏离（四种行内标签归一、其余去标签保文字）
    已写进 `docs/subsystems/app-channel-client.md` §4.1 的偏离表。
 
+## 隔离实例真机验收（2026-10-20 晚）新发现的两条 —— **下一轮第一、二项**
+
+9. **一轮没有"轮组"，与 DSH Web 结构不同（用户当场指出）**。
+   同一轮在两端：
+   - DSH Web：`已完成，用时 1 分 7 秒 ⌃` 一个**可展开的轮组**，组内再分
+     `已完成分析` / `执行了命令`；上下文注入、思考、工具调用、正文都在组里，
+     收起时只剩摘要（`ui-chat/src/client/locale.ts:35,64-65,150-151`、
+     `conversation-nodes/step-process.ts`、`TurnProcessNodeView.tsx`）。
+   - 手机：**平铺**。上下文注入三行、思考行、工具卡、正文、轮摘要各占一块；
+     `TurnProcessRow` 只是"一轮末尾的一行收口"，不收任何东西
+     （`chat_turns.dart` 里那句"不做收起该轮 —— 那是组级交互，而我们没有 turn 组"）。
+
+   要补的是**一层结构**（不是样式）：事件里的 `turn`/`step` 进投影 → 条目带轮号 →
+   列表按轮分组 → 组头复用 `TurnProcessRow`（加展开/收起，默认收起过程、正文不藏）→
+   文案换成 DSH 的 `已完成，用时 ` / `已完成` / `已完成分析` / `N 次工具调用`。
+   代价：列表结构、`_keysById` 的跳转语义、以及一组"收起只剩摘要"的测试。
+
+10. **`ask_user_question` 在真机上直接失败**（用户当场指出"提问报错"）。
+    模型调了 `ask_user_question`，工具结果是我们的原文：
+    `提问缺少 callId：无法为手机答复建立稳定身份`
+    （`connector/src/interaction-claims.ts:255`）。
+    根因：**DSH 的 ask 载荷里 `wait` 是可选的** —— "absent for indefinite waits"
+    （`packages/interaction/user-questions/src/types.ts:140-145`），而未计时的
+    `ask_user_question` 正是 indefinite 那种；`callId` 只出现在
+    `tool/call.callId` 与 `userQuestions` 投影的 `active[].callId` 上
+    （`types.ts:76,142`）。我们只在 `request.wait?.callId` 上取
+    （`connector/src/dsh/interactions.ts:205`），于是**所有未计时的提问都答不了**。
+    修法方向：从会话事件里最近一条未应答的 `ask_user_question` 工具调用取 `callId`
+    （我们已经在收 `tool/call`），或从 `userQuestions` 投影的 `active[]` 里按问题内容配对；
+    两条都要在 `connector/tests/` 里钉住"未计时提问也能答"。
+
+
 ## 不算问题（用户 2026-10-20 纠正）
 
 **「示例数据下轨迹页是空态」不是产品缺陷。** 示例数据只是开发辅助，

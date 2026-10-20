@@ -2203,6 +2203,17 @@ class _ChatTab extends StatelessWidget {
 /// `Scrollable.ensureVisible(itemKeys[selectedIndex].currentContext!)` ——
 /// **每条目一个 key，用 element 的 context 让它滚进视口**。
 /// 用"平均高度 × index"估算是猜（条目高度不定，差一点就偏出半屏），这里不用。
+///
+/// ## 列表下标与 `items` 下标是**反的**
+///
+/// [chatItemIndexFor] 把 `reverse: true` 的列表下标换算成 `items` 下标
+/// （`items` 是 seq 升序，列表 index 0 在最下面 ⇒ 最下面是最新那条）。
+int chatItemIndexFor(
+  int index, {
+  required int itemCount,
+  required bool hasLive,
+}) => itemCount - 1 - (index - (hasLive ? 1 : 0));
+
 class _ConversationFlow extends StatefulWidget {
   const _ConversationFlow({
     required this.items,
@@ -2428,15 +2439,24 @@ class _ConversationFlowState extends State<_ConversationFlow> {
             // **+1 是流式尾条目**（虚拟，没有 itemId）。
             itemCount: widget.items.length + (widget.liveText == null ? 0 : 1),
             itemBuilder: (context, index) {
-              // `reverse: true` 下 index 0 是**最新**一端，所以流式条目在 index 0，
-              // 持久条目从 1 开始（`widget.items[index - 1]`）。
+              // `reverse: true` 下 index 0 在**最下面**，往上递增。
+              // `items` 是 **seq 升序**（`session_store.dart:146`），所以 index 要
+              // **倒着取**：最下面那条 = 最新的持久条目（`items.last`）。
+              //
+              // 2026-10-20 真机复现：原来这里是 `items[index - 1]`（正着取），
+              // 于是**最早的在上、最新的在下** —— 一整段对话是倒的，
+              // 而且"进入会话落在最新一条"也落到了最早一条。
               if (widget.liveText != null && index == 0) {
                 return KeyedSubtree(
                   key: const ValueKey('live'),
                   child: _LiveTurn(widget.liveText!),
                 );
               }
-              final itemIndex = widget.liveText == null ? index : index - 1;
+              final itemIndex = chatItemIndexFor(
+                index,
+                itemCount: widget.items.length,
+                hasLive: widget.liveText != null,
+              );
               // **按 `itemId` 取 key**（跨帧同一个）—— 换 key 会让这一行重新
               // 挂载，工具卡的展开状态就丢了。见 `_keysById` 的说明。
               return KeyedSubtree(
@@ -2685,6 +2705,7 @@ class _TurnView extends StatelessWidget {
         :final steering,
         :final reasoning,
         :final systemLabel,
+        :final systemHint,
       ) =>
         switch (role) {
           MessageRole.user => UserTurn(
@@ -2696,7 +2717,11 @@ class _TurnView extends StatelessWidget {
             text: text,
             reasoning: reasoning,
           ),
-          MessageRole.system => SystemTurn(text, label: systemLabel),
+          MessageRole.system => SystemTurn(
+            text,
+            label: systemLabel,
+            hint: systemHint,
+          ),
         },
       ToolCallItem(
         :final name,

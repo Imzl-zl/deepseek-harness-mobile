@@ -231,26 +231,34 @@ Future<void> _drainSnackBars(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+/// 接管卡的标题文案，**只在接管卡里找**。
+///
+/// 聊天流里同一句话也有一行提示（`TakeoverHint` 的 statusText），
+/// 不限定范围会把"接管队列里有没有"和"对话流里有没有"混成同一条断言 ——
+/// 2026-10-20 修好会话流方向后，那行提示从屏外变成可见，这些断言才暴露出来。
+Finder _takeoverText(String text) =>
+    find.descendant(of: find.byType(TakeoverPanel), matching: find.text(text));
+
 void main() {
   testWidgets('接管卡接进底部，且**输入栏仍在**（并排而不是替换）', (tester) async {
     await _pumpChat(tester);
     // 装之前：只有输入栏。
     expect(find.byType(TakeoverPanel), findsOneWidget);
-    expect(find.text('等待确认计划'), findsNothing);
+    expect(_takeoverText('等待确认计划'), findsNothing);
 
     await _enqueueDemo(tester);
 
     // 装之后：接管卡在，输入栏**也还在**。
     // 队首是**计划**（DSH 的优先级：计划 2 > 提问 1 > 审批 0，
     // `ui-user-questions/.../index.ts:372`）—— 演示三个都装了，先出计划。
-    expect(find.text('等待确认计划'), findsOneWidget);
+    expect(_takeoverText('等待确认计划'), findsOneWidget);
     expect(
       find.byType(DshComposer),
       findsOneWidget,
       reason: '接管卡与输入栏并排（手机上更省高度，且不会让用户以为输入框不见了）',
     );
     // 接管卡在输入栏**上方**。
-    final card = tester.getRect(find.text('等待确认计划'));
+    final card = tester.getRect(_takeoverText('等待确认计划'));
     final composer = tester.getRect(find.byType(DshComposer));
     expect(
       card.bottom,
@@ -264,16 +272,16 @@ void main() {
     await _enqueueDemo(tester);
 
     // ① 计划（优先级 2）。
-    expect(find.text('等待确认计划'), findsOneWidget);
-    expect(find.text('等待回答'), findsNothing, reason: '瀑布：一次只出一个');
-    expect(find.text('等待审批'), findsNothing);
+    expect(_takeoverText('等待确认计划'), findsOneWidget);
+    expect(_takeoverText('等待回答'), findsNothing, reason: '瀑布：一次只出一个');
+    expect(_takeoverText('等待审批'), findsNothing);
 
     await tester.tap(find.text('同意执行'));
     await tester.pumpAndSettle();
 
     // ② 提问（优先级 1）。
-    expect(find.text('等待回答'), findsOneWidget);
-    expect(find.text('等待确认计划'), findsNothing);
+    expect(_takeoverText('等待回答'), findsOneWidget);
+    expect(_takeoverText('等待确认计划'), findsNothing);
     // 推荐是独立徽标（不在标签里）。
     expect(find.text('推荐'), findsOneWidget);
     expect(find.textContaining('（推荐）'), findsNothing);
@@ -281,7 +289,7 @@ void main() {
     // 未回答时提交无效。
     await tester.tap(find.text('提交'));
     await tester.pumpAndSettle();
-    expect(find.text('等待回答'), findsOneWidget, reason: '没答就不该走');
+    expect(_takeoverText('等待回答'), findsOneWidget, reason: '没答就不该走');
 
     await tester.tap(find.text('先只拆资源束'));
     await tester.pumpAndSettle();
@@ -289,12 +297,12 @@ void main() {
     await tester.pumpAndSettle();
 
     // ③ 审批（优先级 0）。
-    expect(find.text('等待审批'), findsOneWidget);
+    expect(_takeoverText('等待审批'), findsOneWidget);
     await tester.tap(find.text('允许一次'));
     await tester.pumpAndSettle();
 
     // 三个都答完 → 接管卡消失，输入栏还在。
-    expect(find.text('等待审批'), findsNothing);
+    expect(_takeoverText('等待审批'), findsNothing);
     expect(find.byType(DshComposer), findsOneWidget);
   });
 
@@ -336,18 +344,51 @@ void main() {
     await _enqueueDemo(tester);
 
     // 审批被跳过 ⇒ 队首是计划（优先级仍高于提问）。
-    expect(find.text('等待审批'), findsNothing, reason: '完全权限下审批不该入队');
-    expect(find.text('等待确认计划'), findsOneWidget);
+    expect(_takeoverText('等待审批'), findsNothing, reason: '完全权限下审批不该入队');
+    expect(_takeoverText('等待确认计划'), findsOneWidget);
+  });
+
+  testWidgets('接管卡的高度上限按**可用高度**算（扣掉键盘）', (tester) async {
+    // 2026-10-20 真机：审批卡 + 输入栏 + 键盘同时在场，底部报
+    // `BOTTOM OVERFLOWED BY 79 PIXELS`。根因是上限用了整窗高度。
+    late double cap;
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(
+          size: Size(360, 800),
+          viewInsets: EdgeInsets.only(bottom: 300),
+        ),
+        child: Builder(
+          builder: (context) {
+            cap = takeoverMaxHeightFor(context);
+            return const SizedBox.shrink();
+          },
+        ),
+      ),
+    );
+    expect(
+      cap,
+      closeTo((800 - 300) * 0.5, 0.01),
+      reason: '键盘占掉的那 300 不能再算进可用高度',
+    );
+    expect(
+      takeoverMaxHeightFor(
+        tester.element(find.byType(SizedBox).first),
+        fraction: 0.45,
+      ),
+      closeTo((800 - 300) * 0.45, 0.01),
+      reason: '卡内正文那一层取 0.45',
+    );
   });
 
   testWidgets('收起接管卡：卡片消失但队列不减（可恢复）', (tester) async {
     await _pumpChat(tester);
     await _enqueueDemo(tester);
-    expect(find.text('等待确认计划'), findsOneWidget);
+    expect(_takeoverText('等待确认计划'), findsOneWidget);
 
     await tester.tap(find.byTooltip('收起'));
     await tester.pumpAndSettle();
-    expect(find.text('等待确认计划'), findsNothing);
+    expect(_takeoverText('等待确认计划'), findsNothing);
     expect(find.byType(DshComposer), findsOneWidget, reason: '输入栏该回来');
   });
 }

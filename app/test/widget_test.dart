@@ -1556,8 +1556,14 @@ void main() {
       expect(find.text('1 个文件'), findsOneWidget, reason: '表头报的是真数量');
       expect(find.text('lib/theme/dsh_icons.dart'), findsOneWidget);
       // 差异页签默认选中，行上带增量。
-      expect(find.text('+100'), findsOneWidget);
-      expect(find.text('−0'), findsOneWidget);
+      //
+      // **只在侧栏里找**：会话流里那张工具卡也有 `+100`（同一条改动），
+      // 不限定范围时两个都能命中 —— 2026-10-20 修好会话流方向后那张卡从
+      // 屏外变成可见，这条断言才暴露出来。
+      Finder inPane(Finder finder) =>
+          find.descendant(of: find.byType(SidePane), matching: finder);
+      expect(inPane(find.text('+100')), findsOneWidget);
+      expect(inPane(find.text('−0')), findsOneWidget);
       // **空态不许同时出现** —— 列着东西还说"还没有改动"就是自相矛盾。
       expect(find.text('还没有改动'), findsNothing);
     });
@@ -1607,6 +1613,42 @@ void main() {
       expect(first.single.path, 'lib/theme/dsh_icons.dart');
       // 不可变：调用方拿去渲染，谁也别想着改它。
       expect(() => first.clear(), throwsUnsupportedError);
+    });
+  });
+
+  group('会话流方向：seq 大的在下（最新一条在最下面）', () {
+    // 2026-10-20 隔离实例真机复现：`ListView(reverse: true)` 里 index 0 在**最下面**，
+    // 而 `items` 是 seq 升序（`session_store.dart:146`）—— 原来按 `items[index]` 正着取，
+    // 于是整段对话**倒着排**（最早的在上），"进入会话落在最新一条"也落到了最早一条。
+    test('列表下标 → items 下标：倒着取，流式条目占最下面一格', () {
+      // 3 条持久条目、没有流式尾：最下面（index 0）= items[2]（最新）。
+      expect(chatItemIndexFor(0, itemCount: 3, hasLive: false), 2);
+      expect(chatItemIndexFor(2, itemCount: 3, hasLive: false), 0);
+      // 有流式尾：index 0 是它，index 1 才是最新的持久条目。
+      expect(chatItemIndexFor(1, itemCount: 3, hasLive: true), 2);
+      expect(chatItemIndexFor(3, itemCount: 3, hasLive: true), 0);
+    });
+
+    testWidgets('真渲染：助手那条（seq 2）在用户那条（seq 1）下面', (tester) async {
+      tester.view.physicalSize = const Size(1080, 4000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final app = AppModel(client: FakeClient())..loadPreview();
+      await tester.pumpWidget(_wrap(app));
+      await tester.pumpAndSettle();
+      await app.openSession('preview-1');
+      await tester.pumpAndSettle();
+
+      final user = tester
+          .getTopLeft(
+            find.textContaining('帮我把 sync_client_impl', findRichText: true),
+          )
+          .dy;
+      final assistant = tester
+          .getTopLeft(find.textContaining('先量了一下耦合面', findRichText: true))
+          .dy;
+      expect(assistant, greaterThan(user), reason: 'seq 大的必须在下面');
     });
   });
 

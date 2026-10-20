@@ -156,6 +156,7 @@ abstract class Outbox {
 | 节点图标 | 系统提示词 `browse`、上下文注入 `contextInjection` | `ui-chat/src/client/chat/SystemPromptRow.tsx:30`、`ContextInjectionRow.tsx:55` |
 | 表格 | 自然宽度 + 横向滚动；单元格 `10px 16px`；只有行分隔线；`th` 左对齐 | `ui-primitives/src/markdown/MarkdownText.module.css:192-196,226-262` |
 | 用户消息正文 | **纯文本，不跑 Markdown** | `ui-primitives/src/user-text.tsx:18-20`（`UserTextRun`：without Markdown or reference recognition） |
+| 上下文注入 | `user/message` 里 **`source.kind !== 'user'` 的一律是上下文**（标题「上下文注入」+ 生产者），不是用户气泡 | `ui-chat/src/client/conversation-nodes/message.ts:79`、`ui-chat/src/client/locale.ts:126`、`ContextInjectionRow.tsx:57` |
 | 原始 HTML | DSH 把标签当**字面文本**显示 | `ui-primitives/src/markdown/render.tsx:333-335` |
 
 实现侧的三个关键落点：
@@ -171,6 +172,11 @@ abstract class Outbox {
   （`ui-primitives/src/markdown/incremental.ts:10-14`），所以"途中显示成代码块"不是缺陷；
   要保的是**围栏闭合那一帧形态不变**。手机侧的流式尾条目与持久条目共用
   `AssistantHead` + `DshMarkdown`，避免流结束换条目时跳一下。
+- **上下文注入不是用户消息**：DSH 把运行时上下文 / 技能目录 / 时间快照都记成
+  `user/message`，只有 `source.kind === 'user'` 才是人打的字
+  （`conversation-nodes/message.ts:79`）。按事件类型认角色会让一段
+  "Current runtime context…" 冒充用户气泡（2026-10-20 隔离实例真机复现，一条会话里
+  冒出三条"用户消息"）。缺 `source` 的 v3 形状按用户消息处理 —— 反向错法会藏掉人话。
 
 ### 有意偏离（每条都不得"顺手改回去"）
 
