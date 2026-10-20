@@ -124,10 +124,10 @@
 - **新会话页**:连上后落到 blank 会话 → hero(鱼 + 标题 + 预览版徽标 + 两枚 chip)。
 - **PC 端**:两通道各自开关;`/api/dsh-mobile/advertise` 管上报地址(藏虚拟网卡 / 追加)。
 
-## 七条教训
+## 八条教训
 
 > 前五条是"替身复现的不是真形状"；第六条是"提交不完整"；
-> 第七条是"生产路径上的假数据"。
+> 第七条是"生产路径上的假数据"；第八条是"线上预算要按帧算"。
 
 1. **投影信封**:`session.projections` 回 `null | {kind, asOfSeq, values}`,**手机要 `values`**。
    连接器曾整包透传 ⇒ 统计条/权限档/子智能体在生产里全空态而单测全绿
@@ -160,6 +160,13 @@
    从 7 项降到 4 项，每一项都是真的（拍照 / 照片 / 后台任务 / 演示）。
    注意这条规则**不给"弹一句还没做"留例外** —— 我一度用"它说的是还没做、
    不是假装做了"给自己找台阶，被 `settings_page.dart:7` 的原文否掉。
+8. **线上预算要按"帧"算，不按"对象"算**（2026-10-20 连续踩两次）：
+   ① 只算了一层膨胀 —— 二进制 `N` → JSON base64 `1.33N`，**漏了 `box` 的
+   base64url 又 ×1.33** ⇒ 实际一帧 ≈ **1.78N**（一张 5 MB 照片 ≈ 8.9 MB 帧，
+   撞 8 MiB 上限**并关连接**）；
+   ② 预算按"每张图"给 —— **漏了整条 content 共用一帧**（两张 3 MiB ⇒ 10.7 MB）。
+   **自查的问法**：这个值在线上最终会被**哪一帧**承载？**那一帧里还有谁？**
+   **传播后的体积**是多少（base64、加密、再 base64 各乘多少）？
 
 ## 真机联调的成本纪律(立过规,别问第二遍)
 
@@ -252,7 +259,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **296 项**(22 条规则自检 + 扫 82 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 43 个)/ 工具脚本不许硬编码盘符(19 个) |
-| `cd app && flutter test` | **863 项** |
+| `cd app && flutter test` | **866 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **550 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
