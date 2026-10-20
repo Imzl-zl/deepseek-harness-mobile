@@ -31,9 +31,21 @@
 4. **电脑侧停一会儿，手机会清掉配对** —— 中转重启后名册是空的，设备换票拿到 401，
    App 把 401 归成 `notPaired`（终态）⇒ 清凭据回配对页。实测一次（清单第 11 条，
    含两条修法方向：名册持久化/503，或 App 侧只在连接器明确拒绝时才终态）。
-5. **隔离实例验收剩下的三条**（本轮没跑到）：附件（`＋`→照片→芯片→发送→附件计数）、
+5. **侧边栏：组折叠已有，会话排序没有**（用户问"可以折叠、移动吗？web 都支持"）。
+   DSH 的"移动"是**组内拖动排序**（`ui-workspace/src/client/rows/Rows.tsx:574-616` +
+   `tree.ts:64-65` 的 `'manual'`），而且顺序是**前端本地偏好**（`stores.ts:114-118`），
+   不改会话归属（归属由 `workspace.sessionIds` 决定，`tree.ts:26-31`）。
+   手机上建议长按菜单（置顶/上移/下移），顺序存本地 —— **别做"拖到另一个工作区"**，
+   那在 Web 上也不存在。做法见清单第 12 条。
+6. **子智能体进入 / 后台任务看与停：都已接**（别再当缺口）：
+   子智能体 = `chat_page.dart:564` → `_openSubagentSession`（`openSession(job.id)`，
+   顶栏"返回"回父会话），DSH 同一条 `ui-subagent/src/client/index.ts:61-63`；
+   后台任务 = 行内展开输出（`job.follow`/`unfollow`，`app_model.dart:828-848`，丢帧写
+   "较早的输出已被淘汰"）+ 两步确认停止（`KILL_ARM_MS = 3000` 照 DSH
+   `ui-jobs/src/client/JobListAction.tsx:63-67`）走 `job.kill`。**只差真机点一次。**
+7. **隔离实例验收剩下的三条**（本轮没跑到）：附件（`＋`→照片→芯片→发送→附件计数）、
    历史翻页（快照页 100 条，要造够真历史）、异常结局/重试/压缩标记。
-6. **「上传文件」** —— 开工单在
+8. **「上传文件」** —— 开工单在
    `.agents/notes/proposed/2026-10-20-file-upload-shape.md`（DSH 侧入口
    `packages/client/file-upload/src/index.ts:105,118`；共 8 个触达点，**别半截提交**）。
 

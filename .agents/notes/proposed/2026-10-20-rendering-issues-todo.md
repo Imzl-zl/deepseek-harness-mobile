@@ -134,6 +134,25 @@ Status: proposed（**清单，不是决定**；每条都写了"证据状态"，�
       换票 401 先按可重试处理（带次数上限），避免一次中转重启就丢配对。
     判据：停掉电脑侧 → 重启 → 手机**不需要重扫**、自动连回。
 
+12. **侧边栏会话只能折叠、不能排序（用户 2026-10-21 问「可以折叠，移动吗？web 都支持」）**。
+    先分清"Web 的移动"到底是什么（查过源码）：
+    - **组折叠**：DSH `tree.ts:79` 的 `expanded`（每组可折叠）+ 整条 sidebar 收成 rail
+      （`SidebarRoot.tsx:88-113`）。我们已有：`session_drawer.dart:139-146,303-315`
+      的 `CollapsibleGroup`（**缺省展开、不落盘**，与 DSH 的 `setGroupExpanded` 不同）。
+    - **会话拖动**：DSH 会话行 `draggable`（`Rows.tsx:574-616`，`drop(before|after)`），
+      落成**手动顺序** `'manual' | 'updated'`（`tree.ts:64-65`、`stores.ts:114-118`
+      的 `setSessionOrder`）；置顶行**只在置顶块内**可重排（`tree.ts:57-58`）。
+    - **它不改会话归属**：会话属于哪个工作区由投影的 `workspace.sessionIds` 决定
+      （`tree.ts:26-31` 的 `owningGroupKey`），拖拽只改顺序；真正持久的是**工作区顺序**
+      （`insertWorkspaceBefore`，`slots.ts:270`）。
+    - **会话顺序是前端本地偏好**（`sessionOrderByAccount` 在 client store），
+      **不是 Host 方法** —— 所以手机做它不需要连接器新方法。
+    我们缺的：会话行没有任何拖动/排序（`session_drawer.dart` 只有 `onLongPress: onDelete`）。
+    手机上照 DSH 的"桌面拖拽"不合适，建议：**长按会话行 → 菜单**（置顶 / 上移 / 下移 /
+    删除），顺序存本地偏好（与 DSH 的"本地偏好"同性质，不假装跨设备同步）。
+    判据：长按能上移下移、重启 App 后顺序还在；**别做成"拖到另一个工作区"** ——
+    那在 Web 上也不存在。
+
 
 ## 不算问题（用户 2026-10-20 纠正）
 
