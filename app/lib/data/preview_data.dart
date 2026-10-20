@@ -155,9 +155,14 @@ const List<PreviewSession> previewSessions = <PreviewSession>[
         name: 'write',
         status: ToolCallStatus.completed,
         summary: 'lib/theme/dsh_icons.dart（100 个图标）',
-        // 示例数据也要给出 `changedPath`：右侧「文件」面板按它列清单，
-        // 没有它那一屏在示例模式下永远是空态。这是**示例**（会话标题带
-        // 「（示例）」），不是生产路径上的编造。
+        // **`detail` 决定这张卡能不能展开**（`ToolCard` 的 `onTap` 是
+        // `hasDetail ? … : null`）。示例数据原来一条 `detail` 都没有 ⇒
+        // 示例模式下所有工具卡都点不开，"展开后会不会被新事件收起"
+        // 这类行为在示例里根本看不到。补一条是为了让它可达（示例数据，
+        // 会话标题带「（示例）」）。
+        detail:
+            '写入了 100 个图标常量：每行一对 name → path，'
+            '外加 12 个语义别名的映射表。',
         changedPath: 'lib/theme/dsh_icons.dart',
         diffStat: (added: 100, removed: 0),
       ),
