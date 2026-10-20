@@ -69,6 +69,28 @@ DSH 的 `packages/client/ui-tool/src/client/tool/components/ToolDetails.module.c
 而本轮上下文已在末尾 —— 在最后几步动三层结构、跑不完构建，
 留下的就是红树。**下一步开头就能做完**，清单已在上表。
 
+## 落地结果（2026-10-20 当日完成）
+
+照上表改完，真机截图确认：正文成了**独立的圆角块**
+（代码块底色 + 0.5px 发丝边框 + 左缩 4px + radius-lg），不再掉出卡片。
+
+同时更正一处**引错出处**的注释：原注释引 `.tool-body { … }`，而
+`.tool-body` 这个类**在 DSH 里不存在**（全仓 grep 为零）—— 照一个不存在的类
+写实现，就成了"每处都看着有出处、合起来却是另一样东西"，这比没有注释更危险
+（它让人停止怀疑）。现在引的是真实存在的
+`ui-tool/src/client/tool/components/ToolDetails.module.css` 的 `.root`。
+
+## 剩余风险（如实记）
+
+**深色主题没有眼验**。判据与理由：
+- 两个 token 的暗色值取自 `design-platform.css:303`（`border-l1`）与 `:348`
+  →`:73`（`markdown-code-block` = `neutral-bluish-900`），是**权威的**；
+- 这一对组合本来就是 DSH 自己在暗色下的搭配，所以"暗色下好不好看"
+  等价于"DSH 暗色下好不好看"，不需要我们重新判断；
+- 几何（margin/radius/border 宽度）与主题无关。
+
+真要眼验时的操作：设置 → 主题 → 深色，然后回到会话点开任意工具卡。
+
 ## 判据（定了之后怎么验）
 
 - 若判定要改：改完后 `write` 卡展开时正文应在**同一块底色**内，
