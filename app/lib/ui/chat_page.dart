@@ -46,6 +46,7 @@ import '../model/permission.dart';
 import '../model/preferences.dart';
 import '../model/session_stats.dart';
 import '../model/workspace.dart';
+import '../platform/photo_picker.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
@@ -392,9 +393,9 @@ class ChatPageState extends State<ChatPage> {
       // 不给这个字段时电脑侧按默认的 queue 走 —— 与本文默认值一致。
       await widget.app.client.call<void>('session.prompt', {
         'sid': sid,
-        'content': [
-          {'type': 'text', 'text': text},
-        ],
+        // 载荷形状由 `promptContentOf` 一处决定（纯函数，可单测）——
+        // 图片随 `{type:'image', mediaType, data}` 一起发出去。
+        'content': promptContentOf(text: text, attachments: _attachments),
         'mode': widget.app.sendMode.wire,
       }, requestId: requestId);
       _input.clear();
@@ -1672,20 +1673,60 @@ class ChatPageState extends State<ChatPage> {
   }
 
   /// `＋` 菜单（对应桌面端的快捷键入口）。
+  /// 选一张照片并挂到输入栏（**这条链是真的**：字节会随 prompt 发出去）。
+  ///
+  /// 原生侧是 Android 系统照片选择器（`dsh/photo-picker`，见
+  /// `platform/photo_picker.dart` 与 `MainActivity.kt`）—— **不申请任何权限**。
+  ///
+  /// 四种结果**分别说话**，不把它们混成"没反应"：
+  /// 取消 → 什么都不做；平台没有 → 直说；类型不支持 → 说清是哪种；
+  /// 失败 → 显示原生的原话。混在一起正是"点了没反应"最难查的那种。
+  Future<void> _pickPhoto() async {
+    final result = await pickPhoto();
+    if (!mounted) return;
+    switch (result) {
+      case PhotoPicked(:final mediaType, :final data, :final name):
+        setState(
+          () => _attachments.add(
+            PendingAttachment(
+              // 没有文件名时用媒体类型的短名（`image/png` → `png`），
+              // 不编一个假文件名。
+              name: name.isNotEmpty ? name : mediaType.split('/').last,
+              icon: 'paperclip',
+              image: PickedImagePart(
+                mediaType: mediaType,
+                data: data,
+                name: name,
+              ),
+            ),
+          ),
+        );
+      case PhotoPickCancelled():
+        // **用户取消不是错误**，一句话都不说。
+        break;
+      case PhotoPickUnavailable(:final reason):
+        _toast('这台设备上没有可用的相册选择器：$reason');
+      case PhotoPickUnsupportedType(:final mediaType):
+        // 明确说出"哪种不发" —— DSH 只认 png/jpeg/webp/gif。
+        _toast('这个格式发不出去（$mediaType）：只支持 PNG / JPEG / WebP / GIF');
+      case PhotoPickFailed(:final reason):
+        _toast('选图失败：$reason');
+    }
+  }
+
   void _showAttachSheet() {
-    // **「附件」那一行已移掉**（2026-10-20）：它原先加的是一个**假附件**
-    // （`PendingAttachment(name: '新增文件.txt')`），而 `_send()` 的 `content`
-    // 只有文本块 —— **附件被静默丢弃**。用户看到芯片以为传了文件，
-    // 发出去的东西里没有它。那比"死按钮"更糟：它不是没反应，是骗人。
+    // **「照片」是真的**（2026-10-20）：它走系统照片选择器，选到的字节会随
+    // `session.prompt` 的 `{type:'image', mediaType, data}` 一起发出去。
     //
-    // 要恢复这一行，先做**附件传输**：选图/选文件 → 编码成 DSH 的
-    // `PromptPart` → 体积限额 → 测试。`session.prompt` 的 `content`
-    // 已经能带非文本 part（`connector/src/handlers.ts` 的 `requireContent`
-    // 只校验"每项是带 type 的对象"），缺的是手机侧整条管线。
+    // 图标用 `paperclip`：DSH 与我们的图标集里都**没有** image/photo/camera
+    // 那一枚（`ui-primitives/src/icons/index.tsx` 只有 folder 系列），
+    // 而图标集是机生成的、不许手写 —— 用已有的"附件"字形 + 文案说清即可。
     //
-    // `PendingAttachment` 与输入栏的附件轨道**保留**（那是已经做对的布局：
-    // 卡片内部、文字行上方），由 `widget_test.dart` 直接构造 composer 验它。
+    // **「上传文件」仍然不做**：DSH 的文件 part 要 `receiptId`
+    // （`types.ts:98`），来自一次 `uploadFile` —— 那是另一个方法面，
+    // 本仓未接。摆一个加假芯片的入口就是 2026-10-20 刚拔掉的那处。
     const items = [
+      (icon: 'paperclip', label: '照片', desc: '从相册选一张，随消息发出去'),
       (icon: 'folderOpen', label: '工作区文件', desc: '桌面端 Ctrl+P'),
       (icon: 'code', label: '新建终端', desc: '桌面端 Ctrl+`'),
       (icon: 'globe', label: '浏览器', desc: '桌面端 Ctrl+T'),
@@ -1708,7 +1749,9 @@ class ChatPageState extends State<ChatPage> {
                 selected: false,
                 onTap: () {
                   Navigator.of(context).pop();
-                  if (item.label == '演示：接管输入栏') {
+                  if (item.label == '照片') {
+                    unawaited(_pickPhoto());
+                  } else if (item.label == '演示：接管输入栏') {
                     _enqueueDemoTakeovers();
                   } else {
                     _notWired(item.label);

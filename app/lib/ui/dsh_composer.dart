@@ -31,11 +31,82 @@ import '../theme/dsh_theme.dart';
 
 /// 待发送附件（`.attach-rail` 里的一项）。
 class PendingAttachment {
-  const PendingAttachment({required this.name, this.icon = 'deliverDoc'});
+  const PendingAttachment({
+    required this.name,
+    this.icon = 'deliverDoc',
+    this.image,
+  });
 
   final String name;
   final String icon;
+
+  /// 图片附件（选到了才有）。`null` = 这一项不是可发送的图片。
+  ///
+  /// **2026-10-20 之前这里没有它** —— 那时「附件」加的是一个只有名字的
+  /// 假芯片（`PendingAttachment(name: '新增文件.txt')`），而 `_send()` 的
+  /// `content` 只有文本块，**附件被静默丢弃**。现在图片这条链是真的：
+  /// 选到的字节随 `session.prompt` 的 `{type:'image', mediaType, data}`
+  /// 一起发出去（DSH 的 `PromptContentPart`，见 `platform/photo_picker.dart`）。
+  final PickedImagePart? image;
+
+  /// 它是不是一枚"只有名字、发不出去"的芯片。
+  ///
+  /// 这种芯片**不许再出现在生产路径上**（2026-10-20 拔掉的那处就是它）；
+  /// 留着这个判据是为了让"可发送"与"仅展示"在代码里分得开。
+  bool get isInert => image == null;
 }
+
+/// 一枚可以直接塞进 `session.prompt` 的图片 part。
+///
+/// 形状与 DSH 的 `PromptContentPart` 的图片分支逐字一致：
+/// `{type:'image', mediaType, data, name?}`
+/// （`packages/api/session-controller/src/types.ts:90-98`）。
+class PickedImagePart {
+  const PickedImagePart({
+    required this.mediaType,
+    required this.data,
+    this.name = '',
+  });
+
+  final String mediaType;
+
+  /// 规范 base64（无换行）。
+  final String data;
+
+  final String name;
+
+  /// 发出去的那一段载荷。
+  Map<String, Object?> toWire() => {
+    'type': 'image',
+    'mediaType': mediaType,
+    'data': data,
+    // `name` 是可选字段（DSH 的 `name?: string`）：空串就不带，
+    // 免得电脑侧收到一个空名字。
+    if (name.isNotEmpty) 'name': name,
+  };
+}
+
+/// 一次发送的 `session.prompt.content`。
+///
+/// **纯函数**：把"输入栏里现在有什么"翻成线上载荷。抽出来是为了能直接断言
+/// 形状（否则要驱动整个 ChatPage 才测得到，而那种测试查不出"少带了图片"
+/// 这种错 —— 它只看有没有异常）。
+///
+/// 形状照 DSH 的 `PromptContentPart[]`
+/// （`packages/api/session-controller/src/types.ts:90-98`）：
+/// 文本是 `{type:'text', text}`，图片是 `{type:'image', mediaType, data, name?}`。
+///
+/// **图片排在文本之前**：模型先看到图、再读提示词，这是本仓的读法
+/// （数组顺序本身 DSH 没有强制）。**只有带图片的附件才进 content** ——
+/// 不可发送的（`isInert`）留在输入栏里，不假装发出去。
+List<Map<String, Object?>> promptContentOf({
+  required String text,
+  required List<PendingAttachment> attachments,
+}) => [
+  for (final attachment in attachments)
+    if (attachment.image case final image?) image.toWire(),
+  {'type': 'text', 'text': text},
+];
 
 /// 普通会话的输入框占位符。
 ///
