@@ -39,6 +39,17 @@ class PreviewSession {
   final int updatedAt;
 }
 
+/// 「图标为什么不用字体」那一轮的助手回复。
+///
+/// 提出来是因为两处要用**同一份**：消息本身，以及该轮 `turn-tail` 的
+/// `copyText`（复制钮复制的就是它）。两处各写一遍迟早会漂移。
+const String _iconsReplyText =
+    '量完发现三样字体表达不了的东西：\n\n'
+    '1. `archiveOff` 的斜杠是 `<mask>` **挖空**出来的 —— 去掉它就是另一个图标；\n'
+    '2. `compact` / `folderOpen` 靠 `opacity` 同色两层叠出层次；\n'
+    '3. 250 个 `<path>` 里大部分是**描边**，混着填充。\n\n'
+    '所以走 SVG 渲染。代价是一个依赖，收益是 100 个图标一个都不走样。';
+
 /// 示例会话列表。三屏各自的难点都覆盖到了。
 ///
 /// ## `updatedAt` 是**相对值**，不是绝对时间戳
@@ -120,12 +131,7 @@ const List<PreviewSession> previewSessions = <PreviewSession>[
         seq: 2,
         updatedAt: 200,
         role: MessageRole.assistant,
-        text:
-            '量完发现三样字体表达不了的东西：\n\n'
-            '1. `archiveOff` 的斜杠是 `<mask>` **挖空**出来的 —— 去掉它就是另一个图标；\n'
-            '2. `compact` / `folderOpen` 靠 `opacity` 同色两层叠出层次；\n'
-            '3. 250 个 `<path>` 里大部分是**描边**，混着填充。\n\n'
-            '所以走 SVG 渲染。代价是一个依赖，收益是 100 个图标一个都不走样。',
+        text: _iconsReplyText,
       ),
       ToolCallItem(
         itemId: 'p2-t1',
@@ -149,6 +155,29 @@ const List<PreviewSession> previewSessions = <PreviewSession>[
         name: 'Write',
         status: ToolCallStatus.completed,
         summary: 'lib/theme/dsh_icons.dart（100 个图标）',
+      ),
+      // **一轮的收口行**（同时是 DSH 的 `turn-tail`：复制 + 用量 pill）。
+      // 放一条是为了"没连电脑也能看到 2026-10-20 做的那一行长什么样"——
+      // 否则它要等真会话才出现，用户没法在看界面时评价它。
+      //
+      // **数字是示例值**（与这个文件里其它样例一样，照真实形状编）。
+      // `usage` 的形状取自真日志里的样本
+      // （`.agents/notes/implemented/2026-10-20-turn-tail-actions.md` 文件头）。
+      TurnProcessItem(
+        itemId: 'p2-turn',
+        seq: 6,
+        updatedAt: 500,
+        turn: 2,
+        elapsedMs: 156000,
+        messageCount: 2,
+        toolCallCount: 2,
+        usage: TurnTokenUsage(
+          inputTokens: 66352,
+          outputTokens: 110,
+          totalTokens: 94408,
+          cacheReadTokens: 27946,
+        ),
+        copyText: _iconsReplyText,
       ),
     ],
   ),

@@ -385,10 +385,15 @@ void main() {
       );
     });
 
-    testWidgets('规则 1：附件在**卡片内部**上方，不是卡片外一行', (tester) async {
-      // **必须有一个当前会话** —— 没有会话时输入栏是置灰的
-      //（`enabled: paired && sid != null`），`＋` 点了没反应。
-      // 第一版这条测试就是漏了这一步，报"找不到新增文件.txt"。
+    testWidgets('＋ 菜单不再摆「附件」（没有传输通路，摆了就是骗人）', (tester) async {
+      // 2026-10-20：那一行原先加的是一个**假附件**
+      //（`PendingAttachment(name: '新增文件.txt')`），而 `_send()` 的
+      // `content` 只有文本块 —— **附件被静默丢弃**。用户看到芯片以为传了
+      // 文件，发出去的东西里没有它。这比死按钮更糟：它不是没反应，是骗人。
+      //
+      // 这条守的是"别在没有传输通路时把那行加回来"。
+      // 附件轨道本身的布局规则在 `composer_layout_test.dart` 直接验
+      //（硬规则 1：卡片内部、文字行上方）。
       final app = AppModel(
         client: FakeClient(
           sessions: [
@@ -401,24 +406,13 @@ void main() {
       await tester.pumpWidget(_wrap(app));
       await tester.pumpAndSettle();
 
-      // `＋` 现在开**菜单**（照原型：附件 / 工作区文件 / 新建终端 / 浏览器 / 后台任务），
-      // 从菜单里选"附件"才加进来。第一版直接点了 `＋` 就断言附件出现 ——
-      // 那时 `＋` 是直接加附件，没有菜单。
       await tester.tap(find.byTooltip('添加文件或调用指令'));
       await tester.pumpAndSettle();
       expect(find.text('添加'), findsOneWidget);
-      await tester.tap(find.text('附件'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('新增文件.txt'), findsOneWidget);
-      // 它在输入框**上方**（同一张卡里）。
-      final chip = tester.getRect(find.text('新增文件.txt'));
-      final field = tester.getRect(find.byType(TextField));
-      expect(
-        chip.bottom,
-        lessThanOrEqualTo(field.top + 1),
-        reason: '附件轨应在文字行上方（卡片内部）',
-      );
+      expect(find.text('附件'), findsNothing, reason: '附件发送还没接 —— 摆一行加假芯片就是静默丢弃');
+      // 其余入口还在（它们各自说"还没做"，不假装）。
+      expect(find.text('后台任务'), findsOneWidget);
+      expect(find.text('演示：接管输入栏'), findsOneWidget);
     });
 
     testWidgets('发送键：空输入时不可点，有内容才亮', (tester) async {

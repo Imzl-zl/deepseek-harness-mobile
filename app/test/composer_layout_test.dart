@@ -23,6 +23,7 @@ Widget _host({
   required TextEditingController controller,
   String model = 'deepseek-v4.1-flash',
   String? reasoning = 'max',
+  List<PendingAttachment> attachments = const [],
 }) => MaterialApp(
   theme: ThemeData.dark(useMaterial3: true),
   home: Scaffold(
@@ -30,7 +31,7 @@ Widget _host({
       children: [
         DshComposer(
           controller: controller,
-          attachments: const [],
+          attachments: attachments,
           modelName: model,
           reasoningLabel: reasoning,
           access: const PermissionChip(
@@ -130,5 +131,39 @@ void main() {
     expect(access.width, 34);
     // 长名被省略号截断：文字 rect 比 composer 窄得多，但仍可见（不是 0 宽）。
     expect(chip.width, greaterThan(40));
+  });
+
+  testWidgets('硬规则 1：附件在**卡片内部**上方，不是卡片外一行', (tester) async {
+    // **这条改用直接构造 composer**（2026-10-20）：原先经 `＋` 菜单的
+    // 「附件」加一个假附件来验，而那条路已移除 —— 它加的是
+    // `PendingAttachment(name: '新增文件.txt')`，**发送时被静默丢弃**
+    //（`_send()` 的 content 只有文本块）。用户看到芯片以为传了文件。
+    //
+    // 布局规则本身仍然要守：附件轨道在**卡片内部、文字行上方**
+    //（方案 §7.2 硬规则 1）。所以直接喂一个附件给 composer 验它 ——
+    // 这比经菜单验更准：菜单那一步是"怎么来的"，这里要的是"摆在哪"。
+    await tester.pumpWidget(
+      _host(
+        controller: TextEditingController(),
+        attachments: const [
+          PendingAttachment(name: '设计稿.png'),
+          PendingAttachment(name: '说明.md'),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('设计稿.png'), findsOneWidget);
+    expect(find.text('说明.md'), findsOneWidget);
+    final chip = tester.getRect(find.text('设计稿.png'));
+    final field = tester.getRect(find.byType(TextField));
+    expect(
+      chip.bottom,
+      lessThanOrEqualTo(field.top + 1),
+      reason: '附件轨应在文字行上方（卡片内部）',
+    );
+    // 两个都在卡片内部（composer 的矩形之内）。
+    final composer = tester.getRect(find.byType(DshComposer));
+    expect(chip.top, greaterThanOrEqualTo(composer.top - 1));
   });
 }

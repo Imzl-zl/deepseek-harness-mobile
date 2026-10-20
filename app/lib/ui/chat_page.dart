@@ -1690,8 +1690,19 @@ class ChatPageState extends State<ChatPage> {
 
   /// `＋` 菜单（对应桌面端的快捷键入口）。
   void _showAttachSheet() {
+    // **「附件」那一行已移掉**（2026-10-20）：它原先加的是一个**假附件**
+    // （`PendingAttachment(name: '新增文件.txt')`），而 `_send()` 的 `content`
+    // 只有文本块 —— **附件被静默丢弃**。用户看到芯片以为传了文件，
+    // 发出去的东西里没有它。那比"死按钮"更糟：它不是没反应，是骗人。
+    //
+    // 要恢复这一行，先做**附件传输**：选图/选文件 → 编码成 DSH 的
+    // `PromptPart` → 体积限额 → 测试。`session.prompt` 的 `content`
+    // 已经能带非文本 part（`connector/src/handlers.ts` 的 `requireContent`
+    // 只校验"每项是带 type 的对象"），缺的是手机侧整条管线。
+    //
+    // `PendingAttachment` 与输入栏的附件轨道**保留**（那是已经做对的布局：
+    // 卡片内部、文字行上方），由 `widget_test.dart` 直接构造 composer 验它。
     const items = [
-      (icon: 'paperclip', label: '附件', desc: '图片、文档、PDF'),
       (icon: 'folderOpen', label: '工作区文件', desc: '桌面端 Ctrl+P'),
       (icon: 'code', label: '新建终端', desc: '桌面端 Ctrl+`'),
       (icon: 'globe', label: '浏览器', desc: '桌面端 Ctrl+T'),
@@ -1714,17 +1725,10 @@ class ChatPageState extends State<ChatPage> {
                 selected: false,
                 onTap: () {
                   Navigator.of(context).pop();
-                  switch (item.label) {
-                    case '附件':
-                      setState(
-                        () => _attachments.add(
-                          const PendingAttachment(name: '新增文件.txt'),
-                        ),
-                      );
-                    case '演示：接管输入栏':
-                      _enqueueDemoTakeovers();
-                    default:
-                      _notWired(item.label);
+                  if (item.label == '演示：接管输入栏') {
+                    _enqueueDemoTakeovers();
+                  } else {
+                    _notWired(item.label);
                   }
                 },
               ),
