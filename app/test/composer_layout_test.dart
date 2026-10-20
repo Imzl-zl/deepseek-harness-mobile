@@ -81,36 +81,29 @@ void main() {
     expect(send.right, lessThanOrEqualTo(composer.right + 0.5));
   });
 
-  testWidgets('没有推理等级时 chip 更窄（等级那一截不占位）', (tester) async {
-    // DSH Web 的 `effortLabel` 是**条件渲染**的（`ModelSelect.tsx:488`）：
-    // 没有等级就不显示。我们原来在"没选模型"时显示"默认"——
-    // 那一截在 390px 屏上约 40px，而"默认"说的是"没有信息"。
+  testWidgets('推理等级是独立的一枚 chip（有等级才显示）', (tester) async {
+    // 2026-10-19 起等级从模型名后面分出来（用户原话「模型选择，思考程度
+    // 选择分开」）。两件事分成两个钮：换模型与换推理等级是两个动作。
     await tester.pumpWidget(_host(controller: TextEditingController()));
     await tester.pumpAndSettle();
-    final chipWith = tester.getRect(
-      find.byKey(const Key('composer-model-chip')),
-    );
 
+    // 有等级 ⇒ 有那一枚，且它在模型 chip 之后、发送键之前。
+    final reasoning = tester.getRect(
+      find.byKey(const Key('composer-reasoning')),
+    );
+    final model = tester.getRect(find.byKey(const Key('composer-model-chip')));
+    final send = tester.getRect(find.byTooltip('发送'));
+    expect(reasoning.left, greaterThanOrEqualTo(model.right));
+    expect(reasoning.right, lessThanOrEqualTo(send.left));
+    // 恒宽 34（与权限 chip 同一档）。
+    expect(reasoning.width, 34);
+
+    // 没有等级 ⇒ 那一枚不占位（DSH Web 的 `effortLabel` 条件渲染）。
     await tester.pumpWidget(
       _host(controller: TextEditingController(), reasoning: null),
     );
     await tester.pumpAndSettle();
-    final chipWithout = tester.getRect(
-      find.byKey(const Key('composer-model-chip')),
-    );
-
-    // 等级那一截不占位 ⇒ chip 真的变窄（不是名字把腾出的宽度吃掉）。
-    expect(
-      chipWithout.width,
-      lessThan(chipWith.width),
-      reason: '无等级时模型 chip 应更窄（${chipWithout.width} vs ${chipWith.width}）',
-    );
-    // **等级那一截真的不渲染**（不是渲染成空串占着）。
-    expect(find.text('· max'), findsNothing);
-    // 而"有等级"那一版它是在的 —— 证明上面那条不是压根找不到文本。
-    await tester.pumpWidget(_host(controller: TextEditingController()));
-    await tester.pumpAndSettle();
-    expect(find.text('· max'), findsOneWidget);
+    expect(find.byKey(const Key('composer-reasoning')), findsNothing);
   });
 
   testWidgets('长模型名下：仍不越过 62%、权限 chip 仍恒宽', (tester) async {

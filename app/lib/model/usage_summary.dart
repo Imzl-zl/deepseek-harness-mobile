@@ -20,12 +20,48 @@ library;
 // 所以这里 import 它而不是再写一份。
 import 'session_stats.dart' show formatTokenCount;
 
+/// 一个项目（工作区目录）在汇总里的一行。
+class UsageProject {
+  const UsageProject({
+    required this.path,
+    required this.tokens,
+    required this.sessions,
+  });
+
+  /// 工作区目录（`session.list` 的 `cwd`）。**可能为空串** —— 那台电脑
+  /// 没给 `cwd` 的会话归到这一档，界面显示成「未关联项目」。
+  final String path;
+
+  /// 这个项目下全部会话的 token 总量（> 0）。
+  final int tokens;
+
+  /// 参与汇总的会话数（含全零的那些）。
+  final int sessions;
+
+  /// 界面上的项目名：**路径末段**（`D:\sudy\myproject\dsh-mobile` → `dsh-mobile`）。
+  ///
+  /// 为什么不直接用整条路径：一屏放不下，而用户认的是项目名。
+  /// **不用 DSH 的 `workspace.title`**：`SessionSummary` 里没有 `workspaceId`
+  /// （`connector/src/dsh/workspaces.ts:9` 明说只有 `cwd`），要拿标题得多一次
+  /// 往返加一次 id 映射；而按 `cwd` 分组**一次调用就够**。
+  String get label {
+    if (path.isEmpty) return kUnlinkedProjectLabel;
+    final normalized = path.replaceAll('\\', '/');
+    final segments = normalized.split('/').where((s) => s.isNotEmpty);
+    return segments.isEmpty ? path : segments.last;
+  }
+
+  /// 没有 `cwd` 的项目档显示名。
+  static const String kUnlinkedProjectLabel = '未关联项目';
+}
+
 /// 一个会话在汇总榜上的一行。
 class UsageEntry {
   const UsageEntry({
     required this.sid,
     required this.title,
     required this.tokens,
+    this.cwd = '',
   });
 
   /// 会话别名（电脑侧分配的不透明 id，契约 §5.1）。
@@ -37,6 +73,9 @@ class UsageEntry {
 
   /// 这个会话的 token 总量（> 0：全零的会话电脑侧已过滤掉）。
   final int tokens;
+
+  /// 这个会话所属的工作区目录（`cwd`）。空串 = 电脑侧没给。
+  final String cwd;
 }
 
 /// 跨会话用量汇总。
@@ -45,6 +84,7 @@ class UsageSummary {
     required this.sessions,
     required this.grandTotalTokens,
     required this.bySession,
+    this.byProject = const [],
   });
 
   /// 参与汇总的会话数（含全零的那些 —— "用了 0" 与 "没这项" 都不是"不存在"）。
@@ -53,13 +93,17 @@ class UsageSummary {
   /// 全部会话的 token 总量。
   final int grandTotalTokens;
 
-  /// 用量前 5 的会话（降序；全零的不在内）。
+  /// 全部有数据的会话（**降序、不截断** —— 用量是独立页面，一页放得下）。
   final List<UsageEntry> bySession;
+
+  /// 按项目聚合的行（降序；空目录单独一档）。
+  final List<UsageProject> byProject;
 
   /// 从电脑侧的载荷解析；**形状不认识就回 null**（调用方显示空态）。
   ///
   /// 期望形状（契约 §5.7 的 `usage.summary`）：
-  /// `{sessions: int, grandTotalTokens: int, bySession: [{sid, title, tokens}]}`。
+  /// `{sessions, grandTotalTokens, byProject:[{path,tokens,sessions}],
+  ///   bySession:[{sid,title,cwd,tokens}]}`。
   static UsageSummary? fromWire(Object? data) {
     if (data is! Map) return null;
     final sessions = data['sessions'];
@@ -77,19 +121,36 @@ class UsageSummary {
         if (sid is! String || sid.isEmpty) continue;
         if (tokens is! int) continue;
         final title = item['title'];
+        final cwd = item['cwd'];
         entries.add(
           UsageEntry(
             sid: sid,
             title: title is String ? title : '',
             tokens: tokens,
+            cwd: cwd is String ? cwd : '',
           ),
         );
+      }
+    }
+    final rawProjects = data['byProject'];
+    final projects = <UsageProject>[];
+    if (rawProjects is List) {
+      for (final item in rawProjects) {
+        if (item is! Map) continue;
+        final path = item['path'];
+        final tokens = item['tokens'];
+        final count = item['sessions'];
+        // `tokens` 与 `sessions` 是数值；`path` 允许空串（未关联项目那一档）。
+        if (path is! String) continue;
+        if (tokens is! int || count is! int) continue;
+        projects.add(UsageProject(path: path, tokens: tokens, sessions: count));
       }
     }
     return UsageSummary(
       sessions: sessions,
       grandTotalTokens: grandTotal,
       bySession: entries,
+      byProject: projects,
     );
   }
 
@@ -98,4 +159,23 @@ class UsageSummary {
   /// **与单会话统计条同一个格式化函数**（`formatTokenCount`）——
   /// 两处各写一份会让"同一个数字在两地显示成两种样子"。
   String get totalLabel => formatTokenCount(grandTotalTokens);
+
+  /// 按项目归组的会话行（**顺序不变**：仍按用量降序）。
+  ///
+  /// 独立页面用它做"项目 → 会话"两级列表。没有 `byProject` 时
+  /// （老连接器）返回空表，界面退回"只有会话榜"的扁平形态。
+  List<({UsageProject project, List<UsageEntry> entries})> get grouped {
+    if (byProject.isEmpty) return const [];
+    final byPath = <String, List<UsageEntry>>{};
+    for (final entry in bySession) {
+      byPath.putIfAbsent(entry.cwd, () => <UsageEntry>[]).add(entry);
+    }
+    return [
+      for (final project in byProject)
+        (
+          project: project,
+          entries: byPath[project.path] ?? const <UsageEntry>[],
+        ),
+    ];
+  }
 }

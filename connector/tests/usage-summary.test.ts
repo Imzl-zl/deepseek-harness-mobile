@@ -137,7 +137,9 @@ void describe('usage.summary 聚合规则', () => {
     assert.equal(result.bySession[0]!.sid, ALIAS['used'])
   })
 
-  void it('榜按用量降序，最多 5 条', async () => {
+  void it('榜按用量降序，且不再截断（独立页面要放得下）', async () => {
+    // **2026-10-19 起不截断**：用量从"设置页里的一组"变成**独立页面**
+    // （`ui/usage_page.dart`），一页能放很多行；截到 5 条会让"更多会话"看不见。
     const rows = Array.from({ length: 8 }, (_, i) => row(`s${i}`))
     const handlers = createHandlers(
       deps({
@@ -150,10 +152,41 @@ void describe('usage.summary 聚合规则', () => {
     const result = (await handlers['usage.summary']!({}, {} as never)) as {
       bySession: { sid: string; tokens: number }[]
     }
-    assert.equal(result.bySession.length, 5)
+    assert.equal(result.bySession.length, 8, '8 个有数据的会话全给')
     assert.deepEqual(
       result.bySession.map((e) => e.tokens),
-      [800, 700, 600, 500, 400],
+      [800, 700, 600, 500, 400, 300, 200, 100],
+    )
+  })
+
+  void it('按项目（cwd）聚合，空目录单独一档', async () => {
+    // 用户 2026-10-19 原话：「用量你最好也是做成一个页面的……总量，单个项目
+    // 使用量是吧」。DSH 没有跨会话汇总接口，所以这一层聚合；`cwd` 就是
+    // `session.list` 已经在发的那个字段。
+    const rows = [row('a', { cwd: 'D:\\p1' }), row('b', { cwd: 'D:\\p1' }), row('c')]
+    const handlers = createHandlers(
+      deps({
+        rows,
+        // p1 两个会话共 500，另一个 200。
+        usageOf: (id) =>
+          tokenUsage({ inputTokens: id === 'c' ? 200 : 250 }),
+      }),
+    )
+    const result = (await handlers['usage.summary']!({}, {} as never)) as {
+      byProject: { path: string; tokens: number; sessions: number }[]
+    }
+    assert.deepEqual(result.byProject, [
+      { path: 'D:\\p1', tokens: 500, sessions: 2 },
+      // **空目录单独一档**：不猜一个项目归属。
+      { path: '', tokens: 200, sessions: 1 },
+    ])
+    // 会话行也带 cwd（手机按它归组）。
+    const bySession = (await handlers['usage.summary']!({}, {} as never)) as {
+      bySession: { sid: string; cwd: string }[]
+    }
+    assert.deepEqual(
+      bySession.bySession.map((e) => e.cwd).sort(),
+      ['', 'D:\\p1', 'D:\\p1'],
     )
   })
 

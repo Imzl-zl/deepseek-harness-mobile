@@ -69,6 +69,7 @@ class DshComposer extends StatelessWidget {
     required this.onPickModel,
     required this.onPickAccess,
     required this.onRemoveAttachment,
+    this.onPickReasoning,
     this.enabled = true,
     this.running = false,
     this.onStop,
@@ -85,12 +86,19 @@ class DshComposer extends StatelessWidget {
 
   final String modelName;
 
-  /// 推理等级（显示成 `· 高`）；**`null` = 不显示那一截**。
+  /// 推理等级（显示成 `· 高`）；**`null` = 没有等级**。
+  ///
+  /// **2026-10-19 起它是独立的一枚 chip**，不再跟在模型名后面
+  /// （用户原话：「模型选择，思考程度选择分开」）。换模型与换推理等级是
+  /// **两个动作**，挤在一枚 chip 里要点开才知道哪一半可点。
   ///
   /// 与 DSH Web 的 `effortLabel` 同一条规则（`ModelSelect.tsx:488` 的
-  /// `{effortLabel !== undefined && …}`）：没有等级就不占位。
-  /// 390px 屏上那一截约 40px，而"默认"说的是"没有信息"。
+  /// `{effortLabel !== undefined && …}`）：没有等级就不占位 ——
+  /// 390px 屏上那一枚约 40px。
   final String? reasoningLabel;
+
+  /// 点那枚独立的推理等级 chip（`null` = 不可点，chip 仍显示当前值）。
+  final VoidCallback? onPickReasoning;
 
   /// 当前权限档的展示值（图标 + 文案 + 是否告警色）。
   ///
@@ -199,6 +207,17 @@ class DshComposer extends StatelessWidget {
                         onPressed: enabled ? onAttach : null,
                       ),
                       const SizedBox(width: 6),
+                      // **权限 chip 在模型 chip 之前**（2026-10-19 用户原话：
+                      // 「模型和这个权限换一下位置」）。图标 34px 恒宽 ——
+                      // 硬规则 3 的后半句：长模型名不许把它挤走。
+                      _IconChip(
+                        key: const Key('composer-access'),
+                        icon: access.icon,
+                        tooltip: access.label,
+                        isWarn: access.warn,
+                        onPressed: enabled ? onPickAccess : null,
+                      ),
+                      const SizedBox(width: 6),
                       // 模型 chip：**图标 + 模型名**，可压缩、上限 62%。
                       //
                       // 上限不能省：`Flexible` 只表示"可以被压"，不表示"最宽多少" ——
@@ -225,85 +244,92 @@ class DshComposer extends StatelessWidget {
                       // `Align(widthFactor: 1.0)` 让 Align 的宽 = 子的宽，
                       // 而 `Flexible(loose)` 允许它小于分配宽 —— 两者一起才收缩。
                       // 长名字仍被这里的 maxWidth 截断（约束没丢）。
+                      // 上限取**左组剩余空间的 62%**（不是整行的 62%）。
+                      //
+                      // 2026-10-19 权限挪到模型之前、等级分成独立一枚之后，
+                      // 左组固定件变成 `＋ 38 + 权限 34 + 等级 34` = 106px。
+                      // **再按整行的 62% 卡模型**，模型可用宽只剩
+                      // `62% − 106px`，长模型名会比改布局前更早被省略号截断
+                      // （实测：`deepseek-v4.1-flash-pro-preview-2026` 越过上限）——
+                      // 那不是"更克制"，是把名字挤没了。原型
+                      // `#chipModel { max-width: 62% }` 的口径是"占所在容器 62%"，
+                      // 所以按**剩余空间**取。
                       Flexible(
                         fit: FlexFit.loose,
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          widthFactor: 1.0,
-                          child: ConstrainedBox(
-                            // 测试用锚点：量"模型 chip 实际占多宽"
-                            // （`composer_layout_test.dart` 的"无等级时更窄"那条）。
-                            key: const Key('composer-model-chip'),
-                            constraints: BoxConstraints(
-                              maxWidth: MediaQuery.sizeOf(context).width * 0.62,
-                            ),
-                            child: _Chip(
-                              onPressed: enabled ? onPickModel : null,
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  DshIcon(
-                                    'database',
-                                    size: 13,
-                                    color: c.labelSecondary,
-                                  ),
-                                  const SizedBox(width: 5),
-                                  // 模型名：**`Flexible(loose)` 而不是 tight**。
-                                  //
-                                  // 2026-10-19 实测三个形态（最小复现逐层量）：
-                                  // - `Flexible`（默认 tight）→ Text 被拉到
-                                  //   "Row 宽 − 其他子宽"，而 Row 在 `0..X` 下取 X，
-                                  //   chip 从 91.25 涨到 308.75（内容宽只要 271）；
-                                  // - 裸 `Text`（无 flexible）→ Text 收到 `0..X`
-                                  //   后取 X，chip 反而涨到 529（越过 62% 上限）；
-                                  // - `Flexible(loose)` → 内容窄时不撑满、内容宽时
-                                  //   压到上限，**两个诉求同时成立**。
-                                  Flexible(
-                                    fit: FlexFit.loose,
-                                    child: Text(
-                                      modelName,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                        color: c.labelPrimary,
+                        child: LayoutBuilder(
+                          builder: (context, constraints) => Align(
+                            alignment: Alignment.centerLeft,
+                            widthFactor: 1.0,
+                            child: ConstrainedBox(
+                              // 测试用锚点：量"模型 chip 实际占多宽"
+                              // （`composer_layout_test.dart` 的几何判据）。
+                              key: const Key('composer-model-chip'),
+                              constraints: BoxConstraints(
+                                maxWidth: constraints.maxWidth * 0.62,
+                              ),
+                              child: _Chip(
+                                onPressed: enabled ? onPickModel : null,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    DshIcon(
+                                      'database',
+                                      size: 13,
+                                      color: c.labelSecondary,
+                                    ),
+                                    const SizedBox(width: 5),
+                                    // 模型名：**`Flexible(loose)` 而不是 tight**。
+                                    //
+                                    // 2026-10-19 实测三个形态（最小复现逐层量）：
+                                    // - `Flexible`（默认 tight）→ Text 被拉到
+                                    //   "Row 宽 − 其他子宽"，而 Row 在 `0..X` 下取 X，
+                                    //   chip 从 91.25 涨到 308.75（内容宽只要 271）；
+                                    // - 裸 `Text`（无 flexible）→ Text 收到 `0..X`
+                                    //   后取 X，chip 反而涨到 529（越过上限）；
+                                    // - `Flexible(loose)` → 内容窄时不撑满、内容宽时
+                                    //   压到上限，**两个诉求同时成立**。
+                                    Flexible(
+                                      fit: FlexFit.loose,
+                                      child: Text(
+                                        modelName,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: c.labelPrimary,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  // 推理等级：**有才显示**（连同前面的分隔点）。
-                                  // 一起条件化而不是留一个孤零零的 `·` ——
-                                  // 那会让"没有等级"显示成"· "。
-                                  if (reasoningLabel != null) ...[
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      '· $reasoningLabel',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: c.labelCaption,
-                                      ),
+                                    // 推理等级**不在这里**了：2026-10-19 起它是
+                                    // 独立的一枚 chip（见左组后面的那一枚）。
+                                    const SizedBox(width: 2),
+                                    DshIcon(
+                                      'chevronDown',
+                                      size: 12,
+                                      color: c.labelCaption,
                                     ),
                                   ],
-                                  const SizedBox(width: 2),
-                                  DshIcon(
-                                    'chevronDown',
-                                    size: 12,
-                                    color: c.labelCaption,
-                                  ),
-                                ],
+                                ),
                               ),
                             ),
                           ),
                         ),
                       ),
                       const SizedBox(width: 6),
-                      // 权限图标：**34px 恒宽**（硬规则 3 的后半句）。
-                      _IconChip(
-                        icon: access.icon,
-                        tooltip: access.label,
-                        isWarn: access.warn,
-                        onPressed: enabled ? onPickAccess : null,
-                      ),
+                      // **推理等级 chip**（2026-10-19 从模型名后面分出来，
+                      // 用户原话「模型选择，思考程度选择分开」）。
+                      //
+                      // **有等级才显示**（DSH Web 的 `effortLabel` 条件渲染）。
+                      // 图标用 `slidersTwo` 而不是模型那枚 `database`：
+                      // 两枚 chip 挨着，同图标会让人以为"一个选择器的两半"。
+                      if (reasoningLabel != null)
+                        _IconChip(
+                          key: const Key('composer-reasoning'),
+                          icon: 'slidersTwo',
+                          tooltip: '推理等级：$reasoningLabel',
+                          onPressed: onPickReasoning,
+                        ),
                       // **「忙时发送」图标已移除**（2026-10-19，用户原话
                       // "输入框下的忙时发送行为没必要吧，设置中有，这个也不经常
                       // 更换设置，占位置"）：它是**装完就不动的偏好**，而设置页
@@ -482,6 +508,7 @@ class _Chip extends StatelessWidget {
 /// 图标 chip（`.chip--icon`：**34px 恒宽**）。
 class _IconChip extends StatelessWidget {
   const _IconChip({
+    super.key,
     required this.icon,
     required this.onPressed,
     this.tooltip,
