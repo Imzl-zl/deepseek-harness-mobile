@@ -135,18 +135,32 @@ class DshMarkdown extends StatelessWidget {
         ),
         // 代码块：整块底色 + 圆角。**内边距不在这里** —— 代码块由
         // `_DshCodeBlock` 接管（头部工具条 + 正文），padding 归它管。
+        //
+        // 规格取自 DSH `ui-primitives/.../CodeBlock.module.css` 的 `.block`：
+        //   background: var(--dsw-alias-markdown-code-block);   ← 块底色
+        //   border-radius: var(--dsw-radius-lg);                ← 不是 sm
+        //   margin: 16px 0;                                     ← 上下各 16
+        //   **没有 border**（原来我们多画了一圈 `layer3`，等于给块加了框）
+        // `markdown-code-block` 这个 token 名就是为它起的（2026-10-20 加到
+        // `DshColors.codeBlock`）。原来用 `c.bgBase` = 页面本色 —— 于是代码块
+        // 看着像"没有底"，整块和正文糊在一起（真机截图确认过）。
         codeblockDecoration: BoxDecoration(
-          color: c.bgBase,
-          borderRadius: BorderRadius.circular(DshRadius.sm),
-          border: Border.all(color: c.layer3),
+          color: c.codeBlock,
+          borderRadius: BorderRadius.circular(DshRadius.lg),
         ),
+        codeblockPadding: EdgeInsets.zero,
         blockquote: body.copyWith(color: c.labelSecondary),
         blockquoteDecoration: BoxDecoration(
           border: Border(left: BorderSide(color: c.layer3, width: 3)),
         ),
         blockquotePadding: const EdgeInsets.only(left: 12),
         // 列表：紧凑一点（聊天里不该像文档那样疏）。
-        listBullet: body,
+        // 规格照 DSH `ui-primitives/src/markdown/MarkdownText.module.css:102-118`：
+        //   `ul, ol { padding-left: 18px }`        → `listIndent: 18` ✓
+        //   `li::marker { color: label-secondary }` → **marker 要比正文淡**
+        // 原来 `listBullet: body` 用的是正文色，于是 `•` 比正文更抢眼
+        // （真机上就是那种"`•` 太重"的感觉）。
+        listBullet: body.copyWith(color: c.labelSecondary),
         listIndent: 18,
         listBulletPadding: const EdgeInsets.only(right: 6),
         // 强调与链接。
