@@ -956,31 +956,26 @@ class ChatPageState extends State<ChatPage> {
   }
 
   SideHeader _sideHeader() => switch (_sidePanel) {
-    // **不再写死一个文件名与 diff 统计**（2026-10-20）：这里原来恒返回
-    // `chat_page.dart` / `app/lib/ui/chat_page.dart` / `+128 −46`，
-    // 而面板体（`_fileBody`）显示的是「还没有改动」——
-    // **表头声称某个文件有 128 行改动，面板体说根本没有改动**。
-    // 那不是"示例"，是在生产路径上摆假数据（与会静默丢弃的假附件同类）。
+    // 表头由**真的**改动数据决定（`AppModel.changedFiles`，来自工具调用），
+    // 与面板体同一个真值来源 —— 所以不会出现"表头说某个文件改了 128 行、
+    // 面板体说还没有改动"那种自相矛盾（2026-10-20 修过）。
     //
-    // 等文件面板接上真的 `deliverables` 投影再从数据里取标题与统计；
-    // 在那之前表头只说实话（与面板体的空态同一口径）。
-    // 表头现在**由真的改动数据决定**：有改动物件时显示"N 个文件"，
-    // 没有时只写「文件」—— 与面板体同一个真值来源（`AppModel.changedFiles`）。
-    SidePanel.file => SideHeader(
-      title: '文件',
-      subtitle: _changedFiles.isEmpty ? '' : '${_changedFiles.length} 个文件',
-    ),
+    // **只取一次**：在这里连问两次（`.isEmpty` 与 `.length`）会让每次 build
+    // 的成本取决于"缓存命中没有"，没必要。
+    SidePanel.file => _fileHeader(widget.app.changedFiles),
     SidePanel.jobs => const SideHeader(title: '后台任务'),
     SidePanel.subs => const SideHeader(title: '子智能体'),
   };
 
-  /// 本会话改动过的文件（`AppModel.changedFiles` 的快照）。
-  List<({String path, ({int added, int removed})? stat})> get _changedFiles =>
-      widget.app.changedFiles;
+  SideHeader _fileHeader(
+    List<({String path, ({int added, int removed})? stat})> changed,
+  ) => changed.isEmpty
+      ? const SideHeader(title: '文件')
+      : SideHeader(title: '文件', subtitle: '${changed.length} 个文件');
 
   Widget? _fileBody() {
     if (_sidePanel != SidePanel.file) return null;
-    final changed = _changedFiles;
+    final changed = widget.app.changedFiles;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

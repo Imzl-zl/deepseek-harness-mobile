@@ -1593,5 +1593,20 @@ void main() {
       expect(clipboard, ['lib/theme/dsh_icons.dart'], reason: '剪贴板里是那条路径');
       expect(find.textContaining('已复制'), findsOneWidget);
     });
+
+    testWidgets('清单**按条目同一性缓存**：没变就不重算，且不可变', (tester) async {
+      // `changedFiles` 每次 build 都会被问（`_sideHeader()` / `_fileBody()`），
+      // 而它要扫全部条目 —— 八千条事件时那是每帧几万次判断。
+      // 失效判据是**列表同一性**：`SessionStore` 每次归并都换成新的
+      // `List.unmodifiable`（`session_store.dart:118`），所以 `identical`
+      // 为假就等于"条目真的变了"。
+      final app = await pumpPreviewSession(tester);
+      final first = app.changedFiles;
+      final second = app.changedFiles;
+      expect(identical(first, second), isTrue, reason: '条目没变就该复用同一份，而不是每次重扫');
+      expect(first.single.path, 'lib/theme/dsh_icons.dart');
+      // 不可变：调用方拿去渲染，谁也别想着改它。
+      expect(() => first.clear(), throwsUnsupportedError);
+    });
   });
 }

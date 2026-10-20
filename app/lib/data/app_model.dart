@@ -1028,10 +1028,31 @@ class AppModel extends ChangeNotifier {
   ///
   /// 去重：同一路径多次改动只留一行，**取最后一次的统计**（最新事实）；
   /// 顺序按"最后一次改动"从新到旧 —— 面板的第一行应该是刚动过的那个。
+  ///
+  /// ## 为什么要缓存（2026-10-20）
+  ///
+  /// 它是**每次 build 都会被问**的：`_sideHeader()` 与 `_fileBody()`
+  /// 在 `ChatPage.build` 里各问一次（`_sideHeader()` 里还问了两次）。
+  /// 而它要扫**全部条目**。八千条事件时那是每帧几万次判断 ——
+  /// 流式输出期间每秒几十帧，白烧 CPU。
+  ///
+  /// 失效判据用**列表同一性**：`SessionStore` 每次归并都换成新的
+  /// `List.unmodifiable`（`session_store.dart:118`），所以
+  /// `identical` 为假等于"条目真的变了"；没变就复用上次的结果。
+  /// 这比加一个 `revision` 计数更稳 —— 少一处可能与真实状态漂移的真值。
+  ({
+    List<ChatItem> source,
+    List<({String path, ({int added, int removed})? stat})> rows,
+  })?
+  _changedFilesCache;
+
   List<({String path, ({int added, int removed})? stat})> get changedFiles {
+    final source = items;
+    final cached = _changedFilesCache;
+    if (cached != null && identical(cached.source, source)) return cached.rows;
     final indexOf = <String, int>{};
     final rows = <({String path, ({int added, int removed})? stat})>[];
-    for (final item in items) {
+    for (final item in source) {
       if (item is! ToolCallItem) continue;
       final path = item.changedPath;
       if (path == null) continue;
@@ -1047,7 +1068,12 @@ class AppModel extends ChangeNotifier {
         );
       }
     }
-    return rows.reversed.toList(growable: false);
+    final result =
+        List<({String path, ({int added, int removed})? stat})>.unmodifiable(
+          rows.reversed,
+        );
+    _changedFilesCache = (source: source, rows: result);
+    return result;
   }
 
   // ---- 模型（`session/modelCatalog` + `modelSelection` 投影）----
