@@ -30,15 +30,20 @@
    该轮的 `turn/start` 落在**更早且未加载的页**里。`stats` 因此只说时长、
    不摆"0 条消息"（`TurnProcessItem.stats` 只列有的项）。**别去"修"它** ——
    编一个用时或编一个计数才是错。第 1 条做完，这里自然就好了。
-8. **消息底部操作栏**（用户："dsh web 我看每个消息完毕有复制用量啥的"）：
-   调研已完成、结论写在
-   `.agents/notes/proposed/2026-10-19-session-page-feedback-research.md`
-   的「第 8 条」小节（独立 `turn-tail` 行、按钮顺序、用量 pill 是
-   `用量 10.6M tok`、用户消息只有时钟+复制、没有分享/重生成/编辑）。
-   **未实现**。
-10. **上传弹框**（用户："比人家的上传点击弹框有拍照，图片，上传文件啥的"）：
-   调研已完成（rikkahub 的 `ModalBottomSheet` + `FlowKit` 六个选项 + 每个选项的
-   图标与动作），同样在那篇笔记的「第 10 条」。**我们 `＋` 现在只有占位**。
+8. ~~**消息底部操作栏**~~ **2026-10-20 做完**（复制 + 用量 pill + 明细弹窗，
+   挂在一轮已有的 `TurnProcessRow` 上 —— 它本来就是 DSH 的 `turn-tail`）。
+   只做复制与用量：点赞/点踩要 `message-feedback` 写面、分支要 `session/fork`，
+   本仓都未接，**不做死按钮**。判据与真日志形状见
+   `.agents/notes/implemented/2026-10-20-turn-tail-actions.md`。
+   **真机未验**：演示数据不造 `TurnProcessItem`，要已配对的真会话才出现。
+10. **上传弹框 —— 不是 UI 活，卡在附件管线**（2026-10-20 改判）：
+    用户要「拍照，图片，上传文件」。`session.prompt` 的 `content` 虽然能带
+    非文本 part，但本仓**没有任何上传通路**（`connector/src` 里 `attachment`
+    只出现在错误码表；没有选图、编码、体积限额、附件读取）。
+    **只做那张 sheet 就是一排死按钮**，所以不做。要做得先立附件传输这一项。
+    调研（rikkahub 的六个选项与动作）在
+    `.agents/notes/proposed/2026-10-19-session-page-feedback-research.md`
+    的「第 10 条」。
 11. **会话页与输入栏背景"不和谐"**：用户没说具体是哪一处。
     已由 `bubble` token 部分回答（气泡曾是隐形的那块），
     **但"输入栏背景"那一处仍未确认 —— 问清再动，别猜**。
@@ -189,7 +194,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **296 项**(22 条规则自检 + 扫 82 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 43 个)/ 工具脚本不许硬编码盘符(19 个) |
-| `cd app && flutter test` | **828 项** |
+| `cd app && flutter test` | **840 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **550 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
