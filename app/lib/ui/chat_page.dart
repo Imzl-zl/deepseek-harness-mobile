@@ -35,6 +35,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/errors.dart';
 import '../core/job.dart';
@@ -3042,38 +3043,54 @@ class _ChangedFileList extends StatelessWidget {
       itemBuilder: (context, index) {
         final row = rows[index];
         final stat = row.stat;
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          child: Row(
-            children: [
-              DshIcon('deliverDoc', size: 14, color: c.labelTertiary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  row.path,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    height: 1.35,
-                    fontFamily: 'monospace',
-                    color: c.labelPrimary,
+        return InkWell(
+          // **点一行复制它的路径**（2026-10-20）。
+          //
+          // 这个动作先前被删掉过：那时面板里根本没有路径可复制，三个按钮
+          // 只会弹「还没做」。留下的话写在删它的注释里 ——
+          // 「等文件面板接上真的 deliverables 再一起做 —— 那时"复制路径"
+          // 才有路径可复制」。现在条件满足了：清单是真的（来自工具调用），
+          // 所以这个动作也是真的。
+          onTap: () async {
+            await Clipboard.setData(ClipboardData(text: row.path));
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context)
+              ..clearSnackBars()
+              ..showSnackBar(SnackBar(content: Text('已复制 ${row.path}')));
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Row(
+              children: [
+                DshIcon('deliverDoc', size: 14, color: c.labelTertiary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    row.path,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      height: 1.35,
+                      fontFamily: 'monospace',
+                      color: c.labelPrimary,
+                    ),
                   ),
                 ),
-              ),
-              if (showStat && stat != null) ...[
-                const SizedBox(width: 8),
-                Text(
-                  '+${stat.added}',
-                  style: TextStyle(fontSize: 11.5, color: c.codeDiffAdd),
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  '−${stat.removed}',
-                  style: TextStyle(fontSize: 11.5, color: c.codeDiffDel),
-                ),
+                if (showStat && stat != null) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    '+${stat.added}',
+                    style: TextStyle(fontSize: 11.5, color: c.codeDiffAdd),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    '−${stat.removed}',
+                    style: TextStyle(fontSize: 11.5, color: c.codeDiffDel),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         );
       },
