@@ -1,61 +1,73 @@
-# 新会话提示词:继续移动端界面接线
+# 新会话提示词：会话页渲染优化 + 文件上传
 
-> 用法:新开一个会话,把下面「提示词」整段贴进去。它会先自己求证文档,再开工。
+> 用法：新开一个会话，把下面「提示词」整段贴进去。
 
-## 提示词(整段复制)
+## 提示词（整段复制）
 
 ```
-我们在做 dsh-mobile —— DSH 的移动端客户端。核心原则一句话:
-**DSH Web 上能看的每一个面,背后都有 @Remote 方法或会话投影;接线是照形状透传,不是重新设计。**
+我们在做 dsh-mobile —— DSH 的移动端客户端（Flutter App + 电脑侧连接器 + 中转）。
+核心原则：**DSH Web 是业务逻辑权威**；手机不是缩小版桌面，允许有意偏离，
+但每处偏离都要在 docs/ 写明理由，并且引用必须是 `packages/...:行号` 能 grep 到的。
 
-第一步(必做,别跳):读下面四个文件,并且**核对里面引用的 DSH 源码行号是否仍指向该内容**
-(行号会漂移;对不上就改正,不要照抄):
+## 第一步（必做，别跳）
 
-1. `docs/mobile-surface-roadmap.md` —— 不变量、三扇门、全景清单、接线顺序、
-   单方法接线清单(11 步)、已知陷阱。**这是主计划。**
-2. `docs/subsystems/remote-channel.md` §5.7 / §5.8 / §9 —— 方法表、DSH 依据、未实现清单。
-3. `memory.md` + `tools.md` —— 当前门禁基线、计数、踩过的坑。
-4. `.agents/notes/proposed/2026-10-15-phone-surface-inventory.md` —— 哪些面为什么做/不做。
+1. 读 `memory.md`（现状快照 + 待办 + 别当缺口的定案 + 门禁数字）。
+2. 读 `.agents/notes/proposed/2026-10-20-rendering-issues-todo.md`
+   —— 本轮要做的事就在里面，按里面的证据状态决定"先查还是先改"。
+3. 读 `.agents/notes/proposed/2026-10-20-file-upload-shape.md`
+   —— 第二件事的开工单（含 DSH 侧入口与 rikkahub 参照）。
+4. 跑一遍门禁确认起点是绿的（`memory.md` 的「门禁」表就是完整命令）；
+   起点不绿先修再动别的。
 
-然后按路线图 §3 的顺序接下一个面,**当前是第 1 项:权限切换**:
+## 当前状态（截至 2026-10-20 晚）
 
-- 读:`permissions` 投影(已经能通过 `session.projections` 拿到,见
-  `app/lib/data/app_model.dart` 的 `_projections`);
-- 写:`ctx.commands.execute('/permission <档位>')`,DSH 依据
-  `packages/interaction/commands/src/index.ts:263` 的 `@Remote('execute')`
-  —— **先读 DSH 源码确认 `/permission` 这个命令的真实名字与参数形状,不要凭猜**;
-  也先看 `packages/interaction/permission-presets/src/index.ts:180` 的
-  `@Remote('catalog')` 能不能直接给档位清单(能就走它,更直)。
+- 用户提的 13 项 + 11 条追加反馈，**除「上传文件」全部落地**，大部分真机验过。
+- 最近一批：空态文字居中、底部一条 `sidebar` 色的缝、系统栏跟主题、
+  Markdown 行内 HTML 归一、代码块四属性（底色/圆角/外边距/无边框）对齐 DSH、
+  列表 marker 改淡色。全部有决策笔记在 `.agents/notes/implemented/`。
+- 门禁：`flutter test 895` / `analyze 0` / `format 0` / `boundary 300`，
+  另加 connector 550 / relay 86 / protocol 486+26+49 / CDP 全绿。
 
-硬规则(违反任何一条就是乱猜):
+## 本轮任务
 
-1. **Web 调哪个,手机就调哪个。** 拿不准先读 `packages/client/ui-*/src/client/*.ts`
-   里 Web 的调用点。找不到就写「未找到」,禁止"通常如此"。
-2. **形状逐字透传**:不挑字段、不改名、不补默认值、不猜默认值。
-3. **真数据接上的同一批里删掉对应的假数据**,不留兜底。
-4. 引用 DSH 行为给 `packages/...:行号`。
+### A. 会话页渲染优化（用户原话：「会话页面渲染还有一部分问题」）
 
-每个方法照路线图 §4 的 11 步走完(适配层 → handler → 能力位 → 封闭集 → 契约 →
-App 数据层 → App UI → 测试 → 四处计数 → 门禁),别跳步。已知陷阱看路线图 §5
-(连字符方法名、Dart null-aware element、注释里写 ctx.<键>、测试替身漏成员、
-断言完整调用序列、integration_test 不在 flutter test 里……)。
+`2026-10-20-rendering-issues-todo.md` 里列了 9 条，**每条都标了证据状态**
+（已截图确认 / 只读代码未比对 / 未验）。做法：
 
-做完自己跑门禁并贴真实输出:
-`cd connector; pnpm exec tsc --noEmit && pnpm build && pnpm test`
-`cd app; flutter test && dart analyze --fatal-infos lib test integration_test`
-`node protocol/verify-fixtures.mjs && node protocol/verify-loopback.mjs && node protocol/verify-vectors.mjs`
-`node app/tools/verify-platform-boundary.mjs`
+1. 先按"证据状态"把**未验的**取证（真机截图 / 探针测试），别先改。
+2. 每条改之前先回 DSH 找权威规格（CSS 或 TSX 行号），**找不到就写「未找到」并停下问**。
+3. 改完一条就在真机上看一次；视觉问题**没有测试能兜底**，截图就是判据。
+4. 样式类改动不强制加断言，但**必须**在笔记里写清"规格来自哪个文件的哪一行"。
 
-非平凡改动留决策笔记到 `.agents/notes/implemented/`,代码与笔记同批;
-被约束的代码入口留一行注释回指笔记。
+### B. 文件上传（用户原话：「文件上传你看看咋搞，这开源的也有」）
+
+按 `2026-10-20-file-upload-shape.md` 的开工顺序整批做，别半截提交：
+契约文档 → 连接器（端口 + handler + caps 键 + 测试）→ 手机（SAF 通道 +
+上传状态 + UI + 测试）。注意首次传输的字节预算（8 MiB 单帧 / 放大 1.78 倍）。
+
+## 硬规则（违反任何一条都等于乱猜）
+
+- **不许猜**：任何 DSH 行为都要 `packages/...:行号`；查不到写「未找到」并问。
+  包的 API 查**本地 pub 缓存里的源码**（`~/AppData/Local/Pub/Cache/hosted/pub.dev/...`），
+  Flutter 行为查本机 SDK（`node app/tools/flutter-api.mjs <符号>`）。
+- **改源码只用编辑工具**，不用 shell 字符串替换（静默损坏过两次）。
+- **一条判据一次变异验证**：故意破坏实现，确认恰好那一条红。
+- 提交前 `git status --porcelain` 必须只剩你有意改的文件；
+  代码与决策笔记**同批提交**。
+- 视觉与文案以 `docs/design-and-tech-plan.md` 为基线；与它冲突时**先改文档再改代码**，
+  且该文档有 **≤3,000 词**预算，新增内容先下沉到 `docs/subsystems/`。
+- 图标集是机生成的（`mock/proto/tools/extract-dsh-icons.mjs`），**不许手写 unicode 字形**。
+- 不另起 DSH 测试 profile：`~/.dsh/{credentials,sessions,storages}` 全局共用，
+  两个实例并发写会话日志有损坏风险。端到端验收需要用户配对时**先问**。
+
+## 交付标准
+
+- 每条改动：改了什么 / 依据在哪（file:line）/ 怎么验的 / 还剩什么。
+- 收尾时更新 `memory.md`（现状 + 待办 + 门禁数字），别做流水追加。
 ```
 
-## 附:当前基线(2026-10-15,供核对,若与文档冲突以文档为准)
+## 备注（给自己看，不用贴）
 
-- 方法面 **15/24**(契约封闭集 24;差额是契约列了没实现的)。
-- 门禁:connector **389** / app **464** / relay **75** / 平台边界 **204** /
-  protocol 486·26·49 / 原型图标与路径门禁,全绿。
-- 服务状态:relay 在 `8787`(可能已退,起来再跑);DSH test profile 在 `8099`(已停);
-  `adb devices` 当时为空;App 装在 `d61cf622` 但**无配对凭据**。
-- 假数据已清光(文件面板 diff / 轨迹 / 子智能体 / 模型 picker / 统计条);
-  保留的只有用户显式触发的「看示例数据」与「演示:接管输入栏」。
+这份提示词取代了早先那份"继续移动端界面接线"——那份里的第 1 项（权限切换）
+早就做完了，{`docs/mobile-surface-roadmap.md`} 的接线清单也已走完。

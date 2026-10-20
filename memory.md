@@ -31,10 +31,10 @@
    （要加就得动 lockfile / 私有 registry），所以端口用**结构化类型**照抄形状；
    共 8 个触达点（caps 键 / `Caps` 字段 / `dsh/` 端口 / handler / 依赖注入 /
    方法表 / 契约文档 / 两边测试）。**别半截提交**。
-3. **会话页渲染的剩余问题**（用户 2026-10-20 晚：「我看你的会话页面渲染
-   还有一部分问题是吧？」）：**尚未系统排查**，下一步就做这个。
-   已知的相邻事实：Markdown 靠 `flutter_markdown_plus`（默认 `gitHubFlavored`），
-   见 `.agents/notes/implemented/2026-10-20-markdown-coverage-and-inline-html.md`。
+3. **会话页渲染的剩余问题** —— **已把 9 条清单写进
+   `.agents/notes/proposed/2026-10-20-rendering-issues-todo.md`**
+   （每条标了证据状态：已截图确认 / 只读代码未比对 / 未验）。
+   新会话从那份清单开工；`proposed/next-session-prompt.md` 是给用户复制的提示词。
 
 别当缺口（定案，别再试）:
 
