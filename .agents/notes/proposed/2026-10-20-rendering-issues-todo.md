@@ -134,24 +134,39 @@ Status: proposed（**清单，不是决定**；每条都写了"证据状态"，�
       换票 401 先按可重试处理（带次数上限），避免一次中转重启就丢配对。
     判据：停掉电脑侧 → 重启 → 手机**不需要重扫**、自动连回。
 
-12. **侧边栏会话只能折叠、不能排序（用户 2026-10-21 问「可以折叠，移动吗？web 都支持」）**。
-    先分清"Web 的移动"到底是什么（查过源码）：
-    - **组折叠**：DSH `tree.ts:79` 的 `expanded`（每组可折叠）+ 整条 sidebar 收成 rail
-      （`SidebarRoot.tsx:88-113`）。我们已有：`session_drawer.dart:139-146,303-315`
-      的 `CollapsibleGroup`（**缺省展开、不落盘**，与 DSH 的 `setGroupExpanded` 不同）。
-    - **会话拖动**：DSH 会话行 `draggable`（`Rows.tsx:574-616`，`drop(before|after)`），
-      落成**手动顺序** `'manual' | 'updated'`（`tree.ts:64-65`、`stores.ts:114-118`
-      的 `setSessionOrder`）；置顶行**只在置顶块内**可重排（`tree.ts:57-58`）。
-    - **它不改会话归属**：会话属于哪个工作区由投影的 `workspace.sessionIds` 决定
-      （`tree.ts:26-31` 的 `owningGroupKey`），拖拽只改顺序；真正持久的是**工作区顺序**
-      （`insertWorkspaceBefore`，`slots.ts:270`）。
-    - **会话顺序是前端本地偏好**（`sessionOrderByAccount` 在 client store），
-      **不是 Host 方法** —— 所以手机做它不需要连接器新方法。
-    我们缺的：会话行没有任何拖动/排序（`session_drawer.dart` 只有 `onLongPress: onDelete`）。
-    手机上照 DSH 的"桌面拖拽"不合适，建议：**长按会话行 → 菜单**（置顶 / 上移 / 下移 /
-    删除），顺序存本地偏好（与 DSH 的"本地偏好"同性质，不假装跨设备同步）。
-    判据：长按能上移下移、重启 App 后顺序还在；**别做成"拖到另一个工作区"** ——
-    那在 Web 上也不存在。
+12. **侧边栏会话只能折叠、不能移动/置顶（用户 2026-10-21 问「可以折叠，移动吗？web 都支持」）**。
+    **这是缺功能，不是"本地偏好"** —— 第一版笔记把它写成本地排序，是错的（用户当场纠正：
+    「不是偏好啊，是 web 都有的功能啊」）。查实后的形状：
+    - **组折叠**：DSH `tree.ts:79` 的 `expanded`。我们已有
+      （`session_drawer.dart:139-146,303-315` 的 `CollapsibleGroup`，缺省展开、不落盘）。
+    - **移动/排序是电脑侧 Host 方法**：
+      `workspace.insertSessionBefore({workspaceId, sessionId, beforeSessionId?})`
+      （`api/workspace-controller/src/index.ts:149-152` → `commands.ts:132-138`；
+      请求形状 `types.ts:107-112`）。它是 DOM-insertBefore 语义，**持久在电脑侧
+      registry 的顺序**，不是浏览器缓存。
+    - **置顶也是 Host 方法**：`workspace.pinSession` / `workspace.unpinSession`
+      （`index.ts` 的 `@Remote('pinSession')` / `@Remote('unpinSession')` →
+      `commands.ts:197-226`），返回 `{pinnedSessionIds}`（`types.ts:137-150`，
+      "most recently pinned first"）；基线里也有 `pinnedSessionIds`（`types.ts:152-158`），
+      增量流有 `{type:'pinned'}`（`types.ts:171`、`feed.ts:124-127`）。
+    - 浏览器那个 `dsh.workspace.view.v5`（`stores.ts:91`）存的是**视图模式与本地顺序缓存**，
+      与上面这条 Host 顺序是两件事 —— 第一版把它们混了。
+    - **会话归属不变**：`insertSessionBefore` 只在**同一个 workspace 内**重排
+      （`WorkspaceMoveInvalidError` → `workspace/move-invalid`，`commands.ts:136-138`），
+      不是"搬到另一个项目"。
+    我们缺的（触达点，与「上传文件」同形）：
+    1. 契约文档：`docs/subsystems/remote-channel.md` §5.7 方法表 +3 行
+       （`workspace.insertSessionBefore` / `pinSession` / `unpinSession`），
+       参数用别名 `sid`、`beforeSid`、`workspaceId`（workspace 目前只 `workspace.list`，
+       没有别名层，先按 id 透传并写清）；
+    2. 连接器：`WorkspacePort` 加三条 + handler + `tests/`（假端口，断言
+       "插入失败要如实报 `workspace/move-invalid`"）；
+    3. 手机：会话行**长按菜单**（置顶/取消置顶、上移、下移、归档、删除）——
+       移动用 `beforeSid` = 目标位置的下一条；置顶态从 `workspace.list` 的
+       `pinnedSessionIds` 读（连 `workspace.list` 的返回形状也要扩一列）；
+    4. 判据：长按上移后**电脑侧顺序变了**（重连后仍在新位置）；置顶项排在最前；
+       越界（首条上移 / 末条下移）是空操作而不是发请求。
+    **手机不做的**：桌面那种"按住拖动"（触屏长按菜单已达同一目的，且不会误触发）。
 
 
 ## 不算问题（用户 2026-10-20 纠正）

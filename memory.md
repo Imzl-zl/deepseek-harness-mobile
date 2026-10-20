@@ -31,12 +31,14 @@
 4. **电脑侧停一会儿，手机会清掉配对** —— 中转重启后名册是空的，设备换票拿到 401，
    App 把 401 归成 `notPaired`（终态）⇒ 清凭据回配对页。实测一次（清单第 11 条，
    含两条修法方向：名册持久化/503，或 App 侧只在连接器明确拒绝时才终态）。
-5. **侧边栏：组折叠已有，会话排序没有**（用户问"可以折叠、移动吗？web 都支持"）。
-   DSH 的"移动"是**组内拖动排序**（`ui-workspace/src/client/rows/Rows.tsx:574-616` +
-   `tree.ts:64-65` 的 `'manual'`），而且顺序是**前端本地偏好**（`stores.ts:114-118`），
-   不改会话归属（归属由 `workspace.sessionIds` 决定，`tree.ts:26-31`）。
-   手机上建议长按菜单（置顶/上移/下移），顺序存本地 —— **别做"拖到另一个工作区"**，
-   那在 Web 上也不存在。做法见清单第 12 条。
+5. **侧边栏：组折叠已有；会话移动/置顶是缺功能**（用户问"可以折叠、移动吗？web 都支持"，
+   并纠正过我"不是偏好啊"）。DSH 的移动/置顶是**电脑侧 Host 方法**：
+   `workspace.insertSessionBefore({workspaceId, sessionId, beforeSessionId?})`
+   （`api/workspace-controller/src/index.ts:149-152` → `commands.ts:132-138`）与
+   `workspace.pinSession` / `workspace.unpinSession`（`commands.ts:197-226`，
+   返回 `{pinnedSessionIds}`，基线 + `{type:'pinned'}` 增量）。
+   我们方法面里一条都没有。触达点与判据见清单第 12 条（契约 +3 行、连接器三条方法、
+   手机长按菜单；**只做同 workspace 内重排**，不是换项目）。
 6. **子智能体进入 / 后台任务看与停：都已接**（别再当缺口）：
    子智能体 = `chat_page.dart:564` → `_openSubagentSession`（`openSession(job.id)`，
    顶栏"返回"回父会话），DSH 同一条 `ui-subagent/src/client/index.ts:61-63`；
