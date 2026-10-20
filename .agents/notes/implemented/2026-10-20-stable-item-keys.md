@@ -74,4 +74,9 @@ GlobalKey _keyOf(String itemId) => _keysById.putIfAbsent(itemId, GlobalKey.new);
   2. `ToolCard` 的 `onTap` 是 `hasDetail ? … : null`，而示例数据原先一条
      `detail` 都没有 ⇒ **示例模式下所有工具卡都点不开**，这个 bug 也就
      "看得到现象、构造不出场景"。所以先给示例的 `write` 卡补了 `detail`。
+- **真机确认（2026-10-20）**：`（示例）图标为什么不用字体` → 点 `write` 卡
+  → 卡片描述里出现了 `写入了 100 个图标常量：每行一对 name → path，
+  外加 12 个语义别名的映射表。`（`uiautomator dump` 读的 content-desc）。
+  点之前那张卡是 `clickable=false`（没有 `detail` 就不可点），点之后
+  描述里多出这段 —— 展开确实生效。
 
