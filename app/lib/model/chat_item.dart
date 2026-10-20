@@ -594,6 +594,7 @@ class ToolCallItem extends ChatItem {
     this.summary = '',
     this.detail = '',
     this.diffStat,
+    this.changedPath,
   });
 
   /// 工具名（如 `Read` / `Bash`）。
@@ -615,6 +616,16 @@ class ToolCallItem extends ChatItem {
   /// 从 `tool/result` 的 `metadata.diffs`  hunks 折算（DSH 的
   /// `diff-card-model.ts:29-41` 认的就是 `{path, oldText, newText}` 这三项）。
   final ({int added, int removed})? diffStat;
+
+  /// 这次调用**改的那个文件**（`write` / `edit` / `str_replace_editor` 才有）。
+  ///
+  /// 判据照 DSH 的 `mutationPath`
+  /// （`ui-deliverables/src/client/turn-deliverables.ts:61-77`）—— 它是
+  /// **model-free** 的：只要参数形状对，这条路径就是真的被改了。
+  /// 右侧「文件」面板按它列出"这一轮/这个会话动了哪些文件"。
+  ///
+  /// **只存路径，不存 `arguments`**：`write` 的参数里是整个文件内容。
+  final String? changedPath;
 }
 
 /// 工具调用的状态。

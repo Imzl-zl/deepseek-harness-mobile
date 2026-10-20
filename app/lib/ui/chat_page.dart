@@ -963,13 +963,23 @@ class ChatPageState extends State<ChatPage> {
     //
     // 等文件面板接上真的 `deliverables` 投影再从数据里取标题与统计；
     // 在那之前表头只说实话（与面板体的空态同一口径）。
-    SidePanel.file => const SideHeader(title: '文件'),
+    // 表头现在**由真的改动数据决定**：有改动物件时显示"N 个文件"，
+    // 没有时只写「文件」—— 与面板体同一个真值来源（`AppModel.changedFiles`）。
+    SidePanel.file => SideHeader(
+      title: '文件',
+      subtitle: _changedFiles.isEmpty ? '' : '${_changedFiles.length} 个文件',
+    ),
     SidePanel.jobs => const SideHeader(title: '后台任务'),
     SidePanel.subs => const SideHeader(title: '子智能体'),
   };
 
+  /// 本会话改动过的文件（`AppModel.changedFiles` 的快照）。
+  List<({String path, ({int added, int removed})? stat})> get _changedFiles =>
+      widget.app.changedFiles;
+
   Widget? _fileBody() {
     if (_sidePanel != SidePanel.file) return null;
+    final changed = _changedFiles;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -980,9 +990,17 @@ class ChatPageState extends State<ChatPage> {
           index: _fileTab,
           onChanged: (i) => setState(() => _fileTab = i),
         ),
-        _fileTab == 0
-            ? const _EmptyFilePane(kind: 'diff')
-            : const _EmptyFilePane(kind: 'file'),
+        if (changed.isEmpty) ...[
+          _fileTab == 0
+              ? const _EmptyFilePane(kind: 'diff')
+              : const _EmptyFilePane(kind: 'file'),
+        ] else
+          // **两个页签同一份真数据**：`文件` = 路径，`差异` = 路径 + 行数增量。
+          // 这样才不会出现"文件页列着 5 个文件、差异页说还没有改动"那种
+          // 自相矛盾（那正是 2026-10-20 修掉过的那类）。
+          Expanded(
+            child: _ChangedFileList(rows: changed, showStat: _fileTab == 0),
+          ),
       ],
     );
   }
@@ -2998,6 +3016,71 @@ class _EmptyChat extends StatelessWidget {
 ///
 /// 真数据通路：`deliverables` 投影（diff）+ `workspace-files` 的
 /// `read` / `list`（文件树与内容）。接上之前说"还没接"，不造假的。
+/// 右侧「文件」面板里**真的改动清单**。
+///
+/// 数据来自工具调用（`AppModel.changedFiles`，判据照 DSH 的 `mutationPath`），
+/// 不是编的。两个页签同一份数据：`文件` 看路径，`差异` 看路径 + 行数增量
+/// （增量来自 `tool/result` 的 `metadata.diffs`，见 `ToolCallItem.diffStat`）。
+///
+/// **没有行数增量的行不显示 `+0 −0`**：那会把"不知道增了多少"说成"没变"。
+class _ChangedFileList extends StatelessWidget {
+  const _ChangedFileList({required this.rows, required this.showStat});
+
+  final List<({String path, ({int added, int removed})? stat})> rows;
+
+  /// `true` = 「差异」页签（显示行数增量）。
+  final bool showStat;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      itemCount: rows.length,
+      separatorBuilder: (_, _) =>
+          Divider(height: 0.5, thickness: 0.5, color: c.borderL3),
+      itemBuilder: (context, index) {
+        final row = rows[index];
+        final stat = row.stat;
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Row(
+            children: [
+              DshIcon('deliverDoc', size: 14, color: c.labelTertiary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  row.path,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    height: 1.35,
+                    fontFamily: 'monospace',
+                    color: c.labelPrimary,
+                  ),
+                ),
+              ),
+              if (showStat && stat != null) ...[
+                const SizedBox(width: 8),
+                Text(
+                  '+${stat.added}',
+                  style: TextStyle(fontSize: 11.5, color: c.codeDiffAdd),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  '−${stat.removed}',
+                  style: TextStyle(fontSize: 11.5, color: c.codeDiffDel),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _EmptyFilePane extends StatelessWidget {
   const _EmptyFilePane({required this.kind});
 

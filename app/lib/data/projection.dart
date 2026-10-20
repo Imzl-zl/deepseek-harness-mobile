@@ -19,6 +19,7 @@ library;
 import 'dart:convert';
 
 import '../core/items.dart';
+import '../model/changed_path.dart';
 import '../model/chat_item.dart';
 import '../model/interaction.dart';
 
@@ -164,6 +165,16 @@ ChatProjection projectEvent({
         summary: toolArgumentsSummary(
           name: stringField(data, 'name') ?? '',
           arguments: stringField(data, 'arguments') ?? '',
+        ),
+        // **"这一轮改了哪些文件"在这里抽出来**（右侧「文件」面板用）。
+        //
+        // 只留一个路径字符串，不留 `arguments` —— `write` 的参数里是
+        // **整个文件内容**，挂在条目上等于把会话里写过的每个文件再存一份。
+        // 判据照 DSH 的 `mutationPath`
+        // （`ui-deliverables/src/client/turn-deliverables.ts:61-77`）。
+        changedPath: changedPathOf(
+          name: stringField(data, 'name') ?? '',
+          argumentsJson: stringField(data, 'arguments') ?? '',
         ),
       ),
     );

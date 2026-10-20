@@ -1019,6 +1019,37 @@ class AppModel extends ChangeNotifier {
   List<ChatItem> get items =>
       _currentSid == null ? const [] : _storeOf(_currentSid!).items;
 
+  /// 当前会话里**被改动过的文件**（右侧「文件」面板用）。
+  ///
+  /// 数据来源是工具调用本身：`write` / `edit` / `str_replace_editor` 的参数形状
+  /// 满足条件时，`changedPathOf` 给出路径（判据照 DSH 的 `mutationPath`，
+  /// `ui-deliverables/src/client/turn-deliverables.ts:61-77`）。
+  /// 这是 **model-free** 的 —— 不靠模型自述，靠真实调用。
+  ///
+  /// 去重：同一路径多次改动只留一行，**取最后一次的统计**（最新事实）；
+  /// 顺序按"最后一次改动"从新到旧 —— 面板的第一行应该是刚动过的那个。
+  List<({String path, ({int added, int removed})? stat})> get changedFiles {
+    final indexOf = <String, int>{};
+    final rows = <({String path, ({int added, int removed})? stat})>[];
+    for (final item in items) {
+      if (item is! ToolCallItem) continue;
+      final path = item.changedPath;
+      if (path == null) continue;
+      final existing = indexOf[path];
+      if (existing == null) {
+        indexOf[path] = rows.length;
+        rows.add((path: path, stat: item.diffStat));
+      } else {
+        // 后来的改动覆盖统计（同一文件在一轮里被改两次时，看的是后一次）。
+        rows[existing] = (
+          path: path,
+          stat: item.diffStat ?? rows[existing].stat,
+        );
+      }
+    }
+    return rows.reversed.toList(growable: false);
+  }
+
   // ---- 模型（`session/modelCatalog` + `modelSelection` 投影）----
 
   /// 模型目录（`session/modelCatalog`，DSH `buildModelCatalog` 的真形状解析）。

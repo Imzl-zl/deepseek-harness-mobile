@@ -92,7 +92,7 @@ const List<PreviewSession> previewSessions = <PreviewSession>[
         itemId: 'p1-t1',
         seq: 3,
         updatedAt: 300,
-        name: 'Read',
+        name: 'read',
         status: ToolCallStatus.completed,
         summary: 'lib/core/sync_client_impl.dart（971 行）',
       ),
@@ -100,7 +100,7 @@ const List<PreviewSession> previewSessions = <PreviewSession>[
         itemId: 'p1-t2',
         seq: 4,
         updatedAt: 400,
-        name: 'Bash',
+        name: 'pwsh',
         status: ToolCallStatus.running,
         summary: 'flutter test test/sync_client_test.dart',
       ),
@@ -137,7 +137,7 @@ const List<PreviewSession> previewSessions = <PreviewSession>[
         itemId: 'p2-t1',
         seq: 3,
         updatedAt: 300,
-        name: 'Grep',
+        name: 'grep',
         status: ToolCallStatus.failed,
         summary: 'no matches found（模式写错了）',
       ),
@@ -152,9 +152,14 @@ const List<PreviewSession> previewSessions = <PreviewSession>[
         itemId: 'p2-t2',
         seq: 5,
         updatedAt: 400,
-        name: 'Write',
+        name: 'write',
         status: ToolCallStatus.completed,
         summary: 'lib/theme/dsh_icons.dart（100 个图标）',
+        // 示例数据也要给出 `changedPath`：右侧「文件」面板按它列清单，
+        // 没有它那一屏在示例模式下永远是空态。这是**示例**（会话标题带
+        // 「（示例）」），不是生产路径上的编造。
+        changedPath: 'lib/theme/dsh_icons.dart',
+        diffStat: (added: 100, removed: 0),
       ),
       // **一轮的收口行**（同时是 DSH 的 `turn-tail`：复制 + 用量 pill）。
       // 放一条是为了"没连电脑也能看到 2026-10-20 做的那一行长什么样"——
