@@ -41,6 +41,56 @@ import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 
+/// 把**常见行内 HTML** 归一成等价的 Markdown 标记。
+///
+/// ## 为什么需要它（2026-10-20 实测，不是猜）
+///
+/// `flutter_markdown_plus` 的默认扩展集是 `md.ExtensionSet.gitHubFlavored`
+/// （`flutter_markdown_plus/lib/src/widget.dart:289`），它的行内表里**有**
+/// `InlineHtmlSyntax`（`markdown-7.3.1/lib/src/extension_set.dart:40`）——
+/// 所以 HTML 会被**解析**成元素。但 flutter_markdown 只为自己认识的标签
+/// 提供构建器，其余标签会**把原始源码当文本吐出来**：
+///
+/// 探针（`test/markdown_coverage_test.dart`）实测：正文里 `<b>` 是**可见字符**。
+/// 也就是说"HTML 会渲染"这个印象是错的 —— 它现在是**原样露出标签**。
+///
+/// ## 做法与边界
+///
+/// 只做**确定等价**的四种，其余标签**去掉**（宁可丢样式，不丢文字）：
+///
+/// | HTML | 归一为 | 说明 |
+/// |---|---|---|
+/// | `<br>` `<br/>` | 换行 | `softLineBreak: true` 下换行真的换行 |
+/// | `<b>` `<strong>` | `**…**` | 与 `styleSheet.strong` 同一样式 |
+/// | `<i>` `<em>` | `*…*` | 与 `styleSheet.em` 同一样式 |
+/// | `<code>` | `` `…` `` | 与 `styleSheet.code` 同一样式 |
+///
+/// **代码块（```…```）里一个字都不动** —— 那里是用户在看的源码，
+/// 把它 `<b>` 改成 `**` 就是改内容。围栏按"成对出现"切分，奇数段落是正文。
+///
+/// 没有 `<` 的串**原样返回**（绝大多数消息走这条快路径，不做任何正则扫描的浪费）。
+String normalizeInlineHtml(String source) {
+  if (!source.contains('<')) return source;
+  final parts = source.split('```');
+  for (var i = 0; i < parts.length; i += 2) {
+    // 偶数段 = 围栏之外（正文）；奇数段 = 代码块内部，跳过。
+    if (i < parts.length) parts[i] = _convertInlineTags(parts[i]);
+  }
+  return parts.join('```');
+}
+
+String _convertInlineTags(String text) {
+  var out = text;
+  // 先去标签→标记，再清掉剩余标签。
+  out = out.replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n');
+  out = out.replaceAll(RegExp(r'</?(b|strong)>', caseSensitive: false), '**');
+  out = out.replaceAll(RegExp(r'</?(i|em)>', caseSensitive: false), '*');
+  out = out.replaceAll(RegExp(r'</?code>', caseSensitive: false), '`');
+  // 其余标签（含 `<p>` `<div>` `<span>` `<u>` `<a href=…>` 等）：去掉标签保文字。
+  out = out.replaceAll(RegExp(r'</?[a-zA-Z][^>]*>'), '');
+  return out;
+}
+
 /// 把一个 Markdown 串渲染成 DSH 风格。
 class DshMarkdown extends StatelessWidget {
   const DshMarkdown(this.data, {super.key, this.baseColor});
@@ -60,7 +110,9 @@ class DshMarkdown extends StatelessWidget {
     final color = baseColor ?? c.labelPrimary;
     final body = TextStyle(fontSize: 13, height: 20 / 13, color: color);
     return MarkdownBody(
-      data: data,
+      // **行内 HTML 先归一成 Markdown**：否则 `<b>` 会原样露出
+      //（探针实测，见 `normalizeInlineHtml` 的说明）。
+      data: normalizeInlineHtml(data),
       selectable: true,
       // `softLineBreak`：Markdown 里的单个换行**也换行**。
       //
