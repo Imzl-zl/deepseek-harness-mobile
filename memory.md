@@ -6,110 +6,55 @@
 
 ## 下一步(新会话从这里开始)
 
-> **在跑的任务书**:同一份 goal(goal-a9fd6fb1)。已落地**十九批**并**真机验证**。
->
-> **DSH Web 的节点清单（`register-node-renderers.ts` 14 个 key）已全部有对应呈现** ——
-> 逐个对照查出并修好了 7 处丢失：工具名被覆盖 / 参数行是键名 / 系统消息巨墙 /
-> 流式文本不显示 / 斜杠命令卡 / 异常结局与重试（真日志 80 条"出了什么事"）/
-> 过程摘要 / 压缩标记。`unknown` 是 `OtherItem`，`turn-tail` / `assistant-actions`
-> 是桌面专属操作（**但"复制/用量 pill"那条正在做**，见待办 8）。
->
-> **用户 2026-10-19 夜间反馈的 11 条里，8 条已落地**（气泡隐形 / 抽屉顺序 /
-> 无会话 tab / 新建会话复用 blank / 按项目折叠 / 右抽屉统一宽度 / 全屏钮 /
-> 停止 3s 自动解除 / 子智能体可进入）。**剩 3 条**见下。
+> 用户列表（13 项）与 2026-10-19/20 的 11 条追加反馈，**除「上传文件」全部落地**，
+> 大部分已真机验过。细节一律回 `.agents/notes/`（因果取舍）与 git（变迁），
+> 这里只留**还没做的**与**容易被误当缺口的定案**。
 
 待办:
 
-1. ~~**历史翻页**~~ **2026-10-26 全链路做完**（anchor / `session.page` /
-   `loadOlderHistory` / 滚到顶触发，四处都有单测，其中两处做过变异验证）。
-   **只剩端到端没验** —— 装到公司电脑后手机停在"还没连电脑"
-   （DSH profile 要重新出码配对，用户不在）。判据：滚到顶多出几轮，
-   且过程摘要开始显示真实用时与计数（`turn/start` 进窗口了）。
-2. **过程摘要的"用时/计数"在历史窗口不全时是如实的降级，不是 bug**：
-   2026-10-19 真机看到 `🕐 第 12 轮 · 不到 1 秒`（渲染链路通了）——
-   该轮的 `turn/start` 落在**更早且未加载的页**里。`stats` 因此只说时长、
-   不摆"0 条消息"（`TurnProcessItem.stats` 只列有的项）。**别去"修"它** ——
-   编一个用时或编一个计数才是错。第 1 条做完，这里自然就好了。
-8. ~~**消息底部操作栏**~~ **2026-10-20 做完并真机验过**（复制 + 用量 pill +
-   明细弹窗，挂在一轮已有的 `TurnProcessRow` 上 —— 它本来就是 DSH 的 `turn-tail`）。
-   只做复制与用量：点赞/点踩要 `message-feedback` 写面、分支要 `session/fork`，
-   本仓都未接，**不做死按钮**。真机实测：`用量 94.4K tok` + `复制`
-   （窄屏 `Wrap` 自动折行），点开「本轮用量」= 94,408 tok / 缓存命中 30% /
-   未缓存输入 66,352 / 缓存读取 27,946 / 输出 110。
-   见 `.agents/notes/implemented/2026-10-20-turn-tail-actions.md`。
-10. ~~**附件**~~ **2026-10-20 图片这条做真了**（系统照片选择器 + 自写通道，
-    零 pub 依赖）。**「上传文件」仍不做**：DSH 的文件 part 要 `receiptId`
-    （来自 `uploadFile`，本仓未接）。
-    - 形状（`session-controller/src/types.ts:90-98`）：
-      `{type:'image', mediaType, data(base64), name?}` **内联直发、不需要先上传**；
-      `{type:'file', receiptId}` 才要回执。`mediaType` ∈ png/jpeg/webp/gif
-      （`attachment/src/types.ts:8`）。
-    - **我上一轮的判断错了**：`app/` 下**没有 `ohos/` 工程**（只有
-      android/ios/windows），鸿蒙是未来目标、不是今天会被破坏的构建。
-      真风险是"把鸿蒙能不能编过交给别人的发布节奏" ⇒ 照
-      `dsh/gesture-exclusion` 的先例自写通道。
-    - 原生：**相册**走 API 33+ `MediaStore.ACTION_PICK_IMAGES`（系统照片选择器，
-      **不需要权限**，官方说它取代 `READ_MEDIA_IMAGES`）；以下退
-      `ACTION_GET_CONTENT`（SAF，同样不要权限）⇒ Manifest 一行没加。
-      **拍照**走 `ACTION_IMAGE_CAPTURE`，但**本 App 已为扫一扫声明了 CAMERA**
-      （`AndroidManifest.xml:4`）⇒ 按 Android 规矩必须先授予、否则抛
-      `SecurityException`；`EXTRA_OUTPUT` 走 `FileProvider`
-      （`cacheDir/dsh_photo/`，API 24+ 给 `file://` 抛 `FileUriExposedException`）。
-    - **本仓第一个手写 Android 依赖**：`androidx.core:core:1.13.1`
-      （`FileProvider` 在它里面，Flutter embedding 不带）。取 1.13.1 而非最新；
-      provider 的 `authorities="${applicationId}.dshfileprovider"`。
-    - **限额仍不猜**：`ImageAttachmentLimits` 是部署解析的
-      （`attachment/src/types.ts:74-82`），手机不知道；超了让电脑侧拒，
-      把它的话如实显示（DSH 也是准入时校验，`types.ts:85-92`）。
-    - **端到端未验**：未配对时输入栏置灰，`＋` 点不开 —— 要等配对后看
-      "点照片/拍照 → 芯片 → 发送后气泡旁显示附件计数"。
-      `iOS` / `Windows` 没有实现（通道不存在 ⇒ 点「照片」会直说没有相册）。
-11. ~~**会话页与输入栏背景"不和谐"**~~ **2026-10-20 量出来并修掉**。
-    真机像素：`#FFFFFF`(会话区) → **`#F1F3F5`(输入栏外面那条灰带)** →
-    `#FFFFFF`(卡内)。所以是两件事叠起来：① 输入栏垫了 `c.sidebar` 灰带
-    （底部像独立的栏、与上面断开）；② 卡片 `layer1`（亮色也纯白）**且无阴影**，
-    在白底上隐形。**关键事实**：DSH 的 `--dsw-specific-input-major` 亮色
-    **也是白**（`design-platform.css:269`）—— 看得见**完全靠 `elevation-soft`
-    那层阴影**（`InputBar.module.css:62-63`），**只改底色改不出来**。
-    已补 `composer` / `borderL2` token + 三层 `boxShadow`（发丝环
-    `spreadRadius:0.5` + 两层模糊），外层底色改 `bgBase`。
-    见 `.agents/notes/implemented/2026-10-20-composer-elevation-soft.md`。
-    **顶栏那条灰带也一起修了**（同一个错）：DSH 的 `.header`
-    （`ConversationRoot.module.css:15`）**只画 `border-bottom: 0.5px
-    border-l3`、没有 background** —— 顶栏与页面同色。
-    改后整页是一个连续白面（顶栏白+发丝线 / 会话区白 / 输入栏浮卡）。
-    `sidebar` 色仍用于抽屉/设置/配对页（那些确实是"侧栏表面"）。
-2. **剩下四件事的真机验收**（投影/渲染/接线都有单测，其中三处含**变异验证**）：
-   - **流式文本**：判据是用户发一句话，正文边生成边显示。
-   - **斜杠命令卡**：判据是在有 `/goal` 或 `/compact` 的会话里看到卡片。
-   - **异常结局与重试**：判据是在有错误的会话里看到"第 N 轮出错 + DSH 原文"。
-   - **压缩标记**：判据是在发生过压缩的会话里看到"已压缩上下文 ·
-     替换 N 条 · 压掉 N tok"（**本会话 `session-1f80f156` 就有一条**）。
-   - **过程摘要** ✅ 2026-10-19 已验（`第 12 轮` 那一行）。
-2. **用量汇总的甘特图**：现在只有账本（一轮一行）。甘特要**每步**起止，
-   而 `sessionStats` 是会话级总量（llmMs/toolMs/ttftMs/decodeMs）——
-   拿总量画分段只能画两条 100% 宽的段（假图）。要逐步耗时可考虑插件加投影。
-3. **输入栏横滚钮组**：rikkahub 的 `weight(1f)+horizontalScroll`
-   （`ChatInput.kt:302-306`）。现在四个钮不换行，加第五个时才需要。
-4. **全局侧滑的真相**（别当缺口）：Flutter 原生抽屉**本来就是整页高**可拖
-   （`material/drawer.dart:680` 的 `height: double.infinity`），宽度由
-   `drawerEdgeDragWidth` 控制。限制在**系统返回手势**：Android 官方
-   `setSystemGestureExclusionRects` **每条边最多排除 200dp 总高度**。
-   **结论：当前实现已是约束下的最优**，不要再试图"整页都能拖"。
-5. DSH 0.2.1 的 `registerFetchRoute` 开始校验同路径重复注册:同 path 的 GET/POST 必须合成
-   一条 `methods: ['GET','POST']`(0.2.0 时是绿的)。
-6. **"又要扫码"先分清是"首次安装"还是"被重装"**（2026-10-26 真机踩到，
-   **第一次判断错了，已修正**）：
-   `adb shell dumpsys package com.example.dsh_mobile` 看两个时间戳：
-   - `firstInstallTime == lastUpdateTime` ⇒ **这是首次安装**（这一版从没在
-     这台手机上配对过）。**不是"被重装清数据"** —— 我第一次就这么判错了，
-     还写进了笔记。`adb install -r` 实测是保住 `firstInstallTime` 的
-     （重装后 lastUpdate 变、firstInstall 不变）。
-   - `firstInstallTime` **变了**（比上次记的晚）⇒ 那才是被卸载重装过。
-   - **判据**：先跟**上一次装包时记下的** `firstInstallTime` 比，别只看两个字段相等。
-     （`tools.md:96` 那条"never `flutter install`"仍然成立，它防的是**同一份
-     凭据被卸掉**；这里说的是"换个装包/换台手机时本来就没有凭据"。）
+1. **端到端验收（要配对，我这边做不了）**。下面几处都有单测、其中三处含
+   **变异验证**，缺的只是真机看一眼：
+   - 流式文本：发一句，正文边生成边显示。
+   - 斜杠命令卡：有 `/goal` 或 `/compact` 的会话里出现卡片。
+   - 异常结局与重试：有错误的会话里显示"第 N 轮出错 + DSH 原文"。
+   - 压缩标记：发生过压缩的会话显示"已压缩上下文 · 替换 N 条 · 压掉 N tok"。
+   - 附件：`＋` → 照片/拍照 → 相册/相机 → 芯片 → 发送后气泡旁显示附件计数。
+   - 历史翻页：滚到顶多出几轮，且过程摘要开始显示真实用时与计数。
+2. **「上传文件」** —— 形状已查清，开工单在
+   `.agents/notes/proposed/2026-10-20-file-upload-shape.md`。
+   卡点：`@deepseek-ai/dsh-client-file-upload` **不在连接器依赖里**
+   （要加就得动 lockfile / 私有 registry），所以端口用**结构化类型**照抄形状；
+   共 8 个触达点（caps 键 / `Caps` 字段 / `dsh/` 端口 / handler / 依赖注入 /
+   方法表 / 契约文档 / 两边测试）。**别半截提交**。
 
+别当缺口（定案，别再试）:
+
+- **全局侧滑**：Flutter 原生抽屉本来就是整页可拖（`material/drawer.dart:680`
+  的 `height: double.infinity`）。真限制是**系统返回手势** ——
+  `setSystemGestureExclusionRects` **每条边最多 200dp 总高**。当前实现已是最优。
+- **过程摘要的"用时/计数"在历史窗口不全时是如实降级**：`turn/start` 落在
+  未加载的更早一页里，所以只说时长、不摆"0 条消息"。**别去"修"**。
+- **用量甘特图**要**每步**起止，而 `sessionStats` 是会话级总量 ——
+  拿总量画分段只能画出假图。要做得先加投影。
+- **输入栏横滚钮组**只在加第五个钮时才需要（现在四个不换行）。
+
+## 附件与图片（做过的，别重做）
+
+- 形状（`session-controller/src/types.ts:90-98`）：图片
+  `{type:'image', mediaType, data(base64), name?}` **内联直发、不用先上传**；
+  文件 `{type:'file', receiptId}` 才要回执。`mediaType` ∈ png/jpeg/webp/gif
+  （`attachment/src/types.ts:8`）。
+- **`app/` 下没有 `ohos/` 工程**（只有 android/ios/windows）—— 鸿蒙是未来目标，
+  不是今天会被破坏的构建。真风险是"把鸿蒙能不能编过交给别人的发布节奏"，
+  所以照 `dsh/gesture-exclusion` 的先例**自写通道、零 pub 依赖**。
+- 相册 = API 33+ `ACTION_PICK_IMAGES`（**不要权限**）/ 以下 `ACTION_GET_CONTENT`；
+  拍照 = `ACTION_IMAGE_CAPTURE`，但**本 App 已为扫一扫声明 CAMERA**
+  （`AndroidManifest.xml:4`）⇒ 必须先授予否则 `SecurityException`，
+  `EXTRA_OUTPUT` 走 `FileProvider`（`cacheDir/dsh_photo/`）。
+- **本仓唯一手写 Android 依赖**：`androidx.core:core:1.13.1`。
+- **限额不猜**：`ImageAttachmentLimits` 是部署解析的（`attachment/src/types.ts:74-82`）；
+  超了让电脑侧拒、把它的话如实显示。
+- **图片预算按"一条消息合计"算**（3 MiB），不是按每张 —— 见第八条教训。
 ## 当前能力(都已在真机上跑通过)
 
 - **会话面**:流 / 历史 / 发送 / 取消 / 排队(编辑·删除·插话)/ 插话与打断 / 列表按工作区分组。
@@ -275,23 +220,10 @@
 - **`dart format` 会重排文件**,之后再编辑同一文件要**重新读一遍**(编辑工具会因"文件变过"拒绝)。
 - 提交纪律 / 多替身接口 / 真机坐标 等**稳定坑点的唯一出处是 `tools.md` → Pitfalls**;本文件不复制一份。
 
-## 已落地批次索引(细节回 git 与 `.agents/notes/`)
+## 已落地批次索引
 
-- **2026-10-19**(十六批,共 16 个提交):渲染三缺陷照 DSH 修 → 输入栏去忙时发送图标
-  + 模型 chip 图标优先 → 右抽屉改真抽屉 + 快速跳转钮(rikkahub `MessageJumper`)
-  → 浅色主题三档 + **全部 UI 面迁完** → 跨会话用量汇总(连接器 + 手机)
-  → 输入栏几何判据 + 模型 chip 按内容宽(省 65px) → **换 WiFi 自动连上已验证**(家→公司)
-  → 轨迹页接 `turnOutline` → 消息流显示流式文本 → 斜杠命令卡
-  (`command/run` + `command/done`) → 一轮的异常结局与模型重试（`turn/end` 的
-  reason + `llm/retry`；真日志 80 条"出了什么事"）→ 一轮的过程摘要
-  （`turn-process`）→ **上下文压缩标记**（`compaction/*`；DSH Web 节点清单至此
-  **全部有对应呈现**）→ **历史翻页骨架**（`session.page` + `loadOlderHistory`，
-  26 个测试替身收成 `FakeSyncClient` 基类）。
-  **`app/test/fixtures/real-session-events.json` 是真机落盘事件** —— 手写形状的
-  用例只会复述实现的假设,这是"我们以为的形状与真形状不同"的判据。
-- **2026-10-18/19**(连接与端点,9 个提交):帧头 id 与幂等键分离 → 多地点端点保留 → 端点管理 UI →
-  PC 端上报地址后端 → 面板 + 0.2.1 适配 → 点名连接 → 切换/重连归位 → 拖动柄 44×44 → 全零投影收起。
-  **每篇都有决策笔记,哈希回 `git log` 找。**
-- **更早**:`6a9249b` 顶栏一行 + 统计条横滚 + hero + 图标集 98→100;交互转手机整链 / 端点切换与
-  局域网直连 / 归档面 / 排队与打断 / 设置页四组 / 标题单一真值源 / 模型目录真形状 /
-  设备身份与失效恢复 / 传输分开关 / 假数据清理 / 配对 v2 三侧收口。
+细节回 `git log`（每篇都有 hash 与决策笔记）。**唯一要记住的资产**：
+`app/test/fixtures/real-session-events.json` **是真机落盘事件** ——
+手写形状的用例只会复述实现的假设，这份 fixture 才是"我们以为的形状与真形状不同"
+的判据。
+
