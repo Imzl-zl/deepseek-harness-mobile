@@ -172,6 +172,17 @@
 
 ## 前置事实(会卡住实施)
 
+- **单帧上限 8 MiB，而任何二进制载荷在线上会放大 ≈1.78 倍**
+  （契约 §40 + `connector/src/transport/codec.ts:53,77`：超了接收侧
+  `protocol/bad-frame` **并关闭连接**）。
+  放大链：原始 `N` → JSON 的 base64 `1.33N` → 密文 ≈`1.33N` →
+  `box` 的 base64url（协议 §132 `base64url(密文‖16字节tag)`）**再 ×1.33**
+  ⇒ **一帧 ≈ 1.78 N**。
+  **所以二进制附件的原始字节预算 = 3 MiB**（3×1.78 ≈ 5.3 MiB，余 2.7 MiB）。
+  图片由 `MainActivity.encodeForTransport` 压（≤3 MiB 原样过、超了按最长边
+  1600px 重编码），Dart 侧 `kMaxImageBytesForTransport` 再兜一道。
+  **发别的二进制（将来传文件）也要按这条算，别只算 base64 那一层。**
+
 - **DSH 运行时 0.2.1-rc.2**(桌面版自带)。连接器 devDeps/peerDeps 都跟 0.2.1-rc.2,
   `schemastery` 跟 **3.18.5**(钉旧版会装出两份 ⇒ tsdown 报 "type cannot be named")。
 - **Flutter 3.41.9 / Dart 3.11.5 版本锁死**(上界由鸿蒙 fork 定)。Android 构建要
@@ -241,7 +252,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **296 项**(22 条规则自检 + 扫 82 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 43 个)/ 工具脚本不许硬编码盘符(19 个) |
-| `cd app && flutter test` | **861 项** |
+| `cd app && flutter test` | **863 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **550 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
