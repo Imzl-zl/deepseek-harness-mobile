@@ -34,6 +34,7 @@ import 'package:dsh_mobile/ui/side_pane.dart';
 // （`AsyncSnapshot` 的 none/waiting/active/done），与我们的**连接状态机**同名
 // 但毫无关系。隐藏它，让本文件里 `ConnectionState` 只有一个意思。
 import 'package:flutter/material.dart' hide ConnectionState;
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'fake_sync_client.dart';
 
@@ -1525,6 +1526,72 @@ void main() {
           reason: '$state 需要用户做点什么',
         );
       }
+    });
+  });
+
+  group('右侧「文件」面板（真清单 + 复制路径）', () {
+    /// 起一页示例数据并落到有 `write` 调用的那个会话。
+    ///
+    /// `preview-2` 里有一条 `name: 'write'` 且带 `changedPath` 的调用
+    /// （`lib/data/preview_data.dart`）—— 面板就是按它列出来的。
+    ///
+    /// 直接调 `loadPreview()` 而不是点「看示例数据」：那个按钮只在**未配对**
+    /// 的空态里出现，而 `_wrap` 默认已配对 —— 点它只会找到 0 个。
+    Future<AppModel> pumpPreviewSession(WidgetTester tester) async {
+      final app = AppModel(client: FakeClient())..loadPreview();
+      await tester.pumpWidget(_wrap(app));
+      await tester.pumpAndSettle();
+      await app.openSession('preview-2');
+      await tester.pumpAndSettle();
+      return app;
+    }
+
+    testWidgets('列出真改动：表头报数量，行里是路径与 +N −M', (tester) async {
+      await pumpPreviewSession(tester);
+      // 抽屉的 `_sidePanel` 默认就是「文件」（`chat_page.dart:143`），
+      // 所以直接开抽屉就落在这一页。
+      tester.state<ScaffoldState>(find.byType(Scaffold).first).openEndDrawer();
+      await tester.pumpAndSettle();
+
+      expect(find.text('1 个文件'), findsOneWidget, reason: '表头报的是真数量');
+      expect(find.text('lib/theme/dsh_icons.dart'), findsOneWidget);
+      // 差异页签默认选中，行上带增量。
+      expect(find.text('+100'), findsOneWidget);
+      expect(find.text('−0'), findsOneWidget);
+      // **空态不许同时出现** —— 列着东西还说"还没有改动"就是自相矛盾。
+      expect(find.text('还没有改动'), findsNothing);
+    });
+
+    testWidgets('点一行 → **真的把路径写进剪贴板**（不只是弹个提示）', (tester) async {
+      final clipboard = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            final args = call.arguments;
+            if (args is Map && args['text'] is String) {
+              clipboard.add(args['text'] as String);
+            }
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      await pumpPreviewSession(tester);
+      tester.state<ScaffoldState>(find.byType(Scaffold).first).openEndDrawer();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('lib/theme/dsh_icons.dart'));
+      await tester.pumpAndSettle();
+
+      expect(clipboard, ['lib/theme/dsh_icons.dart'], reason: '剪贴板里是那条路径');
+      expect(find.textContaining('已复制'), findsOneWidget);
     });
   });
 }

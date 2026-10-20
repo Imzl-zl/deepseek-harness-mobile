@@ -96,7 +96,9 @@ pwsh × 3547   edit × 2169   read × 1738   grep × 591   write × 460
   - **真机**：示例会话 → 右抽屉「文件」→ 表头「1 个文件」、差异页
     `lib/theme/dsh_icons.dart +100 −0`（截图确认）；点一行 → 左下弹出
     「已复制 lib/theme/dsh_icons.dart」（截图确认）。
-    **复制路径这条没有单测**：面板在抽屉里，测试里开抽屉要绕
-    `ScaffoldState`，而这次的真机证据是直接的（点了就弹出提示）。
-    下一批补测试时把它一起带上。
-  - `flutter test 880` 全绿。
+  - **复制路径有单测了**（`widget_test.dart` 的「右侧「文件」面板」组，2 条）：
+    ① 列出真改动、表头报数量、行里有 `+100 −0`、**空态不许同时出现**；
+    ② 点一行 → 断言**剪贴板里真的是那条路径**（mock
+    `SystemChannels.platform` 抓 `Clipboard.setData`），不只是弹了提示。
+    **一处变异验证**：删掉 `Clipboard.setData` → 第 ② 条红。
+  - `flutter test 882` 全绿。
