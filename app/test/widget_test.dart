@@ -410,9 +410,47 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('添加'), findsOneWidget);
       expect(find.text('附件'), findsNothing, reason: '附件发送还没接 —— 摆一行加假芯片就是静默丢弃');
-      // 其余入口还在（它们各自说"还没做"，不假装）。
+      // **桌面快捷键那三项也拔掉了**（2026-10-20）：`工作区文件` /
+      // `新建终端` / `浏览器` 的副标题全是"桌面端 Ctrl+X"，手机上点下去
+      // 只能弹"还没做" —— 而 `settings_page.dart:7` 写着
+      // 「一行点下去只弹"还没做"的假入口，比没有这一行更糟」。
+      for (final dead in ['工作区文件', '新建终端', '浏览器']) {
+        expect(
+          find.text(dead),
+          findsNothing,
+          reason: '$dead 是桌面快捷键入口，手机上只能弹"还没做"',
+        );
+      }
+      // 剩下两项都是真的：`后台任务` 开右抽屉的任务页，`演示` 灌接管队列。
       expect(find.text('后台任务'), findsOneWidget);
       expect(find.text('演示：接管输入栏'), findsOneWidget);
+    });
+
+    testWidgets('＋ → 后台任务：**落到真的面板**（不是"还没做"）', (tester) async {
+      // 右抽屉本来就有「任务」面板（顶栏计数 chip 也是开它），
+      // 所以这个入口没有理由只弹一句"还没做"。
+      final app = AppModel(
+        client: FakeClient(
+          sessions: [
+            {'sid': 's1', 'updatedAt': 0},
+          ],
+        ),
+      );
+      await app.refreshSessions();
+      await app.openSession('s1');
+      await tester.pumpWidget(_wrap(app));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('添加文件或调用指令'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('后台任务'));
+      await tester.pumpAndSettle();
+
+      // 抽屉开着、且落在「后台任务」那一页（表头就是它）。
+      expect(find.text('后台任务'), findsOneWidget);
+      // 空态说的是数据来源，不是"还没做"。
+      expect(find.textContaining('没有后台任务'), findsOneWidget);
+      expect(find.textContaining('还没接'), findsNothing);
     });
 
     testWidgets('发送键：空输入时不可点，有内容才亮', (tester) async {

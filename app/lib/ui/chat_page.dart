@@ -1001,12 +1001,6 @@ class ChatPageState extends State<ChatPage> {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  /// "这个动作还没有接线"的提示。与 [_toast] 分开：结论与未接线是两件事，
-  /// 混在一个助手里必然有一个被说错。
-  void _notWired(String what) {
-    _toast('$what 还没接上数据');
-  }
-
   // ---------------------------------------------------------------------------
   // sheet 体系（照原型的 `sheet-*` action）
   // ---------------------------------------------------------------------------
@@ -1732,12 +1726,20 @@ class ChatPageState extends State<ChatPage> {
     // **「上传文件」仍然不做**：DSH 的文件 part 要 `receiptId`
     // （`types.ts:98`），来自一次 `uploadFile` —— 那是另一个方法面，
     // 本仓未接。摆一个加假芯片的入口就是 2026-10-20 刚拔掉的那处。
+    // **2026-10-20 又拔掉三项**：`工作区文件` / `新建终端` / `浏览器`
+    // 的副标题全是"桌面端 Ctrl+P / Ctrl+` / Ctrl+T" —— 手机上**没有对应入口**
+    // （它们是桌面快捷键的入口），点下去只能弹"还没做"。
+    // 而项目规则写得很清楚（`settings_page.dart:7`）：
+    // 「一行点下去只弹"还没做"的假入口，比没有这一行更糟」。
+    // 我上一轮把它们留下了，理由是"它们各自说的是还没做、不是假装做了" ——
+    // 那是我在替自己的实现找台阶，规则并不这么分。
+    //
+    // **`后台任务`留下了，而且做成了真的**：右抽屉本来就有那个面板
+    // （`SidePanel.jobs`，顶栏计数 chip 也是开它），所以这里直接开过去，
+    // 不再是"还没做"。
     const items = [
       (icon: 'paperclip', label: '拍照', desc: '用相机拍一张，随消息发出去'),
       (icon: 'paperclip', label: '照片', desc: '从相册选一张，随消息发出去'),
-      (icon: 'folderOpen', label: '工作区文件', desc: '桌面端 Ctrl+P'),
-      (icon: 'code', label: '新建终端', desc: '桌面端 Ctrl+`'),
-      (icon: 'globe', label: '浏览器', desc: '桌面端 Ctrl+T'),
       (icon: 'checklist', label: '后台任务', desc: '看运行中的命令与输出'),
       // 原型底栏有一个「演示」入口（`data-act="demo"`）。这里照做：
       // 接管卡**只有真的有待办才出现**，而"看看它长什么样"需要一个入口。
@@ -1761,10 +1763,11 @@ class ChatPageState extends State<ChatPage> {
                     unawaited(_pickPhoto(PhotoSource.gallery));
                   } else if (item.label == '拍照') {
                     unawaited(_pickPhoto(PhotoSource.camera));
-                  } else if (item.label == '演示：接管输入栏') {
-                    _enqueueDemoTakeovers();
+                  } else if (item.label == '后台任务') {
+                    // **落到真的面板**（不是"还没做"）：右抽屉的「任务」页。
+                    _openSidePanel(SidePanel.jobs);
                   } else {
-                    _notWired(item.label);
+                    _enqueueDemoTakeovers();
                   }
                 },
               ),
