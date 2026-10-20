@@ -213,4 +213,39 @@ void main() {
     await tester.pumpAndSettle();
     expect(sent, 0, reason: '惰性附件不该点亮发送键');
   });
+
+  testWidgets('附件芯片有**入场动画**（不是硬蹦出来）', (tester) async {
+    // 用户：「它的动画也挺丝滑…可以参考优秀的设计」（rikkahub 那套）。
+    // 这条钉的不是"动画存在"，而是"**第一帧还没到终值**" ——
+    // 只断言"有个 Opacity"的话，把它换成 `opacity: 1` 也照样绿。
+    await tester.pumpWidget(
+      _host(
+        controller: TextEditingController(),
+        attachments: const [
+          PendingAttachment(
+            name: '设计稿.png',
+            image: PickedImagePart(mediaType: 'image/png', data: 'AA'),
+          ),
+        ],
+      ),
+    );
+    // 只推进一帧：入场动画刚开始。
+    await tester.pump();
+
+    double opacityOfChip() => tester
+        .widgetList<Opacity>(
+          find.ancestor(
+            of: find.text('设计稿.png'),
+            matching: find.byType(Opacity),
+          ),
+        )
+        .first
+        .opacity;
+
+    expect(opacityOfChip(), lessThan(1), reason: '第一帧不该已经完全不透明');
+
+    // 走完 160ms：必须到 1（否则芯片永远是半透明的）。
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(opacityOfChip(), 1);
+  });
 }

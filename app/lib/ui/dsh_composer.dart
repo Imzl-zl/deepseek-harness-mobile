@@ -283,9 +283,29 @@ class DshComposer extends StatelessWidget {
                   runSpacing: 6,
                   children: [
                     for (final item in attachments)
-                      _AttachmentChip(
-                        item: item,
-                        onRemove: () => onRemoveAttachment(item),
+                      // **入场的淡入 + 微缩放**（2026-10-20）：选完图芯片会
+                      // 立刻出现在卡片里，硬蹦出来读作"闪了一下"。
+                      //
+                      // 用 `TweenAnimationBuilder` 而不是给每个芯片加
+                      // `AnimationController`：它自带"首次构建时跑一遍"，
+                      // 不需要为一次性的入场维持 7 个控制器。
+                      // 时长/曲线与发送键那次换形态同一个（160ms / easeOutCubic），
+                      // 两处动画节奏一致才不会显得杂。
+                      TweenAnimationBuilder<double>(
+                        tween: Tween<double>(begin: 0, end: 1),
+                        duration: const Duration(milliseconds: 160),
+                        curve: Curves.easeOutCubic,
+                        builder: (context, t, child) => Opacity(
+                          opacity: t,
+                          child: Transform.scale(
+                            scale: 0.92 + 0.08 * t,
+                            child: child,
+                          ),
+                        ),
+                        child: _AttachmentChip(
+                          item: item,
+                          onRemove: () => onRemoveAttachment(item),
+                        ),
                       ),
                   ],
                 ),
@@ -707,20 +727,46 @@ class _SendButton extends StatelessWidget {
         child: InkWell(
           onTap: enabled ? onPressed : null,
           child: Center(
-            child: sending
-                ? SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: c.onAccent,
+            // **发送 ⇄ 停止 ⇄ 转圈 之间淡入 + 缩放**（2026-10-20）。
+            //
+            // 照 rikkahub 的 `AnimatedVisibility(enter = fadeIn() + scaleIn(),
+            // exit = fadeOut() + scaleOut())`
+            // （`ui/components/ai/ChatInput.kt:391-402`）—— 用户原话
+            // 「它的动画也挺丝滑…可以参考优秀的设计」。
+            //
+            // 为什么值得动画：这三个形态是**同一个按键的不同含义**，
+            // 硬切会读成"按钮被换掉了"（尤其"运行中 → 停止"那一下，
+            // 颜色也从蓝变橙）；淡入缩放读成"同一个键换了含义"。
+            //
+            // **只动图标，不动底色**：`Material` 的底色承载 `InkWell` 的水波，
+            // 把它换成 `AnimatedContainer` 会让水波被盖住（水波画在 Material 上、
+            // 在 child 下面）。取舍：水波要留着，底色就瞬时切。
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 160),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeIn,
+              transitionBuilder: (child, animation) => FadeTransition(
+                opacity: animation,
+                child: ScaleTransition(scale: animation, child: child),
+              ),
+              child: sending
+                  ? SizedBox(
+                      key: const ValueKey('sending'),
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: c.onAccent,
+                      ),
+                    )
+                  : DshIcon(
+                      stops ? 'stopFill' : 'paperPlane',
+                      // key 让 `AnimatedSwitcher` 认出"换形态了"。
+                      key: ValueKey(stops ? 'stop' : 'send'),
+                      size: 18,
+                      color: enabled ? c.onAccent : c.labelTertiary,
                     ),
-                  )
-                : DshIcon(
-                    stops ? 'stopFill' : 'paperPlane',
-                    size: 18,
-                    color: enabled ? c.onAccent : c.labelTertiary,
-                  ),
+            ),
           ),
         ),
       ),
