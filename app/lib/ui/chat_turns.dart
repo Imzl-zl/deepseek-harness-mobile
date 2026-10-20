@@ -401,13 +401,30 @@ class _ToolCardState extends State<ToolCard> {
           ),
           if (hasDetail && _open)
             Container(
+              // 展开后的正文是一块**独立容器**（不是标题行那层暖色底的延续）。
+              //
+              // 出处：`ui-tool/src/client/tool/components/ToolDetails.module.css`
+              // 的 `.root`：
+              //   margin: 4px 0 4px 4px;
+              //   border: 0.5px solid var(--dsw-alias-border-l1);
+              //   border-radius: var(--dsw-radius-lg);
+              //   background: var(--dsw-alias-markdown-code-block);
+              //   overflow: hidden;
+              //
+              // **2026-10-20 更正**：这里原注释引的是
               // `.tool-body { padding:12px 14px; background:layer1;
-              //   border-top:1px solid l1; 等宽; line-height:20 }`
+              // border-top:1px solid l1 }` —— 而 `.tool-body` 这个类
+              // **在 DSH 里不存在**（全仓 grep 为零）。照一个不存在的
+              // 类写实现，就成了"每一处看着都有出处、合起来却是另一样东西"。
+              margin: const EdgeInsets.fromLTRB(4, 4, 0, 4),
               width: double.infinity,
+              // 内边距是**我们的**选择（DSH 的 `.root` 不声明 padding，
+              // 由内部内容自带）；14/12 与标题行的 14/13 对齐。
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
-                color: c.layer1,
-                border: Border(top: BorderSide(color: c.layer1)),
+                color: c.codeBlock,
+                borderRadius: BorderRadius.circular(DshRadius.lg),
+                border: Border.all(color: c.borderL1, width: 0.5),
               ),
               child: Text(
                 widget.detail,

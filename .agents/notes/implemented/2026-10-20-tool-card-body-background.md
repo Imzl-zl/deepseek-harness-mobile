@@ -1,6 +1,6 @@
-# Agent Note: 工具卡展开后正文掉出卡片底色 —— 待核 DSH 再定
+# Agent Note: 工具卡展开后的正文包成独立容器（照 DSH `ToolDetails.root`）
 
-Status: proposed（**只记录现象与缺的证据，未改动代码**）
+Status: implemented（2026-10-20 落地，真机截图确认）
 
 ## 现象
 
