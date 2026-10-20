@@ -24,6 +24,7 @@ Widget _host({
   String model = 'deepseek-v4.1-flash',
   String? reasoning = 'max',
   List<PendingAttachment> attachments = const [],
+  VoidCallback? onSend,
 }) => MaterialApp(
   theme: ThemeData.dark(useMaterial3: true),
   home: Scaffold(
@@ -41,7 +42,7 @@ Widget _host({
           ),
           sendMode: SendMode.queue,
           sending: false,
-          onSend: () {},
+          onSend: onSend ?? () {},
           onAttach: () {},
           onPickModel: () {},
           onPickAccess: () {},
@@ -165,5 +166,51 @@ void main() {
     // 两个都在卡片内部（composer 的矩形之内）。
     final composer = tester.getRect(find.byType(DshComposer));
     expect(chip.top, greaterThanOrEqualTo(composer.top - 1));
+  });
+
+  testWidgets('**只挂一张图、不打字：发送键可点**（点了真的回调）', (tester) async {
+    // 2026-10-20 修的 bug：`canSend` 原来只看文字
+    //（`controller.text.trim().isNotEmpty`），于是"选了照片没打字"时
+    // 发送键是灰的 —— 而"只发一张图"是完全正常的用法
+    //（DSH 的 content 是 part 数组，可以没有文本 part）。
+    var sent = 0;
+    await tester.pumpWidget(
+      _host(
+        controller: TextEditingController(),
+        attachments: const [
+          PendingAttachment(
+            name: '设计稿.png',
+            image: PickedImagePart(
+              mediaType: 'image/png',
+              data: 'iVBORw0KGgo=',
+            ),
+          ),
+        ],
+        onSend: () => sent += 1,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pumpAndSettle();
+    expect(sent, 1, reason: '有可发送的图片就算有草稿');
+  });
+
+  testWidgets('**不可发送的附件不算草稿**（否则点了会发出去一个空消息）', (tester) async {
+    // `isInert` 的芯片（只有名字、没有字节）根本发不出去；
+    // 让它点亮发送键，就会变成一个"发出去什么都没带"的动作。
+    var sent = 0;
+    await tester.pumpWidget(
+      _host(
+        controller: TextEditingController(),
+        attachments: const [PendingAttachment(name: '只有名字.txt')],
+        onSend: () => sent += 1,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pumpAndSettle();
+    expect(sent, 0, reason: '惰性附件不该点亮发送键');
   });
 }

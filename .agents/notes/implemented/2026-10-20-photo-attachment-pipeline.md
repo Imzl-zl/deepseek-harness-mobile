@@ -122,6 +122,33 @@ Flutter 的 embedding 不带。取 1.13.1 而不是最新：与
 （追新只会让"下次构建能不能过"变成运气问题）。
 **实测构建通过**（`flutter build apk --debug` 成功，装机启动无异常）。
 
+## 自查抓到的一个真 bug：只要文字、漏了附件
+
+2026-10-20 自查（"选了照片却不打字"会怎样）发现两处**状态判据只看文字**：
+
+```dart
+final canSend = enabled && !sending && hasDraft;   // hasDraft 只看 controller.text
+if (text.isEmpty || _sending) return;              // _send() 也只看文字
+```
+
+于是**选了照片但没打字 → 发送键是灰的、点下去什么都不发生**。
+而"只发一张图"是完全正常的用法（DSH 的 `content` 本来就是 part 数组，
+可以没有文本 part）。
+
+修法三条：
+
+1. `canSend` 的判据改成 `hasText || hasImage`，而 `hasImage` 只数
+   **可发送**的（`!isInert`）—— 只有名字的芯片不算草稿，
+   否则点亮发送键会发出一个什么都没带的消息；
+2. `_send()` 的早退同样改成 `text.isEmpty && !hasImage`；
+3. `promptContentOf` **空文本不发那一段** ——
+   `{type:'text', text:''}` 对电脑侧只是噪音。
+
+判据：`composer_layout_test.dart` 新增两条（挂图不打字 → 发送键可点、
+点下去真回调 / 惰性附件 → 不许点亮）；
+`photo_attachment_test.dart` 新增一条（空文本 + 一张图 → content 里**没有**
+text part）。**一处变异验证**：把 `canSend` 退回只看文字 → 1 条红。
+
 ## Alternatives considered（否掉的）
 
 - **引 `image_picker` / `file_picker`**：把"鸿蒙能不能编过"交给别人的发布节奏；

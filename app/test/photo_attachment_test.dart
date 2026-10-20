@@ -207,6 +207,22 @@ void main() {
       expect(wire, {'type': 'image', 'mediaType': 'image/png', 'data': 'AA'});
     });
 
+    test('**只发一张图**：content 里没有空的 text part', () {
+      // 2026-10-20 修的那条：`_send()` 原来只要 `text.isEmpty` 就 return，
+      // 于是"选了照片没打字"点发送什么都不发生。而 DSH 的 content 本来就是
+      // part 数组，可以没有文本 part —— 发一个空 text 只是噪音。
+      final content = promptContentOf(text: '', attachments: [image()]);
+      expect(content, [
+        {
+          'type': 'image',
+          'mediaType': 'image/png',
+          'data': 'iVBORw0KGgo=',
+          'name': '设计稿.png',
+        },
+      ]);
+      expect(content.any((part) => part['type'] == 'text'), isFalse);
+    });
+
     test('**不可发送的附件不进 content**（不假装发出去）', () {
       // 只有名字、没有字节的芯片是"仅展示"的（`isInert`）。
       // 它绝不能出现在载荷里 —— 那正是 2026-10-20 拔掉的假附件的行为。

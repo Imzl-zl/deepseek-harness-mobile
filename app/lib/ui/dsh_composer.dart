@@ -99,13 +99,16 @@ class PickedImagePart {
 /// **图片排在文本之前**：模型先看到图、再读提示词，这是本仓的读法
 /// （数组顺序本身 DSH 没有强制）。**只有带图片的附件才进 content** ——
 /// 不可发送的（`isInert`）留在输入栏里，不假装发出去。
+///
+/// **空文本不发那一段**：`text` 为空时（"只发一张图"）content 里就没有
+/// text part。发一个 `{type:'text', text:''}` 给电脑侧只是噪音。
 List<Map<String, Object?>> promptContentOf({
   required String text,
   required List<PendingAttachment> attachments,
 }) => [
   for (final attachment in attachments)
     if (attachment.image case final image?) image.toWire(),
-  {'type': 'text', 'text': text},
+  if (text.isNotEmpty) {'type': 'text', 'text': text},
 ];
 
 /// 普通会话的输入框占位符。
@@ -209,7 +212,17 @@ class DshComposer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
-    final hasDraft = controller.text.trim().isNotEmpty;
+    // **"有没有草稿"包括可发送的附件**（2026-10-20 修）。
+    //
+    // 原来只看文字：`controller.text.trim().isNotEmpty` —— 于是
+    // **选了照片但没打字时发送键是灰的，发不出去**。而"只发一张图"
+    // 是完全正常的用法（DSH 的 `content` 本来就是 part 数组，可以没有文本 part）。
+    //
+    // `isInert` 的（只有名字、没有字节）不算：那种根本发不出去，
+    // 让它点亮发送键只会变成一个发出去什么都没带的动作。
+    final hasText = controller.text.trim().isNotEmpty;
+    final hasImage = attachments.any((item) => !item.isInert);
+    final hasDraft = hasText || hasImage;
     final canSend = enabled && !sending && hasDraft;
     // **主键在运行中且没有草稿时是"停止"**（Web 的 `primaryStops`）。
     final stops = running && !hasDraft && onStop != null;

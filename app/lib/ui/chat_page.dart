@@ -376,9 +376,13 @@ class ChatPageState extends State<ChatPage> {
   Future<void> _send() async {
     final text = _input.text.trim();
     final sid = widget.app.currentSid;
+    // **"只发一张图"是合法的**（2026-10-20 修）：原来这里只看 `text.isEmpty`
+    // 就 return，于是选了照片却没打字时点发送**什么都不发生** ——
+    // 而 DSH 的 `content` 本来就是 part 数组，可以没有文本 part。
+    final hasImage = _attachments.any((item) => !item.isInert);
+    if ((text.isEmpty && !hasImage) || _sending) return;
     // **没选会话就发不出去，必须说出来**：静默 `return` 会让用户以为"点了没反应"，
     // 而那正是"我发了啥也没有"最常见的成因（真机实测）。
-    if (text.isEmpty || _sending) return;
     if (sid == null) {
       ScaffoldMessenger.of(
         context,
