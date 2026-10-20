@@ -2230,7 +2230,6 @@ class _ConversationFlowState extends State<_ConversationFlow> {
   ///
   /// **条目数变化就重建**：留着旧的会漏掉新增条目（跳不过去），
   /// 而 key 数量与 `items` 不一致时 `ensureVisible` 拿到 null context。
-  List<GlobalKey> _keys = const [];
 
   /// 跳转钮的控制器（滚动监听要把"滚过了"告诉它）。
   ///
@@ -2279,23 +2278,47 @@ class _ConversationFlowState extends State<_ConversationFlow> {
   @override
   void initState() {
     super.initState();
-    _syncKeys();
   }
 
   @override
   void didUpdateWidget(_ConversationFlow old) {
     super.didUpdateWidget(old);
-    if (!identical(widget.items, old.items)) _syncKeys();
+    if (!identical(widget.items, old.items)) _pruneStaleKeys();
+  }
+
+  /// **按 `itemId` 复用 `GlobalKey`，不重建。**
+  ///
+  /// ## 为什么必须这样（2026-10-20 修一个真 bug）
+  ///
+  /// 这里原来是 `_syncKeys() = List.generate(items.length, (_) => GlobalKey())`
+  /// —— 只要条目变了就**换成一批全新的 key**。而换 key 在 Flutter 里等于
+  /// **让每一行重新挂载**：
+  ///
+  /// - `ToolCard` / `CommandCard` / `CompactionRow` / `TurnProcessRow` 都是
+  ///   `StatefulWidget`，`_ToolCardState._open` 那种展开状态存在 `State` 里
+  ///   ⇒ **展开一张工具卡，只要来一条新事件（流式输出/工具结果），它就自己收起**。
+  /// - 顺带的性能问题：每帧分配 N 个 `GlobalKey`（它们要注册进全局表）。
+  ///
+  /// 改成按 `itemId` 取（`itemId` 由 `core/items.dart` 保证唯一且稳定），
+  /// 同一条目跨帧拿到**同一个** key ⇒ 元素复用、状态保住、每帧零分配。
+  final Map<String, GlobalKey> _keysById = {};
+
+  GlobalKey _keyOf(String itemId) =>
+      _keysById.putIfAbsent(itemId, GlobalKey.new);
+
+  /// 条目被移出窗口时把 key 也丢掉（**只在真的变少时才扫一遍**）。
+  ///
+  /// 不无条件扫描：流式输出时条目只会增/改，那时这里是 O(1) 的空操作。
+  void _pruneStaleKeys() {
+    if (_keysById.length <= widget.items.length) return;
+    final live = {for (final item in widget.items) item.itemId};
+    _keysById.removeWhere((id, _) => !live.contains(id));
   }
 
   @override
   void dispose() {
     _scroll.dispose();
     super.dispose();
-  }
-
-  void _syncKeys() {
-    _keys = List.generate(widget.items.length, (_) => GlobalKey());
   }
 
   /// 当前第一条可见条目的 index。
@@ -2313,8 +2336,10 @@ class _ConversationFlowState extends State<_ConversationFlow> {
     final listBox = _listKey.currentContext?.findRenderObject() as RenderBox?;
     if (listBox == null || !listBox.hasSize) return 0;
     final viewportTop = listBox.localToGlobal(Offset.zero).dy;
-    for (var i = 0; i < _keys.length; i += 1) {
-      final box = _keys[i].currentContext?.findRenderObject() as RenderBox?;
+    for (var i = 0; i < widget.items.length; i += 1) {
+      final box =
+          _keysById[widget.items[i].itemId]?.currentContext?.findRenderObject()
+              as RenderBox?;
       if (box == null || !box.hasSize) continue;
       final top = box.localToGlobal(Offset.zero).dy;
       if (top >= viewportTop - 1) return i;
@@ -2328,8 +2353,8 @@ class _ConversationFlowState extends State<_ConversationFlow> {
   /// 的动作，调用方（按钮回调）不等它。`unawaited` 是显式说出这件事 ——
   /// `discarded_futures` lint 要求二选一，不能默默丢。
   void _ensureVisible(int index) {
-    if (index < 0 || index >= _keys.length) return;
-    final context = _keys[index].currentContext;
+    if (index < 0 || index >= widget.items.length) return;
+    final context = _keysById[widget.items[index].itemId]?.currentContext;
     if (context == null) return;
     unawaited(
       Scrollable.ensureVisible(
@@ -2349,7 +2374,9 @@ class _ConversationFlowState extends State<_ConversationFlow> {
   /// 不猜一个位置。
   void _step(int delta) {
     if (widget.items.isEmpty) return;
-    _ensureVisible((_firstVisibleIndex + delta).clamp(0, _keys.length - 1));
+    _ensureVisible(
+      (_firstVisibleIndex + delta).clamp(0, widget.items.length - 1),
+    );
   }
 
   /// 跳到某一端。[newest] 为真 = 最新一条。
@@ -2400,8 +2427,10 @@ class _ConversationFlowState extends State<_ConversationFlow> {
                 );
               }
               final itemIndex = widget.liveText == null ? index : index - 1;
+              // **按 `itemId` 取 key**（跨帧同一个）—— 换 key 会让这一行重新
+              // 挂载，工具卡的展开状态就丢了。见 `_keysById` 的说明。
               return KeyedSubtree(
-                key: itemIndex < _keys.length ? _keys[itemIndex] : null,
+                key: _keyOf(widget.items[itemIndex].itemId),
                 child: _TurnView(
                   item: widget.items[itemIndex],
                   autoOpenDetail: widget.autoOpenDetail,
