@@ -48,14 +48,21 @@
       android/ios/windows），鸿蒙是未来目标、不是今天会被破坏的构建。
       真风险是"把鸿蒙能不能编过交给别人的发布节奏" ⇒ 照
       `dsh/gesture-exclusion` 的先例自写通道。
-    - 原生：API 33+ `MediaStore.ACTION_PICK_IMAGES`（系统照片选择器，
+    - 原生：**相册**走 API 33+ `MediaStore.ACTION_PICK_IMAGES`（系统照片选择器，
       **不需要权限**，官方说它取代 `READ_MEDIA_IMAGES`）；以下退
       `ACTION_GET_CONTENT`（SAF，同样不要权限）⇒ Manifest 一行没加。
+      **拍照**走 `ACTION_IMAGE_CAPTURE`，但**本 App 已为扫一扫声明了 CAMERA**
+      （`AndroidManifest.xml:4`）⇒ 按 Android 规矩必须先授予、否则抛
+      `SecurityException`；`EXTRA_OUTPUT` 走 `FileProvider`
+      （`cacheDir/dsh_photo/`，API 24+ 给 `file://` 抛 `FileUriExposedException`）。
+    - **本仓第一个手写 Android 依赖**：`androidx.core:core:1.13.1`
+      （`FileProvider` 在它里面，Flutter embedding 不带）。取 1.13.1 而非最新；
+      provider 的 `authorities="${applicationId}.dshfileprovider"`。
     - **限额仍不猜**：`ImageAttachmentLimits` 是部署解析的
       （`attachment/src/types.ts:74-82`），手机不知道；超了让电脑侧拒，
       把它的话如实显示（DSH 也是准入时校验，`types.ts:85-92`）。
     - **端到端未验**：未配对时输入栏置灰，`＋` 点不开 —— 要等配对后看
-      "点照片 → 相册 → 芯片 → 发送后气泡旁显示附件计数"。
+      "点照片/拍照 → 芯片 → 发送后气泡旁显示附件计数"。
       `iOS` / `Windows` 没有实现（通道不存在 ⇒ 点「照片」会直说没有相册）。
 11. ~~**会话页与输入栏背景"不和谐"**~~ **2026-10-20 量出来并修掉**。
     真机像素：`#FFFFFF`(会话区) → **`#F1F3F5`(输入栏外面那条灰带)** →
@@ -230,7 +237,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **296 项**(22 条规则自检 + 扫 82 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 43 个)/ 工具脚本不许硬编码盘符(19 个) |
-| `cd app && flutter test` | **855 项** |
+| `cd app && flutter test` | **857 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **550 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
