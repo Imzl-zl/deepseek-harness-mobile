@@ -140,6 +140,21 @@ class ChatPageState extends State<ChatPage> {
   bool _sideOpen = false;
   SidePanel _sidePanel = SidePanel.file;
 
+  /// 右抽屉铺满整屏（用户点头部那枚全屏钮切的）。
+  ///
+  /// **不落盘**：它是"这一眼想看多一点"的临时状态，不是偏好
+  /// （DSH 的 manual mode 同样只在会话期内有效，`SidebarRight.tsx:310`）。
+  /// 关掉抽屉再开就回到抽屉态 —— 那才是默认该有的形态。
+  bool _sideFullscreen = false;
+
+  /// 进入子会话之前的那个会话（顶栏"返回"用）。
+  ///
+  /// **不是数据依赖，是导航记忆**：catalog 的 view 不带 `parentId`
+  ///（`subagent/src/catalog.ts:77-94`），所以父会话只能"我来的时候记一下"。
+  /// 子会话在抽屉里是藏起来的（`sessionVisible` 第 1 条），
+  /// 没有这枚返回用户就找不回来。
+  String? _subagentReturnFrom;
+
   /// 文件面板的分段（差异 / 文件）。
   ///
   /// **不是 `final`**：`dart fix` 曾因为"只有读、没有写"把它改成 `final`，
@@ -193,19 +208,41 @@ class ChatPageState extends State<ChatPage> {
   /// **不铺满整屏**：留出左侧一条让下层会话露出来，这才读作"抽屉"而不是
   /// "翻到另一页"（2026-10-19 用户原话"右侧的我感觉做成抽屉好看点"）。
   ///
-  /// 两个宽度按面板分工（DSH 同源规则 `fullscreen ? 100vw : width`，
-  /// `ui-sidebar-right/.../SidebarRight.tsx:310`，且 manual mode 一直保留）：
-  /// - **文件面板要宽**（diff 预览两栏并排，窄了就只剩一半代码）；
-  /// - **任务 / 子智能体一行能放下**（`label + kind + 状态 + 时长`），
-  ///   窄一些让下层露得更多，抽屉感更强。
+  /// 右抽屉的宽度。**三个面板同一个宽度**，且可由用户切成全屏。
   ///
-  /// 下限 300：再窄下去关闭按钮与行内按钮会挤成一团
-  /// （`SidePane` 顶栏是「图标 + 标题 + 三个动作钮」）。
-  double _sideDrawerWidth(BuildContext context) {
-    final width = MediaQuery.sizeOf(context).width;
-    final ratio = _sidePanel == SidePanel.file ? 0.92 : 0.78;
-    return (width * ratio).clamp(300.0, width);
-  }
+  /// ## 为什么不再按面板分两个宽度（2026-10-19 用户反馈）
+  ///
+  /// 原话：「你这个文件切换到任务（是后台任务吧），子智能体还变化大小
+  /// 多割裂啊」。原来文件面板 92%、任务/子智能体 78%，**切换面板时整块
+  /// 面板横向跳一下** —— 那是纯视觉噪音，没有任何信息量。
+  ///
+  /// ## 为什么默认不是 DSH 的 45%
+  ///
+  /// DSH 的 `RIGHTBAR_DEFAULT_RATIO = 0.45`
+  /// （`packages/client/ui-layout/src/client/columns.ts:29`）是**桌面比例**：
+  /// 1400px 的桌面窗口上它是 630px。手机 390dp 的 45% = **175dp**，
+  /// 而 DSH 自己规定 `RIGHTBAR_MIN = 300px`（同文件 `:25`）——
+  /// **照抄 45% 会低于 DSH 自己的最小可用宽**。
+  ///
+  /// 所以取 **300dp**（DSH 的最小可用宽，有出处的数），并用 `× 0.86`
+  /// 兜住窄屏（沿用本项目抽屉已有的约定：`session_drawer.dart` 的
+  /// `min(86%, 360px)`）—— 保证右侧永远露着一条下层会话，
+  /// 读作抽屉而不是换页。
+  ///
+  /// ## 全屏是用户切的，不是宽度派生的
+  ///
+  /// DSH 的 `autoFullscreen = viewportWidth < 768`
+  /// （`ui-sidebar-right/.../SidebarRight.tsx:360-361`）会让**手机永远全屏**；
+  /// 但触屏上"浮在会话上的抽屉"更好用（用户 2026-10-19 原话：
+  /// "这个滑动也就看下现在这样直接换页了感觉怪怪的"）。
+  /// 所以默认抽屉态、**给一枚全屏钮**（DSH 也有这枚钮，在 tab 条末端，
+  /// 同文件 `:263-296`）—— 读长文件 / 看任务输出时点它。
+  ///
+  /// 算术在 `side_pane.dart` 的 `sidePaneWidth`（纯函数，可单测）。
+  double _sideDrawerWidth(BuildContext context) => sidePaneWidth(
+    screenWidth: MediaQuery.sizeOf(context).width,
+    fullscreen: _sideFullscreen,
+  );
 
   @override
   void initState() {
@@ -487,16 +524,18 @@ class ChatPageState extends State<ChatPage> {
       endDrawer: Drawer(
         width: _sideDrawerWidth(context),
         backgroundColor: c.bgBase,
-        // 抽屉的"浮层感"：圆角 + 左边框。**宽度不再是整屏时才画** ——
-        // `SidePane.fullscreen` 的原意是"竖屏手机上铺满，去掉圆角与左边框"，
-        // 而 2026-10-19 起右侧改成真抽屉（用户原话"做成抽屉好看点"），
-        // 于是永远不当全屏画：露出的那条下层会话 + 圆角，才读作抽屉。
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(DshRadius.lg),
-            bottomLeft: Radius.circular(DshRadius.lg),
-          ),
-        ),
+        // 抽屉的"浮层感"：圆角 + 左边框。**全屏时不画** ——
+        // 铺满整屏还留圆角会露出底下的会话，读作"没收干净"。
+        // 判据就是 `_sideFullscreen` 本身（宽度与 chrome 同一个来源，
+        // 不设第二个开关）。
+        shape: _sideFullscreen
+            ? null
+            : const RoundedRectangleBorder(
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(DshRadius.lg),
+                  bottomLeft: Radius.circular(DshRadius.lg),
+                ),
+              ),
         child: SidePane(
           header: _sideHeader(),
           panel: _sidePanel,
@@ -513,8 +552,15 @@ class ChatPageState extends State<ChatPage> {
           //（渲染条件里有 `onStop != null`）—— 第一版就漏了传，
           // 截图里运行中的任务旁边空着。
           onStopJob: (job) => _stopJob(job),
+          // 子智能体行：点它**进入那个子会话**（不是展开输出）。
+          // 会话 id 已是别名（连接器在 `session.projections` 里换过，见
+          // `connector/src/handlers.ts` 的 `aliasSubagentCatalog`），
+          // 所以直接 `openSession` 就通。
+          onOpenSub: (job) => _openSubagentSession(job),
           openJobIds: _openJobs,
-          fullscreen: false,
+          fullscreen: _sideFullscreen,
+          onToggleFullscreen: () =>
+              setState(() => _sideFullscreen = !_sideFullscreen),
         ),
       ),
       onEndDrawerChanged: (open) {
@@ -524,6 +570,19 @@ class ChatPageState extends State<ChatPage> {
       },
       body: Column(
         children: [
+          // **子会话的面包屑**（只在"从子智能体进来"时出现）。
+          //
+          // DSH 桌面靠会话头部的 lineage 回父会话
+          // （`SubagentHeaderLineage.tsx`）；我们拿不到 `parentId`
+          //（catalog 的 view 只有 `{id, createdAt, mode, label?}`，
+          // `subagent/src/catalog.ts:77-94`），所以用**导航记忆**
+          //（`_subagentReturnFrom`）—— 没有它用户找不回来：
+          // 子会话在抽屉里是藏起来的（`sessionVisible` 第 1 条）。
+          //
+          // 放在内容区上方而不是顶栏：那行已有五个位置
+          //（☰ / 标题 / 状态点 / 两枚计数 / ＋），挤不下。
+          if (_subagentReturnFrom != null)
+            _SubagentBreadcrumb(onBack: _returnFromSubagent),
           // **没选中会话时只有「对话」一个 tab**（2026-10-19 用户原话：
           // 「没有会话的时候对话，轨迹不用显示吧，没会话你显示没用啊」）。
           //
@@ -843,6 +902,38 @@ class ChatPageState extends State<ChatPage> {
   }
 
   void _closeSide() => _scaffoldKey.currentState?.closeEndDrawer();
+
+  /// 进入一个子智能体的会话（点右抽屉「子智能体」那一行）。
+  ///
+  /// ## 为什么要记住"从哪来"
+  ///
+  /// DSH 的目录项点开是 `openChild` → `openSession(address)`
+  ///（`ui-subagent/src/client/index.ts:61-63`）—— 子会话**替换主对话区**。
+  /// 桌面靠会话头部的 lineage 面包屑回得去
+  ///（`SubagentHeaderLineage.tsx`），而**我们拿不到父会话 id**：
+  /// catalog 的 view 只有 `{id, createdAt, mode, label?}`
+  ///（`subagent/src/catalog.ts:77-94`，`parentId` 只在
+  /// `listDescendants` 的行上有，那是另一个方法）。
+  ///
+  /// 所以退路用**导航记忆**而不是数据依赖：进来时记下当前会话，
+  /// 顶栏据此给一枚"返回"。这比"让用户自己去抽屉里找父会话"好得多 ——
+  /// 子会话在抽屉里是**藏起来的**（`sessionVisible` 的第 1 条：
+  /// `subagent` 不列），用户根本找不回来。
+  Future<void> _openSubagentSession(SideJob job) async {
+    final from = widget.app.currentSid;
+    _closeSide();
+    // **先记后退**：`_subagentReturnFrom` 是"进子会话之前的那个会话"。
+    setState(() => _subagentReturnFrom = from);
+    await widget.app.openSession(job.id);
+  }
+
+  /// 从子会话回到来处（顶栏那枚"返回"）。
+  Future<void> _returnFromSubagent() async {
+    final from = _subagentReturnFrom;
+    if (from == null) return;
+    setState(() => _subagentReturnFrom = null);
+    await widget.app.openSession(from);
+  }
 
   /// 等当前 sheet 的退出动画走完再跑 [action]。
   ///
@@ -2609,6 +2700,65 @@ class _TurnView extends StatelessWidget {
         stats: stats,
       ),
     };
+  }
+}
+
+/// 子会话的面包屑：`← 返回上一个会话`。
+///
+/// ## 为什么需要它
+///
+/// 点右抽屉「子智能体」的某一行会**进入那个子会话**（`openSession`）——
+/// 与 DSH 的 `openChild` 同一条（`ui-subagent/src/client/index.ts:61-63`）。
+/// 但子会话在会话列表里是**藏起来的**（`sessionVisible` 第 1 条：
+/// `subagent` 不列），所以用户没有别的路回到父会话。
+///
+/// DSH 靠会话头部的 lineage 面包屑（`SubagentHeaderLineage.tsx`）；
+/// 我们拿不到 `parentId`（catalog 的 view 只有
+/// `{id, createdAt, mode, label?}`，`subagent/src/catalog.ts:77-94`），
+/// 所以用**导航记忆**：进来时把来处记在 `_subagentReturnFrom`。
+///
+/// 放在内容区上方而不是顶栏：那一行已有五个位置
+///（☰ / 标题 / 状态点 / 两枚计数 / ＋），挤不下。
+class _SubagentBreadcrumb extends StatelessWidget {
+  const _SubagentBreadcrumb({required this.onBack});
+
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return Material(
+      color: c.layer1,
+      child: InkWell(
+        onTap: onBack,
+        child: Container(
+          // 一行高一点，便于点（触摸目标 ≥ 32）。
+          constraints: const BoxConstraints(minHeight: 34),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          child: Row(
+            children: [
+              DshIcon('chevronLeft', size: 14, color: c.accentBlue),
+              const SizedBox(width: 4),
+              Text(
+                '返回上一个会话',
+                style: TextStyle(fontSize: 12.5, color: c.accentBlue),
+              ),
+              const SizedBox(width: 8),
+              // 说清"你在看的是子智能体" —— 否则标题突然变了会莫名其妙。
+              Expanded(
+                child: Text(
+                  '正在查看子智能体',
+                  textAlign: TextAlign.right,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: c.labelCaption),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

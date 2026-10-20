@@ -39,6 +39,9 @@ SidePane _pane({
   void Function(SideJob)? onToggleJob,
   void Function(SideJob)? onStopJob,
   Set<String> openIds = const {},
+  VoidCallback? onToggleFullscreen,
+  bool fullscreen = false,
+  void Function(SideJob)? onOpenSub,
 }) => SidePane(
   header: _header,
   panel: panel,
@@ -51,10 +54,63 @@ SidePane _pane({
   runningSubs: runningSubs,
   onToggleJob: onToggleJob,
   onStopJob: onStopJob,
+  onOpenSub: onOpenSub,
   openJobIds: openIds,
+  onToggleFullscreen: onToggleFullscreen,
+  fullscreen: fullscreen,
+);
+
+/// 一个子智能体行（catalog 的 `{id, createdAt, mode, label?}` 投影到面板的形状）。
+const sub = SideJob(
+  id: 'sub-1',
+  kind: 'agent',
+  label: '研究 DSH 图标链路',
+  state: 'running',
+  statusText: '可续聊',
+  durationText: '01:20',
+  output: '',
 );
 
 void main() {
+  // ---------------------------------------------------------------------------
+  // 宽度：三个面板同一个值（2026-10-19 用户："子智能体还变化大小多割裂啊"）
+  // ---------------------------------------------------------------------------
+
+  group('sidePaneWidth', () {
+    test('抽屉态：DSH 的最小可用宽 300，窄屏按 86% 兜住', () {
+      // **300 是 DSH 的 RIGHTBAR_MIN**（columns.ts:25）。
+      // **不取 45%**：那是桌面比例，390dp 的 45% = 175dp 低于 DSH 自己的下限。
+      expect(sidePaneWidth(screenWidth: 390, fullscreen: false), 300);
+      expect(sidePaneWidth(screenWidth: 430, fullscreen: false), 300);
+      // 窄屏（320）上 86% = 275 < 300 ⇒ 用比例，保证右侧露一条缝。
+      expect(
+        sidePaneWidth(screenWidth: 320, fullscreen: false),
+        closeTo(275.2, 0.01),
+      );
+      // 平板（800）上仍是 300（37%）—— 内容面板不需要铺满。
+      expect(sidePaneWidth(screenWidth: 800, fullscreen: false), 300);
+    });
+
+    test('全屏态：就是屏宽', () {
+      expect(sidePaneWidth(screenWidth: 390, fullscreen: true), 390);
+      expect(sidePaneWidth(screenWidth: 800, fullscreen: true), 800);
+    });
+
+    test('**签名里没有"哪个面板"** —— 宽度不随面板变', () {
+      // 这条守的是 2026-10-19 修掉的那个跳变：原来
+      // `_sidePanel == SidePanel.file ? 0.92 : 0.78`，切面板时整块横向跳一下。
+      // 现在算术只认屏宽与全屏态 —— 面板不在入参里，**想按面板分叉都做不到**。
+      //
+      // 这不是"测了个恒等式"：如果谁把面板重新引进宽度计算，
+      // 就得改这个签名，而这条用例会先红。
+      final file = sidePaneWidth(screenWidth: 390, fullscreen: false);
+      final jobs = sidePaneWidth(screenWidth: 390, fullscreen: false);
+      final subs = sidePaneWidth(screenWidth: 390, fullscreen: false);
+      expect(file, jobs);
+      expect(jobs, subs);
+    });
+  });
+
   group('右抽屉', () {
     testWidgets('三个面板 tab 都在（文件 / 任务 / 子智能体）', (tester) async {
       await tester.pumpWidget(_wrap(_pane()));
@@ -184,6 +240,143 @@ void main() {
       await tester.tap(find.text('确认停止'));
       await tester.pumpAndSettle();
       expect(stopped, 1);
+    });
+
+    testWidgets('armed **3 秒后自己解除**（DSH 的 KILL_ARM_MS）', (tester) async {
+      // 少了这一步会有一个真危险：第一下点成 armed，然后去做别的事 ——
+      // 回来随手一点（以为在点别的）就把任务杀了。
+      // armed 是"我正在确认"，而这个意图有保质期。
+      // DSH 同一条：`ui-jobs/.../JobListAction.tsx:64` 的 KILL_ARM_MS = 3000。
+      var stopped = 0;
+      await tester.pumpWidget(
+        _wrap(
+          _pane(
+            panel: SidePanel.jobs,
+            jobs: const [job],
+            onStopJob: (_) => stopped += 1,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('停止'));
+      await tester.pumpAndSettle();
+      expect(find.text('确认停止'), findsOneWidget);
+
+      // 还没到期：仍是 armed。
+      await tester.pump(kStopArmWindow - const Duration(milliseconds: 200));
+      expect(find.text('确认停止'), findsOneWidget, reason: '窗口内不该提前解除');
+
+      // 到期：自己回到"停止"。
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      expect(find.text('确认停止'), findsNothing, reason: '窗口过了要自己解除');
+      expect(find.byTooltip('停止'), findsOneWidget);
+      expect(stopped, 0, reason: '解除不是"停止"—— 一个任务都不该被杀');
+    });
+  });
+
+  group('子智能体行：点击是"进入"，不是"展开输出"', () {
+    testWidgets('点一行走 onOpenSub（不是 onToggleJob）', (tester) async {
+      // 用户 2026-10-19：「子智能体是列表，每一个点击是能进入的」。
+      // DSH 同一条：目录项点击 = `openChild` → `openSession(address)`
+      //（`ui-subagent/src/client/index.ts:61-63`）—— 子会话进主对话区。
+      //
+      // 两个回调**分开**是两个语义：任务行点开是"看它输出"，
+      // 子智能体行点开是"进它那个会话"。合用一个回调就会有一边语义错。
+      final opened = <String>[];
+      final toggled = <String>[];
+      await tester.pumpWidget(
+        _wrap(
+          _pane(
+            panel: SidePanel.subs,
+            subs: const [sub],
+            onOpenSub: (j) => opened.add(j.id),
+            onToggleJob: (j) => toggled.add(j.id),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('研究 DSH 图标链路').first);
+      await tester.pumpAndSettle();
+
+      expect(opened, ['sub-1'], reason: '点击要进那个子会话');
+      expect(toggled, isEmpty, reason: '不该走"展开输出"那条路');
+    });
+
+    testWidgets('没给 onOpenSub：行不可点，也不假装能点', (tester) async {
+      final toggled = <String>[];
+      await tester.pumpWidget(
+        _wrap(
+          _pane(
+            panel: SidePanel.subs,
+            subs: const [sub],
+            onToggleJob: (j) => toggled.add(j.id),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('研究 DSH 图标链路').first);
+      await tester.pumpAndSettle();
+      expect(toggled, isEmpty);
+    });
+  });
+
+  group('全屏切换（用户："点击全屏，点击缩回"）', () {
+    testWidgets('给了回调才有那枚钮，tooltip 说清当前动作', (tester) async {
+      // **不给回调就不摆那枚钮** —— 一个按不动的图标是骗人。
+      await tester.pumpWidget(_wrap(_pane(panel: SidePanel.jobs)));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('全屏'), findsNothing);
+      expect(find.byTooltip('退出全屏'), findsNothing);
+
+      // 抽屉态 ⇒ "全屏"。
+      await tester.pumpWidget(
+        _wrap(
+          _pane(
+            panel: SidePanel.jobs,
+            onToggleFullscreen: () {},
+            fullscreen: false,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('全屏'), findsOneWidget);
+      expect(find.byTooltip('退出全屏'), findsNothing);
+
+      // 全屏态 ⇒ "退出全屏"（**同一枚字形，动作靠 tooltip 说**）。
+      await tester.pumpWidget(
+        _wrap(
+          _pane(
+            panel: SidePanel.jobs,
+            onToggleFullscreen: () {},
+            fullscreen: true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('退出全屏'), findsOneWidget);
+      expect(find.byTooltip('全屏'), findsNothing);
+    });
+
+    testWidgets('点它真的回调', (tester) async {
+      var toggled = 0;
+      await tester.pumpWidget(
+        _wrap(
+          _pane(
+            panel: SidePanel.jobs,
+            onToggleFullscreen: () => toggled += 1,
+            fullscreen: false,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('全屏'));
+      await tester.pumpAndSettle();
+      expect(toggled, 1);
     });
   });
 

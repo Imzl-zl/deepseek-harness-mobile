@@ -183,6 +183,51 @@ export interface HandlerDeps {
 
 export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, MethodHandler>> {
   /**
+   * 把 `subagentCatalog` 投影里的**子会话 id 换成别名**（契约 §5.1）。
+   *
+   * ## 为什么必须换
+   *
+   * catalog 每项的 `id` 是**子会话的 DSH session id**
+   *（`packages/subagent/subagent/src/catalog.ts:79` 的 `id: sessionIdSchema`）。
+   * 而手机侧的 `sid` 是别名：`session.subscribe` 走 `requireSession`
+   *（本文件 `:206`，内部是 `aliases.sessionOf`），**原始 id 会抛
+   * `session/not-found`**。
+   *
+   * 所以不换的话，手机拿到的那一列子智能体**点了打不开** ——
+   * 用户 2026-10-19 原话：「子智能体是列表，每一个点击是能进入的」。
+   * 同一件事也修掉一个**一直存在**的越线：catalog 的 id 原先原样过线，
+   * 而 §5.1 说手机与中继只见 `sid`。
+   *
+   * ## 为什么在这里换（而不是让手机去解）
+   *
+   * 别名是**连接器的知识**（`alias.ts` 的分配与持久化）。手机侧拿不到
+   * 「DSH id → sid」的表，也不该拿到。投影是**面向手机**的只读面，
+   * 凡它携带的会话 id 都该在过线前换好 —— 这一条只在这个方法上成立
+   *（其它投影不带会话 id），所以就地做、不造通用机制。
+   *
+   * 认不出的形状**原样放过**：换不了不是"这个投影坏了"，
+   * 而是"这一版没有这个字段"（与 `tokenTotalOf` 同一条纪律：
+   * 不预设键名，也不把认不出当错误）。
+   */
+  async function aliasSubagentCatalog(
+    values: unknown,
+    aliases: AliasPort,
+  ): Promise<unknown> {
+    if (typeof values !== 'object' || values === null) return values
+    const catalog = (values as Record<string, unknown>)['subagentCatalog']
+    if (!Array.isArray(catalog)) return values
+    const aliased = await Promise.all(
+      catalog.map(async (entry) => {
+        if (typeof entry !== 'object' || entry === null) return entry
+        const id = (entry as Record<string, unknown>)['id']
+        if (typeof id !== 'string' || id === '') return entry
+        return { ...(entry as Record<string, unknown>), id: await aliases.ensure(id) }
+      }),
+    )
+    return { ...(values as Record<string, unknown>), subagentCatalog: aliased }
+  }
+
+  /**
    * 取一个**形状合法**的 `sid`（契约 §5.7：形状不对是请求不合法，不是数据不存在）。
    *
    * 与 `requireSession` 分开是因为带 `sid` 的方法有两件事要做：先校验形状，再查别名。
@@ -512,9 +557,10 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
   // **按能力位挂**：缺 `sessionProjections` 服务时这个方法不出现 ——
   // 与 `job.*` 同一条纪律（手机侧看到"不存在"而不是一个必然失败的按钮）。
   if (deps.projections !== undefined) {
-    handlers['session.projections'] = (params) => {
+    handlers['session.projections'] = async (params) => {
       const dshSessionId = requireSession(requireSid(params))
-      return deps.projections!.of(dshSessionId)
+      const values = await deps.projections!.of(dshSessionId)
+      return aliasSubagentCatalog(values, deps.aliases)
     }
 
     // **跨会话用量汇总**（2026-10-19，方案见
@@ -552,23 +598,49 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
         }),
       )
       const grandTotal = usages.reduce((sum, n) => sum + n, 0)
+      // **按项目（工作区目录）聚合**：`cwd` 就是 `session.list` 已经在发的那个
+      // 字段（`dsh/sessions.ts` 的 `...(item.cwd === undefined ? {} : { cwd })`）。
+      // 用户 2026-10-19 原话：「用量你最好也是做成一个页面的……总量，单个项目
+      // 使用量是吧」。DSH 没有跨会话汇总接口，所以这一层聚合（见方法头的说明）。
+      //
+      // **`cwd` 为空的会话单独一档**（`path: ''`）：不猜一个项目归属。
+      // 空目录名在手机上显示成「未关联项目」。
+      const byProjectMap = new Map<string, { tokens: number; sessions: number }>()
+      visible.forEach(({ row }, i) => {
+        const path = row.cwd ?? ''
+        const acc = byProjectMap.get(path) ?? { tokens: 0, sessions: 0 }
+        acc.tokens += usages[i]!
+        acc.sessions += 1
+        byProjectMap.set(path, acc)
+      })
+      const byProject = [...byProjectMap.entries()]
+        .map(([path, acc]) => ({ path, tokens: acc.tokens, sessions: acc.sessions }))
+        .filter((entry) => entry.tokens > 0)
+        .sort((a, b) => b.tokens - a.tokens)
       return {
         sessions: visible.length,
         grandTotalTokens: grandTotal,
+        byProject,
         // 逐字段构造，**不 spread** —— 且只给手机认识的 `sid`
         // （`dshSessionId` 绝不能过线，契约 §5.1）。
+        //
+        // **不再截断到 5 条**：2026-10-19 起用量是**独立页面**（`ui/usage_page.dart`），
+        // 一页能放很多行；截断会让"更多会话"看不见。排序仍然是
+        // "用量大的在前"（手机侧自己决定怎么分组/折叠）。
         bySession: visible
           .map(({ row, sid }, i) => ({
             sid,
             // 标题从列表行的投影提示来（与 `session.list` 同一个来源）；
             // 取不到就空串，手机自己按 DSH 的链退到「未命名」。
             title: titleOf(row),
+            // 项目目录（**同一个来源**：`session.list` 的 `cwd`）。
+            // 空串 = 这台电脑没给 `cwd`，手机显示成「未关联项目」。
+            cwd: row.cwd ?? '',
             tokens: usages[i]!,
           }))
           // 全零的会话不进榜：一张"0 tok"的行说的是"没数据"，不是"用了 0"。
           .filter((entry) => entry.tokens > 0)
-          .sort((a, b) => b.tokens - a.tokens)
-          .slice(0, 5),
+          .sort((a, b) => b.tokens - a.tokens),
       }
     }
   }

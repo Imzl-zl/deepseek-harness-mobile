@@ -22,11 +22,49 @@
 /// 而 tab 上的计数徽标（`.stab .n`）让"有几个在跑"一眼可见。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
+
+/// "确认停止"这个中间态活多久。
+///
+/// **照 DSH 的 `KILL_ARM_MS = 3000`**
+/// （`packages/client/ui-jobs/src/client/JobListAction.tsx:64`）：
+/// armed 是"我正在确认"的意图，而**意图有保质期** ——
+/// 第一下点成 armed、然后去做别的事，回来随手一点就杀了一个正在跑的任务。
+const Duration kStopArmWindow = Duration(seconds: 3);
+
+/// 抽屉态下的最大内容宽。
+///
+/// **300 是 DSH 的 `RIGHTBAR_MIN`**（`packages/client/ui-layout/src/client/columns.ts:25`）
+/// —— 低于它内容就没法读了。**不取 DSH 的 45%**：那是桌面比例，
+/// 手机 390dp 的 45% = 175dp，**低于 DSH 自己的最小可用宽**
+/// （推导见 `chat_page.dart` 的 `_sideDrawerWidth`）。
+const double kSidePaneMaxWidth = 300;
+
+/// 抽屉态下占屏宽的上限比例。
+///
+/// 沿用本项目抽屉已有的约定（`session_drawer.dart` 的 `min(86%, 360px)`）：
+/// 保证右侧永远露着一条下层会话，读作抽屉而不是换页。
+const double kSidePaneWidthRatio = 0.86;
+
+/// 右抽屉该多宽。
+///
+/// **三个面板同一个宽度** —— 这是 2026-10-19 修掉的那条：
+/// 原来文件面板 92%、任务/子智能体 78%，切换面板时整块面板横向跳一下
+///（用户原话：「子智能体还变化大小多割裂啊」）。
+///
+/// [fullscreen] 为真时铺满（用户点头部那枚钮切的，不是宽度派生的）。
+double sidePaneWidth({required double screenWidth, required bool fullscreen}) {
+  if (fullscreen) return screenWidth;
+  return screenWidth * kSidePaneWidthRatio < kSidePaneMaxWidth
+      ? screenWidth * kSidePaneWidthRatio
+      : kSidePaneMaxWidth;
+}
 
 /// 侧抽屉的三个面板。
 enum SidePanel {
@@ -122,7 +160,9 @@ class SidePane extends StatelessWidget {
     this.onToggleJob,
     this.openJobIds = const {},
     this.onStopJob,
+    this.onOpenSub,
     this.fullscreen = true,
+    this.onToggleFullscreen,
   });
 
   final SideHeader header;
@@ -146,10 +186,28 @@ class SidePane extends StatelessWidget {
 
   final void Function(SideJob job)? onToggleJob;
   final void Function(SideJob job)? onStopJob;
+
+  /// 点一个**子智能体**行 —— 进入那个子会话（不是展开输出）。
+  ///
+  /// 与 [onToggleJob] 分开是两个语义：任务行点开是"看它的输出"，
+  /// 子智能体行点开是"进它那个会话"（DSH 的 `openChild`，
+  /// `ui-subagent/src/client/index.ts:61-63`）。
+  /// `null` = 这一版不支持进入，行不可点。
+  final void Function(SideJob job)? onOpenSub;
+
   final Set<String> openJobIds;
 
-  /// 竖屏手机上是全屏页（见文件头）。
+  /// 铺满整屏（由调用方给 —— 它知道屏幕多宽，见文件头）。
+  ///
+  /// **它是用户切的，不是宽度派生的**：DSH 有同一枚钮
+  /// （`ui-sidebar-right/src/client/shell/SidebarRight.tsx:263-296` 的
+  /// `FullscreenGlyph` / `ExitFullscreenGlyph`），
+  /// 手机侧默认抽屉态、点它铺满。
   final bool fullscreen;
+
+  /// 点全屏 / 退出全屏那枚钮。`null` = 不显示那枚钮
+  ///（没有切换能力时摆一个按不动的图标是骗人）。
+  final VoidCallback? onToggleFullscreen;
 
   @override
   Widget build(BuildContext context) {
@@ -239,6 +297,28 @@ class SidePane extends StatelessWidget {
                             ),
                           ),
                         ],
+                        // **全屏 / 退出全屏**（2026-10-19 用户原话：
+                        // "有一个全面的图标，点击全屏，点击缩回"）。
+                        //
+                        // DSH 把它放在 tab 条**末端**
+                        //（`SidebarRight.tsx:263-296` 的 `PanelChrome`）。
+                        //
+                        // **两态用同一枚字形**（`fullscreen`），靠 tooltip 说动作。
+                        // 为什么不做两枚：DSH 的"退出全屏"那个 glyph 是
+                        // **组件内联 SVG**（`SidebarRight.tsx:253-260`），
+                        // **不在它的图标包里**（图标包只有 `IconFullscreenOutline`，
+                        // `ui-primitives/src/icons/index.tsx:796`）——
+                        // 手写一枚就破了"图标集机生成"这条不变量
+                        //（`extract-dsh-icons.mjs` 只读图标包，不该去抓某个组件的内联 SVG）。
+                        // 而且这一枚是**尺寸控制**：面板铺满与否本身就一眼可见。
+                        if (onToggleFullscreen != null) ...[
+                          const SizedBox(width: 4),
+                          _Ib(
+                            icon: 'fullscreen',
+                            tooltip: fullscreen ? '退出全屏' : '全屏',
+                            onPressed: onToggleFullscreen!,
+                          ),
+                        ],
                         const SizedBox(width: 8),
                       ],
                     ),
@@ -287,7 +367,18 @@ class SidePane extends StatelessWidget {
                 SidePanel.subs => _JobPanel(
                   jobs: subs,
                   openIds: openJobIds,
-                  onToggle: onToggleJob,
+                  // **子智能体行的点击语义不是"展开输出"，是"进入那个子会话"**
+                  // （2026-10-19 用户原话：「子智能体是列表，每一个点击是能进入的」）。
+                  //
+                  // DSH 同一条：点目录项 = `openChild` → `openSession(address)`
+                  // —— 子会话**进主对话区**
+                  //（`ui-subagent/src/client/index.ts:61-63`）。
+                  // DSH 另有一个行尾侧箭头走 `openChildAside` → 右侧栏内嵌渲染
+                  //（`:64-69`），手机上册一版不做（右下角的抽屉里再嵌一个会话，
+                  // 300dp 宽里会窄到不能读）。
+                  onToggle: onOpenSub,
+                  // 行尾那枚 `chevronRight` 说明"点进去"（不是"展开"）。
+                  enterable: true,
                   // 空态说清数据来源：2026-10-15 之前这里**无条件**显示两条
                   // 写死的示例子智能体，而用户无法分辨哪个是真的。
                   emptyText: '没有子智能体（数据来自会话投影 subagentCatalog）。',
@@ -341,6 +432,7 @@ class _JobPanel extends StatelessWidget {
     this.onStop,
     this.actions,
     required this.emptyText,
+    this.enterable = false,
   });
 
   final List<SideJob> jobs;
@@ -349,6 +441,12 @@ class _JobPanel extends StatelessWidget {
   final void Function(SideJob job)? onStop;
   final Widget? actions;
   final String emptyText;
+
+  /// 行点击是**进入**（子智能体）还是**展开输出**（任务）。
+  ///
+  /// 两者都要一枚 chevron，但**方向不同**：展开是 `chevronDown`（转 90°），
+  /// 进入是 `chevronRight`。少了这枚，子智能体行看起来像"不可点的一行字"。
+  final bool enterable;
 
   @override
   Widget build(BuildContext context) {
@@ -377,6 +475,7 @@ class _JobPanel extends StatelessWidget {
                   open: openIds.contains(job.id),
                   onToggle: onToggle,
                   onStop: onStop,
+                  enterable: enterable,
                 ),
               if (settled.isNotEmpty) _JobGroup('已结束 ${settled.length}'),
               for (final job in settled)
@@ -384,6 +483,7 @@ class _JobPanel extends StatelessWidget {
                   job: job,
                   open: openIds.contains(job.id),
                   onToggle: onToggle,
+                  enterable: enterable,
                 ),
             ],
           ),
@@ -427,12 +527,14 @@ class _JobRow extends StatelessWidget {
     required this.open,
     this.onToggle,
     this.onStop,
+    this.enterable = false,
   });
 
   final SideJob job;
   final bool open;
   final void Function(SideJob job)? onToggle;
   final void Function(SideJob job)? onStop;
+  final bool enterable;
 
   @override
   Widget build(BuildContext context) {
@@ -551,6 +653,13 @@ class _JobRow extends StatelessWidget {
                   const SizedBox(width: 6),
                   _StopButton(onConfirm: () => onStop!(job)),
                 ],
+                // **进入**那一类的 chevron：`chevronRight`（不转）。
+                // 与下面"展开输出"的 `chevronDown` 分开 —— 两个语义不一样，
+                // 用同一枚图标会让人以为点下去是展开。
+                if (enterable && onToggle != null) ...[
+                  const SizedBox(width: 4),
+                  DshIcon('chevronRight', size: 14, color: c.labelTertiary),
+                ],
                 if (job.output.isNotEmpty) ...[
                   const SizedBox(width: 4),
                   AnimatedRotation(
@@ -626,6 +735,36 @@ class _StopButton extends StatefulWidget {
 class _StopButtonState extends State<_StopButton> {
   bool _armed = false;
 
+  /// armed 之后的自动解除定时器。
+  ///
+  /// **DSH 有这一步**（`ui-jobs/src/client/JobListAction.tsx:64` 的
+  /// `KILL_ARM_MS = 3000`）：armed 态 **3 秒后自己解除**。
+  ///
+  /// 少了它会有一个真危险：第一下点成 armed，然后去做别的事 ——
+  /// 回来随手一点（以为在点别的）就把任务杀了。armed 是"我正在确认"，
+  /// 而这个意图有保质期。
+  Timer? _disarm;
+
+  @override
+  void dispose() {
+    _disarm?.cancel();
+    super.dispose();
+  }
+
+  void _arm() {
+    setState(() => _armed = true);
+    _disarm?.cancel();
+    _disarm = Timer(kStopArmWindow, () {
+      if (!mounted) return;
+      setState(() => _armed = false);
+    });
+  }
+
+  void _disarmNow() {
+    _disarm?.cancel();
+    setState(() => _armed = false);
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
@@ -637,9 +776,9 @@ class _StopButtonState extends State<_StopButton> {
         onTap: () {
           if (_armed) {
             widget.onConfirm();
-            setState(() => _armed = false);
+            _disarmNow();
           } else {
-            setState(() => _armed = true);
+            _arm();
           }
         },
         child: Container(
