@@ -196,13 +196,31 @@ preceding `uploadFile` call on the same Session."**
    `maxImagePixels` / `maxImageDimension` / `mediaTypes`。
    要真做，得先有一个**读限额的方法**（或在 `repo.info` 里带出来）。
    **不许自己拍一个数** —— 猜错就是"发出去被电脑侧拒，而手机上看着像成功了"。
-2. **选图/拍照要一个新依赖**（picker）。按项目纪律，pubspec 注释里要写明
+   **补充（2026-10-20）**：DSH 自己是在**准入时**校验解码后的字节
+   （`types.ts:85-92` 的注释 "verified against the decoded bytes during
+   admission"）。所以一条**不求人**的降级路径存在：不预校验、直接发，
+   把电脑侧的拒绝**如实显示**。那不需要新方法，只是 UX 差一点
+   （用户要等一个往返才知道太大）。**要预校验才需要读限额的方法。**
+2. **选图/拍照要一个新依赖**。按项目纪律，pubspec 注释里要写明
    "核实了哪个签名/哪个能力"。
+
+   **2026-10-20 查证：鸿蒙侧有适配好的包** ——
+   [`file_picker_ohos`](https://pub.dev/packages/file_picker_ohos)（1.0.1）、
+   [`adaptive_image_picker_ohos`](https://pub.dev/packages/adaptive_image_picker_ohos)
+   都已在 pub.dev 发布。所以"鸿蒙做不了"**不成立**。
+
+   **但本仓有一个更硬的约束**：`Flutter 3.41.9` 的版本上界**由鸿蒙 fork 定**
+   （见 `memory.md` 的"前置事实"）。**本机没有鸿蒙构建环境，我无法验证**
+   加了插件之后 OHOS 目标还能不能编过 —— 而"加了但没验"正是本仓
+   反复在修的那类问题（见第七类教训）。
+
+   **所以这一步停在这里**：形状、媒体类型、限额来源、鸿蒙可用包都查清了；
+   等有鸿蒙构建环境（或用户明确"先只保 Android"）再落地。
 
 ### 结论
 
 **这是独立一项**（附件管线），不是"补一张 sheet"。sheet 本身几分钟，
-但没有 1 与 2 它只能是一排加假芯片的按钮 —— 而那正是刚拔掉的东西。
+但没有上面两条它只能是一排加假芯片的按钮 —— 而那正是刚拔掉的东西。
 
 ## 未决
 
