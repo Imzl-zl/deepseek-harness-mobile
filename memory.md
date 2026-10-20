@@ -135,8 +135,14 @@
 
 ## 真机联调的成本纪律(立过规,别问第二遍)
 
-- `--profile` **只隔进程/插件/端口**;`~/.dsh/{.credentials.yaml,sessions,storages}` **全局共用**。
-  **不另起测试 profile**;专用会话走「问 → 建(名字带 `[可删]`)→ 跑 → 用户确认后删」。
+- **`--profile` 只隔进程/插件/端口**，`~/.dsh/{.credentials.yaml,sessions,storages}`
+  全局共用 —— 但它**不是**唯一办法：`DSH_HOME` 是官方支持的**数据根覆盖**
+  （`packages/util/home-paths/src/index.ts:17,135` 的 `DSH_HOME_ENV` 与
+  `resolveDshHome()`，优先级 显式配置 → `$DSH_HOME` → `~/.dsh`）。
+  所以**起隔离实例是可行的**：`$env:DSH_HOME='<临时目录>'` 后再启动，
+  credentials / sessions / storages / attachments 全部落在那个目录，
+  **不碰用户的 `~/.dsh`**。端到端验收应当走这条路，而不是"做不了"。
+  仍不要做的是：拿**默认**根另起第二个实例（那才是并发写同一份会话日志）。
 - **跑之前报一句"这次约几个轮次"并拿到准** —— 审批探针要模型真跑越权命令,花的是用户的钱。
 - 装 App 一律 `flutter build apk --debug` + `adb install -r`;`flutter install` 与
   `flutter test integration_test/` **都会先卸载旧 App**,配对凭据一卸全没。
