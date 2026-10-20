@@ -19,20 +19,48 @@ Column(children: [
 
 也就是说这是**当前实现的选择**，不是渲染事故。
 
-## 缺的证据（下一步要查的）
+## 缺的证据（**已查到，2026-10-20**）
 
-- DSH 的 `.tool-body`（展开后的正文容器）**有没有自己的背景**？
-  搜它的 `ToolCard` / `.tool-r` / `.tool-body` 的 CSS。
-- 如果 DSH 里标题与正文在**同一个**圆角容器内，那我们这里就是偏离，
-  应当把正文包进 `Material`；
-- 如果 DSH 的正文本来就在卡片外的页面底色上，那现状是对的，
-  **只是"看起来掉出来"是它本来的样子**，不必改。
+DSH 的 `packages/client/ui-tool/src/client/tool/components/ToolDetails.module.css`
+的 `.root` 就是展开后的正文容器：
 
-## 为什么没改
+```css
+.root {
+  margin: 4px 0 4px 4px;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-alias-markdown-code-block);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+  overflow: hidden;
+}
+```
 
-**不知道就不能动。** 这是纯视觉判断，凭"看着别扭"改一处卡片结构，
-等于把一个可能有意的设计改成另一个可能错误的样子 —— 而这类改动
-没有测试能兜底（视觉回归不在门禁里）。
+**结论**：正文在 DSH 里是**独立的一块**（自带边框 + 圆角 + 代码块底色 +
+左/上下各 4px 内缩），**不在**工具行那层暖色底内 —— 所以我们现在
+"正文是 `Material` 的兄弟节点"这个**方向是对的**，缺的是**这块容器本身**：
+我们把它赤裸地放在页面底色上。
+
+## 要补的（下次照这个改，不要重新查）
+
+`chat_turns.dart` 的 `ToolCard` 正文外面包一层：
+
+| 属性 | 值 | 出处 |
+|---|---|---|
+| `margin` | `EdgeInsets.fromLTRB(4, 4, 0, 4)` | 上面 `.root` 的 `4px 0 4px 4px` |
+| `border` | `Border.all(c.borderL1, width: 0.5)` | `--dsw-alias-border-l1`（**本仓还没有这个 token，要加**） |
+| `borderRadius` | `DshRadius.lg` | `--dsw-radius-lg` |
+| `color` | 代码块底色 | `--dsw-alias-markdown-code-block`（**本仓也没有，要加**） |
+| `font` | `--dsw-font-xs-13`（13px 小字） | 同上 |
+
+两个新 token 的值要照 `design-platform.css` 查（`border-l1` 与
+`markdown-code-block` 各有明暗两份），**不许估**。
+
+## 为什么这次仍然没改
+
+查到了证据，但**改它要加两个 token + 改一个 widget + 跑门禁**，
+而本轮上下文已在末尾 —— 在最后几步动三层结构、跑不完构建，
+留下的就是红树。**下一步开头就能做完**，清单已在上表。
 
 ## 判据（定了之后怎么验）
 
