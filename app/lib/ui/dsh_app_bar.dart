@@ -311,9 +311,24 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   Widget build(BuildContext context) {
     final c = context.dshColors;
     return Container(
-      color: c.sidebar,
+      // **顶栏没有自己的底色**（2026-10-20 照 DSH 改正）：
+      // `ConversationRoot.module.css:7` 的 `.root` 是 `bg-base`，
+      // 而 `.header`（`:15`）**只声明 `border-bottom: 0.5px solid
+      // var(--dsw-alias-border-l3)`（`:22`），没有任何 background** ——
+      // 它与页面同色，靠一条发丝下边线分隔。
+      //
+      // 我们原来给它 `c.sidebar`（浅色 `#F1F3F5`）⇒ 顶部一条灰带、
+      // 与下面全白的会话区割裂。这与输入栏那条灰带是同一个错
+      // （见 `.agents/notes/implemented/2026-10-20-composer-elevation-soft.md`）。
       padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top),
       height: 56 + MediaQuery.of(context).padding.top,
+      // **底色与边线都在 `decoration` 里**：`Container` 不允许同时给
+      // `color` 与 `decoration`（`container.dart:277` 的断言）。
+      // 0.5px 发丝线是 DSH 的 `border-bottom`（`ConversationRoot.module.css:22`）。
+      decoration: BoxDecoration(
+        color: c.bgBase,
+        border: Border(bottom: BorderSide(color: c.borderL3, width: 0.5)),
+      ),
       child: Row(
         children: [
           const SizedBox(width: 4),

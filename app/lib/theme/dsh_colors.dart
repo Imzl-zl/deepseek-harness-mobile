@@ -46,6 +46,13 @@ abstract final class DshColors {
   /// `--dsw-elevation-stroke-color: var(--dsw-alias-border-l2)`）。
   static const borderL2 = Color(0x1FFFFFFF); // rgba(255,255,255,0.12)
 
+  /// 描边第 3 档（`--dsw-alias-border-l3`，暗色 = 白 16%）。
+  ///
+  /// **会话顶栏的下边线**用它：DSH 的 `.header` 没有自己的底色，
+  /// 只画 `border-bottom: 0.5px solid var(--dsw-alias-border-l3)`
+  /// （`ConversationRoot.module.css:15,22`）。
+  static const borderL3 = Color(0x29FFFFFF); // rgba(255,255,255,0.16)
+
   // ---- 文字 ----
   static const labelPrimary = Color(0xFFF9FAFB);
   static const labelSecondary = Color(0xFFCFD3D6);
@@ -193,6 +200,9 @@ abstract final class DshLightColors {
   /// 描边第 2 档（`--dsw-alias-border-l2`，亮色 = 黑 10%）。
   static const borderL2 = Color(0x1A000000); // rgba(0,0,0,0.1)
 
+  /// 描边第 3 档（`--dsw-alias-border-l3`，亮色 = 黑 12%）。
+  static const borderL3 = Color(0x1F000000); // rgba(0,0,0,0.12)
+
   // ---- 文字（`:root` 的 `--dsw-alias-label-*`）----
   static const labelPrimary = Color(0xFF0F1115); // neutral-bluish-1000
   static const labelSecondary = Color(0xFF61666B); // neutral-bluish-700
@@ -280,6 +290,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     required this.bubble,
     required this.composer,
     required this.borderL2,
+    required this.borderL3,
     required this.labelPrimary,
     required this.labelSecondary,
     required this.labelTertiary,
@@ -327,6 +338,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
         bubble: DshColors.bubble,
         composer: DshColors.composer,
         borderL2: DshColors.borderL2,
+        borderL3: DshColors.borderL3,
         labelPrimary: DshColors.labelPrimary,
         labelSecondary: DshColors.labelSecondary,
         labelTertiary: DshColors.labelTertiary,
@@ -374,6 +386,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
         bubble: DshLightColors.bubble,
         composer: DshLightColors.composer,
         borderL2: DshLightColors.borderL2,
+        borderL3: DshLightColors.borderL3,
         labelPrimary: DshLightColors.labelPrimary,
         labelSecondary: DshLightColors.labelSecondary,
         labelTertiary: DshLightColors.labelTertiary,
@@ -418,6 +431,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
   final Color bubble;
   final Color composer;
   final Color borderL2;
+  final Color borderL3;
   final Color labelPrimary;
   final Color labelSecondary;
   final Color labelTertiary;
@@ -472,6 +486,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     Color? bubble,
     Color? composer,
     Color? borderL2,
+    Color? borderL3,
     Color? labelPrimary,
     Color? labelSecondary,
     Color? labelTertiary,
@@ -515,6 +530,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     bubble: bubble ?? this.bubble,
     composer: composer ?? this.composer,
     borderL2: borderL2 ?? this.borderL2,
+    borderL3: borderL3 ?? this.borderL3,
     labelPrimary: labelPrimary ?? this.labelPrimary,
     labelSecondary: labelSecondary ?? this.labelSecondary,
     labelTertiary: labelTertiary ?? this.labelTertiary,
