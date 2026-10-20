@@ -6,15 +6,17 @@
 
 ## 下一步(新会话从这里开始)
 
-> **在跑的任务书**:同一份 goal(goal-a9fd6fb1)。已落地**十五批**并**真机验证**。
+> **在跑的任务书**:同一份 goal(goal-a9fd6fb1)。已落地**十九批**并**真机验证**。
 >
 > **DSH Web 的节点清单（`register-node-renderers.ts` 14 个 key）已全部有对应呈现** ——
 > 逐个对照查出并修好了 7 处丢失：工具名被覆盖 / 参数行是键名 / 系统消息巨墙 /
 > 流式文本不显示 / 斜杠命令卡 / 异常结局与重试（真日志 80 条"出了什么事"）/
 > 过程摘要 / 压缩标记。`unknown` 是 `OtherItem`，`turn-tail` / `assistant-actions`
-> 是桌面专属操作（不做）。
+> 是桌面专属操作（**但"复制/用量 pill"那条正在做**，见待办 8）。
 >
-> **用户点名的议题已全部清零**。
+> **用户 2026-10-19 夜间反馈的 11 条里，8 条已落地**（气泡隐形 / 抽屉顺序 /
+> 无会话 tab / 新建会话复用 blank / 按项目折叠 / 右抽屉统一宽度 / 全屏钮 /
+> 停止 3s 自动解除 / 子智能体可进入）。**剩 3 条**见下。
 
 待办:
 
@@ -28,6 +30,18 @@
    该轮的 `turn/start` 落在**更早且未加载的页**里。`stats` 因此只说时长、
    不摆"0 条消息"（`TurnProcessItem.stats` 只列有的项）。**别去"修"它** ——
    编一个用时或编一个计数才是错。第 1 条做完，这里自然就好了。
+8. **消息底部操作栏**（用户："dsh web 我看每个消息完毕有复制用量啥的"）：
+   调研已完成、结论写在
+   `.agents/notes/proposed/2026-10-19-session-page-feedback-research.md`
+   的「第 8 条」小节（独立 `turn-tail` 行、按钮顺序、用量 pill 是
+   `用量 10.6M tok`、用户消息只有时钟+复制、没有分享/重生成/编辑）。
+   **未实现**。
+10. **上传弹框**（用户："比人家的上传点击弹框有拍照，图片，上传文件啥的"）：
+   调研已完成（rikkahub 的 `ModalBottomSheet` + `FlowKit` 六个选项 + 每个选项的
+   图标与动作），同样在那篇笔记的「第 10 条」。**我们 `＋` 现在只有占位**。
+11. **会话页与输入栏背景"不和谐"**：用户没说具体是哪一处。
+    已由 `bubble` token 部分回答（气泡曾是隐形的那块），
+    **但"输入栏背景"那一处仍未确认 —— 问清再动，别猜**。
 2. **剩下四件事的真机验收**（投影/渲染/接线都有单测，其中三处含**变异验证**）：
    - **流式文本**：判据是用户发一句话，正文边生成边显示。
    - **斜杠命令卡**：判据是在有 `/goal` 或 `/compact` 的会话里看到卡片。
@@ -73,7 +87,9 @@
 - **新会话页**:连上后落到 blank 会话 → hero(鱼 + 标题 + 预览版徽标 + 两枚 chip)。
 - **PC 端**:两通道各自开关;`/api/dsh-mobile/advertise` 管上报地址(藏虚拟网卡 / 追加)。
 
-## 五条教训(都是"替身复现的不是真形状"这一类)
+## 六条教训
+
+> 前五条都是"替身复现的不是真形状"这一类；第六条是"提交不完整"。
 
 1. **投影信封**:`session.projections` 回 `null | {kind, asOfSeq, values}`,**手机要 `values`**。
    连接器曾整包透传 ⇒ 统计条/权限档/子智能体在生产里全空态而单测全绿
@@ -87,6 +103,11 @@
    `usage == null` 漏了**字段齐全但全零**的对象(输入框底下显示 `0 tok`)。
 5. **判据要能区分"没命中"与"没实现"**:同一句"点了没反应"可能是坐标偏 30px、也可能是回调没跑
    ——2026-10-18 两者同时发生,白查了五轮。**先加一行 `debugPrint` 确认回调跑了没有**,再怀疑手势。
+6. **一个功能要一次提交完整**:2026-10-20 发现 `3979191`（"用量搬到抽屉"）只提交了
+   `ui/usage_page.dart`，而它引用的 `UsageProject` / `grouped` 在 `model/usage_summary.dart`
+   里**没进库** —— 那个提交单独编译不过（下一个提交 `5b36be4` 才补齐）。
+   **没 CI 时这类残缺提交不会被拦**。规律：**提交前 `git status --porcelain` 必须是空**
+   （除了自己有意的未跟踪文件），且新加的文件要**反向 grep 一下"谁引用了它"**。
 
 ## 真机联调的成本纪律(立过规,别问第二遍)
 
@@ -166,11 +187,11 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
-| `node app/tools/verify-platform-boundary.mjs` | **286 项**(22 条规则自检 + 扫 80 个 Dart 文件) |
+| `node app/tools/verify-platform-boundary.mjs` | **296 项**(22 条规则自检 + 扫 82 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 43 个)/ 工具脚本不许硬编码盘符(19 个) |
-| `cd app && flutter test` | **810 项** |
+| `cd app && flutter test` | **828 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **547 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **550 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
 | CDP 浏览器组 | `verify-proto`(**31** = 顶栏与统计条 13 + 新会话页 hero 18) / `verify-authz`(18) / `verify-settings`(28) / `verify-tasks`(53) / `verify-picker` |
 | | **2026-10-26 六项实测全绿**（这一串以前从没在本会话跑过；起法：`pwsh -File mock/proto/tools/cdp.ps1 -Port 9400`，然后 `$env:CDP_URL='http://127.0.0.1:9400'; $env:NO_PROXY='127.0.0.1,localhost'`。注意 `verify-proto` / `verify-picker` 的汇总行格式与其它三个不同，别用同一条 `Select-String` 去抓） |
