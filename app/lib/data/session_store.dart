@@ -101,17 +101,46 @@ class SessionStore {
   }
 
   /// 待处理（审批未决定）计数，UI 角标用。
-  int get pendingCount =>
-      _sorted.whereType<ApprovalItem>().where((a) => !a.decided).length;
+  ///
+  /// ## 为什么要缓存（2026-10-20）
+  ///
+  /// 它要扫**全部条目**，而 `AppModel` 在**每次刷新会话列表**时对**每个会话**
+  /// 各问一次（`app_model.dart:1473`）—— 流式输出期间每帧都会刷新，
+  /// 于是每帧把已加载的条目全扫一遍。
+  ///
+  /// 失效判据用 `_sorted` 的**同一性**：`_resort()` 每次都换成新的
+  /// `List.unmodifiable`（`:118`），所以 `identical` 为假就等于条目真的变了。
+  /// **不加修订计数** —— 那会多一个可能与真实状态漂移的真值。
+  int get pendingCount {
+    if (identical(_pendingCacheSource, _sorted)) return _pendingCache;
+    var count = 0;
+    for (final item in _sorted) {
+      if (item is ApprovalItem && !item.decided) count += 1;
+    }
+    _pendingCacheSource = _sorted;
+    _pendingCache = count;
+    return count;
+  }
+
+  List<ChatItem>? _pendingCacheSource;
+  int _pendingCache = 0;
 
   /// 最后更新时刻（取最大 `updatedAt`；空表返回 0）。
+  ///
+  /// 缓存的理由与 [pendingCount] 一样（它也被逐会话问）。
   int get updatedAt {
+    if (identical(_updatedCacheSource, _sorted)) return _updatedCache;
     var newest = 0;
     for (final item in _sorted) {
       if (item.updatedAt > newest) newest = item.updatedAt;
     }
+    _updatedCacheSource = _sorted;
+    _updatedCache = newest;
     return newest;
   }
+
+  List<ChatItem>? _updatedCacheSource;
+  int _updatedCache = 0;
 
   void _resort() {
     final next = _byId.values.toList()..sort((a, b) => a.seq.compareTo(b.seq));
