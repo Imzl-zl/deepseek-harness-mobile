@@ -83,6 +83,23 @@ Status: proposed（未开工；形状已查清，缺的是一个能连真机的�
 本轮末尾已经判断过一次"不在长会话尾巴上开新工程" ——
 在半截状态提交，正是第 6 类教训（`3979191` 那个残缺提交）的形状。
 
+## 参考实现（2026-10-20 查证，rikkahub）
+
+D:\sudy\github\rikkahub 的附件管线是**三步**，与我们该走的三步同构：
+
+| 步骤 | rikkahub | 我们 |
+|---|---|---|
+| 选 | `ActivityResultContracts.OpenDocument()`（SAF，**不申请权限**） | 同（`ACTION_OPEN_DOCUMENT`） |
+| 落地 | `FilesManager.saveManagedFromUri(folder, uri, displayName, mimeType)` —— **拷贝进 App 托管目录**并写 `ManagedFileEntity` 进 Room | 读字节 → `ctx.fileUploads.uploadStream` → 拿 `receiptId` |
+| 引用 | 消息里存本地受限文件 id，可跨消息复用 | `{type:'file', receiptId}`，**按 Session 作用域**（不可跨会话复用） |
+
+差异要点：**"拷贝归谁"不同** —— rikkahub 自己保管那份副本（本地优先），
+我们的副本由 DSH 宿主保管（`stagedFiles` 也是按 Session 建的 `WeakMap`）。
+所以我们的界面要表达的是"已上传到电脑侧的这份会话"，不是"本地文件"。
+
+rikkahub 的 `saveManagedFromUri` 用 `getFileMimeType(uri) ?: "application/octet-stream"`
+兜底 MIME —— 与我们 `MainActivity` 里 `contentResolver.getType(uri)` 的兜底同形。
+
 ## 开工顺序（下次照这个走）
 
 1. 在 `docs/subsystems/remote-channel.md` §5.7 定下 `attachment.upload` 的签名
