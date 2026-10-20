@@ -65,19 +65,63 @@ import '../theme/dsh_theme.dart';
 /// | `<i>` `<em>` | `*…*` | 与 `styleSheet.em` 同一样式 |
 /// | `<code>` | `` `…` `` | 与 `styleSheet.code` 同一样式 |
 ///
-/// **代码块（```…```）里一个字都不动** —— 那里是用户在看的源码，
-/// 把它 `<b>` 改成 `**` 就是改内容。围栏按"成对出现"切分，奇数段落是正文。
+/// **代码块里一个字都不动** —— 那里是用户在看的源码，
+/// 把它 `<b>` 改成 `**` 就是改内容。
 ///
-/// 没有 `<` 的串**原样返回**（绝大多数消息走这条快路径，不做任何正则扫描的浪费）。
+/// ## 围栏怎么认（2026-10-20 更正）
+///
+/// 第一版用 `source.split('```')` 取奇数段当"围栏内"。那是错的：
+/// **CommonMark 的围栏有两种记号**，`~~~` 与 ```` ``` ```` 等价
+/// （`markdown-7.3.1/lib/src/block_syntaxes/fenced_code_block_syntax.dart:13` 的
+/// "Parses preformatted code blocks between two ~~~ or ``` sequences"，
+/// 判据是 `patterns.dart` 的 `codeFencePattern`）。只认反引号 ⇒
+/// `~~~` 里的 `<T>` 会被当成 HTML 改写掉，等于**改用户看到的代码**。
+///
+/// 所以改成**逐行扫描**：遇到 3 个及以上的 `` ` `` 或 `~` 开围栏，
+/// 同记号、不短于开围栏、后面只有空白的行才关围栏；
+/// **未闭合的围栏一直算围栏内**（流式途中就是这样，与 CommonMark 一致）。
+///
+/// 没有 `<` 的串**原样返回**（绝大多数消息走这条快路径，不做任何扫描的浪费）。
+///
+/// Note: 为什么不能按 ``` 切分、`~~~` 从哪来 —— 见
+/// `.agents/notes/implemented/2026-10-20-render-alignment-to-dsh-spec.md`。
 String normalizeInlineHtml(String source) {
   if (!source.contains('<')) return source;
-  final parts = source.split('```');
-  for (var i = 0; i < parts.length; i += 2) {
-    // 偶数段 = 围栏之外（正文）；奇数段 = 代码块内部，跳过。
-    if (i < parts.length) parts[i] = _convertInlineTags(parts[i]);
+  final lines = source.split('\n');
+  final out = <String>[];
+  String? fence; // 开围栏的记号：'`' 或 '~'；null = 正文
+  var fenceLength = 0;
+  for (final line in lines) {
+    final match = _fenceLine.firstMatch(line);
+    if (fence == null) {
+      if (match != null) {
+        fence = match.group(1)![0];
+        fenceLength = match.group(1)!.length;
+        out.add(line);
+      } else {
+        out.add(_convertInlineTags(line));
+      }
+      continue;
+    }
+    out.add(line);
+    // 关围栏：同记号、长度 ≥ 开围栏、记号后只有空白。
+    final closing = match?.group(1);
+    if (closing != null &&
+        closing[0] == fence &&
+        closing.length >= fenceLength &&
+        match!.group(2)!.trim().isEmpty) {
+      fence = null;
+      fenceLength = 0;
+    }
   }
-  return parts.join('```');
+  return out.join('\n');
 }
+
+/// 一行围栏的记号与剩余部分：`^ {0,3}(`{3,}|~{3,})(.*)$`。
+///
+/// 前导最多 3 个空格是 CommonMark 的规则（`codeFencePattern` 同款），
+/// 4 个空格是缩进代码块，不是围栏。
+final RegExp _fenceLine = RegExp(r'^ {0,3}(`{3,}|~{3,})(.*)$');
 
 String _convertInlineTags(String text) {
   var out = text;
@@ -92,23 +136,50 @@ String _convertInlineTags(String text) {
 }
 
 /// 把一个 Markdown 串渲染成 DSH 风格。
+///
+/// Note: 为什么正文是 14/24、为什么 compact 是 13/20、为什么表格用
+/// `IntrinsicColumnWidth` —— 见
+/// `.agents/notes/implemented/2026-10-20-render-alignment-to-dsh-spec.md`。
 class DshMarkdown extends StatelessWidget {
-  const DshMarkdown(this.data, {super.key, this.baseColor});
+  const DshMarkdown(
+    this.data, {
+    super.key,
+    this.baseColor,
+    this.compact = false,
+  });
 
   /// Markdown 正文。
   final String data;
 
-  /// 基准文字色；`null` = `labelPrimary`。
+  /// 基准文字色；`null` = 非 compact 用 `labelPrimary`、compact 用 `labelTertiary`。
   ///
   /// 用户气泡里正文在蓝底上，所以那个调用点会传 `onAccent` ——
   /// **不在这里按"谁在用"分支**：颜色是调用方的事，这一层只渲染。
   final Color? baseColor;
 
+  /// **compact 档**：DSH 的 `MarkdownText variant="compact"`
+  /// （`ui-primitives/src/markdown/MarkdownText.module.css:331-424` 的 `.compact`）。
+  ///
+  /// 唯一用处是**思考过程正文** —— DSH 的 `ReasoningContent` 就是
+  /// `<MarkdownText variant="compact" />`（`ui-chat/src/client/chat/ReasoningContent.tsx:16`），
+  /// 字号落一档到 secondary 13/20、色用 `label-tertiary`、段距收到 4。
+  final bool compact;
+
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
-    final color = baseColor ?? c.labelPrimary;
-    final body = TextStyle(fontSize: 13, height: 20 / 13, color: color);
+    // 正文字号：DSH 的 markdown base = `--dsh-content-font-size`，
+    // 默认 **14px / 24px**（`ui-theme/src/styles/gradient-shadow-text.css:93`，
+    // 默认值见 `ui-theme/src/theme-settings.ts:58` 与
+    // `ui-layout/tests/theme-presenter.client.spec.ts:86` 的 `14px`）。
+    //
+    // **2026-10-20 更正**：这里原来是 13/20，注释写"DSH 的正文只有 13"——
+    // 那是把 **secondary 档**（13：流程行标题、工具标题、compact 正文）
+    // 当成了正文。正文是 14，比原来大一档，与 DSH 一致。
+    final color = baseColor ?? (compact ? c.labelTertiary : c.labelPrimary);
+    final size = compact ? 13.0 : 14.0;
+    final line = compact ? 20.0 : 24.0;
+    final body = TextStyle(fontSize: size, height: line / size, color: color);
     return MarkdownBody(
       // **行内 HTML 先归一成 Markdown**：否则 `<b>` 会原样露出
       //（探针实测，见 `normalizeInlineHtml` 的说明）。
@@ -123,72 +194,165 @@ class DshMarkdown extends StatelessWidget {
       // 有头部工具条（语言 / 自动换行 / 复制，`ui-primitives/src/CodeBlock.tsx`）。
       // 这跟"有没有语法高亮"是两件事 —— 工具条不需要高亮器。
       builders: {'pre': _DshCodeBlockBuilder()},
-      styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
-        p: body,
-        // 段落间距：默认偏大，聊天里会显得散。
-        pPadding: const EdgeInsets.only(bottom: 8),
-        // 行内代码：等宽 + 底色。用 `roleToolBg`（token 表里的浅底）而不是自造。
-        code: DshTheme.mono.copyWith(
-          fontSize: 12,
-          color: color,
-          backgroundColor: c.roleToolBg,
-        ),
-        // 代码块：整块底色 + 圆角。**内边距不在这里** —— 代码块由
-        // `_DshCodeBlock` 接管（头部工具条 + 正文），padding 归它管。
-        //
-        // 规格取自 DSH `ui-primitives/.../CodeBlock.module.css` 的 `.block`：
-        //   background: var(--dsw-alias-markdown-code-block);   ← 块底色
-        //   border-radius: var(--dsw-radius-lg);                ← 不是 sm
-        //   margin: 16px 0;                                     ← 上下各 16
-        //   **没有 border**（原来我们多画了一圈 `layer3`，等于给块加了框）
-        // `markdown-code-block` 这个 token 名就是为它起的（2026-10-20 加到
-        // `DshColors.codeBlock`）。原来用 `c.bgBase` = 页面本色 —— 于是代码块
-        // 看着像"没有底"，整块和正文糊在一起（真机截图确认过）。
-        codeblockDecoration: const BoxDecoration(),
-        codeblockPadding: EdgeInsets.zero,
-        blockquote: body.copyWith(color: c.labelSecondary),
-        blockquoteDecoration: BoxDecoration(
-          border: Border(left: BorderSide(color: c.layer3, width: 3)),
-        ),
-        blockquotePadding: const EdgeInsets.only(left: 12),
-        // 列表：紧凑一点（聊天里不该像文档那样疏）。
-        // 规格照 DSH `ui-primitives/src/markdown/MarkdownText.module.css:102-118`：
-        //   `ul, ol { padding-left: 18px }`        → `listIndent: 18` ✓
-        //   `li::marker { color: label-secondary }` → **marker 要比正文淡**
-        // 原来 `listBullet: body` 用的是正文色，于是 `•` 比正文更抢眼
-        // （真机上就是那种"`•` 太重"的感觉）。
-        listBullet: body.copyWith(color: c.labelSecondary),
-        listIndent: 18,
-        listBulletPadding: const EdgeInsets.only(right: 6),
-        // 强调与链接。
-        strong: body.copyWith(fontWeight: FontWeight.w600),
-        em: body.copyWith(fontStyle: FontStyle.italic),
-        a: body.copyWith(
-          color: c.accentBlue,
-          decoration: TextDecoration.underline,
-          decorationColor: c.accentBlue,
-        ),
-        // 标题：DSH 的正文只有 13，标题不该大到喧宾夺主。
-        h1: body.copyWith(fontSize: 18, fontWeight: FontWeight.w600),
-        h2: body.copyWith(fontSize: 16, fontWeight: FontWeight.w600),
-        h3: body.copyWith(fontSize: 14, fontWeight: FontWeight.w600),
-        h4: body.copyWith(fontWeight: FontWeight.w600),
-        h5: body.copyWith(fontWeight: FontWeight.w600),
-        h6: body.copyWith(fontWeight: FontWeight.w600, color: c.labelSecondary),
-        // 分隔线。
-        horizontalRuleDecoration: BoxDecoration(
-          border: Border(top: BorderSide(color: c.layer3)),
-        ),
-        // 表格：窄屏会横向溢出，所以给边框与紧凑内边距。
-        tableHead: body.copyWith(fontWeight: FontWeight.w600),
-        tableBody: body,
-        tableBorder: TableBorder.all(color: c.layer3, width: 1),
-        tableCellsPadding: const EdgeInsets.symmetric(
-          horizontal: 6,
-          vertical: 4,
-        ),
+      styleSheet: _sheet(context, c, body),
+    );
+  }
+
+  /// 样式表：**非 compact** 照 DSH 的 `.markdown`，**compact** 照 `.compact`
+  /// （`ui-primitives/src/markdown/MarkdownText.module.css`，行号逐条写在下面）。
+  MarkdownStyleSheet _sheet(
+    BuildContext context,
+    DshColorTokens c,
+    TextStyle body,
+  ) {
+    const mono = DshTheme.mono;
+    return MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+      p: body,
+      // 段距：DSH `p { margin: 16px 0 }`（`:45-47`）在 flutter_markdown 里是
+      // 「块间距 8 + 段底 8」两段相加 ⇒ 视觉 16，与 DSH 相同。
+      // compact 档 DSH 收到 `margin: 4px 0`（`:345-347`）⇒ 块间距 0 + 段底 4。
+      pPadding: EdgeInsets.only(bottom: compact ? 4 : 8),
+      blockSpacing: compact ? 0 : 8,
+      // 行内代码：等宽 + 底色。用 `roleToolBg`（token 表里的浅底）而不是自造。
+      // 非 compact 是 `0.875em`（`:163-174`）⇒ 14×0.875 = 12.25 → 12。
+      // compact 是 `font-size: 1em`（`:384-392`）⇒ 跟随正文 13。
+      code: mono.copyWith(
+        fontSize: compact ? 13 : 12,
+        color: body.color,
+        backgroundColor: c.roleToolBg,
+      ),
+      // 代码块：整块底色 + 圆角。**内边距不在这里** —— 代码块由
+      // `_DshCodeBlock` 接管（头部工具条 + 正文），padding 归它管。
+      //
+      // 规格取自 DSH `ui-primitives/.../CodeBlock.module.css` 的 `.block`：
+      //   background: var(--dsw-alias-markdown-code-block);   ← 块底色
+      //   border-radius: var(--dsw-radius-lg);                ← 不是 sm
+      //   margin: 16px 0;                                     ← 上下各 16
+      //   **没有 border**（原来我们多画了一圈 `layer3`，等于给块加了框）
+      // `markdown-code-block` 这个 token 名就是为它起的（2026-10-20 加到
+      // `DshColors.codeBlock`）。原来用 `c.bgBase` = 页面本色 —— 于是代码块
+      // 看着像"没有底"，整块和正文糊在一起（真机截图确认过）。
+      codeblockDecoration: const BoxDecoration(),
+      codeblockPadding: EdgeInsets.zero,
+      blockquote: compact ? body : body.copyWith(color: c.labelSecondary),
+      blockquoteDecoration: BoxDecoration(
+        border: Border(left: BorderSide(color: c.layer3, width: 3)),
+      ),
+      blockquotePadding: EdgeInsets.only(left: compact ? 8 : 12),
+      // 列表：紧凑一点（聊天里不该像文档那样疏）。
+      // 规格照 DSH `ui-primitives/src/markdown/MarkdownText.module.css:102-118`：
+      //   `ul, ol { padding-left: 18px }`        → `listIndent: 18` ✓
+      //   `li::marker { color: label-secondary }` → **marker 要比正文淡**
+      // 原来 `listBullet: body` 用的是正文色，于是 `•` 比正文更抢眼
+      // （真机上就是那种"`•` 太重"的感觉）。compact 档 DSH 让 marker
+      // `color: inherit`（`:357-360`），所以那里不再淡化。
+      listBullet: compact ? body : body.copyWith(color: c.labelSecondary),
+      listIndent: 18,
+      listBulletPadding: const EdgeInsets.only(right: 6),
+      // 强调与链接。
+      strong: body.copyWith(fontWeight: FontWeight.w600),
+      em: body.copyWith(fontStyle: FontStyle.italic),
+      a: compact
+          // compact：链接跟随正文色、点线下划线（`:370-382`）。
+          ? body.copyWith(decoration: TextDecoration.underline)
+          : body.copyWith(
+              color: c.accentBlue,
+              decoration: TextDecoration.underline,
+              decorationColor: c.accentBlue,
+            ),
+      // 标题：DSH 的字号表在 `gradient-shadow-text.css:65-110`
+      // （h1 21/30·700、h2 19/28·700、h3 18/26·700、h4 14/24·600、h5/h6 = base-strong）。
+      // 原来我们写 18/16/14 是估的，而注释里"正文只有 13"也是个错前提。
+      //
+      // 外边距：DSH 是 `32px 0 16px`（h1-h3）与 `16px 0`（h4-h6）
+      // （`MarkdownText.module.css:16-39`）。`blockSpacing` 已经给了 8，
+      // 所以这里补差值：h1-h3 上 24 / 下 8、h4-h6 上 8 / 下 8。
+      // **有意偏离**：DSH 的 32px 标题上边距是文档级留白，手机聊天里
+      // 会把一条回复拉得很散 —— 这里保留同样的"标题比正文大"的层级，
+      // 但上下留白按聊天的密度收（见 `docs/subsystems/app-channel-client.md`）。
+      h1: compact
+          ? body.copyWith(fontWeight: FontWeight.w600)
+          : body.copyWith(
+              fontSize: 21,
+              height: 30 / 21,
+              fontWeight: FontWeight.w700,
+            ),
+      h1Padding: _headingPadding(compact, level: 1),
+      h2: compact
+          ? body.copyWith(fontWeight: FontWeight.w600)
+          : body.copyWith(
+              fontSize: 19,
+              height: 28 / 19,
+              fontWeight: FontWeight.w700,
+            ),
+      h2Padding: _headingPadding(compact, level: 2),
+      h3: compact
+          ? body.copyWith(fontWeight: FontWeight.w600)
+          : body.copyWith(
+              fontSize: 18,
+              height: 26 / 18,
+              fontWeight: FontWeight.w700,
+            ),
+      h3Padding: _headingPadding(compact, level: 3),
+      h4: body.copyWith(fontWeight: FontWeight.w600),
+      h4Padding: _headingPadding(compact, level: 4),
+      h5: body.copyWith(fontWeight: FontWeight.w600),
+      h5Padding: _headingPadding(compact, level: 5),
+      h6: body.copyWith(fontWeight: FontWeight.w600),
+      h6Padding: _headingPadding(compact, level: 6),
+      // 分隔线。
+      horizontalRuleDecoration: BoxDecoration(
+        border: Border(top: BorderSide(color: c.layer3)),
+      ),
+      // ---------------------------------------------------------------------
+      // 表格（2026-10-20 第 6 条：宽表横向溢出）
+      //
+      // DSH 的表格**外面有一层横向滚动容器**：
+      //   `.tableScroll { max-width: 100%; overflow-x: auto }`（`MarkdownText.module.css:192-196`）
+      // 而多列表格保持自然宽度、在容器里横滚：
+      //   `.tableScroll table { width: max-content }`（`:226-233`）
+      // 少于四列的表格才铺满整列（`:235-242`）。
+      //
+      // flutter_markdown_plus 只在 `tableColumnWidth` 是 `IntrinsicColumnWidth`
+      // 或 `FixedColumnWidth` 时**才**套那层横向滚动
+      // （`flutter_markdown_plus-1.0.12/lib/src/builder.dart:447-463`），
+      // 而默认是 `FlexColumnWidth`（`style_sheet.dart:143`）⇒ 我们的宽表
+      // 只会在屏幕宽度里被压成一条条窄列，**没有横向出路**。
+      // 换成 `IntrinsicColumnWidth` 就同时拿到"自然宽度 + 横滚"。
+      //
+      // 已知代价（有意偏离，已记在 `docs/subsystems/app-channel-client.md`）：
+      // - 只有三列以内的表 DSH 会铺满，我们统一按自然宽度（不铺满）；
+      // - DSH 的 `td { max-width: min(30vw, 320px); min-width: 100px }`
+      //   （`:250-262`）在 `IntrinsicColumnWidth` 下没有等价物。
+      tableColumnWidth: const IntrinsicColumnWidth(),
+      tableHead: body.copyWith(fontWeight: FontWeight.w600),
+      tableBody: body,
+      // DSH `th { text-align: start }`（`:245`）；默认是居中。
+      tableHeadAlign: TextAlign.start,
+      // 单元格内边距：DSH `10px 16px`（`:244-262`）；compact 档 `4px 8px`
+      // （`:421-424`）。**偏离**：DSH 把首列左内边距与末列右内边距归零，
+      // flutter_markdown 的 `tableCellsPadding` 是统一值，做不到按列区分。
+      tableCellsPadding: compact
+          ? const EdgeInsets.symmetric(horizontal: 8, vertical: 4)
+          : const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      // 边框：DSH 只有**行分隔线**（th 下 l3、td 下 l2），没有竖线与外框
+      // （`:244-262`）。原来我们画的是全网格 `TableBorder.all`。
+      // **偏离**：th 与 td 的线色在同一个 `TableBorder` 里无法分开，
+      // 这里统一用 l2。
+      tableBorder: TableBorder(
+        horizontalInside: BorderSide(color: c.borderL2, width: 0.5),
+        bottom: BorderSide(color: c.borderL2, width: 0.5),
       ),
     );
+  }
+
+  /// 标题的上下留白：非 compact 补到 DSH 的 32/16（块间距已给 8），
+  /// compact 用 DSH 的 `8px 0 4px`（块间距 0）。
+  EdgeInsets _headingPadding(bool compact, {required int level}) {
+    if (compact) return const EdgeInsets.only(top: 8, bottom: 4);
+    return level <= 3
+        ? const EdgeInsets.only(top: 24, bottom: 8)
+        : const EdgeInsets.only(top: 8, bottom: 8);
   }
 }
 
@@ -296,6 +460,10 @@ class _DshCodeBlockState extends State<_DshCodeBlock> {
     final body = SelectableText(
       widget.code,
       style: DshTheme.mono.copyWith(
+        // DSH 的代码正文是 `--dsw-font-markdown-code-block` = **11/19**
+        // （`ui-theme/src/styles/gradient-shadow-text.css:170`）。
+        // **有意偏离**：手机上一行代码 11px 太小，这里用 12/18
+        // （比 DSH 大一档、行高略紧），与正文 14/24 的比例仍接近 DSH。
         fontSize: 12,
         height: 1.5,
         color: c.labelPrimary,
@@ -419,7 +587,7 @@ class _CodeToolButton extends StatelessWidget {
 // 2. **分块渲染**（§4 的"长 Markdown 按段落切"）：现在整段交给 `MarkdownBody`，
 //    而它在长文上要一次排版完 —— 那正是 §4 想避免的（`dart:ui` 排版只能在主 isolate）。
 //    查过 DSH 的做法供参考：它**没有**正文虚拟化/段落切分，只在流式期间
-//    冻结除末尾两块以外的所有块（`ui-chat/conversation-nodes/incremental.ts:9,38`
+//    冻结除末尾两块以外的所有块（`ui-primitives/src/markdown/incremental.ts:9-14,38`
 //    的 `UNSTABLE_TAIL_BLOCKS = 2`）。所以手机侧的对策应是"流式期间只重排末尾"，
 //    不是引入虚拟列表。
 //

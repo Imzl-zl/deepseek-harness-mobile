@@ -2637,48 +2637,25 @@ class _LiveTurn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
+    // **与持久条目同一个骨架**（2026-10-20 第 7 条）：`AssistantTurn` 的
+    // 上下留白（18）、`AssistantHead`、`DshMarkdown` 三样都照抄它 ——
+    // 原来这里自己写了一套（留白 10、手抄的头像行、写死颜色），
+    // 于是流结束、条目从"虚拟尾"换成持久消息时，整行的高度与构造都变，
+    // 正文会**跳一下**。DSH 的流式尾与落定条目是**同一个节点类型**
+    // （`ui-chat/src/client/chat/AssistantNodeView.tsx`），所以那边没有这一跳。
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.symmetric(vertical: 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 头像 + 「助手」—— 与 `AssistantTurn` 同一套（照原型 `.a-head`）。
-          Row(
-            children: [
-              Container(
-                width: 26,
-                height: 26,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [DshColors.accentBlue, DshColors.roleAssistant],
-                  ),
-                  borderRadius: BorderRadius.circular(9),
-                ),
-                child: const Center(
-                  child: DshIcon('sparkle', size: 14, color: Colors.white),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                '助手',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: c.labelPrimary,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
+          const AssistantHead(),
           // **正在生成的正文**（Markdown，与持久消息同一套渲染）。
           // 空文本时给一行占位 —— 那表示"这一步开始了但还没有文本"
           // （可能在等工具结果），说"正在生成"比一片白诚实。
           if (text.isEmpty)
             Text(
               '正在生成…',
-              style: TextStyle(fontSize: 13, color: c.labelTertiary),
+              style: TextStyle(fontSize: 14, color: c.labelTertiary),
             )
           else
             DshMarkdown(text),

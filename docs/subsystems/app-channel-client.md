@@ -135,7 +135,56 @@ abstract class Outbox {
 | 流式更新触发整段重排 | 累加器 16 ms 节流 + 段级缓存;不用 `SelectableText` 包整段(开销大) |
 | 大对象(base64 图片、diff)阻塞 UI | >1 MiB 走 `refetch`;JSON 解码放 `compute`;图片走 `Image.memory` + 缓存,不逐帧解码 |
 | 代码高亮开销 | 只在条目首次可见时高亮一次并缓存 token 结果;不随流式每帧重算 |
-| 长 Markdown | **不做段落切分**:查过 DSH,它也没有正文虚拟化/按段切,只在**流式期间冻结除末尾两块以外的块**(`packages/client/ui-chat/src/client/conversation-nodes/incremental.ts:9,38` 的 `UNSTABLE_TAIL_BLOCKS = 2`)⇒ 手机侧照同一条做"流式只重排末尾" |
+| 长 Markdown | **不做段落切分**:查过 DSH,它也没有正文虚拟化/按段切,只在**流式期间冻结除末尾两块以外的块**(`packages/client/ui-primitives/src/markdown/incremental.ts:9-14,38` 的 `UNSTABLE_TAIL_BLOCKS = 2`)⇒ 手机侧照同一条做"流式只重排末尾" |
+
+---
+
+## 4.1 会话页渲染：与 DSH 的逐项对齐（2026-10-20）
+
+规格一律取 DSH 源码行号；**每一处偏离都写明理由**。判定用的断言在
+`app/test/render_alignment_test.dart` 与 `app/test/markdown_coverage_test.dart`。
+
+| 面 | 值 | 规格出处 |
+|---|---|---|
+| 消息正文（Markdown base） | 14 / 24 | `packages/client/ui-theme/src/styles/gradient-shadow-text.css:93`（`--dsh-content-font-size`，默认 14 见 `ui-theme/src/theme-settings.ts:58`）、`ui-chat/src/client/chat/AssistantMarkdown.module.css:1-14` |
+| 思考正文（compact） | 13 / 20、`label-tertiary`、段距 4 | `ui-primitives/src/markdown/MarkdownText.module.css:331-347` + `ui-chat/src/client/chat/ReasoningContent.tsx:16` |
+| 标题字号 | h1 21/30·700、h2 19/28·700、h3 18/26·700、h4 14/24·600 | `gradient-shadow-text.css:65-110` |
+| 工具卡展开正文 | 11 / 16 等宽、`label-secondary`、上限 150 + 内滚 | `ui-tool/src/client/tool/components/ToolRow.module.css:181-201`、`gradient-shadow-text.css:178` |
+| 系统提示词 / 上下文注入正文 | 11 / 16 等宽、上限 141 + 内滚、左缩进 22、`markdown-code-block` 底 | `ui-chat/src/client/chat/ContextInjectionRow.module.css:50-64`（141 是 Figma 10:2482） |
+| 折叠行 | 行高 24、标题 13/24、`label-tertiary`、图标 14 | `ui-primitives/src/DisclosureRow.module.css:36,50-72,100-105` |
+| 斜杠命令 | disclosure 行 + 展开区 `11/16` 等宽、上限 260、`label-primary`；摘要展开后仍在 | `ui-chat/src/client/chat/GenericCommandCard.module.css:38-49`、`GenericCommandCard.tsx:40,67` |
+| 节点图标 | 系统提示词 `browse`、上下文注入 `contextInjection` | `ui-chat/src/client/chat/SystemPromptRow.tsx:30`、`ContextInjectionRow.tsx:55` |
+| 表格 | 自然宽度 + 横向滚动；单元格 `10px 16px`；只有行分隔线；`th` 左对齐 | `ui-primitives/src/markdown/MarkdownText.module.css:192-196,226-262` |
+| 用户消息正文 | **纯文本，不跑 Markdown** | `ui-primitives/src/user-text.tsx:18-20`（`UserTextRun`：without Markdown or reference recognition） |
+| 原始 HTML | DSH 把标签当**字面文本**显示 | `ui-primitives/src/markdown/render.tsx:333-335` |
+
+实现侧的三个关键落点：
+
+- **宽表为什么能横滚**：`flutter_markdown_plus` 只在 `tableColumnWidth` 是
+  `IntrinsicColumnWidth` / `FixedColumnWidth` 时才套横向 `SingleChildScrollView`
+  （`flutter_markdown_plus-1.0.12/lib/src/builder.dart:447-463`），默认 `FlexColumnWidth`
+  （`style_sheet.dart:143`）没有横滚出路 ⇒ 我们固定用 `IntrinsicColumnWidth`。
+- **围栏识别**：`~~~` 与 ```` ``` ```` 等价（`markdown-7.3.1/lib/src/block_syntaxes/
+  fenced_code_block_syntax.dart:13`），行内 HTML 归一必须按"同记号、长度不短于开围栏、
+  未闭合一直算围栏内"逐行扫描，否则会改写围栏内的源码。
+- **流式形态**：DSH 的流式 arm 也把未闭合围栏渲染成代码块并逐块冻结
+  （`ui-primitives/src/markdown/incremental.ts:10-14`），所以"途中显示成代码块"不是缺陷；
+  要保的是**围栏闭合那一帧形态不变**。手机侧的流式尾条目与持久条目共用
+  `AssistantHead` + `DshMarkdown`，避免流结束换条目时跳一下。
+
+### 有意偏离（每条都不得"顺手改回去"）
+
+| 偏离 | 理由 |
+|---|---|
+| 折叠行高 36（DSH 24） | 触屏命中区；DSH 的 24 是桌面鼠标行高 |
+| 折叠行右侧恒显 chevron（DSH 只在 hover 时把前导图标换成 chevron） | 触屏没有 hover，不画出来就没人知道能展开 |
+| 折叠行**没有**卡片边框/底色 | 与 DSH 一致（原实现多了一层 `layer1` 卡片，视觉上冒充工具卡） |
+| 标题上边距 24 / 下 8（DSH 32/16） | 32px 是文档级留白，手机聊天里会把一条回复拉散 |
+| 代码块正文 12/18（DSH 11/19） | 手机上 11px 代码太小；与正文 14 的比例仍接近 DSH |
+| 工具卡正文不带 `输出` gutter 标签（DSH `.ioLabel`） | 那一列要吃掉 14+ 横向空间；卡片标题行已说明是哪个工具 |
+| 表格单元格首/末列不归零内边距、窄表不铺满、无 `min-width:100px`/`max-width:30vw` | `tableCellsPadding` 与列宽策略在 flutter_markdown 里都是整表一个值，做不到按列/按表分支 |
+| 行内 HTML 归一成 Markdown（DSH 显示标签原文） | Flutter 没有 HTML 注入面；`<br>/<b>/<i>/<code>` 四种确定等价，其余去标签保文字（宁可丢样式，不丢文字） |
+| 用户消息没有 `@文件` / `/skill` 引用 chip | 那是 `ui-reference` / `ui-skill` 的匹配器与写面，未接；正文仍是纯文本，与 DSH 同形 |
 
 ---
 

@@ -28,6 +28,7 @@ library;
 import 'package:dsh_mobile/core/items.dart';
 import 'package:dsh_mobile/data/projection.dart';
 import 'package:dsh_mobile/model/chat_item.dart';
+import 'package:dsh_mobile/theme/dsh_icons.dart';
 import 'package:dsh_mobile/ui/chat_turns.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -216,12 +217,32 @@ void main() {
       expect(find.text('/goal'), findsOneWidget);
       // 摘要 = 结果文本第一行。
       expect(find.text('Goal created'), findsOneWidget);
-      // 明细是**多行**（DSH 只对含换行的文本给展开），所以展开箭头在。
-      expect(find.byIcon(Icons.expand_more), findsNothing);
+      // 多行明细才给展开箭头（DSH `GenericCommandCard.tsx:40`）。
+      expect(
+        tester.widgetList<DshIcon>(find.byType(DshIcon)).map((w) => w.name),
+        contains('chevronRight'),
+      );
       // 点开才看得见全文。
       await tester.tap(find.text('Goal created'));
       await tester.pumpAndSettle();
       expect(find.textContaining('Status: active'), findsOneWidget);
+      // 展开后摘要**仍在**（DSH 的 `keepContentWhenOpen`）。
+      expect(find.text('Goal created'), findsOneWidget);
+
+      // 正文照 `.body`（`GenericCommandCard.module.css:38-49`）：
+      // 11/16 等宽、上限 260、`label-primary`（不是 layer1 卡片 + 12.5 等宽）。
+      final body = tester.widget<SelectableText>(find.byType(SelectableText));
+      expect(body.style!.fontSize, 11);
+      expect(body.style!.height, closeTo(16 / 11, 1e-9));
+      final box = tester.widget<ConstrainedBox>(
+        find
+            .ancestor(
+              of: find.byType(SelectableText),
+              matching: find.byType(ConstrainedBox),
+            )
+            .first,
+      );
+      expect(box.constraints.maxHeight, 260);
     });
 
     testWidgets('单行结果不给展开（DSH 的 includes(\\n) 判据）', (tester) async {
@@ -251,7 +272,11 @@ void main() {
       await tester.pumpAndSettle();
       // 单行 ⇒ 没有展开箭头 ⇒ 点行什么都不发生（不是"展开了但空的"）。
       expect(find.text('unknown command: /nope'), findsOneWidget);
-      expect(find.byType(AnimatedRotation), findsNothing);
+      expect(
+        tester.widgetList<DshIcon>(find.byType(DshIcon)).map((w) => w.name),
+        isNot(contains('chevronRight')),
+        reason: '单行结果不该摆一个骗人点的箭头',
+      );
     });
   });
 }

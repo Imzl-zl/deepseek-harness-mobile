@@ -99,6 +99,42 @@ void main() {
     );
   });
 
+  group('流式：未闭合围栏（2026-10-20 第 7 条）', () {
+    // 判据来源：DSH 的流式 arm **也**把未闭合围栏渲染成代码块，并逐块冻结、
+    // 逐行增量高亮（`ui-primitives/src/markdown/incremental.ts:10-14`、
+    // `tests/markdown.client.spec.tsx:281` 的 "a growing unclosed fence
+    // extends highlighting"）。所以"途中显示成代码块"不是缺陷；
+    // 要证的是**围栏闭合那一帧形态不变**（不变就不会抖）。
+    const open = '前言\n```dart\nvoid main() {}';
+    const closed = '前言\n```dart\nvoid main() {}\n```';
+
+    /// 只数**我们自己的代码正文**（`SelectableText` 的 data 分支）；
+    /// 段落是 `SelectableText.rich`（textSpan 分支），不算。
+    List<String> codeBodies(WidgetTester tester) => tester
+        .widgetList<SelectableText>(find.byType(SelectableText))
+        .where((w) => w.data != null)
+        .map((w) => w.data!)
+        .toList();
+
+    testWidgets('未闭合围栏：一块代码块 + 前置段落仍在', (tester) async {
+      await pumpMarkdown(tester, open);
+      expect(find.text('代码块'), findsOneWidget, reason: 'banner 要在');
+      expect(codeBodies(tester), ['void main() {}'], reason: '围栏内容进代码块');
+      expect(rendered(tester, '前言'), isTrue, reason: '前置段落不该被吞进代码块');
+    });
+
+    testWidgets('围栏闭合前后：代码块数量与正文一模一样（不抖）', (tester) async {
+      await pumpMarkdown(tester, open);
+      final before = codeBodies(tester);
+      final bannersBefore = tester.widgetList(find.text('代码块')).length;
+      await pumpMarkdown(tester, closed);
+      final after = codeBodies(tester);
+      final bannersAfter = tester.widgetList(find.text('代码块')).length;
+      expect(after, before, reason: '闭合只多了三个反引号，正文不该变');
+      expect(bannersAfter, bannersBefore, reason: 'banner 不该出现/消失');
+    });
+  });
+
   group('normalizeInlineHtml（纯函数）', () {
     test('四种常见标签归一成 Markdown', () {
       expect(normalizeInlineHtml('<b>x</b>'), '**x**');
@@ -126,6 +162,38 @@ void main() {
         contains('final b = <b>x</b>;'),
         reason: '围栏内必须原样（把它改成 ** 就是改用户的内容）',
       );
+    });
+
+    // CommonMark 的围栏记号有两种：``` 与 ~~~（`markdown-7.3.1/lib/src/
+    // block_syntaxes/fenced_code_block_syntax.dart:13`）。第一版只按 ```
+    // 切分，于是 ~~~ 里的 `<T>` 会被当 HTML 改写 —— 那是改用户的代码。
+    test('~~~ 围栏里也一个字都不动', () {
+      const src = '正文<b>粗</b>\n~~~ts\nconst a = <T>x</T>;\n~~~\n结尾';
+      final out = normalizeInlineHtml(src);
+      expect(out, contains('正文**粗**'));
+      expect(out, contains('const a = <T>x</T>;'), reason: '~~~ 是围栏');
+    });
+
+    test('四个反引号围栏里的三反引号**不改变围栏内外**', () {
+      // 这一条专门盯"按 ``` 切分"的旧实现：四个反引号开围栏时，
+      // 里面的 ``` 会让奇偶段翻转，于是围栏内的 `<T>` 被当 HTML 改写。
+      const src =
+          '````md\n```dart\nconst a = <T>x</T>;\n```\n````\n后面<b>要归一</b>';
+      final out = normalizeInlineHtml(src);
+      expect(out, contains('const a = <T>x</T>;'), reason: '四反引号围栏内一律原样');
+      expect(out, contains('后面**要归一**'));
+    });
+
+    test('**未闭合的围栏一直算围栏内**（流式途中就是这个形状）', () {
+      const src = '正文\n```dart\nfinal b = <b>x</b>;';
+      expect(normalizeInlineHtml(src), src, reason: '没闭合就没有"围栏外"可言');
+    });
+
+    test('比开围栏短的记号不能关围栏', () {
+      const src = '```\ncode\n``\n<b>仍在围栏内</b>\n```\n<b>围栏外</b>';
+      final out = normalizeInlineHtml(src);
+      expect(out, contains('<b>仍在围栏内</b>'));
+      expect(out, contains('**围栏外**'));
     });
 
     test('没有 `<` 的串原样返回（绝大多数消息的快路径）', () {

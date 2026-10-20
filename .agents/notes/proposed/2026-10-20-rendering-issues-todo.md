@@ -20,44 +20,62 @@ Status: proposed（**清单，不是决定**；每条都写了"证据状态"，�
 
 ## 未修 / 未验（**本清单要解决的就是这些**）
 
-1. **用户消息是纯 `Text`**（`chat_turns.dart:110-117`）——**现状有意为之**
-   （用户打的是纯文本，不跑 Markdown）。但**未比对** DSH Web 对用户消息是否渲染
-   Markdown/多行。若 DSH 渲染而我们不渲染，就是偏离。
-   **证据状态**：只读了我们的代码，**没查 DSH**。
+> **2026-10-20 第二轮进度**：1 / 3 / 5 / 6 / 7 已改（依据与断言见
+> `implemented/2026-10-20-render-alignment-to-dsh-spec.md`）；2 / 8 已判定
+> "不是缺陷、不改"；4 仍需真机（阶段二）。
 
-2. **附件计数文案「N 个附件（手机上不显示）」**（`chat_turns.dart:118-125`）
+1. **用户消息是纯 `Text`**（`chat_turns.dart:110-117`）——**已核对：与 DSH 一致，不改**。
+   DSH 的用户正文走 `conversation.user.text` → `UserTextRun`
+   （`packages/client/ui-primitives/src/user-text.tsx:18-20`，"without Markdown or
+   reference recognition"），气泡只负责 `white-space: pre-wrap`。我们少的只是
+   `@文件` / `/skill` 引用 chip（那是 `ui-reference` / `ui-skill` 的匹配器，未接）。
+   断言：`test/render_alignment_test.dart` 的"用户消息：DSH 不跑 Markdown"。
+
+2. **附件计数文案「N 个附件（手机上不显示）」**（`chat_turns.dart:127-134`）
    —— 文本诚实（收来的事件只带引用不带字节，要 `session/attachment` 才能读），
    但"手机上不显示"作为长期形态很弱。是否要缩略图取决于要不要接
    `session/attachment` 方法（那是新方法面）。
-   **证据状态**：事实清楚，**产品取舍未定**。
+   **证据状态**：事实清楚，**产品取舍未定**（本轮不改）。
 
-3. **工具卡内部未逐一比对** —— 标题行已是 DSH 规格（`.tool-r` 的
-   min-height 52 / padding 13-14），展开正文刚改过（`ToolDetails.root`），
-   但**正文里的字体与行高**（DSH `--dsw-font-xs-13` / `line-height`）没核对。
-   **证据状态**：未比对。
+3. **工具卡内部未逐一比对** —— **已改**：正文按 `.ioCard` / `.ioSection` / `.ioText`
+   （11/16 等宽、`label-secondary`、上限 150 + 内滚、内边距 12×16），
+   不再是 `ToolDetails.module.css` 的 `.root`（那是结构化字段卡）。
+   断言：`render_alignment_test.dart` 的"工具卡展开正文"。
 
 4. **斜杠命令卡（`CommandCard`）未逐一比对** —— 示例数据里没有 `CommandItem`，
    真机上这一屏还没出现过（端到端验收也列着它）。
-   **证据状态**：未验（demo 无样本 + 未配对）。
+   **证据状态**：未验（demo 无样本 + 未配对）—— 阶段二看。
 
 5. **`_CollapsibleNote`（"系统提示词"那行）是纯 `SelectableText`**
-   （`chat_turns.dart:1347`）—— 与 DSH 的呈现是否一致未比对。
-   **证据状态**：未比对。
+   —— **已改**：行照 `DisclosureRow`（行高 24→36 的触屏偏离、标题 13/24、
+   `label-tertiary`、图标 14），正文分两种：思考 = compact Markdown（13/20、
+   `label-tertiary`、收起时显示首行摘要），系统提示词 / 上下文注入 = 11/16 等宽
+   + 上限 141 的滚动区（`ContextInjectionRow.module.css:50-64`）。
+   系统提示词的图标改成 `browse`（`SystemPromptRow.tsx:30`）。
+   断言：`message_rendering_test.dart` 的"思考过程块"两条 +
+   `render_alignment_test.dart` 的"系统提示词"两条。
 
-6. **表格在窄屏可能横向溢出** —— 我们的 `tableBorder`/`cellsPadding` 已设，
-   但**没有横向滚动容器**；`flutter_markdown` 的表格是 `Table`，
-   超宽时会挤压或溢出。示例里那张表只有两列且很短，**没验过宽表**。
-   **证据状态**：未验（需要一张 5-6 列的超宽表样本）。
+6. **表格在窄屏可能横向溢出** —— **已改**：`tableColumnWidth` 用
+   `IntrinsicColumnWidth`（`flutter_markdown_plus-1.0.12/lib/src/builder.dart:447-463`
+   只在两种列宽下才套横向滚动），于是宽表按自然宽度横滚、不再被压成窄列；
+   边框改成只有行分隔线、表头左对齐、单元格 10×16（`MarkdownText.module.css:192-262`）。
+   **已知偏离**：窄表不铺满（DSH 三列以内会 `width:100%`），
+   且没有 `min-width:100px` / `max-width:30vw` 的等价物。
+   断言：`render_alignment_test.dart` 的"宽表要有横向出路"（360 视口）。
 
-7. **流式文本用 Markdown 渲染**（`chat_page.dart:2684`）——
-   过程判据合理（边生成边渲染），但**未闭合的围栏**（```` ``` ````）在流式途中
-   会把后续内容短暂显示成代码块。是"渲染抖动"的常见来源。
-   **证据状态**：只读了代码，未在真机观察（需要配对）。
+7. **流式文本用 Markdown 渲染**（`chat_page.dart:2684`）—— **已核：不是缺陷**。
+   DSH 的流式 arm 同样把未闭合围栏渲染成代码块并逐块冻结
+   （`ui-primitives/src/markdown/incremental.ts:10-14`）。本轮做的是两件相关的事：
+   ① `normalizeInlineHtml` 改成逐行扫描围栏（`~~~` 也是围栏，未闭合一直算围栏内，
+   否则会改写围栏内的源码）；② 流式尾条目与持久条目共用 `AssistantHead` + `DshMarkdown`，
+   流结束换条目时不再跳一下。
+   断言：`markdown_coverage_test.dart` 的"流式：未闭合围栏"两条 + 围栏扫描四条。
 
-8. **`normalizeInlineHtml` 只处理行内** —— 块级 HTML（`<div>` `<table>`）会被
-   `InlineHtmlSyntax` 之前就当成普通段落，标签被我们去掉、文字留下。
-   这与"渲染 HTML"不是一回事，**用户可能期待块级也渲染**。
-   **证据状态**：行为已知（有测试），**是否要支持未定**。
+8. **`normalizeInlineHtml` 只处理行内** —— **已判定：不改**。DSH 把原始 HTML 当
+   **字面文本**显示（`ui-primitives/src/markdown/render.tsx:333-335`："No HTML parser
+   enters the pipeline: raw HTML stays literal text"），所以"块级 HTML 也渲染"
+   不是 DSH 的行为，我们不该做。我们的偏离（四种行内标签归一、其余去标签保文字）
+   已写进 `docs/subsystems/app-channel-client.md` §4.1 的偏离表。
 
 ## 不算问题（用户 2026-10-20 纠正）
 

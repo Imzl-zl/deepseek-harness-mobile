@@ -364,21 +364,56 @@ void main() {
   });
 
   group('界面：思考过程块', () {
-    testWidgets('默认折叠，点开见全文', (tester) async {
+    // 2026-10-20：收起时**显示首行摘要**（DSH 的 `settledReasoningPreview`，
+    // 默认档 `detailed` 就是开着的：`presentation-policy.ts:36,44`；
+    // 摘要取首行见 `ReasoningRow.tsx:56-69`），正文仍要展开才见。
+    testWidgets('默认收起：只见首行摘要，点开见全文', (tester) async {
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(
             body: SingleChildScrollView(
-              child: AssistantTurn(text: '正文', reasoning: '这是思考过程的内容'),
+              child: AssistantTurn(text: '正文', reasoning: '第一行思考\n第二行思考'),
             ),
           ),
         ),
       );
       expect(find.text('思考过程'), findsOneWidget);
-      expect(find.text('这是思考过程的内容'), findsNothing, reason: '默认收起');
+      expect(find.textContaining('第一行思考'), findsOneWidget, reason: '首行摘要要显示');
+      expect(
+        find.textContaining('第二行思考'),
+        findsNothing,
+        reason: '折叠时正文不该渲染（只有首行摘要）',
+      );
       await tester.tap(find.text('思考过程'));
       await tester.pumpAndSettle();
-      expect(find.text('这是思考过程的内容'), findsOneWidget);
+      expect(
+        find.textContaining('第二行思考', findRichText: true),
+        findsOneWidget,
+        reason: '展开后正文按 Markdown 渲染，整段都在',
+      );
+    });
+
+    // 正文形态：DSH 的思考正文是 `MarkdownText variant="compact"`
+    // （`ReasoningContent.tsx:16`）—— 所以 `**加粗**` 要渲染成粗体，
+    // 而不是把星号原样露出来。
+    testWidgets('思考正文跑 Markdown（compact 档）', (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: AssistantTurn(text: '正文', reasoning: '看 **重点** 这里'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('思考过程'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('**重点**'),
+        findsNothing,
+        reason: 'Markdown 记号不该原样露出',
+      );
+      expect(find.textContaining('重点', findRichText: true), findsOneWidget);
     });
   });
 
