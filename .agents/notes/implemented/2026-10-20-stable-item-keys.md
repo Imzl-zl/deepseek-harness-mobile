@@ -59,13 +59,19 @@ GlobalKey _keyOf(String itemId) => _keysById.putIfAbsent(itemId, GlobalKey.new);
 
 ## 验证
 
-- `flutter test 887` 全绿（key 的用法变了，所有涉及会话流渲染的用例都跑过）。
-- **一个缺口，如实记下**：这次**没有**自动化判据证明"展开的工具卡在来新事件后
-  仍展开" —— 要证明它，测试里得让 `items` 真的变化，也就是给 `FakeSyncClient`
-  实现 `sessionUpdates` 并推一条 delta（替身基类现在是"没声明就抛"）。
-  那是下一步该补的，**我没有假装测过**。
-  补之前的替代证据：这条改动的正确性依赖 Flutter 的一条已文档化的语义
-  （key 相同 ⇒ 复用元素与 State），而改动本身把"每帧换 key"变成了"同一
-  `itemId` 恒等 key"，方向是确定的。
-  真机判据（配对后）：发一句让它输出，中途展开一张工具卡，
-  **它应当一直开着**直到手动收起。
+- `flutter test 888` 全绿。
+- **判据补上了**（`widget_test.dart` 的「会话流按 itemId 复用 key」组）：
+  起示例会话 → 点开 `write` 卡（断言 `detail` 出现）→ 调 `loadPreview()`
+  造出"同一批 `itemId`、新的列表实例"（**这正是任何一条新事件到达时的形状**）
+  → 断言 `detail` **仍在**。
+- **一处变异验证**：把 `_keyOf` 改回 `=> GlobalKey()`（等于旧行为：每次新建
+  key）→ 该条**红**。所以这条用例真的能抓住这个 bug，不是摆设。
+- 两个构造上的坑（写进注释，免得下次重踩）：
+  1. 这张卡在示例会话里偏下，而 `ListView` 懒构建、屏外条目不在树上 ——
+     用**把测试视口拉高**（`tester.view.physicalSize`）解决；
+     用 `scrollUntilVisible` 反而更脆（本页不止一个 `Scrollable`，
+     解析时 "Too many elements"）。
+  2. `ToolCard` 的 `onTap` 是 `hasDetail ? … : null`，而示例数据原先一条
+     `detail` 都没有 ⇒ **示例模式下所有工具卡都点不开**，这个 bug 也就
+     "看得到现象、构造不出场景"。所以先给示例的 `write` 卡补了 `detail`。
+

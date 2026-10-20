@@ -1609,4 +1609,46 @@ void main() {
       expect(() => first.clear(), throwsUnsupportedError);
     });
   });
+
+  group('会话流按 itemId 复用 key（展开的卡片不会被自己收起）', () {
+    // 这里守的是一个**用户看得见**的 bug（2026-10-20 修）：原来每次条目变化都
+    // `List.generate(items.length, (_) => GlobalKey())` —— 换 key 等于让每一行
+    // **重新挂载**，而 `ToolCard` 的展开状态存在 `State` 里，于是"展开一张工具卡，
+    // 只要来一条新事件它就自己收起"。
+    //
+    // 判据要能区分两条路：**只有"条目换了但 id 没变"**才能暴露它 ——
+    // 所以下面用 `loadPreview()` 再跑一遍（同一批 itemId，新的列表实例）。
+    const detail = '写入了 100 个图标常量';
+
+    testWidgets('展开后换一份 items：**仍然展开**', (tester) async {
+      // 视口拉高：`ListView` 懒构建，屏外条目根本不在树上，
+      // 而这张卡在示例会话里偏下。用视口而不是滚动手势 ——
+      // 后者要挑 `Scrollable`（本页不止一个），脆弱。
+      tester.view.physicalSize = const Size(1080, 4000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final app = AppModel(client: FakeClient())..loadPreview();
+      await tester.pumpWidget(_wrap(app));
+      await tester.pumpAndSettle();
+      await app.openSession('preview-2');
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining(detail), findsNothing, reason: '默认收起');
+      await tester.tap(find.text('write'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining(detail), findsOneWidget, reason: '点开应展开');
+
+      // 触发一次"条目换了一份、但 itemId 没变"的重建 ——
+      // 这正是任何一条新事件到达时的形状。
+      app.loadPreview();
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining(detail),
+        findsOneWidget,
+        reason: '换 key 会让这一行重新挂载 ⇒ 展开状态丢失（本用例就是钉这个）',
+      );
+    });
+  });
 }
