@@ -104,9 +104,35 @@ Status: proposed（**清单，不是决定**；每条都写了"证据状态"，�
     `tool/call.callId` 与 `userQuestions` 投影的 `active[].callId` 上
     （`types.ts:76,142`）。我们只在 `request.wait?.callId` 上取
     （`connector/src/dsh/interactions.ts:205`），于是**所有未计时的提问都答不了**。
-    修法方向：从会话事件里最近一条未应答的 `ask_user_question` 工具调用取 `callId`
-    （我们已经在收 `tool/call`），或从 `userQuestions` 投影的 `active[]` 里按问题内容配对；
-    两条都要在 `connector/tests/` 里钉住"未计时提问也能答"。
+    修法方向（**下一轮照这个做**）：`userQuestions` 投影的 `active[].callId`
+    就是权威身份，而 `sessionProjections` 已经是连接器的依赖
+    （`connector/src/dsh/questions.ts:76-136` 已在读它）。所以：
+    1. `InteractionDeps` 加一个端口 `resolveQuestionCallId(dshSessionId, questions)`
+       （`connector/src/dsh/interactions.ts:88-93` 那一层，保持"内核不 import DSH"）；
+    2. `index.ts` 用它读 `sessionProjections.stateOf(session,'userQuestions').active`，
+       按问题 id 集合配对（多个 active 时取**问题 id 完全一致**的那条，配不上就 fail-closed
+       抛原来那句，绝不猜）；
+    3. `request.wait?.callId` 仍然优先（timed 提问有它，直接信它）；
+    4. `connector/tests/` 钉两条：**未计时提问能答**、**配不上时仍 fail-closed**。
+
+11. **电脑侧停一会儿，手机会把"连不上"当成"这台电脑不认我"，清掉配对回配对页**。
+    2026-10-20 实测：把隔离实例（中转 + DSH）停掉约 2 分钟再起，手机已经**自动回到配对页**
+    并显示「这台电脑已不再认可本机」—— 而电脑侧的 devices 表里那台设备还在、没吊销
+    （`GET /api/dsh-mobile/status` 能看到 `paired:1`）。
+    链路：中转**进程重启后名册是空的**（`relay/src/device-registry.ts:85-94` 的
+    `authenticate` 对"没见过"回 `undefined`），连接器要等 `onConnected: publishDevices`
+    （`connector/src/index.ts:890`）把名册重新报上去；在这个窗口里设备换票拿到
+    **401**（`relay/src/http-face.ts:59-61`），而 App 把 401 归成
+    `notPaired`（`app/lib/core/pairing_client.dart:78-84`）⇒ 终态 ⇒ 清凭据
+    （`app/lib/core/sync_client_impl.dart:311-319` 的注释写明这是有意的终态）。
+    中转其实已经区分了"电脑离线"（`relay/src/http-face.ts:70`，回 503），
+    但它区分不了"从没见过"与"被吊销"。
+    两个修法方向（**下一轮定一个**）：
+    - 中转侧：名册行**持久化**（或在"连接器未注册过"时回 503 + `retry-after`），
+      让"未知设备"不再等于"需要重配"；
+    - App 侧：401 只在**连接器明确拒绝**（握手 close 4003 / `protocol/revoked`）时才终态，
+      换票 401 先按可重试处理（带次数上限），避免一次中转重启就丢配对。
+    判据：停掉电脑侧 → 重启 → 手机**不需要重扫**、自动连回。
 
 
 ## 不算问题（用户 2026-10-20 纠正）
@@ -117,6 +143,45 @@ Status: proposed（**清单，不是决定**；每条都写了"证据状态"，�
 
 示例数据本身可只留给测试用；它在生产路径上只由「看示例数据」这一个
 显式动作触发，不会冒充真实数据，所以暂时留着没有害处 —— 但**不必为它加样本**。
+
+## 隔离实例这一轮的验收状态（2026-10-20 22:00）
+
+起法（已跑通，下一轮照抄）：`$env:DSH_HOME='D:\tmp\dsh-e2e'` → 从 web 模板建 profile
+→ `dsh plugin --profile mobile-e2e add <connector>` → 中转 `node relay/src/main.ts --config
+D:\tmp\dsh-e2e\relay.config.json` → `dsh --profile mobile-e2e --port 63900 --no-open`
+→ 出码用 `D:\tmp\dsh-e2e\pair-payload.mjs`（把 `POST /api/dsh-mobile/pair` 的 svg 解回
+payload，因为该端点**只回 svg 不回 payload**，`connector/src/admin/routes.ts:241-244`）
+→ 手机粘到配对页的输入框（IME 会弹"剪贴板与常用语"，点"不同意"后输入框仍有焦点）。
+
+| 项 | 状态 |
+|---|---|
+| 流式正文边生成边显示 | **已验**（截图：正文逐段长出来） |
+| 代码块 / banner / 复制 | **已验** |
+| 宽表横向滚动 | **已验**（六列，左滑看到 Orbit/Notes） |
+| 工具卡 + 展开 | **已验**（`pwsh` 卡，展开区 11/16 等宽） |
+| 轮摘要真实用时与计数 | **已验**（`第 4 轮 12 分 12 秒 · 6 条消息 · 5 次工具`） |
+| 上下文注入三行 | **已验**（修复后是 `上下文注入 · runtime-context` 等三行） |
+| 审批接管卡 + 允许一次 | **已验**（真跑通一次越权写入，ACL 脚本落盘） |
+| 斜杠命令 | **半验**：`/goal` 被当成普通消息发出去了（不是命令卡），见下 |
+| 附件（＋→照片→芯片→发送→计数） | **未验**：两次都被系统"剪贴板与常用语"对话框打断 |
+| 历史翻页 | **未验**：快照页 100 条（`connector/src/protocol/recovery.ts:113-115`），本轮没造出那么多真历史 |
+| 异常结局 / 重试 / 压缩标记 | **未验**：需要制造失败/重试/压缩，本轮没做 |
+
+**斜杠命令那条要查**（已查清，2026-10-20 23:10）：`/goal finish the render acceptance`
+发出去后模型回了一句 "The user typed /goal …" —— 它是被当成**普通用户消息**发的。
+根因不在渲染：DSH 的命令执行面是 `commands.execute(agent, line)`
+（`packages/interaction/commands/src/index.ts:360-367`，里面才是
+`parseCommand(line)` `:125-128`），而**我们的方法面没有这个命令**
+（`connector/src/protocol/methods.ts` 只有 `permission.switch` 那条"内部拼
+`/permission <preset>`"的路，见同文件 `:70` 的注释）。所以：
+- `/` 开头的输入走 `session.prompt` ⇒ 模型看到的是文本，不会有 `command/run`；
+- `CommandCard` 只会在**电脑侧执行过命令**时出现（例如 Web 里敲 `/goal`，
+  或手机切权限触发的 `/permission`），手机自己发不了命令。
+
+下一轮要做的：加一条 `command.execute`（幂等键与 `session.prompt` 同款），
+手机侧把 `/` 开头的输入走它、并把返回的 `CommandResult` 呈现出来
+（DSH 的 `CommandResult` 只有 text，`types.ts:34`）。**这与"命令卡渲染"是两件事**，
+卡片已经在单测里钉住（`command_item_test.dart`）。
 
 ## 端到端验收：起隔离实例（可行，已查实）
 
