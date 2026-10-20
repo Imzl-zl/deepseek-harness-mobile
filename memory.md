@@ -70,7 +70,11 @@
     已补 `composer` / `borderL2` token + 三层 `boxShadow`（发丝环
     `spreadRadius:0.5` + 两层模糊），外层底色改 `bgBase`。
     见 `.agents/notes/implemented/2026-10-20-composer-elevation-soft.md`。
-    **唯一剩下的视觉疑点**：顶栏那条 `#F1F3F5` 灰带（用户没提，未动）。
+    **顶栏那条灰带也一起修了**（同一个错）：DSH 的 `.header`
+    （`ConversationRoot.module.css:15`）**只画 `border-bottom: 0.5px
+    border-l3`、没有 background** —— 顶栏与页面同色。
+    改后整页是一个连续白面（顶栏白+发丝线 / 会话区白 / 输入栏浮卡）。
+    `sidebar` 色仍用于抽屉/设置/配对页（那些确实是"侧栏表面"）。
 2. **剩下四件事的真机验收**（投影/渲染/接线都有单测，其中三处含**变异验证**）：
    - **流式文本**：判据是用户发一句话，正文边生成边显示。
    - **斜杠命令卡**：判据是在有 `/goal` 或 `/compact` 的会话里看到卡片。
