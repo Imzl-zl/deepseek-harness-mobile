@@ -623,7 +623,17 @@ class ChatPageState extends State<ChatPage> {
           ),
           // ---- 底部：接管卡 + 输入栏 + 统计条 ----
           Container(
-            color: c.sidebar,
+            // **`bgBase`，不是 `sidebar`**（2026-10-20 修）。
+            //
+            // 用户反馈："下面有一块都没覆盖"。实测（深色，`x=30` 竖向）：
+            // 页面 `#151517` 到 `y=2341`，**`y=2343` 起到底边是 `#1B1B1C`**
+            // —— 正好是 `c.sidebar` 的暗色值，高度 ≈ 系统导航条 + 6。
+            //
+            // 根因：输入栏内部（`DshComposer`）为了去掉灰带已改用 `bgBase`，
+            // 但**外面这层包裹仍是 `sidebar`**，而它下面有一条
+            // `padding.bottom + 6` —— 输入栏盖不到那块，就露出一条 sidebar 色。
+            // 也就是说灰带没被"去掉"，而是被挤到了最底部一条缝里。
+            color: c.bgBase,
             padding: EdgeInsets.only(
               bottom: MediaQuery.of(context).padding.bottom + 6,
             ),

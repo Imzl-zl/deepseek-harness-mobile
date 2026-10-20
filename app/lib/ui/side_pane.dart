@@ -452,10 +452,23 @@ class _JobPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.dshColors;
     if (jobs.isEmpty) {
+      // **必须 `textAlign: center`**（2026-10-20 用户反馈："子智能体空态文字
+      // 不居中看着好难受"）：`Center` 只把**这个 Text 盒子**放中间，
+      // 盒子里的多行文本仍按 `start` 对齐。子智能体那句较长会折成两行，
+      // 折行后第二行就左对齐了 —— 看起来像"没居中"。
+      // 加左右留白则是为了长句不贴着卡片边缘折行。
       return Center(
-        child: Text(
-          emptyText,
-          style: TextStyle(fontSize: 13, color: c.labelTertiary),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Text(
+            emptyText,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              height: 20 / 13,
+              color: c.labelTertiary,
+            ),
+          ),
         ),
       );
     }

@@ -20,6 +20,7 @@ import 'dart:ui' show PlatformDispatcher;
 
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 import 'core/box.dart';
 import 'core/crypto.dart';
 import 'core/endpoint.dart';
@@ -345,6 +346,49 @@ class _DshMobileAppState extends State<DshMobileApp>
           DshThemeMode.dark => ThemeMode.dark,
         },
         navigatorKey: navigatorKey,
+        // **系统栏（状态栏 / 导航栏）跟主题走**（2026-10-20）。
+        //
+        // 用户反馈："背景是不是不是全屏的？下面有一块都没覆盖"。
+        // 实测（真机 1080×2400，深色主题，`x=30` 竖向扫描）：页面是
+        // `#151517` 一直到 `y=2341`，但从 **`y=2342` 到屏幕底**是 `#19191A` ——
+        // 约 19dp 的一整条，颜色与页面底不同。那不是我们的组件画的：
+        // 我们的 `Scaffold.backgroundColor` 就是 `c.bgBase`。
+        //
+        // 根因（**照 SDK 文档，不是猜**）：
+        // 1. `SystemUiMode` 的枚举注释写明 —— "If your app targets Android SDK 16
+        //    (API 36) or later, then the Android system will ignore this value"；
+        //    本机是 API 36、`targetSdk` 也是 36（`adb shell getprop
+        //    ro.build.version.sdk` = 36），所以 `SystemUiMode` 那条路已经无效。
+        // 2. `SystemUiMode.edgeToEdge` 的注释写明系统栏**永久显示在应用之上**，
+        //    并指到 `SystemUiOverlayStyle`："can be used to configure transparent
+        //    status and navigation bars with or without a contrast scrim"。
+        // ⇒ 唯一有效的杠杆是 `SystemUiOverlayStyle`：把两条栏都设成**透明**，
+        //    系统就不再在那块画自己的底色，我们自己的 `#151517` 直接透出来；
+        //    图标亮暗跟随主题，浅色主题下才看得见。
+        //
+        // 用 `AnnotatedRegion` 而不是 `SystemChrome.setSystemUIOverlayStyle`：
+        // 前者是**声明式**的（随路由/主题生效），后者是命令式的全局副作用，
+        // 在主题热切换时会与真实状态漂移。
+        builder: (context, child) {
+          final dark = Theme.of(context).brightness == Brightness.dark;
+          return AnnotatedRegion<SystemUiOverlayStyle>(
+            value: SystemUiOverlayStyle(
+              statusBarColor: Colors.transparent,
+              statusBarIconBrightness: dark
+                  ? Brightness.light
+                  : Brightness.dark,
+              // iOS 的状态栏亮度语义务与 Android 相反（SDK 的
+              // `statusBarBrightness` 注释），所以按平台给。
+              statusBarBrightness: dark ? Brightness.dark : Brightness.light,
+              systemNavigationBarColor: Colors.transparent,
+              systemNavigationBarDividerColor: Colors.transparent,
+              systemNavigationBarIconBrightness: dark
+                  ? Brightness.light
+                  : Brightness.dark,
+            ),
+            child: child ?? const SizedBox.shrink(),
+          );
+        },
         home: _body(),
       ),
     );
