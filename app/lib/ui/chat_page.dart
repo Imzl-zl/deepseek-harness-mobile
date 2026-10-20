@@ -542,7 +542,6 @@ class ChatPageState extends State<ChatPage> {
           onPanelChanged: (p) => setState(() => _sidePanel = p),
           onClose: _closeSide,
           fileBody: _fileBody(),
-          fileActions: _fileActions(),
           jobs: jobs,
           subs: subs,
           runningJobs: runningJobs,
@@ -951,12 +950,15 @@ class ChatPageState extends State<ChatPage> {
   }
 
   SideHeader _sideHeader() => switch (_sidePanel) {
-    SidePanel.file => const SideHeader(
-      title: 'chat_page.dart',
-      subtitle: 'app/lib/ui/chat_page.dart',
-      added: 128,
-      removed: 46,
-    ),
+    // **不再写死一个文件名与 diff 统计**（2026-10-20）：这里原来恒返回
+    // `chat_page.dart` / `app/lib/ui/chat_page.dart` / `+128 −46`，
+    // 而面板体（`_fileBody`）显示的是「还没有改动」——
+    // **表头声称某个文件有 128 行改动，面板体说根本没有改动**。
+    // 那不是"示例"，是在生产路径上摆假数据（与会静默丢弃的假附件同类）。
+    //
+    // 等文件面板接上真的 `deliverables` 投影再从数据里取标题与统计；
+    // 在那之前表头只说实话（与面板体的空态同一口径）。
+    SidePanel.file => const SideHeader(title: '文件'),
     SidePanel.jobs => const SideHeader(title: '后台任务'),
     SidePanel.subs => const SideHeader(title: '子智能体'),
   };
@@ -980,31 +982,12 @@ class ChatPageState extends State<ChatPage> {
     );
   }
 
-  Widget? _fileActions() {
-    if (_sidePanel != SidePanel.file) return null;
-    return Row(
-      children: [
-        _FileAction(
-          icon: 'copy',
-          label: '复制路径',
-          onTap: () => _notWired('复制路径'),
-        ),
-        const SizedBox(width: 8),
-        _FileAction(
-          icon: 'rightUp',
-          label: '在电脑打开',
-          onTap: () => _notWired('在电脑打开'),
-        ),
-        const SizedBox(width: 8),
-        _FileAction(
-          icon: 'share',
-          label: '分享',
-          filled: true,
-          onTap: () => _notWired('分享'),
-        ),
-      ],
-    );
-  }
+  // **文件面板底部那三个动作已移除**（2026-10-20）：`复制路径` /
+  // `在电脑打开` / `分享` 全都只弹「还没做」，而它们挂在**根本没有内容**的
+  // 文件面板上（面板体是 `_EmptyFilePane`）。`settings_page.dart` 的文件头
+  // 早就写下这条纪律：「一行点下去只弹"还没做"的假入口，比没有这一行更糟
+  // （用户会以为功能坏了）」。等文件面板接上真的 `deliverables` 再一起做
+  // —— 那时"复制路径"才有路径可复制。
 
   /// 一条普通提示（操作结论）。
   ///
@@ -1948,57 +1931,6 @@ class _SheetEmptyNote extends StatelessWidget {
         what,
         textAlign: TextAlign.center,
         style: TextStyle(fontSize: 13, color: c.labelTertiary),
-      ),
-    );
-  }
-}
-
-/// 文件面板底部的动作按钮（`.btn--out` / `.btn--fill`）。
-class _FileAction extends StatelessWidget {
-  const _FileAction({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.filled = false,
-  });
-
-  final String icon;
-  final String label;
-  final VoidCallback onTap;
-  final bool filled;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.dshColors;
-    return Expanded(
-      child: Material(
-        color: filled ? c.layer3 : Colors.transparent,
-        borderRadius: BorderRadius.circular(DshRadius.md),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Container(
-            height: 38,
-            alignment: Alignment.center,
-            decoration: filled
-                ? null
-                : BoxDecoration(
-                    borderRadius: BorderRadius.circular(DshRadius.md),
-                    border: Border.all(color: c.layer3),
-                  ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                DshIcon(icon, size: 14, color: c.labelSecondary),
-                const SizedBox(width: 6),
-                Text(
-                  label,
-                  style: TextStyle(fontSize: 12.5, color: c.labelSecondary),
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }
