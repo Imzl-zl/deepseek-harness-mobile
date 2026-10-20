@@ -67,6 +67,37 @@ String contextProducerLabel(Object? data) {
 /// 而名字与参数在 `tool/call` 上。DSH Web 的同一步是
 /// `conversation-nodes/tool.ts:100-118` 的 `rootResult(match, previous)`：
 /// `name: previous?.name ?? ''`、`args: previous?.args`、`call: {name, argsRaw}` ——
+/// 一轮已收录条目的统计（调用方按 seq 区间数好给进来）。
+///
+/// **为什么是一个带默认值的类而不是 record**：record 的每个字段都必须到齐，
+/// 于是每个只关心"消息数"的调用点都得写全 5 个字段（第一版就这么被测试
+/// 编译错误逼回头）。这里只有 `messages`/`tools`/`subagents` 有语义上的
+/// "0"（该轮没有），`usage`/`text` 缺省就是"没有"。
+class TurnStats {
+  const TurnStats({
+    this.messages = 0,
+    this.tools = 0,
+    this.subagents = 0,
+    this.usage,
+    this.text = '',
+  });
+
+  /// 该轮带回复的助手消息条数。
+  final int messages;
+
+  /// 该轮的工具调用次数（不含子智能体委派）。
+  final int tools;
+
+  /// 该轮的子智能体委派次数。
+  final int subagents;
+
+  /// 该轮的 token 用量（该轮各条 `assistant/message.usage` 相加）。
+  final TurnTokenUsage? usage;
+
+  /// 该轮助手回复的正文（多步按 seq 顺序拼）—— 「复制」要复制它。
+  final String text;
+}
+
 /// **结果继承调用**。没有这一层继承，`tool/result` 一到达就把卡片上的
 /// `read` 覆盖成"工具"、把参数行覆盖成 JSON 键名（2026-10-19 真机复现）。
 ///
@@ -87,7 +118,7 @@ ChatProjection projectEvent({
   bool steering = false,
   ChatItem? previous,
   int? turnStartTime,
-  ({int messages, int tools, int subagents})? turnStats,
+  TurnStats? turnStats,
 }) {
   // `itemId` 的推导只走 `core/items.dart`（契约 §5.2）：那是**唯一**一处，
   // 而它可能在已知类型缺字段时抛错（宁可让这一帧失败，也不要造一个会漂移的身份）。
@@ -105,6 +136,7 @@ ChatProjection projectEvent({
         attachmentCount: message.attachmentCount,
         steering: steering,
         reasoning: message.reasoning,
+        usage: message.usage,
         // 系统 / 上下文注入行的**标签**（DSH 的 `system-prompt` 与 `context`
         // 两个节点各有一个标题行，见 `register-node-renderers.ts:45,49`）。
         // 用户与助手消息没有它（它们有头像与名字）。
@@ -327,6 +359,8 @@ ChatProjection projectEvent({
       messageCount: turnStats?.messages ?? 0,
       toolCallCount: turnStats?.tools ?? 0,
       subagentCount: turnStats?.subagents ?? 0,
+      usage: turnStats?.usage,
+      copyText: turnStats?.text ?? '',
       failed: failed,
       stopped: stopped,
     );
@@ -549,11 +583,20 @@ class MessageProjection {
     required this.text,
     this.attachmentCount = 0,
     this.reasoning = '',
+    this.usage,
   });
 
   final String text;
   final int attachmentCount;
   final String reasoning;
+
+  /// 这条助手消息那一次请求的用量（`assistant/message` 的 `data.usage`）。
+  ///
+  /// **在 `data` 顶层，不在 `data.message` 里** —— 真日志实测：
+  /// `data` 的键是 `turn, step, message, usage, stream`
+  /// （`assistant/message` 共 8634 条都带 `usage`）。
+  /// 它也是 DSH 折 turn 用量的入口（`turn-usage.ts:246`）。
+  final TurnTokenUsage? usage;
 }
 
 /// 取消息正文（以及附件数与思考过程）。
@@ -572,6 +615,10 @@ MessageProjection messageProjectionOf(String type, Object? data) {
     // 助手消息的 content 里可能有 `{type:'reasoning', text}` 块
     // （真实会话日志里就有）；用户消息没有。
     reasoning: type == 'assistant/message' ? reasoningOf(content) : '',
+    // 用量在 `data` 顶层（见 [MessageProjection.usage]）。
+    usage: type == 'assistant/message'
+        ? TurnTokenUsage.fromWire(fieldOf(data, 'usage'))
+        : null,
   );
 }
 

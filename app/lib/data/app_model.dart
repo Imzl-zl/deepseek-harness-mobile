@@ -2124,16 +2124,23 @@ class AppModel extends ChangeNotifier {
   /// （连它都没有，说明这一轮的开始不在已加载的窗口里）——
   /// 区间不明就不数，与"拿不到就不显示"同一条纪律（0 项在
   /// `TurnProcessItem.stats` 里不列，不会摆出"0 条消息 · 0 次工具"）。
-  static ({int messages, int tools, int subagents}) _turnStatsOf(
+  static TurnStats _turnStatsOf(
     SessionStore store,
     Map<String, ChatItem> inBatch,
     int? startSeq,
     int endSeq,
   ) {
-    if (startSeq == null) return (messages: 0, tools: 0, subagents: 0);
+    if (startSeq == null) return const TurnStats();
     var messages = 0;
     var tools = 0;
     var subagents = 0;
+    // **该轮各条助手消息的用量相加** —— 一个 turn 有多步，每步一条
+    // `assistant/message`（真日志：8641 个 step/start 对 8634 条
+    // assistant/message）。DSH 的 `aggregateAttempts` 也是把该轮各次尝试的
+    // `totalTokens` 相加（`turn-usage.ts:130`），不是取最后一条。
+    TurnTokenUsage? usage;
+    // 该轮助手回复的正文（多步按 seq 顺序拼）—— 「复制」那一枚要复制它。
+    final assistantTexts = <({int seq, String text})>[];
     // **本批优先、落表兜底**：同一条目可能两处都有（`tool/call` 在本批、
     // 更早的 `tool/result` 在表里），按 itemId 去重后各计一次。
     final seen = <String>{};
@@ -2142,6 +2149,11 @@ class AppModel extends ChangeNotifier {
       if (item.seq < startSeq || item.seq > endSeq) continue;
       if (item is MessageItem && item.role == MessageRole.assistant) {
         messages += 1;
+        final sample = item.usage;
+        if (sample != null) usage = usage == null ? sample : usage + sample;
+        if (item.text.trim().isNotEmpty) {
+          assistantTexts.add((seq: item.seq, text: item.text));
+        }
       } else if (item is ToolCallItem) {
         if (_isSubagentDelegation(item.name)) {
           subagents += 1;
@@ -2150,7 +2162,14 @@ class AppModel extends ChangeNotifier {
         }
       }
     }
-    return (messages: messages, tools: tools, subagents: subagents);
+    assistantTexts.sort((a, b) => a.seq.compareTo(b.seq));
+    return TurnStats(
+      messages: messages,
+      tools: tools,
+      subagents: subagents,
+      usage: usage,
+      text: assistantTexts.map((e) => e.text).join('\n\n'),
+    );
   }
 
   /// 这次工具调用是不是**子智能体委派**（DSH 的 `isSubagentDelegationTool`）。

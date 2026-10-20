@@ -46,6 +46,87 @@ sealed class ChatItem {
   final int updatedAt;
 }
 
+/// 一次请求的 token 用量（`assistant/message` 的 `data.usage`）。
+///
+/// ## 形状来自真日志，不是推断
+///
+/// 从 `~/.dsh/sessions/**/session.v4.jsonl.zstd` 解出的一条实测样本：
+///
+/// ```json
+/// {"inputTokens": 66352, "outputTokens": 110,
+///  "totalTokens": 94408, "cacheReadTokens": 27946}
+/// ```
+///
+/// 且它**确实挂在 `assistant/message.data.usage` 上**（真日志 8634 条），
+/// 这正是 DSH 折 turn 用量的入口
+/// （`packages/llm/token-meter/src/turn-usage.ts:246` 的 `event.data.usage`）。
+///
+/// ## `inputTokens` 是**未缓存**输入
+///
+/// 由上面那组数验算：`totalTokens − outputTokens = 94408 − 110 = 94298`，
+/// 而 `inputTokens + cacheReadTokens = 66352 + 27946 = 94298` ✓。
+/// DSH 的 `aggregateAttempts` 也把它叫 `uncachedInputTokens`
+/// （`turn-usage.ts:150-151`）。
+class TurnTokenUsage {
+  const TurnTokenUsage({
+    required this.inputTokens,
+    required this.outputTokens,
+    required this.totalTokens,
+    this.cacheReadTokens,
+    this.cacheWriteTokens,
+  });
+
+  /// 未缓存的输入 token。
+  final int inputTokens;
+  final int outputTokens;
+
+  /// 这次请求的总量（含缓存读取）。
+  final int totalTokens;
+
+  final int? cacheReadTokens;
+  final int? cacheWriteTokens;
+
+  /// 从事件载荷解析。**`totalTokens` / `outputTokens` / `inputTokens` 缺一个
+  /// 就整个不要** —— DSH 的 `normalizeUsage` 也是要么给全、要么 `undefined`
+  /// （`turn-usage.ts:100-113`），而"缺一个就当 0"会把 `0 tok` 显示成真数据。
+  static TurnTokenUsage? fromWire(Object? data) {
+    if (data is! Map) return null;
+    final input = data['inputTokens'];
+    final output = data['outputTokens'];
+    final total = data['totalTokens'];
+    if (input is! int || output is! int || total is! int) return null;
+    if (input < 0 || output < 0 || total < 0) return null;
+    final cacheRead = data['cacheReadTokens'];
+    final cacheWrite = data['cacheWriteTokens'];
+    return TurnTokenUsage(
+      inputTokens: input,
+      outputTokens: output,
+      totalTokens: total,
+      cacheReadTokens: cacheRead is int && cacheRead >= 0 ? cacheRead : null,
+      cacheWriteTokens: cacheWrite is int && cacheWrite >= 0
+          ? cacheWrite
+          : null,
+    );
+  }
+
+  /// 两次请求相加（一个 turn 里有多步时用）。
+  TurnTokenUsage operator +(TurnTokenUsage other) => TurnTokenUsage(
+    inputTokens: inputTokens + other.inputTokens,
+    outputTokens: outputTokens + other.outputTokens,
+    totalTokens: totalTokens + other.totalTokens,
+    // **缓存两档只在双方都有时才求和** —— 一边缺就整体不知道，
+    // 摆一个偏小的数会让人以为缓存命中很差（与 DSH 的
+    // `cacheRead.every(isCount) ? safeSum(...) : undefined` 同一条，
+    // `turn-usage.ts:136-138`）。
+    cacheReadTokens: cacheReadTokens == null || other.cacheReadTokens == null
+        ? null
+        : cacheReadTokens! + other.cacheReadTokens!,
+    cacheWriteTokens: cacheWriteTokens == null || other.cacheWriteTokens == null
+        ? null
+        : cacheWriteTokens! + other.cacheWriteTokens!,
+  );
+}
+
 /// 用户 / 助手 / 系统发的一条消息。
 class MessageItem extends ChatItem {
   const MessageItem({
@@ -58,6 +139,7 @@ class MessageItem extends ChatItem {
     this.steering = false,
     this.reasoning = '',
     this.systemLabel,
+    this.usage,
   });
 
   final MessageRole role;
@@ -95,6 +177,12 @@ class MessageItem extends ChatItem {
   /// 2026-10-19 之前这两种消息被渲染成**正文原样内联** —— 而系统提示词
   /// 在真日志里有上万字符，于是对话流开头横着一条巨墙（真机复现）。
   final String? systemLabel;
+
+  /// 这条助手消息那一次请求的 token 用量；`null` = 事件没带（老日志 / 用户消息）。
+  ///
+  /// 一个 turn 里可能有多步，每步一条 `assistant/message` —— 所以 turn 的
+  /// 用量是**这些值相加**（`TurnProcessItem.usage`），不是取最后一条。
+  final TurnTokenUsage? usage;
 }
 
 /// 一次斜杠命令（`command/run` 与 `command/done` 共用同一个 `itemId`）。
@@ -328,6 +416,8 @@ class TurnProcessItem extends ChatItem {
     this.subagentCount = 0,
     this.failed = false,
     this.stopped = false,
+    this.usage,
+    this.copyText = '',
   });
 
   /// 第几轮。
@@ -354,6 +444,26 @@ class TurnProcessItem extends ChatItem {
 
   /// 这一轮是被中止/中断的（`aborted` / `interrupted`）。
   final bool stopped;
+
+  /// 这一轮的 token 用量（该轮内各条 `assistant/message.usage` 相加）。
+  ///
+  /// `null` = 该轮没有任何一条带 usage 的助手消息（或它们的字段不全）。
+  /// **不摆一个 0** —— 那会把"没数据"说成"用了 0"。
+  ///
+  /// DSH 的同一个数在 `turn-tail` 的用量 pill 上（`TurnUsagePanel.tsx:18-20`，
+  /// 文案 `用量 {formatTokens(total)} tok`），算法是
+  /// `aggregateAttempts` 把该 turn 各次尝试的 `totalTokens` 相加
+  /// （`packages/llm/token-meter/src/turn-usage.ts:130`）。
+  final TurnTokenUsage? usage;
+
+  /// 「复制」这一行要复制的东西：**该轮助手回复的正文**（多步时按顺序拼）。
+  ///
+  /// 空串 = 这一轮没有可复制的正文（纯工具轮 / 失败在中途）——
+  /// 那时不显示复制钮，而不是复制一个空字符串（那会让人以为复制成功了）。
+  ///
+  /// DSH 的复制在 `turn-tail` 行上（`MessageIconActions.tsx:85-89`），
+  /// 复制的就是收口那条助手消息的正文。
+  final String copyText;
 
   /// 一行的标题部分：`第 3 轮`。
   String get title => '第 $turn 轮';

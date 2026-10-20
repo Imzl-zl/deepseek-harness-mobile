@@ -13,14 +13,20 @@
 /// 我的版本把三者都压成了一行。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../data/projection.dart';
 import '../model/chat_item.dart';
+import '../model/session_stats.dart'
+    show formatCacheHitPercent, formatTokenCount;
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 import 'dsh_markdown.dart';
+import 'dsh_sheet.dart';
 
 /// 用户消息（`.turn--u`）。
 class UserTurn extends StatelessWidget {
@@ -887,12 +893,30 @@ class _CompactionRowState extends State<CompactionRow> {
 /// DSH 同处是一个 `<button>`（可折叠收起该轮内容），视觉上是**一行文字**。
 /// 手机这一版不做"收起该轮"（那是组级交互，而我们没有 turn 组），
 /// 所以它就是一条纯展示的行 —— 放在一轮的末尾当收口。
-class TurnProcessRow extends StatelessWidget {
+///
+/// ## 它同时是 DSH 的 `turn-tail` 操作行（2026-10-20）
+///
+/// 用户原话：「dsh web 我看每个消息完毕有复制用量啥的」。DSH 的形态是
+/// **独立的 `turn-tail` 行**（`turn/end` 时以 seq+0.1 物化，
+/// `conversation-nodes/turn-tail.ts:107-140`，**一个 turn 只有一条**），
+/// 按钮顺序 = 复制 → 点赞/点踩 → 分支 → 用量 pill → 时钟
+/// （`TurnTailNodeView.tsx:57-80`）。
+///
+/// 手机上把**复制 + 用量 pill** 挂在这一行（本行就是那个 turn-tail）：
+/// - **点赞/点踩**：要 `message-feedback` 的写面，本仓未接，不做死按钮；
+/// - **分支**：要 `session/fork`，未接；
+/// - **时钟**：本行左侧已有 `clock` 图标 + 用时，再加一个时刻是重复。
+///
+/// 用量 pill 的文案与 DSH 逐字同构：`用量 {formatTokenCount} tok`
+/// （`locale.ts:178,186` + `TurnUsagePanel.tsx:18-20`）。
+class TurnProcessRow extends StatefulWidget {
   const TurnProcessRow({
     super.key,
     required this.title,
     required this.stats,
     this.failed = false,
+    this.usage,
+    this.copyText = '',
   });
 
   /// 一行标题（`第 3 轮`）。
@@ -904,39 +928,203 @@ class TurnProcessRow extends StatelessWidget {
   /// 这一轮是失败收尾的（换图标与颜色）。
   final bool failed;
 
+  /// 该轮的 token 用量；`null` = 不显示用量 pill（**不摆 `0 tok`**）。
+  final TurnTokenUsage? usage;
+
+  /// 「复制」要复制的东西（该轮助手回复正文）。空串 = 不显示复制钮。
+  final String copyText;
+
+  @override
+  State<TurnProcessRow> createState() => _TurnProcessRowState();
+}
+
+class _TurnProcessRowState extends State<TurnProcessRow> {
+  /// 复制成功后短暂变对勾（DSH 是 1 秒，`MessageIconActions.tsx:62-76`）。
+  bool _copied = false;
+  Timer? _reset;
+
+  @override
+  void dispose() {
+    _reset?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: widget.copyText));
+    if (!mounted) return;
+    setState(() => _copied = true);
+    _reset?.cancel();
+    _reset = Timer(const Duration(seconds: 1), () {
+      if (!mounted) return;
+      setState(() => _copied = false);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
     // 失败用工具色（那不是模型的错，也不是"这一轮的正常产出"），
     // 正常收尾用最弱的说明色 —— 它是收口，不是内容。
-    final tone = failed ? c.roleTool : c.labelCaption;
+    final tone = widget.failed ? c.roleTool : c.labelCaption;
+    final usage = widget.usage;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Row(
+      // **`Wrap` 而不是 `Row`**：窄屏上"标题 + 统计 + 两枚操作"放不下一行，
+      // 而 `Row` 只会把它们裁掉（或画出黄黑条纹）。`Wrap` 会自动折行。
+      child: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 8,
+        runSpacing: 4,
         children: [
-          DshIcon(failed ? 'warningTriangle' : 'clock', size: 13, color: tone),
-          const SizedBox(width: 6),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DshIcon(
+                widget.failed ? 'warningTriangle' : 'clock',
+                size: 13,
+                color: tone,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                widget.title,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: tone,
+                ),
+              ),
+            ],
+          ),
           Text(
-            title,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: tone,
-            ),
+            widget.stats,
+            style: TextStyle(fontSize: 12, color: c.labelTertiary),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              stats,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 12, color: c.labelTertiary),
+          // **用量 pill**（DSH 的 `用量 10.6M tok`）：点开是明细。
+          if (usage != null)
+            _Pill(
+              icon: 'database',
+              label: '用量 ${formatTokenCount(usage.totalTokens)} tok',
+              onTap: () => showTurnUsageSheet(context, usage),
             ),
-          ),
+          // **复制**：没有正文就不摆（复制一个空串会让人以为成功了）。
+          if (widget.copyText.isNotEmpty)
+            _Pill(
+              key: const Key('turn-copy'),
+              icon: _copied ? 'check' : 'copy',
+              label: _copied ? '已复制' : '复制',
+              onTap: _copy,
+            ),
         ],
       ),
     );
   }
+}
+
+/// 一枚小的操作胶囊（用量 / 复制）。
+class _Pill extends StatelessWidget {
+  const _Pill({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final String icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return Material(
+      color: c.layer2,
+      borderRadius: BorderRadius.circular(11),
+      child: InkWell(
+        // 触摸目标 ≥ 28（`MessageIconActions` 的命中区就是 28）。
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(11),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 28),
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DshIcon(icon, size: 12, color: c.labelSecondary),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: TextStyle(fontSize: 11.5, color: c.labelSecondary),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 一轮用量的明细（DSH 的「本轮用量」弹窗，`TurnUsagePanel.tsx:52-107`）。
+///
+/// 摆的东西与 DSH 同构：精确值（三位分组）+ 缓存命中 + 未缓存输入 +
+/// 缓存读取 + 缓存写入 + 输出。**缓存命中只在这里显示，pill 上不带**
+/// （DSH 同一条：`formatCacheHitPercent` 只在弹窗里用）。
+Future<void> showTurnUsageSheet(BuildContext context, TurnTokenUsage usage) {
+  final cacheRead = usage.cacheReadTokens;
+  // **分母 = 三个互不重叠的 prompt 侧桶之和**（与 `TokenUsage.billedInput`
+  // 同一条，`session_stats.dart:43-50`）—— 输出不计入"输入侧命中"。
+  final promptTokens =
+      usage.inputTokens + (cacheRead ?? 0) + (usage.cacheWriteTokens ?? 0);
+  final hit = cacheRead == null
+      ? null
+      : formatCacheHitPercent(cacheRead, promptTokens);
+  // 精确值按三位分组（DSH 的 `formatExactTokens`）。
+  String exact(int n) => n.toString().replaceAllMapped(
+    RegExp(r'\B(?=(\d{3})+(?!\d))'),
+    (_) => ',',
+  );
+  final rows = <(String, String)>[
+    ('总量', '${exact(usage.totalTokens)} tok'),
+    if (hit != null) ('缓存命中', '$hit%'),
+    ('未缓存输入', '${exact(usage.inputTokens)} tok'),
+    if (cacheRead != null) ('缓存读取', '${exact(cacheRead)} tok'),
+    if (usage.cacheWriteTokens != null)
+      ('缓存写入', '${exact(usage.cacheWriteTokens!)} tok'),
+    ('输出', '${exact(usage.outputTokens)} tok'),
+  ];
+  return showDshSheet<void>(
+    context: context,
+    title: '本轮用量',
+    body: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final (label, value) in rows)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: context.dshColors.labelSecondary,
+                    ),
+                  ),
+                ),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 13,
+                    color: context.dshColors.labelPrimary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    ),
+  );
 }
 
 /// 审批 / 提问的**一行提示**（原型：它们不在气泡里，而是接管输入栏；

@@ -323,7 +323,7 @@ void main() {
         time: 1791270214061,
         data: _completedEnd,
         turnStartTime: 1791270058171,
-        turnStats: (messages: 12, tools: 8, subagents: 1),
+        turnStats: const TurnStats(messages: 12, tools: 8, subagents: 1),
       ).items.whereType<TurnProcessItem>().single;
 
       await tester.pumpWidget(
