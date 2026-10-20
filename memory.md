@@ -156,6 +156,10 @@
      （而我们自己的规则写着"只弹还没做的假入口比没有这一行更糟"）。
    **抓法两条**：① grep `lib/` 里写死的文件名/中文/数字；
    ② grep `_notWired(` 与 `还没做` —— 每个都是"承诺了但没做"的入口。
+   **2026-10-20 收口**：`_notWired` **已删除**（没有调用方了）；`＋` 菜单
+   从 7 项降到 4 项，每一项都是真的（拍照 / 照片 / 后台任务 / 演示）。
+   注意这条规则**不给"弹一句还没做"留例外** —— 我一度用"它说的是还没做、
+   不是假装做了"给自己找台阶，被 `settings_page.dart:7` 的原文否掉。
 
 ## 真机联调的成本纪律(立过规,别问第二遍)
 
@@ -237,7 +241,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **296 项**(22 条规则自检 + 扫 82 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 43 个)/ 工具脚本不许硬编码盘符(19 个) |
-| `cd app && flutter test` | **857 项** |
+| `cd app && flutter test` | **858 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **550 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
