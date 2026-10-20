@@ -37,29 +37,26 @@
    （窄屏 `Wrap` 自动折行），点开「本轮用量」= 94,408 tok / 缓存命中 30% /
    未缓存输入 66,352 / 缓存读取 27,946 / 输出 110。
    见 `.agents/notes/implemented/2026-10-20-turn-tail-actions.md`。
-10. **附件 = 独立一项（附件管线），不是补一张 sheet**（2026-10-20 查清）：
-    - **图片 / 拍照可行**：`session.prompt` 的 part 支持
-      `{type:'image', mediaType, data(base64), name?}`
-      （`packages/api/session-controller/src/types.ts:90-98`，内联直发不需要先上传）；
-      `mediaType` ∈ png/jpeg/webp/gif（`attachment/src/types.ts:8`）。
-    - **上传文件不可行**：`{type:'file'}` 要 `receiptId`，来自一次
-      `uploadFile` 调用 —— 那是另一个方法面。
-    - **两个前置缺口**：① 限额是**部署解析**的
-      （`ImageAttachmentLimits`，`attachment/src/types.ts:74-82`：
-      单图字节/每消息张数/每消息总字节/像素/边长/媒体类型），手机不知道，
-      **不许自己拍一个数**；但 DSH 自己是在**准入时**校验解码字节
-      （`types.ts:85-92`），所以**不求人的降级路径存在**：不预校验、直接发、
-      把拒绝如实显示（只是多一个往返）。要预校验才需要读限额的方法。
-      ② 选图/拍照要一个 picker 依赖。
-    - **鸿蒙那条已经不是问题**（2026-10-20 查证）：pub.dev 上有
-      `file_picker_ohos`(1.0.1) 与 `adaptive_image_picker_ohos`。
-      **真正卡的是**：Flutter 版本上界由鸿蒙 fork 定，而**本机没有鸿蒙构建环境**，
-      加了插件之后 OHOS 能不能编过**无法验证** —— 而"加了但没验"正是第七类教训。
-      所以停在这里，等有鸿蒙构建环境或用户明确"先只保 Android"。
-    - 细节与 rikkahub 的六个选项都在
-      `.agents/notes/proposed/2026-10-19-session-page-feedback-research.md`
-      的「第 10 条」。**`＋` 里那个假附件已拔掉**
-      （`implemented/2026-10-20-remove-fake-attachment.md`）。
+10. ~~**附件**~~ **2026-10-20 图片这条做真了**（系统照片选择器 + 自写通道，
+    零 pub 依赖）。**「上传文件」仍不做**：DSH 的文件 part 要 `receiptId`
+    （来自 `uploadFile`，本仓未接）。
+    - 形状（`session-controller/src/types.ts:90-98`）：
+      `{type:'image', mediaType, data(base64), name?}` **内联直发、不需要先上传**；
+      `{type:'file', receiptId}` 才要回执。`mediaType` ∈ png/jpeg/webp/gif
+      （`attachment/src/types.ts:8`）。
+    - **我上一轮的判断错了**：`app/` 下**没有 `ohos/` 工程**（只有
+      android/ios/windows），鸿蒙是未来目标、不是今天会被破坏的构建。
+      真风险是"把鸿蒙能不能编过交给别人的发布节奏" ⇒ 照
+      `dsh/gesture-exclusion` 的先例自写通道。
+    - 原生：API 33+ `MediaStore.ACTION_PICK_IMAGES`（系统照片选择器，
+      **不需要权限**，官方说它取代 `READ_MEDIA_IMAGES`）；以下退
+      `ACTION_GET_CONTENT`（SAF，同样不要权限）⇒ Manifest 一行没加。
+    - **限额仍不猜**：`ImageAttachmentLimits` 是部署解析的
+      （`attachment/src/types.ts:74-82`），手机不知道；超了让电脑侧拒，
+      把它的话如实显示（DSH 也是准入时校验，`types.ts:85-92`）。
+    - **端到端未验**：未配对时输入栏置灰，`＋` 点不开 —— 要等配对后看
+      "点照片 → 相册 → 芯片 → 发送后气泡旁显示附件计数"。
+      `iOS` / `Windows` 没有实现（通道不存在 ⇒ 点「照片」会直说没有相册）。
 11. ~~**会话页与输入栏背景"不和谐"**~~ **2026-10-20 量出来并修掉**。
     真机像素：`#FFFFFF`(会话区) → **`#F1F3F5`(输入栏外面那条灰带)** →
     `#FFFFFF`(卡内)。所以是两件事叠起来：① 输入栏垫了 `c.sidebar` 灰带
@@ -233,7 +230,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **296 项**(22 条规则自检 + 扫 82 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 43 个)/ 工具脚本不许硬编码盘符(19 个) |
-| `cd app && flutter test` | **841 项** |
+| `cd app && flutter test` | **855 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **550 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
