@@ -21,52 +21,74 @@ Status: proposed（未开工；形状已查清，缺的是一个能连真机的�
 `packages/api/session-controller/src/types.ts:98`。同处 `:88` 的注释说
 回执来自"a `uploadFile` call on the same Session"。
 
-### 回执从哪来：**HTTP 路由 + 流式收件**，不是 Remote 方法
+### 回执从哪来：**进程内有现成入口**（2026-10-20 查清）
 
-- `packages/client/file-upload/src/http-route.ts` —— 有路由实现；
-  `:31` 读 `sessionId`、`:35` 读 `name`（都从 query 拿）。
-- `packages/client/file-upload/src/index.ts` —— 宿主服务
-  `Host file-upload service: streamed intake and Session-owned staged receipts.`
-  它注册成 `ctx.fileUploads`（`:64` `super(ctx, 'fileUploads')`），
-  暴露的用法在 `session-controller/src/commands.ts` 里能看到：
+- `packages/client/file-upload/src/index.ts:105`：
+  ```ts
+  @Remote('upload')
+  upload(agent: Agent, request: EncodedFileUploadRequest, signal: AbortSignal): Promise<FileUploadValue>
+  ```
+  **挂着 `@Remote('upload')`** —— 它本身就是个 Remote 方法。
+- 同文件 `:118` 还有 `uploadStream({sessionId, data: AsyncIterable<Uint8Array>, signal?, name?})`
+  —— **自己按 `sessionId` 解析 agent**（`:126` `resolveAgent`），调用方不需要 Agent。
+- 载荷与返回值（`file-upload/src/types.ts`）：
+  ```ts
+  interface EncodedFileUploadRequest { readonly data: string /* canonical base64 */; readonly name?: string }
+  interface FileUploadValue { readonly receiptId: FileUploadReceiptId; readonly file: FileAttachmentRef }
+  ```
+  **`{data, name?}` 与我们手机侧已有的 base64 完全对得上**，返回里就有 `receiptId`。
+
+- 回执的使用：`session-controller/src/commands.ts`
   - `resolve(agent, receiptId)`（`:338`）
   - `bindPrompt(agent, receiptIds, requestId)`（`:349`）
   - `retirePrompt(agent, source.rpcId)`（`:477`）
-  - 暂存的收件按 **Session** 建索引（`index.ts:59`
-    `stagedFiles = new WeakMap<Session, Map<FileUploadReceiptId, StagedFileUpload>>()`）
-  - 未为这个会话上传过就报 `'File was not uploaded for this session.'`（`commands.ts:574`）
+  - 暂存按 **Session** 建索引（`file-upload/src/index.ts:59` 的
+    `WeakMap<Session, Map<FileUploadReceiptId, StagedFileUpload>>`）
+  - 没为这个会话上传过就报 `'File was not uploaded for this session.'`（`commands.ts:574`）
 
-**这决定了实现位置**：不能像图片那样内联进 `session.prompt` —— 文件必须先
-"进站"拿到回执。连接器跑在宿主进程里，所以它可以**直接调进程内的
-`ctx.fileUploads`**（而不是去 POST 自己的 HTTP 路由）。
+**所以连接器只要一段薄封装**：`ctx.get('fileUploads')` →
+`uploadStream({sessionId, data, name})` → 返回 `{receiptId}`。
+不需要去 POST 自己的 HTTP 路由（`http-route.ts` 那条是给浏览器用的）。
+
+### 连接器侧的接线点（已定位，避免开工时重新摸）
+
+1. `dsh/caps.ts` 的 `OPTIONAL_SERVICES` **必须加 `'fileUploads'`** ——
+   那份清单是**服务键的登记处**，`tests/layering.test.ts` 的
+   `service-key-registered` 会盯（拼错一个键就是永远 false 的能力位）。
+2. handler 不直接碰 DSH 服务，而是经 `HandlerDeps`（`handlers.ts:56`）里的端口
+   （现有先例：`SessionsPort` 在 `connection-scope.ts:55`）。
+   所以要么加 `FilesPort`，要么把上传能力挂到已有的某个端口上 —— **开工先定这个**。
+3. 契约文档先行：`docs/subsystems/remote-channel.md` §5.7 方法表 +1 行，
+   再动代码（本仓纪律：文档是基线）。
 
 ### 手机侧还缺什么
 
-1. **连接器新方法**（契约 §5.7 方法表 +1）：形如
-   `attachment.upload {sid, name, mediaType?, data(base64)}` → `{receiptId}`；
-   内部转成宿主的进站调用，返回回执。**这是唯一需要动契约的地方。**
-2. **体积预算**：二进制在线上放大约 **1.78 倍**（JSON base64 ×1.33，
+1. **体积预算**：二进制在线上放大约 **1.78 倍**（JSON base64 ×1.33，
    `box` 的 base64url 再 ×1.33），单帧上限 **8 MiB**
    （`connector/src/transport/codec.ts:53,77`）⇒ 原始字节预算 3 MiB。
-   **文件不能像图片那样靠重编码压小** —— 超了只能拒，并把话说清楚。
-   若将来需要传大文件，得给这条链路加分片，那是协议变更。
-3. **选文件的系统入口**：`ACTION_OPEN_DOCUMENT`（SAF，**不需要权限**），
-   走我们已有的自写通道模式（`dsh/photo-picker` 旁边再加一个 method）。
-4. **非图片的媒体类型**：图片只认 png/jpeg/webp/gif；文件那一条的 `mediaType`
-   由宿主自己判，手机不需要白名单（但要如实把选到的 MIME 带上）。
+   **文件不能像图片那样靠重编码压小**（重编码会毁掉非图片文件）——
+   超了只能拒，并把话说清楚。传大文件需要给这条链路加分片，那是协议变更。
+2. **选文件的系统入口**：`ACTION_OPEN_DOCUMENT`（SAF，**不需要权限**），
+   在 `dsh/photo-picker` 旁边再加一个 method（同一个自写通道的模式）。
+3. **非图片的媒体类型**：图片只认 png/jpeg/webp/gif；文件那一条的 `mediaType`
+   由宿主自己判，手机不需要白名单（但要把选到的 MIME 如实带上）。
+4. **界面**：`PendingAttachment` 现在只剩图片一种载荷，要加 file 变体
+   （`{type:'file', receiptId}`），并且**上传是异步的** —— 需要一个"上传中/失败"
+   的状态，不能像图片那样选完就完事。
 
 ## 为什么现在不做
 
-它不是"再写几十行"：连接器新方法 + 契约文档 + 宿主进站调用 + 原生选择器 +
-体积策略 + 测试，是**一个完整回合**的量。而本轮末尾已经做过一次"开新工程"
-的判断 —— 在半截状态提交，正是第 6 类教训（`3979191` 那个残缺提交）的形状。
+它不是"再写几十行"：连接器端口 + 契约文档 + handler + 宿主调用 + 原生选择器 +
+上传状态与界面 + 两边的测试，是**两三个完整回合**的量。
+本轮末尾已经判断过一次"不在长会话尾巴上开新工程" ——
+在半截状态提交，正是第 6 类教训（`3979191` 那个残缺提交）的形状。
 
-## 开工时先做的三件事
+## 开工顺序（下次照这个走）
 
-1. 读 `packages/client/file-upload/src/index.ts` 的**完整**公开面
-   （本笔记只确认了 `resolve` / `bindPrompt` / `retirePrompt` 三个用法点，
-   没有读到"创建回执"的那个入口 —— 那是开工第一步要找的东西）。
-2. 确认回执的作用域：**按 Session**（`WeakMap<Session, …>`），
-   所以"在 A 会话上传的文件不能拿去 B 会话发"这件事要在界面上说清。
-3. 先把 `attachment.upload` 的方法签名写进
-   `docs/subsystems/remote-channel.md`，再动代码（文档先行是本仓纪律）。
+1. 在 `docs/subsystems/remote-channel.md` §5.7 定下 `attachment.upload` 的签名
+   （建议 `{sid, name, data(base64)}` → `{receiptId}`，幂等键与 `session.prompt` 同款）。
+2. 连接器：`FilesPort` + handler + `OPTIONAL_SERVICES` 加键 + 测试（假端口）。
+3. 手机：通道加 `pickFile`（SAF）→ `AppModel.uploadAttachment` → `PendingAttachment`
+   的 file 变体 → 上传中的状态 → 发送时打 `{type:'file', receiptId}`。
+4. 判据：选一个 >3 MiB 的文件要**被拒且说清原因**；正常文件发送后，
+   消息气泡旁出现附件计数（与图片同一条显示路径）。
