@@ -57,13 +57,46 @@ marker 应当比正文**淡**。我们 `listBullet: body` 用的是正文色 ⇒
 - 用户消息是纯 `Text`（`chat_turns.dart:110-117`）—— 用户自己打的字不跑 Markdown，
   与"输入的是纯文本"一致，**有意为之，不改**。
 
+## 同批补上的两处（用户：「你改搞得都搞一下啊」）
+
+### 4. banner 自己的底色
+
+DSH `CodeBlock.module.css:5,38`：`.banner { background: var(--dsl-code-block-banner-background-color) }`，
+而 `--dsl-code-block-banner-background-color: var(--dsw-alias-markdown-code-block-banner)`。
+
+新增 token `codeBlockBanner`：
+
+| | 亮色 | 暗色 |
+|---|---|---|
+| `--dsw-alias-markdown-code-block-banner` | `neutral-bluish-50` = `#F9FAFB`（`:229`） | `neutral-bluish-850` = `#2C2C2E`（`:347`） |
+
+**注意**：亮色下 banner 与块底**同为** `neutral-bluish-50`
+（`design-platform.css:229` 与 `:230` 两行用的是同一个静态色）——
+也就是说这条在浅色主题里看不出差别，只在暗色下分得开。这是 DSH 的既定行为。
+
+### 5. 16px 外边距
+
+DSH `.block { margin: 16px 0 }`。`BoxDecoration` **没有 margin**，
+而 `codeblockDecoration` 是 flutter_markdown 包在**我们返回的 widget 外面**的，
+它包不到更外层 ⇒ 外边距只能由我们出。
+
+所以结构改成：**`codeblockDecoration` 退化为空装饰**（`const BoxDecoration()`），
+由 `_DshCodeBlock` 自己画这一层：
+
+```
+Padding(vertical: 16)              ← DSH 的 margin: 16px 0
+  ClipRRect(radius: lg)            ← 裁切，让 banner 的上圆角跟着走
+    Container(color: codeBlock)    ← DSH 的 .block 底色
+      Container(color: codeBlockBanner)  ← banner 底色
+        Row(语言 + 换行 + 复制)
+      Padding(14,6,14,12) → 正文
+```
+
+这样 `.block` 的四个属性（底色 / 圆角 / 外边距 / 无边框）与 DSH 一一对应，
+而不是"看起来差不多"。
+
 ## 仍未做 / 待查
 
-- **代码块头部 banner 的底色**：DSH 是 `--dsw-alias-markdown-code-block-banner`
-  （比块底色略深/略浅的单独 token）。本仓还没这个 token，现在头部与块同色。
-  要补就得再加一对 token（明暗各一份），值从 `design-platform.css` 查。
-- **代码块 `margin: 16px`**：`flutter_markdown` 的 `codeblockDecoration` 不控外边距，
-  现在靠段落间距近似；要精确得在 `_DshCodeBlock` 外面自己加 `Padding`。
 - 其余渲染面（轨迹页、工具卡内部、斜杠命令卡）本轮没逐一比对，
   但它们各自已有真机验证记录，不在"会话页正文渲染"这条线上。
 

@@ -59,6 +59,10 @@ abstract final class DshColors {
   /// 代码块底色（`--dsw-alias-markdown-code-block`，暗色 = neutral-bluish-900）。
   static const codeBlock = Color(0xFF1B1B1C);
 
+  /// 代码块头部 banner 的底色（`--dsw-alias-markdown-code-block-banner`，
+  /// 暗色 = neutral-bluish-850，比块底 `#1B1B1C` 略浅）。
+  static const codeBlockBanner = Color(0xFF2C2C2E);
+
   // ---- 文字 ----
   static const labelPrimary = Color(0xFFF9FAFB);
   static const labelSecondary = Color(0xFFCFD3D6);
@@ -215,6 +219,11 @@ abstract final class DshLightColors {
   /// 代码块底色（`--dsw-alias-markdown-code-block`，亮色 = neutral-bluish-50）。
   static const codeBlock = Color(0xFFF9FAFB);
 
+  /// 代码块头部 banner 的底色（`--dsw-alias-markdown-code-block-banner`）。
+  /// **亮色下它与块底同为 neutral-bluish-50**（design-platform.css:229,230）——
+  /// 也就是说这条在浅色主题里看不出差别，只在暗色下分得开。
+  static const codeBlockBanner = Color(0xFFF9FAFB);
+
   // ---- 文字（`:root` 的 `--dsw-alias-label-*`）----
   static const labelPrimary = Color(0xFF0F1115); // neutral-bluish-1000
   static const labelSecondary = Color(0xFF61666B); // neutral-bluish-700
@@ -305,6 +314,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     required this.borderL3,
     required this.borderL1,
     required this.codeBlock,
+    required this.codeBlockBanner,
     required this.labelPrimary,
     required this.labelSecondary,
     required this.labelTertiary,
@@ -355,6 +365,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
         borderL3: DshColors.borderL3,
         borderL1: DshColors.borderL1,
         codeBlock: DshColors.codeBlock,
+        codeBlockBanner: DshColors.codeBlockBanner,
         labelPrimary: DshColors.labelPrimary,
         labelSecondary: DshColors.labelSecondary,
         labelTertiary: DshColors.labelTertiary,
@@ -405,6 +416,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
         borderL3: DshLightColors.borderL3,
         borderL1: DshLightColors.borderL1,
         codeBlock: DshLightColors.codeBlock,
+        codeBlockBanner: DshLightColors.codeBlockBanner,
         labelPrimary: DshLightColors.labelPrimary,
         labelSecondary: DshLightColors.labelSecondary,
         labelTertiary: DshLightColors.labelTertiary,
@@ -452,6 +464,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
   final Color borderL3;
   final Color borderL1;
   final Color codeBlock;
+  final Color codeBlockBanner;
   final Color labelPrimary;
   final Color labelSecondary;
   final Color labelTertiary;
@@ -509,6 +522,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     Color? borderL3,
     Color? borderL1,
     Color? codeBlock,
+    Color? codeBlockBanner,
     Color? labelPrimary,
     Color? labelSecondary,
     Color? labelTertiary,
@@ -555,6 +569,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     borderL3: borderL3 ?? this.borderL3,
     borderL1: borderL1 ?? this.borderL1,
     codeBlock: codeBlock ?? this.codeBlock,
+    codeBlockBanner: codeBlockBanner ?? this.codeBlockBanner,
     labelPrimary: labelPrimary ?? this.labelPrimary,
     labelSecondary: labelSecondary ?? this.labelSecondary,
     labelTertiary: labelTertiary ?? this.labelTertiary,

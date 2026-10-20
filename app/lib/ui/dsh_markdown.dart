@@ -144,10 +144,7 @@ class DshMarkdown extends StatelessWidget {
         // `markdown-code-block` 这个 token 名就是为它起的（2026-10-20 加到
         // `DshColors.codeBlock`）。原来用 `c.bgBase` = 页面本色 —— 于是代码块
         // 看着像"没有底"，整块和正文糊在一起（真机截图确认过）。
-        codeblockDecoration: BoxDecoration(
-          color: c.codeBlock,
-          borderRadius: BorderRadius.circular(DshRadius.lg),
-        ),
+        codeblockDecoration: const BoxDecoration(),
         codeblockPadding: EdgeInsets.zero,
         blockquote: body.copyWith(color: c.labelSecondary),
         blockquoteDecoration: BoxDecoration(
@@ -304,47 +301,73 @@ class _DshCodeBlockState extends State<_DshCodeBlock> {
         color: c.labelPrimary,
       ),
     );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(10, 6, 4, 0),
-          child: Row(
+    // **整块的容器与 16px 外边距都在这里**（2026-10-20）。
+    //
+    // 为什么不靠 `styleSheet.codeblockDecoration`：
+    // - `BoxDecoration` **没有 margin**，DSH 的 `.block { margin: 16px 0 }`
+    //   在 Flutter 侧只能靠外面包 `Padding` —— 而 decoration 是
+    //   flutter_markdown 包在**我们返回的 widget 外面**的，它包不到这个
+    //   Padding 之外，所以外边距只能由我们自己出。
+    // - 于是 `codeblockDecoration` 退化成**空装饰**（见 styleSheet 处），
+    //   底色 / 圆角 / 裁切全由这一层画，语义才与 DSH 的 `.block` 一一对应。
+    return Padding(
+      // DSH `.block { margin: 16px 0 }`（`CodeBlock.module.css:15`）。
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(DshRadius.lg),
+        child: Container(
+          color: c.codeBlock,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                child: Text(
-                  _languageLabel,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 11, color: c.labelCaption),
-                ),
-              ),
-              _CodeToolButton(
-                icon: _wrapped ? 'nowrapFill' : 'wrapFill',
-                tooltip: _wrapped ? '取消自动换行' : '自动换行',
-                onPressed: () => setState(() => _wrapped = !_wrapped),
-              ),
-              _CodeToolButton(
-                icon: _copied ? 'check' : 'copy',
-                tooltip: _copied ? '复制成功' : '复制',
-                onPressed: () => unawaited(_copy()),
-              ),
+              // banner 自己的底色：`--dsw-alias-markdown-code-block-banner`
+              // （`CodeBlock.module.css:5,38`）。**亮色下它与块底同色**
+              // （都是 neutral-bluish-50），只有暗色分得开 —— 这是 DSH 的既定
+              // 行为，不是我们没配好。
+              Container(color: c.codeBlockBanner, child: _banner(c)),
+              _body(c, body),
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
-          // 关掉自动换行时给一条横向出路（DSH 是 `data-code-wrap=false` + 横滚）。
-          child: _wrapped
-              ? body
-              : SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: body,
-                ),
-        ),
-      ],
+      ),
     );
   }
+
+  Widget _banner(DshColorTokens c) => Padding(
+    // DSH `.banner { padding: 9px 14px }`（`CodeBlock.module.css:40-46`）。
+    padding: const EdgeInsets.fromLTRB(14, 9, 10, 9),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            _languageLabel,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: c.labelCaption),
+          ),
+        ),
+        _CodeToolButton(
+          icon: _wrapped ? 'nowrapFill' : 'wrapFill',
+          tooltip: _wrapped ? '取消自动换行' : '自动换行',
+          onPressed: () => setState(() => _wrapped = !_wrapped),
+        ),
+        _CodeToolButton(
+          icon: _copied ? 'check' : 'copy',
+          tooltip: _copied ? '复制成功' : '复制',
+          onPressed: () => unawaited(_copy()),
+        ),
+      ],
+    ),
+  );
+
+  /// 正文区。DSH `.content { padding: 0 14px 10px }` 一类的内边距由我们给。
+  Widget _body(DshColorTokens c, Widget body) => Padding(
+    padding: const EdgeInsets.fromLTRB(14, 6, 14, 12),
+    // 关掉自动换行时给一条横向出路（DSH 是 `data-code-wrap=false` + 横滚）。
+    child: _wrapped
+        ? body
+        : SingleChildScrollView(scrollDirection: Axis.horizontal, child: body),
+  );
 }
 
 /// 代码块头部的一个图标按钮（28×28，够手指点）。
