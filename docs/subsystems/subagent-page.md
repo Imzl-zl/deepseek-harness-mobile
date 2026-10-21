@@ -233,11 +233,11 @@
 | F1 一次性子会话只读框（A6） | 未造出 | 本 profile 两个 in-process 后端（`subagent-spawn-in-process` / `-fork-in-process`）都只产 `continuable`；只读框由单测覆盖 |
 | F2 孙级（A3，`maxDepth: 2`） | 过 | `f03-panel-root.png`：根只有 1 行（直接子级）+ 行尾 44dp 展开钮；`f04-panel-expanded.png`：展开后出现孙级行「Reply with fixed text」，它自己再带展开钮（已知空叶） |
 | G 子会话里左缘拖抽屉（B4） | 过 | `g03-child-drawer.png` / `g04-child-after-drawer.png`：在子会话里从 `x=40,y=300` 慢拖（落在 gesture-exclusion 的**上半屏**边带）抽屉跟手出来；关掉后标题仍是「Spawn grandchild, report result」、`←` 仍在 |
-| D1 附件（＋→照片→芯片→发送） | **未过** | `d02-chip.png`：芯片「976.png」正常出现；点发送两次（不同坐标）都没触发，`KEYCODE_ENTER` 只插换行且芯片消失。待查：发送按钮命中区 / 带附件时的发送路径 |
+| D1 附件（＋→照片→芯片→发送） | **未验（模型不支持图片）** | `d02-chip.png` 芯片正常；点发送后宿主回 `ProtocolException(internal): Model "auto" does not support image input.`（`d13-right-after-tap.png` 的 SnackBar 原文）。**App 的路径是对的**：请求发出、错误如实显示、芯片保留；免费渠道的 `auto` 不接受图片，所以这条只能等一个支持视觉的模型再验 |
 | D2 历史翻页（快照一页 100 条） | 未造出 | 本实例没有 >100 条事件的会话；造够真历史要 8~12 个真实轮次 |
 | D3 异常结局 / 重试 / 压缩标记 | 未造出 | 没有稳定制造**失败**回合的手段（取消 ≠ 失败）；压缩标记本轮未出现 |
 | H1 设置页 | 过 | `h01-settings.png`：通用 / 模型 / 连接方式三组都在；端点列表带「当前连接」「首选」「还没试过」 |
-| H2 归档→取消归档闭环 | 未验 | 本轮时间不够，未做（C5 已验过"归档后从列表消失"那一半） |
+| H2 归档→取消归档闭环 | 过 | `h04-archived.png`（未分组 3→2、行从抽屉消失）→ `h05-archive-page.png`（归档页列出 Greeting）→ `h06-unarchived.png`（"暂无已归档会话"）→ `h07-back-in-list.png`（未分组回到 3、行回到抽屉） |
 | H3 连接操作三个入口 | 过 | `e01c-popover.png`：重新连接 / 重新配对 / 断开并清掉凭据三项都在（未真点断开） |
 
 **同一包上的其它证据**：容器中转端到端（配对 → 会话列表 → 发一句 → 收到回复）见

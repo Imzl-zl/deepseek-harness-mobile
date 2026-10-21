@@ -48,8 +48,10 @@
 
 ## P3：本轮（2026-10-21 深夜）验收留下的欠账
 
-8. **D1 附件发送未过**：带图片点发送没反应、Enter 只插换行且芯片消失
-   （`memory.md` 已知缺口 7；证据 `shots-1021b/d02-chip.png` / `d07-image-sent.png`）。
+8. ~~D1 附件发送未过~~ **已查清（2026-10-22）**：不是 App 的缺陷，宿主回
+   `ProtocolException(internal): Model "auto" does not support image input.` ——
+   免费渠道的 `auto` 不接受图片。App 路径正确（请求发出、错误如实显示、芯片保留）。
+   剩下的是一条 UX：错误在键盘挡住的 SnackBar 里，容易看不见（可考虑内联到输入栏）。
 9. **E3 拖动排序真机未验**：隔离实例凑不出"同一工作区下两条可见会话"
    （新会话 blank 不列；宿主账本只记带 `workspaceId` 建的会话）。
    要验得先让宿主把会话记进工作区（或让 `session.create` 带 `workspaceId` —— 那是产品改动）。

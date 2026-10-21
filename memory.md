@@ -9,13 +9,13 @@
 > **2026-10-21 深夜：四阶段一轮收口** —— ① 剩下两处「跟手」改成锚定浮层（顶栏连接点、
 > 抽屉行菜单；菜单触发从长按挪到行尾「…」，长按留给拖动）+ 抽屉拖动排序与组头常显计数
 > （连接器新增 `workspace.insertBefore`，方法面 36→37）；② 容器中转端到端（配对 → 列表 →
-> 发一句 → 收到回复），公网那段**未验（无服务器）**；③ 最终包只装一次，E/F/G/D/H 逐条
+> 发一句 → 收到回复），公网那段**未验（无服务器）**；③ 最终包只装一次（H2 归档闭环已补验：过），E/F/G/D/H 逐条
 > 判据见 `docs/subsystems/subagent-page.md` §7.2（**D1 附件发送未过**、E3 拖动与 H2 归档
 > 未验、D2/D3/A6 未造出）；④ 门禁全绿（flutter 1009 / connector 563 / relay 86 /
 > protocol 486·26·49 / boundary 318 / CDP 六项）。
 > 笔记：`.agents/notes/implemented/2026-10-21-anchored-popover-for-drawer-rows.md`、
 > `.agents/notes/implemented/2026-10-21-drawer-drag-and-counts.md`。
-> **下一轮先查 D1**：带图片附件点发送没反应（芯片在、轮次不涨），Enter 只插换行且芯片消失。
+> **D1 已查清**：宿主回 `Model "auto" does not support image input.` —— 免费渠道不支持图片，不是 App 缺陷。
 
 > 2026-10-20 晚这一轮把「渲染清单」清完了（1/3/5/6/7 改，2/4/8 判定不改），
 > 并用 `DSH_HOME` 隔离实例做了**一次真机全测**。清单与逐条证据在
@@ -286,10 +286,11 @@
 5. **PC 端「上报地址」面板没有布局/点击的自动化测试**(只有 i18n 键完整性门禁;API 侧有用例)。
 6. **IPv6 隐私地址仍会上报**:这台机器报 7 条,其中 4 条是每次轮换都变的 GUA。
    `dialOrder` 已把它们排后面(不再是 30 秒冷启动的成因),但仍占列表位,要用户手动藏。
-7. **带图片附件时点发送没反应**（2026-10-21 真机，`D1`）：芯片「976.png」加得进输入栏，
-   点发送两次（不同坐标）轮次都不涨；`KEYCODE_ENTER` 只插入换行、芯片反而消失。
-   判据：`d02-chip.png` / `d07-image-sent.png`。**先查发送按钮的命中区与带附件时的发送路径**
-   （`_send()` 的 content 里有没有 image 块），别先怀疑图片编码。
+7. **图片附件在这条免费渠道上发不出去**（2026-10-22 查清，**不是 App 的缺陷**）：
+   点发送后宿主回 `ProtocolException(internal): Model "auto" does not support image input.`，
+   App 如实弹错、芯片保留（`shots-1021b/d13-right-after-tap.png`）。
+   免费渠道的 `auto` 不支持视觉输入 ⇒ `D1` 只能等一个支持图片的模型再验。
+   顺带一条 UX：这句错在**键盘挡住的 SnackBar** 里，真机上很容易没看见 —— 下次可考虑在输入栏内联显示。
 
 ## 范围决定(别再当缺口)
 
@@ -338,4 +339,6 @@
 - 2026-10-21 晚 真机验收修掉的三条 + 锚定浮层：
   `.agents/notes/implemented/2026-10-21-subagent-child-address-and-prompt.md`、
   `.agents/notes/implemented/2026-10-21-anchored-popover-for-top-bar-panels.md`。
+
+
 
