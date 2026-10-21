@@ -94,6 +94,23 @@ export interface WorkspacesPort {
     beforeSessionId?: string,
   ): Promise<readonly string[]>
 
+  /**
+   * 把一个**工作区**挪到 `beforeWorkspaceId` 之前（DOM `insertBefore` 语义）。
+   *
+   * DSH：`@Remote('insertBefore')`（`index.ts:135-145`）→ `commands.ts:108-125`。
+   * 请求 `{workspaceId, beforeWorkspaceId?}`（`types.ts:97-105`），
+   * **不给 `beforeWorkspaceId` 就是移到末尾**。
+   *
+   * 与 `insertSessionBefore` 的差别：那个改的是**工作区内部的会话顺序**，
+   * 这个改的是**注册表里工作区自己的顺序**（侧栏项目头的上下位置）。
+   *
+   * @returns **整份**工作区顺序（DSH id）—— 调用方据此重排分组。
+   */
+  insertBefore(
+    workspaceId: string,
+    beforeWorkspaceId?: string,
+  ): Promise<readonly string[]>
+
   /** 置顶（registry 全局集合）。返回**置顶全集**，最近置顶的在前。 */
   pin(sessionId: string): Promise<readonly string[]>
 
@@ -220,6 +237,21 @@ export function createWorkspacesPort(
       )
       // 返回该工作区的新顺序：调用方据此刷新分组，不必再读一次基线。
       return value.workspace.sessionIds.map(String)
+    },
+
+    async insertBefore(workspaceId, beforeWorkspaceId) {
+      const value = await asProtocolError(() =>
+        controller.insertBefore({
+          workspaceId: workspaceId as DshWorkspaceId,
+          // 缺省时**不进请求体**：DSH 的 `beforeWorkspaceId?` 是"不给就移到末尾"
+          // （`types.ts:97-105`），塞空串会被当成一个非法锚点。
+          ...(beforeWorkspaceId === undefined
+            ? {}
+            : { beforeWorkspaceId: beforeWorkspaceId as DshWorkspaceId }),
+        }),
+      )
+      // 返回**整份**工作区顺序：调用方据此重排分组，不必再读一次基线。
+      return value.workspaceIds.map(String)
     },
 
     async pin(sessionId) {

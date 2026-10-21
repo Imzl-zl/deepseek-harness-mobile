@@ -33,7 +33,7 @@ import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 import 'collapsible_group.dart';
-import 'dsh_sheet.dart';
+import 'dsh_popover.dart';
 
 /// 抽屉里的一行会话。
 class DrawerSession {
@@ -138,6 +138,7 @@ class SessionDrawer extends StatefulWidget {
     this.onPin,
     this.onUnpin,
     this.onMove,
+    this.onMoveWorkspace,
     this.onSearch,
   });
 
@@ -149,16 +150,23 @@ class SessionDrawer extends StatefulWidget {
   final void Function(DrawerSession session) onOpenSession;
   final VoidCallback onClose;
 
-  /// 行动作（长按菜单）。`onMove` 的第二个参数是 Host 的 `beforeSid`：
+  /// 行动作（「…」菜单）。`onMove` 的第二个参数是 Host 的 `beforeSid`：
   /// `null` = 移到末尾。
   ///
-  /// **Web 的拖动排序在触屏上换成菜单里的「上移 / 下移」**（有意偏离：
-  /// 长按菜单不会在滚动列表里误触发拖动；DSH 的拖动还要求"同置顶分区内"，
-  /// 菜单用同样的门禁）。见 `docs/design-and-tech-plan.md` §6。
+  /// **排序的主路径是拖动**（与 Web 的 `Rows.tsx:249/602` 同一条）：
+  /// 长按行开始拖、落到目标行的上半/下半决定插在它前/后。菜单里仍保留
+  /// 「上移 / 下移」—— 拖动在滚动列表里对手指不友好，精确移动留一条退路。
   final void Function(DrawerSession session)? onArchive;
   final void Function(DrawerSession session)? onPin;
   final void Function(DrawerSession session)? onUnpin;
   final void Function(DrawerSession session, String? beforeSid)? onMove;
+
+  /// 把一个**工作区**挪到 `beforeWorkspaceId` 之前（`null` = 移到末尾）。
+  ///
+  /// 与 [onMove] 是两条：那条改组内会话顺序，这条改**工作区自己**的顺序
+  /// （侧栏项目头的上下位置）。走 `workspace.insertBefore`。
+  final void Function(String workspaceId, String? beforeWorkspaceId)?
+  onMoveWorkspace;
 
   final ValueChanged<String>? onSearch;
 
@@ -334,31 +342,54 @@ class _SessionDrawerState extends State<SessionDrawer> {
                   : ListView(
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                       children: [
-                        for (final section in widget.sections) ...[
+                        for (var i = 0; i < widget.sections.length; i += 1) ...[
                           // **可折叠的项目组头**（2026-10-19 用户原话：
                           // 「这个侧边栏会话列表，人家的每个项目的会话可以折叠的，
                           // 你没有啊」）。形态照 DSH Web 的
                           // `ui-workspace/src/client/rows/Rows.tsx:259-263`。
+                          //
+                          // **项目头可拖**（2026-10-21 用户原话：「会话和工作区
+                          // 都可以拖拽换位置而不是弹框啊」）：落到另一个头的
+                          // 上半 = 插在它前面，下半 = 插在它后面（后者用
+                          // "下一个工作区"当锚点，没有下一个就是移到末尾）。
                           CollapsibleGroup(
-                            label: section.label,
-                            expanded: _expanded[section.label] ?? true,
+                            label: widget.sections[i].label,
+                            expanded:
+                                _expanded[widget.sections[i].label] ?? true,
                             onToggle: () => setState(
-                              () => _expanded[section.label] =
-                                  !(_expanded[section.label] ?? true),
+                              () => _expanded[widget.sections[i].label] =
+                                  !(_expanded[widget.sections[i].label] ??
+                                      true),
                             ),
-                            childCount: section.sessions.length,
+                            childCount: widget.sections[i].sessions.length,
                             // 当前会话在这个组里 ⇒ 折叠时也高亮
                             // （DSH 的 `containsCurrentDescendant`）。
-                            containsCurrent: section.sessions.any(
+                            containsCurrent: widget.sections[i].sessions.any(
                               (s) => s.isActive,
                             ),
+                            headerWrapper: _headerDragFor(i),
                             children: [
-                              for (final session in section.sessions)
-                                _SessionRow(
+                              for (final session in widget.sections[i].sessions)
+                                _SessionDrag(
                                   session: session,
-                                  onTap: () => widget.onOpenSession(session),
-                                  onLongPress: () =>
-                                      unawaited(_showSessionMenu(session)),
+                                  order: [
+                                    for (final row
+                                        in widget.sections[i].sessions)
+                                      row.sid,
+                                  ],
+                                  pinned: {
+                                    for (final row
+                                        in widget.sections[i].sessions)
+                                      if (row.isPinned) row.sid,
+                                  },
+                                  onMove: widget.onMove,
+                                  child: _SessionRow(
+                                    session: session,
+                                    onTap: () => widget.onOpenSession(session),
+                                    onMenu: (anchor) => unawaited(
+                                      _showSessionMenu(session, anchor),
+                                    ),
+                                  ),
                                 ),
                             ],
                           ),
@@ -419,12 +450,40 @@ class _SessionDrawerState extends State<SessionDrawer> {
     return null;
   }
 
+  /// 项目头的拖动/落点包装。`null` = 这个组不是真工作区（「未分组」/ 没有
+  /// 工作区清单），既不能拖也不能当落点 —— 与「上移/下移不可点」同一条理由：
+  /// `workspace.insertBefore` 要 workspaceId，硬发只会失败。
+  Widget Function(BuildContext, Widget)? _headerDragFor(int index) {
+    final workspaceId = widget.sections[index].workspaceId;
+    final onMove = widget.onMoveWorkspace;
+    if (workspaceId == null || onMove == null) return null;
+    return (context, header) => _WorkspaceDrag(
+      workspaceId: workspaceId,
+      nextWorkspaceId: _nextWorkspaceIdAfter(index),
+      onMove: onMove,
+      child: header,
+    );
+  }
+
+  /// 这个组**之后**第一个真工作区的 id（落到"下半"时的锚点；没有就是末尾）。
+  String? _nextWorkspaceIdAfter(int index) {
+    for (var i = index + 1; i < widget.sections.length; i += 1) {
+      final id = widget.sections[i].workspaceId;
+      if (id != null) return id;
+    }
+    return null;
+  }
+
   /// 行长按菜单。动作与 Web 的会话菜单同义（置顶 / 归档），
   /// 加上触屏需要的「上移 / 下移」。
   ///
+  /// **锚在那一行下面**（[anchor] 由 `_SessionRow` 自己量）：
+  /// 长按的是列表里的某一行，菜单从屏幕底部升起来就是"点在上面、弹在下面"
+  /// （用户 2026-10-21 对顶栏那条的原话，同一类问题）。
+  ///
   /// Note: 为什么是菜单不是拖动、为什么没有删除 —— 见
   /// `.agents/notes/implemented/2026-10-21-sidebar-session-pin-and-reorder.md`。
-  Future<void> _showSessionMenu(DrawerSession session) async {
+  Future<void> _showSessionMenu(DrawerSession session, Rect anchor) async {
     final section = _sectionOf(session.sid);
     final rows = section?.sessions ?? const <DrawerSession>[];
     final pinned = {
@@ -453,41 +512,45 @@ class _SessionDrawerState extends State<SessionDrawer> {
             pinnedSessionIds: pinned,
           );
 
-    final action = await showDshSheet<_SessionMenuAction>(
+    final action = await showDshPopover<_SessionMenuAction>(
       context: context,
+      anchor: anchor,
       title: session.title,
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _SessionMenuRow(
-            icon: session.isPinned ? 'pinFill' : 'pin',
-            label: session.isPinned ? '取消置顶' : '置顶会话',
-            onTap: () => Navigator.of(context).pop(
-              session.isPinned
-                  ? _SessionMenuAction.unpin
-                  : _SessionMenuAction.pin,
+      // 菜单 4 行 + 标题：默认 0.55 足够，但行贴在屏幕底部时会翻到上方。
+      body: Builder(
+        builder: (inner) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _SessionMenuRow(
+              icon: session.isPinned ? 'pinFill' : 'pin',
+              label: session.isPinned ? '取消置顶' : '置顶会话',
+              onTap: () => Navigator.of(inner).pop(
+                session.isPinned
+                    ? _SessionMenuAction.unpin
+                    : _SessionMenuAction.pin,
+              ),
             ),
-          ),
-          _SessionMenuRow(
-            icon: 'chevronUp',
-            label: '上移',
-            onTap: up == null
-                ? null
-                : () => Navigator.of(context).pop(_SessionMenuAction.moveUp),
-          ),
-          _SessionMenuRow(
-            icon: 'chevronDown',
-            label: '下移',
-            onTap: down == null
-                ? null
-                : () => Navigator.of(context).pop(_SessionMenuAction.moveDown),
-          ),
-          _SessionMenuRow(
-            icon: 'archive',
-            label: '归档',
-            onTap: () => Navigator.of(context).pop(_SessionMenuAction.archive),
-          ),
-        ],
+            _SessionMenuRow(
+              icon: 'chevronUp',
+              label: '上移',
+              onTap: up == null
+                  ? null
+                  : () => Navigator.of(inner).pop(_SessionMenuAction.moveUp),
+            ),
+            _SessionMenuRow(
+              icon: 'chevronDown',
+              label: '下移',
+              onTap: down == null
+                  ? null
+                  : () => Navigator.of(inner).pop(_SessionMenuAction.moveDown),
+            ),
+            _SessionMenuRow(
+              icon: 'archive',
+              label: '归档',
+              onTap: () => Navigator.of(inner).pop(_SessionMenuAction.archive),
+            ),
+          ],
+        ),
       ),
     );
     if (!mounted || action == null) return;
@@ -634,85 +697,311 @@ class _SessionRow extends StatelessWidget {
   const _SessionRow({
     required this.session,
     required this.onTap,
-    required this.onLongPress,
+    required this.onMenu,
   });
 
   final DrawerSession session;
   final VoidCallback onTap;
 
-  /// 长按开行动作菜单（置顶 / 上移 / 下移 / 归档）。
+  /// 行尾「…」开行动作菜单（置顶 / 上移 / 下移 / 归档）。
+  ///
+  /// **长按不再开菜单**：长按现在是**拖动排序**（与 Web 的 `Rows.tsx:602` 同一条）。
+  /// 两个手势不能抢同一个动作，所以菜单挪到行尾那枚「…」（Web 侧是 hover 出的
+  /// 行内动作按钮，触屏上它得常显）。
+  ///
+  /// **回调带锚点矩形**：菜单要长在**被点的那一行**下面。锚点必须由这一行
+  /// 自己量 —— 用抽屉或屏幕当锚点都会把菜单弹到别处（用户 2026-10-21 对顶栏
+  /// 那条的原话「点击在上面，下面弹出你不觉得不跟手吗」，同一类问题）。
   ///
   /// **不是删除**：DSH 的会话面没有删除方法（`workspace-controller` 只有
-  /// 归档 / 取消归档 / 置顶 / 取消置顶）。旧代码把长按接到 `onDelete`，
-  /// 而那个回调从未接线 —— 长按一直是死的。
-  final VoidCallback onLongPress;
+  /// 归档 / 取消归档 / 置顶 / 取消置顶）。
+  final void Function(Rect anchor) onMenu;
 
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
-    return Material(
-      color: session.isActive ? c.layer2 : Colors.transparent,
-      borderRadius: BorderRadius.circular(DshRadius.sm),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        onLongPress: onLongPress,
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 56),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-          child: Row(
-            children: [
-              // 活跃点（`.drow .dot`）：正在看的那个有。
-              Container(
-                width: 6,
-                height: 6,
-                decoration: BoxDecoration(
-                  color: session.isActive ? c.accentBlue : Colors.transparent,
-                  shape: BoxShape.circle,
+    // `Builder` 让下面这一行拿到**自己的** `RenderBox`（见 [dshAnchorOf]）。
+    return Builder(
+      builder: (row) => Material(
+        color: session.isActive ? c.layer2 : Colors.transparent,
+        borderRadius: BorderRadius.circular(DshRadius.sm),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 56),
+            padding: const EdgeInsets.fromLTRB(12, 11, 4, 11),
+            child: Row(
+              children: [
+                // 活跃点（`.drow .dot`）：正在看的那个有。
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: session.isActive ? c.accentBlue : Colors.transparent,
+                    shape: BoxShape.circle,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            session.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: c.labelPrimary,
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              session.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: c.labelPrimary,
+                              ),
                             ),
                           ),
-                        ),
-                        // 置顶标记：DSH Web 的 `PinnedIndicator`（`Rows.tsx:660`）
-                        // 是一枚**非交互**的小图钉，动作在菜单里。
-                        if (session.isPinned) ...[
-                          const SizedBox(width: 6),
-                          DshIcon('pinFill', size: 12, color: c.labelTertiary),
+                          // 置顶标记：DSH Web 的 `PinnedIndicator`（`Rows.tsx:660`）
+                          // 是一枚**非交互**的小图钉，动作在菜单里。
+                          if (session.isPinned) ...[
+                            const SizedBox(width: 6),
+                            DshIcon(
+                              'pinFill',
+                              size: 12,
+                              color: c.labelTertiary,
+                            ),
+                          ],
                         ],
-                      ],
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      session.preview,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 12, color: c.labelCaption),
-                    ),
-                  ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        session.preview,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: c.labelCaption),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                session.timeLabel,
-                style: TextStyle(fontSize: 11, color: c.labelTertiary),
-              ),
-            ],
+                const SizedBox(width: 6),
+                Text(
+                  session.timeLabel,
+                  style: TextStyle(fontSize: 11, color: c.labelTertiary),
+                ),
+                // **行尾「…」**：菜单的唯一入口（长按已经给拖动了）。
+                // 36×36 是触摸目标；`key` 让用例能按 sid 定位到具体那一行。
+                SizedBox(
+                  width: 36,
+                  height: 36,
+                  child: Material(
+                    color: Colors.transparent,
+                    shape: const CircleBorder(),
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      key: ValueKey<String>('session-menu-${session.sid}'),
+                      onTap: () => onMenu(dshAnchorOf(row)),
+                      child: Center(
+                        child: DshIcon(
+                          'ellipsis',
+                          size: 16,
+                          color: c.labelTertiary,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 会话行的**拖动 + 落点**。
+///
+/// - 长按行开始拖（`LongPressDraggable`，锚点用 `pointerDragAnchorStrategy`：
+///   `DragTargetDetails.offset` 就是**手指位置**，不是被拖卡片左上角 ——
+///   后者带一段触摸偏移，会让"落在上半还是下半"判错）；
+/// - 落在哪一行的上半/下半 → 插在它前/后（`dropAnchorInDisplayOrder`）；
+/// - 置顶分区由模型函数挡：跨分区直接不接受（与 Web 的 `drag.pinned === node.pinned`
+///   同一条），不弹错、不发请求。
+class _SessionDrag extends StatefulWidget {
+  const _SessionDrag({
+    required this.session,
+    required this.order,
+    required this.pinned,
+    required this.onMove,
+    required this.child,
+  });
+
+  final DrawerSession session;
+
+  /// 本组当前的显示顺序（已分区：置顶在前）。
+  final List<String> order;
+
+  /// 本组里置顶的 sid。
+  final Set<String> pinned;
+
+  final void Function(DrawerSession session, String? beforeSid)? onMove;
+
+  final Widget child;
+
+  @override
+  State<_SessionDrag> createState() => _SessionDragState();
+}
+
+class _SessionDragState extends State<_SessionDrag> {
+  final _key = GlobalKey();
+
+  ({String? beforeSid})? _anchorFor(DragTargetDetails<DrawerSession> details) {
+    final context = _key.currentContext;
+    if (context == null) return null;
+    final rect = dshAnchorOf(context);
+    return dropAnchorInDisplayOrder(
+      displayOrder: widget.order,
+      sid: details.data.sid,
+      targetSid: widget.session.sid,
+      after: details.offset.dy > rect.center.dy,
+      pinnedSessionIds: widget.pinned,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final onMove = widget.onMove;
+    final canMove = onMove != null;
+    return DragTarget<DrawerSession>(
+      onWillAcceptWithDetails: (details) =>
+          canMove && _anchorFor(details) != null,
+      onAcceptWithDetails: (details) {
+        final anchor = _anchorFor(details);
+        if (anchor == null) return;
+        onMove?.call(details.data, anchor.beforeSid);
+      },
+      builder: (context, candidates, rejected) {
+        final row = AnimatedContainer(
+          key: _key,
+          duration: const Duration(milliseconds: 90),
+          decoration: BoxDecoration(
+            // 能落的行给一条底色：拖到一半时用户要知道"松手会插到哪"。
+            color: candidates.isNotEmpty
+                ? context.dshColors.layer2
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(DshRadius.sm),
+          ),
+          child: widget.child,
+        );
+        if (!canMove) return row;
+        return LongPressDraggable<DrawerSession>(
+          data: widget.session,
+          dragAnchorStrategy: pointerDragAnchorStrategy,
+          feedback: _DragChip(label: widget.session.title),
+          childWhenDragging: Opacity(opacity: 0.35, child: row),
+          child: row,
+        );
+      },
+    );
+  }
+}
+
+/// 项目头的**拖动 + 落点**（工作区排序）。
+///
+/// 落点是**另一个项目头**：上半 = 插到它前面，下半 = 插到它后面
+/// （后者用"这个组之后第一个工作区"当锚点，没有下一个就是移到末尾）。
+class _WorkspaceDrag extends StatefulWidget {
+  const _WorkspaceDrag({
+    required this.workspaceId,
+    required this.nextWorkspaceId,
+    required this.onMove,
+    required this.child,
+  });
+
+  final String workspaceId;
+
+  /// 这个组之后第一个真工作区的 id（落到下半时的锚点；`null` = 移到末尾）。
+  final String? nextWorkspaceId;
+
+  final void Function(String workspaceId, String? beforeWorkspaceId) onMove;
+
+  final Widget child;
+
+  @override
+  State<_WorkspaceDrag> createState() => _WorkspaceDragState();
+}
+
+class _WorkspaceDragState extends State<_WorkspaceDrag> {
+  final _key = GlobalKey();
+
+  String? _beforeFor(DragTargetDetails<String> details) {
+    final context = _key.currentContext;
+    if (context == null) return null;
+    final rect = dshAnchorOf(context);
+    final after = details.offset.dy > rect.center.dy;
+    return after ? widget.nextWorkspaceId : widget.workspaceId;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DragTarget<String>(
+      // 拖到自己身上不接受（也不当落点高亮）。
+      onWillAcceptWithDetails: (details) => details.data != widget.workspaceId,
+      onAcceptWithDetails: (details) {
+        final before = _beforeFor(details);
+        // 落点就是自己"后面那一个" ⇒ 顺序不变，不发请求。
+        if (before == details.data) return;
+        widget.onMove(details.data, before);
+      },
+      builder: (context, candidates, rejected) {
+        final header = AnimatedContainer(
+          key: _key,
+          duration: const Duration(milliseconds: 90),
+          decoration: BoxDecoration(
+            color: candidates.isNotEmpty
+                ? context.dshColors.layer2
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(DshRadius.sm),
+          ),
+          child: widget.child,
+        );
+        return LongPressDraggable<String>(
+          data: widget.workspaceId,
+          dragAnchorStrategy: pointerDragAnchorStrategy,
+          feedback: const _DragChip(label: '移动项目'),
+          childWhenDragging: Opacity(opacity: 0.35, child: header),
+          child: header,
+        );
+      },
+    );
+  }
+}
+
+/// 拖动时跟着手指的小卡片（**不是整行**：整行会挡住落点）。
+class _DragChip extends StatelessWidget {
+  const _DragChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return Transform.translate(
+      // `pointerDragAnchorStrategy` 把卡片左上角放在手指上；挪一截让它跟手。
+      offset: const Offset(-16, -16),
+      child: Material(
+        color: c.layer1,
+        elevation: 6,
+        borderRadius: BorderRadius.circular(DshRadius.sm),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 220),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 13, color: c.labelPrimary),
+            ),
           ),
         ),
       ),

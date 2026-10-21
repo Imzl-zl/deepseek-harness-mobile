@@ -143,6 +143,31 @@ test('insertSessionBefore：有锚点时三键齐全；无锚点时不发 `befor
   )
 })
 
+test('insertBefore：有锚点时两键齐全；无锚点时不发 `beforeWorkspaceId`，返回整份顺序', async () => {
+  const seen: unknown[] = []
+  const port = createWorkspacesPort(
+    fakeController({
+      insertBefore: (request: unknown) => {
+        seen.push(request)
+        return Promise.resolve({ workspaceIds: ['ws-2', 'ws-1'] })
+      },
+    }),
+  )
+
+  assert.deepEqual(await port.insertBefore('ws-1', 'ws-2'), ['ws-2', 'ws-1'])
+  assert.deepEqual(await port.insertBefore('ws-1'), ['ws-2', 'ws-1'])
+  assert.deepEqual(
+    seen,
+    [
+      { workspaceId: 'ws-1', beforeWorkspaceId: 'ws-2' },
+      // 移到末尾时**不能塞空串**：`beforeWorkspaceId?` 的语义是"没给 = 末尾"，
+      // 塞空串会被宿主当成一个不存在的锚点（与 `insertSessionBefore` 同一条）。
+      { workspaceId: 'ws-1' },
+    ],
+    '只把真实存在的锚点过线',
+  )
+})
+
 test('pin / unpin：返回置顶全集，且顺序原样保留', async () => {
   const port = createWorkspacesPort(
     fakeController({
@@ -180,6 +205,7 @@ function portOf(overrides: Partial<WorkspacesPort>): WorkspacesPort {
     archive: () => Promise.resolve([]),
     unarchive: () => Promise.resolve([]),
     insertSessionBefore: () => Promise.resolve([]),
+    insertBefore: () => Promise.resolve([]),
     pin: () => Promise.resolve([]),
     unpin: () => Promise.resolve([]),
     ...overrides,
@@ -339,6 +365,33 @@ test('workspace.insertSessionBefore：workspaceId / beforeSid 形状不合规回
   await assert.rejects(async () => {
     await handler({ workspaceId: 'ws-1', sid: 'sid_nope' }, {})
   }, /未知的会话别名/)
+})
+
+test('workspace.insertBefore：两个 id 原样过线，返回整份顺序（工作区 id 不是别名）', async () => {
+  const seen: unknown[] = []
+  const { handlers } = build({
+    insertBefore: (workspaceId, beforeWorkspaceId) => {
+      seen.push({ workspaceId, beforeWorkspaceId })
+      return Promise.resolve(['ws-2', 'ws-1'])
+    },
+  })
+  const handler = handlers['workspace.insertBefore']
+  assert.ok(handler !== undefined)
+
+  assert.deepEqual(
+    await handler({ workspaceId: 'ws-1', beforeWorkspaceId: 'ws-2' }, {}),
+    { workspaceIds: ['ws-2', 'ws-1'] },
+  )
+  assert.deepEqual(await handler({ workspaceId: 'ws-1' }, {}), {
+    workspaceIds: ['ws-2', 'ws-1'],
+  })
+  assert.deepEqual(seen, [
+    { workspaceId: 'ws-1', beforeWorkspaceId: 'ws-2' },
+    { workspaceId: 'ws-1', beforeWorkspaceId: undefined },
+  ])
+  await assert.rejects(async () => {
+    await handler({}, {})
+  }, /workspaceId 必填/)
 })
 
 test('workspace.pin / unpin：sid 反解，返回置顶全集并过别名', async () => {

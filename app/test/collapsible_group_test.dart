@@ -51,8 +51,11 @@ void main() {
     expect(find.text('dsh-mobile'), findsOneWidget);
     expect(find.text('会话 A'), findsOneWidget);
     expect(find.text('会话 C'), findsOneWidget);
-    // 展开时**不显示个数**（DSH 只在折叠时给溢出行）。
-    expect(find.text('3'), findsNothing);
+    // **展开时也显示个数**（2026-10-21 用户原话：「不是按照工作区分类然后每个
+    // 工作区下面多少会话？」）。DSH 只在折叠时给溢出行；手机没有 hover，
+    // 把"有多少"藏在折叠态里等于不给 —— 有意偏离，见
+    // `docs/design-and-tech-plan.md` §6 与 `collapsible_group.dart` 文件头。
+    expect(find.text('3'), findsOneWidget);
   });
 
   testWidgets('折叠：会话不渲染，但把收着的个数说出来', (tester) async {

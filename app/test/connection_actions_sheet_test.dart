@@ -11,12 +11,14 @@ library;
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/connection_actions_sheet.dart';
+import 'package:dsh_mobile/ui/dsh_popover.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Widget _host({
   required ConnectionSummary connection,
   required VoidCallback onRePair,
+  Rect? anchor,
 }) => MaterialApp(
   theme: DshTheme.dark(),
   home: Scaffold(
@@ -26,6 +28,7 @@ Widget _host({
           context,
           connection: connection,
           onRePair: onRePair,
+          anchor: anchor,
         ),
         child: const Text('open'),
       ),
@@ -90,5 +93,38 @@ void main() {
 
     expect(find.text('当前连接：直连 · ws://192.168.2.43:8790'), findsOneWidget);
     expect(find.textContaining('拨不通'), findsNothing);
+  });
+
+  testWidgets('给了锚点：面板长在触发点下面（顶栏那条，不是底部 sheet）', (tester) async {
+    // 顶栏状态点大约在 y≈100~138；这里直接给它的矩形。
+    const anchor = Rect.fromLTWH(300, 100, 38, 38);
+    await tester.pumpWidget(
+      _host(connection: fellBack, onRePair: () {}, anchor: anchor),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    final panel = tester.getRect(find.byKey(popoverPanelKey));
+    expect(
+      panel.top - anchor.bottom,
+      lessThan(80),
+      reason: '面板顶边要贴着状态点（底部 sheet 会差出一整屏）',
+    );
+    expect(
+      (panel.left - anchor.left).abs(),
+      lessThan(80),
+      reason: '水平方向也要落在状态点这一侧',
+    );
+    // 内容与底部 sheet 那份逐字相同（形态不同，动作不漂移）。
+    expect(find.text('重新配对（换一台电脑）'), findsOneWidget);
+  });
+
+  testWidgets('不给锚点：仍是底部 sheet（空态出路 / 抽屉连接行）', (tester) async {
+    await tester.pumpWidget(_host(connection: fellBack, onRePair: () {}));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(popoverPanelKey), findsNothing, reason: '没有锚点就不该长成浮层');
+    expect(find.text('重新配对（换一台电脑）'), findsOneWidget);
   });
 }

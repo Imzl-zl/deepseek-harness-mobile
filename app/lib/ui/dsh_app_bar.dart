@@ -27,6 +27,7 @@ import '../model/chat_item.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
+import 'dsh_popover.dart';
 import 'dsh_state_dot.dart';
 
 /// 顶栏上的一个图标按钮（`.ib`）。
@@ -109,7 +110,7 @@ class DshConnectionDotButton extends StatelessWidget {
     super.key,
     required this.state,
     required this.tooltip,
-    required this.onPressed,
+    required this.onAnchorPressed,
   });
 
   /// 点的语义（由调用方按连接状态映射）。
@@ -119,24 +120,32 @@ class DshConnectionDotButton extends StatelessWidget {
   /// 不在这里另写一套说法。
   final String tooltip;
 
-  final VoidCallback onPressed;
+  /// 点它做什么：把**自己的矩形**交给调用方（连接操作浮层要长在这个点下面）。
+  ///
+  /// 锚点由这枚按钮自己量 —— 38×38 的触摸目标就是"用户点的那个东西"，
+  /// 用整条顶栏或屏幕宽度当锚点都会让面板跑偏。
+  final void Function(Rect anchor)? onAnchorPressed;
 
   @override
   Widget build(BuildContext context) {
     return Tooltip(
       message: tooltip,
-      child: SizedBox(
-        // 与 `DshAppBarButton` 同尺寸的触摸目标（38×38）——点只有 10~14px，
-        // 直接点它等于让手指去戳一个 1/4 圆钮大小的东西。
-        width: 38,
-        height: 38,
-        child: Material(
-          color: Colors.transparent,
-          shape: const CircleBorder(),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: onPressed,
-            child: Center(child: DshStateDot(state)),
+      child: Builder(
+        builder: (inner) => SizedBox(
+          // 与 `DshAppBarButton` 同尺寸的触摸目标（38×38）——点只有 10~14px，
+          // 直接点它等于让手指去戳一个 1/4 圆钮大小的东西。
+          width: 38,
+          height: 38,
+          child: Material(
+            color: Colors.transparent,
+            shape: const CircleBorder(),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: onAnchorPressed == null
+                  ? null
+                  : () => onAnchorPressed!(dshAnchorOf(inner)),
+              child: Center(child: DshStateDot(state)),
+            ),
           ),
         ),
       ),
@@ -315,7 +324,12 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   /// **同一个状态只有一套说法**（抽屉连接行、设置页、这里共用）。
   final String connectionTooltip;
 
-  final VoidCallback onConnectionTap;
+  /// 点连接状态点：弹连接操作浮层。
+  ///
+  /// **回调带锚点矩形**，与 [onTitleTap] 同一条规则（2026-10-21 用户原话
+  /// 「这个 APP 还有多少这个种不跟手的操作习惯」）：顶栏的触发点用锚定浮层，
+  /// 只有输入栏那一侧才用底部 sheet。
+  final void Function(Rect anchor)? onConnectionTap;
 
   /// 子智能体总数 / 在跑数；`0` = 不显示这枚 chip。
   final int subagentCount;
@@ -418,7 +432,7 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
           DshConnectionDotButton(
             state: connectionState,
             tooltip: connectionTooltip,
-            onPressed: onConnectionTap,
+            onAnchorPressed: onConnectionTap,
           ),
           DshAppBarButton(
             icon: 'newChat',
@@ -464,7 +478,7 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
       // 那一枚（标题 + 箭头），不是整条顶栏。
       child: Builder(
         builder: (inner) => InkWell(
-          onTap: tap == null ? null : () => tap(_anchorOf(inner)),
+          onTap: tap == null ? null : () => tap(dshAnchorOf(inner)),
           borderRadius: BorderRadius.circular(DshRadius.sm),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
@@ -482,20 +496,6 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
         ),
       ),
     );
-  }
-
-  /// 一个 `BuildContext` 在**屏幕坐标**里的矩形（锚定浮层用它定位）。
-  ///
-  /// 拿不到（还没布局、或不在有 overlay 的树里）就给一个退化矩形 ——
-  /// 浮层会退到左上角贴边，仍然可读可点，而不是抛。
-  static Rect _anchorOf(BuildContext context) {
-    final box = context.findRenderObject();
-    if (box is! RenderBox || !box.hasSize) return Rect.zero;
-    final overlay = Navigator.of(context).overlay?.context.findRenderObject();
-    final origin = overlay is RenderBox && overlay.hasSize
-        ? box.localToGlobal(Offset.zero, ancestor: overlay)
-        : box.localToGlobal(Offset.zero);
-    return origin & box.size;
   }
 }
 

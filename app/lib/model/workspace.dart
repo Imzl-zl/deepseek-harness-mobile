@@ -232,3 +232,47 @@ List<WorkspaceBucket> bucketSessionsByWorkspace(
   final after = to + 1;
   return (beforeSid: after < displayOrder.length ? displayOrder[after] : null);
 }
+
+/// 拖动落下时该发给 Host 的锚点（`beforeSid`）。
+///
+/// [targetSid] 是被落上的那一行，[after] 表示落在它的**下半**（= 插到它后面）。
+///
+/// 返回 `null` = **不该发请求**：拖到自己身上 / 跨置顶分区 / 位置没变 /
+/// 找不到会话。跨分区那条与 DSH Web 的拖动门禁同一条
+/// （`WorkspaceBrowser.tsx:593-596` 的 `drag.pinned === node.pinned`）——
+/// 置顶行只能在置顶块内挪，普通行不能越过置顶块。
+///
+/// 与 [moveAnchorInDisplayOrder] 的区别：那个是"移一位"，这个是"拖到任意一行"。
+/// 两者共用同一条分区门禁与同一种返回形状，调用方不必分辨。
+({String? beforeSid})? dropAnchorInDisplayOrder({
+  required List<String> displayOrder,
+  required String sid,
+  required String targetSid,
+  required bool after,
+  Set<String> pinnedSessionIds = const {},
+}) {
+  if (sid == targetSid) return null;
+  final from = displayOrder.indexOf(sid);
+  final targetIndex = displayOrder.indexOf(targetSid);
+  if (from < 0 || targetIndex < 0) return null;
+  if (pinnedSessionIds.contains(sid) != pinnedSessionIds.contains(targetSid)) {
+    return null;
+  }
+  // 先把自己摘出去再算插入点：不摘的话"落点在原位置"会算成移动一位。
+  final rest = [
+    for (final id in displayOrder)
+      if (id != sid) id,
+  ];
+  final at = rest.indexOf(targetSid) + (after ? 1 : 0);
+  final next = [...rest]..insert(at, sid);
+  // 顺序没变 ⇒ 不发请求（重发一条"原地重排"只会让 UI 闪一下）。
+  var same = true;
+  for (var i = 0; i < next.length; i += 1) {
+    if (next[i] != displayOrder[i]) {
+      same = false;
+      break;
+    }
+  }
+  if (same) return null;
+  return (beforeSid: at >= rest.length ? null : rest[at]);
+}

@@ -1382,7 +1382,7 @@ void main() {
           onNewSession: () {},
           connectionState: DshStateDotState.done,
           connectionTooltip: '连接状态：已连接（点按查看连接操作）',
-          onConnectionTap: () {},
+          onConnectionTap: (_) {},
           subagentCount: subagents,
           subagentRunning: runningSubagents,
           jobCount: jobs,

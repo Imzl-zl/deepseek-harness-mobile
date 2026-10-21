@@ -168,6 +168,93 @@ void main() {
     expect(app.lastError, isNotNull);
   });
 
+  test(
+    'moveWorkspace：发 workspaceId + beforeWorkspaceId，照**整份**顺序重排，不丢组',
+    () async {
+      Map<String, Object?> snapshot() => {
+        'workspaces': [
+          {
+            'workspaceId': 'w1',
+            'title': 'A',
+            'path': '/a',
+            'sessionIds': ['s1'],
+          },
+          {
+            'workspaceId': 'w2',
+            'title': 'B',
+            'path': '/b',
+            'sessionIds': ['s2'],
+          },
+          {
+            'workspaceId': 'w3',
+            'title': 'C',
+            'path': '/c',
+            'sessionIds': ['s3'],
+          },
+        ],
+        'archivedSessionIds': <String>[],
+        'pinnedSessionIds': <String>[],
+      };
+      final client = _FakeWorkspaceClient(
+        onCall: (method, params) => switch (method) {
+          'workspace.list' => snapshot(),
+          'workspace.insertBefore' => {
+            'workspaceIds': ['w3', 'w1', 'w2'],
+          },
+          _ => null,
+        },
+      );
+      final app = AppModel(client: client);
+      await app.refreshWorkspaces();
+
+      expect(await app.moveWorkspace('w3', beforeWorkspaceId: 'w1'), isTrue);
+      expect(client.calls.last.params, {
+        'workspaceId': 'w3',
+        'beforeWorkspaceId': 'w1',
+      });
+      expect(app.workspaces.map((g) => g.workspaceId), ['w3', 'w1', 'w2']);
+
+      // 移到末尾：**不发** beforeWorkspaceId（DSH 的 `beforeWorkspaceId?` 缺省语义）。
+      expect(await app.moveWorkspace('w1', beforeWorkspaceId: null), isTrue);
+      expect(client.calls.last.params, {'workspaceId': 'w1'});
+    },
+  );
+
+  test('moveWorkspace：应答只提到一部分组 → 其余留在末尾，不丢', () async {
+    final client = _FakeWorkspaceClient(
+      onCall: (method, params) => switch (method) {
+        'workspace.list' => {
+          'workspaces': [
+            {
+              'workspaceId': 'w1',
+              'title': 'A',
+              'path': '/a',
+              'sessionIds': <String>[],
+            },
+            {
+              'workspaceId': 'w2',
+              'title': 'B',
+              'path': '/b',
+              'sessionIds': <String>[],
+            },
+          ],
+          'archivedSessionIds': <String>[],
+          'pinnedSessionIds': <String>[],
+        },
+        // 宿主只回了 w2（形状仍合法）—— 排序是增强，不能因此把 w1 从列表里抹掉。
+        'workspace.insertBefore' => {
+          'workspaceIds': ['w2'],
+        },
+        _ => null,
+      },
+    );
+    final app = AppModel(client: client);
+    await app.refreshWorkspaces();
+
+    expect(await app.moveWorkspace('w2', beforeWorkspaceId: null), isTrue);
+    expect(app.workspaces.map((g) => g.workspaceId), ['w2', 'w1']);
+  });
+
   test('应答形状不认识：不落状态，返回 false', () async {
     final client = _FakeWorkspaceClient(
       onCall: (method, params) => switch (method) {

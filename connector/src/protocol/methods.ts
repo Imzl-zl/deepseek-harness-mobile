@@ -110,6 +110,10 @@ export const METHODS = [
   'workspace.archive',
   'workspace.unarchive',
   'workspace.insertSessionBefore',
+  // 工作区在注册表里的**显示顺序**（拖动侧栏项目头）。DSH 的
+  // `insertBefore`（`workspace-controller/src/index.ts:135-145` → `commands.ts:108-125`），
+  // 请求 `{workspaceId, beforeWorkspaceId?}`，返回**整份**新顺序 `{workspaceIds}`。
+  'workspace.insertBefore',
   'workspace.pin',
   'workspace.unpin',
   // 端点自报：当前可拨的地址表（中转 + 局域网直连）。只读。
@@ -155,6 +159,8 @@ export const IDEMPOTENT_METHODS: ReadonlySet<MethodName> = new Set([
   // `insertSessionBefore` / `pin` / `unpin` 落到同一个终态。
   // 仍然要键 —— 与 `workspace.archive` 同一条纪律：指令层不靠宿主幂等兜底。
   'workspace.insertSessionBefore',
+  // 工作区排序同理：重发同一条落到同一个终态，但键仍由这里强制。
+  'workspace.insertBefore',
   'workspace.pin',
   'workspace.unpin',
 ])

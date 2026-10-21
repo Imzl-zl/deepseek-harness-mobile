@@ -219,3 +219,26 @@
 同一轮修掉的真机缺陷（缺陷与判据见
 `.agents/notes/implemented/2026-10-21-subagent-child-address-and-prompt.md`）：
 子会话白屏、子会话发不出消息、面板指标只在重连后更新。
+
+### 7.2 真机验收（2026-10-21 深夜，同一实例，**最终包只装一次**）
+
+`flutter build apk --debug` + `adb install -r`（`firstInstallTime` 不变、`lastUpdateTime` 更新）。
+截图在 `D:\tmp\dsh-e2e\shots-1021b\`，**不进仓库**。
+
+| 项 | 结论 | 证据 |
+|---|---|---|
+| E1 顶栏连接点 → 面板长在点下面 | 过 | `e01c-popover.png`：点 `[870,127][970,227]`，面板首行 `[103,473]`；面板顶边 = 点下沿 + 6dp（测试判据 `panel.top - anchor.bottom < 80`） |
+| E2 会话行菜单锚在那一行下面 | 过 | `e02-row-menu.png`：行 `[21,941][908,1112]`，菜单标题 `[68,1159]`（差 47px ≈ 17dp）；触发从长按改成行尾「…」 |
+| E3 拖动排序（会话 / 工作区） | 未验 | 隔离实例凑不出「同一工作区下两条可见会话」：新会话是 blank（`sessionVisible` 不列），宿主工作区账本只记带 `workspaceId` 建出来的会话。几何与回调由 widget 测试覆盖（`session_drawer_test` 三条） |
+| F1 一次性子会话只读框（A6） | 未造出 | 本 profile 两个 in-process 后端（`subagent-spawn-in-process` / `-fork-in-process`）都只产 `continuable`；只读框由单测覆盖 |
+| F2 孙级（A3，`maxDepth: 2`） | 过 | `f03-panel-root.png`：根只有 1 行（直接子级）+ 行尾 44dp 展开钮；`f04-panel-expanded.png`：展开后出现孙级行「Reply with fixed text」，它自己再带展开钮（已知空叶） |
+| G 子会话里左缘拖抽屉（B4） | 过 | `g03-child-drawer.png` / `g04-child-after-drawer.png`：在子会话里从 `x=40,y=300` 慢拖（落在 gesture-exclusion 的**上半屏**边带）抽屉跟手出来；关掉后标题仍是「Spawn grandchild, report result」、`←` 仍在 |
+| D1 附件（＋→照片→芯片→发送） | **未过** | `d02-chip.png`：芯片「976.png」正常出现；点发送两次（不同坐标）都没触发，`KEYCODE_ENTER` 只插换行且芯片消失。待查：发送按钮命中区 / 带附件时的发送路径 |
+| D2 历史翻页（快照一页 100 条） | 未造出 | 本实例没有 >100 条事件的会话；造够真历史要 8~12 个真实轮次 |
+| D3 异常结局 / 重试 / 压缩标记 | 未造出 | 没有稳定制造**失败**回合的手段（取消 ≠ 失败）；压缩标记本轮未出现 |
+| H1 设置页 | 过 | `h01-settings.png`：通用 / 模型 / 连接方式三组都在；端点列表带「当前连接」「首选」「还没试过」 |
+| H2 归档→取消归档闭环 | 未验 | 本轮时间不够，未做（C5 已验过"归档后从列表消失"那一半） |
+| H3 连接操作三个入口 | 过 | `e01c-popover.png`：重新连接 / 重新配对 / 断开并清掉凭据三项都在（未真点断开） |
+
+**同一包上的其它证据**：容器中转端到端（配对 → 会话列表 → 发一句 → 收到回复）见
+`docs/cookbook/relay-on-a-server.md` 的「本机容器验证」；`flutter test` 1009 项全绿。

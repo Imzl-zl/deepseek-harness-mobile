@@ -196,6 +196,63 @@ void main() {
     });
   });
 
+  group('拖动落点锚点（Web 的 drag 语义，2026-10-21）', () {
+    ({String? beforeSid})? drop(
+      List<String> order,
+      String sid,
+      String target, {
+      required bool after,
+      Set<String> pinned = const {},
+    }) => dropAnchorInDisplayOrder(
+      displayOrder: order,
+      sid: sid,
+      targetSid: target,
+      after: after,
+      pinnedSessionIds: pinned,
+    );
+
+    test('落在目标上半 = 插到它前面；下半 = 插到它后面', () {
+      expect(drop(['a', 'b', 'c'], 'c', 'a', after: false)?.beforeSid, 'a');
+      expect(
+        drop(['a', 'b', 'c'], 'a', 'b', after: true)?.beforeSid,
+        'c',
+        reason: '落在 B 的下半 ⇒ 插到 B 之后 = C 之前',
+      );
+    });
+
+    test('落在最后一行下半 = 追加到末尾（null）', () {
+      expect(drop(['a', 'b', 'c'], 'a', 'c', after: true)?.beforeSid, isNull);
+    });
+
+    test('原地落下（顺序没变）返回 null —— 不发一条"原地重排"', () {
+      // b 落在 a 的下半 = 本来就该在的位置。
+      expect(drop(['a', 'b', 'c'], 'b', 'a', after: true), isNull);
+      // a 落在 b 的上半 = 也还是原位。
+      expect(drop(['a', 'b', 'c'], 'a', 'b', after: false), isNull);
+    });
+
+    test('跨置顶分区不接受（与 DSH 的 drag.pinned === node.pinned 同一条）', () {
+      final order = ['p1', 'p2', 'n1', 'n2'];
+      final pinned = {'p1', 'p2'};
+      expect(
+        drop(order, 'n1', 'p1', after: false, pinned: pinned),
+        isNull,
+        reason: '普通行不能拖进置顶块',
+      );
+      expect(
+        drop(order, 'p1', 'n2', after: true, pinned: pinned),
+        isNull,
+        reason: '置顶行不能拖进普通块',
+      );
+    });
+
+    test('拖到自己身上 / 认不出的 id：null', () {
+      expect(drop(['a', 'b'], 'a', 'a', after: true), isNull);
+      expect(drop(['a', 'b'], 'a', 'zz', after: true), isNull);
+      expect(drop(['a', 'b'], 'zz', 'a', after: true), isNull);
+    });
+  });
+
   // 列表可见性:**逐条照 DSH Web 的 sessionVisible**
   // (`packages/client/ui-workspace/src/client/tree.ts:238-255`)。
   // 2026-10-15 真机对比:Web 的 anatomy-test 3 条、手机 4 条 ——

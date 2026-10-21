@@ -515,6 +515,9 @@ class _DshMobileAppState extends State<DshMobileApp>
           onUnpin: (session) => unawaited(_pinFromDrawer(app, session, false)),
           onMove: (session, beforeSid) =>
               unawaited(_moveFromDrawer(app, session, beforeSid)),
+          onMoveWorkspace: (workspaceId, beforeWorkspaceId) => unawaited(
+            _moveWorkspaceFromDrawer(app, workspaceId, beforeWorkspaceId),
+          ),
           // 点连接状态行 → 已配对时给"重新配对 / 断开"的选择，没配对上配对页。
           onClose: () {
             if (_credentials == null) {
@@ -621,7 +624,7 @@ class _DshMobileAppState extends State<DshMobileApp>
     if (!ok && mounted) _showActionFailure(app);
   }
 
-  /// 组内上移 / 下移（长按菜单）。[beforeSid] 由抽屉按**显示顺序**算好：
+  /// 组内上移 / 下移 / 拖动落点。[beforeSid] 由抽屉按**显示顺序**算好：
   /// `null` 是末尾（Host 的追加语义）。
   Future<void> _moveFromDrawer(
     AppModel app,
@@ -629,6 +632,19 @@ class _DshMobileAppState extends State<DshMobileApp>
     String? beforeSid,
   ) async {
     final ok = await app.moveSession(session.sid, beforeSid: beforeSid);
+    if (!ok && mounted) _showActionFailure(app);
+  }
+
+  /// 工作区排序（拖动项目头）。[beforeWorkspaceId] 为 `null` = 移到末尾。
+  Future<void> _moveWorkspaceFromDrawer(
+    AppModel app,
+    String workspaceId,
+    String? beforeWorkspaceId,
+  ) async {
+    final ok = await app.moveWorkspace(
+      workspaceId,
+      beforeWorkspaceId: beforeWorkspaceId,
+    );
     if (!ok && mounted) _showActionFailure(app);
   }
 

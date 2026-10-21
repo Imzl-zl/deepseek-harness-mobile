@@ -1896,6 +1896,69 @@ class AppModel extends ChangeNotifier {
     }
   }
 
+  /// 把一个**工作区**挪到 [beforeWorkspaceId] 之前（`null` = 移到末尾）。
+  ///
+  /// 与 [moveSession] 是两条：那条改**组内会话**顺序，这条改**工作区自己**的顺序
+  /// （侧栏项目头的上下位置）。宿主返回**整份** `{workspaceIds}`，照它重排
+  /// [_workspaces]；应答里没提到的组留在末尾，不丢。
+  Future<bool> moveWorkspace(
+    String workspaceId, {
+    required String? beforeWorkspaceId,
+  }) async {
+    try {
+      final result = await client.call<Object?>(
+        'workspace.insertBefore',
+        {
+          'workspaceId': workspaceId,
+          // 只在真的要移到末尾时省略这个键（与 `moveSession` 同一条：
+          // 塞空串会被宿主当成一个不存在的锚点）。
+          'beforeWorkspaceId': ?beforeWorkspaceId,
+        },
+        requestId: 'mvw-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      final order = _parseWorkspaceIds(result);
+      if (order == null) {
+        _recordError('移动工作区失败', StateError('应答缺少 workspaceIds'));
+        return false;
+      }
+      _applyWorkspaceListOrder(order);
+      return true;
+    } catch (error) {
+      _recordError('移动工作区失败', error);
+      return false;
+    }
+  }
+
+  /// 用应答里的**整份**顺序重排 [_workspaces]。
+  ///
+  /// 只认已知的 workspaceId：应答里多出来的（宿主新增、手机还没读到的）跳过，
+  /// 没提到的保留在末尾 —— 排序是增强，**不能因为一次重排把组弄丢**。
+  void _applyWorkspaceListOrder(List<String> order) {
+    if (_disposed) return;
+    final byId = {for (final group in _workspaces) group.workspaceId: group};
+    final next = <WorkspaceGroup>[
+      // 应答里多出来的 id（宿主新增、手机还没读到）落成 null 被丢掉 ——
+      // 排序是增强，不认识的组留在下面那段兜底里。
+      for (final id in order) ?byId[id],
+    ];
+    final seen = {for (final group in next) group.workspaceId};
+    for (final group in _workspaces) {
+      if (!seen.contains(group.workspaceId)) next.add(group);
+    }
+    _workspaces = next;
+    notifyListeners();
+  }
+
+  /// 解析工作区排序应答（`{workspaceIds: [...]}`）；**形状不认识给 `null`**。
+  static List<String>? _parseWorkspaceIds(Object? result) {
+    if (result is! Map) return null;
+    final ids = result['workspaceIds'];
+    if (ids is! List) return null;
+    final out = ids.whereType<String>().where((s) => s.isNotEmpty).toList();
+    if (ids.isNotEmpty && out.isEmpty) return null;
+    return out;
+  }
+
   /// 用应答里的顺序替换那一组的 `sessionIds`。**只动这一组**：别的组没有新真值。
   void _applyWorkspaceOrder(String workspaceId, List<String> sessionIds) {
     if (_disposed) return;

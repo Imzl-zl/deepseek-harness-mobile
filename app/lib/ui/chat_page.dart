@@ -957,19 +957,24 @@ class ChatPageState extends State<ChatPage> {
   /// - **已配对** → sheet。**不再按"serving 时开右抽屉"分叉**：右抽屉入口已经搬到
   ///   自己那个按钮上（`ChatAppBar.onOpenSide`），一个点只做一件事；
   ///   而"任何状态 ≤2 步走到重新配对"的硬判据照旧成立（点 1 → sheet 里选 1）。
-  void _onStatusTap() {
+  void _onStatusTap(Rect anchor) {
     if (!widget.paired) {
       widget.onConnect?.call();
       return;
     }
-    _showConnectionActionsSheet();
+    _showConnectionActionsSheet(anchor);
   }
 
-  /// 弹连接操作 sheet（议题 3 的唯一形状，三处入口共用）。
-  void _showConnectionActionsSheet() {
+  /// 弹连接操作面板（议题 3 的唯一形状，三处入口共用）。
+  ///
+  /// [anchor] 是那枚状态点的矩形 —— 面板长在它下面（锚定浮层），
+  /// 不是从屏幕底部升起来。另外两个入口（空态出路 / 抽屉连接行）
+  /// 仍走底部 sheet：它们的触发点本来就在下半屏。
+  void _showConnectionActionsSheet(Rect anchor) {
     unawaited(
       showConnectionActionsSheet(
         context,
+        anchor: anchor,
         // 「当前连接」块（连接方式选择器第 1 步）：与设置页顶部同一块、
         // 同一套说法（`connectionSummary`）。
         connection: connectionSummary(

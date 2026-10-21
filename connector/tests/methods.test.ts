@@ -32,9 +32,11 @@ test('方法表：封闭集，幂等键标记与契约 §5.7 的表一致', () =
   // `workspace.unpin`（侧栏会话重排与置顶）后是 **35**。
   // 同日加 `subagent.prompt`（给可继续子会话投递人写的消息 —— 子会话不能用
   // `session.prompt`，宿主会拒成 `is owned by subagent routing`）后是 **36**。
+  // 2026-10-21 晚加 `workspace.insertBefore`（侧栏项目头拖动排序，DSH 的
+  // `workspace-controller/src/index.ts:135-145`）后是 **37**。
   // **这个数是契约 §5.7 的表与 `tools.md` 的同步闸**：加了方法不改这里就会红，
   // 而它红的方式是"数不对"，所以改它必须同时改契约那一行。
-  assert.equal(METHODS.length, 36, '方法数变了要同步契约 §5.7 的表')
+  assert.equal(METHODS.length, 37, '方法数变了要同步契约 §5.7 的表')
   assert.equal(new Set(METHODS).size, METHODS.length, '方法名不能重复')
 
   // 幂等集**从契约 §5.7 的表里读**，不在测试里手抄第二份 ——
@@ -73,6 +75,7 @@ test('方法表：封闭集，幂等键标记与契约 §5.7 的表一致', () =
   assert.equal(requiresIdempotencyKey('workspace.archive'), true)
   assert.equal(requiresIdempotencyKey('workspace.unarchive'), true)
   assert.equal(requiresIdempotencyKey('workspace.insertSessionBefore'), true)
+  assert.equal(requiresIdempotencyKey('workspace.insertBefore'), true)
   assert.equal(requiresIdempotencyKey('workspace.pin'), true)
   assert.equal(requiresIdempotencyKey('workspace.unpin'), true)
   assert.equal(requiresIdempotencyKey('permission.catalog'), false, '读方法不带幂等键')

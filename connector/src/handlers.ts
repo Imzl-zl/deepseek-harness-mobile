@@ -750,6 +750,23 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       return { sessionIds: await aliased(order) }
     }
 
+    // 工作区排序（拖动侧栏的项目头）。与上面那条的区别：那条改**组内会话**顺序，
+    // 这条改**工作区自己**的顺序。工作区 id 不是别名（`workspace.list` 也原样给），
+    // 所以不过 `aliased` —— 返回的是**整份** `{workspaceIds}`。
+    handlers['workspace.insertBefore'] = async (params) => {
+      const workspaceId = requireString(params, 'workspaceId')
+      const beforeWorkspaceId =
+        paramOf(params, 'beforeWorkspaceId') === undefined
+          ? undefined
+          : requireString(params, 'beforeWorkspaceId')
+      return {
+        workspaceIds: await deps.workspaces!.insertBefore(
+          workspaceId,
+          beforeWorkspaceId,
+        ),
+      }
+    }
+
     handlers['workspace.pin'] = async (params) => ({
       pinnedSessionIds: await aliased(
         await deps.workspaces!.pin(requireSession(requireSid(params))),

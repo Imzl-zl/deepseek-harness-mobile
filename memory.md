@@ -6,6 +6,17 @@
 
 ## 下一步(新会话从这里开始)
 
+> **2026-10-21 深夜：四阶段一轮收口** —— ① 剩下两处「跟手」改成锚定浮层（顶栏连接点、
+> 抽屉行菜单；菜单触发从长按挪到行尾「…」，长按留给拖动）+ 抽屉拖动排序与组头常显计数
+> （连接器新增 `workspace.insertBefore`，方法面 36→37）；② 容器中转端到端（配对 → 列表 →
+> 发一句 → 收到回复），公网那段**未验（无服务器）**；③ 最终包只装一次，E/F/G/D/H 逐条
+> 判据见 `docs/subsystems/subagent-page.md` §7.2（**D1 附件发送未过**、E3 拖动与 H2 归档
+> 未验、D2/D3/A6 未造出）；④ 门禁全绿（flutter 1009 / connector 563 / relay 86 /
+> protocol 486·26·49 / boundary 318 / CDP 六项）。
+> 笔记：`.agents/notes/implemented/2026-10-21-anchored-popover-for-drawer-rows.md`、
+> `.agents/notes/implemented/2026-10-21-drawer-drag-and-counts.md`。
+> **下一轮先查 D1**：带图片附件点发送没反应（芯片在、轮次不涨），Enter 只插换行且芯片消失。
+
 > 2026-10-20 晚这一轮把「渲染清单」清完了（1/3/5/6/7 改，2/4/8 判定不改），
 > 并用 `DSH_HOME` 隔离实例做了**一次真机全测**。清单与逐条证据在
 > `.agents/notes/proposed/2026-10-20-rendering-issues-todo.md`（第 9、10 条是
@@ -228,14 +239,15 @@
 - `connector/` 与 `relay/` 是**两个独立 pnpm 工程**,导入风格不同、别顺手统一
   (connector 写 `.js` 因 tsdown 打包,relay 直接跑 `.ts`)。本仓库**没有 CI**。
 
-## 方法面 32/36
+## 方法面 33/37
 
-契约封闭集 **36**、实现 **32**,差额 4 个是契约列了没实现的:`settings.describe` /
+契约封闭集 **37**、实现 **33**,差额 4 个是契约列了没实现的:`settings.describe` /
 `settings.update` / `credentials.set` / `credentials.unset`(依据见契约 §5.8)。
-2026-10-21 加的四条是 `workspace.insertSessionBefore` / `workspace.pin` /
-`workspace.unpin` 与 `subagent.prompt`(子会话唯一的写入口,见下)。
+2026-10-21 加的五条是 `workspace.insertSessionBefore` / `workspace.pin` /
+`workspace.unpin` / `workspace.insertBefore`(项目头拖动排序) 与 `subagent.prompt`
+(子会话唯一的写入口,见下)。
 **两个数都从代码里数,不靠减**;数法见 `tools.md`(要数 `METHODS` + `handlers.ts` 的**两种**注册形态)。
-**三处必须同步**:`tools.md`、契约 §5.7 的表、这里的"x/31"。
+**三处必须同步**:`tools.md`、契约 §5.7 的表、这里的"x/37"。
 
 **`session.projections` 是打开全部只读面的那把钥匙**:请求体只有 `{sessionId}`,返回所有投影的当前值。
 已核实的键:`modelSelection` / `permissions` / `subagentCatalog` / `deliverables` / `tokenUsage` /
@@ -267,6 +279,10 @@
 5. **PC 端「上报地址」面板没有布局/点击的自动化测试**(只有 i18n 键完整性门禁;API 侧有用例)。
 6. **IPv6 隐私地址仍会上报**:这台机器报 7 条,其中 4 条是每次轮换都变的 GUA。
    `dialOrder` 已把它们排后面(不再是 30 秒冷启动的成因),但仍占列表位,要用户手动藏。
+7. **带图片附件时点发送没反应**（2026-10-21 真机，`D1`）：芯片「976.png」加得进输入栏，
+   点发送两次（不同坐标）轮次都不涨；`KEYCODE_ENTER` 只插入换行、芯片反而消失。
+   判据：`d02-chip.png` / `d07-image-sent.png`。**先查发送按钮的命中区与带附件时的发送路径**
+   （`_send()` 的 content 里有没有 image 块），别先怀疑图片编码。
 
 ## 范围决定(别再当缺口)
 
@@ -287,11 +303,11 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **318 项**(22 条规则自检 + 扫 88 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 49 个)/ 工具脚本不许硬编码盘符(20 个) |
-| `cd app && flutter test` | **994 项** |
+| `cd app && flutter test` | **1009 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **561 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **563 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
-| CDP 浏览器组 | `verify-proto`(**31** = 顶栏与统计条 13 + 新会话页 hero 18) / `verify-authz`(18) / `verify-settings`(28) / `verify-tasks`(53) / `verify-picker` / `verify-drawer`(**14** = 长按菜单四项 + 无删除 + 置顶标记 + 上移边界 + 下移 + 置顶/取消置顶 + 归档) |
+| CDP 浏览器组 | `verify-proto`(**31** = 顶栏与统计条 13 + 新会话页 hero 18) / `verify-authz`(18) / `verify-settings`(28) / `verify-tasks`(53) / `verify-picker` / `verify-drawer`(**25** = 长按菜单四项 + 无删除 + 置顶标记 + 上移边界 + 下移 + 置顶/取消置顶 + 归档 + 拖动排序) |
 | | **2026-10-21 六项实测全绿**（起法：`pwsh -File mock/proto/tools/cdp.ps1 -Port 9400`，然后 `$env:CDP_URL='http://127.0.0.1:9400'; $env:NO_PROXY='127.0.0.1,localhost'`。注意 `verify-proto` / `verify-picker` 的汇总行格式与其它几个不同，别用同一条 `Select-String` 去抓） |
 
 **项数的唯一出处是 `tools.md`**;**改断言必须做一次变异校验**(故意破坏不变量,确认**恰好**那一条红)。
