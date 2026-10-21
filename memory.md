@@ -11,6 +11,15 @@
 > `.agents/notes/proposed/2026-10-20-rendering-issues-todo.md`（第 9、10 条是
 > 真机当场新发现的两条）；取舍与行号在
 > `.agents/notes/implemented/2026-10-20-render-alignment-to-dsh-spec.md`。
+> **2026-10-21：子智能体页按 Web 对齐已落地（P0+P1+P2）**：
+> 活动态/时长/token 来自投影（`mode` 不再冒充 running）、目录是
+> 「直接子级 + 展开才读」的树、三态分开、子会话头部有当前标题 + 切换 sheet、
+> 一次性/未知换成 54px 只读框。**行与只读框按触屏重排**（行尾 44dp 展开按钮、
+> 右列只放 token、时长进详情行、只读框文字两行），并补了**系统返回键回父会话**。
+> 判据与仍缺的两条（`parentAvailable` / 右侧栏子智能体聊天）见
+> `.agents/notes/implemented/2026-10-21-subagent-catalog-tree-and-state.md`
+> 与 `docs/subsystems/subagent-page.md`。对照清单
+> `.agents/notes/proposed/2026-10-21-subagent-web-parity.md` 仍是**差距的唯一出处**。
 
 待办（按顺序）:
 
@@ -31,23 +40,31 @@
 4. **电脑侧停一会儿，手机会清掉配对** —— 中转重启后名册是空的，设备换票拿到 401，
    App 把 401 归成 `notPaired`（终态）⇒ 清凭据回配对页。实测一次（清单第 11 条，
    含两条修法方向：名册持久化/503，或 App 侧只在连接器明确拒绝时才终态）。
-5. **侧边栏：组折叠已有；会话移动/置顶是缺功能**（用户问"可以折叠、移动吗？web 都支持"，
-   并纠正过我"不是偏好啊"）。DSH 的移动/置顶是**电脑侧 Host 方法**：
-   `workspace.insertSessionBefore({workspaceId, sessionId, beforeSessionId?})`
-   （`api/workspace-controller/src/index.ts:149-152` → `commands.ts:132-138`）与
-   `workspace.pinSession` / `workspace.unpinSession`（`commands.ts:197-226`，
-   返回 `{pinnedSessionIds}`，基线 + `{type:'pinned'}` 增量）。
-   我们方法面里一条都没有。触达点与判据见清单第 12 条（契约 +3 行、连接器三条方法、
-   手机长按菜单；**只做同 workspace 内重排**，不是换项目）。
+5. **侧边栏会话移动 / 置顶已落地**（2026-10-21）：DSH 三条 Host 方法
+   `workspace.insertSessionBefore` / `pinSession` / `unpinSession` 已进契约 §5.7、
+   连接器与手机长按菜单；置顶在**各自工作区分组**内领先，上移/下移只在同置顶分区内生效
+   （与 Web 拖动门禁同一条）。判据见
+   `.agents/notes/implemented/2026-10-21-sidebar-session-pin-and-reorder.md`。
+   **只剩真机点一次 + 置顶/排序在重连后仍成立**。
 6. **子智能体进入 / 后台任务看与停：都已接**（别再当缺口）：
-   子智能体 = `chat_page.dart:564` → `_openSubagentSession`（`openSession(job.id)`，
-   顶栏"返回"回父会话），DSH 同一条 `ui-subagent/src/client/index.ts:61-63`；
+   子智能体 = `_openSubagent`（点目录行 → `openSession(node.id)`，子会话顶栏左侧
+   `←` 回父会话 + 标题即「切换子智能体」，系统返回键同一条路），DSH 同一条
+   `ui-subagent/src/client/index.ts:61-63`；
    后台任务 = 行内展开输出（`job.follow`/`unfollow`，`app_model.dart:828-848`，丢帧写
    "较早的输出已被淘汰"）+ 两步确认停止（`KILL_ARM_MS = 3000` 照 DSH
-   `ui-jobs/src/client/JobListAction.tsx:63-67`）走 `job.kill`。**只差真机点一次。**
+   `ui-jobs/src/client/JobListAction.tsx:63-67`）走 `job.kill`。
+   2026-10-21 补了 `subagent_enter_test.dart`（进入 / 返回 / 切兄弟 / 只读框）、
+   `subagent_tree_test.dart`（树）、`subagent_metrics_test.dart`（活动态与指标）与
+   `side_pane_test.dart`（两步停 + 3 秒自行解除）。**只差真机点一次。**
 7. **隔离实例验收剩下的三条**（本轮没跑到）：附件（`＋`→照片→芯片→发送→附件计数）、
    历史翻页（快照页 100 条，要造够真历史）、异常结局/重试/压缩标记。
-8. **「上传文件」** —— 开工单在
+8. **`mock/proto` 子代理面板还没跟上落地端**（2026-10-21 有意留的差异，用户已确认先提交）：
+   原型 `renderSubs` 还是平铺的演示行（`task`/`state`/`dur`），而 App 已经是
+   「直接子级 + 展开懒加载」的树 + 三态 + token + 详情行 + 行尾 44dp 展开 + 顶栏标题切换。
+   同步要**一次做完**：disclosure 交互、三态演示数据（加载 / 失败+重试 / 已知空叶）、
+   token 与详情行、一个新的 `verify-subs.mjs` —— 半截做会留下"看起来能点、没有断言"的面板。
+   在那之前结构以 `app/lib/ui/subagent_tree.dart` 与 `docs/subsystems/subagent-page.md` 为准。
+9. **「上传文件」** —— 开工单在
    `.agents/notes/proposed/2026-10-20-file-upload-shape.md`（DSH 侧入口
    `packages/client/file-upload/src/index.ts:105,118`；共 8 个触达点，**别半截提交**）。
 
@@ -201,10 +218,11 @@
 - `connector/` 与 `relay/` 是**两个独立 pnpm 工程**,导入风格不同、别顺手统一
   (connector 写 `.js` 因 tsdown 打包,relay 直接跑 `.ts`)。本仓库**没有 CI**。
 
-## 方法面 27/32
+## 方法面 31/35
 
-契约封闭集 **32**、实现 **28**,差额 4 个是契约列了没实现的:`settings.describe` /
+契约封闭集 **35**、实现 **31**,差额 4 个是契约列了没实现的:`settings.describe` /
 `settings.update` / `credentials.set` / `credentials.unset`(依据见契约 §5.8)。
+2026-10-21 加的三条是 `workspace.insertSessionBefore` / `workspace.pin` / `workspace.unpin`。
 **两个数都从代码里数,不靠减**;数法见 `tools.md`(要数 `METHODS` + `handlers.ts` 的**两种**注册形态)。
 **三处必须同步**:`tools.md`、契约 §5.7 的表、这里的"x/31"。
 
@@ -256,14 +274,14 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
-| `node app/tools/verify-platform-boundary.mjs` | **300 项**(22 条规则自检 + 扫 84 个 Dart 文件) |
-| `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 43 个)/ 工具脚本不许硬编码盘符(19 个) |
-| `cd app && flutter test` | **917 项** |
+| `node app/tools/verify-platform-boundary.mjs` | **313 项**(22 条规则自检 + 扫 87 个 Dart 文件) |
+| `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 49 个)/ 工具脚本不许硬编码盘符(20 个) |
+| `cd app && flutter test` | **989 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **550 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **556 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
-| CDP 浏览器组 | `verify-proto`(**31** = 顶栏与统计条 13 + 新会话页 hero 18) / `verify-authz`(18) / `verify-settings`(28) / `verify-tasks`(53) / `verify-picker` |
-| | **2026-10-26 六项实测全绿**（这一串以前从没在本会话跑过；起法：`pwsh -File mock/proto/tools/cdp.ps1 -Port 9400`，然后 `$env:CDP_URL='http://127.0.0.1:9400'; $env:NO_PROXY='127.0.0.1,localhost'`。注意 `verify-proto` / `verify-picker` 的汇总行格式与其它三个不同，别用同一条 `Select-String` 去抓） |
+| CDP 浏览器组 | `verify-proto`(**31** = 顶栏与统计条 13 + 新会话页 hero 18) / `verify-authz`(18) / `verify-settings`(28) / `verify-tasks`(53) / `verify-picker` / `verify-drawer`(**14** = 长按菜单四项 + 无删除 + 置顶标记 + 上移边界 + 下移 + 置顶/取消置顶 + 归档) |
+| | **2026-10-21 六项实测全绿**（起法：`pwsh -File mock/proto/tools/cdp.ps1 -Port 9400`，然后 `$env:CDP_URL='http://127.0.0.1:9400'; $env:NO_PROXY='127.0.0.1,localhost'`。注意 `verify-proto` / `verify-picker` 的汇总行格式与其它几个不同，别用同一条 `Select-String` 去抓） |
 
 **项数的唯一出处是 `tools.md`**;**改断言必须做一次变异校验**(故意破坏不变量,确认**恰好**那一条红)。
 
@@ -280,4 +298,7 @@
 `app/test/fixtures/real-session-events.json` **是真机落盘事件** ——
 手写形状的用例只会复述实现的假设，这份 fixture 才是"我们以为的形状与真形状不同"
 的判据。
+
+- 2026-10-21 子智能体页对齐 Web（目录树 / 三态 / 指标 / 头部切换 / 只读框）——
+  `.agents/notes/implemented/2026-10-21-subagent-catalog-tree-and-state.md`。
 

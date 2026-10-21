@@ -508,9 +508,13 @@ class _DshMobileAppState extends State<DshMobileApp>
             unawaited(navigatorKey.currentState?.maybePop());
             unawaited(app.openSession(session.sid));
           },
-          // 左滑归档（原型基线的行动作）。`workspace.archive` 是 2026-10-16 接上的
-          // ——此前这个参数一直是死的（没人传），所以货架上没有归档这条路。
+          // 行动作（长按菜单）。`workspace.archive` 是 2026-10-16 接上的；
+          // 置顶 / 重排是 2026-10-21 接的，三个都是 Web 侧栏已有的 Host 方法。
           onArchive: (session) => unawaited(_archiveFromDrawer(session)),
+          onPin: (session) => unawaited(_pinFromDrawer(app, session, true)),
+          onUnpin: (session) => unawaited(_pinFromDrawer(app, session, false)),
+          onMove: (session, beforeSid) =>
+              unawaited(_moveFromDrawer(app, session, beforeSid)),
           // 点连接状态行 → 已配对时给"重新配对 / 断开"的选择，没配对上配对页。
           onClose: () {
             if (_credentials == null) {
@@ -602,6 +606,41 @@ class _DshMobileAppState extends State<DshMobileApp>
     if (!await confirmStopAndArchive(_navContext, title: session.title)) return;
     if (!mounted) return;
     await app.archiveSession(session.sid, stopActivity: true);
+  }
+
+  /// 置顶 / 取消置顶（长按菜单）。失败照实说，不吞。
+  Future<void> _pinFromDrawer(
+    AppModel app,
+    DrawerSession session,
+    bool pinned,
+  ) async {
+    final ok = pinned
+        ? await app.pinSession(session.sid)
+        : await app.unpinSession(session.sid);
+    if (!ok && mounted) _showActionFailure(app);
+  }
+
+  /// 组内上移 / 下移（长按菜单）。[beforeSid] 由抽屉按**显示顺序**算好：
+  /// `null` 是末尾（Host 的追加语义）。
+  Future<void> _moveFromDrawer(
+    AppModel app,
+    DrawerSession session,
+    String? beforeSid,
+  ) async {
+    final ok = await app.moveSession(session.sid, beforeSid: beforeSid);
+    if (!ok && mounted) _showActionFailure(app);
+  }
+
+  /// 行动作失败的原因（`AppModel.lastError` 的 code + message）。
+  void _showActionFailure(AppModel app) {
+    final error = app.lastError;
+    ScaffoldMessenger.of(_navContext).showSnackBar(
+      SnackBar(
+        content: Text(
+          error == null ? '操作失败' : '操作失败：${error.code.wire}：${error.message}',
+        ),
+      ),
+    );
   }
 
   /// 抽屉连接行的详情（换设备 / 断开重配）。
@@ -769,6 +808,7 @@ class _DshMobileAppState extends State<DshMobileApp>
         DateTime.fromMillisecondsSinceEpoch(s.updatedAt),
       ),
       isActive: s.sid == app.currentSid,
+      isPinned: app.pinnedSids.contains(s.sid),
     );
 
     final bySid = {for (final s in app.sessions) s.sid: s};
@@ -778,9 +818,14 @@ class _DshMobileAppState extends State<DshMobileApp>
       for (final bucket in bucketSessionsByWorkspace(
         visible.map((s) => s.sid).toList(),
         app.workspaces,
+        // 置顶的排在**各自分组**的最前（DSH 的 `sectionMembers`），
+        // 不是把置顶项抽到整张表最上面。
+        pinnedSessionIds: app.pinnedSids,
       ))
         DrawerSection(
           label: bucket.label,
+          // 哪一组能重排由分桶函数给（`null` = 兜底桶，菜单里上移/下移不可点）。
+          workspaceId: bucket.workspaceId,
           sessions: [
             for (final sid in bucket.sessionIds)
               if (bySid[sid] case final session?) rowOf(session),

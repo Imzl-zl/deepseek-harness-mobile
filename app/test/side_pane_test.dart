@@ -31,8 +31,8 @@ const _header = SideHeader(
 SidePane _pane({
   SidePanel panel = SidePanel.file,
   Widget? fileBody,
+  Widget? subsBody,
   List<SideJob> jobs = const [],
-  List<SideJob> subs = const [],
   int runningJobs = 0,
   int runningSubs = 0,
   ValueChanged<SidePanel>? onPanelChanged,
@@ -41,7 +41,6 @@ SidePane _pane({
   Set<String> openIds = const {},
   VoidCallback? onToggleFullscreen,
   bool fullscreen = false,
-  void Function(SideJob)? onOpenSub,
 }) => SidePane(
   header: _header,
   panel: panel,
@@ -49,26 +48,14 @@ SidePane _pane({
   onClose: () {},
   fileBody: fileBody,
   jobs: jobs,
-  subs: subs,
+  subsBody: subsBody,
   runningJobs: runningJobs,
   runningSubs: runningSubs,
   onToggleJob: onToggleJob,
   onStopJob: onStopJob,
-  onOpenSub: onOpenSub,
   openJobIds: openIds,
   onToggleFullscreen: onToggleFullscreen,
   fullscreen: fullscreen,
-);
-
-/// 一个子智能体行（catalog 的 `{id, createdAt, mode, label?}` 投影到面板的形状）。
-const sub = SideJob(
-  id: 'sub-1',
-  kind: 'agent',
-  label: '研究 DSH 图标链路',
-  state: 'running',
-  statusText: '可续聊',
-  durationText: '01:20',
-  output: '',
 );
 
 void main() {
@@ -276,51 +263,40 @@ void main() {
     });
   });
 
-  group('子智能体行：点击是"进入"，不是"展开输出"', () {
-    testWidgets('点一行走 onOpenSub（不是 onToggleJob）', (tester) async {
-      // 用户 2026-10-19：「子智能体是列表，每一个点击是能进入的」。
-      // DSH 同一条：目录项点击 = `openChild` → `openSession(address)`
-      //（`ui-subagent/src/client/index.ts:61-63`）—— 子会话进主对话区。
-      //
-      // 两个回调**分开**是两个语义：任务行点开是"看它输出"，
-      // 子智能体行点开是"进它那个会话"。合用一个回调就会有一边语义错。
-      final opened = <String>[];
-      final toggled = <String>[];
+  group('子智能体面板：目录树由调用方给', () {
+    testWidgets('面板体就是传进来的那棵树（不是任务行、不是平铺列表）', (tester) async {
+      // 子智能体的行结构与手势（活动点 / disclosure / 两行指标 / 点行进入）
+      // 在 `subagent_tree_test.dart` 里按目录树自己的判据钉住。
+      // 这里只钉**装配**：右抽屉的子智能体面板渲染的是调用方给的树。
       await tester.pumpWidget(
-        _wrap(
-          _pane(
-            panel: SidePanel.subs,
-            subs: const [sub],
-            onOpenSub: (j) => opened.add(j.id),
-            onToggleJob: (j) => toggled.add(j.id),
-          ),
-        ),
+        _wrap(_pane(panel: SidePanel.subs, subsBody: const Text('目录树占位'))),
       );
       await tester.pumpAndSettle();
-
-      await tester.tap(find.text('研究 DSH 图标链路').first);
-      await tester.pumpAndSettle();
-
-      expect(opened, ['sub-1'], reason: '点击要进那个子会话');
-      expect(toggled, isEmpty, reason: '不该走"展开输出"那条路');
+      expect(find.text('目录树占位'), findsOneWidget);
+      // 任务面板那套分组不该出现在子智能体面板里。
+      expect(find.text('进行中'), findsNothing);
     });
 
-    testWidgets('没给 onOpenSub：行不可点，也不假装能点', (tester) async {
-      final toggled = <String>[];
+    testWidgets('给了任务清单也不会串进子智能体面板（两个面板各读各的）', (tester) async {
       await tester.pumpWidget(
         _wrap(
           _pane(
             panel: SidePanel.subs,
-            subs: const [sub],
-            onToggleJob: (j) => toggled.add(j.id),
+            jobs: const [
+              SideJob(
+                id: 'j1',
+                label: 'flutter build apk',
+                kind: 'pwsh',
+                state: 'running',
+                statusText: '构建中',
+              ),
+            ],
           ),
         ),
       );
       await tester.pumpAndSettle();
-
-      await tester.tap(find.text('研究 DSH 图标链路').first);
-      await tester.pumpAndSettle();
-      expect(toggled, isEmpty);
+      expect(find.text('flutter build apk'), findsNothing);
+      expect(find.text('进行中'), findsNothing);
     });
   });
 

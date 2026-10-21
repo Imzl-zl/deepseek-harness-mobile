@@ -22,7 +22,8 @@
 library;
 
 import '../core/endpoint.dart';
-import 'session_stats.dart' show formatTokenCount;
+import 'session_stats.dart' show TokenUsage, formatTokenCount;
+import 'subagent.dart' show SubagentTiming;
 
 /// 一条会话条目在界面上长什么样。
 ///
@@ -704,6 +705,8 @@ class SessionSummary {
     this.subagent = false,
     this.model,
     this.cwd,
+    this.subagentTiming,
+    this.tokenUsage,
   });
 
   /// 会话别名（电脑侧分配的不透明 id，契约 §5.1）。
@@ -772,6 +775,23 @@ class SessionSummary {
   /// 「未命名」而不用目录名兜底（`ui-workspace/README.zh.md:32`），手机对齐。
   final String? cwd;
 
+  /// 子会话的计时投影提示（`projections.values.subagentTiming`）。
+  ///
+  /// **只对子会话有意义**（DSH 的 `subagentTiming` 折的是"这个会话作为子智能体
+  /// 的活跃轮次时长"），但它是**会话自己的**投影，所以挂在会话行上而不是目录行上：
+  /// 目录行（`SubagentRow`）是父会话看到的"有哪些子级"，两者是不同会话的事实。
+  ///
+  /// `null` = 电脑侧没给（老连接器 / 该会话还没轮次）—— 界面就不摆时长，
+  /// **不拿本地时钟凑一个**（那正是"一次性任务时长永远涨"的成因）。
+  final SubagentTiming? subagentTiming;
+
+  /// 子会话的 token 用量投影提示（`projections.values.tokenUsage`）。
+  ///
+  /// 与统计条读的是**同一个投影**（`session.projections` 的 `tokenUsage`
+  /// 那次读的是当前会话，这里是列表行给每个会话的提示）——
+  /// 解析器也是同一个（`parseTokenUsage`）。`null` = 没给 / 形状不认识。
+  final TokenUsage? tokenUsage;
+
   /// 展示用标题。链与 DSH 的**侧栏规则**一致：
   /// 投影提示里的标题 → 「未命名」。
   ///
@@ -804,6 +824,8 @@ class SessionSummary {
     bool? subagent,
     ModelRef? model,
     String? cwd,
+    SubagentTiming? subagentTiming,
+    TokenUsage? tokenUsage,
   }) => SessionSummary(
     sid: sid,
     title: title ?? this.title,
@@ -815,12 +837,15 @@ class SessionSummary {
     subagent: subagent ?? this.subagent,
     model: model ?? this.model,
     cwd: cwd ?? this.cwd,
+    subagentTiming: subagentTiming ?? this.subagentTiming,
+    tokenUsage: tokenUsage ?? this.tokenUsage,
   );
 
   /// 只换**易变计数**（更新时间 / 条目数 / 待处理数）。
   ///
   /// 存在的理由：`AppModel._touchSummary` 每条 delta 都会更新这三个数，
-  /// 而**身份字段（标题 / 模型 / running / blank / subagent / cwd）一条都不该动** ——
+  /// 而**身份字段（标题 / 模型 / running / blank / subagent / cwd / 子智能体
+  /// 计时与 token）一条都不该动** ——
   /// 2026-10-17 前那里用构造函数重建整行，身份字段全部掉成默认值，
   /// 症状是"点进会话模型变未选择、标题变成本地推导名"。
   SessionSummary withCounters({
@@ -838,6 +863,8 @@ class SessionSummary {
     subagent: subagent,
     model: model,
     cwd: cwd,
+    subagentTiming: subagentTiming,
+    tokenUsage: tokenUsage,
   );
 
   /// 只换标题（电脑侧的 `title` 投影 / `session/title` 事件落地时用）。
@@ -852,6 +879,8 @@ class SessionSummary {
     subagent: subagent,
     model: model,
     cwd: cwd,
+    subagentTiming: subagentTiming,
+    tokenUsage: tokenUsage,
   );
 }
 

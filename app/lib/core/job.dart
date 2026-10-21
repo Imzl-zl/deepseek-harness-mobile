@@ -154,24 +154,38 @@ class JobError extends JobFrame {
   final String message;
 }
 
-/// 一个子智能体给手机看的那一行（DSH 的 `subagentCatalog` 投影）。
+/// 一个子智能体在**目录里**的那一行（DSH 的 `subagentCatalog` 投影）。
 ///
-/// 投影的 view 形状（已核实 `packages/subagent/subagent/src/catalog.ts:77-94`）：
+/// 投影的 view 形状（已核实 `packages/subagent/subagent/src/catalog.ts:77-94,111-131`）：
 /// 数组，每项 `{ id, createdAt, mode, label? }`，`mode` ∈
 /// `one-shot` / `continuable` / `external` / `unknown`。
 /// **不翻译 mode**：它与 DSH 逐字一致，翻译一层就多一处会漂移的地方。
+///
+/// ## 这里只有**目录事实**，没有状态
+///
+/// 2026-10-21 之前这里还有 `status` / `isLive` / `finishedAt` /
+/// `statusText`，全部**由 `mode` 推**：`one-shot` ⇒ `completed`，其余 ⇒ `running`。
+/// 那是两个维度被合成一个：`mode` 说的是"能不能续聊"（**不随时间变**），
+/// 而"此刻跑没跑"来自**子会话自己**的 `running`
+/// （Web 的判据：`SubagentHeaderLineage.tsx:471-475` 用
+/// `statuses.get(entry.id)?.running ?? summaries[entry.id]?.running`）。
+/// 后果是可续聊的子会话跑完后，面板与顶栏仍显示「正在运行」、分组永远停在「进行中」。
+///
+/// 所以事实留在这里，运行态视图在 `model/subagent.dart` 的 `SubagentNode`
+/// —— 它才拿得到子会话的时间线与 token。
+/// 布局与三态的因果见 `.agents/notes/implemented/2026-10-21-subagent-catalog-tree-and-state.md`。
 class SubagentRow {
   const SubagentRow({
     required this.id,
     required this.createdAt,
     required this.mode,
     this.label,
-    this.finishedAt,
   });
 
   final String id;
 
-  /// 电脑侧的创建时间（毫秒）。时长从它算，不从手机本地计时。
+  /// 电脑侧的创建时间（毫秒）。**不是时长的起点** —— 时长是
+  /// `subagentTiming` 累加的"活跃轮次时长"（见 `SubagentTiming`）。
   final int createdAt;
 
   /// `one-shot` / `continuable` / `external` / `unknown`。
@@ -180,24 +194,22 @@ class SubagentRow {
   /// 人类可读名字；缺了就靠 id。
   final String? label;
 
-  /// 结束时间（投影不给，由 `subagentTiming` 补；没有就是还在跑）。
-  final int? finishedAt;
-
-  int get startedAt => createdAt;
-
   String get displayLabel => (label == null || label!.isEmpty) ? id : label!;
 
-  /// 状态词。**与 DSH 的 mode 词汇表对应**，不自己造第二套。
-  String get status => mode == 'one-shot' ? 'completed' : 'running';
+  /// 外部任务：DSH 不给它开子会话（`SubagentHeaderLineage.tsx:279-287` 的
+  /// `open()` 第一行 `if (external) return`），也不能展开。
+  bool get isExternal => mode == 'external';
 
-  String get statusText => switch (mode) {
+  /// 行第二段的 mode 词。**逐字照 DSH 的 zh 词典**
+  /// （`ui-subagent/src/client/locales.ts:26-29`）：
+  /// `external` → 外部任务 / `unknown` → 模式未知 / `one-shot` → 一次性 /
+  /// 其余 → 可继续。
+  String get modeText => switch (mode) {
+    'external' => '外部任务',
     'one-shot' => '一次性',
-    'continuable' => '可续聊',
-    'external' => '外部',
-    _ => '未知',
+    'continuable' => '可继续',
+    _ => '模式未知',
   };
-
-  bool get isLive => mode != 'one-shot';
 }
 
 /// 解 `subagentCatalog` 投影的应答：`{ subagentCatalog: [{id, createdAt, mode, label?}] }`。

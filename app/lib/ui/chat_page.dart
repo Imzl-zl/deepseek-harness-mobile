@@ -46,6 +46,7 @@ import '../model/model_catalog.dart';
 import '../model/permission.dart';
 import '../model/preferences.dart';
 import '../model/session_stats.dart';
+import '../model/subagent.dart';
 import '../model/workspace.dart';
 import '../platform/photo_picker.dart';
 import '../theme/dsh_colors.dart';
@@ -66,6 +67,8 @@ import 'edge_stick.dart';
 import 'load_older_trigger.dart';
 import 'queue_dock.dart';
 import 'side_pane.dart';
+import 'subagent_readonly_band.dart';
+import 'subagent_tree.dart';
 import 'takeover.dart';
 import 'trajectory_page.dart';
 
@@ -156,6 +159,19 @@ class ChatPageState extends State<ChatPage> {
   /// 子会话在抽屉里是藏起来的（`sessionVisible` 第 1 条），
   /// 没有这枚返回用户就找不回来。
   String? _subagentReturnFrom;
+
+  /// 当前打开的子会话 sid（用来判断导航是否已经离开它）。
+  ///
+  /// 只记 `_subagentReturnFrom` 不够：用户从抽屉再打开别的会话时，父会话
+  /// 记忆不会自动消失，面包屑会挂在无关会话上。
+  String? _subagentChildSid;
+
+  /// 当前子会话的 catalog 模式（`one-shot` / `continuable` / `unknown`）。
+  ///
+  /// 与 Web 的 `selectReadOnlySubagent` 同一个判据
+  /// （`ui-subagent/src/client/index.ts:37-49`）：一次性 / 模式未知的子会话
+  /// 不接受后续消息，输入栏要换成只读说明。
+  String? _subagentMode;
 
   /// 文件面板的分段（差异 / 文件）。
   ///
@@ -270,6 +286,15 @@ class ChatPageState extends State<ChatPage> {
     super.didUpdateWidget(oldWidget);
     // 配对状态是构造参数：配对上之后出口才该出现（见 `initState` 里同一句）。
     if (oldWidget.paired != widget.paired) _syncAnswerOutlet();
+    // 用户从抽屉/内联列表打开了别的会话：父会话记忆必须跟着失效，
+    // 否则面包屑会挂在一个与子会话无关的会话上。这里直接改字段而不
+    // `setState` —— `didUpdateWidget` 之后本来就会 build。
+    if (_subagentChildSid != null &&
+        widget.app.currentSid != _subagentChildSid) {
+      _subagentReturnFrom = null;
+      _subagentChildSid = null;
+      _subagentMode = null;
+    }
   }
 
   void _syncAnswerOutlet() {
@@ -433,7 +458,27 @@ class ChatPageState extends State<ChatPage> {
             // 左 = `drawer`、右 = `endDrawer`，两条边都能**跟手**拖出
             //（`Scaffold.drawerEdgeDragWidth` + `endDrawerEnableOpenDragGesture`），
             // 遮罩、回弹、拖拽关闭全由 Flutter 管 —— 不自己画第二套。
-            _mainScaffold(context, jobsSid: jobsSid),
+            // **系统返回 = 回父会话**（移动端专有的那条路；Web 靠浏览器 history）。
+            //
+            // 判据用 `PopScope.canPop`（`packages/flutter/lib/src/widgets/pop_scope.dart:83-96`）：
+            // 在子会话里置假 ⇒ 系统返回不弹路由，改由回调回父会话；其余情况照常。
+            // **抽屉开着时不抢**：`DrawerController` 会给自己挂一个
+            // `LocalHistoryEntry`（`material/drawer.dart:526-546`），而
+            // `ModalRoute.popDisposition` 先看它（`routes.dart:942-947`）——
+            // 但回调仍可能被叫到，所以这里再按抽屉状态让一次。
+            PopScope<void>(
+              canPop: _subagentReturnFrom == null,
+              onPopInvokedWithResult: (didPop, _) {
+                if (didPop) return;
+                final scaffold = _scaffoldKey.currentState;
+                if (scaffold != null &&
+                    (scaffold.isDrawerOpen || scaffold.isEndDrawerOpen)) {
+                  return;
+                }
+                unawaited(_returnFromSubagent());
+              },
+              child: _mainScaffold(context, jobsSid: jobsSid),
+            ),
             // ---- 右缘那条"棒棒"：右抽屉的标识（能侧滑的提示）----
             // **抽屉开着时它消失**（用户原话："侧滑之后棒要消失"）：
             // 那时右侧抽屉已经在眼前，再留一条标识只会挡着它。
@@ -458,13 +503,18 @@ class ChatPageState extends State<ChatPage> {
     final c = context.dshColors;
     final items = widget.app.items;
     final sid = widget.app.currentSid;
-    // **各算一次**：`_subsFor()` / `_jobsFor()` 要走投影映射，而顶栏那两枚计数
-    // chip 与右抽屉三个面板读的是**同一份**。原来 drawer 与 chip 行各调两遍
-    // （每帧四遍），chip 行还用 `_jobsSid`（`currentSid ?? ''`）而 drawer 用参数 ——
-    // 两者虽然等价（`_jobsFor` 里 `sid ?? ''`），但没有理由留两个来源。
-    final subs = _subsFor();
+    // **各算一次**：顶栏那两枚计数 chip 与右抽屉三个面板读的是**同一份**。
+    //
+    // 子智能体那枚 chip 的数是**目录直接子级**（Web 的 `directCount`，
+    // `SubagentHeaderLineage.tsx:496-500`），"正在跑"是其中 `running` 的行
+    // （`:498` 用 `activity === 'running'`，而 `activity` 就是会话的 `running`，
+    // `:471-475`）。**不是 `mode`** —— 那是"能不能续聊"。
+    final subs = [
+      for (final row in widget.app.subagentCatalogOf(sid ?? '').entries)
+        _nodeOf(row),
+    ];
     final jobs = _jobsFor(jobsSid);
-    final runningSubs = subs.where((j) => j.isLive).length;
+    final runningSubs = subs.where((n) => n.running).length;
     final runningJobs = jobs.where((j) => j.isLive).length;
     return Scaffold(
       key: _scaffoldKey,
@@ -494,8 +544,19 @@ class ChatPageState extends State<ChatPage> {
         64,
       ),
       appBar: ChatAppBar(
-        title: widget.app.currentTitle ?? 'DSH',
+        // **子会话里顶栏就是那一层导航**：左侧 `←` 回父会话，标题 = 当前子智能体的
+        // 名字（点它开「切换子智能体」），父会话名放得下就并成 `父会话 › 子级名`。
+        // 这样不再需要内容区上方那条 40dp 头部条 ——
+        // 手机上"进入下一层"的惯例就是导航栏左侧返回 + 标题即位置。
+        title: _subagentReturnFrom != null
+            ? _subagentLabel
+            : (widget.app.currentTitle ?? 'DSH'),
+        parentTitle: _subagentParentLabel,
         onOpenDrawer: openDrawer,
+        onBack: _subagentReturnFrom == null
+            ? null
+            : () => unawaited(_returnFromSubagent()),
+        onTitleTap: _subagentReturnFrom == null ? null : _showSubagentSwitcher,
         onNewSession: widget.onNewSession,
         // **连接状态点**（原来是文字胶囊）：绿=服务中 / 转圈=连接中·握手中·重连中 /
         // 红=其余。形状与颜色照 DSH 的 `StateDot`（出处见 `dsh_state_dot.dart`），
@@ -549,7 +610,19 @@ class ChatPageState extends State<ChatPage> {
           onClose: _closeSide,
           fileBody: _fileBody(),
           jobs: jobs,
-          subs: subs,
+          // 子智能体：**目录树**（直接子级 + 展开才懒加载孙级）。
+          // 点行进入那个子会话；点行左侧的 disclosure 只展开。
+          // 会话 id 已是别名（连接器在 `session.projections` 里换过，见
+          // `connector/src/handlers.ts` 的 `aliasSubagentCatalog`），
+          // 所以直接 `openSession` 就通。
+          subsBody: SubagentTree(
+            rootSid: sid ?? '',
+            catalogOf: widget.app.subagentCatalogOf,
+            nodeOf: _nodeOf,
+            onOpen: _openSubagent,
+            onLoad: (target) =>
+                unawaited(widget.app.refreshSubagentCatalog(target)),
+          ),
           runningJobs: runningJobs,
           runningSubs: runningSubs,
           onToggleJob: (job) => _toggleJob(job),
@@ -557,11 +630,6 @@ class ChatPageState extends State<ChatPage> {
           //（渲染条件里有 `onStop != null`）—— 第一版就漏了传，
           // 截图里运行中的任务旁边空着。
           onStopJob: (job) => _stopJob(job),
-          // 子智能体行：点它**进入那个子会话**（不是展开输出）。
-          // 会话 id 已是别名（连接器在 `session.projections` 里换过，见
-          // `connector/src/handlers.ts` 的 `aliasSubagentCatalog`），
-          // 所以直接 `openSession` 就通。
-          onOpenSub: (job) => _openSubagentSession(job),
           openJobIds: _openJobs,
           fullscreen: _sideFullscreen,
           onToggleFullscreen: () =>
@@ -575,19 +643,6 @@ class ChatPageState extends State<ChatPage> {
       },
       body: Column(
         children: [
-          // **子会话的面包屑**（只在"从子智能体进来"时出现）。
-          //
-          // DSH 桌面靠会话头部的 lineage 回父会话
-          // （`SubagentHeaderLineage.tsx`）；我们拿不到 `parentId`
-          //（catalog 的 view 只有 `{id, createdAt, mode, label?}`，
-          // `subagent/src/catalog.ts:77-94`），所以用**导航记忆**
-          //（`_subagentReturnFrom`）—— 没有它用户找不回来：
-          // 子会话在抽屉里是藏起来的（`sessionVisible` 第 1 条）。
-          //
-          // 放在内容区上方而不是顶栏：那行已有五个位置
-          //（☰ / 标题 / 状态点 / 两枚计数 / ＋），挤不下。
-          if (_subagentReturnFrom != null)
-            _SubagentBreadcrumb(onBack: _returnFromSubagent),
           // **没选中会话时只有「对话」一个 tab**（2026-10-19 用户原话：
           // 「没有会话的时候对话，轨迹不用显示吧，没会话你显示没用啊」）。
           //
@@ -647,39 +702,44 @@ class ChatPageState extends State<ChatPage> {
                 // **排队条**（DSH Web 的 `conversation.input.dock` 槽里的
                 // QueueDock）：会话正在跑时发出去的消息排进下一个轮次，
                 // 这里列出来并可编辑 / 删除 / 插话。空队列整条不占位。
-                if (sid != null)
+                if (_subagentReadOnlyReason == null && sid != null)
                   QueueDock(app: widget.app, sid: sid, running: _running),
-                DshComposer(
-                  controller: _input,
-                  attachments: _attachments,
-                  // 模型名与推理等级：**从真投影来**（见 `_modelLabel`）。
-                  // 推理等级同样不写死：模型自带 effort 时显示它，否则显示"默认"。
-                  modelName: _modelLabel,
-                  reasoningLabel: _reasoningLabel,
-                  access: permissionChipOf(
-                    value: widget.app.permissionValue,
-                    catalog: widget.app.permissionCatalog,
+                // 一次性 / 模式未知的子会话：**整条输入栏换成只读状态框**
+                // （DSH 的 `SubagentReadOnlyComposer`，同一个判据）。
+                if (_subagentReadOnlyReason != null)
+                  SubagentReadOnlyBand(reason: _subagentReadOnlyReason!)
+                else
+                  DshComposer(
+                    controller: _input,
+                    attachments: _attachments,
+                    // 模型名与推理等级：**从真投影来**（见 `_modelLabel`）。
+                    // 推理等级同样不写死：模型自带 effort 时显示它，否则显示"默认"。
+                    modelName: _modelLabel,
+                    reasoningLabel: _reasoningLabel,
+                    access: permissionChipOf(
+                      value: widget.app.permissionValue,
+                      catalog: widget.app.permissionCatalog,
+                    ),
+                    sendMode: widget.app.sendMode,
+                    sending: _sending,
+                    enabled: _hasData && sid != null,
+                    // **hero 上换一套占位文案**（DSH 的 `placeholder.hero`，
+                    // `locales.ts:23`）：那一屏的动作是"开一个新任务"。
+                    // 只在真的显示了 hero 时才换 —— 与 `_ChatTab` 用同一个判据，
+                    // 免得出现"文案说开新任务、屏幕却是空态"。
+                    hintText: _heroVisible
+                        ? kComposerHintHero
+                        : kComposerHintDefault,
+                    // 运行中且没有草稿时，主键是"停止"（照 Web 的 primaryStops）。
+                    running: _running,
+                    onStop: _stop,
+                    onSend: _send,
+                    onAttach: _showAttachSheet,
+                    onPickModel: _showModelSheet,
+                    onPickAccess: _showAccessSheet,
+                    onRemoveAttachment: (item) =>
+                        setState(() => _attachments.remove(item)),
                   ),
-                  sendMode: widget.app.sendMode,
-                  sending: _sending,
-                  enabled: _hasData && sid != null,
-                  // **hero 上换一套占位文案**（DSH 的 `placeholder.hero`，
-                  // `locales.ts:23`）：那一屏的动作是"开一个新任务"。
-                  // 只在真的显示了 hero 时才换 —— 与 `_ChatTab` 用同一个判据，
-                  // 免得出现"文案说开新任务、屏幕却是空态"。
-                  hintText: _heroVisible
-                      ? kComposerHintHero
-                      : kComposerHintDefault,
-                  // 运行中且没有草稿时，主键是"停止"（照 Web 的 primaryStops）。
-                  running: _running,
-                  onStop: _stop,
-                  onSend: _send,
-                  onAttach: _showAttachSheet,
-                  onPickModel: _showModelSheet,
-                  onPickAccess: _showAccessSheet,
-                  onRemoveAttachment: (item) =>
-                      setState(() => _attachments.remove(item)),
-                ),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   child: DshStatsBar(
@@ -934,19 +994,138 @@ class ChatPageState extends State<ChatPage> {
   /// 顶栏据此给一枚"返回"。这比"让用户自己去抽屉里找父会话"好得多 ——
   /// 子会话在抽屉里是**藏起来的**（`sessionVisible` 的第 1 条：
   /// `subagent` 不列），用户根本找不回来。
-  Future<void> _openSubagentSession(SideJob job) async {
+  Future<void> _openSubagent(SubagentNode node) async {
     final from = widget.app.currentSid;
     _closeSide();
+    // 模式来自**父会话的 catalog 行**：子会话自己打开后 `subagentCatalogOf(current)`
+    // 看到的是它自己的下级，不是它自己的 mode。
+    final mode = widget.app
+        .subagentCatalogOf(from ?? '')
+        .entries
+        .where((row) => row.id == node.id)
+        .firstOrNull
+        ?.mode;
     // **先记后退**：`_subagentReturnFrom` 是"进子会话之前的那个会话"。
-    setState(() => _subagentReturnFrom = from);
-    await widget.app.openSession(job.id);
+    setState(() {
+      _subagentReturnFrom = from;
+      _subagentChildSid = node.id;
+      _subagentMode = mode;
+    });
+    await widget.app.openSession(node.id);
   }
 
-  /// 从子会话回到来处（顶栏那枚"返回"）。
+  /// 当前子会话是否只读，以及原因（`null` = 可以正常输入）。
+  ///
+  /// 照 DSH 的 `selectReadOnlySubagent`（`ui-subagent/src/client/index.ts:37-49`）：
+  /// `one-shot` 与 `unknown` 的输入栏换成说明；`continuable` 保留正常输入。
+  /// 我们拿不到 `parentAvailable`（它不在 `session.list` 的字段里），所以
+  /// “父会话离线”那一档暂不判 —— 不猜，不把“可能能发”说成“一定能发”。
+  ///
+  /// Note: 为什么只判这两档、不扩 `session.list` —— 见
+  /// `.agents/notes/implemented/2026-10-21-subagent-entry-readonly-composer.md`。
+  SubagentReadOnlyReason? get _subagentReadOnlyReason {
+    if (_subagentReturnFrom == null) return null;
+    if (_subagentMode == 'one-shot') return SubagentReadOnlyReason.oneShot;
+    if (_subagentMode == null || _subagentMode == 'unknown') {
+      return SubagentReadOnlyReason.unknown;
+    }
+    return null;
+  }
+
+  /// 当前子会话在**父级目录**里的名字（面包屑上那个标题）。
+  ///
+  /// 判据照 Web 的 `switcherDisplayTitle`（`SubagentHeaderLineage.tsx:490-495`）：
+  /// 父级 catalog 里**当前子级那一行**的 label（没有就用 id），
+  /// 找不到那一行才退回会话标题。**不缓存 label**：目录重读过就以新的为准。
+  String get _subagentLabel {
+    final parent = _subagentReturnFrom;
+    if (parent == null) return '';
+    final row = widget.app
+        .subagentCatalogOf(parent)
+        .entries
+        .where((r) => r.id == _subagentChildSid)
+        .firstOrNull;
+    if (row != null) return row.displayLabel;
+    return widget.app.currentTitle ?? '子智能体';
+  }
+
+  /// 父会话的显示名（顶栏 `父会话 › 子级名` 的前半段；`null` = 不在子会话里）。
+  ///
+  /// 用会话行的 `displayTitle`（空 ⇒「未命名」，与侧栏同一个兜底）。
+  /// **不缓存**：父会话的标题随时可能被改。**放不放得下由顶栏自己量**
+  /// （`_SubagentCrumb`）—— 这里只给名字，不给宽度。
+  String? get _subagentParentLabel {
+    final parent = _subagentReturnFrom;
+    if (parent == null) return null;
+    return widget.app.sessionOf(parent)?.displayTitle;
+  }
+
+  /// 打开「切换子智能体」sheet：父级目录的树，当前行加粗。
+  ///
+  /// Web 是头部那个 244px 宽的 `switcher` 下拉（`SubagentHeaderLineage.tsx:802-821`）；
+  /// 手机没有 hover，且 300dp 宽的抽屉已经承担了目录，所以用**底部 sheet**
+  /// 复用同一棵树（`.agents/notes/proposed/2026-10-21-subagent-web-parity.md` §8.1 的推荐）。
+  void _showSubagentSwitcher() {
+    final parent = _subagentReturnFrom;
+    if (parent == null) return;
+    unawaited(
+      showDshSheet<void>(
+        context: context,
+        title: '切换子智能体',
+        body: Builder(
+          builder: (sheetContext) => ListenableBuilder(
+            // **sheet 是独立路由**：页面层的重建到不了它，所以展开子级 /
+            // 重试之后，它必须自己听 `AppModel` 的通知才画得出新目录。
+            listenable: widget.app,
+            builder: (context, _) => SubagentTree(
+              rootSid: parent,
+              catalogOf: widget.app.subagentCatalogOf,
+              nodeOf: _nodeOf,
+              currentSid: _subagentChildSid,
+              emptyText: '没有其他子智能体。',
+              onOpen: (node) {
+                Navigator.of(sheetContext).pop();
+                unawaited(_switchSibling(node));
+              },
+              onLoad: (target) =>
+                  unawaited(widget.app.refreshSubagentCatalog(target)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 切到同一个父级下的另一个子会话（父会话记忆保持不变）。
+  Future<void> _switchSibling(SubagentNode node) async {
+    final parent = _subagentReturnFrom;
+    if (parent == null) return;
+    final mode = widget.app
+        .subagentCatalogOf(parent)
+        .entries
+        .where((row) => row.id == node.id)
+        .firstOrNull
+        ?.mode;
+    setState(() {
+      _subagentChildSid = node.id;
+      // 兄弟的 mode 来自**同一条父级目录**（与进入时同一个来源）。
+      _subagentMode = mode;
+    });
+    await widget.app.openSession(node.id);
+  }
+
+  /// 从子会话回到来处（头部条的「返回会话」/ 系统返回键）。
   Future<void> _returnFromSubagent() async {
+    // `PopScope` 的回调可能在路由销毁后才到（SDK 的提醒，
+    // `widgets/routes.dart:2057-2059`）—— 用 `setState` 前必须先看 `mounted`。
+    if (!mounted) return;
     final from = _subagentReturnFrom;
     if (from == null) return;
-    setState(() => _subagentReturnFrom = null);
+    setState(() {
+      _subagentReturnFrom = null;
+      _subagentChildSid = null;
+      _subagentMode = null;
+    });
     await widget.app.openSession(from);
   }
 
@@ -1896,7 +2075,7 @@ class ChatPageState extends State<ChatPage> {
               detail:
                   '1. 展开时 `job.follow`，收起时 `job.unfollow`\n'
                   '2. 把三帧映射成 SideJob\n'
-                  '3. 停止走 `job.stop`，两步确认',
+                  '3. 停止走 `job.kill`，两步确认',
               options: [
                 InteractionOption(label: '同意执行'),
                 InteractionOption(label: '要求修改'),
@@ -1974,52 +2153,36 @@ class ChatPageState extends State<ChatPage> {
     return '$m:$s';
   }
 
-  /// 子智能体列表（`core/job.dart` 的 `SubagentRow` → 侧抽屉的 `SideJob`）。
+  /// 目录一行 → 运行态视图（子会话自己的 `running` / 计时 / token / 标题）。
   ///
-  /// 映射只在这里发生一次：UI 不认识 `subagentCatalog` 投影的 JSON。
-  List<SideJob> _subsFor() {
-    final rows = widget.app.subagentsOf(widget.app.currentSid ?? '');
-    return [
-      for (final row in rows)
-        SideJob(
-          id: row.id,
-          kind: 'agent',
-          label: row.displayLabel,
-          state: row.status,
-          statusText: row.statusText,
-          durationText: _subDuration(row),
-          output: '',
-        ),
-    ];
+  /// **不缓存**：每次 `build` 从 `AppModel` 现算，少一处会跟真值漂移的副本。
+  /// 三样指标都来自**子会话自己**的 `session.list` 行（`projections.values`）——
+  /// 拿不到就是 `null`，界面那一格整个不显示，不拿本地时钟或旧值凑。
+  SubagentNode _nodeOf(SubagentRow row) {
+    final summary = widget.app.sessionOf(row.id);
+    return SubagentNode(
+      row: row,
+      running: summary?.running ?? false,
+      timing: summary?.subagentTiming,
+      tokens: summary?.tokenUsage,
+      title: summary?.title,
+    );
   }
 
-  /// 子智能体时长。与 `_jobDuration` 同一条纪律：**从电脑侧时间戳算**，
-  /// 不从手机本地计时（锁屏/后台时手机会停）。
-  String _subDuration(SubagentRow row) {
-    final end = row.finishedAt ?? DateTime.now().millisecondsSinceEpoch;
-    final seconds = ((end - row.startedAt) / 1000).floor();
-    final m = (seconds ~/ 60).toString().padLeft(2, '0');
-    final s = (seconds % 60).toString().padLeft(2, '0');
-    return '$m:$s';
-  }
-
-  /// 子智能体面板的内容。
+  /// 子智能体面板的内容（**目录树**，见 `ui/subagent_tree.dart`）。
   ///
   /// **2026-10-15 删掉假数据**。原来是两条写死的示例子智能体
   /// （`Extract DSH icon paths` / `Research rikkahub standalone mode`），
   /// 状态文字带「· 示例」—— 标记是有，但它**无条件**出现在面板里，
   /// 真连上了也照显示。
   ///
-  /// 真数据通路**已经找到了**（上一轮我判成"阻塞"是找错了门）：
-  /// `subagentCatalog` 投影（`packages/subagent/subagent/src/catalog.ts:122`）
+  /// 真数据通路：`subagentCatalog` 投影（`packages/subagent/subagent/src/catalog.ts:111-131`）
   /// 经 `session.projections` 读；写面有 `SubagentRuntime` 的
   /// `@Remote('prompt')` 与 `@Remote('interruptByParent')`
   /// （`packages/subagent/subagent/src/index.ts:445,512`）。
-  /// 接线见 `.agents/notes/proposed/2026-10-15-phone-surface-inventory.md`。
   ///
-  /// 面板内容由 `SidePane` 的 `subs` 参数给（`_subsFor()`），空列表由
-  /// `SidePane` 的 `emptyText` 渲染 —— 不另造一份空态，那会让
-  /// "没有子智能体"有两个说法。
+  /// 三个状态（加载 / 就绪 / 失败）与"已知空叶"都由 `SubagentCatalog` 带着，
+  /// 面板不自己判空 —— 否则"没读到"与"读到空"又会变成同一句话。
 }
 
 /// 统计 sheet 的空态（这一项没有数据时）。
@@ -2789,65 +2952,6 @@ class _TurnView extends StatelessWidget {
         stats: stats,
       ),
     };
-  }
-}
-
-/// 子会话的面包屑：`← 返回上一个会话`。
-///
-/// ## 为什么需要它
-///
-/// 点右抽屉「子智能体」的某一行会**进入那个子会话**（`openSession`）——
-/// 与 DSH 的 `openChild` 同一条（`ui-subagent/src/client/index.ts:61-63`）。
-/// 但子会话在会话列表里是**藏起来的**（`sessionVisible` 第 1 条：
-/// `subagent` 不列），所以用户没有别的路回到父会话。
-///
-/// DSH 靠会话头部的 lineage 面包屑（`SubagentHeaderLineage.tsx`）；
-/// 我们拿不到 `parentId`（catalog 的 view 只有
-/// `{id, createdAt, mode, label?}`，`subagent/src/catalog.ts:77-94`），
-/// 所以用**导航记忆**：进来时把来处记在 `_subagentReturnFrom`。
-///
-/// 放在内容区上方而不是顶栏：那一行已有五个位置
-///（☰ / 标题 / 状态点 / 两枚计数 / ＋），挤不下。
-class _SubagentBreadcrumb extends StatelessWidget {
-  const _SubagentBreadcrumb({required this.onBack});
-
-  final VoidCallback onBack;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.dshColors;
-    return Material(
-      color: c.layer1,
-      child: InkWell(
-        onTap: onBack,
-        child: Container(
-          // 一行高一点，便于点（触摸目标 ≥ 32）。
-          constraints: const BoxConstraints(minHeight: 34),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-          child: Row(
-            children: [
-              DshIcon('chevronLeft', size: 14, color: c.accentBlue),
-              const SizedBox(width: 4),
-              Text(
-                '返回上一个会话',
-                style: TextStyle(fontSize: 12.5, color: c.accentBlue),
-              ),
-              const SizedBox(width: 8),
-              // 说清"你在看的是子智能体" —— 否则标题突然变了会莫名其妙。
-              Expanded(
-                child: Text(
-                  '正在查看子智能体',
-                  textAlign: TextAlign.right,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 11, color: c.labelCaption),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }
 

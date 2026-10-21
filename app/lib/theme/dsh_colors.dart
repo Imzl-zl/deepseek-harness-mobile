@@ -53,6 +53,15 @@ abstract final class DshColors {
   /// （`ConversationRoot.module.css:15,22`）。
   static const borderL3 = Color(0x29FFFFFF); // rgba(255,255,255,0.16)
 
+  /// 描边第 4 档（`--dsw-alias-border-l4`，暗色 = 白 20%，
+  /// `design-platform.css:307`）——最重的一档发丝边。
+  ///
+  /// 子智能体的**只读状态框**用它（`SubagentReadOnlyComposer.module.css:9`
+  /// 的 `border: 0.5px solid var(--dsw-alias-border-l4)`）。
+  /// 本仓此前只落到了 l1/l2/l3；用 l3 顶会差一档，而"差一档"正是
+  /// 这组 token 存在的理由（浅色下 l3/l4 是 12% / 16% 的黑，肉眼可辨）。
+  static const borderL4 = Color(0x33FFFFFF); // rgba(255,255,255,0.20)
+
   /// 描边最细一档（`--dsw-alias-border-l1`，暗色 = 白 6%）。
   static const borderL1 = Color(0x0FFFFFFF);
 
@@ -213,6 +222,10 @@ abstract final class DshLightColors {
   /// 描边第 3 档（`--dsw-alias-border-l3`，亮色 = 黑 12%）。
   static const borderL3 = Color(0x1F000000); // rgba(0,0,0,0.12)
 
+  /// 描边第 4 档（`--dsw-alias-border-l4`，亮色 = 黑 16%，
+  /// `design-platform.css:189`）。子智能体只读状态框用它。
+  static const borderL4 = Color(0x29000000); // rgba(0,0,0,0.16)
+
   /// 描边最细一档（`--dsw-alias-border-l1`，亮色 = 黑 4%）。
   static const borderL1 = Color(0x0A000000);
 
@@ -312,6 +325,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     required this.composer,
     required this.borderL2,
     required this.borderL3,
+    required this.borderL4,
     required this.borderL1,
     required this.codeBlock,
     required this.codeBlockBanner,
@@ -363,6 +377,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
         composer: DshColors.composer,
         borderL2: DshColors.borderL2,
         borderL3: DshColors.borderL3,
+        borderL4: DshColors.borderL4,
         borderL1: DshColors.borderL1,
         codeBlock: DshColors.codeBlock,
         codeBlockBanner: DshColors.codeBlockBanner,
@@ -414,6 +429,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
         composer: DshLightColors.composer,
         borderL2: DshLightColors.borderL2,
         borderL3: DshLightColors.borderL3,
+        borderL4: DshLightColors.borderL4,
         borderL1: DshLightColors.borderL1,
         codeBlock: DshLightColors.codeBlock,
         codeBlockBanner: DshLightColors.codeBlockBanner,
@@ -462,6 +478,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
   final Color composer;
   final Color borderL2;
   final Color borderL3;
+  final Color borderL4;
   final Color borderL1;
   final Color codeBlock;
   final Color codeBlockBanner;
@@ -520,6 +537,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     Color? composer,
     Color? borderL2,
     Color? borderL3,
+    Color? borderL4,
     Color? borderL1,
     Color? codeBlock,
     Color? codeBlockBanner,
@@ -567,6 +585,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     composer: composer ?? this.composer,
     borderL2: borderL2 ?? this.borderL2,
     borderL3: borderL3 ?? this.borderL3,
+    borderL4: borderL4 ?? this.borderL4,
     borderL1: borderL1 ?? this.borderL1,
     codeBlock: codeBlock ?? this.codeBlock,
     codeBlockBanner: codeBlockBanner ?? this.codeBlockBanner,

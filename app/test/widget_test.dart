@@ -176,6 +176,11 @@ class _StatefulFakeClient extends FakeSyncClient {
     // 假客户端若回一个裸数组，就会**掩盖**"真机回对象、而界面只认数组"
     // 这类形状不一致 —— 那正是列表在真机上恒为空的原因，且它不报错。
     if (method == 'session.list') return {'sessions': sessions} as T;
+    // 投影应答**也是对象**（`connector/src/handlers.ts` 的 `session.projections`
+    // 回一整包 `{键: 值}`，读不到就抛）。回 `null` 是把"形状不对"伪装成
+    // "没事发生" —— 手机现在会把它记成一次真实的读取失败（`AppModel.lastError`），
+    // 而那是**对的**：替身该复现真形状（`tools.md` 的"替身复现的不是真形状"）。
+    if (method == 'session.projections') return <String, Object?>{} as T;
     return null as T;
   }
 }

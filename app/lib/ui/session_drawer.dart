@@ -24,12 +24,16 @@
 /// "拖动中改变遮罩透明度""松手回弹"这些细节，自写必漏。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../model/workspace.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 import 'collapsible_group.dart';
+import 'dsh_sheet.dart';
 
 /// 抽屉里的一行会话。
 class DrawerSession {
@@ -39,6 +43,7 @@ class DrawerSession {
     required this.preview,
     required this.timeLabel,
     this.isActive = false,
+    this.isPinned = false,
   });
 
   final String sid;
@@ -52,16 +57,37 @@ class DrawerSession {
 
   /// 当前正在看的那个（`is-on`：左侧有活跃点、底色高亮）。
   final bool isActive;
+
+  /// 在 `workspace.list` 的 `pinnedSessionIds` 里。显示时排在分组最前，
+  /// 行尾还有一枚小图钉（DSH Web 的 `PinnedIndicator`，`Rows.tsx:660`）。
+  final bool isPinned;
 }
 
-/// 按日期分组的会话（`.dsec` + 若干 `.drow`）。
+/// 一个分组（`.dsec` + 若干 `.drow`）。`label` 由调用方给：
+/// 现在按**工作区**分（`bucketSessionsByWorkspace`），不是按日期。
 class DrawerSection {
-  const DrawerSection({required this.label, required this.sessions});
+  const DrawerSection({
+    required this.label,
+    required this.sessions,
+    this.workspaceId,
+  });
 
-  /// `今天` / `昨天` / `更早`。
+  /// 工作区标题（`dsh-mobile` / `未分组` / `会话`）。
   final String label;
 
   final List<DrawerSession> sessions;
+
+  /// 这个分组对应的 Host 工作区 id。`null` = **不是真工作区**（「未分组」兜底桶，
+  /// 或拿不到工作区清单时的单桶「会话」）。
+  ///
+  /// 它只做一个判断：**组内上移/下移可不可点**。`workspace.insertSessionBefore`
+  /// 要求 `workspaceId`，而这些桶里的会话没有归属 —— 菜单项留着但不可点，
+  /// 与"边界项保留但不可点"同一条理由（菜单项跳位会让人点错）。
+  /// 判据来自 `bucketSessionsByWorkspace` 的同一字段，不在这里重算归属。
+  final String? workspaceId;
+
+  /// 组内排序是否可用。
+  bool get canReorder => workspaceId != null;
 }
 
 /// 连接状态（`.conn`）。
@@ -109,7 +135,9 @@ class SessionDrawer extends StatefulWidget {
     required this.onOpenSession,
     required this.onClose,
     this.onArchive,
-    this.onDelete,
+    this.onPin,
+    this.onUnpin,
+    this.onMove,
     this.onSearch,
   });
 
@@ -121,9 +149,16 @@ class SessionDrawer extends StatefulWidget {
   final void Function(DrawerSession session) onOpenSession;
   final VoidCallback onClose;
 
-  /// 左滑行露出的两个动作（`.drow-actions`）。
+  /// 行动作（长按菜单）。`onMove` 的第二个参数是 Host 的 `beforeSid`：
+  /// `null` = 移到末尾。
+  ///
+  /// **Web 的拖动排序在触屏上换成菜单里的「上移 / 下移」**（有意偏离：
+  /// 长按菜单不会在滚动列表里误触发拖动；DSH 的拖动还要求"同置顶分区内"，
+  /// 菜单用同样的门禁）。见 `docs/design-and-tech-plan.md` §6。
   final void Function(DrawerSession session)? onArchive;
-  final void Function(DrawerSession session)? onDelete;
+  final void Function(DrawerSession session)? onPin;
+  final void Function(DrawerSession session)? onUnpin;
+  final void Function(DrawerSession session, String? beforeSid)? onMove;
 
   final ValueChanged<String>? onSearch;
 
@@ -322,12 +357,8 @@ class _SessionDrawerState extends State<SessionDrawer> {
                                 _SessionRow(
                                   session: session,
                                   onTap: () => widget.onOpenSession(session),
-                                  onArchive: widget.onArchive == null
-                                      ? null
-                                      : () => widget.onArchive!(session),
-                                  onDelete: widget.onDelete == null
-                                      ? null
-                                      : () => widget.onDelete!(session),
+                                  onLongPress: () =>
+                                      unawaited(_showSessionMenu(session)),
                                 ),
                             ],
                           ),
@@ -372,6 +403,152 @@ class _SessionDrawerState extends State<SessionDrawer> {
                       ),
                     ),
                 ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 找会话所在的分组（行动作要在组内算上下邻）。
+  DrawerSection? _sectionOf(String sid) {
+    for (final section in widget.sections) {
+      if (section.sessions.any((s) => s.sid == sid)) return section;
+    }
+    return null;
+  }
+
+  /// 行长按菜单。动作与 Web 的会话菜单同义（置顶 / 归档），
+  /// 加上触屏需要的「上移 / 下移」。
+  ///
+  /// Note: 为什么是菜单不是拖动、为什么没有删除 —— 见
+  /// `.agents/notes/implemented/2026-10-21-sidebar-session-pin-and-reorder.md`。
+  Future<void> _showSessionMenu(DrawerSession session) async {
+    final section = _sectionOf(session.sid);
+    final rows = section?.sessions ?? const <DrawerSession>[];
+    final pinned = {
+      for (final row in rows)
+        if (row.isPinned) row.sid,
+    };
+    final display = [for (final row in rows) row.sid];
+    // 不是真工作区的组（「未分组」/ 没有工作区清单）**不能重排**：
+    // `workspace.insertSessionBefore` 要 workspaceId，而这些会话没有归属。
+    // 硬发出去只会得到一句失败 —— 所以菜单项留着但不可点，与边界项同一条理由。
+    final reorderable = section?.canReorder ?? false;
+    final up = !reorderable
+        ? null
+        : moveAnchorInDisplayOrder(
+            displayOrder: display,
+            sid: session.sid,
+            delta: -1,
+            pinnedSessionIds: pinned,
+          );
+    final down = !reorderable
+        ? null
+        : moveAnchorInDisplayOrder(
+            displayOrder: display,
+            sid: session.sid,
+            delta: 1,
+            pinnedSessionIds: pinned,
+          );
+
+    final action = await showDshSheet<_SessionMenuAction>(
+      context: context,
+      title: session.title,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SessionMenuRow(
+            icon: session.isPinned ? 'pinFill' : 'pin',
+            label: session.isPinned ? '取消置顶' : '置顶会话',
+            onTap: () => Navigator.of(context).pop(
+              session.isPinned
+                  ? _SessionMenuAction.unpin
+                  : _SessionMenuAction.pin,
+            ),
+          ),
+          _SessionMenuRow(
+            icon: 'chevronUp',
+            label: '上移',
+            onTap: up == null
+                ? null
+                : () => Navigator.of(context).pop(_SessionMenuAction.moveUp),
+          ),
+          _SessionMenuRow(
+            icon: 'chevronDown',
+            label: '下移',
+            onTap: down == null
+                ? null
+                : () => Navigator.of(context).pop(_SessionMenuAction.moveDown),
+          ),
+          _SessionMenuRow(
+            icon: 'archive',
+            label: '归档',
+            onTap: () => Navigator.of(context).pop(_SessionMenuAction.archive),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case _SessionMenuAction.pin:
+        widget.onPin?.call(session);
+      case _SessionMenuAction.unpin:
+        widget.onUnpin?.call(session);
+      case _SessionMenuAction.moveUp:
+        widget.onMove?.call(session, up?.beforeSid);
+      case _SessionMenuAction.moveDown:
+        widget.onMove?.call(session, down?.beforeSid);
+      case _SessionMenuAction.archive:
+        // 与 `ChatPageState._afterCurrentSheet` 同一条：归档失败会接着弹
+        // 「停止并归档」对话框，而 sheet 的退出动画还没走完就开下一个浮层，
+        // 后开的那个会被前一个的 pop 一起带走（真机踩过两次）。
+        await Future<void>.delayed(const Duration(milliseconds: 260));
+        if (mounted) widget.onArchive?.call(session);
+    }
+  }
+}
+
+/// 行长按菜单的一项。
+enum _SessionMenuAction { pin, unpin, moveUp, moveDown, archive }
+
+class _SessionMenuRow extends StatelessWidget {
+  const _SessionMenuRow({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final String icon;
+  final String label;
+
+  /// `null` = 不可用（置顶分区边界）；**保留行**而不是隐藏 ——
+  /// 隐藏会让菜单项在边界前后跳位，用户点错。
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    final enabled = onTap != null;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(DshRadius.sm),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 12),
+        child: Row(
+          children: [
+            DshIcon(
+              icon,
+              size: 18,
+              color: enabled ? c.labelSecondary : c.labelTertiary,
+            ),
+            const SizedBox(width: 12),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 14,
+                color: enabled ? c.labelPrimary : c.labelTertiary,
               ),
             ),
           ],
@@ -457,14 +634,18 @@ class _SessionRow extends StatelessWidget {
   const _SessionRow({
     required this.session,
     required this.onTap,
-    this.onArchive,
-    this.onDelete,
+    required this.onLongPress,
   });
 
   final DrawerSession session;
   final VoidCallback onTap;
-  final VoidCallback? onArchive;
-  final VoidCallback? onDelete;
+
+  /// 长按开行动作菜单（置顶 / 上移 / 下移 / 归档）。
+  ///
+  /// **不是删除**：DSH 的会话面没有删除方法（`workspace-controller` 只有
+  /// 归档 / 取消归档 / 置顶 / 取消置顶）。旧代码把长按接到 `onDelete`，
+  /// 而那个回调从未接线 —— 长按一直是死的。
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -475,8 +656,7 @@ class _SessionRow extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
-        // 左滑露出归档 / 删除（`.drow-actions`）。
-        onLongPress: onDelete,
+        onLongPress: onLongPress,
         child: Container(
           constraints: const BoxConstraints(minHeight: 56),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
@@ -496,11 +676,26 @@ class _SessionRow extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      session.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 14, color: c.labelPrimary),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            session.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: c.labelPrimary,
+                            ),
+                          ),
+                        ),
+                        // 置顶标记：DSH Web 的 `PinnedIndicator`（`Rows.tsx:660`）
+                        // 是一枚**非交互**的小图钉，动作在菜单里。
+                        if (session.isPinned) ...[
+                          const SizedBox(width: 6),
+                          DshIcon('pinFill', size: 12, color: c.labelTertiary),
+                        ],
+                      ],
                     ),
                     const SizedBox(height: 3),
                     Text(

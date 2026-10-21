@@ -38,6 +38,7 @@ import '../model/preferences.dart';
 import '../model/queue_item.dart';
 import '../model/send_mode.dart';
 import '../model/session_stats.dart';
+import '../model/subagent.dart';
 import '../model/turn_outline.dart';
 import '../model/usage_summary.dart';
 import '../model/workspace.dart';
@@ -458,53 +459,113 @@ class AppModel extends ChangeNotifier {
   ///
   /// 失败只留声：投影读不到时那些只读面显示空态，而"整个会话打不开"更糟。
   Future<void> refreshProjections(String sid) async {
+    final values = await _readProjections(sid, what: '读取会话投影失败');
+    if (values == null) return;
+    _applyProjectionValues(sid, values);
+  }
+
+  /// 只重读一个会话的**子智能体目录**（展开子级时的懒加载）。
+  ///
+  /// DSH 的 catalog 投影**只含直接子级**
+  /// （`packages/subagent/subagent/src/catalog.ts:111-131`：
+  /// "current direct-child rows in parent catalog event order"），
+  /// 所以树是"直接子级 + 按需展开"，展开哪一级才读哪一级 ——
+  /// 与 Web 的 `toggleBranch(childSessionId)` → `refreshProjection(child)`
+  /// 同一条（`SubagentHeaderLineage.tsx:570-577`）。
+  /// **不新增方法面**：读的还是 `session.projections`。
+  ///
+  /// 与 [refreshProjections] 的差别只有一处：当前会话之外，这里**不写**
+  /// `_projections`（那一包是当前会话的统计条 / 标题 / 权限档的来源，
+  /// 被某个子会话的投影覆盖会让统计条显示别人的数字）。
+  Future<void> refreshSubagentCatalog(String sid) async {
+    final values = await _readProjections(sid, what: '读取子智能体目录失败');
+    if (values == null) return;
+    _applyProjectionValues(sid, values);
+  }
+
+  /// 读一个会话的投影值包，**顺带把 `subagentCatalog` 落进目录三态**。
+  ///
+  /// 返回 `null` = 这次没读到（失败已记进 [lastError]，目录进 `error` 态）。
+  ///
+  /// ## 为什么读之前先置 `loading`
+  ///
+  /// "还没读到"与"读到空"在界面上必须是两句话：前者要等，后者要换地方找。
+  /// Web 的判据在同一处（`SubagentHeaderLineage.tsx:465-467` 把 `idle` 当
+  /// `loading`；`:212` 只在 `loading` **且 entries 空**时显示"正在加载"）。
+  /// 置 `loading` 时**保留上一次的 entries** —— 刷新不闪空（同 Web `:244-245`）。
+  Future<Map<String, Object?>?> _readProjections(
+    String sid, {
+    required String what,
+  }) async {
+    if (_disposed) return null;
+    _subagentCatalogs[sid] = SubagentCatalog.loading(
+      entries: _subagentCatalogs[sid]?.entries ?? const [],
+    );
+    if (!_disposed) notifyListeners();
     try {
       final result = await client.call<Object?>('session.projections', {
         'sid': sid,
       });
-      if (_disposed || result is! Map) return;
+      if (_disposed) return null;
+      if (result is! Map) {
+        // **形状不对也是失败**，不是"没有子智能体" —— 静默当空会让
+        // "这台电脑没装 subagent 插件"与"我们没看懂回复"分不开。
+        _subagentCatalogs[sid] = const SubagentCatalog.failed();
+        _recordError(
+          what,
+          const FormatException('session.projections 的应答不是对象'),
+        );
+        return null;
+      }
       // JSON 解出来是 `Map<dynamic, dynamic>`，逐字段转型成我们要的形状 ——
       // **不整体 cast**：那会把"键不是字符串"这种畸形数据一起带进来，
       // 而后者的症状是取字段时抛 `noSuchMethod`，很难定位。
-      _projections = {
+      final values = <String, Object?>{
         for (final entry in result.entries)
           if (entry.key is String) entry.key as String: entry.value,
       };
-      // 子智能体从同一个投影包里取（`subagentCatalog` 键）。
-      _subagents[sid] = parseSubagentCatalog(result);
-      // **标题也在这个包里**（`title` 投影，DSH `session-title/src/index.ts:269-281`
-      // 的 wire view 就是 `string | null`）。它是比 `session.list` 的投影提示
-      // **更新**的那个来源：会话刚生成标题时列表提示还是旧的。
-      // 只在非空时落——空值表示"还没有标题"，不该把列表提示擦掉。
-      final title = result['title'];
-      if (title is String && title.isNotEmpty) _applySessionTitle(sid, title);
-      // 收件箱播种：插话判定要从此前的 splice 历史推出来，而投影里的
-      // next-turn / next-step 列表正是那个历史的当前值。
-      _seedInboxTracker(sid);
-      notifyListeners();
+      _subagentCatalogs[sid] = SubagentCatalog.ready(
+        parseSubagentCatalog(values),
+      );
+      return values;
     } catch (error) {
       // **兜住所有异常，不只 `ProtocolException`**（与 `refreshSessions` 同一条纪律）：
       // 解析出错 / 类型不对 / 超时都只该让"这一批只读面显示空态"，
       // 逃逸成未处理的异步错误会让 `openSession` 半途而废 ——
       // 症状是"会话打开了但统计条/权限档永远空着且不报错"。
-      _recordError('读取会话投影失败', error);
+      _subagentCatalogs[sid] = const SubagentCatalog.failed();
+      _recordError(what, error);
+      return null;
     }
+  }
+
+  /// 把一次成功的投影读落进各面。
+  ///
+  /// **`_projections` 只写当前会话**：它是"当前会话那一包"（统计条 / 标题 /
+  /// 权限档 / 队列的来源）。别名会话（子智能体）的投影覆盖它会让统计条
+  /// 显示别人的数字 —— 2026-10-21 之前正是无条件覆盖的
+  /// （笔记 §2.1 的既有缺陷）。
+  void _applyProjectionValues(String sid, Map<String, Object?> values) {
+    if (sid == _currentSid) {
+      _projections = values;
+      // 收件箱播种：插话判定要从此前的 splice 历史推出来，而投影里的
+      // next-turn / next-step 列表正是那个历史的当前值。
+      _seedInboxTracker(sid);
+    }
+    // **标题也在这个包里**（`title` 投影，DSH `session-title/src/index.ts:269-281`
+    // 的 wire view 就是 `string | null`）。它是比 `session.list` 的投影提示
+    // **更新**的那个来源：会话刚生成标题时列表提示还是旧的。
+    // 只在非空时落——空值表示"还没有标题"，不该把列表提示擦掉。
+    final title = values['title'];
+    if (title is String && title.isNotEmpty) _applySessionTitle(sid, title);
+    if (!_disposed) notifyListeners();
   }
 
   // ---- 统计条（`tokenUsage` / `contextPressure` / `sessionStats` 三个投影）----
 
   /// token 用量。**认不出就是 null**，不猜 —— 猜一个就是把
   /// "看起来连着"当成"连着"。
-  TokenUsage? get tokenUsage {
-    final raw = _projections?['tokenUsage'];
-    if (raw is! Map) return null;
-    return TokenUsage(
-      uncachedInputTokens: _intOf(raw['uncachedInputTokens']),
-      outputTokens: _intOf(raw['outputTokens']),
-      cacheReadTokens: _intOf(raw['cacheReadTokens']),
-      cacheWriteTokens: _intOf(raw['cacheWriteTokens']),
-    );
-  }
+  TokenUsage? get tokenUsage => parseTokenUsage(_projections?['tokenUsage']);
 
   /// 会话统计（`sessionStats` 投影）。
   ///
@@ -601,11 +662,21 @@ class AppModel extends ChangeNotifier {
   /// （DSH `SessionProjectionHints`，`list.ts:291-312` 产出）。
   /// 认不出就给空串 —— 由 [SessionSummary.displayTitle] 按 DSH 的链继续退。
   static String _titleHintOf(Object? raw) {
-    if (raw is! Map) return '';
-    final values = raw['values'];
-    if (values is! Map) return '';
-    final title = values['title'];
+    final title = _projectionValueOf(raw, 'title');
     return title is String && title.isNotEmpty ? title : '';
+  }
+
+  /// 从 `session.list` 行的投影提示里取**某一个投影键**。
+  ///
+  /// 行只有一包 `projections`（`{kind, asOfSeq, values}`），而手机要的
+  /// 不止标题：子智能体目录行还要 `subagentTiming` / `tokenUsage`
+  /// （Web 读的是同一处，`SubagentHeaderLineage.tsx:83-84,260`）。
+  /// 形状知识只写在这里一次 —— 另一处抄一份"values 在哪"就会各自漂移。
+  static Object? _projectionValueOf(Object? raw, String key) {
+    if (raw is! Map) return null;
+    final values = raw['values'];
+    if (values is! Map) return null;
+    return values[key];
   }
 
   // ---- 权限档（`permission.catalog` 目录 + `permissions` 投影的当前值）----
@@ -671,12 +742,17 @@ class AppModel extends ChangeNotifier {
 
   // ---- 子智能体（`subagentCatalog` 投影）----
 
-  final Map<String, List<SubagentRow>> _subagents = {};
+  /// 每个会话读到的目录结论（sid → 三态 + 内容）。
+  final Map<String, SubagentCatalog> _subagentCatalogs = {};
 
-  /// 子智能体列表。**空表就是没有**，不造假的 —— 2026-10-15 之前这里是
-  /// 两条写死的示例（`Extract DSH icon paths` 等）。
-  List<SubagentRow> subagentsOf(String sid) =>
-      List.unmodifiable(_subagents[sid] ?? const []);
+  /// 一个会话的子智能体目录（**直接子级**，带加载 / 就绪 / 失败三态）。
+  ///
+  /// 没读到过 ⇒ `loading`：Web 把 `idle` 与 `loading` 视为同一个可见状态
+  /// （`SubagentHeaderLineage.tsx:465-467`）。**空表不等于"没有子智能体"** ——
+  /// 要判空得看 `state == ready`（`SubagentCatalog.isKnownLeaf`），
+  /// 否则"没读到"会被说成"没有"。
+  SubagentCatalog subagentCatalogOf(String sid) =>
+      _subagentCatalogs[sid] ?? const SubagentCatalog.loading();
 
   /// 打断：取消当前轮次但**保留待处理收件箱**。
   ///
@@ -1616,10 +1692,13 @@ class AppModel extends ChangeNotifier {
       final result = await client.call<Object?>('workspace.list', const {});
       if (_disposed) return;
       _workspaces = _parseWorkspaces(result);
-      // 归档集与工作区分组**同一份应答**（`workspace.list` 带 `archivedSessionIds`）——
-      // 分两次解析会让"列表看过一眼、归档集还是旧的"。
+      // 归档集、置顶集与工作区分组**同一份应答**（`workspace.list` 同时带
+      // `archivedSessionIds` 与 `pinnedSessionIds`）—— 分两次解析会让
+      // "列表看过一眼、归档/置顶集还是旧的"。
       final archived = _parseArchivedIds(result);
       if (archived != null) _archivedSids = archived;
+      final pinned = _parsePinnedIds(result);
+      if (pinned != null) _pinnedSids = pinned;
       if (!_disposed) notifyListeners();
     } catch (_) {
       // 附属信息：不把"拉不到工作区"升级成"会话列表也失败了"。
@@ -1637,6 +1716,14 @@ class AppModel extends ChangeNotifier {
   /// 列表里列它们，取消归档就回原位。
   Set<String> get archivedSids => _archivedSids;
   Set<String> _archivedSids = const {};
+
+  /// 已置顶的会话 sid 集合（`workspace.list` 的 `pinnedSessionIds`）。
+  ///
+  /// **registry 全局集合**（不分工作区），顺序在集合里不重要：显示时只按
+  /// "置顶 / 非置顶"分区，区内仍照电脑侧给的会话顺序（DSH Web 的 `sectionMembers`，
+  /// `ui-workspace/src/client/tree.ts:273-287`）。
+  Set<String> get pinnedSids => _pinnedSids;
+  Set<String> _pinnedSids = const {};
 
   /// 已归档的会话行（顺序照会话列表，不另排）。
   List<SessionSummary> get archivedSessions => [
@@ -1688,6 +1775,133 @@ class AppModel extends ChangeNotifier {
       _recordError('取消归档失败', error);
       return false;
     }
+  }
+
+  /// 置顶一个会话（`workspace.pin`）。
+  ///
+  /// 宿主返回**置顶全集**（最近置顶的在前）；手机不本地猜，照应答落。
+  /// 归档与置顶互斥：已归档的会话会被宿主拒成 `gateway/bad-request`
+  /// （`workspace-controller/src/commands.ts:209-211`）—— 主列表本来就不列
+  /// 已归档行，所以这里不预判，出错照实显示。
+  Future<bool> pinSession(String sid) async {
+    try {
+      final result = await client.call<Object?>('workspace.pin', {
+        'sid': sid,
+      }, requestId: 'pin-${DateTime.now().microsecondsSinceEpoch}');
+      final applied = _applyPinnedSet(result);
+      if (!applied) {
+        _recordError('置顶失败', StateError('应答缺少 pinnedSessionIds'));
+      }
+      return applied;
+    } catch (error) {
+      _recordError('置顶失败', error);
+      return false;
+    }
+  }
+
+  /// 取消置顶（宿主侧幂等：没置顶过的 id 也成功）。
+  Future<bool> unpinSession(String sid) async {
+    try {
+      final result = await client.call<Object?>(
+        'workspace.unpin',
+        {'sid': sid},
+        requestId: 'unpin-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      final applied = _applyPinnedSet(result);
+      if (!applied) {
+        _recordError('取消置顶失败', StateError('应答缺少 pinnedSessionIds'));
+      }
+      return applied;
+    } catch (error) {
+      _recordError('取消置顶失败', error);
+      return false;
+    }
+  }
+
+  /// 在同一工作区内把 [sid] 移到 [beforeSid] 之前。
+  ///
+  /// [beforeSid] 为 `null` 表示**追加到末尾**（DSH 的 `beforeSessionId?` 缺省语义）。
+  /// 越界（首条上移 / 末条下移）由调用方先挡掉，不发请求。
+  ///
+  /// 返回的是该工作区**新的**会话顺序（`{sessionIds}`，已换回手机见的 sid），
+  /// 所以落本地时直接替换那一组的 `sessionIds`，不重读整份基线。
+  Future<bool> moveSession(String sid, {required String? beforeSid}) async {
+    final group = workspaceGroupOf(sid, _workspaces);
+    if (group == null) {
+      _recordError('移动会话失败', StateError('会话不属于任何工作区'));
+      return false;
+    }
+    try {
+      final result = await client.call<Object?>(
+        'workspace.insertSessionBefore',
+        {
+          'workspaceId': group.workspaceId,
+          'sid': sid,
+          // 只在真的要追加时省略这个键：塞空串会被宿主当成一个不存在的锚点。
+          'beforeSid': ?beforeSid,
+        },
+        requestId: 'mv-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      final order = _parseSessionIds(result);
+      if (order == null) {
+        _recordError('移动会话失败', StateError('应答缺少 sessionIds'));
+        return false;
+      }
+      _applyWorkspaceOrder(group.workspaceId, order);
+      return true;
+    } catch (error) {
+      _recordError('移动会话失败', error);
+      return false;
+    }
+  }
+
+  /// 用应答里的顺序替换那一组的 `sessionIds`。**只动这一组**：别的组没有新真值。
+  void _applyWorkspaceOrder(String workspaceId, List<String> sessionIds) {
+    if (_disposed) return;
+    _workspaces = [
+      for (final group in _workspaces)
+        if (group.workspaceId == workspaceId)
+          WorkspaceGroup(
+            workspaceId: group.workspaceId,
+            title: group.title,
+            path: group.path,
+            sessionIds: sessionIds,
+          )
+        else
+          group,
+    ];
+    notifyListeners();
+  }
+
+  /// 落置顶全集。**认不出就返回 false 且不动**（与归档集同一条：
+  /// 错位的表现只是"某条没置顶"）—— 调用方据此如实报错，不假装成功。
+  bool _applyPinnedSet(Object? result) {
+    final ids = _parsePinnedIds(result);
+    if (ids == null) return false;
+    if (_disposed) return true;
+    _pinnedSids = ids;
+    notifyListeners();
+    return true;
+  }
+
+  /// 解析置顶全集（`{pinnedSessionIds: [...]}`）；**形状不认识给 `null`**。
+  static Set<String>? _parsePinnedIds(Object? result) {
+    if (result is! Map) return null;
+    final ids = result['pinnedSessionIds'];
+    if (ids is! List) return null;
+    return ids.whereType<String>().where((s) => s.isNotEmpty).toSet();
+  }
+
+  /// 解析重排应答（`{sessionIds: [...]}`）；**形状不认识给 `null`**。
+  static List<String>? _parseSessionIds(Object? result) {
+    if (result is! Map) return null;
+    final ids = result['sessionIds'];
+    if (ids is! List) return null;
+    final out = ids.whereType<String>().where((s) => s.isNotEmpty).toList();
+    // 空数组是**合法**应答（工作区被搬空了），但"全是非法项"不是 —— 后者说明
+    // 形状变了，落它会把整组会话从列表里抹掉。
+    if (ids.isNotEmpty && out.isEmpty) return null;
+    return out;
   }
 
   /// 落归档全集。**认不出就不动**：一个有损的解析会让"哪条是归档的"错位，
@@ -2387,6 +2601,18 @@ class AppModel extends ChangeNotifier {
           cwd: entry['cwd'] is String && (entry['cwd'] as String).isNotEmpty
               ? entry['cwd'] as String
               : null,
+          // 子会话的计时与 token：**同一包投影提示里的另外两个键**
+          // （`projections.values.subagentTiming` / `.tokenUsage`）。
+          // 连接器原样透传整包（`connector/src/handlers.ts:527-533`），
+          // 手机此前只取了 `title`，于是子智能体行没有真实耗时、没有 token，
+          // 一次性任务的时长还只能靠"现在减创建时间"越涨越长。
+          // 认不出就是 null（[parseSubagentTiming] / [parseTokenUsage]）。
+          subagentTiming: parseSubagentTiming(
+            _projectionValueOf(entry['projections'], 'subagentTiming'),
+          ),
+          tokenUsage: parseTokenUsage(
+            _projectionValueOf(entry['projections'], 'tokenUsage'),
+          ),
         ),
       );
     }

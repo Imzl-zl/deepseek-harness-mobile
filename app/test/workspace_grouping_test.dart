@@ -67,6 +67,27 @@ void main() {
       expect(buckets.single.sessionIds, ['s1', 's2']);
     });
 
+    // 分桶同时给出**能不能组内重排**的判据（`workspaceId`）：只有真工作区的
+    // 桶能发 `workspace.insertSessionBefore`；兜底桶里的会话没有归属，
+    // 菜单里的上移/下移必须不可点（否则只会得到一句"不属于任何工作区"）。
+    test('桶带工作区 id：真工作区有，兜底桶没有', () {
+      final buckets = bucketSessionsByWorkspace(
+        ['s1', 's2'],
+        [
+          ws('w1', 'dsh-mobile', ['s1']),
+        ],
+      );
+
+      expect(buckets[0].workspaceId, 'w1');
+      expect(buckets[1].label, '未分组');
+      expect(buckets[1].workspaceId, isNull, reason: '兜底桶不能组内重排');
+      expect(
+        bucketSessionsByWorkspace(['s1'], const []).single.workspaceId,
+        isNull,
+        reason: '拿不到工作区清单时同样不能重排',
+      );
+    });
+
     test('全部分组完就没有「未分组」桶', () {
       final buckets = bucketSessionsByWorkspace(
         ['s1', 's2'],
@@ -76,6 +97,102 @@ void main() {
       );
 
       expect(labelsOf(buckets), ['A']);
+    });
+
+    // 置顶是**组内分区**（DSH 的 `sectionMembers`，`tree.ts:273-287`），
+    // 不是把置顶项抽到整张表最上面 —— 它属于哪个项目仍归哪个项目。
+    test('置顶的排在各自分组最前，两个分区内部保持电脑侧顺序', () {
+      final buckets = bucketSessionsByWorkspace(
+        ['s1', 's2', 's3', 's4'],
+        [
+          ws('w1', 'A', ['s1', 's2']),
+          ws('w2', 'B', ['s3', 's4']),
+        ],
+        pinnedSessionIds: {'s2', 's4'},
+      );
+
+      expect(labelsOf(buckets), ['A', 'B']);
+      expect(buckets[0].sessionIds, ['s2', 's1']);
+      expect(buckets[1].sessionIds, ['s4', 's3']);
+    });
+
+    test('不分组时置顶同样领先（「会话」桶）', () {
+      final buckets = bucketSessionsByWorkspace(
+        ['s1', 's2'],
+        const [],
+        pinnedSessionIds: {'s2'},
+      );
+
+      expect(buckets.single.sessionIds, ['s2', 's1']);
+    });
+  });
+
+  group('组内移动锚点（DSH 的 insertSessionBefore 语义）', () {
+    test('上移 = 插到前一条之前', () {
+      final anchor = moveAnchorInDisplayOrder(
+        displayOrder: ['a', 'b', 'c'],
+        sid: 'b',
+        delta: -1,
+      );
+      expect(anchor?.beforeSid, 'a');
+    });
+
+    test('下移 = 插到"目标位的下一条"之前；末尾使用 append（null）', () {
+      expect(
+        moveAnchorInDisplayOrder(
+          displayOrder: ['a', 'b', 'c'],
+          sid: 'a',
+          delta: 1,
+        )?.beforeSid,
+        'c',
+      );
+      expect(
+        moveAnchorInDisplayOrder(
+          displayOrder: ['a', 'b'],
+          sid: 'a',
+          delta: 1,
+        )?.beforeSid,
+        isNull,
+        reason: '没有下一行 = 追加到末尾（Host 缺省 beforeSessionId）',
+      );
+    });
+
+    test('首条上移 / 末条下移是边界，返回 null（不发请求）', () {
+      expect(
+        moveAnchorInDisplayOrder(displayOrder: ['a', 'b'], sid: 'a', delta: -1),
+        isNull,
+      );
+      expect(
+        moveAnchorInDisplayOrder(displayOrder: ['a', 'b'], sid: 'b', delta: 1),
+        isNull,
+      );
+    });
+
+    test('置顶行只在置顶块内移动，不跨分区', () {
+      // 显示顺序：置顶 a,b 在前，普通 c,d 在后。
+      final display = ['a', 'b', 'c', 'd'];
+      final pinned = {'a', 'b'};
+
+      expect(
+        moveAnchorInDisplayOrder(
+          displayOrder: display,
+          sid: 'b',
+          delta: 1,
+          pinnedSessionIds: pinned,
+        ),
+        isNull,
+        reason: 'b 是置顶块最后一条，下一条 c 是普通行 —— DSH 的拖动同样禁止',
+      );
+      expect(
+        moveAnchorInDisplayOrder(
+          displayOrder: display,
+          sid: 'c',
+          delta: -1,
+          pinnedSessionIds: pinned,
+        ),
+        isNull,
+        reason: 'c 是普通块第一条，上一条 b 是置顶行 —— 不跨分区',
+      );
     });
   });
 

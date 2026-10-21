@@ -26,6 +26,7 @@ import 'package:flutter/material.dart';
 import '../model/chat_item.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
+import '../theme/dsh_theme.dart';
 import 'dsh_state_dot.dart';
 
 /// 顶栏上的一个图标按钮（`.ib`）。
@@ -273,12 +274,32 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.jobRunning = 0,
     this.onTapSubagents,
     this.onTapJobs,
+    this.onBack,
+    this.onTitleTap,
+    this.parentTitle,
   });
 
   final String title;
 
   /// `☰` —— 左抽屉（会话历史）。
   final VoidCallback onOpenDrawer;
+
+  /// **子会话里左侧换成 `←`**：回父会话（`null` = 用 `☰`）。
+  ///
+  /// 这是手机的主流形态（"进入下一层"= 导航栏左侧返回），也省掉了一条
+  /// 40dp 的额外头部条。抽屉仍能从左缘跟手拖出，所以不丢入口。
+  final VoidCallback? onBack;
+
+  /// **子会话里标题可点**：开「切换子智能体」sheet（`null` = 标题不可点）。
+  ///
+  /// 标题右边带一枚 `chevronDown` —— 有箭头才是"能下拉"，不靠猜。
+  final VoidCallback? onTitleTap;
+
+  /// 子会话的父会话名（只有 `onTitleTap != null` 时才可能显示）。
+  ///
+  /// 标题预算是 `kDshTitleMaxWidth`（140dp）。两个名字**放得下**才显示成
+  /// `父会话 › 子级名`，放不下就只留子级名 —— 见 [_SubagentCrumb]。
+  final String? parentTitle;
 
   /// `＋` —— 新建会话。
   final VoidCallback onNewSession;
@@ -332,35 +353,35 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
       child: Row(
         children: [
           const SizedBox(width: 4),
-          DshAppBarButton(
-            icon: 'panelLeft',
-            tooltip: '打开会话抽屉',
-            onPressed: onOpenDrawer,
-          ),
+          if (onBack != null)
+            DshAppBarButton(
+              icon: 'chevronLeft',
+              tooltip: '返回父会话',
+              onPressed: onBack,
+            )
+          else
+            DshAppBarButton(
+              icon: 'panelLeft',
+              tooltip: '打开会话抽屉',
+              onPressed: onOpenDrawer,
+            ),
           const SizedBox(width: 2),
-          // 两件事都要：`Expanded` 把右簇钉在右边（否则右簇跟着标题长度漂），
-          // `ConstrainedBox` 给标题**上限**（否则长标题吃光整行、把计数 chip
-          // 挤到没位置）。
+          // `Expanded` 把右簇钉在右边（否则右簇跟着标题长度漂）。
+          //
+          // 普通标题再加一档 `kDshTitleMaxWidth` 的**上限**（否则长标题吃光整行）；
+          // **子会话的 crumb 不加这个上限**：它要自己量"父级 + 子级放不放得下"，
+          // 而 `Expanded` 给它的就是"右簇摆完剩下的真实宽度"，比写死的 140 准。
           Expanded(
             child: Align(
               alignment: Alignment.centerLeft,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: kDshTitleMaxWidth),
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  // **13px / w500**：形态照 DSH Web 的 `.crumb`
-                  // （`ConversationRoot.module.css:125-139` 的
-                  // `font-size: 14px; line-height: 20px`，当前那条是 w500），
-                  // 手机上收窄一档 —— 同一行还要放两枚计数 chip。
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: c.labelPrimary,
-                  ),
-                ),
-              ),
+              child: onTitleTap == null
+                  ? ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        maxWidth: kDshTitleMaxWidth,
+                      ),
+                      child: _title(context),
+                    )
+                  : _switcher(context),
             ),
           ),
           const SizedBox(width: 2),
@@ -404,6 +425,139 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
         ],
       ),
     );
+  }
+
+  /// 普通标题（当前会话名）。
+  Widget _title(BuildContext context) {
+    final c = context.dshColors;
+    return Text(
+      title,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      // **13px / w500**：形态照 DSH Web 的 `.crumb`
+      // （`ConversationRoot.module.css:125-139` 的
+      // `font-size: 14px; line-height: 20px`，当前那条是 w500），
+      // 手机上收窄一档 —— 同一行还要放两枚计数 chip。
+      style: TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w500,
+        color: c.labelPrimary,
+      ),
+    );
+  }
+
+  /// 子会话的标题 = **可切换的子智能体名**（点开「切换子智能体」sheet）。
+  ///
+  /// 与 Web 的 `switcher`（`SubagentHeaderLineage.tsx:802-821`）同一个位置语义：
+  /// 那里标题本身就是一个切换器，前面还有一段父级 crumb。
+  /// 手机把两者并在一行标题里，**放得下才带父级** —— 见 [_SubagentCrumb]。
+  Widget _switcher(BuildContext context) {
+    final c = context.dshColors;
+    return Tooltip(
+      message: '切换子智能体',
+      child: InkWell(
+        onTap: onTitleTap,
+        borderRadius: BorderRadius.circular(DshRadius.sm),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: _SubagentCrumb(title: title, parentTitle: parentTitle),
+              ),
+              const SizedBox(width: 4),
+              DshIcon('chevronDown', size: 12, color: c.labelCaption),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 子会话标题：`父会话 › 子级名`，**放得下才带父级**。
+///
+/// ## 为什么要有"放得下才带"
+///
+/// 顶栏给标题的预算只有 `kDshTitleMaxWidth`（140dp，账见该常量上方）。
+/// 两个名字硬塞会各截一半：`手机端控… › 调研实…` —— 结构是有了，
+/// 但**"我在哪个子智能体里"读不出来**，而那是这一行最要紧的信息。
+///
+/// 所以：两段名字 + ` › ` + 箭头**量得下**才显示父级，量不下就只留子级名。
+/// 量用 `TextPainter`（Flutter 自己的文本度量，带 `textScaler`），
+/// 不是字符数阈值 —— 中英混排、系统字号放大都不会算错。
+class _SubagentCrumb extends StatelessWidget {
+  const _SubagentCrumb({required this.title, required this.parentTitle});
+
+  final String title;
+  final String? parentTitle;
+
+  /// 父级是小一号的次要信息（12 / tertiary），子级保持顶栏的 13 / w500。
+  static const TextStyle _parentStyle = TextStyle(fontSize: 12);
+  static const TextStyle _titleStyle = TextStyle(
+    fontSize: 13,
+    fontWeight: FontWeight.w500,
+  );
+  static const String _separator = ' › ';
+
+  /// 箭头（12）加它前面的 4dp。
+  static const double _tailWidth = 16;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    final parent = parentTitle;
+    return LayoutBuilder(
+      builder: (context, box) {
+        final max = box.maxWidth.isFinite ? box.maxWidth : kDshTitleMaxWidth;
+        final scaler = MediaQuery.textScalerOf(context);
+        final showParent =
+            parent != null &&
+            _width(parent, _parentStyle, scaler) +
+                    _width(_separator, _parentStyle, scaler) +
+                    _width(title, _titleStyle, scaler) +
+                    _tailWidth <=
+                max;
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (showParent) ...[
+              Text(
+                parent,
+                maxLines: 1,
+                style: _parentStyle.copyWith(color: c.labelTertiary),
+              ),
+              Text(
+                _separator,
+                maxLines: 1,
+                style: _parentStyle.copyWith(color: c.labelCaption),
+              ),
+            ],
+            Flexible(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: _titleStyle.copyWith(color: c.labelPrimary),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  static double _width(String text, TextStyle style, TextScaler scaler) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      maxLines: 1,
+      textDirection: TextDirection.ltr,
+      textScaler: scaler,
+    )..layout();
+    final width = painter.width;
+    painter.dispose();
+    return width;
   }
 }
 

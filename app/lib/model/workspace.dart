@@ -78,8 +78,19 @@ class WorkspaceGroup {
   final List<String> sessionIds;
 }
 
-/// 一桶:分组标签 + 属于它的 sid。
-typedef WorkspaceBucket = ({String label, List<String> sessionIds});
+/// 一桶:分组标签 + 属于它的 sid + 它对应的**工作区 id**。
+///
+/// `workspaceId` 为 `null` 表示这一组**不是真工作区**（「未分组」兜底桶，
+/// 或拿不到工作区清单时的单桶「会话」）。它存在的理由只有一个：
+/// `workspace.insertSessionBefore` 要求 `workspaceId`，而这些桶里的会话没有归属
+/// —— 在这样的组里上移/下移**必须不可点**，否则点下去只能得到一句失败
+/// （`AppModel.moveSession` 会以"会话不属于任何工作区"拒掉）。
+/// 判据放在这里，抽屉（长按菜单）与内联列表读同一个值。
+typedef WorkspaceBucket = ({
+  String label,
+  List<String> sessionIds,
+  String? workspaceId,
+});
 
 /// 某个会话归属的工作区；`null` = 这份清单里没有它（清单为空时也回 `null`）。
 ///
@@ -126,17 +137,41 @@ bool sessionVisible({
 ///
 /// 规则:
 /// 1. **顺序照 groups**（电脑侧给的行序即偏好），不为排序自己发明一套；
-/// 2. 一个会话**只进一个桶**（第一次被认领就定），不会在两个工作区里出现两遍；
-/// 3. 不在任何工作区里的会话进「**未分组**」—— 如实兜底,不丢；
-/// 4. `groups` 为空（拿不到工作区清单）时返回单个「会话」桶 —— **不分组**，
+/// 2. **置顶的排在各自分组的最前**（组内分区，见 `pinnedSessionIds`）；
+/// 3. 一个会话**只进一个桶**（第一次被认领就定），不会在两个工作区里出现两遍；
+/// 4. 不在任何工作区里的会话进「**未分组**」—— 如实兜底,不丢；
+/// 5. `groups` 为空（拿不到工作区清单）时返回单个「会话」桶 —— **不分组**，
 ///    而不是按 `cwd` 猜一个分组（`cwd` 与工作区不是一对一,猜错比不分组更难查）。
+///
+/// [pinnedSessionIds] 来自 `workspace.list` 的 `pinnedSessionIds`
+/// （registry 全局集合）。分区顺序照 DSH Web 的 `sectionMembers`
+/// （`ui-workspace/src/client/tree.ts:273-287`）：**置顶在前，两个分区各自保持
+/// 电脑侧给的相对顺序**。不是把置顶项提到整张表的最前 —— 它属于哪个项目仍归哪个项目。
 List<WorkspaceBucket> bucketSessionsByWorkspace(
   List<String> sessionIds,
-  List<WorkspaceGroup> groups,
-) {
+  List<WorkspaceGroup> groups, {
+  Set<String> pinnedSessionIds = const {},
+}) {
+  /// 组内分区：置顶的在前，两边都保持原顺序。
+  List<String> partitionPinned(Iterable<String> ids) {
+    final all = ids.toList();
+    return [
+      for (final sid in all)
+        if (pinnedSessionIds.contains(sid)) sid,
+      for (final sid in all)
+        if (!pinnedSessionIds.contains(sid)) sid,
+    ];
+  }
+
   if (groups.isEmpty) {
     return [
-      if (sessionIds.isNotEmpty) (label: '会话', sessionIds: [...sessionIds]),
+      if (sessionIds.isNotEmpty)
+        // 没有工作区清单 ⇒ 这一组里的会话**没有 workspaceId**（上移/下移不可用）。
+        (
+          label: '会话',
+          sessionIds: partitionPinned(sessionIds),
+          workspaceId: null,
+        ),
     ];
   }
   final wanted = sessionIds.toSet();
@@ -149,9 +184,51 @@ List<WorkspaceBucket> bucketSessionsByWorkspace(
         .where((sid) => wanted.contains(sid) && !claimed.contains(sid))
         .toList();
     claimed.addAll(ids);
-    if (ids.isNotEmpty) out.add((label: group.title, sessionIds: ids));
+    if (ids.isNotEmpty) {
+      out.add((
+        label: group.title,
+        sessionIds: partitionPinned(ids),
+        workspaceId: group.workspaceId,
+      ));
+    }
   }
   final orphans = sessionIds.where((sid) => !claimed.contains(sid)).toList();
-  if (orphans.isNotEmpty) out.add((label: '未分组', sessionIds: orphans));
+  if (orphans.isNotEmpty) {
+    // 兜底桶：不属于任何工作区 ⇒ 上移/下移不可用（没有 workspaceId 可发）。
+    out.add((
+      label: '未分组',
+      sessionIds: partitionPinned(orphans),
+      workspaceId: null,
+    ));
+  }
   return out;
+}
+
+/// 在**显示顺序**里把 [sid] 移动一位所需的 Host 锚点（`beforeSid`）。
+///
+/// 返回 `null` = 边界 / 跨置顶分区 / 找不到会话 —— **不动**，调用方不要发请求。
+/// 返回 `(beforeSid: null)` 是合法移动：移到末尾（DSH 的 `beforeSessionId?`
+/// 缺省即追加，`workspace-controller/src/types.ts:107-112`）。
+///
+/// [displayOrder] 是该分组**已经分区过**的顺序（置顶在前）。
+/// [delta] 只接受 `-1` / `1`。置顶行只在置顶块内移动，普通行不会跨过置顶块 ——
+/// 与 DSH Web 的拖动门禁同一条（`WorkspaceBrowser.tsx:593-596`：
+/// `drag.pinned === node.pinned`）。
+({String? beforeSid})? moveAnchorInDisplayOrder({
+  required List<String> displayOrder,
+  required String sid,
+  required int delta,
+  Set<String> pinnedSessionIds = const {},
+}) {
+  if (delta != -1 && delta != 1) return null;
+  final from = displayOrder.indexOf(sid);
+  if (from < 0) return null;
+  final to = from + delta;
+  if (to < 0 || to >= displayOrder.length) return null;
+  final pinned = pinnedSessionIds.contains(sid);
+  if (pinnedSessionIds.contains(displayOrder[to]) != pinned) return null;
+  if (delta < 0) return (beforeSid: displayOrder[to]);
+  // 下移：锚点是"目标位的下一行"；没有下一行就是追加到末尾。
+  final after = to + 1;
+  return (beforeSid: after < displayOrder.length ? displayOrder[after] : null);
 }

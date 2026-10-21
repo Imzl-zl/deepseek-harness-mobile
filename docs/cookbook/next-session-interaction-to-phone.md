@@ -165,8 +165,8 @@ fail-closed 报后台**。取舍、被否方案与代价见
   波及用户日常 profile,所以本期只读不写。
 - **模型 picker 接真目录**:`session/modelCatalog` 已在连接器侧接好(`dsh/models.ts`),
   手机侧显示的名字已是真值,但 picker 列表还是手抄的。
-- 方法面剩 8 个未接(`session.create` / `session.cancel` / `settings.*` / `credentials.*` /
-  `devices.revoke` / `push.configure`)。
+- 方法面 31/35:契约列了、连接器还没接的是 `settings.describe` / `settings.update` /
+  `credentials.set` / `credentials.unset`(契约 §5.8)。
 - `always` 档下没订阅该会话的手机看不到卡片(看护超时后 fail-closed)。
 
 ## 相关文档(改之前先读)

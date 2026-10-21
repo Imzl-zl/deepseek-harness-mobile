@@ -80,6 +80,15 @@ class _ChipsClient extends FakeSyncClient {
         return {
               'sessions': [
                 {'sid': 's1', 'itemCount': 3, 'updatedAt': 1},
+                // 子智能体"正在跑"来自**子会话自己**的 `running`
+                // （`SubagentHeaderLineage.tsx:471-475`），不是 catalog 的 `mode`。
+                for (var i = 0; i < subagents; i += 1)
+                  {
+                    'sid': 'sub-$i',
+                    'updatedAt': 2,
+                    'subagent': true,
+                    'running': true,
+                  },
               ],
             }
             as T;

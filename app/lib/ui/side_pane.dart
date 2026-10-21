@@ -152,7 +152,7 @@ class SidePane extends StatelessWidget {
     required this.onClose,
     this.fileBody,
     this.jobs = const [],
-    this.subs = const [],
+    this.subsBody,
     this.runningJobs = 0,
     this.runningSubs = 0,
     this.fileActions,
@@ -160,7 +160,6 @@ class SidePane extends StatelessWidget {
     this.onToggleJob,
     this.openJobIds = const {},
     this.onStopJob,
-    this.onOpenSub,
     this.fullscreen = true,
     this.onToggleFullscreen,
   });
@@ -174,7 +173,15 @@ class SidePane extends StatelessWidget {
   final Widget? fileBody;
 
   final List<SideJob> jobs;
-  final List<SideJob> subs;
+
+  /// 子智能体面板的主体（**目录树**，由调用方给）。
+  ///
+  /// 树要自己持两个状态 —— 展开集合与"在跑就走秒"的时钟 ——
+  /// 而且点一行是"进入那个子会话"、点 disclosure 才"展开"，
+  /// 与任务行的"展开输出"不是一个语义。所以它不塞进 [_JobPanel]，
+  /// 由 `ui/subagent_tree.dart` 自成一块。
+  final Widget? subsBody;
+
   final int runningJobs;
   final int runningSubs;
 
@@ -186,14 +193,6 @@ class SidePane extends StatelessWidget {
 
   final void Function(SideJob job)? onToggleJob;
   final void Function(SideJob job)? onStopJob;
-
-  /// 点一个**子智能体**行 —— 进入那个子会话（不是展开输出）。
-  ///
-  /// 与 [onToggleJob] 分开是两个语义：任务行点开是"看它的输出"，
-  /// 子智能体行点开是"进它那个会话"（DSH 的 `openChild`，
-  /// `ui-subagent/src/client/index.ts:61-63`）。
-  /// `null` = 这一版不支持进入，行不可点。
-  final void Function(SideJob job)? onOpenSub;
 
   final Set<String> openJobIds;
 
@@ -364,25 +363,16 @@ class SidePane extends StatelessWidget {
                   actions: jobActions,
                   emptyText: '没有后台任务。',
                 ),
-                SidePanel.subs => _JobPanel(
-                  jobs: subs,
-                  openIds: openJobIds,
-                  // **子智能体行的点击语义不是"展开输出"，是"进入那个子会话"**
-                  // （2026-10-19 用户原话：「子智能体是列表，每一个点击是能进入的」）。
-                  //
-                  // DSH 同一条：点目录项 = `openChild` → `openSession(address)`
-                  // —— 子会话**进主对话区**
-                  //（`ui-subagent/src/client/index.ts:61-63`）。
-                  // DSH 另有一个行尾侧箭头走 `openChildAside` → 右侧栏内嵌渲染
-                  //（`:64-69`），手机上册一版不做（右下角的抽屉里再嵌一个会话，
-                  // 300dp 宽里会窄到不能读）。
-                  onToggle: onOpenSub,
-                  // 行尾那枚 `chevronRight` 说明"点进去"（不是"展开"）。
-                  enterable: true,
-                  // 空态说清数据来源：2026-10-15 之前这里**无条件**显示两条
-                  // 写死的示例子智能体，而用户无法分辨哪个是真的。
-                  emptyText: '没有子智能体（数据来自会话投影 subagentCatalog）。',
-                ),
+                // 子智能体：**目录树**（`ui/subagent_tree.dart`）。
+                //
+                // 点行 = 进入那个子会话，与 DSH 的 `openChild` → `openSession`
+                // 同一条（`ui-subagent/src/client/index.ts:61-63`）；
+                // 行左侧的 disclosure 才是"展开下级"（Web 的 `toggleBranch`）。
+                // DSH 另有一个行尾按钮走 `openChildAside` → 右侧栏内嵌渲染
+                //（`:64-69`），手机不做（右下角抽屉里再嵌一个会话，
+                // 300dp 宽里会窄到不能读）——「仍未做的差异」记在
+                // `.agents/notes/implemented/2026-10-21-subagent-catalog-tree-and-state.md`。
+                SidePanel.subs => subsBody ?? const SizedBox.shrink(),
               },
             ),
           ],
@@ -423,7 +413,7 @@ class _FilePanel extends StatelessWidget {
   }
 }
 
-/// 任务 / 子智能体面板。
+/// 任务面板。
 class _JobPanel extends StatelessWidget {
   const _JobPanel({
     required this.jobs,
@@ -432,7 +422,6 @@ class _JobPanel extends StatelessWidget {
     this.onStop,
     this.actions,
     required this.emptyText,
-    this.enterable = false,
   });
 
   final List<SideJob> jobs;
@@ -441,12 +430,6 @@ class _JobPanel extends StatelessWidget {
   final void Function(SideJob job)? onStop;
   final Widget? actions;
   final String emptyText;
-
-  /// 行点击是**进入**（子智能体）还是**展开输出**（任务）。
-  ///
-  /// 两者都要一枚 chevron，但**方向不同**：展开是 `chevronDown`（转 90°），
-  /// 进入是 `chevronRight`。少了这枚，子智能体行看起来像"不可点的一行字"。
-  final bool enterable;
 
   @override
   Widget build(BuildContext context) {
@@ -488,7 +471,6 @@ class _JobPanel extends StatelessWidget {
                   open: openIds.contains(job.id),
                   onToggle: onToggle,
                   onStop: onStop,
-                  enterable: enterable,
                 ),
               if (settled.isNotEmpty) _JobGroup('已结束 ${settled.length}'),
               for (final job in settled)
@@ -496,7 +478,6 @@ class _JobPanel extends StatelessWidget {
                   job: job,
                   open: openIds.contains(job.id),
                   onToggle: onToggle,
-                  enterable: enterable,
                 ),
             ],
           ),
@@ -540,14 +521,12 @@ class _JobRow extends StatelessWidget {
     required this.open,
     this.onToggle,
     this.onStop,
-    this.enterable = false,
   });
 
   final SideJob job;
   final bool open;
   final void Function(SideJob job)? onToggle;
   final void Function(SideJob job)? onStop;
-  final bool enterable;
 
   @override
   Widget build(BuildContext context) {
@@ -665,13 +644,6 @@ class _JobRow extends StatelessWidget {
                 if (job.isLive && onStop != null) ...[
                   const SizedBox(width: 6),
                   _StopButton(onConfirm: () => onStop!(job)),
-                ],
-                // **进入**那一类的 chevron：`chevronRight`（不转）。
-                // 与下面"展开输出"的 `chevronDown` 分开 —— 两个语义不一样，
-                // 用同一枚图标会让人以为点下去是展开。
-                if (enterable && onToggle != null) ...[
-                  const SizedBox(width: 4),
-                  DshIcon('chevronRight', size: 14, color: c.labelTertiary),
                 ],
                 if (job.output.isNotEmpty) ...[
                   const SizedBox(width: 4),

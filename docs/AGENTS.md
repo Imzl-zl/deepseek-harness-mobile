@@ -32,6 +32,7 @@
 | `cookbook/channel-bootstrap.md` | 开工实操:从零到真机连通的编号步骤与精确验证命令 |
 | `subsystems/app-platform-boundaries.md` | 手机端多端边界:核心零平台分支、三个能力包、可机械判定的边界规则与校验命令 |
 | `subsystems/blank-session-hero.md` | 新会话页(blank 会话的 hero):落到这一屏的条件、结构、三样数据与标签链、写路径、有意偏离、验证 |
+| `subsystems/subagent-page.md` | 子智能体页:目录树(直接子级 + 展开才懒加载)、三态、行规格、子会话头部条与切换、一次性/未知的只读状态框、已知差异 |
 
 ## 引用纪律
 

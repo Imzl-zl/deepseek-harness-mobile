@@ -72,6 +72,33 @@ class TokenUsage {
       formatCacheHitPercent(cacheReadTokens, billedInput);
 }
 
+/// 解析 `tokenUsage` 投影的 wire view。
+///
+/// 形状是**四个必填整数字段**（DSH `token-meter/src/usage-projection.ts:45-50`
+/// 的 `projectionSchema` 是 `.strict()`，逐字段 `int().nonnegative()`）。
+/// 所以缺一个桶就是**形状变了**，整个当认不出（`null`）—— 不补零：
+/// 补零会让"这个会话用了 1K"与"我们只读到一个桶"看起来一样。
+///
+/// 同一个函数服务两条路：当前会话的统计条读 `session.projections`，
+/// 子智能体目录行读**子会话自己的** `session.list` 行里的同一份投影提示
+/// （`projections.values.tokenUsage`）。两处一个解析器，不各自抄字段名。
+TokenUsage? parseTokenUsage(Object? raw) {
+  if (raw is! Map) return null;
+  final uncached = raw['uncachedInputTokens'];
+  final output = raw['outputTokens'];
+  final read = raw['cacheReadTokens'];
+  final write = raw['cacheWriteTokens'];
+  if (uncached is! num || output is! num || read is! num || write is! num) {
+    return null;
+  }
+  return TokenUsage(
+    uncachedInputTokens: uncached.toInt(),
+    outputTokens: output.toInt(),
+    cacheReadTokens: read.toInt(),
+    cacheWriteTokens: write.toInt(),
+  );
+}
+
 /// 会话统计（DSH 的 `sessionStats` 投影）。
 ///
 /// 字段与投影的 wire view 逐字对应

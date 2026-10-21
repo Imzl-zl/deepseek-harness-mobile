@@ -97,8 +97,10 @@ void main() {
       );
       addTearDown(app.dispose);
       await app.start();
-      // 投影**按 sid 存**（`refreshProjections(sid)`），所以要先读一次。
-      await app.refreshProjections('s1');
+      // 投影**按 sid 存**（`refreshProjections(sid)`），而"当前会话那一包"
+      // 只在 `sid == currentSid` 时才落地（子级目录的重读不能覆盖它），
+      // 所以先打开会话 —— 生产里也是 `openSession` 调它。
+      await app.openSession('s1');
 
       final outline = app.turnOutline;
       expect(outline.length, 2, reason: '另两项形状不对，跳过');
