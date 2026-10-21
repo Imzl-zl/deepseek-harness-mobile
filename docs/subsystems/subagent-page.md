@@ -251,5 +251,5 @@
 |---|---|---|
 | A6 一次性子会话只读框 | **逻辑成立** | 判据是 catalog 行的 `mode == one-shot`，与 `continuable` 分两支；`subagent_enter_test.dart` 两条用例（一次性 / 模式未知）都在跑。未造出只是本 profile 的后端只产 `continuable` |
 | D2 历史翻页 | **发现缺口** | 翻页本身两端都全：连接器有 `session.page` + `refetchThresholdBytes`（默认 1 MiB，`connector/src/config.ts:61`）与 `session.refetch`（`handlers.ts:1001`）；手机侧 `recovery.dart` 会按 `hasMore` 累积快照。**但 `sync_client_impl.dart:956` 把 `refetch` 项直接跳过、从不调 `session.refetch`** ⇒ 超过 1 MiB 的条目会在会话里留下一个**静默的洞**（不报错、不缺页、就是少一条） |
-| D3 异常结局 / 重试 | **结局成立，"重试"入口不存在** | `TurnOutcomeKind` 四档都有渲染（`chat_turns.dart:697` 的 error/interrupted/maxTokens/signedOut）；自动重试有 `ModelRetryItem` 的 `RetryRow`（`:741-768`）。**没有"对失败回合手动重试"的按钮** —— 任务里问的"重试入口"确实没有 |
+| D3 异常结局 / 重试 | **结局成立；"重试"入口不做** | `TurnOutcomeKind` 四档都有渲染（`chat_turns.dart:697` 的 error/interrupted/maxTokens/signedOut）；自动重试有 `ModelRetryItem` 的 `RetryRow`（`:741-768`）。查了 DSH Web：`ui-conversation` 里**也没有"手动重试失败回合"的入口**，所以这不是我们对齐漏了，**不做** |
 | E3 拖动排序 | **逻辑成立** | 纯函数 `dropAnchorInDisplayOrder`（拖到自己 / 跨分区 / 顺序没变都返回 null）+ 5 条模型用例 + 3 条抽屉交互用例；真机未验只是"同一工作区两条可见会话"这个数据条件凑不出 |

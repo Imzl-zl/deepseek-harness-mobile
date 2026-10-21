@@ -155,26 +155,13 @@ class TrajectoryTab extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 顶部工具行：三个 chip + 搜索（原型 `.tj-tools`）。
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 4, 8, 4),
-          child: Row(
-            children: [
-              const _Chip(label: '时长', on: true),
-              const SizedBox(width: 6),
-              const _Chip(label: '轮次'),
-              const SizedBox(width: 6),
-              const _Chip(label: '调用'),
-              const Spacer(),
-              IconButton(
-                tooltip: '搜索轨迹',
-                visualDensity: VisualDensity.compact,
-                onPressed: () {},
-                icon: DshIcon('search', size: 18, color: c.labelSecondary),
-              ),
-            ],
-          ),
-        ),
+        // **这里原来有一行假入口**（「时长 / 轮次 / 调用」三个 chip + 搜索钮，
+        // 全部 `onPressed: () {}` / 没有 `onTap`）：长得像切换器，点了什么都不发生。
+        // 2026-10-22 用户当场问「时间轴，轮次，调用都没有啊」—— 根因就是它们。
+        // 原型里**根本没有这一行**（`mock/proto` 里没有 `tj-tools`），
+        // 所以按第八条教训（"承诺了但没做"比没有更糟）直接删掉，
+        // 等三个视图各自有真数据源再加回来。见
+        // `.agents/notes/proposed/2026-10-22-trajectory-page-parity-and-mobile-fit.md` P0-1。
         // ---- 甘特条（固定 640px 宽，横滑）----
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
@@ -402,37 +389,6 @@ class _LedgerRow extends StatelessWidget {
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 顶部的小 chip（`.chip`：`min-height:32` / `border-radius:16`）。
-class _Chip extends StatelessWidget {
-  const _Chip({required this.label, this.on = false});
-
-  final String label;
-  final bool on;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.dshColors;
-    return Container(
-      constraints: const BoxConstraints(minHeight: 32),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: on ? c.layer3 : Colors.transparent,
-        borderRadius: BorderRadius.circular(16),
-        border: on ? null : Border.all(color: c.layer2),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: on ? FontWeight.w600 : FontWeight.w400,
-          color: on ? c.labelPrimary : c.labelSecondary,
         ),
       ),
     );

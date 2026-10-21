@@ -206,4 +206,19 @@ void main() {
     expect(find.text('只有账本'), findsOneWidget);
     expect(find.text('还没有轨迹'), findsNothing);
   });
+
+  testWidgets('**不摆假入口**：没有「时长/轮次/调用」chip，也没有搜索钮', (tester) async {
+    // 2026-10-22 用户原话「时间轴，轮次，调用都没有啊」：那一行 chip 长得像切换器，
+    // 实际三个都没有 onTap、搜索钮是 `onPressed: () {}`。原型里也没有这一行。
+    // 按第八条教训（承诺了没做比没有更糟）删掉，等三个视图各自有数据源再加回来。
+    await tester.pumpWidget(
+      _wrap(const TrajectoryTab(rows: _rows, entries: _entries)),
+    );
+    await tester.pumpAndSettle();
+
+    for (final label in ['时长', '轮次', '调用']) {
+      expect(find.text(label), findsNothing, reason: '「$label」是没有实现的假 chip');
+    }
+    expect(find.byTooltip('搜索轨迹'), findsNothing, reason: '搜索钮没有实现');
+  });
 }

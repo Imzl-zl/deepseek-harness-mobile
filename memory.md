@@ -99,8 +99,9 @@
     `sync_client_impl.dart:956` 把 `{kind:'refetch', seq, bytes}` 直接跳过、从不调
     `session.refetch` ⇒ **>1 MiB 的条目在会话里静默缺失**（不报错、不缺页，就是少一条）。
     连接器侧完整（`session-page.ts` + `refetchThresholdBytes` 默认 1 MiB）。
-11. **失败回合没有"手动重试"入口**（2026-10-22 静态审查发现，未修）：
-    四档 `TurnOutcomeKind` 都有渲染，自动重试也有 `RetryRow`，但用户点不到"重试这一轮"。
+11. ~~失败回合没有"手动重试"入口~~ **不做（2026-10-22 查证）**：DSH Web 的
+    `ui-conversation` 也没有这个入口（只有自动重试的 `ModelRetryItem` 展示）——
+    不是我们对齐漏了，按"照 DSH"的原则不加。
 
 别当缺口（定案，别再试）:
 
@@ -317,7 +318,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **318 项**(22 条规则自检 + 扫 88 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 49 个)/ 工具脚本不许硬编码盘符(20 个) |
-| `cd app && flutter test` | **1009 项** |
+| `cd app && flutter test` | **1010 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **563 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
@@ -345,6 +346,7 @@
 - 2026-10-21 晚 真机验收修掉的三条 + 锚定浮层：
   `.agents/notes/implemented/2026-10-21-subagent-child-address-and-prompt.md`、
   `.agents/notes/implemented/2026-10-21-anchored-popover-for-top-bar-panels.md`。
+
 
 
 
