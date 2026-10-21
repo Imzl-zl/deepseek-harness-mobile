@@ -450,20 +450,33 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
   是被拖卡片左上角，带一段触摸偏移，会把"落在哪半"判错）。
   跨置顶分区**不接受**（与 Web 的 `drag.pinned === node.pinned` 同一条），判据在
   `model/workspace.dart` 的 `dropAnchorInDisplayOrder`。
-- **adb 合成不出"长按拖动"的落点**（2026-10-22 实测，E3 因此仍未验）：
-  - `adb shell input swipe`：从 DOWN 就开始移动，Flutter 的 `LongPressDraggable`
-    在 500ms 长按窗口内就被移动打断 ⇒ **连拖都起不来**（列表只是被滑了一下）。
-  - `adb shell input motionevent DOWN/MOVE/UP`：**跨进程的多次注入接不成一个手势**
-    （每次 `input` 都是新进程，MOVE 找不到配对的 DOWN），同样起不来。
-  - `adb shell input draganddrop x1 y1 x2 y2 6000`：**能起拖** —— 源行淡出
-    （`childWhenDragging`）、跟手的 `_DragChip` 出现在半空，截图能抓到；
-    但落点**从未被 `DragTarget` 接收**：`staging` 里没有对应的 `mv-<requestId>`
-    （`storages/dsh_mobile_core.json` 的 dedupe 表），抽屉顺序与 `workspace.json`
-    的 `sessionIds` 都不动。慢到 10s、换上下两个方向、换项目头当落点，结果一样。
-  - **所以**：拖动的落点只能用**真手指**验；`adb` 能验的是**同一条移动路径**——
-    行尾「…」菜单的**上移 / 下移**（实测一次「下移」：抽屉顺序变了，
-    dedupe 里出现 `mv-1792604210662`，返回的新顺序是
-    `[PGAyb…, mGa8Bb…, _8brZ…]`）。**别把"菜单能移动"当成"拖动已验证"。**
+- **长按拖动只能用 `sendevent` 合成，`input` 那一套都不行**（2026-10-22 实测，E3 就是靠这条验过的）：
+  - 这台机器 **`adb shell id` 是 `uid=0(root)`**（KernelSU，`adbd is already running as root`），
+    所以 `sendevent` 可用。触摸屏是 **`/dev/input/event7`（`goodix_ts`）**，
+    `getevent -pl` 给的范围是 `ABS_MT_POSITION_X: 0..143999` / `Y: 0..319999`
+    ⇒ **逻辑像素 × 133.333 = 绝对值**（`1080/2400` 两轴同比例；`input` 的坐标也是逻辑像素）。
+  - **能用的手势**（DOWN → 静置 1.2s → 3 段 MOVE → 末尾再静置 1.2s → UP）：
+    ```sh
+    adb shell 'd=/dev/input/event7;
+      sendevent $d 3 47 0; sendevent $d 3 57 700;
+      sendevent $d 3 53 61866; sendevent $d 3 54 136800;   # x=464, y=1026
+      sendevent $d 1 330 1; sendevent $d 0 0 0; sleep 1.2;
+      sendevent $d 3 54 128000; sendevent $d 0 0 0; sleep 0.3;
+      sendevent $d 3 54 110000; sendevent $d 0 0 0; sleep 1.5;
+      sendevent $d 1 330 0; sendevent $d 3 57 -1; sendevent $d 0 0 0'
+    ```
+    （`3`=EV_ABS / `47`=ABS_MT_SLOT / `57`=TRACKING_ID / `53`=X / `54`=Y / `1`=EV_KEY / `330`=BTN_TOUCH / `0 0 0`=SYN_REPORT）
+  - **为什么必须这样**：`input swipe` 从 DOWN 就开始移动，`LongPressDraggable` 在 500ms 长按窗口内就被
+    移动打断（列表只是被滑了一下）；`input motionevent` 跨进程接不成一个手势；
+    `input draganddrop` **能起拖**（源行淡出、chip 跟手），但落点**从不被 `DragTarget` 接收**
+    （dedupe 里没有 `mv-`、顺序不动）—— 别再用它验拖动。
+  - **判据不是"看起来拖动了"**：`storages/dsh_mobile_core.json` 的 dedupe 表里要出现
+    `mv-<requestId>`，且 `storages/workspace.json` 的 `sessionIds` / `global.workspaceIds`
+    顺序真的变了。2026-10-22 实测两条：会话行 `mv-1792606235984569`（`[Greeting, Nested, …]`）、
+    项目头（`workspaceIds` 从 `[dsh-e2e, dsh-mobile, …]` 变 `[dsh-mobile, dsh-e2e, …]`）。
+  - 同一件事的**非拖动**入口是行尾「…」菜单的**上移 / 下移**（2026-10-22 也验过一次：
+    `mv-1792604210662`）。**别把"菜单能移动"当成"拖动已验证"，反过来也别把
+    "input 合成不出来"当成"拖动坏了"。**
 - **Docker 发布的端口从局域网连不上，别先怀疑容器**（2026-10-21）：`docker ps` 显示
   `0.0.0.0:8787->8787/tcp`、宿主 `curl 127.0.0.1:8787` 回 405，而手机 `curl <PC 局域网 IP>:8787`
   超时/拒绝。根因是 **Windows 防火墙**：`WLAN 2` 是 `Public`，入站放行规则只覆盖了 `node.exe`

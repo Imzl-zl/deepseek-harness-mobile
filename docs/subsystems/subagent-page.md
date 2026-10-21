@@ -229,7 +229,7 @@
 |---|---|---|
 | E1 顶栏连接点 → 面板长在点下面 | 过 | `e01c-popover.png`：点 `[870,127][970,227]`，面板首行 `[103,473]`；面板顶边 = 点下沿 + 6dp（测试判据 `panel.top - anchor.bottom < 80`） |
 | E2 会话行菜单锚在那一行下面 | 过 | `e02-row-menu.png`：行 `[21,941][908,1112]`，菜单标题 `[68,1159]`（差 47px ≈ 17dp）；触发从长按改成行尾「…」 |
-| E3 拖动排序（会话 / 工作区） | 未验 | 隔离实例凑不出「同一工作区下两条可见会话」：新会话是 blank（`sessionVisible` 不列），宿主工作区账本只记带 `workspaceId` 建出来的会话。几何与回调由 widget 测试覆盖（`session_drawer_test` 三条） |
+| E3 拖动排序（会话 / 工作区） | **过（2026-10-22 补验）** | 数据条件：同一工作区（`dsh-mobile`）两条可见会话 `Nested Subagent Spawn Test` / `Greeting`。手势用 `sendevent`（本机 root；`input` 那一套做不出落点，recipe 见 `tools.md`）：拖 `Greeting` 到 `Nested` 上半 ⇒ dedupe 出现 `mv-1792606235984569`、返回顺序 `[Greeting, Nested, mGa8Bb…]`，抽屉同步；拖项目头 ⇒ `workspaceIds` 从 `[dsh-e2e, dsh-mobile, …]` 变 `[dsh-mobile, dsh-e2e, …]`。截图 `e40-root-session-drag.png`（拖动中：源行淡出 + chip 跟手） |
 | F1 一次性子会话只读框（A6） | 未造出 | 本 profile 两个 in-process 后端（`subagent-spawn-in-process` / `-fork-in-process`）都只产 `continuable`；只读框由单测覆盖 |
 | F2 孙级（A3，`maxDepth: 2`） | 过 | `f03-panel-root.png`：根只有 1 行（直接子级）+ 行尾 44dp 展开钮；`f04-panel-expanded.png`：展开后出现孙级行「Reply with fixed text」，它自己再带展开钮（已知空叶） |
 | G 子会话里左缘拖抽屉（B4） | 过 | `g03-child-drawer.png` / `g04-child-after-drawer.png`：在子会话里从 `x=40,y=300` 慢拖（落在 gesture-exclusion 的**上半屏**边带）抽屉跟手出来；关掉后标题仍是「Spawn grandchild, report result」、`←` 仍在 |

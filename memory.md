@@ -17,16 +17,18 @@
 > `-refetch-markers-are-fetched.md` / `-new-session-lands-in-a-workspace.md`。
 > 真机：d61cf622，**两次 build 两次 install**（第一次那个包暴露了"行少时内容顶到下半截"的空洞，
 > 第二次才修掉），`firstInstallTime` 始终是 2026-10-19 18:57:02。
+> **E3 拖动排序同一晚补齐**：这台机器是 **root**（KernelSU），用 `sendevent` 注真手势验过
+> 会话行拖动（dedupe `mv-1792606235984569`，顺序变 `[Greeting, Nested, …]`）与项目头拖动
+> （`workspaceIds` 从 `[dsh-e2e, dsh-mobile, …]` 变 `[dsh-mobile, dsh-e2e, …]`）——
+> `input swipe` / `motionevent` / `draganddrop` 都做不出落点，recipe 见 `tools.md`。
 > 门禁：flutter **1032** / connector **563** / relay **86** / protocol **486·26·49** /
 > boundary **318** / CDP 六项（31 / 18 / 28 / 53 / picker / 25）/ analyze+format 0。
 
 待办（按顺序）:
 
-0. **E3 拖动的落点仍未验**：这轮把数据条件造出来了（同一工作区两条可见会话：
-   Nested Subagent Spawn Test / Greeting），也验了**同一条移动路径**（行尾「…」→ 下移 →
-   抽屉顺序变 + 宿主账本 `insertSessionBefore` 成功，dedupe `mv-1792604210662`），
-   但 **adb 合成不出拖动落点**（`input draganddrop` 能起拖、chip 跟手，`DragTarget` 从不接收；
-   `input swipe` / `motionevent` 连拖都起不来）—— 细节见 `tools.md`。下次要**手指拖**。
+0. **E3 拖动排序：已验（2026-10-22 晚补）** —— 会话行与项目头两条都走真手势，
+   判据是宿主账本真的换了顺序（见上）。剩下的只是"换一台**没 root** 的手机时怎么验"，
+   那条写进 `tools.md`（`input` 那一套都做不出落点）。
 1. **轮组（turn/step 分组 + 折叠过程）** —— 用户当场指出 Web 与 App 结构不同：
    Web 是 `已完成，用时 X ⌃` 一个可展开的轮组，组内分 `已完成分析`/`执行了命令`；
    手机是平铺。这不是样式差，是**少了一层结构**（做法与代价见
@@ -103,6 +105,9 @@
   **`dsh.cmd` 在 PATH 上**（`D:\soft\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd`）；
   直接 `Start-Process` 那个 `DeepSeek Harness.exe` 会因为参数里的空格**静默失败**（`Cannot find module 'D:\soft\DeepSeek'`）。
 - **跑之前报一句"这次约几个轮次"并拿到准** —— 审批探针要模型真跑越权命令，花的是用户的钱。
+- **这台机器是 root（KernelSU）**：`adb shell id` = `uid=0`。长按拖动这类"必须在 500ms 后仍不动、
+  再移动"的手势只能用 `sendevent` 注（`/dev/input/event7`，逻辑像素 ×133.333）；
+  `input swipe/motionevent/draganddrop` 都做不出落点 —— recipe 与判据见 `tools.md`。
 - 装 App 一律 `flutter build apk --debug` + `adb install -r`；`flutter install` 与
   `flutter test integration_test/` **都会先卸载旧 App**，配对凭据一卸全没。
 - 屏幕灭掉 = 引擎暂停 ⇒ `adb shell svc power stayon true`。
