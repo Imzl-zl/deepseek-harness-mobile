@@ -26,6 +26,19 @@
 - 目录 id 是**别名 sid**（连接器换过，`connector/src/handlers.ts` 的 `aliasSubagentCatalog`），
   直接 `openSession` 就通。
 
+### 1.1 子会话的地址与写入口（与普通会话不同）
+
+| 用途 | 方法 | 关键点 |
+|---|---|---|
+| 打开子会话 / 翻历史 | `session.subscribe` / `session.page` | 地址必须是 `{kind:'subagent', parentSessionId, childSessionId, mode:'unknown'}`。宿主对 `kind:'session'` 的子会话直接拒（`session-controller/src/history.ts:347-352`，原文 "subagent Sessions require their durable parent address"） |
+| 在可继续子会话里发消息 | `subagent.prompt` | 对子会话调 `session.prompt` 会被拒成 `internal: session "…" is owned by subagent routing`；唯一入口是 `subagents.prompt`（`subagent/src/index.ts:447`） |
+
+- 父级从 `session.list` 行的 `parentSessionId` 取（`connector/src/dsh/sessions.ts` 的
+  `resolveSessionAddress`），与 `session.page` 的地址**同一个出处**。
+- 行的 `running` / `subagentTiming` / `tokenUsage` 也来自那一包行，而它只在
+  **连上 / 建会话**时拉过 —— 所以手机侧补两个时机：**打开子智能体面板**与
+  **当前会话的回合结束**（`AppModel.refreshSessionMetrics`）。不轮询。
+
 ## 2. 目录三态
 
 三态分开是硬要求：`读到空` 与 `没读到` 的下一步动作不同（换地方找 vs 点重试）。
@@ -131,8 +144,11 @@
 1. **导航就地在顶栏**，不另起一条 40dp 的 lineage 条：手机竖屏每一 dp 都是对话高度。
    DSH 的 lineage 是**桌面 header 里的一段**（`:802-821`），这里同样放进 header，
    只是左侧那枚从"抽屉开关"换成"返回"。
-2. 切换用**底部 sheet**（复用同一棵树），不用 Web 的 336px 浮层下拉
-   （`module.css:91-102`）—— 手机没有 hover，而 300dp 抽屉已经承担了目录。
+2. 切换用**锚定浮层**（`ui/dsh_popover.dart`），不用 Web 的 336px 浮层下拉
+   （`module.css:91-102`）也不再用底部 sheet：手机没有 hover，所以复用的是
+   **同一棵树**而不是 Web 的浮层实现；而面板必须**长在标题下方**——
+   第一版用底部 sheet，用户 2026-10-21 当场否掉（"点击在上面，下面弹出你不觉得
+   不跟手吗"）。判据是 `panel.top - crumb.bottom < 80`（`subagent_enter_test.dart`）。
 
 ## 5. 输入区只读（一次性 / 模式未知）
 
@@ -178,5 +194,28 @@
 | `cd app && flutter test test/subagent_metrics_test.dart` | 活动态 / 时长 / token / 第二行（纯 Dart） |
 | `cd app && flutter test test/subagent_panel_test.dart` | 目录三态 + `session.list` 行指标 + 不污染当前会话 |
 | `cd app && flutter test test/subagent_tree_test.dart` | 树的渲染 / 两套手势 / 懒加载 / 收起整枝 / 走秒 |
-| `cd app && flutter test test/subagent_enter_test.dart` | 进入 / 返回 / 切兄弟 / 只读状态框（跨层） |
+| `cd app && flutter test test/subagent_enter_test.dart` | 进入 / 返回 / 切兄弟 / 只读状态框（跨层）/ **锚定浮层的落点**（`panel.top - crumb.bottom < 80`）/ **子会话发送走 `subagent.prompt`** |
+| `cd app && flutter test test/subagent_metrics_refresh_test.dart` | **打开面板 / 回合结束各重拉一次 `session.list`**（否则真机上指标停在连上那一刻） |
 | `cd app && flutter test test/side_pane_test.dart` | 右抽屉装配（子智能体面板 = 调用方给的树） |
+| `cd connector && pnpm test` | 子会话地址（`resolveSessionAddress` / 订阅 / 翻页）与 `subagent.prompt` 的父级来源 |
+
+### 7.1 真机验收（2026-10-21 晚，`DSH_HOME=D:\tmp\dsh-e2e`）
+
+逐条判据与截图（截图在 `D:\tmp\dsh-e2e\shots-1021\`，**不进仓库**）：
+
+| 项 | 结论 | 证据 |
+|---|---|---|
+| A1 目录 = 直接子级 | 过 | 面板只有 2 行（父会话目录 2 条），孙级不在里面 |
+| A2 行 = 活动点 + 标题 + `title · mode · activity · 时长` + `N tok` + 行尾展开 | 过 | `b06-popover.png`；展开按钮 bounds `[965,361][1080,477]`（44dp） |
+| A3 展开才加载 / 已知空叶无展开按钮 | 过（孙级未造出） | 点开子级后它的展开按钮消失（目录读回空）；宿主 `maxDepth` 默认 1，派不出孙级 |
+| A4 跑完变绿 + 已完成 + 时长定格 | 过 | 隔 32 秒两帧数字相同（`b14` / `b15`）：`49秒` / `1分42秒` |
+| A5 顶栏 running 跟着子会话状态变 | 过 | 采样到 `1 个子智能体，正在运行`（21:25:26），其余时刻是 `N 个子智能体` |
+| A6 一次性子会话只读框 | 未造出 | 本 profile 两个 in-process 后端都只产 `continuable`；只读框由单测覆盖 |
+| B1 `☰→←` + `父会话 › 子级`（放不下只留子级） | 过 | `c04`；长父名时只留子级名（量宽判据在 `_SubagentCrumb`） |
+| B2 切换面板选兄弟，`←` 仍在 | 过 | 切到 `Nested subagent: 2+2` 后仍显示「返回父会话」 |
+| B3 系统返回键回父会话 | 过 | 子会话里返回 → 父会话标题 + `☰` |
+| B4 子会话里左缘拖出抽屉 | 未验 | adb 左缘滑动被 MIUI 系统返回手势吃掉（与 `tools.md` 2026-10-18 同一条），需手指实测 |
+
+同一轮修掉的真机缺陷（缺陷与判据见
+`.agents/notes/implemented/2026-10-21-subagent-child-address-and-prompt.md`）：
+子会话白屏、子会话发不出消息、面板指标只在重连后更新。

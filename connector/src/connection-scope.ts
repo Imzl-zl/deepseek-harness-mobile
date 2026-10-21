@@ -2,7 +2,7 @@
  * 决策：.agents/notes/implemented/2026-10-08-pairing-v2-and-device-connections.md。
  */
 import type { JobControlPort } from './dsh/jobs.js'
-import type { SessionsPort } from './dsh/sessions.js'
+import { resolveSessionAddress, type SessionsPort } from './dsh/sessions.js'
 import { createHandlers, type HandlerDeps } from './handlers.js'
 import type { PairingEndpoint } from './pairing-endpoint.js'
 import type { PairingCandidate } from './pairing.js'
@@ -93,6 +93,9 @@ export function createConnectionScope(
   })
   const sessionSubscriptions = createSessionSubscriptions({
     source: deps.sessions, buffer: deps.buffer,
+    // **子会话的地址要带父会话 id**（判据在清单行里，见 `resolveSessionAddress`）——
+    // 少了它，宿主对子会话的 `follow` 直接拒绝，手机进去是一片空白。
+    addressOf: (dshSessionId) => resolveSessionAddress(deps.sessions, dshSessionId),
     send: (out) => {
       if (port.state !== 'serving') return 'closed'
       const frame = out.t === 'ev'

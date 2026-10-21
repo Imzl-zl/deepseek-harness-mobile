@@ -13,6 +13,7 @@
  */
 import assert from 'node:assert/strict'
 
+import { sessionAddress } from '../../src/dsh/sessions.js'
 import { createBoxCodec } from '../../src/protocol/box.js'
 import { deriveIdentity, type SessionKeys } from '../../src/protocol/crypto.js'
 import type { WireFrame } from '../../src/protocol/frame.js'
@@ -129,6 +130,9 @@ export async function start(
       ? null
       : createSessionSubscriptions({
           source: options.sessionSource,
+          // 这一层只做接线回归，会话地址一律当普通会话（子会话地址由
+          // `session-subscriptions.test.ts` 的 `subagents` 替身单独钉住）。
+          addressOf: async (dshSessionId) => sessionAddress(dshSessionId),
           send: (out) => {
             if (wired === null || wired.state !== 'serving') return 'closed'
             const body = out.body

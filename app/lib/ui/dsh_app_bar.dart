@@ -290,10 +290,14 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   /// 40dp 的额外头部条。抽屉仍能从左缘跟手拖出，所以不丢入口。
   final VoidCallback? onBack;
 
-  /// **子会话里标题可点**：开「切换子智能体」sheet（`null` = 标题不可点）。
+  /// **子会话里标题可点**：开「切换子智能体」面板（`null` = 标题不可点）。
   ///
   /// 标题右边带一枚 `chevronDown` —— 有箭头才是"能下拉"，不靠猜。
-  final VoidCallback? onTitleTap;
+  ///
+  /// **回调带锚点矩形**：那个面板是**锚定下拉**，要长在标题下面，
+  /// 不是从屏幕底部升上来的 sheet（用户 2026-10-21 原话「点击在上面，
+  /// 下面弹出你不觉得不跟手吗」）。锚点在这里量：只有它知道自己在哪。
+  final void Function(Rect anchor)? onTitleTap;
 
   /// 子会话的父会话名（只有 `onTitleTap != null` 时才可能显示）。
   ///
@@ -453,26 +457,45 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   /// 手机把两者并在一行标题里，**放得下才带父级** —— 见 [_SubagentCrumb]。
   Widget _switcher(BuildContext context) {
     final c = context.dshColors;
+    final tap = onTitleTap;
     return Tooltip(
       message: '切换子智能体',
-      child: InkWell(
-        onTap: onTitleTap,
-        borderRadius: BorderRadius.circular(DshRadius.sm),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: _SubagentCrumb(title: title, parentTitle: parentTitle),
-              ),
-              const SizedBox(width: 4),
-              DshIcon('chevronDown', size: 12, color: c.labelCaption),
-            ],
+      // `Builder` 让下面这块拿到**自己的** `RenderBox`：锚点必须是被点的
+      // 那一枚（标题 + 箭头），不是整条顶栏。
+      child: Builder(
+        builder: (inner) => InkWell(
+          onTap: tap == null ? null : () => tap(_anchorOf(inner)),
+          borderRadius: BorderRadius.circular(DshRadius.sm),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: _SubagentCrumb(title: title, parentTitle: parentTitle),
+                ),
+                const SizedBox(width: 4),
+                DshIcon('chevronDown', size: 12, color: c.labelCaption),
+              ],
+            ),
           ),
         ),
       ),
     );
+  }
+
+  /// 一个 `BuildContext` 在**屏幕坐标**里的矩形（锚定浮层用它定位）。
+  ///
+  /// 拿不到（还没布局、或不在有 overlay 的树里）就给一个退化矩形 ——
+  /// 浮层会退到左上角贴边，仍然可读可点，而不是抛。
+  static Rect _anchorOf(BuildContext context) {
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return Rect.zero;
+    final overlay = Navigator.of(context).overlay?.context.findRenderObject();
+    final origin = overlay is RenderBox && overlay.hasSize
+        ? box.localToGlobal(Offset.zero, ancestor: overlay)
+        : box.localToGlobal(Offset.zero);
+    return origin & box.size;
   }
 }
 

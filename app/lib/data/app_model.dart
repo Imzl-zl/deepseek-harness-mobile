@@ -1533,21 +1533,57 @@ class AppModel extends ChangeNotifier {
     };
   }
 
+  /// 只重读 `session.list` 的行，**不碰**目录 / 工作区 / 模型目录。
+  ///
+  /// ## 为什么需要它（2026-10-21 真机验收抓到）
+  ///
+  /// 子智能体面板一行里的标题、`running`、时长、token 全部来自**子会话自己**
+  /// 的 `session.list` 行（`projections.values`），而整包行只在
+  /// **连上 / 建会话**（[refreshSessions] 的两个调用点）时拉过。
+  /// 子会话是父会话**回合里**才出现的，于是真机上打开面板看到的是
+  /// 「当前未运行 + 没有 token + 没有时长」，要杀掉 App 重连才变对 ——
+  /// 而组件树的单测一直是绿的（替身一开始就把行喂给了 `sessionOf`）。
+  ///
+  /// 调用点是"面板真的被看见"的那一刻（右抽屉落到子智能体页 / 切换 sheet 打开），
+  /// 不是定时器：这条数据没有推送面，逐帧拉会把一次会话变成一串 `session.list`。
+  /// 代价是**指标是"打开那一刻"的**（在跑的行靠 1 秒时钟继续走秒，但
+  /// `running` 变成 false 要再开一次面板才收）。判据见
+  /// `app/test/subagent_metrics_refresh_test.dart`。
+  Future<void> refreshSessionMetrics() async {
+    if (_disposed) return;
+    try {
+      _applySessionList(await _fetchSessionRows());
+      if (!_disposed) notifyListeners();
+    } catch (error) {
+      _recordError('拉取会话指标失败', error);
+    }
+  }
+
+  /// 向电脑侧要一包会话行（**唯一的 `session.list` 出口**）。
+  Future<List<SessionSummary>> _fetchSessionRows() async {
+    final result = await client.call<Object?>('session.list', const {});
+    return _parseSessionList(result);
+  }
+
+  /// 把一包会话行落到 [sessions]（**唯一的赋值口**）。
+  ///
+  /// **待处理数本地算**：从每个会话已落地的条目里数未决审批/提问。
+  /// 不指望 `session.list` 带它 —— 那是跨请求的汇总，而投影就在手里。
+  /// 多会话并行时，用户靠这个数知道该切去哪个会话（DSH 的待处理是
+  /// per-session 的，切过去才看得见）。
+  void _applySessionList(List<SessionSummary> list) {
+    _sessions = [
+      for (final s in list) s.copyWith(pendingCount: _pendingCountOf(s.sid)),
+    ];
+  }
+
   /// 拉会话列表（`session.list`）。
   ///
   /// **失败不吞**：把错误记进 [lastError] 并让界面能显示。
   /// 吞掉的话界面只会显示"空列表"，而用户无从知道是"真没有会话"还是"请求失败了"。
   Future<void> refreshSessions() async {
     try {
-      final result = await client.call<Object?>('session.list', const {});
-      final list = _parseSessionList(result);
-      // **待处理数本地算**：从每个会话已落地的条目里数未决审批/提问。
-      // 不指望 `session.list` 带它 —— 那是跨请求的汇总，而投影就在手里。
-      // 多会话并行时，用户靠这个数知道该切去哪个会话（DSH 的待处理是
-      // per-session 的，切过去才看得见）。
-      _sessions = [
-        for (final s in list) s.copyWith(pendingCount: _pendingCountOf(s.sid)),
-      ];
+      _applySessionList(await _fetchSessionRows());
       _lastError = null;
       if (!_disposed) notifyListeners();
     } catch (error) {
@@ -2188,6 +2224,8 @@ class AppModel extends ChangeNotifier {
     if (delta.events.isNotEmpty) {
       final items = <ChatItem>[];
       var inboxChanged = false;
+      // 这一批里有没有 `turn/end`（循环末尾据此补一次会话行 —— 见下面那段注释）。
+      var turnEnded = false;
       final tracker = _inboxTrackers.putIfAbsent(sid, () => _InboxTracker());
       // **本批已投影的条目**（itemId → 条目）：`tool/call` 与 `tool/result`
       // 可能在同一个 delta 里先后到达，而 `store.upsertAll` 在循环之后才发生 ——
@@ -2205,6 +2243,7 @@ class AppModel extends ChangeNotifier {
         // **`session/title` 不是条目，是标题的真值**：DSH 生成/改名时落一条
         // （`session-title/src/index.ts` 的 fold 就认这个 type）。它进条目表
         // 只会渲染出一条莫名其妙的"其它事件"，所以在这里截住并落地成标题。
+        if (event.type == 'turn/end') turnEnded = true;
         if (event.type == 'session/title') {
           final title = event.data is Map ? (event.data as Map)['title'] : null;
           if (title is String && title.isNotEmpty) {
@@ -2320,6 +2359,14 @@ class AppModel extends ChangeNotifier {
         // 队列变了：重读一次投影拿新队列（`inbox` 段）。不等它 ——
         // 收帧路径上的回调不该被一个网络往返挡住。
         unawaited(refreshProjections(sid));
+      }
+      // **回合结束 = 子会话那一包行可能变了**（新建 / 跑完 / token 涨）。
+      // 顶栏那枚「N 个子智能体，正在运行」读的就是这些行的 `running`，
+      // 而它只在 连上 / 建会话 / 打开子智能体面板 时拉过 —— 真机上于是
+      // **计数（来自目录）会变、running 永远不亮**（2026-10-21 验收抓到）。
+      // 只在当前会话**真有子智能体**时补一次：普通会话多一次 list 没有信息量。
+      if (turnEnded && _subagentCatalogs[sid]?.entries.isNotEmpty == true) {
+        unawaited(refreshSessionMetrics());
       }
     }
 

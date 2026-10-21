@@ -61,6 +61,7 @@ import 'conversation_hero.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_composer.dart';
 import 'dsh_markdown.dart';
+import 'dsh_popover.dart';
 import 'dsh_sheet.dart';
 import 'dsh_state_dot.dart';
 import 'edge_stick.dart';
@@ -219,6 +220,17 @@ class ChatPageState extends State<ChatPage> {
   void _openSidePanel(SidePanel panel) {
     setState(() => _sidePanel = panel);
     openSide();
+  }
+
+  /// 子智能体面板的指标要**现拉一次** `session.list`（见
+  /// `AppModel.refreshSessionMetrics` 的注释：子会话是在回合里才出现的，
+  /// 而行只在连上 / 建会话时读过）。
+  ///
+  /// 挂在"面板真的会被看见"的三个入口：抽屉打开、抽屉内切到子智能体页、
+  /// 「切换子智能体」sheet 打开。**不是定时器** —— 这一层没有推送面。
+  void _refreshSubsMetrics() {
+    if (widget.app.currentSid == null) return;
+    unawaited(widget.app.refreshSessionMetrics());
   }
 
   /// 右抽屉的宽度。
@@ -421,7 +433,15 @@ class ChatPageState extends State<ChatPage> {
       // **带上发送模式**（排队 / 插话）：DSH 原生二选一，我们这边一个方法
       // 带 `mode` 参数（`connector/src/handlers.ts` 的 `session.prompt`）。
       // 不给这个字段时电脑侧按默认的 queue 走 —— 与本文默认值一致。
-      await widget.app.client.call<void>('session.prompt', {
+      //
+      // **子会话走另一个方法**：对子会话直接 `session.prompt` 会被宿主拒成
+      // `internal: session "…" is owned by subagent routing`（2026-10-21 真机实测，
+      // 手机上就是一句「发送失败」）。子会话唯一的写入口是 `subagent.prompt`
+      // （契约 §5.7），参数形状与这里逐字相同。
+      final method = _subagentChildSid == null
+          ? 'session.prompt'
+          : 'subagent.prompt';
+      await widget.app.client.call<void>(method, {
         'sid': sid,
         // 载荷形状由 `promptContentOf` 一处决定（纯函数，可单测）——
         // 图片随 `{type:'image', mediaType, data}` 一起发出去。
@@ -606,7 +626,11 @@ class ChatPageState extends State<ChatPage> {
         child: SidePane(
           header: _sideHeader(),
           panel: _sidePanel,
-          onPanelChanged: (p) => setState(() => _sidePanel = p),
+          onPanelChanged: (p) {
+            setState(() => _sidePanel = p);
+            // 抽屉内切到子智能体页：同样是一次"面板被看见"。
+            if (p == SidePanel.subs) _refreshSubsMetrics();
+          },
           onClose: _closeSide,
           fileBody: _fileBody(),
           jobs: jobs,
@@ -637,6 +661,9 @@ class ChatPageState extends State<ChatPage> {
         ),
       ),
       onEndDrawerChanged: (open) {
+        // 落在子智能体页就是"面板被看见了"的那一刻：那一页的指标（running /
+        // 时长 / token）来自 `session.list` 的行，现拉一次才不会停在旧值。
+        if (open && _sidePanel == SidePanel.subs) _refreshSubsMetrics();
         // 右缘那条棒棒的显隐跟着它走（开着就收起来）。
         if (_sideOpen == open) return;
         setState(() => _sideOpen = open);
@@ -1060,17 +1087,21 @@ class ChatPageState extends State<ChatPage> {
     return widget.app.sessionOf(parent)?.displayTitle;
   }
 
-  /// 打开「切换子智能体」sheet：父级目录的树，当前行加粗。
+  /// 打开「切换子智能体」面板：父级目录的树，当前行加粗。
   ///
-  /// Web 是头部那个 244px 宽的 `switcher` 下拉（`SubagentHeaderLineage.tsx:802-821`）；
-  /// 手机没有 hover，且 300dp 宽的抽屉已经承担了目录，所以用**底部 sheet**
-  /// 复用同一棵树（`.agents/notes/proposed/2026-10-21-subagent-web-parity.md` §8.1 的推荐）。
-  void _showSubagentSwitcher() {
+  /// Web 是头部那个 244px 宽的 `switcher` 下拉（`SubagentHeaderLineage.tsx:802-821`）。
+  /// **形态也是下拉**：锚在标题正下方（`showDshPopover`）。第一版用的是底部
+  /// sheet，用户 2026-10-21 当场否掉 —— 「点击在上面，下面弹出你不觉得不跟手吗？」
+  /// 点顶栏却从屏幕底部升起来，视线要跨过大半屏去找结果。
+  void _showSubagentSwitcher(Rect anchor) {
     final parent = _subagentReturnFrom;
     if (parent == null) return;
+    // 面板里同样画着指标（token / 时长），打开就现拉一次。
+    _refreshSubsMetrics();
     unawaited(
-      showDshSheet<void>(
+      showDshPopover<void>(
         context: context,
+        anchor: anchor,
         title: '切换子智能体',
         body: Builder(
           builder: (sheetContext) => ListenableBuilder(

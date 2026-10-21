@@ -46,6 +46,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import { type ConnectorConfig, Config } from './config.js'
 import { REQUIRED_SERVICES, readCaps, type Caps } from './dsh/caps.js'
 import { createEndpointsPort } from './endpoints.js'
+import { createSubagentsPort } from './dsh/subagents.js'
+import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent'
 import { createProjectionsPort } from './dsh/projections.js'
 import { deriveIdentity } from './protocol/crypto.js'
 import { loadOrCreateIdentity, type Identity } from './dsh/identity.js'
@@ -686,6 +688,16 @@ let unregisterAdminFace: (() => void) | null = null
                 ),
               }),
           ...(jobControl === null ? {} : { jobControl }),
+          // 子代理面：**写的一面**（给可继续子会话投递人写的消息）。
+          // 子会话不能用 `session.prompt`：宿主回
+          // `internal: session "…" is owned by subagent routing`（真机实测）。
+          ...(ctx.get('subagents') === undefined
+            ? {}
+            : {
+                subagents: createSubagentsPort(
+                  ctx.get('subagents') as SubagentRuntime,
+                ),
+              }),
           aliases: {
             ensure: (dshSessionId) => {
               if (aliases === null) {

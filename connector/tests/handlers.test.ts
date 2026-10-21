@@ -113,6 +113,94 @@ test('repo.info：协议版本、能力位、别名版本，以及**表的键**'
   ])
 })
 
+// 2026-10-21 真机：可继续子会话里输入框是正常的，但发出去被宿主拒成
+// `internal: session "…" is owned by subagent routing` —— 手机上表现成「发送失败」。
+// 子会话的写入口只有一个：`subagents.prompt`，父级从清单行取。
+test('subagent.prompt：父级从清单行来，投递交给子代理面（可继续那一档）', async () => {
+  const deliveries: unknown[] = []
+  const handlers = build({
+    aliases: preloadedAliases(),
+    sessions: {
+      list: () =>
+        Promise.resolve([
+          {
+            dshSessionId: 'dsh-1',
+            updatedAt: 2,
+            running: true,
+            blank: false,
+            subagent: true,
+            parentSessionId: 'dsh-parent',
+          },
+        ]),
+      prompt: () => Promise.resolve({ accepted: true }),
+      selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+      create: async () => ({ sessionId: 'dsh-new' }),
+      updateQueue: async () => ({ accepted: true as const }),
+      cancel: () => ({ accepted: true as const }),
+    },
+    subagents: {
+      children: () => Promise.resolve([]),
+      descendants: () => Promise.resolve([]),
+      deliver: (request) => {
+        deliveries.push(request)
+        return Promise.resolve({ messageId: 'msg-1' })
+      },
+    },
+  })
+
+  const handler = handlers['subagent.prompt']
+  assert.ok(handler !== undefined, '有子代理服务时才挂这个方法')
+  const result = await handler(
+    { sid: 'sid_dsh-1', content: [{ type: 'text', text: '继续' }], mode: 'steer' },
+    { requestId: 'p-1' },
+  )
+  assert.deepEqual(result, { accepted: true, messageId: 'msg-1' })
+  assert.deepEqual(deliveries, [
+    {
+      parentSessionId: 'dsh-parent',
+      childSessionId: 'dsh-1',
+      requestId: 'p-1',
+      content: [{ type: 'text', text: '继续' }],
+      delivery: 'steer',
+    },
+  ])
+})
+
+test('subagent.prompt：不是子会话就回 bad-frame（客户端用错了方法，不伪装成连接问题）', async () => {
+  const handlers = build({
+    aliases: preloadedAliases(),
+    sessions: {
+      list: () =>
+        Promise.resolve([
+          { dshSessionId: 'dsh-1', updatedAt: 2, running: false, blank: false, subagent: false },
+        ]),
+      prompt: () => Promise.resolve({ accepted: true }),
+      selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+      create: async () => ({ sessionId: 'dsh-new' }),
+      updateQueue: async () => ({ accepted: true as const }),
+      cancel: () => ({ accepted: true as const }),
+    },
+    subagents: {
+      children: () => Promise.resolve([]),
+      descendants: () => Promise.resolve([]),
+      deliver: () => Promise.resolve({ messageId: 'msg-1' }),
+    },
+  })
+
+  const handler = handlers['subagent.prompt']
+  assert.ok(handler !== undefined)
+  await assert.rejects(
+    async () => {
+      await handler(
+        { sid: 'sid_dsh-1', content: [{ type: 'text', text: '继续' }] },
+        { requestId: 'p-2' },
+      )
+    },
+    (error: unknown) =>
+      error instanceof ProtocolError && error.code === 'protocol/bad-frame',
+  )
+})
+
 test('job.kill：转达受理与否，并把 jobId 交给宿主门面', () => {
   const seen: unknown[][] = []
   const handlers = build({

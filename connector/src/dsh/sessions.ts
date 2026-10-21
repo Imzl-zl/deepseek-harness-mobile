@@ -43,7 +43,35 @@ export function sessionAddress(sessionId: string): SessionAddress {
   return { kind: 'session', sessionId: sessionId as DshSessionId }
 }
 
-/** 子代理会话的地址；`mode` 由 catalog 决定，未知时用 `'unknown'`。 */
+/**
+ * 一个 DSH 会话的**正确**地址：子代理会话带父会话 id，其余是普通地址。
+ *
+ * 判据来自清单行本身（`origin === 'subagent'` 与 `parentSessionId`），
+ * 不猜、也不从"打开它的那个会话"倒推 —— 两个客户端可能从不同入口进来。
+ * 清单是唯一出处，所以这里读一次 `list()`：一次会话开启多一个宿主往返，
+ * 换掉的是"子会话永远打不开"。
+ */
+export async function resolveSessionAddress(
+  source: { list(signal?: AbortSignal): Promise<readonly SessionSummaryRow[]> },
+  sessionId: string,
+): Promise<SessionAddress> {
+  const rows = await source.list()
+  const row = rows.find((item) => item.dshSessionId === sessionId)
+  if (row !== undefined && row.subagent && row.parentSessionId !== undefined) {
+    return subagentAddress(row.parentSessionId, sessionId)
+  }
+  return sessionAddress(sessionId)
+}
+
+/**
+ * 子代理会话的地址；`mode` 由 catalog 决定，未知时用 `'unknown'`。
+ *
+ * **子代理会话只能用这个地址**：宿主对 `kind: 'session'` 的子会话直接拒绝
+ * （`session-controller/src/history.ts:347-352`，错误原文
+ * "subagent Sessions require their durable parent address"），
+ * 于是会话流与历史翻页一条都拿不到 —— 真机表现是"进子会话一片空白"。
+ * `mode: 'unknown'` 会跳过模式校验（`history.ts:375`），所以不用先去读 catalog。
+ */
 export function subagentAddress(
   parentSessionId: string,
   childSessionId: string,
@@ -115,6 +143,14 @@ export interface SessionSummaryRow {
   blank: boolean
   /** 子代理的子会话（`origin === 'subagent'`）—— 手机可以选择折叠，本层不替它决定。 */
   subagent: boolean
+  /**
+   * 子代理会话的父会话 id（DSH 的 `SessionSummary.parentSessionId`）。
+   *
+   * **它是子会话的准入凭据**：宿主要求子会话用 `subagent` 形式的地址，
+   * 而那个地址里必须有父级（`history.ts:355`）。少了它，子会话的会话流与
+   * 历史翻页一律被拒 —— 见 [resolveSessionAddress]。
+   */
+  parentSessionId?: string
   cwd?: string
   /**
    * 这一行的**投影提示**（DSH `SessionSummary.projections` 原样透传）。
@@ -285,6 +321,12 @@ export function createSessionsAdapter(controller: SessionController): SessionsPo
         running: item.running,
         blank: item.blank,
         subagent: item.origin === 'subagent',
+        // **子会话的父级**：`follow` / `page` 的地址要靠它（见 [subagentAddress]）。
+        // 只对子会话给：普通会话没有"持久父级"这件事，多发一个字段会让手机
+        // 以为它也是某一层的子级。
+        ...(item.origin === 'subagent' && item.parentSessionId !== undefined
+          ? { parentSessionId: item.parentSessionId }
+          : {}),
         ...(item.cwd === undefined ? {} : { cwd: item.cwd }),
         // **投影提示原样透传**：`values.title` 就是列表标题（Web 同源）。
         // 冷行（没打开过的会话）也有 —— DSH 为它读持久缓存，见 `list.ts:301-305`。

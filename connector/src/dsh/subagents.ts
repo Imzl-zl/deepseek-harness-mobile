@@ -28,6 +28,8 @@
  */
 import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent'
 
+import type { PromptPart } from './sessions.js'
+
 /**
  * 子代理的执行形态。
  *
@@ -70,11 +72,34 @@ export type SubagentRow =
       reason: 'corrupt' | 'unsupported' | 'unavailable'
     }
 
+/** 给可继续子会话投递一条人写的消息（`subagent.prompt` 的落点）。 */
+export interface SubagentDelivery {
+  /** 父会话的 DSH id（宿主要按它找"活着的直接父级"）。 */
+  parentSessionId: string
+  /** 子会话的 DSH id。 */
+  childSessionId: string
+  /** **人铸的幂等键**：宿主把它持久在被接受的那条消息上。 */
+  requestId: string
+  content: readonly PromptPart[]
+  /** `queue` = 排到下一轮；`steer` = 塞进最近一步。 */
+  delivery: 'queue' | 'steer'
+}
+
 export interface SubagentsPort {
   /** 直接子代；无活动态。 */
   children(dshSessionId: string, signal?: AbortSignal): Promise<readonly SubagentEntry[]>
   /** 递归子代，带活动态与深度。 */
   descendants(dshSessionId: string, signal?: AbortSignal): Promise<readonly SubagentRow[]>
+  /**
+   * 给**可继续**子会话投递一条消息。
+   *
+   * **这是子会话唯一的写入口**：对子会话直接调 `sessionController.prompt` 会被
+   * 宿主拒成 `internal: session "…" is owned by subagent routing`
+   * （2026-10-21 真机实测：手机上表现成「发送失败」）。DSH 的入口是
+   * `SubagentRuntime.prompt`（`packages/subagent/subagent/src/index.ts:447` 的
+   * `@Remote('prompt')`，服务键 `subagents`，请求形状 `control-types.ts:94-112`）。
+   */
+  deliver(request: SubagentDelivery, signal?: AbortSignal): Promise<{ messageId: string }>
 }
 
 export function createSubagentsPort(subagents: SubagentRuntime): SubagentsPort {
@@ -109,6 +134,25 @@ export function createSubagentsPort(subagents: SubagentRuntime): SubagentsPort {
           ...(entry.label === undefined ? {} : { label: entry.label }),
         }
       })
+    },
+
+    async deliver(request, signal) {
+      // `prompt(request: SubagentPromptRequest, signal): Promise<SubagentPromptReceipt>`
+      // （`packages/subagent/subagent/src/index.ts:447-448`）。
+      // `mode` 是**必填判别式**（`control-types.ts:97`）：只有可继续子会话能收人写的消息，
+      // 一次性 / 外部任务的子会话在手机上本来就是只读框（`docs/subsystems/subagent-page.md` §5）。
+      const receipt = await subagents.prompt(
+        {
+          requestId: request.requestId as never,
+          parentSessionId: request.parentSessionId as never,
+          childSessionId: request.childSessionId as never,
+          mode: 'continuable',
+          delivery: request.delivery,
+          content: request.content as never,
+        },
+        signal ?? new AbortController().signal,
+      )
+      return { messageId: receipt.messageId }
     },
   }
 }

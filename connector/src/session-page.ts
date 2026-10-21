@@ -18,7 +18,7 @@
  * 水位拿不到时**不能猜一个**：回 `session/window-missed`（§3.1 给它的客户端行为是
  * 「走快照刷新」）——手机据此重新订阅，拿到快照与新的水位，再翻页就正常了。
  */
-import { sessionAddress, type SessionsPort } from './dsh/sessions.js'
+import { resolveSessionAddress, type SessionsPort } from './dsh/sessions.js'
 import type { SessionHistoryRecord } from '@deepseek-ai/dsh-api-session-controller/types'
 import { ProtocolError } from './protocol/errors.js'
 import type { ChannelLogger } from './observability.js'
@@ -91,7 +91,8 @@ export function createSessionPager(options: SessionPagerOptions): SessionPager {
       const throughSeq = requireCursor(input.sid)
       const result = await options.sessions.page(
         {
-          address: sessionAddress(input.dshSessionId),
+          // 子会话要带父会话 id（否则宿主按 `session/agent-busy` 拒）。
+          address: await resolveSessionAddress(options.sessions, input.dshSessionId),
           throughSeq,
           ...(input.beforeSeq === undefined ? {} : { beforeSeq: input.beforeSeq }),
           ...(input.maxMessages === undefined ? {} : { maxMessages: input.maxMessages }),
@@ -117,7 +118,7 @@ export function createSessionPager(options: SessionPagerOptions): SessionPager {
       // 也就是把 `beforeSeq` 放到它后面、只取一条。
       const result = await options.sessions.page(
         {
-          address: sessionAddress(input.dshSessionId),
+          address: await resolveSessionAddress(options.sessions, input.dshSessionId),
           throughSeq: Math.max(throughSeq, input.seq),
           beforeSeq: input.seq + 1,
           maxMessages: 1,

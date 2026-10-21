@@ -31,7 +31,7 @@
  *
  * 取舍与被否方案：`.agents/notes/implemented/2026-10-01-session-subscriptions.md`
  */
-import { sessionAddress, type SessionFrame } from './dsh/sessions.js'
+import { resolveSessionAddress, type SessionFrame } from './dsh/sessions.js'
 import type { SessionAddress } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { ChannelLogger } from './observability.js'
 import type { SessionBuffer } from './session-buffer.js'
@@ -57,6 +57,15 @@ export interface SessionFollowSource {
 
 export interface SessionSubscriptionsOptions {
   source: SessionFollowSource
+  /**
+   * 一个 DSH 会话的地址。
+   *
+   * **子会话必须带父会话 id**（宿主对 `kind:'session'` 的子会话直接拒：
+   * `session-controller/src/history.ts:347-352`）。判据在清单行里，
+   * 所以这一层不自己算 —— 生产装配传 `resolveSessionAddress(port, id)`
+   * （`dsh/sessions.ts`），替身按需给一个普通地址。
+   */
+  addressOf: (dshSessionId: string) => Promise<SessionAddress>
   send: (frame: SessionOutbound) => SendOutcome
   waitWritable: () => Promise<void>
   /**
@@ -243,6 +252,10 @@ export function createSessionSubscriptions(
       const ready = core.start({
         key: input.sid,
         open: async function* (signal) {
+          // **地址按清单行决定**：子会话必须带父会话 id，否则宿主直接拒
+          // （`session-controller/src/history.ts:347-352`）—— 真机表现就是
+          // "进子会话一片空白"，而单测里替身从不拒绝，所以一直是绿的。
+          const address = await options.addressOf(input.dshSessionId)
           // **增量优先**：缓冲里覆盖得到 `since` 时，先补发那一段，
           // 不必让手机重新吃一份完整快照（快照只在覆盖不到时才出现）。
           let lastSeq = input.since ?? 0
@@ -255,7 +268,7 @@ export function createSessionSubscriptions(
           }
 
           for await (const frame of options.source.follow(
-            { address: sessionAddress(input.dshSessionId), assistantStream: true },
+            { address, assistantStream: true },
             signal,
           )) {
             // 快照里的补课事件可能与刚补发的那段重叠（宿主不知道我们手里有什么）：

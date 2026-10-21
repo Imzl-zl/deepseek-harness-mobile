@@ -31,6 +31,12 @@ export const METHODS = [
   'session.unsubscribe',
   'session.page',
   'session.prompt',
+  // 给**可继续**子会话投递一条人写的消息。子会话不能用 `session.prompt`：
+  // 宿主会拒成 `internal: session "…" is owned by subagent routing`
+  // （2026-10-21 真机实测）。DSH 的入口是 `subagents.prompt`
+  // （`packages/subagent/subagent/src/index.ts:447` 的 `@Remote('prompt')`）。
+  // 父级从清单行取（`parentSessionId`），与 `follow` / `page` 的地址同一个出处。
+  'subagent.prompt',
   'session.cancel',
   'session.refetch',
   // 排队项变异：编辑 / 删除 / 插话（Web 排队 dock 的三个行内按钮）。
@@ -127,6 +133,10 @@ const METHOD_SET: ReadonlySet<string> = new Set(METHODS)
 export const IDEMPOTENT_METHODS: ReadonlySet<MethodName> = new Set([
   'session.create',
   'session.prompt',
+  // 子会话投递同样是用户指令：重发不该在子会话里落成两条用户消息。
+  // 宿主自己也按 `requestId` 去重（持久在被接受的那条消息上），但键仍由这里强制 ——
+  // 与 `session.prompt` 同一条两级纪律。
+  'subagent.prompt',
   'session.select-model',
   // 排队项变异是用户指令：重发不该把同一项编辑两次 / 删两次。
   // （ steer 的重复由 DSH 自己收束 —— 项一旦离开队列就 `queue-item-not-found`。）

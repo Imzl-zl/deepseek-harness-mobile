@@ -47,10 +47,11 @@ const opening = (cursor: number, records: number[], hasMore = false): SessionFra
 const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
 test('subscribe：开启快照的补课事件**逐条**展开成 ev，并回水位与 hasMore', async () => {
-  const { source, streams } = createControllableSessionSource()
+  const { source, streams, addressOf } = createControllableSessionSource()
   const sink = collector()
   const subscriptions = createSessionSubscriptions({
     source,
+    addressOf,
     send: sink.send,
     waitWritable: () => Promise.resolve(),
   })
@@ -77,10 +78,11 @@ test('subscribe：开启快照的补课事件**逐条**展开成 ev，并回水�
 })
 
 test('subscribe：后续事件继续走 ev；assistant 流用**电脑侧分配**的 stream 与宿主的 index 当 rev', async () => {
-  const { source, streams } = createControllableSessionSource()
+  const { source, streams, addressOf } = createControllableSessionSource()
   const sink = collector()
   const subscriptions = createSessionSubscriptions({
     source,
+    addressOf,
     send: sink.send,
     waitWritable: () => Promise.resolve(),
   })
@@ -125,11 +127,12 @@ test('subscribe：后续事件继续走 ev；assistant 流用**电脑侧分配**
 })
 
 test('重订走增量：缓冲覆盖得到就补发那一段，并跳过快照里重复的 seq', async () => {
-  const { source, streams } = createControllableSessionSource()
+  const { source, streams, addressOf } = createControllableSessionSource()
   const sink = collector()
   const buffer = createSessionBuffer({ pairedDevices: () => ['dev-1'] })
   const subscriptions = createSessionSubscriptions({
     source,
+    addressOf,
     send: sink.send,
     waitWritable: () => Promise.resolve(),
     buffer,
@@ -170,10 +173,11 @@ test('重订走增量：缓冲覆盖得到就补发那一段，并跳过快照�
 })
 
 test('subscribe：中断**不补** error 帧（会话内容有持久副本，重订即自愈）', async () => {
-  const { source, streams } = createControllableSessionSource()
+  const { source, streams, addressOf } = createControllableSessionSource()
   const sink = collector()
   const subscriptions = createSessionSubscriptions({
     source,
+    addressOf,
     send: sink.send,
     waitWritable: () => Promise.resolve(),
   })
@@ -192,10 +196,11 @@ test('subscribe：中断**不补** error 帧（会话内容有持久副本，重
 })
 
 test('subscribe 幂等 / unsubscribe：同一会话不重开流，退订即中止', async () => {
-  const { source, streams } = createControllableSessionSource()
+  const { source, streams, addressOf } = createControllableSessionSource()
   const sink = collector()
   const subscriptions = createSessionSubscriptions({
     source,
+    addressOf,
     send: sink.send,
     waitWritable: () => Promise.resolve(),
   })
@@ -221,4 +226,34 @@ test('subscribe 幂等 / unsubscribe：同一会话不重开流，退订即中�
   assert.equal(streams[1]?.signal.aborted, true, '退订必须真的中止会话流')
   assert.equal(subscriptions.unsubscribe('sid_1'), false)
   assert.equal(subscriptions.active, 0)
+})
+
+test('subscribe：子会话用**带父级**的地址（否则宿主只回一句拒绝，手机进去一片空白）', async () => {
+  // 宿主原文 "subagent Sessions require their durable parent address"
+  // （`session-controller/src/history.ts:347-352`）。2026-10-21 真机：子会话白屏。
+  const { source, streams, addressOf } = createControllableSessionSource({
+    subagents: { 'dsh-child': 'dsh-parent' },
+  })
+  const sink = collector()
+  const subscriptions = createSessionSubscriptions({
+    source,
+    addressOf,
+    send: sink.send,
+    waitWritable: () => Promise.resolve(),
+  })
+
+  const pending = subscriptions.subscribe({ sid: 'sid_c', dshSessionId: 'dsh-child' })
+  await flush()
+  assert.deepEqual(
+    streams[0]?.request.address,
+    {
+      kind: 'subagent',
+      parentSessionId: 'dsh-parent',
+      childSessionId: 'dsh-child',
+      mode: 'unknown',
+    },
+    '子会话的地址必须带父级；mode 用 unknown（跳过模式校验，不用先读 catalog）',
+  )
+  streams[0]?.push(opening(3, []))
+  await pending
 })

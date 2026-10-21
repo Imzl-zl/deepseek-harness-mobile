@@ -15,7 +15,12 @@ import { test } from 'node:test'
 import type { SessionController } from '@deepseek-ai/dsh-api-session-controller'
 import type { SessionFollowFrame, SessionSummary } from '@deepseek-ai/dsh-api-session-controller/types'
 
-import { createSessionsAdapter, sessionAddress, type SessionFrame } from '../src/dsh/sessions.js'
+import {
+  createSessionsAdapter,
+  resolveSessionAddress,
+  sessionAddress,
+  type SessionFrame,
+} from '../src/dsh/sessions.js'
 
 /** DSH 的 `SessionController` 是个大 class；测试只假装它用到的那几个方法。 */
 function fakeController(overrides: Record<string, unknown>): SessionController {
@@ -58,7 +63,17 @@ test('list：只映射该映射的字段，子代理从 origin 推出，cwd 缺�
   const rows = await adapter.list()
   assert.deepEqual(rows, [
     { dshSessionId: 'a', updatedAt: 300, running: true, blank: false, subagent: false, cwd: '/repo/a' },
-    { dshSessionId: 'b', updatedAt: 200, running: false, blank: false, subagent: true },
+    // **子会话带父级**：`follow` / `page` 的地址必须有它 —— 宿主对
+    // `kind:'session'` 的子会话直接拒（`session-controller/src/history.ts:347-352`），
+    // 少了它真机上"进子会话一片空白"。
+    {
+      dshSessionId: 'b',
+      updatedAt: 200,
+      running: false,
+      blank: false,
+      subagent: true,
+      parentSessionId: 'parent',
+    },
     { dshSessionId: 'c', updatedAt: 100, running: false, blank: true, subagent: false },
   ])
   // 权威自己的顺序就是清单顺序（已按活动排序）—— 本层不再排一遍。
@@ -67,9 +82,11 @@ test('list：只映射该映射的字段，子代理从 origin 推出，cwd 缺�
     // DSH 的**其他**字段不该被 spread 过来（投影提示是唯一例外，见下一条用例）。
     assert.equal('agentAvailable' in row, false)
     assert.equal('formatStatus' in row, false)
-    assert.equal('parentSessionId' in row, false)
     assert.equal('origin' in row, false)
   }
+  // 普通会话**没有**"持久父级"这件事：给它一个字段会把它说成某一层的子级。
+  assert.equal('parentSessionId' in rows[0]!, false)
+  assert.equal('parentSessionId' in rows[2]!, false)
 })
 
 test('list：投影提示原样透传 —— values.title 就是列表标题（Web 同源）', async () => {
@@ -193,4 +210,42 @@ test('page / prompt / cancel：把参数按 DSH 的形状递过去', async () =>
 
   adapter.cancel('a')
   assert.deepEqual(calls['cancel'], { sessionId: 'a' })
+})
+
+/**
+ * 2026-10-21 真机抓到的缺陷：**进子会话一片空白**。
+ *
+ * 连接器原来的 `follow` / `page` 一律用 `{kind:'session'}` 地址，而宿主对子会话
+ * 只认带父级的 `kind:'subagent'` 地址（`session-controller/src/history.ts:347-352`
+ * 原文 "subagent Sessions require their durable parent address"）——
+ * 于是子会话一条事件都推不过来。单测一直是绿的，因为替身从不按这条规则拒绝。
+ */
+test('resolveSessionAddress：子会话带父级，普通会话不带', async () => {
+  const adapter = createSessionsAdapter(
+    fakeController({
+      list: () =>
+        Promise.resolve({
+          items: [
+            summary({ sessionId: sid('top'), origin: undefined as never }),
+            summary({ sessionId: sid('child'), origin: 'subagent' }),
+          ],
+        }),
+    }),
+  )
+
+  assert.deepEqual(
+    await resolveSessionAddress(adapter, 'child'),
+    { kind: 'subagent', parentSessionId: 'parent', childSessionId: 'child', mode: 'unknown' },
+    '子会话必须用带父级的地址（mode 用 unknown：它跳过模式校验）',
+  )
+  assert.deepEqual(
+    await resolveSessionAddress(adapter, 'top'),
+    { kind: 'session', sessionId: 'top' },
+    '普通会话仍是普通地址',
+  )
+  assert.deepEqual(
+    await resolveSessionAddress(adapter, '某条清单里根本没有的会话'),
+    { kind: 'session', sessionId: '某条清单里根本没有的会话' },
+    '查不到行就当普通会话（不猜一个父级）',
+  )
 })

@@ -20,6 +20,15 @@
 > `.agents/notes/implemented/2026-10-21-subagent-catalog-tree-and-state.md`
 > 与 `docs/subsystems/subagent-page.md`。对照清单
 > `.agents/notes/proposed/2026-10-21-subagent-web-parity.md` 仍是**差距的唯一出处**。
+>
+> **2026-10-21 晚：隔离实例真机验收（A/B/C 三段）** —— 抓到并修掉三个真机专属缺陷：
+> ① 子会话白屏（`follow`/`page` 地址缺父级，宿主直接拒）、② 子会话发不出消息
+> （`session.prompt` 被拒成 `is owned by subagent routing`，新增 `subagent.prompt`）、
+> ③ 面板指标与顶栏 running 只在重连后才更新（清单行只在连上时拉过）。
+> 另按用户当场意见把「切换子智能体」从底部 sheet 改成**锚定浮层**（`ui/dsh_popover.dart`）。
+> 逐条判据见 `docs/subsystems/subagent-page.md` §7 与
+> `.agents/notes/implemented/2026-10-21-subagent-child-address-and-prompt.md`、
+> `.agents/notes/implemented/2026-10-21-anchored-popover-for-top-bar-panels.md`。
 
 待办（按顺序）:
 
@@ -40,23 +49,21 @@
 4. **电脑侧停一会儿，手机会清掉配对** —— 中转重启后名册是空的，设备换票拿到 401，
    App 把 401 归成 `notPaired`（终态）⇒ 清凭据回配对页。实测一次（清单第 11 条，
    含两条修法方向：名册持久化/503，或 App 侧只在连接器明确拒绝时才终态）。
-5. **侧边栏会话移动 / 置顶已落地**（2026-10-21）：DSH 三条 Host 方法
-   `workspace.insertSessionBefore` / `pinSession` / `unpinSession` 已进契约 §5.7、
-   连接器与手机长按菜单；置顶在**各自工作区分组**内领先，上移/下移只在同置顶分区内生效
-   （与 Web 拖动门禁同一条）。判据见
-   `.agents/notes/implemented/2026-10-21-sidebar-session-pin-and-reorder.md`。
-   **只剩真机点一次 + 置顶/排序在重连后仍成立**。
-6. **子智能体进入 / 后台任务看与停：都已接**（别再当缺口）：
-   子智能体 = `_openSubagent`（点目录行 → `openSession(node.id)`，子会话顶栏左侧
-   `←` 回父会话 + 标题即「切换子智能体」，系统返回键同一条路），DSH 同一条
-   `ui-subagent/src/client/index.ts:61-63`；
-   后台任务 = 行内展开输出（`job.follow`/`unfollow`，`app_model.dart:828-848`，丢帧写
-   "较早的输出已被淘汰"）+ 两步确认停止（`KILL_ARM_MS = 3000` 照 DSH
-   `ui-jobs/src/client/JobListAction.tsx:63-67`）走 `job.kill`。
-   2026-10-21 补了 `subagent_enter_test.dart`（进入 / 返回 / 切兄弟 / 只读框）、
-   `subagent_tree_test.dart`（树）、`subagent_metrics_test.dart`（活动态与指标）与
-   `side_pane_test.dart`（两步停 + 3 秒自行解除）。**只差真机点一次。**
-7. **隔离实例验收剩下的三条**（本轮没跑到）：附件（`＋`→照片→芯片→发送→附件计数）、
+5. **侧边栏移动 / 置顶：真机已验**（2026-10-21 晚，隔离实例）——
+   长按菜单四项（无删除）、置顶后进本组最前并出图钉、跨置顶分区上移不可点、
+   未分组桶上移/下移不可点、归档后从列表消失且能在「归档」页取消、
+   **杀 App 重开 + 中转重启后置顶与顺序仍成立**。
+   唯一没在真机隔离出来的是"同组内非置顶行之间的上下移"（本机没有工作区分组，
+   所有会话都落在「未分组」桶，上移/下移一律不可点 —— C4 的判据先命中）。
+6. **子智能体进入 / 后台任务看与停：真机已验**（2026-10-21 晚）：
+   点目录行进子会话、`←` 回父、系统返回键同一条路、切兄弟后父级记忆不丢、
+   子会话内容能加载、跑完变绿且时长定格、顶栏 running 计数会变。
+   **但当场抓到两个只会在真机上暴露的缺陷**（都已修 + 补回归）：
+   ① 子会话的 `follow`/`page` 缺父级地址 ⇒ 进去一片空白；
+   ② 对子会话发消息被宿主拒 ⇒ 「发送失败」，唯一入口是新的 `subagent.prompt`。
+   另有两条造不出来：孙级（宿主 `maxDepth` 默认 **1**，只能派直接子级）、
+   一次性子会话（本 profile 的两个 in-process 后端都只产 `continuable`）。
+7. **隔离实例验收剩下的三条**（仍未验）：附件（`＋`→照片→芯片→发送→附件计数）、
    历史翻页（快照页 100 条，要造够真历史）、异常结局/重试/压缩标记。
 8. **`mock/proto` 子代理面板还没跟上落地端**（2026-10-21 有意留的差异，用户已确认先提交）：
    原型 `renderSubs` 还是平铺的演示行（`task`/`state`/`dur`），而 App 已经是
@@ -218,11 +225,12 @@
 - `connector/` 与 `relay/` 是**两个独立 pnpm 工程**,导入风格不同、别顺手统一
   (connector 写 `.js` 因 tsdown 打包,relay 直接跑 `.ts`)。本仓库**没有 CI**。
 
-## 方法面 31/35
+## 方法面 32/36
 
-契约封闭集 **35**、实现 **31**,差额 4 个是契约列了没实现的:`settings.describe` /
+契约封闭集 **36**、实现 **32**,差额 4 个是契约列了没实现的:`settings.describe` /
 `settings.update` / `credentials.set` / `credentials.unset`(依据见契约 §5.8)。
-2026-10-21 加的三条是 `workspace.insertSessionBefore` / `workspace.pin` / `workspace.unpin`。
+2026-10-21 加的四条是 `workspace.insertSessionBefore` / `workspace.pin` /
+`workspace.unpin` 与 `subagent.prompt`(子会话唯一的写入口,见下)。
 **两个数都从代码里数,不靠减**;数法见 `tools.md`(要数 `METHODS` + `handlers.ts` 的**两种**注册形态)。
 **三处必须同步**:`tools.md`、契约 §5.7 的表、这里的"x/31"。
 
@@ -274,11 +282,11 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
-| `node app/tools/verify-platform-boundary.mjs` | **313 项**(22 条规则自检 + 扫 87 个 Dart 文件) |
+| `node app/tools/verify-platform-boundary.mjs` | **318 项**(22 条规则自检 + 扫 88 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 49 个)/ 工具脚本不许硬编码盘符(20 个) |
-| `cd app && flutter test` | **989 项** |
+| `cd app && flutter test` | **993 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **556 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **561 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
 | CDP 浏览器组 | `verify-proto`(**31** = 顶栏与统计条 13 + 新会话页 hero 18) / `verify-authz`(18) / `verify-settings`(28) / `verify-tasks`(53) / `verify-picker` / `verify-drawer`(**14** = 长按菜单四项 + 无删除 + 置顶标记 + 上移边界 + 下移 + 置顶/取消置顶 + 归档) |
 | | **2026-10-21 六项实测全绿**（起法：`pwsh -File mock/proto/tools/cdp.ps1 -Port 9400`，然后 `$env:CDP_URL='http://127.0.0.1:9400'; $env:NO_PROXY='127.0.0.1,localhost'`。注意 `verify-proto` / `verify-picker` 的汇总行格式与其它几个不同，别用同一条 `Select-String` 去抓） |
@@ -301,4 +309,7 @@
 
 - 2026-10-21 子智能体页对齐 Web（目录树 / 三态 / 指标 / 头部切换 / 只读框）——
   `.agents/notes/implemented/2026-10-21-subagent-catalog-tree-and-state.md`。
+- 2026-10-21 晚 真机验收修掉的三条 + 锚定浮层：
+  `.agents/notes/implemented/2026-10-21-subagent-child-address-and-prompt.md`、
+  `.agents/notes/implemented/2026-10-21-anchored-popover-for-top-bar-panels.md`。
 

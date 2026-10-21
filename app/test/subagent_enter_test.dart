@@ -44,6 +44,9 @@ class _SubagentClient extends FakeSyncClient {
 
   final _jobs = StreamController<JobFrame>.broadcast();
 
+  /// 发出去的写方法（`session.prompt` / `subagent.prompt`），带 params。
+  final sent = <(String, Map<String, Object?>)>[];
+
   @override
   ConnectionState get state => ConnectionState.serving;
 
@@ -79,6 +82,10 @@ class _SubagentClient extends FakeSyncClient {
     Map<String, Object?> params, {
     String? requestId,
   }) async {
+    if (method == 'session.prompt' || method == 'subagent.prompt') {
+      sent.add((method, params));
+      return <String, Object?>{'accepted': true} as T;
+    }
     final result = switch (method) {
       'session.list' => {
         'sessions': [
@@ -248,6 +255,35 @@ void main() {
     app.dispose();
   });
 
+  testWidgets('可继续子会话里发消息走 subagent.prompt（宿主只认这条路）', (tester) async {
+    // 2026-10-21 真机：子会话的输入框是正常的，但 `session.prompt` 被宿主拒成
+    // `internal: session "…" is owned by subagent routing` —— 手机上那句
+    // 「发送失败」就是这么来的。可继续档必须换方法，参数形状不变。
+    final client = _SubagentClient();
+    final app = AppModel(client: client);
+    await app.start();
+    await app.openSession('sid_A');
+
+    final key = await _pumpChat(tester, app);
+    await _enterFirstChild(tester, key, '调研实现');
+    expect(app.currentSid, 'child-1');
+
+    await tester.enterText(find.byType(TextField).first, '继续');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(client.sent, hasLength(1), reason: '只发一次，不发两遍');
+    final (method, params) = client.sent.single;
+    expect(method, 'subagent.prompt', reason: '子会话的写入口只有这一个');
+    expect(params['sid'], 'child-1');
+    expect(params['content'], [
+      {'type': 'text', 'text': '继续'},
+    ]);
+    app.dispose();
+  });
+
   testWidgets('模式未知的子会话也走只读状态框', (tester) async {
     final app = AppModel(client: _SubagentClient(mode: 'unknown'));
     await app.start();
@@ -262,7 +298,7 @@ void main() {
     app.dispose();
   });
 
-  testWidgets('头部条：点标题开「切换子智能体」sheet，选兄弟切过去', (tester) async {
+  testWidgets('头部条：点标题开「切换子智能体」面板，选兄弟切过去', (tester) async {
     final app = AppModel(
       client: _SubagentClient(siblings: const ['调研实现', '抽图标']),
     );
@@ -273,10 +309,26 @@ void main() {
     await _enterFirstChild(tester, key, '调研实现');
     expect(app.currentSid, 'child-1');
 
+    final crumb = tester.getRect(find.byTooltip('切换子智能体'));
     await tester.tap(find.byTooltip('切换子智能体'));
     await tester.pumpAndSettle();
 
-    expect(find.text('切换子智能体'), findsWidgets, reason: 'sheet 的标题');
+    // **跟手判据**：面板必须长在标题**下面**，而不是从屏幕底部升起来。
+    // 用户 2026-10-21 原话「点击在上面，下面弹出你不觉得不跟手吗？差太远了吧」。
+    // 量的是面板标题那枚 `Text` 的矩形（它就是卡片的顶边那一行）。
+    final panel = tester.getRect(find.text('切换子智能体').first);
+    expect(
+      panel.top - crumb.bottom,
+      lessThan(80),
+      reason: '面板顶边要贴着触发点（底部 sheet 会差出一整屏）',
+    );
+    expect(
+      (panel.left - crumb.left).abs(),
+      lessThan(80),
+      reason: '水平方向也要落在触发点那一侧，不能跑到屏幕另一端',
+    );
+
+    expect(find.text('切换子智能体'), findsWidgets, reason: '面板的标题');
     // 兄弟在 sheet 里（`抽图标` 只在 sheet 里出现：头部条显示的是当前子级）。
     expect(find.text('抽图标'), findsOneWidget);
 
@@ -294,9 +346,9 @@ void main() {
     app.dispose();
   });
 
-  testWidgets('切换 sheet 里也能展开子级（sheet 是独立路由，要自己跟着重建）', (tester) async {
+  testWidgets('切换面板里也能展开子级（面板是独立路由，要自己跟着重建）', (tester) async {
     // 少了这一跳的症状：点 disclosure 发得出 `session.projections`，
-    // 但 sheet 里什么都不变（页面层的重建到不了 sheet 这条路由）。
+    // 但面板里什么都不变（页面层的重建到不了面板这条路由）。
     final app = AppModel(
       client: _SubagentClient(siblings: const ['调研实现', '抽图标']),
     );
@@ -316,7 +368,7 @@ void main() {
     expect(
       find.text('孙级调研'),
       findsOneWidget,
-      reason: '展开后 sheet 必须真的重画（ListenableBuilder 听 AppModel）',
+      reason: '展开后面板必须真的重画（ListenableBuilder 听 AppModel）',
     );
     app.dispose();
   });

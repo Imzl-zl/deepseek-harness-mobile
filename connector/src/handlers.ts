@@ -32,6 +32,7 @@ import type { InteractionFace } from './interaction-face.js'
 import type { ModelFace } from './dsh/models.js'
 import type { EndpointsPort } from './endpoints.js'
 import type { ProjectionsPort } from './dsh/projections.js'
+import type { SubagentsPort } from './dsh/subagents.js'
 import type { WorkspacesPort } from './dsh/workspaces.js'
 import type { PermissionFace } from './dsh/permissions.js'
 import type { AgentPresetsFace } from './dsh/agent-presets.js'
@@ -179,6 +180,15 @@ export interface HandlerDeps {
    * 与 `job.*`、`interaction.respond` 同一个理由（契约 §7 的能力位模型）。
    */
   models?: ModelFace
+  /**
+   * 子代理面（可选服务 `subagents`）。
+   *
+   * 目前只用到**写的一面**：给可继续子会话投递一条人写的消息
+   * （`subagent.prompt`）。读的一面走投影（`subagentCatalog`），不需要端口。
+   * **缺了就不挂这个方法** —— 与 `job.*` 同一条纪律：`repo.info` 报的是
+   * handler 表的键，于是"这台没有子代理服务"与"这个方法没实现"在手机侧同一种表现。
+   */
+  subagents?: SubagentsPort
 }
 
 export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, MethodHandler>> {
@@ -551,6 +561,51 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
   // 缺了 `endpoints` 时 `endpoint.describe` 不出现 —— 手机侧看到的是  // "这个方法不存在"，而不是一个回 `unsupported` 的按钮。
   if (deps.endpoints !== undefined) {
     handlers['endpoint.describe'] = () => deps.endpoints!.describe()
+  }
+
+  // 子会话**唯一的写入口**：给可继续子会话投递一条人写的消息。
+  //
+  // 直接对子会话调 `session.prompt` 会被宿主拒成
+  // `internal: session "…" is owned by subagent routing`（2026-10-21 真机实测，
+  // 手机侧表现成「发送失败：…is owned by subagent routing」）。而手机在子会话里
+  // 给的是**正常输入框**（可继续档，`docs/subsystems/subagent-page.md` §5）——
+  // 输入框能用、发出去必失败，正是"承诺了但做不到"。DSH 的入口是
+  // `SubagentRuntime.prompt`（`packages/subagent/subagent/src/index.ts:447`）。
+  //
+  // 父级从**清单行**来（`parentSessionId` 只在子会话行上出现），
+  // 与 `follow` / `page` 的地址解析同一个出处（`dsh/sessions.ts` 的
+  // `resolveSessionAddress`）：两处各推一次父级就是第二份会漂的真值。
+  if (deps.subagents !== undefined) {
+    handlers['subagent.prompt'] = async (params, context) => {
+      const dshChildId = requireSession(requireSid(params))
+      const requestId = context.requestId
+      if (requestId === undefined || requestId === '') {
+        throw new ProtocolError('protocol/bad-frame', 'requestId 必填：写操作必须带幂等键')
+      }
+      const content = requireContent(params)
+      const mode = paramOf(params, 'mode')
+      if (mode !== undefined && mode !== 'queue' && mode !== 'steer') {
+        throw new ProtocolError('protocol/bad-frame', 'mode 必须是 queue 或 steer')
+      }
+      const rows = await deps.sessions.list()
+      const row = rows.find((item) => item.dshSessionId === dshChildId)
+      if (row === undefined || !row.subagent || row.parentSessionId === undefined) {
+        // 这个 sid 不是子会话（或清单里查不到父级）：那是客户端用错了方法，
+        // 不是宿主故障 —— 让它按 bad-frame 重试/改正，别伪装成连接问题。
+        throw new ProtocolError(
+          'protocol/bad-frame',
+          '这个会话不是子智能体的子会话：投递请走 session.prompt',
+        )
+      }
+      const receipt = await deps.subagents!.deliver({
+        parentSessionId: row.parentSessionId,
+        childSessionId: dshChildId,
+        requestId,
+        content,
+        delivery: mode === 'steer' ? 'steer' : 'queue',
+      })
+      return { accepted: true, messageId: receipt.messageId }
+    }
   }
 
   // 会话投影：一个方法打开全部只读面（见 `dsh/projections.ts` 的文件头）。

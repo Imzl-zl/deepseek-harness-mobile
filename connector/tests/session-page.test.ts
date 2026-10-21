@@ -17,10 +17,29 @@ import type { SessionPage } from '@deepseek-ai/dsh-api-session-controller/types'
 const record = (seq: number, text = 'x'): SessionHistoryRecord =>
   ({ event: { type: 'user/message', seq, time: seq, text } }) as unknown as SessionHistoryRecord
 
-/** 只实现 `page` 的会话端口替身；把每次请求记下来便于断言。 */
-function fakeSessions(answers: SessionPage[]): { port: SessionsPort; requests: PageRequest[] } {
+/**
+ * 会话端口替身：`page` 记下每次请求，`list` 供地址解析用
+ * （`resolveSessionAddress` 要按清单行判"是不是子会话"）。
+ *
+ * `subagents` 给"子会话 id → 父会话 id"；缺省时一切都是普通会话。
+ */
+function fakeSessions(
+  answers: SessionPage[],
+  subagents: Record<string, string> = {},
+): { port: SessionsPort; requests: PageRequest[] } {
   const requests: PageRequest[] = []
   const port = {
+    list: () =>
+      Promise.resolve(
+        Object.entries(subagents).map(([dshSessionId, parentSessionId]) => ({
+          dshSessionId,
+          updatedAt: 0,
+          running: false,
+          blank: false,
+          subagent: true,
+          parentSessionId,
+        })),
+      ),
     page: (request: PageRequest) => {
       requests.push(request)
       const next = answers.shift()
@@ -115,4 +134,33 @@ test('refetch：取不到那一条 → session/not-found', async () => {
     () => pager.refetch({ sid: 'sid_1', dshSessionId: 'dsh-1', seq: 3 }),
     (error: unknown) => error instanceof ProtocolError && error.code === 'session/not-found',
   )
+})
+
+test('page / refetch：子会话翻页也要带父级地址（与 follow 同一条规则）', async () => {
+  // 只修 `follow` 不修 `page` 的话，子会话能看见内容但**翻不动历史** ——
+  // 同一类地址规则，两处都得走。
+  const { port, requests } = fakeSessions(
+    [
+      { records: [record(1)], hasMore: false },
+      { records: [record(2)], hasMore: false },
+    ],
+    { 'dsh-child': 'dsh-parent' },
+  )
+  const pager = createSessionPager({ sessions: port, cursorOf: () => 30 })
+
+  await pager.page({ sid: 'sid_c', dshSessionId: 'dsh-child' })
+  assert.deepEqual(requests[0]?.address, {
+    kind: 'subagent',
+    parentSessionId: 'dsh-parent',
+    childSessionId: 'dsh-child',
+    mode: 'unknown',
+  })
+
+  await pager.refetch({ sid: 'sid_c', dshSessionId: 'dsh-child', seq: 2 })
+  assert.deepEqual(requests[1]?.address, {
+    kind: 'subagent',
+    parentSessionId: 'dsh-parent',
+    childSessionId: 'dsh-child',
+    mode: 'unknown',
+  })
 })

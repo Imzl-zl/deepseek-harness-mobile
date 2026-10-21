@@ -4,8 +4,9 @@
  * 与 `job-stream.ts` 同形，但帧类型是 `SessionFrame`（开启快照 / 事件 / assistant 流）。
  * 「按需推一帧」是必需的：快照展开、`rev` 递增、换尝试换流号这些行为都要能逐步构造。
  */
-import type { SessionFrame } from '../../src/dsh/sessions.js'
+import { sessionAddress, subagentAddress, type SessionFrame } from '../../src/dsh/sessions.js'
 import type { SessionFollowSource } from '../../src/session-subscriptions.js'
+import type { SessionAddress } from '@deepseek-ai/dsh-api-session-controller/types'
 
 type Item = { kind: 'frame'; frame: SessionFrame } | { kind: 'end' } | { kind: 'fail'; error: unknown }
 
@@ -17,11 +18,21 @@ export interface ControllableSessionStream {
   fail(error: unknown): void
 }
 
-export function createControllableSessionSource(): {
+export function createControllableSessionSource(options?: {
+  /** 子会话 id → 父会话 id；命中就走 `subagent` 形式的地址。 */
+  subagents?: Readonly<Record<string, string>>
+}): {
   source: SessionFollowSource
   streams: ControllableSessionStream[]
+  addressOf: (dshSessionId: string) => Promise<SessionAddress>
 } {
   const streams: ControllableSessionStream[] = []
+  const addressOf = async (dshSessionId: string): Promise<SessionAddress> => {
+    const parent = options?.subagents?.[dshSessionId]
+    return parent === undefined
+      ? sessionAddress(dshSessionId)
+      : subagentAddress(parent, dshSessionId)
+  }
 
   const source: SessionFollowSource = {
     follow(request, signal) {
@@ -75,5 +86,5 @@ export function createControllableSessionSource(): {
     },
   }
 
-  return { source, streams }
+  return { source, streams, addressOf }
 }

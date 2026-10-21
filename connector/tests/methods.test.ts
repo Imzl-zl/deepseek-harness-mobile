@@ -30,9 +30,11 @@ test('方法表：封闭集，幂等键标记与契约 §5.7 的表一致', () =
   // 2026-10-19 加 `usage.summary`（跨会话用量汇总，只读）后是 **32**。
   // 2026-10-21 加 `workspace.insertSessionBefore` / `workspace.pin` /
   // `workspace.unpin`（侧栏会话重排与置顶）后是 **35**。
+  // 同日加 `subagent.prompt`（给可继续子会话投递人写的消息 —— 子会话不能用
+  // `session.prompt`，宿主会拒成 `is owned by subagent routing`）后是 **36**。
   // **这个数是契约 §5.7 的表与 `tools.md` 的同步闸**：加了方法不改这里就会红，
   // 而它红的方式是"数不对"，所以改它必须同时改契约那一行。
-  assert.equal(METHODS.length, 35, '方法数变了要同步契约 §5.7 的表')
+  assert.equal(METHODS.length, 36, '方法数变了要同步契约 §5.7 的表')
   assert.equal(new Set(METHODS).size, METHODS.length, '方法名不能重复')
 
   // 幂等集**从契约 §5.7 的表里读**，不在测试里手抄第二份 ——
