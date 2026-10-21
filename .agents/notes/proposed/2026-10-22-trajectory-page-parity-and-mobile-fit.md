@@ -18,11 +18,16 @@
    数据面缺口：`turnOutline` 只有 `{turn, seq, prompt, response}`，**没有每步起止**；
    `sessionStats` 是会话级总量（`memory.md` 已记"拿总量画分段只能画出假图"）。
    要做真时间轴，得先加一个"每步起止"的投影（Host 侧），不是前端能补的。
-3. **「轨迹条目」sheet 里的黄色竖排英文**（用户原话"黄的竖着写的英文"）：
-   待复现。已知该 sheet 是 `_showTraceSheet`（`chat_page.dart:1412-1431`）的三行
-   `DshKeyValue`（角色 / 耗时 / 结果），而 `DshKeyValue` 的 value 是**无约束的 `Text`**
-   （`dsh_sheet.dart:164-171`）—— 长英文 value 在 Row 里会横向溢出。
-   下次真机先抓一张图：若是溢出条纹，改 `Flexible` + 换行；若是真的竖排，再找旋转来源。
+3. **「轨迹条目」sheet 的横向溢出**（用户原话"黄的竖着写的英文"，2026-10-22 截图确认）：
+   那不是竖排文字，是 Flutter 的 **overflow 条纹** —— 黄黑斜纹 + 红字
+   `RIGHT OVERFLOWED BY 474 PIXELS`；「结果」两个字被挤成竖排是**同一个原因**。
+   根因：`_showTraceSheet`（`chat_page.dart:1412-1431`）用 `DshKeyValue` 摆三行，
+   而 `DshKeyValue` 的 value 是**无约束的 `Text`**（`dsh_sheet.dart:164-171`）：
+   `Row(children: [Expanded(label), Text(value), ...])` —— 长英文 value 拿到自己的
+   固有宽度、把 `Expanded` 的标签压到 2 字宽，然后整行溢出 474px。
+   处置（下一轮）：**长文本不该用 KV 行**。`_showTraceSheet` 的「结果」改成
+   "标签一行、正文下一行、可换行"的纵向块；`DshKeyValue` 可加一个可选
+   `multiline` 参数（默认保持现状，别影响统计/用量那几张 sheet）。
 
 ## P1：与 Web 的结构差（不是样式差）
 
