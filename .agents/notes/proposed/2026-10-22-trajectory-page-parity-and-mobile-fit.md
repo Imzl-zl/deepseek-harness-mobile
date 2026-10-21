@@ -52,12 +52,22 @@
    `ProtocolException(internal): Model "auto" does not support image input.` ——
    免费渠道的 `auto` 不接受图片。App 路径正确（请求发出、错误如实显示、芯片保留）。
    剩下的是一条 UX：错误在键盘挡住的 SnackBar 里，容易看不见（可考虑内联到输入栏）。
+   **2026-10-22 00:35 复测：已通过**。根因是**模型配置**——`llm-pi-ai` 的模型条目
+   不声明 `input` 时按 `DEFAULT_INPUT = ['text']`（`llm-pi-ai/src/config.ts:74`）在发送前拒；
+   profile 补 `input: [text, image]` 后，电脑侧 `user/message` 有 `{type:'image'}`，
+   模型回复**读出了截图内容**。教训：**"模型不支持"先查声明，别先信报错**。
 9. **E3 拖动排序真机未验**：隔离实例凑不出"同一工作区下两条可见会话"
    （新会话 blank 不列；宿主账本只记带 `workspaceId` 建的会话）。
-   要验得先让宿主把会话记进工作区（或让 `session.create` 带 `workspaceId` —— 那是产品改动）。
-10. **H2 归档→取消归档闭环未验**（上一轮只验了"归档后从列表消失"那一半）。
-11. **A6 / D2 / D3 未造出**：一次性子会话（两个 in-process 后端只产 continuable）、
-    历史翻页（没有 >100 条事件的会话）、异常结局（没有稳定制造失败回合的手段）。
+   静态审查：纯函数 + 8 条用例成立，缺的只是数据条件。
+10. **H2 归档→取消归档闭环**：**2026-10-22 已验通过**（未分组 3→2→3）。
+11. **A6 / D2 / D3 未造出**，2026-10-22 做了静态审查（见
+    `docs/subsystems/subagent-page.md` §7.3）：
+    - A6：逻辑成立（`mode == one-shot` 两支 + 两条用例）；
+    - **D2 发现缺口**：`sync_client_impl.dart:956` 把 `refetch` 标记跳过、从不调
+      `session.refetch` ⇒ **>1 MiB 的条目会静默缺失**（不报错、不缺页，就是少一条）。
+      连接器侧是完整的（`session-page.ts` + `refetchThresholdBytes` 1 MiB）；
+    - **D3 发现缺口**：四档结局都有渲染，自动重试也有 `RetryRow`，但**没有"手动重试
+      失败回合"的入口**。
 
 ## 相关事实（别重复查）
 

@@ -9,13 +9,13 @@
 > **2026-10-21 深夜：四阶段一轮收口** —— ① 剩下两处「跟手」改成锚定浮层（顶栏连接点、
 > 抽屉行菜单；菜单触发从长按挪到行尾「…」，长按留给拖动）+ 抽屉拖动排序与组头常显计数
 > （连接器新增 `workspace.insertBefore`，方法面 36→37）；② 容器中转端到端（配对 → 列表 →
-> 发一句 → 收到回复），公网那段**未验（无服务器）**；③ 最终包只装一次（H2 归档闭环已补验：过），E/F/G/D/H 逐条
+> 发一句 → 收到回复），公网那段**未验（无服务器）**；③ 最终包只装一次（H2 归档闭环、D1 附件已补验：过），E/F/G/D/H 逐条
 > 判据见 `docs/subsystems/subagent-page.md` §7.2（**D1 附件发送未过**、E3 拖动与 H2 归档
 > 未验、D2/D3/A6 未造出）；④ 门禁全绿（flutter 1009 / connector 563 / relay 86 /
 > protocol 486·26·49 / boundary 318 / CDP 六项）。
 > 笔记：`.agents/notes/implemented/2026-10-21-anchored-popover-for-drawer-rows.md`、
 > `.agents/notes/implemented/2026-10-21-drawer-drag-and-counts.md`。
-> **D1 已查清**：宿主回 `Model "auto" does not support image input.` —— 免费渠道不支持图片，不是 App 缺陷。
+> **D1 已通过**：根因是模型条目没声明 `input`（DSH 默认按纯文本拒），补 `input: [text, image]` 后图片能发、模型能读。
 
 > 2026-10-20 晚这一轮把「渲染清单」清完了（1/3/5/6/7 改，2/4/8 判定不改），
 > 并用 `DSH_HOME` 隔离实例做了**一次真机全测**。清单与逐条证据在
@@ -95,6 +95,12 @@
 9. **「上传文件」** —— 开工单在
    `.agents/notes/proposed/2026-10-20-file-upload-shape.md`（DSH 侧入口
    `packages/client/file-upload/src/index.ts:105,118`；共 8 个触达点，**别半截提交**）。
+10. **历史翻页的 `refetch` 标记被丢弃**（2026-10-22 静态审查发现，未修）：
+    `sync_client_impl.dart:956` 把 `{kind:'refetch', seq, bytes}` 直接跳过、从不调
+    `session.refetch` ⇒ **>1 MiB 的条目在会话里静默缺失**（不报错、不缺页，就是少一条）。
+    连接器侧完整（`session-page.ts` + `refetchThresholdBytes` 默认 1 MiB）。
+11. **失败回合没有"手动重试"入口**（2026-10-22 静态审查发现，未修）：
+    四档 `TurnOutcomeKind` 都有渲染，自动重试也有 `RetryRow`，但用户点不到"重试这一轮"。
 
 别当缺口（定案，别再试）:
 
@@ -286,11 +292,11 @@
 5. **PC 端「上报地址」面板没有布局/点击的自动化测试**(只有 i18n 键完整性门禁;API 侧有用例)。
 6. **IPv6 隐私地址仍会上报**:这台机器报 7 条,其中 4 条是每次轮换都变的 GUA。
    `dialOrder` 已把它们排后面(不再是 30 秒冷启动的成因),但仍占列表位,要用户手动藏。
-7. **图片附件在这条免费渠道上发不出去**（2026-10-22 查清，**不是 App 的缺陷**）：
-   点发送后宿主回 `ProtocolException(internal): Model "auto" does not support image input.`，
-   App 如实弹错、芯片保留（`shots-1021b/d13-right-after-tap.png`）。
-   免费渠道的 `auto` 不支持视觉输入 ⇒ `D1` 只能等一个支持图片的模型再验。
-   顺带一条 UX：这句错在**键盘挡住的 SnackBar** 里，真机上很容易没看见 —— 下次可考虑在输入栏内联显示。
+7. ~~图片附件发不出去~~ **已解决（2026-10-22）**：根因是**模型配置**——`llm-pi-ai` 的模型条目
+   不声明 `input` 时按 `DEFAULT_INPUT = ['text']` 在发送前拒掉（`llm-pi-ai/src/config.ts:74`）。
+   profile 补 `input: [text, image]` 后 D1 通过：电脑侧 `user/message` 有 `{type:'image'}`，
+   模型回复读出了截图内容。**换免费渠道/模型时先看这一条**，别再把"没声明"当成"不支持"。
+   （顺带：错误原本只在键盘挡住的 SnackBar 里，`D1` 那两次就是这样被漏看的。）
 
 ## 范围决定(别再当缺口)
 
@@ -339,6 +345,7 @@
 - 2026-10-21 晚 真机验收修掉的三条 + 锚定浮层：
   `.agents/notes/implemented/2026-10-21-subagent-child-address-and-prompt.md`、
   `.agents/notes/implemented/2026-10-21-anchored-popover-for-top-bar-panels.md`。
+
 
 
 

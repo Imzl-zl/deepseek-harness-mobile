@@ -233,7 +233,7 @@
 | F1 一次性子会话只读框（A6） | 未造出 | 本 profile 两个 in-process 后端（`subagent-spawn-in-process` / `-fork-in-process`）都只产 `continuable`；只读框由单测覆盖 |
 | F2 孙级（A3，`maxDepth: 2`） | 过 | `f03-panel-root.png`：根只有 1 行（直接子级）+ 行尾 44dp 展开钮；`f04-panel-expanded.png`：展开后出现孙级行「Reply with fixed text」，它自己再带展开钮（已知空叶） |
 | G 子会话里左缘拖抽屉（B4） | 过 | `g03-child-drawer.png` / `g04-child-after-drawer.png`：在子会话里从 `x=40,y=300` 慢拖（落在 gesture-exclusion 的**上半屏**边带）抽屉跟手出来；关掉后标题仍是「Spawn grandchild, report result」、`←` 仍在 |
-| D1 附件（＋→照片→芯片→发送） | **未验（模型不支持图片）** | `d02-chip.png` 芯片正常；点发送后宿主回 `ProtocolException(internal): Model "auto" does not support image input.`（`d13-right-after-tap.png` 的 SnackBar 原文）。**App 的路径是对的**：请求发出、错误如实显示、芯片保留；免费渠道的 `auto` 不接受图片，所以这条只能等一个支持视觉的模型再验 |
+| D1 附件（＋→照片→芯片→发送） | **过** | 根因是**模型配置**：`llm-pi-ai` 的模型条目不声明 `input` 时，DSH 按 `DEFAULT_INPUT = ['text']`（`packages/llm/llm-pi-ai/src/config.ts:74`）在**发送前**拒成 `Model "auto" does not support image input.`。profile 补上 `input: [text, image]` 后：芯片清空、新轮次起来（`d14-after-modality.png`），电脑侧会话日志里 `user/message` 的 content 有 **6 处 `{"type":"image"}`**，且模型的回复**读出了截图内容**（"984.png — 连接菜单浮层：当前连接 中转 · ws://127.0.0.1:8787/ws/connector…"，`d15-child-chat.png`） |
 | D2 历史翻页（快照一页 100 条） | 未造出 | 本实例没有 >100 条事件的会话；造够真历史要 8~12 个真实轮次 |
 | D3 异常结局 / 重试 / 压缩标记 | 未造出 | 没有稳定制造**失败**回合的手段（取消 ≠ 失败）；压缩标记本轮未出现 |
 | H1 设置页 | 过 | `h01-settings.png`：通用 / 模型 / 连接方式三组都在；端点列表带「当前连接」「首选」「还没试过」 |
@@ -242,3 +242,14 @@
 
 **同一包上的其它证据**：容器中转端到端（配对 → 会话列表 → 发一句 → 收到回复）见
 `docs/cookbook/relay-on-a-server.md` 的「本机容器验证」；`flutter test` 1009 项全绿。
+
+### 7.3 静态审查（真机造不出来的条目，2026-10-22）
+
+用户要求："验证不了的先静态审查，看逻辑差不多吧"。逐条读代码的结论：
+
+| 项 | 静态结论 | 依据 |
+|---|---|---|
+| A6 一次性子会话只读框 | **逻辑成立** | 判据是 catalog 行的 `mode == one-shot`，与 `continuable` 分两支；`subagent_enter_test.dart` 两条用例（一次性 / 模式未知）都在跑。未造出只是本 profile 的后端只产 `continuable` |
+| D2 历史翻页 | **发现缺口** | 翻页本身两端都全：连接器有 `session.page` + `refetchThresholdBytes`（默认 1 MiB，`connector/src/config.ts:61`）与 `session.refetch`（`handlers.ts:1001`）；手机侧 `recovery.dart` 会按 `hasMore` 累积快照。**但 `sync_client_impl.dart:956` 把 `refetch` 项直接跳过、从不调 `session.refetch`** ⇒ 超过 1 MiB 的条目会在会话里留下一个**静默的洞**（不报错、不缺页、就是少一条） |
+| D3 异常结局 / 重试 | **结局成立，"重试"入口不存在** | `TurnOutcomeKind` 四档都有渲染（`chat_turns.dart:697` 的 error/interrupted/maxTokens/signedOut）；自动重试有 `ModelRetryItem` 的 `RetryRow`（`:741-768`）。**没有"对失败回合手动重试"的按钮** —— 任务里问的"重试入口"确实没有 |
+| E3 拖动排序 | **逻辑成立** | 纯函数 `dropAnchorInDisplayOrder`（拖到自己 / 跨分区 / 顺序没变都返回 null）+ 5 条模型用例 + 3 条抽屉交互用例；真机未验只是"同一工作区两条可见会话"这个数据条件凑不出 |
