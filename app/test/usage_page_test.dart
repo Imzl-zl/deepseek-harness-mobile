@@ -15,10 +15,16 @@
 /// 的文件头）。
 library;
 
+import 'package:dsh_mobile/core/connection.dart';
+import 'package:dsh_mobile/core/job.dart';
+import 'package:dsh_mobile/core/sync_client.dart';
+import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/model/usage_summary.dart';
 import 'package:dsh_mobile/ui/usage_page.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
+
+import 'fake_sync_client.dart';
 
 /// 一份**带项目分组**的汇总（两个项目、三个会话）。
 ///
@@ -159,4 +165,87 @@ void main() {
       expect(summary.bySession.single.cwd, '');
     });
   });
+
+  // 2026-10-21 真机：用量页永远是「还没有用量数据」，而电脑侧有几十万 token。
+  // 根因是接线 —— `main.dart` 先 `unawaited(refreshUsageSummary())` 再立刻
+  // `push(UsagePage(summary: app.usageSummary))`，而那一份是**拉之前**的 null；
+  // `UsagePage` 又是无状态的、不监听 `AppModel`，于是拉到也没人重画。
+  // 这一条钉的是 `UsagePageHost`：它自己拉，并且**听 AppModel**。
+  testWidgets('UsagePageHost：拉到的数据会自己画出来（不是永远空态）', (tester) async {
+    final client = _UsageClient();
+    final app = AppModel(client: client);
+    await app.start();
+
+    await tester.pumpWidget(MaterialApp(home: UsagePageHost(app: app)));
+    // 第一帧还是空态（拉取是异步的）。
+    expect(find.text('还没有用量数据'), findsOneWidget);
+
+    // 拉到之后必须**自己重画**（少了 `ListenableBuilder` 就永远停在这里）。
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('还没有用量数据'), findsNothing);
+    expect(find.text('这台电脑一共'), findsOneWidget);
+    // 10240 → `10.2K`（`formatTokenCount` 的 `_scaled`：< 100 保留一位小数）。
+    // 总量 / 项目行 / 会话行各一处，所以是 `findsWidgets`。
+    expect(find.text('10.2K'), findsWidgets, reason: '总量来自电脑侧的聚合结果');
+    expect(client.calls, 1, reason: '进页面只拉一次');
+    app.dispose();
+  });
+}
+
+/// 只答 `usage.summary` 的替身（其余方法回 null）。
+class _UsageClient extends FakeSyncClient {
+  int calls = 0;
+
+  @override
+  ConnectionState get state => ConnectionState.serving;
+  @override
+  Stream<ConnectionState> get connection => const Stream.empty();
+  @override
+  Future<void> start() async {}
+  @override
+  Future<void> reconnect() => start();
+  @override
+  Future<void> setAppState(AppState state) async {}
+  @override
+  Future<void> close() async {}
+  @override
+  Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
+  @override
+  Future<void> unsubscribe(String sid) async {}
+  @override
+  Stream<SessionDelta> sessionUpdates(String sid) => const Stream.empty();
+
+  @override
+  Future<T> call<T>(
+    String method,
+    Map<String, Object?> params, {
+    String? requestId,
+  }) async {
+    if (method == 'usage.summary') {
+      calls += 1;
+      return {
+            'sessions': 1,
+            'grandTotalTokens': 10240,
+            'byProject': [
+              {
+                'path': 'D:\\sudy\\myproject\\dsh-mobile',
+                'tokens': 10240,
+                'sessions': 1,
+              },
+            ],
+            'bySession': [
+              {
+                'sid': 'sid-1',
+                'title': '父会话',
+                'cwd': 'D:\\sudy\\myproject\\dsh-mobile',
+                'tokens': 10240,
+              },
+            ],
+          }
+          as T;
+    }
+    return null as T;
+  }
 }

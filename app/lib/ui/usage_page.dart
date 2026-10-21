@@ -24,13 +24,66 @@
 /// 不是本地记账 —— 本地记账只覆盖插件在线期间，给出的数字像总量其实不是。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../data/app_model.dart';
 import '../model/session_stats.dart' show formatTokenCount;
 import '../model/usage_summary.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
+
+/// 用量页 + 它的数据缝：**进来就拉一次，拉到就重画**。
+///
+/// ## 为什么要有这一层（2026-10-21 真机抓到）
+///
+/// 原来的接线是（`main.dart` 的 `_openUsage`）：
+///
+/// ```dart
+/// unawaited(app.refreshUsageSummary());        // 异步开始拉
+/// push(UsagePage(summary: app.usageSummary))   // 立刻读 —— 这时还是 null
+/// ```
+///
+/// 而 [UsagePage] 是**无状态**的、只拿一份快照、**不监听 `AppModel`**，
+/// 于是拉回来的数据没有触发任何重画：真机上永远是「还没有用量数据」，
+/// 而电脑侧明明有几十万 token（同屏的统计条就摆着 92.7K）。
+///
+/// 判据见 `app/test/usage_page_test.dart` 的「先空态、拉到后自己重画」——
+/// 少了这一层，那条用例在拉完之后仍看到空态。
+class UsagePageHost extends StatefulWidget {
+  const UsagePageHost({super.key, required this.app, this.onOpenSession});
+
+  final AppModel app;
+  final void Function(String sid)? onOpenSession;
+
+  @override
+  State<UsagePageHost> createState() => _UsagePageHostState();
+}
+
+class _UsagePageHostState extends State<UsagePageHost> {
+  @override
+  void initState() {
+    super.initState();
+    // 不等它：页面先以空态出现，拉到之后由下面的 `ListenableBuilder` 重画。
+    unawaited(widget.app.refreshUsageSummary());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      // **页面是独立路由**：`ChatPage` 的重建到不了它，所以它必须自己听
+      // `AppModel`（与「切换子智能体」面板同一条纪律）。
+      listenable: widget.app,
+      builder: (context, _) => UsagePage(
+        summary: widget.app.usageSummary,
+        failure: widget.app.lastError?.message,
+        onOpenSession: widget.onOpenSession,
+      ),
+    );
+  }
+}
 
 /// 用量页。数据由调用方拉好传进来（**这一页不自己发请求**）——
 /// 与设置页同一约定：拉取是 `AppModel` 的事，页面只显示。

@@ -188,16 +188,16 @@ void main() {
     expect(app.subagentCatalogOf('sid_A').entries, hasLength(1));
 
     client.deltas.add(
-      SessionDelta(
+      const SessionDelta(
         sid: 'sid_A',
-        transient: const {},
+        transient: {},
         events: [
           SessionEvent(
             itemId: 'turn:1',
             type: 'turn/end',
             seq: 10,
             time: 10,
-            data: const {'turn': 1},
+            data: {'turn': 1},
           ),
         ],
       ),
@@ -222,16 +222,16 @@ void main() {
     expect(client.listCalls, 1);
 
     client.deltas.add(
-      SessionDelta(
+      const SessionDelta(
         sid: 'sid_A',
-        transient: const {},
+        transient: {},
         events: [
           SessionEvent(
             itemId: 'i:u1',
             type: 'user/message',
             seq: 11,
             time: 11,
-            data: const {
+            data: {
               'content': [
                 {'type': 'text', 'text': '你好'},
               ],

@@ -26,6 +26,9 @@
 > （`session.prompt` 被拒成 `is owned by subagent routing`，新增 `subagent.prompt`）、
 > ③ 面板指标与顶栏 running 只在重连后才更新（清单行只在连上时拉过）。
 > 另按用户当场意见把「切换子智能体」从底部 sheet 改成**锚定浮层**（`ui/dsh_popover.dart`）。
+> 用户随后问「用量都没有东西啊」——**第四个真机缺陷**：用量页把"拉之前的快照"传进
+> 无状态页面，永远空态；已收进 `UsagePageHost`（`initState` 拉 + `ListenableBuilder` 重画），
+> 真机现在显示 578K / 两个项目。
 > 逐条判据见 `docs/subsystems/subagent-page.md` §7 与
 > `.agents/notes/implemented/2026-10-21-subagent-child-address-and-prompt.md`、
 > `.agents/notes/implemented/2026-10-21-anchored-popover-for-top-bar-panels.md`。
@@ -284,7 +287,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **318 项**(22 条规则自检 + 扫 88 个 Dart 文件) |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集(**100 个**;app/lib 引用 49 个)/ 工具脚本不许硬编码盘符(20 个) |
-| `cd app && flutter test` | **993 项** |
+| `cd app && flutter test` | **994 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0**(analyze 比 `flutter analyze` 严) |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **561 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |

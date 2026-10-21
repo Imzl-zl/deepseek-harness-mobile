@@ -558,13 +558,14 @@ class _DshMobileAppState extends State<DshMobileApp>
   /// （`AppModel.refreshUsageSummary`）。
   void _openUsage(AppModel app) {
     unawaited(navigatorKey.currentState?.maybePop());
-    unawaited(app.refreshUsageSummary());
+    // **不要在这里先拉再传快照**：`UsagePage` 不监听 `AppModel`，
+    // 传进去的那一份永远是"拉之前"的 null（真机上就是永远的「还没有用量数据」）。
+    // 拉与重画都在 `UsagePageHost` 里（它 `initState` 拉、`ListenableBuilder` 重画）。
     unawaited(
       navigatorKey.currentState?.push(
         MaterialPageRoute<void>(
-          builder: (_) => UsagePage(
-            summary: app.usageSummary,
-            failure: app.lastError?.message,
+          builder: (_) => UsagePageHost(
+            app: app,
             onOpenSession: (sid) {
               unawaited(navigatorKey.currentState?.maybePop());
               unawaited(app.openSession(sid));

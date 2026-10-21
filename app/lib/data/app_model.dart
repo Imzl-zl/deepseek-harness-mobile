@@ -1396,9 +1396,14 @@ class AppModel extends ChangeNotifier {
       final result = await client.call<Object?>('usage.summary', const {});
       _usageSummary = UsageSummary.fromWire(result);
       _lastError = null;
-    } on ProtocolException catch (error) {
+    } catch (error) {
+      // **兜住所有异常，不只 `ProtocolException`**（与 `refreshSessions` 同一条纪律）：
+      // 只接协议错误的话，解析 / 类型 / 超时都会逃逸成未处理的异步错误 ——
+      // 界面停在空态且不报错，而那正是"用量页永远是空的"最容易被误判成
+      // "电脑上真没有用量"的形态。
       _usageSummary = null;
-      _lastError = error;
+      _recordError('拉取用量汇总失败', error);
+      return;
     }
     if (!_disposed) notifyListeners();
   }
