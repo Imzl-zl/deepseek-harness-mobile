@@ -31,18 +31,20 @@ function section57(markdown: string): string {
   return next === -1 ? rest : rest.slice(0, next + 3)
 }
 
-test('实现的方法名都在契约 §5.7 里，且契约的方法名数量是 32（"X/32" 不会悄悄失真）', () => {
-  // **32 是"方法名"数,不是表行数**:契约那张表一行可以写两个方法
+test('实现的方法名都在契约 §5.7 里，且契约的方法名数量是 35（"X/35" 不会悄悄失真）', () => {
+  // **35 是"方法名"数,不是表行数**:契约那张表一行可以写两个方法
   // （`job.follow` / `job.unfollow`、`settings.describe` / `settings.update`、
   // `credentials.set` / `credentials.unset`）—— 行数更少。
   //
-  // **32 的来历**:2026-10-14 加 `endpoint.describe`(端点自报),
+  // **35 的来历**:2026-10-14 加 `endpoint.describe`(端点自报),
   // 2026-10-15 加 `session.projections`(一个方法打开全部只读面)、
   // `session.select-model`(切模型,**与 Web 同一个 DSH 方法**)与
   // `permission.catalog` / `permission.switch`(权限切换:读预设目录 + 写 `/permission <档位>`)。
   // 2026-10-15 晚加 `workspace.list`(会话列表按工作区分组)。
   // 2026-10-17 加 `agentPresets.list`(Agent 预设目录,只读)。
   // 2026-10-19 加 `usage.summary`(跨会话用量汇总,只读)。
+  // 2026-10-21 加 `workspace.insertSessionBefore` / `workspace.pin` / `workspace.unpin`
+  // (侧栏会话重排与置顶,三个都是 Web 已有的 Host 方法)。
   // 每次变动都要同步 `memory.md` 里的"X/N"、`tools.md` 的方法数与契约那一行。
   const declared = new Set<string>()
   for (const line of section57(readFileSync(CONTRACT, 'utf8')).split('\n')) {
@@ -72,7 +74,7 @@ test('实现的方法名都在契约 §5.7 里，且契约的方法名数量是 
     if (method !== undefined) implemented.add(method)
   }
 
-  assert.equal(declared.size, 32, `契约 §5.7 定义了 32 个方法名，实际 ${declared.size} —— 改表就要同步引用它的文档`)
+  assert.equal(declared.size, 35, `契约 §5.7 定义了 35 个方法名，实际 ${declared.size} —— 改表就要同步引用它的文档`)
   assert.equal(implemented.size > 0, true, '没能从 handlers.ts 抽出任何方法名 —— 先修解析口径，别当成通过')
 
   const stray = [...implemented].filter((method) => !declared.has(method)).sort()

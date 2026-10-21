@@ -21,10 +21,19 @@
  * 而本期只解决"列表能按工作区分组"。增量留白是如实的：工作区改名/新加工作区
  * 要等下一次读取。
  */
-import type { WorkspaceArchiveSessionRequest, WorkspaceController } from '@deepseek-ai/dsh-api-workspace-controller'
+import type {
+  WorkspaceArchiveSessionRequest,
+  WorkspaceController,
+  WorkspaceInsertSessionBeforeRequest,
+} from '@deepseek-ai/dsh-api-workspace-controller'
+
+import { isErrorCode, ProtocolError } from '../protocol/errors.js'
 
 /** DSH 的会话 id 类型（`SessionId` 是带品牌的字符串，跨界要显式转一次）。 */
 type DshSessionId = WorkspaceArchiveSessionRequest['sessionId']
+
+/** DSH 的工作区 id 类型（同上，`WorkspaceId` 也是品牌字符串）。 */
+type DshWorkspaceId = WorkspaceInsertSessionBeforeRequest['workspaceId']
 
 /** 一个工作区（通道 §5.7 的 `workspace.list` 行）。 */
 export interface WorkspaceRow {
@@ -41,9 +50,16 @@ export interface WorkspacesSnapshot {
   workspaces: readonly WorkspaceRow[]
   /** 已归档的会话 id（DSH 的 id）。归档不是删除：Web 有单独的归档视图。 */
   archivedSessionIds: readonly string[]
+  /**
+   * 置顶的会话 id（DSH 的 id），**最近置顶的在前**
+   * （`types.ts:147-150` 的 `WorkspacePinValue`，基线里同名字段见 `types.ts:152-158`）。
+   *
+   * 它是**registry 全局**的集合（不分工作区），与 Web 的置顶块同一条。
+   */
+  pinnedSessionIds: readonly string[]
 }
 
-/** 工作区读取面 + 两个归档写方法（**收窄成这一层真正用到的方法**）。 */
+/** 工作区读取面 + 归档 / 组内重排 / 置顶写方法（**收窄成这一层真正用到的方法**）。 */
 export interface WorkspacesPort {
   list(): Promise<WorkspacesSnapshot>
   /**
@@ -58,6 +74,31 @@ export interface WorkspacesPort {
   archive(sessionId: string, stopActivity: boolean): Promise<readonly string[]>
   /** 取消归档。**幂等**：没归档过的 id 也成功（DSH `commands.ts:185-195` 的原注释）。 */
   unarchive(sessionId: string): Promise<readonly string[]>
+
+  /**
+   * 在同一工作区内把会话挪到 `beforeSessionId` 之前（DOM `insertBefore` 语义）。
+   *
+   * DSH：`@Remote('insertSessionBefore')`（`index.ts:149-152`）→
+   * `commands.ts:132-152`。请求形状 `{workspaceId, sessionId, beforeSessionId?}`
+   * （`types.ts:107-112`），**不给 `beforeSessionId` 就是追加到末尾**。
+   *
+   * **它只重排、不改归属**：跨工作区的移动会被宿主拒成
+   * `WorkspaceMoveInvalidError` → `workspace/move-invalid`（`commands.ts:137-149`）。
+   *
+   * @returns 该工作区**新的**会话 id 顺序（DSH id）—— 调用方据此刷新分组，
+   *          不必再读一次基线。
+   */
+  insertSessionBefore(
+    workspaceId: string,
+    sessionId: string,
+    beforeSessionId?: string,
+  ): Promise<readonly string[]>
+
+  /** 置顶（registry 全局集合）。返回**置顶全集**，最近置顶的在前。 */
+  pin(sessionId: string): Promise<readonly string[]>
+
+  /** 取消置顶。返回置顶全集（**幂等**：没置顶过的 id 也成功，照 `commands.ts:218-226`）。 */
+  unpin(sessionId: string): Promise<readonly string[]>
 }
 
 /**
@@ -68,6 +109,51 @@ export interface WorkspacesPort {
  * 显示"没有工作区"，而真因是读取失败。
  */
 const BASELINE_TIMEOUT_MS = 10_000
+
+/**
+ * 宿主错误对象上的 `code`。
+ *
+ * `RemoteError` 带它；这里只**结构化地读**（`dsh/jobs.ts:186-190` 同一条读法），
+ * 不依赖宿主的类型 —— 适配层的测试替身只需抛一个带 `code` 的普通对象。
+ */
+function errorCodeOf(error: unknown): string | undefined {
+  const code = (error as { code?: unknown } | null)?.code
+  return typeof code === 'string' ? code : undefined
+}
+
+/**
+ * 把宿主的**封闭错误码**（`protocol/errors.ts` 的 `ERROR_TABLE` 里有的那些）
+ * 抬成协议错误，其余原样抛。
+ *
+ * ## 为什么需要这一层
+ *
+ * `protocol/methods.ts` 的分发器只保留 `ProtocolError` 自己的码，其余一律归
+ * `internal`（`:265-275`）。而 DSH 的工作区写方法抛的是**宿主自己的**错误对象：
+ * 归档一个还在跑的会话是 `workspace/session-active`（`commands.ts:160-167`），
+ * 跨工作区搬会话是 `workspace/move-invalid`（`:137-149`）。不抬一遍，前者那张
+ * 早已写进 `ERROR_TABLE` 的行就是死代码，手机只会看到 `internal`
+ * ——§3.1 给 `internal` 的客户端动作是 `log-and-retry`，而这两件事都不是重试能好的。
+ *
+ * ## 为什么不是"把所有宿主码都透传"
+ *
+ * 手机的码集是**封闭**的（§3.1）。表里没有的码（如 `workspace/move-invalid`）
+ * 透传过去就是发一个手机不认识的码。所以判据是 `isErrorCode`：表里有的原样过线，
+ * 没有的按统一规则降成 `internal`，**原文进 message**（不丢信息，不伪装成功）。
+ */
+async function asProtocolError<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work()
+  } catch (error) {
+    const code = errorCodeOf(error)
+    if (code !== undefined && isErrorCode(code)) {
+      throw new ProtocolError(
+        code,
+        error instanceof Error ? error.message : String(error),
+      )
+    }
+    throw error
+  }
+}
 
 export function createWorkspacesPort(
   controller: WorkspaceController,
@@ -88,6 +174,7 @@ export function createWorkspacesPort(
               sessionIds: item.sessionIds.map(String),
             })),
             archivedSessionIds: value.archivedSessionIds.map(String),
+            pinnedSessionIds: value.pinnedSessionIds.map(String),
           }
         }
         // 流关了也没给出基线：那是宿主的形状变了，不能当成"没有工作区"。
@@ -99,20 +186,54 @@ export function createWorkspacesPort(
     },
 
     async archive(sessionId, stopActivity) {
-      const value = await controller.archiveSession({
-        sessionId: sessionId as DshSessionId,
-        // 缺省时**不进请求体**：DSH 的语义是"不带就是不带"
-        // （`commands.ts:164-167` 判的是 `=== true`）。
-        ...(stopActivity ? { stopActivity: true } : {}),
-      })
+      const value = await asProtocolError(() =>
+        controller.archiveSession({
+          sessionId: sessionId as DshSessionId,
+          // 缺省时**不进请求体**：DSH 的语义是"不带就是不带"
+          // （`commands.ts:160-167` 判的是 `=== true`）。
+          ...(stopActivity ? { stopActivity: true } : {}),
+        }),
+      )
       return value.archivedSessionIds.map(String)
     },
 
     async unarchive(sessionId) {
-      const value = await controller.unarchiveSession({
-        sessionId: sessionId as DshSessionId,
-      })
+      const value = await asProtocolError(() =>
+        controller.unarchiveSession({
+          sessionId: sessionId as DshSessionId,
+        }),
+      )
       return value.archivedSessionIds.map(String)
+    },
+
+    async insertSessionBefore(workspaceId, sessionId, beforeSessionId) {
+      const value = await asProtocolError(() =>
+        controller.insertSessionBefore({
+          workspaceId: workspaceId as DshWorkspaceId,
+          sessionId: sessionId as DshSessionId,
+          // 缺省时**不进请求体**：DSH 的 `beforeSessionId?` 是"不给就追加到末尾"
+          // （`types.ts:107-112`），塞空串会被当成一个非法锚点。
+          ...(beforeSessionId === undefined
+            ? {}
+            : { beforeSessionId: beforeSessionId as DshSessionId }),
+        }),
+      )
+      // 返回该工作区的新顺序：调用方据此刷新分组，不必再读一次基线。
+      return value.workspace.sessionIds.map(String)
+    },
+
+    async pin(sessionId) {
+      const value = await asProtocolError(() =>
+        controller.pinSession({ sessionId: sessionId as DshSessionId }),
+      )
+      return value.pinnedSessionIds.map(String)
+    },
+
+    async unpin(sessionId) {
+      const value = await asProtocolError(() =>
+        controller.unpinSession({ sessionId: sessionId as DshSessionId }),
+      )
+      return value.pinnedSessionIds.map(String)
     },
   }
 }

@@ -649,55 +649,86 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
   // **按能力位挂**：缺 `workspaceController` 时这个方法不出现，手机的列表
   // 退回不分组 —— 如实降级，而不是按 `cwd` 猜一个分组。
   if (deps.workspaces !== undefined) {
+    // 这个面的五种返回体都是"一串会话 id"，而**换别名的规则只有一份**：
+    // `WorkspaceView.sessionIds` / `archivedSessionIds` / `pinnedSessionIds`
+    // 都是 DSH 的 id，手机与中继只见 `sid`（与 `session.list` 同一条纪律）。
+    // 同一份载荷里只换一半 = 手机拿到一串它不认识的 id，分组/归档/置顶全对不上。
+    const aliased = (ids: readonly string[]) =>
+      Promise.all(ids.map((id) => deps.aliases.ensure(id)))
+
     handlers['workspace.list'] = async () => {
       const snapshot = await deps.workspaces!.list()
-      // **会话 id 换成手机见的 sid**：`WorkspaceView.sessionIds` 是 DSH 的 id，
-      // 而中继与手机只见 `sid`（与 `session.list` 同一条纪律）。
-      // 换不动就不进那一行 —— 一个 DSH id 漏到手机上，分组就永远对不上。
       const workspaces = await Promise.all(
         snapshot.workspaces.map(async (row) => ({
           workspaceId: row.workspaceId,
           title: row.title,
           path: row.path,
-          sessionIds: await Promise.all(
-            row.sessionIds.map((dshSessionId) => deps.aliases.ensure(dshSessionId)),
-          ),
+          sessionIds: await aliased(row.sessionIds),
         })),
       )
-      // **归档清单同样要换别名**：它与 `sessionIds` 是同一份载荷里的两种 id 约定 ——
-      // 只换一半，手机就会拿到一串它不认识的 DSH id，"已归档"这一档永远对不上。
-      const archivedSessionIds = await Promise.all(
-        snapshot.archivedSessionIds.map((dshSessionId) => deps.aliases.ensure(dshSessionId)),
-      )
-      return { workspaces, archivedSessionIds }
+      // 归档集与置顶集各多一列；三列一起换，不留下"半份别名"。
+      return {
+        workspaces,
+        archivedSessionIds: await aliased(snapshot.archivedSessionIds),
+        pinnedSessionIds: await aliased(snapshot.pinnedSessionIds),
+      }
     }
+
+    // 同工作区内重排（DOM insertBefore 语义）。**不改归属**：跨工作区的移动
+    // 会被宿主拒成 `workspace/move-invalid`（`commands.ts:137-149`）。
+    // 连接器不吞它、也不改写成"成功"；这个码不在手机的封闭错误表里，
+    // 所以手机收到的是 `internal` + **宿主原文**（`protocol/methods.ts:265-275`）。
+    handlers['workspace.insertSessionBefore'] = async (params) => {
+      const workspaceId = requireString(params, 'workspaceId')
+      const dshSessionId = requireSession(requireSid(params))
+      // 锚点可选：不给 = 追加到末尾（`types.ts:107-112`）。给了就必须是**能解出
+      // DSH id 的别名** —— 认不出就是 `session/not-found`，与其它方法同一条。
+      const beforeSessionId =
+        paramOf(params, 'beforeSid') === undefined
+          ? undefined
+          : requireSession(requireString(params, 'beforeSid'))
+      const order = await deps.workspaces!.insertSessionBefore(
+        workspaceId,
+        dshSessionId,
+        beforeSessionId,
+      )
+      return { sessionIds: await aliased(order) }
+    }
+
+    handlers['workspace.pin'] = async (params) => ({
+      pinnedSessionIds: await aliased(
+        await deps.workspaces!.pin(requireSession(requireSid(params))),
+      ),
+    })
+
+    handlers['workspace.unpin'] = async (params) => ({
+      pinnedSessionIds: await aliased(
+        await deps.workspaces!.unpin(requireSession(requireSid(params))),
+      ),
+    })
 
     // 归档 / 取消归档。**写路径就这两个**，各自带幂等键（`IDEMPOTENT_METHODS`）：
     // 归档是用户指令，重发不该落两次（虽然宿主侧幂等，但指令层不该靠它兜）。
-    // 归档运行中的会话会被宿主拒（`workspace/session-active`）——
+    // 归档运行中的会话会被宿主拒成 `workspace/session-active`（`commands.ts:160-167`）——
     // 那是**信息**不是故障：Web 因此弹"停止并归档"对话，带 `stopActivity` 重试
-    // （`ui-workspace/src/client/index.ts:190-208`）。这里照同一条，把开关过线。
+    // （`ui-workspace/src/client/index.ts:190-208`）。这里照同一条，把开关过线；
+    // 那个码在 `ERROR_TABLE` 里，所以它**原样到手机**（`dsh/workspaces.ts` 的
+    // `asProtocolError`），不是 `internal`。
     handlers['workspace.archive'] = async (params) => {
-      const sid = requireSid(params)
-      const dshSessionId = requireSession(sid)
+      const dshSessionId = requireSession(requireSid(params))
       const stopActivity = paramOf(params, 'stopActivity') === true
-      const archived = await deps.workspaces!.archive(dshSessionId, stopActivity)
       return {
-        archivedSessionIds: await Promise.all(
-          archived.map((id) => deps.aliases.ensure(id)),
+        archivedSessionIds: await aliased(
+          await deps.workspaces!.archive(dshSessionId, stopActivity),
         ),
       }
     }
 
-    handlers['workspace.unarchive'] = async (params) => {
-      const dshSessionId = requireSession(requireSid(params))
-      const archived = await deps.workspaces!.unarchive(dshSessionId)
-      return {
-        archivedSessionIds: await Promise.all(
-          archived.map((id) => deps.aliases.ensure(id)),
-        ),
-      }
-    }
+    handlers['workspace.unarchive'] = async (params) => ({
+      archivedSessionIds: await aliased(
+        await deps.workspaces!.unarchive(requireSession(requireSid(params))),
+      ),
+    })
   }
 
   // 权限预设：清单与写路径都按能力位挂（`dsh/permissions.ts` 的文件头列了三个服务键）。

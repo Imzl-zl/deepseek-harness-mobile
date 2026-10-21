@@ -6,6 +6,7 @@
  * 幂等键必须在分发前强制（漏键 = 重复执行用户指令），以及**分发器从不抛**。
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
 import { ProtocolError } from '../src/protocol/errors.js'
@@ -27,31 +28,41 @@ test('方法表：封闭集，幂等键标记与契约 §5.7 的表一致', () =
   // 2026-10-17 加 `session.updateQueue`（排队项编辑 / 删除 / 插话）后是 **30**；
   // 同日加 `agentPresets.list`（Agent 预设目录，只读）后是 **31**。
   // 2026-10-19 加 `usage.summary`（跨会话用量汇总，只读）后是 **32**。
+  // 2026-10-21 加 `workspace.insertSessionBefore` / `workspace.pin` /
+  // `workspace.unpin`（侧栏会话重排与置顶）后是 **35**。
   // **这个数是契约 §5.7 的表与 `tools.md` 的同步闸**：加了方法不改这里就会红，
   // 而它红的方式是"数不对"，所以改它必须同时改契约那一行。
-  assert.equal(METHODS.length, 32, '方法数变了要同步契约 §5.7 的表')
+  assert.equal(METHODS.length, 35, '方法数变了要同步契约 §5.7 的表')
   assert.equal(new Set(METHODS).size, METHODS.length, '方法名不能重复')
 
-  // §5.7 的「幂等键」列非空的恰好这几个。
-  // `session.create` 也在内:它可能被重发(新建会话这一按尤其容易),而重复创建会得到
-  // 两个会话 —— 那正是幂等键要防的。
-  assert.deepEqual([...IDEMPOTENT_METHODS].sort(), [
-    'credentials.set',
-    'credentials.unset',
-    'interaction.respond',
-    // 切权限是用户指令：重发不该落两条 command/run 生命周期事件。
-    'permission.switch',
-    'session.create',
-    'session.prompt',
-    // 切模型是用户指令：重发不该切两次。
-    'session.select-model',
-    // 排队项变异是用户指令：重发不该把同一项编辑两次 / 删两次。
-    'session.updateQueue',
-    'settings.update',
-    // 归档与取消归档是用户指令：重发不该落两次（宿主侧也幂等，但指令层不靠它兜）。
-    'workspace.archive',
-    'workspace.unarchive',
-  ])
+  // 幂等集**从契约 §5.7 的表里读**，不在测试里手抄第二份 ——
+  // 手抄的那份一旦与表漂了，这个用例名里的"与契约一致"就是假的
+  // （2026-10-21 审查指出：以前正是硬拷常量）。
+  // 判据是「幂等键」列非空：`—` = 不带键，`requestId` / `i:<callId>` 都是键。
+  const contract = readFileSync(
+    new URL('../../docs/subsystems/remote-channel.md', import.meta.url),
+    'utf8',
+  )
+  const from = contract.indexOf('### 5.7')
+  const to = contract.indexOf('### 5.8')
+  assert.ok(from > 0 && to > from, '契约里找不到 §5.7 的表')
+  const declared: string[] = []
+  for (const line of contract.slice(from, to).split('\n')) {
+    if (!line.startsWith('| `')) continue
+    const cells = line.split('|')
+    if (cells.length < 5) continue
+    const methodCell = cells[1] ?? ''
+    const keyCell = (cells[3] ?? '').trim()
+    if (keyCell === '—') continue
+    for (const match of methodCell.matchAll(/`([A-Za-z]+\.[A-Za-z-]+)`/g)) {
+      declared.push(match[1]!)
+    }
+  }
+  assert.deepEqual(
+    [...IDEMPOTENT_METHODS].sort(),
+    declared.sort(),
+    '幂等集必须与契约 §5.7 的「幂等键」列逐项一致（表改了这里跟着红）',
+  )
   assert.equal(requiresIdempotencyKey('session.list'), false)
   assert.equal(requiresIdempotencyKey('session.prompt'), true)
   assert.equal(requiresIdempotencyKey('session.create'), true)
@@ -59,6 +70,9 @@ test('方法表：封闭集，幂等键标记与契约 §5.7 的表一致', () =
   assert.equal(requiresIdempotencyKey('permission.switch'), true)
   assert.equal(requiresIdempotencyKey('workspace.archive'), true)
   assert.equal(requiresIdempotencyKey('workspace.unarchive'), true)
+  assert.equal(requiresIdempotencyKey('workspace.insertSessionBefore'), true)
+  assert.equal(requiresIdempotencyKey('workspace.pin'), true)
+  assert.equal(requiresIdempotencyKey('workspace.unpin'), true)
   assert.equal(requiresIdempotencyKey('permission.catalog'), false, '读方法不带幂等键')
 
   assert.equal(isMethod('session.list'), true)
