@@ -374,8 +374,10 @@
 
   scrim.addEventListener("click", () => D.close());
 
-  /* ---------------------------------------------------------- 会话列表行:左滑归档/删除 */
-  const ROW_ACTIONS = 152; // 76*2
+  /* ---------------------------------------------------------- 会话列表行:左滑归档 + 长按菜单 */
+  /* 只保留「归档」：DSH 的会话面没有删除方法（`workspace-controller` 只有
+     归档 / 取消归档 / 置顶 / 取消置顶）。删除是原型早期自己加的假动作。 */
+  const ROW_ACTIONS = 76;
   let openRow = null;
   function closeRow(row, animate = true) {
     const el = row.querySelector(".drow");
@@ -407,6 +409,9 @@
         row.style.transform = `translate3d(${open ? -ROW_ACTIONS : 0}px,0,0)`;
         openRow = open ? wrap : null;
       },
+      /* 长按开行动作菜单（置顶 / 上移 / 下移 / 归档）。
+         Web 用拖动排序；触屏上改成菜单，门禁相同：置顶行只在置顶块里动。 */
+      longPress: () => openSessionRowMenu(wrap),
     });
     wrap.querySelector(".drow-actions .arc").addEventListener("click", () => {
       haptic();
@@ -419,29 +424,146 @@
       });
       toast("已归档");
     });
-    wrap.querySelector(".drow-actions .del").addEventListener("click", () => {
-      haptic(20);
-      openSheet({
-        title: "删除会话",
-        body: `<p style="padding:2px 8px 12px;color:var(--on3);font-size:13px">
-          删除后电脑端的会话记录不受影响,只是从手机的列表里移除。</p>`,
-        actions: [
-          { label: "取消", kind: "out", onClick: closeSheet },
-          {
-            label: "删除",
-            kind: "danger",
-            onClick: () => {
-              closeSheet();
-              wrap.remove();
-              toast("已从列表移除");
-            },
-          },
-        ],
-      });
-    });
   });
+
+  /** 这个行所在的分区（`.dsec` 之后、下一个 `.dsec` 之前的所有 `.drow-wrap`）。 */
+  function sessionRowSection(wrap) {
+    let sec = wrap.previousElementSibling;
+    while (sec && !sec.classList.contains("dsec")) sec = sec.previousElementSibling;
+    return sec && sec.classList.contains("dsec") ? sec : null;
+  }
+
+  function sessionRowsOf(wrap, includeHidden = false) {
+    const sec = sessionRowSection(wrap);
+    if (!sec) return [wrap];
+    const rows = [];
+    let n = sec.nextElementSibling;
+    while (n && !n.classList.contains("dsec")) {
+      if (n.classList.contains("drow-wrap") && (includeHidden || !n.hidden)) {
+        rows.push(n);
+      }
+      n = n.nextElementSibling;
+    }
+    return rows;
+  }
+
+  const isPinnedRow = (wrap) => wrap.querySelector(".drow").dataset.pinned === "1";
+
+  /** 重排一个分区：置顶的在前，两个分区各自保持当前相对顺序。
+      与 DSH Web 的 `sectionMembers` 同一条（`tree.js:273-287`）。 */
+  function settleSessionRowOrder(wrap) {
+    const sec = sessionRowSection(wrap);
+    if (!sec) return;
+    // 搜索过滤隐藏的行也要重排：否则清空搜索后它们会按旧顺序冒回来。
+    const rows = sessionRowsOf(wrap, true);
+    const ordered = [
+      ...rows.filter(isPinnedRow),
+      ...rows.filter((w) => !isPinnedRow(w)),
+    ];
+    /* 锚点必须是"这一组行的**最后一条**之后"：若拿 sec.nextSibling（很可能是
+       空白文本节点）当锚点，insertBefore 会把后面的行逐个插到它前面，顺序被整段倒排。
+       行与行之间夹着空白文本节点，所以要先找最后一行，不能"顺着 classList 往后跳"。 */
+    let last = null;
+    for (
+      let n = sec.nextSibling;
+      n && !(n.classList && n.classList.contains("dsec"));
+      n = n.nextSibling
+    ) {
+      if (n.classList && n.classList.contains("drow-wrap")) last = n;
+    }
+    const anchor = last ? last.nextSibling : sec.nextSibling;
+    const parent = sec.parentNode;
+    ordered.forEach((w) => parent.insertBefore(w, anchor));
+  }
+
+  function renderPinMark(wrap) {
+    const row = wrap.querySelector(".drow");
+    const old = row.querySelector(".drow-pin");
+    if (!isPinnedRow(wrap)) {
+      if (old) old.remove();
+      return;
+    }
+    if (old) return;
+    const mark = document.createElement("span");
+    mark.className = "drow-pin";
+    mark.title = "已置顶";
+    mark.innerHTML = ic("pinFill", 12);
+    row.insertBefore(mark, row.querySelector(".tm"));
+  }
+
+  /** 长按菜单。动作与手机端 `session_drawer.dart` 的 `_showSessionMenu` 同义。 */
+  function openSessionRowMenu(wrap) {
+    /* 长按后的 pointerup 还会合成一次 click；不吞掉就会"开完菜单又打开会话"。 */
+    wrap.dataset.longPressed = "1";
+    setTimeout(() => delete wrap.dataset.longPressed, 700);
+    const row = wrap.querySelector(".drow");
+    const title = row.querySelector(".t").textContent;
+    const pinned = isPinnedRow(wrap);
+    const rows = sessionRowsOf(wrap);
+    const i = rows.indexOf(wrap);
+    const samePin = (j) =>
+      j >= 0 && j < rows.length && isPinnedRow(rows[j]) === pinned;
+    const canUp = samePin(i - 1);
+    const canDown = samePin(i + 1);
+    /* 不可用的项用 `disabled`：既不可点、也不进 tab 序，样式在 CSS 里
+       （`.sitem[disabled]`）。内联 opacity 只画出"灰"，按钮仍可点、仍可聚焦、
+       点下去什么都不发生 —— 那正是"看起来能点"的假入口。 */
+    const item = (act, icon, label, enabled) =>
+      `<button class="sitem" data-row-act="${act}"${enabled ? "" : " disabled"}>
+        <span class="i">${ic(icon, 16)}</span><span class="m">${label}</span>
+      </button>`;
+    openSheet({
+      title,
+      body:
+        item("pin", pinned ? "pinFill" : "pin", pinned ? "取消置顶" : "置顶会话", true) +
+        item("up", "chevronUp", "上移", canUp) +
+        item("down", "chevronDown", "下移", canDown) +
+        item("archive", "archive", "归档", true),
+      onMount: (sheet) => {
+        sheet.querySelectorAll("[data-row-act]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const act = btn.dataset.rowAct;
+            if (act === "pin") {
+              row.dataset.pinned = pinned ? "0" : "1";
+              renderPinMark(wrap);
+              settleSessionRowOrder(wrap);
+              closeSheet();
+              toast(pinned ? "已取消置顶" : "已置顶");
+              return;
+            }
+            if (act === "up" || act === "down") {
+              /* 边界项的按钮是 `disabled`（点不动），所以这里不需要再判 canUp/canDown。 */
+              const target = rows[i + (act === "up" ? -1 : 1)];
+              if (act === "up") target.parentNode.insertBefore(wrap, target);
+              else target.parentNode.insertBefore(wrap, target.nextSibling);
+              closeSheet();
+              toast(act === "up" ? "已上移" : "已下移");
+              return;
+            }
+            if (act === "archive") {
+              closeSheet();
+              wrap.style.transition = "opacity var(--d2) var(--ease), height var(--d2) var(--ease)";
+              wrap.style.height = wrap.offsetHeight + "px";
+              requestAnimationFrame(() => {
+                wrap.style.opacity = "0";
+                wrap.style.height = "0";
+                setTimeout(() => wrap.remove(), 220);
+              });
+              toast("已归档");
+            }
+          });
+        });
+      },
+    });
+  }
+
+  /* 首次进入把静态标记同步成图钉（HTML 里只写了 data-pinned）。 */
+  $$(".drow-wrap").forEach(renderPinMark);
   $("#dlist") &&
     $("#dlist").addEventListener("click", (e) => {
+      /* 长按菜单刚弹过：这一下 click 是长按的尾巴，不是"打开会话"。 */
+      const hitWrap = e.target.closest(".drow-wrap");
+      if (hitWrap && hitWrap.dataset.longPressed === "1") return;
       /* 点一行会话 = 打开它 —— 打开的是**有内容的**会话,所以离开 blank 那一屏。
          (真机上同理:blank 会话之外的会话一打开,hero 就让位给消息流。) */
       if (e.target.closest(".drow")) setBlankSession(false);

@@ -1183,7 +1183,7 @@ button:focus-visible {
   font-weight: 500;
   padding: 12px 10px 6px;
 }
-/* 行:支持左滑归档/删除 */
+/* 行:左滑归档 + 长按行动作菜单 */
 .drow-wrap {
   position: relative;
   border-radius: var(--r-lg);
@@ -1208,8 +1208,13 @@ button:focus-visible {
 .drow-actions .arc {
   background: var(--layer3);
 }
-.drow-actions .del {
-  background: rgba(242, 90, 90, 0.9);
+/* 置顶标记（DSH Web 的 PinnedIndicator）：非交互小图钉，动作用长按菜单。 */
+.drow .drow-pin {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  color: var(--cap);
+  margin-top: 2px;
 }
 .drow {
   position: relative;
@@ -2608,6 +2613,15 @@ button:focus-visible {
 }
 .sitem:active {
   background: var(--hover);
+}
+/* 不可用项（动作菜单的边界，如首条「上移」）：用真 `disabled` 而不是内联 opacity ——
+   灰是样式，点是行为，两件事要一起关掉。 */
+.sitem[disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+.sitem[disabled]:active {
+  background: none;
 }
 .sitem .i {
   width: 24px;
