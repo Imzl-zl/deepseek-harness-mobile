@@ -1,68 +1,47 @@
 /// 轨迹页（`ui/trajectory_page.dart`）的回归。
 ///
-/// 照 `mock/proto/index.html` 的第二个 `.pg` 与 `styles.css` 的
-/// `.gantt` / `.ledger`。
+/// 规格见 `docs/subsystems/trajectory-page.md`。
 ///
-/// ## 这一组守三件事
+/// ## 这一组守四件事
 ///
-/// 1. **色条是语义不是装饰**：四类（上下文/助手/工具/错误）的色条颜色
-///    与消息流里的角色色**同一套** —— 于是"这一行是什么"不读文字也能看出来。
-/// 2. **甘特固定 640px 宽**（原型 `.gantt-in { width:640px }`）：
-///    时间轴要有稳定刻度，跟着屏宽变会让两张截图没法对比。
-/// 3. **账本条目点得动**（弹 `sheet-traj`）：甘特给"形状"，账本给"明细"，
-///    而明细要能展开 —— 否则"那 84 毫秒干了啥"没人答得上。
+/// 1. **一轮一行**：`第 N 轮` + 用时 + 提问 / 结果预览 + 计数；
+/// 2. **用时诚实**：有 `TurnProcessItem` 说时长，没有就说「用时未加载」，
+///    失败 / 停止替换掉时长（DSH `TurnProcessNodeView.tsx:24-30` 同一条）；
+/// 3. **迷你条是比例**：长度 = 该轮 / 最长一轮（不是每轮一样长）；
+/// 4. **单列、不横滑**：390dp 上没有任何 640px 的固定宽度（那是原型的桌面形态）。
 ///
 /// ## 2026-10-15：示例数据已删，数据由用例自己给
 ///
-/// 原来这些用例**不传 `rows` / `entries`**，靠 widget 里的 `_sampleRows` /
-/// `_sampleEntries` 兜底 —— 于是"删掉假数据"这个动作会让它们全红，
-/// 而红的原因是"示例没了"，不是"功能坏了"。
-/// 现在每条用例自己构造数据（这本来就是这个 widget 该有的用法），
-/// 另有一条专钉"不传数据时是空态"。
+/// 原来这些用例不传数据，靠 widget 里的 `_sampleRows` / `_sampleEntries` 兜底 ——
+/// 于是"删掉假数据"这个动作会让它们全红，而红的原因是"示例没了"，不是"功能坏了"。
 library;
 
-import 'package:dsh_mobile/theme/dsh_colors.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/trajectory_page.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
 
-/// 四条甘特行（四类各一条，颜色照角色色）。
-const _rows = <GanttRow>[
-  GanttRow(label: '输入', color: DshColors.businessBlue, spans: []),
-  GanttRow(label: '模型', color: DshColors.roleAssistant, spans: []),
-  GanttRow(label: '工具', color: DshColors.roleTool, spans: []),
-  GanttRow(label: '错误', color: DshColors.error, spans: []),
-];
-
-/// 四条账本条目（四类各一条）。
-const _entries = <TraceEntry>[
-  TraceEntry(
-    kind: TraceKind.context,
-    name: '上下文',
-    took: '120 ms',
-    summary: '系统提示词 + 工具定义注入，含 4 个 MCP server',
+/// 三条轮次行：一条正常、一条失败、一条用时未加载。
+const _turns = <TraceTurn>[
+  TraceTurn(
+    turn: 1,
+    prompt: '帮我启动',
+    response: '已经在跑了',
+    elapsedMs: 30000,
+    messageCount: 4,
+    toolCallCount: 2,
+    barFraction: 0.25,
   ),
-  TraceEntry(
-    kind: TraceKind.assistant,
-    name: '助手',
-    took: '12.4 s',
-    summary: '我先快速看一下现有导航实现，再决定改哪几个文件。',
+  TraceTurn(
+    turn: 2,
+    prompt: '再跑一次',
+    response: '这一轮失败了',
+    elapsedMs: 120000,
+    messageCount: 6,
+    failed: true,
+    barFraction: 1,
   ),
-  TraceEntry(
-    kind: TraceKind.tool,
-    name: '工具 · read',
-    took: '84 ms',
-    summary: 'rikkahub/…/ChatPage.kt → 741 行',
-    mono: true,
-  ),
-  TraceEntry(
-    kind: TraceKind.error,
-    name: '错误',
-    took: '1.2 s',
-    summary: 'flutter analyze: unused_import（已自动修复）',
-    mono: true,
-  ),
+  TraceTurn(turn: 3, prompt: '', response: '还没结束'),
 ];
 
 Widget _wrap(Widget child) => MaterialApp(
@@ -71,154 +50,207 @@ Widget _wrap(Widget child) => MaterialApp(
 );
 
 void main() {
-  testWidgets('甘特四行都在（输入 / 模型 / 工具 / 错误）', (tester) async {
-    await tester.pumpWidget(
-      _wrap(const TrajectoryTab(rows: _rows, entries: _entries)),
-    );
+  testWidgets('一轮一行：轮次号 / 提问 / 结果 / 计数都在，且轮次升序', (tester) async {
+    await tester.pumpWidget(_wrap(const TrajectoryTab(turns: _turns)));
     await tester.pumpAndSettle();
 
-    for (final label in ['输入', '模型', '工具', '错误']) {
-      expect(find.text(label), findsWidgets, reason: '甘特缺「$label」那一行');
+    for (final label in ['第 1 轮', '第 2 轮', '第 3 轮']) {
+      expect(find.text(label), findsOneWidget, reason: '缺「$label」');
     }
-    // 横滑提示（照原型那句原文）。
-    expect(find.text('← 横滑查看完整时间轴 →'), findsOneWidget);
+    expect(find.text('提问：帮我启动'), findsOneWidget);
+    expect(find.text('结果：已经在跑了'), findsOneWidget);
+    expect(find.text('4 条消息 · 2 次工具'), findsOneWidget);
+
+    // 轮次升序：第 3 轮在第 1 轮下面。
+    final first = tester.getTopLeft(find.text('第 1 轮')).dy;
+    final last = tester.getTopLeft(find.text('第 3 轮')).dy;
+    expect(last, greaterThan(first), reason: '顺序照 turnOutline 的轮次升序');
   });
 
-  testWidgets('甘特的时间轴是**固定 640px**（不是跟屏宽）', (tester) async {
-    // 原型 `.gantt-in { width:640px }`：刻度要稳定。
-    await tester.pumpWidget(
-      _wrap(const TrajectoryTab(rows: _rows, entries: _entries)),
-    );
-    await tester.pumpAndSettle();
+  testWidgets('内容超一屏时**打开就滚到末尾**（最新一轮）', (tester) async {
+    // 行数少时不用 reverse（那会把内容顶到下半截），所以"落在最新一轮"
+    // 只能靠首帧后滚到底。这里用小屏 + 12 轮逼出溢出。
+    tester.view.physicalSize = const Size(390 * 3, 420 * 3);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
 
-    final track = tester
-        .widgetList<SizedBox>(find.byType(SizedBox))
-        .where((s) => s.width == 640);
-    expect(track, isNotEmpty, reason: '甘特内层该是固定 640px 宽');
-  });
-
-  testWidgets('账本四类条目都在，且**色条是语义色**', (tester) async {
-    await tester.pumpWidget(
-      _wrap(const TrajectoryTab(rows: _rows, entries: _entries)),
-    );
-    await tester.pumpAndSettle();
-
-    // 四类的名字都在。
-    //
-    // **「错误」会出现两次**：甘特有一行是它、账本里还有一条也是它 ——
-    // 那是数据的真实重复（同一个东西在"形状"与"明细"里各出现一次），
-    // 不是 bug。第一版写成 `findsOneWidget` 就红了。
-    expect(find.text('上下文'), findsOneWidget);
-    expect(find.text('助手'), findsOneWidget);
-    expect(find.text('工具 · read'), findsOneWidget);
-    expect(find.text('错误'), findsNWidgets(2));
-
-    // 色条颜色与角色色同一套 —— 收集所有 3px 宽的容器，看颜色齐不齐。
-    final barColors = tester
-        .widgetList<Container>(find.byType(Container))
-        .where((c) => c.constraints?.maxWidth == 3)
-        .map((c) => (c.decoration as BoxDecoration?)?.color)
-        .toSet();
-    expect(barColors.contains(DshColors.roleContext), isTrue, reason: '上下文色条');
-    expect(barColors.contains(DshColors.roleAssistant), isTrue, reason: '助手色条');
-    expect(barColors.contains(DshColors.roleTool), isTrue, reason: '工具色条');
-    expect(barColors.contains(DshColors.error), isTrue, reason: '错误色条');
-  });
-
-  testWidgets('点账本条目回调（接线到 sheet-traj）', (tester) async {
-    TraceEntry? tapped;
     await tester.pumpWidget(
       _wrap(
         TrajectoryTab(
-          rows: _rows,
-          entries: _entries,
-          onTapEntry: (e) => tapped = e,
+          turns: [
+            for (var i = 1; i <= 12; i += 1)
+              TraceTurn(turn: i, prompt: '第 $i 句', response: '第 $i 答'),
+          ],
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('工具 · read'));
-    await tester.pumpAndSettle();
-    expect(tapped?.name, '工具 · read');
-  });
-
-  testWidgets('工具那一类的摘要用等宽（它是路径/命令）', (tester) async {
-    await tester.pumpWidget(
-      _wrap(const TrajectoryTab(rows: _rows, entries: _entries)),
-    );
-    await tester.pumpAndSettle();
-
-    final summary = tester.widget<Text>(
-      find.text('rikkahub/…/ChatPage.kt → 741 行'),
-    );
-    expect(summary.style?.fontFamily, 'monospace');
-  });
-
-  testWidgets('长摘要最多两行（`.lg .r2 { line-clamp:2 }`）', (tester) async {
-    await tester.pumpWidget(
-      _wrap(const TrajectoryTab(rows: _rows, entries: _entries)),
-    );
-    await tester.pumpAndSettle();
-
-    final summary = tester.widget<Text>(
-      find.text('系统提示词 + 工具定义注入，含 4 个 MCP server'),
-    );
-    expect(summary.maxLines, 2);
-  });
-
-  testWidgets('**不传数据是空态**，不造一份假的', (tester) async {
-    // 2026-10-15 删掉 `_sampleRows` / `_sampleEntries` 兜底后新增的一条。
-    // 假轨迹看起来和真轨迹一模一样，用户无法分辨 —— 所以"没有"就必须
-    // 显示成"没有"，并且说清数据从哪来。
-    await tester.pumpWidget(_wrap(const TrajectoryTab()));
-    await tester.pumpAndSettle();
-
-    expect(find.text('还没有轨迹'), findsOneWidget);
-    // `turnOutline` 在长文案里，不是独立的 Text —— 用 contains。
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable))
+        .position;
     expect(
-      find.textContaining('turnOutline'),
-      findsOneWidget,
-      reason: '要说清数据来源',
+      position.pixels,
+      position.maxScrollExtent,
+      reason: '首帧后要锚到末尾，而不是停在最早一轮',
     );
-    // 一条示例都不该出现。
-    for (final name in ['上下文', '助手', '工具 · read']) {
-      expect(find.text(name), findsNothing, reason: '$name 是示例数据');
-    }
+    expect(find.text('第 12 轮'), findsOneWidget);
   });
 
-  testWidgets('只传一半数据也渲染（不因为缺一半就整页空）', (tester) async {
+  testWidgets('用时：有就说时长、没有就说未加载、失败替换成「失败」', (tester) async {
+    await tester.pumpWidget(_wrap(const TrajectoryTab(turns: _turns)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('30 秒'), findsOneWidget);
+    expect(find.text('用时未加载'), findsOneWidget);
+    expect(find.text('失败'), findsOneWidget, reason: '失败比"跑了多久"重要');
+    // 失败那轮的用时**不显示**（120 秒不该出现）。
+    expect(find.text('2 分 0 秒'), findsNothing);
+  });
+
+  testWidgets('迷你条是**比例**：30s / 120s = 25%', (tester) async {
+    await tester.pumpWidget(_wrap(const TrajectoryTab(turns: _turns)));
+    await tester.pumpAndSettle();
+
+    // 条的填充与空余都是 `Expanded(flex:)`（整数，可直接断言）。
+    final flexes = tester
+        .widgetList<Expanded>(find.byType(Expanded))
+        .map((e) => e.flex)
+        .toList();
+    expect(flexes, contains(250), reason: '30s 相对 120s 是 25%');
+    expect(flexes, contains(750));
+    expect(flexes, contains(1000), reason: '最长那一轮铺满');
+
+    // 没有可信用时的轮**不画条**（3 轮里只有 2 条：250+750 与铺满的 1000）。
+    final bars = find.byWidgetPredicate(
+      (w) =>
+          w is Expanded && (w.flex == 250 || w.flex == 750 || w.flex == 1000),
+    );
+    expect(bars, findsNWidgets(3), reason: '两条迷你条：25% 那条两段、铺满那条一段');
+  });
+
+  testWidgets('汇总行：有未加载的轮就说清有几轮', (tester) async {
+    await tester.pumpWidget(_wrap(const TrajectoryTab(turns: _turns)));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('共 3 轮 · 已知用时 2 分 30 秒（1 轮未加载）'),
+      findsOneWidget,
+      reason: '不说明的话"已知用时"会被读成全会话总时长',
+    );
+  });
+
+  testWidgets('点一行回调（接线到 sheet-traj）', (tester) async {
+    TraceTurn? tapped;
+    await tester.pumpWidget(
+      _wrap(TrajectoryTab(turns: _turns, onTapTurn: (t) => tapped = t)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('第 2 轮'));
+    await tester.pumpAndSettle();
+    expect(tapped?.turn, 2);
+  });
+
+  testWidgets('390dp 上不横滑：没有 640px 的固定宽度、没有横滑提示', (tester) async {
+    // 原型 `.gantt-in { width:640px }` 是桌面形态；390dp 竖屏上先横滑才知道
+    // 有内容，而时间轴那四行还没有数据源（见 docs/subsystems/trajectory-page.md §1）。
+    tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_wrap(const TrajectoryTab(turns: _turns)));
+    await tester.pumpAndSettle();
+
+    final wide = tester
+        .widgetList<SizedBox>(find.byType(SizedBox))
+        .where((s) => s.width == 640);
+    expect(wide, isEmpty, reason: '不该再有 640px 的固定宽度');
+    expect(find.text('← 横滑查看完整时间轴 →'), findsNothing);
+    expect(find.byType(SingleChildScrollView), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('长英文回复在 390dp 上不溢出（按词换行、两行截断）', (tester) async {
+    tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+
     await tester.pumpWidget(
       _wrap(
         const TrajectoryTab(
-          entries: [
-            TraceEntry(
-              kind: TraceKind.assistant,
-              name: '只有账本',
-              took: '1 s',
-              summary: '摘要',
+          turns: [
+            TraceTurn(
+              turn: 1,
+              prompt: 'record the prompt for the next session please',
+              response:
+                  'I have written it into docs/ and added three assertions to the regression suite '
+                  'so the next session cannot silently drop the marker again.',
+              elapsedMs: 5000,
+              barFraction: 1,
             ),
           ],
         ),
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('只有账本'), findsOneWidget);
-    expect(find.text('还没有轨迹'), findsNothing);
+    expect(tester.takeException(), isNull, reason: '溢出会以 FlutterError 抛出');
+    final response = tester.widget<Text>(
+      find.textContaining('I have written it into docs/'),
+    );
+    expect(response.maxLines, 2);
+    expect(response.overflow, TextOverflow.ellipsis);
+  });
+
+  testWidgets('**不传数据是空态**，不造一份假的', (tester) async {
+    await tester.pumpWidget(_wrap(const TrajectoryTab()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('还没有轨迹'), findsOneWidget);
+    expect(
+      find.textContaining('turnOutline'),
+      findsOneWidget,
+      reason: '要说清数据来源',
+    );
+    for (final name in ['第 1 轮', '第 2 轮']) {
+      expect(find.text(name), findsNothing, reason: '$name 是示例数据');
+    }
   });
 
   testWidgets('**不摆假入口**：没有「时长/轮次/调用」chip，也没有搜索钮', (tester) async {
     // 2026-10-22 用户原话「时间轴，轮次，调用都没有啊」：那一行 chip 长得像切换器，
-    // 实际三个都没有 onTap、搜索钮是 `onPressed: () {}`。原型里也没有这一行。
-    // 按第八条教训（承诺了没做比没有更糟）删掉，等三个视图各自有数据源再加回来。
-    await tester.pumpWidget(
-      _wrap(const TrajectoryTab(rows: _rows, entries: _entries)),
-    );
+    // 实际三个都没有 onTap、搜索钮是 `onPressed: () {}`。按第八条教训
+    //（承诺了没做比没有更糟）删掉，等各自有数据源再加回来。
+    await tester.pumpWidget(_wrap(const TrajectoryTab(turns: _turns)));
     await tester.pumpAndSettle();
 
     for (final label in ['时长', '轮次', '调用']) {
       expect(find.text(label), findsNothing, reason: '「$label」是没有实现的假 chip');
     }
     expect(find.byTooltip('搜索轨迹'), findsNothing, reason: '搜索钮没有实现');
+  });
+
+  group('traceSummaryLabel', () {
+    test('全都加载了：不带括号', () {
+      expect(
+        traceSummaryLabel(const [
+          TraceTurn(turn: 1, prompt: '', response: '', elapsedMs: 60000),
+        ]),
+        '共 1 轮 · 用时 1 分 0 秒',
+      );
+    });
+
+    test('一条都没加载：直说未加载，不摆 0', () {
+      expect(
+        traceSummaryLabel(const [
+          TraceTurn(turn: 1, prompt: '', response: ''),
+          TraceTurn(turn: 2, prompt: '', response: ''),
+        ]),
+        '共 2 轮 · 用时未加载',
+      );
+    });
+
+    test('空表给空串（调用方不该显示这一行）', () {
+      expect(traceSummaryLabel(const []), '');
+    });
   });
 }

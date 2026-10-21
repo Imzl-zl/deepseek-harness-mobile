@@ -934,54 +934,99 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       // **每一页都带 `hasMore`**：翻完这一页，连接层记住还有没有更早的。
       final more = boolFieldOf(reply, 'hasMore') ?? false;
       _historyMore[sid] = more;
-      return SessionPage(events: _pageEventsOf(reply), hasMore: more);
+      return SessionPage(
+        events: await _eventsOfPage(reply, sid),
+        hasMore: more,
+      );
     } on ProtocolException catch (error) {
       // **失败不当成"没有更多"**（契约 §3.1：`session/window-missed` 的客户端
       // 动作是重新订阅走快照）。把原因带回去，让上层决定。
-      // `ErrorCode` 是 String 的字面量联合，`name` 拿它的标识符
-      // （`session/window-missed` 这类带斜杠的用 `message` 更可读）。
+      // 用 `wire`（`session/window-missed`）而不是枚举名（`sessionWindowMissed`）：
+      // 这个值会进诊断面与用户可见的提示，而线上码才是契约里那一串。
       return SessionPage(
         events: const [],
-        hasMore: true,
-        failure: error.code.name,
+        // 失败时水位没前进：保留上一次的结论（不知道就仍是"有更早的"）。
+        hasMore: _historyMore[sid] ?? true,
+        failure: error.code.wire,
       );
     }
   }
 
-  /// `session.page` 的 `items` → 事件表。
+  /// 一页的 `items` → 事件表（**大条目要补取，不许跳过**）。
   ///
   /// 形状（`connector/src/session-page.ts:102-111`）：
   /// `items: [{kind:'record', record:{type:'event', event}} | {kind:'refetch', seq, bytes}]`。
   ///
-  /// **`refetch` 项跳过**：那是"这条太大，改用 `session.refetch` 单独取"的标记
-  /// （`session-page.ts:104-107`），本身不含事件。跳过后这一页会少几条 ——
-  /// 比把标记当事件渲染成一条莫名其妙的东西好。
-  List<SessionEvent> _pageEventsOf(Object? reply) {
+  /// `refetch` 项是"这条太大，改用 `session.refetch` 单独取"的标记
+  /// （同文件 `:103-110`）。**跳过它等于在会话里留一个静默的洞** ——
+  /// 2026-10-22 之前就是这么做的（只留 `record`）：>1 MiB 的条目
+  /// （图片内联在 `assistant/message` 里）在手机上**一条都看不到**，
+  /// 而界面不报错、也不缺页。取舍见
+  /// `.agents/notes/implemented/2026-10-22-refetch-markers-are-fetched.md`。
+  ///
+  /// 补取失败**不吞**：异常往上抛，由 [page] 折成 `failure`，上层整页不落。
+  Future<List<SessionEvent>> _eventsOfPage(Object? reply, String sid) async {
     final items = reply is Map ? reply['items'] : null;
     if (items is! List) return const [];
     final out = <SessionEvent>[];
     for (final item in items) {
-      if (item is! Map || item['kind'] != 'record') continue;
-      final record = item['record'];
-      if (record is! Map) continue;
-      final event = record['event'];
-      if (event is! Map) continue;
-      final type = event['type'];
-      final seq = event['seq'];
-      if (type is! String || seq is! int) continue;
-      out.add(
-        SessionEvent(
-          itemId: itemIdOf(
-            EventLike(type: type, seq: seq, data: event['data']),
-          ),
-          type: type,
-          seq: seq,
-          time: event['time'] is int ? event['time'] as int : seq,
-          data: event['data'],
-        ),
+      if (item is! Map) continue;
+      final kind = item['kind'];
+      if (kind == 'record') {
+        final event = _eventOfRecord(item['record']);
+        if (event != null) out.add(event);
+        continue;
+      }
+      if (kind != 'refetch') continue;
+      final seq = item['seq'];
+      if (seq is! int) {
+        // 标记没有 seq 就取不回来 —— 这是**对端的形状错**，不是"没有这一条"。
+        throw const ProtocolException(
+          ErrorCode.badFrame,
+          'session.page 的 refetch 项没有 seq',
+        );
+      }
+      out.add(await refetch(sid: sid, seq: seq));
+    }
+    // 补取的条目是插进来的，顺序要按 seq 归位（`SessionPage.events` 承诺升序）。
+    out.sort((a, b) => a.seq.compareTo(b.seq));
+    return out;
+  }
+
+  @override
+  Future<SessionEvent> refetch({required String sid, required int seq}) async {
+    final reply = await call<Object?>('session.refetch', {
+      'sid': sid,
+      'seq': seq,
+    });
+    final event = _eventOfRecord(reply is Map ? reply['record'] : null);
+    if (event == null) {
+      // 回了成功但没有可用事件：如实报缺陷，**不返回一条空事件**。
+      throw const ProtocolException(
+        ErrorCode.internal,
+        'session.refetch 没有回一条可解析的事件',
       );
     }
-    return out;
+    return event;
+  }
+
+  /// `record` → 事件（`{type:'event', event:{type, seq, time, data}}`）。
+  ///
+  /// 认不出就 `null`（由调用方决定跳过还是报错）：形状知识只有这一处。
+  SessionEvent? _eventOfRecord(Object? record) {
+    if (record is! Map) return null;
+    final event = record['event'];
+    if (event is! Map) return null;
+    final type = event['type'];
+    final seq = event['seq'];
+    if (type is! String || seq is! int) return null;
+    return SessionEvent(
+      itemId: itemIdOf(EventLike(type: type, seq: seq, data: event['data'])),
+      type: type,
+      seq: seq,
+      time: event['time'] is int ? event['time'] as int : seq,
+      data: event['data'],
+    );
   }
 
   @override

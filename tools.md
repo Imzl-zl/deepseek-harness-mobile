@@ -202,7 +202,10 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
   `:` 被改成 ` : `（中英混排自动加空格），最终输入框里只剩 `v : 2`。
   切换输入法更糟：讯飞首次启用会弹用户协议并把 App 挤后台。
   **结论：需要输入长文本（配对码、URL、token）时，走"出码 → 用户长按粘贴"，不要跟 adb 斗。**
-  可点的按钮/页面切换照常用 `adb shell input tap <x> <y>`。**坐标不要靠截图目测**
+  - **纯 ASCII 的长文本有一条活路：空格写成 `%s`**（2026-10-22 实测，264 字符的英文 prompt 一次进框）：
+    `adb shell input text "Run%s55%sseparate%sshell%stool%scalls..."`。写成带空格的原串时
+    输入法只吃下第一个词（实测只剩 `Run`）。中文仍然不行 —— 走粘贴。
+  - **可点的按钮/页面切换照常用 `adb shell input tap <x> <y>`。** **坐标不要靠截图目测**
   （2026-10-18 白点五轮）：`adb shell uiautomator dump /sdcard/ui.xml` 之后
   `adb shell cat /sdcard/ui.xml`，**`content-desc` 与 `bounds` 都能拿到** ——
   用 `content-desc` 找到元素、再算 `bounds="[x1,y1][x2,y2]"` 的中心
@@ -325,6 +328,8 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
 
 - **提交纪律三条**(2026-10-19 从 `memory.md` 归位到此处):①**提交信息里避免反引号** —— pwsh 会把它当 Unicode 转义,整条命令在**解析阶段**就失败;长消息写临时文件用 `git commit -F`。②**提交前看 `git status` 完整清单**,重点是**意外的文件**(空的、消失的、没见过的新文件)。③**别把"重启后的第一次成功"当能力** —— 判据要包含"连续重连 N 次都成立"(端点切换那条就是这么验的:3 次重连都落在同一条上)。
 - **给多替身接口加方法要给默认实现**(2026-10-18):`SyncClient` 这类接口全仓有 24 个 `implements` 替身,而 **`implements` 不继承默认方法** —— 加 `reconnect()` 时 23 个测试文件当场编译失败。做法:接口上给一个退化的默认实现(`=> start()`),真有别行为的只有实现类一处 override;或者先改接口再逐个补。**别指望 IDE 帮你找到全部替身**。
+  - **2026-10-22 更正**:接口上的默认实现**救不了 `implements` 的替身**(Dart 只认接口面)。真正的缝是 `app/test/fake_sync_client.dart` 那个 `abstract class FakeSyncClient implements SyncClient` —— 替身都 `extends` 它,所以加方法时**改基类一处**就够。数法:`Select-String 'implements SyncClient'` 全仓 5 处 = 真实现 `_SyncClient` + 基类 `FakeSyncClient` + `integration_test/ui_flow_test.dart` 里那个自实现替身(它有意不 extends,见该文件注释)+ `connection_recovery_test.dart` 的 `extends FakeSyncClient implements SyncClientProbe`(只加 Probe 面)。加 `refetch()` 实测只改 3 处。
+  - **`refetch` 这类没有"退化成成功"语义的方法,默认实现要抛**:返回一条假事件会让"大条目出现了"这个断言在假数据上变绿。
 - **帧头 `id` 与信封里的 `requestId` 是两个标识符,不许互相占用**(2026-10-17 修):出帧口曾把 `entry.requestId` 直接写进帧头 `id`。`interaction.respond` 的幂等键是 `i:<callId>`(契约 §5.7),**带冒号**,过不了 §3 的 ASCII 安全字符集(`^[A-Za-z0-9_-]+$`)—— 连接器按 `protocol/bad-frame` 拒收并**关连接**(`connector/src/transport/codec.ts:118`,收帧处 `connection.ts:539,571`),手机侧自己的 `decodeFrame` 同样拒收。表现是"点了允许一次,连接断了,队列不推进",与 `docs/postmortem/2026-09-30-approval-answer-silently-dropped.md` 的症状逐字相同(那篇归因给原型侧 `haptic()` 裸调,真机链路上这个才是根本成因)。**判据(机械)**:帧号由发送方另铸、每次重发换新的;幂等键只进信封顶层;重发判据必须是**键**而不是帧号。用连接器自己的解码器即可离线验:`i:c1 => REJECTED protocol/bad-frame`。因果与备选方案见 `.agents/notes/implemented/2026-10-17-frame-id-not-idempotency-key.md`。
 - **装进 profile 试跑的正确姿势(实测)**:
   - `dsh plugin --profile <名字> add <本地路径>` 会自动建 profile 并把包加进 `dsh.profile.bundles`(`link:` 到本地);**注意 `dsh plugin --profile x --help` 也会顺手建出 profile** —— 只想看帮助也会留下目录。
@@ -445,6 +450,20 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
   是被拖卡片左上角，带一段触摸偏移，会把"落在哪半"判错）。
   跨置顶分区**不接受**（与 Web 的 `drag.pinned === node.pinned` 同一条），判据在
   `model/workspace.dart` 的 `dropAnchorInDisplayOrder`。
+- **adb 合成不出"长按拖动"的落点**（2026-10-22 实测，E3 因此仍未验）：
+  - `adb shell input swipe`：从 DOWN 就开始移动，Flutter 的 `LongPressDraggable`
+    在 500ms 长按窗口内就被移动打断 ⇒ **连拖都起不来**（列表只是被滑了一下）。
+  - `adb shell input motionevent DOWN/MOVE/UP`：**跨进程的多次注入接不成一个手势**
+    （每次 `input` 都是新进程，MOVE 找不到配对的 DOWN），同样起不来。
+  - `adb shell input draganddrop x1 y1 x2 y2 6000`：**能起拖** —— 源行淡出
+    （`childWhenDragging`）、跟手的 `_DragChip` 出现在半空，截图能抓到；
+    但落点**从未被 `DragTarget` 接收**：`staging` 里没有对应的 `mv-<requestId>`
+    （`storages/dsh_mobile_core.json` 的 dedupe 表），抽屉顺序与 `workspace.json`
+    的 `sessionIds` 都不动。慢到 10s、换上下两个方向、换项目头当落点，结果一样。
+  - **所以**：拖动的落点只能用**真手指**验；`adb` 能验的是**同一条移动路径**——
+    行尾「…」菜单的**上移 / 下移**（实测一次「下移」：抽屉顺序变了，
+    dedupe 里出现 `mv-1792604210662`，返回的新顺序是
+    `[PGAyb…, mGa8Bb…, _8brZ…]`）。**别把"菜单能移动"当成"拖动已验证"。**
 - **Docker 发布的端口从局域网连不上，别先怀疑容器**（2026-10-21）：`docker ps` 显示
   `0.0.0.0:8787->8787/tcp`、宿主 `curl 127.0.0.1:8787` 回 405，而手机 `curl <PC 局域网 IP>:8787`
   超时/拒绝。根因是 **Windows 防火墙**：`WLAN 2` 是 `Public`，入站放行规则只覆盖了 `node.exe`

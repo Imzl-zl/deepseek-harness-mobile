@@ -112,6 +112,18 @@ abstract interface class SyncClient {
   /// **没收到应答时是 `false`**：那意味着"不知道"，而不是"确定没有"。
   bool hasOlderHistory(String sid);
 
+  /// 补取一条被 `refetch` 标记替代的大条目（契约 §5.7 的 `session.refetch`）。
+  ///
+  /// 翻页时电脑侧对**单个条目 > `refetchThresholdBytes`（默认 1 MiB）** 的
+  /// 只推一个标记 `{kind:'refetch', seq, bytes}`，内容要按需来取
+  /// （`connector/src/session-page.ts:103-110` 出标记、`:115-139` 补取）。
+  /// **不补取就是会话里一个静默的洞**：不报错、不缺页，只是少一条。
+  ///
+  /// 失败要如实抛（`ProtocolException`）—— 上层据此把这一页判为失败、
+  /// 不落半页（`AppModel.loadOlderHistory`）。**没有"退化的成功"**：
+  /// 返回一条编造的事件比返回失败更糟。
+  Future<SessionEvent> refetch({required String sid, required int seq});
+
   /// 一页历史的消息上限（照 DSH Web 的 `HISTORY_PAGE_OPTIONS.maxMessages`）。
   static const int kHistoryPageMaxMessages = 500;
 

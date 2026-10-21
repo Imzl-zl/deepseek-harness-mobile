@@ -1,203 +1,267 @@
-/// 轨迹页（照 `mock/proto/index.html` 的第二个 `.pg` 与 `styles.css`）。
+/// 轨迹页（手机形态）：**一轮一行 + 用时迷你条**。
 ///
-/// ## 它由两块组成
+/// 规格与数据来源见 `docs/subsystems/trajectory-page.md`。
 ///
-/// 1. **甘特条**（`.gantt`）：四行 —— 输入 / 模型 / 工具 / 错误，
-///    每行一条 14px 高的轨道，里面按时间放彩色段。
-///    宽度固定 640px 并**横滑**（原型 `.gantt-in { width:640px }`）——
-///    手机上竖着看时间轴，横滑才能看清"谁占了多久"。
-/// 2. **账本**（`.ledger`）：按时间排的条目 —— 上下文 / 助手 / 工具 / 错误，
-///    每行左边一条 3px 的色条，右边两行（名字 + 耗时 / 摘要）。
+/// Note: 为什么没有甘特与「调用」明细（以及被否的三个方案）——
+/// 见 `.agents/notes/implemented/2026-10-22-trajectory-turns-only-and-duration-bars.md`。
 ///
-/// ## 为什么这两块合在一屏
+/// ## 它显示什么
 ///
-/// 甘特给"**形状**"（一眼看出时间花在哪），账本给"**明细**"（点进去看每条）。
-/// 只有甘特会让人问"这一段到底是什么"，只有账本会让人看不出整体节奏。
+/// | 这一格 | 来源 |
+/// |---|---|
+/// | `第 N 轮` | `turnOutline` 投影（`session.projections`，契约 §5.7） |
+/// | 用时 | `turn/end.time - turn/start.time`，落在 `TurnProcessItem.elapsedMs` |
+/// | 迷你条 | 该轮用时 / 已加载轮里的最长用时（真比例，不编） |
+/// | 提问 / 结果 | `turnOutline` 的 `prompt` / `response` 预览（电脑侧已截断） |
+/// | 计数 | `TurnProcessItem` 的消息 / 工具 / 子智能体数 |
 ///
-/// ## 色条的颜色是语义（不是装饰）
+/// ## 为什么没有甘特图
 ///
-/// | 类 | 颜色 | 含义 |
-/// |---|---|---|
-/// | `.lg.c` | `roleContext`（绿） | 上下文注入 |
-/// | `.lg.a` | `roleAssistant`（紫） | 助手 |
-/// | `.lg.t` | `roleTool`（橙） | 工具 |
-/// | `.lg.e` | `error`（红） | 错误 |
+/// 时间轴要**每一步的起止**，而两处都不给：`turnOutline` 只有
+/// `{turn, seq, prompt, response}`（`session-turn-outline/src/projection.ts:61-75`），
+/// `sessionStats` 是会话级总量（`session-stats/src/projection.ts:72-81`）。
+/// Web 的 Overview 用**客户端手里的事件时间**现算
+/// （`ui-trajectory/src/client/timeline.ts:61-67`），手机的条目模型没保留每步起止 ——
+/// 所以这一屏只画"每轮一条"，不画假甘特。判据与缺口见
+/// `docs/subsystems/trajectory-page.md` §1。
 ///
-/// 与消息流里的角色色**同一套** —— 于是"这一行是什么"不需要读文字。
+/// ## 空态不造数据
+///
+/// `turns` 为 null / 空 = 空态。2026-10-15 之前这里有 `_sampleRows` /
+/// `_sampleEntries` 兜底，而调用方从不传真数据 —— 于是轨迹页常驻假数据，
+/// 用户无法分辨。假轨迹与真轨迹长得一模一样，所以"没有"必须显示成"没有"。
 library;
 
 import 'package:flutter/material.dart';
 
+import '../model/chat_item.dart';
+import '../model/turn_outline.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 
-/// 账本一行的种类（决定图标与标签）。
-///
-/// **颜色不在这里**：它运行时按亮暗取（`ThemeExtension`），而 enum 字段值是
-/// 编译期常量。所以色条走 [colorOf]（用时取），图标与标签留在这里
-/// （它们不随亮暗变）。
-enum TraceKind {
-  /// 上下文注入。
-  context('info', '上下文'),
-
-  /// 助手。
-  assistant('sparkle', '助手'),
-
-  /// 工具调用。
-  tool('browse', '工具'),
-
-  /// 错误。
-  error('warningTriangle', '错误');
-
-  const TraceKind(this.icon, this.label);
-
-  final String icon;
-  final String label;
-
-  /// 色条颜色（**用时取**，见类文档）。
-  Color colorOf(DshColorTokens c) => switch (this) {
-    TraceKind.context => c.roleContext,
-    TraceKind.assistant => c.roleAssistant,
-    TraceKind.tool => c.roleTool,
-    TraceKind.error => c.error,
-  };
-}
-
-/// 账本里的一条。
-class TraceEntry {
-  const TraceEntry({
-    required this.kind,
-    required this.name,
-    required this.took,
-    required this.summary,
-    this.prompt = '',
-    this.mono = false,
+/// 轨迹页里的一轮（**显示用的形状**：该算的都算好了，widget 只画）。
+class TraceTurn {
+  const TraceTurn({
+    required this.turn,
+    required this.prompt,
+    required this.response,
+    this.elapsedMs,
+    this.messageCount = 0,
+    this.toolCallCount = 0,
+    this.subagentCount = 0,
+    this.failed = false,
+    this.stopped = false,
+    this.barFraction,
   });
 
-  final TraceKind kind;
+  /// 第几轮。
+  final int turn;
 
-  /// 名字（`上下文` / `助手` / `工具 · read`）。
-  final String name;
-
-  /// 耗时（`120 ms` / `12.4 s`）。**可能为空串** —— `turnOutline` 投影
-  /// 不带耗时（它只有 `turn/seq/prompt/response`），所以轮次行的这一格是空的。
-  /// 空着比编一个数字诚实。
-  final String took;
-
-  /// 摘要（一两行，多了截断）。
-  final String summary;
-
-  /// 提问（轮次行才有：用户那句的预览）。空串 = 不显示那一行。
+  /// 用户那句的预览（可能为空串）。
   final String prompt;
 
-  /// 摘要是否用等宽（工具那一类要 —— 它是路径/命令）。
-  final bool mono;
+  /// 助手回复的预览（可能为空串）。
+  final String response;
+
+  /// 这一轮用了多久（毫秒）。
+  ///
+  /// `null` = 这一轮**没有** `TurnProcessItem`（`turn/end` 都不在手机窗口里，
+  /// 比如更早的历史还没翻到）。`0` = 有它但算不出差（`turn/start` 在窗口外，
+  /// 或者真的不到 1 秒）—— 两者在 [timeLabel] 里给不同的话。
+  final int? elapsedMs;
+
+  final int messageCount;
+  final int toolCallCount;
+  final int subagentCount;
+
+  /// 这一轮是失败收尾的（`reason.kind == 'error'`）。
+  final bool failed;
+
+  /// 这一轮被中止/中断（`aborted` / `interrupted`）。
+  final bool stopped;
+
+  /// 迷你条占比（0.02~1）。`null` = 不画条（没有可信的用时）。
+  final double? barFraction;
+
+  /// 用时那一格的字。
+  ///
+  /// 失败 / 停止**替换掉用时**（DSH 的 `TurnProcessNodeView.tsx:24-30` 同一条），
+  /// 因为"这一轮没跑完"比"跑了多久"重要。
+  String get timeLabel {
+    if (failed) return '失败';
+    if (stopped) return '已停止';
+    if (elapsedMs == null) return '用时未加载';
+    return formatElapsedMs(elapsedMs!);
+  }
+
+  /// 计数那一行：`12 条消息 · 8 次工具 · 1 个子智能体`。
+  ///
+  /// **各项为 0 不列**（与 `TurnProcessItem.stats` 同一条）：一个刚起就被取消的
+  /// 轮次不该摆一串 0。全为 0 时返回空串，行里就不画这一行。
+  String get countsLabel {
+    final parts = <String>[
+      if (messageCount > 0) '$messageCount 条消息',
+      if (toolCallCount > 0) '$toolCallCount 次工具',
+      if (subagentCount > 0) '$subagentCount 个子智能体',
+    ];
+    return parts.join(' · ');
+  }
+
+  /// 迷你条的颜色：正常 = 助手紫、失败 = 红、停止 = 琥珀。
+  Color barColor(DshColorTokens c) {
+    if (failed) return c.error;
+    if (stopped) return c.roleTool;
+    return c.roleAssistant;
+  }
 }
 
-/// 甘特里的一段。
-class GanttSpan {
-  const GanttSpan({
-    required this.startPercent,
-    required this.widthPercent,
-    this.opacity = 1,
-  });
-
-  /// 起点（0~100，相对整条时间轴）。
-  final double startPercent;
-
-  /// 宽度（0~100）。
-  final double widthPercent;
-
-  /// 透明度（`<1` 表示"这一段是等待/空隙"）。
-  final double opacity;
+/// 把 `turnOutline` 与本会话的条目合成轨迹页的行。
+///
+/// **join 键是轮次号**：`TurnProcessItem.turn` 与 `TurnOutlineEntry.turn`
+/// 是同一个 DSH 的轮次号（两边都来自 `turn/start` 的 payload）。
+///
+/// 迷你条的分母是"已加载轮里的最长用时" —— 用会话总时长当分母的话，
+/// 一个 3 秒的轮在 8 分钟的会话里会短到看不见，而"这一轮相对其他轮慢不慢"
+/// 正是这条要回答的问题。
+List<TraceTurn> buildTraceTurns({
+  required List<TurnOutlineEntry> outline,
+  required List<ChatItem> items,
+}) {
+  final processes = <int, TurnProcessItem>{};
+  for (final item in items) {
+    if (item is TurnProcessItem) processes[item.turn] = item;
+  }
+  var longest = 0;
+  for (final process in processes.values) {
+    if (process.elapsedMs > longest) longest = process.elapsedMs;
+  }
+  final out = <TraceTurn>[];
+  for (final entry in outline) {
+    final process = processes[entry.turn];
+    final elapsed = process?.elapsedMs;
+    out.add(
+      TraceTurn(
+        turn: entry.turn,
+        prompt: entry.prompt,
+        response: entry.response,
+        elapsedMs: elapsed,
+        messageCount: process?.messageCount ?? 0,
+        toolCallCount: process?.toolCallCount ?? 0,
+        subagentCount: process?.subagentCount ?? 0,
+        failed: process?.failed ?? false,
+        stopped: process?.stopped ?? false,
+        // 没有可信用时就不画条：0 长度的空轨等于说"这一轮没花时间"。
+        barFraction: (elapsed == null || elapsed <= 0 || longest <= 0)
+            ? null
+            // 最短 2%：1px 的条看不出"有数据"。
+            : (elapsed / longest).clamp(0.02, 1.0),
+      ),
+    );
+  }
+  return out;
 }
 
-/// 甘特的一行。
-class GanttRow {
-  const GanttRow({
-    required this.label,
-    required this.color,
-    required this.spans,
-  });
-
-  /// `输入` / `模型` / `工具` / `错误`。
-  final String label;
-  final Color color;
-  final List<GanttSpan> spans;
+/// 顶部汇总：`共 12 轮 · 已知用时 8 分 12 秒（3 轮未加载）`。
+///
+/// 有未加载的轮时**必须带括号说明有几轮** —— 否则"已知用时"会被读成
+/// 全会话总时长，而那不是这个数。
+String traceSummaryLabel(List<TraceTurn> turns) {
+  if (turns.isEmpty) return '';
+  final loaded = turns.where((t) => t.elapsedMs != null).toList();
+  final total = loaded.fold<int>(0, (sum, t) => sum + (t.elapsedMs ?? 0));
+  final missing = turns.length - loaded.length;
+  final head = '共 ${turns.length} 轮';
+  if (loaded.isEmpty) return '$head · 用时未加载';
+  if (missing == 0) return '$head · 用时 ${formatElapsedMs(total)}';
+  return '$head · 已知用时 ${formatElapsedMs(total)}（$missing 轮未加载）';
 }
 
 /// 轨迹页。
 ///
-/// **没有示例数据兜底**：`rows` / `entries` 为 null 时显示空态，不造一份假的。
-/// 2026-10-15 之前这里是 `_sampleRows` / `_sampleEntries` 兜底，而调用方
-/// （`chat_page.dart` 的 `_TrajectoryTab`）从不传真数据 —— 于是轨迹页
-/// **常驻假数据**，用户无法分辨。真数据通路是 `turnOutline` 投影
-/// （`session.projections`，契约 §5.7）。
-class TrajectoryTab extends StatelessWidget {
-  const TrajectoryTab({super.key, this.rows, this.entries, this.onTapEntry});
+/// ## 为什么是 `StatefulWidget`
+///
+/// 只有一件事要状态：**首次布局后滚到末尾**（"打开就落在最新一轮"）。
+/// 用 `reverse: true` 也能锚在底部，但那一招在**行数少**时会把内容顶到屏幕
+/// 下半截、上面留一大片空白（真机 2026-10-22 截图上是一屏半的空洞）。
+/// 所以顺序照旧（轮次升序），只在内容溢出时滚到底 —— 与 DSH Web 的
+/// "打开时定位于当前尾部"同一条。
+class TrajectoryTab extends StatefulWidget {
+  const TrajectoryTab({super.key, this.turns, this.onTapTurn});
 
-  /// 甘特的行；`null` / 空 = 空态（不造假的）。
-  final List<GanttRow>? rows;
+  /// 轮次行；`null` / 空 = 空态（不造假的）。
+  final List<TraceTurn>? turns;
 
-  /// 账本条目的行；`null` / 空 = 空态（不造假的）。
-  final List<TraceEntry>? entries;
+  /// 点一行的回调（弹 `sheet-traj`）。
+  final void Function(TraceTurn turn)? onTapTurn;
 
-  final void Function(TraceEntry entry)? onTapEntry;
+  @override
+  State<TrajectoryTab> createState() => _TrajectoryTabState();
+}
+
+class _TrajectoryTabState extends State<TrajectoryTab> {
+  final ScrollController _scroll = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    // 数据是同步给的（来自投影），所以首帧之后就能算出该滚到哪。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToTail());
+  }
+
+  @override
+  void didUpdateWidget(covariant TrajectoryTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 行数变了（新的一轮来了）再锚一次：用户正往上翻时不打断 ——
+    // 判据是"是否已经在末尾附近"。
+    if ((oldWidget.turns?.length ?? 0) != (widget.turns?.length ?? 0)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToTail());
+    }
+  }
+
+  void _jumpToTail() {
+    if (!mounted || !_scroll.hasClients) return;
+    final max = _scroll.position.maxScrollExtent;
+    if (max <= 0) return;
+    // 已经贴着末尾（或用户自己滚到了末尾）就不动。
+    if ((_scroll.offset - max).abs() < 8) return;
+    _scroll.jumpTo(max);
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
-    final ganttRows = rows ?? const [];
-    final traceEntries = entries ?? const [];
-    if (ganttRows.isEmpty && traceEntries.isEmpty) {
-      return const _EmptyTrajectory();
-    }
+    final rows = widget.turns ?? const [];
+    final onTapTurn = widget.onTapTurn;
+    if (rows.isEmpty) return const _EmptyTrajectory();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // **这里原来有一行假入口**（「时长 / 轮次 / 调用」三个 chip + 搜索钮，
-        // 全部 `onPressed: () {}` / 没有 `onTap`）：长得像切换器，点了什么都不发生。
-        // 2026-10-22 用户当场问「时间轴，轮次，调用都没有啊」—— 根因就是它们。
-        // 原型里**根本没有这一行**（`mock/proto` 里没有 `tj-tools`），
-        // 所以按第八条教训（"承诺了但没做"比没有更糟）直接删掉，
-        // 等三个视图各自有真数据源再加回来。见
-        // `.agents/notes/proposed/2026-10-22-trajectory-page-parity-and-mobile-fit.md` P0-1。
-        // ---- 甘特条（固定 640px 宽，横滑）----
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
-          child: SizedBox(
-            // `.gantt-in { width:640px }` —— 固定宽度是刻意的：
-            // 时间轴要有稳定刻度，跟着屏宽变会让两张截图没法对比。
-            width: 640,
-            child: Column(
-              children: [
-                for (final row in ganttRows) _GanttRowView(row: row),
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      '← 横滑查看完整时间轴 →',
-                      style: TextStyle(fontSize: 11, color: c.labelCaption),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+          child: Text(
+            traceSummaryLabel(rows),
+            style: TextStyle(fontSize: 11, color: c.labelCaption),
           ),
         ),
-        // ---- 账本 ----
         Expanded(
+          // 轮次升序（`turnOutline` 给的顺序），视口由 [_jumpToTail] 锚到末尾。
           child: ListView.builder(
+            controller: _scroll,
             padding: const EdgeInsets.only(bottom: 8),
-            itemCount: traceEntries.length,
-            itemBuilder: (context, index) => _LedgerRow(
-              entry: traceEntries[index],
-              onTap: onTapEntry == null
-                  ? null
-                  : () => onTapEntry!(traceEntries[index]),
-            ),
+            itemCount: rows.length,
+            itemBuilder: (context, index) {
+              final turn = rows[index];
+              return _TurnRow(
+                turn: turn,
+                onTap: onTapTurn == null ? null : () => onTapTurn(turn),
+              );
+            },
           ),
         ),
       ],
@@ -205,191 +269,143 @@ class TrajectoryTab extends StatelessWidget {
   }
 }
 
-/// 甘特的一行（`.grow`）。
-class _GanttRowView extends StatelessWidget {
-  const _GanttRowView({required this.row});
+/// 一轮一行。
+class _TurnRow extends StatelessWidget {
+  const _TurnRow({required this.turn, this.onTap});
 
-  final GanttRow row;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.dshColors;
-    return Padding(
-      // `.grow { gap:10px; margin:7px 0 }`
-      padding: const EdgeInsets.symmetric(vertical: 7),
-      child: Row(
-        children: [
-          // `.grow .lb { width:34px; font-size:11px }`
-          SizedBox(
-            width: 34,
-            child: Text(
-              row.label,
-              style: TextStyle(fontSize: 11, color: c.labelCaption),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final track = constraints.maxWidth;
-                return SizedBox(
-                  // `.gtrack { height:14px; border-radius:7px }`
-                  height: 14,
-                  child: Stack(
-                    children: [
-                      // 轨道底。
-                      Container(
-                        decoration: BoxDecoration(
-                          color: c.layer1,
-                          borderRadius: BorderRadius.circular(7),
-                        ),
-                      ),
-                      for (final span in row.spans)
-                        Positioned(
-                          left: track * span.startPercent / 100,
-                          width: track * span.widthPercent / 100,
-                          top: 0,
-                          height: 14,
-                          child: Opacity(
-                            opacity: span.opacity,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: row.color,
-                                borderRadius: BorderRadius.circular(7),
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 账本的一行（`.lg`）。
-class _LedgerRow extends StatelessWidget {
-  const _LedgerRow({required this.entry, this.onTap});
-
-  final TraceEntry entry;
+  final TraceTurn turn;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
+    final counts = turn.countsLabel;
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
         child: Container(
-          // `.lg { gap:10px; padding:10px 4px; border-bottom:1px solid l1 }`
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+          padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
           decoration: BoxDecoration(
             border: Border(bottom: BorderSide(color: c.layer1)),
           ),
-          child: IntrinsicHeight(
-            // **`IntrinsicHeight` 是必需的**：色条要"和这一行一样高"，
-            // 而 `CrossAxisAlignment.stretch` 在 `ListView` 里拿到的是
-            // **无限高**约束 —— 实测报 `BoxConstraints forces an infinite
-            // height`（渲染断言，整页不显示）。
-            // `IntrinsicHeight` 先量出这一行的自然高度，再让色条撑满它。
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // 色条：**这一行是什么**不需要读文字就能看出来。
-                Container(
-                  width: 3,
-                  decoration: BoxDecoration(
-                    color: entry.kind.colorOf(c),
-                    borderRadius: BorderRadius.circular(2),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    '第 ${turn.turn} 轮',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: c.labelPrimary,
+                    ),
+                  ),
+                  const Spacer(),
+                  // 用时靠右（与 DSH 的 turn-tail 同一位置感）。
+                  Text(
+                    turn.timeLabel,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      color: c.labelCaption,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  DshIcon('chevronRight', size: 16, color: c.labelTertiary),
+                ],
+              ),
+              if (turn.barFraction != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 7),
+                  child: _MiniBar(
+                    fraction: turn.barFraction!,
+                    color: turn.barColor(c),
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          DshIcon(
-                            entry.kind.icon,
-                            size: 13,
-                            color: entry.kind.colorOf(c),
-                          ),
-                          const SizedBox(width: 4),
-                          Flexible(
-                            child: Text(
-                              entry.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                                color: c.labelPrimary,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          // 耗时靠右（`.lg .tt { margin-left:auto }`）。
-                          Text(
-                            entry.took,
-                            style: TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 11,
-                              color: c.labelCaption,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 2),
-                      // 提问（轮次行才有）：比回复更弱一档 —— 它是"因"，
-                      // 回复是"果"，一屏里果比因重要。
-                      if (entry.prompt.isNotEmpty) ...[
-                        Text(
-                          entry.prompt,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            height: 17 / 12,
-                            color: c.labelCaption,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                      ],
-                      Text(
-                        entry.summary,
-                        // `.lg .r2 { -webkit-line-clamp:2 }` —— 最多两行。
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          height: 18 / 12.5,
-                          fontFamily: entry.mono ? 'monospace' : null,
-                          color: c.labelTertiary,
-                        ),
-                      ),
-                    ],
+              if (turn.prompt.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 7),
+                  child: Text(
+                    '提问：${turn.prompt}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: c.labelCaption),
                   ),
                 ),
-                const SizedBox(width: 8),
-                Align(
-                  alignment: Alignment.center,
-                  child: DshIcon(
-                    'chevronRight',
-                    size: 16,
-                    color: c.labelTertiary,
+              if (turn.response.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    '结果：${turn.response}',
+                    // 与原型 `.lg .r2 { line-clamp:2 }` 同一个上限。
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      height: 18 / 12.5,
+                      color: c.labelTertiary,
+                    ),
                   ),
                 ),
-              ],
-            ),
+              if (counts.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 5),
+                  child: Text(
+                    counts,
+                    style: TextStyle(fontSize: 11, color: c.labelCaption),
+                  ),
+                ),
+            ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 用时迷你条（4px 高）。
+///
+/// 用 `Row` + `Expanded(flex:)` 而不是 `LayoutBuilder`：比例是**整数 flex**，
+/// 于是"这条有多长"可以直接从 widget 树读出来断言（widget 测试不需要量像素）。
+class _MiniBar extends StatelessWidget {
+  const _MiniBar({required this.fraction, required this.color});
+
+  /// 0.02~1。
+  final double fraction;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    final filled = (fraction.clamp(0.0, 1.0) * 1000).round();
+    return SizedBox(
+      height: 4,
+      child: Row(
+        children: [
+          // `flex: 0` 的 `Expanded` 没有意义（也不该出现），所以两端都判一下。
+          if (filled > 0)
+            Expanded(
+              flex: filled,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+          if (filled < 1000)
+            Expanded(
+              flex: 1000 - filled,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: c.layer1,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -424,8 +440,8 @@ class _EmptyTrajectory extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              '电脑侧跑完一轮后，这里会显示这一轮的时间轴与每一步的耗时。\n'
-              '数据来自会话投影 turnOutline。',
+              '电脑侧跑完一轮后，这里会显示每一轮的提问、结果与用时。\n'
+              '数据来自会话投影 turnOutline 与这一轮的事件。',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 12, color: c.labelTertiary),
             ),

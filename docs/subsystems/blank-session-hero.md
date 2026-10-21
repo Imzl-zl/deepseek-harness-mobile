@@ -115,6 +115,21 @@ DSH 的 hero chip 走 `remote.agentPresets.select(sessionId, id)`
 
 取舍与被否方案见 `.agents/notes/implemented/2026-10-17-blank-session-hero.md`。
 
+### 4.1 不带 chip 直接新建时,`workspaceId` 从哪来
+
+抽屉/顶栏的「新建会话」不带任何 chip 选择,它按 **DSH 的 `startSession` 链**解析:
+`显式 → 当前会话所在工作区 → 最近工作区`(`ui-workspace/src/client/navigation.ts:320-334`;
+"最近"= 每个工作区里会话的最大 `updatedAt`,同文件 `:553-572`),解析不出来才不塞。
+判据在 `model/workspace.dart` 的 `newSessionWorkspaceId`。
+
+**为什么不能省**:宿主只在给了 `workspaceId` 时才 `workspace.attachSession`
+(`session-controller/src/commands.ts:116-148`),而抽屉分组只认 `workspace.list` 的
+`sessionIds` —— 不带它建的会话永远落在「未分组」。建完还要**重读一次 `workspace.list`**,
+否则新会话在下一次刷新前仍显示在「未分组」(2026-10-22 真机)。
+blank 复用也照 DSH 的 `createInWorkspace`(`navigation.ts:220-233`):只复用**该工作区里**
+且 `cwd == workspace.path` 的那一个。取舍见
+`.agents/notes/implemented/2026-10-22-new-session-lands-in-a-workspace.md`。
+
 ## 5. 什么时候落到这一屏
 
 没有选中会话时,取**第一个 blank 且非子智能体**的会话并打开它 ——

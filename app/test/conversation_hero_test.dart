@@ -527,7 +527,14 @@ void main() {
       await tester.tap(find.text('创造模式'));
       await tester.pumpAndSettle();
 
-      expect(client.paramsOf['session.create'], {'agentPreset': 'cordis'});
+      // **两枚 chip 的写路径都带 workspaceId**（2026-10-22）：不带它建的会话
+      // 不进任何工作区的账本（`session-controller/src/commands.ts:116-148`），
+      // 于是它在抽屉里永远落在「未分组」。解析链见
+      // `AppModel.defaultNewSessionWorkspaceId`（当前会话的工作区优先）。
+      expect(client.paramsOf['session.create'], {
+        'workspaceId': 'w1',
+        'agentPreset': 'cordis',
+      });
       expect(
         client.calls,
         isNot(contains('agentPresets.select')),

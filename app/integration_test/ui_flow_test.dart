@@ -67,6 +67,9 @@ class _FakeClient implements SyncClient {
   @override
   bool hasOlderHistory(String sid) => false;
   @override
+  Future<SessionEvent> refetch({required String sid, required int seq}) async =>
+      throw const ProtocolException(ErrorCode.relayOffline, '测试里不连');
+  @override
   Future<T> call<T>(
     String method,
     Map<String, Object?> params, {

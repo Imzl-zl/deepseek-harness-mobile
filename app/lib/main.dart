@@ -741,15 +741,20 @@ class _DshMobileAppState extends State<DshMobileApp>
     final app = _app;
     if (app == null) return;
     unawaited(() async {
-      // ① 先复用现有的 blank（**不新建**）。
-      final existing = await app.findBlankSession();
+      // 目标工作区照 DSH 的链（显式没有 → 当前会话工作区 → 最近工作区，
+      // 见 `AppModel.defaultNewSessionWorkspaceId`）：
+      // **不带 `workspaceId` 建的会话不会进任何工作区的账本**，于是它在抽屉里
+      // 永远落在「未分组」（2026-10-22 真机反馈）。
+      final workspaceId = app.defaultNewSessionWorkspaceId;
+      // ① 先复用**这个工作区里**现有的 blank（**不新建**）。
+      final existing = await app.findBlankSession(workspaceId: workspaceId);
       if (existing != null) {
         await app.openSession(existing);
         return;
       }
       // ② 没有才建。建失败照实说，不吞。
       try {
-        await app.createSession();
+        await app.createSession(workspaceId: workspaceId);
       } catch (error) {
         _notYet('新建会话（$error）');
       }

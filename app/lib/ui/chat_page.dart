@@ -701,7 +701,7 @@ class ChatPageState extends State<ChatPage> {
                     // 已配对时给空态一条"重新配对"的出路（议题 3，1 步直达）。
                     onRePair: widget.paired ? widget.onRePair : null,
                   )
-                : _TrajectoryTab(app: widget.app, onTapEntry: _showTraceSheet),
+                : _TrajectoryTab(app: widget.app, onTapTurn: _showTraceSheet),
           ),
           // ---- 底部：接管卡 + 输入栏 + 统计条 ----
           Container(
@@ -1405,24 +1405,46 @@ class ChatPageState extends State<ChatPage> {
     );
   }
 
-  /// `sheet-traj`：点账本条目弹的详情。
+  /// `sheet-traj`：点轮次行弹的详情。
   ///
-  /// **点得动是刻意的**：账本给"形状"（时间花在哪），
-  /// 而这个 sheet 给"这一条到底是什么" —— 只有账本会让人问"那 84 毫秒干了啥"。
-  void _showTraceSheet(TraceEntry entry) => unawaited(
+  /// **长文本走纵向块**（`DshKeyValue.multiline`）：`提问` / `结果` 的值可能是一整句
+  /// 英文，放进 KV 的一行形态会撑破屏幕 —— 2026-10-22 真机就是
+  /// `RIGHT OVERFLOWED BY 474 PIXELS`，「结果」两个字被挤成竖排
+  /// （根因：`DshKeyValue` 的值是无约束 `Text`，见 `dsh_sheet.dart` 的类文档）。
+  /// 短字段（用时 / 计数）仍走一行形态，读起来更省高度。
+  ///
+  /// **只有「关闭」一个动作**：原来那个「查看完整调用」是 `onPressed: pop()`，
+  /// 点了只是关掉面板 —— 又一个假入口，按第八条教训删掉。
+  void _showTraceSheet(TraceTurn turn) => unawaited(
     showDshSheet<void>(
       context: context,
-      title: '轨迹条目',
+      title: '第 ${turn.turn} 轮',
       body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          DshKeyValue(label: '角色', value: entry.name),
-          DshKeyValue(label: '耗时', value: entry.took),
-          DshKeyValue(label: '结果', value: entry.summary),
+          DshKeyValue(label: '用时', value: turn.timeLabel),
+          if (turn.countsLabel.isNotEmpty)
+            DshKeyValue(label: '计数', value: turn.countsLabel),
+          if (turn.prompt.isNotEmpty)
+            DshKeyValue(label: '提问', value: turn.prompt, multiline: true),
+          if (turn.response.isNotEmpty)
+            DshKeyValue(label: '结果', value: turn.response, multiline: true),
+          if (turn.prompt.isEmpty && turn.response.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '电脑侧还没给这一轮的预览（刚起，或没有文本输出）。',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: context.dshColors.labelTertiary,
+                ),
+              ),
+            ),
         ],
       ),
       actions: [
         DshSheetAction(
-          label: '查看完整调用',
+          label: '关闭',
           filled: true,
           onPressed: () => Navigator.of(context).pop(),
         ),
@@ -3319,9 +3341,9 @@ class _EmptyFilePane extends StatelessWidget {
 
 /// 轨迹页签。
 ///
-/// 实现已搬到 `ui/trajectory_page.dart`（甘特条 + 账本列表）——
-/// 它有 300 行，留在本文件里会让"聊天页"这个文件同时装两个页面的规格。
-/// 这里只留接线：**把 `turnOutline` 投影喂成账本**，点条目弹 `sheet-traj`。
+/// 实现已搬到 `ui/trajectory_page.dart`（轮次行 + 用时迷你条）——
+/// 它有自己的行规格，留在本文件里会让"聊天页"这个文件同时装两个页面的规格。
+/// 这里只留接线：**把 `turnOutline` 与本会话的条目 join 成轮次行**，点一行弹 `sheet-traj`。
 ///
 /// ## 为什么之前轨迹页常驻空态
 ///
@@ -3330,29 +3352,20 @@ class _EmptyFilePane extends StatelessWidget {
 /// 契约里 `turnOutline` 投影一直都在（`session.projections`，§5.7），
 /// 手机也早就解析了别的投影，只是从没把它接进来。
 class _TrajectoryTab extends StatelessWidget {
-  const _TrajectoryTab({required this.app, required this.onTapEntry});
+  const _TrajectoryTab({required this.app, required this.onTapTurn});
 
   final AppModel app;
-  final void Function(TraceEntry entry) onTapEntry;
+  final void Function(TraceTurn turn) onTapTurn;
 
   @override
   Widget build(BuildContext context) {
     // **一轮一行**：`turnOutline` 的 wire view 是 `[{turn, seq, prompt, response}]`
-    // （DSH `session-turn-outline/src/projection.ts:61-75`）。
+    // （DSH `session-turn-outline/src/projection.ts:61-75`），用时与计数从本会话的
+    // `TurnProcessItem` join 进来（join 规则只有一处：`buildTraceTurns`）。
     // 空表时 `TrajectoryTab` 自己显示空态，不在这里兜假数据。
-    final entries = [
-      for (final turn in app.turnOutline)
-        TraceEntry(
-          kind: TraceKind.assistant,
-          name: '第 ${turn.turn} 轮',
-          // `turnOutline` 不带耗时（只有 turn/seq/prompt/response）——
-          // 空着比编一个数字诚实。
-          took: '',
-          prompt: turn.promptLabel,
-          summary: turn.responseLabel,
-          mono: false,
-        ),
-    ];
-    return TrajectoryTab(entries: entries, onTapEntry: onTapEntry);
+    return TrajectoryTab(
+      turns: buildTraceTurns(outline: app.turnOutline, items: app.items),
+      onTapTurn: onTapTurn,
+    );
   }
 }

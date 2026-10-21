@@ -133,12 +133,24 @@ class _SheetFrame extends StatelessWidget {
 }
 
 /// 一行"标签 · 值"（`.kv`）—— 三种统计 sheet 共用。
+///
+/// ## [multiline]：长文本必须换行（2026-10-22 真机溢出的根因）
+///
+/// 默认形态是 `Row(children: [Expanded(label), Text(value), unit?])` ——
+/// 值那个 [Text] **没有约束**，于是长英文（比如一句 120 字符的回复预览）
+/// 拿到自己的固有宽度，把 `Expanded` 的标签列压到 2 字宽（「结果」竖排），
+/// 整行再往右溢出（真机截图：`RIGHT OVERFLOWED BY 474 PIXELS`）。
+///
+/// 约束给不出来的东西就别放在一行里：[multiline] 为真时改成**纵向块**
+/// （标签一行、值下一行、按词换行）。默认 `false`，统计 / 用量那几张 sheet
+/// 的值都是短数字，形态不变。
 class DshKeyValue extends StatelessWidget {
   const DshKeyValue({
     super.key,
     required this.label,
     required this.value,
     this.unit,
+    this.multiline = false,
   });
 
   final String label;
@@ -147,10 +159,37 @@ class DshKeyValue extends StatelessWidget {
   /// 单位（`s` / `ms` / `tok/s`）—— 比数值小一号、弱一档。
   final String? unit;
 
+  /// 值太长、必须换行时用纵向块（见类文档）。**默认保持原来的一行形态**。
+  final bool multiline;
+
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
     final u = unit;
+    if (multiline) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TextStyle(fontSize: 13, color: c.labelSecondary),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.45,
+                fontWeight: FontWeight.w500,
+                color: c.labelPrimary,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 7),
       child: Row(

@@ -20,6 +20,7 @@ import 'package:dsh_mobile/core/connection.dart' as conn;
 import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
+import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/model/turn_outline.dart';
 import 'package:dsh_mobile/ui/trajectory_page.dart';
 import 'package:flutter/material.dart';
@@ -123,9 +124,7 @@ void main() {
   group('轨迹页', () {
     testWidgets('空表显示空态，不摆假行', (tester) async {
       await tester.pumpWidget(
-        const MaterialApp(
-          home: Scaffold(body: TrajectoryTab(onTapEntry: null)),
-        ),
+        const MaterialApp(home: Scaffold(body: TrajectoryTab(onTapTurn: null))),
       );
       await tester.pumpAndSettle();
       expect(find.textContaining('电脑侧跑完一轮后'), findsOneWidget);
@@ -136,24 +135,107 @@ void main() {
         const MaterialApp(
           home: Scaffold(
             body: TrajectoryTab(
-              entries: [
-                TraceEntry(
-                  kind: TraceKind.assistant,
-                  name: '第 1 轮',
-                  took: '',
-                  prompt: '帮我启动',
-                  summary: '已经在跑了',
-                ),
-              ],
-              onTapEntry: null,
+              turns: [TraceTurn(turn: 1, prompt: '帮我启动', response: '已经在跑了')],
+              onTapTurn: null,
             ),
           ),
         ),
       );
       await tester.pumpAndSettle();
       expect(find.text('第 1 轮'), findsOneWidget);
-      expect(find.text('帮我启动'), findsOneWidget);
-      expect(find.text('已经在跑了'), findsOneWidget);
+      expect(find.text('提问：帮我启动'), findsOneWidget);
+      expect(find.text('结果：已经在跑了'), findsOneWidget);
+    });
+  });
+
+  group('buildTraceTurns：turnOutline × 本轮条目', () {
+    test('用时与计数按轮次号 join 到对应那一行', () {
+      final turns = buildTraceTurns(
+        outline: const [
+          TurnOutlineEntry(turn: 1, seq: 6, prompt: 'a', response: 'b'),
+          TurnOutlineEntry(turn: 2, seq: 20, prompt: 'c', response: 'd'),
+        ],
+        items: const [
+          TurnProcessItem(
+            itemId: 'p:1',
+            seq: 8,
+            updatedAt: 100,
+            turn: 1,
+            elapsedMs: 90000,
+            messageCount: 3,
+            toolCallCount: 2,
+          ),
+        ],
+      );
+      expect(turns.length, 2);
+      expect(turns[0].elapsedMs, 90000);
+      expect(turns[0].timeLabel, '1 分 30 秒');
+      expect(turns[0].countsLabel, '3 条消息 · 2 次工具');
+      expect(turns[0].barFraction, 1.0, reason: '只有一轮有用时，它就是最长的那一轮');
+      // 第 2 轮没有 `TurnProcessItem`（窗口外）：如实说未加载、不画条。
+      expect(turns[1].elapsedMs, isNull);
+      expect(turns[1].timeLabel, '用时未加载');
+      expect(turns[1].barFraction, isNull, reason: '0 长度的空轨等于说"没花时间"');
+    });
+
+    test('迷你条按"最长一轮"归一：30s / 120s = 0.25', () {
+      final turns = buildTraceTurns(
+        outline: const [
+          TurnOutlineEntry(turn: 1, seq: 1, prompt: '', response: ''),
+          TurnOutlineEntry(turn: 2, seq: 9, prompt: '', response: ''),
+        ],
+        items: const [
+          TurnProcessItem(
+            itemId: 'p:1',
+            seq: 2,
+            updatedAt: 1,
+            turn: 1,
+            elapsedMs: 30000,
+          ),
+          TurnProcessItem(
+            itemId: 'p:2',
+            seq: 10,
+            updatedAt: 2,
+            turn: 2,
+            elapsedMs: 120000,
+          ),
+        ],
+      );
+      expect(turns[0].barFraction, 0.25);
+      expect(turns[1].barFraction, 1.0);
+    });
+
+    test('失败 / 停止替换掉用时的**文字**，条仍按真实用时画', () {
+      final turns = buildTraceTurns(
+        outline: const [
+          TurnOutlineEntry(turn: 1, seq: 1, prompt: '', response: ''),
+          TurnOutlineEntry(turn: 2, seq: 9, prompt: '', response: ''),
+        ],
+        items: const [
+          TurnProcessItem(
+            itemId: 'p:1',
+            seq: 2,
+            updatedAt: 1,
+            turn: 1,
+            elapsedMs: 5000,
+            failed: true,
+          ),
+          TurnProcessItem(
+            itemId: 'p:2',
+            seq: 10,
+            updatedAt: 2,
+            turn: 2,
+            elapsedMs: 5000,
+            stopped: true,
+          ),
+        ],
+      );
+      expect(turns[0].timeLabel, '失败');
+      expect(turns[1].timeLabel, '已停止');
+      // 用时本身是已知的（5 秒），所以条照画 —— 只是颜色区分（红 / 琥珀）。
+      // "失败"是结局，"多久"是另一件事，两件都该看得见。
+      expect(turns[0].barFraction, 1.0);
+      expect(turns[1].barFraction, 1.0);
     });
   });
 }

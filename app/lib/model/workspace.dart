@@ -104,6 +104,56 @@ WorkspaceGroup? workspaceGroupOf(String sid, List<WorkspaceGroup> groups) {
   return null;
 }
 
+/// 新建会话该落在哪个工作区（`null` = 这台电脑一个工作区都没有）。
+///
+/// ## 链逐条照 DSH 的 `startSession`
+///
+/// `packages/client/ui-workspace/src/client/navigation.ts:320-334`：
+/// `显式给的 ?? 当前会话所在工作区 ?? 最近工作区`。
+/// "最近"是 `recentWorkspace`（同文件 `:553-572`）：每个工作区里**会话的最大
+/// `updatedAt`**，取最大的那个；并列时按宿主给的行序（先出现的赢）。
+///
+/// **为什么必须有这一条**：`session.create` 不带 `workspaceId` 时，宿主只按
+/// `defaultCwd` 建会话、**不把它记进任何工作区的账本**
+/// （`packages/api/session-controller/src/commands.ts:116-148`：只有给了
+/// `workspaceId` 才 `workspace.attachSession`）。而手机侧的会话行没有
+/// `workspaceId`，分组只能读 `workspace.list` 的 `sessionIds` ——
+/// 于是不带 `workspaceId` 建的会话在抽屉里**永远落在「未分组」**。
+///
+/// ## 与 DSH 的一处偏离
+///
+/// DSH 对**没有任何会话**的工作区用 `Date.parse(workspace.createdAt)` 当它的
+/// "最近时刻"（`:565`），而我们的 `workspace.list` 行只转四个字段、没有
+/// `createdAt`（`connector/src/dsh/workspaces.ts:187-192`）。所以这里把
+/// "没有会话"记成 `-1`：**有会话的工作区永远比空工作区更近**，
+/// 只有全都空着时才按行序取第一个。取舍见
+/// `.agents/notes/implemented/2026-10-22-new-session-lands-in-a-workspace.md`。
+String? newSessionWorkspaceId({
+  String? explicit,
+  String? currentWorkspaceId,
+  required List<WorkspaceGroup> groups,
+  required int Function(String sid) updatedAtOf,
+}) {
+  if (explicit != null && explicit.isNotEmpty) return explicit;
+  if (currentWorkspaceId != null && currentWorkspaceId.isNotEmpty) {
+    return currentWorkspaceId;
+  }
+  String? best;
+  var bestAt = -1;
+  for (final group in groups) {
+    var latest = -1;
+    for (final sid in group.sessionIds) {
+      final at = updatedAtOf(sid);
+      if (at > latest) latest = at;
+    }
+    if (best == null || latest > bestAt) {
+      best = group.workspaceId;
+      bestAt = latest;
+    }
+  }
+  return best;
+}
+
 /// 一个会话在列表里**可不可见**。
 ///
 /// **规则逐条照 DSH Web 的 `sessionVisible`**

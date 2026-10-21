@@ -458,6 +458,130 @@ void main() {
     });
   });
 
+  /// **翻页里的 `refetch` 标记**（契约 §5.3：单个条目 >1 MiB 不推内容、推标记）。
+  ///
+  /// 2026-10-22 的缺口：`page()` 只留 `{kind:'record'}` 的项，`refetch` 标记
+  /// **被直接跳过** ⇒ >1 MiB 的条目（图片内联在 `assistant/message` 里）
+  /// 在会话里静默缺失（不报错、不缺页，就是少一条）。
+  group('翻页里的 refetch 标记：补取而不是跳过', () {
+    /// 应答**最后一帧 `req`**（真封箱；`fc` 每帧加一，重放守卫才不拦）。
+    ///
+    /// [envelope] 是 `res` 的**明文信封**：成功是 `{ok:true, result:…}` 里的
+    /// `result` 那半边（这里统一写成 `{'result': …}`），失败是 `{code, message}`。
+    Future<void> answerLastReq(
+      FakeTransport transport,
+      Map<String, Object?> envelope, {
+      required int fc,
+      bool ok = true,
+    }) async {
+      final frame = <String, Object?>{
+        'v': 1,
+        't': 'res',
+        'id': lastReqId(transport),
+        'ok': ok,
+        'fc': fc,
+      };
+      final box = await BoxCodec(
+        keys: await sessionKeysFor(transport),
+        role: HandshakeRole.responder,
+      ).sealFrame(frame, jsonEncode(envelope));
+      transport.feed('${jsonEncode({...frame, 'box': box})}\n');
+      await pump();
+    }
+
+    test('标记 → 调 session.refetch → 那一条出现在这一页里', () async {
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+      await pump();
+
+      final pageFuture = client.page(sid: 's1', beforeSeq: 10);
+      await pump();
+      // 电脑侧：这一页只有一条，但它 2 MiB ⇒ 只推标记。
+      await answerLastReq(f.transport, {
+        'result': {
+          'items': [
+            {'kind': 'refetch', 'seq': 4, 'bytes': 2 * 1024 * 1024},
+          ],
+          'hasMore': true,
+        },
+      }, fc: 100);
+
+      // 手机侧应当为它单独发一次补取。
+      final probe = client as SyncClientProbe;
+      final refetches = probe.sentRequests
+          .where((envelope) => envelope['method'] == 'session.refetch')
+          .toList();
+      expect(refetches.length, 1, reason: '标记必须换一次补取，不许跳过');
+      expect(refetches.single['params'], {'sid': 's1', 'seq': 4});
+
+      // 补取回一条**真事件**（形状同 `session.page` 的 record.event）。
+      await answerLastReq(f.transport, {
+        'result': {
+          'record': {
+            'type': 'event',
+            'event': {
+              'type': 'user/message',
+              'seq': 4,
+              'time': 44,
+              'data': {
+                'id': 'big-1',
+                'role': 'user',
+                'source': {'kind': 'user'},
+                'content': '一条超过 1 MiB 的消息',
+              },
+            },
+          },
+        },
+      }, fc: 101);
+
+      final page = await pageFuture;
+      expect(page.failure, isNull);
+      expect(page.events.map((e) => e.seq).toList(), [4]);
+      expect(page.events.single.type, 'user/message');
+      expect(page.events.single.time, 44);
+      // 事件按 seq 归位：补取的那条插在它该在的位置上。
+      expect(page.events.single.itemId, isNotEmpty);
+      expect(page.hasMore, isTrue);
+
+      await client.close();
+    });
+
+    test('补取失败：这一页如实失败，不吞成"少一条"', () async {
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+      await pump();
+
+      final pageFuture = client.page(sid: 's1', beforeSeq: 10);
+      await pump();
+      await answerLastReq(f.transport, {
+        'result': {
+          'items': [
+            {'kind': 'refetch', 'seq': 7, 'bytes': 3 * 1024 * 1024},
+          ],
+          'hasMore': false,
+        },
+      }, fc: 100);
+      // 补取被电脑侧拒（真日志里这就是 `session/not-found`）。
+      await answerLastReq(
+        f.transport,
+        {'code': 'session/not-found', 'message': '取不到条目 seq=7'},
+        fc: 101,
+        ok: false,
+      );
+
+      final page = await pageFuture;
+      expect(page.failure, 'session/not-found', reason: '失败要如实报，不当成没有更多');
+      expect(page.events, isEmpty, reason: '不落半页：宁可整页失败也不留一个静默的洞');
+      expect(page.hasMore, isFalse, reason: '水位没前进，保留电脑侧这一页的结论');
+
+      await client.close();
+    });
+  });
+
   group('连接与握手（契约 §2.2、§4.1）', () {
     test('start → connecting → handshake，并发出 hello', () async {
       final f = buildDeps();

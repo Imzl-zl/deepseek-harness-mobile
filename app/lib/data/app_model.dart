@@ -1656,10 +1656,34 @@ class AppModel extends ChangeNotifier {
   /// 先复用现有的 blank，没有才建。而我们原先的「新建会话」直接
   /// `session.create`，**每点一次就在电脑侧多一个会话**（用户反悔不發消息
   /// 也留着，抽屉里慢慢堆满空会话）。
-  Future<String?> findBlankSession() async {
+  ///
+  /// ## [workspaceId]：只复用这个工作区里的 blank
+  ///
+  /// 判据照 DSH 的 `createInWorkspace`
+  /// （`ui-workspace/src/client/navigation.ts:220-233`）：
+  /// `blank && cwd == workspace.path && workspace.sessionIds.includes(id) && !archived`。
+  /// 不筛的话，手机会复用一个属于**别的工作区**的 blank，于是"新建会话"
+  /// 落进别的分组（或未分组）—— 与 `session.create` 不带 `workspaceId` 同一个症状。
+  Future<String?> findBlankSession({String? workspaceId}) async {
     if (_disposed || _isPreview) return null;
-    final blank = _sessions.where((s) => s.blank && !s.subagent).firstOrNull;
-    return blank?.sid;
+    WorkspaceGroup? group;
+    if (workspaceId != null) {
+      for (final g in _workspaces) {
+        if (g.workspaceId == workspaceId) group = g;
+      }
+      // 给了工作区但清单里没有它：**一个 blank 都不复用** —— 清单过期时宁可新建，
+      // 也不要把别组的 blank 拖进这一组（那正是"新会话落进别的分组"的成因）。
+      if (group == null) return null;
+    }
+    for (final s in _sessions) {
+      if (!s.blank || s.subagent) continue;
+      if (_archivedSids.contains(s.sid)) continue;
+      if (group == null) return s.sid;
+      if (!group.sessionIds.contains(s.sid)) continue;
+      if (s.cwd != group.path) continue;
+      return s.sid;
+    }
+    return null;
   }
 
   Future<void> _refreshAgentPresets() async {
@@ -1696,6 +1720,27 @@ class AppModel extends ChangeNotifier {
     if (sid == null) return null;
     return workspaceGroupOf(sid, _workspaces);
   }
+
+  /// 新建会话会落在哪个工作区（`null` = 这台电脑一个工作区都没有）。
+  ///
+  /// 链照 DSH 的 `startSession`：当前会话所在工作区 → 最近工作区
+  /// （`ui-workspace/src/client/navigation.ts:320-334`、`:553-572`），
+  /// 实现与偏离见 `model/workspace.dart` 的 `newSessionWorkspaceId`。
+  ///
+  /// **它决定会话进哪个分组**：`session.create` 不带 `workspaceId` 时宿主不把
+  /// 会话记进任何工作区的账本（`session-controller/src/commands.ts:116-148`），
+  /// 而分组只认账本（`workspace.list` 的 `sessionIds`）—— 那样的会话在抽屉里
+  /// 永远是「未分组」（2026-10-22 真机反馈）。
+  String? get defaultNewSessionWorkspaceId => newSessionWorkspaceId(
+    currentWorkspaceId: currentWorkspace?.workspaceId,
+    groups: _workspaces,
+    updatedAtOf: (sid) {
+      for (final s in _sessions) {
+        if (s.sid == sid) return s.updatedAt;
+      }
+      return -1;
+    },
+  );
 
   /// 当前会话是不是 blank（"从没被 agent 跑过"）。
   ///
@@ -2107,22 +2152,31 @@ class AppModel extends ChangeNotifier {
   /// 它走 `outbox`（带幂等键的写操作）：点了两次不会建出两个会话 ——
   /// 重发复用同一个 `requestId`，电脑侧去重。
   ///
-  /// [workspaceId] / [agentPreset] 是 hero 上那两枚 chip 的选择：
-  /// **不给就一个字段都不塞**（DSH 对缺省字段有自己的当前工作区与默认预设，
-  /// 见 `connector/src/handlers.ts` 的 `session.create`）——
-  /// 硬传一个猜的值比不传更糟。
+  /// [workspaceId] / [agentPreset] 是 hero 上那两枚 chip 的选择。
+  ///
+  /// **不给 `workspaceId` 时按 DSH 的链解析**（显式 → 当前会话工作区 →
+  /// 最近工作区，见 [defaultNewSessionWorkspaceId]）：不带 `workspaceId` 建的
+  /// 会话不会进任何工作区的账本（`session-controller/src/commands.ts:116-148`），
+  /// 而分组只认账本 —— 那样的会话在抽屉里**永远是「未分组」**。
+  /// 解析不出来（这台电脑一个工作区都没有）时才真的不塞：那时"未分组"是事实。
+  ///
+  /// Note: 链的来源、被否方案（`cwd` / 本地塞组 / 默认工作区）与代价 ——
+  /// 见 `.agents/notes/implemented/2026-10-22-new-session-lands-in-a-workspace.md`。
+  ///
+  /// [agentPreset] 仍然是"不给就不塞"（DSH 有默认预设）。
   ///
   /// 选预设走这里而不是 `agentPresets.select`：后者对**跑过一轮**的会话会拒
   /// （`agent-preset/locked`，`agent-preset-registry/src/index.ts:351`），
   /// 而建会话时带上根本不会碰到那条限制。取舍见
   /// `.agents/notes/implemented/2026-10-17-blank-session-hero.md`。
   Future<void> createSession({String? workspaceId, String? agentPreset}) async {
+    final targetWorkspaceId = workspaceId ?? defaultNewSessionWorkspaceId;
     final result = await client.call<Object?>('session.create', {
       // 显式 `if` 而不是 null-aware element（`?key: value`）：后者的 key
       // 取的是**值的字符串形式**而不是标识符（2026-10-15 踩到，
       // 详见 `selectModel` 的注释）。`dart analyze` 会反过来建议改过去，别听。
       // ignore: use_null_aware_elements
-      if (workspaceId != null) 'workspaceId': workspaceId,
+      if (targetWorkspaceId != null) 'workspaceId': targetWorkspaceId,
       // ignore: use_null_aware_elements
       if (agentPreset != null) 'agentPreset': agentPreset,
     }, requestId: 'new-${DateTime.now().microsecondsSinceEpoch}');
@@ -2139,6 +2193,11 @@ class AppModel extends ChangeNotifier {
     ];
     if (!_disposed) notifyListeners();
     await openSession(sid);
+    // **建完立刻重读工作区清单**：分组只认 `workspace.list` 的 `sessionIds`
+    // （`workspaceGroupOf`），而刚建出来的会话还没进那份快照 ——
+    // 不重读的话抽屉会把它摆在「未分组」，直到下一次刷新（实测：杀 App 重开才对）。
+    // 失败只留声（`refreshWorkspaces` 自己兜），不影响"会话已经建好"这个事实。
+    await refreshWorkspaces();
   }
 
   /// 打开一个会话：订阅它，并把条目喂给 store。

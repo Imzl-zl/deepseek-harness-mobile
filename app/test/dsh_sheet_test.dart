@@ -313,4 +313,47 @@ void main() {
       expect(applied, isEmpty, reason: '勾选态不该跨次残留');
     });
   });
+
+  group('DshKeyValue.multiline（长文本不溢出）', () {
+    /// 390dp 宽（411dp 真机上减去内边距那一档）。
+    void narrow(WidgetTester tester) {
+      tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+    }
+
+    testWidgets('一整句长英文：不溢出，标签横排、正文换行', (tester) async {
+      // 2026-10-22 真机：轨迹条目 sheet 里「结果」的值是一整句英文，
+      // 一行形态下 value 是**无约束 Text** ⇒ 拿到固有宽度、把标签列压到 2 字宽，
+      // 整行右侧溢出（`RIGHT OVERFLOWED BY 474 PIXELS`，「结果」竖排）。
+      narrow(tester);
+      const long =
+          'I have written it into docs/ and added three assertions to the '
+          'regression suite so the next session cannot silently drop it again.';
+      await tester.pumpWidget(
+        _wrap(const DshKeyValue(label: '结果', value: long, multiline: true)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull, reason: '溢出会以 FlutterError 抛出');
+      final label = tester.getRect(find.text('结果'));
+      final value = tester.getRect(find.text(long));
+      expect(value.top, greaterThanOrEqualTo(label.bottom), reason: '值在标签下一行');
+      expect(value.height, greaterThan(label.height), reason: '正文按词换行成了多行');
+      expect(label.width, greaterThan(20), reason: '标签横排（竖排时只有两个字宽）');
+    });
+
+    testWidgets('默认仍是一行（统计 / 用量 sheet 的值是短数字）', (tester) async {
+      narrow(tester);
+      await tester.pumpWidget(
+        _wrap(const DshKeyValue(label: '模型用时', value: '12.4', unit: 's')),
+      );
+      await tester.pumpAndSettle();
+
+      final label = tester.getRect(find.text('模型用时'));
+      final value = tester.getRect(find.text('12.4'));
+      expect(value.top, closeTo(label.top, 4), reason: '默认形态：标签与值同一行');
+      expect(value.right, greaterThan(label.right), reason: '值在右侧');
+    });
+  });
 }

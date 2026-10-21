@@ -54,6 +54,13 @@ abstract class FakeSyncClient implements SyncClient {
   @override
   bool hasOlderHistory(String sid) => false;
 
+  /// **默认炸**（而不是回一条空事件）：`refetch` 没有"退化的成功"，
+  /// 编一条事件会让"大条目出现了"这个断言在假数据上变绿。
+  /// 关心它的用例在自己的替身里覆盖（`sync_client_impl_page_test.dart`）。
+  @override
+  Future<SessionEvent> refetch({required String sid, required int seq}) async =>
+      throw UnimplementedError('测试替身没有声明 refetch');
+
   // ---- 其余成员：默认"这个用例不该调我" ----
 
   @override
