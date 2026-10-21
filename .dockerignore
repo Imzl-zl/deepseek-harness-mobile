@@ -1,0 +1,12 @@
+# 中转镜像的构建上下文是**仓库根**（见 relay/Dockerfile 的说明：
+# relay/src 复用 `../../protocol/relay-control.mjs`，所以层级要一致）。
+# 于是这份文件在根上，把与镜像无关的东西挡在上下文之外。
+.git
+**/node_modules
+connector/lib
+mock/proto/shots
+setup-collaboration-files.backup
+*.log
+*.boot.log
+# 运行期配置是这台机器的凭据表（令牌摘要），绝不进镜像。
+relay/relay.config.json

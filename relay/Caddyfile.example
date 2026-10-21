@@ -1,0 +1,15 @@
+# 公网 TLS 终结（与 docker-compose.yml 里被注释掉的 `caddy` 服务配套）。
+#
+# 把 `relay.example.com` 换成你的域名，A 记录指到这台服务器，然后：
+#   cp Caddyfile.example Caddyfile
+#   docker compose up -d caddy
+#
+# Caddy 会自动签证书并处理 WebSocket 升级（中转的 `/ws/connector` 与
+# 设备侧的升级路由都走同一条反代，不需要额外配置）。
+#
+# 之后：
+#   - 连接器的 `relayUrl` 写 `wss://relay.example.com/ws/connector`
+#   - 手机配对载荷里的 `relay` 就是这个域名（`relayHintFor` 对域名原样返回）
+relay.example.com {
+	reverse_proxy relay:8787
+}

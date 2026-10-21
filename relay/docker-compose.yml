@@ -1,0 +1,47 @@
+# 中转的容器编排（本机与服务器同一份）。
+#
+# 用法：
+#   cp relay.config.example.json relay.config.json   # 改成自己的令牌摘要
+#   docker compose up -d --build
+#   docker compose ps                                # 等 healthy
+#   docker compose logs -f relay
+#
+# ## 公网部署要 TLS（这一条不是可选项）
+#
+# 手机对**非私网**地址强制 `wss://`（`app/lib/core/endpoint.dart` 的
+# `isPrivateOrLoopback`），而中转自己**不终结 TLS**（设计见
+# `docs/subsystems/connector-and-relay.md`）。所以公网只有两条路：
+#   ① 打开下面那段 `caddy`（自动签证书，一条 A 记录就够）；
+#   ② 用现成的反代 / `tailscale serve` 把 TLS 终结掉，再指到本服务的 8787。
+services:
+  relay:
+    # **上下文是仓库根**：relay/src 复用 `../../protocol/relay-control.mjs`，
+    # 镜像里的相对层级必须与仓库一致（见 relay/Dockerfile 的说明）。
+    build:
+      context: ..
+      dockerfile: relay/Dockerfile
+    image: dsh-mobile-relay:local
+    restart: unless-stopped
+    ports:
+      # 只在本机暴露时改成 "127.0.0.1:8787:8787"（配合反代更安全）。
+      - "8787:8787"
+    volumes:
+      # **读写**挂载：`--issue-token` / `--revoke-token` 会改这份文件。
+      # 只读部署（令牌在别处签发）可以加 `:ro`。
+      - ./relay.config.json:/config/relay.config.json
+    environment:
+      # 必须与 relay.config.json 的 `port` 一致：镜像的健康检查按它连端口。
+      RELAY_PORT: "8787"
+
+  # ---- 公网 TLS（可选，二选一里的 ①）----
+  # caddy:
+  #   image: caddy:2-alpine
+  #   restart: unless-stopped
+  #   ports: ["80:80", "443:443"]
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy-data:/data
+  #   depends_on: [relay]
+#
+# volumes:
+#   caddy-data:

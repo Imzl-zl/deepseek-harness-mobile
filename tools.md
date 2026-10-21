@@ -8,6 +8,21 @@
 - 本仓库**没有 CI**;`mock/proto/`、`protocol/`、`app/tools/` 全是显式 `node` 脚本,不存在 `npm test` 这类约定命令。**例外:`connector/` 是 pnpm 工程**(见下),它的命令走 `pnpm exec` / `pnpm test`。
 - **`relay/` 也是工程,不需要构建**:`cd relay; pnpm install; node --test` 直接跑(**86 条**)。它靠 Node 的**类型剥离**(≥22.6,本机 24.13)运行,所以**导入写 `.ts` 结尾**——Node 不做 `.js` → `.ts` 映射(写 `.js` 报 `ERR_MODULE_NOT_FOUND`,实测)。**`ws` 是运行时依赖,必须先 `pnpm install`**(`tests/server.test.ts` 起真服务器,缺 `ws` 直接 `ERR_MODULE_NOT_FOUND`);类型检查 `cd relay; pnpm typecheck`。**别把 relay 的导入"顺手统一"成连接器那样的 `.js`**:连接器是插件(要产物,tsdown 打包),中转是独立服务(直接 `node src/main.ts` 起),两者运行时不同。
   - **令牌 CLI 只签连接器**:`--issue-token connector <id>` / `--revoke-token connector <id>`。设备令牌**不由中转签发**(电脑侧签、摘要经 `POST /devices` 进名册),所以 CLI 收到 `device` 明确退出 2;摘要表里残留 `device` 条目也**拒绝启动**。取舍见 `.agents/notes/implemented/2026-10-09-relay-never-issues-device-tokens.md`。
+  - **容器镜像(2026-10-21,`relay/Dockerfile`)**:构建上下文**必须是仓库根** ——
+    `relay/src/*.ts` 里有 `import '../../protocol/relay-control.mjs'`(`core.ts:7` 等四处),
+    中转发帧与配对候选复用仓库根那一份协议模块,镜像里的相对层级必须与仓库一致。
+    所以 `.dockerignore` 在**根**上(不在 `relay/` 下),`relay/docker-compose.yml` 的
+    `build.context` 写 `..`:
+    ```pwsh
+    cd <repo>
+    docker build -f relay/Dockerfile -t dsh-mobile-relay:local .
+    docker run -d --name relay-smoke -p 8788:8788 -e RELAY_PORT=8788 `
+      -v D:\tmp\relay-docker\relay.config.json:/config/relay.config.json:ro dsh-mobile-relay:local
+    ```
+    本机实测判据:`GET /` → **405**;`WS /ws/connector` 无令牌 / 错令牌 → **401**、对令牌 → 升级成功;
+    `docker inspect --format '{{.State.Health.Status}}'` → **healthy**(健康检查用 `node` 连 TCP,
+    因为 alpine 里没有 curl/wget)。公网部署(域名 + Caddy + wss)见
+    `docs/cookbook/relay-on-a-server.md`。
 - **`/ws-ticket` 有两种凭据形态**(配对 v2 的引导,见 `docs/subsystems/pairing-v2.md` §3):body 带 `v:2` + `offerId` + 候选公钥 + 设备名 = **首配**(凭**公开邀请**,无令牌;票绑候选与用途 `pairing`,带候选元数据),body 为 `{}` = **重连**(凭设备令牌;票绑名册里的真实设备 + 它的连接器)。**两种都吃限流桶,桶键都不是 IP**(候选是"匿名 + 每张邀请"两级;见 memory.md 的已知缺口 2)。**旧形状(`codeHash`)被回 426**(`pairing-version-unsupported`)。设备名册走 `POST /devices`(连接器令牌,只交**摘要**)。
 
 ## Read First
