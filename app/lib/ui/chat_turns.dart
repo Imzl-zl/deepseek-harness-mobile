@@ -156,6 +156,7 @@ class AssistantTurn extends StatelessWidget {
     required this.text,
     this.modelName,
     this.reasoning = '',
+    this.showReasoning = true,
   });
 
   final String text;
@@ -169,6 +170,13 @@ class AssistantTurn extends StatelessWidget {
   /// 思考过程（`{type:'reasoning'}` 块；空 = 不显示）。
   final String reasoning;
 
+  /// 要不要画这条思考行。
+  ///
+  /// **轮组收起时为 false**：思考属于过程，DSH 折叠后也不显示
+  /// （`ChatNodeSeat.tsx` 的 `compactAnswer` 就是"收起时答案不带思考"）。
+  /// 不可折的轮（还在跑 / 没有过程）恒为 true。
+  final bool showReasoning;
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -179,7 +187,8 @@ class AssistantTurn extends StatelessWidget {
           AssistantHead(modelName: modelName),
           // **思考过程**：折叠在正文上方。默认收起 —— 它经常比正文还长，
           // 全展开会把对话冲掉（DSH 桌面端同样把它归入"过程"分组）。
-          if (reasoning.isNotEmpty) _ReasoningBlock(text: reasoning),
+          if (showReasoning && reasoning.isNotEmpty)
+            ReasoningRow(text: reasoning),
           // `.md`：Markdown 正文（代码块、列表、加粗都渲染）。
           DshMarkdown(text),
         ],
@@ -245,8 +254,17 @@ class AssistantHead extends StatelessWidget {
 /// 但正文形态不同：DSH 的思考正文是 `MarkdownText variant="compact"`
 /// （`ui-chat/src/client/chat/ReasoningContent.tsx:16`），系统提示词是
 /// 代码字体的 141px 滚动区（`ContextInjectionRow.module.css:50-64`）。
-class _ReasoningBlock extends StatelessWidget {
-  const _ReasoningBlock({required this.text});
+/// 一行「思考过程」（DSH 的 `ReasoningRow`）。
+///
+/// 两种用法：
+///
+/// - **最终回答自带的那段**（同一个 `assistant/message` 里 `reasoning` 与 `text`
+///   并存）：挂在助手头与正文之间，随轮组收起；
+/// - **中间步骤的思考**（`ReasoningItem`）：**没有头像**，与工具卡同级，
+///   是"过程"而不是"一条助手消息"。一个 turn 里出现好几次「助手」头像正是
+///   因为这一点没分开（用户 2026-10-22 当场指出）。
+class ReasoningRow extends StatelessWidget {
+  const ReasoningRow({super.key, required this.text});
 
   final String text;
 

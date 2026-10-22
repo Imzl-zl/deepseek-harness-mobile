@@ -46,6 +46,12 @@
 >
 > 额外那条：`runningOf` 曾是"事件集 OR `session.list` 快照"，旧快照 `true` 永远关不掉
 > ⇒ 运行条转 5 分钟、输入栏永远「排队发送」。现在只有一个真值。
+>
+> 深夜补的一条（用户看图追问"为啥一个 turn 里好几个助手"）：**一个 turn 只有一个
+> 「助手」头** —— 只有带正文的 `assistant/message` 是助手消息，中间步骤的思考变成
+> `ReasoningItem`（无头像的过程行，随轮组收起），"几条消息"只数带正文的那条
+> （DSH `hasAssistantReplyContent`）。见
+> `implemented/2026-10-23-one-assistant-head-per-turn.md`。
 
 待办（按顺序）:
 
@@ -231,7 +237,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **352 项**（22 条规则自检 + 扫 97 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 21 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1097 项** |
+| `cd app && flutter test` | **1101 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **586 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |

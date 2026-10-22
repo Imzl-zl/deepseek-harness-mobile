@@ -23,10 +23,25 @@ seq 93 → 95 → 96），所以用户那句话属于**它前面那个** `turn/s
 
 | 收起时**隐藏** | 收起时**保留** |
 |---|---|
-| 工具卡、命令卡、模型重试、压缩卡 | 用户消息、助手正文（含思考行）、收口行（复制 / 用量）、审批与提问卡 |
+| 工具卡、命令卡、模型重试、压缩卡、**中间步骤的思考行**、最终回答自带的思考行 | 用户消息、助手正文、收口行（复制 / 用量）、审批与提问卡 |
 
 依据 DSH：折叠的是 `processMember`（`packages/client/ui-chat/src/client/chat/ChatNodeSeat.tsx:78-83`），
 用户消息与最终回答是独立节点、始终可见；审批与提问是**等用户决策**的东西，收起来等于让人找不到待办。
+
+## 2.1 一个 turn 只有一个「助手」
+
+一个 turn 的 `assistant/message` **每个 step 一条**（真日志：第 1 步 `reasoning + tool-call`、
+第 2 步 `reasoning + text`）。只有**带正文**的那条是"一条助手消息"：
+
+| 这一步的 content | 条目 | 渲染 |
+|---|---|---|
+| 有正文 | `MessageItem`（role assistant） | 「助手」头 + 思考行 + 正文 |
+| 只有思考 | `ReasoningItem` | 一行「思考过程」（**无头像**，过程行） |
+| 都没有（只有 `tool-call`） | 不落条目 | 无 |
+
+因此一轮里读起来是「过程（思考/工具）→ 一个助手头 + 最终回答」，中间不会有第二个头像。
+"几条消息"的计数也只数带正文的那条（DSH 的 `hasAssistantReplyContent`，
+`packages/client/ui-chat/src/client/contract/assistant-content.ts:9-15`）。
 
 ## 3. 什么时候可折
 
@@ -61,8 +76,11 @@ DSH 的整轮控制行在**轮次开头**（`turn.start.seq − 0.1`，
 
 - 纯函数 `app/test/turn_groups_test.dart`（11 条）：切分、重复 `turn/start`、
   历史窗口按轮号分组、可折条件三种、收藏范围、未归属组不折、按轮分别判。
-- 页面 `app/test/turn_group_collapse_test.dart`（3 条）：收口后默认收起 → 点开 → 再收；
-  空正文的助手消息不留空行；`next-input` 档最新一轮默认展开、上一轮收起。
+- 页面 `app/test/turn_group_collapse_test.dart`（4 条）：收口后默认收起 → 点开 → 再收；
+  **一轮多步只画一个助手头**（思考与工具随组收起）；空正文的助手消息不留空行；
+  `next-input` 档最新一轮默认展开、上一轮收起。
+- 投影 `app/test/assistant_step_projection_test.dart`（3 条）：有正文 → 助手消息；
+  只有思考 → 过程行；都没有 → 不占条目。
 - 真机（`d61cf622`，2026-10-22）：`shots-2026-10-22/n1-collapsed-clean.png`（收起：
   只剩提示 + 回答 + `第 5 轮 ⌄`）与 `n2-expanded.png`（展开：`run_code` 卡回到提示与回答之间）；
   设置页 `n3-settings-row.png`（「工作步骤收起时机 · 回答结束后」）。

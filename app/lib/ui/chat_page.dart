@@ -3298,14 +3298,18 @@ class _TurnView extends StatelessWidget {
             attachmentCount: attachmentCount,
             steering: steering,
           ),
-          // **空正文的助手消息不画**：工具那一步的 `assistant/message` 常常
-          // 只有 `tool_calls`、没有 text 块（DSH 同处也不产生消息行）。
-          // 画出来就是一行只有头像的空行 —— 轮组把工具卡收起来之后它格外显眼
-          //（2026-10-22 真机：收起第 5 轮后屏幕顶上留了一个空「助手」）。
+          // **只有带正文的助手消息才画助手头**。没有正文的那一步在投影层
+          // 已经变成 `ReasoningItem`（过程行）或被 skip 掉，正常走不到这里；
+          // 这一句是兜底：万一正文为空，宁可整条不画，也不要一个空「助手」。
           MessageRole.assistant =>
-            text.isEmpty && reasoning.isEmpty && attachmentCount == 0
+            text.isEmpty && attachmentCount == 0
                 ? const SizedBox.shrink()
-                : AssistantTurn(text: text, reasoning: reasoning),
+                : AssistantTurn(
+                    text: text,
+                    reasoning: reasoning,
+                    // 思考属于过程：轮组收起时一并收起（不可折的轮恒为展开）。
+                    showReasoning: turnExpanded,
+                  ),
           MessageRole.system => SystemTurn(
             text,
             label: systemLabel,
@@ -3380,6 +3384,9 @@ class _TurnView extends StatelessWidget {
         summary: summary,
         stats: stats,
       ),
+      // 中间步骤的思考（没有正文的那条 `assistant/message`）：**过程行**，
+      // 与工具卡同级，跟着轮组一起收起。
+      ReasoningItem(:final text) => ReasoningRow(text: text),
     };
   }
 }

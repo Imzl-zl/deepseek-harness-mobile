@@ -2910,11 +2910,18 @@ class AppModel extends ChangeNotifier {
     for (final item in [...inBatch.values, ...store.items]) {
       if (!seen.add(item.itemId)) continue;
       if (item.seq < startSeq || item.seq > endSeq) continue;
-      if (item is MessageItem && item.role == MessageRole.assistant) {
-        messages += 1;
+      // **"几条消息"只数带正文的**：DSH 的 `messageCount` 走
+      // `hasAssistantReplyContent`（`assistant-content.ts:9-15`，reasoning 与
+      // tool-call 都不算回复内容）。一个 turn 里"只有思考 + 调工具"的那一步
+      // 现在投影成 [ReasoningItem]，它计入 token 合计、不计入条数。
+      if (item is ReasoningItem) {
+        final sample = item.usage;
+        if (sample != null) usage = usage == null ? sample : usage + sample;
+      } else if (item is MessageItem && item.role == MessageRole.assistant) {
         final sample = item.usage;
         if (sample != null) usage = usage == null ? sample : usage + sample;
         if (item.text.trim().isNotEmpty) {
+          messages += 1;
           assistantTexts.add((seq: item.seq, text: item.text));
         }
       } else if (item is ToolCallItem) {

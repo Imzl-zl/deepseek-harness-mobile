@@ -41,7 +41,10 @@ bool isProcessItem(ChatItem item) =>
     item is ToolCallItem ||
     item is CommandItem ||
     item is ModelRetryItem ||
-    item is CompactionItem;
+    item is CompactionItem ||
+    // 中间步骤的思考（`ReasoningItem`）也是过程：DSH 把 reasoning 归进
+    // `processMember`（`ChatNodeSeat.tsx:78-83`），折叠时一起收起。
+    item is ReasoningItem;
 
 /// 一段连续的条目 + 它属于第几轮。
 class TurnGroup {

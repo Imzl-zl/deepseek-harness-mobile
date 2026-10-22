@@ -165,6 +165,29 @@ ChatProjection projectEvent({
     // 把它当上下文会**藏掉真人说的话** —— 两个方向的错法里，这一边更坏。
     final contextKind = type == 'user/message' ? contextSourceKind(data) : null;
     final isContext = contextKind != null && contextKind != 'user';
+    // **一步"只有思考/工具、没有正文"的助手消息 → 过程行**，不画助手头。
+    //
+    // 一个 turn 会落每个 step 一条 `assistant/message`（真机日志：第 1 步
+    // `reasoning + tool-call`、第 2 步 `reasoning + text`）。主流与 DSH 都只把
+    // **带正文**的那条渲染成助手消息（`hasAssistantReplyContent`，
+    // `ui-chat/src/client/contract/assistant-content.ts:9-15`），中间的思考是过程
+    // （`ChatNodeSeat.tsx:78-83` 的 `processMember`）—— 与工具卡同级、随轮组收起。
+    // 不改的话屏幕上会出现好几个「助手」头像（用户当场指出）。
+    if (type == 'assistant/message' && message.text.trim().isEmpty) {
+      if (message.reasoning.isEmpty) {
+        return const ChatProjection.skip('只有工具调用的助手步：没有正文也没有思考');
+      }
+      return ChatProjection.item(
+        ReasoningItem(
+          itemId: itemId,
+          seq: seq,
+          updatedAt: time,
+          turn: turn,
+          text: message.reasoning,
+          usage: message.usage,
+        ),
+      );
+    }
     return ChatProjection.item(
       MessageItem(
         itemId: itemId,

@@ -81,6 +81,7 @@ List<Map<String, Object?>> _closedTurn(
   int turn, {
   String tool = 'bash',
   bool emptyAnswer = false,
+  bool withThinkingStep = false,
 }) => [
   {
     'type': 'turn/start',
@@ -89,6 +90,26 @@ List<Map<String, Object?>> _closedTurn(
     'time': 1,
     'data': {'turn': turn},
   },
+  // 中间那一步：只有思考与工具、没有正文（真日志里最常见的形状）。
+  if (withThinkingStep)
+    {
+      'type': 'assistant/message',
+      'seq': turn * 10 + 2,
+      'itemId': 'm:r$turn',
+      'time': 2,
+      'data': {
+        'turn': turn,
+        'step': 1,
+        'message': {
+          'id': 'r$turn',
+          'role': 'assistant',
+          'content': [
+            {'type': 'reasoning', 'text': '先看看文件'},
+            {'type': 'tool-call', 'name': tool},
+          ],
+        },
+      },
+    },
   {
     'type': 'user/message',
     'seq': turn * 10 + 2,
@@ -212,6 +233,31 @@ void main() {
     await tester.tap(find.textContaining('第 1 轮'));
     await _settle(tester);
     expect(find.text('bash'), findsNothing);
+  });
+
+  testWidgets('一轮多步：只画一个助手头；思考与工具都随轮组收起', (tester) async {
+    final client = _FeedClient();
+    final app = await _pump(tester, client);
+    addTearDown(app.dispose);
+
+    client.emit('s1', _closedTurn(1, withThinkingStep: true));
+    await _settle(tester);
+
+    // 收起：只有一个「助手」（最终回答那条），思考与工具卡都不在。
+    expect(
+      find.text('助手'),
+      findsOneWidget,
+      reason: '一个 turn 只能有一个助手头 —— 中间步骤的思考是过程行，不带头像',
+    );
+    expect(find.text('思考过程'), findsNothing, reason: '思考属于过程，收起时一起收');
+    expect(find.text('bash'), findsNothing);
+
+    // 展开：思考行与工具卡都回来，助手头仍然只有一个。
+    await tester.tap(find.textContaining('第 1 轮'));
+    await _settle(tester);
+    expect(find.text('思考过程'), findsOneWidget);
+    expect(find.text('bash'), findsOneWidget);
+    expect(find.text('助手'), findsOneWidget);
   });
 
   testWidgets('工具那一步的空助手消息不留空行（收起后不该只剩一个空「助手」）', (tester) async {

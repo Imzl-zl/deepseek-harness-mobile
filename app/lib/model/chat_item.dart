@@ -219,6 +219,41 @@ class MessageItem extends ChatItem {
   final TurnTokenUsage? usage;
 }
 
+/// 一步"只有思考、没有正文"的助手消息（`assistant/message` 的 content 里只有
+/// `reasoning` 与 `tool-call`）。
+///
+/// ## 为什么它是独立条目，不再塞进 [MessageItem]
+///
+/// 事件层面一个 turn 会落**每个 step 一条** `assistant/message`（真机日志：
+/// 第 1 步 `reasoning + tool-call`、第 2 步 `reasoning + text`）。把每一条都画成
+/// 完整「助手」，屏幕上就会冒出好几个头像 —— 用户当场问「它一个在输出干嘛分这么多段」。
+///
+/// 主流（含 DSH）的形状是**一轮一段助手**：只有**带正文**的那条渲染成助手消息
+/// （`hasAssistantReplyContent`，`ui-chat/src/client/contract/assistant-content.ts:9-15`），
+/// 中间的思考属于**过程**（`ChatNodeSeat.tsx:78-83` 的 `processMember`）——
+/// 与工具卡同级，轮组收起时一起消失。
+///
+/// Note: 因果与取舍见
+/// `.agents/notes/implemented/2026-10-23-one-assistant-head-per-turn.md`。
+class ReasoningItem extends ChatItem {
+  const ReasoningItem({
+    required super.itemId,
+    required super.seq,
+    required super.updatedAt,
+    super.turn,
+    required this.text,
+    this.usage,
+  });
+
+  /// 思考正文（`assistant/message` 的 `reasoning` 块拼接）。
+  final String text;
+
+  /// 这一步那次请求的用量。**它不参与"几条消息"的计数**
+  /// （DSH 的 `messageCount` 只数带正文的，见 [TurnProcessItem.messageCount]），
+  /// 但 token 合计要算进去。
+  final TurnTokenUsage? usage;
+}
+
 /// 一次斜杠命令（`command/run` 与 `command/done` 共用同一个 `itemId`）。
 ///
 /// ## 它为什么之前不存在
