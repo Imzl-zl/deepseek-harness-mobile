@@ -223,45 +223,45 @@ void main() {
   });
 
   group('一轮的过程摘要（turn-process）', () {
-    test('用时 = end.time - start.time（真日志 155890ms 那条）', () {
+    test('用时**不在这一层算**：`turn/end` 的两个时刻不再产出时长', () {
       // 真日志样本：`turn/start` seq 4 time 1791270058171，
       // `turn/end` seq 117 time 1791270214061 —— 差 155890ms。
+      //
+      // 2026-10-22 起这里**没有** `elapsedMs`：时长由电脑侧的 `trajectory`
+      // 折好随投影下发（`model/trajectory.dart`），手机一个减法都不做。
+      // 这一条守的就是"这个字段不能回到条目上"。
       final item = projectEvent(
         type: 'turn/end',
         seq: 117,
         time: 1791270214061,
         data: _completedEnd,
-        turnStartTime: 1791270058171,
       ).items.whereType<TurnProcessItem>().single;
-      expect(item.elapsedMs, 155890);
-      expect(item.stats, '2 分 35 秒');
+      // 时长由调用方（读投影的那一层）拼进来 —— 不传就没有。
+      expect(item.statsWith(null), '');
+      expect(item.statsWith('2 分 35 秒'), '2 分 35 秒');
     });
 
     test('计数为 0 的项不列（不摆"0 条消息 · 0 次工具"）', () {
       final item = _projectProcess(_completedEnd);
-      // 没有传 turnStats ⇒ 全 0 ⇒ 只说用时。
-      expect(item.stats, '不到 1 秒');
+      // 没有传 turnStats ⇒ 全 0；时长也没传 ⇒ 空串（行里就不画这一段）。
+      expect(item.statsWith(null), '');
     });
 
     test('失败/停止时统计部分换成一句话（DSH 同处替换用时）', () {
       final failed = _projectProcess(_errorEnd);
       expect(failed.failed, isTrue);
-      expect(failed.stats, '失败');
+      expect(failed.statsWith('2 分 35 秒'), '失败');
       final stopped = _projectProcess(_userAbortEnd);
       expect(stopped.stopped, isTrue);
-      expect(stopped.stats, '已停止');
+      expect(stopped.statsWith('2 分 35 秒'), '已停止');
     });
 
     test('不足 1 秒按 1 秒说（DSH 的 Math.max(1000, …)）', () {
-      final item = projectEvent(
-        type: 'turn/end',
-        seq: 8,
-        time: 500,
-        data: _completedEnd,
-        turnStartTime: 0,
-      ).items.whereType<TurnProcessItem>().single;
-      expect(item.elapsedMs, 500);
-      expect(item.stats, '不到 1 秒');
+      // 格式化规则留在手机侧（它只是把电脑给的毫秒数说成人话），
+      // 而"500ms"这个数本身由电脑侧算好下发。
+      expect(formatElapsedMs(500), '不到 1 秒');
+      final item = _projectProcess(_completedEnd);
+      expect(item.statsWith(formatElapsedMs(500)), '不到 1 秒');
     });
   });
 
@@ -322,7 +322,6 @@ void main() {
         seq: 117,
         time: 1791270214061,
         data: _completedEnd,
-        turnStartTime: 1791270058171,
         turnStats: const TurnStats(messages: 12, tools: 8, subagents: 1),
       ).items.whereType<TurnProcessItem>().single;
 
@@ -332,7 +331,8 @@ void main() {
           home: Scaffold(
             body: TurnProcessRow(
               title: item.title,
-              stats: item.stats,
+              // 时长由读投影的那一层拼进来（真日志 155890ms → 2 分 35 秒）。
+              stats: item.statsWith(formatElapsedMs(155890)),
               failed: item.failed,
             ),
           ),

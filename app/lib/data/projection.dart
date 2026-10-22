@@ -113,12 +113,14 @@ class TurnStats {
 /// **结果继承调用**。没有这一层继承，`tool/result` 一到达就把卡片上的
 /// `read` 覆盖成"工具"、把参数行覆盖成 JSON 键名（2026-10-19 真机复现）。
 ///
-/// [turnStartTime] / [turnStats] 只被 `turn/end` 用（一轮的过程摘要）：
-/// 前者是同一轮 `turn/start` 的时刻（算用时），后者是该轮已收录的条目
-/// **计数**（消息 / 工具 / 子智能体）。**它们不由投影层自己推** ——
+/// [turnStats] 只被 `turn/end` 用（一轮的过程摘要）：该轮已收录的条目
+/// **计数**（消息 / 工具 / 子智能体）。**它不由投影层自己推** ——
 /// 投影层是纯函数，不认识"哪些条目属于这一轮"（那要读条目表）。
 /// 调用方（`AppModel`）按 seq 区间数好给进来；给不了就留 0，
-/// 与"拿不到就不显示"同一条纪律（0 项在 [TurnProcessItem.stats] 里不列）。
+/// 与"拿不到就不显示"同一条纪律（0 项在 [TurnProcessItem.statsWith] 里不列）。
+///
+/// **用时不在这一层算**（2026-10-22 起）：每一轮 / 每一步的起止由电脑侧
+/// 折进 `trajectory` 投影下发，手机只读（`model/trajectory.dart`）。
 ///
 /// **未知类型不丢**：返回 [OtherItem]，而不是 `null`。
 /// 丢掉会让"事件总数与条目数对不上"这类问题无从排查，而 DSH 的事件类型会随上游增加。
@@ -129,7 +131,6 @@ ChatProjection projectEvent({
   int time = 0,
   bool steering = false,
   ChatItem? previous,
-  int? turnStartTime,
   TurnStats? turnStats,
 }) {
   // `itemId` 的推导只走 `core/items.dart`（契约 §5.2）：那是**唯一**一处，
@@ -401,11 +402,8 @@ ChatProjection projectEvent({
       seq: seq,
       updatedAt: time,
       turn: turn,
-      // 用时 = `turn/end.time - turn/start.time`（DSH 同处就是这个差）。
-      // 拿不到 `turn/start`（历史翻页落在窗口外）就 0 ——
-      // `formatElapsedMs` 会把 0 说成"不到 1 秒"，与"真用了不到 1 秒"
-      // 同形。**不因此猜一个数**。
-      elapsedMs: turnStartTime == null ? 0 : time - turnStartTime,
+      // **用时不在手机上算**：它由电脑侧折进 `trajectory` 投影，渲染时按轮次号读
+      // （`TurnProcessItem.statsWith` 的入参）。这里只落计数。
       messageCount: turnStats?.messages ?? 0,
       toolCallCount: turnStats?.tools ?? 0,
       subagentCount: turnStats?.subagents ?? 0,

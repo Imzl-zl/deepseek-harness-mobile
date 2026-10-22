@@ -405,8 +405,10 @@ class ModelRetryItem extends ChatItem {
 /// `TurnProcessSpec`：`messageCount` / `toolCallCount` / `subagentCount`），
 /// **不在事件里**。手机没有 turn 状态机，但有三处等价来源：
 ///
-/// - **用时** = `turn/end.time - turn/start.time`（DSH 同处就是这个差，
-///   且 `Math.max(1000, …)` —— 不足 1 秒按 1 秒说，真日志例：155890ms）；
+/// - **用时** = 电脑侧算好的 `trajectory` 投影（`model/trajectory.dart`）；
+///   手机**不做这个减法**（2026-10-22 之前在这里做，跨批就退化成
+///   "不到 1 秒"）。DSH 同处是 `turn/end.time - turn/start.time`，
+///   且 `Math.max(1000, …)` —— 不足 1 秒按 1 秒说（[formatElapsedMs] 照办）；
 /// - **消息/工具/子智能体计数** = 该轮 seq 区间内的条目（子智能体委派的判据
 ///   照 DSH `isSubagentDelegationTool`：工具名是 `subagent` 或 `subagent_` 前缀，
 ///   `contract/turn-process.ts:44-46`）。
@@ -422,7 +424,6 @@ class TurnProcessItem extends ChatItem {
     required super.seq,
     required super.updatedAt,
     required this.turn,
-    required this.elapsedMs,
     this.messageCount = 0,
     this.toolCallCount = 0,
     this.subagentCount = 0,
@@ -434,9 +435,6 @@ class TurnProcessItem extends ChatItem {
 
   /// 第几轮。
   final int turn;
-
-  /// 这一轮用了多久（毫秒）。`turn/end.time - turn/start.time`。
-  final int elapsedMs;
 
   /// 该轮带回复的助手消息条数。
   final int messageCount;
@@ -482,15 +480,27 @@ class TurnProcessItem extends ChatItem {
 
   /// 一行的统计部分：`2 分 36 秒 · 12 条消息 · 8 次工具 · 1 个子智能体`。
   ///
+  /// ## 为什么时长要**传进来**
+  ///
+  /// 这一轮用了多久由电脑侧算好、随 `trajectory` 投影下发（`model/trajectory.dart`）。
+  /// 手机**不做时间减法** —— 2026-10-22 之前这里是
+  /// `turn/end.time - turn/start.time`，而 `turn/start` 落在更早一页时
+  /// 那一轮就说"不到 1 秒"。现在时长只有一个来源，这个 getter 只负责拼串。
+  ///
+  /// [durationLabel] 为 `null` = 这一轮**不在**投影里（更早的轮被截掉，
+  /// 或这台电脑没给时间轴）—— 那时不摆时长，也不摆 0。
+  ///
   /// **各项为 0 时不列**（DSH 同处也是只列有的）：一个 0 条消息 0 次工具的
   /// 轮次（比如刚 start 就被取消）只说用时，不摆一串 0。
-  String get stats {
+  String statsWith(String? durationLabel) {
     if (failed) return '失败';
     if (stopped) return '已停止';
-    final parts = <String>[formatElapsedMs(elapsedMs)];
-    if (messageCount > 0) parts.add('$messageCount 条消息');
-    if (toolCallCount > 0) parts.add('$toolCallCount 次工具');
-    if (subagentCount > 0) parts.add('$subagentCount 个子智能体');
+    final parts = <String>[
+      ?durationLabel,
+      if (messageCount > 0) '$messageCount 条消息',
+      if (toolCallCount > 0) '$toolCallCount 次工具',
+      if (subagentCount > 0) '$subagentCount 个子智能体',
+    ];
     return parts.join(' · ');
   }
 }

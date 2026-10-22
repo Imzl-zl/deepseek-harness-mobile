@@ -47,6 +47,7 @@ import '../model/permission.dart';
 import '../model/preferences.dart';
 import '../model/session_stats.dart';
 import '../model/subagent.dart';
+import '../model/trajectory.dart';
 import '../model/workspace.dart';
 import '../platform/photo_picker.dart';
 import '../theme/dsh_colors.dart';
@@ -701,7 +702,11 @@ class ChatPageState extends State<ChatPage> {
                     // 已配对时给空态一条"重新配对"的出路（议题 3，1 步直达）。
                     onRePair: widget.paired ? widget.onRePair : null,
                   )
-                : _TrajectoryTab(app: widget.app, onTapTurn: _showTraceSheet),
+                : _TrajectoryTab(
+                    app: widget.app,
+                    onTapTurn: _showTraceSheet,
+                    onTapSegment: _showSegmentSheet,
+                  ),
           ),
           // ---- 底部：接管卡 + 输入栏 + 统计条 ----
           Container(
@@ -1425,6 +1430,8 @@ class ChatPageState extends State<ChatPage> {
           DshKeyValue(label: '用时', value: turn.timeLabel),
           if (turn.countsLabel.isNotEmpty)
             DshKeyValue(label: '计数', value: turn.countsLabel),
+          if (turn.stepsTruncated)
+            const DshKeyValue(label: '时间轴', value: '这一轮步数超过上限，只画了最近的若干步'),
           if (turn.prompt.isNotEmpty)
             DshKeyValue(label: '提问', value: turn.prompt, multiline: true),
           if (turn.response.isNotEmpty)
@@ -1451,6 +1458,71 @@ class ChatPageState extends State<ChatPage> {
       ],
     ),
   );
+
+  /// 点一格时间轴弹的详情（与轮次详情同一个面板形态）。
+  ///
+  /// 一格可能是**好几段合并**来的（窄屏上过窄的相邻段会并成一格，
+  /// 规则见 `trajectory_timeline.dart` 文件头），所以这里逐段列出，
+  /// **一段都不省** —— 合并只是画法，不是丢数据。
+  ///
+  /// 时长读 `durationMs`（电脑侧算好的）；还在跑的段说"进行中"，
+  /// 不补一个 0。
+  void _showSegmentSheet(TraceTurn turn, List<TrajectoryStep> steps) {
+    if (steps.isEmpty) return;
+    final merged = steps.length > 1;
+    unawaited(
+      showDshSheet<void>(
+        context: context,
+        title: merged
+            ? '第 ${turn.turn} 轮 · ${steps.length} 段'
+            : '第 ${turn.turn} 轮',
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (merged)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  '这几段在时间轴上挨得太近，画成了一格；这里逐段列出。',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: context.dshColors.labelTertiary,
+                  ),
+                ),
+              ),
+            for (final step in steps)
+              DshKeyValue(
+                label: step.label.isEmpty
+                    ? step.kindLabel
+                    : '${step.kindLabel} · ${step.label}',
+                value: _segmentDurationLabel(step),
+              ),
+          ],
+        ),
+        actions: [
+          DshSheetAction(
+            label: '关闭',
+            filled: true,
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 一段的时长文案：电脑侧给了就照说，没给就说进行中 / 未知。
+  ///
+  /// **失败与用时并列**：段的粒度上"多久"与"成没成"是两件事
+  /// （轮次那一级 DSH 会拿"失败"替换用时，`TurnProcessNodeView.tsx:24-30`，
+  /// 但那里一轮只有一格；这里一格一段，两个信息都塞得下）。
+  static String _segmentDurationLabel(TrajectoryStep step) {
+    final duration = step.durationMs;
+    final parts = <String>[
+      if (step.isError) '失败',
+      if (duration == null) '进行中' else formatElapsedMs(duration),
+    ];
+    return parts.join(' · ');
+  }
 
   /// 模型选择（§7.9 的行结构 + DSH 的模型/推理等级两级的流动）。
   ///
@@ -2495,6 +2567,19 @@ class _ConversationFlowState extends State<_ConversationFlow> {
   ///
   /// 列表倒序，offset 0 是最新一端，`maxScrollExtent` 是最早一端。
   /// 所以滚到**历史**的那一端 = `pixels` 接近 `maxScrollExtent`。
+  /// 一轮的用时文案（`trajectory` 投影里那一轮的 `durationMs`）。
+  ///
+  /// 只对过程摘要那一行有意义（`TurnProcessItem` 是轮次收口），其余条目返回
+  /// `null`。**这一层只查不算**：`formatElapsedMs` 只是把电脑侧给的毫秒数
+  /// 说成人话，没有任何时间相减（判据见 `model/trajectory.dart` 文件头）。
+  String? _durationLabelOf(ChatItem item) {
+    if (item is! TurnProcessItem) return null;
+    final app = widget.app;
+    if (app == null) return null;
+    final duration = app.trajectoryTurnOf(item.turn)?.durationMs;
+    return duration == null ? null : formatElapsedMs(duration);
+  }
+
   void _maybeLoadOlder() {
     final app = widget.app;
     if (app == null || _paging) return;
@@ -2680,11 +2765,13 @@ class _ConversationFlowState extends State<_ConversationFlow> {
               );
               // **按 `itemId` 取 key**（跨帧同一个）—— 换 key 会让这一行重新
               // 挂载，工具卡的展开状态就丢了。见 `_keysById` 的说明。
+              final item = widget.items[itemIndex];
               return KeyedSubtree(
-                key: _keyOf(widget.items[itemIndex].itemId),
+                key: _keyOf(item.itemId),
                 child: _TurnView(
-                  item: widget.items[itemIndex],
+                  item: item,
                   autoOpenDetail: widget.autoOpenDetail,
+                  turnDurationLabel: _durationLabelOf(item),
                 ),
               );
             },
@@ -2907,12 +2994,23 @@ class _LiveTurn extends StatelessWidget {
 }
 
 class _TurnView extends StatelessWidget {
-  const _TurnView({required this.item, this.autoOpenDetail = false});
+  const _TurnView({
+    required this.item,
+    this.autoOpenDetail = false,
+    this.turnDurationLabel,
+  });
 
   final ChatItem item;
 
   /// 工具明细默认展开（"工作步骤展示"偏好）。
   final bool autoOpenDetail;
+
+  /// 这一轮用时的文案（`trajectory` 投影的 `durationMs`，电脑侧算好）。
+  ///
+  /// 由持有 `AppModel` 的那一层按条目所属的轮查好传进来 —— 这一层是纯展示的，
+  /// 不读模型、也不算时间（`app/lib` 里不许出现 epoch 相减）。
+  /// `null` = 这一轮不在投影里（更早的轮被截掉 / 这台电脑没给时间轴）。
+  final String? turnDurationLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -2990,20 +3088,14 @@ class _TurnView extends StatelessWidget {
       ),
       // 一轮的过程摘要（`turn/end` 时的收口行）—— 同时是 DSH 的
       // `turn-tail` 操作行（复制 + 用量 pill）。
-      TurnProcessItem(
-        :final title,
-        :final stats,
-        :final failed,
-        :final usage,
-        :final copyText,
-      ) =>
-        TurnProcessRow(
-          title: title,
-          stats: stats,
-          failed: failed,
-          usage: usage,
-          copyText: copyText,
-        ),
+      final TurnProcessItem process => TurnProcessRow(
+        title: process.title,
+        // 用时**只读投影**（`statsWith` 只拼串，不做减法）。
+        stats: process.statsWith(turnDurationLabel),
+        failed: process.failed,
+        usage: process.usage,
+        copyText: process.copyText,
+      ),
       // 一次上下文压缩（`compaction/*` 三条事件）。
       CompactionItem(:final summary, :final stats) => CompactionRow(
         summary: summary,
@@ -3352,20 +3444,37 @@ class _EmptyFilePane extends StatelessWidget {
 /// 契约里 `turnOutline` 投影一直都在（`session.projections`，§5.7），
 /// 手机也早就解析了别的投影，只是从没把它接进来。
 class _TrajectoryTab extends StatelessWidget {
-  const _TrajectoryTab({required this.app, required this.onTapTurn});
+  const _TrajectoryTab({
+    required this.app,
+    required this.onTapTurn,
+    required this.onTapSegment,
+  });
 
   final AppModel app;
   final void Function(TraceTurn turn) onTapTurn;
+  final void Function(TraceTurn turn, List<TrajectoryStep> steps) onTapSegment;
 
   @override
   Widget build(BuildContext context) {
     // **一轮一行**：`turnOutline` 的 wire view 是 `[{turn, seq, prompt, response}]`
-    // （DSH `session-turn-outline/src/projection.ts:61-75`），用时与计数从本会话的
-    // `TurnProcessItem` join 进来（join 规则只有一处：`buildTraceTurns`）。
+    // （DSH `session-turn-outline/src/projection.ts:61-75`），用时与时间轴从
+    // `trajectory` 投影 join 进来、计数从本会话的 `TurnProcessItem` join 进来
+    // （join 规则只有一处：`buildTraceTurns`）。
     // 空表时 `TrajectoryTab` 自己显示空态，不在这里兜假数据。
+    //
+    // `trajectory == null` = 这台电脑没注册投影 —— 与"跑完一轮就有了"是
+    // 两句不同的话，所以把这一位原样传下去。
+    final trajectory = app.trajectory;
     return TrajectoryTab(
-      turns: buildTraceTurns(outline: app.turnOutline, items: app.items),
+      turns: buildTraceTurns(
+        outline: app.turnOutline,
+        items: app.items,
+        trajectory: trajectory,
+      ),
       onTapTurn: onTapTurn,
+      onTapSegment: onTapSegment,
+      truncationLabel: trajectoryTruncationLabel(trajectory),
+      timelineMissing: trajectory == null,
     );
   }
 }

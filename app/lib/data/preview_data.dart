@@ -173,12 +173,15 @@ const List<PreviewSession> previewSessions = <PreviewSession>[
       // **数字是示例值**（与这个文件里其它样例一样，照真实形状编）。
       // `usage` 的形状取自真日志里的样本
       // （`.agents/notes/implemented/2026-10-20-turn-tail-actions.md` 文件头）。
+      //
+      // **这一行没有用时**（2026-10-22）：用时只从 `trajectory` 投影来，
+      // 而示例模式**没有任何投影**（`loadPreview` 只装条目）—— 所以这里
+      // 编一个"2 分 36 秒"会变成界面上唯一的假时长。示例里如实没有。
       TurnProcessItem(
         itemId: 'p2-turn',
         seq: 6,
         updatedAt: 500,
         turn: 2,
-        elapsedMs: 156000,
         messageCount: 2,
         toolCallCount: 2,
         usage: TurnTokenUsage(

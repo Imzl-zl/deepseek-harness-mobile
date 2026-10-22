@@ -49,6 +49,7 @@ import { createEndpointsPort } from './endpoints.js'
 import { createSubagentsPort } from './dsh/subagents.js'
 import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent'
 import { createProjectionsPort } from './dsh/projections.js'
+import { registerTrajectoryProjection } from './dsh/trajectory.js'
 import { deriveIdentity } from './protocol/crypto.js'
 import { loadOrCreateIdentity, type Identity } from './dsh/identity.js'
 import { PAIRING_TTL_MS, createPairing } from './pairing.js'
@@ -1074,6 +1075,12 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const approvalTakeover = config.approvalTakeover.get()
   const listenPort = config.listenPort.get()
   const listenHost = config.listenHost.get()
+
+  // 轨迹投影（`trajectory` 键，契约 §5.7）：**可选注册**。
+  // 拿不到 `sessionProjections` 服务时什么都不发生（没有日志、没有报错）——
+  // 那是"这台电脑没给时间轴"这条能力缺失，手机侧按缺键显示；
+  // 而一个静默没注册上的投影在手机上长得一模一样，所以注册本身失败会抛。
+  registerTrajectoryProjection(ctx)
 
   ctx.effect(() => {
     const abort = new AbortController()

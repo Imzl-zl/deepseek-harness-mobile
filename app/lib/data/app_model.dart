@@ -39,6 +39,7 @@ import '../model/queue_item.dart';
 import '../model/send_mode.dart';
 import '../model/session_stats.dart';
 import '../model/subagent.dart';
+import '../model/trajectory.dart';
 import '../model/turn_outline.dart';
 import '../model/usage_summary.dart';
 import '../model/workspace.dart';
@@ -464,6 +465,33 @@ class AppModel extends ChangeNotifier {
     _applyProjectionValues(sid, values);
   }
 
+  /// 重读投影，但**同一会话不并发**（在飞那次跑完后补一次）。
+  ///
+  /// 为什么要有这一层：`turn/end` 与"队列变了"经常挤在同一批事件里，
+  /// 两条信号直接各发一次 `session.projections` 会**两个应答乱序落地** ——
+  /// 后到的旧包会把先到的新包盖掉（投影包没有版本号可比，手机上分不出
+  /// 谁更新）。合并成"在飞 + 攒一次"就只有一个应答会落地。
+  void _refreshProjectionsOnce(String sid) {
+    if (_disposed) return;
+    if (!_projectionRefresh.add(sid)) {
+      // 在飞：只记一笔，由那次收尾时兑现（连来十次也只补一次）。
+      _projectionRefreshQueued.add(sid);
+      return;
+    }
+    unawaited(
+      refreshProjections(sid).whenComplete(() {
+        _projectionRefresh.remove(sid);
+        if (_projectionRefreshQueued.remove(sid)) _refreshProjectionsOnce(sid);
+      }),
+    );
+  }
+
+  /// 正在飞投影重读的会话。
+  final Set<String> _projectionRefresh = <String>{};
+
+  /// 在飞期间又要求重读一次的会话。
+  final Set<String> _projectionRefreshQueued = <String>{};
+
   /// 只重读一个会话的**子智能体目录**（展开子级时的懒加载）。
   ///
   /// DSH 的 catalog 投影**只含直接子级**
@@ -620,8 +648,38 @@ class AppModel extends ChangeNotifier {
     return out;
   }
 
-  /// 上下文三段分段（`contextBreakdown` 投影，wire view 就是三项）。
+  /// 轨迹时间轴（`trajectory` 投影）。
   ///
+  /// **手机一个时间减法都不做**：每轮 / 每步的 `durationMs` 由电脑侧折好
+  /// （连接器 `src/dsh/trajectory.ts`），这一层只认形状（`model/trajectory.dart`）。
+  /// 2026-10-22 之前 `data/projection.dart` 拿同一批事件在本批内做减法，
+  /// 跨批（`turn/start` 在更早一页）就退化成"不到 1 秒" —— 那一处已删除。
+  ///
+  /// 返回 `null` = **这台电脑没给时间轴**（键缺席 / 形状不对）；空视图 =
+  /// 给了但还没有轮。界面上这是两句不同的话。
+  ///
+  /// ## 为什么按源包缓存
+  ///
+  /// 一次解析要建几百个对象，而 `_projections` 每次重读都是**新的一包**
+  /// （`_applyProjectionValues` 直接换引用）。缓存键就是那一包的引用：
+  /// 同一包解析一次，换包才重解析 —— 没有这一层，滚动时每一帧都重建。
+  TrajectoryView? get trajectory {
+    final source = _projections;
+    if (identical(source, _trajectorySource)) return _trajectory;
+    _trajectorySource = source;
+    _trajectory = parseTrajectory(source?['trajectory']);
+    return _trajectory;
+  }
+
+  Map<String, Object?>? _trajectorySource;
+  TrajectoryView? _trajectory;
+
+  /// 某一轮的时间轴（对话流的过程摘要读它取用时）。
+  ///
+  /// 取不到就是 `null` —— 界面照"用时未知"渲染，不补零、不估。
+  TrajectoryTurn? trajectoryTurnOf(int turn) => trajectory?.turnOf(turn);
+
+  /// 上下文三段分段（`contextBreakdown` 投影，wire view 就是三项）。
   /// **启发式估算**（DSH 的文件头原话 "Heuristic composition"）——
   /// 界面照 Web 标 `~`。三项全 0 时当没有（那与"没有这个投影"在界面上
   /// 同一表现：上下文 sheet 只画百分比条，不画分段图例）。
@@ -2360,12 +2418,6 @@ class AppModel extends ChangeNotifier {
       // "本批优先、落表兜底"取（DSH 的 `update(context, match)` 同样是
       // 在同一个 Context 里滚动状态，不是回到库里查）。
       final inBatch = <String, ChatItem>{};
-      // **`turn/start` 的时刻与 seq**（按轮次号记）：`turn/end` 算"这一轮
-      // 用了多久"要时刻（DSH 同处 `turn.end.time - turn.start.time`），
-      // 数"这一轮有多少条消息/工具"要 seq 区间。两者都只在本批内有效 ——
-      // 跨批的 `turn/start`（历史翻页落在窗口外）让 `turn/end` 拿不到，
-      // 那时用时说"不到 1 秒"、计数为 0，而不是猜一个数。
-      final turnStarts = <int, ({int time, int seq})>{};
       for (final event in delta.events) {
         // **`session/title` 不是条目，是标题的真值**：DSH 生成/改名时落一条
         // （`session-title/src/index.ts` 的 fold 就认这个 type）。它进条目表
@@ -2396,14 +2448,16 @@ class AppModel extends ChangeNotifier {
         // `TurnProcessNodeView.tsx:18` 要求 `turn.status === 'closed'`）。
         //
         // **但必须落表**：`turn/start` 与 `turn/end` 常常不在同一个 delta
-        // 批次里（翻页/快照加载时前者在更早的批次），只在本批内记一张
-        // `turnStarts` 表的话，过程摘要的用时与计数会**永远是 0** ——
-        // 2026-10-19 真机看到的现象正是"每条收口都只说'不到 1 秒'"。
-        // 落成 OtherItem 后，`_turnStatsOf` 能从 store 里翻到它。
+        // 批次里（翻页/快照加载时前者在更早的批次），只靠本批就拿不到这一轮的
+        // seq 区间，计数会**永远是 0**。落成 OtherItem 后，`_turnStatsOf`
+        // 能从 store 里翻到它。
+        //
+        // **用时不再从这里来**（2026-10-22）：它由电脑侧折进 `trajectory`
+        // 投影、随 `session.projections` 下发（`model/trajectory.dart`）——
+        // 手机一个时间减法都不做。
         if (event.type == 'turn/start') {
           final turn = event.data is Map ? (event.data as Map)['turn'] : null;
           if (turn is int) {
-            turnStarts[turn] = (time: event.time, seq: event.seq);
             items.add(
               OtherItem(
                 itemId: event.itemId,
@@ -2421,17 +2475,12 @@ class AppModel extends ChangeNotifier {
         // 且没有任何报错（流监听里的未处理异步错误）。失败的那条记进
         // [_projectionFailures]，剩下的照常渲染。
         try {
-          // **`turn/end` 专用的两个入参**：该轮 `turn/start` 的时刻（算用时）
-          // 与该轮已收录条目的计数。投影层是纯函数，不认识"哪些条目属于这一轮"，
-          // 所以由这一层数好给进来。
+          // **`turn/end` 专用入参**：该轮已收录条目的计数。投影层是纯函数，
+          // 不认识"哪些条目属于这一轮"，所以由这一层按 seq 区间数好给进来。
           //
-          // **本批优先、落表兜底**：`turn/start` 与 `turn/end` 常常不在同一个
-          // delta 批次里（翻页 / 快照加载时前者在更早的批次）。只靠本批的话，
-          // 过程摘要的用时与计数会永远是 0 —— 所以本批没有就回 store 里翻
-          // 那条 `OtherItem`（`turn/start` 落表用的）。
-          final turnStart = event.type == 'turn/end'
-              ? _turnStartOf(turnStarts, store, event.data, event.seq)
-              : null;
+          // **落表兜底**：`turn/start` 与 `turn/end` 常常不在同一个 delta
+          // 批次里（翻页 / 快照加载时前者在更早的批次）。只靠 store 里那条
+          // `OtherItem`（`turn/start` 落表用的）就能拿到区间。
           final projection = projectEvent(
             type: event.type,
             seq: event.seq,
@@ -2445,9 +2494,13 @@ class AppModel extends ChangeNotifier {
             // 真日志里结果消息不带名字）。投影层自己是纯函数，所以
             // "前一个条目是什么"由这一层给。
             previous: inBatch[event.itemId] ?? store.byId(event.itemId),
-            turnStartTime: turnStart?.time,
             turnStats: event.type == 'turn/end'
-                ? _turnStatsOf(store, inBatch, turnStart?.seq, event.seq)
+                ? _turnStatsOf(
+                    store,
+                    inBatch,
+                    _turnStartSeqOf(store, event.data, event.seq),
+                    event.seq,
+                  )
                 : null,
           );
           // **`skip` 不是失败**：`turn/end` 的 completed / 用户主动 aborted
@@ -2485,7 +2538,18 @@ class AppModel extends ChangeNotifier {
       if (inboxChanged) {
         // 队列变了：重读一次投影拿新队列（`inbox` 段）。不等它 ——
         // 收帧路径上的回调不该被一个网络往返挡住。
-        unawaited(refreshProjections(sid));
+        _refreshProjectionsOnce(sid);
+      }
+      // **回合结束 = 时间轴变了**：`trajectory` 投影的 `endTime` / `durationMs`
+      // 正是 `turn/end` 折出来的（连接器 `src/dsh/trajectory.ts`）。不重读的话
+      // 这一轮的段会永远停在"还在跑"，用量也就永远没有 —— 真机上是
+      // "对话流里那一行说用时未知，轨迹页那一轮没有长度"。
+      //
+      // 只读当前会话：`_projections` 只装当前会话那一包（`_applyProjectionValues`），
+      // 给后台会话补读没有落点；同一次收帧里若已有一次在飞，就并进那次
+      // （`turn/end` 可能跟着一串事件到达，一次就够）。
+      if (turnEnded && sid == _currentSid) {
+        _refreshProjectionsOnce(sid);
       }
       // **回合结束 = 子会话那一包行可能变了**（新建 / 跑完 / token 涨）。
       // 顶栏那枚「N 个子智能体，正在运行」读的就是这些行的 `running`，
@@ -2512,30 +2576,23 @@ class AppModel extends ChangeNotifier {
   static int? _turnOf(Object? data) =>
       data is Map && data['turn'] is int ? data['turn'] as int : null;
 
-  /// 该轮 `turn/start` 的 `(time, seq)`；**本批优先、落表兜底**。
+  /// 该轮 `turn/start` 的 seq（`turn/end` 前最近的一条）。
   ///
-  /// 为什么要有兜底：`turn/start` 与 `turn/end` 常常不在同一个 delta 批次里
-  /// （翻页 / 快照加载时前者在更早的批次），那时本批那张表是空的。
-  /// 落表的那条是 `OtherItem(eventType: 'turn/start')`，所以这里靠
-  /// **seq 小于 `turn/end` 的最后一条**认它 —— 同轮只可能有一条
-  /// `turn/start`（DSH 的格式不变量：turn 号递增），所以"最后一条"就是它。
-  static ({int time, int seq})? _turnStartOf(
-    Map<int, ({int time, int seq})> turnStarts,
-    SessionStore store,
-    Object? endData,
-    int endSeq,
-  ) {
-    final turn = _turnOf(endData);
-    if (turn == null) return null;
-    final inThisBatch = turnStarts[turn];
-    if (inThisBatch != null) return inThisBatch;
-    ({int time, int seq})? found;
+  /// 为什么从落表翻：`turn/start` 与 `turn/end` 常常不在同一个 delta 批次里
+  /// （翻页 / 快照加载时前者在更早的批次）。落表的那条是
+  /// `OtherItem(eventType: 'turn/start')`，所以这里靠 **seq 小于 `turn/end`
+  /// 的最后一条**认它 —— 同轮只可能有一条 `turn/start`（DSH 的格式不变量：
+  /// turn 号递增），所以"最后一条"就是它。
+  ///
+  /// **只取 seq，不取 time**：用时由电脑侧算（`trajectory` 投影），这一层
+  /// 拿时间只可能是为了做减法 —— 那正是禁止的（2026-10-22）。
+  static int? _turnStartSeqOf(SessionStore store, Object? endData, int endSeq) {
+    if (_turnOf(endData) == null) return null;
+    int? found;
     for (final item in store.items) {
       if (item is! OtherItem || item.eventType != 'turn/start') continue;
       if (item.seq >= endSeq) continue;
-      if (found == null || item.seq > found.seq) {
-        found = (time: item.updatedAt, seq: item.seq);
-      }
+      if (found == null || item.seq > found) found = item.seq;
     }
     return found;
   }

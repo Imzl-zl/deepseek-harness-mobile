@@ -174,11 +174,14 @@ void main() {
     expect(app.projectionFailureOf('s1'), isNull);
   });
 
-  test('turn/start 与 turn/end 跨批：用时与计数仍取得到', () async {
+  test('turn/start 与 turn/end 跨批：计数仍取得到（用时已改由投影给）', () async {
     // **这一条守 2026-10-19 真机看到的缺陷**：`turn/start` 与 `turn/end`
     // 常常不在同一个 delta 批次里（翻页 / 快照加载时前者在更早的批次）。
-    // 只在本批内记一张表的话，过程摘要的用时与计数会**永远是 0** ——
-    // 症状是每条收口都只说"不到 1 秒"。
+    // 只在本批内记一张表的话，过程摘要的计数会**永远是 0**。
+    //
+    // 用时**不再走这条路**（2026-10-22）：它由电脑侧的 `trajectory` 折好随
+    // `session.projections` 下发，手机不做减法（`model/trajectory.dart`）。
+    // 所以这一条现在只钉"计数跨批仍然取得到"。
     final client = _FeedClient();
     final app = AppModel(client: client);
     addTearDown(app.dispose);
@@ -250,8 +253,8 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     final process = app.items.whereType<TurnProcessItem>().single;
-    // 用时 = 35000 - 1000（`turn/start` 在上一批，靠落表那条翻到）。
-    expect(process.elapsedMs, 34000);
-    expect(process.stats, '34 秒 · 1 条消息 · 1 次工具 · 1 个子智能体');
+    // 计数仍然要跨批取得到（`turn/start` 在上一批，靠落表那条翻到）。
+    // 用时**不在这里**：`statsWith(null)` 只拼计数。
+    expect(process.statsWith(null), '1 条消息 · 1 次工具 · 1 个子智能体');
   });
 }

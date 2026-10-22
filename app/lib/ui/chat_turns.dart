@@ -936,7 +936,7 @@ class _CompactionRowState extends State<CompactionRow> {
 ///
 /// | DSH | 这里 |
 /// |---|---|
-/// | `elapsedMs = end.time - start.time`（`Math.max(1000, …)`） | `elapsedMs`，不足 1 秒按 1 秒 |
+/// | `elapsedMs = end.time - start.time`（`Math.max(1000, …)`） | **不在这里算**：`trajectory` 投影给 `durationMs`，`formatElapsedMs` 只把它说成人话 |
 /// | `stopped`（aborted/interrupted）→ `t('message.stopped')` | `已停止` |
 /// | `error` → `t('message.turnProcess.failed')` | `失败` |
 /// | 其余 → `t('message.turnProcess.took')` + duration | 时长 |

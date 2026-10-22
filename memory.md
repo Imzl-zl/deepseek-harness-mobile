@@ -6,23 +6,20 @@
 
 ## 下一步（新会话从这里开始）
 
-> **2026-10-22 凌晨：轨迹页重做 + refetch 补取 + 新建会话落进工作区**（一次提交，代码与笔记同批）
-> ① 轨迹页只留**「轮次」一屏**（每轮一行 + 用时迷你条 + 纵向块详情）：640px 横滑甘特与三个假 chip
-> 一起删掉；`DshKeyValue` 加 `multiline`，修掉真机那条 `RIGHT OVERFLOWED BY 474 PIXELS`。
-> ② `SyncClient.refetch` 接上 —— 翻页里的 `refetch` 标记不再被跳过（>1 MiB 的条目不再**静默缺失**）。
-> ③ `session.create` 按 DSH 的链解析 `workspaceId`（显式 → 当前会话工作区 → 最近工作区），
-> 建完重读一次 `workspace.list` —— 手机建的会话不再永远进「未分组」。
-> 判据与证据：`docs/subsystems/trajectory-page.md` §5 +
-> `.agents/notes/implemented/2026-10-22-trajectory-turns-only-and-duration-bars.md` /
-> `-refetch-markers-are-fetched.md` / `-new-session-lands-in-a-workspace.md`。
-> 真机：d61cf622，**两次 build 两次 install**（第一次那个包暴露了"行少时内容顶到下半截"的空洞，
-> 第二次才修掉），`firstInstallTime` 始终是 2026-10-19 18:57:02。
-> **E3 拖动排序同一晚补齐**：这台机器是 **root**（KernelSU），用 `sendevent` 注真手势验过
-> 会话行拖动（dedupe `mv-1792606235984569`，顺序变 `[Greeting, Nested, …]`）与项目头拖动
-> （`workspaceIds` 从 `[dsh-e2e, dsh-mobile, …]` 变 `[dsh-mobile, dsh-e2e, …]`）——
-> `input swipe` / `motionevent` / `draganddrop` 都做不出落点，recipe 见 `tools.md`。
-> 门禁：flutter **1032** / connector **563** / relay **86** / protocol **486·26·49** /
-> boundary **318** / CDP 六项（31 / 18 / 28 / 53 / picker / 25）/ analyze+format 0。
+> **2026-10-22：轨迹页真时间轴（一轮一步都算在电脑侧）**（一次提交，代码与笔记同批）
+> ① 新投影 `trajectory`（`connector/src/dsh/trajectory.ts`）：fold 跑在**完整日志**上，
+> 每步带 `offsetMs`（相对本轮开始）+ `durationMs`，一轮带 `durationMs` / `outcome`；
+> `ctx.inject(['sessionProjections'])` 挂，服务不在就什么都不注册。
+> ② 手机只解析与画：`app/lib/model/trajectory.dart` + `app/lib/ui/trajectory_timeline.dart`；
+> `projection.dart` 的 `turn/end.time - turn/start.time` 与 `TurnProcessItem.elapsedMs` **删掉**，
+> 过程摘要的用时改读投影 —— `app/lib/` 里不再有任何时间减法。
+> ③ `turn/end` 后重读 `session.projections`（按 sid 合流），进行中的轮才从"起点标记"变成真比例。
+> 判据与证据：`docs/subsystems/trajectory-page.md` §3 + 笔记
+> `.agents/notes/implemented/2026-10-22-trajectory-timeline-from-host-projection.md`。
+> 真机：d61cf622，两轮真实会话，几何与日志**逐段**对过（误差 ≤2px），
+> 用时 31587→`31 秒`、19614→`19 秒`，工具段 sheet 1601ms→`1 秒`。
+> 门禁：flutter **1038** / connector **574** / relay **86** / protocol **486·26·49** /
+> boundary **326**（90 个 Dart 文件）/ CDP 六项（31 / 18 / 28 / 53 / picker / 25）/ analyze+format 0。
 
 待办（按顺序）:
 
@@ -67,11 +64,12 @@
   真限制是**系统返回手势** —— `setSystemGestureExclusionRects` **每条边最多 200dp 总高**。当前实现已是最优。
 - **过程摘要的"用时/计数"在历史窗口不全时是如实降级**：`turn/start` 落在未加载的更早一页里，
   所以只说时长、不摆"0 条消息"。**别去"修"**。
-- **轨迹页还没有时间轴 / 「调用」明细 —— 这是欠账，不是墙**：数据在手机上就有（每条事件带 `time`，
-  Web 的 Overview 正是客户端现算的：`ui-trajectory/src/client/layout.ts:145,166`、`:190-196`）；
-  缺的是手机侧投影把起点覆盖掉了（`data/projection.dart:197` 写 `updatedAt`、`:237` 又覆盖）。
-  做法：给工具条目加 `startedAt`、`tool/result` 改成继承，再画行内时间轴。详见
-  `docs/subsystems/trajectory-page.md` §1 与笔记 `2026-10-22-trajectory-turns-only-and-duration-bars.md`。
+- **轨迹页时间轴已经做了，但只做「每轮一格」**：x 轴 = 该轮起止，三条泳道（模型 / 压缩 / 工具），
+  数据来自 `trajectory` 投影。**「调用」明细 tab 与甘特式的多轮对齐视图仍然不做** ——
+  它们要的是"跨轮对齐"的语义，现在没有这个需求，摆出来就是假入口。
+- **时间一律电脑侧算**：`app/lib/` 里出现 `turn/end.time - turn/start.time` 这类减法就是回退。
+  手机的条目表只覆盖已加载的一页，窗口外的轮算不出正确用时（这正是 2026-10-22 之前的失真）。
+  判据：`app/lib/` 里搜不到时间减法；几何只做 `offsetMs / turn.durationMs` 一次除法。
 - **输入栏横滚钮组**只在加第五个钮时才需要（现在四个不换行）。
 - **会话流里 `user/message` 不一定是人说的**：运行时上下文 / 技能目录 / 时间快照都是 `user/message`，
   靠 `source.kind === 'user'` 区分（DSH `conversation-nodes/message.ts:79`）。这条已修。
@@ -139,7 +137,7 @@
 **`session.projections` 是打开全部只读面的那把钥匙**：请求体只有 `{sessionId}`，返回所有投影的当前值。
 已核实的键：`modelSelection` / `permissions` / `subagentCatalog` / `deliverables` / `tokenUsage` /
 `contextPressure` / `sessionStats` / `turnOutline` / `todos` / `goal` / `plan` / `inbox` / `title` /
-`workingDirectory` / `agentPreset` / `userQuestions`。
+`workingDirectory` / `agentPreset` / `userQuestions` / **`trajectory`**（本仓自带，DSH 没有）。
 
 ## 已定案的契约（实施时按这个写，不要重新发明）
 
@@ -182,11 +180,11 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
-| `node app/tools/verify-platform-boundary.mjs` | **318 项**（22 条规则自检 + 扫 88 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | **326 项**（22 条规则自检 + 扫 90 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 20 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1032 项** |
+| `cd app && flutter test` | **1038 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **563 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **574 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**） |
 
@@ -209,3 +207,5 @@
 - 2026-10-22 轨迹页只做轮次 + refetch 补取 + 新建会话落进工作区 ——
   `2026-10-22-trajectory-turns-only-and-duration-bars.md`、`2026-10-22-refetch-markers-are-fetched.md`、
   `2026-10-22-new-session-lands-in-a-workspace.md`。
+- 2026-10-22 轨迹页真时间轴（电脑侧折、手机只画）——
+  `2026-10-22-trajectory-timeline-from-host-projection.md`。
