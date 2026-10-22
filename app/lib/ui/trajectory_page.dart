@@ -140,7 +140,11 @@ List<TraceTurn> buildTraceTurns({
 }) {
   final processes = <int, TurnProcessItem>{};
   for (final item in items) {
-    if (item is TurnProcessItem) processes[item.turn] = item;
+    // 轮号可能缺席（老连接器 / 这一屏没读到 `turn/start`）：那种收口行
+    // join 不上任何一行账本，**跳过它**，而不是拿 0 号去撞。
+    if (item is TurnProcessItem && item.turn != null) {
+      processes[item.turn!] = item;
+    }
   }
   final out = <TraceTurn>[];
   for (final entry in outline) {

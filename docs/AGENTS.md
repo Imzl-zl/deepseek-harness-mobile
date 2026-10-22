@@ -41,6 +41,7 @@
 | `subsystems/type-scale.md` | 字号:两层倍率(系统 × App 四档 0.9/1.0/1.15/1.3)、为什么是等比而不是"只放大内容"、角色表、图标跟随、定高改 minHeight、已知边角 |
 | `subsystems/tool-views.md` | 每步视图:bash/read/edit 三张专用卡的数据来源(meta 与状态标记)、渲染规格、其余工具**有意不做**、已知缺口 |
 | `subsystems/settings-and-versions.md` | 电脑侧设置:`settings.describe`/`update` 的请求形状、两张 allowlist、手机侧三行与判据 |
+| `subsystems/turn-groups.md` | 轮组:边界来自条目自己的轮号、折叠藏过程留结论、什么时候可折、"工作步骤收起时机"两档、与 DSH 的差异与已知边界 |
 
 ## 引用纪律
 

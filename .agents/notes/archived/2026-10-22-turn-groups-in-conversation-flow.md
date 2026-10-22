@@ -1,6 +1,12 @@
 # Agent Note: 会话流的轮组（turn 分组 + 可折叠过程）
 
-Status: proposed（**待用户点头，不动代码**）
+Status: 被 `implemented/2026-10-22-turn-groups-phase-1.md` 取代（阶段 1 已落地；
+阶段 2「语义过程组」仍未做）。本篇是**当时的方案**，结论不改。
+
+> 取代处的两处差异：① 分组边界落地时改成"取条目自己的轮号"（`ChatItem.turn`），
+> 比本篇写的"扫 `turn/start` 记账条目"更稳 —— 历史窗口里没有 `turn/start` 也能分组；
+> ② 组头仍留在轮次末尾（本篇就是这么定的），而 DSH 其实在轮次开头，差异已写进
+> `docs/subsystems/turn-groups.md` §4。
 
 ## Problem
 

@@ -184,6 +184,23 @@ class SettingsPage extends StatelessWidget {
                 onPicked: app.setTranscriptView,
               ),
             ),
+            // **工作步骤收起时机**：只在有轮组之后才有语义（一轮收口后，
+            // 那一轮的过程什么时候收起来）。DSH 把它与「工作步骤展示」放在
+            // 同一行组件里的第二项（`ui-chat/src/chat-settings.ts:15,21`）；
+            // 手机上一行一项，读起来更直白。
+            _PrefRow(
+              icon: 'compact',
+              label: '工作步骤收起时机',
+              value: app.collapseTiming.label,
+              onTap: () => _pickEnum<CollapseTiming>(
+                context: context,
+                title: '工作步骤收起时机',
+                values: CollapseTiming.values,
+                labelOf: (v) => v.label,
+                current: app.collapseTiming,
+                onPicked: app.setCollapseTiming,
+              ),
+            ),
             _PrefRow(
               icon: 'gauge',
               label: '性能与用量',

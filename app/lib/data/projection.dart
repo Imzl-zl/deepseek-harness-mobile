@@ -133,6 +133,12 @@ ChatProjection projectEvent({
   bool steering = false,
   ChatItem? previous,
   TurnStats? turnStats,
+
+  /// 这条事件属于第几轮（调用方按"事件自带的 `data.turn`，否则最近一次
+  /// `turn/start`"算好）。**只有轮次边界条目真的需要它**：
+  /// `turn/start` 落的记账条目靠它把"这一组是第几轮"钉住
+  /// （`docs/subsystems/turn-groups.md` 的分组算法）。
+  int? turn,
 }) {
   // `itemId` 的推导只走 `core/items.dart`（契约 §5.2）：那是**唯一**一处，
   // 而它可能在已知类型缺字段时抛错（宁可让这一帧失败，也不要造一个会漂移的身份）。
@@ -164,6 +170,7 @@ ChatProjection projectEvent({
         itemId: itemId,
         seq: seq,
         updatedAt: time,
+        turn: turn,
         role: isContext ? MessageRole.system : roleOfEvent(type),
         text: message.text,
         attachmentCount: message.attachmentCount,
@@ -197,6 +204,7 @@ ChatProjection projectEvent({
         itemId: itemId,
         seq: seq,
         updatedAt: time,
+        turn: turn,
         name: stringField(data, 'name') ?? kUnknownToolName,
         status: ToolCallStatus.running,
         // **参数行按 DSH 的 `deriveSummary` 推**，不是把载荷摊平：
@@ -241,6 +249,7 @@ ChatProjection projectEvent({
         itemId: itemId,
         seq: seq,
         updatedAt: time,
+        turn: turn,
         name: name,
         status: isToolError(data)
             ? ToolCallStatus.failed
@@ -271,6 +280,7 @@ ChatProjection projectEvent({
         itemId: itemId,
         seq: seq,
         updatedAt: time,
+        turn: turn,
         // 与接管卡同一套措辞（`interactionSignalOf`）：有 reason 照它说，
         // 否则"工具 X 请求越权执行"。两处各写一份必然漂移。
         title: reason ?? '工具 $toolName 请求越权执行',
@@ -285,6 +295,7 @@ ChatProjection projectEvent({
         itemId: itemId,
         seq: seq,
         updatedAt: time,
+        turn: turn,
         title: stringField(data, 'toolName') ?? '审批',
         decided: true,
         decision: stringField(data, 'outcome'),
@@ -303,6 +314,7 @@ ChatProjection projectEvent({
         itemId: itemId,
         seq: seq,
         updatedAt: time,
+        turn: turn,
         name: name == null || name.isEmpty ? kUnknownCommandName : '/$name',
         status: ToolCallStatus.running,
         // 摘要带参数（DSH 的卡片标题只有命令名，参数行进摘要）——
@@ -327,6 +339,7 @@ ChatProjection projectEvent({
         itemId: itemId,
         seq: seq,
         updatedAt: time,
+        turn: turn,
         // 名字从 run 继承：`command/done` **不带 name**（真日志实测）。
         // 历史翻页可能只落到 done（run 在窗口外）—— 那时留"命令"，
         // 不编一个（DSH 同处：`node.name ?? t('command.title')`）。
@@ -356,6 +369,7 @@ ChatProjection projectEvent({
         itemId: itemId,
         seq: seq,
         updatedAt: time,
+        turn: turn,
         retry: retry ?? 0,
         maxRetries: maxRetries ?? 0,
         message: stringField(failure, 'message') ?? '',
@@ -378,6 +392,7 @@ ChatProjection projectEvent({
         itemId: itemId,
         seq: seq,
         updatedAt: time,
+        turn: turn,
         // 次数从 `llm/retry` 继承（`llm/retry-started` 只有 retryId + retry）。
         retry: retry ?? call?.retry ?? 0,
         maxRetries: call?.maxRetries ?? 0,
@@ -523,6 +538,7 @@ ChatProjection projectEvent({
         itemId: itemId,
         seq: seq,
         updatedAt: time,
+        turn: turn,
         // 摘要从 summary 继承（start / end 不带）。
         summary: type == 'compaction/summary'
             ? _compactSummaryText(data)
@@ -539,7 +555,15 @@ ChatProjection projectEvent({
   }
 
   return ChatProjection.item(
-    OtherItem(itemId: itemId, seq: seq, updatedAt: time, eventType: type),
+    OtherItem(
+      itemId: itemId,
+      seq: seq,
+      updatedAt: time,
+      // `turn/start` 也走这条（不可见的记账条目）—— 它带着轮号，轮组靠它
+      // 知道"从这一条开始是新的一轮"。
+      turn: turn,
+      eventType: type,
+    ),
   );
 }
 

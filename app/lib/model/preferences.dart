@@ -86,6 +86,37 @@ enum TranscriptView {
   };
 }
 
+/// 工作步骤**收起时机**（DSH `ui-chat.collapseTiming`，两档）。
+///
+/// 文案照 DSH：`回答结束后` / `下次有新消息时`
+/// （`packages/client/ui-chat/src/chat-settings.ts:15,21`，默认 `completion`）。
+///
+/// **它只在有轮组之后才有语义**：说的是"一轮收口之后，那一轮的过程什么时候收起来"。
+/// 见 `docs/subsystems/turn-groups.md`。
+enum CollapseTiming {
+  /// 轮次一收口就收起（默认）。
+  completion('回答结束后'),
+
+  /// 收口后仍展开，直到用户发了下一句（那时它变成"上一轮"）。
+  nextInput('下次有新消息时');
+
+  const CollapseTiming(this.label);
+
+  final String label;
+
+  /// 盘上的值 → 枚举；认不出返回 null（调用方保持默认，不猜）。
+  static CollapseTiming? fromWire(String? wire) => switch (wire) {
+    'completion' => CollapseTiming.completion,
+    'next-input' => CollapseTiming.nextInput,
+    _ => null,
+  };
+
+  String get wire => switch (this) {
+    CollapseTiming.completion => 'completion',
+    CollapseTiming.nextInput => 'next-input',
+  };
+}
+
 /// 性能与用量信息的详细程度（DSH `settings.performance`，二档）。
 ///
 /// `简洁` 时统计 pill 只留**输出速率与缓存命中**两个读数（照 Web 的

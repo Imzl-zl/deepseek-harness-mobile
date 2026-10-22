@@ -221,6 +221,14 @@ void main() {
 
       expect(find.text('新会话默认权限'), findsOneWidget);
       expect(find.text('新任务默认模式'), findsOneWidget);
+      // **列表是懒建的**：加入「工作步骤收起时机」那一行之后，"上传 Session Log"
+      // 落到首屏之外，不滚过去它根本不在树里（`find.text` 会找不到 —— 那是视口
+      // 问题，不是行没了）。所以先滚到它，再断言。
+      await tester.scrollUntilVisible(
+        find.text('上传 Session Log'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(find.text('上传 Session Log'), findsOneWidget);
       // 权限档的显示名：目录没拿到 ⇒ 照**原值**显示（不翻译、不猜中文名）。
       expect(find.text('workspace-write'), findsOneWidget);

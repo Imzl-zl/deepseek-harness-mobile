@@ -33,7 +33,7 @@
 > |---|---|---|
 > | ① 设置页返回后抽屉仍开（回归） | `a859ef9` | `implemented/2026-10-22-drawer-close-before-push.md` |
 > | ② 工具行扫光的真机证据（缺口 8） | `9a9f684` | 追加进 `2026-10-22-running-cues-shimmer-and-live-clock.md`；配方进 `tools.md` |
-> | ③ 轮组方案（待点头，**未实现**） | — | `proposed/2026-10-22-turn-groups-in-conversation-flow.md` |
+> | ③ 轮组**阶段 1 已落地**（整轮分组 + 可折叠过程 + 「工作步骤收起时机」） | 见下 | `implemented/2026-10-22-turn-groups-phase-1.md`；现状 `docs/subsystems/turn-groups.md` |
 > | 额外：`turn/end` 之后运行条还在转 | `3980fa3` | `implemented/2026-10-22-running-flag-is-events-only.md` |
 >
 > ① 的根因不是"时序没等"而是 `Navigator.maybePop` **会主动放弃**：
@@ -49,15 +49,15 @@
 
 待办（按顺序）:
 
-1. **轮组（turn/step 分组 + 折叠过程）—— 方案已写好，等用户点头**：
-   `.agents/notes/proposed/2026-10-22-turn-groups-in-conversation-flow.md`。
-   查清的关键事实：DSH Web 是**两层**（整轮控制行 `TurnProcessNodeView` + 语义过程组
-   `ChatGroupSeat`），**边界由客户端自己消费 `turn/start`/`turn/end` 算出来**，
-   `turnOutline` 只喂右侧轮次轨道 —— 没有"电脑侧算好的分组"可复用。
-   建议先做阶段 1（整轮组：投影层给每个条目补 `turn`、`user/message` 按位置归组、
-   组头就是现有的 `TurnProcessRow` 加折叠、运行中的轮次仍平铺）。
-   轮组落地后，「工作步骤收起时机」那行才有语义（`settings-porting-notes.md` §1 已记；
-   存储走手机本地，不动 D 的三条可写 `(ns,path)`）。
+1. **轮组阶段 1 已落地**（整轮分组 + 折叠过程 + 「工作步骤收起时机」两档）——
+   `docs/subsystems/turn-groups.md` 是现状，因果见
+   `implemented/2026-10-22-turn-groups-phase-1.md`（原方案移入 `archived/`）。
+   剩下三件：
+   - **原型 `mock/proto` 未同步**：落地端领先，原型没有轮组形态（与「子代理面板未跟上」
+     同一类待办，按 `mock/proto/AGENTS.md` 一次做完才算收口）；
+   - **阶段 2「语义过程组」**（已完成分析 / 执行了命令）：暂不做，390dp 上两层组头
+     要两次点击才看到正文；
+   - **收起/展开不改滚动位置**：`reverse: true` 的格数一变，点开的那一轮可能在屏幕外。
 2. **`ask_user_question` 未计时提问答不了** —— 我们的连接器在 `request.wait?.callId` 缺失时
    fail-closed 抛出（`connector/src/interaction-claims.ts:255`），而 DSH 的 `wait` 对 indefinite
    提问**本来就没有**（`packages/interaction/user-questions/src/types.ts:140-145`）。
@@ -229,9 +229,9 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
-| `node app/tools/verify-platform-boundary.mjs` | **349 项**（22 条规则自检 + 扫 96 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | **352 项**（22 条规则自检 + 扫 97 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 21 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1082 项** |
+| `cd app && flutter test` | **1097 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **586 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |

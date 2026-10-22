@@ -48,6 +48,7 @@ import '../model/preferences.dart';
 import '../model/session_stats.dart';
 import '../model/subagent.dart';
 import '../model/trajectory.dart';
+import '../model/turn_groups.dart';
 import '../model/workspace.dart';
 import '../platform/photo_picker.dart';
 import '../theme/dsh_colors.dart';
@@ -551,8 +552,17 @@ class ChatPageState extends State<ChatPage> {
   /// 读代码时也不必同时记住"我在 Stack 的第几个孩子里"。
   Widget _mainScaffold(BuildContext context, {required String? jobsSid}) {
     final c = context.dshColors;
-    final items = widget.app.items;
     final sid = widget.app.currentSid;
+    // **轮组**：先按轮切开，再把"收起"那些轮里的过程条目去掉
+    // （工具 / 命令 / 重试 / 压缩），只留用户那句话、正文与收口行。
+    // 运行中的一轮不可折叠 —— 组头只在轮次收口后出现
+    // （DSH 同一条：`TurnProcessNodeView.tsx:18` 在未 closed 时整行不渲染）。
+    final groups = buildTurnGroups(widget.app.items);
+    final collapsible = collapsibleTurns(groups);
+    final items = applyTurnCollapse(
+      groups,
+      isExpanded: (turn) => _turnExpanded(sid, turn, groups),
+    );
     // **各算一次**：顶栏那两枚计数 chip 与右抽屉三个面板读的是**同一份**。
     //
     // 子智能体那枚 chip 的数是**目录直接子级**（Web 的 `directCount`，
@@ -730,6 +740,11 @@ class ChatPageState extends State<ChatPage> {
                 ? _ChatTab(
                     app: widget.app,
                     items: items,
+                    // 轮组的折叠接线（见 `_mainScaffold` 里那段注释）。
+                    collapsibleTurns: collapsible,
+                    isTurnExpanded: (turn) => _turnExpanded(sid, turn, groups),
+                    onToggleTurn: (turn, expanded) =>
+                        _toggleTurn(sid, turn, expanded),
                     paired: widget.paired,
                     autoOpenToolDetail: _autoOpenToolDetail,
                     isBlank: widget.app.currentIsBlank,
@@ -920,6 +935,33 @@ class ChatPageState extends State<ChatPage> {
 
   /// 是否有"可看的数据"（真连上了，或在看示例）。
   bool get _hasData => widget.paired || widget.app.isPreview;
+
+  /// 用户手动展开 / 收起的轮：`sid → turn → 是否展开`。
+  ///
+  /// **按轮号存，不按列表下标**：新来一条消息会让下标整体挪位，展开态就落到
+  /// 别的一轮上（`widget_test` 有一条"展开后换一份 items 仍然展开"钉的是同一件事）。
+  final Map<String, Map<int, bool>> _turnOpen = <String, Map<int, bool>>{};
+
+  /// 这一轮此刻要不要展开。
+  ///
+  /// 三档优先：用户手动点过 → 听用户的；否则看「工作步骤收起时机」
+  /// （`CollapseTiming.nextInput` 只让**最新那一轮**保持展开，其余收起；
+  /// `completion` 一律收起）。
+  bool _turnExpanded(String? sid, int turn, List<TurnGroup> groups) {
+    final key = sid ?? '';
+    final manual = _turnOpen[key]?[turn];
+    if (manual != null) return manual;
+    if (widget.app.collapseTiming != CollapseTiming.nextInput) return false;
+    final closed = [
+      for (final group in groups)
+        if (group.collapsible) group.turn!,
+    ];
+    return closed.isNotEmpty && turn == closed.last;
+  }
+
+  void _toggleTurn(String? sid, int turn, bool expanded) {
+    setState(() => (_turnOpen[sid ?? ''] ??= <int, bool>{})[turn] = expanded);
+  }
 
   /// 当前会话是否正在跑（排队条的插话门 + 发送模式 sheet 的禁用判据）。
   ///
@@ -2387,6 +2429,9 @@ class _ChatTab extends StatelessWidget {
   const _ChatTab({
     required this.app,
     required this.items,
+    this.collapsibleTurns = const <int>{},
+    this.isTurnExpanded,
+    this.onToggleTurn,
     required this.paired,
     required this.onOpenDrawer,
     required this.onRefreshSessions,
@@ -2402,6 +2447,15 @@ class _ChatTab extends StatelessWidget {
   final List<ChatItem> items;
   final bool paired;
   final VoidCallback onOpenDrawer;
+
+  /// 可折叠的轮号（有过程条目、且已收口）。
+  final Set<int> collapsibleTurns;
+
+  /// 某一轮此刻展开与否；`null` = 没有轮组接线（只看界面时）。
+  final bool Function(int turn)? isTurnExpanded;
+
+  /// 点收口行：`(轮号, 是否展开)`。
+  final void Function(int turn, bool expanded)? onToggleTurn;
 
   /// 当前会话是不是 blank（"从没被 agent 跑过"）。
   ///
@@ -2510,6 +2564,9 @@ class _ChatTab extends StatelessWidget {
     return _ConversationFlow(
       items: items,
       autoOpenDetail: autoOpenToolDetail,
+      collapsibleTurns: collapsibleTurns,
+      isTurnExpanded: isTurnExpanded,
+      onToggleTurn: onToggleTurn,
       liveText: app.liveText,
       // **这一轮还在跑吗**：运行条只在真的在跑时挂（静止的界面不许闪）。
       // 判据来自电脑侧：`turn/start` / `turn/end` 事件（实时）+ `session.list`
@@ -2561,6 +2618,9 @@ class _ConversationFlow extends StatefulWidget {
   const _ConversationFlow({
     required this.items,
     required this.autoOpenDetail,
+    this.collapsibleTurns = const <int>{},
+    this.isTurnExpanded,
+    this.onToggleTurn,
     this.liveText,
     this.running = false,
     this.turnStartedAt,
@@ -2569,6 +2629,11 @@ class _ConversationFlow extends StatefulWidget {
 
   final List<ChatItem> items;
   final bool autoOpenDetail;
+
+  /// 可折叠的轮号与"这一轮展开吗"（见 `_ChatTab` 的同名字段）。
+  final Set<int> collapsibleTurns;
+  final bool Function(int turn)? isTurnExpanded;
+  final void Function(int turn, bool expanded)? onToggleTurn;
 
   /// 流式文本；`null` = 没有正在生成的流。
   ///
@@ -2636,8 +2701,9 @@ class _ConversationFlowState extends State<_ConversationFlow> {
   String? _durationLabelOf(ChatItem item) {
     if (item is! TurnProcessItem) return null;
     final app = widget.app;
-    if (app == null) return null;
-    final duration = app.trajectoryTurnOf(item.turn)?.durationMs;
+    final turn = item.turn;
+    if (app == null || turn == null) return null;
+    final duration = app.trajectoryTurnOf(turn)?.durationMs;
     return duration == null ? null : formatElapsedMs(duration);
   }
 
@@ -2846,6 +2912,14 @@ class _ConversationFlowState extends State<_ConversationFlow> {
                   item: item,
                   autoOpenDetail: widget.autoOpenDetail,
                   turnDurationLabel: _durationLabelOf(item),
+                  // 轮组：这一轮的收口行是不是折叠开关、现在展不展开。
+                  collapsibleTurn:
+                      item.turn != null &&
+                      widget.collapsibleTurns.contains(item.turn),
+                  turnExpanded:
+                      item.turn != null &&
+                      (widget.isTurnExpanded?.call(item.turn!) ?? true),
+                  onToggleTurn: widget.onToggleTurn,
                 ),
               );
             },
@@ -3178,9 +3252,21 @@ class _TurnView extends StatelessWidget {
     required this.item,
     this.autoOpenDetail = false,
     this.turnDurationLabel,
+    this.collapsibleTurn = false,
+    this.turnExpanded = true,
+    this.onToggleTurn,
   });
 
   final ChatItem item;
+
+  /// 这一条是**可折叠轮组的收口行**（该轮有过程条目、且已收口）。
+  final bool collapsibleTurn;
+
+  /// 这一轮此刻展开与否（只在 [collapsibleTurn] 时有意义）。
+  final bool turnExpanded;
+
+  /// 点收口行：`(轮号, 是否展开)`。
+  final void Function(int turn, bool expanded)? onToggleTurn;
 
   /// 工具明细默认展开（"工作步骤展示"偏好）。
   final bool autoOpenDetail;
@@ -3212,10 +3298,14 @@ class _TurnView extends StatelessWidget {
             attachmentCount: attachmentCount,
             steering: steering,
           ),
-          MessageRole.assistant => AssistantTurn(
-            text: text,
-            reasoning: reasoning,
-          ),
+          // **空正文的助手消息不画**：工具那一步的 `assistant/message` 常常
+          // 只有 `tool_calls`、没有 text 块（DSH 同处也不产生消息行）。
+          // 画出来就是一行只有头像的空行 —— 轮组把工具卡收起来之后它格外显眼
+          //（2026-10-22 真机：收起第 5 轮后屏幕顶上留了一个空「助手」）。
+          MessageRole.assistant =>
+            text.isEmpty && reasoning.isEmpty && attachmentCount == 0
+                ? const SizedBox.shrink()
+                : AssistantTurn(text: text, reasoning: reasoning),
           MessageRole.system => SystemTurn(
             text,
             label: systemLabel,
@@ -3277,6 +3367,13 @@ class _TurnView extends StatelessWidget {
         failed: process.failed,
         usage: process.usage,
         copyText: process.copyText,
+        // 折叠开关：只有"有过程、且已收口"的轮才给。运行中的一轮没有它
+        //（组头不出现），与 DSH 的 `status !== 'closed'` 同一条。
+        expanded: turnExpanded,
+        onToggle:
+            collapsibleTurn && onToggleTurn != null && process.turn != null
+            ? () => onToggleTurn!(process.turn!, !turnExpanded)
+            : null,
       ),
       // 一次上下文压缩（`compaction/*` 三条事件）。
       CompactionItem(:final summary, :final stats) => CompactionRow(

@@ -1412,13 +1412,18 @@ class AppModel extends ChangeNotifier {
 
   TranscriptView _transcriptView = TranscriptView.standard;
   PerformanceUsage _performanceUsage = PerformanceUsage.detailed;
+  CollapseTiming _collapseTiming = CollapseTiming.completion;
 
   TranscriptView get transcriptView => _transcriptView;
   PerformanceUsage get performanceUsage => _performanceUsage;
 
+  /// 轮组的过程什么时候收起来（`docs/subsystems/turn-groups.md`）。
+  CollapseTiming get collapseTiming => _collapseTiming;
+
   /// 落盘的 meta 键：偏好类。**契约两端共用的字符串**，改动等于作废用户的偏好。
   static const String kTranscriptViewKey = 'transcript_view';
   static const String kPerformanceUsageKey = 'performance_usage';
+  static const String kCollapseTimingKey = 'collapse_timing';
 
   /// 切工作步骤展示密度。落盘；同一个值重复切是空操作。
   Future<void> setTranscriptView(TranscriptView view) async {
@@ -1434,6 +1439,17 @@ class AppModel extends ChangeNotifier {
     _performanceUsage = usage;
     notifyListeners();
     await _prefs?.write(kPerformanceUsageKey, usage.wire);
+  }
+
+  /// 切"过程什么时候收起"。落盘；同一个值重复切是空操作。
+  ///
+  /// 切完**要清掉用户手动的展开/收起**：那是对旧默认态的手工覆盖，
+  /// 留着会让"我改了设置但没反应"（`clearTurnOpen()` 由界面调）。
+  Future<void> setCollapseTiming(CollapseTiming timing) async {
+    if (_disposed || timing == _collapseTiming) return;
+    _collapseTiming = timing;
+    notifyListeners();
+    await _prefs?.write(kCollapseTimingKey, timing.wire);
   }
 
   /// 落盘的 meta 键：**界面字号档位**（App 内倍率的下标，0–3）。
@@ -1633,6 +1649,10 @@ class AppModel extends ChangeNotifier {
       await _prefs?.read(kPerformanceUsageKey),
     );
     if (performance != null) _performanceUsage = performance;
+    final collapse = CollapseTiming.fromWire(
+      await _prefs?.read(kCollapseTimingKey),
+    );
+    if (collapse != null) _collapseTiming = collapse;
     // 界面字号档位：存的是下标；认不出（没存过 / 坏了）就保持默认档（1.0）。
     final scaleIndex = int.tryParse(await _prefs?.read(kUiScaleKey) ?? '');
     if (scaleIndex != null) {
@@ -2572,6 +2592,14 @@ class AppModel extends ChangeNotifier {
   /// 事件流则是实时的，而且**边界与时间都来自电脑侧**（`turn/start` 的 `time`）。
   final Set<String> _runningSids = <String>{};
 
+  /// `sid → 最近一次 `turn/start` 的轮号`。
+  ///
+  /// 有些事件的 `data` 里**没有** `turn`（`user/message` / `command/*` /
+  /// `llm/retry` / `compaction/*`），但它们确实属于某一轮；真机日志的次序是
+  /// `turn/start` → `step/start` → `user/message`，所以"最近一次 turn/start"
+  /// 就是它们的归属。轮组的分组靠这一笔（`docs/subsystems/turn-groups.md`）。
+  final Map<String, int> _currentTurn = <String, int>{};
+
   /// `sid → 本轮开始时刻`（毫秒 epoch，来自 `turn/start` 事件的 `time`）。
   ///
   /// 运行条拿它算"用时 N 秒"—— 手机侧**唯一**允许的减法就是这个活时钟；
@@ -2606,6 +2634,14 @@ class AppModel extends ChangeNotifier {
   // Note: 逐条错误隔离（一条坏事件不再炸掉整批）+ 插话判定（DSH
   // SteeringHistory 的移植）—— 见
   // .agents/notes/implemented/2026-10-17-conversation-rendering-fills-dsh-gaps.md
+  /// 这条事件属于第几轮：事件自带 `data.turn` 就用它，否则退回
+  /// [_currentTurn]（最近一次 `turn/start`）。两边都没有就是 `null` ——
+  /// 那种条目在轮组里落进"未归属"，不参与折叠（不猜）。
+  int? _turnOfEvent(SessionEvent event, String sid) {
+    final raw = event.data is Map ? (event.data as Map)['turn'] : null;
+    return raw is int ? raw : _currentTurn[sid];
+  }
+
   void _onDelta(String sid, SessionDelta delta) {
     if (_disposed) return;
     final store = _storeOf(sid);
@@ -2674,11 +2710,15 @@ class AppModel extends ChangeNotifier {
         if (event.type == 'turn/start') {
           final turn = event.data is Map ? (event.data as Map)['turn'] : null;
           if (turn is int) {
+            // **轮号要落在条目上**：轮组靠它知道"从这里开始是新的一轮"
+            // （`docs/subsystems/turn-groups.md`）。
+            _currentTurn[sid] = turn;
             items.add(
               OtherItem(
                 itemId: event.itemId,
                 seq: event.seq,
                 updatedAt: event.time,
+                turn: turn,
                 eventType: 'turn/start',
               ),
             );
@@ -2718,6 +2758,11 @@ class AppModel extends ChangeNotifier {
                     event.seq,
                   )
                 : null,
+            // **这一条属于第几轮**：事件自带就用它，否则用最近一次
+            // `turn/start`（`user/message` / `command/*` / `llm/retry` /
+            // `compaction/*` 都不带 `turn`，而真机日志的次序是
+            // `turn/start` → `step/start` → `user/message`）。
+            turn: _turnOfEvent(event, sid),
           );
           // **`skip` 不是失败**：`turn/end` 的 completed / 用户主动 aborted
           // 这类"没有异常就不占条目"的事件走这支（DSH 同处也是无行）。

@@ -35,6 +35,7 @@ sealed class ChatItem {
     required this.itemId,
     required this.seq,
     required this.updatedAt,
+    this.turn,
   });
 
   /// 稳定身份（契约 §5.2，不变量 I9）。**不是 `seq`** —— 用 `seq` 当主键会让
@@ -46,6 +47,25 @@ sealed class ChatItem {
 
   /// 最后一次更新时刻（DSH 事件自带 `time`）。
   final int updatedAt;
+
+  /// 这条条目属于**第几轮**（DSH 的 `turn` 号）；`null` = 没归属（会话级事件、
+  /// 或这一屏里还没读到 `turn/start`）。
+  ///
+  /// ## 为什么放在基类
+  ///
+  /// 会话流的**分组单位是轮**（`docs/subsystems/turn-groups.md`）：一个轮组要
+  /// 把用户那句话、思考、工具卡、正文、收口行收在一起，而它们的事件类型不同。
+  /// 只在某几个条目类型上带轮号，分组就得靠"位置推测"—— 那是第二个真值。
+  ///
+  /// ## 值从哪来（**不是猜的**）
+  ///
+  /// 事件里自带的就用它（`turn/start` / `assistant/message` / `tool/call` /
+  /// `tool/result` / `system/message` 的 `data.turn`）；不带的那几种
+  /// （`user/message` / `command/*` / `llm/retry` / `compaction/*`）由
+  /// `AppModel` 按"最近一次 `turn/start`"归属 —— 真机日志的次序是
+  /// `turn/start` → `step/start` → `user/message`（`session-4f50055e…`：93 → 95 → 96），
+  /// 所以用户那句话属于**它前面那个** `turn/start`。
+  final int? turn;
 }
 
 /// 一次请求的 token 用量（`assistant/message` 的 `data.usage`）。
@@ -135,6 +155,7 @@ class MessageItem extends ChatItem {
     required super.itemId,
     required super.seq,
     required super.updatedAt,
+    super.turn,
     required this.role,
     required this.text,
     this.attachmentCount = 0,
@@ -219,6 +240,7 @@ class CommandItem extends ChatItem {
     required super.itemId,
     required super.seq,
     required super.updatedAt,
+    super.turn,
     required this.name,
     required this.status,
     this.summary = '',
@@ -286,10 +308,10 @@ class TurnOutcomeItem extends ChatItem {
     required super.itemId,
     required super.seq,
     required super.updatedAt,
+    super.turn,
     required this.kind,
     this.message = '',
     this.code,
-    this.turn = 0,
   });
 
   /// 结局种类（决定图标与颜色）。
@@ -303,16 +325,19 @@ class TurnOutcomeItem extends ChatItem {
   /// `null` = 没有（`interrupted` 就没有）。
   final String? code;
 
-  /// 第几轮（`turn/end.data.turn`）。
-  final int turn;
-
   /// 一行标题（`第 N 轮出错` / `第 N 轮被截断`）。
-  String get title => switch (kind) {
-    TurnOutcomeKind.error => '第 $turn 轮出错',
-    TurnOutcomeKind.interrupted => '第 $turn 轮中断',
-    TurnOutcomeKind.maxTokens => '第 $turn 轮被截断',
-    TurnOutcomeKind.signedOut => '第 $turn 轮停止',
-  };
+  ///
+  /// 轮号读基类的 [turn]（`turn/end.data.turn`）；没有轮号时说「本轮」——
+  /// 编一个 0 会显示成"第 0 轮"。
+  String get title {
+    final label = turn == null ? '本轮' : '第 $turn 轮';
+    return switch (kind) {
+      TurnOutcomeKind.error => '$label出错',
+      TurnOutcomeKind.interrupted => '$label中断',
+      TurnOutcomeKind.maxTokens => '$label被截断',
+      TurnOutcomeKind.signedOut => '$label停止',
+    };
+  }
 }
 
 /// 一轮的异常结局种类。
@@ -358,6 +383,7 @@ class ModelRetryItem extends ChatItem {
     required super.itemId,
     required super.seq,
     required super.updatedAt,
+    super.turn,
     required this.retry,
     required this.maxRetries,
     required this.message,
@@ -424,7 +450,7 @@ class TurnProcessItem extends ChatItem {
     required super.itemId,
     required super.seq,
     required super.updatedAt,
-    required this.turn,
+    required super.turn,
     this.messageCount = 0,
     this.toolCallCount = 0,
     this.subagentCount = 0,
@@ -433,9 +459,6 @@ class TurnProcessItem extends ChatItem {
     this.usage,
     this.copyText = '',
   });
-
-  /// 第几轮。
-  final int turn;
 
   /// 该轮带回复的助手消息条数。
   final int messageCount;
@@ -563,6 +586,7 @@ class CompactionItem extends ChatItem {
     required super.itemId,
     required super.seq,
     required super.updatedAt,
+    super.turn,
     required this.summary,
     this.shadowedItemCount,
     this.shadowedTokenCount,
@@ -612,6 +636,7 @@ class ToolCallItem extends ChatItem {
     required super.itemId,
     required super.seq,
     required super.updatedAt,
+    super.turn,
     required this.name,
     required this.status,
     this.summary = '',
@@ -679,6 +704,7 @@ class ApprovalItem extends ChatItem {
     required super.itemId,
     required super.seq,
     required super.updatedAt,
+    super.turn,
     required this.title,
     required this.decided,
     this.decision,
@@ -702,6 +728,7 @@ class OtherItem extends ChatItem {
     required super.itemId,
     required super.seq,
     required super.updatedAt,
+    super.turn,
     required this.eventType,
   });
 

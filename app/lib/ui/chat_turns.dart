@@ -1001,7 +1001,23 @@ class TurnProcessRow extends StatefulWidget {
     this.running = false,
     this.usage,
     this.copyText = '',
+    this.expanded = true,
+    this.onToggle,
   });
+
+  /// 这一轮的过程此刻**展开**着吗（决定箭头朝向与 `Semantics`）。
+  ///
+  /// 只有"可折叠的轮"才给它意义：运行中的一轮、没有过程条目的一轮都不折。
+  final bool expanded;
+
+  /// 点这一行收起 / 展开该轮的过程；`null` = 不可折叠（不画箭头、不吃点击）。
+  ///
+  /// **它与 DSH 的差别（有意偏离）**：DSH 的整轮控制行在**轮次开头**
+  /// （`turn.start.seq − 0.1`，`conversation-nodes/common.ts:18` 的
+  /// `processControl`），而我们这一行同时是 `turn-tail`（复制 + 用量），
+  /// 一直落在轮次末尾。手机上"点末尾那行、把上面的过程收起来"是
+  /// 更省手指的形态（内容本来就在上方），所以没有再造第二行。
+  final VoidCallback? onToggle;
 
   /// 一行标题（`第 3 轮`）。
   final String title;
@@ -1063,27 +1079,47 @@ class _TurnProcessRowState extends State<TurnProcessRow> {
         spacing: 8,
         runSpacing: 4,
         children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DshIcon(
-                widget.failed ? 'warningTriangle' : 'clock',
-                size: 13,
-                color: tone,
-              ),
-              const SizedBox(width: 6),
-              DshShimmer(
-                active: widget.running,
-                child: Text(
-                  widget.title,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: tone,
-                  ),
+          // **组头**：可折叠时整块是一枚按钮（展开 ⇒ 箭头朝上，收起 ⇒ 朝下，
+          // 与 DSH 的 `rotate(180deg)` 同一条，`TurnProcessNodeView.module.css:37-39`）。
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: widget.onToggle,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DshIcon(
+                      widget.failed ? 'warningTriangle' : 'clock',
+                      size: 13,
+                      color: tone,
+                    ),
+                    const SizedBox(width: 6),
+                    DshShimmer(
+                      active: widget.running,
+                      child: Text(
+                        widget.title,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: tone,
+                        ),
+                      ),
+                    ),
+                    if (widget.onToggle != null) ...[
+                      const SizedBox(width: 4),
+                      DshIcon(
+                        widget.expanded ? 'chevronUp' : 'chevronDown',
+                        size: 13,
+                        color: tone,
+                      ),
+                    ],
+                  ],
                 ),
               ),
-            ],
+            ),
           ),
           Text(
             widget.stats,
