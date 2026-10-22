@@ -67,8 +67,11 @@
   真限制是**系统返回手势** —— `setSystemGestureExclusionRects` **每条边最多 200dp 总高**。当前实现已是最优。
 - **过程摘要的"用时/计数"在历史窗口不全时是如实降级**：`turn/start` 落在未加载的更早一页里，
   所以只说时长、不摆"0 条消息"。**别去"修"**。
-- **轨迹页没有甘特 / 「调用」明细**：要**每步起止**，而 `turnOutline` 与 `sessionStats` 都不给
-  （`docs/subsystems/trajectory-page.md` §1）。要么加 Host 投影、要么条目模型保留每步起止。
+- **轨迹页还没有时间轴 / 「调用」明细 —— 这是欠账，不是墙**：数据在手机上就有（每条事件带 `time`，
+  Web 的 Overview 正是客户端现算的：`ui-trajectory/src/client/layout.ts:145,166`、`:190-196`）；
+  缺的是手机侧投影把起点覆盖掉了（`data/projection.dart:197` 写 `updatedAt`、`:237` 又覆盖）。
+  做法：给工具条目加 `startedAt`、`tool/result` 改成继承，再画行内时间轴。详见
+  `docs/subsystems/trajectory-page.md` §1 与笔记 `2026-10-22-trajectory-turns-only-and-duration-bars.md`。
 - **输入栏横滚钮组**只在加第五个钮时才需要（现在四个不换行）。
 - **会话流里 `user/message` 不一定是人说的**：运行时上下文 / 技能目录 / 时间快照都是 `user/message`，
   靠 `source.kind === 'user'` 区分（DSH `conversation-nodes/message.ts:79`）。这条已修。

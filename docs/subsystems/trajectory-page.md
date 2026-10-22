@@ -25,27 +25,36 @@
 但用时已知时条照画、只换颜色 —— "这一轮没跑完"与"跑了多久"是两件事，都该看得见。
 **不摆 0，也不编一个数。**
 
-### 为什么没有甘特图 / 时间轴
+### 为什么这一屏还没有时间轴
 
-时间轴要有**每一步的起止**。两处都不给：
+**数据在手机上就有**：每条会话事件都带 `time`（`core/sync_client.dart` 的 `SessionEvent.time`），
+而 DSH Web 的时间轴就是**用这些 `time` 在客户端现算的**，不是 Host 投影：
 
-- `turnOutline` 只有 `{turn, seq, prompt, response}`，没有时间（`projection.ts:61-75`）；
-- `sessionStats` 是**会话级总量**（`llmMs` / `toolMs`），拿它画分段只能画出假图
-  （`packages/session/session-stats/src/projection.ts:72-81`）。
+| Web 的那一格 | 来源 |
+|---|---|
+| 一条消息 / 记录的起点 | `startedAt: finiteTime(node.time)`（`ui-trajectory/src/client/layout.ts:145,166`） |
+| 一次工具调用的起点 | `tool/call` 事件的 time（同文件 `:190-196` 的 `callStartById`） |
+| 一次助手请求的起止 | `startedAt: state.startTime` / `completedAt: node?.time`（`trajectory-assistant-definition.ts:308-309`） |
+| 时间轴上的一段 | `cellRange` = `startedAt` + `timeSeconds`（`timeline.ts:61-67`） |
 
-Web 的 Overview 不是读投影，而是用**客户端手里的事件时间**现算
-（`packages/client/ui-trajectory/src/client/timeline.ts:61-67` 的 `cellRange`：
-`startedAt` + `timeSeconds`），且进行中的记录只画开始标记、不虚构耗时
-（同包 `README.zh.md` 的「已知限制」）。手机的条目模型没有保留每步的 `startedAt`，
-所以做真时间轴的前置条件是**新增数据面**：要么 Host 侧加"每步起止"投影，
-要么条目模型保留每步起止。两者都不在本页范围内。
+手机缺的不是数据面，是**投影层把起点丢了**：`tool/call` 先写 `updatedAt: time`
+（`app/lib/data/projection.dart:197`），`tool/result` 到达时同一个条目又被覆盖成
+`updatedAt: time`（同文件 `:237`）—— 起点与终点挤在同一个字段里，只剩终点。
+所以真时间轴的前置条件是**手机侧保留每步起止**（给 `ToolCallItem` 加 `startedAt`、
+`tool/result` 继承而不是覆盖），**不需要动 DSH**。
+
+`turnOutline`（`{turn, seq, prompt, response}`，`projection.ts:61-75`）与 `sessionStats`
+（会话级总量，`session-stats/src/projection.ts:72-81`）确实给不出每步 —— 但事件给得出，
+而轨迹页的每一行本来就来自事件。进行中的记录只画开始标记、不虚构耗时
+（`ui-trajectory/README.zh.md` 的「已知限制」）。
 
 ### 为什么没有「调用」明细
 
 `ToolCallItem` 有名字、参数、结果与 diff 统计，**没有起止时间**
-（`app/lib/model/chat_item.dart` 的工具条目）。列出来只能是一份"这一轮调了哪些工具"的清单，
-而同样的信息已经在对话流里、且那里能展开看参数与结果 —— 在轨迹页再列一遍是重复的第二个真值源。
-要做"每次调用多久"，前提与甘特同一条（每步起止）。
+（`app/lib/model/chat_item.dart:599-641` 只有 `updatedAt`）。列出来只能是一份
+"这一轮调了哪些工具"的清单，而同样的信息已经在对话流里、且那里能展开看参数与结果 ——
+在轨迹页再列一遍是重复的第二个真值源。要做"每次调用多久"，前提与时间轴同一条：
+**投影层保留 `tool/call` 的时刻**（事件里有，见上一节）。
 
 ## 2. 结构
 

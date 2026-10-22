@@ -38,13 +38,18 @@ Status: implemented
 
 ## Alternatives considered
 
-1. **Host 侧加"每步起止"投影，照 Web 做真时间轴**
-   - 最强的理由：那是唯一能同时支撑甘特与「调用」明细的数据面，
-     而且与 Web 的形态真正对齐（它是用户最初的要求："完全没对齐 web"）。
-   - 为何被否：这一轮的时间预算在 A/B/C 三件上，而新投影要动
-     DSH 侧的投影注册 + 契约 §5.7 + 连接器透传 + 手机解析四层；
-     更糟的是它得先定"步"的边界（DSH 的 step 与事件不是一对一），
-     那是设计题不是实现题。先把**能诚实显示的部分**做对。
+1. **这一轮就做真时间轴（手机侧用事件 `time` 现算，照 Web）**
+   - 最强的理由：数据其实**就在手机上** —— 每条事件带 `time`，而 Web 的 Overview 正是
+     客户端用这些 `time` 现算的（`ui-trajectory/src/client/layout.ts:145,166` 的
+     `startedAt: finiteTime(node.time)`、`:190-196` 的工具调用起点、
+     `trajectory-assistant-definition.ts:308-309` 的请求起止）。不缺 Host 数据面，
+     只缺手机侧把起点留下来：`tool/call` 写 `updatedAt`，`tool/result` 又覆盖它
+     （`app/lib/data/projection.dart:197` / `:237`）。这是与 Web 形态真正对齐的路。
+   - 为何被否：这一轮的时间预算在 A/B/C 三件（两件是**静默数据丢失**的真缺陷）上，
+     而时间轴要改投影层的条目形状（加 `startedAt`、`tool/result` 改成继承），
+     再配一套新的行内渲染与判据 —— 那是另一件独立的事，半截做出来就是"看起来有时间轴、
+     其实只有一半"。**下一轮要做的第一件事就是它**（前置条件已写进
+     `docs/subsystems/trajectory-page.md` §1）。
 2. **用 `sessionStats` 的 `llmMs` / `toolMs` 画分段甘特**
    - 最强的理由：投影现成、零成本，看上去"有时间轴了"。
    - 为何被否：那是会话级总量，拿它画分段只能画出假图（`memory.md` 已记过这条），
@@ -61,7 +66,8 @@ Status: implemented
 
 - 收益：轨迹页每个格子都有来源；`DshKeyValue` 的溢出根因被修在组件层
   （`multiline`），将来任何长文本 sheet 直接复用；640px 横滑与假 chip 一起消失。
-- 代价：**仍然没有时间轴**。用户要的"甘特/每步耗时"必须等数据面，
-  而那是 Host 侧改动（新投影或条目模型保留每步起止），不是前端能补的；
-  `docs/subsystems/trajectory-page.md` §1 把这条前置条件写死了，
-  下一次想"顺手画个甘特"的人会先撞到它。
+- 代价：**仍然没有时间轴**。而它并不是"数据面拿不到"——事件里有 `time`，
+  Web 就是客户端现算的；缺的是手机侧投影层只留了一个 `updatedAt`
+  （`app/lib/data/projection.dart:197` / `:237`）。所以这是**一笔欠账，不是一道墙**：
+  下一轮加 `startedAt` + 改 `tool/result` 为继承 + 行内渲染即可，
+  `docs/subsystems/trajectory-page.md` §1 把这条前置条件写清楚了。
