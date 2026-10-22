@@ -229,6 +229,78 @@ void main() {
     });
   });
 
+  group('助手头落在哪（一轮一个、且在最上面）', () {
+    test('每组第一条助手侧条目拿头；用户消息与上下文行不拿', () {
+      final groups = buildTurnGroups([
+        start(1, 1),
+        user(2, '问'),
+        user(3, '上下文注入'),
+        tool(4, 'bash'),
+        answer(5, '答'),
+        process(1, 6),
+      ]);
+      final visible = applyTurnCollapse(groups, isExpanded: (_) => true);
+      final heads = assistantHeadItemIds(visible);
+      expect(heads, {'t:4'}, reason: '头在轮次开头（第一条助手侧条目），不是贴在回答上');
+    });
+
+    test('折叠后按**可见**条目算：被藏掉的过程不能让头跟着消失', () {
+      final groups = buildTurnGroups([
+        start(1, 1),
+        user(2, '问'),
+        tool(3, 'bash'),
+        answer(4, '答'),
+        process(1, 5),
+      ]);
+      final collapsed = applyTurnCollapse(groups, isExpanded: (_) => false);
+      expect(
+        assistantHeadItemIds(collapsed),
+        {'a:4'},
+        reason: '收起时工具卡被藏掉，头必须落到仍然可见的回答上（否则整轮没有助手段）',
+      );
+    });
+
+    test('同一轮里夹一条无轮号的记账事件，也只画一个头', () {
+      // `turn/end` 之后会落 `request/*` 之类没有轮号的条目；它们**不能把段打断**，
+      // 否则"思考 → 记账 → 回答"会被切成两段、冒出两个头像。
+      final groups = buildTurnGroups([
+        start(1, 1),
+        user(2, '问'),
+        tool(3, 'bash'),
+        const OtherItem(
+          itemId: 'o:4',
+          seq: 4,
+          updatedAt: 0,
+          eventType: 'request/header',
+        ),
+        answer(5, '答'),
+        process(1, 6),
+      ]);
+      final visible = applyTurnCollapse(groups, isExpanded: (_) => true);
+      expect(assistantHeadItemIds(visible), {'t:3'});
+    });
+
+    test('命令卡 / 压缩卡不拿头（主语不是助手），但仍然是过程', () {
+      final groups = buildTurnGroups([
+        start(1, 1),
+        user(2, '问'),
+        command(3),
+        compaction(4),
+        answer(5, '答'),
+        process(1, 6),
+      ]);
+      final visible = applyTurnCollapse(groups, isExpanded: (_) => true);
+      expect(assistantHeadItemIds(visible), {'a:5'}, reason: '头落在助手正文上');
+      expect(isProcessItem(command(7)), isTrue, reason: '命令卡仍然随轮组收起');
+    });
+
+    test('没有助手侧条目的组（只有用户消息）不拿头', () {
+      final groups = buildTurnGroups([start(1, 1), user(2, '问')]);
+      final visible = applyTurnCollapse(groups, isExpanded: (_) => true);
+      expect(assistantHeadItemIds(visible), isEmpty);
+    });
+  });
+
   group('折叠藏什么', () {
     test('只藏过程：用户消息 / 正文 / 收口行 / 审批卡都留着', () {
       final items = [

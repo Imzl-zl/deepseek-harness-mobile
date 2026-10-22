@@ -249,15 +249,26 @@ void main() {
       findsOneWidget,
       reason: '一个 turn 只能有一个助手头 —— 中间步骤的思考是过程行，不带头像',
     );
+    // 头必须在**回答上方**（轮次开头一侧），不是贴在回答下面。
+    expect(
+      tester.getTopLeft(find.text('助手')).dy,
+      lessThan(tester.getTopLeft(find.text('第 1 答')).dy),
+      reason: '助手头在轮次开头，不在中途',
+    );
     expect(find.text('思考过程'), findsNothing, reason: '思考属于过程，收起时一起收');
     expect(find.text('bash'), findsNothing);
 
-    // 展开：思考行与工具卡都回来，助手头仍然只有一个。
+    // 展开：思考行与工具卡都回来，助手头仍然只有一个，而且仍在最上方。
     await tester.tap(find.textContaining('第 1 轮'));
     await _settle(tester);
     expect(find.text('思考过程'), findsOneWidget);
     expect(find.text('bash'), findsOneWidget);
     expect(find.text('助手'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('助手')).dy,
+      lessThan(tester.getTopLeft(find.text('思考过程')).dy),
+      reason: '展开时头像在最上面：助手块从头开始，过程在块内',
+    );
   });
 
   testWidgets('工具那一步的空助手消息不留空行（收起后不该只剩一个空「助手」）', (tester) async {

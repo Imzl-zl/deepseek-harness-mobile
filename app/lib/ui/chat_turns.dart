@@ -154,18 +154,17 @@ class AssistantTurn extends StatelessWidget {
   const AssistantTurn({
     super.key,
     required this.text,
-    this.modelName,
     this.reasoning = '',
     this.showReasoning = true,
+    this.showHead = true,
   });
 
-  final String text;
+  /// 要不要画「助手」头。**轮组里由所在那一组在开头统一画**（`assistantHeadItemIds`），
+  /// 所以这条正文不再自己画 —— 否则一个 turn 里会出现两个头像，
+  /// 而且头像会落在轮次中间（用户 2026-10-23 指出）。
+  final bool showHead;
 
-  /// 模型名（显示成 `· claude-opus`）；`null` = 不显示。
-  ///
-  /// **原型有它**，而它是重要信息：同一会话里可能换过模型，
-  /// 而"这段是哪個模型答的"事后无法从内容判断。
-  final String? modelName;
+  final String text;
 
   /// 思考过程（`{type:'reasoning'}` 块；空 = 不显示）。
   final String reasoning;
@@ -184,7 +183,7 @@ class AssistantTurn extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          AssistantHead(modelName: modelName),
+          if (showHead) const AssistantHead(),
           // **思考过程**：折叠在正文上方。默认收起 —— 它经常比正文还长，
           // 全展开会把对话冲掉（DSH 桌面端同样把它归入"过程"分组）。
           if (showReasoning && reasoning.isNotEmpty)
@@ -197,23 +196,23 @@ class AssistantTurn extends StatelessWidget {
   }
 }
 
-/// 助手消息的头部：26×26 品牌渐变头像 + 「助手」+ 可选 `· 模型名`。
+/// 助手消息的头部：26×26 品牌渐变头像 + 「助手」。
 ///
 /// 抽出来是因为**流式尾条目与持久条目必须是同一个头**：原来
 /// `_LiveTurn` 自己抄了一份（还写死了颜色），于是流结束、条目从
 /// "虚拟尾"换成持久消息的那一帧，头像行的构造与上下留白都换了一套
 /// —— 那就是流式结束时的"跳一下"。
+///
+/// **不带模型名**：模型是"当前这一句用哪个"的输入栏状态（`DshComposer` 的
+/// chip，值来自 `modelSelection` 投影），逐条消息再挂一遍是同一件事说两次；
+/// 历史上这里有个 `modelName` 参数，但没有一处调用方传它（审查时删掉）。
 class AssistantHead extends StatelessWidget {
-  const AssistantHead({super.key, this.modelName});
-
-  /// 模型名（显示成 `· claude-opus`）；`null` = 不显示。
-  final String? modelName;
+  const AssistantHead({super.key});
 
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
     final type = context.dshType;
-    final modelName = this.modelName;
     // `.a-head { display:flex; align-items:center; gap:8px; margin-bottom:8px }`
     // —— 那个 8 在 Flutter 里只能自己出（Row 没有 margin）。
     return Padding(
@@ -231,17 +230,6 @@ class AssistantHead extends StatelessWidget {
               color: c.labelPrimary,
             ),
           ),
-          if (modelName != null && modelName.isNotEmpty) ...[
-            const SizedBox(width: 4),
-            Flexible(
-              child: Text(
-                '· $modelName',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12, color: c.labelCaption),
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -1016,7 +1004,6 @@ class TurnProcessRow extends StatefulWidget {
     required this.title,
     required this.stats,
     this.failed = false,
-    this.running = false,
     this.usage,
     this.copyText = '',
     this.expanded = true,
@@ -1046,8 +1033,10 @@ class TurnProcessRow extends StatefulWidget {
   /// 这一轮是失败收尾的（换图标与颜色）。
   final bool failed;
 
-  /// **这一轮还在跑** —— 轮组头的标题扫光（DSH 的 `ChatGroupSeat.tsx:124`）。
-  final bool running;
+  // 这里曾有一个 `running`（组头扫光）。**删掉**：组头只在轮次**收口后**才出现
+  // （运行中的一轮不可折、也不画组头），所以它永远收不到 `true` ——
+  // 审查时发现没有任何调用方传它，扫光代码是死的。运行中的"在动"由
+  // 工具行的扫光与流末尾的运行条表达（`running-cues.md` §1/§2）。
 
   /// 该轮的 token 用量；`null` = 不显示用量 pill（**不摆 `0 tok`**）。
   final TurnTokenUsage? usage;
@@ -1115,15 +1104,12 @@ class _TurnProcessRowState extends State<TurnProcessRow> {
                       color: tone,
                     ),
                     const SizedBox(width: 6),
-                    DshShimmer(
-                      active: widget.running,
-                      child: Text(
-                        widget.title,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: tone,
-                        ),
+                    Text(
+                      widget.title,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: tone,
                       ),
                     ),
                     if (widget.onToggle != null) ...[

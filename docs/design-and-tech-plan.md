@@ -12,6 +12,11 @@
 - **通用插件、多用户**(非纯自用)。
 - **体验优先**:原生级手感 + 三端(iOS / 安卓 / 鸿蒙)视觉规格一致 + 视觉与 DSH 一模一样。
 - **不做**(第一版):Admin、账单、知识库、MCP/Skill 的复杂编辑(与 DEEIX 移动端边界一致,见其 `docs/ARCHITECTURE.md`)。
+- **应用名 = `DSH`**:安卓 `android:label`、iOS `CFBundleDisplayName`、`MaterialApp.title` 三处同口径。
+  **图标 = DSH 桌面端那枚鲸鱼**:源 `D:\sudy\github\deepseek-harness\apps\desktop\resources\icon.png`;
+  产物是 `mipmap-*/ic_launcher.png`(48/72/96/144/192)与自适应前景 `mipmap-*/ic_launcher_foreground.png`
+  (108/162/216/324/432,内容占画布 66%),底色 `#FFFFFF`。
+  取舍见 `.agents/notes/implemented/2026-10-23-app-name-and-icon-from-dsh.md`。
 
 ---
 

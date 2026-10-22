@@ -111,6 +111,52 @@ List<TurnGroup> buildTurnGroups(List<ChatItem> items) {
   return List<TurnGroup>.unmodifiable(groups);
 }
 
+/// 这条条目是不是"助手侧"的内容（思考 / 工具 / 命令 / 重试 / 压缩 / 助手正文）。
+///
+/// 用它决定「助手」头画在哪：用户消息、上下文注入行都不是助手侧。
+bool isAssistantSide(ChatItem item) => switch (item) {
+  MessageItem(:final role) => role == MessageRole.assistant,
+  ReasoningItem() || ToolCallItem() || ModelRetryItem() => true,
+  // **命令卡与压缩卡不算"助手在说话"**：斜杠命令是用户发起的执行，
+  // 压缩是系统行为；把「助手」头挂在它们上面等于说错主语
+  // （DSH 的 `GenericCommandCard` / `CompactionItem` 也各自带标签）。
+  // 它们仍然是**过程**（折叠时随轮组收起），只是不拿头像。
+  _ => false,
+};
+
+/// 该在哪些条目的**上方**画「助手」头：每一组里第一条助手侧条目。
+///
+/// ## 为什么头在最上面，而不是贴着最终回答
+///
+/// 用户 2026-10-23：「助手不应该是开始的时候显示吗？……不是一开始显示然后到输出完毕」。
+/// 主流与 DSH 都是**一轮一个助手块**：块头在轮次开始，块内是思考 / 工具 / 正文。
+/// 我们之前把头像钉在"最终回答"那条上，于是长轮次的头像出现在屏幕中间，
+/// 读起来像两段对话（用户原话「怎么你这个中间显示？」）。
+///
+/// 返回的是 itemId 集合：`_TurnView` 据此在那一条上方补一个 [AssistantHead]。
+/// **按"折叠后仍然可见的条目"算**：收起一轮时，被藏掉的那条（思考 / 工具）
+/// 不能是头像的落点 —— 那样头像会跟着过程一起消失，折叠后整轮就没有助手段了
+///（2026-10-23 widget 测抓到的）。
+Set<String> assistantHeadItemIds(List<ChatItem> visibleItems) {
+  final out = <String>{};
+  int? run;
+  var marked = false;
+  for (final item in visibleItems) {
+    // **只按"非空轮号变化"换段**：`turn == null` 的条目（`turn/end` 之后的
+    // `request/*` 之类记账事件）归当前段，不能把段打断 —— 否则同一轮里
+    // "思考(t1) → 记账(null) → 回答(t1)"会被切成两段、冒出两个头像。
+    final turn = item.turn;
+    if (turn != null && turn != run) {
+      run = turn;
+      marked = false;
+    }
+    if (marked || !isAssistantSide(item)) continue;
+    out.add(item.itemId);
+    marked = true;
+  }
+  return out;
+}
+
 /// 可折叠的轮号集合（UI 用它决定哪些收口行要画箭头）。
 Set<int> collapsibleTurns(List<TurnGroup> groups) => {
   for (final group in groups)

@@ -563,6 +563,15 @@ class ChatPageState extends State<ChatPage> {
       groups,
       isExpanded: (turn) => _turnExpanded(sid, turn, groups),
     );
+    // 「助手」头画在每组第一条助手侧条目上方（用户 2026-10-23：
+    // 「助手不应该是开始的时候显示吗」）。流式尾条目同理：本轮还没有任何
+    // 助手侧条目时才由它自己带头。
+    // 头按**折叠后可见的条目**算：被藏掉的那条不能是头像落点
+    // （否则收起一轮时头像跟着过程一起消失）。
+    final headAt = assistantHeadItemIds(items);
+    final liveShowHead = groups.isEmpty
+        ? true
+        : !groups.last.items.any(isAssistantSide);
     // **各算一次**：顶栏那两枚计数 chip 与右抽屉三个面板读的是**同一份**。
     //
     // 子智能体那枚 chip 的数是**目录直接子级**（Web 的 `directCount`，
@@ -745,6 +754,8 @@ class ChatPageState extends State<ChatPage> {
                     isTurnExpanded: (turn) => _turnExpanded(sid, turn, groups),
                     onToggleTurn: (turn, expanded) =>
                         _toggleTurn(sid, turn, expanded),
+                    headAt: headAt,
+                    liveShowHead: liveShowHead,
                     paired: widget.paired,
                     autoOpenToolDetail: _autoOpenToolDetail,
                     isBlank: widget.app.currentIsBlank,
@@ -952,11 +963,10 @@ class ChatPageState extends State<ChatPage> {
     final manual = _turnOpen[key]?[turn];
     if (manual != null) return manual;
     if (widget.app.collapseTiming != CollapseTiming.nextInput) return false;
-    final closed = [
-      for (final group in groups)
-        if (group.collapsible) group.turn!,
-    ];
-    return closed.isNotEmpty && turn == closed.last;
+    // 「下次有新消息时」：只有**最新那一轮**保持展开。用 groups.last 而不是
+    // "最后一个可折的轮" —— 用户一发出下一句，上一轮就该收起来，
+    // 而那时新一轮还不可折（还没收口）。
+    return groups.isNotEmpty && turn == groups.last.turn;
   }
 
   void _toggleTurn(String? sid, int turn, bool expanded) {
@@ -2432,6 +2442,8 @@ class _ChatTab extends StatelessWidget {
     this.collapsibleTurns = const <int>{},
     this.isTurnExpanded,
     this.onToggleTurn,
+    this.headAt = const <String>{},
+    this.liveShowHead = true,
     required this.paired,
     required this.onOpenDrawer,
     required this.onRefreshSessions,
@@ -2456,6 +2468,12 @@ class _ChatTab extends StatelessWidget {
 
   /// 点收口行：`(轮号, 是否展开)`。
   final void Function(int turn, bool expanded)? onToggleTurn;
+
+  /// 该在哪些条目上方画「助手」头（每组第一条助手侧条目）。
+  final Set<String> headAt;
+
+  /// 流式尾条目要不要自己带头（本轮还没有任何助手侧条目时才带）。
+  final bool liveShowHead;
 
   /// 当前会话是不是 blank（"从没被 agent 跑过"）。
   ///
@@ -2567,6 +2585,8 @@ class _ChatTab extends StatelessWidget {
       collapsibleTurns: collapsibleTurns,
       isTurnExpanded: isTurnExpanded,
       onToggleTurn: onToggleTurn,
+      headAt: headAt,
+      liveShowHead: liveShowHead,
       liveText: app.liveText,
       // **这一轮还在跑吗**：运行条只在真的在跑时挂（静止的界面不许闪）。
       // 判据来自电脑侧：`turn/start` / `turn/end` 事件（实时）+ `session.list`
@@ -2621,6 +2641,8 @@ class _ConversationFlow extends StatefulWidget {
     this.collapsibleTurns = const <int>{},
     this.isTurnExpanded,
     this.onToggleTurn,
+    this.headAt = const <String>{},
+    this.liveShowHead = true,
     this.liveText,
     this.running = false,
     this.turnStartedAt,
@@ -2634,6 +2656,12 @@ class _ConversationFlow extends StatefulWidget {
   final Set<int> collapsibleTurns;
   final bool Function(int turn)? isTurnExpanded;
   final void Function(int turn, bool expanded)? onToggleTurn;
+
+  /// 该在哪些条目上方画「助手」头。
+  final Set<String> headAt;
+
+  /// 流式尾条目要不要自己带头。
+  final bool liveShowHead;
 
   /// 流式文本；`null` = 没有正在生成的流。
   ///
@@ -2894,7 +2922,10 @@ class _ConversationFlowState extends State<_ConversationFlow> {
               if (hasLive && index == (hasRunning ? 1 : 0)) {
                 return KeyedSubtree(
                   key: const ValueKey('live'),
-                  child: _LiveTurn(widget.liveText!),
+                  child: _LiveTurn(
+                    widget.liveText!,
+                    showHead: widget.liveShowHead,
+                  ),
                 );
               }
               final itemIndex = chatItemIndexFor(
@@ -2920,6 +2951,8 @@ class _ConversationFlowState extends State<_ConversationFlow> {
                       item.turn != null &&
                       (widget.isTurnExpanded?.call(item.turn!) ?? true),
                   onToggleTurn: widget.onToggleTurn,
+                  // 组头：这一条是该轮第一条助手侧条目时，头像画在它上方。
+                  showHead: widget.headAt.contains(item.itemId),
                 ),
               );
             },
@@ -3207,10 +3240,14 @@ class _SessionListInlineState extends State<_SessionListInline> {
 /// 用户发一句话后要盯着"什么都没有"等到整步跑完。这正是"没有输出"的**实时版**：
 /// 最终会显示，但生成过程中不显示。
 class _LiveTurn extends StatelessWidget {
-  const _LiveTurn(this.text);
+  const _LiveTurn(this.text, {this.showHead = true});
 
   /// 正在生成的文本（`AppModel.liveText`）。
   final String text;
+
+  /// 要不要带头像。**本轮已经有过程条目时不再画** —— 那一组的头已经在开头
+  /// 画过了（否则同一条回答上会出现两个头像）。
+  final bool showHead;
 
   @override
   Widget build(BuildContext context) {
@@ -3226,7 +3263,7 @@ class _LiveTurn extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const AssistantHead(),
+          if (showHead) const AssistantHead(),
           // **正在生成的正文**（Markdown，与持久消息同一套渲染）。
           // 空文本时给一行占位 —— 那表示"这一步开始了但还没有文本"
           // （可能在等工具结果），说"正在生成"比一片白诚实。
@@ -3255,7 +3292,11 @@ class _TurnView extends StatelessWidget {
     this.collapsibleTurn = false,
     this.turnExpanded = true,
     this.onToggleTurn,
+    this.showHead = false,
   });
+
+  /// 这一条上方要不要画「助手」头（由所在轮组的第一条助手侧条目决定）。
+  final bool showHead;
 
   final ChatItem item;
 
@@ -3280,6 +3321,18 @@ class _TurnView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final content = _content(context);
+    // 「助手」头画在**这一组的第一条助手侧条目上方**（`assistantHeadItemIds`）——
+    // 于是长轮次的头像在开头，而不是贴在最终回答上（用户 2026-10-23 指出）。
+    if (!showHead) return content;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [const AssistantHead(), content],
+    );
+  }
+
+  /// 单条条目自己的样子（不含组头）。
+  Widget _content(BuildContext context) {
     // sealed class ⇒ 这个 switch 是穷尽的：加一种条目时编译器会在**这里**报错，
     // 而不是让新类型静默渲染成空白。
     return switch (item) {
@@ -3309,6 +3362,9 @@ class _TurnView extends StatelessWidget {
                     reasoning: reasoning,
                     // 思考属于过程：轮组收起时一并收起（不可折的轮恒为展开）。
                     showReasoning: turnExpanded,
+                    // 头由所在那一组在**开头**画（`assistantHeadItemIds`），
+                    // 正文这里不再画 —— 否则头像会落在轮次中间。
+                    showHead: false,
                   ),
           MessageRole.system => SystemTurn(
             text,
