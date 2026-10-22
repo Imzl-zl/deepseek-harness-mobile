@@ -126,11 +126,13 @@
   **`relayUrl` 必须写环回** —— 写死局域网 IP 会绕开 `relayHintFor` 的自愈。
 - `connector/` 与 `relay/` 是**两个独立 pnpm 工程**，导入风格不同、别顺手统一。本仓库**没有 CI**。
 
-## 方法面 33/37
+## 方法面 35/37
 
-契约封闭集 **37**、实现 **33**，差额 4 个是契约列了没实现的：`settings.describe` / `settings.update` /
-`credentials.set` / `credentials.unset`。2026-10-21 加的五条是 `workspace.insertSessionBefore` /
-`workspace.pin` / `workspace.unpin` / `workspace.insertBefore` 与 `subagent.prompt`。
+契约封闭集 **37**、实现 **35**，差额 2 个是契约列了没实现的：`credentials.set` / `credentials.unset`。
+2026-10-21 加的五条是 `workspace.insertSessionBefore` /
+`workspace.pin` / `workspace.unpin` / `workspace.insertBefore` 与 `subagent.prompt`；
+2026-10-22 挂上了 `settings.describe` / `settings.update`（三行电脑侧设置，见
+`docs/subsystems/settings-and-versions.md`）。
 **两个数都从代码里数，不靠减**；数法见 `tools.md`（要数 `METHODS` + `handlers.ts` 的**两种**注册形态）。
 **三处必须同步**：`tools.md`、契约 §5.7 的表、这里的"x/37"。
 

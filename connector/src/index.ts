@@ -49,6 +49,9 @@ import { createEndpointsPort } from './endpoints.js'
 import { createSubagentsPort } from './dsh/subagents.js'
 import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent'
 import { createProjectionsPort } from './dsh/projections.js'
+import { createSettingsPort } from './dsh/settings.js'
+import { createSettingsFace } from './dsh/settings-face.js'
+import type { SettingsForms } from '@deepseek-ai/dsh-settings'
 import { registerTrajectoryProjection } from './dsh/trajectory.js'
 import { deriveIdentity } from './protocol/crypto.js'
 import { loadOrCreateIdentity, type Identity } from './dsh/identity.js'
@@ -697,6 +700,19 @@ let unregisterAdminFace: (() => void) | null = null
             : {
                 subagents: createSubagentsPort(
                   ctx.get('subagents') as SubagentRuntime,
+                ),
+              }),
+          // 设置面（`settings.describe` / `settings.update`）：只有 `settings` 服务在时才挂。
+          // 读已脱敏、写只发新值 —— 三条安全规则在 `dsh/settings.ts` 里，范围在
+          // `dsh/settings-face.ts` 的两张 allowlist 里。
+          ...(ctx.get('settings') === undefined
+            ? {}
+            : {
+                settings: createSettingsFace(
+                  createSettingsPort({
+                    settings: ctx.get('settings') as SettingsForms,
+                    credentials: ctx.credentials,
+                  }),
                 ),
               }),
           aliases: {

@@ -1459,6 +1459,103 @@ class AppModel extends ChangeNotifier {
     await _prefs?.write(kContentFontSizeKey, '$clamped');
   }
 
+  // ---- 电脑侧设置（`settings.describe` / `settings.update`，契约 §5.7）----
+  //
+  // 手机只碰**三个命名空间**（连接器的 `dsh/settings-face.ts` 用两张 allowlist 定死）：
+  // `permission`（默认权限档）、`agent-preset-registry`（默认 Agent 预设）、
+  // `session-log-deepseek`（Session Log 开关）。读到的值是**已脱敏**的
+  // （`role('secret')` 字段被剔除，密钥位只剩"设没设"）。
+
+  /// `ns → 已脱敏的值`。
+  final Map<String, Map<String, Object?>> _settingsValues = {};
+
+  /// `ns → 乐观锁版本`（下一次写要带回去；过期会回 `settings/conflict`）。
+  final Map<String, Object?> _settingsRevision = {};
+
+  /// 手机关心的三个命名空间。
+  static const List<String> kSettingsNamespaces = [
+    'permission',
+    'agent-preset-registry',
+    'session-log-deepseek',
+  ];
+
+  /// 某个命名空间的当前值；`null` = 还没读到（**不拿默认值冒充**）。
+  Map<String, Object?>? settingsOf(String ns) => _settingsValues[ns];
+
+  /// 读一个字段；`null` = 没有 / 还没读到。
+  Object? settingsValue(String ns, String path) => _settingsValues[ns]?[path];
+
+  /// 拉一次三个命名空间的设置快照。
+  ///
+  /// `settings.describe` 是**读方法**（不带幂等键），重发只是再读一次。
+  Future<void> refreshSettings() async {
+    try {
+      final result = await client.call<Object?>('settings.describe', {
+        'namespaces': kSettingsNamespaces,
+      });
+      final sections = result is Map ? result['sections'] : null;
+      if (sections is! List) return;
+      for (final section in sections) {
+        if (section is! Map) continue;
+        final ns = section['ns'];
+        if (ns is! String) continue;
+        final values = section['values'];
+        _settingsValues[ns] = values is Map
+            ? Map<String, Object?>.from(values)
+            : <String, Object?>{};
+        _settingsRevision[ns] = section['revision'];
+      }
+      _lastError = null;
+      if (!_disposed) notifyListeners();
+    } catch (error) {
+      // 与 `refreshSessions` 同一条纪律：兜住所有异常，记下来，界面说"拉不到"。
+      _recordError('拉取设置失败', error);
+    }
+  }
+
+  /// 改一个设置字段（**只发新值**）。返回 `true` = 电脑侧已落值。
+  ///
+  /// 冲突（`settings/conflict`，expectedRevision 过期）时**自动重读一次再返回 false**：
+  /// 下一次点击就会带上新的 revision，用户不必自己"刷新页面"。
+  Future<bool> updateSetting(String ns, String path, Object? value) async {
+    try {
+      final result = await client.call<Object?>(
+        'settings.update',
+        {
+          'ns': ns,
+          'path': [path],
+          'value': value,
+          'expectedRevision': _settingsRevision[ns],
+        },
+        requestId: 'set-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      final section = result is Map ? result['section'] : null;
+      if (section is Map && section['ns'] == ns) {
+        final values = section['values'];
+        _settingsValues[ns] = values is Map
+            ? Map<String, Object?>.from(values)
+            : <String, Object?>{};
+        _settingsRevision[ns] = section['revision'];
+      }
+      _lastError = null;
+      if (!_disposed) notifyListeners();
+      return true;
+    } on ProtocolException catch (error) {
+      if (error.code == ErrorCode.settingsConflict) {
+        // 乐观锁过期：重读一次（**不重试这次写** —— 值可能已经被别人改了）。
+        await refreshSettings();
+      }
+      // **失败原因要在重读之后再写回去**：`refreshSettings` 成功时会把 `lastError`
+      // 清空，先写就被擦掉了 —— 界面于是只剩一句没有 code 的"改设置失败"。
+      _lastError = error;
+      if (!_disposed) notifyListeners();
+      return false;
+    } catch (error) {
+      _recordError('改设置失败', error);
+      return false;
+    }
+  }
+
   // ---- 跨会话用量汇总（`usage.summary`，只读）----
 
   /// 汇总数据；`null` = 还没拉过 / 拉失败。
@@ -1489,8 +1586,7 @@ class AppModel extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  /// 读一个**通用字符串偏好**（`meta` 表的 k/v）。
-  ///
+  /// 读一个**通用字符串偏好**（`meta` 表的 k/v）。  ///
   /// 存在的理由：主题模式这一类偏好由 `ThemeController` 持真值
   /// （`model/theme_mode.dart`），而它不该认识 `AppModel`；反过来
   /// `AppModel` 也不该认识每一种偏好。所以缝是"读一个字符串 / 写一个字符串"，
@@ -1697,6 +1793,9 @@ class AppModel extends ChangeNotifier {
     // Agent 预设目录（hero 上那枚模式 chip 的名字来源）。同样只留声：
     // 拿不到时 chip 说"拿不到目录"，而不是摆一份手抄的四个内置预设。
     await _refreshAgentPresets();
+    // 设置面（三行：默认权限档 / 默认 Agent 预设 / Session Log 开关）。
+    // 拿不到时那三行**不出现**（不是摆一个假开关），与 `settings.describe` 的能力位同一条。
+    await refreshSettings();
     // **落到 blank 会话上**（照 DSH 的 `reuseOrCreateBlank`，见该方法的注释）。
     await _openBlankSessionIfUnselected();
   }

@@ -36,6 +36,11 @@ import type { SubagentsPort } from './dsh/subagents.js'
 import type { WorkspacesPort } from './dsh/workspaces.js'
 import type { PermissionFace } from './dsh/permissions.js'
 import type { AgentPresetsFace } from './dsh/agent-presets.js'
+import {
+  SettingsConflictError,
+  SettingsScopeError,
+  type SettingsFace,
+} from './dsh/settings-face.js'
 
 /** 设备清单里的一行。**不含公钥** —— 手机不需要别人的公钥，少发一个字段就少一处泄漏面。 */
 export interface DeviceRow {
@@ -189,6 +194,16 @@ export interface HandlerDeps {
    * handler 表的键，于是"这台没有子代理服务"与"这个方法没实现"在手机侧同一种表现。
    */
   subagents?: SubagentsPort
+  /**
+   * 设置面（`settings.describe` / `settings.update`，可选服务 `settings`）。
+   *
+   * **缺了就不挂这两个方法** —— 与 `job.*` 同一条纪律：`repo.info` 报的是 handler 表的键，
+   * 于是"这台没有设置服务"与"这个方法没实现"在手机侧同一种表现。
+   * 可读 / 可写的范围由 `dsh/settings-face.ts` 的两张 allowlist 定：
+   * 手机只为三行设置而来（默认权限档 / 默认预设 / Session Log），
+   * 而写面按 (ns, path) 逐条放行 —— `mutate` 是能写密钥字段的，`settings.update` 不是那条通道。
+   */
+  settings?: SettingsFace
 }
 
 export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, MethodHandler>> {
@@ -313,6 +328,22 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       throw new ProtocolError('protocol/bad-frame', `${key} 必填`)
     }
     return value
+  }
+
+  /**
+   * 取一个**字符串数组**参数（缺省 = 空数组）。
+   *
+   * 形状不对回 `gateway/bad-request` 而不是 `protocol/bad-frame`：这一层已经解过帧，
+   * 到了这里说明**是我们发的参数**不对（与 `settings.update` 的越界同一条归类）。
+   */
+  const stringArray = (params: unknown, key: string): string[] => {
+    if (params === null || typeof params !== 'object') return []
+    const value = (params as Record<string, unknown>)[key]
+    if (value === undefined) return []
+    if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+      throw new ProtocolError('gateway/bad-request', `${key} 必须是字符串数组`)
+    }
+    return value as string[]
   }
 
   /**
@@ -842,6 +873,45 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       // 空数组会被手机读成"这个部署一个预设都没有"，而真实原因可能是服务没起来。
       if (roster === undefined) return { available: false }
       return { available: true, roster }
+    }
+  }
+
+  // 设置面：三行设置（默认权限档 / 默认预设 / Session Log）的读写。
+  // 范围由 `dsh/settings-face.ts` 的两张 allowlist 定，越界回 `gateway/bad-request`。
+  if (deps.settings !== undefined) {
+    const settings = deps.settings
+
+    // 读：手机点名要哪几个 ns。不在可读 allowlist 里的**静默跳过**（问多了不该报错）。
+    handlers['settings.describe'] = (params) => {
+      const namespaces = stringArray(params, 'namespaces')
+      return { sections: settings.describe(namespaces) }
+    }
+
+    // 写：**只发新值**（`mutate` 的 `{op:'set'}`），带 `expectedRevision` 乐观锁。
+    // 返回改完之后的快照 —— 手机据此刷新那一行，不必自己猜。
+    handlers['settings.update'] = async (params) => {
+      const ns = requireString(params, 'ns')
+      const path = stringArray(params, 'path')
+      if (path.length === 0) {
+        throw new ProtocolError('gateway/bad-request', 'path 不能是空数组')
+      }
+      try {
+        const section = await settings.update({
+          ns,
+          path,
+          value: (params as Record<string, unknown>).value,
+          expectedRevision: (params as Record<string, unknown>).expectedRevision,
+        })
+        return { section: section ?? null }
+      } catch (error) {
+        if (error instanceof SettingsScopeError) {
+          throw new ProtocolError('gateway/bad-request', error.message)
+        }
+        if (error instanceof SettingsConflictError) {
+          throw new ProtocolError('settings/conflict', error.message)
+        }
+        throw error
+      }
     }
   }
 

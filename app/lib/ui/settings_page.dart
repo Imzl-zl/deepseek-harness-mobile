@@ -33,8 +33,10 @@ import 'package:flutter/services.dart';
 import '../core/endpoint.dart';
 import '../core/errors.dart';
 import '../data/app_model.dart';
+import '../model/agent_preset.dart';
 import '../model/chat_item.dart';
 import '../model/model_catalog.dart';
+import '../model/permission.dart';
 import '../model/preferences.dart';
 import '../model/send_mode.dart';
 import '../model/theme_mode.dart';
@@ -127,6 +129,18 @@ class SettingsPage extends StatelessWidget {
               reconnecting: app.connection == ConnectionStateView.connecting,
             ),
             const _SectionTitle('通用'),
+            // **DSH 的 general 组里 order 最靠前的一行（-20）**：
+            // 新会话的默认权限档。值存在**电脑侧**（`permission.defaultPreset`），
+            // 目录来自 `permission.catalog` 的 `defaultOptions` —— 拿不到目录就**点不动**
+            // （`onTap: null`），而不是摆一份手抄的三档。
+            _SettingPickerRow(
+              icon: 'shield',
+              label: '新会话默认权限',
+              value: _permissionDefaultLabel(app),
+              onTap: app.permissionCatalog == null
+                  ? null
+                  : () => unawaited(_pickPermissionDefault(context, app)),
+            ),
             // **主题（浅 / 深 / 跟随系统）** —— 2026-10-19 加。
             //
             // DSH 的 `design-platform.css` 一上来就有两套（浅色是 `:root`、
@@ -192,6 +206,26 @@ class SettingsPage extends StatelessWidget {
             const _PrefNote(
               '这几项只影响这台手机的呈现，不同步到电脑（DSH 桌面把它们存在'
               '电脑上，那是跨浏览器跟随；手机只有自己看，这是有意偏离）。',
+            ),
+            // **以下三行是电脑侧真值**（`settings.describe` / `settings.update`）：
+            // 值存在电脑上，手机改的是电脑的设置 —— 与上面那一组"本地偏好"不是一回事。
+            _SettingPickerRow(
+              icon: 'agentPreset',
+              label: '新任务默认模式',
+              value: _agentPresetDefaultLabel(app),
+              onTap: app.agentPresetRoster == null
+                  ? null
+                  : () => unawaited(_pickAgentPresetDefault(context, app)),
+            ),
+            _SettingSwitchRow(
+              icon: 'share',
+              label: '上传 Session Log',
+              note: '帮助改进 DeepSeek 模型与产品；只在使用官方模型 API 时生效',
+              value:
+                  app.settingsValue('session-log-deepseek', 'enabled') == true,
+              onChanged: app.settingsOf('session-log-deepseek') == null
+                  ? null
+                  : (value) => unawaited(_setSessionLog(context, app, value)),
             ),
             // **用量不在设置页**：2026-10-19 用户原话「用量在侧滑窗口菜单
             // 单独页面啊，这不是显眼，因为这个挺常用的，你藏太深了」。
@@ -271,6 +305,195 @@ Future<void> _pickEnum<T>({
     ),
   );
   if (picked != null) await onPicked(picked);
+}
+
+/// 权限档的显示名：**目录里查得到就用目录的名字**，查不到照原值显示（不猜、不翻译）。
+String _permissionDefaultLabel(AppModel app) {
+  final catalog = app.permissionCatalog;
+  final value =
+      app.settingsValue('permission', 'defaultPreset') as String? ??
+      catalog?.defaultPreset;
+  if (value == null || value.isEmpty) return '未读到';
+  for (final preset in catalog?.defaultOptions ?? const <PermissionPreset>[]) {
+    if (preset.value == value) {
+      return preset.name.isEmpty ? preset.value : preset.name;
+    }
+  }
+  for (final preset in catalog?.options ?? const <PermissionPreset>[]) {
+    if (preset.value == value) {
+      return preset.name.isEmpty ? preset.value : preset.name;
+    }
+  }
+  return value;
+}
+
+/// 选「新会话默认权限」（写 `permission.defaultPreset`）。
+Future<void> _pickPermissionDefault(BuildContext context, AppModel app) async {
+  final catalog = app.permissionCatalog;
+  if (catalog == null) return;
+  // `defaultOptions` 才是"能当默认"的那几档（`Auto review` 只在当前会话门里出现）。
+  final options = catalog.defaultOptions;
+  if (options.isEmpty) return;
+  final current =
+      app.settingsValue('permission', 'defaultPreset') as String? ??
+      catalog.defaultPreset;
+  final picked = await showDshSheet<String>(
+    context: context,
+    title: '新会话默认权限',
+    body: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final preset in options)
+          DshPickerRow(
+            name: preset.name.isEmpty ? preset.value : preset.name,
+            tags: [
+              if (preset.description != null) preset.description!,
+              preset.value,
+            ],
+            selected: preset.value == current,
+            onTap: () => Navigator.of(context).pop(preset.value),
+          ),
+      ],
+    ),
+  );
+  if (picked == null || picked == current) return;
+  final ok = await app.updateSetting('permission', 'defaultPreset', picked);
+  if (!ok && context.mounted) _showSettingFailure(context, app);
+}
+
+/// 新任务默认模式的显示名（`agent-preset-registry.selectedDefault`）。
+String _agentPresetDefaultLabel(AppModel app) {
+  final value = app.settingsValue('agent-preset-registry', 'selectedDefault');
+  if (value is! String || value.isEmpty) return '未读到';
+  for (final option
+      in app.agentPresetRoster?.options ?? const <AgentPresetOption>[]) {
+    if (option.id == value) return option.displayName;
+  }
+  return value;
+}
+
+/// 选「新任务默认模式」（写 `agent-preset-registry.selectedDefault`）。
+Future<void> _pickAgentPresetDefault(BuildContext context, AppModel app) async {
+  final roster = app.agentPresetRoster;
+  if (roster == null || !roster.available) return;
+  final current = app.settingsValue('agent-preset-registry', 'selectedDefault');
+  final picked = await showDshSheet<String>(
+    context: context,
+    title: '新任务默认模式',
+    body: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final option in roster.options)
+          DshPickerRow(
+            name: option.displayName,
+            tags: [
+              if (option.description != null) option.description!,
+              option.id,
+            ],
+            selected: option.id == current,
+            onTap: () => Navigator.of(context).pop(option.id),
+          ),
+      ],
+    ),
+  );
+  if (picked == null || picked == current) return;
+  final ok = await app.updateSetting(
+    'agent-preset-registry',
+    'selectedDefault',
+    picked,
+  );
+  if (!ok && context.mounted) _showSettingFailure(context, app);
+}
+
+/// 上传 Session Log 的开关（写 `session-log-deepseek.enabled`）。
+Future<void> _setSessionLog(
+  BuildContext context,
+  AppModel app,
+  bool value,
+) async {
+  final ok = await app.updateSetting('session-log-deepseek', 'enabled', value);
+  if (!ok && context.mounted) _showSettingFailure(context, app);
+}
+
+/// 改电脑侧设置失败时的一句话（**说清是哪条错误**，不吞掉）。
+void _showSettingFailure(BuildContext context, AppModel app) {
+  final error = app.lastError;
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(error == null ? '改设置失败' : '改设置失败：${error.code.wire}'),
+    ),
+  );
+}
+
+/// 一行「电脑侧设置」：值来自 `settings.describe`，点开是选择器。
+///
+/// 与 [_PrefRow] 的区别是**它写电脑侧**（`settings.update`），而且拿不到值时
+/// `onTap` 为 `null` —— 行还在（用户知道有这个设置），但点不动（不摆假入口）。
+class _SettingPickerRow extends StatelessWidget {
+  const _SettingPickerRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.onTap,
+  });
+
+  final String icon;
+  final String label;
+  final String value;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return ListTile(
+      dense: true,
+      enabled: onTap != null,
+      leading: DshIcon(icon, size: 18, color: c.labelSecondary),
+      title: Text(label, style: TextStyle(fontSize: 14, color: c.labelPrimary)),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(value, style: TextStyle(fontSize: 13, color: c.labelCaption)),
+          const SizedBox(width: 4),
+          DshIcon('chevronRight', size: 14, color: c.labelTertiary),
+        ],
+      ),
+      onTap: onTap,
+    );
+  }
+}
+
+/// 一行「电脑侧开关」（Session Log）。
+class _SettingSwitchRow extends StatelessWidget {
+  const _SettingSwitchRow({
+    required this.icon,
+    required this.label,
+    required this.note,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String icon;
+  final String label;
+  final String note;
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return SwitchListTile.adaptive(
+      dense: true,
+      value: value,
+      onChanged: onChanged,
+      secondary: DshIcon(icon, size: 18, color: c.labelSecondary),
+      title: Text(label, style: TextStyle(fontSize: 14, color: c.labelPrimary)),
+      subtitle: Text(
+        note,
+        style: TextStyle(fontSize: 11, color: c.labelTertiary),
+      ),
+    );
+  }
 }
 
 class _SectionTitle extends StatelessWidget {
