@@ -37,6 +37,7 @@
 | `subsystems/trajectory-page.md` | 轨迹页:每轮一行的数据面(turnOutline + 本轮用时)、迷你条编码、条目详情 sheet、为什么没有甘特/调用明细、有意偏离 |
 | `subsystems/input-focus.md` | 输入焦点:输入法只许用户点输入框引起、五个页面级转换点的收口、判据与已知副作用 |
 | `subsystems/session-ordering.md` | 会话与项目的顺序:谁拥有(会话=电脑侧、Web=浏览器本地)、拖动反馈规格(插入线/扫到即显示/松手提交最后格)、边界 |
+| `subsystems/running-cues.md` | 运行中动效:扫光参数(1.5s/0.3s/steps48/105°)、运行条与活时钟、"在跑吗"的事件流判据、有意不做 |
 
 ## 引用纪律
 

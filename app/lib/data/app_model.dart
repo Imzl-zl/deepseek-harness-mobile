@@ -2397,6 +2397,41 @@ class AppModel extends ChangeNotifier {
   /// `sid → 翻页失败的原因`。
   final Map<String, String> _historyFailure = <String, String>{};
 
+  /// **此刻有轮次在跑的会话** —— 判据是事件流：最后一个 `turn/start` 还没有配对的
+  /// `turn/end`。
+  ///
+  /// ## 为什么不用 `session.list` 的 `running`
+  ///
+  /// 那张表只在**连上 / 收口 / 打开面板**时重读（见 `:2559` 的注释），
+  /// 轮次开始到结束之间它是**旧值**。2026-10-22 真机实测：一轮跑了 40 秒，
+  /// 流末尾的运行条**整轮都没出现** —— 因为 `running` 一直是 `false`。
+  /// 事件流则是实时的，而且**边界与时间都来自电脑侧**（`turn/start` 的 `time`）。
+  final Set<String> _runningSids = <String>{};
+
+  /// `sid → 本轮开始时刻`（毫秒 epoch，来自 `turn/start` 事件的 `time`）。
+  ///
+  /// 运行条拿它算"用时 N 秒"—— 手机侧**唯一**允许的减法就是这个活时钟；
+  /// 跑完的时长仍然只读投影给的 `durationMs`。
+  final Map<String, int> _turnStartedAt = <String, int>{};
+
+  /// 这个会话此刻在跑吗。
+  ///
+  /// 事件流优先（实时）；`session.list` 的行只是**打开会话那一刻的初值** ——
+  /// 事件还没到时先信它，事件一到就由 [_runningSids] 说了算。
+  bool runningOf(String sid) =>
+      _runningSids.contains(sid) || (sessionOf(sid)?.running ?? false);
+
+  /// 本轮开始的时刻（毫秒 epoch）；`null` = 不知道。
+  ///
+  /// 兜底读 `trajectory` 投影里那一轮的 `startTime`，但**只对当前会话** ——
+  /// 投影是按当前会话读的，别的会话拿它等于张冠李戴。
+  int? turnStartedAtOf(String sid) {
+    final fromEvents = _turnStartedAt[sid];
+    if (fromEvents != null) return fromEvents;
+    if (sid != _currentSid) return null;
+    return trajectory?.runningTurn?.startTime;
+  }
+
   // Note: 逐条错误隔离（一条坏事件不再炸掉整批）+ 插话判定（DSH
   // SteeringHistory 的移植）—— 见
   // .agents/notes/implemented/2026-10-17-conversation-rendering-fills-dsh-gaps.md
@@ -2419,6 +2454,16 @@ class AppModel extends ChangeNotifier {
       // 在同一个 Context 里滚动状态，不是回到库里查）。
       final inBatch = <String, ChatItem>{};
       for (final event in delta.events) {
+        // **"这一轮在跑吗"从事件流判**（实时；`session.list` 的 `running` 是旧值，
+        // 见 `_runningSids` 的注释）。`turn/start` 的 `time` 就是本轮的起点 ——
+        // 电脑侧给的，手机只拿它做活时钟的减法。
+        if (event.type == 'turn/start') {
+          _runningSids.add(sid);
+          _turnStartedAt[sid] = event.time;
+        } else if (event.type == 'turn/end') {
+          _runningSids.remove(sid);
+          _turnStartedAt.remove(sid);
+        }
         // **`session/title` 不是条目，是标题的真值**：DSH 生成/改名时落一条
         // （`session-title/src/index.ts` 的 fold 就认这个 type）。它进条目表
         // 只会渲染出一条莫名其妙的"其它事件"，所以在这里截住并落地成标题。

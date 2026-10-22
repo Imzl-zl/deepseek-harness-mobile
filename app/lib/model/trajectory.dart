@@ -164,6 +164,17 @@ class TrajectoryView {
     }
     return null;
   }
+
+  /// **还在跑的那一轮**（`durationMs == null` 的最后一轮）；没有就是 `null`。
+  ///
+  /// 流末尾那条运行条的秒数起点就是它的 [TrajectoryTurn.startTime] ——
+  /// 手机侧唯一允许的减法只有"活时钟"这一处（见 `_RunningBar`）。
+  TrajectoryTurn? get runningTurn {
+    for (var i = turns.length - 1; i >= 0; i -= 1) {
+      if (turns[i].durationMs == null) return turns[i];
+    }
+    return null;
+  }
 }
 
 /// 从投影值包里解析出 [TrajectoryView]。

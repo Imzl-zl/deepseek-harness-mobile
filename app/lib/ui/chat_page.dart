@@ -64,6 +64,7 @@ import 'dsh_composer.dart';
 import 'dsh_markdown.dart';
 import 'dsh_popover.dart';
 import 'dsh_sheet.dart';
+import 'dsh_shimmer.dart';
 import 'dsh_state_dot.dart';
 import 'edge_stick.dart';
 import 'input_focus.dart';
@@ -2480,6 +2481,11 @@ class _ChatTab extends StatelessWidget {
       items: items,
       autoOpenDetail: autoOpenToolDetail,
       liveText: app.liveText,
+      // **这一轮还在跑吗**：运行条只在真的在跑时挂（静止的界面不许闪）。
+      // 判据来自电脑侧：`turn/start` / `turn/end` 事件（实时）+ `session.list`
+      // 的 `running`（打开那一刻的初值）；起点是 `turn/start` 的 `time`。
+      running: app.runningOf(app.currentSid ?? ''),
+      turnStartedAt: app.turnStartedAtOf(app.currentSid ?? ''),
       // 滚到顶翻页要它（`hasOlderHistory` + `loadOlderHistory`）。
       app: app,
     );
@@ -2518,13 +2524,16 @@ int chatItemIndexFor(
   int index, {
   required int itemCount,
   required bool hasLive,
-}) => itemCount - 1 - (index - (hasLive ? 1 : 0));
+  bool hasRunning = false,
+}) => itemCount - 1 - (index - (hasLive ? 1 : 0) - (hasRunning ? 1 : 0));
 
 class _ConversationFlow extends StatefulWidget {
   const _ConversationFlow({
     required this.items,
     required this.autoOpenDetail,
     this.liveText,
+    this.running = false,
+    this.turnStartedAt,
     this.app,
   });
 
@@ -2537,6 +2546,15 @@ class _ConversationFlow extends StatefulWidget {
   /// `items.length + (liveText == null ? 0 : 1)`。持久的 `assistant/message`
   /// 到达后它自动消失（`AppModel` 不再给值）—— 那条消息整体替换它。
   final String? liveText;
+
+  /// 电脑侧说这一轮还在跑（`session.list` 的 `running`）—— 决定流末尾有没有运行条。
+  ///
+  /// **它是虚拟尾条目**（与 [liveText] 同一种东西）：两个工具之间没有正文可显示，
+  /// 那条"深度求索中，用时 N 秒"就是屏幕上唯一在动的东西。
+  final bool running;
+
+  /// 本轮起点（毫秒 epoch，来自 `trajectory` 投影）；`null` = 不知道起点。
+  final int? turnStartedAt;
 
   /// 会话模型（滚到顶翻页要用它的 `hasOlderHistory` 与 `loadOlderHistory`）。
   ///
@@ -2755,8 +2773,11 @@ class _ConversationFlowState extends State<_ConversationFlow> {
             controller: _scroll,
             reverse: true,
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            // **+1 是流式尾条目**（虚拟，没有 itemId）。
-            itemCount: widget.items.length + (widget.liveText == null ? 0 : 1),
+            // **+1 是流式尾条目，再 +1 是运行条**（两条都是虚拟的，没有 itemId）。
+            itemCount:
+                widget.items.length +
+                (widget.liveText == null ? 0 : 1) +
+                (widget.running ? 1 : 0),
             itemBuilder: (context, index) {
               // `reverse: true` 下 index 0 在**最下面**，往上递增。
               // `items` 是 **seq 升序**（`session_store.dart:146`），所以 index 要
@@ -2765,7 +2786,16 @@ class _ConversationFlowState extends State<_ConversationFlow> {
               // 2026-10-20 真机复现：原来这里是 `items[index - 1]`（正着取），
               // 于是**最早的在上、最新的在下** —— 一整段对话是倒的，
               // 而且"进入会话落在最新一条"也落到了最早一条。
-              if (widget.liveText != null && index == 0) {
+              final hasLive = widget.liveText != null;
+              final hasRunning = widget.running;
+              // 运行条在最下面（它是流末尾），流式文本在它上面一格。
+              if (hasRunning && index == 0) {
+                return KeyedSubtree(
+                  key: const ValueKey('running'),
+                  child: RunningBar(startTime: widget.turnStartedAt),
+                );
+              }
+              if (hasLive && index == (hasRunning ? 1 : 0)) {
                 return KeyedSubtree(
                   key: const ValueKey('live'),
                   child: _LiveTurn(widget.liveText!),
@@ -2774,7 +2804,8 @@ class _ConversationFlowState extends State<_ConversationFlow> {
               final itemIndex = chatItemIndexFor(
                 index,
                 itemCount: widget.items.length,
-                hasLive: widget.liveText != null,
+                hasLive: hasLive,
+                hasRunning: hasRunning,
               );
               // **按 `itemId` 取 key**（跨帧同一个）—— 换 key 会让这一行重新
               // 挂载，工具卡的展开状态就丢了。见 `_keysById` 的说明。
@@ -2794,13 +2825,111 @@ class _ConversationFlowState extends State<_ConversationFlow> {
         // `itemCount` 含流式尾条目 —— 它与持久条目一样"可跳"。
         Positioned.fill(
           child: ChatJumper(
-            itemCount: widget.items.length + (widget.liveText == null ? 0 : 1),
+            itemCount:
+                widget.items.length +
+                (widget.liveText == null ? 0 : 1) +
+                (widget.running ? 1 : 0),
             onStep: _step,
             onEdge: _edge,
             onCreated: (controller) => _jumper = controller,
           ),
         ),
       ],
+    );
+  }
+}
+
+/// 流末尾那条运行条读"现在几点"的时钟。**注入的缝**：活时钟要能单测
+/// （与 `subagent_tree.dart` 的 `now` 同一条纪律），用例替换后记得还原。
+int Function() runningBarClock = () => DateTime.now().millisecondsSinceEpoch;
+
+/// 流末尾的**运行条** —— 照 DSH 的 `RunningStatus`
+/// （`packages/client/ui-chat/src/client/chat/RunningStatus.tsx:20-41`，挂在流末尾
+/// `ChatFlow.tsx:60`）。
+///
+/// 用户原话：「没有这个动效还以为卡了」。两个工具之间（等结果时）屏幕上原本
+/// **什么都没有** —— 现在这里有一条：转圈的加载字形 +「深度求索中，用时 N 秒 ···」。
+///
+/// ## 秒数从电脑侧来，手机只走秒
+///
+/// - 起点 = 本轮 `trajectory.startTime`（投影给的毫秒 epoch，`runningTurn`）；
+/// - "在跑" = `session.list` 的 `running`（`_ConversationFlow.running`）；
+/// - 每 `1000ms` 重算一次 —— 照 `message-chrome.ts:13` 的
+///   `LIVE_RUN_CLOCK_INTERVAL_MS = 1000`。
+///
+/// **手机侧唯一允许的时间减法就是这一个活时钟**（`now - startTime`）；跑完的时长
+/// 仍然只读投影给的 `durationMs`（`docs/subsystems/trajectory-page.md` §1）。
+/// 拿不到起点时只说「深度求索中」—— **不编秒数**（DSH 同一条，`:28`）。
+///
+/// 鲸鱼尾 APNG 没有引入（用户 2026-10-22 选的是"用已有 loading 字形转圈"）：
+/// 少一个 2x 资源，动效点来自转圈与活时钟。
+class RunningBar extends StatefulWidget {
+  const RunningBar({super.key, this.startTime});
+
+  /// 本轮起点（毫秒 epoch）；`null` = 不知道起点。
+  final int? startTime;
+
+  @override
+  State<RunningBar> createState() => _RunningBarState();
+}
+
+class _RunningBarState extends State<RunningBar>
+    with SingleTickerProviderStateMixin {
+  /// 1.5s 匀速转 —— 与 `StateDot.module.css:42-45` 的转圈同一个节奏。
+  late final AnimationController _spin = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1500),
+  )..repeat();
+
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    _spin.dispose();
+    super.dispose();
+  }
+
+  String get _label {
+    final start = widget.startTime;
+    if (start == null) return '深度求索中';
+    // `Math.max(1000, …)`：不足 1 秒也说"1 秒"（DSH 同一条）。
+    final elapsed = runningBarClock() - start;
+    return '深度求索中，用时 ${formatElapsedMs(elapsed < 1000 ? 1000 : elapsed)} ···';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return Padding(
+      // 与持久条目同一档上下留白（它也是"流里的一行"）。
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      child: Row(
+        children: [
+          RotationTransition(
+            turns: _spin,
+            child: DshIcon('loading', size: 14, color: c.businessBlue),
+          ),
+          const SizedBox(width: 8),
+          // 文案本身也扫光：DSH 给这条 label 套的就是 `TextShimmer active`
+          // （`RunningStatus.tsx:37`）。
+          DshShimmer(
+            active: true,
+            child: Text(
+              _label,
+              style: TextStyle(fontSize: 13, color: c.businessBlue),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

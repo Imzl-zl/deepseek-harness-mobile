@@ -53,6 +53,7 @@ import 'theme/dsh_theme.dart';
 import 'ui/archive_sheet.dart';
 import 'ui/chat_page.dart';
 import 'ui/connection_actions_sheet.dart';
+import 'ui/dsh_shimmer.dart';
 import 'ui/input_focus.dart';
 import 'ui/pairing_page.dart';
 import 'ui/session_drawer.dart';
@@ -387,7 +388,7 @@ class _DshMobileAppState extends State<DshMobileApp>
                   ? Brightness.light
                   : Brightness.dark,
             ),
-            child: child ?? const SizedBox.shrink(),
+            child: DshShimmerHost(child: child ?? const SizedBox.shrink()),
           );
         },
         home: _body(),

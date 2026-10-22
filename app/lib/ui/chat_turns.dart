@@ -27,6 +27,7 @@ import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 import 'dsh_markdown.dart';
 import 'dsh_sheet.dart';
+import 'dsh_shimmer.dart';
 
 /// 用户消息（`.turn--u`）。
 class UserTurn extends StatelessWidget {
@@ -382,13 +383,18 @@ class _ToolCardState extends State<ToolCard> {
                       ),
                     ),
                     const SizedBox(width: 10),
-                    Text(
-                      widget.name,
-                      style: TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: c.roleTool,
+                    DshShimmer(
+                      // 只给**真的在跑**的工具行扫光（DSH 的
+                      // `ToolRow.tsx:181-182` 把 `running` 传给 `DisclosureRow`）。
+                      active: widget.status == ToolCallStatus.running,
+                      child: Text(
+                        widget.name,
+                        style: TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: c.roleTool,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 6),
@@ -604,6 +610,9 @@ class _CommandCardState extends State<CommandCard> {
             label: widget.name,
             open: open,
             expandable: hasDetail,
+            // 真的在跑才扫光（DSH 把 `running` 传给 `DisclosureRow`
+            // 的 `TextShimmer active`，`ToolRow.tsx:181-182`）。
+            running: widget.status == ToolCallStatus.running,
             // DSH 的 `keepContentWhenOpen`：摘要**展开后仍显示**。
             keepPreviewWhenOpen: true,
             preview: widget.summary,
@@ -969,6 +978,7 @@ class TurnProcessRow extends StatefulWidget {
     required this.title,
     required this.stats,
     this.failed = false,
+    this.running = false,
     this.usage,
     this.copyText = '',
   });
@@ -981,6 +991,9 @@ class TurnProcessRow extends StatefulWidget {
 
   /// 这一轮是失败收尾的（换图标与颜色）。
   final bool failed;
+
+  /// **这一轮还在跑** —— 轮组头的标题扫光（DSH 的 `ChatGroupSeat.tsx:124`）。
+  final bool running;
 
   /// 该轮的 token 用量；`null` = 不显示用量 pill（**不摆 `0 tok`**）。
   final TurnTokenUsage? usage;
@@ -1039,12 +1052,15 @@ class _TurnProcessRowState extends State<TurnProcessRow> {
                 color: tone,
               ),
               const SizedBox(width: 6),
-              Text(
-                widget.title,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: tone,
+              DshShimmer(
+                active: widget.running,
+                child: Text(
+                  widget.title,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: tone,
+                  ),
                 ),
               ),
             ],
@@ -1332,6 +1348,7 @@ class _DisclosureHeader extends StatelessWidget {
     required this.open,
     required this.onTap,
     this.expandable = true,
+    this.running = false,
     this.preview = '',
     this.previewColor,
     this.keepPreviewWhenOpen = false,
@@ -1340,6 +1357,12 @@ class _DisclosureHeader extends StatelessWidget {
   final String icon;
   final String label;
   final bool open;
+
+  /// 这一行**真的在跑**（`running`）—— 只有此时标题才有扫光。
+  ///
+  /// DSH 把它从 `DisclosureRow` 一路传给 `TextShimmer active`
+  /// （`ui-primitives/src/DisclosureRow.tsx:114`）；静止的行不许闪。
+  final bool running;
 
   /// 点整行切换（DSH 的 `expandOnRowClick`）；`null` = 不可展开。
   final VoidCallback? onTap;
@@ -1370,12 +1393,15 @@ class _DisclosureHeader extends StatelessWidget {
             // 偏离 2 的另一半：图标固定 14（`:69-72` 的 14px 字形）。
             DshIcon(icon, size: 14, color: c.labelTertiary),
             const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                // secondary 档 13（`:100-105` 的 `--dsh-content-font-size-secondary`）。
-                fontSize: 13,
-                color: c.labelTertiary,
+            DshShimmer(
+              active: running,
+              child: Text(
+                label,
+                style: TextStyle(
+                  // secondary 档 13（`:100-105` 的 `--dsh-content-font-size-secondary`）。
+                  fontSize: 13,
+                  color: c.labelTertiary,
+                ),
               ),
             ),
             if (showPreview) ...[
