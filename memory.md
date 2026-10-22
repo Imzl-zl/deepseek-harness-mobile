@@ -162,10 +162,10 @@
 4. `pairing_page.dart` 的配对码 `TextField` 没关输入法联想，**手打**的 JSON 会被破坏（粘贴没事）。
 5. **PC 端「上报地址」面板没有布局/点击的自动化测试**（只有 i18n 键完整性门禁；API 侧有用例）。
 6. **IPv6 隐私地址仍会上报**：`dialOrder` 已把它们排后面，但仍占列表位。
-7. **"最近工作区"缺 `createdAt`**：我们的 `workspace.list` 行只转四个字段
-   （`connector/src/dsh/workspaces.ts:187-192`），所以"没有任何会话的工作区"永远不会被
-   `newSessionWorkspaceId` 选中 —— 与 DSH 的 `recentWorkspace` 有一处已知偏离
-   （`.agents/notes/implemented/2026-10-22-new-session-lands-in-a-workspace.md`）。
+7. ~~"最近工作区"缺 `createdAt`~~ **已修（2026-10-22）**：`workspace.list` 的行现在带
+   `createdAt`（宿主 `WorkspaceView.createdAt`，`packages/api/workspace-controller/src/types.ts:27`），
+   `newSessionWorkspaceId` 对**没有会话**的工作区按 `Date.parse(createdAt)` 参与比较 ——
+   与 DSH 的 `recentWorkspace`（`navigation.ts:565`）同一条。字段缺席（老连接器）仍按"最旧"。
 
 ## 范围决定（别再当缺口）
 
@@ -184,7 +184,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **349 项**（22 条规则自检 + 扫 96 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 20 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1078 项** |
+| `cd app && flutter test` | **1080 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **586 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
@@ -211,6 +211,7 @@
   `2026-10-22-new-session-lands-in-a-workspace.md`。
 - 2026-10-22 轨迹页真时间轴（电脑侧折、手机只画）——
   `2026-10-22-trajectory-timeline-from-host-projection.md`。
+
 
 
 

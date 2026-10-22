@@ -44,6 +44,16 @@ export interface WorkspaceRow {
   path: string
   /** 归属这个工作区的会话 id **（DSH 的 id，不是手机见的 sid）**。 */
   sessionIds: readonly string[]
+  /**
+   * 工作区**创建时刻**（ISO 字符串，原样过线）。
+   *
+   * DSH 的 `recentWorkspace`（`packages/client/ui-workspace/src/client/navigation.ts:553-572`）
+   * 对**没有任何会话**的工作区用 `Date.parse(workspace.createdAt)` 当它的"最近时刻" ——
+   * 少了这个字段，空工作区永远赢不了（手机侧以前记成 `-1`，是一处已记过的偏离）。
+   * 宿主的 `WorkspaceView.createdAt` 就是它（`packages/api/workspace-controller/src/types.ts:27`）；
+   * 手机**不解析成时间戳**，只在"谁更新"这件事上按 DSH 的规则比较（见 `model/workspace.dart`）。
+   */
+  createdAt: string
 }
 
 export interface WorkspacesSnapshot {
@@ -189,6 +199,8 @@ export function createWorkspacesPort(
               title: item.title,
               path: item.path,
               sessionIds: item.sessionIds.map(String),
+              // 原样过线（ISO 字符串）：手机只拿它比"谁更新"，不做时区换算。
+              createdAt: item.createdAt,
             })),
             archivedSessionIds: value.archivedSessionIds.map(String),
             pinnedSessionIds: value.pinnedSessionIds.map(String),

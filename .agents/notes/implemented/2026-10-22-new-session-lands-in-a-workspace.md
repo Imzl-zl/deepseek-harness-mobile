@@ -1,6 +1,8 @@
 # Agent Note: 新建会话必须带 workspaceId（照 DSH 的链解析）
 
-Status: implemented
+Status: superseded（2026-10-22：`createdAt` 那一处偏离已被
+`.agents/notes/implemented/2026-10-22-workspace-created-at.md` 消除；
+本篇的**链解析**结论仍然有效，被取代的只是"空工作区永远赢不了"那一段）
 
 ## Problem
 

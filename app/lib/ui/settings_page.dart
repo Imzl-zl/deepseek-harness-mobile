@@ -595,7 +595,9 @@ class _FontSizeRow extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           _StepButton(
-            icon: 'minus',
+            // `false` = 减号（画一条横线：图标集里没有 `minus`，
+            // 而"用 unicode 字形当图标"是本项目的硬禁令）。
+            plus: false,
             semanticLabel: '调小字号',
             onTap: size > DshType.minSize
                 ? () => unawaited(app.setContentFontSize(size - 1))
@@ -614,7 +616,7 @@ class _FontSizeRow extends StatelessWidget {
             ),
           ),
           _StepButton(
-            icon: 'plus',
+            plus: true,
             semanticLabel: '调大字号',
             onTap: size < DshType.maxSize
                 ? () => unawaited(app.setContentFontSize(size + 1))
@@ -626,17 +628,17 @@ class _FontSizeRow extends StatelessWidget {
   }
 }
 
-/// 步进器上的一枚按钮。`icon == 'minus'` 时画一条 12×2 的横线
+/// 步进器上的一枚按钮。[plus] 为假时画一条 12×2 的横线
 /// —— 图标集里没有 minus（`dsh_icons.dart` 只有 plus），
 /// 而"用 unicode 字形当图标"是本项目的硬禁令。
 class _StepButton extends StatelessWidget {
   const _StepButton({
-    required this.icon,
+    required this.plus,
     required this.semanticLabel,
     required this.onTap,
   });
 
-  final String icon;
+  final bool plus;
   final String semanticLabel;
   final VoidCallback? onTap;
 
@@ -656,16 +658,16 @@ class _StepButton extends StatelessWidget {
             width: 36,
             height: 36,
             child: Center(
-              child: icon == 'minus'
-                  ? Container(
+              child: plus
+                  ? DshIcon('plus', size: 14, color: c.labelPrimary)
+                  : Container(
                       width: 12,
                       height: 2,
                       decoration: BoxDecoration(
                         color: c.labelPrimary,
                         borderRadius: BorderRadius.circular(1),
                       ),
-                    )
-                  : DshIcon('plus', size: 14, color: c.labelPrimary),
+                    ),
             ),
           ),
         ),

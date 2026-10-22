@@ -107,13 +107,18 @@ Map<String, Object?> _workspaces(
   'pinnedSessionIds': const <String>[],
 };
 
-Map<String, Object?> _group(String id, String path, List<String> sessionIds) =>
-    <String, Object?>{
-      'workspaceId': id,
-      'title': id.toUpperCase(),
-      'path': path,
-      'sessionIds': sessionIds,
-    };
+Map<String, Object?> _group(
+  String id,
+  String path,
+  List<String> sessionIds, {
+  String createdAt = '',
+}) => <String, Object?>{
+  'workspaceId': id,
+  'title': id.toUpperCase(),
+  'path': path,
+  'sessionIds': sessionIds,
+  if (createdAt.isNotEmpty) 'createdAt': createdAt,
+};
 
 void main() {
   group('newSessionWorkspaceId（纯函数，照 DSH 的链）', () {
@@ -195,7 +200,35 @@ void main() {
       expect(newSessionWorkspaceId(groups: empty, updatedAtOf: (_) => 0), 'a');
     });
 
-    test('有会话的工作区比空工作区更"近"（我们的 createdAt 偏离）', () {
+    test('空工作区靠 createdAt 参与比较：刚建的空工作区赢过老会话', () {
+      // DSH 的 `recentWorkspace` 对没有会话的工作区用 `Date.parse(createdAt)`
+      //（`navigation.ts:565`）—— 手机侧现在也照这条比。
+      final mixed = <WorkspaceGroup>[
+        const WorkspaceGroup(
+          workspaceId: 'used',
+          title: 'U',
+          path: r'D:\u',
+          sessionIds: ['s'],
+        ),
+        const WorkspaceGroup(
+          workspaceId: 'fresh',
+          title: 'F',
+          path: r'D:\f',
+          sessionIds: [],
+          // 比那条会话的 updatedAt 更新。
+          createdAt: '2026-10-22T10:00:00.000Z',
+        ),
+      ];
+      final sessionAt = DateTime.parse(
+        '2026-10-21T10:00:00.000Z',
+      ).millisecondsSinceEpoch;
+      expect(
+        newSessionWorkspaceId(groups: mixed, updatedAtOf: (_) => sessionAt),
+        'fresh',
+      );
+    });
+
+    test('电脑侧没给 createdAt（老连接器）⇒ 空工作区仍然赢不了（不猜时间）', () {
       final mixed = <WorkspaceGroup>[
         const WorkspaceGroup(
           workspaceId: 'empty',
@@ -329,6 +362,42 @@ void main() {
       expect(await app.findBlankSession(workspaceId: 'w1'), 'b2');
       // 不给工作区时保持原行为（第一个 blank），供"启动时落到 blank"用。
       expect(await app.findBlankSession(), 'b1');
+    });
+  });
+
+  group('workspace.list 的 createdAt', () {
+    test('原样落到 WorkspaceGroup.createdAt（空工作区当"最近"要靠它）', () async {
+      final client = _CreateClient(
+        rows: const [],
+        workspaces: _workspaces([
+          _group(
+            'empty',
+            r'D:\e',
+            const [],
+            createdAt: '2026-10-22T08:00:00.000Z',
+          ),
+          // 老连接器不带这个字段 ⇒ 解析成空串（不猜）。
+          _group('old', r'D:\o', const []),
+        ]),
+      );
+      final app = AppModel(client: client);
+      addTearDown(app.dispose);
+      await app.start();
+      await app.refreshSessions();
+
+      expect(
+        app.workspaces.firstWhere((g) => g.workspaceId == 'empty').createdAt,
+        '2026-10-22T08:00:00.000Z',
+      );
+      expect(
+        app.workspaces.firstWhere((g) => g.workspaceId == 'old').createdAt,
+        '',
+      );
+      // 于是"最近的工作区"是刚建的那个空工作区。
+      expect(
+        newSessionWorkspaceId(groups: app.workspaces, updatedAtOf: (_) => -1),
+        'empty',
+      );
     });
   });
 }

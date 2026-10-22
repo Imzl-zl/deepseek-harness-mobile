@@ -2306,6 +2306,11 @@ class AppModel extends ChangeNotifier {
           workspaceId: id,
           title: title,
           path: row['path'] is String ? row['path'] as String : '',
+          // 工作区创建时刻（ISO）：空工作区"谁更新"要靠它（DSH 的 `recentWorkspace`）。
+          // 缺了就是空串 —— `newSessionWorkspaceId` 按"永远最旧"处理，不猜。
+          createdAt: row['createdAt'] is String
+              ? row['createdAt'] as String
+              : '',
           // 只收非空串：一个空 sid 会让"这个会话属于谁"对不上。
           sessionIds: ids
               .whereType<String>()

@@ -64,6 +64,7 @@ class WorkspaceGroup {
     required this.title,
     required this.path,
     required this.sessionIds,
+    this.createdAt = '',
   });
 
   final String workspaceId;
@@ -76,6 +77,14 @@ class WorkspaceGroup {
 
   /// 归属这个工作区的会话（**手机见的 sid**）。
   final List<String> sessionIds;
+
+  /// 工作区**创建时刻**（ISO 字符串，电脑侧原样给的）。
+  ///
+  /// 只在 [newSessionWorkspaceId] 里用一次：DSH 的 `recentWorkspace`
+  /// （`packages/client/ui-workspace/src/client/navigation.ts:553-572`）对
+  /// **没有任何会话**的工作区拿 `Date.parse(createdAt)` 当它的"最近时刻"。
+  /// 空字符串 = 电脑侧没给（那时按"永远最旧"处理，不猜一个时间）。
+  final String createdAt;
 }
 
 /// 一桶:分组标签 + 属于它的 sid + 它对应的**工作区 id**。
@@ -120,14 +129,15 @@ WorkspaceGroup? workspaceGroupOf(String sid, List<WorkspaceGroup> groups) {
 /// `workspaceId`，分组只能读 `workspace.list` 的 `sessionIds` ——
 /// 于是不带 `workspaceId` 建的会话在抽屉里**永远落在「未分组」**。
 ///
-/// ## 与 DSH 的一处偏离
+/// ## 空工作区靠 `createdAt` 参与比较（2026-10-22 起对齐）
 ///
 /// DSH 对**没有任何会话**的工作区用 `Date.parse(workspace.createdAt)` 当它的
-/// "最近时刻"（`:565`），而我们的 `workspace.list` 行只转四个字段、没有
-/// `createdAt`（`connector/src/dsh/workspaces.ts:187-192`）。所以这里把
-/// "没有会话"记成 `-1`：**有会话的工作区永远比空工作区更近**，
-/// 只有全都空着时才按行序取第一个。取舍见
-/// `.agents/notes/implemented/2026-10-22-new-session-lands-in-a-workspace.md`。
+/// "最近时刻"（`packages/client/ui-workspace/src/client/navigation.ts:565`），
+/// 所以"刚建的空工作区"能赢过"很久没动过的老工作区"。
+/// 手机侧以前没有这个字段（连接器只转四个字段），只能把"没有会话"记成 `-1` ——
+/// 那是**已记过的偏离**；现在 `workspace.list` 带 `createdAt` 了，这一层照 DSH 比。
+///
+/// `createdAt` 是空串（电脑侧没给 / 老连接器）时仍然按 `-1` 处理 —— **不猜一个时间**。
 String? newSessionWorkspaceId({
   String? explicit,
   String? currentWorkspaceId,
@@ -141,7 +151,8 @@ String? newSessionWorkspaceId({
   String? best;
   var bestAt = -1;
   for (final group in groups) {
-    var latest = -1;
+    // 有会话 ⇒ 取会话里最大的 `updatedAt`；没有会话 ⇒ 取工作区自己的 `createdAt`。
+    var latest = group.sessionIds.isEmpty ? _parseIso(group.createdAt) : -1;
     for (final sid in group.sessionIds) {
       final at = updatedAtOf(sid);
       if (at > latest) latest = at;
@@ -152,6 +163,12 @@ String? newSessionWorkspaceId({
     }
   }
   return best;
+}
+
+/// ISO 时间串 → 毫秒 epoch；解析不了回 `-1`（**不知道就是最旧**，不猜）。
+int _parseIso(String iso) {
+  if (iso.isEmpty) return -1;
+  return DateTime.tryParse(iso)?.millisecondsSinceEpoch ?? -1;
 }
 
 /// 一个会话在列表里**可不可见**。

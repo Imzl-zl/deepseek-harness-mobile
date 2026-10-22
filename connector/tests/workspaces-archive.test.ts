@@ -52,6 +52,8 @@ const dshWorkspace = (patch: Record<string, unknown> = {}) => ({
   title: 'dsh-mobile',
   path: 'D:/repo',
   sessionIds: ['dsh-a'],
+  // 宿主的 `WorkspaceView.createdAt`（`types.ts:27`）：空工作区"谁更新"要靠它。
+  createdAt: '2026-10-21T15:42:56.03Z',
   ...patch,
 })
 
@@ -69,6 +71,9 @@ test('list：工作区、归档集、置顶集都是 DSH id（换别名是 handl
         title: 'dsh-mobile',
         path: 'D:/repo',
         sessionIds: ['dsh-a'],
+        // `createdAt` **原样过线**：手机侧 `newSessionWorkspaceId` 要靠它判
+        // "空工作区谁更新"（DSH 的 `recentWorkspace`，`navigation.ts:565`）。
+        createdAt: '2026-10-21T15:42:56.03Z',
       },
     ],
     archivedSessionIds: ['dsh-z'],
@@ -243,6 +248,7 @@ test('workspace.list：归档集与置顶集都换成手机见的 sid（同一�
             title: 'dsh-mobile',
             path: 'D:/repo',
             sessionIds: ['dsh-a'],
+            createdAt: '2026-10-21T15:42:56.03Z',
           },
         ],
         archivedSessionIds: ['dsh-a', 'dsh-z'],

@@ -119,8 +119,10 @@ DSH 的 hero chip 走 `remote.agentPresets.select(sessionId, id)`
 
 抽屉/顶栏的「新建会话」不带任何 chip 选择,它按 **DSH 的 `startSession` 链**解析:
 `显式 → 当前会话所在工作区 → 最近工作区`(`ui-workspace/src/client/navigation.ts:320-334`;
-"最近"= 每个工作区里会话的最大 `updatedAt`,同文件 `:553-572`),解析不出来才不塞。
-判据在 `model/workspace.dart` 的 `newSessionWorkspaceId`。
+"最近"= 每个工作区里会话的最大 `updatedAt`,**没有会话的工作区用它的 `createdAt`**
+——同文件 `:553-572`),解析不出来才不塞。
+判据在 `model/workspace.dart` 的 `newSessionWorkspaceId`;`createdAt` 由
+`workspace.list` 原样过线(电脑侧真值,不猜:字段缺席就按"最旧"处理)。
 
 **为什么不能省**:宿主只在给了 `workspaceId` 时才 `workspace.attachSession`
 (`session-controller/src/commands.ts:116-148`),而抽屉分组只认 `workspace.list` 的
