@@ -53,6 +53,7 @@ import 'theme/dsh_theme.dart';
 import 'ui/archive_sheet.dart';
 import 'ui/chat_page.dart';
 import 'ui/connection_actions_sheet.dart';
+import 'ui/input_focus.dart';
 import 'ui/pairing_page.dart';
 import 'ui/session_drawer.dart';
 import 'ui/settings_page.dart';
@@ -539,16 +540,22 @@ class _DshMobileAppState extends State<DshMobileApp>
   /// 其余分组按 `docs/settings-porting-notes.md` 还没搬，**不摆占位行**。
   void _openSettings(AppModel app) {
     unawaited(navigatorKey.currentState?.maybePop());
+    // **输入法不许自己弹出来**：从设置页 pop 回来时，框架会把焦点还给页面里
+    // 上一次的焦点节点（输入栏），`EditableText` 一拿回焦点就开输入连接。
+    // 开与关各收一次，机制见 `ui/input_focus.dart`。
+    dismissInputFocus();
     unawaited(
-      navigatorKey.currentState?.push(
-        MaterialPageRoute<void>(
-          builder: (_) => SettingsPage(
-            app: app,
-            themeMode: _theme.mode,
-            onThemeMode: setThemeMode,
-          ),
-        ),
-      ),
+      navigatorKey.currentState
+          ?.push(
+            MaterialPageRoute<void>(
+              builder: (_) => SettingsPage(
+                app: app,
+                themeMode: _theme.mode,
+                onThemeMode: setThemeMode,
+              ),
+            ),
+          )
+          .whenComplete(dismissInputFocus),
     );
   }
 
@@ -564,18 +571,23 @@ class _DshMobileAppState extends State<DshMobileApp>
     // **不要在这里先拉再传快照**：`UsagePage` 不监听 `AppModel`，
     // 传进去的那一份永远是"拉之前"的 null（真机上就是永远的「还没有用量数据」）。
     // 拉与重画都在 `UsagePageHost` 里（它 `initState` 拉、`ListenableBuilder` 重画）。
+    //
+    // 输入法同理：开与关各收一次（见 `ui/input_focus.dart`）。
+    dismissInputFocus();
     unawaited(
-      navigatorKey.currentState?.push(
-        MaterialPageRoute<void>(
-          builder: (_) => UsagePageHost(
-            app: app,
-            onOpenSession: (sid) {
-              unawaited(navigatorKey.currentState?.maybePop());
-              unawaited(app.openSession(sid));
-            },
-          ),
-        ),
-      ),
+      navigatorKey.currentState
+          ?.push(
+            MaterialPageRoute<void>(
+              builder: (_) => UsagePageHost(
+                app: app,
+                onOpenSession: (sid) {
+                  unawaited(navigatorKey.currentState?.maybePop());
+                  unawaited(app.openSession(sid));
+                },
+              ),
+            ),
+          )
+          .whenComplete(dismissInputFocus),
     );
   }
 

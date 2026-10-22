@@ -35,6 +35,7 @@
 | `subsystems/blank-session-hero.md` | 新会话页(blank 会话的 hero):落到这一屏的条件、结构、三样数据与标签链、写路径、有意偏离、验证 |
 | `subsystems/subagent-page.md` | 子智能体页:目录树(直接子级 + 展开才懒加载)、三态、行规格、子会话头部条与切换、一次性/未知的只读状态框、已知差异 |
 | `subsystems/trajectory-page.md` | 轨迹页:每轮一行的数据面(turnOutline + 本轮用时)、迷你条编码、条目详情 sheet、为什么没有甘特/调用明细、有意偏离 |
+| `subsystems/input-focus.md` | 输入焦点:输入法只许用户点输入框引起、五个页面级转换点的收口、判据与已知副作用 |
 
 ## 引用纪律
 

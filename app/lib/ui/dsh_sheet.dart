@@ -31,12 +31,18 @@ import 'package:flutter/material.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
+import 'input_focus.dart';
 
 /// 打开一个 DSH 风格的底部 sheet。
 ///
 /// `showModalBottomSheet` 的包装：统一圆角、底色、拖拽把手与最大高度。
 /// **不自己写动画** —— 它自带"从下往上滑入 + 遮罩渐显"，
 /// 而那正是原型 `.tk` 的 `tkIn` 关键帧在做的事。
+///
+/// **开合两个方向都失焦**：sheet 是 `ModalRoute`，push 时它把自己设成 first focus
+/// （`packages/flutter/lib/src/widgets/routes.dart:1169-1171`），pop 时框架又把焦点
+/// 还给页面里上一次的焦点节点 —— 输入栏就在那儿，于是输入法自己弹出来。
+/// 机制与真机证据见 `input_focus.dart`；这里只负责在开与关上各收一次。
 Future<T?> showDshSheet<T>({
   required BuildContext context,
   required String title,
@@ -44,21 +50,23 @@ Future<T?> showDshSheet<T>({
   List<Widget> actions = const [],
 }) {
   final c = context.dshColors;
-  return showModalBottomSheet<T>(
-    context: context,
-    backgroundColor: c.layer1,
-    // 顶部圆角 `--r-panel` = 28（原型 sheet 用面板圆角）。
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(
-        top: Radius.circular(DshRadius.panel),
+  return dismissInputFocusAround(
+    () => showModalBottomSheet<T>(
+      context: context,
+      backgroundColor: c.layer1,
+      // 顶部圆角 `--r-panel` = 28（原型 sheet 用面板圆角）。
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(DshRadius.panel),
+        ),
       ),
+      // 最多占 80% 高：留一截能看见背后的界面，让"这是浮层"成立。
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.8,
+      ),
+      builder: (context) =>
+          _SheetFrame(title: title, actions: actions, child: body),
     ),
-    // 最多占 80% 高：留一截能看见背后的界面，让"这是浮层"成立。
-    constraints: BoxConstraints(
-      maxHeight: MediaQuery.of(context).size.height * 0.8,
-    ),
-    builder: (context) =>
-        _SheetFrame(title: title, actions: actions, child: body),
   );
 }
 

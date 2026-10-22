@@ -66,6 +66,7 @@ import 'dsh_popover.dart';
 import 'dsh_sheet.dart';
 import 'dsh_state_dot.dart';
 import 'edge_stick.dart';
+import 'input_focus.dart';
 import 'load_older_trigger.dart';
 import 'queue_dock.dart';
 import 'side_pane.dart';
@@ -541,6 +542,15 @@ class ChatPageState extends State<ChatPage> {
       key: _scaffoldKey,
       backgroundColor: c.bgBase,
       drawer: widget.drawer,
+      // **输入法不许自己弹出来**：抽屉开、关两个方向都失焦。
+      //
+      // 打开时 `DrawerController` 把焦点搬进抽屉（`material/drawer.dart:538`）；
+      // 关闭时框架又把焦点还给页面里**上一次的焦点节点**
+      //（`widgets/focus_manager.dart:1444-1461` 的 `setFirstFocus` → `focusedChild`），
+      // 那通常就是输入栏 —— 而 `EditableText._handleFocusChanged` 一拿回焦点
+      // 就开输入连接（`widgets/editable_text.dart:4752-4753`）。
+      // 真机复现与取舍见 `input_focus.dart` 文件头。
+      onDrawerChanged: (_) => dismissInputFocus(),
       // **跟手**：两条边都用 Flutter 自带的边缘拖动（左 `drawer`、右 `endDrawer`）——
       // 手指拖多少抽屉走多少，松手按位置/速度决定开还是回弹，全由 `DrawerController` 管
       // （`material/drawer.dart` 的 `_move` / `_settle`）。自己写第二套只会更差。
@@ -662,6 +672,9 @@ class ChatPageState extends State<ChatPage> {
         ),
       ),
       onEndDrawerChanged: (open) {
+        // 输入法不许自己弹出来：右抽屉开、关都收一次
+        //（与左抽屉 `onDrawerChanged` 同一条，见 `input_focus.dart`）。
+        dismissInputFocus();
         // 落在子智能体页就是"面板被看见了"的那一刻：那一页的指标（running /
         // 时长 / token）来自 `session.list` 的行，现拉一次才不会停在旧值。
         if (open && _sidePanel == SidePanel.subs) _refreshSubsMetrics();

@@ -29,6 +29,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_theme.dart';
+import 'input_focus.dart';
 
 /// 一个 `BuildContext` 在**屏幕坐标**里的矩形（锚定浮层用它定位）。
 ///
@@ -58,6 +59,10 @@ const Key popoverPanelKey = ValueKey<String>('dsh-popover-panel');
 /// [maxHeightFactor] 是面板最高占屏比：默认 `0.55`（再高就不像"从某处长出来的"，
 /// 而像换了半屏内容）。**动作菜单**可以给更高（`0.8`）—— 那里内容是一串行，
 /// 被截断的代价是"重新配对"要滚动才能点到。
+///
+/// **开合两个方向都失焦**：浮层也是 `ModalRoute`
+/// （`packages/flutter/lib/src/widgets/routes.dart:1169-1171`），
+/// pop 时框架会把焦点还给上一次的输入框 —— 机制与真机证据见 `input_focus.dart`。
 Future<T?> showDshPopover<T>({
   required BuildContext context,
   required Rect anchor,
@@ -76,47 +81,49 @@ Future<T?> showDshPopover<T>({
   final above = anchor.top - gap - 16;
   // 下方放得下一张"够读"的卡片就不翻：翻转会让面板跳离视线。
   final fitsBelow = below >= 200 || below >= above;
-  return showGeneralDialog<T>(
-    context: context,
-    barrierDismissible: true,
-    barrierLabel: '关闭',
-    // **不要深色遮罩**：锚定下拉是"就地展开"，压暗整屏会把它读成一次跳转
-    // （FSD 的 `ModalRoute` 默认会加遮罩，这里显式吃掉）。
-    barrierColor: Colors.transparent,
-    transitionDuration: const Duration(milliseconds: 120),
-    pageBuilder: (context, _, _) => Stack(
-      children: [
-        Positioned(
-          left: left,
-          width: width,
-          // 两个方向各用一个边：下方用 `top`、翻到上方用 `bottom`，
-          // 这样"卡片多高"由内容决定，不需要先量一次。
-          top: fitsBelow ? anchor.bottom + gap : null,
-          bottom: fitsBelow ? null : size.height - anchor.top + gap,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: maxHeight),
-            child: _PopoverFrame(title: title, child: body),
+  return dismissInputFocusAround(
+    () => showGeneralDialog<T>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: '关闭',
+      // **不要深色遮罩**：锚定下拉是"就地展开"，压暗整屏会把它读成一次跳转
+      // （FSD 的 `ModalRoute` 默认会加遮罩，这里显式吃掉）。
+      barrierColor: Colors.transparent,
+      transitionDuration: const Duration(milliseconds: 120),
+      pageBuilder: (context, _, _) => Stack(
+        children: [
+          Positioned(
+            left: left,
+            width: width,
+            // 两个方向各用一个边：下方用 `top`、翻到上方用 `bottom`，
+            // 这样"卡片多高"由内容决定，不需要先量一次。
+            top: fitsBelow ? anchor.bottom + gap : null,
+            bottom: fitsBelow ? null : size.height - anchor.top + gap,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: maxHeight),
+              child: _PopoverFrame(title: title, child: body),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
+      transitionBuilder: (context, animation, _, child) {
+        // 从**锚点那一侧**展开：120ms、8px 位移，够读出自哪来又不拖沓。
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: Offset(0, fitsBelow ? -0.04 : 0.04),
+              end: Offset.zero,
+            ).animate(curved),
+            child: child,
+          ),
+        );
+      },
     ),
-    transitionBuilder: (context, animation, _, child) {
-      // 从**锚点那一侧**展开：120ms、8px 位移，够读出自哪来又不拖沓。
-      final curved = CurvedAnimation(
-        parent: animation,
-        curve: Curves.easeOutCubic,
-      );
-      return FadeTransition(
-        opacity: curved,
-        child: SlideTransition(
-          position: Tween<Offset>(
-            begin: Offset(0, fitsBelow ? -0.04 : 0.04),
-            end: Offset.zero,
-          ).animate(curved),
-          child: child,
-        ),
-      );
-    },
   );
 }
 
