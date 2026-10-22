@@ -6,30 +6,40 @@
 
 ## 下一步（新会话从这里开始）
 
-> **2026-10-22：轨迹页真时间轴（一轮一步都算在电脑侧）**（一次提交，代码与笔记同批）
-> ① 新投影 `trajectory`（`connector/src/dsh/trajectory.ts`）：fold 跑在**完整日志**上，
-> 每步带 `offsetMs`（相对本轮开始）+ `durationMs`，一轮带 `durationMs` / `outcome`；
-> `ctx.inject(['sessionProjections'])` 挂，服务不在就什么都不注册。
-> ② 手机只解析与画：`app/lib/model/trajectory.dart` + `app/lib/ui/trajectory_timeline.dart`；
-> `projection.dart` 的 `turn/end.time - turn/start.time` 与 `TurnProcessItem.elapsedMs` **删掉**，
-> 过程摘要的用时改读投影 —— `app/lib/` 里不再有任何时间减法。
-> ③ `turn/end` 后重读 `session.projections`（按 sid 合流），进行中的轮才从"起点标记"变成真比例。
-> 判据与证据：`docs/subsystems/trajectory-page.md` §3 + 笔记
-> `.agents/notes/implemented/2026-10-22-trajectory-timeline-from-host-projection.md`。
-> 真机：d61cf622，两轮真实会话，几何与日志**逐段**对过（误差 ≤2px），
-> 用时 31587→`31 秒`、19614→`19 秒`，工具段 sheet 1601ms→`1 秒`。
-> 门禁：flutter **1038** / connector **574** / relay **86** / protocol **486·26·49** /
-> boundary **326**（90 个 Dart 文件）/ CDP 六项（31 / 18 / 28 / 53 / picker / 25）/ analyze+format 0。
+> **2026-10-22：八件对齐（输入法 / 拖拽 / 动效 / 字号 / 每步视图 / 设置 / 版本 / createdAt）**
+> 开工单 `.agents/notes/implemented/2026-10-22-running-cues-step-views-font-scale-settings-parity.md`
+> 已全部落地，每件一个提交 + 一篇决策笔记：
+>
+> | 件 | 提交 | 笔记 |
+> |---|---|---|
+> | G 输入法只由用户点击引起 | `4f52a65` | `2026-10-22-input-focus-only-from-user-tap.md` |
+> | F 抽屉拖拽（插入线 / 扫到即显示 / 松手提交最后格） | `6f30f11` | `2026-10-22-drawer-drag-insertion-line.md` |
+> | A 运行中动效（共享 ticker 扫光 + 活时钟运行条） | `00f69a1` | `2026-10-22-running-cues-shimmer-and-live-clock.md` |
+> | C 字号刻度（base+delta，10–22 默认 14） | `38f0661` | `2026-10-22-type-scale-base-plus-delta.md` |
+> | B 每步视图（bash / read / edit） | `376a575` | `2026-10-22-tool-views-three-high-frequency.md` |
+> | D 设置三行（默认权限 / 默认预设 / Session Log） | `d11e935` | `2026-10-22-settings-handlers-and-default-mode.md` |
+> | E 电脑侧 DSH 版本 | `f5592af` | 同上（§4） |
+> | H `workspace.createdAt` | `fab945d` | `2026-10-22-workspace-created-at.md` |
+>
+> 现状事实各有一篇 `docs/subsystems/`（`input-focus` / `session-ordering` / `running-cues` /
+> `type-scale` / `tool-views` / `settings-and-versions`）。
+> 门禁：flutter **1080** / connector **586** / relay **86** / protocol **486·26·49** /
+> boundary **349**（96 个 Dart 文件）/ icons / tool-paths / analyze+format 0。
+> 真机：`d61cf622`，截图在 `D:\tmp\dsh-e2e\shots-2026-10-22\`。
+>
+> **本轮留下的三处已知缺口**（都写进对应笔记的 Consequences）：
+> ① 工具行自己的扫光没截到图（免费渠道思考阶段太长，工具执行窗口错过采样）；
+> ② 从设置页返回后抽屉仍开着（`maybePop` 那句"先收抽屉再 push"没生效，未追）；
+> ③ H 的"空工作区当最近"只有单测证据 —— 真机上总有当前会话，链的第二步先赢，
+> 而手机没有"取消选中会话"的入口。
 
 待办（按顺序）:
 
-0. **E3 拖动排序：已验（2026-10-22 晚补）** —— 会话行与项目头两条都走真手势，
-   判据是宿主账本真的换了顺序（见上）。剩下的只是"换一台**没 root** 的手机时怎么验"，
-   那条写进 `tools.md`（`input` 那一套都做不出落点）。
 1. **轮组（turn/step 分组 + 折叠过程）** —— 用户当场指出 Web 与 App 结构不同：
    Web 是 `已完成，用时 X ⌃` 一个可展开的轮组，组内分 `已完成分析`/`执行了命令`；
    手机是平铺。这不是样式差，是**少了一层结构**（做法与代价见
    `.agents/notes/proposed/2026-10-22-trajectory-page-parity-and-mobile-fit.md` 第 9 条）。
+   轮组落地后，「工作步骤收起时机」那行才有语义（`settings-porting-notes.md` §1 已记）。
 2. **`ask_user_question` 未计时提问答不了** —— 我们的连接器在 `request.wait?.callId` 缺失时
    fail-closed 抛出（`connector/src/interaction-claims.ts:255`），而 DSH 的 `wait` 对 indefinite
    提问**本来就没有**（`packages/interaction/user-questions/src/types.ts:140-145`）。

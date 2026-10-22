@@ -1,6 +1,7 @@
-# Agent Note: 运行中动效、每步视图、字号刻度与设置对齐 —— 开工单
+# Agent Note: 运行中动效、每步视图、字号刻度与设置对齐 —— 开工单（已完成）
 
-Status: proposed
+Status: implemented（八件全部落地；每件一个提交 + 一篇决策笔记，见文末「落地索引」。
+本轮的调研结论与判据未改，留作下一轮的前置事实）
 
 ## Problem
 
@@ -284,3 +285,23 @@ DSH 的机制（已核）：
   - 拖拽补插入线之后会多一层"标记状态"，扫到每一行都要 `setState` —— 抽屉只有几十行，代价可接受；但**不能用它驱动整棵树重建**，标记要走单独的 `ValueNotifier`/局部状态。
   - `unfocus` 是双刃：如果做过头（比如用户点输入框的瞬间也被 unfocus），会吃掉点击。只能绑在**路由/抽屉开合**这些明确的转换点上。
   - 会话顺序**两条路**（Web 本地 manual / 手机写宿主）如果要统一，得改一边的数据归属。本轮**不动**，只在文档写清"两边可能不一致"。
+
+## 落地索引（2026-10-22，八件八提交）
+
+| 件 | 提交 | 决策笔记 | 现状事实 |
+|---|---|---|---|
+| G 输入法只由用户点击引起 | `4f52a65` | `2026-10-22-input-focus-only-from-user-tap.md` | `docs/subsystems/input-focus.md` |
+| F 抽屉拖拽（插入线 / 扫到即显示 / 松手提交最后格） | `6f30f11` | `2026-10-22-drawer-drag-insertion-line.md` | `docs/subsystems/session-ordering.md` |
+| A 运行中动效（共享 ticker 扫光 + 活时钟运行条） | `00f69a1` | `2026-10-22-running-cues-shimmer-and-live-clock.md` | `docs/subsystems/running-cues.md` |
+| C 字号刻度（base + delta，10–22 默认 14） | `38f0661` | `2026-10-22-type-scale-base-plus-delta.md` | `docs/subsystems/type-scale.md` |
+| B 每步视图（bash / read / edit|write） | `376a575` | `2026-10-22-tool-views-three-high-frequency.md` | `docs/subsystems/tool-views.md` |
+| D 设置三行 + 默认模式 | `d11e935` | `2026-10-22-settings-handlers-and-default-mode.md` | `docs/subsystems/settings-and-versions.md` |
+| E 电脑侧 DSH 版本 | `f5592af` | 同上 §4 | 同上 §4 |
+| H `workspace.createdAt` | `fab945d` | `2026-10-22-workspace-created-at.md` | `docs/subsystems/blank-session-hero.md` §4.1 |
+
+**与开工单的三处出入**（都已写进对应笔记的 Consequences，别当成漏做）：
+1. **A 的"在跑吗"判据**：开工单写的是读 `session.list` 的 `running`，真机实测它是旧值
+   （一轮跑 40 秒、运行条整轮不出现）—— 改成事件流判据（`turn/start` / `turn/end`）。
+2. **B 只做三个高频**：`grep` / `web_*` / `todo_write` / 图片结果仍走通用卡，是有意偏离。
+3. **C 只让"贴着内容"的文字跟刻度**：chrome 与 caption 固定（DSH 同一条），
+   216 处字面量里收敛的是内容那一半，其余按"固定"记档。
