@@ -188,9 +188,14 @@ class _SessionDrawerState extends State<SessionDrawer> {
   /// `WorkspaceGroup` 没有 id（只有 `workspaceId`，见 `model/workspace.dart`）。
   final Map<String, bool> _expanded = <String, bool>{};
 
+  /// 拖动时"最后扫过的那一格"（标记 + 松手提交）。会话行与项目头共用一份 ——
+  /// 同一时刻只可能有一次拖动。机制见 [_DropHover]。
+  final _DropHover _hover = _DropHover();
+
   @override
   void dispose() {
     _search.dispose();
+    _hover.dispose();
     super.dispose();
   }
 
@@ -382,6 +387,7 @@ class _SessionDrawerState extends State<SessionDrawer> {
                                         in widget.sections[i].sessions)
                                       if (row.isPinned) row.sid,
                                   },
+                                  hover: _hover,
                                   onMove: widget.onMove,
                                   child: _SessionRow(
                                     session: session,
@@ -460,6 +466,7 @@ class _SessionDrawerState extends State<SessionDrawer> {
     return (context, header) => _WorkspaceDrag(
       workspaceId: workspaceId,
       nextWorkspaceId: _nextWorkspaceIdAfter(index),
+      hover: _hover,
       onMove: onMove,
       child: header,
     );
@@ -818,11 +825,116 @@ class _SessionRow extends StatelessWidget {
   }
 }
 
+/// 拖动时"最后扫过的那一格"：插入线画在哪、松手提交什么。
+///
+/// ## 为什么需要它（框架行为，2026-10-22 探针抓到）
+///
+/// Flutter 的 `DragTarget` 只在指针**进入**目标时问一次 `onWillAcceptWithDetails`
+/// （`packages/flutter/lib/src/widgets/drag_target.dart:752-774` 的 `didEnter`），
+/// 在目标内继续移动只走 `onMove`（`:804-808` 的 `didMove`）。
+/// 所以"落在目标行的上半还是下半"**必须**在 `onMove` 里持续更新 ——
+/// 只在 `onWillAccept` 里算，拿到的永远是"刚进入那一刻"的那一半。
+///
+/// 真机现象（`d61cf622`，探针日志见
+/// `.agents/notes/implemented/2026-10-22-drawer-drag-insertion-line.md`）：
+/// 往上拖时指针从**下方**进入上一行 ⇒ 那一刻是"下半" ⇒ 锚点 = 原地 ⇒ 静默拒绝；
+/// 之后移到上半不再回调，于是一直拒绝 —— 用户读成"往上不动"。
+///
+/// 提交语义照 DSH Web：松手提交**最后扫过的那一格**
+/// （`ui-workspace/src/client/WorkspaceBrowser.tsx:618` 的 `commitSessionDrag(drag, drag.over)`），
+/// 即使松手时指针已经不在任何行上。
+class _DropMark {
+  const _DropMark(this.targetId, this.after);
+
+  /// 被落上的那一行（会话 sid 或工作区 id）。
+  final String targetId;
+
+  /// 落在它的**下半**（= 插到它后面）。
+  final bool after;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _DropMark && other.targetId == targetId && other.after == after;
+
+  @override
+  int get hashCode => Object.hash(targetId, after);
+}
+
+class _DropHover {
+  /// 当前要画插入线的那一格；`null` = 没有标记。
+  final ValueNotifier<_DropMark?> mark = ValueNotifier<_DropMark?>(null);
+
+  /// 松手时提交的动作 —— 由**被扫到的那一行**提供：它知道自己的顺序与锚点。
+  VoidCallback? _commit;
+
+  void take(_DropMark next, VoidCallback commit) {
+    _commit = commit;
+    if (mark.value != next) mark.value = next;
+  }
+
+  /// 松手在空白 / 行间：提交最后扫过的那一格。
+  void commitLast() => _commit?.call();
+
+  void clear() {
+    if (mark.value != null) mark.value = null;
+    _commit = null;
+  }
+
+  void dispose() => mark.dispose();
+}
+
+/// 插入线 —— 照 DSH 的 `.workspaceDropBefore::before` / `.workspaceDropAfter::after`
+/// （`packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.module.css:451-493`）：
+///
+/// - 12px 高的带子画在落行的 `top: -8px`（前）/ `bottom: -8px`（后）；
+/// - 左端一个 5×7 的斜角：55° 与 125° 两条 1px 斜线拼成「〈」；
+/// - 从 `x = 4px` 到右边缘一条 2px 横线；
+/// - 颜色 `--dsw-alias-state-business-primary`（= [DshColors.businessBlue]）。
+/// 插入线的 key —— 用例靠它量"线画在哪一行、在那一行的上边还是下边"。
+const Key sessionDropLineKey = ValueKey<String>('session-drop-line');
+
+class _DropLine extends StatelessWidget {
+  const _DropLine();
+
+  @override
+  Widget build(BuildContext context) => CustomPaint(
+    key: sessionDropLineKey,
+    painter: _DropLinePainter(context.dshColors.businessBlue),
+    size: Size.infinite,
+  );
+}
+
+class _DropLinePainter extends CustomPainter {
+  const _DropLinePainter(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final stroke = Paint()
+      ..color = color
+      ..strokeWidth = 1.4
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    // 「〈」：两臂在左端 (0.8, 6) 交汇，上臂到 (5, 0.4)、下臂到 (5, 11.6)。
+    canvas.drawLine(const Offset(0.8, 6), const Offset(5, 0.4), stroke);
+    canvas.drawLine(const Offset(0.8, 6), const Offset(5, 11.6), stroke);
+    // 2px 横线：从 x=4 到右边缘，压在这条带的 y=5..7。
+    final width = size.width > 4 ? size.width - 4 : 0.0;
+    canvas.drawRect(Rect.fromLTWH(4, 5, width, 2), Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(_DropLinePainter oldDelegate) =>
+      oldDelegate.color != color;
+}
+
 /// 会话行的**拖动 + 落点**。
 ///
 /// - 长按行开始拖（`LongPressDraggable`，锚点用 `pointerDragAnchorStrategy`：
 ///   `DragTargetDetails.offset` 就是**手指位置**，不是被拖卡片左上角 ——
 ///   后者带一段触摸偏移，会让"落在上半还是下半"判错）；
+/// - **落点跟着手指走**：`onMove` 里持续更新插入线与锚点，不是等松手（见 [_DropHover]）；
 /// - 落在哪一行的上半/下半 → 插在它前/后（`dropAnchorInDisplayOrder`）；
 /// - 置顶分区由模型函数挡：跨分区直接不接受（与 Web 的 `drag.pinned === node.pinned`
 ///   同一条），不弹错、不发请求。
@@ -831,6 +943,7 @@ class _SessionDrag extends StatefulWidget {
     required this.session,
     required this.order,
     required this.pinned,
+    required this.hover,
     required this.onMove,
     required this.child,
   });
@@ -843,6 +956,9 @@ class _SessionDrag extends StatefulWidget {
   /// 本组里置顶的 sid。
   final Set<String> pinned;
 
+  /// 标记 + 松手提交的共用状态（抽屉一份）。
+  final _DropHover hover;
+
   final void Function(DrawerSession session, String? beforeSid)? onMove;
 
   final Widget child;
@@ -854,53 +970,99 @@ class _SessionDrag extends StatefulWidget {
 class _SessionDragState extends State<_SessionDrag> {
   final _key = GlobalKey();
 
-  ({String? beforeSid})? _anchorFor(DragTargetDetails<DrawerSession> details) {
+  /// 落点是**这一行**的哪一半（指针位置 vs 行矩形中线）。
+  bool _afterAt(Offset pointer) {
     final context = _key.currentContext;
-    if (context == null) return null;
-    final rect = dshAnchorOf(context);
-    return dropAnchorInDisplayOrder(
+    if (context == null) return false;
+    return pointer.dy > dshAnchorOf(context).center.dy;
+  }
+
+  /// "能不能落"**与指针落在哪一半无关**。
+  ///
+  /// 旧写法把 `dropAnchorInDisplayOrder` 塞进 `onWillAcceptWithDetails`，
+  /// 而框架只在指针**进入**目标时问这一次（`packages/flutter/lib/src/widgets/drag_target.dart:752-774`）。
+  /// 往上拖时指针一定从下方进入上一行 ⇒ 那一刻算出的永远是"落在它下半 = 原地"
+  /// ⇒ 静默拒绝；之后移到上半**再也不会回调**（`:804-808` 只有 `onMove`）——
+  /// 这就是真机上"往上不动"的机械原因（2026-10-22 探针日志见决策笔记）。
+  bool _canAccept(DrawerSession data) {
+    if (widget.onMove == null) return false;
+    if (data.sid == widget.session.sid) return false;
+    // 跨组（= 跨工作区）不做：宿主的重排按工作区账本，跨组没有对应方法。
+    if (!widget.order.contains(data.sid)) return false;
+    final pinned = widget.pinned;
+    return pinned.contains(data.sid) == pinned.contains(widget.session.sid);
+  }
+
+  void _commit(DrawerSession data, bool after) {
+    final anchor = dropAnchorInDisplayOrder(
       displayOrder: widget.order,
-      sid: details.data.sid,
+      sid: data.sid,
       targetSid: widget.session.sid,
-      after: details.offset.dy > rect.center.dy,
+      after: after,
       pinnedSessionIds: widget.pinned,
     );
+    if (anchor == null) return;
+    widget.onMove?.call(data, anchor.beforeSid);
   }
 
   @override
   Widget build(BuildContext context) {
     final onMove = widget.onMove;
     final canMove = onMove != null;
+    // 行内容只建一次：标记变化只重建这个 `Stack`（同一个 widget 实例 ⇒
+    // 行子树不会重建）。抽屉几十行，每次移动都重建整棵树会掉帧。
+    final rowChild = SizedBox(key: _key, child: widget.child);
+    final row = ValueListenableBuilder<_DropMark?>(
+      valueListenable: widget.hover.mark,
+      builder: (context, mark, _) => Stack(
+        // 用例靠它量"这一行的矩形"（插入线是 Positioned，不影响 Stack 尺寸）。
+        key: ValueKey<String>('session-drop-row-${widget.session.sid}'),
+        clipBehavior: Clip.none,
+        children: [
+          rowChild,
+          if (mark != null && mark.targetId == widget.session.sid)
+            Positioned(
+              left: 0,
+              right: 0,
+              height: 12,
+              top: mark.after ? null : -8,
+              bottom: mark.after ? -8 : null,
+              child: const IgnorePointer(child: _DropLine()),
+            ),
+        ],
+      ),
+    );
+    if (!canMove) return row;
     return DragTarget<DrawerSession>(
-      onWillAcceptWithDetails: (details) =>
-          canMove && _anchorFor(details) != null,
+      onWillAcceptWithDetails: (details) => _canAccept(details.data),
+      // **扫到就更新**：标记与锚点都在这里改（不是等松手）。
+      onMove: (details) {
+        final after = _afterAt(details.offset);
+        final data = details.data;
+        widget.hover.take(
+          _DropMark(widget.session.sid, after),
+          () => _commit(data, after),
+        );
+      },
       onAcceptWithDetails: (details) {
-        final anchor = _anchorFor(details);
-        if (anchor == null) return;
-        onMove?.call(details.data, anchor.beforeSid);
+        final after = _afterAt(details.offset);
+        widget.hover.clear();
+        _commit(details.data, after);
       },
-      builder: (context, candidates, rejected) {
-        final row = AnimatedContainer(
-          key: _key,
-          duration: const Duration(milliseconds: 90),
-          decoration: BoxDecoration(
-            // 能落的行给一条底色：拖到一半时用户要知道"松手会插到哪"。
-            color: candidates.isNotEmpty
-                ? context.dshColors.layer2
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(DshRadius.sm),
+      builder: (context, candidates, rejected) =>
+          LongPressDraggable<DrawerSession>(
+            data: widget.session,
+            dragAnchorStrategy: pointerDragAnchorStrategy,
+            feedback: _DragChip(label: widget.session.title),
+            onDragEnd: (details) {
+              // **松手在空白 / 行间也要提交**：提交"最后扫过的那一格"
+              //（DSH `ui-workspace/src/client/WorkspaceBrowser.tsx:618` 同一条）。
+              if (!details.wasAccepted) widget.hover.commitLast();
+              widget.hover.clear();
+            },
+            childWhenDragging: Opacity(opacity: 0.35, child: row),
+            child: row,
           ),
-          child: widget.child,
-        );
-        if (!canMove) return row;
-        return LongPressDraggable<DrawerSession>(
-          data: widget.session,
-          dragAnchorStrategy: pointerDragAnchorStrategy,
-          feedback: _DragChip(label: widget.session.title),
-          childWhenDragging: Opacity(opacity: 0.35, child: row),
-          child: row,
-        );
-      },
     );
   }
 }
@@ -913,6 +1075,7 @@ class _WorkspaceDrag extends StatefulWidget {
   const _WorkspaceDrag({
     required this.workspaceId,
     required this.nextWorkspaceId,
+    required this.hover,
     required this.onMove,
     required this.child,
   });
@@ -921,6 +1084,9 @@ class _WorkspaceDrag extends StatefulWidget {
 
   /// 这个组之后第一个真工作区的 id（落到下半时的锚点；`null` = 移到末尾）。
   final String? nextWorkspaceId;
+
+  /// 标记 + 松手提交的共用状态（抽屉一份，与会话行同一个）。
+  final _DropHover hover;
 
   final void Function(String workspaceId, String? beforeWorkspaceId) onMove;
 
@@ -933,45 +1099,69 @@ class _WorkspaceDrag extends StatefulWidget {
 class _WorkspaceDragState extends State<_WorkspaceDrag> {
   final _key = GlobalKey();
 
-  String? _beforeFor(DragTargetDetails<String> details) {
+  /// 落点是**这个头**的哪一半（指针位置 vs 行矩形中线）。
+  bool _afterAt(Offset pointer) {
     final context = _key.currentContext;
-    if (context == null) return null;
-    final rect = dshAnchorOf(context);
-    final after = details.offset.dy > rect.center.dy;
-    return after ? widget.nextWorkspaceId : widget.workspaceId;
+    if (context == null) return false;
+    return pointer.dy > dshAnchorOf(context).center.dy;
+  }
+
+  void _commit(String draggedId, bool after) {
+    final before = after ? widget.nextWorkspaceId : widget.workspaceId;
+    // 落点就是自己"后面那一个" ⇒ 顺序不变，不发请求。
+    if (before == draggedId) return;
+    widget.onMove(draggedId, before);
   }
 
   @override
   Widget build(BuildContext context) {
+    final headerChild = SizedBox(key: _key, child: widget.child);
+    final header = ValueListenableBuilder<_DropMark?>(
+      valueListenable: widget.hover.mark,
+      builder: (context, mark, _) => Stack(
+        clipBehavior: Clip.none,
+        children: [
+          headerChild,
+          if (mark != null && mark.targetId == widget.workspaceId)
+            Positioned(
+              left: 0,
+              right: 0,
+              height: 12,
+              top: mark.after ? null : -8,
+              bottom: mark.after ? -8 : null,
+              child: const IgnorePointer(child: _DropLine()),
+            ),
+        ],
+      ),
+    );
     return DragTarget<String>(
       // 拖到自己身上不接受（也不当落点高亮）。
       onWillAcceptWithDetails: (details) => details.data != widget.workspaceId,
+      // **扫到就更新**：与 `_SessionDrag` 同一条（见 [_DropHover]）。
+      onMove: (details) {
+        final after = _afterAt(details.offset);
+        final data = details.data;
+        widget.hover.take(
+          _DropMark(widget.workspaceId, after),
+          () => _commit(data, after),
+        );
+      },
       onAcceptWithDetails: (details) {
-        final before = _beforeFor(details);
-        // 落点就是自己"后面那一个" ⇒ 顺序不变，不发请求。
-        if (before == details.data) return;
-        widget.onMove(details.data, before);
+        final after = _afterAt(details.offset);
+        widget.hover.clear();
+        _commit(details.data, after);
       },
-      builder: (context, candidates, rejected) {
-        final header = AnimatedContainer(
-          key: _key,
-          duration: const Duration(milliseconds: 90),
-          decoration: BoxDecoration(
-            color: candidates.isNotEmpty
-                ? context.dshColors.layer2
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(DshRadius.sm),
-          ),
-          child: widget.child,
-        );
-        return LongPressDraggable<String>(
-          data: widget.workspaceId,
-          dragAnchorStrategy: pointerDragAnchorStrategy,
-          feedback: const _DragChip(label: '移动项目'),
-          childWhenDragging: Opacity(opacity: 0.35, child: header),
-          child: header,
-        );
-      },
+      builder: (context, candidates, rejected) => LongPressDraggable<String>(
+        data: widget.workspaceId,
+        dragAnchorStrategy: pointerDragAnchorStrategy,
+        feedback: const _DragChip(label: '移动项目'),
+        onDragEnd: (details) {
+          if (!details.wasAccepted) widget.hover.commitLast();
+          widget.hover.clear();
+        },
+        childWhenDragging: Opacity(opacity: 0.35, child: header),
+        child: header,
+      ),
     );
   }
 }

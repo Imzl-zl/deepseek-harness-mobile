@@ -363,4 +363,122 @@ void main() {
     expect(movedWorkspace, 'w3');
     expect(beforeWorkspace, 'w1', reason: '落在 W1 的上半 ⇒ 插到 W1 前面');
   });
+
+  // ---- 2026-10-22：插入线 + 扫到即更新 + 松手提交最后扫过的那一格 ----
+  //
+  // 修的是真机反馈「往上不动 / 有时候都不动」。机械原因：`DragTarget` 只在指针
+  // **进入**目标时问一次 `onWillAcceptWithDetails`
+  //（`packages/flutter/lib/src/widgets/drag_target.dart:752-774`），
+  // 往上拖时指针从下方进入 ⇒ 那一刻永远算成"落在上一行下半 = 原地" ⇒ 静默拒绝，
+  // 之后移到上半不再回调。所以这三条钉的是**过程**，不是结果。
+
+  /// 起一页只有一组的抽屉（a / b / c）。
+  Future<List<String?>> pumpTriple(WidgetTester tester) async {
+    final moved = <String?>[];
+    await tester.pumpWidget(
+      host(
+        SessionDrawer(
+          sections: [
+            DrawerSection(
+              label: 'w',
+              workspaceId: 'w1',
+              sessions: [row('a'), row('b'), row('c')],
+            ),
+          ],
+          connection: const DrawerConnection(
+            name: '我的电脑',
+            detail: '已连接',
+            platform: 'DSH',
+            online: true,
+          ),
+          footItems: const [],
+          onNewSession: () {},
+          onOpenSession: (_) {},
+          onClose: () {},
+          onMove: (session, beforeSid) => moved.add(beforeSid),
+        ),
+      ),
+    );
+    return moved;
+  }
+
+  testWidgets('拖动过程中插入线跟着手指走：上半在某行上面、下半在它下面', (tester) async {
+    await pumpTriple(tester);
+
+    final b = tester.getRect(find.text('B'));
+    // 行矩形用行本身（`session-menu-*` 那枚按钮是 36×36 且垂直居中，不是行高）。
+    final bRow = tester.getRect(
+      find.byKey(const ValueKey<String>('session-drop-row-b')),
+    );
+
+    // 长按 C 起手（700ms 过掉长按窗口），移到 B 的**上半**。
+    final gesture = await tester.startGesture(tester.getCenter(find.text('C')));
+    await tester.pump(const Duration(milliseconds: 700));
+    await gesture.moveTo(Offset(b.center.dx, bRow.center.dy - 20));
+    await tester.pump();
+
+    expect(find.byKey(sessionDropLineKey), findsOneWidget, reason: '扫到就要有线');
+    final above = tester.getRect(find.byKey(sessionDropLineKey));
+    expect(
+      (above.center.dy - bRow.top).abs(),
+      lessThan(3),
+      reason: '落在 B 的上半 ⇒ 线画在 B 的顶边（DSH 的 top: -8px）',
+    );
+
+    // 继续移到 B 的**下半**：线要立刻挪到 B 的下边（不是等松手）。
+    await gesture.moveTo(Offset(b.center.dx, bRow.center.dy + 20));
+    await tester.pump();
+    final below = tester.getRect(find.byKey(sessionDropLineKey));
+    expect(
+      (below.center.dy - bRow.bottom).abs(),
+      lessThan(3),
+      reason: '落在 B 的下半 ⇒ 线画在 B 的底边，且**扫到就更新**',
+    );
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(find.byKey(sessionDropLineKey), findsNothing, reason: '松手后标记要收掉');
+  });
+
+  testWidgets('松手在空白处：提交最后扫过的那一格（不是什么都不发生）', (tester) async {
+    final moved = await pumpTriple(tester);
+
+    final a = tester.getRect(find.text('A'));
+    final aRow = tester.getRect(
+      find.byKey(const ValueKey<String>('session-menu-a')),
+    );
+    final cRow = tester.getRect(
+      find.byKey(const ValueKey<String>('session-menu-c')),
+    );
+
+    final gesture = await tester.startGesture(tester.getCenter(find.text('C')));
+    await tester.pump(const Duration(milliseconds: 700));
+    // 先扫到 A 的上半（锚点 = 插到 A 前面）。
+    await gesture.moveTo(Offset(a.center.dx, aRow.center.dy - 20));
+    await tester.pump();
+    // 再拖到**最后一行下面**的空白（那儿没有任何行），然后松手。
+    await gesture.moveTo(Offset(a.center.dx, cRow.bottom + 60));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(moved, ['a'], reason: '松手时指针不在任何行上，仍要提交最后扫过的那一格');
+  });
+
+  testWidgets('往上拖一行：落在上一行上半 ⇒ 一次移动，锚点是上一行', (tester) async {
+    final moved = await pumpTriple(tester);
+
+    final a = tester.getRect(find.text('A'));
+    final aRow = tester.getRect(
+      find.byKey(const ValueKey<String>('session-menu-a')),
+    );
+
+    await dragTo(
+      tester,
+      tester.getCenter(find.text('B')),
+      Offset(a.center.dx, aRow.center.dy - 20),
+    );
+
+    expect(moved, ['a'], reason: 'B 拖到 A 的上半 = 插到 A 前面（真机"往上不动"的反面）');
+  });
 }
