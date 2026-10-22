@@ -24,6 +24,7 @@ library;
 import '../core/endpoint.dart';
 import 'session_stats.dart' show TokenUsage, formatTokenCount;
 import 'subagent.dart' show SubagentTiming;
+import 'tool_view.dart';
 
 /// 一条会话条目在界面上长什么样。
 ///
@@ -615,6 +616,7 @@ class ToolCallItem extends ChatItem {
     required this.status,
     this.summary = '',
     this.detail = '',
+    this.view,
     this.diffStat,
     this.changedPath,
   });
@@ -626,6 +628,11 @@ class ToolCallItem extends ChatItem {
 
   /// 一行摘要（参数或结果的短描述）。
   final String summary;
+
+  /// **专用视图**（`bash` / `pwsh` / `read` / `edit` / `write`）——
+  /// 从 `tool/result` 的 `data.meta` 解析（见 `model/tool_view.dart`）。
+  /// `null` = 走通用卡（其余工具 / 老结果 / 形状不认识）。
+  final ToolResultView? view;
 
   /// 展开后的明细（工具输出的预览，截断）。
   ///

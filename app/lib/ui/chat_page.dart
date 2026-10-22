@@ -3198,6 +3198,7 @@ class _TurnView extends StatelessWidget {
         :final status,
         :final summary,
         :final detail,
+        :final view,
         :final diffStat,
       ) =>
         ToolCard(
@@ -3205,6 +3206,7 @@ class _TurnView extends StatelessWidget {
           status: status,
           argument: summary,
           detail: detail,
+          view: view,
           diffStat: diffStat,
           initiallyOpen: autoOpenDetail,
         ),

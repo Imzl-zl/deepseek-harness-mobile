@@ -91,7 +91,7 @@ class DshType {
   static const double code = 11;
 
   /// 与小字固定的 caption（不跟 delta）。
-  static const double caption = 11;
+  double get caption => 11;
 
   @override
   bool operator ==(Object other) => other is DshType && other.size == size;

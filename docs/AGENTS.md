@@ -39,6 +39,7 @@
 | `subsystems/session-ordering.md` | 会话与项目的顺序:谁拥有(会话=电脑侧、Web=浏览器本地)、拖动反馈规格(插入线/扫到即显示/松手提交最后格)、边界 |
 | `subsystems/running-cues.md` | 运行中动效:扫光参数(1.5s/0.3s/steps48/105°)、运行条与活时钟、"在跑吗"的事件流判据、有意不做 |
 | `subsystems/type-scale.md` | 字号刻度:base+delta 派生表、哪些文字跟刻度(内容)与哪些固定(chrome/caption)、代码字号不做、半点已收敛 |
+| `subsystems/tool-views.md` | 每步视图:bash/read/edit 三张专用卡的数据来源(meta 与状态标记)、渲染规格、其余工具**有意不做**、已知缺口 |
 
 ## 引用纪律
 

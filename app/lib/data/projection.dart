@@ -22,6 +22,7 @@ import '../core/items.dart';
 import '../model/changed_path.dart';
 import '../model/chat_item.dart';
 import '../model/interaction.dart';
+import '../model/tool_view.dart';
 
 /// `ask_user_question` 的工具名（DSH：
 /// `packages/interaction/user-questions/src/projection.ts:28` 的 `ASK_USER_QUESTION_TOOL`）。
@@ -231,6 +232,10 @@ ChatProjection projectEvent({
     final call = previous is ToolCallItem ? previous : null;
     // 结果自己带 name 时照它（部分适配器会写）；否则用调用的名字。
     final name = stringField(message, 'name') ?? call?.name ?? kUnknownToolName;
+    // **专用视图**（bash / read / edit|write）从 `data.meta` 解（DSH 的
+    // `presentationMeta`，形状见 `model/tool_view.dart` 的文件头）。
+    // 其余工具 / 形状不认识 ⇒ `null`，走通用卡。
+    final view = toolResultViewOf(name: name, data: data);
     return ChatProjection.item(
       ToolCallItem(
         itemId: itemId,
@@ -248,8 +253,12 @@ ChatProjection projectEvent({
         // **结果正文进明细**：工具到底返回了什么，展开才看得见
         // （`ToolCard` 的 `.tool-body` 一直是支持的，只是投影从不填）。
         detail: toolOutputOf(message),
-        // 文件变更的 +N/−M（`metadata.diffs` hunks 折算）。
-        diffStat: diffStatOf(message),
+        view: view,
+        // 文件变更的 +N/−M：优先用专用视图算好的（`meta.diffs` 的行数），
+        // 否则退回按 hunks 折算（老结果只有 `message.metadata.diffs`）。
+        diffStat: view is DiffResultView
+            ? (added: view.added, removed: view.removed)
+            : diffStatOf(message, data: data),
       ),
     );
   }
@@ -740,8 +749,14 @@ String toolOutputOf(Object? message, {int maxLength = 4000}) {
 /// `{path, oldText, newText}`；这里只取**行数统计**（手机这一版不画 diff
 /// 正文，画正文是 `ui-tool` 的 DiffBlock，属于独立一块）。
 /// 按行折算：旧文本行数 = 删除，新文本行数 = 新增。
-({int added, int removed})? diffStatOf(Object? message) {
-  final diffs = fieldOf(fieldOf(message, 'metadata'), 'diffs');
+({int added, int removed})? diffStatOf(Object? message, {Object? data}) {
+  // **真日志里 diffs 在 `data.meta.diffs`**（DSH 的 `presentationMeta`，
+  // `tool-fs/src/edit.ts:113-117`），不在 `message.metadata` 上 ——
+  // 这里以前只读后者，于是生产里 +N/−M 永远是 null（2026-10-22 用真 fixture 核到）。
+  // 老形状（`message.metadata.diffs`）保留作兜底。
+  final diffs =
+      fieldOf(fieldOf(data, 'meta'), 'diffs') ??
+      fieldOf(fieldOf(message, 'metadata'), 'diffs');
   if (diffs is! List || diffs.isEmpty) return null;
   var added = 0;
   var removed = 0;

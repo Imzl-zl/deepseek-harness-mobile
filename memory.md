@@ -180,9 +180,9 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
-| `node app/tools/verify-platform-boundary.mjs` | **338 项**（22 条规则自检 + 扫 93 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | **349 项**（22 条规则自检 + 扫 96 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 20 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1058 项** |
+| `cd app && flutter test` | **1072 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **574 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
@@ -209,5 +209,6 @@
   `2026-10-22-new-session-lands-in-a-workspace.md`。
 - 2026-10-22 轨迹页真时间轴（电脑侧折、手机只画）——
   `2026-10-22-trajectory-timeline-from-host-projection.md`。
+
 
 

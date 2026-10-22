@@ -22,6 +22,7 @@ import '../data/projection.dart';
 import '../model/chat_item.dart';
 import '../model/session_stats.dart'
     show formatCacheHitPercent, formatTokenCount;
+import '../model/tool_view.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
@@ -29,6 +30,7 @@ import '../theme/dsh_type.dart';
 import 'dsh_markdown.dart';
 import 'dsh_sheet.dart';
 import 'dsh_shimmer.dart';
+import 'tool_views.dart';
 
 /// 用户消息（`.turn--u`）。
 class UserTurn extends StatelessWidget {
@@ -308,6 +310,7 @@ class ToolCard extends StatefulWidget {
     required this.status,
     this.argument = '',
     this.detail = '',
+    this.view,
     this.diffStat,
     this.initiallyOpen = false,
   });
@@ -322,6 +325,10 @@ class ToolCard extends StatefulWidget {
 
   /// 展开后的明细（`.tool-body`）。
   final String detail;
+
+  /// **专用视图**（`bash` / `read` / `edit|write`）—— 有它就画专用正文，
+  /// 没有就退回 [detail] 的通用文本（其余工具 / 老结果）。
+  final ToolResultView? view;
 
   /// 变更统计（`+128 −46`）；`null` = 不显示。
   final ({int added, int removed})? diffStat;
@@ -351,7 +358,7 @@ class _ToolCardState extends State<ToolCard> {
       ToolCallStatus.completed => ('check', c.roleContext),
       ToolCallStatus.failed => ('warningTriangle', c.error),
     };
-    final hasDetail = widget.detail.isNotEmpty;
+    final hasDetail = widget.detail.isNotEmpty || widget.view != null;
     return Container(
       // `.tool { margin:12px 0; border:1px solid l1; border-radius:16 }`
       margin: const EdgeInsets.symmetric(vertical: 12),
@@ -507,17 +514,21 @@ class _ToolCardState extends State<ToolCard> {
                     horizontal: 16,
                     vertical: 12,
                   ),
-                  child: SelectableText(
-                    widget.detail,
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      // `.ioCard` 的 `--dsw-font-markdown-code-block-small`
-                      // = **11px/16px 等宽**（`gradient-shadow-text.css:178`）。
-                      fontSize: 11,
-                      height: 16 / 11,
-                      color: c.labelSecondary,
-                    ),
-                  ),
+                  // **有专用视图就画它**（命令行 / 读文件 / 改文件），
+                  // 否则退回结果原文的通用文本。
+                  child: widget.view == null
+                      ? SelectableText(
+                          widget.detail,
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            // `.ioCard` 的 `--dsw-font-markdown-code-block-small`
+                            // = **11px/16px 等宽**（`gradient-shadow-text.css:178`）。
+                            fontSize: 11,
+                            height: 16 / 11,
+                            color: c.labelSecondary,
+                          ),
+                        )
+                      : ToolResultBody(view: widget.view!),
                 ),
               ),
             ),
