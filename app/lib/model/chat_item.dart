@@ -535,7 +535,10 @@ class TurnProcessItem extends ChatItem {
   final String copyText;
 
   /// 一行的标题部分：`第 3 轮`。
-  String get title => '第 $turn 轮';
+  ///
+  /// 轮号缺席时说「本轮」—— 直接插值会渲染成 `第 null 轮`
+  /// （正常路径不会缺席，但类型是可空的，宁可如实说）。
+  String get title => turn == null ? '本轮' : '第 $turn 轮';
 
   /// 一行的统计部分：`2 分 36 秒 · 12 条消息 · 8 次工具 · 1 个子智能体`。
   ///

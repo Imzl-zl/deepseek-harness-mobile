@@ -153,6 +153,27 @@ void main() {
       expect(result.skipReason, isNull, reason: '不再是 skip');
     });
 
+    test('轮号缺席时标题说「本轮」，不是「第 null 轮」', () {
+      // 正常路径不会缺席（`turn/end` 必带 turn），但字段类型可空 ——
+      // 一旦哪条路径漏传，界面会直接显示 `第 null 轮`（审查时发现的）。
+      const withoutTurn = TurnProcessItem(
+        itemId: 'p:0',
+        seq: 1,
+        updatedAt: 0,
+        turn: null,
+      );
+      expect(withoutTurn.title, '本轮');
+      expect(
+        const TurnProcessItem(
+          itemId: 'p:3',
+          seq: 2,
+          updatedAt: 0,
+          turn: 3,
+        ).title,
+        '第 3 轮',
+      );
+    });
+
     test('用户主动 aborted：只有过程摘要，没有失败行', () {
       final result = projectEvent(
         type: 'turn/end',
