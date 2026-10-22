@@ -44,13 +44,26 @@
 ## 3. "在跑吗"判据：事件流，不是 `session.list`
 
 `AppModel.runningOf(sid)` = `turn/start` 之后还没等到 `turn/end`（`_runningSids`）——
-事件本身就是电脑侧事实，而且实时。`session.list` 的 `running` 只作打开会话那一刻的初值。
+事件本身就是电脑侧事实，而且实时。**这是唯一真值**：`session.list` 的 `running`
+只在读到的那一刻往 `_runningSids` 里**补一笔**（打开会话时还没有事件，那一笔是初值），
+**不许撤销** —— 撤销只由 `turn/end` 做。反过来（用快照 OR 事件）会让旧快照的
+`true` 永远关不掉：2026-10-22 真机上一轮结束后仍转了 5 分钟，杀 App 才消失。
+
+三处读同一个真值：运行条（`_ConversationFlow.running`）、输入栏的「排队发送」与
+「工作步骤展示」的运行中展开（`chat_page.dart` 的 `_running`）、子智能体行的状态。
 
 `turnStartedAtOf(sid)` 读 `_turnStartedAt`（`turn/start` 的 `time`），兜底读
 `trajectory.runningTurn.startTime`（**只对当前会话**）。
 
 **为什么不只用 `session.list` 的 `running`**：那张表只在连上 / 收口 / 打开面板时重读，
 轮次进行中是旧值；真机实测一轮跑了 40 秒、运行条整轮没出现。
+
+## 3.1 判据
+
+- `app/test/shimmer_test.dart`：`turn/start` 起 / `turn/end` 收；**快照说在跑时
+  `turn/end` 也必须能停**（那条走真 `session.list` 解析器）。
+- 真机（`d61cf622`，2026-10-22）：执行中 `shots-2026-10-22/g-213439.png`；
+  `turn/end` 后 `i1-after-turn-end.png`（App 全程前台，未重启）。
 
 ## 4. 有意不做
 

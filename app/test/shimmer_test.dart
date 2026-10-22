@@ -61,6 +61,33 @@ class _EventClient extends FakeSyncClient {
   }) async => <String, Object?>{} as T;
 }
 
+/// `session.list` 的那一行说「在跑」（线上形状：`{sessions:[{sid, running}]}`）。
+///
+/// 走**真解析器**（`_parseSessionList`），不手搓 `SessionSummary` ——
+/// 手搓的形状会复述实现假设，而这里要验的是"快照进了模型之后怎么被用"。
+class _SnapshotEventClient extends _EventClient {
+  _SnapshotEventClient({required this.running});
+
+  final bool running;
+
+  @override
+  Future<T> call<T>(
+    String method,
+    Map<String, Object?> params, {
+    String? requestId,
+  }) async {
+    if (method == 'session.list') {
+      return {
+            'sessions': [
+              {'sid': 's1', 'running': running},
+            ],
+          }
+          as T;
+    }
+    return <String, Object?>{} as T;
+  }
+}
+
 SessionEvent _ev(String type, int seq, int time) => SessionEvent(
   itemId: '$type-$seq',
   type: type,
@@ -192,6 +219,35 @@ void main() {
   // 真机实测（2026-10-22）：一轮跑了 40 秒，运行条**整轮没出现** —— 那张表只在
   // 连上/收口时重读，轮次进行中它是旧值。所以判据改成事件流
   // （`turn/start` 起、`turn/end` 收，起点就是事件里的 `time`）。
+  // ---- 快照只是初值：它说「在跑」，`turn/end` 到了就必须停 ----
+  //
+  // 2026-10-22 真机：`runningOf` 曾写成「事件集 OR 快照」，于是**旧快照一旦说
+  // 在跑就再也关不掉** —— 电脑侧 `turn/end` 21:12:26 已落，App 21:17 还在转，
+  // 输入栏还显示「排队发送」，杀 App 重开（重读列表 ⇒ 新的 false）才消失。
+  test('session.list 说在跑，turn/end 之后必须停（快照不许压过事件）', () async {
+    final client = _SnapshotEventClient(running: true);
+    final app = AppModel(client: client);
+    addTearDown(app.dispose);
+    await app.start();
+    // 打开会话那一刻读到的快照：这一行在跑。
+    await app.refreshSessions();
+    await app.openSession('s1');
+
+    expect(
+      app.runningOf('s1'),
+      isTrue,
+      reason: '还没有任何事件，这一笔初值必须生效（否则整轮都不出运行条）',
+    );
+
+    client.emit('s1', [_ev('turn/end', 2, 1700000040000)]);
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      app.runningOf('s1'),
+      isFalse,
+      reason: '电脑侧已经结束了：旧快照的 true 不许把它继续转下去',
+    );
+  });
+
   test('runningOf / turnStartedAtOf：turn/start 起、turn/end 收', () async {
     final client = _EventClient();
     final app = AppModel(client: client);

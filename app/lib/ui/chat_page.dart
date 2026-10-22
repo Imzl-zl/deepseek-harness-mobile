@@ -923,12 +923,14 @@ class ChatPageState extends State<ChatPage> {
 
   /// 当前会话是否正在跑（排队条的插话门 + 发送模式 sheet 的禁用判据）。
   ///
-  /// **从电脑侧来**（`session.list` 的 `running`，`connector/src/dsh/sessions.ts`）——
-  /// 手机不自己猜"应该在跑吧"。
+  /// 走 `AppModel.runningOf` —— **单一真值**（事件流说了算，`session.list` 只补初值）。
+  /// 这里曾经直读 `sessionOf(sid)?.running`（那张快照），于是它旧地停在一个
+  /// 已经结束的轮次上：输入栏一直显示「排队发送」，运行条一直转
+  /// （2026-10-22 真机，见 `app_model.dart` 的 `runningOf`）。
   bool get _running {
     final sid = widget.app.currentSid;
     if (sid == null) return false;
-    return widget.app.sessionOf(sid)?.running ?? false;
+    return widget.app.runningOf(sid);
   }
 
   /// 工具明细是否默认展开（"工作步骤展示"偏好）。
@@ -2333,7 +2335,8 @@ class ChatPageState extends State<ChatPage> {
     final summary = widget.app.sessionOf(row.id);
     return SubagentNode(
       row: row,
-      running: summary?.running ?? false,
+      // 与 `_running` 同一条真值（快照只补初值，事件流可以撤销）。
+      running: widget.app.runningOf(row.id),
       timing: summary?.subagentTiming,
       tokens: summary?.tokenUsage,
       title: summary?.title,

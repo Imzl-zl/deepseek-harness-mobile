@@ -1783,6 +1783,15 @@ class AppModel extends ChangeNotifier {
     _sessions = [
       for (final s in list) s.copyWith(pendingCount: _pendingCountOf(s.sid)),
     ];
+    // **快照只补「在跑」，不撤销「在跑」**（`runningOf` 的注释里有完整因果）：
+    //
+    // - 补：打开会话时还没有任何事件，这一笔是唯一的初值（一轮要跑 40 秒，
+    //   期间列表是旧值 `false` —— 2026-10-22 就是这么漏掉整轮运行条的）；
+    // - 不撤销：列表同样可能**旧地**说 `false`（轮次已经开始但还没重读），
+    //   撤销就等于把正在跑的轮次关掉。撤销只由 `turn/end` 做。
+    for (final s in _sessions) {
+      if (s.running) _runningSids.add(s.sid);
+    }
   }
 
   /// 拉会话列表（`session.list`）。
@@ -2571,10 +2580,17 @@ class AppModel extends ChangeNotifier {
 
   /// 这个会话此刻在跑吗。
   ///
-  /// 事件流优先（实时）；`session.list` 的行只是**打开会话那一刻的初值** ——
-  /// 事件还没到时先信它，事件一到就由 [_runningSids] 说了算。
-  bool runningOf(String sid) =>
-      _runningSids.contains(sid) || (sessionOf(sid)?.running ?? false);
+  /// **只有一个真值：[_runningSids]**。`session.list` 的 `running` 不参与判断，
+  /// 它只在**读到的那一刻**往 [_runningSids] 里补一笔（见 `_applySessionList`）。
+  ///
+  /// ## 为什么不能写成 `_runningSids.contains(sid) || 快照里的 running`
+  ///
+  /// 那样快照一旦是 `true` 就**再也打不开** —— `turn/end` 只把 sid 从
+  /// [_runningSids] 里移掉，而快照没有任何东西会把它改回 `false`（列表只在
+  /// 连上 / 收口 / 打开面板时重读）。2026-10-22 真机实测：电脑侧 `turn/end`
+  /// 早在 21:12:26 就到了，运行条一直转到 21:17+，杀 App 重开才消失
+  /// （重开时那张快照是新的 `false`）。判据在 `app/test/shimmer_test.dart`。
+  bool runningOf(String sid) => _runningSids.contains(sid);
 
   /// 本轮开始的时刻（毫秒 epoch）；`null` = 不知道。
   ///
