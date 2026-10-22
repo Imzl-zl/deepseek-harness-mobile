@@ -506,10 +506,7 @@ class _JobGroup extends StatelessWidget {
     return Padding(
       // `.jgroup { padding:8px 12px 2px; font-size:11.5px }`
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
-      child: Text(
-        label,
-        style: TextStyle(fontSize: 11.5, color: c.labelCaption),
-      ),
+      child: Text(label, style: TextStyle(fontSize: 11, color: c.labelCaption)),
     );
   }
 }
@@ -572,7 +569,7 @@ class _JobRow extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontFamily: 'monospace',
-                                fontSize: 12.5,
+                                fontSize: 12,
                                 color: c.labelPrimary,
                               ),
                             ),
@@ -594,7 +591,7 @@ class _JobRow extends StatelessWidget {
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
-                                      fontSize: 11.5,
+                                      fontSize: 11,
                                       color: c.labelCaption,
                                     ),
                                   ),
@@ -613,7 +610,7 @@ class _JobRow extends StatelessWidget {
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   fontFamily: 'monospace',
-                                  fontSize: 12.5,
+                                  fontSize: 12,
                                   color: c.labelSecondary,
                                 ),
                               ),
@@ -622,7 +619,7 @@ class _JobRow extends StatelessWidget {
                             Text(
                               job.statusText,
                               style: TextStyle(
-                                fontSize: 11.5,
+                                fontSize: 11,
                                 color: c.labelCaption,
                               ),
                             ),
@@ -785,7 +782,7 @@ class _StopButtonState extends State<_StopButton> {
                 const SizedBox(width: 5),
                 const Text(
                   '确认停止',
-                  style: TextStyle(fontSize: 11.5, color: Colors.white),
+                  style: TextStyle(fontSize: 11, color: Colors.white),
                 ),
               ],
             ],
@@ -848,7 +845,7 @@ class _SideTab extends StatelessWidget {
                   child: Text(
                     '$count',
                     style: TextStyle(
-                      fontSize: 10.5,
+                      fontSize: 11,
                       fontWeight: FontWeight.w600,
                       color: c.roleTool,
                     ),

@@ -25,6 +25,7 @@ import '../model/session_stats.dart'
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
+import '../theme/dsh_type.dart';
 import 'dsh_markdown.dart';
 import 'dsh_sheet.dart';
 import 'dsh_shimmer.dart';
@@ -50,6 +51,7 @@ class UserTurn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
+    final type = context.dshType;
     return Padding(
       // `.turn { margin: 18px 0 }`
       padding: const EdgeInsets.symmetric(vertical: 18),
@@ -120,8 +122,10 @@ class UserTurn extends StatelessWidget {
                   Text(
                     text,
                     style: TextStyle(
-                      fontSize: 14.5,
-                      height: 21 / 14.5,
+                      // 用户消息的正文 = **内容字号**（DSH 的 user text run 跟着
+                      // `--dsh-content-font-size` 走，行高 21+delta）。
+                      fontSize: type.body,
+                      height: (type.body + 7) / type.body,
                       color: c.labelPrimary,
                     ),
                   ),
@@ -197,6 +201,7 @@ class AssistantHead extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
+    final type = context.dshType;
     final modelName = this.modelName;
     // `.a-head { display:flex; align-items:center; gap:8px; margin-bottom:8px }`
     // —— 那个 8 在 Flutter 里只能自己出（Row 没有 margin）。
@@ -209,7 +214,8 @@ class AssistantHead extends StatelessWidget {
           Text(
             '助手',
             style: TextStyle(
-              fontSize: 13,
+              // 说话者标签是**贴在内容上**的（DSH 用 secondary 档）。
+              fontSize: type.secondary,
               fontWeight: FontWeight.w600,
               color: c.labelPrimary,
             ),
@@ -339,6 +345,7 @@ class _ToolCardState extends State<ToolCard> {
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
+    final type = context.dshType;
     final (icon, tone) = switch (widget.status) {
       ToolCallStatus.running => ('loading', c.roleTool),
       ToolCallStatus.completed => ('check', c.roleContext),
@@ -391,7 +398,9 @@ class _ToolCardState extends State<ToolCard> {
                         widget.name,
                         style: TextStyle(
                           fontFamily: 'monospace',
-                          fontSize: 13,
+                          // 工具名是流程行标题，走 secondary 档（DSH 同一条：
+                          // `--dsh-content-font-size-secondary`）。
+                          fontSize: type.secondary,
                           fontWeight: FontWeight.w500,
                           color: c.roleTool,
                         ),
@@ -406,7 +415,7 @@ class _ToolCardState extends State<ToolCard> {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontFamily: 'monospace',
-                          fontSize: 12.5,
+                          fontSize: 12,
                           color: c.labelTertiary,
                         ),
                       ),
@@ -722,7 +731,7 @@ class TurnOutcomeRow extends StatelessWidget {
                 Text(
                   title,
                   style: TextStyle(
-                    fontSize: 12.5,
+                    fontSize: 12,
                     fontWeight: FontWeight.w600,
                     color: tone,
                   ),
@@ -797,7 +806,7 @@ class RetryRow extends StatelessWidget {
             title,
             style: TextStyle(
               fontFamily: 'monospace',
-              fontSize: 12.5,
+              fontSize: 12,
               fontWeight: FontWeight.w600,
               color: started ? c.roleTool : c.labelSecondary,
             ),
@@ -876,7 +885,7 @@ class _CompactionRowState extends State<CompactionRow> {
                 Text(
                   CompactionItem.kTitle,
                   style: TextStyle(
-                    fontSize: 12.5,
+                    fontSize: 12,
                     fontWeight: FontWeight.w600,
                     color: c.roleAssistant,
                   ),
@@ -890,7 +899,7 @@ class _CompactionRowState extends State<CompactionRow> {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontFamily: 'monospace',
-                        fontSize: 11.5,
+                        fontSize: 11,
                         color: c.labelTertiary,
                       ),
                     ),
@@ -919,7 +928,7 @@ class _CompactionRowState extends State<CompactionRow> {
               widget.summary,
               style: TextStyle(
                 fontFamily: 'monospace',
-                fontSize: 11.5,
+                fontSize: 11,
                 height: 17 / 11.5,
                 color: c.labelSecondary,
               ),
@@ -1123,7 +1132,7 @@ class _Pill extends StatelessWidget {
               const SizedBox(width: 5),
               Text(
                 label,
-                style: TextStyle(fontSize: 11.5, color: c.labelSecondary),
+                style: TextStyle(fontSize: 11, color: c.labelSecondary),
               ),
             ],
           ),
@@ -1264,7 +1273,7 @@ class TakeoverHint extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontFamily: 'monospace',
-                      fontSize: 12.5,
+                      fontSize: 12,
                       color: c.labelTertiary,
                     ),
                   ),
@@ -1381,6 +1390,7 @@ class _DisclosureHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
+    final type = context.dshType;
     final showPreview = preview.isNotEmpty && (keepPreviewWhenOpen || !open);
     return InkWell(
       onTap: expandable ? onTap : null,
@@ -1398,8 +1408,9 @@ class _DisclosureHeader extends StatelessWidget {
               child: Text(
                 label,
                 style: TextStyle(
-                  // secondary 档 13（`:100-105` 的 `--dsh-content-font-size-secondary`）。
-                  fontSize: 13,
+                  // secondary 档（`:100-105` 的 `--dsh-content-font-size-secondary`）：
+                  // 流程行标题跟着字号刻度走。
+                  fontSize: type.secondary,
                   color: c.labelTertiary,
                 ),
               ),
@@ -1422,8 +1433,8 @@ class _DisclosureHeader extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 13,
-                    height: 20 / 13,
+                    fontSize: type.secondary,
+                    height: type.secondaryLine / type.secondary,
                     color: previewColor ?? c.labelTertiary,
                   ),
                 ),

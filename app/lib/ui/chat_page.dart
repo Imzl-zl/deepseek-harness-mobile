@@ -53,6 +53,7 @@ import '../platform/photo_picker.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
+import '../theme/dsh_type.dart';
 import 'chat_jumper.dart';
 import 'chat_turns.dart';
 import 'collapsible_group.dart';
@@ -2925,7 +2926,11 @@ class _RunningBarState extends State<RunningBar>
             active: true,
             child: Text(
               _label,
-              style: TextStyle(fontSize: 13, color: c.businessBlue),
+              style: TextStyle(
+                // 运行条是流程行，走 secondary 档（跟字号刻度缩放）。
+                fontSize: context.dshType.secondary,
+                color: c.businessBlue,
+              ),
             ),
           ),
         ],
@@ -3125,7 +3130,11 @@ class _LiveTurn extends StatelessWidget {
           if (text.isEmpty)
             Text(
               '正在生成…',
-              style: TextStyle(fontSize: 14, color: c.labelTertiary),
+              // 占位与正文同一档（它出现的下一帧就会被正文替换，字号跳一下更刺眼）。
+              style: TextStyle(
+                fontSize: context.dshType.body,
+                color: c.labelTertiary,
+              ),
             )
           else
             DshMarkdown(text),
@@ -3502,7 +3511,7 @@ class _ChangedFileList extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 12.5,
+                      fontSize: 12,
                       height: 1.35,
                       fontFamily: 'monospace',
                       color: c.labelPrimary,
@@ -3513,12 +3522,12 @@ class _ChangedFileList extends StatelessWidget {
                   const SizedBox(width: 8),
                   Text(
                     '+${stat.added}',
-                    style: TextStyle(fontSize: 11.5, color: c.codeDiffAdd),
+                    style: TextStyle(fontSize: 11, color: c.codeDiffAdd),
                   ),
                   const SizedBox(width: 4),
                   Text(
                     '−${stat.removed}',
-                    style: TextStyle(fontSize: 11.5, color: c.codeDiffDel),
+                    style: TextStyle(fontSize: 11, color: c.codeDiffDel),
                   ),
                 ],
               ],

@@ -377,7 +377,7 @@ class _SubagentRow extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         // 触屏密度：12.5（Web 是 12）。当前行加粗照 `.currentLabel`。
-                        fontSize: 12.5,
+                        fontSize: 12,
                         fontWeight: current ? FontWeight.w600 : FontWeight.w400,
                         color: c.labelPrimary,
                       ),

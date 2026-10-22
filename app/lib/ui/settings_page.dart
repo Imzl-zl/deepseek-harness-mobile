@@ -40,6 +40,7 @@ import '../model/send_mode.dart';
 import '../model/theme_mode.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
+import '../theme/dsh_type.dart';
 import 'connection_summary_block.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_sheet.dart';
@@ -144,6 +145,11 @@ class SettingsPage extends StatelessWidget {
                 onPicked: onThemeMode,
               ),
             ),
+            // **字号大小**（DSH 的 `settings.general.item` 里 order 11，
+            // 紧跟外观；档位 10–22、默认 14，见 `theme/dsh_type.dart`）。
+            // 形态照 DSH 的 `FontSizeRow`：步进器 ±1，不是列表选择 ——
+            // 十七个档位摆成列表要点三次才能从 14 走到 11。
+            _FontSizeRow(app: app),
             _PrefRow(
               icon: 'checklist',
               label: '工作步骤展示',
@@ -184,7 +190,7 @@ class SettingsPage extends StatelessWidget {
               ),
             ),
             const _PrefNote(
-              '这三项只影响这台手机的呈现，不同步到电脑（DSH 桌面把它们存在'
+              '这几项只影响这台手机的呈现，不同步到电脑（DSH 桌面把它们存在'
               '电脑上，那是跨浏览器跟随；手机只有自己看，这是有意偏离）。',
             ),
             // **用量不在设置页**：2026-10-19 用户原话「用量在侧滑窗口菜单
@@ -319,6 +325,116 @@ class _PrefRow extends StatelessWidget {
         ],
       ),
       onTap: onTap,
+    );
+  }
+}
+
+/// 字号大小：**步进器 ±1**（照 DSH 的 `FontSizeRow.tsx:35-70`）。
+///
+/// 为什么不是列表选择：17 个档位摆成列表，从 14 走到 11 要点三次；
+/// 而"调字号"本来就是"看着屏幕一点一点试"的动作。
+///
+/// 两个按钮**在边界上变灰但仍在**（`min` 10 / `max` 22）—— 消失会让行宽跳。
+class _FontSizeRow extends StatelessWidget {
+  const _FontSizeRow({required this.app});
+
+  final AppModel app;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    final size = app.contentFontSize;
+    return ListTile(
+      dense: true,
+      leading: DshIcon('personalization', size: 18, color: c.labelSecondary),
+      title: Text(
+        '字号大小',
+        style: TextStyle(fontSize: 14, color: c.labelPrimary),
+      ),
+      subtitle: Text(
+        // DSH 的 `fontSize.description` 原话（`ui-theme/src/client/locales.ts:9-13`）。
+        '仅影响会话内容的字号',
+        style: TextStyle(fontSize: 11, color: c.labelTertiary),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _StepButton(
+            icon: 'minus',
+            semanticLabel: '调小字号',
+            onTap: size > DshType.minSize
+                ? () => unawaited(app.setContentFontSize(size - 1))
+                : null,
+          ),
+          SizedBox(
+            width: 40,
+            child: Text(
+              '$size',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: c.labelPrimary,
+              ),
+            ),
+          ),
+          _StepButton(
+            icon: 'plus',
+            semanticLabel: '调大字号',
+            onTap: size < DshType.maxSize
+                ? () => unawaited(app.setContentFontSize(size + 1))
+                : null,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 步进器上的一枚按钮。`icon == 'minus'` 时画一条 12×2 的横线
+/// —— 图标集里没有 minus（`dsh_icons.dart` 只有 plus），
+/// 而"用 unicode 字形当图标"是本项目的硬禁令。
+class _StepButton extends StatelessWidget {
+  const _StepButton({
+    required this.icon,
+    required this.semanticLabel,
+    required this.onTap,
+  });
+
+  final String icon;
+  final String semanticLabel;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    final enabled = onTap != null;
+    return Semantics(
+      button: true,
+      label: semanticLabel,
+      child: Opacity(
+        opacity: enabled ? 1 : 0.35,
+        child: InkResponse(
+          onTap: onTap,
+          radius: 20,
+          child: SizedBox(
+            width: 36,
+            height: 36,
+            child: Center(
+              child: icon == 'minus'
+                  ? Container(
+                      width: 12,
+                      height: 2,
+                      decoration: BoxDecoration(
+                        color: c.labelPrimary,
+                        borderRadius: BorderRadius.circular(1),
+                      ),
+                    )
+                  : DshIcon('plus', size: 14, color: c.labelPrimary),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

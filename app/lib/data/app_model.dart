@@ -1436,6 +1436,29 @@ class AppModel extends ChangeNotifier {
     await _prefs?.write(kPerformanceUsageKey, usage.wire);
   }
 
+  /// 落盘的 meta 键：正文基准字号（DSH 的 `fontSize`，10–22）。**改动等于作废偏好。**
+  static const String kContentFontSizeKey = 'content_font_size';
+
+  int _contentFontSize = kContentFontSizeDefault;
+
+  /// 正文基准字号（10–22，默认 14）。
+  ///
+  /// 只影响**会话内容**（DSH 的 `fontSize.description` 原话："仅影响会话内容的字号"）：
+  /// 正文与标题阶梯按 `base + delta` 缩放，chrome 与 caption 固定不动。
+  /// 刻度本身在 `theme/dsh_type.dart`。
+  int get contentFontSize => _contentFontSize;
+
+  /// 改字号。落盘；同一个值重复设是空操作；越界**夹到边界**。
+  ///
+  /// 夹而不是拒绝：步进器在边界上本来就该停在端点，报错只会多一句没人看的话。
+  Future<void> setContentFontSize(int size) async {
+    final clamped = size.clamp(kContentFontSizeMin, kContentFontSizeMax);
+    if (_disposed || clamped == _contentFontSize) return;
+    _contentFontSize = clamped;
+    notifyListeners();
+    await _prefs?.write(kContentFontSizeKey, '$clamped');
+  }
+
   // ---- 跨会话用量汇总（`usage.summary`，只读）----
 
   /// 汇总数据；`null` = 还没拉过 / 拉失败。
@@ -1493,6 +1516,11 @@ class AppModel extends ChangeNotifier {
       await _prefs?.read(kPerformanceUsageKey),
     );
     if (performance != null) _performanceUsage = performance;
+    // 字号：存的是十进制整数；认不出（没存过 / 坏了）就保持默认 14。
+    final size = int.tryParse(await _prefs?.read(kContentFontSizeKey) ?? '');
+    if (size != null) {
+      _contentFontSize = size.clamp(kContentFontSizeMin, kContentFontSizeMax);
+    }
   }
 
   void _onConnectionChanged(ConnectionState state) {

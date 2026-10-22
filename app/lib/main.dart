@@ -50,6 +50,7 @@ import 'platform/transport_factory.dart';
 import 'platform/websocket_transport.dart';
 import 'theme/dsh_colors.dart';
 import 'theme/dsh_theme.dart';
+import 'theme/dsh_type.dart';
 import 'ui/archive_sheet.dart';
 import 'ui/chat_page.dart';
 import 'ui/connection_actions_sheet.dart';
@@ -388,7 +389,9 @@ class _DshMobileAppState extends State<DshMobileApp>
                   ? Brightness.light
                   : Brightness.dark,
             ),
-            child: DshShimmerHost(child: child ?? const SizedBox.shrink()),
+            child: _typeScoped(
+              DshShimmerHost(child: child ?? const SizedBox.shrink()),
+            ),
           );
         },
         home: _body(),
@@ -396,8 +399,25 @@ class _DshMobileAppState extends State<DshMobileApp>
     );
   }
 
-  /// 全局导航键。
+  /// 把"当前字号"接进整棵树（`theme/dsh_type.dart`）。
   ///
+  /// **只重建 [DshTypeScope]**：`child` 当 `ListenableBuilder` 的 `child` 传进去
+  /// （同一个实例），所以 `AppModel` 的每次通知不会重建整棵树 —— 只有字号真的
+  /// 变了，依赖它的文字才重建（`updateShouldNotify` 比的是值）。
+  Widget _typeScoped(Widget child) {
+    final app = _app;
+    if (app == null) {
+      return DshTypeScope(type: DshType.standard, child: child);
+    }
+    return ListenableBuilder(
+      listenable: app,
+      child: child,
+      builder: (context, child) =>
+          DshTypeScope(type: DshType(app.contentFontSize), child: child!),
+    );
+  }
+
+  /// 全局导航键。
   /// **为什么必须有它**：State 自己的 `context` 在 `MaterialApp` **之上**，
   /// 它的祖先里没有 Navigator / ScaffoldMessenger（那两个都由 MaterialApp 在
   /// **内部**创建）。所以拿 State 自带的 context 去调 `Navigator.of` 在真机上

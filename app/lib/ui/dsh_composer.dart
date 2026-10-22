@@ -28,6 +28,7 @@ import '../model/send_mode.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
+import '../theme/dsh_type.dart';
 
 /// 待发送附件（`.attach-rail` 里的一项）。
 class PendingAttachment {
@@ -220,6 +221,7 @@ class DshComposer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
+    final type = context.dshType;
     // **"有没有草稿"包括可发送的附件**（2026-10-20 修）。
     //
     // 原来只看文字：`controller.text.trim().isNotEmpty` —— 于是
@@ -317,12 +319,17 @@ class DshComposer extends StatelessWidget {
               enabled: enabled,
               minLines: 1,
               maxLines: 6,
-              style: TextStyle(fontSize: 15, color: c.labelPrimary),
+              // 输入文字按**内容字号**缩放（DSH 的 `${…}` 正文档，
+              // `--dsh-content-font-size`）—— 用户调大字号就是要看清自己打的字。
+              style: TextStyle(fontSize: type.body, color: c.labelPrimary),
               decoration: InputDecoration(
                 isDense: true,
                 border: InputBorder.none,
                 hintText: hintText,
-                hintStyle: TextStyle(fontSize: 15, color: c.labelTertiary),
+                hintStyle: TextStyle(
+                  fontSize: type.body,
+                  color: c.labelTertiary,
+                ),
                 contentPadding: const EdgeInsets.symmetric(
                   horizontal: 4,
                   vertical: 8,

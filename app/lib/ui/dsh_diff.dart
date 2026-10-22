@@ -162,7 +162,7 @@ class _Num extends StatelessWidget {
           textAlign: TextAlign.right,
           style: TextStyle(
             fontFamily: 'monospace',
-            fontSize: 11.5,
+            fontSize: 11,
             height: _lineHeight / 11.5,
             color: color,
           ),
@@ -205,7 +205,7 @@ class _Body extends StatelessWidget {
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontFamily: 'monospace',
-                fontSize: 12.5,
+                fontSize: 12,
                 height: _lineHeight / 12.5,
                 color: markerColor,
               ),
@@ -218,7 +218,7 @@ class _Body extends StatelessWidget {
               line.text,
               style: TextStyle(
                 fontFamily: 'monospace',
-                fontSize: 12.5,
+                fontSize: 12,
                 height: _lineHeight / 12.5,
                 color: textColor,
               ),
@@ -283,7 +283,7 @@ class DshCodeLines extends StatelessWidget {
                           line,
                           style: TextStyle(
                             fontFamily: 'monospace',
-                            fontSize: 12.5,
+                            fontSize: 12,
                             height: _lineHeight / 12.5,
                             color: c.labelSecondary,
                           ),

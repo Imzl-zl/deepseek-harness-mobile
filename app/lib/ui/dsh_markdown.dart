@@ -40,6 +40,7 @@ import 'package:markdown/markdown.dart' as md;
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
+import '../theme/dsh_type.dart';
 
 /// 把**常见行内 HTML** 归一成等价的 Markdown 标记。
 ///
@@ -177,8 +178,11 @@ class DshMarkdown extends StatelessWidget {
     // 那是把 **secondary 档**（13：流程行标题、工具标题、compact 正文）
     // 当成了正文。正文是 14，比原来大一档，与 DSH 一致。
     final color = baseColor ?? (compact ? c.labelTertiary : c.labelPrimary);
-    final size = compact ? 13.0 : 14.0;
-    final line = compact ? 20.0 : 24.0;
+    // **字号从刻度来**（`theme/dsh_type.dart`）：正文 = 设置里的基准（默认 14）、
+    // 行高 24+delta；compact（思考正文）= secondary 档（默认 13/20）。
+    final type = context.dshType;
+    final size = compact ? type.secondary : type.body;
+    final line = compact ? type.secondaryLine : type.bodyLine;
     final body = TextStyle(fontSize: size, height: line / size, color: color);
     return MarkdownBody(
       // **行内 HTML 先归一成 Markdown**：否则 `<b>` 会原样露出
@@ -206,6 +210,7 @@ class DshMarkdown extends StatelessWidget {
     TextStyle body,
   ) {
     const mono = DshTheme.mono;
+    final type = context.dshType;
     return MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
       p: body,
       // 段距：DSH `p { margin: 16px 0 }`（`:45-47`）在 flutter_markdown 里是
@@ -214,10 +219,10 @@ class DshMarkdown extends StatelessWidget {
       pPadding: EdgeInsets.only(bottom: compact ? 4 : 8),
       blockSpacing: compact ? 0 : 8,
       // 行内代码：等宽 + 底色。用 `roleToolBg`（token 表里的浅底）而不是自造。
-      // 非 compact 是 `0.875em`（`:163-174`）⇒ 14×0.875 = 12.25 → 12。
-      // compact 是 `font-size: 1em`（`:384-392`）⇒ 跟随正文 13。
+      // 非 compact 是 `0.875em`（`:163-174`）⇒ 跟着**正文字号**缩放；
+      // compact 是 `font-size: 1em`（`:384-392`）⇒ 跟随 secondary 档。
       code: mono.copyWith(
-        fontSize: compact ? 13 : 12,
+        fontSize: compact ? type.secondary : type.body * 0.875,
         color: body.color,
         backgroundColor: c.roleToolBg,
       ),
@@ -273,24 +278,24 @@ class DshMarkdown extends StatelessWidget {
       h1: compact
           ? body.copyWith(fontWeight: FontWeight.w600)
           : body.copyWith(
-              fontSize: 21,
-              height: 30 / 21,
+              fontSize: type.h1,
+              height: type.h1Line / type.h1,
               fontWeight: FontWeight.w700,
             ),
       h1Padding: _headingPadding(compact, level: 1),
       h2: compact
           ? body.copyWith(fontWeight: FontWeight.w600)
           : body.copyWith(
-              fontSize: 19,
-              height: 28 / 19,
+              fontSize: type.h2,
+              height: type.h2Line / type.h2,
               fontWeight: FontWeight.w700,
             ),
       h2Padding: _headingPadding(compact, level: 2),
       h3: compact
           ? body.copyWith(fontWeight: FontWeight.w600)
           : body.copyWith(
-              fontSize: 18,
-              height: 26 / 18,
+              fontSize: type.h3,
+              height: type.h3Line / type.h3,
               fontWeight: FontWeight.w700,
             ),
       h3Padding: _headingPadding(compact, level: 3),

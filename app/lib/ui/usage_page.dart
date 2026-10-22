@@ -228,7 +228,7 @@ class _ProjectHeader extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: 13.5,
+                fontSize: 13,
                 fontWeight: FontWeight.w600,
                 color: c.labelPrimary,
               ),
@@ -239,7 +239,7 @@ class _ProjectHeader extends StatelessWidget {
             formatTokenCount(project.tokens),
             style: TextStyle(
               fontFamily: 'monospace',
-              fontSize: 12.5,
+              fontSize: 12,
               fontWeight: FontWeight.w600,
               color: c.labelSecondary,
             ),
@@ -340,7 +340,7 @@ class _EmptyUsage extends StatelessWidget {
               Text(
                 reason,
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 11.5, color: c.labelTertiary),
+                style: TextStyle(fontSize: 11, color: c.labelTertiary),
               ),
             ],
           ],

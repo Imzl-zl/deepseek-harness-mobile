@@ -352,12 +352,12 @@ class _LegendRow extends StatelessWidget {
           Expanded(
             child: Text(
               label,
-              style: TextStyle(fontSize: 12.5, color: c.labelSecondary),
+              style: TextStyle(fontSize: 12, color: c.labelSecondary),
             ),
           ),
           Text(
             DshContextMeter._short(tokens),
-            style: TextStyle(fontSize: 12.5, color: c.labelCaption),
+            style: TextStyle(fontSize: 12, color: c.labelCaption),
           ),
         ],
       ),

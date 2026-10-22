@@ -846,7 +846,7 @@ class _OptionRow extends StatelessWidget {
                             child: Text(
                               option.label,
                               style: TextStyle(
-                                fontSize: 13.5,
+                                fontSize: 13,
                                 color: c.labelPrimary,
                               ),
                             ),
@@ -937,12 +937,12 @@ class _CustomAnswerState extends State<_CustomAnswer> {
               controller: widget.input,
               enabled: !widget.controller.busy,
               onChanged: widget.controller.setCustom,
-              style: TextStyle(fontSize: 13.5, color: c.labelPrimary),
+              style: TextStyle(fontSize: 13, color: c.labelPrimary),
               decoration: InputDecoration(
                 isDense: true,
                 border: InputBorder.none,
                 hintText: '其他答案…',
-                hintStyle: TextStyle(fontSize: 13.5, color: c.labelTertiary),
+                hintStyle: TextStyle(fontSize: 13, color: c.labelTertiary),
               ),
             ),
           ),

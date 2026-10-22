@@ -12,6 +12,17 @@
 /// 同一条路（`kSendModeKey`）。
 library;
 
+/// 正文基准字号的范围与默认值 —— 照 DSH 的 `fontSize` 设置
+/// （`packages/client/ui-theme/src/theme-settings.ts:24-30`：整数 10–22、默认 14）。
+///
+/// 常量放在这里（纯 Dart）而不是 `theme/dsh_type.dart`：`data/app_model.dart`
+/// 要读它，而 `theme/` 那个文件依赖 `package:flutter/widgets.dart` ——
+/// `data/` 层不许 import widgets（`app-platform-boundaries.md` 的
+/// `core-no-platform-import`）。
+const int kContentFontSizeMin = 10;
+const int kContentFontSizeMax = 22;
+const int kContentFontSizeDefault = 14;
+
 /// 工作步骤展示密度（DSH `settings.transcript`，四档）。
 ///
 /// 文案照 DSH：`简洁` / `标准` / `详细` / `完全展开`
