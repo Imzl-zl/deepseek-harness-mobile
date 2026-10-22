@@ -9,7 +9,7 @@
 //   packages/client/ui-primitives/src/icons/index.tsx
 //   packages/client/ui-primitives/src/icons/shared-artwork.tsx
 //   packages/client/ui-primitives/src/PermissionIcon.tsx
-// 抽取日期：2026-10-17  图标数：100
+// 抽取日期：2026-10-22  图标数：100
 //
 // **不要手改下面的 SVG 载荷**：DSH 升级后重跑抽取器再 diff。
 //
@@ -721,8 +721,28 @@ abstract final class DshIcons {
 ///
 /// 它只负责"把一个 DSH 图标画出来"，**不负责"什么时候用哪个"** ——
 /// 选哪个图标是各屏的事，而名字必须来自 [DshIcons.names]。
+///
+/// ## 图标跟着字号变大（2026-10-22）
+///
+/// Apple HIG 的原话：*"Increase the size of meaningful interface icons as font size
+/// increases… When you use SF Symbols, you get icons that scale automatically."*
+/// 我们这套是 SVG 定尺寸，不跟就永远是 14px —— 用户在"较大/特大"下会看到
+/// 文字变大、图标不动（真机 1.3× 的截图就是这个观感）。
+///
+/// 所以这里按 `MediaQuery.textScalerOf(context).scale(1.0)` 等比放大，
+/// **只放大不缩小**（`clamp(1.0, 1.4)`）：缩小会让小图标失去辨识度；
+/// 上限 1.4 是"最大档 1.3 × 系统仍可能再大"的合理封顶，免得图标抢戏。
+///
+/// [scalesWithText] 给**装饰性大图**（hero 的鱼、空态插画）留出口：
+/// 它们不跟文字排版走，放大只会撑破版面。
 class DshIcon extends StatelessWidget {
-  const DshIcon(this.name, {super.key, this.size, required this.color});
+  const DshIcon(
+    this.name, {
+    super.key,
+    this.size,
+    required this.color,
+    this.scalesWithText = true,
+  });
 
   /// 图标名（必须是 [DshIcons.names] 里的一员）。
   final String name;
@@ -734,9 +754,16 @@ class DshIcon extends StatelessWidget {
   /// 于是"这个图标该是什么颜色"在每一屏都看得见。
   final Color color;
 
+  /// 是否跟随界面字号等比放大（默认跟；装饰性大图传 `false`）。
+  final bool scalesWithText;
+
   @override
   Widget build(BuildContext context) {
-    final edge = size ?? DshIcons.defaultSizeOf(name);
+    final base = size ?? DshIcons.defaultSizeOf(name);
+    final scale = scalesWithText
+        ? MediaQuery.textScalerOf(context).scale(1.0).clamp(1.0, 1.4)
+        : 1.0;
+    final edge = base * scale;
     // 非正方形图标（`treeCorner` 8×10）按比例给高度 —— 一律正方形会拉变形。
     final height = edge * DshIcons.aspectOf(name);
     return SizedBox(

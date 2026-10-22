@@ -1,10 +1,10 @@
-/// 设置页「字号大小」那一行（步进器 10–22）。
+/// 设置页「界面字号」那一行（App 内四档倍率）。
 ///
 /// 守三件事：
 ///
-/// 1. 行在通用组里、显示当前值（默认 14）；
-/// 2. **±1** 真的改到 `AppModel.contentFontSize`（并且落盘走同一条路）；
-/// 3. **边界不可越过**：到 10 / 22 之后对应那颗按钮点不动（不是静默）。
+/// 1. 行在通用组里、显示当前档位（默认「标准」）；
+/// 2. 点开是四档（较小 / 标准 / 较大 / 特大），选完**落到 `AppModel`**（并落盘走同一条路）；
+/// 3. 档位是倍率（0.9 / 1.0 / 1.15 / 1.3），不是 px —— 等比放大不改变对比关系。
 library;
 
 import 'dart:async';
@@ -13,6 +13,7 @@ import 'package:dsh_mobile/core/connection.dart' as conn;
 import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
+import 'package:dsh_mobile/model/preferences.dart';
 import 'package:dsh_mobile/theme/dsh_colors.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/settings_page.dart';
@@ -54,50 +55,37 @@ Widget _host(AppModel app) => MaterialApp(
 );
 
 void main() {
-  testWidgets('字号大小：显示当前值，±1 真的改，边界点不动', (tester) async {
-    final semantics = tester.ensureSemantics();
+  testWidgets('界面字号：四档、默认标准、选完真的落到 AppModel', (tester) async {
     final app = AppModel(client: _Client());
     addTearDown(app.dispose);
     await tester.pumpWidget(_host(app));
     await tester.pumpAndSettle();
 
-    // 通用组在页面靠上，但要先滚到那一行（设置页是多组的长列表）。
-    final label = find.text('字号大小');
+    final label = find.text('界面字号');
     await tester.scrollUntilVisible(
       label,
       200,
       scrollable: find.byType(Scrollable).first,
     );
     expect(label, findsOneWidget);
-    expect(find.text('仅影响会话内容的字号'), findsOneWidget);
-    expect(find.text('14'), findsOneWidget, reason: '默认 14');
+    // 行上显示的是「标准」（设置页里「工作步骤展示」也有一档叫标准，
+    // 所以必须把 finder 限定到**这一行**）。
+    final row = find.ancestor(of: label, matching: find.byType(ListTile));
+    expect(find.descendant(of: row, matching: find.text('标准')), findsOneWidget);
+    expect(app.uiScaleIndex, kUiScaleDefaultIndex, reason: '默认标准档');
 
-    await tester.tap(find.bySemanticsLabel('调大字号'));
+    await tester.tap(label);
     await tester.pumpAndSettle();
-    expect(app.contentFontSize, 15);
-    expect(find.text('15'), findsOneWidget);
-
-    // 一路到上界，再点一次不该越过。
-    for (var i = 0; i < 10; i += 1) {
-      await tester.tap(find.bySemanticsLabel('调大字号'));
-      await tester.pumpAndSettle();
+    // 四档都在，且带百分比。
+    for (final name in kUiScaleLabels) {
+      expect(find.text(name), findsWidgets, reason: '档位 $name 要在选择器里');
     }
-    expect(app.contentFontSize, 22);
-    await tester.tap(find.bySemanticsLabel('调大字号'));
-    await tester.pumpAndSettle();
-    expect(app.contentFontSize, 22, reason: '上界 22 不可越过');
+    expect(find.text('130%'), findsOneWidget);
 
-    // 反向一路到下界。
-    for (var i = 0; i < 20; i += 1) {
-      await tester.tap(find.bySemanticsLabel('调小字号'));
-      await tester.pumpAndSettle();
-    }
-    expect(app.contentFontSize, 10);
-    await tester.tap(find.bySemanticsLabel('调小字号'));
+    await tester.tap(find.text('特大'));
     await tester.pumpAndSettle();
-    expect(app.contentFontSize, 10, reason: '下界 10 不可越过');
-
-    // 语义句柄要在用例体内释放（框架在收尾时才校验，`addTearDown` 太晚）。
-    semantics.dispose();
+    expect(app.uiScaleIndex, 3);
+    expect(app.uiScale, 1.3);
+    expect(find.text('特大'), findsOneWidget, reason: '行上显示新档位');
   });
 }

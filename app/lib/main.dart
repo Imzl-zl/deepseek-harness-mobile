@@ -50,7 +50,6 @@ import 'platform/transport_factory.dart';
 import 'platform/websocket_transport.dart';
 import 'theme/dsh_colors.dart';
 import 'theme/dsh_theme.dart';
-import 'theme/dsh_type.dart';
 import 'ui/archive_sheet.dart';
 import 'ui/chat_page.dart';
 import 'ui/connection_actions_sheet.dart';
@@ -389,7 +388,7 @@ class _DshMobileAppState extends State<DshMobileApp>
                   ? Brightness.light
                   : Brightness.dark,
             ),
-            child: _typeScoped(
+            child: _uiScaled(
               DshShimmerHost(child: child ?? const SizedBox.shrink()),
             ),
           );
@@ -399,21 +398,38 @@ class _DshMobileAppState extends State<DshMobileApp>
     );
   }
 
-  /// 把"当前字号"接进整棵树（`theme/dsh_type.dart`）。
+  /// 把「界面字号」乘进 `MediaQuery.textScaler`（**两层**：系统 × App）。
   ///
-  /// **只重建 [DshTypeScope]**：`child` 当 `ListenableBuilder` 的 `child` 传进去
-  /// （同一个实例），所以 `AppModel` 的每次通知不会重建整棵树 —— 只有字号真的
-  /// 变了，依赖它的文字才重建（`updateShouldNotify` 比的是值）。
-  Widget _typeScoped(Widget child) {
+  /// ## 为什么是这一条路
+  ///
+  /// 手机上字号本来就是两层的：系统字号（Android 的字体大小 / iOS Dynamic Type，
+  /// Flutter 通过 `MediaQuery.textScaler` 递进来）与 App 内档位。主流 App 都是
+  /// **两层相乘**，不是二选一。`TextScaler.linear(f)` 会把**所有** `fontSize`
+  /// 等比放大 —— 包括 chrome 与 caption，且**不改变任何对比关系**
+  /// （11/14 还是 11/14）。这正是"全局"，也不会出现"内容与 chrome 差一倍"。
+  ///
+  /// 整体再 `clamp(0.85, 2.0)`：下限防止系统把字缩到看不清；上限 2.0 是实测
+  /// 还能用的那条线（系统 2.0 无溢出，只是挤；见
+  /// `shots-2026-10-22/font-f-2.0-home.png`）。
+  ///
+  /// **只重建这一层**：`child` 当 `ListenableBuilder` 的 `child` 传进去（同一个实例），
+  /// `AppModel` 的每次通知不会重建整棵树；字号真的变了才重建依赖它的文字。
+  Widget _uiScaled(Widget child) {
     final app = _app;
-    if (app == null) {
-      return DshTypeScope(type: DshType.standard, child: child);
-    }
+    if (app == null) return child;
     return ListenableBuilder(
       listenable: app,
       child: child,
-      builder: (context, child) =>
-          DshTypeScope(type: DshType(app.contentFontSize), child: child!),
+      builder: (context, child) {
+        final platform = MediaQuery.textScalerOf(context);
+        final combined = TextScaler.linear(
+          platform.scale(1.0) * app.uiScale,
+        ).clamp(minScaleFactor: 0.85, maxScaleFactor: 2.0);
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: combined),
+          child: child!,
+        );
+      },
     );
   }
 

@@ -1,62 +1,84 @@
-# 字号刻度（base + delta）
+# 字号：两层倍率（系统 × App）+ 角色表
 
-「设置 → 通用 → 字号大小」是**一个整数 10–22、默认 14**，只影响**会话内容**的字号
-（DSH 的 `fontSize.description` 原话："仅影响会话内容的字号"）。刻度是 `base + delta`，
-**不是**整体缩放。
+手机上的字号**本来就是两层**：
 
-## 1. 派生（照 DSH 逐条）
+1. **系统字号**（Android 设置 → 显示 → 字体大小 / iOS 的 Dynamic Type）由平台递进来，
+   Flutter 通过 `MediaQuery.textScaler` 暴露；本 App 不覆盖它，所以系统放大已经生效。
+2. **App 内档位**（设置页「界面字号」）是**倍率**，乘在系统那一份之上。
 
-`packages/client/ui-theme/src/styles/gradient-shadow-text.css:56-63`：
+两者相乘后整体 `clamp(0.85, 2.0)`。
 
-| 量 | 公式 | 默认档（14） | 10 档 | 22 档 |
-|---|---|---|---|---|
-| delta | `size − 14` | 0 | −4 | +8 |
-| 正文 | `size` | 14 | 10 | 22 |
-| 正文行高 | `24 + delta` | 24 | 20 | 32 |
-| secondary | `min(size−1, max(13, size−2))` | 13 | 9 | 20 |
-| secondary 行高 | `20 + (secondary − 13)` | 20 | 16 | 27 |
-| h1 / 行高 | `21 + delta` / `30 + delta` | 21/30 | 17/26 | 29/38 |
-| h2 / 行高 | `19 + delta` / `28 + delta` | 19/28 | 15/24 | 27/36 |
-| h3 / 行高 | `18 + delta` / `26 + delta` | 18/26 | 14/22 | 26/34 |
-| h4 | 正文（只换字重） | 14 | 10 | 22 |
+## 1. 档位
 
-落点：`app/lib/theme/dsh_type.dart`（`DshType` + `DshTypeScope` + `context.dshType`）。
-**默认档每个值都等于改造前手写的那个字面量**，所以没动设置的设备看到的是同一套像素。
+| 档 | 倍率 | 说明 |
+|---|---|---|
+| 较小 | 0.9 | 一屏塞更多 |
+| 标准 | 1.0 | **默认** |
+| 较大 | 1.15 | |
+| 特大 | 1.3 | 上限；实测 1.3 在有工具卡/代码块/diff 的会话上仍舒服 |
 
-## 2. 哪些文字跟刻度走
+常量在 `app/lib/model/preferences.dart`（`kUiScaleSteps` / `kUiScaleLabels` /
+`kUiScaleDefaultIndex`）；落盘键 `ui_scale_index`；实现见 `app/lib/main.dart` 的 `_uiScaled`。
 
-DSH 的规则是「贴着内容的尺寸写 `calc(基准 + delta)`；caption 与小字固定不跟 delta」
-（`:51-55` 的注释原话 "Small typography keeps a fixed size"）。手机侧照同一条：
+**为什么上限是 1.3**：系统 1.5 时顶栏标题开始省略、输入框占约 1/5 屏；系统 2.0 不溢出但明显发挤
+（`shots-2026-10-22/sc-1_5-session.png`、`sc-2_0-session.png`）。与系统叠加后整体 clamp 到 2.0
+——那是实测还能用的那条线。
 
-| 跟刻度 | 位置 |
-|---|---|
-| 正文 / 标题阶梯 / 行内代码 | `ui/dsh_markdown.dart`（Markdown 正文与 h1–h3） |
-| 用户气泡正文 | `ui/chat_turns.dart` 的 `UserTurn` |
-| 流程行标题（工具名、思考/命令标题 + 摘要、说话者标签、运行条） | `_DisclosureHeader` / `ToolCard` / `AssistantHead` / `RunningBar` |
-| 输入框文字与占位 | `ui/dsh_composer.dart` |
+## 2. 为什么是倍率，不是"内容字号 10–22"
 
-**固定不跟**（chrome 与 caption，DSH 同一条）：顶栏、统计条、抽屉行、设置行的标签与值、
-按钮与徽标、轮次摘要（`第 4 轮 · 2 分 21 秒`）、代码块（见 §3）、各类 11–12px 小字。
+等比缩放**不改变任何对比关系**：正文/caption 还是 14/11，只是都乘同一个数。
+所以"全局"与"好看"不冲突 —— 而**只放大内容**会把对比从 1.27 拉到 2.0（14/11 → 22/11），
+那正是"丑"的机械原因（历史上那一版已作废，见
+`.agents/notes/archived/2026-10-22-type-scale-base-plus-delta.md`）。
 
-## 3. 代码字号是**另一个**设置（这一版没做）
+## 3. 角色表（`app/lib/theme/dsh_type.dart`）
 
-DSH 的代码字号是独立设置（10–16、默认 11，`:60-63`），代码块按它排、行内代码按正文字号的
-`0.875em` 跟随。手机侧这一版：**代码块固定 12**（`DshTheme.mono`），行内代码跟正文缩放。
-代码字号设置列进"不做"，理由：它是另一条轴（改它不动正文），要做就得再来一套刻度与设置行。
+`DshType` 仍是**设计基准**（正文 14），**不随设置变**；设置由 `MediaQuery.textScaler` 乘上去。
+派生公式照 DSH（`packages/client/ui-theme/src/styles/gradient-shadow-text.css:56-99`）：
 
-## 4. 半点字号已经收敛
+| 角色 | 基准 | 行高 |
+|---|---|---|
+| 正文 `body` | 14 | 24 |
+| 次级 `secondary` | `min(size−1, max(13, size−2))` = 13 | 20 |
+| 标题 h1 / h2 / h3 | 21 / 19 / 18 | 30 / 28 / 26 |
+| caption | 11（Apple HIG 的 iOS 最小字号也是 11） | — |
+| 代码 | 12（固定，不跟角色表） | — |
 
-改造前 216 处 `fontSize:` 里有 5 个半点值（10.5 / 11.5 / 12.5 / 13.5 / 14.5），
-DSH 的阶梯只有整数。一次性脚本 `app/tools/migrate-font-half-points.mjs` 把 **32 处**
-抹平（10.5→11、11.5→11、12.5→12、13.5→13、14.5→14），带**每档命中数断言**与
-"改完不许有点数字号"的残渣断言；`app/lib/` 里现在没有点数字号。
+调用点写 `context.dshType.body`，语义是"正文那一档"，不是"14px"。
 
-## 5. 判据
+## 4. 图标跟随
 
-- 单测 `app/test/type_scale_test.dart`：派生公式逐档对（含 10→9 / 14→13 / 15→13 / 22→20
-  那四组）；落盘 / 边界夹取 / 重启读回；
-  **390dp 上到 22 不溢出**（Markdown 与用户气泡各一条，`takeException` 为空 + 字号真的生效）。
-- 单测 `app/test/settings_font_size_test.dart`：设置行的步进器 ±1、到 10 / 22 不可越过。
-- 真机（`d61cf622`，`shots-2026-10-22/`）：`c1-default14.png`（14）、
-  `c3-chat-10.png`（10）、`c5-chat-22.png`（22）三张同屏对照 —— 内容随之缩放、
-  chrome 不动、无溢出；`force-stop` 重启后设置页仍显示 22（落盘生效）。
+`DshIcon` 按 `MediaQuery.textScalerOf(context).scale(1.0)` 等比放大，**只放大不缩小**，
+上限 1.4（`app/tools/dsh_icons.template.dart` → 生成物 `app/lib/theme/dsh_icons.dart`；
+改模板后跑 `node app/tools/extract-dsh-icons-dart.mjs`）。
+装饰性大图传 `scalesWithText: false`。
+
+依据：Apple HIG 原文 *"Increase the size of meaningful interface icons as font size increases…
+When you use SF Symbols, you get icons that scale automatically."*
+（`developer.apple.com/design/human-interface-guidelines/typography`，2026-10-22 读）。
+
+## 5. 布局约束
+
+带文字的容器**不许写死高度**，用 `minHeight`：素材是 `chat_turns.dart` 的披露行、
+`dsh_sheet.dart` 的底部按钮、`session_drawer.dart` 的「新建会话」与搜索框。
+依据：Apple HIG 原文 *"Make sure your app's layout adapts to all font sizes… Keep text
+truncation to a minimum as font size increases."*
+
+## 6. 判据
+
+- `app/test/type_scale_test.dart`：角色表逐档（10/14/15/22）对 DSH 公式；四档倍率表；
+  落盘 / 越界夹取 / 重启读回（垃圾值退回默认）；390dp × 1.3 的 Markdown 与用户气泡**不溢出**
+  且高度确实变大。
+- `app/test/settings_font_size_test.dart`：设置行默认「标准」、sheet 四档带百分比、选完落到 `AppModel`。
+- 真机（`d61cf622`，系统字号 1.0）：`ui-scale-90-chat.png` / `ui-scale-100-chat.png` /
+  `ui-scale-130-chat.png` 与 `ui-scale-130-settings.png` —— 90/100/130 三档整屏等比放大，
+  含 tool 卡、思考行、代码块、输入框、统计条、设置页。
+
+## 7. 已知边角
+
+- **书签胶囊与卡片箭头在 1.3 档会轻微重叠**（「最早/最新」是右缘绝对定位，卡片右箭头也在右缘）。
+  1.0 下不重叠。
+- **代码块字号固定 12**，不随倍率变（`textScaler` 仍会乘它 —— 也就是说它跟着系统与 App 倍率走，
+  只是"设计基准"不跟角色表）。
+- **大字号下顶栏标题会更早出现省略号**（这是 `TextOverflow.ellipsis` 的正常行为，
+  Apple 的"尽量少截断"针对内容区，顶栏标题一直是单行）。

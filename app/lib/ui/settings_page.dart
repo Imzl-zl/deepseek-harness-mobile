@@ -42,7 +42,6 @@ import '../model/send_mode.dart';
 import '../model/theme_mode.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
-import '../theme/dsh_type.dart';
 import 'connection_summary_block.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_sheet.dart';
@@ -159,11 +158,19 @@ class SettingsPage extends StatelessWidget {
                 onPicked: onThemeMode,
               ),
             ),
-            // **字号大小**（DSH 的 `settings.general.item` 里 order 11，
-            // 紧跟外观；档位 10–22、默认 14，见 `theme/dsh_type.dart`）。
-            // 形态照 DSH 的 `FontSizeRow`：步进器 ±1，不是列表选择 ——
-            // 十七个档位摆成列表要点三次才能从 14 走到 11。
-            _FontSizeRow(app: app),
+            // **界面字号**（App 内档位，叠在系统字号之上）。
+            //
+            // 与 DSH 的「字号大小」（10–22、只影响会话内容）**有意偏离**：手机屏更小，
+            // 用户要的是"整个界面一起大"，而"只放大内容"会把内容/chrome 的对比从
+            // 1.27 拉到 2.0（用户原话「丑」）。这一版改成倍率四档、全局等比放大 ——
+            // 等比不改变任何比例，所以不会丑。取舍见
+            // `.agents/notes/implemented/2026-10-22-global-ui-scale.md`。
+            _PrefRow(
+              icon: 'personalization',
+              label: '界面字号',
+              value: kUiScaleLabels[app.uiScaleIndex],
+              onTap: () => _pickUiScale(context, app),
+            ),
             _PrefRow(
               icon: 'checklist',
               label: '工作步骤展示',
@@ -290,6 +297,31 @@ class SettingsPage extends StatelessWidget {
       context,
     ).showSnackBar(const SnackBar(content: Text('已复制')));
   }
+}
+
+/// 选界面字号档位（四档，底部 sheet）。
+///
+/// 选完**整棵树的文字一起变**（`main.dart` 的 `_uiScaled` 把它乘进
+/// `MediaQuery.textScaler`），所以这个 sheet 自己也会跟着变 —— 那是想要的反馈。
+Future<void> _pickUiScale(BuildContext context, AppModel app) async {
+  final picked = await showDshSheet<int>(
+    context: context,
+    title: '界面字号',
+    body: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < kUiScaleSteps.length; i += 1)
+          DshPickerRow(
+            name: kUiScaleLabels[i],
+            tags: ['${(kUiScaleSteps[i] * 100).round()}%'],
+            selected: i == app.uiScaleIndex,
+            onTap: () => Navigator.of(context).pop(i),
+          ),
+      ],
+    ),
+  );
+  if (picked == null) return;
+  await app.setUiScaleIndex(picked);
 }
 
 /// 选一个枚举值（底部 sheet，行结构照 §7.9）。
@@ -560,118 +592,6 @@ class _PrefRow extends StatelessWidget {
         ],
       ),
       onTap: onTap,
-    );
-  }
-}
-
-/// 字号大小：**步进器 ±1**（照 DSH 的 `FontSizeRow.tsx:35-70`）。
-///
-/// 为什么不是列表选择：17 个档位摆成列表，从 14 走到 11 要点三次；
-/// 而"调字号"本来就是"看着屏幕一点一点试"的动作。
-///
-/// 两个按钮**在边界上变灰但仍在**（`min` 10 / `max` 22）—— 消失会让行宽跳。
-class _FontSizeRow extends StatelessWidget {
-  const _FontSizeRow({required this.app});
-
-  final AppModel app;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.dshColors;
-    final size = app.contentFontSize;
-    return ListTile(
-      dense: true,
-      leading: DshIcon('personalization', size: 18, color: c.labelSecondary),
-      title: Text(
-        '字号大小',
-        style: TextStyle(fontSize: 14, color: c.labelPrimary),
-      ),
-      subtitle: Text(
-        // DSH 的 `fontSize.description` 原话（`ui-theme/src/client/locales.ts:9-13`）。
-        '仅影响会话内容的字号',
-        style: TextStyle(fontSize: 11, color: c.labelTertiary),
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _StepButton(
-            // `false` = 减号（画一条横线：图标集里没有 `minus`，
-            // 而"用 unicode 字形当图标"是本项目的硬禁令）。
-            plus: false,
-            semanticLabel: '调小字号',
-            onTap: size > DshType.minSize
-                ? () => unawaited(app.setContentFontSize(size - 1))
-                : null,
-          ),
-          SizedBox(
-            width: 40,
-            child: Text(
-              '$size',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: c.labelPrimary,
-              ),
-            ),
-          ),
-          _StepButton(
-            plus: true,
-            semanticLabel: '调大字号',
-            onTap: size < DshType.maxSize
-                ? () => unawaited(app.setContentFontSize(size + 1))
-                : null,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 步进器上的一枚按钮。[plus] 为假时画一条 12×2 的横线
-/// —— 图标集里没有 minus（`dsh_icons.dart` 只有 plus），
-/// 而"用 unicode 字形当图标"是本项目的硬禁令。
-class _StepButton extends StatelessWidget {
-  const _StepButton({
-    required this.plus,
-    required this.semanticLabel,
-    required this.onTap,
-  });
-
-  final bool plus;
-  final String semanticLabel;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.dshColors;
-    final enabled = onTap != null;
-    return Semantics(
-      button: true,
-      label: semanticLabel,
-      child: Opacity(
-        opacity: enabled ? 1 : 0.35,
-        child: InkResponse(
-          onTap: onTap,
-          radius: 20,
-          child: SizedBox(
-            width: 36,
-            height: 36,
-            child: Center(
-              child: plus
-                  ? DshIcon('plus', size: 14, color: c.labelPrimary)
-                  : Container(
-                      width: 12,
-                      height: 2,
-                      decoration: BoxDecoration(
-                        color: c.labelPrimary,
-                        borderRadius: BorderRadius.circular(1),
-                      ),
-                    ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

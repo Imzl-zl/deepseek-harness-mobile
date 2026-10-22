@@ -103,25 +103,17 @@ class DshType {
   String toString() => 'DshType($size)';
 }
 
-/// 往整棵树上发当前字号。挂在 `MaterialApp.builder` 里一层。
+/// 字号**角色表**（正文 / secondary / 标题阶梯 / caption / code）。
 ///
-/// 找不到（单测直接 pump 某个页面）时 [DshTypeScope.of] 回默认档 ——
-/// 与 `DshShimmerHost` 同一条纪律：不挂也不崩，只是不缩放。
-class DshTypeScope extends InheritedWidget {
-  const DshTypeScope({super.key, required this.type, required super.child});
-
-  final DshType type;
-
-  static DshType of(BuildContext context) {
-    final scope = context.dependOnInheritedWidgetOfExactType<DshTypeScope>();
-    return scope?.type ?? DshType.standard;
-  }
-
-  @override
-  bool updateShouldNotify(DshTypeScope oldWidget) => oldWidget.type != type;
-}
-
+/// 2026-10-22 晚改：**不再承载"字号设置"** —— 设置变成了"界面字号的倍率"
+/// （`model/preferences.dart` 的 `kUiScaleSteps`），由 `main.dart` 乘进
+/// `MediaQuery.textScaler`，让**所有**文字等比放大（含 chrome 与 caption）。
+///
+/// 这一层继续存在的理由：调用点写 `context.dshType.body` 比写 `14` 多一层语义
+/// （"这是正文那一档"），而哪天要调某一档的基准只改这里。
+///
+/// 取舍见 `.agents/notes/implemented/2026-10-22-global-ui-scale.md`。
 extension DshTypeContext on BuildContext {
-  /// 当前字号刻度（没有 scope 时是默认档 14）。
-  DshType get dshType => DshTypeScope.of(this);
+  /// 设计基准字号（不随设置变；设置由 `MediaQuery.textScaler` 乘上去）。
+  DshType get dshType => DshType.standard;
 }

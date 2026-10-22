@@ -513,7 +513,9 @@ class DshSheetAction extends StatelessWidget {
       child: InkWell(
         onTap: onPressed,
         child: Container(
-          height: 44,
+          // **minHeight 而不是 height**：界面字号放大后按钮文字会超过 44，
+          // 写死高度会裁字（Apple HIG：布局要适配所有字号）。
+          constraints: const BoxConstraints(minHeight: 44),
           alignment: Alignment.center,
           decoration: filled
               ? null

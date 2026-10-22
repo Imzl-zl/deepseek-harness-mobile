@@ -1,6 +1,8 @@
 # Agent Note: 字号刻度用 base + delta，不用全局缩放
 
-Status: implemented
+Status: superseded（2026-10-22 晚：被 `.agents/notes/implemented/2026-10-22-global-ui-scale.md`
+取代。本篇的**角色表派生公式**仍然有效并被沿用；被推翻的只是"设置只放大内容、chrome 固定"
+这一条 —— 真机上那会把内容/chrome 的对比从 1.27 拉到 2.0，用户当场退回）
 
 ## Problem
 

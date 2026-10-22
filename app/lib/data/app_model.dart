@@ -1436,27 +1436,27 @@ class AppModel extends ChangeNotifier {
     await _prefs?.write(kPerformanceUsageKey, usage.wire);
   }
 
-  /// 落盘的 meta 键：正文基准字号（DSH 的 `fontSize`，10–22）。**改动等于作废偏好。**
-  static const String kContentFontSizeKey = 'content_font_size';
+  /// 落盘的 meta 键：**界面字号档位**（App 内倍率的下标，0–3）。
+  /// 旧键 `content_font_size`（10–22 的内容字号）已作废 —— 那一版只放大内容，
+  /// 对比会被拉到 2 倍（用户原话「丑」）。见
+  /// `.agents/notes/implemented/2026-10-22-global-ui-scale.md`。
+  static const String kUiScaleKey = 'ui_scale_index';
 
-  int _contentFontSize = kContentFontSizeDefault;
+  int _uiScaleIndex = kUiScaleDefaultIndex;
 
-  /// 正文基准字号（10–22，默认 14）。
-  ///
-  /// 只影响**会话内容**（DSH 的 `fontSize.description` 原话："仅影响会话内容的字号"）：
-  /// 正文与标题阶梯按 `base + delta` 缩放，chrome 与 caption 固定不动。
-  /// 刻度本身在 `theme/dsh_type.dart`。
-  int get contentFontSize => _contentFontSize;
+  /// 界面字号档位的下标（[kUiScaleSteps] / [kUiScaleLabels] 的下标）。
+  int get uiScaleIndex => _uiScaleIndex;
 
-  /// 改字号。落盘；同一个值重复设是空操作；越界**夹到边界**。
-  ///
-  /// 夹而不是拒绝：步进器在边界上本来就该停在端点，报错只会多一句没人看的话。
-  Future<void> setContentFontSize(int size) async {
-    final clamped = size.clamp(kContentFontSizeMin, kContentFontSizeMax);
-    if (_disposed || clamped == _contentFontSize) return;
-    _contentFontSize = clamped;
+  /// 当前倍率（叠在系统字号之上；`main.dart` 把它乘进 `MediaQuery.textScaler`）。
+  double get uiScale => kUiScaleSteps[_uiScaleIndex];
+
+  /// 切界面字号档位。落盘；同一个档位重复设是空操作；越界**夹到边界**。
+  Future<void> setUiScaleIndex(int index) async {
+    final clamped = index.clamp(0, kUiScaleSteps.length - 1);
+    if (_disposed || clamped == _uiScaleIndex) return;
+    _uiScaleIndex = clamped;
     notifyListeners();
-    await _prefs?.write(kContentFontSizeKey, '$clamped');
+    await _prefs?.write(kUiScaleKey, '$clamped');
   }
 
   // ---- 电脑侧设置（`settings.describe` / `settings.update`，契约 §5.7）----
@@ -1633,10 +1633,10 @@ class AppModel extends ChangeNotifier {
       await _prefs?.read(kPerformanceUsageKey),
     );
     if (performance != null) _performanceUsage = performance;
-    // 字号：存的是十进制整数；认不出（没存过 / 坏了）就保持默认 14。
-    final size = int.tryParse(await _prefs?.read(kContentFontSizeKey) ?? '');
-    if (size != null) {
-      _contentFontSize = size.clamp(kContentFontSizeMin, kContentFontSizeMax);
+    // 界面字号档位：存的是下标；认不出（没存过 / 坏了）就保持默认档（1.0）。
+    final scaleIndex = int.tryParse(await _prefs?.read(kUiScaleKey) ?? '');
+    if (scaleIndex != null) {
+      _uiScaleIndex = scaleIndex.clamp(0, kUiScaleSteps.length - 1);
     }
   }
 

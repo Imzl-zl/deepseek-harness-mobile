@@ -1405,10 +1405,11 @@ class _DisclosureHeader extends StatelessWidget {
     final showPreview = preview.isNotEmpty && (keepPreviewWhenOpen || !open);
     return InkWell(
       onTap: expandable ? onTap : null,
-      child: SizedBox(
+      child: ConstrainedBox(
         // 偏离 1：DSH 的行高是 24（`DisclosureRow.module.css:36`）；
-        // 触屏要 36 才够点。
-        height: 36,
+        // 触屏要 36 才够点。**用 minHeight 不用 height**：界面字号放大后
+        // 文字行高会超过 36，写死会裁字（Apple HIG：布局要适配所有字号）。
+        constraints: const BoxConstraints(minHeight: 36),
         child: Row(
           children: [
             // 偏离 2 的另一半：图标固定 14（`:69-72` 的 14px 字形）。

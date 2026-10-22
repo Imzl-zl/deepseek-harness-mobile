@@ -48,19 +48,49 @@ Flutter 的 `MediaQuery.textScaler` 由平台提供（`packages/flutter/lib/src/
 结论：**"全局放大"在布局上已经过了一次压力测试（2.0 没崩）**；真正缺的是
 ①App 内没有这个开关（只有系统那一处），②图标 / 内边距 / 定高不跟着走。
 
-## 行业怎么规范的（能引的与没抓到的）
+### 4. 有数据的页面实测（2026-10-22 晚，隔离实例 63900）
 
-- **Flutter 的机制**（本地源码，可引）：`TextScaler.linear(f)` 乘所有 `fontSize`；
-  `TextScaler.clamp(min,max)` 限定倍率；`MediaQuery.textScaler` 是平台给的那一份。
-  我们已经在吃它 —— 所以"全局乘数"不是自己发明，是把系统那条机制搬到 App 内。
-- **Material 3 / iOS HIG 的具体档位与"200% 不丢内容"**：**未抓到原文**。
-  `m3.material.io/styles/typography/type-scale-tokens` 与
-  `developer.apple.com/design/human-interface-guidelines/typography` 都只回了 `HTTP 200` +
-  标题（JS 渲染，`web_fetch` 拿不到正文）。按项目规矩，这一条我只能写"未找到"，
-  **不把记忆里的数值当证据**。要写进 `docs/` 之前请在浏览器里核一眼（尤其是
-  "body 17/14、caption 11–12、支持到 200%"这三句）。
+在有工具卡 / 代码块 / diff / 长正文的会话（`Run 3 separate shell commands`）上，
+App 内字号先退回 14，再逐档改系统 `font_scale`（**不用跑模型**，只是选会话读历史）：
+
+| 系统 font_scale | 观感与问题 |
+|---|---|
+| 1.0（基准） | 正常。正文 14、工具名 13、chrome 11–13 |
+| 1.15 | 正常，无截断 |
+| 1.3 | 舒适；工具卡、思考行、代码块都撑得住；只有底部统计条要横滑（它本来就是横滚的） |
+| 1.5 | 仍然没有溢出条；顶栏标题开始省略、输入框占到约 1/5 屏 |
+| 2.0 | 不溢出但**明显发挤**：顶栏标题 `Run 3 se…`、统计条尾巴被裁、输入框占 1/3 屏、`…` 菜单与图标尺寸没变、文字与图标脱节 |
+
+截图：`shots-2026-10-22/sc-100-session.png`（1.0）、`sc-1_3-session.png`、`sc-1_5-session.png`、
+`sc-2_0-session.png`；空态与抽屉另有一组 `font-a…font-g`。
+
+**结论（上限）**：1.5 以内是"舒服"的，2.0 是"能用但挤"。所以 App 自己的倍率上限取
+**≈1.5**（并且与系统字号叠加后整体 clamp 到 2.0，别超过系统已经证明能用的那条线）。
+
+## 行业怎么规范的（这次抓到了原文）
+
+用已连的 Chrome 读 `developer.apple.com/design/human-interface-guidelines/typography`
+（`web_fetch` 只能拿到标题，浏览器里 innerText 是完整的）：
+
+- **字号有下限**：iOS/iPadOS **默认 17pt、最小 11pt**；macOS 13/10；watchOS 16/12。
+- **"不是每个字都要一起变大"**：原话 —— *"Prioritize important content when responding to
+  text-size changes… they don't always want to increase the size of every word on the screen.
+  For example… they don't expect the tab titles to increase in size."*
+  ⇒ **DSH 的"内容跟 delta、chrome 固定"在方向上是对的**，问题出在我们的**默认值与对比度**。
+- **图标要跟着字号变大**：原话 —— *"Increase the size of meaningful interface icons as font
+  size increases… When you use SF Symbols, you get icons that scale automatically."*
+  ⇒ 我们 `DshIcon` 固定 px 是不符合这条的，至少"行内、信息性"的图标要跟着走。
+- **布局必须自适应**：*"Make sure your app's layout adapts to all font sizes… Keep text
+  truncation to a minimum as font size increases."*
+- **Material 3**（`m3.material.io/styles/typography/type-scale-tokens`，同样是浏览器读的）：
+  15 个 baseline 档（Display/Headline/Title/Body/Label 各 3 档）+ 15 个 emphasized 档，
+  原话 *"No single product will use all the styles"* —— 也就是说**档位是选出来用的**，
+  不是每个控件随手写一个字号（我们 217 处手写字面量正是反面）。
+- **Flutter 的机制**（本地源码）：`TextScaler.linear(f)` 乘所有 `fontSize`；
+  `TextScaler.clamp(min,max)` 限定倍率（`packages/flutter/lib/src/painting/text_scaler.dart:20-76`）。
+  `MediaQuery.textScaler` 是平台给的那一份，我们已经在吃 —— 所以"全局"不是发明新机制。
 - **我们自己的规范**：`docs/subsystems/type-scale.md`（DSH 的 base + delta）。
-  它对"内容"已经对了，对"全局"没有立场 —— 因为 DSH 的设置本来就只管内容。
+  它对"内容"已经对了，对"全局"没有立场 —— DSH 的设置本来就只管内容。
 
 ## 三条路线
 

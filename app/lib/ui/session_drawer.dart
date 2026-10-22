@@ -272,8 +272,9 @@ class _SessionDrawerState extends State<SessionDrawer> {
                 clipBehavior: Clip.antiAlias,
                 child: InkWell(
                   onTap: widget.onNewSession,
-                  child: SizedBox(
-                    height: 44,
+                  child: ConstrainedBox(
+                    // minHeight：界面字号放大后「新建会话」的文字行高会超过 44。
+                    constraints: const BoxConstraints(minHeight: 44),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -304,7 +305,8 @@ class _SessionDrawerState extends State<SessionDrawer> {
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
               child: Container(
-                height: 36,
+                // minHeight：搜索框里是输入文字，放大后行高会超过 36。
+                constraints: const BoxConstraints(minHeight: 36),
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 decoration: BoxDecoration(
                   color: c.layer1,
