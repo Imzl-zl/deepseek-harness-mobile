@@ -27,19 +27,37 @@
 > boundary **349**（96 个 Dart 文件）/ icons / tool-paths / analyze+format 0。
 > 真机：`d61cf622`，截图在 `D:\tmp\dsh-e2e\shots-2026-10-22\`。
 >
-> **本轮留下的三处已知缺口**（都写进对应笔记的 Consequences）：
-> ① 工具行自己的扫光没截到图（免费渠道思考阶段太长，工具执行窗口错过采样）；
-> ② 从设置页返回后抽屉仍开着（`maybePop` 那句"先收抽屉再 push"没生效，未追）；
-> ③ H 的"空工作区当最近"只有单测证据 —— 真机上总有当前会话，链的第二步先赢，
-> 而手机没有"取消选中会话"的入口。
+> **2026-10-22 晚（本轮）三件 + 一个现场抓到的 bug**：
+>
+> | 件 | 提交 | 笔记 / 判据 |
+> |---|---|---|
+> | ① 设置页返回后抽屉仍开（回归） | `a859ef9` | `implemented/2026-10-22-drawer-close-before-push.md` |
+> | ② 工具行扫光的真机证据（缺口 8） | `9a9f684` | 追加进 `2026-10-22-running-cues-shimmer-and-live-clock.md`；配方进 `tools.md` |
+> | ③ 轮组方案（待点头，**未实现**） | — | `proposed/2026-10-22-turn-groups-in-conversation-flow.md` |
+> | 额外：`turn/end` 之后运行条还在转 | `3980fa3` | `implemented/2026-10-22-running-flag-is-events-only.md` |
+>
+> ① 的根因不是"时序没等"而是 `Navigator.maybePop` **会主动放弃**：
+> 它 `await willPop()` 回来重取栈顶，发现变了就 `return true` 什么都不做
+> （`navigator.dart:5539,5547-5551`），而"收抽屉 + 同一拍 push"正是这个形状。
+> 现在收抽屉一律 `ChatPageState.closeDrawer()`（同步），全屏页走 `openFromDrawer`。
+>
+> ② 的判据（机械）：工具行矩形内相邻帧差分只有一个约 40px 的窗在变、且窗左移。
+> 第一次没抓到是**方法错**（发了 prompt 却按返回键把 App 退到桌面）。
+>
+> 额外那条：`runningOf` 曾是"事件集 OR `session.list` 快照"，旧快照 `true` 永远关不掉
+> ⇒ 运行条转 5 分钟、输入栏永远「排队发送」。现在只有一个真值。
 
 待办（按顺序）:
 
-1. **轮组（turn/step 分组 + 折叠过程）** —— 用户当场指出 Web 与 App 结构不同：
-   Web 是 `已完成，用时 X ⌃` 一个可展开的轮组，组内分 `已完成分析`/`执行了命令`；
-   手机是平铺。这不是样式差，是**少了一层结构**（做法与代价见
-   `.agents/notes/proposed/2026-10-22-trajectory-page-parity-and-mobile-fit.md` 第 9 条）。
-   轮组落地后，「工作步骤收起时机」那行才有语义（`settings-porting-notes.md` §1 已记）。
+1. **轮组（turn/step 分组 + 折叠过程）—— 方案已写好，等用户点头**：
+   `.agents/notes/proposed/2026-10-22-turn-groups-in-conversation-flow.md`。
+   查清的关键事实：DSH Web 是**两层**（整轮控制行 `TurnProcessNodeView` + 语义过程组
+   `ChatGroupSeat`），**边界由客户端自己消费 `turn/start`/`turn/end` 算出来**，
+   `turnOutline` 只喂右侧轮次轨道 —— 没有"电脑侧算好的分组"可复用。
+   建议先做阶段 1（整轮组：投影层给每个条目补 `turn`、`user/message` 按位置归组、
+   组头就是现有的 `TurnProcessRow` 加折叠、运行中的轮次仍平铺）。
+   轮组落地后，「工作步骤收起时机」那行才有语义（`settings-porting-notes.md` §1 已记；
+   存储走手机本地，不动 D 的三条可写 `(ns,path)`）。
 2. **`ask_user_question` 未计时提问答不了** —— 我们的连接器在 `request.wait?.callId` 缺失时
    fail-closed 抛出（`connector/src/interaction-claims.ts:255`），而 DSH 的 `wait` 对 indefinite
    提问**本来就没有**（`packages/interaction/user-questions/src/types.ts:140-145`）。
@@ -176,13 +194,16 @@
    `createdAt`（宿主 `WorkspaceView.createdAt`，`packages/api/workspace-controller/src/types.ts:27`），
    `newSessionWorkspaceId` 对**没有会话**的工作区按 `Date.parse(createdAt)` 参与比较 ——
    与 DSH 的 `recentWorkspace`（`navigation.ts:565`）同一条。字段缺席（老连接器）仍按"最旧"。
-8. **工具行自己的扫光没有真机截图**（2026-10-22）：功能在（`ToolCard` 的 `running` 状态，
-   单测三条钉住），但免费渠道的思考阶段要 1–2 分钟，工具执行的那 20–120 秒落在采样间隙里。
-   要补的证据：一次工具执行中截一张（判据见 `.agents/notes/implemented/2026-10-22-running-cues-shimmer-and-live-clock.md`）。
-9. **从设置页返回后抽屉仍开着**（2026-10-22 真机复现三次）：`_openSettings` 里
-   `maybePop()` 那句「先收抽屉再 push」没生效。判据：回到聊天页后
-   `Scaffold.isDrawerOpen == true`。下一步先查 `ModalRoute.popDisposition` / `didPop`
-   （`widgets/routes.dart:942-966`）在 push 紧随其后的时序里有没有把 local history entry 拿掉。
+8. ~~工具行自己的扫光没有真机截图~~ **已补（2026-10-22 晚，`9a9f684`）**：
+   `shots-2026-10-22/g-213439.png` + 相邻帧差分（变化只在一个约 40px 的窗里、窗左移），
+   做法见 `tools.md` 的「真机抓『工具执行中』那一段」。
+9. ~~从设置页返回后抽屉仍开着~~ **已修（2026-10-22 晚，`a859ef9`）**：根因是
+   `Navigator.maybePop` 在"栈顶已经变了"时**主动放弃**（`navigator.dart:5539,5547-5551`），
+   不是等得不够；收抽屉改 `ChatPageState.closeDrawer()`（同步）。
+   判据：`app/test/drawer_close_before_push_test.dart` + 真机两轮
+   （`a1/a2/a3-*.png`、`a6-*-*.png`）。
+9b. **断线期间发生的 `turn/end` 收不到** ⇒ 重连前运行条会一直转（`turn/end` 是唯一
+   撤销信号）。今天就有，未修；要修得让"重连后的第一包"能补出这一轮的收口。
 10. **`workspace.createdAt` 的"空工作区当最近"只有单测**（2026-10-22）：真机上 App 总会恢复
     上一次的会话，而「当前会话所在工作区」是链的第二步、优先级更高；手机没有「取消选中会话」
     的入口 ⇒ 那条分支在真机上够不到。要真机验，得先有一个能落到"无当前会话"的入口。
@@ -209,8 +230,8 @@
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **349 项**（22 条规则自检 + 扫 96 个 Dart 文件） |
-| `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 20 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1080 项** |
+| `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 21 个工具脚本无硬编码盘符 |
+| `cd app && flutter test` | **1082 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **586 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |

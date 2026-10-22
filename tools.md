@@ -195,7 +195,7 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
   - `cd app; flutter run -d windows` —— **桌面调试**。本机 VS 18 + MSVC + Windows SDK 齐全,所以 UI 与状态机**不需要模拟器、不需要真机**
   - lint 规则集在 `app/analysis_options.yaml`,**每条都写了它针对的具体失败模式**(不是"更严格就好");改它要连注释一起改
   - 新增依赖前先看 `.agents/notes/implemented/2026-10-02-mobile-core-crypto-choice.md` 的选型闸门
-- 工具脚本路径门禁(不需要浏览器):`node mock/proto/tools/verify-tool-paths.mjs` —— 扫 `mock/proto/tools/*.mjs` **与 `app/tools/*.mjs`**(2026-10-16 起,共 20 个),**3 条规则**:① 禁 `file:///` + 盘符的字面量;② 禁 `C:\sudy` / `C:/sudy`(旧环境根);③ **禁任何盘符字面量**(`\b[A-Za-z]:[\\/]`)—— 确实需要写死的那两处(`extract-dsh-icons.mjs` 的 DSH 默认路径、`shoot.mjs` 截图夹具里的假 cwd)在**紧挨着的上方注释块**里标 `allow-hardcoded-path: <原因>` 豁免,**例外必须显式**(变异校验过:去掉标记立刻红)。**本仓库内的路径必须从 `import.meta.url` 派生**;理由与代价见 `.agents/notes/implemented/2026-10-02-paths-must-be-derived-not-hardcoded.md`(一次搬盘让 11 个脚本的 `PAGE` 全部指向不存在的 URL,而门禁是**静默全红**:脚本照常跑完、照常打印 JSON)
+- 工具脚本路径门禁(不需要浏览器):`node mock/proto/tools/verify-tool-paths.mjs` —— 扫 `mock/proto/tools/*.mjs` **与 `app/tools/*.mjs`**(2026-10-16 起,共 21 个),**3 条规则**:① 禁 `file:///` + 盘符的字面量;② 禁 `C:\sudy` / `C:/sudy`(旧环境根);③ **禁任何盘符字面量**(`\b[A-Za-z]:[\\/]`)—— 确实需要写死的那两处(`extract-dsh-icons.mjs` 的 DSH 默认路径、`shoot.mjs` 截图夹具里的假 cwd)在**紧挨着的上方注释块**里标 `allow-hardcoded-path: <原因>` 豁免,**例外必须显式**(变异校验过:去掉标记立刻红)。**本仓库内的路径必须从 `import.meta.url` 派生**;理由与代价见 `.agents/notes/implemented/2026-10-02-paths-must-be-derived-not-hardcoded.md`(一次搬盘让 11 个脚本的 `PAGE` 全部指向不存在的 URL,而门禁是**静默全红**:脚本照常跑完、照常打印 JSON)
 - **adb 无法往 MIUI 的第三方输入法里注入长字符串**（2026-10-15 实测，白绕了半小时）：
   这台设备（`d61cf622`，Android 16）只装了三个第三方输入法（百度/讯飞/搜狗），**没有 AOSP 键盘**。
   `adb shell input text '<330 字节 JSON>'` 会被输入法当成**一个词组做组合输入**：`{`、`"` 被丢弃，
