@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 自适图标的底色：DSH 桌面端那枚图标是白底 + 深色鲸鱼
+         （源 `apps/desktop/resources/icon.png`），所以底色取白。
+         鲸鱼本体在 `mipmap-*/ic_launcher_foreground.png`（108dp 画布、内容占 66%）。 -->
+    <color name="ic_launcher_background">#FFFFFF</color>
+</resources>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适图标（API 26+）：白底 + 鲸鱼前景，与 DSH 桌面端的应用图标同源。
+     `mipmap-*/ic_launcher.png` 留给更老的系统（同一枚图标的位图版）。 -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>
