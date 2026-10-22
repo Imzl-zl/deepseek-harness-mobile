@@ -492,6 +492,19 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
   (用量页现在就是 `UsagePageHost`:`initState` 拉、`ListenableBuilder` 重画)。
   已核过另外两处(pushed `SettingsPage`、`showArchiveSheet`)本来就有 `ListenableBuilder`,
   所以这类只有用量页一处。
+- **真机抓「工具执行中」那一段（2026-10-22 补齐扫光证据时定的配方）**：
+  免费渠道的思考阶段 1–2 分钟，工具执行只有 20–120 秒，靠运气采样必然错过。
+  - 造窗口：发一句 **纯 ASCII** 的 `Run this exact shell command and report its output: Start-Sleep -Seconds 150`
+    （空格写 `%s`；`adb shell input text` 吃不下中文）。之后是一个**确定的 150 秒**窗口。
+  - 采样：`while (…) { adb exec-out screencap -p > g-<HHmmss>.png; Start-Sleep -Seconds 3 }`。
+  - **判断"哪一行在动"别靠眼睛**：把目标行那条矩形裁出来，做**相邻帧差分**，
+    看变化是否只落在一个窄窗里、且窗位置随时间移动（扫光带就是这样）。
+    换行/滚动会让整块都变，那种帧要丢掉。
+  - **别在 App 里按返回键**：`input keyevent 4` 在输入法已自动收起之后会把 App 退到
+    桌面（本轮就因此白跑一轮）；要收键盘就趁 `dumpsys input_method` 的 `mInputShown=true`
+    那一刻按，或者干脆让它开着（键盘不挡工具行）。
+  - **别用文本匹配找工具行**：工具行的 `argument` 是参数摘要（`run_code` 显示的是代码首行
+    `const t0 = Date.now();`），你在 prompt 里写的命令**不在**屏幕上。
 - 血泪史条目见 `docs/postmortem/`;此处只留结论。
 
 

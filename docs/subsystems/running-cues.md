@@ -26,6 +26,11 @@
 `tester.binding.transientCallbackCount`：3 条运行行 = 1，全停 = 0
 （`app/test/shimmer_test.dart`）。
 
+**真机证据（工具行自己的扫光）**：`shots-2026-10-22/g-213439.png`（`run_code` 行 +
+loading 字形 + 运行条「用时 1 分 54 秒」）；同一行矩形的相邻帧差分显示变化只落在
+一个约 40px 宽、随时间左移的窗口里，行内其余像素不变
+（放大对照 `h3-tool-row-band-zoom.png`）。
+
 ## 2. 运行条（`RunningBar`，`app/lib/ui/chat_page.dart`）
 
 挂在流末尾（`reverse: true` 列表的 index 0，`_ConversationFlow` 里当虚拟尾条目）。
