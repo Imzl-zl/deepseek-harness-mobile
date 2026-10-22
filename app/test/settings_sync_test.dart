@@ -91,6 +91,9 @@ class _Client extends FakeSyncClient {
       case 'settings.describe':
         describes += 1;
         return _sections as T;
+      case 'repo.info':
+        // 电脑侧 DSH 版本（`repo.info.dshVersion`）：宿主运行时真值。
+        return {'protocol': 1, 'dshVersion': '0.2.1-rc.2'} as T;
       case 'settings.update':
         if (conflictOnUpdate) {
           throw const ProtocolException(ErrorCode.settingsConflict, '设置已被改动');
@@ -115,6 +118,17 @@ class _Client extends FakeSyncClient {
 }
 
 void main() {
+  test('refreshRepoInfo：读电脑侧 DSH 版本；拿不到就是 null（不编）', () async {
+    final client = _Client();
+    final app = AppModel(client: client);
+    addTearDown(app.dispose);
+    expect(app.dshVersion, isNull);
+    await app.refreshRepoInfo();
+    expect(app.dshVersion, '0.2.1-rc.2');
+    final call = client.calls.firstWhere((c) => c.method == 'repo.info');
+    expect(call.requestId, isNull, reason: '读方法不带幂等键');
+  });
+
   test('refreshSettings：按 ns 落表，字段用 settingsValue 取', () async {
     final client = _Client();
     final app = AppModel(client: client);

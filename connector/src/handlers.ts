@@ -64,6 +64,14 @@ export interface HandlerDeps {
   caps: () => Caps
   /** `repo.info` 要报的「别名→会话元映射版本」（契约 §5.7）。 */
   aliasVersion: () => number
+  /**
+   * 宿主运行时的 DSH 版本（`repo.info.dshVersion`）。
+   *
+   * 是一个**取值函数**而不是字符串：装配时宿主可能还没把版本读出来（或者这个部署
+   * 根本拿不到，见 `dsh/host-version.ts` 的三条取法），而 `repo.info` 是随时会被问的。
+   * 拿不到就**不报这个字段** —— 手机那边说"未读到"。
+   */
+  dshVersion?: () => string | undefined
   /** 已配对设备（含已吊销的，便于手机显示"这台已被移除"）。 */
   devices: () => readonly DeviceRow[]
   /**
@@ -1112,6 +1120,11 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
     protocol: WIRE_VERSION,
     caps: deps.caps(),
     aliasVersion: deps.aliasVersion(),
+    // **宿主运行时的 DSH 版本**（见 `dsh/host-version.ts`）：取不到就**不报这个字段**
+    // —— 手机那边显示"未读到"，而不是一个看起来合理的假版本号。
+    ...(deps.dshVersion === undefined || deps.dshVersion() === undefined
+      ? {}
+      : { dshVersion: deps.dshVersion() }),
     methods: Object.keys(handlers).sort(),
   })
 

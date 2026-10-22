@@ -45,3 +45,16 @@
   紧接着的 `session.create` 回 **`{"sid":"…","agentPreset":"ptc"}`** ——
   手机**没有**传 `agentPreset`，新会话拿到的就是电脑侧的新默认（`agent-preset-registry` 的
   `defaultId` = `selectedDefault ?? default`，`packages/preset/agent-preset-registry/src/index.ts:75,205,233`）。
+  新会话的 hero 上那枚模式 chip 也随之显示「PTC 模式」（`d5-hero-ptc.png`，读的是 `agentPreset` 投影）。
+
+## 4. 两个版本（排错必需）
+
+设置页「关于与连接」并排显示**手机 App 版本**与**电脑侧 DSH 版本**。
+
+- 电脑侧版本走 `repo.info.dshVersion`（连接器 `src/dsh/host-version.ts`），取法从最真到最兜底：
+  1. 已加载宿主包的 `package.json`（`@deepseek-ai/dsh-desktop-host`）；
+  2. 桌面版的 `<安装目录>/resources/runtime/primary-runtime/runtime.json` 的 `desktopVersion`
+     （本机实测路径；发行版之间挪过目录，另一种布局也试）；
+  3. 都拿不到 ⇒ **不报这个字段**，手机显示"未读到"。**不拿连接器自己的 `package.json` 版本冒充**
+     —— 那是构建期常量，用户升级 DSH 后它不会变。
+- 真机（`d61cf622`）：`e2-versions.png` —— App 版本 `dev`、电脑侧 DSH 版本 `0.2.1-rc.2`。

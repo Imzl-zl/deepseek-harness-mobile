@@ -258,6 +258,18 @@ class SettingsPage extends StatelessWidget {
               value: kAppVersion,
               onTap: () => _copy(context, kAppVersion),
             ),
+            // **两个版本并排**（排错必需）：手机是哪一版、电脑上的 DSH 是哪一版。
+            // 电脑侧版本来自 `repo.info.dshVersion`（宿主运行时真值）；拿不到说"未读到"，
+            // 绝不拿连接器自己的 package.json 版本冒充。
+            _PrefRow(
+              icon: 'code',
+              label: '电脑侧 DSH 版本',
+              value: app.dshVersion ?? '未读到',
+              onTap: () {
+                final version = app.dshVersion;
+                if (version != null) unawaited(_copy(context, version));
+              },
+            ),
             _PrefRow(
               icon: 'globe',
               label: '连接状态',

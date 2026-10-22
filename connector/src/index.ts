@@ -51,6 +51,7 @@ import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent'
 import { createProjectionsPort } from './dsh/projections.js'
 import { createSettingsPort } from './dsh/settings.js'
 import { createSettingsFace } from './dsh/settings-face.js'
+import { hostDshVersion } from './dsh/host-version.js'
 import type { SettingsForms } from '@deepseek-ai/dsh-settings'
 import { registerTrajectoryProjection } from './dsh/trajectory.js'
 import { deriveIdentity } from './protocol/crypto.js'
@@ -657,6 +658,9 @@ let unregisterAdminFace: (() => void) | null = null
         const handlerDeps: ConnectionScopeDeps['handlers'] = {
           caps: () => readCaps(ctx, { direct: listener !== null }),
           aliasVersion: () => aliases?.version ?? 0,
+          // 宿主运行时的 DSH 版本（不是构建期常量）：取不到就**不报这个字段**，
+          // 手机那边显示"未读到"—— 见 `dsh/host-version.ts` 的三条取法。
+          dshVersion: () => hostDshVersion(),
           sessions,
           // 端点自报：**没有监听面就不给**（`endpoint.describe` 于是不出现）。
           // 它现取 `listener`：监听面在后面的 `start-transport` 步才起，

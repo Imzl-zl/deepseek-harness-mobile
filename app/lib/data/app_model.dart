@@ -1513,8 +1513,7 @@ class AppModel extends ChangeNotifier {
     }
   }
 
-  /// 改一个设置字段（**只发新值**）。返回 `true` = 电脑侧已落值。
-  ///
+  /// 改一个设置字段（**只发新值**）。返回 `true` = 电脑侧已落值。  ///
   /// 冲突（`settings/conflict`，expectedRevision 过期）时**自动重读一次再返回 false**：
   /// 下一次点击就会带上新的 revision，用户不必自己"刷新页面"。
   Future<bool> updateSetting(String ns, String path, Object? value) async {
@@ -1556,8 +1555,30 @@ class AppModel extends ChangeNotifier {
     }
   }
 
-  // ---- 跨会话用量汇总（`usage.summary`，只读）----
+  // ---- 电脑侧版本（`repo.info.dshVersion`，只读）----
 
+  /// 电脑侧 DSH 版本；`null` = 还没读到 / 这台没报（**不编一个版本号**）。
+  String? get dshVersion => _dshVersion;
+  String? _dshVersion;
+
+  /// 读一次 `repo.info`（排错要它：手机版本与电脑版本并排看）。
+  ///
+  /// 连接器只在**拿得到宿主运行时版本**时才报这个字段（见
+  /// `connector/src/dsh/host-version.ts`），所以拿不到是正常形态之一 ——
+  /// 那时界面说"未读到"，而不是显示连接器自己的 `package.json` 版本冒充。
+  Future<void> refreshRepoInfo() async {
+    try {
+      final result = await client.call<Object?>('repo.info', const {});
+      final version = result is Map ? result['dshVersion'] : null;
+      _dshVersion = version is String && version.isNotEmpty ? version : null;
+      if (!_disposed) notifyListeners();
+    } catch (error) {
+      _dshVersion = null;
+      _recordError('读取电脑侧版本失败', error);
+    }
+  }
+
+  // ---- 跨会话用量汇总（`usage.summary`，只读）----
   /// 汇总数据；`null` = 还没拉过 / 拉失败。
   UsageSummary? get usageSummary => _usageSummary;
   UsageSummary? _usageSummary;
@@ -1796,6 +1817,8 @@ class AppModel extends ChangeNotifier {
     // 设置面（三行：默认权限档 / 默认 Agent 预设 / Session Log 开关）。
     // 拿不到时那三行**不出现**（不是摆一个假开关），与 `settings.describe` 的能力位同一条。
     await refreshSettings();
+    // 电脑侧 DSH 版本（`repo.info.dshVersion`）：与 App 版本并排显示，排错用。
+    await refreshRepoInfo();
     // **落到 blank 会话上**（照 DSH 的 `reuseOrCreateBlank`，见该方法的注释）。
     await _openBlankSessionIfUnselected();
   }
