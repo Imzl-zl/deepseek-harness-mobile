@@ -1,81 +1,78 @@
-# 新会话提示词：轨迹页重做 + D2 refetch + 分组落点（2026-10-22 批次）
+# 新会话提示词：抽屉回归 + 工具行扫光截图 + 轮组方案（2026-10-22 晚）
 
 > 用法：新开一个会话，把下面整段贴进去。
-> 上一轮（2026-10-21 深夜）的产物已提交：`6c3a17f`（删轨迹页假入口）、
-> `3ab5001`（D1 通过 + 静态审查）、`3af61e3`（H2 归档闭环）、`51f6fe6`（抽屉拖动 + 锚定浮层）。
+> 上一轮产物已提交：`4f52a65`(G) / `6f30f11`(F) / `00f69a1`(A) / `38f0661`(C) / `376a575`(B) /
+> `d11e935`(D) / `f5592af`(E) / `fab945d`(H) / `83c3b50`(归档) / `cff3116`(字号两层倍率) /
+> `d9d2b42`(更正"最早/最新"那条)。
 
 ## 提示词（整段复制）
 
 ```
-项目：dsh-mobile（D:\sudy\myproject\dsh-mobile，Windows / pwsh）。
+项目：dsh-mobile（D:\sudy\myproject\dsh-mobile，Windows / pwsh）。中文回复。
 
 ## 0 先读（别跳）
-- memory.md（现状 / 待办 0 与 10 / 已知缺口 7 / 门禁表）
-- tools.md 的「真机联调」「隔离实例」「装 App」「容器镜像」四节 + Pitfalls
-- .agents/notes/proposed/2026-10-22-trajectory-page-parity-and-mobile-fit.md（本轮的主清单）
-- docs/subsystems/subagent-page.md §7.2 / §7.3（上一轮验收与静态审查的结论）
-- docs/cookbook/relay-on-a-server.md §8（容器中转的本机验证与防火墙坑）
+- memory.md（现状、"下一步"、已知缺口 8–11、门禁表）
+- tools.md 的「真机联调」「隔离实例」「装 App」几节 + Pitfalls（尤其"改源码只用编辑工具"）
+- docs/subsystems/type-scale.md（字号两层倍率：系统 × App 四档，刚定的）
+- .agents/notes/implemented/2026-10-22-global-ui-scale.md（为什么是"等比放大全部"，
+  而不是"只放大内容"—— 后者被真机退回）
+- docs/subsystems/running-cues.md 里"在跑吗"的口径（② 要补的图按它判）
 
 ## 1 现状（省你半天）
-- 仓库 HEAD 6c3a17f。门禁基线：flutter **1010**、connector **563**、relay **86**、
-  protocol **486·26·49**、platform-boundary **318**、CDP 六项（proto 31 / authz 18 /
-  settings 28 / tasks 53 / picker / drawer 25）、analyze/format 0。
-- 手机上那个包是 2026-10-21 23:37 的 debug 包：**轨迹页那行死 chip 已经在仓库里删了，
-  但没上机**；D1/H2 是在那个包上验的。
-- 隔离实例：`$env:DSH_HOME='D:\tmp\dsh-e2e'`，`dsh --profile mobile-e2e --port 63900 --no-open`。
-  容器中转 `relay-docker`（8787，配置 D:\tmp\dsh-e2e\relay-docker.config.json）**还在跑**；
-  手机经 `adb reverse tcp:8787` + 环回 relay 配对着。profile 里已有
-  `subagent.maxDepth: 2` 与 `llm-pi-ai` 的 `input: [text, image]`（备份 .bak-2323 / .bak-0031）。
-- 手机 d61cf622（Android 16）。装包一律 `flutter build apk --debug` + `adb install -r`，
-  先 `adb shell svc power stayon true`；截图到 `D:\tmp\dsh-e2e\shots-1022\`（不进仓库）。
+- 八件事（G 输入法 / F 抽屉拖拽 / A 运行中动效 / C 字号 / B 每步视图 /
+  D 设置三行 / E 电脑侧版本 / H workspace.createdAt）全部落地，每件一个提交 + 一篇笔记。
+- 门禁基线：flutter **1080**、connector **586**、relay **86**、protocol **486·26·49**、
+  platform-boundary **349**（96 个 Dart 文件）、icons、tool-paths、analyze+format **0**。
+- 手机上装的是含"界面字号四档 + 图标跟随"的 debug 包；系统 font_scale 1.0，App 内是「标准」。
+- 隔离实例：$env:DSH_HOME='D:\tmp\dsh-e2e'；dsh --profile mobile-e2e --port 63900 --no-open；
+  容器中转 relay-e2e（8787）；adb reverse tcp:8787 tcp:8787。
+  **注意**：`docker restart` 或重开 adb 之后 8787 的 host 侧监听与 reverse 都可能丢，
+  先查这两样再怪 App。
+- 手机 d61cf622；截图到 D:\tmp\dsh-e2e\shots-2026-10-22\（不进仓库）。
+- 字号那题的结论别重开：两层倍率（系统 × App 四档 0.9/1.0/1.15/1.3），
+  由 MediaQuery.textScaler 等比放大全部文字；"只放大内容"已否决（对比会从 1.27 拉到 2.0）。
 
-## 2 任务（按顺序，每条都要判据）
+## 2 本轮三件（按顺序；每件一个提交 + 一篇决策笔记）
 
-### A 轨迹页重做（清单 P0→P2，**先定方案再动手**）
-1. **修「轨迹条目」sheet 的溢出**（用户给了截图：黄黑条纹 + `RIGHT OVERFLOWED BY 474 PIXELS`，
-   「结果」两字被挤成竖排）。根因已定位：`_showTraceSheet`（chat_page.dart:1412-1431）
-   用 `DshKeyValue` 摆长英文，而它的 value 是**无约束 Text**（dsh_sheet.dart:164-171）。
-   判据：390dp 宽下打开该 sheet，`flutter analyze` 无新告警 + 截图里**没有** overflow 条纹，
-   「结果」标签横排、正文按词换行；给 `DshKeyValue` 加可选 `multiline`（默认不变）。
-2. **三个视图只留有数据源的**：`轮次`（turnOutline 已有）保留；`时长`/`调用` 先不做 ——
-   **不许摆假 chip**（上一轮刚删掉一行）。若要做「时长」，先决定数据从哪来：
-   Host 侧加"每步起止"投影，或用每轮 `turnSummary` 的时长做"每轮一条迷你条"。
-   **决定写进 docs 再写代码**。
-3. **移动端适配**（用户原话"web 的我看了电脑屏大，你这个还需要看看怎么适配移动端，
-   考虑屏幕空间，和用户体验还有美观"）：390dp 竖屏不要横滑 640px 的甘特；
-   层级建议"轮次为主，其余点进去"。改完在 411dp 与 360dp 两个宽度各截一张。
+### ① 修回归：从设置页返回后抽屉仍开着（真回归，优先）
+真机复现三次：☰ → 设置 → 返回，回到聊天页时抽屉仍是开的。
+`main.dart` 的 `_openSettings` 里在 push 前有一句 `maybePop()`（本意"先收抽屉再 push"）没生效。
+先查 `ModalRoute.popDisposition` / `didPop`（packages/flutter/lib/src/widgets/routes.dart:942-966）
+在"pop 后立刻 push"的时序里有没有把 local history entry 拿掉；也看 `isDrawerOpen` 的时序。
+判据：返回后 `Scaffold.isDrawerOpen == false`；补一条 widget 级测试（不要只靠真机）。
+另一条相邻行为是 G 的收输入法（`dismissInputFocus()`），别一起改坏。
 
-### B D2：`refetch` 标记被跳过 ⇒ >1 MiB 条目静默缺失（**真缺陷**）
-- 现状：`sync_client_impl.dart:956` 把 `{kind:'refetch', seq, bytes}` 直接跳过，
-  从不调 `session.refetch`。连接器侧完整（session-page.ts + refetchThresholdBytes 1 MiB）。
-- 做法：`SyncClient` 加 `refetch(...)`，收到标记时补取并合并进会话。
-  **坑**：全仓 24 个 `implements SyncClient` 的替身不继承默认方法（tools.md 记着），
-  要么先给接口一个退化默认实现 + 只改真实现，要么逐个补 —— 选哪个都写进笔记。
-- 判据：单测覆盖"标记 → 调 refetch → 条目出现"与"refetch 失败 → 如实报错不吞"；
-  真机上造一条 >1 MiB 的条目（或把 `refetchThresholdBytes` 调到 1 做实验）看它出现。
+### ② 补证据：工具行自己的扫光截图（功能已在，缺图）
+`ToolCard.running` + `DshShimmer` 已有，单测 3 条钉住；缺的是真机截图 ——
+免费渠道的思考阶段 1–2 分钟，工具执行的那 20–120 秒总落在采样间隙。
+建议：让它跑一条 `Start-Sleep -Seconds 90`（或循环 sleep），执行期间连拍 3–4 张；
+判据：工具行文字上有扫光带、且只有它在动。拍不到就明确记"仍缺"，
+**不许拿运行条那张冒充**。
 
-### C 分组落点：手机建的新会话永远进「未分组」
-- 现状：`session.create` 不传 `workspaceId`，宿主不把会话记进工作区账本；
-  而 blank 会话默认不列 ⇒ 手机建的会话在抽屉里永远是「未分组」。
-- 先查 DSH 语义（`workspace-controller` 与 `session-controller` 的 create 参数），
-  再决定：手机新建时带当前工作区？还是给一个"未分组"解释？**别猜**。
+### ③ 轮组（大件：先写方案，别顺手实现）
+memory.md 待办 #1：Web 是"已完成，用时 X ⌃"可展开的轮组，手机是平铺 —— 少了一层结构。
+先出一篇 .agents/notes/proposed/ 的方案（结构、折叠默认态、与 trajectory 投影的关系、
+工作量与风险、对"工作步骤收起时机"那行设置的影响），用户点头再动手。
 
-### D 打一次包 + 真机验收
-- 只打一次、只装一次；在这个包上验：A 的溢出与布局、B 的 refetch、C 的分组、
-  以及上一轮欠的 **E3 拖动排序**（需要"同一工作区下两条可见会话" —— 用 RPC
-  `session/create` 带 workspaceId 造两条、各发一句让它非 blank）。
-- 真机纪律：每次要坐标先 `uiautomator dump`；长文本走剪贴板（`adb shell input text`
-  会吃引号）；左缘拖抽屉要从 `x≈40, y≈300` 起手（落在 gesture-exclusion 的上半屏带）。
+## 3 硬规则（违反会被退回）
+- 改源码只用编辑工具，不用 shell 字符串替换（已两次事故）。
+- 引用 DSH 行为给 packages/...:行号；查不到写「未找到」，禁止猜。
+- 改 app/lib 后跑 boundary + icons；改 connector/src 后 tsc + build + test；全绿才提交。
+- 一件一提交 + 一篇笔记；docs/ 的现状事实同步更新（docs 只写当下事实，历史进 notes/）。
+- 真机证据放 D:\tmp（不进仓库），但笔记与回复里要给出文件名与判据。
+- 已定的题别重开：字号（见上面那篇笔记）、"在跑吗"走事件流而不是 session.list、
+  D 的设置面只有三条 (ns,path) 可写。
 
-## 3 硬规则
-- 改源码只用编辑工具；工作区外文件（D:\tmp、~/.dsh、服务器 compose）用 shell 写 + 回读 + 看 mtime。
-- 不猜：DSH 行为给 `packages/...:行号`；Flutter 行为先 `node app/tools/flutter-api.mjs <符号>`。
-- 造数据要花真实模型轮次：开跑前报"这次约几轮"并拿到准。
-- 门禁全绿才算完：flutter / connector / relay / protocol 三条 / boundary / CDP 六项 / analyze+format。
-- 提交信息避免反引号，长消息写临时文件用 `git commit -F`。
-
-## 4 产物
-- 一份最终 debug APK（装在 d61cf622 上），A/B/C/E3 都在它上面验过。
-- 一张总表（已验 / 不过 / 未造出 / 未验（原因））+ 截图目录。
-- 一次提交（代码 + 笔记同批）+ 门禁输出（每条一行）。
+## 4 遗留清单（memory.md 已知缺口 8–11）
+8. 工具行扫光没有真机截图（就是本轮 ②）。
+9. 设置页返回后抽屉仍开（就是本轮 ①）。
+10. workspace.createdAt 的"空工作区当最近"只有单测 —— 真机总有当前会话，够不到那条分支。
+11. ~~字号局部刻度观感差~~ 已修（两层倍率）。
 ```
+
+## 说明（给用户，不用贴）
+
+- ① 是真回归且代价小，放最前面；② 只补证据、不动代码；③ 是结构性改动（"少了一层结构"），
+  必须先方案后动手。
+- 如果 ① 查下来是 Flutter 的 `Navigator` 时序而不是我们的 bug，也要写成笔记：
+  那说明"先收抽屉再 push"这个做法本身不成立，得换一种（例如 push 之后自己 `closeDrawer()`）。
