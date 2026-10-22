@@ -54,7 +54,6 @@ import 'ui/archive_sheet.dart';
 import 'ui/chat_page.dart';
 import 'ui/connection_actions_sheet.dart';
 import 'ui/dsh_shimmer.dart';
-import 'ui/input_focus.dart';
 import 'ui/pairing_page.dart';
 import 'ui/session_drawer.dart';
 import 'ui/settings_page.dart';
@@ -543,7 +542,7 @@ class _DshMobileAppState extends State<DshMobileApp>
           ],
           onNewSession: _newSession,
           onOpenSession: (session) {
-            unawaited(navigatorKey.currentState?.maybePop());
+            _closeDrawer();
             unawaited(app.openSession(session.sid));
           },
           // 行动作（长按菜单）。`workspace.archive` 是 2026-10-16 接上的；
@@ -559,7 +558,7 @@ class _DshMobileAppState extends State<DshMobileApp>
           // 点连接状态行 → 已配对时给"重新配对 / 断开"的选择，没配对上配对页。
           onClose: () {
             if (_credentials == null) {
-              unawaited(navigatorKey.currentState?.maybePop());
+              _closeDrawer();
               _openPairing();
               return;
             }
@@ -570,29 +569,34 @@ class _DshMobileAppState extends State<DshMobileApp>
     );
   }
 
+  /// 收起会话抽屉（没有被打开时是空操作）。
+  ///
+  /// **不用 `Navigator.maybePop()`**：它是 async，`await willPop()` 回来时如果栈顶
+  /// 已经变了就整条放弃（`packages/flutter/lib/src/widgets/navigator.dart:5539,5547-5551`），
+  /// 而"收抽屉 + 紧接 push"正是这个形状 —— 那句 `maybePop()` 因此静默失效，
+  /// 从设置页返回时抽屉还开着。机制与完整时序见 `ChatPageState.closeDrawer`。
+  void _closeDrawer() => _chatKey.currentState?.closeDrawer();
+
+  /// 从抽屉里 push 一个全屏页（收抽屉 + 收输入法都在 `ChatPageState.openFromDrawer`）。
+  void _openFromDrawer(WidgetBuilder builder) {
+    final chat = _chatKey.currentState;
+    if (chat == null) return;
+    unawaited(chat.openFromDrawer(MaterialPageRoute<void>(builder: builder)));
+  }
+
   /// 打开设置页（抽屉底栏「设置」）。
   ///
-  /// **先收抽屉再 push**：与 `_openArchive` 同一条 —— 全屏页盖着开着的抽屉
-  /// 会留下幽灵层。本期设置页只有「连接方式」一组（端点选择器），
-  /// 其余分组按 `docs/settings-porting-notes.md` 还没搬，**不摆占位行**。
+  /// **先收抽屉再 push**：全屏页盖着开着的抽屉会留下幽灵层（见 [_closeDrawer]）。
+  /// 设置页有哪些行、哪些只读，见 `docs/subsystems/settings-and-versions.md`。
   void _openSettings(AppModel app) {
-    unawaited(navigatorKey.currentState?.maybePop());
-    // **输入法不许自己弹出来**：从设置页 pop 回来时，框架会把焦点还给页面里
-    // 上一次的焦点节点（输入栏），`EditableText` 一拿回焦点就开输入连接。
-    // 开与关各收一次，机制见 `ui/input_focus.dart`。
-    dismissInputFocus();
-    unawaited(
-      navigatorKey.currentState
-          ?.push(
-            MaterialPageRoute<void>(
-              builder: (_) => SettingsPage(
-                app: app,
-                themeMode: _theme.mode,
-                onThemeMode: setThemeMode,
-              ),
-            ),
-          )
-          .whenComplete(dismissInputFocus),
+    // 输入法**不许**自己弹出来：从设置页 pop 回来时框架会把焦点还给输入栏
+    // （`EditableText` 一拿回焦点就开输入连接）。开与关各收一次，见 `ui/input_focus.dart`。
+    _openFromDrawer(
+      (_) => SettingsPage(
+        app: app,
+        themeMode: _theme.mode,
+        onThemeMode: setThemeMode,
+      ),
     );
   }
 
@@ -604,27 +608,19 @@ class _DshMobileAppState extends State<DshMobileApp>
   /// 进页面前先拉一次：汇总是"此刻的总量"，随时在变，**不落盘不缓存**
   /// （`AppModel.refreshUsageSummary`）。
   void _openUsage(AppModel app) {
-    unawaited(navigatorKey.currentState?.maybePop());
     // **不要在这里先拉再传快照**：`UsagePage` 不监听 `AppModel`，
     // 传进去的那一份永远是"拉之前"的 null（真机上就是永远的「还没有用量数据」）。
     // 拉与重画都在 `UsagePageHost` 里（它 `initState` 拉、`ListenableBuilder` 重画）。
-    //
-    // 输入法同理：开与关各收一次（见 `ui/input_focus.dart`）。
-    dismissInputFocus();
-    unawaited(
-      navigatorKey.currentState
-          ?.push(
-            MaterialPageRoute<void>(
-              builder: (_) => UsagePageHost(
-                app: app,
-                onOpenSession: (sid) {
-                  unawaited(navigatorKey.currentState?.maybePop());
-                  unawaited(app.openSession(sid));
-                },
-              ),
-            ),
-          )
-          .whenComplete(dismissInputFocus),
+    _openFromDrawer(
+      (_) => UsagePageHost(
+        app: app,
+        // 用量页是**一条路由**，这里的"收"就是真的 pop 掉它 —— 与收抽屉不同，
+        // 它压在上面且紧接着没有 push，`maybePop()` 在这里没有栈顶竞态。
+        onOpenSession: (sid) {
+          unawaited(navigatorKey.currentState?.maybePop());
+          unawaited(app.openSession(sid));
+        },
+      ),
     );
   }
 
@@ -636,7 +632,7 @@ class _DshMobileAppState extends State<DshMobileApp>
   Future<void> _openArchive() async {
     final app = _app;
     if (app == null) return;
-    unawaited(navigatorKey.currentState?.maybePop());
+    _closeDrawer();
     await showArchiveSheet(
       _navContext,
       app: app,
@@ -718,7 +714,7 @@ class _DshMobileAppState extends State<DshMobileApp>
   /// 复用 `ui/connection_actions_sheet.dart` 的同一形状（议题 3：三个入口
   /// 共用一个 sheet，不各画一份）。抽屉这条路保留，不影响既有用户。
   Future<void> _showConnectionSheet() async {
-    unawaited(navigatorKey.currentState?.maybePop());
+    _closeDrawer();
     final app = _app;
     if (app == null) return;
     await showConnectionActionsSheet(
@@ -782,7 +778,7 @@ class _DshMobileAppState extends State<DshMobileApp>
   /// **没配对时不做假动作**：直接提示去配对 —— 而不是造一个本地空会话
   ///（那会在抽屉里留下一个永远发不出消息的条目）。
   void _newSession() {
-    unawaited(navigatorKey.currentState?.maybePop());
+    _closeDrawer();
     if (_credentials == null) {
       _openPairing();
       return;
@@ -811,7 +807,7 @@ class _DshMobileAppState extends State<DshMobileApp>
   }
 
   void _notYet(String what) {
-    unawaited(navigatorKey.currentState?.maybePop());
+    _closeDrawer();
     ScaffoldMessenger.of(
       _navContext,
     ).showSnackBar(SnackBar(content: Text('$what 还没做')));

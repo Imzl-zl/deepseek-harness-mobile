@@ -209,6 +209,32 @@ class ChatPageState extends State<ChatPage> {
   /// **抽屉归本页的 `Scaffold`**，所以只有这里能开它 —— 外层拿不到那个 `Scaffold`。
   void openDrawer() => _scaffoldKey.currentState?.openDrawer();
 
+  /// 收起左侧会话抽屉（**同步**）。
+  ///
+  /// 抽屉不是一条路由，它给当前路由挂一个 `LocalHistoryEntry`
+  /// （`packages/flutter/lib/src/material/drawer.dart:529-541`）；因此"收抽屉"
+  /// 曾经写成 `Navigator.maybePop()`。那是**错的**：`maybePop` 是 async，
+  /// `await route.willPop()` 之后要重新取一次栈顶，栈顶变了就直接放弃
+  /// （`packages/flutter/lib/src/widgets/navigator.dart:5539,5547-5551`）——
+  /// 抽屉里"先收抽屉、紧接 push 全屏页"正好是这个形状，于是那一句静默失效，
+  /// 抽屉原样开着（真机三次、`app/test/drawer_close_before_push_test.dart`）。
+  /// `ScaffoldState.closeDrawer()` 没有这一步：它自己会摘掉那个 history entry
+  /// （`drawer.dart:543-549` → `routes.dart:950-967`）。
+  ///
+  /// 因果见 `.agents/notes/implemented/2026-10-22-drawer-close-before-push.md`。
+  void closeDrawer() => _scaffoldKey.currentState?.closeDrawer();
+
+  /// 从抽屉里打开一个全屏页：**先收抽屉，再 push**，开 / 关各收一次输入法。
+  ///
+  /// 两支都由本页负责，因为它们用的是本页的 `Scaffold`（抽屉）与本页的焦点树；
+  /// 外层（`main.dart`）只给 route。[closeDrawer] 是同步的，所以 push 与"收抽屉"
+  /// 不会抢同一个栈顶（见它的注释）。
+  Future<void> openFromDrawer(Route<void> route) =>
+      dismissInputFocusAround(() async {
+        closeDrawer();
+        await Navigator.of(context).push(route);
+      });
+
   /// 打开右侧抽屉（文件 / 任务 / 子智能体）。
   ///
   /// 连接操作 sheet 的「打开侧面板」与 chip 行都经它落。

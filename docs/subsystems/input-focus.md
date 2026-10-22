@@ -41,13 +41,29 @@
 | 右抽屉开 / 关 | 同一 `Scaffold` 的 `onEndDrawerChanged` |
 | 底部 sheet 开 / 合 | `ui/dsh_sheet.dart` 的 `showDshSheet` |
 | 锚定浮层开 / 合 | `ui/dsh_popover.dart` 的 `showDshPopover` |
-| 设置页 / 用量页 push · pop | `main.dart` 的 `_openSettings` / `_openUsage` |
+| 设置页 / 用量页 push · pop | `ui/chat_page.dart` 的 `openFromDrawer`（外层只给 route） |
+
+### 2.1 抽屉先收、再 push
+
+从抽屉里跳全屏页的顺序是**同步收抽屉 + 同一拍 push**，收抽屉那条叫 `ChatPageState.closeDrawer()`
+（就是 `ScaffoldState.closeDrawer()`），**不是** `Navigator.maybePop()`：
+
+- 抽屉打开时给当前路由挂一个 `LocalHistoryEntry`（`material/drawer.dart:529-541`），
+  所以"收抽屉"过去写成 `maybePop()`；
+- 而 `NavigatorState.maybePop` 是 `async`，`await willPop()` 回来后重新取栈顶、
+  发现变了就直接放弃（`widgets/navigator.dart:5539,5547-5551`）——
+  "收抽屉 + 紧接 push"正好是这个形状，于是那句静默失效，抽屉一直开着；
+- `ScaffoldState.closeDrawer()` 自己摘 history entry（`drawer.dart:543-549`），没有这一步。
+
+因果与被否方案见 `.agents/notes/implemented/2026-10-22-drawer-close-before-push.md`。
 
 ## 3. 判据
 
 - widget 测：`app/test/input_focus_test.dart` —— 点输入框（焦点在、输入法在）→ 开抽屉 →
   点空白关闭 → 输入框**没有**焦点、`TestTextInput.isVisible` 为 false。
   变异校验：把 `onDrawerChanged` 换成空回调，该测红在 `hasFocus` 断言上。
+- widget 测：`app/test/drawer_close_before_push_test.dart` —— 走 `openFromDrawer` push 一页再
+  `pop`，`Scaffold.isDrawerOpen` 必须为 false（同一处也钉住"先收抽屉"）。
 - 真机：`dumpsys input_method` 的 `mInputShown`。2026-10-22（`d61cf622`）修前是
   「开抽屉 false → 关闭 400ms 后 true」，修后关闭后 0.4s / 2s 均为 false；
   设置页 push·pop 同一条也为 false。
