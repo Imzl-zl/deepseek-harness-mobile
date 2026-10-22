@@ -176,6 +176,18 @@
    `createdAt`（宿主 `WorkspaceView.createdAt`，`packages/api/workspace-controller/src/types.ts:27`），
    `newSessionWorkspaceId` 对**没有会话**的工作区按 `Date.parse(createdAt)` 参与比较 ——
    与 DSH 的 `recentWorkspace`（`navigation.ts:565`）同一条。字段缺席（老连接器）仍按"最旧"。
+8. **工具行自己的扫光没有真机截图**（2026-10-22）：功能在（`ToolCard` 的 `running` 状态，
+   单测三条钉住），但免费渠道的思考阶段要 1–2 分钟，工具执行的那 20–120 秒落在采样间隙里。
+   要补的证据：一次工具执行中截一张（判据见 `.agents/notes/implemented/2026-10-22-running-cues-shimmer-and-live-clock.md`）。
+9. **从设置页返回后抽屉仍开着**（2026-10-22 真机复现三次）：`_openSettings` 里
+   `maybePop()` 那句「先收抽屉再 push」没生效。判据：回到聊天页后
+   `Scaffold.isDrawerOpen == true`。下一步先查 `ModalRoute.popDisposition` / `didPop`
+   （`widgets/routes.dart:942-966`）在 push 紧随其后的时序里有没有把 local history entry 拿掉。
+10. **`workspace.createdAt` 的"空工作区当最近"只有单测**（2026-10-22）：真机上 App 总会恢复
+    上一次的会话，而「当前会话所在工作区」是链的第二步、优先级更高；手机没有「取消选中会话」
+    的入口 ⇒ 那条分支在真机上够不到。要真机验，得先有一个能落到"无当前会话"的入口。
+11. **字号"局部刻度"在真机上观感差**（2026-10-22 用户反馈：丑、有的地方字很小、想要全局）：
+    详见 `.agents/notes/proposed/2026-10-22-global-text-scale-options.md`。
 
 ## 范围决定（别再当缺口）
 
