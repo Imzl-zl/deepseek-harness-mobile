@@ -33,6 +33,7 @@ import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 import 'collapsible_group.dart';
+import 'dsh_brand.dart';
 import 'dsh_popover.dart';
 
 /// 抽屉里的一行会话。
@@ -224,29 +225,16 @@ class _SessionDrawerState extends State<SessionDrawer> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // ---- 头部：logo + DSH + 新建 ----
+            // ---- 头部：logo + App 名 + 新建 ----
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
               child: Row(
                 children: [
-                  Container(
-                    width: 28,
-                    height: 28,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [c.accentBlue, c.roleAssistant],
-                      ),
-                      borderRadius: BorderRadius.circular(9),
-                    ),
-                    child: const Center(
-                      child: DshIcon('sparkle', size: 16, color: Colors.white),
-                    ),
-                  ),
+                  // logo = **DSH 的图标**（与启动图标、助手头像同一枚图）。
+                  const DshBrandMark(size: 28),
                   const SizedBox(width: 10),
                   Text(
-                    'DSH',
+                    'DeepSeek Harness',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,

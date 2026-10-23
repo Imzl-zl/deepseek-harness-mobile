@@ -1,6 +1,13 @@
-# Agent Note: 应用名取 `DSH`，图标取 DSH 桌面端那枚鲸鱼
+# Agent Note: 应用名与品牌图取自 DSH（鲸鱼图标）
 
 Status: implemented
+
+> **后续（2026-10-23 白天，用户改口径）**：名字最终定为 **`DeepSeek Harness`**（不是本篇
+> 最初定的 `DSH`），并把同一枚图标用到 **App 内的两处品牌位**：
+> 侧边抽屉头部 logo 与会话流里的「助手」头像（用户：「助手头像也是 dsh 的图标啊」
+> 「侧边抽屉的图标还是之前的」）。落地方式是一个共享控件
+> `app/lib/ui/dsh_brand.dart` 的 `DshBrandMark` + 资产 `assets/brand/dsh-whale.png`。
+> 下面 Decision 第 1 条记录的是**当时的取舍**，不改；名字以本条为准。
 
 ## Problem
 
@@ -58,6 +65,11 @@ Status: implemented
   - `CFBundleName`（内部短名）仍是 `dsh_mobile`：那是构建标识，不是显示名，没动；
   - `debug` 与 `release` 共用同一套图标（没有按 buildType 分叉）。
 - 判据：
-  - `aapt2 dump badging` 的 `application-label:'DSH'` 与
+  - `aapt2 dump badging` 的 `application-label:'DeepSeek Harness'` 与
     `application-icon-*:'res/mipmap-anydpi-v26/ic_launcher.xml'`；
-  - 真机截图 `shots-2026-10-22/q1-launcher.png`（启动器里的图标与名字）。
+  - `app/test/brand_mark_test.dart`（3 条）：徽标里确实是
+    `assets/brand/dsh-whale.png`；抽屉头部用它且 App 名是 `DeepSeek Harness`；
+    助手头像用它。变异校验：把助手头像换成空盒子，该条红（其余两条仍绿）。
+  - 真机截图：`shots-2026-10-22/s2-drawer-brand.png`（抽屉：鲸鱼 + DeepSeek Harness）、
+    `s3-chat-avatar.png`（助手头像是同一枚鲸鱼）、`s4-recents-name.png`（任务切换器里
+    新包 = 鲸鱼 + `DeepSeek H…`，旧包仍是 Flutter 图标 + `DSH Mobile`）。

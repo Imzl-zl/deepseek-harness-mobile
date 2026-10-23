@@ -27,6 +27,7 @@ import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 import '../theme/dsh_type.dart';
+import 'dsh_brand.dart';
 import 'dsh_markdown.dart';
 import 'dsh_sheet.dart';
 import 'dsh_shimmer.dart';
@@ -275,31 +276,15 @@ class ReasoningRow extends StatelessWidget {
 }
 
 /// 助手头像：26×26、圆角 9、**品牌渐变**（`.a-ava`）。
+/// 助手头像 = **DSH 的图标**（白底圆角方 + 鲸鱼，与启动图标同源）。
+///
+/// 用户 2026-10-23：「助手头像也是 dsh 的图标啊」。此前是蓝紫渐变方块 +
+/// `sparkle` 字形 —— 那是我们自己的装饰，不是 DSH 的品牌图。
 class _AssistantAvatar extends StatelessWidget {
   const _AssistantAvatar();
 
   @override
-  Widget build(BuildContext context) {
-    final c = context.dshColors;
-    return Container(
-      width: 26,
-      height: 26,
-      decoration: BoxDecoration(
-        // `linear-gradient(135deg, #5686fe, #9e7baa)` —— 蓝到紫，
-        // 与 `roleAssistant`（紫）同族。这是 DSH 的品牌识别之一，
-        // 所以两个色值取自 token 而不是现编。
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [c.accentBlue, c.roleAssistant],
-        ),
-        borderRadius: BorderRadius.circular(9),
-      ),
-      child: const Center(
-        child: DshIcon('sparkle', size: 14, color: Colors.white),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => const DshBrandMark(size: 26);
 }
 
 /// 工具调用卡片（`.tool`）。

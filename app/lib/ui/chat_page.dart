@@ -628,7 +628,8 @@ class ChatPageState extends State<ChatPage> {
         // 手机上"进入下一层"的惯例就是导航栏左侧返回 + 标题即位置。
         title: _subagentReturnFrom != null
             ? _subagentLabel
-            : (widget.app.currentTitle ?? 'DSH'),
+            // 没有会话标题时显示 App 名（与启动器 / 抽屉头部同一处口径）。
+            : (widget.app.currentTitle ?? 'DeepSeek Harness'),
         parentTitle: _subagentParentLabel,
         onOpenDrawer: openDrawer,
         onBack: _subagentReturnFrom == null

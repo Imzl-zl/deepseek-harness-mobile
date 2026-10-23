@@ -3,7 +3,7 @@
          只声明一次，不按 build type 分叉 —— 扫码入口在 release 里也在。 -->
     <uses-permission android:name="android.permission.CAMERA" />
     <application
-        android:label="DSH"
+        android:label="DeepSeek Harness"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

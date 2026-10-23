@@ -327,10 +327,10 @@ class _DshMobileAppState extends State<DshMobileApp>
     return ListenableBuilder(
       listenable: _theme,
       builder: (context, _) => MaterialApp(
-        // 桌面/任务切换器里显示的名字。与安卓 `android:label`、iOS
-        // `CFBundleDisplayName` 同一处口径：**DSH**（DeepSeek Harness 的缩写，
-        // 与 `dsh-mobile` / `DSH_HOME` 这些既有称呼一致，且最短）。
-        title: 'DSH',
+        // 任务切换器里显示的名字。与安卓 `android:label`、iOS
+        // `CFBundleDisplayName` 同一处口径：**DeepSeek Harness**（用户 2026-10-23
+        // 指定；抽屉头部那一行也是它）。
+        title: 'DeepSeek Harness',
         debugShowCheckedModeBanner: false,
         // **主题跟着 ThemeController 换**（2026-10-19：加浅色套）。
         //
