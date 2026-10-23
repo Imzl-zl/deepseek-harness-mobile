@@ -3141,14 +3141,16 @@ class AppModel extends ChangeNotifier {
   /// 把一次答复发给电脑（契约 §5.7 的 `interaction.respond`）。
   ///
   /// **答案批次原样转发**，一个字段都不翻译：翻译层就是漂移层（契约 §6.3.1）。
-  /// 幂等键是 `i:<callId>`（§5.7 的表），所以重复点两次不会变成两次授权。
+  /// 键是**卡自己的 `itemId`**（`i:<approvalId>` / `t:<callId>`）—— 连接器的在途 claim
+  /// 也以它为键；幂等键用同一个值（§5.6：键形状由业务定，`i:` / `t:` 带冒号只进信封），
+  /// 所以重复点两次不会变成两次授权。
   ///
   /// 失败**照原样抛**：调用方（接管卡）要据此把那一项标成"已过期"，
   /// 而吞掉它会让用户以为答成功了 —— 答案从未进入会话。
   Future<void> respondInteraction(InteractionAnswer answer) async {
     await client.call<Object?>('interaction.respond', <String, Object?>{
       'sid': answer.sid,
-      'callId': answer.callId,
+      'itemId': answer.itemId,
       'answers': <Object?>[
         for (final item in answer.answers)
           <String, Object?>{
@@ -3157,7 +3159,7 @@ class AppModel extends ChangeNotifier {
             if (item.custom != null) 'custom': item.custom,
           },
       ],
-    }, requestId: 'i:${answer.callId}');
+    }, requestId: answer.itemId);
   }
 
   // Note: 标题只有一个真值源（电脑侧），这里只换计数不重建整行 ——

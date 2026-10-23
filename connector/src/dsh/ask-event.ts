@@ -11,9 +11,10 @@
  * ## 判据
  *
  * - 提问：`tool/call` 里 `name === 'ask_user_question'` 且 `callId` 相同（取最后一条）。
- * - 审批：`approval/asked` 里 `callId` 相同、且没有同 `id` 的 `approval/decided`（取最后一条）。
- *
- * 两个事件都只可能是"这一条"：callId / approval id 由 DSH 铸造，会话内唯一。
+ * - 审批：`approval/asked` 里 `id` 相同、且没有同 `id` 的 `approval/decided`（取最后一条）。
+ *   匹配键是**审批自己的 id**（`ApprovalRequestId`，`user-approval/src/types.ts:13-17`），
+ *   不是 `callId` —— 后者是可选的（`types.ts:68-69`），拿它当键会让"没有 tool call 的审批"
+ *   连重投都拿不到。id 由服务铸、会话内唯一（`src/index.ts:224`）。
  */
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 
@@ -53,7 +54,7 @@ export function questionAskEvent(
 /** 审批那条 `approval/asked` 事件（还没被 `approval/decided` 收口）；找不到回 `undefined`。 */
 export function approvalAskEvent(
   events: readonly SessionEvent[],
-  callId: string,
+  approvalId: string,
 ): SessionEvent | undefined {
   const decided = new Set<string>()
   for (const event of events) {
@@ -62,7 +63,7 @@ export function approvalAskEvent(
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]
     if (event === undefined || event.type !== 'approval/asked') continue
-    if (event.data.callId !== callId || decided.has(event.data.id)) continue
+    if (event.data.id !== approvalId || decided.has(event.data.id)) continue
     return event
   }
   return undefined

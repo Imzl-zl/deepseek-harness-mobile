@@ -341,10 +341,9 @@ class TakeoverController extends ChangeNotifier {
       InteractionAnswer(
         sid: item.sid,
         itemId: item.itemId,
-        callId: item.callId,
         answers: [
           InteractionAnswerItem(
-            id: item.questions.isEmpty ? item.callId : item.questions.first.id,
+            id: item.itemId,
             selected: approved ? <String>[label!] : const <String>[],
           ),
         ],
@@ -364,10 +363,9 @@ class TakeoverController extends ChangeNotifier {
       InteractionAnswer(
         sid: item.sid,
         itemId: item.itemId,
-        callId: item.callId,
         answers: [
           InteractionAnswerItem(
-            id: item.callId,
+            id: item.itemId,
             selected: outcome == 'allowed-once'
                 ? <String>[approvalAllowLabel]
                 : const <String>[],
@@ -411,7 +409,6 @@ class TakeoverController extends ChangeNotifier {
       InteractionAnswer(
         sid: item.sid,
         itemId: item.itemId,
-        callId: item.callId,
         answers: [
           for (final question in item.questions)
             InteractionAnswerItem(

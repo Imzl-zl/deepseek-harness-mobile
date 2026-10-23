@@ -1,5 +1,5 @@
 /**
- * 交互层内核：提问 / 计划审查的待处理投影与 `interaction.respond` 的应答路由（契约 §6）。
+ * 交互层内核：`interaction.respond` 的应答路由与待处理项的 **id 约定**（契约 §5.7 / §6）。
  *
  * 三条约束决定这个模块的长相：
  *
@@ -14,12 +14,15 @@
  *
  * 边界：本文件只承载**语义**。把请求推给手机的那一步（`interaction-claims.ts` 的
  * `InteractionPort`）、`ev` 帧的拼装、别名→会话的解析都在别处。
+ * **这里也没有"待处理集合"** —— 集合是会话事件的投影，随 `ev` 帧到手机（契约 §6.3）。
  *
  * **本文件里没有"应答者"**：连接器不再是 host 的 waterfall answerer，而是 gateway 的一个
  * owner client（`dsh/interaction-client.ts`，契约 §6.2）。所以这里既没有 `ctx.on(...)`
- * 也没有看护应答者的包装 —— 只有提问内核。
+ * 也没有看护应答者的包装 —— 只有"这一项落到哪里"的路由。
  * Note: 为什么删掉了应答者那一路 ——
- * `.agents/notes/implemented/2026-10-23-interaction-as-gateway-client.md`。
+ * `.agents/notes/implemented/2026-10-23-interaction-as-gateway-client.md`；
+ * 为什么键是 `itemId` 而不是 `callId` ——
+ * `.agents/notes/implemented/2026-10-24-interaction-identity-from-native-ids.md`。
  */
 import { ProtocolError } from './protocol/errors.js'
 
@@ -98,18 +101,40 @@ export interface QuestionProjection {
 }
 
 /**
- * 协议里的「待处理项」，随 `ev` / `pending.changed` 下发（契约 §6.3）。
+ * 待处理项的身份（契约 §5.2 / §6.3）：**就是手机那张卡的 `itemId`**，取值是 DSH 自己的
+ * 原生身份，按交互种类不同：
  *
- * `itemId = i:<callId>`：待处理集合是**持久条目的投影**（不变量 I4），有稳定身份、
- * 进快照、upsert，不随连接态变化。注意它与时间线条目不是同一个 id —— 提问在时间线上
- * 是 `t:<callId>`（§5.2），待处理集合用 `i:<callId>`（§6.3）。
+ * - 审批：`i:<approval/asked.id>`（`ApprovalRequestId`，`user-approval/src/types.ts:13-17`；
+ *   手机侧同一条 `app/lib/data/projection.dart:997,1003`）；
+ * - 提问 / 计划审查：`t:<tool/call.callId>`（手机侧同一条 `projection.dart:1031`）。
+ *
+ * 这两个 id 由 DSH 铸造、会话内唯一，我们只负责加前缀 —— 不在这里发明第三套身份。
  */
-export interface PendingItem {
-  readonly itemId: string
-  readonly sid: string
-  readonly callId: string
-  readonly questions: readonly Question[]
-  readonly state: QuestionState
+
+/** 审批的待处理项 id。 */
+export function approvalItemId(approvalId: string): string {
+  return `i:${approvalId}`
+}
+
+/** 提问 / 计划审查的待处理项 id。 */
+export function questionItemId(callId: string): string {
+  return `t:${callId}`
+}
+
+/** 一个 `itemId` 指的是哪一种交互。**认不出前缀就是 `unknown`**（不猜）。 */
+export type InteractionItemRef =
+  | { readonly kind: 'approval'; readonly approvalId: string }
+  | { readonly kind: 'question'; readonly callId: string }
+  | { readonly kind: 'unknown' }
+
+export function interactionItemOf(itemId: string): InteractionItemRef {
+  if (itemId.startsWith('i:') && itemId.length > 2) {
+    return { kind: 'approval', approvalId: itemId.slice(2) }
+  }
+  if (itemId.startsWith('t:') && itemId.length > 2) {
+    return { kind: 'question', callId: itemId.slice(2) }
+  }
+  return { kind: 'unknown' }
 }
 
 /**
@@ -122,36 +147,6 @@ export type QuestionAgent = { readonly __dshLiveRootAgent: 'branded' }
 
 export interface InteractionLogger {
   warn(message: string, detail?: unknown): void
-}
-
-// ---------------------------------------------------------------------------
-// 待处理投影
-// ---------------------------------------------------------------------------
-
-/** 待处理项的稳定身份（契约 §6.3）。 */
-export function itemIdOf(callId: string): string {
-  return `i:${callId}`
-}
-
-/**
- * 把 DSH 的提问投影翻成协议的待处理项。
- *
- * `state` **原样透传，不在这里判灰**：契约 §6.4 把置灰判据交给手机，而 §6.3.1 又说
- * 「迟到的回答允许」—— 两处对 `continued` 的措辞并不一致（§6.4 说手机据此置灰，
- * §6.3.1 说超时转 pending 后用户仍可答）。内核只如实转述宿主状态，不替手机做这个判断；
- * `settled` 半边不进待处理集合（它已经答完了）。
- */
-export function projectPendingQuestions(
-  sid: string,
-  projection: QuestionProjection,
-): readonly PendingItem[] {
-  return projection.active.map((question) => ({
-    itemId: itemIdOf(question.callId),
-    sid,
-    callId: question.callId,
-    questions: question.questions,
-    state: question.state,
-  }))
 }
 
 // ---------------------------------------------------------------------------
@@ -193,13 +188,17 @@ export function validateAnswerBatch(
 /**
  * `interaction.respond` 的载荷（契约 §5.7）。`answers` 与 DSH 的答案批次逐字一致。
  *
+ * `itemId` 是**手机那张卡的 id**（`i:<approval/asked.id>` / `t:<callId>`，
+ * 见 {@link interactionItemOf}）—— 它就是"这一项是哪一次交互"的唯一键，
+ * 不再另设一个 `callId` 字段（那是 DSH 里**可选**的东西，`user-approval/src/types.ts:68-69`）。
+ *
  * 这是**校验通过后**的形状：运行期入参是封箱解出来的 JSON、不可信，所以
  * {@link InteractionFace.respond} 收 `unknown` 并逐个字段校验，这个接口只是给装配层
  * 与手机侧对照的契约。
  */
 export interface RespondParams {
   readonly sid: string
-  readonly callId: string
+  readonly itemId: string
   readonly answers: readonly AnswerItem[]
 }
 
@@ -230,20 +229,18 @@ export interface InteractionFaceDeps {
    * `open` 态被应答链堵着的提问）。那个判据只有挂载级的端口知道（它握着 claim 与看护），
    * 因此作为钩子注在这里。
    *
-   * 在**形状校验之后**调用（那时 `sid` / `callId` / `answers` 都已确认合法），
+   * 在**形状校验之后**调用（那时 `sid` / `itemId` / `answers` 都已确认合法），
    * 在投影比对与 `agentOf` 之前：审批项不在 `userQuestions` 投影里，
    * 走投影比对只会被跳过，而 `agentOf` 对子代理会话的拒绝对审批是错的
    * （审批的 live root 判据在 DSH 的应答链里，不在这里）。
    *
    * @returns `true` = 这一项已作为在途 claim 的答复收束，不要再走提问路由。
    */
-  settleClaim?(sid: string, callId: string, answers: readonly AnswerItem[]): boolean
+  settleClaim?(sid: string, itemId: string, answers: readonly AnswerItem[]): boolean
   log?: InteractionLogger
 }
 
 export interface InteractionFace {
-  /** 待处理项（供连接器随 `ev` / `pending.changed` 下发）。 */
-  pendingOf(sid: string): readonly PendingItem[]
   /**
    * `interaction.respond` 的校验与路由。**失败抛 `ProtocolError`**（分发器把它转成
    * `ok:false` 信封，结构化错误不关连接，契约 §9）；成功返回该项的 `itemId`。
@@ -275,21 +272,19 @@ function codeOf(error: unknown): string | undefined {
 }
 
 /**
- * 提问 / 计划审查的内核：投影 + 应答路由。
+ * 提问 / 计划审查的内核：应答路由。
  *
  * 提问**没有看护计时器**（契约 §6.2.1：它是 fire-and-forget 的投影，超时由 DSH 自己转
  * pending），所以这里只有校验与路由，没有定时器。
+ *
+ * **这里也没有"待处理集合"**：待处理项是会话事件的投影（`approval/asked` / `tool/call`），
+ * 随 `ev` 帧到手机，连接器不另推一份（契约 §6.3）。内核只回答一个问题：
+ * "手机发回来的这一项，落到哪里"。
  */
 export function createInteractionFace(deps: InteractionFaceDeps): InteractionFace {
   const { log } = deps
 
   return {
-    pendingOf(sid) {
-      const projection = deps.projectionOf(sid)
-      // 没有投影快照 = 这个会话当前没有待处理提问；空列表，不是错误
-      return projection === undefined ? [] : projectPendingQuestions(sid, projection)
-    },
-
     respond(params) {
       // ---- 形状：请求本身不合法 → protocol/bad-frame ----
       // 契约 §5.7 对 `sid` 立过同一条规则（"缺失或形状不对 → protocol/bad-frame，
@@ -299,13 +294,13 @@ export function createInteractionFace(deps: InteractionFaceDeps): InteractionFac
       }
       const record = params as Record<string, unknown>
       const sid = record['sid']
-      const callId = record['callId']
+      const itemId = record['itemId']
       const answers = record['answers']
       if (typeof sid !== 'string' || sid === '') {
         throw new ProtocolError('protocol/bad-frame', 'interaction.respond 缺少 sid')
       }
-      if (typeof callId !== 'string' || callId === '') {
-        throw new ProtocolError('protocol/bad-frame', 'interaction.respond 缺少 callId')
+      if (typeof itemId !== 'string' || itemId === '') {
+        throw new ProtocolError('protocol/bad-frame', 'interaction.respond 缺少 itemId')
       }
       if (!Array.isArray(answers)) {
         throw new ProtocolError('protocol/bad-frame', 'interaction.respond 的 answers 必须是数组')
@@ -320,11 +315,28 @@ export function createInteractionFace(deps: InteractionFaceDeps): InteractionFac
 
       // ---- 在途 claim？先问端口 ----
       // 形状已合法，可以安全地把批次交给它。端口答"是"就此收束：
-      // 审批的词汇表映射（哪个标签等于 `allowed-once`）与看护都在端口那一侧，
+      // 审批的词汇表映射（哪个标签等于 `allowed-once`）与在途表都在端口那一侧，
       // 内核不认识审批（`interaction-face.ts` 只承载提问语义）。
-      if (deps.settleClaim?.(sid, callId, items) === true) {
-        return { itemId: itemIdOf(callId) }
+      if (deps.settleClaim?.(sid, itemId, items) === true) {
+        return { itemId }
       }
+
+      // ---- 不是 claim：只剩 `continued` 提问这一条原生路 ----
+      // 审批**没有**"按 approval id 作答"的 DSH 方法（它的答案只经应答链回给 asker），
+      // 所以不在 claim 里的审批项就是"已经不在了"：回 `not-pending`，客户端动作是
+      // 刷新待处理列表（契约 §3.1）。
+      const ref = interactionItemOf(itemId)
+      if (ref.kind === 'approval') {
+        log?.warn('审批答复没有对应的在途 claim', { sid, itemId })
+        throw new ProtocolError(
+          'interaction/not-pending',
+          `审批 ${itemId} 不在本机的在途 claim 里（已经答过，或这个会话没登记给手机）`,
+        )
+      }
+      if (ref.kind === 'unknown') {
+        throw new ProtocolError('protocol/bad-frame', `认不出 itemId 的前缀：${itemId}`)
+      }
+      const callId = ref.callId
 
       // ---- 批次 vs 提问：投影认得这个 call 时才先判一遍 ----
       // 投影不认得时**仍然调用 DSH**：投影可能是装配层的缓存，而 DSH 是自己的权威
@@ -382,7 +394,7 @@ export function createInteractionFace(deps: InteractionFaceDeps): InteractionFac
         // 手机据此把那一项标成"已过期"；客户端行为是刷新列表，不弹错误框。
         throw new ProtocolError('interaction/not-pending', `提问 ${callId} 已结束，答案不再被接纳`)
       }
-      return { itemId: itemIdOf(callId) }
+      return { itemId }
     },
   }
 }

@@ -133,7 +133,7 @@ test('整链：sync.hello 上报前台+订阅 → 端口等到人类的回答，
   ])
 
   // ---- ② 端口：claim 之后它真的被触发，并等到人类的回答 ----
-  const pending = claims.askApproval({ sid: 'sid_dsh-1', callId: 'call-1' })
+  const pending = claims.askApproval({ sid: 'sid_dsh-1', itemId: 'i:approval-1' })
   await settle()
   assert.equal(claims.pending, 1, 'claim 必须在途，否则答复回来时无处可去')
 
@@ -142,13 +142,13 @@ test('整链：sync.hello 上报前台+订阅 → 端口等到人类的回答，
     v: 1, t: 'req', id: 'req-answer', fc: 2,
     box: JSON.stringify({
       method: 'interaction.respond',
-      // **幂等键 `i:<callId>` 必须在请求顶层**（契约 §5.6 / §5.7）：漏了它分发器
-      // 在分发之前就回 `protocol/bad-frame`，而那一帧根本到不了端口。
-      requestId: 'i:call-1',
+      // **幂等键就是手机那张卡的 itemId，必须在请求顶层**（契约 §5.6 / §5.7）：漏了它
+      // 分发器在分发之前就回 `protocol/bad-frame`，而那一帧根本到不了端口。
+      requestId: 'i:approval-1',
       params: {
         sid: 'sid_dsh-1',
-        callId: 'call-1',
-        answers: [{ id: 'call-1', selected: [APPROVAL_ALLOW_LABEL] }],
+        itemId: 'i:approval-1',
+        answers: [{ id: 'i:approval-1', selected: [APPROVAL_ALLOW_LABEL] }],
       },
     }),
   })
@@ -166,10 +166,10 @@ test('整链：sync.hello 上报前台+订阅 → 端口等到人类的回答，
   // 或插件卸载才收束（原生没有超时）。
   scope.servingEnded()
   assert.equal(presence.liveOf('dev-1'), undefined)
-  const stillWaiting = claims.askApproval({ sid: 'sid_dsh-1', callId: 'call-2' })
+  const stillWaiting = claims.askApproval({ sid: 'sid_dsh-1', itemId: 'i:approval-2' })
   await settle()
   assert.equal(claims.pending, 1, '断开不是收束的理由（claim 挂在 host 上）')
-  assert.equal(claims.cancelClaim('call-2'), true, '只有 gateway 说"已经结算了"才放走')
+  assert.equal(claims.cancelClaim('i:approval-2'), true, '只有 gateway 说"已经结算了"才放走')
   assert.deepEqual(await stillWaiting, { kind: 'withdrawn' })
 })
 
@@ -187,13 +187,13 @@ test('整链：手机断开 → claim 保留（不结算），重连后答复仍
   await settle()
 
   const claims = createInteractionPort()
-  const pending = claims.askApproval({ sid: 'sid_dsh-1', callId: 'call-1' })
+  const pending = claims.askApproval({ sid: 'sid_dsh-1', itemId: 'i:approval-1' })
   await settle()
   scope.servingEnded()
   await settle()
   assert.equal(claims.pending, 1, '断开只撤投递，不结算 —— 与 DSH gateway 的 pendingRemoteEvents 同形')
   assert.equal(
-    claims.settleClaim('sid_dsh-1', 'call-1', [{ id: 'call-1', selected: ['allowed-once'] }]),
+    claims.settleClaim('sid_dsh-1', 'i:approval-1', [{ id: 'i:approval-1', selected: ['allowed-once'] }]),
     true,
     '重连回来的答复仍能落进同一条 claim',
   )
@@ -204,8 +204,7 @@ test('整链：方法面真的挂了 sync.hello 与 interaction.respond（repo.i
   const { deps, sent, port } = harness()
   // 提问内核也在场（`userQuestions` 服务在时 `index.ts` 会挂它）。
   deps.handlers.interaction = {
-    pendingOf: () => [],
-    respond: () => ({ itemId: 'i:x' }),
+    respond: () => ({ itemId: 't:x' }),
   }
   const scope = createConnectionScope(port, deps)
   scope.deviceEstablished('dev-1')

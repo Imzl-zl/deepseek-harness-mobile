@@ -970,16 +970,17 @@ String? nonEmptyString(Object? value) =>
 ///
 /// | 事件 | 信号 |
 /// |---|---|
-/// | `approval/asked` | 开（**带 `callId` 才开**，见下） |
+/// | `approval/asked` | 开（id 是卡的身份 `i:<id>`，见下） |
 /// | `approval/decided` | 收束（同 `i:<id>` 覆盖） |
 /// | `tool/call`（`ask_user_question`） | 开 |
 /// | `tool/result` / 迟到的 `user-question-reply` | 收束 |
 ///
-/// ## 没有 `callId` 的审批**不开卡**
+/// ## 审批的卡 id 是 `approval/asked.id`，**不看 `callId`**
 ///
-/// 连接器的转发客户端要求 `request.callId !== undefined` 才 claim（没有稳定身份就
-/// 沉默，`connector/src/dsh/interaction-client.ts`）。于是没有 `callId` 的审批
-/// **本来就会在电脑上答** —— 在手机上摆一张答不了的卡是对用户说谎。
+/// `callId` 在 DSH 是**可选**的（`user-approval/src/types.ts:68-69`，落盘时"有才写"，
+/// `src/index.ts:228`）；审批的原生身份是服务铸的 `ApprovalRequestId`
+/// （`types.ts:13-17`），它与 `approval/decided` 一对一配对。连接器也以它为在途 claim 的键
+/// （`connector/src/interaction-client.ts`），所以卡照开、答复照回 —— 没有 `callId` 也答得了。
 ///
 /// Note: 为什么计划审查按提问渲染（`intent` 不进会话事件）——
 /// 见 `.agents/notes/implemented/2026-10-10-interaction-to-phone-chain.md`。
@@ -991,11 +992,10 @@ InteractionSignal? interactionSignalOf({
   required Object? data,
 }) {
   if (type == 'approval/asked') {
-    // `callId` 是可选的（`user-approval/src/index.ts:228`）；没有它手机答不了。
-    final callId = nonEmptyString(fieldOf(data, 'callId'));
-    if (callId == null) return null;
+    // 身份是 `id`（`ApprovalRequestId`）；`callId` 只作为"针对哪次工具调用"的关联字段。
     final approvalId = nonEmptyString(fieldOf(data, 'id'));
     if (approvalId == null) return null;
+    final callId = nonEmptyString(fieldOf(data, 'callId'));
     final toolName = nonEmptyString(fieldOf(data, 'toolName')) ?? '工具';
     final reason = nonEmptyString(fieldOf(data, 'reason'));
     return InteractionOpened(

@@ -373,7 +373,7 @@ type SyncSnapshot = {
 | `session.page` | 手机→电脑 | — | 历史翻页(按消息对齐,用 DSH `page()`) |
 | `session.prompt` | 手机→电脑 | `requestId` | **参数是 `{ sid, content, mode? }`**,不是 `{ sid, text }`。`content` 必须是**非空数组**,每项带 `type`(照 DSH 的 `PromptContentPart`:文本是 `{type:'text', text}`)。**形状以电脑侧为准** —— 它与 DSH 的 `sessionController.prompt` 同构,手机侧没有第二条真值。`mode: 'queue' \| 'steer'` |
 | `session.updateQueue` | 手机→电脑 | `requestId` | 变异一个**仍在排队**的消息:编辑 / 删除 / 插话。**与 Web 的排队 dock 同一个 DSH 方法**(`session-controller/src/index.ts:462-465` 的 `@Remote('updateQueue')`,实现 `commands.ts:432-479`;Web 侧 `QueueDock.tsx` 的三个行内按钮走它)。载荷 `{ sid, itemId, action }`,`action` 是 DSH 的 `QueueAction` 联合(`types.ts:167-174`):`{kind:'edit', content:[{type:'text',text}]}` / `{kind:'remove'}` / `{kind:'steer'}`。**队列内容不在这个方法里读** —— 它在 `inbox` 投影(`{'next-turn':[…], 'next-step':[…]}`,随 `session.projections` 到手机),与"待处理集合是投影"同一条纪律。`steer` 只在当前轮次正在跑时成立,否则 DSH 回 `session/steer-unavailable`(`commands.ts:477-479`);项已不在队列回 `session/queue-item-not-found` |
-| `interaction.respond` | 手机→电脑 | `i:<callId>` | 提问 / 计划审查的**答案批次**:`{ sid, callId, answers: [{ id, selected[], custom? }] }`。形状与 DSH 的 `AskUserQuestionAnswer` **逐字一致**,不另造决策枚举(§6.3.1)。**同一个入口也收束在途的审批 claim**:分叉点不在方法名上,而在"这一项是不是一次在途 claim"(§6.2 的判定只有端口知道);审批的"允许一次"编码成 `selected` 含 DSH 的 outcome 值 `allowed-once`(`user-approval/src/types.ts:32`),空 `selected` 且无 `custom` = 拒绝。**`callId` 是会话事件 `tool/call` 里的真 id**:手机那张提问卡的 `itemId` 是 `t:<callId>`(`app/lib/data/projection.dart:1020-1033`),发回来的就是这个 id(`app/lib/data/app_model.dart:3148-3160`);连接器的在途 claim 也以它为键。legacy 形态的提问**没有** `wait.callId`,连接器从会话日志里推出**唯一**一条未结算的 `ask_user_question` `tool/call` 当键,推不出就**不参与**(沉默,§6.2;判据见 §6.3.1),**绝不猜一个 id** |
+| `interaction.respond` | 手机→电脑 | `itemId` | 提问 / 计划审查的**答案批次**:`{ sid, itemId, answers: [{ id, selected[], custom? }] }`。形状与 DSH 的 `AskUserQuestionAnswer` **逐字一致**,不另造决策枚举(§6.3.1)。**键是手机那张卡的 `itemId`**:审批 `i:<approval/asked.id>`、提问 `t:<tool/call.callId>`(与手机侧同名同源,`app/lib/data/projection.dart:1003,1031`);连接器的在途 claim 也以它为准。**审批不再依赖 `request.callId`** —— 它在 DSH 是**可选**的(`user-approval/src/types.ts:68-69`),审批的原生身份是服务铸的 `ApprovalRequestId`(`types.ts:13-17`,与 `approval/decided` 一对一配对),连接器从会话日志里认它(判据见 `connector/src/dsh/approval-call.ts`,认不出就**委托**,不猜)。**同一个入口也收束在途的审批 claim**:审批的"允许一次"编码成 `selected` 含 DSH 的 outcome 值 `allowed-once`(`user-approval/src/types.ts:32`),空 `selected` 且无 `custom` = 拒绝;**审批没有"按 approval id 作答"的 DSH 方法**,所以不在 claim 里的 `i:` 项回 `interaction/not-pending`(客户端动作是刷新)。提问没有 claim 时走 DSH 的 `userQuestions.answer`(`continued` 那条原生路);legacy 形态的提问**没有** `wait.callId`,连接器从会话日志里推出**唯一**一条未结算的 `ask_user_question` `tool/call` 当键,推不出就**不参与**(§6.2;判据见 §6.3.1),**绝不猜一个 id** |
 | `subagent.prompt` | 手机→电脑 | `requestId` | 给**可继续**子会话投递一条人写的消息。**子会话不能用 `session.prompt`**:宿主对它回 `internal: session "…" is owned by subagent routing`(2026-10-21 真机实测,手机侧表现成「发送失败」),DSH 的入口是 `SubagentRuntime.prompt`(`packages/subagent/subagent/src/index.ts:447` 的 `@Remote('prompt')`,服务键 `subagents`,请求形状 `control-types.ts:94-112`)。参数与 `session.prompt` 同形(`{ sid, content, mode? }`),`sid` 是**子会话**的别名;父会话 id 由连接器从 `session.list` 行的 `parentSessionId` 取(与 `follow` / `page` 的地址同一个出处)。一次性子会话在手机上是只读框,不会走到这里;**外部任务行不可进入**(`app/lib/ui/subagent_tree.dart` 的 `onTap: row.isExternal ? null : …`),它既没有"进入"这个动作,也不在只读档里 |
 | `session.cancel` | 手机→电脑 | — | 取消当前轮次但保留待处理收件箱 |
 | `session.refetch` | 手机→电脑 | — | 取单个大条目 |
@@ -478,12 +478,17 @@ ctx.get('typertGateway').wireStream.open('$events', { args: {} }, uplink, peer, 
 - **谁先答谁赢,迟到的结果是 no-op**(`api/gateway/src/index.ts:696-699`);断线**只撤投递、不结算**(`:717-721`),
   新 client 上来时**重投**在途事件(`:571`)。三条都在 DSH 源码里,不是本仓的发明。
 - **没有"接管档位"**:手机连着就是 gateway 的一个 client,和浏览器完全一样 —— 收到就参与。
-  只有两种情况会让它**委托**(`{kind:'next'}`):① 这个会话没登记给手机;② 没有稳定身份
-  (审批没有 `callId` / 提问认不出唯一的 tool call)。委托是 DSH 的语义(`types.ts:81-82` 原文
+  只有两种情况会让它**委托**(`{kind:'next'}`):① 这个会话没登记给手机;② 认不出这一项的
+  **原生身份**(审批:会话日志里没有唯一一条未结算的 `approval/asked`;提问:既没有
+  `wait.callId`、日志里也没有唯一一条未结算的 `ask_user_question`)。**审批不看 `request.callId`**
+  —— 它在 DSH 是可选的(`user-approval/src/types.ts:68-69`),浏览器没有它照样弹卡
+  (`ui-approval/src/client/index.ts:45-53`);身份是 `ApprovalRequestId`(`types.ts:13-17`)。
+  委托是 DSH 的语义(`types.ts:81-82` 原文
   "Return an outcome to claim the request or call `next()` to delegate"),gateway 的规则是
   "**只有所有投递都 `next` 之后**才交还 Host"(`gateway-stream.host.spec.ts:1402`)——
   所以一个 client 委托之后事件不结算、另一个 client 的卡照旧能答;真的全都没答,由 DSH 自己
-  兜底成 `'unavailable'`(`user-approval/src/index.ts:281-283`)。
+  兜底成 `'unavailable'`(`user-approval/src/index.ts:281-283`;提问是 `NO_PROVIDER`,
+  `user-questions/src/index.ts:318-321`)。
   **不想让手机参与就停掉传输通道**(手机连不上 = 没有投递),不在交互层再加一层开关。
 - **参与之后**:
   - 手机侧进入在途 claim。
@@ -516,7 +521,8 @@ ctx.get('typertGateway').wireStream.open('$events', { args: {} }, uplink, peer, 
 - **来源是日志,不是内存**:ask 与 outcome 成对落盘,悬空即"有 ask、无 outcome"。桥接启动 / 重连时重放日志尾部重建集合。
 - **它没有独立查询方法**:待处理集合是**会话事件的投影**,随 `ev` 帧一起到手机(§5.7 因此没有 `interaction.list`)。要"拉一次当前集合"就 `session.subscribe` 带 `since` —— 恢复语义已经把这件事做完了。
 - 电脑侧**不另推一份集合**:审批的 ask 是 `approval/asked` 会话事件、提问的 ask 是 `ask_user_question` 的 `tool/call`,手机从事件投影。两份集合必然对不上(§5.7 末尾)。**重连重投也不是第二份集合**:它发的是那条 ask 事件本身(原 seq),来源仍是会话日志(§5.7 的 `session.subscribe`)。
-- 集合是**持久条目的投影**(I4):有 itemId(`i:<callId>`)、进快照、upsert;不随连接态变化。
+- 集合是**持久条目的投影**(I4):有 itemId(审批 `i:<approval/asked.id>`、提问 `t:<tool/call.callId>`)、进快照、upsert;不随连接态变化。
+- **claim 的判据是"这个会话登记给了手机",不是"手机订阅了它"**:连接器收到一条转发交互时只问别名表(§5.1)。所以没订阅时手机看不到卡、连接器**仍会收下这条等待** —— 无害(桌面照常答;手机订阅回来还能补答),但别把它读成"手机答应了"。
 - 重建的边界要如实写进产品:只覆盖持久日志里的事件;日志被裁剪或会话被替换时,集合随基线快照刷新。
 
 #### 6.3.1 审批与提问在 DSH 侧的真实机制(2026-10-09 读源码核实)
@@ -556,6 +562,17 @@ ctx.get('typertGateway').wireStream.open('$events', { args: {} }, uplink, peer, 
   另:空 `selected` 且无 `custom` 是**合法的「显式跳过」**(`tool-ask-user/src/timed.ts:172,179`),
   连接器不得拦截。
 - `agent` 参数是 **live root agent**(`assertLiveRoot`,`:131`):子代理里的提问手机答不了(§15 已记)。
+- **审批的身份从会话日志认,不从请求对象拿**:`ApprovalRequestEvent` 里**没有**审批 id
+  (`user-approval/src/types.ts:63-76`),而服务在 dispatch **之前**就落盘了带 id 的
+  `approval/asked`(`:224-231`),成对的 `approval/decided` 与它同 id。判据:请求带 `callId` 时按
+  `callId` 精确配;不带时取**唯一**一条未结算的 `approval/asked`;0 条 / 多条都**委托**
+  (`connector/src/dsh/approval-call.ts`,与提问的 `question-call.ts` 同一形状)。
+- **计划审查在手机上只能看、不能答**:它由 `/exit_plan_mode` 的**程序化** `ask()` 产生
+  (`plan-mode/src/index.ts:313-330`),身份藏在 `intent.callId` 里,而**手机上那张卡不存在** ——
+  手机的提问卡只从 `ask_user_question` 的 `tool/call` 生成,`exit_plan_mode` 只落一条普通工具行。
+  **故意不 claim**:claim 一条用户看不到的交互,会把 DSH 原生的 fail-closed(`NO_PROVIDER`,
+  `user-questions/src/index.ts:318-321`)换成一个永远等不到人的挂起。要让手机答它,缺的是
+  "卡来自请求"这条投递(不是这里少读一个字段)。
 
 **legacy 提问的身份从会话日志里推**：
 
@@ -570,13 +587,14 @@ ctx.get('typertGateway').wireStream.open('$events', { args: {} }, uplink, peer, 
 - 于是交互客户端在 claim **之前**从 `agent.session.snapshotEvents()` 认身份(会话句柄由 `agentId` 经
   `agents.get` 取):取 `tool/call` 里
   `name === 'ask_user_question'` 的 callId,去掉已有 `tool/result` 的
-  (`tool/result.data.message.toolCallId`),**恰好一个**才用它做 claim 的键。时序由 DSH 的循环保证:
+  (`tool/result.data.message.toolCallId`),**恰好一个**才用它做 claim 的键(`t:<callId>`)。时序由 DSH 的循环保证:
   `tool/call` 在 execute **之前**追加(`agent-loop/src/tool-calls.ts:168`,写入函数 `:263-266`),
   `tool/result` 在执行**之后**(`:156`)。
-- **不唯一 / 没有就不参与**(沉默),**不抛也不猜**:抛等于让这次提问变成工具失败;
-  猜错会把答案写进另一次调用。程序化提问(`/exit_plan_mode` 的 `ask()`,不产生 `tool/call`)也落这一支
-  —— 它在手机上本来就没有卡。判据与失败方向写在 `connector/src/dsh/question-call.ts` 的文件头;
-  "没有 callId 就不 claim"在**类型**上表达(`ClaimRequest.callId` 必填,`connector/src/interaction-claims.ts`)。
+- **不唯一 / 没有就不参与**(委托),**不抛也不猜**:抛等于让这次提问变成工具失败;
+  猜错会把答案写进另一次调用。程序化提问(`/exit_plan_mode` 的 `ask()`,不产生 `ask_user_question` 的
+  `tool/call`)也落这一支 —— 它在手机上本来就没有卡(见上一条"计划审查只能看不能答")。
+  判据与失败方向写在 `connector/src/dsh/question-call.ts` 的文件头;
+  "认不出身份就不 claim"在**类型**上表达(`ClaimRequest.itemId` 必填,`connector/src/interaction-claims.ts`)。
 - **为什么不是把部署改成 `mode: timed`**:timed 会让每个提问都带 `timeout` 参数、桌面端的提问卡
   带倒计时,而改的是 shipped preset(`packages/bundle/web-app/presets/cordis.patch.yml`)—— 不是本仓
   代码,也不该由"手机上要能答"来换掉用户看得见的提问形态。timed 的投影行与 `answer()` 原生可用
@@ -910,6 +928,10 @@ job-settled        后台任务终结     turn-failed       轮次异常结束
 - 审批**没有超时**:手机与桌面都没人答时会一直等(与桌面那张卡同构),回合由用户取消结束。
 - 鸿蒙端不做"跑动中进度"表达,只做关键节点通知。
 - 子代理里的提问**手机答不了**(DSH 要求 live root agent,`user-questions` 的 `assertLiveRoot`)。
+- **计划审查手机上只能看、不能答**:那张卡来自**请求**而不是会话事件,手机侧没有它的形态
+  (§6.3.1)。电脑上照常弹、照常答;手机上那条 `exit_plan_mode` 只是一行普通工具记录。
+- **审批没有 `callId` 时手机也能答**:身份走 `approval/asked.id`(§6.3.1)。但**连接器认不出身份**
+  (日志里 0 条或多条未结算的 `approval/asked`)时仍然**委托** —— 那时只有桌面能答。
 - 待处理集合只覆盖持久日志里的事件;日志被裁剪或会话被替换时随快照刷新。
 - **审批的"迟到即丢弃"不需要桥接兜底**:有人答就结算(gateway 给其余投递发 `cancel`),
   没人答就一直挂着 —— 与浏览器那张卡完全同构,没有"看护计时器"这种东西。

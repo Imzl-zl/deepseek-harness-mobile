@@ -67,16 +67,20 @@ void main() {
       expect(item.title, '工具 bash 请求越权执行');
     });
 
-    test('**没有 callId 就不开卡**（连接器会把它交还桌面）', () {
-      // 没有稳定身份就没有在途 claim，手机上摆一张答不了的卡是对用户说谎。
-      expect(
-        interactionSignalOf(
-          type: 'approval/asked',
-          seq: 3,
-          data: askedData(callId: null),
-        ),
-        isNull,
+    test('**没有 callId 也开卡**：审批的身份是 `approval/asked.id`，不是 callId', () {
+      // `callId` 在 DSH 是**可选**的（`user-approval/src/types.ts:68-69`），浏览器没有它
+      // 照样弹卡照样答（`client/ui-approval/src/client/index.ts:45-53`）。连接器也以
+      // `approval/asked.id` 为在途 claim 的键，所以手机这张卡答得了。
+      final signal = interactionSignalOf(
+        type: 'approval/asked',
+        seq: 3,
+        data: askedData(callId: null),
       );
+      expect(signal, isA<InteractionOpened>());
+      final item = (signal as InteractionOpened).item;
+      expect(item.itemId, 'i:ap-1', reason: '答复的键是卡自己的 itemId');
+      expect(item.callId, isNull, reason: 'callId 只作为"针对哪次工具调用"的关联字段');
+      expect(item.kind, InteractionKind.approval);
     });
 
     test('approval/decided 收束同一个 itemId', () {

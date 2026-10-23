@@ -138,9 +138,9 @@ const METHOD_SET: ReadonlySet<string> = new Set(METHODS)
 /**
  * 带幂等键的方法（§5.7 的「幂等键」列非空的那几个）。
  *
- * `interaction.respond` 的键形状特殊（`i:<callId>`，载荷是答案批次而非标量决策），
- * 所以它由 handler 自己组装（见 `recovery.ts` 的 `answer`）——
- * 这里只要求**必须带**一个键。
+ * `interaction.respond` 的键是**手机那张卡的 `itemId`**（审批 `i:<approvalId>`、
+ * 提问 `t:<callId>`，载荷是答案批次而非标量决策）—— 键由手机侧组装
+ * （`app/lib/data/app_model.dart` 的 `respondInteraction`），这里只要求**必须带**一个。
  */
 export const IDEMPOTENT_METHODS: ReadonlySet<MethodName> = new Set([
   'session.create',

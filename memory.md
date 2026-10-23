@@ -237,10 +237,11 @@
     App 失败分类（传输失败留卡可重试、`not-pending` 撤卡、失败不写成功回执）。
     笔记 `implemented/2026-10-23-in-flight-interaction-is-host-held.md`。
     **仍未做（明确不顺手做）**：timed 部署（代价是桌面倒计时 + 模型 120 s 后继续）。
-    计划审查卡的机制**已查清（2026-10-24 审计 C11）**：`/exit_plan_mode` 的询问带
-    `intent.callId`（`plan-mode/src/index.ts:326`），我们只读 `wait.callId` ⇒ 认不出 ⇒ 委托，
-    于是 `InteractionKind.plan` 在手机上**不可达**（只有演示入口能造）。
-    工单 `proposed/2026-10-24-interaction-identity-from-native-ids.md`（W1）。
+    计划审查卡**已查清（2026-10-24，W1 落地时改判）**：`/exit_plan_mode` 的询问带
+    `intent.callId`（`plan-mode/src/index.ts:326`），但**手机上没有那张卡** —— 提问卡只从
+    `ask_user_question` 的 `tool/call` 生成，`exit_plan_mode` 只落一条普通工具行。
+    claim 一条用户看不到的交互会把 DSH 的 `NO_PROVIDER` fail-closed 换成永远挂起 ⇒
+    **不做**，限制写进契约 §15 / §6.3.1；要真答需"卡来自请求"的投递（B12 升级）。
 12. ~~**交互改成 gateway 的 owner client**~~ **已修（2026-10-23）**：连接器作为 owner client 接
     gateway 的 `$events` 转发流 —— 桌面与手机**同时**收到、谁先答谁赢、其余收 `cancel`；
     host answerer 与 `prepend` 整条路删掉（旧笔记移入 `archived/`）。
@@ -257,10 +258,10 @@
     总账 `.agents/notes/proposed/2026-10-24-native-rules-audit.md`（B1–B13 + C 表逐行结论 +
     归类统计 + 根因分段）；开工单 **W1** 身份面改读原生 / **W2** 换代不撤 claim /
     **W3** 终态只有一个来源 / **W4** 运行态改读原生，零碎 **Z1–Z6**
-    （`proposed/2026-10-24-audit-cleanup-batch.md`）。**下一步默认 W1**。
+    （`proposed/2026-10-24-audit-cleanup-batch.md`）。
     **开工队列（用户已准 2026-10-24；每件一个提交，按"0 真机优先"排序）**：
-    ① **W1** 身份面改读原生（0 真机；只有"计划审查卡能弹出并答"要 1 回合）
-    ② **W2** 换代不撤在途 claim（0 真机）
+    ① ~~**W1** 身份面改读原生~~ **✅ 已落地（`9f1c6a4` 前后，见下条索引）**
+    ② **W2** 换代不撤在途 claim（0 真机）← **下一步**
     ③ **Z5** 配对码关联想 → **Z2** `onOffline` 死码 → **Z1** `fullAccess` 过滤（三件都 0 真机）
     ④ **Z4** `stats.devices` → **Z3** 匿名限流分桶（relay，0 真机）
     ⑤ **Z6a** 预设文案漂移 → **Z6b** §15 一句（0 真机）
@@ -418,12 +419,13 @@
     读取工具，并支持上下文压缩…"（`ui-agent-preset/src/client/locales.ts:100`），我们抄的是旧文案
     （`app/lib/model/agent_preset.dart:51`）；`app/test/agent_preset_test.dart:103-106` 复述同一份
     手抄串，测不出漂移。→ 工单 Z6a（修字 + `tools.md` 升级清单里加"重抄四档"）。
-15. **`interaction-face` 的 `pendingOf` 是生产死码**（2026-10-24 审计 N1）：
-    `pendingOf` / `projectPendingQuestions` / `PendingItem` 只有单测用，
-    且它的 `i:<callId>` 与手机侧 `i:<approvalId>` / `t:<callId>` 已经不一致。→ 工单 W1 里删。
-16. **审批没有 `callId` 时手机不参与**（2026-10-24 审计 B2/N4）：而 `callId` 在 DSH 是可选字段
-    （`user-approval/src/types.ts:68-69`），浏览器照样弹卡；且这种审批**连重投也拿不到**
-    （`ask-event.ts:54-68` 按 callId 匹配）。→ 工单 W1（键改成 `approval/asked.id`）。
+15. ~~**`interaction-face` 的 `pendingOf` 是生产死码**~~ **已删（2026-10-24，W1）**：
+    `pendingOf` / `projectPendingQuestions` / `PendingItem` 全删，`itemIdOf` 换成
+    `approvalItemId` / `questionItemId` / `interactionItemOf` 三个函数（一处表达）。
+16. ~~**审批没有 `callId` 时手机不参与**~~ **已修（2026-10-24，W1）**：审批的 claim 键改成
+    `i:<approval/asked.id>`（`connector/src/dsh/approval-call.ts`），`interaction.respond` 的
+    键从 `callId` 改成 `itemId`（`i:<approvalId>` / `t:<callId>`），重投也按 id 匹配。
+    **认不出身份时仍然委托**（日志 0 条/多条未结算）—— 那时只有桌面能答，契约 §15 已写。
 
 ## 范围决定（别再当缺口）
 
@@ -444,7 +446,7 @@
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
 | `cd app && flutter test` | **1140 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **611 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **615 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 
@@ -490,3 +492,8 @@
 - 2026-10-23 交互改成 gateway 的 owner client（`$events` 转发流 + `$events/result`，桌面与手机同时可见、
   谁先答谁赢）—— `2026-10-23-interaction-as-gateway-client.md`；
   旧的「应答者必须 prepend」移入 `archived/`。
+- 2026-10-24 交互身份改读原生（审批 `i:<approval/asked.id>`、`interaction.respond` 的键 = `itemId`；
+  删 `pendingOf` 死码；**计划审查不接线**并写进 §15）——
+  `2026-10-24-interaction-identity-from-native-ids.md`。门禁：connector **611 → 615**、
+  flutter **1140**、protocol 454·26·49、boundary 360。
+  顺带修：手机侧 fixtures 回放条数 16 → 15（`2da3745`，那条门禁从 `fce4f9e` 起一直是红的）。

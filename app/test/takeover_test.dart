@@ -297,8 +297,16 @@ void main() {
 
       c.enqueue(approval('a1'));
       await c.allowOnce();
-      expect(sent.single.callId, 'call-a1');
-      expect(sent.single.answers.single.id, 'call-a1');
+      expect(
+        sent.single.itemId,
+        'a1',
+        reason: '答复的键是卡自己的 itemId（连接器的 claim 也以它为准）',
+      );
+      expect(
+        sent.single.answers.single.id,
+        'a1',
+        reason: '审批的答案项 id 只要非空；身份已经在 itemId 上',
+      );
       expect(
         sent.single.answers.single.selected,
         // **字面值，不 import 常量**：这条断言钉的是"跨端契约的那个字符串"，

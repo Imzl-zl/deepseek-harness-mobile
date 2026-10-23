@@ -54,11 +54,16 @@ export function settleCall(session: Session, callId: string, callSeq: SessionSeq
   )
 }
 
-/** 追加一条 `approval/asked`（DSH 在 dispatch 之前 append，`user-approval/src/index.ts:225`）。 */
-export function openApproval(session: Session, approvalId: string, callId: string): SessionSeq {
+/**
+ * 追加一条 `approval/asked`（DSH 在 dispatch 之前 append，`user-approval/src/index.ts:225`）。
+ *
+ * `callId` **可选**：请求对象里它是可选的（`user-approval/src/types.ts:68-69`），落盘时
+ * "有才写"（`src/index.ts:228`）。审批的身份是 `id`，不是 `callId`。
+ */
+export function openApproval(session: Session, approvalId: string, callId?: string): SessionSeq {
   return session.append('approval/asked', {
     id: approvalId as never,
     toolName: 'bash',
-    callId: callId as never,
+    ...callId === undefined ? {} : { callId: callId as never },
   }).seq
 }

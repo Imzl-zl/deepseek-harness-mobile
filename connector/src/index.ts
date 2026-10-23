@@ -746,8 +746,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
                 ...createQuestionFaceDeps(ctx, {
                   sessionOf: (sid) => aliases?.sessionOf(sid),
                 }),
-                settleClaim: (sid, callId, answers) =>
-                  interactionPort.settleClaim(sid, callId, answers),
+                settleClaim: (sid, itemId, answers) =>
+                  interactionPort.settleClaim(sid, itemId, answers),
               })
         if (questionFace !== null) {
           handlerDeps.interaction = questionFace

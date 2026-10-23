@@ -106,7 +106,7 @@ class InteractionItem {
   const InteractionItem({
     required this.itemId,
     this.sid = '',
-    required this.callId,
+    this.callId,
     required this.kind,
     this.title = '',
     this.detail = '',
@@ -119,13 +119,17 @@ class InteractionItem {
   });
 
   /// 稳定身份：审批是 `i:<approvalId>`，提问是 `t:<callId>`（契约 §5.2）。
+  ///
+  /// **它是答复的键**（`interaction.respond` 的 `itemId`）：连接器的在途 claim 也以它为键。
   final String itemId;
 
   /// 会话别名（答复要带回它）。
   final String sid;
 
-  /// 提问 / 审批的调用身份。**没有它就不能从手机答**（连接器据此建立在途 claim）。
-  final String callId;
+  /// "这条交互针对哪一次工具调用"。**只为呈现与关联**，不再是答复的键 ——
+  /// 审批的 `callId` 在 DSH 是可选的（`user-approval/src/types.ts:68-69`），
+  /// 拿它当键会把"没有 tool call 的审批"整类挡在门外。
+  final String? callId;
 
   final InteractionKind kind;
 
@@ -175,15 +179,14 @@ class InteractionAnswer {
   const InteractionAnswer({
     required this.sid,
     required this.itemId,
-    required this.callId,
     required this.answers,
   });
 
   /// 会话别名（电脑侧据此反解回 DSH 会话 id）。
   final String sid;
 
+  /// 这一项的身份 = 卡自己的 `itemId`（`i:<approvalId>` / `t:<callId>`，契约 §5.7）。
   final String itemId;
-  final String callId;
 
   /// 答案批次：每个问题恰好一项（契约 §5.7）。
   final List<InteractionAnswerItem> answers;

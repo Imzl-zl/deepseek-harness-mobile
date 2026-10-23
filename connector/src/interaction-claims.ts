@@ -64,14 +64,19 @@ export interface ClaimRequest {
   /** 通道别名（中转只看得到它）。 */
   sid: string
   /**
-   * claim 的唯一键：手机发回的答复也以它为键（`interaction.respond` 的 `callId`）。
+   * claim 的唯一键：**手机那张卡的 `itemId`**（`interaction.respond` 的 `itemId` 也是它）。
    *
-   * 审批：请求对象里的 `callId`（DSH 只在有 tool call 时才给）；提问：timed 形态自带
-   * `wait.callId`，legacy 形态从会话日志里推出**唯一**一条未结算的 `ask_user_question`
-   * `tool/call`（判据见 `dsh/question-call.ts`）。**认不出来就不 claim**（调用方委托）——
-   * 所以这里必有值。
+   * 取值是 DSH 自己的两个原生身份之一，按交互种类不同：
+   *
+   * - 审批：`i:<approval/asked.id>`（服务铸的 `ApprovalRequestId`，`user-approval/src/types.ts:13-17`；
+   *   手机侧早就在用它当卡 id，`app/lib/data/projection.dart:997,1003`）。**不看 `callId`** ——
+   *   那是可选的（`types.ts:68-69`），拿它当键会把"没有 tool call 的审批"整类挡在门外。
+   * - 提问：`t:<callId>`（timed 形态的 `wait.callId`；legacy 形态从会话日志里推出**唯一**一条
+   *   未结算的 `ask_user_question` `tool/call`，判据见 `dsh/question-call.ts`）。
+   *
+   * **认不出来就不 claim**（调用方委托）：所以这里必有值。
    */
-  callId: string
+  itemId: string
   /** 重连重投用：这条 ask 的会话事件（原 seq + body，见 `dsh/ask-event.ts`）。 */
   redeliver?: Redelivery
 }
@@ -108,7 +113,7 @@ export interface InteractionPort {
    * @returns `true` = 已收束；`false` = 没有这个 callId 的在途 claim，
    *   调用方继续走提问路由（`continued` 提问正是这条路）。
    */
-  settleClaim(sid: string, callId: string, answers: readonly AnswerItem[]): boolean
+  settleClaim(sid: string, itemId: string, answers: readonly AnswerItem[]): boolean
   /**
    * gateway 说这条 pending event 已经结算（别人先答 / asker 取消）。
    *
@@ -117,7 +122,7 @@ export interface InteractionPort {
    *
    * @returns `true` = 撤掉了一条在途 claim；`false` = 没有（已经结过 / 不是我们的）。
    */
-  cancelClaim(callId: string): boolean
+  cancelClaim(itemId: string): boolean
   /**
    * 该会话上仍在途的 ask 事件（重连重投用，见 `dsh/ask-event.ts` 的 `Redelivery`）。
    *
@@ -131,12 +136,12 @@ export interface InteractionPort {
 }
 
 export function createInteractionPort(): InteractionPort {
-  /** `callId → 在途 claim`。一个 callId 同时只可能有一个 claim（DSH 的应答链保证）。 */
+  /** `itemId → 在途 claim`。一个 itemId 同时只可能有一个 claim（DSH 的应答链保证）。 */
   const claims = new Map<string, Claim>()
 
   const ask = <T>(kind: Claim['kind'], request: ClaimRequest): Promise<ClaimSettlement<T>> =>
     new Promise((resolve) => {
-      claims.set(request.callId, {
+      claims.set(request.itemId, {
         kind,
         sid: request.sid,
         ...(request.redeliver === undefined ? {} : { redeliver: request.redeliver }),
@@ -166,23 +171,23 @@ export function createInteractionPort(): InteractionPort {
       return out
     },
 
-    cancelClaim(callId) {
-      const claim = claims.get(callId)
+    cancelClaim(itemId) {
+      const claim = claims.get(itemId)
       if (claim === undefined) return false
       // 先摘表再收束（与 `settleClaim` 同一个顺序）：否则"撤掉"与"手机又点了一下"
       // 之间有一拍，那一拍里 `settleClaim` 会认下一条已经不属于任何人的答复。
-      claims.delete(callId)
+      claims.delete(itemId)
       claim.resolve({ kind: 'withdrawn' })
       return true
     },
 
-    settleClaim(sid, callId, answers) {
-      const claim = claims.get(callId)
+    settleClaim(sid, itemId, answers) {
+      const claim = claims.get(itemId)
       if (claim === undefined) return false
-      // **会话被替换**：这个 callId 的在途 claim 属于另一个 `sid` 了。放行它会把
+      // **会话被替换**：这个 itemId 的在途 claim 属于另一个 `sid` 了。放行它会把
       // 答复写进一个已经不持有这个提问的会话 —— 与 DSH"迟到即丢弃"同构，丢弃。
       if (claim.sid !== sid) return false
-      claims.delete(callId)
+      claims.delete(itemId)
       if (claim.kind === 'approval') {
         // **词汇表映射只在这里**：认不出的标签就是拒绝 —— 与 DSH 把词汇表外返回值归一成
         // `unavailable` 同向（`user-approval/src/index.ts:288`）。

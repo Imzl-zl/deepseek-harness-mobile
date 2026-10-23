@@ -1034,10 +1034,9 @@ test('interaction.respond：内核照常被调，并记 lastInteractedAt（时�
   const handlers = build({
     aliases: preloadedAliases(),
     interaction: {
-      pendingOf: () => [],
       respond: (params) => {
         seen.push(params)
-        return { itemId: 'i:call-1' }
+        return { itemId: 'i:approval-1' }
       },
     },
     connection: { deviceId: () => 'dev-1', presence: presence.sink },
@@ -1045,12 +1044,12 @@ test('interaction.respond：内核照常被调，并记 lastInteractedAt（时�
   const handler = handlers['interaction.respond']
   assert.ok(handler !== undefined)
 
-  const answers = [{ id: 'call-1', selected: ['allowed-once'] }]
-  assert.deepEqual(handler({ sid: 'sid_dsh-1', callId: 'call-1', answers }, {}), {
-    itemId: 'i:call-1',
+  const answers = [{ id: 'i:approval-1', selected: ['allowed-once'] }]
+  assert.deepEqual(handler({ sid: 'sid_dsh-1', itemId: 'i:approval-1', answers }, {}), {
+    itemId: 'i:approval-1',
   })
   // 分叉点在内核里（它问一次 settleClaim），处理器不替它决定这是审批还是提问。
-  assert.deepEqual(seen, [{ sid: 'sid_dsh-1', callId: 'call-1', answers }])
+  assert.deepEqual(seen, [{ sid: 'sid_dsh-1', itemId: 'i:approval-1', answers }])
   // **lastInteractedAt 由连接器盖**：客户端时钟会漂，而这个值只喂仲裁排序的并列判据。
   assert.deepEqual(presence.calls, [{ what: 'interacted', devId: 'dev-1', sid: 'sid_dsh-1' }])
 })
@@ -1062,7 +1061,7 @@ test('interaction.respond / sync.hello 的能力缺失时整个方法不出现�
 
   const full = build({
     sessionSubscriptions: fakeSessionSubscriptions(),
-    interaction: { pendingOf: () => [], respond: () => ({ itemId: 'i:x' }) },
+    interaction: { respond: () => ({ itemId: 't:x' }) },
   })
   assert.deepEqual(handlers_info(full).methods, [
     'devices.list',

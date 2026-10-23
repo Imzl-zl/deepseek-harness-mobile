@@ -142,7 +142,7 @@ void main() {
     expect(item.title, '要删文件');
   });
 
-  test('答复的载荷逐字段符合契约 §5.7，幂等键是 i:<callId>', () async {
+  test('答复的载荷逐字段符合契约 §5.7：键是 itemId，幂等键也用它', () async {
     final client = _FakeClient();
     final app = AppModel(client: client);
     addTearDown(app.dispose);
@@ -151,21 +151,20 @@ void main() {
       const InteractionAnswer(
         sid: 'sid-1',
         itemId: 'i:ap-1',
-        callId: 'call-1',
         answers: [
-          InteractionAnswerItem(id: 'call-1', selected: ['allowed-once']),
+          InteractionAnswerItem(id: 'i:ap-1', selected: ['allowed-once']),
         ],
       ),
     );
 
     expect(client.called, ['interaction.respond']);
-    expect(client.lastRequestId, 'i:call-1');
+    expect(client.lastRequestId, 'i:ap-1');
     expect(client.lastParams, {
       'sid': 'sid-1',
-      'callId': 'call-1',
+      'itemId': 'i:ap-1',
       'answers': [
         {
-          'id': 'call-1',
+          'id': 'i:ap-1',
           'selected': ['allowed-once'],
         },
       ],
@@ -181,7 +180,6 @@ void main() {
       const InteractionAnswer(
         sid: 'sid-1',
         itemId: 't:call-q',
-        callId: 'call-q',
         answers: [InteractionAnswerItem(id: 'q1', selected: [])],
       ),
     );

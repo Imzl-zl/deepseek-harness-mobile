@@ -26,7 +26,14 @@
  * ## 两种"不参与"，一律回 `{kind:'next'}`（原生委托）
  *
  * 1. 这个会话没登记给手机（别名表里没有）；
- * 2. 没有稳定身份（审批没有 `callId`；提问认不出唯一的 tool call）。
+ * 2. 认不出这一项的原生身份（审批：日志里没有唯一一条未结算的 `approval/asked`；
+ *    提问：既没有 `wait.callId`、日志里也没有唯一一条未结算的 `ask_user_question`）。
+ *
+ * **身份用的是 DSH 自己的 id**：审批 = `ApprovalRequestId`（`approval/asked.id`），
+ * 提问 = `tool/call` 的 `callId`；手机那张卡的 `itemId` 就是它们（`i:` / `t:` 前缀，
+ * 见 `interaction-face.ts` 的 {@link interactionItemOf}）。**不看审批的 `callId`** ——
+ * 它在 DSH 是可选的（`user-approval/src/types.ts:68-69`），浏览器没有它照样弹卡
+ * （`client/ui-approval/src/client/index.ts:45-53`）。
  *
  * **没有"档位"**：手机连着就是 client、就参与，和浏览器完全一样。以前那三档
  * （`never` / `foreground` / `always`）是为"抢"服务的 —— 抢到桌面就看不到，所以需要
@@ -52,8 +59,10 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
 
 import type { InteractionPort } from '../interaction-claims.js'
+import { approvalItemId, questionItemId } from '../interaction-face.js'
 import { createBackoff, type Backoff } from '../transport/backoff.js'
 import { approvalAskEvent, questionAskEvent, redeliverOf } from './ask-event.js'
+import { resolveApprovalIdentity } from './approval-call.js'
 import { resolveQuestionCall } from './question-call.js'
 
 /** `setTimeout` 语义，返回取消函数（与 `protocol/handshake-driver.ts:108` 的注入形状一致）。 */
@@ -270,12 +279,12 @@ export function createInteractionClient(
   }
 
   /** 登记一条在途投递。`cancel` 帧与流断开都经由它撤掉手机侧的在途 claim。 */
-  const track = (eventId: string, callId: string): void => {
+  const track = (eventId: string, itemId: string): void => {
     const controller = new AbortController()
     controller.signal.addEventListener(
       'abort',
       () => {
-        deps.port.cancelClaim(callId)
+        deps.port.cancelClaim(itemId)
       },
       { once: true },
     )
@@ -321,27 +330,41 @@ export function createInteractionClient(
     log?.warn('交互结果没有被 gateway 接纳', { eventId, error: body.result?.error })
   }
 
-  /** 一条审批：仲裁 → claim → 手机答了就回 `allowed-once` / `rejected`。 */
+  /** 一条审批：认身份 → claim → 手机答了就回 `allowed-once` / `rejected`。 */
   const answerApproval = async (
     frame: Extract<Downlink, { type: 'waterfall' }>,
     sid: string,
   ): Promise<void> => {
     const request = frame.request
-    const callId = request['callId']
-    // 没有 callId 就没有稳定身份（手机发回的答复以它为键）→ 委托。
-    if (typeof callId !== 'string' || callId === '') {
+    const requestCallId = typeof request['callId'] === 'string' && request['callId'] !== ''
+      ? request['callId']
+      : undefined
+    const events = eventsOf(frame.agentId)
+    // **身份**：请求对象里没有审批 id（`user-approval/src/types.ts:63-76`），而服务在 dispatch
+    // 之前就把带 id 的 `approval/asked` 落盘了（`src/index.ts:224-231`）—— 从日志里取它。
+    // 带 `callId` 时按 callId 精确配，不带时才退到"唯一一条未结算"，认不出就委托。
+    // 判据与失败方向见 `approval-call.ts` 的文件头。
+    const identity = events === undefined
+      ? ({ kind: 'none' } as const)
+      : resolveApprovalIdentity(events, requestCallId)
+    if (identity.kind !== 'found') {
+      log?.warn('审批认不出对应的 approval/asked 身份：这条委托出去（桌面照常答）', {
+        sid,
+        reason: identity.kind,
+        ...(identity.kind === 'ambiguous' ? { ids: identity.ids } : {}),
+      })
       await reply(frame.eventId, { kind: 'next' })
       return
     }
+    const itemId = approvalItemId(identity.id)
     // 重连重投：那条 `approval/asked` 的原 seq 与 body 随请求进 claim（`ask-event.ts`）。
-    const events = eventsOf(frame.agentId)
-    const redeliver = events === undefined ? undefined : redeliverOf(approvalAskEvent(events, callId))
+    const redeliver = events === undefined ? undefined : redeliverOf(approvalAskEvent(events, identity.id))
 
-    track(frame.eventId, callId)
+    track(frame.eventId, itemId)
     try {
       const settlement = await deps.port.askApproval({
         sid,
-        callId,
+        itemId,
         ...(redeliver === undefined ? {} : { redeliver }),
       })
       if (settlement.kind !== 'answered') return
@@ -373,6 +396,14 @@ export function createInteractionClient(
     // **身份**：timed 形态自带 `wait.callId`；legacy 形态没有 —— 只能从会话日志里推
     // （唯一一条没有 `tool/result` 的 `ask_user_question` `tool/call`）。判据与失败方向
     // 见 `question-call.ts` 的文件头：认不出就**委托**，不抛也不猜。
+    //
+    // **为什么不用计划审查的 `intent.callId`**（它就在请求里，`plan-mode/src/index.ts:326`）：
+    // 那个 id 是 `exit_plan_mode` 的 tool call，而**手机上没有它的卡** —— 手机的提问卡只从
+    // `ask_user_question` 的 `tool/call` 生成（`app/lib/data/projection.dart:1020-1043`），
+    // `exit_plan_mode` 只落一条普通工具行。claim 一条"用户根本看不到"的交互，会把 DSH 原生的
+    // **fail-closed**（没有任何 answerer 时抛 `NO_PROVIDER`，`user-questions/src/index.ts:318-321`）
+    // 换成一个**永远等不到人**的挂起。要真让手机答计划审查，缺的是"卡来自请求"这条投递
+    // （契约 §6.3 的已知缺口），不是这里少读一个字段。
     const identity = waitCallId !== undefined
       ? ({ kind: 'found', callId: waitCallId } as const)
       : events === undefined
@@ -380,7 +411,7 @@ export function createInteractionClient(
         : resolveQuestionCall(events)
     if (identity.kind !== 'found') {
       // 计划审查是**程序化**提问（`/exit_plan_mode` 的 `ask()`）：它本来就没有
-      // `tool/call`，所以"认不出"是正常形态，不该留 warn。其余情况是异常，要留声。
+      // `ask_user_question` 的 `tool/call`，所以"认不出"是正常形态，不该留 warn。其余情况是异常，要留声。
       if (planReviewOf(items) === undefined) {
         log?.warn('提问认不出唯一的 tool call 身份：这条委托出去（桌面照常答）', {
           sid,
@@ -391,14 +422,15 @@ export function createInteractionClient(
       await reply(frame.eventId, { kind: 'next' })
       return
     }
+    const itemId = questionItemId(identity.callId)
     const redeliver =
       events === undefined ? undefined : redeliverOf(questionAskEvent(events, identity.callId))
 
-    track(frame.eventId, identity.callId)
+    track(frame.eventId, itemId)
     try {
       const settlement = await deps.port.askQuestion({
         sid,
-        callId: identity.callId,
+        itemId,
         ...(redeliver === undefined ? {} : { redeliver }),
       })
       if (settlement.kind !== 'answered') return

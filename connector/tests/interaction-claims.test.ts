@@ -4,6 +4,9 @@
  * 这一层**只交结算单**（`answered` / `withdrawn`），回话由 gateway client 决定：
  * `answered` → `{kind:'result'}`；`withdrawn` → **什么都不回**。
  *
+ * **键是 `itemId`**（手机那张卡的 id）：审批 `i:<approval/asked.id>`、提问 `t:<callId>`。
+ * 端口不认识这两种交互的差别（那是 `interaction-face.ts` 的事），它只认"这一个键"。
+ *
  * **没有计时器**：DSH 的审批没有"等多久"这个概念，端口也就不接受 `guardMs` / `schedule`
  * 这类参数（`createInteractionPort()` 不接任何依赖）—— 这条约束在签名上，不靠测试。
  */
@@ -18,13 +21,13 @@ import {
 
 const approval = (patch: Partial<ClaimRequest> = {}): ClaimRequest => ({
   sid: 'sid_1',
-  callId: 'call-1',
+  itemId: 'i:a1',
   ...patch,
 })
 
 const question = (patch: Partial<ClaimRequest> = {}): ClaimRequest => ({
   sid: 'sid_1',
-  callId: 'call-q',
+  itemId: 't:q1',
   ...patch,
 })
 
@@ -40,16 +43,16 @@ test('审批：手机答"允许一次"→ answered+allowed-once；答别的 → 
   assert.equal(
     // **字面值，不 import 常量**：这条钉的是跨端契约的那个字符串。用常量来断等于恒真
     // （改常量两边一起改，红不了 —— 实测过）。
-    port.settleClaim('sid_1', 'call-1', [{ id: 'call-1', selected: ['allowed-once'] }]),
+    port.settleClaim('sid_1', 'i:a1', [{ id: 'i:a1', selected: ['allowed-once'] }]),
     true,
   )
   assert.deepEqual(await pending, { kind: 'answered', value: 'allowed-once' })
   assert.equal(port.pending, 0, '收束后要撤：否则在途表只涨不消')
 
   // 词汇表之外的标签一律读成拒绝 —— 与 DSH 把野值归一成 unavailable 同向。
-  const rejected = port.askApproval(approval({ callId: 'call-2' }))
+  const rejected = port.askApproval(approval({ itemId: 'i:a2' }))
   await tick()
-  assert.equal(port.settleClaim('sid_1', 'call-2', [{ id: 'call-2', selected: ['whatever'] }]), true)
+  assert.equal(port.settleClaim('sid_1', 'i:a2', [{ id: 'i:a2', selected: ['whatever'] }]), true)
   assert.deepEqual(await rejected, { kind: 'answered', value: 'rejected' })
 })
 
@@ -59,7 +62,7 @@ test('审批：空 selected 且无 custom = 显式跳过，读成拒绝而不是
   await tick()
   // DSH 把"空 selected 且无 custom"定义为合法跳过（`tool-ask-user/src/timed.ts:172,179`），
   // 连接器不得拦截。审批侧它天然落在"没有 allowed-once 标签"上。
-  assert.equal(port.settleClaim('sid_1', 'call-1', [{ id: 'call-1', selected: [] }]), true)
+  assert.equal(port.settleClaim('sid_1', 'i:a1', [{ id: 'i:a1', selected: [] }]), true)
   assert.deepEqual(await pending, { kind: 'answered', value: 'rejected' })
 })
 
@@ -67,12 +70,12 @@ test('cancelClaim：gateway 说这条已经结算 → withdrawn、摘表、不�
   const port = createInteractionPort()
   const pending = port.askApproval(approval({ redeliver: { seq: 7, body: '{}' } }))
   await tick()
-  assert.equal(port.cancelClaim('call-1'), true, '撤掉在途 claim 必须报"撤到了"')
+  assert.equal(port.cancelClaim('i:a1'), true, '撤掉在途 claim 必须报"撤到了"')
   assert.deepEqual(await pending, { kind: 'withdrawn' })
   assert.equal(port.pending, 0)
   assert.deepEqual(port.pendingAsks('sid_1'), [], '撤掉的 claim 不再重投')
-  assert.equal(port.cancelClaim('call-1'), false, '第二次是 no-op（已经不在表里）')
-  assert.equal(port.cancelClaim('nope'), false, '不认识的 callId 也是 no-op')
+  assert.equal(port.cancelClaim('i:a1'), false, '第二次是 no-op（已经不在表里）')
+  assert.equal(port.cancelClaim('nope'), false, '不认识的 itemId 也是 no-op')
 })
 
 test('settleClaim 与 cancelClaim 谁先到谁赢：先结算的收口，后到的是 no-op', { timeout: 60_000 }, async () => {
@@ -80,18 +83,18 @@ test('settleClaim 与 cancelClaim 谁先到谁赢：先结算的收口，后到�
   const answeredPending = answered.askApproval(approval())
   await tick()
   assert.equal(
-    answered.settleClaim('sid_1', 'call-1', [{ id: 'call-1', selected: [APPROVAL_ALLOW_LABEL] }]),
+    answered.settleClaim('sid_1', 'i:a1', [{ id: 'i:a1', selected: [APPROVAL_ALLOW_LABEL] }]),
     true,
   )
-  assert.equal(answered.cancelClaim('call-1'), false, '已经结算的 claim 不该还能被撤')
+  assert.equal(answered.cancelClaim('i:a1'), false, '已经结算的 claim 不该还能被撤')
   assert.deepEqual(await answeredPending, { kind: 'answered', value: 'allowed-once' })
 
   const cancelled = createInteractionPort()
   const cancelledPending = cancelled.askApproval(approval())
   await tick()
-  assert.equal(cancelled.cancelClaim('call-1'), true)
+  assert.equal(cancelled.cancelClaim('i:a1'), true)
   assert.equal(
-    cancelled.settleClaim('sid_1', 'call-1', [{ id: 'call-1', selected: [APPROVAL_ALLOW_LABEL] }]),
+    cancelled.settleClaim('sid_1', 'i:a1', [{ id: 'i:a1', selected: [APPROVAL_ALLOW_LABEL] }]),
     false,
     '撤掉之后手机上再点也答不进来（gateway 那边已经结算了）',
   )
@@ -103,7 +106,7 @@ test('审批：会话被替换（答复的 sid 与在途 claim 不一致）→ �
   port.askApproval(approval())
   await tick()
   assert.equal(
-    port.settleClaim('sid_2', 'call-1', [{ id: 'call-1', selected: ['allowed-once'] }]),
+    port.settleClaim('sid_2', 'i:a1', [{ id: 'i:a1', selected: ['allowed-once'] }]),
     false,
     '认下它就是把一次批准写进一个已经不持有这个提问的会话',
   )
@@ -119,7 +122,7 @@ test('提问：答案批次**原样转发**（一个字段都不翻译）', { ti
   const pending = port.askQuestion(question())
   await tick()
   assert.equal(
-    port.settleClaim('sid_1', 'call-q', [
+    port.settleClaim('sid_1', 't:q1', [
       { id: 'q1', selected: ['第二个'], custom: '补充一句' },
       { id: 'q2', selected: [] },
     ]),
@@ -136,18 +139,18 @@ test('提问：答案批次**原样转发**（一个字段都不翻译）', { ti
   })
 })
 
-test('审批与提问并存：两条 claim 互不干扰，各按自己的 callId 收束', { timeout: 60_000 }, async () => {
+test('审批与提问并存：两条 claim 互不干扰，各按自己的 itemId 收束', { timeout: 60_000 }, async () => {
   const port = createInteractionPort()
   const ap = port.askApproval(approval())
   const q = port.askQuestion(question())
   await tick()
   assert.equal(port.pending, 2)
 
-  assert.equal(port.cancelClaim('call-q'), true, '撤提问不该碰到审批')
+  assert.equal(port.cancelClaim('t:q1'), true, '撤提问不该碰到审批')
   assert.deepEqual(await q, { kind: 'withdrawn' })
   assert.equal(port.pending, 1)
 
-  assert.equal(port.settleClaim('sid_1', 'call-1', [{ id: 'call-1', selected: [] }]), true)
+  assert.equal(port.settleClaim('sid_1', 'i:a1', [{ id: 'i:a1', selected: [] }]), true)
   assert.deepEqual(await ap, { kind: 'answered', value: 'rejected' })
   assert.equal(port.pending, 0)
 })
@@ -160,7 +163,7 @@ test('pendingAsks：只给仍在途的 ask（原 seq + body），结算后清空
   assert.deepEqual(port.pendingAsks('sid_1'), [redelivery], '重连重投的来源就是这张表')
   assert.deepEqual(port.pendingAsks('sid_2'), [], '别的会话拿不到这一条')
   assert.equal(
-    port.settleClaim('sid_1', 'call-1', [{ id: 'call-1', selected: ['allowed-once'] }]),
+    port.settleClaim('sid_1', 'i:a1', [{ id: 'i:a1', selected: ['allowed-once'] }]),
     true,
   )
   await pending
@@ -180,7 +183,7 @@ test('端口不接受任何依赖：没有 guardMs / schedule 的位置 = 没有
   assert.equal(createInteractionPort.length, 0)
 })
 
-test('settleClaim 对没有在途 claim 的 callId 返回 false（提问路由继续走 DSH）', { timeout: 60_000 }, async () => {
+test('settleClaim 对没有在途 claim 的 itemId 返回 false（提问路由继续走 DSH）', { timeout: 60_000 }, async () => {
   const port = createInteractionPort()
   assert.equal(port.settleClaim('sid_1', 'nope', [{ id: 'x', selected: [] }]), false)
   assert.equal(port.pending, 0)

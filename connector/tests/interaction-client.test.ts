@@ -6,7 +6,7 @@
  *
  * 1. 手机答 → 发 `{kind:'result'}`，`value` 与 `interaction.respond` 的批次逐字一致；
  * 2. desktop 结算（`cancel`）→ 手机 claim 撤掉，且不再重投；
- * 3. 仲裁不参与 → **不回应**（不是发 `next`）；
+ * 3. 不参与 → 回 `{kind:'next'}`（DSH 的委托，不是我们自己发明的沉默）；
  * 4. 缺 `typertGateway` / `connection` → 不挂交互面；
  * 5. 流断开 → 退避重连；重连后 gateway 重投的在途事件仍能被处理。
  *
@@ -219,7 +219,14 @@ function harness(patch: {
     },
   }
 
-  const session = patch.session ?? emptySession()
+  // **默认会话里有一条未结算的 `approval/asked`**：审批的身份是它（`ApprovalRequestId`），
+  // 不是请求对象里的 `callId`（那个在 DSH 里可选的，`user-approval/src/types.ts:68-69`）。
+  // 于是默认的 `approvalFrame()`（带 `callId: 'call-1'`）认出来的是 `i:approval-1`。
+  const session = patch.session ?? (() => {
+    const fresh = emptySession()
+    openApproval(fresh, 'approval-1', 'call-1')
+    return fresh
+  })()
   const agents = {
     get: (id: string) => (id === AGENT_ID ? { id: AGENT_ID, session } : undefined),
   }
@@ -343,7 +350,7 @@ test('ready 之后：审批被 claim，手机答「允许一次」→ 发 {kind:
 
   // 手机侧：`interaction.respond` 的落点（真端口）。
   assert.equal(
-    h.port.settleClaim(SID, 'call-1', [{ id: 'call-1', selected: [APPROVAL_ALLOW_LABEL] }]),
+    h.port.settleClaim(SID, 'i:approval-1', [{ id: 'i:approval-1', selected: [APPROVAL_ALLOW_LABEL] }]),
     true,
   )
   await until(() => h.results.length === 1, '结果请求')
@@ -366,7 +373,7 @@ test('手机点拒绝 → value 是 DSH 词汇表的 rejected（不是我们自�
   h.streams[0]?.push(approvalFrame())
   await settle()
 
-  assert.equal(h.port.settleClaim(SID, 'call-1', [{ id: 'call-1', selected: [] }]), true)
+  assert.equal(h.port.settleClaim(SID, 'i:approval-1', [{ id: 'i:approval-1', selected: [] }]), true)
   await until(() => h.results.length === 1, '结果请求')
   assert.deepEqual(h.results[0]?.outcome, { kind: 'result', value: 'rejected' })
 })
@@ -381,7 +388,7 @@ test('提问：value 就是 interaction.respond 的答案批次（一个字段�
     { id: 'q1', selected: ['第二个'], custom: '补充一句' },
     { id: 'q2', selected: [] },
   ]
-  assert.equal(h.port.settleClaim(SID, 'call-q', answers), true)
+  assert.equal(h.port.settleClaim(SID, 't:call-q', answers), true)
   await until(() => h.results.length === 1, '结果请求')
   assert.deepEqual(h.results[0]?.outcome, { kind: 'result', value: { answers } })
 })
@@ -405,7 +412,7 @@ test('gateway 说这条已经结算（cancel）→ 手机 claim 撤掉、不重�
   assert.deepEqual(h.results, [], '那边已经结算：我们再回什么都只是迟到的噪声')
 
   // 结算之后手机上再点也没用 —— 但**不会**产生第二个结果请求。
-  assert.equal(h.port.settleClaim(SID, 'call-1', [{ id: 'call-1', selected: [] }]), false)
+  assert.equal(h.port.settleClaim(SID, 'i:approval-1', [{ id: 'i:approval-1', selected: [] }]), false)
   await settle()
   assert.deepEqual(h.results, [])
 })
@@ -437,7 +444,7 @@ test('答完之后同一条 eventId 再被投递 → 重新 claim（投递状态
   await openStream(h)
   h.streams[0]?.push(approvalFrame())
   await settle()
-  assert.equal(h.port.settleClaim(SID, 'call-1', [{ id: 'call-1', selected: [APPROVAL_ALLOW_LABEL] }]), true)
+  assert.equal(h.port.settleClaim(SID, 'i:approval-1', [{ id: 'i:approval-1', selected: [APPROVAL_ALLOW_LABEL] }]), true)
   await until(() => h.results.length === 1, '第一次结果')
 
   h.streams[0]?.push(approvalFrame())
@@ -450,7 +457,7 @@ test('答完之后迟到的 cancel → 不追发第二个 outcome', { timeout: 6
   await openStream(h)
   h.streams[0]?.push(approvalFrame())
   await settle()
-  assert.equal(h.port.settleClaim(SID, 'call-1', [{ id: 'call-1', selected: [APPROVAL_ALLOW_LABEL] }]), true)
+  assert.equal(h.port.settleClaim(SID, 'i:approval-1', [{ id: 'i:approval-1', selected: [APPROVAL_ALLOW_LABEL] }]), true)
   await until(() => h.results.length === 1, '第一次结果')
 
   h.streams[0]?.push({ type: 'cancel', eventId: 'e-1' })
@@ -490,17 +497,46 @@ test('会话没登记给手机 → 不 claim，回 {kind:next}', { timeout: 60_0
   )
 })
 
-test('没有 callId 的审批 → 委托（没有稳定身份就不 claim）', { timeout: 60_000 }, async () => {
-  const h = harness()
+test('没有 callId 的审批：日志里有唯一一条未结算的 approval/asked → 照样 claim（身份是 ApprovalRequestId）', { timeout: 60_000 }, async () => {
+  // **这是本轮删掉的那条规则**：以前"没有 callId 就委托"。而 DSH 的浏览器在
+  // `callId === undefined` 时照样弹卡照样答（`client/ui-approval/src/client/index.ts:45-53,59-65`）——
+  // 身份从来不是 callId，是服务铸的 `ApprovalRequestId`（`user-approval/src/types.ts:13-17`）。
+  const slow = harness()
+  await openStream(slow)
+  // 请求里完全没有 callId（`{}` 与 `''` 都要走到日志推断那一步）。
+  slow.streams[0]?.push(approvalFrame({ callId: undefined }))
+  await settle()
+  assert.equal(slow.port.pending, 1, '认得出唯一一条未结算的 approval/asked 就要 claim')
+  assert.equal(
+    slow.port.settleClaim(SID, 'i:approval-1', [{ id: 'i:approval-1', selected: [APPROVAL_ALLOW_LABEL] }]),
+    true,
+  )
+  await until(() => slow.results.length === 1, '结果请求')
+  assert.deepEqual(slow.results[0]?.outcome, { kind: 'result', value: 'allowed-once' })
+})
+
+test('审批认不出身份（日志里一条 approval/asked 都没有）→ 委托，且留一声', { timeout: 60_000 }, async () => {
+  const h = harness({ session: emptySession() })
   await openStream(h)
+  h.streams[0]?.push(approvalFrame())
+  await settle()
+  assert.equal(h.port.pending, 0, '认不出就不猜一个 id')
+  assert.deepEqual(h.results.map((entry) => entry.outcome), [{ kind: 'next' }])
+  assert.match(h.warnings.join('\n'), /认不出对应的 approval\/asked 身份/)
+})
+
+test('审批不唯一（两条未结算的 approval/asked）→ 委托（不猜是哪一条）', { timeout: 60_000 }, async () => {
+  const session = emptySession()
+  openApproval(session, 'approval-1', 'call-1')
+  openApproval(session, 'approval-2', 'call-2')
+  const h = harness({ session })
+  await openStream(h)
+  // 请求里不带 callId ⇒ 无法在两条之间分辨。
   h.streams[0]?.push(approvalFrame({ callId: undefined }))
-  h.streams[0]?.push(approvalFrame({ eventId: 'e-2', callId: '' }))
   await settle()
   assert.equal(h.port.pending, 0)
-  assert.deepEqual(
-    h.results.map((entry) => entry.outcome),
-    [{ kind: 'next' }, { kind: 'next' }],
-  )
+  assert.deepEqual(h.results.map((entry) => entry.outcome), [{ kind: 'next' }])
+  assert.match(h.warnings.join('\n'), /ambiguous/)
 })
 
 test('审批：重投载荷是那条 approval/asked 的原 seq 与 body', { timeout: 60_000 }, async () => {
@@ -531,7 +567,7 @@ test('不是交互的事件（emit / 别的事件名）→ 忽略', { timeout: 6
 // legacy 提问：身份从会话日志推（`dsh/question-call.ts`）
 // ---------------------------------------------------------------------------
 
-test('legacy 提问（没有 wait.callId）：身份从日志推出，claim 键是真 call id，重投载荷是那条 tool/call', { timeout: 60_000 }, async () => {
+test('legacy 提问（没有 wait.callId）：身份从日志推出，claim 键是 t:<真 call id>，重投载荷是那条 tool/call', { timeout: 60_000 }, async () => {
   const session = emptySession()
   const seq = openCall(session, 'call-7')
   const h = harness({ session })
@@ -546,7 +582,7 @@ test('legacy 提问（没有 wait.callId）：身份从日志推出，claim 键�
   assert.equal(asks[0]?.seq, seq, '原 seq —— 重投不推进水位')
   assert.equal(JSON.parse(asks[0]?.body ?? '{}').data.callId, 'call-7')
 
-  assert.equal(h.port.settleClaim(SID, 'call-7', [{ id: 'q1', selected: [] }]), true)
+  assert.equal(h.port.settleClaim(SID, 't:call-7', [{ id: 'q1', selected: [] }]), true)
   await until(() => h.results.length === 1, '结果请求')
   assert.deepEqual(h.results[0]?.outcome, {
     kind: 'result',
@@ -614,7 +650,7 @@ test('流断开 → 退避重连；gateway 重投的在途事件仍能被处理�
   second.push(approvalFrame())
   await settle()
   assert.equal(h.port.pending, 1, '重投的事件要重新 claim')
-  assert.equal(h.port.settleClaim(SID, 'call-1', [{ id: 'call-1', selected: [APPROVAL_ALLOW_LABEL] }]), true)
+  assert.equal(h.port.settleClaim(SID, 'i:approval-1', [{ id: 'i:approval-1', selected: [APPROVAL_ALLOW_LABEL] }]), true)
   await until(() => h.results.length === 1, '重连之后的结果请求')
   assert.equal(h.results[0]?.clientId, 'c-2', '结果必须带**当前这一代**的 clientId')
   assert.equal(h.results[0]?.eventId, 'e-1', 'eventId 跨代不变（gateway 的 pending 表按它索引）')
@@ -674,7 +710,7 @@ test('结果没被接纳（result.ok !== true）→ 留声，且**不重试**（
   await openStream(h)
   h.streams[0]?.push(approvalFrame())
   await settle()
-  assert.equal(h.port.settleClaim(SID, 'call-1', [{ id: 'call-1', selected: [APPROVAL_ALLOW_LABEL] }]), true)
+  assert.equal(h.port.settleClaim(SID, 'i:approval-1', [{ id: 'i:approval-1', selected: [APPROVAL_ALLOW_LABEL] }]), true)
   await until(() => h.results.length === 1, '结果请求')
 
   await settle(16)
@@ -706,7 +742,7 @@ test('同一 eventId 重投到同一个 client → 不重复 claim（第一条 a
   assert.equal(h.port.pending, 1, '重复投递不该造出第二条 claim')
 
   // 手机上答一次就好：第一条 claim 收到了答案、回了话，且只回一次。
-  assert.equal(h.port.settleClaim(SID, 'call-1', [{ id: 'call-1', selected: [APPROVAL_ALLOW_LABEL] }]), true)
+  assert.equal(h.port.settleClaim(SID, 'i:approval-1', [{ id: 'i:approval-1', selected: [APPROVAL_ALLOW_LABEL] }]), true)
   await until(() => h.results.length === 1, '结果请求')
   await settle(16)
   assert.equal(h.results.length, 1)
@@ -720,8 +756,8 @@ test('审批与提问同时到达 → 两条 claim 各按自己的 eventId 回�
   await settle()
   assert.equal(h.port.pending, 2, '两条不同的交互各一条 claim')
 
-  assert.equal(h.port.settleClaim(SID, 'call-q', [{ id: 'q1', selected: ['甲'] }]), true)
-  assert.equal(h.port.settleClaim(SID, 'call-1', [{ id: 'call-1', selected: [APPROVAL_ALLOW_LABEL] }]), true)
+  assert.equal(h.port.settleClaim(SID, 't:call-q', [{ id: 'q1', selected: ['甲'] }]), true)
+  assert.equal(h.port.settleClaim(SID, 'i:approval-1', [{ id: 'i:approval-1', selected: [APPROVAL_ALLOW_LABEL] }]), true)
   await until(() => h.results.length === 2, '两条结果请求')
 
   const byEvent = new Map(h.results.map((entry) => [entry.eventId, entry]))

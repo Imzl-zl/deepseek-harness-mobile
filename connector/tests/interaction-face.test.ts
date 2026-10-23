@@ -1,26 +1,26 @@
 /**
- * `src/interaction-face.ts` 的单测：提问投影、`interaction.respond` 路由、审批看护。
+ * `src/interaction-face.ts` 的单测：`interaction.respond` 的路由。
  *
  * 为什么这些用例值得写：这个内核的每一条分支都对应一个**已经发生过或即将发生的事故** ——
- * 提问已结束时的崩溃、重复应答造出第二条用户消息、看护漏一个定时器、审批在无人看护时
- * 被无限挂起。而它可测的前提是依赖全部注入：这里没有一个 DSH 替身，只有假时钟、假投影
- * 与会记录调用的假 `answer`。
+ * 提问已结束时的崩溃、重复应答造出第二条用户消息、批次与待处理视图对不上、审批答复落到
+ * 一个不存在的 claim 上。而它可测的前提是依赖全部注入：这里没有一个 DSH 替身，
+ * 只有假投影与会记录调用的假 `answer`。
  *
- * 三条被钉住的语义：
+ * 四条被钉住的语义：
  * 1. **答案批次原样透传**，连接器不翻译（§6.3.1：翻译层就是漂移层）；
  * 2. **提问已结束不是崩溃**，而是 `interaction/not-pending` → 刷新待处理列表（§3.1 / §6.3.1）；
- * 3. **看护只放行人类的回答**：超时 / 被 gateway 撤销一律收成"没答"并留证（§6.2）。
+ * 3. **键是 itemId**（`t:<callId>` / `i:<approvalId>`），不是 DSH 里可选的 `callId`；
+ * 4. **审批只在 claim 里作答**：DSH 没有"按 approval id 作答"的方法，所以不在 claim 里的
+ *    `i:` 项就是"已经不在了"。
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
   createInteractionFace,
-  projectPendingQuestions,
   validateAnswerBatch,
   type AnswerItem,
   type InteractionLogger,
-  type PendingItem,
   type Question,
   type QuestionAgent,
   type QuestionProjection,
@@ -73,8 +73,11 @@ function setupFace(options: {
   /** `false` = 没有 live root agent（子代理里的提问 / 会话被替换）。 */
   liveAgent?: boolean
   warnings?: string[]
+  /** 在途 claim 的替身：返回 `true` = 这一项被 claim 认下（审批就是这样收束的）。 */
+  claimed?: readonly string[]
 } = {}) {
   const calls: { agent: unknown; callId: string; batch: unknown }[] = []
+  const claimed: { itemId: string; answers: readonly AnswerItem[] }[] = []
   const log: InteractionLogger | undefined =
     options.warnings === undefined
       ? undefined
@@ -87,15 +90,20 @@ function setupFace(options: {
       if (options.script?.throws !== undefined) throw options.script.throws
       return options.script?.returns ?? true
     },
+    settleClaim: (sid, itemId, answers) => {
+      if (sid !== 'sid_1' || !(options.claimed ?? []).includes(itemId)) return false
+      claimed.push({ itemId, answers })
+      return true
+    },
     ...(log === undefined ? {} : { log }),
   })
-  return { face, calls }
+  return { face, calls, claimed }
 }
 
 function respondParams(patch: Record<string, unknown> = {}) {
   return {
     sid: 'sid_1',
-    callId: 'call-1',
+    itemId: 't:call-1',
     answers: [
       { id: 'scope', selected: ['Tool only'] },
       { id: 'mode', selected: ['plan'] },
@@ -103,44 +111,6 @@ function respondParams(patch: Record<string, unknown> = {}) {
     ...patch,
   }
 }
-
-// ---------------------------------------------------------------------------
-// 待处理投影
-// ---------------------------------------------------------------------------
-
-test('待处理投影：itemId = i:<callId>、问题与 state 原样带上；已答的不进集合（§6.3）', () => {
-  const items: readonly PendingItem[] = projectPendingQuestions('sid_1', {
-    active: [
-      { callId: 'call-1', questions: TWO_QUESTIONS, state: 'continued' },
-      { callId: 'call-2', questions: [TWO_QUESTIONS[0]!], state: 'open' },
-    ],
-    // 已答完的 call 只在 settled 半边：它不再是待处理项
-    settled: [{ callId: 'call-0', answers: [] }],
-  })
-
-  assert.equal(items.length, 2, 'settled 半边不进待处理集合')
-  assert.deepEqual(
-    items[0],
-    {
-      itemId: 'i:call-1',
-      sid: 'sid_1',
-      callId: 'call-1',
-      questions: TWO_QUESTIONS,
-      state: 'continued',
-    },
-    'state 原样透传：内核不替手机判灰（§6.4 把置灰判据留给手机）',
-  )
-  assert.equal(items[1]?.state, 'open')
-})
-
-test('投影来源缺失（没投影快照 / 不认识的 sid）时是空列表，不是错误', () => {
-  const { face } = setupFace({ projection: CONTINUED_VIEW })
-  assert.deepEqual(
-    face.pendingOf('sid_1').map((item) => item.itemId),
-    ['i:call-1'],
-  )
-  assert.deepEqual(face.pendingOf('sid_unknown'), [], '没有投影 = 当前没有待处理提问')
-})
 
 // ---------------------------------------------------------------------------
 // 批次形状校验
@@ -225,7 +195,7 @@ test('空答案：selected 为空且无 custom 是 DSH 的「显式跳过」，�
     { id: 'mode', selected: [] },
   ]
 
-  assert.deepEqual(face.respond(respondParams({ answers })), { itemId: 'i:call-1' })
+  assert.deepEqual(face.respond(respondParams({ answers })), { itemId: 't:call-1' })
   assert.equal(calls.length, 1)
   assert.deepEqual(calls[0]?.batch, { answers }, '答案批次原样透传：翻译层就是漂移层（§6.3.1）')
 })
@@ -254,7 +224,7 @@ test('形状不合法 → protocol/bad-frame：answers 不是数组 / 项缺 id 
     'selected 必须是字符串数组（选项标签）',
   )
   assert.equal(
-    protocolErrorOf(() => face.respond({ callId: 'call-1', answers: [] })).code,
+    protocolErrorOf(() => face.respond({ itemId: 't:call-1', answers: [] })).code,
     'protocol/bad-frame',
     '缺 sid',
   )
@@ -368,6 +338,66 @@ test('未知错误（steer 抛错）原样上交：吞掉它会让手机以为�
     assert.ok(!(error instanceof ProtocolError), '未知错误必须原样上交，不套协议错误的外壳')
     assert.match((error as Error).message, /steer failed/)
   }
+})
+
+// ---------------------------------------------------------------------------
+// itemId 的路由：`t:` 走提问，`i:` 只走 claim
+// ---------------------------------------------------------------------------
+
+test('审批：`i:<approvalId>` 由在途 claim 认下 → 原样回 itemId，且**不**调 DSH 的 answer', () => {
+  // 审批的答案只经应答链回给 asker（`user-approval/src/index.ts:215,231`），
+  // DSH **没有**"按 approval id 作答"的方法 —— 所以这条只能走 claim。
+  const { face, calls, claimed } = setupFace({ claimed: ['i:approval-9'] })
+  const answers: readonly AnswerItem[] = [{ id: 'i:approval-9', selected: ['allowed-once'] }]
+
+  assert.deepEqual(face.respond({ sid: 'sid_1', itemId: 'i:approval-9', answers }), {
+    itemId: 'i:approval-9',
+  })
+  assert.equal(claimed.length, 1, 'claim 必须先被问一次')
+  assert.deepEqual(claimed[0]?.answers, answers, '批次原样交给端口（词汇表映射在那一侧）')
+  assert.deepEqual(calls, [], '审批不走 `userQuestions.answer`')
+})
+
+test('审批：不在 claim 里的 `i:` 项 → interaction/not-pending（已经答过 / 会话没登记给手机）', () => {
+  const { face, calls, claimed } = setupFace({ claimed: ['i:somebody-else'] })
+
+  const error = protocolErrorOf(() =>
+    face.respond({ sid: 'sid_1', itemId: 'i:approval-9', answers: [{ id: 'q', selected: [] }] }),
+  )
+  assert.equal(error.code, 'interaction/not-pending')
+  assert.equal(clientActionOf(error.code), 'refresh-pending')
+  assert.deepEqual(claimed, [], '不属于我们的项不该被记成"答过一次"')
+  assert.deepEqual(calls, [], '更不该拿一个审批 id 去问 DSH 的提问面')
+})
+
+test('认不出的 itemId 前缀 → protocol/bad-frame（这是请求本身不合法）', () => {
+  const { face, calls } = setupFace({ claimed: ['i:x'] })
+
+  assert.equal(
+    protocolErrorOf(() =>
+      face.respond({ sid: 'sid_1', itemId: 'z:nonsense', answers: [{ id: 'q', selected: [] }] }),
+    ).code,
+    'protocol/bad-frame',
+  )
+  assert.equal(
+    protocolErrorOf(() =>
+      face.respond({ sid: 'sid_1', itemId: 't:', answers: [{ id: 'q', selected: [] }] }),
+    ).code,
+    'protocol/bad-frame',
+    '只有前缀、没有 body 的 itemId 也是不合法',
+  )
+  assert.deepEqual(calls, [])
+})
+
+test('缺 itemId → protocol/bad-frame（`callId` 已经不再是这个方法的字段）', () => {
+  const { face } = setupFace({ claimed: ['i:x'] })
+
+  assert.equal(
+    protocolErrorOf(() =>
+      face.respond({ sid: 'sid_1', callId: 'call-1', answers: [{ id: 'q', selected: [] }] }),
+    ).code,
+    'protocol/bad-frame',
+  )
 })
 
 
