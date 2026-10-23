@@ -15,10 +15,24 @@
  * 取舍见 `.agents/notes/implemented/2026-10-01-connector-interaction-adapter.md`
  */
 import type { Context } from '@deepseek-ai/cordis'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type { AskUserQuestionAnswer, AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
 import { decideTakeover, type TakeoverDevice, type TakeoverMode } from '../protocol/takeover.js'
+import { approvalAskEvent, questionAskEvent } from './ask-event.js'
 import { resolveQuestionCall } from './question-call.js'
+
+/**
+ * 一条"重连重投"载荷：那次 ask 的会话事件（原 seq + 线上 body）。
+ *
+ * 形状与 `ev` 帧的载荷逐字一致（`session-subscriptions.ts` 的 `JSON.stringify(event)`），
+ * 所以重投走的是**已有的**出帧路径 —— 不新增帧类型、不新增方法。App 按 `itemId` upsert，
+ * 重发天然幂等（与 DSH gateway 的 `deliverRemoteEvent` 同形）。
+ */
+export interface Redelivery {
+  readonly seq: number
+  readonly body: string
+}
 
 /**
  * 手机能表达的决定。
@@ -37,6 +51,8 @@ export interface ApprovalPrompt {
   toolName: string
   reason?: string
   displayReason?: Readonly<Record<string, string>>
+  /** 重连重投用：这条 ask 的会话事件（原 seq + body）。 */
+  redeliver?: Redelivery
 }
 
 export interface QuestionPrompt {
@@ -58,6 +74,13 @@ export interface QuestionPrompt {
    * 没有 `tool/call`"—— `/exit_plan_mode` 的 `ask()` 就是这种（`plan-mode/src/index.ts:313-330`）。
    */
   planReview?: { approve: string }
+  /** 重连重投用：这条 ask 的会话事件（原 seq + body）。 */
+  redeliver?: Redelivery
+}
+
+/** 把一次 ask 的会话事件收成重投载荷；事件不在时回 `undefined`（不重投）。 */
+function redeliverOf(event: SessionEvent | undefined): Redelivery | undefined {
+  return event === undefined ? undefined : { seq: event.seq, body: JSON.stringify(event) }
 }
 
 /** 连接层必须提供的能力。 */
@@ -166,6 +189,9 @@ export function registerInteractions(ctx: Context, deps: InteractionDeps): () =>
       const claim = claimFor(sid)
       if (!claim.claim || claim.deviceId === null) return next()
 
+      // 重连重投：把这条 ask 的事件随 prompt 带进 claim（`ask-event.ts`）。
+      const redeliver = redeliverOf(approvalAskEvent(request.agent.session.snapshotEvents(), request.callId))
+
       try {
         const decision = await port.askApproval(
           {
@@ -176,6 +202,7 @@ export function registerInteractions(ctx: Context, deps: InteractionDeps): () =>
             ...(request.displayReason === undefined
               ? {}
               : { displayReason: request.displayReason as Readonly<Record<string, string>> }),
+            ...(redeliver === undefined ? {} : { redeliver }),
           },
           claim.deviceId,
           // 传的是 asker 的**原** signal，绝不替换：取消语义整个挂在它上面
@@ -220,8 +247,9 @@ export function registerInteractions(ctx: Context, deps: InteractionDeps): () =>
       // `tool/call`）也落这一支：它在手机上本来就没有卡。
       // Note: 为什么从日志推、为什么认不出要 next() —— 见
       // `.agents/notes/implemented/2026-10-23-legacy-question-identity-from-session-log.md`。
+      const events = request.agent.session.snapshotEvents()
       const identity = request.wait?.callId === undefined
-        ? resolveQuestionCall(request.agent.session.snapshotEvents())
+        ? resolveQuestionCall(events)
         : ({ kind: 'found', callId: request.wait.callId } as const)
       if (identity.kind !== 'found') {
         // 计划审查是**程序化**提问（`/exit_plan_mode` 的 `ask()`）：它本来就没有
@@ -236,11 +264,14 @@ export function registerInteractions(ctx: Context, deps: InteractionDeps): () =>
         return next()
       }
 
+      // 重连重投：那条 `tool/call` 事件（原 seq + body）随 prompt 进 claim。
+      const redeliver = redeliverOf(questionAskEvent(events, identity.callId))
       const prompt: QuestionPrompt = {
         sid,
         callId: identity.callId,
         questions: request.questions,
         ...(planReview === undefined ? {} : { planReview }),
+        ...(redeliver === undefined ? {} : { redeliver }),
       }
 
       try {

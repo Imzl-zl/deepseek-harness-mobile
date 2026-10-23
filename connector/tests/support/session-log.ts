@@ -53,3 +53,12 @@ export function settleCall(session: Session, callId: string, callSeq: SessionSeq
     { surfaceOp: 'append', sourceEventSeqs: [callSeq] },
   )
 }
+
+/** 追加一条 `approval/asked`（DSH 在 dispatch 之前 append，`user-approval/src/index.ts:225`）。 */
+export function openApproval(session: Session, approvalId: string, callId: string): SessionSeq {
+  return session.append('approval/asked', {
+    id: approvalId as never,
+    toolName: 'bash',
+    callId: callId as never,
+  }).seq
+}

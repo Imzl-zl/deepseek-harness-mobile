@@ -366,20 +366,31 @@ class ChatPageState extends State<ChatPage> {
 
   /// 把一次答复发给电脑（契约 §5.7 的 `interaction.respond`）。
   ///
-  /// **失败不吞**：`interaction/not-pending` 说明这一项已经不在待处理集合里
-  /// （电脑侧答过了、或会话被替换），用户该看到"已过期"而不是以为答成功了。
+  /// **失败不吞**，而且**按错误码分两类**：
+  ///
+  /// - `interaction/not-pending`：这一项真的没了（电脑侧答过了 / 会话被替换 / 已过期）。
+  ///   客户端动作正是"刷新待处理列表"（§3.1），所以撤卡并说"已过期"。
+  /// - 其余（传输 / 超时 / 未知）：这一项**很可能还在** —— 留卡，让用户重试。
+  ///   把它当成"已过期"撤掉，等于让一次网络抖动变成"永远答不了"。
+  ///
+  /// 处理完**照原样抛**：控制器（`takeover.dart` 的 `_send`）据此知道"没发出去"，
+  /// 从而不写成功回执、不撤卡。
   Future<void> _onTakeoverAnswer(InteractionAnswer answer) async {
     try {
       await widget.app.respondInteraction(answer);
     } on Exception catch (error) {
-      // 结构化错误（`ProtocolException`）与其它异常都走这条：它们对用户是同一件事 ——
-      // "这一项没能答上去"。而 `interaction/not-pending` 的客户端动作正是
-      // "刷新待处理列表"，所以顺手把那一项从队列里撤掉。
-      if (!mounted) return;
-      _takeover.settle(answer.itemId);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('这一项已过期：$error')));
+      final expired =
+          error is ProtocolException &&
+          error.code == ErrorCode.interactionNotPending;
+      if (expired) _takeover.settle(answer.itemId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(expired ? '这一项已过期：$error' : '没发出去，再试一次：$error'),
+          ),
+        );
+      }
+      rethrow;
     }
   }
 

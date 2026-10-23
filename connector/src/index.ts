@@ -854,6 +854,9 @@ let unregisterAdminFace: (() => void) | null = null
           // presence 上报面（挂载级的那一份）。方法面拿到的 `connection.deviceId()`
           // 由 `createConnectionScope` 自己构造，所以这里只需要 sink 本身。
           presence,
+          // 在途 ask 的重投来源（挂载级的 claim 表）。订阅恢复之后按原 seq 再发一遍，
+          // 与 DSH gateway 把 pending 重投给新 client 同形。
+          pendingAsks: (sid) => interactionPort.pendingAsks(sid),
         }
 
         // 连接器令牌（§12.2）：**拨号与出码登记共用同一个值**，所以在这一步开头读一次。

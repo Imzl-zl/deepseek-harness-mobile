@@ -209,6 +209,47 @@ Future<(AppModel, _PermissionFakeClient)> _pumpChatWithPermission(
   return (app, client);
 }
 
+/// 答复失败时的接线：传输失败**留卡**，`not-pending`**撤卡**。
+///
+/// 两者都被当成"已过期"撤掉，会让一次网络抖动变成"永远答不了"（`takeover.dart` 的 `_send`）。
+class _RespondFailClient extends _FakeClient {
+  _RespondFailClient(this.error);
+
+  final Exception error;
+
+  @override
+  Future<T> call<T>(
+    String method,
+    Map<String, Object?> params, {
+    String? requestId,
+  }) async {
+    if (method == 'interaction.respond') throw error;
+    return super.call<T>(method, params, requestId: requestId);
+  }
+}
+
+Future<void> _pumpChatPaired(WidgetTester tester, _FakeClient client) async {
+  final app = AppModel(client: client);
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: DshTheme.dark(),
+      home: ChatPage(
+        app: app,
+        paired: true,
+        onOpenDrawer: () {},
+        onNewSession: () {},
+        drawer: const Drawer(child: SizedBox()),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  // 已配对时空态没有"看示例数据"按钮（那是未配对时的入口），直接灌示例数据。
+  app.loadPreview();
+  await tester.pumpAndSettle();
+  await app.openSession('preview-1');
+  await tester.pumpAndSettle();
+}
+
 /// 走 `＋` 菜单 → "演示：接管输入栏"。
 Future<void> _enqueueDemo(WidgetTester tester) async {
   await tester.tap(find.byTooltip('添加文件或调用指令'));
@@ -390,5 +431,44 @@ void main() {
     await tester.pumpAndSettle();
     expect(_takeoverText('等待确认计划'), findsNothing);
     expect(find.byType(DshComposer), findsOneWidget, reason: '输入栏该回来');
+  });
+
+  testWidgets('答复传输失败 → **卡片留在队列里**，提示"没发出去"', (tester) async {
+    await _pumpChatPaired(
+      tester,
+      _RespondFailClient(const ProtocolException(ErrorCode.relayOffline, '断了')),
+    );
+    await _enqueueDemo(tester);
+    expect(_takeoverText('等待确认计划'), findsOneWidget);
+
+    await tester.tap(find.text('同意执行'));
+    await tester.pumpAndSettle();
+
+    expect(
+      _takeoverText('等待确认计划'),
+      findsOneWidget,
+      reason: '传输失败不是"这一项没了"：撤卡等于让一次网络抖动变成永远答不了',
+    );
+    expect(find.textContaining('没发出去'), findsOneWidget);
+  });
+
+  testWidgets('答复 not-pending → **撤卡**并说"已过期"', (tester) async {
+    await _pumpChatPaired(
+      tester,
+      _RespondFailClient(
+        const ProtocolException(ErrorCode.interactionNotPending, '没了'),
+      ),
+    );
+    await _enqueueDemo(tester);
+
+    await tester.tap(find.text('同意执行'));
+    await tester.pumpAndSettle();
+
+    expect(
+      _takeoverText('等待确认计划'),
+      findsNothing,
+      reason: 'not-pending 的客户端动作就是"刷新待处理列表"（撤掉这一项）',
+    );
+    expect(find.textContaining('已过期'), findsOneWidget);
   });
 }

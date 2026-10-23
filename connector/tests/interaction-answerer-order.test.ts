@@ -23,6 +23,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { registerInteractions } from '../src/dsh/interactions.js'
+import { emptySession } from './support/session-log.js'
 
 type Answerer = (request: never, next: () => unknown) => unknown
 
@@ -86,7 +87,7 @@ function setupOrderedWaterfall() {
 }
 
 const approvalRequest = () => ({
-  agent: { id: 'dsh-session-1' },
+  agent: { id: 'dsh-session-1', session: emptySession() },
   callId: 'call-1',
   toolName: 'pwsh',
   signal: new AbortController().signal,

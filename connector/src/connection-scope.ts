@@ -62,6 +62,11 @@ export interface ConnectionScopeDeps {
    * 仍然能答，只是不上报前后台态。
    */
   presence?: DevicePresenceSink
+  /**
+   * 该会话上仍在途的 ask 事件（重连重投，见 `session-subscriptions.ts` 的 `pendingOf`）。
+   * **可缺**：只测方法面 / 订阅骨架的用例不需要它；缺了就是"没有要重投的"。
+   */
+  pendingAsks?: (sid: string) => readonly { seq: number; body: string }[]
 }
 export interface PairingScope {
   candidate: PairingCandidate
@@ -96,6 +101,7 @@ export function createConnectionScope(
     // **子会话的地址要带父会话 id**（判据在清单行里，见 `resolveSessionAddress`）——
     // 少了它，宿主对子会话的 `follow` 直接拒绝，手机进去是一片空白。
     addressOf: (dshSessionId) => resolveSessionAddress(deps.sessions, dshSessionId),
+    ...(deps.pendingAsks === undefined ? {} : { pendingOf: deps.pendingAsks }),
     send: (out) => {
       if (port.state !== 'serving') return 'closed'
       const frame = out.t === 'ev'

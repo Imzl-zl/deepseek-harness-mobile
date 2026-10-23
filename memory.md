@@ -202,12 +202,12 @@
    失败如实报（`SessionPage.failure`）。真机实验：把 `refetchThresholdBytes` 调到 1，
    61 条消息的会话滚到顶 → 翻页 + 逐条补取 → **会话开头（系统提示词 + 第一句 prompt）出现在手机上**。
 10. ~~失败回合没有"手动重试"入口~~ **不做**：DSH Web 的 `ui-conversation` 也没有这个入口。
-11. **在途交互 = host-held pending（提案，待点头）** —— 照 DSH gateway 的形状
-    （`api/gateway/src/index.ts:227,571,685-689,717-721`：pending 挂在 host，断线只撤投递、
-    新 client 重投、重复答复 no-op）：P1 App 失败分类（传输失败留卡可重试、失败不写成功回执）、
-    P2a 连接器断线**不结算** claim（审批与提问同一规则）、P2b 手机重订阅时**重发在途 ask 事件**
-    （不新增帧 / 方法）。P3 可选 timed（只解决"看护之后才答"，代价是桌面倒计时 + 模型 120 s 后继续）。
-    方案与代价见 `.agents/notes/proposed/2026-10-23-mobile-interaction-under-latency.md`。
+11. ~~**在途交互 = host-held pending**~~ **P1/P2a/P2b 已落地（2026-10-23）**：断线**不结算** claim
+    （审批与提问同一规则）、手机重订阅时按原 seq **重投在途 ask 事件**（不新增帧 / 方法）、
+    App 失败分类（传输失败留卡可重试、`not-pending` 撤卡、失败不写成功回执）。
+    笔记 `implemented/2026-10-23-in-flight-interaction-is-host-held.md`。
+    **仍未做（明确不顺手做）**：timed 部署（只解决看护之后才答，代价是桌面倒计时 + 模型 120 s 后继续）、
+    计划审查卡（卡只从 `ask_user_question` 的 `tool/call` 生成，`/exit_plan_mode` 没有卡）。
 
 别当缺口（定案，别再试）:
 
@@ -360,9 +360,9 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **360 项**（22 条规则自检 + 扫 99 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1137 项** |
+| `cd app && flutter test` | **1140 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **612 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **617 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 
@@ -403,3 +403,5 @@
   `2026-10-23-slash-command-execution-surface.md`。
 - 2026-10-23 legacy 提问的身份从会话日志推（唯一一条未结算的 `ask_user_question` `tool/call`）——
   `2026-10-23-legacy-question-identity-from-session-log.md`。
+- 2026-10-23 在途交互 = host-held pending（断线不结算 + 重连重投 ask 事件 + App 失败分类）——
+  `2026-10-23-in-flight-interaction-is-host-held.md`。

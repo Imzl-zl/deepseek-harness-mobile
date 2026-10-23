@@ -260,6 +260,16 @@ void main() {
       await first;
       expect(c.receipts.length, 1, reason: '在途期间只该有一次应答');
     });
+
+    test('提交失败：不写成功回执、不撤卡、busy 复位（传输失败要能重试）', () async {
+      final c = _controllerFor();
+      c.onAnswer = (answer) async => throw Exception('断了');
+      c.enqueue(approval('a1'));
+      await c.allowOnce();
+      expect(c.receipts, isEmpty, reason: '没发出去就不能写「已拒绝」回执');
+      expect(c.queue.length, 1, reason: '卡还在：传输失败不是"这一项没了"');
+      expect(c.phase, TakeoverPhase.active, reason: 'busy 必须复位，否则卡片永远点不了');
+    });
   });
 
   group('收起与恢复', () {

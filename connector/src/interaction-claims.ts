@@ -22,11 +22,13 @@
  *
  * 两者都经 `session-subscriptions.ts` 的正常出帧路径到手机。于是本层**不需要新的帧类型**，
  * 也不自己拼一份待处理集合 —— 那份集合的权威在 DSH 的会话日志里（§6.3 第一条）。
- * 本层真正负责的三件事因此是：
+ * 本层真正负责的四件事因此是：
  *
  * 1. **选中那条连接**：仲裁给出的 `deviceId` → presence 里那条活着的记录；
- * 2. **看护它**：看护计时器 + 断开 + 取消，全部 fail-closed；
- * 3. **把答复交回在途的 claim**：`settleClaim` 由 `interaction.respond` 调进来。
+ * 2. **看护它**：看护计时器 + 取消，全部 fail-closed；**断开不结算**（见下）；
+ * 3. **把答复交回在途的 claim**：`settleClaim` 由 `interaction.respond` 调进来；
+ * 4. **留住重投载荷**：`pendingAsks(sid)` 给出仍在途的 ask 事件，订阅恢复后按原 seq 再发
+ *    一遍（与 DSH gateway 的 `deliverRemoteEvent` 同形）。
  *
  * ## 一个如实的缺口
  *
@@ -39,8 +41,13 @@
  *
  * | 结局 | 审批 | 提问 |
  * |---|---|---|
- * | 看护超时 / 断开 / 取消 / 没有活连接 | `reject` | **抛错** |
- * | 会话被替换（别名指向了别的会话） | `reject` | **抛错** |
+ * | 看护超时 / 取消 / claim 之前就离线 | **抛错** | **抛错** |
+ * | 会话被替换（别名指向了别的会话） | 丢弃答复，看护到点后抛 | 同左 |
+ * | **设备断开** | **不结算**（等重连；看护到点才抛） | 同左 |
+ *
+ * **断开不结算**与 DSH gateway 同一模型：在途请求挂在 host 上（`pendingRemoteEvents`），
+ * 断线只撤投递、不结算（`packages/api/gateway/src/index.ts:717-721`）。审批那条
+ * "断开就还桌面"的理由不成立 —— claim 做出之后桌面拿不回来，抛错只会让工具失败。
  *
  * 提问侧**绝不返回空答案**：`{answers: []}` 会被 DSH 当成"用户跳过了每一题"
  * （`packages/interaction/user-questions/src/index.ts:318-321`），而链尾本应是 reject。
@@ -60,6 +67,7 @@ import {
 import type {
   ApprovalPrompt,
   QuestionPrompt,
+  Redelivery,
   RemoteApprovalDecision,
 } from './dsh/interactions.js'
 import type { DevicePresence } from './presence.js'
@@ -104,8 +112,20 @@ export interface InteractionPortDeps {
 
 /** 一条在途的 claim。两种终点：审批给标量决定，提问给答案批次。 */
 type Claim =
-  | { kind: 'approval'; sid: string; deviceId: string; settle: (decision: ApprovalDecision) => void }
-  | { kind: 'question'; sid: string; deviceId: string; settle: (answer: AskUserQuestionAnswer) => void }
+  | {
+    kind: 'approval'
+    sid: string
+    deviceId: string
+    redeliver?: Redelivery
+    settle: (decision: ApprovalDecision) => void
+  }
+  | {
+    kind: 'question'
+    sid: string
+    deviceId: string
+    redeliver?: Redelivery
+    settle: (answer: AskUserQuestionAnswer) => void
+  }
 
 export interface InteractionPort {
   askApproval(
@@ -125,6 +145,14 @@ export interface InteractionPort {
    *   调用方继续走提问路由（`continued` 提问正是这条路）。
    */
   settleClaim(sid: string, callId: string, answers: readonly AnswerItem[]): boolean
+  /**
+   * 该会话上仍在途的 ask 事件（重连重投用，见 `dsh/interactions.ts` 的 `Redelivery`）。
+   *
+   * 只包含**还等着回答**的 claim：已结算的已经从表里删掉。订阅恢复之后由
+   * `session-subscriptions.ts` 按原 seq 再发一遍 —— 与 DSH gateway 的
+   * `deliverRemoteEvent(pending, client)` 同形。
+   */
+  pendingAsks(sid: string): readonly Redelivery[]
   /** 在途 claim 数（指标与测试用）。 */
   readonly pending: number
 }
@@ -214,12 +242,14 @@ export function createInteractionPort(deps: InteractionPortDeps): InteractionPor
         kind: 'approval',
         sid: prompt.sid,
         deviceId,
+        ...(prompt.redeliver === undefined ? {} : { redeliver: prompt.redeliver }),
         settle: (): void => {},
       }
       claims.set(prompt.callId, claim)
 
-      // **断开就收束**：看护的语义是"手机不看了就立刻还桌面"，而不是等满 10 分钟。
-      const cancelOffline = presence.onOffline(deviceId, () => watchdog.disconnect())
+      // **断开不结算**（与 DSH gateway 同一模型：`pendingRemoteEvents` 在 host 上，
+      // 断线只撤投递、不结算 —— `packages/api/gateway/src/index.ts:717-721`）。
+      // claim 的寿命挂在 host 上，不挂在某条连接上：手机重连回来还能答，看护到点才收束。
       // asker 的**原** signal 继续管取消语义（绝不替换，`user-approval/src/index.ts:293-306`）。
       const onAbort = (): void => watchdog.disconnect()
       if (signal !== undefined) signal.addEventListener('abort', onAbort, { once: true })
@@ -239,7 +269,6 @@ export function createInteractionPort(deps: InteractionPortDeps): InteractionPor
         }
         return settlement.value === 'allow-once' ? 'allow-once' : 'reject'
       } finally {
-        cancelOffline()
         if (signal !== undefined) signal.removeEventListener('abort', onAbort)
         claims.delete(prompt.callId)
       }
@@ -266,11 +295,12 @@ export function createInteractionPort(deps: InteractionPortDeps): InteractionPor
         kind: 'question',
         sid: prompt.sid,
         deviceId,
+        ...(prompt.redeliver === undefined ? {} : { redeliver: prompt.redeliver }),
         settle: (): void => {},
       }
       claims.set(prompt.callId, claim)
 
-      const cancelOffline = presence.onOffline(deviceId, () => watchdog.disconnect())
+      // 同审批：**断开不结算**，claim 挂在 host 上；看护到点或取消才收束。
       const onAbort = (): void => watchdog.disconnect()
       if (signal !== undefined) signal.addEventListener('abort', onAbort, { once: true })
 
@@ -289,10 +319,18 @@ export function createInteractionPort(deps: InteractionPortDeps): InteractionPor
         }
         return settlement.value
       } finally {
-        cancelOffline()
         if (signal !== undefined) signal.removeEventListener('abort', onAbort)
         claims.delete(prompt.callId)
       }
+    },
+
+    pendingAsks(sid) {
+      const out: Redelivery[] = []
+      for (const claim of claims.values()) {
+        if (claim.sid !== sid || claim.redeliver === undefined) continue
+        out.push(claim.redeliver)
+      }
+      return out
     },
 
     settleClaim(sid, callId, answers) {

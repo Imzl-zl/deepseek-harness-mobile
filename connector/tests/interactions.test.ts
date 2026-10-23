@@ -18,7 +18,7 @@ import { test } from 'node:test'
 import type { Session } from '@deepseek-ai/dsh-session'
 
 import { registerInteractions } from '../src/dsh/interactions.js'
-import { emptySession, openCall, settleCall } from './support/session-log.js'
+import { emptySession, openApproval, openCall, settleCall } from './support/session-log.js'
 
 interface Captured {
   approval?: (request: never, next: () => Promise<unknown>) => Promise<unknown>
@@ -72,8 +72,8 @@ function setup(patch: {
   return { run, calls, warnings, nextCount: () => nextCalled }
 }
 
-const request = (patch: Record<string, unknown> = {}) => ({
-  agent: { id: 'dsh-session-1' },
+const request = (patch: Record<string, unknown> = {}, session?: Session) => ({
+  agent: { id: 'dsh-session-1', session: session ?? emptySession() },
   callId: 'call-1',
   toolName: 'bash',
   signal: new AbortController().signal,
@@ -112,6 +112,16 @@ test('接管：prompt 逐字段来自 DSH 请求，且 **signal 就是原对象*
   // **deviceId 必须来自仲裁的返回**（`protocol/takeover.ts:78` 的 `winner.id`）。
   // 丢掉它就只有"接管了"而不知道推给谁 —— 端口会退化成"等一个永远不来的回答"。
   assert.equal(call.deviceId, 'dev-1', '推送目标是仲裁选出的那台设备，不是端口自己再挑')
+})
+
+test('审批：prompt 带上重投载荷（那条 approval/asked 的原 seq 与 body）', async () => {
+  const session = emptySession()
+  const seq = openApproval(session, 'ap-1', 'call-1')
+  const { run, calls } = setup()
+  await run(request({}, session))
+  const redeliver = calls[0]?.prompt['redeliver'] as { seq: number; body: string } | undefined
+  assert.equal(redeliver?.seq, seq, '原 seq —— 重投不推进水位')
+  assert.equal(JSON.parse(redeliver?.body ?? '{}').type, 'approval/asked')
 })
 
 test('拒绝与异常：reject → rejected；端口抛错 → **unavailable** 且留声', async () => {
@@ -296,6 +306,16 @@ test('legacy 提问：日志里没有 / 只有已结算的 → next()', async ()
   const settled = setupQuestions()
   assert.equal(await settled.run(legacyQuestion(session)), 'from-desktop')
   assert.deepEqual(settled.calls, [], '有 tool/result 的调用不是"这一次"')
+})
+
+test('提问：prompt 带上重投载荷（那条 tool/call 的原 seq 与 body）', async () => {
+  const session = emptySession()
+  const seq = openCall(session, 'call-7')
+  const { run, calls } = setupQuestions()
+  await run(legacyQuestion(session))
+  const redeliver = calls[0]?.prompt['redeliver'] as { seq: number; body: string } | undefined
+  assert.equal(redeliver?.seq, seq)
+  assert.equal(JSON.parse(redeliver?.body ?? '{}').data.callId, 'call-7')
 })
 
 test('程序化提问（计划审查，没有 tool/call）→ next()，且**不 warn**', async () => {

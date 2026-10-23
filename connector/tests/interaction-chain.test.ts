@@ -196,7 +196,7 @@ test('整链：sync.hello 上报前台+订阅 → decideTakeover 真的 claim �
   assert.equal(unhandled.at(-1)?.end, 'disconnected', '断开之后立刻 fail-closed 并留证')
 })
 
-test('整链：手机断开 → 在途审批立刻 fail-closed（不等满 10 分钟）', { timeout: 60_000 }, async () => {
+test('整链：手机断开 → claim 保留（不结算），重连后答复仍能落', { timeout: 60_000 }, async () => {
   const { presence, deps, port } = harness()
   const scope = createConnectionScope(port, deps)
   scope.deviceEstablished('dev-1')
@@ -221,13 +221,15 @@ test('整链：手机断开 → 在途审批立刻 fail-closed（不等满 10 �
   )
   await settle()
   scope.servingEnded()
-  await assert.rejects(() => pending, '手机不看了就抛，不冒充用户的决定')
-  assert.equal(unhandled.length, 1)
-  assert.deepEqual(
-    (unhandled[0] as { end: string }).end,
-    'disconnected',
-    '未处理记录要说清是"断开"，而不是笼统的失败',
+  await settle()
+  assert.equal(claims.pending, 1, '断开只撤投递，不结算 —— 与 DSH gateway 的 pendingRemoteEvents 同形')
+  assert.equal(
+    claims.settleClaim('sid_dsh-1', 'call-1', [{ id: 'call-1', selected: ['allowed-once'] }]),
+    true,
+    '重连回来的答复仍能落进同一条 claim',
   )
+  assert.equal(await pending, 'allow-once')
+  assert.deepEqual(unhandled, [], '答上了就不是未处理')
 })
 
 test('整链：方法面真的挂了 sync.hello 与 interaction.respond（repo.info 报的是表的键）', async () => {

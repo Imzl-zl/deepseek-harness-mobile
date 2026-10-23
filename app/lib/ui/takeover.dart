@@ -337,54 +337,45 @@ class TakeoverController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    _busy = true;
-    notifyListeners();
-    final answer = InteractionAnswer(
-      sid: item.sid,
-      itemId: item.itemId,
-      callId: item.callId,
-      answers: [
-        InteractionAnswerItem(
-          id: item.questions.isEmpty ? item.callId : item.questions.first.id,
-          selected: approved ? <String>[label!] : const <String>[],
-        ),
-      ],
+    await _send(
+      InteractionAnswer(
+        sid: item.sid,
+        itemId: item.itemId,
+        callId: item.callId,
+        answers: [
+          InteractionAnswerItem(
+            id: item.questions.isEmpty ? item.callId : item.questions.first.id,
+            selected: approved ? <String>[label!] : const <String>[],
+          ),
+        ],
+      ),
+      (
+        key: item.itemId,
+        text: '计划回执 · ${item.title} · ${approved ? '同意执行' : '要求修改'}',
+      ),
     );
-    await _submit(answer);
-    receipts.add((
-      key: item.itemId,
-      text: '计划回执 · ${item.title} · ${approved ? '同意执行' : '要求修改'}',
-    ));
-    _busy = false;
-    settle(item.itemId, sid: item.sid);
   }
 
   Future<void> _settleApproval(String outcome, String label) async {
     final item = active;
     if (item == null || _busy) return;
-    _busy = true;
-    notifyListeners();
     // 审批的答案是"选中的标签里有没有 `allowed-once`"：空 `selected` = 显式跳过 = 拒绝。
-    final answer = InteractionAnswer(
-      sid: item.sid,
-      itemId: item.itemId,
-      callId: item.callId,
-      answers: [
-        InteractionAnswerItem(
-          id: item.callId,
-          selected: outcome == 'allowed-once'
-              ? <String>[approvalAllowLabel]
-              : const <String>[],
-        ),
-      ],
+    await _send(
+      InteractionAnswer(
+        sid: item.sid,
+        itemId: item.itemId,
+        callId: item.callId,
+        answers: [
+          InteractionAnswerItem(
+            id: item.callId,
+            selected: outcome == 'allowed-once'
+                ? <String>[approvalAllowLabel]
+                : const <String>[],
+          ),
+        ],
+      ),
+      (key: item.itemId, text: '审批回执 · ${item.toolName} · $label（$outcome）'),
     );
-    await _submit(answer);
-    receipts.add((
-      key: item.itemId,
-      text: '审批回执 · ${item.toolName} · $label（$outcome）',
-    ));
-    _busy = false;
-    settle(item.itemId, sid: item.sid);
   }
 
   /// 显式跳过当前这一题（原型 `skipQuestion`）。
@@ -413,30 +404,56 @@ class TakeoverController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    _busy = true;
-    notifyListeners();
-    final answer = InteractionAnswer(
-      sid: item.sid,
-      itemId: item.itemId,
-      callId: item.callId,
-      answers: [
-        for (final question in item.questions)
-          InteractionAnswerItem(
-            id: question.id,
-            selected: <String>[...?_selected[question.id]],
-            custom: _custom[question.id]?.trim().isNotEmpty == true
-                ? _custom[question.id]!.trim()
-                : null,
-          ),
-      ],
-    );
-    await _submit(answer);
     final all = <String>[
       for (final question in item.questions) ...?_selected[question.id],
     ];
-    receipts.add((key: item.itemId, text: '已回答 · ${all.join(' / ')}'));
-    _busy = false;
-    settle(item.itemId, sid: item.sid);
+    await _send(
+      InteractionAnswer(
+        sid: item.sid,
+        itemId: item.itemId,
+        callId: item.callId,
+        answers: [
+          for (final question in item.questions)
+            InteractionAnswerItem(
+              id: question.id,
+              selected: <String>[...?_selected[question.id]],
+              custom: _custom[question.id]?.trim().isNotEmpty == true
+                  ? _custom[question.id]!.trim()
+                  : null,
+            ),
+        ],
+      ),
+      (key: item.itemId, text: '已回答 · ${all.join(' / ')}'),
+    );
+  }
+
+  /// 发一次答复：**只有真的发出去了**才写回执、撤卡。
+  ///
+  /// 失败（传输 / 超时 / 这一项已经没了）**不写回执、不撤卡** —— 卡片的去留由调用方
+  /// （`chat_page` 的 `_onTakeoverAnswer`）按错误码决定：`interaction/not-pending` 撤，
+  /// 其余留卡可重试。这里只保证 `_busy` 一定复位（没有 `finally` 会让卡片永远禁用）。
+  ///
+  /// 因果见 `.agents/notes/implemented/2026-10-23-in-flight-interaction-is-host-held.md`。
+  Future<void> _send(
+    InteractionAnswer answer,
+    ({String key, String text}) receipt,
+  ) async {
+    _busy = true;
+    notifyListeners();
+    var sent = false;
+    try {
+      await _submit(answer);
+      sent = true;
+    } on Exception {
+      // 提示与撤卡由调用方处理；这里只吞掉异常让 busy 复位（错误已经报给用户了）。
+      sent = false;
+    } finally {
+      _busy = false;
+      notifyListeners();
+    }
+    if (!sent) return;
+    receipts.add(receipt);
+    settle(answer.itemId, sid: answer.sid);
   }
 
   /// 把答复交给注入的出口。**没有出口时只记回执**（演示模式）。

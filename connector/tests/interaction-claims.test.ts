@@ -4,7 +4,8 @@
  * 这个文件替换掉的是 `index.ts` 里那个**永远跑不到**的 fail-closed 桩。下面几条用例
  * 钉住的是它接上之后必须成立的行为，其中三条是"绝不放行"的硬规则：
  *
- * 1. 看护超时 / 断开 / 取消 / 没有活连接 → 审批 `reject`、提问**抛错**；
+ * 1. 看护超时 / 取消 / claim 之前就离线 → 审批与提问**都抛错**；**设备断开不结算**
+ *    （claim 挂在 host 上，等重连；看护到点才抛 —— 与 DSH gateway 的 pending 同形）；
  * 2. 提问侧**绝不返回空答案**（`{answers: []}` 会被 DSH 读成"用户跳过了每一题"）；
  * 3. 会话被替换时丢弃答复（与 DSH"迟到即丢弃"同构）。
  */
@@ -129,13 +130,33 @@ test('审批：看护超时 → 抛错 + 未处理记录（fail-closed，绝不�
   assert.equal(unhandled[0]?.code, 'interaction/not-pending')
 })
 
-test('审批：手机断开 → 抛错（不等超时，也不冒充用户决定）', { timeout: 60_000 }, async () => {
+test('审批：手机断开 → **不结算**，重连后答复仍能落（claim 挂在 host 上）', { timeout: 60_000 }, async () => {
   const { port, presence, unhandled } = build({ guardMs: 10 * 60_000 })
   const pending = port.askApproval(approval(), 'dev-1')
   await tick()
   presence.offline('dev-1')
-  await assert.rejects(() => pending)
-  assert.equal(unhandled[0]?.end, 'disconnected')
+  await tick()
+  assert.equal(port.pending, 1, '断开只撤投递，不结算 —— 与 DSH gateway 的 pendingRemoteEvents 同形')
+  assert.equal(
+    port.settleClaim('sid_1', 'call-1', [{ id: 'call-1', selected: ['allowed-once'] }]),
+    true,
+    '重连回来的答复仍能落进同一条 claim',
+  )
+  assert.equal(await pending, 'allow-once')
+  assert.equal(unhandled.length, 0, '答上了就不是未处理')
+})
+
+test('审批：断开之后看护到点仍然 fail-closed（不再"断开即抛"，但也不无限等）', { timeout: 60_000 }, async () => {
+  const timer = manualTimer()
+  const { port, presence, unhandled } = build({ guardMs: 1000, schedule: timer.schedule })
+  const pending = port.askApproval(approval(), 'dev-1')
+  await tick()
+  presence.offline('dev-1')
+  await tick()
+  assert.equal(port.pending, 1)
+  timer.box.fire?.()
+  await assert.rejects(() => pending, '看护到点必须抛 —— 不能替用户决定')
+  assert.equal(unhandled[0]?.end, 'timeout', '收束原因现在是 timeout，不再是 disconnected')
 })
 
 test('审批：asker 的原 signal 取消 → 抛错', { timeout: 60_000 }, async () => {
@@ -207,6 +228,21 @@ test('提问：拿不到答案就抛，绝不返回空答案', { timeout: 60_000
   timer.box.fire?.()
   await assert.rejects(() => pending, /看护以 timeout 收束/)
   assert.equal(timedOut.unhandled[0]?.end, 'timeout')
+})
+
+test('pendingAsks：只给仍在途的 ask（原 seq + body），结算后清空', { timeout: 60_000 }, async () => {
+  const { port } = build()
+  const redelivery = { seq: 7, body: '{"type":"approval/asked"}' }
+  const pending = port.askApproval(approval({ redeliver: redelivery }), 'dev-1')
+  await tick()
+  assert.deepEqual(port.pendingAsks('sid_1'), [redelivery], '重连重投的来源就是这张表')
+  assert.deepEqual(port.pendingAsks('sid_2'), [], '别的会话拿不到这一条')
+  assert.equal(
+    port.settleClaim('sid_1', 'call-1', [{ id: 'call-1', selected: ['allowed-once'] }]),
+    true,
+  )
+  await pending
+  assert.deepEqual(port.pendingAsks('sid_1'), [], '已结算的不再重投')
 })
 
 test('审批：`allowed-once` 标签与 DSH 的 outcome 词汇表逐字一致（跨端契约）', () => {

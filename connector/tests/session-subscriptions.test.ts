@@ -77,6 +77,33 @@ test('subscribe：开启快照的补课事件**逐条**展开成 ev，并回水�
   )
 })
 
+test('subscribe：在途 ask 的事件按**原 seq** 重投，且排在快照之前', async () => {
+  const { source, streams, addressOf } = createControllableSessionSource()
+  const sink = collector()
+  const subscriptions = createSessionSubscriptions({
+    source,
+    addressOf,
+    send: sink.send,
+    waitWritable: () => Promise.resolve(),
+    pendingOf: (sid) => (sid === 'sid_1' ? [{ seq: 97, body: '{"type":"tool/call"}' }] : []),
+  })
+
+  const pending = subscriptions.subscribe({ sid: 'sid_1', dshSessionId: 'dsh-1' })
+  await flush()
+  streams[0]?.push(opening(100, [98, 99, 100]))
+  await pending
+  assert.deepEqual(
+    sink.sent.map((frame) => [frame.t, frame.t === 'ev' ? frame.seq : undefined]),
+    [['ev', 97], ['ev', 98], ['ev', 99], ['ev', 100]],
+    '重投必须先于快照：反过来会"先撤后开"，留下一张幽灵卡',
+  )
+  assert.equal(
+    sink.sent[0]?.t === 'ev' ? sink.sent[0].body : undefined,
+    '{"type":"tool/call"}',
+    'body 原样过线（App 按 itemId upsert，重发天然幂等）',
+  )
+})
+
 test('subscribe：后续事件继续走 ev；assistant 流用**电脑侧分配**的 stream 与宿主的 index 当 rev', async () => {
   const { source, streams, addressOf } = createControllableSessionSource()
   const sink = collector()

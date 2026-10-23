@@ -369,7 +369,7 @@ type SyncSnapshot = {
 | 方法 | 方向 | 幂等键 | 说明 |
 |---|---|---|---|
 | `session.list` | 手机→电脑 | — | 会话清单(别名 + 最近活动 + 状态)。取自 `sessionController.list`(`packages/api/session-controller/src/index.ts:251-254`,已按活动排序);**标题在行的投影提示里** —— `projections.values.title`(宿主的 `list.ts:291-312` 的 `projectionsFor` 不挑键,`connector/src/dsh/sessions.ts:331-341` 原样透传),手机按它取,空标题显示「未命名」;**`cwd` 只给工作区分组 / 文件面板 / 用量聚合,不做标题兜底** —— 拿目录名当会话名,手机上会是一串工作区目录名冒充标题。**子会话行多一个 `parentSessionId`**(宿主的 `SessionSummary.parentSessionId`,已过别名表换成 `sid`);**根会话不给这个键** —— 不给 = 根。手机用它算子会话头部的父级与 `←` 返回;老连接器没有它时手机退到"目录扫描 / 导航记忆" |
-| `session.subscribe` | 手机→电脑 | — | 开始推送该会话的 `ev` / `live`;带 `since` 即同时完成恢复 |
+| `session.subscribe` | 手机→电脑 | — | 开始推送该会话的 `ev` / `live`;带 `since` 即同时完成恢复。**恢复之后会按原 seq 重投该会话上仍在途的 ask 事件**(`approval/asked` / `tool/call`,来自连接器内存里的在途 claim 表)——与 DSH gateway 把 `pendingRemoteEvents` 重投给新 client 同形(`api/gateway/src/index.ts:571`)。重投的是**会话事件本身**,不新增帧类型;App 按 `itemId` upsert,重发天然幂等 |
 | `session.unsubscribe` | 手机→电脑 | — | 停止推送;桥接可释放该会话缓冲(仍需等 persisted) |
 | `session.page` | 手机→电脑 | — | 历史翻页(按消息对齐,用 DSH `page()`) |
 | `session.prompt` | 手机→电脑 | `requestId` | **参数是 `{ sid, content, mode? }`**,不是 `{ sid, text }`。`content` 必须是**非空数组**,每项带 `type`(照 DSH 的 `PromptContentPart`:文本是 `{type:'text', text}`)。**形状以电脑侧为准** —— 它与 DSH 的 `sessionController.prompt` 同构,手机侧没有第二条真值。`mode: 'queue' \| 'steer'` |
@@ -474,7 +474,10 @@ claim(请求) :=
 - **claim 之后**(桥接已独占该请求,桌面看不到——这是 DSH 既有语义,与"两个浏览器同时打开"同构):
   - 把请求推给手机;启动**看护计时器**(默认 **10 min**,可配)。
   - 手机应答 → 返回对应 outcome;待处理项随下一条 `ev` 收敛(`approval/decided` 覆盖 `approval/asked`,§5.2)。
-  - 看护超时 / 手机断开 / 会话被替换 → 返回 **`unavailable`(fail-closed,绝不静默放行)**,并留一条"审批在手机上未被处理"的记录。
+  - **手机断开不结算**:claim 挂在 host 上,不挂在某条连接上——手机重连回来还能答。这是 DSH gateway 的既有模型
+    (`api/gateway/src/index.ts:227,571,717-721`:`pendingRemoteEvents` 挂在 host,断线只撤投递、新 client 重投)。
+    重连后的订阅恢复会按原 seq 重投那条 ask 事件(§5.7 的 `session.subscribe`),卡片随之回来。
+  - 看护超时 / 会话被替换 / asker 取消 → 返回 **`unavailable`(fail-closed,绝不静默放行)**,并留一条"审批在手机上未被处理"的记录。
     **本期只有日志与指标两条出口**:"推一条通知"需要一种电脑→手机的推送帧,而本期没有(见 §5.7 末尾)。
 - **产品文案必须如实**:手机接管期间审批不在电脑上出现;要恢复桌面接管,把开关设为 `never` 或让 App 退到后台(`foreground` 档下会自动 delegate)。
 - 演进(不在第一版):桥接可带一个 DSH 客户端插件,在桌面界面显示"手机接管中",避免用户误以为审批没弹。
@@ -496,7 +499,7 @@ claim(请求) :=
 
 - **来源是日志,不是内存**:ask 与 outcome 成对落盘,悬空即"有 ask、无 outcome"。桥接启动 / 重连时重放日志尾部重建集合。
 - **它没有独立查询方法**:待处理集合是**会话事件的投影**,随 `ev` 帧一起到手机(§5.7 因此没有 `interaction.list`)。要"拉一次当前集合"就 `session.subscribe` 带 `since` —— 恢复语义已经把这件事做完了。
-- 电脑侧**不另推一份集合**:审批的 ask 是 `approval/asked` 会话事件、提问的 ask 是 `ask_user_question` 的 `tool/call`,手机从事件投影。两份集合必然对不上(§5.7 末尾)。
+- 电脑侧**不另推一份集合**:审批的 ask 是 `approval/asked` 会话事件、提问的 ask 是 `ask_user_question` 的 `tool/call`,手机从事件投影。两份集合必然对不上(§5.7 末尾)。**重连重投也不是第二份集合**:它发的是那条 ask 事件本身(原 seq),来源仍是会话日志(§5.7 的 `session.subscribe`)。
 - 集合是**持久条目的投影**(I4):有 itemId(`i:<callId>`)、进快照、upsert;不随连接态变化。
 - 重建的边界要如实写进产品:只覆盖持久日志里的事件;日志被裁剪或会话被替换时,集合随基线快照刷新。
 

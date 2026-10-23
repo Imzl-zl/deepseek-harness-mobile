@@ -83,6 +83,14 @@ export interface SessionSubscriptionsOptions {
    * 三处各通报一次比让读取方猜"什么时候变了"可靠。
    */
   onChange?: (sids: readonly string[]) => void
+  /**
+   * 该会话上**仍在途**的 ask 事件（重连重投）。
+   *
+   * 订阅恢复（补发 / 快照）之后，这些事件会按**原 seq** 再发一遍 `ev` —— 与 DSH gateway
+   * 把 `pendingRemoteEvents` 重投给新 client 同形（`api/gateway/src/index.ts:571`）。
+   * App 按 `itemId` upsert，重发天然幂等；不新增帧类型。
+   */
+  pendingOf?: (sid: string) => readonly { seq: number; body: string }[]
   log?: ChannelLogger
 }
 
@@ -265,6 +273,14 @@ export function createSessionSubscriptions(
               lastSeq = event.seq
               yield { kind: 'buffered', seq: event.seq, body: event.body }
             }
+          }
+
+          // **在途 ask 重投**（与 DSH gateway 的 `deliverRemoteEvent` 同形）：订阅恢复之后，
+          // 把仍在等回答的那几条事件按原 seq 再发一遍。放在快照之前 —— 万一这次 ask 恰好
+          // 在重投与快照之间被结算，App 看到的是"先开后撤"（正确），而不是"先撤后开"（幽灵卡）。
+          // 原 seq 可能低于 `lastSeq`：它**不推进水位**，App 那边按 `itemId` upsert。
+          for (const pending of options.pendingOf?.(input.sid) ?? []) {
+            yield { kind: 'buffered', seq: pending.seq, body: pending.body }
           }
 
           for await (const frame of options.source.follow(
