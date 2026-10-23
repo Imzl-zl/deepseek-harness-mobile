@@ -48,7 +48,10 @@ const Map<String, ({String name, String description})> kBuiltInPresetCopy = {
     name: 'PTC 模式',
     description: '包含标准模式的所有能力，更适合批量调用工具，并对结果进行筛选、整理、去重、统计或汇总的任务。',
   ),
-  'minimal': (name: '极简模式', description: 'Agent 仅使用终端工具完成任务，适合测试和对比其基础表现。'),
+  'minimal': (
+    name: '极简模式',
+    description: 'Agent 使用终端和图片读取工具，并支持上下文压缩，适合测试和对比其基础表现。',
+  ),
   'cordis': (
     name: '创造模式',
     description: '用对话定制 DSH：让 Agent 编写插件，添加新功能或界面；也能组合工具和提示词，创建自己的模式。',

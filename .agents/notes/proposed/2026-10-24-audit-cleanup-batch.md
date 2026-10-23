@@ -83,21 +83,20 @@ Status: proposed
   变异校验：把 `enableSuggestions` 改回 true ⇒ **恰好那条红**。
 - **门禁**：flutter **1140 → 1141**、`dart analyze` / `format` 0。
 
-## Z6a（修字 + 清单）内置预设文案**已经漂了**
+## Z6a（修字 + 清单）内置预设文案**已经漂了** —— ✅ 已落地
 
-- **位置**：`app/lib/model/agent_preset.dart:51`（`minimal` 的描述）。
-- **事实**：DSH 现在是 `presetMinimalDescription: 'Agent 使用终端和图片读取工具，并支持上下文压缩，适合测试和对比其基础表现。'`
+- **位置**：`app/lib/model/agent_preset.dart` 的 `kBuiltInPresetCopy`（`minimal` 那一条）。
+- **事实**：DSH 的 zh 字典是 `presetMinimalDescription: 'Agent 使用终端和图片读取工具，并支持上下文压缩，适合测试和对比其基础表现。'`
   （`packages/client/ui-agent-preset/src/client/locales.ts:100`），
-  我们抄的是旧文案「Agent 仅使用终端工具完成任务…」。
-  另外三档与 DSH 逐字一致（`:95-98`、`:101-102`）。
+  我们抄的是旧文案「Agent 仅使用终端工具完成任务…」。其余三档本来就一致。
 - **为什么只能抄**：内置预设**不发布** `name`（`packages/preset/agent-preset-registry/src/display.ts:48-49,63-73`
   的 `presetDisplayText` 要一个 locale 查表函数，只有客户端有）⇒ 手机拿不到。
-- **改什么**：改那一条文案；`app/test/agent_preset_test.dart:103-106` 的断言跟着改
-  （它复述的是手抄串，本来就是**同义反复**，改完仍不是证据 —— 在注释里写清这一点）。
-  在 `tools.md` 的"DSH 升级后要重跑"清单里加一行：**重抄内置预设四档文案**
-  （来源 `ui-agent-preset/src/client/locales.ts:95-102`），顺带核 `permission.dart:160-191` 的三档措辞。
-- **判据**：四条文案与 DSH 逐字一致（人工核一次，写进提交信息）。
-- **门禁**：flutter、`dart analyze`。
+- **改什么**：改那一条文案；`app/test/agent_preset_test.dart` 里那条断言加注
+  "**这不是与 DSH 一致性的证据**，它复述的是手抄串"（它钉的是分摊逻辑）。
+  在 `tools.md` 的"DSH 升级后要重跑"那一段加一条**重抄四档**（含来源行号与"已漂过一次"的教训）。
+- **判据**：机械比对 DSH `zh` 字典与 Dart 表的四条 name + 四条 description，**逐字相等**
+  （2026-10-24 跑过一次全 OK）。
+- **门禁**：flutter **1141 持平**、`analyze` / `format` 0。
 
 ## Z6b（写进 docs，不改码）IPv6 隐私地址仍会上报
 

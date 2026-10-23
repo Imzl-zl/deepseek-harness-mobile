@@ -251,6 +251,14 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
       它已经**静默漂移过一次**(245 → 273):当时用 shell 的 `.Replace` 更新,没匹配上就**什么都不做** ✗ ——
       所以改这行用编辑工具,改完跑一次 `pnpm test` 对一下数。
 - 图标重新抽取(DSH 升级后):`node mock/proto/tools/extract-dsh-icons.mjs`
+- **内置 Agent 预设四档文案(DSH 升级后重抄)**:`app/lib/model/agent_preset.dart` 的
+  `kBuiltInPresetCopy` 是**手抄的第二份真值** —— 内置预设**不发布** `name`
+  (`packages/preset/agent-preset-registry/src/display.ts:48-49,63-73`),手机只能抄。
+  来源:`packages/client/ui-agent-preset/src/client/locales.ts:95-102` 的
+  `presetStandard/Ptc/Minimal/Cordis` 的 `Name`/`Description`(逐字,含标点)。
+  **它已经静默漂过一次**(极简模式,2026-10-24 发现):当时的测试只复述手抄串,
+  测不出漂移(`app/test/agent_preset_test.dart` 那条因此**不是证据**)。顺带核
+  `app/lib/model/permission.dart` 的三档措辞(那组是**我们自己的**文案,不是 DSH 的)。
 - **图标只有一个来源**(硬规则):DSH 的 100 个图标 → `mock/proto/icons.js`(机生成) → **同一份**产出 Flutter 侧 `app/lib/theme/dsh_icons.dart`。
   - 重新生成 Dart 侧:`node app/tools/extract-dsh-icons-dart.mjs`。**改 DSH 图标后必须重跑**(先跑上面那条,再跑这条)。
   - Dart 侧实现写在 `app/tools/dsh_icons.template.dart`(带 `@@…@@` 占位符的普通 Dart 文件)。**不要把它写成 JS 模板字符串** —— Dart 文档注释里全是反引号,塞进模板字符串会直接语法错误(踩过)。

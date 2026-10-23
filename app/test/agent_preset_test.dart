@@ -99,6 +99,10 @@ void main() {
 
   group('显示名', () {
     test('内置四档走本地化字典（DSH 的四个中文名逐字）', () {
+      // **这条不是"与 DSH 一致"的证据**：它复述的是 `agent_preset.dart` 里那份手抄串
+      // （内置预设不发布 `name`，手机只能抄，见 `display.ts:48-49`）。手抄与 DSH 的
+      // 一致性只能靠 `tools.md` 的"DSH 升级后重抄"清单，而不是这里。
+      // 它钉的是**分摊逻辑**：内置走字典、自建走自己的 name。
       final roster = parseAgentPresetRoster(rosterReply());
       expect(roster.displayNameOf('standard'), '标准模式');
       expect(roster.displayNameOf('ptc'), 'PTC 模式');

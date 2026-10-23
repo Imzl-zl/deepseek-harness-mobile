@@ -265,7 +265,7 @@
     ③ ~~**Z5** 配对码关联想~~ **✅ `67d0397`** → ~~**Z2** `onOffline` 死码~~ **✅ `55ea630`** →
     ~~**Z1** `fullAccess` 过滤~~ **✅（见索引）**
     ④ ~~**Z4** `stats.devices`~~ **✅ `bbfa5f7`** → ~~**Z3** 匿名限流分桶~~ **✅（见索引）**
-    ⑤ **Z6a** 预设文案漂移 → **Z6b** §15 一句（0 真机）← **下一步**
+    ⑤ ~~**Z6a** 预设文案漂移~~ **✅（见索引）** → **Z6b** §15 一句（0 真机）← **下一步**
     ⑥ **W3** 终态只有一个来源（1–2 回合）→ **W4** 运行态改读原生（1 回合，要加一条契约帧）
     铁律（用户 2026-10-24 复述）：**别擅自加规则，DSH 原生就行**。
 
@@ -422,10 +422,9 @@
     `dispose()` 才是终态。判据 `connector/tests/interaction-client.test.ts`（3 条），变异校验两组
     各恰好红 3 / 1 条。**残余窗口**（换代期间别人先答）已在笔记里如实写明。
     笔记 `implemented/2026-10-24-claims-survive-stream-generation.md`。
-14. **内置预设文案已漂一条**（2026-10-24 审计 B13）：极简模式的描述在 DSH 是"终端和图片
-    读取工具，并支持上下文压缩…"（`ui-agent-preset/src/client/locales.ts:100`），我们抄的是旧文案
-    （`app/lib/model/agent_preset.dart:51`）；`app/test/agent_preset_test.dart:103-106` 复述同一份
-    手抄串，测不出漂移。→ 工单 Z6a（修字 + `tools.md` 升级清单里加"重抄四档"）。
+14. ~~**内置预设文案已漂一条**~~ **已修（2026-10-24，Z6a）**：`minimal` 的描述跟上 DSH
+    （`ui-agent-preset/src/client/locales.ts:100`），四档 name+description **机械比对逐字相等**；
+    `agent_preset_test.dart` 那条加了注"不是一致性证据"；`tools.md` 加了"DSH 升级后重抄四档"清单。
 15. ~~**`interaction-face` 的 `pendingOf` 是生产死码**~~ **已删（2026-10-24，W1）**：
     `pendingOf` / `projectPendingQuestions` / `PendingItem` 全删，`itemIdOf` 换成
     `approvalItemId` / `questionItemId` / `interactionItemOf` 三个函数（一处表达）。
