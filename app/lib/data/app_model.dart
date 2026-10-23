@@ -1204,6 +1204,7 @@ class AppModel extends ChangeNotifier {
 
   StreamSubscription<ConnectionState>? _stateSub;
   StreamSubscription<JobFrame>? _jobSub;
+  StreamSubscription<SessionStatus>? _statusSub;
   final Map<String, StreamSubscription<SessionDelta>> _deltaSubs = {};
 
   /// 交互信号流（契约 §6.3：待处理集合是会话事件的投影）。
@@ -1466,6 +1467,10 @@ class AppModel extends ChangeNotifier {
     _stateSub = client.connection.listen(_onConnectionChanged);
     // 任务输出帧：任务面板与角标都听它。**广播流**，所以这里只订一份。
     _jobSub = client.jobUpdates.listen(_applyJobFrame);
+    // 会话运行态：宿主 `api-session/status` 的原样转发（`status` 帧）。
+    // **这是 running 的唯一实时来源** —— 以前是"数 turn/start / turn/end + 重连重建 + 轮次代号"，
+    // 那套东西已经删掉（宿主本来就有这条推送，见 `lib/core/sync_client.dart` 的说明）。
+    _statusSub = client.sessionStatus.listen(_applySessionStatus);
     _connection = _viewOf(client.state, client);
     // **先把落盘的发送模式读回来**：它决定发 prompt 时带哪个 `mode`，
     // 重启后要还是用户选的那个。读不到（没存过 / 存了个不认识的值）
@@ -1783,14 +1788,14 @@ class AppModel extends ChangeNotifier {
     // 是**根本没人去问过**。连上的那一刻是唯一正确的时机：
     // 之前发请求会撞上"还没握手"，之后没有别的事件会再来一次。
     //
-    // **每次进服务态都按这一包重建"在跑吗"**（首次连上时集合是空的，等价于只补）：
-    // 断线期间的 `turn/end` 不保证以事件形式回来，所以新快照说 `false` 时要把
-    // `_runningSids` 里那条撤掉 —— 否则运行条会一直转到杀 App。
+    // **每次进服务态都拉一包会话行**：它的 `running` 按原样覆盖（与 DSH 的浏览器同一条，
+    // `manager.ts:248-253`），于是断线期间结束的那一轮会在这里被纠正 —— 不再需要
+    // "重连按代号重建"那套护栏（那套已随 W4 一起删掉）。
     //
     // 拉完的结果由 `refreshSessions` 自己 `notifyListeners`，这里不等它：
     // 收帧路径上的回调不该被一个网络往返挡住（§2.2 的状态迁移通知是同步派发的）。
     if (state == ConnectionState.serving) {
-      unawaited(refreshSessions(reconcileRunning: true));
+      unawaited(refreshSessions());
       // **一进服务态就问一次"你还在哪些地址"**。
       //
       // 这是"局域网直连"能自愈的唯一时机：连接器只在**连上之后**才说得出自己
@@ -1891,66 +1896,48 @@ class AppModel extends ChangeNotifier {
   /// 多会话并行时，用户靠这个数知道该切去哪个会话（DSH 的待处理是
   /// per-session 的，切过去才看得见）。
   ///
-  /// **两种应用方式**（同一处，不许分叉）：
-  ///
-  /// - 不传 [reconcileRunningFrom]（平时）：`running` 只补不撤；
-  /// - 传了代号表（**进服务态那一包**）：按这一包重建 —— 代号没变过的行
-  ///   `true` 补、`false` 撤；代号变过（请求之后来了轮次边界事件）就跳过。
-  void _applySessionList(
-    List<SessionSummary> list, {
-    Map<String, int>? reconcileRunningFrom,
-  }) {
+  /// **`running` 按这一包原样覆盖**（两个方向都覆盖），与 DSH 的浏览器同一条：
+  /// 它拿到 `session.list` 之后就是 `session.handleRunning(summary.running)`
+  /// （`packages/api/session-controller/src/client/sessions/manager.ts:248-253`、`:450`）。
+  /// 之后的变化由 `status` 帧维护（宿主 `api-session/status` 的转发）。
+  void _applySessionList(List<SessionSummary> list) {
     _sessions = [
       for (final s in list) s.copyWith(pendingCount: _pendingCountOf(s.sid)),
     ];
-    if (reconcileRunningFrom == null) {
-      // **平时：快照只补「在跑」，不撤销「在跑」**（`runningOf` 的注释里有完整因果）：
-      //
-      // - 补：打开会话时还没有任何事件，这一笔是唯一的初值（一轮要跑 40 秒，
-      //   期间列表是旧值 `false` —— 2026-10-22 就是这么漏掉整轮运行条的）；
-      // - 不撤销：列表同样可能**旧地**说 `false`（轮次已经开始但还没重读），
-      //   撤销就等于把正在跑的轮次关掉。撤销只由 `turn/end` 做。
-      for (final s in _sessions) {
-        if (s.running) _runningSids.add(s.sid);
-      }
+    for (final s in _sessions) {
+      _setRunning(s.sid, s.running);
+    }
+  }
+
+  /// 把"这个会话在不在跑"写进 [_runningSids]，并在收口时清掉活时钟的起点。
+  ///
+  /// **唯一的两处调用**：`session.list` 那一包（覆盖式）与 `status` 帧（实时）。
+  void _setRunning(String sid, bool running) {
+    if (running) {
+      _runningSids.add(sid);
       return;
     }
-    // **重连：按这一包重建**（唯一允许"撤"的地方，见 `runningOf` 的注释）。
-    //
-    // 断线期间的 `turn/end` 不保证以事件形式回来，所以新快照是"这一轮到底还在
-    // 不在跑"的权威；但它是**请求/应答**，从请求发出到这一包落地之间到达的
-    // `turn/start` / `turn/end` 比它新 —— 那些行的代号变了，直接跳过：
-    // 旧的 `true` 不许钉死刚结束的一轮，旧的 `false` 也不许关掉刚起的一轮。
-    for (final s in _sessions) {
-      if (_turnGeneration[s.sid] != reconcileRunningFrom[s.sid]) continue;
-      if (s.running) {
-        _runningSids.add(s.sid);
-      } else {
-        _runningSids.remove(s.sid);
-        _turnStartedAt.remove(s.sid);
-      }
-    }
+    _runningSids.remove(sid);
+    _turnStartedAt.remove(sid);
+  }
+
+  /// 宿主推来的一条运行态（`status` 帧）。
+  void _applySessionStatus(SessionStatus status) {
+    if (_disposed) return;
+    final before = runningOf(status.sid);
+    _setRunning(status.sid, status.running);
+    // 只在真的变了的时候通知：这条流跟着宿主的 `agent/status` 走，
+    // 相邻两次常常是同一状态（重连后的首条就是），没必要让整页重建。
+    if (before != status.running || status.running) notifyListeners();
   }
 
   /// 拉会话列表（`session.list`）。
   ///
   /// **失败不吞**：把错误记进 [lastError] 并让界面能显示。
   /// 吞掉的话界面只会显示"空列表"，而用户无从知道是"真没有会话"还是"请求失败了"。
-  ///
-  /// [reconcileRunning]：**只在 `_onConnectionChanged` 的 serving 分支**传 `true` ——
-  /// 它让这一包按"请求发出前的轮次代号"重建 [_runningSids]（见 `_applySessionList`）。
-  /// 首次连上时集合本来就是空的（等价于只补）；重连时才是真正的重建。
-  /// 平时（打开面板 / 切模型后的重读）不传：那些时候列表只是补充，不是重建。
-  Future<void> refreshSessions({bool reconcileRunning = false}) async {
-    // **代号要在请求发出之前拍**：请求发出之后到达的事件都比这一包新。
-    final generations = reconcileRunning
-        ? Map<String, int>.of(_turnGeneration)
-        : null;
+  Future<void> refreshSessions() async {
     try {
-      _applySessionList(
-        await _fetchSessionRows(),
-        reconcileRunningFrom: generations,
-      );
+      _applySessionList(await _fetchSessionRows());
       _lastError = null;
       if (!_disposed) notifyListeners();
     } catch (error) {
@@ -2710,15 +2697,18 @@ class AppModel extends ChangeNotifier {
   /// `sid → 翻页失败的原因`。
   final Map<String, String> _historyFailure = <String, String>{};
 
-  /// **此刻有轮次在跑的会话** —— 判据是事件流：最后一个 `turn/start` 还没有配对的
-  /// `turn/end`。
+  /// **此刻有轮次在跑的会话** —— 来源是**宿主的推送**（`status` 帧，`api-session/status`
+  /// 的原样转发）+ `session.list` 那一包的覆盖。
   ///
-  /// ## 为什么不用 `session.list` 的 `running`
+  /// ## 为什么不再自己数 `turn/start` / `turn/end`
   ///
-  /// 那张表只在**连上 / 收口 / 打开面板**时重读（见 `:2559` 的注释），
-  /// 轮次开始到结束之间它是**旧值**。2026-10-22 真机实测：一轮跑了 40 秒，
-  /// 流末尾的运行条**整轮都没出现** —— 因为 `running` 一直是 `false`。
-  /// 事件流则是实时的，而且**边界与时间都来自电脑侧**（`turn/start` 的 `time`）。
+  /// 那套自建状态机（"最后一个 `turn/start` 没配对 `turn/end`"）再加"重连按首包重建 + 轮次
+  /// 代号护栏"，每一个补丁都是在**补协议的缺口** —— 而宿主本来就有这条推送，
+  /// DSH 的浏览器吃的就是它（`packages/api/session-controller/src/client/index.ts:118-119`）。
+  /// 删掉之后这里只剩两处写入：`session.list` 与 `status` 帧（`_setRunning`）。
+  ///
+  /// 活时钟的起点仍来自 `turn/start` 的 `time`（那是事件的事实，推送里没有时间），
+  /// 收口时由 `_setRunning(false)` 一起清掉。
   final Set<String> _runningSids = <String>{};
 
   /// `sid → 最近一次 `turn/start` 的轮号`。
@@ -2735,45 +2725,11 @@ class AppModel extends ChangeNotifier {
   /// 跑完的时长仍然只读投影给的 `durationMs`。
   final Map<String, int> _turnStartedAt = <String, int>{};
 
-  /// `sid → 最近一次轮次边界的代号`（`turn/start` / `turn/end`）。
-  ///
-  /// **只服务重连时的重建**：`session.list` 是请求/应答，它的 `running` 是
-  /// "电脑侧算这一包那一刻"的值；而从请求发出到应答落地之间到达的事件比它新。
-  /// 代号变了就说明这一包对这一行已经过期 —— 见 `_applySessionList` 的
-  /// `reconcileRunningFrom`。
-  final Map<String, int> _turnGeneration = <String, int>{};
-
-  int _nextTurnGeneration = 0;
-
-  /// 记一次轮次边界。**只在 `turn/start` / `turn/end` 两处调** ——
-  /// 代号单调递增，跨会话共用一个计数器（只比相等，不比较大小）。
-  void _bumpTurnGeneration(String sid) {
-    _turnGeneration[sid] = ++_nextTurnGeneration;
-  }
-
   /// 这个会话此刻在跑吗。
   ///
-  /// **只有一个真值：[_runningSids]**。`session.list` 的 `running` 不参与判断，
-  /// 它只在**读到的那一刻**往 [_runningSids] 里补一笔（见 `_applySessionList`）。
-  ///
-  /// ## 为什么不能写成 `_runningSids.contains(sid) || 快照里的 running`
-  ///
-  /// 那样快照一旦是 `true` 就**再也打不开** —— `turn/end` 只把 sid 从
-  /// [_runningSids] 里移掉，而快照没有任何东西会把它改回 `false`（列表只在
-  /// 连上 / 收口 / 打开面板时重读）。2026-10-22 真机实测：电脑侧 `turn/end`
-  /// 早在 21:12:26 就到了，运行条一直转到 21:17+，杀 App 重开才消失
-  /// （重开时那张快照是新的 `false`）。判据在 `app/test/shimmer_test.dart`。
-  ///
-  /// ## 重连是唯一的例外（2026-10-23）
-  ///
-  /// 断线期间的 `turn/end` 不保证以事件形式回来：重连的第一包按协议只有
-  /// **增量**或**快照页**两种，而快照页没有事件类型（`protocol/verify-fixtures.mjs`
-  /// 的 `01` / `04` 两条）。所以重连后第一包 `session.list` 到手时按它**重建**
-  /// 一次 [_runningSids]（见 `_applySessionList` 的 `reconcileRunningFrom`）：
-  /// 新行说 `false` 就撤。平时仍然只补不撤 —— 这条方向没变。
-  ///
-  /// Note: 为什么重连要重建、平时却只补不撤 —— 见
-  /// `.agents/notes/implemented/2026-10-23-running-rebuilt-on-reconnect.md`。
+  /// 唯一真值就是 [_runningSids]；它只有两处写入（`session.list` 那一包与 `status` 帧，
+  /// 同一个 `_setRunning`）。以前这里是"事件流推算 + 重连重建 + 轮次代号"三件套，
+  /// 已经随宿主推送的接入整块删掉。
   bool runningOf(String sid) => _runningSids.contains(sid);
 
   /// 本轮开始的时刻（毫秒 epoch）；`null` = 不知道。
@@ -2817,19 +2773,11 @@ class AppModel extends ChangeNotifier {
       // 在同一个 Context 里滚动状态，不是回到库里查）。
       final inBatch = <String, ChatItem>{};
       for (final event in delta.events) {
-        // **"这一轮在跑吗"从事件流判**（实时；`session.list` 的 `running` 是旧值，
-        // 见 `_runningSids` 的注释）。`turn/start` 的 `time` 就是本轮的起点 ——
-        // 电脑侧给的，手机只拿它做活时钟的减法。
+        // **"这一轮在跑吗"不在这里判**：它走宿主的 `status` 帧（见 `_runningSids`）。
+        // `turn/start` 的 `time` 仍然是活时钟的起点 —— 那是事件的**时间事实**，
+        // 推送里没有它。
         if (event.type == 'turn/start') {
-          _runningSids.add(sid);
           _turnStartedAt[sid] = event.time;
-          _bumpTurnGeneration(sid);
-        } else if (event.type == 'turn/end') {
-          _runningSids.remove(sid);
-          _turnStartedAt.remove(sid);
-          // **收口也记一次代号**：重连时那包 `session.list` 可能是在这次
-          // `turn/end` 之前算的（说 `true`）—— 代号变了，重建就不会把它加回来。
-          _bumpTurnGeneration(sid);
         }
         // **`session/title` 不是条目，是标题的真值**：DSH 生成/改名时落一条
         // （`session-title/src/index.ts` 的 fold 就认这个 type）。它进条目表
@@ -3337,6 +3285,7 @@ class AppModel extends ChangeNotifier {
     _disposed = true;
     unawaited(_stateSub?.cancel());
     unawaited(_jobSub?.cancel());
+    unawaited(_statusSub?.cancel());
     for (final sub in _deltaSubs.values) {
       unawaited(sub.cancel());
     }

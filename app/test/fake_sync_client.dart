@@ -74,6 +74,13 @@ abstract class FakeSyncClient implements SyncClient {
   Stream<JobFrame> get jobUpdates =>
       throw UnimplementedError('测试替身没有声明 jobUpdates');
 
+  /// 会话运行态流：**默认是空流** —— `AppModel.start()` 无条件订阅它，
+  /// 而绝大多数用例不关心"在不在跑"。关心它的用例自己覆盖这个 getter
+  /// （`running_reconnect_test.dart` 里那个带控制器的替身）。
+  @override
+  Stream<SessionStatus> get sessionStatus =>
+      const Stream<SessionStatus>.empty();
+
   @override
   Stream<SessionDelta> sessionUpdates(String sid) =>
       throw UnimplementedError('测试替身没有声明 sessionUpdates');

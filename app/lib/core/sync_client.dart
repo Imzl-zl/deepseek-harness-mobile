@@ -151,6 +151,14 @@ abstract interface class SyncClient {
   /// UI 拿到的是 `core/job.dart` 的 `sealed class JobFrame`。
   Stream<JobFrame> get jobUpdates;
 
+  /// 会话运行态流（`status` 帧）：宿主 `api-session/status` 的原样转发。
+  ///
+  /// 这是"这个会话在不在跑"的**唯一真值来源**（`SessionSummary.running` 只是初值）。
+  /// 它取代了手机侧原来那套"数 `turn/start` / `turn/end` + 重连重建 + 轮次代号"的
+  /// 自建状态机 —— 宿主本来就有这条推送，DSH 的浏览器吃的就是它
+  /// （`packages/api/session-controller/src/client/index.ts:118-119`）。
+  Stream<SessionStatus> get sessionStatus;
+
   /// 前后台切换。
   Future<void> setAppState(AppState state);
 
@@ -343,6 +351,17 @@ class SessionDelta {
 
   /// 快照原因（仅 `outcome == snapshot` 时有）。
   final SnapshotReason? reason;
+}
+
+/// 一条**会话运行态**（`status` 帧）：宿主 `api-session/status` 的原样转发。
+///
+/// 它不是条目、也不进 [SessionDelta]：运行态是瞬时事实（与 `presence` 同性质），
+/// 没有 `seq`、不参与水位，重新连上时以最新一条为准。
+class SessionStatus {
+  const SessionStatus({required this.sid, required this.running});
+
+  final String sid;
+  final bool running;
 }
 
 /// 一条会话事件：**原始载荷 + 已推导的身份**。

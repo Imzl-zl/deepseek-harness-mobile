@@ -51,6 +51,7 @@ const List<String> frameTypes = <String>[
   'job',
   'persisted',
   'presence',
+  'status',
 ];
 
 /// 握手三帧（明文例外之一，契约 §4.1）。定义在协议层：这是**帧的语义**。

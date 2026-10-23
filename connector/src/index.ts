@@ -94,7 +94,7 @@ import { createInteractionFace } from './interaction-face.js'
 import { createDeviceConnection } from './device-connection.js'
 import type { HandlerDeps } from './handlers.js'
 import { createIdempotency, type DedupeRows } from './idempotency.js'
-import type { ConnectionScopeDeps } from './connection-scope.js'
+import type { ConnectionScope, ConnectionScopeDeps } from './connection-scope.js'
 import { mount, type LifecycleStep } from './lifecycle.js'
 import { METRIC, createChannelLogger, createMetrics, type ChannelLogger, type ChannelMetrics } from './observability.js'
 import { createAliases, type Aliases } from './alias.js'
@@ -823,6 +823,15 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         }
 
         /**
+         * **在服务的**连接作用域（挂载级）。
+         *
+         * 为什么需要它：所有下行帧原本都是"某条连接自己的订阅/方法面"发出去的
+         * （`ev` / `res` / `job`），所以从来不需要一份"所有活连接"的册子。
+         * 运行态（`status` 帧）是**宿主事件驱动、会话级**的，得由挂载级广播。
+         */
+        const liveScopes = new Set<ConnectionScope>()
+
+        /**
          * 每连接装配的输入。**拨号路径与将来的监听面共用这一份** ——
          * 一条 socket 一份的是 `port`，不是这里的东西。
          */
@@ -840,7 +849,33 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           // 在途 ask 的重投来源（挂载级的 claim 表）。订阅恢复之后按原 seq 再发一遍，
           // 与 DSH gateway 把 pending 重投给新 client 同形。
           pendingAsks: (sid) => interactionPort.pendingAsks(sid),
+          // 把活连接交给挂载级：运行态（`status` 帧）要广播给**所有**在服务的连接，
+          // 而它没有"某条会话订阅"这个入口可用（那是会话级，运行态是会话级但推送来源是宿主）。
+          registerScope: (scope) => {
+            liveScopes.add(scope)
+            return () => {
+              liveScopes.delete(scope)
+            }
+          },
         }
+
+        /**
+         * 会话运行态：**宿主推什么就转发什么**（`api-session/status`）。
+         *
+         * 手机侧原来是自己推的（最后一个 `turn/start` 没配对的 `turn/end`）+ 重连时"按首包
+         * 重建 + 轮次代号护栏"。而宿主本来就有一条推送 —— DSH 的浏览器吃的就是它
+         * （`packages/api/session-controller/src/client/index.ts:118-119` →
+         * `manager.ts:726-734`），来源是 `agent/status`（`src/index.ts:204-205`）、
+         * 在网关转发清单里（`api/remotes/src/remote-events.ts:33`）。我们只是没转发。
+         *
+         * 别名还没认领的会话直接丢：手机是从 `session.list` 那一行学到它的，那一行本来就带
+         * `running`（初值），之后由这条推送维护。
+         */
+        ctx.effect(() => ctx.on('api-session/status', (sessionId: string, running: boolean) => {
+          const sid = aliases?.sidOf(sessionId)
+          if (sid === undefined) return
+          for (const scope of liveScopes) scope.sendStatus(sid, running)
+        }))
 
         // 连接器令牌（§12.2）：**拨号与出码登记共用同一个值**，所以在这一步开头读一次。
         // 读不到就**大声失败**（`readRelayToken` 的契约）：起来一个连不上中转的插件没有意义。

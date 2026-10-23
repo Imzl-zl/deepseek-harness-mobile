@@ -49,45 +49,49 @@ loading 字形 + 运行条「用时 1 分 54 秒」）；同一行矩形的相�
 那一轮的 `startTime`）；拿不到就只说「深度求索中」，不编数字。
 手机侧唯一允许的减法就是这个活时钟；**跑完的时长仍然只读投影的 `durationMs`**。
 
-## 3. "在跑吗"判据：事件流，不是 `session.list`
+## 3. "在跑吗"判据：宿主的推送（`status` 帧），不是自己数事件
 
-`AppModel.runningOf(sid)` = `turn/start` 之后还没等到 `turn/end`（`_runningSids`）——
-事件本身就是电脑侧事实，而且实时。**这是唯一真值**：`session.list` 的 `running`
-只在读到的那一刻往 `_runningSids` 里**补一笔**（打开会话时还没有事件，那一笔是初值），
-平时**不许撤销** —— 撤销只由 `turn/end` 做。反过来（用快照 OR 事件）会让旧快照的
-`true` 永远关不掉：2026-10-22 真机上一轮结束后仍转了 5 分钟，杀 App 才消失。
+`AppModel.runningOf(sid)` 只读 `_runningSids`，而它只有**两个写入面**（都走 `_setRunning`）：
 
-**唯一的例外是重连那一刻。** 断线期间收口的一轮，`turn/end` 不保证以事件形式回来：
-重连的第一包按协议只有两种结果 —— **增量**（含漏掉的 `turn/end`）或**快照页**
-（只有条目 `{seq,itemId,text}`，没有事件类型；`connector/src/protocol/recovery.ts:298-311`，
-fixture `01-normal-delta` 是增量、`04-window-missed-baseline` 是快照）。所以
-`_runningSids` 可能停在一个过期的 `true` 上。重连后第一包 `session.list` 到手时
-按它**重建**一次：新行说 `false` 就撤、说 `true` 就补。
+1. **`status` 帧**（实时）：连接器把宿主 `api-session/status` 原样转发过来
+   （`connector/src/protocol/frame.ts` 的 `status`，载荷 `{running}`）。这正是 DSH 浏览器的
+   数据源（`packages/api/session-controller/src/client/index.ts:118-119` → `manager.ts:726-734`）。
+2. **`session.list` 那一包**（初值与重连纠正）：**按原样覆盖**，与 DSH 浏览器同一条
+   （`manager.ts:248-253` 的 `session.handleRunning(summary.running)`）。
 
-重建有一条硬护栏：**只对这一包里没有被更新事件改过的行生效**。`turn/start` /
-`turn/end` 各带一个单调的轮次代号；请求发出后代号变了的行直接跳过 —— 否则旧的
-`true` 会钉死刚结束的一轮（2026-10-22 那条教训），旧的 `false` 会关掉刚起的一轮
-（排队消息在重连瞬间发出就会撞上）。事件流仍然赢过快照，只是"旧"的判据从
-"上一次读"改成了"这一包发出之后有没有新事件"。
+历史两课都在这条线上：**不能用快照当实时判据**（2026-10-22 一轮 40 秒整轮没出运行条 ——
+那张表只在连上/收口时重读），**也不能把"快照 OR 事件"叠起来**（旧快照的 `true` 永远关不掉，
+电脑侧收口后 App 还转 5 分钟）。所以实时的那一半交给宿主推送，快照只在读到时覆盖一次。
+
+**没有"轮次代号护栏"了**：那套东西是给"自己数 `turn/start` / `turn/end` + 重连重建"用的，
+事件推算整个删掉之后它没有对象。断线期间收口的一轮由重连后那一包 `session.list` 纠正，
+之后的变化由 `status` 帧维护。
 
 三处读同一个真值：运行条（`_ConversationFlow.running`）、输入栏的「排队发送」与
 「工作步骤展示」的运行中展开（`chat_page.dart` 的 `_running`）、子智能体行的状态。
 
 `turnStartedAtOf(sid)` 读 `_turnStartedAt`（`turn/start` 的 `time`），兜底读
-`trajectory.runningTurn.startTime`（**只对当前会话**）。
-
-**为什么不只用 `session.list` 的 `running`**：那张表只在连上 / 收口 / 打开面板时重读，
-轮次进行中是旧值；真机实测一轮跑了 40 秒、运行条整轮没出现。
+`trajectory.runningTurn.startTime`（**只对当前会话**）。**起点仍来自事件**：推送里没有时间。
+收口（`status{running:false}`）会一并清掉起点。
 
 ## 3.1 判据
 
-- `app/test/shimmer_test.dart`：`turn/start` 起 / `turn/end` 收；**快照说在跑时
-  `turn/end` 也必须能停**（那条走真 `session.list` 解析器）。
-- `app/test/running_reconnect_test.dart`：断线 → 重连的两种第一包与两条边界 ——
-  断线期间收口（新快照说 `false`，或增量里的 `turn/end` 先于快照落地）⇒ `runningOf` 为 `false`；
-  断线期间没收到口、这一轮仍在跑（新快照说 `true`，或增量里的 `turn/start` 先于快照落地）
-  ⇒ 仍为 `true`；重连那包 `session.list` **读失败** ⇒ 保持原值（不知道就不撤）。
-  widget 级一条：`ChatPage` 重连后运行条消失、输入栏主键从「停止」回到「发送」。
+- `app/test/shimmer_test.dart`：`status{true}` 起、`status{false}` 收；**快照说在跑时
+  `status{false}` 也必须能停**（后者走真 `session.list` 解析器）；`turn/start` 只提供起点。
+- `app/test/running_reconnect_test.dart`：两个写入面各一条 ——
+  断线期间收口（重连那包 `session.list` 说 `false`）⇒ `runningOf` 为 `false`；
+  仍在跑（新快照说 `true`）⇒ 仍为 `true`；`session.list` **读失败** ⇒ 保持原值（不知道就不撤）；
+  `status` 帧单独一条（true 起 / false 收 + 清起点）。
+  widget 级两条：`ChatPage` 重连后运行条消失、输入栏从「停止」回到「发送」；
+  **只靠 `status` 帧**也能让运行条起落。
+- `connector/tests/connection-scope.test.ts`：`sendStatus` 在未认证时**不发**、认证后推一封
+  `status` 帧（载荷 `{running}`）。
+- `connector/tests/frame-list-single-source.test.ts` 与 `job-frame.test.ts`：帧类型清单
+  与契约 §3 **逐项相等**（加一种帧必须两侧同时改 —— 本轮就是这么发现契约表漏行的）。
+- 真机（`d61cf622`，2026-10-22）：执行中 `shots-2026-10-22/g-213439.png`；
+  `turn/end` 后 `i1-after-turn-end.png`（App 全程前台，未重启）。
+  **W4 之后这条判据的数据源变了，真机尚未复验**（1 回合，见
+  `.agents/notes/proposed/2026-10-24-running-from-native-status.md` 的"判据"一节）。
 - 真机（`d61cf622`，2026-10-22）：执行中 `shots-2026-10-22/g-213439.png`；
   `turn/end` 后 `i1-after-turn-end.png`（App 全程前台，未重启）。
   重连这条边界**没有真机回合**：模型级 + widget 级用例已覆盖，见

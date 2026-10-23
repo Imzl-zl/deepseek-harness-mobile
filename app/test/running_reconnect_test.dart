@@ -1,20 +1,18 @@
-/// 断线 → 重连：运行条（`_runningSids`）必须能按第一包收口。
+/// 运行态（`runningOf`）的**两个写入面**：`session.list` 那一包与 `status` 帧。
 ///
 /// ## 这一组守什么
 ///
-/// 断线期间收口的一轮，`turn/end` **不保证**以事件形式回来：重连的第一包按协议
-/// 只有两种结果 —— **增量**（含漏掉的 `turn/end`）或**快照页**（只有条目
-/// `{seq,itemId,text}`，没有事件类型；`connector/src/protocol/recovery.ts:298-311`，
-/// fixture `01-normal-delta` / `04-window-missed-baseline`）。旧实现里
-/// `_runningSids` 只由 `turn/end` 撤，于是快照页那条 sid 永远留着 ——
-/// 运行条转到杀 App、输入栏永远「排队发送」。
+/// "这个会话在不在跑"在 2026-10-24（W4）之后由**宿主推送**维护：连接器把
+/// `api-session/status` 转成 `status` 帧（`connector/src/protocol/frame.ts` 的 `status`）。
+/// 手机侧只剩两处写入，都走 `_setRunning`：
 ///
-/// 修法是"重连时按 `session.list` 重建"，并且**事件流仍然赢过快照**：
+/// - `session.list` 那一包：**按原样覆盖**（与 DSH 浏览器同一条，
+///   `session-controller/src/client/sessions/manager.ts:248-253`）—— 断线期间收口的那一轮
+///   靠它在重连后纠正；
+/// - `status` 帧：宿主 `agent/status` 的实时转发。
 ///
-/// - 断线期间收口（新快照说 `false`，或增量里的 `turn/end` 先于快照落地）⇒ `false`；
-/// - 断线期间没收到口、这一轮仍在跑（新快照说 `true`，或增量里的 `turn/start`
-///   先于快照落地）⇒ `true`；
-/// - 重连那包 `session.list` 读失败 ⇒ 保持原值（不知道就不撤）。
+/// 原来那套"数 `turn/start` / `turn/end` + 重连按代号重建"已经删掉，
+/// 它的护栏用例（"旧快照不许钉死 true / 不许关掉刚起的一轮"）随行为一起删。
 ///
 /// 最后一条 widget 级：`ChatPage` 重连后运行条消失、输入栏主键从「停止」回到「发送」。
 library;
@@ -33,17 +31,17 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_sync_client.dart';
 
-/// 能推连接状态、能换 `session.list` 应答、能推事件的替身。
+/// 能推连接状态、能换 `session.list` 应答、能推事件与**运行态帧**的替身。
 ///
-/// `listGate` 用来把"事件先到、快照后到"排出来：重连的 `session.list` 会卡在
-/// 它上面，测试先推一条事件，再放行快照 —— 那正是真机上"请求已发出、应答
-/// 还在路上"的窗口。
+/// `listGate` 用来把"帧先到、快照后到"排出来：重连的 `session.list` 会卡在
+/// 它上面，测试先推一帧，再放行快照 —— 那正是真机上"请求已发出、应答还在路上"的窗口。
 class _ReconnectClient extends FakeSyncClient {
   _ReconnectClient({required List<Map<String, Object?>> rows}) : _rows = rows;
 
   List<Map<String, Object?>> _rows;
   final _states = StreamController<conn.ConnectionState>.broadcast();
   final _sessions = StreamController<SessionDelta>.broadcast();
+  final _status = StreamController<SessionStatus>.broadcast();
   conn.ConnectionState _state = conn.ConnectionState.serving;
 
   /// 非空时，`session.list` 会等它。
@@ -63,12 +61,19 @@ class _ReconnectClient extends FakeSyncClient {
     _sessions.add(SessionDelta(sid: sid, events: [event], transient: const {}));
   }
 
+  /// 推一条运行态（宿主 `api-session/status` 的转发）。
+  void emitStatus(String sid, bool running) {
+    _status.add(SessionStatus(sid: sid, running: running));
+  }
+
   @override
   conn.ConnectionState get state => _state;
   @override
   Stream<conn.ConnectionState> get connection => _states.stream;
   @override
   Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
+  @override
+  Stream<SessionStatus> get sessionStatus => _status.stream;
   @override
   Future<void> start() async {}
   @override
@@ -80,6 +85,7 @@ class _ReconnectClient extends FakeSyncClient {
   Future<void> close() async {
     await _states.close();
     await _sessions.close();
+    await _status.close();
   }
 
   @override
@@ -182,57 +188,26 @@ void main() {
     expect(app.runningOf('s1'), isTrue, reason: '重建不能把还在跑的那一轮关掉（快照说 true）');
   });
 
-  test('增量里的 turn/end 先于快照落地：旧快照的 true 不许把它加回来', () async {
-    final client = _ReconnectClient(rows: [_row(running: true)]);
-    final app = await _started(client);
-    expect(app.runningOf('s1'), isTrue);
-
-    client.emitState(conn.ConnectionState.backoff);
-    final gate = Completer<void>();
-    client.listGate = gate;
-    // 这一包是在 turn/end 之前算的：它仍说 true。
-    client.rows = [_row(running: true)];
-    client.emitState(conn.ConnectionState.serving);
-    await _settle();
-
-    // 重连的补课事件（增量）先说这一轮结束了。
-    client.emit('s1', _turn('turn/end', 2, 1700000040000));
-    await _settle();
-    expect(app.runningOf('s1'), isFalse);
-
-    gate.complete();
-    await _settle();
-    expect(
-      app.runningOf('s1'),
-      isFalse,
-      reason: '这一包比 turn/end 旧：不许用旧 true 把刚结束的一轮钉死',
-    );
-  });
-
-  test('增量里的 turn/start 先于快照落地：旧快照的 false 不许关掉刚起的一轮', () async {
+  test('`status` 帧是实时真值：true 起、false 收，且收口清掉活时钟起点', () async {
     final client = _ReconnectClient(rows: [_row(running: false)]);
     final app = await _started(client);
     expect(app.runningOf('s1'), isFalse);
 
-    client.emitState(conn.ConnectionState.backoff);
-    final gate = Completer<void>();
-    client.listGate = gate;
-    // 这一包是在 turn/start 之前算的：它仍说 false。
-    client.rows = [_row(running: false)];
-    client.emitState(conn.ConnectionState.serving);
-    await _settle();
-
+    // 宿主说开始跑了（真实路径上 `turn/start` 事件同时带来 time）。
     client.emit('s1', _turn('turn/start', 1, 1700000000000));
+    client.emitStatus('s1', true);
     await _settle();
     expect(app.runningOf('s1'), isTrue);
-
-    gate.complete();
-    await _settle();
     expect(
-      app.runningOf('s1'),
-      isTrue,
-      reason: '这一包比 turn/start 旧：不许用旧 false 关掉刚起的一轮',
+      app.turnStartedAtOf('s1'),
+      1700000000000,
+      reason: '活时钟起点仍来自 turn/start 的 time',
     );
+
+    client.emitStatus('s1', false);
+    await _settle();
+    expect(app.runningOf('s1'), isFalse);
+    expect(app.turnStartedAtOf('s1'), isNull, reason: '收口要把起点清掉，否则下次运行条从旧起点算');
   });
 
   test('重连那包 session.list 读失败：保持原值，不猜"已经收口"', () async {
@@ -282,6 +257,36 @@ void main() {
     );
     expect(_primaryTooltip(tester), '发送', reason: '输入栏从「停止」回到可发送（不再停在运行态）');
     // 收掉运行条的 1 秒时钟（不留 pending timer 给下一个用例）。
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('ChatPage：**只靠 `status` 帧**也能让运行条起来/收掉（不再依赖 turn 事件）', (
+    tester,
+  ) async {
+    final client = _ReconnectClient(rows: [_row(running: false)]);
+    final app = AppModel(client: client);
+    addTearDown(app.dispose);
+    await app.start();
+    await app.refreshSessions();
+    await app.openSession('s1');
+    client.emit('s1', _userMessage());
+    await tester.pumpWidget(_chatPage(app));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('running')), findsNothing);
+
+    // 宿主说这一轮开始跑了（真实路径上同时会有 `turn/start` 提供时钟起点）。
+    client.emit('s1', _turn('turn/start', 2, 1700000000000));
+    client.emitStatus('s1', true);
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('running')), findsOneWidget);
+    expect(_primaryTooltip(tester), '停止');
+
+    client.emitStatus('s1', false);
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('running')), findsNothing);
+    expect(_primaryTooltip(tester), '发送');
     await tester.pumpWidget(const SizedBox());
   });
 }

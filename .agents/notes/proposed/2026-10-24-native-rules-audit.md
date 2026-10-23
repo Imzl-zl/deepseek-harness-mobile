@@ -1,6 +1,6 @@
 # Agent Note: 「我们替 DSH 做了决定」总账 —— 已逐条求证 + 归类
 
-Status: proposed（**结论已求证**；10/11 已落地，剩 W4）
+Status: proposed（**结论已求证**；**11/11 全部落地**，真机验证 3–4 回合待点头）
 
 ## 落地进度（2026-10-24，每件一个提交）
 
@@ -16,11 +16,11 @@ Status: proposed（**结论已求证**；10/11 已落地，剩 W4）
 | Z6a 预设文案跟上 DSH | ✅ | `748edcf` |
 | Z6b IPv6 仅排后写进 §15 | ✅ | `e1a421a` |
 | **W3 终态只有一个来源** | ✅（代码）／真机待跑 | 见 `implemented/2026-10-24-terminal-identity-from-pc.md`；**真机 1–2 回合未跑** |
-| **W4 运行态改读原生** | ⏳ | 要加一条契约帧（最大一件），1 个真机回合 |
+| **W4 运行态改读原生** | ✅（代码）／真机待跑 | `implemented/2026-10-24-running-from-native-status.md`；**真机 1 回合未跑** |
 
-门禁（10 件落地后）：protocol **454·26·49**、boundary **360**、connector **615**、
+门禁（11 件全部落地后）：protocol **454·26·49**、boundary **360**、connector **616**、
 relay **87**、flutter **1144**、analyze/format **0**、icons / tool-paths 绿。
-真机回合：**0**（W3 的验证 1–2 回合、W4 的 1 回合另计，均未跑）。
+真机回合：**0**（W3 的 1–2 回合、W4 的 1 回合另计，均未跑）。
 
 ## 这一轮做了什么
 
@@ -65,7 +65,7 @@ relay **87**、flutter **1144**、analyze/format **0**、icons / tool-paths 绿�
 | B2 | **自创** | `自作主张` | `connector/src/dsh/interaction-client.ts:330-335` | 浏览器在 `callId === undefined` 时**照样弹卡、照样答**（`ui-approval/src/client/index.ts:45-53`、`:59-65`）；审批的原生身份是服务铸的 `ApprovalRequestId`（`user-approval/src/types.ts:13-17`、`index.ts:224-232`）。**未找到**"没有 callId 就拒答"的 DSH 规则（`acp/src/index.ts:161` 那条是 ACP **自己的协议**要求 toolCallId，不是 approval 的语义） | 我们**替宿主决定"手机不参与这类审批"**；后果比"少答一类"更宽：这条审批**连重投也拿不到**（`connector/src/dsh/ask-event.ts:65` 按 callId 匹配） | **改读原生**：审批的 claim 键改成 `approval/asked.id`（手机侧早就在用它当卡 id，`app/lib/data/projection.dart:997,1003`）—— **已落地**，见 `implemented/2026-10-24-interaction-identity-from-native-ids.md` |
 | B3 | **不是自创** | `设计缺陷`（可接受） | `app/lib/ui/chat_page.dart:378-395` | 浏览器的三个出口（答 / `next()` 委托 / `signal` 中止）在 `ui-approval/src/client/index.ts:59-69`、`ui-user-questions/src/client/index.ts:258-266`；`interaction/not-pending` 的客户端动作在契约 §3.1（`docs/subsystems/remote-channel.md:154`） | 浏览器只有"这条 invocation 结束"这一种终态；我们的卡是**会话事件的投影**，通道失败时那条 `approval/decided` 还没来 ⇒ "其余留卡"是通道层的必要补丁，不是替宿主决定 | **保留**；把"其余错误留卡可重试"一句补进契约 §3.1（现在只在代码注释里） |
 | B4 | **自创**（且在本部署**不可达**） | `自作主张` | `app/lib/ui/takeover.dart:193-195`；提示语 `app/lib/ui/chat_page.dart:353-358` | `danger-full-access` 预设 = `sandbox: danger-full-access, approval: 'never'`（`bundle/base/cordis.patch.yml:274-276`、`permission-presets/src/index.ts:193-195`）；`'never'` 在 **dispatch 之前**就 `rejected`（`user-approval/src/index.ts:270-275`）⇒ **根本不产生 `approval/request`**。浏览器侧没有任何同类过滤 | 多了一层 DSH 没有的过滤，而它过滤的是一个不会发生的场景；那句"完全权限下不再逐步确认：X 直接执行"因此是一条**永远显示不出来**的提示（promise-preset 与 policy 只由 `permissionPresets.set` 成对写，`:272`） | **删**（过滤 + 那条 toast），见 Z1 |
-| B5 | **自创**（原生已有该事实，我们没转发） | `设计缺陷` | `app/lib/data/app_model.dart:1899-1933`（重建）、`:2738-2751`（代号）、`:2756-2777`（唯一真值） | `SessionSummary.running`（`api/session-controller/src/types.ts:185`，取值 `list.ts:120` 的 `agent.status === 'running'`）；**原生推送** `api-session/status`（`types.ts:617-622`、`index.ts:204-205`），在转发清单里（`api/remotes/src/remote-events.ts:33`），DSH 浏览器直接吃（`session-controller/src/client/index.ts:118-119`、`manager.ts:726-734`） | 宿主把"在不在跑"当**一条推送**；我们用两条会话事件 + 一次列表重读 + 代号护栏重建同一事实 | **改读原生**：连接器订阅 `api-session/status` 并转发，App 删掉重建与代号；见 W4（**收益最大、代价也最大**：要动契约帧） |
+| B5 | **自创**（原生已有该事实，我们没转发） | `设计缺陷` | `app/lib/data/app_model.dart:1899-1933`（重建）、`:2738-2751`（代号）、`:2756-2777`（唯一真值） | `SessionSummary.running`（`api/session-controller/src/types.ts:185`，取值 `list.ts:120` 的 `agent.status === 'running'`）；**原生推送** `api-session/status`（`types.ts:617-622`、`index.ts:204-205`），在转发清单里（`api/remotes/src/remote-events.ts:33`），DSH 浏览器直接吃（`session-controller/src/client/index.ts:118-119`、`manager.ts:726-734`） | 宿主把"在不在跑"当**一条推送**；我们用两条会话事件 + 一次列表重读 + 代号护栏重建同一事实 | **改读原生**：连接器订阅 `api-session/status` 并转发，App 删掉重建与代号 —— **已落地**，见 `implemented/2026-10-24-running-from-native-status.md`（新帧 `status`；收益：`_runningSids` 的重建、轮次代号、`turn/*` 推 running 全部删除） |
 | B6 | **自创** | `设计缺陷` | `connector/src/interaction-claims.ts:63-77`（`callId` 必填）；`connector/src/interaction-face.ts:200-204`（`RespondParams.callId`）；幂等键 `app/lib/data/app_model.dart:3160`（`i:<callId>`） | DSH 没有"卡 id"这个概念：审批是 `ApprovalRequestId`（`user-approval/src/types.ts:17`），提问的卡按 `ToolCallId` 分组（`ui-user-questions/src/client/index.ts:87-89`），计划审查挂在 `intent.callId` 上（`plan-mode/src/index.ts:326`） | 我们把"待处理项身份"折成**一个** `callId`，于是两个原生的身份里必须有一个能伪装成另一个 | **改读原生**：`interaction.respond` 的键改成 `itemId`（`i:<approvalRequestId>` / `t:<callId>`），与手机已有的 `itemId` 对齐；见 W1 |
 | B7 | **不是自创**（它是被删规则的配套） | `实现缺陷`（死代码 + 过期注释） | `connector/src/presence.ts:73-81`（契约面）、`:94-95`、`:125-135`（触发）、`:177-188`（实现）；生产**零调用**（只有 `presence.test.ts` 一条） | 触发它的那条规则已经删了：DSH 里"手机断开"不结算任何交互（`api/gateway/src/index.ts:717-721` 只撤投递；A2/A4 已收口） | 注释还写着"在途审批的看护要靠它收口、契约 §6.2 的『手机断开 → unavailable』"—— 那条规则**不存在了** | **删**（字段 + 监听桶 + 注释），见 Z2 |
 | B8 | **不是自创** | `有意偏离` | `connector/src/handlers.ts:77`（名单）、`:952`（拦） | `/goal` 注册在 `goal/command-goal/src/index.ts:191-197`，已有目标拒 `create`（`:143-149`）、`clear` 重复是 no-op（`:171-174`）；`/plan` 注册在 `plan/plan-mode/src/index.ts:230-274`，`set` 回 `committed/queued/cancelled/noop` | 无（准入三条齐备，且只有一处表达：契约 §5.7 的 `command.execute` 行 + `MOBILE_COMMANDS`） | **保留**；复核已过（`/plan <message>` 会 steer 一条用户消息，仍在会话之内，不违反准入①） |

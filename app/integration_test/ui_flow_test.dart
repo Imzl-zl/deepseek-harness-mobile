@@ -51,6 +51,9 @@ class _FakeClient implements SyncClient {
   @override
   Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
   @override
+  Stream<SessionStatus> get sessionStatus =>
+      const Stream<SessionStatus>.empty();
+  @override
   Future<SessionAnchor> subscribe(String sid, {required int since}) async =>
       const SessionAnchor(since: 0, hasMore: false);
   @override

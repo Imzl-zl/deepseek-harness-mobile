@@ -67,6 +67,14 @@ export interface ConnectionScopeDeps {
    * **可缺**：只测方法面 / 订阅骨架的用例不需要它；缺了就是"没有要重投的"。
    */
   pendingAsks?: (sid: string) => readonly { seq: number; body: string }[]
+  /**
+   * 把**活连接的作用域**交给挂载级，返回注销函数（这条连接收口时调）。
+   *
+   * 存在的理由：所有下行帧原本都由"某条连接自己的订阅/方法面"发出，所以从不需要一份
+   * "所有活连接"的册子；而会话运行态（`status` 帧）是**宿主事件驱动、会话级**的，
+   * 得由挂载级广播给每一条在服务的连接。**可缺**：只测方法面的装配不需要它。
+   */
+  registerScope?: (scope: ConnectionScope) => () => void
 }
 export interface PairingScope {
   candidate: PairingCandidate
@@ -77,6 +85,15 @@ export interface ConnectionScope {
   pairingEstablished(): void
   servingEnded(): void
   handleFrame(frame: WireFrame): void
+  /**
+   * 推一条**会话运行态**（`status` 帧，宿主 `api-session/status` 的转发）。
+   *
+   * 只在**这台设备已完成鉴权**时发（待配对通道与未认证连接一律不发）；
+   * 窗口满 / 不在服务态时 `port.send` 自己回 `false`。
+   * **不排队、不重试**：运行态是瞬时事实，丢掉一拍不要紧 —— 下一条会补上，
+   * 手机侧还有首包 `session.list.running` 当初值。
+   */
+  sendStatus(sid: string, running: boolean): boolean
 }
 
 export function createConnectionScope(
@@ -139,6 +156,10 @@ export function createConnectionScope(
   })
 
   return {
+    sendStatus(sid, running) {
+      if (deviceId === null) return false
+      return port.send({ v: 1, t: 'status', sid, box: JSON.stringify({ running }) })
+    },
     deviceEstablished(devId) {
       if (pairing !== undefined) throw new Error('配对候选不能激活普通业务身份')
       deviceId = devId

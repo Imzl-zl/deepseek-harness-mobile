@@ -566,6 +566,8 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       case 'job':
         _jobFrames.add((frame, plaintext));
         _emitJobFrame(frame, plaintext);
+      case 'status':
+        _onStatus(frame, plaintext);
       case 'credit':
       case 'ping':
       case 'pong':
@@ -1184,6 +1186,8 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     _sessionControllers.clear();
     // 任务帧流也收口：不关的话 UI 上的订阅会挂在一个已死的客户端上。
     await _jobUpdates.close();
+    // 运行态流同理（订阅方是会话页/角标）。
+    await _sessionStatus.close();
     // 关闭时也要拒掉在途请求（同 `_enterClosed`，但错误码不同：
     // 这里是"客户端被关了"，不是"连接断了" —— 前者不该再重试）。
     _calls.failAll(const ProtocolException(ErrorCode.internal, '客户端已关闭'));
@@ -1415,6 +1419,47 @@ class _SyncClient implements SyncClient, SyncClientProbe {
 
   final StreamController<JobFrame> _jobUpdates =
       StreamController<JobFrame>.broadcast();
+
+  /// 会话运行态（`status` 帧）。**广播流**：会话页的运行条、列表角标、子智能体面板都听。
+  final StreamController<SessionStatus> _sessionStatus =
+      StreamController<SessionStatus>.broadcast();
+
+  /// 会话运行态流（宿主 `api-session/status` 的原样转发）。
+  @override
+  Stream<SessionStatus> get sessionStatus => _sessionStatus.stream;
+
+  /// 收到一条 `status` 帧：解出 `running` 就广播。
+  ///
+  /// **载荷坏了要吵**（`bad-frame`，与 `ev` 帧缺 `sid/seq` 同一条纪律）：
+  /// 静默丢掉等于"运行条自己停了"，而那种症状会被读成"模型跑完了"。
+  void _onStatus(Map<String, Object?> frame, String plaintext) {
+    final sid = frame['sid'];
+    if (sid is! String || sid.isEmpty) {
+      _protocolFailure(
+        const ProtocolException(ErrorCode.badFrame, 'status 帧缺少 sid'),
+      );
+      return;
+    }
+    final Object? parsed;
+    try {
+      parsed = jsonDecode(plaintext);
+    } on FormatException catch (error) {
+      _protocolFailure(
+        ProtocolException(ErrorCode.badFrame, 'status 载荷不是合法 JSON：$error'),
+      );
+      return;
+    }
+    final running = parsed is Map ? parsed['running'] : null;
+    if (running is! bool) {
+      _protocolFailure(
+        const ProtocolException(ErrorCode.badFrame, 'status 载荷缺少 running'),
+      );
+      return;
+    }
+    if (!_sessionStatus.isClosed) {
+      _sessionStatus.add(SessionStatus(sid: sid, running: running));
+    }
+  }
 
   /// 收到的任务输出帧（`(帧头, 明文)`；任务面板读它）。
   @override

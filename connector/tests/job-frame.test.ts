@@ -39,6 +39,7 @@ test('帧类型清单只有一份：与契约 §3 的联合逐项相等', () => 
     'job',
     'persisted',
     'presence',
+    'status',
   ]
   assert.deepEqual([...FRAME_TYPES], contract)
   // 编解码那份**不是**第二份真值：同一个对象。

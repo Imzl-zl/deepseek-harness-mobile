@@ -26,12 +26,21 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_sync_client.dart';
 
-/// 能推**持久事件**的替身（运行条要 `turn/start` / `turn/end`）。
+/// 能推**持久事件**与**运行态帧**的替身。
+///
+/// 运行态本身由 `status` 帧驱动（宿主 `api-session/status` 的转发，2026-10-24 W4）；
+/// `turn/start` / `turn/end` 只再提供活时钟的起点。
 class _EventClient extends FakeSyncClient {
   final _sessions = StreamController<SessionDelta>.broadcast();
+  final _status = StreamController<SessionStatus>.broadcast();
 
   void emit(String sid, List<SessionEvent> events) {
     _sessions.add(SessionDelta(sid: sid, events: events, transient: const {}));
+  }
+
+  /// 推一条运行态（宿主侧的 `agent/status`）。
+  void emitStatus(String sid, bool running) {
+    _status.add(SessionStatus(sid: sid, running: running));
   }
 
   @override
@@ -40,6 +49,8 @@ class _EventClient extends FakeSyncClient {
   Stream<conn.ConnectionState> get connection => const Stream.empty();
   @override
   Stream<JobFrame> get jobUpdates => const Stream.empty();
+  @override
+  Stream<SessionStatus> get sessionStatus => _status.stream;
   @override
   Future<void> start() async {}
   @override
@@ -214,17 +225,15 @@ void main() {
     await tester.pumpWidget(host(const SizedBox()));
   });
 
-  // ---- 运行条的**数据源**：为什么不能用 `session.list` 的 running ----
+  // ---- 运行条的**数据源**：宿主的 `api-session/status` 推送 ----
   //
-  // 真机实测（2026-10-22）：一轮跑了 40 秒，运行条**整轮没出现** —— 那张表只在
-  // 连上/收口时重读，轮次进行中它是旧值。所以判据改成事件流
-  // （`turn/start` 起、`turn/end` 收，起点就是事件里的 `time`）。
-  // ---- 快照只是初值：它说「在跑」，`turn/end` 到了就必须停 ----
-  //
-  // 2026-10-22 真机：`runningOf` 曾写成「事件集 OR 快照」，于是**旧快照一旦说
-  // 在跑就再也关不掉** —— 电脑侧 `turn/end` 21:12:26 已落，App 21:17 还在转，
-  // 输入栏还显示「排队发送」，杀 App 重开（重读列表 ⇒ 新的 false）才消失。
-  test('session.list 说在跑，turn/end 之后必须停（快照不许压过事件）', () async {
+  // 历史两课合起来就是现在的形状：
+  // ① 2026-10-22：不能用 `session.list` 当实时判据 —— 那张表只在连上/收口时重读，
+  //    轮次进行中它是旧值，一整轮 40 秒的运行条都没出现；
+  // ② 同一天反向：`runningOf` 写成「事件集 OR 快照」⇒ 旧快照一旦说在跑就**再也关不掉**，
+  //    电脑侧早已收口、App 还在转，杀 App 重开才好。
+  // 现在两件事都交给宿主那条推送（W4）：快照只在读到时覆盖一次，实时由 `status` 帧。
+  test('session.list 说在跑：`status{false}` 到了必须停（快照不许压过推送）', () async {
     final client = _SnapshotEventClient(running: true);
     final app = AppModel(client: client);
     addTearDown(app.dispose);
@@ -233,13 +242,9 @@ void main() {
     await app.refreshSessions();
     await app.openSession('s1');
 
-    expect(
-      app.runningOf('s1'),
-      isTrue,
-      reason: '还没有任何事件，这一笔初值必须生效（否则整轮都不出运行条）',
-    );
+    expect(app.runningOf('s1'), isTrue, reason: '这一笔初值必须生效（否则还没收到帧之前整轮都不出运行条）');
 
-    client.emit('s1', [_ev('turn/end', 2, 1700000040000)]);
+    client.emitStatus('s1', false);
     await Future<void>.delayed(Duration.zero);
     expect(
       app.runningOf('s1'),
@@ -248,24 +253,29 @@ void main() {
     );
   });
 
-  test('runningOf / turnStartedAtOf：turn/start 起、turn/end 收', () async {
-    final client = _EventClient();
-    final app = AppModel(client: client);
-    addTearDown(app.dispose);
-    await app.start();
-    await app.openSession('s1');
+  test(
+    'runningOf / turnStartedAtOf：`status` 起收，起点来自 `turn/start` 的 time',
+    () async {
+      final client = _EventClient();
+      final app = AppModel(client: client);
+      addTearDown(app.dispose);
+      await app.start();
+      await app.openSession('s1');
 
-    expect(app.runningOf('s1'), isFalse, reason: '还没起轮次');
-    expect(app.turnStartedAtOf('s1'), isNull);
+      expect(app.runningOf('s1'), isFalse, reason: '还没起轮次');
+      expect(app.turnStartedAtOf('s1'), isNull);
 
-    client.emit('s1', [_ev('turn/start', 1, 1700000000000)]);
-    await Future<void>.delayed(Duration.zero);
-    expect(app.runningOf('s1'), isTrue);
-    expect(app.turnStartedAtOf('s1'), 1700000000000, reason: '起点来自事件的 time');
+      // 真实路径：宿主的 `turn/start` 事件（带 time）与 `agent/status=running` 一起发生。
+      client.emit('s1', [_ev('turn/start', 1, 1700000000000)]);
+      client.emitStatus('s1', true);
+      await Future<void>.delayed(Duration.zero);
+      expect(app.runningOf('s1'), isTrue);
+      expect(app.turnStartedAtOf('s1'), 1700000000000, reason: '起点来自事件的 time');
 
-    client.emit('s1', [_ev('turn/end', 2, 1700000040000)]);
-    await Future<void>.delayed(Duration.zero);
-    expect(app.runningOf('s1'), isFalse);
-    expect(app.turnStartedAtOf('s1'), isNull);
-  });
+      client.emitStatus('s1', false);
+      await Future<void>.delayed(Duration.zero);
+      expect(app.runningOf('s1'), isFalse);
+      expect(app.turnStartedAtOf('s1'), isNull);
+    },
+  );
 }

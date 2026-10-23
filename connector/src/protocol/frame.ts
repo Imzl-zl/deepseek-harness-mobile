@@ -38,6 +38,7 @@ export const FRAME_TYPES = [
   'job',
   'persisted',
   'presence',
+  'status',
 ] as const
 
 export type FrameType = (typeof FRAME_TYPES)[number]
@@ -127,6 +128,14 @@ export type WireFrame =
   | { v: 1; t: 'live'; sid: string; stream: number; rev: number; fc: number; box: string }
   | { v: 1; t: 'job'; sid: string; fc: number; box: string }
   | { v: 1; t: 'persisted'; sid: string; seq: number; fc: number; box: string }
+  /**
+   * 会话运行态（`{sid, running}`）—— **宿主 `api-session/status` 的原样转发**。
+   *
+   * 为什么单独一帧而不是塞进 `presence`：`presence` 是**每设备的连接级事实**
+   * （在线 / 前后台），而"这个会话在不在跑"是**会话级**的、随宿主事件变化的瞬时事实。
+   * 形状与 `ev` 同档（带 box 与 fc），因为它描述的是会话内容面的事。
+   */
+  | { v: 1; t: 'status'; sid: string; fc: number; box: string }
   | { v: 1; t: 'presence'; computer: 'online' | 'offline'; app?: 'foreground' | 'background' }
 
 export function wireRoutingOf(frame: WireFrame): WireRoutingView {

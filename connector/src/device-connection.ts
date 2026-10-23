@@ -25,6 +25,8 @@ export function createDeviceConnection(options: DeviceConnectionOptions): Connec
   const { identity, binding, scope: deps } = options
   const candidate = binding?.purpose === 'pairing' ? binding.candidate : undefined
   let scope: ConnectionScope | null = null
+  /** 从挂载级的"活连接"册子里摘掉的句柄（`registerScope` 的返回值）。 */
+  let releaseScope: (() => void) | null = null
   const scopeOf = (): ConnectionScope => {
     if (scope === null) throw new Error('设备连接在装配就绪前收到回调')
     return scope
@@ -68,6 +70,11 @@ export function createDeviceConnection(options: DeviceConnectionOptions): Connec
       deps.metrics.increment(METRIC.stateTransitions)
       if (to === 'connecting') deps.metrics.increment(METRIC.connects)
       if (from === 'serving' && to !== 'serving') scopeOf().servingEnded()
+      // 连接收口：从挂载级的"活连接"册子里摘掉（运行态广播不再往死连接上发）。
+      if (to === 'closed') {
+        releaseScope?.()
+        releaseScope = null
+      }
     },
     onFrame: (frame) => {
       deps.metrics.increment(METRIC.inboundFrames)
@@ -76,5 +83,6 @@ export function createDeviceConnection(options: DeviceConnectionOptions): Connec
   })
   scope = createConnectionScope(connection, deps,
     candidate === undefined ? undefined : { candidate, endpoint: options.enrollment })
+  releaseScope = deps.registerScope?.(scope) ?? null
   return connection
 }

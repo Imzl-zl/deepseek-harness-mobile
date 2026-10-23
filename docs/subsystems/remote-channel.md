@@ -116,6 +116,8 @@ type Frame =
   | { v: 1; t: 'pair-commit'; id: string; fc: number; box: string }
   | { v: 1; t: 'pair-result'; id: string; fc: number; box: string }
   | { v: 1; t: 'persisted'; sid: string; seq: number; fc: number; box: string }
+  // 会话运行态:宿主 api-session/status 的原样转发(box = { running }),瞬时事实
+  | { v: 1; t: 'status'; sid: string; fc: number; box: string }
   // 投影:在线态(明文,中继可转发)
   | { v: 1; t: 'presence'; computer: 'online' | 'offline'; app?: 'foreground' | 'background' }
 ```
@@ -408,7 +410,9 @@ type SyncSnapshot = {
 主链路不依赖它。等三端能力包(§10)落地后**再**把它加进方法表;今天声明一个
 调不通的方法,只会让手机侧多一个必然失败的按钮。
 
-事件(电脑→手机):`ev`(会话事件)、`live`(流式)、`job`(任务输出,订阅式,§5.3)、`presence`(在线态/前台态)。
+事件(电脑→手机):`ev`(会话事件)、`live`(流式)、`job`(任务输出,订阅式,§5.3)、`status`(会话运行态,
+宿主 `api-session/status` 的原样转发:载荷 `{running}`,与 `presence` 同性质的**瞬时事实**,**不排队、
+不重试**,丢了由下一条或 `session.list` 的 `running` 兜)、`presence`(在线态/前台态)。
 
 **没有 `pending.changed` 帧**。§6.3 的待处理集合是**会话事件的投影**,随 `ev` 一起到手机 ——
 审批的 ask 就是一条 `approval/asked` 会话事件(`user-approval/src/index.ts:225`),

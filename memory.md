@@ -268,9 +268,8 @@
     ④ ~~**Z4** `stats.devices`~~ **✅ `bbfa5f7`** → ~~**Z3** 匿名限流分桶~~ **✅（见索引）**
     ⑤ ~~**Z6a** 预设文案漂移~~ **✅ `748edcf`** → ~~**Z6b** §15 一句~~ **✅（见索引）**
     ⑥ ~~**W3** 终态只有一个来源~~ **✅（见索引；真机 1–2 回合未跑）** →
-    **W4** 运行态改读原生（1 回合，要加一条契约帧）← **下一步**；
-    **执行计划已核实触点**（`proposed/2026-10-24-running-from-native-status.md` 的头两节：
-    电脑侧 5 处、手机侧 4 处、测试迁移逐条列出）。
+    ~~**W4** 运行态改读原生~~ **✅（见索引；真机 1 回合未跑）**
+    **队列 11/11 全部落地**（代码与门禁；真机验证 3 次共 3–4 回合仍待点头）。
     铁律（用户 2026-10-24 复述）：**别擅自加规则，DSH 原生就行**。
 
 别当缺口（定案，别再试）:
@@ -458,7 +457,7 @@
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
 | `cd app && flutter test` | **1144 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **615 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **616 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **87 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 
@@ -526,3 +525,7 @@
 - 2026-10-24 W3 终态只有一个来源：已配对设备的换票 401 归 `relay/offline`（退避重试、不清凭据），
   终态只认电脑侧 **4003 + 身份类协议码**（`protocol/not-paired`）。flutter **1141 → 1144**；
   **真机 1–2 回合未跑**。笔记 `2026-10-24-terminal-identity-from-pc.md`。
+- 2026-10-24 W4 运行态改读原生：新帧 `status`（`api-session/status` 的转发）+
+  `liveScopes` 广播 + `SyncClient.sessionStatus`；App 删掉 `_turnGeneration` / 重连重建 /
+  `turn/*` 推 running，`session.list` 改成按原样覆盖。connector **615 → 616**、flutter **1144** 持平；
+  **真机 1 回合未跑**。笔记 `2026-10-24-running-from-native-status.md`。

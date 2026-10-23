@@ -35,6 +35,21 @@ const frameTypes = (frames: readonly OutboundFrame[]) => frames.map((frame) => f
 const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 const persisted = (seq: number, fc: number): WireFrame => ({ v: 1, t: 'persisted', sid: 's1', seq, fc, box: '' })
 
+test('sendStatus：未认证不发；认证后推一封 `status` 帧（载荷 `{running}`）', () => {
+  // 运行态是**宿主推送的转发**（`api-session/status`）。它不走订阅，所以只能从
+  // 挂载级按"活连接"广播 —— `ConnectionScope.sendStatus` 就是那条出口。
+  const a = fakePort()
+  const scope = createConnectionScope(a.port, makeDeps())
+  assert.equal(scope.sendStatus('s1', true), false, '待配对 / 未认证的连接不发运行态')
+  assert.deepEqual(a.sent, [])
+
+  scope.deviceEstablished('dev-a')
+  assert.equal(scope.sendStatus('s1', true), true)
+  assert.deepEqual(a.sent, [
+    { v: 1, t: 'status', sid: 's1', box: JSON.stringify({ running: true }) },
+  ])
+})
+
 test('两连接的 ping、业务应答和配对应答都只走自己的端口', async (t) => {
   const a = fakePort()
   const b = fakePort()
