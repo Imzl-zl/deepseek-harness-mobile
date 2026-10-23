@@ -1,0 +1,108 @@
+# Agent Note: 开工单 Z1–Z6 —— 审计后的零碎清理（每行一个提交）
+
+Status: proposed
+
+这六件都来自总账 `.agents/notes/proposed/2026-10-24-native-rules-audit.md`，都是**单点**
+修复：没有备选方案、不改跨端契约的形状、不需要新测试策略。所以不给每件单独立一篇笔记，
+但**每件仍然是一个独立提交**，提交信息里回指本篇的编号与总账的行号。
+
+---
+
+## Z1（删规则）`danger-full-access` 下"审批不入队"
+
+- **位置**：`app/lib/ui/takeover.dart:193-195`（过滤）、`app/lib/ui/chat_page.dart:353-358`
+  （那句 toast）、文件头 `takeover.dart:17-19`（抄原型的说明）。
+- **为什么删**：DSH 在 `danger-full-access` 预设下把审批策略写成 `never`
+  （`packages/bundle/base/cordis.patch.yml:274-276`、`packages/interaction/permission-presets/src/index.ts:193-195`），
+  而 `never` 在 **dispatch 之前**就 `rejected`（`packages/interaction/user-approval/src/index.ts:270-275`）
+  ⇒ **根本不产生 `approval/request`**。这条过滤过滤的是一个不会发生的场景，
+  配的那句"完全权限下不再逐步确认：X 直接执行"因此永远显示不出来。
+  浏览器侧也没有任何同类过滤（`packages/client/ui-approval/src/client/index.ts` 全文）。
+- **改什么**：`enqueue` 去掉 `fullAccess` 分支与字段；`chat_page.dart` 去掉那条
+  `showSnackBar` 分支（`if (!_takeover.enqueue(...))` 的整块）；文件头第 2 条改成
+  "完全权限下 DSH 不产生审批（policy=never），本层不需要过滤"。
+- **判据**：`app/test/` 里断言"fullAccess 下不入队"的用例删掉（行为被删，不是放宽）；
+  `takeover.dart` 的 `fullAccess` 字段与 `_syncTakeoverTruth` 的那一行同步删除。
+- **门禁**：flutter（1140 → 略降，属于行为删除）、boundary 360。
+
+## Z2（删死码）`presence.onOffline` 与它的监听桶
+
+- **位置**：`connector/src/presence.ts:73-81`（契约面）、`:94-95`（桶）、`:125-135`
+  （`offline` 里的通知）、`:177-188`（实现）。
+- **为什么删**：生产**零调用**（全仓只有 `presence.test.ts` 一条）。它服务的是
+  已经删掉的规则（"手机断开 → 看护收口 → `unavailable`"，A2/A4），而今天的真相是
+  "断线只撤投递、不结算"（`packages/api/gateway/src/index.ts:717-721`）。
+  注释还指着那条不存在的契约（`presence.ts:74`）。
+- **改什么**：删接口方法、桶、`offline()` 里的通知块、对应单测；`presence.ts:73` 的注释删。
+- **判据**：`grep -r onOffline connector/` 零命中；`presence.test.ts` 少一条。
+- **门禁**：connector（611 → 610，**行为被删**）、`pnpm exec tsc --noEmit`。
+
+## Z3（修）首配匿名限流的**单一全局桶**
+
+- **位置**：`relay/src/http-face.ts:41`（键是字面量 `'pairing:anonymous'`）；
+  桶参数 `relay/src/server.ts:68`（容量 60 / 每秒 6）。
+- **为什么修**：所有**未配对**设备共用一个桶 ⇒ 约 6 req/s 就能让全部新设备吃 429
+  （约 10 s 才恢复）。这是实现缺陷，不是策略：策略（"匿名要限流"）本身对。
+- **改什么**：匿名键带上来源（`pairing:anonymous:<remoteAddress>`），与设备键共用同一个
+  limiter；`rate-limit.ts` 不动（它本来就按 key 分桶，`relay/src/rate-limit.ts:70`）。
+- **判据**：`relay/tests` 加一条"两个不同来源的匿名请求互不影响"；
+  变异校验：把键改回字面量 ⇒ 恰好那条红。
+- **门禁**：relay（86 → 87）、`pnpm typecheck`。
+
+## Z4（删字段）`stats.devices` 与 `stats.channels` 恒等
+
+- **位置**：`relay/src/core.ts:61-62`：`devices: channels.size` 与 `channels: channels.size`。
+- **为什么改**：名字说"设备数"，值是"通道数"，两个字段在同一行给出同一个数 ——
+  读它的人会以为在数设备。契约 §8.2 的 `devices` 表是另一件事（名册）。
+- **改什么**：删 `devices` 字段（消费方一起改）；若确实需要"设备数"，用
+  `new Set([...channels.values()].map(c => c.deviceId)).size` 另立一个名字，
+  **不要**让 `devices` 继续承担它。
+- **判据**：`relay/tests` 里断言 stats 形状的用例按新形状改（少一个键）。
+- **门禁**：relay、`pnpm typecheck`。
+
+## Z5（修一行）配对码输入框关掉输入法联想
+
+- **位置**：`app/lib/ui/pairing_page.dart:413` 的 `TextField`。
+- **为什么修**：二维码内容是 JSON，用户**手打**时输入法联想/纠错会改写它（粘贴没事）。
+- **改什么**：`enableSuggestions: false`、`autocorrect: false`、
+  `keyboardType: TextInputType.visiblePassword`（三者一起才是"不要联想"；
+  `visiblePassword` 同时关掉中文输入法的联想条）。
+- **判据**：`app/test/pairing_page_test.dart` 加一条 widget 断言（三个属性）。
+- **门禁**：flutter、`dart analyze`、`dart format`。
+
+## Z6a（修字 + 清单）内置预设文案**已经漂了**
+
+- **位置**：`app/lib/model/agent_preset.dart:51`（`minimal` 的描述）。
+- **事实**：DSH 现在是 `presetMinimalDescription: 'Agent 使用终端和图片读取工具，并支持上下文压缩，适合测试和对比其基础表现。'`
+  （`packages/client/ui-agent-preset/src/client/locales.ts:100`），
+  我们抄的是旧文案「Agent 仅使用终端工具完成任务…」。
+  另外三档与 DSH 逐字一致（`:95-98`、`:101-102`）。
+- **为什么只能抄**：内置预设**不发布** `name`（`packages/preset/agent-preset-registry/src/display.ts:48-49,63-73`
+  的 `presetDisplayText` 要一个 locale 查表函数，只有客户端有）⇒ 手机拿不到。
+- **改什么**：改那一条文案；`app/test/agent_preset_test.dart:103-106` 的断言跟着改
+  （它复述的是手抄串，本来就是**同义反复**，改完仍不是证据 —— 在注释里写清这一点）。
+  在 `tools.md` 的"DSH 升级后要重跑"清单里加一行：**重抄内置预设四档文案**
+  （来源 `ui-agent-preset/src/client/locales.ts:95-102`），顺带核 `permission.dart:160-191` 的三档措辞。
+- **判据**：四条文案与 DSH 逐字一致（人工核一次，写进提交信息）。
+- **门禁**：flutter、`dart analyze`。
+
+## Z6b（写进 docs，不改码）IPv6 隐私地址仍会上报
+
+- **位置**：`connector/src/transport/listener.ts:131-145`（只跳过 `fe80` link-local）、
+  `:150`（IPv4 排前）。
+- **为什么不动代码**：Node 的 `os.networkInterfaces()` 不暴露 `temporary` 标记（RFC 4941
+  地址只能靠前缀/接口 id 猜），**判据不可靠** ⇒ 不猜。当前形态（IPv4 排前、IPv6 回落）
+  已经把代价压到最小。
+- **改什么**：契约 §15 加一条"IPv6 隐私地址仍会出现在候选里，只是排在 IPv4 之后"。
+- **门禁**：无（只改文档）。
+
+---
+
+## 提交顺序建议
+
+Z5（一行、零风险）→ Z2（删死码）→ Z1（删规则）→ Z4 → Z3 → Z6a → Z6b。
+四条工单（W1–W4）与这六件**互不依赖**，但 W1 会重写 `interaction-claims` 与
+`interaction-face`，Z 批不碰那两个文件 —— 可以并行，冲突面为零。
+
+Note: 总账见 `.agents/notes/proposed/2026-10-24-native-rules-audit.md`；原则见
+`implemented/2026-10-24-native-semantics-first.md`。

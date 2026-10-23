@@ -211,6 +211,9 @@
    命令卡的渲染没动（那是另一件事）。笔记 `implemented/2026-10-23-slash-command-execution-surface.md`。
 4. **电脑侧停一会儿，手机会清掉配对** —— 中转重启后名册是空的，设备换票拿到 401，
    App 把 401 归成 `notPaired`（终态）⇒ 清凭据回配对页。实测一次（清单第 11 条）。
+   **根因已查清（2026-10-24 审计 C1）**：中转那个 401 只说"我的名册里没有你"
+   （名册是电脑推上去的），它不是终态 —— 是我们把它读成了终态。
+   工单 `proposed/2026-10-24-terminal-identity-from-relay.md`（W3，与已知缺口 3 同批）。
 5. **侧边栏移动 / 置顶：真机已验**（2026-10-21 晚，隔离实例）—— 长按菜单四项（无删除）、
    置顶后进本组最前并出图钉、跨置顶分区上移不可点、未分组桶上移/下移不可点、
    归档后从列表消失且能在「归档」页取消、杀 App 重开 + 中转重启后置顶与顺序仍成立。
@@ -233,19 +236,28 @@
     （审批与提问同一规则）、手机重订阅时按原 seq **重投在途 ask 事件**（不新增帧 / 方法）、
     App 失败分类（传输失败留卡可重试、`not-pending` 撤卡、失败不写成功回执）。
     笔记 `implemented/2026-10-23-in-flight-interaction-is-host-held.md`。
-    **仍未做（明确不顺手做）**：timed 部署（代价是桌面倒计时 + 模型 120 s 后继续）、
-    计划审查卡（卡只从 `ask_user_question` 的 `tool/call` 生成，`/exit_plan_mode` 没有卡）。
+    **仍未做（明确不顺手做）**：timed 部署（代价是桌面倒计时 + 模型 120 s 后继续）。
+    计划审查卡的机制**已查清（2026-10-24 审计 C11）**：`/exit_plan_mode` 的询问带
+    `intent.callId`（`plan-mode/src/index.ts:326`），我们只读 `wait.callId` ⇒ 认不出 ⇒ 委托，
+    于是 `InteractionKind.plan` 在手机上**不可达**（只有演示入口能造）。
+    工单 `proposed/2026-10-24-interaction-identity-from-native-ids.md`（W1）。
 12. ~~**交互改成 gateway 的 owner client**~~ **已修（2026-10-23）**：连接器作为 owner client 接
     gateway 的 `$events` 转发流 —— 桌面与手机**同时**收到、谁先答谁赢、其余收 `cancel`；
     host answerer 与 `prepend` 整条路删掉（旧笔记移入 `archived/`）。
     笔记 `implemented/2026-10-23-interaction-as-gateway-client.md`。
     **真机/桌面已验（1 个轮次）**：手机先答 → 桌面卡关（截图 + 管理面 `lastInteractedAt` 判据）。
-13. **原生规则审计（下一轮，已备好提示词）** —— 把「我们替 DSH 做了决定」的地方找全、求证、归类：
-    总账 `.agents/notes/proposed/2026-10-24-native-rules-audit.md`（A 已收口 / B 待求证 13 条 /
-    C 已知缺口按归类重排 / D 不做清单），提示词
-    `.agents/notes/proposed/2026-10-24-next-round-native-rules-audit.md`（整段复制）。
-    原则已进 `AGENTS.md` 常驻军规「**宿主语义优先**」+ 笔记
-    `implemented/2026-10-24-native-semantics-first.md`。**默认只求证不改代码**；预计 0 真机回合。
+13. ~~**原生规则审计**~~ **已收口（2026-10-24，0 真机回合）**：27 行逐条求证并归类（B1–B13 +
+    C 表去重）+ 3 条新发现 ——
+    `自作主张` **2** / `设计缺陷` **7** / `逻辑语义` **3** / `实现缺陷` **6** /
+    `验证缺口` **3** / `有意偏离` **4** / `未实现` **2**。
+    真正"替宿主做决定"只剩两条：**审批没有 `callId` 就不参与**、**`danger-full-access`
+    下审批不入队**（后者在本部署**永久不可达**：`approval: never` 在 dispatch 之前就拒了）。
+    新发现三条：**计划审查卡在手机上永远不出现**（`intent.callId` 没读）、
+    **内置预设文案已漂一条**（极简模式）、`interaction-face` 的 `pendingOf` 是生产死码。
+    总账 `.agents/notes/proposed/2026-10-24-native-rules-audit.md`（B1–B13 + C 表逐行结论 +
+    归类统计 + 根因分段）；开工单 **W1** 身份面改读原生 / **W2** 换代不撤 claim /
+    **W3** 终态只有一个来源 / **W4** 运行态改读原生，零碎 **Z1–Z6**
+    （`proposed/2026-10-24-audit-cleanup-batch.md`）。**下一步默认 W1**。
 
 别当缺口（定案，别再试）:
 
@@ -347,11 +359,16 @@
 ## 已知缺口（定位过、有证据，都未修）
 
 1. **首配的匿名限流桶是单一全局桶**：约 6 请求/秒即可让所有新设备换票 429（约 10 s 恢复）。
+   → 键是字面量 `'pairing:anonymous'`（`relay/src/http-face.ts:41`）；工单 Z3。
 2. `stats.devices` 实为**通道数**，与 §8.2 的 `devices` 表不同名同义。
+   → `relay/src/core.ts:61-62` 两字段恒等；工单 Z4（删字段）。
 3. 握手层 close 4003 与 `protocol/revoked` 帧两条兜底路径仍走退避，未收口。
+   → 与下面第 4 条同根（终态判据只覆盖建连失败）；工单 W3。
 4. `pairing_page.dart` 的配对码 `TextField` 没关输入法联想，**手打**的 JSON 会被破坏（粘贴没事）。
+   → 工单 Z5（三个属性一起关）。
 5. **PC 端「上报地址」面板没有布局/点击的自动化测试**（只有 i18n 键完整性门禁；API 侧有用例）。
 6. **IPv6 隐私地址仍会上报**：`dialOrder` 已把它们排后面，但仍占列表位。
+   → **不改码**（Node 不暴露 `temporary` 标记，判据不可靠）；工单 Z6b 只写进契约 §15。
 7. ~~"最近工作区"缺 `createdAt`~~ **已修（2026-10-22）**：`workspace.list` 的行现在带
    `createdAt`（宿主 `WorkspaceView.createdAt`，`packages/api/workspace-controller/src/types.ts:27`），
    `newSessionWorkspaceId` 对**没有会话**的工作区按 `Date.parse(createdAt)` 参与比较 ——
@@ -382,9 +399,23 @@
     `docs/subsystems/type-scale.md`；旧方案（只放大内容）已移入 `notes/archived/`。
 12. **`presence.onOffline` 是死 API**（2026-10-23 删掉两处调用之后留下的）：生产无调用方（只有
     `presence.test.ts` 一条），注释还写着"看护要靠它收口"。同批可删的还有它的离线监听桶。
+    → 工单 Z2（死码 + 过期注释一起删）。
 13. **`$events` 换代窗口**：流换代时在途 claim 会被撤（结果发不回去），此时手机点答拿
     `interaction/not-pending` → App 撤卡，而桌面那张卡还在（得在电脑上再点一次）。
     已写进笔记，**契约 §15 还没写**；窗口极小（进程内、只在网关源重注册 / peer 失效时）。
+    → **根因已定（2026-10-24 审计 C13）**：我们把"流换代"当成"claim 结束"；DSH 换代
+    只撤投递、不结算（`api/gateway/src/index.ts:717-721`）+ 新 client 重投（`:571`）。
+    工单 W2（换代不撤 claim，`dispose` 才撤）。
+14. **内置预设文案已漂一条**（2026-10-24 审计 B13）：极简模式的描述在 DSH 是"终端和图片
+    读取工具，并支持上下文压缩…"（`ui-agent-preset/src/client/locales.ts:100`），我们抄的是旧文案
+    （`app/lib/model/agent_preset.dart:51`）；`app/test/agent_preset_test.dart:103-106` 复述同一份
+    手抄串，测不出漂移。→ 工单 Z6a（修字 + `tools.md` 升级清单里加"重抄四档"）。
+15. **`interaction-face` 的 `pendingOf` 是生产死码**（2026-10-24 审计 N1）：
+    `pendingOf` / `projectPendingQuestions` / `PendingItem` 只有单测用，
+    且它的 `i:<callId>` 与手机侧 `i:<approvalId>` / `t:<callId>` 已经不一致。→ 工单 W1 里删。
+16. **审批没有 `callId` 时手机不参与**（2026-10-24 审计 B2/N4）：而 `callId` 在 DSH 是可选字段
+    （`user-approval/src/types.ts:68-69`），浏览器照样弹卡；且这种审批**连重投也拿不到**
+    （`ask-event.ts:54-68` 按 callId 匹配）。→ 工单 W1（键改成 `approval/asked.id`）。
 
 ## 范围决定（别再当缺口）
 
