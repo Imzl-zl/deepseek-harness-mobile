@@ -9,7 +9,9 @@
  * 2. 目录拿得到就报 `available: true`，拿不到就 `available: false` ——
  *    **不给空数组**：空数组会被手机读成"没有可用模型"，而真实原因可能是 key 没配；
  * 3. 每会话当前模型取投影的 `next ?? lastUsed`；两者都没有就**不给 `model` 字段**
- *    （手机显示"未选择"，而不是猜一个）。
+ *    （手机显示"未选择"，而不是猜一个）。`next` 是**线格式**里由宿主 state 的
+ *    `pending` 映射出来的（`model-selection-projection.ts:65`），所以替身必须
+ *    两层各实现一遍 —— 把线格式喂给 `stateOf` 会让"读错那一层"的 bug 在假数据上变绿。
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -17,12 +19,45 @@ import { test } from 'node:test'
 import { createHandlers } from '../src/handlers.js'
 import type { HandlerDeps } from '../src/handlers.js'
 import { createModelFace } from '../src/dsh/models.js'
-import type { ModelFace } from '../src/dsh/models.js'
+import type { ModelFace, ModelRef } from '../src/dsh/models.js'
 import { METHODS, isMethod } from '../src/protocol/methods.js'
 
 /** 最小可用的假 DSH 上下文：只按形状回答本插件问到的那几个键。 */
 function fakeCtx(services: Record<string, unknown>) {
   return { get: (key: string) => services[key] } as never
+}
+
+/** 宿主 state 的形状（`model-selection-projection.ts:19-22`）。 */
+type SelectionState = { lastUsed: ModelRef | null; pending: ModelRef | null }
+
+/**
+ * 一份够真的 `sessionProjections` 替身：**两层各实现一遍**。
+ *
+ * - `stateOf` 给宿主 state（`{lastUsed, pending}`，`model-selection-projection.ts:19-22`）；
+ * - `snapshot` 给过 `wire.view` 的线格式（`{lastUsed, next}`，同文件 `:63-65`）。
+ *
+ * 合成一层就是 2026-10-23 那个 bug 的成因：替身把线格式喂给 `stateOf`，连接器读
+ * `.next` 恒 `undefined`、`??` 永远落到 `lastUsed`，而断言在假数据上全绿。
+ */
+function projectionsWith(states: Record<string, SelectionState>) {
+  const stateOf = (session: unknown): SelectionState =>
+    states[session as string] ?? { lastUsed: null, pending: null }
+  return {
+    stateOf,
+    snapshot: (session: unknown) => {
+      const state = stateOf(session)
+      return {
+        // 与 DSH 的 `view: state => ({lastUsed, next: state.pending ?? state.lastUsed})`
+        // 逐字同一个表达式 —— 替身不许发明第三种形状。
+        values: {
+          modelSelection: {
+            lastUsed: state.lastUsed,
+            next: state.pending ?? state.lastUsed,
+          },
+        },
+      }
+    },
+  }
 }
 
 const NO_SESSIONS = { list: async () => [] } as never
@@ -118,26 +153,27 @@ test('session.list 的行带当前模型；取不到就不带这个字段', asyn
     '拿不到当前模型就不给这个字段 —— 猜一个就是把"看起来连着"当成"连着"')
 })
 
-test('modelOf：next 优先于 lastUsed；两者都无返回 undefined', () => {
-  // 投影的线格式是 `{lastUsed, next}`；`next` 是"下一次请求将用哪个"。
-  const views: Record<string, unknown> = {
-    'dsh-has-next': { lastUsed: { provider: 'p', model: 'old' }, next: { provider: 'p', model: 'new' } },
-    'dsh-only-last': { lastUsed: { provider: 'p', model: 'old' }, next: null },
-    'dsh-neither': { lastUsed: null, next: null },
-  }
+test('modelOf：待定优先（宿主 state 的 pending 经 wire view 变成 next）', () => {
+  const old = { provider: 'p', model: 'old' }
+  const next = { provider: 'p', model: 'new' }
   const face = createModelFace(
     fakeCtx({
-      sessionProjections: {
-        stateOf: (session: unknown) => views[session as string],
-      },
+      sessionProjections: projectionsWith({
+        // 刚切完模型：`pending` 有值、`lastUsed` 还是上一轮那个。
+        // 这一条就是"切完模型立刻生效" —— 读宿主 state 的 `.next` 会退回 old。
+        'dsh-just-switched': { lastUsed: old, pending: next },
+        // 跑完一轮：`request/header` 把 `pending` 清掉，`next` 落回 `lastUsed`。
+        'dsh-settled': { lastUsed: old, pending: null },
+        'dsh-neither': { lastUsed: null, pending: null },
+      }),
       agents: { get: (id: string) => ({ session: id }) },
       sessionController: { modelCatalog: async () => CATALOG },
     }),
     { sessionOf: (sid) => sid.replace('sid-', 'dsh-') },
   )
-  assert.deepEqual(face.modelOf('sid-has-next'), { provider: 'p', model: 'new' },
+  assert.deepEqual(face.modelOf('sid-just-switched'), next,
     '有待定的选择时用它 —— 那才是下一次请求会用的')
-  assert.deepEqual(face.modelOf('sid-only-last'), { provider: 'p', model: 'old' },
+  assert.deepEqual(face.modelOf('sid-settled'), old,
     '没有待定就退回到上一次实际用过的')
   assert.equal(face.modelOf('sid-neither'), undefined, '两者都没有就是不知道，别猜')
   assert.equal(face.modelOf('sid-unknown'), undefined, '别名不认识时也是不知道')
@@ -145,7 +181,11 @@ test('modelOf：next 优先于 lastUsed；两者都无返回 undefined', () => {
 
 test('modelOf：投影或 agents 缺席时返回 undefined（不抛）', () => {
   const onlyProjections = createModelFace(
-    fakeCtx({ sessionProjections: { stateOf: () => ({ next: { provider: 'p', model: 'm' } }) } }),
+    fakeCtx({
+      sessionProjections: projectionsWith({
+        'dsh-1': { lastUsed: { provider: 'p', model: 'm' }, pending: null },
+      }),
+    }),
     { sessionOf: () => 'dsh-1' },
   )
   assert.equal(onlyProjections.modelOf('sid-1'), undefined,
