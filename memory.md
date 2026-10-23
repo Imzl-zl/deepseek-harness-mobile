@@ -240,6 +240,12 @@
     host answerer 与 `prepend` 整条路删掉（旧笔记移入 `archived/`）。
     笔记 `implemented/2026-10-23-interaction-as-gateway-client.md`。
     **真机/桌面已验（1 个轮次）**：手机先答 → 桌面卡关（截图 + 管理面 `lastInteractedAt` 判据）。
+13. **原生规则审计（下一轮，已备好提示词）** —— 把「我们替 DSH 做了决定」的地方找全、求证、归类：
+    总账 `.agents/notes/proposed/2026-10-24-native-rules-audit.md`（A 已收口 / B 待求证 13 条 /
+    C 已知缺口按归类重排 / D 不做清单），提示词
+    `.agents/notes/proposed/2026-10-24-next-round-native-rules-audit.md`（整段复制）。
+    原则已进 `AGENTS.md` 常驻军规「**宿主语义优先**」+ 笔记
+    `implemented/2026-10-24-native-semantics-first.md`。**默认只求证不改代码**；预计 0 真机回合。
 
 别当缺口（定案，别再试）:
 
@@ -374,6 +380,11 @@
     带文字的定高改成 `minHeight`。取舍见
     `.agents/notes/implemented/2026-10-22-global-ui-scale.md`，现状见
     `docs/subsystems/type-scale.md`；旧方案（只放大内容）已移入 `notes/archived/`。
+12. **`presence.onOffline` 是死 API**（2026-10-23 删掉两处调用之后留下的）：生产无调用方（只有
+    `presence.test.ts` 一条），注释还写着"看护要靠它收口"。同批可删的还有它的离线监听桶。
+13. **`$events` 换代窗口**：流换代时在途 claim 会被撤（结果发不回去），此时手机点答拿
+    `interaction/not-pending` → App 撤卡，而桌面那张卡还在（得在电脑上再点一次）。
+    已写进笔记，**契约 §15 还没写**；窗口极小（进程内、只在网关源重注册 / peer 失效时）。
 
 ## 范围决定（别再当缺口）
 

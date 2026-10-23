@@ -540,6 +540,19 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
   - **判据（谁答的）**：管理面 `/api/dsh-mobile/status` 的 `devices[].lastInteractedAt` 与会话日志里
     `approval/decided.time` **同毫秒级**（实测差 3 ms）⇒ 这个决定是手机上 `interaction.respond` 写的，
     不是浏览器。只看"卡消失了"分不出是 `cancel` 还是宿主结算。
+- **自查「我们替宿主做了决定」**（2026-10-23 用户连点两次之后立的规矩，见 `AGENTS.md` 常驻军规
+  「宿主语义优先」与 `.agents/notes/implemented/2026-10-24-native-semantics-first.md`）：
+  **三问** —— ① 删掉这条规则，DSH 会不会已经给出答案？会 ⇒ 我们不该有；② 它是补"我们这条通道没有的
+  东西"，还是替宿主做决定？补通道可以，替决定不行；③ 它写进 `docs/` 了吗、同一件事是不是只有一处表达？
+  **机械起点**（会同时命中正常代码，逐条看，别按命中数下结论）：
+  `Select-String -Path connector/src/**/*.ts -Pattern 'setTimeout|Timeout|guardMs|deadline'` ——
+  凡是**我们**给的超时都要问"宿主有没有"（审批看护 10 min 就是这么被删的）；
+  `... -Pattern "'never'|'always'|mode\(\)"` —— 凡"档位/模式"都要问是不是"抢"时代的（三档接管已删）；
+  `... -Pattern 'not-pending|unsupported|兜底|fallback'`（connector + app/lib）—— 凡是替宿主决定
+  "这个失败意味着什么"的，都去问浏览器那侧有没有同样的概念。
+  **参照系永远是 DSH 的浏览器客户端**（`packages/client/ui-approval`、`ui-user-questions`）与
+  gateway 的多客户端语义（`api/gateway/src/index.ts:571,676-679,696-699,717-721,734-745`）。
+  总账：`.agents/notes/proposed/2026-10-24-native-rules-audit.md`。
 - 血泪史条目见 `docs/postmortem/`;此处只留结论。
 
 
