@@ -290,6 +290,11 @@
     ④ 斜杠命令只有 `/goal` `/plan` 两条且无补全面板；⑤ 用量页不可折叠、`usage.summary` 零参数（日期筛选要改契约）；
     ⑥ **通知做不了**：切后台主动断连（`sync_client_impl.dart:1152-1163`，"三端都不做后台长连接"），
     只能先做 App 内通知；后台常驻是设计决定（会改契约 §13），FCM 仍不做。
+    **下一步 = 通知（后台/前台）与这五条的调研 + 方案**，提示词：
+    `.agents/notes/proposed/2026-10-24-next-round-notifications-and-ui-gaps-prompt.md`（整段复制）。
+    要求：原生能力优先（`NotificationChannel` / 前台服务 / 通知 Action 都要先查清系统约束与 MIUI 实测）、
+    架构与源码优雅（能力包边界 + 单一真值 + 不加平台分支）、语义清晰（触发源只能是既有语义：
+    `status` 的运行边沿 / `approval/asked` / 提问事件）。调研 0 真机回合，落地 1–2 次真机、0–1 次模型请求。
 
 别当缺口（定案，别再试）:
 
