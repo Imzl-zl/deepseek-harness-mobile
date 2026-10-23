@@ -71,7 +71,13 @@ class SubagentTree extends StatefulWidget {
   final SubagentNode Function(SubagentRow row) nodeOf;
 
   /// 点一行 = 进入那个子会话（Web 的 `openChild`，`:279-287`）。
-  final void Function(SubagentNode node) onOpen;
+  ///
+  /// 第二个参数是**画出这一行的那一层**（`_Level.sid`）—— 父级与 mode 都随行交出，
+  /// 与 DSH 在那一层构造地址同一条：`openChild({parentSessionId, childSessionId, mode})`
+  /// （`SubagentHeaderLineage.tsx:279-287`）。调用方**不需要**回目录里再查。
+  /// Note: 为什么父级不从目录扫描来 —— 见
+  /// .agents/notes/implemented/2026-10-23-subagent-parent-and-mode-from-the-layer.md
+  final void Function(SubagentNode node, String parentSid) onOpen;
 
   /// 展开一个子级时**懒加载**它的目录（Web 的 `refreshProjection(child)`）。
   final void Function(String sid) onLoad;
@@ -256,7 +262,7 @@ class _Level extends StatelessWidget {
           now: tree._now,
           expanded: expanded,
           current: tree.widget.currentSid == row.id,
-          onTap: row.isExternal ? null : () => tree.widget.onOpen(node),
+          onTap: row.isExternal ? null : () => tree.widget.onOpen(node, sid),
           onToggle: expandable ? () => tree._toggle(row) : null,
         ),
         if (expanded)

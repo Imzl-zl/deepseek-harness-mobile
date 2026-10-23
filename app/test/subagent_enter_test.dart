@@ -31,6 +31,7 @@ import 'fake_sync_client.dart';
 class _SubagentClient extends FakeSyncClient {
   _SubagentClient({
     this.mode = 'continuable',
+    this.grandMode = 'one-shot',
     this.siblings = const ['调研实现'],
     this.parentTitle = '父会话',
     this.noParentId = const {},
@@ -39,6 +40,9 @@ class _SubagentClient extends FakeSyncClient {
 
   /// catalog 行的 mode；`one-shot` 时子会话输入栏应换成只读状态框。
   final String mode;
+
+  /// 孙级那一行的 mode（它在 **child-1** 的目录里，不在祖父目录里）。
+  final String grandMode;
 
   /// 父会话目录里的子级名字（按顺序，第一个是 child-1）。
   final List<String> siblings;
@@ -54,6 +58,21 @@ class _SubagentClient extends FakeSyncClient {
   final Set<String> failingCatalogs;
 
   final _jobs = StreamController<JobFrame>.broadcast();
+
+  /// 挂住某些 sid 目录读取的闸门（模拟网络慢的那一拍）。
+  final _gates = <String, Completer<void>>{};
+
+  /// 让 [sid] 的**目录读取**在 [releaseCatalog] 之前不返回。
+  ///
+  /// 挂住的不是"还没开始读"：`AppModel._readProjections` 已经把那一层置成
+  /// `loading`（**保留旧 entries**），所以界面上那一行照常画得出来、也点得动。
+  void holdCatalog(String sid) => _gates[sid] = Completer<void>();
+
+  /// 放行被 [holdCatalog] 挂住的那一次读取。
+  void releaseCatalog(String sid) {
+    final gate = _gates.remove(sid);
+    if (gate != null && !gate.isCompleted) gate.complete();
+  }
 
   /// 发出去的写方法（`session.prompt` / `subagent.prompt`），带 params。
   final sent = <(String, Map<String, Object?>)>[];
@@ -159,14 +178,18 @@ class _SubagentClient extends FakeSyncClient {
       },
       // 目录**按 sid 各是一条直接子级表**（DSH 的 catalog 只含直接子级）：
       // 父会话有 [siblings]，子级 child-1 自己还有一个孙级，child-2 是空叶。
-      'session.projections' => _projections(params['sid'] as String?),
+      'session.projections' => await _projections(params['sid'] as String?),
       _ => null,
     };
     return result as T;
   }
 
-  Object? _projections(String? sid) {
+  Future<Object?> _projections(String? sid) async {
     catalogReads.add(sid ?? '');
+    // 闸门先看：`_readProjections` 已经把目录置成 `loading`（旧 entries 还在），
+    // 所以挂住应答时界面照常画行 —— 那正是"展开后那一拍里点孙级"的窗口。
+    final gate = _gates[sid];
+    if (gate != null) await gate.future;
     // 读失败：形状不对（不是对象）—— 目录进 error 态，界面要有重试入口。
     if (sid != null && failingCatalogs.contains(sid)) return 'boom';
     return switch (sid) {
@@ -175,7 +198,7 @@ class _SubagentClient extends FakeSyncClient {
           {
             'id': 'grand-1',
             'createdAt': 3000,
-            'mode': 'one-shot',
+            'mode': grandMode,
             'label': grandLabel,
           },
         ],
@@ -670,6 +693,59 @@ void main() {
 
     // 回到父级后不再有返回（根会话没有面包屑，DSH `:801`）
     expect(find.byTooltip('返回父会话'), findsNothing);
+    app.dispose();
+  });
+
+  testWidgets('展开后那一拍里点孙级：mode 来自它自己那一行，不是回目录里查', (tester) async {
+    // 审查 I2：`_switchSibling` 曾经拿"已读目录"回查 mode，而展开**无条件**重读
+    // 那一层（`AppModel._readProjections` 先置 `loading`，但保留旧 entries ⇒ 界面
+    // 照常画行、也点得动）。于是那一拍里点孙级会查不到 mode ⇒ 可续聊的孙级显示
+    // 「此子智能体暂时只读」，而且不自愈（mode 只在进入那一刻取一次）。
+    // 判据：把 `session.projections` 的应答挂住，在挂住期间点孙级。
+    final client = _SubagentClient(grandMode: 'continuable');
+    final app = AppModel(client: client);
+    await app.start();
+    await app.refreshSessions();
+    await app.openSession('sid_A');
+
+    final key = await _pumpChat(tester, app);
+    await _enterFirstChild(tester, key, '调研实现');
+
+    // ① 先正常展开一次：孙级那一行进到界面上（那一层目录 ready）。
+    await tester.tap(find.byTooltip('切换子智能体'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('展开 调研实现 的下级子智能体'));
+    await tester.pumpAndSettle();
+    expect(find.text(_SubagentClient.grandLabel), findsOneWidget);
+
+    // ② 收起再展开 = 再读一次那一层，这次把应答挂住：
+    //    目录进 `loading`，但旧 entries 还在 ⇒ 孙级行仍然可点。
+    client.holdCatalog('child-1');
+    await tester.tap(find.byTooltip('收起 调研实现 的下级子智能体'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('展开 调研实现 的下级子智能体'));
+    await tester.pump();
+    expect(
+      find.text(_SubagentClient.grandLabel),
+      findsOneWidget,
+      reason: 'loading 保留旧 entries（刷新不闪空）⇒ 这一行照常画出来',
+    );
+
+    // ③ 就在这一拍里点孙级。
+    await tester.tap(find.text(_SubagentClient.grandLabel));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(app.currentSid, 'grand-1');
+    expect(
+      find.byType(SubagentReadOnlyBand),
+      findsNothing,
+      reason: '可续聊的孙级不许被说成只读 —— mode 就在画出它的那一行上',
+    );
+    expect(find.byType(DshComposer), findsOneWidget);
+
+    client.releaseCatalog('child-1');
+    await tester.pump();
     app.dispose();
   });
 

@@ -1128,36 +1128,23 @@ class ChatPageState extends State<ChatPage> {
 
   /// 进入一个子智能体的会话（点右抽屉「子智能体」那一行）。
   ///
-  /// ## 为什么要记住"从哪来"
-  ///
   /// DSH 的目录项点开是 `openChild` → `openSession(address)`
   ///（`ui-subagent/src/client/index.ts:61-63`）—— 子会话**替换主对话区**。
-  /// 桌面靠会话头部的 lineage 面包屑回得去
-  ///（`SubagentHeaderLineage.tsx`），而**我们拿不到父会话 id**：
-  /// catalog 的 view 只有 `{id, createdAt, mode, label?}`
-  ///（`subagent/src/catalog.ts:77-94`，`parentId` 只在
-  /// `listDescendants` 的行上有，那是另一个方法）。
+  /// 地址里的父级与 mode **由画出这一行的那一层交出**（[SubagentTree.onOpen] 的
+  /// 第二个参数）：DSH 同样在那一层构造
+  /// `openChild({parentSessionId, childSessionId, mode})`
+  ///（`SubagentHeaderLineage.tsx:279-287`），不查表。
   ///
-  /// 所以退路用**导航记忆**而不是数据依赖：进来时记下当前会话，
-  /// 顶栏据此给一枚"返回"。这比"让用户自己去抽屉里找父会话"好得多 ——
-  /// 子会话在抽屉里是**藏起来的**（`sessionVisible` 的第 1 条：
-  /// `subagent` 不列），用户根本找不回来。
-  Future<void> _openSubagent(SubagentNode node) async {
-    final from = widget.app.currentSid;
+  /// `_subagentReturnFrom` 只是**老连接器**的第三档兜底（见 [_subagentParentSid]）：
+  /// 子会话在抽屉里是**藏起来的**（`sessionVisible` 的第 1 条：`subagent` 不列），
+  /// 没有父级就没有返回入口，用户根本找不回来。
+  Future<void> _openSubagent(SubagentNode node, String parentSid) async {
     _closeSide();
-    // 模式来自**父会话的 catalog 行**：子会话自己打开后 `subagentCatalogOf(current)`
-    // 看到的是它自己的下级，不是它自己的 mode。
-    final mode = widget.app
-        .subagentCatalogOf(from ?? '')
-        .entries
-        .where((row) => row.id == node.id)
-        .firstOrNull
-        ?.mode;
     // **先记后退**：`_subagentReturnFrom` 是"进子会话之前的那个会话"。
     setState(() {
-      _subagentReturnFrom = from;
+      _subagentReturnFrom = parentSid;
       _subagentChildSid = node.id;
-      _subagentMode = mode;
+      _subagentMode = node.row.mode;
     });
     await widget.app.openSession(node.id);
   }
@@ -1174,6 +1161,8 @@ class ChatPageState extends State<ChatPage> {
   SubagentReadOnlyReason? get _subagentReadOnlyReason {
     if (_subagentReturnFrom == null) return null;
     if (_subagentMode == 'one-shot') return SubagentReadOnlyReason.oneShot;
+    // `null` 与 `unknown` 同一档：说不清能不能续聊就不给输入。记忆非空时 mode
+    // 必有值（进入即赋值），所以这一支是**默认拒绝**的那一侧，不是活分支。
     if (_subagentMode == null || _subagentMode == 'unknown') {
       return SubagentReadOnlyReason.unknown;
     }
@@ -1271,9 +1260,9 @@ class ChatPageState extends State<ChatPage> {
               nodeOf: _nodeOf,
               currentSid: current,
               emptyText: '没有其他子智能体。',
-              onOpen: (node) {
+              onOpen: (node, parentSid) {
                 Navigator.of(sheetContext).pop();
-                unawaited(_switchSibling(node));
+                unawaited(_switchSibling(node, parentSid));
               },
               onLoad: (target) =>
                   unawaited(widget.app.refreshSubagentCatalog(target)),
@@ -1284,32 +1273,20 @@ class ChatPageState extends State<ChatPage> {
     );
   }
 
-  /// 切到同一个父级下的另一个子会话（父级来自数据，不是记忆）。
-  Future<void> _switchSibling(SubagentNode node) async {
-    if (widget.app.currentSid == null) return;
+  /// 切到同一个父级下的另一个子会话（父级由**画它的那一层**给出，不扫描）。
+  Future<void> _switchSibling(SubagentNode node, String parentSid) async {
     // **点当前行什么都不做**（面板已经关了）：以前这里会 `openSession(自己)`，
     // 屏幕上看起来就是"又进了自己一次"。DSH 那一下是重新打开同一个会话 +
     // 关面板（`SubagentHeaderLineage.tsx:279-287`），对手机来说就是纯噪音。
     if (node.id == widget.app.currentSid) return;
-    // 那一行的**真正父级**是"产出这一行的那条目录"，**不一定等于当前会话的父级**：
-    // 面板里往下钻时点的可能是孙级，它的父级是子级。用 `_subagentParentSid`（当前会话
-    // 的父级）去查它的 mode 会查不到 ⇒ 一个可续聊的孙级被显示成「暂时只读」
-    // （真机 2026-10-23 抓到：进孙级后输入栏变成只读框）。
-    final parent =
-        widget.app.subagentParentOfCatalogEntry(node.id) ?? _subagentParentSid;
-    if (parent == null) return;
-    final mode = widget.app
-        .subagentCatalogOf(parent)
-        .entries
-        .where((row) => row.id == node.id)
-        .firstOrNull
-        ?.mode;
     setState(() {
       // 记忆跟着更新：它是老连接器那一档的兜底，留着旧父级会让第 3 档指错。
-      _subagentReturnFrom = parent;
+      _subagentReturnFrom = parentSid;
       _subagentChildSid = node.id;
-      // mode 来自**node 自己那条父级目录**（与它被画出来的地方同一个来源）。
-      _subagentMode = mode;
+      // mode 是**这一行自己的**（`SubagentRow.mode`）。以前回目录里再查一次：
+      // 目录可能正在重读（`loading` 保留旧 entries，界面照常画行），那一拍里回查
+      // 查不到 ⇒ 可续聊的孙级被说成「暂时只读」，而且不会自愈（mode 只取一次）。
+      _subagentMode = node.row.mode;
     });
     await widget.app.openSession(node.id);
   }

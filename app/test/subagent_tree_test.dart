@@ -39,6 +39,7 @@ Widget _host({
   String rootSid = 'root',
   String? currentSid,
   List<String>? opened,
+  List<String>? openedParents,
   List<String>? loaded,
   int Function()? clock,
 }) {
@@ -48,6 +49,7 @@ Widget _host({
     rootSid: rootSid,
     currentSid: currentSid,
     opened: opened,
+    openedParents: openedParents,
     loaded: loaded,
     clock: clock,
   );
@@ -62,6 +64,7 @@ class _Host extends StatefulWidget {
     required this.rootSid,
     required this.currentSid,
     required this.opened,
+    required this.openedParents,
     required this.loaded,
     required this.clock,
   });
@@ -71,6 +74,9 @@ class _Host extends StatefulWidget {
   final String rootSid;
   final String? currentSid;
   final List<String>? opened;
+
+  /// 每次 `onOpen` 的**父级**（画出那一行的那一层）。与 [opened] 一一对应。
+  final List<String>? openedParents;
   final List<String>? loaded;
   final int Function()? clock;
 
@@ -92,7 +98,10 @@ class _HostState extends State<_Host> {
           catalogOf: (sid) =>
               widget.catalogs[sid] ?? const SubagentCatalog.loading(),
           nodeOf: (row) => widget.nodes[row.id] ?? SubagentNode(row: row),
-          onOpen: (node) => widget.opened?.add(node.id),
+          onOpen: (node, parentSid) {
+            widget.opened?.add(node.id);
+            widget.openedParents?.add(parentSid);
+          },
           onLoad: (sid) {
             widget.loaded?.add(sid);
             rebuild();
@@ -248,6 +257,7 @@ void main() {
   group('两个手势：点行进入，点 disclosure 展开', () {
     testWidgets('点行 = onOpen（不是展开，也不是加载）', (tester) async {
       final opened = <String>[];
+      final openedParents = <String>[];
       final loaded = <String>[];
       final row = _row('child-1', label: '调研实现');
       await tester.pumpWidget(
@@ -257,6 +267,7 @@ void main() {
           },
           nodes: {'child-1': SubagentNode(row: row)},
           opened: opened,
+          openedParents: openedParents,
           loaded: loaded,
         ),
       );
@@ -265,12 +276,16 @@ void main() {
       await tester.pump();
 
       expect(opened, ['child-1'], reason: '点目录项 = openChild（`:279-287`）');
+      expect(openedParents, [
+        'root',
+      ], reason: '父级由画出这一行的那一层交出（`_Level.sid`），调用方不必回目录里查');
       expect(loaded, isEmpty, reason: '点行不该顺手去读子级目录');
     });
 
     testWidgets('点 disclosure：先懒加载，读到后展开出孙级', (tester) async {
       final loaded = <String>[];
       final opened = <String>[];
+      final openedParents = <String>[];
       final child = _row('child-1', label: '调研实现');
       final grand = _row('grand-1', label: '孙级');
       final catalogs = <String, SubagentCatalog>{
@@ -285,6 +300,7 @@ void main() {
           },
           loaded: loaded,
           opened: opened,
+          openedParents: openedParents,
         ),
       );
 
@@ -317,6 +333,13 @@ void main() {
         findsOneWidget,
         reason: '展开后 disclosure 的无障碍名换成"收起"（`locales.ts:34-35`）',
       );
+
+      // 孙级那一行的父级是 **child-1**（画出它的那一层），不是 root ——
+      // 这一条钉的就是"父级随行交出"：调用方不需要（也不该）扫目录反推。
+      await tester.tap(find.text('孙级'));
+      await tester.pump();
+      expect(opened, ['grand-1'], reason: '点孙级 = 进入它');
+      expect(openedParents, ['child-1'], reason: '父级是它所在的那一层');
     });
 
     testWidgets('子级读失败：展开后显示错误 + 重试，点重试重读那个子级', (tester) async {

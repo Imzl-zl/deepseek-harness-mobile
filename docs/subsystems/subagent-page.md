@@ -133,7 +133,7 @@
 | 选中兄弟 | 换主对话区（`openChild`），父级跟着数据变 | `ui-subagent/src/client/index.ts:61-63` |
 | 点当前行 | 只关面板，**不重开自己**（一次 `session.subscribe` 都不发） | 有意偏离（见下 4） |
 | 输入栏模型 | `modelSelection` 投影（`next ?? lastUsed`），**优先取行里的投影提示** `projections.values.modelSelection`，退到连接器的顶层 `model` | `AppModel._parseSessionList` / `currentModel`；DSH 的 composer 读的也是会话的 `modelSelection` |
-| 只读档的 mode | 取自**产出那一行的那条目录**（`subagentParentOfCatalogEntry(node.id)`），不是"当前会话的父级" —— 从面板往下钻时两者不同 | `_switchSibling`；判据 `subagent_enter_test.dart` 的"一次性 / 模式未知"到底哪一档 |
+| 只读档的 mode | 取自**那一行自己**（`SubagentRow.mode`，随 `onOpen(node, parentSid)` 交出），不回目录里查 —— 展开会重读那一层，`loading` 期间回查会查不到 | `_switchSibling` / `_openSubagent`；判据 `subagent_enter_test.dart` 的"展开后那一拍里点孙级" |
 | 目录读失败 | 顶栏计数 chip 仍出现（前导图标换成重试），面板里给「无法加载子智能体 / 重试」 | DSH 的 `visible`：`:617-631` |
 | 系统返回 | 子会话里回父会话；抽屉开着时先关抽屉；其余情况不拦 | `pop_scope.dart:83-96`、`drawer.dart:526-546` |
 
