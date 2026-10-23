@@ -23,7 +23,6 @@ import { fileURLToPath } from 'node:url'
 import { createBridge } from './reference/bridge.mjs'
 import { createRelay } from './reference/relay.mjs'
 import { ROUTING_KEYS, unseal } from './reference/frame.mjs'
-import { decideTakeover } from './reference/takeover.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const FIXTURES_DIR = join(HERE, 'fixtures')
@@ -31,7 +30,7 @@ const FIXTURES_DIR = join(HERE, 'fixtures')
 const KNOWN_OPS = new Set([
   'append', 'redeliver', 'hello', 'ack', 'ackSeq', 'snapshotPage',
   'relayEvictAll', 'relayRestart', 'bridgeTrim', 'bridgeRestart', 'sendTwice',
-  'setTransient', 'ask', 'answer', 'rebuildPending', 'live', 'takeover',
+  'setTransient', 'ask', 'answer', 'rebuildPending', 'live',
 ])
 const OUTCOMES = new Set(['delta', 'snapshot'])
 const REASONS = new Set(['window-missed', 'revision-newer', 'history-rewritten', 'no-session'])
@@ -83,7 +82,6 @@ function runFixture(file, fx) {
   const requests = new Map()
   const answers = []
   const snapshots = new Map()                      // sid -> { asOfSeq, buffered: Map }
-  const takeovers = []
   const liveSeq = new Map()                        // sid -> 收到 live 帧前的修订号
   let liveReceived = 0
   let relayFramesSeen = []
@@ -241,10 +239,6 @@ function runFixture(file, fx) {
         liveSeq.set(step.sid, bridge.latestSeq(step.sid))
         break
       }
-      case 'takeover': {
-        takeovers.push({ sid: step.sid ?? null, ...decideTakeover({ mode: step.mode, sid: step.sid, devices: step.devices }) })
-        break
-      }
       default:
         throw new Error(`未实现的步骤: ${step.op}`)
     }
@@ -318,18 +312,6 @@ function runFixture(file, fx) {
       const got = [...bridge.pendingOf(sid).keys()].sort()
       check(JSON.stringify(got) === JSON.stringify([...want].sort()), `${file}: ${sid} 待审批集合`, `期望 ${want.join(',') || '(空)'}，实际 ${got.join(',') || '(空)'}`)
     }
-  }
-
-  if (fx.expect?.takeover) {
-    const want = Array.isArray(fx.expect.takeover) ? fx.expect.takeover : [fx.expect.takeover]
-    check(takeovers.length === want.length, `${file}: 仲裁判定次数`, `期望 ${want.length}，实际 ${takeovers.length}`)
-    want.forEach((w, i) => {
-      const got = takeovers[i]
-      if (!got) return
-      for (const [key, value] of Object.entries(w)) {
-        check(got[key] === value, `${file}: 仲裁第 ${i + 1} 次 ${key}`, `期望 ${value}，实际 ${got[key]}`)
-      }
-    })
   }
 
   if (fx.expect?.liveIgnored) {

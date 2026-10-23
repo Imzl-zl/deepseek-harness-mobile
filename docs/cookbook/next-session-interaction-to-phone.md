@@ -29,13 +29,14 @@
 `session.subscribe` 后 `ev` 流进来 → `session.prompt` 发出去的那句**作为 `user/message`
 回到手机** → **`等待审批` 卡片画在手机输入栏上** → 点「允许一次」→ `interaction.respond`
 带对 `callId` / `requestId: 'i:<callId>'` / 字面值 `"allowed-once"` → 卡片收束 →
-**`approval/decided` 确实回来了**(这证明 prepend 修复有效,应答者真被问到了)。
+**`approval/decided` 确实回来了**(这证明当时的 host answerer 真的被问到了;现在的形态是连接器作为
+gateway 的 owner client 收 `waterfall`,见 `../subsystems/remote-channel.md` §6.2)。
 
-**根因已在上一轮修掉**:`askApproval` 曾在"呈示不了"时 `return 'reject'`,
-于是一个 outcome 同时代表"用户点了拒绝"和"手机不在线 / 看护断了" ——
+**"呈示不了"不许伪装成用户的决定**:`askApproval` 曾在"手机不在线 / 连不上"时 `return 'reject'`,
+于是一个 outcome 同时代表"用户点了拒绝"和"没人能答" ——
 **在替用户做一个他没做过的决定**(真机那条 tool result 写着
 *"the user rejected … so stop and explain"*,而用户什么都没点)。
-已改成抛,由 `interactions.ts` 归一成 `'unavailable'`。
+现在是**委托**(`next`,DSH 原生语义;桌面照常答)。
 **原生依据与取舍**:`.agents/notes/implemented/2026-10-13-approval-must-not-fake-rejection.md`
 (参照 `packages/client/ui-approval/src/client/index.ts` 的 `answerApproval` 三个出口)。
 
@@ -167,7 +168,7 @@ fail-closed 报后台**。取舍、被否方案与代价见
   手机侧显示的名字已是真值,但 picker 列表还是手抄的。
 - 方法面 31/35:契约列了、连接器还没接的是 `settings.describe` / `settings.update` /
   `credentials.set` / `credentials.unset`(契约 §5.8)。
-- `always` 档下没订阅该会话的手机看不到卡片(看护超时后 fail-closed)。
+- `always` 档下没订阅该会话的手机看不到卡片(它也就不会答那一条;桌面照常答,谁都没答就一直等)。
 
 ## 相关文档(改之前先读)
 

@@ -1,17 +1,14 @@
 /**
- * 已认证设备的**瞬时**状态：在线、前台、已订阅、最近交互（契约 §6.2 仲裁判定的输入）。
+ * 已认证设备的**瞬时**状态：在线、前台、已订阅、最近交互。
  *
- * ## 为什么它必须存在
+ * ## 它为什么存在
  *
- * `protocol/takeover.ts` 的 `decideTakeover` 只根据设备状态判定 claim，而设备状态只有一个
- * 来源——本模块。在它落地之前完整因果链是：
+ * 三个读者：管理面的设备列表（在线 / 前台 / 最近交互的排序）、
+ * `connection-scope.ts` 的订阅集上报、以及"手机答过一次话"的时间戳。它们都要的是
+ * **同一个事实**（这台设备此刻是什么样），所以只能有一个记账处。
  *
- * ```text
- * 没人写 liveRegistry → liveDevices() 返回 [] → decideTakeover 永不 claim
- * → answerer 永远 next() 交还桌面 → fail-closed 桩根本跑不到
- * ```
- *
- * 也就是说"审批转手机"不是"会拒绝"，而是**永远不触发**。本模块补的就是这一环。
+ * 注意：**没有"谁接管"这种判定了**。连接器是 gateway 的一个 client，和浏览器并列 ——
+ * 手机连着就参与，不连着就没有投递，不存在需要"档位"来仲裁的场景（见契约 §6.2）。
  *
  * ## 三条约束
  *
@@ -19,7 +16,7 @@
  *    进程重启即清零（重连后由连接层重新上报）。混在一起会让"重启后设备还在线"这种假状态
  *    有机会出现。
  * 2. **连接层认证过不等于授权过**。`devices()` 只返回"配对行存在且未吊销"的设备——
- *    这条过滤是 `liveDevices` 的**唯一**去处，写在这里而不是每个读取点各判一遍。
+ *    这条过滤只写在这一个地方，而不是每个读取点各判一遍。
  * 3. **上报全是幂等的覆盖写**。同一个设备重复上报在线/前台/订阅集，结果与上报一次相同
  *    （`sync.hello` 每次回前台都会发一次，契约 §9 的兜底）。
  *
@@ -29,12 +26,22 @@
  * Note: 为什么"断开整条作废"与"迟到上报不得救活"是两条独立的不变量 ——
  * 见 `.agents/notes/implemented/2026-10-10-interaction-to-phone-chain.md`。
  */
-import type { TakeoverDevice } from './protocol/takeover.js'
+
+/** 一台设备的状态快照（管理面与 presence 的读取面共用这一个形状）。 */
+export interface DeviceState {
+  id: string
+  online: boolean
+  foreground: boolean
+  subscribed: readonly string[]
+  pairedAt: number
+  /** 按会话记的"最近答话时间"（管理面排序用）。 */
+  lastInteractedAt?: Record<string, number>
+}
 
 /** 手机声明的应用态（契约 §5.4 的 `sync.hello.app`）。 */
 export type DeviceAppState = 'foreground' | 'background'
 
-/** 一台设备的瞬时状态。`lastInteractedAt` 按会话记（仲裁排序要用它，契约 §6.2）。 */
+/** 一台设备的瞬时状态。`lastInteractedAt` 按会话记。 */
 export interface LiveDeviceRecord {
   online: boolean
   foreground: boolean
@@ -59,8 +66,8 @@ export interface DevicePresence extends PresenceDevices {
   subscriptions(devId: string, sids: readonly string[]): void
   /** 手机在这个会话上答了一次话（`lastInteractedAt` 由**连接器**盖时间戳）。 */
   interacted(devId: string, sid: string, at: number): void
-  /** 仲裁判定的输入快照（只含已配对且未吊销的设备）。 */
-  devices(): readonly TakeoverDevice[]
+  /** 状态快照（只含已配对且未吊销的设备）。 */
+  devices(): readonly DeviceState[]
   /** 一台设备的瞬时记录；不在线（或从未上报）时是 `undefined`。 */
   liveOf(devId: string): LiveDeviceRecord | undefined
   /**
@@ -117,8 +124,7 @@ export function createDevicePresence(options: PresenceDevices): DevicePresence {
 
     offline(devId) {
       // **整条作废而不是只置 `online: false`**：订阅集属于那条连接，连接没了订阅就没了。
-      // 留着旧订阅集会让"设备已断但 decideTakeover 仍认为它订阅着这个会话"——
-      // 而 `foreground` 档的 claim 判据正是"前台且已订阅"。
+      // 留着旧订阅集会让管理面显示"这台设备还订阅着这个会话"。
       live.delete(devId)
       // 先清状态再通知：监听器（在途审批的看护）收到的必须是"已经下线"这个事实。
       const listeners = offlineListeners.get(devId)
@@ -147,9 +153,9 @@ export function createDevicePresence(options: PresenceDevices): DevicePresence {
     },
 
     devices() {
-      const rows: TakeoverDevice[] = []
+      const rows: DeviceState[] = []
       for (const [id, record] of live) {
-        // **连接层认证过不等于授权过**：没配过对、或已吊销的设备一律不参与仲裁。
+        // **连接层认证过不等于授权过**：没配过对、或已吊销的设备一律不列出。
         const pairedAt = options.pairedAtOf(id)
         if (pairedAt === undefined) continue
         rows.push({

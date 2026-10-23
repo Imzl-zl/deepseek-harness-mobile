@@ -1,6 +1,15 @@
 # Agent Note: 交互应答者必须 `prepend`，否则被桌面转发监听器挡住
 
-Status: implemented
+Status: archived（被 `.agents/notes/implemented/2026-10-23-interaction-as-gateway-client.md` 取代：
+连接器不再是 host 的 waterfall answerer，`prepend` 与"顺序挡不挡桌面"这个问题一起消失）
+
+## 被取代的原因（一句话）
+
+`prepend` 解决的是"排在桌面转发监听器后面就问不到"，代价是**claim 之后桌面收不到请求**
+（waterfall 只能有一个赢家）。改成 gateway 的 owner client 之后，同一条 pending 交互
+**同时**投给桌面与手机，谁先答谁赢、其余收 `cancel` —— 那条链上不再有"顺序"这回事。
+
+以下为原文，结论不改动。
 
 ## Problem
 

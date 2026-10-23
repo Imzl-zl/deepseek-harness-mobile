@@ -25,19 +25,18 @@ import { fileURLToPath } from 'node:url'
 import { ROUTING_KEYS, unseal, type Frame } from '../src/protocol/frame.js'
 import type { ItemRecord } from '../src/protocol/items.js'
 import { createBridge, type Bridge, type TransientFacts } from '../src/protocol/recovery.js'
-import { decideTakeover } from '../src/protocol/takeover.js'
 import { createRelay, type Relay, type RelayFrame } from './support/relay.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const FIXTURES_DIR = join(HERE, '..', '..', 'protocol', 'fixtures')
 
 /** `verify-fixtures.mjs` 的断言总数。两侧实现各自跑同一批 fixtures，这个数必须相等。 */
-const REFERENCE_CHECK_COUNT = 486
+const REFERENCE_CHECK_COUNT = 454
 
 const KNOWN_OPS = new Set([
   'append', 'redeliver', 'hello', 'ack', 'ackSeq', 'snapshotPage',
   'relayEvictAll', 'relayRestart', 'bridgeTrim', 'bridgeRestart', 'sendTwice',
-  'setTransient', 'ask', 'answer', 'rebuildPending', 'live', 'takeover',
+  'setTransient', 'ask', 'answer', 'rebuildPending', 'live',
 ])
 const OUTCOMES = new Set(['delta', 'snapshot'])
 const REASONS = new Set(['window-missed', 'revision-newer', 'history-rewritten', 'no-session'])
@@ -129,7 +128,6 @@ test('16 条 fixtures 在 connector 侧跑绿，且断言数与 verify-fixtures.
     const requests = new Map<string, number>()
     const answers: ReceivedAnswer[] = []
     const snapshots = new Map<string, SnapshotBuffer>()                    // sid -> { asOfSeq, buffered }
-    const takeovers: Json[] = []
     const liveSeq = new Map<string, number | null>()                       // sid -> 收到 live 帧前的修订号
     let liveReceived = 0
 
@@ -293,10 +291,6 @@ test('16 条 fixtures 在 connector 侧跑绿，且断言数与 verify-fixtures.
           liveSeq.set(step.sid, bridge.latestSeq(step.sid))
           break
         }
-        case 'takeover': {
-          takeovers.push({ sid: step.sid ?? null, ...decideTakeover({ mode: step.mode, sid: step.sid, devices: step.devices }) })
-          break
-        }
         default:
           throw new Error(`未实现的步骤: ${step.op}`)
       }
@@ -370,18 +364,6 @@ test('16 条 fixtures 在 connector 侧跑绿，且断言数与 verify-fixtures.
         const got = [...bridge.pendingOf(sid).keys()].sort()
         check(JSON.stringify(got) === JSON.stringify([...want].sort()), `${file}: ${sid} 待审批集合`, `期望 ${want.join(',') || '(空)'}，实际 ${got.join(',') || '(空)'}`)
       }
-    }
-
-    if (fx.expect?.takeover) {
-      const want: Json[] = Array.isArray(fx.expect.takeover) ? fx.expect.takeover : [fx.expect.takeover]
-      check(takeovers.length === want.length, `${file}: 仲裁判定次数`, `期望 ${want.length}，实际 ${takeovers.length}`)
-      want.forEach((w: Json, i: number) => {
-        const got = takeovers[i]
-        if (!got) return
-        for (const [key, value] of Object.entries(w as Record<string, unknown>)) {
-          check(got[key] === value, `${file}: 仲裁第 ${i + 1} 次 ${key}`, `期望 ${value}，实际 ${got[key]}`)
-        }
-      })
     }
 
     if (fx.expect?.liveIgnored) {

@@ -19,6 +19,23 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 
 import { ASK_USER_QUESTION_TOOL } from './question-call.js'
 
+/**
+ * 一条"重连重投"载荷：那次 ask 的会话事件（原 seq + 线上 body）。
+ *
+ * 形状与 `ev` 帧的载荷逐字一致（`session-subscriptions.ts` 的 `JSON.stringify(event)`），
+ * 所以重投走的是**已有的**出帧路径 —— 不新增帧类型、不新增方法。App 按 `itemId` upsert，
+ * 重发天然幂等（与 DSH gateway 的 `deliverRemoteEvent` 同形）。
+ */
+export interface Redelivery {
+  readonly seq: number
+  readonly body: string
+}
+
+/** 把一次 ask 的会话事件收成重投载荷；事件不在时回 `undefined`（不重投）。 */
+export function redeliverOf(event: SessionEvent | undefined): Redelivery | undefined {
+  return event === undefined ? undefined : { seq: event.seq, body: JSON.stringify(event) }
+}
+
 /** 提问那条 `tool/call` 事件；找不到回 `undefined`（不猜）。 */
 export function questionAskEvent(
   events: readonly SessionEvent[],

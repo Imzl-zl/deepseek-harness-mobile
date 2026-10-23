@@ -167,6 +167,33 @@
 > 契约 §5.7 的 `interaction.respond` 行 + §6.3.1 已写清判据与取舍。
 > 门禁：connector **599 → 612**（+13：12 条身份用例 + 1 条"程序化提问不 warn"），其余不变。
 
+> **2026-10-23（本轮）交互改成 gateway 的 owner client —— 桌面与手机由同一个触发关闭**：
+> 连接器不再是 host 的 `prepend` answerer。它建 in-process owner peer，接 gateway 的 `$events` 转发流
+> （`connector/src/dsh/interaction-client.ts`），同一条 pending 交互**同时**投给桌面与手机：
+> 手机先答 → 回 `{kind:'result'}` → gateway 结算 → 给浏览器发 `cancel` → 桌面卡关；桌面先答 →
+> 收到 `cancel` → 撤手机在途 claim。三档仲裁只剩"**手机参不参与**"：**不参与就回 `next`（原生委托）**。
+> **没有看护计时器**：DSH 的审批没有超时（浏览器的卡也一直挂着），所以不造超时、不记"未处理"、
+> 不设 fail-closed 指标 —— 这三样都是 host answerer 时代的自创边界（用户当场点破："DSH 原生是啥样
+> 就啥样，不擅自加边界"）。一条 claim 只有三种结局：手机答了 / gateway 发 `cancel` / 插件卸载。
+> **三档开关 `approvalTakeover`（never/foreground/always）连根删了**：它是"抢"时代的产物 ——
+> 现在两边都弹、谁先答谁赢，没有"谁接管"；不想让手机参与就停传输通道（手机连不上 = 没有投递）。
+> 一起删的：`protocol/takeover.ts` 与 `decideTakeover`、`fixture 16`、`protocol/reference/takeover.mjs`、
+> store 里没人写的 `takeover` 表、没人读的 `approvalWatchdogMin`、客户端里的 `TakeoverSource`。
+> 删除 `dsh/interactions.ts`、`registerApprovalAnswerer`、`Watchdog*`、`UnhandledInteraction`、
+> `METRIC.failClosed`；端口入参收窄成 `ClaimRequest { sid, callId, redeliver? }` 且**不接受任何依赖**
+> （`createInteractionPort()`）；缺 `typertGateway` / `connection` → **不做手机交互**（没有 fallback）。
+> 笔记 `implemented/2026-10-23-interaction-as-gateway-client.md`（含"沉默 + 10 分钟"与"三档"两个
+> 被撤掉的方案）（`2026-10-13-answerer-must-be-prepended.md` 移入 `archived/`）；
+> 契约 §6.2 / §6.2.1 / §6.3.1 / §8.1 / §10 / §15 同步。
+> 门禁：connector **618 → 611**、protocol **486 → 454**（fixture 16 那一份随规则删除；
+> 两边同时删、仍对等，`AGENTS.md` 的"fixtures 断言数须 = 454"）。**这是唯一一处破了"门禁只许升"，
+> 理由是契约规则本身被删，不是放宽**；其余门禁不变。
+> **真机/桌面已验（1 个轮次，22:50 与 23:36 各一次）**：隔离实例装新产物 + 桌面 Web GUI
+> （headless 里的真客户端），两边同时弹卡（旧形态下桌面收不到），**手机点「允许一次」→ 桌面卡消失**；
+> 会话日志 `approval/asked` → `decided allowed-once`，管理面 `lastInteractedAt` 与 decided 时间差 **1 ms**
+> （= 决定来自手机）。截图 `D:\tmp\dsh-e2e\shots-2026-10-23-interaction-client\`（`final-*` 是删掉
+> 计时器之后的复验）。"不参与 → next"由单测覆盖，没过真机。
+
 待办（按顺序）:
 
 1. **轮组阶段 1 已落地**（整轮分组 + 折叠过程 + 「工作步骤收起时机」两档）——
@@ -206,13 +233,13 @@
     （审批与提问同一规则）、手机重订阅时按原 seq **重投在途 ask 事件**（不新增帧 / 方法）、
     App 失败分类（传输失败留卡可重试、`not-pending` 撤卡、失败不写成功回执）。
     笔记 `implemented/2026-10-23-in-flight-interaction-is-host-held.md`。
-    **仍未做（明确不顺手做）**：timed 部署（只解决看护之后才答，代价是桌面倒计时 + 模型 120 s 后继续）、
+    **仍未做（明确不顺手做）**：timed 部署（代价是桌面倒计时 + 模型 120 s 后继续）、
     计划审查卡（卡只从 `ask_user_question` 的 `tool/call` 生成，`/exit_plan_mode` 没有卡）。
-12. **交互改成 gateway 的 owner client（下一轮，已备好提示词）** —— 现状是 host 的 `prepend` answerer，
-    claim 之后桌面收不到请求、手机先答时桌面卡关不掉。原生模型是让连接器作为 owner client 接
-    `$events` 转发流：桌面与手机都收到、谁先答谁赢、gateway 给其余 client 发 `cancel`。
-    提案（含全部行号与迁移顺序）`.agents/notes/proposed/2026-10-23-interaction-as-gateway-client.md`；
-    新会话提示词 `.agents/notes/proposed/2026-10-23-next-round-interaction-client.md`（整段复制）。
+12. ~~**交互改成 gateway 的 owner client**~~ **已修（2026-10-23）**：连接器作为 owner client 接
+    gateway 的 `$events` 转发流 —— 桌面与手机**同时**收到、谁先答谁赢、其余收 `cancel`；
+    host answerer 与 `prepend` 整条路删掉（旧笔记移入 `archived/`）。
+    笔记 `implemented/2026-10-23-interaction-as-gateway-client.md`。
+    **真机/桌面已验（1 个轮次）**：手机先答 → 桌面卡关（截图 + 管理面 `lastInteractedAt` 判据）。
 
 别当缺口（定案，别再试）:
 
@@ -362,12 +389,12 @@
 
 | 命令 | 覆盖 |
 |---|---|
-| `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
+| `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **454 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **360 项**（22 条规则自检 + 扫 99 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
 | `cd app && flutter test` | **1140 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **618 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **611 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 
@@ -410,3 +437,6 @@
   `2026-10-23-legacy-question-identity-from-session-log.md`。
 - 2026-10-23 在途交互 = host-held pending（断线不结算 + 重连重投 ask 事件 + App 失败分类）——
   `2026-10-23-in-flight-interaction-is-host-held.md`。
+- 2026-10-23 交互改成 gateway 的 owner client（`$events` 转发流 + `$events/result`，桌面与手机同时可见、
+  谁先答谁赢）—— `2026-10-23-interaction-as-gateway-client.md`；
+  旧的「应答者必须 prepend」移入 `archived/`。

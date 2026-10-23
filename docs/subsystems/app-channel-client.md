@@ -224,7 +224,7 @@ app/packages/
 | 会话详情 · 轨迹 | items 内的 step/usage 投影(与对话同一份 items,不额外请求) |
 | 状态 chip → 三个 sheet | 同一 items 的统计投影(本地算,不请求) |
 | 右抽屉(文件 / 任务 / 子代理) | items 的 tool/diff 投影 + `job.list` / `job.follow` 订阅流;子智能体面板是**目录树**(直接子级 + 展开才懒加载,`subagentCatalog`),行带活动态 / `title · mode · activity` / token / 真实耗时;点行**进入子会话**(同 DSH `openChild`,`ui-subagent/src/client/index.ts:61-63`),子会话顶栏是 `←` + 当前子级标题(点开 = 切换面板);**父级来自 `session.list` 行的 `parentSessionId`**(别名形式,老连接器才退到目录扫描 / 导航记忆),一次性 / 模式未知的输入栏换成 54px 横向只读框(`SubagentReadOnlyComposer`);规格见 `subagent-page.md` |
-| 审批 / 提问接管输入栏 | 待处理项随 `ev` 帧到达(**没有 `interaction.list`**,见 `remote-channel.md` §6.3);本期只转**提问与计划审查**,审批等看护计时器实现后再开(§6.2.1) |
+| 审批 / 提问接管输入栏 | 待处理项随 `ev` 帧到达(**没有 `interaction.list`**,见 `remote-channel.md` §6.3);审批与提问都转,连接器"不参与"时**委托**(`next`),手机这边的卡能不能答由 `interaction.respond` 的结果决定 |
 | 设置页 | `repo.info` 的 `caps` 决定可用性;`settings.*` / `credentials.set\|unset` |
 | 设备与连接状态 | `presence` + 本地 `ConnectionState` |
 

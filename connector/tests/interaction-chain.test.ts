@@ -1,19 +1,12 @@
 /**
- * **整条链**的接线证明：presence → 仲裁 claim → 端口 → 答复回到在途 claim。
+ * **整条链**的接线证明：手机连上（`sync.hello` 上报前台+订阅）→ 交互投递 → 端口 →
+ * 答复从同一条连接回来。
  *
- * 这是「审批转手机」从"永远不触发"变成"真的能通"的那一条用例。接线之前的状态是：
+ * 它**不需要 DSH**：presence 是真实现，端口是真实现，只有 DSH 的 `userQuestions` /
+ * `approval` 服务不在场 —— 而它们本来就在端口的外面。
  *
- * ```text
- * 没人写 liveRegistry → liveDevices() 返回 [] → decideTakeover 永不 claim
- * → answerer 永远 next() 交还桌面 → fail-closed 桩根本跑不到
- * ```
- *
- * 所以这条用例的验收口径就是任务书那三句：`liveDevices()` 不再恒为空；
- * `decideTakeover` 第一次真的能 claim；端口第一次真的被触发并等到人类的回答。
- *
- * 它**不需要 DSH**：presence 是真实现，仲裁是真函数（`protocol/takeover.ts`），
- * 端口是真实现，只有 DSH 的 `userQuestions` / `approval` 服务不在场 ——
- * 而它们本来就在端口的外面（answerer 那一侧）。
+ * Note: "谁参与"没有仲裁这回事了（连接器是 gateway 的一个 client，连着就参与）——
+ * 见 `.agents/notes/implemented/2026-10-23-interaction-as-gateway-client.md`。
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -21,8 +14,7 @@ import { test } from 'node:test'
 import { createConnectionScope, type ConnectionScopeDeps } from '../src/connection-scope.js'
 import { createMetrics, silentLogger } from '../src/observability.js'
 import { createDevicePresence } from '../src/presence.js'
-import { decideTakeover } from '../src/protocol/takeover.js'
-import { APPROVAL_ALLOW_LABEL, createInteractionPort, type UnhandledInteraction } from '../src/interaction-claims.js'
+import { APPROVAL_ALLOW_LABEL, createInteractionPort } from '../src/interaction-claims.js'
 import { createInteractionFace } from '../src/interaction-face.js'
 import { createHandlers } from '../src/handlers.js'
 import { createSessionBuffer } from '../src/session-buffer.js'
@@ -101,15 +93,11 @@ function lastResponse(sent: readonly OutboundFrame[]): { ok: boolean; payload: R
 
 const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
-test('整链：sync.hello 上报前台+订阅 → decideTakeover 真的 claim → 端口等到人类的回答', { timeout: 60_000 }, async () => {
+test('整链：sync.hello 上报前台+订阅 → 端口等到人类的回答，答复从同一条连接回来', { timeout: 60_000 }, async () => {
   const { presence, deps, sent, port, streams } = harness()
 
   // ---- ② 端口与 ③ 的内核先装进方法面（装配顺序：先挂 handler 再建连接）----
-  const unhandled: UnhandledInteraction[] = []
-  const claims = createInteractionPort({
-    presence,
-    onUnhandled: (record) => unhandled.push(record),
-  })
+  const claims = createInteractionPort()
   const face = createInteractionFace({
     answer: () => assert.fail('这一项是在途审批，不该走到 DSH 的 answer()'),
     agentOf: () => undefined,
@@ -125,8 +113,6 @@ test('整链：sync.hello 上报前台+订阅 → decideTakeover 真的 claim �
   assert.deepEqual(presence.devices(), [
     { id: 'dev-1', pairedAt: 1000, online: true, foreground: false, subscribed: [] },
   ])
-  const beforeClaim = decideTakeover({ mode: 'foreground', sid: 'sid_dsh-1', devices: presence.devices() })
-  assert.equal(beforeClaim.claim, false, '没上报前后台态之前不 claim（fail-closed 的方向）')
 
   // 手机发 `sync.hello`：声明前台 + 订阅集。
   scope.handleFrame({
@@ -140,21 +126,14 @@ test('整链：sync.hello 上报前台+订阅 → decideTakeover 真的 claim �
   streams[0]?.push({ kind: 'opening', cursor: 0, header: { id: 'dsh-1' } as never, records: [], hasMore: false })
   await settle()
 
-  // ---- ① 的验收：liveDevices() 不再恒为空 ----
+  // ---- ① 的验收：设备状态真的被上报（管理面读的就是它）----
   const devices = presence.devices()
   assert.deepEqual(devices, [
     { id: 'dev-1', pairedAt: 1000, online: true, foreground: true, subscribed: ['sid_dsh-1'] },
   ])
 
-  // ---- ② 的验收：decideTakeover 第一次真的能 claim ----
-  const claim = decideTakeover({ mode: 'foreground', sid: 'sid_dsh-1', devices })
-  assert.deepEqual(claim, { claim: true, deviceId: 'dev-1', reason: 'foreground-claimed' })
-
   // ---- ② 端口：claim 之后它真的被触发，并等到人类的回答 ----
-  const pending = claims.askApproval(
-    { sid: 'sid_dsh-1', callId: 'call-1', toolName: 'bash' },
-    claim.deviceId ?? '',
-  )
+  const pending = claims.askApproval({ sid: 'sid_dsh-1', callId: 'call-1' })
   await settle()
   assert.equal(claims.pending, 1, 'claim 必须在途，否则答复回来时无处可去')
 
@@ -175,25 +154,23 @@ test('整链：sync.hello 上报前台+订阅 → decideTakeover 真的 claim �
   })
   await settle()
 
-  assert.equal(await pending, 'allow-once', '审批转手机：真机上"手机上答 → 电脑侧继续"就是这一步')
+  assert.deepEqual(
+    await pending,
+    { kind: 'answered', value: 'allowed-once' },
+    '审批转手机：真机上"手机上答 → 电脑侧继续"就是这一步',
+  )
   assert.equal(claims.pending, 0)
-  assert.equal(unhandled.length, 0, '等到回答就不该有未处理记录')
   assert.equal(lastResponse(sent).ok, true, '答复要被确认，手机才能把那一项标成已答')
 
-  // 断开之后端口不再接受任何 claim（不等满一个看护周期）。
+  // 设备断开：端口不结算在途 claim，也**不会**自己超时 —— 只有手机答、gateway 撤、
+  // 或插件卸载才收束（原生没有超时）。
   scope.servingEnded()
   assert.equal(presence.liveOf('dev-1'), undefined)
-  // **抛，不是 `'reject'`**：`'rejected'` 在 DSH 原生语义里只代表用户点了拒绝
-  // （`ui-approval/contract/slots.ts`）。我们呈示不了就 reject，等于替用户做一个
-  // 他没做过的决定；抛出去由 `interactions.ts` 归一成 `'unavailable'` 才是实话。
-  await assert.rejects(
-    () =>
-      claims.askApproval(
-        { sid: 'sid_dsh-1', callId: 'call-2', toolName: 'bash' },
-        'dev-1',
-      ),
-  )
-  assert.equal(unhandled.at(-1)?.end, 'disconnected', '断开之后立刻 fail-closed 并留证')
+  const stillWaiting = claims.askApproval({ sid: 'sid_dsh-1', callId: 'call-2' })
+  await settle()
+  assert.equal(claims.pending, 1, '断开不是收束的理由（claim 挂在 host 上）')
+  assert.equal(claims.cancelClaim('call-2'), true, '只有 gateway 说"已经结算了"才放走')
+  assert.deepEqual(await stillWaiting, { kind: 'withdrawn' })
 })
 
 test('整链：手机断开 → claim 保留（不结算），重连后答复仍能落', { timeout: 60_000 }, async () => {
@@ -209,16 +186,8 @@ test('整链：手机断开 → claim 保留（不结算），重连后答复仍
   })
   await settle()
 
-  const unhandled: unknown[] = []
-  const claims = createInteractionPort({
-    presence,
-    onUnhandled: (record) => unhandled.push(record),
-    guardMs: 10 * 60_000,
-  })
-  const pending = claims.askApproval(
-    { sid: 'sid_dsh-1', callId: 'call-1', toolName: 'bash' },
-    'dev-1',
-  )
+  const claims = createInteractionPort()
+  const pending = claims.askApproval({ sid: 'sid_dsh-1', callId: 'call-1' })
   await settle()
   scope.servingEnded()
   await settle()
@@ -228,8 +197,7 @@ test('整链：手机断开 → claim 保留（不结算），重连后答复仍
     true,
     '重连回来的答复仍能落进同一条 claim',
   )
-  assert.equal(await pending, 'allow-once')
-  assert.deepEqual(unhandled, [], '答上了就不是未处理')
+  assert.deepEqual(await pending, { kind: 'answered', value: 'allowed-once' })
 })
 
 test('整链：方法面真的挂了 sync.hello 与 interaction.respond（repo.info 报的是表的键）', async () => {

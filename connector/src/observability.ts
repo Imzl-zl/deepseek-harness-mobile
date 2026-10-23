@@ -107,8 +107,6 @@ export const METRIC = {
   pairedDevices: 'connector.devices.paired',
   /** 当前待处理的审批 / 提问数。 */
   pendingInteractions: 'connector.interactions.pending',
-  /** 转给手机但没等到回答、按 fail-closed 收束的次数。 */
-  failClosed: 'connector.interactions.fail_closed',
 } as const
 
 export type MetricName = (typeof METRIC)[keyof typeof METRIC]

@@ -72,6 +72,14 @@ export const OPTIONAL_SERVICES = [
   // 手机 hero 上那枚模式 chip 退回"拿不到目录"，而不是摆一份手抄的四个内置预设。
   // 写路径不需要它：新建会话时带 `agentPreset` 走的是 `session.create`。
   'agentPresets',
+  // 交互转发的两个宿主缝（`dsh/interaction-client.ts`，契约 §6.2）：`typertGateway` 的
+  // `$events` 转发流（`packages/api/gateway/src/types.ts:148-151`）+ `connection` 的
+  // in-process owner peer（`packages/client/connection/src/rpc-host.ts:140`）。
+  // **缺任一个就不做手机交互**（不转发、不 claim）—— 它们是"手机能不能答审批/提问"的
+  // 前提，但**不进 `inject`**：缺了只是那个面不工作，插件本身照常跑（会话、配对、
+  // 订阅都不依赖它们）。
+  'typertGateway',
+  'connection',
 ] as const
 
 /** 通道对外公布的能力位。 */

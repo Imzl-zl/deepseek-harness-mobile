@@ -2,13 +2,13 @@
  * 插件入口：装配、发布服务、dispose（契约 §1.3）。
  *
  * 顺序由 `lifecycle.ts` 的引擎保证（含 mount 中途失败的回滚、dispose 的尽力而为），
- * 本文件只负责**把零件接成那五步**：
+ * 本文件只负责**把零件接成那六步**：
  *
  * ```text
  * 1 validate-config     校验 relayUrl / 令牌引用存在
  * 2 open-store          两个 domain 打开 + meta 按 schema 逐代迁移
  * 3 publish-service     ctx.provide('dshMobileConnector', api) ← 手机端能力门控读它
- * 4 register-answerers  审批与提问的 claim-or-delegate（§6.2）
+ * 4 mount-interactions  接 gateway 的 `$events` 转发流（owner client，§6.2）
  * 5 load-identity       取（或首次生成）本机身份种子（§12.1）
  * 6 start-transport     出站 WSS，并把 §4.1 的握手交给驱动器；配了 `listenPort` 时**同时**起直连监听面
  * ```
@@ -82,7 +82,7 @@ import {
   createAdvertiseAdmin,
   type AdvertiseTablePort,
 } from './admin/advertise.js'
-import { registerInteractions, type RemoteInteractionPort } from './dsh/interactions.js'
+import { createInteractionClient, type InteractionClient } from './dsh/interaction-client.js'
 import { createQuestionFaceDeps } from './dsh/questions.js'
 import { createModelFace } from './dsh/models.js'
 import { createPermissionFace } from './dsh/permissions.js'
@@ -91,7 +91,6 @@ import { createAgentPresetsFace } from './dsh/agent-presets.js'
 import { createDevicePresence } from './presence.js'
 import { createInteractionPort } from './interaction-claims.js'
 import { createInteractionFace } from './interaction-face.js'
-import type { TakeoverDevice, TakeoverMode } from './protocol/takeover.js'
 import { createDeviceConnection } from './device-connection.js'
 import type { HandlerDeps } from './handlers.js'
 import { createIdempotency, type DedupeRows } from './idempotency.js'
@@ -181,12 +180,10 @@ interface Assembly {
   /** 直连监听面（§1.7）：`0` = 不监听。同样是挂载时取一次快照。 */
   listenPort: number
   listenHost: string
-  /** 接管档位（契约 §6.2）。同样是挂载时取一次快照。 */
-  approvalTakeover: TakeoverMode
 }
 
 function buildSteps(assembly: Assembly): LifecycleStep[] {
-  const { ctx, relayUrl, allowInsecureLocal, relayTokenSecretRef, listenPort, listenHost, approvalTakeover, logger, metrics, abort } =
+  const { ctx, relayUrl, allowInsecureLocal, relayTokenSecretRef, listenPort, listenHost, logger, metrics, abort } =
     assembly
 
   let closeStore: (() => Promise<void>) | null = null
@@ -222,17 +219,18 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
   }
   /**
    * 这条连接的**已认证设备**由 `connection-scope.ts` 记着（增量缓冲的水位按设备记，
-   * 契约 §5.5）—— 它是每连接的状态，所以不放在这里。
+   * 契约 §5.5）—— 它是每连接的状态，所以不放在这里。下面三个都是**挂载级**的句柄。
    */
-  let unregisterInteractions: (() => void) | null = null
-/** 出码命令的注销（ctx.commands.register 返回的就是它）。 */
-let unregisterPairingCommand: (() => void) | null = null
-/** 管理面 RPC（`/api/dsh-mobile/*`）的注销。**不用 ctx.effect**，理由见 `admin/mount.ts`。 */
-let unregisterAdminFace: (() => void) | null = null
+  /** 交互客户端（gateway 的 owner client）。缺宿主缝时是 `null`，那时不做手机交互。 */
+  let interactionClient: InteractionClient | null = null
+  /** 出码命令的注销（ctx.commands.register 返回的就是它）。 */
+  let unregisterPairingCommand: (() => void) | null = null
+  /** 管理面 RPC（`/api/dsh-mobile/*`）的注销。**不用 ctx.effect**，理由见 `admin/mount.ts`。 */
+  let unregisterAdminFace: (() => void) | null = null
 
-  /** 设备状态与档位。真值在 store 里，这里给出 transport 需要的读取面。 */
+  /** 设备状态。真值在 store 里，这里给出 transport 需要的读取面。 */
   /**
-   * 挂载期才可用的东西。`open-store` 之前都是 null —— 所以 `takeover` 里的读取
+   * 挂载期才可用的东西。`open-store` 之前都是 null —— 所以读取
    * 一律走可选链，而不是假设它们已就绪。
    */
   let aliases: Aliases | null = null
@@ -253,18 +251,18 @@ let unregisterAdminFace: (() => void) | null = null
   let connectorId = ''
 
   /**
-   * 已认证设备的**瞬时**状态（在线、前台、已订阅、最近交互）—— 契约 §6.2 仲裁判定的输入。
+   * 已认证设备的**瞬时**状态（在线、前台、已订阅、最近交互）。管理面的设备列表读它；
+   * 交互侧**不再**用"在线/前台/订阅"做任何仲裁 —— 手机连着就是 gateway 的一个 client，
+   * 和浏览器并列（契约 §6.2）。
    *
    * 真值在 `presence.ts`，由连接层在四个时机写进来：鉴权完成 / 断开 / 订阅变化 /
-   * 收到 `sync.hello`。在它接线之前，完整因果链是
-   * 「没人写 liveRegistry → `liveDevices()` 恒空 → `decideTakeover` 永不 claim →
-   * answerer 永远 `next()` 交还桌面 → 端口根本跑不到」—— 所以这一步是整条链的地基。
+   * 收到 `sync.hello`。
    *
    * 持久部分（身份、配对时间、吊销标记）在 `devices` 表里；这一份进程重启即清零，
    * 重连后由连接层重新上报。
    */
   const presence = createDevicePresence({
-    // **连接层认证过不等于授权过**：没配过对、或已吊销的设备一律不参与仲裁。
+    // **连接层认证过不等于授权过**：没配过对、或已吊销的设备不列出。
     // 这条过滤只在 `presence.ts` 的 `devices()` 里做一次。
     pairedAtOf: (devId) => {
       const record = devicesTable?.get(devId)
@@ -272,33 +270,14 @@ let unregisterAdminFace: (() => void) | null = null
     },
   })
 
-  const liveDevices = (): readonly TakeoverDevice[] => presence.devices()
-
-  const takeover = {
-    mode: (): TakeoverMode => approvalTakeover,
-    devices: liveDevices,
-    sidOf: (dshSessionId: string): string | undefined => aliases?.sidOf(dshSessionId),
-  }
-
   /**
-   * 交互端口（契约 §6.2）：把审批 / 提问送到仲裁选出的那条连接，并看护到人类回答
-   * 或 fail-closed。
+   * 在途 claim 表（契约 §6.2）：把手机的答复配给在途的那一次交互。
    *
    * 待处理项**不在这里推送** —— 它乘会话事件流（`approval/asked` 与 `ask_user_question`
    * 的 `tool/call` 本来就是 DSH 的会话事件，见 `interaction-claims.ts` 的文件头）。
-   * 本端口只负责"选中哪条连接、看护多久、答复怎么回来"。
-   *
-   * 未处理记录目前只有**日志与指标**两条出口：契约 §6.2 说的"推一条通知"需要一种
-   * 电脑→手机的推送帧，而本期没有（`pending.changed` 在 §5.7 的事件表里、却不是帧类型）。
-   * 如实记成指标 + warn，不假装通知已送达。
+   * 本端口只负责"这一次交互还在等谁、答复怎么回来"，**没有计时器**（原生没有超时）。
    */
-  const interactionPort = createInteractionPort({
-    presence,
-    onUnhandled: (record) => {
-      metrics.increment(METRIC.failClosed)
-      logger.warn('交互在手机上未被处理，已按 fail-closed 收束', record)
-    },
-  })
+  const interactionPort = createInteractionPort()
   metrics.gauge(METRIC.pendingInteractions, interactionPort.pending)
 
   /**
@@ -314,13 +293,6 @@ let unregisterAdminFace: (() => void) | null = null
     logger.info(
       `传输通道${running ? '启动' : '停止'}：${id}（${describeChannels(registry.channels())}）`,
     )
-  }
-
-  const port: RemoteInteractionPort = {
-    askApproval: (prompt, deviceId, signal) =>
-      interactionPort.askApproval(prompt, deviceId, signal),
-    askQuestion: (prompt, deviceId, signal) =>
-      interactionPort.askQuestion(prompt, deviceId, signal),
   }
 
   return [
@@ -420,15 +392,26 @@ let unregisterAdminFace: (() => void) | null = null
     },
 
     {
-      name: 'register-answerers',
+      /**
+       * 交互接入（契约 §6.2）：连接器作为 gateway 的一个 **owner client** 接 `$events`
+       * 转发流，与浏览器标签页同一条路。
+       *
+       * **这不是注册应答者**：host 的 waterfall 里没有我们的 listener 了 ——
+       * 桌面弹它自己的卡、我们弹手机的卡，两边由 gateway 的 `cancel` 对齐。
+       * 缺 `typertGateway` / `connection` 时 `createInteractionClient` 回 `null`：
+       * 那时**不做手机交互**，也不留 host answerer 兜底（见该文件头）。
+       */
+      name: 'mount-interactions',
       run() {
-        unregisterInteractions = registerInteractions(ctx, { port, takeover, log: logger })
+        interactionClient = createInteractionClient(ctx, {
+          port: interactionPort,
+          sidOf: (dshSessionId) => aliases?.sidOf(dshSessionId),
+          log: logger,
+        })
       },
-      undo() {
-        unregisterPairingCommand?.()
-        unregisterPairingCommand = null
-        unregisterInteractions?.()
-        unregisterInteractions = null
+      async undo() {
+        await interactionClient?.dispose()
+        interactionClient = null
       },
     },
 
@@ -1099,6 +1082,10 @@ let unregisterAdminFace: (() => void) | null = null
         unregisterAdminFace = null
         pairingEndpoint?.dispose()
         pairingEndpoint = null
+        // 出码命令**在这一步注册**，所以也在这一步注销（它一度挂在 `register-answerers`
+        // 的 undo 上：一个从没被赋过值的变量 + 一个不拥有它的步骤）。
+        unregisterPairingCommand?.()
+        unregisterPairingCommand = null
       },
     },
   ]
@@ -1111,7 +1098,6 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const relayUrl = config.relayUrl.get()
   const allowInsecureLocal = config.allowInsecureLocal.get()
   const relayTokenSecretRef = config.relayTokenRef.get()
-  const approvalTakeover = config.approvalTakeover.get()
   const listenPort = config.listenPort.get()
   const listenHost = config.listenHost.get()
 
@@ -1133,7 +1119,6 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         relayTokenSecretRef,
         listenPort,
         listenHost,
-        approvalTakeover,
         logger,
         metrics,
         abort,

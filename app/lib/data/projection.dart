@@ -977,8 +977,8 @@ String? nonEmptyString(Object? value) =>
 ///
 /// ## 没有 `callId` 的审批**不开卡**
 ///
-/// 连接器的应答者要求 `request.callId !== undefined` 才 claim（没有稳定身份就
-/// 交还桌面，`connector/src/dsh/interactions.ts`）。于是没有 `callId` 的审批
+/// 连接器的转发客户端要求 `request.callId !== undefined` 才 claim（没有稳定身份就
+/// 沉默，`connector/src/dsh/interaction-client.ts`）。于是没有 `callId` 的审批
 /// **本来就会在电脑上答** —— 在手机上摆一张答不了的卡是对用户说谎。
 ///
 /// Note: 为什么计划审查按提问渲染（`intent` 不进会话事件）——

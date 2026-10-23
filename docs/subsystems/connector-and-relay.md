@@ -72,8 +72,6 @@
 | `listenPort` | 0(不监听) | **直连拓扑**的监听端口;`0` = 关(只走中转,行为与不监听完全一致) |
 | `listenHost` | `127.0.0.1` | 监听地址。直连要走 Tailscale 时显式写 tailnet 地址;默认只在本机 |
 | `deviceLimit` | 8 | 允许配对的设备数 |
-| `approvalTakeover` | `'foreground'` | `never` / `foreground` / `always`(契约 §6.2) |
-| `approvalWatchdogMin` | 10 | 看护超时(分钟) |
 | `pushDigest` | `'rich'` | `rich` / `doorbell` |
 | `frameLimitBytes` | 8388608 | 单帧上限 |
 | `refetchThresholdBytes` | 1048576 | 大对象阈值 |
@@ -105,7 +103,7 @@ mount
  ├─ 读配置 → 校验 relayUrl / 令牌存在
  ├─ store.open():迁移到当前 schema → 载入 devices / aliases / dedupe
  ├─ 发布服务 ctx.provide('dshMobileConnector', api)     ← 手机端能力门控读它
- ├─ 注册 answerer(TakeoverGate 判定,见 §1.5)
+ ├─ 接 gateway 的 `$events` 转发流(owner client,见 §1.5)
  ├─ load-identity:取(或首次生成)本机身份种子(§12.1)
  ├─ 装每连接的活物:createConnectionScope(port, deps)(见下"装配分层")
  ├─ 通道注册表(transport/channels.ts):两条通道各自 start ——
@@ -113,6 +111,7 @@ mount
  └─ 订阅策略:只为"手机已订阅的会话"建立 follow
 
 dispose
+ ├─ 断开 `$events` 流并停掉退避计时器 → 释放 in-process owner peer
  ├─ 停止接受新请求 → 等待在途请求(min(请求超时, 5 s))
  ├─ flush:缓冲落盘(不丢已 ack 的窗口)+ 去重表落盘
  ├─ 两条通道各自 stop:监听面停止接受 + 关闭已接受的连接;拨号发 close
@@ -132,7 +131,7 @@ dispose
 
 | 层级 | 构造物 | 位置 |
 |---|---|---|
-| 挂载级(每挂载一份) | 配置与校验、`store.open()`、`ctx.provide('dshMobileConnector')`、answerer 注册、本机身份、会话与任务适配器、幂等表、配对核心、出码命令、**增量缓冲** | `src/index.ts` |
+| 挂载级(每挂载一份) | 配置与校验、`store.open()`、`ctx.provide('dshMobileConnector')`、交互客户端(owner peer + `$events` 流)、在途 claim 表、本机身份、会话与任务适配器、幂等表、配对核心、出码命令、**增量缓冲** | `src/index.ts` |
 | 每连接(每条 socket 一份) | 入站帧处理、方法面与处理器表、会话订阅、任务输出订阅、翻页器、配对端点 | `src/connection-scope.ts` 的 `createConnectionScope(port, deps)` |
 
 - **`deps` 全是挂载级的,`port` 是每连接唯一的输入**。窄端口的成员集合是 `ConnectionPort`(3 个):
@@ -165,21 +164,26 @@ dispose
 - 窗口帧**先入内存、后批量落盘**(每 500 ms 或每 64 帧一次);`lastPersisted` 与去重表**同步落盘**(它们决定正确性)。
 - 任何落盘失败都必须**降级为"要求快照"**而不是静默丢帧。
 
-### 1.5 审批接管(TakeoverGate)
+### 1.5 审批 / 提问的转发(owner client)
+
+连接器**不在 host 的 waterfall 里注册应答者**。它建一个 in-process 的 owner peer,打开 gateway 的
+`$events` 转发流,与浏览器标签页同一条路:
 
 ```ts
-// 与契约 §6.2 一一对应;判定输入全部来自已认证设备的上报
-function shouldClaim(req: ApprovalRequestEvent, state: TakeoverState): boolean {
-  const mode = state.deviceModeOf(mostRecentForegroundDevice())   // 只看前台设备
-  if (mode === 'never') return false
-  if (mode === 'always') return state.onlineDevices().length > 0
-  return state.foregroundSubscribersOf(req.agent.session.id).length > 0   // 默认档
-}
+// 与契约 §6.2 一一对应;两个宿主键都可选(缺任一就不挂交互面)
+const peer = ctx.get('connection').createPeer({ principal: { kind: 'owner' } })
+const stream = await ctx.get('typertGateway').wireStream.open('$events', { args: {} }, uplink, peer, signal)
+// ready { clientId } / waterfall { event, eventId, agentId, request } / cancel { eventId }
+// → POST /api/$events/result { clientId, eventId, outcome }
 ```
 
-- 并列设备按"最近与该会话交互"→"配对最早"排序(确定性,便于测试)。
-- claim 后启动看护计时器;超时 / 断开 / 会话被替换 → 返回 `'unavailable'`(fail-closed)并推通知。
-- **绝不**出现"始终允许 / 本次会话允许":DSH 只认 `'allowed-once' | 'rejected'`。
+- **没有"接管档位"**:手机连着就是 gateway 的一个 client,和浏览器完全一样,收到就参与。
+  只有两种情况委托(回 `{kind:'next'}`):会话没登记给手机、或没有稳定身份(审批没有 `callId` /
+  提问认不出唯一的 tool call)。委托是原生语义(只有所有投递都 next 之后才交还 Host),不是沉默。
+  不想让手机参与就停掉传输通道(手机连不上 = 没有投递)。
+- 参与之后:手机答了就回 `result`(审批只有 `allowed-once` / `rejected`,**绝不**出现"始终允许 /
+  本次会话允许");桌面先答则收到 `cancel`,撤掉手机的在途 claim。**没有看护计时器** ——
+  DSH 的审批没有超时(浏览器的卡也一直挂着),手机断开也不结算(claim 挂在 host 上,重连回来还能答)。
 
 ### 1.6 每设备数据连接与控制面
 

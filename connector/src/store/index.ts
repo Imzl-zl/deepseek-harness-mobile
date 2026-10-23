@@ -112,11 +112,6 @@ const windowSchema = z.object({
   lastPersisted: z.number().int(),
 })
 
-const takeoverSchema = z.object({
-  mode: z.enum(['never', 'foreground', 'always']),
-  lastInteractedAt: z.record(z.string(), z.number()),
-})
-
 /**
  * 用户对**上报哪些端点地址**的显式表态（key = url）。
  *
@@ -149,7 +144,6 @@ export const coreDomain = defineDomain({
     /** `dshSessionId → sid`，反向查询用。 */
     by_session: domainTable<string, string>(z.string()),
     dedupe: domainTable<string, z.infer<typeof dedupeEntrySchema>>(dedupeEntrySchema),
-    takeover: domainTable<string, z.infer<typeof takeoverSchema>>(takeoverSchema),
     /** 上报地址的显式表态（key = url）。见 `advertiseSchema`。 */
     advertise: domainTable<string, z.infer<typeof advertiseSchema>>(advertiseSchema),
   },
@@ -170,7 +164,6 @@ export type DeviceRecord = z.infer<typeof deviceSchema>
 export type MetaRecord = z.infer<typeof metaSchema>
 export type DedupeEntry = z.infer<typeof dedupeEntrySchema>
 export type WindowRecord = z.infer<typeof windowSchema>
-export type TakeoverRecord = z.infer<typeof takeoverSchema>
 export type AdvertiseRecord = z.infer<typeof advertiseSchema>
 
 /** 两个域的初始 meta。首次启动时写入，之后只按 `schema` 迁移。 */

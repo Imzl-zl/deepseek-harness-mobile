@@ -1,6 +1,8 @@
 # Agent Note: 在途交互是 host-held pending —— 断线只换投递通道，不结算
 
-Status: implemented
+Status: implemented（**投递模型已被 `2026-10-23-interaction-as-gateway-client.md` 取代**：
+连接器不再做 host answerer，而是 gateway 的 owner client；"断线不结算 / 重连重投在途 ask 事件 /
+App 按错误码决定卡片去留"三条仍按本篇执行）
 
 ## Problem
 

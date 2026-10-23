@@ -103,7 +103,7 @@ pnpm test
 | 文件 | 取自 DSH | 验收 |
 |---|---|---|
 | `sessions.ts` | `sessionController.follow/page/prompt/cancel` | `seq` 直接当修订号;`page()` 用于快照分页 |
-| `interactions.ts` | `approval` / `userQuestions` 的 waterfall | claim 判定走 `takeover.ts`;只用 `allowed-once` / `rejected` |
+| `interaction-client.ts` / `interaction-claims.ts` | `typertGateway` 的 `$events` 转发流(owner client)+ 在途 claim | 参与判定走 `takeover.ts`;回话只用 `allowed-once` / `rejected`;不参与就 `next`(原生委托) |
 | `jobs.ts` | `ctx.jobs` | **按 owner 过滤**(`list` 会把无主任务并进每个会话) |
 | `subagents.ts` | `listChildren` / `listDescendants` | `activity` 只表达驻留 |
 | `settings.ts` | `ctx.settings` / `ctx.credentials` | 密钥**只有写面**;`describe` 不含值 |

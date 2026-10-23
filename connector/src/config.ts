@@ -30,10 +30,6 @@ export interface ConnectorConfig {
   listenHost: Volatile<string>
   /** 允许配对的设备数。 */
   deviceLimit: Volatile<number>
-  /** 审批接管档位,判定表见契约 §6.2。 */
-  approvalTakeover: Volatile<'never' | 'foreground' | 'always'>
-  /** claim 后的看护超时(分钟),超时按 fail-closed 结束。 */
-  approvalWatchdogMin: Volatile<number>
   /** 推送摘要粒度。 */
   pushDigest: Volatile<'rich' | 'doorbell'>
   /** 单帧上限。 */
@@ -54,8 +50,6 @@ export const Config = z.object({
   listenPort: z.number().step(1).min(0).max(65535).default(0).volatile(),
   listenHost: z.string().default('127.0.0.1').volatile(),
   deviceLimit: z.number().step(1).min(1).default(8).volatile(),
-  approvalTakeover: z.union([z.const('never'), z.const('foreground'), z.const('always')]).default('foreground').volatile(),
-  approvalWatchdogMin: z.number().step(1).min(1).default(10).volatile(),
   pushDigest: z.union([z.const('rich'), z.const('doorbell')]).default('rich').volatile(),
   frameLimitBytes: z.number().step(1).min(1).default(8_388_608).volatile(),
   refetchThresholdBytes: z.number().step(1).min(1).default(1_048_576).volatile(),

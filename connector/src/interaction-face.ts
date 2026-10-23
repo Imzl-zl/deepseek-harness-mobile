@@ -1,6 +1,5 @@
 /**
- * 交互层内核：提问 / 计划审查的待处理投影、`interaction.respond` 的应答路由，
- * 以及审批接管的看护计时器（契约 §6）。
+ * 交互层内核：提问 / 计划审查的待处理投影与 `interaction.respond` 的应答路由（契约 §6）。
  *
  * 三条约束决定这个模块的长相：
  *
@@ -10,24 +9,19 @@
  * 2. **不发明协议**。答案批次与 DSH 的 `AskUserQuestionAnswer` 逐字一致
  *    （`packages/interaction/user-questions/src/types.ts:66-69`），原样转发 ——
  *    翻译层就是漂移层（契约 §6.3.1）。
- * 3. **fail-closed**。审批 claim 之后只能以「人类的回答」或 `unavailable` 收束；
- *    看护超时 / 手机断开 / 会话被替换一律 `unavailable` 并留一条未处理记录，
- *    绝不放行（契约 §6.2、§15）。
+ * 3. **不发明边界**。这里**没有计时器**：DSH 的审批没有超时概念（浏览器的卡也一直挂着），
+ *    所以"等多久、什么时候放弃"不是本层该定的事（契约 §6.2）。
  *
- * 边界：本文件只承载**语义**。把请求推给手机的那一步（`RemoteInteractionPort` 的实现）、
- * `ev` / `pending.changed` 帧的拼装、别名→会话的解析都在装配层。
+ * 边界：本文件只承载**语义**。把请求推给手机的那一步（`interaction-claims.ts` 的
+ * `InteractionPort`）、`ev` 帧的拼装、别名→会话的解析都在别处。
  *
- * **与 `dsh/interactions.ts` 的关系（装配时必须二选一）**：那边已经注册了一个
- * `approval/request` 应答者，但它没有看护计时器 —— 而契约 §15 明确「转审批要求看护
- * 计时器已实现」。本文件的 `registerApprovalAnswerer` 是带看护的版本；两者同时挂上去，
- * waterfall 只会走到先注册的那个，另一个永远不触发（且不报错），所以装配要显式取舍。
- *
- * **若将来切到本文件的 `registerApprovalAnswerer`，必须把 `{ prepend: true }` 一起搬过去** ——
- * 否则它会被 DSH 的桌面转发监听器（`packages/api/remotes/src/index.ts:57-75`）挡住，
- * 审批永远问不到我们。见 `.agents/notes/implemented/2026-10-13-answerer-must-be-prepended.md`。
+ * **本文件里没有"应答者"**：连接器不再是 host 的 waterfall answerer，而是 gateway 的一个
+ * owner client（`dsh/interaction-client.ts`，契约 §6.2）。所以这里既没有 `ctx.on(...)`
+ * 也没有看护应答者的包装 —— 只有提问内核。
+ * Note: 为什么删掉了应答者那一路 ——
+ * `.agents/notes/implemented/2026-10-23-interaction-as-gateway-client.md`。
  */
-import { ProtocolError, clientActionOf, type ClientAction, type ErrorCode } from './protocol/errors.js'
-import { decideTakeover, type TakeoverDevice, type TakeoverMode } from './protocol/takeover.js'
+import { ProtocolError } from './protocol/errors.js'
 
 // ---------------------------------------------------------------------------
 // 协议形状（DSH 类型的结构镜像：内核不 import DSH，装配层的真实类型可结构化赋进这些形状）
@@ -125,9 +119,6 @@ export interface PendingItem {
  * 返回 `undefined` 由本内核映射成 `interaction/not-pending`（契约 §15）。
  */
 export type QuestionAgent = { readonly __dshLiveRootAgent: 'branded' }
-
-/** `setTimeout` 语义，返回取消函数（与 `protocol/handshake-driver.ts:108` 的注入形状一致）。 */
-export type Schedule = (fn: () => void, ms: number) => () => void
 
 export interface InteractionLogger {
   warn(message: string, detail?: unknown): void
@@ -259,7 +250,7 @@ export interface InteractionFace {
    *
    * 两条目的地：**在途 claim**（{@link InteractionFaceDeps.settleClaim} 认下它）
    * 与 **`continued` 提问**（路由到 DSH 的 `userQuestions.answer`）。`open` 提问不走这里 ——
-   * 它由实时应答链（`dsh/interactions.ts` 的 answerer）处理。
+   * 它由实时投递（`dsh/interaction-client.ts` 从 `$events` 流收到的 `waterfall`）处理。
    *
    * @param params - 封箱后解出来的原始载荷，**不可信**，逐个字段校验。
    */
@@ -397,284 +388,9 @@ export function createInteractionFace(deps: InteractionFaceDeps): InteractionFac
 }
 
 // ---------------------------------------------------------------------------
-// 看护计时器（审批专用）
-// ---------------------------------------------------------------------------
-
-/**
- * 看护结局。**只有 `answered` 是放行**，其余三个都是 fail-closed（契约 §6.2）。
- *
- * - `timeout`：看护超时（默认 10 min，§10 参数表）；
- * - `disconnected`：手机断开（也覆盖推答端口以 reject 表达"没等到回答"的情形）；
- * - `replaced`：会话被替换（别名映射指向了另一个会话）。
- */
-export type WatchdogEnd = 'answered' | 'timeout' | 'disconnected' | 'replaced'
-
-export interface WatchdogRecord {
-  readonly end: WatchdogEnd
-  readonly at: number
-  /** `true` = 这次 claim 没等到人类的回答，必须 fail-closed。 */
-  readonly unhandled: boolean
-}
-
-export interface WatchdogSettlement<T> {
-  readonly record: WatchdogRecord
-  /** 仅 `record.end === 'answered'` 时有值：手机给进来的答案。 */
-  readonly value: T | undefined
-}
-
-/** 看护上限默认值：10 min（契约 §10 参数表「审批看护超时」，依据是"看一眼手机再决定"的合理上限）。 */
-export const DEFAULT_APPROVAL_GUARD_MS = 10 * 60 * 1000
-
-export interface WatchdogOptions {
-  readonly guardMs?: number
-  readonly now?: () => number
-  readonly schedule?: Schedule
-}
-
-export interface Watchdog {
-  /**
-   * claim 之后调用：**先起表再推题**。顺序反了就会出现一段"题已推出、表还没走"的窗口，
-   * 那段时间里断开与超时都没有收束者。
-   *
-   * @param push - 把请求推给手机并返回它的答案；reject 视为"没等到回答"。
-   */
-  awaitAnswer<T>(push: () => Promise<T>): Promise<WatchdogSettlement<T>>
-  /** 手机断开（连接结束 / 设备下线）。已收束则忽略。 */
-  disconnect(): void
-  /** 会话被替换。已收束则忽略。 */
-  replace(): void
-  /** 已收束的记录；未收束为 `null`。 */
-  readonly settled: WatchdogRecord | null
-}
-
-/**
- * 看护计时器（契约 §6.2）。一个实例只看护一次 claim。
- *
- * 「迟到即丢弃」与 DSH 同构：收束之后再到的事件一律忽略
- * （`packages/interaction/user-approval/src/index.ts:303` 原话
- * "the late answer is discarded by construction"）。这正是 §6.2.1 说的补偿 ——
- * 桥接自己计时、超时主动收口，不把决定留给 DSH 的 signal 竞速。
- */
-export function createWatchdog(options: WatchdogOptions = {}): Watchdog {
-  const guardMs = options.guardMs ?? DEFAULT_APPROVAL_GUARD_MS
-  const now = options.now ?? (() => Date.now())
-  const schedule = options.schedule ?? ((fn: () => void, ms: number) => {
-    const handle = setTimeout(fn, ms)
-    return () => {
-      clearTimeout(handle)
-    }
-  })
-
-  let record: WatchdogRecord | null = null
-  let cancel: (() => void) | null = null
-  let resolveAwait: ((settlement: WatchdogSettlement<unknown>) => void) | null = null
-  let started = false
-
-  /**
-   * 收束一次；返回**最终**记录（迟到事件拿到的是先到的那一条，即被丢弃）。
-   *
-   * 答案只在 `answered` 这一次带上；其余收束一律 `value: undefined` ——
-   * 绝不放行的意思就是"没有答案可放"。
-   */
-  const settle = (end: WatchdogEnd, value?: unknown): WatchdogRecord => {
-    if (record !== null) return record
-    record = { end, at: now(), unhandled: end !== 'answered' }
-    cancel?.()
-    cancel = null
-    resolveAwait?.({ record, value: end === 'answered' ? value : undefined })
-    resolveAwait = null
-    return record
-  }
-
-  return {
-    get settled() {
-      return record
-    },
-
-    awaitAnswer<T>(push: () => Promise<T>): Promise<WatchdogSettlement<T>> {
-      if (started) throw new Error('看护已经启动：一个 claim 只能看护一次')
-      started = true
-
-      const waiting = new Promise<WatchdogSettlement<T>>((resolve) => {
-        // 唯一的类型收窄点：内部按 unknown 持有，对外仍是 T
-        resolveAwait = resolve as (settlement: WatchdogSettlement<unknown>) => void
-      })
-
-      // 先起表再推题：反过来的话有一段"题已推出、表还没走"的窗口，
-      // 那段时间里断开与超时都没有收束者（§6.2 的 claim 之后立刻看护）。
-      cancel = schedule(() => {
-        settle('timeout')
-      }, guardMs)
-
-      // 推答端口的**同步**抛错（例如设备那一下就断了）也要落到同一条 fail-closed 路上，
-      // 不能从 `awaitAnswer` 里逃出去把应答者变成一个 rejected promise。
-      let pushed: Promise<T>
-      try {
-        pushed = push()
-      } catch (error) {
-        pushed = Promise.reject(error)
-      }
-      void pushed.then(
-        (value) => {
-          settle('answered', value)
-        },
-        // 推答端口以 reject 表达"没等到回答"（断开 / 取消）。桥接不再细分原因 ——
-        // DSH 侧 answerer 抛错也被静默归一成 'unavailable'
-        // （`user-approval/src/index.ts:291`），我们在这里显式收口并留声。
-        () => {
-          settle('disconnected')
-        },
-      )
-      return waiting
-    },
-
-    disconnect() {
-      settle('disconnected')
-    },
-
-    replace() {
-      settle('replaced')
-    },
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 审批应答者
+// 审批的 outcome 词汇表（DSH 的，不是我们的）
 // ---------------------------------------------------------------------------
 
 /** DSH `ApprovalOutcome` 词汇表（`user-approval/src/types.ts:32`），封闭；唯一授权值是 `allowed-once`（`src/index.ts:211`）。 */
 export type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
 
-/** 手机能表达的决定。映射收敛在内核里：词汇表之外的返回值会被 DSH 静默归一成 `unavailable`（`src/index.ts:288`）。 */
-export type ApprovalDecision = 'allow-once' | 'reject'
-
-/**
- * 从 DSH 的 `ApprovalRequestEvent` 里取出的最小字段。
- *
- * 会话 id 只能从 agent 上取：请求对象里**没有** sessionId 字段
- * （`user-approval/src/types.ts:63-76`；`Agent.id` 即 `SessionId`）。
- */
-export interface ApprovalAsk {
-  readonly dshSessionId: string
-  /** 可选；没有它就建立不了稳定身份，这条交还桌面（ACP 桥同样处理，`packages/acp/acp/src/index.ts:157`）。 */
-  readonly callId: string | undefined
-  readonly toolName: string
-  readonly reason?: string
-  /** asker 的原 signal：取消语义整个挂在它上面（`user-approval/src/index.ts:293-306`）。 */
-  readonly signal?: AbortSignal
-}
-
-export type ApprovalAnswerer = (
-  ask: ApprovalAsk,
-  next: () => Promise<ApprovalOutcome>,
-) => Promise<ApprovalOutcome>
-
-/** 只依赖 cordis 的 `on`：内核不 import DSH，装配层把真 `ctx` 传进来（形状同 `ctx.on('approval/request', …)`）。 */
-export interface ApprovalRegistry {
-  on(event: 'approval/request', handler: ApprovalAnswerer): () => void
-}
-
-/** 契约 §6.2 仲裁判定的输入（判定本身在 `protocol/takeover.ts`，fixture 16 覆盖，不在这里重写）。 */
-export interface ApprovalTakeoverSource {
-  mode(): TakeoverMode
-  devices(): readonly TakeoverDevice[]
-  /** DSH 会话 id → 通道别名；未登记给手机的会话返回 `undefined`。 */
-  sidOf(dshSessionId: string): string | undefined
-}
-
-/**
- * 看护 fail-closed 时留下的「未处理」记录（契约 §6.2：推一条"审批在手机上未被处理"的通知）。
- *
- * `code` / `clientAction` 一并给出，让手机对这条待处理项有确定的行为（刷新列表），
- * 而不是各端各自解释。**刻意不带 `itemId`**：审批待处理项的身份是 `i:<approvalRequestId>`
- * （§5.2 的审计对），而那个 id 在 `approval/asked` **事件**里、不在 waterfall 请求对象里
- * （`user-approval/src/types.ts:63-76` 没有 id 字段），claim 这一刻拿不到 —— 由装配层
- * 拿 `sid` + `callId` 与日志投影对上。
- */
-export interface UnhandledApproval {
-  readonly sid: string
-  readonly callId: string | undefined
-  readonly end: WatchdogEnd
-  readonly at: number
-  readonly code: ErrorCode
-  readonly clientAction: ClientAction
-}
-
-export interface ApprovalAnswererDeps {
-  readonly takeover: ApprovalTakeoverSource
-  /**
-   * 把审批推给手机并等它的决定。`deviceId` 是 §6.2 判定选出的那台设备（推送目标；
-   * 多设备并列时的确定性排序在 `protocol/takeover.ts`）。
-   */
-  readonly askApproval: (ask: ApprovalAsk, deviceId: string) => Promise<ApprovalDecision>
-  /** 未处理留证 + 通知。**必填**：少了它，fail-closed 就变成无声的。 */
-  readonly onUnhandled: (record: UnhandledApproval) => void
-  readonly guardMs?: number
-  readonly now?: () => number
-  readonly schedule?: Schedule
-  readonly log?: InteractionLogger
-}
-
-/**
- * 注册 `approval/request` 应答者，返回注销函数。
- *
- * claim 条件按 §6.2 的机械判据（`decideTakeover`，档位 × 在线 / 前台 / 订阅），
- * **判定与看护都通过注入接进来**，所以单测不需要 DSH。
- *
- * 与 `dsh/interactions.ts` 已注册的应答者是**二选一**关系（见文件头）：那个没有看护
- * 计时器，而契约 §15 要求"转审批"以看护已实现为前提。同时挂两个时 waterfall 只会
- * 走到先注册的那个，另一个永不触发且不报错。
- */
-export function registerApprovalAnswerer(
-  registry: ApprovalRegistry,
-  deps: ApprovalAnswererDeps,
-): () => void {
-  const { takeover, askApproval, onUnhandled, log } = deps
-
-  return registry.on('approval/request', async (ask, next) => {
-    // 会话没登记给手机 → 交还桌面（绝不 claim 之后又答不出来）
-    const sid = takeover.sidOf(ask.dshSessionId)
-    if (sid === undefined) return next()
-    // 没有 callId 就没有稳定身份 → 交还桌面
-    if (ask.callId === undefined) return next()
-
-    let claim: ReturnType<typeof decideTakeover>
-    try {
-      claim = decideTakeover({ mode: takeover.mode(), sid, devices: takeover.devices() })
-    } catch (error) {
-      // 档位是不可识别的值（配置损坏）。**不静默降级**成某一档：那不决策，
-      // 而是把"无法判定"伪装成一个分支。fail-closed + 响亮留声。
-      log?.warn('接管档位不可识别，审批按 fail-closed 收束', error)
-      return 'unavailable'
-    }
-    if (!claim.claim || claim.deviceId === null) return next()
-    // 收窄成常量：闭包捕获 `let` 时 TS 不会保留窄化，`?? ''` 那种兜底会造出一个
-    // 查不到设备的推送目标
-    const deviceId = claim.deviceId
-
-    const watchdog = createWatchdog({
-      ...(deps.guardMs === undefined ? {} : { guardMs: deps.guardMs }),
-      ...(deps.now === undefined ? {} : { now: deps.now }),
-      ...(deps.schedule === undefined ? {} : { schedule: deps.schedule }),
-    })
-    const settlement = await watchdog.awaitAnswer(() => askApproval(ask, deviceId))
-
-    if (settlement.record.end !== 'answered' || settlement.value === undefined) {
-      // 看护超时 / 手机断开 / 会话被替换 / 端口没给出决定：一律 fail-closed。
-      const unhandled: UnhandledApproval = {
-        sid,
-        callId: ask.callId,
-        end: settlement.record.end,
-        at: settlement.record.at,
-        code: 'interaction/not-pending',
-        clientAction: clientActionOf('interaction/not-pending'),
-      }
-      onUnhandled(unhandled)
-      log?.warn(`审批看护以 ${settlement.record.end} 收束，fail-closed 返回 unavailable`, unhandled)
-      return 'unavailable'
-    }
-
-    // 唯一授权值是 allowed-once；手机上的"始终允许 / 本会话允许"不存在（§6.4）。
-    return settlement.value === 'allow-once' ? 'allowed-once' : 'rejected'
-  })
-}
