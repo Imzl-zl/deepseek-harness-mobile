@@ -98,14 +98,15 @@ Status: proposed
   （2026-10-24 跑过一次全 OK）。
 - **门禁**：flutter **1141 持平**、`analyze` / `format` 0。
 
-## Z6b（写进 docs，不改码）IPv6 隐私地址仍会上报
+## Z6b（写进 docs，不改码）IPv6 隐私地址仍会上报 —— ✅ 已落地
 
-- **位置**：`connector/src/transport/listener.ts:131-145`（只跳过 `fe80` link-local）、
-  `:150`（IPv4 排前）。
+- **位置**：`connector/src/transport/listener.ts` 的候选过滤（只跳过 `fe80` link-local）、
+  以及 `dialOrder`（IPv4 排前）。
 - **为什么不动代码**：Node 的 `os.networkInterfaces()` 不暴露 `temporary` 标记（RFC 4941
   地址只能靠前缀/接口 id 猜），**判据不可靠** ⇒ 不猜。当前形态（IPv4 排前、IPv6 回落）
   已经把代价压到最小。
-- **改什么**：契约 §15 加一条"IPv6 隐私地址仍会出现在候选里，只是排在 IPv4 之后"。
+- **改什么**：契约 §15 加一条"IPv6 隐私地址仍会出现在直连候选里（只排后）"，
+  并指向 `dialOrder`。**没有代码改动**。
 - **门禁**：无（只改文档）。
 
 ---
