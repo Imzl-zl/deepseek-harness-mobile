@@ -374,7 +374,7 @@ type SyncSnapshot = {
 | `session.page` | 手机→电脑 | — | 历史翻页(按消息对齐,用 DSH `page()`) |
 | `session.prompt` | 手机→电脑 | `requestId` | **参数是 `{ sid, content, mode? }`**,不是 `{ sid, text }`。`content` 必须是**非空数组**,每项带 `type`(照 DSH 的 `PromptContentPart`:文本是 `{type:'text', text}`)。**形状以电脑侧为准** —— 它与 DSH 的 `sessionController.prompt` 同构,手机侧没有第二条真值。`mode: 'queue' \| 'steer'` |
 | `session.updateQueue` | 手机→电脑 | `requestId` | 变异一个**仍在排队**的消息:编辑 / 删除 / 插话。**与 Web 的排队 dock 同一个 DSH 方法**(`session-controller/src/index.ts:462-465` 的 `@Remote('updateQueue')`,实现 `commands.ts:432-479`;Web 侧 `QueueDock.tsx` 的三个行内按钮走它)。载荷 `{ sid, itemId, action }`,`action` 是 DSH 的 `QueueAction` 联合(`types.ts:167-174`):`{kind:'edit', content:[{type:'text',text}]}` / `{kind:'remove'}` / `{kind:'steer'}`。**队列内容不在这个方法里读** —— 它在 `inbox` 投影(`{'next-turn':[…], 'next-step':[…]}`,随 `session.projections` 到手机),与"待处理集合是投影"同一条纪律。`steer` 只在当前轮次正在跑时成立,否则 DSH 回 `session/steer-unavailable`(`commands.ts:477-479`);项已不在队列回 `session/queue-item-not-found` |
-| `interaction.respond` | 手机→电脑 | `i:<callId>` | 提问 / 计划审查的**答案批次**:`{ sid, callId, answers: [{ id, selected[], custom? }] }`。形状与 DSH 的 `AskUserQuestionAnswer` **逐字一致**,不另造决策枚举(§6.3.1)。**同一个入口也收束在途的审批 claim**:分叉点不在方法名上,而在"这一项是不是一次在途 claim"(§6.2 的判定只有端口知道);审批的"允许一次"编码成 `selected` 含 DSH 的 outcome 值 `allowed-once`(`user-approval/src/types.ts:32`),空 `selected` 且无 `custom` = 拒绝 |
+| `interaction.respond` | 手机→电脑 | `i:<callId>` | 提问 / 计划审查的**答案批次**:`{ sid, callId, answers: [{ id, selected[], custom? }] }`。形状与 DSH 的 `AskUserQuestionAnswer` **逐字一致**,不另造决策枚举(§6.3.1)。**同一个入口也收束在途的审批 claim**:分叉点不在方法名上,而在"这一项是不是一次在途 claim"(§6.2 的判定只有端口知道);审批的"允许一次"编码成 `selected` 含 DSH 的 outcome 值 `allowed-once`(`user-approval/src/types.ts:32`),空 `selected` 且无 `custom` = 拒绝。**`callId` 是会话事件 `tool/call` 里的真 id**:手机那张提问卡的 `itemId` 是 `t:<callId>`(`app/lib/data/projection.dart:1020-1033`),发回来的就是这个 id(`app/lib/data/app_model.dart:3148-3160`);连接器的在途 claim 也以它为键。legacy 形态的提问**没有** `wait.callId`,连接器从会话日志里推出**唯一**一条未结算的 `ask_user_question` `tool/call` 当键,推不出就交还桌面(判据见 §6.3.1),**绝不猜一个 id** |
 | `subagent.prompt` | 手机→电脑 | `requestId` | 给**可继续**子会话投递一条人写的消息。**子会话不能用 `session.prompt`**:宿主对它回 `internal: session "…" is owned by subagent routing`(2026-10-21 真机实测,手机侧表现成「发送失败」),DSH 的入口是 `SubagentRuntime.prompt`(`packages/subagent/subagent/src/index.ts:447` 的 `@Remote('prompt')`,服务键 `subagents`,请求形状 `control-types.ts:94-112`)。参数与 `session.prompt` 同形(`{ sid, content, mode? }`),`sid` 是**子会话**的别名;父会话 id 由连接器从 `session.list` 行的 `parentSessionId` 取(与 `follow` / `page` 的地址同一个出处)。一次性子会话在手机上是只读框,不会走到这里;**外部任务行不可进入**(`app/lib/ui/subagent_tree.dart` 的 `onTap: row.isExternal ? null : …`),它既没有"进入"这个动作,也不在只读档里 |
 | `session.cancel` | 手机→电脑 | — | 取消当前轮次但保留待处理收件箱 |
 | `session.refetch` | 手机→电脑 | — | 取单个大条目 |
@@ -536,6 +536,30 @@ claim(请求) :=
   另:空 `selected` 且无 `custom` 是**合法的「显式跳过」**(`tool-ask-user/src/timed.ts:172,179`),
   连接器不得拦截。
 - `agent` 参数是 **live root agent**(`assertLiveRoot`,`:131`):子代理里的提问手机答不了(§15 已记)。
+
+**legacy 提问的身份从会话日志里推**：
+
+- legacy 工具调 `ask()` 时**不传 `wait`**(`tool-ask-user/src/index.ts:98-109`);只有 timed 形态才带
+  (`timed.ts:200-203` 的无限等待、`user-questions/src/index.ts:251` 的 `askTimed`)。**本机部署是 legacy**:
+  `bundle/web-app/presets/cordis.patch.yml:109-110` 的 `tool-ask-user` 没写 `config`,`Config` 的
+  `mode` 默认 `legacy`(`tool-ask-user/src/index.ts:24`),而只有 `timed` 才注册 timed 工具(`:34-35`)。
+- **legacy 的唯一结算路径是应答链的 promise**。`answer()` 只读投影里 `state === 'continued'` 的行
+  (`user-questions/src/index.ts:146-149`、`:167-168`),而投影的 fold **只跟踪 timed schema**
+  (`projection.ts:12-20`,靠请求头里的 `timeout` 参数判别,`:30-36`)⇒ legacy 的调用永不进投影;
+  `attachWait` 只认 `askTimed` 建的那张 wait 表(`:215-220`);`askTimed` 是另一个入口,legacy 工具从不调。
+- 于是应答者在 claim **之前**从 `agent.session.snapshotEvents()` 认身份:取 `tool/call` 里
+  `name === 'ask_user_question'` 的 callId,去掉已有 `tool/result` 的
+  (`tool/result.data.message.toolCallId`),**恰好一个**才用它做 claim 的键。时序由 DSH 的循环保证:
+  `tool/call` 在 execute **之前**追加(`agent-loop/src/tool-calls.ts:168`,写入函数 `:263-266`),
+  `tool/result` 在执行**之后**(`:156`)。
+- **不唯一 / 没有就 `return next()`**(交还桌面),**不抛也不猜**:抛等于让这次提问变成工具失败;
+  猜错会把答案写进另一次调用。程序化提问(`/exit_plan_mode` 的 `ask()`,不产生 `tool/call`)也落这一支
+  —— 它在手机上本来就没有卡。判据与失败方向写在 `connector/src/dsh/question-call.ts` 的文件头;
+  `interaction-claims.ts` 的"没有 callId 不 claim"fail-closed **保留**(它是兜底,不是主路径)。
+- **为什么不是把部署改成 `mode: timed`**:timed 会让每个提问都带 `timeout` 参数、桌面端的提问卡
+  带倒计时,而改的是 shipped preset(`packages/bundle/web-app/presets/cordis.patch.yml`)—— 不是本仓
+  代码,也不该由"手机上要能答"来换掉用户看得见的提问形态。timed 的投影行与 `answer()` 原生可用
+  是真的,但本仓要的是**认出身份**,不是**改提问形态**。
 
 三条**对实现有直接影响**的源码事实:
 

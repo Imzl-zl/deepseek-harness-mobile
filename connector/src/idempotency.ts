@@ -226,8 +226,8 @@ export function createIdempotency(options: IdempotencyOptions): Idempotency {
        *
        * 这种情况**按"未生效"处理并重发**（契约 §5.6 的原话），依据是下游真的认得出重复：
        * `sessionController.prompt` 会查 `hasPromptRequest`，而它除了看 `inbox.nextTurn` / `nextStep`，
-       * 还扫 **`agent.session.snapshotEvents()`**（会话事件日志，
-       * `packages/api/session-controller/src/commands.ts:602-614`）——
+       * 还扫 **`agent.session.snapshotEvents()`**（会话事件日志，`hasPromptRequest` 的
+       * 最后一段，`packages/api/session-controller/src/commands.ts:591-595`）——
        * 会话被加载/重放之后，上一次那条 `user/message` 的 `rpcId` 就在里面，
        * 于是重发得到 `{ accepted: true }` 而**不会**产生第二条消息。
        *

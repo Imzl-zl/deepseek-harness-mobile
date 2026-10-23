@@ -15,7 +15,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import type { Session } from '@deepseek-ai/dsh-session'
+
 import { registerInteractions } from '../src/dsh/interactions.js'
+import { emptySession, openCall, settleCall } from './support/session-log.js'
 
 interface Captured {
   approval?: (request: never, next: () => Promise<unknown>) => Promise<unknown>
@@ -170,8 +173,8 @@ function setupQuestions(patch: { mode?: string; sid?: string | null } = {}) {
   return { run, calls, warnings, disposals: () => disposals, off }
 }
 
-const questionRequest = (patch: Record<string, unknown> = {}) => ({
-  agent: { id: 'dsh-session-1' },
+const questionRequest = (patch: Record<string, unknown> = {}, session?: Session) => ({
+  agent: { id: 'dsh-session-1', session: session ?? emptySession() },
   questions: [{ header: '选一个', question: '继续吗', options: [] }],
   wait: { callId: 'call-9', timed: true },
   signal: new AbortController().signal,
@@ -245,4 +248,64 @@ test('disposer 同时注销两个 answerer（少一个就留下一条指向手�
   assert.equal(disposals(), 0, '注册阶段不该调用 disposer')
   off()
   assert.equal(disposals(), 2, 'approval 与 questions 两个通道都要注销')
+})
+
+// ---------------------------------------------------------------------------
+// legacy 提问的身份：`wait` 缺席时从会话日志里推（契约 §6.3.1）
+// ---------------------------------------------------------------------------
+
+/**
+ * legacy 形态的请求：**没有 `wait`** —— legacy 工具调 `ask()` 时根本不传它
+ * （`packages/interaction/tool-ask-user/src/index.ts:98-109`），而本机部署正是 legacy
+ * （`bundle/web-app/presets/cordis.patch.yml:109-110` 没写 config ⇒ `mode: 'legacy'`）。
+ */
+const legacyQuestion = (session: Session) => questionRequest({ wait: undefined }, session)
+
+test('legacy 提问：身份从会话日志推出来，claim 到那条**真** call id', async () => {
+  const session = emptySession()
+  openCall(session, 'call-7')
+  const { run, calls } = setupQuestions()
+
+  assert.deepEqual(await run(legacyQuestion(session)), { answers: [] }, '认出身份就照常 claim')
+  const call = calls[0]
+  assert.ok(call !== undefined)
+  assert.equal(
+    call.prompt['callId'],
+    'call-7',
+    'claim 的键必须是日志里那条 tool/call 的 id —— 手机发回的答复也以它为键',
+  )
+  assert.equal(call.prompt['timed'], false)
+})
+
+test('legacy 提问：两条并发 → next()，不猜也不打扰手机', async () => {
+  const session = emptySession()
+  openCall(session, 'call-7')
+  openCall(session, 'call-8')
+  const { run, calls, warnings } = setupQuestions()
+
+  assert.equal(await run(legacyQuestion(session)), 'from-desktop')
+  assert.deepEqual(calls, [], '身份不唯一时不打扰手机')
+  assert.equal(warnings.length, 1, '交还桌面不能无声无息')
+  assert.match(warnings[0] ?? '', /交还桌面/)
+})
+
+test('legacy 提问：日志里没有 / 只有已结算的 → next()', async () => {
+  const absent = setupQuestions()
+  assert.equal(await absent.run(legacyQuestion(emptySession())), 'from-desktop')
+  assert.deepEqual(absent.calls, [])
+
+  const session = emptySession()
+  settleCall(session, 'call-7', openCall(session, 'call-7'))
+  const settled = setupQuestions()
+  assert.equal(await settled.run(legacyQuestion(session)), 'from-desktop')
+  assert.deepEqual(settled.calls, [], '有 tool/result 的调用不是"这一次"')
+})
+
+test('timed 提问：`wait.callId` 优先，日志里另有一条未结算的调用也不改键', async () => {
+  const session = emptySession()
+  openCall(session, 'call-log')
+  const { run, calls } = setupQuestions()
+
+  await run(questionRequest({}, session))
+  assert.equal(calls[0]?.prompt['callId'], 'call-9', '自带身份时绝不回退去扫日志')
 })

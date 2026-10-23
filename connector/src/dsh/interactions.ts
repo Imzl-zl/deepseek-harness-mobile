@@ -18,6 +18,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type { AskUserQuestionAnswer, AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
 import { decideTakeover, type TakeoverDevice, type TakeoverMode } from '../protocol/takeover.js'
+import { resolveQuestionCall } from './question-call.js'
 
 /**
  * 手机能表达的决定。
@@ -199,10 +200,35 @@ export function registerInteractions(ctx: Context, deps: InteractionDeps): () =>
       if (!claim.claim || claim.deviceId === null) return next()
 
       const planReview = planReviewOf(request.questions)
+
+      // **身份**：timed 形态自带 `wait.callId`；legacy 形态**没有** —— legacy 工具调
+      // `ask()` 时根本不传 `wait`（`packages/interaction/tool-ask-user/src/index.ts:98-109`），
+      // 于是只能从会话日志里认：唯一一条没有 `tool/result` 的 `ask_user_question` `tool/call`。
+      // 判据、并发语义与失败方向见 `question-call.ts` 的文件头。
+      //
+      // 认不出就交还桌面（`next()`）：**不抛**（抛等于让这次提问变成工具失败），
+      // 也**不猜**一个 id（猜错会把答案写进另一次调用）。`next()` 只是兜底，不是修复 ——
+      // 手机上的卡会因 `settleClaim` 认不下而回 `interaction/not-pending`，所以主路径
+      // 必须是"推出唯一 id"。程序化提问（如 `/exit_plan_mode` 的 `ask()`，不产生
+      // `tool/call`）也落这一支：它在手机上本来就没有卡。
+      // Note: 为什么从日志推、为什么认不出要 next() —— 见
+      // `.agents/notes/implemented/2026-10-23-legacy-question-identity-from-session-log.md`。
+      const identity = request.wait?.callId === undefined
+        ? resolveQuestionCall(request.agent.session.snapshotEvents())
+        : ({ kind: 'found', callId: request.wait.callId } as const)
+      if (identity.kind !== 'found') {
+        log?.warn('提问认不出唯一的 tool call 身份，交还桌面', {
+          sid,
+          reason: identity.kind,
+          ...(identity.kind === 'ambiguous' ? { callIds: identity.callIds } : {}),
+        })
+        return next()
+      }
+
       const prompt: QuestionPrompt = {
         sid,
         dshSessionId: request.agent.id,
-        callId: request.wait?.callId,
+        callId: identity.callId,
         questions: request.questions,
         timed: request.wait?.timed === true,
         ...(planReview === undefined ? {} : { planReview }),

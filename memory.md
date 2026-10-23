@@ -152,6 +152,21 @@
 > 契约 §5.7 加一行、§5.8 的旧数（35/4）校准成 38/2。
 > 门禁：connector **587 → 599**（+12）、flutter **1127 → 1137**（+10）、boundary **357 → 360**（+1 个文件），其余不变。
 
+> **2026-10-23（本轮）legacy 提问终于有身份 —— 未计时 `ask_user_question` 不再变成工具失败** —— **0 个真机回合**：
+> 根因是**两端本来就有同一个身份，只是应答者那一刻没把它交给自己那份 claim**：手机那张卡的 `itemId`
+> 是 `t:<callId>`（来自会话事件 `tool/call`，`app/lib/data/projection.dart:1020-1033`），
+> `interaction.respond` 发的也是真 call id（`app/lib/data/app_model.dart:3148-3160`）；而 legacy 形态的
+> ask **没有** `wait.callId`（legacy 工具调 `ask()` 时不传 `wait`，`tool-ask-user/src/index.ts:98-109`），
+> 连接器于是把 `undefined` 写进 claim 的键 → fail-closed 抛出 → DSH 把一次提问变成工具失败。
+> 修法：claim 之前从 `agent.session.snapshotEvents()` 认身份 —— `tool/call` 里
+> `name === 'ask_user_question'` 且**没有** `tool/result` 的**恰好一条**；不唯一 / 没有就 `next()`
+> （交还桌面，不抛也不猜）。纯函数 `connector/src/dsh/question-call.ts`；`interaction-claims.ts`
+> 的 fail-closed 保留（它是兜底，不是主路径）。**不改部署成 `mode: timed`**：那要改 shipped preset，
+> 还让桌面提问卡带倒计时 —— 本仓要的是"认出身份"，不是"改提问形态"。
+> 笔记 `implemented/2026-10-23-legacy-question-identity-from-session-log.md`；
+> 契约 §5.7 的 `interaction.respond` 行 + §6.3.1 已写清判据与取舍。
+> 门禁：connector **599 → 611**（+12），其余不变。
+
 待办（按顺序）:
 
 1. **轮组阶段 1 已落地**（整轮分组 + 折叠过程 + 「工作步骤收起时机」两档）——
@@ -161,9 +176,9 @@
    - **阶段 2「语义过程组」**（已完成分析 / 执行了命令）：暂不做，390dp 上两层组头
      要两次点击才看到正文；
    - **收起/展开不改滚动位置**：`reverse: true` 的格数一变，点开的那一轮可能在屏幕外。
-2. **`ask_user_question` 未计时提问答不了** —— 我们的连接器在 `request.wait?.callId` 缺失时
-   fail-closed 抛出（`connector/src/interaction-claims.ts:255`），而 DSH 的 `wait` 对 indefinite
-   提问**本来就没有**（`packages/interaction/user-questions/src/types.ts:140-145`）。
+2. ~~**`ask_user_question` 未计时提问答不了**~~ **已修（2026-10-23）**：legacy 形态没有
+   `wait.callId`，连接器改从会话日志推身份（唯一一条未结算的 `ask_user_question` `tool/call`），
+   推不出就交还桌面。笔记 `implemented/2026-10-23-legacy-question-identity-from-session-log.md`。
 3. ~~**斜杠命令没有执行面**~~ **已修（2026-10-23）**：新方法 `command.execute`
    （白名单只放 `/goal` 与 `/plan`，准入判据见契约 §5.7 那一行），`/goal …` 不再变成普通消息。
    命令卡的渲染没动（那是另一件事）。笔记 `implemented/2026-10-23-slash-command-execution-surface.md`。
@@ -341,7 +356,7 @@
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
 | `cd app && flutter test` | **1137 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **599 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **611 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 
@@ -380,3 +395,5 @@
 - 2026-10-23 斜杠命令执行面：`command.execute` + 白名单（`/goal` `/plan`），
   两个命令门共用 `dsh/command-line.ts`，手机侧一处分流 ——
   `2026-10-23-slash-command-execution-surface.md`。
+- 2026-10-23 legacy 提问的身份从会话日志推（唯一一条未结算的 `ask_user_question` `tool/call`）——
+  `2026-10-23-legacy-question-identity-from-session-log.md`。
