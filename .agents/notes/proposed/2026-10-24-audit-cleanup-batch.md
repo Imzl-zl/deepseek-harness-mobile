@@ -60,15 +60,19 @@ Status: proposed
 - **判据**：`relay/tests` 里断言 stats 形状的用例按新形状改（少一个键）。
 - **门禁**：relay、`pnpm typecheck`。
 
-## Z5（修一行）配对码输入框关掉输入法联想
+## Z5（修一行）配对码输入框关掉输入法联想 —— ✅ 已落地
 
 - **位置**：`app/lib/ui/pairing_page.dart:413` 的 `TextField`。
 - **为什么修**：二维码内容是 JSON，用户**手打**时输入法联想/纠错会改写它（粘贴没事）。
-- **改什么**：`enableSuggestions: false`、`autocorrect: false`、
-  `keyboardType: TextInputType.visiblePassword`（三者一起才是"不要联想"；
-  `visiblePassword` 同时关掉中文输入法的联想条）。
-- **判据**：`app/test/pairing_page_test.dart` 加一条 widget 断言（三个属性）。
-- **门禁**：flutter、`dart analyze`、`dart format`。
+- **改什么**：`enableSuggestions: false` + `autocorrect: false`。
+  **原计划里的第三个属性（`keyboardType: visiblePassword`）查了 SDK 后砍掉** ——
+  `visiblePassword` 的文档只说"要一个字母和数字都顺手的键盘"
+  （`packages/flutter/lib/src/services/text_input.dart:554-557`），**没有**说它关联想；
+  真正管用的是那两个布尔：`enableSuggestions` 在 Android 是独立的 `NO_SUGGESTIONS` 标记，
+  iOS 的联想**跟着 `autocorrect` 走**（同一文件 `:623-636`）。三件一起上就是猜。
+- **判据**：`app/test/widget_test.dart` 新增一条 widget 断言（两个属性都是 false）；
+  变异校验：把 `enableSuggestions` 改回 true ⇒ **恰好那条红**。
+- **门禁**：flutter **1140 → 1141**、`dart analyze` / `format` 0。
 
 ## Z6a（修字 + 清单）内置预设文案**已经漂了**
 

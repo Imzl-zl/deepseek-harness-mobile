@@ -995,6 +995,18 @@ void main() {
       expect(find.byKey(const Key('pairing-notice')), findsNothing);
       expect(find.text('扫二维码，或把内容粘贴到下面'), findsOneWidget);
     });
+
+    testWidgets('配对码输入框关掉输入法联想（手打的 JSON 不能被纠错改掉）', (tester) async {
+      // 依据：`packages/flutter/lib/src/services/text_input.dart:623-636` ——
+      // `enableSuggestions` 在 Android 是独立的 NO_SUGGESTIONS 标记，iOS 的联想
+      // **跟着 `autocorrect` 走**，所以两个都要 false。
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.enableSuggestions, isFalse);
+      expect(field.autocorrect, isFalse);
+    });
   });
 
   // 统计条三项：轮次/步数 + **输出速率**、用量 + 缓存命中、**上下文占用**。

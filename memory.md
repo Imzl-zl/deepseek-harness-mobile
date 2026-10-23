@@ -373,8 +373,10 @@
    → `relay/src/core.ts:61-62` 两字段恒等；工单 Z4（删字段）。
 3. 握手层 close 4003 与 `protocol/revoked` 帧两条兜底路径仍走退避，未收口。
    → 与下面第 4 条同根（终态判据只覆盖建连失败）；工单 W3。
-4. `pairing_page.dart` 的配对码 `TextField` 没关输入法联想，**手打**的 JSON 会被破坏（粘贴没事）。
-   → 工单 Z5（三个属性一起关）。
+4. ~~`pairing_page.dart` 的配对码 `TextField` 没关输入法联想，**手打**的 JSON 会被破坏（粘贴没事）~~
+   **已修（2026-10-24，Z5）**：`enableSuggestions: false` + `autocorrect: false`
+   （Android 是独立标记，iOS 跟着 autocorrect 走，`text_input.dart:623-636`）；
+   判据 `app/test/widget_test.dart` 一条 widget 断言 + 变异校验。
 5. **PC 端「上报地址」面板没有布局/点击的自动化测试**（只有 i18n 键完整性门禁；API 侧有用例）。
 6. **IPv6 隐私地址仍会上报**：`dialOrder` 已把它们排后面，但仍占列表位。
    → **不改码**（Node 不暴露 `temporary` 标记，判据不可靠）；工单 Z6b 只写进契约 §15。
@@ -443,7 +445,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **454 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **360 项**（22 条规则自检 + 扫 99 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1140 项** |
+| `cd app && flutter test` | **1141 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **616 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
@@ -498,3 +500,6 @@
   顺带修：手机侧 fixtures 回放条数 16 → 15（`2da3745`，那条门禁从 `fce4f9e` 起一直是红的）。
 - 2026-10-24 `$events` 换代不撤在途 claim（claim 挂挂载；窗口里的答复等下一代 ready 再发）——
   `2026-10-24-claims-survive-stream-generation.md`。门禁：connector **615 → 616**，其余不变。
+- 2026-10-24 配对码输入框关掉输入法联想（`enableSuggestions` + `autocorrect`）——
+  零碎清理 Z5；flutter **1140 → 1141**。**原计划的 `keyboardType: visiblePassword` 查 SDK 后砍掉**
+  （它的文档不含"关联想"，见 `text_input.dart:623-636`）。

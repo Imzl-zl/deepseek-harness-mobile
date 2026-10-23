@@ -414,6 +414,13 @@ class _PairingPageState extends State<PairingPage> {
             controller: _input,
             minLines: 3,
             maxLines: 6,
+            // **关掉输入法联想**：这一格是 JSON，手打时被自动纠错/候选词改一个字符
+            // 就解析失败（粘贴不受影响，所以只有"手打"这一路会中招）。
+            // 两个开关缺一不可 —— `enableSuggestions` 在 Android 是独立的
+            // TYPE_TEXT_FLAG_NO_SUGGESTIONS，在 iOS 联想则**跟着 `autocorrect` 走**
+            // （`packages/flutter/lib/src/services/text_input.dart:623-636`）。
+            enableSuggestions: false,
+            autocorrect: false,
             style: TextStyle(
               fontSize: 12,
               fontFamily: 'monospace',
