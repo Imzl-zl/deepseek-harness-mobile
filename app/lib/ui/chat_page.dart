@@ -312,8 +312,6 @@ class ChatPageState extends State<ChatPage> {
     // 输入框有内容才亮发送键 —— `TextField` 的 `onChanged` 不触发本层重建，
     // 所以手动挂一个监听（否则发送键永远灰着）。
     _input.addListener(_onInputChanged);
-    // 权限档与接管队列联动：**完全权限下审批不入队**（原型 `enqueue` 的
-    // 同一条逻辑 —— 那是"已授权"的结果，不是绕过）。
     _takeover.addListener(_onTakeoverChanged);
     // **真实交互接进接管队列**：待处理项是会话事件的投影（契约 §6.3），
     // 于是"对话流里有一条审批"与"输入栏上有一张审批卡"不可能对不上。
@@ -350,12 +348,7 @@ class ChatPageState extends State<ChatPage> {
     if (!mounted) return;
     switch (signal) {
       case InteractionOpened(:final item):
-        if (!_takeover.enqueue(item)) {
-          // 完全权限下审批不入队（原型同一条逻辑）—— 如实提示，不静默丢弃。
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('完全权限下不再逐步确认：${item.toolName} 直接执行')),
-          );
-        }
+        _takeover.enqueue(item);
       case InteractionSettled(:final itemId):
         // **不带 sid**：收束要全桶找。迟到的 `approval/decided` 可能属于
         // **另一个**会话（用户在 A 里的时候 B 的审批在电脑上被答了）——
@@ -392,25 +385,6 @@ class ChatPageState extends State<ChatPage> {
       }
       rethrow;
     }
-  }
-
-  /// 把电脑侧的真值同步给接管队列（**每次 build 调，幂等**）。
-  ///
-  /// ## 为什么放在 build 里
-  ///
-  /// 权限档的真值在电脑侧（`permissions` 投影），手机不再持有本地副本 ——
-  /// 于是"改权限"与"同步给接管"必须是同一件事的两面，而不是两个各自赋值的地方。
-  /// 历史上正是两处 `setState(() => _accessMode = …)` 各自赋值，
-  /// 而接管队列的 `fullAccess` 只在接管自己 notify 时才同步，于是"切到完全权限"
-  /// 之后审批**照样入队**（那个标志还是旧的）—— 不崩、不报错，
-  /// 只会让"完全权限下不再逐次确认"这句话变成假的。
-  ///
-  /// 与 `_takeover.setCurrentSid` 同一个口径：控制器内部重复设不通知。
-  ///
-  /// **取不到当前值时按"不是完全权限"算**：那是保守侧 —— 宁可多问一次，
-  /// 也不要因为"不知道"就跳过审批。
-  void _syncTakeoverAccess() {
-    _takeover.fullAccess = widget.app.permissionValue == fullAccessPreset;
   }
 
   void _onTakeoverChanged() {
@@ -551,7 +525,6 @@ class ChatPageState extends State<ChatPage> {
     // 放在 build 里而不是某个点击回调：切会话的路径有两条（抽屉、内联列表），
     // 漏一条就会"切过去了但卡片没换"。控制器内部幂等，重复设不通知。
     _takeover.setCurrentSid(widget.app.currentSid);
-    _syncTakeoverAccess();
     // 任务清单按会话取；`sid` 为 null（列表页）时给空表。
     final jobsSid = widget.app.currentSid;
     return ListenableBuilder(

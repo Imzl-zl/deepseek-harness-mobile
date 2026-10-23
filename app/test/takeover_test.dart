@@ -7,9 +7,7 @@
 /// 1. **"允许一次" = `allowed-once`**，不是权限变更。原型里
 ///    `settleApproval(item, 'allowed-once')` 与 `'rejected'` 是两个结果值，
 ///    而权限档位（`perm`）是另一套东西。**混起来会让"点了一次允许"变成永久放权**。
-/// 2. **`fullAccess` 下审批不入队**（原型 `enqueue` 的第一条分支）——
-///    那是"已授权"的结果，不是绕过。
-/// 3. **队列是瀑布**：一次只处理队首（原型注释
+/// 2. **队列是瀑布**：一次只处理队首（原型注释
 ///    `const queue = [] // 待处理队列(瀑布:一次只处理队首)`）。
 ///    不铺成列表是因为审批要**逐个看** —— 一次批准五件事等于没看。
 /// 4. **一个会话一队**（2026-10-13 起，对齐 DSH 原生）：待处理带 `sid`，
@@ -131,9 +129,9 @@ void main() {
         contains('允许一次'),
         reason: '文案要写"允许一次" —— 用户看到的必须是这个',
       );
-      // **没有改任何权限档**：控制器里唯一与权限有关的是 `fullAccess`，
-      // 而它不该被这次点击动到。
-      expect(c.fullAccess, isFalse, reason: '允许一次不该把权限改成完全权限');
+      // **控制器不认识权限档**：那层"完全权限下审批不入队"的过滤已经删了
+      // （DSH 在 `danger-full-access` 下根本不产生审批，见 `takeover.dart` 的文件头）。
+      // 所以这里唯一该断的是回执，不再有"有没有动到权限"这回事。
     });
 
     test('拒绝的回执是 `rejected`', () async {
@@ -153,17 +151,21 @@ void main() {
     });
   });
 
-  group('fullAccess 下审批不入队（原型 enqueue 的第一条分支）', () {
-    test('完全权限：审批返回 false、队列不变', () {
-      final c = _controllerFor()..fullAccess = true;
-      final queued = c.enqueue(approval('a1'));
-      expect(queued, isFalse, reason: '未入队要如实返回 false');
-      expect(c.queue, isEmpty);
-      expect(c.phase, TakeoverPhase.idle);
+  group('入队不按权限分叉（那层自创过滤已删）', () {
+    test('审批也照常入队：控制器不再认识权限档', () {
+      // DSH 在 `danger-full-access` 下把审批策略写成 `never`，在 dispatch 之前就拒
+      // （`packages/interaction/user-approval/src/index.ts:270-275`）⇒ 那时根本不会
+      // 有 `approval/request`。所以"完全权限下不入队"过滤的是一个不会发生的场景。
+      final c = _controllerFor();
+      expect(c.enqueue(approval('a1')), isTrue);
+      expect(c.queue.map((item) => item.itemId), ['a1']);
     });
 
-    test('完全权限**只影响审批** —— 提问与计划照常入队', () {
-      final c = _controllerFor()..fullAccess = true;
+    test('三种交互都进同一个桶，顺序只由 DSH 的优先级决定（审批垫底）', () {
+      // 入队判据里**没有"种类"这一维**（唯一按种类分叉的地方是排序优先级，
+      // 照 `ui-user-questions/src/client/index.ts:372` 与 `ui-approval/.../index.ts:89`）。
+      final c = _controllerFor();
+      expect(c.enqueue(approval('a1')), isTrue);
       expect(c.enqueue(question('q1')), isTrue);
       expect(
         c.enqueue(
@@ -177,6 +179,8 @@ void main() {
         ),
         isTrue,
       );
+      expect(c.queue.map((item) => item.itemId), ['p1', 'q1', 'a1']);
+      expect(c.pendingCountOf('sid-1'), 3);
     });
   });
 

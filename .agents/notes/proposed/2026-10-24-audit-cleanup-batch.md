@@ -8,22 +8,25 @@ Status: proposed
 
 ---
 
-## Z1（删规则）`danger-full-access` 下"审批不入队"
+## Z1（删规则）`danger-full-access` 下"审批不入队" —— ✅ 已落地
 
-- **位置**：`app/lib/ui/takeover.dart:193-195`（过滤）、`app/lib/ui/chat_page.dart:353-358`
-  （那句 toast）、文件头 `takeover.dart:17-19`（抄原型的说明）。
+- **位置**：`app/lib/ui/takeover.dart`（`enqueue` 的分支 + `fullAccess` 字段 + 文件头第 2 条）、
+  `app/lib/ui/chat_page.dart`（`_syncTakeoverAccess` 与 build 里那一行 + 那句 toast）。
 - **为什么删**：DSH 在 `danger-full-access` 预设下把审批策略写成 `never`
   （`packages/bundle/base/cordis.patch.yml:274-276`、`packages/interaction/permission-presets/src/index.ts:193-195`），
   而 `never` 在 **dispatch 之前**就 `rejected`（`packages/interaction/user-approval/src/index.ts:270-275`）
   ⇒ **根本不产生 `approval/request`**。这条过滤过滤的是一个不会发生的场景，
   配的那句"完全权限下不再逐步确认：X 直接执行"因此永远显示不出来。
   浏览器侧也没有任何同类过滤（`packages/client/ui-approval/src/client/index.ts` 全文）。
-- **改什么**：`enqueue` 去掉 `fullAccess` 分支与字段；`chat_page.dart` 去掉那条
-  `showSnackBar` 分支（`if (!_takeover.enqueue(...))` 的整块）；文件头第 2 条改成
-  "完全权限下 DSH 不产生审批（policy=never），本层不需要过滤"。
-- **判据**：`app/test/` 里断言"fullAccess 下不入队"的用例删掉（行为被删，不是放宽）；
-  `takeover.dart` 的 `fullAccess` 字段与 `_syncTakeoverTruth` 的那一行同步删除。
-- **门禁**：flutter（1140 → 略降，属于行为删除）、boundary 360。
+- **改什么**：`enqueue` 去掉分支与字段；`chat_page.dart` 去掉 `_syncTakeoverAccess` 与整块
+  `if (!_takeover.enqueue(...))` toast；文件头第 2 条改成"**没有**这条过滤"并写出处。
+- **判据**：`takeover_test.dart` 的两条旧用例（"完全权限下不入队"）删掉，换成两条新的
+  （"审批也照常入队"、"三种交互都进同一个桶，顺序只由优先级决定"）；
+  `chat_takeover_wiring_test.dart` 那条改成"切到完全权限后审批**仍在队列里**（排最后）"。
+- **变异校验**：在 `enqueue` 里临时 `if (approval) return false` ⇒ 接管层与接线层**成片红**
+  （审批相关的全部用例，含新加的两条）。**注**：`fullAccess` 字段已删，做不了"只恢复旧条件"的
+  精确变异 —— 这是能拿到的最接近的一组。
+- **门禁**：flutter **1141 → 1141**（删 2 条、加 2 条，净持平）、`analyze` / `format` 0、boundary 360。
 
 ## Z2（删死码）`presence.onOffline` 与它的监听桶 —— ✅ 已落地
 

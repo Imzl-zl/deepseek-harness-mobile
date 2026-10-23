@@ -347,10 +347,11 @@ void main() {
     expect(find.byType(DshComposer), findsOneWidget);
   });
 
-  testWidgets('完全权限下审批**不入队**（但提问与计划照常）', (tester) async {
-    // §7.10：完全权限下审批不再逐次确认 —— 那是"已授权"的**结果**。
-    // 这一条在接管层有用例，这里验的是**接线**：切了权限档，
-    // 聊天页里的接管队列真的跟着变了。
+  testWidgets('切到完全权限：预设真的发到电脑侧，接管队列**不再自行过滤审批**', (tester) async {
+    // 曾经的规则是"完全权限下审批不入队"（抄原型的 `enqueue`）。它 2026-10-24 被删：
+    // DSH 在 `danger-full-access` 下把审批策略写成 `never`，在 dispatch 之前就拒
+    // （`packages/interaction/user-approval/src/index.ts:270-275`）⇒ 那时**根本不会**
+    // 产生 `approval/request`，这层过滤过滤的是一个不会发生的场景。
     //
     // **走完整条链**（目录 → sheet → `permission.switch` → 电脑侧落值 →
     // 重读投影）：权限档的真值在电脑侧，手机不再持有本地副本，
@@ -384,9 +385,20 @@ void main() {
     await _drainSnackBars(tester);
     await _enqueueDemo(tester);
 
-    // 审批被跳过 ⇒ 队首是计划（优先级仍高于提问）。
-    expect(_takeoverText('等待审批'), findsNothing, reason: '完全权限下审批不该入队');
+    // 队首仍是计划（DSH 的确定性优先级 计划2 > 提问1 > 审批0）；审批**在队列里**，
+    // 只是排在最后 —— 这正是"不再按权限档丢掉它"的证据。
     expect(_takeoverText('等待确认计划'), findsOneWidget);
+    await tester.tap(find.text('同意执行'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('先只拆资源束'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('提交'));
+    await tester.pumpAndSettle();
+    expect(
+      _takeoverText('等待审批'),
+      findsOneWidget,
+      reason: '完全权限下审批也照常入队（DSH 那时不会发，所以本层没有理由过滤）',
+    );
   });
 
   testWidgets('接管卡的高度上限按**可用高度**算（扣掉键盘）', (tester) async {

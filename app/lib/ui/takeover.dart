@@ -14,11 +14,15 @@
 /// 1. **"允许一次" = `allowed-once`**，不是权限变更。原型
 ///    `settleApproval(item, 'allowed-once')` 与 `'rejected'` 是**两个结果值**，
 ///    而权限档位（`perm`）是另一套东西。混起来会让"点了一次允许"变成永久放权。
-/// 2. **`danger-full-access` 下审批不入队**：原型 `enqueue()` 里
-///    `if (item.kind === 'approval' && !needsApproval()) { toast(...); return false }`
-///    —— 那是"已授权"的结果，不是绕过。
-/// 3. **回答在途时按钮禁用**（`item.busy`）：不只是防重复提交，
+/// 2. **回答在途时按钮禁用**（`item.busy`）：不只是防重复提交，
 ///    也是给用户"它在处理"的反馈（原型把状态点换成转圈）。
+///
+/// **没有"完全权限下审批不入队"这条过滤**（2026-10-24 删）：DSH 在
+/// `danger-full-access` 预设下把审批策略写成 `never`
+/// （`packages/bundle/base/cordis.patch.yml:274-276`），而 `never` 在 **dispatch 之前**
+/// 就 `rejected`（`packages/interaction/user-approval/src/index.ts:270-275`）——
+/// 那时**根本不产生 `approval/request`**。所以那层过滤过滤的是一个不会发生的场景，
+/// 浏览器侧也没有同类判断。
 ///
 /// ## 队列按**会话**分桶（2026-10-13，对齐 DSH 原生）
 ///
@@ -116,9 +120,6 @@ class TakeoverController extends ChangeNotifier {
   bool _busy = false;
   bool _minimized = false;
 
-  /// 当前权限档（决定审批是否入队）。
-  bool fullAccess = false;
-
   /// 答复出口（`interaction.respond`）。**装配时注入**：控制器不认识 `AppModel`，
   /// 于是"答一次"在单测里可以只断言产出了什么批次，而不必起一个假客户端。
   ///
@@ -188,11 +189,7 @@ class TakeoverController extends ChangeNotifier {
 
   /// 入队一个事件。**按它自己的 `sid` 进桶** —— 当前不在看的会话也照收，
   /// 切回去就看见（DSH 的待处理本来就是 per-session 的）。
-  ///
-  /// **`fullAccess` 下的审批不入队**（原型 `enqueue` 的同一条逻辑）——
-  /// 返回 `false` 表示"没入队"，调用方据此提示。
   bool enqueue(InteractionItem item) {
-    if (item.kind == InteractionKind.approval && fullAccess) return false;
     final bucket = _bySid.putIfAbsent(item.sid, () => <InteractionItem>[]);
     // 同一个 key 不重复入队（收起后重新打开走的是"取消最小化"而不是再入一次）。
     if (bucket.any((i) => i.itemId == item.itemId)) {
