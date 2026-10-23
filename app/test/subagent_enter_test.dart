@@ -135,7 +135,15 @@ class _SubagentClient extends FakeSyncClient {
               if (!noParentId.contains('child-${i + 1}'))
                 'parentSessionId': 'sid_A',
               'projections': {
-                'values': {'title': siblings[i]},
+                'values': {
+                  'title': siblings[i],
+                  // 子会话的模型**只在投影提示里**（顶层没有 `model` ——
+                  // 连接器读不到子会话的活 agent）。
+                  'modelSelection': {
+                    'lastUsed': {'provider': 'p', 'model': 'm-child-$i'},
+                    'next': {'provider': 'p', 'model': 'm-child-$i'},
+                  },
+                },
               },
             },
           {
@@ -497,6 +505,35 @@ void main() {
     app.dispose();
   });
 
+  testWidgets('子智能体页面的输入栏要显示模型（行里的投影提示 modelSelection）', (tester) async {
+    // 2026-10-23 用户看到的问题：进子会话，输入栏的模型显示「未选择」。
+    // 根因是连接器顶层 `model` 从**活 agent** 读，子会话不在那张表里；
+    // 而行的投影提示 `modelSelection` 对子会话也有（`lastUsed` 由 request/header 推）。
+    final app = AppModel(client: _SubagentClient());
+    await app.start();
+    await app.refreshSessions();
+    await app.openSession('sid_A');
+
+    final key = await _pumpChat(tester, app);
+    // 对照：父会话的行没有 modelSelection ⇒ 仍是「未选择」，不猜
+    expect(
+      find.descendant(of: find.byType(DshComposer), matching: find.text('未选择')),
+      findsOneWidget,
+    );
+
+    await _enterFirstChild(tester, key, '调研实现');
+    expect(app.currentSid, 'child-1');
+    expect(
+      find.descendant(
+        of: find.byType(DshComposer),
+        matching: find.text('m-child-0'),
+      ),
+      findsOneWidget,
+      reason: '子会话的模型来自投影提示（顶层 model 没有这个会话）',
+    );
+    app.dispose();
+  });
+
   testWidgets('系统返回键：在子会话里回父会话，不在子会话时不拦', (tester) async {
     // 这条是**移动端专有**的：Web 有浏览器 history，手机只有系统返回。
     // 判据用 `PopScope.canPop`（`packages/flutter/lib/src/widgets/pop_scope.dart:83-96`）。
@@ -570,6 +607,16 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(app.currentSid, 'grand-1');
+
+    // **只读档取自孙级自己的父级目录**（child-1 里那一行是 `one-shot`）：
+    // 用"当前会话的父级"（sid_A）去查会查不到 ⇒ 显示成「模式未知」。
+    // 真机 2026-10-23 抓到过这一支（进孙级后输入栏变成只读）。
+    expect(
+      find.text('一次性子智能体记录'),
+      findsOneWidget,
+      reason: 'mode 来自 node 自己那条目录（child-1），不是当前会话的父级（sid_A）',
+    );
+    expect(find.text('此子智能体暂时只读'), findsNothing);
 
     // 孙级头部：标题是它在 **child-1** 目录里的 label（不是祖父目录里的东西）
     expect(

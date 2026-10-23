@@ -72,6 +72,18 @@
 > 现状 `docs/subsystems/subagent-page.md` §4；真机截图 `shots-2026-10-23/v*.png`。
 > 门禁：flutter **1117**（原 1111），connector 586 / boundary 357 / icons 不变。
 > **契约方法面因此变了**（`session.list` 行多一个键）—— 老手机忽略，新手机连老连接器退到记忆。
+>
+> **同日追加（用户看图追问"子智能体页面怎么没有显示模型"）** —— 两个真 bug：
+> ① 子会话的输入栏模型显示「未选择」：连接器顶层 `model` 从**活 agent** 读，
+> 子会话不在那张表 ⇒ 改 App 侧**优先取行的投影提示** `modelSelection`（同一包里，
+> 零额外往返），输入栏模型名 / 推理等级 / 模型面板的"当前"三处一起走 `AppModel.currentModel`；
+> ② 从面板往下钻时孙级的只读档取错了目录（用"当前会话的父级"查 mode ⇒ 查不到 ⇒
+> 可续聊的孙级显示成「暂时只读」）⇒ 改成"产出那一行的那条目录"。
+> 笔记 `implemented/2026-10-23-subagent-composer-model-and-mode-source.md`；
+> 真机 `shots-2026-10-23/w5|w9|w10-*.png`（父/子/孙三层都显示 `auto`）。
+> 门禁：flutter **1119**。
+> **面板行不显示模型是有意的**（DSH 的 `ui-subagent` 里 `model` 零命中，行第二行是
+> `title · mode · activity`）—— 想要就得单独决定"移动端偏离"。
 
 待办（按顺序）:
 
@@ -259,7 +271,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **357 项**（22 条规则自检 + 扫 98 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 21 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1117 项** |
+| `cd app && flutter test` | **1119 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **586 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
@@ -289,8 +301,3 @@
 - 2026-10-23 子会话头部父级数据驱动（`session.list` 多一个别名形式的
   `parentSessionId`）+ 顶栏标题只显示子级名 ——
   `2026-10-23-subagent-header-parent-from-data.md`。
-
-
-
-
-

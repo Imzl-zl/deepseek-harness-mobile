@@ -1025,7 +1025,10 @@ class ChatPageState extends State<ChatPage> {
     if (!_hasData) return '未连接';
     final sid = widget.app.currentSid;
     if (sid == null) return '未选择';
-    final model = widget.app.sessionOf(sid)?.model;
+    // 走 `AppModel.currentModel`（唯一出口）：它先看**本会话的投影提示**
+    // `modelSelection`，再退到清单行 —— 只读清单行的话，子智能体页面上
+    // 永远显示「未选择」（子会话不在连接器那张活 agent 表里）。
+    final model = widget.app.currentModel;
     if (model == null) return '未选择';
     return widget.app.modelCatalog?.displayNameOf(
           provider: model.provider,
@@ -1050,7 +1053,9 @@ class ChatPageState extends State<ChatPage> {
     if (!_hasData) return null;
     final sid = widget.app.currentSid;
     if (sid == null) return null;
-    final model = widget.app.sessionOf(sid)?.model;
+    // 与 [_modelLabel] 同一个出口（`AppModel.currentModel`）：
+    // 推理等级是模型选择的一部分，两个来源就会"模型有、等级没有"。
+    final model = widget.app.currentModel;
     if (model == null) return null;
     final name = widget.app.modelCatalog?.effortNameOf(
       provider: model.provider,
@@ -1281,12 +1286,18 @@ class ChatPageState extends State<ChatPage> {
 
   /// 切到同一个父级下的另一个子会话（父级来自数据，不是记忆）。
   Future<void> _switchSibling(SubagentNode node) async {
-    final parent = _subagentParentSid;
-    if (parent == null) return;
+    if (widget.app.currentSid == null) return;
     // **点当前行什么都不做**（面板已经关了）：以前这里会 `openSession(自己)`，
     // 屏幕上看起来就是"又进了自己一次"。DSH 那一下是重新打开同一个会话 +
     // 关面板（`SubagentHeaderLineage.tsx:279-287`），对手机来说就是纯噪音。
     if (node.id == widget.app.currentSid) return;
+    // 那一行的**真正父级**是"产出这一行的那条目录"，**不一定等于当前会话的父级**：
+    // 面板里往下钻时点的可能是孙级，它的父级是子级。用 `_subagentParentSid`（当前会话
+    // 的父级）去查它的 mode 会查不到 ⇒ 一个可续聊的孙级被显示成「暂时只读」
+    // （真机 2026-10-23 抓到：进孙级后输入栏变成只读框）。
+    final parent =
+        widget.app.subagentParentOfCatalogEntry(node.id) ?? _subagentParentSid;
+    if (parent == null) return;
     final mode = widget.app
         .subagentCatalogOf(parent)
         .entries
@@ -1297,7 +1308,7 @@ class ChatPageState extends State<ChatPage> {
       // 记忆跟着更新：它是老连接器那一档的兜底，留着旧父级会让第 3 档指错。
       _subagentReturnFrom = parent;
       _subagentChildSid = node.id;
-      // 兄弟的 mode 来自**同一条父级目录**（与进入时同一个来源）。
+      // mode 来自**node 自己那条父级目录**（与它被画出来的地方同一个来源）。
       _subagentMode = mode;
     });
     await widget.app.openSession(node.id);

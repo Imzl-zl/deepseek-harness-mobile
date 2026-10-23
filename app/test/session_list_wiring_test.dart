@@ -270,6 +270,77 @@ void main() {
       );
       expect(child.withTitle('新名字').parentSid, 'sid_root');
     });
+
+    test('模型优先取行里的投影提示 modelSelection（子会话没有活 agent，只有这一条）', () async {
+      // 连接器的顶层 `model` 是从**活 agent** 读的（`connector/src/dsh/models.ts`），
+      // 子会话不在那张表里 ⇒ 子智能体页面会显示「未选择」。
+      // 而行的投影提示对每个会话都有（DSH `list.ts:291-312` 不挑键），
+      // `modelSelection` 的 `lastUsed` 由 `request/header` 推出来
+      // （`model-selection-projection.ts:44-51`）—— 子会话也有 request/header。
+      final client = _FakeClient(
+        onCall: (method, params) => {
+          'sessions': [
+            // 子会话行：**没有顶层 `model`**，只有投影提示。
+            {
+              'sid': 'sid_child',
+              'updatedAt': 900,
+              'subagent': true,
+              'projections': {
+                'kind': 'sequenced',
+                'asOfSeq': 7,
+                'values': {
+                  'title': '孙级',
+                  'modelSelection': {
+                    'lastUsed': {'provider': 'p', 'model': 'm-used'},
+                    'next': {
+                      'provider': 'p',
+                      'model': 'm-next',
+                      'reasoningEffort': 'high',
+                    },
+                  },
+                },
+              },
+            },
+            // 老连接器：只有顶层 `model`（没有投影提示）。
+            {
+              'sid': 'sid_top',
+              'updatedAt': 800,
+              'model': {'provider': 'p', 'model': 'm-top'},
+            },
+            // `next` 显式为 null ⇒ 退 `lastUsed`（DSH 的线格式就是这样）。
+            {
+              'sid': 'sid_null_next',
+              'updatedAt': 700,
+              'projections': {
+                'values': {
+                  'modelSelection': {
+                    'lastUsed': {'provider': 'p', 'model': 'm-used-only'},
+                    'next': null,
+                  },
+                },
+              },
+            },
+          ],
+        },
+      );
+      final app = AppModel(client: client);
+
+      await app.refreshSessions();
+
+      final byId = {for (final s in app.sessions) s.sid: s};
+      expect(byId['sid_child']!.model?.model, 'm-next', reason: 'next 优先');
+      expect(byId['sid_child']!.model?.reasoningEffort, 'high');
+      expect(
+        byId['sid_top']!.model?.model,
+        'm-top',
+        reason: '没有投影提示时退到顶层字段（老连接器）',
+      );
+      expect(
+        byId['sid_null_next']!.model?.model,
+        'm-used-only',
+        reason: 'next 为 null 时用 lastUsed',
+      );
+    });
   });
 
   // **回归 2026-10-15 真机**："列表里名字对了,但我点进去会话名字又变了"。

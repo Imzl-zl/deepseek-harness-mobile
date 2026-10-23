@@ -849,12 +849,16 @@ class SessionSummary {
   /// `null` = 根会话（电脑侧对根会话不给这个键），或老连接器。
   final String? parentSid;
 
-  /// 这个会话**下一次**将用的模型（`session.list` 的 `model`）。
+  /// 这个会话**下一次**将用的模型（`modelSelection` 投影的 `next ?? lastUsed`）。
   ///
-  /// 来自 DSH 的 `modelSelection` 投影（`next ?? lastUsed`），
-  /// 见 `connector/src/dsh/models.ts`。**`null` 就是"不知道"** ——
-  /// 新建会话、或投影还没落时电脑侧也不说，这时界面显示"未选择"，
-  /// 而不是猜一个把"看起来连着"当成"连着"。
+  /// 两个来源，同一份投影，见 `AppModel._parseSessionList`：
+  /// ① 行里的**投影提示** `projections.values.modelSelection`（对每个会话都有，
+  ///    包括子会话 —— DSH 的 `list.ts:291-312` 原样带全部投影值）；
+  /// ② 行顶层的 `model`（连接器从**活 agent** 读，`connector/src/dsh/models.ts`）。
+  /// **① 优先**：子会话不在活 agent 那张表里，只认 ② 会让子智能体页面显示「未选择」。
+  ///
+  /// **`null` 就是"不知道"** —— 新建会话、或投影还没落时电脑侧也不说，
+  /// 这时界面显示"未选择"，而不是猜一个把"看起来连着"当成"连着"。
   final ModelRef? model;
 
   /// 会话的工作区目录（`session.list` 的 `cwd`）。

@@ -1245,6 +1245,10 @@ class AppModel extends ChangeNotifier {
   ModelCatalog? _modelCatalog;
 
   /// 当前会话的模型（`modelSelection` 投影，`next ?? lastUsed`）。
+  ///
+  /// 取的是 [SessionSummary.model]，而那一项**优先来自行的投影提示**
+  /// （见 `_parseSessionList` 的注释）—— 子会话没有活 agent，只有这条能给出模型。
+  /// 输入栏的模型名 / 推理等级 / 模型选择面板的"当前"标记都走这里，不各自取。
   ModelRef? get currentModel {
     final sid = _currentSid;
     if (sid == null) return null;
@@ -3122,10 +3126,18 @@ class AppModel extends ChangeNotifier {
                   (entry['parentSessionId'] as String).isNotEmpty
               ? entry['parentSessionId'] as String
               : null,
-          // 当前模型：来自 DSH 的 `modelSelection` 投影（`connector/src/dsh/models.ts`）。
+          // 当前模型：**先看行里的投影提示 `modelSelection`**，再看行顶层 `model`。
+          // 两处同源（DSH 的 `modelSelection` 投影，`next ?? lastUsed`），
+          // 但覆盖面不同：顶层 `model` 是连接器从**活 agent** 读的
+          // （`connector/src/dsh/models.ts` 的 `agents.get`），子会话不在那张表里 ——
+          // 于是子智能体页面的输入栏会显示「未选择」。而投影提示对每个会话都有
+          // （DSH 的 `list.ts:291-312` 不挑键；`modelSelection` 的 `lastUsed`
+          // 由 `request/header` 推出来，`model-selection-projection.ts:44-51`）。
           // **认不出就不给**（`null`），界面显示"未选择"—— 猜一个就是把
           // "看起来连着"当成"连着"。
-          model: _parseModelRef(entry['model']),
+          model:
+              _modelSelectionOf(entry['projections']) ??
+              _parseModelRef(entry['model']),
           // 工作区目录：电脑侧一直在发（`connector/src/handlers.ts` 的 `session.list`）。
           // **认不出就不给**（`null`）—— 空串会让"按工作区挑靶子"静默匹配失败。
           cwd: entry['cwd'] is String && (entry['cwd'] as String).isNotEmpty
@@ -3147,6 +3159,20 @@ class AppModel extends ChangeNotifier {
       );
     }
     return out;
+  }
+
+  /// 从 `session.list` 行的投影提示里取 `modelSelection`（`{lastUsed, next}`）。
+  ///
+  /// **`next ?? lastUsed`** 与 DSH 的线格式完全一致
+  /// （`packages/api/session-controller/src/model-selection-projection.ts:65`：
+  /// `view: state => ({lastUsed, next: state.pending ?? state.lastUsed})`），
+  /// 与 `connector/src/dsh/models.ts` 的 `modelOf` 也是同一条。
+  ///
+  /// 认不出就给 `null`（缺 `provider` / `model` 都算认不出）。
+  static ModelRef? _modelSelectionOf(Object? projections) {
+    final value = _projectionValueOf(projections, 'modelSelection');
+    if (value is! Map) return null;
+    return _parseModelRef(value['next'] ?? value['lastUsed']);
   }
 
   /// 解析 `session.list` 行里的 `model` 字段。

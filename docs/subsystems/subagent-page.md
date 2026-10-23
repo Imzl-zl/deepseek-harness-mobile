@@ -132,6 +132,8 @@
 | 切换面板 root | **当前会话的父级**（第 1~3 档的同一个值），当前行加粗 | `:802-821` |
 | 选中兄弟 | 换主对话区（`openChild`），父级跟着数据变 | `ui-subagent/src/client/index.ts:61-63` |
 | 点当前行 | 只关面板，**不重开自己**（一次 `session.subscribe` 都不发） | 有意偏离（见下 4） |
+| 输入栏模型 | `modelSelection` 投影（`next ?? lastUsed`），**优先取行里的投影提示** `projections.values.modelSelection`，退到连接器的顶层 `model` | `AppModel._parseSessionList` / `currentModel`；DSH 的 composer 读的也是会话的 `modelSelection` |
+| 只读档的 mode | 取自**产出那一行的那条目录**（`subagentParentOfCatalogEntry(node.id)`），不是"当前会话的父级" —— 从面板往下钻时两者不同 | `_switchSibling`；判据 `subagent_enter_test.dart` 的"一次性 / 模式未知"到底哪一档 |
 | 目录读失败 | 顶栏计数 chip 仍出现（前导图标换成重试），面板里给「无法加载子智能体 / 重试」 | DSH 的 `visible`：`:617-631` |
 | 系统返回 | 子会话里回父会话；抽屉开着时先关抽屉；其余情况不拦 | `pop_scope.dart:83-96`、`drawer.dart:526-546` |
 
@@ -282,4 +284,7 @@ DSH 的根会话不给面包屑（`:801`），我们同一条：没有父级 ⇒
 | H5 面板 root = 真正的父级 | 过 | `v5-switcher-child.png`：子会话的切换面板只列它自己那一层（父级的直接子级）；孙级的面板同样只列它自己那一层 —— 旧实现里孙级面板会列出**祖父的子级** |
 | H6 点当前行不进自己 | 过 | `v11-current-row-tap.png`：点当前行后浮层关掉、仍在该子会话；单测同时钉住"一次 `session.subscribe` 都没多发" |
 | H7 根会话没有面包屑 | 过 | `v9` 的左侧是 `☰`（`打开会话抽屉`），不是 `←` |
+| H8 子会话输入栏显示模型 | 过 | `w5-child-model.png` / `w8-child-model.png`：模型 chip 是 `auto`（修之前同一屏是「未选择」） |
+| H9 孙会话输入栏显示模型、且不是只读框 | 过 | `w9-grandchild-model.png`：`auto` + 正常输入栏（进入方式正是"面板下钻"，旧代码会把可续聊的孙级显示成「暂时只读」） |
+| H10 顶层会话的模型不受影响 | 过 | `w10-parent-model.png`：`Nested Subagent Spawn Test` 的模型 chip 仍是 `auto` |
 
