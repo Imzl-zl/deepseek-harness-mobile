@@ -92,6 +92,14 @@
 > （显示别人的数字比空一拍更坏）；同一会话重读失败仍保留旧值（"刷新不闪空"不变）。
 > 笔记 `implemented/2026-10-23-projections-belong-to-a-session.md`；真机 `y3|y4|y5-*.png`
 > 三层数字各自不同。门禁：flutter **1120**。
+>
+> **同日审查（只读，未改代码）**：三笔提交查出 4 条 Important + 7 条 Minor，**无 Critical**，
+> 开工单 `.agents/notes/proposed/2026-10-23-subagent-parent-and-model-truth-review.md`
+> （含新会话提示词、判据、变异校验、被否的替代）。两条代码项是同一个病根 ——
+> 同一事实两处取数：**模型**（连接器读 state、App 读 wire view ⇒ 顶层 `model` 永远只是
+> lastUsed）与**父级/mode**（树知道，却回目录里再查、还全表扫描反推 ⇒ 刷新窗口里点孙级
+> 显示「暂时只读」）。另两条是文档与代码相反（`remote-channel.md` 的 `session.list` 行、
+> `subagent-page.md` §7.3 D2 把已修的 refetch 缺口写成"发现缺口"）。**0 个真机回合**。
 
 待办（按顺序）:
 
