@@ -1,6 +1,45 @@
 # Agent Note: 开工单 W4 —— 运行态改读原生（`api-session/status`），删掉 App 侧的"重建 + 代号"
 
-Status: proposed
+Status: proposed（**执行计划已核实触点**，代码未动）
+
+## 落地顺序（先读这条）
+
+线上帧词汇是**两侧各有一份清单**：电脑侧 `connector/src/protocol/frame.ts:114-130` 的
+`WireFrame` 联合 + `FRAME_TYPES`（`:43`），手机侧 `app/lib/core/frame.dart:38` 的 `frameTypes`。
+手机的解码器**不拒收**未知类型：没有 `id` 的认不出帧归 `IgnoredFrame`，有 `id` 的归
+`UnsupportedFrame`（回到对端一条错误应答）—— `frame.dart:272-276`。所以严格说
+**可以**先发后收；但本单仍然**两侧同一个提交**：它是一件事（一个行为变化），
+而且"手机遇到不认识的帧就忽略"是**兼容路径**，不该被我们当成发布策略来依赖。
+
+## 已核实的触点（下一轮照着改，不用再找）
+
+### 电脑侧（5 处 + 2 条测试）
+
+| 位置 | 改什么 |
+|---|---|
+| `connector/src/protocol/frame.ts:114-130` / `:43` | `WireFrame` 加一支 `{ v: 1; t: 'status'; sid: string; fc: number; box: string }`；`FRAME_TYPES` 加 `'status'`（与 `ev` / `live` / `job` 同一档：**带 box、带 fc**） |
+| `connector/src/protocol/codec.ts` | 帧校验按 `FRAME_TYPES` 走，多半无需改；跑 `pnpm test` 见红再补 |
+| `connector/src/connection-scope.ts` | 给 `ConnectionScope` 加 `sendStatus(sid: string, running: boolean): boolean`，实现走它自己的 `port.send`（与 `send` 闭包同一处，不要新开一条出帧口） |
+| `connector/src/index.ts`（`accept:` 回调，`:961-968`） | 挂一个**挂载级** `Set<ConnectionScope>`：accept 时加、连接收口时删（`stop` 里删）。这是本轮唯一的结构性新增 —— 现在没有"所有活连接"的册子 |
+| `connector/src/index.ts`（`start-transport` 段，`sessionBuffer` 附近） | `ctx.on('api-session/status', (sessionId, running) => …)`：`sessionId` 经别名表换成 `sid`（未登记就丢），逐个 `sendStatus`。**它是 host 侧同一条 Cordis 事件**（`api-remotes` 转发的也是它，`remote-events.ts:33`） |
+
+测试：`connector/tests/` 加两条 —— ① 一条 `api-session/status` 产生一帧 `status`（假连接 + 真 scope）；
+② 未登记给手机的会话不发。帧层再加一条"`status` 帧能编码/解码"（若 `frame.ts` 的测试有统一表就加一行）。
+
+### 手机侧（4 处 + 2 条测试）
+
+| 位置 | 改什么 |
+|---|---|
+| `app/lib/core/frame.dart:38` | `frameTypes` 加 `'status'` |
+| `app/lib/core/sync_client_impl.dart:562-566` | `_onLine` 的类型分派加 `case 'status'`：解 `{sid, running}`，推给一个新的 `Stream<SessionStatus>`（与 `sessionUpdates` 同形） |
+| `app/lib/core/sync_client.dart` | 加 `Stream<SessionStatus> get sessionStatus`（契约里是"瞬时事实"，不进条目流） |
+| `app/lib/data/app_model.dart` | 订阅它 → `_runningSids.add/remove`；**删** `_turnGeneration`（`:2738-2751`）、`_applySessionList` 的 `reconcileRunningFrom` 分支（`:1918-1932`）、`runningOf` 注释里那套"唯一真值"的长解释改成"宿主推的"；`turn/start` 仍用于 `_turnStartedAt`（活时钟） |
+
+测试：`app/test/running_reconnect_test.dart` 6 条里 ——
+②④（"断线期间收口的一轮，重连后停"）改写成"`status{false}` 帧到达即停"；
+③（"旧快照不许钉死 true"）删掉（快照不再参与判定）；
+①（首包只补不撤）改成"首包 `session.list.running` 只作为**还没有帧时**的初值"；
+⑤⑥（代号护栏）删掉。`app/test/shimmer_test.dart` 驱动 running 的地方改成喂帧。
 
 ## Problem
 
