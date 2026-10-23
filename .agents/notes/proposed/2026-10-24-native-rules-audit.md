@@ -1,6 +1,26 @@
 # Agent Note: 「我们替 DSH 做了决定」总账 —— 已逐条求证 + 归类
 
-Status: proposed（**结论已求证**；4 件待开工 + 1 批零碎，见文末"开工单"）
+Status: proposed（**结论已求证**；9/11 已落地，剩 W3、W4）
+
+## 落地进度（2026-10-24，每件一个提交）
+
+| 单 | 状态 | 提交 / 笔记 |
+|---|---|---|
+| W1 身份面改读原生 | ✅ | `4acb23c` · `implemented/2026-10-24-interaction-identity-from-native-ids.md` |
+| W2 换代不撤在途 claim | ✅ | `1ba20a0` · `implemented/2026-10-24-claims-survive-stream-generation.md` |
+| Z1 删 `full-access` 审批过滤 | ✅ | `cdc9aa9` |
+| Z2 删 `presence.onOffline` | ✅ | `55ea630` |
+| Z3 匿名限流按来源地址分桶 | ✅ | `eee1569` |
+| Z4 删 `relay.stats.devices` | ✅ | `bbfa5f7` |
+| Z5 配对码输入关联想 | ✅ | `67d0397` |
+| Z6a 预设文案跟上 DSH | ✅ | `748edcf` |
+| Z6b IPv6 仅排后写进 §15 | ✅ | `e1a421a` |
+| **W3 终态只有一个来源** | ⏳ | 需 1–2 个真机回合验证恢复路径（已报价，**等用户点头**） |
+| **W4 运行态改读原生** | ⏳ | 要加一条契约帧（最大一件），1 个真机回合 |
+
+门禁（9 件落地后）：protocol **454·26·49**、boundary **360**、connector **615**、
+relay **87**、flutter **1141**、analyze/format **0**、icons / tool-paths 绿。
+真机回合：**0**（W3/W4 的验证另计）。
 
 ## 这一轮做了什么
 
