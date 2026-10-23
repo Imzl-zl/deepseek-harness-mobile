@@ -202,6 +202,10 @@
    失败如实报（`SessionPage.failure`）。真机实验：把 `refetchThresholdBytes` 调到 1，
    61 条消息的会话滚到顶 → 翻页 + 逐条补取 → **会话开头（系统提示词 + 第一句 prompt）出现在手机上**。
 10. ~~失败回合没有"手动重试"入口~~ **不做**：DSH Web 的 `ui-conversation` 也没有这个入口。
+11. **交互在延迟下的形态（提案，待点头）** —— P1 App 失败分类（传输失败留卡可重试、失败不写成功回执）、
+    P2 连接器"提问不因手机断开立刻失败"（只有看护超时 / 取消才收束；依据：`onOffline` 在**重连中**
+    也触发，而提问的 claim 是独占的，抛错只会让工具失败）、P3 可选 timed（桌面倒计时 + 模型 120 s
+    后继续）。方案与代价见 `.agents/notes/proposed/2026-10-23-mobile-interaction-under-latency.md`。
 
 别当缺口（定案，别再试）:
 
