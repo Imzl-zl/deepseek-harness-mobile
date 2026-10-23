@@ -1669,6 +1669,14 @@ class AppModel extends ChangeNotifier {
   String? get dshVersion => _dshVersion;
   String? _dshVersion;
 
+  /// 斜杠命令白名单（`repo.info.commands`，**电脑侧原样过线**）。
+  ///
+  /// 空表 = **不知道**（老连接器不报这个键）⇒ `/` 不出候选菜单。
+  /// **手机侧不抄第二份**：抄一份的后果是电脑侧加了第三条命令，手机菜单里永远没有它
+  /// （同一个事实两处表达必然漂）。判据与取舍在契约 §5.7 的 `repo.info` 行。
+  List<String> get slashCommands => _slashCommands;
+  List<String> _slashCommands = const <String>[];
+
   /// 读一次 `repo.info`（排错要它：手机版本与电脑版本并排看）。
   ///
   /// 连接器只在**拿得到宿主运行时版本**时才报这个字段（见
@@ -1679,6 +1687,15 @@ class AppModel extends ChangeNotifier {
       final result = await client.call<Object?>('repo.info', const {});
       final version = result is Map ? result['dshVersion'] : null;
       _dshVersion = version is String && version.isNotEmpty ? version : null;
+      // 白名单与版本同一口读：都是"电脑侧说了算"的只读事实。没有这个键
+      // （老连接器）就清空 —— 菜单不出，而不是拿手机里的一份旧名单凑。
+      final commands = result is Map ? result['commands'] : null;
+      _slashCommands = commands is List
+          ? commands
+                .whereType<String>()
+                .where((c) => c.isNotEmpty)
+                .toList(growable: false)
+          : const <String>[];
       if (!_disposed) notifyListeners();
     } catch (error) {
       _dshVersion = null;

@@ -403,7 +403,7 @@ type SyncSnapshot = {
 | `workspace.insertBefore` | 手机→电脑 | `requestId` | 把一个**工作区**挪到另一个之前(侧栏项目头的上下位置;不改会话归属,也不动组内会话顺序)。线上请求 `{workspaceId, beforeWorkspaceId?}`(`beforeWorkspaceId` 缺省 = 移到末尾)。DSH 的 `insertBefore`(`index.ts:135-145` → `commands.ts:108-125`,DSH 侧请求 `{workspaceId, beforeWorkspaceId?}`,`types.ts:97-105`)。返回**整份** `{workspaceIds}`(注册表顺序),手机据此重排分组。与 `workspace.insertSessionBefore` 是两条:**那条改组内会话顺序,这条改工作区自己的顺序**。Web 拖动项目头调的就是它 |
 | `sync.hello` | 手机→电脑 | — | §5.4 的恢复握手。**两个职责**:① 一次声明整份订阅集(手机回到前台时要恢复的是"所有会话",不是一个;断线之后 UI 不会重新 `subscribe`,所以恢复由持有连接的这一层发起);② 上报前后台态(`app`)。每个声明的会话都走同一个 `session.subscribe` 的订阅面,不另起一套恢复语义;失败语义与它逐字一致(一个别名未知就整票失败并回 `session/not-found`) |
 | `endpoint.describe` | 手机→电脑 | — | **端点自报**:当前可拨的地址表(`{ endpoints: [{kind,url,label?}] }`,`kind` ∈ `relay`/`direct`)。没有直连监听面时这个方法**不出现**(能力位 `caps.direct` 为 false),而不是挂上去回 `connector/unsupported`。手机据此建"连接方式"列表,并在 IP 变了之后自愈 —— 顺序即偏好(`direct` 先于 `relay`)。取舍与被否方案(二维码字段 / mDNS / 手填 / 塞进 `sync.hello`)见 `.agents/notes/implemented/2026-10-14-endpoint-switching-lan-direct.md` |
-| `repo.info` | 手机→电脑 | — | 版本、能力位、别名→会话元的映射版本 |
+| `repo.info` | 手机→电脑 | — | 版本、能力位、别名→会话元的映射版本。**`commands` 是斜杠命令白名单**(`connector/src/handlers.ts` 的 `MOBILE_COMMANDS` 原样过线,手机据此画 `/` 候选菜单) —— 手抄一份就是第二真值;老连接器不给这个键 ⇒ 不出菜单(那是"不知道",不是"没有命令可用") |
 | `session.create` | 手机→电脑 | `requestId` | 新建会话。**与 Web 同一个 DSH 方法**(`session-controller/src/index.ts:280`,请求形状 `{workspaceId?, cwd?, sessionId?, agentPreset?}`,回 `{sessionId, agentPreset?}`)。**`workspaceId` / `cwd` 都不传**:手机侧不知道电脑有哪些工作区(那要另接 `workspace-controller`),而不传时 DSH 用它自己的当前工作区 —— 与 Web 点"新建会话"一致;硬传一个猜的比不传更糟。**只在给了参数时才进请求体**:DSH 对缺省字段有自己的默认,塞空串会被当成"显式选空" |
 
 **没有 `push.configure`**（刻意不声明）。推送本期不做——正确性靠"回前台补课"(I6),

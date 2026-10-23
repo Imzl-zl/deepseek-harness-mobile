@@ -67,8 +67,9 @@ export interface DeviceRow {
  * 3. **没有已存在的窄口**：`/permission` 的写入口是 `permission.switch`，
  *    同一个状态不开第二条路。
  *
- * 名单**只有这一处**：手机侧不抄第二份（它只按"以 `/` 开头"分流，认不认识由这里判），
- * 所以电脑侧加一个名字，手机上立刻能发；拿掉一个名字，手机收到的是
+ * 名单**只有这一处**：手机侧不抄第二份 —— 它按"以 `/` 开头"分流发给 `command.execute`，
+ * 候选菜单要画的名字由 `repo.info.commands` **原样过线**（同一份 `MOBILE_COMMANDS`）。
+ * 所以电脑侧加一个名字，手机上的菜单立刻多一行；拿掉一个名字，手机收到的是
  * `connector/unsupported` + 一句人话，而不是"电脑不认识这条命令"。
  *
  * 取舍（为什么是白名单而不是推翻 §5.7 的通用命令面、为什么第 2 条同时是幂等的依据）见
@@ -1219,6 +1220,13 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       ? {}
       : { dshVersion: deps.dshVersion() }),
     methods: Object.keys(handlers).sort(),
+    // **斜杠命令白名单原样过线**（候选菜单用）。仍然是**一处**真值：
+    // 手机上那张菜单只画这里给的名字，加/减一个名字不需要改手机。
+    // **只在 `command.execute` 真的挂上时才报**：报一个调不通的名字，就是
+    // 契约 §5.7 表后那句"多一个必然失败的按钮"。
+    ...(handlers['command.execute'] === undefined
+      ? {}
+      : { commands: [...MOBILE_COMMANDS] }),
   })
 
   return handlers

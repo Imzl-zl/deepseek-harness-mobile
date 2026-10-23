@@ -157,7 +157,11 @@ class DshComposer extends StatelessWidget {
     this.running = false,
     this.onStop,
     this.hintText = kComposerHintDefault,
+    this.slashCommands = const <String>[],
   });
+
+  /// 斜杠命令白名单（`repo.info.commands`，契约 §5.7）。空表 = 不知道 ⇒ 不出菜单。
+  final List<String> slashCommands;
 
   /// 占位符。默认是普通会话那句；hero（blank 会话）传 [kComposerHintHero]。
   final String hintText;
@@ -312,6 +316,17 @@ class DshComposer extends StatelessWidget {
                   ],
                 ),
               ),
+
+            // ---- `/` 候选：**只在命令名打了一半时出现** ----
+            //
+            // 候选**只来自电脑侧**（`repo.info.commands`，契约 §5.7）：手机侧
+            // 不抄第二份名单 —— 抄了就是同一个事实两处表达，电脑侧加一条命令
+            // 这里永远看不到。空表（老连接器）= 不出菜单，不是"没有命令"。
+            _SlashSuggestions(
+              controller: controller,
+              commands: slashCommands,
+              enabled: enabled,
+            ),
 
             // ---- 文字行：**独占一行**（硬规则 2）----
             TextField(
@@ -987,6 +1002,111 @@ class _StatChip extends StatelessWidget {
                 style: TextStyle(fontSize: 11, color: c.labelCaption),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 输入框里"命令名打了一半"的查询串；`null` = 不该出候选。
+///
+/// 判据只有两条：整段文本**以 `/` 开头**，且**还没有空白**（有空白说明命令名
+/// 打完了、后面在写参数）。**不在正文中间找 `/`** —— DSH 的斜杠命令只在行首
+/// 成立（`input-trigger` 的 `CommandClaim` 同一条），路中间出现一个 `/` 是普通文本。
+String? slashQueryOf(String text) {
+  if (!text.startsWith('/')) return null;
+  final body = text.substring(1);
+  if (body.contains(RegExp(r'\s'))) return null;
+  return body;
+}
+
+/// 候选菜单：一条命令一枚胶囊，点了就把 `/名字 ` 填进输入框。
+///
+/// 它读 `controller`（`ValueNotifier<TextEditingValue>`），所以输入一个字就会重算，
+/// 不需要上层 `setState` —— 输入栏是 `StatelessWidget`，让父层为每个按键重建
+/// 会把整页统计条也带着重画。
+class _SlashSuggestions extends StatelessWidget {
+  const _SlashSuggestions({
+    required this.controller,
+    required this.commands,
+    required this.enabled,
+  });
+
+  final TextEditingController controller;
+  final List<String> commands;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled || commands.isEmpty) return const SizedBox.shrink();
+    final c = context.dshColors;
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: controller,
+      builder: (context, value, _) {
+        final query = slashQueryOf(value.text);
+        if (query == null) return const SizedBox.shrink();
+        // 名单是电脑侧给的，可能带或不带前导 `/`：比对时统一去掉。
+        final matched = [
+          for (final name in commands)
+            if (name.replaceFirst('/', '').startsWith(query))
+              name.replaceFirst('/', ''),
+        ];
+        if (matched.isEmpty) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 2),
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final name in matched)
+                _SlashChip(
+                  key: ValueKey<String>('slash-$name'),
+                  label: '/$name',
+                  color: c,
+                  onTap: () {
+                    final text = '/$name ';
+                    controller.value = TextEditingValue(
+                      text: text,
+                      selection: TextSelection.collapsed(offset: text.length),
+                    );
+                  },
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SlashChip extends StatelessWidget {
+  const _SlashChip({
+    super.key,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  final String label;
+  final DshColorTokens color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: color.layer2,
+      borderRadius: BorderRadius.circular(DshRadius.sm),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 30, minWidth: 44),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            style: TextStyle(fontSize: 12, color: color.labelPrimary),
           ),
         ),
       ),

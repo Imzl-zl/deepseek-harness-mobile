@@ -14,7 +14,9 @@
  * 6. **白名单**：不在名单里的名字回 `connector/unsupported` 且**不去问 DSH**；
  *    不是命令形状的行**照原样交给宿主**（别自己发明语法）；
  * 7. **坏参数 → `protocol/bad-frame`**，未知 sid → `session/not-found`（都不去问 DSH）；
- * 8. **没有活动 agent → `internal`**（不是 `session/not-found`：那会让手机把会话删掉）。
+ * 8. **没有活动 agent → `internal`**（不是 `session/not-found`：那会让手机把会话删掉）；
+ * 9. **白名单原样过线**（`repo.info.commands`）：手机侧画候选菜单只画这里给的名字，
+ *    而 `command.execute` 没挂时**连 `commands` 这个键都不报**。
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -279,4 +281,24 @@ test('commandLine 缺席时方法不挂（repo.info 自然也不报）', () => {
   assert.equal(handlers['command.execute'], undefined, '能力位为 false 时不该挂（契约 §7）')
   const info = handlers['repo.info']!({}, undefined as never) as { methods: string[] }
   assert.equal(info.methods.includes('command.execute'), false)
+  // **不报一个调不通的名单**：没有 `command.execute` 就没有 `commands`
+  // （契约 §5.7 表后："多一个必然失败的按钮"）。
+  assert.equal('commands' in info, false)
+})
+
+test('repo.info 报斜杠命令白名单（原样过线，手机据此画候选菜单）', () => {
+  const { runner } = spyRunner()
+  const handlers = createHandlers({
+    ...depsWith(runner),
+    caps: () => ({
+      sessions: true, storage: true, approval: false, questions: false,
+      jobs: false, subagents: false, settings: false, credentials: true, direct: false,
+    }),
+    aliasVersion: () => 0,
+  } as unknown as HandlerDeps)
+  const info = handlers['repo.info']!({}, undefined as never) as {
+    commands?: string[]
+  }
+  // 与 `MOBILE_COMMANDS` **同一份**：手机侧不抄第二份，加一个名字这里就多一项。
+  assert.deepEqual(info.commands, ['goal', 'plan'])
 })

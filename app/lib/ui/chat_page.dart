@@ -844,6 +844,9 @@ class ChatPageState extends State<ChatPage> {
                   DshComposer(
                     controller: _input,
                     attachments: _attachments,
+                    // 候选菜单的名单来自电脑侧（`repo.info.commands`）——
+                    // 手机侧不抄第二份（契约 §5.7 的 `repo.info` 行）。
+                    slashCommands: widget.app.slashCommands,
                     // 模型名与推理等级：**从真投影来**（见 `_modelLabel`）。
                     // 推理等级同样不写死：模型自带 effort 时显示它，否则显示"默认"。
                     modelName: _modelLabel,
