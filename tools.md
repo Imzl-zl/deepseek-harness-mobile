@@ -195,7 +195,7 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
   - `cd app; flutter run -d windows` —— **桌面调试**。本机 VS 18 + MSVC + Windows SDK 齐全,所以 UI 与状态机**不需要模拟器、不需要真机**
   - lint 规则集在 `app/analysis_options.yaml`,**每条都写了它针对的具体失败模式**(不是"更严格就好");改它要连注释一起改
   - 新增依赖前先看 `.agents/notes/implemented/2026-10-02-mobile-core-crypto-choice.md` 的选型闸门
-- 工具脚本路径门禁(不需要浏览器):`node mock/proto/tools/verify-tool-paths.mjs` —— 扫 `mock/proto/tools/*.mjs` **与 `app/tools/*.mjs`**(2026-10-16 起,共 **22** 个),**3 条规则**:① 禁 `file:///` + 盘符的字面量;② 禁 `C:\sudy` / `C:/sudy`(旧环境根);③ **禁任何盘符字面量**(`\b[A-Za-z]:[\\/]`)—— 确实需要写死的那两处(`extract-dsh-icons.mjs` 的 DSH 默认路径、`shoot.mjs` 截图夹具里的假 cwd)在**紧挨着的上方注释块**里标 `allow-hardcoded-path: <原因>` 豁免,**例外必须显式**(变异校验过:去掉标记立刻红)。**本仓库内的路径必须从 `import.meta.url` 派生**;理由与代价见 `.agents/notes/implemented/2026-10-02-paths-must-be-derived-not-hardcoded.md`(一次搬盘让 11 个脚本的 `PAGE` 全部指向不存在的 URL,而门禁是**静默全红**:脚本照常跑完、照常打印 JSON)
+- 工具脚本路径门禁(不需要浏览器):`node mock/proto/tools/verify-tool-paths.mjs` —— 扫 `mock/proto/tools/*.mjs` **与 `app/tools/*.mjs`**(2026-10-16 起,共 **23** 个),**3 条规则**:① 禁 `file:///` + 盘符的字面量;② 禁 `C:\sudy` / `C:/sudy`(旧环境根);③ **禁任何盘符字面量**(`\b[A-Za-z]:[\\/]`)—— 确实需要写死的那两处(`extract-dsh-icons.mjs` 的 DSH 默认路径、`shoot.mjs` 截图夹具里的假 cwd)在**紧挨着的上方注释块**里标 `allow-hardcoded-path: <原因>` 豁免,**例外必须显式**(变异校验过:去掉标记立刻红)。**本仓库内的路径必须从 `import.meta.url` 派生**;理由与代价见 `.agents/notes/implemented/2026-10-02-paths-must-be-derived-not-hardcoded.md`(一次搬盘让 11 个脚本的 `PAGE` 全部指向不存在的 URL,而门禁是**静默全红**:脚本照常跑完、照常打印 JSON)
 - **adb 无法往 MIUI 的第三方输入法里注入长字符串**（2026-10-15 实测，白绕了半小时）：
   这台设备（`d61cf622`，Android 16）只装了三个第三方输入法（百度/讯飞/搜狗），**没有 AOSP 键盘**。
   `adb shell input text '<330 字节 JSON>'` 会被输入法当成**一个词组做组合输入**：`{`、`"` 被丢弃，
@@ -220,12 +220,13 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
 - 起独立 headless Chrome(不碰日常浏览器,默认端口 9400):`pwsh -File mock/proto/tools/cdp.ps1 -Port 9400`
 - 设环境后跑验证:`$env:CDP_URL='http://127.0.0.1:9400'; $env:NO_PROXY='127.0.0.1,localhost'`
   - `node mock/proto/tools/verify-proto.mjs` —— 布局与交互(顺序、控件位置、搜索过滤、动画、遮罩)+ **顶栏与统计条 13 项断言**(2026-10-17 补:标题 ≤140/13px、计数 chip 在顶栏且与标题同行、chip 可见文案只有计数而 aria 带 DSH 全文本、统计条 `nowrap`+`overflow-x:auto`+三项同一行+轮次格照 `stats.counts`)+ **新会话页 hero 18 项**(2026-10-17 补:按 ⊕ 落到 blank → hero 显示 / `#msgs` 藏起 / 占位符换 `placeholder.hero` / 标题「探索未至之境」/ 徽标「预览版」/ 鱼宽 34 / 标题 24px / 徽标等宽 / 两枚 chip 高 ≥44 且同一行且都在输入卡片上方 / 两个选择器选完名字真的变 / 打开有内容的会话就离开这一屏)。**此前它只 dump JSON、从不断言**,跑过了看起来永远像没问题
-  - `node mock/proto/tools/verify-drawer.mjs` —— 会话抽屉行动作,**14 项**(长按菜单四项 / 无删除入口 / 置顶标记 / 上移边界 / 下移 / 置顶与取消置顶 / 归档移除)
+  - `node mock/proto/tools/verify-drawer.mjs` —— 会话抽屉行动作,**25 项**(长按菜单四项 / 无删除入口 / 置顶标记 / 上移边界 / 下移 / 置顶与取消置顶 / 归档移除)
   - `node mock/proto/tools/verify-authz.mjs` —— **授权矩阵 18 项**,必须 0 失败
   - `node mock/proto/tools/verify-picker.mjs` —— 选择类列表列固定
-  - `node mock/proto/tools/verify-settings.mjs` —— 设置页导航/控件/边界回归,**28 项**(首页分组顺序 + 通用页 11 行顺序 + 关于页连接方式两组端点)
+  - `node mock/proto/tools/verify-settings.mjs` —— 设置页导航/控件/边界回归,**28 项**(首页分组顺序 + 通用页 12 行顺序 + 关于页连接方式两组端点)
   - `node mock/proto/tools/verify-tasks.mjs` —— 对话 dock(目标 / 任务清单)+ 自动化任务页,53 项
   - `node mock/proto/tools/verify-subs.mjs` —— 右抽屉「子智能体」**目录树**,**41 项**(root 只有直接子级 / 展开才读 / 三态三句话 / 已知空叶无展开钮 / external 不可进入 / 行规格:活动点 · 第二行 · token · 行尾 44×44 / 收起连带整枝 / 点行 = 进入)。判据出处 `docs/subsystems/subagent-page.md` §2/§3/§3.1
+  - `node mock/proto/tools/verify-turns.mjs` —— 会话流**轮组**(turn 分组 + 可折叠过程),**60 项**(未归属组永不折叠 / 收口后默认收起且只藏过程 / 点组头展开再收起 / 组头文案三段与用量复制 / 一个 turn 只有一个助手头且命令卡与压缩卡不拿头 / 审批提问卡不随收起 / 运行中的一轮没有组头 / 打断也是收口 / 「工作步骤收起时机」两档与手动优先)。判据出处 `docs/subsystems/turn-groups.md` §1/§2/§2.1/§3/§5
   - `node mock/proto/tools/measure-composer.mjs` —— 量输入区控件几何
   - `node mock/proto/tools/shoot.mjs` / `shoot-composer.mjs` / `shoot-picker.mjs` / `shoot-settings.mjs` / `shoot-tasks.mjs` —— 截图到 `mock/proto/shots/`
 - 语法检查:`node --check mock/proto/app.js`(同 `interactions.js`、`tools/*.mjs`)

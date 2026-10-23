@@ -115,14 +115,26 @@
 > 笔记 `implemented/2026-10-23-proto-subagent-panel-tree.md`；
 > `docs/subsystems/subagent-page.md` 的 §6 第 3 条差异（"原型还是平的"）已删、§3.1 行字号回到 12/11、§7 加原型验证行。
 
+> **2026-10-23（本轮）原型轮组同步 + `verify-turns.mjs`** —— **0 个真机回合**（只跑 headless CDP）：
+> `#msgs` 从静态平铺改成**一轮一个 `.tgrp`**：过程条目挂 `data-proc`（CSS 只按这一个标记收起）、
+> `data-turn` 缺席 = 未归属组永不折叠、`data-closed` 才画组头；组头照落地端 `TurnProcessRow`
+> （`第 N 轮` + 统计三段 + 用量 / 复制 pill，落在轮次末尾 —— §4 已定案的有意偏离）。
+> 助手头改成**每组一个、轮次开头**（头像 = 鲸鱼、名字 = `DeepSeek Harness`、不再挂模型名）；
+> 补了系统提示词 / 上下文注入 / 斜杠命令卡 / 压缩卡四种行（§2.1 的三条细节要靠它们才看得见）；
+> 发送流程 `beginTurn` → `finishTurn`（运行中无组头、不可折）；审批 / 提问回执并进最后一组；
+> 设置页补「工作步骤收起时机」两档（`next-input` 判据 = 最后一组；手动点过优先）。
+> 顺手修：统计条第一格在发送后曾被写成 `第 1 轮 · 3 步`（与 DSH `stats.counts` 冲突、同一句两处写）
+> ⇒ 记住初值还原。新脚本 `mock/proto/tools/verify-turns.mjs` **60 项**。
+> 笔记 `implemented/2026-10-23-proto-turn-groups-and-verify-turns.md`；
+> `docs/subsystems/turn-groups.md` §2 补"内联 diff / 变更文件 / 过程产出的图片"、§3 补箭头朝向、§6 补原型判据。
+> **箭头方向**照 DSH/落地端（收起朝下、展开朝上）—— 开工单里"收起后箭头朝右"与两侧真值冲突，未采用。
+
 待办（按顺序）:
 
 1. **轮组阶段 1 已落地**（整轮分组 + 折叠过程 + 「工作步骤收起时机」两档）——
    `docs/subsystems/turn-groups.md` 是现状，因果见
    `implemented/2026-10-22-turn-groups-phase-1.md`（原方案移入 `archived/`）。
-   剩下三件：
-   - **原型 `mock/proto` 未同步**：落地端领先，原型没有轮组形态（与「子代理面板未跟上」
-     同一类待办，按 `mock/proto/AGENTS.md` 一次做完才算收口）；
+   原型已追平（`verify-turns.mjs` 60 项）。剩下两件：
    - **阶段 2「语义过程组」**（已完成分析 / 执行了命令）：暂不做，390dp 上两层组头
      要两次点击才看到正文；
    - **收起/展开不改滚动位置**：`reverse: true` 的格数一变，点开的那一轮可能在屏幕外。
@@ -297,12 +309,12 @@
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **357 项**（22 条规则自检 + 扫 98 个 Dart 文件） |
-| `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 22 个工具脚本无硬编码盘符 |
+| `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
 | `cd app && flutter test` | **1121 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **587 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
-| CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**） |
+| CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 
 **项数的唯一出处是 `tools.md`**；**改断言必须做一次变异校验**（故意破坏不变量，确认**恰好**那一条红）。
 
@@ -332,3 +344,5 @@
   `2026-10-23-connector-model-from-wire-view.md`、`2026-10-23-subagent-parent-and-mode-from-the-layer.md`。
 - 2026-10-23 原型子智能体面板同步落地端（目录树 + 三态 + 44×44 + 收起整枝）+ `verify-subs.mjs` 41 项 ——
   `2026-10-23-proto-subagent-panel-tree.md`。
+- 2026-10-23 原型轮组同步落地端（一轮一个可折叠组 + 一个助手头 + 「工作步骤收起时机」）+
+  `verify-turns.mjs` 60 项 —— `2026-10-23-proto-turn-groups-and-verify-turns.md`。
