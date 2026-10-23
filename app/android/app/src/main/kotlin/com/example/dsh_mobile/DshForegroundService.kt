@@ -42,7 +42,10 @@ class DshForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         DshNotifications.ensureChannels(this)
         val title = intent?.getStringExtra(EXTRA_TITLE) ?: "DeepSeek Harness"
-        val text = intent?.getStringExtra(EXTRA_TEXT) ?: "正在后台保持与电脑的连接"
+        // **不写"正在保持连接"**：进程被系统冻结 / 被 ROM 杀掉时那句话就是假的
+        // （2026-10-24 真机实测：`isFreezeExempt=false`，锁屏几分钟后连接就断了）。
+        // 这条通知只承诺"保活开着"，连接状态以 App 内为准。
+        val text = intent?.getStringExtra(EXTRA_TEXT) ?: "后台保活已开启"
         val notification = DshNotifications.buildRunning(this, title, text)
         if (Build.VERSION.SDK_INT >= 34) {
             // 类型只能在 34+ 用（`FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING` 是 API 34

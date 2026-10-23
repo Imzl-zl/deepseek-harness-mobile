@@ -2187,7 +2187,9 @@ class AppModel extends ChangeNotifier {
     if (want && !status.keepAlive) {
       await port.startKeepAlive(
         title: 'DeepSeek Harness',
-        text: '正在后台保持与电脑的连接',
+        // **不承诺"连接还在"**：进程会被系统冻结 / 被 ROM 杀掉，那时这句话就是假的
+        // （2026-10-24 真机实测，见 `docs/subsystems/notifications.md` §2）。
+        text: '后台保活已开启',
       );
     } else if (!want && status.keepAlive) {
       await port.stopKeepAlive();

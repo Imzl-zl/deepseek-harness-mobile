@@ -28,6 +28,28 @@ App 退到后台之后还能不能提醒、以及靠什么保住那条连接。
 需要 `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_REMOTE_MESSAGING` 两条权限，manifest 里
 `android:foregroundServiceType="remoteMessaging"` 必须与 `startForeground` 传的常量一致。
 
+### 2.1 真机量测：小米 `23113RKC6C` / MIUI OS3.0 / Android 16（2026-10-24）
+
+| 时刻 | 系统侧真值 | 手机到中转的 WS |
+|---|---|---|
+| 退后台 6 s | `isForeground=true foregroundId=1001 **types=0x00000200**`；`foregroundNoti` 在 `dsh_running`（`ONGOING_EVENT｜FOREGROUND_SERVICE｜SILENT`）；两个渠道都在（`dsh_attention` importance 3 / `dsh_running` importance 2 且 `mShowBadge=false`） | 有 |
+| 熄屏 2 分（`Dozing`） | `isForeground=true types=0x00000200`（服务还在）；**进程 `ps` 显示 `do_freezer_trap`**，`curProcState=4 mHasForegroundServices=true` 而 **`isFreezeExempt=false`** | **断**（且没自己回来） |
+| 熄屏 4 分 | **`ServiceRecord` 没了**（服务被收走） | 断 |
+| 亮屏（锁屏态） | 进程仍是 `do_freezer_trap` | 断 |
+
+同一次的对照量测：
+
+- 手机 Wi-Fi 正常（`Supplicant state: COMPLETED`、`IP 192.168.2.29`、RSSI −32），
+  `ping 192.168.2.47` 通、`curl http://192.168.2.47:8787/` 回 **405** ⇒ **不是网络问题**；
+- `dumpsys deviceidle whitelist +com.example.dsh_mobile` 之后白名单里有它，
+  但 **`isFreezeExempt` 仍是 `false`** ⇒ "关掉电池优化"这一条在本机**不足以**让它不被冻结。
+
+**结论（写进产品，不用"以后补"回避）**：`remoteMessaging` 前台服务在这台机器上**起得来、
+也真的拿到了前台服务态**，但**屏幕熄灭后进程会被系统冻结、服务随后被收走**，
+连接不会自己回来。可靠的办法只有用户在 **MIUI 自己的**「省电策略 / 自启动」里把
+这个 App 设成「无限制」—— 那是 ROM 的开关，没有公开 API，我们只能在设置里给一句说明。
+所以：**后台提醒是尽力而为，正确性仍然只承诺"回到 App 时状态正确"**。
+
 ## 3. 三类提醒（触发源全是既有语义）
 
 | 通知 | 触发源 | 能不能直接答 |
