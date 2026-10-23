@@ -1007,6 +1007,325 @@
     })
   );
 
+  /* ---------------------------------------------------------- 轮组(turn 分组 + 可折叠过程)
+     结构与判据的唯一出处:**docs/subsystems/turn-groups.md**
+     (§1 边界 / §2 折叠藏什么 / §2.1 一个 turn 只有一个助手头 / §3 什么时候可折 /
+      §5 收起时机两档 / §4 组头落在轮次末尾的有意偏离)。
+
+     原型里的三条约定:
+       · 一个 `.tgrp` = 一轮;`data-turn` 缺席 = 未归属组(历史窗口没加载到
+         这一轮的 `turn/start`),**永不折叠**(§1);
+       · 过程条目挂 `data-proc` —— CSS 只按这一个标记收起(§2),不在 JS 里再列一份;
+       · `data-closed="1"` = 已收口 ⇒ 才画组头。运行中的一轮没有组头、不可折(§3)。 */
+  const COLLAPSE_TIMINGS = [
+    { id: "completion", label: "回答结束后", desc: "轮次一收口就收起(默认)" },
+    { id: "next-input", label: "下次有新消息时", desc: "收口后仍展开,直到你发出下一句" },
+  ];
+  /* 「工作步骤收起时机」—— 与落地端 `CollapseTiming`(preferences.dart)同名同义;
+     值只存手机本地,电脑侧没有这一项。 */
+  let collapseTiming = "completion";
+  /* 用户手动展开 / 收起的轮:`轮号 → 是否展开`。**按轮号存,不按下标**
+     (新来一条消息会让下标整体挪位,展开态就落到别的一轮上)。
+     不落盘 —— 关掉页面回默认,与落地端同一条。 */
+  const turnOpen = new Map();
+
+  const turnGroups = () => $$(".tgrp", msgScroll);
+
+  /** 这一组能不能折:**有轮号 + 有过程条目 + 已收口**(§3)。 */
+  function turnCollapsible(g) {
+    return (
+      !!g.dataset.turn &&
+      g.dataset.closed === "1" &&
+      !!g.querySelector("[data-proc]")
+    );
+  }
+
+  /** 这一组此刻展开吗?三档优先:用户手动点过 → 收起时机偏好 → 默认收起。
+      与落地端 `ChatPageState._turnExpanded`(chat_page.dart)同一条。 */
+  function turnExpanded(g, index, groups) {
+    const manual = turnOpen.get(Number(g.dataset.turn));
+    if (manual != null) return manual;
+    // 「下次有新消息时」只让**最新那一组**保持展开:用户一发出下一句,
+    // 上一轮就不再是最后一组 ⇒ 收起。判据是"是不是最后一组",
+    // 不是"最后一个可折的轮"(那时新一轮还不可折)。
+    return collapseTiming === "next-input" && index === groups.length - 1;
+  }
+
+  /** 组头的统计三段(`2 分 36 秒 · 1 条消息 · 1 次工具`)。
+      **各项为 0 时不列** —— 一个 0 条消息 0 次工具的轮次只摆已有的,
+      不写一串 0(与落地端 `TurnProcessItem.statsWith` 同一条)。 */
+  function turnStats(g) {
+    return [
+      g.dataset.dur || "",
+      Number(g.dataset.msgs || 0) > 0 ? `${g.dataset.msgs} 条消息` : "",
+      Number(g.dataset.tools || 0) > 0 ? `${g.dataset.tools} 次工具` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  /** 紧凑 token 数(`10.6M` / `41.7K` / `980`):**与落地端 `formatTokenCount`
+      (session_stats.dart)同一条** —— 大于等于 100 取整,否则一位小数。 */
+  function formatTokens(n) {
+    const scaled = (v) => (v >= 100 ? String(Math.round(v)) : String(Math.round(v * 10) / 10));
+    if (n < 1000) return String(n);
+    if (n < 1000000) return scaled(n / 1000) + "K";
+    return scaled(n / 1000000) + "M";
+  }
+
+  /** 这一轮助手回复的正文(复制用)。**排除过程条目与 UI 提示行**:
+      工具卡 / diff / 文件 / 图片 / "长按消息"提示都不是"助手说的话"。 */
+  function turnCopyText(g) {
+    const md = g.querySelector(".md");
+    if (!md) return "";
+    const clone = md.cloneNode(true);
+    clone.querySelectorAll("[data-proc], [data-ui-hint]").forEach((n) => n.remove());
+    return clone.textContent.replace(/\s+/g, " ").trim();
+  }
+
+  /** 这一轮的 token 用量;三项全零 = 没有数据,**不摆 0**(同一条)。 */
+  function turnTokens(g) {
+    const inTok = Number(g.dataset.tokIn || 0);
+    const cache = Number(g.dataset.tokCache || 0);
+    const out = Number(g.dataset.tokOut || 0);
+    return { inTok, cache, out, total: inTok + cache + out };
+  }
+
+  function setIcon(el, name, size) {
+    if (!el) return;
+    el.dataset.icon = name;
+    el.innerHTML = ic(name, size || Number(el.dataset.iconSize || 16));
+  }
+
+  /** 画 / 刷新组头。**运行中的一轮没有组头**(§3),所以这里先看 `data-closed`。 */
+  function renderTurnHead(g) {
+    if (!g.dataset.turn || g.dataset.closed !== "1") return;
+    const turn = Number(g.dataset.turn);
+    let head = g.querySelector(".tgrp-head");
+    if (!head) {
+      head = document.createElement("div");
+      head.className = "tgrp-head";
+      head.innerHTML =
+        `<button class="tgrp-tgl" data-act="turn-toggle" aria-expanded="false">` +
+        `<span class="tgrp-ic" data-icon="clock" data-icon-size="13"></span>` +
+        `<span class="tgrp-n">第 ${turn} 轮</span>` +
+        `<span class="tgrp-cv" data-icon="chevronDown" data-icon-size="13"></span>` +
+        `</button>` +
+        `<span class="tgrp-st"></span>`;
+      // 用量 pill:没有用量就不摆(摆一个 `0 tok` 等于把"没数据"说成"用了 0")。
+      const tok = turnTokens(g);
+      if (tok.total > 0) {
+        const pill = document.createElement("button");
+        pill.className = "tgrp-pill";
+        pill.dataset.act = "turn-usage";
+        pill.innerHTML = `${ic("database", 12)}<span>用量 ${formatTokens(tok.total)} tok</span>`;
+        head.appendChild(pill);
+      }
+      // 复制:没有正文就不摆(复制一个空串会让人以为成功了)。
+      if (turnCopyText(g)) {
+        const pill = document.createElement("button");
+        pill.className = "tgrp-pill";
+        pill.dataset.act = "turn-copy";
+        pill.innerHTML = `${ic("copy", 12)}<span>复制</span>`;
+        head.appendChild(pill);
+      }
+      g.appendChild(head);
+    }
+    head.querySelector(".tgrp-st").textContent = turnStats(g);
+  }
+
+  /** 按当前状态刷一遍所有组:收起 / 展开、箭头朝向、aria。 */
+  function applyTurnState() {
+    const groups = turnGroups();
+    groups.forEach((g, i) => {
+      const foldable = turnCollapsible(g);
+      const expanded = foldable ? turnExpanded(g, i, groups) : true;
+      g.classList.toggle("is-folded", foldable && !expanded);
+      const tgl = g.querySelector(".tgrp-tgl");
+      if (!tgl) return; // 运行中 / 未归属:没有组头
+      tgl.setAttribute("aria-expanded", expanded ? "true" : "false");
+      tgl.setAttribute(
+        "aria-label",
+        `${expanded ? "收起" : "展开"}第 ${Number(g.dataset.turn)} 轮的过程`
+      );
+      // 箭头照 DSH:收起朝下、展开朝上(`TurnProcessNodeView.module.css:37-39`
+      // 的 `chevronDown` + `rotate(180deg)`);落地端 `chat_turns.dart` 同一条。
+      // 不可折的轮**没有箭头**:点它没有东西可收,画一个箭头是骗人点。
+      const cv = tgl.querySelector(".tgrp-cv");
+      setIcon(cv, expanded ? "chevronUp" : "chevronDown", 13);
+      cv.hidden = !foldable;
+    });
+  }
+
+  /* 正在跑的那一轮:运行中不画组头、不可折(§3);收口时补 `data-closed`。 */
+  let liveTurn = null;
+  let liveTyping = null;
+  let turnSeq = 0;
+  const LIVE_ANSWER = "已收到。这一轮在电脑端执行,手机上可以继续刷会话,完成后推送通知你。";
+
+  /** 用户那句话的气泡(附件在卡片内部上方)。 */
+  function userNode(text, files) {
+    const d = document.createElement("div");
+    d.className = "turn turn--u";
+    const list = files || [];
+    d.innerHTML =
+      `<div class="b">` +
+      (list.length
+        ? `<div class="sent-atts">` +
+          list
+            .map((f) =>
+              f.kind === "image"
+                ? `<img class="sent-img" src="${SAMPLE_IMG}" alt="已发送图片" data-act="img-open" data-i="0">`
+                : `<span class="sent-file">${ic("folderClose", 14)} ${f.name} · ${
+                    f.size || ""
+                  }</span>`
+            )
+            .join("") +
+          `</div>`
+        : "") +
+      `<span class="tx"></span></div>`;
+    d.querySelector(".tx").textContent = text;
+    return d;
+  }
+
+  /** 开一轮(运行中):组里先有用户消息 + 过程条目,收口后才补组头。
+      过程条目是**思考行 + 工具卡** —— 收口后默认收起,正好证明"只藏过程"。 */
+  function beginTurn(text, files) {
+    const g = document.createElement("div");
+    g.className = "tgrp";
+    turnSeq += 1;
+    g.dataset.turn = String(turnSeq);
+    // 时长由"电脑侧"给;原型没有电脑侧,这一轮就是刚跑完的演示轮。
+    g.dataset.dur = "不到 1 秒";
+    g.dataset.msgs = "1";
+    g.dataset.tools = "1";
+    g.appendChild(userNode(text, files));
+    g.insertAdjacentHTML(
+      "beforeend",
+      `<div class="a-head">
+         <span class="a-ava"><img src="../../app/assets/brand/dsh-whale.png" alt=""></span>
+         <span class="a-who">DeepSeek Harness</span>
+       </div>
+       <div class="think" data-proc>
+         <button class="think-r" data-act="think-toggle" aria-expanded="false">
+           <span class="think-ic" data-icon="sparkle" data-icon-size="14"></span>
+           <span class="think-lb">思考过程</span>
+           <span class="think-pv">正在电脑端执行</span>
+           <span class="think-cv" data-icon="chevronDown" data-icon-size="14"></span>
+         </button>
+         <div class="think-b">原型没有电脑侧:这一轮用 1.4 秒的演示动画代替真实执行。</div>
+       </div>
+       <div class="tool" data-proc>
+         <button class="tool-r">
+           <span class="tool-ic" data-icon="loading" data-icon-size="14"></span>
+           <span class="tool-nm">bash</span>
+           <span class="tool-arg">flutter test</span>
+           <span class="tool-st">运行中</span>
+         </button>
+       </div>
+       <div class="md" data-longpress-msg><p data-typing></p></div>`
+    );
+    msgScroll.appendChild(g);
+    liveTurn = g;
+    paintIcons(g);
+    // 新的一轮开始 ⇒ 上一组不再是"最后一组",`next-input` 档下它当场收起(§5)。
+    applyTurnState();
+    const p = g.querySelector("[data-typing]");
+    let i = 0;
+    liveTyping = setInterval(() => {
+      if (!p.isConnected) {
+        clearInterval(liveTyping);
+        liveTyping = null;
+        return;
+      }
+      p.textContent = LIVE_ANSWER.slice(0, ++i);
+      if (i >= LIVE_ANSWER.length) {
+        clearInterval(liveTyping);
+        liveTyping = null;
+      }
+    }, 26);
+    return g;
+  }
+
+  /** 收口:补 `data-closed` 与组头。默认档下这一轮当场收起(§5 的 `completion`)。
+      [g] 缺省 = 正在跑的那一组;**已经收口过的不再收一次**(打断后再到的定时器
+      不能把「已停止」改写成完整回答)。 */
+  function finishTurn(g = liveTurn) {
+    if (!g || g.dataset.closed === "1") return;
+    if (liveTurn === g) liveTurn = null;
+    if (liveTyping) {
+      clearInterval(liveTyping);
+      liveTyping = null;
+    }
+    const p = g.querySelector("[data-typing]");
+    if (p) {
+      p.textContent = LIVE_ANSWER;
+      p.removeAttribute("data-typing");
+    }
+    g.dataset.closed = "1";
+    renderTurnHead(g);
+    applyTurnState();
+  }
+
+  /** 打断:也是**收口** —— DSH 的 `turn/end` reason=aborted 会给组头一句「已停止」
+      (`TurnProcessNodeView.tsx:27-28` 的 `message.stopped`),而且不摆计数
+      (落地端 `TurnProcessItem.statsWith` 的 `stopped` 档同一条)。
+      不收口的话,这一组会永远停在"运行中"的样子(没有组头)。 */
+  function stopTurn() {
+    const g = liveTurn;
+    if (!g) return;
+    liveTurn = null;
+    if (liveTyping) {
+      clearInterval(liveTyping);
+      liveTyping = null;
+    }
+    const p = g.querySelector("[data-typing]");
+    if (p) p.removeAttribute("data-typing");
+    g.dataset.dur = "已停止";
+    g.dataset.msgs = "0";
+    g.dataset.tools = "0";
+    g.dataset.closed = "1";
+    renderTurnHead(g);
+    applyTurnState();
+  }
+
+  /** 把一条不属于"新轮"的条目并进最后一组(审批 / 提问回执属于当前这一轮)。
+      收口行永远是组的最后一个孩子,所以插在它前面。 */
+  function appendItem(node) {
+    const groups = turnGroups();
+    const g = groups[groups.length - 1];
+    if (g) {
+      const head = g.querySelector(".tgrp-head");
+      g.insertBefore(node, head || null);
+      applyTurnState();
+    } else {
+      msgScroll.appendChild(node);
+    }
+    msgScroll.scrollTo({ top: msgScroll.scrollHeight, behavior: "smooth" });
+  }
+
+  /** 首屏:给已收口的轮画组头,并按「收起时机」刷一遍折叠态。 */
+  function initTurns() {
+    turnGroups().forEach((g) => renderTurnHead(g));
+    turnSeq = turnGroups().reduce(
+      (m, g) => Math.max(m, Number(g.dataset.turn || 0)),
+      0
+    );
+    applyTurnState();
+  }
+
+  function collapseTimingLabel() {
+    const hit = COLLAPSE_TIMINGS.find((t) => t.id === collapseTiming);
+    return hit ? hit.label : COLLAPSE_TIMINGS[0].label;
+  }
+
+  function setCollapseTiming(id) {
+    if (!COLLAPSE_TIMINGS.some((t) => t.id === id)) return;
+    collapseTiming = id;
+    applyTurnState();
+    if (settingsSection === "general") renderSettingsDetail("general");
+  }
+
   /* ---------------------------------------------------------- 输入栏 */
   const ta = $("#input");
   const send = $("#send");
@@ -1416,6 +1735,10 @@
   }
 
   let running = false;
+  /* 统计条第一格的原样:照 DSH 的 `stats.counts`(**没有「第」**)。
+     运行中临时换成「运行中…」,结束后**还原它** —— 这里曾经另写一份
+     `第 1 轮 · 3 步`,与 DSH 的写法冲突,而且同一句在两处各写一遍。 */
+  let statTurnIdle = null;
   function setRunning(on) {
     running = on;
     if (!send) return;
@@ -1424,16 +1747,18 @@
     send.disabled = on ? false : ta.value.trim().length === 0 && drafts.length === 0;
     /* 运行中不再占一行提示:底栏统计片已经用转圈图标表达了 */
     const first = $(".stat");
-    if (first)
-      first.innerHTML = on
-        ? ic("loading", 13) + " 运行中…"
-        : ic("gauge", 13) + " 第 1 轮 · 3 步";
+    if (first) {
+      if (statTurnIdle == null) statTurnIdle = first.innerHTML;
+      first.innerHTML = on ? ic("loading", 13) + " 运行中…" : statTurnIdle;
+    }
   }
   send &&
     send.addEventListener("click", () => {
       haptic();
       if (running) {
         setRunning(false);
+        // 打断 = 收口(组头说「已停止」),不然这一组永远停在"运行中"的样子。
+        stopTurn();
         toast("已发送打断");
         return;
       }
@@ -1443,7 +1768,8 @@
       }
       const text = ta.value.trim();
       if (!text && drafts.length === 0) return;
-      appendUser(text || "(仅附件)", drafts.slice());
+      // **开一轮**:运行中 ⇒ 没有组头、不可折(docs/subsystems/turn-groups.md §3)。
+      const turn = beginTurn(text || "(仅附件)", drafts.slice());
       drafts.length = 0;
       renderRail();
       ta.value = "";
@@ -1451,54 +1777,14 @@
       setRunning(true);
       msgScroll.scrollTo({ top: msgScroll.scrollHeight, behavior: "smooth" });
       setTimeout(() => {
+        // 这一轮已经收口(手动 finishTurn / 打断)⇒ 迟到的定时器什么都不做:
+        // 否则它会把**下一轮**的运行指示收掉,或者把「已停止」改写成完整回答。
+        if (liveTurn !== turn) return;
         setRunning(false);
-        appendAssistant(text);
+        finishTurn(turn);
         msgScroll.scrollTo({ top: msgScroll.scrollHeight, behavior: "smooth" });
       }, 1400);
     });
-
-  function appendUser(text, files) {
-    const d = document.createElement("div");
-    d.className = "turn turn--u";
-    const list = files || [];
-    d.innerHTML =
-      `<div class="b">` +
-      (list.length
-        ? `<div class="sent-atts">` +
-          list
-            .map((f) =>
-              f.kind === "image"
-                ? `<img class="sent-img" src="${SAMPLE_IMG}" alt="已发送图片" data-act="img-open" data-i="0">`
-                : `<span class="sent-file">${ic("folderClose", 14)} ${f.name} · ${
-                    f.size || ""
-                  }</span>`
-            )
-            .join("") +
-          `</div>`
-        : "") +
-      `<span class="tx"></span></div>`;
-    d.querySelector(".tx").textContent = text;
-    msgScroll.appendChild(d);
-  }
-  function appendAssistant(prompt) {
-    const d = document.createElement("div");
-    d.className = "turn a";
-    d.innerHTML = `
-      <div class="a-head"><span class="a-ava">${ic("sparkle", 14)}</span><span class="a-who">助手</span>
-      <span class="a-mdl">· ${modelOf(sel.model).name}${
-      effortName() ? " · " + effortName() : ""
-    }</span></div>
-      <div class="md"><p data-typing></p></div>`;
-    msgScroll.appendChild(d);
-    const p = d.querySelector("[data-typing]");
-    const full =
-      "已收到。这一轮在电脑端执行,手机上可以继续刷会话,完成后推送通知你。";
-    let i = 0;
-    const t = setInterval(() => {
-      p.textContent = full.slice(0, ++i);
-      if (i >= full.length) clearInterval(t);
-    }, 26);
-  }
 
   /* ============================================================
      后台任务(ui-jobs):行内折叠区 + 全屏页共用一套渲染
@@ -3026,6 +3312,7 @@
             ${toggleControl("外观", "主题跟随 DSH Mobile 主题层", true, "appearance")}
             ${settingsControl("字号大小", "仅影响会话内容的字号", '<span class="settings-badge">系统默认</span>')}
             ${settingsControl("工作步骤展示", "消息中的步骤与工具轨迹", '<span class="settings-badge">标准</span>')}
+            ${settingsControl("工作步骤收起时机", "一轮收口后,过程什么时候收起来", `<button class="settings-badge" data-act="pick-collapse-timing">${collapseTimingLabel()}</button>`)}
             ${toggleControl("显示代码工作视图", "开启后显示轨迹、本轮代码差异;关闭会一并隐藏", true, "code-view")}
             ${settingsControl("网页链接打开方式", "只影响手机端链接", '<span class="settings-badge">系统浏览器</span>')}
           </div></section>
@@ -3477,6 +3764,52 @@
         t.setAttribute("aria-pressed", t.classList.contains("is-on") ? "true" : "false");
         haptic();
         break;
+      /* ---- 轮组(docs/subsystems/turn-groups.md)---- */
+      case "turn-toggle": {
+        const g = t.closest(".tgrp");
+        if (!g || !turnCollapsible(g)) break;
+        const groups = turnGroups();
+        const i = groups.indexOf(g);
+        // 记下**用户这一次**的选择;之后不再受「收起时机」影响(三档优先的第一档)。
+        turnOpen.set(Number(g.dataset.turn), !turnExpanded(g, i, groups));
+        applyTurnState();
+        haptic();
+        break;
+      }
+      case "turn-copy": {
+        const g = t.closest(".tgrp");
+        const text = g ? turnCopyText(g) : "";
+        if (!text) break;
+        navigator.clipboard && navigator.clipboard.writeText(text);
+        toast("已复制这一轮的回复");
+        haptic();
+        break;
+      }
+      case "turn-usage": {
+        const g = t.closest(".tgrp");
+        if (!g) break;
+        const tok = turnTokens(g);
+        const exact = (v) => String(v).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+        openSheet({
+          title: `第 ${Number(g.dataset.turn)} 轮用量`,
+          body: `
+            <div class="kv"><span class="k">未缓存输入</span><span class="v">${exact(tok.inTok)}</span></div>
+            <div class="kv"><span class="k">缓存读取</span><span class="v">${exact(tok.cache)}</span></div>
+            <div class="kv"><span class="k">输出</span><span class="v">${exact(tok.out)}</span></div>
+            <div class="kv"><span class="k">合计</span><span class="v">${exact(tok.total)}</span></div>`,
+        });
+        break;
+      }
+      case "think-toggle":
+      case "note-toggle": {
+        /* 流程行(DSH 的 `DisclosureRow`):思考过程 / 系统提示词 / 上下文注入共用一条 */
+        const row = t.closest(".think, .note");
+        if (!row) break;
+        const open = row.classList.toggle("is-open");
+        t.setAttribute("aria-expanded", open ? "true" : "false");
+        haptic();
+        break;
+      }
       case "tasks-open":
         /* 与 settings-open 同一条路径:从左抽屉切到全屏页时先同步摘掉 drawer 层。
            不摘的话页面会开在仍未收起的抽屉后面(返回栈还会留下 'drawer' 幽灵层)。 */
@@ -3919,6 +4252,29 @@
           applyDefaultPerm(t.dataset.perm);
         }
         break;
+      case "pick-collapse-timing":
+        /* 「工作步骤收起时机」两档:文案照落地端 `CollapseTiming`(preferences.dart),
+           与 DSH 的 `collapseTiming`(ui-chat/src/chat-settings.ts:15,21)同名同义。
+           值只存手机本地 —— 电脑侧没有这一项。 */
+        openSheet({
+          title: "工作步骤收起时机",
+          size: "half",
+          body:
+            COLLAPSE_TIMINGS.map(
+              (opt) => `<button class="sitem" data-act="collapse-timing-set" data-timing="${opt.id}">
+                <span class="m">${opt.label}<span class="s">${opt.desc}</span></span>
+                ${collapseTiming === opt.id ? '<span class="ck">✓</span>' : ""}
+              </button>`
+            ).join("") +
+            `<p class="opt-desc" style="padding:10px 12px 0">
+              说的是"一轮收口之后,那一轮的过程什么时候收起来"。收起只藏过程(工具卡 / diff / 文件 / 图片 / 思考行),用户消息与助手正文始终在。</p>`,
+        });
+        break;
+      case "collapse-timing-set":
+        setCollapseTiming(t.dataset.timing);
+        closeSheet(true);
+        toast("工作步骤收起时机已设为 " + collapseTimingLabel());
+        break;
       case "pick-perm":
         openSheet({
           title: "访问模式",
@@ -4098,14 +4454,16 @@
       appendNode(html) {
         const box = document.createElement("div");
         box.innerHTML = html;
-        if (box.firstElementChild) msgScroll.appendChild(box.firstElementChild);
-        msgScroll.scrollTo({ top: msgScroll.scrollHeight, behavior: "smooth" });
+        // 回执属于**当前这一轮**,不是一条新的轮:并进最后一组(收口行之前)。
+        if (box.firstElementChild) appendItem(box.firstElementChild);
       },
     },
   });
   paintPerm(Takeovers.permissionInfo);
   paintModelChip();
   renderRail();
+  /* 轮组:已收口的轮补组头(运行中的没有),再按「收起时机」刷一遍折叠态。 */
+  initTurns();
   paintIcons();
   if (send) send.innerHTML = SEND_SVG; // 初始态就是 DSH 的发送几何
   renderJobs();
@@ -4171,6 +4529,17 @@
     closeLightbox,
     takeovers: Takeovers,
     perm: (id) => Takeovers.setPermission(id),
+    /* 轮组(docs/subsystems/turn-groups.md):验证脚本用 ——
+       与发送后 1.4 秒那条路径**同形**(先收运行指示,再收口这一轮),不是另一套;
+       迟到的定时器会看到 `liveTurn !== turn` 而什么都不做。 */
+    finishTurn: () => {
+      setRunning(false);
+      finishTurn();
+    },
+    setCollapseTiming,
+    get collapseTiming() {
+      return collapseTiming;
+    },
     /* 验证脚本用:复位自动化任务的演示目录(删除会改数据,空态分支需要干净起点) */
     resetDemoTasks: () => {
       resetDemoTasks();

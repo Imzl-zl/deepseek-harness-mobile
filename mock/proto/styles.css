@@ -1303,7 +1303,65 @@ button:focus-visible {
   font-size: 18px;
 }
 
-/* ============================================================ 消息流 */
+/* ============================================================ 消息流
+   一轮 = 一个 `.tgrp`(轮组)。结构与判据的唯一出处是
+   docs/subsystems/turn-groups.md:§1 边界 / §2 折叠藏什么 / §2.1 一个助手头 / §3 什么时候可折。
+   收起时只藏标了 `data-proc` 的条目 —— 这个标记就是"它属于过程"的唯一一份清单。 */
+.tgrp {
+  margin: 18px 0;
+}
+.tgrp.is-folded [data-proc] {
+  display: none !important;
+}
+/* 组头:落在**轮次末尾**(有意偏离 DSH 的轮次开头,见该文档 §4)。
+   一行 = 时钟 + `第 N 轮` + 箭头 + 统计三段 + 用量 / 复制两枚 pill,
+   与落地端 `TurnProcessRow`(chat_turns.dart)同形。 */
+.tgrp-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 10px 0;
+}
+.tgrp-tgl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 2px;
+  border-radius: var(--r-sm);
+  color: var(--cap);
+}
+.tgrp-tgl:active {
+  background: var(--hover);
+}
+.tgrp-ic,
+.tgrp-cv {
+  display: inline-flex;
+  flex: none;
+}
+.tgrp-n {
+  font-size: 12px;
+  font-weight: 600;
+}
+.tgrp-st {
+  font-size: 12px;
+  color: var(--on3);
+}
+.tgrp-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 4px 9px;
+  border-radius: 11px;
+  background: var(--layer2);
+  color: var(--on2);
+  font-size: 11px;
+}
+.tgrp-pill:active {
+  background: var(--hover);
+}
 .turn {
   margin: 18px 0;
 }
@@ -1325,6 +1383,9 @@ button:focus-visible {
   gap: 8px;
   margin-bottom: 8px;
 }
+/* 助手头像 = **DSH 的鲸鱼图标**(白底圆角方 + 鲸鱼,与启动图标同源)。
+   落地端是同一枚:`app/lib/ui/dsh_brand.dart` 的 `DshBrandMark`(26,圆角 0.34×size)。
+   原型直接引 app 的资产,免得在这里再描一遍鲸鱼。 */
 .a-ava {
   width: 26px;
   height: 26px;
@@ -1333,18 +1394,162 @@ button:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
-  color: #fff;
-  background: linear-gradient(135deg, #5686fe, #9e7baa);
+  padding: 3px;
+  background: #fff;
+  border: 1px solid var(--l1);
   box-shadow: var(--el1);
+}
+.a-ava img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 .a-who {
   font-size: 13px;
   font-weight: 600;
 }
-.a-mdl {
+/* 流程行(DSH 的 `DisclosureRow`):思考过程 / 系统提示词 / 上下文注入共用一套形状。
+   行高 36 是触屏偏离(DSH 24,`DisclosureRow.module.css:36`)。 */
+.think,
+.note {
+  margin: 2px 0;
+}
+.think-r,
+.note-r {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 36px;
+  text-align: left;
+  color: var(--on3);
   font-size: 12px;
+}
+.think-ic,
+.note-ic,
+.think-cv,
+.note-cv {
+  display: inline-flex;
+  flex: none;
+  color: var(--on3);
+}
+.think-lb,
+.note-lb {
+  flex: none;
+  color: var(--on3);
+}
+.note-lb {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.think-pv {
+  flex: 1;
+  min-width: 0;
   color: var(--cap);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.think-cv,
+.note-cv {
+  transition: transform var(--d2) var(--ease);
+}
+.think.is-open .think-cv,
+.note.is-open .note-cv {
+  transform: rotate(180deg);
+}
+.think-b {
+  display: none;
+  padding: 6px 0 8px 20px;
+  color: var(--on3);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.think.is-open .think-b {
+  display: block;
+}
+/* 系统提示词 / 上下文注入的正文是**给模型看的原文**:代码字体 + 141px 上限
+   (DSH `ContextInjectionRow.module.css:50-64`),一份上万字的提示词展开后
+   不该把对话顶到屏幕外。 */
+.note-b {
+  display: none;
+  margin: 4px 0 6px 20px;
+  padding: 10px 12px;
+  max-height: 141px;
+  overflow: auto;
+  border: 1px solid var(--l1);
+  border-radius: var(--r-lg);
+  background: #171719;
+}
+.note.is-open .note-b {
+  display: block;
+}
+.note-b code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 17px;
+  color: var(--on2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* 斜杠命令卡(DSH 的 `GenericCommandCard`):**不是工具卡**,是流程里的一条行。
+   命令是用户发起的执行,所以它**不拿助手头**(§2.1),但仍是过程(随组收起)。 */
+.cmd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  color: var(--on3);
+  font-size: 12px;
+}
+.cmd-ic {
+  display: inline-flex;
+  flex: none;
+  color: var(--on3);
+}
+.cmd-lb {
+  font-weight: 600;
+}
+.cmd-pv {
+  min-width: 0;
+  color: var(--cap);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 上下文压缩标记(DSH 的 `CompactionItem`):助手色的极淡底 —— 它是
+   "模型看到的世界在这里换了",不是错误、也不是工具。也不拿助手头(§2.1)。 */
+.cmp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  border: 1px solid rgba(158, 123, 170, 0.24);
+  background: rgba(158, 123, 170, 0.08);
+  font-size: 12px;
+}
+.cmp-ic {
+  display: inline-flex;
+  flex: none;
+  color: var(--asst);
+}
+.cmp-lb {
+  font-weight: 600;
+  color: var(--asst);
+}
+.cmp-st {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--cap);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* 长按反馈 */
 .pressable {

@@ -71,8 +71,8 @@ const result = await evaluate(async () => {
   pass('通用页行顺序照 settings.general.item 的 order',
     rowTitles().join('>') === [
       '新会话默认权限', '当前会话权限', '语言', '外观', '字号大小', '工作步骤展示',
-      '显示代码工作视图', '网页链接打开方式', '繁忙时的发送行为', '性能与用量',
-      '在使用官方模型 API 时上传 Session Log',
+      '工作步骤收起时机', '显示代码工作视图', '网页链接打开方式', '繁忙时的发送行为',
+      '性能与用量', '在使用官方模型 API 时上传 Session Log',
     ].join('>'), rowTitles().join('>'))
   pass('通用页不搬快捷键(手机无物理键盘)',
     !rowTitles().some(x => /快捷键/.test(x)) && (q('#settingsDetail').textContent.includes('快捷键')))

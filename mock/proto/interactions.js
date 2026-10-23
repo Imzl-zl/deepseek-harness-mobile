@@ -562,7 +562,7 @@ window.Takeovers = (() => {
   /* ---------------------------------------------------------- 聊天侧回执节点 */
   function approvalNode(item, outcome) {
     const ok = outcome === "allowed-once";
-    return `<div class="turn a"><div class="qreply">
+    return `<div class="turn"><div class="qreply">
       <div class="qreply-h"><span class="sdot" data-state="${
         ok ? "done" : "error"
       }"></span>
@@ -571,7 +571,7 @@ window.Takeovers = (() => {
   }
 
   function planNode(item, ok) {
-    return `<div class="turn a"><div class="qreply">
+    return `<div class="turn"><div class="qreply">
       <div class="qreply-h"><span class="sdot" data-state="${
         ok ? "done" : "idle"
       }"></span>
@@ -590,7 +590,7 @@ window.Takeovers = (() => {
         }${esc(a.question)}</div><div class="a">${val}</div></div>`;
       })
       .join("");
-    return `<div class="turn a"><div class="qreply is-open">
+    return `<div class="turn"><div class="qreply is-open">
       <button class="qreply-h" data-act="qreply-toggle">
         <span class="sdot" data-state="done"></span>
         <span>回答先前等待中的问题</span><span class="cv">${ic("chevronDown", 16)}</span>

@@ -67,14 +67,85 @@
             </div>
             <div class="scroll" id="msgs">
 
-              <div class="turn turn--u">
-                <div class="b">帮我把 DSH 会话做成手机版,要地道的移动端手感</div>
+              <!-- ============ 轮组(turn 分组 + 可折叠过程)============
+                   一轮 = 一个 `.tgrp`;条目按事件顺序平铺,过程条目挂 `data-proc`
+                   (收起时藏它们)。结构与判据的唯一出处是 docs/subsystems/turn-groups.md:
+                   §1 分组边界 / §2 折叠藏什么 / §2.1 一个 turn 只有一个助手头 / §3 什么时候可折。
+                   组头(`.tgrp-head`)由 app.js 渲染在**轮次末尾**(有意偏离,见该文档 §4);
+                   运行中的一轮没有组头、不可折(§3)。
+                   `data-turn` 缺席 = 未归属组(历史窗口没加载到这一轮的 `turn/start`),永不折叠(§1)。 -->
+
+              <!-- 未归属组:窗口开头只有系统提示词 + 上下文注入 + 一条工具结果,都没有轮号。
+                   头画在**第一条助手侧**条目(上下文注入)上方 —— 系统提示词不算助手侧(§2.1)。 -->
+              <div class="tgrp">
+                <div class="note note--sys">
+                  <button class="note-r" data-act="note-toggle" aria-expanded="false">
+                    <span class="note-ic" data-icon="browse" data-icon-size="14"></span>
+                    <span class="note-lb">系统提示词</span>
+                    <span class="note-cv" data-icon="chevronDown" data-icon-size="14"></span>
+                  </button>
+                  <div class="note-b"><code>You are DeepSeek Harness, a coding agent running on the user's computer.</code></div>
+                </div>
+                <div class="a-head">
+                  <span class="a-ava"><img src="../../app/assets/brand/dsh-whale.png" alt=""></span>
+                  <span class="a-who">DeepSeek Harness</span>
+                </div>
+                <div class="note note--ctx">
+                  <button class="note-r" data-act="note-toggle" aria-expanded="false">
+                    <span class="note-ic" data-icon="contextInjection" data-icon-size="14"></span>
+                    <span class="note-lb">上下文注入 · runtime-context</span>
+                    <span class="note-cv" data-icon="chevronDown" data-icon-size="14"></span>
+                  </button>
+                  <div class="note-b"><code>工作区 dsh-mobile · Windows · 2026-10-23 13:11 (Asia/Shanghai)</code></div>
+                </div>
+                <div class="note note--ctx">
+                  <button class="note-r" data-act="note-toggle" aria-expanded="false">
+                    <span class="note-ic" data-icon="contextInjection" data-icon-size="14"></span>
+                    <span class="note-lb">上下文注入 · skill-catalog</span>
+                    <span class="note-cv" data-icon="chevronDown" data-icon-size="14"></span>
+                  </button>
+                  <div class="note-b"><code>decision-notes · dev-expert · office …(名称 + 一句话)</code></div>
+                </div>
+                <div class="note note--ctx">
+                  <button class="note-r" data-act="note-toggle" aria-expanded="false">
+                    <span class="note-ic" data-icon="contextInjection" data-icon-size="14"></span>
+                    <span class="note-lb">上下文注入 · time-context</span>
+                    <span class="note-cv" data-icon="chevronDown" data-icon-size="14"></span>
+                  </button>
+                  <div class="note-b"><code>今天 2026-10-23,星期五;时区 Asia/Shanghai。</code></div>
+                </div>
+                <div class="tool" data-proc>
+                  <button class="tool-r">
+                    <span class="tool-ic" data-icon="check" data-icon-size="14"></span>
+                    <span class="tool-nm">read</span>
+                    <span class="tool-arg">app/lib/model/turn_groups.dart</span>
+                    <span class="tool-st">已完成</span>
+                    <span class="tool-cv" data-icon="chevronRight" data-icon-size="16"></span>
+                  </button>
+                  <div class="tool-body">没有轮号的过程条目落在未归属组里,始终可见 —— 不猜轮号、也不折叠(§1)。</div>
+                </div>
               </div>
 
-              <div class="turn a">
+              <!-- 第 1 轮(已收口):多步 —— 思考 → 正文(含代码块)→ 工具 → 内联 diff → 变更文件 → 图片。
+                   助手头只画一次,在**轮次开头**、第一条助手侧条目(思考行)上方(§2.1)。 -->
+              <div class="tgrp" data-turn="1" data-closed="1" data-dur="2 分 36 秒" data-msgs="1" data-tools="1" data-tok-in="8240" data-tok-cache="10540000" data-tok-out="52000">
+
+                <div class="turn turn--u">
+                  <div class="b">帮我把 DSH 会话做成手机版,要地道的移动端手感</div>
+                </div>
+
                 <div class="a-head">
-                  <span class="a-ava" data-icon="sparkle" data-icon-size="14"></span><span class="a-who">助手</span>
-                  <span class="a-mdl">· claude-opus</span>
+                  <span class="a-ava"><img src="../../app/assets/brand/dsh-whale.png" alt=""></span>
+                  <span class="a-who">DeepSeek Harness</span>
+                </div>
+                <div class="think" data-proc>
+                  <button class="think-r" data-act="think-toggle" aria-expanded="false">
+                    <span class="think-ic" data-icon="sparkle" data-icon-size="14"></span>
+                    <span class="think-lb">思考过程</span>
+                    <span class="think-pv">先把导航结构定下来,再改会话流</span>
+                    <span class="think-cv" data-icon="chevronDown" data-icon-size="14"></span>
+                  </button>
+                  <div class="think-b">抽屉承载会话历史;轮组让一轮收成"提示 + 回答 + 一行组头"。先改导航,再同步轮组。</div>
                 </div>
                 <div class="md" data-longpress-msg>
                   <p>参考 <b>rikkahub</b> 重做了导航结构:<b>聊天即主页 + 抽屉</b>;抽屉支持左缘跟手拖出、拖回关闭、遮罩点按关闭。</p>
@@ -101,7 +172,7 @@
 );</pre>
                   </div>
 
-                  <div class="tool">
+                  <div class="tool" data-proc>
                     <button class="tool-r">
                       <span class="tool-ic" data-icon="edit" data-icon-size="14"></span>
                       <span class="tool-nm">edit</span>
@@ -112,7 +183,7 @@
                     <div class="tool-body">替换 Scaffold 为 ModalNavigationDrawer,底部导航移除,改由抽屉承载会话历史。</div>
                   </div>
 
-                  <div class="idiff">
+                  <div class="idiff" data-proc>
                     <div class="idiff-h">导航模型</div>
                     <div class="idiff-b">
                       <div class="idiff-l dl"><span class="sg">−</span><span class="tx">bottomNavigationBar: const DshNavBar(),</span></div>
@@ -122,7 +193,7 @@
                   </div>
 
                   <!-- 变更文件:点开全屏预览(之前这版漏了) -->
-                  <div class="files">
+                  <div class="files" data-proc>
                     <button class="fchip" data-act="open-file" data-file="app/lib/ui/chat_page.dart">
                       <span class="fi" data-icon="edit" data-icon-size="14"></span><span class="nm">chat_page.dart</span>
                       <span class="st"><span class="p">+128</span> <span class="m">−46</span></span>
@@ -138,19 +209,37 @@
                     <button class="fmore" data-act="files-all">另外 4 个 <span data-icon="chevronRight" data-icon-size="14"></span></button>
                   </div>
 
-                  <div class="imgs">
+                  <div class="imgs" data-proc>
                     <img class="thumb" src="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%221200%22%20height%3D%22800%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22a%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%235686FE%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%239E7BAA%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%221200%22%20height%3D%22800%22%20fill%3D%22url(%23a)%22%2F%3E%3Ctext%20x%3D%2260%22%20y%3D%22740%22%20font-family%3D%22monospace%22%20font-size%3D%2244%22%20fill%3D%22%23fff%22%3E%E6%A1%8C%E9%9D%A2%E6%88%AA%E5%9B%BE%201%3C%2Ftext%3E%3C%2Fsvg%3E"
                          data-act="img-open" data-i="0" alt="桌面截图 1">
                     <img class="thumb" src="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22800%22%20height%3D%221200%22%3E%3Crect%20width%3D%22800%22%20height%3D%221200%22%20fill%3D%22%231F3124%22%2F%3E%3Crect%20x%3D%2260%22%20y%3D%2280%22%20width%3D%22680%22%20height%3D%22180%22%20rx%3D%2228%22%20fill%3D%22%2341C977%22%20opacity%3D%22.35%22%2F%3E%3Ctext%20x%3D%2260%22%20y%3D%221120%22%20font-family%3D%22monospace%22%20font-size%3D%2240%22%20fill%3D%22%2341C977%22%3Ediff%20%E7%AB%96%E5%9B%BE%3C%2Ftext%3E%3C%2Fsvg%3E"
                          data-act="img-open" data-i="1" alt="diff 竖图">
                   </div>
 
-                  <p class="press">· 长按消息:复制 / 重发 / 分支 ·</p>
+                  <p class="press" data-ui-hint>· 长按消息:复制 / 重发 / 分支 ·</p>
                 </div>
               </div>
 
-              <div class="turn a">
-                <div class="a-head"><span class="a-ava" data-icon="sparkle" data-icon-size="14"></span><span class="a-who">助手</span><span class="a-mdl">· claude-opus</span></div>
+              <!-- 第 2 轮(已收口):审批与提问卡**不随轮组收起**(§2 —— 它们在等用户决策)。
+                   组里唯一的过程条目是那条思考行;收起它正好证明"过程收起、待办留下"。 -->
+              <div class="tgrp" data-turn="2" data-closed="1" data-dur="48 秒" data-msgs="1">
+
+                <div class="turn turn--u">
+                  <div class="b">清理构建产物,再把配置写到工作区外</div>
+                </div>
+                <div class="a-head">
+                  <span class="a-ava"><img src="../../app/assets/brand/dsh-whale.png" alt=""></span>
+                  <span class="a-who">DeepSeek Harness</span>
+                </div>
+                <div class="think" data-proc>
+                  <button class="think-r" data-act="think-toggle" aria-expanded="false">
+                    <span class="think-ic" data-icon="sparkle" data-icon-size="14"></span>
+                    <span class="think-lb">思考过程</span>
+                    <span class="think-pv">先确认删除范围与工作区边界</span>
+                    <span class="think-cv" data-icon="chevronDown" data-icon-size="14"></span>
+                  </button>
+                  <div class="think-b">rm -rf build/ 在工作区内、可以直接跑;写工作区外的配置要审批。</div>
+                </div>
                 <div class="md" data-longpress-msg>
                   <p>要清理构建产物、并写一份配置到工作区外。审批和提问都不在气泡里,而是<b>接管输入栏</b>(DSH 的 composer takeover);需要时也可以从这里重新打开。</p>
                   <div class="tool">
@@ -174,6 +263,43 @@
 
                   <!-- 后台任务 / 子代理明细都在右侧抽屉,由图顶栏状态位与右下计数 chip 进入;
                        对话流里不再放入口(左右两个抽屉互相跳没有道理,已撤) -->
+                </div>
+              </div>
+
+              <!-- 第 3 轮(已收口):命令卡与压缩卡**不拿助手头**(§2.1)——
+                   它们是过程,却不是"助手在说话";头落在第一条助手侧条目(工具卡)上方。
+                   收起后这三条过程都不在,只剩用户消息、正文与组头。 -->
+              <div class="tgrp" data-turn="3" data-closed="1" data-dur="1 分 12 秒" data-msgs="1" data-tools="1">
+
+                <div class="turn turn--u">
+                  <div class="b">上下文太长了,压缩一下再继续</div>
+                </div>
+                <div class="cmd" data-proc>
+                  <span class="cmd-ic" data-icon="api" data-icon-size="14"></span>
+                  <span class="cmd-lb">/compact</span>
+                  <span class="cmd-pv">已压缩 142 条消息</span>
+                </div>
+                <div class="cmp" data-proc>
+                  <span class="cmp-ic" data-icon="compact" data-icon-size="14"></span>
+                  <span class="cmp-lb">已压缩上下文</span>
+                  <span class="cmp-st">替换 142 条 · 压掉 605K tok</span>
+                </div>
+                <div class="a-head">
+                  <span class="a-ava"><img src="../../app/assets/brand/dsh-whale.png" alt=""></span>
+                  <span class="a-who">DeepSeek Harness</span>
+                </div>
+                <div class="tool" data-proc>
+                  <button class="tool-r">
+                    <span class="tool-ic" data-icon="check" data-icon-size="14"></span>
+                    <span class="tool-nm">read</span>
+                    <span class="tool-arg">docs/subsystems/turn-groups.md</span>
+                    <span class="tool-st">已完成</span>
+                    <span class="tool-cv" data-icon="chevronRight" data-icon-size="16"></span>
+                  </button>
+                  <div class="tool-body">压缩后重新读一遍判据,确认轮组边界没有变。</div>
+                </div>
+                <div class="md" data-longpress-msg>
+                  <p>上下文已压缩,接着上一轮继续:收起一轮只藏过程,用户消息与正文始终可见。</p>
                 </div>
               </div>
 
