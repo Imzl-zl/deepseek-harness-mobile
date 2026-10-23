@@ -2,6 +2,11 @@
 
 Status: implemented
 
+> 部分被取代（2026-10-23）：本篇里「子会话标题 = `父会话 › 子级名`（`_SubagentCrumb`，放不下只留子级）」
+> 那一条已由 `.agents/notes/implemented/2026-10-23-subagent-header-parent-from-data.md` 取代 ——
+> 顶栏标题现在**只显示当前子级名**，父级改由会话数据（`session.list` 的 `parentSessionId`）决定。
+> 其余结论（目录三态 / 指标来自投影 / 行规格）仍然成立。
+
 ## Problem
 
 手机端子智能体面板把**两件不同的事**压成了一个字段：`SubagentRow.status` 由

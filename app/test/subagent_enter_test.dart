@@ -254,8 +254,6 @@ void main() {
     expect(find.byTooltip('返回父会话'), findsOneWidget);
     expect(find.byTooltip('打开会话抽屉'), findsNothing);
     // 标题 = 父级目录那一行的 label（Web `switcherDisplayTitle`，:490-495），
-    // 点它开「切换子智能体」；父会话名放得下就并成 `父会话 › 子级名`。
-    // 标题 = 父级目录那一行的 label（Web `switcherDisplayTitle`，:490-495），
     // **只有当前子级名**：父级名不进标题（DSH 的 switcher 同样只显示这一层）。
     expect(find.byTooltip('切换子智能体'), findsOneWidget);
     expect(
