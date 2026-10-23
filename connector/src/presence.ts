@@ -70,15 +70,6 @@ export interface DevicePresence extends PresenceDevices {
   devices(): readonly DeviceState[]
   /** 一台设备的瞬时记录；不在线（或从未上报）时是 `undefined`。 */
   liveOf(devId: string): LiveDeviceRecord | undefined
-  /**
-   * 设备下线时通知（在途审批的看护要靠它收口，契约 §6.2 的"手机断开 → unavailable"）。
-   *
-   * 为什么是推而不是拉：看护的语义是"断开**立刻**收束"，轮询会把最坏情况从
-   * "立刻"拖成一个周期。而端口只需要一个信号，不需要知道原因。
-   *
-   * @returns 注销函数（claim 收束后必须调，否则监听器随每次审批累积）。
-   */
-  onOffline(devId: string, listener: () => void): () => void
   /** 当前记录数（指标与测试用）。 */
   readonly size: number
 }
@@ -86,13 +77,11 @@ export interface DevicePresence extends PresenceDevices {
 /**
  * 建一份设备瞬时状态。
  *
- * @param options.pairedAtOf - 配对行读取。**必填**：少了它，"已吊销的设备仍在仲裁里"
+ * @param options.pairedAtOf - 配对行读取。**必填**：少了它，"已吊销的设备仍出现在列表里"
  *   这条就只能靠调用方各自记得判，而那是本模块存在的理由的反面。
  */
 export function createDevicePresence(options: PresenceDevices): DevicePresence {
   const live = new Map<string, LiveDeviceRecord>()
-  /** 下线监听器（按设备分桶）。 */
-  const offlineListeners = new Map<string, Set<() => void>>()
 
   /** 取记录，**没有就建一条在线的**。只给 `online()` 用。 */
   const recordOf = (devId: string): LiveDeviceRecord => {
@@ -125,13 +114,11 @@ export function createDevicePresence(options: PresenceDevices): DevicePresence {
     offline(devId) {
       // **整条作废而不是只置 `online: false`**：订阅集属于那条连接，连接没了订阅就没了。
       // 留着旧订阅集会让管理面显示"这台设备还订阅着这个会话"。
+      //
+      // **这里不通知任何人**：断线不是任何交互的终态（DSH 的 gateway 断线只撤投递、
+      // 不结算，`packages/api/gateway/src/index.ts:717-721`），在途 claim 挂在 Host 上、
+      // 等手机回来还能答（契约 §6.2）。
       live.delete(devId)
-      // 先清状态再通知：监听器（在途审批的看护）收到的必须是"已经下线"这个事实。
-      const listeners = offlineListeners.get(devId)
-      if (listeners !== undefined) {
-        offlineListeners.delete(devId)
-        for (const listener of [...listeners]) listener()
-      }
     },
 
     app(devId, state) {
@@ -172,19 +159,6 @@ export function createDevicePresence(options: PresenceDevices): DevicePresence {
 
     liveOf(devId) {
       return live.get(devId)
-    },
-
-    onOffline(devId, listener) {
-      const listeners = offlineListeners.get(devId) ?? new Set<() => void>()
-      listeners.add(listener)
-      offlineListeners.set(devId, listeners)
-      return () => {
-        const current = offlineListeners.get(devId)
-        if (current === undefined) return
-        current.delete(listener)
-        // 桶空了就撤掉：否则"每次审批加一个监听器"会随进程寿命无界增长。
-        if (current.size === 0) offlineListeners.delete(devId)
-      }
     },
 
     get size() {

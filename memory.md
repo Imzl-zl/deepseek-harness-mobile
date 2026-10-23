@@ -408,9 +408,10 @@
     带文字的定高改成 `minHeight`。取舍见
     `.agents/notes/implemented/2026-10-22-global-ui-scale.md`，现状见
     `docs/subsystems/type-scale.md`；旧方案（只放大内容）已移入 `notes/archived/`。
-12. **`presence.onOffline` 是死 API**（2026-10-23 删掉两处调用之后留下的）：生产无调用方（只有
-    `presence.test.ts` 一条），注释还写着"看护要靠它收口"。同批可删的还有它的离线监听桶。
-    → 工单 Z2（死码 + 过期注释一起删）。
+12. ~~**`presence.onOffline` 是死 API**~~ **已删（2026-10-24，Z2）**：接口、监听桶、
+    `offline()` 里的通知、单测全删（生产本来就零调用），`offline()` 的注释改成
+    "断线不是任何交互的终态"并带上 `api/gateway/src/index.ts:717-721`。connector **616 → 615**
+    （**断言随行为删除**，不是放宽）；`presence.test.ts` 里"仲裁 / decideTakeover"那些过期措辞一起清掉。
 13. ~~**`$events` 换代窗口**~~ **已修（2026-10-24，W2）**：换代**不撤**在途 claim（claim 挂在挂载上，
     与 DSH"断线只撤投递"一致），手机在窗口里答的答复等下一代 `ready` 再用新 `clientId` 发出去；
     `dispose()` 才是终态。判据 `connector/tests/interaction-client.test.ts`（3 条），变异校验两组
@@ -447,7 +448,7 @@
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
 | `cd app && flutter test` | **1141 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **616 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **615 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 

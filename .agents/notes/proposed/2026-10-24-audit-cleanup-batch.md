@@ -25,17 +25,19 @@ Status: proposed
   `takeover.dart` 的 `fullAccess` 字段与 `_syncTakeoverTruth` 的那一行同步删除。
 - **门禁**：flutter（1140 → 略降，属于行为删除）、boundary 360。
 
-## Z2（删死码）`presence.onOffline` 与它的监听桶
+## Z2（删死码）`presence.onOffline` 与它的监听桶 —— ✅ 已落地
 
-- **位置**：`connector/src/presence.ts:73-81`（契约面）、`:94-95`（桶）、`:125-135`
-  （`offline` 里的通知）、`:177-188`（实现）。
+- **位置**：`connector/src/presence.ts`（契约面 / 桶 / `offline()` 里的通知 / 实现，四处）。
 - **为什么删**：生产**零调用**（全仓只有 `presence.test.ts` 一条）。它服务的是
   已经删掉的规则（"手机断开 → 看护收口 → `unavailable`"，A2/A4），而今天的真相是
   "断线只撤投递、不结算"（`packages/api/gateway/src/index.ts:717-721`）。
-  注释还指着那条不存在的契约（`presence.ts:74`）。
-- **改什么**：删接口方法、桶、`offline()` 里的通知块、对应单测；`presence.ts:73` 的注释删。
-- **判据**：`grep -r onOffline connector/` 零命中；`presence.test.ts` 少一条。
-- **门禁**：connector（611 → 610，**行为被删**）、`pnpm exec tsc --noEmit`。
+  注释还指着那条不存在的契约。
+- **改什么**：删接口方法、监听桶、`offline()` 里的通知块、对应单测；`offline()` 的注释改成
+  "这里不通知任何人"并写上出处。**顺手把 `presence.test.ts` 里过期的措辞一起改**
+  （"仲裁判定的唯一输入" / "decideTakeover" / "不进仲裁" —— 那些概念都不存在了）。
+- **判据**：`grep -r onOffline` 零命中；`presence.test.ts` 少一条（**断言随行为删除**，
+  不是放宽）。
+- **门禁**：connector **616 → 615**、`tsc --noEmit`、`pnpm build`。
 
 ## Z3（修）首配匿名限流的**单一全局桶**
 
