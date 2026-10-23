@@ -43,6 +43,7 @@
 | `subsystems/settings-and-versions.md` | 电脑侧设置:`settings.describe`/`update` 的请求形状、两张 allowlist、手机侧三行与判据 |
 | `subsystems/turn-groups.md` | 轮组:边界来自条目自己的轮号、折叠藏过程留结论、什么时候可折、"工作步骤收起时机"两档、与 DSH 的差异与已知边界 |
 | `subsystems/usage-page.md` | 用量页:一页五块(总量 / 四格分项 / 26 周热力图 / 可折叠项目段 / 扁平兜底)、`usage.summary` 的字段与口径去向、与 rikkahub 形态的两处有意偏离、已知边界 |
+| `subsystems/notifications.md` | 通知与后台保活:起服务的三条判据(后台 + 通知权限 + 服务态)、前台服务类型为何是 `remoteMessaging`、三类提醒的触发源与"审批可直接答"、撤销口径、`dsh/notifications` 通道、渠道归属、已知边界 |
 
 ## 引用纪律
 

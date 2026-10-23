@@ -44,6 +44,7 @@ import 'model/workspace.dart';
 import 'platform/app_state_reporter.dart';
 import 'platform/http_sender.dart';
 import 'platform/lan_address.dart';
+import 'platform/notify_factory.dart';
 import 'platform/pairing_store.dart';
 import 'platform/sqflite_item_store.dart';
 import 'platform/ticketed_transport.dart';
@@ -138,7 +139,12 @@ class _DshMobileAppState extends State<DshMobileApp>
   ///
   /// 它跟着根 State 活，而客户端跟着 [_app] 活 —— 所以报的是"当前那个"
   /// （重新配对会换 `AppModel`，observer 只注册一次）。
-  late final AppStateReporter _reporter = AppStateReporter(() => _app?.client);
+  late final AppStateReporter _reporter = AppStateReporter(
+    () => _app?.client,
+    // 同一个态变化的第二处收口：通知要它（"看着那个会话就不提醒"）与
+    // 保活要它（退到后台才起前台服务）。判据仍然只有 `isForeground` 一处。
+    onState: (state) => _app?.setAppForeground(isForeground(state)),
+  );
 
   /// 连接终态失败的恢复编排（议题 2 的 `ClientAction` 唯一执行处）。
   ///
@@ -1157,6 +1163,8 @@ Future<AppModel> _assemble(
     // 偏好走同一个库的 `meta` 表（见 `_assembleWithoutCredentials` 同一处）。
     prefs: MetaPreferences(store),
     client: client,
+    // 通知与后台保活：端口在 `core/`、实现按端选（`platform/notify_factory.dart`）。
+    notify: createNotifyPort(),
     // 端点表交给 `AppModel` 当所有者：界面要读、设置页要改，而上面的
     // `EndpointTransport` 每次 `connect()` 经 `appRef` 现读它。
     endpoints: credentials.endpoints,

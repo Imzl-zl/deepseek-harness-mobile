@@ -2,6 +2,8 @@ package com.example.dsh_mobile
 
 import android.Manifest
 import android.app.Activity
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -12,7 +14,9 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.util.Base64
+import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -34,6 +38,7 @@ import kotlin.concurrent.thread
 class MainActivity : FlutterActivity() {
     private val gestureChannelName = "dsh/gesture-exclusion"
     private val photoChannelName = "dsh/photo-picker"
+    private val notifyChannelName = "dsh/notifications"
 
     /**
      * 单张图片**原样通过**的字节阈值。
@@ -65,6 +70,9 @@ class MainActivity : FlutterActivity() {
     /** 相机权限请求的 requestCode。 */
     private val cameraPermissionRequest = 4712
 
+    /** 通知权限（`POST_NOTIFICATIONS`）请求的 requestCode。 */
+    private val notificationPermissionRequest = 4714
+
     /**
      * 选图/拍照期间挂起的回包。
      *
@@ -85,6 +93,178 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         registerGestureExclusion(flutterEngine)
         registerPhotoPicker(flutterEngine)
+        registerNotifications(flutterEngine)
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        // 引擎要走的时候把通道摘掉：此后通知上的按钮一律"没人听"（见
+        // `DshNotificationBridge` 的文件头），而不是往一个死通道里发。
+        DshNotificationBridge.detach()
+        super.cleanUpFlutterEngine(flutterEngine)
+    }
+
+    /** 通知权限请求的回包（它只能被调用一次，所以挂在这里）。 */
+    private var pendingPermissionResult: MethodChannel.Result? = null
+
+    /** 当前是否已经起了前台服务（`status` 如实报，不猜）。 */
+    private var keepAlive = false
+
+    /**
+     * 通知 + 后台保活（`dsh/notifications`）。
+     *
+     * ## 这一层的边界
+     *
+     * 它**不判断语义**："该不该保活 / 该提醒什么"全在 Dart（`lib/platform/notify.dart`
+     * 与 `AppModel`）。这里只做平台动作：起停前台服务、贴/撤通知、
+     * 申请通知权限、跳系统渠道设置。
+     *
+     * ## 授权是这套能力的前提
+     *
+     * `POST_NOTIFICATIONS`（API 33+）**新装默认关**；关着的时候连前台服务的
+     * 通知也进不了通知抽屉（只在 Task Manager 里可见）。所以 Dart 侧
+     * **没权限就不起服务** —— 起一个看不见的服务只是白耗电。
+     */
+    private fun registerNotifications(flutterEngine: FlutterEngine) {
+        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, notifyChannelName)
+        DshNotificationBridge.attach(channel)
+        channel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "status" -> result.success(
+                    mapOf(
+                        "granted" to notificationsEnabled(),
+                        "keepAlive" to keepAlive,
+                    ),
+                )
+                "requestPermission" -> {
+                    if (Build.VERSION.SDK_INT < 33 || notificationsEnabled()) {
+                        result.success(notificationsEnabled())
+                    } else {
+                        pendingPermissionResult = result
+                        requestPermissions(
+                            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                            notificationPermissionRequest,
+                        )
+                    }
+                }
+                "startKeepAlive" -> {
+                    DshNotifications.ensureChannels(this)
+                    DshForegroundService.start(
+                        this,
+                        call.argument<String>("title") ?: "DeepSeek Harness",
+                        call.argument<String>("text") ?: "正在后台保持与电脑的连接",
+                    )
+                    keepAlive = true
+                    result.success(true)
+                }
+                "stopKeepAlive" -> {
+                    DshForegroundService.stop(this)
+                    keepAlive = false
+                    result.success(true)
+                }
+                "show" -> result.success(showAttention(call))
+                "cancel" -> {
+                    call.argument<Int>("id")?.let { DshNotifications.cancel(this, it) }
+                    result.success(true)
+                }
+                "cancelAll" -> {
+                    getSystemService(NotificationManager::class.java)?.cancelAll()
+                    result.success(true)
+                }
+                "openChannelSettings" -> {
+                    val intent = Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply {
+                        putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                        putExtra(Settings.EXTRA_CHANNEL_ID, DshNotifications.CHANNEL_ATTENTION)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    try {
+                        startActivity(intent)
+                        result.success(true)
+                    } catch (error: Exception) {
+                        result.error("unavailable", error.message, null)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    /** 通知权限开着没有（API 33 之下恒为 true —— 那之前没这个运行时权限）。 */
+    private fun notificationsEnabled(): Boolean {
+        if (Build.VERSION.SDK_INT < 33) return true
+        return checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+
+    /**
+     * 贴一条"要你处理"的通知；带 `itemId` 时**多两个审批按钮**。
+     *
+     * 按钮走 `PendingIntent.getBroadcast`（明确指向 `DshActionReceiver`）——
+     * 只有那里能把答复交给唯一出口 `interaction.respond`。
+     * `requestCode` 用 `id*2+{0,1}` 区分两个动作：同 requestCode + 同 Intent
+     * 会被系统视为同一个 PendingIntent，后一个把前一个覆盖掉。
+     */
+    private fun showAttention(call: MethodCall): Boolean {
+        val id = call.argument<Int>("id") ?: return false
+        val title = call.argument<String>("title") ?: "DeepSeek Harness"
+        val text = call.argument<String>("text") ?: ""
+        val itemId = call.argument<String>("itemId")
+        val allowLabel = call.argument<String>("allowLabel")
+        val denyLabel = call.argument<String>("denyLabel")
+        DshNotifications.ensureChannels(this)
+        val openApp = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val builder = NotificationCompat.Builder(this, DshNotifications.CHANNEL_ATTENTION)
+            .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setAutoCancel(true)
+            .setContentIntent(openApp)
+        if (itemId != null && allowLabel != null && denyLabel != null) {
+            builder
+                .addAction(
+                    android.R.drawable.ic_menu_send,
+                    allowLabel,
+                    approvalIntent(id, itemId, DshActionReceiver.ACTION_ALLOW_ONCE, id * 2),
+                )
+                .addAction(
+                    android.R.drawable.ic_menu_close_clear_cancel,
+                    denyLabel,
+                    approvalIntent(id, itemId, DshActionReceiver.ACTION_DENY, id * 2 + 1),
+                )
+        }
+        return try {
+            getSystemService(NotificationManager::class.java)?.notify(id, builder.build())
+            true
+        } catch (_: SecurityException) {
+            // 权限被吊销的瞬间：如实回 false（Dart 侧据此撤记录、停服务）。
+            false
+        }
+    }
+
+    private fun approvalIntent(
+        notificationId: Int,
+        itemId: String,
+        action: String,
+        requestCode: Int,
+    ): PendingIntent {
+        val intent = Intent(this, DshActionReceiver::class.java).apply {
+            this.action = action
+            putExtra(DshActionReceiver.EXTRA_ITEM_ID, itemId)
+            putExtra(DshActionReceiver.EXTRA_NOTIFICATION_ID, notificationId)
+        }
+        return PendingIntent.getBroadcast(
+            this,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     /**
@@ -249,6 +429,14 @@ class MainActivity : FlutterActivity() {
         permissions: Array<out String>,
         grantResults: IntArray,
     ) {
+        if (requestCode == notificationPermissionRequest) {
+            // 回"当下真实的可通知状态"，而不是 `grantResults[0]` —— 后者只是
+            // 这一次的答复；用户在系统设置里可能已经关掉，Dart 侧要的是现状。
+            val result = pendingPermissionResult
+            pendingPermissionResult = null
+            result?.success(notificationsEnabled())
+            return
+        }
         if (requestCode != cameraPermissionRequest) {
             super.onRequestPermissionsResult(requestCode, permissions, grantResults)
             return

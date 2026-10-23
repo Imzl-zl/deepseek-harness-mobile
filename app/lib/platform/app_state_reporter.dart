@@ -45,13 +45,21 @@ import '../core/sync_client.dart';
 /// 其余十几个回调要的是它的**默认空实现**（`implements` 会要求全部自己实现一遍，
 /// 而那正是"每个文件抄 16 个空方法"的来源）。
 class AppStateReporter with WidgetsBindingObserver {
-  AppStateReporter(this._clientOf);
+  AppStateReporter(this._clientOf, {this.onState});
 
   /// 当前那个客户端。**每次现取**：理由见文件头"为什么持的是取值函数"。
   final SyncClient? Function() _clientOf;
 
+  /// 同一个态变化的第二个消费者（装配点是 `AppModel.setAppForeground`）。
+  ///
+  /// **为什么共用这一个观察者**：`AppLifecycleState` 只从 `WidgetsBinding` 来，
+  /// 挂两个观察者会让"谁先看到"变成一个没人盯的顺序问题；而"只有 `resumed`
+  /// 算前台"这条判据也只该有一份（[isForeground]）。
+  final void Function(AppLifecycleState state)? onState;
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    onState?.call(state);
     final client = _clientOf();
     // 启动过程里还没有客户端：那一次无可上报。**这不是静默兜底** ——
     // 客户端自己的初相就是 `foreground`，而移动端的冷启动必然在前台
@@ -78,6 +86,12 @@ class AppStateReporter with WidgetsBindingObserver {
 /// 还桌面。契约 §2.2 明说"重连是常态，不是异常路径"，回前台立刻重连，
 /// 所以代价是一次秒级重连，而不是功能缺失。
 AppState appStateOf(AppLifecycleState state) =>
-    state == AppLifecycleState.resumed
-    ? AppState.foreground
-    : AppState.background;
+    isForeground(state) ? AppState.foreground : AppState.background;
+
+/// 这个生命周期态算不算"用户正看着手机"。
+///
+/// **判据只有这一处**：协议侧（[appStateOf]）与通知侧
+/// （`AppModel.setAppForeground`）都读它 —— 两处各写一遍
+/// `state == resumed` 就是同一条规则两个表达。
+bool isForeground(AppLifecycleState state) =>
+    state == AppLifecycleState.resumed;

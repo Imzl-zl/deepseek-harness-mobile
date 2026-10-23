@@ -2,6 +2,16 @@
     <!-- 摄像头权限：配对页的"扫一扫"要用（电脑侧把配对邀请渲染成二维码）。
          只声明一次，不按 build type 分叉 —— 扫码入口在 release 里也在。 -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- 通知：API 33+ 是**运行时权限**，新装默认关（官方文档原文）。
+         关着的时候连前台服务的通知也进不了通知抽屉（只在 Task Manager 里可见）——
+         所以它既是"能不能提醒"的前提，也是"要不要起保活服务"的判据
+         （Dart 侧据此决定，见 app/lib/platform/notify.dart）。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 前台服务：FOREGROUND_SERVICE 是总开关，按类型再加一条权限。
+         为什么是 remoteMessaging（无时限）而不是 dataSync（24 小时 6 小时额度）：
+         见 DshForegroundService.kt 的文件头。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
     <application
         android:label="DeepSeek Harness"
         android:name="${applicationName}"
@@ -48,6 +58,22 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/dsh_file_paths" />
         </provider>
+
+        <!-- 后台保活：App 退到后台时用前台服务保住那条 WebSocket。
+             foregroundServiceType 是 Android 14+ 的必填项；这里只有一个类型，
+             与 startForeground 里传的常量必须一致（不一致会抛
+             InvalidForegroundServiceTypeException）。 -->
+        <service
+            android:name=".DshForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="remoteMessaging" />
+
+        <!-- 通知上的「允许一次 / 拒绝」按下来之后回到这里，再由它交给 Dart。
+             没有 intent-filter：只有我们自己的 PendingIntent 能命中它
+             （显式 ComponentName），所以 exported=false 就够。 -->
+        <receiver
+            android:name=".DshActionReceiver"
+            android:exported="false" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

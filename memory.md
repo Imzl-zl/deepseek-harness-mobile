@@ -283,18 +283,28 @@
     **App 不打 logcat**（`flutter` 标签 0 行）⇒ 这几条只有现象 + 电脑侧证据，没有日志原文 —— 下次别指望它。
     截图与 `ui-*.xml` 语义树在 `D:\tmp\dsh-e2e\shots-2026-10-24-verify\`。
     铁律（用户 2026-10-24 复述）：**别擅自加规则，DSH 原生就行**。
-    **下一步候选（用户 2026-10-24 从真机看出来的，已逐条求证，0 行代码）**：
-    `.agents/notes/proposed/2026-10-24-ui-gaps-and-notification-feasibility.md` ——
-    ① 抽屉会话行没有运行中/完成态（数据已有，纯 UI）；② 设置页「上传 Session Log」未读到时被画成"关"
-    （其余三项显示"未读到"，要统一）；③ `@ 文件或对话` 只是占位符文案、**零实现**（`@会话` 轻、`@文件` 要新方法）；
-    ④ 斜杠命令只有 `/goal` `/plan` 两条且无补全面板；⑤ 用量页不可折叠、`usage.summary` 零参数（日期筛选要改契约）；
-    ⑥ **通知做不了**：切后台主动断连（`sync_client_impl.dart:1152-1163`，"三端都不做后台长连接"），
-    只能先做 App 内通知；后台常驻是设计决定（会改契约 §13），FCM 仍不做。
-    **下一步 = 通知（后台/前台）与这五条的调研 + 方案**，提示词：
-    `.agents/notes/proposed/2026-10-24-next-round-notifications-and-ui-gaps-prompt.md`（整段复制）。
-    要求：原生能力优先（`NotificationChannel` / 前台服务 / 通知 Action 都要先查清系统约束与 MIUI 实测）、
-    架构与源码优雅（能力包边界 + 单一真值 + 不加平台分支）、语义清晰（触发源只能是既有语义：
-    `status` 的运行边沿 / `approval/asked` / 提问事件）。调研 0 真机回合，落地 1–2 次真机、0–1 次模型请求。
+    **2026-10-24（同一轮）五条界面短板 + 通知 + 后台保活 —— 全部落地**（用户原话「全部实现一下」）：
+
+    | # | 件 | 提交 | 笔记 |
+    |---|---|---|---|
+    | 1 | 设置页「未读到」不再画成"关" | `6362ad6` | `implemented/2026-10-24-unknown-settings-are-not-off.md` |
+    | 2 | 抽屉行**四态**状态点 | `3413fa4` | `implemented/2026-10-24-drawer-status-dot-from-dsh.md` |
+    | 3 | `/` 候选菜单（白名单随 `repo.info.commands` 过线） | `117652c` | `implemented/2026-10-24-slash-suggestion-menu-single-source.md` |
+    | 4 | 用量页卡片 + 26 周热力图 | `84b0d29` | `implemented/2026-10-24-usage-page-cards-and-heatmap.md` |
+    | 5 | 后台保活（`remoteMessaging`）+ 三类通知 | 见文末索引 | `implemented/2026-10-24-background-keepalive-and-notifications.md` |
+
+    两条**推翻原假设**的发现：① 抽屉那枚"完成绿点"不是本地已读表，是 DSH 的 `completionUnread`
+    （`running` 边沿 + "不在主视图里"）**派生、不落盘**；② `@` 的线上形状是**文本 token**
+    （文件 `@path`、会话 `@[label](uri)`），不是结构化编码 —— 所以 `@文件/@会话` 各是
+    "1 个只读窄口 + 一个面板"，**不是"重"**（仍排在后面，本轮没做）。
+    用量页形态的依据是 rikkahub 的 `StatsPage.kt`（DSH 桌面**没有**用量页）。
+    **契约同步**：§13（安卓保活例外）、§2.2（backoff）、§9（心跳与批量合并不分前后台）、
+    §15（保活是尽力而为 / 定时任务轮次不提醒 / 未订阅会话不提醒 / 提问不做通知内答题 /
+    Local Network Permission 将来会强制）、§5.7（`usage.summary` 的 `totals`/`byDay` 与规则⑤、
+    `repo.info.commands`）。新增现状文档 `docs/subsystems/notifications.md` 与 `usage-page.md`。
+    **还没做（明确记账）**：① 通知的**原生代码没过真机**（服务起没起 / 锁屏 10 分钟活不活 /
+    通知上的按钮电脑侧认不认）；② 电脑侧 `Keepalive/Batch.setForeground` 已成死码待删；
+    ③ MIUI 的自启动与电池优化门槛待量（量法见 `docs/subsystems/notifications.md` §9）。
 
 别当缺口（定案，别再试）:
 
@@ -477,11 +487,11 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **454 / 26 / 49** 项 |
-| `node app/tools/verify-platform-boundary.mjs` | **360 项**（22 条规则自检 + 扫 99 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | **369 项**（22 条规则自检 + 扫 104 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1144 项** |
+| `cd app && flutter test` | **1172 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **616 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **620 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **87 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 
@@ -559,3 +569,8 @@
   停用设备在**中转链路上看不到"明说"**（写进契约 §15）、**直连链路上能看到**；
   断线期间跑完的一轮在回网 0.4 s 收口；计划审查卡在手机上**确实不存在**。
   三篇 implemented 笔记各自的「真机验证」一节 + `tools.md` 五条真机坑。
+
+- 2026-10-24 五条界面短板 + 通知 + 后台保活（`6362ad6` 设置未读到 / `3413fa4` 抽屉四态点 /
+  `117652c` `/` 候选菜单 / `84b0d29` 用量页卡片与热力图 / 见上表第 5 行 后台保活与三类通知）。
+  契约：§13 §2.2 §9 §15 §5.7；新增 `docs/subsystems/notifications.md` 与 `usage-page.md`。
+  **原生通知代码未过真机**（服务起停 / 锁屏存活 / 通知按钮）。

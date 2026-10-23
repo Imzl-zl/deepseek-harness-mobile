@@ -28,6 +28,7 @@ import '../core/connection.dart';
 import '../core/endpoint.dart';
 import '../core/errors.dart';
 import '../core/job.dart';
+import '../core/notify.dart';
 import '../core/sync_client.dart';
 import '../model/agent_preset.dart';
 import '../model/chat_item.dart';
@@ -74,7 +75,9 @@ class AppModel extends ChangeNotifier {
     this.onEndpointsChanged,
     this.onEndpointsMetaChanged,
     this.onConnectionTerminated,
+    NotifyPort? notify,
   }) : _prefs = prefs,
+       _notify = notify,
        _endpoints = List<Endpoint>.of(endpoints),
        _rememberedEndpointUrl = rememberedEndpointUrl,
        _hiddenEndpointIds = Set<String>.of(hiddenEndpointIds),
@@ -86,6 +89,12 @@ class AppModel extends ChangeNotifier {
 
   /// 偏好缝（`meta` 表的窄接口）；`null` = 不落盘（测试 / 未装配）。
   final PreferenceStore? _prefs;
+
+  /// 通知与后台保活的端口（`core/notify.dart` 的接口，实现在 `platform/`）。
+  ///
+  /// `null` = 这个宿主没有通知能力（测试 / 未装配）—— 所有通知路径直接跳过，
+  /// **不做假成功**。
+  final NotifyPort? _notify;
 
   /// 端点表变了之后落盘（装配层注入：`PairingStore.saveEndpoints`）。
   ///
@@ -1471,6 +1480,14 @@ class AppModel extends ChangeNotifier {
     // **这是 running 的唯一实时来源** —— 以前是"数 turn/start / turn/end + 重连重建 + 轮次代号"，
     // 那套东西已经删掉（宿主本来就有这条推送，见 `lib/core/sync_client.dart` 的说明）。
     _statusSub = client.sessionStatus.listen(_applySessionStatus);
+    // 通知上的「允许一次 / 拒绝」：原生把动作回给这里，再走既有的唯一出口
+    // `interaction.respond`（这个类里没有第二套答复路径）。
+    _approvalSub ??= _notify?.approvals.listen((action) {
+      unawaited(_answerFromNotification(action));
+    });
+    // 开屏就问一次通知权限现状（设置页那一行要显示"已开启 / 点这里开启"，
+    // 而不是一直"未读到"）。顺手把保活对齐。
+    unawaited(_syncKeepAlive());
     _connection = _viewOf(client.state, client);
     // **先把落盘的发送模式读回来**：它决定发 prompt 时带哪个 `mode`，
     // 重启后要还是用户选的那个。读不到（没存过 / 存了个不认识的值）
@@ -1799,6 +1816,9 @@ class AppModel extends ChangeNotifier {
       }
     }
     notifyListeners();
+    // 连接态变了要重判"还该不该保活"：进服务态才起服务，掉到退避/关闭就该停
+    // （停掉之后通知栏那条常驻随之消失 —— 它说的"正在保持连接"不再成立）。
+    unawaited(_syncKeepAlive());
     // **一进服务态就拉会话列表**。
     //
     // 少了这一步，界面永远停在「还没有会话」—— 而那不是"电脑上真没有会话"，
@@ -1924,6 +1944,7 @@ class AppModel extends ChangeNotifier {
     for (final s in _sessions) {
       _setRunning(s.sid, s.running);
     }
+    _syncNotices();
   }
 
   /// 把"这个会话在不在跑"写进 [_runningSids]，并在收口时清掉活时钟的起点。
@@ -1956,6 +1977,209 @@ class AppModel extends ChangeNotifier {
     // 只在真的变了的时候通知：这条流跟着宿主的 `agent/status` 走，
     // 相邻两次常常是同一状态（重连后的首条就是），没必要让整页重建。
     if (before != status.running || status.running) notifyListeners();
+    _syncNotices();
+  }
+
+  // ---- 通知与后台保活（端口在 `core/notify.dart`，实现只在 `platform/`）----
+  //
+  // 这一段的**全部输入都是既有事实**：`_runningSids` / `_completionUnread` /
+  // 本地条目里的 `ApprovalItem` 与 `ask_user_question` 的 `ToolCallItem` /
+  // `_currentSid` / 前后台态。**没有第四份状态机**，也没有落盘 —— "已提醒过哪几条"
+  // 就记在 [_activeNotices] 里（派生，杀 App 即丢，与"完成绿点"同一条理由）。
+
+  /// 前台还是后台（`AppStateReporter` 翻译 Flutter 生命周期之后调 [setAppForeground]）。
+  bool _appForeground = true;
+
+  /// 通知权限（原生报的真值）；`null` = 还没问过。
+  bool? _notifyGranted;
+
+  /// 电脑侧此刻允许我们发通知吗（设置页那行用；`null` = 不知道）。
+  bool? get notifyGranted => _notifyGranted;
+
+  /// 已经贴上去的那批（`id → notice`）：`_syncNotices` 靠它做增删差集。
+  final Map<int, AttentionNotice> _activeNotices = <int, AttentionNotice>{};
+
+  StreamSubscription<NotifyApproval>? _approvalSub;
+
+  /// 前后台态变化（装配点从 `AppStateReporter` 转过来）。
+  ///
+  /// 它同时是两件事的输入：**通知**（前台且看着那个会话 ⇒ 不提醒）与
+  /// **保活**（退到后台才需要那条前台服务）。
+  void setAppForeground(bool foreground) {
+    if (_appForeground == foreground) return;
+    _appForeground = foreground;
+    _syncNotices();
+    unawaited(_syncKeepAlive());
+  }
+
+  /// 问一次通知权限（设置页那一行点下去调它）。
+  ///
+  /// 返回**问完之后**的真实状态；顺手把保活对齐（刚给了权限就该能起服务）。
+  Future<bool> requestNotifyPermission() async {
+    final port = _notify;
+    if (port == null) return false;
+    final granted = await port.requestPermission();
+    _notifyGranted = granted;
+    if (!_disposed) notifyListeners();
+    await _syncKeepAlive();
+    return granted;
+  }
+
+  /// 跳到系统的通知渠道设置（**声音/震动归系统**，App 不再造一套开关）。
+  Future<void> openNotificationSettings() async =>
+      _notify?.openChannelSettings();
+
+  /// 通知上的按钮（原生回话）：走**既有的唯一出口** `interaction.respond`。
+  ///
+  /// 「允许一次」= `selected: ['allowed-once']`（DSH 的 outcome 值，
+  /// `user-approval/src/types.ts:32`）；「拒绝」= 空 `selected` 且无 `custom`
+  /// （契约 §5.7 那一行）。**没有"总是允许"**，所以通知按不出永久授权。
+  Future<void> _answerFromNotification(NotifyApproval action) async {
+    final sid = _sidOfPendingItem(action.itemId);
+    if (sid == null) {
+      // 找不到那个待处理项（已答 / 会话不在列表里）：撤掉通知，什么都不答。
+      // 不猜一个 sid —— 答错会话比不答更糟。
+      final stale = noticeIdOf('approval:${action.itemId}');
+      _activeNotices.remove(stale);
+      await _notify?.cancel(stale);
+      return;
+    }
+    try {
+      await respondInteraction(
+        InteractionAnswer(
+          sid: sid,
+          itemId: action.itemId,
+          answers: [
+            InteractionAnswerItem(
+              id: action.itemId,
+              selected: action.allowedOnce ? const ['allowed-once'] : const [],
+            ),
+          ],
+        ),
+      );
+    } catch (error) {
+      // **失败照原样记下来**（`not-pending` 说明卡已经不在待处理里了），
+      // 并撤掉那条通知 —— 让用户去 App 里看到真实状态，而不是对着一个
+      // 已经无效的按钮反复按。
+      _recordError('通知上的答复没能送达', error);
+      final id = noticeIdOf('approval:${action.itemId}');
+      _activeNotices.remove(id);
+      await _notify?.cancel(id);
+    }
+  }
+
+  /// 某个待处理项属于哪个会话（只查**已订阅**会话的本地条目）。
+  ///
+  /// 与 `_pendingCountOf` 同一个数据面，所以边界也一样：没访问过的会话在本地
+  /// 没有条目（它的事件没订阅）—— 那种会话的审批**在手机上不提醒**
+  /// （写在契约 §15）。
+  String? _sidOfPendingItem(String itemId) {
+    for (final session in _sessions) {
+      for (final item in _storeOf(session.sid).items) {
+        if (item is ApprovalItem && !item.decided && item.itemId == itemId) {
+          return session.sid;
+        }
+      }
+    }
+    return null;
+  }
+
+  /// 期望的通知集合 —— **完全从既有事实派生**。
+  List<AttentionNotice> _desiredNotices() {
+    final notices = <AttentionNotice>[];
+    for (final session in _sessions) {
+      // 前台且正看着它 ⇒ 不提醒：结果就在眼前（与"完成绿点"同一条判据）。
+      if (_appForeground && session.sid == _currentSid) continue;
+      final title = session.displayTitle;
+      for (final item in _storeOf(session.sid).items) {
+        if (item is ApprovalItem && !item.decided) {
+          notices.add(
+            AttentionNotice(
+              id: noticeIdOf('approval:${item.itemId}'),
+              kind: NoticeKind.approval,
+              sid: session.sid,
+              title: '等你审批 · $title',
+              body: item.title.isEmpty ? '有一项操作需要你确认' : item.title,
+              itemId: item.itemId,
+              allowLabel: '允许一次',
+              denyLabel: '拒绝',
+            ),
+          );
+        }
+        // 提问：`ask_user_question` 的 `tool/call` 还没有 `tool/result` ——
+        // 与连接器认身份的那条规则同一个判据（`connector/src/dsh/question-call.ts`）。
+        if (item is ToolCallItem &&
+            item.name == 'ask_user_question' &&
+            item.status == ToolCallStatus.running) {
+          notices.add(
+            AttentionNotice(
+              id: noticeIdOf('question:${item.itemId}'),
+              kind: NoticeKind.question,
+              sid: session.sid,
+              title: '有人在问你 · $title',
+              body: '点开回答（通知上不答题：答案要按问题逐条给）',
+            ),
+          );
+        }
+      }
+      if (completionUnreadOf(session.sid)) {
+        notices.add(
+          AttentionNotice(
+            id: noticeIdOf('completed:${session.sid}'),
+            kind: NoticeKind.completed,
+            sid: session.sid,
+            title: '跑完了 · $title',
+            body: '你没看着它的时候这一轮结束了',
+          ),
+        );
+      }
+    }
+    return notices;
+  }
+
+  /// 把"该贴的"与"已贴的"对齐：消失的撤、新增的贴、同样的不动。
+  void _syncNotices() {
+    final port = _notify;
+    if (port == null || _disposed) return;
+    final desired = <int, AttentionNotice>{
+      for (final notice in _desiredNotices()) notice.id: notice,
+    };
+    for (final id in _activeNotices.keys.toList()) {
+      if (desired.containsKey(id)) continue;
+      _activeNotices.remove(id);
+      unawaited(port.cancel(id));
+    }
+    for (final entry in desired.entries) {
+      if (_activeNotices.containsKey(entry.key)) continue;
+      _activeNotices[entry.key] = entry.value;
+      unawaited(port.show(entry.value));
+    }
+  }
+
+  /// 前台服务：**退到后台 + 有通知权限 + 连接在服务态** ⇒ 保住它。
+  ///
+  /// 三条判据都是既有的：前后台态来自 `AppStateReporter`，权限是平台真值，
+  /// "连接在服务态"就是 `client.state`。**没有第四条**。
+  ///
+  /// 为什么没权限就不起：平台原文说清 —— 拒绝 `POST_NOTIFICATIONS` 时前台服务的
+  /// 通知进不了通知抽屉；那条服务唯一可观察的产出就没了，起了只是白耗电。
+  Future<void> _syncKeepAlive() async {
+    final port = _notify;
+    if (port == null || _disposed) return;
+    final status = await port.status();
+    _notifyGranted = status.granted;
+    final want =
+        !_appForeground &&
+        status.granted &&
+        client.state == ConnectionState.serving;
+    if (want && !status.keepAlive) {
+      await port.startKeepAlive(
+        title: 'DeepSeek Harness',
+        text: '正在后台保持与电脑的连接',
+      );
+    } else if (!want && status.keepAlive) {
+      await port.stopKeepAlive();
+    }
   }
 
   /// 拉会话列表（`session.list`）。
@@ -2619,6 +2843,9 @@ class AppModel extends ChangeNotifier {
 
     // 同一批只读面（统计条 / 轨迹 / 子智能体 / 交付物 / 权限档）走同一个投影读。
     await refreshProjections(sid);
+    // 换了会话就重判通知：切到的那个会话不该再有一条"等你处理"挂在通知栏里
+    // （与"点进去绿点消失"同一条判据）。
+    _syncNotices();
   }
 
   /// 关闭当前会话（退订）。
@@ -2984,6 +3211,9 @@ class AppModel extends ChangeNotifier {
 
     // 会话列表里的更新时间与计数跟着动。
     _touchSummary(sid, store);
+    // 待处理集合（审批 / 提问）就长在条目里，所以收帧之后对齐一次通知 ——
+    // "有人等你"这件事的新增与消失都在这里发生。
+    _syncNotices();
   }
 
   /// `turn/end` 载荷里的轮次号（取不到是 null）。
@@ -3336,6 +3566,14 @@ class AppModel extends ChangeNotifier {
     }
     _deltaSubs.clear();
     unawaited(_interactions.close());
+    // 通知：**收尾要干净** —— 撤掉自己贴的那批、停掉前台服务（否则 App 已经
+    // 不在了，通知栏里还挂着一条"正在保持连接"的骗人常驻）。
+    unawaited(_approvalSub?.cancel());
+    final port = _notify;
+    if (port != null) {
+      unawaited(port.cancelAll());
+      unawaited(port.stopKeepAlive());
+    }
     for (final store in _stores.values) {
       unawaited(store.dispose());
     }

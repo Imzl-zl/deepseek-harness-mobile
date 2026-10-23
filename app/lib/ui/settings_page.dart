@@ -255,6 +255,17 @@ class SettingsPage extends StatelessWidget {
                   ? null
                   : (value) => unawaited(_setSessionLog(context, app, value)),
             ),
+            // **通知不在这里造开关**：声音/震动/重要级归系统渠道（平台规矩 ——
+            // 渠道一经创建，App 改不了它们）。这一行只说"系统给了没"，
+            // 点它去把权限要回来、或去调系统渠道设置。
+            _PrefRow(
+              icon: 'alarmClock',
+              label: '通知与后台保活',
+              value: app.notifyGranted == null
+                  ? '未读到'
+                  : (app.notifyGranted! ? '已开启' : '点这里开启'),
+              onTap: () => unawaited(_onNotifyTap(context, app)),
+            ),
             // **用量不在设置页**：2026-10-19 用户原话「用量在侧滑窗口菜单
             // 单独页面啊，这不是显眼，因为这个挺常用的，你藏太深了」。
             // 所以它是**抽屉底栏的一枚**（`main.dart` 的 `DrawerFootItem`），
@@ -478,6 +489,25 @@ Future<void> _setSessionLog(
 ) async {
   final ok = await app.updateSetting('session-log-deepseek', 'enabled', value);
   if (!ok && context.mounted) _showSettingFailure(context, app);
+}
+
+/// 「通知与后台保活」那一行：没权限就去要，有了就带用户去系统渠道设置。
+///
+/// **不在这里造"震动/声音"开关**：那些归系统渠道（平台明文：渠道一经创建，
+/// 声音/震动/重要级由用户完全控制）。我们能做的只有"要权限"和"把用户送到
+/// 那个页面"，两件都不是第二份真值。
+Future<void> _onNotifyTap(BuildContext context, AppModel app) async {
+  final granted = app.notifyGranted;
+  if (granted == true) {
+    await app.openNotificationSettings();
+    return;
+  }
+  final ok = await app.requestNotifyPermission();
+  if (ok || !context.mounted) return;
+  // 被拒（或系统不再弹窗）：**明说后果**，不假装开着。
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(content: Text('没有通知权限：退到后台不会提醒（点这里可在系统设置里打开）')),
+  );
 }
 
 /// 改电脑侧设置失败时的一句话（**说清是哪条错误**，不吞掉）。
