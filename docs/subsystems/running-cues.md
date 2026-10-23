@@ -54,8 +54,21 @@ loading 字形 + 运行条「用时 1 分 54 秒」）；同一行矩形的相�
 `AppModel.runningOf(sid)` = `turn/start` 之后还没等到 `turn/end`（`_runningSids`）——
 事件本身就是电脑侧事实，而且实时。**这是唯一真值**：`session.list` 的 `running`
 只在读到的那一刻往 `_runningSids` 里**补一笔**（打开会话时还没有事件，那一笔是初值），
-**不许撤销** —— 撤销只由 `turn/end` 做。反过来（用快照 OR 事件）会让旧快照的
+平时**不许撤销** —— 撤销只由 `turn/end` 做。反过来（用快照 OR 事件）会让旧快照的
 `true` 永远关不掉：2026-10-22 真机上一轮结束后仍转了 5 分钟，杀 App 才消失。
+
+**唯一的例外是重连那一刻。** 断线期间收口的一轮，`turn/end` 不保证以事件形式回来：
+重连的第一包按协议只有两种结果 —— **增量**（含漏掉的 `turn/end`）或**快照页**
+（只有条目 `{seq,itemId,text}`，没有事件类型；`connector/src/protocol/recovery.ts:298-311`，
+fixture `01-normal-delta` 是增量、`04-window-missed-baseline` 是快照）。所以
+`_runningSids` 可能停在一个过期的 `true` 上。重连后第一包 `session.list` 到手时
+按它**重建**一次：新行说 `false` 就撤、说 `true` 就补。
+
+重建有一条硬护栏：**只对这一包里没有被更新事件改过的行生效**。`turn/start` /
+`turn/end` 各带一个单调的轮次代号；请求发出后代号变了的行直接跳过 —— 否则旧的
+`true` 会钉死刚结束的一轮（2026-10-22 那条教训），旧的 `false` 会关掉刚起的一轮
+（排队消息在重连瞬间发出就会撞上）。事件流仍然赢过快照，只是"旧"的判据从
+"上一次读"改成了"这一包发出之后有没有新事件"。
 
 三处读同一个真值：运行条（`_ConversationFlow.running`）、输入栏的「排队发送」与
 「工作步骤展示」的运行中展开（`chat_page.dart` 的 `_running`）、子智能体行的状态。
@@ -70,8 +83,15 @@ loading 字形 + 运行条「用时 1 分 54 秒」）；同一行矩形的相�
 
 - `app/test/shimmer_test.dart`：`turn/start` 起 / `turn/end` 收；**快照说在跑时
   `turn/end` 也必须能停**（那条走真 `session.list` 解析器）。
+- `app/test/running_reconnect_test.dart`：断线 → 重连的两种第一包与两条边界 ——
+  断线期间收口（新快照说 `false`，或增量里的 `turn/end` 先于快照落地）⇒ `runningOf` 为 `false`；
+  断线期间没收到口、这一轮仍在跑（新快照说 `true`，或增量里的 `turn/start` 先于快照落地）
+  ⇒ 仍为 `true`；重连那包 `session.list` **读失败** ⇒ 保持原值（不知道就不撤）。
+  widget 级一条：`ChatPage` 重连后运行条消失、输入栏主键从「停止」回到「发送」。
 - 真机（`d61cf622`，2026-10-22）：执行中 `shots-2026-10-22/g-213439.png`；
   `turn/end` 后 `i1-after-turn-end.png`（App 全程前台，未重启）。
+  重连这条边界**没有真机回合**：模型级 + widget 级用例已覆盖，见
+  `.agents/notes/implemented/2026-10-23-running-rebuilt-on-reconnect.md`。
 
 ## 4. 有意不做
 

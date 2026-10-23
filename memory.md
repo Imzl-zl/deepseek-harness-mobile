@@ -129,6 +129,14 @@
 > `docs/subsystems/turn-groups.md` §2 补"内联 diff / 变更文件 / 过程产出的图片"、§3 补箭头朝向、§6 补原型判据。
 > **箭头方向**照 DSH/落地端（收起朝下、展开朝上）—— 开工单里"收起后箭头朝右"与两侧真值冲突，未采用。
 
+> **2026-10-23（本轮）缺口 9b：断线期间收口的一轮，重连后运行条不再转** —— **0 个真机回合**：
+> 重连进服务态时第一包 `session.list` **重建** `_runningSids`（唯一允许"撤"的地方；
+> 平时仍只补不撤），轮次代号（`turn/start` / `turn/end` 各 +1）挡住"请求之后到达的事件"——
+> 旧快照不许钉死 `true`，也不许关掉刚起的一轮。第一包按协议可能是增量或快照页
+> （`connector/src/protocol/recovery.ts:298-311`）。判据 `app/test/running_reconnect_test.dart`
+> 6 条；变异校验两组各恰好 3 / 2 条红。笔记 `implemented/2026-10-23-running-rebuilt-on-reconnect.md`；
+> 门禁 flutter **1127**，其余不变。
+
 待办（按顺序）:
 
 1. **轮组阶段 1 已落地**（整轮分组 + 折叠过程 + 「工作步骤收起时机」两档）——
@@ -281,8 +289,13 @@
    不是等得不够；收抽屉改 `ChatPageState.closeDrawer()`（同步）。
    判据：`app/test/drawer_close_before_push_test.dart` + 真机两轮
    （`a1/a2/a3-*.png`、`a6-*-*.png`）。
-9b. **断线期间发生的 `turn/end` 收不到** ⇒ 重连前运行条会一直转（`turn/end` 是唯一
-   撤销信号）。今天就有，未修；要修得让"重连后的第一包"能补出这一轮的收口。
+9b. ~~断线期间发生的 `turn/end` 收不到 ⇒ 重连前运行条一直转~~ **已修（2026-10-23）**：
+    重连进服务态时按第一包 `session.list` **重建** `_runningSids`（唯一允许"撤"的地方；
+    平时仍只补不撤），并用轮次代号挡住"请求之后到达的 `turn/end` / `turn/start`"——
+    旧快照不许把 `true` 钉死，也不许把刚起的一轮关掉。第一包按协议可能是增量
+    （含 `turn/end`）或快照页（`connector/src/protocol/recovery.ts:298-311`）。
+    判据 `app/test/running_reconnect_test.dart`（6 条，**0 个真机回合**）；
+    因果见 `implemented/2026-10-23-running-rebuilt-on-reconnect.md`。
 10. **`workspace.createdAt` 的"空工作区当最近"只有单测**（2026-10-22）：真机上 App 总会恢复
     上一次的会话，而「当前会话所在工作区」是链的第二步、优先级更高；手机没有「取消选中会话」
     的入口 ⇒ 那条分支在真机上够不到。要真机验，得先有一个能落到"无当前会话"的入口。
@@ -310,7 +323,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **357 项**（22 条规则自检 + 扫 98 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1121 项** |
+| `cd app && flutter test` | **1127 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **587 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
@@ -346,3 +359,5 @@
   `2026-10-23-proto-subagent-panel-tree.md`。
 - 2026-10-23 原型轮组同步落地端（一轮一个可折叠组 + 一个助手头 + 「工作步骤收起时机」）+
   `verify-turns.mjs` 60 项 —— `2026-10-23-proto-turn-groups-and-verify-turns.md`。
+- 2026-10-23 断线期间收口的一轮：重连按 `session.list` 重建运行态（轮次代号护栏）——
+  `2026-10-23-running-rebuilt-on-reconnect.md`。
