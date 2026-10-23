@@ -1,6 +1,6 @@
 # Agent Note: 「我们替 DSH 做了决定」总账 —— 已逐条求证 + 归类
 
-Status: proposed（**结论已求证**；9/11 已落地，剩 W3、W4）
+Status: proposed（**结论已求证**；10/11 已落地，剩 W4）
 
 ## 落地进度（2026-10-24，每件一个提交）
 
@@ -15,12 +15,12 @@ Status: proposed（**结论已求证**；9/11 已落地，剩 W3、W4）
 | Z5 配对码输入关联想 | ✅ | `67d0397` |
 | Z6a 预设文案跟上 DSH | ✅ | `748edcf` |
 | Z6b IPv6 仅排后写进 §15 | ✅ | `e1a421a` |
-| **W3 终态只有一个来源** | ⏳ | 需 1–2 个真机回合验证恢复路径（已报价，**等用户点头**） |
+| **W3 终态只有一个来源** | ✅（代码）／真机待跑 | 见 `implemented/2026-10-24-terminal-identity-from-pc.md`；**真机 1–2 回合未跑** |
 | **W4 运行态改读原生** | ⏳ | 要加一条契约帧（最大一件），1 个真机回合 |
 
-门禁（9 件落地后）：protocol **454·26·49**、boundary **360**、connector **615**、
-relay **87**、flutter **1141**、analyze/format **0**、icons / tool-paths 绿。
-真机回合：**0**（W3/W4 的验证另计）。
+门禁（10 件落地后）：protocol **454·26·49**、boundary **360**、connector **615**、
+relay **87**、flutter **1144**、analyze/format **0**、icons / tool-paths 绿。
+真机回合：**0**（W3 的验证 1–2 回合、W4 的 1 回合另计，均未跑）。
 
 ## 这一轮做了什么
 
@@ -79,8 +79,8 @@ relay **87**、flutter **1141**、analyze/format **0**、icons / tool-paths 绿�
 
 | # | 结论 | 归类 | 我们 file:line | DSH 证据 / 事实出处 | 与原生语义的差异 | 建议 |
 |---|---|---|---|---|---|---|
-| C1（待办 4） | 不是自创（我们自己的中转/App 形状） | `逻辑语义` | `app/lib/core/pairing_client.dart:80`（401/409 → `notPaired`）；`app/lib/core/errors.dart:92-93`（→ `rePair`）；`app/lib/platform/ticketed_transport.dart:68-77`；`app/lib/core/sync_client_impl.dart:311-320` | 未找到 DSH 对应（中转是本仓的）。中转把三件事合成 401：令牌无效 / 已吊销 / 没见过（`relay/src/device-registry.ts:88`、`relay/src/digest-auth.ts:43,59`、`relay/src/http-face.ts:61`） | "名册被我清空了"（**可恢复**）与"你被停用了"（**终态**）在线上是同一条 401，而 App 把它读成终态并清凭据 | **改**：换票 401 **不再当终态**（中转只知道"名册里没有我"，而名册是电脑推的 ⇒ 可恢复）；终态只认电脑侧的**明说**（close 4003 / `protocol/revoked`）。**不让中转假装知道 revoked** —— 它不知道，造那条知识要新加一个协议面；见 W3 |
-| C2（已知缺口 3） | 不是自创 | `逻辑语义` | 服务端 `connector/src/transport/connection.ts:660`（close 4003）；错误表 `connector/src/protocol/errors.ts:30`；客户端终态判据只覆盖**建连失败**（`app/lib/core/sync_client_impl.dart:316-320`） | 未找到 DSH 对应（握手是本仓的）；"身份不被认 = 终态"这条原则已在 `sync_client_impl.dart:311-315` 与 `endpoint_transport.dart:142-153` 写死 | 同一件事有两条路：换票 401 走终态，握手 close 4003 / `protocol/revoked` 帧仍走退避 ⇒ "终态被当成可重试" | **改**：与 C1 同批收口（终态判据只写一处）；见 W3 |
+| C1（待办 4） | 不是自创（我们自己的中转/App 形状） | `逻辑语义` | `app/lib/core/pairing_client.dart:80`（401/409 → `notPaired`）；`app/lib/core/errors.dart:92-93`（→ `rePair`）；`app/lib/platform/ticketed_transport.dart:68-77`；`app/lib/core/sync_client_impl.dart:311-320` | 未找到 DSH 对应（中转是本仓的）。中转把三件事合成 401：令牌无效 / 已吊销 / 没见过（`relay/src/device-registry.ts:88`、`relay/src/digest-auth.ts:43,59`、`relay/src/http-face.ts:61`） | "名册被我清空了"（**可恢复**）与"你被停用了"（**终态**）在线上是同一条 401，而 App 把它读成终态并清凭据 | **改**：换票 401 **不再当终态**（中转只知道"名册里没有我"，而名册是电脑推的 ⇒ 可恢复）；终态只认电脑侧的**明说**（close 4003 + 身份类协议码）。**不让中转假装知道 revoked** —— 它不知道，造那条知识要新加一个协议面 —— **已落地**，见 `implemented/2026-10-24-terminal-identity-from-pc.md` |
+| C2（已知缺口 3） | 不是自创 | `逻辑语义` | 服务端 `connector/src/transport/connection.ts:660`（close 4003）；错误表 `connector/src/protocol/errors.ts:30`；客户端终态判据只覆盖**建连失败**（`app/lib/core/sync_client_impl.dart:316-320`） | 未找到 DSH 对应（握手是本仓的）；"身份不被认 = 终态"这条原则已在 `sync_client_impl.dart:311-315` 与 `endpoint_transport.dart:142-153` 写死 | 同一件事有两条路：换票 401 走终态，握手 close 4003 / `protocol/revoked` 帧仍走退避 ⇒ "终态被当成可重试" | **改**：与 C1 同批收口（终态判据只写一处）—— **已落地**：`TransportClosed` 按**理由**判，4003 + `rePair` 码才是终态；见 `implemented/2026-10-24-terminal-identity-from-pc.md` |
 | C3（已知缺口 1） | 不是自创 | `实现缺陷` | `relay/src/http-face.ts:41`（键是字面量 `'pairing:anonymous'`）；桶参数 `relay/src/server.ts:68`（60 容量 / 6 每秒） | 未找到 DSH 对应（中转是本仓的） | 所有**未配对**设备共用一个桶 ⇒ 约 6 req/s 就能让全部新设备 429 | **改**：匿名键按来源地址分桶（与设备键同一个 limiter）；见 Z3 |
 | C4（已知缺口 2） | 不是自创 | `实现缺陷`（名字与语义不符） | `relay/src/core.ts:61-62`：`devices: channels.size` 与 `channels: channels.size` **恒等** | 未找到 DSH 对应 | 两个字段同义 ⇒ `devices` 不携带信息，读它的人会以为在数设备 | **删** `devices` 字段（或改成 distinct deviceId 数）；见 Z4 |
 | C5（已知缺口 4） | 不是自创 | `实现缺陷` | `app/lib/ui/pairing_page.dart:413`（`TextField` 无 `enableSuggestions` / `autocorrect` / `keyboardType`） | 未找到 DSH 对应（配对码是本仓的） | 输入法联想会把**手打**的 JSON 改坏（粘贴没事） | **改**：一行（`enableSuggestions: false, autocorrect: false`）；见 Z5 |

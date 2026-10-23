@@ -197,6 +197,31 @@ void main() {
       expect(error.code, ErrorCode.relayOffline);
       expect(error.clientAction, ClientAction.showOffline);
     });
+
+    test('**已配对**设备的换票 401 → 离线态（不是回配对页）', () async {
+      // 这条路上的 401 只说明"中转的名册里没有这个摘要"，而名册是**电脑推上去的**：
+      // 中转重启后它是空的，等电脑连上来重新灌（`relay/src/device-registry.ts:88`）。
+      // 把它读成"你被停用了"会清掉用户凭据 —— 而真正"被停用"是电脑在握手层明说
+      // （关闭码 4003 + `protocol/not-paired`，见 `core/sync_client_impl.dart`）。
+      final http = _FakeHttp([const HttpResult(status: 401, body: '{}')]);
+      final client = PairingClient(
+        relayUrl: 'ws://127.0.0.1:8787',
+        send: http.call,
+        allowInsecureLocal: true,
+      );
+
+      final error = await () async {
+        try {
+          await client.ticketByDeviceToken('device-token-1');
+        } on ProtocolException catch (error) {
+          return error;
+        }
+        fail('401 应当抛 ProtocolException');
+      }();
+
+      expect(error.code, ErrorCode.relayOffline);
+      expect(error.clientAction, ClientAction.showOffline, reason: '退避重试，不清凭据');
+    });
   });
 
   group('响应形状坏掉时不静默降级', () {

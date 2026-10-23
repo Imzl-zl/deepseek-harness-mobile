@@ -41,6 +41,12 @@ import 'transport.dart';
 /// 于是测试能用假定时器在毫秒内跑完"退避 30 s"这类场景。
 SyncClient createSyncClient(SyncClientDeps deps) => _SyncClient(deps);
 
+/// 电脑侧在**握手被拒**时用的关闭码（`connector/src/transport/connection.ts:660`）。
+///
+/// 关闭理由里带的是**协议码**（`protocol/not-paired` 等，`protocol/handshake-driver.ts:278`），
+/// 所以"是不是终态"由**理由**决定、由这个码收窄范围：别的 4003（坏帧 / 握手超时）照旧退避。
+const int kHandshakeRefusalCloseCode = 4003;
+
 class _SyncClient implements SyncClient, SyncClientProbe {
   _SyncClient(this._deps)
     : _machine = ConnectionMachine(),
@@ -308,10 +314,12 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       // 与"连上了但没数据"长得一模一样（都是空列表、都无错误），
       // 而真机上**反复重连**正是走这里（换票失败、升级被拒都会抛到这里）。
       //
-      // **身份不被认（notPaired / revoked）是终态，不进退避**：换票被拒说明
-      // 这台电脑已不再认可本机（停用 / 凭据失效 / 名册里没有），退避重连只会
-      // 每次都拿到同一个 401，用户永远卡在"重连中…"。这种情况由上层
-      // （装配点，经 AppModel → ConnectionRecovery）清掉本地凭据并回配对页；
+      // **终态只有一个来源：电脑侧明说"我不认你"**（`rePair` 那两个码）。
+      // 换票 401 在这一层**不是**终态（已配对设备的换票路径把它归成 `relay/offline`，
+      // 见 `pairing_client.dart`）：中转只知道"名册里没有这个摘要"，而名册由电脑推、
+      // 重启后为空 ⇒ 可恢复。真正"被停用"由握手层用关闭码 4003 + `protocol/not-paired`
+      // 明说，走 `_onTransportEvent` 的 `TransportClosed` 那一支（同一个判据：`rePair`）。
+      // 判成终态后由上层（装配点 → AppModel → ConnectionRecovery）清凭据回配对页；
       // 连接层只负责"不重连 + 留声"，不认识平台、也不导航。
       final exception = _connectFailure(error);
       _lastProtocolError = exception;
@@ -428,6 +436,18 @@ class _SyncClient implements SyncClient, SyncClientProbe {
         // 记下关闭码与理由，至少能区分"谁关的""为什么关"。
         _lastCloseCode = code;
         _lastCloseReason = reason;
+        // **电脑侧"明说不要你了"才算终态**：握手层的拒绝以关闭码 4003 + **协议码**作理由
+        // 送出（`connector/src/transport/connection.ts:660`，理由来自 `ProtocolError.code`，
+        // `protocol/handshake-driver.ts:278`），其中 `protocol/not-paired` 就是"未配对或已吊销"
+        // （同文件 `:164`）。别的 4003（`protocol/bad-frame` / `handshake-timeout` / `internal`）
+        // 都是可重试的，照旧退避。
+        if (code == kHandshakeRefusalCloseCode && reason != null) {
+          final refusal = ErrorCode.fromWire(reason);
+          if (refusal.clientAction == ClientAction.rePair) {
+            _lastProtocolError = ProtocolException(refusal, '握手被拒：$reason');
+            _lastConnectWasTerminal = true;
+          }
+        }
         _enterClosed();
     }
   }

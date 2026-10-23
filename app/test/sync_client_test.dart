@@ -77,9 +77,9 @@ class FakeTransport implements ChannelTransport {
     _controller?.add(TransportMessage(chunk));
   }
 
-  /// 模拟对端断开。
-  void dropFromPeer({int? code}) {
-    _controller?.add(TransportClosed(code: code));
+  /// 模拟对端断开（`reason` 是电脑侧带出的**协议码**，见 `handshake-driver.ts:278`）。
+  void dropFromPeer({int? code, String? reason}) {
+    _controller?.add(TransportClosed(code: code, reason: reason));
   }
 
   /// 已发出的帧（解析后的）。
@@ -685,6 +685,72 @@ void main() {
       expect(f.transport.connectCount, 1, reason: '终态客户端回前台也不重连、不炸');
 
       await client.close();
+    });
+
+    test('握手被拒（4003 + `protocol/not-paired`）→ 终态：不重连、看得见原因', () async {
+      // **终态的唯一来源**：电脑侧在握手层明说"我不认这台设备"
+      // （`connector/src/protocol/handshake-driver.ts:164` 抛出 → `:278` 以协议码为理由关闭 →
+      // `connector/src/transport/connection.ts:660` 用 4003 关）。
+      // 换票 401 不再属于这一类（中转只能说"名册里没你"，见 `pairing_client.dart`）。
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+      await pump();
+      expect(client.state, ConnectionState.serving);
+
+      f.transport.dropFromPeer(code: 4003, reason: 'protocol/not-paired');
+      await pump();
+
+      final probe = client as SyncClientProbe;
+      expect(probe.lastConnectWasTerminal, isTrue);
+      expect(probe.lastProtocolError?.code, ErrorCode.notPaired);
+      expect(client.state, ConnectionState.closed);
+
+      f.clock.advance(120000);
+      await pump();
+      expect(f.transport.connectCount, 1, reason: '电脑已明说不认本机：不重连（等上层清凭据）');
+      await client.close();
+    });
+
+    test('4003 但理由不是身份拒绝（坏帧 / 超时 / 无理由）→ **照旧退避重连**', () async {
+      // 4003 是"握手失败"的通用关闭码，只有**理由**是身份类协议码时才是终态。
+      for (final reason in <String?>[
+        null,
+        'protocol/bad-frame',
+        'handshake-timeout',
+        'internal',
+      ]) {
+        final f = buildDeps();
+        final client = createSyncClient(f.deps);
+        await client.start();
+        await answerHello(f.transport);
+        await pump();
+
+        f.transport.dropFromPeer(code: 4003, reason: reason);
+        await pump();
+
+        final probe = client as SyncClientProbe;
+        expect(
+          probe.lastConnectWasTerminal,
+          isFalse,
+          reason: '理由 ${reason ?? 'null'} 不是身份拒绝，不该清凭据',
+        );
+        expect(
+          client.state,
+          ConnectionState.backoff,
+          reason: '理由 ${reason ?? 'null'} 要退避',
+        );
+
+        f.clock.advance(1100);
+        await pump();
+        expect(
+          f.transport.connectCount,
+          2,
+          reason: '理由 ${reason ?? 'null'} 要重连',
+        );
+        await client.close();
+      }
     });
 
     test('换票被限流（429 → rateLimited）→ **照旧退避重试**，不是终态', () async {

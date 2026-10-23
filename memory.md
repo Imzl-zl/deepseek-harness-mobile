@@ -209,11 +209,12 @@
 3. ~~**斜杠命令没有执行面**~~ **已修（2026-10-23）**：新方法 `command.execute`
    （白名单只放 `/goal` 与 `/plan`，准入判据见契约 §5.7 那一行），`/goal …` 不再变成普通消息。
    命令卡的渲染没动（那是另一件事）。笔记 `implemented/2026-10-23-slash-command-execution-surface.md`。
-4. **电脑侧停一会儿，手机会清掉配对** —— 中转重启后名册是空的，设备换票拿到 401，
-   App 把 401 归成 `notPaired`（终态）⇒ 清凭据回配对页。实测一次（清单第 11 条）。
-   **根因已查清（2026-10-24 审计 C1）**：中转那个 401 只说"我的名册里没有你"
-   （名册是电脑推上去的），它不是终态 —— 是我们把它读成了终态。
-   工单 `proposed/2026-10-24-terminal-identity-from-relay.md`（W3，与已知缺口 3 同批）。
+4. ~~**电脑侧停一会儿，手机会清掉配对**~~ **已修（2026-10-24，W3）**：换票 401 在**已配对**那条路上
+   不再当终态（归 `relay/offline`，退避重试），终态只认电脑侧明说 —— **关闭码 4003 +
+   `protocol/not-paired`**（`connector/src/protocol/handshake-driver.ts:164` →
+   `connection.ts:660`）。判据 `sync_client_test` 两条（含"其他 4003 仍退避"的对照面）+
+   `pairing_client_test` 一条；变异校验两组各恰好 1 条红。**真机 1–2 回合未跑**（见笔记"还没做的"）。
+   笔记 `implemented/2026-10-24-terminal-identity-from-pc.md`。
 5. **侧边栏移动 / 置顶：真机已验**（2026-10-21 晚，隔离实例）—— 长按菜单四项（无删除）、
    置顶后进本组最前并出图钉、跨置顶分区上移不可点、未分组桶上移/下移不可点、
    归档后从列表消失且能在「归档」页取消、杀 App 重开 + 中转重启后置顶与顺序仍成立。
@@ -266,7 +267,8 @@
     ~~**Z1** `fullAccess` 过滤~~ **✅（见索引）**
     ④ ~~**Z4** `stats.devices`~~ **✅ `bbfa5f7`** → ~~**Z3** 匿名限流分桶~~ **✅（见索引）**
     ⑤ ~~**Z6a** 预设文案漂移~~ **✅ `748edcf`** → ~~**Z6b** §15 一句~~ **✅（见索引）**
-    ⑥ **W3** 终态只有一个来源（1–2 回合）→ **W4** 运行态改读原生（1 回合，要加一条契约帧）← **下一步**
+    ⑥ ~~**W3** 终态只有一个来源~~ **✅（见索引；真机 1–2 回合未跑）** →
+    **W4** 运行态改读原生（1 回合，要加一条契约帧）← **下一步**
     铁律（用户 2026-10-24 复述）：**别擅自加规则，DSH 原生就行**。
 
 别当缺口（定案，别再试）:
@@ -376,8 +378,10 @@
    `relay/src/core.ts` 的 `stats` 去掉了 `devices`（它与 `channels` 恒等，同一个数字两个名字）；
    设备数看名册（`deviceRegistry.stats.devices` / `bound`）。判据 `relay/tests/core.test.ts`
    的键集合断言 + 变异校验（加回去恰好一条红）。
-3. 握手层 close 4003 与 `protocol/revoked` 帧两条兜底路径仍走退避，未收口。
-   → 与下面第 4 条同根（终态判据只覆盖建连失败）；工单 W3。
+3. ~~握手层 close 4003 与 `protocol/revoked` 帧两条兜底路径仍走退避，未收口~~
+   **已收口（2026-10-24，W3）**：`TransportClosed` 里按**理由**判 —— 4003 + 身份类协议码（`rePair`）
+   才是终态，其余 4003 照旧退避。`protocol/revoked` 仍无生产者（只有码表条目），实际到达的是
+   `protocol/not-paired`；契约 §3.1 已注明这条。
 4. ~~`pairing_page.dart` 的配对码 `TextField` 没关输入法联想，**手打**的 JSON 会被破坏（粘贴没事）~~
    **已修（2026-10-24，Z5）**：`enableSuggestions: false` + `autocorrect: false`
    （Android 是独立标记，iOS 跟着 autocorrect 走，`text_input.dart:623-636`）；
@@ -450,7 +454,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **454 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **360 项**（22 条规则自检 + 扫 99 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1141 项** |
+| `cd app && flutter test` | **1144 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **615 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **87 条** |
@@ -517,3 +521,6 @@
   反代之后会塌成一个桶（与改动前等价），如实写在 `rate-limit.ts` 头注。
 - 2026-10-24 Z6a 极简模式文案跟上 DSH（四档机械比对逐字相等）+ `tools.md` 重抄清单；
   Z6b 把"IPv6 隐私地址只排后、不清除"写进契约 §15（**不改码**：判据不可靠）。
+- 2026-10-24 W3 终态只有一个来源：已配对设备的换票 401 归 `relay/offline`（退避重试、不清凭据），
+  终态只认电脑侧 **4003 + 身份类协议码**（`protocol/not-paired`）。flutter **1141 → 1144**；
+  **真机 1–2 回合未跑**。笔记 `2026-10-24-terminal-identity-from-pc.md`。
