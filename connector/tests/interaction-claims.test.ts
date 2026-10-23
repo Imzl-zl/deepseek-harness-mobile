@@ -146,6 +146,22 @@ test('审批：手机断开 → **不结算**，重连后答复仍能落（claim
   assert.equal(unhandled.length, 0, '答上了就不是未处理')
 })
 
+test('提问：手机断开 → **不结算**，重连后答复仍能落（与审批同一规则）', { timeout: 60_000 }, async () => {
+  const { port, presence, unhandled } = build({ guardMs: 10 * 60_000 })
+  const pending = port.askQuestion(question(), 'dev-1')
+  await tick()
+  presence.offline('dev-1')
+  await tick()
+  assert.equal(port.pending, 1, '提问的 claim 同样挂在 host 上')
+  assert.equal(
+    port.settleClaim('sid_1', 'call-q', [{ id: 'q1', selected: [] }]),
+    true,
+    '重连回来的答复仍能落进同一条 claim',
+  )
+  assert.deepEqual(await pending, { answers: [{ id: 'q1', selected: [] }] })
+  assert.equal(unhandled.length, 0)
+})
+
 test('审批：断开之后看护到点仍然 fail-closed（不再"断开即抛"，但也不无限等）', { timeout: 60_000 }, async () => {
   const timer = manualTimer()
   const { port, presence, unhandled } = build({ guardMs: 1000, schedule: timer.schedule })

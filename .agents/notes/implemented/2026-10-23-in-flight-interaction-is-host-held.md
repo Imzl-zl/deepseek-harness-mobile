@@ -104,8 +104,8 @@ App 按错误码决定卡片去留。** 三处落点：
   被结算，App 可能短暂看到一张已被答掉的卡 —— 下一次答复会拿到 `not-pending` 并撤卡，
   与"迟到即丢弃"同构。
 - 代价：`onAnswer` 的契约从"吞掉失败"变成"把失败交回控制器"（`_send` 只负责复位 busy）。
-- 判据（连接器，612 → 617）：`interaction-claims.test.ts`（断开不结算 / 断开后看护到点仍抛 /
-  `pendingAsks` 只给在途的）、`interaction-chain.test.ts`（整链断开后仍能答）、
+- 判据（连接器，612 → 618）：`interaction-claims.test.ts`（断开不结算 —— 审批与提问各一条 /
+  断开后看护到点仍抛 / `pendingAsks` 只给在途的）、`interaction-chain.test.ts`（整链断开后仍能答）、
   `interactions.test.ts`（审批与提问的 prompt 都带重投载荷）、
   `session-subscriptions.test.ts`（重投按原 seq 且先于快照）。
 - 判据（App，1137 → 1140）：`takeover_test.dart`（失败不写回执、不撤卡、busy 复位）、
@@ -114,7 +114,7 @@ App 按错误码决定卡片去留。** 三处落点：
   "断开后看护到点"那条 —— 断开先以 `disconnected` 收束，看护那条也就到不了 `timeout`）；
   ② 删掉订阅里的重投循环 ⇒ **恰好 1 条红**；③ App 的 `_send` 忽略 `sent`（失败也写回执/撤卡）⇒
   **恰好 2 条红**（控制器那条 + 传输失败接线那条）。
-- 门禁：connector **617** / flutter **1140** / boundary **360**；**0 个真机回合**（重连时序在单测里
+- 门禁：connector **618** / flutter **1140** / boundary **360**；**0 个真机回合**（重连时序在单测里
   用"设备离线 → 答复仍落"证）。
 
 代码入口回指：`connector/src/interaction-claims.ts` 的 `askApproval` / `askQuestion` 注释、
