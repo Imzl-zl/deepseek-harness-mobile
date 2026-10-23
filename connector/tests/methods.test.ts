@@ -34,9 +34,10 @@ test('方法表：封闭集，幂等键标记与契约 §5.7 的表一致', () =
   // `session.prompt`，宿主会拒成 `is owned by subagent routing`）后是 **36**。
   // 2026-10-21 晚加 `workspace.insertBefore`（侧栏项目头拖动排序，DSH 的
   // `workspace-controller/src/index.ts:135-145`）后是 **37**。
+  // 2026-10-23 加 `command.execute`（斜杠命令执行面，白名单只放 /goal 与 /plan）后是 **38**。
   // **这个数是契约 §5.7 的表与 `tools.md` 的同步闸**：加了方法不改这里就会红，
   // 而它红的方式是"数不对"，所以改它必须同时改契约那一行。
-  assert.equal(METHODS.length, 37, '方法数变了要同步契约 §5.7 的表')
+  assert.equal(METHODS.length, 38, '方法数变了要同步契约 §5.7 的表')
   assert.equal(new Set(METHODS).size, METHODS.length, '方法名不能重复')
 
   // 幂等集**从契约 §5.7 的表里读**，不在测试里手抄第二份 ——
@@ -72,6 +73,7 @@ test('方法表：封闭集，幂等键标记与契约 §5.7 的表一致', () =
   assert.equal(requiresIdempotencyKey('session.create'), true)
   assert.equal(requiresIdempotencyKey('session.select-model'), true)
   assert.equal(requiresIdempotencyKey('permission.switch'), true)
+  assert.equal(requiresIdempotencyKey('command.execute'), true)
   assert.equal(requiresIdempotencyKey('workspace.archive'), true)
   assert.equal(requiresIdempotencyKey('workspace.unarchive'), true)
   assert.equal(requiresIdempotencyKey('workspace.insertSessionBefore'), true)

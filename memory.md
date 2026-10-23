@@ -137,6 +137,21 @@
 > 6 条；变异校验两组各恰好 3 / 2 条红。笔记 `implemented/2026-10-23-running-rebuilt-on-reconnect.md`；
 > 门禁 flutter **1127**，其余不变。
 
+> **2026-10-23（本轮）斜杠命令执行面：`/goal …` 不再变成普通消息** —— **0 个真机回合**：
+> 新方法 `command.execute`（参数 `{sid, line}`，`agentId` 由连接器从 `sid` 解析，附件恒 `[]`，
+> 回 `{matched, execution?}` —— **与 `permission.switch` 同一个形状、同一段执行逻辑**
+> `connector/src/dsh/command-line.ts`）。**不收窄成"通用命令面"**：白名单 `MOBILE_COMMANDS`
+> 只放 `/goal` 与 `/plan`，准入三条（结果只由 `{kind,text}` 承载且不产生会话之外的新产物 /
+> 处理器自己是状态机、重复执行落到同一终态 / 没有已存在的窄口）；`/compact` `/export`
+> `/feedback` `/permission` 都在外面，拒绝时回 `connector/unsupported` 并报出名单。
+> 手机侧**一处分流**（`app/lib/model/command.dart` 的 `sendRouteOf`）：命令 → 新方法、
+> 普通文本 → `session.prompt`、子会话恒 → `subagent.prompt`；`matched:false` 按 Web 的
+> 输入流水线退成普通消息（`machine.ts:170-175`）并说一句，失败则如实报且文本留在输入框。
+> 应答解析上收到一处（`parseCommandOutcome`），`permission.switch` 跟着换。
+> 笔记 `implemented/2026-10-23-slash-command-execution-surface.md`；
+> 契约 §5.7 加一行、§5.8 的旧数（35/4）校准成 38/2。
+> 门禁：connector **587 → 599**（+12）、flutter **1127 → 1137**（+10）、boundary **357 → 360**（+1 个文件），其余不变。
+
 待办（按顺序）:
 
 1. **轮组阶段 1 已落地**（整轮分组 + 折叠过程 + 「工作步骤收起时机」两档）——
@@ -149,9 +164,9 @@
 2. **`ask_user_question` 未计时提问答不了** —— 我们的连接器在 `request.wait?.callId` 缺失时
    fail-closed 抛出（`connector/src/interaction-claims.ts:255`），而 DSH 的 `wait` 对 indefinite
    提问**本来就没有**（`packages/interaction/user-questions/src/types.ts:140-145`）。
-3. **斜杠命令没有执行面** —— `/goal …` 走 `session.prompt` 变成**普通消息**。
-   DSH 的执行面是 `commands.execute(agent,line)`（`packages/interaction/commands/src/index.ts:360-367`），
-   我们方法面里没有它。命令卡的渲染已被单测钉住，别混为一谈。
+3. ~~**斜杠命令没有执行面**~~ **已修（2026-10-23）**：新方法 `command.execute`
+   （白名单只放 `/goal` 与 `/plan`，准入判据见契约 §5.7 那一行），`/goal …` 不再变成普通消息。
+   命令卡的渲染没动（那是另一件事）。笔记 `implemented/2026-10-23-slash-command-execution-surface.md`。
 4. **电脑侧停一会儿，手机会清掉配对** —— 中转重启后名册是空的，设备换票拿到 401，
    App 把 401 归成 `notPaired`（终态）⇒ 清凭据回配对页。实测一次（清单第 11 条）。
 5. **侧边栏移动 / 置顶：真机已验**（2026-10-21 晚，隔离实例）—— 长按菜单四项（无删除）、
@@ -241,15 +256,16 @@
   **`relayUrl` 必须写环回** —— 写死局域网 IP 会绕开 `relayHintFor` 的自愈。
 - `connector/` 与 `relay/` 是**两个独立 pnpm 工程**，导入风格不同、别顺手统一。本仓库**没有 CI**。
 
-## 方法面 35/37
+## 方法面 36/38
 
-契约封闭集 **37**、实现 **35**，差额 2 个是契约列了没实现的：`credentials.set` / `credentials.unset`。
+契约封闭集 **38**、实现 **36**，差额 2 个是契约列了没实现的：`credentials.set` / `credentials.unset`。
 2026-10-21 加的五条是 `workspace.insertSessionBefore` /
 `workspace.pin` / `workspace.unpin` / `workspace.insertBefore` 与 `subagent.prompt`；
 2026-10-22 挂上了 `settings.describe` / `settings.update`（三行电脑侧设置，见
-`docs/subsystems/settings-and-versions.md`）。
+`docs/subsystems/settings-and-versions.md`）；2026-10-23 加了 `command.execute`
+（斜杠命令执行面，**白名单**只放 `/goal` 与 `/plan`，准入判据见契约 §5.7 那一行）。
 **两个数都从代码里数，不靠减**；数法见 `tools.md`（要数 `METHODS` + `handlers.ts` 的**两种**注册形态）。
-**三处必须同步**：`tools.md`、契约 §5.7 的表、这里的"x/37"。
+**三处必须同步**：`tools.md`、契约 §5.7 的表、这里的"x/38"。
 
 **`session.projections` 是打开全部只读面的那把钥匙**：请求体只有 `{sessionId}`，返回所有投影的当前值。
 已核实的键：`modelSelection` / `permissions` / `subagentCatalog` / `deliverables` / `tokenUsage` /
@@ -321,11 +337,11 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
-| `node app/tools/verify-platform-boundary.mjs` | **357 项**（22 条规则自检 + 扫 98 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | **360 项**（22 条规则自检 + 扫 99 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1127 项** |
+| `cd app && flutter test` | **1137 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **587 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **599 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 
@@ -361,3 +377,6 @@
   `verify-turns.mjs` 60 项 —— `2026-10-23-proto-turn-groups-and-verify-turns.md`。
 - 2026-10-23 断线期间收口的一轮：重连按 `session.list` 重建运行态（轮次代号护栏）——
   `2026-10-23-running-rebuilt-on-reconnect.md`。
+- 2026-10-23 斜杠命令执行面：`command.execute` + 白名单（`/goal` `/plan`），
+  两个命令门共用 `dsh/command-line.ts`，手机侧一处分流 ——
+  `2026-10-23-slash-command-execution-surface.md`。

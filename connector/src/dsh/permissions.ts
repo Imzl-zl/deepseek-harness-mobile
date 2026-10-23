@@ -30,14 +30,17 @@
  * 手机经已有的 `session.projections` 拿 —— 所以本文件**不碰**它，
  * 同一个状态不会有第二个来源。
  *
- * ## 为什么不放一个通用的 `command.execute`
+ * ## 与通用命令门（`command.execute`）的分工
  *
- * 契约 §5.7 的方法名是**封闭集**，每个方法对应手机上一个人人看得见的动作。
- * 通用的命令执行面会让手机调到那些"移动端根本没有形态"的命令上
- * （`/compact`、`/export`、各插件自带的命令），而它们的 `CommandResult`
- * 只有 `{kind, text}`（`interaction/commands/src/types.ts:34-41`）——
- * 副作用在电脑侧发生，手机上既呈现不了也撤不回来。本期只接"权限切换"这一个面，
- * 将来每个面各带自己的方法名（与 `session.select-model` 同一个命名口径）。
+ * 手机上现在有两扇命令门，落到**同一段**执行逻辑（`dsh/command-line.ts`）：
+ *
+ * - `permission.switch`（本文件）：一个**具名动作**，手机上有落点（输入栏的权限 chip），
+ *   参数是预设名而不是一条自由文本命令行。
+ * - `command.execute`：白名单里的命令（`/goal`、`/plan`），准入判据见契约 §5.7 那一行。
+ *
+ * **`/permission` 不在那个白名单里**：同一个状态只许一个写入口，否则手机上会出现
+ * "从 chip 切"与"从命令行切"两条路径，而它们的错误措辞、幂等键、失败呈现都得对齐两遍。
+ * 反过来也成立 —— 这里不会因为白名单存在就改走通用门。
  *
  * ## 命令注入这条边界
  *
@@ -49,35 +52,17 @@
  * handler 侧按边界校验（见 `handlers.ts` 的 `permission.switch`）。
  *
  * 取舍（为何是两个方法而不是一个通用的 `command.execute`）见
- * `.agents/notes/implemented/2026-10-15-permission-switch-through-dsh-two-doors.md`。
+ * `.agents/notes/implemented/2026-10-15-permission-switch-through-dsh-two-doors.md`；
+ * 2026-10-23 起通用门有了白名单，取舍见
+ * `.agents/notes/implemented/2026-10-23-slash-command-execution-surface.md`。
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { Agent } from '@deepseek-ai/dsh-agent'
 
-import { ProtocolError } from '../protocol/errors.js'
+import { createCommandLineRunner, type CommandRunView } from './command-line.js'
 
 /** `permissionPresets` 服务面（`super(ctx, 'permissionPresets')`，`:208`）。 */
 interface PermissionPresetsService {
   catalog(): unknown
-}
-
-/**
- * `commands` 服务面（`@Remote` 的 `execute`，`interaction/commands/src/index.ts:360`；
- * 方法体 `:361`）。**按形状收窄、不 import DSH 类型** —— 与 `index.ts` 里
- * `ctx.get('commands')` 的 `register` 同一个口径（`dsh-commands` 不是本插件的依赖）。
- */
-interface CommandsService {
-  execute(
-    agent: Agent,
-    line: string,
-    submittedAttachments: readonly unknown[],
-    signal: AbortSignal,
-  ): Promise<unknown>
-}
-
-/** `agents` 注册表（`packages/core/agent/src/index.ts` 的 `get`；口径同 `dsh/questions.ts`）。 */
-interface AgentsRegistry {
-  get(id: Agent['id']): Agent | undefined
 }
 
 export interface PermissionFaceDeps {
@@ -88,16 +73,13 @@ export interface PermissionFaceDeps {
 /**
  * 一次切换的结论。
  *
- * `matched` 是 Web 客户端自己推导的那个字段（`session.ts:390`：
- * `matched: result.value !== undefined`）—— `undefined` 的语义是
- * "语法或名字没解析出来"，也就是**这台电脑上没有 `/permission` 这个命令**。
- * 它与 `{kind:'error'}` 是两件事：后者是命令在、但预设名不对。
+ * **与 `command.execute` 是同一个形状**（`dsh/command-line.ts` 的 `CommandRunView`）：
+ * 两者都是 `commands.execute` 的应答，`matched` 都来自同一条推导
+ * （`session.ts:390`：`matched: result.value !== undefined`）。
+ * `undefined` 的语义是"语法或名字没解析出来"，也就是**这台电脑上没有 `/permission`
+ * 这个命令**；它与 `{kind:'error'}` 是两件事 —— 后者是命令在、但预设名不对。
  */
-export interface PermissionSwitchView {
-  matched: boolean
-  /** `matched` 为 true 时 DSH 的结算（`commandId` + `result`），**原样过线不挑字段**。 */
-  execution?: unknown
-}
+export type PermissionSwitchView = CommandRunView
 
 export interface PermissionFace {
   /**
@@ -110,9 +92,6 @@ export interface PermissionFace {
   switchTo(sid: string, preset: string): Promise<PermissionSwitchView>
 }
 
-/** `/permission` 命令的超时。契约 §10 的请求超时是 60 s，取同一个值。 */
-const COMMAND_TIMEOUT_MS = 60_000
-
 /**
  * 建权限面的 DSH 半边。
  *
@@ -120,21 +99,14 @@ const COMMAND_TIMEOUT_MS = 60_000
  * 裸读在服务缺失时抛，见 `dsh/caps.ts` 的文件头）。**装配层按三者同时在场
  * 才挂这个方法**（`index.ts`），与 DSH 自己的规则一致：键缺席时客户端
  * **隐藏控件**（`permission-presets/src/types.ts:58-59`）。
+ *
+ * `commands` 与 `agents` 这两个键的用法**不在这里**：它连同超时与
+ * `undefined` 的语义一起在 `dsh/command-line.ts`，与 `command.execute` 共用。
  */
 export function createPermissionFace(ctx: Context, deps: PermissionFaceDeps): PermissionFace {
   const presetsOf = (): PermissionPresetsService | undefined =>
     (ctx.get('permissionPresets') as PermissionPresetsService | undefined) ?? undefined
-  const commandsOf = (): CommandsService | undefined =>
-    (ctx.get('commands') as CommandsService | undefined) ?? undefined
-  const agentsOf = (): AgentsRegistry | undefined =>
-    (ctx.get('agents') as AgentsRegistry | undefined) ?? undefined
-
-  /** 别名 → live root agent。口径与 `dsh/questions.ts` 的 `agentOf` 一致。 */
-  const agentOf = (sid: string): Agent | undefined => {
-    const dshSessionId = deps.sessionOf(sid)
-    if (dshSessionId === undefined) return undefined
-    return agentsOf()?.get(dshSessionId as Agent['id'])
-  }
+  const commandLine = createCommandLineRunner(ctx, deps)
 
   return {
     async catalog() {
@@ -149,35 +121,8 @@ export function createPermissionFace(ctx: Context, deps: PermissionFaceDeps): Pe
       }
     },
 
-    async switchTo(sid, preset) {
-      const commands = commandsOf()
-      // 装配层已经按能力位挂过，走到这里只可能是装配写错了。
-      if (commands === undefined) {
-        throw new ProtocolError('internal', 'commands 服务不在：/permission 写路径不可用')
-      }
-      const agent = agentOf(sid)
-      if (agent === undefined) {
-        // DSH 的 Web 客户端在同一处抛 "this session is not materialized yet"
-        // （`ui-permission-presets/src/client/index.ts:125`）：`/permission`
-        // 需要一个**活的** agent（要 `agent.session` 落生命周期事件、
-        // 要 agent 的 scope 合并命令层）。
-        // 错误码用 `internal` 而不是 `session/not-found`：这个会话**存在**，
-        // 而 `session/not-found` 的客户端动作是"从列表移除"（契约 §3.1）——
-        // 那会让手机把一个好会话删掉。表是封闭的，不为它加一个新码。
-        throw new ProtocolError(
-          'internal',
-          `这个会话在电脑上没有对应的活动 agent（${sid}）：/permission 需要一个已打开的会话`,
-        )
-      }
-      const execution = await commands.execute(
-        agent,
-        `/permission ${preset}`,
-        [],
-        AbortSignal.timeout(COMMAND_TIMEOUT_MS),
-      )
-      return execution === undefined || execution === null
-        ? { matched: false }
-        : { matched: true, execution }
-    },
+    // 写路径：**同一条命令**（`/permission <preset>`）经共用那段跑，
+    // 所以"没有活动 agent"与"超时"这两条失败语义与 `command.execute` 逐字一致。
+    switchTo: (sid, preset) => commandLine.run(sid, `/permission ${preset}`),
   }
 }

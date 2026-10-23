@@ -86,6 +86,7 @@ import { registerInteractions, type RemoteInteractionPort } from './dsh/interact
 import { createQuestionFaceDeps } from './dsh/questions.js'
 import { createModelFace } from './dsh/models.js'
 import { createPermissionFace } from './dsh/permissions.js'
+import { createCommandLineRunner } from './dsh/command-line.js'
 import { createAgentPresetsFace } from './dsh/agent-presets.js'
 import { createDevicePresence } from './presence.js'
 import { createInteractionPort } from './interaction-claims.js'
@@ -786,6 +787,21 @@ let unregisterAdminFace: (() => void) | null = null
             : createModelFace(ctx, { sessionOf: (sid) => aliases?.sessionOf(sid) })
         if (modelsFace !== null) {
           handlerDeps.models = modelsFace
+        }
+
+        /**
+         * 通用命令门（`command.execute`）：`commands` 跑命令行，`agents` 把会话 id
+         * 换成它要的 live root agent。**两个键任一缺席就整块不挂** —— `repo.info` 的
+         * `methods` 里也就没有 `command.execute`，手机侧不会摆一个必然失败的入口。
+         *
+         * 分工：**白名单是方法面的政策**（`handlers.ts` 的 `MOBILE_COMMANDS`），
+         * 执行那段（别名 → 活 agent、60 s 超时、`undefined` → `matched:false`）
+         * 在 `dsh/command-line.ts`，与 `permission.switch` 共用同一份。
+         */
+        if (ctx.get('commands') !== undefined && ctx.get('agents') !== undefined) {
+          handlerDeps.commandLine = createCommandLineRunner(ctx, {
+            sessionOf: (sid) => aliases?.sessionOf(sid),
+          })
         }
 
         /**

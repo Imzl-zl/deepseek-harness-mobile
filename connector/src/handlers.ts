@@ -35,6 +35,7 @@ import type { ProjectionsPort } from './dsh/projections.js'
 import type { SubagentsPort } from './dsh/subagents.js'
 import type { WorkspacesPort } from './dsh/workspaces.js'
 import type { PermissionFace } from './dsh/permissions.js'
+import { commandNameOf, type CommandLineRunner } from './dsh/command-line.js'
 import type { AgentPresetsFace } from './dsh/agent-presets.js'
 import {
   SettingsConflictError,
@@ -50,6 +51,33 @@ export interface DeviceRow {
   /** 是否已吊销（电脑侧删公钥）。 */
   revoked: boolean
 }
+
+/**
+ * 手机上的命令面白名单（`command.execute` 的准入，契约 §5.7）。
+ *
+ * **判据三条，加一个名字要三条都成立**：
+ *
+ * 1. **结果就是 `CommandResult` 的 `{kind,text}`**（`interaction/commands/src/types.ts:34-41`），
+ *    不产生**会话之外**的新产物 —— 手机拿不到的东西（`/export` 的 ZIP 下载、
+ *    `/feedback` 的反馈记录）在电脑侧发生了也呈现不了、更撤不回来。
+ * 2. **效果是会话级状态，且处理器自己是状态机**：非法转移被拒、重复执行落到同一终态。
+ *    这一条同时是幂等的前提 —— 契约 §5.6 对"崩溃窗口里重新执行"的承诺，靠的正是
+ *    下游认得出重复（`idempotency.ts` 文件头那张表）。`/compact` 不满足：没有反向命令，
+ *    且一次调用就是一次模型总结（`command-compact/src/index.ts:67`）。
+ * 3. **没有已存在的窄口**：`/permission` 的写入口是 `permission.switch`，
+ *    同一个状态不开第二条路。
+ *
+ * 名单**只有这一处**：手机侧不抄第二份（它只按"以 `/` 开头"分流，认不认识由这里判），
+ * 所以电脑侧加一个名字，手机上立刻能发；拿掉一个名字，手机收到的是
+ * `connector/unsupported` + 一句人话，而不是"电脑不认识这条命令"。
+ *
+ * 取舍（为什么是白名单而不是推翻 §5.7 的通用命令面、为什么第 2 条同时是幂等的依据）见
+ * `.agents/notes/implemented/2026-10-23-slash-command-execution-surface.md`。
+ */
+const MOBILE_COMMANDS: ReadonlySet<string> = new Set(['goal', 'plan'])
+
+/** 白名单的人话（错误信息里用；顺序固定，便于用户照抄）。 */
+const MOBILE_COMMAND_LIST = [...MOBILE_COMMANDS].map((name) => `/${name}`).join('、')
 
 /** 别名端口（契约 §5.1）：手机与中继都只见 `sid`，所以两个方向都要。 */
 export interface AliasPort {
@@ -102,6 +130,16 @@ export interface HandlerDeps {
    * 为什么是三个键，见 `dsh/permissions.ts` 的文件头。
    */
   permissions?: PermissionFace
+  /**
+   * 跑一条斜杠命令（`command.execute`，**`commands` 与 `agents` 同时在场才给**）。
+   *
+   * 与 `permissions` 同一条纪律：缺了就干脆不挂 `command.execute`，而不是挂上去
+   * 再回 `connector/unsupported` —— `repo.info` 报的是 handler 表的键，于是
+   * "这台电脑没有命令服务"与"这个方法没实现"在手机侧同一种表现（方法不出现）。
+   * 执行那段（别名 → 活 agent、超时、`undefined` 的语义）在 `dsh/command-line.ts`，
+   * 与 `permission.switch` 共用。
+   */
+  commandLine?: CommandLineRunner
   /**
    * Agent 预设目录（**`agentPresets` 服务不在时不给**）。
    *
@@ -889,6 +927,40 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
         throw new ProtocolError('protocol/bad-frame', 'preset 必须是非空且不带首尾空白的字符串')
       }
       return permissions.switchTo(sid, preset)
+    }
+  }
+
+  // 通用命令门：**白名单里的命令才放行**（判据见文件头 `MOBILE_COMMANDS`）。
+  // 与 Web 同一个 DSH 方法（`commands.execute`，`interaction/commands/src/index.ts:360`；
+  // Web 侧 `session-controller/.../session.ts:388`），执行那段在 `dsh/command-line.ts`。
+  if (deps.commandLine !== undefined) {
+    const commandLine = deps.commandLine
+    // **带幂等键**（`IDEMPOTENT_METHODS`）：分发前就拦，所以这里一定拿得到。
+    // 键只保证"同一次重发不跑两遍"（同键合流 / 24 h 内命中缓存）；崩溃窗口里的
+    // 重发靠的是白名单那三条判据里的第 2 条（处理器自己认得出重复）。
+    handlers['command.execute'] = async (params) => {
+      const sid = requireSid(params)
+      requireSession(sid)
+      const line = requireString(params, 'line')
+      // 手机输入框是单行；换行会让一条命令变成"命令 + 一段 rawInput"，
+      // 而 DSH 的 `parseCommand` 只认行首那一条（`index.ts:126` 的正则不跨行）。
+      // 与其让它悄悄进 rawInput，不如在这里拦掉。
+      if (/[\r\n]/.test(line)) {
+        throw new ProtocolError('protocol/bad-frame', 'line 不能包含换行')
+      }
+      const name = commandNameOf(line)
+      if (name !== undefined && !MOBILE_COMMANDS.has(name)) {
+        // **不是 `matched:false`**：那个值让手机按"电脑不认识"退成普通消息，
+        // 等于把 `/compact` 悄悄当消息发出去 —— 正是本轮要消灭的形状。
+        // 也不是 `protocol/bad-frame`：请求本身合法，是**这台手机**没有这个动作。
+        throw new ProtocolError(
+          'connector/unsupported',
+          `手机上的命令面只放 ${MOBILE_COMMAND_LIST}：/${name} 不在其中`,
+        )
+      }
+      // 名字解析不出（`/etc/passwd 是啥` 这种）就交给宿主：它会回 `undefined`，
+      // 手机按 Web 的同一条推导退成普通消息（`machine.ts:170-175`）。
+      return commandLine.run(sid, line)
     }
   }
 

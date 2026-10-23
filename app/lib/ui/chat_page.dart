@@ -42,6 +42,7 @@ import '../core/job.dart';
 import '../data/app_model.dart';
 import '../model/agent_preset.dart';
 import '../model/chat_item.dart';
+import '../model/command.dart';
 import '../model/model_catalog.dart';
 import '../model/permission.dart';
 import '../model/preferences.dart';
@@ -442,6 +443,13 @@ class ChatPageState extends State<ChatPage> {
   /// （照 DSH 的 `PromptContentPart`：文本是 `{type:'text', text}`）。
   /// 早先这里发的是 `{ sid, text }` —— 电脑侧回 `content 必须是非空数组`，
   /// 而那个错误只在一闪而过的 SnackBar 里，看起来就是"发了啥也没有"（真机实测）。
+  ///
+  /// ## 分流只有一处
+  ///
+  /// 判据在 [sendRouteOf]（纯函数、可单测）：命令 → `command.execute`；
+  /// 普通消息 → `session.prompt`；子会话 → `subagent.prompt`。
+  /// **这里不重写判据** —— 两处判据必然有一天对不上，而对不上的症状是
+  /// "同样一句话在某个会话里发不出去"。
   Future<void> _send() async {
     final text = _input.text.trim();
     final sid = widget.app.currentSid;
@@ -460,6 +468,41 @@ class ChatPageState extends State<ChatPage> {
     }
     setState(() => _sending = true);
     try {
+      // 判据与顶栏同一个（[_subagentParentSid]）：它比"我是不是从面板走进来的"宽一档
+      // —— 恢复出来的子会话（重启后直接落在子会话上）也该走这条路，
+      // 而那条按记忆判会走 `session.prompt`，必然被宿主拒。
+      final route = sendRouteOf(
+        text: text,
+        isSubagent: _subagentParentSid != null,
+      );
+
+      if (route == SendRoute.command) {
+        // **命令不随附件走**（契约 §5.7：这一版 `command.execute` 恒传 `[]`）。
+        // 悄悄把图片丢掉比拒绝更坏 —— 用户会以为目标设上了、图也一起发了。
+        if (hasImage) {
+          _toast('命令暂不随附件发送：先移除图片再发');
+          return;
+        }
+        final outcome = await widget.app.executeCommand(text);
+        if (!mounted) return;
+        if (outcome == null) {
+          // 失败如实报，**文本留在输入框**（改一改就能再发）。
+          _toast('命令没有执行：${widget.app.lastError?.message ?? '电脑侧没有给结论'}');
+          return;
+        }
+        if (outcome.matched) {
+          // 跑过了：结果落在命令卡上（`command/run` + `command/done` 是 DSH 的
+          // 生命周期事件，随会话流到手机），所以输入框可以清。
+          // **附件不清**：命令没带它们走。
+          _input.clear();
+          return;
+        }
+        // 电脑侧没有这条命令（DSH 的 `execute` 回 `undefined`）⇒ 与 Web 的输入
+        // 流水线同一条：**当普通消息发出去**（`machine.ts:170-175`），并说一句。
+        // 不说的话，用户会以为命令跑过了 —— 那正是本轮要消灭的形状。
+        _toast('电脑上没有这条命令，按普通消息发送');
+      }
+
       final requestId = 'p-${DateTime.now().microsecondsSinceEpoch}';
       // **带上发送模式**（排队 / 插话）：DSH 原生二选一，我们这边一个方法
       // 带 `mode` 参数（`connector/src/handlers.ts` 的 `session.prompt`）。
@@ -469,13 +512,9 @@ class ChatPageState extends State<ChatPage> {
       // `internal: session "…" is owned by subagent routing`（2026-10-21 真机实测，
       // 手机上就是一句「发送失败」）。子会话唯一的写入口是 `subagent.prompt`
       // （契约 §5.7），参数形状与这里逐字相同。
-      //
-      // 判据与顶栏同一个（[_subagentParentSid]）：它比"我是不是从面板走进来的"宽一档
-      // —— 恢复出来的子会话（重启后直接落在子会话上）也该走这条路，
-      // 而那条按记忆判会走 `session.prompt`，必然被宿主拒。
-      final method = _subagentParentSid == null
-          ? 'session.prompt'
-          : 'subagent.prompt';
+      final method = route == SendRoute.subagentPrompt
+          ? 'subagent.prompt'
+          : 'session.prompt';
       await widget.app.client.call<void>(method, {
         'sid': sid,
         // 载荷形状由 `promptContentOf` 一处决定（纯函数，可单测）——

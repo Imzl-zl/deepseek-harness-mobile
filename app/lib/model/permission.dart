@@ -25,6 +25,9 @@
 /// 而它**不在 catalog 的 options 里**（`catalog()` 只列可切目标）。
 /// 所以手机可以显示"当前是 custom"，但列表里不会有这一项可点。
 ///
+/// 应答形状（`{matched, execution?}`）**不在这里解**：它与 `command.execute` 是同一个形状，
+/// 解析器在 `model/command.dart` 的 `parseCommandOutcome`（抄第二份就会有一边先漂）。
+///
 /// 取舍（为何是两个方法、为何不放通用的 `command.execute`、为何风险门按预设键比对）
 /// 见 `.agents/notes/implemented/2026-10-15-permission-switch-through-dsh-two-doors.md`。
 library;
@@ -152,50 +155,6 @@ String? parsePermissionValue(Object? projections) {
   if (raw is! Map) return null;
   final value = raw['currentValue'];
   return value is String && value.isNotEmpty ? value : null;
-}
-
-/// 一次切换的结论（连接器 `permission.switch` 的应答）。
-class PermissionSwitch {
-  const PermissionSwitch({required this.matched, this.kind, this.text});
-
-  /// 电脑上有没有 `/permission` 这个命令。
-  ///
-  /// `false` 的语义是 DSH 的 `commands.execute` 回 `undefined`
-  /// （`interaction/commands/src/index.ts:366-370`：语法或名字没解析出来）——
-  /// 与 Web 客户端的推导逐字一致（`session-controller/.../session.ts:390`）。
-  final bool matched;
-
-  /// DSH 的 `result.kind`：`success` / `error`。
-  final String? kind;
-
-  /// DSH 的 `result.text`。**原文照显，不翻译** ——
-  /// `unknown preset "yolo" (available: …)` 这种话是电脑侧权威的措辞，
-  /// 自己抄一份就会在 DSH 改词时静默分叉。
-  final String? text;
-
-  /// 这次切换在电脑侧成功了（命令在、且 DSH 回 success）。
-  bool get succeeded => matched && kind == 'success';
-}
-
-/// 解 `permission.switch` 的应答：`{matched, execution?}`。
-///
-/// **认不出返回 `null`**（调用方按失败留声），不猜一个"成功"。
-PermissionSwitch? parsePermissionSwitch(Object? raw) {
-  if (raw is! Map) return null;
-  final matched = raw['matched'];
-  if (matched is! bool) return null;
-  final execution = raw['execution'];
-  if (!matched) return const PermissionSwitch(matched: false);
-  if (execution is! Map) return null;
-  final result = execution['result'];
-  if (result is! Map) return null;
-  final kind = result['kind'];
-  final text = result['text'];
-  return PermissionSwitch(
-    matched: true,
-    kind: kind is String ? kind : null,
-    text: text is String && text.isNotEmpty ? text : null,
-  );
 }
 
 /// DSH 内置三个预设键 → 手机上的图标与文案。

@@ -76,6 +76,14 @@ export const METHODS = [
   // `remote.commands.execute` 调它（`ui-permission-presets/src/client/index.ts:126`）。
   // 当前值不走这个方法读 —— 它在 `permissions` 投影里，随 `session.projections` 到手机。
   'permission.switch',
+  // 通用命令门：跑一条**斜杠命令**，只放白名单里的命令名（判据与名单在
+  // `handlers.ts` 的 `MOBILE_COMMANDS`）。**与 Web 同一个 DSH 方法**：
+  // `commands.execute`（`interaction/commands/src/index.ts:360`），Web 侧落到
+  // `remote.commands.execute(sessionId, line, [])`
+  // （`session-controller/src/client/sessions/session.ts:388`）。
+  // 手机侧只有一处分流：命令走这里、普通消息走 `session.prompt`、
+  // 子会话恒走 `subagent.prompt`（`app/lib/model/command.dart`）。
+  'command.execute',
   // Agent 预设目录（只读）。**与 Web 同一个 DSH 方法**：
   // `agentPresets.remoteExportList()`（`@Remote('list')`，
   // `packages/preset/agent-preset-registry/src/index.ts:194-198`），
@@ -148,6 +156,11 @@ export const IDEMPOTENT_METHODS: ReadonlySet<MethodName> = new Set([
   // 切权限是用户指令：重发不该落两条 `command/run` / `command/done`
   // 生命周期事件，也不该把预设应用两遍。
   'permission.switch',
+  // 跑一条命令是用户指令：重发不该落两遍 `command/run` / `command/done` 生命周期
+  // （那是两张命令卡），也不该把命令的副作用做两遍。
+  // 键只覆盖"同键合流 + 24 h 内命中缓存"；崩溃窗口里的重发由白名单的第 2 条判据
+  // 兜（处理器自己是状态机，见 `handlers.ts` 的 `MOBILE_COMMANDS`）。
+  'command.execute',
   'interaction.respond',
   'settings.update',
   'credentials.set',

@@ -31,6 +31,7 @@ import '../core/job.dart';
 import '../core/sync_client.dart';
 import '../model/agent_preset.dart';
 import '../model/chat_item.dart';
+import '../model/command.dart';
 import '../model/interaction.dart';
 import '../model/model_catalog.dart';
 import '../model/permission.dart';
@@ -787,7 +788,7 @@ class AppModel extends ChangeNotifier {
   /// 而投影只在打开会话时拉过一次 —— 不重读就要等下次开会话才变。
   ///
   /// @returns 电脑侧的结论；`null` = 这次调用没成功（原因在 [lastError]）。
-  Future<PermissionSwitch?> switchPermission(String preset) async {
+  Future<CommandOutcome?> switchPermission(String preset) async {
     final sid = _currentSid;
     if (sid == null) return null;
     try {
@@ -796,7 +797,7 @@ class AppModel extends ChangeNotifier {
         {'sid': sid, 'preset': preset},
         requestId: 'perm-${DateTime.now().microsecondsSinceEpoch}',
       );
-      final switched = parsePermissionSwitch(result);
+      final switched = _commandOutcomeOf(result, '切换权限档失败');
       if (switched == null || _disposed) return null;
       if (switched.succeeded) await refreshProjections(sid);
       return switched;
@@ -806,6 +807,49 @@ class AppModel extends ChangeNotifier {
       _recordError('切换权限档失败', error);
       return null;
     }
+  }
+
+  /// 跑一条斜杠命令（`command.execute`）。
+  ///
+  /// **与 Web 同一个 DSH 方法**：`commands.execute`
+  /// （`packages/interaction/commands/src/index.ts:360` 的 `@Remote`），Web 侧
+  /// `SessionFace.command(line)` 落到 `remote.commands.execute(sessionId, line, [])`
+  /// （`session-controller/src/client/sessions/session.ts:388`）。
+  ///
+  /// 参数是 `{sid, line}`：**`agentId` 由连接器从 `sid` 解析**（Typert 的线上键是
+  /// `agentId`，见 `tools.md` 铁律①），手机不传 agent id。附件恒为空数组 ——
+  /// 这一版命令不随附件发送（契约 §5.7）。
+  ///
+  /// @returns 电脑侧的结论；`null` = 这次没跑成（原因在 [lastError]）。
+  /// `matched == false` **不是失败**：那是"电脑上没这条命令"（DSH 的 `execute`
+  /// 回 `undefined`），调用方按 Web 的同一条推导退成普通消息（`model/command.dart`）。
+  Future<CommandOutcome?> executeCommand(String line) async {
+    final sid = _currentSid;
+    if (sid == null) return null;
+    try {
+      final result = await client.call<Object?>(
+        'command.execute',
+        {'sid': sid, 'line': line},
+        requestId: 'cmd-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      return _commandOutcomeOf(result, '执行命令失败');
+    } catch (error) {
+      _recordError('执行命令失败', error);
+      return null;
+    }
+  }
+
+  /// 解一次命令应答（两个命令门共用）。
+  ///
+  /// **形状认不出也要留声**：只回 `null` 的话，调用方读到的 `lastError` 会是
+  /// 上一条错误 —— 用户看到的是一句与这次操作无关的失败原因。
+  CommandOutcome? _commandOutcomeOf(Object? result, String what) {
+    final outcome = parseCommandOutcome(result);
+    if (outcome == null) {
+      _recordError(what, StateError('电脑侧的命令应答形状认不出'));
+      return null;
+    }
+    return outcome;
   }
 
   // ---- 子智能体（`subagentCatalog` 投影）----

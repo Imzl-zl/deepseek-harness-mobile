@@ -22,6 +22,7 @@ import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
+import 'package:dsh_mobile/model/command.dart';
 import 'package:dsh_mobile/model/permission.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'fake_sync_client.dart';
@@ -176,9 +177,11 @@ void main() {
     });
   });
 
-  group('parsePermissionSwitch：三种结论分开', () {
+  // 应答形状与 `command.execute` **同一个**（都是 `commands.execute` 的结算），
+  // 所以解析器只有一处：`model/command.dart` 的 `parseCommandOutcome`。
+  group('parseCommandOutcome：三种结论分开', () {
     test('success：matched + kind + DSH 原文', () {
-      final result = parsePermissionSwitch({
+      final result = parseCommandOutcome({
         'matched': true,
         'execution': {
           'commandId': 'cmd-1-1',
@@ -192,7 +195,7 @@ void main() {
     });
 
     test('error：matched 但 kind 是 error（预设名不对，原文照显）', () {
-      final result = parsePermissionSwitch({
+      final result = parseCommandOutcome({
         'matched': true,
         'execution': {
           'commandId': 'cmd-1-2',
@@ -209,7 +212,7 @@ void main() {
     });
 
     test('matched 为 false：这台电脑没有 /permission 命令', () {
-      final result = parsePermissionSwitch({'matched': false});
+      final result = parseCommandOutcome({'matched': false});
       expect(result!.matched, isFalse);
       expect(result.succeeded, isFalse);
       expect(result.kind, isNull);
@@ -217,11 +220,11 @@ void main() {
     });
 
     test('形状不对：返回 null（调用方按失败留声）', () {
-      expect(parsePermissionSwitch(null), isNull);
-      expect(parsePermissionSwitch({}), isNull);
-      expect(parsePermissionSwitch({'matched': 'yes'}), isNull);
+      expect(parseCommandOutcome(null), isNull);
+      expect(parseCommandOutcome({}), isNull);
+      expect(parseCommandOutcome({'matched': 'yes'}), isNull);
       // matched 却缺 execution —— 那是电脑侧实现不对，不能读成成功。
-      expect(parsePermissionSwitch({'matched': true}), isNull);
+      expect(parseCommandOutcome({'matched': true}), isNull);
     });
   });
 

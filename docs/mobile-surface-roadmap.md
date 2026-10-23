@@ -77,7 +77,7 @@
 | 账号 | `getState` / `getProfile` / `getBalance` / `getUnnotifiedBonuses` / `ackBonusNotified` / `startSignIn` / `cancelSignIn` / `hasRunningAccountTasks` / `signOut` / `watch` | `packages/api/account-controller/src/index.ts` |
 | 技能 | (skill-catalog) | `packages/api/session-controller/src/skill-catalog.ts:20` |
 | 子智能体(写) | `prompt` / `interruptByParent` | `packages/subagent/subagent/src/index.ts:445,512` |
-| ~~命令~~ | ~~`execute`~~ | `packages/interaction/commands/src/index.ts:360`。**已接**(2026-10-15):`permission.switch` 经它跑 `/permission <档位>` |
+| 命令 | `execute` | `packages/interaction/commands/src/index.ts:360`。**两个门、同一段**：窄口 `permission.switch` 跑 `/permission <档位>`（2026-10-15），白名单口 `command.execute` 跑手机呈现得了的命令（2026-10-23，准入判据见契约 §5.7 那一行） |
 
 ### 2.4 手机上不做(C 类)
 
