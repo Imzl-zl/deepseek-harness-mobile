@@ -55,8 +55,7 @@
 > ② **头像在轮次开头**（每组第一条助手侧条目上方，按折叠后可见条目算）：
 > `implemented/2026-10-23-assistant-head-at-turn-start.md`。
 >
-> 同一批改了应用身份：**名字 = DeepSeek Harness**（`android:label` / `CFBundleDisplayName` /
-> `MaterialApp.title` / 抽屉头部 / 顶栏兜底，五处同口径）、**图标 = DSH 桌面端那枚鲸鱼**
+> 同一批改了应用身份：**名字 = DeepSeek Harness**（一处定义 `kAppName`，六处显示：安卓 label / iOS 显示名 / `MaterialApp.title` / 抽屉头部 / 顶栏兜底 / **会话里助手说话者**）、**图标 = DSH 桌面端那枚鲸鱼**
 > （`apps/desktop/resources/icon.png`；legacy 五档 + 自适应前景，底色 #FFFFFF）：
 > `implemented/2026-10-23-app-name-and-icon-from-dsh.md`。
 > 白天用户又追两条：**品牌位全部用同一枚图标** —— 抽屉头部 logo 与「助手」头像都改成
@@ -247,7 +246,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **357 项**（22 条规则自检 + 扫 98 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 21 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1110 项** |
+| `cd app && flutter test` | **1111 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **586 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |

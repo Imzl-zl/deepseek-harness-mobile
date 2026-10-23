@@ -22,6 +22,7 @@ import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/chat_page.dart';
+import 'package:dsh_mobile/ui/dsh_brand.dart';
 import 'package:dsh_mobile/ui/dsh_composer.dart';
 import 'package:dsh_mobile/ui/side_pane.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
@@ -336,7 +337,7 @@ void main() {
 
     // 账本。
     expect(find.text('上下文'), findsOneWidget);
-    expect(find.text('助手'), findsOneWidget);
+    expect(find.text(kAppName), findsOneWidget);
     expect(find.text('工具 · read'), findsOneWidget);
 
     // 点一条 → 弹 `sheet-traj`。

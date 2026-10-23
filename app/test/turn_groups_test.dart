@@ -75,6 +75,27 @@ ChatItem compaction(int seq) => CompactionItem(
 ChatItem process(int turn, int seq) =>
     TurnProcessItem(itemId: 'p:$turn', seq: seq, updatedAt: 0, turn: turn);
 
+/// 上下文注入行（`role: system` + `systemHint` = 生产者）。
+ChatItem contextRow(int seq) => MessageItem(
+  itemId: 'c:$seq',
+  seq: seq,
+  updatedAt: 0,
+  role: MessageRole.system,
+  text: 'Current runtime context…',
+  systemLabel: '上下文注入',
+  systemHint: 'runtime-context',
+);
+
+/// 系统提示词（`role: system`，**没有** `systemHint`）。
+ChatItem systemPrompt(int seq) => MessageItem(
+  itemId: 's:$seq',
+  seq: seq,
+  updatedAt: 0,
+  role: MessageRole.system,
+  text: '你是 DeepSeek Harness…',
+  systemLabel: '系统提示词',
+);
+
 void main() {
   group('切分', () {
     test('按 turn/start 分成两组，成员与顺序都对', () {
@@ -234,14 +255,26 @@ void main() {
       final groups = buildTurnGroups([
         start(1, 1),
         user(2, '问'),
-        user(3, '上下文注入'),
+        contextRow(3),
         tool(4, 'bash'),
         answer(5, '答'),
         process(1, 6),
       ]);
       final visible = applyTurnCollapse(groups, isExpanded: (_) => true);
       final heads = assistantHeadItemIds(visible);
-      expect(heads, {'t:4'}, reason: '头在轮次开头（第一条助手侧条目），不是贴在回答上');
+      expect(heads, {'c:3'}, reason: '上下文注入行属于助手块：头画在它上面（用户：应该都在图标下面）');
+    });
+
+    test('系统提示词不拿头（它在用户那句之前，头不能跑到问题上面）', () {
+      final groups = buildTurnGroups([
+        start(1, 1),
+        systemPrompt(2),
+        user(3, '问'),
+        answer(4, '答'),
+        process(1, 5),
+      ]);
+      final visible = applyTurnCollapse(groups, isExpanded: (_) => true);
+      expect(assistantHeadItemIds(visible), {'a:4'});
     });
 
     test('折叠后按**可见**条目算：被藏掉的过程不能让头跟着消失', () {

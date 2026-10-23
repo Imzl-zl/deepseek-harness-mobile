@@ -53,6 +53,7 @@ import 'theme/dsh_theme.dart';
 import 'ui/archive_sheet.dart';
 import 'ui/chat_page.dart';
 import 'ui/connection_actions_sheet.dart';
+import 'ui/dsh_brand.dart';
 import 'ui/dsh_shimmer.dart';
 import 'ui/pairing_page.dart';
 import 'ui/session_drawer.dart';
@@ -328,9 +329,9 @@ class _DshMobileAppState extends State<DshMobileApp>
       listenable: _theme,
       builder: (context, _) => MaterialApp(
         // 任务切换器里显示的名字。与安卓 `android:label`、iOS
-        // `CFBundleDisplayName` 同一处口径：**DeepSeek Harness**（用户 2026-10-23
-        // 指定；抽屉头部那一行也是它）。
-        title: 'DeepSeek Harness',
+        // `CFBundleDisplayName` 同一处口径（用户 2026-10-23 指定）；
+        // 抽屉头部、会话里助手说话者的名字读的是同一个常量。
+        title: kAppName,
         debugShowCheckedModeBanner: false,
         // **主题跟着 ThemeController 换**（2026-10-19：加浅色套）。
         //

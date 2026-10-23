@@ -28,6 +28,14 @@ const String kDshWhaleAsset = 'assets/brand/dsh-whale.png';
 /// 徽标根节点的 key：测试用它断言"这一处用的是品牌图标"。
 const Key kDshBrandMarkKey = Key('dsh-brand-mark');
 
+/// App 名：**一处定义，五处使用** —— 启动器（`android:label`/`CFBundleDisplayName`
+/// 是原生资源，得手写同一串）、`MaterialApp.title`、抽屉头部、顶栏无标题时的兜底、
+/// 会话里助手说话者的名字（此前那里写的是「助手」，用户 2026-10-23 要求改成它）。
+const String kAppName = 'DeepSeek Harness';
+
+/// 会话里助手说话者显示的名字 —— 就是 App 名（别名，读代码时更清楚它用在哪）。
+const String kAssistantSpeakerLabel = kAppName;
+
 /// 白底圆角方 + 鲸鱼。尺寸随 [size] 等比：圆角 `0.34×size`、内边距 `0.12×size`。
 class DshBrandMark extends StatelessWidget {
   const DshBrandMark({super.key, this.size = 26});

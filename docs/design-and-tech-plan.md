@@ -12,8 +12,9 @@
 - **通用插件、多用户**(非纯自用)。
 - **体验优先**:原生级手感 + 三端(iOS / 安卓 / 鸿蒙)视觉规格一致 + 视觉与 DSH 一模一样。
 - **不做**(第一版):Admin、账单、知识库、MCP/Skill 的复杂编辑(与 DEEIX 移动端边界一致,见其 `docs/ARCHITECTURE.md`)。
-- **应用名 = `DeepSeek Harness`**,五处同口径:安卓 `android:label`、iOS `CFBundleDisplayName`、
-  `MaterialApp.title`、抽屉头部那一行、顶栏没有会话标题时的兜底。
+- **应用名 = `DeepSeek Harness`**,定义一处(`app/lib/ui/dsh_brand.dart` 的 `kAppName`)、
+  显示六处:安卓 `android:label`(原生资源里手写同一串)、iOS `CFBundleDisplayName`、
+  `MaterialApp.title`、抽屉头部那一行、顶栏没有会话标题时的兜底、**会话里助手说话者的名字**。
   **品牌图 = DSH 桌面端那枚鲸鱼**(源 `D:\sudy\github\deepseek-harness\apps\desktop\resources\icon.png`),
   显示位置四处:
   - 启动图标:`mipmap-*/ic_launcher.png`(48/72/96/144/192)+ 自适应前景

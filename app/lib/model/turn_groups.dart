@@ -115,7 +115,16 @@ List<TurnGroup> buildTurnGroups(List<ChatItem> items) {
 ///
 /// 用它决定「助手」头画在哪：用户消息、上下文注入行都不是助手侧。
 bool isAssistantSide(ChatItem item) => switch (item) {
-  MessageItem(:final role) => role == MessageRole.assistant,
+  // 助手正文，**以及上下文注入行**（"电脑侧塞给模型的东西"）。
+  // 后者是用户 2026-10-23 指出的：「上下文注入啥的显示在外面，不是在图标下面」——
+  // 那块内容属于这一轮的助手块，头像要画在它上面。
+  //
+  // 判据用 `systemHint`（生产者：`runtime-context` / `skill-catalog` /
+  // `time-context`）：**系统提示词**没有它（只有标题），因此它不会成为
+  // "助手开始"的锚点 —— 系统提示词在用户那句之前，头像不能跑到问题上面。
+  MessageItem(:final role, :final systemHint) =>
+    role == MessageRole.assistant ||
+        (role == MessageRole.system && systemHint != null),
   ReasoningItem() || ToolCallItem() || ModelRetryItem() => true,
   // **命令卡与压缩卡不算"助手在说话"**：斜杠命令是用户发起的执行，
   // 压缩是系统行为；把「助手」头挂在它们上面等于说错主语

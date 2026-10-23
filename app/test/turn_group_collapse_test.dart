@@ -19,6 +19,7 @@ import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/model/preferences.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/chat_page.dart';
+import 'package:dsh_mobile/ui/dsh_brand.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
 
@@ -245,13 +246,13 @@ void main() {
 
     // 收起：只有一个「助手」（最终回答那条），思考与工具卡都不在。
     expect(
-      find.text('助手'),
+      find.byKey(kDshBrandMarkKey),
       findsOneWidget,
       reason: '一个 turn 只能有一个助手头 —— 中间步骤的思考是过程行，不带头像',
     );
     // 头必须在**回答上方**（轮次开头一侧），不是贴在回答下面。
     expect(
-      tester.getTopLeft(find.text('助手')).dy,
+      tester.getTopLeft(find.byKey(kDshBrandMarkKey)).dy,
       lessThan(tester.getTopLeft(find.text('第 1 答')).dy),
       reason: '助手头在轮次开头，不在中途',
     );
@@ -263,9 +264,9 @@ void main() {
     await _settle(tester);
     expect(find.text('思考过程'), findsOneWidget);
     expect(find.text('bash'), findsOneWidget);
-    expect(find.text('助手'), findsOneWidget);
+    expect(find.byKey(kDshBrandMarkKey), findsOneWidget);
     expect(
-      tester.getTopLeft(find.text('助手')).dy,
+      tester.getTopLeft(find.byKey(kDshBrandMarkKey)).dy,
       lessThan(tester.getTopLeft(find.text('思考过程')).dy),
       reason: '展开时头像在最上面：助手块从头开始，过程在块内',
     );
@@ -281,7 +282,11 @@ void main() {
 
     expect(find.textContaining('第 1 轮'), findsOneWidget);
     expect(find.text('bash'), findsNothing, reason: '默认收起');
-    expect(find.text('助手'), findsNothing, reason: '空正文的那条助手消息不该画成一行只有头像的空行');
+    expect(
+      find.byKey(kDshBrandMarkKey),
+      findsNothing,
+      reason: '空正文的那条助手消息不该画成一行只有头像的空行',
+    );
   });
 
   testWidgets('收起时机＝下次有新消息时：最新一轮默认展开', (tester) async {

@@ -234,7 +234,7 @@ class _SessionDrawerState extends State<SessionDrawer> {
                   const DshBrandMark(size: 28),
                   const SizedBox(width: 10),
                   Text(
-                    'DeepSeek Harness',
+                    kAppName,
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,

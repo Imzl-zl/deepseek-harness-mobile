@@ -21,6 +21,7 @@ import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/ui/chat_turns.dart';
+import 'package:dsh_mobile/ui/dsh_brand.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'fake_sync_client.dart';
@@ -80,7 +81,7 @@ void main() {
     );
     // 复用 `AssistantTurn` 的同一套头部（头像 + 「助手」）—— 流式条目与
     // 持久消息必须是同一条视觉，否则"生成中"与"生成完"像两个东西。
-    expect(find.text('助手'), findsOneWidget);
+    expect(find.text(kAppName), findsOneWidget);
     expect(find.text('正在写的正文'), findsOneWidget);
   });
 

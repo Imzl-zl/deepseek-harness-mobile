@@ -197,12 +197,15 @@ class AssistantTurn extends StatelessWidget {
   }
 }
 
-/// 助手消息的头部：26×26 品牌渐变头像 + 「助手」。
+/// 助手消息的头部：DSH 鲸鱼徽标 + 说话者名字（**DeepSeek Harness**）。
 ///
 /// 抽出来是因为**流式尾条目与持久条目必须是同一个头**：原来
 /// `_LiveTurn` 自己抄了一份（还写死了颜色），于是流结束、条目从
 /// "虚拟尾"换成持久消息的那一帧，头像行的构造与上下留白都换了一套
 /// —— 那就是流式结束时的"跳一下"。
+///
+/// 名字用 App 的品牌名（用户 2026-10-23：「会话内的名字也改成 deepseek harness」），
+/// 与抽屉头部、启动器同一处口径；此前这里写的是「助手」。
 ///
 /// **不带模型名**：模型是"当前这一句用哪个"的输入栏状态（`DshComposer` 的
 /// chip，值来自 `modelSelection` 投影），逐条消息再挂一遍是同一件事说两次；
@@ -222,13 +225,19 @@ class AssistantHead extends StatelessWidget {
         children: [
           const _AssistantAvatar(),
           const SizedBox(width: 8),
-          Text(
-            '助手',
-            style: TextStyle(
-              // 说话者标签是**贴在内容上**的（DSH 用 secondary 档）。
-              fontSize: type.secondary,
-              fontWeight: FontWeight.w600,
-              color: c.labelPrimary,
+          // 名字可能比「助手」长得多（13 个字符）：给 `Flexible` + 省略号，
+          // 大字号（1.3 档）下也不会把这一行撑出界。
+          Flexible(
+            child: Text(
+              kAssistantSpeakerLabel,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                // 说话者标签是**贴在内容上**的（DSH 用 secondary 档）。
+                fontSize: type.secondary,
+                fontWeight: FontWeight.w600,
+                color: c.labelPrimary,
+              ),
             ),
           ),
         ],

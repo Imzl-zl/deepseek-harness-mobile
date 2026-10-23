@@ -8,6 +8,13 @@ Status: implemented
 > 「侧边抽屉的图标还是之前的」）。落地方式是一个共享控件
 > `app/lib/ui/dsh_brand.dart` 的 `DshBrandMark` + 资产 `assets/brand/dsh-whale.png`。
 > 下面 Decision 第 1 条记录的是**当时的取舍**，不改；名字以本条为准。
+>
+> **再后续（同日）**：① 会话里助手说话者的名字也改成 `kAppName`（此前是「助手」）——
+> 「会话内的名字也改成 deepseek harness 啊」；② **上下文注入行归进助手块**：
+> 三行 `上下文注入 · …` 原先显示在头像**上面**，现在算作"助手侧"条目，
+> 头像画在它们上面（用户：「上下文注入啥的显示在外面，不是在图标下面」）。
+> 判据：`MessageItem.systemHint != null` 才算上下文行；系统提示词没有它，所以不会
+> 把头像顶到用户问题上面。
 
 ## Problem
 

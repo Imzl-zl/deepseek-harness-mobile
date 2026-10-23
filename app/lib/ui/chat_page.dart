@@ -62,6 +62,7 @@ import 'connection_actions_sheet.dart';
 import 'connection_summary_block.dart';
 import 'conversation_hero.dart';
 import 'dsh_app_bar.dart';
+import 'dsh_brand.dart';
 import 'dsh_composer.dart';
 import 'dsh_markdown.dart';
 import 'dsh_popover.dart';
@@ -629,7 +630,7 @@ class ChatPageState extends State<ChatPage> {
         title: _subagentReturnFrom != null
             ? _subagentLabel
             // 没有会话标题时显示 App 名（与启动器 / 抽屉头部同一处口径）。
-            : (widget.app.currentTitle ?? 'DeepSeek Harness'),
+            : (widget.app.currentTitle ?? kAppName),
         parentTitle: _subagentParentLabel,
         onOpenDrawer: openDrawer,
         onBack: _subagentReturnFrom == null
