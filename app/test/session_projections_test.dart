@@ -156,6 +156,33 @@ void main() {
     app.dispose();
   });
 
+  test('换会话后不再挂着上一个会话的投影（统计条 / 权限都不许串台）', () async {
+    // 投影包只对"读出它的那个会话"有效：从 A 切到 B 的那一瞬间（以及 B 读失败时），
+    // 统计条 / token / 权限档都不能还是 A 的数字 —— 那正是"显示别人的"。
+    // 2026-10-23 用户问"子智能体显示的都是自己的吧"时顺手查出来的。
+    final client = _ProjClient(
+      onCall: (m, p) {
+        if (m != 'session.projections') return null;
+        if (p['sid'] == 'sid_A') return _fullProjections();
+        // B 读失败：形状不对 ⇒ 非空态，而是"读不到"。
+        return 'boom';
+      },
+    );
+    final app = AppModel(client: client);
+    await app.start();
+
+    await app.openSession('sid_A');
+    expect(app.tokenUsage, isNotNull);
+    expect(app.sessionStats, isNotNull);
+
+    await app.openSession('sid_B');
+    expect(app.projections, isNull, reason: '这一包属于 A，不对外提供');
+    expect(app.tokenUsage, isNull, reason: 'B 读失败 ⇒ 空，不是 A 的 1000+200');
+    expect(app.sessionStats, isNull);
+    expect(app.permissionValue, isNull);
+    app.dispose();
+  });
+
   test('投影读不到：三个 getter 全 null（不猜数字）', () async {
     final client = _ProjClient(onCall: (m, p) => null);
     final app = AppModel(client: client);

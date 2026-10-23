@@ -454,7 +454,17 @@ class AppModel extends ChangeNotifier {
   /// 各面按需从这里取，认不出就不给。
   Map<String, Object?>? _projections;
 
-  Map<String, Object?>? get projections => _projections;
+  /// 这一包是**哪个会话**的。
+  ///
+  /// 投影包没有版本号也没有会话字段（`session.projections` 的应答就是 `values`），
+  /// 所以"它属于谁"只能在这里记。**换会话的那一刻**（新包还没落地）以及
+  /// 新会话**读失败**时，都不许再把上一包当成当前的 —— 那会让统计条 / token /
+  /// 权限档显示上一个会话的数字（真机上就是"进了子会话，数字还是父会话的"）。
+  String? _projectionsSid;
+
+  /// 当前会话的投影包；**不匹配就当作没有**（见 [_projectionsSid]）。
+  Map<String, Object?>? get projections =>
+      _projectionsSid == _currentSid ? _projections : null;
 
   /// 读一次投影。**点开会话时调**（与 `refreshJobs` 同一步）。
   ///
@@ -576,6 +586,7 @@ class AppModel extends ChangeNotifier {
   void _applyProjectionValues(String sid, Map<String, Object?> values) {
     if (sid == _currentSid) {
       _projections = values;
+      _projectionsSid = sid;
       // 收件箱播种：插话判定要从此前的 splice 历史推出来，而投影里的
       // next-turn / next-step 列表正是那个历史的当前值。
       _seedInboxTracker(sid);
@@ -593,7 +604,7 @@ class AppModel extends ChangeNotifier {
 
   /// token 用量。**认不出就是 null**，不猜 —— 猜一个就是把
   /// "看起来连着"当成"连着"。
-  TokenUsage? get tokenUsage => parseTokenUsage(_projections?['tokenUsage']);
+  TokenUsage? get tokenUsage => parseTokenUsage(projections?['tokenUsage']);
 
   /// 会话统计（`sessionStats` 投影）。
   ///
@@ -603,7 +614,7 @@ class AppModel extends ChangeNotifier {
   /// 手机就算不出 Web 上那个 `75 tok/s`；`ttftMs` / `ttftSteps`
   /// 是统计 sheet 里 TTFT 那一行的来源。
   SessionStats? get sessionStats {
-    final raw = _projections?['sessionStats'];
+    final raw = projections?['sessionStats'];
     if (raw is! Map) return null;
     return SessionStats(
       turns: _intOf(raw['turns']),
@@ -626,7 +637,7 @@ class AppModel extends ChangeNotifier {
   /// 拿不到（没这个投影 / 形状不对）就是空表 —— 轨迹页显示空态，
   /// 不造一份假的（2026-10-15 删掉 `_sampleRows` 的理由）。
   List<TurnOutlineEntry> get turnOutline {
-    final raw = _projections?['turnOutline'];
+    final raw = projections?['turnOutline'];
     if (raw is! List) return const [];
     final out = <TurnOutlineEntry>[];
     for (final entry in raw) {
@@ -664,7 +675,7 @@ class AppModel extends ChangeNotifier {
   /// （`_applyProjectionValues` 直接换引用）。缓存键就是那一包的引用：
   /// 同一包解析一次，换包才重解析 —— 没有这一层，滚动时每一帧都重建。
   TrajectoryView? get trajectory {
-    final source = _projections;
+    final source = projections;
     if (identical(source, _trajectorySource)) return _trajectory;
     _trajectorySource = source;
     _trajectory = parseTrajectory(source?['trajectory']);
@@ -684,7 +695,7 @@ class AppModel extends ChangeNotifier {
   /// 界面照 Web 标 `~`。三项全 0 时当没有（那与"没有这个投影"在界面上
   /// 同一表现：上下文 sheet 只画百分比条，不画分段图例）。
   ContextBreakdown? get contextBreakdown {
-    final raw = _projections?['contextBreakdown'];
+    final raw = projections?['contextBreakdown'];
     if (raw is! Map) return null;
     final breakdown = ContextBreakdown(
       systemTokens: _intOf(raw['systemTokens']),
@@ -699,7 +710,7 @@ class AppModel extends ChangeNotifier {
   /// `contextWindow` 是**分母**：没有它"占了多少"无解，而 Web 的
   /// `ContextMeter` 同样在只有分子时不渲染。
   ContextPressure? get contextPressure {
-    final raw = _projections?['contextPressure'];
+    final raw = projections?['contextPressure'];
     if (raw is! Map) return null;
     final pressure = raw['pressureTokens'];
     final projected = raw['projectedTokens'];
@@ -757,7 +768,7 @@ class AppModel extends ChangeNotifier {
   String? get permissionValue {
     final sid = _currentSid;
     if (sid == null) return null;
-    return parsePermissionValue(_projections);
+    return parsePermissionValue(projections);
   }
 
   /// 存一份预设目录（连接器 `permission.catalog` 的应答）。
@@ -863,7 +874,7 @@ class AppModel extends ChangeNotifier {
   /// `next-step` 段不列（Web 同一条：那已经生效了，不在队列里）。
   List<QueueItem> queueOf(String sid) {
     if (_currentSid != sid) return const [];
-    return parseQueueItems(_projections?['inbox']);
+    return parseQueueItems(projections?['inbox']);
   }
 
   /// 变异一个排队项（编辑 / 删除 / 插话）。
@@ -925,7 +936,7 @@ class AppModel extends ChangeNotifier {
 
   /// 打开会话时用投影里的当前收件箱播种追踪器（否则恢复会漏掉早先的 splice）。
   void _seedInboxTracker(String sid) {
-    final inbox = _projections?['inbox'];
+    final inbox = projections?['inbox'];
     if (inbox is! Map) return;
     _inboxTrackers
         .putIfAbsent(sid, () => _InboxTracker())
@@ -1974,7 +1985,7 @@ class AppModel extends ChangeNotifier {
   /// 界面退回"按目录里的默认项显示"或显示 id，不猜一个档。
   String? get agentPresetValue {
     if (_currentSid == null) return null;
-    return parseAgentPresetValue(_projections);
+    return parseAgentPresetValue(projections);
   }
 
   /// 当前会话归属的工作区；`null` = 清单里没有它（或清单还没到）。

@@ -84,6 +84,14 @@
 > 门禁：flutter **1119**。
 > **面板行不显示模型是有意的**（DSH 的 `ui-subagent` 里 `model` 零命中，行第二行是
 > `title · mode · activity`）—— 想要就得单独决定"移动端偏离"。
+>
+> **同轮再查一层（用户问"不会又有细节不到位吧"）**：`_projections` 只有一包、
+> 没有"属于谁"的标记 ⇒ 换会话那一刻（以及新会话读失败时）统计条 / token / 权限档
+> 显示的是**上一个会话**的数字。修法：`_projectionsSid` + `projections` getter
+> 只在 sid 匹配时给（内部 10 处直读全改走 getter）。代价：换会话后到新包落地前是空态
+> （显示别人的数字比空一拍更坏）；同一会话重读失败仍保留旧值（"刷新不闪空"不变）。
+> 笔记 `implemented/2026-10-23-projections-belong-to-a-session.md`；真机 `y3|y4|y5-*.png`
+> 三层数字各自不同。门禁：flutter **1120**。
 
 待办（按顺序）:
 
@@ -271,7 +279,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **357 项**（22 条规则自检 + 扫 98 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 21 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1119 项** |
+| `cd app && flutter test` | **1120 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **586 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
