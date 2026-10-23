@@ -49,7 +49,7 @@ Status: implemented
   `session.list` 那一包改成**按原样覆盖**（两个方向），与 DSH 浏览器同一条。
   `turn/start` 的 `time` 仍然写 `_turnStartedAt`（活时钟的起点 —— 推送里没有时间）。
 
-## 判据（0 个真机回合）
+## 判据（单测 + 变异校验）
 
 - **connector 615 → 616**：`connection-scope.test.ts` 一条（未认证不发 / 认证后推一封 `status`
   帧，载荷逐字 `{running}`）。
@@ -69,6 +69,38 @@ Status: implemented
   `app/lib/core/frame.dart:272-276` 是 `IgnoredFrame` / `UnsupportedFrame`（不关连接）。
   所以分阶段上线并非不可行；本单仍两侧一个提交（它是一件事）。
 
+## 真机验证（2026-10-24，1 回合，1 次模型请求）
+
+**做法**：在 `Probe Root Directory Write Test`（`session-4fa99cf9-…`，模型 `auto`）发一句
+`Run this exact shell command and report its output: Start-Sleep -Seconds 20`；
+运行条出现、主键变「停止」后**切断传输** = 杀中转进程（直连通道此前已
+`POST /api/dsh-mobile/transport/direct/stop`，中转是唯一通路）。
+
+**电脑侧在断线期间跑完**（会话日志按 zstd 帧解压，`D:\tmp\dsh-e2e\tail-events.mjs` 原文）：
+
+```
+114 18:46:20  assistant/message  {"turn":4,"step":2,…}
+115 18:46:20  step/end           {"turn":4,"step":2}
+116 18:46:20  turn/end           {"turn":4,"reason":{"kind":"completed"}}
+```
+
+**断线期间**（`w4-4-offline-running.png` + `ui-w4-offline.xml`）：`连接状态：重连中…`，
+主键仍是 `content-desc="停止"` —— 这一轮确实还没在手机上收口。
+
+**回网后**（重启中转 → `devices[].online` 转 true 计 21.79 s，这是退避走完的时间，不是判据）：
+
+| 判据 | 实测 |
+|---|---|
+| ① 运行条消失 | ✅ online 后 **0.4 s** 的截图里「深度求索中…」已不见 |
+| ② 主键从「停止」回「发送」 | ✅ `ui-w4-recovered.xml` 里是 `content-desc="发送"` |
+| ③ 结束条目/统计出现 | ✅ 统计从 `3 轮 6 步 · 125K tok` 变成 `4 轮 8 步 · 172K tok`，助手收尾正文可见 |
+
+截图：`w4-3-sent-running.png`（送出去、主键=停止）/ `w4-4-offline-running.png`（断线）/
+`w4-5-recovered-immediate.png`（回网 0.4 s）。
+
+**没有 `status` 帧的日志**：App 不打 logcat（`flutter` 标签 0 行），所以这一条只报现象与时间点 ——
+与另一篇（`2026-10-24-terminal-identity-from-pc.md`）里那条判据缺口同一个原因。
+
 ## 代价与后果
 
 - **快照按原样覆盖**（照 DSH）：如果它在"某条 `status` 帧之后"才落地（请求在途时宿主状态变了），
@@ -76,8 +108,6 @@ Status: implemented
 - **装配期多一个册子**：`liveScopes` 随连接进出（`closed` 时摘），内存随连接数走。
 - **契约同步**：§3 的帧表加一行、§5.7 末尾的事件清单加 `status`；
   `docs/subsystems/running-cues.md` §3 / §3.1 整节改成"宿主推送 + 快照覆盖"。
-- **真机未复验（1 回合）**：断网 20 秒、期间让一轮跑完，回网后运行条**立刻**停。
-  按"要真机先报价"的纪律没跑，等点头。
 
 ## 代码入口回指
 

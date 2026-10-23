@@ -548,6 +548,33 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
   - **判据（谁答的）**：管理面 `/api/dsh-mobile/status` 的 `devices[].lastInteractedAt` 与会话日志里
     `approval/decided.time` **同毫秒级**（实测差 3 ms）⇒ 这个决定是手机上 `interaction.respond` 写的，
     不是浏览器。只看"卡消失了"分不出是 `cancel` 还是宿主结算。
+- **真机验「断网/重连/停用」这一组时的五个坑**（2026-10-24 一轮全踩到，约 1 轮）：
+  - **8787 可能被遗留的 docker 中转容器占着，而 `Get-NetTCPConnection` 看不见它**
+    （WSL 转发，和上面那条"Docker 发布的端口局域网连不上"同一个盲区）。症状很好骗人：
+    `node src/main.ts` 报 `EADDRINUSE`，而手机侧 `curl http://127.0.0.1:8787/` 回 **405**
+    —— 那个 405 是**容器**答的。判据：`docker ps -a --filter publish=8787` 看有没有
+    `relay-docker` / `relay-e2e`，有就 `docker rm -f` 后再用
+    `node -e "…createServer().listen(8787,'0.0.0.0')…"` 探一次端口才敢起中转。
+  - **`adb reverse --remove-all` 不掐已建立的连接**：撤掉隧道后手机的中转 WS 还能活 15 s 以上
+    （实测 15 s 后仍 online）。要它重拨就**杀对端进程**（中转），别指望撤隧道。
+  - **配对码喂不进手机**：新包已按 Z5 关了 `enableSuggestions` / `autocorrect`，
+    `adb shell input text '{"v":2}'` 仍被改成 `{\ v\:2}`（`"` 被丢、`:` → `\:`）——
+    那是输入法的**组合输入**，不是联想开关能治的。唯一顺的路：电脑出码 → 二维码显示在屏幕上
+    （`POST /api/dsh-mobile/pair` 回 svg，存成 html 用浏览器打开）→ 手机「扫一扫」。
+  - **输入法弹着时 `adb exec-out screencap` 是黑屏**（只剩状态栏），而且**别用 BACK 收键盘**
+    —— 键盘已自动收起时 BACK 会把 App 退到桌面（又白跑一次）。要看屏幕就先点别处收键盘。
+  - **`uiautomator dump` 偶尔返回空语义树**（本轮两次，尺寸约 1.5 KB、`content-desc` 全空）：
+    别据此判"页面没东西"，改用截图 + 上一次 dump 的 bounds。另：**dump 是物理像素，而人看截图时
+    图被缩放**（1080→约 880），目测 y 会差 ~250 px —— 一律以 dump 的 bounds 为准。
+- **出码可以直接走 RPC，不必开浏览器敲命令**（2026-10-24）：cookie 鉴权后
+  `POST http://127.0.0.1:<port>/api/commands/execute`，体
+  `{"type":"client-request","rpcId":"x","method":"commands/execute","payload":{"args":{"agentId":"<会话 id>","line":"/dsh-mobile-pair","submittedAttachments":[]}}}`
+  ⇒ 应答 `result.value.result.text` 里就有 payload JSON（`{"v":2,…}`）。`agentId` 就是
+  `$DSH_HOME/sessions/<workspace>/session-<uuid>/` 那个 uuid。**少开一个浏览器**。
+- **抓"换票 401"这类窄窗口要用替身，不要赌时序**（2026-10-24）：中转重启后连接器**立刻**重放名册，
+  401 窗口只有几百毫秒。做法是让一个只回 `401 {"error":"unauthorized"}` 的小服务占住同一端口
+  （形状照 `relay/src/http-face.ts:77`），手机就会稳定地反复撞它 —— 脚本在
+  `D:\tmp\dsh-e2e\stub-401.mjs`（仓库外，一次性仪器）。
 - **自查「我们替宿主做了决定」**（2026-10-23 用户连点两次之后立的规矩，见 `AGENTS.md` 常驻军规
   「宿主语义优先」与 `.agents/notes/implemented/2026-10-24-native-semantics-first.md`）：
   **三问** —— ① 删掉这条规则，DSH 会不会已经给出答案？会 ⇒ 我们不该有；② 它是补"我们这条通道没有的

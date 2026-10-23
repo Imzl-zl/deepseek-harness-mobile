@@ -73,7 +73,7 @@ claim 一条用户**看不到**的交互，会把 DSH 原生的 fail-closed（�
 所以：**代码不动，把限制如实写进契约 §15 与 §6.3.1**（本次已写），C11 在总账里从
 `设计缺陷` 改判为 `未实现`。
 
-## 证据（0 个真机回合）
+## 证据（单测 + 变异校验）
 
 - **connector 611 → 615**：`interaction-client.test.ts` 那条"没有 callId 就委托"换成三条
   （无 `callId` 照样 claim / 一条 `approval/asked` 都没有 → 委托 / 两条 → 委托）；
@@ -97,6 +97,26 @@ claim 一条用户**看不到**的交互，会把 DSH 原生的 fail-closed（�
 `app/test/fixtures_test.dart` 还写死"16 条 fixtures"，而 `fce4f9e` 已删掉 fixture 16 ⇒
 `flutter test` 从那时起**一直是红的**（上一轮报的"1140 全绿"漏了这个文件）。
 现在改成 15，并在文件头写清"条数四处同步"的纪律。
+
+## 真机验证（2026-10-24，1 回合，只验"看不看得见"）
+
+`/plan Propose a short plan … then call exit_plan_mode …`（1 次模型请求）。
+命令生效有原文：`command/done {"commandId":"cmd-43f0071f-3","kind":"success","text":"Plan mode on. Use /plan off to leave."}`
+（seq 123，18:47:46）。
+
+- **手机上没有任何卡片**：只有运行条与模型推理文本（`w1-2-phone-after-plan-exit.png`）。
+  会话事件里 `exit_plan_mode` 只落一条 `tool/call`（seq 130 `call_4273af…`，18:48:17），
+  **没有 `tool/result`** —— 那一轮停在"等一个手机侧不存在的应答者"上。
+- **电脑侧那张卡没拍到**：headless Web GUI（`cdp.ps1 -Port 9410`）打开后停在**新会话首屏**
+  （`w1-3-pc-gui-plan-card.png`），左侧会话面板未展开、DOM 里也搜不到会话行 ⇒
+  **未取到电脑侧卡片截图**，如实记。判据靠上面那条 `tool/call` 无结果的形状 + 已知事实。
+- **附带事实**：这个 ask 在无人应答时由**工具程序自己的 120 s 预算**收口 ——
+  模型在下一轮的原话是散文里的「the approval wait hit my program's 120s execution deadline」，
+  随后重试了一次 `exit_plan_mode`（seq 137，18:50:41）又停住。**不是** DSH 的交互超时
+  （审批与提问在 DSH 侧都没有超时，§15 那条限制仍成立）。
+
+结论：本篇"计划审查只能看不能答、手机侧根本没有那张卡"的判断**实测成立**；
+要让它变成"能答"，缺的仍是"卡来自请求"的投递，不是身份字段。
 
 ## 代价与后果
 

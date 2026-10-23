@@ -37,7 +37,7 @@ Status: implemented
   `exception.clientAction == ClientAction.rePair`，终态后的副作用仍由 `ConnectionRecovery`
   （清凭据 + 回配对页）执行，连接层不认识平台、不导航。
 
-## 判据（0 个真机回合；真机 1–2 回合**待做**，见下）
+## 判据（单测 + 变异校验）
 
 - **flutter 1141 → 1144**：
   - `sync_client_test.dart` 新增两条：「4003 + `protocol/not-paired` → 终态（不重连、留声）」、
@@ -52,12 +52,60 @@ Status: implemented
 - **没有改协议、没有加码**：用的仍是封闭表里的 `protocol/not-paired` / `relay/offline`，
   两边码表未变（`connector/tests/error-table-parity.test.ts` 仍绿）。
 
-## 还没做的：真机验证（1–2 回合）
+## 真机验证（2026-10-24，2 个轮次；同一台仪器做 A/B）
 
-按"要真机先报价"的纪律**没跑**，等用户点头：
+**环境**：隔离实例 `$env:DSH_HOME='D:\tmp\dsh-e2e'` + `dsh --profile mobile-e2e --port 63900 --no-open`；
+中转 `cd relay; node src/main.ts --config D:\tmp\dsh-e2e\relay.config.json`（8787/`0.0.0.0`）；
+装包 `flutter build apk --debug` + `adb install -r`（`firstInstallTime` 仍是 10-19 18:57 = **没卸载**）。
+证据目录 `D:\tmp\dsh-e2e\shots-2026-10-24-verify\`。
 
-1. 中转重启 → 手机**自动恢复**、配对不掉（看 `notPaired` 不再出现、连接回到 serving）；
-2. 电脑上停用这台设备 → 手机**明说**"这台电脑已不再认可本机"，并回配对页（不再静默清凭据）。
+**仪器**：`D:\tmp\dsh-e2e\stub-401.mjs`（占 `0.0.0.0:8787`，对任何请求回
+401 + `{"error":"unauthorized"}`，形状照 `relay/src/http-face.ts:77`）。
+用它而不是"真中转重启"：连接器重连后**立刻**重放名册，换票 401 的窗口只有几百毫秒，抓不住。
+
+### ① 换票 401 不再清凭据（A/B）
+
+| | 旧包（10-23 10:58，本篇之前） | 新包（10-24 02:27 构建） |
+|---|---|---|
+| 手机表现 | **回配对页** +「这台电脑已不再认可本机（可能已停用，或凭据已失效）。请重新扫码配对。」 | **停在会话页**，顶栏空心重连点，无配对页 |
+| 凭据 | 被清（`FlutterSecureStorage.xml` → 65 B，mtime 02:24:27） | 保留（重开 App 直接进会话页） |
+| 截图 | `15-ticket-rejected.png` | `w3a7-new-build-401.png`、`w3a8-relaunch-still-paired.png` |
+
+新包一侧的替身日志原文（4 条换票，退避 1.7 / 4.8 / 8 s）：
+
+```
+[stub401] 2026-10-23T18:41:19.674Z POST /ws-ticket ua=Dart/3.11 (dart:io)
+[stub401] 2026-10-23T18:41:21.438Z POST /ws-ticket ua=Dart/3.11 (dart:io)
+[stub401] 2026-10-23T18:41:26.241Z POST /ws-ticket ua=Dart/3.11 (dart:io)
+[stub401] 2026-10-23T18:41:34.319Z POST /ws-ticket ua=Dart/3.11 (dart:io)
+```
+
+换回真中转后恢复：`devices[].online` 02:42:12/16/19 = false → **02:42:22 = true**（12 s，无任何点击）；
+抽屉显示「中转已连接 · 空闲」且会话列表/计数全部重载（`w3a-4b-drawer-sessions.png`）。
+
+**判据缺口（如实记）**：**App 不打 logcat** —— `adb logcat -d` 里 `flutter` 标签 **0 行**，
+`not-paired` / `relay/offline` / `notPaired` 全部零命中（`w3a-logcat-full.txt` 3968 行）。
+所以"401 被读成 `relay/offline` 而不是 `not-paired`"**没有日志原文可贴**，
+只有行为面（不回配对页 + 凭据未清 + 退避重试）与替身侧的 401 计数。第八条教训的同一形状：
+**判据要能区分"没命中"与"没实现"** —— 这里是"没打日志"，不是"没发生"。
+
+### ② 停用这台设备：两条链路两种结果
+
+`POST /api/dsh-mobile/devices/enabled {"devId":"AsZSTs4sKCUzOWan87HkyQ","enabled":false}`
+（`devId` 取自 `GET /api/dsh-mobile/status` 的 `devices[]`）。
+
+- **纯中转链路**（`POST /transport/direct/stop` 关掉直连监听面，只剩中转 + `adb reverse`）：
+  - 停用后手机**先是仍显示「已连接」**（既有连接没被踢掉）；杀中转才变「连接中…」（`w3b-4-relay-killed-while-revoked.png`）。
+  - 中转恢复后 35 s 仍是「重连中…」，**不回配对页、不出现"不再认可本机"**
+    （`w3b-5-revoked-relay-retry.png`，语义树 `ui-w3b-retry.xml` 只有 `连接状态：重连中…`，
+    没有 `扫一扫` / `连接电脑` 这两个配对页元素）。
+  - 原因：停用后名册里没有它 ⇒ 换票回 401 ⇒ 归 `relay/offline` 退避；中转这一跳就到不了握手层。
+- **直连链路**（局域网 `192.168.2.29 → 192.168.2.47:8790`，`adb reverse` 与中转都撤掉）：
+  - 停用状态下重开 App ⇒ **明说**「这台电脑已不再认可本机（可能已停用，或凭据已失效）。请重新扫码配对。」
+    + 回配对页（`w3b-7-direct-relaunch-revoked.png`，`ui-w3b-direct-relaunch.xml` 同文案）。
+  - 即关闭码 4003 + `protocol/not-paired` 这条终态路**实测成立**。
+- **恢复**：中转链路下 `enabled:true` 后在 02:56:54 **没重新扫码**就连上（online=true）；
+  直连链路验完凭据已被清（终态即清凭据），要回到可用状态得重新扫码 —— 这一步不是回归，是设计。
 
 ## 代价与后果
 
