@@ -83,8 +83,10 @@ Status: implemented（**原生部分未过真机** —— 见文末"还没验的
 
 ## 还没验的那一半（必须说清）
 
-**原生部分进不了 `flutter test`**：`DshForegroundService` / `DshNotifications` /
-`DshActionReceiver` / manifest 的类型与权限，只能装包到真机才作数。要验的是：
+**原生部分进不了 `flutter test`**。**编译这一半已经验过**：`flutter build apk --debug` 通过，
+合并后的 manifest（`build/app/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml`）
+里三条权限、`DshForegroundService`（`android:foregroundServiceType="remoteMessaging"`）与
+`DshActionReceiver` 都在。**行为那一半只能装包到真机**，要验的是：
 
 1. 授予通知权限后，按 Home 退到后台是否真的起了服务（`dumpsys activity services` 里
    `isForeground=true`、类型 `remoteMessaging`）；
