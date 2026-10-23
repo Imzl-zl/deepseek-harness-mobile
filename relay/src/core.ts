@@ -34,7 +34,14 @@ export interface RelayCore {
   channel(channelId: string): RelayChannel | undefined
   channelOf(connectorId: string, deviceId: string): string | undefined
   onLine(from: { kind: 'device' | 'data'; channelId: string }, raw: string): readonly Delivery[]
-  readonly stats: { connectors: number; devices: number; channels: number; registrations: number; dropped: number }
+  /**
+   * 计数快照。
+   *
+   * **没有 `devices`**：设备数是名册的事（`deviceRegistry.stats.devices` / `bound`）。
+   * 这里曾经有一个 `devices: channels.size`，与 `channels` **恒等** —— 同一个数字两个名字，
+   * 读它的人会以为在数设备（2026-10-24 审计 C4）。
+   */
+  readonly stats: { connectors: number; channels: number; registrations: number; dropped: number }
 }
 
 export function createRelayCore(options: RelayCoreOptions = {}): RelayCore {
@@ -59,7 +66,7 @@ export function createRelayCore(options: RelayCoreOptions = {}): RelayCore {
 
   return {
     get stats() {
-      return { connectors: connectors.size, devices: channels.size, channels: channels.size, registrations: pairing.stats.registrations, dropped }
+      return { connectors: connectors.size, channels: channels.size, registrations: pairing.stats.registrations, dropped }
     },
     attachConnector(connectorId) { connectors.add(connectorId) },
     detachConnector(connectorId) {

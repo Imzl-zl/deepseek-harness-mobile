@@ -189,7 +189,9 @@ test('通道关闭：归属与统计一并清掉，重连是一条新代次（�
   core.closeChannel('channel-b')
   core.closeChannel('channel-new')
   assert.equal(core.stats.channels, 0)
-  assert.equal(core.stats.devices, 0, '没有活通道就没有设备投影')
+  // `stats` 里**没有 `devices`**：设备数是名册的事（`deviceRegistry.stats.devices`），
+  // 这里原来那个 `devices: channels.size` 与 `channels` 恒等，是个不携带信息的第二个名字。
+  assert.deepEqual(Object.keys(core.stats).sort(), ['channels', 'connectors', 'dropped', 'registrations'])
 })
 
 test('一设备一通道、一通道一代次：重复开通道与同设备的第二条通道都被拒', () => {

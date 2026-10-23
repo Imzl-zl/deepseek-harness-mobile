@@ -264,7 +264,7 @@
     ② ~~**W2** 换代不撤在途 claim~~ **✅ 已落地（`1ba20a0`）**
     ③ ~~**Z5** 配对码关联想~~ **✅ `67d0397`** → ~~**Z2** `onOffline` 死码~~ **✅ `55ea630`** →
     ~~**Z1** `fullAccess` 过滤~~ **✅（见索引）**
-    ④ **Z4** `stats.devices` → **Z3** 匿名限流分桶（relay，0 真机）← **下一步**
+    ④ ~~**Z4** `stats.devices`~~ **✅（见索引）** → **Z3** 匿名限流分桶（relay，0 真机）← **下一步**
     ⑤ **Z6a** 预设文案漂移 → **Z6b** §15 一句（0 真机）
     ⑥ **W3** 终态只有一个来源（1–2 回合）→ **W4** 运行态改读原生（1 回合，要加一条契约帧）
     铁律（用户 2026-10-24 复述）：**别擅自加规则，DSH 原生就行**。
@@ -370,8 +370,10 @@
 
 1. **首配的匿名限流桶是单一全局桶**：约 6 请求/秒即可让所有新设备换票 429（约 10 s 恢复）。
    → 键是字面量 `'pairing:anonymous'`（`relay/src/http-face.ts:41`）；工单 Z3。
-2. `stats.devices` 实为**通道数**，与 §8.2 的 `devices` 表不同名同义。
-   → `relay/src/core.ts:61-62` 两字段恒等；工单 Z4（删字段）。
+2. ~~`stats.devices` 实为**通道数**，与 §8.2 的 `devices` 表不同名同义~~ **已删（2026-10-24，Z4）**：
+   `relay/src/core.ts` 的 `stats` 去掉了 `devices`（它与 `channels` 恒等，同一个数字两个名字）；
+   设备数看名册（`deviceRegistry.stats.devices` / `bound`）。判据 `relay/tests/core.test.ts`
+   的键集合断言 + 变异校验（加回去恰好一条红）。
 3. 握手层 close 4003 与 `protocol/revoked` 帧两条兜底路径仍走退避，未收口。
    → 与下面第 4 条同根（终态判据只覆盖建连失败）；工单 W3。
 4. ~~`pairing_page.dart` 的配对码 `TextField` 没关输入法联想，**手打**的 JSON 会被破坏（粘贴没事）~~
@@ -508,3 +510,5 @@
 - 2026-10-24 零碎清理三件：Z5 配对码关联想（`67d0397`）、Z2 删 `presence.onOffline` 死码
   （`55ea630`，connector 616 → 615）、Z1 删 `full-access` 审批过滤 + 那句永远显示不出的 toast。
   flutter 1141 持平（删 2 条旧断言、加 2 条新的）。
+- 2026-10-24 Z4 删 `relay.core.stats.devices`（与 `channels` 恒等）—— relay **86 持平**
+  （一条断言换成键集合断言）；顺手改掉 cookbook 里"别信这个数"那句。

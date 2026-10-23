@@ -54,16 +54,17 @@ Status: proposed
   变异校验：把键改回字面量 ⇒ 恰好那条红。
 - **门禁**：relay（86 → 87）、`pnpm typecheck`。
 
-## Z4（删字段）`stats.devices` 与 `stats.channels` 恒等
+## Z4（删字段）`stats.devices` 与 `stats.channels` 恒等 —— ✅ 已落地
 
-- **位置**：`relay/src/core.ts:61-62`：`devices: channels.size` 与 `channels: channels.size`。
+- **位置**：`relay/src/core.ts` 的 `stats` getter：`devices: channels.size` 与 `channels: channels.size`。
 - **为什么改**：名字说"设备数"，值是"通道数"，两个字段在同一行给出同一个数 ——
-  读它的人会以为在数设备。契约 §8.2 的 `devices` 表是另一件事（名册）。
-- **改什么**：删 `devices` 字段（消费方一起改）；若确实需要"设备数"，用
-  `new Set([...channels.values()].map(c => c.deviceId)).size` 另立一个名字，
-  **不要**让 `devices` 继续承担它。
-- **判据**：`relay/tests` 里断言 stats 形状的用例按新形状改（少一个键）。
-- **门禁**：relay、`pnpm typecheck`。
+  读它的人会以为在数设备。设备数本来就在名册（`deviceRegistry.stats.devices` / `bound`）。
+- **改什么**：删 `devices` 字段（类型 + getter + 注释写出处），消费方只有一条测试断言，
+  改成"键集合里没有 `devices`"。`docs/cookbook/next-session-real-device.md` 里那句
+  "别信这个数"跟着改成"设备数看名册、通道数看 channels"。
+- **判据**：`relay/tests/core.test.ts` 断言 `Object.keys(core.stats).sort()` 等于四个键；
+  变异校验：把 `devices: channels.size` 加回去 ⇒ **恰好那一条红**（85 绿 / 1 红）。
+- **门禁**：relay **86 → 86**（一条断言替换，不增不减）、`pnpm typecheck`。
 
 ## Z5（修一行）配对码输入框关掉输入法联想 —— ✅ 已落地
 
