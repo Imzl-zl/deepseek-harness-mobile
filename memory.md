@@ -208,6 +208,11 @@
     笔记 `implemented/2026-10-23-in-flight-interaction-is-host-held.md`。
     **仍未做（明确不顺手做）**：timed 部署（只解决看护之后才答，代价是桌面倒计时 + 模型 120 s 后继续）、
     计划审查卡（卡只从 `ask_user_question` 的 `tool/call` 生成，`/exit_plan_mode` 没有卡）。
+12. **交互改成 gateway 的 owner client（下一轮，已备好提示词）** —— 现状是 host 的 `prepend` answerer，
+    claim 之后桌面收不到请求、手机先答时桌面卡关不掉。原生模型是让连接器作为 owner client 接
+    `$events` 转发流：桌面与手机都收到、谁先答谁赢、gateway 给其余 client 发 `cancel`。
+    提案（含全部行号与迁移顺序）`.agents/notes/proposed/2026-10-23-interaction-as-gateway-client.md`；
+    新会话提示词 `.agents/notes/proposed/2026-10-23-next-round-interaction-client.md`（整段复制）。
 
 别当缺口（定案，别再试）:
 
