@@ -101,20 +101,24 @@ DSH 侧看到的是一次 `ask_user_question` 抛错，手机侧看到的是 `in
 - 收益：`next()` 的失败方向让"认不出"退化成"桌面接管"，而不是"工具失败"—— 比修复前严格更好。
 - 代价：多了一处对**已废弃**的 `snapshotEvents()` 的生产调用（带 waiver，理由如上）；每次 legacy 提问
   扫一遍日志（低频，可忽略）。
+- 收口：`QuestionPrompt` / `ApprovalPrompt` 上三个**只写不读**的字段删掉了（`dshSessionId` ×2、`timed`）——
+  端口只读 `sid` / `callId`；`planReview` 保留，并第一次真的被读（"程序化提问不 warn"的判据）。
 - 代价：**PTC 子调用里的提问认不出**（它没有 `tool/call` 事件，只有 `tool/ptc-dispatch*`），一律 `next()`；
   手机上本来也没有对应的卡。
 - 代价：**程序化提问**（`/exit_plan_mode` 的 `ask()`，不产生 `tool/call`）也落 `next()` —— 它在手机上
-  本来就没有卡（卡只从 `ask_user_question` 的 `tool/call` 生成），所以不是回归；但每次都会留一条 warn。
+  本来就没有卡（卡只从 `ask_user_question` 的 `tool/call` 生成），所以不是回归。这一支**不 warn**：
+  `planReview` 标记把它与"真的认不出"区分开；其余 `none` / `ambiguous` 各留一条 warn。
 - 代价：并行两次提问时，后跑到的那个应答者会看到两条未结算（`ambiguous`）并交还桌面；先跑到的
   可能只看到自己那一条（认领，正确）。取决于循环调度，但不会认错 id。
 - 判据：`connector/tests/question-call.test.ts` 8 条（真 `Session` 造事件：唯一 / 已结算排除 / 两条
   ambiguous / 一老一新 / 别的工具 / 空日志 / 重复记录 / 工具名），`connector/tests/interactions.test.ts`
-  新增 4 条（legacy 唯一 → claim 到真 id；两条并发 → `next()`；没有 / 只有已结算 → `next()`；
-  timed 的 `wait.callId` 优先于日志）。
+  新增 5 条（legacy 唯一 → claim 到真 id；两条并发 → `next()`；没有 / 只有已结算 → `next()`；
+  timed 的 `wait.callId` 优先于日志；程序化提问 → `next()` 且不 warn）。
 - 变异校验（都做过）：① 把"推出 id"改回 `undefined`（`found` → `none`）⇒ **恰好 4 条红**：
   3 条 `found` 的解析用例 + 1 条 legacy claim 接线；② 把身份缺失的 `next()` 改回 `throw` ⇒
-  **恰好 2 条红**：两条 `next()` 接线用例。
-- 门禁：connector **599 → 611**（+12），其余不变；**0 个真机回合**。
+  **恰好 2 条红**：两条 `next()` 接线用例；③ 把"程序化提问不 warn"的判据改成恒真 ⇒
+  **恰好 1 条红**：那条"不 warn"用例。
+- 门禁：connector **599 → 612**（+13），其余不变；**0 个真机回合**。
 
 代码入口回指：`connector/src/dsh/question-call.ts` 的文件头与
 `connector/src/dsh/interactions.ts` 的身份解析处各有一行指向本篇。

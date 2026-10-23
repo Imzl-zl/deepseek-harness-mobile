@@ -152,7 +152,7 @@ test('整链：sync.hello 上报前台+订阅 → decideTakeover 真的 claim �
 
   // ---- ② 端口：claim 之后它真的被触发，并等到人类的回答 ----
   const pending = claims.askApproval(
-    { sid: 'sid_dsh-1', dshSessionId: 'dsh-1', callId: 'call-1', toolName: 'bash' },
+    { sid: 'sid_dsh-1', callId: 'call-1', toolName: 'bash' },
     claim.deviceId ?? '',
   )
   await settle()
@@ -189,7 +189,7 @@ test('整链：sync.hello 上报前台+订阅 → decideTakeover 真的 claim �
   await assert.rejects(
     () =>
       claims.askApproval(
-        { sid: 'sid_dsh-1', dshSessionId: 'dsh-1', callId: 'call-2', toolName: 'bash' },
+        { sid: 'sid_dsh-1', callId: 'call-2', toolName: 'bash' },
         'dev-1',
       ),
   )
@@ -216,7 +216,7 @@ test('整链：手机断开 → 在途审批立刻 fail-closed（不等满 10 �
     guardMs: 10 * 60_000,
   })
   const pending = claims.askApproval(
-    { sid: 'sid_dsh-1', dshSessionId: 'dsh-1', callId: 'call-1', toolName: 'bash' },
+    { sid: 'sid_dsh-1', callId: 'call-1', toolName: 'bash' },
     'dev-1',
   )
   await settle()

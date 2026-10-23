@@ -165,7 +165,7 @@
 > 还让桌面提问卡带倒计时 —— 本仓要的是"认出身份"，不是"改提问形态"。
 > 笔记 `implemented/2026-10-23-legacy-question-identity-from-session-log.md`；
 > 契约 §5.7 的 `interaction.respond` 行 + §6.3.1 已写清判据与取舍。
-> 门禁：connector **599 → 611**（+12），其余不变。
+> 门禁：connector **599 → 612**（+13：12 条身份用例 + 1 条"程序化提问不 warn"），其余不变。
 
 待办（按顺序）:
 
@@ -356,7 +356,7 @@
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
 | `cd app && flutter test` | **1137 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **611 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **612 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 

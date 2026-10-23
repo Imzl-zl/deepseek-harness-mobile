@@ -42,7 +42,6 @@ function build(patch: Partial<InteractionPortDeps> = {}, paired = true): Harness
 
 const approval = (patch: Partial<ApprovalPrompt> = {}): ApprovalPrompt => ({
   sid: 'sid_1',
-  dshSessionId: 'dsh-1',
   callId: 'call-1',
   toolName: 'bash',
   ...patch,
@@ -50,10 +49,8 @@ const approval = (patch: Partial<ApprovalPrompt> = {}): ApprovalPrompt => ({
 
 const question = (patch: Partial<QuestionPrompt> = {}): QuestionPrompt => ({
   sid: 'sid_1',
-  dshSessionId: 'dsh-1',
   callId: 'call-q',
   questions: [{ id: 'q1', question: '继续吗' }],
-  timed: true,
   ...patch,
 })
 

@@ -104,7 +104,6 @@ test('接管：prompt 逐字段来自 DSH 请求，且 **signal 就是原对象*
   const call = calls[0]
   assert.ok(call !== undefined)
   assert.equal(call.prompt['sid'], 'sid_1')
-  assert.equal(call.prompt['dshSessionId'], 'dsh-session-1')
   assert.equal(call.prompt['callId'], 'call-1')
   assert.equal(call.prompt['toolName'], 'bash')
   assert.equal(call.prompt['reason'], '要删文件')
@@ -201,13 +200,12 @@ test('提问：无 agent 的请求不接管；接管时 prompt 逐字段映射�
   const call = calls[0]
   assert.ok(call !== undefined)
   assert.equal(call.prompt['sid'], 'sid_1')
-  assert.equal(call.prompt['dshSessionId'], 'dsh-session-1')
   assert.equal(call.prompt['callId'], 'call-9')
-  assert.equal(call.prompt['timed'], true)
   assert.deepEqual(
     call.prompt['planReview'],
     { approve: 'yes' },
-    '计划审查的判别靠 intent.kind（它走提问通道而不是审批）—— 漏了它，手机就看不到"批准计划"那个按钮',
+    '计划审查的判别靠 intent.kind。**它不进手机**（投影不映射 intent），在本层只用来'
+      + '识别"这次提问是程序化的、没有 tool/call"—— 见下面那条"不 warn"的用例',
   )
   assert.equal(call.signal, original.signal, 'signal 同样是原对象')
 })
@@ -274,7 +272,6 @@ test('legacy 提问：身份从会话日志推出来，claim 到那条**真** ca
     'call-7',
     'claim 的键必须是日志里那条 tool/call 的 id —— 手机发回的答复也以它为键',
   )
-  assert.equal(call.prompt['timed'], false)
 })
 
 test('legacy 提问：两条并发 → next()，不猜也不打扰手机', async () => {
@@ -299,6 +296,19 @@ test('legacy 提问：日志里没有 / 只有已结算的 → next()', async ()
   const settled = setupQuestions()
   assert.equal(await settled.run(legacyQuestion(session)), 'from-desktop')
   assert.deepEqual(settled.calls, [], '有 tool/result 的调用不是"这一次"')
+})
+
+test('程序化提问（计划审查，没有 tool/call）→ next()，且**不 warn**', async () => {
+  const { run, calls, warnings } = setupQuestions()
+  const request = questionRequest({
+    wait: undefined,
+    questions: [
+      { header: '计划', question: '批准吗', options: [], intent: { kind: 'plan-review', approve: 'yes' } },
+    ],
+  })
+  assert.equal(await run(request), 'from-desktop')
+  assert.deepEqual(calls, [], '没有身份就不打扰手机')
+  assert.deepEqual(warnings, [], '计划审查本来就没有 tool/call —— 这不是异常，别刷 warn')
 })
 
 test('timed 提问：`wait.callId` 优先，日志里另有一条未结算的调用也不改键', async () => {

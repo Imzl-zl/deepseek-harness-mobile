@@ -33,8 +33,6 @@ export type RemoteApprovalDecision = 'allow-once' | 'reject'
 export interface ApprovalPrompt {
   /** 通道别名（中转只看得到它）。 */
   sid: string
-  /** DSH 会话 id，电脑侧内部使用。 */
-  dshSessionId: string
   callId: string
   toolName: string
   reason?: string
@@ -43,13 +41,23 @@ export interface ApprovalPrompt {
 
 export interface QuestionPrompt {
   sid: string
-  dshSessionId: string
-  /** `request.wait` 可能不存在；它只是「前台等待」标记，**不是**倒计时。 */
+  /**
+   * claim 的唯一键：手机发回的答复也以它为键。
+   *
+   * 应答者总会给一个字符串（legacy 从会话日志推，见 `question-call.ts`）；类型仍留
+   * `undefined`，因为端口的 fail-closed 判据长在它上面（`interaction-claims.ts`，
+   * 兜底，不是主路径）。
+   */
   callId: string | undefined
   questions: readonly AskUserQuestionItem[]
-  /** 计划审查的判别标记；非计划审查为 undefined（契约 §6.4）。 */
+  /**
+   * 计划审查的判别标记（`intent.kind === 'plan-review'`）。
+   *
+   * **不进手机**：`intent` 只活在应答链的请求对象上，投影不映射它
+   * （`user-questions/src/projection.ts:148-161`）。本层只用它识别"这次提问是程序化的、
+   * 没有 `tool/call`"—— `/exit_plan_mode` 的 `ask()` 就是这种（`plan-mode/src/index.ts:313-330`）。
+   */
   planReview?: { approve: string }
-  timed: boolean
 }
 
 /** 连接层必须提供的能力。 */
@@ -162,7 +170,6 @@ export function registerInteractions(ctx: Context, deps: InteractionDeps): () =>
         const decision = await port.askApproval(
           {
             sid,
-            dshSessionId: request.agent.id,
             callId: request.callId,
             toolName: request.toolName,
             ...(request.reason === undefined ? {} : { reason: request.reason }),
@@ -217,20 +224,22 @@ export function registerInteractions(ctx: Context, deps: InteractionDeps): () =>
         ? resolveQuestionCall(request.agent.session.snapshotEvents())
         : ({ kind: 'found', callId: request.wait.callId } as const)
       if (identity.kind !== 'found') {
-        log?.warn('提问认不出唯一的 tool call 身份，交还桌面', {
-          sid,
-          reason: identity.kind,
-          ...(identity.kind === 'ambiguous' ? { callIds: identity.callIds } : {}),
-        })
+        // 计划审查是**程序化**提问（`/exit_plan_mode` 的 `ask()`）：它本来就没有
+        // `tool/call`，所以"认不出"是正常形态，不该留 warn。其余情况是异常，要留声。
+        if (planReview === undefined) {
+          log?.warn('提问认不出唯一的 tool call 身份，交还桌面', {
+            sid,
+            reason: identity.kind,
+            ...(identity.kind === 'ambiguous' ? { callIds: identity.callIds } : {}),
+          })
+        }
         return next()
       }
 
       const prompt: QuestionPrompt = {
         sid,
-        dshSessionId: request.agent.id,
         callId: identity.callId,
         questions: request.questions,
-        timed: request.wait?.timed === true,
         ...(planReview === undefined ? {} : { planReview }),
       }
 
