@@ -220,6 +220,56 @@ void main() {
       expect(byId['sid_no_cwd']!.cwd, isNull);
       expect(byId['sid_empty_cwd']!.cwd, isNull);
     });
+
+    test('parentSid 要解析（子会话头部的父级与 ← 返回父会话都靠它）', () async {
+      // 连接器 `session.list` 对**子会话**发 `parentSessionId`（别名形式），
+      // 对根会话**不发这个键**（`connector/src/handlers.ts`）。
+      // 手机侧三条重路径（`copyWith` / `withCounters` / `withTitle`）都得留住它 ——
+      // 其中 `_applySessionList` 每次都走 `copyWith`，漏一处就是"父级时有时无"。
+      final client = _FakeClient(
+        onCall: (method, params) => {
+          'sessions': [
+            {'sid': 'sid_root', 'updatedAt': 1000},
+            {
+              'sid': 'sid_child',
+              'updatedAt': 900,
+              'subagent': true,
+              'parentSessionId': 'sid_root',
+            },
+            // 空串按"没有"处理：拿空串当 sid 会让父级查名字永远落空。
+            {
+              'sid': 'sid_empty',
+              'updatedAt': 800,
+              'subagent': true,
+              'parentSessionId': '',
+            },
+            // 老连接器：根本没有这个键。
+            {'sid': 'sid_legacy', 'updatedAt': 700, 'subagent': true},
+          ],
+        },
+      );
+      final app = AppModel(client: client);
+
+      await app.refreshSessions();
+
+      final byId = {for (final s in app.sessions) s.sid: s};
+      expect(byId['sid_root']!.parentSid, isNull, reason: '根会话行没有这个键');
+      expect(byId['sid_child']!.parentSid, 'sid_root');
+      expect(byId['sid_empty']!.parentSid, isNull);
+      expect(byId['sid_legacy']!.parentSid, isNull);
+
+      // **三条重建路径都要留住它**（这条是 2026-10-23 真机前发现的那类坑：
+      // 构造函数重建整行会让身份字段掉成默认值）。
+      final child = byId['sid_child']!;
+      expect(child.copyWith(pendingCount: 3).parentSid, 'sid_root');
+      expect(
+        child
+            .withCounters(updatedAt: 1, itemCount: 2, pendingCount: 3)
+            .parentSid,
+        'sid_root',
+      );
+      expect(child.withTitle('新名字').parentSid, 'sid_root');
+    });
   });
 
   // **回归 2026-10-15 真机**："列表里名字对了,但我点进去会话名字又变了"。

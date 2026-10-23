@@ -785,6 +785,7 @@ class SessionSummary {
     this.running = false,
     this.blank = false,
     this.subagent = false,
+    this.parentSid,
     this.model,
     this.cwd,
     this.subagentTiming,
@@ -836,6 +837,17 @@ class SessionSummary {
   /// 手机 4 条，多的那条就是子智能体会话 —— 连接器一直在发这个标志，
   /// 是手机侧没解析也没用。
   final bool subagent;
+
+  /// 子会话的**父级别名**（`session.list` 行的 `parentSessionId`，电脑侧已过别名表）。
+  ///
+  /// 这是「子会话头部的父级」与「`←` 返回父会话」的**真值**：
+  /// 导航记忆只有一层，从面板往深处再走一层就不对了（进孙级时父级仍停在祖父上，
+  /// 名字查找落空 ⇒ 头部显示成字面量「子智能体」、返回跳过真正的父级）。
+  ///
+  /// 三档取值的顺序见 `ui/chat_page.dart` 的 `_subagentParentSid`：
+  /// 本条 → 已读目录里扫到的那一行 → 导航记忆（**老连接器没有这个键时的兜底**）。
+  /// `null` = 根会话（电脑侧对根会话不给这个键），或老连接器。
+  final String? parentSid;
 
   /// 这个会话**下一次**将用的模型（`session.list` 的 `model`）。
   ///
@@ -904,6 +916,7 @@ class SessionSummary {
     bool? running,
     bool? blank,
     bool? subagent,
+    String? parentSid,
     ModelRef? model,
     String? cwd,
     SubagentTiming? subagentTiming,
@@ -917,6 +930,7 @@ class SessionSummary {
     running: running ?? this.running,
     blank: blank ?? this.blank,
     subagent: subagent ?? this.subagent,
+    parentSid: parentSid ?? this.parentSid,
     model: model ?? this.model,
     cwd: cwd ?? this.cwd,
     subagentTiming: subagentTiming ?? this.subagentTiming,
@@ -926,10 +940,13 @@ class SessionSummary {
   /// 只换**易变计数**（更新时间 / 条目数 / 待处理数）。
   ///
   /// 存在的理由：`AppModel._touchSummary` 每条 delta 都会更新这三个数，
-  /// 而**身份字段（标题 / 模型 / running / blank / subagent / cwd / 子智能体
-  /// 计时与 token）一条都不该动** ——
+  /// 而**身份字段（标题 / 模型 / running / blank / subagent / parentSid / cwd /
+  /// 子智能体计时与 token）一条都不该动** ——
   /// 2026-10-17 前那里用构造函数重建整行，身份字段全部掉成默认值，
   /// 症状是"点进会话模型变未选择、标题变成本地推导名"。
+  ///
+  /// **每加一个身份字段，三处重建（本方法 / [copyWith] / [withTitle]）都要跟上**：
+  /// 漏一处的症状是"某些时刻它突然变成 null"，而构造函数不会报错。
   SessionSummary withCounters({
     required int updatedAt,
     required int itemCount,
@@ -943,6 +960,7 @@ class SessionSummary {
     running: running,
     blank: blank,
     subagent: subagent,
+    parentSid: parentSid,
     model: model,
     cwd: cwd,
     subagentTiming: subagentTiming,
@@ -959,6 +977,7 @@ class SessionSummary {
     running: running,
     blank: blank,
     subagent: subagent,
+    parentSid: parentSid,
     model: model,
     cwd: cwd,
     subagentTiming: subagentTiming,

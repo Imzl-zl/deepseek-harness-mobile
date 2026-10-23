@@ -174,6 +174,7 @@ class DshCountChip extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.onTap,
+    this.failed = false,
   });
 
   /// 显示的数字（子智能体报总数、后台任务在跑时报在跑数 —— 由调用方按
@@ -189,16 +190,28 @@ class DshCountChip extends StatelessWidget {
   /// aria / tooltip：与 DSH 逐字一致的那句全文本。
   final String label;
 
+  /// 目录**读失败**（`SubagentCatalog.state == error`）。
+  ///
+  /// 有它这枚 chip 才会在 `count == 0` 时也显示：DSH 的判据是
+  /// "有子级 **或** 加载失败值得重试"才渲染
+  /// （`SubagentHeaderLineage.tsx:617-631` 的 `visible`）。我们以前只按
+  /// `count > 0` 显示 ⇒ 目录失败时连入口都没有，面板里那个重试按钮
+  /// （`subagent_tree.dart` 的 `_ErrorRow`）永远够不着。
+  final bool failed;
+
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
     final live = running > 0;
+    // 失败时把原因并进同一句（tooltip 与 Semantics 共用一个字符串 ——
+    // 两处各写一遍就会漂）。
+    final message = failed ? '$label · 目录加载失败，点开重试' : label;
     return Tooltip(
-      message: label,
+      message: message,
       child: Semantics(
-        label: label,
+        label: message,
         button: true,
         child: Material(
           color: c.layer2,
@@ -217,7 +230,13 @@ class DshCountChip extends StatelessWidget {
                     if (live)
                       const DshStateDot(DshStateDotState.ongoing)
                     else
-                      DshIcon(icon, size: 13, color: c.labelSecondary),
+                      // 读失败时换成"重试"那一枚：数字是上次读到的，
+                      // 图标是"这一格现在不太对"。
+                      DshIcon(
+                        failed ? 'refresh' : icon,
+                        size: 13,
+                        color: c.labelSecondary,
+                      ),
                     const SizedBox(width: 5),
                     Text(
                       '$count',
@@ -279,13 +298,13 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
     required this.onConnectionTap,
     this.subagentCount = 0,
     this.subagentRunning = 0,
+    this.subagentCatalogFailed = false,
     this.jobCount = 0,
     this.jobRunning = 0,
     this.onTapSubagents,
     this.onTapJobs,
     this.onBack,
     this.onTitleTap,
-    this.parentTitle,
   });
 
   final String title;
@@ -308,12 +327,6 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   /// 下面弹出你不觉得不跟手吗」）。锚点在这里量：只有它知道自己在哪。
   final void Function(Rect anchor)? onTitleTap;
 
-  /// 子会话的父会话名（只有 `onTitleTap != null` 时才可能显示）。
-  ///
-  /// 标题预算是 `kDshTitleMaxWidth`（140dp）。两个名字**放得下**才显示成
-  /// `父会话 › 子级名`，放不下就只留子级名 —— 见 [_SubagentCrumb]。
-  final String? parentTitle;
-
   /// `＋` —— 新建会话。
   final VoidCallback onNewSession;
 
@@ -331,9 +344,13 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   /// 只有输入栏那一侧才用底部 sheet。
   final void Function(Rect anchor)? onConnectionTap;
 
-  /// 子智能体总数 / 在跑数；`0` = 不显示这枚 chip。
+  /// 子智能体总数 / 在跑数；`0` 且没失败 = 不显示这枚 chip。
   final int subagentCount;
   final int subagentRunning;
+
+  /// 子智能体目录**读失败**：`0` 也要显示 chip（那是唯一能进面板重试的入口）。
+  /// 判据照 DSH 的 `visible`（`SubagentHeaderLineage.tsx:617-631`）。
+  final bool subagentCatalogFailed;
 
   /// 后台任务总数 / 在跑数；`0` = 不显示这枚 chip。
   final int jobCount;
@@ -403,14 +420,15 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
             ),
           ),
           const SizedBox(width: 2),
-          // **计数 chip**：有才显示（0 时整枚不占位，不是显示"0 个子智能体"）。
+          // **计数 chip**：有才显示（0 且没失败时整枚不占位，不是显示"0 个子智能体"）。
           // 文案（全文本那句）走 `subagentChipLabel` / `jobChipLabel`，
           // 与 Web 逐字一致，只是退进了 aria/tooltip。
-          if (subagentCount > 0) ...[
+          if (subagentCount > 0 || subagentCatalogFailed) ...[
             DshCountChip(
               count: subagentCount,
               running: subagentRunning,
               icon: 'users',
+              failed: subagentCatalogFailed,
               label: subagentChipAria(
                 total: subagentCount,
                 running: subagentRunning,
@@ -466,9 +484,10 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   /// 子会话的标题 = **可切换的子智能体名**（点开「切换子智能体」sheet）。
   ///
-  /// 与 Web 的 `switcher`（`SubagentHeaderLineage.tsx:802-821`）同一个位置语义：
-  /// 那里标题本身就是一个切换器，前面还有一段父级 crumb。
-  /// 手机把两者并在一行标题里，**放得下才带父级** —— 见 [_SubagentCrumb]。
+  /// 与 Web 的 `switcher`（`SubagentHeaderLineage.tsx:802-821`）同一条：
+  /// 那里标题本身就是一个切换器，显示的**只有当前子级名**
+  /// （`switcherDisplayTitle`，`:490-495` —— 父级名不出现在标题里，
+  /// 父级在哪由切换面板的 root 表达）。
   Widget _switcher(BuildContext context) {
     final c = context.dshColors;
     final tap = onTitleTap;
@@ -485,9 +504,7 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Flexible(
-                  child: _SubagentCrumb(title: title, parentTitle: parentTitle),
-                ),
+                Flexible(child: _title(context)),
                 const SizedBox(width: 4),
                 DshIcon('chevronDown', size: 12, color: c.labelCaption),
               ],
@@ -496,91 +513,6 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
         ),
       ),
     );
-  }
-}
-
-/// 子会话标题：`父会话 › 子级名`，**放得下才带父级**。
-///
-/// ## 为什么要有"放得下才带"
-///
-/// 顶栏给标题的预算只有 `kDshTitleMaxWidth`（140dp，账见该常量上方）。
-/// 两个名字硬塞会各截一半：`手机端控… › 调研实…` —— 结构是有了，
-/// 但**"我在哪个子智能体里"读不出来**，而那是这一行最要紧的信息。
-///
-/// 所以：两段名字 + ` › ` + 箭头**量得下**才显示父级，量不下就只留子级名。
-/// 量用 `TextPainter`（Flutter 自己的文本度量，带 `textScaler`），
-/// 不是字符数阈值 —— 中英混排、系统字号放大都不会算错。
-class _SubagentCrumb extends StatelessWidget {
-  const _SubagentCrumb({required this.title, required this.parentTitle});
-
-  final String title;
-  final String? parentTitle;
-
-  /// 父级是小一号的次要信息（12 / tertiary），子级保持顶栏的 13 / w500。
-  static const TextStyle _parentStyle = TextStyle(fontSize: 12);
-  static const TextStyle _titleStyle = TextStyle(
-    fontSize: 13,
-    fontWeight: FontWeight.w500,
-  );
-  static const String _separator = ' › ';
-
-  /// 箭头（12）加它前面的 4dp。
-  static const double _tailWidth = 16;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.dshColors;
-    final parent = parentTitle;
-    return LayoutBuilder(
-      builder: (context, box) {
-        final max = box.maxWidth.isFinite ? box.maxWidth : kDshTitleMaxWidth;
-        final scaler = MediaQuery.textScalerOf(context);
-        final showParent =
-            parent != null &&
-            _width(parent, _parentStyle, scaler) +
-                    _width(_separator, _parentStyle, scaler) +
-                    _width(title, _titleStyle, scaler) +
-                    _tailWidth <=
-                max;
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (showParent) ...[
-              Text(
-                parent,
-                maxLines: 1,
-                style: _parentStyle.copyWith(color: c.labelTertiary),
-              ),
-              Text(
-                _separator,
-                maxLines: 1,
-                style: _parentStyle.copyWith(color: c.labelCaption),
-              ),
-            ],
-            Flexible(
-              child: Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: _titleStyle.copyWith(color: c.labelPrimary),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  static double _width(String text, TextStyle style, TextScaler scaler) {
-    final painter = TextPainter(
-      text: TextSpan(text: text, style: style),
-      maxLines: 1,
-      textDirection: TextDirection.ltr,
-      textScaler: scaler,
-    )..layout();
-    final width = painter.width;
-    painter.dispose();
-    return width;
   }
 }
 

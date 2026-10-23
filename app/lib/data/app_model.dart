@@ -812,6 +812,28 @@ class AppModel extends ChangeNotifier {
   SubagentCatalog subagentCatalogOf(String sid) =>
       _subagentCatalogs[sid] ?? const SubagentCatalog.loading();
 
+  /// 在**已读到的目录**里找 [sid] 这一行，返回它所在的父级 sid（找不到 = `null`）。
+  ///
+  /// 这是「子会话头部的父级」的**第二档**（第一档是 `session.list` 行的
+  /// `parentSessionId`；第三档是导航记忆）。DSH 同一条：
+  /// 拿不到 `address.parentSessionId` 时就扫所有已加载的 catalog
+  /// （`SubagentHeaderLineage.tsx:790-797` 的 `projectionsBySession` 那一圈）。
+  ///
+  /// **只扫已读到的**：`subagentCatalogOf` 对没读过的会话返回 `loading` 占位，
+  /// 用它扫会既扫不到东西、又往表里塞一堆空行。扫不到就如实返回 `null`，
+  /// 由调用方退到下一档 —— 不猜、也不为找父级发起一轮网络请求。
+  String? subagentParentOfCatalogEntry(String sid) {
+    for (final entry in _subagentCatalogs.entries) {
+      if (entry.value.state != SubagentCatalogState.ready) {
+        // 失败/加载中的目录不算证据：它们的 `entries` 是上一次的内容
+        // （刷新不闪空，见 [_readProjections]），拿它认父级会认到旧关系上。
+        continue;
+      }
+      if (entry.value.entries.any((row) => row.id == sid)) return entry.key;
+    }
+    return null;
+  }
+
   /// 打断：取消当前轮次但**保留待处理收件箱**。
   ///
   /// 走 `session.cancel`（与 Web 同一个 DSH 方法，`@Remote('cancel')`，
@@ -3091,6 +3113,15 @@ class AppModel extends ChangeNotifier {
           // `ui-workspace/src/client/tree.ts:244`）。连接器一直在发这个标志，
           // 手机此前没解析 —— 真机上于是多列一行（Web 3 条 / 手机 4 条）。
           subagent: entry['subagent'] == true,
+          // 子会话的父级（`connector/src/handlers.ts` 的 `session.list`，
+          // **别名形式**）。根会话不给这个键 ⇒ `null`；老连接器也不给
+          // ⇒ 头部退到"目录扫到的父级 / 导航记忆"那两档。
+          // 空串按"没有"处理：把空串当 sid 会让父级查名字永远落空。
+          parentSid:
+              entry['parentSessionId'] is String &&
+                  (entry['parentSessionId'] as String).isNotEmpty
+              ? entry['parentSessionId'] as String
+              : null,
           // 当前模型：来自 DSH 的 `modelSelection` 投影（`connector/src/dsh/models.ts`）。
           // **认不出就不给**（`null`），界面显示"未选择"—— 猜一个就是把
           // "看起来连着"当成"连着"。

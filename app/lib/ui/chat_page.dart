@@ -470,7 +470,11 @@ class ChatPageState extends State<ChatPage> {
       // `internal: session "…" is owned by subagent routing`（2026-10-21 真机实测，
       // 手机上就是一句「发送失败」）。子会话唯一的写入口是 `subagent.prompt`
       // （契约 §5.7），参数形状与这里逐字相同。
-      final method = _subagentChildSid == null
+      //
+      // 判据与顶栏同一个（[_subagentParentSid]）：它比"我是不是从面板走进来的"宽一档
+      // —— 恢复出来的子会话（重启后直接落在子会话上）也该走这条路，
+      // 而那条按记忆判会走 `session.prompt`，必然被宿主拒。
+      final method = _subagentParentSid == null
           ? 'session.prompt'
           : 'subagent.prompt';
       await widget.app.client.call<void>(method, {
@@ -519,7 +523,9 @@ class ChatPageState extends State<ChatPage> {
             // `ModalRoute.popDisposition` 先看它（`routes.dart:942-947`）——
             // 但回调仍可能被叫到，所以这里再按抽屉状态让一次。
             PopScope<void>(
-              canPop: _subagentReturnFrom == null,
+              // 与 `←` 同一个判据（数据里的父级），否则"恢复出来的子会话"会被
+              // 顶栏认成子会话、而返回键直接退出 App —— 同一件事两套答案。
+              canPop: _subagentParentSid == null,
               onPopInvokedWithResult: (didPop, _) {
                 if (didPop) return;
                 final scaffold = _scaffoldKey.currentState;
@@ -579,10 +585,8 @@ class ChatPageState extends State<ChatPage> {
     // `SubagentHeaderLineage.tsx:496-500`），"正在跑"是其中 `running` 的行
     // （`:498` 用 `activity === 'running'`，而 `activity` 就是会话的 `running`，
     // `:471-475`）。**不是 `mode`** —— 那是"能不能续聊"。
-    final subs = [
-      for (final row in widget.app.subagentCatalogOf(sid ?? '').entries)
-        _nodeOf(row),
-    ];
+    final subsCatalog = widget.app.subagentCatalogOf(sid ?? '');
+    final subs = [for (final row in subsCatalog.entries) _nodeOf(row)];
     final jobs = _jobsFor(jobsSid);
     final runningSubs = subs.where((n) => n.running).length;
     final runningJobs = jobs.where((j) => j.isLive).length;
@@ -624,19 +628,21 @@ class ChatPageState extends State<ChatPage> {
       ),
       appBar: ChatAppBar(
         // **子会话里顶栏就是那一层导航**：左侧 `←` 回父会话，标题 = 当前子智能体的
-        // 名字（点它开「切换子智能体」），父会话名放得下就并成 `父会话 › 子级名`。
-        // 这样不再需要内容区上方那条 40dp 头部条 ——
+        // 名字（点它开「切换子智能体」）。这样不再需要内容区上方那条 40dp 头部条 ——
         // 手机上"进入下一层"的惯例就是导航栏左侧返回 + 标题即位置。
-        title: _subagentReturnFrom != null
+        //
+        // **"在不在子会话里"看的是数据里的父级**（[_subagentParentSid]），不是
+        // 导航记忆：记忆只有一层，往深处再走一层就错了（2026-10-23 的 bug：
+        // 孙级头部显示的仍是祖父）。
+        title: _subagentParentSid != null
             ? _subagentLabel
             // 没有会话标题时显示 App 名（与启动器 / 抽屉头部同一处口径）。
             : (widget.app.currentTitle ?? kAppName),
-        parentTitle: _subagentParentLabel,
         onOpenDrawer: openDrawer,
-        onBack: _subagentReturnFrom == null
+        onBack: _subagentParentSid == null
             ? null
             : () => unawaited(_returnFromSubagent()),
-        onTitleTap: _subagentReturnFrom == null ? null : _showSubagentSwitcher,
+        onTitleTap: _subagentParentSid == null ? null : _showSubagentSwitcher,
         onNewSession: widget.onNewSession,
         // **连接状态点**（原来是文字胶囊）：绿=服务中 / 转圈=连接中·握手中·重连中 /
         // 红=其余。形状与颜色照 DSH 的 `StateDot`（出处见 `dsh_state_dot.dart`），
@@ -650,6 +656,9 @@ class ChatPageState extends State<ChatPage> {
         // 而右抽屉本来就是这三个面板的家，且能原路关回来。
         subagentCount: subs.length,
         subagentRunning: runningSubs,
+        // 目录读失败时这枚 chip 是**唯一**能进面板重试的入口（DSH 的 `visible`
+        // 同样把 `state === 'error'` 算作要渲染，`SubagentHeaderLineage.tsx:617-631`）。
+        subagentCatalogFailed: subsCatalog.state == SubagentCatalogState.error,
         jobCount: jobs.length,
         jobRunning: runningJobs,
         onTapSubagents: () => _openSidePanel(SidePanel.subs),
@@ -1171,27 +1180,52 @@ class ChatPageState extends State<ChatPage> {
   /// 判据照 Web 的 `switcherDisplayTitle`（`SubagentHeaderLineage.tsx:490-495`）：
   /// 父级 catalog 里**当前子级那一行**的 label（没有就用 id），
   /// 找不到那一行才退回会话标题。**不缓存 label**：目录重读过就以新的为准。
+  ///
+  /// **查不到就显示会话自己的标题，不回落成字面量「子智能体」** ——
+  /// 那会把"没查到"伪装成"名字就叫子智能体"，用户看到的是"里面还是它自己"，
+  /// 也正是 2026-10-23 那个 bug 在屏幕上的样子。
   String get _subagentLabel {
-    final parent = _subagentReturnFrom;
-    if (parent == null) return '';
-    final row = widget.app
-        .subagentCatalogOf(parent)
-        .entries
-        .where((r) => r.id == _subagentChildSid)
-        .firstOrNull;
-    if (row != null) return row.displayLabel;
-    return widget.app.currentTitle ?? '子智能体';
+    final parent = _subagentParentSid;
+    final current = widget.app.currentSid;
+    if (parent != null && current != null) {
+      final row = widget.app
+          .subagentCatalogOf(parent)
+          .entries
+          .where((r) => r.id == current)
+          .firstOrNull;
+      if (row != null) return row.displayLabel;
+    }
+    final summary = current == null ? null : widget.app.sessionOf(current);
+    return widget.app.currentTitle ?? summary?.displayTitle ?? kAppName;
   }
 
-  /// 父会话的显示名（顶栏 `父会话 › 子级名` 的前半段；`null` = 不在子会话里）。
+  /// 当前子会话的**父级** sid（`null` = 不在子会话里：根会话 / 没连上）。
   ///
-  /// 用会话行的 `displayTitle`（空 ⇒「未命名」，与侧栏同一个兜底）。
-  /// **不缓存**：父会话的标题随时可能被改。**放不放得下由顶栏自己量**
-  /// （`_SubagentCrumb`）—— 这里只给名字，不给宽度。
-  String? get _subagentParentLabel {
-    final parent = _subagentReturnFrom;
-    if (parent == null) return null;
-    return widget.app.sessionOf(parent)?.displayTitle;
+  /// 三档，按可信度排（与 DSH `SubagentHeaderLineage.tsx:789-797` 同一个次序）：
+  ///
+  /// 1. `session.list` 行的 `parentSessionId`（电脑侧已过别名表，见
+  ///    `connector/src/handlers.ts` 的 `session.list`）—— **真值**；
+  /// 2. 已读目录里扫到"当前会话"的那一行（`AppModel.subagentParentOfCatalogEntry`）
+  ///    —— 老连接器没有第 1 档时，只要是从面板走进来的，父级目录就已经在表里；
+  /// 3. 导航记忆 `_subagentReturnFrom` —— **只在这一层确实是"走进去的那个会话"时**
+  ///    才算（`_subagentChildSid` 与当前会话相同），否则从抽屉打开别的会话时
+  ///    面包屑会挂在无关会话上。
+  ///
+  /// 第 3 档不能删：**新手机连老连接器**时 `parentSid` 为空，删了就退回
+  /// 2026-10-21 那个"进子会话出不来"的坑（返回按钮根本不出现）。
+  ///
+  /// 「只读 / 可续聊」那条**仍看导航记忆**（`_subagentMode` 只在走进目录那一刻
+  /// 知道）：恢复出来的子会话没有 mode，按这里判只读会把输入栏凭空禁掉 ——
+  /// 那是另一个方向的"说的和做的不一致"。取舍见决策笔记。
+  String? get _subagentParentSid {
+    final current = widget.app.currentSid;
+    if (current == null) return null;
+    final fromData = widget.app.sessionOf(current)?.parentSid;
+    if (fromData != null) return fromData;
+    final fromCatalog = widget.app.subagentParentOfCatalogEntry(current);
+    if (fromCatalog != null) return fromCatalog;
+    if (_subagentChildSid == current) return _subagentReturnFrom;
+    return null;
   }
 
   /// 打开「切换子智能体」面板：父级目录的树，当前行加粗。
@@ -1201,10 +1235,21 @@ class ChatPageState extends State<ChatPage> {
   /// sheet，用户 2026-10-21 当场否掉 —— 「点击在上面，下面弹出你不觉得不跟手吗？」
   /// 点顶栏却从屏幕底部升起来，视线要跨过大半屏去找结果。
   void _showSubagentSwitcher(Rect anchor) {
-    final parent = _subagentReturnFrom;
-    if (parent == null) return;
+    // **root 是当前会话真正的父级**（数据里的那个），当前行加粗。
+    // 以前 root 用的是导航记忆、当前行是 `_subagentChildSid` —— 两者都不跟数据走，
+    // 于是孙级的面板里会列着"它自己"（`u3-switcher.png`）。
+    final parent = _subagentParentSid;
+    final current = widget.app.currentSid;
+    if (parent == null || current == null) return;
     // 面板里同样画着指标（token / 时长），打开就现拉一次。
     _refreshSubsMetrics();
+    // 父级目录可能还没读过（恢复出来的子会话、或老连接器）：现拉一次，
+    // 与展开子级走同一个入口。**不拉就打开**会是一个空面板 ——
+    // 用户读成"没有兄弟"，而真相是我们还没问。
+    if (widget.app.subagentCatalogOf(parent).state !=
+        SubagentCatalogState.ready) {
+      unawaited(widget.app.refreshSubagentCatalog(parent));
+    }
     unawaited(
       showDshPopover<void>(
         context: context,
@@ -1219,7 +1264,7 @@ class ChatPageState extends State<ChatPage> {
               rootSid: parent,
               catalogOf: widget.app.subagentCatalogOf,
               nodeOf: _nodeOf,
-              currentSid: _subagentChildSid,
+              currentSid: current,
               emptyText: '没有其他子智能体。',
               onOpen: (node) {
                 Navigator.of(sheetContext).pop();
@@ -1234,10 +1279,14 @@ class ChatPageState extends State<ChatPage> {
     );
   }
 
-  /// 切到同一个父级下的另一个子会话（父会话记忆保持不变）。
+  /// 切到同一个父级下的另一个子会话（父级来自数据，不是记忆）。
   Future<void> _switchSibling(SubagentNode node) async {
-    final parent = _subagentReturnFrom;
+    final parent = _subagentParentSid;
     if (parent == null) return;
+    // **点当前行什么都不做**（面板已经关了）：以前这里会 `openSession(自己)`，
+    // 屏幕上看起来就是"又进了自己一次"。DSH 那一下是重新打开同一个会话 +
+    // 关面板（`SubagentHeaderLineage.tsx:279-287`），对手机来说就是纯噪音。
+    if (node.id == widget.app.currentSid) return;
     final mode = widget.app
         .subagentCatalogOf(parent)
         .entries
@@ -1245,6 +1294,8 @@ class ChatPageState extends State<ChatPage> {
         .firstOrNull
         ?.mode;
     setState(() {
+      // 记忆跟着更新：它是老连接器那一档的兜底，留着旧父级会让第 3 档指错。
+      _subagentReturnFrom = parent;
       _subagentChildSid = node.id;
       // 兄弟的 mode 来自**同一条父级目录**（与进入时同一个来源）。
       _subagentMode = mode;
@@ -1252,12 +1303,16 @@ class ChatPageState extends State<ChatPage> {
     await widget.app.openSession(node.id);
   }
 
-  /// 从子会话回到来处（头部条的「返回会话」/ 系统返回键）。
+  /// 回到**数据里的父级**（头部条的「返回会话」/ 系统返回键）。
+  ///
+  /// 逐层返回靠的就是这一点：孙级回子级、子级回父级。
+  /// `_subagentReturnFrom` 只当老连接器没有 `parentSid` 时的兜底（见
+  /// [_subagentParentSid] 的第 3 档）。
   Future<void> _returnFromSubagent() async {
     // `PopScope` 的回调可能在路由销毁后才到（SDK 的提醒，
     // `widgets/routes.dart:2057-2059`）—— 用 `setState` 前必须先看 `mounted`。
     if (!mounted) return;
-    final from = _subagentReturnFrom;
+    final from = _subagentParentSid;
     if (from == null) return;
     setState(() {
       _subagentReturnFrom = null;

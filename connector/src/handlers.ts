@@ -553,16 +553,35 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       // 别名可以**并发**分配：不同会话之间互不影响，同一个会话则由 `ensure` 自己合流
       // （见 `alias.ts` 的说明）。逐字段构造给手机的行，**不 spread** ——
       // `dshSessionId` 绝不能过线（中继与手机只见 `sid`）。
+      //
+      // **父级也要过同一张别名表**：`parentSessionId` 是 DSH 的会话 id
+      // （`dsh/sessions.ts` 的 `SessionSummaryRow.parentSessionId`），
+      // 原样发出去就是把 DSH 的 id 漏过线 —— 与 `session.create` 那条同一个错
+      // （见本文件 `session.create` 的注释）。根会话没有父级 ⇒ **不给这个键**，
+      // 也不为 `undefined` 建别名（那会往别名表里塞一行空映射）。
       const assigned = await Promise.all(
-        rows.map(async (row) => ({ row, sid: await deps.aliases.ensure(row.dshSessionId) })),
+        rows.map(async (row) => ({
+          row,
+          sid: await deps.aliases.ensure(row.dshSessionId),
+          parentSid:
+            row.parentSessionId === undefined
+              ? undefined
+              : await deps.aliases.ensure(row.parentSessionId),
+        })),
       )
       return {
-        sessions: assigned.map(({ row, sid }) => ({
+        sessions: assigned.map(({ row, sid, parentSid }) => ({
           sid,
           updatedAt: row.updatedAt,
           running: row.running,
           blank: row.blank,
           subagent: row.subagent,
+          // **父级（别名形式）**：手机侧「子会话头部的父级」与「← 返回父会话」
+          // 走的就是它 —— 导航记忆只有一层，往深处走一层就不对了
+          // （`.agents/notes/implemented/2026-10-23-subagent-header-parent-from-data.md`）。
+          // 根会话（`parentSessionId === undefined`）**不带这个键**：
+          // 不给 = 根；给空串会把根读成"父级叫空"的子会话。
+          ...(parentSid === undefined ? {} : { parentSessionId: parentSid }),
           // **当前模型从真投影来**，不是占位：`modelSelection` 的 `next ?? lastUsed`
           // （`dsh/models.ts`）。取不到就**不给这个字段** —— 手机显示"未选择"，
           // 而不是猜一个把"看起来连着"当成"连着"。

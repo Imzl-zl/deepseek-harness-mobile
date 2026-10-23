@@ -110,13 +110,10 @@
 进入子会话后**没有额外的头部条**：那一层导航就在顶栏里（手机的主流形态 ——
 "进入下一层"= 导航栏左侧返回，标题即位置）：
 
-- 左侧 `←`（`chevronLeft`，tooltip「返回父会话」）—— 回到进来之前的那个会话
-  （**导航记忆**，见下）。抽屉仍能从左缘跟手拖出，不丢入口。
-- 标题 = **`父会话 › 子级名`**（父级 12px/tertiary，子级 13px/w500），右边一枚
-  `chevronDown`；点它开「切换子智能体」底部 sheet。
-  **放得下才带父级**：两个名字 + ` › ` + 箭头用 `TextPainter`（含 `textScaler`）
-  量过顶栏剩余宽度，放不下就只留子级名 —— 硬塞会各截一半，
-  而"我在哪个子智能体里"比"父级叫什么"要紧。
+- 左侧 `←`（`chevronLeft`，tooltip「返回父会话」）—— 回到**数据里的父级**。
+  抽屉仍能从左缘跟手拖出，不丢入口。
+- 标题 = **当前子级名**（13 / w500），右边一枚 `chevronDown`；点它开「切换子智能体」浮层。
+  **不显示父级名**（见下「有意偏离」3）。
 - 右侧不变：连接状态点 / 两枚计数 chip / `＋`。
 - **系统返回键 = 同一条路**：按 Android 返回（手势/键）回父会话，
   而不是退出聊天页。判据是 `PopScope.canPop`
@@ -127,17 +124,27 @@
 | 要素 | 规则 | 依据 |
 |---|---|---|
 | 左侧 | 子会话里 `panelLeft` → `chevronLeft`（`ui/dsh_app_bar.dart` 的 `onBack`） | — |
-| 当前子级名字 | 父级 `subagentCatalog` 里**当前子级那一行**的 `label`（缺则 id）；找不到那一行才退回会话标题 | `SubagentHeaderLineage.tsx:490-495` |
-| 父会话名 | 父会话行的 `displayTitle`（空 ⇒「未命名」）；**只在量得下时显示** | `:490-495` 的 `switcherDisplayTitle` + `displayTitle` |
-| 标题宽度 | 子会话标题**不吃** `kDshTitleMaxWidth`：`Expanded` 给的就是右簇摆完的剩余宽度，由 `_SubagentCrumb` 自己量 | — |
-| 切换目内容 | 父级的**直接子级树**（可再展开），当前行加粗 | `:802-821` |
-| 选中兄弟 | 换主对话区（`openChild`），父级记忆不变 | `ui-subagent/src/client/index.ts:61-63` |
+| 父级·第 1 档（真值） | `session.list` 行的 `parentSessionId`（连接器已换成别名） | `chat_page.dart` 的 `_subagentParentSid` |
+| 父级·第 2 档 | 已读目录里扫到"当前会话"的那一行 ⇒ 那个目录的 sid | `AppModel.subagentParentOfCatalogEntry`；DSH 同一圈扫描 `:792-794` |
+| 父级·第 3 档 | 导航记忆（进目录行时记下的会话），**只在这一层确实是"走进去的那个会话"时**才算 | `_subagentReturnFrom`；老连接器没有第 1 档时的兜底 |
+| 当前子级名字 | 父级 `subagentCatalog` 里**当前子级那一行**的 `label`（缺则 id）；找不到 → **会话自己的标题** | `SubagentHeaderLineage.tsx:490-495` |
+| 标题宽度 | 子会话标题**不吃** `kDshTitleMaxWidth`：`Expanded` 给的就是右簇摆完的剩余宽度 | — |
+| 切换面板 root | **当前会话的父级**（第 1~3 档的同一个值），当前行加粗 | `:802-821` |
+| 选中兄弟 | 换主对话区（`openChild`），父级跟着数据变 | `ui-subagent/src/client/index.ts:61-63` |
+| 点当前行 | 只关面板，**不重开自己**（一次 `session.subscribe` 都不发） | 有意偏离（见下 4） |
+| 目录读失败 | 顶栏计数 chip 仍出现（前导图标换成重试），面板里给「无法加载子智能体 / 重试」 | DSH 的 `visible`：`:617-631` |
 | 系统返回 | 子会话里回父会话；抽屉开着时先关抽屉；其余情况不拦 | `pop_scope.dart:83-96`、`drawer.dart:526-546` |
 
-**父级从哪来**：`subagentCatalog` 的 view 不带 `parentId`
-（`packages/subagent/subagent/src/catalog.ts:77-94`），所以父会话靠
-**导航记忆**：点目录行进入时记下当前会话。子会话在会话列表里不列
-（`packages/client/ui-workspace/src/client/tree.ts:238-245`），没有这条记忆就找不回来。
+**父级为什么必须来自数据**：`subagentCatalog` 的 view 不带 `parentId`
+（`packages/subagent/subagent/src/catalog.ts:77-94`），所以父级曾只能靠导航记忆 ——
+而记忆只有一层：**从面板往深处再走一层时父级不更新**，名字查找必然落空，
+屏幕上就成了"每一层都显示它自己"，`←` 还会跳过真正的父级。
+数据面的父级是宿主的 `SessionSummary.parentSessionId`，连接器在 `session.list`
+里**换成别名**后原样过线（根会话不给这个键）。DSH 的次序是
+`address.parentSessionId` → 扫已加载目录 → `summary.parentId`
+（`SubagentHeaderLineage.tsx:789-797`），我们同一条，第 3 档的导航记忆是本仓
+对**老连接器**的兜底（没有 `parentSessionId` 时不能退回"进子会话出不来"）。
+DSH 的根会话不给面包屑（`:801`），我们同一条：没有父级 ⇒ 左侧还是 `☰`。
 
 **有意偏离**（都是触屏决定，不是漏做）：
 
@@ -149,6 +156,13 @@
    **同一棵树**而不是 Web 的浮层实现；而面板必须**长在标题下方**——
    第一版用底部 sheet，用户 2026-10-21 当场否掉（"点击在上面，下面弹出你不觉得
    不跟手吗"）。判据是 `panel.top - crumb.bottom < 80`（`subagent_enter_test.dart`）。
+3. **标题只显示当前子级名**（对齐 DSH 的 `switcherDisplayTitle`，`:490-495`）：
+   父级名不塞进标题 —— 390dp 上两个名字 + ` › ` 只能各截一半，读起来是"两个半截名字"。
+   父级由切换面板的 root 表达（面板列的就是父级的直接子级）。
+   后果：**顶栏上没有父级的名字**；父级在屏幕上的证据是 `←` 的落点与标题取自
+   **真正的父级目录**。要父级名回来是另一个决定（不预先发明）。
+4. **点当前行只关面板**：DSH 那一下是"重新打开同一个会话 + 关面板"（`:279-287`），
+   在手机上是纯噪音（屏幕上看不出任何变化，等于"点了没反应"）。
 
 ## 5. 输入区只读（一次性 / 模式未知）
 
@@ -211,7 +225,7 @@
 | A4 跑完变绿 + 已完成 + 时长定格 | 过 | 隔 32 秒两帧数字相同（`b14` / `b15`）：`49秒` / `1分42秒` |
 | A5 顶栏 running 跟着子会话状态变 | 过 | 采样到 `1 个子智能体，正在运行`（21:25:26），其余时刻是 `N 个子智能体` |
 | A6 一次性子会话只读框 | 未造出 | 本 profile 两个 in-process 后端都只产 `continuable`；只读框由单测覆盖 |
-| B1 `☰→←` + `父会话 › 子级`（放不下只留子级） | 过 | `c04`；长父名时只留子级名（量宽判据在 `_SubagentCrumb`） |
+| B1 `☰→←` + 当前子级名 | 过 | `c04`（当日标题是 `父会话 › 子级`；2026-10-23 起只显示子级名，见 §7.4） |
 | B2 切换面板选兄弟，`←` 仍在 | 过 | 切到 `Nested subagent: 2+2` 后仍显示「返回父会话」 |
 | B3 系统返回键回父会话 | 过 | 子会话里返回 → 父会话标题 + `☰` |
 | B4 子会话里左缘拖出抽屉 | 未验 | adb 左缘滑动被 MIUI 系统返回手势吃掉（与 `tools.md` 2026-10-18 同一条），需手指实测 |
@@ -253,3 +267,19 @@
 | D2 历史翻页 | **发现缺口** | 翻页本身两端都全：连接器有 `session.page` + `refetchThresholdBytes`（默认 1 MiB，`connector/src/config.ts:61`）与 `session.refetch`（`handlers.ts:1001`）；手机侧 `recovery.dart` 会按 `hasMore` 累积快照。**但 `sync_client_impl.dart:956` 把 `refetch` 项直接跳过、从不调 `session.refetch`** ⇒ 超过 1 MiB 的条目会在会话里留下一个**静默的洞**（不报错、不缺页、就是少一条） |
 | D3 异常结局 / 重试 | **结局成立；"重试"入口不做** | `TurnOutcomeKind` 四档都有渲染（`chat_turns.dart:697` 的 error/interrupted/maxTokens/signedOut）；自动重试有 `ModelRetryItem` 的 `RetryRow`（`:741-768`）。查了 DSH Web：`ui-conversation` 里**也没有"手动重试失败回合"的入口**，所以这不是我们对齐漏了，**不做** |
 | E3 拖动排序 | **逻辑成立** | 纯函数 `dropAnchorInDisplayOrder`（拖到自己 / 跨分区 / 顺序没变都返回 null）+ 5 条模型用例 + 3 条抽屉交互用例；真机未验只是"同一工作区两条可见会话"这个数据条件凑不出 |
+
+### 7.4 真机验收（2026-10-23，父级改成数据驱动）
+
+同一个隔离实例（`DSH_HOME=D:\tmp\dsh-e2e`，连接器重建后重启）；
+截图在 `D:\tmp\dsh-e2e\shots-2026-10-23\`，**不进仓库**。
+
+| 项 | 结论 | 证据 |
+|---|---|---|
+| H1 父会话头部 | 过 | `v2-parent.png`：`Nested Subagent Spawn Test` + `1 个子智能体` + 左侧 `☰`（根会话没有面包屑） |
+| H2 子会话头部 | 过 | `v4-child-header.png`：`←` + `Spawn grandchild, report result`（名字取自**父级目录**那一行）+ `1 个子智能体` |
+| H3 孙会话头部 | 过 | `v7-grandchild-header.png`：`←` + **`Reply with fixed text`** —— 这是它在 **`Spawn grandchild…` 目录**里的 label；按旧逻辑（父级=记忆=祖父）查找必然落空，会退成会话自己的标题 `Reply with exactly the text:` 或字面量「子智能体」 |
+| H4 `←` 逐层返回 | 过 | `v8-back-to-child.png`（孙 → `Spawn grandchild, report result`）→ `v9-back-to-parent.png`（子 → `Nested Subagent Spawn Test`，左侧回到 `☰`） |
+| H5 面板 root = 真正的父级 | 过 | `v5-switcher-child.png`：子会话的切换面板只列它自己那一层（父级的直接子级）；孙级的面板同样只列它自己那一层 —— 旧实现里孙级面板会列出**祖父的子级** |
+| H6 点当前行不进自己 | 过 | `v11-current-row-tap.png`：点当前行后浮层关掉、仍在该子会话；单测同时钉住"一次 `session.subscribe` 都没多发" |
+| H7 根会话没有面包屑 | 过 | `v9` 的左侧是 `☰`（`打开会话抽屉`），不是 `←` |
+

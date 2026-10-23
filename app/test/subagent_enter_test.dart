@@ -19,8 +19,10 @@ import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/chat_page.dart';
+import 'package:dsh_mobile/ui/dsh_app_bar.dart';
 import 'package:dsh_mobile/ui/dsh_composer.dart';
 import 'package:dsh_mobile/ui/subagent_readonly_band.dart';
+import 'package:dsh_mobile/ui/subagent_tree.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
 
@@ -31,6 +33,8 @@ class _SubagentClient extends FakeSyncClient {
     this.mode = 'continuable',
     this.siblings = const ['调研实现'],
     this.parentTitle = '父会话',
+    this.noParentId = const {},
+    this.failingCatalogs = const {},
   });
 
   /// catalog 行的 mode；`one-shot` 时子会话输入栏应换成只读状态框。
@@ -39,13 +43,38 @@ class _SubagentClient extends FakeSyncClient {
   /// 父会话目录里的子级名字（按顺序，第一个是 child-1）。
   final List<String> siblings;
 
-  /// 父会话的标题（顶栏 `父会话 › 子级名` 的前半段）。
+  /// 父会话的标题。
   final String parentTitle;
+
+  /// 这些 sid 的 `session.list` 行**不带** `parentSessionId`：
+  /// 老连接器（没有这个字段）与"这个会话查不到父级"都长这样。
+  final Set<String> noParentId;
+
+  /// 这些 sid 的 `session.projections` 读失败（目录三态的 error 档）。
+  final Set<String> failingCatalogs;
 
   final _jobs = StreamController<JobFrame>.broadcast();
 
   /// 发出去的写方法（`session.prompt` / `subagent.prompt`），带 params。
   final sent = <(String, Map<String, Object?>)>[];
+
+  /// 读过的目录（`session.projections` 的 sid 顺序；重试用得上）。
+  final catalogReads = <String>[];
+
+  /// 每次 `subscribe` 的 sid（`openSession` 必发一次）——
+  /// 用来钉"点当前行不再重进自己"：重进会多一条同名记录。
+  final subscribes = <String>[];
+
+  /// 孙级会话的标题与它在父级目录里的 label **故意不同**：
+  /// 这样"标题取目录里的 label"与"回落到会话自己的标题"能分开断言。
+  static const grandTitle = '孙会话标题';
+  static const grandLabel = '孙级记录';
+
+  @override
+  Future<SessionAnchor> subscribe(String sid, {required int since}) async {
+    subscribes.add(sid);
+    return super.subscribe(sid, since: since);
+  }
 
   @override
   ConnectionState get state => ConnectionState.serving;
@@ -101,42 +130,64 @@ class _SubagentClient extends FakeSyncClient {
               'sid': 'child-${i + 1}',
               'updatedAt': 2 + i,
               'subagent': true,
+              // **父级（别名形式）**：电脑侧 `session.list` 的行就带这个键；
+              // 根会话（sid_A）没有它 —— 与连接器那条判据一致。
+              if (!noParentId.contains('child-${i + 1}'))
+                'parentSessionId': 'sid_A',
               'projections': {
                 'values': {'title': siblings[i]},
               },
             },
+          {
+            'sid': 'grand-1',
+            'updatedAt': 9,
+            'subagent': true,
+            if (!noParentId.contains('grand-1')) 'parentSessionId': 'child-1',
+            'projections': {
+              'values': {'title': grandTitle},
+            },
+          },
         ],
       },
       // 目录**按 sid 各是一条直接子级表**（DSH 的 catalog 只含直接子级）：
       // 父会话有 [siblings]，子级 child-1 自己还有一个孙级，child-2 是空叶。
-      'session.projections' => switch (params['sid']) {
-        'child-1' => {
-          'subagentCatalog': [
-            {
-              'id': 'grand-1',
-              'createdAt': 3000,
-              'mode': 'one-shot',
-              'label': '孙级调研',
-            },
-          ],
-        },
-        'child-2' => {'subagentCatalog': <Object?>[]},
-        _ => {
-          'subagentCatalog': [
-            for (var i = 0; i < siblings.length; i++)
-              {
-                'id': 'child-${i + 1}',
-                // 第一个子级是"正在被进入的那一个"，它的 mode 由 [mode] 决定。
-                'createdAt': 1000 + i,
-                'mode': i == 0 ? mode : 'one-shot',
-                'label': siblings[i],
-              },
-          ],
-        },
-      },
+      'session.projections' => _projections(params['sid'] as String?),
       _ => null,
     };
     return result as T;
+  }
+
+  Object? _projections(String? sid) {
+    catalogReads.add(sid ?? '');
+    // 读失败：形状不对（不是对象）—— 目录进 error 态，界面要有重试入口。
+    if (sid != null && failingCatalogs.contains(sid)) return 'boom';
+    return switch (sid) {
+      'child-1' => {
+        'subagentCatalog': [
+          {
+            'id': 'grand-1',
+            'createdAt': 3000,
+            'mode': 'one-shot',
+            'label': grandLabel,
+          },
+        ],
+      },
+      'grand-1' => {'subagentCatalog': <Object?>[]},
+      'sid_A' => {
+        'subagentCatalog': [
+          for (var i = 0; i < siblings.length; i++)
+            {
+              'id': 'child-${i + 1}',
+              // 第一个子级是"正在被进入的那一个"，它的 mode 由 [mode] 决定。
+              'createdAt': 1000 + i,
+              'mode': i == 0 ? mode : 'one-shot',
+              'label': siblings[i],
+            },
+        ],
+      },
+      // child-2 / 其他：已知空叶。
+      _ => {'subagentCatalog': <Object?>[]},
+    };
   }
 }
 
@@ -172,9 +223,14 @@ Future<void> _enterFirstChild(
   key.currentState!.openSide();
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
-  await tester.tap(find.text('子智能体'));
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 400));
+  // 抽屉可能**已经停在**子智能体页（这一屏之前进来过）：那时面板标题与 tab
+  // 都叫「子智能体」，再点一次会撞上两个同名文本。两处都在 = 已经在这一页。
+  final tabs = find.text('子智能体');
+  if (tabs.evaluate().length < 2) {
+    await tester.tap(tabs);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  }
   await tester.tap(find.text(label).first);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
@@ -199,6 +255,8 @@ void main() {
     expect(find.byTooltip('打开会话抽屉'), findsNothing);
     // 标题 = 父级目录那一行的 label（Web `switcherDisplayTitle`，:490-495），
     // 点它开「切换子智能体」；父会话名放得下就并成 `父会话 › 子级名`。
+    // 标题 = 父级目录那一行的 label（Web `switcherDisplayTitle`，:490-495），
+    // **只有当前子级名**：父级名不进标题（DSH 的 switcher 同样只显示这一层）。
     expect(find.byTooltip('切换子智能体'), findsOneWidget);
     expect(
       find.descendant(
@@ -209,8 +267,8 @@ void main() {
     );
     expect(
       find.descendant(of: find.byTooltip('切换子智能体'), matching: find.text('父会话')),
-      findsOneWidget,
-      reason: '两个名字放得下时，标题里带父级（量不下就只留子级）',
+      findsNothing,
+      reason: '标题只显示当前子级名（父级由切换面板的 root 表达，不是塞进标题）',
     );
     expect(
       find.byType(DshComposer),
@@ -366,19 +424,17 @@ void main() {
     await tester.tap(find.byTooltip('展开 调研实现 的下级子智能体'));
     await tester.pumpAndSettle();
     expect(
-      find.text('孙级调研'),
+      find.text(_SubagentClient.grandLabel),
       findsOneWidget,
       reason: '展开后面板必须真的重画（ListenableBuilder 听 AppModel）',
     );
     app.dispose();
   });
 
-  testWidgets('标题预算放不下时不带父级：只留子级名', (tester) async {
-    // 这条钉的是"空间怎么省"的判断：两个名字硬塞会各截一半，
-    // 而"我在哪个子智能体里"比"父级叫什么"要紧 —— 量不下就只留子级。
-    //
-    // 用**手机宽度**（390dp）+ 一个长父标题：默认 800dp 的测试画布上什么都放得下，
-    // 那测不到"放不下"这一支。
+  testWidgets('顶栏标题只有当前子级名：父级名不进标题（照 DSH 的 switcher）', (tester) async {
+    // 用**手机宽度**（390dp）+ 一个长父标题：这条钉的是"父级名根本不进来"，
+    // 不是"放不下才省掉" —— 上一版是 `父会话 › 子级名`，DSH 的 switcher
+    // 只显示 `switcherDisplayTitle`（`SubagentHeaderLineage.tsx:490-495`）。
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -403,7 +459,42 @@ void main() {
     expect(
       find.textContaining('非常非常长'),
       findsNothing,
-      reason: '父级名放不下就整段不出现（不是截一半）',
+      reason: '父级名一次都不出现（不是"放不下才省"，是不进标题）',
+    );
+    app.dispose();
+  });
+
+  testWidgets('名字查不到时显示会话自己的标题，不再出现「子智能体」字面量', (tester) async {
+    // 2026-10-23 的真机症状：孙级的父级仍停在祖父上 ⇒ 父级目录里找不到这一行
+    // ⇒ 标题回落到字面量「子智能体」，用户读成"里面还是它自己"。
+    // 现在查不到就退到**会话自己的标题**（`currentTitle`）。
+    final client = _SubagentClient();
+    final app = AppModel(client: client);
+    await app.start();
+    await app.refreshSessions();
+    // 直接落在孙级上、**不经面板**：没有导航记忆，父级目录也还没读，
+    // 于是"父级目录里那一行"一定查不到。
+    await app.openSession('grand-1');
+
+    await _pumpChat(tester, app);
+
+    // 数据里有父级（`parentSessionId: child-1`）⇒ 仍然是子会话头部。
+    expect(find.byTooltip('返回父会话'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byTooltip('切换子智能体'),
+        matching: find.text(_SubagentClient.grandTitle),
+      ),
+      findsOneWidget,
+      reason: '父级目录里没有这一行时，标题是会话自己的标题',
+    );
+    expect(
+      find.descendant(
+        of: find.byTooltip('切换子智能体'),
+        matching: find.text('子智能体'),
+      ),
+      findsNothing,
+      reason: '字面量兜底已删（它会把"查不到"伪装成"名字叫子智能体"）',
     );
     app.dispose();
   });
@@ -437,6 +528,181 @@ void main() {
 
     expect(app.currentSid, 'sid_A', reason: '子会话里按返回 = 回父会话，不是退出整个聊天页');
     expect(find.byTooltip('返回父会话'), findsNothing);
+    app.dispose();
+  });
+
+  testWidgets('数据档：直接落在孙级，← 回到数据里的父级（这里根本没有记忆）', (tester) async {
+    // 2026-10-23 的 bug：父级来自导航记忆 ⇒ 直接落在孙级上（重启恢复 /
+    // 从别的入口进来）时**连返回都没有**；有记忆时又会跳过真正的父级。
+    // 判据：这里没有走面板、没有记忆，`←` 必须回 `child-1`（`parentSessionId`）。
+    final app = AppModel(client: _SubagentClient());
+    await app.start();
+    await app.refreshSessions();
+    await app.openSession('grand-1');
+
+    await _pumpChat(tester, app);
+
+    expect(find.byTooltip('返回父会话'), findsOneWidget, reason: '数据里有父级 ⇒ 头部就是子会话');
+    await tester.tap(find.byTooltip('返回父会话'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(app.currentSid, 'child-1', reason: '孙级的父级是 child-1，不是祖父');
+    app.dispose();
+  });
+
+  testWidgets('父→子→孙：每层头部是各自的父级，← 逐层返回', (tester) async {
+    final client = _SubagentClient(siblings: const ['调研实现', '抽图标']);
+    final app = AppModel(client: client);
+    await app.start();
+    await app.refreshSessions();
+    await app.openSession('sid_A');
+
+    final key = await _pumpChat(tester, app);
+
+    // 父 → 子
+    await _enterFirstChild(tester, key, '调研实现');
+    expect(app.currentSid, 'child-1');
+
+    // 子 → 孙：切换面板（root = sid_A）里展开 child-1，再点孙级
+    await tester.tap(find.byTooltip('切换子智能体'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('展开 调研实现 的下级子智能体'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(_SubagentClient.grandLabel).last);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(app.currentSid, 'grand-1');
+
+    // 孙级头部：标题是它在 **child-1** 目录里的 label（不是祖父目录里的东西）
+    expect(
+      find.descendant(
+        of: find.byTooltip('切换子智能体'),
+        matching: find.text(_SubagentClient.grandLabel),
+      ),
+      findsOneWidget,
+    );
+
+    // 孙级的切换面板 root = **child-1**：列的是它自己的兄弟（空的），
+    // 不再列祖父的子级 —— `抽图标` 出现就说明 root 还是错的。
+    await tester.tap(find.byTooltip('切换子智能体'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('抽图标'),
+      findsNothing,
+      reason: 'root 必须是真正的父级 child-1，不是祖父 sid_A',
+    );
+
+    // 当前行不可点：点它只关面板，不再"进自己"。
+    // **判据是 `subscribe` 不多发**（"又进一次自己"在屏幕上看不出差别，
+    // 但 `openSession` 一定会重新订阅一次）。
+    final subscribesBefore = client.subscribes.length;
+    await tester.tap(
+      find.descendant(
+        of: find.byType(SubagentTree),
+        matching: find.text(_SubagentClient.grandLabel),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(app.currentSid, 'grand-1', reason: '点当前行不再 openSession(自己)');
+    expect(
+      client.subscribes.length,
+      subscribesBefore,
+      reason: '点当前行不许再订阅一次（那正是"又进了自己一次"）',
+    );
+
+    // ← 孙 → 子
+    await tester.tap(find.byTooltip('返回父会话'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(app.currentSid, 'child-1', reason: '孙级回的是真正的父级');
+
+    // ← 子 → 父
+    await tester.tap(find.byTooltip('返回父会话'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(app.currentSid, 'sid_A', reason: '子级回到父级');
+
+    // 回到父级后不再有返回（根会话没有面包屑，DSH `:801`）
+    expect(find.byTooltip('返回父会话'), findsNothing);
+    app.dispose();
+  });
+
+  testWidgets('目录扫描档 / 记忆档：老连接器没有 parentSessionId 时仍能回父级', (tester) async {
+    // 第 2 档（目录扫描）与第 3 档（记忆）**都不能删**：
+    // 新手机连老连接器时 `parentSessionId` 为空，删了就退回 2026-10-21
+    // 那个"进子会话出不来"的坑。
+    final failing = <String>{};
+    final client = _SubagentClient(
+      noParentId: {'child-1'},
+      failingCatalogs: failing,
+    );
+    final app = AppModel(client: client);
+    await app.start();
+    await app.refreshSessions();
+    await app.openSession('sid_A');
+
+    final key = await _pumpChat(tester, app);
+
+    // ① 目录扫描档：连接器没发父级，但父级目录里就有这一行
+    await _enterFirstChild(tester, key, '调研实现');
+    expect(app.currentSid, 'child-1');
+    expect(find.byTooltip('返回父会话'), findsOneWidget, reason: '父级从目录扫到');
+    await tester.tap(find.byTooltip('返回父会话'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(app.currentSid, 'sid_A');
+
+    // ② 记忆档：连目录也没了（读失败 ⇒ 三态 error、entries 清空）
+    await _enterFirstChild(tester, key, '调研实现');
+    expect(app.currentSid, 'child-1');
+    failing.add('sid_A');
+    await app.refreshSubagentCatalog('sid_A');
+    await tester.pump();
+    expect(
+      find.byTooltip('返回父会话'),
+      findsOneWidget,
+      reason: '目录读失败也不能把返回弄丢 —— 这时只有导航记忆还知道父级',
+    );
+    await tester.tap(find.byTooltip('返回父会话'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(app.currentSid, 'sid_A', reason: '记忆兜底给出的是走进来之前的会话');
+    app.dispose();
+  });
+
+  testWidgets('目录读失败：顶栏给入口，面板里点重试会真的再读一次', (tester) async {
+    // DSH 的 `visible`（`SubagentHeaderLineage.tsx:617-631`）把"加载失败"也算作
+    // 要渲染 —— 否则连进面板的入口都没有，那个重试按钮永远够不着。
+    final client = _SubagentClient(failingCatalogs: {'sid_A'});
+    final app = AppModel(client: client);
+    await app.start();
+    await app.refreshSessions();
+    await app.openSession('sid_A');
+
+    await _pumpChat(tester, app);
+
+    // 0 个子智能体 + 失败 ⇒ chip 仍在（图标换成重试）
+    expect(
+      find.byType(DshCountChip),
+      findsOneWidget,
+      reason: '失败时这枚 chip 是唯一入口',
+    );
+
+    final before = client.catalogReads.length;
+    await tester.tap(find.byType(DshCountChip));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('无法加载子智能体'), findsOneWidget, reason: '面板如实报错');
+
+    await tester.tap(find.text('重试'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      client.catalogReads.length,
+      greaterThan(before),
+      reason: '点重试必须真的再发一次 session.projections（不是只重画）',
+    );
     app.dispose();
   });
 }

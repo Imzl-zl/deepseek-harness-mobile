@@ -783,7 +783,16 @@ test('session.list：逐字段映射，别名在方法面合成，**DSH 会话 i
       list: () =>
         Promise.resolve([
           { dshSessionId: 'dsh-1', updatedAt: 200, running: true, blank: false, subagent: false, cwd: '/repo/a' },
-          { dshSessionId: 'dsh-2', updatedAt: 100, running: false, blank: true, subagent: true },
+          // 子会话行：`parentSessionId` 是 **DSH 的会话 id**（`SessionSummaryRow`），
+          // 方法面必须换成别名再发出去。
+          {
+            dshSessionId: 'dsh-2',
+            updatedAt: 100,
+            running: false,
+            blank: true,
+            subagent: true,
+            parentSessionId: 'dsh-1',
+          },
         ]),
       prompt: () => Promise.resolve({ accepted: true }),
       updateQueue: async () => ({ accepted: true as const }),
@@ -798,12 +807,31 @@ test('session.list：逐字段映射，别名在方法面合成，**DSH 会话 i
   const listed = (await handler(undefined, {})) as { sessions: Record<string, unknown>[] }
   assert.deepEqual(listed.sessions, [
     { sid: 'sid_dsh-1', updatedAt: 200, running: true, blank: false, subagent: false, cwd: '/repo/a' },
-    { sid: 'sid_dsh-2', updatedAt: 100, running: false, blank: true, subagent: true },
+    {
+      sid: 'sid_dsh-2',
+      updatedAt: 100,
+      running: false,
+      blank: true,
+      subagent: true,
+      // **别名形式**，不是 `dsh-1`：手机只看得到 sid（本文件同一条纪律）。
+      parentSessionId: 'sid_dsh-1',
+    },
   ])
   for (const row of listed.sessions) {
     assert.equal('dshSessionId' in row, false, 'DSH 会话 id 绝不能过线 —— 中继与手机只见 sid')
     assert.match(String(row['sid']), /^[A-Za-z0-9_-]+$/, 'sid 要过 AAD 的字符集要求')
   }
+  // 根会话（没有父级）**不给这个键**：不给 = 根，给空值会被手机读成"父级叫空"。
+  assert.equal(
+    'parentSessionId' in listed.sessions[0]!,
+    false,
+    '根会话行不许出现 parentSessionId',
+  )
+  assert.equal(
+    listed.sessions[1]!['parentSessionId'],
+    'sid_dsh-1',
+    '子会话行的父级必须是别名（DSH 的原始 id 不能漏）',
+  )
 })
 
 test('session.list：并发分配别名（不同会话互不影响）', async () => {

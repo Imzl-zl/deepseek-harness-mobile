@@ -368,7 +368,7 @@ type SyncSnapshot = {
 
 | 方法 | 方向 | 幂等键 | 说明 |
 |---|---|---|---|
-| `session.list` | 手机→电脑 | — | 会话清单(别名 + 最近活动 + 状态)。取自 `sessionController.list`(`packages/api/session-controller/src/index.ts:251-254`,已按活动排序);**标题不在这里** —— 该面不返回标题,标题由 `session-title` 提供、且它读的是**活的 `Session` 对象**(落盘-only 的会话拿不到),所以清单先不含标题,手机用 `cwd` 末段 + 相对时间兜底 |
+| `session.list` | 手机→电脑 | — | 会话清单(别名 + 最近活动 + 状态)。取自 `sessionController.list`(`packages/api/session-controller/src/index.ts:251-254`,已按活动排序);**标题不在这里** —— 该面不返回标题,标题由 `session-title` 提供、且它读的是**活的 `Session` 对象**(落盘-only 的会话拿不到),所以清单先不含标题,手机用 `cwd` 末段 + 相对时间兜底。**子会话行多一个 `parentSessionId`**(宿主的 `SessionSummary.parentSessionId`,已过别名表换成 `sid`);**根会话不给这个键** —— 不给 = 根。手机用它算子会话头部的父级与 `←` 返回;老连接器没有它时手机退到"目录扫描 / 导航记忆" |
 | `session.subscribe` | 手机→电脑 | — | 开始推送该会话的 `ev` / `live`;带 `since` 即同时完成恢复 |
 | `session.unsubscribe` | 手机→电脑 | — | 停止推送;桥接可释放该会话缓冲(仍需等 persisted) |
 | `session.page` | 手机→电脑 | — | 历史翻页(按消息对齐,用 DSH `page()`) |
