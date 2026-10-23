@@ -80,6 +80,21 @@ const MOBILE_COMMANDS: ReadonlySet<string> = new Set(['goal', 'plan'])
 /** 白名单的人话（错误信息里用；顺序固定，便于用户照抄）。 */
 const MOBILE_COMMAND_LIST = [...MOBILE_COMMANDS].map((name) => `/${name}`).join('、')
 
+/** `tokenUsage` 的四个分项（键名是 DSH 的原名，`usage-projection.ts:16-21`）。 */
+interface TokenBuckets {
+  uncachedInputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+}
+
+const ZERO_BUCKETS: TokenBuckets = {
+  uncachedInputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+}
+
 /** 别名端口（契约 §5.1）：手机与中继都只见 `sid`，所以两个方向都要。 */
 export interface AliasPort {
   /** 会话 → 别名（首次调用会分配并落盘）。 */
@@ -351,6 +366,47 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       if (typeof value === 'number' && Number.isFinite(value)) sum += value
     }
     return sum
+  }
+
+  /// 四个 token 分项（`tokenUsage` 的 wire 值是 `totals` 本身，同上）。
+  ///
+  /// **键名原样用 DSH 的**（`usage-projection.ts:16-21` 的 `zeroBuckets`）：
+  /// 连接器不做"提示词/补全"这类翻译 —— 词属于界面，由手机给。
+  /// 认不出的形状给全零（与 `tokenTotalOf` 同一条纪律：不预设键名）。
+  const bucketsOf = (tokenUsage: unknown): TokenBuckets => {
+    const out: TokenBuckets = { ...ZERO_BUCKETS }
+    if (typeof tokenUsage !== 'object' || tokenUsage === null) return out
+    const direct = tokenUsage as Record<string, unknown>
+    const totals = typeof direct.totals === 'object' && direct.totals !== null
+      ? (direct.totals as Record<string, unknown>)
+      : direct
+    for (const key of Object.keys(out) as (keyof TokenBuckets)[]) {
+      const value = totals[key]
+      if (typeof value === 'number' && Number.isFinite(value)) out[key] = value
+    }
+    return out
+  }
+
+  /// 把 `trajectory` 投影里每一轮的起点折成"按天计数"（热力图的数据面）。
+  ///
+  /// 日期用**电脑侧本地时区**：`turn/start.time` 是那台电脑的时钟，
+  /// 而热力图回答的是"这台电脑上哪天在干活"。
+  /// **覆盖范围受投影上限约束**（`dsh/trajectory.ts:98` 的 `MAX_TURNS = 200`，
+  /// 超出保留窗口的轮不在里面）—— 这是如实的上界，写进契约 §5.7 那一行。
+  const turnsByDayOf = (trajectory: unknown): Map<string, number> => {
+    const days = new Map<string, number>()
+    if (typeof trajectory !== 'object' || trajectory === null) return days
+    const turns = (trajectory as { turns?: unknown }).turns
+    if (!Array.isArray(turns)) return days
+    for (const turn of turns) {
+      if (typeof turn !== 'object' || turn === null) continue
+      const time = (turn as { startTime?: unknown }).startTime
+      if (typeof time !== 'number' || !Number.isFinite(time) || time <= 0) continue
+      const date = new Date(time)
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+      days.set(key, (days.get(key) ?? 0) + 1)
+    }
+    return days
   }
 
   /// 列表行的标题（**从投影提示来**，与 `session.list` 给手机的同一个来源）。
@@ -747,11 +803,39 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
         visible.map(async ({ row }) => {
           const values = (await deps.projections!.of(row.dshSessionId)) as {
             tokenUsage?: unknown
+            trajectory?: unknown
           }
-          return tokenTotalOf(values.tokenUsage)
+          // **一次投影读要算三样**：总量（老字段）、四个分项、以及"哪几天在干活"。
+          // 三样都来自同一包 `values`，所以按天聚合**没有额外往返**
+          // （`trajectory` 本来就在 `session.projections` 的返回里）。
+          return {
+            tokens: tokenTotalOf(values.tokenUsage),
+            buckets: bucketsOf(values.tokenUsage),
+            days: turnsByDayOf(values.trajectory),
+          }
         }),
       )
-      const grandTotal = usages.reduce((sum, n) => sum + n, 0)
+      const grandTotal = usages.reduce((sum, entry) => sum + entry.tokens, 0)
+      const totalBuckets = usages.reduce<TokenBuckets>(
+        (acc, entry) => ({
+          uncachedInputTokens: acc.uncachedInputTokens + entry.buckets.uncachedInputTokens,
+          outputTokens: acc.outputTokens + entry.buckets.outputTokens,
+          cacheReadTokens: acc.cacheReadTokens + entry.buckets.cacheReadTokens,
+          cacheWriteTokens: acc.cacheWriteTokens + entry.buckets.cacheWriteTokens,
+        }),
+        { ...ZERO_BUCKETS },
+      )
+      // 按天合并（**只数轮次**，不按天摊 token：投影里没有"每一轮用了多少"，
+      // 编一个就是假数据）。日期升序 —— 热力图画的是连续的一段日历。
+      const dayMap = new Map<string, number>()
+      for (const entry of usages) {
+        for (const [date, turns] of entry.days) {
+          dayMap.set(date, (dayMap.get(date) ?? 0) + turns)
+        }
+      }
+      const byDay = [...dayMap.entries()]
+        .map(([date, turns]) => ({ date, turns }))
+        .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
       // **按项目（工作区目录）聚合**：`cwd` 就是 `session.list` 已经在发的那个
       // 字段（`dsh/sessions.ts` 的 `...(item.cwd === undefined ? {} : { cwd })`）。
       // 用户 2026-10-19 原话：「用量你最好也是做成一个页面的……总量，单个项目
@@ -763,7 +847,7 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       visible.forEach(({ row }, i) => {
         const path = row.cwd ?? ''
         const acc = byProjectMap.get(path) ?? { tokens: 0, sessions: 0 }
-        acc.tokens += usages[i]!
+        acc.tokens += usages[i]!.tokens
         acc.sessions += 1
         byProjectMap.set(path, acc)
       })
@@ -774,6 +858,11 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       return {
         sessions: visible.length,
         grandTotalTokens: grandTotal,
+        // 四个分项（键名是 DSH 的原名，手机自己给中文标签）。
+        totals: totalBuckets,
+        // **按天只数轮次**：投影里没有"每一轮用了多少 token"，按天摊 token 就是编。
+        // 覆盖范围 = 各会话 `trajectory` 保留的最近 200 轮（`dsh/trajectory.ts:98`）。
+        byDay,
         byProject,
         // 逐字段构造，**不 spread** —— 且只给手机认识的 `sid`
         // （`dshSessionId` 绝不能过线，契约 §5.1）。
@@ -790,7 +879,7 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
             // 项目目录（**同一个来源**：`session.list` 的 `cwd`）。
             // 空串 = 这台电脑没给 `cwd`，手机显示成「未关联项目」。
             cwd: row.cwd ?? '',
-            tokens: usages[i]!,
+            tokens: usages[i]!.tokens,
           }))
           // 全零的会话不进榜：一张"0 tok"的行说的是"没数据"，不是"用了 0"。
           .filter((entry) => entry.tokens > 0)

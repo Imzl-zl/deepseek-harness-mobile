@@ -42,6 +42,7 @@
 | `subsystems/tool-views.md` | 每步视图:bash/read/edit 三张专用卡的数据来源(meta 与状态标记)、渲染规格、其余工具**有意不做**、已知缺口 |
 | `subsystems/settings-and-versions.md` | 电脑侧设置:`settings.describe`/`update` 的请求形状、两张 allowlist、手机侧三行与判据 |
 | `subsystems/turn-groups.md` | 轮组:边界来自条目自己的轮号、折叠藏过程留结论、什么时候可折、"工作步骤收起时机"两档、与 DSH 的差异与已知边界 |
+| `subsystems/usage-page.md` | 用量页:一页五块(总量 / 四格分项 / 26 周热力图 / 可折叠项目段 / 扁平兜底)、`usage.summary` 的字段与口径去向、与 rikkahub 形态的两处有意偏离、已知边界 |
 
 ## 引用纪律
 

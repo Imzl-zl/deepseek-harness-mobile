@@ -112,6 +112,17 @@ class UsagePage extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
               children: [
                 _TotalCard(summary: data),
+                // 四个分项：**电脑侧没报就整块不出现**（老连接器），
+                // 不摆四个 0。
+                if (data.totals != null) ...[
+                  const SizedBox(height: 12),
+                  _BreakdownGrid(totals: data.totals!, turns: data.totalTurns),
+                ],
+                // 热力图：**没有按天数据就整块不出现**（同上）。
+                if (data.byDay.isNotEmpty) ...[
+                  const SizedBox(height: 20),
+                  _HeatmapCard(days: data.byDay),
+                ],
                 const SizedBox(height: 24),
                 ..._projectSections(context, data),
               ],
@@ -136,14 +147,7 @@ class UsagePage extends StatelessWidget {
     }
     return [
       for (final group in groups) ...[
-        _ProjectHeader(group: group),
-        for (final entry in group.entries)
-          _SessionRow(
-            entry: entry,
-            onTap: onOpenSession == null
-                ? null
-                : () => onOpenSession!(entry.sid),
-          ),
+        _ProjectSection(group: group, onOpenSession: onOpenSession),
         const SizedBox(height: 12),
       ],
     ];
@@ -206,51 +210,345 @@ class _TotalCard extends StatelessWidget {
   }
 }
 
+/// 四个分项的小卡片（2×2）：输入 / 输出 / 缓存 / 轮次。
+///
+/// 为什么是"小卡片"而不是一行字：用量页的动作是**看趋势与构成**，
+/// 四格并排比四行文字更快扫到（参照 rikkahub 的 `StatsGrid` + `StatCard`，
+/// `ui/pages/stats/StatsPage.kt:277-360`）。
+class _BreakdownGrid extends StatelessWidget {
+  const _BreakdownGrid({required this.totals, required this.turns});
+
+  final UsageTotals totals;
+
+  /// 轮次总数；`null` = 没有按天数据（那一格不出现，而不是显示 0）。
+  final int? turns;
+
+  @override
+  Widget build(BuildContext context) {
+    final cells = <Widget>[
+      _MiniCard(
+        label: '输入（未命中缓存）',
+        value: formatTokenCount(totals.uncachedInputTokens),
+      ),
+      _MiniCard(label: '输出', value: formatTokenCount(totals.outputTokens)),
+      _MiniCard(label: '缓存读 / 写', value: formatTokenCount(totals.cacheTokens)),
+      if (turns != null) _MiniCard(label: '轮次', value: '$turns'),
+    ];
+    return Column(
+      children: [
+        for (var i = 0; i < cells.length; i += 2) ...[
+          if (i > 0) const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(child: cells[i]),
+              const SizedBox(width: 8),
+              Expanded(
+                child: i + 1 < cells.length ? cells[i + 1] : const SizedBox(),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _MiniCard extends StatelessWidget {
+  const _MiniCard({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: c.layer1,
+        borderRadius: BorderRadius.circular(DshRadius.md),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: TextStyle(fontSize: 11, color: c.labelCaption)),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              color: c.labelPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 活动热力图：**最近 26 周**，一格一天，颜色深浅 = 那天开了几轮。
+///
+/// ## 为什么 26 周而不是 52 周
+///
+/// rikkahub 画 52 周（`ui/pages/stats/StatsPage.kt:144-260`），但它的格子是
+/// 4dp + 计算过的间距；390dp 的屏上 52 周 × 7 行的格子会挤到 5px 上下，
+/// 点也点不到、深浅也分不出。**26 周**（半年）是这台机器上仍能读出"哪几天在干活"
+/// 的上限，其余信息由上面的四格卡片承担。
+///
+/// ## 数据口径（写在卡片上，不靠猜）
+///
+/// 只数轮次、不摊 token（契约 §5.7 聚合规则⑤）；覆盖范围是各会话
+/// `trajectory` 保留的最近 200 轮。所以底下一句如实写"按轮次"。
+class _HeatmapCard extends StatelessWidget {
+  const _HeatmapCard({required this.days});
+
+  final List<UsageDay> days;
+
+  static const int _weeks = 26;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    final byDate = {for (final day in days) day.date: day.turns};
+    final today = DateTime.now();
+    final todayDate = DateTime(today.year, today.month, today.day);
+    // 本周周一（`DateTime.weekday` 的 1 = 周一）。
+    final thisMonday = todayDate.subtract(
+      Duration(days: todayDate.weekday - 1),
+    );
+    final firstMonday = thisMonday.subtract(
+      const Duration(days: 7 * (_weeks - 1)),
+    );
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: c.layer1,
+        borderRadius: BorderRadius.circular(DshRadius.lg),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '最近 $_weeks 周',
+                  style: TextStyle(fontSize: 12, color: c.labelSecondary),
+                ),
+              ),
+              Text(
+                '按轮次',
+                style: TextStyle(fontSize: 11, color: c.labelCaption),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              const gap = 3.0;
+              final cell =
+                  ((constraints.maxWidth - gap * (_weeks - 1)) / _weeks).clamp(
+                    4.0,
+                    14.0,
+                  );
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var week = 0; week < _weeks; week++) ...[
+                    if (week > 0) const SizedBox(width: gap),
+                    Column(
+                      children: [
+                        for (var weekday = 0; weekday < 7; weekday++)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: gap),
+                            child: _HeatCell(
+                              turns: _turnsOf(
+                                byDate,
+                                firstMonday.add(
+                                  Duration(days: week * 7 + weekday),
+                                ),
+                              ),
+                              size: cell,
+                              future: firstMonday
+                                  .add(Duration(days: week * 7 + weekday))
+                                  .isAfter(todayDate),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  int _turnsOf(Map<String, int> byDate, DateTime date) =>
+      byDate[_dateKey(date)] ?? 0;
+}
+
+class _HeatCell extends StatelessWidget {
+  const _HeatCell({
+    required this.turns,
+    required this.size,
+    required this.future,
+  });
+
+  final int turns;
+  final double size;
+
+  /// 未来的日子（本周内）画成透明 —— 它不是"0 轮"。
+  final bool future;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    final alpha = heatAlphaOf(turns);
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: future
+            ? Colors.transparent
+            : alpha == 0.0
+            ? c.layer2
+            : c.accentBlue.withValues(alpha: alpha),
+        borderRadius: BorderRadius.circular(2),
+      ),
+    );
+  }
+}
+
+String _dateKey(DateTime date) =>
+    '${date.year}-${date.month.toString().padLeft(2, '0')}-'
+    '${date.day.toString().padLeft(2, '0')}';
+
+/// 热力图一格的不透明度：**纯函数**（界面只调它，测试只测它）。
+///
+/// 0 轮 = 底色（不是透明 —— 那一天存在，只是没干活）；越忙越深。
+double heatAlphaOf(int turns) => switch (turns) {
+  <= 0 => 0.0,
+  <= 1 => 0.30,
+  <= 3 => 0.50,
+  <= 6 => 0.75,
+  _ => 1.0,
+};
+
 /// 一个项目的标题行（名字 · 用量 · 几个会话）。
 class _ProjectHeader extends StatelessWidget {
-  const _ProjectHeader({required this.group});
+  const _ProjectHeader({
+    required this.group,
+    required this.open,
+    required this.onTap,
+  });
 
   final ({UsageProject project, List<UsageEntry> entries}) group;
+
+  /// 这一个项目展开着没有（决定箭头朝向）。
+  final bool open;
+
+  /// 点整行 = 收起/展开（**只有项目头可点**，会话行仍然是"进入会话"）。
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
     final project = group.project;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        children: [
-          DshIcon('workspaceTree', size: 14, color: c.labelSecondary),
-          const SizedBox(width: 7),
-          Expanded(
-            child: Text(
-              project.label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: c.labelPrimary,
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(DshRadius.sm),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            DshIcon('workspaceTree', size: 14, color: c.labelSecondary),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(
+                project.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: c.labelPrimary,
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            formatTokenCount(project.tokens),
-            style: TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: c.labelSecondary,
+            const SizedBox(width: 8),
+            Text(
+              formatTokenCount(project.tokens),
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: c.labelSecondary,
+              ),
             ),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            '${project.sessions} 个会话',
-            style: TextStyle(fontSize: 11, color: c.labelCaption),
-          ),
-        ],
+            const SizedBox(width: 6),
+            Text(
+              '${project.sessions} 个会话',
+              style: TextStyle(fontSize: 11, color: c.labelCaption),
+            ),
+            const SizedBox(width: 2),
+            // 箭头朝向照落地端既有口径：收起朝右、展开朝下。
+            DshIcon(
+              open ? 'chevronDown' : 'chevronRight',
+              size: 14,
+              color: c.labelTertiary,
+            ),
+          ],
+        ),
       ),
+    );
+  }
+}
+
+/// 一个项目段：**头可点、身子可折**（用户 2026-10-24 原话「用量页不可折叠」）。
+///
+/// 默认**展开**：折叠是省屏的手段，不该把信息默认藏起来。
+class _ProjectSection extends StatefulWidget {
+  const _ProjectSection({required this.group, this.onOpenSession});
+
+  final ({UsageProject project, List<UsageEntry> entries}) group;
+  final void Function(String sid)? onOpenSession;
+
+  @override
+  State<_ProjectSection> createState() => _ProjectSectionState();
+}
+
+class _ProjectSectionState extends State<_ProjectSection> {
+  bool _open = true;
+
+  @override
+  Widget build(BuildContext context) {
+    final ids = {for (final entry in widget.group.entries) entry.sid};
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 键里带项目路径：热力图/卡片变化导致的整页重建不该把折叠态带丢。
+        KeyedSubtree(
+          key: ValueKey<String>('usage-project-${widget.group.project.path}'),
+          child: _ProjectHeader(
+            group: widget.group,
+            open: _open,
+            onTap: () => setState(() => _open = !_open),
+          ),
+        ),
+        if (_open)
+          for (final entry in widget.group.entries)
+            if (ids.contains(entry.sid))
+              _SessionRow(
+                entry: entry,
+                onTap: widget.onOpenSession == null
+                    ? null
+                    : () => widget.onOpenSession!(entry.sid),
+              ),
+      ],
     );
   }
 }

@@ -80,6 +80,109 @@ void main() {
     expect(find.text('未命名'), findsOneWidget);
     // 挂在「未关联项目」下的那个会话。
     expect(find.text('另一个项目'), findsOneWidget);
+
+    // 老连接器（没有 `totals` / `byDay`）：两块都**不出现** ——
+    // 不摆四个 0、也不画一张空热力图（对照组，证明上面那条不是恒真）。
+    expect(find.text('输入（未命中缓存）'), findsNothing);
+    expect(find.text('最近 26 周'), findsNothing);
+  });
+
+  testWidgets('项目头可折叠：点一下收起，再点展开（默认展开）', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: UsagePage(summary: _summary)),
+    );
+    await tester.pumpAndSettle();
+
+    // 默认展开：会话行在。
+    expect(find.text('插件UI与交互体验优化'), findsOneWidget);
+
+    await tester.tap(find.text('dsh-mobile'));
+    await tester.pumpAndSettle();
+    expect(find.text('插件UI与交互体验优化'), findsNothing, reason: '收起只藏身子');
+
+    await tester.tap(find.text('dsh-mobile'));
+    await tester.pumpAndSettle();
+    expect(find.text('插件UI与交互体验优化'), findsOneWidget);
+  });
+
+  testWidgets('四个分项 + 热力图：有数据才出现；轮次是轮次，不是 token', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: UsagePage(
+          summary: UsageSummary(
+            sessions: 2,
+            grandTotalTokens: 1234,
+            bySession: [],
+            totals: UsageTotals(
+              uncachedInputTokens: 1000,
+              outputTokens: 200,
+              cacheReadTokens: 30,
+              cacheWriteTokens: 4,
+            ),
+            byDay: [
+              UsageDay(date: '2026-10-01', turns: 2),
+              UsageDay(date: '2026-10-02', turns: 3),
+              UsageDay(date: '2026-10-03', turns: 1),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('输入（未命中缓存）'), findsOneWidget);
+    expect(find.text('输出'), findsOneWidget);
+    expect(find.text('缓存读 / 写'), findsOneWidget);
+    // 轮次 = `byDay` 之和（2+3+1）。**它不是 token**：热力图只数轮次
+    // （契约 §5.7 聚合规则⑤）。
+    expect(find.text('轮次'), findsOneWidget);
+    expect(find.text('6'), findsOneWidget);
+    expect(find.text('最近 26 周'), findsOneWidget);
+    expect(find.text('按轮次'), findsOneWidget);
+  });
+
+  test('fromWire：totals 与 byDay 原样解析；缺席就 null / 空表', () {
+    final both = UsageSummary.fromWire({
+      'sessions': 1,
+      'grandTotalTokens': 100,
+      'totals': {
+        'uncachedInputTokens': 60,
+        'outputTokens': 30,
+        'cacheReadTokens': 8,
+        'cacheWriteTokens': 2,
+      },
+      'byDay': [
+        {'date': '2026-10-01', 'turns': 2},
+        {'date': '2026-10-02', 'turns': 0},
+      ],
+    });
+    expect(both, isNotNull);
+    expect(both!.totals!.uncachedInputTokens, 60);
+    expect(both.totals!.cacheTokens, 10);
+    expect(both.byDay.length, 2);
+    expect(both.totalTurns, 2);
+
+    // 老连接器：两个键都不在 ⇒ 界面整块不出现（不是四个 0、也不是 0 轮）。
+    final old = UsageSummary.fromWire({'sessions': 1, 'grandTotalTokens': 100});
+    expect(old, isNotNull);
+    expect(old!.totals, isNull, reason: '不摆四个 0');
+    expect(old.byDay, isEmpty);
+    expect(old.totalTurns, isNull);
+  });
+
+  test('heatAlphaOf：0 轮是底色、越忙越深，且严格单调', () {
+    expect(heatAlphaOf(0), 0.0, reason: '那一天存在，只是没干活 ⇒ 底色，不是透明');
+    expect(heatAlphaOf(1), 0.30);
+    expect(heatAlphaOf(3), 0.50);
+    expect(heatAlphaOf(6), 0.75);
+    expect(heatAlphaOf(7), 1.0);
+    // 单调：把边界两侧都点一遍，防止将来改阈值时出现"更忙更浅"。
+    var previous = -1.0;
+    for (final turns in [0, 1, 2, 3, 4, 6, 7, 20]) {
+      final alpha = heatAlphaOf(turns);
+      expect(alpha, greaterThanOrEqualTo(previous));
+      previous = alpha;
+    }
   });
 
   testWidgets('点会话行：回调带上 sid', (tester) async {

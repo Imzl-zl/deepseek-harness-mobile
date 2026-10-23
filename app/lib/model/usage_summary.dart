@@ -20,6 +20,41 @@ library;
 // 所以这里 import 它而不是再写一份。
 import 'session_stats.dart' show formatTokenCount;
 
+/// 四个 token 分项（`usage.summary.totals`）。
+///
+/// **键名是 DSH 的原名**（`llm/token-meter/src/usage-projection.ts:16-21` 的
+/// `zeroBuckets`）：连接器不翻译，界面自己给中文标签 —— 词属于界面。
+class UsageTotals {
+  const UsageTotals({
+    required this.uncachedInputTokens,
+    required this.outputTokens,
+    required this.cacheReadTokens,
+    required this.cacheWriteTokens,
+  });
+
+  final int uncachedInputTokens;
+  final int outputTokens;
+  final int cacheReadTokens;
+  final int cacheWriteTokens;
+
+  /// 缓存两项之和（"省下来的"那一格）。
+  int get cacheTokens => cacheReadTokens + cacheWriteTokens;
+}
+
+/// 一天的活动（热力图一格）：**轮次数**，不是 token。
+///
+/// 为什么只数轮次：投影里没有"每一轮用了多少 token"，按天摊 token 就是编
+/// （契约 §5.7 的聚合规则⑤）。
+class UsageDay {
+  const UsageDay({required this.date, required this.turns});
+
+  /// `YYYY-MM-DD`（**电脑侧本地时区**）。
+  final String date;
+
+  /// 那天开了几轮。
+  final int turns;
+}
+
 /// 一个项目（工作区目录）在汇总里的一行。
 class UsageProject {
   const UsageProject({
@@ -85,6 +120,8 @@ class UsageSummary {
     required this.grandTotalTokens,
     required this.bySession,
     this.byProject = const [],
+    this.totals,
+    this.byDay = const [],
   });
 
   /// 参与汇总的会话数（含全零的那些 —— "用了 0" 与 "没这项" 都不是"不存在"）。
@@ -92,6 +129,18 @@ class UsageSummary {
 
   /// 全部会话的 token 总量。
   final int grandTotalTokens;
+
+  /// 四个分项。`null` = 电脑侧没报（老连接器）—— 界面**不摆四个 0**。
+  final UsageTotals? totals;
+
+  /// 按天的轮次（升序；空表 = 电脑侧没报 / 没有历史）。
+  final List<UsageDay> byDay;
+
+  /// 参与汇总的轮次总数（= `byDay` 之和；没有 `byDay` 时是 `null`）。
+  int? get totalTurns {
+    if (byDay.isEmpty) return null;
+    return byDay.fold<int>(0, (sum, day) => sum + day.turns);
+  }
 
   /// 全部有数据的会话（**降序、不截断** —— 用量是独立页面，一页放得下）。
   final List<UsageEntry> bySession;
@@ -146,11 +195,43 @@ class UsageSummary {
         projects.add(UsageProject(path: path, tokens: tokens, sessions: count));
       }
     }
+    // 四个分项：**整个键缺席就是 null**（老连接器），而不是四项 0 ——
+    // 摆四个 0 会把"没报"说成"没用"（`memory.md` 教训 4）。
+    final rawTotals = data['totals'];
+    UsageTotals? totals;
+    if (rawTotals is Map) {
+      int pick(Object? key) {
+        final value = rawTotals[key];
+        return value is int && value >= 0 ? value : 0;
+      }
+
+      totals = UsageTotals(
+        uncachedInputTokens: pick('uncachedInputTokens'),
+        outputTokens: pick('outputTokens'),
+        cacheReadTokens: pick('cacheReadTokens'),
+        cacheWriteTokens: pick('cacheWriteTokens'),
+      );
+    }
+    // 按天的轮次：认不出的一天就跳过（不补一个 0 轮的日子）。
+    final rawDays = data['byDay'];
+    final days = <UsageDay>[];
+    if (rawDays is List) {
+      for (final item in rawDays) {
+        if (item is! Map) continue;
+        final date = item['date'];
+        final turns = item['turns'];
+        if (date is! String || date.isEmpty) continue;
+        if (turns is! int || turns < 0) continue;
+        days.add(UsageDay(date: date, turns: turns));
+      }
+    }
     return UsageSummary(
       sessions: sessions,
       grandTotalTokens: grandTotal,
       bySession: entries,
       byProject: projects,
+      totals: totals,
+      byDay: days,
     );
   }
 

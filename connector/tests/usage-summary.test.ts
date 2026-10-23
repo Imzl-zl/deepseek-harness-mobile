@@ -57,9 +57,12 @@ const ALIAS: Record<string, string> = {
 function deps({
   rows,
   usageOf,
+  trajectoryOf,
 }: {
   rows: ReturnType<typeof row>[]
   usageOf: (dshSessionId: string) => unknown
+  /** 可选：这个会话的 `trajectory` 投影（按天热力图的数据面）。 */
+  trajectoryOf?: (dshSessionId: string) => unknown
 }): HandlerDeps {
   return {
     caps: () => ({}) as never,
@@ -79,9 +82,31 @@ function deps({
         Object.keys(ALIAS).find((key) => ALIAS[key] === sid),
     },
     projections: {
-      of: async (dshSessionId: string) => ({ tokenUsage: usageOf(dshSessionId) }),
+      of: async (dshSessionId: string) => ({
+        tokenUsage: usageOf(dshSessionId),
+        ...(trajectoryOf === undefined
+          ? {}
+          : { trajectory: trajectoryOf(dshSessionId) }),
+      }),
     },
   } as unknown as HandlerDeps
+}
+
+/** 一份 `trajectory` 投影（这一层只读 `turns[].startTime`）。 */
+function trajectory(startTimes: number[]) {
+  return {
+    turns: startTimes.map((startTime, i) => ({
+      turn: i + 1,
+      startTime,
+      endTime: startTime + 1000,
+      durationMs: 1000,
+      outcome: 'completed',
+      steps: [],
+    })),
+    truncated: false,
+    droppedTurns: 0,
+    droppedSteps: 0,
+  }
 }
 
 void describe('usage.summary 聚合规则', () => {
@@ -284,5 +309,73 @@ void describe('usage.summary 聚合规则', () => {
     assert.equal(result.sessions, 0)
     assert.equal(result.grandTotalTokens, 0)
     assert.deepEqual(result.bySession, [])
+  })
+
+  void it('totals 分四项原样过线（键名是 DSH 的，连接器不翻译）', async () => {
+    const handlers = createHandlers(
+      deps({
+        rows: [row('a'), row('b')],
+        usageOf: (id) =>
+          tokenUsage(
+            id === 'a'
+              ? {
+                uncachedInputTokens: 100,
+                outputTokens: 40,
+                cacheReadTokens: 7,
+                cacheWriteTokens: 3,
+              }
+              : {
+                uncachedInputTokens: 10,
+                outputTokens: 2,
+                cacheReadTokens: 1,
+                cacheWriteTokens: 5,
+              },
+          ),
+      }),
+    )
+    const result = (await handlers['usage.summary']!({}, {} as never)) as {
+      totals: Record<string, number>
+      grandTotalTokens: number
+    }
+    assert.deepEqual(result.totals, {
+      uncachedInputTokens: 110,
+      outputTokens: 42,
+      cacheReadTokens: 8,
+      cacheWriteTokens: 8,
+    })
+    // 老字段仍然是四个分项的和（老手机只读它）。
+    assert.equal(result.grandTotalTokens, 110 + 42 + 8 + 8)
+  })
+
+  void it('byDay 跨会话按天合并轮次，日期升序', async () => {
+    // 2026-10-01 与 2026-10-02 各一条（本地时区，取当天中午避开边界）。
+    const d1 = new Date(2026, 9, 1, 12).getTime()
+    const d2 = new Date(2026, 9, 2, 12).getTime()
+    const handlers = createHandlers(
+      deps({
+        rows: [row('a'), row('b')],
+        usageOf: () => tokenUsage({ uncachedInputTokens: 1 }),
+        // b 的两轮**早于** a 的两轮：排序不能靠"会话顺序"。
+        trajectoryOf: (id) =>
+          trajectory(id === 'a' ? [d2, d2] : [d1, d1, d2]),
+      }),
+    )
+    const result = (await handlers['usage.summary']!({}, {} as never)) as {
+      byDay: { date: string; turns: number }[]
+    }
+    assert.deepEqual(result.byDay, [
+      { date: '2026-10-01', turns: 2 },
+      { date: '2026-10-02', turns: 3 },
+    ])
+  })
+
+  void it('没有 trajectory 投影 ⇒ byDay 空（不是"今天 0 轮"）', async () => {
+    const handlers = createHandlers(
+      deps({ rows: [row('a')], usageOf: () => tokenUsage({ uncachedInputTokens: 5 }) }),
+    )
+    const result = (await handlers['usage.summary']!({}, {} as never)) as {
+      byDay: unknown[]
+    }
+    assert.deepEqual(result.byDay, [])
   })
 })
