@@ -466,7 +466,7 @@ test('答完之后迟到的 cancel → 不追发第二个 outcome', { timeout: 6
   assert.deepEqual(h.results[0]?.outcome, { kind: 'result', value: 'allowed-once' })
 })
 
-test('换代窗口：还在等手机时流断了 → 不发明 outcome（结果发不回去，claim 撤掉）', { timeout: 60_000 }, async () => {
+test('换代窗口：还在等手机时流断了 → **不撤 claim**（claim 挂在挂载上，不挂在传输上）', { timeout: 60_000 }, async () => {
   const h = harness()
   await openStream(h, 'c-1')
   h.streams[0]?.push(approvalFrame())
@@ -475,8 +475,37 @@ test('换代窗口：还在等手机时流断了 → 不发明 outcome（结果�
 
   h.streams[0]?.end()
   await settle()
-  assert.deepEqual(h.results, [], '流没了就没有可回写的投递对象：这是原生"断线只撤投递"')
-  assert.equal(h.port.pending, 0, 'claim 一并撤掉（不能让手机对着一张关不掉的卡）')
+  assert.deepEqual(h.results, [], '没有可回写的投递对象：不发明 outcome')
+  assert.equal(
+    h.port.pending,
+    1,
+    'claim 不撤：DSH 换代只撤投递、不结算（`api/gateway/src/index.ts:717-721`），新 client 上来还会重投',
+  )
+  assert.equal(h.port.cancelClaim('i:approval-1'), true, '要撤只有两条路：gateway 的 cancel 或卸载')
+})
+
+test('换代窗口里手机答了 → 结果等下一代 ready 再用新 clientId 发出去（不吞掉）', { timeout: 60_000 }, async () => {
+  const h = harness()
+  await openStream(h, 'c-1')
+  h.streams[0]?.push(approvalFrame())
+  await settle()
+
+  h.streams[0]?.end()
+  await settle()
+  // 传输还没回来，手机就答了。
+  assert.equal(
+    h.port.settleClaim(SID, 'i:approval-1', [{ id: 'i:approval-1', selected: [APPROVAL_ALLOW_LABEL] }]),
+    true,
+  )
+  await settle()
+  assert.equal(h.results.length, 0, '这一代没有投递对象：先端着，不发明一个 outcome')
+
+  h.timers.box.fire?.()
+  await settle()
+  await openStream(h, 'c-2', 1)
+  await until(() => h.results.length === 1, '换代之后的结果请求')
+  assert.equal(h.results[0]?.clientId, 'c-2', '结果用**新一代**的 clientId 发（gateway 按它判投递）')
+  assert.deepEqual(h.results[0]?.outcome, { kind: 'result', value: 'allowed-once' })
 })
 
 // ---------------------------------------------------------------------------
@@ -624,7 +653,7 @@ test('计划审查（程序化提问，没有 tool/call）→ 委托，且**不 
 // 判据 5：断流 → 退避重连，在途事件仍能被处理
 // ---------------------------------------------------------------------------
 
-test('流断开 → 退避重连；gateway 重投的在途事件仍能被处理（新 clientId）', { timeout: 60_000 }, async () => {
+test('流断开 → 退避重连；在途 claim 不断，重投的同一 eventId 不造第二条 claim', { timeout: 60_000 }, async () => {
   const h = harness()
   await openStream(h, 'c-1')
 
@@ -636,7 +665,11 @@ test('流断开 → 退避重连；gateway 重投的在途事件仍能被处理�
   await settle()
 
   assert.equal(h.client?.clientId, null, '流没了就没有 clientId')
-  assert.equal(h.port.pending, 0, '这一代的投递已经作废（gateway 把我们移出投递表了）')
+  assert.equal(
+    h.port.pending,
+    1,
+    'claim 还在：断线只撤投递（`api/gateway/src/index.ts:717-721`），手机重连回来还能答',
+  )
   assert.equal(h.timers.box.fire !== null, true, '应当排了一次退避重连')
   assert.equal(h.timers.box.delay, 1000, '首次退避 1 s（抖动为 0）')
 
@@ -649,7 +682,7 @@ test('流断开 → 退避重连；gateway 重投的在途事件仍能被处理�
   // gateway 把同一条 pending event（同一个 eventId）重投给新 client（`api/gateway/src/index.ts:571`）。
   second.push(approvalFrame())
   await settle()
-  assert.equal(h.port.pending, 1, '重投的事件要重新 claim')
+  assert.equal(h.port.pending, 1, '重投同一 eventId 不该造出第二条 claim')
   assert.equal(h.port.settleClaim(SID, 'i:approval-1', [{ id: 'i:approval-1', selected: [APPROVAL_ALLOW_LABEL] }]), true)
   await until(() => h.results.length === 1, '重连之后的结果请求')
   assert.equal(h.results[0]?.clientId, 'c-2', '结果必须带**当前这一代**的 clientId')

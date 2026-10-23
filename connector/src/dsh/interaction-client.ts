@@ -262,15 +262,37 @@ export function createInteractionClient(
   const peer = connection.createPeer({ principal: { kind: 'owner' } })
   const fetchHandler = connection.createSharedFetchHandler('/api')
 
-  /** `eventId → 这条投递的取消开关`。`cancel` 帧与流断开都经由它撤掉手机侧的在途 claim。 */
+  /**
+   * `eventId → 这条投递的取消开关`。
+   *
+   * **只由 `cancel` 帧与 `dispose()` 触发** —— 流换代**不**撤它：claim 的生命周期挂在
+   * 挂载（Host 上那条 pending event）上，不挂在某一条传输上。DSH 自己就是这样：
+   * 换代只撤投递、不结算，新 client 上来还会把在途事件**重投**给新 client
+   * （`packages/api/gateway/src/index.ts:717-721`、`:571`）。
+   */
   const deliveries = new Map<string, AbortController>()
-  /** 正在进行的分批任务（不阻塞读流：一条 claim 可能等十分钟的人）。 */
+  /** 正在进行的分批任务（不阻塞读流：一条 claim 可能等十分钟的人）。**寿命 = 挂载**。 */
   const tasks = new Set<Promise<void>>()
   let generation: AbortController | null = null
   let clientId: string | null = null
+  /** 这一代的 `ready`（`reply` 在换代窗口里等它：结果等传输回来再发，不吞掉）。 */
+  let ready = deferClientId()
   let stopped = false
   let stopTimer: (() => void) | null = null
   let wake: (() => void) | null = null
+
+  function deferClientId(): { readonly promise: Promise<string>; resolve(id: string): void } {
+    let resolveOne!: (id: string) => void
+    const promise = new Promise<string>((resolve) => {
+      resolveOne = resolve
+    })
+    return {
+      promise,
+      resolve: (id) => {
+        resolveOne(id)
+      },
+    }
+  }
 
   /** gateway 的 `agentId` 就是 `Agent.id`（`packages/core/agent/src/index.ts:568` 的键）。 */
   const eventsOf = (agentId: string): readonly SessionEvent[] | undefined => {
@@ -278,7 +300,7 @@ export function createInteractionClient(
     return agents?.get(agentId as Agent['id'])?.session.snapshotEvents()
   }
 
-  /** 登记一条在途投递。`cancel` 帧与流断开都经由它撤掉手机侧的在途 claim。 */
+  /** 登记一条在途投递。`cancel` 帧与 `dispose()` 经由它撤掉手机侧的在途 claim。 */
   const track = (eventId: string, itemId: string): void => {
     const controller = new AbortController()
     controller.signal.addEventListener(
@@ -301,10 +323,12 @@ export function createInteractionClient(
    * （`packages/api/gateway/tests/gateway-stream.host.spec.ts:1402`）。
    */
   const reply = async (eventId: string, outcome: Outcome): Promise<void> => {
-    const forClient = clientId
-    if (forClient === null) {
-      // 流已经换了一代：这一代没有可回写的投递对象。
-      log?.warn('交互结果没有可回写的 client（流已换一代）', { eventId })
+    // **换代窗口**：这一代已经结束、下一代还没 ready。**等它**，而不是把结果吞掉 ——
+    // 这是补通道（传输短暂不在），不是替宿主决定：结果要么发出去，要么在卸载时放弃。
+    const forClient = clientId ?? await ready.promise
+    if (forClient === '') {
+      // `dispose()` 把等待中的 ready 解成空串：没有可回写的投递对象。
+      log?.warn('交互结果没有可回写的 client（交互客户端已卸载）', { eventId })
       return
     }
     const response = await fetchHandler.fetch(
@@ -496,6 +520,7 @@ export function createInteractionClient(
           // 开启帧必须先是 `ready`（`stream-protocol.ts:34-39`）。
           if (frame.type !== 'ready') throw new TypeError('交互 $events 流的第一帧不是 ready')
           clientId = frame.clientId
+          ready.resolve(frame.clientId)
           backoff.reset()
           log?.debug?.('交互已作为 owner client 接入 gateway', { clientId })
           continue
@@ -529,10 +554,12 @@ export function createInteractionClient(
     } finally {
       generation = null
       clientId = null
-      // 这一代的投递全部作废：gateway 已经把我们移出投递表（`:717-721`），
-      // 结果发不回去，claim 也不该继续等下去。
-      for (const eventId of [...deliveries.keys()]) cancelDelivery(eventId)
-      await Promise.allSettled([...tasks])
+      // **这一代的投递不撤**：claim 挂在挂载（Host 上那条 pending event）上，不挂在传输上。
+      // 与 DSH 同构 —— 断线只撤投递、不结算（`api/gateway/src/index.ts:717-721`），
+      // 新 client 上来会把在途事件重投给新 client（`:571`），那时 `deliveries` 里已有的
+      // eventId 会直接跳过、不重复 claim（`answer` 开头那条）。
+      // 在途的答复也不用等：它们在 `reply` 里等下一代的 `ready`（见那里的注释）。
+      ready = deferClientId()
     }
   }
 
@@ -561,13 +588,19 @@ export function createInteractionClient(
     },
     async dispose() {
       stopped = true
+      // **卸载才是终态**：在途投递全部作废（结果再也发不回去），等待中的 `ready` 解成空串，
+      // 再等挂载级的分批任务收束。这一条与"断线只撤投递"是两件事：
+      // 断线时我们还会回来，卸载时不会。
+      ready.resolve('')
       generation?.abort(new Error('交互客户端已卸载'))
+      for (const eventId of [...deliveries.keys()]) cancelDelivery(eventId)
       stopTimer?.()
       stopTimer = null
       const wakeNow = wake
       wake = null
       wakeNow?.()
       await running
+      await Promise.allSettled([...tasks])
       await peer.dispose()
     },
   }

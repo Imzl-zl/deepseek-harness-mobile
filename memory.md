@@ -260,9 +260,9 @@
     **W3** 终态只有一个来源 / **W4** 运行态改读原生，零碎 **Z1–Z6**
     （`proposed/2026-10-24-audit-cleanup-batch.md`）。
     **开工队列（用户已准 2026-10-24；每件一个提交，按"0 真机优先"排序）**：
-    ① ~~**W1** 身份面改读原生~~ **✅ 已落地（`9f1c6a4` 前后，见下条索引）**
-    ② **W2** 换代不撤在途 claim（0 真机）← **下一步**
-    ③ **Z5** 配对码关联想 → **Z2** `onOffline` 死码 → **Z1** `fullAccess` 过滤（三件都 0 真机）
+    ① ~~**W1** 身份面改读原生~~ **✅ 已落地（`4acb23c`，见下条索引）**
+    ② ~~**W2** 换代不撤在途 claim~~ **✅ 已落地（见下条索引）**
+    ③ **Z5** 配对码关联想 → **Z2** `onOffline` 死码 → **Z1** `fullAccess` 过滤（三件都 0 真机）← **下一步**
     ④ **Z4** `stats.devices` → **Z3** 匿名限流分桶（relay，0 真机）
     ⑤ **Z6a** 预设文案漂移 → **Z6b** §15 一句（0 真机）
     ⑥ **W3** 终态只有一个来源（1–2 回合）→ **W4** 运行态改读原生（1 回合，要加一条契约帧）
@@ -409,12 +409,11 @@
 12. **`presence.onOffline` 是死 API**（2026-10-23 删掉两处调用之后留下的）：生产无调用方（只有
     `presence.test.ts` 一条），注释还写着"看护要靠它收口"。同批可删的还有它的离线监听桶。
     → 工单 Z2（死码 + 过期注释一起删）。
-13. **`$events` 换代窗口**：流换代时在途 claim 会被撤（结果发不回去），此时手机点答拿
-    `interaction/not-pending` → App 撤卡，而桌面那张卡还在（得在电脑上再点一次）。
-    已写进笔记，**契约 §15 还没写**；窗口极小（进程内、只在网关源重注册 / peer 失效时）。
-    → **根因已定（2026-10-24 审计 C13）**：我们把"流换代"当成"claim 结束"；DSH 换代
-    只撤投递、不结算（`api/gateway/src/index.ts:717-721`）+ 新 client 重投（`:571`）。
-    工单 W2（换代不撤 claim，`dispose` 才撤）。
+13. ~~**`$events` 换代窗口**~~ **已修（2026-10-24，W2）**：换代**不撤**在途 claim（claim 挂在挂载上，
+    与 DSH"断线只撤投递"一致），手机在窗口里答的答复等下一代 `ready` 再用新 `clientId` 发出去；
+    `dispose()` 才是终态。判据 `connector/tests/interaction-client.test.ts`（3 条），变异校验两组
+    各恰好红 3 / 1 条。**残余窗口**（换代期间别人先答）已在笔记里如实写明。
+    笔记 `implemented/2026-10-24-claims-survive-stream-generation.md`。
 14. **内置预设文案已漂一条**（2026-10-24 审计 B13）：极简模式的描述在 DSH 是"终端和图片
     读取工具，并支持上下文压缩…"（`ui-agent-preset/src/client/locales.ts:100`），我们抄的是旧文案
     （`app/lib/model/agent_preset.dart:51`）；`app/test/agent_preset_test.dart:103-106` 复述同一份
@@ -446,7 +445,7 @@
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
 | `cd app && flutter test` | **1140 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **615 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **616 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 
@@ -497,3 +496,5 @@
   `2026-10-24-interaction-identity-from-native-ids.md`。门禁：connector **611 → 615**、
   flutter **1140**、protocol 454·26·49、boundary 360。
   顺带修：手机侧 fixtures 回放条数 16 → 15（`2da3745`，那条门禁从 `fce4f9e` 起一直是红的）。
+- 2026-10-24 `$events` 换代不撤在途 claim（claim 挂挂载；窗口里的答复等下一代 ready 再发）——
+  `2026-10-24-claims-survive-stream-generation.md`。门禁：connector **615 → 616**，其余不变。

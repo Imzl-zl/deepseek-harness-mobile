@@ -496,6 +496,10 @@ ctx.get('typertGateway').wireStream.open('$events', { args: {} }, uplink, peer, 
     `approval/asked`,§5.2)。
   - **手机断开不结算**:claim 挂在 host 上,不挂在某条连接上——手机重连回来还能答。重连后的订阅恢复会按原 seq
     重投那条 ask 事件(§5.7 的 `session.subscribe`),卡片随之回来。
+  - **`$events` 流换代也不结算**:`api/remotes` 重新注册源 / peer 失效时,连接器只是换一代投递
+    (与 DSH 的"断线只撤投递"一致,`api/gateway/src/index.ts:717-721`);在途 claim 留在表里,gateway 会把
+    同一条事件**重投**给新 client(`:571`),`eventId` 相同就不会重复 claim。手机在换代窗口里答的答复
+    **不丢**:它等下一代的 `ready` 再用新 `clientId` 发出去(不重试、不发明 outcome)。
   - **没有看护计时器**:DSH 的审批没有"等多久"这个概念(浏览器的卡一直挂到有人答或 `signal` 中止,
     `ui-approval/src/client/index.ts:59-69`),所以连接器**不造**一个超时、也**不记**"未处理":
     只有三件事能让这条 claim 结束 —— 手机答了、gateway 发 `cancel`(别人先答 / asker 取消)、本插件卸载。

@@ -71,7 +71,7 @@ Status: proposed（**结论已求证**；4 件待开工 + 1 批零碎，见文�
 | C10（待办 7） | 不是自创 | `验证缺口` | `app/lib/data/projection.dart`（异常结局 / 压缩标记的解析）；没有稳定制造失败回合的手段 | DSH 侧压缩标记是既有事件（`compaction/compaction`） | 无（能力有，场景造不出） | **保留**（要一次真机 + 一个会失败的回合，成本 1–2 回合，未开） |
 | C11（待办 11 尾巴） | **不是自创**（改判：身份拿得到，缺的是**投递**） | `未实现` | `connector/src/dsh/interaction-client.ts:368-393`（只读 `wait.callId` + 只认 `ask_user_question` 的 tool/call）；演示入口 `app/lib/ui/chat_page.dart:2385-2388`（`_enqueueDemoTakeovers`） | 计划审查是**程序化** `ask()`，无 `wait`，但**带 `intent.callId`**（`plan-mode/src/index.ts:313-330`，`callId: exec.callId` 在 `:326`）；浏览器照样弹卡（`ui-user-questions/src/client/index.ts:107-115`） | **计划审查卡在手机上不存在**（`InteractionKind.plan` 只有演示能造）。原因不是少读一个字段：手机的卡只从 `ask_user_question` 的 `tool/call` 生成，`exit_plan_mode` 只落一条普通工具行 | **不做**（原来写"改读 `intent.callId`"是**错的**：claim 一条用户看不到的交互，会把 `NO_PROVIDER` 的 fail-closed 换成永远挂起）。限制已写进契约 §15/§6.3.1；要真答需"卡来自请求"的投递（B12 升级） |
 | C12（待办 1 尾巴） | 不是自创 | `设计缺陷` | `app/lib/ui/chat_page.dart:2993`（`reverse: true`）；`chat_jumper.dart:32-34`、`chat_page.dart:2704-2723` | 未找到 DSH 对应（DSH 是 DOM 滚动，不做列表 `reverse`） | 收起/展开改变格数 ⇒ 点开的那一轮可能移出屏幕 | **保留**（390dp 上做锚点滚动的代价大于收益）；已写进 `docs/subsystems/turn-groups.md` 的边界 |
-| C13（本轮新增） | **自创** | `逻辑语义` | `connector/src/dsh/interaction-client.ts:497-504`（换代时 `cancelDelivery` 全部 + `await Promise.allSettled(tasks)`） | DSH：换代只撤**投递**、**不结算**（`api/gateway/src/index.ts:717-721`）；新 client 上来**重投**同一 `eventId`（`:571`）；重复/迟到结果是 no-op（`:696-699`）；`{kind:'next'}` 只是撤掉自己那一份投递（`:700-709`） | 我们把"这条流换代了"当成"这条 claim 结束了"——**用连接态覆盖了宿主态**。于是手机点答拿 `not-pending`、App 撤卡，而桌面那张卡还在 | **改**：换代不撤 claim（只撤投递、只换 clientId），`dispose()` 才撤；见 W2 |
+| C13（本轮新增） | **自创** | `逻辑语义` | `connector/src/dsh/interaction-client.ts:497-504`（换代时 `cancelDelivery` 全部 + `await Promise.allSettled(tasks)`） | DSH：换代只撤**投递**、**不结算**（`api/gateway/src/index.ts:717-721`）；新 client 上来**重投**同一 `eventId`（`:571`）；重复/迟到结果是 no-op（`:696-699`）；`{kind:'next'}` 只是撤掉自己那一份投递（`:700-709`） | 我们把"这条流换代了"当成"这条 claim 结束了"——**用连接态覆盖了宿主态**。于是手机点答拿 `not-pending`、App 撤卡，而桌面那张卡还在 | **改**：换代不撤 claim（只撤投递、只换 clientId），`dispose()` 才撤 —— **已落地**，见 `implemented/2026-10-24-claims-survive-stream-generation.md` |
 | C14（待办 8） | 不是自创 | `未实现` | 开工单 `proposed/2026-10-20-file-upload-shape.md` | DSH 入口 `client/file-upload/src/index.ts:105,118` | 无（范围外） | 保持（8 个触达点，别半截提交） |
 | C15（待办 1） | 不是自创 | `未实现` | `docs/subsystems/turn-groups.md` §"阶段 2" | —— | 无（产品决定：390dp 上两层组头要两次点击） | 保持（暂不做） |
 
@@ -159,7 +159,7 @@ DSH 的 `NO_PROVIDER` fail-closed 换成永远挂起。
 | 单 | 标题 | 覆盖 | 笔记 |
 |---|---|---|---|
 | ~~W1~~ | ~~身份面改读原生~~ **✅ 已落地（`2026-10-24`）** | B1、B2、B6、C11（改判）、N1、N3、N4 | `implemented/2026-10-24-interaction-identity-from-native-ids.md` |
-| W2 | 换代不撤在途 claim | C13 | `proposed/2026-10-24-claims-survive-stream-generation.md` |
+| ~~W2~~ | ~~换代不撤在途 claim~~ **✅ 已落地（`2026-10-24`）** | C13 | `implemented/2026-10-24-claims-survive-stream-generation.md` |
 | W3 | 终态身份面收口（中转分开说） | C1、C2 | `proposed/2026-10-24-terminal-identity-from-relay.md` |
 | W4 | 运行态改读原生 `api-session/status` | B5 | `proposed/2026-10-24-running-from-native-status.md` |
 | Z1–Z6 | 零碎清理（每行一个提交，无备选方案故不各自立笔记） | Z1 B4 / Z2 B7 / Z3 C3 / Z4 C4 / Z5 C5 / Z6 C6·B13 | `proposed/2026-10-24-audit-cleanup-batch.md` |
