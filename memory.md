@@ -93,13 +93,16 @@
 > 笔记 `implemented/2026-10-23-projections-belong-to-a-session.md`；真机 `y3|y4|y5-*.png`
 > 三层数字各自不同。门禁：flutter **1120**。
 >
-> **同日审查（只读，未改代码）**：三笔提交查出 4 条 Important + 7 条 Minor，**无 Critical**，
-> 开工单 `.agents/notes/proposed/2026-10-23-subagent-parent-and-model-truth-review.md`
-> （含新会话提示词、判据、变异校验、被否的替代）。两条代码项是同一个病根 ——
-> 同一事实两处取数：**模型**（连接器读 state、App 读 wire view ⇒ 顶层 `model` 永远只是
-> lastUsed）与**父级/mode**（树知道，却回目录里再查、还全表扫描反推 ⇒ 刷新窗口里点孙级
-> 显示「暂时只读」）。另两条是文档与代码相反（`remote-channel.md` 的 `session.list` 行、
-> `subagent-page.md` §7.3 D2 把已修的 refetch 缺口写成"发现缺口"）。**0 个真机回合**。
+> **同日审查 11 条已全部收口**（`ef33b49` I1 / `8173d3d` I2 / `8679df8` I3+I4 /
+> `31984d9` M1·M2·M6 / `9ec3288` M3·M4·M5·M7）：清单移入
+> `implemented/2026-10-23-subagent-parent-and-model-truth-review.md`（含落地表与两处偏离）。
+> 两条代码项是同一个病根 —— 同一事实两处取数：**模型**（连接器读宿主 state 的 `.next`
+> 恒 undefined ⇒ 顶层 `model` 永远只是 lastUsed）改成读 wire view，与 App 同一表达式；
+> **父级/mode**（树知道，却回目录里再查、还全表扫描反推 ⇒ 刷新窗口里点孙级显示
+> 「暂时只读」）改成由画出那一行的那一层交出。**0 个真机回合**。
+> 笔记 `implemented/2026-10-23-connector-model-from-wire-view.md` /
+> `implemented/2026-10-23-subagent-parent-and-mode-from-the-layer.md`。
+> 门禁：flutter **1121**（+1 条新用例）/ connector **587**（+1 条空串父级），其余不变。
 
 待办（按顺序）:
 
@@ -287,9 +290,9 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **357 项**（22 条规则自检 + 扫 98 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 21 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1120 项** |
+| `cd app && flutter test` | **1121 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **586 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **587 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**） |
 
@@ -317,3 +320,5 @@
 - 2026-10-23 子会话头部父级数据驱动（`session.list` 多一个别名形式的
   `parentSessionId`）+ 顶栏标题只显示子级名 ——
   `2026-10-23-subagent-header-parent-from-data.md`。
+- 2026-10-23 审查 11 条收口（连接器模型读 wire view / 父级与 mode 由画它的那一层交出）——
+  `2026-10-23-connector-model-from-wire-view.md`、`2026-10-23-subagent-parent-and-mode-from-the-layer.md`。
