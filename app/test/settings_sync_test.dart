@@ -54,9 +54,13 @@ const _sections = {
 };
 
 class _Client extends FakeSyncClient {
-  _Client({this.conflictOnUpdate = false});
+  _Client({this.conflictOnUpdate = false, this.includeSessionLog = true});
 
   final bool conflictOnUpdate;
+
+  /// `false` = 电脑侧**没回** `session-log-deepseek` 这个 ns（读面缺失）。
+  /// 用来钉"没读到不等于关"：那一行既不许出开关，也不许把值说成 `false`。
+  final bool includeSessionLog;
   final calls =
       <({String method, Map<String, Object?> params, String? requestId})>[];
   var describes = 0;
@@ -90,6 +94,13 @@ class _Client extends FakeSyncClient {
     switch (method) {
       case 'settings.describe':
         describes += 1;
+        if (!includeSessionLog) {
+          final copy = Map<String, Object?>.from(_sections);
+          copy['sections'] = (_sections['sections']! as List)
+              .where((s) => (s as Map)['ns'] != 'session-log-deepseek')
+              .toList();
+          return copy as T;
+        }
         return _sections as T;
       case 'repo.info':
         // 电脑侧 DSH 版本（`repo.info.dshVersion`）：宿主运行时真值。
@@ -230,6 +241,17 @@ void main() {
         scrollable: find.byType(Scrollable).first,
       );
       expect(find.text('上传 Session Log'), findsOneWidget);
+      // 读到了就**照常出开关**（对照组：证明下面那条不是"开关永远不出"）。
+      expect(
+        find.descendant(
+          of: find.ancestor(
+            of: find.text('上传 Session Log'),
+            matching: find.byType(ListTile),
+          ),
+          matching: find.byType(Switch),
+        ),
+        findsOneWidget,
+      );
       // 权限档的显示名：目录没拿到 ⇒ 照**原值**显示（不翻译、不猜中文名）。
       expect(find.text('workspace-write'), findsOneWidget);
       // 名册没拿到 ⇒ 原样显示 id。
@@ -243,6 +265,35 @@ void main() {
         ),
       );
       expect(tile.enabled, isFalse);
+    });
+
+    testWidgets('没读到那个 ns：不画开关，写"未读到"（不许画成"关"）', (tester) async {
+      final app = AppModel(client: _Client(includeSessionLog: false));
+      addTearDown(app.dispose);
+      await app.refreshSettings();
+      await tester.pumpWidget(host(app));
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.text('上传 Session Log'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      final row = find.ancestor(
+        of: find.text('上传 Session Log'),
+        matching: find.byType(ListTile),
+      );
+      // 值本身在模型层是 `null`（不是 `false`）—— 界面这里只负责别撒谎。
+      expect(app.settingsValue('session-log-deepseek', 'enabled'), isNull);
+      expect(
+        find.descendant(of: row, matching: find.byType(Switch)),
+        findsNothing,
+        reason: '没读到不许画成一个具体状态（"关"）',
+      );
+      expect(
+        find.descendant(of: row, matching: find.text('未读到')),
+        findsOneWidget,
+      );
     });
 
     testWidgets('目录在：显示目录里的名字，点开是选择器', (tester) async {

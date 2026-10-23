@@ -245,8 +245,12 @@ class SettingsPage extends StatelessWidget {
               icon: 'share',
               label: '上传 Session Log',
               note: '帮助改进 DeepSeek 模型与产品；只在使用官方模型 API 时生效',
-              value:
-                  app.settingsValue('session-log-deepseek', 'enabled') == true,
+              // **没读到就是 `null`，不是 `false`**：画成"关"会让用户以为
+              // 这项被显式关掉了（读面缺失时它一次都没读到过）。
+              value: app.settingsOf('session-log-deepseek') == null
+                  ? null
+                  : app.settingsValue('session-log-deepseek', 'enabled') ==
+                        true,
               onChanged: app.settingsOf('session-log-deepseek') == null
                   ? null
                   : (value) => unawaited(_setSessionLog(context, app, value)),
@@ -537,15 +541,40 @@ class _SettingSwitchRow extends StatelessWidget {
   final String icon;
   final String label;
   final String note;
-  final bool value;
+
+  /// `null` = **没读到**（电脑侧没回这个 ns / 连不上）。
+  ///
+  /// 不许把"不知道"画成"关"：`null == true` 是 `false`，界面于是给出一个
+  /// 从未读到过的具体状态（memory.md 第八条教训"生产路径上的假数据"）。
+  /// 未读到时**不画开关**，trailing 写"未读到" —— 与旁边三项同一个口径。
+  final bool? value;
   final ValueChanged<bool>? onChanged;
 
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
+    final known = value;
+    if (known == null) {
+      return ListTile(
+        dense: true,
+        leading: DshIcon(icon, size: 18, color: c.labelSecondary),
+        title: Text(
+          label,
+          style: TextStyle(fontSize: 14, color: c.labelPrimary),
+        ),
+        subtitle: Text(
+          note,
+          style: TextStyle(fontSize: 11, color: c.labelTertiary),
+        ),
+        trailing: Text(
+          '未读到',
+          style: TextStyle(fontSize: 13, color: c.labelCaption),
+        ),
+      );
+    }
     return SwitchListTile.adaptive(
       dense: true,
-      value: value,
+      value: known,
       onChanged: onChanged,
       secondary: DshIcon(icon, size: 18, color: c.labelSecondary),
       title: Text(label, style: TextStyle(fontSize: 14, color: c.labelPrimary)),
