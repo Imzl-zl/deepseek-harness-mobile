@@ -266,7 +266,7 @@ DSH 的根会话不给面包屑（`:801`），我们同一条：没有父级 ⇒
 | 项 | 静态结论 | 依据 |
 |---|---|---|
 | A6 一次性子会话只读框 | **逻辑成立** | 判据是 catalog 行的 `mode == one-shot`，与 `continuable` 分两支；`subagent_enter_test.dart` 两条用例（一次性 / 模式未知）都在跑。未造出只是本 profile 的后端只产 `continuable` |
-| D2 历史翻页 | **发现缺口** | 翻页本身两端都全：连接器有 `session.page` + `refetchThresholdBytes`（默认 1 MiB，`connector/src/config.ts:61`）与 `session.refetch`（`handlers.ts:1001`）；手机侧 `recovery.dart` 会按 `hasMore` 累积快照。**但 `sync_client_impl.dart:956` 把 `refetch` 项直接跳过、从不调 `session.refetch`** ⇒ 超过 1 MiB 的条目会在会话里留下一个**静默的洞**（不报错、不缺页、就是少一条） |
+| D2 历史翻页 | **成立** | 两端都全：连接器有 `session.page`（`connector/src/handlers.ts:1085`）+ `refetchThresholdBytes`（默认 1 MiB，`connector/src/config.ts:61`）与 `session.refetch`（`handlers.ts:1098`）；手机侧 `recovery.dart:225,251` 按 `hasMore` 累积快照，`refetch` 标记**逐条补取**（`sync_client_impl.dart:968-994` 的 `_eventsOfPage` 调 `:997-1011` 的 `refetch`，补完按 seq 归位），补取失败如实报（`sync_client_impl.dart:949-950` 的 `SessionPage.failure`）。判据见 `memory.md` 已知缺口 10 |
 | D3 异常结局 / 重试 | **结局成立；"重试"入口不做** | `TurnOutcomeKind` 四档都有渲染（`chat_turns.dart:697` 的 error/interrupted/maxTokens/signedOut）；自动重试有 `ModelRetryItem` 的 `RetryRow`（`:741-768`）。查了 DSH Web：`ui-conversation` 里**也没有"手动重试失败回合"的入口**，所以这不是我们对齐漏了，**不做** |
 | E3 拖动排序 | **逻辑成立** | 纯函数 `dropAnchorInDisplayOrder`（拖到自己 / 跨分区 / 顺序没变都返回 null）+ 5 条模型用例 + 3 条抽屉交互用例；真机未验只是"同一工作区两条可见会话"这个数据条件凑不出 |
 
