@@ -104,6 +104,17 @@
 > `implemented/2026-10-23-subagent-parent-and-mode-from-the-layer.md`。
 > 门禁：flutter **1121**（+1 条新用例）/ connector **587**（+1 条空串父级），其余不变。
 
+> **2026-10-23（本轮）原型子智能体面板同步 + `verify-subs.mjs`** —— **0 个真机回合**（只跑 headless CDP）：
+> 原型 `renderSubs` 从"三条平铺演示行"换成**目录树**。`SUBS` 改成**按父会话分层的直接子级表**
+> （可续聊在跑 / 一次性 / external / 目录读失败 / 已知空叶 / 可展开的孙级 + 曾孙），
+> 展开才懒加载、三态各一句话（加载中 / 失败+重试 / 读到空）、行 = 活动点 + label + 第二行
+> （`title · mode · activity · 时长`）+ 右列 token + 行尾 44×44、缩进 12 只画竖线；
+> 点行 = 进入（收起抽屉 + 一句提示）、点行尾 = 只展开；收起连带收整枝。
+> 面板 root = **当前会话**（点抽屉里的会话行就换 root，「没有子智能体。」那一态走这条路）。
+> 新脚本 `mock/proto/tools/verify-subs.mjs` **41 项**。
+> 笔记 `implemented/2026-10-23-proto-subagent-panel-tree.md`；
+> `docs/subsystems/subagent-page.md` 的 §6 第 3 条差异（"原型还是平的"）已删、§3.1 行字号回到 12/11、§7 加原型验证行。
+
 待办（按顺序）:
 
 1. **轮组阶段 1 已落地**（整轮分组 + 折叠过程 + 「工作步骤收起时机」两档）——
@@ -135,15 +146,12 @@
    逐层返回与面板 root 都跟着真值走。
 7. **异常结局 / 重试 / 压缩标记**（仍未造出）：没有稳定制造**失败**回合的手段（取消 ≠ 失败）；
    压缩标记未出现。历史翻页这轮用 B 的实验验掉了（见下），附件 D1 已过。
-8. **`mock/proto` 子代理面板还没跟上落地端**（2026-10-21 有意留的差异，用户已确认先提交）：
-   原型 `renderSubs` 还是平铺演示行，App 已是「直接子级 + 展开懒加载」的树 + 三态 + token + 详情行。
-   同步要**一次做完**（disclosure、三态演示数据、token 与详情行、`verify-subs.mjs`），半截做会留下假面板。
-9. **「上传文件」** —— 开工单在 `.agents/notes/proposed/2026-10-20-file-upload-shape.md`
+8. **「上传文件」** —— 开工单在 `.agents/notes/proposed/2026-10-20-file-upload-shape.md`
    （DSH 侧入口 `packages/client/file-upload/src/index.ts:105,118`；共 8 个触达点，**别半截提交**）。
-10. ~~历史翻页的 `refetch` 标记被丢弃~~ **已修（2026-10-22）**：`SyncClient.refetch` + `page()` 合并 +
-    失败如实报（`SessionPage.failure`）。真机实验：把 `refetchThresholdBytes` 调到 1，
-    61 条消息的会话滚到顶 → 翻页 + 逐条补取 → **会话开头（系统提示词 + 第一句 prompt）出现在手机上**。
-11. ~~失败回合没有"手动重试"入口~~ **不做**：DSH Web 的 `ui-conversation` 也没有这个入口。
+9. ~~历史翻页的 `refetch` 标记被丢弃~~ **已修（2026-10-22）**：`SyncClient.refetch` + `page()` 合并 +
+   失败如实报（`SessionPage.failure`）。真机实验：把 `refetchThresholdBytes` 调到 1，
+   61 条消息的会话滚到顶 → 翻页 + 逐条补取 → **会话开头（系统提示词 + 第一句 prompt）出现在手机上**。
+10. ~~失败回合没有"手动重试"入口~~ **不做**：DSH Web 的 `ui-conversation` 也没有这个入口。
 
 别当缺口（定案，别再试）:
 
@@ -289,12 +297,12 @@
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **357 项**（22 条规则自检 + 扫 98 个 Dart 文件） |
-| `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 21 个工具脚本无硬编码盘符 |
+| `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 22 个工具脚本无硬编码盘符 |
 | `cd app && flutter test` | **1121 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **587 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
-| CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**） |
+| CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**） |
 
 **项数的唯一出处是 `tools.md`**；**改断言必须做一次变异校验**（故意破坏不变量，确认**恰好**那一条红）。
 
@@ -322,3 +330,5 @@
   `2026-10-23-subagent-header-parent-from-data.md`。
 - 2026-10-23 审查 11 条收口（连接器模型读 wire view / 父级与 mode 由画它的那一层交出）——
   `2026-10-23-connector-model-from-wire-view.md`、`2026-10-23-subagent-parent-and-mode-from-the-layer.md`。
+- 2026-10-23 原型子智能体面板同步落地端（目录树 + 三态 + 44×44 + 收起整枝）+ `verify-subs.mjs` 41 项 ——
+  `2026-10-23-proto-subagent-panel-tree.md`。

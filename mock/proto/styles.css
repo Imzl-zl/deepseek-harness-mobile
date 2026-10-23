@@ -628,10 +628,11 @@ button:focus-visible {
 .livechip:active {
   background: var(--active);
 }
-/* chip 前导槽里的"在跑"信号:DSH 的任务触发条就是一枚转圈点
+/* 前导槽里的"在跑"信号:DSH 的任务触发条就是一枚转圈点
    (JobListAction.tsx:534 的 `<StateDot state="ongoing">`),这里用同出自 DSH 图标集的
-   `loading` 那条弧旋转,周期照 StateDot 的 1.5s(StateDot.module.css:44)。 */
-.livechip-dot {
+   `loading` 那条弧旋转,周期照 StateDot 的 1.5s(StateDot.module.css:44)。
+   子智能体行里的活动点也用它(同一个"在跑"信号,不另画一枚)。 */
+.spin-arc {
   display: inline-flex;
   color: var(--on3);
   animation: livechip-spin 1.5s linear infinite;
@@ -642,7 +643,7 @@ button:focus-visible {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .livechip-dot {
+  .spin-arc {
     animation: none;
   }
 }
@@ -2721,72 +2722,40 @@ button:focus-visible {
 }
 
 /* ============================================================ 状态圆点(StateDot)
-   done 绿 / warning 琥珀 / ongoing 转圈 / error 红 / idle 中性。 */
+   done 绿 / warning 琥珀 / ongoing 转圈 / error 红 / idle 中性。
+   实心态照 DSH 的 `.dot`:`10px` 布局槽里画**一个 6px 的核**
+   (ui-primitives/StateDot.module.css:1-15 的 `inset:20%` + `currentColor`)——
+   App 的 `DshStateDot` 同一条(`app/lib/ui/dsh_state_dot.dart` 文件头)。
+   任务面板与子智能体面板共用这一枚,不各画一个"差不多大"的点。 */
 .sdot {
+  position: relative;
   width: 10px;
   height: 10px;
-  border-radius: 50%;
   flex: none;
   display: inline-block;
 }
+.sdot::after {
+  content: '';
+  position: absolute;
+  inset: 20%;
+  border-radius: 50%;
+  background: currentColor;
+}
 .sdot[data-state="done"] {
-  background: var(--ok);
+  color: var(--ok);
 }
 .sdot[data-state="warning"] {
-  background: var(--warn);
+  color: var(--warn);
 }
 .sdot[data-state="error"] {
-  background: var(--err);
+  color: var(--err);
 }
 .sdot[data-state="idle"] {
-  background: var(--layer3);
+  color: var(--layer3);
 }
-/* StateDot 的 ongoing 转圈:数值照抄 ui-primitives/StateDot.module.css
-   (r=9.5、stroke 2、track opacity .25、arc dasharray 12 150、spin 1.5s linear) */
-.sdot-spin {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  color: var(--on3); /* DSH:spinner 固定 label-tertiary,不跟随状态色 */
-  stroke: currentColor;
-}
-.sdot-spin circle {
-  fill: none;
-  stroke-width: 2;
-  stroke-linecap: round;
-}
-.sdot-spin .trk {
-  opacity: 0.25;
-}
-.sdot-spin .arc {
-  stroke-dasharray: 12 150;
-}
-.sdot-spin .motion {
-  transform-origin: center;
-  animation: sdot-spin 1.5s linear infinite;
-}
-.sdot-spin .arc {
-  animation: sdot-dash 1.5s ease-in-out infinite;
-}
-@keyframes sdot-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@keyframes sdot-dash {
-  0% {
-    stroke-dasharray: 12 150;
-    stroke-dashoffset: 0;
-  }
-  50% {
-    stroke-dasharray: 24 150;
-    stroke-dashoffset: -6;
-  }
-  100% {
-    stroke-dasharray: 12 150;
-    stroke-dashoffset: 0;
-  }
-}
+/* 转圈态不在这张表里:DSH 的 `ongoing` 是"整环 + 弧",而图标集里最接近且同源的是
+   `loading` 那一枚 —— 用 `.spin-arc`(与顶栏 chip 同一枚,1.5s 匀速)。
+   App 的 `DshStateDot` 同一条取舍(`app/lib/ui/dsh_state_dot.dart` 文件头)。 */
 
 /* 图标在按钮/胶囊里统一居中对齐 */
 .ib svg,
@@ -4064,6 +4033,144 @@ button:focus-visible {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(86, 134, 254, 0.22);
   transition: border-color var(--d2) var(--ease), box-shadow var(--d2) var(--ease);
+}
+
+/* ============================================================ 子智能体目录树(ui-subagent)
+   结构照 DSH 的 `CatalogRows`(SubagentHeaderLineage.tsx:190-408):
+   行 = 活动点 + label + 第二行 + 右列指标 + disclosure。
+   **排布按触屏重做**(docs/subsystems/subagent-page.md §3.1 的四条偏离):
+   行尾 44×44 展开钮、不预留 disclosure 槽、右列只放 token、缩进 12 且只画竖线。 */
+.slist {
+  padding: 4px 0 12px;
+}
+.sub-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  /* 左 9 留给活动点(Web 的 `padding:6px 7px 6px 9px`,module.css:147);
+     右 0 让 44 的展开钮贴到行尾 —— 右抽屉贴右缘,那一侧是拇指够得到的地方 */
+  padding: 0 0 0 9px;
+  text-align: left;
+  color: var(--on);
+}
+.sub-row[data-sub-enter]:active {
+  background: var(--hover);
+}
+/* 外部任务不可进入(Web 的 `open()` 第一行就 return),所以不给按压反馈 */
+.sub-row[aria-disabled="true"] {
+  color: var(--on2);
+}
+/* 活动点:14×17 的槽(Web 的 `.rowActivitySlot`,module.css:177-184) */
+.sub-dot {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 17px;
+}
+.sub-m {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 0;
+}
+.sub-l1,
+.sub-l2 {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 行字号 12 / 11(Web 是 12 / 10;半点字号在 2026-10-22 的字号批次里已收敛为整数,
+   App 的 `_SubagentRow` 同一条) */
+.sub-l1 {
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--on);
+}
+.sub-l2 {
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--cap);
+}
+/* 右列只放 token 一个数(时长并进第二行):右对齐 + 等宽数字最好扫 */
+.sub-tok {
+  flex: none;
+  padding-left: 8px;
+  font-size: 11px;
+  color: var(--cap);
+  font-variant-numeric: tabular-nums;
+}
+/* 行尾展开钮:可点区 44×44。Web 把它放在 label 左边、14×17(module.css:186-216)——
+   鼠标能点 14px,手指不行;而且左侧那枚紧贴整行的"进入"区,两种误触都会发生。 */
+.sub-exp {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  color: var(--on3);
+}
+.sub-exp svg {
+  transition: transform var(--d2) var(--ease);
+}
+.sub-exp.is-open svg {
+  transform: rotate(90deg);
+}
+/* 不可展开的行:行尾留 9 与左内边距对称,**不预留 44**(Web 的 reserveDisclosure
+   是为了对齐左缘 label;这里左缘由活动点占住已经对齐) */
+.sub-gap {
+  flex: none;
+  width: 9px;
+}
+/* 子级容器:缩进 12 + 一条竖线(Web 是 16 + 每行一条短横线,module.css:288-329;
+   300dp 里每层 16 到第三层就吃掉 48dp) */
+.sub-kids {
+  margin-left: 12px;
+  padding-left: 4px;
+  border-left: 0.5px solid var(--l2);
+}
+/* 提示行(Web 的 `.notice`,module.css:331-337):加载中 / 空态 */
+.sub-note {
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--cap);
+}
+/* 错误行:一句「无法加载子智能体」+「重试」。**原始错误不进这一行** ——
+   它进 AppModel.lastError,这一行只说用户能做的下一件事(subagent-page.md §2) */
+.sub-err {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--err);
+}
+.sub-retry {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 15px;
+  color: inherit;
+  font-size: 12px;
+}
+.sub-retry:active {
+  background: var(--hover);
+}
+.sub-empty {
+  padding: 24px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--cap);
+  text-align: center;
 }
 
 /* ============================================================ 侧抽屉入口(对话流里一行)

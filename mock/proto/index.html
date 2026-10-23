@@ -365,9 +365,11 @@
         </div>
       </div>
 
-      <!-- 面板 3:子智能体 -->
+      <!-- 面板 3:子智能体 —— **目录树**(直接子级 + 展开才懒加载孙级),
+           结构与判据见 docs/subsystems/subagent-page.md §2/§3;渲染在 app.js 的 renderSubs。
+           root = 当前会话(抽屉里选中哪一行就是哪一行),所以这里只有一个空容器。 -->
       <div class="side-panel" id="panelSubs">
-        <div class="file-view" id="subsList"></div>
+        <div class="file-view slist" id="subsList" aria-label="子智能体会话"></div>
       </div>
     </section>
 
@@ -464,7 +466,7 @@
         <div class="drow-actions">
           <button class="arc"><span data-icon="archive" data-icon-size="18"></span><span>归档</span></button>
         </div>
-        <button class="drow is-on" data-pinned="1">
+        <button class="drow is-on" data-pinned="1" data-sid="sess-mobile">
           <span class="dot"></span>
           <span class="m"><span class="t">手机端控制电脑DSH方案</span><span class="p">抽屉 + 文件预览已按真机手感重做</span></span>
           <span class="drow-pin" data-icon="pinFill" data-icon-size="12" title="已置顶"></span>
@@ -476,7 +478,7 @@
         <div class="drow-actions">
           <button class="arc"><span data-icon="archive" data-icon-size="18"></span><span>归档</span></button>
         </div>
-        <button class="drow">
+        <button class="drow" data-sid="sess-auth">
           <span class="dot"></span>
           <span class="m"><span class="t">重构鉴权状态机</span><span class="p">已完成 · 12 轮</span></span>
           <span class="tm">14:20</span>
@@ -489,7 +491,7 @@
         <div class="drow-actions">
           <button class="arc"><span data-icon="archive" data-icon-size="18"></span><span>归档</span></button>
         </div>
-        <button class="drow">
+        <button class="drow" data-sid="sess-diff">
           <span class="dot"></span>
           <span class="m"><span class="t">修复 diff 渲染越界</span><span class="p">已完成 · 5 轮</span></span>
           <span class="tm">昨天</span>
@@ -500,7 +502,7 @@
         <div class="drow-actions">
           <button class="arc"><span data-icon="archive" data-icon-size="18"></span><span>归档</span></button>
         </div>
-        <button class="drow">
+        <button class="drow" data-sid="sess-bridge">
           <span class="dot"></span>
           <span class="m"><span class="t">接入 bridge 只读会话</span><span class="p">已完成 · 8 轮</span></span>
           <span class="tm">昨天</span>
@@ -513,7 +515,7 @@
         <div class="drow-actions">
           <button class="arc"><span data-icon="archive" data-icon-size="18"></span><span>归档</span></button>
         </div>
-        <button class="drow">
+        <button class="drow" data-sid="sess-token">
           <span class="dot"></span>
           <span class="m"><span class="t">抽取 DSH 设计 token</span><span class="p">已完成 · 3 轮</span></span>
           <span class="tm">周一</span>

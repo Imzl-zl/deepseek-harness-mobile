@@ -102,7 +102,7 @@
 | 右列 | 两行小字：token / 时长（`module.css:248-264`） | **只放 token 一个数** | 右列两行吃 70dp（23%），10px 小字在手机上既小又不齐；数字右对齐最好扫 |
 | 时长 | 右列第二行 | 并进详情行（`… · 1分05秒`） | 它是"多久"的短语，与 mode / activity 读在一起更自然 |
 | 缩进 / 树线 | 16 + 每行 12px 短横线（`module.css:288-329`） | **12** + 只画竖线 | 300dp 里每层 16 到第三层就吃掉 48dp；短横线是噪音 |
-| 行字号 | 12 / 10 | 12.5 / 11 | 与右抽屉任务面板同一条偏离 |
+| 行字号 | 12 / 10 | 12 / 11 | 与右抽屉任务面板同一条偏离 |
 | "进入"箭头 | 行尾另有一枚（侧栏按钮，`:356-373`） | **没有** | 整行都是进入区，行尾已经是展开按钮；同一侧两个箭头两个含义会读乱 |
 
 ## 4. 子会话顶栏
@@ -197,11 +197,6 @@ DSH 的根会话不给面包屑（`:801`），我们同一条：没有父级 ⇒
 2. **右侧栏子智能体聊天（`openChildAside`）**：Web 在右侧栏内嵌同一个子会话
    （`ui-subagent/src/client/index.ts:64-69`）。手机不做：右下角抽屉里再嵌一个会话，
    300dp 宽读不了。入口本身留在目录行（点行进入主对话区）。
-3. **`mock/proto/` 的子代理面板仍是平的演示列表**（`SUBS` 三条 + 进行中/已结束分组，
-   `mock/proto/app.js` 的 `renderSubs`）。本期只改 Flutter 落地端；两边的结构差异
-   在此登记，**面板结构以本文件与 `app/lib/ui/subagent_tree.dart` 为准**。
-   同步原型要一起做：disclosure 展开、三态演示数据、token / 第二行指标，
-   以及一个能跑通的验证脚本（`verify-proto.mjs` 现有项数不含子代理树）。
 
 ## 7. 验证
 
@@ -214,6 +209,7 @@ DSH 的根会话不给面包屑（`:801`），我们同一条：没有父级 ⇒
 | `cd app && flutter test test/subagent_metrics_refresh_test.dart` | **打开面板 / 回合结束各重拉一次 `session.list`**（否则真机上指标停在连上那一刻） |
 | `cd app && flutter test test/side_pane_test.dart` | 右抽屉装配（子智能体面板 = 调用方给的树） |
 | `cd connector && pnpm test` | 子会话地址（`resolveSessionAddress` / 订阅 / 翻页）与 `subagent.prompt` 的父级来源 |
+| `node mock/proto/tools/verify-subs.mjs` | **原型**面板：root 只有直接子级 / 展开才读 / 三态三句话 / 已知空叶 / external / 行规格（活动点 · 第二行 · token · 44×44）/ 收起整枝 / 点行 = 进入（41 项，需 headless） |
 
 ### 7.1 真机验收（2026-10-21 晚，`DSH_HOME=D:\tmp\dsh-e2e`）
 

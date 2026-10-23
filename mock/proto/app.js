@@ -1588,9 +1588,10 @@
 
   function jobDot(state) {
     const s = JOB_DOT[state] || "idle";
+    /* 转圈用图标集的 `loading` 那一枚(与子智能体行、顶栏 chip 同一枚 `.spin-arc`):
+       DSH 的 ongoing 是"整环 + 弧",图标集里没有这个字形,手绘一套就是第二份真值。 */
     return s === "ongoing"
-      ? '<svg class="sdot-spin" viewBox="0 0 24 24" aria-hidden="true"><g class="motion">' +
-          '<circle class="trk" cx="12" cy="12" r="9.5"/><circle class="arc" cx="12" cy="12" r="9.5"/></g></svg>'
+      ? '<span class="spin-arc" data-icon="loading" data-icon-size="14"></span>'
       : `<span class="sdot" data-state="${s}"></span>`;
   }
 
@@ -1632,20 +1633,6 @@
           <span class="out">${esc2(j.out)}</span></div>`;
   }
 
-  /* 活组永远在上;摘要行只显示前两条正在跑的 label(默认收起,不占屏) */
-  function jobsSummary() {
-    const live = JOBS.filter(isLive);
-    if (!live.length) return "";
-    const names = live.slice(0, 2).map((j) => j.label).join(" · ");
-    return (
-      '<span class="jobs-sum">' +
-      (live.length === 1 ? jobDot(live[0].state) : "") +
-      `<span class="nm">${esc2(names)}</span>` +
-      (live.length > 2 ? `<span>+${live.length - 2}</span>` : "") +
-      "</span>"
-    );
-  }
-
   function jobsHtml() {
     const live = JOBS.filter(isLive);
     const settled = JOBS.filter((j) => !isLive(j));
@@ -1665,35 +1652,331 @@
   const jobsList = $("#jobsList");
   const subsList = $("#subsList");
 
-  /* 子代理(DSH 是「N 个子智能体」折叠区,和任务同一套行样式) */
-  const SUBS = [
-    {
-      id: "s1",
-      name: "Extract DSH icon paths",
-      task: "从 DSH 源码里抽取真实图标 · 可继续",
-      state: "completed",
-      dur: 537,
-      status: "已完成",
-      out: "100 个图标 · 验证脚本 37 项全 PASS",
+  /* ============================================================ 子智能体目录树(ui-subagent)
+     结构照 DSH 的 `CatalogRows`
+     (`packages/client/ui-subagent/src/client/SubagentHeaderLineage.tsx:190-408`):
+     一层的目录**只含直接子级**(`packages/subagent/subagent/src/catalog.ts:111-131`),
+     孙级要**展开才再读一次那一层**(`toggleBranch` → `refreshProjection`,同文件 `:570-577`)。
+     所以演示数据是一张**按父会话分层**的表,每层自带三态:
+
+       · 表里没有 = 已读到空(演示里那些会话/层级确实没有子级);
+       · 写 `loading` = 还没读过(点 disclosure 才读);
+       · 写 `error` = 那一层读不回来。
+
+     三态、已知空叶与行规格的判据见 `docs/subsystems/subagent-page.md` §2/§3。
+     Note: 为什么原型必须与落地端同形(而不是各留一份演示) —— 见
+     .agents/notes/implemented/2026-10-23-proto-subagent-panel-tree.md */
+  const SUBS = {
+    /* 当前会话「手机端控制电脑DSH方案」的直接子级:
+       可续聊(在跑) / 一次性(已知空叶) / 外部任务 / 目录读失败 */
+    "sess-mobile": {
+      state: "ready",
+      entries: [
+        { id: "sub-icon", createdAt: 0, mode: "continuable", label: "抽取 DSH 图标路径" },
+        { id: "sub-empty", createdAt: 0, mode: "one-shot", label: "调研本机运行模式" },
+        { id: "sub-ext", createdAt: 0, mode: "external", label: "跨仓库回归" },
+        { id: "sub-broken", createdAt: 0, mode: "continuable", label: "重写抽屉手势" },
+      ],
     },
-    {
-      id: "s2",
-      name: "Research rikkahub standalone mode",
-      task: "研究开源安卓 AI 聊天 App 的本机运行模式",
-      state: "completed",
-      dur: 334,
-      status: "已完成",
-      out: "docs/standalone-mode-notes.md(921 行)",
+    /* 还没读过:展开那一刻才读(演示里先看到「正在加载子智能体…」) */
+    "sub-icon": { state: "loading", entries: [] },
+    "sub-icon-grand": { state: "loading", entries: [] },
+    /* 读失败:那一层的目录在电脑侧读不回来 */
+    "sub-broken": { state: "error", entries: [] },
+  };
+
+  /* 子会话自己的投影提示 —— 子会话 `session.list` 行的
+     `running` / `subagentTiming` / `tokenUsage` / `title`(见 subagent-page.md §1)。
+     **没给的字段整段不出现**:不拿本地时钟凑时长,也不摆 `0 tok`。 */
+  const SUB_META = {
+    "sub-icon": {
+      running: true,
+      title: "图标链路",
+      timing: { settledMs: 0, since: Date.now() - 125000, through: Date.now(), lastTurnCompleted: false },
+      tokens: { uncachedInput: 12000, output: 3400, cacheRead: 25000, cacheWrite: 1300 },
     },
-    {
-      id: "s3",
-      name: "Research DSH plugins and jobs",
-      task: "从移动端视角查插件体系与后台任务",
-      state: "running",
-      started: Date.now() - 173000,
-      out: "正在读 ui-plugin-manager / ui-jobs / extensions…",
+    "sub-empty": {
+      title: "独立模式调研",
+      timing: { settledMs: 334000, lastTurnCompleted: true },
+      tokens: { uncachedInput: 3000, output: 900, cacheRead: 8000, cacheWrite: 400 },
     },
-  ];
+    "sub-ext": {
+      title: "跨仓库回归",
+      tokens: { uncachedInput: 6000, output: 1200, cacheRead: 1500, cacheWrite: 200 },
+    },
+    /* 目录读失败的那一行:token 投影**在、但四桶全零** —— "还没用"不能摆成 `0 tok`
+       (本仓第八条教训 4:字段齐全但全零,判空只查 `null` 就会漏) */
+    "sub-broken": {
+      title: "抽屉手势",
+      timing: { settledMs: 12000, lastTurnCompleted: false },
+      tokens: { uncachedInput: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    },
+    "sub-icon-grand": {
+      title: "核对图标几何",
+      timing: { settledMs: 9000, lastTurnCompleted: true },
+      tokens: { uncachedInput: 800, output: 200, cacheRead: 200, cacheWrite: 0 },
+    },
+  };
+
+  /* 电脑侧的答复。`sub-icon` 第一次展开读回一条孙级、再展开它读回一条曾孙级;
+     `sub-broken` 那一层**每次读都失败** —— 所以「重试」是"重读这一层",不是"重试到成功"
+     (subagent-page.md §2 最后一条)。 */
+  const SUB_READ = {
+    "sub-icon": () => ({
+      state: "ready",
+      entries: [{ id: "sub-icon-grand", createdAt: 0, mode: "continuable", label: "核对图标几何" }],
+    }),
+    "sub-icon-grand": () => ({
+      state: "ready",
+      entries: [{ id: "sub-icon-great", createdAt: 0, mode: "continuable", label: "复查 44×44 命中区" }],
+    }),
+    "sub-broken": () => ({ state: "error", entries: [] }),
+  };
+  /* 演示用的往返延迟:加载态要看得见,但不能慢到像卡住 */
+  const SUB_READ_MS = 520;
+
+  /* 面板 root = **当前会话**(App 的 `SubagentTree(rootSid: 当前会话)`)。 */
+  let curSid = "sess-mobile";
+  /* 展开着的层(Web 的 `expanded`,默认全收起) */
+  const subExpanded = new Set();
+
+  const subCatalog = (sid) => SUBS[sid] || { state: "ready", entries: [] };
+  const subEntries = (sid) => subCatalog(sid).entries;
+  const subMeta = (id) => SUB_META[id] || {};
+  const subEntry = (id) => {
+    for (const cat of Object.values(SUBS)) {
+      const hit = cat.entries.find((e) => e.id === id);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const subIsExternal = (id) => {
+    const e = subEntry(id);
+    return !!e && e.mode === "external";
+  };
+  /* 已知空叶 = 那一层**成功读到且为空**;`loading` / `error` 都不是证据
+     (`SubagentHeaderLineage.tsx:196-198` 的 `isKnownLeaf`)。 */
+  const subIsKnownLeaf = (sid) => {
+    const c = subCatalog(sid);
+    return c.state === "ready" && c.entries.length === 0;
+  };
+  const subCanExpand = (id) => !subIsExternal(id) && !subIsKnownLeaf(id);
+  const subRunningOf = (sid) => subEntries(sid).filter((e) => subMeta(e.id).running).length;
+  const subAnyRunning = () => Object.keys(SUB_META).some((id) => subMeta(id).running);
+
+  /* mode 词照 DSH 的 zh 词典(`ui-subagent/src/client/locales.ts:26-29`) */
+  const SUB_MODE = { continuable: "可继续", "one-shot": "一次性", external: "外部任务", unknown: "模式未知" };
+  /* 活动态词(`locales.ts:31-33`);**外部任务没有活动态段**(`SubagentHeaderLineage.tsx:252`) */
+  const SUB_ACTIVITY = { running: "正在运行", completed: "已完成", inactive: "当前未运行" };
+
+  const subModeText = (mode) => SUB_MODE[mode] || SUB_MODE.unknown;
+
+  /* 活动态判据照 Web(`SubagentHeaderLineage.tsx:250-256`):
+     在跑 ⇒ running;停了且最近一轮正常完成 ⇒ completed;否则 inactive。 */
+  const subActivity = (id) => {
+    const m = subMeta(id);
+    if (m.running) return "running";
+    if (!subIsExternal(id) && m.timing && m.timing.lastTurnCompleted) return "completed";
+    return "inactive";
+  };
+  const subActivityText = (id) => (subIsExternal(id) ? "" : SUB_ACTIVITY[subActivity(id)]);
+
+  /* 时长:逐字照 Web 的 `activityDuration`(`SubagentHeaderLineage.tsx:77-91`)——
+     没有 `active` 就是 settledMs;在跑 = settled + (now − since);
+     停了 = settled + (through − since),**不再长**。 */
+  function subDurationMs(id, now) {
+    const m = subMeta(id);
+    const t = m.timing;
+    if (!t) return null;
+    if (t.since == null) return t.settledMs || 0;
+    const end = m.running ? now : t.through == null ? t.since : t.through;
+    return (t.settledMs || 0) + Math.max(0, end - t.since);
+  }
+
+  /* 时长文字:模板逐字照 `ui-subagent/src/client/locales.ts:8-17`
+     (与 App 的 `formatSubagentDuration` 同一套:整秒起步,按天/月/年降精度)。 */
+  function fmtSubDur(ms) {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    const totalHours = Math.floor(totalMinutes / 60);
+    const days = Math.floor(totalHours / 24);
+    const seconds = totalSeconds % 60;
+    const minutes = totalMinutes % 60;
+    const hours = totalHours % 24;
+    const ss = String(seconds).padStart(2, "0");
+    const mm = String(minutes).padStart(2, "0");
+    if (days >= 365) {
+      const years = Math.floor(days / 365);
+      const months = Math.floor((days % 365) / 30);
+      return months === 0 ? "约" + years + "年" : "约" + years + "年" + months + "个月";
+    }
+    if (days >= 30) {
+      const months = Math.floor(days / 30);
+      const rest = days % 30;
+      return rest === 0 ? "约" + months + "个月" : "约" + months + "个月" + rest + "天";
+    }
+    if (days > 0) return hours === 0 ? days + "天" : days + "天" + hours + "小时";
+    if (totalHours > 0) return totalHours + "小时" + mm + "分" + ss + "秒";
+    if (totalMinutes > 0) return totalMinutes + "分" + ss + "秒";
+    return totalSeconds + "秒";
+  }
+
+  /* token 数字:与 `formatTokenCount` 同一条(`>= 100` 取整,否则一位小数)。 */
+  function fmtTok(n) {
+    const scaled = (v) => (v >= 100 ? String(Math.round(v)) : String(Math.round(v * 10) / 10));
+    if (n < 1000) return String(n);
+    return n < 1000000 ? scaled(n / 1000) + "K" : scaled(n / 1000000) + "M";
+  }
+
+  /* 右列那一个数:四桶之和;**全零当作没给**(Web 的 `tokenTotal`,:66-74)。 */
+  function subTokenText(id) {
+    const u = subMeta(id).tokens;
+    if (!u) return "";
+    const total =
+      (u.uncachedInput || 0) + (u.output || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0);
+    return total === 0 ? "" : fmtTok(total) + " tok";
+  }
+
+  /* 第二行 = `title · mode · activity · 时长`(Web 的前三段 + 挪进来的时长,
+     `SubagentHeaderLineage.tsx:257-259`),空段整段不出。 */
+  function subDetail(id, now) {
+    const e = subEntry(id);
+    const dur = subDurationMs(id, now);
+    return [
+      subMeta(id).title || "",
+      e ? subModeText(e.mode) : "",
+      subActivityText(id),
+      dur == null ? "" : fmtSubDur(dur),
+    ]
+      .filter((s) => s !== "")
+      .join(" · ");
+  }
+
+  /* 活动点:在跑 = 转圈(DSH `StateDot` 的 `ongoing`)/ 正常完成 = 绿 / 其余 = 灰
+     (`SubagentHeaderLineage.tsx:336-338`)。转圈用图标集的 `loading` 那一枚 ——
+     与 App 的 `DshStateDot` 同一条(`app/lib/ui/dsh_state_dot.dart` 文件头),
+     1.5s 匀速照 `StateDot.module.css:42-45`。 */
+  const subDot = (id) => {
+    const a = subActivity(id);
+    return a === "running"
+      ? '<span class="sub-dot"><span class="spin-arc" data-icon="loading" data-icon-size="14"></span></span>'
+      : '<span class="sub-dot"><span class="sdot" data-state="' +
+          (a === "completed" ? "done" : "idle") +
+          '"></span></span>';
+  };
+
+  /* 读一层目录。刷新时**保留上一次的行**(`loading` 且非空 ⇒ 照常画内容、不闪空,
+     Web `:244-245`)。 */
+  function readSubs(sid) {
+    const prev = subCatalog(sid);
+    SUBS[sid] = { state: "loading", entries: prev.entries };
+    setTimeout(() => {
+      const read = SUB_READ[sid];
+      SUBS[sid] = read ? read() : { state: "ready", entries: [] };
+      renderSubs();
+    }, SUB_READ_MS);
+  }
+
+  function toggleSubs(id) {
+    if (subExpanded.has(id)) {
+      /* 收起**连带收起整枝**(Web 的 `closeBranch`,:556-568):留着深层展开,
+         下次展开会突然多出一大片,读起来像跳帧。 */
+      const closing = new Set();
+      const visit = (sid) => {
+        if (closing.has(sid) || !subExpanded.has(sid)) return;
+        closing.add(sid);
+        subEntries(sid).forEach((e) => visit(e.id));
+      };
+      visit(id);
+      closing.forEach((sid) => subExpanded.delete(sid));
+    } else {
+      subExpanded.add(id);
+      readSubs(id); // 展开才读(`toggleBranch` → `refreshProjection`,:570-577)
+    }
+    haptic();
+    renderSubs();
+  }
+
+  /* 点行 = 进入那个子会话(Web 的 `openChild`,:279-287);点行尾那枚 44×44 = 只展开。
+     原型没有子会话内容,所以"进入"的可见后果是收起抽屉 + 一句提示 ——
+     与 App 里"抽屉收起、主对话区换成子会话"是同一个动作序列的第一步。 */
+  function enterSubagent(id) {
+    if (subIsExternal(id)) return; // Web 的 `open()` 第一行就 `if (external) return`(:280)
+    const e = subEntry(id);
+    haptic();
+    closeSide();
+    toast("进入子智能体 · " + (e && e.label ? e.label : id));
+  }
+
+  /* 一层目录。递归只穿过**显式展开**的行(Web 的 `CatalogRows`)。
+     `ancestors` 截断环:某行 id 已在自己祖先链上时不再给展开钮、也不再往下画 ——
+     健康宿主的 catalog 是树,这里防的是线上畸形投影(递归打穿栈是不可捕获的
+     `StackOverflowError`,整页白屏)。 */
+  function subsLevelHtml(sid, ancestors, isRoot) {
+    const cat = subCatalog(sid);
+    let html = "";
+    if (cat.state === "loading" && !cat.entries.length)
+      html += '<div class="sub-note">正在加载子智能体…</div>';
+    if (cat.state === "error")
+      html +=
+        '<div class="sub-err"><span>无法加载子智能体</span>' +
+        '<button class="sub-retry" data-sub-retry="' +
+        esc2(sid) +
+        '">' +
+        ic("refresh", 12) +
+        "<span>重试</span></button></div>";
+    /* 空态只说一次,而且只在根级:子级读到空就是"没有下级",不摆一句话(Web 同一条) */
+    if (isRoot && cat.state === "ready" && !cat.entries.length)
+      html += '<div class="sub-empty">没有子智能体。</div>';
+    for (const e of cat.entries) html += subNodeHtml(e, ancestors);
+    return html;
+  }
+
+  function subNodeHtml(e, ancestors) {
+    const id = e.id;
+    const external = e.mode === "external";
+    const expandable = subCanExpand(id) && !ancestors.has(id);
+    const open = expandable && subExpanded.has(id);
+    const tok = subTokenText(id);
+    const label = e.label || id;
+    const act = open ? "收起" : "展开";
+    return (
+      '<div class="sub" data-sub-node="' +
+      esc2(id) +
+      '"><div class="sub-row" data-sub-row="' +
+      esc2(id) +
+      '"' +
+      (external ? ' aria-disabled="true"' : ' data-sub-enter="' + esc2(id) + '"') +
+      ">" +
+      subDot(id) +
+      '<span class="sub-m"><span class="sub-l1">' +
+      esc2(label) +
+      '</span><span class="sub-l2">' +
+      esc2(subDetail(id, Date.now())) +
+      "</span></span>" +
+      (tok ? '<span class="sub-tok">' + tok + "</span>" : "") +
+      (expandable
+        ? '<button class="sub-exp' +
+          (open ? " is-open" : "") +
+          '" data-sub-toggle="' +
+          esc2(id) +
+          '" aria-label="' +
+          act +
+          " " +
+          esc2(label) +
+          ' 的下级子智能体" aria-expanded="' +
+          open +
+          '"><span data-icon="chevronRight" data-icon-size="14"></span></button>'
+        : '<span class="sub-gap"></span>') +
+      "</div>" +
+      (open
+        ? '<div class="sub-kids">' +
+          subsLevelHtml(id, new Set([...ancestors, id]), false) +
+          "</div>"
+        : "") +
+      "</div>"
+    );
+  }
 
   /* 顶栏连接状态点(§7.8):一档 = 一个点(服务中绿 / 连接中转圈 / 其余红),
      点它弹「连接操作」sheet(重新配对 / 打开侧面板 / 取消)。
@@ -1720,18 +2003,21 @@
   function renderLiveChips() {
     const box = $("#liveChips");
     if (!box) return;
-    const liveSubs = SUBS.filter((s) => s.state === "running").length;
+    const subs = subEntries(curSid);
+    const liveSubs = subRunningOf(curSid);
     const liveJobs = JOBS.filter(isLive).length;
-    const spin = `<span class="livechip-dot" data-icon="loading" data-icon-size="14"></span>`;
+    const spin = `<span class="spin-arc" data-icon="loading" data-icon-size="14"></span>`;
     const chips = [];
-    if (SUBS.length) {
+    if (subs.length) {
+      /* 计数口径照 DSH:`{count} 个子智能体` 报**总数**(在跑另画转圈点),
+         在跑那一档的 `{count}` 是**在跑的个数**(`locales.ts:36-39`)。 */
       const aria = liveSubs
-        ? `${liveSubs} 个子智能体,正在运行`
-        : `${SUBS.length} 个子智能体`;
+        ? `${liveSubs} 个子智能体，正在运行`
+        : `${subs.length} 个子智能体`;
       chips.push(
         `<button class="livechip" data-act="subs-all" aria-label="${aria}" title="${aria}">` +
           (liveSubs ? spin : `<span data-icon="users" data-icon-size="13"></span>`) +
-          `<span>${SUBS.length}</span></button>`
+          `<span>${subs.length}</span></button>`
       );
     }
     if (JOBS.length) {
@@ -1769,52 +2055,12 @@
   }
   const running0 = () => JOBS.filter(isLive).length;
 
-  function subRow(s, openSet) {
-    const live = s.state === "running" || s.state === "stopping";
-    const dur = live
-      ? fmtClock(Math.round((Date.now() - s.started) / 1000))
-      : fmtDur(s.dur || 0);
-    const open = openSet.has(s.id);
-    const chev = `<span class="cv" data-icon="chevronDown" data-icon-size="14"></span>`;
-    return live
-      ? `<div class="jrow${open ? " is-open" : ""}" data-job="${s.id}">
-          ${jobDot(s.state)}
-          <span class="m" data-sub-toggle="${s.id}">
-            <span class="l1"><span class="label">${esc2(s.name)}</span></span>
-            <span class="l2"><span class="kind">agent</span><span class="status">${esc2(
-              s.task
-            )}</span></span>
-          </span>
-          <span class="tm">${dur}</span>${chev}
-          <span class="out">${esc2(s.out)}</span></div>`
-      : `<div class="jrow jrow--settled${open ? " is-open" : ""}" data-job="${s.id}">
-          ${jobDot(s.state)}<span class="kind">agent</span>
-          <span class="m" data-sub-toggle="${s.id}"><span class="label">${esc2(
-          s.name
-        )}</span></span>
-          <span class="status">${esc2(s.task)}</span>
-          <span class="tm">${dur}</span>${chev}
-          <span class="out">${esc2(s.out)}</span></div>`;
-  }
-
   function renderSubs() {
     if (!subsList) return;
-    const running = SUBS.filter((s) => s.state === "running").length;
-    subsList.innerHTML =
-      `<div class="jgroup">${
-        running ? "进行中 " + running + " · " : ""
-      }已结束 ${SUBS.length - running}</div>` +
-      SUBS.map((s) => subRow(s, jobOpen)).join("");
+    subsList.innerHTML = subsLevelHtml(curSid, new Set([curSid]), true);
     paintIcons(subsList);
-    $$("[data-sub-toggle]", subsList).forEach((el) =>
-      el.addEventListener("click", () => {
-        const id = el.dataset.subToggle;
-        if (jobOpen.has(id)) jobOpen.delete(id);
-        else jobOpen.add(id);
-        haptic();
-        renderSubs();
-      })
-    );
+    /* tab 上的运行中计数:与 chip 同一个判据(当前会话的直接子级里在跑的个数) */
+    const running = subRunningOf(curSid);
     const ts = $("#tabSubsN");
     if (ts) {
       ts.hidden = running === 0;
@@ -1822,6 +2068,40 @@
     }
     renderLiveChips();
   }
+
+  /* 面板内的两个手势 + 重试:事件委托挂在容器上 —— 每次重画都换 innerHTML,
+     逐个绑定会绑到已经不在文档里的节点上。 */
+  if (subsList)
+    subsList.addEventListener("click", (e) => {
+      /* 先认展开钮:它在整行的"进入"区里面,顺序反了就成了"点展开却进了会话" */
+      const tgl = e.target.closest("[data-sub-toggle]");
+      if (tgl) {
+        toggleSubs(tgl.dataset.subToggle);
+        return;
+      }
+      const retry = e.target.closest("[data-sub-retry]");
+      if (retry) {
+        readSubs(retry.dataset.subRetry); // 重读**那一层**,不是重开抽屉
+        renderSubs();
+        return;
+      }
+      const row = e.target.closest("[data-sub-enter]");
+      if (row) enterSubagent(row.dataset.subEnter);
+    });
+
+  /* 面板 root = 当前会话:点抽屉里的会话行就换 root。
+     演示里「手机端控制电脑DSH方案」有子级,其余会话的目录读到空 ——
+     那是「没有子智能体。」这一态的真实入口(不是另做一个演示开关)。 */
+  const dlistEl = $("#dlist");
+  if (dlistEl)
+    dlistEl.addEventListener("click", (e) => {
+      const row = e.target.closest(".drow");
+      const sid = row && row.dataset.sid;
+      if (!sid || sid === curSid) return;
+      curSid = sid;
+      subExpanded.clear(); // 换会话 = 换一棵树
+      renderSubs();
+    });
 
   function bindJobRows() {
     if (!jobsList) return;
@@ -1898,19 +2178,22 @@
   function startJobTick() {
     if (jobTick) return;
     jobTick = setInterval(() => {
-      const anyRunning =
-        JOBS.some((j) => j.state === "running") ||
-        SUBS.some((s) => s.state === "running");
+      const anyRunning = JOBS.some((j) => j.state === "running") || subAnyRunning();
       if (!anyRunning) return;
       /* 只更新时长文本,不整段重绘(否则展开的输出会跳回顶部) */
       $$("[data-job]").forEach((row) => {
-        const it =
-          JOBS.find((x) => x.id === row.dataset.job) ||
-          SUBS.find((x) => x.id === row.dataset.job);
+        const it = JOBS.find((x) => x.id === row.dataset.job);
         if (!it || it.state !== "running") return;
         const tm = row.querySelector(".tm");
         if (tm)
           tm.textContent = fmtClock(Math.round((Date.now() - it.started) / 1000));
+      });
+      /* 子智能体同理:只重写第二行(时长每秒长一格,Web `:205-211`) */
+      $$("[data-sub-row]").forEach((row) => {
+        const id = row.dataset.subRow;
+        if (!subMeta(id).running) return;
+        const l2 = row.querySelector(".sub-l2");
+        if (l2) l2.textContent = subDetail(id, Date.now());
       });
     }, 1000);
   }
@@ -2466,9 +2749,10 @@
       $("#fileDel").textContent = "";
       renderJobs();
     } else {
-      const live = SUBS.filter((s) => s.state === "running").length;
+      /* 子智能体面板的抬头:只有标题(App 的 `SideHeader(title: '子智能体')` 没有副标题;
+         计数在顶栏 chip 与 tab 徽标上,抬头不再重复一遍) */
       $("#sideTitle").textContent = "子智能体";
-      $("#sideSub").textContent = live ? live + " 个运行中" : "均已结束";
+      $("#sideSub").textContent = "";
       $("#fileAdd").textContent = "";
       $("#fileDel").textContent = "";
       renderSubs();
