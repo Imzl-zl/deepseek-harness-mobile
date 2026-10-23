@@ -202,10 +202,12 @@
    失败如实报（`SessionPage.failure`）。真机实验：把 `refetchThresholdBytes` 调到 1，
    61 条消息的会话滚到顶 → 翻页 + 逐条补取 → **会话开头（系统提示词 + 第一句 prompt）出现在手机上**。
 10. ~~失败回合没有"手动重试"入口~~ **不做**：DSH Web 的 `ui-conversation` 也没有这个入口。
-11. **交互在延迟下的形态（提案，待点头）** —— P1 App 失败分类（传输失败留卡可重试、失败不写成功回执）、
-    P2 连接器"提问不因手机断开立刻失败"（只有看护超时 / 取消才收束；依据：`onOffline` 在**重连中**
-    也触发，而提问的 claim 是独占的，抛错只会让工具失败）、P3 可选 timed（桌面倒计时 + 模型 120 s
-    后继续）。方案与代价见 `.agents/notes/proposed/2026-10-23-mobile-interaction-under-latency.md`。
+11. **在途交互 = host-held pending（提案，待点头）** —— 照 DSH gateway 的形状
+    （`api/gateway/src/index.ts:227,571,685-689,717-721`：pending 挂在 host，断线只撤投递、
+    新 client 重投、重复答复 no-op）：P1 App 失败分类（传输失败留卡可重试、失败不写成功回执）、
+    P2a 连接器断线**不结算** claim（审批与提问同一规则）、P2b 手机重订阅时**重发在途 ask 事件**
+    （不新增帧 / 方法）。P3 可选 timed（只解决"看护之后才答"，代价是桌面倒计时 + 模型 120 s 后继续）。
+    方案与代价见 `.agents/notes/proposed/2026-10-23-mobile-interaction-under-latency.md`。
 
 别当缺口（定案，别再试）:
 
