@@ -61,6 +61,17 @@
 > 白天用户又追两条：**品牌位全部用同一枚图标** —— 抽屉头部 logo 与「助手」头像都改成
 > `DshBrandMark`（`lib/ui/dsh_brand.dart` + `assets/brand/dsh-whale.png`）；
 > 启动器里 `DeepSeek Harness` 会被系统省略成 `DeepSeek H…`（名字是用户指定的，留观感问题）。
+>
+> **2026-10-23（本轮）子会话头部的父级改成数据驱动** —— `7806b2a`：
+> 连接器 `session.list` 的子会话行多一个**别名形式**的 `parentSessionId`（根会话不给这个键）
+> ⇒ App 头部三档取值（清单行 → 已读目录扫描 → 导航记忆，第三档是老连接器的兜底）；
+> 切换面板 root = 当前会话真正的父级，点当前行只关面板；`←` / `PopScope` / 发送方法
+> 共用同一个父级判据（孙级逐层返回）；顶栏标题只显示当前子级名（删 `_SubagentCrumb`）；
+> 目录读失败时计数 chip 仍出现、点开可重试。
+> 笔记 `implemented/2026-10-23-subagent-header-parent-from-data.md`，
+> 现状 `docs/subsystems/subagent-page.md` §4；真机截图 `shots-2026-10-23/v*.png`。
+> 门禁：flutter **1117**（原 1111），connector 586 / boundary 357 / icons 不变。
+> **契约方法面因此变了**（`session.list` 行多一个键）—— 老手机忽略，新手机连老连接器退到记忆。
 
 待办（按顺序）:
 
@@ -89,6 +100,8 @@
    系统返回键同一条路、切兄弟后父级记忆不丢、子会话内容能加载、跑完变绿且时长定格、顶栏 running 计数会变。
    两个只在真机暴露的缺陷已修（子会话地址缺父级、子会话发消息被拒 → `subagent.prompt`）。
    孙级（`maxDepth: 2`）已验；一次性子会话本 profile 造不出（两个 in-process 后端只产 `continuable`）。
+   **第三个缺陷（头部父级停在祖父）2026-10-23 已修**（`7806b2a`）：父级改数据驱动，
+   逐层返回与面板 root 都跟着真值走。
 7. **异常结局 / 重试 / 压缩标记**（仍未造出）：没有稳定制造**失败**回合的手段（取消 ≠ 失败）；
    压缩标记未出现。历史翻页这轮用 B 的实验验掉了（见下），附件 D1 已过。
 8. **`mock/proto` 子代理面板还没跟上落地端**（2026-10-21 有意留的差异，用户已确认先提交）：
@@ -246,7 +259,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **486 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **357 项**（22 条规则自检 + 扫 98 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 21 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1111 项** |
+| `cd app && flutter test` | **1117 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **586 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
@@ -273,6 +286,9 @@
   `2026-10-22-new-session-lands-in-a-workspace.md`。
 - 2026-10-22 轨迹页真时间轴（电脑侧折、手机只画）——
   `2026-10-22-trajectory-timeline-from-host-projection.md`。
+- 2026-10-23 子会话头部父级数据驱动（`session.list` 多一个别名形式的
+  `parentSessionId`）+ 顶栏标题只显示子级名 ——
+  `2026-10-23-subagent-header-parent-from-data.md`。
 
 
 
