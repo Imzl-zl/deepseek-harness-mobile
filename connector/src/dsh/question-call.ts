@@ -16,13 +16,16 @@
  * 取 `tool/call` 里 `name === 'ask_user_question'` 的 callId，去掉已有 `tool/result` 的
  * （`tool/result.data.message.toolCallId`，`packages/core/session/src/types.ts:376-386`、
  * `packages/llm/llm/src/message.ts:177`），剩下的**恰好一个**才算认出来。
- * 0 个 = 日志里还没有这一次调用；≥2 个 = 不唯一（同一 step 里并行发了两次提问，
- * 或崩溃留下的悬空调用）。两种都**不猜**。
+ * 0 个 = 日志里还没有这一次调用（程序化提问就没有）；≥2 个 = 不唯一（同一 step 里并行发了
+ * 两次提问）。崩溃留下的悬空调用不算：DSH 在加载时会给它补一条合成结果
+ * （`packages/core/session/src/repair.ts:18-29`）。两种都**不猜**。
  *
  * ## 并发语义
  *
  * 同一会话里一次只该有一个未结算的 `ask_user_question`：legacy 工具是阻塞的，
- * 第二个只能来自同一 step 的并行工具调用。并行即"不唯一"，按未认出处理。
+ * 第二个只能来自同一 step 的并行工具调用。并行时先跑到的应答者可能只看到自己那一条
+ * （认领自己，正确），后跑到的会看到两条（不唯一，交还桌面）—— 取决于循环调度
+ * （`packages/core/agent-loop/src/tool-calls.ts:165-213`），但**任何调度都不会认错 id**。
  * 本函数是**纯函数**（无时钟、无 IO、无缓存），每次调用都读调用方给的快照，
  * 所以它不会比日志更旧。
  *

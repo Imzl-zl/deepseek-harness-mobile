@@ -38,7 +38,8 @@ DSH 侧看到的是一次 `ask_user_question` 抛错，手机侧看到的是 `in
    - 形状：`tool/call` 是 `{turn, step, callId, name, arguments}`
      （`packages/core/session/src/types.ts:362`），`tool/result` 的配对键是
      `data.message.toolCallId`（`:376-386`、`packages/llm/llm/src/message.ts:177`）。
-   - **唯一性不是天然的**：同一 step 里并行发两次提问、或崩溃留下的悬空调用，都会让"未结算"多于一条。
+   - **唯一性不是天然的**：同一 step 里并行发两次提问会让"未结算"多于一条。崩溃留下的悬空
+     调用**不算** —— DSH 在加载时会补一条合成结果（`packages/core/session/src/repair.ts:18-29`）。
    - 证据：`connector/tests/question-call.test.ts` 用**真 `Session`**（`Session.create` + `append`）造日志，
      不是手搓事件数组 —— 手搓只会复述我们对形状的假设。
 
@@ -104,7 +105,8 @@ DSH 侧看到的是一次 `ask_user_question` 抛错，手机侧看到的是 `in
   手机上本来也没有对应的卡。
 - 代价：**程序化提问**（`/exit_plan_mode` 的 `ask()`，不产生 `tool/call`）也落 `next()` —— 它在手机上
   本来就没有卡（卡只从 `ask_user_question` 的 `tool/call` 生成），所以不是回归；但每次都会留一条 warn。
-- 代价：并行两次提问时手机侧看不到卡、桌面接管（`ambiguous` 分支）。这是有意的：不猜。
+- 代价：并行两次提问时，后跑到的那个应答者会看到两条未结算（`ambiguous`）并交还桌面；先跑到的
+  可能只看到自己那一条（认领，正确）。取决于循环调度，但不会认错 id。
 - 判据：`connector/tests/question-call.test.ts` 8 条（真 `Session` 造事件：唯一 / 已结算排除 / 两条
   ambiguous / 一老一新 / 别的工具 / 空日志 / 重复记录 / 工具名），`connector/tests/interactions.test.ts`
   新增 4 条（legacy 唯一 → claim 到真 id；两条并发 → `next()`；没有 / 只有已结算 → `next()`；
