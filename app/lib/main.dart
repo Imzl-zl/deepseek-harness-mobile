@@ -144,6 +144,10 @@ class _DshMobileAppState extends State<DshMobileApp>
     // 同一个态变化的第二处收口：通知要它（"看着那个会话就不提醒"）与
     // 保活要它（退到后台才起前台服务）。判据仍然只有 `isForeground` 一处。
     onState: (state) => _app?.setAppForeground(isForeground(state)),
+    // 报给连接层的态：保活生效时后台也照报 `foreground`（判据在
+    // `AppModel.connectionForeground`，这里只转达）。
+    activeFor: (state) =>
+        _app?.connectionForeground(isForeground(state)) ?? isForeground(state),
   );
 
   /// 连接终态失败的恢复编排（议题 2 的 `ClientAction` 唯一执行处）。

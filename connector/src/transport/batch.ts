@@ -7,8 +7,8 @@
  *
  * 两条纪律：
  *
- * - **前台用小间隔，后台不推**（§9）。切后台本来就该断开连接（§2.2），
- *   所以 `setForeground(false)` 之后 `due()` 恒为 false。
+ * - **一套窗口，不分前后台**（§9）。后台连接存活期间沿用同一个间隔 ——
+ *   "后台不推"这条规则随"后台不维持连接"一起作废（§13 的安卓例外）。
  * - **合并的是发送时机，不是内容顺序**。调用方按顺序 `push`，`take()` 按顺序还回来；
  *   本文件不做去重、不做重排 —— 那是会话层的事。
  *
@@ -32,8 +32,6 @@ export interface Batcher<T> {
   due(now: number): boolean
   /** 取出并清空当前批次（空批次返回 `null`）。 */
   take(): Batch<T> | null
-  /** 前台态变化。非前台时 `due()` 恒为 false。 */
-  setForeground(foreground: boolean): void
   readonly pending: number
 }
 
@@ -50,7 +48,6 @@ export function createBatcher<T>(options: BatcherOptions = {}): Batcher<T> {
   let bytes = 0
   /** 当前批次第一项的入队时刻；空批次时为 NaN。 */
   let openedAt = Number.NaN
-  let foreground = true
 
   return {
     push(item, sizeBytes, now) {
@@ -60,7 +57,7 @@ export function createBatcher<T>(options: BatcherOptions = {}): Batcher<T> {
     },
 
     due(now) {
-      if (!foreground || items.length === 0) return false
+      if (items.length === 0) return false
       // 字节阈值优先：攒够 4 KiB 就别再等窗口，否则大 turn 会一直等到窗口关闭。
       if (bytes >= flushBytes) return true
       return now - openedAt >= flushMs
@@ -73,10 +70,6 @@ export function createBatcher<T>(options: BatcherOptions = {}): Batcher<T> {
       bytes = 0
       openedAt = Number.NaN
       return batch
-    },
-
-    setForeground(next) {
-      foreground = next
     },
 
     get pending() {

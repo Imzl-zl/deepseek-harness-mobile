@@ -2012,6 +2012,18 @@ class AppModel extends ChangeNotifier {
     unawaited(_syncKeepAlive());
   }
 
+  /// **给连接层报哪个态**（`AppStateReporter` 的 `activeFor` 接到这里）。
+  ///
+  /// 退到后台**不再等于断开**：保活生效时（通知权限开着 **且** 连接在服务态），
+  /// 照报 `foreground` —— 连接要活着、心跳要继续，而且这台设备仍然能直接答
+  /// （通知上那两个按钮就是答案入口）。
+  ///
+  /// **判据就这一处**：`AppStateReporter` 只负责问，不自己判。
+  /// 没保活时照旧报 `background` ⇒ 连接断开（§2.2 的老行为不变）。
+  bool connectionForeground(bool appForeground) =>
+      appForeground ||
+      (_notifyGranted == true && client.state == ConnectionState.serving);
+
   /// 问一次通知权限（设置页那一行点下去调它）。
   ///
   /// 返回**问完之后**的真实状态；顺手把保活对齐（刚给了权限就该能起服务）。
@@ -2179,6 +2191,9 @@ class AppModel extends ChangeNotifier {
       );
     } else if (!want && status.keepAlive) {
       await port.stopKeepAlive();
+      // 保活撤了而人还在后台 ⇒ 把连接**真的**断掉（否则服务没了、连接还在，
+      // 那是"看不见的长连接"，比断开更糟）。
+      if (!_appForeground) unawaited(client.setAppState(AppState.background));
     }
   }
 

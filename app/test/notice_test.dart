@@ -157,6 +157,24 @@ void main() {
     expect(notify.keepAliveCount, 0, reason: '回前台就不需要那条常驻了');
   });
 
+  test('保活生效时退后台照报 foreground（连接不因退后台被断）', () async {
+    app.setAppForeground(false);
+    await pump();
+    expect(
+      app.connectionForeground(false),
+      isTrue,
+      reason: '有权限 + 在服务态 ⇒ 那条连接要活着（否则服务只是白保进程）',
+    );
+
+    // 权限被收回 ⇒ 回到老行为：退后台就断。
+    notify.granted = false;
+    app.setAppForeground(true);
+    await pump();
+    app.setAppForeground(false);
+    await pump();
+    expect(app.connectionForeground(false), isFalse);
+  });
+
   test('没有通知权限 ⇒ 不起服务（看不见的通知只是白耗电）', () async {
     notify.granted = false;
     app.setAppForeground(false);

@@ -205,16 +205,15 @@ void main() {
       );
     });
 
-    test('后台不发心跳，但半开判定照旧（后台本就不该维持连接）', () {
+    // 原本这里有一条「后台不发心跳，但半开判定照旧」——随契约 §9 的规则一起删：
+    // 心跳现在不分前后台（后台连接由前台服务维持，见 §13 的安卓例外），
+    // 停心跳只会把一条健康连接在 2 个周期后判死。
+    test('空闲到心跳间隔就发 ping（不分前后台）', () {
       final keepalive = Keepalive(heartbeat: 1000, periods: 2);
-      keepalive.setForeground(false);
       keepalive.onFrame(0);
-      expect(keepalive.tick(1000), isA<KeepaliveIdle>(), reason: '后台不发 ping');
-      expect(
-        keepalive.tick(2000),
-        isA<KeepaliveHalfOpen>(),
-        reason: '半开判定不受前台态影响',
-      );
+      expect(keepalive.tick(1000), isA<KeepalivePing>());
+      // ping 本身重置空闲计时 ⇒ 半开要再静默满 2 个周期。
+      expect(keepalive.tick(3000), isA<KeepaliveHalfOpen>());
     });
 
     test('第一次 tick 以自己为基准（不把"启动到现在"算成沉默）', () {

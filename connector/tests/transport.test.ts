@@ -66,14 +66,19 @@ test('保活：任何一帧都重置空闲计时（收与发都算）', () => {
   assert.equal(keepalive.silentFor(HEARTBEAT_MS * HALF_OPEN_PERIODS), 1)
 })
 
-test('保活：后台不发心跳，但半开判定照旧', () => {
+test('保活：心跳不分前后台（空闲到间隔就发 ping）', () => {
+  // 原本这条断言"后台不发心跳"，随 §9 的规则一起删：后台连接现在由前台服务
+  // 维持（§13 的安卓例外），停心跳只会把一条健康连接在 2 个周期后判死。
   const keepalive = createKeepalive({ startedAt: 0 })
-  keepalive.setForeground(false)
-  assert.deepEqual(keepalive.tick(HEARTBEAT_MS), { kind: 'idle' }, '后台不该发心跳')
-  assert.equal(keepalive.tick(HEARTBEAT_MS * HALF_OPEN_PERIODS).kind, 'half-open')
+  assert.deepEqual(keepalive.tick(HEARTBEAT_MS), { kind: 'ping' })
+  // ping 本身重置空闲计时，所以半开要到"再静默满 2 个周期"才算。
+  assert.equal(
+    keepalive.tick(HEARTBEAT_MS * (HALF_OPEN_PERIODS + 1)).kind,
+    'half-open',
+  )
 })
 
-test('攒批：窗口到点或攒够 4 KiB 即触发，后台不触发', () => {
+test('攒批：窗口到点或攒够 4 KiB 即触发（不分前后台）', () => {
   const batcher = createBatcher<string>()
   assert.equal(batcher.due(0), false, '空批次不触发')
 
@@ -90,10 +95,7 @@ test('攒批：窗口到点或攒够 4 KiB 即触发，后台不触发', () => {
   batcher.push('big', 4 * 1024, 0)
   assert.equal(batcher.due(1), true, '攒够 4 KiB 立刻发')
 
-  // 后台不推。
-  batcher.setForeground(false)
-  assert.equal(batcher.due(1_000), false, '后台不推')
-  batcher.setForeground(true)
+  // 同一套窗口继续有效（"后台不推"随 §9 的规则一起删）。
   assert.equal(batcher.due(1_000), true)
 })
 

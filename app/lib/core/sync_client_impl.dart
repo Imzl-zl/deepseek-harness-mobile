@@ -1152,14 +1152,17 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   Future<void> setAppState(AppState next) async {
     final previous = _appState;
     _appState = next;
-    _keepalive.setForeground(next == AppState.foreground);
+    // **心跳不在这里改**（2026-10-24）：它不分前后台（§9）。后台连接是否维持
+    // 由"前台服务活着"那一条决定（§13 的安卓例外，`AppModel._syncKeepAlive`）——
+    // 那一层若没起服务，下面的 `_disconnect()` 照旧把连接断掉。
     if (next == AppState.background) {
       // **先声明退到后台，再断开**：电脑侧的 `foreground` 档接管判据是"前台且已订阅"，
       // 声明过之后即使断开慢了一步，审批也不会继续推给一台已经退到后台的手机。
       if (previous != next && _machine.acceptsBusinessFrames) {
         await _sendHello();
       }
-      // 切后台主动断开并停表（§2.2）：三端都不做后台长连接（§13）。
+      // 切后台默认断开（§2.2）。**保活那条路不走这里**：起了前台服务时
+      // `AppModel` 不会把 `background` 传下来（见 `_syncKeepAlive` 的三条判据）。
       await _disconnect();
     } else if (_machine.isAnyOf([
       ConnectionState.idle,

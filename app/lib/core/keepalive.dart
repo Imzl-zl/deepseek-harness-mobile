@@ -58,7 +58,6 @@ class Keepalive {
   late final int _halfOpenAfterMs;
 
   int? _lastFrameAt;
-  bool _foreground = true;
 
   /// 已经发过心跳、还没等到任何帧 —— 避免同一个空闲期反复发 `ping`。
   bool _pingedInThisIdle = false;
@@ -77,7 +76,6 @@ class Keepalive {
 
     if (silent >= _halfOpenAfterMs) return KeepaliveHalfOpen(silent);
 
-    if (!_foreground) return const KeepaliveIdle();
     if (silent < _heartbeatMs || _pingedInThisIdle) {
       return const KeepaliveIdle();
     }
@@ -89,8 +87,8 @@ class Keepalive {
     return const KeepalivePing();
   }
 
-  /// 前台态变化。`false` 时不再发心跳；**半开判定照旧** —— 后台本就不该维持连接。
-  void setForeground(bool foreground) => _foreground = foreground;
+  // **没有 `setForeground`**：心跳不分前后台（契约 §9）。后台连接是否维持由
+  // "前台服务活着"那一条决定（§13 的安卓例外），不是靠"后台别发心跳"。
 
   /// 距离上一次帧过了多久。
   int silentFor(int now) => _lastFrameAt == null ? 0 : now - _lastFrameAt!;

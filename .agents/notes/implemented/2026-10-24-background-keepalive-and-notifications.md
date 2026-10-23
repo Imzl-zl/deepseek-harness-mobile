@@ -67,8 +67,11 @@ Status: implemented（**原生部分未过真机** —— 见文末"还没验的
   国产 ROM 的省电策略也可能杀掉它（真机待量）。
 - **代价**：**没订阅过的会话**的审批 / 提问不会提醒（待处理集合来自本地条目，与抽屉行上
   "N 个待处理"同一个边界）；**定时任务 / 工作流**在没人操作时起的轮次也没有通知（写进 §15）。
-- **删掉的东西**：电脑侧 `Keepalive.setForeground` / `Batch.setForeground` 的语义随之作废
-  （它们本来就只有测试在调）。**本轮没删**（不在这一件的判据里）—— 见下"还没做的那一半"。
+- **删掉的东西**（同批第二个提交）：`Keepalive.setForeground` / `Batch.setForeground`
+  （两侧：`connector/src/transport/{keepalive,batch}.ts` 与 `app/lib/core/keepalive.dart`）
+  连同 `sync_client_impl` 里那次调用与三条用例。它们编码的正是"后台不发心跳 / 后台不推"，
+  而 §9 现在说**一套窗口、不分前后台** —— 规则改了、字段还在就是本篇要防的那种漂移。
+  判据随行为删除：那三条用例改成断言**规则本身**（空闲到间隔就 ping；攒批同一套窗口）。
 
 ## 判据
 
@@ -90,8 +93,14 @@ Status: implemented（**原生部分未过真机** —— 见文末"还没验的
    （判据同 `implemented/2026-10-24-terminal-identity-from-pc.md` 那套"谁答的"）。
 4. **反面对照**：不起服务（没权限）时锁屏 2 分钟连接必断 —— 用来证明"判据能区分没命中与没实现"。
 
-还没做的另一半（下一件）：删掉电脑侧那两个已经作废的 `setForeground`（含其测试），
-并在 `docs/subsystems/notifications.md` §2 补上 MIUI 的量测结论。
+还差的只有一件：`docs/subsystems/notifications.md` §2 里 MIUI 的量测结论（量法已在 §9，
+数据要真机跑一次）。
+
+附带修掉的一处**真 bug**（写这篇时发现）：起前台服务保活时，`AppStateReporter` 仍把
+`background` 报给连接层 ⇒ 连接照样被 `_disconnect()` 断掉，服务只是白保进程。
+修法是把"报哪个态"也收进 `AppModel`（`connectionForeground`：保活生效时照报
+`foreground`），判据仍然只有一处；判据在 `test/notice_test.dart` 的那条
+"保活生效时退后台照报 foreground"。
 
 ## 代码入口回指
 

@@ -45,7 +45,7 @@ import '../core/sync_client.dart';
 /// 其余十几个回调要的是它的**默认空实现**（`implements` 会要求全部自己实现一遍，
 /// 而那正是"每个文件抄 16 个空方法"的来源）。
 class AppStateReporter with WidgetsBindingObserver {
-  AppStateReporter(this._clientOf, {this.onState});
+  AppStateReporter(this._clientOf, {this.onState, this.activeFor});
 
   /// 当前那个客户端。**每次现取**：理由见文件头"为什么持的是取值函数"。
   final SyncClient? Function() _clientOf;
@@ -57,6 +57,14 @@ class AppStateReporter with WidgetsBindingObserver {
   /// 算前台"这条判据也只该有一份（[isForeground]）。
   final void Function(AppLifecycleState state)? onState;
 
+  /// **给连接层报哪个态**（装配点是 `AppModel.connectionForeground`）。
+  ///
+  /// 为什么需要它：切后台**不再等于断开**。起了前台服务保活时，连接要活着、
+  /// 心跳要继续、而且这台设备仍然能直接答（通知上的两个按钮就是答案入口）——
+  /// 那时照报 `foreground`。没保活时仍报 `background`（照旧断开，§2.2）。
+  /// **判据只有一处**（`AppModel.connectionForeground`），这里只负责问。
+  final bool Function(AppLifecycleState state)? activeFor;
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     onState?.call(state);
@@ -65,7 +73,12 @@ class AppStateReporter with WidgetsBindingObserver {
     // 客户端自己的初相就是 `foreground`，而移动端的冷启动必然在前台
     // （引擎要附着到视图上才会走到这里），所以"跳过"与"报 foreground"等价。
     if (client == null) return;
-    unawaited(client.setAppState(appStateOf(state)));
+    final foreground = activeFor?.call(state) ?? isForeground(state);
+    unawaited(
+      client.setAppState(
+        foreground ? AppState.foreground : AppState.background,
+      ),
+    );
   }
 }
 

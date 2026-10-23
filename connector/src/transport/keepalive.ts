@@ -33,8 +33,9 @@ export interface Keepalive {
   onFrame(now: number): void
   /** 周期性调用（真实时钟驱动，间隔自定；判定只依赖传入的 `now`）。 */
   tick(now: number): KeepaliveAction
-  /** 前台态变化。`false` 时不再发心跳；半开判定照旧 —— 后台本就不该维持连接。 */
-  setForeground(foreground: boolean): void
+  // **没有 `setForeground`**：心跳不分前后台（契约 §9）。后台连接是否维持由
+  // "前台服务活着"那一条决定（§13 的安卓例外），而不是靠"后台别发心跳"——
+  // 停掉心跳只会让一条健康连接在 2 个周期后被自己判成半开。
   /** 距离上一次帧过了多久。 */
   silentFor(now: number): number
 }
@@ -53,7 +54,6 @@ export function createKeepalive(options: KeepaliveOptions = {}): Keepalive {
   const halfOpenAfterMs = heartbeatMs * periods
 
   let lastFrameAt = options.startedAt ?? Number.NaN
-  let foreground = true
   /** 已经发过心跳、还没等到任何帧 —— 用来避免同一个空闲期反复发 ping。 */
   let pingedInThisIdle = false
 
@@ -69,7 +69,6 @@ export function createKeepalive(options: KeepaliveOptions = {}): Keepalive {
       const silentMs = now - lastFrameAt
       if (silentMs >= halfOpenAfterMs) return { kind: 'half-open', silentMs }
 
-      if (!foreground) return { kind: 'idle' }
       if (silentMs < heartbeatMs || pingedInThisIdle) return { kind: 'idle' }
 
       // 心跳本身是我们**发出**的一帧，所以它重置空闲计时 —— 否则会在对端还没回 pong
@@ -77,10 +76,6 @@ export function createKeepalive(options: KeepaliveOptions = {}): Keepalive {
       pingedInThisIdle = true
       lastFrameAt = now
       return { kind: 'ping' }
-    },
-
-    setForeground(next) {
-      foreground = next
     },
 
     silentFor(now) {
