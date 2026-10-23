@@ -21,7 +21,7 @@
   该子会话自己的 `session.projections`。Web 的对应动作是
   `toggleBranch(childSessionId)` → `refreshProjection(child)`
   （`packages/client/ui-subagent/src/client/SubagentHeaderLineage.tsx:570-577`）。
-- 连接器把 `session.list` 行的整包投影提示原样透传（`connector/src/handlers.ts:527-533`），
+- 连接器把 `session.list` 行的整包投影提示原样透传（`connector/src/handlers.ts:596-602`），
   所以上面三个提示都到得了手机。
 - 目录 id 是**别名 sid**（连接器换过，`connector/src/handlers.ts` 的 `aliasSubagentCatalog`），
   直接 `openSession` 就通。
@@ -137,15 +137,15 @@
 | 目录读失败 | 顶栏计数 chip 仍出现（前导图标换成重试），面板里给「无法加载子智能体 / 重试」 | DSH 的 `visible`：`:617-631` |
 | 系统返回 | 子会话里回父会话；抽屉开着时先关抽屉；其余情况不拦 | `pop_scope.dart:83-96`、`drawer.dart:526-546` |
 
-**父级为什么必须来自数据**：`subagentCatalog` 的 view 不带 `parentId`
-（`packages/subagent/subagent/src/catalog.ts:77-94`），所以父级曾只能靠导航记忆 ——
-而记忆只有一层：**从面板往深处再走一层时父级不更新**，名字查找必然落空，
-屏幕上就成了"每一层都显示它自己"，`←` 还会跳过真正的父级。
-数据面的父级是宿主的 `SessionSummary.parentSessionId`，连接器在 `session.list`
-里**换成别名**后原样过线（根会话不给这个键）。DSH 的次序是
+**父级的来源**：宿主的 `SessionSummary.parentSessionId` —— 连接器在 `session.list`
+里**换成别名**后原样过线（根会话不给这个键）。`subagentCatalog` 的 view 不带
+`parentId`（`packages/subagent/subagent/src/catalog.ts:77-94`），目录本身给不出父级，
+`session.list` 这一行才是真值。DSH 的次序是
 `address.parentSessionId` → 扫已加载目录 → `summary.parentId`
-（`SubagentHeaderLineage.tsx:789-797`），我们同一条，第 3 档的导航记忆是本仓
+（`SubagentHeaderLineage.tsx:789-797`），我们同一条；第 3 档的导航记忆是本仓
 对**老连接器**的兜底（没有 `parentSessionId` 时不能退回"进子会话出不来"）。
+因果与被否掉的方案见
+`.agents/notes/implemented/2026-10-23-subagent-header-parent-from-data.md`。
 DSH 的根会话不给面包屑（`:801`），我们同一条：没有父级 ⇒ 左侧还是 `☰`。
 
 **有意偏离**（都是触屏决定，不是漏做）：

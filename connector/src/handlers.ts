@@ -558,13 +558,14 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       // （`dsh/sessions.ts` 的 `SessionSummaryRow.parentSessionId`），
       // 原样发出去就是把 DSH 的 id 漏过线 —— 与 `session.create` 那条同一个错
       // （见本文件 `session.create` 的注释）。根会话没有父级 ⇒ **不给这个键**，
-      // 也不为 `undefined` 建别名（那会往别名表里塞一行空映射）。
+      // 也不为 `undefined` / 空串建别名（前者会塞一行空映射，后者会铸出一个
+      // 不存在的父级 —— 手机拿到它会让 `←` 打开一个空会话）。
       const assigned = await Promise.all(
         rows.map(async (row) => ({
           row,
           sid: await deps.aliases.ensure(row.dshSessionId),
           parentSid:
-            row.parentSessionId === undefined
+            row.parentSessionId === undefined || row.parentSessionId === ''
               ? undefined
               : await deps.aliases.ensure(row.parentSessionId),
         })),
@@ -595,7 +596,8 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
           // **投影提示原样透送**：`projections.values.title` 就是列表标题，
           // Web 的列表行读的是同一个东西（`list.ts:291-312` 的 hints）。
           // 冷行（从没打开过的会话）也有值 —— DSH 为它读持久缓存。
-          // 手机据此显示标题；取不到时它自己按 DSH 的链退到目录名、再退到 sid。
+          // 手机据此显示标题；空标题显示「未命名」，不拿目录名兜底
+          // （DSH 的 `sessionTitle` 同一条，`ui-workspace/src/client/tree.ts:296`）。
           ...(row.projections === undefined
             ? {}
             : { projections: row.projections }),

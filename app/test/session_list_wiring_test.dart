@@ -307,7 +307,9 @@ void main() {
               'updatedAt': 800,
               'model': {'provider': 'p', 'model': 'm-top'},
             },
-            // `next` 显式为 null ⇒ 退 `lastUsed`（DSH 的线格式就是这样）。
+            // 防御性用例：`next` 缺失 / 为 null 时退 `lastUsed`。
+            // **真实 view 不会给这个形状** —— 它是 `pending ?? lastUsed`
+            // （`model-selection-projection.ts:65`），`lastUsed` 非空时 `next` 必然非空。
             {
               'sid': 'sid_null_next',
               'updatedAt': 700,

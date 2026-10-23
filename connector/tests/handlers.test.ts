@@ -834,6 +834,51 @@ test('session.list：逐字段映射，别名在方法面合成，**DSH 会话 i
   )
 })
 
+test('session.list：空串父级按"没有"处理，不铸别名', async () => {
+  // `parentSessionId` 是 branded string，空串概率很低；而别名表对**任何**字符串
+  // 都分配（`alias.ts` 的 `ensure` 不校验空串）。一旦发生，手机就拿到一个不存在的
+  // 父级别名，`←` 会 `openSession` 到一个空会话（白屏 + `lastError`）。
+  const seen: string[] = []
+  const handlers = build({
+    sessions: {
+      list: () =>
+        Promise.resolve([
+          { dshSessionId: 'dsh-1', updatedAt: 2, running: false, blank: false, subagent: false },
+          {
+            dshSessionId: 'dsh-2',
+            updatedAt: 1,
+            running: false,
+            blank: false,
+            subagent: true,
+            parentSessionId: '',
+          },
+        ]),
+      prompt: () => Promise.resolve({ accepted: true }),
+      selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
+      create: async () => ({ sessionId: 'dsh-new' }),
+      updateQueue: async () => ({ accepted: true as const }),
+      cancel: () => ({ accepted: true as const }),
+    },
+    aliases: {
+      ...createFakeAliases(),
+      ensure: (id) => {
+        seen.push(id)
+        return Promise.resolve(`sid_${id}`)
+      },
+    },
+  })
+  const handler = handlers['session.list']
+  assert.ok(handler !== undefined)
+
+  const listed = (await handler(undefined, {})) as { sessions: Record<string, unknown>[] }
+  assert.deepEqual(seen.sort(), ['dsh-1', 'dsh-2'], '空串不该进别名表')
+  assert.equal(
+    'parentSessionId' in listed.sessions[1]!,
+    false,
+    '空串父级 = 没有父级（给出去手机会打开一个不存在的会话）',
+  )
+})
+
 test('session.list：并发分配别名（不同会话互不影响）', async () => {
   const seen: string[] = []
   const handlers = build({
