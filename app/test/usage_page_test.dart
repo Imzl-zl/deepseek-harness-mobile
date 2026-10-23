@@ -84,7 +84,7 @@ void main() {
     // 老连接器（没有 `totals` / `byDay`）：两块都**不出现** ——
     // 不摆四个 0、也不画一张空热力图（对照组，证明上面那条不是恒真）。
     expect(find.text('输入（未命中缓存）'), findsNothing);
-    expect(find.text('最近 26 周'), findsNothing);
+    expect(find.text('最近 52 周'), findsNothing);
   });
 
   testWidgets('项目头可折叠：点一下收起，再点展开（默认展开）', (tester) async {
@@ -137,7 +137,7 @@ void main() {
     // （契约 §5.7 聚合规则⑤）。
     expect(find.text('轮次'), findsOneWidget);
     expect(find.text('6'), findsOneWidget);
-    expect(find.text('最近 26 周'), findsOneWidget);
+    expect(find.text('最近 52 周'), findsOneWidget);
     expect(find.text('按轮次'), findsOneWidget);
   });
 

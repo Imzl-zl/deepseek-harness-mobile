@@ -287,14 +287,17 @@ class _MiniCard extends StatelessWidget {
   }
 }
 
-/// 活动热力图：**最近 26 周**，一格一天，颜色深浅 = 那天开了几轮。
+/// 活动热力图：**最近 52 周**，一格一天，颜色深浅 = 那天开了几轮。
 ///
-/// ## 为什么 26 周而不是 52 周
+/// ## 为什么 52 周放得下（这组数字是算过的）
 ///
-/// rikkahub 画 52 周（`ui/pages/stats/StatsPage.kt:144-260`），但它的格子是
-/// 4dp + 计算过的间距；390dp 的屏上 52 周 × 7 行的格子会挤到 5px 上下，
-/// 点也点不到、深浅也分不出。**26 周**（半年）是这台机器上仍能读出"哪几天在干活"
-/// 的上限，其余信息由上面的四格卡片承担。
+/// 390dp 屏：页面左右各 16 + 卡片左右各 14 ⇒ 可用 **330dp**。
+/// 52 列 × 4dp + 51 条间距 × 2dp = **310dp**，留 20dp 余量；
+/// 320dp 的小屏上单格退到 3dp 也还在界内（`clamp(3, 14)` 兜住）。
+/// 更宽屏 / 大字号下格子跟着变大，但**永不溢出** —— 宽度由 `LayoutBuilder` 现量。
+///
+/// 密度照 GitHub 移动端的同一档（4dp 格 + 2dp 缝）：这不是"点按目标"，
+/// 读数靠颜色深浅，不靠点。
 ///
 /// ## 数据口径（写在卡片上，不靠猜）
 ///
@@ -305,7 +308,7 @@ class _HeatmapCard extends StatelessWidget {
 
   final List<UsageDay> days;
 
-  static const int _weeks = 26;
+  static const int _weeks = 52;
 
   @override
   Widget build(BuildContext context) {
@@ -346,10 +349,12 @@ class _HeatmapCard extends StatelessWidget {
           const SizedBox(height: 10),
           LayoutBuilder(
             builder: (context, constraints) {
-              const gap = 3.0;
+              // 52 列要更细的缝与格：390dp 屏上正是 4dp 格 + 2dp 缝
+              // （见类注释里那组算式），再宽也由 `clamp` 兜住不会溢出。
+              const gap = 2.0;
               final cell =
                   ((constraints.maxWidth - gap * (_weeks - 1)) / _weeks).clamp(
-                    4.0,
+                    3.0,
                     14.0,
                   );
               return Row(
