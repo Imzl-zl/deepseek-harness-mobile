@@ -1,4 +1,9 @@
-/// 跑 `protocol/fixtures`（16 条）—— 与电脑侧同一批场景脚本。
+/// 跑 `protocol/fixtures`（15 条）—— 与电脑侧同一批场景脚本。
+///
+/// **条数是三处同步的**：`protocol/fixtures/` 的文件数、`protocol/verify-fixtures.mjs`、
+/// `connector/tests/fixtures.test.ts` 的 `REFERENCE_CHECK_COUNT`、以及这里的 `files.length` 断言。
+/// 删/加一条 fixture 必须三处一起改（`fce4f9e` 删 fixture 16 时这里漏了，`flutter test`
+/// 因此红了一整轮）。
 ///
 /// 这是 `protocol/verify-fixtures.mjs` 在 Dart 手机侧的对应物，判据逐条对齐：
 /// 形状校验 → 三角色回放（手机 ⇄ 中转 ⇄ 桥接）→ 全局不变量 → 逐条期望。
@@ -96,7 +101,7 @@ const Set<String> knownReasons = <String>{
 const Set<String> knownSources = <String>{'bridge', 'relay'};
 
 void main() {
-  test('16 条 fixtures 在手机侧跑绿（三角色回放：手机 ⇄ 中转 ⇄ 桥接）', () {
+  test('15 条 fixtures 在手机侧跑绿（三角色回放：手机 ⇄ 中转 ⇄ 桥接）', () {
     final failures = <String>[];
     var checks = 0;
 
@@ -627,7 +632,7 @@ void main() {
             .toList()
           ..sort((a, b) => a.path.compareTo(b.path));
     check(files.isNotEmpty, 'protocol/fixtures 下没有 fixture');
-    check(files.length == 16, 'fixture 条数', '期望 16，实际 ${files.length}');
+    check(files.length == 15, 'fixture 条数', '期望 15，实际 ${files.length}');
 
     for (final file in files) {
       final name = file.uri.pathSegments.last;
