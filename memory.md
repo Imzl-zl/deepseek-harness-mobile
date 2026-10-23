@@ -264,8 +264,8 @@
     ② ~~**W2** 换代不撤在途 claim~~ **✅ 已落地（`1ba20a0`）**
     ③ ~~**Z5** 配对码关联想~~ **✅ `67d0397`** → ~~**Z2** `onOffline` 死码~~ **✅ `55ea630`** →
     ~~**Z1** `fullAccess` 过滤~~ **✅（见索引）**
-    ④ ~~**Z4** `stats.devices`~~ **✅（见索引）** → **Z3** 匿名限流分桶（relay，0 真机）← **下一步**
-    ⑤ **Z6a** 预设文案漂移 → **Z6b** §15 一句（0 真机）
+    ④ ~~**Z4** `stats.devices`~~ **✅ `bbfa5f7`** → ~~**Z3** 匿名限流分桶~~ **✅（见索引）**
+    ⑤ **Z6a** 预设文案漂移 → **Z6b** §15 一句（0 真机）← **下一步**
     ⑥ **W3** 终态只有一个来源（1–2 回合）→ **W4** 运行态改读原生（1 回合，要加一条契约帧）
     铁律（用户 2026-10-24 复述）：**别擅自加规则，DSH 原生就行**。
 
@@ -368,8 +368,10 @@
 
 ## 已知缺口（定位过、有证据，都未修）
 
-1. **首配的匿名限流桶是单一全局桶**：约 6 请求/秒即可让所有新设备换票 429（约 10 s 恢复）。
-   → 键是字面量 `'pairing:anonymous'`（`relay/src/http-face.ts:41`）；工单 Z3。
+1. ~~**首配的匿名限流桶是单一全局桶**：约 6 请求/秒即可让所有新设备换票 429（约 10 s 恢复）~~
+   **已修（2026-10-24，Z3）**：匿名键按**来源地址**分桶（`pairing:anonymous:<addr>`），
+   取不到地址退到 `unknown`（等价于改动前）；反代之后会塌成一个桶，如实写在 `rate-limit.ts` 头注。
+   判据 relay **86 → 87** + 变异校验（改回字面量恰好 2 条红）。
 2. ~~`stats.devices` 实为**通道数**，与 §8.2 的 `devices` 表不同名同义~~ **已删（2026-10-24，Z4）**：
    `relay/src/core.ts` 的 `stats` 去掉了 `devices`（它与 `channels` 恒等，同一个数字两个名字）；
    设备数看名册（`deviceRegistry.stats.devices` / `bound`）。判据 `relay/tests/core.test.ts`
@@ -452,7 +454,7 @@
 | `cd app && flutter test` | **1141 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **615 项** |
-| `cd relay && pnpm typecheck && pnpm test` | 类型 + **86 条** |
+| `cd relay && pnpm typecheck && pnpm test` | 类型 + **87 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 
 **项数的唯一出处是 `tools.md`**；**改断言必须做一次变异校验**（故意破坏不变量，确认**恰好**那一条红）。
@@ -512,3 +514,5 @@
   flutter 1141 持平（删 2 条旧断言、加 2 条新的）。
 - 2026-10-24 Z4 删 `relay.core.stats.devices`（与 `channels` 恒等）—— relay **86 持平**
   （一条断言换成键集合断言）；顺手改掉 cookbook 里"别信这个数"那句。
+- 2026-10-24 Z3 首配匿名限流按来源地址分桶（`pairing:anonymous:<addr>`）—— relay **86 → 87**；
+  反代之后会塌成一个桶（与改动前等价），如实写在 `rate-limit.ts` 头注。

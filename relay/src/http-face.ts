@@ -18,7 +18,19 @@ export interface HttpFaceOptions {
   rateLimit?: (key: string) => { allowed: boolean; retryAfterMs: number | null }
   log?: ChannelLogger
 }
-export interface HttpRequest { method: string; path: string; token?: string; body?: unknown }
+export interface HttpRequest {
+  method: string
+  path: string
+  token?: string
+  body?: unknown
+  /**
+   * 这条请求的网络来源（`request.socket.remoteAddress`）。
+   *
+   * **只给未认证的那一跳用**：认证过的调用方按身份取桶（设备 id / 连接器 id），
+   * 而"还没配对"的请求没有任何身份 —— 来源地址是唯一能区分的维度（见 `pairing-anonymous` 键）。
+   */
+  remoteAddress?: string
+}
 export interface HttpResponse { status: number; body?: unknown }
 export interface HttpFace { handle(request: HttpRequest): HttpResponse }
 
@@ -38,7 +50,11 @@ export function createHttpFace(options: HttpFaceOptions): HttpFace {
       if ('codeHash' in body) return { status: 426, body: { error: 'pairing-version-unsupported' } }
 
       if (request.path === '/ws-ticket' && 'offerId' in body) {
-        const denied = limited('pairing:anonymous')
+        // **未认证的那一跳按来源地址分桶**：它没有任何身份可用，而"所有人共用一个桶"
+        // 的后果是"一个人刷坏请求就把所有人的首配限成 429"（约 6 req/s 就够）。
+        // 取不到地址时退到 `unknown` —— 那时等价于改动前的全局桶（不更坏）。
+        // 在反向代理之后所有客户端会塌成一个地址，同样等价于改动前（见 `rate-limit.ts` 的头注）。
+        const denied = limited(`pairing:anonymous:${request.remoteAddress ?? 'unknown'}`)
         if (denied !== undefined) return denied
         const candidate = body['v'] === 2 ? parsePairingCandidate(body) : undefined
         if (candidate === undefined) return { status: 400, body: { error: 'invalid-pairing-candidate' } }

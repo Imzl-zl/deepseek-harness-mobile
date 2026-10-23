@@ -1,15 +1,17 @@
 /**
  * HTTP 面限流的回归（契约 §12 的"按设备限流"；`docs/subsystems/pairing-v2.md` §3）。
  *
- * 五条：被拒回 **429 + retryAfterMs**、**被拒时不发任何票**、桶键是**身份**（不是 IP）、
- * 以及首配那一跳的两个桶 —— **匿名桶 + 每张公开邀请一个桶**。
+ * 六条：被拒回 **429 + retryAfterMs**、**被拒时不发任何票**、认证过的按**身份**取桶，
+ * 以及首配那一跳的两个桶 —— **按来源地址的匿名桶** + 每张公开邀请一个桶。
  *
- * ## 为什么首配也限得住，而且仍然不按 IP
+ * ## 首配为什么这样分桶
  *
- * 限流按**身份**取桶（§10 的下一条理由：按 IP 会在反代后面把所有人归成一个，
- * 一个人就能把大家限住）。首配时手机还没有身份 —— 但 v2 有**公开邀请**：
- * 匿名流量先过 `pairing:anonymous`，形状合法的候选再过 `pairing:offer:<offerId>`。
- * 次序是刻意的：坏请求连"这是不是一个 v2 候选"都过不了，就不该占用**别人的** per-offer 桶。
+ * 限流优先按**身份**取桶（§10 的下一条理由：按 IP 会在反代后面把所有人归成一个，
+ * 一个人就能把大家限住）。首配时手机还没有身份 —— v2 有**公开邀请**，形状合法的候选
+ * 过 `pairing:offer:<offerId>`；而**解析之前**那一跳没有任何可用身份，
+ * 于是按**来源地址**取桶（`pairing:anonymous:<addr>`）：所有人共用一个桶的后果是
+ * "一个人刷坏请求就把所有人的首配限成 429"。次序是刻意的：坏请求连"这是不是一个 v2 候选"
+ * 都过不了，就不该占用**别人的** per-offer 桶。
  */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
@@ -106,22 +108,49 @@ test('桶键是**身份**（不是 IP）：设备与连接器各是一个命名�
   assert.deepEqual(
     keys,
     ['device:dev-1', 'connector:conn-1'],
-    '按身份限流；按 IP 会在代理后面把所有人归成一个，而设备与连接器的同名 id 也不共桶',
+    '认证过的按身份限流；按 IP 会在代理后面把所有人归成一个，而设备与连接器的同名 id 也不共桶',
   )
 })
 
-test('首配的桶键是**公开邀请**：匿名桶 + 每张邀请一个桶（都不是 IP）', () => {
+test('首配的桶键：**来源地址**的匿名桶 + 每张邀请一个桶', () => {
   const { face, keys } = setup(() => ({ allowed: true, retryAfterMs: 0 }))
-  assert.equal(face.handle(bootstrap()).status, 201)
-  assert.deepEqual(keys, ['pairing:anonymous', `pairing:offer:${OFFER_A}`])
+  assert.equal(face.handle({ ...bootstrap(), remoteAddress: '::ffff:10.0.0.7' }).status, 201)
+  assert.deepEqual(keys, ['pairing:anonymous:::ffff:10.0.0.7', `pairing:offer:${OFFER_A}`])
 
   // 形状不合法的候选：匿名桶都没过 —— 坏请求不该占用**别人的** per-offer 桶。
   keys.length = 0
   assert.equal(
-    face.handle({ method: 'POST', path: '/ws-ticket', body: { v: 2, offerId: OFFER_A } }).status,
+    face.handle({
+      method: 'POST', path: '/ws-ticket', remoteAddress: '::ffff:10.0.0.7',
+      body: { v: 2, offerId: OFFER_A },
+    }).status,
     400,
   )
-  assert.deepEqual(keys, ['pairing:anonymous'], '形状不合法就到不了 per-offer 桶')
+  assert.deepEqual(keys, ['pairing:anonymous:::ffff:10.0.0.7'], '形状不合法就到不了 per-offer 桶')
+
+  // 取不到来源地址（例如测试里的裸请求）：退到 `unknown`，等价于改动前的全局桶。
+  keys.length = 0
+  assert.equal(face.handle(bootstrap()).status, 201)
+  assert.deepEqual(keys, ['pairing:anonymous:unknown', `pairing:offer:${OFFER_A}`])
+})
+
+test('两个来源地址互不牵连：一个人刷坏请求限不住别人的首配', () => {
+  // 改动前的形态是单一全局桶（`pairing:anonymous`）：约 6 req/s 就让**所有**新设备 429。
+  const { face } = setup(
+    (key) => (key === 'pairing:anonymous:::ffff:10.0.0.7'
+      ? { allowed: false, retryAfterMs: 9_000 }
+      : { allowed: true, retryAfterMs: 0 }),
+  )
+
+  const denied = face.handle({ ...bootstrap(), remoteAddress: '::ffff:10.0.0.7' })
+  assert.equal(denied.status, 429)
+  assert.deepEqual(denied.body, { error: 'rate-limited', retryAfterMs: 9_000 })
+
+  assert.equal(
+    face.handle({ ...bootstrap(), remoteAddress: '::ffff:10.0.0.8' }).status,
+    201,
+    '另一个来源的首配不受影响',
+  )
 })
 
 test('一张邀请被刷不牵连另一张：per-offer 桶各自独立', () => {

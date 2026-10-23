@@ -87,8 +87,11 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         return
       }
       const token = bearerOf(request.headers.authorization)
+      const remoteAddress = request.socket.remoteAddress
       const result = face.handle({
         method: request.method ?? 'GET', path: url.pathname,
+        // 未认证那一跳（首配）按来源地址取桶 —— 它是那一跳唯一能区分的维度。
+        ...(remoteAddress === undefined ? {} : { remoteAddress }),
         ...(token === undefined ? {} : { token }), ...(body === undefined ? {} : { body }),
       })
       reply(response, result.status, result.body ?? {})

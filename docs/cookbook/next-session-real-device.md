@@ -62,9 +62,9 @@ flutter test integration_test/channel_e2e_test.dart -d <真机序列号> `
 
 ## 上来先知道的两件事(可能就是卡点)
 
-1. **首配的匿名限流桶是单一全局桶**(`relay/src/http-face.ts` 的 `pairing:anonymous`):
-   刷约 6 请求/秒就能让所有新设备换票 429(约 10 s 恢复)。真机若"莫名其妙配不上",
-   先停手等 10 秒再试,别去改协议。
+1. **首配的匿名限流按来源地址分桶**(`relay/src/http-face.ts` 的 `pairing:anonymous:<来源地址>`):
+   同一台电脑上反复试会把自己的桶刷空(60 个突发 / 6 每秒,约 10 s 恢复),
+   但**不再牵连别的来源**。真机若"莫名其妙配不上",先停手等 10 秒再试,别去改协议。
 2. `relay.core.stats` 里**没有 `devices`**:设备数看名册(`deviceRegistry.stats.devices` / `bound`),
    通道数看 `channels`(排查"设备掉了"时别拿通道数当设备数)。
 

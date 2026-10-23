@@ -42,17 +42,20 @@ Status: proposed
   不是放宽）。
 - **门禁**：connector **616 → 615**、`tsc --noEmit`、`pnpm build`。
 
-## Z3（修）首配匿名限流的**单一全局桶**
+## Z3（修）首配匿名限流的**单一全局桶** —— ✅ 已落地
 
-- **位置**：`relay/src/http-face.ts:41`（键是字面量 `'pairing:anonymous'`）；
-  桶参数 `relay/src/server.ts:68`（容量 60 / 每秒 6）。
+- **位置**：`relay/src/http-face.ts`（键是字面量 `'pairing:anonymous'`）；
+  桶参数 `relay/src/server.ts`（容量 60 / 每秒 6）。
 - **为什么修**：所有**未配对**设备共用一个桶 ⇒ 约 6 req/s 就能让全部新设备吃 429
   （约 10 s 才恢复）。这是实现缺陷，不是策略：策略（"匿名要限流"）本身对。
-- **改什么**：匿名键带上来源（`pairing:anonymous:<remoteAddress>`），与设备键共用同一个
-  limiter；`rate-limit.ts` 不动（它本来就按 key 分桶，`relay/src/rate-limit.ts:70`）。
-- **判据**：`relay/tests` 加一条"两个不同来源的匿名请求互不影响"；
-  变异校验：把键改回字面量 ⇒ 恰好那条红。
-- **门禁**：relay（86 → 87）、`pnpm typecheck`。
+- **改什么**：匿名键带上来源（`pairing:anonymous:<remoteAddress>`），取不到地址时退到
+  `unknown`（等价于改动前的全局桶，不更坏）；`HttpRequest` 多一个**可选** `remoteAddress`，
+  由 `server.ts` 从 `request.socket.remoteAddress` 填。`rate-limit.ts` 的头注写清
+  "认证过的按身份、未配对那一跳按来源地址"，并如实写明**反代之后会塌成一个桶**
+  （那时与改动前等价）。
+- **判据**：`relay/tests/http-face-rate-limit.test.ts` 改了键形状断言、加一条
+  "两个来源地址互不牵连"；变异校验：把键改回字面量 ⇒ **恰好那两条红**（85 绿 / 2 红）。
+- **门禁**：relay **86 → 87**、`pnpm typecheck`。cookbook 里那句"单一全局桶"同步改成新形态。
 
 ## Z4（删字段）`stats.devices` 与 `stats.channels` 恒等 —— ✅ 已落地
 
