@@ -14,18 +14,22 @@
 /// 6. **拖动项目头**：落到另一个头的上半/下半 ⇒ 插到它前/后（`workspace.insertBefore`）。
 library;
 
+import 'package:dsh_mobile/model/session_dot.dart';
+import 'package:dsh_mobile/theme/dsh_colors.dart';
 import 'package:dsh_mobile/ui/dsh_popover.dart';
 import 'package:dsh_mobile/ui/session_drawer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-DrawerSession row(String sid, {bool pinned = false}) => DrawerSession(
-  sid: sid,
-  title: sid.toUpperCase(),
-  preview: '预览',
-  timeLabel: '10:00',
-  isPinned: pinned,
-);
+DrawerSession row(String sid, {bool pinned = false, SessionDot? dot}) =>
+    DrawerSession(
+      sid: sid,
+      title: sid.toUpperCase(),
+      preview: '预览',
+      timeLabel: '10:00',
+      isPinned: pinned,
+      dot: dot ?? SessionDot.idle,
+    );
 
 Widget host(SessionDrawer drawer) => MaterialApp(home: Scaffold(body: drawer));
 
@@ -480,5 +484,55 @@ void main() {
     );
 
     expect(moved, ['a'], reason: 'B 拖到 A 的上半 = 插到 A 前面（真机"往上不动"的反面）');
+  });
+
+  testWidgets('行首点是状态点：琥珀 / 蓝 / 绿 / 灰，且与"当前会话"无关', (tester) async {
+    await tester.pumpWidget(
+      host(
+        SessionDrawer(
+          sections: [
+            DrawerSection(
+              label: 'dsh-mobile',
+              workspaceId: 'w1',
+              sessions: [
+                row('a', dot: SessionDot.warning),
+                row('b', dot: SessionDot.ongoing),
+                row('c', dot: SessionDot.done),
+                row('d'),
+                // 当前会话仍然是 idle 态：那枚点**不表示**"我正在看它"。
+                row('e', dot: SessionDot.idle),
+              ],
+            ),
+          ],
+          connection: const DrawerConnection(
+            name: '我的电脑',
+            detail: '已连接',
+            platform: 'DSH',
+            online: true,
+          ),
+          footItems: const [],
+          onNewSession: () {},
+          onOpenSession: (_) {},
+          onClose: () {},
+          onPin: (_) {},
+          onMove: (_, _) {},
+          onArchive: (_) {},
+        ),
+      ),
+    );
+
+    final c = tester.element(find.byType(SessionDrawer)).dshColors;
+    Color? dotOf(String sid) {
+      final box = tester.widget<Container>(
+        find.byKey(ValueKey<String>('drawer-dot-$sid')),
+      );
+      return (box.decoration! as BoxDecoration).color;
+    }
+
+    expect(dotOf('a'), c.stateWarn, reason: '待处理 = 琥珀（Rows.tsx 的 warning）');
+    expect(dotOf('b'), c.accentBlue, reason: '运行中 = 蓝（ongoing）');
+    expect(dotOf('c'), c.stateSuccess, reason: '已完成 = 绿（done）');
+    expect(dotOf('d'), c.stateIdle, reason: '空闲 = 灰（idle）');
+    expect(dotOf('e'), c.stateIdle);
   });
 }

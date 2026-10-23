@@ -38,6 +38,7 @@ import 'data/app_model.dart';
 import 'data/connection_recovery.dart';
 import 'data/store.dart';
 import 'model/chat_item.dart';
+import 'model/session_dot.dart';
 import 'model/theme_mode.dart';
 import 'model/workspace.dart';
 import 'platform/app_state_reporter.dart';
@@ -880,6 +881,15 @@ class _DshMobileAppState extends State<DshMobileApp>
       ),
       isActive: s.sid == app.currentSid,
       isPinned: app.pinnedSids.contains(s.sid),
+      // 行首那枚点表达**状态**（照 DSH 的 `Rows.tsx:344-398`），"是不是当前"
+      // 由底色说。三个输入都是既有事实：待处理计数、宿主运行态、未读收口。
+      // `running` 取 `app.runningOf` 而不是行上的 `s.running` —— 前者的
+      // 唯一真值是 `_runningSids`（`status` 帧 + 快照覆盖），后者只是快照。
+      dot: sessionDotOf(
+        pendingCount: s.pendingCount,
+        running: app.runningOf(s.sid),
+        completionUnread: app.completionUnreadOf(s.sid),
+      ),
     );
 
     final bySid = {for (final s in app.sessions) s.sid: s};

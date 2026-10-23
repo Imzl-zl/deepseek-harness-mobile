@@ -1912,13 +1912,23 @@ class AppModel extends ChangeNotifier {
   /// 把"这个会话在不在跑"写进 [_runningSids]，并在收口时清掉活时钟的起点。
   ///
   /// **唯一的两处调用**：`session.list` 那一包（覆盖式）与 `status` 帧（实时）。
+  ///
+  /// 收口时顺带记一笔"未读的完成"（[_completionUnread]）：只有**真的看着它从跑
+  /// 变成不跑**才算，所以基线（首包 `session.list`，此时 `_runningSids` 里没有它）
+  /// 不会凭空造出一个绿点 —— 与 DSH 的 `previous === undefined` 那条同义
+  /// （`packages/client/ui-session/src/client/index.ts:495`）。
   void _setRunning(String sid, bool running) {
+    final was = _runningSids.contains(sid);
     if (running) {
       _runningSids.add(sid);
+      _completionUnread.remove(sid);
       return;
     }
     _runningSids.remove(sid);
     _turnStartedAt.remove(sid);
+    // 正在看的那个收口不算"未读"：结果就在眼前（DSH 的判据是
+    // "停止发生在这个会话之外"，`:65-66` 的字段注释）。
+    if (was && sid != _currentSid) _completionUnread.add(sid);
   }
 
   /// 宿主推来的一条运行态（`status` 帧）。
@@ -2563,6 +2573,8 @@ class AppModel extends ChangeNotifier {
   /// [since] 是本地已有的水位（本地库还没做，先给 0 = 从零开始，电脑侧会给快照）。
   Future<void> openSession(String sid, {int since = 0}) async {
     _currentSid = sid;
+    // 打开它就是"看见了"：未读的完成点当场消失（DSH 的"在主视图里就清"，`:511`）。
+    _completionUnread.remove(sid);
     if (!_disposed) notifyListeners();
 
     // 订阅前先把这一路的事件流接上（顺序反了会丢掉开启帧 —— 那是第一帧）。
@@ -2731,6 +2743,22 @@ class AppModel extends ChangeNotifier {
   /// 同一个 `_setRunning`）。以前这里是"事件流推算 + 重连重建 + 轮次代号"三件套，
   /// 已经随宿主推送的接入整块删掉。
   bool runningOf(String sid) => _runningSids.contains(sid);
+
+  /// 这个会话"跑完了、但我没看着"—— DSH 的 `completionUnread`。
+  ///
+  /// ## 为什么是派生、不是落盘
+  ///
+  /// DSH 的浏览器端也只持有一个 `Set<SessionId>`（`ui-session/src/client/index.ts:292`），
+  /// 刷新即丢；规则三条（`:490-498,511`）：running 变 true 清、收口且**不在主视图里**
+  /// 才置位、在主视图里每轮基线扫描都清。手机上的"主视图"就是 [currentSid] ——
+  /// 所以这里不新开一份存储、也不新开一个"已读"概念（AGENTS.md 三问①：
+  /// 删掉这张表，宿主已经给出答案）。
+  ///
+  /// 代价如实记：**杀 App 即丢**，与浏览器刷新一致；这是"一个提示"，不是持久事实。
+  bool completionUnreadOf(String sid) => _completionUnread.contains(sid);
+
+  /// 观测到的收口但没被看见的会话（见 [completionUnreadOf]）。
+  final Set<String> _completionUnread = <String>{};
 
   /// 本轮开始的时刻（毫秒 epoch）；`null` = 不知道。
   ///

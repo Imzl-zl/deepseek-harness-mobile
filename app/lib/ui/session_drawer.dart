@@ -28,6 +28,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../model/session_dot.dart';
 import '../model/workspace.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
@@ -45,6 +46,7 @@ class DrawerSession {
     required this.timeLabel,
     this.isActive = false,
     this.isPinned = false,
+    this.dot = SessionDot.idle,
   });
 
   final String sid;
@@ -56,8 +58,16 @@ class DrawerSession {
   /// 右侧时间（`3 分钟` / `14:20` / `昨天`）。
   final String timeLabel;
 
-  /// 当前正在看的那个（`is-on`：左侧有活跃点、底色高亮）。
+  /// 当前正在看的那个（底色高亮）。
+  ///
+  /// **它不再负责行首那枚点**：那枚点自 2026-10-24 起表达**状态**
+  /// （`SessionDot`，照 DSH `Rows.tsx:344-398`），而"是不是当前"由底色说
+  /// —— 与 DSH 同一条（它的当前行靠 label 强调 + 背景，不靠点）。
   final bool isActive;
+
+  /// 行首状态点：待处理 / 运行中 / 已完成 / 空闲（`sessionDotOf` 算好，
+  /// 这一层不重算优先级）。
+  final SessionDot dot;
 
   /// 在 `workspace.list` 的 `pinnedSessionIds` 里。显示时排在分组最前，
   /// 行尾还有一枚小图钉（DSH Web 的 `PinnedIndicator`，`Rows.tsx:660`）。
@@ -730,12 +740,19 @@ class _SessionRow extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(12, 11, 4, 11),
             child: Row(
               children: [
-                // 活跃点（`.drow .dot`）：正在看的那个有。
+                // 状态点（照 DSH 的 `StateDot`）：待处理琥珀 / 运行中蓝 /
+                // 已完成绿 / 空闲灰。**它不代表"当前会话"** —— 当前由底色说。
                 Container(
-                  width: 6,
-                  height: 6,
+                  key: ValueKey<String>('drawer-dot-${session.sid}'),
+                  width: 8,
+                  height: 8,
                   decoration: BoxDecoration(
-                    color: session.isActive ? c.accentBlue : Colors.transparent,
+                    color: switch (session.dot) {
+                      SessionDot.warning => c.stateWarn,
+                      SessionDot.ongoing => c.accentBlue,
+                      SessionDot.done => c.stateSuccess,
+                      SessionDot.idle => c.stateIdle,
+                    },
                     shape: BoxShape.circle,
                   ),
                 ),
