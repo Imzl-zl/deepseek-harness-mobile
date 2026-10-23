@@ -127,7 +127,7 @@
 | 父级·第 1 档（真值） | `session.list` 行的 `parentSessionId`（连接器已换成别名） | `chat_page.dart` 的 `_subagentParentSid` |
 | 父级·第 2 档 | 已读目录里扫到"当前会话"的那一行 ⇒ 那个目录的 sid | `AppModel.subagentParentOfCatalogEntry`；DSH 同一圈扫描 `:792-794` |
 | 父级·第 3 档 | 导航记忆（进目录行时记下的会话），**只在这一层确实是"走进去的那个会话"时**才算 | `_subagentReturnFrom`；老连接器没有第 1 档时的兜底 |
-| 当前子级名字 | 父级 `subagentCatalog` 里**当前子级那一行**的 `label`（缺则 id）；找不到 → **会话自己的标题** | `SubagentHeaderLineage.tsx:490-495` |
+| 当前子级名字 | 父级 `subagentCatalog` 里**当前子级那一行**的 `label`（缺则 id）；找不到 → **会话自己的标题**（`currentTitle`），再退到 App 名 | `SubagentHeaderLineage.tsx:490-495` |
 | 标题宽度 | 子会话标题**不吃** `kDshTitleMaxWidth`：`Expanded` 给的就是右簇摆完的剩余宽度 | — |
 | 切换面板 root | **当前会话的父级**（第 1~3 档的同一个值），当前行加粗 | `:802-821` |
 | 选中兄弟 | 换主对话区（`openChild`），父级跟着数据变 | `ui-subagent/src/client/index.ts:61-63` |

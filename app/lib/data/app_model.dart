@@ -765,11 +765,10 @@ class AppModel extends ChangeNotifier {
   /// **认不出就是 null**：投影没注册（这台电脑没装权限插件）与
   /// "这一帧没有这个键"是同一件事，而正确表现都是"不知道"——
   /// 界面显示空态，不猜一个档位。
-  String? get permissionValue {
-    final sid = _currentSid;
-    if (sid == null) return null;
-    return parsePermissionValue(projections);
-  }
+  ///
+  /// 不另判 `_currentSid == null`：`projections` getter 判的就是**这一包属于谁**，
+  /// 没选中会话时它必然给 null（`_projections` 与 `_projectionsSid` 同批写）。
+  String? get permissionValue => parsePermissionValue(projections);
 
   /// 存一份预设目录（连接器 `permission.catalog` 的应答）。
   void setPermissionCatalog(PermissionCatalog? catalog) {
@@ -877,6 +876,9 @@ class AppModel extends ChangeNotifier {
   /// 到手机（契约 §5.7 已把 `inbox` 列进核实过的键）。插进当前轮次的
   /// `next-step` 段不列（Web 同一条：那已经生效了，不在队列里）。
   List<QueueItem> queueOf(String sid) {
+    // **两个条件不是同一件事**：这里判"调用方问的是谁"，`projections` getter 判
+    // "这一包属于谁"（`_projectionsSid == _currentSid`）。少了这一行，问别的会话
+    // 会拿到当前会话的队列（`queue_dock_test.dart` 的"队列按 sid 取"盯着它）。
     if (_currentSid != sid) return const [];
     return parseQueueItems(projections?['inbox']);
   }
@@ -1987,10 +1989,9 @@ class AppModel extends ChangeNotifier {
   ///
   /// **`null` 就是"这个会话没记过预设"**（老会话，或这台电脑没有预设服务）——
   /// 界面退回"按目录里的默认项显示"或显示 id，不猜一个档。
-  String? get agentPresetValue {
-    if (_currentSid == null) return null;
-    return parseAgentPresetValue(projections);
-  }
+  ///
+  /// 不另判 `_currentSid == null`：与 [permissionValue] 同一条（getter 已按归属判过）。
+  String? get agentPresetValue => parseAgentPresetValue(projections);
 
   /// 当前会话归属的工作区；`null` = 清单里没有它（或清单还没到）。
   WorkspaceGroup? get currentWorkspace {

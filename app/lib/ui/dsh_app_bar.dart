@@ -404,8 +404,8 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
           // `Expanded` 把右簇钉在右边（否则右簇跟着标题长度漂）。
           //
           // 普通标题再加一档 `kDshTitleMaxWidth` 的**上限**（否则长标题吃光整行）；
-          // **子会话的 crumb 不加这个上限**：它要自己量"父级 + 子级放不放得下"，
-          // 而 `Expanded` 给它的就是"右簇摆完剩下的真实宽度"，比写死的 140 准。
+          // **子会话的切换器不加这个上限**：`Expanded` 给它的就是"右簇摆完剩下的
+          // 真实宽度"，比写死的 140 准。
           Expanded(
             child: Align(
               alignment: Alignment.centerLeft,

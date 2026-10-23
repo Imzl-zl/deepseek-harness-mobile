@@ -159,18 +159,17 @@ class ChatPageState extends State<ChatPage> {
   /// 关掉抽屉再开就回到抽屉态 —— 那才是默认该有的形态。
   bool _sideFullscreen = false;
 
-  /// 进入子会话之前的那个会话（顶栏"返回"用）。
+  /// 进入子会话之前的那个会话（**老连接器**的返回兜底，见 [_subagentParentSid] 第 3 档）。
   ///
-  /// **不是数据依赖，是导航记忆**：catalog 的 view 不带 `parentId`
-  ///（`subagent/src/catalog.ts:77-94`），所以父会话只能"我来的时候记一下"。
-  /// 子会话在抽屉里是藏起来的（`sessionVisible` 第 1 条），
-  /// 没有这枚返回用户就找不回来。
+  /// 父级本身来自数据（`session.list` 行的 `parentSessionId`，或画出那一行的那一层），
+  /// 记忆只在"新手机连老连接器"时兜底。子会话在抽屉里是藏起来的
+  ///（`sessionVisible` 第 1 条），没有返回入口用户就找不回来。
   String? _subagentReturnFrom;
 
   /// 当前打开的子会话 sid（用来判断导航是否已经离开它）。
   ///
   /// 只记 `_subagentReturnFrom` 不够：用户从抽屉再打开别的会话时，父会话
-  /// 记忆不会自动消失，面包屑会挂在无关会话上。
+  /// 记忆不会自动消失，子会话头部（`←` + 标题）会挂在无关会话上。
   String? _subagentChildSid;
 
   /// 当前子会话的 catalog 模式（`one-shot` / `continuable` / `unknown`）。
@@ -331,7 +330,7 @@ class ChatPageState extends State<ChatPage> {
     // 配对状态是构造参数：配对上之后出口才该出现（见 `initState` 里同一句）。
     if (oldWidget.paired != widget.paired) _syncAnswerOutlet();
     // 用户从抽屉/内联列表打开了别的会话：父会话记忆必须跟着失效，
-    // 否则面包屑会挂在一个与子会话无关的会话上。这里直接改字段而不
+    // 否则子会话头部会挂在一个与它无关的会话上。这里直接改字段而不
     // `setState` —— `didUpdateWidget` 之后本来就会 build。
     if (_subagentChildSid != null &&
         widget.app.currentSid != _subagentChildSid) {
@@ -1023,8 +1022,7 @@ class ChatPageState extends State<ChatPage> {
   /// （刚拉到手、模型已下线）才退到 id。
   String get _modelLabel {
     if (!_hasData) return '未连接';
-    final sid = widget.app.currentSid;
-    if (sid == null) return '未选择';
+    if (widget.app.currentSid == null) return '未选择';
     // 走 `AppModel.currentModel`（唯一出口）：它先看**本会话的投影提示**
     // `modelSelection`，再退到清单行 —— 只读清单行的话，子智能体页面上
     // 永远显示「未选择」（子会话不在连接器那张活 agent 表里）。
@@ -1051,8 +1049,7 @@ class ChatPageState extends State<ChatPage> {
   /// **没有信息就不占位**（与"拿不到就整条不显示"同一条纪律）。
   String? get _reasoningLabel {
     if (!_hasData) return null;
-    final sid = widget.app.currentSid;
-    if (sid == null) return null;
+    if (widget.app.currentSid == null) return null;
     // 与 [_modelLabel] 同一个出口（`AppModel.currentModel`）：
     // 推理等级是模型选择的一部分，两个来源就会"模型有、等级没有"。
     final model = widget.app.currentModel;
@@ -1169,7 +1166,7 @@ class ChatPageState extends State<ChatPage> {
     return null;
   }
 
-  /// 当前子会话在**父级目录**里的名字（面包屑上那个标题）。
+  /// 当前子会话在**父级目录**里的名字（子会话头部那个标题）。
   ///
   /// 判据照 Web 的 `switcherDisplayTitle`（`SubagentHeaderLineage.tsx:490-495`）：
   /// 父级 catalog 里**当前子级那一行**的 label（没有就用 id），
@@ -1178,6 +1175,10 @@ class ChatPageState extends State<ChatPage> {
   /// **查不到就显示会话自己的标题，不回落成字面量「子智能体」** ——
   /// 那会把"没查到"伪装成"名字就叫子智能体"，用户看到的是"里面还是它自己"，
   /// 也正是 2026-10-23 那个 bug 在屏幕上的样子。
+  ///
+  /// 第二档是 `currentTitle`，再退到 App 名（冷启动、`session.list` 还没到）。
+  /// **不另取 `sessionOf(current)?.displayTitle`**：它和 `currentTitle` 是同一次
+  /// `_sessions` 查找，所以后者为 null 时前者必然也是 null —— 那一档永远不会给出值。
   String get _subagentLabel {
     final parent = _subagentParentSid;
     final current = widget.app.currentSid;
@@ -1189,8 +1190,7 @@ class ChatPageState extends State<ChatPage> {
           .firstOrNull;
       if (row != null) return row.displayLabel;
     }
-    final summary = current == null ? null : widget.app.sessionOf(current);
-    return widget.app.currentTitle ?? summary?.displayTitle ?? kAppName;
+    return widget.app.currentTitle ?? kAppName;
   }
 
   /// 当前子会话的**父级** sid（`null` = 不在子会话里：根会话 / 没连上）。
@@ -1203,7 +1203,7 @@ class ChatPageState extends State<ChatPage> {
   ///    —— 老连接器没有第 1 档时，只要是从面板走进来的，父级目录就已经在表里；
   /// 3. 导航记忆 `_subagentReturnFrom` —— **只在这一层确实是"走进去的那个会话"时**
   ///    才算（`_subagentChildSid` 与当前会话相同），否则从抽屉打开别的会话时
-  ///    面包屑会挂在无关会话上。
+  ///    子会话头部会挂在无关会话上。
   ///
   /// 第 3 档不能删：**新手机连老连接器**时 `parentSid` 为空，删了就退回
   /// 2026-10-21 那个"进子会话出不来"的坑（返回按钮根本不出现）。
