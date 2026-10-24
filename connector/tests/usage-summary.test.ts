@@ -92,8 +92,8 @@ function deps({
   } as unknown as HandlerDeps
 }
 
-/** 一份 `trajectory` 投影（这一层只读 `turns[].startTime`）。 */
-function trajectory(startTimes: number[]) {
+/** 一份 `trajectory` 投影（这一层读 `turns[].startTime` 与 `turns[].tokens`）。 */
+function trajectory(startTimes: number[], tokens = 0) {
   return {
     turns: startTimes.map((startTime, i) => ({
       turn: i + 1,
@@ -101,6 +101,7 @@ function trajectory(startTimes: number[]) {
       endTime: startTime + 1000,
       durationMs: 1000,
       outcome: 'completed',
+      tokens,
       steps: [],
     })),
     truncated: false,
@@ -347,7 +348,7 @@ void describe('usage.summary 聚合规则', () => {
     assert.equal(result.grandTotalTokens, 110 + 42 + 8 + 8)
   })
 
-  void it('byDay 跨会话按天合并轮次，日期升序', async () => {
+  void it('byDay 跨会话按天合并轮次与 token，日期升序', async () => {
     // 2026-10-01 与 2026-10-02 各一条（本地时区，取当天中午避开边界）。
     const d1 = new Date(2026, 9, 1, 12).getTime()
     const d2 = new Date(2026, 9, 2, 12).getTime()
@@ -356,16 +357,17 @@ void describe('usage.summary 聚合规则', () => {
         rows: [row('a'), row('b')],
         usageOf: () => tokenUsage({ uncachedInputTokens: 1 }),
         // b 的两轮**早于** a 的两轮：排序不能靠"会话顺序"。
+        // token 每轮 100：a 有 2 轮、b 有 3 轮 ⇒ 10-01 是 200、10-02 是 300。
         trajectoryOf: (id) =>
-          trajectory(id === 'a' ? [d2, d2] : [d1, d1, d2]),
+          trajectory(id === 'a' ? [d2, d2] : [d1, d1, d2], 100),
       }),
     )
     const result = (await handlers['usage.summary']!({}, {} as never)) as {
-      byDay: { date: string; turns: number }[]
+      byDay: { date: string; turns: number; tokens: number }[]
     }
     assert.deepEqual(result.byDay, [
-      { date: '2026-10-01', turns: 2 },
-      { date: '2026-10-02', turns: 3 },
+      { date: '2026-10-01', turns: 2, tokens: 200 },
+      { date: '2026-10-02', turns: 3, tokens: 300 },
     ])
   })
 

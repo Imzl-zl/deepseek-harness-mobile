@@ -131,7 +131,12 @@ function toolResult(callId: string, isError: boolean): SessionEvent<'tool/result
 }
 
 /** `assistant/message` 的载荷（同文件 `:342-350`）。 */
-function assistant(turn: number, step: number, id: string): SessionEvent<'assistant/message'>['data'] {
+function assistant(
+  turn: number,
+  step: number,
+  id: string,
+  usage?: Record<string, number>,
+): SessionEvent<'assistant/message'>['data'] {
   return {
     turn,
     step,
@@ -142,6 +147,9 @@ function assistant(turn: number, step: number, id: string): SessionEvent<'assist
       source: { kind: 'model', provider: 'test', model: 'test' },
     },
     stream: [],
+    // 宿主把**这一次请求**的用量挂在消息上（`usage-projection.ts:83` 读的就是它），
+    // 于是"每轮多少 token"能在同一条事件流上算出来。
+    ...(usage === undefined ? {} : { usage }),
   } as SessionEvent<'assistant/message'>['data']
 }
 
@@ -168,12 +176,49 @@ test('注册后 session.projections 的 values 里出现 trajectory 这个键', 
   assert.deepEqual(Object.keys(view).sort(), ['droppedSteps', 'droppedTurns', 'truncated', 'turns'])
   assert.equal(view.turns.length, 1)
   assert.deepEqual(Object.keys(view.turns[0] ?? {}).sort(), [
-    'durationMs', 'endTime', 'outcome', 'startSeq', 'startTime', 'steps', 'stepsTruncated', 'turn',
+    // `tokens` 是 2026-10-24 加的：`usage.summary` 要按天汇总用量，而宿主的
+    // `tokenUsage` 只有会话累计；`assistant/message` 自带 `usage`，这里顺手累进本轮。
+    'durationMs', 'endTime', 'outcome', 'startSeq', 'startTime', 'steps', 'stepsTruncated',
+    'tokens', 'turn',
   ])
   // 步的键同样钉住：`offsetMs` 是**画 x 轴唯一要的几何**（手机不做 epoch 相减）。
   assert.deepEqual(Object.keys(view.turns[0]?.steps[0] ?? {}).sort(), [
     'durationMs', 'endTime', 'isError', 'kind', 'label', 'offsetMs', 'seq', 'startTime',
   ])
+})
+
+test('每轮的 token：assistant/message 的 usage 累进本轮；没有 usage 就是 0', async () => {
+  const harnessed = await harness()
+  const { session } = harnessed
+
+  // 第 1 轮：两次模型请求，各带一份 usage ⇒ 累加。
+  session.append('turn/start', { turn: 1 })
+  session.append('step/start', { turn: 1, step: 1 })
+  session.append(
+    'assistant/message',
+    assistant(1, 1, 'a1', { inputTokens: 100, outputTokens: 40, cacheReadTokens: 7, cacheWriteTokens: 3 }),
+    { surfaceOp: 'append' },
+  )
+  session.append('step/end', { turn: 1, step: 1 })
+  session.append('step/start', { turn: 1, step: 2 })
+  session.append(
+    'assistant/message',
+    assistant(1, 2, 'a2', { inputTokens: 10, outputTokens: 2 }),
+    { surfaceOp: 'append' },
+  )
+  session.append('step/end', { turn: 1, step: 2 })
+  session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+
+  // 第 2 轮：没有 usage（老事件 / 不计量）⇒ 0，而不是"用了 0"的编造。
+  session.append('turn/start', { turn: 2 })
+  session.append('step/start', { turn: 2, step: 1 })
+  session.append('assistant/message', assistant(2, 1, 'a3'), { surfaceOp: 'append' })
+  session.append('step/end', { turn: 2, step: 1 })
+  session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
+
+  const turns = viewOf(harnessed).turns
+  assert.equal(turns[0]?.tokens, 100 + 40 + 7 + 3 + 10 + 2)
+  assert.equal(turns[1]?.tokens, 0)
 })
 
 test('宿主没有 sessionProjections 服务时：不注册、也不报错', () => {

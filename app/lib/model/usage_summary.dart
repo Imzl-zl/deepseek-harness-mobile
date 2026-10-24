@@ -41,18 +41,27 @@ class UsageTotals {
   int get cacheTokens => cacheReadTokens + cacheWriteTokens;
 }
 
-/// 一天的活动（热力图一格）：**轮次数**，不是 token。
+/// 一天的活动（热力图一格）：轮次数 **与** 那天用掉的 token。
 ///
-/// 为什么只数轮次：投影里没有"每一轮用了多少 token"，按天摊 token 就是编
-/// （契约 §5.7 的聚合规则⑤）。
+/// `tokens` 是真值而不是摊出来的：每一轮的用量来自那条 `assistant/message`
+/// 自带的 `data.usage`，由连接器在 `trajectory` 投影里累进本轮
+/// （`connector/src/dsh/trajectory.ts` 的 `TrajectoryTurn.tokens`），
+/// 再按天求和（契约 §5.7 的聚合规则⑤）。
 class UsageDay {
-  const UsageDay({required this.date, required this.turns});
+  const UsageDay({
+    required this.date,
+    required this.turns,
+    required this.tokens,
+  });
 
   /// `YYYY-MM-DD`（**电脑侧本地时区**）。
   final String date;
 
   /// 那天开了几轮。
   final int turns;
+
+  /// 那天用掉的 token（四个分项之和）。`0` = 那一天没有计量数据。
+  final int tokens;
 }
 
 /// 一个项目（工作区目录）在汇总里的一行。
@@ -212,7 +221,7 @@ class UsageSummary {
         cacheWriteTokens: pick('cacheWriteTokens'),
       );
     }
-    // 按天的轮次：认不出的一天就跳过（不补一个 0 轮的日子）。
+    // 按天：认不出的一天就跳过（不补一个 0 轮的日子）。
     final rawDays = data['byDay'];
     final days = <UsageDay>[];
     if (rawDays is List) {
@@ -220,9 +229,17 @@ class UsageSummary {
         if (item is! Map) continue;
         final date = item['date'];
         final turns = item['turns'];
+        final tokens = item['tokens'];
         if (date is! String || date.isEmpty) continue;
         if (turns is! int || turns < 0) continue;
-        days.add(UsageDay(date: date, turns: turns));
+        days.add(
+          UsageDay(
+            date: date,
+            turns: turns,
+            // `tokens` 缺席 ⇒ 0（那一天没有计量），而不是把整天丢掉。
+            tokens: tokens is int && tokens > 0 ? tokens : 0,
+          ),
+        );
       }
     }
     return UsageSummary(

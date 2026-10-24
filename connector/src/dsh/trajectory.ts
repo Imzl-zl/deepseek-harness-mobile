@@ -154,6 +154,15 @@ export interface TrajectoryTurn {
   readonly durationMs: number | null
   /** `turn/end.reason.kind`；`null` = 还没收口。 */
   readonly outcome: string | null
+  /**
+   * 这一轮**用掉的 token**（`assistant/message` 的 `data.usage` 四个分项之和）。
+   *
+   * 为什么在这里：`usage.summary` 要按天汇总用量，而宿主的 `tokenUsage` 投影只有
+   * **会话累计**（`usage-projection.ts:56-63` 的 `{totals, last}`）—— 没有"每轮多少"。
+   * 好在同一条事件流里 `assistant/message` 自带 `usage`（`usage-projection.ts:83`），
+   * 而本投影**本来就在折它**（助手段的终点），顺手累加不增加任何往返。
+   */
+  readonly tokens: number
   /** 这一轮的步数超过 {@link MAX_STEPS_PER_TURN}，只留了最近的若干步。 */
   readonly stepsTruncated: boolean
   readonly steps: TrajectoryStep[]
@@ -211,6 +220,7 @@ const turnSchema: z.ZodType<TrajectoryTurn> = z
     endTime: z.number().int().nonnegative().nullable(),
     durationMs: z.number().int().nonnegative().nullable(),
     outcome: z.string().nullable(),
+    tokens: z.number().int().nonnegative(),
     stepsTruncated: z.boolean(),
     steps: z.array(stepSchema),
   })
@@ -436,6 +446,7 @@ function startTurn(state: TrajectoryState, turn: number, seq: number, time: numb
           endTime: null,
           durationMs: null,
           outcome: null,
+          tokens: 0,
           stepsTruncated: false,
           steps: [],
         },
@@ -468,6 +479,7 @@ function settleAssistantStep(
   turn: number,
   time: number,
   interrupted: boolean,
+  tokens: number,
 ): TrajectoryState {
   const turnIndex = indexOfTurn(state.visible.turns, turn)
   if (turnIndex < 0) return state
@@ -485,7 +497,34 @@ function settleAssistantStep(
   /* v8 ignore next -- findLastIndex 已保证存在 */
   if (target === undefined) return state
   steps[stepIndex] = { ...target, endTime: time, durationMs: time - target.startTime, isError: interrupted }
-  return withSteps(state, turnIndex, steps, current.stepsTruncated)
+  const next = withSteps(state, turnIndex, steps, current.stepsTruncated)
+  // 这一条 `assistant/message` 自带的 usage 累进本轮（见 `TrajectoryTurn.tokens`）。
+  // 没有 usage（老事件 / 不支持计量）就不动 —— 0 是"不知道"，不是"用了 0"。
+  return tokens > 0
+    ? withTurn(next, turnIndex, { tokens: current.tokens + tokens })
+    : next
+}
+
+/**
+ * `assistant/message` 的 `data.usage` → 四个分项之和。
+ *
+ * 键名照宿主（`usage-projection.ts:24-29` 的 `bucketsFrom`：`inputTokens` /
+ * `outputTokens` / `cacheReadTokens` / `cacheWriteTokens`）。认不出的形状给 0。
+ */
+function usageTokensOf(usage: unknown): number {
+  if (typeof usage !== 'object' || usage === null) return 0
+  const record = usage as Record<string, unknown>
+  let sum = 0
+  for (const key of [
+    'inputTokens',
+    'outputTokens',
+    'cacheReadTokens',
+    'cacheWriteTokens',
+  ] as const) {
+    const value = record[key]
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) sum += value
+  }
+  return sum
 }
 
 /** `tool/call`：开一段工具调用。 */
@@ -664,7 +703,14 @@ function apply(state: TrajectoryState, event: SessionEvent): TrajectoryState {
     case 'step/end':
       return closeTurnSteps(state, event.data.turn, event.time)
     case 'assistant/message':
-      return settleAssistantStep(state, event.data.turn, event.time, event.data.interrupted === true)
+      return settleAssistantStep(
+        state,
+        event.data.turn,
+        event.time,
+        event.data.interrupted === true,
+        // 这一轮用掉多少 token 就在这条事件上（`data.usage`），顺手累进本轮。
+        usageTokensOf(event.data.usage),
+      )
     case 'tool/call':
       return startToolStep(
         state,

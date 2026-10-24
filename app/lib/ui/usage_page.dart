@@ -287,33 +287,50 @@ class _MiniCard extends StatelessWidget {
   }
 }
 
-/// 活动热力图：**最近 52 周**，一格一天，颜色深浅 = 那天开了几轮。
+/// 活动热力图：**最近 52 周**，一格一天，**颜色 = 那天用掉的 token**。
 ///
-/// ## 为什么 52 周放得下（这组数字是算过的）
+/// ## 它凭什么不再"只是一张图"
 ///
-/// 390dp 屏：页面左右各 16 + 卡片左右各 14 ⇒ 可用 **330dp**。
-/// 52 列 × 4dp + 51 条间距 × 2dp = **310dp**，留 20dp 余量；
-/// 320dp 的小屏上单格退到 3dp 也还在界内（`clamp(3, 14)` 兜住）。
-/// 更宽屏 / 大字号下格子跟着变大，但**永不溢出** —— 宽度由 `LayoutBuilder` 现量。
+/// 三件能读出数字的东西：
 ///
-/// 密度照 GitHub 移动端的同一档（4dp 格 + 2dp 缝）：这不是"点按目标"，
-/// 读数靠颜色深浅，不靠点。
+/// 1. **可点**：点一格，标题右边那行读出 `10月3日 · 3 轮 · 12.4K tok`；
+/// 2. **有刻度**：左边星期（一/三/五）、顶上按周对齐的月份；
+/// 3. **有图例**：少 → 多 五档，与格子用同一个色阶（[heatAlphaAt]）。
+///
+/// ## 尺寸为什么是 10dp 且可横向滚
+///
+/// 4dp 的装饰格**点不中**（那是"看个样子"的根源）。10dp 格 + 3dp 缝 ⇒
+/// 52 周约 **673dp**，一屏放不下，所以网格横向可滚、星期列固定不动。
 ///
 /// ## 数据口径（写在卡片上，不靠猜）
 ///
-/// 只数轮次、不摊 token（契约 §5.7 聚合规则⑤）；覆盖范围是各会话
-/// `trajectory` 保留的最近 200 轮。所以底下一句如实写"按轮次"。
-class _HeatmapCard extends StatelessWidget {
+/// 颜色按 token；一格同时能读出轮次。两数都是真值：每轮用量来自那条
+/// `assistant/message` 的 `data.usage`（连接器在 `trajectory` 里累进本轮）。
+/// 覆盖范围是各会话 `trajectory` 保留的最近 200 轮。
+class _HeatmapCard extends StatefulWidget {
   const _HeatmapCard({required this.days});
 
   final List<UsageDay> days;
 
+  @override
+  State<_HeatmapCard> createState() => _HeatmapCardState();
+}
+
+class _HeatmapCardState extends State<_HeatmapCard> {
   static const int _weeks = 52;
+  static const double _cell = 10;
+
+  /// 格与缝；一格 + 一缝 = [_slot]。
+  static const double _gap = 3;
+  static const double _slot = _cell + _gap;
+
+  /// 选中的那天（`YYYY-MM-DD`）；`null` = 还没点（显示"点一格"）。
+  String? _selected;
 
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
-    final byDate = {for (final day in days) day.date: day.turns};
+    final byDate = {for (final day in widget.days) day.date: day};
     final today = DateTime.now();
     final todayDate = DateTime(today.year, today.month, today.day);
     // 本周周一（`DateTime.weekday` 的 1 = 周一）。
@@ -323,6 +340,9 @@ class _HeatmapCard extends StatelessWidget {
     final firstMonday = thisMonday.subtract(
       const Duration(days: 7 * (_weeks - 1)),
     );
+    final scale = heatScaleOf(byDate.values.map((day) => day.tokens));
+    final selected = _selected == null ? null : byDate[_selected];
+
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       decoration: BoxDecoration(
@@ -334,86 +354,262 @@ class _HeatmapCard extends StatelessWidget {
         children: [
           Row(
             children: [
+              Text(
+                '最近 $_weeks 周',
+                style: TextStyle(fontSize: 12, color: c.labelSecondary),
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  '最近 $_weeks 周',
-                  style: TextStyle(fontSize: 12, color: c.labelSecondary),
+                  selected == null ? '点一格看当天' : _readoutOf(selected),
+                  textAlign: TextAlign.right,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: selected == null ? c.labelCaption : c.labelPrimary,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
                 ),
               ),
-              Text(
-                '按轮次',
-                style: TextStyle(fontSize: 11, color: c.labelCaption),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 星期列**固定不滚**（滚走了就不知道哪一行是哪天）。
+              const _WeekdayColumn(cell: _cell, gap: _gap),
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  // 默认停在最右（最近的几周才是常看的）。
+                  reverse: true,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _MonthRow(firstMonday: firstMonday, todayDate: todayDate),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          for (var week = 0; week < _weeks; week++) ...[
+                            if (week > 0) const SizedBox(width: _gap),
+                            Column(
+                              children: [
+                                for (var weekday = 0; weekday < 7; weekday++)
+                                  Padding(
+                                    padding: const EdgeInsets.only(
+                                      bottom: _gap,
+                                    ),
+                                    child: Builder(
+                                      builder: (context) {
+                                        final date = firstMonday.add(
+                                          Duration(days: week * 7 + weekday),
+                                        );
+                                        final key = _dateKey(date);
+                                        final day = byDate[key];
+                                        return _HeatCell(
+                                          key: Key('heat-$key'),
+                                          alpha: heatAlphaAt(
+                                            day?.tokens ?? 0,
+                                            scale,
+                                          ),
+                                          size: _cell,
+                                          future: date.isAfter(todayDate),
+                                          selected: key == _selected,
+                                          onTap: date.isAfter(todayDate)
+                                              ? null
+                                              : () => setState(
+                                                  () => _selected = key,
+                                                ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ],
           ),
           const SizedBox(height: 10),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              // 52 列要更细的缝与格：390dp 屏上正是 4dp 格 + 2dp 缝
-              // （见类注释里那组算式），再宽也由 `clamp` 兜住不会溢出。
-              const gap = 2.0;
-              final cell =
-                  ((constraints.maxWidth - gap * (_weeks - 1)) / _weeks).clamp(
-                    3.0,
-                    14.0,
-                  );
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (var week = 0; week < _weeks; week++) ...[
-                    if (week > 0) const SizedBox(width: gap),
-                    Column(
-                      children: [
-                        for (var weekday = 0; weekday < 7; weekday++)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: gap),
-                            child: _HeatCell(
-                              turns: _turnsOf(
-                                byDate,
-                                firstMonday.add(
-                                  Duration(days: week * 7 + weekday),
-                                ),
-                              ),
-                              size: cell,
-                              future: firstMonday
-                                  .add(Duration(days: week * 7 + weekday))
-                                  .isAfter(todayDate),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ],
-                ],
-              );
-            },
-          ),
+          _Legend(scale: scale),
         ],
       ),
     );
   }
 
-  int _turnsOf(Map<String, int> byDate, DateTime date) =>
-      byDate[_dateKey(date)] ?? 0;
+  /// 选中那天的读出行：`10月3日 · 3 轮 · 12.4K tok`。
+  String _readoutOf(UsageDay day) {
+    final parts = _datePartsOf(day.date);
+    final label = parts == null ? day.date : '${parts.$2}月${parts.$3}日';
+    final tokens = day.tokens > 0 ? formatTokenCount(day.tokens) : '无计量';
+    return '$label · ${day.turns} 轮 · $tokens tok';
+  }
+}
+
+/// `YYYY-MM-DD` → `(year, month, day)`；认不出给 `null`。
+(int, int, int)? _datePartsOf(String date) {
+  final parts = date.split('-');
+  if (parts.length != 3) return null;
+  final year = int.tryParse(parts[0]);
+  final month = int.tryParse(parts[1]);
+  final day = int.tryParse(parts[2]);
+  if (year == null || month == null || day == null) return null;
+  return (year, month, day);
+}
+
+/// 左边的星期列（只标一/三/五，与 GitHub 同一档密度）。
+class _WeekdayColumn extends StatelessWidget {
+  const _WeekdayColumn({required this.cell, required this.gap});
+
+  final double cell;
+  final double gap;
+
+  static const List<String> _labels = ['一', '', '三', '', '五', '', ''];
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          for (final label in _labels)
+            SizedBox(
+              height: cell + gap,
+              child: Center(
+                child: Text(
+                  label,
+                  style: TextStyle(fontSize: 9, color: c.labelCaption),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 顶上按月对齐的月份标签（只在"这一周的周一进入新月份"处标，太近的不叠）。
+class _MonthRow extends StatelessWidget {
+  const _MonthRow({required this.firstMonday, required this.todayDate});
+
+  final DateTime firstMonday;
+  final DateTime todayDate;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    const slot = _HeatmapCardState._slot;
+    const weeks = _HeatmapCardState._weeks;
+    final labels = <({int week, String text})>[];
+    var lastMonth = firstMonday.month;
+    var lastLabeledWeek = -99;
+    for (var week = 0; week < weeks; week++) {
+      final monday = firstMonday.add(Duration(days: week * 7));
+      if (monday.month == lastMonth) continue;
+      lastMonth = monday.month;
+      // 相邻标签至少隔 3 格，否则 `10月`/`11月` 会叠在一起。
+      if (week - lastLabeledWeek < 3) continue;
+      lastLabeledWeek = week;
+      labels.add((week: week, text: '${monday.month}月'));
+    }
+    // 宽度必须**显式给**：这块在横向滚动里，父级宽度是无限的，
+    // 而 `Stack` 不接受无限宽（`RenderStack._computeSize` 会断言）。
+    return SizedBox(
+      width: weeks * slot,
+      height: 13,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          for (final label in labels)
+            Positioned(
+              left: label.week * slot,
+              child: Text(
+                label.text,
+                style: TextStyle(fontSize: 9, color: c.labelCaption),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 图例：少 → 多 五档，用的是与格子同一个 [heatAlphaAt]。
+class _Legend extends StatelessWidget {
+  const _Legend({required this.scale});
+
+  /// 这一年的非零 token 升序（色阶的分位依据）。
+  final List<int> scale;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    // 图例用这一年的中位数量级做样本：读的人关心"深浅对应多少"，
+    // 而不是把 5 个格子各自标上数字（那会挤满一行）。
+    final sample = scale.isEmpty ? 0 : scale[scale.length ~/ 2];
+    return Row(
+      children: [
+        Text('少', style: TextStyle(fontSize: 10, color: c.labelCaption)),
+        const SizedBox(width: 4),
+        for (var step = 0; step <= 4; step++) ...[
+          if (step > 0) const SizedBox(width: 3),
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: step == 0
+                  ? c.layer2
+                  : c.accentBlue.withValues(alpha: step / 4 * 0.7 + 0.3),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        ],
+        const SizedBox(width: 4),
+        Text('多', style: TextStyle(fontSize: 10, color: c.labelCaption)),
+        const Spacer(),
+        Text(
+          sample > 0 ? '中位 ${formatTokenCount(sample)} tok/天' : '按 token 深浅',
+          style: TextStyle(fontSize: 10, color: c.labelCaption),
+        ),
+      ],
+    );
+  }
 }
 
 class _HeatCell extends StatelessWidget {
   const _HeatCell({
-    required this.turns,
+    super.key,
+    required this.alpha,
     required this.size,
     required this.future,
+    required this.selected,
+    this.onTap,
   });
 
-  final int turns;
+  final double alpha;
   final double size;
 
   /// 未来的日子（本周内）画成透明 —— 它不是"0 轮"。
   final bool future;
 
+  /// 选中的那一格：加一圈描边（否则点完看不出点的是哪格）。
+  final bool selected;
+
+  final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
-    final alpha = heatAlphaOf(turns);
-    return Container(
+    final box = Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
@@ -423,7 +619,14 @@ class _HeatCell extends StatelessWidget {
             ? c.layer2
             : c.accentBlue.withValues(alpha: alpha),
         borderRadius: BorderRadius.circular(2),
+        border: selected ? Border.all(color: c.labelPrimary, width: 1.2) : null,
       ),
+    );
+    if (onTap == null) return box;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: box,
     );
   }
 }
@@ -432,16 +635,39 @@ String _dateKey(DateTime date) =>
     '${date.year}-${date.month.toString().padLeft(2, '0')}-'
     '${date.day.toString().padLeft(2, '0')}';
 
-/// 热力图一格的不透明度：**纯函数**（界面只调它，测试只测它）。
+/// 这一年的色阶：**非零 token 升序**（空 = 这一年没有任何计量）。
 ///
-/// 0 轮 = 底色（不是透明 —— 那一天存在，只是没干活）；越忙越深。
-double heatAlphaOf(int turns) => switch (turns) {
-  <= 0 => 0.0,
-  <= 1 => 0.30,
-  <= 3 => 0.50,
-  <= 6 => 0.75,
-  _ => 1.0,
-};
+/// 分档用**数据自己的四分位**，不发明绝对阈值（"多少 token 算多"因人而异；
+/// 而"你这台机器里相对算多"是数据能回答的）。
+List<int> heatScaleOf(Iterable<int> tokenValues) {
+  final nonzero = [
+    for (final value in tokenValues)
+      if (value > 0) value,
+  ]..sort();
+  return nonzero;
+}
+
+/// 一格的不透明度：纯函数（界面只调它，测试只测它）。
+///
+/// `0` 或负数 = 底色（不是透明 —— 那一天存在，只是没干活）；
+/// 否则按它在 [scale] 里的**分位**落 0.30 / 0.45 / 0.60 / 0.75 / 1.0。
+double heatAlphaAt(int tokens, List<int> scale) {
+  if (tokens <= 0) return 0.0;
+  if (scale.isEmpty) return 0.30;
+  // 这一格在非零样本里的位置（0..1）⇒ 五档。
+  var atOrBelow = 0;
+  for (final value in scale) {
+    if (value <= tokens) atOrBelow++;
+  }
+  final fraction = atOrBelow / scale.length;
+  return switch (fraction) {
+    <= 0.2 => 0.30,
+    <= 0.4 => 0.45,
+    <= 0.6 => 0.60,
+    <= 0.8 => 0.75,
+    _ => 1.0,
+  };
+}
 
 /// 一个项目的标题行（名字 · 用量 · 几个会话）。
 class _ProjectHeader extends StatelessWidget {

@@ -120,9 +120,9 @@ void main() {
               cacheWriteTokens: 4,
             ),
             byDay: [
-              UsageDay(date: '2026-10-01', turns: 2),
-              UsageDay(date: '2026-10-02', turns: 3),
-              UsageDay(date: '2026-10-03', turns: 1),
+              UsageDay(date: '2026-10-01', turns: 2, tokens: 1200),
+              UsageDay(date: '2026-10-02', turns: 3, tokens: 8400),
+              UsageDay(date: '2026-10-03', turns: 1, tokens: 300),
             ],
           ),
         ),
@@ -133,12 +133,53 @@ void main() {
     expect(find.text('输入（未命中缓存）'), findsOneWidget);
     expect(find.text('输出'), findsOneWidget);
     expect(find.text('缓存读 / 写'), findsOneWidget);
-    // 轮次 = `byDay` 之和（2+3+1）。**它不是 token**：热力图只数轮次
-    // （契约 §5.7 聚合规则⑤）。
+    // 轮次 = `byDay` 之和（2+3+1）。
     expect(find.text('轮次'), findsOneWidget);
     expect(find.text('6'), findsOneWidget);
     expect(find.text('最近 52 周'), findsOneWidget);
-    expect(find.text('按轮次'), findsOneWidget);
+    // 还没点格子：那行是操作提示（不是空着，也不是假装有数据）。
+    expect(find.text('点一格看当天'), findsOneWidget);
+    // 图例两侧的刻度词。
+    expect(find.text('少'), findsOneWidget);
+    expect(find.text('多'), findsOneWidget);
+  });
+
+  testWidgets('热力图：点一格能读出那天（日期 · 轮次 · token）', (tester) async {
+    // 用"今天"造数据：格子是按日历铺的，历史日期也要落在网格里。
+    final today = DateTime.now();
+    String keyOf(int daysAgo) {
+      final date = DateTime(
+        today.year,
+        today.month,
+        today.day,
+      ).subtract(Duration(days: daysAgo));
+      return '${date.year}-${date.month.toString().padLeft(2, '0')}-'
+          '${date.day.toString().padLeft(2, '0')}';
+    }
+
+    final threeDaysAgo = keyOf(3);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UsagePage(
+          summary: UsageSummary(
+            sessions: 1,
+            grandTotalTokens: 9999,
+            bySession: const [],
+            byDay: [UsageDay(date: threeDaysAgo, turns: 4, tokens: 15000)],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(Key('heat-$threeDaysAgo')));
+    await tester.pumpAndSettle();
+
+    // 读出行由**生产数据**算出来：4 轮、15000 tok（`formatTokenCount` 格式化）。
+    final readout = find.textContaining('4 轮');
+    expect(readout, findsOneWidget);
+    final text = tester.widget<Text>(readout).data!;
+    expect(text, contains('15K tok'), reason: '读数走同一个格式化函数');
   });
 
   test('fromWire：totals 与 byDay 原样解析；缺席就 null / 空表', () {
@@ -152,7 +193,7 @@ void main() {
         'cacheWriteTokens': 2,
       },
       'byDay': [
-        {'date': '2026-10-01', 'turns': 2},
+        {'date': '2026-10-01', 'turns': 2, 'tokens': 900},
         {'date': '2026-10-02', 'turns': 0},
       ],
     });
@@ -161,6 +202,9 @@ void main() {
     expect(both.totals!.cacheTokens, 10);
     expect(both.byDay.length, 2);
     expect(both.totalTurns, 2);
+    expect(both.byDay.first.tokens, 900);
+    // 某一天没有 `tokens` 键 ⇒ 0（那一天没计量），整天不丢。
+    expect(both.byDay.last.tokens, 0);
 
     // 老连接器：两个键都不在 ⇒ 界面整块不出现（不是四个 0、也不是 0 轮）。
     final old = UsageSummary.fromWire({'sessions': 1, 'grandTotalTokens': 100});
@@ -170,19 +214,24 @@ void main() {
     expect(old.totalTurns, isNull);
   });
 
-  test('heatAlphaOf：0 轮是底色、越忙越深，且严格单调', () {
-    expect(heatAlphaOf(0), 0.0, reason: '那一天存在，只是没干活 ⇒ 底色，不是透明');
-    expect(heatAlphaOf(1), 0.30);
-    expect(heatAlphaOf(3), 0.50);
-    expect(heatAlphaOf(6), 0.75);
-    expect(heatAlphaOf(7), 1.0);
-    // 单调：把边界两侧都点一遍，防止将来改阈值时出现"更忙更浅"。
+  test('heatAlphaAt：0 是底色；色阶按**这一年自己的分位**，且严格单调', () {
+    // 空样本（这一年没有任何计量）也要给一个能看的档，而不是全白。
+    expect(heatAlphaAt(0, const []), 0.0, reason: '那一天存在，只是没干活');
+    expect(heatAlphaAt(100, const []), 0.30);
+
+    final scale = heatScaleOf([0, 100, 200, 300, 400, 500, 0]);
+    expect(scale, [100, 200, 300, 400, 500], reason: '0 不进样本（那是"没干活"）');
+
+    // 单调：拿真实样本逐个走一遍，防止将来改分位时出现"更忙更浅"。
     var previous = -1.0;
-    for (final turns in [0, 1, 2, 3, 4, 6, 7, 20]) {
-      final alpha = heatAlphaOf(turns);
+    for (final tokens in [0, 100, 200, 300, 400, 500]) {
+      final alpha = heatAlphaAt(tokens, scale);
       expect(alpha, greaterThanOrEqualTo(previous));
       previous = alpha;
     }
+    // 样本里最大的一天一定是深色档（"相对你这台机器算多"由数据回答）。
+    expect(heatAlphaAt(500, scale), 1.0);
+    expect(heatAlphaAt(100, scale), 0.30);
   });
 
   testWidgets('点会话行：回调带上 sid', (tester) async {

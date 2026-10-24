@@ -393,8 +393,10 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
   /// 而热力图回答的是"这台电脑上哪天在干活"。
   /// **覆盖范围受投影上限约束**（`dsh/trajectory.ts:98` 的 `MAX_TURNS = 200`，
   /// 超出保留窗口的轮不在里面）—— 这是如实的上界，写进契约 §5.7 那一行。
-  const turnsByDayOf = (trajectory: unknown): Map<string, number> => {
-    const days = new Map<string, number>()
+  const turnsByDayOf = (
+    trajectory: unknown,
+  ): Map<string, { turns: number; tokens: number }> => {
+    const days = new Map<string, { turns: number; tokens: number }>()
     if (typeof trajectory !== 'object' || trajectory === null) return days
     const turns = (trajectory as { turns?: unknown }).turns
     if (!Array.isArray(turns)) return days
@@ -402,9 +404,17 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       if (typeof turn !== 'object' || turn === null) continue
       const time = (turn as { startTime?: unknown }).startTime
       if (typeof time !== 'number' || !Number.isFinite(time) || time <= 0) continue
+      const tokens = (turn as { tokens?: unknown }).tokens
       const date = new Date(time)
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-      days.set(key, (days.get(key) ?? 0) + 1)
+      const acc = days.get(key) ?? { turns: 0, tokens: 0 }
+      acc.turns += 1
+      // 这一轮的 token 来自 `trajectory.turns[].tokens`（`assistant/message.usage`
+      // 的累加，见 `dsh/trajectory.ts` 的 `TrajectoryTurn.tokens`）。
+      if (typeof tokens === 'number' && Number.isFinite(tokens) && tokens > 0) {
+        acc.tokens += tokens
+      }
+      days.set(key, acc)
     }
     return days
   }
@@ -825,16 +835,19 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
         }),
         { ...ZERO_BUCKETS },
       )
-      // 按天合并（**只数轮次**，不按天摊 token：投影里没有"每一轮用了多少"，
-      // 编一个就是假数据）。日期升序 —— 热力图画的是连续的一段日历。
-      const dayMap = new Map<string, number>()
+      // 按天合并：**轮次与 token 都是真值**（token 来自每轮 `assistant/message.usage`
+      // 的累加，见 `dsh/trajectory.ts`）。日期升序 —— 热力图画的是连续的一段日历。
+      const dayMap = new Map<string, { turns: number; tokens: number }>()
       for (const entry of usages) {
-        for (const [date, turns] of entry.days) {
-          dayMap.set(date, (dayMap.get(date) ?? 0) + turns)
+        for (const [date, acc] of entry.days) {
+          const total = dayMap.get(date) ?? { turns: 0, tokens: 0 }
+          total.turns += acc.turns
+          total.tokens += acc.tokens
+          dayMap.set(date, total)
         }
       }
       const byDay = [...dayMap.entries()]
-        .map(([date, turns]) => ({ date, turns }))
+        .map(([date, acc]) => ({ date, turns: acc.turns, tokens: acc.tokens }))
         .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
       // **按项目（工作区目录）聚合**：`cwd` 就是 `session.list` 已经在发的那个
       // 字段（`dsh/sessions.ts` 的 `...(item.cwd === undefined ? {} : { cwd })`）。
