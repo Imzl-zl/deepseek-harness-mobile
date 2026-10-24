@@ -1687,7 +1687,11 @@ class _AtSuggestionsState extends State<_AtSuggestions> {
   }
 }
 
-/// 面板的一句话（加载 / 空 / 失败三态共用；宽度撑满，读起来像"这一行没有候选"）。
+/// 面板的一句话（**空 / 失败**两态共用；宽度撑满，读起来像"这一行没有候选"）。
+///
+/// 加载态不走这里：它给两行骨架（`_PanelSkeletonRow`），因为"正在找"本身不是候选。
+/// 失败**不占列表**：宿主的错误是 toast（`MenuView` 只画候选），手机上一条常驻的行
+/// 比 toast 更好找，但同样不假装成一行候选。
 class _AtStatusLine extends StatelessWidget {
   const _AtStatusLine({super.key, required this.text, required this.color});
 
