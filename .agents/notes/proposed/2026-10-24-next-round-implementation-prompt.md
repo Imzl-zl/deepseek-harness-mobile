@@ -121,12 +121,11 @@ DSH 参考源码（只读）：`D:\sudy\github\deepseek-harness`，当前 **0.2.
 文本与图片预览不用改 DSH；但入参是 `WorkspaceFileScope`（要 workspace 身份），比 `fileReferences` 重 ——
 **只给"文件页/预览"用，不要用在 `@` 补全里**。
 
-## 7. 版本基线（放最后，单独一个提交）
+## 7. 版本基线（**已完成**，别再动）
 
-连接器钉 `@deepseek-ai/dsh-*` = **0.2.1-rc.2**，checkout 已 **0.2.1-rc.3**。差异集中在 typert 资源解析
-（`feat(typert): support default resource resolvers` 等），对"透传 Remote"的接法有利，非破坏性。
-做法：只改 `connector/package.json` 版本 + 重装 → 跑 `tsc --noEmit && pnpm build && pnpm test`，不绿就回退。
-**不允许**为了升版本改业务代码。
+`connector` 的 peer/dev 已对齐宿主实际安装的 **`0.2.1-rc.3` + `cordis 4.0.5`**（`schemastery 3.18.5` 本来就对），
+`pnpm install`（本地 store，8.7 s）→ `tsc --noEmit` 0 → `build` 过 → `pnpm test` **621/621**。
+取舍与"以后每次 DSH 升级怎么量"见 `implemented/2026-10-24-dsh-version-baseline-rc3.md`。
 
 ## 8. 硬规则（违反即返工）
 

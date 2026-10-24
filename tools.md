@@ -596,3 +596,17 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
 
 
 
+
+## DSH 升级后的固定动作（版本基线对齐）
+
+每次 DSH 升级后,先量**宿主实际安装的**版本(不要看 changelog 猜):
+
+```powershell
+$env:ELECTRON_RUN_AS_NODE='1'
+& 'D:\soft\DeepSeek Harness\DeepSeek Harness.exe' -e "for (const p of ['@deepseek-ai/cordis','@deepseek-ai/dsh-typert-protocol','@deepseek-ai/schemastery']) console.log(p, require('D:/soft/DeepSeek Harness/resources/app.asar/dsh/node_modules/' + p + '/package.json').version)"
+```
+
+再把 `connector/package.json` 的 `peerDependencies` + `devDependencies` 对齐到这些版本 →
+`pnpm install` → `pnpm exec tsc --noEmit` → `pnpm build` → `pnpm test`。
+**红了就回退版本号,不许为升版本改业务代码。** 两份 `cordis` 是 Cordis 插件的典型事故源。
+2026-10-24 那次是 `rc.2/4.0.4 → rc.3/4.0.5`,取舍见 `implemented/2026-10-24-dsh-version-baseline-rc3.md`。
