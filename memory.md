@@ -246,7 +246,13 @@
     `intent.callId`（`plan-mode/src/index.ts:326`），但**手机上没有那张卡** —— 提问卡只从
     `ask_user_question` 的 `tool/call` 生成，`exit_plan_mode` 只落一条普通工具行。
     claim 一条用户看不到的交互会把 DSH 的 `NO_PROVIDER` fail-closed 换成永远挂起 ⇒
-    **不做**，限制写进契约 §15 / §6.3.1；要真答需"卡来自请求"的投递（B12 升级）。
+    当时判**不做**，限制写进契约 §15 / §6.3.1。
+    **2026-10-24 二次更正：可做（"卡来自请求"）**。投递本来就在 —— `plan-mode` 与 `ask_user_question`
+    走**同一条** `userQuestions.ask()` waterfall，请求里带齐 `header`/`question`/`detail`(=整份计划)/
+    `options`/`intent.callId`；手机端 `TakeoverController` 的浮动卡**不依赖投影锚点**，
+    `InteractionKind.plan` 的分支已存在（`app/lib/ui/takeover.dart:219,533-535,613-615`）。
+    缺的只是连接器"从请求造 item"（旧理由随卡片可见而失效）。做法见
+    `.agents/notes/proposed/2026-10-24-next-round-mentions-and-usage-range-prompt.md` §4.8。
     **真机已确认（2026-10-24）**：`/plan … exit_plan_mode` 那一轮在手机上**没有任何卡**，
     只有运行条；会话日志停在 `tool/call` 无 `tool/result`，最后由工具程序自己的 120 s 预算收口。
 12. ~~**交互改成 gateway 的 owner client**~~ **已修（2026-10-23）**：连接器作为 owner client 接

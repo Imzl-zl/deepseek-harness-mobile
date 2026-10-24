@@ -106,12 +106,54 @@ rc.2→rc.3 的差异集中在 typert 的资源解析（`feat(typert): support d
 **升级放在本轮最后**、单独一个提交：只改 `connector/package.json` 的版本 + 重装，然后跑全量（`tsc` + `build` + `test`），
 不绿就回退。**不允许**为了升版本改动业务代码。
 
+## 4.7 任务 D：附件上限（用宿主的数，不发明）
+
+DSH 的图片限制有六条，而且**已经通过现有投影暴露**：
+
+- 默认值（`packages/attachment/attachment/src/index.ts:34-46`）：`maxImageBytes` **50 MB**、
+  `maxImagesPerMessage` **20**、`maxMessageImageBytes` **200 MB**、`maxImagePixels` 64,000,000、
+  `maxImageDimension` 65,535、`mediaTypes` = `image/png|jpeg|webp|gif`（可配）。
+- 暴露：`packages/api/session-controller/src/list.ts:98-105` 把 `ctx.attachments.imageLimits`
+  注册成投影 **`imageLimits`** ⇒ 我们本来就在调 `session.projections`，**不用加方法**。
+
+现状：`app/` 与 `connector/` 里**一条限制都没有**（grep 不到 `maxBytes`/`IMAGES_TOO_LARGE`），全靠 DSH 拒绝。
+要做：从 `session.projections` 读 `imageLimits`，选图时**用这些数**前置校验（超了直接拦，文案说清是哪一条），
+并把 DSH 的拒绝码（`IMAGES_TOO_LARGE` / `TOO_MANY_IMAGES` / `IMAGE_TOO_LARGE`）原样呈现。
+**禁止**在手机侧写死自己的数字。判据：超数量 / 超单图 / 超总量各 1 条（用假的上限喂进去），
+以及"投影缺席（老连接器）⇒ 不前置拦，靠拒绝码"1 条。
+
+## 4.8 任务 E：计划审查卡 = **卡来自请求**（C11 改判"可做"）
+
+之前判"不做"是错的一半。事实：
+
+- 投递一直在：`plan-mode` 的 `exit_plan_mode` 调 `userQuestions.ask()`（`packages/plan/plan-mode/src/index.ts:316-333`），
+  与 `ask_user_question` **同一条 waterfall**（`packages/api/remotes/src/remote-events.ts:28,54` 的 allowlist 就这两个事件）。
+- **请求里带着渲染需要的一切**：`questions[0]` 的 `header` / `question` / `detail`（=整份计划 markdown）/
+  `options`，外加 `intent: { kind: 'plan-review', approve, callId }`。
+- 手机端**早就有落地形态**：`TakeoverController` 的浮动接管卡按 `InteractionKind` 渲染，
+  `InteractionKind.plan` 的分支都在（`app/lib/ui/takeover.dart:219,533-535,613-615`，标题「等待确认计划」），
+  **不依赖投影锚点**。
+- 我们卡在哪：`connector/src/dsh/interaction-client.ts:424-430` 明确选择"不认它"，因为过去手机的卡只能
+  从 `ask_user_question` 的 `tool/call` 投影生成 —— 现在这条路通了，那条理由消失。
+
+要做：
+1. 连接器：waterfall 里若是提问，就**直接从请求造 item**（`questions` 原样 + `detail`），
+   身份优先 `intent.callId`、其次 `wait.callId`，两者都没有才照旧委托；`intent.callId` 只用于**去重与幂等键**，
+   不用于"找日志里的 tool/call"。
+2. 手机：plan 卡把 `detail` 展示出来（可折叠/滚动，计划可能很长），答「批准」/「继续规划」两个选项，
+   走既有 `interaction.respond`。
+3. 判据：connector 3 条（plan-review 造卡 / 身份回退 / 无身份仍委托）；app 2 条（plan 卡渲染 detail、答复载荷）。
+
+## 4.9 任务 F（可选）：文件预览
+
+`packages/api/workspace-files/src/index.ts` 有 `read` / `readBytes` / `stat` / `list`（还有流式 `changes`）。
+文本与图片预览**不用改 DSH**；注意它的入参是 `WorkspaceFileScope`（要 workspace 身份），
+比 `fileReferences` 重 —— 留给"文件页/预览"，**不要**用在 `@` 补全里。
+
 ## 5. 明确不做（别花时间）
 
 - 插件的**安装 / 卸载 / 升级**：有 Remote（`installBundle:835` / `removeBundle:999` / `updateBundle:677`），
   但风险面（下载、磁盘、重启）远大于收益，先不做。
-- **计划审查卡**（C11）：`packages/plan/plan-mode/src/index.ts` 零 Remote、`user-questions` 只有 `answer`，
-  仍无"卡来自请求"的投递路径 —— 结论不变（硬接会把 `NO_PROVIDER` 的 fail-closed 换成永久挂起）。
 - 计划审查卡、后台送达、厂商推送：都已定案不做（`memory.md`「范围决定」、`docs/subsystems/notifications.md` §2.1/§2.2）。
 - 设置 42 项对账：**可选**，只做只读核对，不改代码；有结论就写进 `docs/settings-porting-notes.md`。
 
