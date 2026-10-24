@@ -81,6 +81,67 @@ import 'subagent_tree.dart';
 import 'takeover.dart';
 import 'trajectory_page.dart';
 
+/// 会话至少露出来的高度：底部那一块（接管卡 + 输入栏 + 统计条）不许把它吃掉。
+///
+/// 布局参数，不是业务规则 —— 它只决定"卡片最多能长多高"，不决定任何行为。
+const double kMinConversationVisible = 72;
+
+/// 输入栏**固定件**的高度：文字行 + 控制行 + 内外边距（候选面板不在里面）。
+///
+/// 实测上界，由 `app/test/composer_layout_test.dart` 的一条用例守着
+/// （空输入栏的实测高度必须 ≤ 这个常量）：常量只能大于等于实测，
+/// 低了就会让候选面板把接管卡挤爆。
+const double kComposerFixedHeight = 104;
+
+/// 统计条 + 它的上边距（一行 chip，见 `DshStatsBar` 的 `padding.top`）。
+///
+/// 实测 32（`composer_layout_test.dart` 的棘轮用例），留 4px 余量。
+const double kStatsBarHeight = 36;
+
+/// 底部这一块的**一份预算**（接管卡与候选面板从同一个数里分空间）。
+///
+/// 为什么要有它：接管卡、队列条、输入栏、统计条同在一个 `Column` 里，而手机键盘
+/// 弹起后可用高度只剩一小半。各算各的"屏幕高度比例"会叠出溢出 ——
+/// 真机 2026-10-24 抓到的那次是 `BOTTOM OVERFLOWED BY 204 PIXELS`，
+/// 接管卡的「跳过 / 提交」被顶出屏幕（`shots-2026-10-24-mentions/h1-typed.png`）。
+///
+/// 现在只有这里算：
+/// - [blockMax]：底部这一块最多占多高（可用高度减掉至少要露出来的会话）；
+/// - 接管卡拿 `Flexible` 的**剩余空间**（结构约束，不必猜它有多高）；
+/// - 候选面板拿 [panelMax]（同一个数再减掉输入栏固定件、统计条，接管卡在场时
+///   还要扣掉它不可压缩的那两行）—— 两者因此不可能相加超过 [blockMax]。
+///
+/// Note: 为什么是"一份预算 + `Flexible`"而不是调小那个窗口比例 ——
+/// 见 `.agents/notes/implemented/2026-10-25-bottom-budget-and-takeover-card.md`
+@immutable
+class _BottomBudget {
+  const _BottomBudget({required this.blockMax, required this.panelMax});
+
+  /// [viewportHeight] 是**页面 body 自己的**高度（已经扣掉顶栏与键盘 ——
+  /// 这正是 `Scaffold` 按 `viewInsets` 压缩 body 的结果，别再用屏幕高度算一遍）。
+  factory _BottomBudget.of(double viewportHeight, {required bool cardActive}) {
+    final blockMax = math.max(0.0, viewportHeight - kMinConversationVisible);
+    final reserved =
+        kComposerFixedHeight +
+        kStatsBarHeight +
+        (cardActive ? kTakeoverFixedHeight : 0);
+    return _BottomBudget(
+      blockMax: blockMax,
+      // 设计上限仍然照宿主（400）：空间够时不画一个比桌面还高的菜单。
+      panelMax: math.min(
+        kSuggestionPanelMax,
+        math.max(0.0, blockMax - reserved),
+      ),
+    );
+  }
+
+  /// 底部这一块的硬上限（`ConstrainedBox` 用它）。
+  final double blockMax;
+
+  /// 候选面板的高度上限（传给 `DshComposer`）。
+  final double panelMax;
+}
+
 /// 聊天页。
 class ChatPage extends StatefulWidget {
   const ChatPage({
@@ -763,149 +824,176 @@ class ChatPageState extends State<ChatPage> {
         if (_sideOpen == open) return;
         setState(() => _sideOpen = open);
       },
-      body: Column(
-        children: [
-          // **没选中会话时只有「对话」一个 tab**（2026-10-19 用户原话：
-          // 「没有会话的时候对话，轨迹不用显示吧，没会话你显示没用啊」）。
-          //
-          // 轨迹页读的是**当前会话**的事件流；没有会话时它是一块空屏，
-          // 而那一格 tab 等于在说"这里有个你点不开的东西"。
-          // **选中了但还没有条目时仍然显示两个**：那时轨迹页有话说
-          // （会话刚建、事件正在来）。
-          if (sid != null)
-            DshSegmented(
-              labels: const ['对话', '轨迹'],
-              index: _tab,
-              onChanged: (i) => setState(() => _tab = i),
-            ),
-          Expanded(
-            child: _tab == 0
-                ? _ChatTab(
-                    app: widget.app,
-                    items: items,
-                    // 轮组的折叠接线（见 `_mainScaffold` 里那段注释）。
-                    collapsibleTurns: collapsible,
-                    isTurnExpanded: (turn) => _turnExpanded(sid, turn, groups),
-                    onToggleTurn: (turn, expanded) =>
-                        _toggleTurn(sid, turn, expanded),
-                    headAt: headAt,
-                    liveShowHead: liveShowHead,
-                    paired: widget.paired,
-                    autoOpenToolDetail: _autoOpenToolDetail,
-                    isBlank: widget.app.currentIsBlank,
-                    // hero 的两枚 chip 都要开 sheet / 建会话，所以**由页面层建**
-                    // （`_ChatTab` 是纯展示的，拿不到那些方法）。
-                    hero: _buildHero(),
-                    onOpenDrawer: widget.onOpenDrawer,
-                    onRefreshSessions: _refreshSessions,
-                    onOpenSession: widget.onOpenSession ?? (_) {},
-                    onConnect: widget.onConnect,
-                    // 已配对时给空态一条"重新配对"的出路（议题 3，1 步直达）。
-                    onRePair: widget.paired ? widget.onRePair : null,
-                  )
-                : _TrajectoryTab(
-                    app: widget.app,
-                    onTapTurn: _showTraceSheet,
-                    onTapSegment: _showSegmentSheet,
-                  ),
-          ),
-          // ---- 底部：接管卡 + 输入栏 + 统计条 ----
-          Container(
-            // **`bgBase`，不是 `sidebar`**（2026-10-20 修）。
-            //
-            // 用户反馈："下面有一块都没覆盖"。实测（深色，`x=30` 竖向）：
-            // 页面 `#151517` 到 `y=2341`，**`y=2343` 起到底边是 `#1B1B1C`**
-            // —— 正好是 `c.sidebar` 的暗色值，高度 ≈ 系统导航条 + 6。
-            //
-            // 根因：输入栏内部（`DshComposer`）为了去掉灰带已改用 `bgBase`，
-            // 但**外面这层包裹仍是 `sidebar`**，而它下面有一条
-            // `padding.bottom + 6` —— 输入栏盖不到那块，就露出一条 sidebar 色。
-            // 也就是说灰带没被"去掉"，而是被挤到了最底部一条缝里。
-            color: c.bgBase,
-            padding: EdgeInsets.only(
-              bottom: MediaQuery.of(context).padding.bottom + 6,
-            ),
-            child: Column(
-              children: [
-                // **接管卡在输入栏上方**：它接管的是"下一步做什么"，
-                // 而输入栏仍然是最后一行（用户随时能看到自己在哪打字）。
-                // 原型是把输入栏整块换掉 —— 手机上并排更省高度，
-                // 且不会让用户以为"输入框不见了"。
-                TakeoverPanel(controller: _takeover),
-                // **排队条**（DSH Web 的 `conversation.input.dock` 槽里的
-                // QueueDock）：会话正在跑时发出去的消息排进下一个轮次，
-                // 这里列出来并可编辑 / 删除 / 插话。空队列整条不占位。
-                if (_subagentReadOnlyReason == null && sid != null)
-                  QueueDock(app: widget.app, sid: sid, running: _running),
-                // 一次性 / 模式未知的子会话：**整条输入栏换成只读状态框**
-                // （DSH 的 `SubagentReadOnlyComposer`，同一个判据）。
-                if (_subagentReadOnlyReason != null)
-                  SubagentReadOnlyBand(reason: _subagentReadOnlyReason!)
-                else
-                  DshComposer(
-                    controller: _input,
-                    attachments: _attachments,
-                    // 候选菜单的名单来自电脑侧（`repo.info.commands`）——
-                    // 手机侧不抄第二份（契约 §5.7 的 `repo.info` 行）。
-                    slashCommands: widget.app.slashCommands,
-                    // `@` 候选：能力位与处理器都来自电脑侧（`repo.info.caps.references`
-                    // 与 `refs.files` / `refs.sessions`）。老连接器 ⇒ 能力位 false ⇒
-                    // 面板整块不出现（不是显示一个永远空的列表）。
-                    mentionsEnabled: widget.app.mentionsAvailable,
-                    onQueryMentions: widget.app.mentionsAvailable
-                        ? widget.app.queryMentions
-                        : null,
-                    // 模型名与推理等级：**从真投影来**（见 `_modelLabel`）。
-                    // 推理等级同样不写死：模型自带 effort 时显示它，否则显示"默认"。
-                    modelName: _modelLabel,
-                    reasoningLabel: _reasoningLabel,
-                    access: permissionChipOf(
-                      value: widget.app.permissionValue,
-                      catalog: widget.app.permissionCatalog,
-                    ),
-                    sendMode: widget.app.sendMode,
-                    sending: _sending,
-                    enabled: _hasData && sid != null,
-                    // **hero 上换一套占位文案**（DSH 的 `placeholder.hero`，
-                    // `locales.ts:23`）：那一屏的动作是"开一个新任务"。
-                    // 只在真的显示了 hero 时才换 —— 与 `_ChatTab` 用同一个判据，
-                    // 免得出现"文案说开新任务、屏幕却是空态"。
-                    hintText: _heroVisible
-                        ? kComposerHintHero
-                        : kComposerHintDefault,
-                    // 运行中且没有草稿时，主键是"停止"（照 Web 的 primaryStops）。
-                    running: _running,
-                    onStop: _stop,
-                    onSend: _send,
-                    onAttach: _showAttachSheet,
-                    onPickModel: _showModelSheet,
-                    onPickAccess: _showAccessSheet,
-                    onRemoveAttachment: (item) =>
-                        setState(() => _attachments.remove(item)),
-                  ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: DshStatsBar(
-                    // **三条都从真投影来**（`session.projections` 的
-                    // `sessionStats` / `tokenUsage` / `contextPressure`）。
-                    // 2026-10-15 之前这里是写死的 `第 1 轮 · N 步` /
-                    // `302K · 缓存 0%` / `3%` —— 与电脑侧毫无关系，
-                    // 而用户无法分辨哪个是真的。**拿不到就整条不显示**，
-                    // 不猜一个数字把"看起来连着"当成"连着"。
-                    turnText: _turnText,
-                    usageText: _usageText,
-                    contextPercent: _contextPercent,
-                    // 三个统计各自弹一个 sheet（原型 `sheet-stats` /
-                    // `sheet-usage` / `sheet-context`）。
-                    onTapTurn: _showStatsSheet,
-                    onTapUsage: _showUsageSheet,
-                    onTapContext: _showContextSheet,
+      body: LayoutBuilder(
+        builder: (context, viewport) {
+          // **底部这一块的预算只算一次**（接管卡与候选面板从同一个数里分空间）。
+          // 键盘弹起后可用高度只剩一小半，各算各的"屏幕比例"就会叠出溢出 ——
+          // 真机 2026-10-24 抓到的那次是 `BOTTOM OVERFLOWED BY 204 PIXELS`，
+          // 接管卡的「跳过 / 提交」被顶出屏幕。
+          final budget = _BottomBudget.of(
+            viewport.maxHeight,
+            cardActive: _takeover.active != null,
+          );
+          return Column(
+            children: [
+              // **没选中会话时只有「对话」一个 tab**（2026-10-19 用户原话：
+              // 「没有会话的时候对话，轨迹不用显示吧，没会话你显示没用啊」）。
+              //
+              // 轨迹页读的是**当前会话**的事件流；没有会话时它是一块空屏，
+              // 而那一格 tab 等于在说"这里有个你点不开的东西"。
+              // **选中了但还没有条目时仍然显示两个**：那时轨迹页有话说
+              // （会话刚建、事件正在来）。
+              if (sid != null)
+                DshSegmented(
+                  labels: const ['对话', '轨迹'],
+                  index: _tab,
+                  onChanged: (i) => setState(() => _tab = i),
+                ),
+              Expanded(
+                child: _tab == 0
+                    ? _ChatTab(
+                        app: widget.app,
+                        items: items,
+                        // 轮组的折叠接线（见 `_mainScaffold` 里那段注释）。
+                        collapsibleTurns: collapsible,
+                        isTurnExpanded: (turn) =>
+                            _turnExpanded(sid, turn, groups),
+                        onToggleTurn: (turn, expanded) =>
+                            _toggleTurn(sid, turn, expanded),
+                        headAt: headAt,
+                        liveShowHead: liveShowHead,
+                        paired: widget.paired,
+                        autoOpenToolDetail: _autoOpenToolDetail,
+                        isBlank: widget.app.currentIsBlank,
+                        // hero 的两枚 chip 都要开 sheet / 建会话，所以**由页面层建**
+                        // （`_ChatTab` 是纯展示的，拿不到那些方法）。
+                        hero: _buildHero(),
+                        onOpenDrawer: widget.onOpenDrawer,
+                        onRefreshSessions: _refreshSessions,
+                        onOpenSession: widget.onOpenSession ?? (_) {},
+                        onConnect: widget.onConnect,
+                        // 已配对时给空态一条"重新配对"的出路（议题 3，1 步直达）。
+                        onRePair: widget.paired ? widget.onRePair : null,
+                      )
+                    : _TrajectoryTab(
+                        app: widget.app,
+                        onTapTurn: _showTraceSheet,
+                        onTapSegment: _showSegmentSheet,
+                      ),
+              ),
+              // ---- 底部：接管卡 + 输入栏 + 统计条 ----
+              Container(
+                // **`bgBase`，不是 `sidebar`**（2026-10-20 修）。
+                //
+                // 用户反馈："下面有一块都没覆盖"。实测（深色，`x=30` 竖向）：
+                // 页面 `#151517` 到 `y=2341`，**`y=2343` 起到底边是 `#1B1B1C`**
+                // —— 正好是 `c.sidebar` 的暗色值，高度 ≈ 系统导航条 + 6。
+                //
+                // 根因：输入栏内部（`DshComposer`）为了去掉灰带已改用 `bgBase`，
+                // 但**外面这层包裹仍是 `sidebar`**，而它下面有一条
+                // `padding.bottom + 6` —— 输入栏盖不到那块，就露出一条 sidebar 色。
+                // 也就是说灰带没被"去掉"，而是被挤到了最底部一条缝里。
+                color: c.bgBase,
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(context).padding.bottom + 6,
+                ),
+                // **底部这一块有硬上限**（`_BottomBudget` 的 `blockMax`）：
+                // 它和消息列表在同一个 `Column` 里，而消息列表是 `Expanded` ——
+                // 不设上限时键盘一弹就会溢出（真机 `h1-typed.png`）。
+                // 上限之内**接管卡先让位**：它是 `Flexible`，主体自己滚、动作行恒可见；
+                // 队列条 / 输入栏 / 统计条是固定件，永远整块可见。
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: budget.blockMax),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // **接管卡在输入栏上方**：它接管的是"下一步做什么"，
+                      // 而输入栏仍然是最后一行（用户随时能看到自己在哪打字）。
+                      // 原型是把输入栏整块换掉 —— 手机上并排更省高度，
+                      // 且不会让用户以为"输入框不见了"。
+                      Flexible(
+                        child: TakeoverPanel(controller: _takeover),
+                      ), // **排队条**（DSH Web 的 `conversation.input.dock` 槽里的
+                      // QueueDock）：会话正在跑时发出去的消息排进下一个轮次，
+                      // 这里列出来并可编辑 / 删除 / 插话。空队列整条不占位。
+                      if (_subagentReadOnlyReason == null && sid != null)
+                        QueueDock(app: widget.app, sid: sid, running: _running),
+                      // 一次性 / 模式未知的子会话：**整条输入栏换成只读状态框**
+                      // （DSH 的 `SubagentReadOnlyComposer`，同一个判据）。
+                      if (_subagentReadOnlyReason != null)
+                        SubagentReadOnlyBand(reason: _subagentReadOnlyReason!)
+                      else
+                        DshComposer(
+                          controller: _input,
+                          attachments: _attachments,
+                          // 候选菜单的名单来自电脑侧（`repo.info.commands`）——
+                          // 手机侧不抄第二份（契约 §5.7 的 `repo.info` 行）。
+                          slashCommands: widget.app.slashCommands,
+                          // **面板的高度上限来自底部预算**：不是屏幕的一个比例，
+                          // 而是"输入卡上方真正剩下的空间"（扣除输入栏固定件、
+                          // 统计条，接管卡在场时再扣它那两行）。
+                          panelMaxHeight: budget.panelMax,
+                          // `@` 候选：能力位与处理器都来自电脑侧（`repo.info.caps.references`
+                          // 与 `refs.files` / `refs.sessions`）。老连接器 ⇒ 能力位 false ⇒
+                          // 面板整块不出现（不是显示一个永远空的列表）。
+                          mentionsEnabled: widget.app.mentionsAvailable,
+                          onQueryMentions: widget.app.mentionsAvailable
+                              ? widget.app.queryMentions
+                              : null,
+                          // 模型名与推理等级：**从真投影来**（见 `_modelLabel`）。
+                          // 推理等级同样不写死：模型自带 effort 时显示它，否则显示"默认"。
+                          modelName: _modelLabel,
+                          reasoningLabel: _reasoningLabel,
+                          access: permissionChipOf(
+                            value: widget.app.permissionValue,
+                            catalog: widget.app.permissionCatalog,
+                          ),
+                          sendMode: widget.app.sendMode,
+                          sending: _sending,
+                          enabled: _hasData && sid != null,
+                          // **hero 上换一套占位文案**（DSH 的 `placeholder.hero`，
+                          // `locales.ts:23`）：那一屏的动作是"开一个新任务"。
+                          // 只在真的显示了 hero 时才换 —— 与 `_ChatTab` 用同一个判据，
+                          // 免得出现"文案说开新任务、屏幕却是空态"。
+                          hintText: _heroVisible
+                              ? kComposerHintHero
+                              : kComposerHintDefault,
+                          // 运行中且没有草稿时，主键是"停止"（照 Web 的 primaryStops）。
+                          running: _running,
+                          onStop: _stop,
+                          onSend: _send,
+                          onAttach: _showAttachSheet,
+                          onPickModel: _showModelSheet,
+                          onPickAccess: _showAccessSheet,
+                          onRemoveAttachment: (item) =>
+                              setState(() => _attachments.remove(item)),
+                        ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: DshStatsBar(
+                          // **三条都从真投影来**（`session.projections` 的
+                          // `sessionStats` / `tokenUsage` / `contextPressure`）。
+                          // 2026-10-15 之前这里是写死的 `第 1 轮 · N 步` /
+                          // `302K · 缓存 0%` / `3%` —— 与电脑侧毫无关系，
+                          // 而用户无法分辨哪个是真的。**拿不到就整条不显示**，
+                          // 不猜一个数字把"看起来连着"当成"连着"。
+                          turnText: _turnText,
+                          usageText: _usageText,
+                          contextPercent: _contextPercent,
+                          // 三个统计各自弹一个 sheet（原型 `sheet-stats` /
+                          // `sheet-usage` / `sheet-context`）。
+                          onTapTurn: _showStatsSheet,
+                          onTapUsage: _showUsageSheet,
+                          onTapContext: _showContextSheet,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
-            ),
-          ),
-        ],
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -2374,6 +2462,13 @@ class ChatPageState extends State<ChatPage> {
                 InteractionOption(
                   label: '先只拆资源束',
                   description: '改动更小，但在途请求那个缺口会留着',
+                ),
+                // **三条而不是两条**：真机上溢出的那一问就是三条选项
+                //（`shots-2026-10-24-mentions/h1-typed.png`）。演示数据按那个形状摆，
+                // 溢出那条回归用例才验得到同一件事。
+                InteractionOption(
+                  label: '先不动，等我画张图',
+                  description: '把两层画清楚再决定，代价是这一轮先停在原地',
                 ),
               ],
             ),

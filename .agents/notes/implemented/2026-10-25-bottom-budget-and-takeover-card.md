@@ -1,0 +1,66 @@
+# Agent Note: 底部这一块只有一份高度预算，接管卡拿剩下的空间
+
+Status: implemented
+
+## Problem
+
+真机 2026-10-24：提问卡 + 键盘同时在场，底部报 `BOTTOM OVERFLOWED BY 204 PIXELS`，
+卡片底部的「跳过 / 提交」被顶出屏幕（`D:\tmp\dsh-e2e\shots-2026-10-24-mentions\h1-typed.png`）。
+
+根因不是"某一张卡太高"，而是**三件东西各算各的高度**：接管卡按"窗口高度 × 比例"
+（`(size.height − viewInsets.bottom) * 0.5`，卡内正文再来一个 0.45）给自己设上限，
+输入栏与统计条是固定件，而它们同在一个 `Column` 里 —— 键盘一弹，三个独立的数相加就超过
+可用高度。再往下还有一层：`Column` 给非弹性子节点的是**无界高度**，所以"卡片最多能长多高"
+这件事在那个位置上根本没有真值可读，只有一个比例在猜。
+
+## Decision
+
+底部这一块的高度**只在一个地方算**（`app/lib/ui/chat_page.dart` 的 `_BottomBudget`）：
+
+```text
+blockMax = 页面可见高度 − kMinConversationVisible(72)
+panelMax = min(400, blockMax − kComposerFixedHeight − kStatsBarHeight − (接管卡在场 ? kTakeoverFixedHeight : 0))
+```
+
+`blockMax` 同时是底部那一块的 `ConstrainedBox` 上限；接管卡在里面是 `Flexible`（拿剩余空间），
+卡内三段仍是「顶条 / 可滚的主体 / 动作行」，**主体先让位、动作行恒完整**；候选面板拿 `panelMax`。
+卡片自己**不再**设任何比例上限（删掉 `takeoverMaxHeightFor` 与卡内的 0.45）。
+
+准入门槛（可机械判定）：
+
+1. 键盘在场（`tester.view.viewInsets = FakeViewPadding(bottom: …)`）+ 一条三条选项的提问 ⇒
+   `tester.takeException()` 为 `null`、`提交` 在屏幕内且 `hitTestable`、输入栏仍在屏幕内；
+2. 三个常量都是**上界**且各有棘轮用例（实测 widget 高度 ≤ 常量）：输入栏固定件与统计条在
+   `app/test/composer_layout_test.dart`，卡片两行在 `app/test/takeover_test.dart`；
+3. 卡内 `Flexible` 让主体滚而动作行不滚（同一张卡在 `kTakeoverFixedHeight` 的盒子里仍能看见
+   「跳过 / 提交」）。
+
+## Alternatives considered
+
+1. **把比例调小**（0.5 → 0.45 → 0.3，直到不溢出为止）
+   - 最强的理由：一行改动，立刻不溢出；不需要新的数据结构。
+   - 为何被否：它猜的还是**窗口**，而真正可用的是"输入栏与统计条之外剩下的那点"；键盘收起时
+     同一张卡又被压得没必要地矮。上一次翻车（2026-10-20，`BOTTOM OVERFLOWED BY 79 PIXELS`）
+     就是这么从 `屏幕 * 0.45` 改成 `(屏幕 − 键盘) * 0.5` 的 —— 同一个病换了一次参数。
+2. **页面级 `Stack` + 浮动卡片**（完全脱离 `Column`）
+   - 最强的理由：卡片不可能把输入栏挤出去，会话区也不会被压缩。
+   - 为何被否：`Stack` 里溢出父边界的子节点收不到点击（命中测试按父节点尺寸裁），
+     要做就得 `OverlayEntry` + 量输入栏高度；而"`Flexible` + 一份预算"用普通布局就拿到了
+     同样的保证，且约束可被 widget 测试直接断言。
+3. **卡片与输入栏都设成 `Flexible` 按权重分**
+   - 最强的理由：完全不用常量，纯 flex 分空间。
+   - 为何被否：权重分的是**平均**，不是优先级。要的是"阻塞性卡片先拿到它不可压缩的两行，
+     面板吃剩下的"；按权重分会让输入栏在紧张时先丢文字行（用户就没法用文字回答），
+     而那正是最该保住的东西。
+4. **只给输入栏设上限、卡片不设**（让卡片永远完整、必要时把输入栏挤出去）
+   - 最强的理由：卡片是"等你拿主意"的东西，完整性最重要。
+   - 为何被否：输入栏被挤出去等于回答不了（提问卡允许自定义输入），而且 `Column` 会直接溢出。
+
+## Consequences
+
+- 收益：一条算式替代三处猜测；卡片 / 面板 / 输入栏**不可能**相加超过可用高度；三个常量都有
+  棘轮用例（改内边距忘改常量会红）；`takeoverMaxHeightFor` 这个"窗口比例"函数被删掉。
+- 代价：卡片与面板**同时**在场时面板会被压到很矮甚至 0 高（键盘弹起后物理上就没有空间，
+  已写进 `docs/subsystems/composer-mentions.md` §9）；常量按 1.0 的界面字号实测，
+  字号调到 1.3 时输入栏固定件会长约 20dp，而预算没有跟着放大（极端组合下卡片可能短 20dp，
+  **已记未修**）；这条修法只有 widget 测试与变异校验，**真机未复验**。

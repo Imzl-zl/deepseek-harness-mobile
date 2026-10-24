@@ -15,6 +15,7 @@ library;
 
 import 'package:dsh_mobile/model/permission.dart';
 import 'package:dsh_mobile/model/send_mode.dart';
+import 'package:dsh_mobile/ui/chat_page.dart';
 import 'package:dsh_mobile/ui/dsh_composer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -247,5 +248,40 @@ void main() {
     // 走完 160ms：必须到 1（否则芯片永远是半透明的）。
     await tester.pump(const Duration(milliseconds: 200));
     expect(opacityOfChip(), 1);
+  });
+
+  /// 底部预算里的两个常量必须是**上界**（常量低了，候选面板或接管卡就会把
+  /// 输入栏那一列撑爆 —— 真机 `BOTTOM OVERFLOWED BY 204 PIXELS`）。
+  ///
+  /// 这一条是**棘轮**：改输入栏的内边距 / 行高而忘了改常量，它会红。
+  testWidgets('空输入栏 + 统计条的实测高度 ≤ 底部预算里的两个常量', (tester) async {
+    await tester.pumpWidget(_host(controller: TextEditingController()));
+    await tester.pumpAndSettle();
+
+    // 没有面板、没有接管卡时的输入栏高度。
+    final composer = tester.getSize(find.byType(DshComposer)).height;
+    expect(
+      composer,
+      lessThanOrEqualTo(kComposerFixedHeight),
+      reason:
+          '`kComposerFixedHeight`（$kComposerFixedHeight）必须 ≥ 实测（$composer）：'
+          '它是底部预算里"面板之外输入栏会占多高"的那个数',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: const Scaffold(
+          body: DshStatsBar(turnText: '3 轮 12 步', usageText: '302K tok'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final stats = tester.getSize(find.byType(DshStatsBar)).height;
+    expect(
+      stats,
+      lessThanOrEqualTo(kStatsBarHeight),
+      reason: '`kStatsBarHeight`（$kStatsBarHeight）必须 ≥ 实测（$stats）',
+    );
   });
 }

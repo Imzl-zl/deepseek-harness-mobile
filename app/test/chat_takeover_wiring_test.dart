@@ -401,36 +401,47 @@ void main() {
     );
   });
 
-  testWidgets('接管卡的高度上限按**可用高度**算（扣掉键盘）', (tester) async {
-    // 2026-10-20 真机：审批卡 + 输入栏 + 键盘同时在场，底部报
-    // `BOTTOM OVERFLOWED BY 79 PIXELS`。根因是上限用了整窗高度。
-    late double cap;
-    await tester.pumpWidget(
-      MediaQuery(
-        data: const MediaQueryData(
-          size: Size(360, 800),
-          viewInsets: EdgeInsets.only(bottom: 300),
-        ),
-        child: Builder(
-          builder: (context) {
-            cap = takeoverMaxHeightFor(context);
-            return const SizedBox.shrink();
-          },
-        ),
-      ),
-    );
+  testWidgets('键盘在场 + 三条选项的提问：**不溢出**，动作行仍可点', (tester) async {
+    // 2026-10-24 真机：提问卡 + 键盘同时在场，`BOTTOM OVERFLOWED BY 204 PIXELS`，
+    // 「跳过 / 提交」被顶出屏幕（`shots-2026-10-24-mentions/h1-typed.png`）。
+    //
+    // 根因不是"某一张卡太高"，而是**三件东西各算各的高度**：卡片按"窗口高度 × 比例"
+    // 给自己设上限，输入栏与统计条是固定件，而它们同在一个 `Column` 里 ——
+    // 键盘一弹，三个数相加就超过可用高度。
+    //
+    // 现在底线由 `chat_page.dart` 的 `_BottomBudget` 一条算：底部这一块有硬上限
+    // （可用高度 − 至少露出来的会话），卡片在里面拿 `Flexible` 的剩余空间、
+    // 主体自己滚，顶条与动作行永远完整。
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 2.625; // 411.4 × 914.3 dp（真机同一档）
+    // 键盘 ≈ 442dp（真机上键盘顶边在 y≈1240px / 2.625）。
+    tester.view.viewInsets = const FakeViewPadding(bottom: 1160);
+    addTearDown(tester.view.reset);
+
+    await _pumpChat(tester);
+    await _enqueueDemo(tester);
+    // 计划先出（DSH 的优先级），答掉它才轮到提问（三条选项那一问）。
+    await tester.tap(find.text('同意执行'));
+    await tester.pumpAndSettle();
+    expect(_takeoverText('等待回答'), findsOneWidget);
+
+    // ① 没有任何 RenderFlex 溢出（溢出在测试里就是抛出来的 FlutterError）。
+    expect(tester.takeException(), isNull, reason: '不该有 overflow 异常');
+    // ② 动作行在屏幕里、且点得中。
+    final submit = tester.getRect(find.text('提交'));
+    final screen =
+        tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    expect(submit.bottom, lessThan(screen), reason: '提交键必须整颗在屏幕内');
     expect(
-      cap,
-      closeTo((800 - 300) * 0.5, 0.01),
-      reason: '键盘占掉的那 300 不能再算进可用高度',
+      find.text('提交').hitTestable(),
+      findsOneWidget,
+      reason: '看得见还要点得中（被别的层盖住就等于没有）',
     );
+    // ③ 输入栏也还在（卡片让位，不是把输入栏挤走）。
+    expect(find.byType(DshComposer), findsOneWidget);
     expect(
-      takeoverMaxHeightFor(
-        tester.element(find.byType(SizedBox).first),
-        fraction: 0.45,
-      ),
-      closeTo((800 - 300) * 0.45, 0.01),
-      reason: '卡内正文那一层取 0.45',
+      tester.getRect(find.byType(DshComposer)).bottom,
+      lessThanOrEqualTo(screen),
     );
   });
 

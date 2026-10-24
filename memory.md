@@ -6,15 +6,25 @@
 
 ## 下一步（新会话从这里开始）
 
-> **2026-10-24 深夜：候选面板要重做 + 真机尾巴**
-> 开工单 `.agents/notes/proposed/2026-10-24-next-round-panel-redesign-prompt.md`
+> **2026-10-25 深夜：候选面板照宿主重做（列表行 + drill + 面包屑）+ 命令说明 + 接管卡溢出**
+> 开工单 `.agents/notes/proposed/2026-10-24-next-round-panel-redesign-prompt.md`（本轮已全部落地，见文末索引）。
 > 用户原话：「UI 有点丑啊…居中的，为啥不是目录那种…你文件肯定父子级吧？可以嵌套的吧？还有命令的也是」。
-> 事实：宿主的候选菜单是**列表行**（icon + 名字 + 右对齐说明 + 目录行 chevron + 分组标题 + drill 面包屑，
-> `ui-input-trigger/src/client/MenuView.tsx` / `ui-reference/src/client/index.ts:240-291`），
-> 我们做成了居中胶囊 —— 这是**偏离宿主**，不是取舍。
-> 同批：`/` 命令说明（`repo.info.commands` 从字符串数组改 `{name,description?}`）、
-> 接管卡键盘态溢出 204px（真机证据在 `shots-2026-10-24-mentions\h1-typed.png`）、
-> 计划审查卡的真机验证（上一轮被 `input text` 的空格截断搞砸，见 `tools.md`）。
+>
+> 三篇笔记：`implemented/2026-10-25-composer-panel-rows-drill-crumbs.md`（面板形状）、
+> `implemented/2026-10-25-command-descriptions-from-host.md`（命令说明从宿主读）、
+> `implemented/2026-10-25-bottom-budget-and-takeover-card.md`（底部预算）。
+> 现状：`docs/subsystems/composer-mentions.md`（§3 形状 / §4 drill / §5 高度预算）。
+> 门禁：flutter **1221 → 1234**、connector **655 → 657**、boundary **391** 持平、analyze/format 0。
+> 变异校验：drill 落定化 ⇒ 恰好 2 条红（drill + 面包屑回根）；面包屑忽略 `drilled` ⇒ 恰好 1 条红；
+> 底部去 `Flexible` ⇒ 恰好 1 条红（键盘态溢出）。
+>
+> **仍未上真机**（本轮 0 个模型请求）：① 面板的观感（列表行 / 面包屑 / 骨架）；② 接管卡键盘态
+> 的修法只过了 widget 测试（真机证据 `shots-2026-10-24-mentions\h1-typed.png` 是修之前）；
+> ③ 计划审查卡的观感（`/plan` + `%s` 代空格的 prompt，见 `tools.md`）；
+> ④ 图片上限四条、插件安装/卸载的真实 pnpm 流程。
+
+> **2026-10-24 深夜（上一轮的前提，仍有效）**：宿主候选菜单是**列表行**，
+> 我们当时做成了居中胶囊 —— 那一轮已改掉（上面这条）。旧的开工单留在 `proposed/`。
 
 > **2026-10-22：八件对齐（输入法 / 拖拽 / 动效 / 字号 / 每步视图 / 设置 / 版本 / createdAt）**
 > 开工单 `.agents/notes/implemented/2026-10-22-running-cues-step-views-font-scale-settings-parity.md`
@@ -521,9 +531,9 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **454 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **391 项**（22 条规则自检 + 扫 110 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1221 项** |
+| `cd app && flutter test` | **1234 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **655 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **657 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **87 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 
@@ -540,8 +550,12 @@
 `ConstrainedBox(132) + SingleChildScrollView`，补了同名候选用例。
 **仍未上真机**：计划审查卡（那一轮被我自己打错的 prompt 截断成 "Give" 卡在提问里）、
 图片上限四条、`readBytes` 预览、插件安装/卸载的真实 pnpm 流程。
-**新记的既有缺陷**：接管卡 + 键盘同时在场时**溢约 200px**（`BOTTOM OVERFLOWED BY 204 PIXELS`），
-「跳过 / 提交」被顶出屏幕 —— 与本轮功能无关，待单独修。
+**新记的既有缺陷（2026-10-25 已修）**：接管卡 + 键盘同时在场时**溢约 200px**
+（`BOTTOM OVERFLOWED BY 204 PIXELS`），「跳过 / 提交」被顶出屏幕。
+现在底部这一块的高度**只有一个出处**（`chat_page.dart` 的 `_BottomBudget`），卡片在里面拿
+`Flexible` 的剩余空间、主体自己滚、动作行恒完整；判据 `chat_takeover_wiring_test.dart` 的
+「键盘在场 + 三条选项的提问」+ 三个常量的棘轮用例。
+因果见 `implemented/2026-10-25-bottom-budget-and-takeover-card.md`。**真机未复验。**
 
 ## 仍未注意就会翻车的
 
@@ -647,3 +661,12 @@
   `117652c` `/` 候选菜单 / `84b0d29` 用量页卡片与热力图 / 见上表第 5 行 后台保活与三类通知）。
   契约：§13 §2.2 §9 §15 §5.7；新增 `docs/subsystems/notifications.md` 与 `usage-page.md`。
   **原生通知代码未过真机**（服务起停 / 锁屏存活 / 通知按钮）。
+- 2026-10-25 候选面板照宿主重做（列表行 + 分组标题 + 图标三档 + 目录 drill + 面包屑 + 两行骨架；
+  `/` 同一个形状）—— `implemented/2026-10-25-composer-panel-rows-drill-crumbs.md`；
+  现状 `docs/subsystems/composer-mentions.md`（§3 形状 / §4 drill / §5 高度预算）。
+  flutter **1221 → 1234**。
+- 2026-10-25 命令说明从宿主读（`repo.info.commands` 改 `{name, description?}[]`，
+  `commands.list(agent)` 的 `description`；手机两种形状都收）——
+  `implemented/2026-10-25-command-descriptions-from-host.md`；connector **655 → 657**。
+- 2026-10-25 底部预算与接管卡（`_BottomBudget` 一条算式定 `blockMax` / `panelMax`，
+  卡片拿 `Flexible`；三个常量各有棘轮用例）—— `implemented/2026-10-25-bottom-budget-and-takeover-card.md`。

@@ -460,23 +460,18 @@ class TakeoverController extends ChangeNotifier {
   }
 }
 
-/// 接管卡（原型 `.tk`）。
+/// 接管卡**不可压缩**的两行（顶条 + 动作行）的高度上界。
 ///
-/// ## 高度上限按**可用高度**算，不是屏幕高度
+/// 卡片的整张高度由**外面的 `Flexible` 给**（`chat_page.dart` 的底部预算），
+/// 它自己不再猜"能用多高"。这一行数字只回答另一个问题：底部预算里**至少要给卡片
+/// 留出多少**，才能保证「跳过 / 提交」永远可见、主体去滚。
 ///
-/// 2026-10-20 真机：审批卡 + 输入栏 + 键盘同时在场时底部报
-/// `BOTTOM OVERFLOWED BY 79 PIXELS`。原因是上限用了
-/// `MediaQuery.size.height * 0.45` —— 那是**整窗高度**，而键盘弹起后
-/// 留给"接管卡 + 输入栏"的高度只剩一小半。扣掉 `viewInsets.bottom` 才是
-/// 真正可用的高度（`Scaffold` 会按它压缩 body）。
-///
-/// [fraction] 是占可用高度的比例：整张卡 0.5、卡内正文 0.45
-/// （正文那一层外面还有卡片自身的 margin / 边框，取小一点才不会把外框顶满）。
-double takeoverMaxHeightFor(BuildContext context, {double fraction = 0.5}) {
-  final media = MediaQuery.of(context);
-  return (media.size.height - media.viewInsets.bottom) * fraction;
-}
+/// 取值来自 `takeover_test.dart` 的一条用例（把卡片塞进这个高度的盒子里，
+/// 断言动作行仍在、且没有溢出）：常量只能**大于等于**实测，低了卡片就会自己溢出。
+/// 实测 118（含卡片下边距 6），留 2px 余量。
+const double kTakeoverFixedHeight = 120;
 
+/// 接管卡（原型 `.tk`）。
 class TakeoverPanel extends StatefulWidget {
   const TakeoverPanel({super.key, required this.controller});
 
@@ -516,49 +511,51 @@ class _TakeoverPanelState extends State<TakeoverPanel> {
         if (widget.controller.phase == TakeoverPhase.minimized) {
           return const SizedBox.shrink();
         }
-        // **整张卡有高度上限**：它和输入栏、统计条同在一个 `Column` 里，
-        // 而消息列表是 `Expanded` —— 卡片不设上限就会把那个 `Column` 撑爆
-        //（实测在 800×544 上报 `RenderFlex overflowed by 9.0 pixels`）。
-        return ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: takeoverMaxHeightFor(context)),
-          child: Container(
-            // 接管卡从下往上浮入 —— 用 `AnimatedSize` 而不是硬切。
-            margin: const EdgeInsets.fromLTRB(8, 0, 8, 6),
-            decoration: BoxDecoration(
-              color: c.layer1,
-              borderRadius: BorderRadius.circular(DshRadius.lg),
-              border: Border.all(
-                color: switch (item.kind) {
-                  // 审批是"要你拿主意"的事 —— 告警色边框。
-                  InteractionKind.approval => c.roleTool,
-                  InteractionKind.plan => c.businessBlue,
-                  InteractionKind.question => c.layer2,
-                },
-              ),
+        // **整张卡的高度由外面给**（`chat_page.dart` 的底部预算把它放进
+        // 一个 `Flexible`），这里不再自己算"能用多高"。
+        //
+        // 2026-10-24 之前的两次翻车都出自"自己算"：`屏幕高度 * 0.45` 撞键盘、
+        // 后来改 `(屏幕 - 键盘) * 0.5` 仍撞 —— 因为那个数说的是**窗口**，
+        // 而卡片真正能用的是"输入栏 + 统计条之外剩下的那点"。
+        // 现在：约束来自父级（`Flexible` 的剩余空间），卡内三段里**主体先让位**，
+        // 顶条与动作行恒完整 —— 用户最需要的恰恰是那两个按钮。
+        return Container(
+          // 接管卡从下往上浮入 —— 用 `AnimatedSize` 而不是硬切。
+          margin: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+          decoration: BoxDecoration(
+            color: c.layer1,
+            borderRadius: BorderRadius.circular(DshRadius.lg),
+            border: Border.all(
+              color: switch (item.kind) {
+                // 审批是"要你拿主意"的事 —— 告警色边框。
+                InteractionKind.approval => c.roleTool,
+                InteractionKind.plan => c.businessBlue,
+                InteractionKind.question => c.layer2,
+              },
             ),
-            clipBehavior: Clip.antiAlias,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              // 三个部分（顶条 / 主体 / 动作）在高度受限时，**主体先让位**
-              //（它内部已经可滚），顶条与动作行必须完整可见 ——
-              // 用户最需要的恰恰是那两个按钮。
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _Strip(controller: widget.controller, item: item),
-                Flexible(
-                  child: _Body(
-                    controller: widget.controller,
-                    item: item,
-                    input: _input,
-                  ),
-                ),
-                _Actions(
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            // 三个部分（顶条 / 主体 / 动作）在高度受限时，**主体先让位**
+            //（它内部已经可滚），顶条与动作行必须完整可见 ——
+            // 用户最需要的恰恰是那两个按钮。
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _Strip(controller: widget.controller, item: item),
+              Flexible(
+                child: _Body(
                   controller: widget.controller,
                   item: item,
                   input: _input,
                 ),
-              ],
-            ),
+              ),
+              _Actions(
+                controller: widget.controller,
+                item: item,
+                input: _input,
+              ),
+            ],
           ),
         );
       },
@@ -679,95 +676,87 @@ class _Body extends StatelessWidget {
     // 铺成一屏长表单会让用户漏答，而逐个走正是 DSH 桌面端 `QuestionComposer` 的形状。
     final question = controller.currentQuestion;
     final multi = item.questions.length > 1;
-    return ConstrainedBox(
-      // **明细可以很长（审批的 diff、多题的选项），但整张卡必须有上限**。
-      //
-      // 它和输入栏、统计条同在一个 `Column` 里，而消息列表是 `Expanded` ——
-      // 卡片不设上限时会把那个 `Column` 撑爆：实测在 800×544 上报
-      // `RenderFlex overflowed by 9.0 pixels on the bottom`（黄黑条）。
-      // 上限取**可用高度**（扣掉键盘）的 45%：既能看清明细，也保证输入栏永远在视口内。
-      constraints: BoxConstraints(
-        maxHeight: takeoverMaxHeightFor(context, fraction: 0.45),
-      ),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (question != null && question.header != null) ...[
-              Text(
-                question.header!,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: c.labelCaption,
-                ),
-              ),
-              const SizedBox(height: 4),
-            ],
+    // **明细可以很长（审批的 diff、多题的选项），但这一层的上限来自卡片**：
+    // 卡片把三段排成 `Column`，这一层是其中的 `Flexible` —— 拿到的就是"顶条与
+    // 动作行之外剩下的那点"。所以这里**不再自己设一个比例**：多一处猜，
+    // 就多一次"两个数相加超过屏幕"。内容超出就自己滚。
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (question != null && question.header != null) ...[
             Text(
-              question?.question ?? item.title,
+              question.header!,
               style: TextStyle(
-                fontSize: 14,
-                height: 21 / 14,
-                fontWeight: FontWeight.w500,
-                color: c.labelPrimary,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: c.labelCaption,
               ),
             ),
-            if (question?.detail != null || item.detail.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: c.bgBase,
-                  borderRadius: BorderRadius.circular(DshRadius.sm),
-                  border: Border.all(color: c.layer2),
-                ),
-                child: Text(
-                  question?.detail ?? item.detail,
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12,
-                    height: 19 / 12,
-                    color: c.labelSecondary,
-                  ),
-                ),
-              ),
-            ],
-            if (multi) ...[
-              const SizedBox(height: 8),
-              Text(
-                '第 ${controller.questionIndex + 1} / ${item.questions.length} 题',
-                style: TextStyle(fontSize: 11, color: c.labelTertiary),
-              ),
-            ],
-            // **计划不渲染选项行**：它的两个动作（要求修改 / 同意执行）就是决策面，
-            // 再把 DSH 给的两个标签铺成选项等于让用户在同一次决定上点两处
-            // （原型 `planHtml` 也只有正文 + 两个按钮）。
-            if (question != null &&
-                item.kind != InteractionKind.plan &&
-                question.options.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              for (var i = 0; i < question.options.length; i += 1)
-                _OptionRow(
-                  index: i,
-                  option: question.options[i],
-                  multiSelect: question.multiSelect,
-                  selected: controller.selected.contains(
-                    question.options[i].label,
-                  ),
-                  disabled: controller.busy,
-                  onTap: () =>
-                      controller.toggleOption(question.options[i].label),
-                ),
-            ],
-            if (question != null) ...[
-              const SizedBox(height: 10),
-              _CustomAnswer(controller: controller, input: input),
-            ],
+            const SizedBox(height: 4),
           ],
-        ),
+          Text(
+            question?.question ?? item.title,
+            style: TextStyle(
+              fontSize: 14,
+              height: 21 / 14,
+              fontWeight: FontWeight.w500,
+              color: c.labelPrimary,
+            ),
+          ),
+          if (question?.detail != null || item.detail.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: c.bgBase,
+                borderRadius: BorderRadius.circular(DshRadius.sm),
+                border: Border.all(color: c.layer2),
+              ),
+              child: Text(
+                question?.detail ?? item.detail,
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  height: 19 / 12,
+                  color: c.labelSecondary,
+                ),
+              ),
+            ),
+          ],
+          if (multi) ...[
+            const SizedBox(height: 8),
+            Text(
+              '第 ${controller.questionIndex + 1} / ${item.questions.length} 题',
+              style: TextStyle(fontSize: 11, color: c.labelTertiary),
+            ),
+          ],
+          // **计划不渲染选项行**：它的两个动作（要求修改 / 同意执行）就是决策面，
+          // 再把 DSH 给的两个标签铺成选项等于让用户在同一次决定上点两处
+          // （原型 `planHtml` 也只有正文 + 两个按钮）。
+          if (question != null &&
+              item.kind != InteractionKind.plan &&
+              question.options.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            for (var i = 0; i < question.options.length; i += 1)
+              _OptionRow(
+                index: i,
+                option: question.options[i],
+                multiSelect: question.multiSelect,
+                selected: controller.selected.contains(
+                  question.options[i].label,
+                ),
+                disabled: controller.busy,
+                onTap: () => controller.toggleOption(question.options[i].label),
+              ),
+          ],
+          if (question != null) ...[
+            const SizedBox(height: 10),
+            _CustomAnswer(controller: controller, input: input),
+          ],
+        ],
       ),
     );
   }

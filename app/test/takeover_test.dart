@@ -456,6 +456,59 @@ void main() {
   });
 
   group('界面', () {
+    testWidgets('卡片塞进 kTakeoverFixedHeight 的盒子里：动作行仍在、不溢出', (tester) async {
+      // 棘轮：底部预算按 `kTakeoverFixedHeight` 给卡片留位置（`chat_page.dart` 的
+      // `_BottomBudget`）。常量必须 ≥ 卡片**不可压缩**的那两行（顶条 + 动作行），
+      // 低了卡片就会在"键盘 + 面板同时在场"时自己溢出。
+      final c = _controllerFor();
+      c.enqueue(
+        const InteractionItem(
+          itemId: 'q3',
+          sid: 'sid-1',
+          callId: 'call-q3',
+          kind: InteractionKind.question,
+          header: '要确认一件事',
+          title: '三条选项的一问：拆不拆、怎么拆、什么时候拆？',
+          questions: [
+            InteractionQuestion(
+              id: 'q3',
+              question: '三条选项的一问：拆不拆、怎么拆、什么时候拆？',
+              options: [
+                InteractionOption(label: '一起拆'),
+                InteractionOption(label: '先只拆资源束', description: '改动更小'),
+                InteractionOption(label: '先不动'),
+              ],
+            ),
+          ],
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: DshTheme.dark(),
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.bottomCenter,
+              child: SizedBox(
+                height: kTakeoverFixedHeight,
+                child: TakeoverPanel(controller: c),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull, reason: '常量必须够装下这两行');
+      // 动作行（跳过 / 提交）必须在盒子里，且点得中。
+      expect(find.text('提交').hitTestable(), findsOneWidget);
+      expect(find.text('跳过').hitTestable(), findsOneWidget);
+      final box = tester.getRect(find.byType(TakeoverPanel));
+      expect(
+        tester.getRect(find.text('提交')).bottom,
+        lessThanOrEqualTo(box.bottom),
+      );
+    });
+
     testWidgets('审批卡显示标题、明细与两个按钮', (tester) async {
       final c = _controllerFor();
       c.enqueue(
