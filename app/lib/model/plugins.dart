@@ -139,6 +139,168 @@ class PluginToggleOutcome {
   };
 }
 
+/// 一个**包**（宿主的 `BundleInfo`，`plugin-manager/src/types.ts:84-138`）。
+///
+/// 与"插件行"是两个东西：一行是一个 Loader entry（可单独启停），一个包可能带来多行；
+/// 而**卸载只按包名**（`removeBundle(name)`）。所以卸载按钮挂在包上，`removable` 由宿主说。
+class PluginBundle {
+  const PluginBundle({
+    required this.name,
+    this.version = '',
+    this.installed = false,
+    this.enabled = false,
+    this.removable = false,
+    this.readOnlyReason = '',
+  });
+
+  static PluginBundle? fromWire(Object? row) {
+    if (row is! Map) return null;
+    final name = row['name'];
+    if (name is! String || name.isEmpty) return null;
+    final version = row['version'];
+    final readOnlyReason = row['readOnlyReason'];
+    return PluginBundle(
+      name: name,
+      version: version is String ? version : '',
+      installed: row['installed'] == true,
+      enabled: row['enabled'] == true,
+      removable: row['removable'] == true,
+      readOnlyReason: readOnlyReason is String ? readOnlyReason : '',
+    );
+  }
+
+  final String name;
+  final String version;
+  final bool installed;
+  final bool enabled;
+
+  /// 宿主说能不能 `pnpm remove` 它（**手机不猜**）。
+  final bool removable;
+
+  /// 这一层不能在这里改的原因（宿主的 `readOnlyReason`）。
+  final String readOnlyReason;
+
+  /// 名字短名（`@scope/pkg` → `pkg`），列表里更好读；`-` 分隔的长名也一样。
+  String get shortName {
+    final at = name.indexOf('/');
+    return at >= 0 ? name.substring(at + 1) : name;
+  }
+}
+
+/// 一次安装/卸载在手机眼里的状态（`plugin.installStatus`）。
+class PluginJob {
+  const PluginJob({
+    required this.requestId,
+    this.status = 'unknown',
+    this.kind = '',
+    this.phase = '',
+    this.log = const <String>[],
+    this.logTruncated = false,
+    this.application = '',
+    this.errorCode = '',
+    this.error = '',
+    this.bundle = '',
+    this.version = '',
+    this.exitCode,
+    this.outputTail = '',
+  });
+
+  static PluginJob? fromWire(Object? value) {
+    if (value is! Map) return null;
+    final requestId = value['requestId'];
+    if (requestId is! String || requestId.isEmpty) return null;
+    final log = value['log'];
+    final result = value['result'];
+    final detail = result is Map ? result : const <String, Object?>{};
+    final exitCode = detail['exitCode'];
+    return PluginJob(
+      requestId: requestId,
+      status: value['status'] is String ? value['status'] as String : 'unknown',
+      kind: value['kind'] is String ? value['kind'] as String : '',
+      phase: value['phase'] is String ? value['phase'] as String : '',
+      log: log is List
+          ? log.whereType<String>().toList(growable: false)
+          : const <String>[],
+      logTruncated: value['logTruncated'] == true,
+      application: detail['application'] is String
+          ? detail['application'] as String
+          : '',
+      errorCode: detail['errorCode'] is String
+          ? detail['errorCode'] as String
+          : '',
+      error: value['error'] is String ? value['error'] as String : '',
+      bundle: detail['bundle'] is String ? detail['bundle'] as String : '',
+      version: detail['version'] is String ? detail['version'] as String : '',
+      exitCode: exitCode is int ? exitCode : null,
+      outputTail: detail['outputTail'] is String
+          ? detail['outputTail'] as String
+          : '',
+    );
+  }
+
+  final String requestId;
+
+  /// `running` / `done` / `unknown`（宿主给的三档，原样）。
+  final String status;
+
+  /// `install` / `remove`。
+  final String kind;
+
+  /// 宿主的阶段（`installing` / `cancelling` / `applying`）。
+  final String phase;
+
+  /// pnpm 输出的尾部几行（连接器已按帧预算截过）。
+  final List<String> log;
+
+  /// 日志被截了 —— **说明白，不假装有完整日志**。
+  final bool logTruncated;
+
+  /// 宿主的 `application`（`applied` / `restart-required` / `overridden` / `failed` / `cancelled`）。
+  final String application;
+
+  /// 宿主的 `ManagementError.code`（`unknown-plugin` / `not-removable` / …）。
+  final String errorCode;
+
+  /// 宿主抛错时的原话。
+  final String error;
+
+  /// 装出来 / 卸掉的包名与版本（安装才有）。
+  final String bundle;
+  final String version;
+
+  /// pnpm 的退出码（没有就是 `null`，**不填 0**）。
+  final int? exitCode;
+
+  /// pnpm 输出的尾部（连接器已截）。
+  final String outputTail;
+
+  bool get running => status == 'running';
+  bool get done => status == 'done';
+
+  /// 一句话结论（**只解释宿主的码，不发明状态**）。
+  String get headline => switch (status) {
+    'running' =>
+      phase == 'applying'
+          ? '正在应用改动…'
+          : phase == 'cancelling'
+          ? '正在取消…'
+          : '正在跑 pnpm…',
+    'done' =>
+      error.isNotEmpty
+          ? '失败：$error'
+          : switch (application) {
+              'applied' => '完成（已生效）',
+              'restart-required' => '完成，重启电脑侧 DSH 后生效',
+              'overridden' => '完成，但被更高优先级的配置盖住',
+              'failed' => '电脑侧报告这次改动失败',
+              'cancelled' => '已取消（文件已还原）',
+              '' => '完成',
+              _ => '完成（电脑侧回了未知结论：$application）',
+            },
+    _ => '没有这次任务的记录',
+  };
+}
+
 /// 把宿主的 `LocalizedText`（`string | {en, [locale]}`）挑成一档。
 ///
 /// 顺序：本身就是字符串 → `zh` → `en` → 任何一档。**没有就空串**

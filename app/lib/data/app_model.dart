@@ -1837,6 +1837,10 @@ class AppModel extends ChangeNotifier {
   String? get pluginsFailure => _pluginsFailure;
   String? _pluginsFailure;
 
+  /// 已经读到的**包**清单（卸载按包名走，见 `PluginBundle`）。
+  List<PluginBundle> get pluginBundles => _pluginBundles;
+  List<PluginBundle> _pluginBundles = const <PluginBundle>[];
+
   /// 拉一次插件清单（只读、不落盘）。
   ///
   /// **没有能力位就不发请求**：老连接器上这个方法不存在，发出去只会拿一个
@@ -1847,14 +1851,25 @@ class AppModel extends ChangeNotifier {
     _pluginsLoading = true;
     if (!_disposed) notifyListeners();
     try {
-      final result = await client.call<Object?>('plugin.list', const {});
-      final rows = result is Map ? result['plugins'] : null;
+      // 两个面各一发（并发）：插件行与包是两张表，卸载按包名走。
+      final answers = await Future.wait<Object?>([
+        client.call<Object?>('plugin.list', const {}),
+        client.call<Object?>('plugin.listBundles', const {}),
+      ]);
+      final rows = answers[0] is Map ? (answers[0] as Map)['plugins'] : null;
       _plugins = rows is List
           ? rows
                 .map(PluginRow.fromWire)
                 .whereType<PluginRow>()
                 .toList(growable: false)
           : const <PluginRow>[];
+      final bundles = answers[1] is Map ? (answers[1] as Map)['bundles'] : null;
+      _pluginBundles = bundles is List
+          ? bundles
+                .map(PluginBundle.fromWire)
+                .whereType<PluginBundle>()
+                .toList(growable: false)
+          : const <PluginBundle>[];
       _pluginsLoaded = true;
       _pluginsFailure = null;
     } catch (error) {
@@ -1899,6 +1914,65 @@ class AppModel extends ChangeNotifier {
       return outcome;
     } catch (error) {
       _recordError('启停插件失败', error);
+      return null;
+    }
+  }
+
+  /// 发起一次安装（`plugin.install`）。返回任务 id（**同一个 id 就是幂等键**）。
+  ///
+  /// **立刻返回**：真实安装跑 pnpm、常超 60 s 请求超时，所以结论靠
+  /// [pluginJobStatus] 轮询（与 `session.projections` 同一种节奏）。
+  Future<String?> installPlugin(String spec) =>
+      _startPluginJob('plugin.install', {'spec': spec});
+
+  /// 卸载一个**包**（`plugin.remove`，按包名）。形状与安装相同。
+  Future<String?> removePluginBundle(String name) =>
+      _startPluginJob('plugin.remove', {'name': name});
+
+  Future<String?> _startPluginJob(
+    String method,
+    Map<String, Object?> body,
+  ) async {
+    if (!_pluginsAvailable) return null;
+    final requestId = 'plug-${DateTime.now().microsecondsSinceEpoch}';
+    try {
+      final result = await client.call<Object?>(
+        method,
+        body,
+        requestId: requestId,
+      );
+      // 电脑侧回的是它自己记下的那个 id（正常等于我们发的）。
+      final echoed = result is Map ? result['requestId'] : null;
+      return echoed is String && echoed.isNotEmpty ? echoed : requestId;
+    } catch (error) {
+      _recordError('发起插件任务失败', error);
+      return null;
+    }
+  }
+
+  /// 问一次任务状态（`plugin.installStatus`）。失败原因在 [lastError]。
+  Future<PluginJob?> pluginJobStatus(String requestId) async {
+    try {
+      final result = await client.call<Object?>('plugin.installStatus', {
+        'requestId': requestId,
+      });
+      return PluginJob.fromWire(result);
+    } catch (error) {
+      _recordError('读取插件任务状态失败', error);
+      return null;
+    }
+  }
+
+  /// 取消一次安装（`plugin.cancelInstall`）。回宿主的三档状态（原样）。
+  Future<String?> cancelPluginInstall(String requestId) async {
+    try {
+      final result = await client.call<Object?>('plugin.cancelInstall', {
+        'requestId': requestId,
+      });
+      final status = result is Map ? result['status'] : null;
+      return status is String ? status : null;
+    } catch (error) {
+      _recordError('取消安装失败', error);
       return null;
     }
   }

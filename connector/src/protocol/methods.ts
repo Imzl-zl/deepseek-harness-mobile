@@ -108,7 +108,20 @@ export const METHODS = [
   // **安装 / 卸载 / 升级（`installBundle` / `removeBundle` / `updateBundle`）不做**：
   // 它们动 profile 的 `package.json` 与 `pnpm-lock`，失败面手机上修不了。
   'plugin.list',
+  // 包清单（只读）：卸载按**包名**走（`removeBundle(name)`），而 `plugin.list` 给的是
+  // Loader entry 行 —— 两者不是一回事（一个包可以带多行）。宿主 `listBundles` 在
+  // `packages/boot/plugin-manager/src/index.ts:463`。
+  'plugin.listBundles',
   'plugin.setEnabled',
+  // 安装 / 卸载 / 取消 / 看进度（`packages/boot/plugin-manager/src/index.ts:835,972,982,999`）。
+  // **发起即返回 + 轮询**：宿主这两个方法会跑 pnpm 并等它结束，远超 §10 的 60 s 请求超时。
+  // `requestId` 就是幂等键（与宿主按 requestId 记控制块同一个 id）。
+  // **进度不新开帧**：轮询 `plugin.installStatus`，数据来自宿主的
+  // `plugin-manager/install-state` / `install-log` 事件（只留尾部并明说截断）。
+  'plugin.install',
+  'plugin.installStatus',
+  'plugin.cancelInstall',
+  'plugin.remove',
   // Agent 预设目录（只读）。**与 Web 同一个 DSH 方法**：
   // `agentPresets.remoteExportList()`（`@Remote('list')`，
   // `packages/preset/agent-preset-registry/src/index.ts:194-198`），
@@ -193,6 +206,10 @@ export const IDEMPOTENT_METHODS: ReadonlySet<MethodName> = new Set([
   // 启停插件是用户指令：重发不该把同一行的 profile patch 写两遍 / 热重载两轮。
   // 它天然按目标态幂等（同一个 `enabled` 落到同一个终态），键仍由这里强制。
   'plugin.setEnabled',
+  // 安装 / 卸载带键，而且**键就是任务句柄**：同一次操作重发不能起第二遍 pnpm。
+  // （取消不带键：重复取消落到同一个终态 `not-running`。）
+  'plugin.install',
+  'plugin.remove',
   // 归档是用户指令：重发不该落两次（宿主侧幂等，但指令层不靠它兜）。
   'workspace.archive',
   'workspace.unarchive',

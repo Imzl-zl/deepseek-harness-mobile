@@ -186,11 +186,19 @@
 | 版本兼容豁免 | 支持 | `listVersionExemptions()` `:231-235`、`setVersionExemption(...)` `:244-250` | 未在前端找到调用点（未找到前端入口） |
 | **配置读写** | 支持，但**不在 pluginManager** | `settings.describe` `packages/api/settings-controller/src/index.ts:97-105`、`settings.update` `:115-122`、`settings.replace` `:132-139`、`settings.mutate` `:151-158`、`settings.openSettingsDocument` `:166-185` | `ctx.configForms.get(ns)` `packages/client/ui-settings/src/client/config-form.ts:293-302`；`mutate(ops, expectedRevision)` `:134-153` |
 
-**手机侧已接线的只有两行**：清单（`plugin.list`，宿主 `listPlugins:439`）与行级启停
-（`plugin.setEnabled`，宿主 `setPluginEnabled:796`）。**bundle 级启停 / 安装 / 卸载 / 升级
-都不接**：它们动 profile 的 `package.json` 与 `pnpm-lock.yaml`、还会跑 `pnpm`，
-失败面在手机上既看不见也修不了（取舍见
-`.agents/notes/implemented/2026-10-24-plugin-list-and-toggle.md`）。
+**手机侧已接线的**：清单（`plugin.list`，宿主 `listPlugins:439`）、包清单
+（`plugin.listBundles`，宿主 `:463`）、行级启停（`plugin.setEnabled`，宿主 `:796`）、
+安装 / 取消 / 状态（`plugin.install` / `plugin.cancelInstall` / `plugin.installStatus`，
+宿主 `:835` / `:982` / `:972`）与卸载（`plugin.remove`，宿主 `:999`）。
+
+安装与卸载是**发起即返回 + 轮询**：宿主这两个方法会跑 pnpm 并等它结束，远超契约 §10 的
+60 s 请求超时；`requestId` 既是幂等键也是宿主的安装句柄，进度来自宿主的
+`plugin-manager/install-state` / `install-log` 事件（连接器收成尾窗，**不新开帧**）。
+取舍见 `.agents/notes/implemented/2026-10-24-plugin-install-and-remove.md`。
+
+**仍未接**：升级（`updateBundle:677` + `listVersions:626`）与 bundle 级启停
+（`setBundleEnabled:814`，会连带改一串行）；安装时"批准 pnpm 构建脚本"
+（`approvedBuilds`）没有手机入口，宿主要求显式批准时只会体现在失败原文里。
 另：`packages/host/plugin-inventory/src/index.ts:70` 的 `list()` **没有 `@Remote`**，
 不是方法面 —— 方法面全在 `pluginManager` 上。
 

@@ -72,6 +72,27 @@ function hostCtx(
   return fakeCtx({
     pluginManager: {
       listPlugins: async () => rows,
+      // 包清单（`listBundles:463`）：卸载按包名走，手机要先看见包。
+      listBundles: async () => [
+        {
+          name: '@deepseek-ai/dsh-tool-bash',
+          version: '0.2.1',
+          installed: true,
+          enabled: true,
+          removable: true,
+          rows: [{ rowId: 'bash' }],
+          overrides: [],
+        },
+        {
+          name: 'dsh-mobile-connector',
+          installed: true,
+          enabled: true,
+          removable: false,
+          readOnlyReason: 'management-required',
+          rows: [],
+          overrides: [],
+        },
+      ],
       setPluginEnabled: async (id: string, enabled: boolean) => {
         if (overrides.setThrows !== undefined) throw overrides.setThrows
         for (const row of rows) {
@@ -127,6 +148,32 @@ test('plugin.list：行字段以 PluginInfo 为准（meta / fiberPhase 原样，
       },
     ],
   })
+})
+
+test('plugin.listBundles：只带手机用得上的字段（卸载按包名，removable 由宿主说）', async () => {
+  const ctx = hostCtx()
+  const handlers = createHandlers({ ...depsWith(ctx), plugins: createPluginsFace(ctx) })
+  const result = await handlers['plugin.listBundles']!({}, undefined as never)
+  assert.deepEqual(result, {
+    bundles: [
+      {
+        name: '@deepseek-ai/dsh-tool-bash',
+        version: '0.2.1',
+        installed: true,
+        enabled: true,
+        removable: true,
+      },
+      {
+        name: 'dsh-mobile-connector',
+        installed: true,
+        enabled: true,
+        removable: false,
+        readOnlyReason: 'management-required',
+      },
+    ],
+  })
+  // 宿主的 `rows` / `overrides` 不过线（手机不渲染包内行）。
+  assert.equal(JSON.stringify(result).includes('rowId'), false)
 })
 
 test('plugin.list：宿主没有插件时是空数组（不是错误）', async () => {

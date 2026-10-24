@@ -44,6 +44,7 @@ import { ProtocolError } from '../protocol/errors.js'
 /** `pluginManager` 服务面（**按形状收窄、不 import DSH 类型**）。 */
 interface PluginManagerService {
   listPlugins(): Promise<readonly unknown[]>
+  listBundles(): Promise<readonly unknown[]>
   setPluginEnabled(id: string, enabled: boolean): Promise<unknown>
 }
 
@@ -74,8 +75,30 @@ export interface PluginToggleResult {
   restartReason?: string
 }
 
+/**
+ * 手机眼里的一个**包**（宿主的 `BundleInfo`，`types.ts:84-138`）。
+ *
+ * 与"插件行"是两个东西：一行是一个 Loader entry（可以单独启停），一个包可能带来多行。
+ * **卸载只按包名**（宿主 `removeBundle(name)`），所以手机上要卸载就得有这份清单 ——
+ * 它同时给出"能不能卸"（`removable`）与"装没装"（`installed`），手机不猜。
+ */
+export interface BundleRow {
+  name: string
+  /** 版本（宿主 `BundleInfo.version`，可能没有：本地链接包）。 */
+  version?: string
+  /** profile manifest 里声明了这个依赖。 */
+  installed: boolean
+  /** 被 profile 选中（它的 patch 层生效）。 */
+  enabled: boolean
+  /** 宿主说能不能 `pnpm remove` 它。 */
+  removable: boolean
+  /** 这一层能不能在这里启停（宿主给了 `readOnlyReason` 就是不能）。 */
+  readOnlyReason?: string
+}
+
 export interface PluginsFace {
   list(): Promise<readonly PluginRow[]>
+  listBundles(): Promise<readonly BundleRow[]>
   setEnabled(id: string, enabled: boolean): Promise<PluginToggleResult>
 }
 
@@ -116,6 +139,28 @@ export function createPluginsFace(ctx: Context): PluginsFace {
             fiberPhase: record['fiberPhase'] ?? null,
             ...(record['meta'] === undefined ? {} : { meta: record['meta'] }),
             ...(typeof record['patchId'] === 'string' ? { patchId: record['patchId'] } : {}),
+            ...(typeof record['readOnlyReason'] === 'string'
+              ? { readOnlyReason: record['readOnlyReason'] }
+              : {}),
+          },
+        ]
+      })
+    },
+
+    async listBundles() {
+      const rows = await managerOf().listBundles()
+      return rows.flatMap((row): BundleRow[] => {
+        if (typeof row !== 'object' || row === null) return []
+        const record = row as Record<string, unknown>
+        const name = record['name']
+        if (typeof name !== 'string' || name === '') return []
+        return [
+          {
+            name,
+            ...(typeof record['version'] === 'string' ? { version: record['version'] } : {}),
+            installed: record['installed'] === true,
+            enabled: record['enabled'] === true,
+            removable: record['removable'] === true,
             ...(typeof record['readOnlyReason'] === 'string'
               ? { readOnlyReason: record['readOnlyReason'] }
               : {}),

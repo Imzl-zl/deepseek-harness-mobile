@@ -98,6 +98,7 @@ import { createAgentPresetsFace } from './dsh/agent-presets.js'
 import { createReferencesFace } from './dsh/references.js'
 import { createPluginsFace } from './dsh/plugins.js'
 import { createFilesFace } from './dsh/files.js'
+import { createPluginInstallFace } from './dsh/plugin-install.js'
 import { createDevicePresence } from './presence.js'
 import { createInteractionPort } from './interaction-claims.js'
 import { createInteractionFace } from './interaction-face.js'
@@ -842,6 +843,9 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
          */
         if (pluginsAvailable(ctx)) {
           handlerDeps.plugins = createPluginsFace(ctx)
+          // 安装面与清单/启停**同一份服务**，但需要宿主的事件订阅（阶段 + 日志），
+          // 所以单独建一个面。它自己也走 `ctx.get('pluginManager')`。
+          handlerDeps.pluginInstall = createPluginInstallFace(ctx)
         }
 
         /**

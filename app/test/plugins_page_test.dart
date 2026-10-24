@@ -27,14 +27,23 @@ class _PluginClient extends FakeSyncClient {
   _PluginClient({
     this.pluginsAvailable = true,
     this.rows = const [],
+    this.bundles = const [],
     this.toggleResult,
+    this.jobStatuses = const [],
   });
 
   final bool pluginsAvailable;
   final List<Map<String, Object?>> rows;
+  final List<Map<String, Object?>> bundles;
 
   /// `plugin.setEnabled` 的回执；`null` 时回 `{enabled: 请求值, application:'applied'}`。
   final Map<String, Object?>? toggleResult;
+
+  /// 依次返回的 `plugin.installStatus` 应答（用完最后一个就一直用它）。
+  final List<Map<String, Object?>> jobStatuses;
+
+  /// 已经问过几次状态（决定上面那个列表用到第几个）。
+  int statusPolls = 0;
 
   /// 发出去的调用：方法名 + 参数 + 幂等键。
   final sent = <(String, Map<String, Object?>, String?)>[];
@@ -74,6 +83,9 @@ class _PluginClient extends FakeSyncClient {
       case 'plugin.list':
         sent.add((method, params, requestId));
         return <String, Object?>{'plugins': rows} as T;
+      case 'plugin.listBundles':
+        sent.add((method, params, requestId));
+        return <String, Object?>{'bundles': bundles} as T;
       case 'plugin.setEnabled':
         sent.add((method, params, requestId));
         return (toggleResult ??
@@ -83,6 +95,25 @@ class _PluginClient extends FakeSyncClient {
                   'application': 'applied',
                 })
             as T;
+      case 'plugin.install':
+      case 'plugin.remove':
+        sent.add((method, params, requestId));
+        return <String, Object?>{'requestId': requestId} as T;
+      case 'plugin.installStatus':
+        sent.add((method, params, requestId));
+        final id = params['requestId'] as String? ?? '';
+        // 依次吐配置好的应答；用完最后一个就重复它（"done" 之后页面不再轮询）。
+        final index = statusPolls < jobStatuses.length
+            ? statusPolls
+            : jobStatuses.length - 1;
+        statusPolls += 1;
+        return (jobStatuses.isEmpty
+                ? <String, Object?>{'requestId': id, 'status': 'unknown'}
+                : jobStatuses[index])
+            as T;
+      case 'plugin.cancelInstall':
+        sent.add((method, params, requestId));
+        return <String, Object?>{'status': 'cancelled'} as T;
     }
     return <String, Object?>{} as T;
   }
@@ -257,6 +288,130 @@ void main() {
       final row = app.plugins.firstWhere((item) => item.entryId == 'entry-a');
       expect(row.enabled, isTrue, reason: '回执里的 enabled 是宿主回读后的真值');
       expect(find.textContaining('被更高优先级的配置盖住了'), findsOneWidget);
+    });
+  });
+
+  group('安装 / 卸载（发起即返回 + 轮询）', () {
+    testWidgets('安装：确认后发 {spec} + 幂等键；轮询到 done 显示结论并重读清单', (tester) async {
+      final client = _PluginClient(
+        rows: _rows,
+        jobStatuses: const [
+          {
+            'requestId': 'job',
+            'status': 'running',
+            'kind': 'install',
+            'phase': 'installing',
+          },
+          {
+            'requestId': 'job',
+            'status': 'done',
+            'kind': 'install',
+            'result': {
+              'application': 'applied',
+              'bundle': '@acme/demo',
+              'version': '1.2.3',
+            },
+          },
+        ],
+      );
+      final app = await _app(client);
+      addTearDown(app.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: DshTheme.dark(),
+          home: PluginsPageHost(app: app),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('安装插件'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, '@acme/demo');
+      await tester.tap(
+        find.byKey(const ValueKey<String>('plugin-install-confirm')),
+      );
+      await tester.pump(); // 发出去
+      await tester.pump(); // 状态第一轮
+
+      final started = client.sent.where((call) => call.$1 == 'plugin.install');
+      expect(started.length, 1);
+      expect(started.single.$2, {'spec': '@acme/demo'});
+      expect(started.single.$3, isNotNull, reason: '幂等键就是任务句柄');
+
+      expect(find.textContaining('正在跑 pnpm'), findsOneWidget);
+
+      // 第二轮轮询（页面按 1 s 一次）拿到结论。
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('完成（已生效）'), findsOneWidget);
+      expect(find.textContaining('@acme/demo'), findsWidgets);
+      expect(find.text('取消'), findsNothing);
+      expect(find.text('关闭'), findsOneWidget);
+    });
+
+    testWidgets('卸载：只有宿主说 removable 的包有按钮；确认后按包名发请求', (tester) async {
+      final client = _PluginClient(
+        rows: _rows,
+        bundles: const [
+          {
+            'name': '@acme/demo',
+            'version': '1.0.0',
+            'installed': true,
+            'enabled': true,
+            'removable': true,
+          },
+          {
+            'name': 'dsh-mobile-connector',
+            'installed': true,
+            'enabled': true,
+            'removable': false,
+          },
+        ],
+        jobStatuses: const [
+          {
+            'requestId': 'job',
+            'status': 'done',
+            'kind': 'remove',
+            'result': {'application': 'applied'},
+          },
+        ],
+      );
+      final app = await _app(client);
+      addTearDown(app.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: DshTheme.dark(),
+          home: PluginsPageHost(app: app),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey<String>('plugin-remove-@acme/demo')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey<String>('plugin-remove-dsh-mobile-connector'),
+        ),
+        findsNothing,
+        reason: '宿主说不可卸的包不摆按钮 —— 点了必然失败',
+      );
+
+      await tester.tap(
+        find.byKey(const ValueKey<String>('plugin-remove-@acme/demo')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('plugin-remove-confirm')),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      final removed = client.sent.where((call) => call.$1 == 'plugin.remove');
+      expect(removed.length, 1);
+      expect(removed.single.$2, {'name': '@acme/demo'});
+      expect(removed.single.$3, isNotNull);
     });
   });
 }

@@ -33,6 +33,7 @@ import type { ModelFace } from './dsh/models.js'
 import type { EndpointsPort } from './endpoints.js'
 import type { ProjectionsPort } from './dsh/projections.js'
 import type { FilesFace } from './dsh/files.js'
+import type { PluginInstallFace } from './dsh/plugin-install.js'
 import type { PluginsFace } from './dsh/plugins.js'
 import type { ReferencesFace } from './dsh/references.js'
 import type { SubagentsPort } from './dsh/subagents.js'
@@ -288,6 +289,16 @@ export interface HandlerDeps {
    * 这台电脑没有文件服务"，而不是摆一个空目录冒充"工作区是空的"。
    */
   files?: FilesFace
+  /**
+   * 插件的安装 / 卸载 / 取消 / 看进度（同一份 `pluginManager` 服务）。
+   *
+   * **发起即返回**：真实安装会跑 pnpm 并远超契约 §10 的 60 s 请求超时，所以
+   * `plugin.install` / `plugin.remove` 只回 `{requestId}`，结论靠 `plugin.installStatus` 轮询；
+   * `requestId` 就是这两个方法的**幂等键**（与宿主按 requestId 记控制块是同一个 id）。
+   * 进度来自宿主的 `plugin-manager/install-state` / `install-log` 事件（**不新开帧**），
+   * 只留尾部几行并明说截断（单帧预算，契约 §40）。
+   */
+  pluginInstall?: PluginInstallFace
   /**
    * 设置面（`settings.describe` / `settings.update`，可选服务 `settings`）。
    *
@@ -1181,9 +1192,37 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
 
   // 插件清单与启停（契约 §5.7）。**只有清单与行级启停**：安装 / 卸载 / 升级
   // 动的是 profile 的 `package.json` 与 `pnpm-lock`，失败面手机上既看不见也修不了。
+  // 安装 / 卸载 / 取消 / 看进度（契约 §5.7）。**同一份 `pluginManager` 服务**，
+  // 但与清单/启停分开挂：安装面还需要宿主的事件订阅（阶段与日志）。
+  if (deps.pluginInstall !== undefined) {
+    const jobs = deps.pluginInstall
+    /** 幂等键即安装句柄：漏了就不许起跑（重发会变成第二次 pnpm）。 */
+    const jobIdOf = (context: { requestId?: string }): string => {
+      const requestId = context.requestId
+      if (requestId === undefined || requestId === '') {
+        throw new ProtocolError('protocol/bad-frame', 'requestId 必填：安装/卸载必须带幂等键')
+      }
+      return requestId
+    }
+
+    handlers['plugin.install'] = (params, context) =>
+      jobs.install(requireString(params, 'spec'), jobIdOf(context))
+
+    handlers['plugin.remove'] = (params, context) =>
+      jobs.remove(requireString(params, 'name'), jobIdOf(context))
+
+    // 取消不带幂等键：重复取消落到同一个终态（`not-running`），与宿主的三档状态一致。
+    handlers['plugin.cancelInstall'] = (params) => jobs.cancel(requireString(params, 'requestId'))
+
+    // 轮询：**读方法**（与 `session.projections` 同一种节奏，不新开帧）。
+    handlers['plugin.installStatus'] = (params) => jobs.status(requireString(params, 'requestId'))
+  }
+
   if (deps.plugins !== undefined) {
     const plugins = deps.plugins
     handlers['plugin.list'] = async () => ({ plugins: await plugins.list() })
+    // 包清单（`listBundles`）：卸载按**包名**走，所以手机上要卸载就得先看见包。
+    handlers['plugin.listBundles'] = async () => ({ bundles: await plugins.listBundles() })
     // **带幂等键**（`IDEMPOTENT_METHODS`）：启停是用户指令，同一目标态重发落到同一终态。
     handlers['plugin.setEnabled'] = (params) => {
       const id = requireString(params, 'id')

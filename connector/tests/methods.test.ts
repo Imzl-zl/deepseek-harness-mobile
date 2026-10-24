@@ -37,10 +37,13 @@ test('方法表：封闭集，幂等键标记与契约 §5.7 的表一致', () =
   // 2026-10-23 加 `command.execute`（斜杠命令执行面，白名单只放 /goal 与 /plan）后是 **38**。
   // 2026-10-24 加 `refs.files` / `refs.sessions`（`@` 候选，只读）后是 **40**；
   // 同日加 `plugin.list` / `plugin.setEnabled`（插件清单与行级启停）后是 **42**；
-  // 同日加 `file.list` / `file.read`（工作区目录清单 + 文本分页）后是 **44**。
+  // 同日加 `file.list` / `file.read`（工作区目录清单 + 文本分页）后是 **44**；
+  // 同日加 `plugin.install` / `plugin.installStatus` / `plugin.cancelInstall` / `plugin.remove`
+  // （插件安装面：发起即返回 + 轮询）后是 **48**；同日加 `plugin.listBundles`（包清单，
+  // 卸载按包名走）后是 **49**。
   // **这个数是契约 §5.7 的表与 `tools.md` 的同步闸**：加了方法不改这里就会红，
   // 而它红的方式是"数不对"，所以改它必须同时改契约那一行。
-  assert.equal(METHODS.length, 44, '方法数变了要同步契约 §5.7 的表')
+  assert.equal(METHODS.length, 49, '方法数变了要同步契约 §5.7 的表')
   assert.equal(new Set(METHODS).size, METHODS.length, '方法名不能重复')
 
   // 幂等集**从契约 §5.7 的表里读**，不在测试里手抄第二份 ——
