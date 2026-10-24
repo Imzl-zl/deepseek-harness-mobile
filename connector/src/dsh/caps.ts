@@ -72,6 +72,16 @@ export const OPTIONAL_SERVICES = [
   // 手机 hero 上那枚模式 chip 退回"拿不到目录"，而不是摆一份手抄的四个内置预设。
   // 写路径不需要它：新建会话时带 `agentPreset` 走的是 `session.create`。
   'agentPresets',
+  // `@` 候选的两个只读面（`dsh/references.ts`，契约 §5.7）：
+  // `fileReferences` 是文件 / 目录候选的宿主服务
+  // （`packages/context/file-reference/src/index.ts:20-42`），
+  // `sessionReferenceResolver` 是会话候选
+  // （`packages/context/session-reference/src/index.ts:106,281-295`）。
+  // 两者都在 `bundle/web-app` 里（`cordis.patch.yml:86-90` 的 `session-reference` 与
+  // `file-reference-local`），base 没有 —— 所以这对键**决定 `caps.references`**，
+  // 缺任一个手机就不显示 `@` 面板（契约 §7 的能力位模型）。
+  'fileReferences',
+  'sessionReferenceResolver',
   // 交互转发的两个宿主缝（`dsh/interaction-client.ts`，契约 §6.2）：`typertGateway` 的
   // `$events` 转发流（`packages/api/gateway/src/types.ts:148-151`）+ `connection` 的
   // in-process owner peer（`packages/client/connection/src/rpc-host.ts:140`）。
@@ -96,6 +106,14 @@ export interface Caps {
   jobs: boolean
   /** 子代理树。 */
   subagents: boolean
+  /**
+   * `@` 候选（文件 / 目录 + 跨会话引用）。
+   *
+   * **两个面都在才算**：手机那边是一张面板（拼音节流查一次），
+   * 只有一个面时面板要么只列文件、要么只列会话 —— 那是两条不同的能力，
+   * 不该让用户猜"为什么少一半"。所以本字段是**与**，判据见 {@link referencesAvailable}。
+   */
+  references: boolean
   /** 设置读写面。 */
   settings: boolean
   /** 凭据面（手机侧只有设置页的密钥写面）。**必需服务**，所以通常为 true。 */
@@ -112,6 +130,21 @@ export interface Caps {
 
 const present = (ctx: Context, name: string): boolean => ctx.get(name) !== undefined
 
+/**
+ * `@` 候选这一块能不能挂（`refs.files` / `refs.sessions`）。
+ *
+ * **一处定义、两处用**：`readCaps` 的能力位与 `index.ts` 的挂载判据读的是同一个函数 ——
+ * 各写一遍必然漂成"`repo.info` 说有能力、方法却不在表里"（那正是手机侧
+ * 一个点了没反应的按钮）。
+ *
+ * 三个键缺一不可：两个候选服务各自出一个面，而两个面的第一个参数都是**活 agent**
+ * （`file-references.ts:38-43`、`session-reference/src/index.ts:282-286`），
+ * 会话 id 要经 `agents` 才换得到它（与 `dsh/command-line.ts` 同一条）。
+ */
+export function referencesAvailable(ctx: Context): boolean {
+  return present(ctx, 'fileReferences') && present(ctx, 'sessionReferenceResolver') && present(ctx, 'agents')
+}
+
 export function readCaps(ctx: Context, options: { direct: boolean } = { direct: false }): Caps {
   return {
     sessions: present(ctx, 'sessionController'),
@@ -120,6 +153,7 @@ export function readCaps(ctx: Context, options: { direct: boolean } = { direct: 
     questions: present(ctx, 'userQuestions'),
     jobs: present(ctx, 'jobs'),
     subagents: present(ctx, 'subagents'),
+    references: referencesAvailable(ctx),
     settings: present(ctx, 'settings'),
     credentials: present(ctx, 'credentials'),
     direct: options.direct,

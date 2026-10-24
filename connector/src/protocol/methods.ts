@@ -84,6 +84,16 @@ export const METHODS = [
   // 手机侧只有一处分流：命令走这里、普通消息走 `session.prompt`、
   // 子会话恒走 `subagent.prompt`（`app/lib/model/command.dart`）。
   'command.execute',
+  // `@` 候选的两个只读面（契约 §5.7）。**与 Web 同一对 DSH 方法**：
+  // 文件 / 目录 `fileReferences.list(agent, query, signal)`
+  // （`packages/api/session-controller/src/file-references.ts:32-39`），
+  // 会话 `sessionReferenceResolver` 的 `@Remote('candidates')`
+  // （`packages/context/session-reference/src/index.ts:281-295`）。
+  // 两者都**只透传**：候选上限交给宿主（`candidateLimit`），我们不截断、不缓存；
+  // 空结果是空数组。手机只把 `mention` 当不透明文本插进输入框。
+  // 按 `caps.references` 挂（`dsh/caps.ts` 的 `referencesAvailable`）。
+  'refs.files',
+  'refs.sessions',
   // Agent 预设目录（只读）。**与 Web 同一个 DSH 方法**：
   // `agentPresets.remoteExportList()`（`@Remote('list')`，
   // `packages/preset/agent-preset-registry/src/index.ts:194-198`），

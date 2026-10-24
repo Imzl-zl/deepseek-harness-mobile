@@ -44,7 +44,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 
 import { type ConnectorConfig, Config } from './config.js'
-import { REQUIRED_SERVICES, readCaps, type Caps } from './dsh/caps.js'
+import { REQUIRED_SERVICES, readCaps, referencesAvailable, type Caps } from './dsh/caps.js'
 import { createEndpointsPort } from './endpoints.js'
 import { createSubagentsPort } from './dsh/subagents.js'
 import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent'
@@ -88,6 +88,7 @@ import { createModelFace } from './dsh/models.js'
 import { createPermissionFace } from './dsh/permissions.js'
 import { createCommandLineRunner } from './dsh/command-line.js'
 import { createAgentPresetsFace } from './dsh/agent-presets.js'
+import { createReferencesFace } from './dsh/references.js'
 import { createDevicePresence } from './presence.js'
 import { createInteractionPort } from './interaction-claims.js'
 import { createInteractionFace } from './interaction-face.js'
@@ -820,6 +821,33 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
          */
         if (ctx.get('agentPresets') !== undefined) {
           handlerDeps.agentPresets = createAgentPresetsFace(ctx)
+        }
+
+        /**
+         * `@` 候选的两个只读面（`refs.files` / `refs.sessions`）。
+         *
+         * 判据是 `dsh/caps.ts` 的 `referencesAvailable(ctx)` —— **与 `caps.references`
+         * 同一个函数**，不是另写一遍"三个键在不在"。两处各写一遍，就等着
+         * `repo.info` 说有能力、`methods` 里却没有那两个方法（手机上一个点了没反应的按钮）。
+         *
+         * 为什么需要 `agents`：两个候选面的第一个参数都是活 `Agent`
+         * （`file-references.ts:38-43`、`session-reference/src/index.ts:282-286`），
+         * 而手机只给 `sid`。换法与 `dsh/command-line.ts` 的 `agentOf` 同一条。
+         */
+        if (referencesAvailable(ctx)) {
+          handlerDeps.references = createReferencesFace(ctx, {
+            sessionOf: (sid) => aliases?.sessionOf(sid),
+            // **先查再分配**：`session.list` 已经为可见会话分过别名，候选绝大多数命中第一档；
+            // 第二档只覆盖"会话刚建、列表还没刷"的窗口（同一个会话不会分到两个 sid，
+            // `alias.ts` 的 `ensure` 自带合流）。
+            ensureSid: (dshSessionId) => {
+              if (aliases === null) {
+                // 步骤顺序由 `lifecycle.ts` 保证：`open-store` 一定先跑过。
+                throw new Error('别名表尚未就绪：装配顺序有误')
+              }
+              return Promise.resolve(aliases.sidOf(dshSessionId) ?? aliases.ensure(dshSessionId))
+            },
+          })
         }
 
         /**

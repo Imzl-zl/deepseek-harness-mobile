@@ -21,8 +21,11 @@
 /// 点它弹 sheet（§7.4）——本版先只显示，sheet 是下一步。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../model/mention.dart';
 import '../model/permission.dart';
 import '../model/send_mode.dart';
 import '../theme/dsh_colors.dart';
@@ -158,10 +161,21 @@ class DshComposer extends StatelessWidget {
     this.onStop,
     this.hintText = kComposerHintDefault,
     this.slashCommands = const <String>[],
+    this.mentionsEnabled = false,
+    this.onQueryMentions,
   });
 
   /// 斜杠命令白名单（`repo.info.commands`，契约 §5.7）。空表 = 不知道 ⇒ 不出菜单。
   final List<String> slashCommands;
+
+  /// 电脑侧有没有 `@` 候选（`repo.info.caps.references`）。老连接器 ⇒ false ⇒ 不出面板。
+  final bool mentionsEnabled;
+
+  /// 问一次 `@` 候选。`null` = 这一版不接（整块 `@` 面板不出现）。
+  ///
+  /// **回调而不是传数据**：候选要按用户打的字现查，而"现查"需要去抖与
+  /// 作废在飞请求 —— 那两件事只有输入栏自己知道（它拿到每一次按键）。
+  final Future<MentionQueryResult> Function(String query)? onQueryMentions;
 
   /// 占位符。默认是普通会话那句；hero（blank 会话）传 [kComposerHintHero]。
   final String hintText;
@@ -322,6 +336,15 @@ class DshComposer extends StatelessWidget {
             // 候选**只来自电脑侧**（`repo.info.commands`，契约 §5.7）：手机侧
             // 不抄第二份名单 —— 抄了就是同一个事实两处表达，电脑侧加一条命令
             // 这里永远看不到。空表（老连接器）= 不出菜单，不是"没有命令"。
+            // `@` 候选（文件 / 目录 + 跨会话引用）。**与 `/` 同一条缝**：
+            // 都读 `controller`、都只是输入框上方的一行；区别是候选要**问电脑侧**
+            // （`refs.files` / `refs.sessions`），所以有去抖与三态。
+            if (onQueryMentions != null)
+              _AtSuggestions(
+                controller: controller,
+                enabled: enabled && mentionsEnabled,
+                onQuery: onQueryMentions!,
+              ),
             _SlashSuggestions(
               controller: controller,
               commands: slashCommands,
@@ -1021,6 +1044,207 @@ String? slashQueryOf(String text) {
   return body;
 }
 
+/// `@` 候选：文件 / 目录 + 跨会话引用。
+///
+/// **与 `/` 同一条缝**（都读 `controller`、都画在输入框上方一行），区别只有两点：
+///
+/// 1. 候选要**问电脑侧**（`refs.files` / `refs.sessions`），所以有去抖：
+///    **150 ms**（通道层参数，描述的是我们这条管道，不是业务语义）。
+/// 2. 三态各是一句话：列表 / 空（"没有匹配"）/ 失败（**电脑侧给的原因**）。
+///    失败画成空列表会让用户以为自己路径打错了。
+///
+/// **不缓存、不预取**：候选随工作目录与所打的字变化，存一份就是第二个真值源。
+/// **新按键作废在飞的答复**：通道没有"取消这次请求"（契约 §10 没有取消语义），
+/// 所以"取消"= 换一个代号，回来的旧答复对不上就丢掉 —— 它不会盖住新的结果。
+class _AtSuggestions extends StatefulWidget {
+  const _AtSuggestions({
+    required this.controller,
+    required this.enabled,
+    required this.onQuery,
+  });
+
+  final TextEditingController controller;
+  final bool enabled;
+  final Future<MentionQueryResult> Function(String query) onQuery;
+
+  @override
+  State<_AtSuggestions> createState() => _AtSuggestionsState();
+}
+
+class _AtSuggestionsState extends State<_AtSuggestions> {
+  /// 输入去抖（通道层参数：我们这条管道打一个来回的节奏）。
+  static const Duration _debounce = Duration(milliseconds: 150);
+
+  Timer? _timer;
+
+  /// 代号：每次按键 +1。回来的答复代号对不上就是"已经被取消"。
+  int _epoch = 0;
+
+  /// 面板当前对应的查询串；`null` = 面板不显示。
+  String? _query;
+
+  /// 刚选进去的那一段 token：它还在就不弹面板（否则选完立刻又弹回来）。
+  String? _chosen;
+
+  List<AtCandidate> _rows = const [];
+  String? _error;
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onChanged);
+    _onChanged();
+  }
+
+  @override
+  void didUpdateWidget(_AtSuggestions old) {
+    super.didUpdateWidget(old);
+    // 能力位变了（连接了另一台电脑）要立刻按新判据重算，不能等下一次按键。
+    if (old.enabled != widget.enabled || old.onQuery != widget.onQuery) {
+      _onChanged();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onChanged);
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _onChanged() {
+    final text = widget.controller.text;
+    final trigger = widget.enabled ? atTriggerOf(text) : null;
+    if (trigger == null || _chosen == text.substring(trigger.at)) {
+      _hide();
+      return;
+    }
+    // 同一个 token（只是移动了光标）不重发请求：去抖是为了新按键，不是为了光标。
+    if (trigger.query == _query &&
+        (_loading || _rows.isNotEmpty || _error != null)) {
+      return;
+    }
+    _timer?.cancel();
+    _epoch += 1;
+    final epoch = _epoch;
+    final query = trigger.query;
+    setState(() {
+      _query = query;
+      _rows = const [];
+      _error = null;
+      _loading = true;
+    });
+    _timer = Timer(_debounce, () => _run(query, epoch));
+  }
+
+  void _hide() {
+    _timer?.cancel();
+    if (_query == null) return;
+    _epoch += 1;
+    setState(() {
+      _query = null;
+      _rows = const [];
+      _error = null;
+      _loading = false;
+    });
+  }
+
+  Future<void> _run(String query, int epoch) async {
+    final result = await widget.onQuery(query);
+    if (!mounted || epoch != _epoch) return;
+    setState(() {
+      _loading = false;
+      _error = result.error;
+      _rows = result.candidates?.all ?? const <AtCandidate>[];
+    });
+  }
+
+  void _choose(AtCandidate candidate) {
+    final next = insertAtMention(widget.controller.text, candidate);
+    final trigger = atTriggerOf(next);
+    // **先记住再改文本**：`controller.value` 的赋值会同步触发监听器，
+    // 那时 `_chosen` 必须已经是新值，否则面板会立刻为同一段 token 再查一次。
+    _chosen = trigger == null ? null : next.substring(trigger.at);
+    _hide();
+    widget.controller.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: next.length),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final query = _query;
+    if (!widget.enabled || query == null) return const SizedBox.shrink();
+    final c = context.dshColors;
+    final error = _error;
+    if (error != null) {
+      return _AtStatusLine(
+        key: const ValueKey<String>('at-failure'),
+        text: error,
+        color: c.labelSecondary,
+      );
+    }
+    if (_loading) {
+      return _AtStatusLine(
+        key: const ValueKey<String>('at-loading'),
+        text: '正在找…',
+        color: c.labelCaption,
+      );
+    }
+    if (_rows.isEmpty) {
+      return _AtStatusLine(
+        key: const ValueKey<String>('at-empty'),
+        text: '没有匹配的文件或会话',
+        color: c.labelCaption,
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (final candidate in _rows)
+            _SuggestionChip(
+              key: ValueKey<String>(
+                'at-${candidate.kind.name}-${candidate.label}',
+              ),
+              label: candidate.label,
+              color: c,
+              onTap: () => _choose(candidate),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 面板的一句话（加载 / 空 / 失败三态共用；宽度撑满，读起来像"这一行没有候选"）。
+class _AtStatusLine extends StatelessWidget {
+  const _AtStatusLine({super.key, required this.text, required this.color});
+
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4, left: 2),
+      child: SizedBox(
+        width: double.infinity,
+        child: Text(
+          text,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 11.5, color: color),
+        ),
+      ),
+    );
+  }
+}
+
 /// 候选菜单：一条命令一枚胶囊，点了就把 `/名字 ` 填进输入框。
 ///
 /// 它读 `controller`（`ValueNotifier<TextEditingValue>`），所以输入一个字就会重算，
@@ -1060,7 +1284,7 @@ class _SlashSuggestions extends StatelessWidget {
             runSpacing: 6,
             children: [
               for (final name in matched)
-                _SlashChip(
+                _SuggestionChip(
                   key: ValueKey<String>('slash-$name'),
                   label: '/$name',
                   color: c,
@@ -1080,8 +1304,9 @@ class _SlashSuggestions extends StatelessWidget {
   }
 }
 
-class _SlashChip extends StatelessWidget {
-  const _SlashChip({
+/// 面板上的一枚候选胶囊（`/` 的命令与 `@` 的文件/会话共用同一个形状）。
+class _SuggestionChip extends StatelessWidget {
+  const _SuggestionChip({
     super.key,
     required this.label,
     required this.color,

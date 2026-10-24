@@ -380,9 +380,11 @@
   **`relayUrl` 必须写环回** —— 写死局域网 IP 会绕开 `relayHintFor` 的自愈。
 - `connector/` 与 `relay/` 是**两个独立 pnpm 工程**，导入风格不同、别顺手统一。本仓库**没有 CI**。
 
-## 方法面 36/38
+## 方法面 38/40
 
-契约封闭集 **38**、实现 **36**，差额 2 个是契约列了没实现的：`credentials.set` / `credentials.unset`。
+契约封闭集 **40**、实现 **38**，差额 2 个是契约列了没实现的：`credentials.set` / `credentials.unset`。
+2026-10-24 加的两个是 `refs.files` / `refs.sessions`（`@` 候选的两个只读面，
+按 `caps.references` 挂）。
 2026-10-21 加的五条是 `workspace.insertSessionBefore` /
 `workspace.pin` / `workspace.unpin` / `workspace.insertBefore` 与 `subagent.prompt`；
 2026-10-22 挂上了 `settings.describe` / `settings.update`（三行电脑侧设置，见
@@ -500,11 +502,11 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **454 / 26 / 49** 项 |
-| `node app/tools/verify-platform-boundary.mjs` | **369 项**（22 条规则自检 + 扫 104 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | **372 项**（22 条规则自检 + 扫 105 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1174 项** |
+| `cd app && flutter test` | **1189 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **621 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **629 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **87 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 
@@ -583,6 +585,10 @@
   断线期间跑完的一轮在回网 0.4 s 收口；计划审查卡在手机上**确实不存在**。
   三篇 implemented 笔记各自的「真机验证」一节 + `tools.md` 五条真机坑。
 
+- 2026-10-24 `@` 文件与会话提及（`refs.files` / `refs.sessions` 两个只读面 + `caps.references`
+  一处定义两处用 + 手机侧 `atTriggerOf` 判据对照宿主 `TEXT_REF_RE`、去抖 150 ms、失败态显示电脑侧原话）——
+  `implemented/2026-10-24-file-and-session-mentions.md`；现状 `docs/subsystems/composer-mentions.md`。
+  门禁：connector **621 → 629**、flutter **1175 → 1189**、boundary **369 → 372**。变异校验两组各恰好 1 条红。
 - 2026-10-24 五条界面短板 + 通知 + 后台保活（`6362ad6` 设置未读到 / `3413fa4` 抽屉四态点 /
   `117652c` `/` 候选菜单 / `84b0d29` 用量页卡片与热力图 / 见上表第 5 行 后台保活与三类通知）。
   契约：§13 §2.2 §9 §15 §5.7；新增 `docs/subsystems/notifications.md` 与 `usage-page.md`。

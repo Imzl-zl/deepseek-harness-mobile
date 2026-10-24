@@ -32,6 +32,7 @@ import type { InteractionFace } from './interaction-face.js'
 import type { ModelFace } from './dsh/models.js'
 import type { EndpointsPort } from './endpoints.js'
 import type { ProjectionsPort } from './dsh/projections.js'
+import type { ReferencesFace } from './dsh/references.js'
 import type { SubagentsPort } from './dsh/subagents.js'
 import type { WorkspacesPort } from './dsh/workspaces.js'
 import type { PermissionFace } from './dsh/permissions.js'
@@ -256,6 +257,17 @@ export interface HandlerDeps {
    * handler 表的键，于是"这台没有子代理服务"与"这个方法没实现"在手机侧同一种表现。
    */
   subagents?: SubagentsPort
+  /**
+   * `@` 候选的两个只读面（`refs.files` / `refs.sessions`）。
+   *
+   * **两个面都在才给**（`dsh/caps.ts` 的 `referencesAvailable`）：缺了就不挂这两个方法，
+   * `repo.info` 的 `methods` 里自然也没有它们、`caps.references` 为 false ——
+   * 手机据此**不显示** `@` 面板，而不是显示一个永远空的候选列表。
+   *
+   * 候选上限交给宿主（它有 `candidateLimit`），这里不截断；空结果是空数组；
+   * 宿主抛错原样过线（分发器把非协议错误归成 `internal`，消息文字保留）。
+   */
+  references?: ReferencesFace
   /**
    * 设置面（`settings.describe` / `settings.update`，可选服务 `settings`）。
    *
@@ -1116,6 +1128,34 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
         }
         throw error
       }
+    }
+  }
+
+  // `@` 的两个候选面（契约 §5.7）。**两个都必须挂**才给 `caps.references`，
+  // 判据在 `dsh/caps.ts` 的 `referencesAvailable`（与装配层同一个函数）。
+  //
+  // `query` 允许空串：用户刚打完一个 `@` 时就是"这个目录下有什么"，
+  // 空串不是缺陷。形状不对才是 `protocol/bad-frame` —— 形状校验在**方法面**做，
+  // 与 `sid` 同一条纪律。
+  if (deps.references !== undefined) {
+    const references = deps.references
+    /** `{sid, query}`：`query` 必须是字符串（可以是空串），**不做长度/字符裁剪**。 */
+    const queryOf = (params: unknown): string => {
+      const query = paramOf(params, 'query')
+      if (typeof query !== 'string') {
+        throw new ProtocolError('protocol/bad-frame', 'query 必须是字符串（可以是空串）')
+      }
+      return query
+    }
+
+    handlers['refs.files'] = async (params) => {
+      const sid = requireSid(params)
+      return { files: await references.files(sid, queryOf(params)) }
+    }
+
+    handlers['refs.sessions'] = async (params) => {
+      const sid = requireSid(params)
+      return { sessions: await references.sessions(sid, queryOf(params)) }
     }
   }
 

@@ -25,7 +25,7 @@ function makeDeps(overrides: Partial<ConnectionScopeDeps> = {}): ConnectionScope
   return {
     logger: silentLogger, metrics: createMetrics(), sessions,
     handlers: {
-      caps: () => ({ sessions: true, storage: true, approval: false, questions: false, jobs: false, subagents: false, settings: false, credentials: true, direct: false }),
+      caps: () => ({ sessions: true, storage: true, approval: false, questions: false, jobs: false, subagents: false, references: false, settings: false, credentials: true, direct: false }),
       aliasVersion: () => 0, sessions, aliases: { ensure: async () => 's1', sessionOf: () => undefined }, devices: () => [],
     },
     buffer: createSessionBuffer({ pairedDevices: () => [] }), jobControl: null, idempotency: null, ...overrides,

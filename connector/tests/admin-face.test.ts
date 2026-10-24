@@ -49,6 +49,7 @@ const CAPS = {
   questions: true,
   jobs: true,
   subagents: false,
+  references: false,
   settings: true,
   credentials: true,
   direct: true,

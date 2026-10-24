@@ -34,6 +34,7 @@ import '../model/agent_preset.dart';
 import '../model/chat_item.dart';
 import '../model/command.dart';
 import '../model/interaction.dart';
+import '../model/mention.dart';
 import '../model/model_catalog.dart';
 import '../model/permission.dart';
 import '../model/preferences.dart';
@@ -1694,6 +1695,15 @@ class AppModel extends ChangeNotifier {
   List<String> get slashCommands => _slashCommands;
   List<String> _slashCommands = const <String>[];
 
+  /// 电脑侧有没有 `@` 候选（`repo.info.caps.references`）。
+  ///
+  /// **只看能力位，不看方法表**：连接器那边两个判据是同一个函数
+  /// （`connector/src/dsh/caps.ts` 的 `referencesAvailable`，`readCaps` 与挂载点共用），
+  /// 所以"有能力位 ⇒ 方法一定在表里"。老连接器不报这个键 ⇒ false ⇒
+  /// 手机上**不显示** `@` 面板（不是显示一个永远空的列表）。
+  bool get mentionsAvailable => _mentionsAvailable;
+  bool _mentionsAvailable = false;
+
   /// 读一次 `repo.info`（排错要它：手机版本与电脑版本并排看）。
   ///
   /// 连接器只在**拿得到宿主运行时版本**时才报这个字段（见
@@ -1713,11 +1723,63 @@ class AppModel extends ChangeNotifier {
                 .where((c) => c.isNotEmpty)
                 .toList(growable: false)
           : const <String>[];
+      // `@` 候选的能力位（`caps.references`）：缺这个键（老连接器）就是 false。
+      final caps = result is Map ? result['caps'] : null;
+      _mentionsAvailable = caps is Map && caps['references'] == true;
       if (!_disposed) notifyListeners();
     } catch (error) {
       _dshVersion = null;
       _recordError('读取电脑侧版本失败', error);
     }
+  }
+
+  // ---- `@` 候选（`refs.files` / `refs.sessions`，只读）----
+
+  /// 查这个会话里的 `@` 候选（文件 / 目录 + 跨会话引用）。
+  ///
+  /// **两个方法并发发一次**：面板一行里两种候选都要，串行只是多等一个往返。
+  /// **不缓存、不预取**：候选随会话工作目录与我打的字变化，落一份本地快照就是
+  /// 第二个真值源（而且下一个按键就得作废它）。去抖与"作废在飞请求"在界面层
+  /// （`ui/dsh_composer.dart` 的 `_AtSuggestions`），因为它才是那个知道"又按了一个键"的地方。
+  ///
+  /// 空结果 = 电脑侧说"没有匹配"；失败 = 原因在返回值的 `error` 里
+  /// （两种"没有"在界面上是两种形态，见 [MentionQueryResult]）。
+  Future<MentionQueryResult> queryMentions(String query) async {
+    final sid = _currentSid;
+    if (sid == null) {
+      return const MentionQueryResult(error: '还没有选中的会话：@ 候选要在一个会话自己的工作目录里找');
+    }
+    final params = <String, Object?>{'sid': sid, 'query': query};
+    try {
+      final answers = await Future.wait<Object?>([
+        client.call<Object?>('refs.files', params),
+        client.call<Object?>('refs.sessions', params),
+      ]);
+      final files = _mentionRowsOf(answers[0], 'files')
+          .map(AtCandidate.fromFileRow)
+          .whereType<AtCandidate>()
+          .toList(growable: false);
+      final sessions = _mentionRowsOf(answers[1], 'sessions')
+          .map(AtCandidate.fromSessionRow)
+          .whereType<AtCandidate>()
+          .toList(growable: false);
+      return MentionQueryResult(
+        candidates: AtCandidates(files: files, sessions: sessions),
+      );
+    } catch (error) {
+      // **兜住所有异常**（与 `refreshSessions` / `refreshUsageSummary` 同一条纪律）：
+      // 只接协议错误的话，解析 / 超时都会逃逸成未处理的异步错误，
+      // 而界面会停在"还在找"——那正是最难与"电脑没有匹配"区分的形态。
+      _recordError('读取 @ 候选失败', error);
+      return MentionQueryResult(error: _lastError?.message ?? '$error');
+    }
+  }
+
+  /// 从应答里取一列行（`{files:[…]}` / `{sessions:[…]}`）；认不出给空列。
+  static List<Object?> _mentionRowsOf(Object? answer, String key) {
+    if (answer is! Map) return const [];
+    final rows = answer[key];
+    return rows is List ? rows : const [];
   }
 
   // ---- 跨会话用量汇总（`usage.summary`，只读）----
