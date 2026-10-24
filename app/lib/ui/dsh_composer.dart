@@ -1200,22 +1200,32 @@ class _AtSuggestionsState extends State<_AtSuggestions> {
         color: c.labelCaption,
       );
     }
+    // **候选可以很多**（40 个同名会话那种），所以面板要有上限并自己滚：
+    // 不设上限时它会把输入栏这一列撑爆（真机：`Duplicate keys` 之后整屏红 + overflow）。
     return Padding(
       padding: const EdgeInsets.only(bottom: 2),
-      child: Wrap(
-        spacing: 6,
-        runSpacing: 6,
-        children: [
-          for (final candidate in _rows)
-            _SuggestionChip(
-              key: ValueKey<String>(
-                'at-${candidate.kind.name}-${candidate.label}',
-              ),
-              label: candidate.label,
-              color: c,
-              onTap: () => _choose(candidate),
-            ),
-        ],
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 132),
+        child: SingleChildScrollView(
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              // key 里带**下标**：候选的标签不唯一（同名会话、同名目录都可能出现在
+              // 同一批里），只拿 `kind + label` 做 key 会撞 —— 真机 40 个同名会话
+              // 直接 `Duplicate keys found`。
+              for (var index = 0; index < _rows.length; index += 1)
+                _SuggestionChip(
+                  key: ValueKey<String>(
+                    'at-$index-${_rows[index].kind.name}-${_rows[index].label}',
+                  ),
+                  label: _rows[index].label,
+                  color: c,
+                  onTap: () => _choose(_rows[index]),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }

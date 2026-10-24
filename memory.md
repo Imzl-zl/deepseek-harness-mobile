@@ -511,13 +511,27 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **454 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **391 项**（22 条规则自检 + 扫 110 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1220 项** |
+| `cd app && flutter test` | **1221 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **655 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **87 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 
 **项数的唯一出处是 `tools.md`**；**改断言必须做一次变异校验**（故意破坏不变量，确认**恰好**那一条红）。
+
+## 2026-10-24 真机（新功能第一次上真机，1 个模型请求 + 若干本地操作）
+
+证据在 `D:\tmp\dsh-e2e\shots-2026-10-24-mentions\`（隔离实例 63900/8790 + 直连）。
+**已确认可用**：`@` 面板（候选来自宿主、插入 `@path`、面板收起）、文件页（真实工作区 +
+`AGENTS.md` 预览）、插件页（本地化名 / 只读原因 / **启停真的写进 `cordis.patch.yml`**）、
+`/plan` 命令卡；在途提问卡**杀 App 重开后仍在**（host-held pending 重投）。
+**真机抓到的真 bug（已修）**：`@` 候选胶囊的 key 只由 `kind+label` 组成，而会话里
+有 40 个同名会话 ⇒ `Duplicate keys` 整屏红；面板也没有高度上限。修法：key 带下标 +
+`ConstrainedBox(132) + SingleChildScrollView`，补了同名候选用例。
+**仍未上真机**：计划审查卡（那一轮被我自己打错的 prompt 截断成 "Give" 卡在提问里）、
+图片上限四条、`readBytes` 预览、插件安装/卸载的真实 pnpm 流程。
+**新记的既有缺陷**：接管卡 + 键盘同时在场时**溢约 200px**（`BOTTOM OVERFLOWED BY 204 PIXELS`），
+「跳过 / 提交」被顶出屏幕 —— 与本轮功能无关，待单独修。
 
 ## 仍未注意就会翻车的
 

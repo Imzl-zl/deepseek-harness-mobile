@@ -249,16 +249,17 @@ void main() {
       );
       await type(tester, input, '@sr');
 
+      // key 带**下标**：候选标签不唯一（真机 40 个同名会话把 `kind+label` 撞成红屏）。
       expect(
-        find.byKey(const ValueKey<String>('at-directory-src/')),
+        find.byKey(const ValueKey<String>('at-0-directory-src/')),
         findsOneWidget,
       );
       expect(
-        find.byKey(const ValueKey<String>('at-file-src/index.ts')),
+        find.byKey(const ValueKey<String>('at-1-file-src/index.ts')),
         findsOneWidget,
       );
       expect(
-        find.byKey(const ValueKey<String>('at-session-重构输入栏')),
+        find.byKey(const ValueKey<String>('at-2-session-重构输入栏')),
         findsOneWidget,
       );
     });
@@ -292,6 +293,43 @@ void main() {
       expect(find.byKey(const ValueKey<String>('at-failure')), findsOneWidget);
       expect(find.text('这个会话在电脑上没有对应的活动 agent'), findsOneWidget);
       expect(find.byKey(const ValueKey<String>('at-empty')), findsNothing);
+    });
+
+    testWidgets('同名候选不撞 key（真机 40 个同名会话整屏红的那个回归）', (tester) async {
+      final input = TextEditingController();
+      addTearDown(input.dispose);
+      await tester.pumpWidget(
+        host(
+          input,
+          onQueryMentions: (_) async => MentionQueryResult(
+            candidates: AtCandidates(
+              // 宿主的候选**允许重名**（同一批里两个会话可以都叫这个名字）。
+              sessions: [
+                AtCandidate.fromSessionRow({
+                  'sid': 'sid_a',
+                  'title': 'List numbers 1 to 40',
+                  'mention': '@[List numbers 1 to 40](dsh-session:YQ)',
+                })!,
+                AtCandidate.fromSessionRow({
+                  'sid': 'sid_b',
+                  'title': 'List numbers 1 to 40',
+                  'mention': '@[List numbers 1 to 40](dsh-session:Yg)',
+                })!,
+              ],
+            ),
+          ),
+        ),
+      );
+      await type(tester, input, '@List');
+
+      expect(
+        find.byKey(const ValueKey<String>('at-0-session-List numbers 1 to 40')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('at-1-session-List numbers 1 to 40')),
+        findsOneWidget,
+      );
     });
 
     testWidgets('老连接器（没有 caps.references）⇒ 面板整块不显示', (tester) async {
@@ -333,13 +371,13 @@ void main() {
       );
       await type(tester, input, '看 @src');
       await tester.tap(
-        find.byKey(const ValueKey<String>('at-file-src/index.ts')),
+        find.byKey(const ValueKey<String>('at-0-file-src/index.ts')),
       );
       await tester.pump();
 
       expect(input.text, '看 @src/index.ts');
       expect(
-        find.byKey(const ValueKey<String>('at-file-src/index.ts')),
+        find.byKey(const ValueKey<String>('at-0-file-src/index.ts')),
         findsNothing,
       );
     });

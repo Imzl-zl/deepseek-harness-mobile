@@ -95,6 +95,28 @@ Status: implemented
   ② 把 `referencesAvailable` 写成恒真 ⇒ 只有「缺任一服务 ⇒ 能力位 false 且两个方法都不挂」红。
 - `pnpm exec tsc --noEmit` 0、`pnpm build` 过、`dart analyze --fatal-infos` 0、`dart format` 0。
 
+## 真机验证（2026-10-24，隔离实例 + adb）
+
+**结论：`@` 面板在真机上能用，但暴露了一个单测抓不到的 bug —— 已修。**
+
+- **`Duplicate keys found`（整屏红）**：候选胶囊的 key 原来只由 `kind + label` 组成，
+  而这台机器的会话里有 **40 个同名会话**（`List numbers 1 to 40`）⇒ 同一批候选里
+  key 重复 ⇒ Flutter 直接红屏。**修法：key 带下标**（`at-<index>-<kind>-<label>`），
+  并补一条回归用例（两个同名会话同时出现）。
+- **面板没有高度上限**：40 多个候选把输入栏那一列撑爆（同屏还报了 `overflowed`）。
+  **修法：`ConstrainedBox(maxHeight: 132)` + `SingleChildScrollView`** ——
+  候选条数仍由宿主决定（不截断），只是把它放进一个能滚的窗口。
+- 其余确认可用：打 `@` 后候选项来自宿主（工作区根的真实目录 `app` / `artifacts` /
+  `connector` / `docs`）；点一个文件 ⇒ 输入框变成 `@app/test/agent_preset_test.dart`
+  （**文件不带尾斜杠**，与探针规则一致），面板随即收起。
+- 同一轮真机还确认了**文件页**（列真实工作区、`AGENTS.md` 预览中文正常）、
+  **插件页**（宿主的本地化名、只读原因、**启停真的写进了 profile patch**：
+  `cordis.patch.yml` 里出现 `disabled: true`，再点一次变 `disabled: false`）、
+  `/plan` 命令卡（`Plan mode on. Use /plan off to leave.`）。
+- **另发现一个既有缺陷（与本轮功能无关）**：接管卡（提问）在**键盘弹出时溢约 200px**
+  （`BOTTOM OVERFLOWED BY 204 PIXELS`），卡片底部的「跳过 / 提交」被顶出屏幕 ——
+  已记进 `memory.md` 的已知缺口，待单独修。
+
 ## 代码入口回指
 
 - 连接器：`connector/src/dsh/references.ts`（两个面 + 形状收窄）、
