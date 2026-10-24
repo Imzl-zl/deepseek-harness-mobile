@@ -31,7 +31,7 @@ function section57(markdown: string): string {
   return next === -1 ? rest : rest.slice(0, next + 3)
 }
 
-test('实现的方法名都在契约 §5.7 里，且契约的方法名数量是 42（"X/42" 不会悄悄失真）', () => {
+test('实现的方法名都在契约 §5.7 里，且契约的方法名数量是 44（"X/44" 不会悄悄失真）', () => {
   // **38 是"方法名"数,不是表行数**:契约那张表一行可以写两个方法
   // （`job.follow` / `job.unfollow`、`settings.describe` / `settings.update`、
   // `credentials.set` / `credentials.unset`）—— 行数更少。
@@ -79,7 +79,7 @@ test('实现的方法名都在契约 §5.7 里，且契约的方法名数量是 
     if (method !== undefined) implemented.add(method)
   }
 
-  assert.equal(declared.size, 42, `契约 §5.7 定义了 42 个方法名，实际 ${declared.size} —— 改表就要同步引用它的文档`)
+  assert.equal(declared.size, 44, `契约 §5.7 定义了 44 个方法名，实际 ${declared.size} —— 改表就要同步引用它的文档`)
   assert.equal(implemented.size > 0, true, '没能从 handlers.ts 抽出任何方法名 —— 先修解析口径，别当成通过')
 
   const stray = [...implemented].filter((method) => !declared.has(method)).sort()

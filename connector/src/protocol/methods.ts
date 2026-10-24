@@ -94,6 +94,14 @@ export const METHODS = [
   // 按 `caps.references` 挂（`dsh/caps.ts` 的 `referencesAvailable`）。
   'refs.files',
   'refs.sessions',
+  // 工作区文件（契约 §5.7）：目录清单 + UTF-8 文本按行分页。
+  // **与 Web 同一对 DSH 方法**：`workspaceFiles.list` / `read`
+  // （`packages/api/workspace-files/src/index.ts:233-247,303-329`），
+  // scope 由宿主自己的 `workspaceFileScope` lookup 按 sessionId 解析（`:203-221`）。
+  // **`readBytes` 与 `changes` 不接**：前者原样字节撞单帧预算（契约 §40），
+  // 后者是另一条订阅面 —— 见 `dsh/files.ts` 的文件头。
+  'file.list',
+  'file.read',
   // 插件清单与启停（契约 §5.7）：`pluginManager` 的三个 `@Remote` 里只用两个
   // （`listPlugins` / `setPluginEnabled`，`packages/boot/plugin-manager/src/index.ts:439,796`）。
   // 行字段以 `PluginInfo` 为准、不翻译；启停回**回读后的真值**与宿主的 `application`。

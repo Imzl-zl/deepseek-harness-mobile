@@ -48,6 +48,7 @@ import '../model/trajectory.dart';
 import '../model/turn_outline.dart';
 import '../model/usage_summary.dart';
 import '../model/workspace.dart';
+import '../model/workspace_files.dart';
 import 'preview_data.dart';
 import 'projection.dart';
 import 'session_store.dart';
@@ -1736,12 +1737,82 @@ class AppModel extends ChangeNotifier {
       // `@` 候选的能力位（`caps.references`）：缺这个键（老连接器）就是 false。
       final caps = result is Map ? result['caps'] : null;
       _mentionsAvailable = caps is Map && caps['references'] == true;
+      // 工作区文件面（`caps.files`）：没有 workspaceFiles / typert ⇒ 文件页说清原因。
+      _filesAvailable = caps is Map && caps['files'] == true;
       // 插件面同理（`caps.plugins`）：老连接器 / 没装 plugin-manager ⇒ 不发请求。
       _pluginsAvailable = caps is Map && caps['plugins'] == true;
       if (!_disposed) notifyListeners();
     } catch (error) {
       _dshVersion = null;
       _recordError('读取电脑侧版本失败', error);
+    }
+  }
+
+  // ---- 工作区文件（`file.list` / `file.read`，只读）----
+
+  /// 电脑侧有没有文件面（`repo.info.caps.files`）。老连接器 ⇒ false。
+  bool get filesAvailable => _filesAvailable;
+  bool _filesAvailable = false;
+
+  /// 列一个目录（`path` 空串 = 工作区根）。
+  ///
+  /// 失败**不吞**：原因留在 [lastError]（宿主的原话，例如
+  /// `workspace-file/not-directory` / `workspace-file/not-found`），调用方显示它 ——
+  /// 翻译一遍就成了两句话。
+  Future<FileListing?> listFiles(String path) async {
+    // **没有能力位就不发请求**（与 `refreshPlugins` 同一条）：老连接器上这个方法不存在，
+    // 发出去只会拿一个 `connector/unsupported`，而它会被画成"读取失败"。
+    if (!_filesAvailable) return null;
+    final sid = _currentSid;
+    if (sid == null) {
+      _recordError('读取目录失败', StateError('还没有选中的会话'));
+      return null;
+    }
+    try {
+      final result = await client.call<Object?>('file.list', {
+        'sid': sid,
+        'path': path,
+      });
+      final listing = FileListing.fromWire(
+        result is Map ? result['listing'] : null,
+      );
+      if (listing == null) {
+        _recordError('读取目录失败', StateError('电脑侧的目录应答形状认不出'));
+        return null;
+      }
+      return listing;
+    } catch (error) {
+      _recordError('读取目录失败', error);
+      return null;
+    }
+  }
+
+  /// 读一页文本（`offset` / `limit` 不传就用宿主的页默认）。
+  ///
+  /// 二进制文件由宿主拒（`workspace-file/not-text`），原因同样进 [lastError]。
+  Future<FilePage?> readFile(String path, {int? offset, int? limit}) async {
+    if (!_filesAvailable) return null;
+    final sid = _currentSid;
+    if (sid == null) {
+      _recordError('读取文件失败', StateError('还没有选中的会话'));
+      return null;
+    }
+    try {
+      final result = await client.call<Object?>('file.read', {
+        'sid': sid,
+        'path': path,
+        'offset': ?offset,
+        'limit': ?limit,
+      });
+      final page = FilePage.fromWire(result is Map ? result['page'] : null);
+      if (page == null) {
+        _recordError('读取文件失败', StateError('电脑侧的文件应答形状认不出'));
+        return null;
+      }
+      return page;
+    } catch (error) {
+      _recordError('读取文件失败', error);
+      return null;
     }
   }
 

@@ -34,6 +34,7 @@ const CAPS = {
   subagents: false,
   references: false,
   plugins: false,
+  files: false,
   settings: false,
   credentials: true,
   direct: false,

@@ -57,6 +57,7 @@ import 'ui/chat_page.dart';
 import 'ui/connection_actions_sheet.dart';
 import 'ui/dsh_brand.dart';
 import 'ui/dsh_shimmer.dart';
+import 'ui/files_page.dart';
 import 'ui/pairing_page.dart';
 import 'ui/plugins_page.dart';
 import 'ui/session_drawer.dart';
@@ -528,10 +529,12 @@ class _DshMobileAppState extends State<DshMobileApp>
             online: app.connection == ConnectionStateView.serving,
           ),
           footItems: [
+            // **文件**：工作区目录浏览 + 文本预览（`file.list` / `file.read`，
+            // 契约 §5.7）。只做"看"—— 二进制由宿主拒，`readBytes` / `changes` 不接。
             DrawerFootItem(
               icon: 'folderClose',
               label: '文件',
-              onTap: () => _notYet('文件页'),
+              onTap: () => _openFiles(app),
             ),
             DrawerFootItem(
               icon: 'archive',
@@ -646,6 +649,14 @@ class _DshMobileAppState extends State<DshMobileApp>
         },
       ),
     );
+  }
+
+  /// 打开文件页（抽屉底栏「文件」）。
+  ///
+  /// **先收抽屉再 push**（与 `_openUsage` / `_openPlugins` 同一条）。
+  /// 目录由 `FilesPageHost` 自己拉，且它要一个**当前会话**（scope 按 sessionId 解析）。
+  void _openFiles(AppModel app) {
+    _openFromDrawer((_) => FilesPageHost(app: app));
   }
 
   /// 打开插件页（抽屉底栏「插件」）。

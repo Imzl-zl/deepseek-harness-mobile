@@ -200,6 +200,7 @@ const CAPS: Caps = {
   subagents: false,
   references: false,
   plugins: false,
+  files: false,
   settings: false,
   credentials: false,
   direct: false,

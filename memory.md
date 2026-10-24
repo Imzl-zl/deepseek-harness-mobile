@@ -382,12 +382,14 @@
   **`relayUrl` 必须写环回** —— 写死局域网 IP 会绕开 `relayHintFor` 的自愈。
 - `connector/` 与 `relay/` 是**两个独立 pnpm 工程**，导入风格不同、别顺手统一。本仓库**没有 CI**。
 
-## 方法面 40/42
+## 方法面 42/44
 
-契约封闭集 **42**、实现 **40**，差额 2 个是契约列了没实现的：`credentials.set` / `credentials.unset`。
-2026-10-24 加的四个：`refs.files` / `refs.sessions`（`@` 候选的两个只读面，按 `caps.references` 挂）
-与 `plugin.list` / `plugin.setEnabled`（插件清单与行级启停，按 `caps.plugins` 挂；
-**方法面在 `pluginManager`**，`host/plugin-inventory` 那个 `list()` 没有 `@Remote`）。
+契约封闭集 **44**、实现 **42**，差额 2 个是契约列了没实现的：`credentials.set` / `credentials.unset`。
+2026-10-24 加的六个：`refs.files` / `refs.sessions`（`@` 候选，按 `caps.references` 挂）、
+`plugin.list` / `plugin.setEnabled`（插件清单与启停，按 `caps.plugins` 挂；
+**方法面在 `pluginManager`**，`host/plugin-inventory` 那个 `list()` 没有 `@Remote`）、
+`file.list` / `file.read`（工作区目录 + 文本分页，按 `caps.files` 挂，scope 走宿主的
+`workspaceFileScope` lookup）。
 2026-10-21 加的五条是 `workspace.insertSessionBefore` /
 `workspace.pin` / `workspace.unpin` / `workspace.insertBefore` 与 `subagent.prompt`；
 2026-10-22 挂上了 `settings.describe` / `settings.update`（三行电脑侧设置，见
@@ -505,11 +507,11 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **454 / 26 / 49** 项 |
-| `node app/tools/verify-platform-boundary.mjs` | **383 项**（22 条规则自检 + 扫 108 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | **391 项**（22 条规则自检 + 扫 110 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1211 项** |
+| `cd app && flutter test` | **1218 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **639 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **645 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **87 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 
@@ -594,6 +596,10 @@
   门禁：connector **621 → 629**、flutter **1175 → 1189**、boundary **369 → 372**。变异校验两组各恰好 1 条红。
 - 2026-10-24 用量页时间范围（7 / 30 / 90 / 全部，**纯前端切片**，`usage.summary` 一行没动）——
   `implemented/2026-10-24-usage-range-client-slice.md`；flutter **1189 → 1192**。
+- 2026-10-24 文件页（抽屉底栏那个死入口接上）：`file.list` / `file.read`，scope 走宿主的
+  `workspaceFileScope` lookup（不自己拼）；只接目录清单 + 文本分页，**`readBytes` / `changes` 不接** ——
+  `implemented/2026-10-24-workspace-file-browser.md`；现状 `docs/subsystems/files-page.md`。
+  connector **639 → 645**、flutter **1211 → 1218**、boundary **383 → 391**。
 - 2026-10-24 计划审查卡**来自请求**（`exit_plan_mode` 的 `tool/call` 造 plan 卡；连接器身份优先
   `intent.callId`、答复按请求的题 id 与 `intent.approve` 重写，手机只发标记 `plan-approve`）——
   `implemented/2026-10-24-plan-review-card-from-request.md`；契约 §6.3.1 / §15 已改口。

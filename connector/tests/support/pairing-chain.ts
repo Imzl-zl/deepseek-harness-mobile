@@ -79,7 +79,7 @@ export async function startChain(t: Cleanup): Promise<Chain> {
     logger, metrics: createMetrics(), sessions,
     buffer: createSessionBuffer({ pairedDevices: () => [...devices.keys()] }), jobControl: null, idempotency: null,
     handlers: {
-      caps: () => ({ sessions: true, storage: true, approval: false, questions: false, jobs: false, subagents: false, references: false, plugins: false, settings: false, credentials: true, direct: false }),
+      caps: () => ({ sessions: true, storage: true, approval: false, questions: false, jobs: false, subagents: false, references: false, plugins: false, files: false, settings: false, credentials: true, direct: false }),
       aliasVersion: () => 1, sessions, aliases: { ensure: async () => 's1', sessionOf: () => undefined },
       devices: () => [...devices].map(([id, row]) => ({ id, name: row.name, pairedAt: row.pairedAt, revoked: false })),
     },

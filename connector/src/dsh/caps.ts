@@ -88,6 +88,13 @@ export const OPTIONAL_SERVICES = [
   // 不是方法面）。缺了只是插件页显示"这台电脑没有插件服务"，
   // 不挂这两个方法（`caps.plugins` 为 false）。
   'pluginManager',
+  // 工作区文件面（`dsh/files.ts`，契约 §5.7 的 `file.list` / `file.read`）：
+  // `workspaceFiles` 是 `packages/api/workspace-files/src/index.ts:199-201` 注册的服务
+  // （`list` / `read` 的 `@Remote` 在 `:233-247`、`:303-329`）；`typert` 是它的
+  // `workspaceFileScope` lookup（`:203-221` 注册，注册表形状见
+  // `packages/typert/protocol/src/types.ts:782-825`）—— 两个都在才挂，见 `filesAvailable`。
+  'workspaceFiles',
+  'typert',
   // 交互转发的两个宿主缝（`dsh/interaction-client.ts`，契约 §6.2）：`typertGateway` 的
   // `$events` 转发流（`packages/api/gateway/src/types.ts:148-151`）+ `connection` 的
   // in-process owner peer（`packages/client/connection/src/rpc-host.ts:140`）。
@@ -127,6 +134,13 @@ export interface Caps {
    * 那是同一台电脑上另一类动作，不靠一个 bool 张冠李戴。
    */
   plugins: boolean
+  /**
+   * 工作区文件面（目录清单 + 文本分页读）。
+   *
+   * 只覆盖"看文件"这一屏：**`readBytes` 与 `changes` 不在里面**（前者撞单帧预算、
+   * 后者是另一条订阅面，见 `dsh/files.ts` 的文件头）。
+   */
+  files: boolean
   /** 设置读写面。 */
   settings: boolean
   /** 凭据面（手机侧只有设置页的密钥写面）。**必需服务**，所以通常为 true。 */
@@ -168,6 +182,18 @@ export function pluginsAvailable(ctx: Context): boolean {
   return present(ctx, 'pluginManager')
 }
 
+/**
+ * 工作区文件面能不能挂（`file.list` / `file.read`）。
+ *
+ * 两个键缺一不可：`workspaceFiles` 出方法，`typert` 出 scope 解析
+ * （`workspaceFileScope` lookup，`api/workspace-files/src/index.ts:203-221`）。
+ * `readCaps` 与 `index.ts` 的挂载判据读的是**这一个函数** —— 两处各写一遍必然漂成
+ * "`repo.info` 说有能力、方法却不在表里"。
+ */
+export function filesAvailable(ctx: Context): boolean {
+  return present(ctx, 'workspaceFiles') && present(ctx, 'typert')
+}
+
 export function readCaps(ctx: Context, options: { direct: boolean } = { direct: false }): Caps {
   return {
     sessions: present(ctx, 'sessionController'),
@@ -178,6 +204,7 @@ export function readCaps(ctx: Context, options: { direct: boolean } = { direct: 
     subagents: present(ctx, 'subagents'),
     references: referencesAvailable(ctx),
     plugins: pluginsAvailable(ctx),
+    files: filesAvailable(ctx),
     settings: present(ctx, 'settings'),
     credentials: present(ctx, 'credentials'),
     direct: options.direct,

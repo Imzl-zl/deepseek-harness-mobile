@@ -32,6 +32,7 @@ import type { InteractionFace } from './interaction-face.js'
 import type { ModelFace } from './dsh/models.js'
 import type { EndpointsPort } from './endpoints.js'
 import type { ProjectionsPort } from './dsh/projections.js'
+import type { FilesFace } from './dsh/files.js'
 import type { PluginsFace } from './dsh/plugins.js'
 import type { ReferencesFace } from './dsh/references.js'
 import type { SubagentsPort } from './dsh/subagents.js'
@@ -278,6 +279,15 @@ export interface HandlerDeps {
    * `application`（`overridden` 时请求值不是终态）。安装 / 卸载 / 升级 **不做**。
    */
   plugins?: PluginsFace
+  /**
+   * 工作区文件面（`file.list` / `file.read`，可选服务 `workspaceFiles` + `typert`）。
+   *
+   * **只有"看文件"这一屏**：目录清单 + UTF-8 文本按行分页；`readBytes` 与 `changes` 不接
+   * （前者撞单帧预算、后者是另一条订阅面，见 `dsh/files.ts` 的文件头）。
+   * 缺了就不挂这两个方法、`caps.files` 同时为 false —— 手机侧文件页说"
+   * 这台电脑没有文件服务"，而不是摆一个空目录冒充"工作区是空的"。
+   */
+  files?: FilesFace
   /**
    * 设置面（`settings.describe` / `settings.update`，可选服务 `settings`）。
    *
@@ -1182,6 +1192,57 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
         throw new ProtocolError('protocol/bad-frame', 'enabled 必须是布尔值')
       }
       return plugins.setEnabled(id, enabled)
+    }
+  }
+
+  // 工作区文件面（契约 §5.7）：目录清单 + 文本按行分页。**只读**，不带幂等键。
+  if (deps.files !== undefined) {
+    const files = deps.files
+    /**
+     * `path` 参数：必须是字符串；**空串或 `.` = 工作区根**。
+     *
+     * 宿主的 `inspect` 对空串回 `gateway/bad-request`（`api/workspace-files/src/index.ts:391`），
+     * 而"列根目录"是文件页的第一屏 —— 所以这里把空串归一成 `.`（相对工作区根的当前目录），
+     * 不让手机去记这个约定。其余路径**原样过线**：绝对路径与 `..` 的判定是宿主的事
+     * （`locateFile` / `inspect` 已经做了 workspace 围栏）。
+     */
+    const pathOf = (params: unknown): string => {
+      const value = paramOf(params, 'path')
+      if (typeof value !== 'string') {
+        throw new ProtocolError('protocol/bad-frame', 'path 必须是字符串（空串 = 工作区根）')
+      }
+      return value === '' ? '.' : value
+    }
+
+    /** 可选的正整数参数（`offset` / `limit`）；给了就必须是安全正整数。 */
+    const optionalPositive = (params: unknown, key: string): number | undefined => {
+      const value = paramOf(params, key)
+      if (value === undefined) return undefined
+      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
+        throw new ProtocolError('protocol/bad-frame', `${key} 必须是正整数`)
+      }
+      return value
+    }
+
+    handlers['file.list'] = async (params) => {
+      const sid = requireSid(params)
+      // `path` 允许空串：空 = 工作区根（宿主 `inspect` 对空串回 `gateway/bad-request`，
+      // 所以这里把"根"显式给成 `.` —— 见 `dsh/files.ts` 的 `list` 注释）。
+      const path = pathOf(params)
+      return { listing: await files.list(sid, path) }
+    }
+
+    handlers['file.read'] = async (params) => {
+      const sid = requireSid(params)
+      const path = pathOf(params)
+      const offset = optionalPositive(params, 'offset')
+      const limit = optionalPositive(params, 'limit')
+      return {
+        page: await files.read(sid, path, {
+          ...(offset === undefined ? {} : { offset }),
+          ...(limit === undefined ? {} : { limit }),
+        }),
+      }
     }
   }
 

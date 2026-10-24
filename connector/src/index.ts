@@ -46,6 +46,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { type ConnectorConfig, Config } from './config.js'
 import {
   REQUIRED_SERVICES,
+  filesAvailable,
   pluginsAvailable,
   readCaps,
   referencesAvailable,
@@ -96,6 +97,7 @@ import { createCommandLineRunner } from './dsh/command-line.js'
 import { createAgentPresetsFace } from './dsh/agent-presets.js'
 import { createReferencesFace } from './dsh/references.js'
 import { createPluginsFace } from './dsh/plugins.js'
+import { createFilesFace } from './dsh/files.js'
 import { createDevicePresence } from './presence.js'
 import { createInteractionPort } from './interaction-claims.js'
 import { createInteractionFace } from './interaction-face.js'
@@ -840,6 +842,19 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
          */
         if (pluginsAvailable(ctx)) {
           handlerDeps.plugins = createPluginsFace(ctx)
+        }
+
+        /**
+         * 工作区文件面（`file.list` / `file.read`）。
+         *
+         * 判据是 `dsh/caps.ts` 的 `filesAvailable(ctx)`（**与 `caps.files` 同一个函数**）：
+         * `workspaceFiles` 出方法、`typert` 出 scope 解析（`workspaceFileScope` lookup）。
+         * **只接"看文件"这一屏**：`readBytes` 撞单帧预算、`changes` 是另一条订阅面（见文件头）。
+         */
+        if (filesAvailable(ctx)) {
+          handlerDeps.files = createFilesFace(ctx, {
+            sessionOf: (sid) => aliases?.sessionOf(sid),
+          })
         }
 
         /**

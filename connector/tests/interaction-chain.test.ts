@@ -56,7 +56,7 @@ function harness() {
     handlers: {
       caps: () => ({
         sessions: true, storage: true, approval: true, questions: true,
-        jobs: false, subagents: false, references: false, plugins: false, settings: false, credentials: true,
+        jobs: false, subagents: false, references: false, plugins: false, files: false, settings: false, credentials: true,
         direct: false,
       }),
       aliasVersion: () => 0,
