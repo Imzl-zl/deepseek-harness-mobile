@@ -58,6 +58,13 @@ const _summary = UsageSummary(
   ],
 );
 
+/// `today` 往前 [days] 天的 `YYYY-MM-DD`（格子按日历铺，历史日期也要落在网格里）。
+String _dayAgo(DateTime today, int days) {
+  final date = today.subtract(Duration(days: days));
+  return '${date.year}-${date.month.toString().padLeft(2, '0')}-'
+      '${date.day.toString().padLeft(2, '0')}';
+}
+
 void main() {
   testWidgets('总量 + 按项目 + 按会话，一页三级', (tester) async {
     await tester.pumpWidget(
@@ -216,6 +223,80 @@ void main() {
     expect(readout, findsOneWidget);
     final text = tester.widget<Text>(readout).data!;
     expect(text, contains('15K tok'), reason: '读数走同一个格式化函数');
+  });
+
+  group('时间范围（纯前端切片，不改契约）', () {
+    test('7 / 30 天只取窗口内的日期，且周数按**连续日历**算（不是只画 N 格）', () {
+      // 固定"今天"= 2026-10-24（周六）。7 天窗口从 10-18（周日）起 ⇒
+      // 首日那一周的周一是 10-12，今天所在的周一是 10-19 ⇒ **2 周**。
+      final today = DateTime(2026, 10, 24);
+      final days = [
+        for (var back = 0; back <= 120; back += 10)
+          UsageDay(
+            date: _dayAgo(today, back),
+            turns: 1,
+            tokens: 100 * (back + 1),
+          ),
+      ];
+
+      final week = usageWindowOf(days, UsageRange.d7, today);
+      expect(week.weeks, 2, reason: '7 天窗口在周六看是 2 列 —— 连续日历，不是一根 7 格长条');
+      expect(
+        week.days.map((day) => day.date).toList(),
+        ['2026-10-24'],
+        reason: '只留 10-18 及以后的；10-14 在窗口外',
+      );
+
+      final month = usageWindowOf(days, UsageRange.d30, today);
+      expect(month.weeks, 5, reason: '30 天 = 10-24 往前 29 天，首日周一到今天周一跨 5 周');
+      expect(month.days.length, greaterThan(week.days.length));
+      expect(
+        month.days.every((day) => day.date.compareTo('2026-09-25') >= 0),
+        isTrue,
+        reason: '30 天窗口的起点是 9-25',
+      );
+    });
+
+    test('「全部」原样给全部保留日期，仍是 52 周的连续日历', () {
+      final today = DateTime(2026, 10, 24);
+      const days = [
+        UsageDay(date: '2025-01-02', turns: 1, tokens: 10),
+        UsageDay(date: '2026-10-24', turns: 2, tokens: 20),
+      ];
+      final all = usageWindowOf(days, UsageRange.all, today);
+      expect(all.days, days, reason: '全部 = 一条都不切');
+      expect(all.weeks, 52);
+      // 对照组：7 天窗口把 2025 那条切掉。
+      expect(usageWindowOf(days, UsageRange.d7, today).days.length, 1);
+    });
+
+    testWidgets('切到 7 天后读数仍正确（窗口只影响取哪些天，不影响怎么读）', (tester) async {
+      final today = DateTime.now();
+      final key = _dayAgo(DateTime(today.year, today.month, today.day), 3);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UsagePage(
+            summary: UsageSummary(
+              sessions: 1,
+              grandTotalTokens: 9999,
+              bySession: const [],
+              byDay: [UsageDay(date: key, turns: 4, tokens: 15000)],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey<String>('usage-range-d7')));
+      await tester.pumpAndSettle();
+      expect(find.text('最近 7 天'), findsOneWidget);
+
+      await tester.tap(find.byKey(Key('heat-$key')));
+      await tester.pumpAndSettle();
+      final readout = find.textContaining('4 轮');
+      expect(readout, findsOneWidget);
+      expect(tester.widget<Text>(readout).data, contains('15K tok'));
+    });
   });
 
   test('fromWire：totals 与 byDay 原样解析；缺席就 null / 空表', () {

@@ -317,7 +317,6 @@ class _HeatmapCard extends StatefulWidget {
 }
 
 class _HeatmapCardState extends State<_HeatmapCard> {
-  static const int _weeks = 52;
   static const double _cell = 10;
 
   /// 格与缝；一格 + 一缝 = [_slot]。
@@ -327,20 +326,25 @@ class _HeatmapCardState extends State<_HeatmapCard> {
   /// 选中的那天（`YYYY-MM-DD`）；`null` = 还没点（显示"点一格"）。
   String? _selected;
 
+  /// 当前窗口（**纯前端切片**：`usage.summary.byDay` 已经带全部保留日期）。
+  UsageRange _range = UsageRange.all;
+
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
-    final byDate = {for (final day in widget.days) day.date: day};
     final today = DateTime.now();
     final todayDate = DateTime(today.year, today.month, today.day);
+    final window = usageWindowOf(widget.days, _range, today);
+    final byDate = {for (final day in window.days) day.date: day};
     // 本周周一（`DateTime.weekday` 的 1 = 周一）。
     final thisMonday = todayDate.subtract(
       Duration(days: todayDate.weekday - 1),
     );
     final firstMonday = thisMonday.subtract(
-      const Duration(days: 7 * (_weeks - 1)),
+      Duration(days: 7 * (window.weeks - 1)),
     );
     final scale = heatScaleOf(byDate.values.map((day) => day.tokens));
+    // 窗口一换，落在窗口外的选中日期就没有读数可显示了 —— 清掉，不摆旧值。
     final selected = _selected == null ? null : byDate[_selected];
 
     return Container(
@@ -355,7 +359,9 @@ class _HeatmapCardState extends State<_HeatmapCard> {
           Row(
             children: [
               Text(
-                '最近 $_weeks 周',
+                _range.isAll
+                    ? '最近 $_fullCalendarWeeks 周'
+                    : '最近 ${_range.days} 天',
                 style: TextStyle(fontSize: 12, color: c.labelSecondary),
               ),
               const SizedBox(width: 10),
@@ -375,6 +381,23 @@ class _HeatmapCardState extends State<_HeatmapCard> {
             ],
           ),
           const SizedBox(height: 8),
+          // 7 / 30 / 90 / 全部：**只切窗口**，不新增任何请求 ——
+          // `byDay` 本来就带着全部保留日期（契约 §5.7 的规则⑤）。
+          Row(
+            children: [
+              for (final range in UsageRange.values)
+                _RangeChip(
+                  key: ValueKey<String>('usage-range-${range.name}'),
+                  label: range.label,
+                  selected: range == _range,
+                  onTap: () => setState(() {
+                    _range = range;
+                    _selected = null;
+                  }),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -388,11 +411,15 @@ class _HeatmapCardState extends State<_HeatmapCard> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _MonthRow(firstMonday: firstMonday, todayDate: todayDate),
+                      _MonthRow(
+                        firstMonday: firstMonday,
+                        todayDate: todayDate,
+                        weeks: window.weeks,
+                      ),
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          for (var week = 0; week < _weeks; week++) ...[
+                          for (var week = 0; week < window.weeks; week++) ...[
                             if (week > 0) const SizedBox(width: _gap),
                             Column(
                               children: [
@@ -499,16 +526,22 @@ class _WeekdayColumn extends StatelessWidget {
 
 /// 顶上按月对齐的月份标签（只在"这一周的周一进入新月份"处标，太近的不叠）。
 class _MonthRow extends StatelessWidget {
-  const _MonthRow({required this.firstMonday, required this.todayDate});
+  const _MonthRow({
+    required this.firstMonday,
+    required this.todayDate,
+    required this.weeks,
+  });
 
   final DateTime firstMonday;
   final DateTime todayDate;
+
+  /// 这一屏画几周（窗口决定：7/30/90 天与"全部"各是连续的一段日历）。
+  final int weeks;
 
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
     const slot = _HeatmapCardState._slot;
-    const weeks = _HeatmapCardState._weeks;
     final labels = <({int week, String text})>[];
     var lastMonth = firstMonday.month;
     var lastLabeledWeek = -99;
@@ -634,6 +667,105 @@ class _HeatCell extends StatelessWidget {
 String _dateKey(DateTime date) =>
     '${date.year}-${date.month.toString().padLeft(2, '0')}-'
     '${date.day.toString().padLeft(2, '0')}';
+
+/// 热力图的时间范围。
+///
+/// **纯前端切片**，不改契约、不加参数：`usage.summary.byDay` 本来就带着全部保留日期的
+/// `{date, turns, tokens}`（契约 §5.7 的规则⑤），所以"看最近 N 天"只是**取窗口**。
+enum UsageRange {
+  d7('7 天', 7),
+  d30('30 天', 30),
+  d90('90 天', 90),
+  all('全部', null);
+
+  const UsageRange(this.label, this.days);
+
+  /// 胶囊上的字。
+  final String label;
+
+  /// 窗口天数；`null` = 全部保留日期。
+  final int? days;
+
+  /// 是不是"全部保留日期"那一档。
+  bool get isAll => days == null;
+}
+
+/// 「全部」时画的周数（一年左右的连续日历）。
+const int _fullCalendarWeeks = 52;
+
+/// 把 `byDay` 切成一个窗口，并算出这一屏要画**几周**。
+///
+/// **窗口仍是连续日历**：格子按 周 × 星期 画，窗口首日落到它那一周的周一、
+/// 一直到今天所在的周 —— 所以"7 天"在周三看是 2 列、周一就正好 1 列，
+/// 而不是"只画 7 格"的一根长条。
+///
+/// 日期比较直接用 `YYYY-MM-DD` 的字符串序（同格式下字典序 = 时间序），
+/// 认不出的日期不猜，按它自己的字面值参与比较。
+({List<UsageDay> days, int weeks}) usageWindowOf(
+  List<UsageDay> days,
+  UsageRange range,
+  DateTime today,
+) {
+  final todayDate = DateTime(today.year, today.month, today.day);
+  final dayCount = range.days;
+  if (dayCount == null) {
+    return (days: [...days], weeks: _fullCalendarWeeks);
+  }
+  final start = todayDate.subtract(Duration(days: dayCount - 1));
+  final startKey = _dateKey(start);
+  final kept = [
+    for (final day in days)
+      if (day.date.compareTo(startKey) >= 0) day,
+  ];
+  final firstMonday = start.subtract(Duration(days: start.weekday - 1));
+  final thisMonday = todayDate.subtract(Duration(days: todayDate.weekday - 1));
+  final weeks = thisMonday.difference(firstMonday).inDays ~/ 7 + 1;
+  return (days: kept, weeks: weeks);
+}
+
+/// 范围胶囊（7 / 30 / 90 / 全部）。选中态只换底色与字重，不改高度 ——
+/// 这四个词长度不同，靠 `minWidth` 与等高的内边距对齐。
+class _RangeChip extends StatelessWidget {
+  const _RangeChip({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: Material(
+        color: selected ? c.layer2 : Colors.transparent,
+        borderRadius: BorderRadius.circular(DshRadius.sm),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 26, minWidth: 44),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            alignment: Alignment.center,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                color: selected ? c.labelPrimary : c.labelCaption,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 /// 这一年的色阶：**非零 token 升序**（空 = 这一年没有任何计量）。
 ///
