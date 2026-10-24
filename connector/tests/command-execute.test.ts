@@ -51,15 +51,28 @@ function depsWith(commandLine: CommandLineRunner): HandlerDeps {
 }
 
 /** 只记账、不真的跑：用来验"白名单/形状校验有没有走到 DSH"。 */
-function spyRunner(view: unknown = { matched: true, execution: {} }) {
+function spyRunner(
+  view: unknown = { matched: true, execution: {} },
+  descriptions: Record<string, string> = {},
+) {
   const seen: { sid: string; line: string }[] = []
+  const asked: string[][] = []
   const runner: CommandLineRunner = {
     run: async (sid, line) => {
       seen.push({ sid, line })
       return view as { matched: boolean }
     },
+    describe: (names) => {
+      asked.push([...names])
+      const declared: Record<string, string> = {}
+      for (const name of names) {
+        const description = descriptions[name]
+        if (description !== undefined) declared[name] = description
+      }
+      return declared
+    },
   }
-  return { runner, seen }
+  return { runner, seen, asked }
 }
 
 test('方法表：command.execute 在封闭集里，且带幂等键', () => {
@@ -286,8 +299,42 @@ test('commandLine 缺席时方法不挂（repo.info 自然也不报）', () => {
   assert.equal('commands' in info, false)
 })
 
+test('命令说明从宿主定义读（`commands.list(agent)` 的 description），不手抄文案', () => {
+  // 断言值故意是一句**不可能被手抄到**的字符串：手抄文案的实现在这里必红。
+  const fromHost = 'HOST-DECLARED-description-of-goal'
+  const runner = createCommandLineRunner(
+    fakeCtx({
+      commands: {
+        execute: async () => undefined,
+        list: () => [
+          { name: 'goal', description: fromHost },
+          { name: 'plan', description: '' },
+          { name: 'export', description: '不在白名单里' },
+        ],
+      },
+      agents: { get: () => undefined, list: () => [{ id: 'dsh-1' }] },
+    }),
+    { sessionOf: () => 'dsh-1' },
+  )
+  // 空说明视同没给；不在询问名单里的不报。
+  assert.deepEqual(runner.describe(['goal', 'plan']), { goal: fromHost })
+})
+
+test('一个活 agent 都没有 ⇒ 说明为空（repo.info 只报名字）', () => {
+  const runner = createCommandLineRunner(
+    fakeCtx({
+      commands: { execute: async () => undefined, list: () => [{ name: 'goal', description: 'x' }] },
+      agents: { get: () => undefined, list: () => [] },
+    }),
+    { sessionOf: () => 'dsh-1' },
+  )
+  assert.deepEqual(runner.describe(['goal']), {}, '没有 agent 就没法读宿主定义：回空表，不编')
+})
+
 test('repo.info 报斜杠命令白名单（原样过线，手机据此画候选菜单）', () => {
-  const { runner } = spyRunner()
+  const { runner, asked } = spyRunner(undefined, {
+    goal: 'Set or view the goal for a long-running task',
+  })
   const handlers = createHandlers({
     ...depsWith(runner),
     caps: () => ({
@@ -297,8 +344,13 @@ test('repo.info 报斜杠命令白名单（原样过线，手机据此画候选�
     aliasVersion: () => 0,
   } as unknown as HandlerDeps)
   const info = handlers['repo.info']!({}, undefined as never) as {
-    commands?: string[]
+    commands?: { name: string; description?: string }[]
   }
   // 与 `MOBILE_COMMANDS` **同一份**：手机侧不抄第二份，加一个名字这里就多一项。
-  assert.deepEqual(info.commands, ['goal', 'plan'])
+  // 形状是 `{name, description?}[]`：说明来自宿主的命令定义，读不到就不带这个键。
+  assert.deepEqual(info.commands, [
+    { name: 'goal', description: 'Set or view the goal for a long-running task' },
+    { name: 'plan' },
+  ])
+  assert.deepEqual(asked, [['goal', 'plan']], '一次问完全部白名单名字，不逐个往返')
 })

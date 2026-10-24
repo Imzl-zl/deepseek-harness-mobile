@@ -84,6 +84,23 @@ const MOBILE_COMMANDS: ReadonlySet<string> = new Set(['goal', 'plan'])
 /** 白名单的人话（错误信息里用；顺序固定，便于用户照抄）。 */
 const MOBILE_COMMAND_LIST = [...MOBILE_COMMANDS].map((name) => `/${name}`).join('、')
 
+/**
+ * `repo.info.commands` 的行：白名单的名字 + **宿主的说明**。
+ *
+ * 说明来自 `commands.list(agent)` 的 `description`（`CommandLineRunner.describe`），
+ * 不是手抄的文案 —— DSH 改词时我们跟着变。读不到就**不带这个键**：
+ * 手机上那一列不画说明，而不是画一句编的。
+ */
+function commandRows(
+  runner: CommandLineRunner,
+): { name: string; description?: string }[] {
+  const descriptions = runner.describe([...MOBILE_COMMANDS])
+  return [...MOBILE_COMMANDS].map((name) => {
+    const description = descriptions[name]
+    return description === undefined ? { name } : { name, description }
+  })
+}
+
 /** `tokenUsage` 的四个分项（键名是 DSH 的原名，`usage-projection.ts:16-21`）。 */
 interface TokenBuckets {
   uncachedInputTokens: number
@@ -1504,9 +1521,15 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
     // 手机上那张菜单只画这里给的名字，加/减一个名字不需要改手机。
     // **只在 `command.execute` 真的挂上时才报**：报一个调不通的名字，就是
     // 契约 §5.7 表后那句"多一个必然失败的按钮"。
-    ...(handlers['command.execute'] === undefined
+    //
+    // 形状是 `{name, description?}[]`（老连接器只有 `string[]`，手机两种都收）：
+    // 说明**从宿主的命令定义读**（`commands.list(agent)` 的 `description`，
+    // `interaction/commands/src/types.ts:56-66`），不手抄 —— DSH 改词我们跟着变。
+    // 读不到（一个活 agent 都没有）就不带这个键：手机上那一列不画说明，
+    // 不是画一句编的。
+    ...(handlers['command.execute'] === undefined || deps.commandLine === undefined
       ? {}
-      : { commands: [...MOBILE_COMMANDS] }),
+      : { commands: commandRows(deps.commandLine) }),
   })
 
   return handlers

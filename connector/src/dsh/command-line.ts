@@ -13,6 +13,9 @@
  * 2. **请求超时**：契约 §10 的 60 s。取消信号**不进 args**（Typert 在业务参数之后注入，
  *    `tools.md` 的铁律②），它是 `execute` 的**第四个**参数。
  * 3. **`undefined` 的语义**：见下。
+ * 4. **命令说明**（`describe`）：手机 `/` 菜单那一列右对齐的字就是它 —— 从宿主的
+ *    `commands.list(agent)` 读，**不手抄文案**。取哪个 agent、没有活 agent 时怎么办，
+ *    见 `CommandLineRunner.describe` 的注释。
  *
  * ## `undefined` 是什么意思
  *
@@ -47,7 +50,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 
 import { ProtocolError } from '../protocol/errors.js'
 
-/** `commands` 服务面（`@Remote` 的 `execute`）。**按形状收窄、不 import DSH 类型**。 */
+/** `commands` 服务面（`@Remote` 的 `execute` / `list`）。**按形状收窄、不 import DSH 类型**。 */
 interface CommandsService {
   execute(
     agent: Agent,
@@ -55,11 +58,19 @@ interface CommandsService {
     submittedAttachments: readonly unknown[],
     signal: AbortSignal,
   ): Promise<unknown>
+  /**
+   * `@Remote` 的 `list`（`interaction/commands/src/index.ts:314-320`）：
+   * 一个 agent 的有效命令视图（全局层 + agent 作用域层的覆盖结果），
+   * 每项是 `CommandDescriptor`，**带宿主的 `description`**（`types.ts:56-66`）。
+   */
+  list(agent: Agent): readonly { name?: unknown; description?: unknown }[]
 }
 
-/** `agents` 注册表（`packages/core/agent/src/index.ts` 的 `get`）。 */
+/** `agents` 注册表（`packages/core/agent/src/index.ts` 的 `get` / `list`）。 */
 interface AgentsRegistry {
   get(id: Agent['id']): Agent | undefined
+  /** 活 agent 的登记顺序（`core/agent/src/index.ts:611`）。 */
+  list(): Agent[]
 }
 
 export interface CommandLineDeps {
@@ -83,6 +94,31 @@ export interface CommandRunView {
 export interface CommandLineRunner {
   /** 在这个会话上跑一条命令行。别名未知 = 调用方的缺陷（handler 已经查过一次）。 */
   run(sid: string, line: string): Promise<CommandRunView>
+  /**
+   * 这些命令名在宿主定义里的说明（`CommandDefinition.description`）—— 手机 `/` 菜单
+   * 那一列右对齐的字就来自这里，**手机侧不抄文案**。
+   *
+   * ## 为什么需要一个活 agent，以及"取哪一个"
+   *
+   * `commands` 的方法面都是 per-agent 的（`list(agent)` / `find(agent, name)`，
+   * `interaction/commands/src/index.ts:314,328`）：定义可以按 agent 作用域覆盖
+   * （`register` 走 `ctx.effect` + `ScopedLayers`，`:285-292`）。而 `repo.info`
+   * 是**无会话**的只读面，手上没有 `sid` 可换 agent。
+   *
+   * 所以这里取**登记顺序里第一个活 agent** 的视图，并且只在**拿它与全局层一致**的
+   * 前提下有意义 —— 手机上白名单里的 `/goal`、`/plan` 都由插件在**根 context**
+   * 上注册（`goal/command-goal/src/index.ts:191`、`plan/plan-mode/src/index.ts:233`），
+   * 对每个 agent 都是同一份。真正的 per-agent 覆盖在本部署里不存在；
+   * 哪天出现了，`repo.info` 这条就会把"某一个 agent 的说明"当成全局的 ——
+   * 那时正确的修法是让说明跟着会话走（`command.list({sid})`），不是在这里取巧。
+   *
+   * 一个活 agent 都没有（刚连上、一条会话都没开）⇒ 回空表：`repo.info` 只报名字，
+   * 手机那一列不画说明。下一次刷新（`session.list` 之后）就补上。
+   *
+   * Note: 为什么不手抄文案、也不新开 `command.list({sid})` ——
+   * 见 `.agents/notes/implemented/2026-10-25-command-descriptions-from-host.md`
+   */
+  describe(names: readonly string[]): Record<string, string>
 }
 
 /** 单条命令的超时。契约 §10 的请求超时是 60 s，取同一个值。 */
@@ -148,6 +184,22 @@ export function createCommandLineRunner(ctx: Context, deps: CommandLineDeps): Co
       return execution === undefined || execution === null
         ? { matched: false }
         : { matched: true, execution }
+    },
+
+    describe(names) {
+      const commands = commandsOf()
+      const agent = agentsOf()?.list()[0]
+      if (commands === undefined || agent === undefined) return {}
+      const wanted = new Set(names)
+      const descriptions: Record<string, string> = {}
+      for (const descriptor of commands.list(agent)) {
+        const { name, description } = descriptor
+        if (typeof name !== 'string' || !wanted.has(name)) continue
+        // 空说明视同没给（线上就是"这个键不出现"，手机那一列不画）。
+        if (typeof description !== 'string' || description === '') continue
+        descriptions[name] = description
+      }
+      return descriptions
     },
   }
 }
