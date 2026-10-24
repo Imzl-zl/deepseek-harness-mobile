@@ -19,6 +19,24 @@
 
 现有门禁（全绿，别弄红）：connector **621**、flutter **1175**、boundary **369**、`dart analyze --fatal-infos` 0、`dart format` 0。
 
+## 0.5 三个"单源"（先记死，别在实现里另立一套）
+
+两端不是"桌面 + 简化手机"，而是**同一个输入的两种接法**。任何一个数字、任何一个形状、任何一次仲裁，
+都只能有一个源：
+
+1. **限制与数据：单源在 DSH 的投影。** 上传上限读 `imageLimits`（`session-controller/src/list.ts:98-105`，
+   值来自 `attachment/attachment/src/index.ts:34-46`）；权限档读 `permissions`；用量读 `tokenUsage`。
+   **手机侧不许写死自己的数字**（现在一条都没有，保持这样）。超限时 DSH 报 `IMAGES_TOO_LARGE` /
+   `TOO_MANY_IMAGES` 之类的码 —— 手机**原样显示**，不翻译成自家文案（契约 §3.1 的码表）。
+2. **载荷形状：单源在契约 §5.7。** `session.prompt` 只有一种形状（内容块 + `submittedAttachments`），
+   手机发的和桌面发的**是同一个东西**。我们做不到的只允许是"没接线"，不许是"手机版少几个字段"。
+3. **仲裁：单源在 gateway 的 owner-client waterfall。** 两端同时收到同一条交互，**谁先答谁赢**，
+   其余端收到 `cancel`；桌面与手机地位相同。已落地并有真机证据：
+   `implemented/2026-10-23-interaction-as-gateway-client.md`。
+
+**唯一允许我们自己定的是"通道层参数"**：帧大小上限、分页大小、输入去抖（150 ms）、退避曲线 ——
+它们描述的是**我们这条管道**，不是业务语义；写这些的时候不许顺手把业务规则也写进去。
+
 ## 1. 任务 A：`@文件` + `@会话`（主要活）
 
 ### 已定的方案（不要重新设计）
