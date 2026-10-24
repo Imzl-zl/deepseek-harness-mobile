@@ -85,9 +85,33 @@ DSH 原生事实（已查证，直接引用即可）：
    `node app/tools/verify-platform-boundary.mjs`
 3. `git push origin main`。
 
+## 4.5 任务 C（可选，A/B 做完再做）：插件页只读清单 + 启停
+
+**前提已核实**（2026-10-24 二次查证，第一次查错了包）：
+
+- `packages/host/plugin-inventory/src/index.ts:70` 只有 `list()`（只读快照）—— **不是**方法面；
+- **真正的方法面在 `packages/boot/plugin-manager/src/index.ts`，14 个 `@Remote`**，我们要用的就三个：
+  `listPlugins`（:439）、`setPluginEnabled`（:796）、`setBundleEnabled`（:814）。
+
+做法照任务 A 的形状：`plugin.list` → `{plugins: [{name, version, enabled, origin?}]}`（字段以 `PluginInfo` 为准，**不翻译**）、
+`plugin.setEnabled` → `{name, enabled}`，两个都透传，`repo.info.caps.plugins` 做能力位。
+**安装 / 卸载 / 升级先不做**（`installBundle` / `removeBundle` / `updateBundle` 涉及网络与磁盘，风险面另议）。
+判据：清单 2 条（有插件 / 空）、启停各 1 条（成功 / 宿主抛错原样）、caps 2 条；界面一个只读列表 + 开关。
+
+## 4.6 版本基线（本轮顺带核对）
+
+连接器现在钉 `@deepseek-ai/dsh-*` = **0.2.1-rc.2**，而 checkout 已到 **0.2.1-rc.3**（2026-10-23）。
+rc.2→rc.3 的差异集中在 typert 的资源解析（`feat(typert): support default resource resolvers` 等），
+对本轮"透传 Remote"的接法**是有利的**（资源声明更稳），不是破坏性变更。
+**升级放在本轮最后**、单独一个提交：只改 `connector/package.json` 的版本 + 重装，然后跑全量（`tsc` + `build` + `test`），
+不绿就回退。**不允许**为了升版本改动业务代码。
+
 ## 5. 明确不做（别花时间）
 
-- 插件的启停/安装日志：DSH **没有 Remote**（`packages/host/plugin-inventory/src/index.ts:70` 只有 `list`），memory 已更正。
+- 插件的**安装 / 卸载 / 升级**：有 Remote（`installBundle:835` / `removeBundle:999` / `updateBundle:677`），
+  但风险面（下载、磁盘、重启）远大于收益，先不做。
+- **计划审查卡**（C11）：`packages/plan/plan-mode/src/index.ts` 零 Remote、`user-questions` 只有 `answer`，
+  仍无"卡来自请求"的投递路径 —— 结论不变（硬接会把 `NO_PROVIDER` 的 fail-closed 换成永久挂起）。
 - 计划审查卡、后台送达、厂商推送：都已定案不做（`memory.md`「范围决定」、`docs/subsystems/notifications.md` §2.1/§2.2）。
 - 设置 42 项对账：**可选**，只做只读核对，不改代码；有结论就写进 `docs/settings-porting-notes.md`。
 

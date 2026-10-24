@@ -476,11 +476,14 @@
 
 - **刷新令牌轮换不做** / **中转不做多实例**（单实例 + I7 重启收敛就是个人工具的形态）。
 - **鸿蒙暂缓**（不是放弃）：Flutter 版本锁保留，OHOS 适配/HUKS/推送全部暂停。
-- **插件不做"逐插件页面适配"**：只做**清单**（+ `volatile` 字段通用表单）。
-  **2026-10-24 更正**：原来写的"状态/启停/安装日志"里，**启停与安装日志在 DSH 没有 Remote**
-  —— `packages/host/plugin-inventory/src/index.ts:70` 只有 `@Remote('list')`（`PluginInventorySnapshot`），
-  整个 `plugin-manager` 里 `@Remote(` 数量为 0。所以手机上**只能读清单**，启停要么加 DSH API（不做），
-  要么明说"去电脑上改"。
+- **插件不做"逐插件页面适配"**；但**清单 + 启停都能做**（2026-10-24 二次更正：第一次我查错了包）：
+  - `packages/host/plugin-inventory/src/index.ts:70` → 只有 `list()`（只读快照 `PluginInventorySnapshot`）；
+  - **真正的方法面在 `packages/boot/plugin-manager/src/index.ts`，14 个 `@Remote`**：
+    `readBundleDetail:379` / `listVersionExemptions:415` / `setVersionExemption:428` / `listPlugins:439` /
+    `listBundles:463` / `registries:550` / `inspect:566` / `listVersions:626` / `updateBundle:677` /
+    **`setPluginEnabled:796`** / **`setBundleEnabled:814`** / `installBundle:835` / `waitForInstall:972` /
+    `cancelInstall:982` / `removeBundle:999`。
+  ⇒ 手机"清单 + 启停"只是透传，**不需要改 DSH**；安装/卸载先不给手机做（风险面大，另议）。
 - **管理页面不做**：二维码唯一出口，DSH 的 `CommandResult` 只有 text 没有图片出口。
 - **不做 hard pin**："手动选择"= 立刻试一次（失败回自动）+ 拖动排序。
 - **手机上不做（C 类）**：目录选择器、唤起电脑应用、内嵌浏览器/Office 预览、快捷键/窗口管理、
