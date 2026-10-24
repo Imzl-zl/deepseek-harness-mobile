@@ -37,6 +37,7 @@ import '../model/interaction.dart';
 import '../model/mention.dart';
 import '../model/model_catalog.dart';
 import '../model/permission.dart';
+import '../model/plugins.dart';
 import '../model/preferences.dart';
 import '../model/queue_item.dart';
 import '../model/send_mode.dart';
@@ -1726,10 +1727,99 @@ class AppModel extends ChangeNotifier {
       // `@` 候选的能力位（`caps.references`）：缺这个键（老连接器）就是 false。
       final caps = result is Map ? result['caps'] : null;
       _mentionsAvailable = caps is Map && caps['references'] == true;
+      // 插件面同理（`caps.plugins`）：老连接器 / 没装 plugin-manager ⇒ 不发请求。
+      _pluginsAvailable = caps is Map && caps['plugins'] == true;
       if (!_disposed) notifyListeners();
     } catch (error) {
       _dshVersion = null;
       _recordError('读取电脑侧版本失败', error);
+    }
+  }
+
+  // ---- 插件（`plugin.list` / `plugin.setEnabled`）----
+
+  /// 电脑侧有没有插件面（`repo.info.caps.plugins`）。老连接器 ⇒ false。
+  bool get pluginsAvailable => _pluginsAvailable;
+  bool _pluginsAvailable = false;
+
+  /// 已经读到的插件行（**顺序就是电脑侧给的顺序**，手机不重排）。
+  List<PluginRow> get plugins => _plugins;
+  List<PluginRow> _plugins = const <PluginRow>[];
+
+  /// 读到过没有（`false` = 还在读 / 没读过）。
+  bool get pluginsLoaded => _pluginsLoaded;
+  bool _pluginsLoaded = false;
+
+  bool get pluginsLoading => _pluginsLoading;
+  bool _pluginsLoading = false;
+
+  /// 上一次读取失败的原因（`null` = 没失败）。
+  String? get pluginsFailure => _pluginsFailure;
+  String? _pluginsFailure;
+
+  /// 拉一次插件清单（只读、不落盘）。
+  ///
+  /// **没有能力位就不发请求**：老连接器上这个方法不存在，发出去只会拿一个
+  /// `connector/unsupported` 回来，而那会被画成"读取失败"—— 比"这台电脑没有
+  /// 插件服务"更难懂。
+  Future<void> refreshPlugins() async {
+    if (!_pluginsAvailable) return;
+    _pluginsLoading = true;
+    if (!_disposed) notifyListeners();
+    try {
+      final result = await client.call<Object?>('plugin.list', const {});
+      final rows = result is Map ? result['plugins'] : null;
+      _plugins = rows is List
+          ? rows
+                .map(PluginRow.fromWire)
+                .whereType<PluginRow>()
+                .toList(growable: false)
+          : const <PluginRow>[];
+      _pluginsLoaded = true;
+      _pluginsFailure = null;
+    } catch (error) {
+      _recordError('读取插件清单失败', error);
+      _pluginsFailure = _lastError?.message ?? '$error';
+    } finally {
+      _pluginsLoading = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  /// 启停一行（`plugin.setEnabled`）。
+  ///
+  /// 回执里的 `enabled` 是**宿主回读后的真值**，所以这里用它就地更正那一行 ——
+  /// 请求值与终态可能不同（宿主回 `overridden`）。失败原因在 [lastError]。
+  Future<PluginToggleOutcome?> setPluginEnabled(String id, bool enabled) async {
+    try {
+      final result = await client.call<Object?>(
+        'plugin.setEnabled',
+        {'id': id, 'enabled': enabled},
+        requestId: 'plug-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      if (result is! Map) {
+        _recordError('启停插件失败', StateError('电脑侧的回执形状认不出'));
+        return null;
+      }
+      final outcome = PluginToggleOutcome(
+        entryId: id,
+        enabled: result['enabled'] == true,
+        application: result['application'] is String
+            ? result['application'] as String
+            : '',
+        restartReason: result['restartReason'] is String
+            ? result['restartReason'] as String
+            : '',
+      );
+      _plugins = [
+        for (final row in _plugins)
+          row.entryId == id ? row.withEnabled(outcome.enabled) : row,
+      ];
+      if (!_disposed) notifyListeners();
+      return outcome;
+    } catch (error) {
+      _recordError('启停插件失败', error);
+      return null;
     }
   }
 

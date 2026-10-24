@@ -380,11 +380,12 @@
   **`relayUrl` 必须写环回** —— 写死局域网 IP 会绕开 `relayHintFor` 的自愈。
 - `connector/` 与 `relay/` 是**两个独立 pnpm 工程**，导入风格不同、别顺手统一。本仓库**没有 CI**。
 
-## 方法面 38/40
+## 方法面 40/42
 
-契约封闭集 **40**、实现 **38**，差额 2 个是契约列了没实现的：`credentials.set` / `credentials.unset`。
-2026-10-24 加的两个是 `refs.files` / `refs.sessions`（`@` 候选的两个只读面，
-按 `caps.references` 挂）。
+契约封闭集 **42**、实现 **40**，差额 2 个是契约列了没实现的：`credentials.set` / `credentials.unset`。
+2026-10-24 加的四个：`refs.files` / `refs.sessions`（`@` 候选的两个只读面，按 `caps.references` 挂）
+与 `plugin.list` / `plugin.setEnabled`（插件清单与行级启停，按 `caps.plugins` 挂；
+**方法面在 `pluginManager`**，`host/plugin-inventory` 那个 `list()` 没有 `@Remote`）。
 2026-10-21 加的五条是 `workspace.insertSessionBefore` /
 `workspace.pin` / `workspace.unpin` / `workspace.insertBefore` 与 `subagent.prompt`；
 2026-10-22 挂上了 `settings.describe` / `settings.update`（三行电脑侧设置，见
@@ -502,11 +503,11 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **454 / 26 / 49** 项 |
-| `node app/tools/verify-platform-boundary.mjs` | **372 项**（22 条规则自检 + 扫 105 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | **380 项**（22 条规则自检 + 扫 107 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1192 项** |
+| `cd app && flutter test` | **1199 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **629 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **636 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **87 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 
@@ -591,6 +592,10 @@
   门禁：connector **621 → 629**、flutter **1175 → 1189**、boundary **369 → 372**。变异校验两组各恰好 1 条红。
 - 2026-10-24 用量页时间范围（7 / 30 / 90 / 全部，**纯前端切片**，`usage.summary` 一行没动）——
   `implemented/2026-10-24-usage-range-client-slice.md`；flutter **1189 → 1192**。
+- 2026-10-24 插件清单与行级启停（`plugin.list` / `plugin.setEnabled` + `caps.plugins`；
+  手机抽屉底栏「插件」一页，只读行开关禁用）——
+  `implemented/2026-10-24-plugin-list-and-toggle.md`；connector **629 → 636**、
+  flutter **1192 → 1199**、boundary **372 → 380**。变异校验恰好 2 条红（同一个不变量）。
 - 2026-10-24 五条界面短板 + 通知 + 后台保活（`6362ad6` 设置未读到 / `3413fa4` 抽屉四态点 /
   `117652c` `/` 候选菜单 / `84b0d29` 用量页卡片与热力图 / 见上表第 5 行 后台保活与三类通知）。
   契约：§13 §2.2 §9 §15 §5.7；新增 `docs/subsystems/notifications.md` 与 `usage-page.md`。

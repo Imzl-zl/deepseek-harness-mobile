@@ -94,6 +94,13 @@ export const METHODS = [
   // 按 `caps.references` 挂（`dsh/caps.ts` 的 `referencesAvailable`）。
   'refs.files',
   'refs.sessions',
+  // 插件清单与启停（契约 §5.7）：`pluginManager` 的三个 `@Remote` 里只用两个
+  // （`listPlugins` / `setPluginEnabled`，`packages/boot/plugin-manager/src/index.ts:439,796`）。
+  // 行字段以 `PluginInfo` 为准、不翻译；启停回**回读后的真值**与宿主的 `application`。
+  // **安装 / 卸载 / 升级（`installBundle` / `removeBundle` / `updateBundle`）不做**：
+  // 它们动 profile 的 `package.json` 与 `pnpm-lock`，失败面手机上修不了。
+  'plugin.list',
+  'plugin.setEnabled',
   // Agent 预设目录（只读）。**与 Web 同一个 DSH 方法**：
   // `agentPresets.remoteExportList()`（`@Remote('list')`，
   // `packages/preset/agent-preset-registry/src/index.ts:194-198`），
@@ -175,6 +182,9 @@ export const IDEMPOTENT_METHODS: ReadonlySet<MethodName> = new Set([
   'settings.update',
   'credentials.set',
   'credentials.unset',
+  // 启停插件是用户指令：重发不该把同一行的 profile patch 写两遍 / 热重载两轮。
+  // 它天然按目标态幂等（同一个 `enabled` 落到同一个终态），键仍由这里强制。
+  'plugin.setEnabled',
   // 归档是用户指令：重发不该落两次（宿主侧幂等，但指令层不靠它兜）。
   'workspace.archive',
   'workspace.unarchive',

@@ -33,6 +33,7 @@ const CAPS = {
   jobs: false,
   subagents: false,
   references: false,
+  plugins: false,
   settings: false,
   credentials: true,
   direct: false,

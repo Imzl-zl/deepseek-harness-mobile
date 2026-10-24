@@ -44,7 +44,13 @@
 import type { Context } from '@deepseek-ai/cordis'
 
 import { type ConnectorConfig, Config } from './config.js'
-import { REQUIRED_SERVICES, readCaps, referencesAvailable, type Caps } from './dsh/caps.js'
+import {
+  REQUIRED_SERVICES,
+  pluginsAvailable,
+  readCaps,
+  referencesAvailable,
+  type Caps,
+} from './dsh/caps.js'
 import { createEndpointsPort } from './endpoints.js'
 import { createSubagentsPort } from './dsh/subagents.js'
 import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent'
@@ -89,6 +95,7 @@ import { createPermissionFace } from './dsh/permissions.js'
 import { createCommandLineRunner } from './dsh/command-line.js'
 import { createAgentPresetsFace } from './dsh/agent-presets.js'
 import { createReferencesFace } from './dsh/references.js'
+import { createPluginsFace } from './dsh/plugins.js'
 import { createDevicePresence } from './presence.js'
 import { createInteractionPort } from './interaction-claims.js'
 import { createInteractionFace } from './interaction-face.js'
@@ -821,6 +828,18 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
          */
         if (ctx.get('agentPresets') !== undefined) {
           handlerDeps.agentPresets = createAgentPresetsFace(ctx)
+        }
+
+        /**
+         * 插件清单与启停（`plugin.list` / `plugin.setEnabled`）。
+         *
+         * 判据是 `dsh/caps.ts` 的 `pluginsAvailable(ctx)`（**与 `caps.plugins` 同一个函数**）。
+         * 服务键是 `pluginManager`（`packages/boot/plugin-manager/src/index.ts:333`），
+         * 不是 `host/plugin-inventory` —— 后者的 `list()` 没有 `@Remote`，不是方法面。
+         * **只挂清单与行级启停**：安装 / 卸载 / 升级不做（见 `dsh/plugins.ts` 文件头）。
+         */
+        if (pluginsAvailable(ctx)) {
+          handlerDeps.plugins = createPluginsFace(ctx)
         }
 
         /**

@@ -58,6 +58,7 @@ import 'ui/connection_actions_sheet.dart';
 import 'ui/dsh_brand.dart';
 import 'ui/dsh_shimmer.dart';
 import 'ui/pairing_page.dart';
+import 'ui/plugins_page.dart';
 import 'ui/session_drawer.dart';
 import 'ui/settings_page.dart';
 import 'ui/usage_page.dart';
@@ -549,6 +550,14 @@ class _DshMobileAppState extends State<DshMobileApp>
               label: '用量',
               onTap: () => _openUsage(app),
             ),
+            // **插件**（清单 + 行级启停，契约 §5.7）。排在设置之前：它答的是
+            // "这台电脑上装了什么"，比偏好更常被点开；安装 / 卸载 / 升级不在这里
+            // （改的是 profile 的依赖与锁文件，手机上做不了）。
+            DrawerFootItem(
+              icon: 'cordisPlugin',
+              label: '插件',
+              onTap: () => _openPlugins(app),
+            ),
             DrawerFootItem(
               icon: 'settings',
               label: '设置',
@@ -637,6 +646,15 @@ class _DshMobileAppState extends State<DshMobileApp>
         },
       ),
     );
+  }
+
+  /// 打开插件页（抽屉底栏「插件」）。
+  ///
+  /// **先收抽屉再 push**（与 `_openUsage` / `_openSettings` 同一条：全屏页盖着
+  /// 开着的抽屉会留下幽灵层）。清单由 `PluginsPageHost` 自己拉 —— 与用量页同一条
+  /// 纪律：页面不接"push 之前"的快照，否则永远停在空态。
+  void _openPlugins(AppModel app) {
+    _openFromDrawer((_) => PluginsPageHost(app: app));
   }
 
   /// 打开归档列表（抽屉底栏「归档」）。

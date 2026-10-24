@@ -32,6 +32,7 @@ import type { InteractionFace } from './interaction-face.js'
 import type { ModelFace } from './dsh/models.js'
 import type { EndpointsPort } from './endpoints.js'
 import type { ProjectionsPort } from './dsh/projections.js'
+import type { PluginsFace } from './dsh/plugins.js'
 import type { ReferencesFace } from './dsh/references.js'
 import type { SubagentsPort } from './dsh/subagents.js'
 import type { WorkspacesPort } from './dsh/workspaces.js'
@@ -268,6 +269,15 @@ export interface HandlerDeps {
    * 宿主抛错原样过线（分发器把非协议错误归成 `internal`，消息文字保留）。
    */
   references?: ReferencesFace
+  /**
+   * 插件清单与启停（`plugin.list` / `plugin.setEnabled`，可选服务 `pluginManager`）。
+   *
+   * **缺了就不挂这两个方法**（`caps.plugins` 同时为 false），手机侧插件页显示
+   * "这台电脑没有插件服务"，而不是摆一份空清单冒充"一个插件都没有"。
+   * 字段以宿主的 `PluginInfo` 为准、**不翻译**；启停回**回读后的真值**与宿主的
+   * `application`（`overridden` 时请求值不是终态）。安装 / 卸载 / 升级 **不做**。
+   */
+  plugins?: PluginsFace
   /**
    * 设置面（`settings.describe` / `settings.update`，可选服务 `settings`）。
    *
@@ -1156,6 +1166,22 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
     handlers['refs.sessions'] = async (params) => {
       const sid = requireSid(params)
       return { sessions: await references.sessions(sid, queryOf(params)) }
+    }
+  }
+
+  // 插件清单与启停（契约 §5.7）。**只有清单与行级启停**：安装 / 卸载 / 升级
+  // 动的是 profile 的 `package.json` 与 `pnpm-lock`，失败面手机上既看不见也修不了。
+  if (deps.plugins !== undefined) {
+    const plugins = deps.plugins
+    handlers['plugin.list'] = async () => ({ plugins: await plugins.list() })
+    // **带幂等键**（`IDEMPOTENT_METHODS`）：启停是用户指令，同一目标态重发落到同一终态。
+    handlers['plugin.setEnabled'] = (params) => {
+      const id = requireString(params, 'id')
+      const enabled = paramOf(params, 'enabled')
+      if (typeof enabled !== 'boolean') {
+        throw new ProtocolError('protocol/bad-frame', 'enabled 必须是布尔值')
+      }
+      return plugins.setEnabled(id, enabled)
     }
   }
 

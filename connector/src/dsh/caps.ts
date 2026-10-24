@@ -82,6 +82,12 @@ export const OPTIONAL_SERVICES = [
   // 缺任一个手机就不显示 `@` 面板（契约 §7 的能力位模型）。
   'fileReferences',
   'sessionReferenceResolver',
+  // 插件面（`dsh/plugins.ts`，契约 §5.7 的 `plugin.list` / `plugin.setEnabled`）：
+  // `pluginManager` 是 `packages/boot/plugin-manager/src/index.ts:333` 注册的服务
+  // （14 个 `@Remote` 都在那里；`host/plugin-inventory` 那个 `list()` **没有 `@Remote`**，
+  // 不是方法面）。缺了只是插件页显示"这台电脑没有插件服务"，
+  // 不挂这两个方法（`caps.plugins` 为 false）。
+  'pluginManager',
   // 交互转发的两个宿主缝（`dsh/interaction-client.ts`，契约 §6.2）：`typertGateway` 的
   // `$events` 转发流（`packages/api/gateway/src/types.ts:148-151`）+ `connection` 的
   // in-process owner peer（`packages/client/connection/src/rpc-host.ts:140`）。
@@ -114,6 +120,13 @@ export interface Caps {
    * 不该让用户猜"为什么少一半"。所以本字段是**与**，判据见 {@link referencesAvailable}。
    */
   references: boolean
+  /**
+   * 插件清单与启停（`pluginManager` 服务在不在）。
+   *
+   * 本仓只透传清单与行级启停；**安装 / 卸载 / 升级不在能力位里** ——
+   * 那是同一台电脑上另一类动作，不靠一个 bool 张冠李戴。
+   */
+  plugins: boolean
   /** 设置读写面。 */
   settings: boolean
   /** 凭据面（手机侧只有设置页的密钥写面）。**必需服务**，所以通常为 true。 */
@@ -145,6 +158,16 @@ export function referencesAvailable(ctx: Context): boolean {
   return present(ctx, 'fileReferences') && present(ctx, 'sessionReferenceResolver') && present(ctx, 'agents')
 }
 
+/**
+ * 插件面能不能挂（`plugin.list` / `plugin.setEnabled`）。
+ *
+ * 与 `referencesAvailable` 同一个套路：**一处定义、两处用**（`readCaps` 的能力位与
+ * `index.ts` 的挂载判据）—— 两处各写一遍必然漂成"`repo.info` 说有能力、方法却不在表里"。
+ */
+export function pluginsAvailable(ctx: Context): boolean {
+  return present(ctx, 'pluginManager')
+}
+
 export function readCaps(ctx: Context, options: { direct: boolean } = { direct: false }): Caps {
   return {
     sessions: present(ctx, 'sessionController'),
@@ -154,6 +177,7 @@ export function readCaps(ctx: Context, options: { direct: boolean } = { direct: 
     jobs: present(ctx, 'jobs'),
     subagents: present(ctx, 'subagents'),
     references: referencesAvailable(ctx),
+    plugins: pluginsAvailable(ctx),
     settings: present(ctx, 'settings'),
     credentials: present(ctx, 'credentials'),
     direct: options.direct,
