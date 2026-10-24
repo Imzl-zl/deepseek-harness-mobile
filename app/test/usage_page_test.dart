@@ -144,6 +144,42 @@ void main() {
     expect(find.text('多'), findsOneWidget);
   });
 
+  testWidgets('热力图在 390dp 手机上不溢出（宽度由横向滚动承担）', (tester) async {
+    // 这一条防的是"在自己机器上好好的、到窄屏就黄条"：
+    // 网格本身约 673dp 装不进 390dp，所以必须靠横向滚动 —— 溢出在测试里是异常。
+    tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final today = DateTime.now();
+    final key =
+        '${today.year}-${today.month.toString().padLeft(2, '0')}-'
+        '${today.day.toString().padLeft(2, '0')}';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UsagePage(
+          summary: UsageSummary(
+            sessions: 1,
+            grandTotalTokens: 5000,
+            bySession: const [],
+            totals: const UsageTotals(
+              uncachedInputTokens: 4000,
+              outputTokens: 900,
+              cacheReadTokens: 80,
+              cacheWriteTokens: 20,
+            ),
+            byDay: [UsageDay(date: key, turns: 2, tokens: 5000)],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    // 格子确实铺出来了（不是"没溢出因为没渲染"）。
+    expect(find.byKey(Key('heat-$key')), findsOneWidget);
+  });
+
   testWidgets('热力图：点一格能读出那天（日期 · 轮次 · token）', (tester) async {
     // 用"今天"造数据：格子是按日历铺的，历史日期也要落在网格里。
     final today = DateTime.now();
