@@ -33,6 +33,7 @@ import '../core/sync_client.dart';
 import '../model/agent_preset.dart';
 import '../model/chat_item.dart';
 import '../model/command.dart';
+import '../model/image_limits.dart';
 import '../model/interaction.dart';
 import '../model/mention.dart';
 import '../model/model_catalog.dart';
@@ -781,6 +782,14 @@ class AppModel extends ChangeNotifier {
   /// 不另判 `_currentSid == null`：`projections` getter 判的就是**这一包属于谁**，
   /// 没选中会话时它必然给 null（`_projections` 与 `_projectionsSid` 同批写）。
   String? get permissionValue => parsePermissionValue(projections);
+
+  /// 图片附件的**宿主上限**（`imageLimits` 投影）。
+  ///
+  /// `null` = 这一包没有这个键（老连接器没注册投影 / 还没读到）⇒
+  /// **不前置拦**，靠 DSH 自己的拒绝码（`IMAGES_TOO_LARGE` / `TOO_MANY_IMAGES`）。
+  /// 由来与"为什么手机不写死这些数"见 `model/image_limits.dart` 的文件头。
+  DshImageLimits? get imageLimits =>
+      DshImageLimits.fromWire(projections?['imageLimits']);
 
   /// 存一份预设目录（连接器 `permission.catalog` 的应答）。
   void setPermissionCatalog(PermissionCatalog? catalog) {

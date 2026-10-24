@@ -43,6 +43,7 @@ import '../data/app_model.dart';
 import '../model/agent_preset.dart';
 import '../model/chat_item.dart';
 import '../model/command.dart';
+import '../model/image_limits.dart';
 import '../model/model_catalog.dart';
 import '../model/permission.dart';
 import '../model/preferences.dart';
@@ -2197,11 +2198,27 @@ class ChatPageState extends State<ChatPage> {
         :final name,
         :final byteCount,
       ):
-        // **按"这条消息的合计"判，不是"这一张"**：整条 content 只占一帧，
-        // 两张 3 MiB 的图就是 6 MiB 原始字节 ≈ 10.7 MB 的帧（撞 8 MiB 就断连接）。
         final already = _attachments
             .where((item) => !item.isInert)
             .fold<int>(0, (sum, item) => sum + (item.image?.byteCount ?? 0));
+        final images = _attachments.where((item) => !item.isInert).length;
+        // **先问宿主的限制**（`imageLimits` 投影，部署可配）：超张数 / 超单图 /
+        // 超合计 / 类型不收，各自说清是哪一条。投影缺席（老连接器）⇒ 这里恒放行，
+        // 让 DSH 自己拒并把 `IMAGES_TOO_LARGE` / `TOO_MANY_IMAGES` 写在错误里。
+        final violation = imageLimitViolationOf(
+          limits: widget.app.imageLimits,
+          images: images,
+          incomingBytes: byteCount,
+          totalBytes: already,
+          mediaType: mediaType,
+        );
+        if (violation != null) {
+          _toast(violation);
+          return;
+        }
+        // 再问**我们这条管道**的预算：整条 content 只占一帧，两张 3 MiB 的图
+        // 就是 6 MiB 原始字节 ≈ 10.7 MB 的帧（撞 8 MiB 就断连接）。
+        // 它与上一条是两个主人：那一条是宿主的业务上限，这一条是通道层参数。
         if (!fitsMessageBudget(already: already, incoming: byteCount)) {
           _toast(
             '这条消息的图片合计超过 '
