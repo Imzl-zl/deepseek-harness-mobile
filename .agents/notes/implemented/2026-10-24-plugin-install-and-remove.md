@@ -35,7 +35,14 @@ Status: implemented
 5. 手机：插件页加"安装"（一次明确确认 + 输入 spec）与包段的"卸载"（仅 `removable` 可点，
    二次确认），任务卡显示 `headline`（宿主的 `application` / 错误原话）+ 阶段 + pnpm 输出尾部，
    跑的时候可取消。
-6. **不做**：升级（`updateBundle` + `listVersions` 是另一组方法，等有人真用再说）与
+6. **手机只收 registry / git 来源的 spec**（`installableFromPhone`）：本机路径回
+   `gateway/bad-request`。宿主本身允许本地路径（`index.ts:830-834` 的注释原话
+   "including local paths relative to the invocation directory"），但"指定电脑上某个目录里的包"
+   不该由一个**已配对设备**发起 —— 人在电脑前能看见自己装了什么，手机上做不到。
+   这是**我们的政策**，写在方法面（与 `/` 命令白名单同一处），不在手机里重复。
+   判据只看形状（前缀 / 盘符 / 反斜杠 / `file:`），不联网、不解析版本；
+   版本兼容与 registry 可达性仍由宿主判。
+7. **不做**：升级（`updateBundle` + `listVersions` 是另一组方法，等有人真用再说）与
    bundle 级启停（会连带改一串行）。
 
 ## Alternatives considered

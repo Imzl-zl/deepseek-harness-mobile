@@ -33,7 +33,7 @@ import type { ModelFace } from './dsh/models.js'
 import type { EndpointsPort } from './endpoints.js'
 import type { ProjectionsPort } from './dsh/projections.js'
 import type { FilesFace } from './dsh/files.js'
-import type { PluginInstallFace } from './dsh/plugin-install.js'
+import { installableFromPhone, type PluginInstallFace } from './dsh/plugin-install.js'
 import type { PluginsFace } from './dsh/plugins.js'
 import type { ReferencesFace } from './dsh/references.js'
 import type { SubagentsPort } from './dsh/subagents.js'
@@ -1205,8 +1205,20 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       return requestId
     }
 
-    handlers['plugin.install'] = (params, context) =>
-      jobs.install(requireString(params, 'spec'), jobIdOf(context))
+    handlers['plugin.install'] = (params, context) => {
+      const spec = requireString(params, 'spec')
+      // **只收 registry / git 来源**：本地路径是宿主允许、而手机上不允许的那一档
+      // （桌面能看见自己装了什么，一个已配对设备不该能指定"装电脑上某个目录里的包"）。
+      // 判据见 `dsh/plugin-install.ts` 的 `installableFromPhone`。
+      if (!installableFromPhone(spec)) {
+        throw new ProtocolError(
+          'gateway/bad-request',
+          `手机上只收 registry / git 来源（包名、name@version、git 地址），不收本机路径：${spec}。` +
+            '要在电脑上装本地包，请在电脑上操作',
+        )
+      }
+      return jobs.install(spec, jobIdOf(context))
+    }
 
     handlers['plugin.remove'] = (params, context) =>
       jobs.remove(requireString(params, 'name'), jobIdOf(context))

@@ -220,6 +220,76 @@ test('不认识的任务 id ⇒ status unknown（不是"还在跑"）', async ()
   assert.equal(status.result['status'], 'unknown')
 })
 
+test('本机路径的 spec 一律拒（registry / git 来源放行），且一次都没交给宿主', async () => {
+  const handed: string[] = []
+  const pending = pendingInstall()
+  const host = fakeCtx({
+    pluginManager: {
+      installBundle: async (spec: string) => {
+        handed.push(spec)
+        return DONE_RESULT
+      },
+      removeBundle: async () => DONE_RESULT,
+      cancelInstall: async () => ({ status: 'not-running' }),
+    },
+  })
+  const dispatcher = createDispatcher(
+    createHandlers({ ...depsWith(host.ctx), pluginInstall: createPluginInstallFace(host.ctx) }),
+  )
+
+  for (const spec of [
+    './local-pkg',
+    '../outside',
+    '.',
+    '/opt/pkgs/x',
+    '~/pkgs/x',
+    'C:\\pkgs\\x',
+    'C:/pkgs/x',
+    '\\\\server\\share\\pkg',
+    'file:../pkg',
+    '-D',
+  ]) {
+    const reply = await dispatcher.dispatch({
+      method: 'plugin.install',
+      params: { spec },
+      requestId: `bad-${spec}`,
+    })
+    assert.equal(reply.ok, false, `${spec} 不该放行`)
+    assert.equal(
+      reply.ok === false ? reply.code : undefined,
+      'gateway/bad-request',
+      `${spec} 归"这个请求在手机上不合法"，不是"电脑侧不认识"`,
+    )
+    assert.ok(
+      reply.ok === false ? reply.message?.includes('不收本机路径') : false,
+      '话里要说清是哪一类不收',
+    )
+  }
+  assert.deepEqual(handed, [], '被拒的 spec 一次都不该交给宿主（不跑 pnpm）')
+
+  // 反向对照：registry / git 来源照放行（否则上面那串可能只是"全拒"）。
+  for (const spec of [
+    'dsh-plugin-demo',
+    '@scope/pkg',
+    '@scope/pkg@1.2.3',
+    'pkg@^2.0.0',
+    'git+https://github.com/u/r.git',
+    'https://github.com/u/r.git',
+    'git@github.com:u/r.git',
+    'github:u/r',
+    'u/r',
+  ]) {
+    const ok = await dispatcher.dispatch({
+      method: 'plugin.install',
+      params: { spec },
+      requestId: `ok-${spec}`,
+    })
+    assert.equal(ok.ok, true, `${spec} 应当放行`)
+  }
+  assert.equal(handed.length, 9, '放行的都真的交给了宿主')
+  pending.settle(DONE_RESULT)
+})
+
 test('漏幂等键 ⇒ 安装不发出去（分发前就拦）', async () => {
   const pending = pendingInstall()
   const h = harness({ install: pending.promise })

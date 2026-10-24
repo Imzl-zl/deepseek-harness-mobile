@@ -196,6 +196,12 @@
 `plugin-manager/install-state` / `install-log` 事件（连接器收成尾窗，**不新开帧**）。
 取舍见 `.agents/notes/implemented/2026-10-24-plugin-install-and-remove.md`。
 
+**手机上只收 registry / git 来源的 spec**：本机路径（`./`、`../`、`/`、`~`、盘符、UNC、`file:`）
+回 `gateway/bad-request`。宿主允许本地路径（`installBundle` 的注释原话
+"including local paths relative to the invocation directory"），但"指定电脑上某个目录里的包"
+不该由一个已配对设备发起 —— 这是我们的政策，判据在
+`connector/src/dsh/plugin-install.ts` 的 `installableFromPhone`。
+
 **仍未接**：升级（`updateBundle:677` + `listVersions:626`）与 bundle 级启停
 （`setBundleEnabled:814`，会连带改一串行）；安装时"批准 pnpm 构建脚本"
 （`approvedBuilds`）没有手机入口，宿主要求显式批准时只会体现在失败原文里。

@@ -104,6 +104,36 @@ export interface PluginInstallFace {
   status(requestId: string): PluginJobStatus
 }
 
+/**
+ * 手机上能不能提交这个 spec —— **只允许 registry / git 来源，不许本机路径**。
+ *
+ * 为什么这条是**我们的政策**而不是宿主的：宿主 `installBundle` 收的是 `pnpm add` 的任意
+ * spec，**包括相对 profile 目录的本地路径**（`index.ts:830-834` 的注释原话
+ * "including local paths relative to the invocation directory"）。桌面上那是对的 ——
+ * 人在电脑前、能看见自己装了什么；手机上不行：一个已配对的设备不该能指定
+ * "装电脑上某个目录里的包"。
+ *
+ * 判据只看**形状**（不联网、不解析版本）：
+ *
+ * - 本地路径：`/`、`./`、`../`、`~`、盘符（`C:\` / `C:/`）、UNC（`\\`）、任何反斜杠、`file:`；
+ * - registry / git：`name`、`@scope/name`、`name@1.2.3`、`git+https://…`、`git@host:path`、
+ *   `https://…`、`github:user/repo`、`user/repo`（github 简写）全部放行；
+ * - `-` 开头的（会被 `pnpm` 当选项）宿主自己也拒，这里先拒，省一次往返。
+ *
+ * **不是替宿主判"能不能装"**：版本兼容 / registry 可达性 / 构建脚本，仍然全由宿主说。
+ */
+export function installableFromPhone(spec: string): boolean {
+  const value = spec.trim()
+  if (value === '' || value.startsWith('-')) return false
+  // 反斜杠只出现在 Windows 路径里（registry / git spec 不用它）。
+  if (value.includes('\\')) return false
+  if (value.startsWith('/') || value.startsWith('~')) return false
+  if (value.startsWith('.') ) return false // `.` / `./x` / `../x`
+  if (/^[A-Za-z]:[\\/]/u.test(value)) return false // 盘符路径
+  if (/^file:/iu.test(value)) return false
+  return true
+}
+
 /** 日志尾窗（**通道层参数**：单帧预算下的尾巴，不是业务规则）。 */
 const LOG_TAIL_CHARS = 4000
 /** 同时保留几条任务的记录（内存上界；按插入顺序淘汰最老的）。 */

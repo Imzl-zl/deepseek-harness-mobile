@@ -313,6 +313,7 @@ class _InstallDialogState extends State<_InstallDialog> {
           ),
           const SizedBox(height: 12),
           const Text(
+            '只收包名 / 版本 / git 地址；**不能是电脑上的本地路径**（那条只能在电脑上做）。\n'
             '电脑侧会跑 pnpm（可能要几分钟）。装不上时电脑侧的原话会显示在下面。',
             style: TextStyle(fontSize: 12),
           ),
