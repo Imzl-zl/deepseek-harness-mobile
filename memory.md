@@ -6,6 +6,16 @@
 
 ## 下一步（新会话从这里开始）
 
+> **2026-10-24 深夜：候选面板要重做 + 真机尾巴**
+> 开工单 `.agents/notes/proposed/2026-10-24-next-round-panel-redesign-prompt.md`
+> 用户原话：「UI 有点丑啊…居中的，为啥不是目录那种…你文件肯定父子级吧？可以嵌套的吧？还有命令的也是」。
+> 事实：宿主的候选菜单是**列表行**（icon + 名字 + 右对齐说明 + 目录行 chevron + 分组标题 + drill 面包屑，
+> `ui-input-trigger/src/client/MenuView.tsx` / `ui-reference/src/client/index.ts:240-291`），
+> 我们做成了居中胶囊 —— 这是**偏离宿主**，不是取舍。
+> 同批：`/` 命令说明（`repo.info.commands` 从字符串数组改 `{name,description?}`）、
+> 接管卡键盘态溢出 204px（真机证据在 `shots-2026-10-24-mentions\h1-typed.png`）、
+> 计划审查卡的真机验证（上一轮被 `input text` 的空格截断搞砸，见 `tools.md`）。
+
 > **2026-10-22：八件对齐（输入法 / 拖拽 / 动效 / 字号 / 每步视图 / 设置 / 版本 / createdAt）**
 > 开工单 `.agents/notes/implemented/2026-10-22-running-cues-step-views-font-scale-settings-parity.md`
 > 已全部落地，每件一个提交 + 一篇决策笔记：
