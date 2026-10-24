@@ -190,12 +190,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** 计划审查走的是**提问**通道、不是审批，靠 `intent.kind` 判别（`packages/plan/plan-mode/src/index.ts:320`）。 */
-function planReviewOf(questions: readonly AskUserQuestionItem[]): { approve: string } | undefined {
+/**
+ * 计划审查走的是**提问**通道、不是审批，靠 `intent.kind` 判别
+ * （`packages/plan/plan-mode/src/index.ts:320-329`）。
+ *
+ * 三件**都只能从请求里读**：
+ *
+ * - 题 id —— 答案批次按它回（宿主的 `REVIEW_ID = 'plan-review'`，`:73`）；
+ * - 同意标签 —— `intent.approve`（`:76,329`），plan-mode 用它判"同意"（`:346-350`）；
+ * - 那次工具调用的 `callId` —— `intent.callId`（`:329`），手机那张计划卡的 id 就是它。
+ *
+ * 手机只看得到 `exit_plan_mode` 的 `tool/call`（`presentCall` 只给正文与标题，`:364-369`），
+ * 选项与标签从来不会到手机。所以"能否认出这是计划审查"必须在这一层判，**不猜**。
+ */
+function planReviewOf(
+  questions: readonly AskUserQuestionItem[],
+):
+  | { questionId: string; approve: string; callId?: string }
+  | undefined {
   for (const question of questions) {
     const intent = question.intent
-    if (intent?.kind === 'plan-review' && typeof intent.approve === 'string') {
-      return { approve: intent.approve }
+    if (intent?.kind !== 'plan-review') continue
+    if (typeof intent.approve !== 'string' || intent.approve === '') continue
+    if (typeof question.id !== 'string' || question.id === '') continue
+    return {
+      questionId: question.id,
+      approve: intent.approve,
+      ...(typeof intent.callId === 'string' && intent.callId !== ''
+        ? { callId: intent.callId }
+        : {}),
     }
   }
   return undefined
@@ -417,26 +440,28 @@ export function createInteractionClient(
       isRecord(wait) && typeof wait['callId'] === 'string' && wait['callId'] !== ''
         ? wait['callId']
         : undefined
-    // **身份**：timed 形态自带 `wait.callId`；legacy 形态没有 —— 只能从会话日志里推
-    // （唯一一条没有 `tool/result` 的 `ask_user_question` `tool/call`）。判据与失败方向
-    // 见 `question-call.ts` 的文件头：认不出就**委托**，不抛也不猜。
+    // **身份**，按优先级三条：
     //
-    // **为什么不用计划审查的 `intent.callId`**（它就在请求里，`plan-mode/src/index.ts:326`）：
-    // 那个 id 是 `exit_plan_mode` 的 tool call，而**手机上没有它的卡** —— 手机的提问卡只从
-    // `ask_user_question` 的 `tool/call` 生成（`app/lib/data/projection.dart:1020-1043`），
-    // `exit_plan_mode` 只落一条普通工具行。claim 一条"用户根本看不到"的交互，会把 DSH 原生的
-    // **fail-closed**（没有任何 answerer 时抛 `NO_PROVIDER`，`user-questions/src/index.ts:318-321`）
-    // 换成一个**永远等不到人**的挂起。要真让手机答计划审查，缺的是"卡来自请求"这条投递
-    // （契约 §6.3 的已知缺口），不是这里少读一个字段。
-    const identity = waitCallId !== undefined
-      ? ({ kind: 'found', callId: waitCallId } as const)
-      : events === undefined
-        ? ({ kind: 'none' } as const)
-        : resolveQuestionCall(events)
+    // 1. **计划审查的 `intent.callId`**（`plan-mode/src/index.ts:329`）：它是那次
+    //    `exit_plan_mode` 的 tool call id，**手机侧那张计划卡正是用它建出来的**
+    //    （`app/lib/data/projection.dart` 从 `tool/call` 造 plan item，id = `t:<callId>`）。
+    //    2026-10-24 之前这里刻意不读它，理由是"手机上没有那张卡"—— 那个理由随
+    //    "卡来自请求"落地而失效（契约 §6.3.1）。
+    // 2. timed 形态的 `wait.callId`。
+    // 3. legacy 形态：从会话日志里推（唯一一条没有 `tool/result` 的 `ask_user_question`
+    //    `tool/call`，判据见 `question-call.ts`）。认不出就**委托**，不抛也不猜。
+    const plan = planReviewOf(items)
+    const identity = plan?.callId !== undefined
+      ? ({ kind: 'found', callId: plan.callId } as const)
+      : waitCallId !== undefined
+        ? ({ kind: 'found', callId: waitCallId } as const)
+        : events === undefined
+          ? ({ kind: 'none' } as const)
+          : resolveQuestionCall(events)
     if (identity.kind !== 'found') {
       // 计划审查是**程序化**提问（`/exit_plan_mode` 的 `ask()`）：它本来就没有
       // `ask_user_question` 的 `tool/call`，所以"认不出"是正常形态，不该留 warn。其余情况是异常，要留声。
-      if (planReviewOf(items) === undefined) {
+      if (plan === undefined) {
         log?.warn('提问认不出唯一的 tool call 身份：这条委托出去（桌面照常答）', {
           sid,
           reason: identity.kind,
@@ -456,6 +481,11 @@ export function createInteractionClient(
         sid,
         itemId,
         ...(redeliver === undefined ? {} : { redeliver }),
+        // 计划审查：手机只表达"同意 / 继续规划"，题 id 与"同意"标签由**请求**定
+        // （见 `interaction-claims.ts` 的 `ClaimRequest.planReview`）。
+        ...(plan === undefined
+          ? {}
+          : { planReview: { questionId: plan.questionId, approve: plan.approve } }),
       })
       if (settlement.kind !== 'answered') return
       await reply(frame.eventId, { kind: 'result', value: settlement.value })

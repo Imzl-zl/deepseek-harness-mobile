@@ -579,12 +579,20 @@ ctx.get('typertGateway').wireStream.open('$events', { args: {} }, uplink, peer, 
   `approval/asked`(`:224-231`),成对的 `approval/decided` 与它同 id。判据:请求带 `callId` 时按
   `callId` 精确配;不带时取**唯一**一条未结算的 `approval/asked`;0 条 / 多条都**委托**
   (`connector/src/dsh/approval-call.ts`,与提问的 `question-call.ts` 同一形状)。
-- **计划审查在手机上只能看、不能答**:它由 `/exit_plan_mode` 的**程序化** `ask()` 产生
-  (`plan-mode/src/index.ts:313-330`),身份藏在 `intent.callId` 里,而**手机上那张卡不存在** ——
-  手机的提问卡只从 `ask_user_question` 的 `tool/call` 生成,`exit_plan_mode` 只落一条普通工具行。
-  **故意不 claim**:claim 一条用户看不到的交互,会把 DSH 原生的 fail-closed(`NO_PROVIDER`,
-  `user-questions/src/index.ts:318-321`)换成一个永远等不到人的挂起。要让手机答它,缺的是
-  "卡来自请求"这条投递(不是这里少读一个字段)。
+- **计划审查:卡来自那次 `exit_plan_mode` 的 `tool/call`**(2026-10-24 起可答)。它由
+  `/exit_plan_mode` 的程序化 `ask()` 产生(`plan-mode/src/index.ts:313-333`),而请求里带齐了
+  三件手机需要的东西:`question.id`(宿主的 `REVIEW_ID = 'plan-review'`,`:73`)、
+  `intent.approve`(`:76,329`)与 `intent.callId`(`:329`,就是那次工具调用的 id)。
+  - **手机侧**:`exit_plan_mode` 的 `tool/call` 的参数里是**整份计划**(`plan` 必填,`:283-284`),
+    于是卡从这条事件造(`app/lib/data/projection.dart` 的 `exitPlanModeTool` 分支),身份
+    `t:<callId>`、正文 = 计划、标题 = 计划第一个 markdown 标题(宿主 `presentCall` 同一条读法,`:364-369`)。
+  - **连接器侧**:身份优先 `intent.callId`、其次 `wait.callId`、再退到会话日志
+    (`dsh/interaction-client.ts`);两者都没有才照旧**委托**(不猜)。
+  - **词汇表在请求里,不在手机里**:屏幕只有两个按钮(同意 / 继续规划),而宿主要的答案必须含
+    `selected: ['Approve']`。所以手机发一个**标记**(`kPlanApproveMark`),连接器结算时按
+    claim 记下的请求词汇重建批次(`id` = `plan-review`、`selected` = `['Approve']` 或空,
+    `connector/src/interaction-claims.ts` 的 `planReview`)。**别在手机里写死英文标签** ——
+    那是第二份真值(旧理由"手机上没有那张卡"随卡落地失效)。
 
 **legacy 提问的身份从会话日志里推**：
 
@@ -940,8 +948,11 @@ job-settled        后台任务终结     turn-failed       轮次异常结束
 - 审批**没有超时**:手机与桌面都没人答时会一直等(与桌面那张卡同构),回合由用户取消结束。
 - 鸿蒙端不做"跑动中进度"表达,只做关键节点通知。
 - 子代理里的提问**手机答不了**(DSH 要求 live root agent,`user-questions` 的 `assertLiveRoot`)。
-- **计划审查手机上只能看、不能答**:那张卡来自**请求**而不是会话事件,手机侧没有它的形态
-  (§6.3.1)。电脑上照常弹、照常答;手机上那条 `exit_plan_mode` 只是一行普通工具记录。
+- **计划审查的选项/标签不到手机**:卡来自那次 `exit_plan_mode` 的 `tool/call`(正文与标题够用),
+  而 `ask()` 请求里的选项与 `intent.approve` **不进会话事件**。所以手机上那两个按钮是**我们自己的**
+  文案,答复里的"同意"只是一个标记,由连接器按请求的词汇重写(§6.3.1)。
+  **代价**:DSH 若改掉 `Approve` 这个标签,手机侧不用改(它只发标记),但连接器读的
+  `intent.approve` 会跟着变 —— 那正是"从请求取"的好处。
 - **停用设备在纯中转链路上只表现为"一直重连"**:名册里没有这台设备时换票回 401
   (`relay/src/http-face.ts:77`),手机归成 `relay/offline` 退避重试,**不会**显示"这台电脑已不再认可本机"
   —— 那句明说来自电脑侧握手拒绝(关闭码 4003 + `protocol/not-paired`),而这条链路在换票那一跳就断了,

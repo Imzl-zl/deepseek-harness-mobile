@@ -505,9 +505,9 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **454 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **383 项**（22 条规则自检 + 扫 108 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1206 项** |
+| `cd app && flutter test` | **1211 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **636 项** |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **639 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **87 条** |
 | CDP 浏览器组 | `verify-proto`（**31**）/ `verify-authz`（18）/ `verify-settings`（28）/ `verify-tasks`（53）/ `verify-picker` / `verify-drawer`（**25**）/ `verify-subs`（**41**）/ `verify-turns`（**60**） |
 
@@ -592,6 +592,10 @@
   门禁：connector **621 → 629**、flutter **1175 → 1189**、boundary **369 → 372**。变异校验两组各恰好 1 条红。
 - 2026-10-24 用量页时间范围（7 / 30 / 90 / 全部，**纯前端切片**，`usage.summary` 一行没动）——
   `implemented/2026-10-24-usage-range-client-slice.md`；flutter **1189 → 1192**。
+- 2026-10-24 计划审查卡**来自请求**（`exit_plan_mode` 的 `tool/call` 造 plan 卡；连接器身份优先
+  `intent.callId`、答复按请求的题 id 与 `intent.approve` 重写，手机只发标记 `plan-approve`）——
+  `implemented/2026-10-24-plan-review-card-from-request.md`；契约 §6.3.1 / §15 已改口。
+  connector **636 → 639**、flutter **1206 → 1211**，boundary 383 持平。
 - 2026-10-24 图片上限改读宿主投影 `imageLimits`（超张数 / 超单图 / 超合计 / 类型不收各自说清；
   投影缺席 ⇒ 不前置拦、靠 DSH 的 `IMAGES_TOO_LARGE` 拒绝码）——
   `implemented/2026-10-24-attachment-limits-from-dsh.md`；现状 `docs/subsystems/attachments.md`。

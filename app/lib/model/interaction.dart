@@ -39,6 +39,17 @@ library;
 /// 常量，两边各有一条断言钉住它。
 const String approvalAllowLabel = 'allowed-once';
 
+/// 计划审查答复里的"同意"标记。
+///
+/// **它不是宿主的标签**：宿主的题 id（`plan-review`）与"同意"标签（`Approve`）
+/// 只存在于那次 `ask()` 的**请求**里（`packages/plan/plan-mode/src/index.ts:73,76,329`），
+/// 而手机只看得到 `exit_plan_mode` 的 `tool/call`（正文，没有选项）。
+///
+/// 所以手机只表达"同意 / 继续规划"：连接器拿到 claim 时记下了请求里的题 id 与标签，
+/// 结算时按它们重建答案批次（`connector/src/interaction-claims.ts` 的 `planReview`，
+/// 契约 §6.3.1）。**别把它换成宿主的英文标签** —— 那会成为第二份真值。
+const String kPlanApproveMark = 'plan-approve';
+
 /// 待接管的事件的种类。
 enum InteractionKind {
   /// 工具越权，等审批（拒绝 / 允许一次）。

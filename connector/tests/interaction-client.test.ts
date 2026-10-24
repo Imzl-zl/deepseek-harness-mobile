@@ -633,20 +633,96 @@ test('legacy 提问：两条并发 → 不参与且留声（不猜一个 id）',
   assert.match(h.warnings.join('\n'), /认不出唯一的 tool call 身份/)
 })
 
-test('计划审查（程序化提问，没有 tool/call）→ 委托，且**不 warn**', { timeout: 60_000 }, async () => {
+/** 一份**真形状**的计划审查请求（照 `plan-mode/src/index.ts:316-329`）。 */
+const planQuestions = (callId?: string) => [
+  {
+    id: 'plan-review',
+    header: 'Plan review',
+    question: 'Approve this plan and leave plan mode?',
+    detail: '# 重构输入栏\n\n1. 把候选抽成一层\n2. 收口三态',
+    options: [
+      { label: 'Approve', description: 'Leave plan mode' },
+      { label: 'Keep planning', description: 'Stay in plan mode' },
+    ],
+    intent: {
+      kind: 'plan-review',
+      approve: 'Approve',
+      ...(callId === undefined ? {} : { callId }),
+    },
+  },
+]
+
+test('计划审查带 intent.callId ⇒ 造卡并 claim（键 t:<callId>），答复按**请求**的题 id 与标签重写', { timeout: 60_000 }, async () => {
+  const h = harness()
+  await openStream(h)
+  h.streams[0]?.push(questionFrame({ questions: planQuestions('call-plan') }))
+  await settle()
+
+  assert.equal(h.port.pending, 1, '认出 intent.callId 就要 claim（手机那张计划卡就是它）')
+  assert.equal(h.results.length, 0, '还没人答，不该先回 next')
+
+  // 手机只表达"同意"（它的卡看不到请求里的选项），所以发的是自己的标记。
+  assert.equal(
+    h.port.settleClaim(SID, 't:call-plan', [{ id: 't:call-plan', selected: ['plan-approve'] }]),
+    true,
+  )
+  await until(() => h.results.length === 1, '结果请求')
+  assert.deepEqual(h.results[0]?.outcome, {
+    kind: 'result',
+    // 题 id 是请求里的 `plan-review`、标签是请求里的 `Approve` —— 都是宿主的词。
+    value: { answers: [{ id: 'plan-review', selected: ['Approve'] }] },
+  })
+})
+
+test('计划审查"继续规划" ⇒ 空 selected（宿主按它判 decline）', { timeout: 60_000 }, async () => {
+  const h = harness()
+  await openStream(h)
+  h.streams[0]?.push(questionFrame({ questions: planQuestions('call-plan'), eventId: 'q-plan-2' }))
+  await settle()
+  assert.equal(h.port.pending, 1)
+
+  assert.equal(
+    h.port.settleClaim(SID, 't:call-plan', [{ id: 't:call-plan', selected: [] }]),
+    true,
+  )
+  await until(() => h.results.length === 1, '结果请求')
+  assert.deepEqual(h.results[0]?.outcome, {
+    kind: 'result',
+    value: { answers: [{ id: 'plan-review', selected: [] }] },
+  })
+})
+
+test('计划审查没有 intent.callId ⇒ 身份回退到 wait.callId', { timeout: 60_000 }, async () => {
   const h = harness()
   await openStream(h)
   h.streams[0]?.push(
     questionFrame({
-      questions: [
-        { id: 'plan', question: '批准吗', options: [], intent: { kind: 'plan-review', approve: 'yes' } },
-      ],
+      questions: planQuestions(),
+      wait: { callId: 'call-wait' },
+      eventId: 'q-plan-3',
     }),
   )
   await settle()
+  assert.equal(h.port.pending, 1, '没有 intent.callId 就用 wait.callId，同一张卡同一个键')
+  assert.equal(
+    h.port.settleClaim(SID, 't:call-wait', [{ id: 't:call-wait', selected: ['plan-approve'] }]),
+    true,
+  )
+  await until(() => h.results.length === 1, '结果请求')
+  assert.deepEqual(h.results[0]?.outcome, {
+    kind: 'result',
+    value: { answers: [{ id: 'plan-review', selected: ['Approve'] }] },
+  })
+})
+
+test('计划审查两个身份都没有 ⇒ 照旧委托，且**不 warn**（它本来就没有 tool/call）', { timeout: 60_000 }, async () => {
+  const h = harness()
+  await openStream(h)
+  h.streams[0]?.push(questionFrame({ questions: planQuestions(), eventId: 'q-plan-4' }))
+  await settle()
   assert.equal(h.port.pending, 0)
   assert.deepEqual(h.results.map((entry) => entry.outcome), [{ kind: 'next' }])
-  assert.deepEqual(h.warnings, [], '计划审查本来就没有 tool/call —— 这不是异常')
+  assert.deepEqual(h.warnings, [], '计划审查认不出身份不是异常形态')
 })
 
 // ---------------------------------------------------------------------------

@@ -28,6 +28,31 @@ import '../model/tool_view.dart';
 /// `packages/interaction/user-questions/src/projection.ts:28` 的 `ASK_USER_QUESTION_TOOL`）。
 const String askUserQuestionTool = 'ask_user_question';
 
+/// 计划审查那次工具调用的名字（DSH：`packages/plan/plan-mode/src/index.ts:64`
+/// 的 `EXIT_PLAN_MODE`）。
+///
+/// **计划卡来自这次 `tool/call`**：它的参数里带着整份计划（`plan: {type:'string'}`
+/// 必填，`:283-284`），而 `presentCall` 又把它当正文展示（`:364-369`）。
+/// 提问通道里那条 `ask()` 的选项与标签**不会**到手机（见 `interaction.dart` 的
+/// `kPlanApproveMark`），所以卡的正文只能从这里取。
+const String exitPlanModeTool = 'exit_plan_mode';
+
+/// 计划正文里第一个 markdown 标题（`# ` 或 `## `……）。
+///
+/// 与宿主的 `firstHeading` 同一条读法（`plan-mode/src/index.ts:86-95`：取第一行
+/// 以 1–6 个 `#` 开头的标题的正文）。取不到就 `null` —— 调用方退回一句固定的标题，
+/// 不从正文里截前 20 个字冒充标题。
+String? firstHeadingOf(String markdown) {
+  for (final line in markdown.split('\n')) {
+    final match = RegExp(r'^#{1,6}\s+(\S.*)$').firstMatch(line.trim());
+    if (match != null) {
+      final heading = match.group(1)!.trim();
+      if (heading.isNotEmpty) return heading;
+    }
+  }
+  return null;
+}
+
 /// 系统提示词那一行的标签（DSH `locale.ts:116` 的 `message.systemPrompt`）。
 const String kSystemPromptLabel = '系统提示词';
 
@@ -1018,7 +1043,29 @@ InteractionSignal? interactionSignalOf({
   }
 
   if (type == 'tool/call') {
-    if (nonEmptyString(fieldOf(data, 'name')) != askUserQuestionTool) {
+    final name = nonEmptyString(fieldOf(data, 'name'));
+    // **计划审查**：卡从这次 `tool/call` 造（`exit_plan_mode` 的 `arguments.plan` 就是整份计划）。
+    // 与提问卡同一个 `t:<callId>` 身份 —— 连接器的 claim 用的是请求里的
+    // `intent.callId`，而它**就是**这次工具调用的 id（`plan-mode/src/index.ts:329`）。
+    if (name == exitPlanModeTool) {
+      final planCallId = nonEmptyString(fieldOf(data, 'callId'));
+      final plan = nonEmptyString(fieldOf(fieldOf(data, 'arguments'), 'plan'));
+      if (planCallId == null || plan == null) return null;
+      return InteractionOpened(
+        InteractionItem(
+          itemId: 't:$planCallId',
+          sid: '',
+          callId: planCallId,
+          kind: InteractionKind.plan,
+          title: firstHeadingOf(plan) ?? '计划审查',
+          detail: plan,
+          // 答复里的"同意"只是**一个标记**：宿主的标签与题 id 在请求里，
+          // 由连接器按请求重写（`kPlanApproveMark` 的注释）。
+          approveLabel: kPlanApproveMark,
+        ),
+      );
+    }
+    if (name != askUserQuestionTool) {
       return null;
     }
     final callId = nonEmptyString(fieldOf(data, 'callId'));

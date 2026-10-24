@@ -79,6 +79,16 @@ export interface ClaimRequest {
   itemId: string
   /** 重连重投用：这条 ask 的会话事件（原 seq + body，见 `dsh/ask-event.ts`）。 */
   redeliver?: Redelivery
+  /**
+   * 计划审查（`intent.kind === 'plan-review'`）的**请求侧词汇**。
+   *
+   * 为什么它在这里：计划的题 id（`plan-review`）与"同意"标签（`Approve`）**只存在于
+   * 请求里**（`packages/plan/plan-mode/src/index.ts:73,76,316-329`），而手机能看到的
+   * 只有那次 `exit_plan_mode` 的 `tool/call`（`presentCall` 只给正文，`:364-369`）——
+   * 选项与标签从来不会到手机。所以手机只表达"是否同意"，
+   * **把手机的决定翻成宿主的标签是本层的事**（与审批的 `allowed-once` 映射同一个位置）。
+   */
+  planReview?: { readonly questionId: string; readonly approve: string }
 }
 
 /**
@@ -99,6 +109,7 @@ interface Claim {
   readonly kind: 'approval' | 'question'
   readonly sid: string
   readonly redeliver?: Redelivery
+  readonly planReview?: { readonly questionId: string; readonly approve: string }
   readonly resolve: (settlement: RawSettlement) => void
 }
 
@@ -145,6 +156,7 @@ export function createInteractionPort(): InteractionPort {
         kind,
         sid: request.sid,
         ...(request.redeliver === undefined ? {} : { redeliver: request.redeliver }),
+        ...(request.planReview === undefined ? {} : { planReview: request.planReview }),
         resolve: resolve as (settlement: RawSettlement) => void,
       })
     })
@@ -198,6 +210,23 @@ export function createInteractionPort(): InteractionPort {
           ? 'allowed-once'
           : 'rejected'
         claim.resolve({ kind: 'answered', value: outcome })
+        return true
+      }
+      // 计划审查：手机的答复只表达"同意 / 继续规划"（它的卡只有那两个按钮，
+      // 看不到请求里的选项），所以这里按**请求里的词汇**重建批次：
+      // `id` = 请求的题 id、`selected` = 同意时给 `intent.approve`、否则空（= 继续规划，
+      // `plan-mode/src/index.ts:346-350` 就是这么判的）。
+      const plan = claim.planReview
+      if (plan !== undefined) {
+        const approved = answers.some((answer) => answer.selected.length > 0)
+        claim.resolve({
+          kind: 'answered',
+          value: {
+            answers: [
+              { id: plan.questionId, selected: approved ? [plan.approve] : [] },
+            ],
+          },
+        })
         return true
       }
       // 提问：**答案批次原样转发**，一个字段都不翻译（契约 §6.3.1：翻译层就是漂移层）。
