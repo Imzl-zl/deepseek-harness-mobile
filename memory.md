@@ -251,10 +251,12 @@
     走**同一条** `userQuestions.ask()` waterfall，请求里带齐 `header`/`question`/`detail`(=整份计划)/
     `options`/`intent.callId`；手机端 `TakeoverController` 的浮动卡**不依赖投影锚点**，
     `InteractionKind.plan` 的分支已存在（`app/lib/ui/takeover.dart:219,533-535,613-615`）。
-    缺的只是连接器"从请求造 item"（旧理由随卡片可见而失效）。做法见
-    `.agents/notes/proposed/2026-10-24-next-round-mentions-and-usage-range-prompt.md` §4.8。
-    **真机已确认（2026-10-24）**：`/plan … exit_plan_mode` 那一轮在手机上**没有任何卡**，
-    只有运行条；会话日志停在 `tool/call` 无 `tool/result`，最后由工具程序自己的 120 s 预算收口。
+    缺的只是连接器"从请求造 item"（旧理由随卡片可见而失效）。
+    **已落地（2026-10-24，任务 E）**：卡从 `exit_plan_mode` 的 `tool/call` 造（参数里就是整份计划），
+    连接器身份优先 `intent.callId`、答复按请求的题 id 与 `intent.approve` 重写（手机只发标记
+    `plan-approve`）。笔记 `implemented/2026-10-24-plan-review-card-from-request.md`；
+    **真机未验**（真机只确认过"当时没有卡"：`tool/call` 之后没有 `tool/result`，
+    最后由工具程序自己的 120 s 预算收口）。
 12. ~~**交互改成 gateway 的 owner client**~~ **已修（2026-10-23）**：连接器作为 owner client 接
     gateway 的 `$events` 转发流 —— 桌面与手机**同时**收到、谁先答谁赢、其余收 `cancel`；
     host answerer 与 `prepend` 整条路删掉（旧笔记移入 `archived/`）。
