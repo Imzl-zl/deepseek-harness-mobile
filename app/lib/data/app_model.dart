@@ -1703,8 +1703,12 @@ class AppModel extends ChangeNotifier {
   /// 空表 = **不知道**（老连接器不报这个键）⇒ `/` 不出候选菜单。
   /// **手机侧不抄第二份**：抄一份的后果是电脑侧加了第三条命令，手机菜单里永远没有它
   /// （同一个事实两处表达必然漂）。判据与取舍在契约 §5.7 的 `repo.info` 行。
-  List<String> get slashCommands => _slashCommands;
-  List<String> _slashCommands = const <String>[];
+  ///
+  /// 两种形状都收（老连接器的 `string[]` 与新连接器的 `{name, description?}[]`），
+  /// 解析在 `model/command.dart` 的 `parseSlashCommands` —— 说明是**宿主命令定义里的话**，
+  /// 手机不自带文案。
+  List<SlashCommand> get slashCommands => _slashCommands;
+  List<SlashCommand> _slashCommands = const <SlashCommand>[];
 
   /// 电脑侧有没有 `@` 候选（`repo.info.caps.references`）。
   ///
@@ -1728,12 +1732,7 @@ class AppModel extends ChangeNotifier {
       // 白名单与版本同一口读：都是"电脑侧说了算"的只读事实。没有这个键
       // （老连接器）就清空 —— 菜单不出，而不是拿手机里的一份旧名单凑。
       final commands = result is Map ? result['commands'] : null;
-      _slashCommands = commands is List
-          ? commands
-                .whereType<String>()
-                .where((c) => c.isNotEmpty)
-                .toList(growable: false)
-          : const <String>[];
+      _slashCommands = parseSlashCommands(commands);
       // `@` 候选的能力位（`caps.references`）：缺这个键（老连接器）就是 false。
       final caps = result is Map ? result['caps'] : null;
       _mentionsAvailable = caps is Map && caps['references'] == true;

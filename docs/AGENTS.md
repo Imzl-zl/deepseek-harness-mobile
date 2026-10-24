@@ -44,7 +44,7 @@
 | `subsystems/turn-groups.md` | 轮组:边界来自条目自己的轮号、折叠藏过程留结论、什么时候可折、"工作步骤收起时机"两档、与 DSH 的差异与已知边界 |
 | `subsystems/usage-page.md` | 用量页:一页五块(总量 / 四格分项 / 26 周热力图 / 可折叠项目段 / 扁平兜底)、`usage.summary` 的字段与口径去向、与 rikkahub 形态的两处有意偏离、已知边界 |
 | `subsystems/notifications.md` | 通知与后台保活:起服务的三条判据(后台 + 通知权限 + 服务态)、前台服务类型为何是 `remoteMessaging`、三类提醒的触发源与"审批可直接答"、撤销口径、`dsh/notifications` 通道、渠道归属、已知边界 |
-| `subsystems/composer-mentions.md` | 输入栏的 `@` 候选:三种候选与插入文本、触发判据三条(与宿主 `TEXT_REF_RE` 对齐)、面板三态、通道层三个参数(去抖 / 作废在飞 / 不缓存)、能力位与已知边界 |
+| `subsystems/composer-mentions.md` | 输入栏的候选面板(`@` / `/`):四种候选与插入文本、触发判据三条(与宿主 `TEXT_REF_RE` 对齐)、面板形状(浮层/分组/列表行/图标三档)、drill 与面包屑的判据、底部预算给出的高度上限、三态、通道层参数、能力位与已知边界 |
 | `subsystems/attachments.md` | 图片附件:选图这条链、两条上限与两个主人(宿主 `imageLimits` 投影 / 通道层单帧预算)、明确不判的两条(像素与长边)、已知边界 |
 | `subsystems/files-page.md` | 文件页:工作区目录浏览 + 文本分页预览、路径规则(相对工作区、`scope` 走宿主 lookup)、不接 `readBytes`/`changes`、三态与已知边界 |
 

@@ -91,6 +91,49 @@ class AtCandidate {
     AtCandidateKind.session => title.isEmpty ? sid : title,
   };
 
+  /// 行首那枚图标（宿主 `ReferenceIconRegular` 的三档，`ui-primitives/src/ReferenceIcon.tsx:25-30`）。
+  ///
+  /// 三个字形**逐字对应**宿主的三种 artwork，不是"最接近的一个"：
+  /// 目录 = `FolderCloseArtwork`（`folderClose`）、文件 = `BrowseOutlineArtwork`
+  /// （`browse`）、会话 = `ChatLinesOutlineArtwork`（同文件 `:13-19`，
+  /// 注释原话 "matches the `queue-outline` product glyph" ⇒ 我们图标集里的 `queue`）。
+  String get icon => switch (kind) {
+    AtCandidateKind.directory => 'folderClose',
+    AtCandidateKind.file => 'browse',
+    AtCandidateKind.session => 'queue',
+  };
+
+  /// 分组标题（宿主的行内 `section`，`ui-reference/src/client/index.ts:258,288`）。
+  ///
+  /// 用宿主 zh 词典的原话（`ui-reference/src/client/locales.ts` 的
+  /// `section.files` / `section.sessions`），不另起一套中文。
+  String get section => switch (kind) {
+    AtCandidateKind.file || AtCandidateKind.directory => kSectionFiles,
+    AtCandidateKind.session => kSectionSessions,
+  };
+
+  /// 行上显示的名字：路径最后一段，**目录带一个尾斜杠**
+  /// （宿主 `fileCandidate` 的 `name`，`ui-reference/src/client/index.ts:253`）。
+  String get displayName {
+    if (kind == AtCandidateKind.session) return label;
+    final trimmed = _trimSlash(path);
+    final slash = trimmed.lastIndexOf('/');
+    final name = slash < 0 ? trimmed : trimmed.substring(slash + 1);
+    return kind == AtCandidateKind.directory ? '$name/' : name;
+  }
+
+  /// 行右侧的说明 = **父目录**（宿主同一条：`:242-256`，
+  /// "The location is the parent alone"）。
+  ///
+  /// 根目录下的候选没有父目录 ⇒ 空串（那一行不摆说明，不是摆一个空串占位）。
+  /// 会话行没有位置信息（`refs.sessions` 只回 `{sid,title,mention}`）⇒ 空串。
+  String get parent {
+    if (kind == AtCandidateKind.session) return '';
+    final trimmed = _trimSlash(path);
+    final slash = trimmed.lastIndexOf('/');
+    return slash < 0 ? '' : trimmed.substring(0, slash);
+  }
+
   /// 选中后**插进输入框的纯文本**。这是唯一一处决定"目录补斜杠、文件不补、
   /// 会话用宿主原样"的地方。
   String get insertion => switch (kind) {
@@ -98,6 +141,76 @@ class AtCandidate {
     AtCandidateKind.directory => path.endsWith('/') ? '@$path' : '@$path/',
     AtCandidateKind.session => mention,
   };
+}
+
+/// 分组标题：文件与文件夹（宿主 zh 词典 `section.files` 的原话）。
+const String kSectionFiles = '文件与文件夹';
+
+/// 分组标题：对话（宿主 zh 词典 `section.sessions` 的原话）。
+const String kSectionSessions = '对话';
+
+/// 面包屑最左那一段的文案（宿主 zh 词典 `crumb.root` 的原话）。
+const String kCrumbRoot = '工作区';
+
+/// 一截面包屑的一段。
+///
+/// 宿主把 crumb 的 `value` 当"候选的 drill 载荷"原样还给 `onPick`
+/// （`ui-input-trigger/src/types.ts:169-180`），所以这里只存**插回输入框的文本**：
+/// 根 = `@`，第 n 段 = `@a/b/`（与目录 mention 同形，`file-reference/grammar.ts` 的
+/// `formatFileMention`）。
+class AtCrumb {
+  const AtCrumb({
+    required this.label,
+    required this.insertion,
+    this.current = false,
+  });
+
+  final String label;
+
+  /// 点它之后替换掉 `@…` 那一段 token 的文本。
+  final String insertion;
+
+  /// 列表此刻就停在这一层 ⇒ 它是一段标签，不是可点的入口（宿主 `crumbCurrent`）。
+  final bool current;
+}
+
+/// drill 之后的面包屑；`null` = 这一屏不该有面包屑。
+///
+/// 与宿主 `crumbsFor` 逐条对齐（`ui-reference/src/client/index.ts:199-226`）：
+///
+/// 1. **没 drill 就整条不出现**（`if (!drilled) return undefined`）—— 手打的路径
+///    自带上下文（就在草稿里），而 drill 把用户正在读的文本换成了更深的一段，
+///    欠他一条回去的路；
+/// 2. 查询串里**没有 `/`** 也不出现（还在工作区根挑东西，没有"上一层"）；
+/// 3. 根 + 各段，最后一段是 `current`（不可点）。
+List<AtCrumb>? atCrumbsOf(String query, {required bool drilled}) {
+  if (!drilled) return null;
+  final slash = query.lastIndexOf('/');
+  if (slash < 0) return null;
+  final segments = query
+      .substring(0, slash)
+      .split('/')
+      .where((segment) => segment.isNotEmpty)
+      .toList(growable: false);
+  return [
+    const AtCrumb(label: kCrumbRoot, insertion: '@'),
+    for (var index = 0; index < segments.length; index += 1)
+      AtCrumb(
+        label: segments[index],
+        insertion: '@${segments.take(index + 1).join('/')}/',
+        current: index == segments.length - 1,
+      ),
+  ];
+}
+
+/// 去掉尾部斜杠（宿主的目录候选**不带**尾斜杠，`file-reference-local/src/search.ts:248`；
+/// 而手机侧的测试替身里两种都出现过 —— 显示前统一一次，别让 `/` 与 `//` 两种形状各算一遍）。
+String _trimSlash(String path) {
+  var end = path.length;
+  while (end > 0 && path[end - 1] == '/') {
+    end -= 1;
+  }
+  return path.substring(0, end);
 }
 
 /// 一次查询的两半（文件/目录 + 会话）。
@@ -151,8 +264,16 @@ String? atQueryOf(String input) => atTriggerOf(input)?.query;
 /// 把选中的候选插进草稿：**只替换那一个 token**，前面的文字原样留着。
 ///
 /// 认不出触发位置时**原样返回**（不猜一个位置去改用户的文本）。
-String insertAtMention(String input, AtCandidate candidate) {
+String insertAtMention(String input, AtCandidate candidate) =>
+    insertAtToken(input, candidate.insertion);
+
+/// 把 `@…` 那一段 token 换成 [text]。
+///
+/// 只有两处会用它：落定（[insertAtMention]）与 drill / 面包屑（宿主把 drill 的载荷
+/// 也叫 "text"，`ui-reference/src/client/index.ts:138-140`）—— 两者都是"换掉那一段"，
+/// 所以替换规则只有这一份。认不出触发位置时**原样返回**。
+String insertAtToken(String input, String text) {
   final trigger = atTriggerOf(input);
   if (trigger == null) return input;
-  return input.substring(0, trigger.at) + candidate.insertion;
+  return input.substring(0, trigger.at) + text;
 }

@@ -11,6 +11,8 @@
 ///    老连接器（`caps.references` 缺席）⇒ 面板整块不显示。
 library;
 
+import 'dart:async';
+
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
@@ -18,6 +20,7 @@ import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/model/mention.dart';
 import 'package:dsh_mobile/model/permission.dart';
 import 'package:dsh_mobile/model/send_mode.dart';
+import 'package:dsh_mobile/theme/dsh_icons.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/dsh_composer.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
@@ -380,6 +383,252 @@ void main() {
         find.byKey(const ValueKey<String>('at-0-file-src/index.ts')),
         findsNothing,
       );
+    });
+  });
+
+  group('面板是列表行（照宿主 MenuView，不是居中胶囊）', () {
+    /// 一台"会按查询串换答案"的电脑：根层给 `src` / `src/index.ts`，
+    /// `src/` 那一层给 `src/lib.ts`。
+    Future<MentionQueryResult> Function(String) refsByQuery(
+      List<String> asked,
+    ) => (query) async {
+      asked.add(query);
+      if (query.startsWith('src/')) {
+        return MentionQueryResult(
+          candidates: AtCandidates(
+            files: [
+              AtCandidate.fromFileRow({'path': 'src/lib.ts', 'kind': 'file'})!,
+            ],
+          ),
+        );
+      }
+      return MentionQueryResult(
+        candidates: AtCandidates(
+          files: [
+            AtCandidate.fromFileRow({'path': 'src', 'kind': 'directory'})!,
+            AtCandidate.fromFileRow({'path': 'src/index.ts', 'kind': 'file'})!,
+          ],
+        ),
+      );
+    };
+
+    testWidgets('分组标题、行左对齐、名字只取最后一段、说明是父目录', (tester) async {
+      final input = TextEditingController();
+      addTearDown(input.dispose);
+      await tester.pumpWidget(
+        host(
+          input,
+          onQueryMentions: (query) async => MentionQueryResult(
+            candidates: AtCandidates(
+              files: [
+                AtCandidate.fromFileRow({'path': 'src', 'kind': 'directory'})!,
+                AtCandidate.fromFileRow({
+                  'path': 'src/index.ts',
+                  'kind': 'file',
+                })!,
+              ],
+              sessions: [
+                AtCandidate.fromSessionRow({
+                  'sid': 'sid_a',
+                  'title': '重构输入栏',
+                  'mention': '@[重构输入栏](dsh-session:x)',
+                })!,
+              ],
+            ),
+          ),
+        ),
+      );
+      await type(tester, input, '@sr');
+
+      // **分组标题**：宿主 zh 词典的原话（`section.files` / `section.sessions`）。
+      expect(find.text(kSectionFiles), findsOneWidget);
+      expect(find.text(kSectionSessions), findsOneWidget);
+
+      final panel = tester.getRect(
+        find.byKey(const ValueKey<String>('at-panel')),
+      );
+      // **贴在输入卡上方、与卡片同宽**（DSH 的菜单是 `position:absolute;
+      // bottom:calc(100% + 4px); left:0; right:0`，`MenuView.module.css:1-8`）。
+      final card = tester.getRect(
+        find.descendant(
+          of: find.byType(DshComposer),
+          matching: find.byType(TextField),
+        ),
+      );
+      expect(panel.bottom, lessThanOrEqualTo(card.top), reason: '面板在输入框上方');
+      expect(
+        panel.width,
+        closeTo(tester.getSize(find.byType(DshComposer)).width - 16, 0.5),
+        reason: '面板与卡片同宽（卡片在 8px 的内边距里）',
+      );
+      final dirRow = tester.getRect(
+        find.byKey(const ValueKey<String>('at-0-directory-src')),
+      );
+      // 行是**左对齐的一列**（居中的胶囊会落在中间）。
+      expect(dirRow.left, lessThan(panel.center.dx));
+      expect(
+        dirRow.width,
+        greaterThan(panel.width - 20),
+        reason: '行撑满面板（列表行，不是胶囊）',
+      );
+      expect(
+        dirRow.height,
+        greaterThanOrEqualTo(34),
+        reason: '`.item` 的 min-height 是 34',
+      );
+
+      // 名字只取最后一段；目录带一个尾斜杠、文件不带（宿主 `fileCandidate`）。
+      expect(find.text('src/'), findsOneWidget);
+      expect(find.text('index.ts'), findsOneWidget);
+      // 说明 = 父目录；工作区根那一行没有父目录 ⇒ 不摆说明。
+      expect(find.text('src'), findsOneWidget, reason: '文件行的说明是它的父目录');
+      // 目录行末尾有 chevron，文件行没有。
+      Finder chevronIn(String key) => find.descendant(
+        of: find.byKey(ValueKey<String>(key)),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is DshIcon && widget.name == 'chevronRight',
+        ),
+      );
+      expect(chevronIn('at-0-directory-src'), findsOneWidget);
+      expect(chevronIn('at-1-file-src/index.ts'), findsNothing);
+    });
+
+    testWidgets('点目录行的 chevron = drill：输入框变 `@src/`，**面板不关**，面包屑出现', (
+      tester,
+    ) async {
+      final input = TextEditingController();
+      addTearDown(input.dispose);
+      final asked = <String>[];
+      await tester.pumpWidget(host(input, onQueryMentions: refsByQuery(asked)));
+      await type(tester, input, '@sr');
+      expect(find.byKey(const ValueKey<String>('crumb-0')), findsNothing);
+
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('at-0-directory-src')),
+          matching: find.byWidgetPredicate(
+            (widget) => widget is DshIcon && widget.name == 'chevronRight',
+          ),
+        ),
+      );
+      await tester.pump(); // drill 之后的查询是**立刻**发的，不用等去抖
+      await tester.pump();
+
+      expect(input.text, '@src/');
+      expect(
+        find.byKey(const ValueKey<String>('at-panel')),
+        findsOneWidget,
+        reason: 'drill 的语义是"进去"而不是"选定"，面板必须还在',
+      );
+      // 面包屑只在 drill 之后出现：工作区 / src。
+      expect(find.text(kCrumbRoot), findsOneWidget);
+      expect(find.text('src'), findsWidgets);
+      // 新的一层有自己的一行。
+      expect(
+        find.byKey(const ValueKey<String>('at-0-file-src/lib.ts')),
+        findsOneWidget,
+      );
+      expect(asked.last, 'src/', reason: 'drill 之后按新查询再问一次');
+    });
+
+    testWidgets('**手打** `@src/` 不出面包屑（只有 drill 才欠一条回去的路）', (tester) async {
+      // 宿主原话（`ui-reference/src/client/index.ts:193-198`）：手打的路径自带上下文，
+      // 而 drill 把用户正在读的文本换成了更深的一段。所以判据是 `drilled`，
+      // 不是"查询串里有没有 `/`"——只按 `/` 判会让每条长路径上面多出一条面包屑。
+      final input = TextEditingController();
+      addTearDown(input.dispose);
+      await tester.pumpWidget(
+        host(input, onQueryMentions: refsByQuery(<String>[])),
+      );
+      await type(tester, input, '@src/');
+
+      expect(find.byKey(const ValueKey<String>('at-panel')), findsOneWidget);
+      expect(find.byKey(const ValueKey<String>('crumb-0')), findsNothing);
+      expect(find.text(kCrumbRoot), findsNothing);
+    });
+
+    testWidgets('点面包屑的「工作区」回根层（查询串变空 ⇒ 面包屑自己消失）', (tester) async {
+      final input = TextEditingController();
+      addTearDown(input.dispose);
+      await tester.pumpWidget(
+        host(input, onQueryMentions: refsByQuery(<String>[])),
+      );
+      await type(tester, input, '@sr');
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('at-0-directory-src')),
+          matching: find.byWidgetPredicate(
+            (widget) => widget is DshIcon && widget.name == 'chevronRight',
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(input.text, '@src/');
+
+      await tester.tap(find.text(kCrumbRoot));
+      await tester.pump();
+      await tester.pump();
+
+      expect(input.text, '@');
+      expect(
+        find.byKey(const ValueKey<String>('crumb-0')),
+        findsNothing,
+        reason: '查询串里没有 `/` 就没有"上一层"（宿主 `crumbsFor` 第二条）',
+      );
+    });
+
+    testWidgets('点目录行**行体** = 落定：插入 `@src/` 并关面板（不是 drill）', (tester) async {
+      final input = TextEditingController();
+      addTearDown(input.dispose);
+      await tester.pumpWidget(
+        host(input, onQueryMentions: refsByQuery(<String>[])),
+      );
+      await type(tester, input, '@sr');
+
+      await tester.tap(
+        find.byKey(const ValueKey<String>('at-0-directory-src')),
+      );
+      await tester.pump();
+
+      expect(input.text, '@src/');
+      expect(find.byKey(const ValueKey<String>('at-panel')), findsNothing);
+      expect(find.byKey(const ValueKey<String>('crumb-0')), findsNothing);
+    });
+
+    testWidgets('文件行没有 chevron；点它插入 `@path` 并关面板', (tester) async {
+      final input = TextEditingController();
+      addTearDown(input.dispose);
+      await tester.pumpWidget(
+        host(input, onQueryMentions: refsByQuery(<String>[])),
+      );
+      await type(tester, input, '@sr');
+
+      await tester.tap(
+        find.byKey(const ValueKey<String>('at-1-file-src/index.ts')),
+      );
+      await tester.pump();
+      expect(input.text, '@src/index.ts');
+      expect(find.byKey(const ValueKey<String>('at-panel')), findsNothing);
+    });
+
+    testWidgets('pending 先给两行骨架（不是一句"正在找…"）', (tester) async {
+      final input = TextEditingController();
+      addTearDown(input.dispose);
+      final never = Completer<MentionQueryResult>();
+      await tester.pumpWidget(
+        host(input, onQueryMentions: (_) => never.future),
+      );
+      input.text = '@sr';
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.byKey(const ValueKey<String>('at-panel')), findsOneWidget);
+      expect(find.byKey(const ValueKey<String>('at-loading')), findsNothing);
+      expect(find.text('正在找…'), findsNothing);
+      // 骨架 = 两根灰条（宽 32% / 48%），没有名字可读。
+      expect(find.byKey(const ValueKey<String>('at-empty')), findsNothing);
+      addTearDown(() => never.complete(const MentionQueryResult()));
     });
   });
 

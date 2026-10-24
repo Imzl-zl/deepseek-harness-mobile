@@ -25,6 +25,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../model/command.dart';
 import '../model/mention.dart';
 import '../model/permission.dart';
 import '../model/send_mode.dart';
@@ -160,13 +161,23 @@ class DshComposer extends StatelessWidget {
     this.running = false,
     this.onStop,
     this.hintText = kComposerHintDefault,
-    this.slashCommands = const <String>[],
+    this.slashCommands = const <SlashCommand>[],
     this.mentionsEnabled = false,
     this.onQueryMentions,
+    this.panelMaxHeight = kSuggestionPanelMax,
   });
 
-  /// 斜杠命令白名单（`repo.info.commands`，契约 §5.7）。空表 = 不知道 ⇒ 不出菜单。
-  final List<String> slashCommands;
+  /// 斜杠命令名单（`repo.info.commands`，契约 §5.7）。
+  ///
+  /// 空表 = 不知道 ⇒ 不出菜单。形状见 `model/command.dart` 的 [SlashCommand]：
+  /// 老连接器只有名字，新连接器带宿主的说明。
+  final List<SlashCommand> slashCommands;
+
+  /// 候选面板的高度上限（**输入卡上方真正剩下的空间**，由页面算好传进来）。
+  ///
+  /// 面板自己滚，所以这个数只决定"看得见几行"。默认值只给直接构造本组件的测试用 ——
+  /// 生产路径一律由 `chat_page.dart` 的底部预算给（那里才知道键盘、接管卡与统计条）。
+  final double panelMaxHeight;
 
   /// 电脑侧有没有 `@` 候选（`repo.info.caps.references`）。老连接器 ⇒ false ⇒ 不出面板。
   final bool mentionsEnabled;
@@ -265,291 +276,296 @@ class DshComposer extends StatelessWidget {
       // 页面 `#FFFFFF` / 灰带 `#F1F3F5` / 卡内 `#FFFFFF`。
       color: c.bgBase,
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-      child: Container(
-        // `.composer { padding:6px 6px 6px 8px; border-radius:24px }`
-        padding: const EdgeInsets.fromLTRB(8, 6, 6, 6),
-        decoration: BoxDecoration(
-          // **`composer` 而不是 `layer1`**：DSH 用的是专用 token
-          // `--dsw-specific-input-major`（`InputBar.module.css:62`）。
-          // 亮色下它也是白 —— 所以"看得见"靠下面那层阴影，不是底色差。
-          color: c.composer,
-          borderRadius: BorderRadius.circular(24),
-          // **`elevation-soft`**（`gradient-shadow-text.css:33,38-39`）：
-          //   0 0 0 0.5px <border-l2>,
-          //   0 4px 16px rgba(0,0,0,0.03),
-          //   0 0 24px  rgba(0,0,0,0.03)
-          // 第一层是**发丝环**：DSH 的 `.card` 明确写 `border: 0`，并注释
-          // "描边由 elevation 发丝线画，不占布局"（`InputBar.module.css:55-63`）。
-          // 少这三层，白卡在白底上就是一块看不出来的白。
-          boxShadow: [
-            BoxShadow(color: c.borderL2, spreadRadius: 0.5),
-            const BoxShadow(
-              color: Color(0x08000000),
-              blurRadius: 16,
-              offset: Offset(0, 4),
-            ),
-            const BoxShadow(color: Color(0x08000000), blurRadius: 24),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ---- 附件轨：**卡片内部最上方**（硬规则 1）----
-            if (attachments.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    for (final item in attachments)
-                      // **入场的淡入 + 微缩放**（2026-10-20）：选完图芯片会
-                      // 立刻出现在卡片里，硬蹦出来读作"闪了一下"。
-                      //
-                      // 用 `TweenAnimationBuilder` 而不是给每个芯片加
-                      // `AnimationController`：它自带"首次构建时跑一遍"，
-                      // 不需要为一次性的入场维持 7 个控制器。
-                      // 时长/曲线与发送键那次换形态同一个（160ms / easeOutCubic），
-                      // 两处动画节奏一致才不会显得杂。
-                      TweenAnimationBuilder<double>(
-                        tween: Tween<double>(begin: 0, end: 1),
-                        duration: const Duration(milliseconds: 160),
-                        curve: Curves.easeOutCubic,
-                        builder: (context, t, child) => Opacity(
-                          opacity: t,
-                          child: Transform.scale(
-                            scale: 0.92 + 0.08 * t,
-                            child: child,
-                          ),
-                        ),
-                        child: _AttachmentChip(
-                          item: item,
-                          onRemove: () => onRemoveAttachment(item),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-
-            // ---- `/` 候选：**只在命令名打了一半时出现** ----
-            //
-            // 候选**只来自电脑侧**（`repo.info.commands`，契约 §5.7）：手机侧
-            // 不抄第二份名单 —— 抄了就是同一个事实两处表达，电脑侧加一条命令
-            // 这里永远看不到。空表（老连接器）= 不出菜单，不是"没有命令"。
-            // `@` 候选（文件 / 目录 + 跨会话引用）。**与 `/` 同一条缝**：
-            // 都读 `controller`、都只是输入框上方的一行；区别是候选要**问电脑侧**
-            // （`refs.files` / `refs.sessions`），所以有去抖与三态。
-            if (onQueryMentions != null)
-              _AtSuggestions(
-                controller: controller,
-                enabled: enabled && mentionsEnabled,
-                onQuery: onQueryMentions!,
-              ),
-            _SlashSuggestions(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        // 候选面板与卡片**同宽**：DSH 的菜单是 `left:0; right:0` 贴着卡片边缘
+        // （`MenuView.module.css:4-7`），不是居中的一团。
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // ---- 候选面板：在**输入卡上方**（DSH `bottom: calc(100% + 4px)`）----
+          //
+          // 两个触发器共用同一条缝，各自按自己的判据决定画不画：
+          // `@` 要问电脑侧（`refs.files` / `refs.sessions`），`/` 读 `repo.info.commands`。
+          if (onQueryMentions != null)
+            _AtSuggestions(
               controller: controller,
-              commands: slashCommands,
-              enabled: enabled,
+              enabled: enabled && mentionsEnabled,
+              panelMaxHeight: panelMaxHeight,
+              onQuery: onQueryMentions!,
             ),
-
-            // ---- 文字行：**独占一行**（硬规则 2）----
-            TextField(
-              controller: controller,
-              enabled: enabled,
-              minLines: 1,
-              maxLines: 6,
-              // 输入文字按**内容字号**缩放（DSH 的 `${…}` 正文档，
-              // `--dsh-content-font-size`）—— 用户调大字号就是要看清自己打的字。
-              style: TextStyle(fontSize: type.body, color: c.labelPrimary),
-              decoration: InputDecoration(
-                isDense: true,
-                border: InputBorder.none,
-                hintText: hintText,
-                hintStyle: TextStyle(
-                  fontSize: type.body,
-                  color: c.labelTertiary,
+          _SlashSuggestions(
+            controller: controller,
+            commands: slashCommands,
+            enabled: enabled,
+            panelMaxHeight: panelMaxHeight,
+          ),
+          Container(
+            // `.composer { padding:6px 6px 6px 8px; border-radius:24px }`
+            padding: const EdgeInsets.fromLTRB(8, 6, 6, 6),
+            decoration: BoxDecoration(
+              // **`composer` 而不是 `layer1`**：DSH 用的是专用 token
+              // `--dsw-specific-input-major`（`InputBar.module.css:62`）。
+              // 亮色下它也是白 —— 所以"看得见"靠下面那层阴影，不是底色差。
+              color: c.composer,
+              borderRadius: BorderRadius.circular(24),
+              // **`elevation-soft`**（`gradient-shadow-text.css:33,38-39`）：
+              //   0 0 0 0.5px <border-l2>,
+              //   0 4px 16px rgba(0,0,0,0.03),
+              //   0 0 24px  rgba(0,0,0,0.03)
+              // 第一层是**发丝环**：DSH 的 `.card` 明确写 `border: 0`，并注释
+              // "描边由 elevation 发丝线画，不占布局"（`InputBar.module.css:55-63`）。
+              // 少这三层，白卡在白底上就是一块看不出来的白。
+              boxShadow: [
+                BoxShadow(color: c.borderL2, spreadRadius: 0.5),
+                const BoxShadow(
+                  color: Color(0x08000000),
+                  blurRadius: 16,
+                  offset: Offset(0, 4),
                 ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 4,
-                  vertical: 8,
-                ),
-              ),
-              onSubmitted: (_) {
-                if (canSend) onSend();
-              },
+                const BoxShadow(color: Color(0x08000000), blurRadius: 24),
+              ],
             ),
-
-            // ---- 控制行：左一组 / 右只有发送（硬规则 3）----
-            Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Row(
-                    children: [
-                      // `＋`：38×38 圆钮。
-                      _RoundIconButton(
-                        icon: 'plus',
-                        tooltip: '添加文件或调用指令',
-                        onPressed: enabled ? onAttach : null,
-                      ),
-                      const SizedBox(width: 6),
-                      // **权限 chip 在模型 chip 之前**（2026-10-19 用户原话：
-                      // 「模型和这个权限换一下位置」）。图标 34px 恒宽 ——
-                      // 硬规则 3 的后半句：长模型名不许把它挤走。
-                      _IconChip(
-                        key: const Key('composer-access'),
-                        icon: access.icon,
-                        tooltip: access.label,
-                        isWarn: access.warn,
-                        onPressed: enabled ? onPickAccess : null,
-                      ),
-                      const SizedBox(width: 6),
-                      // 模型 chip：**图标 + 模型名**，可压缩、上限 62%。
-                      //
-                      // 上限不能省：`Flexible` 只表示"可以被压"，不表示"最宽多少" ——
-                      // 没有上限时它会**吃满**左组剩余宽度（长模型名尤其明显），
-                      // 而原型 `#chipModel { max-width: 62% }` 是明确写了上限的。
-                      // 实测：`claude-opus · 高` 在 1080px 宽的屏上被拉成一整条，
-                      // 看起来像"模型是个很宽的选择器"，与胶囊形态不符。
-                      //
-                      // **图标 + 名字而不是裸名字**（照 rikkahub 的
-                      // `ModelSelectorButton(onlyIcon = true)`，`ChatInput.kt:309-313`）：
-                      // 真机上模型名是 `step-5-preview · max` 这种 20+ 字符的 id，
-                      // 光靠文字就把左组吃掉一半；加一枚图标让"这是模型选择器"
-                      // 在名字被省略号截掉之后仍然认得出。推理等级跟在名字后面
-                      // （`· max`），它是同一个选择的第二半。
-                      //
-                      // 图标取 `database`：DSH Web 的模型触发器用的就是它
-                      // （`ui-model-selection/src/client/ModelSelect.tsx:484` 的
-                      // `IconDataOutlineRegular`，抽取进我们图标集时叫 `database`）。
-                      // **不新造字形**：`verify-icons.cjs` 只放行集合内的 100 个。
-                      // **`Flexible(loose)` + `Align(widthFactor: 1.0)`**（2026-10-19）：
-                      // 单 `Flexible` 不够 —— `_Chip` 里的 `Container` 在 `0..X`
-                      // 约束下会取 **X**（Flutter 的 `Container` 有界时用 biggest），
-                      // 于是 chip 仍撑满、权限 chip 不动、"省宽度"没发生。
-                      // `Align(widthFactor: 1.0)` 让 Align 的宽 = 子的宽，
-                      // 而 `Flexible(loose)` 允许它小于分配宽 —— 两者一起才收缩。
-                      // 长名字仍被这里的 maxWidth 截断（约束没丢）。
-                      // 上限取**左组剩余空间的 62%**（不是整行的 62%）。
-                      //
-                      // 2026-10-19 权限挪到模型之前、等级分成独立一枚之后，
-                      // 左组固定件变成 `＋ 38 + 权限 34 + 等级 34` = 106px。
-                      // **再按整行的 62% 卡模型**，模型可用宽只剩
-                      // `62% − 106px`，长模型名会比改布局前更早被省略号截断
-                      // （实测：`deepseek-v4.1-flash-pro-preview-2026` 越过上限）——
-                      // 那不是"更克制"，是把名字挤没了。原型
-                      // `#chipModel { max-width: 62% }` 的口径是"占所在容器 62%"，
-                      // 所以按**剩余空间**取。
-                      Flexible(
-                        fit: FlexFit.loose,
-                        child: LayoutBuilder(
-                          builder: (context, constraints) => Align(
-                            alignment: Alignment.centerLeft,
-                            widthFactor: 1.0,
-                            child: ConstrainedBox(
-                              // 测试用锚点：量"模型 chip 实际占多宽"
-                              // （`composer_layout_test.dart` 的几何判据）。
-                              key: const Key('composer-model-chip'),
-                              constraints: BoxConstraints(
-                                maxWidth: constraints.maxWidth * 0.62,
+                // ---- 附件轨：**卡片内部最上方**（硬规则 1）----
+                if (attachments.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final item in attachments)
+                          // **入场的淡入 + 微缩放**（2026-10-20）：选完图芯片会
+                          // 立刻出现在卡片里，硬蹦出来读作"闪了一下"。
+                          //
+                          // 用 `TweenAnimationBuilder` 而不是给每个芯片加
+                          // `AnimationController`：它自带"首次构建时跑一遍"，
+                          // 不需要为一次性的入场维持 7 个控制器。
+                          // 时长/曲线与发送键那次换形态同一个（160ms / easeOutCubic），
+                          // 两处动画节奏一致才不会显得杂。
+                          TweenAnimationBuilder<double>(
+                            tween: Tween<double>(begin: 0, end: 1),
+                            duration: const Duration(milliseconds: 160),
+                            curve: Curves.easeOutCubic,
+                            builder: (context, t, child) => Opacity(
+                              opacity: t,
+                              child: Transform.scale(
+                                scale: 0.92 + 0.08 * t,
+                                child: child,
                               ),
-                              child: _Chip(
-                                onPressed: enabled ? onPickModel : null,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    DshIcon(
-                                      'database',
-                                      size: 13,
-                                      color: c.labelSecondary,
-                                    ),
-                                    const SizedBox(width: 5),
-                                    // 模型名：**`Flexible(loose)` 而不是 tight**。
-                                    //
-                                    // 2026-10-19 实测三个形态（最小复现逐层量）：
-                                    // - `Flexible`（默认 tight）→ Text 被拉到
-                                    //   "Row 宽 − 其他子宽"，而 Row 在 `0..X` 下取 X，
-                                    //   chip 从 91.25 涨到 308.75（内容宽只要 271）；
-                                    // - 裸 `Text`（无 flexible）→ Text 收到 `0..X`
-                                    //   后取 X，chip 反而涨到 529（越过上限）；
-                                    // - `Flexible(loose)` → 内容窄时不撑满、内容宽时
-                                    //   压到上限，**两个诉求同时成立**。
-                                    Flexible(
-                                      fit: FlexFit.loose,
-                                      child: Text(
-                                        modelName,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                          color: c.labelPrimary,
+                            ),
+                            child: _AttachmentChip(
+                              item: item,
+                              onRemove: () => onRemoveAttachment(item),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+
+                // ---- 文字行：**独占一行**（硬规则 2）----
+                TextField(
+                  controller: controller,
+                  enabled: enabled,
+                  minLines: 1,
+                  maxLines: 6,
+                  // 输入文字按**内容字号**缩放（DSH 的 `${…}` 正文档，
+                  // `--dsh-content-font-size`）—— 用户调大字号就是要看清自己打的字。
+                  style: TextStyle(fontSize: type.body, color: c.labelPrimary),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    border: InputBorder.none,
+                    hintText: hintText,
+                    hintStyle: TextStyle(
+                      fontSize: type.body,
+                      color: c.labelTertiary,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 8,
+                    ),
+                  ),
+                  onSubmitted: (_) {
+                    if (canSend) onSend();
+                  },
+                ),
+
+                // ---- 控制行：左一组 / 右只有发送（硬规则 3）----
+                Row(
+                  children: [
+                    Expanded(
+                      child: Row(
+                        children: [
+                          // `＋`：38×38 圆钮。
+                          _RoundIconButton(
+                            icon: 'plus',
+                            tooltip: '添加文件或调用指令',
+                            onPressed: enabled ? onAttach : null,
+                          ),
+                          const SizedBox(width: 6),
+                          // **权限 chip 在模型 chip 之前**（2026-10-19 用户原话：
+                          // 「模型和这个权限换一下位置」）。图标 34px 恒宽 ——
+                          // 硬规则 3 的后半句：长模型名不许把它挤走。
+                          _IconChip(
+                            key: const Key('composer-access'),
+                            icon: access.icon,
+                            tooltip: access.label,
+                            isWarn: access.warn,
+                            onPressed: enabled ? onPickAccess : null,
+                          ),
+                          const SizedBox(width: 6),
+                          // 模型 chip：**图标 + 模型名**，可压缩、上限 62%。
+                          //
+                          // 上限不能省：`Flexible` 只表示"可以被压"，不表示"最宽多少" ——
+                          // 没有上限时它会**吃满**左组剩余宽度（长模型名尤其明显），
+                          // 而原型 `#chipModel { max-width: 62% }` 是明确写了上限的。
+                          // 实测：`claude-opus · 高` 在 1080px 宽的屏上被拉成一整条，
+                          // 看起来像"模型是个很宽的选择器"，与胶囊形态不符。
+                          //
+                          // **图标 + 名字而不是裸名字**（照 rikkahub 的
+                          // `ModelSelectorButton(onlyIcon = true)`，`ChatInput.kt:309-313`）：
+                          // 真机上模型名是 `step-5-preview · max` 这种 20+ 字符的 id，
+                          // 光靠文字就把左组吃掉一半；加一枚图标让"这是模型选择器"
+                          // 在名字被省略号截掉之后仍然认得出。推理等级跟在名字后面
+                          // （`· max`），它是同一个选择的第二半。
+                          //
+                          // 图标取 `database`：DSH Web 的模型触发器用的就是它
+                          // （`ui-model-selection/src/client/ModelSelect.tsx:484` 的
+                          // `IconDataOutlineRegular`，抽取进我们图标集时叫 `database`）。
+                          // **不新造字形**：`verify-icons.cjs` 只放行集合内的 100 个。
+                          // **`Flexible(loose)` + `Align(widthFactor: 1.0)`**（2026-10-19）：
+                          // 单 `Flexible` 不够 —— `_Chip` 里的 `Container` 在 `0..X`
+                          // 约束下会取 **X**（Flutter 的 `Container` 有界时用 biggest），
+                          // 于是 chip 仍撑满、权限 chip 不动、"省宽度"没发生。
+                          // `Align(widthFactor: 1.0)` 让 Align 的宽 = 子的宽，
+                          // 而 `Flexible(loose)` 允许它小于分配宽 —— 两者一起才收缩。
+                          // 长名字仍被这里的 maxWidth 截断（约束没丢）。
+                          // 上限取**左组剩余空间的 62%**（不是整行的 62%）。
+                          //
+                          // 2026-10-19 权限挪到模型之前、等级分成独立一枚之后，
+                          // 左组固定件变成 `＋ 38 + 权限 34 + 等级 34` = 106px。
+                          // **再按整行的 62% 卡模型**，模型可用宽只剩
+                          // `62% − 106px`，长模型名会比改布局前更早被省略号截断
+                          // （实测：`deepseek-v4.1-flash-pro-preview-2026` 越过上限）——
+                          // 那不是"更克制"，是把名字挤没了。原型
+                          // `#chipModel { max-width: 62% }` 的口径是"占所在容器 62%"，
+                          // 所以按**剩余空间**取。
+                          Flexible(
+                            fit: FlexFit.loose,
+                            child: LayoutBuilder(
+                              builder: (context, constraints) => Align(
+                                alignment: Alignment.centerLeft,
+                                widthFactor: 1.0,
+                                child: ConstrainedBox(
+                                  // 测试用锚点：量"模型 chip 实际占多宽"
+                                  // （`composer_layout_test.dart` 的几何判据）。
+                                  key: const Key('composer-model-chip'),
+                                  constraints: BoxConstraints(
+                                    maxWidth: constraints.maxWidth * 0.62,
+                                  ),
+                                  child: _Chip(
+                                    onPressed: enabled ? onPickModel : null,
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        DshIcon(
+                                          'database',
+                                          size: 13,
+                                          color: c.labelSecondary,
                                         ),
-                                      ),
+                                        const SizedBox(width: 5),
+                                        // 模型名：**`Flexible(loose)` 而不是 tight**。
+                                        //
+                                        // 2026-10-19 实测三个形态（最小复现逐层量）：
+                                        // - `Flexible`（默认 tight）→ Text 被拉到
+                                        //   "Row 宽 − 其他子宽"，而 Row 在 `0..X` 下取 X，
+                                        //   chip 从 91.25 涨到 308.75（内容宽只要 271）；
+                                        // - 裸 `Text`（无 flexible）→ Text 收到 `0..X`
+                                        //   后取 X，chip 反而涨到 529（越过上限）；
+                                        // - `Flexible(loose)` → 内容窄时不撑满、内容宽时
+                                        //   压到上限，**两个诉求同时成立**。
+                                        Flexible(
+                                          fit: FlexFit.loose,
+                                          child: Text(
+                                            modelName,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                              color: c.labelPrimary,
+                                            ),
+                                          ),
+                                        ),
+                                        // 推理等级**不在这里**了：2026-10-19 起它是
+                                        // 独立的一枚 chip（见左组后面的那一枚）。
+                                        const SizedBox(width: 2),
+                                        DshIcon(
+                                          'chevronDown',
+                                          size: 12,
+                                          color: c.labelCaption,
+                                        ),
+                                      ],
                                     ),
-                                    // 推理等级**不在这里**了：2026-10-19 起它是
-                                    // 独立的一枚 chip（见左组后面的那一枚）。
-                                    const SizedBox(width: 2),
-                                    DshIcon(
-                                      'chevronDown',
-                                      size: 12,
-                                      color: c.labelCaption,
-                                    ),
-                                  ],
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
+                          const SizedBox(width: 6),
+                          // **推理等级 chip**（2026-10-19 从模型名后面分出来，
+                          // 用户原话「模型选择，思考程度选择分开」）。
+                          //
+                          // **有等级才显示**（DSH Web 的 `effortLabel` 条件渲染）。
+                          // 图标用 `slidersTwo` 而不是模型那枚 `database`：
+                          // 两枚 chip 挨着，同图标会让人以为"一个选择器的两半"。
+                          if (reasoningLabel != null)
+                            _IconChip(
+                              key: const Key('composer-reasoning'),
+                              icon: 'slidersTwo',
+                              tooltip: '推理等级：$reasoningLabel',
+                              onPressed: onPickReasoning,
+                            ),
+                          // **「忙时发送」图标已移除**（2026-10-19，用户原话
+                          // "输入框下的忙时发送行为没必要吧，设置中有，这个也不经常
+                          // 更换设置，占位置"）：它是**装完就不动的偏好**，而设置页
+                          // 「通用」里一直有同一选择（`settings_page.dart` 的发送模式行）。
+                          // 运行时要改也有出路：发送键在 running 且没草稿时是**停止**键，
+                          // 有草稿时 tooltip 直接说"排队发送 / 插话发送"——
+                          // 当前模式看得见，不必再占一颗 34px 的图标位。
+                        ],
                       ),
-                      const SizedBox(width: 6),
-                      // **推理等级 chip**（2026-10-19 从模型名后面分出来，
-                      // 用户原话「模型选择，思考程度选择分开」）。
-                      //
-                      // **有等级才显示**（DSH Web 的 `effortLabel` 条件渲染）。
-                      // 图标用 `slidersTwo` 而不是模型那枚 `database`：
-                      // 两枚 chip 挨着，同图标会让人以为"一个选择器的两半"。
-                      if (reasoningLabel != null)
-                        _IconChip(
-                          key: const Key('composer-reasoning'),
-                          icon: 'slidersTwo',
-                          tooltip: '推理等级：$reasoningLabel',
-                          onPressed: onPickReasoning,
-                        ),
-                      // **「忙时发送」图标已移除**（2026-10-19，用户原话
-                      // "输入框下的忙时发送行为没必要吧，设置中有，这个也不经常
-                      // 更换设置，占位置"）：它是**装完就不动的偏好**，而设置页
-                      // 「通用」里一直有同一选择（`settings_page.dart` 的发送模式行）。
-                      // 运行时要改也有出路：发送键在 running 且没草稿时是**停止**键，
-                      // 有草稿时 tooltip 直接说"排队发送 / 插话发送"——
-                      // 当前模式看得见，不必再占一颗 34px 的图标位。
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 6),
-                // 右侧**只有**发送键（运行中且没草稿时它是**停止**键）。
-                _SendButton(
-                  key: const Key('composer-primary'),
-                  // **停止键不受"空草稿"门限**：它的启用判据是"有没有停止出口"
-                  // （照 Web 的 `primaryDisabled = primaryStops ? stop === undefined
-                  // : empty || disabled || …`，`InputBar.tsx:325`）——
-                  // 否则运行中正想停的时候，那颗键永远是灰的。
-                  enabled: stops || canSend,
-                  sending: sending,
-                  stops: stops,
-                  // tooltip 里带当前发送模式（排队 / 插话）：**模式只在设置页改**，
-                  // 而行控区那颗图标已移除（2026-10-19，用户原话"设置中有，
-                  // 不经常更换，占位置"）。长按/无障碍时用户仍要知道这句话会怎样，
-                  // 而 tooltip 是它唯一的出口。
-                  tooltip: stops
-                      ? '停止'
-                      : running
-                      ? (sendMode == SendMode.steer ? '插话发送' : '排队发送')
-                      : '发送',
-                  onPressed: stops ? (onStop ?? onSend) : onSend,
+                    ),
+                    const SizedBox(width: 6),
+                    // 右侧**只有**发送键（运行中且没草稿时它是**停止**键）。
+                    _SendButton(
+                      key: const Key('composer-primary'),
+                      // **停止键不受"空草稿"门限**：它的启用判据是"有没有停止出口"
+                      // （照 Web 的 `primaryDisabled = primaryStops ? stop === undefined
+                      // : empty || disabled || …`，`InputBar.tsx:325`）——
+                      // 否则运行中正想停的时候，那颗键永远是灰的。
+                      enabled: stops || canSend,
+                      sending: sending,
+                      stops: stops,
+                      // tooltip 里带当前发送模式（排队 / 插话）：**模式只在设置页改**，
+                      // 而行控区那颗图标已移除（2026-10-19，用户原话"设置中有，
+                      // 不经常更换，占位置"）。长按/无障碍时用户仍要知道这句话会怎样，
+                      // 而 tooltip 是它唯一的出口。
+                      tooltip: stops
+                          ? '停止'
+                          : running
+                          ? (sendMode == SendMode.steer ? '插话发送' : '排队发送')
+                          : '发送',
+                      onPressed: stops ? (onStop ?? onSend) : onSend,
+                    ),
+                  ],
                 ),
               ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1044,14 +1060,418 @@ String? slashQueryOf(String text) {
   return body;
 }
 
+/// 候选面板的高度上限（DSH 的设计上限：`MenuView.tsx:28` 的 `MAX_HEIGHT = 400`）。
+///
+/// 真正画多高由调用方给（页面按"输入卡上方真正剩下的空间"算，见 `chat_page.dart`
+/// 的 `_BottomBudget`）。桌面的 `TOP_MARGIN = 84`（会话头部 76 + 8，`MenuView.tsx:35`）
+/// **不搬** —— 那是桌面头部的尺寸，手机上可用高度是页面算出来的。
+const double kSuggestionPanelMax = 400;
+
+/// 面板上的一行（`@` 的行与 `/` 的行**同一个形状**，区别只在数据与回调）。
+///
+/// 形状照宿主 `MenuView.tsx:161-213` 的 `.item`：图标 → 名字 → 右侧说明 → 目录行的
+/// chevron。**没有别名列**：那一列是给"本地化标题 + 命令名"准备的（`:187-189`），
+/// 我们的行没有本地化标题，摆一列别名只是重复。
+class _PanelRow {
+  const _PanelRow({
+    required this.key,
+    required this.name,
+    this.icon,
+    this.description = '',
+    this.drill = false,
+    this.section,
+    this.onTap,
+    this.onDrill,
+  });
+
+  /// 行自己的 key（候选**允许重名**：真机 40 个同名会话把 `kind+label` 撞成过红屏，
+  /// 所以调用方给的 key 里带下标）。
+  final Key key;
+
+  /// 行首图标（`DshIcons` 里的名字）；`null` = 这一行没有图标列。
+  final String? icon;
+
+  final String name;
+
+  /// 右侧说明（截断、右对齐）；空串 = 这一行不摆说明。
+  final String description;
+
+  /// 这一行末尾有 drill 的 chevron（只有目录行有）。
+  final bool drill;
+
+  /// 分组标题；与上一行相同就不重复画。
+  final String? section;
+
+  /// 点**行体** = 落定（插入 + 关面板）。
+  final VoidCallback? onTap;
+
+  /// 点**行尾 chevron** = drill（插进更深一层 + **面板不关**）。
+  final VoidCallback? onDrill;
+}
+
+/// 候选面板本体：浮在输入卡上方的一个列表（照 DSH 的 `MenuSurface` + `.viewport`）。
+///
+/// 三件事**只在这里表达**：
+///
+/// 1. **行高与内边距**（`.item { min-height:34; padding:6px 8px; gap:6 }`）；
+/// 2. **面板自己滚**，不是把输入栏那一列撑开（真机：没有上限时整屏 overflow）；
+/// 3. **面包屑钉在列表上方**（`MenuView.tsx:95-128`：`crumbs` 在 `.viewport` 外面），
+///    跟着列表一起滚会失去"回去的路"的意义。
+///
+/// Note: 为什么是行 + 分组 + drill 而不是胶囊 / 内联树 ——
+/// 见 `.agents/notes/implemented/2026-10-25-composer-panel-rows-drill-crumbs.md`
+class _SuggestionPanel extends StatelessWidget {
+  const _SuggestionPanel({
+    super.key,
+    required this.rows,
+    required this.maxHeight,
+    this.crumbs,
+    this.onCrumb,
+    this.pending = false,
+  });
+
+  final List<_PanelRow> rows;
+
+  /// 面板最多占的高度（超出就自己滚）。
+  final double maxHeight;
+
+  /// drill 之后的面包屑；`null` = 不画（根层 / 手打路径）。
+  final List<AtCrumb>? crumbs;
+
+  final void Function(AtCrumb crumb)? onCrumb;
+
+  /// pending：给两行骨架（`MenuView.tsx:147-153` 的 `skeletonRow`），不是一句"正在找…"。
+  final bool pending;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    final trail = crumbs;
+    return Padding(
+      // 与卡片之间留 4px（DSH：`bottom: calc(100% + 4px)`）。
+      padding: const EdgeInsets.only(bottom: 4),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: maxHeight),
+        child: Container(
+          // MenuSurface：浮层（`padding:4px`、`radius lg`、`elevation-prominent`）。
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: c.menu,
+            borderRadius: BorderRadius.circular(DshRadius.lg),
+            // `--dsw-elevation-prominent`（`gradient-shadow-text.css`）：
+            //   0 0 0 0.5px <border-l1>, 0 3px 8px rgba(0,0,0,0.04), 0 0 20px rgba(0,0,0,0.05)
+            boxShadow: [
+              BoxShadow(color: c.borderL1, spreadRadius: 0.5),
+              const BoxShadow(
+                color: Color(0x0A000000),
+                blurRadius: 8,
+                offset: Offset(0, 3),
+              ),
+              const BoxShadow(color: Color(0x0D000000), blurRadius: 20),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (trail != null && trail.isNotEmpty)
+                _PanelCrumbs(crumbs: trail, onCrumb: onCrumb),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: pending
+                          ? const [
+                              _PanelSkeletonRow(width: 0.32),
+                              _PanelSkeletonRow(width: 0.48),
+                            ]
+                          : _items(constraints.maxWidth),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 分组 + 行（宿主 `MenuView.tsx:154-217`：section 变了才画标题，第一行也画）。
+  List<Widget> _items(double width) {
+    // 名字列最多占 40%（`.itemName { max-width: 40% }`）—— 超出走省略号，
+    // 说明那一列永远贴同一个右边缘，名字才读成一列。
+    final nameMax = width * 0.4;
+    final children = <Widget>[];
+    String? section;
+    for (final row in rows) {
+      final next = row.section;
+      if (next != null && next != section) {
+        section = next;
+        children.add(
+          _PanelSection(
+            key: ValueKey<String>('section-$next'),
+            label: next,
+            first: children.isEmpty,
+          ),
+        );
+      }
+      children.add(_PanelItem(key: row.key, row: row, nameMaxWidth: nameMax));
+    }
+    return children;
+  }
+}
+
+/// 分组标题（`.sectionTitle`：11px / 500 / label-tertiary / `min-height:23`）。
+class _PanelSection extends StatelessWidget {
+  const _PanelSection({super.key, required this.label, required this.first});
+
+  final String label;
+
+  /// 第一组不需要上边距（`.sectionTitle:not(:first-child) { margin-top: 3px }`）。
+  final bool first;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return Container(
+      constraints: const BoxConstraints(minHeight: 23),
+      padding: EdgeInsets.fromLTRB(8, first ? 5 : 8, 8, 2),
+      alignment: Alignment.centerLeft,
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
+          color: c.labelTertiary,
+        ),
+      ),
+    );
+  }
+}
+
+/// 面板上的一行（`.item`）：图标 + 名字 + 右侧说明 + 目录行的 chevron。
+class _PanelItem extends StatelessWidget {
+  const _PanelItem({super.key, required this.row, required this.nameMaxWidth});
+
+  final _PanelRow row;
+  final double nameMaxWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    final icon = row.icon;
+    return Material(
+      // 行本身透明：浮层的底色由面板给（`.item { background: transparent }`）。
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(DshRadius.sm),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: row.onTap,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 34),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            children: [
+              if (icon != null) ...[
+                SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: Center(
+                    child: DshIcon(icon, size: 14, color: c.labelSecondary),
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
+              ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: nameMaxWidth),
+                child: Text(
+                  row.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, color: c.labelPrimary),
+                ),
+              ),
+              if (row.description.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    row.description,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.right,
+                    style: TextStyle(fontSize: 12, color: c.labelTertiary),
+                  ),
+                ),
+              ] else
+                const Spacer(),
+              if (row.drill) _PanelDrill(onPressed: row.onDrill),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 目录行末尾的 chevron（`.drill`：桌面是 18×18 的方块，点它 drill 而不是落定）。
+///
+/// **触达区比宿主的大**：桌面是鼠标、手机是手指。这里给 30×22 —— 高度不超过行高
+/// （34）减去上下 padding（12）的内容区，于是行高仍是 34；点偏一点落到行体上，
+/// 结果是"把这个目录整个插进去并关面板"，可撤销、不丢输入。
+class _PanelDrill extends StatelessWidget {
+  const _PanelDrill({required this.onPressed});
+
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return Semantics(
+      button: true,
+      label: '进入目录',
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(DshRadius.xs),
+        child: SizedBox(
+          width: 30,
+          height: 22,
+          child: Center(
+            child: DshIcon('chevronRight', size: 12, color: c.labelTertiary),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 面包屑（`.crumbs`）：钉在列表上方，根 → 各段，最后一段不可点。
+///
+/// **只在 drill 之后出现**（宿主 `crumbsFor` 的第一条，见 `atCrumbsOf`）。
+class _PanelCrumbs extends StatelessWidget {
+  const _PanelCrumbs({required this.crumbs, this.onCrumb});
+
+  final List<AtCrumb> crumbs;
+  final void Function(AtCrumb crumb)? onCrumb;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(3, 3, 3, 5),
+      margin: const EdgeInsets.only(bottom: 2),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: c.borderL1, width: 0.5)),
+      ),
+      child: Wrap(
+        spacing: 2,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          for (var index = 0; index < crumbs.length; index += 1) ...[
+            if (index > 0)
+              DshIcon('chevronRight', size: 12, color: c.labelTertiary),
+            _PanelCrumb(
+              key: ValueKey<String>('crumb-$index'),
+              crumb: crumbs[index],
+              onTap: crumbs[index].current
+                  ? null
+                  : () => onCrumb?.call(crumbs[index]),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// 一截面包屑（`.crumb`：11px、`padding: 2px 5px`、`radius sm`）。
+class _PanelCrumb extends StatelessWidget {
+  const _PanelCrumb({super.key, required this.crumb, this.onTap});
+
+  final AtCrumb crumb;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    // 列表已经停在这一层 ⇒ 它读作标签，不是入口（`.crumbCurrent`）。
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(DshRadius.sm),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        child: Text(
+          crumb.label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 11,
+            color: crumb.current ? c.labelPrimary : c.labelTertiary,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// pending 的骨架行（`.skeletonRow` + `.skeletonBar`：`min-height:34`、`padding:6px 8px`）。
+///
+/// 宿主是 2s 的呼吸（`@keyframes dsh-menu-skeleton`）。这里做成**一次性淡入**：
+/// 面板一出现骨架就到位，不需要为一段可能只活 150 ms 的等待维持一个无限动画
+/// （无限动画会让 `pumpAndSettle` 的用例永远等不到静止）。
+class _PanelSkeletonRow extends StatelessWidget {
+  const _PanelSkeletonRow({required this.width});
+
+  /// 占行宽的比例（宿主两行是 32% / 48%）。
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 160),
+      curve: Curves.easeOutCubic,
+      builder: (context, t, child) => Opacity(opacity: t, child: child),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 34),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        alignment: Alignment.centerLeft,
+        child: FractionallySizedBox(
+          widthFactor: width,
+          child: Container(
+            height: 18,
+            decoration: BoxDecoration(
+              color: c.layer3,
+              borderRadius: BorderRadius.circular(DshRadius.xs),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// `@` 候选：文件 / 目录 + 跨会话引用。
 ///
-/// **与 `/` 同一条缝**（都读 `controller`、都画在输入框上方一行），区别只有两点：
+/// **与 `/` 同一条缝**（都读 `controller`、都画在输入卡上方），区别只有两点：
 ///
 /// 1. 候选要**问电脑侧**（`refs.files` / `refs.sessions`），所以有去抖：
 ///    **150 ms**（通道层参数，描述的是我们这条管道，不是业务语义）。
 /// 2. 三态各是一句话：列表 / 空（"没有匹配"）/ 失败（**电脑侧给的原因**）。
 ///    失败画成空列表会让用户以为自己路径打错了。
+///
+/// ## drill：目录行有两个动作
+///
+/// **点行体** = 落定：把 `@path/` 填进去并关面板；**点行尾 chevron** = drill：
+/// 同样填 `@path/`，但**面板不关**、接着问"这个目录下面有什么"。
+/// 这是宿主的原样（`ui-reference/src/client/index.ts:131-149`）：目录行的"落定选择"
+/// 把目录本身作为引用插入，而 `action: 'drill'` 回 `{text: mention, continue: true}`。
+///
+/// drill 之后出现**面包屑**（`crumbsFor`，`:199-226`）：手打的路径自带上下文
+/// （就在草稿里），而 drill 把用户正在读的文本换成了更深的一段，欠他一条回去的路。
 ///
 /// **不缓存、不预取**：候选随工作目录与所打的字变化，存一份就是第二个真值源。
 /// **新按键作废在飞的答复**：通道没有"取消这次请求"（契约 §10 没有取消语义），
@@ -1060,11 +1480,13 @@ class _AtSuggestions extends StatefulWidget {
   const _AtSuggestions({
     required this.controller,
     required this.enabled,
+    required this.panelMaxHeight,
     required this.onQuery,
   });
 
   final TextEditingController controller;
   final bool enabled;
+  final double panelMaxHeight;
   final Future<MentionQueryResult> Function(String query) onQuery;
 
   @override
@@ -1085,6 +1507,13 @@ class _AtSuggestionsState extends State<_AtSuggestions> {
 
   /// 刚选进去的那一段 token：它还在就不弹面板（否则选完立刻又弹回来）。
   String? _chosen;
+
+  /// 这一屏是**钻进来的**（drill / 面包屑），不是手打的。
+  ///
+  /// 它决定面包屑画不画（宿主 `HeaderRequest.drilled`，`types.ts:93-100`：
+  /// "survives further typing and clears when the menu closes"）——
+  /// 所以只在面板关掉时清，打字不清。
+  bool _drilled = false;
 
   List<AtCandidate> _rows = const [];
   String? _error;
@@ -1125,28 +1554,41 @@ class _AtSuggestionsState extends State<_AtSuggestions> {
         (_loading || _rows.isNotEmpty || _error != null)) {
       return;
     }
+    _request(trigger.query);
+  }
+
+  /// 起一次查询。
+  ///
+  /// [immediate] = 不等去抖：drill 与面包屑是**用户点出来的**，不是打字，
+  /// 等 150 ms 只会让"进去了"这件事看起来慢半拍。
+  void _request(String query, {bool immediate = false}) {
     _timer?.cancel();
     _epoch += 1;
     final epoch = _epoch;
-    final query = trigger.query;
     setState(() {
       _query = query;
       _rows = const [];
       _error = null;
       _loading = true;
     });
-    _timer = Timer(_debounce, () => _run(query, epoch));
+    if (immediate) {
+      unawaited(_run(query, epoch));
+    } else {
+      _timer = Timer(_debounce, () => _run(query, epoch));
+    }
   }
 
   void _hide() {
     _timer?.cancel();
-    if (_query == null) return;
+    if (_query == null && !_drilled) return;
     _epoch += 1;
     setState(() {
       _query = null;
       _rows = const [];
       _error = null;
       _loading = false;
+      // 面板一关，drill 这件事就结束了（宿主同一条：`drilled` 不跨菜单实例）。
+      _drilled = false;
     });
   }
 
@@ -1160,18 +1602,38 @@ class _AtSuggestionsState extends State<_AtSuggestions> {
     });
   }
 
-  void _choose(AtCandidate candidate) {
-    final next = insertAtMention(widget.controller.text, candidate);
+  /// 把 `@…` 那一段 token 换成 [text]。
+  ///
+  /// [keepOpen] = drill：菜单不关、输入框里是新的一段查询（宿主 `continue: true`）。
+  void _replaceToken(String text, {required bool keepOpen}) {
+    final next = insertAtToken(widget.controller.text, text);
     final trigger = atTriggerOf(next);
-    // **先记住再改文本**：`controller.value` 的赋值会同步触发监听器，
-    // 那时 `_chosen` 必须已经是新值，否则面板会立刻为同一段 token 再查一次。
-    _chosen = trigger == null ? null : next.substring(trigger.at);
-    _hide();
+    if (keepOpen) {
+      _drilled = true;
+      // **不设 `_chosen`**：drill 之后菜单要继续跟着新查询走。
+      _chosen = null;
+      // 先按新查询起一次请求，再改文本 —— 改文本会同步触发监听器，
+      // 那时 `_query` 必须已经是新值，否则会再排一次 150 ms 后的重复查询。
+      _request(trigger?.query ?? '', immediate: true);
+    } else {
+      // **先记住再改文本**：`controller.value` 的赋值会同步触发监听器，
+      // 那时 `_chosen` 必须已经是新值，否则面板会立刻为同一段 token 再查一次。
+      _chosen = trigger == null ? null : next.substring(trigger.at);
+      _hide();
+    }
     widget.controller.value = TextEditingValue(
       text: next,
       selection: TextSelection.collapsed(offset: next.length),
     );
   }
+
+  /// 落定：插进去并关面板。
+  void _choose(AtCandidate candidate) =>
+      _replaceToken(candidate.insertion, keepOpen: false);
+
+  /// drill：插进去，**面板不关**。
+  void _drill(AtCandidate candidate) =>
+      _replaceToken(candidate.insertion, keepOpen: true);
 
   @override
   Widget build(BuildContext context) {
@@ -1186,14 +1648,7 @@ class _AtSuggestionsState extends State<_AtSuggestions> {
         color: c.labelSecondary,
       );
     }
-    if (_loading) {
-      return _AtStatusLine(
-        key: const ValueKey<String>('at-loading'),
-        text: '正在找…',
-        color: c.labelCaption,
-      );
-    }
-    if (_rows.isEmpty) {
+    if (!_loading && _rows.isEmpty) {
       return _AtStatusLine(
         key: const ValueKey<String>('at-empty'),
         text: '没有匹配的文件或会话',
@@ -1202,31 +1657,32 @@ class _AtSuggestionsState extends State<_AtSuggestions> {
     }
     // **候选可以很多**（40 个同名会话那种），所以面板要有上限并自己滚：
     // 不设上限时它会把输入栏这一列撑爆（真机：`Duplicate keys` 之后整屏红 + overflow）。
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 2),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 132),
-        child: SingleChildScrollView(
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              // key 里带**下标**：候选的标签不唯一（同名会话、同名目录都可能出现在
-              // 同一批里），只拿 `kind + label` 做 key 会撞 —— 真机 40 个同名会话
-              // 直接 `Duplicate keys found`。
-              for (var index = 0; index < _rows.length; index += 1)
-                _SuggestionChip(
-                  key: ValueKey<String>(
-                    'at-$index-${_rows[index].kind.name}-${_rows[index].label}',
-                  ),
-                  label: _rows[index].label,
-                  color: c,
-                  onTap: () => _choose(_rows[index]),
-                ),
-            ],
+    return _SuggestionPanel(
+      key: const ValueKey<String>('at-panel'),
+      maxHeight: widget.panelMaxHeight,
+      pending: _loading,
+      crumbs: atCrumbsOf(query, drilled: _drilled),
+      onCrumb: (crumb) => _replaceToken(crumb.insertion, keepOpen: true),
+      rows: [
+        for (var index = 0; index < _rows.length; index += 1)
+          _PanelRow(
+            // key 里带**下标**：候选的标签不唯一（同名会话、同名目录都可能出现在
+            // 同一批里），只拿 `kind + label` 做 key 会撞 —— 真机 40 个同名会话
+            // 直接 `Duplicate keys found`。
+            key: ValueKey<String>(
+              'at-$index-${_rows[index].kind.name}-${_rows[index].label}',
+            ),
+            icon: _rows[index].icon,
+            name: _rows[index].displayName,
+            // 说明 = 父目录。**drill 之后不重复**：面包屑已经说了在哪一层
+            // （宿主 `withLocation = crumbsFor(...) === undefined`，`index.ts:100-102`）。
+            description: _drilled ? '' : _rows[index].parent,
+            drill: _rows[index].kind == AtCandidateKind.directory,
+            section: _rows[index].section,
+            onTap: () => _choose(_rows[index]),
+            onDrill: () => _drill(_rows[index]),
           ),
-        ),
-      ),
+      ],
     );
   }
 }
@@ -1255,96 +1711,66 @@ class _AtStatusLine extends StatelessWidget {
   }
 }
 
-/// 候选菜单：一条命令一枚胶囊，点了就把 `/名字 ` 填进输入框。
+/// `/` 候选菜单：一条命令一行，点了就把 `/名字 ` 填进输入框。
 ///
-/// 它读 `controller`（`ValueNotifier<TextEditingValue>`），所以输入一个字就会重算，
-/// 不需要上层 `setState` —— 输入栏是 `StatelessWidget`，让父层为每个按键重建
-/// 会把整页统计条也带着重画。
+/// 名单**只来自电脑侧**（`repo.info.commands`，契约 §5.7）：手机侧不抄第二份 ——
+/// 抄了就是同一个事实两处表达，电脑侧加一条命令这里永远看不到。空表（老连接器）
+/// = 不出菜单，不是"没有命令"。
+///
+/// 行的形状与 `@` **同一个**（`_SuggestionPanel`）：名字 + 右侧说明。区别只有数据：
+/// 命令的说明来自宿主的命令定义（`CommandDefinition.description`），没有就不画那一列。
+/// **没有图标**：宿主的图标来自客户端内置的"命令脸"
+/// （`ui-commands/src/client/presentation.ts:54-62`），手机没有那张表，
+/// 凭空给每行配一枚图标就是编数据。
 class _SlashSuggestions extends StatelessWidget {
   const _SlashSuggestions({
     required this.controller,
     required this.commands,
     required this.enabled,
+    required this.panelMaxHeight,
   });
 
   final TextEditingController controller;
-  final List<String> commands;
+  final List<SlashCommand> commands;
   final bool enabled;
+  final double panelMaxHeight;
 
   @override
   Widget build(BuildContext context) {
     if (!enabled || commands.isEmpty) return const SizedBox.shrink();
-    final c = context.dshColors;
     return ValueListenableBuilder<TextEditingValue>(
       valueListenable: controller,
       builder: (context, value, _) {
         final query = slashQueryOf(value.text);
         if (query == null) return const SizedBox.shrink();
-        // 名单是电脑侧给的，可能带或不带前导 `/`：比对时统一去掉。
+        // 名单是电脑侧给的，解析时已统一去掉前导 `/`（`parseSlashCommands`），
+        // 这里只按前缀筛。
         final matched = [
-          for (final name in commands)
-            if (name.replaceFirst('/', '').startsWith(query))
-              name.replaceFirst('/', ''),
+          for (final command in commands)
+            if (command.name.startsWith(query)) command,
         ];
         if (matched.isEmpty) return const SizedBox.shrink();
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 2),
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              for (final name in matched)
-                _SuggestionChip(
-                  key: ValueKey<String>('slash-$name'),
-                  label: '/$name',
-                  color: c,
-                  onTap: () {
-                    final text = '/$name ';
-                    controller.value = TextEditingValue(
-                      text: text,
-                      selection: TextSelection.collapsed(offset: text.length),
-                    );
-                  },
-                ),
-            ],
-          ),
+        return _SuggestionPanel(
+          key: const ValueKey<String>('slash-panel'),
+          maxHeight: panelMaxHeight,
+          rows: [
+            for (final command in matched)
+              _PanelRow(
+                key: ValueKey<String>('slash-${command.name}'),
+                name: '/${command.name}',
+                description: command.description ?? '',
+                section: kSectionCommands,
+                onTap: () {
+                  final text = '/${command.name} ';
+                  controller.value = TextEditingValue(
+                    text: text,
+                    selection: TextSelection.collapsed(offset: text.length),
+                  );
+                },
+              ),
+          ],
         );
       },
-    );
-  }
-}
-
-/// 面板上的一枚候选胶囊（`/` 的命令与 `@` 的文件/会话共用同一个形状）。
-class _SuggestionChip extends StatelessWidget {
-  const _SuggestionChip({
-    super.key,
-    required this.label,
-    required this.color,
-    required this.onTap,
-  });
-
-  final String label;
-  final DshColorTokens color;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: color.layer2,
-      borderRadius: BorderRadius.circular(DshRadius.sm),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 30, minWidth: 44),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          alignment: Alignment.center,
-          child: Text(
-            label,
-            style: TextStyle(fontSize: 12, color: color.labelPrimary),
-          ),
-        ),
-      ),
     );
   }
 }

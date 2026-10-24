@@ -59,6 +59,73 @@ SendRoute sendRouteOf({required String text, required bool isSubagent}) {
   return text.trim().startsWith('/') ? SendRoute.command : SendRoute.prompt;
 }
 
+/// 候选菜单里 `/` 那一组的分组标题。
+///
+/// 宿主 zh 词典的原话（`ui-input-trigger/src/client/locales.ts` 的 `'command'`）——
+/// 不另起一个中文（"命令"/"指令"两种说法并存就是两处真值）。
+const String kSectionCommands = '指令';
+
+/// 候选菜单里的一条命令（`repo.info.commands`）。
+///
+/// **说明来自宿主的命令定义**（`CommandDefinition.description`，
+/// `interaction/commands/src/index.ts:79`）—— 连接器从 `ctx.commands` 读，手机不抄：
+/// 抄一份文案，DSH 改词时我们这边永远看不到。
+///
+/// 说明**可以为空**：老连接器只发名字数组（`['goal','plan']`），新连接器才带说明。
+/// 两种形状手机都收（见 [parseSlashCommands]），空的就只画名字那一列 —— 不是画一个
+/// 空说明占位。
+class SlashCommand {
+  const SlashCommand({required this.name, this.description});
+
+  /// 命令名（**不带**前导 `/`，宿主的 `CommandDefinition.name` 同形）。
+  final String name;
+
+  /// 宿主定义里的那句话；`null` = 这台电脑没给。
+  final String? description;
+}
+
+/// 解 `repo.info.commands`，**两种形状都收**。
+///
+/// - 新连接器：`[{name, description?}, …]`；
+/// - 老连接器：`['goal', 'plan']`（只有名字）。
+///
+/// 两种都收是**兼容**，不是两个真值：名单本身永远来自电脑侧（白名单只有一处，
+/// `connector/src/handlers.ts` 的 `MOBILE_COMMANDS`），手机只决定"这一行画不画说明"。
+/// 认不出的条目**跳过**（不是编一个名字）：一条画不对的命令点下去会跑错东西。
+List<SlashCommand> parseSlashCommands(Object? raw) {
+  if (raw is! List) return const <SlashCommand>[];
+  final rows = <SlashCommand>[];
+  for (final entry in raw) {
+    if (entry is String) {
+      final name = _commandName(entry);
+      if (name != null) rows.add(SlashCommand(name: name));
+      continue;
+    }
+    if (entry is Map) {
+      final name = _commandName(entry['name']);
+      if (name == null) continue;
+      final description = entry['description'];
+      rows.add(
+        SlashCommand(
+          name: name,
+          description: description is String && description.isNotEmpty
+              ? description
+              : null,
+        ),
+      );
+    }
+  }
+  return rows;
+}
+
+/// 去掉前导 `/`（宿主的名单自己不带，但连接器是"原样过线"，
+/// 两种写法都会出现在线上）。空串 ⇒ `null`。
+String? _commandName(Object? raw) {
+  if (raw is! String) return null;
+  final name = raw.startsWith('/') ? raw.substring(1) : raw;
+  return name.isEmpty ? null : name;
+}
+
 /// 一条命令的结论（连接器 `command.execute` / `permission.switch` 的应答）。
 ///
 /// 两个方法**同一个形状**：都是 `commands.execute` 的结算

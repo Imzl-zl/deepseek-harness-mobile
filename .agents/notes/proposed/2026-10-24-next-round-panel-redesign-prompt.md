@@ -1,5 +1,12 @@
 # 下一轮提示词：`@` / `/` 候选面板重做（照宿主列表形状）+ 真机尾巴
 
+> **已全部落地（2026-10-25）**：A/B/C 三件各有笔记，D（真机尾巴）**未做**。
+> - A 面板形状：`.agents/notes/implemented/2026-10-25-composer-panel-rows-drill-crumbs.md`
+> - B 命令说明：`.agents/notes/implemented/2026-10-25-command-descriptions-from-host.md`
+> - C 接管卡溢出：`.agents/notes/implemented/2026-10-25-bottom-budget-and-takeover-card.md`
+>
+> 这张开工单只留作**当初的需求原文**，不再是待办。
+
 > 用法：新会话整段复制粘贴（或直接读这个文件）。
 > **这一轮写代码**。方向已由用户定案（"居中的胶囊丑、要目录式/父子级"），不要再论证"要不要做"，只需论证"怎么照宿主做对"。
 > 预期成本：**0 次模型请求**；真机只在最后验观感（可选，约 1 个模型请求）。
