@@ -38,7 +38,8 @@ const GOLDEN = new URL('./fixtures/wire-shapes.json', import.meta.url)
 const UPDATE = process.env['UPDATE_WIRE_SHAPES'] === '1'
 
 /**
- * 一个方法的采样清单：`params` 就是手机真正会发的参数（形状出处写在各方法旁边）。
+ * 一条样本：`params` 是手机真正会发的参数；`context` 是方法面在分发时注入的那几样
+ * （写操作的 `requestId` 就在那里，见 `src/handlers.ts:581`）。
  *
  * **`session.list` 与 `session.projections` 是同一个名字的两种形状**：
  * - `session.list` 行里的 `.projections` 是**信封** `{kind, asOfSeq, values}`
@@ -48,13 +49,62 @@ const UPDATE = process.env['UPDATE_WIRE_SHAPES'] === '1'
  *
  * 读错的表现是**静默空值**，所以两条金样都必须收 —— 只收一条就判不出"谁读错了层"。
  */
-const SAMPLED_METHODS = ['session.list', 'session.projections'] as const
+interface WireSample {
+  readonly params?: Record<string, unknown>
+  /** 写操作要求顶层 `requestId`（`handlers.ts:581-584`）。 */
+  readonly context?: { readonly requestId: string }
+}
+
+const SAMPLED_METHODS = [
+  'session.list',
+  'session.projections',
+  'session.create',
+  'session.select-model',
+  'session.modelCatalog',
+  'session.cancel',
+  'session.updateQueue',
+  'session.prompt',
+  'subagent.prompt',
+] as const
 
 type SampledMethod = (typeof SAMPLED_METHODS)[number]
 
-const SAMPLES: Record<SampledMethod, readonly Record<string, unknown>[]> = {
+const SAMPLES: Record<SampledMethod, readonly WireSample[]> = {
   'session.list': [{}],
-  'session.projections': [{ sid: sidOf('dsh-4') }],
+  'session.projections': [{ params: { sid: sidOf('dsh-4') } }],
+  // 写操作：三个可选键各有"给"与"不给"两种，先收"给"的那一种。
+  'session.create': [{ params: { agentPreset: 'standard' } }],
+  'session.select-model': [
+    {
+      params: {
+        sid: sidOf('dsh-1'),
+        provider: 'deepseek',
+        model: 'deepseek-reasoner',
+        reasoningEffort: 'high',
+      },
+    },
+  ],
+  'session.modelCatalog': [{}],
+  'session.cancel': [{ params: { sid: sidOf('dsh-1') } }],
+  'session.updateQueue': [
+    {
+      params: { sid: sidOf('dsh-1'), itemId: 'q-1', action: { kind: 'remove' } },
+      context: { requestId: 'q-1' },
+    },
+  ],
+  'session.prompt': [
+    {
+      params: { sid: sidOf('dsh-1'), content: [{ type: 'text', text: '你好' }], mode: 'queue' },
+      context: { requestId: 'p-1' },
+    },
+  ],
+  // 子会话唯一的写入口：目标必须是**清单里的子会话**（`handlers.ts:809-817` 会拒根会话）。
+  'subagent.prompt': [
+    {
+      params: { sid: sidOf('dsh-2'), content: [{ type: 'text', text: '继续' }], mode: 'steer' },
+      context: { requestId: 'p-2' },
+    },
+  ],
 }
 
 /** **线上那一层**：丢掉 `undefined`、规整成 JSON 标量，再比较。 */
@@ -84,8 +134,12 @@ async function collect(): Promise<Record<string, unknown[]>> {
       `${method} 没挂上 —— 没有它就没有样本（检查 fixtureHandlers 的依赖给了没有）`,
     )
     const collected: unknown[] = []
-    for (const params of SAMPLES[method]) {
-      collected.push(onWire(await handler(params, undefined as never)))
+    for (const sample of SAMPLES[method]) {
+      const result = await handler(
+        sample.params ?? {},
+        (sample.context ?? undefined) as never,
+      )
+      collected.push(onWire(result))
     }
     out[method] = collected
   }

@@ -52,7 +52,26 @@ const SID_OF: Record<string, string> = {
   'dsh-2': 'sid_1122334455667788',
   'dsh-3': 'sid_2233445566778899',
   'dsh-4': 'sid_33445566778899aa',
+  'dsh-new': 'sid_99aabbccddeeff00',
 }
+
+/** 一份确定性的模型目录（形状照 DSH 的 `buildModelCatalog`：
+ *  `packages/api/session-controller/src/catalog.ts:20-72`）。 */
+export const MODEL_CATALOG_VALUE = {
+  default: { provider: 'deepseek', model: 'deepseek-chat' },
+  routableProviders: ['deepseek'],
+  groups: [
+    {
+      id: 'deepseek',
+      name: 'DeepSeek',
+      models: [
+        { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+        { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', reasoning: [{ id: 'high', name: 'High' }] },
+      ],
+    },
+  ],
+  failures: [] as { id: string; name: string; message: string }[],
+} as const
 
 /**
  * 一个子会话的**完整投影包**（`dsh-4` 的行信封与 `session.projections` 的应答共用）。
@@ -138,8 +157,15 @@ export function fixtureHandlers(
         if (promptBox !== undefined) promptBox.count += 1
         return Promise.resolve({ accepted: true })
       },
-      selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
-      create: async () => ({ sessionId: 'dsh-new' }),
+      selectModel: async (request: { provider: string; model: string }) => ({
+        // **回执照请求回声**：DSH 的 `selectModel` 回的就是"已生效的那一对"，
+        // 这里写死一对常量会让"手机读回执"的用例测不到真东西。
+        selected: { provider: request.provider, model: request.model },
+      }),
+      create: async (request: { agentPreset?: string }) => ({
+        sessionId: 'dsh-new',
+        ...(request.agentPreset === undefined ? {} : { agentPreset: request.agentPreset }),
+      }),
       updateQueue: async () => ({ accepted: true as const }),
       cancel: () => ({ accepted: true as const }),
     },
@@ -152,7 +178,7 @@ export function fixtureHandlers(
     // 这正是线上形态：`model` 由活 agent 表读，子会话不在那张表里
     // （`connector/src/dsh/models.ts` 的 `modelOf`）。
     models: {
-      catalog: async () => undefined,
+      catalog: async () => MODEL_CATALOG_VALUE,
       modelOf: (sid) =>
         sid === SID_OF['dsh-1']
           ? { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' }
@@ -199,6 +225,13 @@ export function fixtureHandlers(
     },
     ...(subscriptions === null ? {} : { jobSubscriptions: subscriptions }),
     ...(sessionSubscriptions === null ? {} : { sessionSubscriptions }),
+    // 子代理面：只用到写的一面（`subagent.prompt`）。`deliver` 回一条确定的回执，
+    // 于是那条方法的金样样本是确定的。
+    subagents: {
+      children: async () => [],
+      descendants: async () => [],
+      deliver: async () => ({ messageId: 'msg-1' }),
+    },
   })
 }
 

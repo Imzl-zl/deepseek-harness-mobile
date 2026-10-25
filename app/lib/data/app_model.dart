@@ -49,7 +49,7 @@ import '../model/turn_outline.dart';
 import '../model/usage_summary.dart';
 import '../model/workspace.dart';
 import '../model/workspace_files.dart';
-import '../wire/rpc/session.dart';
+import '../wire/rpc/session.dart' as wire;
 import 'preview_data.dart';
 import 'projection.dart';
 import 'session_store.dart';
@@ -902,7 +902,7 @@ class AppModel extends ChangeNotifier {
   /// @returns 成功与否；失败原因在 [lastError]。
   Future<bool> cancel(String sid) async {
     try {
-      await client.call<Object?>('session.cancel', {'sid': sid});
+      await wire.cancelSession(client, sid: sid);
       return true;
     } on ProtocolException catch (error) {
       _lastError = error;
@@ -943,21 +943,19 @@ class AppModel extends ChangeNotifier {
     String? text,
   }) async {
     try {
-      await client.call<Object?>(
-        'session.updateQueue',
-        {
-          'sid': sid,
-          'itemId': itemId,
-          'action': switch (kind) {
-            QueueActionKind.edit => {
-              'kind': 'edit',
-              'content': [
-                {'type': 'text', 'text': text ?? ''},
-              ],
-            },
-            QueueActionKind.remove => {'kind': 'remove'},
-            QueueActionKind.steer => {'kind': 'steer'},
+      await wire.updateQueueAction(
+        client,
+        sid: sid,
+        itemId: itemId,
+        action: switch (kind) {
+          QueueActionKind.edit => {
+            'kind': 'edit',
+            'content': [
+              {'type': 'text', 'text': text ?? ''},
+            ],
           },
+          QueueActionKind.remove => {'kind': 'remove'},
+          QueueActionKind.steer => {'kind': 'steer'},
         },
         requestId: 'q-${DateTime.now().microsecondsSinceEpoch}',
       );
@@ -1337,35 +1335,27 @@ class AppModel extends ChangeNotifier {
     final sid = _currentSid;
     if (sid == null) return null;
     try {
-      final result = await client.call<Object?>(
-        'session.select-model',
-        {
-          'sid': sid,
-          'provider': provider,
-          'model': model,
-          // 显式 `if` 而不是 null-aware element（`?key: value`）：后者的 key
-          // 取的是**值的字符串形式**而不是标识符 —— 实测展开成 `high: high`
-          // 而不是 `reasoningEffort: high`（2026-10-15 踩到）。`dart analyze`
-          // 会反过来建议改用那个语法（`use_null_aware_elements`），别听它的。
-          // ignore: use_null_aware_elements
-          if (reasoningEffort != null) 'reasoningEffort': reasoningEffort,
-        },
+      final selected = await wire.selectModel(
+        client,
+        sid: sid,
+        provider: provider,
+        model: model,
+        reasoningEffort: reasoningEffort,
         requestId: 'sel-${DateTime.now().microsecondsSinceEpoch}',
       );
-      if (_disposed || result is! Map) return null;
-      final selected = result['selected'];
-      if (selected is! Map) return null;
       // 切完立刻重拉一次清单：`session.list` 的行带 `model` 字段，
       // 而输入栏的模型名走的是它。不拉就要等下一次自然刷新才变。
-      await refreshSessions();
-      return ModelRef(
-        provider: selected['provider'] is String
-            ? selected['provider'] as String
-            : provider,
-        model: selected['model'] is String
-            ? selected['model'] as String
-            : model,
-      );
+      if (!_disposed) await refreshSessions();
+      if (_disposed) return null;
+      // **认不出回执就用刚发出去的那个值**：切模型是写操作，"我请求了 X、
+      // 回执读不出"时显示 X 比显示「未选择」更接近事实（这不是猜电脑侧的状态，
+      // 是复述我们自己的请求）。回执读不出已经计数了一次。
+      return selected ??
+          ModelRef(
+            provider: provider,
+            model: model,
+            reasoningEffort: reasoningEffort,
+          );
     } on ProtocolException catch (error) {
       _lastError = error;
       if (!_disposed) notifyListeners();
@@ -2209,7 +2199,8 @@ class AppModel extends ChangeNotifier {
   /// 方法名、参数形状与应答字段**全在 `app/lib/wire/rpc/session.dart`** ——
   /// 这一层不再知道 `session.list` 长什么样，这正是
   /// `app/tools/verify-rpc-single-caller.mjs` 那个会归零的预算在数的事。
-  Future<List<SessionSummary>> _fetchSessionRows() => loadSessionList(client);
+  Future<List<SessionSummary>> _fetchSessionRows() =>
+      wire.loadSessionList(client);
 
   /// 把一包会话行落到 [sessions]（**唯一的赋值口**）。
   ///
@@ -3022,16 +3013,9 @@ class AppModel extends ChangeNotifier {
 
   Future<void> _refreshModelCatalog() async {
     try {
-      final result = await client.call<Object?>(
-        'session.modelCatalog',
-        const {},
-      );
-      if (_disposed || result is! Map) return;
-      // **按 DSH 的真形状解析**（`{available, catalog:{default, routableProviders,
-      // groups, failures}}`，`packages/api/session-controller/src/catalog.ts:20-72`）。
-      // 认不出（含 `available: false`）就留 null —— picker 说"拿不到目录"，
-      // 而不是摆一个空列表。
-      final catalog = parseModelCatalog(result);
+      // 形状（`{available, catalog}` 与目录本体）在 `wire/rpc/session.dart` 的
+      // `readModelCatalog`；这里只知道"目录可能拿不到"。
+      final catalog = await wire.loadModelCatalog(client);
       if (catalog == _modelCatalog) return;
       _modelCatalog = catalog;
       if (!_disposed) notifyListeners();
@@ -3082,17 +3066,15 @@ class AppModel extends ChangeNotifier {
   /// `.agents/notes/implemented/2026-10-17-blank-session-hero.md`。
   Future<void> createSession({String? workspaceId, String? agentPreset}) async {
     final targetWorkspaceId = workspaceId ?? defaultNewSessionWorkspaceId;
-    final result = await client.call<Object?>('session.create', {
-      // 显式 `if` 而不是 null-aware element（`?key: value`）：后者的 key
-      // 取的是**值的字符串形式**而不是标识符（2026-10-15 踩到，
-      // 详见 `selectModel` 的注释）。`dart analyze` 会反过来建议改过去，别听。
-      // ignore: use_null_aware_elements
-      if (targetWorkspaceId != null) 'workspaceId': targetWorkspaceId,
-      // ignore: use_null_aware_elements
-      if (agentPreset != null) 'agentPreset': agentPreset,
-    }, requestId: 'new-${DateTime.now().microsecondsSinceEpoch}');
-    final sid = result is Map ? result['sid'] : null;
-    if (sid is! String || sid.isEmpty) {
+    // 方法名与参数形状（含"两个可选键只发有值的那个"）在
+    // `wire/rpc/session.dart` 的 `createSession`；`sid` 缺失会在那边计数并回 null。
+    final sid = await wire.createSession(
+      client,
+      workspaceId: targetWorkspaceId,
+      agentPreset: agentPreset,
+      requestId: 'new-${DateTime.now().microsecondsSinceEpoch}',
+    );
+    if (sid == null) {
       throw const ProtocolException(
         ErrorCode.internal,
         '新建会话没有返回 sid（电脑侧实现不对？）',

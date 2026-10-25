@@ -161,15 +161,21 @@ void main() {
       // 现在它走解码层的 `WireBad`：空列表 + 计数 1（不抛、不猜）。
       WireDiagnostics.reset();
       final client = _FakeClient(
-        onCall: (method, params) => [
-          {
-            'sid': 'sid_CCCC',
-            'updatedAt': 3000,
-            'running': false,
-            'blank': false,
-            'subagent': false,
-          },
-        ],
+        // **只坏一处**：`session.list` 回裸数组；其余方法（模型目录）给正常形状。
+        // 否则一条用例同时踩坏两个方法的形状，`badCount` 就说明不了"哪一处"。
+        onCall: (method, params) => switch (method) {
+          'session.list' => [
+            {
+              'sid': 'sid_CCCC',
+              'updatedAt': 3000,
+              'running': false,
+              'blank': false,
+              'subagent': false,
+            },
+          ],
+          'session.modelCatalog' => {'available': false},
+          _ => null,
+        },
       );
       final app = AppModel(client: client);
 
@@ -238,15 +244,20 @@ void main() {
       // 于是"挑一个 blank 会话建新聊天"这类功能安静地选错 —— 现在整行丢并计数。
       WireDiagnostics.reset();
       final client = _FakeClient(
-        onCall: (method, params) => {
-          'sessions': [
-            {
-              'sid': 'sid_legacy',
-              'updatedAt': 1,
-              'running': false,
-              'subagent': false,
-            },
-          ],
+        // **只坏一处**：会话行缺恒发键 `blank`；模型目录给正常形状（见上一条用例的注释）。
+        onCall: (method, params) => switch (method) {
+          'session.list' => {
+            'sessions': [
+              {
+                'sid': 'sid_legacy',
+                'updatedAt': 1,
+                'running': false,
+                'subagent': false,
+              },
+            ],
+          },
+          'session.modelCatalog' => {'available': false},
+          _ => null,
         },
       );
       final app = AppModel(client: client);

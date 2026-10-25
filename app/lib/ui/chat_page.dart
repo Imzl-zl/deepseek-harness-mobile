@@ -57,6 +57,8 @@ import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 import '../theme/dsh_type.dart';
+import '../wire/rpc/session.dart' show sendPrompt;
+import '../wire/rpc/subagent.dart' show sendSubagentPrompt;
 import 'chat_jumper.dart';
 import 'chat_turns.dart';
 import 'collapsible_group.dart';
@@ -559,16 +561,28 @@ class ChatPageState extends State<ChatPage> {
       // `internal: session "…" is owned by subagent routing`（2026-10-21 真机实测，
       // 手机上就是一句「发送失败」）。子会话唯一的写入口是 `subagent.prompt`
       // （契约 §5.7），参数形状与这里逐字相同。
-      final method = route == SendRoute.subagentPrompt
-          ? 'subagent.prompt'
-          : 'session.prompt';
-      await widget.app.client.call<void>(method, {
-        'sid': sid,
-        // 载荷形状由 `promptContentOf` 一处决定（纯函数，可单测）——
-        // 图片随 `{type:'image', mediaType, data}` 一起发出去。
-        'content': promptContentOf(text: text, attachments: _attachments),
-        'mode': widget.app.sendMode.wire,
-      }, requestId: requestId);
+      //
+      // 两个方法名与参数形状都在 `app/lib/wire/rpc/` 里（`session.dart` /
+      // `subagent.dart`）——界面层不再知道线上方法的形状。
+      final content = promptContentOf(text: text, attachments: _attachments);
+      final mode = widget.app.sendMode.wire;
+      if (route == SendRoute.subagentPrompt) {
+        await sendSubagentPrompt(
+          widget.app.client,
+          sid: sid,
+          content: content,
+          mode: mode,
+          requestId: requestId,
+        );
+      } else {
+        await sendPrompt(
+          widget.app.client,
+          sid: sid,
+          content: content,
+          mode: mode,
+          requestId: requestId,
+        );
+      }
       _input.clear();
       if (mounted) setState(() => _attachments.clear());
     } catch (error) {

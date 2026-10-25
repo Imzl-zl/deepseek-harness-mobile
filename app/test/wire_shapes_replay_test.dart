@@ -33,6 +33,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dsh_mobile/model/chat_item.dart';
+import 'package:dsh_mobile/model/model_catalog.dart';
 import 'package:dsh_mobile/wire/rpc/session.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -95,6 +96,15 @@ Map<String, Object?>? _valuesOf(Map<String, Object?> row) {
   if (projections is! Map) return null;
   final values = projections['values'];
   return values is Map ? values.cast<String, Object?>() : null;
+}
+
+/// 取某个方法的**第一条**样本（金样按"方法 → 样本数组"存，这里只要我们收的单形态）。
+Map<String, Object?> _sampleOf(Map<String, Object?> golden, String method) {
+  final samples = golden[method];
+  expect(samples, isA<List<Object?>>(), reason: '金样缺 $method 的样本数组');
+  final first = (samples! as List<Object?>).first;
+  expect(first, isA<Map<String, Object?>>(), reason: '$method 的样本不是对象');
+  return (first as Map).cast<String, Object?>();
 }
 
 /// 这一行覆盖了哪几种形态（名字从数据里长出来，所以不会与金样脱节）。
@@ -262,6 +272,85 @@ void main() {
     // 恒发键照旧可读 —— 这一行仍然是一条可用的会话。
     expect(summary.sid, broken['sid']);
     expect(summary.running, broken['running']);
+  });
+
+  // ---- 会话面其余方法（第 2 批 A1）：create / select-model / modelCatalog ----
+
+  test('session.create：读出的 sid 等于金样里写的那个', () {
+    final sample = _sampleOf(golden, 'session.create');
+    final reading = readCreatedSid(sample);
+    expect(reading, isA<WireOk<String>>());
+    expect((reading as WireOk<String>).value, sample['sid']);
+    expect(WireDiagnostics.badCount, 0);
+  });
+
+  test('session.create 缺 sid ⇒ WireBad + 计数 1（新建会话拿不到 sid 必须响）', () {
+    final reading = readCreatedSid({'agentPreset': 'standard'});
+    expect(reading, isA<WireBad<String>>());
+    expect(valueOrReport(reading, 'session.create'), isNull);
+    expect(WireDiagnostics.badCount, 1);
+  });
+
+  test('session.select-model：selected 里的 provider/model 等于金样', () {
+    final sample = _sampleOf(golden, 'session.select-model');
+    final selected = (sample['selected']! as Map).cast<String, Object?>();
+    final reading = readSelectedModel(sample);
+    expect(reading, isA<WireOk<ModelRef>>());
+    final ref = (reading as WireOk<ModelRef>).value;
+    expect(ref.provider, selected['provider']);
+    expect(ref.model, selected['model']);
+    expect(WireDiagnostics.badCount, 0);
+  });
+
+  test('session.select-model 的 selected 缺 model ⇒ WireBad（不许拿请求值冒充回执）', () {
+    final reading = readSelectedModel({
+      'selected': {'provider': 'deepseek'},
+    });
+    expect(reading, isA<WireBad<ModelRef>>());
+    expect(valueOrReport(reading, 'session.select-model'), isNull);
+    expect(WireDiagnostics.badCount, 1);
+  });
+
+  test('session.modelCatalog：available 为真时目录解得出，分组数与金样一致', () {
+    final sample = _sampleOf(golden, 'session.modelCatalog');
+    expect(sample['available'], isTrue);
+    final catalog = (sample['catalog']! as Map).cast<String, Object?>();
+    final groups = catalog['groups']! as List<Object?>;
+    final reading = readModelCatalog(sample);
+    expect(reading, isA<WireOk<ModelCatalog?>>());
+    final value = (reading as WireOk<ModelCatalog?>).value;
+    expect(value?.groups.length, groups.length);
+    expect(WireDiagnostics.badCount, 0);
+  });
+
+  test('session.modelCatalog：available=false 是电脑侧明说 ⇒ WireOk(null)，不计错', () {
+    final reading = readModelCatalog({'available': false});
+    expect(reading, isA<WireOk<ModelCatalog?>>());
+    expect((reading as WireOk<ModelCatalog?>).value, isNull);
+    expect(WireDiagnostics.badCount, 0, reason: '"目录拿不到"不是形状错');
+  });
+
+  test('session.modelCatalog：说 available 却不给 catalog ⇒ WireBad + 计数 1', () {
+    final reading = readModelCatalog({'available': true});
+    expect(reading, isA<WireBad<ModelCatalog?>>());
+    expect(valueOrReport(reading, 'session.modelCatalog'), isNull);
+    expect(WireDiagnostics.badCount, 1);
+  });
+
+  test('应答无人消费的四个方法：金样里钉住线上形状（回执是 {accepted:true}）', () {
+    // cancel / updateQueue / prompt / subagent.prompt：手机侧**不读应答**，
+    // 所以 App 没有 decoder（造一个没人读的 decoder 是假象）。
+    // 但金样照样收它们：连接器哪天把回执改成 `{ok:true}`，这里会红，
+    // 而那一刻正是"我们该决定要不要读它"的时候。
+    for (final method in const [
+      'session.cancel',
+      'session.updateQueue',
+      'session.prompt',
+      'subagent.prompt',
+    ]) {
+      final sample = _sampleOf(golden, method);
+      expect(sample['accepted'], isTrue, reason: '$method 的回执形状变了');
+    }
   });
 }
 

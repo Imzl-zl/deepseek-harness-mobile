@@ -107,5 +107,77 @@
         "cacheWriteTokens": 600
       }
     }
+  ],
+  "session.create": [
+    {
+      "sid": "sid_99aabbccddeeff00",
+      "agentPreset": "standard"
+    }
+  ],
+  "session.select-model": [
+    {
+      "selected": {
+        "provider": "deepseek",
+        "model": "deepseek-reasoner"
+      }
+    }
+  ],
+  "session.modelCatalog": [
+    {
+      "available": true,
+      "catalog": {
+        "default": {
+          "provider": "deepseek",
+          "model": "deepseek-chat"
+        },
+        "routableProviders": [
+          "deepseek"
+        ],
+        "groups": [
+          {
+            "id": "deepseek",
+            "name": "DeepSeek",
+            "models": [
+              {
+                "id": "deepseek-chat",
+                "name": "DeepSeek Chat"
+              },
+              {
+                "id": "deepseek-reasoner",
+                "name": "DeepSeek Reasoner",
+                "reasoning": [
+                  {
+                    "id": "high",
+                    "name": "High"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "failures": []
+      }
+    }
+  ],
+  "session.cancel": [
+    {
+      "accepted": true
+    }
+  ],
+  "session.updateQueue": [
+    {
+      "accepted": true
+    }
+  ],
+  "session.prompt": [
+    {
+      "accepted": true
+    }
+  ],
+  "subagent.prompt": [
+    {
+      "accepted": true,
+      "messageId": "msg-1"
+    }
   ]
 }

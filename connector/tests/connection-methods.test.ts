@@ -106,9 +106,10 @@ test('端到端：手机问 repo.info，电脑侧回一个可解的 res（id 对
       'session.prompt',
       'session.select-model',
       'session.updateQueue',
+      'subagent.prompt',
       'usage.summary',
     ],
-    '实现了哪些方法也由同一张表报出（`models` / `projections` 两个面给了，就多这几条）',
+    '实现了哪些方法也由同一张表报出（`models` / `projections` / `subagents` 三个面给了，就多这几条）',
   )
 })
 
