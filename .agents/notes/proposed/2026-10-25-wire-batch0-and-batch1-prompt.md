@@ -52,26 +52,40 @@
    ```
 2. **新增 `connector/tests/wire-shapes.test.ts`**：用现成装置（`createHandlers` +
    `tests/support/fake-aliases.js`，见 `connection-methods.test.ts:43-97` 的 `fixtureHandlers`）
-   调**真实 handler**，与金样 `deepStrictEqual`；不一致就红并打印 diff。
+   调**真实 handler**，与金样比较。**比较必须在"线上那一层"**：
+   比 `JSON.parse(JSON.stringify(result))`，不比 JS 对象 —— `{a: undefined}` 与 `{}`
+   在 JS 里不相等、在线上是同一件事。参照 `error-table-parity.test.ts` 的报错写法（红时打 diff）。
    **只有 `UPDATE_WIRE_SHAPES=1` 时才写盘**（快照测试的老做法），平时只比较。
    本轮只收两个方法：`session.list` / `session.projections`。
 3. **扩 `connector/tests/connection-methods.test.ts` 的假行**：`sessions.list()` 今天只有 1 行
    （`:53-64`），扩到 4 种 —— 普通 / 带 `parentSessionId` / 冷行（无 `model`、无 `projections`）/
    带完整信封 `projections`（`values` 里要有 `title` / `modelSelection` / `subagentTiming` / `tokenUsage`）。
+   **`model` 这个键要先给 `fixtureHandlers` 注入 `deps.models`** 才会出现
+   （`handlers.ts:754-759` 的判据是 `deps.models !== undefined`），今天的 `fixtureHandlers`
+   没给 —— 不补这一步，4 种行里没有一行带 `model`，"可选键"那一半等于没测。
 4. **新增 `app/test/wire_shapes_replay_test.dart`**：读
    `../connector/tests/fixtures/wire-shapes.json`，**文件不存在直接 `fail`（不许 skip）**。
    本轮只断言三件：① 文件里含 `session.list` / `session.projections` 两个键；
    ② 每条样本 `jsonDecode` 出来是 `Map`；③ 两个键的样本条数 ≥1。
    （真正的 decoder 断言是第 1 批的事 —— 这一条先把"文件在、没缩水"钉住。）
-5. **加门禁规则 `wire-rpc-single-reader`**（`app/tools/verify-platform-boundary.mjs`）：
-   名单是 `方法名 → 唯一允许出现的文件`，**本轮从空数组开始**（空名单不拦任何东西）。
-   规则形态照现有 `wire-field-single-reader`（`:129-134`）：`appliesTo` 排除目标文件、
-   `firstCodeUse` 先剥注释再匹配字面量。配 **2 条自检**：反例 = 方法名出现在 `data/`（应红）、
-   正例 = 出现在 `wire/rpc/`（应放过）。
+5. **新增 `app/tools/verify-rpc-single-caller.mjs`**（二十行）：扫 `app/lib/data/` 与 `app/lib/ui/`，
+   数 `client.call<` 的**代码**出现次数（先剥注释；正则取 `client\.call<` —— 这两个目录里
+   所有 RPC 调用都带显式泛型，而 `onEndpointsChanged?.call(...)` 那类回调不带 `<`，不会误命中），
+   要求**等于预算常量**。今天的实测预算是 **39**
+   （`data/app_model.dart` 38、`ui/chat_page.dart` 1；`core/` 里的是 client 调自己，不在范围）。
+   **它不是空名单**：从第一分钟起就禁止第 40 处。预算只许降，`why` 里写死这条纪律。
+   **不要剥注释再数**：`verify-platform-boundary.mjs` 的 `firstCodeUse` 用空格替换整段块注释，
+   会把行号冲掉（只剩匹配串）—— 对"按行报告违规位置"的脚本是致命的。
+   改成"逐行看，行首是 `///` / `//` / `*` / `/*` 就跳过"，行号就保持原样
+   （2026-10-25 实测：这两个文件里注释零命中，两种数法都得 39）。
+   输出一行（`ALL CHECKS PASSED — 39 处，预算 39`），加入 `app/tools/` 后
+   `verify-tool-paths.mjs` 扫到的脚本数 23 → 24（那条门禁自己会算出来）。
 6. **变异校验**：把金样里 `session.list` 某一行的 `running` 改成字符串 `"true"`
-   ⇒ 连接器深比较**恰好那一条**红。确认金样不是恒真，改回来。
+   ⇒ 连接器比较**恰好那一条**红。确认金样不是恒真，改回来。
 
-**第 0 批验收**：门禁全绿 + 上条变异恰好 1 红 + `git diff` 里新增 4 个文件、改 2 个。
+**第 0 批验收**：门禁全绿 + 上条变异恰好 1 红 + 预算脚本在新加一处 `client.call` 时红（临时探针，
+验完删）+ `git diff` 里新增 4 个文件（金样、连接器用例、App 回放用例、预算脚本）、改 1 个
+（`connection-methods.test.ts`）。
 
 ### 两个已经拍过的决定（别重新讨论）
 
@@ -88,8 +102,13 @@
 ### 新文件 `app/lib/wire/rpc/session.dart`
 
 ```dart
-/// `session.list` 的应答：`{sessions: [...]}`（`connector/src/handlers.ts:738-770`）。
-/// 行是连接器自造的，形状出处是连接器而不是 `packages/...`。
+/// `session.list` 的**唯一入口**：发请求 + 解码。方法名与参数形状只在这个文件里。
+/// 收 `SyncClient`（`core/sync_client.dart:140-144` 的既有端口，**不新造 RpcCaller 之类的平行抽象**）。
+/// 应答 `{sessions: [...]}`（`connector/src/handlers.ts:738-770`）；行是连接器自造的，
+/// 形状出处是连接器而不是 `packages/...`。
+Future<List<SessionSummary>> loadSessionList(SyncClient client);
+
+/// 纯解码，给回放用例与"已经拿到应答"的调用方（不收 client，用例里不启传输）。
 WireReading<List<SessionSummary>> readSessionList(Object? result);
 
 /// 一行。缺 `sid` / 恒发键 ⇒ WireBad（整行丢 + 计数）；
@@ -97,13 +116,24 @@ WireReading<List<SessionSummary>> readSessionList(Object? result);
 WireReading<SessionSummary> readSessionRow(Object? row);
 ```
 
+**调用必须跟着搬**：`_fetchSessionRows` 改成 `await loadSessionList(client)`，预算 **39 → 38**。
+不搬调用，`data/` 就仍然知道方法名与参数形状 —— 那是协议知识漏在 `wire/` 外面，
+预算也就降不下来。搬的理由是这个，不是为了迁就某条 grep。
+
 - **产出已有模型类** `SessionSummary`（`app/lib/model/chat_item.dart:778-913`），**不新造 DTO**。
+  `chat_item.dart` 不 import `wire/`（已核），所以 `wire → model` 是单向的，不成环。
   `pendingCount` / `itemCount` 是本地派生，由调用方 `copyWith` 补（`app_model.dart:2245-2253`）。
 - **必填/可选的分界看生产方式，不看名字**：`handlers.ts:739-769` 里无条件写出的键
   （`sid` / `updatedAt` / `running` / `blank` / `subagent`）缺失 = 漂了 ⇒ `WireBad`；
   被 `...(cond ? {} : …)` 包住的 4 个键缺失 = 正常 ⇒ `null`。
+- **`model` 不是恒有的键**：`handlers.ts:754-759` 只在 `deps.models` 存在且 `modelOf(sid)`
+  有值时才写。金样必须覆盖"有 `model`"与"整键缺席"两种行，否则第一版 decoder 会把冷行全丢掉。
 - **`projections` 是信封**：只断言 `values` 是 `Map`（`kind` / `asOfSeq` 手机不用 ⇒ 不声明）；
   `values` 不是 `Map` ⇒ 四个投影字段全降级 + 计数一次。**头注写明"这是信封，不是扁平 map"**。
+- **裸数组分支必须一起删**：`_parseSessionList` 现在两种形状都收（`app_model.dart:3766-3772`，
+  注释说"早期的假客户端与将来的简写"），而连接器**从来只回 `{sessions: [...]}`**（`handlers.ts:738`）。
+  删分支的同时把 `test/session_list_wiring_test.dart:136-147`（`裸数组也认…`）**改成反向断言**：
+  裸数组 ⇒ 空列表 + `badCount == 1`。这是把"容忍假客户端"换成"钉线上形状"，不是删断言。
 - 行内二次读（`values.title` / `values.modelSelection` / `values.subagentTiming` / `values.tokenUsage`）
   全部收进本文件；`parseSubagentTiming` / `parseTokenUsage` 仍住 `model/`（它们是投影值解析，第 3 批才搬）。
 
@@ -113,8 +143,8 @@ WireReading<SessionSummary> readSessionRow(Object? row);
 |---|---|---|
 | `747-750` | `_titleHintOf` | 删，进 decoder |
 | `758-763` | `_projectionValueOf` | 删，进 decoder（**头注要写"这是信封"**） |
-| `2229-2232` | `_fetchSessionRows`（唯一调用点） | 改成 `valueOrReport(readSessionList(await client.call<Object?>('session.list', const {})), 'session.list') ?? const []` |
-| `3765-3843` | `_parseSessionList`（79 行、12 个字段） | 整段删 |
+| `2229-2232` | `_fetchSessionRows`（唯一调用点） | 改成 `await loadSessionList((m, p) => client.call<Object?>(m, p))` |
+| `3765-3843` | `_parseSessionList`（79 行、12 个字段，含 `3766-3772` 的裸数组分支） | 整段删（裸数组分支同时消失） |
 | `3853-3857` | `_modelSelectionOf` | 删，进 decoder |
 | `3864-3876` | `_parseModelRef` | 删，进 decoder |
 
@@ -123,21 +153,39 @@ WireReading<SessionSummary> readSessionRow(Object? row);
 
 ### 门禁与用例
 
-- 把 `session.list` 加进 `wire-rpc-single-reader` 的名单（唯一允许文件 `app/lib/wire/rpc/session.dart`）；
-  旧读法没删干净这条会先红 —— **先加规则、再删代码、最后绿**。
-- `app/test/wire_shapes_replay_test.dart` 补 decoder 断言：4 种行各一条，全部 `WireOk` 且
-  `WireDiagnostics.badCount == 0`；**断言值全部来自金样本身，不写常量**。
+- **预算 39 → 38**（`app/tools/verify-rpc-single-caller.mjs` 里那一个常量）。
+  这一批若只搬了解码、把 `client.call<Object?>('session.list')` 留在 `app_model.dart`，
+  处数还是 39 ⇒ 预算对不上 ⇒ 红。这就是"调用必须搬"的机械执行者。
+- `app/test/wire_shapes_replay_test.dart` 补 decoder 断言：4 种行**各一条用例**，全部 `WireOk` 且
+  `WireDiagnostics.badCount == 0`；**断言值全部来自金样本身，不写常量**（照
+  `event_wire_replay_test.dart` 的 `setUp` 里 `reset()` + 收集 sink）。
 - 补 2 条"形状错要响"的用例：缺 `sid` ⇒ `WireBad` 且计数 +1；`projections` 的 `values` 是字符串
   ⇒ 该行仍 `WireOk`、四个投影字段为空、计数 +1。
+- **变异校验打在可选键上**：把 `values.title` 改成 `values.tittle` ⇒ **恰好 1 条**红。
+  别打在恒发键上（`running` 那种会让 4 条同时红，看不出哪一行坏）。
 
-**第 1 批验收**：门禁全绿 + `session.list` 在 `app/lib/` 只剩 1 处（在 `wire/rpc/session.dart`）+
-`git diff` 里 `_parseSessionList` 整段消失 + 变异校验恰好 1 红
-（把 decoder 里 `entry['running']` 改成 `entry['isRunning']`）。
+**第 1 批验收**：门禁全绿（含预算 38）+ `data/` 里不再出现 `session.list` 字样 +
+`git diff` 里 `_parseSessionList` 整段消失（含裸数组分支）+ 那条旧用例改成反向断言后仍绿 +
+变异校验恰好 1 红。
 
 ---
 
 ## 3. 已知的坑（别重踩）
 
+- **判据有三条路走不通，别试**（都是 2026-10-25 试过并否掉的）：
+  ① "方法名在 `app/lib/` 里只出现一次" —— 今天 41 个方法**全都**只出现一次，现在就绿，恒真；
+  ② "响应键字面量只许出现在 `wire/rpc/`" —— `'sessions'` 三种意思（`session.list` 的行数组
+  `handlers.ts:738`、`sync.hello` 的订阅集 `core/sync_client_impl.dart:205`、
+  `usage.summary` 的计数 `int` `model/usage_summary.dart:167`），例外会多到没人看；
+  ③ "名字 → 唯一文件"的名单表 —— 一条规则只能表达一个事实，41 个方法 = 41 条规则，
+  规则表自己长成第二个真值源。
+  **能用的只有"会归零的数"**：`data/`+`ui/` 里 `call<` 的处数，39 → 0。
+  它度量的是"协议知识还有几处漏在 `wire/` 外面"，不是某个字面量在哪。
+- **不要为了迁就判据去改架构**：初稿曾为了"让 grep 看见方法名"而把调用搬进 `wire/`、
+  还造了个 `RpcCaller` 回调把 `core/` 挡在外面 —— 顺序反了。搬调用是对的，
+  但理由是"`data/` 不该知道方法名与参数形状"；端口 `SyncClient` 本来就有，直接用。
+- **裸数组那条用例是真的存在**（`test/session_list_wiring_test.dart:136-147`），删分支时必须同时改它，
+  否则第 1 批会红在一个"看起来与本次改动无关"的文件上。
 - **`session.page` / `session.refetch` 不在本轮**：它们的解析在连接层
   （`core/sync_client_impl.dart:990-1016`、`:1024`、`:1038-1052`），`SessionPage` 要参与
   `await refetch`，一个纯 decoder 不能 await。它们需要两字段的中间结构，是第 2 批的事。

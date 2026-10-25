@@ -108,24 +108,47 @@ node -e "const fs=require('fs');const p='app/lib';const walk=d=>fs.readdirSync(d
 四个机制：
 
 1. **一个面一个读者，读者住 `wire/`**：`wire/events.dart`（事件，已落地）+
-   `wire/rpc/<family>.dart`（应答与投影值）。理由只有一个、但足够：**门禁按路径豁免**
-   （现有 `wire-field-single-reader` 就是这么做的，`verify-platform-boundary.mjs:132`），
-   别的方案都无法把"只此一处"变成一条可判定的规则。
+   `wire/rpc/<family>.dart`（应答与投影值）。理由不是"层更漂亮"，是**协议知识必须只有一个归属** ——
+   方法名、参数形状、应答字段这三样只要还有第二处出现，就会有一处先漂，而漂的表现是静默空值。
+   能被度量，所以能被门禁（见机制 4）。
 2. **失败语义只有一个**：`WireReading<T>` 三态（`wire/reading.dart:34-60`）。
    面内分层规则：**身份键与"生产者无条件写出的键"缺失 ⇒ 整条丢并计数**；
    **可选键组里的东西读不出来 ⇒ 该字段降级 + 计数，不丢整条**（丢整行会让会话从列表消失，比空标题坏得多）。
+   外层 `WireBad` 只留给**信封**错（`{sessions: […]}` 都没了）；行级问题走计数，不升级成 `Bad`——
+   否则一行坏就等于整个列表消失。
 3. **金样（golden）而不是快照**：`connector/tests/fixtures/wire-shapes.json`，
    由连接器测试用**真实 handler** 产出、**深比较**守住（不相等就红并打 diff）；
    App 的用例读**同一份文件**。这是"漂移怎么被发现"的唯一机械答案，先例是
    `connector/tests/error-table-parity.test.ts:28`（连接器测试读 App 的源码做逐字对撞）。
-4. **门禁即进度表**：`verify-platform-boundary.mjs` 里加一条 `wire-rpc-single-reader`，
-   名单随批次增长（一条规则一个方法名）。**名单就是"哪些方法已搬完"的清单**——
-   不需要任何索引文件，且每加一条就多锁死一个方法。
+   **比较必须在"线上那一层"**：比 `JSON.parse(JSON.stringify(result))`，不比 JS 对象 ——
+   `{a: undefined}` 与 `{}` 在 JS 里不相等、在线上是同一件事。
+4. **判据是一个会归零的数字，不是一张会长大的名单**：
+   `app/tools/verify-rpc-single-caller.mjs`（新脚本，二十行）扫 `app/lib/data/` 与 `app/lib/ui/`，
+   数 `client.call<` 的**代码**出现次数，要求 **等于预算**；预算逐批下降，**终态 0**。
+   实现上**逐行判注释行、不剥注释** —— 剥块注释会冲掉行号，而它必须能报出"哪一行"。
+   正则取 `client\.call<` 是精确的：这两个目录里所有 RPC 调用都带显式泛型，
+   而 `onEndpointsChanged?.call(...)` 那类回调**不带 `<`**，不会误命中（2026-10-25 实测 39/39）。
+   预算是文件里的**一个数**，改它就是"这一批搬了哪个方法"，`git diff` 里看得见。
+   为什么不是"方法名 → 唯一文件"的表：那是**代理指标**（方法名字面量在哪 ≠ 应答被谁解释），
+   而且一条规则只能表达一个事实 ⇒ 41 个方法就是 41 条规则、每条 +111 项检查，
+   规则表本身长成了一个新的真值源。预算只有一个事实：**协议知识还有几处漏在 `wire/` 外面**。
+   为什么不是"响应键字面量只许在一处"：`'sessions'` 有三种意思（`session.list` 的行数组
+   `handlers.ts:738`、`sync.hello` 的订阅集 `core/sync_client_impl.dart:205`、
+   `usage.summary` 的**会话计数 `int`** `model/usage_summary.dart:167`），例外会多到没人看。
+
+**为什么"发请求"也要搬进 `wire/`**：留下调用就等于留下"方法名 + 参数形状"这两样协议知识 ——
+`data/` 里仍得知道 `{sid: sid}` 长什么样。所以 `wire/rpc/<family>.dart` 同时是**唯一发请求**和
+**唯一断言应答**的地方；它直接收 `SyncClient`（`core/sync_client.dart:140-144` 的既有端口），
+**不新造 `RpcCaller` 之类的平行抽象** —— 端口已经有了，再造一个是重复。
 
 准入门槛（可机械判定）：
 
-1. **一个方法名在 `app/lib/` 里只出现一次**，且在 `wire/rpc/`（`core/` 的连接层方法除外）。
-   今天 46 个方法**已全部满足"只出现一次"**，只是位置在 `data/` / `ui/` / `core/`。
+1. **`data/` 与 `ui/` 里的 `client.call<` 数量 == 预算，预算只降不升，终态 0。**
+   今天实测 **39 处**（`data/app_model.dart` 38、`ui/chat_page.dart` 1；`core/` 里的是 client 调自己，
+   不在范围）。**这条判据 2026-10-25 用二十行探针实跑过**：预算 39 ⇒ PASS 并列出 39 个位置；
+   改成 38 ⇒ FALSE 并逐行报出那 39 处 —— 它确实不是恒真。
+   终态"`app/lib/` 除 `wire/rpc/` 外零 `client.call<`"是**绝对规则、零例外** ——
+   这一点比"方法名只出现一次"强得多：后者今天 41 个方法**全都满足**，是恒真的空判据。
 2. **decoder 头注必须有出处**：`connector/src/...:行号` 或 `packages/...:行号`。
    没有行号的 decoder 视为未完成（评审一句话就能核）。
 3. **金样覆盖**：`wire-shapes.json` 里每个**已搬**方法至少一条样本，App 用例在每条样本上
@@ -181,15 +204,43 @@ node -e "const fs=require('fs');const p='app/lib';const walk=d=>fs.readdirSync(d
      事故照样发生（`session.list` 就是自造 DTO 之后又出过两次事）。所以 e 要真正生效，
      必须有 b 的生成或机制 3 的金样；而金样的成本是 e 的几十分之一。
 
+### 次一级的取舍：怎么让"只有一个读者"成立
+
+方案定了 a 之后，真正的难点是**判据**。下面四条都被否过，两条是 2026-10-25 初稿自己踩的。
+
+1. **"方法名 → 唯一允许文件"的名单表（初稿的写法）**
+   - 最强的理由：与 `wire-field-single-reader` 同形，评审一眼能核，谁搬完了一目了然。
+   - 为何被否：① 它拦的是**代理指标** —— 方法名字面量在哪，不等于应答被谁解释；
+     ② 一条规则只能表达一个事实，41 个方法 = 41 条规则、每条 +111 项检查，规则表自己长成第二个真值源；
+     ③ 初稿写的"名单从空数组开始"是死脚手架（空名单拦不住任何东西）。
+2. **`RpcCaller` 回调（让 `wire/` 不 import `core/`）**
+   - 最强的理由：`wire/` 保持零 `core/` 依赖，层次最"干净"，且同样能让字面量只在一处。
+   - 为何被否：**端口已经有了** —— `SyncClient` 就是那个抽象（`core/sync_client.dart:140-144`），
+     再造一个 `RpcCaller` 是重复抽象，41 个调用点各多一个闭包换零收益。
+     依赖方向本来也对：适配器（`wire/rpc`）依赖端口（`SyncClient`），不是反过来。
+3. **"响应键字面量只许出现在 `wire/rpc/`"**
+   - 最强的理由：与字段门禁完全同形，不必往方法面看。
+   - 为何被否：`'sessions'` 三种意思（行数组 / 订阅集 / 计数 `int`），例外一多，规则就没人看了。
+4. **只靠 `git diff` 复核"旧读法删干净"（没有判据）**
+   - 最强的理由：零机制成本，改动都在评审眼皮底下。
+   - 为何被否：这正是三次事故之前的状态 —— 每次都说"这次我看过了"。
+     没有数字的判据在一次赶工之后就等于不存在。
+
 ## Consequences
 
 - 收益：形状知识从 23 个文件里**除本仓协议之外的 20 来个**收到 `wire/`；失败语义只有一个且可计数；
   漂移在**改连接器的那个提交**里就能被看见（金样 diff + App 回放用例），
   不用等真机 —— 这是三次事故里唯一真正缺的一环。
-- 收益：**门禁即进度表**。`wire-rpc-single-reader` 的名单只增不减，评审看一眼名单就知道搬完几个方法，
-  不需要维护任何索引文件。
-- 代价：46 个调用点分 7 批搬，每批"抓金样 → 写 decoder → 删旧读法 → 加一条门禁名单"四件事，
-  `app_model.dart` 会瘦一大圈（那是好事，但那是个大 diff）。
+- 收益：**进度是一个会归零的数字**。39 → 0 写在 `verify-rpc-single-caller.mjs` 的一个常量里，
+  评审看那个数就知道搬到哪；终态是一条零例外的绝对规则，不需要维护任何索引或名单。
+- 代价：39 处调用分 7 批搬，每批"抓金样 → 写 decoder → 改调用点 → 删旧读法 → 预算减到位"，
+  `app_model.dart` 会瘦一大圈（那是好事，但那是个大 diff）。迁移期间 `data/` 是"新旧混住"的，
+  这一点没法避免，只能靠预算把水位逼下去。
+- 代价：预算是**手写的一个数**，能被顺手改大。防线是"只许降"写进脚本的 `why` + 提交信息里
+  必须写明这一批减了什么。
+- 代价：**`wire/rpc/` 直接收 `SyncClient`**（它是 `core/` 的端口接口）。
+  `wire/` 因此多了一条指向 `core/` 的边 —— 方向是对的（适配器依赖端口），
+  但它确实让"`wire/` 只依赖 `reading.dart`"这个纯度说法不成立了，如实记账。
 - 代价：**引入两个工程之间的测试耦合**。App 的用例要读 `../connector/tests/fixtures/wire-shapes.json`；
   该文件缺失时**必须直接 `fail`，不许 skip**（否则门禁会静默退化成空跑）。
   先例已存在（`connector/tests/error-table-parity.test.ts` 反向读 App 源码），所以不是新范式，但是新的**方向**。
@@ -209,35 +260,52 @@ node -e "const fs=require('fs');const p='app/lib';const walk=d=>fs.readdirSync(d
 
 | # | 面 | 方法 | 每批的机械验收（四条同时成立） |
 |---|---|---|---|
-| 0 | 机器 | — | ① `wire-shapes.json` 存在且含 `session.list` / `session.projections` 两条；② 连接器深比较用例在改一个字段时红；③ App 侧一条"金样在就不会空跑"的用例（文件缺失即 `fail`）；④ 门禁加一条**空名单**规则（名单为空时不拦任何东西，但规则与自检就位） |
-| 1 | 会话身份 | `session.list` | ① 门槛 1（方法名只出现一次且位置对）；② 金样含 4 种行（普通 / 带 `parentSessionId` / 冷行无 `model`+无 `projections` / 带信封的 `projections`）；③ 删掉 `app_model.dart:747-750,758-763,3765-3843,3853-3857,3864-3876`；④ 变异校验恰好 1 条红 |
-| 2 | 历史页（连接层） | `session.page` / `session.refetch` | ① `SessionPageWire` 的判别联合（`record` / `refetch`）在金样上解全；② `throughSeq` 明确"读了但不用"或"不读"（**今天没读，写成注释**）；③ `core/sync_client_impl.dart:957,990-1016,1024,1038-1052` 的形状读取搬走，`await` 循环留下；④ 变异恰 1 红 |
+| 0 | 机器 | — | ① `wire-shapes.json` 存在且含 `session.list` / `session.projections` 两条；② 连接器深比较（**比 `JSON.parse(JSON.stringify(...))`**）在改一个字段时红；③ App 侧一条"金样在就不会空跑"的用例（文件缺失即 `fail`）；④ 新增 `app/tools/verify-rpc-single-caller.mjs`，预算 = **39**（今天实测数）—— **不是空名单**：它从第一分钟起就禁止第 40 处；顺带 `verify-tool-paths.mjs` 扫到的脚本数 23 → 24 |
+| 1 | 会话身份 | `session.list` | ① 预算 **39 → 38**；② **调用也搬进 `wire/rpc/session.dart`**（收 `SyncClient`，产出 `List<SessionSummary>`）；③ 金样含 4 种行（普通 / 带 `parentSessionId` / 冷行无 `model`+无 `projections` / 带信封的 `projections`）；④ 删掉 `app_model.dart:747-750,758-763,2229-2232,3765-3843,3853-3857,3864-3876`，并**删掉 `_parseSessionList` 里的裸数组分支**（见「第一批」）；⑤ 变异校验恰好 1 条红 |
+| 2 | 历史页（连接层） | `session.page` / `session.refetch` | ① `SessionPageWire` 的判别联合（`record` / `refetch`）在金样上解全；② `throughSeq` 明确"读了但不用"或"不读"（**今天没读，写成注释**）；③ `core/sync_client_impl.dart:957,990-1016,1024,1038-1052` 的形状读取搬走，`await` 循环留下；④ 变异恰 1 红。**预算不变** —— 这两个走的是 `SyncClient` 的具名方法（`page` / `refetch`），根本不是 `call<`，所以它们天然不占预算，也只能靠"decoder + 金样 + 旧形状读取整段消失"验收 |
 | 3 | 投影 | `session.projections` | ① 头注写清"**这里是扁平 `values`，不是信封**"，并交叉引用第 1 批的信封读法；② 金样含全部 **14** 个被 App 消费的键；③ 6 个 `model/*` 解析器（`session_stats` / `subagent` / `trajectory` / `image_limits` / `permission.currentValue` / `agent_preset`）搬进 `wire/rpc/projections.dart`；④ 变异恰 1 红 |
 | 4 | 能力面 | `repo.info` | ① `commands` 两种形状**都收**，并在头注写明"这是兼容，不是两个真值"（`handlers.ts:1525`）；② 金样两条：带 `commands` / 不带 `commands`；③ 三个 `caps` 布尔与 `dshVersion` 的缺失语义固定；④ 变异恰 1 红 |
-| 5 | 文件与引用 | `file.list` / `file.read` / `refs.files` / `refs.sessions` | ① `model/workspace_files.dart` 的 `fromWire` 变成返回 `WireReading`（**唯一一处 d→a 的机械改造**，形状不动）；② 金样含 `size?` / `bytes?` 缺席两条；③ 门禁名单 +4；④ 变异恰 1 红 |
-| 6 | 插件 | `plugin.list` / `listBundles` / `install*` | ① `plugin.installStatus` 的"4 键 unknown vs 8 键"两形态各一条金样（`connector/src/dsh/plugin-install.ts:250-262`）；② `plugin.list` 的 `patchId?` / `readOnlyReason?` 恰有一个，decoder 不能两个都当必填；③ 门禁 +6；④ 变异恰 1 红 |
-| 7 | 收尾 | `usage.summary` / `settings.*` / `job.*` / `command.execute` / `workspace.*` / `endpoint.describe` / `sync.hello` | ① 每个方法至少一条金样；② `workspace.*` 的"归档/置顶全集"三处共用一份 decoder；③ 门禁覆盖除上文 7 个"无人消费应答"之外的全部方法；④ 全量门禁绿 + 变异恰 1 红 |
+| 5 | 文件与引用 | `file.list` / `file.read` / `refs.files` / `refs.sessions` | ① `model/workspace_files.dart` 的 `fromWire` 变成返回 `WireReading`（**唯一一处 d→a 的机械改造**，形状不动）；② 金样含 `size?` / `bytes?` 缺席两条；③ 预算按本批实际搬走的 `call<` 处数下调（实测：`app_model.dart:1771,1800,1998,1999` 四处 → −4）；④ 变异恰 1 红 |
+| 6 | 插件 | `plugin.list` / `listBundles` / `install*` | ① `plugin.installStatus` 的"4 键 unknown vs 8 键"两形态各一条金样（`connector/src/dsh/plugin-install.ts:250-262`）；② `plugin.list` 的 `patchId?` / `readOnlyReason?` 恰有一个，decoder 不能两个都当必填；③ 预算按实测下调（`:1855,1856,1889,1938,1955,1968` 六处 → −6）；④ 变异恰 1 红 |
+| 7 | 收尾 | `usage.summary` / `settings.*` / `job.*` / `command.execute` / `permission.*` / `workspace.*` / `endpoint.describe` / `session.select-model` / `session.create` / `session.cancel` / `session.updateQueue` / `interaction.respond` / **`session.prompt`** | ① 每个方法至少一条金样；② `workspace.*` 的"归档/置顶全集"三处共用一份 decoder；③ **预算归 0**，并把常量从脚本里删掉（规则从此是零例外的绝对规则）；`ui/chat_page.dart:565` 的 `session.prompt` 搬成 `wire/rpc/session.dart` 的 `sendPrompt(...)`；④ 全量门禁绿 + 变异恰 1 红 |
 
-**"删掉旧读法"怎么机械化验收**（这是前一版草案没答的问题）：
-门禁规则 `wire-rpc-single-reader` 的名单**逐批增长**，每条是"某方法名在 `app/lib/` 只许出现在 `wire/rpc/`"。
-名单加进去的那一批，若旧读法还在原地，规则立刻红。于是"删干净"不是靠人在 diff 里找，
-而是靠**规则先加、再绿**——这正是现有 `wire-field-single-reader` 的形态（`verify-platform-boundary.mjs:129-134`）。
+**"删掉旧读法"怎么机械化验收**（这是前一版草案没答的问题，也是本稿前两版都答错的地方）：
+
+- **判据必须是"协议知识还有几处漏在 `wire/` 外面"，不是"某个字面量在哪"**。
+  可度量的代理就是**`data/`+`ui/` 里 `call<` 的处数**：今天 39，搬完方法就必然少一处，
+  终态 0。写成一个常量，只许降 —— 这既是判据也是进度表，而且**只有一个数字**。
+- 前两版错在：先选"能 grep 的东西"（方法名字面量），再为了让它成立去改架构
+  （把调用搬走、造 `RpcCaller`）。顺序反了 —— 应该先定架构（协议知识只在一个模块），
+  再找能度量它的最小判据。搬调用仍然是必须的，但**理由变成"`data/` 不该知道方法名与参数形状"**，
+  不是为了迁就一个 grep。
+- 为什么不用"方法名出现次数"：今天 41 个方法**全都只出现一次**，这条判据现在就是绿的，
+  恒真 —— 拦不住任何东西。
+- 为什么不用"响应键字面量"：`'sessions'` 在同一个方法面里有三种意思（
+  `session.list` 的行数组 `handlers.ts:738`、`sync.hello` 的订阅集 `core/sync_client_impl.dart:205`、
+  `usage.summary` 的**会话计数 `int`** `model/usage_summary.dart:167`）。例外一多，规则就没人看了。
 
 ## 第一批的具体形状（`session.list`）
 
 ### decoder（`app/lib/wire/rpc/session.dart`，新文件）
 
 ```dart
-/// `session.list` 的应答：`{sessions: [...]}`（`connector/src/handlers.ts:738-770`）。
-///
-/// **行是连接器自造的，不是宿主形状**（`handlers.ts:719-720` 的原话："逐字段构造、不 spread"）。
+/// `session.list` 的**唯一入口**：发请求 + 解码。方法名与参数形状只在这个文件里。
+/// 收 `SyncClient`（`core/sync_client.dart:140-144` 的既有端口，**不新造平行抽象**）。
+/// 应答 `{sessions: [...]}`（`connector/src/handlers.ts:738-770`）；
+/// **行是连接器自造的，不是宿主形状**（`handlers.ts:719-720` 的原话："逐字段构造、不 spread"），
 /// 所以形状出处是连接器，不是 `packages/...`。
+Future<List<SessionSummary>> loadSessionList(SyncClient client);
+
+/// 纯解码，给回放用例与"已经拿到应答"的调用方（不收 client，用例里不启传输）。
 WireReading<List<SessionSummary>> readSessionList(Object? result);
 
-/// 一行。缺 `sid` 是形状错（身份丢了，`WireBad` ⇒ 整行丢 + 计数）；
-/// 可选键（`parentSessionId` / `model` / `cwd` / `projections`）读不出 ⇒ 该字段降级 + 计数。
+/// 一行。缺 `sid` / 恒发键 ⇒ WireBad（整行丢 + 计数）；
+/// 4 个可选键读不出 ⇒ 该字段降级为 null + 计数（不丢整行）。
 WireReading<SessionSummary> readSessionRow(Object? row);
 ```
+
+调用点（`app_model.dart` 的 `_fetchSessionRows`）变成 `await loadSessionList(client)`
+—— `data/` 从此不知道方法名，也不知道 `{sessions: …}` 长什么样，预算 39 → 38。
 
 - **产出已有模型类**：`SessionSummary`（`app/lib/model/chat_item.dart:778-913`），不新造 DTO。
   `pendingCount` / `itemCount` 是本地派生（`app_model.dart:2245-2253`），由调用方 `copyWith` 补。
@@ -250,6 +318,19 @@ WireReading<SessionSummary> readSessionRow(Object? row);
   `values` 不是 Map ⇒ 四个投影字段全降级 + 计数一次。
 - 行内二次读（`values.title` / `values.modelSelection` / `values.subagentTiming` / `values.tokenUsage`）
   全部收进本文件；`parseSubagentTiming` / `parseTokenUsage` 仍住 `model/`（它们是投影值解析，第 3 批才搬）。
+- **`model` 这个键不是恒有的**：`handlers.ts:754-759` 只在 `deps.models` 存在且
+  `modelOf(sid)` 有值时才写。金样要覆盖"有 `model`"与"整键缺席"两种行，
+  否则第一版 decoder 会把 `model` 当必填而线上冷行全丢。
+- **裸数组分支必须随函数一起删**：`_parseSessionList` 现在两种形状都收
+  （`app_model.dart:3766-3772`，注释说"早期的假客户端与将来的简写"），
+  而连接器**从来只回 `{sessions: [...]}`**（`handlers.ts:738`）。留着它，
+  "认不出就必须留声"这条永远不成立。删分支的同时要把
+  `test/session_list_wiring_test.dart:136-147`（`裸数组也认…`）**改成反向断言**：
+  裸数组 ⇒ 空列表 + `badCount == 1`。这是把一条"容忍假客户端"的用例换成"钉线上形状"的用例，
+  不是删断言。
+- **用例与变异校验的对应关系要对齐**：4 种行**各一条用例**（诊断更快），
+  变异打在**可选键**上（把 `values.title` 改成 `values.tittle`）⇒ 恰好 1 条红。
+  打在恒发键上（如 `running`）会让 4 条同时红，看不出是哪一行坏的。
 
 ### 金样从哪来（**不是从真机抓**）
 
@@ -307,9 +388,9 @@ WireReading<SessionPageWire> readSessionPage(Object? reply);
 
 1. **金样会不会变成第二个真值？** 它由连接器测试产出、深比较守，改动它的唯一方式是改实现。
    但这需要一次真实演练来证明"改一个字段 ⇒ 连接器红 + App 红"两条都成立（第 0 批的验收就是它）。
-2. **`session.prompt` 的调用点在 `ui/chat_page.dart:562-571`**（不在 `data/`）。门槛 1 要求方法名只出现一次，
-   它今天满足，但位置在界面层。要不要把写路径也收进 `wire/rpc/session.dart`（`sendPrompt(...)`）——
-   留到第 1 批落地后单独决定，不在本轮拍。
+2. **`session.prompt` 的调用点在 `ui/chat_page.dart:562-571`**（不在 `data/`）。**它必须搬**，
+   否则预算归不了零；放在第 7 批搬成 `wire/rpc/session.dart` 的 `sendPrompt(...)`。
+   （这一条前一版写成"留到落地后再定"，是错的：留着它就等于留一处在 `wire/` 外面说协议。）
 3. **7 个"无人消费应答"的方法不搬**（`session.cancel` / `session.updateQueue` / `job.follow` /
    `job.unfollow` / `interaction.respond` / `session.prompt` / `subagent.prompt`）：
    它们连返回形态都不判，属于"没有形状可断言"。但要在 `wire/rpc/` 的文件头列出来，
