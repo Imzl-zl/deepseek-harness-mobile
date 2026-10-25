@@ -20,6 +20,10 @@
 >   tool-paths **23 → 24**、**预算 39 → 38**（新脚本 `app/tools/verify-rpc-single-caller.mjs`）、
 >   analyze/format 0。变异校验：金样 `running` 改成 `"true"` ⇒ 连接器恰好 1 红；
 >   decoder 的 `values['title']` → `'tittle'` ⇒ 金样回放恰好 1 红（全仓 7 红）。
+> - **实测（2026-10-25 20:31，0 个模型请求，隔离实例）**：真实 DSH 清单 20 条
+>   → 生产适配器 → 生产 handler → App 解码 = **20/20 `WireOk`、`badCount 0`、一行没丢**；
+>   `parentSessionId` 恰好出现在 6 个子会话行、`model` 0 条（`agentAvailable` 全 false）、
+>   `projections` 20 条全是**信封**。取数配方在笔记里（服务键是 `session`；args 必须带 `_request`）。
 > - **下一步 = 第 3 批（`session.projections`，14 个键 + 6 个 `model/*` 解析器）**。
 >   理由：`session.projections` 的应答**已经在金样里**（第 0 批就收了它，正好是"同名两种形状"的
 >   对照面），而它背后就是手机上 10 个读取点与 6 个解析器，收益最大、风险最小。

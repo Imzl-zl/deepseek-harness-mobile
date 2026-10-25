@@ -234,3 +234,47 @@
 - `app/lib/data/app_model.dart` 的 `_fetchSessionRows`（唯一调用点，一行委派）
 - `app/tools/verify-rpc-single-caller.mjs`（那个从 39 起、终态 0 的预算）
 
+---
+
+## 同日实测：真实 DSH 会话清单走完生产链（0 个模型请求）
+
+不是替身：数据取自一棵**活的隔离实例**，映射走的是仓库里那份生产代码。
+
+做法（可复现，约 5 分钟）：
+
+1. `$env:DSH_HOME='D:\tmp\dsh-e2e'` + `dsh --profile mobile-e2e --port 63900 --no-open`；
+2. 带 token 打开 `http://127.0.0.1:63900/`，在**页面里**（cookie 已就位）POST `/api/session/list`，
+   body 是 `{"type":"client-request","rpcId":"…","method":"session/list","payload":{"args":{"_request":{}}}}`。
+   两个坑：**服务键是 `session`**（写 `sessionController` / `sessions` 都是 404）；
+   **args 必须带 `_request`**（少了回 `gateway/arguments-invalid: missing "_request"`）；
+3. 拿到的 `{items:[…]}` ⇒ `createSessionsAdapter`（生产适配器）⇒ `createHandlers(...)['session.list']`
+   （生产 handler）⇒ 这就是手机真正会收到的那份载荷；
+4. 那份载荷交给 App 的 `readSessionList`。
+
+结果（2026-10-25 20:31，20 条真实会话）：
+
+| 环节 | 结果 |
+|---|---|
+| DSH 原始 items | 20 条。行级键 = `sessionId` / `updatedAt` / `agentAvailable` / `formatStatus` / `running` / `blank` / `cwd` / `projections`（子会话另加 `parentSessionId` / `origin`）|
+| 适配器 → 行 | 20 → 20（一行没丢）|
+| 过线键出现次数 | `sid` / `updatedAt` / `running` / `blank` / `subagent` / `cwd` / `projections` **各 20**；`parentSessionId` **恰好 6**（= 6 个子会话）；`model` **0** |
+| `projections` 形状 | 20 条**全是信封** `{kind, asOfSeq, values}`（不是扁平 map）|
+| App 解码 | **20/20 `WireOk`，`badCount == 0`，零出声**；子会话父级别名正确（`sid_9a2bd3d9 → sid_30fd5a9c`）；`subagentTiming` 真值 115204 / 19887 / 28687 / 40061 / 49196 / 102090 ms；`tokenUsage` 真值；3 条无标题会话读成 `""` ⇒ 显示「未命名」|
+
+三件事因此从"设计假设"变成"实测过"：
+
+- 五个恒发键**确实**在每条真行里都有 —— 把它们当必填不会丢真数据；
+- `projections` **确实是信封** —— 这正是第 1 批（行）与第 3 批（扁平 `values`）的分界；
+- `model` **确实**可以整键缺席（这次 20 条全缺：隔离实例里 `agentAvailable` 全是 false），
+  而 `values.modelSelection` 照样给出 `auto` —— "冷会话/子会话靠投影提示"那条路的实证。
+
+**这次没覆盖**：① 真机上的渲染（本次只验解码层）；② `model` 键**出现**的那一半
+（要一个活 agent，即一次模型请求，本轮不做）；③ 连接器那层以下的 DSH 适配细节
+（`dsh/sessions.ts` 的映射只有手写假输入兜着 —— 这次的真输入只喂到了适配器入口，
+`real-session-summaries.json` 那类固化没有做）。
+
+**是否固化**：这次是手工实测，脚本在 `D:\tmp\capture-wire.mts`（**不入库**）。
+把它固化成"真实清单进金样的第二条样本"是可行的下一步，但那要新增一条生成路径、
+等于给金样多一个输入源，得单独决定 —— 本轮**没做**。
+
+
