@@ -69,6 +69,9 @@ Map<String, Object?> _row(String sid, {required bool running}) => {
   'sid': sid,
   'updatedAt': 0,
   'running': running,
+  // 恒发键（`connector/src/handlers.ts:740-744`）：假行必须是线上形状。
+  'blank': false,
+  'subagent': false,
 };
 
 /// 让 `_status` 的事件真的投递到 `AppModel`（纯 `test` 里可以等零延迟）。

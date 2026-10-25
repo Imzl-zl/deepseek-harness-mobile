@@ -97,6 +97,8 @@ Map<String, Object?> _sessionRow({
     'updatedAt': 1,
     'running': running,
     'subagent': subagent,
+    // 恒发键（`connector/src/handlers.ts:740-744`）：假行必须是线上形状。
+    'blank': false,
     'projections': {'kind': 'hints', 'asOfSeq': 1, 'values': values},
   };
 }

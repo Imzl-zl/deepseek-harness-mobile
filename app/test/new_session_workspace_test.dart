@@ -96,6 +96,10 @@ Map<String, Object?> _row(
   'cwd': cwd,
   'updatedAt': updatedAt,
   'blank': blank,
+  // 恒发键：连接器对每一行**无条件**写出它们（`connector/src/handlers.ts:740-744`），
+  // 解码层据此把它们当必填 —— 假行也必须是线上形状。
+  'running': false,
+  'subagent': false,
 };
 
 Map<String, Object?> _workspaces(

@@ -18,7 +18,7 @@
             "kind": "sequenced",
             "asOfSeq": 12,
             "values": {
-              "title": "重构会话列表"
+              "agentPreset": "standard"
             }
           }
         },

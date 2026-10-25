@@ -851,7 +851,7 @@ class SessionSummary {
 
   /// 这个会话**下一次**将用的模型（`modelSelection` 投影的 `next ?? lastUsed`）。
   ///
-  /// 两个来源，同一份投影，见 `AppModel._parseSessionList`：
+  /// 两个来源，同一份投影，读法只在 `app/lib/wire/rpc/session.dart` 的 `readSessionRow`：
   /// ① 行里的**投影提示** `projections.values.modelSelection`（对每个会话都有，
   ///    包括子会话 —— DSH 的 `list.ts:291-312` 原样带全部投影值）；
   /// ② 行顶层的 `model`（连接器从**活 agent** 读，`connector/src/dsh/models.ts`）。

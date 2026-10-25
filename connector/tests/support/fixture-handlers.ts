@@ -78,8 +78,10 @@ export const FULL_PROJECTION_VALUES = {
   },
 } as const
 
-/** 普通行的投影提示：只带 `title`（"暖"行，DSH 只发它读过的键）。 */
-export const PLAIN_PROJECTION_VALUES = { title: '重构会话列表' } as const
+/** 普通行的投影提示：**没有标题**（会话开过、但还没生成标题 —— 未命名是正常态，
+ *  手机侧显示「未命名」而**不**当成形状错）。里面放一个手机暂时不读的投影键，
+ *  顺带钉住"`values` 里有我们没消费的键是正常的"。 */
+export const PLAIN_PROJECTION_VALUES = { agentPreset: 'standard' } as const
 
 export function fixtureHandlers(
   subscriptions: JobSubscriptions | null = null,

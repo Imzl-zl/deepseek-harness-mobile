@@ -148,6 +148,9 @@ Map<String, Object?> blankRow(String sid, {String? cwd}) => {
   'blank': true,
   'itemCount': 0,
   'updatedAt': 5,
+  // 恒发键（`connector/src/handlers.ts:740-744`）：假行必须是线上形状。
+  'running': false,
+  'subagent': false,
   'cwd': ?cwd,
 };
 

@@ -15,6 +15,7 @@ import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/core/sync_client_impl.dart'
     show encodeRequestEnvelope;
 import 'package:dsh_mobile/data/app_model.dart';
+import 'package:dsh_mobile/wire/reading.dart' show WireDiagnostics;
 import 'package:flutter_test/flutter_test.dart';
 import 'fake_sync_client.dart';
 
@@ -79,7 +80,13 @@ void main() {
       final client = _FakeClient(
         onCall: (method, params) => {
           'sessions': [
-            {'sid': 'J-AQFoAKdDuro5HLhhaaOw', 'updatedAt': 1791361744613},
+            {
+              'sid': 'J-AQFoAKdDuro5HLhhaaOw',
+              'updatedAt': 1791361744613,
+              'running': false,
+              'blank': false,
+              'subagent': false,
+            },
           ],
         },
       );
@@ -109,8 +116,20 @@ void main() {
       final client = _FakeClient(
         onCall: (method, params) => {
           'sessions': [
-            {'sid': 'sid_AAAA', 'updatedAt': 1000},
-            {'sid': 'sid_BBBB', 'updatedAt': 2000},
+            {
+              'sid': 'sid_AAAA',
+              'updatedAt': 1000,
+              'running': false,
+              'blank': false,
+              'subagent': false,
+            },
+            {
+              'sid': 'sid_BBBB',
+              'updatedAt': 2000,
+              'running': false,
+              'blank': false,
+              'subagent': false,
+            },
           ],
         },
       );
@@ -133,17 +152,40 @@ void main() {
       expect(app.lastError, isNull);
     });
 
-    test('裸数组也认（早期假客户端的形状），但两种形状都得能用', () async {
+    test('裸数组**不认**了：空清单 + 一处声音（钉线上形状，不是"容忍假客户端"）', () async {
+      // 2026-10-25 之前这里收**两种**形状：`{sessions: [...]}` 与裸数组
+      // （注释写的是"早期的假客户端与将来的简写都可能这么给"）。
+      // 而连接器**从来只回 `{sessions: [...]}`**（`connector/src/handlers.ts:738`）。
+      // 留着那条分支的代价是"认不出就必须留声"永远不成立：一个裸数组会被当成
+      // 一次**成功的空清单**，于是"电脑上没有会话"与"我们没看懂回复"在界面上一模一样。
+      // 现在它走解码层的 `WireBad`：空列表 + 计数 1（不抛、不猜）。
+      WireDiagnostics.reset();
       final client = _FakeClient(
         onCall: (method, params) => [
-          {'sid': 'sid_CCCC', 'updatedAt': 3000},
+          {
+            'sid': 'sid_CCCC',
+            'updatedAt': 3000,
+            'running': false,
+            'blank': false,
+            'subagent': false,
+          },
         ],
       );
       final app = AppModel(client: client);
 
       await app.refreshSessions();
 
-      expect(app.sessions.map((s) => s.sid), ['sid_CCCC']);
+      expect(app.sessions, isEmpty, reason: '裸数组是形状错，不是"空清单"');
+      expect(
+        WireDiagnostics.badCount,
+        1,
+        reason: '认不出必须留声，且**按应答计一次**（不是每行一次）',
+      );
+      expect(
+        app.lastError,
+        isNull,
+        reason: '形状错不进 lastError —— 它的出口是 WireDiagnostics（计数 + 一行打印）',
+      );
     });
 
     test('running 与 blank 都要解析（挑靶子靠它们，丢了就会叫醒别人的会话）', () async {
@@ -154,18 +196,26 @@ void main() {
       final client = _FakeClient(
         onCall: (method, params) => {
           'sessions': [
-            {'sid': 'sid_running', 'updatedAt': 1000, 'running': true},
+            {
+              'sid': 'sid_running',
+              'updatedAt': 1000,
+              'running': true,
+              'blank': false,
+              'subagent': false,
+            },
             {
               'sid': 'sid_blank',
               'updatedAt': 900,
               'running': false,
               'blank': true,
+              'subagent': false,
             },
             {
               'sid': 'sid_idle_used',
               'updatedAt': 800,
               'running': false,
               'blank': false,
+              'subagent': false,
             },
           ],
         },
@@ -178,18 +228,33 @@ void main() {
       expect(byId['sid_running']!.running, isTrue);
       expect(byId['sid_blank']!.blank, isTrue);
       expect(byId['sid_idle_used']!.blank, isFalse);
-      // 默认值也得对：老连接器/老 fixture 不发 blank 时不能默认成 true。
-      final legacy = AppModel(
-        client: _FakeClient(
-          onCall: (method, params) => {
-            'sessions': [
-              {'sid': 'sid_legacy', 'updatedAt': 1},
-            ],
-          },
-        ),
+    });
+
+    test('缺恒发键（blank）⇒ 整行丢 + 计数 1（不许按默认值猜）', () async {
+      // **这里原来写的是另一条断言**："老连接器/老 fixture 不发 blank 时不能默认成
+      // true"。它守的那个前提本身是错的：连接器对每一行**无条件**写 `blank`
+      // （`connector/src/handlers.ts:743`），所以"行里没有 blank"只可能是漂移。
+      // 按默认值猜（`entry['blank'] == true` ⇒ 假）会把一次漂移伪装成一条正常会话，
+      // 于是"挑一个 blank 会话建新聊天"这类功能安静地选错 —— 现在整行丢并计数。
+      WireDiagnostics.reset();
+      final client = _FakeClient(
+        onCall: (method, params) => {
+          'sessions': [
+            {
+              'sid': 'sid_legacy',
+              'updatedAt': 1,
+              'running': false,
+              'subagent': false,
+            },
+          ],
+        },
       );
-      await legacy.refreshSessions();
-      expect(legacy.sessions.single.blank, isFalse);
+      final app = AppModel(client: client);
+
+      await app.refreshSessions();
+
+      expect(app.sessions, isEmpty, reason: '缺恒发键的行不算一条正常的会话');
+      expect(WireDiagnostics.badCount, 1, reason: '整行丢要计一次数，否则与"没有会话"分不开');
     });
 
     test('cwd 要解析（按工作区挑靶子靠它，丢了就只能满清单挑）', () async {
@@ -202,12 +267,29 @@ void main() {
             {
               'sid': 'sid_with_cwd',
               'updatedAt': 1000,
+              'running': false,
+              'blank': false,
+              'subagent': false,
               'cwd': r'D:\sudy\myproject\dsh-mobile-test',
             },
             // 老连接器 / 落盘里没有 cwd 的会话：**null**，不是空串。
-            {'sid': 'sid_no_cwd', 'updatedAt': 900},
+            {
+              'sid': 'sid_no_cwd',
+              'updatedAt': 900,
+              'running': false,
+              'blank': false,
+              'subagent': false,
+            },
             // 空串同样当没有：空串会让"按工作区匹配"静默失败。
-            {'sid': 'sid_empty_cwd', 'updatedAt': 800, 'cwd': ''},
+            // （这里**不计**漂移：连接器原样透传宿主的 cwd，空串只可能意味着"没有目录"。）
+            {
+              'sid': 'sid_empty_cwd',
+              'updatedAt': 800,
+              'running': false,
+              'blank': false,
+              'subagent': false,
+              'cwd': '',
+            },
           ],
         },
       );
@@ -229,10 +311,18 @@ void main() {
       final client = _FakeClient(
         onCall: (method, params) => {
           'sessions': [
-            {'sid': 'sid_root', 'updatedAt': 1000},
+            {
+              'sid': 'sid_root',
+              'updatedAt': 1000,
+              'running': false,
+              'blank': false,
+              'subagent': false,
+            },
             {
               'sid': 'sid_child',
               'updatedAt': 900,
+              'running': false,
+              'blank': false,
               'subagent': true,
               'parentSessionId': 'sid_root',
             },
@@ -240,11 +330,19 @@ void main() {
             {
               'sid': 'sid_empty',
               'updatedAt': 800,
+              'running': false,
+              'blank': false,
               'subagent': true,
               'parentSessionId': '',
             },
             // 老连接器：根本没有这个键。
-            {'sid': 'sid_legacy', 'updatedAt': 700, 'subagent': true},
+            {
+              'sid': 'sid_legacy',
+              'updatedAt': 700,
+              'running': false,
+              'blank': false,
+              'subagent': true,
+            },
           ],
         },
       );
@@ -284,6 +382,8 @@ void main() {
             {
               'sid': 'sid_child',
               'updatedAt': 900,
+              'running': false,
+              'blank': false,
               'subagent': true,
               'projections': {
                 'kind': 'sequenced',
@@ -305,6 +405,9 @@ void main() {
             {
               'sid': 'sid_top',
               'updatedAt': 800,
+              'running': false,
+              'blank': false,
+              'subagent': false,
               'model': {'provider': 'p', 'model': 'm-top'},
             },
             // 防御性用例：`next` 缺失 / 为 null 时退 `lastUsed`。
@@ -313,6 +416,9 @@ void main() {
             {
               'sid': 'sid_null_next',
               'updatedAt': 700,
+              'running': false,
+              'blank': false,
+              'subagent': false,
               'projections': {
                 'values': {
                   'modelSelection': {
@@ -356,6 +462,9 @@ void main() {
             {
               'sid': 's1',
               'updatedAt': 1,
+              'running': false,
+              'blank': false,
+              'subagent': false,
               'projections': {
                 'kind': 'cached',
                 'asOfSeq': 1,
@@ -383,7 +492,14 @@ void main() {
       final client = _FakeClient(
         onCall: (method, params) => {
           'sessions': [
-            {'sid': 's1', 'updatedAt': 1, 'cwd': r'D:\sudy\github\dsh-mobile'},
+            {
+              'sid': 's1',
+              'updatedAt': 1,
+              'running': false,
+              'blank': false,
+              'subagent': false,
+              'cwd': r'D:\sudy\github\dsh-mobile',
+            },
           ],
         },
       );
@@ -564,6 +680,8 @@ void main() {
               'sid': 's1',
               'updatedAt': 1792023957795,
               'running': true,
+              'blank': false,
+              'subagent': false,
               // DSH `SessionSummary.projections` 提示的真形状。
               'projections': {
                 'kind': 'sequenced',

@@ -6,6 +6,27 @@
 
 ## 下一步（新会话从这里开始）
 
+> **2026-10-25 晚：线上形状第 0 批（金样机器）+ 第 1 批（`session.list`）已落地** —— **0 个真机回合**。
+> 笔记 `implemented/2026-10-25-wire-golden-and-session-list.md`；细则门禁数字只在 `tools.md`。
+> - **金样**：`connector/tests/fixtures/wire-shapes.json` 由连接器测试调**真实 handler** 产出、
+>   比 `JSON.parse(JSON.stringify(...))` 深比较（线上那一层）；App 用例读**同一份**文件，
+>   **缺失即 fail 不许 skip**。采样确定性另有专门用例。假行只有一份
+>   （`connector/tests/support/fixture-handlers.ts`：4 种会话行 + `models` + `projections` 两个面）。
+> - **第 1 批**：`app/lib/wire/rpc/session.dart` 成了 `session.list` 的**唯一发请求与唯一解码**处；
+>   `app_model.dart` 删掉 `_parseSessionList` 等 5 个函数 + 裸数组分支（净 −107 行），
+>   调用点只剩 `loadSessionList(client)` 一行。必填/可选**看生产方式**（`handlers.ts:740-744`
+>   无条件写的那 5 个键缺失 = 整行丢 + 计数；4 个条件键缺失 = null 正常）。
+> - **门禁**：flutter **1241 → 1251**、connector **657 → 660**、boundary **509 → 512**、
+>   tool-paths **23 → 24**、**预算 39 → 38**（新脚本 `app/tools/verify-rpc-single-caller.mjs`）、
+>   analyze/format 0。变异校验：金样 `running` 改成 `"true"` ⇒ 连接器恰好 1 红；
+>   decoder 的 `values['title']` → `'tittle'` ⇒ 金样回放恰好 1 红（全仓 7 红）。
+> - **下一步 = 第 3 批（`session.projections`，14 个键 + 6 个 `model/*` 解析器）**。
+>   理由：`session.projections` 的应答**已经在金样里**（第 0 批就收了它，正好是"同名两种形状"的
+>   对照面），而它背后就是手机上 10 个读取点与 6 个解析器，收益最大、风险最小。
+>   第 2 批（`session.page` / `session.refetch`）要新造 `SessionPageWire` 中间结构并动连接层的
+>   `await` 循环，排在它后面。规格与每批验收见 `proposed/2026-10-25-wire-design-review.md`。
+> - **仍没验**：`@` 面板的骨架 / 失败态、图片上限四条、插件安装/卸载的真实 pnpm 流程（上一轮遗留，未变）。
+
 > **2026-10-25 深夜：候选面板照宿主重做（列表行 + drill + 面包屑）+ 命令说明 + 接管卡溢出**
 > 开工单 `.agents/notes/proposed/2026-10-24-next-round-panel-redesign-prompt.md`（本轮已全部落地，见文末索引）。
 > 用户原话：「UI 有点丑啊…居中的，为啥不是目录那种…你文件肯定父子级吧？可以嵌套的吧？还有命令的也是」。
@@ -39,13 +60,11 @@
 >   （fixture 每条都要解得出、六个关键键不许少）。笔记
 >   `implemented/2026-10-25-event-wire-single-decoder.md`。
 >   门禁：flutter **1235 → 1241**、boundary **391 → 509**（22 → 25 条自检、110 → 112 文件）。
-> - **下一步（用户："转格式这种一定要设计好，不是枚举猜，都看看"）**：RPC 应答面还没搬 ——
->   `app_model.dart`（41 个读取点 / 104 个字段）+ `model/*.dart`（36 个读取点，198 处字面量下标）
->   仍是 `result is Map ? result['x'] : null`。**方案已审（2026-10-25，0 代码改动）**：
->   `proposed/2026-10-25-wire-design-review.md` —— 继续走手写 decoder，但漂移判据换成
->   **连接器测试产出的金样**（真样本快照发现不了漂移），门禁名单逐批增长即进度表。
+> - ~~**下一步（用户："转格式这种一定要设计好，不是枚举猜，都看看"）**：RPC 应答面还没搬~~ ——
+>   **第 0 批 + 第 1 批已落地（2026-10-25 晚，见本节顶部）**：金样机器 + `session.list` 已搬，
+>   `app_model.dart` 的 41 个读取点还剩 40 个（预算 39 → 38）。剩余批次仍按
+>   `proposed/2026-10-25-wire-design-review.md` 的迁移表走，**下一批 = 第 3 批（`session.projections`）**。
 >   旧草案（原 `proposed/2026-10-25-wire-format-layer.md`）已标"被取代"移入 `archived/`。
->   **内核已就位**（`wire/reading.dart`），下一批搬 `session.list`（第 1 批，形状与要删的行号见新篇）。
 > - **新发现**：`/` 的说明列**生产路径恒空** —— `repo.info` 只在握手后取一次，而连接器
 >   `describe()` 要活 agent。见 `implemented/2026-10-25-command-descriptions-from-host.md` 末两条。
 > - **仍没验**：`@` 面板的骨架 / 失败态、图片上限四条（要先调小宿主的

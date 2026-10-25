@@ -116,6 +116,9 @@ Map<String, Object?> _row({required bool running}) => {
   'sid': 's1',
   'updatedAt': 0,
   'running': running,
+  // 恒发键（`connector/src/handlers.ts:740-744`）：假行必须是线上形状。
+  'blank': false,
+  'subagent': false,
 };
 
 SessionEvent _turn(String type, int seq, int time) => SessionEvent(

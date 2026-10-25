@@ -94,6 +94,9 @@ Map<String, Object?> _row(String sid) => {
   'sid': sid,
   'updatedAt': 0,
   'running': false,
+  // 恒发键（`connector/src/handlers.ts:740-744`）：假行必须是线上形状。
+  'blank': false,
+  'subagent': false,
 };
 
 /// 让异步链（`_syncKeepAlive` 的 `await`、`_syncNotices` 的 `unawaited`）跑完。

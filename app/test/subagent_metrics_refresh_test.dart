@@ -67,13 +67,20 @@ class _FreshnessClient extends FakeSyncClient {
         listCalls += 1;
         return {
               'sessions': [
-                {'sid': 'sid_A', 'updatedAt': 1, 'blank': false},
+                {
+                  'sid': 'sid_A',
+                  'updatedAt': 1,
+                  'running': false,
+                  'blank': false,
+                  'subagent': false,
+                },
                 if (listCalls > 1) ...[
                   {
                     'sid': 'child-1',
                     'updatedAt': 2,
                     'subagent': true,
                     'running': false,
+                    'blank': false,
                     'projections': {
                       'kind': 'cached',
                       'asOfSeq': 9,

@@ -1,7 +1,7 @@
-# 线上形状（RPC 应答）：金样机器（第 0 批）
+# 线上形状（RPC 应答）：金样机器 + `session.list` 的单读者
 
 - 日期：2026-10-25
-- 状态：已落地（**第 0 批已完成**；第 1 批及以后逐批在本篇追加）
+- 状态：已落地（**第 0 批 + 第 1 批**；第 2 批及以后逐批在本篇追加）
 - 规格：`proposed/2026-10-25-wire-design-review.md`（本轮开工单
   `proposed/2026-10-25-wire-batch0-and-batch1-prompt.md`）
 - 相关：`implemented/2026-10-25-event-wire-single-decoder.md`（事件面已落地，本篇沿用它的三态内核）、
@@ -96,7 +96,7 @@
 - **未做**：`session.projections` 的 14 个键本轮不解（第 3 批），本轮只是把它的应答收进金样 ——
   它在这里的作用是"证明同一个名字有两种形状"，不是"读它"。
 
-## 判据
+## 判据（第 0 批）
 
 - `connector`：**657 → 660**（`tests/wire-shapes.test.ts` 三条：键集合 / 逐字深比较 / 采样确定性）。
   `pnpm exec tsc --noEmit` 0。
@@ -116,3 +116,121 @@
 - `connector/tests/fixtures/wire-shapes.json`（金样本体）
 - `app/test/wire_shapes_replay_test.dart`（App 侧回放：文件缺失即 fail）
 - `app/tools/verify-rpc-single-caller.mjs`（"协议知识还有几处漏在 `wire/` 外面"的那个数）
+- `app/lib/wire/rpc/session.dart`（第 1 批：`session.list` 的唯一发请求与唯一解码）
+- `app/lib/data/app_model.dart` 的 `_fetchSessionRows`（唯一的调用点，只剩一行委派）
+
+---
+
+## 第 1 批：`session.list` 的单读者
+
+### Problem
+
+`session.list` 的解析在 `app/lib/data/app_model.dart` 里摊成了五个函数
+（`_parseSessionList` 79 行 + `_titleHintOf` + `_projectionValueOf` + `_modelSelectionOf` +
+`_parseModelRef`），还有一条"裸数组也认"的分支。两个后果：
+
+1. **协议知识留在 `data/`**：方法名、参数形状、应答字段三样都在 `wire/` 外面，
+   而"还有几处漏在外面"没有数字可看 —— 搬走解码却留着 `client.call<…>('session.list')`
+   与搬走整件事，在评审眼里长得一样。
+2. **形状错的三种表现全是静默的**：缺 `running` 就 `== true` ⇒ `false`（把"读不到"
+   说成"没在跑"）；`projections` 认不出 ⇒ 标题/模型/时长/token 全空；裸数组 ⇒
+   一次**成功的空清单**。第三种最坏：它让"电脑上没有会话"与"我们没看懂回复"同形。
+
+### Decision
+
+**`session.list` 的方法名、参数形状、应答字段全部收进 `app/lib/wire/rpc/session.dart`；
+调用点只剩一行委派；预算 39 → 38。**
+
+准入门槛（可机械判定）：
+
+1. **`data/` 与 `ui/` 里 `client.call<` 的处数 == 预算**（39 → 38 → … → 0）。
+   这一批落地的就是那**一处**：`_fetchSessionRows` 改成 `loadSessionList(client)`。
+2. **必填 / 可选看生产方式，不看名字**：`handlers.ts:740-744` **无条件写出**的
+   `sid` / `updatedAt` / `running` / `blank` / `subagent` 缺失 ⇒ 整行丢 + 计数 1；
+   被 `...(cond ? {} : …)` 包住的 `parentSessionId` / `cwd` / `model` / `projections`
+   缺失 ⇒ `null`（正常），**在但读不出**才降级 + 计数 1。
+3. **信封错与行级问题分档**：`{sessions: [...]}` 都没了 ⇒ 外层 `WireBad`；
+   一条坏行只丢那一行 —— 丢整行会让会话从列表消失，比空标题坏得多。
+4. **旧读法整段消失**：`_parseSessionList` / `_titleHintOf` / `_projectionValueOf` /
+   `_modelSelectionOf` / `_parseModelRef` 与裸数组分支一起删
+   （函数体 107 行，连头注一起 **净 −146 行**：`git diff --numstat` 是 `+8 / −154`）。
+5. **产出已有模型类** `SessionSummary`，不新造 DTO；`pendingCount` / `itemCount`
+   仍由 `_applySessionList` 本地补。
+
+关于两处细节（都是"如实记账"而不是"放宽"）：
+
+- **`cwd` 的空串不计数**：连接器原样透传宿主的 `cwd`（`handlers.ts:760`），
+  空串只可能意味着"没有目录"，不是漂移。**`parentSessionId` 的空串计数**：
+  连接器显式不为 `undefined` / 空串建别名（`handlers.ts:728-736`），所以空串只可能来自漂移。
+  两个键的处理**故意不同**，理由都写在各自的函数头注里。
+- **`values` 里我们还没消费的键不计数**：金样的"普通行"就放了一个 `agentPreset`
+  —— 一个会话行的投影里有很多手机暂时不读的键，把它们当漂移会天天红。
+
+### Alternatives considered
+
+1. **只搬解码，把 `client.call` 留在 `app_model.dart`**
+   - 最强的理由：改动最小 —— 调用点不动，鉴权/请求号/错误分类那条既有链路完全不受影响。
+   - 为何被否：方法名与参数形状**仍然是 `data/` 的知识**，预算降不下来 ⇒ 这一类门禁
+     对这一批完全无效，下一批还会以同样的理由把调用留在原地。搬调用的理由是
+     "`data/` 不该知道方法名与参数形状"，不是为了迁就一个 grep。
+2. **`session.page` / `session.refetch` 一起搬（一次把会话面搬完）**
+   - 最强的理由：这三个方法同属"会话怎么读"，分两批会让 `wire/rpc/session.dart` 先长一半。
+   - 为何被否：它们的形状读取在**连接层**（`core/sync_client_impl.dart:957` / `:990-1016` /
+     `:1024` / `:1038-1052`），而 `SessionPage` 要参与 `await refetch` 补取 ——
+     一个纯 decoder 不能 `await`。这需要两字段的中间结构（`SessionPageWire` + 判别联合），
+     是第 2 批；塞进这一批会让"一个方法一个文件"的边界立刻糊掉。
+3. **新造一个 wire DTO，不复用 `SessionSummary`**
+   - 最强的理由：wire 形状与界面模型解耦，金样变了只改 DTO，界面层不动。
+   - 为何被否：`pendingCount` / `itemCount` 是**本地派生**（跨请求汇总），不在线上；
+     新 DTO 会引出两个形状几乎相同、差两个字段的类型，界面层还要再映射一次 ——
+     而 `chat_item.dart` 不 import `wire/`，`wire → model` 本来就是单向的，不会成环。
+4. **保留裸数组分支（"早期的假客户端与将来的简写"）**
+   - 最强的理由：兼容性 —— 假客户端与"将来也许更简单的形状"都能跑。
+   - 为何被否：连接器**从来只回 `{sessions: [...]}`**（`handlers.ts:738`）；
+     留着它"认不出必须留声"永远不成立，而代价是"空清单"与"没看懂"同形。
+     旧用例 `裸数组也认…` 因此改成**反向断言**（空列表 + `badCount == 1`）——
+     这是把"容忍假客户端"换成"钉线上形状"，不是删断言。
+
+### Consequences
+
+- 收益：`app_model.dart` **净 −146 行**（`git diff --numstat`：`+8 / −154`；
+  `_parseSessionList` 79 行 + 5 个辅助 30 行 + 各自的头注），
+  方法名只剩 `wire/rpc/session.dart` 一处；形状错从"静默空值"变成"计数 + 一行打印"。
+- 收益：**"可选键"第一次真的被测到**：金样的四行覆盖 `parentSessionId` / `cwd` / `model` /
+  `projections` 各"有与没有"，把任何一个当必填都会红。
+- 代价：**`wire/` 多了一条指向 `core/` 的边**（`wire/rpc/session.dart` 直接收
+  `SyncClient` 端口）。方向是对的（适配器依赖端口），但"`wire/` 只依赖 `reading.dart`"
+  这个纯度说法从此不成立，如实记账。
+- 代价：**"可选键在但读不出"会计数**，于是同一个"漂移"数字里混着两种严重程度
+  （行丢掉 vs 字段降级）。这是有意的：两者都需要有人看一眼，而分开计数要多一套状态。
+  真需要分桶时再加维度（`WireDiagnostics` 是进程级计数，见 `wire/reading.dart`）。
+- 代价：**迁移面不小** —— 恒发键变成必填之后，15 个测试文件里手写的会话行都得补齐，
+  另外 `session_list_wiring_test.dart` 里"老连接器不发 blank 时不能默认成 true"那条前提
+  被证明是错的（连接器**无条件**写 `blank`），已改成"缺 `blank` ⇒ 整行丢 + 计数 1"。
+  这正是"钉线上形状"的直接代价，也正是不再容忍假客户端形状的那部分。
+
+### 判据（第 1 批）
+
+- `flutter test`：**1243 → 1251**。新增/改动的用例：
+  - `test/wire_shapes_replay_test.dart` 由 2 条涨到 9 条：金样的**四种行各一条**
+    （名字与期望值全部从金样长出来）、可选键覆盖两侧的守卫、缺 `sid` ⇒ 整行丢 + 计数 1、
+    `values` 不是映射 ⇒ 该行仍 `WireOk` + 四个投影字段降级 + 计数 1。
+  - `test/session_list_wiring_test.dart`：裸数组改成反向断言；"老连接器默认 blank"
+    换成"缺恒发键 ⇒ 整行丢 + 计数 1"（20 条，原 19）。
+- 预算：**39 → 38**（`app/tools/verify-rpc-single-caller.mjs` 的 `BUDGET`），PASS 且静默。
+  反向校验：把常量写成 39 ⇒ FAIL 并逐行报出 38 个位置（说明它真的在比，不是恒真）。
+- `verify-platform-boundary.mjs`：**509 → 512**（`app/lib` 多一个 Dart 文件：112 → 113）。
+- `connector`：**660** 不变（本批只改了金样里"普通行"的投影值：去掉 `title`，
+  因为未命名是正常态，且这样"标题"这条变异才恰好只红一行）。
+- **变异校验**：把 decoder 里的 `values['title']` 改成 `values['tittle']`
+  ⇒ 金样回放里**恰好 1 条红**（第 4 行 —— 金样里唯一带标题的那一行）；
+  全仓共 7 条红（另外 6 条是别的套件自己断言了标题的用例，说明变异打在真实读法上）。
+  改回来即绿。
+- `dart analyze --fatal-infos` 0、`dart format` 0。
+
+### 代码入口回指（第 1 批）
+
+- `app/lib/wire/rpc/session.dart`（头注写了形状出处、必填/可选的分界、信封与扁平的区别）
+- `app/lib/data/app_model.dart` 的 `_fetchSessionRows`（唯一调用点，一行委派）
+- `app/tools/verify-rpc-single-caller.mjs`（那个从 39 起、终态 0 的预算）
+

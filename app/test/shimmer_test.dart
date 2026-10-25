@@ -90,7 +90,14 @@ class _SnapshotEventClient extends _EventClient {
     if (method == 'session.list') {
       return {
             'sessions': [
-              {'sid': 's1', 'running': running},
+              // 线上形状：恒发键一个都不能少（`connector/src/handlers.ts:740-744`）。
+              {
+                'sid': 's1',
+                'updatedAt': 0,
+                'running': running,
+                'blank': false,
+                'subagent': false,
+              },
             ],
           }
           as T;

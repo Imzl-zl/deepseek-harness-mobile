@@ -49,6 +49,7 @@ import '../model/turn_outline.dart';
 import '../model/usage_summary.dart';
 import '../model/workspace.dart';
 import '../model/workspace_files.dart';
+import '../wire/rpc/session.dart';
 import 'preview_data.dart';
 import 'projection.dart';
 import 'session_store.dart';
@@ -739,29 +740,6 @@ class AppModel extends ChangeNotifier {
 
   static int _intOf(Object? value) => value is num ? value.toInt() : 0;
 
-  /// 从 `session.list` 行的**投影提示**里取标题。
-  ///
-  /// 形状：`{kind, asOfSeq, values: {title: '...', ...}}`
-  /// （DSH `SessionProjectionHints`，`list.ts:291-312` 产出）。
-  /// 认不出就给空串 —— 由 [SessionSummary.displayTitle] 按 DSH 的链继续退。
-  static String _titleHintOf(Object? raw) {
-    final title = _projectionValueOf(raw, 'title');
-    return title is String && title.isNotEmpty ? title : '';
-  }
-
-  /// 从 `session.list` 行的投影提示里取**某一个投影键**。
-  ///
-  /// 行只有一包 `projections`（`{kind, asOfSeq, values}`），而手机要的
-  /// 不止标题：子智能体目录行还要 `subagentTiming` / `tokenUsage`
-  /// （Web 读的是同一处，`SubagentHeaderLineage.tsx:83-84,260`）。
-  /// 形状知识只写在这里一次 —— 另一处抄一份"values 在哪"就会各自漂移。
-  static Object? _projectionValueOf(Object? raw, String key) {
-    if (raw is! Map) return null;
-    final values = raw['values'];
-    if (values is! Map) return null;
-    return values[key];
-  }
-
   // ---- 权限档（`permission.catalog` 目录 + `permissions` 投影的当前值）----
 
   /// 权限预设目录（`permission.catalog`，原样过线）。
@@ -1330,7 +1308,8 @@ class AppModel extends ChangeNotifier {
   /// 当前会话的模型（`modelSelection` 投影，`next ?? lastUsed`）。
   ///
   /// 取的是 [SessionSummary.model]，而那一项**优先来自行的投影提示**
-  /// （见 `_parseSessionList` 的注释）—— 子会话没有活 agent，只有这条能给出模型。
+  /// （`app/lib/wire/rpc/session.dart` 的 `readSessionRow`：`values.modelSelection`
+  /// 先于行顶层 `model`）—— 子会话没有活 agent，只有这条能给出模型。
   /// 输入栏的模型名 / 推理等级 / 模型选择面板的"当前"标记都走这里，不各自取。
   ModelRef? get currentModel {
     final sid = _currentSid;
@@ -2226,10 +2205,11 @@ class AppModel extends ChangeNotifier {
   }
 
   /// 向电脑侧要一包会话行（**唯一的 `session.list` 出口**）。
-  Future<List<SessionSummary>> _fetchSessionRows() async {
-    final result = await client.call<Object?>('session.list', const {});
-    return _parseSessionList(result);
-  }
+  ///
+  /// 方法名、参数形状与应答字段**全在 `app/lib/wire/rpc/session.dart`** ——
+  /// 这一层不再知道 `session.list` 长什么样，这正是
+  /// `app/tools/verify-rpc-single-caller.mjs` 那个会归零的预算在数的事。
+  Future<List<SessionSummary>> _fetchSessionRows() => loadSessionList(client);
 
   /// 把一包会话行落到 [sessions]（**唯一的赋值口**）。
   ///
@@ -3747,132 +3727,6 @@ class AppModel extends ChangeNotifier {
     next[index] = current.withTitle(title);
     _sessions = next;
     if (!_disposed) notifyListeners();
-  }
-
-  /// 解析 `session.list` 的返回。
-  ///
-  /// **形状是 `{ sessions: [...] }`，不是一个裸数组** —— 这是真机上"连上了却永远
-  /// 没有会话"的真因：这里原先只认 `List`，而电脑侧回的是对象，
-  /// 于是**每一条都被静默跳过**、列表恒为空、且不报错（用户无从分辨
-  /// "电脑上真没有会话"与"我们没看懂回复"）。
-  ///
-  /// 判据取电脑侧：`connector/src/handlers.ts` 的 `session.list` 返回
-  /// `{ sessions: [...] }`，且 `connector/tests/connection-methods.test.ts` 有多处
-  /// 按 `result.sessions[…]` 断言。**两侧只有一个真值，不能各认各的形状。**
-  ///
-  /// Note: 这条与另外两处"线上形状不一致"一起记在
-  /// `.agents/notes/implemented/2026-10-07-three-wire-shape-mismatches.md`
-  static List<SessionSummary> _parseSessionList(Object? result) {
-    // 对象形状是权威；裸数组也认（早期的假客户端与将来的简写都可能这么给），
-    // 但**认不出就必须留声** —— 静默返回空列表正是这个 bug 藏了这么久的原因。
-    final Object? raw = switch (result) {
-      List() => result,
-      Map() => result['sessions'],
-      _ => null,
-    };
-    if (raw is! List) return const [];
-    final out = <SessionSummary>[];
-    for (final entry in raw) {
-      if (entry is! Map) continue;
-      final sid = entry['sid'];
-      if (sid is! String || sid.isEmpty) continue;
-      // **标题从行的投影提示来**：`projections.values.title`。
-      // 这是 host 侧 `session.list` 行唯一的标题来源（`dsh-api-session-controller`
-      // 的 `lib/types/types.d.ts`：行只有 `projections`，没有独立的持久标题字段），
-      // Web 侧栏读的"持久标题"远程客户端拿不到——契约如此，不是将就。
-      // 取不到就留空，由 [SessionSummary.displayTitle] 显示「未命名」
-      // （DSH 的 Web 侧栏对无标题会话不用目录名兜底，`ui-workspace/README.zh.md:32`）。
-      out.add(
-        SessionSummary(
-          sid: sid,
-          title: _titleHintOf(entry['projections']),
-          updatedAt: (entry['updatedAt'] as num?)?.toInt() ?? 0,
-          // 电脑侧一直在发（`connector/src/handlers.ts` 的 `session.list`），
-          // 只是手机侧此前丢掉了它 —— 而"这个会话正在跑"决定了新消息会不会被排队。
-          running: entry['running'] == true,
-          // 从没被 agent 跑过（`connector/src/handlers.ts` 的 `session.list` 一直在发）。
-          // **挑靶子时要它**：只按 `!running` 挑会挑到"刚被别的 agent 跑完一轮"的
-          // 会话，而那种会话随时可能又被唤起（真机联调两次叫醒别人的会话）。
-          blank: entry['blank'] == true,
-          // 子智能体的子会话：**列表可见性的一条判据**（DSH Web 同样不列它，
-          // `ui-workspace/src/client/tree.ts:244`）。连接器一直在发这个标志，
-          // 手机此前没解析 —— 真机上于是多列一行（Web 3 条 / 手机 4 条）。
-          subagent: entry['subagent'] == true,
-          // 子会话的父级（`connector/src/handlers.ts` 的 `session.list`，
-          // **别名形式**）。根会话不给这个键 ⇒ `null`；老连接器也不给
-          // ⇒ 头部退到"目录扫到的父级 / 导航记忆"那两档。
-          // 空串按"没有"处理：把空串当 sid 会让父级查名字永远落空。
-          parentSid:
-              entry['parentSessionId'] is String &&
-                  (entry['parentSessionId'] as String).isNotEmpty
-              ? entry['parentSessionId'] as String
-              : null,
-          // 当前模型：**先看行里的投影提示 `modelSelection`**，再看行顶层 `model`。
-          // 两处同源（DSH 的 `modelSelection` 投影，`next ?? lastUsed`），
-          // 但覆盖面不同：顶层 `model` 是连接器从**活 agent** 读的
-          // （`connector/src/dsh/models.ts` 的 `agents.get`），子会话不在那张表里 ——
-          // 于是子智能体页面的输入栏会显示「未选择」。而投影提示对每个会话都有
-          // （DSH 的 `list.ts:291-312` 不挑键；`modelSelection` 的 `lastUsed`
-          // 由 `request/header` 推出来，`model-selection-projection.ts:44-51`）。
-          // **认不出就不给**（`null`），界面显示"未选择"—— 猜一个就是把
-          // "看起来连着"当成"连着"。
-          model:
-              _modelSelectionOf(entry['projections']) ??
-              _parseModelRef(entry['model']),
-          // 工作区目录：电脑侧一直在发（`connector/src/handlers.ts` 的 `session.list`）。
-          // **认不出就不给**（`null`）—— 空串会让"按工作区挑靶子"静默匹配失败。
-          cwd: entry['cwd'] is String && (entry['cwd'] as String).isNotEmpty
-              ? entry['cwd'] as String
-              : null,
-          // 子会话的计时与 token：**同一包投影提示里的另外两个键**
-          // （`projections.values.subagentTiming` / `.tokenUsage`）。
-          // 连接器原样透传整包（`connector/src/handlers.ts:527-533`），
-          // 手机此前只取了 `title`，于是子智能体行没有真实耗时、没有 token，
-          // 一次性任务的时长还只能靠"现在减创建时间"越涨越长。
-          // 认不出就是 null（[parseSubagentTiming] / [parseTokenUsage]）。
-          subagentTiming: parseSubagentTiming(
-            _projectionValueOf(entry['projections'], 'subagentTiming'),
-          ),
-          tokenUsage: parseTokenUsage(
-            _projectionValueOf(entry['projections'], 'tokenUsage'),
-          ),
-        ),
-      );
-    }
-    return out;
-  }
-
-  /// 从 `session.list` 行的投影提示里取 `modelSelection`（`{lastUsed, next}`）。
-  ///
-  /// **`next ?? lastUsed`** 与 DSH 的线格式完全一致
-  /// （`packages/api/session-controller/src/model-selection-projection.ts:65`：
-  /// `view: state => ({lastUsed, next: state.pending ?? state.lastUsed})`），
-  /// 与 `connector/src/dsh/models.ts` 的 `modelOf` 也是同一条。
-  ///
-  /// 认不出就给 `null`（缺 `provider` / `model` 都算认不出）。
-  static ModelRef? _modelSelectionOf(Object? projections) {
-    final value = _projectionValueOf(projections, 'modelSelection');
-    if (value is! Map) return null;
-    return _parseModelRef(value['next'] ?? value['lastUsed']);
-  }
-
-  /// 解析 `session.list` 行里的 `model` 字段。
-  ///
-  /// 形状与 DSH 的 `ModelSelection` 逐字一致（`{provider, model, reasoningEffort?}`）。
-  /// 字段不齐就当没有 —— 一个缺 `model` 的 `ModelRef` 显示不出来，
-  /// 而硬填一个空串会让界面显示一个空的模型名。
-  static ModelRef? _parseModelRef(Object? raw) {
-    if (raw is! Map) return null;
-    final provider = raw['provider'];
-    final model = raw['model'];
-    if (provider is! String || provider.isEmpty) return null;
-    if (model is! String || model.isEmpty) return null;
-    final effort = raw['reasoningEffort'];
-    return ModelRef(
-      provider: provider,
-      model: model,
-      reasoningEffort: effort is String && effort.isNotEmpty ? effort : null,
-    );
   }
 
   /// 释放（**幂等**）。

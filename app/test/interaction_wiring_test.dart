@@ -200,8 +200,20 @@ void main() {
     // session.list 先给出两行。
     client.onList = const {
       'sessions': [
-        {'sid': 'sid-A', 'updatedAt': 2, 'running': false, 'blank': true},
-        {'sid': 'sid-B', 'updatedAt': 1, 'running': false, 'blank': true},
+        {
+          'sid': 'sid-A',
+          'updatedAt': 2,
+          'running': false,
+          'blank': true,
+          'subagent': false,
+        },
+        {
+          'sid': 'sid-B',
+          'updatedAt': 1,
+          'running': false,
+          'blank': true,
+          'subagent': false,
+        },
       ],
     };
     await app.refreshSessions();

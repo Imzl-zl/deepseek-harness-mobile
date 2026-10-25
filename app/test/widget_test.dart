@@ -270,6 +270,9 @@ void main() {
             {
               'sid': 's1',
               'updatedAt': 0,
+              'running': false,
+              'blank': false,
+              'subagent': false,
               'projections': {
                 'kind': 'cached',
                 'asOfSeq': 1,
@@ -403,7 +406,13 @@ void main() {
       final app = AppModel(
         client: FakeClient(
           sessions: [
-            {'sid': 's1', 'updatedAt': 0},
+            {
+              'sid': 's1',
+              'updatedAt': 0,
+              'running': false,
+              'blank': false,
+              'subagent': false,
+            },
           ],
         ),
       );
@@ -438,7 +447,13 @@ void main() {
       final app = AppModel(
         client: FakeClient(
           sessions: [
-            {'sid': 's1', 'updatedAt': 0},
+            {
+              'sid': 's1',
+              'updatedAt': 0,
+              'running': false,
+              'blank': false,
+              'subagent': false,
+            },
           ],
         ),
       );
@@ -650,7 +665,14 @@ void main() {
       // 于是"电脑上有 10 个会话"与"电脑上一个都没有"在界面上长得一模一样。
       final client = _StatefulFakeClient(
         sessions: [
-          {'sid': 's1', 'itemCount': 3, 'updatedAt': 1},
+          {
+            'sid': 's1',
+            'itemCount': 3,
+            'updatedAt': 1,
+            'running': false,
+            'blank': false,
+            'subagent': false,
+          },
         ],
       );
       final app = AppModel(client: client);
@@ -682,6 +704,8 @@ void main() {
             'itemCount': 1,
             'updatedAt': 1,
             'running': false,
+            'blank': false,
+            'subagent': false,
             // 形状与 DSH 的 `ModelSelection` 逐字一致。
             'model': {'provider': 'lightvela-free', 'model': 'auto'},
           },
@@ -690,6 +714,8 @@ void main() {
             'itemCount': 1,
             'updatedAt': 2,
             'running': true,
+            'blank': false,
+            'subagent': false,
             // 这台没有 model 字段：电脑侧也说不出模型（新会话 / 投影还没落）。
           },
         ],
@@ -818,7 +844,13 @@ void main() {
       // （那才是真实现状），而本条要测的正是"连上了、会话是空的"这一种。
       final client = _StatefulFakeClient(
         sessions: [
-          {'sid': 's1', 'updatedAt': 1},
+          {
+            'sid': 's1',
+            'updatedAt': 1,
+            'running': false,
+            'blank': false,
+            'subagent': false,
+          },
         ],
       );
       final app = AppModel(client: client);
@@ -893,7 +925,13 @@ void main() {
       final app = AppModel(
         client: FakeClient(
           sessions: [
-            {'sid': 's1', 'updatedAt': 1},
+            {
+              'sid': 's1',
+              'updatedAt': 1,
+              'running': false,
+              'blank': false,
+              'subagent': false,
+            },
           ],
         ),
       );
@@ -1017,7 +1055,13 @@ void main() {
       final app = AppModel(
         client: FakeClient(
           sessions: const [
-            {'sid': 's1', 'updatedAt': 1},
+            {
+              'sid': 's1',
+              'updatedAt': 1,
+              'running': false,
+              'blank': false,
+              'subagent': false,
+            },
           ],
           projections: const {
             'tokenUsage': {
@@ -1066,7 +1110,13 @@ void main() {
       final app = AppModel(
         client: FakeClient(
           sessions: const [
-            {'sid': 's1', 'updatedAt': 1},
+            {
+              'sid': 's1',
+              'updatedAt': 1,
+              'running': false,
+              'blank': false,
+              'subagent': false,
+            },
           ],
           projections: const {
             'tokenUsage': {
@@ -1124,7 +1174,13 @@ void main() {
       final app = AppModel(
         client: FakeClient(
           sessions: const [
-            {'sid': 's1', 'updatedAt': 1},
+            {
+              'sid': 's1',
+              'updatedAt': 1,
+              'running': false,
+              'blank': false,
+              'subagent': false,
+            },
           ],
           projections: const {
             'tokenUsage': {
@@ -1182,7 +1238,13 @@ void main() {
       final app = AppModel(
         client: FakeClient(
           sessions: const [
-            {'sid': 's1', 'updatedAt': 1},
+            {
+              'sid': 's1',
+              'updatedAt': 1,
+              'running': false,
+              'blank': false,
+              'subagent': false,
+            },
           ],
         ),
       );
@@ -1199,7 +1261,13 @@ void main() {
       final app = AppModel(
         client: FakeClient(
           sessions: const [
-            {'sid': 's1', 'updatedAt': 1},
+            {
+              'sid': 's1',
+              'updatedAt': 1,
+              'running': false,
+              'blank': false,
+              'subagent': false,
+            },
           ],
         ),
       );
@@ -1222,7 +1290,14 @@ void main() {
     testWidgets('serving：点状态点弹连接 sheet（不再抢右抽屉）', (tester) async {
       final client = _StatefulFakeClient(
         sessions: [
-          {'sid': 's1', 'itemCount': 3, 'updatedAt': 1},
+          {
+            'sid': 's1',
+            'itemCount': 3,
+            'updatedAt': 1,
+            'running': false,
+            'blank': false,
+            'subagent': false,
+          },
         ],
       );
       final app = AppModel(client: client);
@@ -1249,7 +1324,13 @@ void main() {
       final app = AppModel(
         client: FakeClient(
           sessions: [
-            {'sid': 's1', 'updatedAt': 1},
+            {
+              'sid': 's1',
+              'updatedAt': 1,
+              'running': false,
+              'blank': false,
+              'subagent': false,
+            },
           ],
         ),
       );
@@ -1271,7 +1352,13 @@ void main() {
     testWidgets('点跟着连接状态变：服务中=绿点，重连中=转圈', (tester) async {
       final client = _StatefulFakeClient(
         sessions: [
-          {'sid': 's1', 'updatedAt': 1},
+          {
+            'sid': 's1',
+            'updatedAt': 1,
+            'running': false,
+            'blank': false,
+            'subagent': false,
+          },
         ],
       );
       final app = AppModel(client: client);

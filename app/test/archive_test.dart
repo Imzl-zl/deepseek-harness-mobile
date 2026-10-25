@@ -76,6 +76,9 @@ class _FakeArchiveClient extends FakeSyncClient {
                 {
                   'sid': 's1',
                   'updatedAt': 30,
+                  'running': false,
+                  'blank': false,
+                  'subagent': false,
                   'projections': {
                     'kind': 'cached',
                     'asOfSeq': 1,
@@ -85,6 +88,9 @@ class _FakeArchiveClient extends FakeSyncClient {
                 {
                   'sid': 's2',
                   'updatedAt': 20,
+                  'running': false,
+                  'blank': false,
+                  'subagent': false,
                   'projections': {
                     'kind': 'cached',
                     'asOfSeq': 1,

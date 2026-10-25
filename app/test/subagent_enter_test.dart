@@ -140,6 +140,10 @@ class _SubagentClient extends FakeSyncClient {
           {
             'sid': 'sid_A',
             'updatedAt': 1,
+            // 恒发键（`connector/src/handlers.ts:740-744`）：假行必须是线上形状。
+            'running': false,
+            'blank': false,
+            'subagent': false,
             'projections': {
               'values': {'title': parentTitle},
             },
@@ -149,6 +153,8 @@ class _SubagentClient extends FakeSyncClient {
               'sid': 'child-${i + 1}',
               'updatedAt': 2 + i,
               'subagent': true,
+              'running': false,
+              'blank': false,
               // **父级（别名形式）**：电脑侧 `session.list` 的行就带这个键；
               // 根会话（sid_A）没有它 —— 与连接器那条判据一致。
               if (!noParentId.contains('child-${i + 1}'))
@@ -169,6 +175,8 @@ class _SubagentClient extends FakeSyncClient {
             'sid': 'grand-1',
             'updatedAt': 9,
             'subagent': true,
+            'running': false,
+            'blank': false,
             if (!noParentId.contains('grand-1')) 'parentSessionId': 'child-1',
             'projections': {
               'values': {'title': grandTitle},
