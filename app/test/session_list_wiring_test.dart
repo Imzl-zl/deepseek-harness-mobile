@@ -173,15 +173,9 @@ void main() {
               'subagent': false,
             },
           ],
-          'session.modelCatalog' => {'available': false},
-          // 工作区面也要给正常形状：它由 `refreshWorkspaces` 顺带拉，
-          // 解不出来会往同一个计数里再 +1（这一条用例只想坏一处）。
-          'workspace.list' => {
-            'workspaces': <Object?>[],
-            'archivedSessionIds': <String>[],
-            'pinnedSessionIds': <String>[],
-          },
-          _ => null,
+          // 连接/刷新时会顺带拉的那几个附属面：给**正常形状**，别让它们往
+          // 同一个 `badCount` 里 +1 —— 这两条用例只打算坏**一处**（`session.list`）。
+          _ => _sideChannels(method),
         },
       );
       final app = AppModel(client: client);
@@ -263,14 +257,8 @@ void main() {
               },
             ],
           },
-          'session.modelCatalog' => {'available': false},
-          // 见上一条用例：工作区面也要正常形状，别让它往同一个计数里再 +1。
-          'workspace.list' => {
-            'workspaces': <Object?>[],
-            'archivedSessionIds': <String>[],
-            'pinnedSessionIds': <String>[],
-          },
-          _ => null,
+          // 见上一条用例：其余附属面都给正常形状，别让它们往同一个计数里再 +1。
+          _ => _sideChannels(method),
         },
       );
       final app = AppModel(client: client);
@@ -844,6 +832,25 @@ SessionEvent _userEvent({required int seq, required String text}) =>
         'id': 'msg-$seq',
       },
     );
+
+/// 连接/刷新时**顺带**拉的那几个附属面，给正常形状。
+///
+/// 用途是让"只坏一处"的用例真的只坏一处：这些方法也走同一个
+/// `WireDiagnostics` 计数器，回一个坏形状会往 `badCount` 里再 +1，
+/// 于是断言 `badCount == 1` 就说明不了是哪一处坏了。
+Object? _sideChannels(String method) => switch (method) {
+  // 目录面的"明说没有"形态：`available: false`，不是形状错。
+  'session.modelCatalog' => {'available': false},
+  'permission.catalog' => {'available': false},
+  'agentPresets.list' => {'available': false},
+  'workspace.list' => {
+    'workspaces': <Object?>[],
+    'archivedSessionIds': <String>[],
+    'pinnedSessionIds': <String>[],
+  },
+  'settings.describe' => {'sections': <Object?>[]},
+  _ => null,
+};
 
 /// 一条 `assistant/message` 事件（真日志形状：消息在 `data.message` 上）。
 SessionEvent _assistantEvent({required int seq, required String text}) =>

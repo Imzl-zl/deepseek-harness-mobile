@@ -33,9 +33,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dsh_mobile/model/chat_item.dart';
+import 'package:dsh_mobile/model/command.dart';
 import 'package:dsh_mobile/model/model_catalog.dart';
+import 'package:dsh_mobile/model/permission.dart';
+import 'package:dsh_mobile/wire/rpc/permission.dart';
 import 'package:dsh_mobile/wire/rpc/projections.dart';
 import 'package:dsh_mobile/wire/rpc/session.dart';
+import 'package:dsh_mobile/wire/rpc/settings.dart';
 import 'package:dsh_mobile/wire/rpc/workspace.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -536,6 +540,83 @@ void main() {
       (workspaceOrder['workspaceIds']! as List).cast<String>(),
     );
     expect(WireDiagnostics.badCount, 0);
+  });
+
+  // ---- B2：权限 / 设置 / 预设三个目录面 ----
+
+  test('permission.catalog：available 为真时预设表解得出，条目数与金样一致', () {
+    final sample = _sampleOf(golden, 'permission.catalog');
+    expect(sample['available'], isTrue);
+    final catalog = (sample['catalog']! as Map).cast<String, Object?>();
+    final reading = readPermissionCatalog(sample);
+    expect(reading, isA<WireOk<PermissionCatalog?>>());
+    final value = (reading as WireOk<PermissionCatalog?>).value;
+    expect(value?.options.length, (catalog['options']! as List).length);
+    expect(value?.defaultPreset, catalog['defaultPreset']);
+    expect(WireDiagnostics.badCount, 0);
+  });
+
+  test('permission.catalog：available=false 是明说 ⇒ WireOk(null)，不计错', () {
+    final reading = readPermissionCatalog({'available': false});
+    expect(reading, isA<WireOk<PermissionCatalog?>>());
+    expect((reading as WireOk<PermissionCatalog?>).value, isNull);
+    expect(WireDiagnostics.badCount, 0);
+  });
+
+  test('permission.catalog：说 available 却不给 catalog ⇒ WireBad + 计数 1', () {
+    final reading = readPermissionCatalog({'available': true});
+    expect(reading, isA<WireBad<PermissionCatalog?>>());
+    expect(
+      valueOrReport<PermissionCatalog?>(reading, 'permission.catalog'),
+      isNull,
+    );
+    expect(WireDiagnostics.badCount, 1);
+  });
+
+  test('permission.switch 与 command.execute 的回执形状相同（matched + execution）', () {
+    final sample = _sampleOf(golden, 'permission.switch');
+    final reading = readPermissionSwitch(sample);
+    expect(reading, isA<WireOk<CommandOutcome>>());
+    final outcome = (reading as WireOk<CommandOutcome>).value;
+    expect(outcome.matched, sample['matched']);
+    final execution = (sample['execution']! as Map).cast<String, Object?>();
+    final result = (execution['result']! as Map).cast<String, Object?>();
+    expect(outcome.text, result['text']);
+    expect(WireDiagnostics.badCount, 0);
+  });
+
+  test('settings.describe：一个 section 的 ns/revision/values 等于金样', () {
+    final sample = _sampleOf(golden, 'settings.describe');
+    final sections = (sample['sections']! as List).cast<Object?>();
+    final first = (sections.first! as Map).cast<String, Object?>();
+    final reading = readSettings(sample);
+    expect(reading, isA<WireOk<List<SettingSectionWire>>>());
+    final list = (reading as WireOk<List<SettingSectionWire>>).value;
+    expect(list.length, sections.length);
+    expect(list.first.ns, first['ns']);
+    expect(list.first.revision, first['revision']);
+    expect(list.first.values, first['values']);
+    expect(WireDiagnostics.badCount, 0);
+  });
+
+  test('settings.update：section 里的新值解得出；section 为 null 是合法应答', () {
+    final sample = _sampleOf(golden, 'settings.update');
+    final section = (sample['section']! as Map).cast<String, Object?>();
+    final reading = readSettingSection(sample);
+    expect(reading, isA<WireOk<SettingSectionWire?>>());
+    final value = (reading as WireOk<SettingSectionWire?>).value;
+    expect(value?.ns, section['ns']);
+    expect(value?.values, section['values']);
+
+    final nullReading = readSettingSection({'section': null});
+    expect(nullReading, isA<WireOk<SettingSectionWire?>>());
+    expect((nullReading as WireOk<SettingSectionWire?>).value, isNull);
+    expect(WireDiagnostics.badCount, 0, reason: 'section:null 不是漂移');
+
+    final bad = readSettingSection({'sections': <Object?>[]});
+    expect(bad, isA<WireBad<SettingSectionWire?>>());
+    expect(valueOrReport<SettingSectionWire?>(bad, 'settings.update'), isNull);
+    expect(WireDiagnostics.badCount, 1);
   });
 }
 

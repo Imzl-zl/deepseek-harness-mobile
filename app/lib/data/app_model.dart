@@ -49,8 +49,11 @@ import '../model/turn_outline.dart';
 import '../model/usage_summary.dart';
 import '../model/workspace.dart';
 import '../model/workspace_files.dart';
+import '../wire/rpc/permission.dart' as wire;
+import '../wire/rpc/preset.dart' as wire;
 import '../wire/rpc/projections.dart' as wire;
 import '../wire/rpc/session.dart' as wire;
+import '../wire/rpc/settings.dart' as wire;
 import '../wire/rpc/workspace.dart' as wire;
 import 'preview_data.dart';
 import 'projection.dart';
@@ -723,13 +726,19 @@ class AppModel extends ChangeNotifier {
     final sid = _currentSid;
     if (sid == null) return null;
     try {
-      final result = await client.call<Object?>(
-        'permission.switch',
-        {'sid': sid, 'preset': preset},
+      // 方法名、参数形状与`{matched, execution?}` 的回执都在 `wire/rpc/permission.dart`。
+      final switched = await wire.switchPermissionPreset(
+        client,
+        sid: sid,
+        preset: preset,
         requestId: 'perm-${DateTime.now().microsecondsSinceEpoch}',
       );
-      final switched = _commandOutcomeOf(result, '切换权限档失败');
-      if (switched == null || _disposed) return null;
+      if (switched == null) {
+        // 回执认不出：**如实报错**，别让界面读上一条错误（`_commandOutcomeOf` 的旧账）。
+        _recordError('切换权限档失败', StateError('电脑侧的命令应答形状认不出'));
+        return null;
+      }
+      if (_disposed) return null;
       if (switched.succeeded) await refreshProjections(sid);
       return switched;
     } catch (error) {
@@ -1528,20 +1537,16 @@ class AppModel extends ChangeNotifier {
   /// `settings.describe` 是**读方法**（不带幂等键），重发只是再读一次。
   Future<void> refreshSettings() async {
     try {
-      final result = await client.call<Object?>('settings.describe', {
-        'namespaces': kSettingsNamespaces,
-      });
-      final sections = result is Map ? result['sections'] : null;
-      if (sections is! List) return;
+      // 形状（`{sections: [{ns, revision, values, secrets}]}`）在 `wire/rpc/settings.dart`；
+      // 这里只把快照落进三张表。
+      final sections = await wire.loadSettings(
+        client,
+        namespaces: kSettingsNamespaces,
+      );
+      if (sections == null) return;
       for (final section in sections) {
-        if (section is! Map) continue;
-        final ns = section['ns'];
-        if (ns is! String) continue;
-        final values = section['values'];
-        _settingsValues[ns] = values is Map
-            ? Map<String, Object?>.from(values)
-            : <String, Object?>{};
-        _settingsRevision[ns] = section['revision'];
+        _settingsValues[section.ns] = section.values;
+        _settingsRevision[section.ns] = section.revision;
       }
       _lastError = null;
       if (!_disposed) notifyListeners();
@@ -1556,23 +1561,18 @@ class AppModel extends ChangeNotifier {
   /// 下一次点击就会带上新的 revision，用户不必自己"刷新页面"。
   Future<bool> updateSetting(String ns, String path, Object? value) async {
     try {
-      final result = await client.call<Object?>(
-        'settings.update',
-        {
-          'ns': ns,
-          'path': [path],
-          'value': value,
-          'expectedRevision': _settingsRevision[ns],
-        },
+      final section = await wire.updateSettingValue(
+        client,
+        ns: ns,
+        path: [path],
+        value: value,
+        expectedRevision: _settingsRevision[ns],
         requestId: 'set-${DateTime.now().microsecondsSinceEpoch}',
       );
-      final section = result is Map ? result['section'] : null;
-      if (section is Map && section['ns'] == ns) {
-        final values = section['values'];
-        _settingsValues[ns] = values is Map
-            ? Map<String, Object?>.from(values)
-            : <String, Object?>{};
-        _settingsRevision[ns] = section['revision'];
+      // `section: null` 是合法应答（宿主没给新快照）⇒ 这一行不刷新，但写已生效。
+      if (section != null && section.ns == ns && !_disposed) {
+        _settingsValues[ns] = section.values;
+        _settingsRevision[ns] = section.revision;
       }
       _lastError = null;
       if (!_disposed) notifyListeners();
@@ -2518,12 +2518,12 @@ class AppModel extends ChangeNotifier {
 
   Future<void> _refreshAgentPresets() async {
     try {
-      final result = await client.call<Object?>('agentPresets.list', const {});
+      // 方法名与参数形状在 `wire/rpc/preset.dart`；目录本体（`roster.presets`
+      // 逐项：`broken` 跳过、`isDefault`、`name`/`description` 可空）仍由
+      // `model/agent_preset.dart` 解析。
+      final roster = await wire.loadAgentPresets(client);
       if (_disposed) return;
-      // **认不出就给 `available:false`**（`parseAgentPresetRoster` 对
-      // `available != true` 与形状不对都这么回）：界面据此说"拿不到预设目录"，
-      // 而不是把"电脑侧没给"显示成"这台电脑一个预设都没有"。
-      _agentPresetRoster = parseAgentPresetRoster(result);
+      _agentPresetRoster = roster;
       if (!_disposed) notifyListeners();
     } catch (_) {
       // **兜住所有异常** —— 与 `_refreshPermissionCatalog` 同一条纪律：
@@ -2584,12 +2584,11 @@ class AppModel extends ChangeNotifier {
 
   Future<void> _refreshPermissionCatalog() async {
     try {
-      final result = await client.call<Object?>('permission.catalog', const {});
+      // 形状（`{available, catalog}`）在 `wire/rpc/permission.dart`：
+      // `available: false` 是电脑侧的明说（⇒ null），`true` 却不给 catalog 才是漂移。
+      final catalog = await wire.loadPermissionCatalog(client);
       if (_disposed) return;
-      // **认不出就给 null**（`parsePermissionCatalog` 对 `available != true`
-      // 与形状不对都返回 null）：界面据此说"拿不到目录"，
-      // 而不是把"电脑侧没给"显示成"这台电脑没有预设"。
-      setPermissionCatalog(parsePermissionCatalog(result));
+      setPermissionCatalog(catalog);
     } catch (_) {
       // **兜住所有异常** —— 与 `_refreshModelCatalog` 同一条纪律。
       // 目录是附属信息，不该把"拉不到权限目录"升级成"会话列表也失败了"。

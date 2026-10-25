@@ -88,7 +88,8 @@
 | A1 | 字段内核 + `session.create`/`select-model`/`cancel`/`updateQueue`/`prompt` + `subagent.prompt` + `session.modelCatalog` | 38 → 32 | ✅ |
 | A2 | `session.projections`（14 个键 + 值对象）+ `session.page`/`refetch` 的形状（`wire/rpc/session_page.dart`）| 32 → 31 | ✅ |
 | B1 | `workspace.*`（7 个，七种应答都是"分组 + 两列 id"或"整份顺序/集合"）| 31 → 24 | ✅ |
-| B2 | `permission.*` / `settings.*` / `agentPresets.list` / `repo.info` / `endpoint.describe` | −7 | 待做 |
+| B2 | `permission.*`(2) / `settings.*`(2) / `agentPresets.list` | 24 → 19 | ✅ |
+| B3 | `repo.info`（先归一成方法条数）/ `endpoint.describe` | −2 | 待做 |
 | C | `file.*` / `refs.*` / `plugin.*` / `job.*` / `interaction.respond` / `usage.summary` / `command.execute` | −17 | 待做 |
 | D | 收尾：预算归 0、常量删掉、金样覆盖全部方法、笔记并入 `implemented/` | 0 | 待做 |
 

@@ -72,6 +72,11 @@ const SAMPLED_METHODS = [
   'workspace.unarchive',
   'workspace.insertSessionBefore',
   'workspace.insertBefore',
+  'permission.catalog',
+  'permission.switch',
+  'settings.describe',
+  'settings.update',
+  'agentPresets.list',
 ] as const
 
 type SampledMethod = (typeof SAMPLED_METHODS)[number]
@@ -122,6 +127,14 @@ const SAMPLES: Record<SampledMethod, readonly WireSample[]> = {
     { params: { workspaceId: 'ws-1', sid: sidOf('dsh-1'), beforeSid: sidOf('dsh-2') } },
   ],
   'workspace.insertBefore': [{ params: { workspaceId: 'ws-1' } }],
+  // 权限 / 设置 / 预设三个目录面：`available` 是"明说"字段，值本体各有自己的解析器。
+  'permission.catalog': [{}],
+  'permission.switch': [{ params: { sid: sidOf('dsh-1'), preset: 'workspace-write' } }],
+  'settings.describe': [{ params: { namespaces: ['general'] } }],
+  'settings.update': [
+    { params: { ns: 'general', path: ['defaultMode'], value: 'read-only' } },
+  ],
+  'agentPresets.list': [{}],
 }
 
 /** **线上那一层**：丢掉 `undefined`、规整成 JSON 标量，再比较。 */

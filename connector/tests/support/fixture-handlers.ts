@@ -287,6 +287,47 @@ export function fixtureHandlers(
       insertSessionBefore: async () => ['dsh-2', 'dsh-1'],
       insertBefore: async () => ['ws-1'],
     },
+    // 权限面：一份确定性的预设表 + 一个"切成功"的回执（`CommandRunView`）。
+    permissions: {
+      catalog: async () => ({
+        options: [
+          { value: 'read-only', name: '只读' },
+          { value: 'workspace-write', name: '工作区写入' },
+          { value: 'danger-full-access', name: '完全访问' },
+        ],
+        defaultOptions: [{ value: 'workspace-write', name: '工作区写入' }],
+        defaultPreset: 'workspace-write',
+      }),
+      switchTo: async (_sid: string, preset: string) => ({
+        matched: true,
+        execution: { result: { kind: 'text', text: `已切换到 ${preset}` } },
+      }),
+    },
+    // 设置面：描述把同名 ns 回成一份快照；写回改完之后的快照（revision 递增）。
+    settings: {
+      describe: (namespaces: readonly string[]) =>
+        namespaces.map((ns) => ({
+          ns,
+          revision: 3,
+          values: { defaultMode: 'workspace-write' },
+          secrets: [],
+        })),
+      update: async (input: { ns: string; path: readonly string[]; value: unknown }) => ({
+        ns: input.ns,
+        revision: 4,
+        values: { [String(input.path[0])]: input.value },
+        secrets: [],
+      }),
+    },
+    // Agent 预设目录：一个内置默认 + 一个自建（`name` 可缺，手机不翻译）。
+    agentPresets: {
+      roster: async () => ({
+        presets: [
+          { id: 'standard', isDefault: true },
+          { id: 'team-review', name: 'Team Review', description: 'Review-only composition.' },
+        ],
+      }),
+    },
     jobs: {
       listOwnedBy: (dshSessionId) =>
         dshSessionId === 'dsh-1'

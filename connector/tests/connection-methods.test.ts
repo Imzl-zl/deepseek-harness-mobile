@@ -94,9 +94,12 @@ test('端到端：手机问 repo.info，电脑侧回一个可解的 res（id 对
   assert.deepEqual(
     info.methods,
     [
+      'agentPresets.list',
       'devices.list',
       'job.kill',
       'job.list',
+      'permission.catalog',
+      'permission.switch',
       'repo.info',
       'session.cancel',
       'session.create',
@@ -106,6 +109,8 @@ test('端到端：手机问 repo.info，电脑侧回一个可解的 res（id 对
       'session.prompt',
       'session.select-model',
       'session.updateQueue',
+      'settings.describe',
+      'settings.update',
       'subagent.prompt',
       'usage.summary',
       'workspace.archive',
@@ -116,7 +121,8 @@ test('端到端：手机问 repo.info，电脑侧回一个可解的 res（id 对
       'workspace.unarchive',
       'workspace.unpin',
     ],
-    '实现了哪些方法也由同一张表报出（`models` / `projections` / `subagents` / `workspaces` 四个面给了）',
+    '实现了哪些方法也由同一张表报出（`models` / `projections` / `subagents` / `workspaces` / ' +
+      '`permissions` / `settings` / `agentPresets` 这些面给了，就多这几条）',
   )
 })
 

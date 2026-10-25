@@ -430,5 +430,88 @@
         "ws-1"
       ]
     }
+  ],
+  "permission.catalog": [
+    {
+      "available": true,
+      "catalog": {
+        "options": [
+          {
+            "value": "read-only",
+            "name": "只读"
+          },
+          {
+            "value": "workspace-write",
+            "name": "工作区写入"
+          },
+          {
+            "value": "danger-full-access",
+            "name": "完全访问"
+          }
+        ],
+        "defaultOptions": [
+          {
+            "value": "workspace-write",
+            "name": "工作区写入"
+          }
+        ],
+        "defaultPreset": "workspace-write"
+      }
+    }
+  ],
+  "permission.switch": [
+    {
+      "matched": true,
+      "execution": {
+        "result": {
+          "kind": "text",
+          "text": "已切换到 workspace-write"
+        }
+      }
+    }
+  ],
+  "settings.describe": [
+    {
+      "sections": [
+        {
+          "ns": "general",
+          "revision": 3,
+          "values": {
+            "defaultMode": "workspace-write"
+          },
+          "secrets": []
+        }
+      ]
+    }
+  ],
+  "settings.update": [
+    {
+      "section": {
+        "ns": "general",
+        "revision": 4,
+        "values": {
+          "defaultMode": "read-only"
+        },
+        "secrets": []
+      }
+    }
+  ],
+  "agentPresets.list": [
+    {
+      "available": true,
+      "roster": {
+        "presets": [
+          {
+            "id": "standard",
+            "isDefault": true
+          },
+          {
+            "id": "team-review",
+            "name": "Team Review",
+            "description": "Review-only composition."
+          }
+        ]
+      }
+    }
   ]
 }

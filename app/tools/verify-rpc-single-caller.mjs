@@ -19,7 +19,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
-const BUDGET = 24
+const BUDGET = 19
 const DIRS = ['app/lib/data', 'app/lib/ui']
 /** 行首是注释就不算用法。不剥注释是为了保住行号（块注释会被整段吞掉）。 */
 const COMMENT_LINE = /^\s*(\/\/|\*|\/\*)/
