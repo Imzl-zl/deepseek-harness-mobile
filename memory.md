@@ -24,11 +24,14 @@
 >   → 生产适配器 → 生产 handler → App 解码 = **20/20 `WireOk`、`badCount 0`、一行没丢**；
 >   `parentSessionId` 恰好出现在 6 个子会话行、`model` 0 条（`agentAvailable` 全 false）、
 >   `projections` 20 条全是**信封**。取数配方在笔记里（服务键是 `session`；args 必须带 `_request`）。
-> - **下一步 = 第 3 批（`session.projections`，14 个键 + 6 个 `model/*` 解析器）**。
->   理由：`session.projections` 的应答**已经在金样里**（第 0 批就收了它，正好是"同名两种形状"的
->   对照面），而它背后就是手机上 10 个读取点与 6 个解析器，收益最大、风险最小。
->   第 2 批（`session.page` / `session.refetch`）要新造 `SessionPageWire` 中间结构并动连接层的
->   `await` 循环，排在它后面。规格与每批验收见 `proposed/2026-10-25-wire-design-review.md`。
+> - **下一步 = 全量搬迁进行中**（用户 2026-10-25 晚："你做好所有的都优化了……设计优雅一点，需要封装啥的就搞"）。
+>   层形状见 `proposed/2026-10-25-wire-rpc-layer-layout.md`：一个面一个文件
+>   `wire/rpc/<面>.dart`、字段级语义只在 `wire/fields.dart`、信封/扁平与 `{x:[…]}` 各一个入口。
+>   **已完成**：第 0 批（金样）、第 1 批（`session.list`）、**A1**（`create`/`select-model`/`cancel`/
+>   `updateQueue`/`prompt`/`modelCatalog`/`subagent.prompt`）—— 预算 **38 → 32**，金样 2 → 9 个方法。
+>   **待做**：A2（`session.projections` 14 键 + 连接层 `page`/`refetch` 形状）→ B（workspace/permission/
+>   settings/preset/repo/endpoint，−14）→ C（file/refs/plugin/job/interaction/usage/command，−17）→
+>   D（预算归 0、删常量、金样覆盖全部、notes 并入 `implemented/`）。每批：金样样本 + 预算减到位 + 变异恰 1 红 + 一个提交。
 > - **仍没验**：`@` 面板的骨架 / 失败态、图片上限四条、插件安装/卸载的真实 pnpm 流程（上一轮遗留，未变）。
 
 > **2026-10-25 深夜：候选面板照宿主重做（列表行 + drill + 面包屑）+ 命令说明 + 接管卡溢出**
