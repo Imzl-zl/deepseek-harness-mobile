@@ -34,21 +34,29 @@ import 'dart:io';
 
 import 'package:dsh_mobile/core/endpoint.dart' show parseEndpointList;
 import 'package:dsh_mobile/core/job.dart' show JobRow;
+import 'package:dsh_mobile/core/sync_client.dart' show SessionEvent;
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/model/command.dart';
 import 'package:dsh_mobile/model/mention.dart' show AtCandidate;
 import 'package:dsh_mobile/model/model_catalog.dart';
 import 'package:dsh_mobile/model/permission.dart';
+import 'package:dsh_mobile/model/plugins.dart'
+    show PluginBundle, PluginJob, PluginRow;
+import 'package:dsh_mobile/model/usage_summary.dart' show UsageSummary;
 import 'package:dsh_mobile/model/workspace_files.dart'
     show FileListing, FilePage;
+import 'package:dsh_mobile/wire/rpc/command.dart';
 import 'package:dsh_mobile/wire/rpc/file.dart';
 import 'package:dsh_mobile/wire/rpc/job.dart';
 import 'package:dsh_mobile/wire/rpc/permission.dart';
+import 'package:dsh_mobile/wire/rpc/plugin.dart';
 import 'package:dsh_mobile/wire/rpc/projections.dart';
 import 'package:dsh_mobile/wire/rpc/refs.dart';
 import 'package:dsh_mobile/wire/rpc/repo.dart';
 import 'package:dsh_mobile/wire/rpc/session.dart';
+import 'package:dsh_mobile/wire/rpc/session_page.dart';
 import 'package:dsh_mobile/wire/rpc/settings.dart';
+import 'package:dsh_mobile/wire/rpc/usage.dart';
 import 'package:dsh_mobile/wire/rpc/workspace.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -758,6 +766,159 @@ void main() {
     expect(bad, isA<WireBad<List<AtCandidate>>>());
     expect(valueOrReport(bad, 'refs.files'), isNull);
     expect(WireDiagnostics.badCount, 1);
+  });
+
+  // ---- C2：插件 / 命令 / 用量 / 交互答复 ----
+
+  test('plugin.list / listBundles：两列各解出金样里的条数（行由 model/plugins.dart 解）', () {
+    final pluginsSample = _sampleOf(golden, 'plugin.list');
+    final plugins = (pluginsSample['plugins']! as List).cast<Object?>();
+    final pluginsReading = readPluginList(pluginsSample);
+    expect(pluginsReading, isA<WireOk<List<Object?>>>());
+    expect(
+      (pluginsReading as WireOk<List<Object?>>).value.length,
+      plugins.length,
+    );
+    expect(PluginRow.fromWire(plugins.first)?.entryId, isNotNull);
+
+    final bundlesSample = _sampleOf(golden, 'plugin.listBundles');
+    final bundles = (bundlesSample['bundles']! as List).cast<Object?>();
+    final bundlesReading = readPluginBundles(bundlesSample);
+    expect(bundlesReading, isA<WireOk<List<Object?>>>());
+    expect(
+      (bundlesReading as WireOk<List<Object?>>).value.length,
+      bundles.length,
+    );
+    expect(PluginBundle.fromWire(bundles.first)?.name, isNotNull);
+  });
+
+  test('plugin.setEnabled：enabled 是回读后的真值；缺它 ⇒ WireBad + 计数 1', () {
+    final sample = _sampleOf(golden, 'plugin.setEnabled');
+    final reading = readPluginToggle(sample);
+    expect(
+      reading,
+      isA<WireOk<({bool enabled, String application, String restartReason})>>(),
+    );
+    final toggled =
+        (reading
+                as WireOk<
+                  ({bool enabled, String application, String restartReason})
+                >)
+            .value;
+    expect(toggled.enabled, sample['enabled']);
+
+    final bad = readPluginToggle({'application': 'applied'});
+    expect(
+      bad,
+      isA<
+        WireBad<({bool enabled, String application, String restartReason})>
+      >(),
+    );
+    expect(valueOrReport(bad, 'plugin.setEnabled'), isNull);
+    expect(WireDiagnostics.badCount, 1);
+  });
+
+  test('plugin.install / remove：回执只有 requestId（发起即返回）', () {
+    for (final method in const ['plugin.install', 'plugin.remove']) {
+      final sample = _sampleOf(golden, method);
+      final reading = readPluginJobStart(sample, method: method);
+      expect(reading, isA<WireOk<String>>(), reason: method);
+      expect(
+        (reading as WireOk<String>).value,
+        sample['requestId'],
+        reason: method,
+      );
+    }
+  });
+
+  test('plugin.installStatus / cancelInstall：状态与取消三档都解得出', () {
+    final statusSample = _sampleOf(golden, 'plugin.installStatus');
+    final statusReading = readPluginJob(statusSample);
+    expect(statusReading, isA<WireOk<PluginJob>>());
+    final job = (statusReading as WireOk<PluginJob>).value;
+    expect(job.requestId, statusSample['requestId']);
+    expect(job.status, statusSample['status']);
+
+    final cancelSample = _sampleOf(golden, 'plugin.cancelInstall');
+    final cancelReading = readPluginCancelStatus(cancelSample);
+    expect(cancelReading, isA<WireOk<String>>());
+    expect((cancelReading as WireOk<String>).value, cancelSample['status']);
+  });
+
+  test('command.execute：回执与 permission.switch 同一个形状，正文对金样', () {
+    final sample = _sampleOf(golden, 'command.execute');
+    final reading = readCommandOutcome(sample);
+    expect(reading, isA<WireOk<CommandOutcome>>());
+    final outcome = (reading as WireOk<CommandOutcome>).value;
+    expect(outcome.matched, sample['matched']);
+    final execution = (sample['execution']! as Map).cast<String, Object?>();
+    final result = (execution['result']! as Map).cast<String, Object?>();
+    expect(outcome.text, result['text']);
+  });
+
+  test('usage.summary：总量与分桶对金样（聚合规则不在这一层）', () {
+    final sample = _sampleOf(golden, 'usage.summary');
+    final reading = readUsageSummary(sample);
+    expect(reading, isA<WireOk<UsageSummary>>());
+    final summary = (reading as WireOk<UsageSummary>).value;
+    expect(summary.grandTotalTokens, sample['grandTotalTokens']);
+    final totals = (sample['totals']! as Map).cast<String, Object?>();
+    expect(summary.totals?.outputTokens, totals['outputTokens']);
+  });
+
+  test('interaction.respond：应答手机不读，金样里钉住 {itemId} 形状', () {
+    final sample = _sampleOf(golden, 'interaction.respond');
+    expect(sample['itemId'], isA<String>());
+  });
+
+  test('session.page：一页里的 record 与 refetch 标记都解得出', () {
+    final sample = _sampleOf(golden, 'session.page');
+    final rawItems = (sample['items']! as List).cast<Object?>();
+    final reading = readSessionPage(sample);
+    expect(reading, isA<WireOk<SessionPageWire>>());
+    final page = (reading as WireOk<SessionPageWire>).value;
+    expect(page.items.length, rawItems.length);
+    expect(page.hasMore, sample['hasMore']);
+
+    final record = page.items.first;
+    expect(record, isA<SessionPageRecordWire>());
+    final event = (record as SessionPageRecordWire).event;
+    final rawRecord = ((rawItems.first! as Map)['record']! as Map)
+        .cast<String, Object?>();
+    final rawEvent = (rawRecord['event']! as Map).cast<String, Object?>();
+    expect(event.type, rawEvent['type']);
+    expect(event.seq, rawEvent['seq']);
+
+    // 第二个是"太大、需单独补取"的标记：它的 seq 必须带出来（丢了就是会话里一个洞）。
+    final marker = page.items.last;
+    expect(marker, isA<SessionPageRefetchWire>());
+    expect(
+      (marker as SessionPageRefetchWire).seq,
+      ((rawItems.last! as Map)['seq']! as int),
+    );
+  });
+
+  test('session.page：refetch 标记缺 seq ⇒ 抛（整页失败，不静默跳过）', () {
+    expect(
+      () => readSessionPage({
+        'items': [
+          {'kind': 'refetch', 'bytes': 1024},
+        ],
+        'hasMore': false,
+      }),
+      throwsA(isA<SessionPageShapeError>()),
+    );
+  });
+
+  test('session.refetch：{record} 里的事件解得出', () {
+    final sample = _sampleOf(golden, 'session.refetch');
+    final rawRecord = (sample['record']! as Map).cast<String, Object?>();
+    final rawEvent = (rawRecord['event']! as Map).cast<String, Object?>();
+    final reading = readRefetchedEvent(sample);
+    expect(reading, isA<WireOk<SessionEvent>>());
+    final event = (reading as WireOk<SessionEvent>).value;
+    expect(event.type, rawEvent['type']);
+    expect(event.seq, rawEvent['seq']);
   });
 }
 

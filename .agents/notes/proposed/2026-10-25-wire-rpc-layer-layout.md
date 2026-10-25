@@ -91,7 +91,8 @@
 | B2 | `permission.*`(2) / `settings.*`(2) / `agentPresets.list` | 24 → 19 | ✅ |
 | B3 | `repo.info`（`methods` 采样时归一掉）+ `endpoint.describe` | 19 → 17 | ✅ |
 | C1 | `job.*`(4) / `file.*`(2) / `refs.*`(2) | 17 → 9 | ✅ |
-| C2 | `plugin.*`(7) / `command.execute` / `usage.summary` / `interaction.respond` | 9 → 0，删常量 | 待做 |
+| C2 | `plugin.*`(7) / `command.execute` / `usage.summary` / `interaction.respond` | 9 → **0**（删掉常量）| ✅ |
+| D | 金样覆盖全部已搬方法（含 `session.page`/`refetch`，43 个）/ 笔记并入 `implemented/` / 记忆与工具收口 | — | 待做 |
 | D | 收尾：预算归 0、常量删掉、金样覆盖全部方法、笔记并入 `implemented/` | 0 | 待做 |
 
 每批的验收（四条同时成立）：**该批方法全部进金样且 App 侧 `badCount == 0`**、

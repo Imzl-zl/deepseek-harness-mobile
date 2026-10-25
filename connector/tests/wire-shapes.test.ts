@@ -95,6 +95,21 @@ const SAMPLED_METHODS = [
   'file.read',
   'refs.files',
   'refs.sessions',
+  // C2：插件 / 命令 / 用量 / 交互答复四个面。
+  'plugin.list',
+  'plugin.listBundles',
+  'plugin.setEnabled',
+  'plugin.install',
+  'plugin.installStatus',
+  'plugin.cancelInstall',
+  'plugin.remove',
+  'command.execute',
+  'usage.summary',
+  'interaction.respond',
+  // 历史页两个方法：**不占预算**（走 `SyncClient` 的具名方法），但形状照样进金样 ——
+  // "不占预算"说的是调用口，不是"没人断言它"。
+  'session.page',
+  'session.refetch',
 ] as const
 
 type SampledMethod = (typeof SAMPLED_METHODS)[number]
@@ -177,6 +192,34 @@ const SAMPLES: Record<SampledMethod, readonly WireSample[]> = {
   // `@` 候选：两列各一条。
   'refs.files': [{ params: { sid: sidOf('dsh-1'), query: 'main' } }],
   'refs.sessions': [{ params: { sid: sidOf('dsh-1'), query: 'gree' } }],
+  // 插件面：`install` / `remove` / `cancelInstall` / `installStatus` 都靠 `requestId` 串联。
+  'plugin.list': [{}],
+  'plugin.listBundles': [{}],
+  'plugin.setEnabled': [{ params: { id: 'plugin-1', enabled: false } }],
+  'plugin.install': [{ params: { spec: 'dsh-mobile@0.1.0' }, context: { requestId: 'plug-1' } }],
+  'plugin.remove': [{ params: { name: 'dsh-mobile' }, context: { requestId: 'plug-2' } }],
+  'plugin.installStatus': [{ params: { requestId: 'plug-1' } }],
+  'plugin.cancelInstall': [{ params: { requestId: 'plug-1' } }],
+  // 命令执行：白名单里的 `/plan`（不在白名单的会回 connector/unsupported，那条路径由单测覆盖）。
+  'command.execute': [
+    { params: { sid: sidOf('dsh-1'), line: '/plan 写个计划' }, context: { requestId: 'cmd-1' } },
+  ],
+  // 跨会话用量：需要 projections 面（夹具已给）与可见会话（夹具已给）。
+  'usage.summary': [{}],
+  // 交互答复：回执只有 `{itemId}`（`RespondOk`）。
+  'interaction.respond': [
+    {
+      params: {
+        sid: sidOf('dsh-1'),
+        itemId: 'i:approval-1',
+        answers: [{ id: 'q1', selected: ['allow'] }],
+      },
+      context: { requestId: 'i:approval-1' },
+    },
+  ],
+  // 历史页：`{items, hasMore, throughSeq}`；item 是 `record` / `refetch` 的判别联合。
+  'session.page': [{ params: { sid: sidOf('dsh-1'), beforeSeq: 4, maxMessages: 2 } }],
+  'session.refetch': [{ params: { sid: sidOf('dsh-1'), seq: 9 } }],
 }
 
 /** **线上那一层**：丢掉 `undefined`、规整成 JSON 标量，再比较。 */

@@ -531,7 +531,17 @@
         "credentials": true,
         "direct": false
       },
-      "aliasVersion": 7
+      "aliasVersion": 7,
+      "commands": [
+        {
+          "name": "goal",
+          "description": "goal 的说明"
+        },
+        {
+          "name": "plan",
+          "description": "plan 的说明"
+        }
+      ]
     }
   ],
   "endpoint.describe": [
@@ -628,6 +638,192 @@
           "mention": "@[Greeting](dsh:session-1)"
         }
       ]
+    }
+  ],
+  "plugin.list": [
+    {
+      "plugins": [
+        {
+          "entryId": "plugin-1",
+          "name": "dsh-mobile",
+          "moduleName": "dsh-mobile",
+          "enabled": true,
+          "fiberPhase": "active"
+        }
+      ]
+    }
+  ],
+  "plugin.listBundles": [
+    {
+      "bundles": [
+        {
+          "name": "dsh-mobile",
+          "version": "0.1.0",
+          "installed": true,
+          "enabled": true,
+          "removable": true
+        }
+      ]
+    }
+  ],
+  "plugin.setEnabled": [
+    {
+      "name": "dsh-mobile",
+      "enabled": false,
+      "application": "applied"
+    }
+  ],
+  "plugin.install": [
+    {
+      "requestId": "plug-1"
+    }
+  ],
+  "plugin.installStatus": [
+    {
+      "requestId": "plug-1",
+      "status": "done",
+      "kind": "install",
+      "phase": "applying",
+      "log": [
+        "added dsh-mobile"
+      ],
+      "logTruncated": false,
+      "result": {
+        "changed": true,
+        "application": "applied",
+        "stage": "applying",
+        "target": "dsh-mobile",
+        "bundle": "dsh-mobile",
+        "version": "0.1.0"
+      }
+    }
+  ],
+  "plugin.cancelInstall": [
+    {
+      "status": "cancelling"
+    }
+  ],
+  "plugin.remove": [
+    {
+      "requestId": "plug-2"
+    }
+  ],
+  "command.execute": [
+    {
+      "matched": true,
+      "execution": {
+        "result": {
+          "kind": "text",
+          "text": "ran /plan 写个计划"
+        }
+      }
+    }
+  ],
+  "usage.summary": [
+    {
+      "sessions": 3,
+      "grandTotalTokens": 6600,
+      "totals": {
+        "uncachedInputTokens": 1200,
+        "outputTokens": 800,
+        "cacheReadTokens": 4000,
+        "cacheWriteTokens": 600
+      },
+      "byDay": [
+        {
+          "date": "1970-01-01",
+          "turns": 1,
+          "tokens": 12868
+        }
+      ],
+      "byProject": [
+        {
+          "path": "/repo/b",
+          "tokens": 6600,
+          "sessions": 1
+        }
+      ],
+      "bySession": [
+        {
+          "sid": "sid_33445566778899aa",
+          "title": "把 token 账算对",
+          "cwd": "/repo/b",
+          "tokens": 6600
+        }
+      ]
+    }
+  ],
+  "interaction.respond": [
+    {
+      "itemId": "i:approval-1"
+    }
+  ],
+  "session.page": [
+    {
+      "items": [
+        {
+          "kind": "record",
+          "record": {
+            "type": "event",
+            "event": {
+              "type": "user/message",
+              "seq": 4,
+              "time": 1000,
+              "data": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hi"
+                  }
+                ],
+                "source": {
+                  "kind": "user"
+                },
+                "role": "user",
+                "id": "m1"
+              }
+            }
+          }
+        },
+        {
+          "kind": "refetch",
+          "seq": 9,
+          "bytes": 2097152
+        }
+      ],
+      "hasMore": true,
+      "throughSeq": 4
+    }
+  ],
+  "session.refetch": [
+    {
+      "record": {
+        "type": "event",
+        "event": {
+          "type": "assistant/message",
+          "seq": 9,
+          "time": 2000,
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "big"
+                }
+              ],
+              "source": {
+                "kind": "model",
+                "provider": "deepseek"
+              },
+              "id": "a9"
+            },
+            "stream": []
+          }
+        }
+      }
     }
   ]
 }

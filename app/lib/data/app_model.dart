@@ -49,16 +49,20 @@ import '../model/turn_outline.dart';
 import '../model/usage_summary.dart';
 import '../model/workspace.dart';
 import '../model/workspace_files.dart';
+import '../wire/rpc/command.dart' as wire;
 import '../wire/rpc/endpoint.dart' as wire;
 import '../wire/rpc/file.dart' as wire;
+import '../wire/rpc/interaction.dart' as wire;
 import '../wire/rpc/job.dart' as wire;
 import '../wire/rpc/permission.dart' as wire;
+import '../wire/rpc/plugin.dart' as wire;
 import '../wire/rpc/preset.dart' as wire;
 import '../wire/rpc/projections.dart' as wire;
 import '../wire/rpc/refs.dart' as wire;
 import '../wire/rpc/repo.dart' as wire;
 import '../wire/rpc/session.dart' as wire;
 import '../wire/rpc/settings.dart' as wire;
+import '../wire/rpc/usage.dart' as wire;
 import '../wire/rpc/workspace.dart' as wire;
 import 'preview_data.dart';
 import 'projection.dart';
@@ -772,29 +776,23 @@ class AppModel extends ChangeNotifier {
     final sid = _currentSid;
     if (sid == null) return null;
     try {
-      final result = await client.call<Object?>(
-        'command.execute',
-        {'sid': sid, 'line': line},
+      // 方法名 / 参数形状 / 回执形状都在 `wire/rpc/command.dart`。
+      final outcome = await wire.executeCommand(
+        client,
+        sid: sid,
+        line: line,
         requestId: 'cmd-${DateTime.now().microsecondsSinceEpoch}',
       );
-      return _commandOutcomeOf(result, '执行命令失败');
+      if (outcome == null) {
+        // 形状认不出也要留声：只回 null 的话，调用方读到的 lastError 会是上一条错误。
+        _recordError('执行命令失败', StateError('电脑侧的命令应答形状认不出'));
+        return null;
+      }
+      return outcome;
     } catch (error) {
       _recordError('执行命令失败', error);
       return null;
     }
-  }
-
-  /// 解一次命令应答（两个命令门共用）。
-  ///
-  /// **形状认不出也要留声**：只回 `null` 的话，调用方读到的 `lastError` 会是
-  /// 上一条错误 —— 用户看到的是一句与这次操作无关的失败原因。
-  CommandOutcome? _commandOutcomeOf(Object? result, String what) {
-    final outcome = parseCommandOutcome(result);
-    if (outcome == null) {
-      _recordError(what, StateError('电脑侧的命令应答形状认不出'));
-      return null;
-    }
-    return outcome;
   }
 
   // ---- 子智能体（`subagentCatalog` 投影）----
@@ -1759,25 +1757,16 @@ class AppModel extends ChangeNotifier {
     _pluginsLoading = true;
     if (!_disposed) notifyListeners();
     try {
-      // 两个面各一发（并发）：插件行与包是两张表，卸载按包名走。
-      final answers = await Future.wait<Object?>([
-        client.call<Object?>('plugin.list', const {}),
-        client.call<Object?>('plugin.listBundles', const {}),
-      ]);
-      final rows = answers[0] is Map ? (answers[0] as Map)['plugins'] : null;
-      _plugins = rows is List
-          ? rows
-                .map(PluginRow.fromWire)
-                .whereType<PluginRow>()
-                .toList(growable: false)
-          : const <PluginRow>[];
-      final bundles = answers[1] is Map ? (answers[1] as Map)['bundles'] : null;
-      _pluginBundles = bundles is List
-          ? bundles
-                .map(PluginBundle.fromWire)
-                .whereType<PluginBundle>()
-                .toList(growable: false)
-          : const <PluginBundle>[];
+      // 两个面各一发（并发）：插件行与包是两张表，卸载按包名走。形状在
+      // `wire/rpc/plugin.dart`（行本体仍由 `model/plugins.dart` 的 fromWire 解）。
+      final inventory = await wire.loadPluginInventory(client);
+      if (inventory == null) {
+        _recordError('读取插件清单失败', StateError('电脑侧的插件应答形状认不出'));
+        _pluginsFailure = '电脑侧的插件应答形状认不出';
+        return;
+      }
+      _plugins = inventory.rows;
+      _pluginBundles = inventory.bundles;
       _pluginsLoaded = true;
       _pluginsFailure = null;
     } catch (error) {
@@ -1795,24 +1784,22 @@ class AppModel extends ChangeNotifier {
   /// 请求值与终态可能不同（宿主回 `overridden`）。失败原因在 [lastError]。
   Future<PluginToggleOutcome?> setPluginEnabled(String id, bool enabled) async {
     try {
-      final result = await client.call<Object?>(
-        'plugin.setEnabled',
-        {'id': id, 'enabled': enabled},
+      // 回执的 `enabled` 是**宿主回读后的真值**（`wire/rpc/plugin.dart`）。
+      final toggled = await wire.setPluginEnabled(
+        client,
+        id: id,
+        enabled: enabled,
         requestId: 'plug-${DateTime.now().microsecondsSinceEpoch}',
       );
-      if (result is! Map) {
+      if (toggled == null) {
         _recordError('启停插件失败', StateError('电脑侧的回执形状认不出'));
         return null;
       }
       final outcome = PluginToggleOutcome(
         entryId: id,
-        enabled: result['enabled'] == true,
-        application: result['application'] is String
-            ? result['application'] as String
-            : '',
-        restartReason: result['restartReason'] is String
-            ? result['restartReason'] as String
-            : '',
+        enabled: toggled.enabled,
+        application: toggled.application,
+        restartReason: toggled.restartReason,
       );
       _plugins = [
         for (final row in _plugins)
@@ -1830,28 +1817,29 @@ class AppModel extends ChangeNotifier {
   ///
   /// **立刻返回**：真实安装跑 pnpm、常超 60 s 请求超时，所以结论靠
   /// [pluginJobStatus] 轮询（与 `session.projections` 同一种节奏）。
-  Future<String?> installPlugin(String spec) =>
-      _startPluginJob('plugin.install', {'spec': spec});
+  Future<String?> installPlugin(String spec) async {
+    if (!_pluginsAvailable) return null;
+    try {
+      return await wire.startPluginInstall(
+        client,
+        spec: spec,
+        requestId: 'plug-${DateTime.now().microsecondsSinceEpoch}',
+      );
+    } catch (error) {
+      _recordError('发起插件任务失败', error);
+      return null;
+    }
+  }
 
   /// 卸载一个**包**（`plugin.remove`，按包名）。形状与安装相同。
-  Future<String?> removePluginBundle(String name) =>
-      _startPluginJob('plugin.remove', {'name': name});
-
-  Future<String?> _startPluginJob(
-    String method,
-    Map<String, Object?> body,
-  ) async {
+  Future<String?> removePluginBundle(String name) async {
     if (!_pluginsAvailable) return null;
-    final requestId = 'plug-${DateTime.now().microsecondsSinceEpoch}';
     try {
-      final result = await client.call<Object?>(
-        method,
-        body,
-        requestId: requestId,
+      return await wire.removePluginBundle(
+        client,
+        name: name,
+        requestId: 'plug-${DateTime.now().microsecondsSinceEpoch}',
       );
-      // 电脑侧回的是它自己记下的那个 id（正常等于我们发的）。
-      final echoed = result is Map ? result['requestId'] : null;
-      return echoed is String && echoed.isNotEmpty ? echoed : requestId;
     } catch (error) {
       _recordError('发起插件任务失败', error);
       return null;
@@ -1861,10 +1849,7 @@ class AppModel extends ChangeNotifier {
   /// 问一次任务状态（`plugin.installStatus`）。失败原因在 [lastError]。
   Future<PluginJob?> pluginJobStatus(String requestId) async {
     try {
-      final result = await client.call<Object?>('plugin.installStatus', {
-        'requestId': requestId,
-      });
-      return PluginJob.fromWire(result);
+      return await wire.pluginJobStatus(client, requestId: requestId);
     } catch (error) {
       _recordError('读取插件任务状态失败', error);
       return null;
@@ -1874,11 +1859,7 @@ class AppModel extends ChangeNotifier {
   /// 取消一次安装（`plugin.cancelInstall`）。回宿主的三档状态（原样）。
   Future<String?> cancelPluginInstall(String requestId) async {
     try {
-      final result = await client.call<Object?>('plugin.cancelInstall', {
-        'requestId': requestId,
-      });
-      final status = result is Map ? result['status'] : null;
-      return status is String ? status : null;
+      return await wire.cancelPluginInstall(client, requestId: requestId);
     } catch (error) {
       _recordError('取消安装失败', error);
       return null;
@@ -1944,8 +1925,9 @@ class AppModel extends ChangeNotifier {
   /// 而不是摆一个 `0 tok` —— 那会把"没数据"说成"用了 0"。
   Future<void> refreshUsageSummary() async {
     try {
-      final result = await client.call<Object?>('usage.summary', const {});
-      _usageSummary = UsageSummary.fromWire(result);
+      // 形状（`{totals, byDay, bySession, byProject, grandTotal}`）在 `wire/rpc/usage.dart`；
+      // 聚合规则不在这层（连接器自己遍历可见会话聚出来的）。
+      _usageSummary = await wire.loadUsageSummary(client);
       _lastError = null;
     } catch (error) {
       // **兜住所有异常，不只 `ProtocolException`**（与 `refreshSessions` 同一条纪律）：
@@ -3503,10 +3485,13 @@ class AppModel extends ChangeNotifier {
   /// 失败**照原样抛**：调用方（接管卡）要据此把那一项标成"已过期"，
   /// 而吞掉它会让用户以为答成功了 —— 答案从未进入会话。
   Future<void> respondInteraction(InteractionAnswer answer) async {
-    await client.call<Object?>('interaction.respond', <String, Object?>{
-      'sid': answer.sid,
-      'itemId': answer.itemId,
-      'answers': <Object?>[
+    // 形状（`{sid, itemId, answers}` + 幂等键 = itemId）在 `wire/rpc/interaction.dart`；
+    // 这一层只负责把答复批次**原样**递过去（一个字段都不翻译）。
+    await wire.respondInteraction(
+      client,
+      sid: answer.sid,
+      itemId: answer.itemId,
+      answers: <Map<String, Object?>>[
         for (final item in answer.answers)
           <String, Object?>{
             'id': item.id,
@@ -3514,7 +3499,7 @@ class AppModel extends ChangeNotifier {
             if (item.custom != null) 'custom': item.custom,
           },
       ],
-    }, requestId: answer.itemId);
+    );
   }
 
   // Note: 标题只有一个真值源（电脑侧），这里只换计数不重建整行 ——

@@ -328,6 +328,117 @@ export function fixtureHandlers(
       stopAll: () => {},
       active: 0,
     },
+    // 历史页：一条记录 + 一个"太大、需单独补取"的标记；补取回同形状的一条记录。
+    sessionPager: {
+      page: async () => ({
+        items: [
+          {
+            kind: 'record' as const,
+            record: {
+              type: 'event',
+              event: {
+                type: 'user/message',
+                seq: 4,
+                time: 1000,
+                data: {
+                  content: [{ type: 'text', text: 'hi' }],
+                  source: { kind: 'user' },
+                  role: 'user',
+                  id: 'm1',
+                },
+              },
+            },
+          },
+          { kind: 'refetch' as const, seq: 9, bytes: 2097152 },
+        ],
+        hasMore: true,
+        throughSeq: 4,
+      }),
+      refetch: async () => ({
+        record: {
+          type: 'event',
+          event: {
+            type: 'assistant/message',
+            seq: 9,
+            time: 2000,
+            data: {
+              turn: 1,
+              step: 1,
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: 'big' }],
+                source: { kind: 'model', provider: 'deepseek' },
+                id: 'a9',
+              },
+              stream: [],
+            },
+          },
+        },
+      }),
+    },
+    // 插件面：一行插件 + 一个包 + 一个"回读后"的启停回执（`application` 原样）。
+    plugins: {
+      list: async () => [
+        {
+          entryId: 'plugin-1',
+          name: 'dsh-mobile',
+          moduleName: 'dsh-mobile',
+          enabled: true,
+          fiberPhase: 'active',
+        },
+      ],
+      listBundles: async () => [
+        {
+          name: 'dsh-mobile',
+          version: '0.1.0',
+          installed: true,
+          enabled: true,
+          removable: true,
+        },
+      ],
+      setEnabled: async (_id: string, enabled: boolean) => ({
+        name: 'dsh-mobile',
+        enabled,
+        application: 'applied',
+      }),
+    },
+    // 插件安装面：**发起即返回**（只有 requestId）+ 一份确定的结论。
+    pluginInstall: {
+      install: (spec: string, requestId: string) => ({ requestId }),
+      remove: (name: string, requestId: string) => ({ requestId }),
+      cancel: async (requestId: string) => ({ status: 'cancelling' }),
+      status: (requestId: string) => ({
+        requestId,
+        status: 'done' as const,
+        kind: 'install' as const,
+        phase: 'applying',
+        log: ['added dsh-mobile'],
+        logTruncated: false,
+        result: {
+          changed: true,
+          application: 'applied',
+          stage: 'applying',
+          target: 'dsh-mobile',
+          bundle: 'dsh-mobile',
+          version: '0.1.0',
+        },
+      }),
+    },
+    // 斜杠命令执行面：一条成功回执（`CommandRunView`）+ 一份命令说明。
+    commandLine: {
+      run: async (_sid: string, line: string) => ({
+        matched: true,
+        execution: { result: { kind: 'text', text: `ran ${line}` } },
+      }),
+      describe: (names: readonly string[]) =>
+        Object.fromEntries(names.map((name) => [name, `${name} 的说明`])),
+    },
+    // 交互答复面：只用到 `respond`（其余成员对这条样本无意义，强制转型即可）。
+    interaction: {
+      respond: (params: unknown) => ({
+        itemId: (params as { itemId?: string }).itemId ?? '',
+      }),
+    } as never,
     // 权限面：一份确定性的预设表 + 一个"切成功"的回执（`CommandRunView`）。
     permissions: {
       catalog: async () => ({

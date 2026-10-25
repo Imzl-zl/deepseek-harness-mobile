@@ -1,25 +1,26 @@
-// 判据：协议知识（方法名 + 参数形状）只许待在 wire/ 外面 —— 这个数只许降，终态 0。
-// Note: 为什么是"会归零的数"而不是"名单表" —— 见 .agents/notes/proposed/2026-10-25-wire-design-review.md
+// 判据：`app/lib/data/` 与 `app/lib/ui/` 里**零** `client.call<` —— 零例外的绝对规则。
 //
-// ## 它数的是什么，怎么读结果
+// Note: 为什么是"会归零的数"而不是"名单表" —— 见
+// `.agents/notes/implemented/2026-10-25-wire-golden-and-session-list.md`
 //
-// `app/lib/data/` 与 `app/lib/ui/` 里 `client.call<` 的**代码**出现次数：
-// 每有一处，就说明还有"方法名 + 参数形状"这两样协议知识漏在 `wire/` 外面
-// （`wire/rpc/<family>.dart` 才是唯一该发请求、唯一该断言应答的地方）。
-// 搬走一个方法 ⇒ 把这个常量减到底 —— **`BUDGET` 就是进度表，只许降**；
-// 想加回去就等于把协议知识放回界面层，评审看这一个数就能拦住。
-// 终态 0 时删掉常量，规则变成零例外的绝对规则。
+// ## 它数的是什么
 //
-// **不要改成"剥注释再数"**：块注释会被整段吞掉、行号就没了，而这条门禁的价值
-// 一半在"报出是哪一行"。行首是注释的行直接跳过就够（见 COMMENT_LINE）。
-// 正则取 `client\.call<` 是精确的：这两个目录里所有 RPC 调用都带显式泛型，
-// 而 `onEndpointsChanged?.call(...)` 那类回调不带 `<`，不会误命中。
+// 每有一处 `client.call<`，就说明还有"方法名 + 参数形状"这两样协议知识漏在 `wire/` 外面
+// （`wire/rpc/<面>.dart` 才是唯一该发请求、唯一该断言应答的地方）。
 //
-// 路径全部相对仓库根（`verify-tool-paths.mjs` 会拦盘符字面量），跑之前先 cd 到仓库根。
+// **这条门禁走完了它的预算**：2026-10-25 从 39 降到 0，于是那行 `BUDGET` 被删了
+// —— 规则从"等于某个数"变成"必须为 0"。要加回一个例外，就得在这里写第二个数，
+// 而评审一眼就能看见（这比"名单表"难隐藏得多）。
+//
+// ## 口径
+//
+// - **行首是注释就不算用法**。不剥注释是为了保住行号（块注释会被整段吞掉）。
+// - 正则取 `client\.call<` 是精确的：`wire/rpc/` 里所有 RPC 调用都带显式泛型，
+//   而 `onEndpointsChanged?.call(...)` 那类回调不带 `<`，不会误命中。
+// - 路径全部相对仓库根（`verify-tool-paths.mjs` 会拦盘符字面量），跑之前先 cd 到仓库根。
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
-const BUDGET = 9
 const DIRS = ['app/lib/data', 'app/lib/ui']
 /** 行首是注释就不算用法。不剥注释是为了保住行号（块注释会被整段吞掉）。 */
 const COMMENT_LINE = /^\s*(\/\/|\*|\/\*)/
@@ -43,8 +44,12 @@ for (const dir of DIRS) {
   }
 }
 
-const ok = hits.length === BUDGET
-console.log(`${ok ? 'PASS' : 'FAIL'} — 实测 ${hits.length} 处，预算 ${BUDGET}`)
+const ok = hits.length === 0
+console.log(
+  ok
+    ? 'PASS — `data/` 与 `ui/` 里没有 client.call<（协议知识只在 wire/rpc/）'
+    : `FAIL — 实测 ${hits.length} 处 client.call< 漏在 wire/ 外面（规则是零例外）`,
+)
 if (!ok) {
   for (const hit of hits) console.log('  ', hit)
   process.exitCode = 1
