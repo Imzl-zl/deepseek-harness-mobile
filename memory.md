@@ -26,10 +26,12 @@
 >   + 点行体落定 `@app/` + 会话行插宿主原样 mention + 面板内部滚动；`/` 同形状（section `指令`）。
 > - **过了**：接管卡键盘态 —— 三选项提问 + 键盘同框，**无溢出**，选项可滚、`提交` 落库
 >   （`seq:130`）。204px 那条收口成立。
-> - **没过**：**计划审查卡在手机上仍然不出现**。同一时刻桌面（同实例 headless Edge）有卡、
->   可点 `同意执行` ⇒ `seq:90 plan/mode {active:false}`；反面对照 `ask_user_question` 的卡在手机上
->   正常。缺口锁在 "plan-review 这一种 ask 的手机侧投递/认领"，不是整条链。见
->   `implemented/2026-10-24-plan-review-card-from-request.md` 的真机一节（含下一步查法）。
+> - **抓到并已修**：**计划审查卡在手机上不出现**。桌面（同实例 headless Edge）有卡、可点
+>   `同意执行` ⇒ `seq:90 plan/mode {active:false}`；手机侧 24 张采样无卡。二分办法：拉手机库
+>   查 `items` ⇒ `t:call_16f5bd…` **在**（事件到了），而 `arguments` 是 **JSON 字符串**、
+>   投影那一支按**对象**读 ⇒ `plan` 恒 null ⇒ 不开卡。修法见
+>   `implemented/2026-10-24-plan-review-card-from-request.md`（`_argumentsMapOf` + 真形状用例）。
+>   **端到端仍未复验**（需要一次模型请求）。
 > - **新发现**：`/` 的说明列**生产路径恒空** —— `repo.info` 只在握手后取一次，而连接器
 >   `describe()` 要活 agent。见 `implemented/2026-10-25-command-descriptions-from-host.md` 末两条。
 > - **仍没验**：`@` 面板的骨架 / 失败态、图片上限四条（要先调小宿主的
@@ -363,10 +365,12 @@
 - **会话流里 `user/message` 不一定是人说的**：运行时上下文 / 技能目录 / 时间快照都是 `user/message`，
   靠 `source.kind === 'user'` 区分（DSH `conversation-nodes/message.ts:79`）。这条已修。
 
-## 八条教训
+## 九条教训
 
 > 前五条是"替身复现的不是真形状"；第六条是"提交不完整"；
-> 第七条是"生产路径上的假数据"；第八条是"线上预算要按帧算"。
+> 第七条是"生产路径上的假数据"；第八条是"线上预算要按帧算"；
+> 第九条是"用例把实现的错假设写死了"。第九条是前五条的近亲，但更阴：**不是替身不全，
+> 是替身和实现对同一个字段用了同一种错读法**，所以永远绿。
 
 1. **投影信封**：`session.projections` 回 `null | {kind, asOfSeq, values}`，**手机要 `values`**。
    连接器曾整包透传 ⇒ 统计条/权限档/子智能体在生产里全空态而单测全绿（修在 `valuesOf`）。
@@ -386,6 +390,11 @@
    注意这条规则**不给"弹一句还没做"留例外**。
 8. **线上预算要按"帧"算，不按"对象"算**：二进制 `N` → JSON base64 `1.33N` → `box` 的 base64url 再 ×1.33
    ⇒ **一帧 ≈ 1.78N**。**自查的问法**：这个值在线上最终会被**哪一帧**承载？那一帧里还有谁？
+9. **用例喂的形状必须是线上形状**（2026-10-25 计划卡）：`tool/call` 的 `arguments` 在线上是
+   **JSON 字符串**，投影那一支按**对象**读 ⇒ `plan` 恒 `null` ⇒ 真机一次都没开卡；
+   而用例的 `planCall()` 正好喂的是对象，于是 5 条全绿。**抓法**：凡是"从 `data` 里取字段"的代码，
+   先 dump 一条**真机事件/真库行**看类型（`tools.md` 的"事件到了没"那条给了命令）；
+   再问一句"用例里这个字段是我编的形状，还是抄的线上形状？"
 
 ## 真机联调的成本纪律（立过规，别问第二遍）
 
@@ -519,13 +528,15 @@
     `i:<approval/asked.id>`（`connector/src/dsh/approval-call.ts`），`interaction.respond` 的
     键从 `callId` 改成 `itemId`（`i:<approvalId>` / `t:<callId>`），重投也按 id 匹配。
     **认不出身份时仍然委托**（日志 0 条/多条未结算）—— 那时只有桌面能答，契约 §15 已写。
-17. **计划审查卡在手机上不出现（2026-10-25 真机定位到"plan-review 这一种 ask"）**：
-    同一时刻桌面有卡且能结算（`plan/mode(active:false)`），手机的 `ask_user_question` 卡正常，
-    所以既不是 DSH 没发、也不是卡片渲染缺分支。最可疑的一步是连接器
-    `interaction-client.ts` 的 `planReviewOf` 认没认出 `intent.kind === 'plan-review'` ——
-    认不出会**静默** `next`，而 `log` 走 `ctx.logger`（到不了 stdout，`tools.md` 已记）。
-    查法（下轮，约 1 个模型请求）：`answer()` 里临时 `console.error` 打
-    `frame.event` / `agentId` / `sidOf()`，再走一次 `/plan`。
+17. ~~**计划审查卡在手机上不出现**~~ **已修（2026-10-25，手机侧解析）**：同一时刻桌面有卡且能
+    结算（`plan/mode(active:false)`），手机没有 —— 于是先做"传输 vs 渲染"的二分：
+    把手机库拉下来查 `items`，`t:call_16f5bd…`（那次 `exit_plan_mode` 的 callId）**在库里**
+    ⇒ 事件到了；而 `payload_json.arguments` 的类型是 **`str`**，投影那一支却按**对象**读
+    `plan`（`fieldOf` 对非 Map 恒回 `null`）⇒ 不开卡、不报错。隔壁 `_questionsOf` 一直按字符串
+    `jsonDecode`，所以提问卡没事。修法：`_argumentsMapOf` 一处解释这个字段、两支共用；
+    用例改成真机形状并加"当对象传不算数"的钉子。变异校验恰好 2 条红。
+    门禁：flutter **1234 → 1235**。笔记 `implemented/2026-10-24-plan-review-card-from-request.md`。
+    **端到端仍未复验**（要一次模型请求才有新卡）。
 18. **`/` 的命令说明在生产路径上恒为空**：`repo.info` 只在握手后 `refreshRepoInfo()` 取一次
     （`app/lib/data/app_model.dart:2540`），那时没有活 agent ⇒ 连接器 `describe()` 回空表
     （`connector/src/dsh/command-line.ts:189-203`）；之后没有任何重取点。
@@ -559,7 +570,7 @@
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **454 / 26 / 49** 项 |
 | `node app/tools/verify-platform-boundary.mjs` | **391 项**（22 条规则自检 + 扫 110 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1234 项** |
+| `cd app && flutter test` | **1235 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **657 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **87 条** |

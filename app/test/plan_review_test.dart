@@ -10,6 +10,8 @@
 ///    由连接器按请求重写（`kPlanApproveMark` 的注释、契约 §6.3.1）。
 library;
 
+import 'dart:convert';
+
 import 'package:dsh_mobile/data/projection.dart';
 import 'package:dsh_mobile/model/interaction.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
@@ -17,11 +19,21 @@ import 'package:dsh_mobile/ui/takeover.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
 
-/// 一条 `exit_plan_mode` 的 `tool/call`（形状照 `plan-mode/src/index.ts:283-284`）。
+/// 一条 `exit_plan_mode` 的 `tool/call`，**形状取真机落下来的事件**（不是手捏的理想形状）。
+///
+/// `arguments` 是 **JSON 字符串**：证据是 2026-10-25 真机库 `items.payload_json`
+/// （`arguments` 的类型是 `str`）与 DSH 会话日志 `seq:87` 的同一条事件。
+///
+/// **这一行原来的写法是 `{'plan': plan}`（对象）** —— 线上从来没出现过那个形状，
+/// 于是它把"按对象读"的实现一起养绿了，真机上计划卡一次都没开。
+/// 改这一行之前请先看一眼真机库。
 Map<String, Object?> planCall(String callId, String plan) => {
+  // 真事件带着这两个字段；投影不看它们，但让这一条尽量接近线上形状。
+  'turn': 3,
+  'step': 5,
   'name': 'exit_plan_mode',
   'callId': callId,
-  'arguments': {'plan': plan},
+  'arguments': jsonEncode({'plan': plan}),
 };
 
 const _plan = '# 重构输入栏\n\n1. 把候选抽成一层\n2. 收口三态\n';
@@ -58,7 +70,7 @@ void main() {
       expect(item.approveLabel, kPlanApproveMark);
     });
 
-    test('没有 plan 参数 / 没有 callId ⇒ 不开卡（宁可留给工具行，不造半张卡）', () {
+    test('没有 plan 参数 / 没有 callId / 参数不是 JSON ⇒ 不开卡（宁可留给工具行，不造半张卡）', () {
       expect(
         interactionSignalOf(
           type: 'tool/call',
@@ -66,7 +78,18 @@ void main() {
           data: const {
             'name': 'exit_plan_mode',
             'callId': 'call-1',
-            'arguments': {},
+            'arguments': '{}',
+          },
+        ),
+        isNull,
+      );
+      expect(
+        interactionSignalOf(
+          type: 'tool/call',
+          seq: 1,
+          data: {
+            'name': 'exit_plan_mode',
+            'arguments': jsonEncode({'plan': '# 计划'}),
           },
         ),
         isNull,
@@ -77,6 +100,26 @@ void main() {
           seq: 1,
           data: const {
             'name': 'exit_plan_mode',
+            'callId': 'call-1',
+            'arguments': '{ 不是 JSON',
+          },
+        ),
+        isNull,
+        reason: '流式中断的调用会把原始文本留着 —— 解不开就不开卡',
+      );
+    });
+
+    test('线上是字符串：把参数当**对象**传不算数（真机就是这么漏的）', () {
+      // 这一条是回归钉子：旧实现按对象读 `plan`，于是真事件（字符串）永远读不出东西，
+      // 而当时的用例正好喂的是对象，两边一起绿。现在两支共用一个解码口，
+      // 对象不再被接受 —— 谁想放宽，会在这里看到"为什么当初这么定"。
+      expect(
+        interactionSignalOf(
+          type: 'tool/call',
+          seq: 1,
+          data: const {
+            'name': 'exit_plan_mode',
+            'callId': 'call-1',
             'arguments': {'plan': '# 计划'},
           },
         ),

@@ -67,7 +67,7 @@ Status: implemented
 - **代价**：`plan-mode` 的"继续规划"会把一句反馈当工具错误抛出（`:349-350`），所以手机上
   点「要求修改」后那一轮以工具失败收尾 —— 那是宿主的语义，我们不吞。
 
-## 真机验证（2026-10-25）：桌面有卡、手机没有
+## 真机验证（2026-10-25）：桌面有卡、手机没有 —— 根因在手机侧解析
 
 仪器：`d61cf622` + 隔离实例（63900 / 直连 8790）+ 中转 8787；桌面侧是**同一个实例**的
 Web GUI，跑在 headless Edge 里（`D:\tmp\dsh-e2e\cdp.mjs`）。手机与桌面同时在线。
@@ -76,30 +76,57 @@ Web GUI，跑在 headless Edge 里（`D:\tmp\dsh-e2e\cdp.mjs`）。手机与桌�
    `要求修改` / `同意执行` 两枚按钮），正文是整份计划。
 2. 手机：**同一时刻没有任何卡**。10:52–11:00 的 24 张采样（`p-10-s01…s24`）里只有模型正文
    与「深度求索中，用时 N 分」；输入卡上方空着。`uiautomator` 语义树里也搜不到 plan 字样。
-3. 在桌面点 `同意执行` ⇒ 会话日志 `seq:90 plan/mode {"active":false}`（紧接
-   `step/end` 之后），该轮继续往下跑 —— 宿主的整条计划审查链是通的。
-4. 反面对照（同一轮之后、同一台手机）：让模型用 `ask_user_question` 提一问三选项 ⇒
-   **卡正常出现**、选项可选、`提交` 落库（`seq:130 tool/result {"answers":[…]}`）。
-   见 `2026-10-25-bottom-budget-and-takeover-card.md` 的真机一节。
+3. 在桌面点 `同意执行` ⇒ 会话日志 `seq:90 plan/mode {"active":false}`，该轮继续往下跑 ——
+   宿主的整条计划审查链是通的。
+4. 反面对照（同一轮之后、同一台手机）：`ask_user_question` 提一问三选项 ⇒ **卡正常出现**、
+   选项可选、`提交` 落库（`seq:130`）。见 `2026-10-25-bottom-budget-and-takeover-card.md`。
 
-结论：**缺口精确在 plan-review 这一种 ask 的手机侧投递/认领**，不是整条 waterfall 链，
-也不是手机上的卡片渲染（plan 分支早就在）。本篇"手机上能看能答"的收益**在真机上未成立**。
+### 根因：`arguments` 在线上是 JSON **字符串**，这一支按对象读
 
-- 已排除：DSH 侧没有这次交互（桌面有卡且能结算）；转发请求丢 `intent`
-  （`api/gateway/src/stream-protocol.ts:146-172` 只删 `agent` / `signal`）；手机缺 plan 卡分支。
-- 待查（下一轮，需要一次日志 + 约 1 个模型请求）：`interaction-client.ts` 的 `answerQuestion`
-  里 `planReviewOf` 到底认没认出 `intent.kind === 'plan-review'`。认不出会**静默** `next`
-  （`:461-472`，而 `log` 走 `ctx.logger`，按 `tools.md` 到不了 stdout），表现与"没收到"完全一样。
-  查法：在 `answer()` 里临时加 `console.error`（`tools.md` 记着 console.error 能到 stdout），
-  打 `frame.event` / `frame.agentId` / `sidOf()` 的结果，再走一次 `/plan` + 一句 prompt。
+先按"传输 vs 渲染"二分，用真机库定案（不必再花模型请求）：把
+`/data/data/com.example.dsh_mobile/databases/dsh_mobile.db` 拉下来查 `items`。
+
+- `t:call_16f5bd626c1749a4b47a8693`（那次 `exit_plan_mode` 的 callId）**在库里**，
+  `kind=tool/result`、`seq=88`、`updatedAt=11:04:56` ⇒ **事件到了手机**，不是传输问题。
+- 库里所有 `tool/call` 行的 `payload_json.arguments` 类型都是 **`str`**
+  （`{"plan":"…"}` / `{"questions":[…]}`），与会话日志同形。
+
+而投影里这一支当时写的是：
+
+```dart
+final plan = nonEmptyString(fieldOf(fieldOf(data, 'arguments'), 'plan'));  // arguments 是 String
+```
+
+`fieldOf` 对非 Map 恒回 `null`（`projection.dart:957`）⇒ `plan == null` ⇒ `return null` ⇒
+**不开卡、不报错**。隔壁 `_questionsOf` 一直按字符串 `jsonDecode`（`:1127-1134`），
+所以提问卡没事 —— 同一个字段两种读法，只有一支是错的。
+
+**为什么单测没拦住**：`plan_review_test.dart` 的 `planCall()` 喂的是
+`'arguments': {'plan': plan}`（对象），线上从没出现过这个形状 ——
+用例把实现里的错误假设一起写死了，于是两边一起绿。
+
+### 修法
+
+- 新增 `_argumentsMapOf`（`app/lib/data/projection.dart`）：**唯一**解释
+  "`arguments` 是 JSON 字符串"的地方，解不开回 `null`（不猜）；plan 与 question 两支共用它。
+- 用例改成真机形状（`jsonEncode({'plan': …})`），并加一条回归钉子
+  "把参数当对象传不算数"；再补"参数不是 JSON ⇒ 不开卡"。
+- 变异校验：把 plan 那一支改回 `fieldOf(fieldOf(...))` ⇒ **恰好 2 条红**
+  （主用例 + 回归钉子），其余绿。
+- 门禁：flutter **1234 → 1235**；analyze / format / boundary 391 不变。
+
+**仍未验**：修完这次**没有**再上真机（要一次模型请求才有新的 `/plan` 卡）。
+所以"卡片出现 → 点同意执行 → `plan/mode(active:false)`"这一整条在手机上仍只有
+单测 + 真机事件形状的证据，**端到端未复验**。
 
 ## 判据
 
 - connector（`tests/interaction-client.test.ts` +4）：带 `intent.callId` ⇒ claim 且键是
   `t:call-plan`、答复按请求重写成 `{id:'plan-review', selected:['Approve']}`；"继续规划"⇒
   空 `selected`；没有 `intent.callId` ⇒ 回退 `wait.callId`；两者都没有 ⇒ 委托且不 warn。
-- flutter（`test/plan_review_test.dart` +5）：`exit_plan_mode` 造 plan 卡（身份 / 正文 / 标题 /
-  缺字段不开卡）；`firstHeadingOf` 的读法；答复载荷（同意带标记、拒绝空 selected）；
+- flutter（`test/plan_review_test.dart` +6）：`exit_plan_mode` 造 plan 卡（身份 / 正文 / 标题）；
+  **参数是线上那种 JSON 字符串**；参数不是 JSON / 没有 `plan` / 没有 `callId` ⇒ 不开卡；
+  把参数当对象传**不算数**（回归钉子）；`firstHeadingOf` 的读法；答复载荷；
   卡上看得见正文与两个按钮。
 - `pnpm exec tsc --noEmit` 0、`pnpm build` 过、`dart analyze --fatal-infos` 0、`dart format` 0。
 

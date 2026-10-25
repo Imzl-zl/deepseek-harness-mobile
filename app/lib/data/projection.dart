@@ -1049,7 +1049,11 @@ InteractionSignal? interactionSignalOf({
     // `intent.callId`，而它**就是**这次工具调用的 id（`plan-mode/src/index.ts:329`）。
     if (name == exitPlanModeTool) {
       final planCallId = nonEmptyString(fieldOf(data, 'callId'));
-      final plan = nonEmptyString(fieldOf(fieldOf(data, 'arguments'), 'plan'));
+      // `arguments` 是 **JSON 字符串**，不是对象（见 `_argumentsMapOf`）。
+      // 2026-10-25 真机：按对象读 ⇒ `plan` 恒为 `null` ⇒ 事件到了、不报错、**卡不开**。
+      final plan = nonEmptyString(
+        fieldOf(_argumentsMapOf(fieldOf(data, 'arguments')), 'plan'),
+      );
       if (planCallId == null || plan == null) return null;
       return InteractionOpened(
         InteractionItem(
@@ -1114,6 +1118,29 @@ InteractionSignal? interactionSignalOf({
   return null;
 }
 
+/// `tool/call` 的 `arguments`：**线上是一个 JSON 字符串**，不是对象。
+///
+/// 两处证据（都不是推断）：真机库里落下来的 `payload_json` 里 `arguments` 的类型是
+/// `str`（`{"plan":"…"}` / `{"questions":[ … ]}`），DSH 会话日志同形。
+///
+/// 为什么单独有这一个口：同一个字段曾经有两种读法 —— `ask_user_question` 那一支按字符串解，
+/// `exit_plan_mode` 那一支按对象取 `plan`。后者永远读出 `null`，于是"事件到了、不报错、
+/// 卡不开"（2026-10-25 真机抓到，见 `implemented/2026-10-24-plan-review-card-from-request.md`）。
+/// 现在两支都从这里进，形状只在这一个地方被解释。
+///
+/// 解不开（流式中断 / 被拒的调用会把原始文本留着）就回 `null`：**不猜**。
+Map<String, Object?>? _argumentsMapOf(Object? arguments) {
+  if (arguments is! String || arguments.isEmpty) return null;
+  Object? parsed;
+  try {
+    parsed = jsonDecode(arguments);
+  } catch (_) {
+    return null;
+  }
+  if (parsed is! Map) return null;
+  return parsed.cast<String, Object?>();
+}
+
 /// 从 `ask_user_question` 的**工具参数**里读出问题清单。
 ///
 /// 形状照 DSH 的 `toolArgumentsSchema`（`user-questions/src/projection.ts:43-53`）：
@@ -1125,13 +1152,8 @@ InteractionSignal? interactionSignalOf({
 /// **读不懂就返回空表**：那是模型的坏参数，工具根本没被调用过，没有卡可显示
 /// （DSH 同一处也是 `return null`，`projection.ts:142-144`）。
 List<InteractionQuestion> _questionsOf(Object? arguments) {
-  if (arguments is! String || arguments.isEmpty) return const [];
-  Object? parsed;
-  try {
-    parsed = jsonDecode(arguments);
-  } catch (_) {
-    return const [];
-  }
+  final parsed = _argumentsMapOf(arguments);
+  if (parsed == null) return const [];
   final raw = fieldOf(parsed, 'questions');
   if (raw is! List) return const [];
   final out = <InteractionQuestion>[];
