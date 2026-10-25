@@ -11,101 +11,19 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { createHandlers } from '../src/handlers.js'
 import { createIdempotency } from '../src/idempotency.js'
 import { waitFor } from './support/peer.js'
 import { phoneOpenBox, phoneSealBox } from './support/phone.js'
 import { createMemoryDedupeRows } from './support/dedupe-rows.js'
-import { createFakeAliases } from './support/fake-aliases.js'
-import { ProtocolError } from '../src/protocol/errors.js'
+import { CAPS, fixtureHandlers } from './support/fixture-handlers.js'
 import { completeHandshake, start, type Fixture } from './support/secure-connection.js'
 import type { SessionKeys } from '../src/protocol/crypto.js'
-import type { JobSubscriptions } from '../src/job-subscriptions.js'
-import type { SessionSubscriptions } from '../src/session-subscriptions.js'
 import { createControllableSource } from './support/job-stream.js'
 import { createControllableSessionSource } from './support/session-stream.js'
 
-const CAPS = {
-  sessions: true,
-  storage: true,
-  approval: false,
-  questions: false,
-  jobs: false,
-  subagents: false,
-  references: false,
-  plugins: false,
-  files: false,
-  settings: false,
-  credentials: true,
-  direct: false,
-} as const
-
-function fixtureHandlers(
-  subscriptions: JobSubscriptions | null = null,
-  sessionSubscriptions: SessionSubscriptions | null = null,
-  /** 数一数真实的 `session.prompt` 被调用了几次（I8 的证据）。 */
-  promptBox?: { count: number },
-) {
-  return createHandlers({
-    caps: () => ({ ...CAPS }),
-    aliasVersion: () => 7,
-    devices: () => [{ id: 'dev-1', name: '我的手机', pairedAt: 1000, revoked: false }],
-    sessions: {
-      list: () =>
-        Promise.resolve([
-          {
-            dshSessionId: 'dsh-1',
-            updatedAt: 200,
-            running: false,
-            blank: false,
-            subagent: false,
-            cwd: '/repo/a',
-          },
-        ]),
-      prompt: () => {
-        if (promptBox !== undefined) promptBox.count += 1
-        return Promise.resolve({ accepted: true })
-      },
-      selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
-      create: async () => ({ sessionId: 'dsh-new' }),
-      updateQueue: async () => ({ accepted: true as const }),
-      cancel: () => ({ accepted: true as const }),
-    },
-    aliases: createFakeAliases({
-      // 别名是**不透明的**：刻意不把 DSH 会话 id 编进去，否则"id 不过线"的断言会失去意义
-      // （拿一个含 id 的 sid 去查 `includes(id)`，永远为真）。
-      sidFor: (dshSessionId) => (dshSessionId === 'dsh-1' ? 'sid_0123456789abcd' : 'sid_ffffffffffff'),
-    }),
-    jobs: {
-      listOwnedBy: (dshSessionId) =>
-        dshSessionId === 'dsh-1'
-          ? [
-              {
-                id: 'j1',
-                kind: 'shell',
-                label: '构建',
-                status: 'running',
-                progress: '2/5',
-                startedAt: 10,
-                outputTotal: 42,
-              },
-            ]
-          : [],
-      readOutput: () => ({ chunks: [], next: 0, lossy: false }),
-      subscribe: () => () => {},
-    },
-    // 端口层面的替身：真实端口会把宿主的 job/not-found 转成协议码（见 dsh/jobs.ts），这里照样。
-    jobControl: {
-      kill: (_sessionId, jobId) => {
-        if (jobId === 'j-foreign') throw new ProtocolError('job/not-found', '不属于这个会话')
-        return jobId === 'j-done' ? 'already-finished' : 'requested'
-      },
-      follow: () => (async function* () {})(),
-    },
-    ...(subscriptions === null ? {} : { jobSubscriptions: subscriptions }),
-    ...(sessionSubscriptions === null ? {} : { sessionSubscriptions }),
-  })
-}
+// 方法面的假依赖装置（别名 / 四种会话行 / 任务 / 模型 / 投影）搬到了
+// `tests/support/fixture-handlers.ts`：**金样生成器要用同一份假行**
+// （`tests/wire-shapes.test.ts`），两份假行各长一份就又回到"用例喂的形状不是线上形状"。
 
 /** 手机侧解出收到的所有 `job` 帧载荷（用手机侧自己那份封箱实现）。 */
 function jobPayloadsOf(f: Fixture, keys: SessionKeys): unknown[] {
@@ -183,11 +101,14 @@ test('端到端：手机问 repo.info，电脑侧回一个可解的 res（id 对
       'session.cancel',
       'session.create',
       'session.list',
+      'session.modelCatalog',
+      'session.projections',
       'session.prompt',
       'session.select-model',
       'session.updateQueue',
+      'usage.summary',
     ],
-    '实现了哪些方法也由同一张表报出',
+    '实现了哪些方法也由同一张表报出（`models` / `projections` 两个面给了，就多这几条）',
   )
 })
 
@@ -234,15 +155,24 @@ test('端到端：手机问 session.list，拿到的是 sid（DSH 会话 id 不�
   const res = responseOf(f, keys)
   assert.equal(res.ok, true)
   const rows = (res.envelope['result'] as { sessions: Record<string, unknown>[] }).sessions
-  assert.equal(rows.length, 1)
+  assert.equal(rows.length, 4, '假行覆盖四种形态：普通 / 子会话 / 冷行 / 完整信封')
   const row = rows[0]
   assert.ok(row !== undefined)
   assert.equal(row['sid'], 'sid_0123456789abcd', '手机只见别名')
   assert.equal(row['updatedAt'], 200)
   assert.equal(row['cwd'], '/repo/a')
   // 中继与手机都只见 sid：DSH 的会话 id 绝不能出现在线上载荷里。
-  assert.equal(JSON.stringify(res.envelope).includes('dsh-1'), false, 'DSH 会话 id 泄漏了')
-  assert.equal('dshSessionId' in row, false)
+  const wire = JSON.stringify(res.envelope)
+  for (const leaked of ['dsh-1', 'dsh-2', 'dsh-3', 'dsh-4', 'dshSessionId']) {
+    assert.equal(wire.includes(leaked), false, `DSH 侧的东西泄漏到线上了：${leaked}`)
+  }
+  // **恒发键**：连接器对每一行**无条件**写出这五个（`handlers.ts:740-744`）——
+  // 手机侧据此把它们当必填（缺了就是漂了，整行丢），所以这里逐行钉住。
+  for (const key of ['sid', 'updatedAt', 'running', 'blank', 'subagent']) {
+    rows.forEach((each, index) => {
+      assert.equal(key in each, true, `第 ${index + 1} 行缺恒发键 ${key}`)
+    })
+  }
 })
 
 test('端到端：同一个幂等键重发 → 只执行一次，第二次回上次的结果（I8）', async (t) => {

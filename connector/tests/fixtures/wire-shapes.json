@@ -1,0 +1,111 @@
+{
+  "session.list": [
+    {
+      "sessions": [
+        {
+          "sid": "sid_0123456789abcd",
+          "updatedAt": 200,
+          "running": false,
+          "blank": false,
+          "subagent": false,
+          "model": {
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "reasoningEffort": "high"
+          },
+          "cwd": "/repo/a",
+          "projections": {
+            "kind": "sequenced",
+            "asOfSeq": 12,
+            "values": {
+              "title": "重构会话列表"
+            }
+          }
+        },
+        {
+          "sid": "sid_1122334455667788",
+          "updatedAt": 180,
+          "running": false,
+          "blank": false,
+          "subagent": true,
+          "parentSessionId": "sid_0123456789abcd"
+        },
+        {
+          "sid": "sid_2233445566778899",
+          "updatedAt": 160,
+          "running": false,
+          "blank": true,
+          "subagent": false
+        },
+        {
+          "sid": "sid_33445566778899aa",
+          "updatedAt": 140,
+          "running": true,
+          "blank": false,
+          "subagent": false,
+          "cwd": "/repo/b",
+          "projections": {
+            "kind": "cached",
+            "asOfSeq": 7,
+            "values": {
+              "title": "把 token 账算对",
+              "modelSelection": {
+                "lastUsed": {
+                  "provider": "deepseek",
+                  "model": "deepseek-chat"
+                },
+                "next": {
+                  "provider": "deepseek",
+                  "model": "deepseek-reasoner",
+                  "reasoningEffort": "high"
+                }
+              },
+              "subagentTiming": {
+                "settledMs": 2000,
+                "active": {
+                  "since": 1000,
+                  "through": 3000
+                }
+              },
+              "tokenUsage": {
+                "uncachedInputTokens": 1200,
+                "outputTokens": 800,
+                "cacheReadTokens": 4000,
+                "cacheWriteTokens": 600
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "session.projections": [
+    {
+      "title": "把 token 账算对",
+      "modelSelection": {
+        "lastUsed": {
+          "provider": "deepseek",
+          "model": "deepseek-chat"
+        },
+        "next": {
+          "provider": "deepseek",
+          "model": "deepseek-reasoner",
+          "reasoningEffort": "high"
+        }
+      },
+      "subagentTiming": {
+        "settledMs": 2000,
+        "active": {
+          "since": 1000,
+          "through": 3000
+        }
+      },
+      "tokenUsage": {
+        "uncachedInputTokens": 1200,
+        "outputTokens": 800,
+        "cacheReadTokens": 4000,
+        "cacheWriteTokens": 600
+      }
+    }
+  ]
+}
