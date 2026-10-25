@@ -18,7 +18,8 @@
      （旧稿的取证机制不成立，别照它做）。
   3. `implemented/2026-10-25-event-wire-single-decoder.md`（事件面已落地的形态，照它抄手感）。
 - 门禁（**改代码后必须全绿**，数字唯一出处 `tools.md`）：connector **657**、flutter **1241**、
-  boundary **509**、`dart analyze --fatal-infos` 0、`dart format` 0、契约方法面 **49 / 实现 47**。
+  boundary **509**、**`verify-rpc-single-caller` 39 处（预算 39）**、`verify-tool-paths` **23**、
+  `dart analyze --fatal-infos` 0、`dart format` 0、契约方法面 **49 / 实现 47**。
 - **已经落地的别推翻**：`app/lib/wire/reading.dart`（三态 `WireReading` + `WireDiagnostics`）、
   `app/lib/wire/events.dart`（7 个事件 decoder）、门禁 `wire-field-single-reader`、
   `app/test/event_wire_replay_test.dart` + `fixtures/real-session-events.json`。
@@ -68,18 +69,53 @@
    本轮只断言三件：① 文件里含 `session.list` / `session.projections` 两个键；
    ② 每条样本 `jsonDecode` 出来是 `Map`；③ 两个键的样本条数 ≥1。
    （真正的 decoder 断言是第 1 批的事 —— 这一条先把"文件在、没缩水"钉住。）
-5. **新增 `app/tools/verify-rpc-single-caller.mjs`**（二十行）：扫 `app/lib/data/` 与 `app/lib/ui/`，
-   数 `client.call<` 的**代码**出现次数（先剥注释；正则取 `client\.call<` —— 这两个目录里
-   所有 RPC 调用都带显式泛型，而 `onEndpointsChanged?.call(...)` 那类回调不带 `<`，不会误命中），
-   要求**等于预算常量**。今天的实测预算是 **39**
-   （`data/app_model.dart` 38、`ui/chat_page.dart` 1；`core/` 里的是 client 调自己，不在范围）。
+5. **新增 `app/tools/verify-rpc-single-caller.mjs`**：扫 `app/lib/data/` 与 `app/lib/ui/`，
+   数 `client.call<` 的出现次数，要求**等于预算常量**。今天的实测预算是 **39**
+   （`data/app_model.dart` 38、`ui/chat_page.dart` 1；`core/` 里的是 client 调自己，不在范围）
+   —— **2026-10-25 已用下面这份实现实跑过：预算 39 ⇒ PASS；改 38 ⇒ 逐行报出 39 个位置**。
    **它不是空名单**：从第一分钟起就禁止第 40 处。预算只许降，`why` 里写死这条纪律。
-   **不要剥注释再数**：`verify-platform-boundary.mjs` 的 `firstCodeUse` 用空格替换整段块注释，
-   会把行号冲掉（只剩匹配串）—— 对"按行报告违规位置"的脚本是致命的。
-   改成"逐行看，行首是 `///` / `//` / `*` / `/*` 就跳过"，行号就保持原样
-   （2026-10-25 实测：这两个文件里注释零命中，两种数法都得 39）。
-   输出一行（`ALL CHECKS PASSED — 39 处，预算 39`），加入 `app/tools/` 后
-   `verify-tool-paths.mjs` 扫到的脚本数 23 → 24（那条门禁自己会算出来）。
+   直接照抄（**不要**改用 `firstCodeUse` 那种"块注释替换成空格"的剥法 —— 那会把行号冲掉）：
+
+   ```js
+   // 判据：协议知识（方法名 + 参数形状）只许待在 wire/ 外面 —— 这个数只许降，终态 0。
+   // Note: 为什么是"会归零的数"而不是"名单表" —— 见 .agents/notes/proposed/2026-10-25-wire-design-review.md
+   import { readFileSync, readdirSync, statSync } from 'node:fs'
+   import { join, relative } from 'node:path'
+
+   const BUDGET = 39
+   const DIRS = ['app/lib/data', 'app/lib/ui']
+   /** 行首是注释就不算用法。不剥注释是为了保住行号（块注释会被整段吞掉）。 */
+   const COMMENT_LINE = /^\s*(\/\/|\*|\/\*)/
+
+   function walk(dir, out = []) {
+     for (const entry of readdirSync(dir)) {
+       const full = join(dir, entry)
+       if (statSync(full).isDirectory()) walk(full, out)
+       else if (entry.endsWith('.dart')) out.push(full)
+     }
+     return out
+   }
+
+   const hits = []
+   for (const dir of DIRS) {
+     for (const file of walk(dir)) {
+       readFileSync(file, 'utf8').split('\n').forEach((line, index) => {
+         if (COMMENT_LINE.test(line)) return
+         if (/client\.call</.test(line)) hits.push(`${relative('.', file)}:${index + 1}`)
+       })
+     }
+   }
+
+   const ok = hits.length === BUDGET
+   console.log(`${ok ? 'PASS' : 'FAIL'} — 实测 ${hits.length} 处，预算 ${BUDGET}`)
+   if (!ok) {
+     for (const hit of hits) console.log('  ', hit)
+     process.exitCode = 1
+   }
+   ```
+
+   路径全部相对仓库根（`verify-tool-paths.mjs` 会拦盘符字面量），`cd` 到仓库根再跑。
+   加入 `app/tools/` 后 `verify-tool-paths.mjs` 扫到的脚本数 23 → 24（那条门禁自己会算出来）。
 6. **变异校验**：把金样里 `session.list` 某一行的 `running` 改成字符串 `"true"`
    ⇒ 连接器比较**恰好那一条**红。确认金样不是恒真，改回来。
 
@@ -143,7 +179,7 @@ WireReading<SessionSummary> readSessionRow(Object? row);
 |---|---|---|
 | `747-750` | `_titleHintOf` | 删，进 decoder |
 | `758-763` | `_projectionValueOf` | 删，进 decoder（**头注要写"这是信封"**） |
-| `2229-2232` | `_fetchSessionRows`（唯一调用点） | 改成 `await loadSessionList((m, p) => client.call<Object?>(m, p))` |
+| `2229-2232` | `_fetchSessionRows`（唯一调用点） | 改成 `await loadSessionList(client)` |
 | `3765-3843` | `_parseSessionList`（79 行、12 个字段，含 `3766-3772` 的裸数组分支） | 整段删（裸数组分支同时消失） |
 | `3853-3857` | `_modelSelectionOf` | 删，进 decoder |
 | `3864-3876` | `_parseModelRef` | 删，进 decoder |
@@ -179,7 +215,7 @@ WireReading<SessionSummary> readSessionRow(Object? row);
   `usage.summary` 的计数 `int` `model/usage_summary.dart:167`），例外会多到没人看；
   ③ "名字 → 唯一文件"的名单表 —— 一条规则只能表达一个事实，41 个方法 = 41 条规则，
   规则表自己长成第二个真值源。
-  **能用的只有"会归零的数"**：`data/`+`ui/` 里 `call<` 的处数，39 → 0。
+   **能用的只有"会归零的数"**：`data/`+`ui/` 里 `client.call<` 的处数，39 → 0。
   它度量的是"协议知识还有几处漏在 `wire/` 外面"，不是某个字面量在哪。
 - **不要为了迁就判据去改架构**：初稿曾为了"让 grep 看见方法名"而把调用搬进 `wire/`、
   还造了个 `RpcCaller` 回调把 `core/` 挡在外面 —— 顺序反了。搬调用是对的，
@@ -230,8 +266,8 @@ WireReading<SessionSummary> readSessionRow(Object? row);
 - 第 2 批及以后（`session.page` / 投影 14 键 / `repo.info` / 文件引用 / 插件 / 收尾）。
 - codegen（方案 b）、运行时 schema（方案 c）、连接器侧类型化 DTO（方案 e）—— 触发条件写在
   规格笔记的「仍未决」第 4 条，本轮不碰。
-- `session.prompt` 的写路径要不要搬进 `wire/rpc/`（它在 `ui/chat_page.dart:562-571`）——
-  留到第 1 批落地后单独定。
+- **`session.prompt` 的写路径（`ui/chat_page.dart:565`）本轮不搬** —— 它是第 7 批的事
+  （`sendPrompt(...)`）。**但它最终必须搬**，否则预算归不了零；别把它当成"可以永远留在界面层"。
 - 不动 `app/lib/data/projection.dart` 的事件面（那是另一件事）、不动 `mock/proto/`。
 
 ---
@@ -247,6 +283,7 @@ Get-Content app\lib\wire\reading.dart -TotalCount 60
 Get-Content app\lib\wire\events.dart -TotalCount 60
 # 复跑一遍基线（改代码前先确认起点是绿的）
 node app\tools\verify-platform-boundary.mjs
+node mock\proto\tools\verify-tool-paths.mjs
 cd connector; pnpm test 2>&1 | Select-Object -Last 20
 cd ..\app; flutter test 2>&1 | Select-Object -Last 10
 ```
