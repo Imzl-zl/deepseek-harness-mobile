@@ -337,6 +337,15 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
     鉴权走浏览器 cookie(先打开一次带 `?token=` 的页面),所以在**已认证的页面里 fetch** 最省事;
     PowerShell 直连会 401。实例见 `.agents/notes/` 与本节的 Typert 两条。
     `payload` 少包一层 `args` 会回 `gateway/internal: Remote payload must contain exactly one plain-object args field`。
+    - **2026-10-25 实测两条**:① 会话清单的服务键是 **`session`**(不是 `sessionController` / `sessions`,那两个回 404),
+      URL 是 `/api/session/list`;② 方法带 `_request` 参数的,**args 里必须给 `_request`**
+      (`payload.args = {"_request":{}}`),少了回 `gateway/arguments-invalid: missing "_request"`。
+      所以"抓一份真实会话清单"是:`await fetch('/api/session/list',{method:'POST',…,body:JSON.stringify({type:'client-request',rpcId:'c1',method:'session/list',payload:{args:{_request:{}}}})})`
+      —— 返回值是 DSH 自己的 `{items:[…]}`,再过 `createSessionsAdapter` + `createHandlers(...)['session.list']`
+      就是手机真正收到的那份载荷。用例见
+      `.agents/notes/implemented/2026-10-25-wire-golden-and-session-list.md` 的「同日实测」。
+    - 页面把大对象写不出磁盘(MCP 的 `filePath` 只认它自己的 workspace roots):起一个临时 `node:http`
+      接收端(`127.0.0.1:7801`),页面用 `fetch(..., {mode:'no-cors', headers:{'content-type':'text/plain'}})` POST 过来即可。
   - 开发者文档 <https://deepseek-harness.github.io/deepseek-harness/reference/> —— 子系统 `reference/subsystems/web-server`、`web-client`、`client-modules`;另有 `develop/basic/`、`guide/quickstart`
   - 架构决策笔记金矿 `D:\sudy\github\deepseek-harness\.agents\notes\archived\architecture\`:`2026-07-19-gui-layering-and-rpc-protocol`(GUI 分层与 RPC 协议)、`2026-07-23-unified-session-query-service`(统一会话查询服务)、`2026-07-25-web-command-surfaces-and-assembly`(命令面与装配)、`2026-07-25-web-input-machine-and-slash-pipeline`(输入状态机与 slash 流水线)、`2026-07-28-user-settings-seam`(用户设置缝)。每篇都带 `.zh.md`
   - **交互层(审批/提问/计划审查,2026-10-09 核实)**:`packages/interaction/user-approval/src/index.ts:215` 的 `request()` 与 `:267` 的 `decide()`(无限等 + signal 竞速 + 迟到丢弃 + fail-closed);`packages/interaction/user-questions/src/index.ts:187`(回答成为 `answer_to_pending_question` 用户消息)、`src/types.ts:26`(plan-review 意图);`packages/interaction/tool-ask-user/src/timed.ts:103`(计时提问默认 120 s、`-1` 无限等、超时转 pending)
