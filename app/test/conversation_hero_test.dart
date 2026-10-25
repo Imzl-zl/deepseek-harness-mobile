@@ -179,16 +179,20 @@ Map<String, Object?> workspaceReply({String? owningWorkspace}) => {
       'workspaceId': 'w1',
       'title': 'dsh-mobile',
       'path': r'D:\sudy\myproject\dsh-mobile',
+      'createdAt': '2026-10-01T00:00:00.000Z',
       'sessionIds': owningWorkspace == 'w1' ? ['blank-1'] : <String>[],
     },
     {
       'workspaceId': 'w2',
       'title': 'deepseek-harness',
       'path': r'D:\sudy\github\deepseek-harness',
+      'createdAt': '2026-09-01T00:00:00.000Z',
       'sessionIds': owningWorkspace == 'w2' ? ['blank-1'] : <String>[],
     },
   ],
   'archivedSessionIds': <String>[],
+  // 连接器无条件写三列（`handlers.ts:1004-1014`）；少一列整份快照就解不出来。
+  'pinnedSessionIds': <String>[],
 };
 
 Widget host(AppModel app, {bool paired = true}) => MaterialApp(
@@ -612,6 +616,7 @@ void main() {
             },
           ],
           'archivedSessionIds': <String>[],
+          'pinnedSessionIds': <String>[],
         },
         presets: {
           'available': true,

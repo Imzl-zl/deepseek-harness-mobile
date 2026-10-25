@@ -997,6 +997,14 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
           workspaceId: row.workspaceId,
           title: row.title,
           path: row.path,
+          // **`createdAt` 必须过线**：手机用"组内最大 updatedAt、没有会话时用它"
+          // 来算"最近工作区"（`app/lib/data/app_model.dart` 的 `newSessionWorkspaceId`）。
+          // 2026-10-25 之前这里漏了这个键 —— 端口有（`dsh/workspaces.ts:203`）、
+          // 手机也在读（`readWorkspaceList`），**只有这一层没写**，于是手机上
+          // `createdAt` 恒为空串、"空工作区当最旧"那条分支在生产里永远走不到。
+          // 金样（`connector/tests/fixtures/wire-shapes.json`）现在收的就是这一行，
+          // 漏写成因与回归网都在那里。
+          createdAt: row.createdAt,
           sessionIds: await aliased(row.sessionIds),
         })),
       )

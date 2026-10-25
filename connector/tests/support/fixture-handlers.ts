@@ -265,6 +265,28 @@ export function fixtureHandlers(
               : {},
         ),
     },
+    // 工作区面：一份确定性的基线 + 七个方法的定值回执（都是"整份顺序/集合"）。
+    workspaces: {
+      list: async () => ({
+        workspaces: [
+          {
+            workspaceId: 'ws-1',
+            title: 'dsh-mobile',
+            path: '/repo/dsh-mobile',
+            createdAt: '2026-10-01T00:00:00.000Z',
+            sessionIds: ['dsh-1', 'dsh-2'],
+          },
+        ],
+        archivedSessionIds: ['dsh-3'],
+        pinnedSessionIds: ['dsh-2'],
+      }),
+      archive: async (sessionId: string) => ['dsh-3', sessionId],
+      unarchive: async () => ['dsh-3'],
+      pin: async (sessionId: string) => ['dsh-2', sessionId],
+      unpin: async () => ['dsh-2'],
+      insertSessionBefore: async () => ['dsh-2', 'dsh-1'],
+      insertBefore: async () => ['ws-1'],
+    },
     jobs: {
       listOwnedBy: (dshSessionId) =>
         dshSessionId === 'dsh-1'

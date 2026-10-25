@@ -107,10 +107,14 @@ class _FakeArchiveClient extends FakeSyncClient {
                   'workspaceId': 'ws-1',
                   'title': 'dsh-mobile',
                   'path': 'D:/repo',
+                  'createdAt': '2026-10-01T00:00:00.000Z',
                   'sessionIds': ['s1', 's2'],
                 },
               ],
               'archivedSessionIds': archived,
+              // 三列都是连接器**无条件**写出的（`handlers.ts:1004-1014`）：
+              // 假行少一列，整份快照就解不出来（手机退回"不分组"，归档页也空）。
+              'pinnedSessionIds': <String>[],
             }
             as T;
       case 'workspace.archive':

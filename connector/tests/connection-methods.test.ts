@@ -108,8 +108,15 @@ test('端到端：手机问 repo.info，电脑侧回一个可解的 res（id 对
       'session.updateQueue',
       'subagent.prompt',
       'usage.summary',
+      'workspace.archive',
+      'workspace.insertBefore',
+      'workspace.insertSessionBefore',
+      'workspace.list',
+      'workspace.pin',
+      'workspace.unarchive',
+      'workspace.unpin',
     ],
-    '实现了哪些方法也由同一张表报出（`models` / `projections` / `subagents` 三个面给了，就多这几条）',
+    '实现了哪些方法也由同一张表报出（`models` / `projections` / `subagents` / `workspaces` 四个面给了）',
   )
 })
 

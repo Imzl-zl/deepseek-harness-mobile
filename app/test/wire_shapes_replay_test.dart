@@ -36,6 +36,7 @@ import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/model/model_catalog.dart';
 import 'package:dsh_mobile/wire/rpc/projections.dart';
 import 'package:dsh_mobile/wire/rpc/session.dart';
+import 'package:dsh_mobile/wire/rpc/workspace.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// 金样相对 `app/`（`flutter test` 的工作目录）的路径。
@@ -444,6 +445,97 @@ void main() {
     expect(reading, isA<WireOk<SessionProjections>>());
     expect((reading as WireOk<SessionProjections>).value.title, '标题还在');
     expect(WireDiagnostics.badCount, 1);
+  });
+
+  // ---- 工作区面（B1）：分组 + 两列 id 同一份应答，七种应答都是"整份真值" ----
+
+  test('workspace.list：分组与两列 id 都等于金样（含 createdAt）', () {
+    final sample = _sampleOf(golden, 'workspace.list');
+    final reading = readWorkspaceList(sample);
+    expect(reading, isA<WireOk<WorkspaceSnapshot>>());
+    final snapshot = (reading as WireOk<WorkspaceSnapshot>).value;
+
+    final rows = (sample['workspaces']! as List).cast<Object?>();
+    expect(snapshot.groups.length, rows.length);
+    final first = (rows.first! as Map).cast<String, Object?>();
+    final group = snapshot.groups.first;
+    expect(group.workspaceId, first['workspaceId']);
+    expect(group.title, first['title']);
+    expect(group.path, first['path']);
+    expect(
+      group.createdAt,
+      first['createdAt'],
+      reason: 'createdAt 必须过线（2026-10-25 才修的那一处）',
+    );
+    expect(group.sessionIds, (first['sessionIds']! as List).cast<String>());
+
+    expect(
+      snapshot.archivedSessionIds,
+      (sample['archivedSessionIds']! as List).toSet(),
+    );
+    expect(
+      snapshot.pinnedSessionIds,
+      (sample['pinnedSessionIds']! as List).toSet(),
+    );
+    expect(WireDiagnostics.badCount, 0);
+  });
+
+  test('workspace.list 缺 pinnedSessionIds ⇒ WireBad + 计数 1（三列都是恒发的）', () {
+    final reading = readWorkspaceList({
+      'workspaces': <Object?>[],
+      'archivedSessionIds': <String>[],
+    });
+    expect(reading, isA<WireBad<WorkspaceSnapshot>>());
+    expect(valueOrReport(reading, 'workspace.list'), isNull);
+    expect(WireDiagnostics.badCount, 1);
+  });
+
+  test('"整份真值"非空却全非法 ⇒ WireBad（落空集会静默清空归档/置顶）', () {
+    final reading = readSessionOrder({
+      'sessionIds': ['', ''],
+    });
+    expect(reading, isA<WireBad<List<String>>>());
+    expect(valueOrReport(reading, 'workspace.insertSessionBefore'), isNull);
+    expect(WireDiagnostics.badCount, 1);
+  });
+
+  test('workspace 的四种"整份集合/顺序"应答都与金样一致', () {
+    for (final method in const ['workspace.pin', 'workspace.unpin']) {
+      final sample = _sampleOf(golden, method);
+      final reading = readPinnedSet(sample);
+      expect(reading, isA<WireOk<Set<String>>>());
+      expect(
+        (reading as WireOk<Set<String>>).value,
+        (sample['pinnedSessionIds']! as List).toSet(),
+        reason: method,
+      );
+    }
+    for (final method in const ['workspace.archive', 'workspace.unarchive']) {
+      final sample = _sampleOf(golden, method);
+      final reading = readArchivedSet(sample);
+      expect(reading, isA<WireOk<Set<String>>>());
+      expect(
+        (reading as WireOk<Set<String>>).value,
+        (sample['archivedSessionIds']! as List).toSet(),
+        reason: method,
+      );
+    }
+    final order = _sampleOf(golden, 'workspace.insertSessionBefore');
+    final orderReading = readSessionOrder(order);
+    expect(orderReading, isA<WireOk<List<String>>>());
+    expect(
+      (orderReading as WireOk<List<String>>).value,
+      (order['sessionIds']! as List).cast<String>(),
+    );
+
+    final workspaceOrder = _sampleOf(golden, 'workspace.insertBefore');
+    final idsReading = readWorkspaceOrder(workspaceOrder);
+    expect(idsReading, isA<WireOk<List<String>>>());
+    expect(
+      (idsReading as WireOk<List<String>>).value,
+      (workspaceOrder['workspaceIds']! as List).cast<String>(),
+    );
+    expect(WireDiagnostics.badCount, 0);
   });
 }
 

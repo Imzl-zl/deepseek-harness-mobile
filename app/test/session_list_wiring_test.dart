@@ -174,6 +174,13 @@ void main() {
             },
           ],
           'session.modelCatalog' => {'available': false},
+          // 工作区面也要给正常形状：它由 `refreshWorkspaces` 顺带拉，
+          // 解不出来会往同一个计数里再 +1（这一条用例只想坏一处）。
+          'workspace.list' => {
+            'workspaces': <Object?>[],
+            'archivedSessionIds': <String>[],
+            'pinnedSessionIds': <String>[],
+          },
           _ => null,
         },
       );
@@ -257,6 +264,12 @@ void main() {
             ],
           },
           'session.modelCatalog' => {'available': false},
+          // 见上一条用例：工作区面也要正常形状，别让它往同一个计数里再 +1。
+          'workspace.list' => {
+            'workspaces': <Object?>[],
+            'archivedSessionIds': <String>[],
+            'pinnedSessionIds': <String>[],
+          },
           _ => null,
         },
       );

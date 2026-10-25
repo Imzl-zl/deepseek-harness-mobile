@@ -87,7 +87,8 @@
 | 1 | `session.list`（含裸数组分支删除）| 39 → 38 | ✅ `e88d852` |
 | A1 | 字段内核 + `session.create`/`select-model`/`cancel`/`updateQueue`/`prompt` + `subagent.prompt` + `session.modelCatalog` | 38 → 32 | ✅ |
 | A2 | `session.projections`（14 个键 + 值对象）+ `session.page`/`refetch` 的形状（`wire/rpc/session_page.dart`）| 32 → 31 | ✅ |
-| B | `workspace.*` / `permission.*` / `settings.*` / `agentPresets.list` / `repo.info` / `endpoint.describe` | −14 | 待做 |
+| B1 | `workspace.*`（7 个，七种应答都是"分组 + 两列 id"或"整份顺序/集合"）| 31 → 24 | ✅ |
+| B2 | `permission.*` / `settings.*` / `agentPresets.list` / `repo.info` / `endpoint.describe` | −7 | 待做 |
 | C | `file.*` / `refs.*` / `plugin.*` / `job.*` / `interaction.respond` / `usage.summary` / `command.execute` | −17 | 待做 |
 | D | 收尾：预算归 0、常量删掉、金样覆盖全部方法、笔记并入 `implemented/` | 0 | 待做 |
 

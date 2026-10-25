@@ -51,6 +51,7 @@ import '../model/workspace.dart';
 import '../model/workspace_files.dart';
 import '../wire/rpc/projections.dart' as wire;
 import '../wire/rpc/session.dart' as wire;
+import '../wire/rpc/workspace.dart' as wire;
 import 'preview_data.dart';
 import 'projection.dart';
 import 'session_store.dart';
@@ -2603,16 +2604,16 @@ class AppModel extends ChangeNotifier {
   /// 分组是增强，不是正确性前提。
   Future<void> refreshWorkspaces() async {
     try {
-      final result = await client.call<Object?>('workspace.list', const {});
+      // 形状（分组 + 两列 id，**同一份应答**）在 `wire/rpc/workspace.dart`。
+      final snapshot = await wire.loadWorkspaceList(client);
+      if (snapshot == null) return;
       if (_disposed) return;
-      _workspaces = _parseWorkspaces(result);
+      _workspaces = snapshot.groups;
       // 归档集、置顶集与工作区分组**同一份应答**（`workspace.list` 同时带
       // `archivedSessionIds` 与 `pinnedSessionIds`）—— 分两次解析会让
       // "列表看过一眼、归档/置顶集还是旧的"。
-      final archived = _parseArchivedIds(result);
-      if (archived != null) _archivedSids = archived;
-      final pinned = _parsePinnedIds(result);
-      if (pinned != null) _pinnedSids = pinned;
+      _archivedSids = snapshot.archivedSessionIds;
+      _pinnedSids = snapshot.pinnedSessionIds;
       if (!_disposed) notifyListeners();
     } catch (_) {
       // 附属信息：不把"拉不到工作区"升级成"会话列表也失败了"。
@@ -2657,17 +2658,19 @@ class AppModel extends ChangeNotifier {
   /// 时该走"停止并归档"）。
   Future<bool> archiveSession(String sid, {bool stopActivity = false}) async {
     try {
-      final result = await client.call<Object?>(
-        'workspace.archive',
-        {
-          'sid': sid,
-          // 只在真的要停时才带这个键：DSH 判的是 `=== true`，
-          // 塞一个 false 进去是另一种语义（见 `dsh/workspaces.ts` 的注释）。
-          if (stopActivity) 'stopActivity': true,
-        },
+      final archived = await wire.workspaceArchive(
+        client,
+        sid: sid,
+        stopActivity: stopActivity,
         requestId: 'arc-${DateTime.now().microsecondsSinceEpoch}',
       );
-      _applyArchiveSet(result);
+      // 应答认不出就**不动**：有损地落一个归档集会让"哪条是归档的"错位，
+      // 而症状只是"列表里少了一条"。**但归档本身已经成功**（宿主回的 ok），
+      // 所以仍返回 true —— 不能对写操作说谎；读不出的那一半已经计过数。
+      if (archived != null && !_disposed) {
+        _archivedSids = archived;
+        notifyListeners();
+      }
       return true;
     } catch (error) {
       _recordError('归档失败', error);
@@ -2678,12 +2681,15 @@ class AppModel extends ChangeNotifier {
   /// 取消归档（**宿主侧幂等**：没归档过的 id 也成功）。
   Future<bool> unarchiveSession(String sid) async {
     try {
-      final result = await client.call<Object?>(
-        'workspace.unarchive',
-        {'sid': sid},
+      final archived = await wire.workspaceUnarchive(
+        client,
+        sid: sid,
         requestId: 'unarc-${DateTime.now().microsecondsSinceEpoch}',
       );
-      _applyArchiveSet(result);
+      if (archived != null && !_disposed) {
+        _archivedSids = archived;
+        notifyListeners();
+      }
       return true;
     } catch (error) {
       _recordError('取消归档失败', error);
@@ -2699,14 +2705,21 @@ class AppModel extends ChangeNotifier {
   /// 已归档行，所以这里不预判，出错照实显示。
   Future<bool> pinSession(String sid) async {
     try {
-      final result = await client.call<Object?>('workspace.pin', {
-        'sid': sid,
-      }, requestId: 'pin-${DateTime.now().microsecondsSinceEpoch}');
-      final applied = _applyPinnedSet(result);
-      if (!applied) {
+      final pinned = await wire.workspacePin(
+        client,
+        sid: sid,
+        requestId: 'pin-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      if (pinned == null) {
+        // 置顶**是写操作但应答是"整份真值"**：读不出就没法把本地的集合对齐，
+        // 而错位的表现是"某条没置顶"。如实报错，不假装成功（与旧行为一致）。
         _recordError('置顶失败', StateError('应答缺少 pinnedSessionIds'));
+        return false;
       }
-      return applied;
+      if (_disposed) return true;
+      _pinnedSids = pinned;
+      notifyListeners();
+      return true;
     } catch (error) {
       _recordError('置顶失败', error);
       return false;
@@ -2716,16 +2729,19 @@ class AppModel extends ChangeNotifier {
   /// 取消置顶（宿主侧幂等：没置顶过的 id 也成功）。
   Future<bool> unpinSession(String sid) async {
     try {
-      final result = await client.call<Object?>(
-        'workspace.unpin',
-        {'sid': sid},
+      final pinned = await wire.workspaceUnpin(
+        client,
+        sid: sid,
         requestId: 'unpin-${DateTime.now().microsecondsSinceEpoch}',
       );
-      final applied = _applyPinnedSet(result);
-      if (!applied) {
+      if (pinned == null) {
         _recordError('取消置顶失败', StateError('应答缺少 pinnedSessionIds'));
+        return false;
       }
-      return applied;
+      if (_disposed) return true;
+      _pinnedSids = pinned;
+      notifyListeners();
+      return true;
     } catch (error) {
       _recordError('取消置顶失败', error);
       return false;
@@ -2746,17 +2762,13 @@ class AppModel extends ChangeNotifier {
       return false;
     }
     try {
-      final result = await client.call<Object?>(
-        'workspace.insertSessionBefore',
-        {
-          'workspaceId': group.workspaceId,
-          'sid': sid,
-          // 只在真的要追加时省略这个键：塞空串会被宿主当成一个不存在的锚点。
-          'beforeSid': ?beforeSid,
-        },
+      final order = await wire.workspaceInsertSessionBefore(
+        client,
+        workspaceId: group.workspaceId,
+        sid: sid,
+        beforeSid: beforeSid,
         requestId: 'mv-${DateTime.now().microsecondsSinceEpoch}',
       );
-      final order = _parseSessionIds(result);
       if (order == null) {
         _recordError('移动会话失败', StateError('应答缺少 sessionIds'));
         return false;
@@ -2779,17 +2791,12 @@ class AppModel extends ChangeNotifier {
     required String? beforeWorkspaceId,
   }) async {
     try {
-      final result = await client.call<Object?>(
-        'workspace.insertBefore',
-        {
-          'workspaceId': workspaceId,
-          // 只在真的要移到末尾时省略这个键（与 `moveSession` 同一条：
-          // 塞空串会被宿主当成一个不存在的锚点）。
-          'beforeWorkspaceId': ?beforeWorkspaceId,
-        },
+      final order = await wire.workspaceInsertBefore(
+        client,
+        workspaceId: workspaceId,
+        beforeWorkspaceId: beforeWorkspaceId,
         requestId: 'mvw-${DateTime.now().microsecondsSinceEpoch}',
       );
-      final order = _parseWorkspaceIds(result);
       if (order == null) {
         _recordError('移动工作区失败', StateError('应答缺少 workspaceIds'));
         return false;
@@ -2822,16 +2829,6 @@ class AppModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 解析工作区排序应答（`{workspaceIds: [...]}`）；**形状不认识给 `null`**。
-  static List<String>? _parseWorkspaceIds(Object? result) {
-    if (result is! Map) return null;
-    final ids = result['workspaceIds'];
-    if (ids is! List) return null;
-    final out = ids.whereType<String>().where((s) => s.isNotEmpty).toList();
-    if (ids.isNotEmpty && out.isEmpty) return null;
-    return out;
-  }
-
   /// 用应答里的顺序替换那一组的 `sessionIds`。**只动这一组**：别的组没有新真值。
   void _applyWorkspaceOrder(String workspaceId, List<String> sessionIds) {
     if (_disposed) return;
@@ -2850,46 +2847,6 @@ class AppModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 落置顶全集。**认不出就返回 false 且不动**（与归档集同一条：
-  /// 错位的表现只是"某条没置顶"）—— 调用方据此如实报错，不假装成功。
-  bool _applyPinnedSet(Object? result) {
-    final ids = _parsePinnedIds(result);
-    if (ids == null) return false;
-    if (_disposed) return true;
-    _pinnedSids = ids;
-    notifyListeners();
-    return true;
-  }
-
-  /// 解析置顶全集（`{pinnedSessionIds: [...]}`）；**形状不认识给 `null`**。
-  static Set<String>? _parsePinnedIds(Object? result) {
-    if (result is! Map) return null;
-    final ids = result['pinnedSessionIds'];
-    if (ids is! List) return null;
-    return ids.whereType<String>().where((s) => s.isNotEmpty).toSet();
-  }
-
-  /// 解析重排应答（`{sessionIds: [...]}`）；**形状不认识给 `null`**。
-  static List<String>? _parseSessionIds(Object? result) {
-    if (result is! Map) return null;
-    final ids = result['sessionIds'];
-    if (ids is! List) return null;
-    final out = ids.whereType<String>().where((s) => s.isNotEmpty).toList();
-    // 空数组是**合法**应答（工作区被搬空了），但"全是非法项"不是 —— 后者说明
-    // 形状变了，落它会把整组会话从列表里抹掉。
-    if (ids.isNotEmpty && out.isEmpty) return null;
-    return out;
-  }
-
-  /// 落归档全集。**认不出就不动**：一个有损的解析会让"哪条是归档的"错位，
-  /// 而错位的表现只是"列表里少了一条"，最难查的那类。
-  void _applyArchiveSet(Object? result) {
-    final ids = _parseArchivedIds(result);
-    if (ids == null || _disposed) return;
-    _archivedSids = ids;
-    notifyListeners();
-  }
-
   /// 记一次失败（与 `switchPermission` 同一条纪律：**兜住所有异常**，
   /// 不只 `ProtocolException`，别让形状不对 / 超时逃逸成未处理的异步错误）。
   void _recordError(String what, Object error) {
@@ -2897,49 +2854,6 @@ class AppModel extends ChangeNotifier {
         ? error
         : ProtocolException(ErrorCode.internal, '$what：$error');
     if (!_disposed) notifyListeners();
-  }
-
-  /// 解析归档全集（`{archivedSessionIds: [...]}`）；**形状不认识给 `null`**。
-  static Set<String>? _parseArchivedIds(Object? result) {
-    if (result is! Map) return null;
-    final ids = result['archivedSessionIds'];
-    if (ids is! List) return null;
-    return ids.whereType<String>().where((s) => s.isNotEmpty).toSet();
-  }
-
-  /// 解析 `workspace.list`。认不出就给空列表（不分组）。
-  static List<WorkspaceGroup> _parseWorkspaces(Object? result) {
-    if (result is! Map) return const [];
-    final rows = result['workspaces'];
-    if (rows is! List) return const [];
-    final out = <WorkspaceGroup>[];
-    for (final row in rows) {
-      if (row is! Map) continue;
-      final id = row['workspaceId'];
-      final title = row['title'];
-      final ids = row['sessionIds'];
-      if (id is! String || id.isEmpty) continue;
-      if (title is! String || title.isEmpty) continue;
-      if (ids is! List) continue;
-      out.add(
-        WorkspaceGroup(
-          workspaceId: id,
-          title: title,
-          path: row['path'] is String ? row['path'] as String : '',
-          // 工作区创建时刻（ISO）：空工作区"谁更新"要靠它（DSH 的 `recentWorkspace`）。
-          // 缺了就是空串 —— `newSessionWorkspaceId` 按"永远最旧"处理，不猜。
-          createdAt: row['createdAt'] is String
-              ? row['createdAt'] as String
-              : '',
-          // 只收非空串：一个空 sid 会让"这个会话属于谁"对不上。
-          sessionIds: ids
-              .whereType<String>()
-              .where((s) => s.isNotEmpty)
-              .toList(),
-        ),
-      );
-    }
-    return out;
   }
 
   Future<void> _refreshModelCatalog() async {

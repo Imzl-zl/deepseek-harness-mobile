@@ -269,6 +269,10 @@ test('workspace.list：归档集与置顶集都换成手机见的 sid（同一�
         workspaceId: 'ws-1',
         title: 'dsh-mobile',
         path: 'D:/repo',
+        // **`createdAt` 必须过线**：手机用"组内最大 updatedAt、没有会话时用它"
+        // 算"最近工作区"（`app/lib/data/app_model.dart` 的 `newSessionWorkspaceId`）。
+        // 这条断言原先漏了它 —— 于是"缺这个键"被测试钉成了正常。
+        createdAt: '2026-10-21T15:42:56.03Z',
         sessionIds: ['sid_dsh-a'],
       },
     ],

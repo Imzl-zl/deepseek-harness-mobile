@@ -65,6 +65,13 @@ const SAMPLED_METHODS = [
   'session.updateQueue',
   'session.prompt',
   'subagent.prompt',
+  'workspace.list',
+  'workspace.pin',
+  'workspace.unpin',
+  'workspace.archive',
+  'workspace.unarchive',
+  'workspace.insertSessionBefore',
+  'workspace.insertBefore',
 ] as const
 
 type SampledMethod = (typeof SAMPLED_METHODS)[number]
@@ -105,6 +112,16 @@ const SAMPLES: Record<SampledMethod, readonly WireSample[]> = {
       context: { requestId: 'p-2' },
     },
   ],
+  // 工作区面：七种应答全是"分组 + 两列 id"或"整份顺序/集合"，且 sid 都过了别名表。
+  'workspace.list': [{}],
+  'workspace.pin': [{ params: { sid: sidOf('dsh-1') } }],
+  'workspace.unpin': [{ params: { sid: sidOf('dsh-1') } }],
+  'workspace.archive': [{ params: { sid: sidOf('dsh-1') } }],
+  'workspace.unarchive': [{ params: { sid: sidOf('dsh-1') } }],
+  'workspace.insertSessionBefore': [
+    { params: { workspaceId: 'ws-1', sid: sidOf('dsh-1'), beforeSid: sidOf('dsh-2') } },
+  ],
+  'workspace.insertBefore': [{ params: { workspaceId: 'ws-1' } }],
 }
 
 /** **线上那一层**：丢掉 `undefined`、规整成 JSON 标量，再比较。 */

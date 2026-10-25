@@ -363,5 +363,72 @@
       "accepted": true,
       "messageId": "msg-1"
     }
+  ],
+  "workspace.list": [
+    {
+      "workspaces": [
+        {
+          "workspaceId": "ws-1",
+          "title": "dsh-mobile",
+          "path": "/repo/dsh-mobile",
+          "createdAt": "2026-10-01T00:00:00.000Z",
+          "sessionIds": [
+            "sid_0123456789abcd",
+            "sid_1122334455667788"
+          ]
+        }
+      ],
+      "archivedSessionIds": [
+        "sid_2233445566778899"
+      ],
+      "pinnedSessionIds": [
+        "sid_1122334455667788"
+      ]
+    }
+  ],
+  "workspace.pin": [
+    {
+      "pinnedSessionIds": [
+        "sid_1122334455667788",
+        "sid_0123456789abcd"
+      ]
+    }
+  ],
+  "workspace.unpin": [
+    {
+      "pinnedSessionIds": [
+        "sid_1122334455667788"
+      ]
+    }
+  ],
+  "workspace.archive": [
+    {
+      "archivedSessionIds": [
+        "sid_2233445566778899",
+        "sid_0123456789abcd"
+      ]
+    }
+  ],
+  "workspace.unarchive": [
+    {
+      "archivedSessionIds": [
+        "sid_2233445566778899"
+      ]
+    }
+  ],
+  "workspace.insertSessionBefore": [
+    {
+      "sessionIds": [
+        "sid_1122334455667788",
+        "sid_0123456789abcd"
+      ]
+    }
+  ],
+  "workspace.insertBefore": [
+    {
+      "workspaceIds": [
+        "ws-1"
+      ]
+    }
   ]
 }
