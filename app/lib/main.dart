@@ -18,7 +18,7 @@ library;
 import 'dart:async';
 import 'dart:ui' show PlatformDispatcher;
 
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 import 'core/box.dart';
@@ -26,6 +26,7 @@ import 'core/crypto.dart';
 import 'core/endpoint.dart';
 import 'core/endpoint_transport.dart';
 import 'core/errors.dart';
+import 'core/event_wire.dart';
 import 'core/frame.dart';
 import 'core/handshake_driver.dart';
 import 'core/outbox.dart';
@@ -65,6 +66,17 @@ import 'ui/settings_page.dart';
 import 'ui/usage_page.dart';
 
 void main() {
+  // 线上事件形状读不出来时往哪儿说话（`core/event_wire.dart` 的 `WireDiagnostics`）。
+  //
+  // **只在 debug 接**：release 里计数照加，但不去污染日志 —— App 也不打 logcat
+  // （`tools.md`），release 里真正能看的是排错面板将来的那个计数。
+  // 接在这里而不是 wire 层自己 `debugPrint`：那一层是纯 Dart，判据（回放用例 + 计数）
+  // 不该依赖"有没有控制台"。
+  if (kDebugMode) {
+    WireDiagnostics.sink = (event, detail) {
+      debugPrint('[wire] $event: $detail');
+    };
+  }
   runApp(const DshMobileApp());
 }
 

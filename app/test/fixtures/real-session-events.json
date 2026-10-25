@@ -1,5 +1,30 @@
 {
  "_source": "~/.dsh/sessions/--D-sudy-myproject-dsh-mobile--/session-1f80f156…/session.v4.jsonl.zstd（按帧解压后导出；字段未改，仅两处长文本按上方标注截断）",
+ "_source_2026_10_25": "planCall / questionCall 取自 2026-10-25 真机：隔离实例（DSH_HOME=D:\\tmp\\dsh-e2e）的会话日志 seq:87 与 seq:129，并与手机库 /data/data/com.example.dsh_mobile/databases/dsh_mobile.db 的 items.payload_json 逐字对照过。**只截断了计划正文**（`arguments` 仍是同一个 JSON 字符串、同一个字段名与类型）；其余字段原样。加这两条的原因见 core/event_wire.dart 的头注。",
+ "planCall": {
+  "type": "tool/call",
+  "seq": 87,
+  "time": 1792897073542,
+  "data": {
+   "turn": 3,
+   "step": 5,
+   "callId": "call_16f5bd626c1749a4b47a8693",
+   "name": "exit_plan_mode",
+   "arguments": "{\"plan\":\"# 根 CHANGELOG:新增「每日一行」,先记 2026-10-25 一条\\n\\n## 目标与成功标准\\n\\n在仓库根新增 `CHANGELOG.md`,用**一行**记下 2026-10-25 当天落地的工作。（正文在此截断）\\n\"}"
+  }
+ },
+ "questionCall": {
+  "type": "tool/call",
+  "seq": 129,
+  "time": 1792897671305,
+  "data": {
+   "turn": 4,
+   "step": 1,
+   "callId": "call_429409290d6f4adaa362f610",
+   "name": "ask_user_question",
+   "arguments": "{\"questions\":[{\"header\":\"颜色\",\"id\":\"fav-colour\",\"multi_select\":false,\"options\":[{\"description\":\"深浅皆宜,经典耐看。\",\"label\":\"蓝色\"},{\"description\":\"自然清爽,护眼舒适。\",\"label\":\"绿色\"},{\"description\":\"热烈醒目,存在感强。\",\"label\":\"红色\"}],\"question\":\"你最喜欢的颜色是什么?\"}]}"
+  }
+ },
  "toolCall": {
   "type": "tool/call",
   "seq": 69,

@@ -32,6 +32,13 @@
 >   投影那一支按**对象**读 ⇒ `plan` 恒 null ⇒ 不开卡。修法见
 >   `implemented/2026-10-24-plan-review-card-from-request.md`（`_argumentsMapOf` + 真形状用例）。
 >   **端到端仍未复验**（需要一次模型请求）。
+> - **收口成结构**（用户："这东西要设计好，要不然不稳，会遗漏"）：事件载荷的字段名与类型现在
+>   **只在 `app/lib/core/event_wire.dart` 里断言一次**（三态 `WireOk/Skip/Bad`，
+>   `Bad` 计数 + 装配点打印），并配两道闸 —— 边界规则 `wire-field-single-reader`
+>   （`'arguments'` / `'toolCallId'` 只许出现在那一处）+ 真机事件回放用例
+>   （fixture 每条都要解得出、六个关键键不许少）。笔记
+>   `implemented/2026-10-25-event-wire-single-decoder.md`。
+>   门禁：flutter **1235 → 1241**、boundary **391 → 507**（22 → 25 条自检、110 → 111 文件）。
 > - **新发现**：`/` 的说明列**生产路径恒空** —— `repo.info` 只在握手后取一次，而连接器
 >   `describe()` 要活 agent。见 `implemented/2026-10-25-command-descriptions-from-host.md` 末两条。
 > - **仍没验**：`@` 面板的骨架 / 失败态、图片上限四条（要先调小宿主的
@@ -395,6 +402,8 @@
    而用例的 `planCall()` 正好喂的是对象，于是 5 条全绿。**抓法**：凡是"从 `data` 里取字段"的代码，
    先 dump 一条**真机事件/真库行**看类型（`tools.md` 的"事件到了没"那条给了命令）；
    再问一句"用例里这个字段是我编的形状，还是抄的线上形状？"
+   **现在的机制**：字段类型只在 `core/event_wire.dart` 断言（门禁 `wire-field-single-reader`
+   + `event_wire_replay_test.dart` 回放真机事件），所以这条教训不再靠人记。
 
 ## 真机联调的成本纪律（立过规，别问第二遍）
 
@@ -568,9 +577,9 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | **454 / 26 / 49** 项 |
-| `node app/tools/verify-platform-boundary.mjs` | **391 项**（22 条规则自检 + 扫 110 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | **507 项**（25 条规则自检 + 扫 111 个 Dart 文件） |
 | `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | 图标集（100 个）/ 23 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | **1235 项** |
+| `cd app && flutter test` | **1241 项** |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format --output=none --set-exit-if-changed …` | 各 **0** |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **657 项** |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + **87 条** |
@@ -709,3 +718,11 @@
   `implemented/2026-10-25-command-descriptions-from-host.md`；connector **655 → 657**。
 - 2026-10-25 底部预算与接管卡（`_BottomBudget` 一条算式定 `blockMax` / `panelMax`，
   卡片拿 `Flexible`；三个常量各有棘轮用例）—— `implemented/2026-10-25-bottom-budget-and-takeover-card.md`。
+- 2026-10-25 计划审查卡真机不出现 → 根因是手机侧按对象读 `arguments`（线上是 JSON 字符串）——
+  修法 + 真机二分法（查手机库 `items`）见 `implemented/2026-10-24-plan-review-card-from-request.md`
+  的「真机验证」一节；flutter **1234 → 1235**。
+- 2026-10-25 事件字段收成**一个读者**（`core/event_wire.dart`：三态解码 + `WireDiagnostics`
+  计数 + 门禁 `wire-field-single-reader` + 真机事件回放）——
+  `implemented/2026-10-25-event-wire-single-decoder.md`；flutter **1235 → 1241**、
+  boundary **391 → 507**。变异校验：`parseArguments` 恒 `null` ⇒ 恰好 3 条红；
+  门禁探针 ⇒ 恰好 1 条红。

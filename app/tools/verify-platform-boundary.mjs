@@ -121,6 +121,17 @@ const RULES = [
       ? '装配点引用了兜底实现但没有 kDebugMode 守卫'
       : null),
   },
+  {
+    // 2026-10-25 事故：`tool/call` 的 `arguments` 在线上是 JSON 字符串，
+    // `core/items.dart` 知道、`data/projection.dart` 不知道 ⇒ 计划审查卡在真机上一次没出现，
+    // 而且不报错（单测喂的是对象形状，两边一起绿）。
+    // 一个字段只许有一个读者：所有"名字 + 类型"的断言都在 `core/event_wire.dart`。
+    id: 'wire-field-single-reader',
+    why: '事件载荷的字段名/类型只许在 core/event_wire.dart 里断言；'
+      + '同一个字段两处解释，猜错的那一处会静默变成空值（2026-10-25 计划卡）',
+    appliesTo: (p) => p !== 'app/lib/core/event_wire.dart',
+    match: (content) => firstCodeUse(content, /['"](?:arguments|toolCallId)['"]/g),
+  },
 ]
 
 /** 自检样本：每条规则都要能拦住一个反例、放过一个正例。 */
@@ -182,6 +193,28 @@ const SELF_TEST = [
     rule: 'fallback-not-in-release',
     path: 'app/lib/platform/registry.dart',
     content: 'final store = kDebugMode ? InMemorySecureStore() : fail();',
+    shouldFail: false,
+  },
+  // 事件字段只有一个读者（`wire-field-single-reader`）。
+  // 反例就是 2026-10-25 那一行：从 `data` 上直接取 `arguments`。
+  {
+    rule: 'wire-field-single-reader',
+    path: 'app/lib/data/projection.dart',
+    content: "final plan = stringField(data, 'arguments');",
+    shouldFail: true,
+  },
+  {
+    rule: 'wire-field-single-reader',
+    path: 'app/lib/core/event_wire.dart',
+    content: "final raw = _string(data, 'arguments') ?? '';",
+    shouldFail: false,
+  },
+  // **注释里提到字段名不算违规**：说明"为什么只能有一个读者"是好代码，
+  // 按正文 grep 会让规则惩罚把理由写下来的人（`no-material-icons` 踩过同一个坑）。
+  {
+    rule: 'wire-field-single-reader',
+    path: 'app/lib/data/projection.dart',
+    content: "// 别再按 'arguments' 取字段了，见 core/event_wire.dart",
     shouldFail: false,
   },
 ]

@@ -4,7 +4,15 @@
 /// 因此快照的拼接顺序取每个 itemId **最后**出现的修订号，而不是首次出现。
 ///
 /// 移植源：`connector/src/protocol/items.ts`（行为基准）。
+///
+/// ## 身份字段从 `event_wire.dart` 来，不在这里猜
+///
+/// 2026-10-25：`tool/call` 的 `arguments` 在线上是 JSON 字符串，本文件知道、
+/// `data/projection.dart` 不知道 ⇒ 计划卡静默消失。现在凡是**载荷字段的类型**都只在
+/// `core/event_wire.dart` 里断言，这里只取解好的身份字段；缺身份仍然**抛**（比一行打印更响）。
 library;
+
+import 'event_wire.dart';
 
 /// 持久事件日志里的一条：修订号 + 条目号 + 内容。
 class LogEntry {
@@ -100,29 +108,29 @@ String itemIdOf(EventLike event) {
   }
 
   if (type == 'tool/call') {
-    final callId = _nonEmptyString(_fieldOf(data, 'callId'));
-    if (callId == null) throw StateError('tool/call(seq=$seq) 缺少 callId');
-    return 't:$callId';
+    final call = valueOrNull(readToolCall(data));
+    if (call == null) throw StateError('tool/call(seq=$seq) 缺少 callId');
+    return 't:${call.callId}';
   }
 
   if (type == 'tool/result') {
     // 结果与调用共用同一个 itemId，靠 `toolCallId` 配对。
-    final callId = _nonEmptyString(
-      _fieldOf(_fieldOf(data, 'message'), 'toolCallId'),
-    );
-    if (callId == null) {
+    final result = valueOrNull(readToolResult(data));
+    if (result == null) {
       throw StateError(
         'tool/result(seq=$seq) 缺少 message.toolCallId：无法与 tool/call 配对',
       );
     }
-    return 't:$callId';
+    return 't:${result.callId}';
   }
 
   if (type == 'approval/asked' || type == 'approval/decided') {
     // ask 与 outcome 共用同一个 id，后者覆盖前者即「已决定」。
-    final approvalId = _nonEmptyString(_fieldOf(data, 'id'));
-    if (approvalId == null) throw StateError('$type(seq=$seq) 缺少 id');
-    return 'i:$approvalId';
+    final asked = type == 'approval/asked'
+        ? valueOrNull(readApprovalAsked(data))?.approvalId
+        : valueOrNull(readApprovalDecided(data))?.approvalId;
+    if (asked == null) throw StateError('$type(seq=$seq) 缺少 id');
+    return 'i:$asked';
   }
 
   if (type == 'command/run' || type == 'command/done') {
@@ -130,7 +138,9 @@ String itemIdOf(EventLike event) {
     // tool/result 同一形状（DSH 的格式不变量逐字同源：
     // `session-format-v3-to-v4/README.md:244` 原话
     // "Run ids are unique; completion has a prior run"）。
-    final commandId = _nonEmptyString(_fieldOf(data, 'commandId'));
+    final commandId = type == 'command/run'
+        ? valueOrNull(readCommandRun(data))?.commandId
+        : valueOrNull(readCommandDone(data))?.commandId;
     if (commandId == null) {
       throw StateError('$type(seq=$seq) 缺少 commandId：无法与另一条配对');
     }

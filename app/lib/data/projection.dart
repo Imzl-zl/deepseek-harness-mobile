@@ -18,6 +18,7 @@ library;
 
 import 'dart:convert';
 
+import '../core/event_wire.dart';
 import '../core/items.dart';
 import '../model/changed_path.dart';
 import '../model/chat_item.dart';
@@ -247,32 +248,40 @@ ChatProjection projectEvent({
   }
 
   if (type == 'tool/call') {
+    // **名字与参数都从解码层来**：`arguments` 是 JSON 字符串这件事只在
+    // `core/event_wire.dart` 里被断言一次（2026-10-25 之前这里按对象读，
+    // 计划卡因此静默消失，见 `readToolCall` 的头注）。
+    final call = valueOrReport(readToolCall(data), type);
     return ChatProjection.item(
       ToolCallItem(
         itemId: itemId,
         seq: seq,
         updatedAt: time,
         turn: turn,
-        name: stringField(data, 'name') ?? kUnknownToolName,
+        name: call?.name ?? kUnknownToolName,
         status: ToolCallStatus.running,
         // **参数行按 DSH 的 `deriveSummary` 推**，不是把载荷摊平：
         // 真日志里 `tool/call` 的 data 是 `{turn, step, callId, name, arguments}`，
         // 而 `arguments` 才是参数（JSON 字符串）。摊平 data 得到的是
         // `turn, step, callId, name, arguments` 这种键名清单（2026-10-19 真机复现）。
-        summary: toolArgumentsSummary(
-          name: stringField(data, 'name') ?? '',
-          arguments: stringField(data, 'arguments') ?? '',
-        ),
+        summary: call == null
+            ? ''
+            : toolArgumentsSummary(
+                name: call.name ?? '',
+                arguments: call.argumentsRaw,
+              ),
         // **"这一轮改了哪些文件"在这里抽出来**（右侧「文件」面板用）。
         //
         // 只留一个路径字符串，不留 `arguments` —— `write` 的参数里是
         // **整个文件内容**，挂在条目上等于把会话里写过的每个文件再存一份。
         // 判据照 DSH 的 `mutationPath`
         // （`ui-deliverables/src/client/turn-deliverables.ts:61-77`）。
-        changedPath: changedPathOf(
-          name: stringField(data, 'name') ?? '',
-          argumentsJson: stringField(data, 'arguments') ?? '',
-        ),
+        changedPath: call == null
+            ? null
+            : changedPathOf(
+                name: call.name ?? '',
+                argumentsJson: call.argumentsRaw,
+              ),
       ),
     );
   }
@@ -1018,48 +1027,44 @@ InteractionSignal? interactionSignalOf({
 }) {
   if (type == 'approval/asked') {
     // 身份是 `id`（`ApprovalRequestId`）；`callId` 只作为"针对哪次工具调用"的关联字段。
-    final approvalId = nonEmptyString(fieldOf(data, 'id'));
-    if (approvalId == null) return null;
-    final callId = nonEmptyString(fieldOf(data, 'callId'));
-    final toolName = nonEmptyString(fieldOf(data, 'toolName')) ?? '工具';
-    final reason = nonEmptyString(fieldOf(data, 'reason'));
+    final asked = valueOrReport(readApprovalAsked(data), type);
+    if (asked == null) return null;
+    final toolName = asked.toolName ?? '工具';
     return InteractionOpened(
       InteractionItem(
-        itemId: 'i:$approvalId',
+        itemId: 'i:${asked.approvalId}',
         sid: '',
-        callId: callId,
+        callId: asked.callId,
         kind: InteractionKind.approval,
         toolName: toolName,
         // 有 reason 就照它说；否则退回"工具 X 请求越权执行"（照 DSH 桌面的措辞）。
-        title: reason ?? '工具 $toolName 请求越权执行',
+        title: asked.reason ?? '工具 $toolName 请求越权执行',
       ),
     );
   }
 
   if (type == 'approval/decided') {
-    final approvalId = nonEmptyString(fieldOf(data, 'id'));
-    if (approvalId == null) return null;
-    return InteractionSettled('i:$approvalId');
+    final decided = valueOrReport(readApprovalDecided(data), type);
+    if (decided == null) return null;
+    return InteractionSettled('i:${decided.approvalId}');
   }
 
   if (type == 'tool/call') {
-    final name = nonEmptyString(fieldOf(data, 'name'));
+    // 名字、callId 与**解开的参数**都来自解码层：`arguments` 是 JSON 字符串这件事
+    // 只在 `core/event_wire.dart` 里被断言（2026-10-25 之前这里按对象读 ⇒ 计划卡静默消失）。
+    final call = valueOrReport(readToolCall(data), type);
+    if (call == null) return null;
     // **计划审查**：卡从这次 `tool/call` 造（`exit_plan_mode` 的 `arguments.plan` 就是整份计划）。
     // 与提问卡同一个 `t:<callId>` 身份 —— 连接器的 claim 用的是请求里的
     // `intent.callId`，而它**就是**这次工具调用的 id（`plan-mode/src/index.ts:329`）。
-    if (name == exitPlanModeTool) {
-      final planCallId = nonEmptyString(fieldOf(data, 'callId'));
-      // `arguments` 是 **JSON 字符串**，不是对象（见 `_argumentsMapOf`）。
-      // 2026-10-25 真机：按对象读 ⇒ `plan` 恒为 `null` ⇒ 事件到了、不报错、**卡不开**。
-      final plan = nonEmptyString(
-        fieldOf(_argumentsMapOf(fieldOf(data, 'arguments')), 'plan'),
-      );
-      if (planCallId == null || plan == null) return null;
+    if (call.name == exitPlanModeTool) {
+      final plan = nonEmptyString(fieldOf(call.arguments, 'plan'));
+      if (plan == null) return null;
       return InteractionOpened(
         InteractionItem(
-          itemId: 't:$planCallId',
+          itemId: 't:${call.callId}',
           sid: '',
-          callId: planCallId,
+          callId: call.callId,
           kind: InteractionKind.plan,
           title: firstHeadingOf(plan) ?? '计划审查',
           detail: plan,
@@ -1069,19 +1074,17 @@ InteractionSignal? interactionSignalOf({
         ),
       );
     }
-    if (name != askUserQuestionTool) {
+    if (call.name != askUserQuestionTool) {
       return null;
     }
-    final callId = nonEmptyString(fieldOf(data, 'callId'));
-    if (callId == null) return null;
-    final questions = _questionsOf(fieldOf(data, 'arguments'));
+    final questions = _questionsOf(call.arguments);
     if (questions.isEmpty) return null;
     final first = questions.first;
     return InteractionOpened(
       InteractionItem(
-        itemId: 't:$callId',
+        itemId: 't:${call.callId}',
         sid: '',
-        callId: callId,
+        callId: call.callId,
         kind: InteractionKind.question,
         title: first.question,
         header: first.header ?? '',
@@ -1095,66 +1098,38 @@ InteractionSignal? interactionSignalOf({
 
   if (type == 'tool/result') {
     // 结果与调用共用同一个 itemId（`core/items.dart` 的配对规则）。
-    final callId = nonEmptyString(
-      fieldOf(fieldOf(data, 'message'), 'toolCallId'),
-    );
-    if (callId == null) return null;
-    return InteractionSettled('t:$callId');
+    final result = valueOrReport(readToolResult(data), type);
+    if (result == null) return null;
+    return InteractionSettled('t:${result.callId}');
   }
 
   if (type == 'user/message') {
     // 迟到的答复：DSH 把它 steer 成一条 `source.kind='user-question-reply'` 的
     // 用户消息，而那条消息同时是投影里"这个问题已关闭"的记录
     // （`user-questions/src/index.ts:186-191`）。
-    final source = fieldOf(data, 'source');
-    if (nonEmptyString(fieldOf(source, 'kind')) != 'user-question-reply') {
-      return null;
-    }
-    final callId = nonEmptyString(fieldOf(source, 'callId'));
-    if (callId == null) return null;
-    return InteractionSettled('t:$callId');
+    final reply = valueOrReport(readQuestionReply(data), type);
+    if (reply == null) return null;
+    return InteractionSettled('t:${reply.callId}');
   }
 
   return null;
 }
 
-/// `tool/call` 的 `arguments`：**线上是一个 JSON 字符串**，不是对象。
-///
-/// 两处证据（都不是推断）：真机库里落下来的 `payload_json` 里 `arguments` 的类型是
-/// `str`（`{"plan":"…"}` / `{"questions":[ … ]}`），DSH 会话日志同形。
-///
-/// 为什么单独有这一个口：同一个字段曾经有两种读法 —— `ask_user_question` 那一支按字符串解，
-/// `exit_plan_mode` 那一支按对象取 `plan`。后者永远读出 `null`，于是"事件到了、不报错、
-/// 卡不开"（2026-10-25 真机抓到，见 `implemented/2026-10-24-plan-review-card-from-request.md`）。
-/// 现在两支都从这里进，形状只在这一个地方被解释。
-///
-/// 解不开（流式中断 / 被拒的调用会把原始文本留着）就回 `null`：**不猜**。
-Map<String, Object?>? _argumentsMapOf(Object? arguments) {
-  if (arguments is! String || arguments.isEmpty) return null;
-  Object? parsed;
-  try {
-    parsed = jsonDecode(arguments);
-  } catch (_) {
-    return null;
-  }
-  if (parsed is! Map) return null;
-  return parsed.cast<String, Object?>();
-}
-
-/// 从 `ask_user_question` 的**工具参数**里读出问题清单。
+/// 从 `ask_user_question` 的**已解开参数**里读出问题清单。
 ///
 /// 形状照 DSH 的 `toolArgumentsSchema`（`user-questions/src/projection.ts:43-53`）：
-/// `arguments` 是**JSON 字符串**，里层是 `{questions: [{id, question, header?, options?, multi_select?}]}`。
+/// 里层是 `{questions: [{id, question, header?, options?, multi_select?}]}`。
 /// 注意字段名是 **snake_case 的 `multi_select`**（模型看到的形状），
 /// 而应答链上的 `AskUserQuestionItem` 是 camelCase 的 `multiSelect` —— 两处形状不同，
 /// 照错的那个会让多选永远读成单选。
 ///
+/// 参数**怎么从线上 JSON 字符串解成 Map** 归 `core/event_wire.dart` 管（`parseArguments`）；
+/// 这里只处理"解开了的值"。
+///
 /// **读不懂就返回空表**：那是模型的坏参数，工具根本没被调用过，没有卡可显示
 /// （DSH 同一处也是 `return null`，`projection.ts:142-144`）。
-List<InteractionQuestion> _questionsOf(Object? arguments) {
-  final parsed = _argumentsMapOf(arguments);
-  if (parsed == null) return const [];
-  final raw = fieldOf(parsed, 'questions');
+List<InteractionQuestion> _questionsOf(Map<String, Object?>? arguments) {
+  final raw = fieldOf(arguments, 'questions');
   if (raw is! List) return const [];
   final out = <InteractionQuestion>[];
   for (final entry in raw) {
