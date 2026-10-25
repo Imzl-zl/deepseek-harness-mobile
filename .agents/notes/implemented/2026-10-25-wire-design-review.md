@@ -1,8 +1,10 @@
 # 线上形状：真值在生产者，判据在金样
 
 - 日期：2026-10-25
-- 状态：待评审（**用户已准按第 0/1 批开工**，开工单 `proposed/2026-10-25-wire-batch0-and-batch1-prompt.md`；
-  每批落地后逐条改判，全部落地才移 `implemented/`）
+- 状态：**已全部落地**（协议知识口禁 0 处、金样 43 个方法、`BUDGET` 常量已删）。
+  **实际的批次切分与本篇「迁移」表的七批不同**（落成 8 批：0 / 1 / A1 / A2 / B1 / B2 / B3 / C1 / C2），
+  差异与原因记在 `implemented/2026-10-25-wire-rpc-layer-layout.md` 的批次表 —— 那份是施工图，
+  本篇是被否方案与判据的来处。
 - 取代旧稿：`archived/2026-10-25-wire-format-layer.md`（同一件事的前一版草案）
 - 相关：`implemented/2026-10-25-event-wire-single-decoder.md`（事件面已落地）、
   `implemented/2026-10-24-plan-review-card-from-request.md`（第三次事故现场）、

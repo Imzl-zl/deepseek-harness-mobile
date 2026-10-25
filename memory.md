@@ -6,39 +6,29 @@
 
 ## 下一步（新会话从这里开始）
 
-> **2026-10-25 晚：线上形状第 0 批（金样机器）+ 第 1 批（`session.list`）已落地** —— **0 个真机回合**。
-> 笔记 `implemented/2026-10-25-wire-golden-and-session-list.md`；细则门禁数字只在 `tools.md`。
-> - **金样**：`connector/tests/fixtures/wire-shapes.json` 由连接器测试调**真实 handler** 产出、
->   比 `JSON.parse(JSON.stringify(...))` 深比较（线上那一层）；App 用例读**同一份**文件，
->   **缺失即 fail 不许 skip**。采样确定性另有专门用例。假行只有一份
->   （`connector/tests/support/fixture-handlers.ts`：4 种会话行 + `models` + `projections` 两个面）。
-> - **第 1 批**：`app/lib/wire/rpc/session.dart` 成了 `session.list` 的**唯一发请求与唯一解码**处；
->   `app_model.dart` 删掉 `_parseSessionList` 等 5 个函数 + 裸数组分支（净 −107 行），
->   调用点只剩 `loadSessionList(client)` 一行。必填/可选**看生产方式**（`handlers.ts:740-744`
->   无条件写的那 5 个键缺失 = 整行丢 + 计数；4 个条件键缺失 = null 正常）。
-> - **门禁**：flutter **1241 → 1251**、connector **657 → 660**、boundary **509 → 512**、
->   tool-paths **23 → 24**、**预算 39 → 38**（新脚本 `app/tools/verify-rpc-single-caller.mjs`）、
->   analyze/format 0。变异校验：金样 `running` 改成 `"true"` ⇒ 连接器恰好 1 红；
->   decoder 的 `values['title']` → `'tittle'` ⇒ 金样回放恰好 1 红（全仓 7 红）。
-> - **实测（2026-10-25 20:31，0 个模型请求，隔离实例）**：真实 DSH 清单 20 条
->   → 生产适配器 → 生产 handler → App 解码 = **20/20 `WireOk`、`badCount 0`、一行没丢**；
->   `parentSessionId` 恰好出现在 6 个子会话行、`model` 0 条（`agentAvailable` 全 false）、
->   `projections` 20 条全是**信封**。取数配方在笔记里（服务键是 `session`；args 必须带 `_request`）。
-> - **下一步 = 全量搬迁进行中**（用户 2026-10-25 晚："你做好所有的都优化了……设计优雅一点，需要封装啥的就搞"）。
->   层形状见 `proposed/2026-10-25-wire-rpc-layer-layout.md`：一个面一个文件
->   `wire/rpc/<面>.dart`、字段级语义只在 `wire/fields.dart`、信封/扁平与 `{x:[…]}` 各一个入口。
->   **已完成**：第 0 批（金样）、第 1 批（`session.list`）、**A1**（`create`/`select-model`/`cancel`/
->   `updateQueue`/`prompt`/`modelCatalog`/`subagent.prompt`）、**A2**（`session.projections` 14 键 →
->   `SessionProjections` 值对象 + `session.page`/`refetch` 的 `SessionPageWire`）、
->   **B1**（`workspace.*` 七个方法 → `WorkspaceSnapshot` + 四种"整份真值"）—— 预算 **38 → 24**，
->   金样 2 → 16 个方法（投影那条扩到全部 14 个键）。
->   **A2/B1 顺带修掉两个真缺陷**（都是金样夹具当场抓到、都由"同一件事两个出口"造成）：
->   ① `session.list` 行里的 `projections.values.subagentCatalog` 原样透传 ⇒ 子会话的 **DSH 会话 id
->   漏到线上**；② `workspace.list` 的行**漏写 `createdAt`**（端口有、手机在读，中间那层没写）⇒
->   "空工作区当最旧"在生产里永远走不到。两条回归网分别是 `connection-methods.test.ts` 的
->   "DSH 侧不许过线"与 `workspaces-archive.test.ts` 的逐字段期望。
->   **待做**：B2（permission/settings/preset/repo/endpoint，−7）→ C（file/refs/plugin/job/
->   interaction/usage/command，−17）→ D（预算归 0、删常量、金样覆盖全部、notes 并入 `implemented/`）。
+> **2026-10-25 深夜：RPC 应答解码面**全部收进 `wire/rpc/`**（8 批 / 8 个提交，**0 个真机回合**，0 个模型请求）
+> - **终态**：`app/lib/wire/` 是 RPC 应答的**唯一解码层**。`data/` 与 `ui/` 里
+>   **0 处 `client.call<`**（零例外规则，`BUDGET` 常量已删）；金样 **43 个方法**全覆盖；
+>   `wire/rpc/` 一个面一个文件，每个方法一处方法名常量 + `load*`（发请求）+ `read*`（纯解码）。
+> - 层形状与被否方案见 `implemented/2026-10-25-wire-rpc-layer-layout.md`（施工图，含 8 批表）；
+>   判据与三次事故的来处见 `implemented/2026-10-25-wire-design-review.md`；
+>   金样机器与第 0/1 批见 `implemented/2026-10-25-wire-golden-and-session-list.md`。
+>   门禁数字只在 `tools.md`。
+> - **三个真缺陷是这一轮自己抓到的**（都不是"顺手优化"，是搬形状时被夹具/用例逼出来的）：
+>   ① `session.list` 行里的 `projections.values.subagentCatalog` 原样透传 ⇒ 子会话 **DSH 会话 id 漏上线**；
+>   ② `workspace.list` 的行**漏写 `createdAt`**（端口有、手机在读、中间那层没写）⇒ "空工作区当最旧"生产里走不到；
+>   ③ `job.list` 快照与 `status` 推送**赛跑**会把已完成的任务盖回 running ⇒ 面板永远转。
+>   三条各自都有回归网（`connection-methods` 的"DSH 侧不许过线" / `workspaces-archive` 的逐字段期望 /
+>   `job_panel_test` 的"status 帧：终态更新那一行"）。
+> - **实测（2026-10-25 20:31，隔离实例，0 个模型请求）**：真实 DSH 清单 20 条 → 生产适配器 →
+>   生产 handler → App 解码 = **20/20 `WireOk`、`badCount 0`、一行没丢**；`parentSessionId` 恰在 6 个
+>   子会话行、`model` 0 条（`agentAvailable` 全 false）、`projections` 20 条全是**信封**。
+>   取数配方在笔记与 `tools.md`（服务键是 `session`；args 必须带 `_request`）。
+> - **下一步可选（都不必再做搬迁）**：
+>   ① 把"真实清单"固化成金样的第二条样本（现在真实数据只进了笔记，没进门禁）；
+>   ② 连接器那层以下（DSH 真对象 → 行）仍只有手写假输入兜着 —— 见本次实测笔记的「没覆盖」一节；
+>   ③ 第 7 批之外的旧账：`usage.summary` 的 byDay 时区、`plugin.installStatus` 的 4 键/8 键两形态
+>   在 `readPluginJob` 里只有一种（真出现第二种时那里会红，属**已知的下一处**）。
 > - **仍没验**：`@` 面板的骨架 / 失败态、图片上限四条、插件安装/卸载的真实 pnpm 流程（上一轮遗留，未变）。
 
 > **2026-10-25 深夜：候选面板照宿主重做（列表行 + drill + 面包屑）+ 命令说明 + 接管卡溢出**

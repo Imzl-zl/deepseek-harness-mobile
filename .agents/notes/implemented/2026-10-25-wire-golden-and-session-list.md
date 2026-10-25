@@ -1,7 +1,8 @@
 # 线上形状（RPC 应答）：金样机器 + `session.list` 的单读者
 
 - 日期：2026-10-25
-- 状态：已落地（**第 0 批 + 第 1 批**；第 2 批及以后逐批在本篇追加）
+- 状态：已落地（**第 0 批 + 第 1 批**；后续 6 批见 `implemented/2026-10-25-wire-rpc-layer-layout.md`
+  —— 全部搬迁完成后：协议知识口禁 **0 处**、金样 **43 个方法**）
 - 规格：`proposed/2026-10-25-wire-design-review.md`（本轮开工单
   `proposed/2026-10-25-wire-batch0-and-batch1-prompt.md`）
 - 相关：`implemented/2026-10-25-event-wire-single-decoder.md`（事件面已落地，本篇沿用它的三态内核）、

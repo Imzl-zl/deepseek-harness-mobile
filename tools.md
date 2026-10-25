@@ -100,7 +100,7 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
 
   **两条 import 规则只认 `import` / `export` 指令本身,不按正文 grep** —— 否则文件头那句「不许 import `dart:io`」会被自己判成违规(等于惩罚把规则写进代码)。自带规则自检 **25** 条,所以 `lib/` 还没代码时也不是空转(当前输出:`规则自检 25 条 + 扫描 130 个 Dart 文件` = **563 项**)
 - **协议知识只在 `wire/rpc/`**(终态规则,零例外):`node app/tools/verify-rpc-single-caller.mjs` —— 数 `app/lib/data/` 与 `app/lib/ui/` 里 `client.call<` 的**代码**出现次数,要求**为 0**。**2026-10-25 已归零**(从 39 一路降到 0,那行 `BUDGET` 常量已删):要加回例外就得在脚本里写第二个数,评审一眼就能看见。它度量的是"方法名 + 参数形状还有几处漏在 `wire/` 外面",不是某个字面量在哪。红了会逐行报出每一处位置(所以行号必须保住:**别改成剥注释再数**)。规则来源与代价见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`
-- **线上形状金样**:`connector/tests/fixtures/wire-shapes.json` —— 由 `connector/tests/wire-shapes.test.ts` 调**真实 handler** 生成、**深比较**守住(`JSON.parse(JSON.stringify(...))`,比"线上那一层");`app/test/wire_shapes_replay_test.dart` 读**同一份文件**做回放,文件缺失**直接 fail**。
+- **线上形状金样**:`connector/tests/fixtures/wire-shapes.json` —— 由 `connector/tests/wire-shapes.test.ts` 调**真实 handler** 生成、**深比较**守住(`JSON.parse(JSON.stringify(...))`,比"线上那一层");`app/test/wire_shapes_replay_test.dart` 读**同一份文件**做回放,文件缺失**直接 fail**。**当前收 43 个方法**(`wire/rpc/` 里出现的每个方法名都在里面;`session.page`/`refetch` 也收,它们不占上面的口禁但形状照样钉)。
   - 改连接器应答 ⇒ 连接器红 + App 红,这是有意的。确认改动是**有意的**才重生成:`cd connector; $env:UPDATE_WIRE_SHAPES='1'; pnpm exec tsx --test tests/wire-shapes.test.ts`,并**同一批**改 `app/lib/wire/rpc/` 的解码。
   - 金样按"方法名 → 样本数组":同一个名字在线上可能有**两种形状**(`session.list` 行里是信封 `{kind,asOfSeq,values}`,`session.projections` 的应答是扁平 `values`)—— 两条都必须收,谁读错层谁红。
   - 采样必须确定性(无时间戳、无随机 id;假 id 走 `connector/tests/support/fake-aliases.ts`),另有一条"采两遍一模一样"的用例按住。假行只有一份:`connector/tests/support/fixture-handlers.ts`(连接级用例与金样共用)。

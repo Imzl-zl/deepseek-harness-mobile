@@ -1,9 +1,9 @@
 # `wire/rpc/` 的层形状：字段内核 + 一个面一个文件
 
 - 日期：2026-10-25
-- 状态：待评审（**正在按批落地**；全部落地后移入 `implemented/`，并逐条改判）
-- 相关：`proposed/2026-10-25-wire-design-review.md`（五判据 / 七批 / 被否方案）、
-  `implemented/2026-10-25-wire-golden-and-session-list.md`（金样机器 + 第 1 批，已落地）
+- 状态：**已全部落地**（8 批、8 个提交；协议知识口禁实测 **0 处**，`BUDGET` 常量已删）
+- 相关：`implemented/2026-10-25-wire-design-review.md`（五判据 / 被否方案）、
+  `implemented/2026-10-25-wire-golden-and-session-list.md`（金样机器 + 第 0/1 批）
 
 ## Problem
 
@@ -91,12 +91,17 @@
 | B2 | `permission.*`(2) / `settings.*`(2) / `agentPresets.list` | 24 → 19 | ✅ |
 | B3 | `repo.info`（`methods` 采样时归一掉）+ `endpoint.describe` | 19 → 17 | ✅ |
 | C1 | `job.*`(4) / `file.*`(2) / `refs.*`(2) | 17 → 9 | ✅ |
-| C2 | `plugin.*`(7) / `command.execute` / `usage.summary` / `interaction.respond` | 9 → **0**（删掉常量）| ✅ |
-| D | 金样覆盖全部已搬方法（含 `session.page`/`refetch`，43 个）/ 笔记并入 `implemented/` / 记忆与工具收口 | — | 待做 |
-| D | 收尾：预算归 0、常量删掉、金样覆盖全部方法、笔记并入 `implemented/` | 0 | 待做 |
+| C2 | `plugin.*`(7) / `command.execute` / `usage.summary` / `interaction.respond` | 9 → **0**（删掉常量）| ✅ `e977c6f` |
+| D | 金样覆盖全部已搬方法（`session.page`/`refetch` 也收，共 43 个）/ 两份笔记并入 `implemented/` / 记忆与工具收口 | — | ✅ |
 
 每批的验收（四条同时成立）：**该批方法全部进金样且 App 侧 `badCount == 0`**、
-**`data/`+`ui/` 里该批方法名归零**、**预算减到位**、**一次变异校验恰好 1 红**。
+**`data/`+`ui/` 里该批方法名归零**、**预算减到位**、**一次变异校验**（红的条数如实记录，
+不追求"恰好 1"——好几个键本来就有 2~6 个真实消费者）。
+
+**覆盖率是核过的**：`wire/rpc/*.dart` 里出现 42 个方法字面量，金样 43 个 ——
+缺的那个是 `session.refetch`（它的方法名在 `core/sync_client_impl.dart`，因为走具名方法；
+但**形状解码**在本层，金样照样收了它）。反向也没有多余：金样里除它以外的 42 个，
+每一个都能在 `wire/rpc/` 里找到归属。
 
 ## Consequences
 
