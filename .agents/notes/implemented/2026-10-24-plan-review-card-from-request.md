@@ -66,7 +66,32 @@ Status: implemented
   必须继续走这条规则（"词从请求来，不从手机来"）。
 - **代价**：`plan-mode` 的"继续规划"会把一句反馈当工具错误抛出（`:349-350`），所以手机上
   点「要求修改」后那一轮以工具失败收尾 —— 那是宿主的语义，我们不吞。
-- **未验**：真机（下一轮；本轮以单测为准）。
+
+## 真机验证（2026-10-25）：桌面有卡、手机没有
+
+仪器：`d61cf622` + 隔离实例（63900 / 直连 8790）+ 中转 8787；桌面侧是**同一个实例**的
+Web GUI，跑在 headless Edge 里（`D:\tmp\dsh-e2e\cdp.mjs`）。手机与桌面同时在线。
+
+1. 桌面：侧栏 `Greeting` 行出现 `计划待审`；会话底部出现计划卡（标题 = 计划第一行，
+   `要求修改` / `同意执行` 两枚按钮），正文是整份计划。
+2. 手机：**同一时刻没有任何卡**。10:52–11:00 的 24 张采样（`p-10-s01…s24`）里只有模型正文
+   与「深度求索中，用时 N 分」；输入卡上方空着。`uiautomator` 语义树里也搜不到 plan 字样。
+3. 在桌面点 `同意执行` ⇒ 会话日志 `seq:90 plan/mode {"active":false}`（紧接
+   `step/end` 之后），该轮继续往下跑 —— 宿主的整条计划审查链是通的。
+4. 反面对照（同一轮之后、同一台手机）：让模型用 `ask_user_question` 提一问三选项 ⇒
+   **卡正常出现**、选项可选、`提交` 落库（`seq:130 tool/result {"answers":[…]}`）。
+   见 `2026-10-25-bottom-budget-and-takeover-card.md` 的真机一节。
+
+结论：**缺口精确在 plan-review 这一种 ask 的手机侧投递/认领**，不是整条 waterfall 链，
+也不是手机上的卡片渲染（plan 分支早就在）。本篇"手机上能看能答"的收益**在真机上未成立**。
+
+- 已排除：DSH 侧没有这次交互（桌面有卡且能结算）；转发请求丢 `intent`
+  （`api/gateway/src/stream-protocol.ts:146-172` 只删 `agent` / `signal`）；手机缺 plan 卡分支。
+- 待查（下一轮，需要一次日志 + 约 1 个模型请求）：`interaction-client.ts` 的 `answerQuestion`
+  里 `planReviewOf` 到底认没认出 `intent.kind === 'plan-review'`。认不出会**静默** `next`
+  （`:461-472`，而 `log` 走 `ctx.logger`，按 `tools.md` 到不了 stdout），表现与"没收到"完全一样。
+  查法：在 `answer()` 里临时加 `console.error`（`tools.md` 记着 console.error 能到 stdout），
+  打 `frame.event` / `frame.agentId` / `sidOf()` 的结果，再走一次 `/plan` + 一句 prompt。
 
 ## 判据
 

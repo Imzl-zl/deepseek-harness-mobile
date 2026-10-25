@@ -63,3 +63,30 @@ Status: implemented
 - 代价：多一个 `_drilled` 状态与 drill / crumb 两条回调路径；面板移到卡片**外面**后
   卡片高度不再包含面板，底部预算要把两块分开算（这正是第三篇笔记要解决的问题）；
   chevron 的触达区 30×22 仍小于 44×44 的触屏惯例（比桌面的 18×18 大，点偏会落到行体上）。
+
+## 真机验证（2026-10-25）
+
+仪器：`d61cf622`（23113RKC6C，root），隔离实例 `DSH_HOME=D:\tmp\dsh-e2e` +
+`mobile-e2e` profile（63900 / 直连 8790）+ 本机中转 8787（`adb reverse`）；
+APK 是当前 HEAD 的 debug 包（`adb install -r`，配对凭据保留）。
+截图与语义树在 `D:\tmp\dsh-e2e\`（`a-01…a-11`、`s-01`）。
+
+- **列表行 / 分组 / 图标**：`@` 面板贴着输入卡上方、与卡同宽，左对齐行、行首图标、
+  section 标题两档实际文案是 **`文件与文件夹` / `对话`**（宿主 zh 词典 `section.files` /
+  `section.sessions` 的原话，不是开工单里简写的"文件 / 会话"）；`/` 面板 section 是 `指令`。
+- **高度与滚动**：面板底部停在输入卡上沿，超出部分在列表内滚（`app/lib/ui` 35 个文件只
+  一屏放得下 7 行，实测两次滑动后可见 `dsh_popover…input_focus`）。**没有**滚到底的渐变提示
+  （开工单列为可选，未做）。
+- **drill**：点 `app/` 行尾 chevron ⇒ 输入框变 `@app/`、**面板不关**、面包屑出现
+  `工作区 › app`；再钻 `lib/`、`ui/` ⇒ `工作区 › app › lib › ui`；点最左的 `工作区` ⇒
+  回根层、面包屑消失、输入框回到 `@`。宿主同一条（`crumbsFor` 只在 drill 后给）。
+- **落定**：点 `app/` **行体** ⇒ 输入框 `@app/` 且**面板关闭**；点会话行（`Reply with fixed text`）
+  ⇒ 输入框是宿主原样的 `@[Reply with fixed text](dsh-session:…)`，选择规则一个字没动。
+- **名字列 40% 截断是真机可见的**：会话行 `Spawn grandchild, re…` 右边还有半个屏的空白。
+  这不是实现走偏 —— 宿主 `.itemName { max-width: 40% }`（`MenuView.module.css:103-109`）
+  就是这个数；手机上 40% 的绝对宽度更窄，观感差异来自屏宽不是实现。
+- **会话行没有右侧说明**：宿主是 `位置 · 相对时间`，我们是空的 —— `refs.sessions` 只回
+  `{sid,title,mention}`（`app/lib/model/mention.dart:125-135` 已注明）。**仍是缺口**，
+  要补就得让 `refs.sessions` 带上位置与更新时间（`session.list` 里两样都有）。
+- **没验到的两态**：pending 骨架（本机往返几十毫秒，`screencap` 起不来时就结束了）与
+  失败态（要停实例）。两者都只有 widget 测试证据。

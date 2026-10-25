@@ -18,10 +18,23 @@
 > 变异校验：drill 落定化 ⇒ 恰好 2 条红（drill + 面包屑回根）；面包屑忽略 `drilled` ⇒ 恰好 1 条红；
 > 底部去 `Flexible` ⇒ 恰好 1 条红（键盘态溢出）。
 >
-> **仍未上真机**（本轮 0 个模型请求）：① 面板的观感（列表行 / 面包屑 / 骨架）；② 接管卡键盘态
-> 的修法只过了 widget 测试（真机证据 `shots-2026-10-24-mentions\h1-typed.png` 是修之前）；
-> ③ 计划审查卡的观感（`/plan` + `%s` 代空格的 prompt，见 `tools.md`）；
-> ④ 图片上限四条、插件安装/卸载的真实 pnpm 流程。
+> **真机尾巴已跑（2026-10-25 10:40–11:12，2 个模型请求，0 行代码改动）**：仪器 `d61cf622`，
+> 隔离实例 `DSH_HOME=D:\tmp\dsh-e2e` + `mobile-e2e`（63900 / 直连 8790）+ 中转 8787（`adb reverse`），
+> 新包 `adb install -r`（配对凭据保留）。证据 `D:\tmp\dsh-e2e\`（`a-*` `@` 面板 / `s-01` `/` 面板 /
+> `p-*` 计划 / `q-*` 提问卡 / `desk-*` 桌面）。三篇 10-25 笔记各补了「真机验证」一节。
+> - **过了**：`@` 列表行 + 分组（`文件与文件夹` / `对话`）+ 目录 drill（`工作区 › app › lib › ui`）
+>   + 点行体落定 `@app/` + 会话行插宿主原样 mention + 面板内部滚动；`/` 同形状（section `指令`）。
+> - **过了**：接管卡键盘态 —— 三选项提问 + 键盘同框，**无溢出**，选项可滚、`提交` 落库
+>   （`seq:130`）。204px 那条收口成立。
+> - **没过**：**计划审查卡在手机上仍然不出现**。同一时刻桌面（同实例 headless Edge）有卡、
+>   可点 `同意执行` ⇒ `seq:90 plan/mode {active:false}`；反面对照 `ask_user_question` 的卡在手机上
+>   正常。缺口锁在 "plan-review 这一种 ask 的手机侧投递/认领"，不是整条链。见
+>   `implemented/2026-10-24-plan-review-card-from-request.md` 的真机一节（含下一步查法）。
+> - **新发现**：`/` 的说明列**生产路径恒空** —— `repo.info` 只在握手后取一次，而连接器
+>   `describe()` 要活 agent。见 `implemented/2026-10-25-command-descriptions-from-host.md` 末两条。
+> - **仍没验**：`@` 面板的骨架 / 失败态、图片上限四条（要先调小宿主的
+>   `maxImageBytes` 等，得先查到 attachment 插件的 cordis id；手机只能选图 ⇒ "类型不收"够不到）、
+>   插件安装/卸载的真实 pnpm 流程（需要一个敢往隔离实例里装的 registry 插件）。
 
 > **2026-10-24 深夜（上一轮的前提，仍有效）**：宿主候选菜单是**列表行**，
 > 我们当时做成了居中胶囊 —— 那一轮已改掉（上面这条）。旧的开工单留在 `proposed/`。
@@ -506,6 +519,21 @@
     `i:<approval/asked.id>`（`connector/src/dsh/approval-call.ts`），`interaction.respond` 的
     键从 `callId` 改成 `itemId`（`i:<approvalId>` / `t:<callId>`），重投也按 id 匹配。
     **认不出身份时仍然委托**（日志 0 条/多条未结算）—— 那时只有桌面能答，契约 §15 已写。
+17. **计划审查卡在手机上不出现（2026-10-25 真机定位到"plan-review 这一种 ask"）**：
+    同一时刻桌面有卡且能结算（`plan/mode(active:false)`），手机的 `ask_user_question` 卡正常，
+    所以既不是 DSH 没发、也不是卡片渲染缺分支。最可疑的一步是连接器
+    `interaction-client.ts` 的 `planReviewOf` 认没认出 `intent.kind === 'plan-review'` ——
+    认不出会**静默** `next`，而 `log` 走 `ctx.logger`（到不了 stdout，`tools.md` 已记）。
+    查法（下轮，约 1 个模型请求）：`answer()` 里临时 `console.error` 打
+    `frame.event` / `agentId` / `sidOf()`，再走一次 `/plan`。
+18. **`/` 的命令说明在生产路径上恒为空**：`repo.info` 只在握手后 `refreshRepoInfo()` 取一次
+    （`app/lib/data/app_model.dart:2540`），那时没有活 agent ⇒ 连接器 `describe()` 回空表
+    （`connector/src/dsh/command-line.ts:189-203`）；之后没有任何重取点。
+    宿主那边 `description` 是必填非空（`interaction/commands/src/index.ts:183-188`）。
+    要收口得先定"什么时候重取"（候选：第一次会话订阅成功之后 / 打开会话时，两者都要防抖）。
+19. **`@` 会话行没有右侧 `位置 · 相对时间`**：`refs.sessions` 只回 `{sid,title,mention}`，
+    宿主那一列的信息 `session.list` 里本来就有（工作区名 + `updatedAt`）。要么加两个字段
+    （改线上形状），要么如实记成偏离。
 
 ## 范围决定（别再当缺口）
 

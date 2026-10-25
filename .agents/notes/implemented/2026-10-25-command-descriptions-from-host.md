@@ -53,5 +53,23 @@ Status: implemented
 - 收益：说明跟着宿主走（改词不用改手机）；老连接器的 `string[]` 仍然能用；白名单仍只有一处。
 - 代价：`repo.info` 的应答形状变了 —— 老手机（`whereType<String>()`）会把对象数组读成空表，
   于是不出 `/` 菜单（所以手机改成两种都收，新手机连老连接器则没有说明）；
-  说明是**宿主定义里的英文原文**，手机不做本地化；刚连上、一条会话都没开时说明为空，
-  要等下一次 `session.list` 之后的 `refreshRepoInfo` 才补上。
+  说明是**宿主定义里的英文原文**，手机不做本地化。
+- 代价（真机证实，比当初写的更糟）：连接器 `describe()` 要一个**活 agent**
+  （`connector/src/dsh/command-line.ts:189-203`），而手机只在**握手后那次**
+  `refreshRepoInfo()` 取 `repo.info`（`app/lib/data/app_model.dart:2540`）—— 那一刻
+  一条会话都还没打开 ⇒ 说明恒为空表。**本笔记原先写的"下一次 `session.list` 之后的
+  `refreshRepoInfo` 就补上"不成立**：代码里没有那次刷新。
+
+## 真机验证（2026-10-25）
+
+仪器同 `2026-10-25-composer-panel-rows-drill-crumbs.md` 的同名一节。
+
+- `/` 面板形状**对了**：section `指令`，`/goal` / `/plan` 两行、左对齐、无图标
+  （宿主的命令图标表不在手机上，凭空配图标就是编数据 —— 与本篇的取舍一致）。
+- **说明列在真机上一次都没出现过**，原因见上面最后一条"代价"：`repo.info` 在握手时取，
+  那时没有活 agent；之后没有任何一处重取。宿主的 `description` 是**必填且非空**
+  （`packages/interaction/commands/src/index.ts:183-188` 对空串直接抛），所以"宿主没给词"
+  这个解释不成立 —— 是我们取数时机的问题。
+- 这一条目前的状态：**两条单测都绿，生产路径恒空**。要收口得先定"什么时候重取"：
+  候选是"第一次有会话订阅成功之后"或"打开会话时"，两者都要防抖（`repo.info` 是
+  per-agent 全局面，不是 per-session）。未做。
