@@ -1,4 +1,4 @@
-# 事件字段只有一个读者：`core/event_wire.dart`
+# 事件字段只有一个读者：`wire/events.dart`
 
 - 日期：2026-10-25
 - 状态：已落地
@@ -31,12 +31,12 @@
 
 **一条不变量 + 三个机制。**
 
-不变量：**线上事件载荷的字段名与类型只在 `app/lib/core/event_wire.dart` 里断言一次；
+不变量：**线上事件载荷的字段名与类型只在 `app/lib/wire/events.dart` 里断言一次；
 读不出来必须成为一次"响"，而不是 `null`。**
 
 机制：
 
-1. **单一解码层** `core/event_wire.dart`
+1. **单一解码层** `wire/events.dart`（内核 `wire/reading.dart`）
    - 只收我们真正消费的事件（`tool/call`、`tool/result`、`approval/asked|decided`、
      `user/message` 的 `user-question-reply`、`command/run|done`）。不建全量 schema ——
      那会变成第二个真值来源。
@@ -88,11 +88,24 @@
   新增"消费一类事件"要同时在 `event_wire.dart` 与 fixture 里各加一处（这是有意的摩擦）。
 - 代价：`WireDiagnostics.badCount` 是**进程级**计数，没有按会话分桶 —— 排错面板要用它时
   再决定要不要加维度（现在只有回放用例与测试读它）。
-- 代价：门禁项数从 391 涨到 **507**（多一条规则 × 111 个文件 + 3 条自检 + 1 个新文件），
+- 代价：门禁项数从 391 涨到 **509**（多一条规则 × 112 个文件 + 3 条自检 + 2 个新文件），
   以后每次动 `app/lib/` 的输出数字都会变 —— 数字的唯一出处仍是 `tools.md`。
 - **未做**：把 `session.projections`（`modelSelection` / `permissions` / …）也收进同一层。
   它们同样是线上形状，但不在这次事故的路径上，且几十个字段的迁移会淹没"一个字段一个读者"
   这条主线。下一步该做，但不是同一批。
+
+## 同日追加：内核搬到 `wire/`，事件面只是第一个面
+
+落地当天又发现"同一个病还有第二个面"：RPC 应答（28 个方法）在 `app_model.dart` 与
+`model/*.dart` 里仍是 `result is Map ? result['x'] : null`（扫描 `app/lib` 共 **103 处裸 Map 读取**）。
+于是把内核从 `core/event_wire.dart` 拆成：
+
+- `wire/reading.dart` —— 三态 + `WireDiagnostics` + `valueOrReport` / `valueOrNull`（**两个面共用**）
+- `wire/events.dart` —— 事件 decoder，`export 'reading.dart'`，消费方一行 import 拿齐
+
+行为零变化（同批跑完 1241 / 509 / analyze 0 / format 0）。RPC 面的搬运顺序、
+取证办法（桌面跑一次抓真样本）与门禁延伸写在
+`proposed/2026-10-25-wire-format-layer.md`。
 
 ## 判据
 
@@ -102,12 +115,13 @@
   不入计数、缺身份出声并计数。
 - **变异校验**：`parseArguments` 改成恒 `null` ⇒ 恰好 3 条红（计划卡投影 + 回放的计划与提问）；
   门禁规则用临时探针文件验收 ⇒ 恰好 1 条红（`wire-field-single-reader` 命中 `'arguments'`）。
-- `node app/tools/verify-platform-boundary.mjs` **391 → 507**（规则自检 22 → 25，文件 110 → 111）。
+- `node app/tools/verify-platform-boundary.mjs` **391 → 509**（规则自检 22 → 25，文件 110 → 112）。
 - `dart analyze --fatal-infos` 0、`dart format` 0（跑 `lib test integration_test`）。
 
 ## 代码入口回指
 
-- `app/lib/core/event_wire.dart`（解码层本体；头注写了三条不变量与形状证据）
+- `app/lib/wire/reading.dart`（三态内核与唯一出声口）
+- `app/lib/wire/events.dart`（事件 decoder；头注写了三条不变量与形状证据）
 - `app/lib/data/projection.dart`（`tool/call` 与 `interactionSignalOf` 走解码层）
 - `app/lib/core/items.dart`（`itemIdOf` 的身份字段走解码层，缺身份仍抛）
 - `app/lib/main.dart`（装配点：`kDebugMode` 下把 `WireDiagnostics.sink` 接到 `debugPrint`）

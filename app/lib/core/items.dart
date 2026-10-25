@@ -9,10 +9,10 @@
 ///
 /// 2026-10-25：`tool/call` 的 `arguments` 在线上是 JSON 字符串，本文件知道、
 /// `data/projection.dart` 不知道 ⇒ 计划卡静默消失。现在凡是**载荷字段的类型**都只在
-/// `core/event_wire.dart` 里断言，这里只取解好的身份字段；缺身份仍然**抛**（比一行打印更响）。
+/// `wire/events.dart` 里断言，这里只取解好的身份字段；缺身份仍然**抛**（比一行打印更响）。
 library;
 
-import 'event_wire.dart';
+import '../wire/events.dart';
 
 /// 持久事件日志里的一条：修订号 + 条目号 + 内容。
 class LogEntry {

@@ -12,11 +12,11 @@
 ///
 /// ## 三条不变量
 ///
-/// 1. **字段名与类型只在这个文件里断言**。别处拿到的是解好的值（`WireOk` 里的对象），
+/// 1. **事件载荷的字段名与类型只在这里断言**。别处拿到的是解好的值（`WireOk` 里的对象），
 ///    不再对裸 `Map` 取字段。门禁：`app/tools/verify-platform-boundary.mjs` 的
-///    `event-field-single-reader` 规则 —— `'arguments'` / `'toolCallId'` 两个字面量
-///    只许出现在这里。
-/// 2. **读不出来必须出声**。`WireBad` 走 [WireDiagnostics]，计数 + 一行打印；
+///    `wire-field-single-reader` 规则 —— `'arguments'` / `'toolCallId'` 两个字面量
+///    只许出现在本文件。
+/// 2. **读不出来必须出声**。`WireBad` 走 `reading.dart` 的 `WireDiagnostics`（计数 + 一行打印）；
 ///    `null` 在这套代码里已经被"这条事件与交互无关"占用了，两者混在一起就再也分不出
 ///    "没有"与"读不到"（教训第九条，`memory.md`）。
 /// 3. **只收我们真正消费的事件**。不消费的类型不建 decoder（Skip），避免维护一份全量 schema ——
@@ -31,97 +31,14 @@ library;
 
 import 'dart:convert';
 
-// ---------------------------------------------------------------------------
-// 读取结果：三态，不是可空
-// ---------------------------------------------------------------------------
+import 'reading.dart';
 
-/// 一次解码的结果。**没有"可空"这一档**：`null` 说不清"不是我要找的事件"还是"形状读不出来"。
-sealed class WireReading<T> {
-  const WireReading();
-}
+/// 消费方一次拿齐"三态内核 + 事件 decoder"（`items.dart` / `projection.dart` 只需要这一行 import）。
+/// RPC 面同样 re-export 一次，保证全 app 只有一套失败语义。
+export 'reading.dart';
 
-/// 读出来了。
-final class WireOk<T> extends WireReading<T> {
-  const WireOk(this.value);
-
-  final T value;
-}
-
-/// 这条事件不是这个 decoder 管的（例如 `assistant/message` 里没有交互信息）。
-///
-/// **不是错误**：绝大多数事件都会落到这一档。
-final class WireSkip<T> extends WireReading<T> {
-  const WireSkip();
-}
-
-/// 形状读不出来：字段缺失、类型不对、JSON 坏。**这是要命的，必须响**。
-///
-/// [detail] 是给人看的一句话（哪个字段、期望什么、实际什么），不是给机器判的码 ——
-/// 它唯一的用途是让下一次"卡不出现"能在五分钟内定位。
-final class WireBad<T> extends WireReading<T> {
-  const WireBad(this.detail);
-
-  final String detail;
-}
-
-/// 形状读不出来的唯一出口。
-///
-/// 计数是给回放用例与排错用的（`badCount == 0` 才说明真机事件形状没漂）；
-/// 打印由**装配点**装进来（`lib/main.dart` 在 debug 下接 `debugPrint`）——
-/// 这一层是纯 Dart（零 Flutter 依赖），不自己决定往哪儿写。
-///
-/// 为什么默认什么都不打也不等于"静默降级"：**计数照加**，而回放用例与排错面板读的是计数；
-/// 打不打印只是给人看的第二层。App 不打 logcat（`tools.md` 记过），所以真正可用的判据是计数。
-class WireDiagnostics {
-  WireDiagnostics._();
-
-  static int _bad = 0;
-
-  /// 累计的形状错误条数（`reset()` 之后重新计）。
-  static int get badCount => _bad;
-
-  /// 换成别的出口（装配点接 `debugPrint`、测试收集、排错面板）。
-  static void Function(String event, String detail)? sink;
-
-  static void reset() {
-    _bad = 0;
-  }
-
-  static void report(String event, String detail) {
-    _bad += 1;
-    sink?.call(event, detail);
-  }
-}
-
-/// 把一次读取落到值上：[WireBad] 在这里**统一出声**，调用方只处理"有没有值"。
-///
-/// 为什么不让调用方各自 `switch`：出声这件事一旦可以被忘记，就一定会有地方忘
-/// （这正是 2026-10-25 的形态）。收在这里之后，`null` 的含义重新变回"这条不是我要的"。
-T? valueOrReport<T>(WireReading<T> reading, String event) {
-  switch (reading) {
-    case WireOk<T>(:final value):
-      return value;
-    case WireSkip<T>():
-      return null;
-    case WireBad<T>(:final detail):
-      WireDiagnostics.report(event, detail);
-      return null;
-  }
-}
-
-/// 只取值，**不出声** —— 给"读不出来马上就会更响地失败"的调用方（`items.dart` 的
-/// `itemIdOf` 缺身份时直接 `throw StateError`，那是比一行打印更强的信号）。
-///
-/// 除这一种情形外一律用 [valueOrReport]：能安静返回 `null` 的地方，它必然会安静。
-T? valueOrNull<T>(WireReading<T> reading) {
-  switch (reading) {
-    case WireOk<T>(:final value):
-      return value;
-    case WireSkip<T>():
-    case WireBad<T>():
-      return null;
-  }
-}
+// 内核（`WireReading` / `WireDiagnostics` / `valueOrReport` / `valueOrNull`）在 `reading.dart`：
+// 事件面与 RPC 面共用同一套三态与同一个计数，不为每个面各造一份。
 
 // ---------------------------------------------------------------------------
 // 各事件的载荷（只断言我们消费的字段）

@@ -18,12 +18,12 @@ library;
 
 import 'dart:convert';
 
-import '../core/event_wire.dart';
 import '../core/items.dart';
 import '../model/changed_path.dart';
 import '../model/chat_item.dart';
 import '../model/interaction.dart';
 import '../model/tool_view.dart';
+import '../wire/events.dart';
 
 /// `ask_user_question` 的工具名（DSH：
 /// `packages/interaction/user-questions/src/projection.ts:28` 的 `ASK_USER_QUESTION_TOOL`）。
@@ -249,7 +249,7 @@ ChatProjection projectEvent({
 
   if (type == 'tool/call') {
     // **名字与参数都从解码层来**：`arguments` 是 JSON 字符串这件事只在
-    // `core/event_wire.dart` 里被断言一次（2026-10-25 之前这里按对象读，
+    // `wire/events.dart` 里被断言一次（2026-10-25 之前这里按对象读，
     // 计划卡因此静默消失，见 `readToolCall` 的头注）。
     final call = valueOrReport(readToolCall(data), type);
     return ChatProjection.item(
@@ -1051,7 +1051,7 @@ InteractionSignal? interactionSignalOf({
 
   if (type == 'tool/call') {
     // 名字、callId 与**解开的参数**都来自解码层：`arguments` 是 JSON 字符串这件事
-    // 只在 `core/event_wire.dart` 里被断言（2026-10-25 之前这里按对象读 ⇒ 计划卡静默消失）。
+    // 只在 `wire/events.dart` 里被断言（2026-10-25 之前这里按对象读 ⇒ 计划卡静默消失）。
     final call = valueOrReport(readToolCall(data), type);
     if (call == null) return null;
     // **计划审查**：卡从这次 `tool/call` 造（`exit_plan_mode` 的 `arguments.plan` 就是整份计划）。
@@ -1123,7 +1123,7 @@ InteractionSignal? interactionSignalOf({
 /// 而应答链上的 `AskUserQuestionItem` 是 camelCase 的 `multiSelect` —— 两处形状不同，
 /// 照错的那个会让多选永远读成单选。
 ///
-/// 参数**怎么从线上 JSON 字符串解成 Map** 归 `core/event_wire.dart` 管（`parseArguments`）；
+/// 参数**怎么从线上 JSON 字符串解成 Map** 归 `wire/events.dart` 管（`parseArguments`）；
 /// 这里只处理"解开了的值"。
 ///
 /// **读不懂就返回空表**：那是模型的坏参数，工具根本没被调用过，没有卡可显示

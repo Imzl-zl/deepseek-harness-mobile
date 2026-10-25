@@ -1,4 +1,4 @@
-/// 真机事件回放的**形状闸门**：`core/event_wire.dart` 的判据来源。
+/// 真机事件回放的**形状闸门**：`wire/events.dart` 的判据来源。
 ///
 /// ## 这一组守什么
 ///
@@ -20,9 +20,9 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:dsh_mobile/core/event_wire.dart';
 import 'package:dsh_mobile/data/projection.dart';
 import 'package:dsh_mobile/model/interaction.dart';
+import 'package:dsh_mobile/wire/events.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Map<String, Object?> _fixture() =>

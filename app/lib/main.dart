@@ -26,7 +26,6 @@ import 'core/crypto.dart';
 import 'core/endpoint.dart';
 import 'core/endpoint_transport.dart';
 import 'core/errors.dart';
-import 'core/event_wire.dart';
 import 'core/frame.dart';
 import 'core/handshake_driver.dart';
 import 'core/outbox.dart';
@@ -64,9 +63,10 @@ import 'ui/plugins_page.dart';
 import 'ui/session_drawer.dart';
 import 'ui/settings_page.dart';
 import 'ui/usage_page.dart';
+import 'wire/reading.dart';
 
 void main() {
-  // 线上事件形状读不出来时往哪儿说话（`core/event_wire.dart` 的 `WireDiagnostics`）。
+  // 线上事件形状读不出来时往哪儿说话（`wire/reading.dart` 的 `WireDiagnostics`）。
   //
   // **只在 debug 接**：release 里计数照加，但不去污染日志 —— App 也不打 logcat
   // （`tools.md`），release 里真正能看的是排错面板将来的那个计数。

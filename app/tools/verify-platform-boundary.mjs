@@ -125,11 +125,11 @@ const RULES = [
     // 2026-10-25 事故：`tool/call` 的 `arguments` 在线上是 JSON 字符串，
     // `core/items.dart` 知道、`data/projection.dart` 不知道 ⇒ 计划审查卡在真机上一次没出现，
     // 而且不报错（单测喂的是对象形状，两边一起绿）。
-    // 一个字段只许有一个读者：所有"名字 + 类型"的断言都在 `core/event_wire.dart`。
+    // 一个字段只许有一个读者：所有"名字 + 类型"的断言都在 `wire/events.dart`。
     id: 'wire-field-single-reader',
-    why: '事件载荷的字段名/类型只许在 core/event_wire.dart 里断言；'
+    why: '事件载荷的字段名/类型只许在 wire/events.dart 里断言；'
       + '同一个字段两处解释，猜错的那一处会静默变成空值（2026-10-25 计划卡）',
-    appliesTo: (p) => p !== 'app/lib/core/event_wire.dart',
+    appliesTo: (p) => p !== 'app/lib/wire/events.dart',
     match: (content) => firstCodeUse(content, /['"](?:arguments|toolCallId)['"]/g),
   },
 ]
@@ -205,7 +205,7 @@ const SELF_TEST = [
   },
   {
     rule: 'wire-field-single-reader',
-    path: 'app/lib/core/event_wire.dart',
+    path: 'app/lib/wire/events.dart',
     content: "final raw = _string(data, 'arguments') ?? '';",
     shouldFail: false,
   },
@@ -214,7 +214,7 @@ const SELF_TEST = [
   {
     rule: 'wire-field-single-reader',
     path: 'app/lib/data/projection.dart',
-    content: "// 别再按 'arguments' 取字段了，见 core/event_wire.dart",
+    content: "// 别再按 'arguments' 取字段了，见 wire/events.dart",
     shouldFail: false,
   },
 ]
