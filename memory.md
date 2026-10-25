@@ -29,12 +29,15 @@
 >   `wire/rpc/<面>.dart`、字段级语义只在 `wire/fields.dart`、信封/扁平与 `{x:[…]}` 各一个入口。
 >   **已完成**：第 0 批（金样）、第 1 批（`session.list`）、**A1**（`create`/`select-model`/`cancel`/
 >   `updateQueue`/`prompt`/`modelCatalog`/`subagent.prompt`）、**A2**（`session.projections` 14 键 →
->   `SessionProjections` 值对象 + `session.page`/`refetch` 的 `SessionPageWire`）—— 预算 **38 → 31**，
->   金样 2 → 9 个方法（投影那条扩到全部 14 个键）。
->   **A2 顺带修掉一个真缺陷**：`session.list` 行里的 `projections.values.subagentCatalog`
->   原先原样透传 ⇒ 子会话的 **DSH 会话 id 漏到线上**（`session.projections` 那条路过别名表、
->   行这条路没有），两条出口现在共用同一份变换，`connection-methods.test.ts` 的"DSH 侧不许过线"是回归网。
->   **待做**：B（workspace/permission/settings/preset/repo/endpoint，−14）→ C（file/refs/plugin/job/
+>   `SessionProjections` 值对象 + `session.page`/`refetch` 的 `SessionPageWire`）、
+>   **B1**（`workspace.*` 七个方法 → `WorkspaceSnapshot` + 四种"整份真值"）—— 预算 **38 → 24**，
+>   金样 2 → 16 个方法（投影那条扩到全部 14 个键）。
+>   **A2/B1 顺带修掉两个真缺陷**（都是金样夹具当场抓到、都由"同一件事两个出口"造成）：
+>   ① `session.list` 行里的 `projections.values.subagentCatalog` 原样透传 ⇒ 子会话的 **DSH 会话 id
+>   漏到线上**；② `workspace.list` 的行**漏写 `createdAt`**（端口有、手机在读，中间那层没写）⇒
+>   "空工作区当最旧"在生产里永远走不到。两条回归网分别是 `connection-methods.test.ts` 的
+>   "DSH 侧不许过线"与 `workspaces-archive.test.ts` 的逐字段期望。
+>   **待做**：B2（permission/settings/preset/repo/endpoint，−7）→ C（file/refs/plugin/job/
 >   interaction/usage/command，−17）→ D（预算归 0、删常量、金样覆盖全部、notes 并入 `implemented/`）。
 > - **仍没验**：`@` 面板的骨架 / 失败态、图片上限四条、插件安装/卸载的真实 pnpm 流程（上一轮遗留，未变）。
 
