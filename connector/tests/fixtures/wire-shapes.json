@@ -548,5 +548,86 @@
         }
       ]
     }
+  ],
+  "job.list": [
+    {
+      "jobs": [
+        {
+          "id": "j1",
+          "kind": "shell",
+          "label": "构建",
+          "status": "running",
+          "progress": "2/5",
+          "startedAt": 10,
+          "outputTotal": 42
+        }
+      ]
+    }
+  ],
+  "job.kill": [
+    {
+      "outcome": "requested"
+    }
+  ],
+  "job.follow": [
+    {
+      "from": 0
+    }
+  ],
+  "job.unfollow": [
+    {
+      "stopped": true
+    }
+  ],
+  "file.list": [
+    {
+      "listing": {
+        "path": "app",
+        "truncated": false,
+        "entries": [
+          {
+            "name": "README.md",
+            "type": "file",
+            "size": 42
+          },
+          {
+            "name": "src",
+            "type": "directory"
+          }
+        ]
+      }
+    }
+  ],
+  "file.read": [
+    {
+      "page": {
+        "text": "# dsh-mobile",
+        "offset": 1,
+        "lines": 1,
+        "eof": true,
+        "bytes": 13
+      }
+    }
+  ],
+  "refs.files": [
+    {
+      "files": [
+        {
+          "path": "app/lib/main.dart",
+          "kind": "file"
+        }
+      ]
+    }
+  ],
+  "refs.sessions": [
+    {
+      "sessions": [
+        {
+          "sid": "sid_0123456789abcd",
+          "title": "Greeting",
+          "mention": "@[Greeting](dsh:session-1)"
+        }
+      ]
+    }
   ]
 }

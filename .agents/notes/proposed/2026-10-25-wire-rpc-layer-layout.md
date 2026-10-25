@@ -90,7 +90,8 @@
 | B1 | `workspace.*`（7 个，七种应答都是"分组 + 两列 id"或"整份顺序/集合"）| 31 → 24 | ✅ |
 | B2 | `permission.*`(2) / `settings.*`(2) / `agentPresets.list` | 24 → 19 | ✅ |
 | B3 | `repo.info`（`methods` 采样时归一掉）+ `endpoint.describe` | 19 → 17 | ✅ |
-| C | `file.*` / `refs.*` / `plugin.*` / `job.*` / `interaction.respond` / `usage.summary` / `command.execute` | −17 | 待做 |
+| C1 | `job.*`(4) / `file.*`(2) / `refs.*`(2) | 17 → 9 | ✅ |
+| C2 | `plugin.*`(7) / `command.execute` / `usage.summary` / `interaction.respond` | 9 → 0，删常量 | 待做 |
 | D | 收尾：预算归 0、常量删掉、金样覆盖全部方法、笔记并入 `implemented/` | 0 | 待做 |
 
 每批的验收（四条同时成立）：**该批方法全部进金样且 App 侧 `badCount == 0`**、

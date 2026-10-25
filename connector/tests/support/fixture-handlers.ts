@@ -296,6 +296,38 @@ export function fixtureHandlers(
         ],
       }),
     },
+    // 工作区文件面：一份确定的目录清单 + 一页文本（形状照 app 侧 `fromWire` 的必填项）。
+    files: {
+      list: async (sid: string, path: string) => ({
+        path,
+        truncated: false,
+        entries: [
+          { name: 'README.md', type: 'file' as const, size: 42 },
+          { name: 'src', type: 'directory' as const },
+        ],
+      }),
+      read: async (sid: string, path: string) => ({
+        text: '# dsh-mobile',
+        offset: 1,
+        lines: 1,
+        eof: true,
+        bytes: 13,
+      }),
+    },
+    // `@` 候选：两列各一条（行形状由 app 侧 `AtCandidate.from*Row` 认）。
+    references: {
+      files: async () => [{ path: 'app/lib/main.dart', kind: 'file' as const }],
+      sessions: async () => [
+        { sid: SID_OF['dsh-1']!, title: 'Greeting', mention: '@[Greeting](dsh:session-1)' },
+      ],
+    },
+    // 任务订阅：`follow` 回起点（手机据此拼尾部缓冲），`unfollow` 回是否真的有在跑的。
+    jobSubscriptions: {
+      follow: async () => ({ from: 0 }),
+      unfollow: () => true,
+      stopAll: () => {},
+      active: 0,
+    },
     // 权限面：一份确定性的预设表 + 一个"切成功"的回执（`CommandRunView`）。
     permissions: {
       catalog: async () => ({

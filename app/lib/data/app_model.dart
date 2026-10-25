@@ -50,9 +50,12 @@ import '../model/usage_summary.dart';
 import '../model/workspace.dart';
 import '../model/workspace_files.dart';
 import '../wire/rpc/endpoint.dart' as wire;
+import '../wire/rpc/file.dart' as wire;
+import '../wire/rpc/job.dart' as wire;
 import '../wire/rpc/permission.dart' as wire;
 import '../wire/rpc/preset.dart' as wire;
 import '../wire/rpc/projections.dart' as wire;
+import '../wire/rpc/refs.dart' as wire;
 import '../wire/rpc/repo.dart' as wire;
 import '../wire/rpc/session.dart' as wire;
 import '../wire/rpc/settings.dart' as wire;
@@ -967,15 +970,37 @@ class AppModel extends ChangeNotifier {
     // **先建桶再早退**：`job` 帧不带 sid，只能靠"这个会话有桶"归位。
     // 桶不存在时帧会被丢 —— 而表现是"任务在跑但没有输出"，最难查的那类。
     _jobs.putIfAbsent(sid, () => <JobRow>[]);
-    final result = await client.call<Object?>('job.list', {'sid': sid});
-    if (_disposed || result is! Map) return;
-    final raw = result['jobs'];
-    if (raw is! List) return;
-    _jobs[sid] = [
-      for (final entry in raw)
-        if (entry is Map) _jobRowFromJson(entry),
-    ];
+    // 形状（`{jobs: [...]}` 与一行任务）在 `wire/rpc/job.dart`。
+    final rows = await wire.loadJobList(client, sid: sid);
+    if (_disposed || rows == null) return;
+    _mergeJobSnapshot(sid, rows);
     notifyListeners();
+  }
+
+  /// 把一次 `job.list` 快照并进桶里：**已结束的行不许被"还在跑"的快照回退**。
+  ///
+  /// ## 为什么需要这一层（2026-10-25 由这一批的迁移暴露出来）
+  ///
+  /// `job.list` 是一次**请求**，而 `status` 是**推送**：两者会赛跑。
+  /// 实测形态：`openSession` 发出的快照请求还没回来，推送先到了（任务在那一刻完成），
+  /// 于是快照把它盖回 `running` —— 任务面板上的任务就永远转下去。
+  ///
+  /// 判据取 `JobRow.isLive`：**终态是单向的**（`completed` / `killed` / `failed`
+  /// 之后不会再回到 `running`——同一个 jobId 是一次运行，不会复活）。
+  /// 所以合并时只挡这一种：已有的行不 live、快照说 live ⇒ 留已有的。
+  /// 反过来（已有 live、快照说终态）照收 —— 那是快照更新。
+  void _mergeJobSnapshot(String sid, List<JobRow> rows) {
+    final byId = {
+      for (final row in _jobs[sid] ?? const <JobRow>[]) row.id: row,
+    };
+    final next = <JobRow>[];
+    for (final row in rows) {
+      final existing = byId[row.id];
+      next.add(
+        existing != null && !existing.isLive && row.isLive ? existing : row,
+      );
+    }
+    _jobs[sid] = next;
   }
 
   /// 展开一个任务：订阅它的输出流。
@@ -988,7 +1013,8 @@ class AppModel extends ChangeNotifier {
     _jobOutput.putIfAbsent(jobId, StringBuffer.new);
     _jobErrors.remove(jobId);
     try {
-      await client.call<Object?>('job.follow', {'sid': sid, 'jobId': jobId});
+      // **应答不读**：开流的作用在服务端，输出走 `job` 帧。
+      await wire.followJobOutput(client, sid: sid, jobId: jobId);
     } on ProtocolException catch (error) {
       // 订阅没开成：把本地标记撤掉，否则 UI 会显示"已订阅"却永远没有输出。
       followed.remove(jobId);
@@ -1001,7 +1027,7 @@ class AppModel extends ChangeNotifier {
   Future<void> unfollowJob(String sid, String jobId) async {
     _followedJobs[sid]?.remove(jobId);
     try {
-      await client.call<Object?>('job.unfollow', {'sid': sid, 'jobId': jobId});
+      await wire.unfollowJobOutput(client, sid: sid, jobId: jobId);
     } on ProtocolException catch (error) {
       _jobErrors[jobId] = error.message;
     }
@@ -1011,13 +1037,7 @@ class AppModel extends ChangeNotifier {
   /// 停一个任务。**走宿主的人类发起门面**，返回电脑侧的结论。
   Future<String?> killJob(String sid, String jobId) async {
     try {
-      final result = await client.call<Object?>('job.kill', {
-        'sid': sid,
-        'jobId': jobId,
-      });
-      return result is Map && result['outcome'] is String
-          ? result['outcome'] as String
-          : null;
+      return await wire.killJob(client, sid: sid, jobId: jobId);
     } on ProtocolException catch (error) {
       _jobErrors[jobId] = error.message;
       notifyListeners();
@@ -1081,21 +1101,6 @@ class AppModel extends ChangeNotifier {
       }
     }
   }
-
-  static JobRow _jobRowFromJson(Map entry) => JobRow(
-    id: entry['id'] is String ? entry['id'] as String : '',
-    kind: entry['kind'] is String ? entry['kind'] as String : '',
-    label: entry['label'] is String ? entry['label'] as String : '',
-    status: entry['status'] is String ? entry['status'] as String : 'running',
-    startedAt: (entry['startedAt'] as num?)?.toInt() ?? 0,
-    outputTotal: (entry['outputTotal'] as num?)?.toInt() ?? 0,
-    progress: entry['progress'] is String ? entry['progress'] as String : null,
-    detail: entry['detail'] is String ? entry['detail'] as String : null,
-    finishedAt: (entry['finishedAt'] as num?)?.toInt(),
-    // 帧路径上连接器盖的 sid（`job` 帧不带会话，归桶靠它）。
-    // `job.list` 的行不带 —— 那次本来就知道是哪个会话。
-    sid: entry['sid'] is String ? entry['sid'] as String : null,
-  );
 
   final Map<String, SessionStore> _stores = {};
 
@@ -1676,13 +1681,8 @@ class AppModel extends ChangeNotifier {
       return null;
     }
     try {
-      final result = await client.call<Object?>('file.list', {
-        'sid': sid,
-        'path': path,
-      });
-      final listing = FileListing.fromWire(
-        result is Map ? result['listing'] : null,
-      );
+      // 形状（`{listing}` 信封 + 本体）在 `wire/rpc/file.dart`。
+      final listing = await wire.loadFileListing(client, sid: sid, path: path);
       if (listing == null) {
         _recordError('读取目录失败', StateError('电脑侧的目录应答形状认不出'));
         return null;
@@ -1705,13 +1705,14 @@ class AppModel extends ChangeNotifier {
       return null;
     }
     try {
-      final result = await client.call<Object?>('file.read', {
-        'sid': sid,
-        'path': path,
-        'offset': ?offset,
-        'limit': ?limit,
-      });
-      final page = FilePage.fromWire(result is Map ? result['page'] : null);
+      // 形状（`{page}` 信封 + 本体）在 `wire/rpc/file.dart`。
+      final page = await wire.loadFilePage(
+        client,
+        sid: sid,
+        path: path,
+        offset: offset,
+        limit: limit,
+      );
       if (page == null) {
         _recordError('读取文件失败', StateError('电脑侧的文件应答形状认不出'));
         return null;
@@ -1900,22 +1901,25 @@ class AppModel extends ChangeNotifier {
     if (sid == null) {
       return const MentionQueryResult(error: '还没有选中的会话：@ 候选要在一个会话自己的工作目录里找');
     }
-    final params = <String, Object?>{'sid': sid, 'query': query};
     try {
-      final answers = await Future.wait<Object?>([
-        client.call<Object?>('refs.files', params),
-        client.call<Object?>('refs.sessions', params),
-      ]);
-      final files = _mentionRowsOf(answers[0], 'files')
-          .map(AtCandidate.fromFileRow)
-          .whereType<AtCandidate>()
-          .toList(growable: false);
-      final sessions = _mentionRowsOf(answers[1], 'sessions')
-          .map(AtCandidate.fromSessionRow)
-          .whereType<AtCandidate>()
-          .toList(growable: false);
+      // 形状（`{files:[…]}` / `{sessions:[…]}`，并发查一次）在 `wire/rpc/refs.dart`；
+      // 行本体仍由 `AtCandidate.fromFileRow` / `fromSessionRow` 解析（认不出的行跳过）。
+      final answers = await wire.loadMentionCandidates(
+        client,
+        sid: sid,
+        query: query,
+      );
+      // 任一侧读不出来 ⇒ 那一侧当"没有"（另一侧照常给）—— 两列独立。
+      final files = answers.files;
+      final sessions = answers.sessions;
+      if (files == null || sessions == null) {
+        _recordError('读取 @ 候选失败', StateError('电脑侧的候选应答形状认不出'));
+      }
       return MentionQueryResult(
-        candidates: AtCandidates(files: files, sessions: sessions),
+        candidates: AtCandidates(
+          files: files ?? const [],
+          sessions: sessions ?? const [],
+        ),
       );
     } catch (error) {
       // **兜住所有异常**（与 `refreshSessions` / `refreshUsageSummary` 同一条纪律）：
@@ -1924,13 +1928,6 @@ class AppModel extends ChangeNotifier {
       _recordError('读取 @ 候选失败', error);
       return MentionQueryResult(error: _lastError?.message ?? '$error');
     }
-  }
-
-  /// 从应答里取一列行（`{files:[…]}` / `{sessions:[…]}`）；认不出给空列。
-  static List<Object?> _mentionRowsOf(Object? answer, String key) {
-    if (answer is! Map) return const [];
-    final rows = answer[key];
-    return rows is List ? rows : const [];
   }
 
   // ---- 跨会话用量汇总（`usage.summary`，只读）----

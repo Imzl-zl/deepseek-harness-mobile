@@ -86,6 +86,15 @@ const SAMPLED_METHODS = [
   'agentPresets.list',
   'repo.info',
   'endpoint.describe',
+  // C1：任务 / 文件 / `@` 候选三个面。
+  'job.list',
+  'job.kill',
+  'job.follow',
+  'job.unfollow',
+  'file.list',
+  'file.read',
+  'refs.files',
+  'refs.sessions',
 ] as const
 
 type SampledMethod = (typeof SAMPLED_METHODS)[number]
@@ -157,6 +166,17 @@ const SAMPLES: Record<SampledMethod, readonly WireSample[]> = {
     },
   ],
   'endpoint.describe': [{}],
+  // 任务面：`follow`/`unfollow` 的应答手机不读，但金样照样钉它的线上形状。
+  'job.list': [{ params: { sid: sidOf('dsh-1') } }],
+  'job.kill': [{ params: { sid: sidOf('dsh-1'), jobId: 'j1' } }],
+  'job.follow': [{ params: { sid: sidOf('dsh-1'), jobId: 'j1' } }],
+  'job.unfollow': [{ params: { sid: sidOf('dsh-1'), jobId: 'j1' } }],
+  // 文件面：两个信封各一层（`{listing}` / `{page}`）。
+  'file.list': [{ params: { sid: sidOf('dsh-1'), path: 'app' } }],
+  'file.read': [{ params: { sid: sidOf('dsh-1'), path: 'README.md' } }],
+  // `@` 候选：两列各一条。
+  'refs.files': [{ params: { sid: sidOf('dsh-1'), query: 'main' } }],
+  'refs.sessions': [{ params: { sid: sidOf('dsh-1'), query: 'gree' } }],
 }
 
 /** **线上那一层**：丢掉 `undefined`、规整成 JSON 标量，再比较。 */

@@ -33,12 +33,19 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dsh_mobile/core/endpoint.dart' show parseEndpointList;
+import 'package:dsh_mobile/core/job.dart' show JobRow;
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/model/command.dart';
+import 'package:dsh_mobile/model/mention.dart' show AtCandidate;
 import 'package:dsh_mobile/model/model_catalog.dart';
 import 'package:dsh_mobile/model/permission.dart';
+import 'package:dsh_mobile/model/workspace_files.dart'
+    show FileListing, FilePage;
+import 'package:dsh_mobile/wire/rpc/file.dart';
+import 'package:dsh_mobile/wire/rpc/job.dart';
 import 'package:dsh_mobile/wire/rpc/permission.dart';
 import 'package:dsh_mobile/wire/rpc/projections.dart';
+import 'package:dsh_mobile/wire/rpc/refs.dart';
 import 'package:dsh_mobile/wire/rpc/repo.dart';
 import 'package:dsh_mobile/wire/rpc/session.dart';
 import 'package:dsh_mobile/wire/rpc/settings.dart';
@@ -655,6 +662,102 @@ void main() {
       expect(endpoints[index].url, row['url'], reason: '第 ${index + 1} 条的地址');
       expect(endpoints[index].kind.name, row['kind']);
     }
+  });
+
+  // ---- C1：任务面 / 文件面 / `@` 候选面 ----
+
+  test('job.list：一行的字段等于金样（行不带 sid，靠请求的会话归桶）', () {
+    final sample = _sampleOf(golden, 'job.list');
+    final rows = (sample['jobs']! as List).cast<Object?>();
+    final reading = readJobList(sample);
+    expect(reading, isA<WireOk<List<JobRow>>>());
+    final jobs = (reading as WireOk<List<JobRow>>).value;
+    expect(jobs.length, rows.length);
+    final row = (rows.first! as Map).cast<String, Object?>();
+    final job = jobs.first;
+    expect(job.id, row['id']);
+    expect(job.kind, row['kind']);
+    expect(job.status, row['status']);
+    expect(job.startedAt, row['startedAt']);
+    expect(job.outputTotal, row['outputTotal']);
+    expect(job.sid, isNull, reason: '`job.list` 的行不带 sid');
+    expect(WireDiagnostics.badCount, 0);
+  });
+
+  test('job.kill：outcome 等于金样；缺 outcome ⇒ WireBad + 计数 1', () {
+    final sample = _sampleOf(golden, 'job.kill');
+    final reading = readJobKillOutcome(sample);
+    expect(reading, isA<WireOk<String>>());
+    expect((reading as WireOk<String>).value, sample['outcome']);
+
+    final bad = readJobKillOutcome({'accepted': true});
+    expect(bad, isA<WireBad<String>>());
+    expect(valueOrReport(bad, 'job.kill'), isNull);
+    expect(WireDiagnostics.badCount, 1);
+  });
+
+  test('job.follow / job.unfollow：应答手机不读，金样照样钉住线上形状', () {
+    // 两个都是"作用在服务端"的方法：follow 回 `{from}`、unfollow 回 `{stopped}`。
+    // 手机侧不造 decoder（没人读），但连接器把回执改了必须**在别处红**——这里就是那处。
+    expect(_sampleOf(golden, 'job.follow').containsKey('from'), isTrue);
+    expect(_sampleOf(golden, 'job.unfollow')['stopped'], isA<bool>());
+  });
+
+  test('file.list / file.read：信封里的本体解得出', () {
+    final listingSample = _sampleOf(golden, 'file.list');
+    final listingBody = (listingSample['listing']! as Map)
+        .cast<String, Object?>();
+    final listingReading = readFileListing(listingSample);
+    expect(listingReading, isA<WireOk<FileListing>>());
+    final listing = (listingReading as WireOk<FileListing>).value;
+    expect(listing.path, listingBody['path']);
+    expect(
+      listing.entries.map((e) => e.name).toList(),
+      (listingBody['entries']! as List)
+          .map((row) => (row! as Map)['name'])
+          .toList(),
+    );
+
+    final pageSample = _sampleOf(golden, 'file.read');
+    final pageBody = (pageSample['page']! as Map).cast<String, Object?>();
+    final pageReading = readFilePage(pageSample);
+    expect(pageReading, isA<WireOk<FilePage>>());
+    final page = (pageReading as WireOk<FilePage>).value;
+    expect(page.text, pageBody['text']);
+    expect(page.offset, pageBody['offset']);
+    expect(page.lines, pageBody['lines']);
+
+    // 信封缺一层 ⇒ WireBad + 计数 1。
+    final bad = readFilePage({'listing': <String, Object?>{}});
+    expect(bad, isA<WireBad<FilePage>>());
+    expect(valueOrReport(bad, 'file.read'), isNull);
+    expect(WireDiagnostics.badCount, 1);
+  });
+
+  test('refs.files / refs.sessions：两列候选各解出一条', () {
+    final filesSample = _sampleOf(golden, 'refs.files');
+    final files = (filesSample['files']! as List).cast<Object?>();
+    final filesReading = readRefsFiles(filesSample);
+    expect(filesReading, isA<WireOk<List<AtCandidate>>>());
+    expect(
+      (filesReading as WireOk<List<AtCandidate>>).value.length,
+      files.length,
+    );
+
+    final sessionsSample = _sampleOf(golden, 'refs.sessions');
+    final sessions = (sessionsSample['sessions']! as List).cast<Object?>();
+    final sessionsReading = readRefsSessions(sessionsSample);
+    expect(sessionsReading, isA<WireOk<List<AtCandidate>>>());
+    expect(
+      (sessionsReading as WireOk<List<AtCandidate>>).value.length,
+      sessions.length,
+    );
+
+    // 信封坏了才算错：`files` 不是数组 ⇒ WireBad + 计数 1。
+    final bad = readRefsFiles({'sessions': <Object?>[]});
+    expect(bad, isA<WireBad<List<AtCandidate>>>());
+    expect(valueOrReport(bad, 'refs.files'), isNull);
+    expect(WireDiagnostics.badCount, 1);
   });
 }
 
