@@ -287,6 +287,15 @@ export function fixtureHandlers(
       insertSessionBefore: async () => ['dsh-2', 'dsh-1'],
       insertBefore: async () => ['ws-1'],
     },
+    // 端点自报：一张确定性的端点表（顺序即偏好：direct 先于 relay）。
+    endpoints: {
+      describe: () => ({
+        endpoints: [
+          { kind: 'direct' as const, url: 'ws://192.168.2.10:8790/', label: 'WLAN' },
+          { kind: 'relay' as const, url: 'ws://127.0.0.1:8787/ws/device' },
+        ],
+      }),
+    },
     // 权限面：一份确定性的预设表 + 一个"切成功"的回执（`CommandRunView`）。
     permissions: {
       catalog: async () => ({

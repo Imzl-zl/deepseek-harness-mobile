@@ -38,6 +38,9 @@ class _Client extends FakeSyncClient {
     if (method == 'repo.info') {
       return <String, Object?>{
             'protocol': 1,
+            // `caps` 是连接器**无条件**写出的（`handlers.ts:1548`）：少了它整条应答
+            // 解不出来（`wire/rpc/repo.dart`），命令名单也就跟着丢。
+            'caps': <String, Object?>{},
             if (commands != null) 'commands': commands,
           }
           as T;

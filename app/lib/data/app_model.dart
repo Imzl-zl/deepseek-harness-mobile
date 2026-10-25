@@ -49,9 +49,11 @@ import '../model/turn_outline.dart';
 import '../model/usage_summary.dart';
 import '../model/workspace.dart';
 import '../model/workspace_files.dart';
+import '../wire/rpc/endpoint.dart' as wire;
 import '../wire/rpc/permission.dart' as wire;
 import '../wire/rpc/preset.dart' as wire;
 import '../wire/rpc/projections.dart' as wire;
+import '../wire/rpc/repo.dart' as wire;
 import '../wire/rpc/session.dart' as wire;
 import '../wire/rpc/settings.dart' as wire;
 import '../wire/rpc/workspace.dart' as wire;
@@ -1627,20 +1629,25 @@ class AppModel extends ChangeNotifier {
   /// 那时界面说"未读到"，而不是显示连接器自己的 `package.json` 版本冒充。
   Future<void> refreshRepoInfo() async {
     try {
-      final result = await client.call<Object?>('repo.info', const {});
-      final version = result is Map ? result['dshVersion'] : null;
-      _dshVersion = version is String && version.isNotEmpty ? version : null;
-      // 白名单与版本同一口读：都是"电脑侧说了算"的只读事实。没有这个键
-      // （老连接器）就清空 —— 菜单不出，而不是拿手机里的一份旧名单凑。
-      final commands = result is Map ? result['commands'] : null;
-      _slashCommands = parseSlashCommands(commands);
-      // `@` 候选的能力位（`caps.references`）：缺这个键（老连接器）就是 false。
-      final caps = result is Map ? result['caps'] : null;
-      _mentionsAvailable = caps is Map && caps['references'] == true;
-      // 工作区文件面（`caps.files`）：没有 workspaceFiles / typert ⇒ 文件页说清原因。
-      _filesAvailable = caps is Map && caps['files'] == true;
-      // 插件面同理（`caps.plugins`）：老连接器 / 没装 plugin-manager ⇒ 不发请求。
-      _pluginsAvailable = caps is Map && caps['plugins'] == true;
+      // 形状（`{protocol, caps, aliasVersion, methods, dshVersion?, commands?}`）在
+      // `wire/rpc/repo.dart`：手机只消费四个键（三个能力位 + commands + dshVersion），
+      // `protocol` / `aliasVersion` / `methods` 不声明（前者在帧头 `v` 里校验）。
+      final info = await wire.loadRepoInfo(client);
+      if (info == null) {
+        // 应答读不出来：能力位一律 false（界面退回"没有那个面"），并如实记下。
+        _dshVersion = null;
+        _slashCommands = const <SlashCommand>[];
+        _mentionsAvailable = false;
+        _filesAvailable = false;
+        _pluginsAvailable = false;
+        if (!_disposed) notifyListeners();
+        return;
+      }
+      _dshVersion = info.dshVersion;
+      _slashCommands = info.slashCommands;
+      _mentionsAvailable = info.mentionsAvailable;
+      _filesAvailable = info.filesAvailable;
+      _pluginsAvailable = info.pluginsAvailable;
       if (!_disposed) notifyListeners();
     } catch (error) {
       _dshVersion = null;
@@ -2059,8 +2066,8 @@ class AppModel extends ChangeNotifier {
     if (_discovering) return;
     _discovering = true;
     try {
-      final result = await client.call<Object?>('endpoint.describe', const {});
-      final discovered = parseEndpointList(result);
+      // 形状（`{endpoints: [{kind, url, label?}]}`）在 `wire/rpc/endpoint.dart`。
+      final discovered = await wire.loadEndpoints(client);
       if (discovered.isEmpty) return;
       await mergeDiscoveredEndpoints(discovered);
     } on ProtocolException catch (error) {

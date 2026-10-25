@@ -849,6 +849,9 @@ Object? _sideChannels(String method) => switch (method) {
     'pinnedSessionIds': <String>[],
   },
   'settings.describe' => {'sections': <Object?>[]},
+  // 能力面：`caps` 是连接器无条件写出的键（`handlers.ts:1548`）。
+  'repo.info' => {'protocol': 1, 'caps': <String, Object?>{}},
+  'endpoint.describe' => {'endpoints': <Object?>[]},
   _ => null,
 };
 

@@ -104,7 +104,14 @@ class _Client extends FakeSyncClient {
         return _sections as T;
       case 'repo.info':
         // 电脑侧 DSH 版本（`repo.info.dshVersion`）：宿主运行时真值。
-        return {'protocol': 1, 'dshVersion': '0.2.1-rc.2'} as T;
+        // **`caps` 必须给**：它是连接器无条件写出的键，少了它整条应答解不出来
+        // （`wire/rpc/repo.dart`），版本号也就跟着丢。
+        return {
+              'protocol': 1,
+              'caps': <String, Object?>{},
+              'dshVersion': '0.2.1-rc.2',
+            }
+            as T;
       case 'settings.update':
         if (conflictOnUpdate) {
           throw const ProtocolException(ErrorCode.settingsConflict, '设置已被改动');

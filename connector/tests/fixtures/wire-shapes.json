@@ -513,5 +513,40 @@
         ]
       }
     }
+  ],
+  "repo.info": [
+    {
+      "protocol": 1,
+      "caps": {
+        "sessions": true,
+        "storage": true,
+        "approval": false,
+        "questions": false,
+        "jobs": false,
+        "subagents": false,
+        "references": false,
+        "plugins": false,
+        "files": false,
+        "settings": false,
+        "credentials": true,
+        "direct": false
+      },
+      "aliasVersion": 7
+    }
+  ],
+  "endpoint.describe": [
+    {
+      "endpoints": [
+        {
+          "kind": "direct",
+          "url": "ws://192.168.2.10:8790/",
+          "label": "WLAN"
+        },
+        {
+          "kind": "relay",
+          "url": "ws://127.0.0.1:8787/ws/device"
+        }
+      ]
+    }
   ]
 }

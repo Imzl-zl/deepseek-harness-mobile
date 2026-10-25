@@ -32,12 +32,14 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:dsh_mobile/core/endpoint.dart' show parseEndpointList;
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/model/command.dart';
 import 'package:dsh_mobile/model/model_catalog.dart';
 import 'package:dsh_mobile/model/permission.dart';
 import 'package:dsh_mobile/wire/rpc/permission.dart';
 import 'package:dsh_mobile/wire/rpc/projections.dart';
+import 'package:dsh_mobile/wire/rpc/repo.dart';
 import 'package:dsh_mobile/wire/rpc/session.dart';
 import 'package:dsh_mobile/wire/rpc/settings.dart';
 import 'package:dsh_mobile/wire/rpc/workspace.dart';
@@ -617,6 +619,42 @@ void main() {
     expect(bad, isA<WireBad<SettingSectionWire?>>());
     expect(valueOrReport<SettingSectionWire?>(bad, 'settings.update'), isNull);
     expect(WireDiagnostics.badCount, 1);
+  });
+
+  // ---- B3：能力面（repo.info）与端点自报（endpoint.describe）----
+
+  test('repo.info：三个能力位等于金样里的 caps，methods 只数条数', () {
+    final sample = _sampleOf(golden, 'repo.info');
+    final caps = (sample['caps']! as Map).cast<String, Object?>();
+    final reading = readRepoInfo(sample);
+    expect(reading, isA<WireOk<RepoInfoWire>>());
+    final info = (reading as WireOk<RepoInfoWire>).value;
+    expect(info.mentionsAvailable, caps['references'] == true);
+    expect(info.filesAvailable, caps['files'] == true);
+    expect(info.pluginsAvailable, caps['plugins'] == true);
+    // 金样采样时把 `methods` 归一掉了（它会随任何方法增减而变），所以这里是 0 条。
+    expect(info.methodCount, 0);
+    expect(info.dshVersion, sample['dshVersion']);
+    expect(WireDiagnostics.badCount, 0);
+  });
+
+  test('repo.info 缺 caps ⇒ WireBad + 计数 1（它由连接器无条件写出）', () {
+    final reading = readRepoInfo({'protocol': 1, 'aliasVersion': 7});
+    expect(reading, isA<WireBad<RepoInfoWire>>());
+    expect(valueOrReport(reading, 'repo.info'), isNull);
+    expect(WireDiagnostics.badCount, 1);
+  });
+
+  test('endpoint.describe：端点表逐条等于金样（顺序即偏好，原样保留）', () {
+    final sample = _sampleOf(golden, 'endpoint.describe');
+    final rows = (sample['endpoints']! as List).cast<Object?>();
+    final endpoints = parseEndpointList(sample);
+    expect(endpoints.length, rows.length);
+    for (var index = 0; index < rows.length; index += 1) {
+      final row = (rows[index]! as Map).cast<String, Object?>();
+      expect(endpoints[index].url, row['url'], reason: '第 ${index + 1} 条的地址');
+      expect(endpoints[index].kind.name, row['kind']);
+    }
   });
 }
 

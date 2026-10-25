@@ -53,6 +53,13 @@ interface WireSample {
   readonly params?: Record<string, unknown>
   /** 写操作要求顶层 `requestId`（`handlers.ts:581-584`）。 */
   readonly context?: { readonly requestId: string }
+  /**
+   * **采集前归一**（只用于"会随无关变化而变"的字段）。
+   *
+   * 今天只有一处：`repo.info.methods` —— 它是 handler 表的键，加任何一个方法都会变。
+   * 归一必须**写在采样处**并留理由，不能在比较时放过（那是恒真的另一种写法）。
+   */
+  readonly normalize?: (value: unknown) => unknown
 }
 
 const SAMPLED_METHODS = [
@@ -77,6 +84,8 @@ const SAMPLED_METHODS = [
   'settings.describe',
   'settings.update',
   'agentPresets.list',
+  'repo.info',
+  'endpoint.describe',
 ] as const
 
 type SampledMethod = (typeof SAMPLED_METHODS)[number]
@@ -135,6 +144,19 @@ const SAMPLES: Record<SampledMethod, readonly WireSample[]> = {
     { params: { ns: 'general', path: ['defaultMode'], value: 'read-only' } },
   ],
   'agentPresets.list': [{}],
+  // `repo.info` 的 `methods` 会随**任何**方法增减而变（`Object.keys(handlers).sort()`），
+  // 逐字收进金样会为"与形状无关的原因"常年红 —— 采样时**归一掉**这个键
+  // （`normalize`），另有一条连接器用例单独钉"它是排好序的字符串数组、含 repo.info 自己"。
+  'repo.info': [
+    {
+      normalize: (value) => {
+        const reply = value as Record<string, unknown>
+        const { methods: _methods, ...rest } = reply
+        return rest
+      },
+    },
+  ],
+  'endpoint.describe': [{}],
 }
 
 /** **线上那一层**：丢掉 `undefined`、规整成 JSON 标量，再比较。 */
@@ -169,7 +191,8 @@ async function collect(): Promise<Record<string, unknown[]>> {
         sample.params ?? {},
         (sample.context ?? undefined) as never,
       )
-      collected.push(onWire(result))
+      const wire = onWire(result)
+      collected.push(sample.normalize === undefined ? wire : onWire(sample.normalize(wire)))
     }
     out[method] = collected
   }
@@ -216,4 +239,19 @@ test('金样是确定性的：采两遍必须一模一样', async () => {
   // 一次性快照最阴的失败形态是"里面有时间戳/随机 id"，那样金样每月都会红一次、
   // 而红的原因与本轮改动无关。这条用例把它按在同一处。
   assert.deepEqual(await collect(), await collect(), '采样不确定：金样里混进了时间戳或随机值')
+})
+
+test('repo.info.methods 的约定单独钉住（它被金样归一掉了，不能因此没人看着）', async () => {
+  // 为什么单独钉：这个键会随**任何**方法增减而变，收进金样会常年红；
+  // 但它仍然必须"是排好序的字符串数组、并且含 repo.info 自己"（它最后挂，看得见全部兄弟）。
+  const handlers = fixtureHandlers()
+  const info = handlers['repo.info']
+  assert.ok(info !== undefined, 'repo.info 没挂上')
+  const reply = (await info({}, undefined as never)) as { methods: unknown }
+  assert.equal(Array.isArray(reply.methods), true, 'methods 必须是数组')
+  const methods = reply.methods as string[]
+  assert.equal(methods.every((name) => typeof name === 'string' && name !== ''), true)
+  assert.deepEqual(methods, [...methods].sort(), 'methods 必须排好序（手机侧靠这个比"同一张表"）')
+  assert.equal(methods.includes('repo.info'), true, 'methods 里必须有 repo.info 自己')
+  assert.equal(methods.includes('session.list'), true)
 })
