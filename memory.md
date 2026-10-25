@@ -40,10 +40,12 @@
 >   `implemented/2026-10-25-event-wire-single-decoder.md`。
 >   门禁：flutter **1235 → 1241**、boundary **391 → 509**（22 → 25 条自检、110 → 112 文件）。
 > - **下一步（用户："转格式这种一定要设计好，不是枚举猜，都看看"）**：RPC 应答面还没搬 ——
->   `app_model.dart` / `model/*.dart` 里还有 ~40 处 `result is Map ? result['x'] : null`。
->   层设计、七个批次的顺序、取证办法（桌面跑一次抓真样本，0 个模型请求）见
->   `proposed/2026-10-25-wire-format-layer.md`。**内核已就位**（`wire/reading.dart`），
->   下一批搬 `session.list` / `session.page`。
+>   `app_model.dart`（41 个读取点 / 104 个字段）+ `model/*.dart`（36 个读取点，198 处字面量下标）
+>   仍是 `result is Map ? result['x'] : null`。**方案已审（2026-10-25，0 代码改动）**：
+>   `proposed/2026-10-25-wire-design-review.md` —— 继续走手写 decoder，但漂移判据换成
+>   **连接器测试产出的金样**（真样本快照发现不了漂移），门禁名单逐批增长即进度表。
+>   旧草案（原 `proposed/2026-10-25-wire-format-layer.md`）已标"被取代"移入 `archived/`。
+>   **内核已就位**（`wire/reading.dart`），下一批搬 `session.list`（第 1 批，形状与要删的行号见新篇）。
 > - **新发现**：`/` 的说明列**生产路径恒空** —— `repo.info` 只在握手后取一次，而连接器
 >   `describe()` 要活 agent。见 `implemented/2026-10-25-command-descriptions-from-host.md` 末两条。
 > - **仍没验**：`@` 面板的骨架 / 失败态、图片上限四条（要先调小宿主的

@@ -105,7 +105,8 @@
 
 行为零变化（同批跑完 1241 / 509 / analyze 0 / format 0）。RPC 面的搬运顺序、
 取证办法（桌面跑一次抓真样本）与门禁延伸写在
-`proposed/2026-10-25-wire-format-layer.md`。
+`archived/2026-10-25-wire-format-layer.md`（**已被 `proposed/2026-10-25-wire-design-review.md` 取代**：
+那份草案的取证机制不成立，新篇改成"连接器测试产出的金样"）。
 
 ## 判据
 

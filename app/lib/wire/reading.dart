@@ -23,7 +23,7 @@
 /// `items.dart` 至今零 Flutter 依赖（`flutter test` 之外也能跑）。打印由**装配点**装进来
 /// （`main.dart` 在 `kDebugMode` 下接 `debugPrint`），这一层不决定往哪儿写。
 ///
-/// Note: 设计取舍与七个批次的搬运顺序见 `.agents/notes/proposed/2026-10-25-wire-format-layer.md`。
+/// Note: 设计取舍与七个批次的搬运顺序见 `.agents/notes/proposed/2026-10-25-wire-design-review.md`。
 library;
 
 // ---------------------------------------------------------------------------

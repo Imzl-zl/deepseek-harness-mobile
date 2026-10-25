@@ -1,7 +1,13 @@
 # 线上格式收成一层：`app/lib/wire/`
 
+> **被 `archived/2026-10-25-wire-design-review.md` 取代（2026-10-25）**：结论（走手写 decoder）保留且已生效，
+> 但本稿的**漂移判据不成立**（真样本是一次性快照，连接器改了它不会变 ⇒ 用例永远绿）、
+> 第 3 批的前提陈述有事实错误（`session.projections` 的信封已在连接器侧拆掉）、
+> 且"每个字段必须有出处"这条对工具参数不成立。新篇改为金样 + 门禁即进度表。
+> 本稿文末「已落地」那一项的事实仍以 `implemented/2026-10-25-event-wire-single-decoder.md` 为准。
+
 - 日期：2026-10-25
-- 状态：待评审（第 1 步已落地：内核搬家，见文末「已落地 / 待搬」）
+- 状态：被取代（第 1 步已落地：内核搬家，见文末「已落地 / 待搬」）
 - 相关：`implemented/2026-10-25-event-wire-single-decoder.md`（事件面已经收口）、
   `implemented/2026-10-24-plan-review-card-from-request.md`（事故现场）
 
