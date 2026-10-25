@@ -76,11 +76,20 @@ export const MODEL_CATALOG_VALUE = {
 /**
  * 一个子会话的**完整投影包**（`dsh-4` 的行信封与 `session.projections` 的应答共用）。
  *
- * 四个键都是 App 真消费的（`app/lib/wire/rpc/session.dart` 的头注列了出处）。
- * 形状逐字照线上：
+ * 这里刻意收**App 真消费的全部 14 个键**（`app/lib/wire/rpc/projections.dart` 的字段表）：
+ * 少一个键，那一面就只在手写假行上测过 —— 而"手写假行"正是三次事故的形态。
+ * 值取自 2026-10-25 那棵隔离实例的真实投影（尺寸/上限/统计那几个数是真的）。
+ *
+ * 形状出处：
+ * - `tokenUsage`：四个必填整数桶（`app/lib/model/session_stats.dart:85-100`）
+ * - `sessionStats`：`session-stats/src/projection.ts:72-81`
+ * - `contextPressure` / `contextBreakdown` / `turnOutline`：DSH 各自的 wire view
  * - `modelSelection`：`{lastUsed, next}`（`model-selection-projection.ts:65`）
  * - `subagentTiming`：`{settledMs, active?: {since, through}}`（`app/lib/model/subagent.dart:101-125`）
- * - `tokenUsage`：四个必填整数桶（`app/lib/model/session_stats.dart:85-100`）
+ * - `permissions`：`{currentValue}`（`permission-presets/src/index.ts:243`）
+ * - `subagentCatalog`：`[{id, createdAt, mode, label?}]`（`app/lib/core/job.dart:215-235`）
+ * - `trajectory`：本仓自带（`app/lib/model/trajectory.dart:185-205`）
+ * - `imageLimits`：`app/lib/model/image_limits.dart` 的 `fromWire`
  */
 export const FULL_PROJECTION_VALUES = {
   title: '把 token 账算对',
@@ -95,6 +104,65 @@ export const FULL_PROJECTION_VALUES = {
     cacheReadTokens: 4000,
     cacheWriteTokens: 600,
   },
+  sessionStats: {
+    turns: 4,
+    steps: 13,
+    llmMs: 413838,
+    toolMs: 544207,
+    ttftMs: 193103,
+    ttftSteps: 12,
+    decodeMs: 220735,
+    decodeTokens: 10948,
+  },
+  contextPressure: { pressureTokens: 53715, projectedTokens: 53873, contextWindow: 1000000 },
+  contextBreakdown: { systemTokens: 1446, toolsTokens: 7205, messageTokens: 27421 },
+  turnOutline: [
+    { turn: 1, seq: 4, prompt: 'hi', response: '你好！' },
+    { turn: 2, seq: 27, prompt: 'Give', response: '' },
+  ],
+  permissions: { currentValue: 'workspace-write' },
+  agentPreset: 'standard',
+  subagentCatalog: [
+    { id: 'dsh-2', createdAt: 1000, mode: 'continuable', label: '调研实现' },
+  ],
+  trajectory: {
+    turns: [
+      {
+        turn: 1,
+        startSeq: 4,
+        startTime: 1000,
+        endTime: 2000,
+        durationMs: 1000,
+        outcome: 'completed',
+        tokens: 12868,
+        stepsTruncated: false,
+        steps: [
+          {
+            kind: 'assistant',
+            seq: 6,
+            startTime: 1000,
+            endTime: 2000,
+            offsetMs: 0,
+            durationMs: 1000,
+            isError: false,
+            label: '',
+          },
+        ],
+      },
+    ],
+    truncated: false,
+    droppedTurns: 0,
+    droppedSteps: 0,
+  },
+  imageLimits: {
+    maxImageBytes: 20971520,
+    maxImagesPerMessage: 20,
+    maxMessageImageBytes: 209715200,
+    maxImagePixels: 64000000,
+    maxImageDimension: 8192,
+    mediaTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
+  },
+  inbox: { 'next-turn': [], 'next-step': [] },
 } as const
 
 /** 普通行的投影提示：**没有标题**（会话开过、但还没生成标题 —— 未命名是正常态，

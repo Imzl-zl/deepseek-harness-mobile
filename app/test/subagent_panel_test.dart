@@ -387,7 +387,7 @@ void main() {
         reason: '父会话的目录不该被孙级覆盖',
       );
       expect(app.tokenUsage!.grandTotal, 41700, reason: '统计条读的是当前会话');
-      expect(app.projections!['title'], '父会话');
+      expect(app.projections!.title, '父会话');
       app.dispose();
     });
 
@@ -402,7 +402,7 @@ void main() {
       await app.start();
       await app.openSession('sid_A');
       await app.refreshSubagentCatalog('sid_A');
-      expect(app.projections!['title'], '重新读到的标题');
+      expect(app.projections!.title, '重新读到的标题');
       app.dispose();
     });
   });

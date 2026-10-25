@@ -21,6 +21,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import '../wire/rpc/session_page.dart';
 import 'call_registry.dart';
 import 'connection.dart';
 import 'connection_resources.dart';
@@ -953,12 +954,21 @@ class _SyncClient implements SyncClient, SyncClientProbe {
         'maxMessages': maxMessages,
         'turnWindow': {'minMessages': minMessages, 'minTurns': minTurns},
       });
+      // 形状（`{items, hasMore}` 与两条 item 的判别联合）在
+      // `wire/rpc/session_page.dart`；这里只剩"记住还有没有更早的"与补取循环。
+      final decoded = valueOrReport(readSessionPage(reply), 'session.page');
+      if (decoded == null) {
+        // 整页读不出来：**不当成"没有更多"**，保留上一次的结论（与失败分支同一条）。
+        return SessionPage(
+          events: const [],
+          hasMore: _historyMore[sid] ?? true,
+        );
+      }
       // **每一页都带 `hasMore`**：翻完这一页，连接层记住还有没有更早的。
-      final more = boolFieldOf(reply, 'hasMore') ?? false;
-      _historyMore[sid] = more;
+      _historyMore[sid] = decoded.hasMore;
       return SessionPage(
-        events: await _eventsOfPage(reply, sid),
-        hasMore: more,
+        events: await _eventsOfPage(decoded, sid),
+        hasMore: decoded.hasMore,
       );
     } on ProtocolException catch (error) {
       // **失败不当成"没有更多"**（契约 §3.1：`session/window-missed` 的客户端
@@ -974,41 +984,28 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     }
   }
 
-  /// 一页的 `items` → 事件表（**大条目要补取，不许跳过**）。
+  /// 一页的 items → 事件表（**大条目要补取，不许跳过**）。
   ///
-  /// 形状（`connector/src/session-page.ts:102-111`）：
-  /// `items: [{kind:'record', record:{type:'event', event}} | {kind:'refetch', seq, bytes}]`。
-  ///
-  /// `refetch` 项是"这条太大，改用 `session.refetch` 单独取"的标记
-  /// （同文件 `:103-110`）。**跳过它等于在会话里留一个静默的洞** ——
-  /// 2026-10-22 之前就是这么做的（只留 `record`）：>1 MiB 的条目
-  /// （图片内联在 `assistant/message` 里）在手机上**一条都看不到**，
-  /// 而界面不报错、也不缺页。取舍见
+  /// 形状与判别联合在 `wire/rpc/session_page.dart`（`{kind:'record'|'refetch'}`）；
+  /// 这里只做**那一件必须 await 的事**：`refetch` 标记要按 `seq` 单独取回来。
+  /// **跳过它等于在会话里留一个静默的洞** —— 2026-10-22 之前就是这么做的
+  /// （只留 `record`）：>1 MiB 的条目（图片内联在 `assistant/message` 里）
+  /// 在手机上**一条都看不到**，而界面不报错、也不缺页。取舍见
   /// `.agents/notes/implemented/2026-10-22-refetch-markers-are-fetched.md`。
   ///
   /// 补取失败**不吞**：异常往上抛，由 [page] 折成 `failure`，上层整页不落。
-  Future<List<SessionEvent>> _eventsOfPage(Object? reply, String sid) async {
-    final items = reply is Map ? reply['items'] : null;
-    if (items is! List) return const [];
+  Future<List<SessionEvent>> _eventsOfPage(
+    SessionPageWire page,
+    String sid,
+  ) async {
     final out = <SessionEvent>[];
-    for (final item in items) {
-      if (item is! Map) continue;
-      final kind = item['kind'];
-      if (kind == 'record') {
-        final event = _eventOfRecord(item['record']);
-        if (event != null) out.add(event);
-        continue;
+    for (final item in page.items) {
+      switch (item) {
+        case SessionPageRecordWire(:final event):
+          out.add(event);
+        case SessionPageRefetchWire(:final seq):
+          out.add(await refetch(sid: sid, seq: seq));
       }
-      if (kind != 'refetch') continue;
-      final seq = item['seq'];
-      if (seq is! int) {
-        // 标记没有 seq 就取不回来 —— 这是**对端的形状错**，不是"没有这一条"。
-        throw const ProtocolException(
-          ErrorCode.badFrame,
-          'session.page 的 refetch 项没有 seq',
-        );
-      }
-      out.add(await refetch(sid: sid, seq: seq));
     }
     // 补取的条目是插进来的，顺序要按 seq 归位（`SessionPage.events` 承诺升序）。
     out.sort((a, b) => a.seq.compareTo(b.seq));
@@ -1021,7 +1018,8 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       'sid': sid,
       'seq': seq,
     });
-    final event = _eventOfRecord(reply is Map ? reply['record'] : null);
+    // 形状（`{record:{type,seq,event}}`）在 `wire/rpc/session_page.dart`。
+    final event = valueOrReport(readRefetchedEvent(reply), 'session.refetch');
     if (event == null) {
       // 回了成功但没有可用事件：如实报缺陷，**不返回一条空事件**。
       throw const ProtocolException(
@@ -1030,25 +1028,6 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       );
     }
     return event;
-  }
-
-  /// `record` → 事件（`{type:'event', event:{type, seq, time, data}}`）。
-  ///
-  /// 认不出就 `null`（由调用方决定跳过还是报错）：形状知识只有这一处。
-  SessionEvent? _eventOfRecord(Object? record) {
-    if (record is! Map) return null;
-    final event = record['event'];
-    if (event is! Map) return null;
-    final type = event['type'];
-    final seq = event['seq'];
-    if (type is! String || seq is! int) return null;
-    return SessionEvent(
-      itemId: itemIdOf(EventLike(type: type, seq: seq, data: event['data'])),
-      type: type,
-      seq: seq,
-      time: event['time'] is int ? event['time'] as int : seq,
-      data: event['data'],
-    );
   }
 
   @override

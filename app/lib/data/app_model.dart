@@ -49,6 +49,7 @@ import '../model/turn_outline.dart';
 import '../model/usage_summary.dart';
 import '../model/workspace.dart';
 import '../model/workspace_files.dart';
+import '../wire/rpc/projections.dart' as wire;
 import '../wire/rpc/session.dart' as wire;
 import 'preview_data.dart';
 import 'projection.dart';
@@ -462,12 +463,13 @@ class AppModel extends ChangeNotifier {
   // 会话投影（`session.projections`，契约 §5.7）—— 一个方法打开全部只读面
   // ---------------------------------------------------------------------------
 
-  /// 最近一次读到的投影值包（`null` = 还没读过 / 读不到）。
+  /// 最近一次读到的投影包（`null` = 还没读过 / 读不到）。
   ///
-  /// **原样存，不挑字段**：投影的 `viewSchema` 是 zod `.strict()`，
-  /// 连接器那侧"挑着发"就要预先知道全部键 —— 而那正是会漂移的清单。
-  /// 各面按需从这里取，认不出就不给。
-  Map<String, Object?>? _projections;
+  /// **类型是解码结果，不是裸 map**：14 个键的键名与类型只在
+  /// `wire/rpc/projections.dart` 里出现一次（`SessionProjections`），
+  /// 各面拿字段而不是 `values['x']`。连接器原样透传整包（不挑键）这一点没变，
+  /// 挑键发生在解码层（那一层正好是"知道线上形状"的那一层）。
+  wire.SessionProjections? _projections;
 
   /// 这一包是**哪个会话**的。
   ///
@@ -478,7 +480,7 @@ class AppModel extends ChangeNotifier {
   String? _projectionsSid;
 
   /// 当前会话的投影包；**不匹配就当作没有**（见 [_projectionsSid]）。
-  Map<String, Object?>? get projections =>
+  wire.SessionProjections? get projections =>
       _projectionsSid == _currentSid ? _projections : null;
 
   /// 读一次投影。**点开会话时调**（与 `refreshJobs` 同一步）。
@@ -546,7 +548,7 @@ class AppModel extends ChangeNotifier {
   /// Web 的判据在同一处（`SubagentHeaderLineage.tsx:465-467` 把 `idle` 当
   /// `loading`；`:212` 只在 `loading` **且 entries 空**时显示"正在加载"）。
   /// 置 `loading` 时**保留上一次的 entries** —— 刷新不闪空（同 Web `:244-245`）。
-  Future<Map<String, Object?>?> _readProjections(
+  Future<wire.SessionProjections?> _readProjections(
     String sid, {
     required String what,
   }) async {
@@ -556,13 +558,12 @@ class AppModel extends ChangeNotifier {
     );
     if (!_disposed) notifyListeners();
     try {
-      final result = await client.call<Object?>('session.projections', {
-        'sid': sid,
-      });
+      final values = await wire.loadSessionProjections(client, sid: sid);
       if (_disposed) return null;
-      if (result is! Map) {
+      if (values == null) {
         // **形状不对也是失败**，不是"没有子智能体" —— 静默当空会让
         // "这台电脑没装 subagent 插件"与"我们没看懂回复"分不开。
+        // （形状错已经在 `wire/rpc/projections.dart` 计过数了，这里只落错误态。）
         _subagentCatalogs[sid] = const SubagentCatalog.failed();
         _recordError(
           what,
@@ -570,16 +571,7 @@ class AppModel extends ChangeNotifier {
         );
         return null;
       }
-      // JSON 解出来是 `Map<dynamic, dynamic>`，逐字段转型成我们要的形状 ——
-      // **不整体 cast**：那会把"键不是字符串"这种畸形数据一起带进来，
-      // 而后者的症状是取字段时抛 `noSuchMethod`，很难定位。
-      final values = <String, Object?>{
-        for (final entry in result.entries)
-          if (entry.key is String) entry.key as String: entry.value,
-      };
-      _subagentCatalogs[sid] = SubagentCatalog.ready(
-        parseSubagentCatalog(values),
-      );
+      _subagentCatalogs[sid] = SubagentCatalog.ready(values.subagentCatalog);
       return values;
     } catch (error) {
       // **兜住所有异常，不只 `ProtocolException`**（与 `refreshSessions` 同一条纪律）：
@@ -598,7 +590,7 @@ class AppModel extends ChangeNotifier {
   /// 权限档 / 队列的来源）。别名会话（子智能体）的投影覆盖它会让统计条
   /// 显示别人的数字 —— 2026-10-21 之前正是无条件覆盖的
   /// （笔记 §2.1 的既有缺陷）。
-  void _applyProjectionValues(String sid, Map<String, Object?> values) {
+  void _applyProjectionValues(String sid, wire.SessionProjections values) {
     if (sid == _currentSid) {
       _projections = values;
       _projectionsSid = sid;
@@ -606,12 +598,11 @@ class AppModel extends ChangeNotifier {
       // next-turn / next-step 列表正是那个历史的当前值。
       _seedInboxTracker(sid);
     }
-    // **标题也在这个包里**（`title` 投影，DSH `session-title/src/index.ts:269-281`
-    // 的 wire view 就是 `string | null`）。它是比 `session.list` 的投影提示
+    // **标题也在这个包里**（`title` 投影）。它是比 `session.list` 的投影提示
     // **更新**的那个来源：会话刚生成标题时列表提示还是旧的。
     // 只在非空时落——空值表示"还没有标题"，不该把列表提示擦掉。
-    final title = values['title'];
-    if (title is String && title.isNotEmpty) _applySessionTitle(sid, title);
+    final title = values.title;
+    if (title != null && title.isNotEmpty) _applySessionTitle(sid, title);
     if (!_disposed) notifyListeners();
   }
 
@@ -619,7 +610,7 @@ class AppModel extends ChangeNotifier {
 
   /// token 用量。**认不出就是 null**，不猜 —— 猜一个就是把
   /// "看起来连着"当成"连着"。
-  TokenUsage? get tokenUsage => parseTokenUsage(projections?['tokenUsage']);
+  TokenUsage? get tokenUsage => projections?.tokenUsage;
 
   /// 会话统计（`sessionStats` 投影）。
   ///
@@ -628,20 +619,7 @@ class AppModel extends ChangeNotifier {
   /// `decodeMs` / `decodeTokens` 是输出速率的唯一来源，缺了它
   /// 手机就算不出 Web 上那个 `75 tok/s`；`ttftMs` / `ttftSteps`
   /// 是统计 sheet 里 TTFT 那一行的来源。
-  SessionStats? get sessionStats {
-    final raw = projections?['sessionStats'];
-    if (raw is! Map) return null;
-    return SessionStats(
-      turns: _intOf(raw['turns']),
-      steps: _intOf(raw['steps']),
-      llmMs: _intOf(raw['llmMs']),
-      toolMs: _intOf(raw['toolMs']),
-      ttftMs: _intOf(raw['ttftMs']),
-      ttftSteps: _intOf(raw['ttftSteps']),
-      decodeMs: _intOf(raw['decodeMs']),
-      decodeTokens: _intOf(raw['decodeTokens']),
-    );
-  }
+  SessionStats? get sessionStats => projections?.sessionStats;
 
   /// 轮次大纲（`turnOutline` 投影，wire view 是 `[{turn, seq, prompt, response}]`）。
   ///
@@ -651,28 +629,8 @@ class AppModel extends ChangeNotifier {
   ///
   /// 拿不到（没这个投影 / 形状不对）就是空表 —— 轨迹页显示空态，
   /// 不造一份假的（2026-10-15 删掉 `_sampleRows` 的理由）。
-  List<TurnOutlineEntry> get turnOutline {
-    final raw = projections?['turnOutline'];
-    if (raw is! List) return const [];
-    final out = <TurnOutlineEntry>[];
-    for (final entry in raw) {
-      if (entry is! Map) continue;
-      final turn = entry['turn'];
-      final seq = entry['seq'];
-      if (turn is! int || seq is! int) continue;
-      out.add(
-        TurnOutlineEntry(
-          turn: turn,
-          seq: seq,
-          prompt: entry['prompt'] is String ? entry['prompt'] as String : '',
-          response: entry['response'] is String
-              ? entry['response'] as String
-              : '',
-        ),
-      );
-    }
-    return out;
-  }
+  List<TurnOutlineEntry> get turnOutline =>
+      projections?.turnOutline ?? const [];
 
   /// 轨迹时间轴（`trajectory` 投影）。
   ///
@@ -684,20 +642,17 @@ class AppModel extends ChangeNotifier {
   /// 返回 `null` = **这台电脑没给时间轴**（键缺席 / 形状不对）；空视图 =
   /// 给了但还没有轮。界面上这是两句不同的话。
   ///
-  /// ## 为什么按源包缓存
-  ///
-  /// 一次解析要建几百个对象，而 `_projections` 每次重读都是**新的一包**
-  /// （`_applyProjectionValues` 直接换引用）。缓存键就是那一包的引用：
-  /// 同一包解析一次，换包才重解析 —— 没有这一层，滚动时每一帧都重建。
+  /// 解析已在 `wire/rpc/projections.dart` 做过（随那一包一起解），
+  /// **按包缓存为了"换包才重算"**：`identical` 判断的是"这一包换没换"。
   TrajectoryView? get trajectory {
     final source = projections;
     if (identical(source, _trajectorySource)) return _trajectory;
     _trajectorySource = source;
-    _trajectory = parseTrajectory(source?['trajectory']);
+    _trajectory = source?.trajectory;
     return _trajectory;
   }
 
-  Map<String, Object?>? _trajectorySource;
+  wire.SessionProjections? _trajectorySource;
   TrajectoryView? _trajectory;
 
   /// 某一轮的时间轴（对话流的过程摘要读它取用时）。
@@ -709,36 +664,13 @@ class AppModel extends ChangeNotifier {
   /// **启发式估算**（DSH 的文件头原话 "Heuristic composition"）——
   /// 界面照 Web 标 `~`。三项全 0 时当没有（那与"没有这个投影"在界面上
   /// 同一表现：上下文 sheet 只画百分比条，不画分段图例）。
-  ContextBreakdown? get contextBreakdown {
-    final raw = projections?['contextBreakdown'];
-    if (raw is! Map) return null;
-    final breakdown = ContextBreakdown(
-      systemTokens: _intOf(raw['systemTokens']),
-      toolsTokens: _intOf(raw['toolsTokens']),
-      messageTokens: _intOf(raw['messageTokens']),
-    );
-    return breakdown.total == 0 ? null : breakdown;
-  }
+  ContextBreakdown? get contextBreakdown => projections?.contextBreakdown;
 
   /// 上下文占用压力（`contextPressure` 投影）。三个字段都没有就是 `null`。
   ///
   /// `contextWindow` 是**分母**：没有它"占了多少"无解，而 Web 的
   /// `ContextMeter` 同样在只有分子时不渲染。
-  ContextPressure? get contextPressure {
-    final raw = projections?['contextPressure'];
-    if (raw is! Map) return null;
-    final pressure = raw['pressureTokens'];
-    final projected = raw['projectedTokens'];
-    final window = raw['contextWindow'];
-    if (pressure is! num && projected is! num && window is! num) return null;
-    return ContextPressure(
-      pressureTokens: pressure is num ? pressure.toInt() : null,
-      projectedTokens: projected is num ? projected.toInt() : null,
-      contextWindow: window is num ? window.toInt() : null,
-    );
-  }
-
-  static int _intOf(Object? value) => value is num ? value.toInt() : 0;
+  ContextPressure? get contextPressure => projections?.contextPressure;
 
   // ---- 权限档（`permission.catalog` 目录 + `permissions` 投影的当前值）----
 
@@ -760,15 +692,14 @@ class AppModel extends ChangeNotifier {
   ///
   /// 不另判 `_currentSid == null`：`projections` getter 判的就是**这一包属于谁**，
   /// 没选中会话时它必然给 null（`_projections` 与 `_projectionsSid` 同批写）。
-  String? get permissionValue => parsePermissionValue(projections);
+  String? get permissionValue => projections?.permissionValue;
 
   /// 图片附件的**宿主上限**（`imageLimits` 投影）。
   ///
   /// `null` = 这一包没有这个键（老连接器没注册投影 / 还没读到）⇒
   /// **不前置拦**，靠 DSH 自己的拒绝码（`IMAGES_TOO_LARGE` / `TOO_MANY_IMAGES`）。
   /// 由来与"为什么手机不写死这些数"见 `model/image_limits.dart` 的文件头。
-  DshImageLimits? get imageLimits =>
-      DshImageLimits.fromWire(projections?['imageLimits']);
+  DshImageLimits? get imageLimits => projections?.imageLimits;
 
   /// 存一份预设目录（连接器 `permission.catalog` 的应答）。
   void setPermissionCatalog(PermissionCatalog? catalog) {
@@ -923,7 +854,7 @@ class AppModel extends ChangeNotifier {
     // "这一包属于谁"（`_projectionsSid == _currentSid`）。少了这一行，问别的会话
     // 会拿到当前会话的队列（`queue_dock_test.dart` 的"队列按 sid 取"盯着它）。
     if (_currentSid != sid) return const [];
-    return parseQueueItems(projections?['inbox']);
+    return parseQueueItems(projections?.inbox);
   }
 
   /// 变异一个排队项（编辑 / 删除 / 插话）。
@@ -983,7 +914,7 @@ class AppModel extends ChangeNotifier {
 
   /// 打开会话时用投影里的当前收件箱播种追踪器（否则恢复会漏掉早先的 splice）。
   void _seedInboxTracker(String sid) {
-    final inbox = projections?['inbox'];
+    final inbox = projections?.inbox;
     if (inbox is! Map) return;
     _inboxTrackers
         .putIfAbsent(sid, () => _InboxTracker())
@@ -2609,7 +2540,7 @@ class AppModel extends ChangeNotifier {
   /// 界面退回"按目录里的默认项显示"或显示 id，不猜一个档。
   ///
   /// 不另判 `_currentSid == null`：与 [permissionValue] 同一条（getter 已按归属判过）。
-  String? get agentPresetValue => parseAgentPresetValue(projections);
+  String? get agentPresetValue => projections?.agentPreset;
 
   /// 当前会话归属的工作区；`null` = 清单里没有它（或清单还没到）。
   WorkspaceGroup? get currentWorkspace {

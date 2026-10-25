@@ -34,6 +34,7 @@ import 'dart:io';
 
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/model/model_catalog.dart';
+import 'package:dsh_mobile/wire/rpc/projections.dart';
 import 'package:dsh_mobile/wire/rpc/session.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -351,6 +352,98 @@ void main() {
       final sample = _sampleOf(golden, method);
       expect(sample['accepted'], isTrue, reason: '$method 的回执形状变了');
     }
+  });
+
+  // ---- 投影面（A2）：一个方法打开全部只读面，应答是**扁平 values** ----
+
+  test('session.projections：14 个被消费的键都解得出（期望值来自金样）', () {
+    final sample = _sampleOf(golden, 'session.projections');
+    final reading = readSessionProjections(sample);
+    expect(reading, isA<WireOk<SessionProjections>>());
+    final projections = (reading as WireOk<SessionProjections>).value;
+
+    Map<String, Object?> mapOf(Object? raw) =>
+        (raw! as Map).cast<String, Object?>();
+
+    // 标题 / 模型
+    expect(projections.title, sample['title']);
+    final selection = mapOf(sample['modelSelection']);
+    final next = mapOf(selection['next'] ?? selection['lastUsed']);
+    expect(projections.modelSelection?.provider, next['provider']);
+    expect(projections.modelSelection?.model, next['model']);
+
+    // 统计条三项
+    final usage = mapOf(sample['tokenUsage']);
+    expect(
+      projections.tokenUsage?.uncachedInputTokens,
+      usage['uncachedInputTokens'],
+    );
+    final stats = mapOf(sample['sessionStats']);
+    expect(projections.sessionStats?.turns, stats['turns']);
+    expect(projections.sessionStats?.decodeTokens, stats['decodeTokens']);
+    final pressure = mapOf(sample['contextPressure']);
+    expect(
+      projections.contextPressure?.contextWindow,
+      pressure['contextWindow'],
+    );
+    final breakdown = mapOf(sample['contextBreakdown']);
+    expect(
+      projections.contextBreakdown?.systemTokens,
+      breakdown['systemTokens'],
+    );
+
+    // 轮次大纲：条数与每轮 turn 都照金样
+    final outline = (sample['turnOutline']! as List).cast<Object?>();
+    expect(projections.turnOutline.length, outline.length);
+    expect(projections.turnOutline.first.turn, mapOf(outline.first)['turn']);
+
+    // 权限 / 预设
+    expect(
+      projections.permissionValue,
+      mapOf(sample['permissions'])['currentValue'],
+    );
+    expect(projections.agentPreset, sample['agentPreset']);
+
+    // 子智能体目录（连接器会把 id 过别名表，所以只比条数与 label）
+    final catalog = (sample['subagentCatalog']! as List).cast<Object?>();
+    expect(projections.subagentCatalog.length, catalog.length);
+    expect(
+      projections.subagentCatalog.first.label,
+      mapOf(catalog.first)['label'],
+    );
+
+    // 计时 / 轨迹 / 附件上限 / 收件箱
+    final timing = mapOf(sample['subagentTiming']);
+    expect(projections.subagentTiming?.settledMs, timing['settledMs']);
+    final turns = (mapOf(sample['trajectory'])['turns']! as List)
+        .cast<Object?>();
+    expect(projections.trajectory?.turns.length, turns.length);
+    final limits = mapOf(sample['imageLimits']);
+    expect(projections.imageLimits?.maxImageBytes, limits['maxImageBytes']);
+    expect(projections.inbox, isNotNull);
+
+    expect(WireDiagnostics.badCount, 0, reason: '真实形状的 14 个键一个都不该算漂移');
+  });
+
+  test('session.projections 应答不是对象 ⇒ WireBad + 计数 1', () {
+    final reading = readSessionProjections([
+      {'title': 'x'},
+    ]);
+    expect(reading, isA<WireBad<SessionProjections>>());
+    expect(valueOrReport(reading, 'session.projections'), isNull);
+    expect(WireDiagnostics.badCount, 1);
+  });
+
+  test('session.projections 的 values 有非字符串键 ⇒ 计 1，其余字段照常', () {
+    // 线上 JSON 不可能出现非字符串键（JSON 的键恒是字符串），所以这是"畸形数据"，
+    // 不是漂移面；但它必须**留声**而不是静默丢掉。
+    final reading = readSessionProjections(<Object?, Object?>{
+      'title': '标题还在',
+      42: '垃圾',
+    });
+    expect(reading, isA<WireOk<SessionProjections>>());
+    expect((reading as WireOk<SessionProjections>).value.title, '标题还在');
+    expect(WireDiagnostics.badCount, 1);
   });
 }
 

@@ -736,37 +736,55 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
         })),
       )
       return {
-        sessions: assigned.map(({ row, sid, parentSid }) => ({
-          sid,
-          updatedAt: row.updatedAt,
-          running: row.running,
-          blank: row.blank,
-          subagent: row.subagent,
-          // **父级（别名形式）**：手机侧「子会话头部的父级」与「← 返回父会话」
-          // 走的就是它 —— 导航记忆只有一层，往深处走一层就不对了
-          // （`.agents/notes/implemented/2026-10-23-subagent-header-parent-from-data.md`）。
-          // 根会话（`parentSessionId === undefined`）**不带这个键**：
-          // 不给 = 根；给空串会把根读成"父级叫空"的子会话。
-          ...(parentSid === undefined ? {} : { parentSessionId: parentSid }),
-          // **当前模型从真投影来**，不是占位：`modelSelection` 的 `next ?? lastUsed`
-          // （`dsh/models.ts`）。取不到就**不给这个字段** —— 手机显示"未选择"，
-          // 而不是猜一个把"看起来连着"当成"连着"。
-          ...(deps.models === undefined
-            ? {}
-            : (() => {
-                const model = deps.models.modelOf(sid)
-                return model === undefined ? {} : { model }
-              })()),
-          ...(row.cwd === undefined ? {} : { cwd: row.cwd }),
-          // **投影提示原样透送**：`projections.values.title` 就是列表标题，
-          // Web 的列表行读的是同一个东西（`list.ts:291-312` 的 hints）。
-          // 冷行（从没打开过的会话）也有值 —— DSH 为它读持久缓存。
-          // 手机据此显示标题；空标题显示「未命名」，不拿目录名兜底
-          // （DSH 的 `sessionTitle` 同一条，`ui-workspace/src/client/tree.ts:296`）。
-          ...(row.projections === undefined
-            ? {}
-            : { projections: row.projections }),
-        })),
+        sessions: await Promise.all(
+          assigned.map(async ({ row, sid, parentSid }) => ({
+            sid,
+            updatedAt: row.updatedAt,
+            running: row.running,
+            blank: row.blank,
+            subagent: row.subagent,
+            // **父级（别名形式）**：手机侧「子会话头部的父级」与「← 返回父会话」
+            // 走的就是它 —— 导航记忆只有一层，往深处走一层就不对了
+            // （`.agents/notes/implemented/2026-10-23-subagent-header-parent-from-data.md`）。
+            // 根会话（`parentSessionId === undefined`）**不带这个键**：
+            // 不给 = 根；给空串会把根读成"父级叫空"的子会话。
+            ...(parentSid === undefined ? {} : { parentSessionId: parentSid }),
+            // **当前模型从真投影来**，不是占位：`modelSelection` 的 `next ?? lastUsed`
+            // （`dsh/models.ts`）。取不到就**不给这个字段** —— 手机显示"未选择"，
+            // 而不是猜一个把"看起来连着"当成"连着"。
+            ...(deps.models === undefined
+              ? {}
+              : (() => {
+                  const model = deps.models.modelOf(sid)
+                  return model === undefined ? {} : { model }
+                })()),
+            ...(row.cwd === undefined ? {} : { cwd: row.cwd }),
+            // **投影提示原样透送**：`projections.values.title` 就是列表标题，
+            // Web 的列表行读的是同一个东西（`list.ts:291-312` 的 hints）。
+            // 冷行（从没打开过的会话）也有值 —— DSH 为它读持久缓存。
+            // 手机据此显示标题；空标题显示「未命名」，不拿目录名兜底
+            // （DSH 的 `sessionTitle` 同一条，`ui-workspace/src/client/tree.ts:296`）。
+            //
+            // **但 `values.subagentCatalog` 里的 id 必须过别名表**：它与
+            // `session.projections` 的应答是**同一份投影**，那条路过
+            // `aliasSubagentCatalog`（`:843`），这条路原先原样透传 —— 于是子会话
+            // 的 **DSH 会话 id 从这里漏到线上**（2026-10-25 由金样夹具抓到：
+            // 假目录项的 id 是 `dsh-2`，`connection-methods.test.ts` 的
+            // "DSH 会话侧的东西不许过线"当场红）。两处必须是同一份变换 ——
+            // 否则"同一件事两个出口"就会有一处先漏。
+            ...(row.projections === undefined
+              ? {}
+              : {
+                  projections: {
+                    ...row.projections,
+                    values: (await aliasSubagentCatalog(
+                      row.projections.values,
+                      deps.aliases,
+                    )) as Record<string, unknown>,
+                  },
+                }),
+          })),
+        ),
       }
     },
   }

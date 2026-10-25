@@ -72,6 +72,98 @@
                 "outputTokens": 800,
                 "cacheReadTokens": 4000,
                 "cacheWriteTokens": 600
+              },
+              "sessionStats": {
+                "turns": 4,
+                "steps": 13,
+                "llmMs": 413838,
+                "toolMs": 544207,
+                "ttftMs": 193103,
+                "ttftSteps": 12,
+                "decodeMs": 220735,
+                "decodeTokens": 10948
+              },
+              "contextPressure": {
+                "pressureTokens": 53715,
+                "projectedTokens": 53873,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1446,
+                "toolsTokens": 7205,
+                "messageTokens": 27421
+              },
+              "turnOutline": [
+                {
+                  "turn": 1,
+                  "seq": 4,
+                  "prompt": "hi",
+                  "response": "你好！"
+                },
+                {
+                  "turn": 2,
+                  "seq": 27,
+                  "prompt": "Give",
+                  "response": ""
+                }
+              ],
+              "permissions": {
+                "currentValue": "workspace-write"
+              },
+              "agentPreset": "standard",
+              "subagentCatalog": [
+                {
+                  "id": "sid_1122334455667788",
+                  "createdAt": 1000,
+                  "mode": "continuable",
+                  "label": "调研实现"
+                }
+              ],
+              "trajectory": {
+                "turns": [
+                  {
+                    "turn": 1,
+                    "startSeq": 4,
+                    "startTime": 1000,
+                    "endTime": 2000,
+                    "durationMs": 1000,
+                    "outcome": "completed",
+                    "tokens": 12868,
+                    "stepsTruncated": false,
+                    "steps": [
+                      {
+                        "kind": "assistant",
+                        "seq": 6,
+                        "startTime": 1000,
+                        "endTime": 2000,
+                        "offsetMs": 0,
+                        "durationMs": 1000,
+                        "isError": false,
+                        "label": ""
+                      }
+                    ]
+                  }
+                ],
+                "truncated": false,
+                "droppedTurns": 0,
+                "droppedSteps": 0
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
               }
             }
           }
@@ -105,6 +197,98 @@
         "outputTokens": 800,
         "cacheReadTokens": 4000,
         "cacheWriteTokens": 600
+      },
+      "sessionStats": {
+        "turns": 4,
+        "steps": 13,
+        "llmMs": 413838,
+        "toolMs": 544207,
+        "ttftMs": 193103,
+        "ttftSteps": 12,
+        "decodeMs": 220735,
+        "decodeTokens": 10948
+      },
+      "contextPressure": {
+        "pressureTokens": 53715,
+        "projectedTokens": 53873,
+        "contextWindow": 1000000
+      },
+      "contextBreakdown": {
+        "systemTokens": 1446,
+        "toolsTokens": 7205,
+        "messageTokens": 27421
+      },
+      "turnOutline": [
+        {
+          "turn": 1,
+          "seq": 4,
+          "prompt": "hi",
+          "response": "你好！"
+        },
+        {
+          "turn": 2,
+          "seq": 27,
+          "prompt": "Give",
+          "response": ""
+        }
+      ],
+      "permissions": {
+        "currentValue": "workspace-write"
+      },
+      "agentPreset": "standard",
+      "subagentCatalog": [
+        {
+          "id": "sid_1122334455667788",
+          "createdAt": 1000,
+          "mode": "continuable",
+          "label": "调研实现"
+        }
+      ],
+      "trajectory": {
+        "turns": [
+          {
+            "turn": 1,
+            "startSeq": 4,
+            "startTime": 1000,
+            "endTime": 2000,
+            "durationMs": 1000,
+            "outcome": "completed",
+            "tokens": 12868,
+            "stepsTruncated": false,
+            "steps": [
+              {
+                "kind": "assistant",
+                "seq": 6,
+                "startTime": 1000,
+                "endTime": 2000,
+                "offsetMs": 0,
+                "durationMs": 1000,
+                "isError": false,
+                "label": ""
+              }
+            ]
+          }
+        ],
+        "truncated": false,
+        "droppedTurns": 0,
+        "droppedSteps": 0
+      },
+      "imageLimits": {
+        "maxImageBytes": 20971520,
+        "maxImagesPerMessage": 20,
+        "maxMessageImageBytes": 209715200,
+        "maxImagePixels": 64000000,
+        "maxImageDimension": 8192,
+        "mediaTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif"
+        ]
+      },
+      "inbox": {
+        "next-turn": [],
+        "next-step": []
       }
     }
   ],
