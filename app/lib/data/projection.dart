@@ -325,6 +325,23 @@ ChatProjection projectEvent({
         diffStat: view is DiffResultView
             ? (added: view.added, removed: view.removed)
             : diffStatOf(message, data: data),
+        // **改动的路径必须从调用继承**：结果载荷里没有路径字段
+        // （真日志只有 `role / source / toolCallId / content / isError / id`），
+        // 而它到达时**覆盖同一个 itemId** —— 不继承的话，"这一轮改了哪些文件"
+        // 在结果到达的那一刻全部消失（右侧文件面板与正文提及词表都会空）。
+        //
+        // 桌面同一步：`rootResult(match, previous)`（`tool.ts:100-118`）+
+        // 产出路径取"成功调用的记录目标 / 老结果退回参数拼写"
+        // （`ui-deliverables/src/client/turn-deliverables.ts:119-124,132-137`）。
+        // **失败的结果不算产出**（同一句："failed results contribute nothing"）。
+        //
+        // 手机保留**参数拼写**而不是 `meta.path` 的绝对路径：模型在正文里引用的
+        // 就是参数那一串，而 `file.read` 按会话 scope 解析相对路径 ——
+        // 换成绝对路径反而要在手机侧再做一次映射（桌面的 `argumentPath` 别名）。
+        //
+        // Note: 为什么必须继承、"失败不算产出"、词表为什么按轮且只给收口正文 ——
+        // 见 `.agents/notes/implemented/2026-10-26-file-mentions-and-open-file.md`
+        changedPath: isToolError(data) ? null : call?.changedPath,
       ),
     );
   }

@@ -1832,17 +1832,18 @@ class AppModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 某一轮**产出/改动过**的路径 —— 正文提及的词表。
+  /// 某一轮**产出过**的路径 —— 正文提及的词表。
   ///
   /// 与 DSH 同一条：词表是**这一轮**的产出，不是工作区文件清单
-  /// （`ui-deliverables/src/client/turn-deliverables.ts:269-296`）。
-  /// 数据来自工具调用的 `changedPath`（判据照 `mutationPath`）。
+  /// （`ui-deliverables/src/client/turn-deliverables.ts:132-160`）。
+  /// 判据也照它：**只有成功的变更调用算产出**（`:134-137` 的
+  /// "failed results contribute nothing"），读取与未知工具不算。
   List<String> producedPathsOf(int? turn) {
     if (turn == null) return const <String>[];
     return _pathsByTurn[turn] ?? const <String>[];
   }
 
-  /// `turn → 这一轮的改动路径`。失效判据与 [changedFiles] 同一条（列表同一性）。
+  /// `turn → 这一轮的产出路径`。失效判据与 [changedFiles] 同一条（列表同一性）。
   ({List<ChatItem> source, Map<int, List<String>> byTurn})? _pathsByTurnCache;
 
   Map<int, List<String>> get _pathsByTurn {
@@ -1852,12 +1853,17 @@ class AppModel extends ChangeNotifier {
       return cached.byTurn;
     }
     final byTurn = <int, List<String>>{};
+    final seen = <int, Set<String>>{};
     for (final item in source) {
       if (item is! ToolCallItem) continue;
       final turn = item.turn;
       final path = item.changedPath;
       if (turn == null || path == null) continue;
-      (byTurn[turn] ??= <String>[]).add(path);
+      // 失败的结果不算产出（桌面同一句：failed results contribute nothing）。
+      if (item.status != ToolCallStatus.completed) continue;
+      final (turns, paths) = (byTurn, seen);
+      if (!(paths[turn] ??= <String>{}).add(path)) continue;
+      (turns[turn] ??= <String>[]).add(path);
     }
     final frozen = <int, List<String>>{
       for (final entry in byTurn.entries)
@@ -1869,6 +1875,10 @@ class AppModel extends ChangeNotifier {
 
   /// 某条消息里的**文件提及表**（`token → path`），没有提及就是 `null`。
   ///
+  /// 只在**收口那条助手正文**上给：桌面把提及限定在"这一轮收口的那条助手消息"
+  /// （`ui-chat/src/client/chat/AssistantNodeView.tsx:19-27`：轮次已收口、且
+  /// `tail.closing.finalNode` 就是这条），中间步骤的正文里长出链接会与桌面不一致。
+  ///
   /// 解析只有一处（`model/file_mentions.dart`），并按条目缓存 ——
   /// 对话页每帧都会问一次，长会话里重复扫正文会把每帧成本拖长。
   Map<String, String>? fileMentionsOf(ChatItem item) {
@@ -1878,6 +1888,44 @@ class AppModel extends ChangeNotifier {
   ({List<ChatItem> source, Map<String, Map<String, String>> byItem})?
   _mentionTableCache;
 
+  /// 每一轮**收口的那条助手正文**（`turn → 条目`）。
+  ///
+  /// 判据照桌面（`ui-chat/src/client/chat/AssistantNodeView.tsx:19-27`）：
+  /// 轮次要**已收口**（有轮次过程行 `p:<turn>`），且这条是这一轮**最后一条**
+  /// 带正文的助手消息（桌面的 `tail.closing.finalNode`）。
+  ({List<ChatItem> source, Map<int, MessageItem> byTurn})?
+  _closingAssistantCache;
+
+  Map<int, MessageItem> get _closingAssistantByTurn {
+    final source = items;
+    final cached = _closingAssistantCache;
+    if (cached != null && identical(cached.source, source)) {
+      return cached.byTurn;
+    }
+    final closed = <int>{};
+    final last = <int, MessageItem>{};
+    for (final item in source) {
+      if (item is TurnProcessItem) {
+        final turn = item.turn;
+        if (turn != null) closed.add(turn);
+        continue;
+      }
+      if (item is! MessageItem ||
+          item.role != MessageRole.assistant ||
+          item.turn == null ||
+          item.text.trim().isEmpty) {
+        continue;
+      }
+      last[item.turn!] = item;
+    }
+    final byTurn = <int, MessageItem>{
+      for (final turn in closed)
+        if (last[turn] != null) turn: last[turn]!,
+    };
+    _closingAssistantCache = (source: source, byTurn: byTurn);
+    return byTurn;
+  }
+
   Map<String, Map<String, String>> get _mentionTables {
     final source = items;
     final cached = _mentionTableCache;
@@ -1885,12 +1933,12 @@ class AppModel extends ChangeNotifier {
       return cached.byItem;
     }
     final byItem = <String, Map<String, String>>{};
-    for (final item in source) {
-      if (item is! MessageItem || item.role != MessageRole.assistant) continue;
+    for (final entry in _closingAssistantByTurn.entries) {
+      final item = entry.value;
       if (item.text.isEmpty) continue;
       final spans = resolveFileMentions(
         item.text,
-        knownPaths: producedPathsOf(item.turn),
+        knownPaths: producedPathsOf(entry.key),
       );
       if (spans.isEmpty) continue;
       byItem[item.itemId] = fileMentionTargets(spans);

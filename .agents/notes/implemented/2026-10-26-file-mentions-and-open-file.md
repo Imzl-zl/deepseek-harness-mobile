@@ -30,16 +30,27 @@ Status: implemented
    `ui/dsh_markdown.dart` 的 `normalizeInlineHtml` 同一套。
 2. **命中恰好一条才算**：`basename 歧义保持惰性` 两条（解析器一条、模型词表一条）。
    变异校验：把 `_uniqueMatch` 改成"先匹配先赢"，恰好这两条红。
-3. **词表按轮**：`file_open_test.dart` 的"同一轮里 write 过的路径 ⇒ 提及；
-   别的轮的同一 token ⇒ 惰性"。
-4. **路径是桌面侧的值，手机只映射**：`file.read` 收到的就是 token 原样
+3. **词表按轮、只给收口那条正文、只算成功的变更调用**（三条都照桌面）：
+   - 按轮：`file_open_test.dart` 的"同一轮里 write 过的路径 ⇒ 提及；别的轮的同一 token ⇒ 惰性"；
+   - 只给收口那条：`AssistantNodeView.tsx:19-27` 要求轮次已收口、且是
+     `tail.closing.finalNode` 那条；用例是"一轮里有多条助手正文 ⇒ 只有收口那条认提及"
+     与"还没收口的一轮不给提及"；
+   - 只算成功：`turn-deliverables.ts:132-137` 的 "failed results contribute nothing"；
+     用例"失败的写调用不算产出"。
+4. **产出路径要能从结果继承**：真机上 `tool/result` 用同一 itemId **覆盖**调用条目，
+   而结果载荷没有路径字段（`turn-deliverables.ts:119-124` 的 `mutationResultPath`
+   就是从结果记录里取目标、老结果退回参数拼写）。不继承的话右侧文件面板与正文词表
+   在结果一到就**全空** —— 这是 2026-10-25 之前就存在的缺陷，测试只喂 `tool/call`
+   条目所以一直没暴露；用例"同一轮里 write 过的路径"现在走
+   `call → result → turn/end → 收口正文` 的真序列。
+5. **路径是桌面侧的值，手机只映射**：`file.read` 收到的就是 token 原样
    （`file_open_test.dart` 第一条），手机不拼 cwd、不规范化、不判断归属 ——
    scope 由宿主 `workspaceFileScope` lookup 按会话解析
    （`packages/api/workspace-files/src/index.ts:203-221`；连接器 `connector/src/dsh/files.ts:136-154`），
    绝对路径与 `..` 也由宿主接手（`workspace-files/src/index.ts:228,241`），
    桌面 `openFile` 的兜底用的是同一个 cwd（`packages/client/ui-chat/src/client/apply.ts:271-278`）。
    手机复刻的只有**桌面前端的展示规则**，不含任何文件语义。
-5. **点击只改模型**：`openFile` 记请求 + 读第一页，界面（右抽屉 / 文件页）自己听
+6. **点击只改模型**：`openFile` 记请求 + 读第一页，界面（右抽屉 / 文件页）自己听
    `AppModel` 画三态；`file.read` 失败照报电脑侧原话。
 
 ## Alternatives considered

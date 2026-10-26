@@ -169,6 +169,15 @@
   批 C 要在投影里留下"这一轮 → 该事件 seq"。
 - 收口行的 fork 用的是**该轮 `turn/end` 的 seq**（`ui-chat/src/client/apply.ts:299-305`），
   手机侧正好是 `TurnProcessItem.seq`（`projection.dart:481-495`）。
+- **提及只给"收口那条助手正文"，且只算成功的变更调用**：
+  `ui-chat/src/client/chat/AssistantNodeView.tsx:19-27` 要求轮次已收口
+  （`turn.status === 'closed'`）且是 `tail.closing.finalNode.seq` 那条；
+  产出路径的判据在 `ui-deliverables/src/client/turn-deliverables.ts:119-124,132-137`
+  （成功调用的记录目标，老结果退回参数拼写；"failed results contribute nothing"）。
+- **顺带查到的手机侧老缺陷**：`tool/result` 用同一 itemId 覆盖调用条目，而结果载荷
+  没有路径字段 —— 不继承的话右侧文件面板与正文词表在结果一到就全空。
+  已在 `app/lib/data/projection.dart` 的 tool/result 分支修掉（从调用继承，
+  失败给 `null`），用例走 `call → result → turn/end → 收口正文` 的真序列。
 
 ## Alternatives considered
 
@@ -203,8 +212,16 @@
 | E | 收尾：docs/memory/notes、真机（用户操作，App 侧不碰辅助功能） | 门禁全绿；真机四项各一条证据 |
 
 进度：**A 已落地**（`implemented/2026-10-26-file-mentions-and-open-file.md`；
-门禁 `flutter test` 1340 / analyze 0 / format 0 / boundary 576 / single-caller PASS / connector 663）。
+门禁 `flutter test` 1343 / analyze 0 / format 0 / boundary / single-caller / connector 见提交）。
+A 之后按"App 只重画桌面已经显示的东西"复核过一遍，修了两处判据不一致：
+提及只给收口正文 + 只算成功的变更调用，以及结果到达时路径要从调用继承。
 B 起待续。
+
+**B/C 的顺序要改**：改动卡与差异面板的**数字与行**来自桌面记录
+（`workspace/changes` 的 summary/diff），手机自己从工具调用推出来的 `+N −M` 与桌面**不同源**。
+所以 B 先做 `file.changes`（summary）+ 卡片 + 侧栏换源，C 再做 `file.diff` + `DiffView`。
+A 的提及词表是**唯一**保留工具调用投影的地方（桌面前端也是这么折叠的），
+批 C 不把它换成 summary —— 桌面自己就是两套：提及看 deliverables，卡片看 changes。
 
 ## Consequences
 

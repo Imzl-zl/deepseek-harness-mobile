@@ -101,6 +101,45 @@ ChatItem _writeCall({
   },
 ).item!;
 
+/// 一条 `tool/result`（成功）：真机上写调用**总有结果**，而结果会覆盖同 itemId 的
+/// 调用条目 —— 路径从调用继承（见 `data/projection.dart` 的 tool/result 分支）。
+ChatItem _writeResult({
+  required int seq,
+  required int turn,
+  required ChatItem previous,
+}) => projectEvent(
+  type: 'tool/result',
+  seq: seq,
+  turn: turn,
+  previous: previous,
+  data: <String, Object?>{
+    'turn': turn,
+    'step': 1,
+    'callId': 'c1',
+    'message': <String, Object?>{
+      'role': 'tool',
+      'toolCallId': 'c1',
+      'id': 'r-c1',
+      'isError': false,
+      'content': [
+        {'type': 'text', 'text': 'ok'},
+      ],
+    },
+  },
+).item!;
+
+/// 一条 `turn/end`：桌面只对**已收口**的轮解析提及，手机同一条
+/// （`ui-chat/src/client/chat/AssistantNodeView.tsx:19-27`）。
+ChatItem _turnEnd({required int seq, required int turn}) => projectEvent(
+  type: 'turn/end',
+  seq: seq,
+  turn: turn,
+  data: <String, Object?>{
+    'turn': turn,
+    'reason': <String, Object?>{'kind': 'completed'},
+  },
+).item!;
+
 ChatItem _assistant({
   required int seq,
   required int turn,
@@ -124,14 +163,17 @@ ChatItem _assistant({
 ).item!;
 
 Future<AppModel> _seeded(_MentionClient client) async {
+  final call = _writeCall(seq: 2, turn: 1, path: 'src/a.ts');
   final app = AppModel(client: client);
   app.seedForTest(
     sid: _sid,
     title: 't',
     updatedAt: 1,
     items: [
-      _writeCall(seq: 2, turn: 1, path: 'src/a.ts'),
-      _assistant(seq: 3, turn: 1, text: '改了 `src/a.ts` 里的两行。'),
+      call,
+      _writeResult(seq: 3, turn: 1, previous: call),
+      _assistant(seq: 4, turn: 1, text: '改了 `src/a.ts` 里的两行。'),
+      _turnEnd(seq: 5, turn: 1),
     ],
   );
   await app.refreshRepoInfo();
@@ -163,6 +205,12 @@ void main() {
 
     await _pump(tester, app);
 
+    // 先确认模型层：这一轮的收口消息确实拿到了词表。
+    expect(
+      app.fileMentionsOf(app.items.whereType<MessageItem>().first),
+      {'src/a.ts': 'src/a.ts'},
+      reason: '模型层的词表（失败在这里 = 收口判定没命中）',
+    );
     final mention = find.byTooltip('打开 src/a.ts');
     expect(mention, findsOneWidget, reason: '这一轮写过 src/a.ts ⇒ 正文里可点');
 

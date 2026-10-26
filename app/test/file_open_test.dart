@@ -115,6 +115,45 @@ ChatItem _writeCall({
   },
 ).item!;
 
+/// 一条 `tool/result`（真日志形状：`message.toolCallId` + `isError`）。
+ChatItem _writeResult({
+  required int seq,
+  required int turn,
+  required String callId,
+  required ChatItem previous,
+  bool isError = false,
+}) => projectEvent(
+  type: 'tool/result',
+  seq: seq,
+  turn: turn,
+  previous: previous,
+  data: <String, Object?>{
+    'turn': turn,
+    'step': 1,
+    'callId': callId,
+    'message': <String, Object?>{
+      'role': 'tool',
+      'toolCallId': callId,
+      'id': 'r-$callId',
+      'isError': isError,
+      'content': [
+        {'type': 'text', 'text': isError ? 'permission denied' : 'ok'},
+      ],
+    },
+  },
+).item!;
+
+/// 一条 `turn/end`（收口的判据：桌面只在**已收口**的轮上给提及）。
+ChatItem _turnEnd({required int seq, required int turn}) => projectEvent(
+  type: 'turn/end',
+  seq: seq,
+  turn: turn,
+  data: <String, Object?>{
+    'turn': turn,
+    'reason': <String, Object?>{'kind': 'completed'},
+  },
+).item!;
+
 /// 一条带正文的 `assistant/message`。
 ChatItem _assistant({
   required int seq,
@@ -298,10 +337,15 @@ void main() {
     }
 
     test('同一轮里 write 过的路径 ⇒ 提及；别的轮的同一 token ⇒ 惰性', () async {
+      final call = _writeCall(seq: 2, turn: 1, callId: 'c1', path: 'src/a.ts');
       final items = <ChatItem>[
-        _writeCall(seq: 2, turn: 1, callId: 'c1', path: 'src/a.ts'),
-        _assistant(seq: 3, turn: 1, id: 'm1', text: '改了 `src/a.ts`。'),
-        _assistant(seq: 4, turn: 2, id: 'm2', text: '又提到 `src/a.ts`。'),
+        call,
+        // **结果到达会覆盖同 itemId 的调用条目**（真机必然如此）——
+        // 路径要能从调用继承过来，否则词表在结果一到就空。
+        _writeResult(seq: 3, turn: 1, callId: 'c1', previous: call),
+        _assistant(seq: 4, turn: 1, id: 'm1', text: '改了 `src/a.ts`。'),
+        _turnEnd(seq: 5, turn: 1),
+        _assistant(seq: 6, turn: 2, id: 'm2', text: '又提到 `src/a.ts`。'),
       ];
       final app = await seeded(items);
 
@@ -315,8 +359,61 @@ void main() {
       expect(
         app.fileMentionsOf(second),
         isNull,
-        reason: '词表是**这一轮**的产出（DSH 的 producedFileMentions 同一条）',
+        reason: '词表是**这一轮**的产出；而且第 2 轮还没收口，桌面也不给提及',
       );
+    });
+
+    test('一轮里有多条助手正文 ⇒ 只有收口那条认提及（桌面的判据）', () async {
+      final call = _writeCall(seq: 2, turn: 1, callId: 'c1', path: 'src/a.ts');
+      final items = <ChatItem>[
+        call,
+        _writeResult(seq: 3, turn: 1, callId: 'c1', previous: call),
+        _assistant(seq: 4, turn: 1, id: 'm1', text: '中间步骤提到 `src/a.ts`。'),
+        _assistant(seq: 5, turn: 1, id: 'm2', text: '收口这条也提到 `src/a.ts`。'),
+        _turnEnd(seq: 6, turn: 1),
+      ];
+      final app = await seeded(items);
+
+      final middle = app.items.whereType<MessageItem>().firstWhere(
+        (i) => i.itemId == 'm:m1',
+      );
+      final closing = app.items.whereType<MessageItem>().firstWhere(
+        (i) => i.itemId == 'm:m2',
+      );
+      expect(app.fileMentionsOf(middle), isNull, reason: '中间步骤不是收口消息');
+      expect(app.fileMentionsOf(closing), {'src/a.ts': 'src/a.ts'});
+    });
+
+    test('还没收口的一轮不给提及（与桌面 `turn.status !== closed` 同一条）', () async {
+      final items = <ChatItem>[
+        _writeCall(seq: 2, turn: 1, callId: 'c1', path: 'src/a.ts'),
+        _assistant(seq: 3, turn: 1, id: 'm1', text: '改了 `src/a.ts`。'),
+      ];
+      final app = await seeded(items);
+
+      final message = app.items.whereType<MessageItem>().first;
+      expect(app.fileMentionsOf(message), isNull);
+    });
+
+    test('失败的写调用不算产出（桌面：failed results contribute nothing）', () async {
+      final call = _writeCall(seq: 2, turn: 1, callId: 'c1', path: 'src/a.ts');
+      final items = <ChatItem>[
+        call,
+        _writeResult(
+          seq: 3,
+          turn: 1,
+          callId: 'c1',
+          previous: call,
+          isError: true,
+        ),
+        _assistant(seq: 4, turn: 1, id: 'm1', text: '没改成 `src/a.ts`。'),
+        _turnEnd(seq: 5, turn: 1),
+      ];
+      final app = await seeded(items);
+
+      final message = app.items.whereType<MessageItem>().first;
+      expect(app.fileMentionsOf(message), isNull);
+      expect(app.producedPathsOf(1), isEmpty);
     });
 
     test('basename 歧义 ⇒ 不做成链接（不猜）', () async {
@@ -324,6 +421,7 @@ void main() {
         _writeCall(seq: 2, turn: 1, callId: 'c1', path: 'src/a.ts'),
         _writeCall(seq: 3, turn: 1, callId: 'c2', path: 'server/a.ts'),
         _assistant(seq: 4, turn: 1, id: 'm1', text: '看 `a.ts`。'),
+        _turnEnd(seq: 5, turn: 1),
       ];
       final app = await seeded(items);
 
