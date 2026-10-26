@@ -11,7 +11,7 @@
 /// 形状错（缺 `summary` 键、summary 不是对象 / 字段不齐）才走 [WireBad] + 计数。
 ///
 /// Note: 为什么数据只来自桌面、手机不自己算 —— 见
-/// `.agents/notes/proposed/2026-10-26-desktop-alignment-plan.md` 的批 B。
+/// `.agents/notes/implemented/2026-10-26-changes-face-and-card.md`。
 library;
 
 import '../../core/sync_client.dart';

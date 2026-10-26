@@ -29,8 +29,8 @@
 ## 3. 不做什么
 
 - **`readBytes` 不接**：原样字节会撞我们这条管道的单帧预算（契约 §40）。要看图片得先量帧。
-- **`changes` 不接**：它是流（`mode:'stream'`），接它等于给手机加一条订阅面，与"只读预览"
-  不是同一个需求。
+- **工作区 `changes` 流（`mode:'stream'`）不订**：改动记录走独立的一次性方法
+  `file.changes` / `file.diff`（`changes-card.md`），不是给文件页加订阅。
 - **不写文件**：宿主这一面本来也只有读（`stat` / `list` / `read` / `readBytes`）。
 - 非普通文件（`type: 'other'`）列出来但**不给点**：宿主 `read` 也会拒。
 

@@ -1,7 +1,7 @@
 # 桌面四件事对齐到手机：文件提及 / 改动卡 + diff / 在新会话分支
 
 - 日期：2026-10-26
-- 状态：proposed（待新会话调研后落第一批）
+- 状态：implemented（A–D 已落地，E 收口；四份实现笔记见下）
 - 相关：`implemented/2026-10-26-unified-toast.md`（同日完成）、
   `implemented/2026-10-26-remove-preview-and-demo.md`、
   桌面源码 `D:\sudy\github\deepseek-harness`（只读）
@@ -32,7 +32,7 @@
 - 我们的协议里**没有** `session.fork`、也没有 `file.changes`/`file.diff`；
   `connector/src/dsh/files.ts:16` 明确写了 `changes` 不接。设计不能假装它们存在。
 
-## Decision（建议）
+## Decision
 
 ### 1. 文件提及：一个解析器 + 一个打开动作（App 侧，无协议）
 
@@ -54,12 +54,12 @@
   协议里还没有 `file.changes`，所以批 B 先用**过渡来源**（`deliverables` 投影 +
   `model/changed_path.dart` 的参数投影），**批 C 落地时换成桌面记录**并在代码里回指；
   手机不替桌面决定"这一轮改了什么"（`changedPath` 只是工具调用的参数形状）。
-- 行点击 → `AppModel.openFile(mode: preview)`；标题点击 → 打开 diff（等第 3 条）。
-- 复制按钮已存在于收口行；分支按钮等第 4 条。
+- 行点击 → `AppModel.openFile(mode: preview)`；标题点击 → 打开第一个文件的逐行差异（见第 3 条）。
+- 复制按钮在收口行；分支按钮见第 4 条。
 
 ### 3. 真 diff：新增协议面，而不是让手机读宿主 HTTP
 
-建议新增一个**只读文件面方法**（名字待调研，倾向 `file.changes` + `file.diff`）：
+新增两个**只读文件面方法**（`file.changes` + `file.diff`）：
 
 - 请求：`{sid, seq}`（该轮 `workspace/changes` 事件的 seq）与
   `{sid, seq, index}`（index = 文件在 summary.files 里的下标）—— **不是 path**：
@@ -68,10 +68,11 @@
   `binary?`/`oversized?`）+ 单文件 `WorkspaceFileDiff` 结构化 hunks；
 - 连接器端口：直接调宿主 `workspaceChanges` 服务（**不代理 HTTP** —— 见批 0 第 1 条，
   服务就在 `index.ts:116-120`，`/api/changes.*` 只是浏览器侧对它的适配）；
-- App：`wire/rpc/file.dart` 解码 hunks（逐行 `+`/`-`/` `），金样加两条（文本 diff、二进制/超大
-  降级）；UI 用一个 `DiffView` 组件（侧栏与改动卡共用）。
-- **预算**：diff 可能很大；契约已有单帧上限，响应必须按行截断并显式标记
-  （与 `file.read` 的 `truncated` 同一条纪律）。
+- App：`wire/rpc/changes.dart` 解码 hunks（逐行 `+`/`-`/` `），金样两条（文本 diff、二进制）；
+  UI 用同一个 `DiffView`（`ui/dsh_diff.dart`，侧栏与改动卡共用）。
+- **预算**：行数上限 **1000**（桌面渲染是 5000，手机这一版 `DshDiff` 一次性铺完；
+  见 `implemented/2026-10-26-file-diff-and-diffview.md`）+ 1 MiB 字节兜底，
+  超了按桌面的切法切最后一条 hunk 并回 `truncated:{shownLines,totalLines}`。
 
 ### 4. 分支：新增 `session.fork`，连接器调宿主
 
@@ -200,7 +201,7 @@
    最强理由：以后什么都能接，不用逐个加方法。
    被否：等于放弃协议边界与能力位；手机端会重新长出一堆"猜形状"的代码，回到这轮之前。
 
-## 批次（建议）
+## 批次（实际）
 
 | 批 | 范围 | 验收 |
 |---|---|---|
@@ -221,7 +222,8 @@ A 之后按"App 只重画桌面已经显示的东西"复核过一遍，修了两
 侧栏换源 + 1000 行上限；方法面 51/49）。
 **D 已落地**（`implemented/2026-10-26-session-fork.md`：`session.fork` + 分支钮 + 别名/列表刷新
 + 标题后缀；方法面 52/50；`docs/subsystems/session-fork.md`）。
-E 起待续（docs/memory 收口 + 真机）。
+**E 已落地**：docs（`prose-file-mentions.md` / `changes-card.md` / `session-fork.md`）、
+memory、本笔记入 `implemented/`；真机四件事由用户操作验证（App 侧不碰辅助功能）。
 
 **B/C 的顺序要改**：改动卡与差异面板的**数字与行**来自桌面记录
 （`workspace/changes` 的 summary/diff），手机自己从工具调用推出来的 `+N −M` 与桌面**不同源**。
@@ -238,9 +240,15 @@ A 的提及词表是**唯一**保留工具调用投影的地方（桌面前端�
   是本轮最大的一批。
 - 代价：diff 受单帧预算限制，长 diff 必须截断；"完整 diff"在手机上不是默认保证。
 
-## 代码入口回指（待落地后补）
+## 代码入口回指
 
-- `app/lib/model/file_mentions.dart`、`app/lib/data/app_model.dart`（openFile）
-- `app/lib/ui/dsh_markdown.dart`、`app/lib/ui/side_pane.dart`、`app/lib/ui/chat_page.dart`
-- `connector/src/dsh/files.ts`、`connector/src/handlers.ts`、`connector/src/protocol/methods.ts`
-- `app/lib/wire/rpc/file.dart`、`app/lib/wire/rpc/session.dart`
+- A：`app/lib/model/file_mentions.dart`、`app/lib/model/file_open.dart`、
+  `app/lib/data/app_model.dart`（`openFile` / `fileMentionsOf`）、
+  `app/lib/ui/dsh_markdown.dart`、`app/lib/ui/chat_page.dart`、`app/lib/ui/files_page.dart`
+- B：`connector/src/dsh/changes.ts`、`connector/src/handlers.ts`（`file.changes`）、
+  `connector/src/dsh/caps.ts`（`changesAvailable`）、`app/lib/model/changes.dart`、
+  `app/lib/wire/rpc/changes.dart`、`app/lib/core/items.dart`、`app/lib/data/projection.dart`
+- C：`connector/src/dsh/changes.ts`（`diff` + 两个上限）、`app/lib/model/file_diff.dart`、
+  `app/lib/wire/rpc/changes.dart`（`loadFileDiff`）、`app/lib/ui/chat_page.dart`（`_diffBody` / `_ChangesPane`）
+- D：`connector/src/dsh/sessions.ts`（`fork` / `rename` / `increasedForkTitle`）、
+  `app/lib/wire/rpc/session.dart`（`forkSession`）、`app/lib/ui/chat_turns.dart`（分支钮）

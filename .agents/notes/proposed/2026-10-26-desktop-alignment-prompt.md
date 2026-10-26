@@ -6,7 +6,7 @@
 
 你在 `D:\sudy\myproject\dsh-mobile` 工作（Windows / pwsh，Flutter + Dart + TS connector）。
 先读根 `AGENTS.md`、`tools.md`、`memory.md`、`.agents/notes/AGENTS.md`，再读
-`proposed/2026-10-26-desktop-alignment-plan.md`（本任务的方案与源码证据）。
+`implemented/2026-10-26-desktop-alignment-plan.md`（本任务的方案与源码证据；已落地）。
 
 ## 目标
 

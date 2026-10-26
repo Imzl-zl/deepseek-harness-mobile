@@ -46,9 +46,10 @@
 | `subsystems/notifications.md` | 通知与后台保活:起服务的三条判据(后台 + 通知权限 + 服务态)、前台服务类型为何是 `remoteMessaging`、三类提醒的触发源与"审批可直接答"、撤销口径、`dsh/notifications` 通道、渠道归属、已知边界 |
 | `subsystems/composer-mentions.md` | 输入栏的候选面板(`@` / `/`):四种候选与插入文本、触发判据三条(与宿主 `TEXT_REF_RE` 对齐)、面板形状(浮层/分组/列表行/图标三档)、drill 与面包屑的判据、底部预算给出的高度上限、三态、通道层参数、能力位与已知边界 |
 | `subsystems/attachments.md` | 图片附件:选图这条链、两条上限与两个主人(宿主 `imageLimits` 投影 / 通道层单帧预算)、明确不判的两条(像素与长边)、已知边界 |
-| `subsystems/files-page.md` | 文件页:工作区目录浏览 + 文本分页预览、路径规则(相对工作区、`scope` 走宿主 lookup)、不接 `readBytes`/`changes`、三态与已知边界 |
+| `subsystems/files-page.md` | 文件页:工作区目录浏览 + 文本分页预览、路径规则(相对工作区、`scope` 走宿主 lookup)、不接 `readBytes` 与工作区 `changes` 流、三态与已知边界 |
 | `subsystems/changes-card.md` | 改动卡:数据来自桌面 `workspace/changes` 记录、条目身份按轮、标题/行/折叠/截断规则、三态、能力位与已知边界 |
 | `subsystems/session-fork.md` | 分支:坐标是收口 seq、`session.fork` 的请求/应答、标题后缀规则、别名与列表刷新、失败与重复点击 |
+| `subsystems/prose-file-mentions.md` | 正文提及:什么算提及、词汇表来源、唯一命中/惰性、行内代码与围栏规则、点开走 `openFile`、已知边界 |
 
 ## 引用纪律
 
