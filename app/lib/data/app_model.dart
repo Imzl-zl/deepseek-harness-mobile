@@ -1419,6 +1419,9 @@ class AppModel extends ChangeNotifier {
   /// 落盘的 meta 键：发送模式。**契约两端共用的字符串**，改动等于作废用户的偏好。
   static const String kSendModeKey = 'send_mode';
 
+  /// 落盘的 meta 键：上次看的会话（连上/冷启动的落点，见 [landingSessionOf]）。
+  static const String kLastSessionKey = 'last_session';
+
   SendMode _sendMode = SendMode.queue;
 
   /// 当前的发送模式（排队 / 插话）。
@@ -2380,7 +2383,8 @@ class AppModel extends ChangeNotifier {
     // 拉完的结果由 `refreshSessions` 自己 `notifyListeners`，这里不等它：
     // 收帧路径上的回调不该被一个网络往返挡住（§2.2 的状态迁移通知是同步派发的）。
     if (state == ConnectionState.serving) {
-      unawaited(refreshSessions());
+      // 拉完列表再落会话：落点要用 `updatedAt` / `running`，那是列表里的字段。
+      unawaited(refreshSessions().then((_) => _landOnSession()));
       // **一进服务态就问一次"你还在哪些地址"**。
       //
       // 这是"局域网直连"能自愈的唯一时机：连接器只在**连上之后**才说得出自己
@@ -2747,6 +2751,53 @@ class AppModel extends ChangeNotifier {
       // 那是"看不见的长连接"，比断开更糟）。
       if (!_appForeground) unawaited(client.setAppState(AppState.background));
     }
+  }
+
+  /// 连上（或冷启动）之后落到哪个会话 —— **只用宿主已有的数据**。
+  ///
+  /// 桌面的"当前打开哪个会话"是**浏览器本地 UI 状态**
+  /// （`ui-chat` 的 `ctx.uiWorkspace.openSession`），宿主没有这个字段；
+  /// 手机拿得到的只有 `session.list` 的 `updatedAt` 与 `running`。
+  /// 所以落点规则只有四档：
+  ///
+  /// 1. 上次看的那个还在 → 回到它（它要是正在跑，界面直接显示"运行中"）；
+  /// 2. 否则 **在跑的里面最新的**（"电脑那边还在跑"是最该先看见的状态）；
+  /// 3. 再否则最新 `updatedAt` 的；
+  /// 4. 列表为空 / 只有子会话 → `null`，保持空白屏，**不发明会话**。
+  ///
+  /// 子会话不参与落点：它属于某个父会话的视图（子智能体页另开一条路）。
+  SessionSummary? landingSessionOf({String? remembered}) {
+    final list = sessions;
+    if (list.isEmpty) return null;
+    if (remembered != null) {
+      for (final row in list) {
+        if (row.sid == remembered) return row;
+      }
+    }
+    SessionSummary? best;
+    for (final row in list) {
+      if (row.subagent) continue;
+      if (best == null) {
+        best = row;
+        continue;
+      }
+      final betterRunning = row.running && !best.running;
+      final sameRunning = row.running == best.running;
+      if (betterRunning || (sameRunning && row.updatedAt > best.updatedAt)) {
+        best = row;
+      }
+    }
+    return best;
+  }
+
+  /// 连上之后落到 [landingSessionOf] 挑出来的那个会话（已经有会话就不动）。
+  Future<void> _landOnSession() async {
+    if (_disposed || _currentSid != null) return;
+    final remembered = await _prefs?.read(kLastSessionKey);
+    if (_disposed || _currentSid != null) return;
+    final target = landingSessionOf(remembered: remembered);
+    if (target == null) return;
+    await openSession(target.sid);
   }
 
   /// 拉会话列表（`session.list`）。
@@ -3312,6 +3363,9 @@ class AppModel extends ChangeNotifier {
     _deltaSubs[sid] ??= client.sessionUpdates(sid).listen((delta) {
       _onDelta(sid, delta);
     });
+
+    // 记住"上次看的是哪个"：下次连上（或冷启动）落回它 —— 见 [landingSessionOf]。
+    unawaited(_prefs?.write(kLastSessionKey, sid));
 
     try {
       await client.subscribe(sid, since: since);

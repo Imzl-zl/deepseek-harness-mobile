@@ -50,6 +50,7 @@
 | `subsystems/changes-card.md` | 改动卡:数据来自桌面 `workspace/changes` 记录、条目身份按轮、标题/行/折叠/截断规则、三态、能力位与已知边界 |
 | `subsystems/session-fork.md` | 分支:坐标是收口 seq、`session.fork` 的请求/应答、标题后缀规则、别名与列表刷新、失败与重复点击 |
 | `subsystems/prose-file-mentions.md` | 正文提及:什么算提及、词汇表来源、唯一命中/惰性、行内代码与围栏规则、点开走 `openFile`、已知边界 |
+| `subsystems/connect-landing.md` | 连通落点:宿主没有"当前会话"、四档落点规则(`last_session` → 在跑的 → 最新 → 空白)、"在跑"怎么显示、已知边界 |
 
 ## 引用纪律
 

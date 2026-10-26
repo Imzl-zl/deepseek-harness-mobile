@@ -25,10 +25,15 @@
   逐行差异 `file.diff` + 共用 `DiffView`（手机上限 1000 行）；收口分支 `session.fork`
   （标题后缀在连接器）。笔记 `implemented/2026-10-26-desktop-alignment-plan.md` 与四篇实现笔记；
   文档 `prose-file-mentions.md` / `changes-card.md` / `session-fork.md`。
+- **连通落点（2026-10-26）**：连上后落在「上次看的 → 在跑的 → 最近更新 → 空白」四档；
+  桌面"当前打开哪个"是浏览器本地状态，宿主没有，手机不追。文档 `connect-landing.md`；
+  笔记 `implemented/2026-10-26-connect-landing.md`。运行态来自 `session.list.running` +
+  `api-session/status` 帧（落点选中在跑的会话就直接显示运行条）。
 - **UI**：会话/抽屉/输入区/审批与提问/任务/文件/@ 候选/插件/设置/用量/轨迹页全部接真数据；
   真机验收到 2026-10-24（W3/W4 四项）。
 - **未验**：图片上限四条、`readBytes` 预览、插件安装/卸载的真实 pnpm 流程；
-  桌面四件事的**真机验收**（改动卡 / 差异 / 分支 / 正文提及各一条证据，由用户操作）；
+  桌面四件事的真机验收（改动卡 / 差异 / 正文提及待验；**分支已真机通过**：
+  子会话标题 `dsh-model-desk (1)` 自动打开）；`caps.changes` 在真机上是否 true **待查**；
   计划审查卡**有意不接**。
 
 ## 下一步
@@ -56,10 +61,10 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 583 项（25 条规则自检 + 135 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | 587 项（25 条规则自检 + 136 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1373 项 |
+| `cd app && flutter test` | 1381 项 |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + 685 项 |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + 87 条 |
@@ -96,3 +101,4 @@
 - 2026-10-25 RPC 应答面收口（8 批） — `implemented/2026-10-25-wire-*`
 - 2026-10-26 评审六批 + 真实清单进金样 — `implemented/2026-10-26-wire-review-fixes.md`
 - 2026-10-26 桌面四件事（提及 / 改动卡 / 差异 / 分支）— `implemented/2026-10-26-desktop-alignment-plan.md` 与四篇实现笔记
+- 2026-10-26 真机对照修正（模型 pill fallback / 分支静默）+ 连通落点 — `implemented/2026-10-26-device-alignment-fixes.md`、`2026-10-26-connect-landing.md`
