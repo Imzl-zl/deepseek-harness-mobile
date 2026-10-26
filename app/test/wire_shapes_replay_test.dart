@@ -898,16 +898,17 @@ void main() {
     );
   });
 
-  test('session.page：refetch 标记缺 seq ⇒ 抛（整页失败，不静默跳过）', () {
-    expect(
-      () => readSessionPage({
-        'items': [
-          {'kind': 'refetch', 'bytes': 1024},
-        ],
-        'hasMore': false,
-      }),
-      throwsA(isA<SessionPageShapeError>()),
-    );
+  test('session.page：refetch 标记缺 seq ⇒ WireBad + 计数 1（整页失败，不静默跳过）', () {
+    WireDiagnostics.reset();
+    final reading = readSessionPage({
+      'items': [
+        {'kind': 'refetch', 'bytes': 1024},
+      ],
+      'hasMore': false,
+    });
+    expect(reading, isA<WireBad<SessionPageWire>>());
+    expect(valueOrReport(reading, 'session.page'), isNull);
+    expect(WireDiagnostics.badCount, 1, reason: '整页失败只出声一次');
   });
 
   test('session.refetch：{record} 里的事件解得出', () {

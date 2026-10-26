@@ -16,13 +16,16 @@
 ///
 /// ## 失败语义
 ///
-/// - **页级**：`items` 不是数组 ⇒ [WireBad]（整天读不出来）；`hasMore` 认不出 ⇒ `false`
-///   并计一次数（它是可选字段：`connector` 对最后一页不给 `hasMore`）。
-/// - **条目级**：`kind` 不认识的条目**跳过并计一次数**（对端加了新 kind 时我们不该整页失败）；
-///   但 `refetch` 项**没有 `seq`** 是硬错（取不回来 ⇒ 那一页有洞），所以它抛
-///   [SessionPageShapeError]，由连接层折成整页失败 —— 与 2026-10-22 之前"静默跳过"相反。
+/// - **页级**：`items` 不是数组、或 `refetch` 项**没有 `seq`**（取不回来 ⇒ 那一页有洞）
+///   ⇒ [WireBad]，由调用方折成整页失败。**这里不抛异常**：解码层只有 [WireReading]
+///   一条失败通道（2026-10-26 评审：上一个版本在这里抛自定义异常，而 `page()` 只接
+///   `ProtocolException`，于是整页失败变成了未处理的异步错误）。
+/// - **条目级**：`kind` 不认识、或 `record` 解不出 ⇒ 跳过并计一次数
+///   （对端加了新 kind 时我们不该整页失败；但"少一条"必须留声）。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`。
+/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`；
+/// 失败只有一条通道（本文件 2026-10-26 第 1 批）见
+/// `.agents/notes/proposed/2026-10-26-wire-review-fixes.md`。
 library;
 
 import '../../core/items.dart' show EventLike, itemIdOf;
@@ -66,20 +69,11 @@ final class SessionPageWire {
   final bool hasMore;
 }
 
-/// `refetch` 标记缺 `seq` —— 这一页取不回来，必须整页失败（不是"少一条"）。
-final class SessionPageShapeError implements Exception {
-  const SessionPageShapeError(this.detail);
-
-  final String detail;
-
-  @override
-  String toString() => 'SessionPageShapeError: $detail';
-}
-
 /// 解一页。**只解形状**：补取与排序留在连接层（那里才能 `await`）。
 ///
-/// [SessionPageShapeError] 会**抛出去**（不折成 `WireBad`）：连接层靠它决定整页失败，
-/// 而"整页失败"与"这一页是空的"在界面上是两句不同的话。
+/// **失败只回 [WireReading]，不抛异常**：整页读不出来是 [WireBad]，
+/// 由 `page()` 折成 `SessionPage.failure`。解码层自己决定不了"界面该说什么"，
+/// 也就不该抢走那条通道（2026-10-26 评审的第一条）。
 WireReading<SessionPageWire> readSessionPage(Object? reply) {
   if (reply is! Map) {
     return const WireBad('应答不是 {items, hasMore}（`session.page`）');
@@ -100,13 +94,19 @@ WireReading<SessionPageWire> readSessionPage(Object? reply) {
     final kind = item.optionalString('kind');
     if (kind == 'record') {
       final event = _eventOfRecord(raw['record']);
-      if (event != null) items.add(SessionPageRecordWire(event));
+      if (event == null) {
+        // **少一条也要留声**：静默丢弃正是 2026-10-22 之前那批事故的形态。
+        fields.report('items 里的 record 解不出：$raw');
+      } else {
+        items.add(SessionPageRecordWire(event));
+      }
       continue;
     }
     if (kind == 'refetch') {
       final seq = raw['seq'];
       if (seq is! int) {
-        throw const SessionPageShapeError('session.page 的 refetch 项没有 seq');
+        // 取不回来 ⇒ 这一页有洞：整页失败，交给调用方折成 `failure`。
+        return const WireBad('session.page 的 refetch 项没有 seq');
       }
       items.add(SessionPageRefetchWire(seq));
       continue;

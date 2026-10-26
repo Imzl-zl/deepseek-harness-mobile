@@ -25,6 +25,7 @@ import 'package:dsh_mobile/core/recovery.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/core/sync_client_impl.dart';
 import 'package:dsh_mobile/core/transport.dart';
+import 'package:dsh_mobile/wire/reading.dart' show WireDiagnostics;
 import 'package:flutter_test/flutter_test.dart';
 
 /// 假的传输：把发出去的行记下来，并允许测试"从对端"注入行。
@@ -577,6 +578,34 @@ void main() {
       expect(page.failure, 'session/not-found', reason: '失败要如实报，不当成没有更多');
       expect(page.events, isEmpty, reason: '不落半页：宁可整页失败也不留一个静默的洞');
       expect(page.hasMore, isFalse, reason: '水位没前进，保留电脑侧这一页的结论');
+
+      await client.close();
+    });
+
+    test('坏页（refetch 标记缺 seq）：整页如实失败，异常不许穿到调用方', () async {
+      WireDiagnostics.reset();
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+      await pump();
+
+      final pageFuture = client.page(sid: 's1', beforeSeq: 10);
+      await pump();
+      // 标记取不回来 = 这一页有洞：页级硬错，不是"少一条"。
+      await answerLastReq(f.transport, {
+        'result': {
+          'items': [
+            {'kind': 'refetch', 'bytes': 2048},
+          ],
+          'hasMore': true,
+        },
+      }, fc: 102);
+
+      final page = await pageFuture;
+      expect(page.failure, 'protocol/bad-frame', reason: '页级形状错要如实失败，不是静默空页');
+      expect(page.events, isEmpty);
+      expect(WireDiagnostics.badCount, 1, reason: '同一个缺陷只计一次数');
 
       await client.close();
     });

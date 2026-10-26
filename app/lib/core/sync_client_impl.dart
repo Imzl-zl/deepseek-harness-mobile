@@ -959,9 +959,12 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       final decoded = valueOrReport(readSessionPage(reply), 'session.page');
       if (decoded == null) {
         // 整页读不出来：**不当成"没有更多"**，保留上一次的结论（与失败分支同一条）。
+        // **必须带 `failure`**：解码失败是页级形状错，用户要看得到"翻页失败"；
+        // 只计数不回报的形态等于"上滑没反应"（2026-10-26 评审的第一条）。
         return SessionPage(
           events: const [],
           hasMore: _historyMore[sid] ?? true,
+          failure: ErrorCode.badFrame.wire,
         );
       }
       // **每一页都带 `hasMore`**：翻完这一页，连接层记住还有没有更早的。
