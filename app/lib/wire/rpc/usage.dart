@@ -9,7 +9,7 @@
 /// `visible` 会话聚出来（连接器那一段的注释记着"为什么不本地记账"）。
 /// 所以这里只负责调用与"读不出来要响"，聚合规则不在这层。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`。
+/// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
 import '../../core/sync_client.dart';

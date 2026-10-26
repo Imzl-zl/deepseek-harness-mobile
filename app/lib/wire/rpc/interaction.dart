@@ -19,7 +19,7 @@
 /// 手机只关心"这次答复有没有送到"（失败要抛，见调用方），回执体对界面没有意义 ——
 /// 造一个没人读的 decoder 等于给"我们校验过了"的假象。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`。
+/// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
 import '../../core/sync_client.dart';

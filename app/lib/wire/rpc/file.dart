@@ -15,7 +15,7 @@
 ///
 /// 二进制文件由宿主拒（`workspace-file/not-text`）—— 那是错误码，不是形状，走 `lastError`。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`。
+/// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
 import '../../core/sync_client.dart';

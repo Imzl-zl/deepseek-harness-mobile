@@ -15,17 +15,18 @@
 ///
 /// `permission.switch` 的应答与 `command.execute` **逐字相同**（同一个
 /// `CommandRunView`，`connector/src/dsh/permissions.ts` 的 `PermissionSwitchView = CommandRunView`），
-/// 所以解析器只有一个：`model/command.dart` 的 `parseCommandOutcome`。
+/// 所以解码器只有一个：`command.dart` 的 [readCommandOutcome]（本文件直接复用）。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`。
+/// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
 import '../../core/sync_client.dart';
-import '../../model/command.dart' show CommandOutcome, parseCommandOutcome;
+import '../../model/command.dart' show CommandOutcome;
 import '../../model/permission.dart'
     show PermissionCatalog, parsePermissionCatalog;
 import '../fields.dart';
 import '../reading.dart';
+import 'command.dart' show readCommandOutcome;
 
 /// 消费方一次拿齐"三态内核 + 字段内核 + 权限面解码"。
 export '../fields.dart';
@@ -81,10 +82,9 @@ WireReading<PermissionCatalog?> readPermissionCatalog(Object? result) =>
     });
 
 /// `permission.switch` 的应答（形状与 `command.execute` 同一个）。
-WireReading<CommandOutcome> readPermissionSwitch(Object? result) {
-  final outcome = parseCommandOutcome(result);
-  if (outcome == null) {
-    return const WireBad('应答不是 {matched, execution?}（`permission.switch`）');
-  }
-  return WireOk(outcome);
-}
+///
+/// **直接复用** [readCommandOutcome]：同一个 `CommandRunView` 只有一个解码器，
+/// 方法名只作为计数时点名的参数传进去（此前这里抄了一份等价实现，
+/// 与头注"解析器只有一个"不符 —— 2026-10-26 评审）。
+WireReading<CommandOutcome> readPermissionSwitch(Object? result) =>
+    readCommandOutcome(result, method: _kSwitch);

@@ -37,7 +37,7 @@
 /// 比空标题坏得多）。
 ///
 /// Note: 取舍、批次与代价见 `.agents/notes/implemented/2026-10-25-wire-golden-and-session-list.md`
-/// 与 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`。
+/// 与 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
 import '../../core/sync_client.dart';

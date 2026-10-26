@@ -16,7 +16,7 @@
 /// （连接器盖的，归桶靠它）。所以这里的行解码不声明 `sid`：帧路径由
 /// `core/job.dart` 的 `parseJobFrame` 负责，两条路各自只有一个读者。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`。
+/// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
 import '../../core/job.dart' show JobRow;

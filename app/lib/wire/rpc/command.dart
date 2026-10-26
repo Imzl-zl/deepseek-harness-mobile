@@ -10,7 +10,7 @@
 /// `matched: false` 是**合法应答**：电脑侧没有这条命令（DSH 对认不出的命令回 `undefined`），
 /// 手机据此按 Web 的输入流水线退成普通消息（`machine.ts:170-175`）。那不是形状错。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`。
+/// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
 import '../../core/sync_client.dart';

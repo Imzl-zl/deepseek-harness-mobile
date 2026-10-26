@@ -27,7 +27,7 @@
 /// 本文件只依赖 `reading.dart`（纯 Dart，零 Flutter）。family 文件依赖本文件 +
 /// `model/` 的模型类 + `core/sync_client.dart` 的端口。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`；
+/// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`；
 /// 取舍与判据见 `.agents/notes/implemented/2026-10-25-wire-golden-and-session-list.md`。
 library;
 

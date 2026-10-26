@@ -35,6 +35,7 @@ import 'dart:io';
 import 'package:dsh_mobile/core/endpoint.dart' show parseEndpointList;
 import 'package:dsh_mobile/core/job.dart' show JobRow;
 import 'package:dsh_mobile/core/sync_client.dart' show SessionEvent;
+import 'package:dsh_mobile/model/agent_preset.dart' show parseAgentPresetRoster;
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/model/command.dart';
 import 'package:dsh_mobile/model/mention.dart' show AtCandidate;
@@ -852,26 +853,43 @@ void main() {
 
   // ---- C2：插件 / 命令 / 用量 / 交互答复 ----
 
+  test('agentPresets.list：金样的目录用同一份 model 解析器解得出（43/43 覆盖）', () {
+    final sample = _sampleOf(golden, 'agentPresets.list');
+    final roster = parseAgentPresetRoster(sample);
+    expect(roster.available, isTrue);
+    final raw = ((sample['roster']! as Map)['presets']! as List).length;
+    expect(roster.options.length, raw, reason: '金样里的预设都该解得出（只有 broken 才被滤掉）');
+  });
+
   test('plugin.list / listBundles：两列各解出金样里的条数（行由 model/plugins.dart 解）', () {
     final pluginsSample = _sampleOf(golden, 'plugin.list');
     final plugins = (pluginsSample['plugins']! as List).cast<Object?>();
     final pluginsReading = readPluginList(pluginsSample);
-    expect(pluginsReading, isA<WireOk<List<Object?>>>());
+    expect(pluginsReading, isA<WireOk<List<PluginRow>>>());
     expect(
-      (pluginsReading as WireOk<List<Object?>>).value.length,
+      (pluginsReading as WireOk<List<PluginRow>>).value.length,
       plugins.length,
     );
-    expect(PluginRow.fromWire(plugins.first)?.entryId, isNotNull);
 
     final bundlesSample = _sampleOf(golden, 'plugin.listBundles');
     final bundles = (bundlesSample['bundles']! as List).cast<Object?>();
     final bundlesReading = readPluginBundles(bundlesSample);
-    expect(bundlesReading, isA<WireOk<List<Object?>>>());
+    expect(bundlesReading, isA<WireOk<List<PluginBundle>>>());
     expect(
-      (bundlesReading as WireOk<List<Object?>>).value.length,
+      (bundlesReading as WireOk<List<PluginBundle>>).value.length,
       bundles.length,
     );
-    expect(PluginBundle.fromWire(bundles.first)?.name, isNotNull);
+
+    // 认不出的行：丢那一条 + 计数 1（此前 loader 里静默 `?fromWire`）。
+    WireDiagnostics.reset();
+    final oneBad = readPluginList({
+      'plugins': [
+        {'nope': true},
+      ],
+    });
+    expect(oneBad, isA<WireOk<List<PluginRow>>>());
+    expect((oneBad as WireOk<List<PluginRow>>).value, isEmpty);
+    expect(WireDiagnostics.badCount, 1);
   });
 
   test('plugin.setEnabled：enabled 是回读后的真值；缺它 ⇒ WireBad + 计数 1', () {

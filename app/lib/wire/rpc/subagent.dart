@@ -12,11 +12,11 @@
 ///
 /// ## 应答不读
 ///
-/// `{accepted}` 今天没有任何消费者（`ui/chat_page.dart` 直接 `call<void>`），
+/// `{accepted}` 今天没有任何消费者（`sendSubagentPrompt` 直接 `call<void>`），
 /// 所以这里**只搬调用**（方法名与参数形状是协议知识），不造 decoder ——
 /// 造一个没人读的 decoder 等于给"我们校验过了"的假象。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`。
+/// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
 import '../../core/sync_client.dart';

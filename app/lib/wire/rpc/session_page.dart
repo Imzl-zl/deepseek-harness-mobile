@@ -1,8 +1,9 @@
-/// **历史页**（`session.page` / `session.refetch`）的形状解码。
+/// **历史页**（`session.page` / `session.refetch`）的唯一入口：发请求 + 解码。
 ///
-/// 这两个方法**不走 `client.call`**：它们走 `SyncClient` 的具名方法（`page` / `refetch`），
-/// 因为补取（`refetch`）要参与 `await`，纯 decoder 不能 await。所以它们不占
-/// `verify-rpc-single-caller.mjs` 的预算 —— 那个数只数 `data/` 与 `ui/` 里的 `call<`。
+/// 方法名与参数形状在这里（`loadSessionPage` / `loadRefetchedEvent`）；连接层只留
+/// "记住 hasMore + 逐条 `await` 补取 + 按 seq 排序" —— 那两件事需要连接状态，
+/// 不属于纯解码。**本文件不占 `verify-rpc-single-caller.mjs` 的白名单**：
+/// 门禁扫 `app/lib` 全域，`wire/` 之外零 `call<`。
 ///
 /// ## 形状的出处
 ///
@@ -23,7 +24,7 @@
 /// - **条目级**：`kind` 不认识、或 `record` 解不出 ⇒ 跳过并计一次数
 ///   （对端加了新 kind 时我们不该整页失败；但"少一条"必须留声）。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`；
+/// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`；
 /// 失败只有一条通道（本文件 2026-10-26 第 1 批）见
 /// `.agents/notes/proposed/2026-10-26-wire-review-fixes.md`。
 library;

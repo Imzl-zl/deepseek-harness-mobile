@@ -14,7 +14,7 @@
 /// `values`（那一行的当前值）。`secrets` **不声明** —— 密钥值不回传手机（契约 §7.5），
 /// 少声明一个键就少一处要维护的漂移面。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`。
+/// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
 import '../../core/sync_client.dart';

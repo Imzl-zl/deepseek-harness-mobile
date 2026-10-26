@@ -27,7 +27,7 @@
 /// 那是连接器**有意的兼容决定**，不是两个真值 —— 解析器只有一个
 /// （`model/command.dart` 的 `parseSlashCommands`），这里只负责把值递过去。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`。
+/// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
 import '../../core/sync_client.dart';

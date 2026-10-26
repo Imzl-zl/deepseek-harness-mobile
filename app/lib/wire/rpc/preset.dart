@@ -15,7 +15,7 @@
 /// 这里**只搬调用**（方法名与参数形状是协议知识）；`parseAgentPresetRoster`
 /// 自己已经处理了 `available` 与 `roster` 两层，再造一个 envelope 断言是重复。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`。
+/// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
 import '../../core/sync_client.dart';

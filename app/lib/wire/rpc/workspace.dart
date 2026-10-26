@@ -21,13 +21,13 @@
 ///
 /// ## 失败语义
 ///
-/// - 分组：`workspaces` 里**一条认不出就跳过那一条**（少一个分组比整个列表失败轻），
-///   但"`workspaces` 不是数组"是 [WireBad]。
+/// - 分组：**一条认不出就丢那一条 + 计数**（少一个分组比整个列表失败轻），
+///   走的是 `readObjectList` 的统一入口；"`workspaces` 不是数组"是 [WireBad]。
 /// - 集合 / 顺序（"整份真值"）：**认不出就返回 `null`**，由调用方"不动 + 如实报错"——
 ///   一个有损的落盘会让"哪条是归档的"错位，而症状只是"列表里少了一条"，最难查。
 ///   空数组**合法**（工作区被搬空了）；但"非空却全是非法项"说明形状变了，也算认不出。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`。
+/// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
 import '../../core/sync_client.dart';

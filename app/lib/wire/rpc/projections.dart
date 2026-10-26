@@ -7,9 +7,9 @@
 ///
 /// **这与 `session.list` 行里的 `.projections` 不是同一个形状**：那个是
 /// **信封** `{kind, asOfSeq, values}`（`connector/src/dsh/sessions.ts:333-341`）。
-/// 同一个名字的两种形状、读错的表现是**静默空值**，所以：
-/// - 信封的读法只有 [WireFields.envelopeValues]（在 `session.dart` 的行解码里用）；
-/// - 扁平的读法只有本文件（`readSessionProjections` 直接吃 `values`）。
+/// 同一个名字的两种形状、读错的表现是**静默空值**，所以各自只有一处入口：
+/// - 信封的读法只有 `WireFields.envelopeValues`（在 `session.dart` 的行解码里用）；
+/// - 扁平的读法只有 `fields.dart` 的 `readFlatValues`（本文件调用它）。
 ///
 /// ## 为什么产出的是一个值对象而不是裸 map
 ///
@@ -28,7 +28,7 @@
 /// "这台电脑没注册那个投影"与"还没读到"在界面上是同一句话（空态），不是漂移。
 /// 例外是 `values` 里出现**非字符串键**（线上从不可能）：那计一次数并丢掉那个键。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`。
+/// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
 import '../../core/job.dart' show SubagentRow, parseSubagentCatalog;

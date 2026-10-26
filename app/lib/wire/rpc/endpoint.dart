@@ -15,7 +15,7 @@
 /// `core/endpoint.dart` 的 `parseEndpointList` / `endpointFromJson` 做
 /// （认不出的条目跳过，不猜）。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`。
+/// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
 import '../../core/endpoint.dart' show Endpoint, parseEndpointList;

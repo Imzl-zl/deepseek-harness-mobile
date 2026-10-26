@@ -8,11 +8,11 @@
 /// 所以这里给的是两个 async 函数 + 一个把它们并起来的 [loadMentionCandidates]。
 ///
 /// 行本体的解析（`path` / `kind` / `mention` / `label`）在 `model/mention.dart` 的
-/// `AtCandidate.fromFileRow` / `fromSessionRow` —— **单独一行认不出就跳过那一行**，
-/// 不计数：那可能是"这条候选的形状我们不认识"，而它的正确表现就是"不显示这一条"，
-/// 不是"整次查询失败"。只有**信封**坏（`files` / `sessions` 不是数组）才 [WireBad]。
+/// `AtCandidate.fromFileRow` / `fromSessionRow` —— **单独一行认不出就跳过那一行并计数**
+/// （那是"这条候选的形状我们不认识"，正确表现是"不显示这一条"，但必须留声）。
+/// 只有**信封**坏（`files` / `sessions` 不是数组）才是整天 [WireBad]。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`。
+/// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
 import '../../core/sync_client.dart';

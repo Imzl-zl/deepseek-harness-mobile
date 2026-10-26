@@ -22,7 +22,7 @@
 /// 这里分成两个函数 —— 旧实现用一个 `_startPluginJob(method, body)` 把方法名当参数传，
 /// 那正好是"方法名 + 参数形状各在一处、且都可以被调用方拼错"的形态。
 ///
-/// Note: 布局与批次见 `.agents/notes/proposed/2026-10-25-wire-rpc-layer-layout.md`。
+/// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
 import '../../core/sync_client.dart';
@@ -57,21 +57,16 @@ final class PluginInventoryWire {
 /// 任一侧读不出来 ⇒ 那一侧空表（另一侧照常给），并计一次数；
 /// **两侧都读不出来**才返回 `null`（调用方把插件页画成"读取失败"）。
 Future<PluginInventoryWire?> loadPluginInventory(SyncClient client) async {
-  final answers = await Future.wait<WireReading<List<Object?>>?>([
-    _readList(client, _kList, 'plugins'),
-    _readList(client, _kBundles, 'bundles'),
-  ]);
-  final rows = valueOrReport(answers[0]!, _kList);
-  final bundles = valueOrReport(answers[1]!, _kBundles);
+  final (rowsReading, bundlesReading) = await (
+    _loadList(client, _kList, readPluginList),
+    _loadList(client, _kBundles, readPluginBundles),
+  ).wait;
+  final rows = valueOrReport(rowsReading, _kList);
+  final bundles = valueOrReport(bundlesReading, _kBundles);
   if (rows == null && bundles == null) return null;
   return PluginInventoryWire(
-    rows: [
-      for (final row in rows ?? const <Object?>[]) ?PluginRow.fromWire(row),
-    ],
-    bundles: [
-      for (final row in bundles ?? const <Object?>[])
-        ?PluginBundle.fromWire(row),
-    ],
+    rows: rows ?? const <PluginRow>[],
+    bundles: bundles ?? const <PluginBundle>[],
   );
 }
 
@@ -127,12 +122,33 @@ Future<String?> cancelPluginInstall(
 // ---------------------------------------------------------------------------
 
 /// `plugin.list` 的应答 `{plugins: [...]}`（行由 `model/plugins.dart` 解）。
-WireReading<List<Object?>> readPluginList(Object? result) =>
-    _readListFrom(result, _kList, 'plugins');
+///
+/// 行解码收进 [readObjectList]：认不出的行**丢那一条 + 计数**。
+/// 此前在 loader 里 `?PluginRow.fromWire(row)` 静默丢弃，计数为 0
+/// （2026-10-26 评审的第 6 批）。
+WireReading<List<PluginRow>> readPluginList(Object? result) => readObjectList(
+  result,
+  method: _kList,
+  key: 'plugins',
+  build: (fields) {
+    final row = PluginRow.fromWire(fields.map);
+    if (row == null) throw const WireFieldError('插件行认不出');
+    return row;
+  },
+);
 
-/// `plugin.listBundles` 的应答 `{bundles: [...]}`。
-WireReading<List<Object?>> readPluginBundles(Object? result) =>
-    _readListFrom(result, _kBundles, 'bundles');
+/// `plugin.listBundles` 的应答 `{bundles: [...]}`（同上：坏行计数）。
+WireReading<List<PluginBundle>> readPluginBundles(Object? result) =>
+    readObjectList(
+      result,
+      method: _kBundles,
+      key: 'bundles',
+      build: (fields) {
+        final bundle = PluginBundle.fromWire(fields.map);
+        if (bundle == null) throw const WireFieldError('插件包行认不出');
+        return bundle;
+      },
+    );
 
 /// `plugin.setEnabled` 的应答。
 ///
@@ -190,20 +206,8 @@ Future<String?> _startJob(
       requestId;
 }
 
-Future<WireReading<List<Object?>>?> _readList(
+Future<WireReading<T>> _loadList<T>(
   SyncClient client,
   String method,
-  String key,
-) async =>
-    _readListFrom(await client.call<Object?>(method, const {}), method, key);
-
-WireReading<List<Object?>> _readListFrom(
-  Object? result,
-  String method,
-  String key,
-) {
-  if (result is! Map) return WireBad('应答不是 {$key: [...]}（`$method`）');
-  final rows = result[key];
-  if (rows is! List) return WireBad('应答里没有 $key 数组（`$method`）');
-  return WireOk(List<Object?>.unmodifiable(rows));
-}
+  WireReading<T> Function(Object?) decode,
+) async => decode(await client.call<Object?>(method, const {}));
