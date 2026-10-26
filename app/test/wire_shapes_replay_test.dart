@@ -692,6 +692,44 @@ void main() {
     expect(WireDiagnostics.badCount, 0);
   });
 
+  test('job.list 行缺任一必填键 ⇒ 整行丢 + 计数 1（JobRowView 的必填键）', () {
+    // 连接器无条件写出这六个（`connector/src/dsh/jobs.ts:47-59`）：
+    // 缺了就是漂了，不许用默认值兜住 —— `status ?? running` 正是"永远转"的形态。
+    const required = [
+      'id',
+      'kind',
+      'label',
+      'status',
+      'startedAt',
+      'outputTotal',
+    ];
+    for (final key in required) {
+      WireDiagnostics.reset();
+      final row = <String, Object?>{
+        'id': 'j1',
+        'kind': 'pwsh',
+        'label': 'flutter build apk',
+        'status': 'running',
+        'startedAt': 1,
+        'outputTotal': 0,
+      }..remove(key);
+      final reading = readJobList({
+        'jobs': [row],
+      });
+      expect(
+        reading,
+        isA<WireOk<List<JobRow>>>(),
+        reason: '缺 $key 只丢那一行，不整天失败',
+      );
+      expect(
+        (reading as WireOk<List<JobRow>>).value,
+        isEmpty,
+        reason: '缺 $key 的行不许被默认值兜住',
+      );
+      expect(WireDiagnostics.badCount, 1, reason: '缺 $key 恰好计一次');
+    }
+  });
+
   test('job.kill：outcome 等于金样；缺 outcome ⇒ WireBad + 计数 1', () {
     final sample = _sampleOf(golden, 'job.kill');
     final reading = readJobKillOutcome(sample);
@@ -909,6 +947,14 @@ void main() {
     expect(reading, isA<WireBad<SessionPageWire>>());
     expect(valueOrReport(reading, 'session.page'), isNull);
     expect(WireDiagnostics.badCount, 1, reason: '整页失败只出声一次');
+  });
+
+  test('session.page 缺 hasMore ⇒ WireBad + 计数 1（连接器每一页都带它）', () {
+    WireDiagnostics.reset();
+    final reading = readSessionPage({'items': <Object?>[]});
+    expect(reading, isA<WireBad<SessionPageWire>>());
+    expect(valueOrReport(reading, 'session.page'), isNull);
+    expect(WireDiagnostics.badCount, 1);
   });
 
   test('session.refetch：{record} 里的事件解得出', () {

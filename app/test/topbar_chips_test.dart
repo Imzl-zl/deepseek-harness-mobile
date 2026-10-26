@@ -119,6 +119,9 @@ class _ChipsClient extends FakeSyncClient {
                     'label': 'flutter build apk --release $i',
                     'status': i < liveJobs ? 'running' : 'completed',
                     'startedAt': 1,
+                    // 连接器无条件写它（`connector/src/dsh/jobs.ts:47-59`）：
+                    // 假行必须照生产形状，缺了会被解码器整行丢掉。
+                    'outputTotal': 0,
                   },
               ],
             }

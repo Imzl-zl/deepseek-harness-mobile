@@ -65,7 +65,8 @@ final class SessionPageWire {
 
   final List<SessionPageItemWire> items;
 
-  /// 还有没有更早的历史。**缺省是 `false`**：连接器对最后一页不给这个字段。
+  /// 还有没有更早的历史。**每一页都带**（`connector/src/session-page.ts:109`），
+  /// 缺了就是漂了 ⇒ 整页 [WireBad]。
   final bool hasMore;
 }
 
@@ -74,48 +75,43 @@ final class SessionPageWire {
 /// **失败只回 [WireReading]，不抛异常**：整页读不出来是 [WireBad]，
 /// 由 `page()` 折成 `SessionPage.failure`。解码层自己决定不了"界面该说什么"，
 /// 也就不该抢走那条通道（2026-10-26 评审的第一条）。
-WireReading<SessionPageWire> readSessionPage(Object? reply) {
-  if (reply is! Map) {
-    return const WireBad('应答不是 {items, hasMore}（`session.page`）');
-  }
-  final fields = WireFields(reply, _kPage);
-  final rawItems = reply['items'];
-  if (rawItems is! List) return const WireBad('应答里没有 items 数组（`session.page`）');
-  // `hasMore` 可选：缺席 ⇒ 最后一页（连接器只在还有更早的时给 true）。
-  final hasMore = fields.optionalBool('hasMore') ?? false;
+WireReading<SessionPageWire> readSessionPage(Object? reply) =>
+    readObject(_kPage, reply, (fields) {
+      final rawItems = fields.requireList('items');
+      // **每一页都带它**（`connector/src/session-page.ts:109`）：缺了就是漂了。
+      final hasMore = fields.requireBool('hasMore');
 
-  final items = <SessionPageItemWire>[];
-  for (final raw in rawItems) {
-    if (raw is! Map) {
-      fields.report('items 里有一项不是对象：$raw');
-      continue;
-    }
-    final item = WireFields(raw, _kPage);
-    final kind = item.optionalString('kind');
-    if (kind == 'record') {
-      final event = _eventOfRecord(raw['record']);
-      if (event == null) {
-        // **少一条也要留声**：静默丢弃正是 2026-10-22 之前那批事故的形态。
-        fields.report('items 里的 record 解不出：$raw');
-      } else {
-        items.add(SessionPageRecordWire(event));
+      final items = <SessionPageItemWire>[];
+      for (final raw in rawItems) {
+        if (raw is! Map) {
+          fields.report('items 里有一项不是对象：$raw');
+          continue;
+        }
+        final kind = raw['kind'];
+        if (kind == 'record') {
+          final event = _eventOfRecord(raw['record']);
+          if (event == null) {
+            // **少一条也要留声**：静默丢弃正是 2026-10-22 之前那批事故的形态。
+            fields.report('items 里的 record 解不出：$raw');
+          } else {
+            items.add(SessionPageRecordWire(event));
+          }
+          continue;
+        }
+        if (kind == 'refetch') {
+          final seq = raw['seq'];
+          if (seq is! int) {
+            // 取不回来 ⇒ 这一页有洞：整页失败，由 readObject 折成 WireBad。
+            throw const WireFieldError('session.page 的 refetch 项没有 seq');
+          }
+          items.add(SessionPageRefetchWire(seq));
+          continue;
+        }
+        // 不认识的 kind：跳过并计数（对端加新 kind 时不该整页失败）。
+        fields.report('items 里有不认识的 kind：$kind');
       }
-      continue;
-    }
-    if (kind == 'refetch') {
-      final seq = raw['seq'];
-      if (seq is! int) {
-        // 取不回来 ⇒ 这一页有洞：整页失败，交给调用方折成 `failure`。
-        return const WireBad('session.page 的 refetch 项没有 seq');
-      }
-      items.add(SessionPageRefetchWire(seq));
-      continue;
-    }
-    // 不认识的 kind：跳过并计数（对端加新 kind 时不该整页失败）。
-    fields.report('items 里有不认识的 kind：$kind');
-  }
-  return WireOk(SessionPageWire(items: items, hasMore: hasMore));
-}
+      return SessionPageWire(items: items, hasMore: hasMore);
+    });
 
 /// `session.refetch` 的应答：`{record}` → 一条事件。认不出 ⇒ [WireBad]。
 WireReading<SessionEvent> readRefetchedEvent(Object? reply) {

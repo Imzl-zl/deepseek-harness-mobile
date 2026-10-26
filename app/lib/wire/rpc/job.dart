@@ -88,16 +88,19 @@ WireReading<String> readJobKillOutcome(Object? result) => readObject(
 
 /// 一行任务（`job.list` 的形状）。
 ///
-/// `status` 缺省按 `running`（连接器在流的生命周期里总会写它；缺了按"还在跑"处理，
-/// 因为"没结束"是更保守的那个解读 —— 界面据此继续转，而不是把在跑的说成结束）。
+/// **六个键是必填**：连接器无条件写出它们（`connector/src/dsh/jobs.ts:47-59`
+/// 的 `toRow`，协议侧 `protocol/job-output.ts:54-67` 也声明为必填）。
+/// 缺一个就是漂了 ⇒ 整行丢 + 计数，**不拿默认值兜** ——
+/// `status ?? 'running'` 正是"任务永远转"的形态（2026-10-26 评审）。
+/// `progress` / `detail` / `finishedAt` / `sid` 才是可选的（生产侧按条件展开）。
 JobRow _jobRowOf(WireFields fields) {
   return JobRow(
     id: fields.requireNonEmptyString('id'),
     kind: fields.requireString('kind'),
-    label: fields.optionalString('label') ?? '',
-    status: fields.optionalString('status') ?? 'running',
-    startedAt: fields.optionalInt('startedAt') ?? 0,
-    outputTotal: fields.optionalInt('outputTotal') ?? 0,
+    label: fields.requireString('label'),
+    status: fields.requireString('status'),
+    startedAt: fields.requireInt('startedAt'),
+    outputTotal: fields.requireInt('outputTotal'),
     progress: fields.optionalNonEmptyString('progress'),
     detail: fields.optionalNonEmptyString('detail'),
     finishedAt: fields.optionalInt('finishedAt'),
