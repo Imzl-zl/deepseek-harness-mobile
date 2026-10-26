@@ -62,6 +62,21 @@
 - 代价：未配对用户失去"先看看界面"的入口（**有意**）；下一次若要做，
   应按"只读预览、不造假数据"重开，而不是把 `preview_data.dart` 搬回来。
 
+## 真机验证（同日）
+
+- 装新构建后（真机 d61cf622）未配对空态只有「还没配对 / 重新配对 / 连电脑」，
+  **没有「看示例数据」**；`＋` 菜单的「演示：接管输入栏」已由代码与用例保证不存在
+  （无会话时菜单不可点，未在真机上展开该项）。
+- **重新配对**：起隔离 profile（`dsh-mobile-test`，直连 8790 + relay 8787），
+  扫二维码配对成功；手机经 relay 连上并在首次 serving 时跑 `endpoint.describe`，
+  合并出 relay + 三条直连。
+- **留存端点**：停掉 relay、杀 App 冷启动 ⇒ 日志
+  `[dial] direct ws://192.168.110.79:8790 通 (118ms)`，绿点、会话页正常。
+  即"换 WiFi 后按当前 IP 重连"走的是保存下来的端点，不需要重扫。
+- **时序注意**：`endpoint.describe` 只在连上后跑一次；配对完成后要让它落盘
+  （一次 serving）再断 relay。第一次测试在配对后立刻断 relay，下一次启动仍只有
+  relay —— 这是预期时序，不是 bug。
+
 ## 代码入口回指
 
 - `app/lib/data/app_model.dart`（`seedForTest` / `emitInteractionForTest`，以及被删的 preview API）
