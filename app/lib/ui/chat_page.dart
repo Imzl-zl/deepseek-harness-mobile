@@ -2880,6 +2880,27 @@ class _ConversationFlowState extends State<_ConversationFlow> {
   /// 正在翻页（滚到顶会**连续**触发，不去重就会一次滚到发好几页）。
   bool _paging = false;
 
+  /// 收口处的「在新会话中分支」：成功打开子会话，失败如实弹。
+  ///
+  /// 成功时 `AppModel.forkSession` 已经重拉过会话列表（子会话进抽屉）；
+  /// 这里只负责"打开它"与"把失败说出来"。
+  Future<void> _fork(int atSeq) async {
+    final app = widget.app;
+    final sid = app?.currentSid;
+    if (app == null || sid == null) return;
+    final child = await app.forkSession(sid, atSeq: atSeq);
+    if (!mounted) return;
+    if (child == null) {
+      DshToast.show(
+        context,
+        '分支失败：${app.lastError?.message ?? '电脑侧没有给结论'}',
+        kind: DshToastKind.error,
+      );
+      return;
+    }
+    await app.openSession(child);
+  }
+
   /// 滚到顶就翻一页更早的历史（DSH Web 的 `loadOlder`，`session.ts:406`）。
   ///
   /// ## 为什么在 `ScrollNotification` 里判，而不是照抄 DSH 的 viewport
@@ -3132,6 +3153,8 @@ class _ConversationFlowState extends State<_ConversationFlow> {
                       item.turn != null &&
                       (widget.isTurnExpanded?.call(item.turn!) ?? true),
                   onToggleTurn: widget.onToggleTurn,
+                  // 分支：走 `AppModel.forkSession`（宿主 fork；标题后缀在连接器）。
+                  onFork: widget.app == null ? null : _fork,
                   // 组头：这一条是该轮第一条助手侧条目时，头像画在它上方。
                   showHead: widget.headAt.contains(item.itemId),
                 ),
@@ -3477,10 +3500,14 @@ class _TurnView extends StatelessWidget {
     this.fileMentions,
     this.onOpenFile,
     this.app,
+    this.onFork,
   });
 
   /// 会话模型（改动卡要按事件 seq 向电脑要记录；`null` = 不画卡）。
   final AppModel? app;
+
+  /// 收口行的「分支」动作（参数是**该轮收口事件的 seq**）；`null` = 不摆那枚钮。
+  final Future<void> Function(int atSeq)? onFork;
 
   /// 这一条上方要不要画「助手」头（由所在轮组的第一条助手侧条目决定）。
   final bool showHead;
@@ -3629,6 +3656,9 @@ class _TurnView extends StatelessWidget {
             collapsibleTurn && onToggleTurn != null && process.turn != null
             ? () => onToggleTurn!(process.turn!, !turnExpanded)
             : null,
+        // 收口 seq 就是这一条（`turn/end`）的 seq —— 桌面 `forkAt(turn.end.seq)`
+        // 用的是同一个坐标（`ui-chat/src/client/apply.ts:299-305`）。
+        onFork: onFork == null ? null : () => onFork!(item.seq),
       ),
       // 一轮的改动记录（`workspace/changes`）：桌面在收口处那张「已编辑 N 个文件」卡。
       // **数字来自电脑**（`file.changes` → 宿主 `workspaceChanges`），手机只画。

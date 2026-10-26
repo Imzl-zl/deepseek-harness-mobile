@@ -26,6 +26,14 @@ import { isErrorCode, ProtocolError, type ErrorCode } from './errors.js'
  */
 export const METHODS = [
   'session.create',
+  // 在一轮的收口处**分支**出一个新会话（契约 §5.7）。**与 Web 同一个 DSH 方法**：
+  // `SessionController.fork({sessionId, atSeq})`（`session-controller/src/index.ts:432-443`，
+  // 请求/应答 `types.ts:300-312`）。`atSeq` 缺省 = 宿主取"最近一个已完成轮次前缀"。
+  // 标题后缀**不是宿主参数**：宿主 fork 没有 `increaseTitle`，Web 是客户端服务层
+  // 读源标题 → fork → `rename` 做的（`client/sessions/service.ts:463-487`），连接器照同一步。
+  // **不带幂等键**：宿主 fork 没有键，桌面也每点一次建一个；重复点击由界面在途禁用兜
+  // （加一个键等于在指令层发明"同键同子会话"的语义）。
+  'session.fork',
   'session.list',
   'session.subscribe',
   'session.unsubscribe',

@@ -73,6 +73,8 @@ export async function startChain(t: Cleanup): Promise<Chain> {
     updateQueue: async () => ({ accepted: true as const }),
     selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
     create: async () => ({ sessionId: 'dsh-new' }),
+    fork: async () => ({ childSessionId: 'dsh-child' }),
+    rename: async () => ({ title: 't', seq: 1 }),
     follow: (): never => { throw new Error('本用例不应建立 DSH 订阅') },
   }
   const scope: ConnectionScopeDeps = {

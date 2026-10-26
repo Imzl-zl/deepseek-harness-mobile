@@ -26,6 +26,10 @@ import type { JobControlPort, JobsPort } from './dsh/jobs.js'
 import type { JobSubscriptions } from './job-subscriptions.js'
 import type { SessionPager } from './session-page.js'
 import type { SessionSubscriptions } from './session-subscriptions.js'
+import {
+  increasedForkTitle,
+  sourceTitleOf,
+} from './dsh/sessions.js'
 import type { PromptPart, QueueAction, SessionSummaryRow, SessionsPort } from './dsh/sessions.js'
 import type { ConnectionIdentity } from './connection-scope.js'
 import type { InteractionFace } from './interaction-face.js'
@@ -200,7 +204,16 @@ export interface HandlerDeps {
    * `sessionController` 是本插件的必需服务（缺了它插件根本不挂载），所以不存在"这个端口不在"
    * 的生产形态；把它写成可选只会多一条永远不会被走到的错误分支。
    */
-  sessions: Pick<SessionsPort, 'list' | 'prompt' | 'selectModel' | 'create' | 'updateQueue' | 'cancel'>
+  sessions: Pick<
+    SessionsPort,
+    'list' | 'prompt' | 'selectModel' | 'create' | 'updateQueue' | 'cancel'
+  > &
+    /**
+     * 分支用的两个宿主方法。**可选**只因为测试替身按需给：
+     * 生产装配走 `createSessionsAdapter`，两个都在。缺了回 `connector/unsupported`
+     * （"这个连接器版本没有接分支"），**不伪装成别的失败**。
+     */
+    Partial<Pick<SessionsPort, 'fork' | 'rename'>>
   aliases: AliasPort
   /**
    * 后台任务（可选服务）。
@@ -722,6 +735,50 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
         sid,
         ...(created.agentPreset === undefined ? {} : { agentPreset: created.agentPreset }),
       }
+    },
+
+    // 收口处分支。**与 Web 同一条链**（`ui-chat/src/client/apply.ts:299-305` 的 `forkAt`
+    // → 客户端服务层 `fork`）：读源标题 → 宿主 `fork` → `rename` 加后缀 → 子会话过别名。
+    // 标题读法是 `displayTitleOf` 同一套（持久标题 → cwd 目录名；**不用 DSH id 兜底**，
+    // id 不过线）。
+    'session.fork': async (params) => {
+      const fork = deps.sessions.fork
+      const rename = deps.sessions.rename
+      if (fork === undefined || rename === undefined) {
+        throw new ProtocolError('connector/unsupported', '这个连接器没有接分支')
+      }
+      const dshSessionId = requireSession(requireSid(params));
+      const atSeqRaw = paramOf(params, 'atSeq');
+      if (
+        atSeqRaw !== undefined &&
+        (typeof atSeqRaw !== 'number' ||
+          !Number.isSafeInteger(atSeqRaw) ||
+          atSeqRaw < 0)
+      ) {
+        throw new ProtocolError(
+          'protocol/bad-frame',
+          'atSeq 必须是安全非负整数（某一轮收口的事件序号）',
+        )
+      }
+      const rows = await deps.sessions.list();
+      const row = rows.find((item) => item.dshSessionId === dshSessionId);
+      const sourceTitle = sourceTitleOf(
+        row?.projections?.values['title'],
+        row?.cwd,
+      );
+      const created = await fork({
+        sessionId: dshSessionId,
+        ...(atSeqRaw === undefined ? {} : { atSeq: atSeqRaw }),
+      });
+      // rename 失败就如实抛：fork 已经建了（桌面同样不回滚，`service.ts:484`），
+      // 但别把"没改成标题"说成"没 fork 成功"。
+      if (sourceTitle !== undefined) {
+        await rename(
+          created.childSessionId,
+          increasedForkTitle(sourceTitle),
+        );
+      }
+      return { sid: await deps.aliases.ensure(created.childSessionId) };
     },
 
     'session.list': async () => {

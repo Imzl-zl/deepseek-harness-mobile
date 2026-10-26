@@ -1016,7 +1016,12 @@ class TurnProcessRow extends StatefulWidget {
     this.copyText = '',
     this.expanded = true,
     this.onToggle,
+    this.onFork,
   });
+
+  /// 「在新会话中分支」（桌面收口行的那枚按钮）。`null` = 不摆这枚钮
+  /// （没有会话模型 / 这一轮没有收口 seq）。
+  final Future<void> Function()? onFork;
 
   /// 这一轮的过程此刻**展开**着吗（决定箭头朝向与 `Semantics`）。
   ///
@@ -1060,6 +1065,20 @@ class _TurnProcessRowState extends State<TurnProcessRow> {
   /// 复制成功后短暂变对勾（DSH 是 1 秒，`MessageIconActions.tsx:62-76`）。
   bool _copied = false;
   Timer? _reset;
+
+  /// 分支请求在途（宿主 fork 没有幂等键，重复点击由这里兜）。
+  bool _forking = false;
+
+  Future<void> _fork() async {
+    final fork = widget.onFork;
+    if (fork == null || _forking) return;
+    setState(() => _forking = true);
+    try {
+      await fork();
+    } finally {
+      if (mounted) setState(() => _forking = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -1151,6 +1170,14 @@ class _TurnProcessRowState extends State<TurnProcessRow> {
               icon: _copied ? 'check' : 'copy',
               label: _copied ? '已复制' : '复制',
               onTap: _copy,
+            ),
+          // **在新会话中分支**（桌面收口行的同一枚按钮）。在途时置灰，防重复 fork。
+          if (widget.onFork != null)
+            _Pill(
+              key: const Key('turn-fork'),
+              icon: 'branch',
+              label: _forking ? '分支中…' : '分支',
+              onTap: () => unawaited(_fork()),
             ),
         ],
       ),

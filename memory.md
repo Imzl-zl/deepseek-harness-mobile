@@ -7,11 +7,12 @@
 
 - **通道**：`protocol/`（配对 / 握手 / AEAD / 流控 / 恢复）+ `relay/`（中转）+ `connector/`（电脑侧网关）
   全部落地；手机侧 `app/lib/core/` 是连接层，`app/lib/wire/` 是**线上形状的唯一解码层**。
-- **RPC 应答面（2026-10-26）**：`wire/rpc/` 18 个面文件、45 个方法；`app/lib`（`wire/` 外）
-  零 `call<`；金样 45 个方法，`session.list` 有第二条**真实清单**样本（20 种形状）。
-- **方法面 51/49**（差额 2 = `credentials.set` / `credentials.unset`）；改动卡与逐行差异的数据
+- **RPC 应答面（2026-10-26）**：`wire/rpc/` 18 个面文件、46 个方法；`app/lib`（`wire/` 外）
+  零 `call<`；金样 46 个方法，`session.list` 有第二条**真实清单**样本（20 种形状）。
+- **方法面 52/50**（差额 2 = `credentials.set` / `credentials.unset`）；改动卡与逐行差异的数据
   只来自桌面记录（`file.changes` / `file.diff` → 宿主 `workspaceChanges`），
-  `docs/subsystems/changes-card.md`。
+  `docs/subsystems/changes-card.md`；分支走宿主 `session.fork`，
+  `docs/subsystems/session-fork.md`。
   笔记 `implemented/2026-10-25-wire-rpc-layer-layout.md`。
 - **2026-10-26 评审修复（六批）**：页级失败单通道、任务合并纯函数、必填口径、
   信封/值单一入口、门禁扩到全域、回指与死代码。笔记 `implemented/2026-10-26-wire-review-fixes.md`。
@@ -52,9 +53,9 @@
 | `node app/tools/verify-platform-boundary.mjs` | 583 项（25 条规则自检 + 135 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1368 项 |
+| `cd app && flutter test` | 1373 项 |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + 677 项 |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + 685 项 |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + 87 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。

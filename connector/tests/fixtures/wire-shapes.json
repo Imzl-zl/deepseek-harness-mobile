@@ -2003,6 +2003,11 @@
       "agentPreset": "standard"
     }
   ],
+  "session.fork": [
+    {
+      "sid": "sid_ffffffffffff"
+    }
+  ],
   "session.select-model": [
     {
       "selected": {

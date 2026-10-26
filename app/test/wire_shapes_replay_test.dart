@@ -901,6 +901,21 @@ void main() {
     expect(WireDiagnostics.badCount, 1);
   });
 
+  test('session.fork：回的是子会话别名（DSH id 不过线）', () {
+    final sample = _sampleOf(golden, 'session.fork');
+    final reading = readForkedSid(sample);
+    expect(reading, isA<WireOk<String>>());
+    final sid = (reading as WireOk<String>).value;
+    // 期望值取自金样本身；另断言形状上"只有 sid 一个键"。
+    expect(sid, sample['sid']);
+    expect(sample.keys.toSet(), {'sid'}, reason: '分支应答只该有别名');
+    expect(
+      readForkedSid({'sid': ''}),
+      isA<WireBad<String>>(),
+      reason: '空 sid 是形状错，不是"成功但没名字"',
+    );
+  });
+
   test('file.diff：两种判别形态（文本 hunks / 二进制）都从金样解得出', () {
     final samples = golden['file.diff']! as List;
     expect(samples.length, 2, reason: '文本与二进制两种 kind 都要钉');

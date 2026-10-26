@@ -74,6 +74,7 @@ const SAMPLED_METHODS = [
   'session.list',
   'session.projections',
   'session.create',
+  'session.fork',
   'session.select-model',
   'session.modelCatalog',
   'session.cancel',
@@ -129,6 +130,8 @@ const SAMPLES: Record<SampledMethod, readonly WireSample[]> = {
   'session.projections': [{ params: { sid: sidOf('dsh-4') } }],
   // 写操作：三个可选键各有"给"与"不给"两种，先收"给"的那一种。
   'session.create': [{ params: { agentPreset: 'standard' } }],
+  // 分支：**只收 `{sid}`**（child 也要过别名，不能漏 DSH id）。
+  'session.fork': [{ params: { sid: sidOf('dsh-1'), atSeq: 9 } }],
   'session.select-model': [
     {
       params: {

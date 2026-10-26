@@ -58,6 +58,7 @@ export '../reading.dart';
 // 每个方法名在整个仓库里只出现在这个文件（预算门禁扫 `data/` 与 `ui/`）。
 const String _kList = 'session.list';
 const String _kCreate = 'session.create';
+const String _kFork = 'session.fork';
 const String _kSelectModel = 'session.select-model';
 const String _kCancel = 'session.cancel';
 const String _kUpdateQueue = 'session.updateQueue';
@@ -101,6 +102,29 @@ Future<String?> createSession(
   }, requestId: requestId);
   return valueOrReport(readCreatedSid(result), _kCreate);
 }
+
+/// 在一轮的收口处**分支**，回子会话的 `sid`（读不出来 ⇒ `null` + 计数）。
+///
+/// 坐标是**该轮收口事件的序号**（桌面 `forkAt(turn.end.seq)`，`apply.ts:299-305`），
+/// 不是轮号也不是路径；`atSeq` 缺省时宿主取"最近一个已完成轮次"。
+/// 标题后缀由连接器照 Web 客户端服务层做（宿主 fork 没有这个参数）——
+/// 手机不需要知道它。
+Future<String?> forkSession(
+  SyncClient client, {
+  required String sid,
+  int? atSeq,
+}) async {
+  final result = await client.call<Object?>(_kFork, {
+    'sid': sid,
+    // ignore: use_null_aware_elements
+    if (atSeq != null) 'atSeq': atSeq,
+  });
+  return valueOrReport(readForkedSid(result), _kFork);
+}
+
+/// `session.fork` 的应答 `{sid}`（子会话的**别名**）。
+WireReading<String> readForkedSid(Object? result) =>
+    readObject(_kFork, result, (fields) => fields.requireNonEmptyString('sid'));
 
 /// 切模型，回电脑侧**实际生效**的那一对（`{selected: {provider, model}}`）。
 ///

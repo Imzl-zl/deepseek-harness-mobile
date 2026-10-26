@@ -20,6 +20,8 @@ function makeDeps(overrides: Partial<ConnectionScopeDeps> = {}): ConnectionScope
     updateQueue: async () => ({ accepted: true as const }),
     selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
     create: async () => ({ sessionId: 'dsh-new' }),
+    fork: async () => ({ childSessionId: 'dsh-child' }),
+    rename: async () => ({ title: 't', seq: 1 }),
     page: async () => ({ records: [], hasMore: false }), follow: (): never => { throw new Error('本用例不应建立订阅') },
   }
   return {
@@ -145,6 +147,8 @@ test('presence：订阅集变化就上报（foreground 档的 claim 判据是"�
       updateQueue: async () => ({ accepted: true as const }),
       selectModel: async () => ({ selected: { provider: 'test', model: 'test' } }),
       create: async () => ({ sessionId: 'dsh-new' }),
+      fork: async () => ({ childSessionId: 'dsh-child' }),
+      rename: async () => ({ title: 't', seq: 1 }),
       follow: (): never => { throw new Error('本用例不应建立订阅') },
     },
     presence: {

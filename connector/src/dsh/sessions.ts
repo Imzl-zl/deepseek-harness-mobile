@@ -277,6 +277,29 @@ export interface SessionsPort {
     sessionId?: string
     agentPreset?: string
   }): Promise<{ sessionId: string; agentPreset?: string }>
+  /**
+   * 从一段已完成的前缀 fork 出一个新会话。
+   *
+   * **与 Web 用同一个 DSH 方法**：`SessionController.fork`
+   * （`packages/api/session-controller/src/index.ts:432-443`），请求
+   * `{sessionId, atSeq?, allowMigration?}`、应答 `{sessionId}`（`types.ts:300-312`）。
+   * 省略 `atSeq` 时宿主取"最近一个已完成的轮次前缀"。
+   */
+  fork(request: {
+    sessionId: string
+    atSeq?: number
+  }): Promise<{ childSessionId: string }>
+  /**
+   * 改标题。**fork 的标题后缀要用它**：宿主 `fork` 没有 `increaseTitle`
+   * （`types.ts:300-307`），后缀是客户端服务层做的（`client/sessions/service.ts:470-485`）。
+   *
+   * 方法名与请求形状：`@Remote('rename')`（`index.ts:420-423`），`{sessionId, title}` → `{title, seq}`
+   * （`types.ts:288-297`）。
+   */
+  rename(
+    sessionId: string,
+    title: string,
+  ): Promise<{ title: string; seq: number }>
 }
 
 /**
@@ -411,6 +434,7 @@ export function createSessionsAdapter(controller: SessionController): SessionsPo
       // 全部字段可选，且**只在给了时才进请求体**：DSH 对缺省字段有自己的
       // 默认（当前工作区 / 默认预设），塞空串会被当成"显式选空"。
       return controller.create({
+
         ...(request?.workspaceId === undefined
           ? {}
           : { workspaceId: request.workspaceId as never }),
@@ -423,5 +447,64 @@ export function createSessionsAdapter(controller: SessionController): SessionsPo
           : { agentPreset: request.agentPreset }),
       })
     },
+
+    async fork(request) {
+      // `atSeq` 缺省时**不进请求体**：宿主对缺省有自己的语义（取最近一个已完成轮次），
+      // 塞一个 0 会被当成"从第 0 条切"。
+      const value = await controller.fork({
+        sessionId: request.sessionId as DshSessionId,
+        ...(request.atSeq === undefined ? {} : { atSeq: request.atSeq }),
+      })
+      return { childSessionId: String(value.sessionId) }
+    },
+
+    rename(sessionId, title) {
+      return controller.rename({ sessionId: sessionId as DshSessionId, title })
+    },
   }
+}
+
+/**
+ * fork 子会话的标题后缀 —— **逐字照 Web 客户端服务层**
+ * （`packages/api/session-controller/src/client/sessions/service.ts:132-148`）：
+ * 尾部半角 `(N)` / 全角 `（N）` 各加一，没有编号就加 ` (1)`。
+ *
+ * 宿主 `fork` 本身没有这个参数（`types.ts:300-307`），所以客户端得自己先读标题、
+ * fork 之后再调 `rename`（`service.ts:463-487`）。
+ */
+export function increasedForkTitle(title: string): string {
+  const ascii = /^(.*?)\((\d+)\)$/u.exec(title)
+  if (ascii?.[1] !== undefined && ascii[2] !== undefined) {
+    return `${ascii[1]}(${BigInt(ascii[2]) + 1n})`
+  }
+  const fullWidth = /^(.*?)（(\d+)）$/u.exec(title)
+  if (fullWidth?.[1] !== undefined && fullWidth[2] !== undefined) {
+    return `${fullWidth[1]}（${BigInt(fullWidth[2]) + 1n}）`
+  }
+  return `${title} (1)`
+}
+
+/**
+ * 拿来加后缀的"源标题"。
+ *
+ * 与 Web 的 `displayTitleOf` 同一套（`service.ts:119-130`）：持久标题 → 工作目录名 → `undefined`。
+ * **不用 DSH 会话 id 兜底**（Web 用）：id 不过线（契约 §5.1），
+ * 拿它当标题会把宿主 id 显示在手机上。都取不到时**不改名**（分隔线保持原样）。
+ */
+export function sourceTitleOf(
+  title: unknown,
+  cwd: unknown,
+): string | undefined {
+  if (typeof title === 'string' && title !== '') return title
+  if (typeof cwd === 'string' && cwd !== '') {
+    const base = cwdBaseName(cwd)
+    if (base !== '') return base
+  }
+  return undefined
+}
+
+/** 路径最后一段（`/` 与 `\` 都认）。 */
+function cwdBaseName(path: string): string {
+  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return at === -1 ? path : path.slice(at + 1)
 }

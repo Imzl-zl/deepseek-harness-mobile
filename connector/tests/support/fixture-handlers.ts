@@ -299,6 +299,11 @@ export function fixtureHandlers(
       }),
       updateQueue: async () => ({ accepted: true as const }),
       cancel: () => ({ accepted: true as const }),
+      // 分支：子 id 确定性（金样里不出现时间戳/随机数）；`rename` 回显标题。
+      fork: async (request: { atSeq?: number }) => ({
+        childSessionId: `dsh-fork-${request.atSeq ?? 'latest'}`,
+      }),
+      rename: async (_sessionId: string, title: string) => ({ title, seq: 2 }),
     },
     aliases: createFakeAliases({
       // 别名是**不透明的**：刻意不把 DSH 会话 id 编进去，否则"id 不过线"的断言会失去意义

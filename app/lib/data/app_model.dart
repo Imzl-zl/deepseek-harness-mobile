@@ -3279,6 +3279,26 @@ class AppModel extends ChangeNotifier {
     await refreshWorkspaces();
   }
 
+  /// 在一轮的收口处**分支**（`session.fork`），回子会话别名。
+  ///
+  /// 成功后**重拉一次会话列表**：子会话要进抽屉（与 `createSession` 同一步）。
+  /// 失败把原因留在 [lastError] 并返回 `null` —— 界面如实弹错误，
+  /// **不假装成功**（fork 是宿主状态，客户端伪造不了）。
+  Future<String?> forkSession(String sid, {int? atSeq}) async {
+    try {
+      final child = await wire.forkSession(client, sid: sid, atSeq: atSeq);
+      if (child == null) {
+        _recordError('分支失败', StateError('电脑侧的分支应答形状认不出'));
+        return null;
+      }
+      await refreshSessions();
+      return child;
+    } catch (error) {
+      _recordError('分支失败', error);
+      return null;
+    }
+  }
+
   /// 打开一个会话：订阅它，并把条目喂给 store。
   ///
   /// [since] 是本地已有的水位（本地库还没做，先给 0 = 从零开始，电脑侧会给快照）。
