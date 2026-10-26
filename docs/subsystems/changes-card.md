@@ -72,3 +72,9 @@
   没有轮次选择器。
 - 卡片只反映 `workspace/changes` 记录到的改动（非 git 仓库只列文件工具改过的文件，
   `workspace-changes/src/index.ts:6-9`）。
+- **记录是宿主进程内存态**（`workspace-changes/src/recorder.ts` 的 `byId` map）：
+  电脑侧 DSH 重启之后，之前那些轮次的 `summary` 就查不到了（回 `{summary:null}`），
+  卡片**不画**。这与桌面一致（`ui-deliverables/src/client/Deliverables.tsx:69-72`
+  "A summary the Host no longer serves leaves no card"），不是手机独有的降级。
+- 真机已确认（2026-10-26）：`caps.changes` 为 **true**，`workspace/changes` 事件**会**到手机
+  （卡槽存在）；卡面空只可能是宿主那边已不再提供服务。
