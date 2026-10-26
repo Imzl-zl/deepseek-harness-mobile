@@ -77,6 +77,85 @@
   失败如实弹（`DshToastKind.error`），不假装成功。
 - 契约/文档：`docs/` 的方法表与 `protocol/methods.ts` 同步；金样收一条 fork 应答。
 
+## 批 0 调研结论（2026-10-26，带证据）
+
+### 1. 连接器能拿到宿主 `workspaceChanges`，**不代理 HTTP**
+
+- 服务是 `ctx.provide('workspaceChanges', service)`：`packages/deliverables/workspace-changes/src/index.ts:116-120`；
+  Context 的类型声明在 `src/types.ts:110-114`。
+- 服务面只有两个方法（`src/types.ts:79-97`）：
+  `summary(sessionId, seq)` **同步**、Session dispose 后 `undefined`；
+  `diff(sessionId, seq, index, signal)` 异步、会抛（快照读失败）。
+- 插件在 `bundle/web-app/cordis.patch.yml:358-359` 注册，**base 没有** ⇒ 能力位判据只能是
+  `ctx.get('workspaceChanges') !== undefined`（与 `filesAvailable` 同一套路，`connector/src/dsh/caps.ts:193-195`）。
+- **不代理 `/api/changes.summary` / `/api/changes.diff`**：那两条只是浏览器侧对**同一个服务**的适配
+  （`packages/client/ui-deliverables/src/present-open.ts:131-165`，路径常量在 `src/changes.ts:6,9`），
+  代理会把宿主路由与鉴权变成手机协议的第二份真值（Rejected 第 3 条）。
+- **方案里 `{sid, path, seq}` 的形状要改**：宿主按 **seq + 文件在 `summary.files` 里的 index** 取 diff
+  （`types.ts:88-96`、`changes.ts:122-124` 的 `?sessionId&seq&index`），没有按 path 的入口。
+
+### 2. `SessionController.fork` **不在**连接器现有 session 端口里
+
+- `SessionsPort`（`connector/src/dsh/sessions.ts:187-280`）只有
+  list / follow / page / prompt / cancel / updateQueue / selectModel / create。
+- 宿主入口：`@Remote('fork')`（`packages/api/session-controller/src/index.ts:432-443`），
+  请求/应答 `{sessionId, atSeq?, allowMigration?}` → `{sessionId}`（`src/types.ts:300-312`）。
+- 最小端口就是加一条 `fork(request: {sessionId, atSeq?})` + 一条 `rename({sessionId, title})`
+  （`@Remote('rename')`，`index.ts:420-423`，`{sessionId,title}`→`{title,seq}`，`types.ts:288-297`）——
+  后者是为了第 3 条的标题后缀。
+
+### 3. `increaseTitle` 是**客户端选项**，不是宿主参数；别名与列表照 `session.create`
+
+- `increaseTitle` 只存在于 Web 的客户端服务 `ClientSessions.fork`（`src/client/sessions/service.ts:463-487`）：
+  它先读源标题（`:470-471` 的 `list.getSnapshot().byId[id].title`），fork 成功后
+  `manager.rename(childId, increasedForkTitle(sourceTitle))`（`:482-485`）；后缀规则在 `:132-148`
+  （ASCII 半角 `(N)` 与全角 `（N）` 各自加一，没有编号就加 ` (1)`）。
+  **宿主 `SessionForkRequest` 里没有 `increaseTitle`**（`types.ts:300-307`）。
+- rename 失败时客户端**抛错但不回滚**（fork 已建，`:484`）—— 手机侧照这个语义：如实报错，子会话仍在。
+- 别名：`session.create` 的现成写法是 `deps.aliases.ensure(created.sessionId)` 后回 `{sid}`
+  （`connector/src/handlers.ts:697-714`），列表每次 `session.list` 都重新 ensure（`:728-737`）。
+  所以 `session.fork` 只需 `ensure(childId)` 回 `sid`，父级不用动；手机侧重拉 `session.list` 即并入列表
+  （`app/lib/data/app_model.dart:2388` 的 `refreshSessions`）。
+
+### 4. 单帧预算下的截断口径：**按行截 + 按字节兜，显式 `truncated`**
+
+- 单帧上限 8 MiB（`connector/src/protocol/frame.ts:84-85`；手机侧 `app/lib/core/frame.dart:32`），
+  而载荷封箱后膨胀 ≈ `1.78N`（`memory.md` 教训 8）⇒ 明文预算 ≈ 4.5 MiB。
+- 宿主允许单文件 2 MiB（`workspace-changes/src/index.ts:51-57` 的 `maxFileBytes`）；
+  一次整文件替换的 diff 两侧各 2 MiB 文本 ⇒ 可在封箱后撞上限。**所以连接器必须截断**。
+- 既有同一条纪律的先例：`trajectory` 的 `truncated` + `dropped*`（`connector/src/dsh/trajectory.ts:53-60`）、
+  `file.list` 的 `truncated`（`connector/src/dsh/files.ts:73-76`）。
+- **二进制 / 超大由宿主自己说**：`WorkspaceFileDiff` 是 `text | binary | oversized`
+  （`workspace-changes/src/types.ts:56-76`）；`coarse: true` 是超时降级（`:70-71`）。
+  手机照报这三个 `kind`，**不自己造"太大"的判据**（不自算字节、不猜文件类型）。
+- 截断只作用在 `text` 的 hunks 上：行数上限 + 字节兜底，二者都从**同一个导出常量**来，
+  用例按常量取边界、不手抄数字。
+
+### 5. 文件提及的词表 = **这一轮产出/交付的路径**，不是工作区文件清单
+
+- DSH 的解析器 `producedFileMentions`（`packages/client/ui-deliverables/src/client/turn-deliverables.ts:269-296`）：
+  `path === value || basename(path) === value`，另外按 `argumentPath` 精确别名补一条；
+  **命中恰好一条**才 resolve，歧义与未知都保持惰性（`:292-294`）。
+- README 原话："inline-code matching remains limited to produced or delivered files"
+  （`packages/client/ui-deliverables/README.zh.md:67`）。
+  ⇒ 手机侧词表 = `AppModel.changedFiles`（`app/lib/data/app_model.dart:1198-1226`，来自 `tool/call` 的
+  `changedPath`），**不拿 `file.list` 的目录缓存**（那份缓存只服务文件页，且会放大误报）。
+- 会话 cwd：`session.list` 行的 `cwd`（`connector/src/handlers.ts:761`、`dsh/sessions.ts:154`；
+  手机侧 `app/lib/model/chat_item.dart:864-874`）。
+- **相对路径的解析不在手机**：`file.read` 的 scope 由宿主 `workspaceFileScope` lookup 按 sessionId 解析
+  （`packages/api/workspace-files/src/index.ts:203-221`，连接器 `dsh/files.ts:136-154`）。
+  桌面 `openFile` 也是"先看 `workingDirectory` 投影、退到 list 行 cwd"再交给同一套地址
+  （`ui-chat/src/client/apply.ts:271-278`）。所以手机把 token **原样**交给 `file.read` 即可，
+  自己再拼 cwd 就是第二份真值（偏离方案原文那一句，理由记在这里）。
+
+### 6. 顺带查到的两处前置事实
+
+- `workspace/changes` 事件**只带 `turn` 号**（`workspace-changes/src/types.ts:99-108`），
+  diff 的坐标要该事件的 `seq`；手机侧投影目前把它归到 `OtherItem`（`app/lib/data/projection.dart:614-624`）——
+  批 C 要在投影里留下"这一轮 → 该事件 seq"。
+- 收口行的 fork 用的是**该轮 `turn/end` 的 seq**（`ui-chat/src/client/apply.ts:299-305`），
+  手机侧正好是 `TurnProcessItem.seq`（`projection.dart:481-495`）。
+
 ## Alternatives considered
 
 1. **分支纯客户端做（复制事件另建会话）**。
@@ -108,6 +187,10 @@
 | C | `file.changes` / `file.diff` 协议 + 连接器 handler + wire 解码 + `DiffView` | 金样两条（文本 / 二进制降级）；截断显式；连接器测试不手写端口行 |
 | D | `session.fork` 协议 + 连接器 + App 分支按钮 + 别名/列表刷新 | fork 应答金样；child sid 是别名；失败弹 error；契约与 docs 同步 |
 | E | 收尾：docs/memory/notes、真机（用户操作，App 侧不碰辅助功能） | 门禁全绿；真机四项各一条证据 |
+
+进度：**A 已落地**（`implemented/2026-10-26-file-mentions-and-open-file.md`；
+门禁 `flutter test` 1340 / analyze 0 / format 0 / boundary 576 / single-caller PASS / connector 663）。
+B 起待续。
 
 ## Consequences
 

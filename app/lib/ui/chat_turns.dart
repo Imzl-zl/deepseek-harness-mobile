@@ -158,7 +158,17 @@ class AssistantTurn extends StatelessWidget {
     this.reasoning = '',
     this.showReasoning = true,
     this.showHead = true,
+    this.fileMentions,
+    this.onOpenFile,
   });
+
+  /// `行内代码 → 路径`（这一轮产出过的文件）。`null` = 这条正文不认提及。
+  ///
+  /// 表由 `AppModel.fileMentionsOf` 产出（解析只有 `model/file_mentions.dart` 一处）。
+  final Map<String, String>? fileMentions;
+
+  /// 点中一处提及。与 [fileMentions] **同时给**才可点（见 `DshMarkdown` 的注释）。
+  final void Function(String path)? onOpenFile;
 
   /// 要不要画「助手」头。**轮组里由所在那一组在开头统一画**（`assistantHeadItemIds`），
   /// 所以这条正文不再自己画 —— 否则一个 turn 里会出现两个头像，
@@ -190,7 +200,11 @@ class AssistantTurn extends StatelessWidget {
           if (showReasoning && reasoning.isNotEmpty)
             ReasoningRow(text: reasoning),
           // `.md`：Markdown 正文（代码块、列表、加粗都渲染）。
-          DshMarkdown(text),
+          //
+          // **文件提及只在这一层给**：思考行（`ReasoningRow`）不给 ——
+          // DSH 那边 `ReasoningContent` 用的是不带 `fileMentions` 的
+          // `MarkdownText`，思考正文里长出可点链接会让人以为"那里改了什么"。
+          DshMarkdown(text, fileMentions: fileMentions, onOpenFile: onOpenFile),
         ],
       ),
     );

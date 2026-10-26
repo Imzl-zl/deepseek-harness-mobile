@@ -37,6 +37,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:markdown/markdown.dart' as md;
 
+import '../model/file_mentions.dart' show normalizeCodeSpan;
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
@@ -147,10 +148,22 @@ class DshMarkdown extends StatelessWidget {
     super.key,
     this.baseColor,
     this.compact = false,
+    this.fileMentions,
+    this.onOpenFile,
   });
 
   /// Markdown 正文。
   final String data;
+
+  /// `行内代码原文 → 文件路径`：**只认这里面的 token**。
+  ///
+  /// 表由 `model/file_mentions.dart` 的 `resolveFileMentions` +
+  /// `fileMentionTargets` 产出（唯一命中、歧义惰性都在那一层）。
+  /// 这一层**不判断**什么像路径 —— 判断写两处必然漂。
+  final Map<String, String>? fileMentions;
+
+  /// 点中一处提及。（`null` = 不可点：思考正文这类地方不该长出链接。）
+  final void Function(String path)? onOpenFile;
 
   /// 基准文字色；`null` = 非 compact 用 `labelPrimary`、compact 用 `labelTertiary`。
   ///
@@ -197,7 +210,16 @@ class DshMarkdown extends StatelessWidget {
       // **代码块自己接管**：默认渲染只是一个横滚的 `<pre>`，而 DSH 的代码块
       // 有头部工具条（语言 / 自动换行 / 复制，`ui-primitives/src/CodeBlock.tsx`）。
       // 这跟"有没有语法高亮"是两件事 —— 工具条不需要高亮器。
-      builders: {'pre': _DshCodeBlockBuilder()},
+      builders: {
+        'pre': _DshCodeBlockBuilder(),
+        // **两个都给才挂**：只有词表没有回调（或反过来）时不该长出点不动的链接
+        // —— 那种入口比没有更糟（用户会以为功能坏了）。
+        if (fileMentions != null && onOpenFile != null)
+          'code': _FileMentionCodeBuilder(
+            targets: fileMentions!,
+            onOpen: onOpenFile!,
+          ),
+      },
       styleSheet: _sheet(context, c, body),
     );
   }
@@ -398,6 +420,82 @@ class _DshCodeBlockBuilder extends MarkdownElementBuilder {
     // 尾部换行是围栏语法的一部分，不显示（DSH 也 trim，`CodeBlock.tsx:118`）。
     final text = (code?.textContent ?? element.textContent).trimRight();
     return _DshCodeBlock(code: text, language: language);
+  }
+}
+
+/// 行内代码 → **文件提及**（可点）。
+///
+/// ## 为什么返回 `Text.rich` + `WidgetSpan`
+///
+/// `flutter_markdown_plus` 的段落最终是一个 `Wrap`（`builder.dart:778-796`），
+/// 非文本 widget 会**单独占一个 Wrap 子项** —— 直接返回一个 `Container`
+/// 会让它前后的文字各成一段（"改了 / [chip] / 里的两行"三行）。
+/// 返回 `Text.rich` 时它会被并进段落的那一个 `RichText`（`builder.dart:801-820`
+/// 的 `_getInlineSpanFromText`），`WidgetSpan` 于是落在文字中间。
+///
+/// Note: 为什么提及表由调用方给、这一层不解析 —— 见
+/// `.agents/notes/implemented/2026-10-26-file-mentions-and-open-file.md`
+///
+/// ## 它不认识路径
+///
+/// 只查 `token → path` 表；表是 `model/file_mentions.dart` 的唯一产出。
+/// 查不到**返回 `null`** —— 该 token 保持普通行内代码（认不出就保持惰性）。
+class _FileMentionCodeBuilder extends MarkdownElementBuilder {
+  _FileMentionCodeBuilder({required this.targets, required this.onOpen});
+
+  final Map<String, String> targets;
+  final void Function(String path) onOpen;
+
+  @override
+  Widget? visitElementAfterWithContext(
+    BuildContext context,
+    md.Element element,
+    TextStyle? preferredStyle,
+    TextStyle? parentStyle,
+  ) {
+    final raw = element.textContent;
+    // Markdown 解析器多半已经归一过，但也可能没有 —— 两次归一用同一条规则
+    // （`normalizeCodeSpan`），否则表查不中而链接静默消失。
+    final path = targets[raw] ?? targets[normalizeCodeSpan(raw)];
+    if (path == null) return null;
+    final c = context.dshColors;
+    final token = normalizeCodeSpan(raw);
+    return Text.rich(
+      TextSpan(
+        children: [
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Tooltip(
+              message: '打开 $path',
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => onOpen(path),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: c.roleToolBg,
+                    borderRadius: BorderRadius.circular(DshRadius.sm),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // 一枚链形图标：与 DSH 的 `fileMention` 按钮同义
+                      // （`ui-primitives/src/markdown/render.tsx:349-363`）。
+                      DshIcon('link', size: 11, color: c.accentBlue),
+                      const SizedBox(width: 3),
+                      Text(token, style: preferredStyle ?? DshTheme.mono),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

@@ -43,6 +43,7 @@ import '../data/app_model.dart';
 import '../model/agent_preset.dart';
 import '../model/chat_item.dart';
 import '../model/command.dart';
+import '../model/file_open.dart';
 import '../model/image_limits.dart';
 import '../model/model_catalog.dart';
 import '../model/permission.dart';
@@ -386,6 +387,11 @@ class ChatPageState extends State<ChatPage> {
     // **没配对时不接**：那意味着没有电脑可答，而接一个必然失败的出口只会
     // 让每次答复都被报成"已过期"。
     _syncAnswerOutlet();
+    // **打开文件是一次"动作"，不是一份"状态"**：`openFile` 只改模型，
+    // 而"把右抽屉拉出来、落到文件面板"是本页的事（抽屉归本页的 Scaffold 管）。
+    // 先用当前序号对账，免得挂载时把上一次的请求再开一遍。
+    _seenFileOpenTicket = widget.app.fileOpenTicket;
+    widget.app.addListener(_onAppFileOpen);
   }
 
   @override
@@ -456,8 +462,26 @@ class ChatPageState extends State<ChatPage> {
     if (mounted) setState(() {});
   }
 
+  /// 已经处理过的那次"打开文件"（见 `initState`）。
+  int _seenFileOpenTicket = 0;
+
+  /// `AppModel.openFile` 之后：切到文件面板并拉开右抽屉。
+  ///
+  /// **只认序号**：`AppModel` 的通知里绝大多数与打开文件无关（流式输出每秒几十条），
+  /// 每次都拉抽屉会把用户正在做的事打断。同一个路径连点两次也会再开一次（序号递增）。
+  void _onAppFileOpen() {
+    final ticket = widget.app.fileOpenTicket;
+    if (ticket == _seenFileOpenTicket) return;
+    _seenFileOpenTicket = ticket;
+    if (!mounted) return;
+    if (widget.app.fileOpenRequest == null) return; // closeFile：什么都不用做
+    setState(() => _sidePanel = SidePanel.file);
+    openSide();
+  }
+
   @override
   void dispose() {
+    widget.app.removeListener(_onAppFileOpen);
     _takeover.removeListener(_onTakeoverChanged);
     _takeover.dispose();
     unawaited(_interactionSub?.cancel());
@@ -1463,19 +1487,35 @@ class ChatPageState extends State<ChatPage> {
     //
     // **只取一次**：在这里连问两次（`.isEmpty` 与 `.length`）会让每次 build
     // 的成本取决于"缓存命中没有"，没必要。
-    SidePanel.file => _fileHeader(widget.app.changedFiles),
+    SidePanel.file => _fileHeader(widget.app),
     SidePanel.jobs => const SideHeader(title: '后台任务'),
     SidePanel.subs => const SideHeader(title: '子智能体'),
   };
 
-  SideHeader _fileHeader(
-    List<({String path, ({int added, int removed})? stat})> changed,
-  ) => changed.isEmpty
-      ? const SideHeader(title: '文件')
-      : SideHeader(title: '文件', subtitle: '${changed.length} 个文件');
+  /// 文件面板的表头：**正在看某个文件时是那个文件**，否则是改动清单。
+  ///
+  /// 两者同一处给出，是为了"表头说 5 个文件、面板里是某个文件的内容"这种
+  /// 自相矛盾不可能出现（2026-10-20 修过同类的表头/面板不一致）。
+  SideHeader _fileHeader(AppModel app) {
+    final request = app.fileOpenRequest;
+    if (request != null) {
+      return SideHeader(
+        title: fileNameOf(request.path),
+        subtitle: request.path,
+      );
+    }
+    final changed = app.changedFiles;
+    return changed.isEmpty
+        ? const SideHeader(title: '文件')
+        : SideHeader(title: '文件', subtitle: '${changed.length} 个文件');
+  }
 
   Widget? _fileBody() {
     if (_sidePanel != SidePanel.file) return null;
+    // 正在看某个文件（正文提及 / 改动卡行点进来的）：面板就是那份内容。
+    if (widget.app.fileOpenRequest != null) {
+      return _OpenedFileBody(app: widget.app);
+    }
     final changed = widget.app.changedFiles;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3043,6 +3083,14 @@ class _ConversationFlowState extends State<_ConversationFlow> {
                 child: _TurnView(
                   item: item,
                   autoOpenDetail: widget.autoOpenDetail,
+                  // **提及表与打开动作都从模型来**：这一层不解析路径、也不决定打开哪里
+                  // （`AppModel.openFile` 是四个入口唯一的那一个动作）。
+                  fileMentions: widget.app?.fileMentionsOf(item),
+                  onOpenFile: widget.app == null
+                      ? null
+                      : (path) => unawaited(
+                          widget.app!.openFile(FileOpenRequest(path: path)),
+                        ),
                   turnDurationLabel: _durationLabelOf(item),
                   // 轮组：这一轮的收口行是不是折叠开关、现在展不展开。
                   collapsibleTurn:
@@ -3394,12 +3442,20 @@ class _TurnView extends StatelessWidget {
     this.turnExpanded = true,
     this.onToggleTurn,
     this.showHead = false,
+    this.fileMentions,
+    this.onOpenFile,
   });
 
   /// 这一条上方要不要画「助手」头（由所在轮组的第一条助手侧条目决定）。
   final bool showHead;
 
   final ChatItem item;
+
+  /// 正文里 `行内代码 → 文件路径` 的表（这一轮产出过的文件；`null` = 不认提及）。
+  final Map<String, String>? fileMentions;
+
+  /// 点中一处提及（走 `AppModel.openFile`，这里只转达路径）。
+  final void Function(String path)? onOpenFile;
 
   /// 这一条是**可折叠轮组的收口行**（该轮有过程条目、且已收口）。
   final bool collapsibleTurn;
@@ -3466,6 +3522,8 @@ class _TurnView extends StatelessWidget {
                     // 头由所在那一组在**开头**画（`assistantHeadItemIds`），
                     // 正文这里不再画 —— 否则头像会落在轮次中间。
                     showHead: false,
+                    fileMentions: fileMentions,
+                    onOpenFile: onOpenFile,
                   ),
           MessageRole.system => SystemTurn(
             text,
@@ -3817,6 +3875,107 @@ class _ChangedFileList extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// 右抽屉里"正在看的那一份文件"。
+///
+/// 数据全部来自 `AppModel`（`openFile` 是唯一入口）：这里只画三态 ——
+/// 读失败（电脑侧原话）/ 正在读 / 已读到。**没有"加载中"之外的假内容**：
+/// 空正文就是空正文，不是"文件不存在"。
+class _OpenedFileBody extends StatelessWidget {
+  const _OpenedFileBody({required this.app});
+
+  final AppModel app;
+
+  @override
+  Widget build(BuildContext context) {
+    // **自己听模型**：抽屉是独立路由，外层重建到不了它（与子智能体 sheet 同一条），
+    // 而"读完了"是一次异步到达 —— 不自己听就永远停在「正在读取…」。
+    return ListenableBuilder(
+      listenable: app,
+      builder: (context, _) => _content(context),
+    );
+  }
+
+  Widget _content(BuildContext context) {
+    final c = context.dshColors;
+    final opened = app.openedFile;
+    final failure = app.fileFailure;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 关掉这份文件的入口（回到改动清单）。面板的标题栏那枚收起钮收的是
+        // 整个抽屉，与"收起这个文件"不是一件事。
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(6, 2, 6, 0),
+            child: TextButton.icon(
+              key: const ValueKey<String>('file-open-back'),
+              onPressed: app.closeFile,
+              icon: DshIcon('chevronLeft', size: 14, color: c.labelSecondary),
+              label: const Text('返回改动'),
+            ),
+          ),
+        ),
+        Expanded(
+          child: failure != null
+              ? Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    failure,
+                    style: TextStyle(fontSize: 12, color: c.stateError),
+                  ),
+                )
+              : opened == null
+              ? Center(
+                  child: Text(
+                    '正在读取…',
+                    style: TextStyle(fontSize: 12, color: c.labelTertiary),
+                  ),
+                )
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: c.layer1,
+                          borderRadius: BorderRadius.circular(DshRadius.md),
+                        ),
+                        child: SelectableText(
+                          opened.text,
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                            height: 19 / 12,
+                            color: c.labelSecondary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      if (opened.lines > 0)
+                        Text(
+                          opened.eof
+                              ? '共 ${opened.lines} 行（已到末尾）'
+                              : '已读 ${opened.lines} 行',
+                          style: TextStyle(fontSize: 11, color: c.labelCaption),
+                        ),
+                      if (!opened.eof && !app.fileLoading)
+                        TextButton(
+                          key: const ValueKey<String>('file-open-more'),
+                          onPressed: () => unawaited(app.loadMoreOpenedFile()),
+                          child: const Text('加载更多'),
+                        ),
+                    ],
+                  ),
+                ),
+        ),
+      ],
     );
   }
 }

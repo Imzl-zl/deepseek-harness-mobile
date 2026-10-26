@@ -24,6 +24,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../data/app_model.dart';
+import '../model/file_open.dart';
 import '../model/workspace_files.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
@@ -258,6 +259,12 @@ class _FileRow extends StatelessWidget {
 }
 
 /// 文本预览：**按行分页**读，`eof` 之前可以"加载更多"。
+///
+/// ## 它不自己读文件
+///
+/// 打开走 `AppModel.openFile`（**四个入口唯一的那个动作**），内容与分页状态都在
+/// 模型里（`OpenedFile`）；这一页只画三态。自己再维护一份 chunks 就是第二份真值 ——
+/// 同一个文件在右抽屉里看一半、在文件页里又从头读，两处会各说各的。
 class FilePreviewPage extends StatefulWidget {
   const FilePreviewPage({super.key, required this.app, required this.path});
 
@@ -269,47 +276,23 @@ class FilePreviewPage extends StatefulWidget {
 }
 
 class _FilePreviewPageState extends State<FilePreviewPage> {
-  final List<String> _chunks = [];
-  String? _failure;
-  bool _loading = false;
-  bool _eof = true;
-  int _nextOffset = 1;
-  int _lines = 0;
-
   @override
   void initState() {
     super.initState();
-    unawaited(_load());
+    unawaited(widget.app.openFile(FileOpenRequest(path: widget.path)));
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _failure = null;
-    });
-    final page = await widget.app.readFile(
-      widget.path,
-      offset: _chunks.isEmpty ? null : _nextOffset,
-    );
-    if (!mounted) return;
-    setState(() {
-      _loading = false;
-      if (page == null) {
-        _failure = widget.app.lastError?.message ?? '读取文件失败';
-        return;
-      }
-      // **空页也要落一处**：一页空行（`lines > 0` 但 `text` 为空）与"越过末行"
-      // （`lines == 0`）是两件事，前者有内容、后者没有。
-      if (page.lines > 0) _chunks.add(page.text);
-      _lines += page.lines;
-      _eof = page.eof;
-      _nextOffset = page.nextOffset;
-    });
+  @override
+  void dispose() {
+    // 离开这一页 = 不再"正看着某个文件"（模型里只有一份这样的状态）。
+    widget.app.closeFile();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
+    final app = widget.app;
     return Scaffold(
       backgroundColor: c.bgBase,
       appBar: AppBar(
@@ -327,41 +310,62 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
           style: TextStyle(fontSize: 14, color: c.labelPrimary),
         ),
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-        children: [
-          if (_failure != null) ...[
-            _FileHint(text: '读取失败：$_failure', color: c.stateError),
-            const SizedBox(height: 8),
-            TextButton(onPressed: _load, child: const Text('重试')),
-          ],
-          if (_chunks.isNotEmpty)
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: c.layer1,
-                borderRadius: BorderRadius.circular(DshRadius.md),
-              ),
-              child: SelectableText(
-                _chunks.join('\n'),
-                style: TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                  height: 19 / 12,
-                  color: c.labelSecondary,
+      // **必须听模型**：内容在打开完成之后才到，这一页自己不 setState。
+      body: ListenableBuilder(
+        listenable: app,
+        builder: (context, _) {
+          final opened = app.openedFile;
+          final failure = app.fileFailure;
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+            children: [
+              if (failure != null) ...[
+                _FileHint(text: '读取失败：$failure', color: c.stateError),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => unawaited(
+                    app.openFile(FileOpenRequest(path: widget.path)),
+                  ),
+                  child: const Text('重试'),
                 ),
-              ),
-            ),
-          const SizedBox(height: 10),
-          if (_lines > 0)
-            _FileHint(text: _eof ? '共 $_lines 行（已到末尾）' : '已读 $_lines 行'),
-          if (!_eof && _failure == null)
-            TextButton(
-              key: const ValueKey<String>('files-more'),
-              onPressed: _loading ? null : _load,
-              child: Text(_loading ? '正在读取…' : '加载更多'),
-            ),
-        ],
+              ],
+              if (opened != null && opened.lines > 0)
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: c.layer1,
+                    borderRadius: BorderRadius.circular(DshRadius.md),
+                  ),
+                  child: SelectableText(
+                    opened.text,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      height: 19 / 12,
+                      color: c.labelSecondary,
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 10),
+              if (opened != null && opened.lines > 0)
+                _FileHint(
+                  text: opened.eof
+                      ? '共 ${opened.lines} 行（已到末尾）'
+                      : '已读 ${opened.lines} 行',
+                ),
+              if (opened == null && failure == null)
+                const _FileHint(text: '正在读取…'),
+              if (opened != null && !opened.eof && failure == null)
+                TextButton(
+                  key: const ValueKey<String>('files-more'),
+                  onPressed: app.fileLoading
+                      ? null
+                      : () => unawaited(app.loadMoreOpenedFile()),
+                  child: Text(app.fileLoading ? '正在读取…' : '加载更多'),
+                ),
+            ],
+          );
+        },
       ),
     );
   }

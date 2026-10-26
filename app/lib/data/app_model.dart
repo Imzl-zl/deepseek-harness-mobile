@@ -34,6 +34,8 @@ import '../core/sync_client.dart';
 import '../model/agent_preset.dart';
 import '../model/chat_item.dart';
 import '../model/command.dart';
+import '../model/file_mentions.dart';
+import '../model/file_open.dart';
 import '../model/image_limits.dart';
 import '../model/interaction.dart';
 import '../model/mention.dart';
@@ -1708,6 +1710,188 @@ class AppModel extends ChangeNotifier {
       _recordError('读取文件失败', error);
       return null;
     }
+  }
+
+  // ---- 打开一个文件（**唯一动作**，四个入口都走它）----
+
+  /// 最近一次打开请求（`null` = 当前没有打开文件）。
+  FileOpenRequest? get fileOpenRequest => _fileOpenRequest;
+  FileOpenRequest? _fileOpenRequest;
+
+  /// 请求序号：**每次 `openFile` 都 +1**。
+  ///
+  /// 界面据此判断"这是一次新的打开动作"——同一个路径连点两次也要再开一次，
+  /// 所以不能拿请求值本身当判据（它按值相等）。
+  int get fileOpenTicket => _fileOpenTicket;
+  int _fileOpenTicket = 0;
+
+  /// 已读到的那份内容（`null` = 正在读 / 读失败 / 没打开）。
+  OpenedFile? get openedFile => _openedFile;
+  OpenedFile? _openedFile;
+
+  bool get fileLoading => _fileLoading;
+  bool _fileLoading = false;
+
+  /// 上一次打开的失败原因（电脑侧原话；`null` = 没失败）。
+  String? get fileFailure => _fileFailure;
+  String? _fileFailure;
+
+  /// 打开一个文件。**所有入口只走它**（正文提及 / 改动卡行 / 侧栏差异行 / 文件页）。
+  ///
+  /// 路径**原样**交给 `file.read`：scope 由宿主按会话解析
+  /// （见 `model/file_open.dart` 的文件头）。
+  ///
+  /// Note: 为什么是"模型记状态、界面自己画"而不是在这里 push 路由 —— 见
+  /// `.agents/notes/implemented/2026-10-26-file-mentions-and-open-file.md`
+  ///
+  /// 只读第一页；"加载更多"走 [loadMoreOpenedFile]。
+  Future<void> openFile(FileOpenRequest request) async {
+    _fileOpenTicket += 1;
+    _fileOpenRequest = request;
+    _openedFile = null;
+    _fileFailure = null;
+    // **没有能力位就不发请求**（与 `listFiles` 同一条）：老连接器上 `file.read`
+    // 不存在，发出去只会拿一个 `connector/unsupported`，而它会被画成"读取失败"。
+    if (!_filesAvailable) {
+      _fileFailure = _repoInfoKnown
+          ? '这台电脑没有文件服务：连接器版本较旧，或没装 workspace-files。'
+          : '还没连上电脑：连上后再看文件。';
+      if (!_disposed) notifyListeners();
+      return;
+    }
+    if (request.mode == FileOpenMode.diff) {
+      // 逐行差异要协议方法 `file.diff`（宿主按 `(seq, index)` 取，见方案笔记批 0 第 1 条）。
+      // **先如实说还没有**，不拿两段现在的文本去编一份"看起来像 diff"的东西
+      // （那只有"当前内容"，没有这一轮的起点）。
+      _fileFailure = '逐行差异还没接上：连接器还没有 file.diff。';
+      if (!_disposed) notifyListeners();
+      return;
+    }
+    _fileLoading = true;
+    if (!_disposed) notifyListeners();
+    final page = await readFile(request.path);
+    if (_disposed) return;
+    _fileLoading = false;
+    if (page == null) {
+      _fileFailure = _lastError?.message ?? '读取文件失败';
+    } else {
+      _openedFile = OpenedFile(
+        request: request,
+        text: page.text,
+        lines: page.lines,
+        eof: page.eof,
+        nextOffset: page.nextOffset,
+        bytes: page.bytes,
+      );
+    }
+    notifyListeners();
+  }
+
+  /// 接着读下一页（`eof` 之后是空操作）。
+  Future<void> loadMoreOpenedFile() async {
+    final current = _openedFile;
+    if (current == null || current.eof || _fileLoading) return;
+    _fileLoading = true;
+    notifyListeners();
+    final page = await readFile(
+      current.request.path,
+      offset: current.nextOffset,
+    );
+    if (_disposed) return;
+    _fileLoading = false;
+    if (page == null) {
+      _fileFailure = _lastError?.message ?? '读取文件失败';
+    } else {
+      _openedFile = current.appended(
+        text: page.text,
+        lines: page.lines,
+        eof: page.eof,
+        nextOffset: page.nextOffset,
+        bytes: page.bytes,
+      );
+    }
+    notifyListeners();
+  }
+
+  /// 收起当前打开的文件（侧栏回到改动清单 / 文件页返回列表）。
+  void closeFile() {
+    if (_fileOpenRequest == null &&
+        _openedFile == null &&
+        _fileFailure == null) {
+      return;
+    }
+    _fileOpenRequest = null;
+    _openedFile = null;
+    _fileFailure = null;
+    _fileLoading = false;
+    notifyListeners();
+  }
+
+  /// 某一轮**产出/改动过**的路径 —— 正文提及的词表。
+  ///
+  /// 与 DSH 同一条：词表是**这一轮**的产出，不是工作区文件清单
+  /// （`ui-deliverables/src/client/turn-deliverables.ts:269-296`）。
+  /// 数据来自工具调用的 `changedPath`（判据照 `mutationPath`）。
+  List<String> producedPathsOf(int? turn) {
+    if (turn == null) return const <String>[];
+    return _pathsByTurn[turn] ?? const <String>[];
+  }
+
+  /// `turn → 这一轮的改动路径`。失效判据与 [changedFiles] 同一条（列表同一性）。
+  ({List<ChatItem> source, Map<int, List<String>> byTurn})? _pathsByTurnCache;
+
+  Map<int, List<String>> get _pathsByTurn {
+    final source = items;
+    final cached = _pathsByTurnCache;
+    if (cached != null && identical(cached.source, source)) {
+      return cached.byTurn;
+    }
+    final byTurn = <int, List<String>>{};
+    for (final item in source) {
+      if (item is! ToolCallItem) continue;
+      final turn = item.turn;
+      final path = item.changedPath;
+      if (turn == null || path == null) continue;
+      (byTurn[turn] ??= <String>[]).add(path);
+    }
+    final frozen = <int, List<String>>{
+      for (final entry in byTurn.entries)
+        entry.key: List<String>.unmodifiable(entry.value),
+    };
+    _pathsByTurnCache = (source: source, byTurn: frozen);
+    return frozen;
+  }
+
+  /// 某条消息里的**文件提及表**（`token → path`），没有提及就是 `null`。
+  ///
+  /// 解析只有一处（`model/file_mentions.dart`），并按条目缓存 ——
+  /// 对话页每帧都会问一次，长会话里重复扫正文会把每帧成本拖长。
+  Map<String, String>? fileMentionsOf(ChatItem item) {
+    return _mentionTables[item.itemId];
+  }
+
+  ({List<ChatItem> source, Map<String, Map<String, String>> byItem})?
+  _mentionTableCache;
+
+  Map<String, Map<String, String>> get _mentionTables {
+    final source = items;
+    final cached = _mentionTableCache;
+    if (cached != null && identical(cached.source, source)) {
+      return cached.byItem;
+    }
+    final byItem = <String, Map<String, String>>{};
+    for (final item in source) {
+      if (item is! MessageItem || item.role != MessageRole.assistant) continue;
+      if (item.text.isEmpty) continue;
+      final spans = resolveFileMentions(
+        item.text,
+        knownPaths: producedPathsOf(item.turn),
+      );
+      if (spans.isEmpty) continue;
+      byItem[item.itemId] = fileMentionTargets(spans);
+    }
+    _mentionTableCache = (source: source, byItem: byItem);
+    return byItem;
   }
 
   // ---- 插件（`plugin.list` / `plugin.setEnabled`）----
