@@ -262,7 +262,7 @@ class _DshMobileAppState extends State<DshMobileApp>
       // 界面本来就该能看：它不依赖电脑，只依赖数据。
       //
       // 所以：没有凭据时**建一个不连的客户端**（`client` 存在但不 start），
-      // 界面照常渲染（会话列表会是空的，用户还能点"看示例数据"）。
+      // 界面照常渲染（会话列表会是空的，能进各屏）。
       final app = await _assembleWithoutCredentials(_recovery.onTerminated);
       if (!mounted) return;
       setState(() {
@@ -511,10 +511,8 @@ class _DshMobileAppState extends State<DshMobileApp>
     // **抽屉必须跟着 `AppModel` 重建**。
     //
     // 这一层原先直接 `_drawerSections(app)` 取一次列表就完事 —— 而
-    // `AppModel` 是 `ChangeNotifier`：会话列表、连接状态、示例数据
-    // 都靠 `notifyListeners()` 通知。不监听它就等于**列表永远停在首帧**：
-    // 真实会话拉回来了、示例数据装上了，抽屉里却还是"还没有会话"。
-    //（实测踩到：装了示例数据，`ChatPage` 里有内容，抽屉里是空的。）
+    // `AppModel` 是 `ChangeNotifier`：会话列表、连接状态都靠 `notifyListeners()` 通知。
+    // 不监听它就等于**列表永远停在首帧**：真实会话拉回来了，抽屉里却还是"还没有会话"。
     return ListenableBuilder(
       listenable: app,
       builder: (context, _) => ChatPage(
@@ -1024,7 +1022,7 @@ ChannelTransport _pairingTransport(String upgradeUrl) =>
 
 /// 没配对时的**装配**：客户端存在但**不连**（没有可信的电脑身份就没法连）。
 ///
-/// 它让界面照常可用 —— 会话列表是空的、能点"看示例数据"、能进各屏。
+/// 它让界面照常可用 —— 会话列表是空的、能进各屏。
 /// 这比"没配对就只显示一张配对表"有用得多：**界面不该被连接状态挡住**。
 ///
 /// ## 为什么这里能复用真装配的零件

@@ -22,7 +22,8 @@ library;
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show ChangeNotifier, listEquals;
+import 'package:flutter/foundation.dart'
+    show ChangeNotifier, listEquals, visibleForTesting;
 
 import '../core/connection.dart';
 import '../core/endpoint.dart';
@@ -64,7 +65,6 @@ import '../wire/rpc/session.dart' as wire;
 import '../wire/rpc/settings.dart' as wire;
 import '../wire/rpc/usage.dart' as wire;
 import '../wire/rpc/workspace.dart' as wire;
-import 'preview_data.dart';
 import 'projection.dart';
 import 'session_store.dart';
 import 'store.dart';
@@ -1335,56 +1335,46 @@ class AppModel extends ChangeNotifier {
 
   final Map<String, String> _projectionFailures = {};
 
-  /// 是否是示例数据（界面上要能看出来，见 `preview_data.dart` 的文件头）。
-  bool get isPreview => _isPreview;
-  bool _isPreview = false;
-
-  /// 装上示例数据，让"没连电脑也能看看界面长什么样"。
+  /// **只给测试**：把一份会话与条目直接放进内存。
   ///
-  /// **只在用户点了那个入口时调**：它不是错误路径的回退，
-  /// 也不是"没数据就自动填" —— 那会让人以为连上了。
-  ///
-  /// 它**不写库**（不经 `ItemStore`）：退出重进就没了，不会永远占着真实列表。
-  void loadPreview() {
+  /// 产品里的"示例数据"已删除（2026-10-26：发版不该带演示内容）；UI 用例仍需要
+  /// 一份确定的会话内容，示例内容搬到了 `app/test/support/preview_data.dart`，
+  /// 这里只留写入口。**不在任何产品路径上调用**（release 树摇会丢掉它）。
+  @visibleForTesting
+  void seedForTest({
+    required String sid,
+    required String title,
+    required int updatedAt,
+    required List<ChatItem> items,
+  }) {
     if (_disposed) return;
-    _isPreview = true;
-    // 把示例数据里的**相对锚点**换算成真时间戳（见 `preview_data.dart` 的说明）：
-    // 不换算的话它们会被算成 1970 年，全落进抽屉的「更早」那一组。
-    final anchor = DateTime.now().millisecondsSinceEpoch;
-    final sessions = <SessionSummary>[];
-    for (final preview in previewSessions) {
-      final store = _storeOf(preview.sid);
-      store.replaceAll(preview.items);
-      // 标题带 `（示例）` 前缀：**任何一屏都看得出它不是真的**。
-      sessions.add(
-        SessionSummary(
-          sid: preview.sid,
-          title: '（示例）${preview.title}',
-          updatedAt: anchor + preview.updatedAt,
-          itemCount: preview.items.length,
-          pendingCount: preview.items
-              .whereType<ApprovalItem>()
-              .where((a) => !a.decided)
-              .length,
-        ),
-      );
-    }
-    _sessions = sessions;
+    _storeOf(sid).replaceAll(items);
+    final summary = SessionSummary(
+      sid: sid,
+      title: title,
+      updatedAt: updatedAt,
+      itemCount: items.length,
+      pendingCount: items
+          .whereType<ApprovalItem>()
+          .where((item) => !item.decided)
+          .length,
+    );
+    _sessions = [
+      for (final session in _sessions)
+        if (session.sid != sid) session,
+      summary,
+    ];
     _lastError = null;
     notifyListeners();
   }
 
-  /// 清掉示例数据（真的连上时要清，免得混在真实列表里）。
-  void clearPreview() {
-    if (!_isPreview) return;
-    _isPreview = false;
-    for (final preview in previewSessions) {
-      // 不等它：`dispose` 只是关一个广播控制器（见 `SessionStore.dispose`）。
-      unawaited(_stores.remove(preview.sid)?.dispose());
-    }
-    _sessions = const [];
-    if (!_disposed) notifyListeners();
-  }
+  /// **只给测试**：推进一条交互信号。
+  ///
+  /// 真实信号来自会话事件投影（`_onProjected` 里的 `interactionSignalOf`）；
+  /// 产品里的"演示接管"菜单已删除（2026-10-26），UI 用例改从这里注入。
+  @visibleForTesting
+  void emitInteractionForTest(InteractionSignal signal) =>
+      _interactions.add(signal);
 
   /// 启动：连通道。
   Future<void> start() async {
@@ -2439,7 +2429,7 @@ class AppModel extends ChangeNotifier {
   /// Note: 为什么必须有这一步（blank 会话在列表里是藏起来的）与被否方案 —— 见
   /// `.agents/notes/implemented/2026-10-17-blank-session-hero.md`。
   Future<void> _openBlankSessionIfUnselected() async {
-    if (_disposed || _isPreview) return;
+    if (_disposed) return;
     if (_currentSid != null) return;
     // **找不到 blank 就什么都不做**（不是建一个）：建是 `createSession` 的事，
     // 这里只负责"选中"。
@@ -2469,7 +2459,7 @@ class AppModel extends ChangeNotifier {
   /// 不筛的话，手机会复用一个属于**别的工作区**的 blank，于是"新建会话"
   /// 落进别的分组（或未分组）—— 与 `session.create` 不带 `workspaceId` 同一个症状。
   Future<String?> findBlankSession({String? workspaceId}) async {
-    if (_disposed || _isPreview) return null;
+    if (_disposed) return null;
     WorkspaceGroup? group;
     if (workspaceId != null) {
       for (final g in _workspaces) {

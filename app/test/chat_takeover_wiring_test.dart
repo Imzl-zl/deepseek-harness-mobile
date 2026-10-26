@@ -26,6 +26,11 @@ import 'package:dsh_mobile/ui/takeover.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
 import 'fake_sync_client.dart';
+import 'support/preview_data.dart';
+import 'support/takeover_demo.dart';
+
+/// 最近一次 `_pumpChat` / `_pumpChatWithPermission` 起的 App（给 `_enqueueDemo` 用）。
+AppModel? _lastApp;
 
 class _FakeClient extends FakeSyncClient {
   @override
@@ -54,7 +59,13 @@ class _FakeClient extends FakeSyncClient {
     String method,
     Map<String, Object?> params, {
     String? requestId,
-  }) async => throw const ProtocolException(ErrorCode.relayOffline, '测试里不连');
+  }) async {
+    // 接管卡答一次就走 `interaction.respond`；这条用例要的是"答完队列往前走"。
+    if (method == 'interaction.respond') {
+      return {'itemId': params['itemId']} as T;
+    }
+    throw const ProtocolException(ErrorCode.relayOffline, '测试里不连');
+  }
 }
 
 /// 权限链的假电脑：给真目录、真切换、真投影回读。
@@ -152,6 +163,9 @@ class _PermissionFakeClient extends FakeSyncClient {
           'permissions': <String, Object?>{'currentValue': current},
         };
         return projections as T;
+      case 'interaction.respond':
+        // 答完就结算：接管队列要能走到下一项。
+        return {'itemId': params['itemId']} as T;
       default:
         throw const ProtocolException(ErrorCode.relayOffline, '测试里不连');
     }
@@ -165,7 +179,9 @@ Future<void> _pumpChat(WidgetTester tester) async {
       theme: DshTheme.dark(),
       home: ChatPage(
         app: app,
-        paired: false,
+        // 示例入口已删（2026-10-26）：未配对不再有"看数据"这一档，
+        // 要测输入栏就得按真实语义给 `paired: true`。
+        paired: true,
         onOpenDrawer: () {},
         onNewSession: () {},
         drawer: const Drawer(child: SizedBox()),
@@ -173,11 +189,12 @@ Future<void> _pumpChat(WidgetTester tester) async {
     ),
   );
   await tester.pumpAndSettle();
-  await tester.tap(find.text('看示例数据'));
+  seedPreview(app);
   await tester.pumpAndSettle();
   // 需要一个当前会话，输入栏与统计条才活。
   await app.openSession('preview-1');
   await tester.pumpAndSettle();
+  _lastApp = app;
 }
 
 /// 用权限假电脑起一页聊天（目录 / 切换 / 投影都真）。
@@ -191,7 +208,9 @@ Future<(AppModel, _PermissionFakeClient)> _pumpChatWithPermission(
       theme: DshTheme.dark(),
       home: ChatPage(
         app: app,
-        paired: false,
+        // 示例入口已删（2026-10-26）：未配对不再有"看数据"这一档，
+        // 要测输入栏就得按真实语义给 `paired: true`。
+        paired: true,
         onOpenDrawer: () {},
         onNewSession: () {},
         drawer: const Drawer(child: SizedBox()),
@@ -199,13 +218,14 @@ Future<(AppModel, _PermissionFakeClient)> _pumpChatWithPermission(
     ),
   );
   await tester.pumpAndSettle();
-  await tester.tap(find.text('看示例数据'));
+  seedPreview(app);
   await tester.pumpAndSettle();
   await app.openSession('preview-1');
   await tester.pumpAndSettle();
   // 目录随 `refreshSessions` 一起拉（与 `session.modelCatalog` 同一条纪律）。
   await app.refreshSessions();
   await tester.pumpAndSettle();
+  _lastApp = app;
   return (app, client);
 }
 
@@ -243,22 +263,19 @@ Future<void> _pumpChatPaired(WidgetTester tester, _FakeClient client) async {
     ),
   );
   await tester.pumpAndSettle();
-  // 已配对时空态没有"看示例数据"按钮（那是未配对时的入口），直接灌示例数据。
-  app.loadPreview();
+  // 产品里的示例入口已删除（2026-10-26）；测试用同一份内容直接播种。
+  seedPreview(app);
   await tester.pumpAndSettle();
   await app.openSession('preview-1');
   await tester.pumpAndSettle();
+  _lastApp = app;
 }
 
-/// 走 `＋` 菜单 → "演示：接管输入栏"。
+/// 把三条接管交互推进队列（原来走 `＋` 菜单的演示入口，2026-10-26 已从产品删除）。
 Future<void> _enqueueDemo(WidgetTester tester) async {
-  await tester.tap(find.byTooltip('添加文件或调用指令'));
-  await tester.pumpAndSettle();
-  // **先滚到它再点**：菜单 6 项，最后一项在 320×640 上超出屏幕
-  //（`tap` 会报 "would not hit test"）。
-  await tester.ensureVisible(find.text('演示：接管输入栏'));
-  await tester.pumpAndSettle();
-  await tester.tap(find.text('演示：接管输入栏'));
+  final app = _lastApp;
+  if (app == null) throw StateError('先调 _pumpChat / _pumpChatWithPermission');
+  enqueueDemoTakeovers(app);
   await tester.pumpAndSettle();
 }
 

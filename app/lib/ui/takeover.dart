@@ -450,7 +450,7 @@ class TakeoverController extends ChangeNotifier {
     settle(answer.itemId, sid: answer.sid);
   }
 
-  /// 把答复交给注入的出口。**没有出口时只记回执**（演示模式）。
+  /// 把答复交给注入的出口。**没有出口时只记回执**（未配对 / 测试）。
   ///
   /// 失败**不吞**：`interaction/not-pending` 要让调用方看见，否则用户以为答成功了。
   Future<void> _submit(InteractionAnswer answer) async {

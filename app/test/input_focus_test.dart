@@ -33,6 +33,7 @@ import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_sync_client.dart';
+import 'support/preview_data.dart';
 
 class _FakeClient extends FakeSyncClient {
   @override
@@ -72,7 +73,8 @@ Future<void> _pumpChat(WidgetTester tester) async {
       theme: DshTheme.dark(),
       home: ChatPage(
         app: app,
-        paired: false,
+        // 示例入口已删（2026-10-26）：未配对不再有"看数据"这一档。
+        paired: true,
         onOpenDrawer: () {},
         onNewSession: () {},
         drawer: const Drawer(child: SizedBox(height: 200)),
@@ -80,7 +82,8 @@ Future<void> _pumpChat(WidgetTester tester) async {
     ),
   );
   await tester.pumpAndSettle();
-  await tester.tap(find.text('看示例数据'));
+  // 产品里的示例入口已删除（2026-10-26）；测试用同一份内容直接播种。
+  seedPreview(app);
   await tester.pumpAndSettle();
   // 有当前会话，输入栏才活（否则它整块不在树里）。
   await app.openSession('preview-1');

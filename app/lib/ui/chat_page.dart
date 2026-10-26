@@ -383,7 +383,7 @@ class ChatPageState extends State<ChatPage> {
     // 答复出口：控制器不认识 `AppModel`，所以在这一层把"答一次"接到
     // `interaction.respond` 上（装配点才知道用哪个实现）。
     // **没配对时不接**：那意味着没有电脑可答，而接一个必然失败的出口只会
-    // 让演示入口（`＋` → 演示接管）每次都被报成"已过期"。
+    // 让每次答复都被报成"已过期"。
     _syncAnswerOutlet();
   }
 
@@ -1090,8 +1090,8 @@ class ChatPageState extends State<ChatPage> {
   String _connectionTooltip() =>
       '连接状态：${connectionLabel(widget.app.connection)}（点按查看连接操作）';
 
-  /// 是否有"可看的数据"（真连上了，或在看示例）。
-  bool get _hasData => widget.paired || widget.app.isPreview;
+  /// 是否有"可看的数据"（已配对）。
+  bool get _hasData => widget.paired;
 
   /// 用户手动展开 / 收起的轮：`sid → turn → 是否展开`。
   ///
@@ -2395,9 +2395,6 @@ class ChatPageState extends State<ChatPage> {
       (icon: 'paperclip', label: '拍照', desc: '用相机拍一张，随消息发出去'),
       (icon: 'paperclip', label: '照片', desc: '从相册选一张，随消息发出去'),
       (icon: 'checklist', label: '后台任务', desc: '看运行中的命令与输出'),
-      // 原型底栏有一个「演示」入口（`data-act="demo"`）。这里照做：
-      // 接管卡**只有真的有待办才出现**，而"看看它长什么样"需要一个入口。
-      (icon: 'shield', label: '演示：接管输入栏', desc: '审批 / 提问 / 计划长什么样'),
     ];
     unawaited(
       showDshSheet<void>(
@@ -2420,8 +2417,6 @@ class ChatPageState extends State<ChatPage> {
                   } else if (item.label == '后台任务') {
                     // **落到真的面板**（不是"还没做"）：右抽屉的「任务」页。
                     _openSidePanel(SidePanel.jobs);
-                  } else {
-                    _enqueueDemoTakeovers();
                   }
                 },
               ),
@@ -2429,91 +2424,6 @@ class ChatPageState extends State<ChatPage> {
         ),
       ),
     );
-  }
-
-  /// 装三个演示接管（审批 / 提问 / 计划），让"接管长什么样"可见。
-  ///
-  /// 队列是**瀑布**（一次只处理队首），所以三个会依次出现。
-  void _enqueueDemoTakeovers() {
-    setState(() {
-      _takeover.enqueue(
-        const InteractionItem(
-          itemId: 'demo-approval',
-          sid: 'preview-1',
-          callId: 'demo-call-approval',
-          kind: InteractionKind.approval,
-          toolName: 'bash',
-          title: '工具 bash 请求越权执行',
-          detail:
-              'rm -rf build/ && flutter clean\n\n'
-              '只读 / 工作区内修改模式下，越权操作要你确认；\n'
-              '完全权限模式下这一步不会出现（那是"已授权"的结果）。',
-        ),
-      );
-      _takeover.enqueue(
-        const InteractionItem(
-          itemId: 'demo-question',
-          sid: 'preview-1',
-          callId: 'demo-call-question',
-          kind: InteractionKind.question,
-          header: 'DSH 想确认一件事',
-          title: '拆连接层的资源束时，要不要顺手把「在途请求」也一起拆出去？',
-          questions: [
-            InteractionQuestion(
-              id: 'demo-q1',
-              header: 'DSH 想确认一件事',
-              question: '拆连接层的资源束时，要不要顺手把「在途请求」也一起拆出去？',
-              options: [
-                InteractionOption(
-                  // **标签里不写"（推荐）"**：原型会把它剥出来单独渲染成徽标
-                  //（`label.replace(/[（(]推荐[)）]/g, '')`）。
-                  // 我第一版把"（推荐）"写进了标签，于是界面上同时出现
-                  // 标签里的括号与独立徽标 —— 重复了。
-                  label: '一起拆',
-                  description: '它俩生命周期不同：资源束每连接换一份，在途请求要跨重连保留',
-                  recommended: true,
-                ),
-                InteractionOption(
-                  label: '先只拆资源束',
-                  description: '改动更小，但在途请求那个缺口会留着',
-                ),
-                // **三条而不是两条**：真机上溢出的那一问就是三条选项
-                //（`shots-2026-10-24-mentions/h1-typed.png`）。演示数据按那个形状摆，
-                // 溢出那条回归用例才验得到同一件事。
-                InteractionOption(
-                  label: '先不动，等我画张图',
-                  description: '把两层画清楚再决定，代价是这一轮先停在原地',
-                ),
-              ],
-            ),
-          ],
-        ),
-      );
-      _takeover.enqueue(
-        const InteractionItem(
-          itemId: 'demo-plan',
-          sid: 'preview-1',
-          callId: 'demo-call-plan',
-          kind: InteractionKind.plan,
-          title: '把侧抽屉的「任务」面板接上 job 帧',
-          approveLabel: '同意执行',
-          questions: [
-            InteractionQuestion(
-              id: 'demo-call-plan',
-              question: '把侧抽屉的「任务」面板接上 job 帧',
-              detail:
-                  '1. 展开时 `job.follow`，收起时 `job.unfollow`\n'
-                  '2. 把三帧映射成 SideJob\n'
-                  '3. 停止走 `job.kill`，两步确认',
-              options: [
-                InteractionOption(label: '同意执行'),
-                InteractionOption(label: '要求修改'),
-              ],
-            ),
-          ],
-        ),
-      );
-    });
   }
 
   /// 展开 / 收起一个任务：**展开即订阅输出，收起即退订**。
@@ -2754,7 +2664,6 @@ class _ChatTab extends StatelessWidget {
         onOpenDrawer: onOpenDrawer,
         onConnect: onConnect,
         onRePair: onRePair,
-        onPreview: app.loadPreview,
         onRefresh: paired ? onRefreshSessions : null,
         // 失败原因带进空态：**空列表 + 有错** 与 **空列表 + 真没有** 必须看得出区别。
         // 连接诊断也带上：真机"列表恒空 + 反复重连"而两端日志无原因，
@@ -3660,7 +3569,6 @@ class _EmptyChat extends StatelessWidget {
     required this.paired,
     required this.hasSessions,
     required this.onOpenDrawer,
-    required this.onPreview,
     this.selectedSid,
     this.projectionFailure,
     this.onRefresh,
@@ -3680,7 +3588,6 @@ class _EmptyChat extends StatelessWidget {
   /// 投影失败的第一条原因（`null` = 没失败）。**与"真没有内容"分开说**。
   final String? projectionFailure;
   final VoidCallback onOpenDrawer;
-  final VoidCallback onPreview;
 
   /// 重新拉一次会话列表。
   ///
@@ -3819,12 +3726,6 @@ class _EmptyChat extends StatelessWidget {
                   ),
                 ],
                 if (!paired) ...[
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    onPressed: onPreview,
-                    icon: DshIcon('sparkle', size: 14, color: c.labelSecondary),
-                    label: const Text('看示例数据'),
-                  ),
                   const SizedBox(height: 8),
                   FilledButton(
                     onPressed: onConnect,

@@ -37,6 +37,7 @@ import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'fake_sync_client.dart';
+import 'support/preview_data.dart';
 
 /// 一个**只回固定答案**的假客户端：界面测试只关心"拿到这些数据时长什么样"。
 class FakeClient extends FakeSyncClient {
@@ -250,7 +251,8 @@ void main() {
       // 旧文案"还没连电脑"会被读成"从没配对过"。
       expect(find.text('还没配对'), findsOneWidget);
       expect(find.text('还没连电脑'), findsNothing);
-      expect(find.text('看示例数据'), findsOneWidget);
+      // 2026-10-26：产品里不再有「看示例数据」（发版不带演示内容）。
+      expect(find.text('看示例数据'), findsNothing);
       expect(find.text('连电脑（配对）'), findsOneWidget);
 
       await tester.tap(find.text('连电脑（配对）'));
@@ -436,9 +438,10 @@ void main() {
           reason: '$dead 是桌面快捷键入口，手机上只能弹"还没做"',
         );
       }
-      // 剩下两项都是真的：`后台任务` 开右抽屉的任务页，`演示` 灌接管队列。
+      // 剩下的都是真的：`后台任务` 开右抽屉的任务页。
+      // 2026-10-26：`演示：接管输入栏` 已从产品删除（发版不带演示入口）。
       expect(find.text('后台任务'), findsOneWidget);
-      expect(find.text('演示：接管输入栏'), findsOneWidget);
+      expect(find.text('演示：接管输入栏'), findsNothing);
     });
 
     testWidgets('＋ → 后台任务：**落到真的面板**（不是"还没做"）', (tester) async {
@@ -1634,15 +1637,15 @@ void main() {
   });
 
   group('右侧「文件」面板（真清单 + 复制路径）', () {
-    /// 起一页示例数据并落到有 `write` 调用的那个会话。
+    /// 起一页测试会话并落到有 `write` 调用的那个会话。
     ///
     /// `preview-2` 里有一条 `name: 'write'` 且带 `changedPath` 的调用
-    /// （`lib/data/preview_data.dart`）—— 面板就是按它列出来的。
+    /// （`test/support/preview_data.dart`）—— 面板就是按它列出来的。
     ///
-    /// 直接调 `loadPreview()` 而不是点「看示例数据」：那个按钮只在**未配对**
-    /// 的空态里出现，而 `_wrap` 默认已配对 —— 点它只会找到 0 个。
+    /// 产品里的示例入口已在 2026-10-26 删除，测试用 `seedPreview` 直接播种。
     Future<AppModel> pumpPreviewSession(WidgetTester tester) async {
-      final app = AppModel(client: FakeClient())..loadPreview();
+      final app = AppModel(client: FakeClient());
+      seedPreview(app);
       await tester.pumpWidget(_wrap(app));
       await tester.pumpAndSettle();
       await app.openSession('preview-2');
@@ -1738,7 +1741,8 @@ void main() {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
 
-      final app = AppModel(client: FakeClient())..loadPreview();
+      final app = AppModel(client: FakeClient());
+      seedPreview(app);
       await tester.pumpWidget(_wrap(app));
       await tester.pumpAndSettle();
       await app.openSession('preview-1');
@@ -1763,7 +1767,7 @@ void main() {
     // 只要来一条新事件它就自己收起"。
     //
     // 判据要能区分两条路：**只有"条目换了但 id 没变"**才能暴露它 ——
-    // 所以下面用 `loadPreview()` 再跑一遍（同一批 itemId，新的列表实例）。
+    // 所以下面用 `seedPreview` 再跑一遍（同一批 itemId，新的列表实例）。
     const detail = '写入了 100 个图标常量';
 
     testWidgets('展开后换一份 items：**仍然展开**', (tester) async {
@@ -1774,7 +1778,8 @@ void main() {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
 
-      final app = AppModel(client: FakeClient())..loadPreview();
+      final app = AppModel(client: FakeClient());
+      seedPreview(app);
       await tester.pumpWidget(_wrap(app));
       await tester.pumpAndSettle();
       await app.openSession('preview-2');
@@ -1787,7 +1792,7 @@ void main() {
 
       // 触发一次"条目换了一份、但 itemId 没变"的重建 ——
       // 这正是任何一条新事件到达时的形状。
-      app.loadPreview();
+      seedPreview(app);
       await tester.pumpAndSettle();
 
       expect(

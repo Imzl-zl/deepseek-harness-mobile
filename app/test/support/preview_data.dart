@@ -1,25 +1,20 @@
-/// 示例数据：**只为"没连电脑时也能看看界面长什么样"**。
+/// **测试专用**的会话内容（原来产品里的"看示例数据"）。
 ///
-/// ## 为什么要有它，以及为什么它必须是"显式"的
+/// 2026-10-26：发版前把产品里的示例入口删了（未配对空态不再有「看示例数据」）。
+/// 但 UI 用例仍需要一个确定的会话：长中文、代码块、工具调用三种状态、待审批、
+/// 系统消息、一条带 `detail` 的工具卡、一轮收口行。
 ///
-/// 界面在没连电脑时只能是空列表 —— 那让"这一版做出来是什么样"无法回答，
-/// 也让布局问题（长文本溢出、气泡宽度、工具行对齐）要等到真连上才暴露。
+/// 所以数据搬到这里，注入走 `AppModel.seedForTest`（`@visibleForTesting`）。
+/// **产品代码不引用本文件**；标题也不再带「（示例）」前缀。
 ///
-/// 但它**绝不能是静默兜底**：真实产品里"没数据"与"演示数据"混在一起，
-/// 会让人以为连上了。所以：
+/// ## 数据是照着 DSH 的真实形状写的
 ///
-/// 1. 只有**用户点了"看示例数据"**才会装（不是自动的、不是错误路径的回退）；
-/// 2. 装进来的会话标题带 **`（示例）`** 前缀，界面上任何一屏都看得出它不是真的；
-/// 3. 它**不写库**（`ItemStore` 不参与）—— 所以退出重进就没了，
-///    不会永远占着真实的会话列表。
-///
-/// ## 数据本身是照着 DSH 的真实形状编的
-///
-/// 会话/工具调用/审批/流式那几屏各自要能看出问题，所以样例覆盖：
-/// 长中文、代码块、工具调用的三种状态、一条待审批、一条系统消息。
+/// `updatedAt` 是**相对当前时刻的偏移（毫秒）**，由 [seedPreview] 换算成真时间戳；
+/// 写死小数字会被抽屉算成 1970 年、全落进「更早」（实测踩到过）。
 library;
 
-import '../model/chat_item.dart';
+import 'package:dsh_mobile/data/app_model.dart';
+import 'package:dsh_mobile/model/chat_item.dart';
 
 /// 一份示例会话（含它的条目）。
 class PreviewSession {
@@ -55,7 +50,7 @@ const String _iconsReplyText =
 /// ## `updatedAt` 是**相对值**，不是绝对时间戳
 ///
 /// 这里的 `updatedAt`（500 / 400 / 300）是**"距今多少秒"的锚点**，
-/// 由 `AppModel.loadPreview()` 加上当前时刻换算成真时间戳。
+/// 由 [seedPreview] 加上当前时刻换算成真时间戳。
 ///
 /// 为什么不写死绝对时间戳：抽屉按今天 / 昨天 / 更早分组，而写死的小数字
 /// 会被算成"1970 年"，于是三个会话全落进「更早」（实测踩到）。
@@ -241,3 +236,18 @@ const List<PreviewSession> previewSessions = <PreviewSession>[
     ],
   ),
 ];
+
+/// 把三份示例会话装进 [app]（**测试专用**）。
+///
+/// 产品里没有这个入口了；它只调 `@visibleForTesting` 的 `seedForTest`。
+void seedPreview(AppModel app) {
+  final anchor = DateTime.now().millisecondsSinceEpoch;
+  for (final preview in previewSessions) {
+    app.seedForTest(
+      sid: preview.sid,
+      title: preview.title,
+      updatedAt: anchor + preview.updatedAt,
+      items: preview.items,
+    );
+  }
+}
