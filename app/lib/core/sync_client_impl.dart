@@ -948,15 +948,20 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     int minTurns = SyncClient.kHistoryPageMinTurns,
   }) async {
     try {
-      final reply = await call<Object?>('session.page', {
-        'sid': sid,
-        'beforeSeq': beforeSeq,
-        'maxMessages': maxMessages,
-        'turnWindow': {'minMessages': minMessages, 'minTurns': minTurns},
-      });
-      // 形状（`{items, hasMore}` 与两条 item 的判别联合）在
-      // `wire/rpc/session_page.dart`；这里只剩"记住还有没有更早的"与补取循环。
-      final decoded = valueOrReport(readSessionPage(reply), 'session.page');
+      // 形状（`{items, hasMore}` 与两条 item 的判别联合）与**方法名/参数**
+      // 都在 `wire/rpc/session_page.dart` 的 `loadSessionPage`；
+      // 这里只剩"记住还有没有更早的"与补取循环。
+      final decoded = valueOrReport(
+        await loadSessionPage(
+          this,
+          sid: sid,
+          beforeSeq: beforeSeq,
+          maxMessages: maxMessages,
+          turnWindowMinMessages: minMessages,
+          turnWindowMinTurns: minTurns,
+        ),
+        'session.page',
+      );
       if (decoded == null) {
         // 整页读不出来：**不当成"没有更多"**，保留上一次的结论（与失败分支同一条）。
         // **必须带 `failure`**：解码失败是页级形状错，用户要看得到"翻页失败"；
@@ -1017,12 +1022,12 @@ class _SyncClient implements SyncClient, SyncClientProbe {
 
   @override
   Future<SessionEvent> refetch({required String sid, required int seq}) async {
-    final reply = await call<Object?>('session.refetch', {
-      'sid': sid,
-      'seq': seq,
-    });
-    // 形状（`{record:{type,seq,event}}`）在 `wire/rpc/session_page.dart`。
-    final event = valueOrReport(readRefetchedEvent(reply), 'session.refetch');
+    // 形状（`{record:{type,seq,event}}`）与**方法名/参数**都在
+    // `wire/rpc/session_page.dart` 的 `loadRefetchedEvent`。
+    final event = valueOrReport(
+      await loadRefetchedEvent(this, sid: sid, seq: seq),
+      'session.refetch',
+    );
     if (event == null) {
       // 回了成功但没有可用事件：如实报缺陷，**不返回一条空事件**。
       throw const ProtocolException(

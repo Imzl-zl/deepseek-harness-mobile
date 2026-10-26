@@ -29,7 +29,7 @@
 library;
 
 import '../../core/items.dart' show EventLike, itemIdOf;
-import '../../core/sync_client.dart' show SessionEvent;
+import '../../core/sync_client.dart';
 import '../fields.dart';
 import '../reading.dart';
 
@@ -37,8 +37,43 @@ import '../reading.dart';
 export '../reading.dart';
 
 const String _kPage = 'session.page';
-// `session.refetch` 的方法名与参数留在连接层（它走 `SyncClient.refetch` 具名方法，
-// 不是 `call<`）；本文件只管那条应答的形状，所以不需要它自己的常量。
+const String _kRefetch = 'session.refetch';
+
+/// 取一页（`session.page`）。方法名与参数形状只在这里。
+///
+/// 连接层只保留"记住 hasMore + 逐条 await 补取 + 按 seq 排序"——
+/// 那两件事需要 `SyncClient` 的状态，属于连接层；发请求与解码属于本层。
+Future<WireReading<SessionPageWire>> loadSessionPage(
+  SyncClient client, {
+  required String sid,
+  required int beforeSeq,
+  required int maxMessages,
+  required int turnWindowMinMessages,
+  required int turnWindowMinTurns,
+}) async {
+  final reply = await client.call<Object?>(_kPage, {
+    'sid': sid,
+    'beforeSeq': beforeSeq,
+    'maxMessages': maxMessages,
+    // `turnWindow` 的键与连接层参数名不同名（`minMessages` / `minTurns`），
+    // requestId 不在这里：它是连接层的幂等键，与形状无关。
+    'turnWindow': {
+      'minMessages': turnWindowMinMessages,
+      'minTurns': turnWindowMinTurns,
+    },
+  });
+  return readSessionPage(reply);
+}
+
+/// 补取一条被 `refetch` 标记替代的大条目（`session.refetch`）。
+Future<WireReading<SessionEvent>> loadRefetchedEvent(
+  SyncClient client, {
+  required String sid,
+  required int seq,
+}) async {
+  final reply = await client.call<Object?>(_kRefetch, {'sid': sid, 'seq': seq});
+  return readRefetchedEvent(reply);
+}
 
 /// 一页里的一条：要么是记录（已解成事件），要么是"需要单独补取"的标记。
 sealed class SessionPageItemWire {

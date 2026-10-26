@@ -103,6 +103,11 @@
 但**形状解码**在本层，金样照样收了它）。反向也没有多余：金样里除它以外的 42 个，
 每一个都能在 `wire/rpc/` 里找到归属。
 
+**2026-10-26 订正**：`session.page` / `session.refetch` 的调用已搬进
+`wire/rpc/session_page.dart` 的 `loadSessionPage` / `loadRefetchedEvent`，
+`wire/rpc/` 现在有 **43** 个方法字面量，与金样一比一；门禁
+（`app/tools/verify-rpc-single-caller.mjs`）也改为扫 `app/lib` 全域（`wire/` 除外）。
+
 ## Consequences
 
 - 收益：加一个方法的成本固定成"一个 `read*` + 一个 `load*` + 一条金样样本"

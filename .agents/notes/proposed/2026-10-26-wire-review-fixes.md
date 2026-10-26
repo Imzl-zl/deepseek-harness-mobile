@@ -126,7 +126,7 @@
 | 3 | 必填口径：`job` 六键改 `require*`；`session.page` 改走 `readObject` 且 `hasMore` 必填 | 金样仍绿；缺任一必填键 ⇒ 整行为 `WireBad` + 计数 1 的新用例（循环覆盖六键）；手写假行补齐；analyze/format | ✅ |
 | 4a | 值与扁平入口：`readFlatValues` 成为真实入口（`projections` 改用它）；`modelSelection`/`modelRef` 只住 `wire/values.dart`；删 `has`/`readReceipt`/旧 `flatValues` | `modelSelection` 坏形状 ⇒ 计数 1（新用例）；投影面与行面共用一份解析；`fields.dart` 无未用公开成员 | ✅ |
 | 4b | 信封入口：`readObjectList` 成为 `{key: [...]}` 的唯一读法（refs / settings / workspace 分组），坏行计数；workspace 五键升必填 | 三个面不再手写"取 Map → 取 key → 判 List"；缺 `createdAt` ⇒ 丢行 + 计数 1（新用例）；回放全绿 | ✅ |
-| 5 | 门禁范围与事实：`page`/`refetch` 的 `load*` 搬进 `wire/rpc/session_page.dart`；脚本扫 `app/lib`（除 `wire/`）；订正设计评审 `:267` | 脚本零 `call<`；在 `core/` 加一处 `call<` 会红（变异）；设计评审改成事实 | 待做 |
+| 5 | 门禁范围与事实：`page`/`refetch` 的 `load*` 搬进 `wire/rpc/session_page.dart`；脚本扫 `app/lib`（除 `wire/`）且识别无前缀 `call<`；订正设计评审 `:267` | 脚本零 `call<`；在 `core/` 加一处 `call<` 会红（变异）；设计评审改成事实 | ✅（变异 1 红） |
 | 6 | 杂项：19 处回指、`permission.switch` 复用、`agentPresets` 断言、插件行认不出时计数、金样笔记的状态行 | 回指全部命中；`permission` 不再有第二份解码；回放覆盖 43/43；插件坏行计数用例 | 待做 |
 
 ## 代码入口回指
