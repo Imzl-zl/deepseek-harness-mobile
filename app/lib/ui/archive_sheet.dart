@@ -21,6 +21,7 @@ import '../model/chat_item.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import 'dsh_sheet.dart';
+import 'dsh_toast.dart';
 
 /// 「取消归档」的动作（失败原因在 `app.lastError`）。
 typedef UnarchiveAction = Future<bool> Function(String sid);
@@ -140,9 +141,7 @@ class _UnarchiveButtonState extends State<_UnarchiveButton> {
     setState(() => _busy = false);
     if (!ok) {
       // 失败要留声：这一行还在原地，用户得知道"刚才那一下没生效"。
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('取消归档失败，稍后再试')));
+      DshToast.show(context, '取消归档失败，稍后再试', kind: DshToastKind.error);
     }
   }
 

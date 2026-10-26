@@ -73,6 +73,7 @@ import 'dsh_popover.dart';
 import 'dsh_sheet.dart';
 import 'dsh_shimmer.dart';
 import 'dsh_state_dot.dart';
+import 'dsh_toast.dart';
 import 'edge_stick.dart';
 import 'input_focus.dart';
 import 'load_older_trigger.dart';
@@ -441,10 +442,10 @@ class ChatPageState extends State<ChatPage> {
           error.code == ErrorCode.interactionNotPending;
       if (expired) _takeover.settle(answer.itemId);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(expired ? '这一项已过期：$error' : '没发出去，再试一次：$error'),
-          ),
+        DshToast.show(
+          context,
+          expired ? '这一项已过期：$error' : '没发出去，再试一次：$error',
+          kind: DshToastKind.error,
         );
       }
       rethrow;
@@ -477,9 +478,7 @@ class ChatPageState extends State<ChatPage> {
     if (!mounted) return;
     final error = widget.app.lastError;
     if (error == null) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('拉取会话失败：${error.message}')));
+    DshToast.show(context, '拉取会话失败：${error.message}', kind: DshToastKind.error);
   }
 
   /// 发一句。
@@ -510,9 +509,7 @@ class ChatPageState extends State<ChatPage> {
     // **没选会话就发不出去，必须说出来**：静默 `return` 会让用户以为"点了没反应"，
     // 而那正是"我发了啥也没有"最常见的成因（真机实测）。
     if (sid == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('先在列表里选一个会话，再发消息')));
+      DshToast.show(context, '先在列表里选一个会话，再发消息');
       return;
     }
     setState(() => _sending = true);
@@ -587,9 +584,7 @@ class ChatPageState extends State<ChatPage> {
       if (mounted) setState(() => _attachments.clear());
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('发送失败：$error')));
+      DshToast.show(context, '发送失败：$error', kind: DshToastKind.error);
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -1519,10 +1514,8 @@ class ChatPageState extends State<ChatPage> {
   /// **2026-10-17 从 `_toast` 拆出来**：原来只有一个助手、且所有消息都被缀上
   /// "还没接上数据"—— 于是"已切到 deepseek-chat"在界面上变成
   /// "已切到 deepseek-chat 还没接上数据"，一句**谎话**（它确实切了）。
-  void _toast(String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+  void _toast(String message, {DshToastKind kind = DshToastKind.info}) {
+    DshToast.show(context, message, kind: kind);
   }
 
   // ---------------------------------------------------------------------------
@@ -1971,19 +1964,14 @@ class ChatPageState extends State<ChatPage> {
     );
     if (!mounted) return;
     if (picked == null) {
-      _toast('切换失败：${widget.app.lastError?.message ?? '电脑侧没有给结论'}');
+      _toast(
+        '切换失败：${widget.app.lastError?.message ?? '电脑侧没有给结论'}',
+        kind: DshToastKind.error,
+      );
       return;
     }
-    final effortLabel = widget.app.modelCatalog?.effortNameOf(
-      provider: picked.provider,
-      model: picked.model,
-      effort: picked.reasoningEffort,
-    );
-    _toast(
-      effortLabel == null || effortLabel.isEmpty
-          ? '已切到 $name'
-          : '已切到 $name · $effortLabel',
-    );
+    // **成功不弹**：模型名与推理档就在输入栏上，弹一条"已切到 X"是噪音
+    // （2026-10-26 真机原话：黑色的选择成功弹窗又丑又多余）。
   }
 
   /// 权限选择（**目录来自电脑侧** + 完全权限的**风险确认门**，§7.10）。
@@ -3791,9 +3779,7 @@ class _ChangedFileList extends StatelessWidget {
           onTap: () async {
             await Clipboard.setData(ClipboardData(text: row.path));
             if (!context.mounted) return;
-            ScaffoldMessenger.of(context)
-              ..clearSnackBars()
-              ..showSnackBar(SnackBar(content: Text('已复制 ${row.path}')));
+            DshToast.show(context, '已复制 ${row.path}');
           },
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),

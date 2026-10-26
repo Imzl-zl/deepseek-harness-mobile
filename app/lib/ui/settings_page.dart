@@ -45,6 +45,7 @@ import '../theme/dsh_icons.dart';
 import 'connection_summary_block.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_sheet.dart';
+import 'dsh_toast.dart';
 
 /// App 版本（排错必需：手机侧这一行与电脑侧 DSH 版本互相印证）。
 ///
@@ -325,9 +326,7 @@ class SettingsPage extends StatelessWidget {
   Future<void> _copy(BuildContext context, String text) async {
     await Clipboard.setData(ClipboardData(text: text));
     if (!context.mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('已复制')));
+    DshToast.show(context, '已复制');
   }
 }
 
@@ -505,18 +504,20 @@ Future<void> _onNotifyTap(BuildContext context, AppModel app) async {
   final ok = await app.requestNotifyPermission();
   if (ok || !context.mounted) return;
   // 被拒（或系统不再弹窗）：**明说后果**，不假装开着。
-  ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(content: Text('没有通知权限：退到后台不会提醒（点这里可在系统设置里打开）')),
+  DshToast.show(
+    context,
+    '没有通知权限：退到后台不会提醒（点这里可在系统设置里打开）',
+    kind: DshToastKind.error,
   );
 }
 
 /// 改电脑侧设置失败时的一句话（**说清是哪条错误**，不吞掉）。
 void _showSettingFailure(BuildContext context, AppModel app) {
   final error = app.lastError;
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text(error == null ? '改设置失败' : '改设置失败：${error.code.wire}'),
-    ),
+  DshToast.show(
+    context,
+    error == null ? '改设置失败' : '改设置失败：${error.code.wire}',
+    kind: DshToastKind.error,
   );
 }
 
@@ -1072,11 +1073,11 @@ class _EndpointRow extends StatelessWidget {
     );
   }
 
-  void _toast(BuildContext context, String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
-  }
+  void _toast(
+    BuildContext context,
+    String message, {
+    DshToastKind kind = DshToastKind.info,
+  }) => DshToast.show(context, message, kind: kind);
 }
 
 /// 「已隐藏」—— 用户删掉的自报端点。
@@ -1166,9 +1167,7 @@ class _AddEndpointButton extends StatelessWidget {
     if (added == null || !context.mounted) return;
     await app.addManualEndpoint(added);
     if (!context.mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('已添加，下次重连会试它')));
+    DshToast.show(context, '已添加，下次重连会试它');
   }
 }
 

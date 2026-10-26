@@ -29,6 +29,7 @@ import '../model/queue_item.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
+import 'dsh_toast.dart';
 
 /// 排队条。**空队列时整条不占位**（返回 `SizedBox.shrink()`）——
 /// 没有排队消息时摆一条空dock 是把"没有"说成"有一个空的"。
@@ -173,12 +174,15 @@ class _QueueDockState extends State<QueueDock> {
     if (!mounted) return;
     setState(() => _busyItemId = null);
     final error = widget.app.lastError;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          ok ? '$what成功' : '$what失败：${error?.message ?? '电脑侧没有给结论'}',
-        ),
-      ),
+    // 队列行的变化不一定看得出来（尤其是"编辑后仍是一行"），成功也要回执。
+    if (ok) {
+      DshToast.show(context, '$what成功');
+      return;
+    }
+    DshToast.show(
+      context,
+      '$what失败：${error?.message ?? '电脑侧没有给结论'}',
+      kind: DshToastKind.error,
     );
   }
 }

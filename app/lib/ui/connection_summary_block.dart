@@ -24,6 +24,7 @@ import '../model/chat_item.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import 'dsh_sheet.dart';
+import 'dsh_toast.dart';
 
 /// 「换个连接方式」：选一条端点并**立刻用它连**。
 ///
@@ -33,7 +34,6 @@ import 'dsh_sheet.dart';
 /// 列表按当前队列顺序排；正在用的那条打勾、点它无效（那是重连，不是换）。
 Future<void> pickEndpointToConnect(BuildContext context, AppModel app) async {
   if (app.endpoints.isEmpty) return;
-  final messenger = ScaffoldMessenger.of(context);
   final picked = await showDshSheet<Endpoint>(
     context: context,
     title: '选择连接方式',
@@ -57,22 +57,25 @@ Future<void> pickEndpointToConnect(BuildContext context, AppModel app) async {
     ),
   );
   if (picked == null) return;
+  if (!context.mounted) return;
 
   final label = endpointKindLabel(picked.kind);
   // **先给"正在试"的反馈再 await**：握手要几百毫秒，静默会让人觉得没点上。
-  messenger.showSnackBar(SnackBar(content: Text('正在用「$label」连接…')));
+  DshToast.show(context, '正在用「$label」连接…');
   final ok = await app.useEndpointNow(picked);
+  if (!context.mounted) return;
+  if (ok) {
+    // 切端点后"现在走哪条"只在设置块里看得到，不在当前屏 —— 成功要回执。
+    DshToast.show(context, '已连上「$label」');
+    return;
+  }
   final reason = app.endpointRequestResult?.reason;
-  messenger.showSnackBar(
-    SnackBar(
-      content: Text(
-        ok
-            ? '已连上「$label」'
-            : reason == null || reason.isEmpty
-            ? '这条没连上，已回到自动选择'
-            : '这条没连上（$reason），已回到自动选择',
-      ),
-    ),
+  DshToast.show(
+    context,
+    reason == null || reason.isEmpty
+        ? '这条没连上，已回到自动选择'
+        : '这条没连上（$reason），已回到自动选择',
+    kind: DshToastKind.error,
   );
 }
 
@@ -80,10 +83,11 @@ Future<void> pickEndpointToConnect(BuildContext context, AppModel app) async {
 Future<void> reconnectNow(BuildContext context, AppModel app) async {
   final reconnect = app.onReconnect;
   if (reconnect == null) return;
-  final messenger = ScaffoldMessenger.of(context);
-  messenger.showSnackBar(const SnackBar(content: Text('正在重连…')));
+  DshToast.show(context, '正在重连…');
   await reconnect();
-  messenger.showSnackBar(const SnackBar(content: Text('已重新发起连接')));
+  if (!context.mounted) return;
+  // 状态点要等握手才有变化，"点了没点上"这一拍需要回执。
+  DshToast.show(context, '已重新发起连接');
 }
 
 class ConnectionSummaryBlock extends StatelessWidget {

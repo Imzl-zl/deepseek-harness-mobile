@@ -57,6 +57,7 @@ import 'ui/chat_page.dart';
 import 'ui/connection_actions_sheet.dart';
 import 'ui/dsh_brand.dart';
 import 'ui/dsh_shimmer.dart';
+import 'ui/dsh_toast.dart';
 import 'ui/files_page.dart';
 import 'ui/pairing_page.dart';
 import 'ui/plugins_page.dart';
@@ -750,12 +751,10 @@ class _DshMobileAppState extends State<DshMobileApp>
   /// 行动作失败的原因（`AppModel.lastError` 的 code + message）。
   void _showActionFailure(AppModel app) {
     final error = app.lastError;
-    ScaffoldMessenger.of(_navContext).showSnackBar(
-      SnackBar(
-        content: Text(
-          error == null ? '操作失败' : '操作失败：${error.code.wire}：${error.message}',
-        ),
-      ),
+    DshToast.show(
+      _navContext,
+      error == null ? '操作失败' : '操作失败：${error.code.wire}：${error.message}',
+      kind: DshToastKind.error,
     );
   }
 
@@ -813,8 +812,10 @@ class _DshMobileAppState extends State<DshMobileApp>
   ///
   /// **不加静默兜底**：映射不到的动作照实显示，绝不"试试看继续重连"。
   void _reportConnectionDefect(ProtocolException error) {
-    ScaffoldMessenger.of(_navContext).showSnackBar(
-      SnackBar(content: Text('连接失败：${error.code.wire}：${error.message}')),
+    DshToast.show(
+      _navContext,
+      '连接失败：${error.code.wire}：${error.message}',
+      kind: DshToastKind.error,
     );
   }
 
@@ -862,9 +863,7 @@ class _DshMobileAppState extends State<DshMobileApp>
 
   void _notYet(String what) {
     _closeDrawer();
-    ScaffoldMessenger.of(
-      _navContext,
-    ).showSnackBar(SnackBar(content: Text('$what 还没做')));
+    DshToast.show(_navContext, '$what 还没做');
   }
 
   /// 抽屉连接行的详情（换设备 / 断开重配）。
