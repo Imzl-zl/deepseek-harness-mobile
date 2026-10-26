@@ -122,7 +122,7 @@
 | 批 | 范围 | 验收（四条同时成立） | 状态 |
 |---|---|---|---|
 | 1 | 页级失败语义：删 `SessionPageShapeError`，`refetch` 缺 `seq` ⇒ `WireBad`；`page()` 把解码失败映射成 `failure`；`record` 解不出计数 | 先红后绿：`sync_client_test` 一条"坏页 ⇒ `failure` 且不抛"；回放用例改断言 `WireBad` + 计数 1；`dart analyze lib test` / `format` | ✅ |
-| 2 | 任务合并策略：`core/job.dart` 的 `mergeJobRow` + `mergeJobSnapshot`；快照与推送共用 | 纯函数单测 4 条转移；`job_panel_test` 一条真赛跑（`completed` 后快照回 `running` 仍 `completed`）；回滚合并函数至少 1 红 | 待做 |
+| 2 | 任务合并策略：`core/job.dart` 的 `mergeJobRow` + `mergeJobSnapshot`；快照与推送共用 | 纯函数单测 4 条转移；`job_panel_test` 一条真赛跑（`completed` 后快照回 `running` 仍 `completed`）；回滚合并函数至少 1 红 | ✅（变异 5 红） |
 | 3 | 必填口径：`job` 4 键改 `require*`；`session.page` 的 `hasMore`；`workspace` 的 5 键 | 金样仍绿；缺键 ⇒ 整行为 `WireBad` + 计数 1 的新用例；手写假行补齐；analyze/format | 待做 |
 | 4 | 信封与值解析收口：`readEnvelopeList` 一个入口、`modelSelection` 一份、删死代码、`projections` 走 `flatValues` | 六个面改用同一入口；`fields.dart` 无未用公开成员；回放用例全绿 | 待做 |
 | 5 | 门禁范围与事实：`page`/`refetch` 的 `load*` 搬进 `wire/rpc/session_page.dart`；脚本扫 `app/lib`（除 `wire/`）；订正设计评审 `:267` | 脚本零 `call<`；在 `core/` 加一处 `call<` 会红（变异）；设计评审改成事实 | 待做 |

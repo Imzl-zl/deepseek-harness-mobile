@@ -80,6 +80,35 @@ class JobRow {
   };
 }
 
+/// 合并一条任务行：**终态单向**。
+///
+/// 同一个 `jobId` 是一次运行，不会复活（`killed` / `completed` / `failed`
+/// 之后不会再回到 `running`）。所以只有一种情形要挡：**已有行已结束、来的是 live**
+/// —— 留已有行。其余方向照收（新的终态、更新的 live 都是更新）。
+///
+/// ## 为什么是一条规则而不是两处判据
+///
+/// `job.list` 是**请求**、`job` 是**推送**，两者会赛跑（2026-10-25 实测：
+/// 快照请求还没回来，推送先说任务完成了，旧快照把它盖回 `running`，面板永远转）。
+/// 同一个不变量出现在两条写路径上，就必须只有一份实现 —— 否则下一次只会修好一条。
+///
+/// Note: 取舍见 `.agents/notes/proposed/2026-10-26-wire-review-fixes.md`（第 2 批）。
+JobRow mergeJobRow(JobRow? existing, JobRow incoming) {
+  if (existing == null) return incoming;
+  if (!existing.isLive && incoming.isLive) return existing;
+  return incoming;
+}
+
+/// 把一次 `job.list` 快照并进桶里：逐行套 [mergeJobRow]。
+///
+/// **快照里没有的行丢弃**：`job.list` 给的是这个会话的全集，保留幽灵行会让
+/// "电脑侧已经没有了"的任务一直挂在面板上。丢弃只发生在"快照确实成功"时
+/// （解码失败时调用方不会走到这里，见 `refreshJobs`）。
+List<JobRow> mergeJobSnapshot(List<JobRow> existing, List<JobRow> incoming) {
+  final byId = {for (final row in existing) row.id: row};
+  return [for (final row in incoming) mergeJobRow(byId[row.id], row)];
+}
+
 /// 一块输出。偏移 `at` **永不移动**。
 class JobChunk {
   const JobChunk({

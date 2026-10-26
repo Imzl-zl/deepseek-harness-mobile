@@ -975,30 +975,14 @@ class AppModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 把一次 `job.list` 快照并进桶里：**已结束的行不许被"还在跑"的快照回退**。
+  /// 把一次 `job.list` 快照并进桶里。
   ///
-  /// ## 为什么需要这一层（2026-10-25 由这一批的迁移暴露出来）
-  ///
-  /// `job.list` 是一次**请求**，而 `status` 是**推送**：两者会赛跑。
-  /// 实测形态：`openSession` 发出的快照请求还没回来，推送先到了（任务在那一刻完成），
-  /// 于是快照把它盖回 `running` —— 任务面板上的任务就永远转下去。
-  ///
-  /// 判据取 `JobRow.isLive`：**终态是单向的**（`completed` / `killed` / `failed`
-  /// 之后不会再回到 `running`——同一个 jobId 是一次运行，不会复活）。
-  /// 所以合并时只挡这一种：已有的行不 live、快照说 live ⇒ 留已有的。
-  /// 反过来（已有 live、快照说终态）照收 —— 那是快照更新。
+  /// 判据（**终态单向**）只有一份：`core/job.dart` 的 [mergeJobSnapshot]。
+  /// 这里只负责"桶"（哪个会话）与"通知"，不重复规则本身 —— 快照与 `status`
+  /// 推送会赛跑（请求早于完成、回来晚于推送），两条写路径必须共用同一条规则，
+  /// 否则下一次只会修好一条（2026-10-26 评审）。
   void _mergeJobSnapshot(String sid, List<JobRow> rows) {
-    final byId = {
-      for (final row in _jobs[sid] ?? const <JobRow>[]) row.id: row,
-    };
-    final next = <JobRow>[];
-    for (final row in rows) {
-      final existing = byId[row.id];
-      next.add(
-        existing != null && !existing.isLive && row.isLive ? existing : row,
-      );
-    }
-    _jobs[sid] = next;
+    _jobs[sid] = mergeJobSnapshot(_jobs[sid] ?? const <JobRow>[], rows);
   }
 
   /// 展开一个任务：订阅它的输出流。
@@ -1081,9 +1065,12 @@ class AppModel extends ChangeNotifier {
     if (targetSid != null && _jobs.containsKey(targetSid)) {
       final bucket = _jobs[targetSid]!;
       final index = bucket.indexWhere((j) => j.id == row.id);
+      // **同一份合并规则**：终态单向（`core/job.dart` 的 [mergeJobRow]）。
+      // 推送路径也曾漏过这条 —— 一条迟到的 `status` 帧会把已结束的任务改回 running。
+      final merged = mergeJobRow(index >= 0 ? bucket[index] : null, row);
       _jobs[targetSid] = index >= 0
-          ? [...bucket..[index] = row]
-          : [...bucket, row];
+          ? [...bucket..[index] = merged]
+          : [...bucket, merged];
       notifyListeners();
       return;
     }
@@ -1093,7 +1080,8 @@ class AppModel extends ChangeNotifier {
     for (final entry in _jobs.entries) {
       final index = entry.value.indexWhere((j) => j.id == row.id);
       if (index >= 0) {
-        _jobs[entry.key] = [...entry.value..[index] = row];
+        final merged = mergeJobRow(entry.value[index], row);
+        _jobs[entry.key] = [...entry.value..[index] = merged];
         notifyListeners();
         return;
       }

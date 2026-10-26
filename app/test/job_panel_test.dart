@@ -328,6 +328,101 @@ void main() {
     app.dispose();
   });
 
+  test('旧快照晚到：已结束的任务不许被盖回 running（终态单向）', () async {
+    // 快照内容始终是"还在跑"：模拟"请求发出时任务在跑、回来时已经结束"。
+    final client = _JobClient(
+      onCall: (m, p) => m == 'job.list'
+          ? {
+              'jobs': [_rowJson('j1')],
+            }
+          : null,
+    );
+    final app = AppModel(client: client);
+    await app.start();
+    await app.openSession('sid_A');
+    expect(app.jobsOf('sid_A').single.status, 'running');
+
+    // 推送先到：任务在快照请求回来之前完成了。
+    client.push(
+      const JobStatus(
+        jobId: 'j1',
+        row: JobRow(
+          id: 'j1',
+          kind: 'pwsh',
+          label: 'flutter build apk',
+          status: 'completed',
+          startedAt: 1000,
+          outputTotal: 12,
+          finishedAt: 1003,
+        ),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(app.jobsOf('sid_A').single.status, 'completed');
+
+    // 那份早于完成的快照现在才回来：内容仍然是 running。
+    await app.refreshJobs('sid_A');
+    expect(
+      app.jobsOf('sid_A').single.status,
+      'completed',
+      reason: '同一个 jobId 是一次运行，不会复活；旧快照不许把它盖回 running',
+    );
+    app.dispose();
+  });
+
+  test('迟到的 status 帧说还在跑：推送路径也守终态单向', () async {
+    final client = _JobClient(
+      onCall: (m, p) => m == 'job.list'
+          ? {
+              'jobs': [_rowJson('j1')],
+            }
+          : null,
+    );
+    final app = AppModel(client: client);
+    await app.start();
+    await app.openSession('sid_A');
+
+    client.push(
+      const JobStatus(
+        jobId: 'j1',
+        row: JobRow(
+          id: 'j1',
+          kind: 'pwsh',
+          label: 'flutter build apk',
+          status: 'completed',
+          startedAt: 1000,
+          outputTotal: 12,
+          finishedAt: 1003,
+        ),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(app.jobsOf('sid_A').single.status, 'completed');
+
+    // 重连重放/乱序都可能让一条旧帧后到：它不许把终态改回 live。
+    client.push(
+      const JobStatus(
+        jobId: 'j1',
+        row: JobRow(
+          id: 'j1',
+          kind: 'pwsh',
+          label: 'flutter build apk',
+          status: 'running',
+          startedAt: 1000,
+          outputTotal: 12,
+        ),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      app.jobsOf('sid_A').single.status,
+      'completed',
+      reason: '终态单向是合并规则，不是快照专用的补丁',
+    );
+    app.dispose();
+  });
+
   test('`error` 帧：订阅中断要显式提示', () async {
     final client = _JobClient(onCall: (m, p) => null);
     final app = AppModel(client: client);
