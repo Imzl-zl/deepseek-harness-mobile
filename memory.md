@@ -6,9 +6,10 @@
 
 ## 下一步（新会话从这里开始）
 
-> **2026-10-25 深夜：RPC 应答解码面**全部收进 `wire/rpc/`**（8 批 / 8 个提交，**0 个真机回合**，0 个模型请求）
-> - **终态**：`app/lib/wire/` 是 RPC 应答的**唯一解码层**。`data/` 与 `ui/` 里
->   **0 处 `client.call<`**（零例外规则，`BUDGET` 常量已删）；金样 **43 个方法**全覆盖；
+> **2026-10-25 深夜：RPC 应答解码面**全部收进 `wire/rpc/`**（8 批 + 2026-10-26 六批评审修复，**0 个真机回合**，0 个模型请求）
+> - **终态**：`app/lib/wire/` 是 RPC 应答的**唯一解码层**。`app/lib`（`wire/` 外）**零 `call<`**
+>   （零例外规则，范围 2026-10-26 从 `data/`+`ui/` 扩到全域）；金样 **43 个方法**全覆盖、
+>   `wire/rpc/` **43 个方法字面量**；
 >   `wire/rpc/` 一个面一个文件，每个方法一处方法名常量 + `load*`（发请求）+ `read*`（纯解码）。
 > - 层形状与被否方案见 `implemented/2026-10-25-wire-rpc-layer-layout.md`（施工图，含 8 批表）；
 >   判据与三次事故的来处见 `implemented/2026-10-25-wire-design-review.md`；
@@ -19,7 +20,8 @@
 >   ② `workspace.list` 的行**漏写 `createdAt`**（端口有、手机在读、中间那层没写）⇒ "空工作区当最旧"生产里走不到；
 >   ③ `job.list` 快照与 `status` 推送**赛跑**会把已完成的任务盖回 running ⇒ 面板永远转。
 >   三条各自都有回归网（`connection-methods` 的"DSH 侧不许过线" / `workspaces-archive` 的逐字段期望 /
->   `job_panel_test` 的"status 帧：终态更新那一行"）。
+>   `job_merge_test` + `job_panel_test` 的两条赛跑用例；第 ③ 条的网是 2026-10-26 补的 ——
+>   原先指的那条 `status` 帧用例并不经过合并路径）。
 > - **实测（2026-10-25 20:31，隔离实例，0 个模型请求）**：真实 DSH 清单 20 条 → 生产适配器 →
 >   生产 handler → App 解码 = **20/20 `WireOk`、`badCount 0`、一行没丢**；`parentSessionId` 恰在 6 个
 >   子会话行、`model` 0 条（`agentAvailable` 全 false）、`projections` 20 条全是**信封**。
@@ -30,6 +32,13 @@
 >   ③ 第 7 批之外的旧账：`usage.summary` 的 byDay 时区、`plugin.installStatus` 的 4 键/8 键两形态
 >   在 `readPluginJob` 里只有一种（真出现第二种时那里会红，属**已知的下一处**）。
 > - **仍没验**：`@` 面板的骨架 / 失败态、图片上限四条、插件安装/卸载的真实 pnpm 流程（上一轮遗留，未变）。
+
+> **2026-10-26 上午：评审后的六批修复**（笔记 `implemented/2026-10-26-wire-review-fixes.md`）
+> - ① 页级失败只剩一条通道：删 `SessionPageShapeError`，`session.page` 解码失败 ⇒ `failure=protocol/bad-frame`；
+>   ② 任务合并只有一份纯函数（终态单向，快照与推送共用）；③ 生产者无条件写出的键改必填（job 六键 / page `hasMore` / workspace 五键）；
+>   ④ `{key:[...]}` 与扁平 `values` 各一个入口，`modelSelection` 一份解析；⑤ 门禁扩到 `app/lib` 全域并识别无前缀 `call<`，
+>   `page`/`refetch` 的调用搬进 `wire/rpc/session_page.dart`；⑥ 回指、`permission.switch` 复用、`agentPresets` 覆盖、plugin 坏行计数。
+> - 每批都先红后绿并留了变异校验；旧笔记里的"三缺陷都有网""page/refetch 不是 call<"已订正（订正行标了日期）。
 
 > **2026-10-25 深夜：候选面板照宿主重做（列表行 + drill + 面包屑）+ 命令说明 + 接管卡溢出**
 > 开工单 `.agents/notes/proposed/2026-10-24-next-round-panel-redesign-prompt.md`（本轮已全部落地，见文末索引）。

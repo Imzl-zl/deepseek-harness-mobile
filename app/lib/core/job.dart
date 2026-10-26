@@ -92,7 +92,7 @@ class JobRow {
 /// 快照请求还没回来，推送先说任务完成了，旧快照把它盖回 `running`，面板永远转）。
 /// 同一个不变量出现在两条写路径上，就必须只有一份实现 —— 否则下一次只会修好一条。
 ///
-/// Note: 取舍见 `.agents/notes/proposed/2026-10-26-wire-review-fixes.md`（第 2 批）。
+/// Note: 取舍见 `.agents/notes/implemented/2026-10-26-wire-review-fixes.md`（第 2 批）。
 JobRow mergeJobRow(JobRow? existing, JobRow incoming) {
   if (existing == null) return incoming;
   if (!existing.isLive && incoming.isLive) return existing;

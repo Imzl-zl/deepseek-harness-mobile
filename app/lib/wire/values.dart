@@ -4,7 +4,7 @@
 /// 同一个值在 `session.list` 的行里与 `session.projections` 的应答里都出现，
 /// 就必须只有一份解析，否则两处会各自演化（2026-10-26 评审的第 5 条）。
 ///
-/// Note: 取舍见 `.agents/notes/proposed/2026-10-26-wire-review-fixes.md`（第 4 批）。
+/// Note: 取舍见 `.agents/notes/implemented/2026-10-26-wire-review-fixes.md`（第 4 批）。
 library;
 
 import '../model/chat_item.dart' show ModelRef;

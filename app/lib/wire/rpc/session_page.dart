@@ -26,7 +26,7 @@
 ///
 /// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`；
 /// 失败只有一条通道（本文件 2026-10-26 第 1 批）见
-/// `.agents/notes/proposed/2026-10-26-wire-review-fixes.md`。
+/// `.agents/notes/implemented/2026-10-26-wire-review-fixes.md`。
 library;
 
 import '../../core/items.dart' show EventLike, itemIdOf;

@@ -1,7 +1,7 @@
 # wire/rpc 评审后的修复：一条失败通道、一份合并规则、一个信封入口
 
 - 日期：2026-10-26
-- 状态：proposed
+- 状态：已落地（六批；提交 `1717deb` / `74cd0a9` / `b71a23c` / `f10de28` / `0303f1d` / `313cc61` / `17e7894`）
 - 范围：`5428fba^..96d4448`（上一轮 RPC 应答面收口的 51 个文件）的评审结论
 - 相关：`implemented/2026-10-25-wire-rpc-layer-layout.md`（层形状与批次）、
   `implemented/2026-10-25-wire-design-review.md`（五判据与被否方案）、
@@ -57,8 +57,9 @@
 
 - **失败只有一条通道**：解码器只回 `WireReading`，不再抛自定义异常；
   "整页读不出来"是 `WireBad`，由调用方映射成 `SessionPage.failure`。
-  **门槛**：`app/lib/wire/` 里不出现 `throw`（`WireFieldError` 只由 `fields.dart` 定义、
-  由 `readObject` 捕获），`SessionPageShapeError` 删除。
+  **门槛**：`app/lib/wire/` 里的 `throw` 只允许是 `WireFieldError`，且只出现在
+  `readObject` 的 build 内（由 `readObject` 捕获、折成 `WireBad`）；不新增任何会
+  穿出解码层的异常类型。2026-10-26 实测：该目录下除注释外共 19 处 `throw`，全部是它。
 - **同一规则只写一次，且是可单测的纯函数**：任务合并策略住 `core/job.dart`，
   `job.list` 快照与 `job` 帧推送共用它；`JobRow` 的必填键按生产者口径改 `require*`。
   **门槛**：删掉合并函数后至少一条用例变红（变异校验记在提交里）。
@@ -128,6 +129,21 @@
 | 4b | 信封入口：`readObjectList` 成为 `{key: [...]}` 的唯一读法（refs / settings / workspace 分组），坏行计数；workspace 五键升必填 | 三个面不再手写"取 Map → 取 key → 判 List"；缺 `createdAt` ⇒ 丢行 + 计数 1（新用例）；回放全绿 | ✅ |
 | 5 | 门禁范围与事实：`page`/`refetch` 的 `load*` 搬进 `wire/rpc/session_page.dart`；脚本扫 `app/lib`（除 `wire/`）且识别无前缀 `call<`；订正设计评审 `:267` | 脚本零 `call<`；在 `core/` 加一处 `call<` 会红（变异）；设计评审改成事实 | ✅（变异 1 红） |
 | 6 | 杂项：19 处回指、`permission.switch` 复用、`agentPresets` 断言、插件行认不出时计数、金样笔记的状态行 | 回指全部命中；`permission` 不再有第二份解码；回放覆盖 43/43；插件坏行计数用例 | ✅ |
+
+## 落地记录
+
+| 批 | 提交 | 先红后绿的证据 |
+|---|---|---|
+| 1 | `1717deb` | 两条用例在改动前以 `SessionPageShapeError` 穿出 `page()` 失败；改后 `sync_client_test` + 回放全绿 |
+| 2 | `74cd0a9` | 推送路径用例改动前 `Actual: running`；删掉单向判断的变异 ⇒ 5 红（3 纯函数 + 2 跨层） |
+| 3 | `b71a23c` | 缺键用例改动前 `Actual: [JobRow]` / `WireOk`；对 `status` 做变异 ⇒ 恰好 1 红（报错点名 status） |
+| 4a | `f10de28` | `modelSelection` 坏形状改动前计数 0；改后 88 条相关用例全绿 |
+| 4b | `0303f1d` | 缺 `createdAt` 的变异 ⇒ 恰好 1 红；refs 坏行计数用例改前静默 |
+| 5 | `313cc61` | 范围放宽后先 FAIL（点名 core 两处 `call<`）；搬完 PASS；临时探针 ⇒ 恰好 1 红 |
+| 6 | `17e7894` | 回指全命中、`agentPresets` 进入回放、plugin 坏行计数用例；相关 132 条全绿 |
+
+**订正**：`2026-10-25-wire-design-review.md:267` 与 `2026-10-25-wire-rpc-layer-layout.md`
+的覆盖率段在 2026-10-26 加了日期标注 —— 旧结论不改，只标"当时为什么写错、现在的事实是什么"。
 
 ## 代码入口回指
 
