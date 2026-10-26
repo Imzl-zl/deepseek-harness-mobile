@@ -44,6 +44,7 @@ import '../model/agent_preset.dart';
 import '../model/changes.dart';
 import '../model/chat_item.dart';
 import '../model/command.dart';
+import '../model/file_diff.dart';
 import '../model/file_open.dart';
 import '../model/image_limits.dart';
 import '../model/model_catalog.dart';
@@ -70,6 +71,7 @@ import 'conversation_hero.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_brand.dart';
 import 'dsh_composer.dart';
+import 'dsh_diff.dart';
 import 'dsh_markdown.dart';
 import 'dsh_popover.dart';
 import 'dsh_sheet.dart';
@@ -1505,6 +1507,14 @@ class ChatPageState extends State<ChatPage> {
         subtitle: request.path,
       );
     }
+    // **有改动面时表头数的是桌面记录的总数**（同一份数据源）；老连接器退回旧清单。
+    if (app.changesAvailable) {
+      final seq = app.latestChangesSeq;
+      final total = seq == null ? null : app.changesStateOf(seq).summary?.total;
+      return total == null
+          ? const SideHeader(title: '文件')
+          : SideHeader(title: '文件', subtitle: '$total 个文件');
+    }
     final changed = app.changedFiles;
     return changed.isEmpty
         ? const SideHeader(title: '文件')
@@ -1516,6 +1526,26 @@ class ChatPageState extends State<ChatPage> {
     // 正在看某个文件（正文提及 / 改动卡行点进来的）：面板就是那份内容。
     if (widget.app.fileOpenRequest != null) {
       return _OpenedFileBody(app: widget.app);
+    }
+    // **有改动面就按桌面的记录画**（一轮一条 summary，行是它的 files）；
+    // 没有（老连接器 / 没装 workspace-changes）才退回旧清单。
+    if (widget.app.changesAvailable) {
+      final seq = widget.app.latestChangesSeq;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          DshSegmented(
+            labels: const ['差异', '文件'],
+            index: _fileTab,
+            onChanged: (i) => setState(() => _fileTab = i),
+          ),
+          Expanded(
+            child: seq == null
+                ? _EmptyFilePane(kind: _fileTab == 0 ? 'diff' : 'file')
+                : _ChangesPane(app: widget.app, seq: seq, tab: _fileTab),
+          ),
+        ],
+      );
     }
     final changed = widget.app.changedFiles;
     return Column(
@@ -3675,6 +3705,20 @@ class _ChangedFilesCardState extends State<_ChangedFilesCard> {
     unawaited(app.openFile(FileOpenRequest(path: path)));
   }
 
+  /// 打开这一轮里第 [index] 个文件的**逐行差异**（坐标 = 事件 seq + 下标）。
+  void _openDiff(AppModel app, String path, int index) {
+    unawaited(
+      app.openFile(
+        FileOpenRequest(
+          path: path,
+          mode: FileOpenMode.diff,
+          seq: widget.seq,
+          index: index,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final app = widget.app;
@@ -3744,9 +3788,10 @@ class _ChangedFilesCardState extends State<_ChangedFilesCard> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             InkWell(
+              // 标题点开**逐行差异**（桌面点卡头开的是本轮 review 的第一个文件）。
               onTap: summary.files.isEmpty
                   ? null
-                  : () => _open(app, summary.files.first.path),
+                  : () => _openDiff(app, summary.files.first.path, 0),
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                 child: Row(
@@ -3766,7 +3811,7 @@ class _ChangedFilesCardState extends State<_ChangedFilesCard> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    _counts(
+                    _countsOf(
                       context,
                       added: summary.added,
                       deleted: summary.deleted,
@@ -3827,7 +3872,7 @@ class _ChangedFilesCardState extends State<_ChangedFilesCard> {
               ),
             ),
             const SizedBox(width: 8),
-            _counts(
+            _countsOf(
               context,
               added: file.added,
               deleted: file.deleted,
@@ -3839,45 +3884,47 @@ class _ChangedFilesCardState extends State<_ChangedFilesCard> {
       ),
     );
   }
+}
 
-  /// `+N` / `-M`，或宿主的两个"没有行数"标记（`changes.binary` / `changes.oversized`）。
-  Widget _counts(
-    BuildContext context, {
-    required int added,
-    required int deleted,
-    required bool binary,
-    required bool oversized,
-  }) {
-    final c = context.dshColors;
-    if (binary || oversized) {
-      return Text(
-        binary ? '二进制' : '过大',
-        style: TextStyle(fontSize: 11, color: c.labelCaption),
-      );
-    }
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          '+$added',
-          style: TextStyle(
-            fontSize: 11,
-            fontFamily: 'monospace',
-            color: c.codeDiffAdd,
-          ),
-        ),
-        const SizedBox(width: 4),
-        Text(
-          '-$deleted',
-          style: TextStyle(
-            fontSize: 11,
-            fontFamily: 'monospace',
-            color: c.codeDiffDel,
-          ),
-        ),
-      ],
+/// `+N` / `-M`，或宿主的两个"没有行数"标记（`changes.binary` / `changes.oversized`）。
+///
+/// 卡片与侧栏**同一份**（两处各写一遍必然漂成"卡片说 +9、侧栏说 +0"）。
+Widget _countsOf(
+  BuildContext context, {
+  required int added,
+  required int deleted,
+  required bool binary,
+  required bool oversized,
+}) {
+  final c = context.dshColors;
+  if (binary || oversized) {
+    return Text(
+      binary ? '二进制' : '过大',
+      style: TextStyle(fontSize: 11, color: c.labelCaption),
     );
   }
+  return Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(
+        '+$added',
+        style: TextStyle(
+          fontSize: 11,
+          fontFamily: 'monospace',
+          color: c.codeDiffAdd,
+        ),
+      ),
+      const SizedBox(width: 4),
+      Text(
+        '-$deleted',
+        style: TextStyle(
+          fontSize: 11,
+          fontFamily: 'monospace',
+          color: c.codeDiffDel,
+        ),
+      ),
+    ],
+  );
 }
 
 /// 空态（原型没有这一屏 —— 因为原型永远有会话；但真实 App 第一次打开是空的）。
@@ -4081,6 +4128,167 @@ class _EmptyChat extends StatelessWidget {
 /// （增量来自 `tool/result` 的 `metadata.diffs`，见 `ToolCallItem.diffStat`）。
 ///
 /// **没有行数增量的行不显示 `+0 −0`**：那会把"不知道增了多少"说成"没变"。
+/// 侧栏「差异 / 文件」两份视图，数据是**桌面那一轮改动记录**（`file.changes`）。
+///
+/// 与改动卡同一份记录、同一套 `_countsOf`：两处数字口径不可能不同。
+/// 「差异」行点开逐行差异（`file.diff`，坐标 `seq`+下标），「文件」行点开内容预览。
+class _ChangesPane extends StatefulWidget {
+  const _ChangesPane({required this.app, required this.seq, required this.tab});
+
+  final AppModel app;
+
+  /// `workspace/changes` 事件的 seq（查询坐标）。
+  final int seq;
+
+  /// `0` = 差异；`1` = 文件。
+  final int tab;
+
+  @override
+  State<_ChangesPane> createState() => _ChangesPaneState();
+}
+
+class _ChangesPaneState extends State<_ChangesPane> {
+  @override
+  void initState() {
+    super.initState();
+    // 下一帧再拉：`loadChangesSummary` 会同步通知祖先（同 `_ChangedFilesCard`）。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _ensureLoaded();
+    });
+  }
+
+  void _ensureLoaded() {
+    final app = widget.app;
+    if (app.changesStateOf(widget.seq).loaded) return;
+    if (app.changesLoading(widget.seq)) return;
+    if (app.changesFailureOf(widget.seq) != null) return;
+    unawaited(app.loadChangesSummary(widget.seq));
+  }
+
+  void _openRow(AppModel app, ChangedFile file, int index) {
+    if (widget.tab == 0) {
+      unawaited(
+        app.openFile(
+          FileOpenRequest(
+            path: file.path,
+            mode: FileOpenMode.diff,
+            seq: widget.seq,
+            index: index,
+          ),
+        ),
+      );
+      return;
+    }
+    unawaited(app.openFile(FileOpenRequest(path: file.path)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return ListenableBuilder(
+      listenable: widget.app,
+      builder: (context, _) {
+        final app = widget.app;
+        final failure = app.changesFailureOf(widget.seq);
+        if (failure != null) {
+          return ListView(
+            padding: const EdgeInsets.all(14),
+            children: [
+              Text(
+                '改动记录读取失败：$failure',
+                style: TextStyle(fontSize: 12, color: c.stateError),
+              ),
+              TextButton(
+                onPressed: () => unawaited(app.loadChangesSummary(widget.seq)),
+                child: const Text('重试'),
+              ),
+            ],
+          );
+        }
+        final state = app.changesStateOf(widget.seq);
+        if (!state.loaded) {
+          return Center(
+            child: Text(
+              '正在读取改动…',
+              style: TextStyle(fontSize: 12, color: c.labelTertiary),
+            ),
+          );
+        }
+        final summary = state.summary;
+        if (summary == null) {
+          return _EmptyFilePane(kind: widget.tab == 0 ? 'diff' : 'file');
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: ListView.separated(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                itemCount: summary.files.length,
+                separatorBuilder: (_, _) =>
+                    Divider(height: 0.5, thickness: 0.5, color: c.borderL3),
+                itemBuilder: (context, index) {
+                  final file = summary.files[index];
+                  return InkWell(
+                    onTap: () => _openRow(app, file, index),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      child: Row(
+                        children: [
+                          DshIcon(
+                            'deliverDoc',
+                            size: 14,
+                            color: c.labelTertiary,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              file.display,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                height: 1.35,
+                                fontFamily: 'monospace',
+                                color: c.labelPrimary,
+                              ),
+                            ),
+                          ),
+                          if (widget.tab == 0) ...[
+                            const SizedBox(width: 8),
+                            _countsOf(
+                              context,
+                              added: file.added,
+                              deleted: file.deleted,
+                              binary: file.binary,
+                              oversized: file.oversized,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            if (summary.truncated)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                child: Text(
+                  '还有 ${summary.total - summary.files.length} 个文件没列出（超过电脑侧上限）',
+                  style: TextStyle(fontSize: 11, color: c.labelCaption),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _ChangedFileList extends StatelessWidget {
   const _ChangedFileList({required this.rows, required this.showStat});
 
@@ -4175,8 +4383,10 @@ class _OpenedFileBody extends StatelessWidget {
 
   Widget _content(BuildContext context) {
     final c = context.dshColors;
+    final request = app.fileOpenRequest;
+    final isDiff = request?.mode == FileOpenMode.diff;
     final opened = app.openedFile;
-    final failure = app.fileFailure;
+    final failure = isDiff ? app.diffFailure : app.fileFailure;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -4195,7 +4405,9 @@ class _OpenedFileBody extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: failure != null
+          child: isDiff
+              ? _diffBody(context, failure, request!)
+              : failure != null
               ? Padding(
                   padding: const EdgeInsets.all(16),
                   child: Text(
@@ -4250,6 +4462,81 @@ class _OpenedFileBody extends StatelessWidget {
                 ),
         ),
       ],
+    );
+  }
+
+  /// 逐行差异（`file.diff`）的五种结局，文案与桌面同一份词典
+  /// （`ui-deliverables/src/client/locales.ts:58-67`）。
+  Widget _diffBody(
+    BuildContext context,
+    String? failure,
+    FileOpenRequest request,
+  ) {
+    final c = context.dshColors;
+    if (failure != null) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '无法读取改动：$failure',
+              style: TextStyle(fontSize: 12, color: c.stateError),
+            ),
+            TextButton(
+              onPressed: () => unawaited(app.openFile(request)),
+              child: const Text('重试'),
+            ),
+          ],
+        ),
+      );
+    }
+    if (app.diffLoading) return _diffNote(context, '正在读取改动…');
+    final diff = app.openedDiff;
+    // 电脑侧没有这条记录（会话已释放 / 没记录过）—— 与桌面 `diff.missing` 同一句话。
+    if (diff == null) return _diffNote(context, '这轮改动的内容已不可用');
+    if (diff.isBinary) return _diffNote(context, '二进制文件，无法显示改动');
+    if (diff.isOversized) return _diffNote(context, '文件过大，无法显示改动');
+    final notes = <String>[
+      if (!diff.before) '本轮新建的文件',
+      if (!diff.after) '本轮删除的文件',
+      if (diff.before && diff.after && diff.hunks.isEmpty) '两侧内容相同',
+      if (diff.coarse) '逐行对比超时，按整个文件替换显示',
+      if (diff.truncated != null)
+        '只显示前 ${diff.truncated!.shownLines} 行（共 ${diff.truncated!.totalLines} 行）',
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final note in notes)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+            child: Text(
+              note,
+              style: TextStyle(fontSize: 11, color: c.labelCaption),
+            ),
+          ),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: DshDiff(diffLinesOfHunks(diff.hunks)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _diffNote(BuildContext context, String text) {
+    final c = context.dshColors;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 12, color: c.labelTertiary),
+        ),
+      ),
     );
   }
 }

@@ -217,7 +217,9 @@
 门禁数字以 `memory.md` 的表为准。
 A 之后按"App 只重画桌面已经显示的东西"复核过一遍，修了两处判据不一致：
 提及只给收口正文 + 只算成功的变更调用，以及结果到达时路径要从调用继承。
-C 起待续（`file.diff` + `DiffView` + 侧栏换源）。
+**C 已落地**（`implemented/2026-10-26-file-diff-and-diffview.md`：`file.diff` + `DiffView` +
+侧栏换源 + 1000 行上限；方法面 51/49）。
+D 起待续（`session.fork`）。
 
 **B/C 的顺序要改**：改动卡与差异面板的**数字与行**来自桌面记录
 （`workspace/changes` 的 summary/diff），手机自己从工具调用推出来的 `+N −M` 与桌面**不同源**。

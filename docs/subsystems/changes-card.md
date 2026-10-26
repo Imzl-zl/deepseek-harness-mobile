@@ -31,21 +31,44 @@
 | 行 | 显示宿主的 `display`（相对 cwd / `../` / `~` / 绝对路径，`types.ts:9-13`），等宽 |
 | 折叠 | 默认 4 行（桌面 `ChangedFiles.tsx:18` 的 `COLLAPSED_ROWS`），超过给「全部 N 个文件 / 收起」 |
 | 截断 | `files.length < total` 时明说「还有 M 个文件没列出（超过电脑侧上限）」——照报不假装列全 |
-| 点击 | 行 → `AppModel.openFile(path, preview)`；标题 → 第一个文件（逐行差异等 `file.diff`） |
+| 点击 | 行 → `AppModel.openFile(path, preview)`；标题 → 第一个文件的**逐行差异**（`file.diff`，坐标 `seq` + 下标 `0`） |
 
 三态：没读到 ⇒ 不画；`summary: null`（电脑侧没有这条记录）⇒ 不画；读失败 ⇒ 卡片位置摆出
 电脑侧原话 + 重试。
 
-## 4. 能力位
+## 4. 逐行差异（`file.diff`）
+
+侧栏「差异」页签与卡片标题共用同一个 `DiffView`（`app/lib/ui/dsh_diff.dart`），数据来自
+`file.diff` → 宿主 `workspaceChanges.diff(sessionId, seq, index, signal)`
+（`workspace-changes/src/types.ts:88-96`）。坐标是 **`seq` + 文件在记录里的下标**，不是路径。
+
+四种结局与桌面的文案同一份（`ui-deliverables/src/client/locales.ts:58-67`）：
+
+| 结局 | 显示 |
+|---|---|
+| `kind: binary` | 二进制文件，无法显示改动 |
+| `kind: oversized` | 文件过大，无法显示改动 |
+| `coarse: true` | 逐行对比超时，按整个文件替换显示 |
+| `before:false` / `after:false` / 空 hunks | 本轮新建的文件 / 本轮删除的文件 / 两侧内容相同 |
+
+**上限**：行数 **1000**、字节 1 MiB（连接器 `dsh/changes.ts` 的 `DIFF_MAX_LINES` /
+`DIFF_MAX_BYTES`）。桌面渲染上限是 5000（`FileDiff.tsx:14`），手机上取 1000 是因为
+`DshDiff` 一次性铺完（约 5 个 widget/行），5000 行≈2.5 万个 widget。超了按桌面的切法
+（`FileDiff.tsx:116-125`）切最后一条 hunk，并回 `truncated:{shownLines,totalLines}`，
+界面显示「只显示前 N 行（共 M 行）」。
+
+行号折法照 `FileDiff.tsx:66-77` 的 `hunkRows`：上下文行两边各进一格、`-` 只进旧行号、
+`+` 只进新行号。
+
+## 5. 能力位
 
 `caps.changes`（连接器 `dsh/caps.ts` 的 `changesAvailable`：宿主 `workspaceChanges` 在不在）。
-缺了（老连接器 / 没装 `workspace-changes` 的部署）就**一次 `file.changes` 都不发**，也不画卡。
+缺了（老连接器 / 没装 `workspace-changes` 的部署）就**一次 `file.changes` / `file.diff` 都不发**，
+也不画卡；侧栏退回旧的会话级清单。
 
-## 5. 已知边界
+## 6. 已知边界
 
-- **没有逐行差异**：`file.diff` 未接，卡片与侧栏都没有 hunks（方案笔记批 C）。标题点击因此
-  先开内容预览。
-- **侧栏「差异」页签仍是会话级聚合**，不是这一轮的记录；两者的数字口径不同源，等 `file.diff`
-  那一批一起收口。
+- 侧栏画的是**最近一轮**有改动记录的 `workspace/changes`（桌面右栏也是按轮 review）；
+  没有轮次选择器。
 - 卡片只反映 `workspace/changes` 记录到的改动（非 git 仓库只列文件工具改过的文件，
   `workspace-changes/src/index.ts:6-9`）。

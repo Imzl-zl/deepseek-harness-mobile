@@ -111,6 +111,11 @@ export const METHODS = [
   // （diff 才按 `seq` + `files` 下标取，见 `types.ts:88-96`）。
   // 按 `caps.changes` 挂（`dsh/caps.ts` 的 `changesAvailable`）。
   'file.changes',
+  // 一个改动文件的**逐行比对**（契约 §5.7）。同一个宿主服务：
+  // `workspaceChanges.diff(sessionId, seq, index, signal)`（`types.ts:88-96`）。
+  // 坐标同样是 **`seq` + 下标**；应答是 `text | binary | oversized` 的判别联合
+  // （`types.ts:56-76`）。超长时按桌面的 5000 行裁并明说（`dsh/changes.ts` 的常量）。
+  'file.diff',
   // 插件清单与启停（契约 §5.7）：`pluginManager` 的三个 `@Remote` 里只用两个
   // （`listPlugins` / `setPluginEnabled`，`packages/boot/plugin-manager/src/index.ts:439,796`）。
   // 行字段以 `PluginInfo` 为准、不翻译；启停回**回读后的真值**与宿主的 `application`。

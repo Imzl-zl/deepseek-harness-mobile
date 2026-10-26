@@ -35,6 +35,7 @@ import '../model/agent_preset.dart';
 import '../model/changes.dart';
 import '../model/chat_item.dart';
 import '../model/command.dart';
+import '../model/file_diff.dart';
 import '../model/file_mentions.dart';
 import '../model/file_open.dart';
 import '../model/image_limits.dart';
@@ -1744,6 +1745,16 @@ class AppModel extends ChangeNotifier {
   String? get fileFailure => _fileFailure;
   String? _fileFailure;
 
+  /// 逐行差异（`FileOpenMode.diff` 的那一份；`null` = 还没读到 / 电脑侧没有记录）。
+  FileDiff? get openedDiff => _openedDiff;
+  FileDiff? _openedDiff;
+
+  bool get diffLoading => _diffLoading;
+  bool _diffLoading = false;
+
+  String? get diffFailure => _diffFailure;
+  String? _diffFailure;
+
   /// 打开一个文件。**所有入口只走它**（正文提及 / 改动卡行 / 侧栏差异行 / 文件页）。
   ///
   /// 路径**原样**交给 `file.read`：scope 由宿主按会话解析
@@ -1757,21 +1768,54 @@ class AppModel extends ChangeNotifier {
     _fileOpenTicket += 1;
     _fileOpenRequest = request;
     _openedFile = null;
+    _openedDiff = null;
     _fileFailure = null;
+    _diffFailure = null;
+    _diffLoading = false;
     // **没有能力位就不发请求**（与 `listFiles` 同一条）：老连接器上 `file.read`
     // 不存在，发出去只会拿一个 `connector/unsupported`，而它会被画成"读取失败"。
+    if (request.mode == FileOpenMode.diff) {
+      // 差异面与文件面**同一个能力位**（宿主 `workspaceChanges` 在不在）。
+      if (!_changesAvailable) {
+        _diffFailure = _repoInfoKnown
+            ? '这台电脑没有改动记录：连接器版本较旧，或没装 workspace-changes。'
+            : '还没连上电脑：连上后再看改动。';
+        if (!_disposed) notifyListeners();
+        return;
+      }
+      final seq = request.seq;
+      final index = request.index;
+      if (seq == null || index == null) {
+        // 坐标不全会请求到"另一个文件的 diff"——那是比报错更坏的结果。
+        _diffFailure = '缺少这一轮的坐标（seq / index），打不开逐行差异。';
+        if (!_disposed) notifyListeners();
+        return;
+      }
+      _diffLoading = true;
+      if (!_disposed) notifyListeners();
+      try {
+        final diff = await wire.loadFileDiff(
+          client,
+          sid: _currentSid!,
+          seq: seq,
+          index: index,
+        );
+        if (_disposed) return;
+        _openedDiff = diff;
+      } catch (error) {
+        if (_disposed) return;
+        _recordError('读取改动失败', error);
+        _diffFailure = _lastError?.message ?? '读取改动失败';
+      } finally {
+        _diffLoading = false;
+        if (!_disposed) notifyListeners();
+      }
+      return;
+    }
     if (!_filesAvailable) {
       _fileFailure = _repoInfoKnown
           ? '这台电脑没有文件服务：连接器版本较旧，或没装 workspace-files。'
           : '还没连上电脑：连上后再看文件。';
-      if (!_disposed) notifyListeners();
-      return;
-    }
-    if (request.mode == FileOpenMode.diff) {
-      // 逐行差异要协议方法 `file.diff`（宿主按 `(seq, index)` 取，见方案笔记批 0 第 1 条）。
-      // **先如实说还没有**，不拿两段现在的文本去编一份"看起来像 diff"的东西
-      // （那只有"当前内容"，没有这一轮的起点）。
-      _fileFailure = '逐行差异还没接上：连接器还没有 file.diff。';
       if (!_disposed) notifyListeners();
       return;
     }
@@ -1830,8 +1874,11 @@ class AppModel extends ChangeNotifier {
     }
     _fileOpenRequest = null;
     _openedFile = null;
+    _openedDiff = null;
     _fileFailure = null;
+    _diffFailure = null;
     _fileLoading = false;
+    _diffLoading = false;
     notifyListeners();
   }
 
@@ -1987,6 +2034,18 @@ class AppModel extends ChangeNotifier {
   String? changesFailureOf(int seq) {
     final key = _changesKey(seq);
     return key == null ? null : _changesFailures[key];
+  }
+
+  /// 最近一轮有改动记录的 `workspace/changes` 事件 seq。
+  ///
+  /// 侧栏「差异」画的是**这一轮**的记录（桌面右侧栏也是按轮 review）；没有就 `null`。
+  int? get latestChangesSeq {
+    final list = items;
+    for (var i = list.length - 1; i >= 0; i -= 1) {
+      final item = list[i];
+      if (item is ChangesItem) return item.seq;
+    }
+    return null;
   }
 
   /// 读一条改动记录（`seq` = `workspace/changes` 事件序号）。

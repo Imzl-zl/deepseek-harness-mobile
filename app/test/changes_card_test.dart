@@ -22,8 +22,11 @@ import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/data/projection.dart';
 import 'package:dsh_mobile/model/changes.dart';
 import 'package:dsh_mobile/model/chat_item.dart';
+import 'package:dsh_mobile/model/file_diff.dart';
+import 'package:dsh_mobile/model/file_open.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/chat_page.dart';
+import 'package:dsh_mobile/ui/dsh_diff.dart' show DiffKind;
 import 'package:dsh_mobile/wire/rpc/changes.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
@@ -55,17 +58,44 @@ const Map<String, Object?> _summary = {
   'deleted': 2,
 };
 
+/// 一份文本比对（宿主 `WorkspaceFileDiff` 的过线形状，`types.ts:56-72`）。
+const Map<String, Object?> _textDiff = {
+  'kind': 'text',
+  'path': 'app/lib/main.dart',
+  'display': 'app/lib/main.dart',
+  'before': true,
+  'after': true,
+  'coarse': false,
+  'hunks': [
+    {
+      'oldStart': 3,
+      'oldLines': 3,
+      'newStart': 3,
+      'newLines': 4,
+      'lines': [' a', '-b', '+c', '+d', ' e'],
+    },
+  ],
+};
+
 class _ChangesClient extends FakeSyncClient {
   _ChangesClient({
     this.changesAvailable = true,
     this.noRecord = false,
     this.readThrows,
+    this.diff = _textDiff,
+    this.diffThrows,
   });
 
   final bool changesAvailable;
 
   /// `file.changes` 回 `{summary: null}`（电脑侧没有这条记录）。
   final bool noRecord;
+
+  /// `file.diff` 的应答（`null` = `{diff:null}`）。
+  final Map<String, Object?>? diff;
+
+  /// 让 `file.diff` 抛。
+  final Exception? diffThrows;
 
   /// 让 `file.changes` 抛（宿主快照读失败）。
   final Exception? readThrows;
@@ -112,6 +142,10 @@ class _ChangesClient extends FakeSyncClient {
         final thrown = readThrows;
         if (thrown != null) throw thrown;
         return <String, Object?>{'summary': noRecord ? null : _summary} as T;
+      case 'file.diff':
+        final thrown = diffThrows;
+        if (thrown != null) throw thrown;
+        return <String, Object?>{'diff': diff} as T;
       case 'file.read':
         return <String, Object?>{
               'page': {'text': '// file', 'offset': 1, 'lines': 1, 'eof': true},
@@ -420,6 +454,132 @@ void main() {
       expect(find.textContaining('改动记录读取失败'), findsOneWidget);
       expect(find.textContaining('snapshot read failed'), findsOneWidget);
       expect(find.text('重试'), findsOneWidget);
+    });
+  });
+
+  group('逐行差异（file.diff）', () {
+    test('模型：hunks 折行，行号照桌面的 hunkRows（上下文两边进、- 只进旧、+ 只进新）', () {
+      final diff = FileDiff.fromWire(_textDiff)!;
+      final lines = diffLinesOfHunks(diff.hunks);
+      expect(
+        lines
+            .map((l) => (l.kind, l.text, l.oldLine, l.newLine))
+            .toList(growable: false),
+        [
+          (DiffKind.context, 'a', 3, 3),
+          (DiffKind.del, 'b', 4, null),
+          (DiffKind.add, 'c', null, 4),
+          (DiffKind.add, 'd', null, 5),
+          (DiffKind.context, 'e', 5, 6),
+        ],
+      );
+    });
+
+    test('模型：binary / oversized 没有行；截断标记解析', () {
+      final binary = FileDiff.fromWire({
+        'kind': 'binary',
+        'path': 'assets/logo.png',
+        'display': 'assets/logo.png',
+      })!;
+      expect(binary.isBinary, isTrue);
+      expect(binary.hunks, isEmpty);
+
+      final truncated = FileDiff.fromWire({
+        ..._textDiff,
+        'truncated': {'shownLines': 900, 'totalLines': 1400},
+      })!;
+      expect(truncated.truncated!.shownLines, 900);
+      expect(truncated.truncated!.totalLines, 1400);
+    });
+
+    test('wire：{diff:null} 是有效应答；缺 diff 键才是形状错', () {
+      expect(readFileDiff({'diff': null}), isA<WireOk<FileDiff?>>());
+      expect(readFileDiff({}), isA<WireBad<FileDiff?>>());
+      expect(
+        readFileDiff({
+          'diff': {'kind': 'text'},
+        }),
+        isA<WireBad<FileDiff?>>(),
+        reason: 'diff 在但字段不齐 ⇒ 形状错，不能静默当成"没有记录"',
+      );
+    });
+
+    test('AppModel：diff 模式按 seq + 下标请求并落账', () async {
+      final client = _ChangesClient();
+      final model = await _seeded(client);
+      addTearDown(model.dispose);
+
+      await model.openFile(
+        const FileOpenRequest(
+          path: 'app/lib/main.dart',
+          mode: FileOpenMode.diff,
+          seq: 6,
+          index: 0,
+        ),
+      );
+
+      expect(client.sent.where((c) => c.$1 == 'file.diff').map((c) => c.$2), [
+        {'sid': _sid, 'seq': 6, 'index': 0},
+      ]);
+      expect(model.diffFailure, isNull);
+      expect(model.openedDiff!.isText, isTrue);
+      expect(model.openedDiff!.hunks, hasLength(1));
+      expect(model.openedFile, isNull, reason: 'diff 模式不该顺带读文本');
+    });
+
+    testWidgets('卡片标题点开逐行差异：请求下标 0，视图画出删 / 增行', (tester) async {
+      final client = _ChangesClient();
+      final model = await _seeded(client);
+      addTearDown(model.dispose);
+      await _pump(tester, model);
+
+      await tester.tap(find.text('已编辑 2 个文件'));
+      await tester.pumpAndSettle();
+
+      expect(
+        client.sent.where((c) => c.$1 == 'file.diff').map((c) => c.$2['index']),
+        [0],
+      );
+      expect(find.text('c'), findsOneWidget, reason: '新增行正文');
+      expect(find.text('b'), findsOneWidget, reason: '删除行正文');
+      expect(find.text('a'), findsOneWidget, reason: '上下文行正文');
+    });
+
+    testWidgets('读失败：摆出电脑侧原话 + 重试', (tester) async {
+      final client = _ChangesClient(
+        diffThrows: const ProtocolException(
+          ErrorCode.internal,
+          'snapshot read failed: EACCES',
+        ),
+      );
+      final model = await _seeded(client);
+      addTearDown(model.dispose);
+      await _pump(tester, model);
+
+      await tester.tap(find.text('已编辑 2 个文件'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('无法读取改动'), findsOneWidget);
+      expect(find.textContaining('snapshot read failed'), findsOneWidget);
+      expect(find.text('重试'), findsWidgets);
+    });
+
+    testWidgets('二进制：一句"二进制文件，无法显示改动"', (tester) async {
+      final client = _ChangesClient(
+        diff: const {
+          'kind': 'binary',
+          'path': 'assets/logo.png',
+          'display': 'assets/logo.png',
+        },
+      );
+      final model = await _seeded(client);
+      addTearDown(model.dispose);
+      await _pump(tester, model);
+
+      await tester.tap(find.text('已编辑 2 个文件'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('二进制文件，无法显示改动'), findsOneWidget);
     });
   });
 }

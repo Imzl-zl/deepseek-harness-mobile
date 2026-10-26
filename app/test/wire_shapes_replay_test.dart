@@ -39,6 +39,8 @@ import 'package:dsh_mobile/model/agent_preset.dart' show parseAgentPresetRoster;
 import 'package:dsh_mobile/model/changes.dart' show ChangesSummary;
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/model/command.dart';
+import 'package:dsh_mobile/model/file_diff.dart'
+    show FileDiff, diffLinesOfHunks;
 import 'package:dsh_mobile/model/mention.dart' show AtCandidate;
 import 'package:dsh_mobile/model/model_catalog.dart';
 import 'package:dsh_mobile/model/permission.dart';
@@ -47,7 +49,8 @@ import 'package:dsh_mobile/model/plugins.dart'
 import 'package:dsh_mobile/model/usage_summary.dart' show UsageSummary;
 import 'package:dsh_mobile/model/workspace_files.dart'
     show FileListing, FilePage;
-import 'package:dsh_mobile/wire/rpc/changes.dart' show readChangesSummary;
+import 'package:dsh_mobile/wire/rpc/changes.dart'
+    show readChangesSummary, readFileDiff;
 import 'package:dsh_mobile/wire/rpc/command.dart';
 import 'package:dsh_mobile/wire/rpc/file.dart';
 import 'package:dsh_mobile/wire/rpc/job.dart';
@@ -895,6 +898,42 @@ void main() {
     final bad = readChangesSummary(<String, Object?>{});
     expect(bad, isA<WireBad<ChangesSummary?>>());
     expect(valueOrReport(bad, 'file.changes'), isNull);
+    expect(WireDiagnostics.badCount, 1);
+  });
+
+  test('file.diff：两种判别形态（文本 hunks / 二进制）都从金样解得出', () {
+    final samples = golden['file.diff']! as List;
+    expect(samples.length, 2, reason: '文本与二进制两种 kind 都要钉');
+
+    final textSample = (samples.first! as Map).cast<String, Object?>();
+    final diffBody = (textSample['diff']! as Map).cast<String, Object?>();
+    final reading = readFileDiff(textSample);
+    expect(reading, isA<WireOk<FileDiff?>>());
+    final diff = (reading as WireOk<FileDiff?>).value!;
+    expect(diff.isText, isTrue);
+    expect(diff.path, diffBody['path']);
+    // 期望值全部取自金样：hunk 的行前缀与行数原样对得上。
+    final hunks = diffBody['hunks']! as List;
+    expect(diff.hunks.length, hunks.length);
+    expect(diff.hunks.first.lines, (hunks.first! as Map)['lines']);
+    // 行号折行的不变量：折出来的行数 = 各 hunk 行数之和。
+    expect(
+      diffLinesOfHunks(diff.hunks).length,
+      hunks.fold<int>(
+        0,
+        (sum, hunk) => sum + ((hunk! as Map)['lines']! as List).length,
+      ),
+    );
+
+    final binarySample = (samples[1]! as Map).cast<String, Object?>();
+    final binary = (readFileDiff(binarySample) as WireOk<FileDiff?>).value!;
+    expect(binary.isBinary, isTrue);
+    expect(binary.hunks, isEmpty);
+
+    // 缺 diff 键 ⇒ 形状错 + 计数 1（与"没有记录"分开）。
+    final bad = readFileDiff(<String, Object?>{});
+    expect(bad, isA<WireBad<FileDiff?>>());
+    expect(valueOrReport(bad, 'file.diff'), isNull);
     expect(WireDiagnostics.badCount, 1);
   });
 

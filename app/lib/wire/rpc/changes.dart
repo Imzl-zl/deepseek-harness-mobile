@@ -16,6 +16,7 @@ library;
 
 import '../../core/sync_client.dart';
 import '../../model/changes.dart' show ChangesSummary;
+import '../../model/file_diff.dart' show FileDiff;
 import '../fields.dart';
 import '../reading.dart';
 
@@ -24,6 +25,7 @@ export '../fields.dart';
 export '../reading.dart';
 
 const String _kChanges = 'file.changes';
+const String _kDiff = 'file.diff';
 
 /// 读取一个 `workspace/changes` 事件宣告的改动记录。
 ///
@@ -40,6 +42,43 @@ Future<ChangesSummary?> loadChangesSummary(
   });
   // 显式给类型参数：`summary: null` 是有效值，推断成 `ChangesSummary` 会让它编译不过。
   return valueOrReport<ChangesSummary?>(readChangesSummary(result), _kChanges);
+}
+
+/// 读取一个改动文件的逐行比对。
+///
+/// [seq] 是 `workspace/changes` 事件的序号、[index] 是文件在 summary 里的下标 ——
+/// **都不是路径**（宿主只认这两个坐标，`workspace-changes/src/types.ts:88-96`）。
+Future<FileDiff?> loadFileDiff(
+  SyncClient client, {
+  required String sid,
+  required int seq,
+  required int index,
+}) async {
+  final result = await client.call<Object?>(_kDiff, {
+    'sid': sid,
+    'seq': seq,
+    'index': index,
+  });
+  return valueOrReport<FileDiff?>(readFileDiff(result), _kDiff);
+}
+
+/// `file.diff` 的应答 `{diff}`；`diff: null` **是**有效值（电脑侧没有这条记录）。
+WireReading<FileDiff?> readFileDiff(Object? result) {
+  if (result is! Map) {
+    return const WireBad('应答不是 {diff}（file.diff）');
+  }
+  if (!result.containsKey('diff')) {
+    return const WireBad('应答里没有 diff 键（file.diff）');
+  }
+  final diff = result['diff'];
+  if (diff == null) return const WireOk(null);
+  return readObject(_kDiff, diff, (fields) {
+    final parsed = FileDiff.fromWire(fields.map);
+    if (parsed == null) {
+      throw const WireFieldError('diff 认不出（file.diff）');
+    }
+    return parsed;
+  });
 }
 
 /// `file.changes` 的应答 `{summary}`；`summary: null` **是**有效值。

@@ -79,7 +79,7 @@ test('实现的方法名都在契约 §5.7 里，且契约的方法名数量是 
     if (method !== undefined) implemented.add(method)
   }
 
-  assert.equal(declared.size, 50, `契约 §5.7 定义了 50 个方法名，实际 ${declared.size} —— 改表就要同步引用它的文档`)
+  assert.equal(declared.size, 51, `契约 §5.7 定义了 51 个方法名，实际 ${declared.size} —— 改表就要同步引用它的文档`)
   assert.equal(implemented.size > 0, true, '没能从 handlers.ts 抽出任何方法名 —— 先修解析口径，别当成通过')
 
   const stray = [...implemented].filter((method) => !declared.has(method)).sort()

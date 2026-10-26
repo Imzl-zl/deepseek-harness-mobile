@@ -400,6 +400,31 @@ export function fixtureHandlers(
               added: 9,
               deleted: 2,
             },
+      // 逐行比对：`index: 1` 回二进制（两种判别形态都进金样），其余回一段文本。
+      diff: async (_sid: string, _seq: number, index: number) =>
+        index === 1
+          ? {
+              kind: 'binary' as const,
+              path: 'assets/logo.png',
+              display: 'assets/logo.png',
+            }
+          : {
+              kind: 'text' as const,
+              path: 'app/lib/main.dart',
+              display: 'app/lib/main.dart',
+              before: true,
+              after: true,
+              coarse: false,
+              hunks: [
+                {
+                  oldStart: 3,
+                  oldLines: 3,
+                  newStart: 3,
+                  newLines: 4,
+                  lines: [' a', '-b', '+c', '+d', ' e'],
+                },
+              ],
+            },
     },
     // `@` 候选：两列各一条（行形状由 app 侧 `AtCandidate.from*Row` 认）。
     references: {

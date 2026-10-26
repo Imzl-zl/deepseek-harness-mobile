@@ -41,10 +41,11 @@ test('方法表：封闭集，幂等键标记与契约 §5.7 的表一致', () =
   // 同日加 `plugin.install` / `plugin.installStatus` / `plugin.cancelInstall` / `plugin.remove`
   // （插件安装面：发起即返回 + 轮询）后是 **48**；同日加 `plugin.listBundles`（包清单，
   // 卸载按包名走）后是 **49**。
-  // 2026-10-26 加 `file.changes`（桌面改动记录：这一轮改了哪些文件、各增删多少行）后是 **50**。
+  // 2026-10-26 加 `file.changes`（桌面改动记录）后是 **50**；同日加 `file.diff`
+  // （一个改动文件的逐行比对）后是 **51**。
   // **这个数是契约 §5.7 的表与 `tools.md` 的同步闸**：加了方法不改这里就会红，
   // 而它红的方式是"数不对"，所以改它必须同时改契约那一行。
-  assert.equal(METHODS.length, 50, '方法数变了要同步契约 §5.7 的表')
+  assert.equal(METHODS.length, 51, '方法数变了要同步契约 §5.7 的表')
   assert.equal(new Set(METHODS).size, METHODS.length, '方法名不能重复')
 
   // 幂等集**从契约 §5.7 的表里读**，不在测试里手抄第二份 ——

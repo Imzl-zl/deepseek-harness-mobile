@@ -102,6 +102,7 @@ const SAMPLED_METHODS = [
   'file.list',
   'file.read',
   'file.changes',
+  'file.diff',
   'refs.files',
   'refs.sessions',
   // C2：插件 / 命令 / 用量 / 交互答复四个面。
@@ -203,6 +204,11 @@ const SAMPLES: Record<SampledMethod, readonly WireSample[]> = {
   'file.changes': [
     { params: { sid: sidOf('dsh-1'), seq: 9 } },
     { params: { sid: sidOf('dsh-1'), seq: 10 } },
+  ],
+  // 逐行比对：两种判别形态（文本 hunks / 二进制）都收；坐标是 seq + 下标。
+  'file.diff': [
+    { params: { sid: sidOf('dsh-1'), seq: 9, index: 0 } },
+    { params: { sid: sidOf('dsh-1'), seq: 9, index: 1 } },
   ],
   // `@` 候选：两列各一条。
   'refs.files': [{ params: { sid: sidOf('dsh-1'), query: 'main' } }],

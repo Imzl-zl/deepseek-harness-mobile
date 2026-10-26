@@ -2353,6 +2353,40 @@
       "summary": null
     }
   ],
+  "file.diff": [
+    {
+      "diff": {
+        "kind": "text",
+        "path": "app/lib/main.dart",
+        "display": "app/lib/main.dart",
+        "before": true,
+        "after": true,
+        "coarse": false,
+        "hunks": [
+          {
+            "oldStart": 3,
+            "oldLines": 3,
+            "newStart": 3,
+            "newLines": 4,
+            "lines": [
+              " a",
+              "-b",
+              "+c",
+              "+d",
+              " e"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "diff": {
+        "kind": "binary",
+        "path": "assets/logo.png",
+        "display": "assets/logo.png"
+      }
+    }
+  ],
   "refs.files": [
     {
       "files": [

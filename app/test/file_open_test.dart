@@ -26,9 +26,18 @@ import 'fake_sync_client.dart';
 
 /// 一台假电脑：`repo.info`（能力位）+ `file.read`（按 offset 分页）。
 class _OpenClient extends FakeSyncClient {
-  _OpenClient({this.filesAvailable = true, this.pages = const {}});
+  _OpenClient({
+    this.filesAvailable = true,
+    this.changesAvailable = false,
+    this.pages = const {},
+    this.diffResponse,
+  });
 
   final bool filesAvailable;
+  final bool changesAvailable;
+
+  /// `file.diff` 的应答（`{diff: ...}`）；给 `null` 时方法不会被调。
+  final Map<String, Object?>? diffResponse;
 
   /// `offset → 页`（键 `null` 是第一页）。
   final Map<int?, Map<String, Object?>> pages;
@@ -65,9 +74,14 @@ class _OpenClient extends FakeSyncClient {
       case 'repo.info':
         return <String, Object?>{
               'protocol': 1,
-              'caps': <String, Object?>{if (filesAvailable) 'files': true},
+              'caps': <String, Object?>{
+                if (filesAvailable) 'files': true,
+                if (changesAvailable) 'changes': true,
+              },
             }
             as T;
+      case 'file.diff':
+        return (diffResponse ?? <String, Object?>{'diff': null}) as T;
       case 'file.read':
         final offset = params['offset'] as int?;
         return <String, Object?>{
@@ -265,7 +279,7 @@ void main() {
       expect(app.fileFailure, isNot(contains('没有文件服务')));
     });
 
-    test('diff 模式如实说"还没接"：不发请求，更不拿现在的文本编一份', () async {
+    test('diff 模式没有改动面：一次请求都不发，也不拿文本来编一份 diff', () async {
       final client = _OpenClient(
         pages: {
           null: {'text': 'x', 'offset': 1, 'lines': 1, 'eof': true},
@@ -274,13 +288,76 @@ void main() {
       final app = await _app(client);
       addTearDown(app.dispose);
 
+      // 这个假电脑只报了 `caps.files`（没有 `caps.changes`）⇒ 差异面不存在。
+      await app.openFile(
+        const FileOpenRequest(
+          path: 'src/a.ts',
+          mode: FileOpenMode.diff,
+          seq: 6,
+          index: 0,
+        ),
+      );
+
+      expect(client.sent.where((c) => c.$1 == 'file.read'), isEmpty);
+      expect(client.sent.where((c) => c.$1 == 'file.diff'), isEmpty);
+      expect(app.diffFailure, contains('改动记录'));
+      expect(app.openedDiff, isNull);
+    });
+
+    test('diff 模式：读到比对就落账（不是文本预览）', () async {
+      final client = _OpenClient(
+        changesAvailable: true,
+        diffResponse: const {
+          'diff': {
+            'kind': 'text',
+            'path': 'src/a.ts',
+            'display': 'src/a.ts',
+            'before': true,
+            'after': true,
+            'coarse': false,
+            'hunks': [
+              {
+                'oldStart': 1,
+                'oldLines': 1,
+                'newStart': 1,
+                'newLines': 1,
+                'lines': [' a'],
+              },
+            ],
+          },
+        },
+      );
+      final app = await _app(client);
+      addTearDown(app.dispose);
+
+      await app.openFile(
+        const FileOpenRequest(
+          path: 'src/a.ts',
+          mode: FileOpenMode.diff,
+          seq: 6,
+          index: 2,
+        ),
+      );
+
+      expect(client.sent.where((c) => c.$1 == 'file.diff').map((c) => c.$2), [
+        {'sid': 'sid_1', 'seq': 6, 'index': 2},
+      ]);
+      expect(app.openedDiff!.isText, isTrue);
+      expect(app.openedFile, isNull);
+      expect(client.sent.where((c) => c.$1 == 'file.read'), isEmpty);
+    });
+
+    test('diff 模式缺坐标：不发请求，如实说打不开', () async {
+      final client = _OpenClient(changesAvailable: true);
+      final app = await _app(client);
+      addTearDown(app.dispose);
+
       await app.openFile(
         const FileOpenRequest(path: 'src/a.ts', mode: FileOpenMode.diff),
       );
 
-      expect(client.sent.where((c) => c.$1 == 'file.read'), isEmpty);
-      expect(app.fileFailure, contains('file.diff'));
-      expect(app.openedFile, isNull);
+      expect(client.sent.where((c) => c.$1 == 'file.diff'), isEmpty);
+      expect(app.diffFailure, contains('坐标'));
     });
 
     test('加载更多：用下一页的 offset 追加正文，eof 之后不再请求', () async {

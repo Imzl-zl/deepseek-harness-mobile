@@ -1351,21 +1351,35 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
     }
   }
 
-  // 改动面（契约 §5.7）：**只读**，不带幂等键。坐标是 `workspace/changes` 事件的 seq。
+  // 改动面（契约 §5.7）：**只读**，不带幂等键。坐标是 `workspace/changes` 事件的 seq
+  // （`file.diff` 再加一个文件下标）。**两者都不是路径**。
   if (deps.changes !== undefined) {
     const changes = deps.changes
-    handlers['file.changes'] = (params) => {
-      const sid = requireSid(params)
-      // `seq` 是**事件序号**：安全非负整数。形状不对是请求不合法（bad-frame），
-      // 不是"没有这条记录"（那是 `summary: null`，两种结论不能混）。
-      const seq = paramOf(params, 'seq')
-      if (typeof seq !== 'number' || !Number.isSafeInteger(seq) || seq < 0) {
+    /**
+     * 一个非负整数参数（`seq` / `index`）。
+     *
+     * 形状不对是**请求不合法**（`bad-frame`），不是"没有这条记录"
+     * （那是 `{summary:null}` / `{diff:null}` —— 两种结论不能混）。
+     */
+    const nonNegative = (params: unknown, key: string): number => {
+      const value = paramOf(params, key)
+      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
         throw new ProtocolError(
           'protocol/bad-frame',
-          'seq 必须是安全非负整数（workspace/changes 事件的序号）',
+          `${key} 必须是安全非负整数（workspace/changes 的坐标，不是路径）`,
         )
       }
-      return { summary: changes.summary(sid, seq) }
+      return value
+    }
+    handlers['file.changes'] = (params) => {
+      const sid = requireSid(params)
+      return { summary: changes.summary(sid, nonNegative(params, 'seq')) }
+    }
+    handlers['file.diff'] = async (params) => {
+      const sid = requireSid(params)
+      const seq = nonNegative(params, 'seq')
+      const index = nonNegative(params, 'index')
+      return { diff: await changes.diff(sid, seq, index) }
     }
   }
 

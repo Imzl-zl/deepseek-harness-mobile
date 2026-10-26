@@ -20,7 +20,7 @@ import { test } from 'node:test'
 
 import { createHandlers } from '../src/handlers.js'
 import type { HandlerDeps } from '../src/handlers.js'
-import { createChangesFace } from '../src/dsh/changes.js'
+import { createChangesFace, DIFF_MAX_LINES } from '../src/dsh/changes.js'
 import { changesAvailable, readCaps } from '../src/dsh/caps.js'
 import { createDispatcher, IDEMPOTENT_METHODS, METHODS, isMethod } from '../src/protocol/methods.js'
 
@@ -58,11 +58,36 @@ const SUMMARY = {
   snapshot: { before: 'a', after: 'b' },
 }
 
+/** 宿主的文本比对（`types.ts:56-72` 的形状：每行带 `+` / `-` / 空格前缀）。 */
+const TEXT_DIFF = {
+  kind: 'text',
+  path: 'app/lib/main.dart',
+  display: 'app/lib/main.dart',
+  before: true,
+  after: true,
+  coarse: false,
+  hunks: [
+    {
+      oldStart: 3,
+      oldLines: 3,
+      newStart: 3,
+      newLines: 4,
+      lines: [' a', '-b', '+c', '+d', ' e'],
+    },
+  ],
+}
+
 /** 一台真形状的电脑：`workspaceChanges` 服务 + 记录收到的参数。 */
 function hostCtx(
-  options: { noRecord?: boolean; summary?: unknown; throws?: Error } = {},
+  options: {
+    noRecord?: boolean
+    summary?: unknown
+    throws?: Error
+    diff?: unknown
+    diffThrows?: Error
+  } = {},
 ) {
-  const asked: { sessionId: string; seq: number }[] = []
+  const asked: { sessionId: string; seq: number; index?: number }[] = []
   const ctx = fakeCtx({
     workspaceChanges: {
       summary: (sessionId: string, seq: number) => {
@@ -70,6 +95,12 @@ function hostCtx(
         if (options.throws !== undefined) throw options.throws
         if (options.noRecord === true) return undefined
         return options.summary === undefined ? SUMMARY : options.summary
+      },
+      diff: async (sessionId: string, seq: number, index: number) => {
+        asked.push({ sessionId, seq, index })
+        if (options.diffThrows !== undefined) throw options.diffThrows
+        if (options.noRecord === true) return undefined
+        return options.diff === undefined ? TEXT_DIFF : options.diff
       },
     },
   })
@@ -194,4 +225,134 @@ test('caps.changes 与挂载判据同一个函数：服务在 ⇒ 都报；不�
   }
   assert.equal(oldInfo.caps.changes, false)
   assert.equal(oldInfo.methods.includes('file.changes'), false)
+})
+
+// ---------------------------------------------------------------------------
+// file.diff：逐行比对（坐标 seq + 下标，形态 text / binary / oversized）
+// ---------------------------------------------------------------------------
+
+function diffHandlers(host: { ctx: unknown }) {
+  return createHandlers({
+    ...depsWith(host.ctx),
+    changes: createChangesFace(host.ctx as never, {
+      sessionOf: () => 'dsh-session-1',
+    }),
+  })
+}
+
+test('方法表里有 file.diff，且是读方法（不带幂等键）', () => {
+  assert.equal(isMethod('file.diff'), true)
+  assert.ok(METHODS.includes('file.diff'))
+  assert.equal(IDEMPOTENT_METHODS.has('file.diff'), false)
+})
+
+test('file.diff：文本比对逐字段过线（hunks 的行前缀原样），坐标是 seq + 下标', async () => {
+  const host = hostCtx()
+  const handlers = diffHandlers(host)
+  const result = await handlers['file.diff']!(
+    { sid: 'sid_1', seq: 9, index: 1 },
+    undefined as never,
+  )
+  assert.deepEqual(result, {
+    diff: {
+      kind: 'text',
+      path: 'app/lib/main.dart',
+      display: 'app/lib/main.dart',
+      before: true,
+      after: true,
+      coarse: false,
+      hunks: [
+        { oldStart: 3, oldLines: 3, newStart: 3, newLines: 4, lines: [' a', '-b', '+c', '+d', ' e'] },
+      ],
+    },
+  })
+  assert.deepEqual(host.asked, [
+    { sessionId: 'dsh-session-1', seq: 9, index: 1 },
+  ])
+})
+
+test('file.diff：binary / oversized 原样（没有行，不编）', async () => {
+  for (const kind of ['binary', 'oversized'] as const) {
+    const host = hostCtx({
+      diff: { kind, path: 'assets/logo.png', display: 'assets/logo.png' },
+    })
+    const result = (await diffHandlers(host)['file.diff']!(
+      { sid: 'sid_1', seq: 9, index: 0 },
+      undefined as never,
+    )) as { diff: Record<string, unknown> }
+    assert.deepEqual(result, {
+      diff: { kind, path: 'assets/logo.png', display: 'assets/logo.png' },
+    })
+    assert.equal('hunks' in result.diff, false, `${kind} 不该带 hunks`)
+  }
+})
+
+test('file.diff：宿主没有这条记录 ⇒ {diff:null}（不是失败）', async () => {
+  const host = hostCtx({ noRecord: true })
+  const reply = await createDispatcher(diffHandlers(host)).dispatch({
+    method: 'file.diff',
+    params: { sid: 'sid_1', seq: 9, index: 0 },
+  })
+  assert.deepEqual(reply, { ok: true, result: { diff: null } })
+})
+
+test('file.diff：seq / index 必须是安全非负整数（形状不对 = bad-frame）', async () => {
+  const host = hostCtx()
+  for (const params of [
+    { sid: 'sid_1', seq: 9 },
+    { sid: 'sid_1', seq: -1, index: 0 },
+    { sid: 'sid_1', seq: 9, index: '0' },
+    { sid: 'sid_1', seq: 9, index: 1.5 },
+  ]) {
+    const reply = await createDispatcher(diffHandlers(host)).dispatch({
+      method: 'file.diff',
+      params,
+    })
+    assert.equal(reply.ok, false, `${JSON.stringify(params)} 应被拒`)
+    assert.equal(reply.ok === false ? reply.code : undefined, 'protocol/bad-frame')
+  }
+})
+
+test('file.diff：超长按手机自己的上限裁（1000 行），并如实报 shown/total', async () => {
+  // 用**生产常量**造边界：第一条 hunk 700 行（整条收），第二条 700 行（只收 300）。
+  const line = (prefix: string, at: number): string => `${prefix}line ${at}`;
+  const big = {
+    ...TEXT_DIFF,
+    hunks: [
+      { oldStart: 1, oldLines: 700, newStart: 1, newLines: 700, lines: Array.from({ length: 700 }, (_, at) => line(' ', at)) },
+      { oldStart: 701, oldLines: 700, newStart: 701, newLines: 700, lines: Array.from({ length: 700 }, (_, at) => line('+', at)) },
+    ],
+  }
+  const host = hostCtx({ diff: big })
+  const result = (await diffHandlers(host)['file.diff']!(
+    { sid: 'sid_1', seq: 9, index: 0 },
+    undefined as never,
+  )) as {
+    diff: {
+      hunks: { lines: string[] }[]
+      truncated?: { shownLines: number; totalLines: number }
+    }
+  }
+  assert.equal(
+    result.diff.hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0),
+    DIFF_MAX_LINES,
+    '发出的行数必须等于上限（不多发一行）',
+  )
+  assert.deepEqual(result.diff.truncated, {
+    shownLines: DIFF_MAX_LINES,
+    totalLines: 1400,
+  })
+  // 第一条整条在（700 行），第二条切到 300 行 —— 与桌面 renderedHunks 同一条切法。
+  assert.equal(result.diff.hunks.length, 2)
+  assert.equal(result.diff.hunks[0]!.lines.length, 700)
+  assert.equal(result.diff.hunks[1]!.lines.length, DIFF_MAX_LINES - 700)
+})
+
+test('file.diff：没超上限时**不出现** truncated（不假装截断）', async () => {
+  const host = hostCtx()
+  const result = (await diffHandlers(host)['file.diff']!(
+    { sid: 'sid_1', seq: 9, index: 0 },
+    undefined as never,
+  )) as { diff: Record<string, unknown> }
+  assert.equal('truncated' in result.diff, false)
 })

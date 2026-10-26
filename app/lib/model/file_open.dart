@@ -45,8 +45,7 @@ enum FileOpenMode {
   /// 文件内容（`file.read`，当前已接）。
   preview,
 
-  /// 逐行差异（需要协议方法 `file.diff`，见
-  /// `.agents/notes/proposed/2026-10-26-desktop-alignment-plan.md` 的批 C）。
+  /// 逐行差异（`file.diff`）。坐标是 [FileOpenRequest.seq] + [FileOpenRequest.index]。
   diff,
 }
 
@@ -55,7 +54,19 @@ enum FileOpenMode {
 /// **值相等**：同一个路径连点两次要能各自触发一次动作（所以还有一个请求序号，
 /// 见 `AppModel.fileOpenTicket`），而 `==` 只用来表达"这是同一个请求"。
 class FileOpenRequest {
-  const FileOpenRequest({required this.path, this.mode = FileOpenMode.preview});
+  const FileOpenRequest({
+    required this.path,
+    this.mode = FileOpenMode.preview,
+    this.seq,
+    this.index,
+  });
+
+  /// 逐行差异的坐标：`workspace/changes` 的事件序号 + 文件在记录里的下标。
+  ///
+  /// **不是路径**（宿主只认这两个，`workspace-changes/src/types.ts:88-96`）。
+  /// `preview` 模式用不到；`diff` 模式缺一就是一次不完整的请求。
+  final int? seq;
+  final int? index;
 
   /// **桌面侧的那一串路径，原样**（相对工作区的路径，或宿主认得的绝对路径）。
   ///
@@ -66,13 +77,17 @@ class FileOpenRequest {
 
   @override
   bool operator ==(Object other) =>
-      other is FileOpenRequest && other.path == path && other.mode == mode;
+      other is FileOpenRequest &&
+      other.path == path &&
+      other.mode == mode &&
+      other.seq == seq &&
+      other.index == index;
 
   @override
-  int get hashCode => Object.hash(path, mode);
+  int get hashCode => Object.hash(path, mode, seq, index);
 
   @override
-  String toString() => 'FileOpenRequest($path, ${mode.name})';
+  String toString() => 'FileOpenRequest($path, ${mode.name}, $seq/$index)';
 }
 
 /// 已经读到的那个文件（首屏 + 后续"加载更多"累计）。
