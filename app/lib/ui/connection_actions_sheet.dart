@@ -53,6 +53,10 @@ Future<void> showConnectionActionsSheet(
   /// 换一条并直接连（弹选择框的动作由调用方实现 —— 它持有 `AppModel`）。
   VoidCallback? onPickEndpoint,
 
+  /// 填一个新地址**只加进表**（换了网络、旧地址全拨不通时的那条出路）。
+  /// **不自动拨**：连不连是用户的动作。
+  VoidCallback? onManualEndpoint,
+
   /// 触发点矩形。`null` = 底部 sheet。
   Rect? anchor,
 }) {
@@ -83,6 +87,20 @@ Future<void> showConnectionActionsSheet(
             // 回调必须由**页面**的 context 实现（见下方参数说明）：
             // 它内部要再开一个 sheet，而这个面板的 context 此刻已随路由失效。
             onPickEndpoint();
+          },
+        ),
+      if (onManualEndpoint != null)
+        ListTile(
+          leading: const DshIcon(
+            'plus',
+            size: 18,
+            color: DshColors.labelSecondary,
+          ),
+          title: const Text('手动填写电脑地址'),
+          subtitle: const Text('换了网络连不上：填新地址，再自己选它连接'),
+          onTap: () {
+            Navigator.of(inner).pop();
+            onManualEndpoint();
           },
         ),
       if (onReconnect != null)

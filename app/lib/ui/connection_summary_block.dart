@@ -23,6 +23,7 @@ import '../data/app_model.dart';
 import '../model/chat_item.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
+import 'add_endpoint_dialog.dart';
 import 'dsh_sheet.dart';
 import 'dsh_toast.dart';
 
@@ -77,6 +78,18 @@ Future<void> pickEndpointToConnect(BuildContext context, AppModel app) async {
         : '这条没连上（$reason），已回到自动选择',
     kind: DshToastKind.error,
   );
+}
+
+/// **只加一条地址，不自动拨**（换了网络、旧地址全拨不通时的那条出路）。
+///
+/// 与设置页「添加端点」共用同一个对话框、同一句承诺：加进表之后由用户自己选它连接
+/// （`pickEndpointToConnect`）。配对凭据与地址无关，所以**不需要重新扫码**。
+Future<void> addEndpointOnly(BuildContext context, AppModel app) async {
+  final added = await showAddEndpointDialog(context);
+  if (added == null || !context.mounted) return;
+  await app.addManualEndpoint(added);
+  if (!context.mounted) return;
+  DshToast.show(context, '已添加 ${added.url}（在「换个连接方式」里选它连接）');
 }
 
 /// **重新拨一次**：不改偏好、不换端点。

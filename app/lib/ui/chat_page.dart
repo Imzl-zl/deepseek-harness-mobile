@@ -1276,6 +1276,11 @@ class ChatPageState extends State<ChatPage> {
         onPickEndpoint: () => unawaited(
           _afterCurrentSheet(() => pickEndpointToConnect(context, widget.app)),
         ),
+        // **换了网络之后的那条出路**：把电脑的新地址加进表，**由用户自己选它连接**
+        // （不自动拨 —— 「什么时候连」是用户的动作，与设置页「添加端点」同一句承诺）。
+        onManualEndpoint: () => unawaited(
+          _afterCurrentSheet(() => addEndpointOnly(context, widget.app)),
+        ),
         onReconnect: () => unawaited(
           _afterCurrentSheet(() => reconnectNow(context, widget.app)),
         ),

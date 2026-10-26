@@ -26,12 +26,10 @@ library;
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/endpoint.dart';
-import '../core/errors.dart';
 import '../data/app_model.dart';
 import '../model/agent_preset.dart';
 import '../model/chat_item.dart';
@@ -42,6 +40,7 @@ import '../model/send_mode.dart';
 import '../model/theme_mode.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
+import 'add_endpoint_dialog.dart';
 import 'connection_summary_block.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_sheet.dart';
@@ -1160,120 +1159,10 @@ class _AddEndpointButton extends StatelessWidget {
   }
 
   Future<void> _add(BuildContext context) async {
-    final added = await showDialog<Endpoint>(
-      context: context,
-      builder: (context) => const _AddEndpointDialog(),
-    );
+    final added = await showAddEndpointDialog(context);
     if (added == null || !context.mounted) return;
     await app.addManualEndpoint(added);
     if (!context.mounted) return;
     DshToast.show(context, '已添加，下次重连会试它');
-  }
-}
-
-/// 填地址的小对话框（kind + url）。
-class _AddEndpointDialog extends StatefulWidget {
-  const _AddEndpointDialog();
-
-  @override
-  State<_AddEndpointDialog> createState() => _AddEndpointDialogState();
-}
-
-class _AddEndpointDialogState extends State<_AddEndpointDialog> {
-  EndpointKind _kind = EndpointKind.direct;
-  final _input = TextEditingController();
-  String? _error;
-
-  @override
-  void dispose() {
-    _input.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    final raw = _input.text.trim();
-    if (raw.isEmpty) {
-      setState(() => _error = '填一个地址');
-      return;
-    }
-    try {
-      // 过安全边界：公网必须 wss、明文只限非公网。
-      checkedRelayUri(raw, allowInsecureLocal: kDebugMode);
-      if (_kind == EndpointKind.direct) {
-        if (!raw.startsWith('ws://')) {
-          setState(() => _error = '直连是明文 ws://（电脑侧监听面不终结 TLS）');
-          return;
-        }
-        if (!isPrivateOrLoopback(Uri.parse(raw).host)) {
-          setState(() => _error = '直连地址必须是局域网 / 回环地址');
-          return;
-        }
-      }
-    } on ProtocolException catch (error) {
-      setState(() => _error = error.message);
-      return;
-    }
-    Navigator.of(context).pop(Endpoint(kind: _kind, url: raw));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.dshColors;
-    return AlertDialog(
-      backgroundColor: c.layer1,
-      title: const Text('添加端点'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              for (final kind in EndpointKind.values) ...[
-                ChoiceChip(
-                  label: Text(endpointKindLabel(kind)),
-                  selected: _kind == kind,
-                  onSelected: (_) => setState(() {
-                    _kind = kind;
-                    _error = null;
-                  }),
-                ),
-                const SizedBox(width: 8),
-              ],
-            ],
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _input,
-            autofocus: true,
-            style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
-            decoration: InputDecoration(
-              hintText: _kind == EndpointKind.direct
-                  ? 'ws://192.168.1.4:8790'
-                  : 'wss://relay.example.com',
-              hintStyle: const TextStyle(fontSize: 12),
-              errorText: _error,
-              errorMaxLines: 2,
-            ),
-            onChanged: (_) {
-              if (_error != null) setState(() => _error = null);
-            },
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _kind == EndpointKind.direct
-                ? '直连不走中转、不要票：填电脑侧直连监听面的地址。'
-                : '中转要换票：填中转的根地址（不带路径）。',
-            style: TextStyle(fontSize: 11, color: c.labelTertiary),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        TextButton(onPressed: _submit, child: const Text('添加')),
-      ],
-    );
   }
 }
