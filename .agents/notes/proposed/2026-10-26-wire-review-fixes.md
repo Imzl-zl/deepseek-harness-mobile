@@ -124,7 +124,8 @@
 | 1 | 页级失败语义：删 `SessionPageShapeError`，`refetch` 缺 `seq` ⇒ `WireBad`；`page()` 把解码失败映射成 `failure`；`record` 解不出计数 | 先红后绿：`sync_client_test` 一条"坏页 ⇒ `failure` 且不抛"；回放用例改断言 `WireBad` + 计数 1；`dart analyze lib test` / `format` | ✅ |
 | 2 | 任务合并策略：`core/job.dart` 的 `mergeJobRow` + `mergeJobSnapshot`；快照与推送共用 | 纯函数单测 4 条转移；`job_panel_test` 一条真赛跑（`completed` 后快照回 `running` 仍 `completed`）；回滚合并函数至少 1 红 | ✅（变异 5 红） |
 | 3 | 必填口径：`job` 六键改 `require*`；`session.page` 改走 `readObject` 且 `hasMore` 必填 | 金样仍绿；缺任一必填键 ⇒ 整行为 `WireBad` + 计数 1 的新用例（循环覆盖六键）；手写假行补齐；analyze/format | ✅ |
-| 4 | 信封与值解析收口：`readEnvelopeList` 一个入口、`modelSelection` 一份、删死代码、`projections` 走 `flatValues` | 六个面改用同一入口；`fields.dart` 无未用公开成员；回放用例全绿 | 待做 |
+| 4a | 值与扁平入口：`readFlatValues` 成为真实入口（`projections` 改用它）；`modelSelection`/`modelRef` 只住 `wire/values.dart`；删 `has`/`readReceipt`/旧 `flatValues` | `modelSelection` 坏形状 ⇒ 计数 1（新用例）；投影面与行面共用一份解析；`fields.dart` 无未用公开成员 | ✅ |
+| 4b | 信封入口：`readObjectList` 成为 `{key: [...]}` 的唯一读法（refs / plugin / settings / workspace 分组） | 四个面不再手写"取 Map → 取 key → 判 List"；坏行计数；回放全绿 | 待做 |
 | 5 | 门禁范围与事实：`page`/`refetch` 的 `load*` 搬进 `wire/rpc/session_page.dart`；脚本扫 `app/lib`（除 `wire/`）；订正设计评审 `:267` | 脚本零 `call<`；在 `core/` 加一处 `call<` 会红（变异）；设计评审改成事实 | 待做 |
 | 6 | 杂项：19 处回指、`permission.switch` 复用、`agentPresets` 断言、`_idsOf` 双计数、金样笔记的状态行 | 回指全部命中；`permission` 不再有第二份解码；回放覆盖 43/43；双计数用例 | 待做 |
 

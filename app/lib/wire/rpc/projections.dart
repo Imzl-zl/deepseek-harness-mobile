@@ -49,6 +49,7 @@ import '../../model/trajectory.dart' show TrajectoryView, parseTrajectory;
 import '../../model/turn_outline.dart' show TurnOutlineEntry;
 import '../fields.dart';
 import '../reading.dart';
+import '../values.dart';
 
 /// 方法名只在这里出现一次（`connector/src/handlers.ts:840`）。
 const String _kProjections = 'session.projections';
@@ -135,36 +136,33 @@ Future<SessionProjections?> loadSessionProjections(
 
 /// 纯解码：应答是**扁平 `values`**（不是信封）。
 ///
-/// 认不出的**键**不计数（缺席是正常的：投影没注册 / 还没读到），
-/// 但**应答本身不是对象**是漂移 ⇒ [WireBad]。
+/// 入口只有一份：`fields.dart` 的 [readFlatValues]（与 [WireFields.envelopeValues]
+/// 成对）。认不出的**键**不计数（缺席是正常的：投影没注册 / 还没读到），
+/// 但"应答本身不是对象"与"非字符串键"必须留声。
 WireReading<SessionProjections> readSessionProjections(Object? result) {
-  if (result is! Map) {
-    return const WireBad('应答不是扁平 values 映射（`session.projections`）');
+  final flat = readFlatValues(result, _kProjections);
+  switch (flat) {
+    case WireOk<Map<String, Object?>>(:final value):
+      return WireOk(_buildProjections(value, WireFields(value, _kProjections)));
+    case WireBad<Map<String, Object?>>(:final detail):
+      return WireBad(detail);
+    case WireSkip<Map<String, Object?>>():
+      // 扁平映射没有"不归我"这一档；只为穷尽 switch。
+      return const WireBad('应答不是扁平 values 映射（`session.projections`）');
   }
-  // `values` 的键只在这里读一次。非字符串键线上不可能出现 —— 计一次数并丢掉。
-  final values = <String, Object?>{};
-  var droppedKeys = 0;
-  for (final entry in result.entries) {
-    if (entry.key is String) {
-      values[entry.key! as String] = entry.value;
-    } else {
-      droppedKeys += 1;
-    }
-  }
-  if (droppedKeys > 0) {
-    WireDiagnostics.report(_kProjections, 'values 里有 $droppedKeys 个非字符串键');
-  }
-  return WireOk(_buildProjections(values));
 }
 
 // ---------------------------------------------------------------------------
 // 14 个键 → 值（键名只在这个文件里出现）
 // ---------------------------------------------------------------------------
 
-SessionProjections _buildProjections(Map<String, Object?> values) {
+SessionProjections _buildProjections(
+  Map<String, Object?> values,
+  WireFields fields,
+) {
   return SessionProjections(
     title: _nonEmptyString(values['title']),
-    modelSelection: _modelSelectionOf(values['modelSelection']),
+    modelSelection: modelSelectionOf(values['modelSelection'], fields),
     tokenUsage: parseTokenUsage(values['tokenUsage']),
     sessionStats: _sessionStatsOf(values['sessionStats']),
     contextPressure: _contextPressureOf(values['contextPressure']),
@@ -260,30 +258,5 @@ List<TurnOutlineEntry> _turnOutlineOf(Object? raw) {
 
 /// `modelSelection` 投影 → `next ?? lastUsed`。
 ///
-/// **`next ?? lastUsed` 与 DSH 的线格式逐字一致**
-/// （`packages/api/session-controller/src/model-selection-projection.ts:65`：
-/// `view: state => ({lastUsed, next: state.pending ?? state.lastUsed})`）。
-/// `lastUsed` / `next` 都是 `null` 是**正常**（新会话、投影还没落），不计数。
-ModelRef? _modelSelectionOf(Object? raw) {
-  if (raw == null) return null;
-  if (raw is! Map) return null;
-  return _modelRefOf(raw['next'] ?? raw['lastUsed']);
-}
-
-/// `{provider, model, reasoningEffort?}` → [ModelRef]；认不出返回 `null`（不计数：
-/// 新会话/投影没落时这里本来就是 `null`）。
-///
-/// 缺 `provider` / `model` 就当没有 —— 硬填空串会让界面显示一个空的模型名。
-ModelRef? _modelRefOf(Object? raw) {
-  if (raw is! Map) return null;
-  final provider = raw['provider'];
-  final model = raw['model'];
-  if (provider is! String || provider.isEmpty) return null;
-  if (model is! String || model.isEmpty) return null;
-  final effort = raw['reasoningEffort'];
-  return ModelRef(
-    provider: provider,
-    model: model,
-    reasoningEffort: effort is String && effort.isNotEmpty ? effort : null,
-  );
-}
+/// 解析器只有一份：`wire/values.dart` 的 [modelSelectionOf]（与 `session.list`
+/// 的行共用）。这里不留副本 —— 同一份投影在两个面各写一遍，迟早只有一处会改。

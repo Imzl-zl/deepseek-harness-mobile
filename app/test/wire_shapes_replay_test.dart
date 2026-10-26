@@ -468,6 +468,20 @@ void main() {
     expect(WireDiagnostics.badCount, 1);
   });
 
+  test('session.projections 的 modelSelection 不是对象 ⇒ 计 1，其余字段照常', () {
+    // 投影没落 / `lastUsed`/`next` 都是 null 是正常的（不计数）；
+    // 但"它在，却不是对象"是漂移，必须留声。
+    final reading = readSessionProjections({
+      'title': '标题还在',
+      'modelSelection': '不是对象',
+    });
+    expect(reading, isA<WireOk<SessionProjections>>());
+    final projections = (reading as WireOk<SessionProjections>).value;
+    expect(projections.title, '标题还在');
+    expect(projections.modelSelection, isNull);
+    expect(WireDiagnostics.badCount, 1);
+  });
+
   // ---- 工作区面（B1）：分组 + 两列 id 同一份应答，七种应答都是"整份真值" ----
 
   test('workspace.list：分组与两列 id 都等于金样（含 createdAt）', () {

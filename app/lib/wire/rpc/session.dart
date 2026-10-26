@@ -48,6 +48,7 @@ import '../../model/session_stats.dart' show parseTokenUsage;
 import '../../model/subagent.dart' show parseSubagentTiming;
 import '../fields.dart';
 import '../reading.dart';
+import '../values.dart';
 
 /// 消费方一次拿齐"三态内核 + 字段内核 + 会话面解码"（与 `wire/events.dart` 同一条：
 /// 全 app 只有一套失败语义）。
@@ -250,10 +251,10 @@ SessionSummary _buildSessionRow(WireFields fields) {
   final cwd = fields.optionalNonEmptyString('cwd');
   // `model`：行顶层那份来自**活 agent**（`connector/src/dsh/models.ts` 的 `modelOf`），
   // 子会话取不到 ⇒ 整键缺席。所以它**不是**恒发键（`handlers.ts:754-759`）。
-  final model = _modelRefOf(fields.optionalMap('model'), fields);
+  final model = modelRefOf(fields.optionalMap('model'), fields);
 
   final values = fields.envelopeValues('projections');
-  final modelSelection = _modelSelectionOf(values, fields);
+  final modelSelection = modelSelectionOf(values?['modelSelection'], fields);
 
   return SessionSummary(
     sid: sid,
@@ -288,39 +289,4 @@ String _titleOf(Map<Object?, Object?>? values, WireFields fields) {
 
 /// `values.modelSelection` → `next ?? lastUsed`。
 ///
-/// **`next ?? lastUsed` 与 DSH 的线格式逐字一致**
-/// （`packages/api/session-controller/src/model-selection-projection.ts:65`），
-/// 与连接器的 `modelOf` 也是同一条（`connector/src/dsh/models.ts:92-101`）。
-///
-/// **只对"这一层的类型"计数**：`modelSelection` 是 Map 但里面 `lastUsed` / `next` 都是 `null`
-/// 是**正常**（新会话、投影还没落），所以不再往下计。
-ModelRef? _modelSelectionOf(Map<Object?, Object?>? values, WireFields fields) {
-  final selection = values?['modelSelection'];
-  if (selection == null) return null;
-  if (selection is! Map) {
-    fields.report('values.modelSelection 不是对象：$selection');
-    return null;
-  }
-  return _modelRefOf(selection['next'] ?? selection['lastUsed'], fields);
-}
-
-/// `{provider, model, reasoningEffort?}` → [ModelRef]；认不出返回 `null`。
-///
-/// 缺 `provider` / `model` 就当没有 —— 硬填空串会让界面显示一个空的模型名。
-ModelRef? _modelRefOf(Object? raw, WireFields fields) {
-  if (raw == null) return null;
-  if (raw is! Map) {
-    fields.report('模型引用不是对象：$raw');
-    return null;
-  }
-  final provider = raw['provider'];
-  final model = raw['model'];
-  if (provider is! String || provider.isEmpty) return null;
-  if (model is! String || model.isEmpty) return null;
-  final effort = raw['reasoningEffort'];
-  return ModelRef(
-    provider: provider,
-    model: model,
-    reasoningEffort: effort is String && effort.isNotEmpty ? effort : null,
-  );
-}
+/// 解析器只有一份：`wire/values.dart` 的 [modelSelectionOf]（与投影面共用）。

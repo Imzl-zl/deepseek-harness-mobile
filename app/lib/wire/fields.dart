@@ -52,9 +52,6 @@ final class WireFields {
   /// 计数/打印时点名的那个方法名（`session.list` / `workspace.list` …）。
   final String method;
 
-  /// 键在不在（`null` 等于不在：生产侧从不写 `null` 表示"有"）。
-  bool has(String key) => _map[key] != null;
-
   /// 整包原文。
   ///
   /// **只给一种用法**：把整个对象交给 `model/` 里的**值解析器**
@@ -194,8 +191,27 @@ final class WireFields {
 /// 读一个**扁平 `values` 映射**（`session.projections` 的应答形态）。
 ///
 /// 与 [WireFields.envelopeValues] 是一对：**同一个名字的两种形状**，各自一个入口，
-/// 谁用错谁在类型上就过不去（这里收的是"已经是 values 的那个对象"）。
-Map<Object?, Object?>? flatValues(Object? raw) => raw is Map ? raw : null;
+/// 用错在类型上就过不去。
+///
+/// - 非对象 ⇒ [WireBad]（应答本身漂了）；
+/// - 非字符串键 ⇒ 丢掉那个键并计数一次（JSON 的键恒是字符串，出现即畸形数据）。
+WireReading<Map<String, Object?>> readFlatValues(Object? raw, String method) {
+  if (raw is! Map) return WireBad('应答不是扁平 values 映射（`$method`）');
+  final values = <String, Object?>{};
+  var dropped = 0;
+  for (final entry in raw.entries) {
+    final key = entry.key;
+    if (key is String) {
+      values[key] = entry.value;
+    } else {
+      dropped += 1;
+    }
+  }
+  if (dropped > 0) {
+    WireDiagnostics.report(method, 'values 里有 $dropped 个非字符串键');
+  }
+  return WireOk(values);
+}
 
 /// 读一个对象：**必填缺失 ⇒ 整对象 [WireBad]**；可选读不出 ⇒ 计数 + `null`（对象保留）。
 ///
@@ -252,13 +268,3 @@ WireReading<List<T>> readObjectList<T>(
   }
   return WireOk(List<T>.unmodifiable(out));
 }
-
-/// 读"成功回执"形态（`{accepted: true}` / `{stopped: bool}` 之类）。
-///
-/// 认不出就是 [WireBad]：**回执读不出来不能当成成功**（`settings.update` 曾经
-/// 认不出仍 `return true`，见设计笔记 Alternatives 里 d 方案那一条）。
-WireReading<T> readReceipt<T>(
-  String method,
-  Object? result,
-  T Function(WireFields fields) build,
-) => readObject(method, result, build);
