@@ -1629,6 +1629,9 @@ class AppModel extends ChangeNotifier {
       _mentionsAvailable = info.mentionsAvailable;
       _filesAvailable = info.filesAvailable;
       _pluginsAvailable = info.pluginsAvailable;
+      // **读到了**才置位：界面靠它区分"这台电脑没有这个面"与"还没读到"
+      // （离线时 `caps.files` 只是默认 false，不是电脑的答复）。
+      _repoInfoKnown = true;
       if (!_disposed) notifyListeners();
     } catch (error) {
       _dshVersion = null;
@@ -1641,6 +1644,13 @@ class AppModel extends ChangeNotifier {
   /// 电脑侧有没有文件面（`repo.info.caps.files`）。老连接器 ⇒ false。
   bool get filesAvailable => _filesAvailable;
   bool _filesAvailable = false;
+
+  /// 是否**成功读到过** `repo.info`。
+  ///
+  /// `filesAvailable == false` 有两种含义：电脑说"没有这个面"，或**还没读到**
+  /// （没连上 / 刚启动）。界面必须分开说，否则离线会被说成"没有文件服务"。
+  bool get repoInfoKnown => _repoInfoKnown;
+  bool _repoInfoKnown = false;
 
   /// 列一个目录（`path` 空串 = 工作区根）。
   ///

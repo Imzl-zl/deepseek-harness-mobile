@@ -230,6 +230,24 @@ void main() {
       expect(find.textContaining('没有文件服务'), findsOneWidget);
       expect(client.sent.where((c) => c.$1 == 'file.list'), isEmpty);
     });
+
+    testWidgets('没连上时不说"没有文件服务"（离线 ≠ 没能力）', (tester) async {
+      // 2026-10-26 真机踩到：停掉电脑侧后点文件页，页面说"这台电脑没有文件服务"，
+      // 而真实原因是**没连上**。两者下一步动作完全不同（重连 vs 换连接器版本）。
+      final client = _FilesClient(listings: const {'': _rootListing});
+      final app = AppModel(client: client);
+      addTearDown(app.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: DshTheme.dark(),
+          home: FilesPageHost(app: app),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('还没连上'), findsOneWidget);
+      expect(find.textContaining('没有文件服务'), findsNothing);
+    });
   });
 
   group('文本预览', () {

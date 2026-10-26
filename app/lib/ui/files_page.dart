@@ -116,7 +116,16 @@ class _FilesPageHostState extends State<FilesPageHost> {
   List<Widget> _body(BuildContext context, AppModel app) {
     final c = context.dshColors;
     if (!app.filesAvailable) {
-      return const [_FileHint(text: '这台电脑没有文件服务：连接器版本较旧，或没装 workspace-files。')];
+      // **离线 ≠ 没能力**：没读到 `repo.info` 时 `caps.files` 只是默认 false，
+      // 说成"没有文件服务"会把用户引向"换连接器版本"，而下一步其实只是重连
+      // （2026-10-26 真机踩到）。
+      return [
+        _FileHint(
+          text: app.repoInfoKnown
+              ? '这台电脑没有文件服务：连接器版本较旧，或没装 workspace-files。'
+              : '还没连上电脑：连上后再看文件。',
+        ),
+      ];
     }
     final failure = _failure;
     if (failure != null) {
