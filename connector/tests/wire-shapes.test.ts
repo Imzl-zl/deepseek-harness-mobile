@@ -30,9 +30,17 @@ import assert from 'node:assert/strict'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { test } from 'node:test'
 
-import { fixtureHandlers, sidOf } from './support/fixture-handlers.js'
+import type { SessionSummary } from '@deepseek-ai/dsh-api-session-controller/types'
+
+import {
+  fixtureHandlers,
+  sessionListHandlerFor,
+  sidOf,
+} from './support/fixture-handlers.js'
 
 const GOLDEN = new URL('./fixtures/wire-shapes.json', import.meta.url)
+/** 归一化的真实 DSH 清单（`connector/tools/import-real-sessions.mjs` 生成）。 */
+const REAL_SESSIONS = new URL('./fixtures/real-dsh-sessions.json', import.meta.url)
 
 /** `UPDATE_WIRE_SHAPES=1` 时重写金样；平时只比较。 */
 const UPDATE = process.env['UPDATE_WIRE_SHAPES'] === '1'
@@ -259,6 +267,17 @@ async function collect(): Promise<Record<string, unknown[]>> {
     }
     out[method] = collected
   }
+
+  // 第二条 `session.list` 样本：**归一化的真实 DSH 清单**（20 种形状，见
+  // `connector/tools/import-real-sessions.mjs`）。它走真实适配器 + handler，
+  // 证明"真数据能过这条链"，而不是只有手写假行能过（2026-10-26 评审）。
+  const realItems = JSON.parse(
+    readFileSync(REAL_SESSIONS, 'utf8'),
+  ) as SessionSummary[]
+  const realHandler = sessionListHandlerFor(realItems)
+  const listSamples = out['session.list']
+  assert.ok(listSamples !== undefined, 'session.list 的样本容器不在')
+  listSamples.push(onWire(await realHandler({}, undefined as never)))
   return out
 }
 

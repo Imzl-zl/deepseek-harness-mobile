@@ -27,7 +27,10 @@
  */
 import { createHandlers } from '../../src/handlers.js'
 import { ProtocolError } from '../../src/protocol/errors.js'
+import { createSessionsAdapter } from '../../src/dsh/sessions.js'
 import { createFakeAliases } from './fake-aliases.js'
+import type { SessionController } from '@deepseek-ai/dsh-api-session-controller'
+import type { SessionSummary } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { JobSubscriptions } from '../../src/job-subscriptions.js'
 import type { SessionSubscriptions } from '../../src/session-subscriptions.js'
 
@@ -170,6 +173,103 @@ export const FULL_PROJECTION_VALUES = {
  *  顺带钉住"`values` 里有我们没消费的键是正常的"。 */
 export const PLAIN_PROJECTION_VALUES = { agentPreset: 'standard' } as const
 
+/** DSH 的会话 id 是 branded 类型；夹具里把普通字符串标成它。 */
+const dshSid = (value: string): SessionSummary['sessionId'] =>
+  value as SessionSummary['sessionId']
+
+/**
+ * 投影提示：外壳（kind / asOfSeq）照 DSH 的类型走；`values` 里是我们自己贡献的
+ * JSON 投影（DSH 的 `SessionProjectionSummaryValues` 只声明了它编译面内的键，
+ * 类型注释原话是 "plus JSON-safe values contributed outside this compilation face"），
+ * 所以只有这一层用一次显式转换 —— **会话行的其它字段不接受转换**。
+ */
+const dshProjections = (
+  kind: 'cached' | 'sequenced',
+  asOfSeq: number,
+  values: Record<string, unknown>,
+): SessionSummary['projections'] =>
+  ({ kind, asOfSeq, values }) as unknown as SessionSummary['projections']
+
+/**
+ * **DSH 侧的真形状会话清单**：类型来自 DSH 自己的 `SessionSummary`。
+ *
+ * 之前这里直接写端口行（`dshSessionId` / `subagent`…），等于**绕过适配器** ——
+ * 金样测的是"手写的行 → handler"，`createSessionsAdapter` 永远没人经过
+ * （2026-10-26 评审：连接器下层只有手写假输入兜着）。
+ *
+ * 现在夹具是 DSH 对象，再走**真实适配器**变成端口行：DSH 改 `SessionSummary`
+ * 时 `tsc --noEmit` 直接红，而不是等到某次真机。
+ */
+const DSH_SESSION_ITEMS: readonly SessionSummary[] = [
+  {
+    agentAvailable: true,
+    sessionId: dshSid('dsh-1'),
+    updatedAt: 200,
+    running: false,
+    blank: false,
+    cwd: '/repo/a',
+    projections: dshProjections('sequenced', 12, { ...PLAIN_PROJECTION_VALUES }),
+  },
+  {
+    agentAvailable: false,
+    sessionId: dshSid('dsh-2'),
+    updatedAt: 180,
+    running: false,
+    blank: false,
+    parentSessionId: dshSid('dsh-1'),
+    origin: 'subagent',
+  },
+  {
+    agentAvailable: false,
+    sessionId: dshSid('dsh-3'),
+    updatedAt: 160,
+    running: false,
+    blank: true,
+  },
+  {
+    agentAvailable: true,
+    sessionId: dshSid('dsh-4'),
+    updatedAt: 140,
+    running: true,
+    blank: false,
+    cwd: '/repo/b',
+    projections: dshProjections('cached', 7, { ...FULL_PROJECTION_VALUES }),
+  },
+]
+
+/** 走一次真实适配器：DSH `SessionSummary` → 端口行（`SessionSummaryRow`）。 */
+function dshSessionRows() {
+  // DSH 的 `SessionController` 是个大 class；夹具只假装它用到的那一个方法。
+  const controller = {
+    list: async () => ({ items: DSH_SESSION_ITEMS }),
+  } as unknown as SessionController
+  return createSessionsAdapter(controller).list()
+}
+
+/**
+ * 用**一份给定的 DSH 清单**造 `session.list` 处理器。
+ *
+ * 真实数据那条样本（`tests/fixtures/real-dsh-sessions.json`）与适配器用例共用它：
+ * 两条路径都经过 `createSessionsAdapter`，不存在"夹具手写端口行"的捷径。
+ * 别名用 `sid_r<原 id>`：**不透明**，且与 DSH id 不同（否则泄漏断言会永远为真）。
+ */
+export function sessionListHandlerFor(items: readonly SessionSummary[]) {
+  const handlers = createHandlers({
+    caps: () => ({ ...CAPS }),
+    aliasVersion: () => 7,
+    devices: () => [],
+    sessions: createSessionsAdapter({
+      list: async () => ({ items }),
+    } as unknown as SessionController),
+    aliases: createFakeAliases({
+      sidFor: (dshSessionId) => `sid_r${dshSessionId.replace(/^sid_/, '')}`,
+    }),
+  })
+  const handler = handlers['session.list']
+  if (handler === undefined) throw new Error('session.list 没挂上')
+  return handler
+}
+
 export function fixtureHandlers(
   subscriptions: JobSubscriptions | null = null,
   sessionSubscriptions: SessionSubscriptions | null = null,
@@ -181,46 +281,8 @@ export function fixtureHandlers(
     aliasVersion: () => 7,
     devices: () => [{ id: 'dev-1', name: '我的手机', pairedAt: 1000, revoked: false }],
     sessions: {
-      list: () =>
-        Promise.resolve([
-          {
-            dshSessionId: 'dsh-1',
-            updatedAt: 200,
-            running: false,
-            blank: false,
-            subagent: false,
-            cwd: '/repo/a',
-            projections: { kind: 'sequenced', asOfSeq: 12, values: { ...PLAIN_PROJECTION_VALUES } },
-          },
-          {
-            dshSessionId: 'dsh-2',
-            updatedAt: 180,
-            running: false,
-            blank: false,
-            subagent: true,
-            parentSessionId: 'dsh-1',
-          },
-          {
-            dshSessionId: 'dsh-3',
-            updatedAt: 160,
-            running: false,
-            blank: true,
-            subagent: false,
-          },
-          {
-            dshSessionId: 'dsh-4',
-            updatedAt: 140,
-            running: true,
-            blank: false,
-            subagent: false,
-            cwd: '/repo/b',
-            projections: {
-              kind: 'cached',
-              asOfSeq: 7,
-              values: { ...FULL_PROJECTION_VALUES },
-            },
-          },
-        ]),
+      // **不是手写的端口行**：DSH 对象走真实适配器（见上方 `DSH_SESSION_ITEMS`）。
+      list: () => dshSessionRows(),
       prompt: () => {
         if (promptBox !== undefined) promptBox.count += 1
         return Promise.resolve({ accepted: true })

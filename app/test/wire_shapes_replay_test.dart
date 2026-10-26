@@ -257,6 +257,46 @@ void main() {
     });
   }
 
+  test('session.list 的每一条样本都解得出（第二条是归一化的真实清单）', () {
+    final samples = (golden['session.list']! as List).cast<Object?>();
+    expect(samples.length, 2, reason: '第一条手写四形态，第二条真实清单');
+    for (var index = 0; index < samples.length; index += 1) {
+      WireDiagnostics.reset();
+      final sample = samples[index]! as Map;
+      final rows = (sample['sessions']! as List).cast<Object?>();
+      final reading = readSessionList(sample);
+      expect(
+        reading,
+        isA<WireOk<List<SessionSummary>>>(),
+        reason: '样本 ${index + 1}',
+      );
+      expect(
+        (reading as WireOk<List<SessionSummary>>).value.length,
+        rows.length,
+        reason: '样本 ${index + 1} 的行数',
+      );
+      expect(WireDiagnostics.badCount, 0, reason: '样本 ${index + 1} 必须零形状错');
+    }
+
+    // 真实清单按"形状签名"去重成 20 条；子会话与带投影的行都必须出现过，
+    // 否则这条样本只是"第二条手写清单"。生成器见
+    // `connector/tools/import-real-sessions.mjs`。
+    final realRows = (((samples[1]! as Map)['sessions']!) as List)
+        .cast<Object?>()
+        .cast<Map>();
+    expect(realRows.length, 20);
+    expect(
+      realRows.any((row) => row['parentSessionId'] != null),
+      isTrue,
+      reason: '真实清单里没有子会话行 —— 样本退化了',
+    );
+    expect(
+      realRows.any((row) => row['projections'] != null),
+      isTrue,
+      reason: '真实清单里没有投影信封 —— 样本退化了',
+    );
+  });
+
   test('缺 sid ⇒ 整行丢，且计数恰好 1（恒发键缺失是漂移，不是"少一个字段"）', () {
     final broken = Map<String, Object?>.from(rowSamples.first)..remove('sid');
     final reading = readSessionList({

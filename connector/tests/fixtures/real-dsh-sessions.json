@@ -1,0 +1,1730 @@
+[
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0000",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "current",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": "s",
+        "goal": null,
+        "tokenUsage": {
+          "uncachedInputTokens": 1,
+          "outputTokens": 1,
+          "cacheReadTokens": 1,
+          "cacheWriteTokens": 1
+        },
+        "contextPressure": {
+          "pressureTokens": 1,
+          "projectedTokens": 1,
+          "contextWindow": 1
+        },
+        "contextBreakdown": {
+          "systemTokens": 1,
+          "toolsTokens": 1,
+          "messageTokens": 1
+        },
+        "inbox": {
+          "next-turn": [],
+          "next-step": []
+        },
+        "sessionStats": {
+          "turns": 1,
+          "steps": 1,
+          "llmMs": 1,
+          "toolMs": 1,
+          "ttftMs": 1,
+          "ttftSteps": 1,
+          "decodeMs": 1,
+          "decodeTokens": 1
+        },
+        "turnOutline": [
+          {
+            "turn": 1,
+            "seq": 1,
+            "prompt": "s",
+            "response": "s"
+          }
+        ],
+        "agentPreset": "s",
+        "userQuestions": {
+          "active": [],
+          "settled": []
+        },
+        "permissions": {
+          "currentValue": "danger-full-access"
+        },
+        "workingDirectory": "s",
+        "subagentCatalog": [],
+        "subagentTiming": {
+          "settledMs": 1
+        },
+        "subagent": null,
+        "todos": null,
+        "plan": {
+          "active": false,
+          "pending": false
+        },
+        "modelSelection": {
+          "lastUsed": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          },
+          "next": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          }
+        },
+        "sessionListMetadata": {
+          "blank": false,
+          "lastPromptAt": 1
+        },
+        "imageLimits": {
+          "maxImageBytes": 1,
+          "maxImagesPerMessage": 1,
+          "maxMessageImageBytes": 1,
+          "maxImagePixels": 1,
+          "maxImageDimension": 1,
+          "mediaTypes": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0004",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "current",
+    "parentSessionId": "sid_0005",
+    "origin": "subagent",
+    "cwd": "/repo/s"
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0005",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "current",
+    "cwd": "/repo/s"
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0010",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "current",
+    "parentSessionId": "sid_0003",
+    "origin": "subagent",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": "s",
+        "goal": null,
+        "tokenUsage": {
+          "uncachedInputTokens": 1,
+          "outputTokens": 1,
+          "cacheReadTokens": 1,
+          "cacheWriteTokens": 1
+        },
+        "contextPressure": {
+          "pressureTokens": 1,
+          "projectedTokens": 1,
+          "contextWindow": 1
+        },
+        "contextBreakdown": {
+          "systemTokens": 1,
+          "toolsTokens": 1,
+          "messageTokens": 1
+        },
+        "inbox": {
+          "next-turn": [],
+          "next-step": []
+        },
+        "sessionStats": {
+          "turns": 1,
+          "steps": 1,
+          "llmMs": 1,
+          "toolMs": 1,
+          "ttftMs": 1,
+          "ttftSteps": 1,
+          "decodeMs": 1,
+          "decodeTokens": 1
+        },
+        "turnOutline": [
+          {
+            "turn": 1,
+            "seq": 1,
+            "prompt": "s",
+            "response": "s"
+          }
+        ],
+        "agentPreset": "s",
+        "userQuestions": {
+          "active": [],
+          "settled": []
+        },
+        "permissions": {
+          "currentValue": "danger-full-access"
+        },
+        "workingDirectory": "s",
+        "subagentCatalog": [],
+        "subagentTiming": {
+          "settledMs": 1,
+          "active": {
+            "since": 1,
+            "through": 1
+          }
+        },
+        "subagent": {
+          "mode": "continuable",
+          "label": "s",
+          "seq": 1
+        },
+        "todos": null,
+        "plan": {
+          "active": false,
+          "pending": false
+        },
+        "modelSelection": {
+          "lastUsed": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          },
+          "next": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          }
+        },
+        "sessionListMetadata": {
+          "blank": false,
+          "lastPromptAt": 1
+        },
+        "imageLimits": {
+          "maxImageBytes": 1,
+          "maxImagesPerMessage": 1,
+          "maxMessageImageBytes": 1,
+          "maxImagePixels": 1,
+          "maxImageDimension": 1,
+          "mediaTypes": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0012",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "current",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": "s",
+        "goal": null,
+        "tokenUsage": {
+          "uncachedInputTokens": 1,
+          "outputTokens": 1,
+          "cacheReadTokens": 1,
+          "cacheWriteTokens": 1
+        },
+        "contextPressure": {
+          "pressureTokens": 1,
+          "projectedTokens": 1,
+          "contextWindow": 1
+        },
+        "contextBreakdown": {
+          "systemTokens": 1,
+          "toolsTokens": 1,
+          "messageTokens": 1
+        },
+        "inbox": {
+          "next-turn": [],
+          "next-step": []
+        },
+        "sessionStats": {
+          "turns": 1,
+          "steps": 1,
+          "llmMs": 1,
+          "toolMs": 1,
+          "ttftMs": 1,
+          "ttftSteps": 1,
+          "decodeMs": 1,
+          "decodeTokens": 1
+        },
+        "turnOutline": [
+          {
+            "turn": 1,
+            "seq": 1,
+            "prompt": "s",
+            "response": "s"
+          }
+        ],
+        "agentPreset": "s",
+        "userQuestions": {
+          "active": [],
+          "settled": []
+        },
+        "permissions": {
+          "currentValue": "danger-full-access"
+        },
+        "workingDirectory": "s",
+        "subagentCatalog": [],
+        "subagentTiming": {
+          "settledMs": 1
+        },
+        "subagent": null,
+        "todos": [
+          {
+            "content": "s",
+            "status": "s"
+          }
+        ],
+        "plan": {
+          "active": false,
+          "pending": false
+        },
+        "modelSelection": {
+          "lastUsed": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          },
+          "next": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          }
+        },
+        "sessionListMetadata": {
+          "blank": false,
+          "lastPromptAt": 1
+        },
+        "imageLimits": {
+          "maxImageBytes": 1,
+          "maxImagesPerMessage": 1,
+          "maxMessageImageBytes": 1,
+          "maxImagePixels": 1,
+          "maxImageDimension": 1,
+          "mediaTypes": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0032",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "current",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": "s",
+        "goal": {
+          "goal": {
+            "id": "s",
+            "revision": 1,
+            "objective": "s",
+            "phase": "s",
+            "maxGoalRounds": 1
+          },
+          "roundsStarted": 1,
+          "createdAt": 1,
+          "updatedAt": 1
+        },
+        "tokenUsage": {
+          "uncachedInputTokens": 1,
+          "outputTokens": 1,
+          "cacheReadTokens": 1,
+          "cacheWriteTokens": 1
+        },
+        "contextPressure": {
+          "pressureTokens": 1,
+          "projectedTokens": 1,
+          "contextWindow": 1
+        },
+        "contextBreakdown": {
+          "systemTokens": 1,
+          "toolsTokens": 1,
+          "messageTokens": 1
+        },
+        "inbox": {
+          "next-turn": [],
+          "next-step": []
+        },
+        "sessionStats": {
+          "turns": 1,
+          "steps": 1,
+          "llmMs": 1,
+          "toolMs": 1,
+          "ttftMs": 1,
+          "ttftSteps": 1,
+          "decodeMs": 1,
+          "decodeTokens": 1
+        },
+        "turnOutline": [
+          {
+            "turn": 1,
+            "seq": 1,
+            "prompt": "s",
+            "response": "s"
+          }
+        ],
+        "agentPreset": "s",
+        "userQuestions": {
+          "active": [],
+          "settled": []
+        },
+        "permissions": {
+          "currentValue": "danger-full-access"
+        },
+        "workingDirectory": "s",
+        "subagentCatalog": [],
+        "subagentTiming": {
+          "settledMs": 1
+        },
+        "subagent": null,
+        "todos": null,
+        "plan": {
+          "active": false,
+          "pending": false
+        },
+        "modelSelection": {
+          "lastUsed": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          },
+          "next": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          }
+        },
+        "sessionListMetadata": {
+          "blank": false,
+          "lastPromptAt": 1
+        },
+        "imageLimits": {
+          "maxImageBytes": 1,
+          "maxImagesPerMessage": 1,
+          "maxMessageImageBytes": 1,
+          "maxImagePixels": 1,
+          "maxImageDimension": 1,
+          "mediaTypes": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0048",
+    "updatedAt": 1,
+    "running": false,
+    "blank": true,
+    "formatStatus": "current",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": null,
+        "goal": null,
+        "tokenUsage": {
+          "uncachedInputTokens": 1,
+          "outputTokens": 1,
+          "cacheReadTokens": 1,
+          "cacheWriteTokens": 1
+        },
+        "contextPressure": {},
+        "contextBreakdown": {
+          "systemTokens": 1,
+          "toolsTokens": 1,
+          "messageTokens": 1
+        },
+        "inbox": {
+          "next-turn": [],
+          "next-step": []
+        },
+        "sessionStats": {
+          "turns": 1,
+          "steps": 1,
+          "llmMs": 1,
+          "toolMs": 1,
+          "ttftMs": 1,
+          "ttftSteps": 1,
+          "decodeMs": 1,
+          "decodeTokens": 1
+        },
+        "turnOutline": [],
+        "agentPreset": "s",
+        "userQuestions": {
+          "active": [],
+          "settled": []
+        },
+        "permissions": {
+          "currentValue": "workspace-write"
+        },
+        "workingDirectory": "s",
+        "subagentCatalog": [],
+        "subagentTiming": {
+          "settledMs": 1
+        },
+        "subagent": null,
+        "todos": null,
+        "plan": {
+          "active": false,
+          "pending": false
+        },
+        "modelSelection": {
+          "lastUsed": null,
+          "next": null
+        },
+        "sessionListMetadata": {
+          "blank": true,
+          "lastPromptAt": null
+        },
+        "imageLimits": {
+          "maxImageBytes": 1,
+          "maxImagesPerMessage": 1,
+          "maxMessageImageBytes": 1,
+          "maxImagePixels": 1,
+          "maxImageDimension": 1,
+          "mediaTypes": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0112",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "current",
+    "parentSessionId": "sid_0110",
+    "origin": "subagent",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": "s",
+        "goal": null,
+        "tokenUsage": {
+          "uncachedInputTokens": 1,
+          "outputTokens": 1,
+          "cacheReadTokens": 1,
+          "cacheWriteTokens": 1
+        },
+        "contextPressure": {
+          "pressureTokens": 1,
+          "projectedTokens": 1,
+          "contextWindow": 1
+        },
+        "contextBreakdown": {
+          "systemTokens": 1,
+          "toolsTokens": 1,
+          "messageTokens": 1
+        },
+        "inbox": {
+          "next-turn": [],
+          "next-step": []
+        },
+        "sessionStats": {
+          "turns": 1,
+          "steps": 1,
+          "llmMs": 1,
+          "toolMs": 1,
+          "ttftMs": 1,
+          "ttftSteps": 1,
+          "decodeMs": 1,
+          "decodeTokens": 1
+        },
+        "turnOutline": [
+          {
+            "turn": 1,
+            "seq": 1,
+            "prompt": "s",
+            "response": "s"
+          }
+        ],
+        "agentPreset": "s",
+        "userQuestions": {
+          "active": [],
+          "settled": []
+        },
+        "permissions": {
+          "currentValue": "danger-full-access"
+        },
+        "workingDirectory": "s",
+        "subagentCatalog": [],
+        "subagentTiming": {
+          "settledMs": 1,
+          "lastTurnCompleted": true
+        },
+        "subagent": {
+          "mode": "continuable",
+          "label": "s",
+          "seq": 1
+        },
+        "todos": [
+          {
+            "content": "s",
+            "status": "s"
+          }
+        ],
+        "plan": {
+          "active": false,
+          "pending": false
+        },
+        "modelSelection": {
+          "lastUsed": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          },
+          "next": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          }
+        },
+        "sessionListMetadata": {
+          "blank": false,
+          "lastPromptAt": 1
+        },
+        "imageLimits": {
+          "maxImageBytes": 1,
+          "maxImagesPerMessage": 1,
+          "maxMessageImageBytes": 1,
+          "maxImagePixels": 1,
+          "maxImageDimension": 1,
+          "mediaTypes": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0122",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "current",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": "s",
+        "goal": {
+          "goal": {
+            "id": "s",
+            "revision": 1,
+            "objective": "s",
+            "phase": "s",
+            "maxGoalRounds": 1
+          },
+          "roundsStarted": 1,
+          "createdAt": 1,
+          "updatedAt": 1
+        },
+        "tokenUsage": {
+          "uncachedInputTokens": 1,
+          "outputTokens": 1,
+          "cacheReadTokens": 1,
+          "cacheWriteTokens": 1
+        },
+        "contextPressure": {
+          "pressureTokens": 1,
+          "projectedTokens": 1,
+          "contextWindow": 1
+        },
+        "contextBreakdown": {
+          "systemTokens": 1,
+          "toolsTokens": 1,
+          "messageTokens": 1
+        },
+        "inbox": {
+          "next-turn": [],
+          "next-step": []
+        },
+        "sessionStats": {
+          "turns": 1,
+          "steps": 1,
+          "llmMs": 1,
+          "toolMs": 1,
+          "ttftMs": 1,
+          "ttftSteps": 1,
+          "decodeMs": 1,
+          "decodeTokens": 1
+        },
+        "turnOutline": [
+          {
+            "turn": 1,
+            "seq": 1,
+            "prompt": "s",
+            "response": "s"
+          }
+        ],
+        "agentPreset": "s",
+        "userQuestions": {
+          "active": [],
+          "settled": []
+        },
+        "permissions": {
+          "currentValue": "danger-full-access"
+        },
+        "workingDirectory": "s",
+        "subagentCatalog": [],
+        "subagentTiming": {
+          "settledMs": 1
+        },
+        "subagent": null,
+        "todos": [
+          {
+            "content": "s",
+            "status": "s"
+          }
+        ],
+        "plan": {
+          "active": false,
+          "pending": false
+        },
+        "modelSelection": {
+          "lastUsed": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          },
+          "next": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          }
+        },
+        "sessionListMetadata": {
+          "blank": false,
+          "lastPromptAt": 1
+        },
+        "imageLimits": {
+          "maxImageBytes": 1,
+          "maxImagesPerMessage": 1,
+          "maxMessageImageBytes": 1,
+          "maxImagePixels": 1,
+          "maxImageDimension": 1,
+          "mediaTypes": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0148",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "current",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": null,
+        "goal": null,
+        "tokenUsage": {
+          "uncachedInputTokens": 1,
+          "outputTokens": 1,
+          "cacheReadTokens": 1,
+          "cacheWriteTokens": 1
+        },
+        "contextPressure": {},
+        "contextBreakdown": {
+          "systemTokens": 1,
+          "toolsTokens": 1,
+          "messageTokens": 1
+        },
+        "inbox": {
+          "next-turn": [],
+          "next-step": []
+        },
+        "sessionStats": {
+          "turns": 1,
+          "steps": 1,
+          "llmMs": 1,
+          "toolMs": 1,
+          "ttftMs": 1,
+          "ttftSteps": 1,
+          "decodeMs": 1,
+          "decodeTokens": 1
+        },
+        "turnOutline": [
+          {
+            "turn": 1,
+            "seq": 1,
+            "prompt": "s",
+            "response": "s"
+          }
+        ],
+        "agentPreset": "s",
+        "userQuestions": {
+          "active": [],
+          "settled": []
+        },
+        "permissions": {
+          "currentValue": "danger-full-access"
+        },
+        "workingDirectory": "s",
+        "subagentCatalog": [],
+        "subagentTiming": {
+          "settledMs": 1
+        },
+        "subagent": null,
+        "todos": null,
+        "plan": {
+          "active": false,
+          "pending": false
+        },
+        "modelSelection": {
+          "lastUsed": null,
+          "next": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          }
+        },
+        "sessionListMetadata": {
+          "blank": false,
+          "lastPromptAt": null
+        },
+        "imageLimits": {
+          "maxImageBytes": 1,
+          "maxImagesPerMessage": 1,
+          "maxMessageImageBytes": 1,
+          "maxImagePixels": 1,
+          "maxImageDimension": 1,
+          "mediaTypes": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0216",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "current",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": "s",
+        "goal": null,
+        "tokenUsage": {
+          "uncachedInputTokens": 1,
+          "outputTokens": 1,
+          "cacheReadTokens": 1,
+          "cacheWriteTokens": 1
+        },
+        "contextPressure": {
+          "pressureTokens": 1,
+          "projectedTokens": 1,
+          "contextWindow": 1
+        },
+        "inbox": {
+          "next-turn": [],
+          "next-step": []
+        },
+        "sessionStats": {
+          "turns": 1,
+          "steps": 1,
+          "llmMs": 1,
+          "toolMs": 1,
+          "ttftMs": 1,
+          "ttftSteps": 1,
+          "decodeMs": 1,
+          "decodeTokens": 1
+        },
+        "turnOutline": [
+          {
+            "turn": 1,
+            "seq": 1,
+            "prompt": "s",
+            "response": "s"
+          }
+        ],
+        "agentPreset": "s",
+        "userQuestions": {
+          "active": [],
+          "settled": []
+        },
+        "permissions": {
+          "currentValue": "danger-full-access"
+        },
+        "subagentTiming": {
+          "settledMs": 1
+        },
+        "subagent": null,
+        "todos": null,
+        "plan": {
+          "active": false,
+          "pending": false
+        },
+        "modelSelection": {
+          "lastUsed": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          },
+          "next": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          }
+        },
+        "sessionListMetadata": {
+          "blank": false,
+          "lastPromptAt": 1
+        },
+        "imageLimits": {
+          "maxImageBytes": 1,
+          "maxImagesPerMessage": 1,
+          "maxMessageImageBytes": 1,
+          "maxImagePixels": 1,
+          "maxImageDimension": 1,
+          "mediaTypes": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0218",
+    "updatedAt": 1,
+    "running": false,
+    "blank": true,
+    "formatStatus": "current",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": null,
+        "goal": null,
+        "tokenUsage": {
+          "uncachedInputTokens": 1,
+          "outputTokens": 1,
+          "cacheReadTokens": 1,
+          "cacheWriteTokens": 1
+        },
+        "contextPressure": {},
+        "inbox": {
+          "next-turn": [],
+          "next-step": []
+        },
+        "sessionStats": {
+          "turns": 1,
+          "steps": 1,
+          "llmMs": 1,
+          "toolMs": 1,
+          "ttftMs": 1,
+          "ttftSteps": 1,
+          "decodeMs": 1,
+          "decodeTokens": 1
+        },
+        "turnOutline": [],
+        "agentPreset": "s",
+        "userQuestions": {
+          "active": [],
+          "settled": []
+        },
+        "permissions": {
+          "currentValue": "workspace-write"
+        },
+        "subagentTiming": {
+          "settledMs": 1
+        },
+        "subagent": null,
+        "todos": null,
+        "plan": {
+          "active": false,
+          "pending": false
+        },
+        "modelSelection": {
+          "lastUsed": null,
+          "next": null
+        },
+        "sessionListMetadata": {
+          "blank": true,
+          "lastPromptAt": null
+        },
+        "imageLimits": {
+          "maxImageBytes": 1,
+          "maxImagesPerMessage": 1,
+          "maxMessageImageBytes": 1,
+          "maxImagePixels": 1,
+          "maxImageDimension": 1,
+          "mediaTypes": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0221",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "current",
+    "parentSessionId": "sid_0220",
+    "origin": "subagent",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": "s",
+        "goal": null,
+        "tokenUsage": {
+          "uncachedInputTokens": 1,
+          "outputTokens": 1,
+          "cacheReadTokens": 1,
+          "cacheWriteTokens": 1
+        },
+        "contextPressure": {
+          "pressureTokens": 1,
+          "projectedTokens": 1,
+          "contextWindow": 1
+        },
+        "inbox": {
+          "next-turn": [],
+          "next-step": []
+        },
+        "sessionStats": {
+          "turns": 1,
+          "steps": 1,
+          "llmMs": 1,
+          "toolMs": 1,
+          "ttftMs": 1,
+          "ttftSteps": 1,
+          "decodeMs": 1,
+          "decodeTokens": 1
+        },
+        "turnOutline": [
+          {
+            "turn": 1,
+            "seq": 1,
+            "prompt": "s",
+            "response": "s"
+          }
+        ],
+        "agentPreset": "s",
+        "userQuestions": {
+          "active": [],
+          "settled": []
+        },
+        "permissions": {
+          "currentValue": "danger-full-access"
+        },
+        "subagentTiming": {
+          "settledMs": 1,
+          "lastTurnCompleted": true
+        },
+        "subagent": {
+          "mode": "continuable",
+          "label": "s",
+          "seq": 1
+        },
+        "todos": null,
+        "plan": {
+          "active": false,
+          "pending": false
+        },
+        "modelSelection": {
+          "lastUsed": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          },
+          "next": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          }
+        },
+        "sessionListMetadata": {
+          "blank": false,
+          "lastPromptAt": 1
+        },
+        "imageLimits": {
+          "maxImageBytes": 1,
+          "maxImagesPerMessage": 1,
+          "maxMessageImageBytes": 1,
+          "maxImagePixels": 1,
+          "maxImageDimension": 1,
+          "mediaTypes": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0231",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "current",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": "s",
+        "goal": null,
+        "tokenUsage": {
+          "uncachedInputTokens": 1,
+          "outputTokens": 1,
+          "cacheReadTokens": 1,
+          "cacheWriteTokens": 1
+        },
+        "contextPressure": {
+          "pressureTokens": 1,
+          "projectedTokens": 1,
+          "contextWindow": 1
+        },
+        "inbox": {
+          "next-turn": [],
+          "next-step": []
+        },
+        "userQuestions": {
+          "active": [],
+          "settled": []
+        },
+        "permissions": {
+          "currentValue": "danger-full-access"
+        },
+        "subagentTiming": {
+          "settledMs": 1
+        },
+        "subagent": null,
+        "todos": null,
+        "plan": {
+          "active": false,
+          "pending": false
+        }
+      }
+    }
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0240",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "current",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": "s",
+        "goal": null,
+        "tokenUsage": {
+          "uncachedInputTokens": 1,
+          "outputTokens": 1,
+          "cacheReadTokens": 1,
+          "cacheWriteTokens": 1
+        },
+        "contextPressure": {
+          "pressureTokens": 1,
+          "projectedTokens": 1,
+          "contextWindow": 1
+        },
+        "inbox": {
+          "next-turn": [],
+          "next-step": []
+        },
+        "sessionStats": {
+          "turns": 1,
+          "steps": 1,
+          "llmMs": 1,
+          "toolMs": 1,
+          "ttftMs": 1,
+          "ttftSteps": 1,
+          "decodeMs": 1,
+          "decodeTokens": 1
+        },
+        "turnOutline": [
+          {
+            "turn": 1,
+            "seq": 1,
+            "prompt": "s",
+            "response": "s"
+          }
+        ],
+        "agentPreset": "s",
+        "userQuestions": {
+          "active": [],
+          "settled": []
+        },
+        "permissions": {
+          "currentValue": "danger-full-access"
+        },
+        "subagentTiming": {
+          "settledMs": 1
+        },
+        "subagent": null,
+        "todos": [
+          {
+            "content": "s",
+            "status": "s"
+          }
+        ],
+        "plan": {
+          "active": false,
+          "pending": false
+        },
+        "modelSelection": {
+          "lastUsed": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          },
+          "next": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          }
+        },
+        "sessionListMetadata": {
+          "blank": false,
+          "lastPromptAt": 1
+        },
+        "imageLimits": {
+          "maxImageBytes": 1,
+          "maxImagesPerMessage": 1,
+          "maxMessageImageBytes": 1,
+          "maxImagePixels": 1,
+          "maxImageDimension": 1,
+          "mediaTypes": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0257",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "current",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": "s",
+        "goal": {
+          "goal": {
+            "id": "s",
+            "revision": 1,
+            "objective": "s",
+            "phase": "s",
+            "maxGoalRounds": 1
+          },
+          "roundsStarted": 1,
+          "createdAt": 1,
+          "updatedAt": 1
+        },
+        "tokenUsage": {
+          "uncachedInputTokens": 1,
+          "outputTokens": 1,
+          "cacheReadTokens": 1,
+          "cacheWriteTokens": 1
+        },
+        "contextPressure": {
+          "pressureTokens": 1,
+          "projectedTokens": 1,
+          "contextWindow": 1
+        },
+        "inbox": {
+          "next-turn": [],
+          "next-step": []
+        },
+        "sessionStats": {
+          "turns": 1,
+          "steps": 1,
+          "llmMs": 1,
+          "toolMs": 1,
+          "ttftMs": 1,
+          "ttftSteps": 1,
+          "decodeMs": 1,
+          "decodeTokens": 1
+        },
+        "turnOutline": [
+          {
+            "turn": 1,
+            "seq": 1,
+            "prompt": "s",
+            "response": "s"
+          }
+        ],
+        "agentPreset": "s",
+        "userQuestions": {
+          "active": [],
+          "settled": []
+        },
+        "permissions": {
+          "currentValue": "danger-full-access"
+        },
+        "subagentTiming": {
+          "settledMs": 1
+        },
+        "subagent": null,
+        "todos": null,
+        "plan": {
+          "active": false,
+          "pending": false
+        },
+        "modelSelection": {
+          "lastUsed": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          },
+          "next": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          }
+        },
+        "sessionListMetadata": {
+          "blank": false,
+          "lastPromptAt": 1
+        },
+        "imageLimits": {
+          "maxImageBytes": 1,
+          "maxImagesPerMessage": 1,
+          "maxMessageImageBytes": 1,
+          "maxImagePixels": 1,
+          "maxImageDimension": 1,
+          "mediaTypes": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0281",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "current",
+    "parentSessionId": "sid_0278",
+    "origin": "subagent",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": "s",
+        "goal": null,
+        "tokenUsage": {
+          "uncachedInputTokens": 1,
+          "outputTokens": 1,
+          "cacheReadTokens": 1,
+          "cacheWriteTokens": 1
+        },
+        "contextPressure": {
+          "pressureTokens": 1,
+          "projectedTokens": 1,
+          "contextWindow": 1
+        },
+        "inbox": {
+          "next-turn": [],
+          "next-step": []
+        },
+        "sessionStats": {
+          "turns": 1,
+          "steps": 1,
+          "llmMs": 1,
+          "toolMs": 1,
+          "ttftMs": 1,
+          "ttftSteps": 1,
+          "decodeMs": 1,
+          "decodeTokens": 1
+        },
+        "turnOutline": [
+          {
+            "turn": 1,
+            "seq": 1,
+            "prompt": "s",
+            "response": "s"
+          }
+        ],
+        "agentPreset": "s",
+        "userQuestions": {
+          "active": [],
+          "settled": []
+        },
+        "permissions": {
+          "currentValue": "danger-full-access"
+        },
+        "subagentTiming": {
+          "settledMs": 1,
+          "lastTurnCompleted": true
+        },
+        "subagent": {
+          "mode": "continuable",
+          "label": "s",
+          "seq": 1
+        },
+        "todos": [
+          {
+            "content": "s",
+            "status": "s"
+          }
+        ],
+        "plan": {
+          "active": false,
+          "pending": false
+        },
+        "modelSelection": {
+          "lastUsed": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          },
+          "next": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          }
+        },
+        "sessionListMetadata": {
+          "blank": false,
+          "lastPromptAt": 1
+        },
+        "imageLimits": {
+          "maxImageBytes": 1,
+          "maxImagesPerMessage": 1,
+          "maxMessageImageBytes": 1,
+          "maxImagePixels": 1,
+          "maxImageDimension": 1,
+          "mediaTypes": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0285",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "current",
+    "parentSessionId": "sid_0271",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": "s",
+        "goal": null,
+        "tokenUsage": {
+          "uncachedInputTokens": 1,
+          "outputTokens": 1,
+          "cacheReadTokens": 1,
+          "cacheWriteTokens": 1
+        },
+        "contextPressure": {
+          "pressureTokens": 1,
+          "projectedTokens": 1,
+          "contextWindow": 1
+        },
+        "inbox": {
+          "next-turn": [],
+          "next-step": []
+        },
+        "sessionStats": {
+          "turns": 1,
+          "steps": 1,
+          "llmMs": 1,
+          "toolMs": 1,
+          "ttftMs": 1,
+          "ttftSteps": 1,
+          "decodeMs": 1,
+          "decodeTokens": 1
+        },
+        "turnOutline": [
+          {
+            "turn": 1,
+            "seq": 1,
+            "prompt": "s",
+            "response": "s"
+          }
+        ],
+        "agentPreset": "s",
+        "userQuestions": {
+          "active": [],
+          "settled": []
+        },
+        "permissions": {
+          "currentValue": "danger-full-access"
+        },
+        "subagentTiming": {
+          "settledMs": 1
+        },
+        "subagent": null,
+        "todos": null,
+        "plan": {
+          "active": false,
+          "pending": false
+        },
+        "modelSelection": {
+          "lastUsed": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          },
+          "next": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          }
+        },
+        "sessionListMetadata": {
+          "blank": false,
+          "lastPromptAt": 1
+        },
+        "imageLimits": {
+          "maxImageBytes": 1,
+          "maxImagesPerMessage": 1,
+          "maxMessageImageBytes": 1,
+          "maxImagePixels": 1,
+          "maxImageDimension": 1,
+          "mediaTypes": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0328",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "current",
+    "parentSessionId": "sid_0313",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": "s",
+        "goal": null,
+        "tokenUsage": {
+          "uncachedInputTokens": 1,
+          "outputTokens": 1,
+          "cacheReadTokens": 1,
+          "cacheWriteTokens": 1
+        },
+        "contextPressure": {
+          "pressureTokens": 1,
+          "projectedTokens": 1,
+          "contextWindow": 1
+        },
+        "contextBreakdown": {
+          "systemTokens": 1,
+          "toolsTokens": 1,
+          "messageTokens": 1
+        },
+        "inbox": {
+          "next-turn": [],
+          "next-step": []
+        },
+        "sessionStats": {
+          "turns": 1,
+          "steps": 1,
+          "llmMs": 1,
+          "toolMs": 1,
+          "ttftMs": 1,
+          "ttftSteps": 1,
+          "decodeMs": 1,
+          "decodeTokens": 1
+        },
+        "turnOutline": [
+          {
+            "turn": 1,
+            "seq": 1,
+            "prompt": "s",
+            "response": "s"
+          }
+        ],
+        "agentPreset": "s",
+        "userQuestions": {
+          "active": [],
+          "settled": []
+        },
+        "permissions": {
+          "currentValue": "danger-full-access"
+        },
+        "workingDirectory": "s",
+        "subagentCatalog": [],
+        "subagentTiming": {
+          "settledMs": 1
+        },
+        "subagent": null,
+        "todos": null,
+        "plan": {
+          "active": false,
+          "pending": false
+        },
+        "modelSelection": {
+          "lastUsed": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          },
+          "next": {
+            "provider": "s",
+            "model": "s",
+            "reasoningEffort": "s"
+          }
+        },
+        "sessionListMetadata": {
+          "blank": false,
+          "lastPromptAt": 1
+        },
+        "imageLimits": {
+          "maxImageBytes": 1,
+          "maxImagesPerMessage": 1,
+          "maxMessageImageBytes": 1,
+          "maxImagePixels": 1,
+          "maxImageDimension": 1,
+          "mediaTypes": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "agentAvailable": false,
+    "sessionId": "sid_0357",
+    "updatedAt": 1,
+    "running": false,
+    "blank": false,
+    "formatStatus": "migration-required",
+    "cwd": "/repo/s",
+    "projections": {
+      "kind": "cached",
+      "asOfSeq": 1,
+      "values": {
+        "title": null
+      }
+    }
+  }
+]

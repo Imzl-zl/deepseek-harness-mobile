@@ -130,6 +130,30 @@
 | 5 | 门禁范围与事实：`page`/`refetch` 的 `load*` 搬进 `wire/rpc/session_page.dart`；脚本扫 `app/lib`（除 `wire/`）且识别无前缀 `call<`；订正设计评审 `:267` | 脚本零 `call<`；在 `core/` 加一处 `call<` 会红（变异）；设计评审改成事实 | ✅（变异 1 红） |
 | 6 | 杂项：19 处回指、`permission.switch` 复用、`agentPresets` 断言、插件行认不出时计数、金样笔记的状态行 | 回指全部命中；`permission` 不再有第二份解码；回放覆盖 43/43；插件坏行计数用例 | ✅ |
 
+## 真实数据进门禁（同日追加）
+
+评审的"下一步 ①"：真实清单不再只活在笔记里。
+
+- **采集**：2026-10-26 10:05 用 `dsh web --port 63900 --no-open` 起一个隔离实例
+  （profile `web`，读同一份 `~/.dsh` 真实数据，**不触发模型**），从它打印的带 token 页面
+  `POST /api/session/list`（`args` 必须带 `_request`）拿到 **358 条真实清单**。
+  旧的 8099 实例已停、历史 token 对不上，所以这次是新抓的一份。
+- **归一化**：只换值、不换形状 —— 键、类型、嵌套、数组长度、以及解码会分支的枚举
+  （`projections.kind` / `origin` / `mode` / `formatStatus` / `currentValue`）原样保留；
+  `sessionId` / `parentSessionId` / `subagentCatalog[].id` 换成按原下标编号的稳定别名，
+  父子关系保留。
+- **按形状签名去重**：358 条只有 **20 种形状**（`blank`/`running`/父级/`origin`/
+  投影键集合/每个投影值的类型），每种留第一条 ⇒ 20 条、21.9 KB。
+  生成器：`connector/tools/import-real-sessions.mjs`；夹具：`connector/tests/fixtures/real-dsh-sessions.json`。
+- **进门禁**：金样的 `session.list` 现在有**两条样本**（4 条手写 + 20 条真实）；
+  Dart 回放逐条解，`badCount == 0`，并断言真实样本里子会话与投影信封都出现过。
+- **连接器下层**：真实夹具先走 `createSessionsAdapter`（类型来自 DSH 自己的
+  `SessionSummary`）再进 handler，`connector/tests/real-sessions.test.ts` 钉住
+  "DSH 字段不过线、真实 id 不出现"；`fixture-handlers` 的会话端口也从"手写端口行"
+  改成"DSH 对象 → 真实适配器"。
+- **代价**：真实行只剩形状，标题/目录/id 都是占位；重抓要重跑导入器（原始 dump 不进 git）。
+  归一化只保证"形状真实"，**不保证值真实** —— 值语义仍要靠真机。
+
 ## 落地记录
 
 | 批 | 提交 | 先红后绿的证据 |
