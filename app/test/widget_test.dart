@@ -730,21 +730,25 @@ void main() {
       client.emit(ConnectionState.serving);
       await tester.pumpAndSettle();
 
-      // 有模型的那台：显示模型 id。
+      // 有模型的那台：**数据**来自投影（写死占位等于对用户说谎）。
       await app.openSession('s1');
       await tester.pumpAndSettle();
+      expect(app.currentModel?.model, 'auto', reason: '投影给了模型就必须用投影的');
+      // **显示**照桌面的触发器：目录里没有这一项 ⇒ `trigger.fallback`
+      // 「请选择模型」（`ModelSelect.tsx:424-429`），不是原始 id、也不是"未选择"。
+      // 这个假电脑没有 `session/modelCatalog`；目录命中时显示展示名那条链
+      // 由 picker / 布局那几组用例覆盖。
       expect(
-        find.text('auto'),
+        find.text('请选择模型'),
         findsOneWidget,
-        reason: '电脑侧给了模型就必须显示它 —— 写死占位等于对用户说谎',
+        reason: '目录缺项时照桌面的 fallback，不退到原始 id',
       );
-      expect(find.text('未选择'), findsNothing, reason: '已经有了还显示"未选择"，说明投影没接上');
 
-      // 没模型的那台：显示"未选择"，**不猜**。
+      // 没模型的那台：同一句话，**不猜**。
       await app.openSession('s2');
       await tester.pumpAndSettle();
       expect(
-        find.text('未选择'),
+        find.text('请选择模型'),
         findsOneWidget,
         reason: '电脑侧没说就别猜 —— 猜一个就是把"看起来连着"当成"连着"',
       );

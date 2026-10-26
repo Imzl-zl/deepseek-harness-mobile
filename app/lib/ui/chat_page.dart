@@ -1170,27 +1170,36 @@ class ChatPageState extends State<ChatPage> {
   /// 见 `connector/src/dsh/models.ts`）。这里曾经写死 `'claude-opus'`，
   /// 于是手机上显示的模型与电脑侧真实状态毫无关系 —— 用户看到的"模型"是个谎言。
   ///
-  /// 三个档次，按证据从强到弱：
-  /// ① 电脑侧说了 → 显示那个模型 id；
-  /// ② 电脑侧没说（`null`）但连着 → "未选择"（**不猜**）；
-  /// ③ 没连着 → "未连接"。
+  /// 文案与分支**照桌面的触发器**
+  /// （`ui-model-selection/src/client/ModelSelect.tsx:424-429`）：
   ///
-  /// 目录里有这一项时用它的**展示名**（`DeepSeek-V41-Flash`），与 Web 的
-  /// trigger 同一条链（`ModelSelect.tsx:419` 的 `model.name`）；目录里没有
-  /// （刚拉到手、模型已下线）才退到 id。
+  /// ```ts
+  /// const modelLabel = waiting ? t('trigger.loading')
+  ///   : currentChoice?.model.name ?? t('trigger.fallback')   // 「请选择模型」
+  /// ```
+  ///
+  /// 所以只有三种结果：
+  /// ① 目录里有这一项 → 展示名（`DeepSeek-V41-Flash`）；
+  /// ② 没有选中模型 / 选中项不在目录里 → 「请选择模型」（`locales.ts:17`）；
+  /// ③ 没连着 → 「未连接」（手机自己的传输状态，桌面没有这一档）。
+  ///
+  /// **不再退回模型 id**：那会让界面显示 `c518aa0a-…:deepseek-4.1-flash`
+  /// 这种路由 id，而桌面从来不显示它（真机 2026-10-26 拍到的偏离）。
   String get _modelLabel {
     if (!_hasData) return '未连接';
     if (widget.app.currentSid == null) return '未选择';
     // 走 `AppModel.currentModel`（唯一出口）：它先看**本会话的投影提示**
     // `modelSelection`，再退到清单行 —— 只读清单行的话，子智能体页面上
-    // 永远显示「未选择」（子会话不在连接器那张活 agent 表里）。
+    // 永远显示「请选择模型」（子会话不在连接器那张活 agent 表里）。
     final model = widget.app.currentModel;
-    if (model == null) return '未选择';
-    return widget.app.modelCatalog?.displayNameOf(
-          provider: model.provider,
-          model: model.model,
-        ) ??
-        model.label;
+    if (model == null) return '请选择模型';
+    // **不用 `displayNameOf`**：那一个在目录缺项时会退回模型 id
+    // （`model_catalog.dart` 的兜底，picker 里需要它），而桌面触发器在缺项时
+    // 显示的是「请选择模型」。取入口再判断，才是桌面那句。
+    return widget.app.modelCatalog
+            ?.entryOf(provider: model.provider, model: model.model)
+            ?.displayName ??
+        '请选择模型';
   }
 
   /// 推理等级的文字；**`null` = 不显示那一截**。
@@ -2890,14 +2899,10 @@ class _ConversationFlowState extends State<_ConversationFlow> {
     if (app == null || sid == null) return;
     final child = await app.forkSession(sid, atSeq: atSeq);
     if (!mounted) return;
-    if (child == null) {
-      DshToast.show(
-        context,
-        '分支失败：${app.lastError?.message ?? '电脑侧没有给结论'}',
-        kind: DshToastKind.error,
-      );
-      return;
-    }
+    // **失败静默、源视图不变** —— 照桌面的 catch
+    // （`ui-chat/src/client/apply.ts:307-310`："Fork or child-title failure
+    // leaves the source view unchanged"，什么都不弹）。原因留在 `AppModel.lastError`。
+    if (child == null) return;
     await app.openSession(child);
   }
 

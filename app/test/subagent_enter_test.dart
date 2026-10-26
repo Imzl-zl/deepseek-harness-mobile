@@ -134,6 +134,7 @@ class _SubagentClient extends FakeSyncClient {
       sent.add((method, params));
       return <String, Object?>{'accepted': true} as T;
     }
+
     final result = switch (method) {
       'session.list' => {
         'sessions': [
@@ -540,27 +541,38 @@ void main() {
     // 2026-10-23 用户看到的问题：进子会话，输入栏的模型显示「未选择」。
     // 根因是连接器顶层 `model` 从**活 agent** 读，子会话不在那张表里；
     // 而行的投影提示 `modelSelection` 对子会话也有（`lastUsed` 由 request/header 推）。
-    final app = AppModel(client: _SubagentClient());
+    final client = _SubagentClient();
+    final app = AppModel(client: client);
     await app.start();
     await app.refreshSessions();
+
     await app.openSession('sid_A');
 
     final key = await _pumpChat(tester, app);
-    // 对照：父会话的行没有 modelSelection ⇒ 仍是「未选择」，不猜
+    // 对照：父会话的行没有 modelSelection ⇒ 桌面那句「请选择模型」
+    // （`ModelSelect.tsx:424-429` 的 `trigger.fallback`），不猜具体名字
     expect(
-      find.descendant(of: find.byType(DshComposer), matching: find.text('未选择')),
+      find.descendant(
+        of: find.byType(DshComposer),
+        matching: find.text('请选择模型'),
+      ),
       findsOneWidget,
     );
 
     await _enterFirstChild(tester, key, '调研实现');
     expect(app.currentSid, 'child-1');
+    // **数据层**：子会话的模型来自它自己的投影提示（顶层 `model` 没有它）。
+    expect(app.currentModel?.model, 'm-child-0', reason: '子会话的模型来自投影提示');
+    // **显示层**：这个假电脑没有模型目录，桌面在这种情况下显示
+    // `trigger.fallback` =「请选择模型」（`ModelSelect.tsx:424-429`）——
+    // 所以这里断言的是"不再显示原始 id / 不再显示未选择"。
     expect(
       find.descendant(
         of: find.byType(DshComposer),
-        matching: find.text('m-child-0'),
+        matching: find.text('请选择模型'),
       ),
       findsOneWidget,
-      reason: '子会话的模型来自投影提示（顶层 model 没有这个会话）',
+      reason: '目录缺项时照桌面的 fallback，不退到原始 id',
     );
     app.dispose();
   });
