@@ -101,6 +101,7 @@ const SAMPLED_METHODS = [
   'job.unfollow',
   'file.list',
   'file.read',
+  'file.changes',
   'refs.files',
   'refs.sessions',
   // C2：插件 / 命令 / 用量 / 交互答复四个面。
@@ -197,6 +198,12 @@ const SAMPLES: Record<SampledMethod, readonly WireSample[]> = {
   // 文件面：两个信封各一层（`{listing}` / `{page}`）。
   'file.list': [{ params: { sid: sidOf('dsh-1'), path: 'app' } }],
   'file.read': [{ params: { sid: sidOf('dsh-1'), path: 'README.md' } }],
+  // 改动面：一条真的记录 + 一条"电脑侧没有这条记录"（`{summary:null}`）——
+  // 后者不是失败，App 侧据此不画卡片，形状必须和金样一起钉住。
+  'file.changes': [
+    { params: { sid: sidOf('dsh-1'), seq: 9 } },
+    { params: { sid: sidOf('dsh-1'), seq: 10 } },
+  ],
   // `@` 候选：两列各一条。
   'refs.files': [{ params: { sid: sidOf('dsh-1'), query: 'main' } }],
   'refs.sessions': [{ params: { sid: sidOf('dsh-1'), query: 'gree' } }],

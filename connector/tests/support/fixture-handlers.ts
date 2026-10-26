@@ -44,6 +44,7 @@ export const CAPS = {
   references: false,
   plugins: false,
   files: false,
+  changes: false,
   settings: false,
   credentials: true,
   direct: false,
@@ -375,6 +376,30 @@ export function fixtureHandlers(
         eof: true,
         bytes: 13,
       }),
+    },
+    // 改动面：一份确定的记录（普通行 + 二进制行，两种行形态都收进金样）。
+    // **`seq: 10` 回 `undefined`** —— 那是"电脑侧没有这条记录"的形态（`file.changes` 的
+    // `{summary:null}`），金样两条都收，App 侧解码才两边都钉得住。
+    changes: {
+      summary: (_sid: string, seq: number) =>
+        seq === 10
+          ? null
+          : {
+              turn: 3,
+              files: [
+                { path: 'app/lib/main.dart', display: 'app/lib/main.dart', added: 9, deleted: 2 },
+                {
+                  path: 'assets/logo.png',
+                  display: 'assets/logo.png',
+                  added: 0,
+                  deleted: 0,
+                  binary: true as const,
+                },
+              ],
+              total: 2,
+              added: 9,
+              deleted: 2,
+            },
     },
     // `@` 候选：两列各一条（行形状由 app 侧 `AtCandidate.from*Row` 认）。
     references: {

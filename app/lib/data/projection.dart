@@ -628,6 +628,19 @@ ChatProjection projectEvent({
     );
   }
 
+  if (type == 'workspace/changes') {
+    // 一轮的改动记录（只带轮号，`workspace-changes/src/types.ts:99-108`）。
+    // 卡片的**数据不在这里**：它按这条事件的 seq 向电脑要 `file.changes`
+    // （宿主 `workspaceChanges` 的记录），手机不自己从工具调用推。
+    final changedTurn = intField(data, 'turn');
+    if (changedTurn == null) {
+      return const ChatProjection.skip('workspace/changes 缺 turn');
+    }
+    return ChatProjection.item(
+      ChangesItem(itemId: itemId, seq: seq, updatedAt: time, turn: changedTurn),
+    );
+  }
+
   return ChatProjection.item(
     OtherItem(
       itemId: itemId,

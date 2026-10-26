@@ -95,6 +95,12 @@ export const OPTIONAL_SERVICES = [
   // `packages/typert/protocol/src/types.ts:782-825`）—— 两个都在才挂，见 `filesAvailable`。
   'workspaceFiles',
   'typert',
+  // 改动面（`dsh/changes.ts`，契约 §5.7 的 `file.changes`）：`workspaceChanges` 是
+  // `packages/deliverables/workspace-changes/src/index.ts:120` 注册的服务
+  // （类型 `src/types.ts:110-114`）。它只在 `bundle/web-app` 里挂
+  // （`cordis.patch.yml:358-359`），base 没有 —— 所以这个键**决定 `caps.changes`**：
+  // 缺了手机就不画改动卡，而不是画一张永远读不到的卡。
+  'workspaceChanges',
   // 交互转发的两个宿主缝（`dsh/interaction-client.ts`，契约 §6.2）：`typertGateway` 的
   // `$events` 转发流（`packages/api/gateway/src/types.ts:148-151`）+ `connection` 的
   // in-process owner peer（`packages/client/connection/src/rpc-host.ts:140`）。
@@ -141,6 +147,13 @@ export interface Caps {
    * 后者是另一条订阅面，见 `dsh/files.ts` 的文件头）。
    */
   files: boolean
+  /**
+   * 改动面（`file.changes`）：这一轮改了哪些文件、各增删多少行。
+   *
+   * **数据仍然是桌面的记录**（宿主 `workspaceChanges`），手机只是画成一张卡。
+   * 缺了不画卡片（老连接器 / 没装 workspace-changes 的部署）。
+   */
+  changes: boolean
   /** 设置读写面。 */
   settings: boolean
   /** 凭据面（手机侧只有设置页的密钥写面）。**必需服务**，所以通常为 true。 */
@@ -194,6 +207,17 @@ export function filesAvailable(ctx: Context): boolean {
   return present(ctx, 'workspaceFiles') && present(ctx, 'typert')
 }
 
+/**
+ * 改动面能不能挂（`file.changes`）。
+ *
+ * 一个服务键：`workspaceChanges`（`workspace-changes/src/index.ts:120`）。
+ * 与 `filesAvailable` 同一个套路：**一处定义、两处用**（`readCaps` 与 `index.ts` 的挂载判据）——
+ * 两处各写一遍必然漂成"`repo.info` 说有能力、方法却不在表里"。
+ */
+export function changesAvailable(ctx: Context): boolean {
+  return present(ctx, 'workspaceChanges')
+}
+
 export function readCaps(ctx: Context, options: { direct: boolean } = { direct: false }): Caps {
   return {
     sessions: present(ctx, 'sessionController'),
@@ -205,6 +229,7 @@ export function readCaps(ctx: Context, options: { direct: boolean } = { direct: 
     references: referencesAvailable(ctx),
     plugins: pluginsAvailable(ctx),
     files: filesAvailable(ctx),
+    changes: changesAvailable(ctx),
     settings: present(ctx, 'settings'),
     credentials: present(ctx, 'credentials'),
     direct: options.direct,

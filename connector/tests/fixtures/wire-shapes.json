@@ -2232,6 +2232,7 @@
         "references": false,
         "plugins": false,
         "files": false,
+        "changes": false,
         "settings": false,
         "credentials": true,
         "direct": false
@@ -2322,6 +2323,34 @@
         "eof": true,
         "bytes": 13
       }
+    }
+  ],
+  "file.changes": [
+    {
+      "summary": {
+        "turn": 3,
+        "files": [
+          {
+            "path": "app/lib/main.dart",
+            "display": "app/lib/main.dart",
+            "added": 9,
+            "deleted": 2
+          },
+          {
+            "path": "assets/logo.png",
+            "display": "assets/logo.png",
+            "added": 0,
+            "deleted": 0,
+            "binary": true
+          }
+        ],
+        "total": 2,
+        "added": 9,
+        "deleted": 2
+      }
+    },
+    {
+      "summary": null
     }
   ],
   "refs.files": [

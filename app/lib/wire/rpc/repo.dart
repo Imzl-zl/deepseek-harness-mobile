@@ -7,7 +7,7 @@
 ///
 /// | 键 | 手机拿它做什么 | 缺了怎么办 |
 /// |---|---|---|
-/// | `caps.references` / `caps.files` / `caps.plugins` | 决定 `@` 面板 / 文件页 / 插件页**显不显示** | 按 `false`（老连接器） |
+/// | `caps.references` / `caps.files` / `caps.changes` / `caps.plugins` | 决定 `@` 面板 / 文件页 / 改动卡 / 插件页**显不显示** | 按 `false`（老连接器） |
 /// | `commands` | `/` 候选菜单的**唯一**内容来源 | 空表 ⇒ 不出菜单 |
 /// | `dshVersion` | 与 App 版本并排显示（排错用） | `null` ⇒ 显示"未读到" |
 /// | `methods` | **不读**（只用它数条数做形状检查） | 见下 |
@@ -47,6 +47,7 @@ final class RepoInfoWire {
     required this.slashCommands,
     required this.mentionsAvailable,
     required this.filesAvailable,
+    required this.changesAvailable,
     required this.pluginsAvailable,
     required this.dshVersion,
     required this.methodCount,
@@ -60,6 +61,12 @@ final class RepoInfoWire {
 
   /// `caps.files`：文件页显不显示。
   final bool filesAvailable;
+
+  /// `caps.changes`：收口改动卡画不画。
+  ///
+  /// 缺了（老连接器 / 没装 `workspace-changes` 的部署）就**不画卡片** ——
+  /// 一张永远读不到的卡比没有更糟。
+  final bool changesAvailable;
 
   /// `caps.plugins`：插件页显不显示。
   final bool pluginsAvailable;
@@ -91,6 +98,7 @@ WireReading<RepoInfoWire> readRepoInfo(Object? result) =>
         ),
         mentionsAvailable: caps['references'] == true,
         filesAvailable: caps['files'] == true,
+        changesAvailable: caps['changes'] == true,
         pluginsAvailable: caps['plugins'] == true,
         dshVersion: fields.optionalNonEmptyString('dshVersion'),
         methodCount: _methodCountOf(fields),

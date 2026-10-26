@@ -211,11 +211,13 @@
 | D | `session.fork` 协议 + 连接器 + App 分支按钮 + 别名/列表刷新 | fork 应答金样；child sid 是别名；失败弹 error；契约与 docs 同步 |
 | E | 收尾：docs/memory/notes、真机（用户操作，App 侧不碰辅助功能） | 门禁全绿；真机四项各一条证据 |
 
-进度：**A 已落地**（`implemented/2026-10-26-file-mentions-and-open-file.md`；
-门禁 `flutter test` 1343 / analyze 0 / format 0 / boundary / single-caller / connector 见提交）。
+进度：**A 已落地**（`implemented/2026-10-26-file-mentions-and-open-file.md`）；
+**B 已落地**（`implemented/2026-10-26-changes-face-and-card.md`：`file.changes` + 改动卡 +
+`docs/subsystems/changes-card.md`；方法面 50/48）。
+门禁数字以 `memory.md` 的表为准。
 A 之后按"App 只重画桌面已经显示的东西"复核过一遍，修了两处判据不一致：
 提及只给收口正文 + 只算成功的变更调用，以及结果到达时路径要从调用继承。
-B 起待续。
+C 起待续（`file.diff` + `DiffView` + 侧栏换源）。
 
 **B/C 的顺序要改**：改动卡与差异面板的**数字与行**来自桌面记录
 （`workspace/changes` 的 summary/diff），手机自己从工具调用推出来的 `+N −M` 与桌面**不同源**。

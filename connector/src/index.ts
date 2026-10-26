@@ -46,6 +46,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { type ConnectorConfig, Config } from './config.js'
 import {
   REQUIRED_SERVICES,
+  changesAvailable,
   filesAvailable,
   pluginsAvailable,
   readCaps,
@@ -97,6 +98,7 @@ import { createCommandLineRunner } from './dsh/command-line.js'
 import { createAgentPresetsFace } from './dsh/agent-presets.js'
 import { createReferencesFace } from './dsh/references.js'
 import { createPluginsFace } from './dsh/plugins.js'
+import { createChangesFace } from './dsh/changes.js'
 import { createFilesFace } from './dsh/files.js'
 import { createPluginInstallFace } from './dsh/plugin-install.js'
 import { createDevicePresence } from './presence.js'
@@ -857,6 +859,20 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
          */
         if (filesAvailable(ctx)) {
           handlerDeps.files = createFilesFace(ctx, {
+            sessionOf: (sid) => aliases?.sessionOf(sid),
+          })
+        }
+
+        /**
+         * 改动面（`file.changes`）。
+         *
+         * 判据是 `dsh/caps.ts` 的 `changesAvailable(ctx)`（**与 `caps.changes` 同一个函数**）：
+         * 宿主 `workspaceChanges` 在不在（`workspace-changes/src/index.ts:120`，只在
+         * `bundle/web-app` 里挂）。**数据由宿主给**：真实文件、行数、二进制 / 超大判定
+         * 都在那一侧（`types.ts:25-76`），手机只画卡片。
+         */
+        if (changesAvailable(ctx)) {
+          handlerDeps.changes = createChangesFace(ctx, {
             sessionOf: (sid) => aliases?.sessionOf(sid),
           })
         }

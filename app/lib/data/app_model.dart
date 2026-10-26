@@ -32,6 +32,7 @@ import '../core/job.dart';
 import '../core/notify.dart';
 import '../core/sync_client.dart';
 import '../model/agent_preset.dart';
+import '../model/changes.dart';
 import '../model/chat_item.dart';
 import '../model/command.dart';
 import '../model/file_mentions.dart';
@@ -52,6 +53,7 @@ import '../model/turn_outline.dart';
 import '../model/usage_summary.dart';
 import '../model/workspace.dart';
 import '../model/workspace_files.dart';
+import '../wire/rpc/changes.dart' as wire;
 import '../wire/rpc/command.dart' as wire;
 import '../wire/rpc/endpoint.dart' as wire;
 import '../wire/rpc/file.dart' as wire;
@@ -1635,6 +1637,7 @@ class AppModel extends ChangeNotifier {
       _slashCommands = info.slashCommands;
       _mentionsAvailable = info.mentionsAvailable;
       _filesAvailable = info.filesAvailable;
+      _changesAvailable = info.changesAvailable;
       _pluginsAvailable = info.pluginsAvailable;
       // **读到了**才置位：界面靠它区分"这台电脑没有这个面"与"还没读到"
       // （离线时 `caps.files` 只是默认 false，不是电脑的答复）。
@@ -1945,6 +1948,75 @@ class AppModel extends ChangeNotifier {
     }
     _mentionTableCache = (source: source, byItem: byItem);
     return byItem;
+  }
+
+  // ---- 改动记录（`file.changes`，只读；数据是桌面的记录）----
+
+  /// 电脑侧有没有改动面（`repo.info.caps.changes`）。老连接器 / 没装
+  /// `workspace-changes` 的部署 ⇒ false（不画改动卡）。
+  bool get changesAvailable => _changesAvailable;
+  bool _changesAvailable = false;
+
+  /// 已读到的改动记录，键是 `'<sid>:<seq>'`。
+  ///
+  /// **值 `null` 也是一个结果**（电脑侧没有这条记录），所以用 [containsKey] 区分
+  /// "没读过"与"读过但空" —— 不拿 `null` 兼表两件事（`memory.md` 教训 4）。
+  final Map<String, ChangesSummary?> _changesBySeq = {};
+  final Set<String> _changesLoading = {};
+  final Map<String, String> _changesFailures = {};
+
+  String? _changesKey(int seq) {
+    final sid = _currentSid;
+    return sid == null ? null : '$sid:$seq';
+  }
+
+  /// 三态读法：`loaded == false` = 还没读过；`loaded && summary == null` = 电脑侧没有记录。
+  ({bool loaded, ChangesSummary? summary}) changesStateOf(int seq) {
+    final key = _changesKey(seq);
+    if (key == null || !_changesBySeq.containsKey(key)) {
+      return (loaded: false, summary: null);
+    }
+    return (loaded: true, summary: _changesBySeq[key]);
+  }
+
+  bool changesLoading(int seq) {
+    final key = _changesKey(seq);
+    return key != null && _changesLoading.contains(key);
+  }
+
+  String? changesFailureOf(int seq) {
+    final key = _changesKey(seq);
+    return key == null ? null : _changesFailures[key];
+  }
+
+  /// 读一条改动记录（`seq` = `workspace/changes` 事件序号）。
+  ///
+  /// **没有能力位就不发请求**：老连接器上方法不存在，发出去只会拿
+  /// `connector/unsupported`，而它会被画成"读取失败"。
+  /// 失败照报电脑侧原话（[lastError]），卡片据此显示原因。
+  Future<void> loadChangesSummary(int seq) async {
+    if (!_changesAvailable) return;
+    final key = _changesKey(seq);
+    if (key == null || _changesLoading.contains(key)) return;
+    _changesLoading.add(key);
+    _changesFailures.remove(key);
+    if (!_disposed) notifyListeners();
+    try {
+      final summary = await wire.loadChangesSummary(
+        client,
+        sid: _currentSid!,
+        seq: seq,
+      );
+      if (_disposed) return;
+      _changesBySeq[key] = summary;
+    } catch (error) {
+      if (_disposed) return;
+      _recordError('读取改动记录失败', error);
+      _changesFailures[key] = _lastError?.message ?? '读取改动记录失败';
+    } finally {
+      _changesLoading.remove(key);
+      if (!_disposed) notifyListeners();
+    }
   }
 
   // ---- 插件（`plugin.list` / `plugin.setEnabled`）----

@@ -98,6 +98,7 @@ test('端到端：手机问 repo.info，电脑侧回一个可解的 res（id 对
       'command.execute',
       'devices.list',
       'endpoint.describe',
+      'file.changes',
       'file.list',
       'file.read',
       'interaction.respond',

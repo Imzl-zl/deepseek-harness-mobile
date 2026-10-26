@@ -187,6 +187,15 @@ String itemIdOf(EventLike event) {
     return 'x:$compactionId';
   }
 
+  if (type == 'workspace/changes') {
+    // 一轮的改动记录。**同一轮只认最新一条**（DSH 原话 "The latest event for one turn
+    // replaces earlier ones"，`packages/deliverables/workspace-changes/src/types.ts:105-106`），
+    // 所以身份取**轮号**：用 seq 会让同一轮的多条各占一个条目，卡片重复出现。
+    final turn = _fieldOf(data, 'turn');
+    if (turn is! int) throw StateError('$type(seq=$seq) 缺少 turn');
+    return 'w:$turn';
+  }
+
   // 规格许可的兜底：仅用于没有更稳定身份的事件类型（契约 §5.2）。
   return '$type:$seq';
 }

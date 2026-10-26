@@ -774,6 +774,31 @@ class OtherItem extends ChatItem {
   final String eventType;
 }
 
+/// 一轮的**改动记录**（`workspace/changes` 事件）。
+///
+/// ## 为什么是一条条目，而不是塞进收口行
+///
+/// 桌面的改动卡挂在 `conversation.chat.turnTail` 上、由 `deliverables` 那一份轮次数据
+/// 渲染（`ui-deliverables/src/client/ChangedFiles.tsx:37-69`）。手机是平铺条目模型，
+/// 所以让这条事件自己成为条目：顺序天然落在该轮收口之后，卡片随它出现。
+///
+/// ## 身份取轮号
+///
+/// DSH 对同一轮的多条 `workspace/changes` 只认**最新一条**（`workspace-changes/src/types.ts:105-106`），
+/// 所以 itemId 是 `w:<turn>`（`core/items.dart`）—— 用 `seq` 会让同一轮各占一条，
+/// 卡片就会重复。
+///
+/// 数字**不在手机上算**：卡片按 [seq] 向电脑要 `file.changes`（宿主 `workspaceChanges`
+/// 的记录），见 `wire/rpc/changes.dart`。
+class ChangesItem extends ChatItem {
+  const ChangesItem({
+    required super.itemId,
+    required super.seq,
+    required super.updatedAt,
+    super.turn,
+  });
+}
+
 /// 会话列表里的一行。
 class SessionSummary {
   const SessionSummary({

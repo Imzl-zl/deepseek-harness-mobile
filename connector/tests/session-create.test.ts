@@ -37,6 +37,7 @@ const CAPS: Caps = {
   references: false,
   plugins: false,
   files: false,
+  changes: false,
   settings: false,
   credentials: true,
   direct: false,

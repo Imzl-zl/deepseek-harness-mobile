@@ -102,6 +102,15 @@ export const METHODS = [
   // 后者是另一条订阅面 —— 见 `dsh/files.ts` 的文件头。
   'file.list',
   'file.read',
+  // 改动面（契约 §5.7）：一个 `workspace/changes` 事件宣告的改动记录（这一轮改了哪些文件、
+  // 各增删多少行、是不是二进制 / 超大）。**与 Web 同一个 DSH 服务**：
+  // `workspaceChanges.summary(sessionId, seq)`（`workspace-changes/src/index.ts:116-120`、
+  // 类型 `types.ts:79-97`）；浏览器侧的 `/api/changes.summary` 只是它的 HTTP 适配
+  // （`ui-deliverables/src/present-open.ts:131-139`），我们**不代理那条路由**。
+  // 坐标是 **`seq`**（`workspace/changes` 事件），路径是记录自带的字段、不是查询键
+  // （diff 才按 `seq` + `files` 下标取，见 `types.ts:88-96`）。
+  // 按 `caps.changes` 挂（`dsh/caps.ts` 的 `changesAvailable`）。
+  'file.changes',
   // 插件清单与启停（契约 §5.7）：`pluginManager` 的三个 `@Remote` 里只用两个
   // （`listPlugins` / `setPluginEnabled`，`packages/boot/plugin-manager/src/index.ts:439,796`）。
   // 行字段以 `PluginInfo` 为准、不翻译；启停回**回读后的真值**与宿主的 `application`。

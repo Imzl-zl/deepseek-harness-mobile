@@ -32,6 +32,7 @@ import type { InteractionFace } from './interaction-face.js'
 import type { ModelFace } from './dsh/models.js'
 import type { EndpointsPort } from './endpoints.js'
 import type { ProjectionsPort } from './dsh/projections.js'
+import type { ChangesFace } from './dsh/changes.js'
 import type { FilesFace } from './dsh/files.js'
 import { installableFromPhone, type PluginInstallFace } from './dsh/plugin-install.js'
 import type { PluginsFace } from './dsh/plugins.js'
@@ -306,6 +307,16 @@ export interface HandlerDeps {
    * 这台电脑没有文件服务"，而不是摆一个空目录冒充"工作区是空的"。
    */
   files?: FilesFace
+  /**
+   * 改动面（`file.changes`，可选服务 `workspaceChanges`）。
+   *
+   * **数据是桌面的记录**：宿主 `workspaceChanges.summary(sessionId, seq)` 里有
+   * 这一轮改了哪些文件、各增删多少行、是不是二进制 / 超大（`workspace-changes/src/types.ts:25-76`）。
+   * 手机只把它画成一张卡，**不自己从工具调用推改动**（那是桌面已经算好的东西）。
+   * 缺了就不挂这个方法、`caps.changes` 同时为 false —— 手机上不出现卡片，
+   * 而不是一张永远读不到的卡。
+   */
+  changes?: ChangesFace
   /**
    * 插件的安装 / 卸载 / 取消 / 看进度（同一份 `pluginManager` 服务）。
    *
@@ -1337,6 +1348,24 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
           ...(limit === undefined ? {} : { limit }),
         }),
       }
+    }
+  }
+
+  // 改动面（契约 §5.7）：**只读**，不带幂等键。坐标是 `workspace/changes` 事件的 seq。
+  if (deps.changes !== undefined) {
+    const changes = deps.changes
+    handlers['file.changes'] = (params) => {
+      const sid = requireSid(params)
+      // `seq` 是**事件序号**：安全非负整数。形状不对是请求不合法（bad-frame），
+      // 不是"没有这条记录"（那是 `summary: null`，两种结论不能混）。
+      const seq = paramOf(params, 'seq')
+      if (typeof seq !== 'number' || !Number.isSafeInteger(seq) || seq < 0) {
+        throw new ProtocolError(
+          'protocol/bad-frame',
+          'seq 必须是安全非负整数（workspace/changes 事件的序号）',
+        )
+      }
+      return { summary: changes.summary(sid, seq) }
     }
   }
 

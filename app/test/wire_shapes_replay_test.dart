@@ -36,6 +36,7 @@ import 'package:dsh_mobile/core/endpoint.dart' show parseEndpointList;
 import 'package:dsh_mobile/core/job.dart' show JobRow;
 import 'package:dsh_mobile/core/sync_client.dart' show SessionEvent;
 import 'package:dsh_mobile/model/agent_preset.dart' show parseAgentPresetRoster;
+import 'package:dsh_mobile/model/changes.dart' show ChangesSummary;
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/model/command.dart';
 import 'package:dsh_mobile/model/mention.dart' show AtCandidate;
@@ -46,6 +47,7 @@ import 'package:dsh_mobile/model/plugins.dart'
 import 'package:dsh_mobile/model/usage_summary.dart' show UsageSummary;
 import 'package:dsh_mobile/model/workspace_files.dart'
     show FileListing, FilePage;
+import 'package:dsh_mobile/wire/rpc/changes.dart' show readChangesSummary;
 import 'package:dsh_mobile/wire/rpc/command.dart';
 import 'package:dsh_mobile/wire/rpc/file.dart';
 import 'package:dsh_mobile/wire/rpc/job.dart';
@@ -853,6 +855,46 @@ void main() {
     final bad = readFilePage({'listing': <String, Object?>{}});
     expect(bad, isA<WireBad<FilePage>>());
     expect(valueOrReport(bad, 'file.read'), isNull);
+    expect(WireDiagnostics.badCount, 1);
+  });
+
+  test('file.changes：两条样本 —— 一条记录 + 一条"电脑侧没有记录"', () {
+    // 金样里这个方法是**两条**样本（`connector/tests/wire-shapes.test.ts` 的 SAMPLES）：
+    // 第一条是真的记录，第二条是 `{summary: null}`。后者是有效应答，不是形状错。
+    final samples = golden['file.changes']! as List;
+    expect(samples.length, 2, reason: '两种形态都要收：有记录 / 没有记录');
+
+    final recordSample = (samples.first! as Map).cast<String, Object?>();
+    final summaryBody = (recordSample['summary']! as Map)
+        .cast<String, Object?>();
+    final reading = readChangesSummary(recordSample);
+    expect(reading, isA<WireOk<ChangesSummary?>>());
+    final summary = (reading as WireOk<ChangesSummary?>).value!;
+    // 期望值全部取自金样本身（不手抄一份常量）。
+    expect(summary.turn, summaryBody['turn']);
+    expect(summary.total, summaryBody['total']);
+    expect(summary.added, summaryBody['added']);
+    expect(summary.deleted, summaryBody['deleted']);
+    expect(summary.files.map((f) => f.path).toList(), [
+      for (final row in summaryBody['files']! as List) (row! as Map)['path'],
+    ]);
+    expect(
+      summary.files.where((f) => f.binary).length,
+      (summaryBody['files']! as List)
+          .where((row) => (row! as Map)['binary'] == true)
+          .length,
+    );
+
+    final nullSample = (samples[1]! as Map).cast<String, Object?>();
+    expect(nullSample['summary'], isNull);
+    final nullReading = readChangesSummary(nullSample);
+    expect(nullReading, isA<WireOk<ChangesSummary?>>());
+    expect((nullReading as WireOk<ChangesSummary?>).value, isNull);
+
+    // 缺 summary 键 ⇒ 形状错 + 计数 1（与"没有记录"分开）。
+    final bad = readChangesSummary(<String, Object?>{});
+    expect(bad, isA<WireBad<ChangesSummary?>>());
+    expect(valueOrReport(bad, 'file.changes'), isNull);
     expect(WireDiagnostics.badCount, 1);
   });
 

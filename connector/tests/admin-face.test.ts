@@ -52,6 +52,7 @@ const CAPS = {
   references: false,
   plugins: false,
   files: false,
+  changes: false,
   settings: true,
   credentials: true,
   direct: true,
