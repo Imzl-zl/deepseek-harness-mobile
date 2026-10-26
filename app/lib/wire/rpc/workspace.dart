@@ -174,12 +174,22 @@ WireReading<WorkspaceSnapshot> readWorkspaceList(Object? result) {
   if (result is! Map) {
     return const WireBad('应答不是 {workspaces, …}（`workspace.list`）');
   }
-  final fields = WireFields(result, _kList);
-  final rows = result['workspaces'];
-  if (rows is! List) {
-    return const WireBad('应答里没有 workspaces 数组（`workspace.list`）');
+  // 分组行走**同一个** `{key: [...]}` 入口：坏一条丢一条 + 计数，
+  // 而不是每个面自己写一遍"取 Map → 取 key → 判 List"。
+  final rows = readObjectList<WorkspaceGroup>(
+    result,
+    method: _kList,
+    key: 'workspaces',
+    build: _groupOf,
+  );
+  if (rows is WireBad<List<WorkspaceGroup>>) {
+    return WireBad(rows.detail);
+  }
+  if (rows is! WireOk<List<WorkspaceGroup>>) {
+    return const WireBad('workspaces 读不出来（`workspace.list`）');
   }
 
+  final fields = WireFields(result, _kList);
   final archived = _idsOf(fields, 'archivedSessionIds');
   if (archived == null) {
     return const WireBad('archivedSessionIds 认不出（`workspace.list`）');
@@ -189,14 +199,9 @@ WireReading<WorkspaceSnapshot> readWorkspaceList(Object? result) {
     return const WireBad('pinnedSessionIds 认不出（`workspace.list`）');
   }
 
-  final groups = <WorkspaceGroup>[];
-  for (final row in rows) {
-    final group = _groupOf(row, fields);
-    if (group != null) groups.add(group);
-  }
   return WireOk(
     WorkspaceSnapshot(
-      groups: List<WorkspaceGroup>.unmodifiable(groups),
+      groups: rows.value,
       archivedSessionIds: archived,
       pinnedSessionIds: pinned,
     ),
@@ -253,7 +258,9 @@ WireReading<Set<String>> _setReading(
 /// **"非空却全是非法项"算认不出**（返回 `null`）：那说明形状变了，
 /// 而落一个空集会静默地把归档/置顶清空。空数组本身**合法**。
 Set<String>? _idsOf(WireFields fields, String key) {
-  final raw = fields.optionalList(key);
+  // **不在这里 `report`**：认不出由调用方折成 WireBad 并计一次数。
+  // 两处都报会让同一个缺陷记两次（2026-10-26 评审）。
+  final raw = fields.map[key];
   if (raw is! List) return null;
   final out = <String>{};
   for (final id in raw) {
@@ -263,28 +270,24 @@ Set<String>? _idsOf(WireFields fields, String key) {
   return out;
 }
 
-/// 一条工作区分组。缺 `workspaceId` / `title` / `sessionIds` 就跳过这一条
-/// （没有名字或没有 id 的分组摆不出来）。
-WorkspaceGroup? _groupOf(Object? raw, WireFields fields) {
-  if (raw is! Map) {
-    fields.report('workspaces 里有一项不是对象：$raw');
-    return null;
-  }
-  final row = WireFields(raw, _kList);
-  final id = row.optionalNonEmptyString('workspaceId');
-  final title = row.optionalNonEmptyString('title');
-  final sessionIds = _idsOf(row, 'sessionIds');
-  if (id == null || title == null || sessionIds == null) {
-    fields.report('workspaces 里有一项缺 workspaceId/title/sessionIds：$raw');
-    return null;
+/// 一条工作区分组。
+///
+/// **五个键都是必填**：连接器逐键构造、不 spread（`connector/src/handlers.ts:996-1009`），
+/// 而且 `createdAt` 就是"空工作区当最近"那条链的输入（漏过它一次，2026-10-25）。
+/// 缺一个就到不了界面 ⇒ 这一条丢掉 + 计数（由 `readObjectList` 记一次）。
+WorkspaceGroup _groupOf(WireFields fields) {
+  final id = fields.requireNonEmptyString('workspaceId');
+  final title = fields.requireNonEmptyString('title');
+  final sessionIds = _idsOf(fields, 'sessionIds');
+  if (sessionIds == null) {
+    throw const WireFieldError('sessionIds 认不出（`workspace.list`）');
   }
   return WorkspaceGroup(
     workspaceId: id,
     title: title,
-    // `path` 缺失是 ''（老连接器）：分组仍然可用，只是"新建会话挑工作区"那条要退。
-    path: row.optionalString('path') ?? '',
-    // `createdAt`（ISO）：手机只拿它比"谁更新"，缺了按"永远最旧"处理，不猜。
-    createdAt: row.optionalString('createdAt') ?? '',
+    path: fields.requireString('path'),
+    // `createdAt`（ISO）：手机只拿它比"谁更新"。连接器无条件写它。
+    createdAt: fields.requireString('createdAt'),
     sessionIds: sessionIds.toList(growable: false),
   );
 }

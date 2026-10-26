@@ -84,54 +84,42 @@ Future<SettingSectionWire?> updateSettingValue(
 }
 
 /// `settings.describe` 的应答：`{sections: [...]}`。
-WireReading<List<SettingSectionWire>> readSettings(Object? result) {
-  if (result is! Map) {
-    return const WireBad('应答不是 {sections}（`settings.describe`）');
-  }
-  final fields = WireFields(result, _kDescribe);
-  final raw = result['sections'];
-  if (raw is! List) {
-    return const WireBad('应答里没有 sections 数组（`settings.describe`）');
-  }
-  final out = <SettingSectionWire>[];
-  for (final entry in raw) {
-    final section = _sectionOf(entry, fields);
-    if (section != null) out.add(section);
-  }
-  return WireOk(List<SettingSectionWire>.unmodifiable(out));
-}
+WireReading<List<SettingSectionWire>> readSettings(Object? result) =>
+    readObjectList(
+      result,
+      method: _kDescribe,
+      key: 'sections',
+      build: _sectionOf,
+    );
 
 /// `settings.update` 的应答：`{section: null | {...}}`。
-WireReading<SettingSectionWire?> readSettingSection(Object? result) {
-  if (result is! Map) return const WireBad('应答不是 {section}（`settings.update`）');
-  final fields = WireFields(result, _kUpdate);
-  // **用 `containsKey` 而不是 `WireFields.has`**：`section: null` 是合法应答
-  // （宿主没有给出新快照），而 `has()` 把 `null` 当缺席 —— 两者在这里必须分开。
-  if (!result.containsKey('section')) {
-    return const WireBad('应答里没有 section 键（`settings.update`）');
-  }
-  final raw = result['section'];
-  // `null` 是合法应答（宿主没有给出新快照），不是漂移。
-  if (raw == null) return const WireOk(null);
-  final section = _sectionOf(raw, fields);
-  if (section == null) return const WireBad('section 认不出（`settings.update`）');
-  return WireOk(section);
-}
+WireReading<SettingSectionWire?> readSettingSection(Object? result) =>
+    readObject(_kUpdate, result, (fields) {
+      // **用 `containsKey` 而不是"取不到就当缺席"**：`section: null` 是合法应答
+      // （宿主没有给出新快照），两者在这里必须分开。
+      if (!fields.map.containsKey('section')) {
+        throw const WireFieldError('应答里没有 section 键（`settings.update`）');
+      }
+      final raw = fields.map['section'];
+      // `null` 是合法应答（宿主没有给出新快照），不是漂移。
+      if (raw == null) return null;
+      if (raw is! Map) {
+        throw const WireFieldError('section 不是对象（`settings.update`）');
+      }
+      // 解不出 ⇒ 抛，由 readObject 折成 WireBad（计数只发生一次）。
+      return _sectionOf(WireFields(raw, _kUpdate));
+    });
 
-SettingSectionWire? _sectionOf(Object? raw, WireFields fields) {
-  if (raw is! Map) {
-    fields.report('sections 里有一项不是对象：$raw');
-    return null;
-  }
-  final ns = raw['ns'];
-  if (ns is! String || ns.isEmpty) {
-    fields.report('sections 里有一项没有 ns：$raw');
-    return null;
-  }
-  final values = raw['values'];
+/// 一个 section：`ns` 必填，`revision` / `values` 可选。
+///
+/// 解不出就抛 [WireFieldError]（由 `readObject` 计数一次）——
+/// **不在里面先 `report` 再返回 `null`**，否则同一个缺陷会记两次。
+SettingSectionWire _sectionOf(WireFields fields) {
+  final ns = fields.requireNonEmptyString('ns');
+  final values = fields.map['values'];
   return SettingSectionWire(
     ns: ns,
-    revision: raw['revision'],
+    revision: fields.map['revision'],
     // `values` 缺席/不是对象 ⇒ 空映射（"这一行没值"与"没读到"在界面同一表现）。
     values: values is Map ? values.cast<String, Object?>() : const {},
   );

@@ -482,6 +482,27 @@ void main() {
     expect(WireDiagnostics.badCount, 1);
   });
 
+  test('workspace.list 的行缺 createdAt ⇒ 丢那一条 + 计数 1（五键都是必填）', () {
+    // 连接器逐键构造、不 spread（`handlers.ts:996-1009`）：缺 createdAt 与
+    // 2026-10-25 那次"漏发"是同一个错，只是发生在手机侧解码时。
+    WireDiagnostics.reset();
+    final reading = readWorkspaceList({
+      'workspaces': [
+        {
+          'workspaceId': 'w1',
+          'title': 'W1',
+          'path': '/w',
+          'sessionIds': <String>[],
+        },
+      ],
+      'archivedSessionIds': <String>[],
+      'pinnedSessionIds': <String>[],
+    });
+    expect(reading, isA<WireOk<WorkspaceSnapshot>>());
+    expect((reading as WireOk<WorkspaceSnapshot>).value.groups, isEmpty);
+    expect(WireDiagnostics.badCount, 1);
+  });
+
   // ---- 工作区面（B1）：分组 + 两列 id 同一份应答，七种应答都是"整份真值" ----
 
   test('workspace.list：分组与两列 id 都等于金样（含 createdAt）', () {
@@ -817,6 +838,15 @@ void main() {
     final bad = readRefsFiles({'sessions': <Object?>[]});
     expect(bad, isA<WireBad<List<AtCandidate>>>());
     expect(valueOrReport(bad, 'refs.files'), isNull);
+    expect(WireDiagnostics.badCount, 1);
+
+    // 单行认不出：丢那一条 + 计数 1（不静默）。
+    WireDiagnostics.reset();
+    final oneBad = readRefsFiles({
+      'files': [42],
+    });
+    expect(oneBad, isA<WireOk<List<AtCandidate>>>());
+    expect((oneBad as WireOk<List<AtCandidate>>).value, isEmpty);
     expect(WireDiagnostics.badCount, 1);
   });
 

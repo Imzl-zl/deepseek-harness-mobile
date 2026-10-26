@@ -17,6 +17,7 @@ library;
 
 import '../../core/sync_client.dart';
 import '../../model/mention.dart' show AtCandidate;
+import '../fields.dart';
 import '../reading.dart';
 
 /// 消费方一次拿齐"三态内核 + 字段内核 + 候选面解码"。
@@ -84,15 +85,17 @@ WireReading<List<AtCandidate>> _candidatesOf(
   String method,
   String key,
   AtCandidate? Function(Object? row) parse,
-) {
-  if (result is! Map) return WireBad('应答不是 {$key: [...]}（`$method`）');
-  final rows = result[key];
-  if (rows is! List) return WireBad('应答里没有 $key 数组（`$method`）');
-  final out = <AtCandidate>[];
-  for (final row in rows) {
-    // 单独一行认不出就跳过：那是"这一条候选不认识"，不是"整次查询坏了"。
-    final candidate = parse(row);
-    if (candidate != null) out.add(candidate);
-  }
-  return WireOk(List<AtCandidate>.unmodifiable(out));
-}
+) => readObjectList(
+  result,
+  method: method,
+  key: key,
+  build: (fields) {
+    // 单独一行认不出就跳过并计数：那是"这一条候选不认识"，不是"整次查询坏了"，
+    // 但**不许静默**（计数是排错时唯一的线索）。
+    final candidate = parse(fields.map);
+    if (candidate == null) {
+      throw const WireFieldError('候选行认不出');
+    }
+    return candidate;
+  },
+);

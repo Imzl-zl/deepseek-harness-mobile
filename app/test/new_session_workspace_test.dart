@@ -121,7 +121,9 @@ Map<String, Object?> _group(
   'title': id.toUpperCase(),
   'path': path,
   'sessionIds': sessionIds,
-  if (createdAt.isNotEmpty) 'createdAt': createdAt,
+  // 连接器无条件写这个键（`handlers.ts:997-1010`）：假行也一样，
+  // 空串是"不知道创建时间"，不是"没有这个键"。
+  'createdAt': createdAt,
 };
 
 void main() {
