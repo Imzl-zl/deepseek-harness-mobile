@@ -7,13 +7,26 @@
 /// （2026-10-20 那一轮就是"表头说改了 128 行、面板说还没有改动"）。
 /// 所以请求与状态收在这里，读写只有 `AppModel.openFile` 一条路。
 ///
-/// ## 路径**原样**过线，手机不做归属解析
+/// ## 路径是**桌面侧的值**，手机只做映射
 ///
-/// `file.read` 的 scope 由宿主 `workspaceFileScope` lookup 按会话解析
-/// （`packages/api/workspace-files/src/index.ts:203-221`；连接器
-/// `connector/src/dsh/files.ts:136-154`），与桌面 `openFile` 的兜底是同一个 cwd
-/// （`packages/client/ui-chat/src/client/apply.ts:271-278`）。
-/// 手机自己拼 cwd 就是第二份真值（会话中途 `cd` 之后两边会漂）。
+/// 真实文件、工作区归属、`cd`、存在性、二进制判定、这一轮改了什么 —— 全在电脑上。
+/// 手机这一侧只做一件事：把**桌面已经给出（或桌面将要解析）的那一串路径**原样转交。
+/// 所以下面这些在 `app/lib` 里**故意都不做**：
+///
+/// - 不拼会话 cwd：scope 由宿主 `workspaceFileScope` lookup 按 sessionId 解析
+///   （`packages/api/workspace-files/src/index.ts:203-221`；连接器
+///   `connector/src/dsh/files.ts:136-154`），与桌面 `openFile` 的兜底是同一个 cwd
+///   （`packages/client/ui-chat/src/client/apply.ts:271-278`）；
+/// - 不规范化分隔符 / 大小写：宿主按自己的文件系统判（连接器只是原样转交，
+///   `connector/src/handlers.ts:1296-1309`）；
+/// - 不判断是否在工作区内：绝对路径与 `..` 由宿主 `locateFile` 接手
+///   （`packages/api/workspace-files/src/index.ts:228,241` 的注释原话
+///   "absolute path or path relative to the workspace root; files outside it are allowed"）；
+/// - 不查本地文件、不算 diff、不判断二进制：结论由宿主的 `workspaceFiles` /
+///   `workspace-changes` 给（`workspace-changes/src/types.ts:56-76`）。
+///
+/// 于是 [FileOpenRequest.path] 的语义是"**照桌面看到的那一串**"，
+/// 不是"手机算出来的路径"。手机自己拼一份，等于在电脑之外又长出一套文件语义。
 library;
 
 /// 路径的最后一段（`/` 与 `\` 都认，照 DSH 的 `basename`，
@@ -44,7 +57,9 @@ enum FileOpenMode {
 class FileOpenRequest {
   const FileOpenRequest({required this.path, this.mode = FileOpenMode.preview});
 
-  /// 路径**原样**（相对工作区的路径，或宿主认得的绝对路径）。
+  /// **桌面侧的那一串路径，原样**（相对工作区的路径，或宿主认得的绝对路径）。
+  ///
+  /// 手机不解释它：不拼 cwd、不规范化、不判断归属（见文件头那五条"不做"）。
   final String path;
 
   final FileOpenMode mode;

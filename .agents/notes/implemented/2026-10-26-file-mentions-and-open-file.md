@@ -32,10 +32,13 @@ Status: implemented
    变异校验：把 `_uniqueMatch` 改成"先匹配先赢"，恰好这两条红。
 3. **词表按轮**：`file_open_test.dart` 的"同一轮里 write 过的路径 ⇒ 提及；
    别的轮的同一 token ⇒ 惰性"。
-4. **路径原样过线**：`file.read` 收到的就是 token 原样（`file_open_test.dart` 第一条），
-   手机不拼 cwd —— scope 由宿主 `workspaceFileScope` lookup 按会话解析
+4. **路径是桌面侧的值，手机只映射**：`file.read` 收到的就是 token 原样
+   （`file_open_test.dart` 第一条），手机不拼 cwd、不规范化、不判断归属 ——
+   scope 由宿主 `workspaceFileScope` lookup 按会话解析
    （`packages/api/workspace-files/src/index.ts:203-221`；连接器 `connector/src/dsh/files.ts:136-154`），
+   绝对路径与 `..` 也由宿主接手（`workspace-files/src/index.ts:228,241`），
    桌面 `openFile` 的兜底用的是同一个 cwd（`packages/client/ui-chat/src/client/apply.ts:271-278`）。
+   手机复刻的只有**桌面前端的展示规则**，不含任何文件语义。
 5. **点击只改模型**：`openFile` 记请求 + 读第一页，界面（右抽屉 / 文件页）自己听
    `AppModel` 画三态；`file.read` 失败照报电脑侧原话。
 
@@ -50,9 +53,10 @@ Status: implemented
    - 为何被否：判定会分叉成好几份，"同一个路径在正文里能点、在卡片里不能点"是必然结果。
 3. **手机侧按当前会话 cwd 拼绝对路径再请求**
    - 最强的理由：看起来与桌面 `openFile` 的"先解析再打开"完全一致。
-   - 为何被否：会话中途 `cd` 之后，桌面用的是 `workingDirectory` 投影、宿主 scope 用的是
-     header cwd，手机再拼一份就是**第三份**真值。`file.read` 本来按 sessionId 解析，
-     原样传 token 就够（这也是方案笔记批 0 第 5 条记下的偏离理由）。
+   - 为何被否：**这条不是偏好问题**。手机里没有文件系统，真实文件、`cd`、归属、
+     存在性都在电脑上（宿主 `locateFile` 明确接受绝对路径与 `..`，
+     `packages/api/workspace-files/src/index.ts:228,241`）；手机再拼一份就是
+     在电脑之外长出第二套文件语义，会话中途 `cd` 后必然漂。
 4. **在 `AppModel` 里直接 push 路由**
    - 最强的理由：一个动作从头做到尾，调用方什么都不用管。
    - 为何被否：数据层不认识 `Navigator`（本项目跨屏导航统一走 `main.dart` 的
@@ -66,9 +70,11 @@ Status: implemented
 - 收益：正文提及与 DSH 同一条判定，误报面与桌面一致。
 - 代价：**只有工具调用改过的文件**才可点；用户在正文里随手写的其他路径仍是普通代码
   （与桌面一致，但比"全部可点"少）。
-- 代价：手机侧词表来自 `tool/call` 的 `changedPath`（DSH 的 `mutationPath`），
-  比桌面少了"成功结果的 `meta.path` 校验"和 `presented` 交付物那一路 ——
-  失败的写调用也会进词表。补这一条要等 `deliverables` 投影进手机。
+- 代价：**词表的来源是过渡的**。它现在是 `tool/call` 的 `changedPath`（DSH 的
+  `mutationPath` 同一层），比桌面少了"成功结果的 `meta.path` 校验"与 `presented`
+  交付物那一路，失败的写调用也会进词表。桌面记录（`workspace/changes` 的
+  summary/diff）过线后以它为准：**批 C 把改动卡与差异面板换成桌面记录**，
+  `changedPath` 只留给正文提及当词表。手机不替桌面决定"这一轮改了什么"。
 - 代价：正文提及在 **流式尾条目**（`_LiveTurn`）里不可点（那条没有 itemId，也就没有
   "这一轮"的词表）；落定后同一条消息立刻可点。
 

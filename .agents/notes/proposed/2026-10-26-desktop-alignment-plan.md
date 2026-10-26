@@ -47,8 +47,13 @@
 
 ### 2. 改动卡：复用 `deliverables`，不新造数据（App 侧）
 
-- 收口消息插入一张 `ChangedFilesCard`：标题「改动 N 个文件 / +A −D」，最多 4 行 + 展开；
-  数据来自已有的 `deliverables` 投影与 `changed_path` 解析（`model/changed_path.dart`）。
+- 收口消息插入一张 `ChangedFilesCard`：标题「改动 N 个文件 / +A −D」，最多 4 行 + 展开。
+  行显示的是**桌面给的 `display`**（`workspace-changes/src/types.ts:5-22`：相对 cwd 的路径、
+  `../`、`~` 或绝对路径，`display` 就是"该显示的那一串"），不是手机拼的。
+- **数据最终来自桌面记录**：`workspace/changes` 的 summary（`types.ts:25-40`）。
+  协议里还没有 `file.changes`，所以批 B 先用**过渡来源**（`deliverables` 投影 +
+  `model/changed_path.dart` 的参数投影），**批 C 落地时换成桌面记录**并在代码里回指；
+  手机不替桌面决定"这一轮改了什么"（`changedPath` 只是工具调用的参数形状）。
 - 行点击 → `AppModel.openFile(mode: preview)`；标题点击 → 打开 diff（等第 3 条）。
 - 复制按钮已存在于收口行；分支按钮等第 4 条。
 
@@ -56,11 +61,13 @@
 
 建议新增一个**只读文件面方法**（名字待调研，倾向 `file.changes` + `file.diff`）：
 
-- 请求：`{sid, seq}`（该轮 `workspace/changes` 事件的 seq）与 `{sid, path, seq}`；
-- 应答：summary（files/added/deleted/total）+ 单文件 `WorkspaceFileDiff` 结构化 hunks；
-- 连接器端口：直接调宿主 `workspaceChanges` 服务（若连接器注入面拿不到，则代理
-  `/api/changes.summary` 与 `/api/changes.diff`，但**只在这一个 handler 里**，不把 HTTP 形状
-  泄给手机）；
+- 请求：`{sid, seq}`（该轮 `workspace/changes` 事件的 seq）与
+  `{sid, seq, index}`（index = 文件在 summary.files 里的下标）—— **不是 path**：
+  宿主只认这两个坐标（`workspace-changes/src/types.ts:88-96`、`changes.ts:122-124`）；
+- 应答：summary（files/added/deleted/total + 每行的 `path`/`display`/`added`/`deleted`/
+  `binary?`/`oversized?`）+ 单文件 `WorkspaceFileDiff` 结构化 hunks；
+- 连接器端口：直接调宿主 `workspaceChanges` 服务（**不代理 HTTP** —— 见批 0 第 1 条，
+  服务就在 `index.ts:116-120`，`/api/changes.*` 只是浏览器侧对它的适配）；
 - App：`wire/rpc/file.dart` 解码 hunks（逐行 `+`/`-`/` `），金样加两条（文本 diff、二进制/超大
   降级）；UI 用一个 `DiffView` 组件（侧栏与改动卡共用）。
 - **预算**：diff 可能很大；契约已有单帧上限，响应必须按行截断并显式标记
@@ -142,11 +149,18 @@
   `changedPath`），**不拿 `file.list` 的目录缓存**（那份缓存只服务文件页，且会放大误报）。
 - 会话 cwd：`session.list` 行的 `cwd`（`connector/src/handlers.ts:761`、`dsh/sessions.ts:154`；
   手机侧 `app/lib/model/chat_item.dart:864-874`）。
-- **相对路径的解析不在手机**：`file.read` 的 scope 由宿主 `workspaceFileScope` lookup 按 sessionId 解析
-  （`packages/api/workspace-files/src/index.ts:203-221`，连接器 `dsh/files.ts:136-154`）。
-  桌面 `openFile` 也是"先看 `workingDirectory` 投影、退到 list 行 cwd"再交给同一套地址
-  （`ui-chat/src/client/apply.ts:271-278`）。所以手机把 token **原样**交给 `file.read` 即可，
-  自己再拼 cwd 就是第二份真值（偏离方案原文那一句，理由记在这里）。
+- **路径是桌面侧的值，手机只做映射**（这条是架构结论，不是待选的实现细节）：
+  `file.read` 的 scope 由宿主 `workspaceFileScope` lookup 按 sessionId 解析
+  （`packages/api/workspace-files/src/index.ts:203-221`，连接器 `dsh/files.ts:136-154`）；
+  绝对路径与 `..` 由宿主 `locateFile` 接手（`workspace-files/src/index.ts:228,241`：
+  "absolute path or path relative to the workspace root; files outside it are allowed"）；
+  连接器只原样转交（`connector/src/handlers.ts:1296-1309`）；桌面 `openFile` 也只是
+  "先看 `workingDirectory` 投影、退到 list 行 cwd"再交给同一套地址
+  （`ui-chat/src/client/apply.ts:271-278`）。
+  ⇒ 手机把 token **原样**交给 `file.read`；不拼 cwd、不规范化分隔符 / 大小写、
+  不判断工作区归属、不查本地文件、不算 diff、不判断二进制。
+  手机复刻的只有**桌面前端的展示规则**（`producedFileMentions` 本身也是客户端函数），
+  真实文件与真实处理都在电脑上。
 
 ### 6. 顺带查到的两处前置事实
 
@@ -183,8 +197,8 @@
 |---|---|---|
 | 0 | 调研：`workspaceChanges` 在连接器的注入面、`SessionController.fork` 是否在端口、别名如何拿 child sid、diff 大小预算 | 每条结论带 `packages/...:行号` 或连接器注入面证据；不许写"应该可以" |
 | A | 提及解析器 + `openFile` 单一动作 + 正文可点 → 文件页预览（无协议） | 纯函数单测（命中/不命中/相对路径）；widget 用例点链接打开预览；回退惰性 |
-| B | 收口改动卡（标题/行/复制；行打开预览） + 侧栏与卡片共用组件 | 卡片行数与金样一致；点行打开同一路径；无新增网络调用 |
-| C | `file.changes` / `file.diff` 协议 + 连接器 handler + wire 解码 + `DiffView` | 金样两条（文本 / 二进制降级）；截断显式；连接器测试不手写端口行 |
+| B | 收口改动卡（标题/行/复制；行打开预览） + 侧栏与卡片共用组件（数据先走过渡来源，批 C 换桌面记录） | 卡片行数与金样一致；点行打开同一路径；无新增网络调用 |
+| C | `file.changes` / `file.diff` 协议（坐标 `seq`+`index`）+ 连接器 handler + wire 解码 + `DiffView` + 改动卡换源 | 金样两条（文本 / 二进制降级）；截断显式；连接器测试不手写端口行；`changedPath` 退出卡片与差异面板 |
 | D | `session.fork` 协议 + 连接器 + App 分支按钮 + 别名/列表刷新 | fork 应答金样；child sid 是别名；失败弹 error；契约与 docs 同步 |
 | E | 收尾：docs/memory/notes、真机（用户操作，App 侧不碰辅助功能） | 门禁全绿；真机四项各一条证据 |
 

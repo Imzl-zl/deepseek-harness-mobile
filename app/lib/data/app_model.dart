@@ -1177,6 +1177,11 @@ class AppModel extends ChangeNotifier {
   /// `ui-deliverables/src/client/turn-deliverables.ts:61-77`）。
   /// 这是 **model-free** 的 —— 不靠模型自述，靠真实调用。
   ///
+  /// **但"这一轮改了什么"最终以电脑的记录为准**：真实文件、行数增减、二进制与超大
+  /// 的判定都在宿主的 `workspace-changes`（`workspace-changes/src/types.ts:25-76`）。
+  /// 手机这一份是**过渡期的来源**（协议里还没有 `file.changes`，见方案笔记批 C）；
+  /// 桌面记录过线后，改动卡与差异面板改读它，`changedPath` 只留给正文提及当词表。
+  ///
   /// 去重：同一路径多次改动只留一行，**取最后一次的统计**（最新事实）；
   /// 顺序按"最后一次改动"从新到旧 —— 面板的第一行应该是刚动过的那个。
   ///
