@@ -42,13 +42,16 @@
 
 ## 下一步
 
-0. **状态语义对齐（进行中的主线）**：**第 1 段（审计）已完成**——
-   归属表 `proposed/2026-10-27-state-semantics-audit.md`（状态与动作两类表 + 桌面行号 +
-   移动端实现分叉 §F-6/§F-7），机制原则 `proposed/2026-10-27-state-semantics-mechanism-decisions.md`。
-   原始缺口清单仍是 `proposed/2026-10-27-state-semantics-inventory.md`（第 2/3/4/5 条口径已被
-   审计表 §C 更正）。**第 2 段（设计）也已完成**：机制设计 `proposed/2026-10-27-ui-state-design.md`
-   （含 A–H 八批落地表与 §11 自审记录）、收窄计划 `proposed/2026-10-27-appmodel-narrowing.md`。
-   **仍未动代码**；下一步＝评审点头后从批 A（发送门槛）开始，红先用例。
+0. **状态语义对齐（主线，已落 9 个提交；G 还剩第三簇）**：现状事实已进 `docs/subsystems/ui-state.md`
+   （三类主人 / 键方案 / 迁移与清理 / 门槛入口 / 连接瞬间复合状态），索引在 `docs/AGENTS.md`。
+   - 已落地并各自一个提交：A 发送门槛 `8cbda30`、B 设备本地缝+抽屉+页签 `0a54d2a`、
+     C 草稿 `f487e35`、D 选择记忆默认 `c6c4b76`、E 子智能体在跑可见 `4e8f8fb`、
+     F 提问草稿 `1712bac`、G1 统一与优化 `8aa775b`、G2 `HostCatalogs` `a317129`、
+     H 发送模式走宿主 `f71f83f`。
+   - 因果：`implemented/2026-10-27-state-semantics-mechanism-decisions.md`（五条裁定）、
+     审计与设计仍在 `proposed/`（`state-semantics-audit.md` / `ui-state-design.md` /
+     `appmodel-narrowing.md`）。
+   - **剩 G3**：`file_preview` / `endpoint_book` / `session_rows` 三簇抽取（纯重构，无行为变化）。
 1. 跑一轮真机复验改动卡 / 差异 / 提及（要模型请求 —— 先报价再跑）。
 2. `usage.summary` 的 byDay 时区；`plugin.installStatus` 的 4 键/8 键两形态
    （真出现第二种时 `readPluginJob` 会红，属**已知的下一处**）。
@@ -72,12 +75,12 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 587 项（25 条规则自检 + 136 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | 613 项（25 条规则自检 + 142 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1381 项 |
+| `cd app && flutter test` | 1468 项 |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + 685 项 |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + 686 项 |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + 87 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
@@ -113,3 +116,5 @@
 - 2026-10-26 评审六批 + 真实清单进金样 — `implemented/2026-10-26-wire-review-fixes.md`
 - 2026-10-26 桌面四件事（提及 / 改动卡 / 差异 / 分支）— `implemented/2026-10-26-desktop-alignment-plan.md` 与四篇实现笔记
 - 2026-10-26 真机对照修正（模型 pill fallback / 分支静默）+ 连通落点 — `implemented/2026-10-26-device-alignment-fixes.md`、`2026-10-26-connect-landing.md`
+- 2026-10-27 UI 状态语义（审计 → 机制 → A–H 批）— `implemented/2026-10-27-state-semantics-mechanism-decisions.md`；
+  现状事实 `docs/subsystems/ui-state.md`；审计/设计仍 `proposed/2026-10-27-*`

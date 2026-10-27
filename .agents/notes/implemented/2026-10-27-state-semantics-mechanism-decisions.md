@@ -1,9 +1,10 @@
 # 手机端 UI 状态：语义照宿主，机制照移动端
 
 - 日期：2026-10-27
-- 状态：proposed（第 1 段审计通过后先钉原则；第 2 段的设计与落地按本篇约束）
+- 状态：implemented（五条裁定均已在 A–H 批落地，落地位置见文末"落地"一节）
 - 相关：`proposed/2026-10-27-state-semantics-inventory.md`（缺口清单）、
-  `proposed/2026-10-27-state-semantics-audit.md`（归属表与桌面/移动端证据）
+  `proposed/2026-10-27-state-semantics-audit.md`（归属表与桌面/移动端证据）、
+  `docs/subsystems/ui-state.md`（现状事实）
 
 ## Problem
 
@@ -81,7 +82,20 @@
 3. 不建本地选择键 ⇒ 首次连上、目录未到时模型 chip 仍显示「请选择模型」；这是"诚实"的代价，
    不是缺陷，要在文档里说明。
 4. 离线时手机永远无法显示"上次用的模型"（接受：宿主是唯一真值）。
-5. 需要删掉 `app/lib/model/session_dot.dart:9-15` 那条"没有 `runningSubagentCount` 投影"的
-   自我限制注释（前提错误），但**行形态仍是"一枚点 + 一行文字"**——360dp 放不下桌面的两枚点。
-6. 落地时必须在被约束的代码入口留一行回指本篇（草稿旁路、门槛函数、迁移代三处），
-   否则下一个会话只会看到"这段写得别扭"然后重写掉。
+5. `app/lib/model/session_dot.dart:9-15` 那条"没有 `runningSubagentCount` 投影"的注释
+   已改（前提错误），但**行形态仍是"一枚点 + 一行文字"**——360dp 放不下桌面的两枚点。
+6. 被约束的代码入口都留了回指：`data/composer_gate.dart`（门槛）、
+   `data/ui_state.dart`（设备本地缝）、`data/store.dart` 的 `storeDataMigrations`（迁移代）、
+   `ui/takeover.dart`（提问草稿）、`ui/chat_page.dart` 的草稿恢复处。
+
+## 落地（五条裁定各自在哪）
+
+| 裁定 | 落地位置 |
+|---|---|
+| 1 语义真值只来自宿主 | 全部读取点；不新增协议（`wire/rpc/` 方法与连接器 `METHODS` 未增） |
+| 2 设备本地状态走编号迁移 | `data/store.dart`（`storeSchemaVersion` 2 + `storeDataMigrations[1]`）、`data/ui_state.dart` |
+| 3 活文本由控制器持有、落盘旁路 | `ui/chat_page.dart` 的 `_syncDraftForSession` / `_onInputChanged`；`UiStateStore.noteDraft/flushDrafts` |
+| 4 选择记忆不建本地键 | `AppModel.currentModel`（回落 `catalog.defaultSelection`）、`defaultNewSessionWorkspaceId` |
+| 5 动作门槛一个入口 | `data/composer_gate.dart`；UI 只消费结论（`ui/chat_page.dart`） |
+
+批序与门禁结果见 `proposed/2026-10-27-ui-state-design.md` §9 与 git 历史（A–H 各一个提交）。

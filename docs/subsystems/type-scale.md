@@ -18,7 +18,8 @@
 | 特大 | 1.3 | 上限；实测 1.3 在有工具卡/代码块/diff 的会话上仍舒服 |
 
 常量在 `app/lib/model/preferences.dart`（`kUiScaleSteps` / `kUiScaleLabels` /
-`kUiScaleDefaultIndex`）；落盘键 `ui_scale_index`；实现见 `app/lib/main.dart` 的 `_uiScaled`。
+`kUiScaleDefaultIndex`）；落盘键 `device.ui_scale_index`（`data/ui_state.dart` 的 `UiKey`，
+首帧前读回）；实现见 `app/lib/main.dart` 的 `_uiScaled`。
 
 **为什么上限是 1.3**：系统 1.5 时顶栏标题开始省略、输入框占约 1/5 屏；系统 2.0 不溢出但明显发挤
 （`shots-2026-10-22/sc-1_5-session.png`、`sc-2_0-session.png`）。与系统叠加后整体 clamp 到 2.0

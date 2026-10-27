@@ -1,6 +1,8 @@
 # 电脑侧设置（`settings.describe` / `settings.update`）
 
-手机能改**三行电脑侧设置**：新会话默认权限、新任务默认模式、上传 Session Log。
+手机能改**三行电脑侧设置**：新会话默认权限、新任务默认模式、上传 Session Log；
+另有一个**非设置页字段**走同一条通道：发送模式 `ui-conversation.busyEnter`
+（见 `docs/subsystems/ui-state.md` §5）。
 值是**电脑侧真值**（不是手机本地偏好 —— 后者见 `docs/subsystems/type-scale.md` 那一类）。
 
 ## 1. 方法面
@@ -13,17 +15,20 @@
 两个方法的实现在连接器：
 - `connector/src/dsh/settings.ts` —— 端口（**读已脱敏、写只发新值**，三条安全规则见文件头）；
 - `connector/src/dsh/settings-face.ts` —— 手机这一层的**两张 allowlist**：
-  - 可读 ns：`permission` / `agent-preset-registry` / `session-log-deepseek`（问别的**静默跳过**）；
+  - 可读 ns：`permission` / `agent-preset-registry` / `session-log-deepseek` /
+    `ui-conversation`（问别的**静默跳过**）；
   - 可写字段：`permission.defaultPreset`、`agent-preset-registry.selectedDefault`、
-    `session-log-deepseek.enabled` —— 按 **(ns, path)** 逐条放行，越界回 `gateway/bad-request`。
+    `session-log-deepseek.enabled`、`ui-conversation.busyEnter` —— 按 **(ns, path)**
+    逐条放行，越界回 `gateway/bad-request`。
     为什么不是"ns 可写"：`mutate` 能写密钥字段，而 `settings.update` 不是密钥的通道。
 
 `settings` 服务不在时两个方法**都不挂**（`repo.info` 也就不报）—— 与 `job.*` 同一条能力位模型。
 
 ## 2. 手机侧
 
-- `AppModel.refreshSettings()` 拉三个 ns（连上时一次）；`updateSetting(ns, path, value)`
-  只发新值 + 上一次的 `revision`。冲突时**重读一次并返回 false**（不重试这次写 —— 值可能已被别人改）。
+- `AppModel.refreshSettings()` 拉四个 ns（连上时一次；第四个只用于发送模式）；
+  `updateSetting(ns, path, value)` 只发新值 + 上一次的 `revision`。冲突时**重读一次并返回 false**
+  （不重试这次写 —— 值可能已被别人改）。
 - 设置页三行：
 
 | 行 | 写哪里 | 选项来源 | 拿不到时的样子 |
@@ -34,7 +39,7 @@
 
 ## 3. 判据
 
-- 连接器 `connector/tests/settings-face.test.ts`（8 条）：读面 allowlist、写面 (ns,path) allowlist、
+- 连接器 `connector/tests/settings-face.test.ts`（9 条）：读面 allowlist、写面 (ns,path) allowlist、
   密钥位只有 `{path,set}`、冲突转 `settings/conflict`、越界转 `gateway/bad-request`、
   服务不在时不挂方法。
 - 手机 `app/test/settings_sync_test.dart`（5 条）：值落表、只发新值 + 上一个 revision、

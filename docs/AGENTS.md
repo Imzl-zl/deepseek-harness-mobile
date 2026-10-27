@@ -51,6 +51,7 @@
 | `subsystems/session-fork.md` | 分支:坐标是收口 seq、`session.fork` 的请求/应答、标题后缀规则、别名与列表刷新、失败与重复点击 |
 | `subsystems/prose-file-mentions.md` | 正文提及:什么算提及、词汇表来源、唯一命中/惰性、行内代码与围栏规则、点开走 `openFile`、已知边界 |
 | `subsystems/connect-landing.md` | 连通落点:宿主没有"当前会话"、四档落点规则(`last_session` → 在跑的 → 最新 → 空白)、"在跑"怎么显示、已知边界 |
+| `subsystems/ui-state.md` | UI 状态:三类主人(host / 落盘同构 / 设备本地)、`device.*` 与 `host.*` 键方案、迁移与清理、门槛唯一入口、连接瞬间的复合状态 |
 
 ## 引用纪律
 
