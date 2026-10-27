@@ -44,7 +44,20 @@ enum SubagentReadOnlyReason {
   oneShot,
 
   /// 模式未知：读完子会话才知道能不能继续。
-  unknown,
+  unknown;
+
+  /// 标题（Web 的 `strong`）。**文案只在这一处**：只读框与发送门槛
+  /// （`data/composer_gate.dart` 的句子）都读它，分两处写就会漂。
+  String get title => switch (this) {
+    SubagentReadOnlyReason.oneShot => '一次性子智能体记录',
+    SubagentReadOnlyReason.unknown => '此子智能体暂时只读',
+  };
+
+  /// 正文。
+  String get body => switch (this) {
+    SubagentReadOnlyReason.oneShot => '一次性任务不支持后续消息，可在这里查看完整执行记录。',
+    SubagentReadOnlyReason.unknown => '读取子会话后才能确定是否可继续。',
+  };
 }
 
 /// 一条只读说明。
@@ -53,17 +66,11 @@ class SubagentReadOnlyBand extends StatelessWidget {
 
   final SubagentReadOnlyReason reason;
 
-  /// 标题（Web 的 `strong`）。
-  String get title => switch (reason) {
-    SubagentReadOnlyReason.oneShot => '一次性子智能体记录',
-    SubagentReadOnlyReason.unknown => '此子智能体暂时只读',
-  };
+  /// 标题（Web 的 `strong`）—— 文案在枚举上（唯一一处）。
+  String get title => reason.title;
 
   /// 正文。
-  String get body => switch (reason) {
-    SubagentReadOnlyReason.oneShot => '一次性任务不支持后续消息，可在这里查看完整执行记录。',
-    SubagentReadOnlyReason.unknown => '读取子会话后才能确定是否可继续。',
-  };
+  String get body => reason.body;
 
   /// 框的最小高度（Web `min-height:54px`）。
   static const double minHeight = 54;

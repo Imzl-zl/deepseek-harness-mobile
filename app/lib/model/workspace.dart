@@ -28,6 +28,13 @@ String workspaceTitleOf(String path) {
   return trimmed.substring(separator + 1);
 }
 
+/// 工作区 chip 的占位文案。
+///
+/// **只有这一处定义**：hero 的 chip（`ui/conversation_hero.dart`）与输入栏的门槛
+/// （`data/composer_gate.dart` 的 "缺工作区" 那句）读同一个常量 ——
+/// 桌面也是同一句（`hero.chooseWorkspace`，`EmptyHero.tsx:55-58`），分两处写就会漂。
+const String kWorkspacePlaceholder = '选择工作区';
+
 /// 工作区 chip 的标签（`null` = 占位「选择工作区」）。
 ///
 /// **链逐条照 DSH 的 `ConversationContent.tsx:89-108`**，注释里的五级也照抄：

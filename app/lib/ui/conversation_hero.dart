@@ -43,6 +43,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../model/workspace.dart' show kWorkspacePlaceholder;
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
@@ -170,7 +171,7 @@ class HeroChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
-    final text = label ?? '选择工作区';
+    final text = label ?? kWorkspacePlaceholder;
     return Tooltip(
       message: tooltip ?? text,
       child: InkWell(

@@ -222,7 +222,11 @@ void main() {
     Map<String, Object?> projections = const {},
   }) {
     final client = _HeroClient(
-      sessions: sessions ?? [blankRow('blank-1')],
+      // **blank 行必须带 `cwd`**：真实行恒有它（`handlers.ts:760`），而 2026-10-27
+      // 起"blank 会话的工作区解析不出来就不能发"进了门槛
+      // （桌面 `ConversationContent.tsx:142` 的 `inert`）。没有 `cwd` 又没有
+      // 工作区清单 ⇒ 解析不出来 ⇒ 占位文案被换成「选择工作区」，这一屏就不是 hero 了。
+      sessions: sessions ?? [blankRow('blank-1', cwd: r'D:\work\dsh-mobile')],
       workspaces: workspaces,
       presets: presets,
       projections: projections,
@@ -370,7 +374,9 @@ void main() {
       // OtherItem，于是 `items.isEmpty` 恒为假、hero 分支永不进入。
       // **这个用例必须推真形状**：空 store 的旧用例对此一无所知。
       final client = _HeroClient(
-        sessions: [blankRow('blank-1')],
+        // 真行恒带 `cwd`（`handlers.ts:760`）；没有它工作区解析不出来，
+        // 输入栏会被门槛挡住，占位文案就不是 hero 那句了。
+        sessions: [blankRow('blank-1', cwd: r'D:\work\dsh-mobile')],
         presets: presetReply(),
         replay: const [
           SessionEvent(
@@ -423,7 +429,9 @@ void main() {
       // 用户消息已回来、轮次还没起（电脑侧 blank 尚未翻面）时，
       // 那一行必须看得见 —— 被 hero 盖住等于"消息发出去了却看不到"。
       final client = _HeroClient(
-        sessions: [blankRow('blank-1')],
+        // 真行恒带 `cwd`；缺了它工作区解析不出来，输入栏会被门槛挡住
+        // （这一条要的是"消息进正文"，不是门槛）。
+        sessions: [blankRow('blank-1', cwd: r'D:\work\dsh-mobile')],
         presets: presetReply(),
         replay: const [
           SessionEvent(
@@ -590,12 +598,21 @@ void main() {
     });
 
     testWidgets('拿不到工作区清单：点 chip 如实说，不摆空选择器', (tester) async {
-      final (_, app) = connected(presets: presetReply());
+      // 这条要的是**标签解析不出来**那一刻（占位「选择工作区」），
+      // 所以显式给一行**没有 `cwd`** 的 blank：`connected()` 的默认行带 cwd
+      // （真实行恒有），那样 chip 会显示目录名，点不到占位态。
+      final (_, app) = connected(
+        sessions: [blankRow('blank-1')],
+        presets: presetReply(),
+      );
       addTearDown(app.dispose);
       await tester.pumpWidget(host(app));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('选择工作区'));
+      // 两句都是「选择工作区」：hero 的 chip（上）与输入栏占位（下）——
+      // 桌面同样如此（`hero.chooseWorkspace` 与 `placeholder.workspace` 同一句）。
+      // 要点的是 chip，它在上面。
+      await tester.tap(find.text('选择工作区').first);
       await tester.pumpAndSettle();
 
       expect(find.textContaining('workspace.list'), findsOneWidget);

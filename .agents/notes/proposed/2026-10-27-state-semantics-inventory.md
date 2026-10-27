@@ -1,7 +1,9 @@
 # 状态语义缺口清单（UI 状态：谁拥有、记不记、约束在不在）
 
 - 日期：2026-10-27
-- 状态：proposed（待做一次系统审计与统一设计；本文件只记"已发现的缺口"与判据，不写补丁方案）
+- 状态：proposed。**2026-10-27 已审计完**：归属表与桌面/移动端证据见
+  `2026-10-27-state-semantics-audit.md`，机制原则见 `2026-10-27-state-semantics-mechanism-decisions.md`。
+  本文件只保留"缺口清单"的原始形态；其中第 2/3/4/5 条的口径已被审计表 §C 更正（以源码为准）
 - 相关：`implemented/2026-10-26-connect-landing.md`、`implemented/2026-10-26-drawer-pickers-and-hero.md`
 
 ## 一句话问题

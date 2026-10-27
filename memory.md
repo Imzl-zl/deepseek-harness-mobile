@@ -42,11 +42,13 @@
 
 ## 下一步
 
-0. **状态语义对齐（进行中的主线）**：清单
-   `proposed/2026-10-27-state-semantics-inventory.md`（抽屉折叠态 / 模型·思考·工作区记忆 /
-   发送门槛 / 草稿与页签 / 连接瞬间复合状态），新会话提示词
-   `proposed/2026-10-27-state-semantics-prompt.md`。**先审计出归属表，再一次性做机制，
-   禁止逐条打补丁。**
+0. **状态语义对齐（进行中的主线）**：**第 1 段（审计）已完成**——
+   归属表 `proposed/2026-10-27-state-semantics-audit.md`（状态与动作两类表 + 桌面行号 +
+   移动端实现分叉 §F-6/§F-7），机制原则 `proposed/2026-10-27-state-semantics-mechanism-decisions.md`。
+   原始缺口清单仍是 `proposed/2026-10-27-state-semantics-inventory.md`（第 2/3/4/5 条口径已被
+   审计表 §C 更正）。**第 2 段（设计）也已完成**：机制设计 `proposed/2026-10-27-ui-state-design.md`
+   （含 A–H 八批落地表与 §11 自审记录）、收窄计划 `proposed/2026-10-27-appmodel-narrowing.md`。
+   **仍未动代码**；下一步＝评审点头后从批 A（发送门槛）开始，红先用例。
 1. 跑一轮真机复验改动卡 / 差异 / 提及（要模型请求 —— 先报价再跑）。
 2. `usage.summary` 的 byDay 时区；`plugin.installStatus` 的 4 键/8 键两形态
    （真出现第二种时 `readPluginJob` 会红，属**已知的下一处**）。

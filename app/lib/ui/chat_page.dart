@@ -40,6 +40,7 @@ import 'package:flutter/services.dart';
 import '../core/errors.dart';
 import '../core/job.dart';
 import '../data/app_model.dart';
+import '../data/composer_gate.dart';
 import '../model/agent_preset.dart';
 import '../model/changes.dart';
 import '../model/chat_item.dart';
@@ -532,13 +533,21 @@ class ChatPageState extends State<ChatPage> {
     // 就 return，于是选了照片却没打字时点发送**什么都不发生** ——
     // 而 DSH 的 `content` 本来就是 part 数组，可以没有文本 part。
     final hasImage = _attachments.any((item) => !item.isInert);
-    if ((text.isEmpty && !hasImage) || _sending) return;
-    // **没选会话就发不出去，必须说出来**：静默 `return` 会让用户以为"点了没反应"，
-    // 而那正是"我发了啥也没有"最常见的成因（真机实测）。
-    if (sid == null) {
-      DshToast.show(context, '先在列表里选一个会话，再发消息');
+    // **可用性只有一处判据**（`_composerGate`）。这里不再自己判
+    // `text.isEmpty` / `_sending` / `sid == null` —— 那些条件搬进门槛后，
+    // 按钮的置灰与"点了说什么"才不会各说各的。
+    final gate = _composerGate;
+    if (gate is ComposerGateBlocked) {
+      // 被挡时必须说清缺什么（句子来自门槛，唯一一处）。
+      DshToast.show(context, gate.sentence);
       return;
     }
+    // 静默禁用（正文空 / 请求在途）与"停止"主键都不该走到这里；
+    // 主键是停止时按钮调的是 `_stop`，不是这里。
+    if (gate is! ComposerGateSend) return;
+    // 不可达（GateSend 的前提就是有会话）；留着是为了让类型收窄，
+    // 而不是给"没会话也能发"开一条路。
+    if (sid == null) return;
     setState(() => _sending = true);
     try {
       // 判据与顶栏同一个（[_subagentParentSid]）：它比"我是不是从面板走进来的"宽一档
@@ -870,6 +879,8 @@ class ChatPageState extends State<ChatPage> {
             viewport.maxHeight,
             cardActive: _takeover.active != null,
           );
+          // 输入栏的可用性只算一次（`_composerGate` 是唯一判据）。
+          final gate = _composerGate;
           return Column(
             children: [
               // **没选中会话时只有「对话」一个 tab**（2026-10-19 用户原话：
@@ -989,12 +1000,28 @@ class ChatPageState extends State<ChatPage> {
                           ),
                           sendMode: widget.app.sendMode,
                           sending: _sending,
-                          enabled: _hasData && sid != null,
+                          // **整条输入栏是否活着**（chip / 候选面板 / 附件都跟它走）：
+                          // 只有"被挡"才锁。**"正文空"不锁** —— 桌面 `empty` 只禁主键，
+                          // 而 `inert`（无会话 / blank 无工作区）才锁整条
+                          // （`InputBar.tsx:154,343` + `ConversationContent.tsx:142`）。
+                          //
+                          // 2026-10-27 这条被用例抓过一次：把 `enabled` 直接接成
+                          // "能发/能停"，于是空草稿时模型与权限 chip 全灰，
+                          // 用户在打字**之前**根本选不了模型。
+                          enabled: gate is! ComposerGateBlocked,
                           // **hero 上换一套占位文案**（DSH 的 `placeholder.hero`，
                           // `locales.ts:23`）：那一屏的动作是"开一个新任务"。
                           // 只在真的显示了 hero 时才换 —— 与 `_ChatTab` 用同一个判据，
                           // 免得出现"文案说开新任务、屏幕却是空态"。
-                          hintText: _heroVisible
+                          //
+                          // **被挡时用门槛给的那句**（桌面把占位文案换成
+                          // `blocked.reason` / "选择工作区"，`ConversationContent.tsx:152,160`）：
+                          // 用户不用点就知道缺什么。
+                          hintText:
+                              gate is ComposerGateBlocked &&
+                                  gate.replacesPlaceholder
+                              ? gate.sentence
+                              : _heroVisible
                               ? kComposerHintHero
                               : kComposerHintDefault,
                           // 运行中且没有草稿时，主键是"停止"（照 Web 的 primaryStops）。
@@ -1157,6 +1184,42 @@ class ChatPageState extends State<ChatPage> {
     final sid = widget.app.currentSid;
     if (sid == null) return false;
     return widget.app.runningOf(sid);
+  }
+
+  /// 输入栏可用性的**唯一判据**（`data/composer_gate.dart`）。
+  ///
+  /// 这里只负责把"手机手上已有的四个事实"喂进去，**不在页面上重写条件**：
+  /// 每多一处在页面里判 `sid != null` / `workspace == null`，就会多一个"这条路径漏了"。
+  ///
+  /// 三个输入的出处：
+  /// - `workspaceResolved`：与 hero 的 chip **同一个纯函数**（`workspaceChipLabel`，
+  ///   桌面 `ConversationContent.tsx:89-108` 的五级链）；
+  /// - `subagentReadOnlySentence`：只读框的标题（同一份文案，`SubagentReadOnlyReason.title`）；
+  /// - `parentOffline`：**近似判据** —— 桌面看客户端"父会话有活 agent"
+  ///   （`session-controller/src/client/sessions/manager.ts:277-286`），手机只能看
+  ///   "父会话还在 `session.list` 里"。偏差记在 `docs/`。
+  ComposerGate get _composerGate {
+    final app = widget.app;
+    final sid = app.currentSid;
+    final hasImage = _attachments.any((item) => !item.isInert);
+    final parent = _subagentParentSid;
+    return composerGateOf(
+      paired: widget.paired,
+      sid: sid,
+      blankSession: app.currentIsBlank,
+      workspaceResolved:
+          workspaceChipLabel(
+            workspacesReady: app.workspaces.isNotEmpty,
+            sessionWorkspaceTitle: app.currentWorkspace?.title,
+            cwd: sid == null ? null : app.sessionOf(sid)?.cwd,
+          ) !=
+          null,
+      subagentReadOnlySentence: _subagentReadOnlyReason?.title,
+      parentOffline: parent != null && app.sessionOf(parent) == null,
+      draftEmpty: _input.text.trim().isEmpty && !hasImage,
+      sending: _sending,
+      canStop: _running,
+    );
   }
 
   /// 工具明细是否默认展开（"工作步骤展示"偏好）。

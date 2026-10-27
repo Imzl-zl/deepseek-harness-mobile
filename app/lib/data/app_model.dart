@@ -1356,6 +1356,9 @@ class AppModel extends ChangeNotifier {
     required String title,
     required int updatedAt,
     required List<ChatItem> items,
+    // **`blank` 必须能种**：新会话页（hero）与"blank 会话没有工作区就不能发"
+    // 这两条判据都只在 blank 上成立，而真实 blank 需要一次 `session.list` 往返。
+    bool blank = false,
   }) {
     if (_disposed) return;
     _storeOf(sid).replaceAll(items);
@@ -1363,6 +1366,7 @@ class AppModel extends ChangeNotifier {
       sid: sid,
       title: title,
       updatedAt: updatedAt,
+      blank: blank,
       itemCount: items.length,
       pendingCount: items
           .whereType<ApprovalItem>()
