@@ -326,7 +326,7 @@ int runningChildrenOf(String parentSid) => subagentIdsOf(parentSid)
 | E | 连接瞬间复合 | `wire/rpc/session.dart`、`session_rows.dart`、`chat_page.dart`、`main.dart`、`model/session_dot.dart`（改注释） | 列表行带 `subagentCatalog`；`runningChildrenOf` 公式逐条对桌面；**先量再改** `_BottomBudget` 三常量 + 棘轮用例；会话页一行可见；抽屉副标题 |
 | F | 提问草稿 | `ui/takeover.dart` | 答到第 2 题关掉再开还在；收束后 prune |
 | G | 统一与优化（**拆成三簇**，见下） | `cache.dart`/`ids.dart`/`guarded.dart`/`session_rows.dart`/`host_catalogs.dart`/`file_preview.dart`/`endpoint_book.dart` | 现有全绿 + 索引/派生各一条 |
-| H | `send_mode` → 宿主 | `connector/src/dsh/settings-face.ts`、`app_model.dart`、`data/store.dart`（删键） | 连接器 settings 用例 + 手机读宿主值/写回 |
+| H | `send_mode` → 宿主（**老连接器保留本地键作退路**） | `connector/src/dsh/settings-face.ts`（读面 +1 ns、写面 +1 字段）、`app_model.dart`（`kSettingsNamespaces` 第四个 ns、`refreshSettings` 采纳宿主值、`setSendMode` 写宿主） | 连接器 settings 用例（读面多 ns / 写面多字段 / busyEnter 可写）+ 手机 `send_mode_host_test` 4 条（读 / 写 / 退路 / 怪值不猜） |
 
 **G 的实际拆分与状态（2026-10-27）**：
 
