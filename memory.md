@@ -42,16 +42,19 @@
 
 ## 下一步
 
-0. **状态语义对齐（主线，已落 9 个提交；G 还剩第三簇）**：现状事实已进 `docs/subsystems/ui-state.md`
+0. **状态语义对齐（主线，A–H 全落地，共 13 个提交）**：现状事实已进 `docs/subsystems/ui-state.md`
    （三类主人 / 键方案 / 迁移与清理 / 门槛入口 / 连接瞬间复合状态），索引在 `docs/AGENTS.md`。
    - 已落地并各自一个提交：A 发送门槛 `8cbda30`、B 设备本地缝+抽屉+页签 `0a54d2a`、
      C 草稿 `f487e35`、D 选择记忆默认 `c6c4b76`、E 子智能体在跑可见 `4e8f8fb`、
      F 提问草稿 `1712bac`、G1 统一与优化 `8aa775b`、G2 `HostCatalogs` `a317129`、
      H 发送模式走宿主 `f71f83f`。
+   - G3 四个提交：`5d54eae`（端点特征用例）+ `06dd9f7`（EndpointBook）、
+     `d10e0da`（ItemDerivations，并修掉 changedFiles 排序与注释不一致）、
+     `d29cbe8`（SessionRows）、`a17b595`（FilePreview）。
    - 因果：`implemented/2026-10-27-state-semantics-mechanism-decisions.md`（五条裁定）、
-     审计与设计仍在 `proposed/`（`state-semantics-audit.md` / `ui-state-design.md` /
-     `appmodel-narrowing.md`）。
-   - **剩 G3**：`file_preview` / `endpoint_book` / `session_rows` 三簇抽取（纯重构，无行为变化）。
+     `implemented/2026-10-27-appmodel-narrowing.md`（六步落地顺序 + 不做 guarded 的理由）；
+     审计与设计仍在 `proposed/`（`state-semantics-audit.md` / `ui-state-design.md`）。
+   - `guarded.dart` **决定不做**（47 处 catch 各不相同，统一模板会把"吞错"变成默认动作）。
 1. 跑一轮真机复验改动卡 / 差异 / 提及（要模型请求 —— 先报价再跑）。
 2. `usage.summary` 的 byDay 时区；`plugin.installStatus` 的 4 键/8 键两形态
    （真出现第二种时 `readPluginJob` 会红，属**已知的下一处**）。

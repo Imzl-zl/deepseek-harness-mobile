@@ -1,8 +1,9 @@
 # AppModel 收窄：按簇抽类 + 保留转发 getter
 
 - 日期：2026-10-27
-- 状态：proposed（设计与批序见 `2026-10-27-ui-state-design.md` §7/§9；本篇只记这个选择与被否方案）
-- 相关：`2026-10-27-state-semantics-mechanism-decisions.md`（五条机制裁定）
+- 状态：implemented（五簇均已落地、各一个提交；`guarded` 决定不做，理由见 Consequences 3）
+- 相关：`2026-10-27-state-semantics-mechanism-decisions.md`（五条机制裁定）、
+  `docs/subsystems/ui-state.md`（现状事实）
 
 ## Problem
 
@@ -28,8 +29,17 @@ AGENTS.md 的硬规则是"新机制不许让它继续膨胀"。所以先定拆�
 4. 每个新类都能用**纯 Dart 用例**直接构造与断言（不经过 `AppModel`）；
 5. 一批只搬一簇，`flutter test` 与静态检查在同一提交内。
 
-批序（每批一个提交）：① `host_catalogs` ② `file_preview` ③ `endpoint_book` + `session_rows`。
+实际落地顺序（每个一个提交，各自变异校验）：
+
+1. `data/ids.dart` + `data/cache.dart` + 三处索引（`sessionOf` / 工作区 / 待处理计数）—— G1；
+2. `data/host_catalogs.dart`（模型 / 权限 / Agent 预设目录）—— G2；
+3. `data/endpoint_book.dart`（端点表 + 路由记忆）—— G3-1；
+4. `data/item_derivations.dart`（改动清单 / 每轮产出 / 收口助手 / 提及表）—— G3-2；
+5. `data/session_rows.dart`（在跑 / 子智能体在跑 / 未读完成 / 活时钟 / 轮号）—— G3-3；
+6. `data/file_preview.dart`（打开 / 分页 / 逐行差异）—— G3-4。
+
 三个新缝（`ui_state` / `composer_gate` / 派生行事实）**独立成文件，不进 AppModel**。
+`AppModel` 剩 3700 行左右，公开签名未收缩（门槛 2 满足），UI 调用点改动数为 0。
 
 ## Alternatives considered
 
@@ -66,7 +76,11 @@ AGENTS.md 的硬规则是"新机制不许让它继续膨胀"。所以先定拆�
    这是为了保住调用点，属于有意的可读性代价。
 2. 拆分期间 `AppModel` 是"半搬半留"状态，可能出现同一簇数据在两处可读的过渡期；
    每批必须**当场删掉旧私有字段**，不允许留下第二种读法。
-3. 抽类后 `_disposed`、`notifyListeners`、错误记录要从"类内直接调"改成注入的回调或
-   基类契约；这会新增少量样板（`guarded.dart` 就是为此准备的）。
+3. 抽类后 `_disposed`、`notifyListeners`、错误记录改成注入的回调。**没有做 `guarded.dart`**：
+   它会把"吞错"变成模板化的默认动作 —— 抽样这 47 处 try 后，它们的 catch 各不相同
+   （有的记 `lastError`、有的换成一句面向用户的话、有的按错误码分支），
+   统一成一个 `guard(what, body)` 只能保住"吞掉"这个共同点，等于让"失败要留声"更难被看见。
+   现在的做法是每簇自己收口（`host_catalogs` 静默、`file_preview` 交 `recordError`），
+   判据留在能读到上下文的那一层。
 4. `AppModel` 测试里那些 `@visibleForTesting` 的注入点需要随之搬移，测试文件要同步改；
    这是本批唯一允许改测试文件的场景（改的是**接线**，不是断言）。

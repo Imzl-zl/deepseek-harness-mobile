@@ -334,7 +334,8 @@ int runningChildrenOf(String parentSid) => subagentIdsOf(parentSid)
 |---|---|---|
 | G1 | `ids.dart`（16 处幂等键）、`cache.dart`（4 处源缓存）、三处索引（`sessionOf` / 工作区 / 待处理计数） | **已落地** |
 | G2 | `host_catalogs.dart`（模型/权限/预设目录） | **已落地** |
-| G3 | `endpoint_book.dart` / `file_preview.dart` / `session_rows.dart` / `guarded.dart` | **未做**（纯重构、无行为变化；`guarded` 要逐个替换 47 个 try，风险与 G3 同批评估） |
+| G3 | `endpoint_book.dart`（G3-1）、`item_derivations.dart`（G3-2）、`session_rows.dart`（G3-3）、`file_preview.dart`（G3-4） | **已落地**，各一个提交与变异校验 |
+| — | `guarded.dart` | **决定不做**：47 处 catch 各不相同（记 lastError / 面向用户的一句话 / 按码分支），统一模板只保住"吞掉"这一点，详见 `implemented/2026-10-27-appmodel-narrowing.md` 代价 3 |
 
 门禁（每批都跑）：`dart analyze --fatal-infos lib test integration_test`、
 `dart format --output=none --set-exit-if-changed …`、`flutter test`、
