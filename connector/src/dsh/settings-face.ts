@@ -22,11 +22,19 @@
  */
 import type { SettingsSnapshot, SettingsPort } from './settings.js'
 
-/** 手机能读的命名空间（就这三行设置所在的三个 ns）。 */
+/**
+ * 手机能读的命名空间。
+ *
+ * 前三个是三行设置；第四个（`ui-conversation`）只读一个字段：**发送模式**
+ * `busyEnter`（`packages/client/ui-conversation/src/submission-settings.ts:1-33`）。
+ * 它在桌面本来就是宿主设置 —— 手机不自己存一份（两份真值会让
+ * "手机显示插话、电脑显示排队"而无处解释）。
+ */
 export const READABLE_NAMESPACES: readonly string[] = [
   'permission',
   'agent-preset-registry',
   'session-log-deepseek',
+  'ui-conversation',
 ]
 
 /** 手机能写的字段：**(ns, path)** 逐条列出，不按 ns 放行。 */
@@ -37,6 +45,9 @@ export const WRITABLE_FIELDS: readonly { ns: string; path: readonly string[] }[]
   { ns: 'agent-preset-registry', path: ['selectedDefault'] },
   // 上传 Session Log 的开关（`packages/client/ui-settings-session-log/src/client/index.ts:27,29`）。
   { ns: 'session-log-deepseek', path: ['enabled'] },
+  // 发送模式：跑动中按 Enter 是排队还是插话
+  // （`packages/client/ui-conversation/src/submission-settings.ts:6-18,26-33`）。
+  { ns: 'ui-conversation', path: ['busyEnter'] },
 ]
 
 /** 一个可写的设置字段（手机侧三行设置各对应一条）。 */

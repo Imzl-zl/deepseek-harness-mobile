@@ -79,6 +79,13 @@ function rows(): Record<string, SettingsSnapshot> {
       values: { enabled: false },
       secrets: [],
     },
+    // 发送模式（宿主设置里的那个；桌面也写这里）。
+    'ui-conversation': {
+      ns: 'ui-conversation',
+      revision: 'rev-1',
+      values: { busyEnter: 'queue' },
+      secrets: [],
+    },
     'some-other-ns': {
       ns: 'some-other-ns',
       revision: 'rev-1',
@@ -111,12 +118,18 @@ test('describe：只回 allowlist 里的 ns，其余静默跳过', () => {
     'permission',
     'agent-preset-registry',
     'session-log-deepseek',
+    'ui-conversation',
     'some-other-ns',
     'never-existed',
   ])
   assert.deepEqual(
     sections.map((section) => section.ns),
-    ['permission', 'agent-preset-registry', 'session-log-deepseek'],
+    [
+      'permission',
+      'agent-preset-registry',
+      'session-log-deepseek',
+      'ui-conversation',
+    ],
     'some-other-ns 不在可读 allowlist 里，never-existed 不存在 —— 都不返回',
   )
 })
@@ -164,7 +177,28 @@ test('update：越界字段在连接器就被挡住（不到宿主）', async ()
     SettingsScopeError,
   )
   assert.equal(calls.setField.length, 0, '一次都不该调到宿主')
-  assert.equal(WRITABLE_FIELDS.length, 3, '可写面就是这三行设置')
+  assert.equal(
+    WRITABLE_FIELDS.length,
+    4,
+    '可写面：三行设置 + 发送模式（`ui-conversation.busyEnter`）',
+  )
+})
+
+test('update：发送模式（`ui-conversation.busyEnter`）可写，回改后的快照', async () => {
+  // 这一条是"唯一真值"的通道：手机切发送模式 = 写宿主设置，
+  // 桌面读的是同一个字段（`submission-settings.ts:26-33`）。
+  const { port, calls } = fakePort({ rows: rows() })
+  const face = createSettingsFace(port)
+  const section = await face.update({
+    ns: 'ui-conversation',
+    path: ['busyEnter'],
+    value: 'steer',
+    expectedRevision: 'rev-1',
+  })
+  assert.deepEqual(calls.setField, [
+    ['ui-conversation', ['busyEnter'], 'steer', 'rev-1'],
+  ])
+  assert.deepEqual(section?.values, { busyEnter: 'steer' })
 })
 
 test('update：乐观锁过期转成 SettingsConflictError', async () => {

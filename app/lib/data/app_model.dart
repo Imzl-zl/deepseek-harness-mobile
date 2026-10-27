@@ -1558,9 +1558,10 @@ class AppModel extends ChangeNotifier {
     // 而不是一直"未读到"）。顺手把保活对齐。
     unawaited(_syncKeepAlive());
     _connection = _viewOf(client.state, client);
-    // **先把落盘的发送模式读回来**：它决定发 prompt 时带哪个 `mode`，
-    // 重启后要还是用户选的那个。读不到（没存过 / 存了个不认识的值）
-    // 就保持默认的排队 —— 与 DSH 的默认一致，也不猜。
+    // **发送模式的初始种子**：真值在宿主设置 `ui-conversation.busyEnter`
+    // （`refreshSettings` 回来后会覆盖这里），本机这份只在两种时刻起作用：
+    // ① 首帧还没读到设置时别闪；② **老连接器没有那个设置面**时的退路。
+    // 读不到就保持默认的排队 —— 与 DSH 的默认一致，也不猜。
     final stored = await _prefs?.read(kSendModeKey);
     final restored = SendMode.fromWire(stored);
     if (restored != null) _sendMode = restored;
@@ -1582,11 +1583,21 @@ class AppModel extends ChangeNotifier {
   /// 当前的发送模式（排队 / 插话）。
   SendMode get sendMode => _sendMode;
 
-  /// 切发送模式。**落盘**（见 [kSendModeKey]）；同一个值重复切是空操作。
+  /// 切发送模式。同一个值重复切是空操作。
+  ///
+  /// **真值在宿主**：`ui-conversation.busyEnter`（桌面也写这里，
+  /// `packages/client/ui-conversation/src/submission-settings.ts:1-33`）。
+  /// 手机只在**老连接器**（没有这个设置面）时才退回本地键 —— 两份真值并存
+  /// 会让"手机显示插话、电脑显示排队"而无处解释，而那是本轮审计点名的
+  /// §C-5。写失败**不回滚界面**：用户已经看到按钮变了，回滚只会更错。
   Future<void> setSendMode(SendMode mode) async {
     if (_disposed || mode == _sendMode) return;
     _sendMode = mode;
     notifyListeners();
+    if (_settingsValues.containsKey(kBusyEnterNs)) {
+      await updateSetting(kBusyEnterNs, kBusyEnterField, mode.wire);
+      return;
+    }
     await _prefs?.write(kSendModeKey, mode.wire);
   }
 
@@ -1690,12 +1701,22 @@ class AppModel extends ChangeNotifier {
   /// `ns → 乐观锁版本`（下一次写要带回去；过期会回 `settings/conflict`）。
   final Map<String, Object?> _settingsRevision = {};
 
-  /// 手机关心的三个命名空间。
+  /// 手机关心的四个命名空间。
+  ///
+  /// 第四个（`ui-conversation`）只读一个字段：**发送模式 `busyEnter`**。
+  /// 它是宿主设置里已有的东西（`packages/client/ui-conversation/src/submission-settings.ts:1-33`），
+  /// 桌面也写这里 —— 手机不再自己存一份（那是第二份真值，见
+  /// `proposed/2026-10-27-state-semantics-audit.md` §C-5）。
   static const List<String> kSettingsNamespaces = [
     'permission',
     'agent-preset-registry',
     'session-log-deepseek',
+    'ui-conversation',
   ];
+
+  /// 发送模式在宿主设置里的位置（`ui-conversation.busyEnter`）。
+  static const String kBusyEnterNs = 'ui-conversation';
+  static const String kBusyEnterField = 'busyEnter';
 
   /// 某个命名空间的当前值；`null` = 还没读到（**不拿默认值冒充**）。
   Map<String, Object?>? settingsOf(String ns) => _settingsValues[ns];
@@ -1719,6 +1740,15 @@ class AppModel extends ChangeNotifier {
         _settingsValues[section.ns] = section.values;
         _settingsRevision[section.ns] = section.revision;
       }
+      // **发送模式以宿主为准**：`busyEnter` 有值就覆盖本机那份种子
+      // （读不到 = 老连接器 / 没这个 ns，保持种子不动）。
+      final hostMode = SendMode.fromWire(
+        switch (_settingsValues[kBusyEnterNs]?[kBusyEnterField]) {
+          final String value => value,
+          _ => null,
+        },
+      );
+      if (hostMode != null) _sendMode = hostMode;
       _lastError = null;
       if (!_disposed) notifyListeners();
     } catch (error) {
