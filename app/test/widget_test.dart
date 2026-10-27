@@ -736,7 +736,7 @@ void main() {
       expect(app.currentModel?.model, 'auto', reason: '投影给了模型就必须用投影的');
       // **显示**照桌面的触发器：目录里没有这一项 ⇒ `trigger.fallback`
       // 「请选择模型」（`ModelSelect.tsx:424-429`），不是原始 id、也不是"未选择"。
-      // 这个假电脑没有 `session/modelCatalog`；目录命中时显示展示名那条链
+      // 这个假电脑没有 `session.modelCatalog`；目录命中时显示展示名那条链
       // 由 picker / 布局那几组用例覆盖。
       expect(
         find.text('请选择模型'),

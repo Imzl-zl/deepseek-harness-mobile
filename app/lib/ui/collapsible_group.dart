@@ -38,8 +38,12 @@ class CollapsibleGroup extends StatelessWidget {
     required this.childCount,
     this.containsCurrent = false,
     this.headerWrapper,
+    this.indent = 14,
     required this.children,
   });
+
+  /// 组内行相对组头缩进多少（**层级**靠这个与字重/颜色一起表达）。
+  final double indent;
 
   /// 项目名（工作区标题；`groups` 为空时是「会话」/「未分组」）。
   final String label;
@@ -81,10 +85,12 @@ class CollapsibleGroup extends StatelessWidget {
           children: [
             // **开/关两个文件夹图标**（DSH `Rows.tsx:259-261`）：
             // 折叠态用关着的那个，"这里收着一份东西"。
+            // 一级菜单（工作区）：**字号/字重/颜色都要压过二级的会话行** ——
+            // 2026-10-26 用户原话："谁家一级菜单这样？"（当时是 11px 浅色，看不出来）。
             DshIcon(
               expanded ? 'folderOpen' : 'folderClose',
-              size: 13,
-              color: containsCurrent ? c.accentBlue : c.labelCaption,
+              size: 15,
+              color: containsCurrent ? c.accentBlue : c.labelSecondary,
             ),
             const SizedBox(width: 6),
             Expanded(
@@ -93,10 +99,10 @@ class CollapsibleGroup extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
                   // 当前所在的项目**用强调色**（DSH 同一条规则）。
-                  color: containsCurrent ? c.accentBlue : c.labelCaption,
+                  color: containsCurrent ? c.accentBlue : c.labelPrimary,
                 ),
               ),
             ),
@@ -107,7 +113,7 @@ class CollapsibleGroup extends StatelessWidget {
               const SizedBox(width: 6),
               Text(
                 '$childCount',
-                style: TextStyle(fontSize: 10, color: c.labelCaption),
+                style: TextStyle(fontSize: 11, color: c.labelSecondary),
               ),
             ],
             const SizedBox(width: 4),
@@ -125,7 +131,14 @@ class CollapsibleGroup extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         headerWrapper?.call(context, header) ?? header,
-        if (expanded) ...children,
+        // 二级（会话行）缩进：层级靠"缩进 + 字重 + 颜色"三样表达，
+        // 单靠字号在手机上不够（真机反馈"一眼看过去看不出层级"）。
+        if (expanded)
+          for (final child in children)
+            Padding(
+              padding: EdgeInsets.only(left: indent),
+              child: child,
+            ),
       ],
     );
   }

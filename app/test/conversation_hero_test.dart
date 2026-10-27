@@ -324,8 +324,13 @@ void main() {
       await tester.pumpAndSettle();
 
       final hero = tester.getRect(find.text('探索未至之境'));
-      // 对话区 = 分段控件下缘 → 输入栏上缘（hero 只在这一段里）。
-      final areaTop = tester.getRect(find.byType(DshSegmented)).bottom;
+      // 对话区 = 顶栏下缘 → 输入栏上缘（hero 只在这一段里）。
+      //
+      // **2026-10-26 起这一屏没有「对话 / 轨迹」分段**（用户原话：
+      // "没有会话不用显示上面的对话轨迹"），所以量的上界变成顶栏下缘，
+      // 不再是分段控件的下缘。
+      expect(find.byType(DshSegmented), findsNothing, reason: '首页不该有分段');
+      final areaTop = tester.getRect(find.byType(ChatAppBar)).bottom;
       final areaBottom = tester.getRect(find.byType(DshComposer)).top;
       final area = Rect.fromLTRB(0, areaTop, 800, areaBottom);
       // 量的必须是**子控件**（标题那一行）：`Column` 默认 `mainAxisSize.max`

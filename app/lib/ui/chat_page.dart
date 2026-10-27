@@ -879,14 +879,17 @@ class ChatPageState extends State<ChatPage> {
               // 而那一格 tab 等于在说"这里有个你点不开的东西"。
               // **选中了但还没有条目时仍然显示两个**：那时轨迹页有话说
               // （会话刚建、事件正在来）。
-              if (sid != null)
+              // **新会话（blank / 首页）也不显示**（用户 2026-10-26 原话：
+              // "没有会话不用显示上面的对话轨迹"）：那时两个 tab 都无内容，
+              // hero 才是这一屏的主体。
+              if (sid != null && !widget.app.currentIsBlank)
                 DshSegmented(
                   labels: const ['对话', '轨迹'],
                   index: _tab,
                   onChanged: (i) => setState(() => _tab = i),
                 ),
               Expanded(
-                child: _tab == 0
+                child: _tab == 0 || widget.app.currentIsBlank
                     ? _ChatTab(
                         app: widget.app,
                         items: items,
@@ -1000,6 +1003,9 @@ class ChatPageState extends State<ChatPage> {
                           onSend: _send,
                           onAttach: _showAttachSheet,
                           onPickModel: _showModelSheet,
+                          // 那枚"思考"chip 之前**没有接线**（`onPressed` 为 null，
+                          // 点了没反应 —— 2026-10-26 用户反馈）。
+                          onPickReasoning: _showReasoningSheet,
                           onPickAccess: _showAccessSheet,
                           onRemoveAttachment: (item) =>
                               setState(() => _attachments.remove(item)),
@@ -1933,16 +1939,10 @@ class ChatPageState extends State<ChatPage> {
               ),
               for (final entry in group.models)
                 DshPickerRow(
+                  // **只显示模型名**：渠道由上面的分组头表达，说明文字与"几档推理"
+                  // 都是废话（用户 2026-10-26 原话："你就显示渠道和模型不就行了"）。
                   name: entry.displayName,
-                  tags: [
-                    if (entry.description != null)
-                      entry.description!
-                    else
-                      group.name,
-                    // 有推理档的模型把档数说出来：用户据此知道点了还有下一步。
-                    if (entry.reasoning != null)
-                      '${entry.reasoning!.efforts.length} 档推理等级',
-                  ],
+                  tags: const [],
                   selected:
                       current != null &&
                       current.provider == group.id &&
@@ -1982,56 +1982,92 @@ class ChatPageState extends State<ChatPage> {
     final selected = reasoning.effectiveEffortOf(
       sameModel ? current.reasoningEffort : null,
     );
-    unawaited(
-      showDshSheet<void>(
-        context: context,
-        title: '推理等级 · ${entry.displayName}',
-        body: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // "默认"只在 provider 没有指定 defaultEffort 时出现
-            // （`ModelSelect.tsx:132-134`：有默认档时就只列各档）。
-            if (reasoning.defaultEffort == null)
-              DshPickerRow(
-                name: '默认',
-                tags: const ['跟随这个提供商的默认等级'],
-                selected: selected == null,
-                onTap: () {
-                  Navigator.of(context).pop();
-                  unawaited(
-                    _switchModel(
-                      provider: group.id,
-                      model: entry.id,
-                      effort: null,
-                      name: entry.displayName,
-                    ),
-                  );
-                },
-              ),
-            for (final effort in reasoning.efforts)
-              DshPickerRow(
-                name: effort.name,
-                tags: [
-                  if (effort.description != null) effort.description!,
-                  if (effort.id == reasoning.defaultEffort) '提供商默认',
-                ],
-                selected: effort.id == selected,
-                onTap: () {
-                  Navigator.of(context).pop();
-                  unawaited(
-                    _switchModel(
-                      provider: group.id,
-                      model: entry.id,
-                      effort: effort.id,
-                      name: entry.displayName,
-                    ),
-                  );
-                },
-              ),
-          ],
-        ),
+    unawaited(_showEffortSheet(group, entry, reasoning, selected));
+  }
+
+  /// 推理等级面板（**模型面板的第二级，也是输入栏那枚「思考」chip 的唯一落点**）。
+  ///
+  /// 2026-10-26 用户反馈："思考选择点了没反应" —— 根因是 `ChatPage` 从来没把
+  /// `onPickReasoning` 传给输入栏（chip 的 `onPressed` 是 `null`），
+  /// 不是这一层的问题。两处入口共用这一个面板，档位按宿主的 `reasoning.efforts`。
+  Future<void> _showEffortSheet(
+    ModelProviderGroup group,
+    ModelCatalogEntry entry,
+    ModelReasoning reasoning,
+    String? selected,
+  ) {
+    return showDshSheet<void>(
+      context: context,
+      title: '推理等级 · ${entry.displayName}',
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // "默认"只在 provider 没有指定 defaultEffort 时出现
+          // （`ModelSelect.tsx:132-134`：有默认档时就只列各档）。
+          if (reasoning.defaultEffort == null)
+            DshPickerRow(
+              name: '默认',
+              tags: const [],
+              selected: selected == null,
+              onTap: () {
+                Navigator.of(context).pop();
+                unawaited(
+                  _switchModel(
+                    provider: group.id,
+                    model: entry.id,
+                    effort: null,
+                    name: entry.displayName,
+                  ),
+                );
+              },
+            ),
+          for (final effort in reasoning.efforts)
+            DshPickerRow(
+              // 档位名 + 只有"提供商默认"一个标记（说明文字是废话）。
+              name: effort.name,
+              tags: [if (effort.id == reasoning.defaultEffort) '提供商默认'],
+              selected: effort.id == selected,
+              onTap: () {
+                Navigator.of(context).pop();
+                unawaited(
+                  _switchModel(
+                    provider: group.id,
+                    model: entry.id,
+                    effort: effort.id,
+                    name: entry.displayName,
+                  ),
+                );
+              },
+            ),
+        ],
       ),
     );
+  }
+
+  /// 输入栏那枚「思考」chip 的落点：**当前模型**的推理等级面板。
+  ///
+  /// 拿不到目录 / 这个模型没有档位时如实说一句 —— 不给一个点了没反应的 chip。
+  void _showReasoningSheet() {
+    final catalog = widget.app.modelCatalog;
+    final current = widget.app.currentModel;
+    if (catalog == null || current == null) {
+      _toast('拿不到推理等级：电脑侧没有返回模型目录');
+      return;
+    }
+    final entry = catalog.entryOf(
+      provider: current.provider,
+      model: current.model,
+    );
+    final reasoning = entry?.reasoning;
+    final group = catalog.groups
+        .where((g) => g.id == current.provider)
+        .firstOrNull;
+    if (entry == null || reasoning == null || group == null) {
+      _toast('这个模型没有可选的推理等级');
+      return;
+    }
+    final selected = reasoning.effectiveEffortOf(current.reasoningEffort);
+    unawaited(_showEffortSheet(group, entry, reasoning, selected));
   }
 
   /// 切模型。**失败要如实说** —— 静默失败会让用户以为"点了没反应"，
