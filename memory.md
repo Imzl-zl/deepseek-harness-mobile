@@ -42,6 +42,11 @@
 
 ## 下一步
 
+0. **状态语义对齐（进行中的主线）**：清单
+   `proposed/2026-10-27-state-semantics-inventory.md`（抽屉折叠态 / 模型·思考·工作区记忆 /
+   发送门槛 / 草稿与页签 / 连接瞬间复合状态），新会话提示词
+   `proposed/2026-10-27-state-semantics-prompt.md`。**先审计出归属表，再一次性做机制，
+   禁止逐条打补丁。**
 1. 跑一轮真机复验改动卡 / 差异 / 提及（要模型请求 —— 先报价再跑）。
 2. `usage.summary` 的 byDay 时区；`plugin.installStatus` 的 4 键/8 键两形态
    （真出现第二种时 `readPluginJob` 会红，属**已知的下一处**）。
