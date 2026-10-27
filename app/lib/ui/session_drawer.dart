@@ -81,10 +81,18 @@ class DrawerSection {
     required this.label,
     required this.sessions,
     this.workspaceId,
+    this.hiddenCount = 0,
   });
 
   /// 工作区标题（`dsh-mobile` / `未分组` / `会话`）。
   final String label;
+
+  /// **这一组被 watermark 藏起来的条数**（`model/workspace.dart` 的
+  /// `watermarkRowsOf`）。`0` = 全在 [sessions] 里。
+  ///
+  /// 桌面同名字段驱动「展开其余 {n} 个会话」
+  /// （`rows/WorkspaceBrowser.tsx:665`）。遮多少由装配层算，这一层只画。
+  final int hiddenCount;
 
   final List<DrawerSession> sessions;
 
@@ -153,7 +161,15 @@ class SessionDrawer extends StatefulWidget {
     this.onSearch,
     this.expandedOf,
     this.onExpandedChanged,
+    this.onRevealMore,
   });
+
+  /// 点了「展开其余 N 个会话」：把这一组**全部**放出来。
+  ///
+  /// 遮多少是装配层按 watermark 算的（`model/workspace.dart` 的
+  /// `watermarkRowsOf`），所以"放出来"也只能由装配层记 ——
+  /// 这一层不自己截断、也不自己补行。
+  final void Function(DrawerSection section)? onRevealMore;
 
   /// 一个组的展开态；`null` = 没记过（按"展开"处理）。
   ///
@@ -164,6 +180,13 @@ class SessionDrawer extends StatefulWidget {
 
   /// 展开态变了（由装配层落到 `data/ui_state.dart` 的 `host.drawer_expansion`）。
   final void Function(String groupKey, bool expanded)? onExpandedChanged;
+
+  /// 一个组的**身份键**：工作区 id，兜底桶退到标题。
+  ///
+  /// **唯一拼写处**：折叠记忆（`host.drawer_expansion`）与「展开其余」的
+  /// 记录都用它，两边各拼一次就会漂。
+  static String keyOf(DrawerSection section) =>
+      section.workspaceId ?? section.label;
 
   final List<DrawerSection> sections;
   final DrawerConnection connection;
@@ -212,7 +235,7 @@ class _SessionDrawerState extends State<SessionDrawer> {
   /// 桌面也是按工作区身份记（`ui-workspace/src/client/stores.ts:25-26,50,99`），
   /// 按标题记会在改标题后把记忆丢在旧名字下 —— 2026-10-27 之前正是那样。
   static String groupKeyOf(DrawerSection section) =>
-      section.workspaceId ?? section.label;
+      SessionDrawer.keyOf(section);
 
   bool _expandedOf(DrawerSection section) {
     final key = groupKeyOf(section);
@@ -417,6 +440,16 @@ class _SessionDrawerState extends State<SessionDrawer> {
                                     onMenu: (anchor) => unawaited(
                                       _showSessionMenu(session, anchor),
                                     ),
+                                  ),
+                                ),
+                              // 「展开其余 N 个会话」：文案照桌面
+                              // `sessions.expand`（`locales.ts:34`），只在真被
+                              // watermark 藏掉时才占位（`hiddenCount > 0`）。
+                              if (widget.sections[i].hiddenCount > 0)
+                                _RevealRow(
+                                  hiddenCount: widget.sections[i].hiddenCount,
+                                  onTap: () => widget.onRevealMore?.call(
+                                    widget.sections[i],
                                   ),
                                 ),
                             ],
@@ -722,6 +755,35 @@ class _ConnectionRow extends StatelessWidget {
 }
 
 /// 会话行（`.drow`）。
+/// 「展开其余 N 个会话」那一行（桌面的 `sessions.expand`）。
+///
+/// 形态不是会话行：不留状态点、不占时间列 —— 它是一条**动作**，
+/// 与上面的组头同属"列表骨架"，所以用 caption 字色 + 居中左对齐的窄行。
+class _RevealRow extends StatelessWidget {
+  const _RevealRow({required this.hiddenCount, required this.onTap});
+
+  final int hiddenCount;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(DshRadius.sm),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 40),
+        padding: const EdgeInsets.fromLTRB(28, 8, 12, 8),
+        alignment: Alignment.centerLeft,
+        child: Text(
+          '展开其余 $hiddenCount 个会话',
+          style: TextStyle(fontSize: 13, color: c.labelSecondary),
+        ),
+      ),
+    );
+  }
+}
+
 class _SessionRow extends StatelessWidget {
   const _SessionRow({
     required this.session,

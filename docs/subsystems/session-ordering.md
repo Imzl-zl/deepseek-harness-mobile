@@ -47,6 +47,23 @@ Flutter 的 `DragTarget` 只在指针**进入**目标时问一次 `onWillAcceptW
 现在 `onWillAcceptWithDetails` 只回答"能不能落"（同一组、同一置顶分区、不是自己），
 与指针位置无关；指针位置只影响标记与锚点。
 
+## 3.5 每组显示几条：watermark = 5，多出来的收进「展开其余 N 个会话」
+
+照桌面 `rows/WorkspaceBrowser.tsx:55` 的 `SESSION_WATERMARK_BASE = 5`：
+每个工作区默认只列 **5 条非 blank 会话**，其余折叠成一行
+「展开其余 {n} 个会话」（文案逐字照 `ui-workspace/src/client/locales.ts:34`）。
+blank 行恒显示且不占名额（`:60-70`）。
+
+- **谁算"必须可见"**：在跑 / 有子在跑 / 有待处理 / **当前**这几类不被裁掉，
+  watermark 抬到刚好覆盖它（上限 50，桌面 `SESSION_WATERMARK_AUTO_MAX`，`:57`）。
+  桌面还有 `unread` 一档，手机侧暂未纳入（与 `pendingCount` 口径重叠）。
+- **在哪儿裁**：装配层（`main.dart` 的 `_sectionOfBucket`）调纯函数
+  `model/workspace.dart` 的 `watermarkRowsOf`；抽屉只画，不自己截断。
+- **点「展开其余」**只放这一组，且**不落盘** —— 与 `host.drawer_expansion`
+  （组折叠的跨重启记忆）是两个意图，不复用同一个键。
+- 抽屉的搜索框只筛标题、大小写不敏感，且**筛的是同一份可见集**
+  （归档 / blank 规则先跑）。它 2026-10-27 之前是死控件（装配层没传 `onSearch`）。
+
 ## 4. 边界（不做）
 
 - **跨组（跨工作区）拖动不做**：宿主的会话重排按工作区账本，没有"跨工作区移动会话"的方法。

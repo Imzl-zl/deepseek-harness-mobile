@@ -114,6 +114,19 @@ class _DshMobileAppState extends State<DshMobileApp>
   AppModel? _app;
   bool _booting = true;
 
+  /// 抽屉搜索框里当前的查询（空 = 不过滤）。
+  ///
+  /// 2026-10-27 之前 `SessionDrawer.onSearch` **没人传**：搜索框能打字、但
+  /// 一行都不筛（死控件）。过滤放在装配层，是因为"哪些会话算可见"本来就在这里
+  /// 算（`sessionVisible` + 分桶），多一处过滤就是第二份真值。
+  String _drawerQuery = '';
+
+  /// 点了「展开其余 N 个会话」的组（键同抽屉的 [SessionDrawer.groupKeyOf]）。
+  ///
+  /// **不落盘**：它是"这次打开抽屉想多看几条"的临时意图，与"这一组折叠/展开"
+  /// 那种跨重启记忆（`host.drawer_expansion`）不是一回事。
+  final Set<String> _revealedGroups = <String>{};
+
   /// 主题真值（三档 + 当下亮暗）。
   ///
   /// 2026-10-19 加浅色套时引入：DSH 的 `design-platform.css` 一上来就有
@@ -603,6 +616,15 @@ class _DshMobileAppState extends State<DshMobileApp>
           expandedOf: app.drawerExpandedOf,
           onExpandedChanged: (groupKey, expanded) =>
               unawaited(app.setWorkspaceExpanded(groupKey, expanded)),
+          // 搜索框（2026-10-27 之前这个回调没人传 —— 打字完全没反应）：
+          // 过滤在装配层，与"哪些会话可见"用同一份可见集。
+          onSearch: (value) {
+            if (value == _drawerQuery) return;
+            setState(() => _drawerQuery = value);
+          },
+          // 「展开其余 N 个会话」：这一组不再按 watermark 裁（只活这次抽屉）。
+          onRevealMore: (section) =>
+              setState(() => _revealedGroups.add(SessionDrawer.keyOf(section))),
           onOpenSession: (session) {
             _closeDrawer();
             unawaited(app.openSession(session.sid));
@@ -917,6 +939,10 @@ class _DshMobileAppState extends State<DshMobileApp>
   /// 而 Web 的结构是"先选项目再看它的会话"。
   List<DrawerSection> _drawerSections(AppModel app) {
     final now = DateTime.now();
+    // 搜索：**只筛标题**（与桌面 `session.search` 命中会话名的口径一致），
+    // 大小写不敏感；空串不过滤。筛的是"可见集"，所以归档/blank 那几条规则
+    // 仍然先算，不会因为搜索把不该露的会话翻出来。
+    final query = _drawerQuery.trim().toLowerCase();
     // **可见性规则逐条照 DSH Web**（`model/workspace.dart` 的 `sessionVisible`）:
     // 子智能体的子会话不列、从没跑过的 blank 除当前外不列。
     // 2026-10-15 真机对比:Web 的 anatomy-test 3 条,手机 4 条 —— 多的那条
@@ -972,24 +998,64 @@ class _DshMobileAppState extends State<DshMobileApp>
     final bySid = {for (final s in app.sessions) s.sid: s};
     // **分组规则只有一份**（模型层的纯函数 `bucketSessionsByWorkspace`）——
     // 抽屉与内联列表都用它,免得两处各写一遍"谁进哪个桶"。
+    final matched = query.isEmpty
+        ? visible
+        : [
+            for (final s in visible)
+              if (s.displayTitle.toLowerCase().contains(query)) s,
+          ];
     return [
       for (final bucket in bucketSessionsByWorkspace(
-        visible.map((s) => s.sid).toList(),
+        matched.map((s) => s.sid).toList(),
         app.workspaces,
         // 置顶的排在**各自分组**的最前（DSH 的 `sectionMembers`），
         // 不是把置顶项抽到整张表最上面。
         pinnedSessionIds: app.pinnedSids,
       ))
-        DrawerSection(
-          label: bucket.label,
-          // 哪一组能重排由分桶函数给（`null` = 兜底桶，菜单里上移/下移不可点）。
-          workspaceId: bucket.workspaceId,
-          sessions: [
-            for (final sid in bucket.sessionIds)
-              if (bySid[sid] case final session?) rowOf(session),
-          ],
-        ),
+        _sectionOfBucket(app, bucket, bySid, rowOf),
     ];
+  }
+
+  /// 一个桶 → 一节抽屉。**watermark 在这里裁**（`watermarkRowsOf`）：
+  /// 每组默认只放 [kSessionWatermarkBase] 条非 blank 会话，其余收进
+  /// 「展开其余 N 个会话」—— 与 DSH 桌面同一条
+  /// （`ui-workspace/src/client/rows/WorkspaceBrowser.tsx:55,665`）。
+  ///
+  /// 用户点过「展开其余」的组（[_revealedGroups]）不再裁：那是本次打开抽屉的
+  /// 临时意图，不落盘。
+  DrawerSection _sectionOfBucket(
+    AppModel app,
+    WorkspaceBucket bucket,
+    Map<String, SessionSummary> bySid,
+    DrawerSession Function(SessionSummary session) rowOf,
+  ) {
+    final key = bucket.workspaceId ?? bucket.label;
+    final revealed = _revealedGroups.contains(key);
+    final wm = watermarkRowsOf(
+      bucket.sessionIds,
+      isBlank: (sid) => bySid[sid]?.blank ?? false,
+      // 桌面的 `requiredWatermark`：在跑 / 有子在跑 / 有待处理 / 当前
+      // 这几类**不许被裁掉**（裁掉就等于"正在出活的会话看不见"）。
+      mustShow: <String>{
+        if (app.currentSid != null) app.currentSid!,
+        for (final sid in bucket.sessionIds)
+          if (app.runningOf(sid) ||
+              app.runningChildrenOf(sid) > 0 ||
+              (bySid[sid]?.pendingCount ?? 0) > 0)
+            sid,
+      },
+    );
+    final shown = revealed ? bucket.sessionIds : wm.rows;
+    return DrawerSection(
+      label: bucket.label,
+      // 哪一组能重排由分桶函数给（`null` = 兜底桶，菜单里上移/下移不可点）。
+      workspaceId: bucket.workspaceId,
+      hiddenCount: revealed ? 0 : wm.hiddenCount,
+      sessions: [
+        for (final sid in shown)
+          if (bySid[sid] case final session?) rowOf(session),
+      ],
+    );
   }
 
   static String _relativeTime(int days, DateTime at) {

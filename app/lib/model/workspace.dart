@@ -278,6 +278,59 @@ List<WorkspaceBucket> bucketSessionsByWorkspace(
   return out;
 }
 
+/// 每个工作区**默认显示**多少条非 blank 会话。
+///
+/// 照桌面 `SESSION_WATERMARK_BASE = 5`
+/// （`packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx:55`）：
+/// 多出来的收进那一行「展开其余 {n} 个会话」（`locales.ts:34`，用在 `:665`）。
+const int kSessionWatermarkBase = 5;
+
+/// 自动抬高的上限（桌面 `SESSION_WATERMARK_AUTO_MAX = 50`，同文件 `:57`）。
+///
+/// 桌面把"在跑 / 有子在跑 / 等你答 / 有未读 / 当前"这些会话排除在裁剪之外，
+/// 抬高到刚好覆盖它们；上限保证一个堆满运行中会话的组不会把整列撑爆。
+const int kSessionWatermarkAutoMax = 50;
+
+/// 按 watermark 裁一组会话。**纯函数**，判据逐条照桌面 `watermarkRows`
+/// （`WorkspaceBrowser.tsx:60-70`）：
+///
+/// - **blank 行恒显示**，且**不占**名额（桌面 `if (session.blank) return true`）；
+/// - 其余按顺序计数，超过 watermark 的进 `hiddenCount`。
+///
+/// [mustShow] 对应桌面的 [requiredWatermark]：里面出现的会话（在跑 / 有子在跑 /
+/// 有待处理 / 当前）**必须可见**，于是把 watermark 抬到刚好覆盖它（不超过
+/// [kSessionWatermarkAutoMax]）。
+({List<String> rows, int hiddenCount}) watermarkRowsOf(
+  List<String> sessionIds, {
+  bool Function(String sid)? isBlank,
+  Set<String> mustShow = const <String>{},
+  int watermark = kSessionWatermarkBase,
+}) {
+  final blank = isBlank ?? (String _) => false;
+  var effective = watermark;
+  var counted = 0;
+  for (final sid in sessionIds) {
+    if (blank(sid)) continue;
+    counted += 1;
+    if (!mustShow.contains(sid)) continue;
+    final wanted = counted <= kSessionWatermarkAutoMax
+        ? counted
+        : kSessionWatermarkAutoMax;
+    if (wanted > effective) effective = wanted;
+  }
+  final rows = <String>[];
+  var seen = 0;
+  for (final sid in sessionIds) {
+    if (blank(sid)) {
+      rows.add(sid);
+      continue;
+    }
+    seen += 1;
+    if (seen <= effective) rows.add(sid);
+  }
+  return (rows: rows, hiddenCount: sessionIds.length - rows.length);
+}
+
 /// 在**显示顺序**里把 [sid] 移动一位所需的 Host 锚点（`beforeSid`）。
 ///
 /// 返回 `null` = 边界 / 跨置顶分区 / 找不到会话 —— **不动**，调用方不要发请求。
