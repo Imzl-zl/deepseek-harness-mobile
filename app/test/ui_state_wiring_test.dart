@@ -9,6 +9,8 @@
 /// Note: 语义与取舍见 `.agents/notes/proposed/2026-10-27-ui-state-design.md` §2/§3。
 library;
 
+import 'dart:async';
+
 import 'package:dsh_mobile/core/connection.dart' as conn;
 import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/job.dart';
@@ -79,6 +81,78 @@ class _IdleClient extends FakeSyncClient {
     Map<String, Object?> params, {
     String? requestId,
   }) async => throw const ProtocolException(ErrorCode.relayOffline, '这条用例不连通道');
+}
+
+/// 能让连接态走一遍 backoff → serving 的替身（落点只在那一步发生）。
+///
+/// 形状照 `running_reconnect_test.dart` 的 `_ReconnectClient`：
+/// `session.list` 回线上形状的行，其余方法回空对象。
+class _LandingClient extends FakeSyncClient {
+  _LandingClient({required List<Map<String, Object?>> rows}) : _rows = rows;
+
+  final List<Map<String, Object?>> _rows;
+  final StreamController<conn.ConnectionState> _states =
+      StreamController<conn.ConnectionState>.broadcast();
+  conn.ConnectionState _state = conn.ConnectionState.idle;
+
+  void emitState(conn.ConnectionState next) {
+    _state = next;
+    _states.add(next);
+  }
+
+  @override
+  conn.ConnectionState get state => _state;
+  @override
+  Stream<conn.ConnectionState> get connection => _states.stream;
+  @override
+  Stream<JobFrame> get jobUpdates => const Stream<JobFrame>.empty();
+  @override
+  Stream<SessionStatus> get sessionStatus =>
+      const Stream<SessionStatus>.empty();
+  @override
+  Stream<SessionDelta> sessionUpdates(String sid) =>
+      const Stream<SessionDelta>.empty();
+  @override
+  Future<void> start() async {}
+  @override
+  Future<void> reconnect() async {}
+  @override
+  Future<void> setAppState(AppState state) async {}
+  @override
+  Future<void> unsubscribe(String sid) async {}
+  @override
+  Future<void> close() async => _states.close();
+
+  @override
+  Future<T> call<T>(
+    String method,
+    Map<String, Object?> params, {
+    String? requestId,
+  }) async {
+    if (method == 'session.list') return {'sessions': _rows} as T;
+    // 其余（目录 / 工作区 / 设置 / 版本）回空对象：这一组只关心落点。
+    return <String, Object?>{} as T;
+  }
+}
+
+/// `session.list` 的一行（**线上形状**：`connector/src/handlers.ts:740-744` 恒发键）。
+Map<String, Object?> _landingRow({
+  required String sid,
+  required bool blank,
+  required int updatedAt,
+}) => <String, Object?>{
+  'sid': sid,
+  'updatedAt': updatedAt,
+  'running': false,
+  'blank': blank,
+  'subagent': false,
+};
+
+/// 让 `_onConnectionChanged` 里那串 `unawaited(...)` 跑完。
+Future<void> _landingSettle() async {
+  for (var i = 0; i < 8; i += 1) {
+    await Future<void>.delayed(Duration.zero);
+  }
 }
 
 void main() {
@@ -215,6 +289,60 @@ void main() {
         findsNothing,
         reason: '改标题不该让折叠记忆失效（键是 workspaceId，不是标题）',
       );
+    });
+  });
+
+  group('落点：记住的会话优先于 blank 复用', () {
+    // 真机 2026-10-27 复现：冷启动不回到上次的会话，而是落到一个 blank 会话上
+    // （于是页签/草稿都"没恢复"）。根因是**两条落点路径**：
+    // `refreshSessions()` 末尾先 `_openBlankSessionIfUnselected()` 选中 blank，
+    // 之后 `_landOnSession()` 因 `_currentSid != null` 直接早退 ——
+    // 记住的会话永远没机会。规则见 `docs/subsystems/connect-landing.md` §2 四档。
+    test('冷启动：记住的会话还在 → 落到它，不是那个 blank', () async {
+      final prefs = _Prefs({UiKey.lastSession: 's-remembered'});
+      final client = _LandingClient(
+        rows: <Map<String, Object?>>[
+          // blank 排在最前且最新 —— "复用 blank" 这一步总能赢，
+          // 真机上就是这样把记忆覆盖掉的。
+          _landingRow(sid: 's-blank', blank: true, updatedAt: 9999),
+          _landingRow(sid: 's-remembered', blank: false, updatedAt: 1),
+        ],
+      );
+      final app = AppModel(client: client, prefs: prefs);
+      addTearDown(app.dispose);
+      await app.loadUiState();
+
+      await app.start();
+      client.emitState(conn.ConnectionState.backoff);
+      client.emitState(conn.ConnectionState.serving);
+      await _landingSettle();
+
+      expect(app.currentSid, 's-remembered', reason: '第 1 档：上次看的那个还在');
+      expect(
+        prefs.values[UiKey.lastSession],
+        's-remembered',
+        reason: '落点不许把记忆覆盖成那个 blank',
+      );
+    });
+
+    test('没有记忆时：仍落最新（第 2/3 档），不靠 blank 复用', () async {
+      final prefs = _Prefs();
+      final client = _LandingClient(
+        rows: <Map<String, Object?>>[
+          _landingRow(sid: 's-old', blank: false, updatedAt: 1),
+          _landingRow(sid: 's-new', blank: false, updatedAt: 50),
+        ],
+      );
+      final app = AppModel(client: client, prefs: prefs);
+      addTearDown(app.dispose);
+      await app.loadUiState();
+
+      await app.start();
+      client.emitState(conn.ConnectionState.backoff);
+      client.emitState(conn.ConnectionState.serving);
+      await _landingSettle();
+
+      expect(app.currentSid, 's-new');
     });
   });
 

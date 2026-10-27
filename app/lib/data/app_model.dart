@@ -2582,7 +2582,13 @@ class AppModel extends ChangeNotifier {
         : await _prefs?.read(kLastSessionKey);
     if (_disposed || _currentSid != null) return;
     final target = landingSessionOf(remembered: remembered);
-    if (target == null) return;
+    if (target == null) {
+      // 第 4 档：列表空 / 只有子会话 ⇒ 不发明会话。此时若电脑侧还有一个 blank，
+      // 落上去仍是"这一屏"（照 DSH 的 `reuseOrCreateBlank`，见该方法注释）——
+      // 它是**兜底**，不是第 1 档之前的一步。
+      await _openBlankSessionIfUnselected();
+      return;
+    }
     await openSession(target.sid);
   }
 
@@ -2626,8 +2632,14 @@ class AppModel extends ChangeNotifier {
     await refreshSettings();
     // 电脑侧 DSH 版本（`repo.info.dshVersion`）：与 App 版本并排显示，排错用。
     await refreshRepoInfo();
-    // **落到 blank 会话上**（照 DSH 的 `reuseOrCreateBlank`，见该方法的注释）。
-    await _openBlankSessionIfUnselected();
+    // **这里不选会话**：落点是 `_landOnSession()` 一个人的事（四档规则见
+    // `docs/subsystems/connect-landing.md` §2）。
+    // Note: 为什么不允许两条落点路径 —— 见
+    // `.agents/notes/implemented/2026-10-27-connect-landing-single-path.md`。
+    // 2026-10-27 真机实测：
+    // 这一步原先在这里 `_openBlankSessionIfUnselected()`，把 blank 先选中了，
+    // 于是随后的 `_landOnSession()` 撞上 `_currentSid != null` 直接早退 ——
+    // 记住的会话永远没机会，还顺手把 `host.last_session` 覆盖成那个 blank。
   }
 
   /// 没有选中会话时，落到"那个 blank 会话"上。

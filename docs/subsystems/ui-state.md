@@ -111,3 +111,21 @@
   真宿主上 `settings.describe` 确有 `ui-conversation.busyEnter`（取值只有 `queue` / `steer`）、
   `settings.update` 写得进并回读得到、`session.list` 的行确实带 `values.subagentCatalog`。
   2026-10-27 实测：302 行里 123 行带该键、15 行有子级。
+
+### 真机逐条清单（2026-10-27，设备 `d61cf622`，截图在 `D:\tmp\ui-state-shots\`）
+
+| 条目 | 结果 | 判据 |
+|---|---|---|
+| 抽屉折叠跨 force-stop 重启 | 通过 | 收起 easyStory 后重开仍收起；盘上 `host.drawer_expansion` 出现该 workspaceId=false |
+| 页签按会话 + 跨重启 | 通过 | 重开后仍停在「轨迹」；`host.session_view.<sid>=trajectory` |
+| 草稿恢复且不弹键盘 | 通过 | 重启后输入框仍是原文本，`dumpsys input_method` 的 `mInputShown=false` |
+| 门槛四态 | 3/4 | 无工作区 blank：占位「选择工作区」且发送静默禁用；有工作区正文空：发送灰、模型/权限 chip 可弹；正文非空可发。「未配对」态未测（会动配对凭据） |
+| 模型/推理回落宿主默认 | 通过 | 新建 blank 显示宿主默认模型名（`auto`），与 Web UI 同；该模型目录无 efforts 故不显示等级（同桌面条件渲染） |
+| 子智能体在跑可见 | 未测 | 免费渠道 `403/503`，agent 一轮都没跑成 |
+| 提问草稿 | 未测 | 同上，无 `ask_user_question` 可答 |
+| 发送模式唯一真值 | 未测 | 设置页导航被系统手势打断 |
+| 设备库 schema=2 与旧键 | 通过（部分） | `user_version=2`、`schema.data_version=2`、无 `theme.mode`/`ui_scale_index`/`last_session`；`device.theme_mode` 不存在，因该设备全新安装在 v2、v1 数据从未存在 |
+| 断连/重连不丢状态 | 未测 | 与后续条目互相打断，留到最后 |
+
+落点本身在真机上验证过：修前每次都落到 blank（页签/草稿看起来"没恢复"），
+修后重开回到原会话（见 `connect-landing.md` §2 与那篇决策笔记）。

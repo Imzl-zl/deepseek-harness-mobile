@@ -25,6 +25,11 @@
 触发时机：进服务态（`ConnectionState.serving`）之后、`refreshSessions()` 回来的那一步
 （`AppModel._landOnSession`）。已经有会话时不覆盖（用户点开的那个优先）。
 
+**只有这一条入口**：`refreshSessions()` 自己**不选会话**。它曾经在末尾复用 blank
+（`reuseOrCreateBlank`），于是 blank 先被选中、`_landOnSession` 随后早退 ——
+落点永远是 blank，`host.last_session` 还被覆盖。现在 blank 复用只是第 4 档兜底
+（`.agents/notes/implemented/2026-10-27-connect-landing-single-path.md`）。
+
 ## 3. "在跑"的显示
 
 - 数据：`session.list.running`（快照）+ `api-session/status` 推送（实时）。
