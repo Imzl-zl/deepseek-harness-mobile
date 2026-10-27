@@ -72,6 +72,7 @@ import 'host_catalogs.dart';
 import 'ids.dart';
 import 'item_derivations.dart';
 import 'projection.dart';
+import 'session_rows.dart';
 import 'session_store.dart';
 import 'store.dart';
 import 'ui_state.dart';
@@ -2432,42 +2433,17 @@ class AppModel extends ChangeNotifier {
     _sessions = [
       for (final s in list) s.copyWith(pendingCount: _pendingCountOf(s.sid)),
     ];
-    for (final s in _sessions) {
-      _setRunning(s.sid, s.running);
-    }
+    _rows.applyList(_sessions);
     _syncNotices();
-  }
-
-  /// 把"这个会话在不在跑"写进 [_runningSids]，并在收口时清掉活时钟的起点。
-  ///
-  /// **唯一的两处调用**：`session.list` 那一包（覆盖式）与 `status` 帧（实时）。
-  ///
-  /// 收口时顺带记一笔"未读的完成"（[_completionUnread]）：只有**真的看着它从跑
-  /// 变成不跑**才算，所以基线（首包 `session.list`，此时 `_runningSids` 里没有它）
-  /// 不会凭空造出一个绿点 —— 与 DSH 的 `previous === undefined` 那条同义
-  /// （`packages/client/ui-session/src/client/index.ts:495`）。
-  void _setRunning(String sid, bool running) {
-    final was = _runningSids.contains(sid);
-    if (running) {
-      _runningSids.add(sid);
-      _completionUnread.remove(sid);
-      return;
-    }
-    _runningSids.remove(sid);
-    _turnStartedAt.remove(sid);
-    // 正在看的那个收口不算"未读"：结果就在眼前（DSH 的判据是
-    // "停止发生在这个会话之外"，`:65-66` 的字段注释）。
-    if (was && sid != _currentSid) _completionUnread.add(sid);
   }
 
   /// 宿主推来的一条运行态（`status` 帧）。
   void _applySessionStatus(SessionStatus status) {
     if (_disposed) return;
-    final before = runningOf(status.sid);
-    _setRunning(status.sid, status.running);
+    final changed = _rows.applyStatus(status);
     // 只在真的变了的时候通知：这条流跟着宿主的 `agent/status` 走，
     // 相邻两次常常是同一状态（重连后的首条就是），没必要让整页重建。
-    if (before != status.running || status.running) notifyListeners();
+    if (changed || status.running) notifyListeners();
     _syncNotices();
   }
 
@@ -3277,7 +3253,7 @@ class AppModel extends ChangeNotifier {
   Future<void> openSession(String sid, {int since = 0}) async {
     _currentSid = sid;
     // 打开它就是"看见了"：未读的完成点当场消失（DSH 的"在主视图里就清"，`:511`）。
-    _completionUnread.remove(sid);
+    _rows.markSeen(sid);
     if (!_disposed) notifyListeners();
 
     // 订阅前先把这一路的事件流接上（顺序反了会丢掉开启帧 —— 那是第一帧）。
@@ -3425,87 +3401,33 @@ class AppModel extends ChangeNotifier {
   /// `sid → 翻页失败的原因`。
   final Map<String, String> _historyFailure = <String, String>{};
 
-  /// **此刻有轮次在跑的会话** —— 来源是**宿主的推送**（`status` 帧，`api-session/status`
-  /// 的原样转发）+ `session.list` 那一包的覆盖。
+  /// 会话行的运行态事实（在跑 / 子智能体在跑 / 未读完成 / 活时钟 / 轮号）。
   ///
-  /// ## 为什么不再自己数 `turn/start` / `turn/end`
-  ///
-  /// 那套自建状态机（"最后一个 `turn/start` 没配对 `turn/end`"）再加"重连按首包重建 + 轮次
-  /// 代号护栏"，每一个补丁都是在**补协议的缺口** —— 而宿主本来就有这条推送，
-  /// DSH 的浏览器吃的就是它（`packages/api/session-controller/src/client/index.ts:118-119`）。
-  /// 删掉之后这里只剩两处写入：`session.list` 与 `status` 帧（`_setRunning`）。
-  ///
-  /// 活时钟的起点仍来自 `turn/start` 的 `time`（那是事件的事实，推送里没有时间），
-  /// 收口时由 `_setRunning(false)` 一起清掉。
-  final Set<String> _runningSids = <String>{};
+  /// 判据与"为什么不再自建状态机"都在 `data/session_rows.dart` 的文件头。
+  late final SessionRows _rows = SessionRows(
+    rowOf: sessionOf,
+    currentSidOf: () => _currentSid,
+  );
 
-  /// `sid → 最近一次 `turn/start` 的轮号`。
-  ///
-  /// 有些事件的 `data` 里**没有** `turn`（`user/message` / `command/*` /
-  /// `llm/retry` / `compaction/*`），但它们确实属于某一轮；真机日志的次序是
-  /// `turn/start` → `step/start` → `user/message`，所以"最近一次 turn/start"
-  /// 就是它们的归属。轮组的分组靠这一笔（`docs/subsystems/turn-groups.md`）。
-  final Map<String, int> _currentTurn = <String, int>{};
+  /// 这个会话此刻在跑吗（唯一真值：宿主的 `status` 帧 + `session.list` 覆盖）。
+  bool runningOf(String sid) => _rows.runningOf(sid);
 
-  /// `sid → 本轮开始时刻`（毫秒 epoch，来自 `turn/start` 事件的 `time`）。
-  ///
-  /// 运行条拿它算"用时 N 秒"—— 手机侧**唯一**允许的减法就是这个活时钟；
-  /// 跑完的时长仍然只读投影给的 `durationMs`。
-  final Map<String, int> _turnStartedAt = <String, int>{};
-
-  /// 这个会话此刻在跑吗。
-  ///
-  /// 唯一真值就是 [_runningSids]；它只有两处写入（`session.list` 那一包与 `status` 帧，
-  /// 同一个 `_setRunning`）。以前这里是"事件流推算 + 重连重建 + 轮次代号"三件套，
-  /// 已经随宿主推送的接入整块删掉。
-  bool runningOf(String sid) => _runningSids.contains(sid);
-
-  /// 这个会话有几个**直接子智能体**此刻在跑。
-  ///
-  /// 公式照桌面 `ui-workspace/src/client/tree.ts:381-386`：
-  /// 父行 `values.subagentCatalog` 里的每个子 id，`running` 为真就计数
-  /// （状态帧优先、列表行兜底）。
-  ///
-  /// **它不是宿主字段**（`SessionSummary` 里没有 `runningSubagentCount`）——
-  /// 桌面也是客户端算的，所以这里不新增协议，只读行里已有的两样东西。
-  int runningChildrenOf(String sid) {
-    final children = sessionOf(sid)?.subagents;
-    if (children == null || children.isEmpty) return 0;
-    var count = 0;
-    for (final child in children) {
-      // 桌面写的是 `statuses.get(id)?.running ?? list.byId[id]?.running`；
-      // 手机上这两条已经被 [`_runningSids`] 合成一份（列表快照走
-      // `_applySessionList` → `_setRunning`，实时走 `status` 帧），所以这里
-      // 只读那一份就等价 —— 不再写"状态优先、列表兜底"的第二套判据。
-      if (runningOf(child.id)) {
-        count += 1;
-      }
-    }
-    return count;
-  }
+  /// 这个会话有几个**直接子智能体**此刻在跑（公式照桌面 `tree.ts:381-386`）。
+  int runningChildrenOf(String sid) => _rows.runningChildrenOf(sid);
 
   /// 这个会话"跑完了、但我没看着"—— DSH 的 `completionUnread`。
   ///
-  /// ## 为什么是派生、不是落盘
-  ///
-  /// DSH 的浏览器端也只持有一个 `Set<SessionId>`（`ui-session/src/client/index.ts:292`），
-  /// 刷新即丢；规则三条（`:490-498,511`）：running 变 true 清、收口且**不在主视图里**
-  /// 才置位、在主视图里每轮基线扫描都清。手机上的"主视图"就是 [currentSid] ——
-  /// 所以这里不新开一份存储、也不新开一个"已读"概念（AGENTS.md 三问①：
-  /// 删掉这张表，宿主已经给出答案）。
-  ///
-  /// 代价如实记：**杀 App 即丢**，与浏览器刷新一致；这是"一个提示"，不是持久事实。
-  bool completionUnreadOf(String sid) => _completionUnread.contains(sid);
-
-  /// 观测到的收口但没被看见的会话（见 [completionUnreadOf]）。
-  final Set<String> _completionUnread = <String>{};
+  /// **派生、不落盘**：DSH 的浏览器端也只持有一个 `Set<SessionId>`
+  /// （`ui-session/src/client/index.ts:292`），刷新即丢；代价如实记 ——
+  /// 杀 App 即丢，与浏览器刷新一致（这是"一个提示"，不是持久事实）。
+  bool completionUnreadOf(String sid) => _rows.completionUnreadOf(sid);
 
   /// 本轮开始的时刻（毫秒 epoch）；`null` = 不知道。
   ///
   /// 兜底读 `trajectory` 投影里那一轮的 `startTime`，但**只对当前会话** ——
   /// 投影是按当前会话读的，别的会话拿它等于张冠李戴。
   int? turnStartedAtOf(String sid) {
-    final fromEvents = _turnStartedAt[sid];
+    final fromEvents = _rows.startedAtOf(sid);
     if (fromEvents != null) return fromEvents;
     if (sid != _currentSid) return null;
     return trajectory?.runningTurn?.startTime;
@@ -3515,11 +3437,11 @@ class AppModel extends ChangeNotifier {
   // SteeringHistory 的移植）—— 见
   // .agents/notes/implemented/2026-10-17-conversation-rendering-fills-dsh-gaps.md
   /// 这条事件属于第几轮：事件自带 `data.turn` 就用它，否则退回
-  /// [_currentTurn]（最近一次 `turn/start`）。两边都没有就是 `null` ——
-  /// 那种条目在轮组里落进"未归属"，不参与折叠（不猜）。
+  /// "最近一次 `turn/start` 的轮号"（[SessionRows.currentTurnOf]）。
+  /// 两边都没有就是 `null` —— 那种条目在轮组里落进"未归属"，不参与折叠（不猜）。
   int? _turnOfEvent(SessionEvent event, String sid) {
     final raw = event.data is Map ? (event.data as Map)['turn'] : null;
-    return raw is int ? raw : _currentTurn[sid];
+    return raw is int ? raw : _rows.currentTurnOf(sid);
   }
 
   void _onDelta(String sid, SessionDelta delta) {
@@ -3545,7 +3467,7 @@ class AppModel extends ChangeNotifier {
         // `turn/start` 的 `time` 仍然是活时钟的起点 —— 那是事件的**时间事实**，
         // 推送里没有它。
         if (event.type == 'turn/start') {
-          _turnStartedAt[sid] = event.time;
+          _rows.noteTurnStart(sid, time: event.time);
         }
         // **`session/title` 不是条目，是标题的真值**：DSH 生成/改名时落一条
         // （`session-title/src/index.ts` 的 fold 就认这个 type）。它进条目表
@@ -3588,7 +3510,7 @@ class AppModel extends ChangeNotifier {
           if (turn is int) {
             // **轮号要落在条目上**：轮组靠它知道"从这里开始是新的一轮"
             // （`docs/subsystems/turn-groups.md`）。
-            _currentTurn[sid] = turn;
+            _rows.noteTurnStart(sid, time: event.time, turn: turn);
             items.add(
               OtherItem(
                 itemId: event.itemId,
