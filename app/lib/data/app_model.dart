@@ -35,7 +35,6 @@ import '../model/changes.dart';
 import '../model/chat_item.dart';
 import '../model/command.dart';
 import '../model/file_diff.dart';
-import '../model/file_mentions.dart';
 import '../model/file_open.dart';
 import '../model/image_limits.dart';
 import '../model/interaction.dart';
@@ -68,10 +67,10 @@ import '../wire/rpc/session.dart' as wire;
 import '../wire/rpc/settings.dart' as wire;
 import '../wire/rpc/usage.dart' as wire;
 import '../wire/rpc/workspace.dart' as wire;
-import 'cache.dart';
 import 'endpoint_book.dart';
 import 'host_catalogs.dart';
 import 'ids.dart';
+import 'item_derivations.dart';
 import 'projection.dart';
 import 'session_store.dart';
 import 'store.dart';
@@ -122,6 +121,12 @@ class AppModel extends ChangeNotifier {
   /// 三类目录同形（一次只读请求 → 解析 → 缓存 → getter），收窄计划的**第一簇**
   /// （`.agents/notes/proposed/2026-10-27-appmodel-narrowing.md`）。
   /// 这里只建一次；`onChange` 走守卫过的 `notifyListeners`。
+  /// 条目列表的派生表（改动清单 / 每轮产出 / 收口助手 / 提及表）。
+  ///
+  /// 只依赖条目列表，所以能纯 Dart 构造；收窄计划第二簇
+  /// （`.agents/notes/proposed/2026-10-27-appmodel-narrowing.md`）。
+  late final ItemDerivations _derivations = ItemDerivations(() => items);
+
   late final HostCatalogs _catalogs = HostCatalogs(
     client: client,
     onChange: () {
@@ -1089,40 +1094,8 @@ class AppModel extends ChangeNotifier {
   /// `List.unmodifiable`（`session_store.dart:118`），所以
   /// `identical` 为假等于"条目真的变了"；没变就复用上次的结果。
   /// 这比加一个 `revision` 计数更稳 —— 少一处可能与真实状态漂移的真值。
-  final SourceCache<List<({String path, ({int added, int removed})? stat})>>
-  _changedFilesCache =
-      SourceCache<List<({String path, ({int added, int removed})? stat})>>();
-
-  List<({String path, ({int added, int removed})? stat})> get changedFiles {
-    final source = items;
-    return _changedFilesCache.read(source, () => _buildChangedFiles(source));
-  }
-
-  List<({String path, ({int added, int removed})? stat})> _buildChangedFiles(
-    List<ChatItem> source,
-  ) {
-    final indexOf = <String, int>{};
-    final rows = <({String path, ({int added, int removed})? stat})>[];
-    for (final item in source) {
-      if (item is! ToolCallItem) continue;
-      final path = item.changedPath;
-      if (path == null) continue;
-      final existing = indexOf[path];
-      if (existing == null) {
-        indexOf[path] = rows.length;
-        rows.add((path: path, stat: item.diffStat));
-      } else {
-        // 后来的改动覆盖统计（同一文件在一轮里被改两次时，看的是后一次）。
-        rows[existing] = (
-          path: path,
-          stat: item.diffStat ?? rows[existing].stat,
-        );
-      }
-    }
-    return List<({String path, ({int added, int removed})? stat})>.unmodifiable(
-      rows.reversed,
-    );
-  }
+  List<({String path, ({int added, int removed})? stat})> get changedFiles =>
+      _derivations.changedFiles;
 
   // ---- 模型（`session/modelCatalog` + `modelSelection` 投影）----
 
@@ -1949,35 +1922,7 @@ class AppModel extends ChangeNotifier {
   /// 判据也照它：**只有成功的变更调用算产出**（`:134-137` 的
   /// "failed results contribute nothing"），读取与未知工具不算。
   List<String> producedPathsOf(int? turn) {
-    if (turn == null) return const <String>[];
-    return _pathsByTurn[turn] ?? const <String>[];
-  }
-
-  /// `turn → 这一轮的产出路径`。失效判据与 [changedFiles] 同一条（列表同一性）。
-  final SourceCache<Map<int, List<String>>> _pathsByTurnCache =
-      SourceCache<Map<int, List<String>>>();
-
-  Map<int, List<String>> get _pathsByTurn =>
-      _pathsByTurnCache.read(items, () => _buildPathsByTurn(items));
-
-  Map<int, List<String>> _buildPathsByTurn(List<ChatItem> source) {
-    final byTurn = <int, List<String>>{};
-    final seen = <int, Set<String>>{};
-    for (final item in source) {
-      if (item is! ToolCallItem) continue;
-      final turn = item.turn;
-      final path = item.changedPath;
-      if (turn == null || path == null) continue;
-      // 失败的结果不算产出（桌面同一句：failed results contribute nothing）。
-      if (item.status != ToolCallStatus.completed) continue;
-      final (turns, paths) = (byTurn, seen);
-      if (!(paths[turn] ??= <String>{}).add(path)) continue;
-      (turns[turn] ??= <String>[]).add(path);
-    }
-    return <int, List<String>>{
-      for (final entry in byTurn.entries)
-        entry.key: List<String>.unmodifiable(entry.value),
-    };
+    return _derivations.producedPathsOf(turn);
   }
 
   /// 某条消息里的**文件提及表**（`token → path`），没有提及就是 `null`。
@@ -1988,64 +1933,9 @@ class AppModel extends ChangeNotifier {
   ///
   /// 解析只有一处（`model/file_mentions.dart`），并按条目缓存 ——
   /// 对话页每帧都会问一次，长会话里重复扫正文会把每帧成本拖长。
-  Map<String, String>? fileMentionsOf(ChatItem item) {
-    return _mentionTables[item.itemId];
-  }
-
-  final SourceCache<Map<String, Map<String, String>>> _mentionTableCache =
-      SourceCache<Map<String, Map<String, String>>>();
-
-  /// 每一轮**收口的那条助手正文**（`turn → 条目`）。
-  ///
-  /// 判据照桌面（`ui-chat/src/client/chat/AssistantNodeView.tsx:19-27`）：
-  /// 轮次要**已收口**（有轮次过程行 `p:<turn>`），且这条是这一轮**最后一条**
-  /// 带正文的助手消息（桌面的 `tail.closing.finalNode`）。
-  final SourceCache<Map<int, MessageItem>> _closingAssistantCache =
-      SourceCache<Map<int, MessageItem>>();
-
-  Map<int, MessageItem> get _closingAssistantByTurn =>
-      _closingAssistantCache.read(items, () => _buildClosingAssistant(items));
-
-  Map<int, MessageItem> _buildClosingAssistant(List<ChatItem> source) {
-    final closed = <int>{};
-    final last = <int, MessageItem>{};
-    for (final item in source) {
-      if (item is TurnProcessItem) {
-        final turn = item.turn;
-        if (turn != null) closed.add(turn);
-        continue;
-      }
-      if (item is! MessageItem ||
-          item.role != MessageRole.assistant ||
-          item.turn == null ||
-          item.text.trim().isEmpty) {
-        continue;
-      }
-      last[item.turn!] = item;
-    }
-    return <int, MessageItem>{
-      for (final turn in closed)
-        if (last[turn] != null) turn: last[turn]!,
-    };
-  }
-
-  Map<String, Map<String, String>> get _mentionTables =>
-      _mentionTableCache.read(items, _buildMentionTables);
-
-  Map<String, Map<String, String>> _buildMentionTables() {
-    final byItem = <String, Map<String, String>>{};
-    for (final entry in _closingAssistantByTurn.entries) {
-      final item = entry.value;
-      if (item.text.isEmpty) continue;
-      final spans = resolveFileMentions(
-        item.text,
-        knownPaths: producedPathsOf(entry.key),
-      );
-      if (spans.isEmpty) continue;
-      byItem[item.itemId] = fileMentionTargets(spans);
-    }
-    return byItem;
-  }
+  /// 缓存与派生在 `ItemDerivations`（同一份入口）。
+  Map<String, String>? fileMentionsOf(ChatItem item) =>
+      _derivations.fileMentionsOf(item);
 
   // ---- 改动记录（`file.changes`，只读；数据是桌面的记录）----
 
