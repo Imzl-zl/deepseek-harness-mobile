@@ -158,7 +158,13 @@ class _DshMobileAppState extends State<DshMobileApp>
     () => _app?.client,
     // 同一个态变化的第二处收口：通知要它（"看着那个会话就不提醒"）与
     // 保活要它（退到后台才起前台服务）。判据仍然只有 `isForeground` 一处。
-    onState: (state) => _app?.setAppForeground(isForeground(state)),
+    onState: (state) {
+      final app = _app;
+      app?.setAppForeground(isForeground(state));
+      // 退到后台就把在途草稿写下去：Android 可能随时杀进程，
+      // 而防抖窗口（300ms）内的最后几个字不该因此丢（设计 §2.4 的代价收窄）。
+      if (!isForeground(state)) unawaited(app?.flushDrafts());
+    },
     // 报给连接层的态：保活生效时后台也照报 `foreground`（判据在
     // `AppModel.connectionForeground`，这里只转达）。
     activeFor: (state) =>

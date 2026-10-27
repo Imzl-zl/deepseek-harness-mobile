@@ -169,6 +169,56 @@ void main() {
     });
   });
 
+  group('草稿：按会话、旁路写、防抖', () {
+    test('写进去的是 JSON（形状照 DraftSnapshot），读回来是正文', () async {
+      await ui.setSessionDraft('sid-1', '你好');
+      expect(
+        prefs.values[UiKey.sessionDraft('sid-1')],
+        '{"text":"你好","references":[]}',
+        reason: '形状照桌面 `DraftSnapshot`：今天只有 text，但盘上格式不换',
+      );
+      expect(await ui.sessionDraftOf('sid-1'), '你好');
+      expect(await ui.sessionDraftOf('sid-2'), isNull);
+    });
+
+    test('盘上是旧形态（纯字符串）也认（迁移友好）', () async {
+      prefs.values[UiKey.sessionDraft('sid-1')] = '旧草稿';
+      expect(await ui.sessionDraftOf('sid-1'), '旧草稿');
+    });
+
+    test('盘上坏了 → 当没有（不抛）', () async {
+      prefs.values[UiKey.sessionDraft('sid-1')] = '{不是 json';
+      expect(await ui.sessionDraftOf('sid-1'), isNull);
+    });
+
+    test('防抖：连打三次只落一次盘；flush 立刻落', () async {
+      final before = prefs.writes;
+      ui.noteDraft('sid-1', '你');
+      ui.noteDraft('sid-1', '你好');
+      ui.noteDraft('sid-1', '你好啊');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(prefs.writes, before, reason: '20ms 内不该写盘（防抖窗口 300ms）');
+
+      await ui.flushDrafts();
+      expect(prefs.writes, before + 1, reason: '三次击键合并成一次写');
+      expect(await ui.sessionDraftOf('sid-1'), '你好啊');
+    });
+
+    test('切会话前 flush 能把在途草稿写下去（不丢最后几个字）', () async {
+      ui.noteDraft('sid-1', '写到一半');
+      await ui.flushDrafts();
+      final again = UiStateStore(prefs: prefs);
+      await again.open();
+      expect(await again.sessionDraftOf('sid-1'), '写到一半');
+    });
+
+    test('空草稿等于删掉（别在盘上留空串）', () async {
+      await ui.setSessionDraft('sid-1', '有内容');
+      await ui.setSessionDraft('sid-1', '');
+      expect(prefs.values.containsKey(UiKey.sessionDraft('sid-1')), isFalse);
+    });
+  });
+
   test('open 只读一次（不是每键/每帧一趟）', () async {
     prefs.values[UiKey.themeMode] = 'dark';
     prefs.values[UiKey.lastSession] = 'sid-1';

@@ -211,6 +211,12 @@ class ChatPage extends StatefulWidget {
 class ChatPageState extends State<ChatPage> {
   final _input = TextEditingController();
 
+  /// 输入框里当前装的是**哪个会话**的草稿（`null` = 还没装过）。
+  ///
+  /// 切换会话时用它判断"要不要换文本"：`AppModel` 的通知很密（每条 delta 一次），
+  /// 每次都读盘会把流式输出卡住，也会覆盖用户正在打的字。
+  String? _draftSid;
+
   /// 本页 `Scaffold` 的 key —— [openDrawer] 靠它开抽屉。
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
@@ -405,6 +411,10 @@ class ChatPageState extends State<ChatPage> {
     // 先用当前序号对账，免得挂载时把上一次的请求再开一遍。
     _seenFileOpenTicket = widget.app.fileOpenTicket;
     widget.app.addListener(_onAppFileOpen);
+    // **草稿的恢复点**：监听 `AppModel` 的会话切换（不在 `build` 里读盘 ——
+    // 那会变成每次通知一次异步读，且流式期间反复覆盖用户正在打的字）。
+    widget.app.addListener(_onSessionChangedForDraft);
+    unawaited(_syncDraftForSession());
   }
 
   @override
@@ -495,6 +505,9 @@ class ChatPageState extends State<ChatPage> {
   @override
   void dispose() {
     widget.app.removeListener(_onAppFileOpen);
+    widget.app.removeListener(_onSessionChangedForDraft);
+    // 页面消失前把在途草稿写下去（防抖窗口内的最后几个字不能丢）。
+    unawaited(widget.app.flushDrafts());
     _takeover.removeListener(_onTakeoverChanged);
     _takeover.dispose();
     unawaited(_interactionSub?.cancel());
@@ -503,7 +516,40 @@ class ChatPageState extends State<ChatPage> {
     super.dispose();
   }
 
-  void _onInputChanged() => setState(() {});
+  void _onInputChanged() {
+    // **旁路**记一次击键（防抖在 `UiStateStore`）：不走 `notifyListeners`，
+    // 所以打字不会把整页带起来。
+    final sid = widget.app.currentSid;
+    if (sid != null) widget.app.noteDraft(sid, _input.text);
+    setState(() {});
+  }
+
+  void _onSessionChangedForDraft() {
+    if (widget.app.currentSid != _draftSid) {
+      unawaited(_syncDraftForSession());
+    }
+  }
+
+  /// 切会话时把草稿换过来。
+  ///
+  /// **恢复不请求焦点**：本仓纪律是"输入法只允许用户点输入框引起"
+  /// （`docs/subsystems/input-focus.md`；SDK 见
+  /// `widgets/editable_text.dart:4752-4753`）—— 设 `controller.text`
+  /// 不会打开输入连接，不要顺手 `requestFocus()`。
+  Future<void> _syncDraftForSession() async {
+    final sid = widget.app.currentSid;
+    if (sid == _draftSid) return;
+    final previous = _draftSid;
+    _draftSid = sid;
+    // 先把上一个会话的在途草稿写下去，再换文本。
+    if (previous != null) unawaited(widget.app.flushDrafts());
+    final draft = sid == null ? null : await widget.app.draftOf(sid);
+    if (!mounted) return;
+    if (widget.app.currentSid != sid) return; // 读盘期间又切了
+    final next = draft ?? '';
+    if (_input.text == next) return;
+    _input.text = next;
+  }
 
   /// 重新拉一次会话列表，失败**要说出来**。
   ///
@@ -626,6 +672,9 @@ class ChatPageState extends State<ChatPage> {
         );
       }
       _input.clear();
+      // 发出去 = 草稿清空（**立刻落盘**，别让防抖把"已清空"晚 300ms）。
+      widget.app.noteDraft(sid, '');
+      unawaited(widget.app.flushDrafts());
       if (mounted) setState(() => _attachments.clear());
     } catch (error) {
       if (!mounted) return;

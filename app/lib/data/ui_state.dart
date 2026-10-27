@@ -65,7 +65,11 @@ abstract final class UiKey {
 /// 设备本地 UI 状态。**不是 `ChangeNotifier`**：它的读者是 `AppModel` 与页面，
 /// 而"草稿"这类高频值绝不能借通知把整页带起来（见设计 §3）。
 class UiStateStore {
-  UiStateStore({required PreferenceStore prefs}) : _prefs = prefs;
+  UiStateStore({
+    required PreferenceStore prefs,
+    Duration draftDebounce = const Duration(milliseconds: 300),
+  }) : _prefs = prefs,
+       _draftDebounce = draftDebounce;
 
   final PreferenceStore _prefs;
 
@@ -79,6 +83,15 @@ class UiStateStore {
 
   /// 会话级值的缓存：`sid → 值`。`null` 也是有效值（"这个会话没存过"）。
   final Map<String, String?> _views = <String, String?>{};
+
+  /// 在途草稿（`sid → 正文`）+ 防抖计时器。
+  final Map<String, String> _pendingDrafts = <String, String>{};
+  Timer? _draftTimer;
+
+  /// 草稿防抖窗口。桌面是**每次变更同步写**（`client/store/src/index.ts:159-165`）——
+  /// 那是 `localStorage` 的便宜；sqflite 是异步事务，不能每击键一次。
+  /// 代价：进程在窗口内被杀，最多丢这一段内的输入。
+  final Duration _draftDebounce;
 
   /// 串行写：保证"先写的先落盘"，且调用方不必 `await` 在 UI 回调里。
   Future<void> _writes = Future<void>.value();
@@ -178,13 +191,76 @@ class UiStateStore {
     await _write(key, viewId);
   }
 
-  /// 一个会话的草稿（形状是 JSON 字符串，解析在调用方 —— 今天只有 `text`）。
-  Future<String?> sessionDraftJsonOf(String sid) =>
-      _prefs.read(UiKey.sessionDraft(sid));
+  /// 一个会话的草稿正文；`null` = 没存过。
+  ///
+  /// 盘上是 **JSON**（形状照桌面的 `DraftSnapshot`：`{text, references: []}`，
+  /// `ui-conversation/src/client/contract/draft-editor.ts:43-56`）—— 今天只用到 `text`，
+  /// 但格式先立住：将来加 `@` chip 不必换盘上格式。
+  /// 旧形态（纯字符串）也认；坏数据当"没有"（不抛）。
+  Future<String?> sessionDraftOf(String sid) async {
+    final pending = _pendingDrafts[sid];
+    if (pending != null) return pending.isEmpty ? null : pending;
+    final raw = await _prefs.read(UiKey.sessionDraft(sid));
+    if (raw == null || raw.isEmpty) return null;
+    if (!raw.startsWith('{')) return raw; // 旧形态
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final text = decoded['text'];
+      return text is String && text.isNotEmpty ? text : null;
+    } on FormatException {
+      return null;
+    }
+  }
 
-  /// 写一个会话的草稿。按 [write] 的串行链落盘（草稿的防抖在批 C 的调用方）。
-  Future<void> setSessionDraftJson(String sid, String json) =>
-      _write(UiKey.sessionDraft(sid), json);
+  /// 立刻写一个会话的草稿；**空串等于删**（别在盘上留空串）。
+  Future<void> setSessionDraft(String sid, String text) async {
+    _pendingDrafts.remove(sid);
+    if (text.isEmpty) {
+      await _enqueue(
+        () => _prefs.delete(UiKey.sessionDraft(sid), includePrefixed: false),
+      );
+      return;
+    }
+    await _writeDraft(sid, text);
+  }
+
+  /// 记一次击键：进待写表并**重启**防抖计时器（同一会话的新输入覆盖旧值）。
+  ///
+  /// 为什么不在页面里防抖：防抖是"这条通道怎么落盘"的一部分，属于 [UiStateStore]；
+  /// 页面只需在"发送成功 / 切会话 / 退后台"时调 [flushDrafts]。
+  void noteDraft(String sid, String text) {
+    _pendingDrafts[sid] = text;
+    _draftTimer?.cancel();
+    _draftTimer = Timer(_draftDebounce, () {
+      _draftTimer = null;
+      // 定时器回调里没有 await 的地方：写失败由 `_enqueue` 的链吞掉并留给
+      // 下一次 `flushDrafts()` 的返回 Future（测试与调用方等的是那一个）。
+      unawaited(flushDrafts());
+    });
+  }
+
+  /// 把在途草稿立刻写下去（发送后 / 切会话前 / `paused` 时调）。
+  Future<void> flushDrafts() async {
+    _draftTimer?.cancel();
+    _draftTimer = null;
+    if (_pendingDrafts.isEmpty) return _writes;
+    final batch = Map<String, String>.of(_pendingDrafts);
+    _pendingDrafts.clear();
+    for (final entry in batch.entries) {
+      final key = UiKey.sessionDraft(entry.key);
+      if (entry.value.isEmpty) {
+        await _enqueue(() => _prefs.delete(key, includePrefixed: false));
+      } else {
+        await _writeDraft(entry.key, entry.value);
+      }
+    }
+  }
+
+  Future<void> _writeDraft(String sid, String text) => _write(
+    UiKey.sessionDraft(sid),
+    jsonEncode(<String, Object?>{'text': text, 'references': const []}),
+  );
 
   // ---- 清理与失效 ----
 

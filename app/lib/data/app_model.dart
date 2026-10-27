@@ -1366,6 +1366,24 @@ class AppModel extends ChangeNotifier {
     await _uiState?.setWorkspaceExpanded(groupKey, expanded);
   }
 
+  /// 一个会话的草稿正文（**旁路**：不进 `notifyListeners`）。
+  ///
+  /// 草稿的活文本由 `ChatPage` 的 `TextEditingController` 持有；这里只负责读盘
+  /// 与"记一次击键"。为什么不放进 `AppModel` 通知：`notifyListeners()` 同步遍历
+  /// 全部监听者（`foundation/change_notifier.dart:410-451`），草稿一进去就是
+  /// 每击键整页重建（设计 §3）。
+  Future<String?> draftOf(String sid) async {
+    final ui = _uiState;
+    if (ui == null) return null;
+    return ui.sessionDraftOf(sid);
+  }
+
+  /// 记一次击键（防抖在 `UiStateStore` 里，默认 300ms）。
+  void noteDraft(String sid, String text) => _uiState?.noteDraft(sid, text);
+
+  /// 把在途草稿立刻落盘（发送后 / 切会话前 / 退到后台）。
+  Future<void> flushDrafts() => _uiState?.flushDrafts() ?? Future<void>.value();
+
   /// 换电脑（重新配对）：清掉属于某台电脑的那一段（`host.*`），`device.*` 留着。
   Future<void> clearHostUiState() async {
     _views.clear();
