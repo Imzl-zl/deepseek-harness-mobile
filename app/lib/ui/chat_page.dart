@@ -398,6 +398,11 @@ class ChatPageState extends State<ChatPage> {
     // 所以手动挂一个监听（否则发送键永远灰着）。
     _input.addListener(_onInputChanged);
     _takeover.addListener(_onTakeoverChanged);
+    // 提问进度落盘（`host.question_draft.<sid>`）：控制器只负责"什么时候读写"，
+    // 存哪由设备本地状态缝决定（`data/ui_state.dart`）。
+    _takeover
+      ..readDraft = widget.app.questionDraftOf
+      ..writeDraft = widget.app.saveQuestionDraft;
     // **真实交互接进接管队列**：待处理项是会话事件的投影（契约 §6.3），
     // 于是"对话流里有一条审批"与"输入栏上有一张审批卡"不可能对不上。
     _interactionSub = widget.app.interactions.listen(_onInteractionSignal);

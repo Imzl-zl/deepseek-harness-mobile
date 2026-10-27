@@ -160,6 +160,25 @@ void main() {
       expect(prefs.values['${UiKey.sessionViewPrefix}sid-1'], 'trajectory');
     });
 
+    test('提问进度：按会话存取，null 等于删', () async {
+      expect(await ui.questionDraftOf('sid-1'), isNull);
+      await ui.setQuestionDraft('sid-1', '{"item":"t:1"}');
+      expect(await ui.questionDraftOf('sid-1'), '{"item":"t:1"}');
+      expect(prefs.values[UiKey.questionDraft('sid-1')], '{"item":"t:1"}');
+
+      await ui.setQuestionDraft('sid-1', null);
+      expect(await ui.questionDraftOf('sid-1'), isNull);
+      expect(prefs.values.containsKey(UiKey.questionDraft('sid-1')), isFalse);
+    });
+
+    test('pruneSessions 也清掉已消失会话的提问进度', () async {
+      await ui.setQuestionDraft('sid-1', '{"item":"t:1"}');
+      await ui.setQuestionDraft('sid-2', '{"item":"t:2"}');
+      await ui.pruneSessions({'sid-1'});
+      expect(prefs.values.containsKey(UiKey.questionDraft('sid-2')), isFalse);
+      expect(prefs.values.containsKey(UiKey.questionDraft('sid-1')), isTrue);
+    });
+
     test('pruneWorkspaces：只留还活着的工作区', () async {
       await ui.setWorkspaceExpanded('w1', false);
       await ui.setWorkspaceExpanded('w2', false);

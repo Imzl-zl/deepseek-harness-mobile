@@ -49,6 +49,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -120,6 +121,22 @@ class TakeoverController extends ChangeNotifier {
   bool _busy = false;
   bool _minimized = false;
 
+  // ---- 提问草稿的持久化端口（**注入**：控制器自己不做 IO）----
+  //
+  // 桌面对同一件事的持久化在 `ui-user-questions/src/client/draft-store.ts:28-60`
+  // （`{progressByRequest: {requestKey: {index, drafts: [...]}}}`，带 `clear`/`prune`）。
+  // 手机把"存哪"交给 `UiStateStore`（`host.question_draft.<sid>`），
+  // 这里只负责"什么时候读写"。
+
+  /// 读某个会话的草稿 JSON；`null` = 没存过。
+  Future<String?> Function(String sid)? readDraft;
+
+  /// 写某个会话的草稿 JSON；`null` = 删（这一项已收束）。
+  void Function(String sid, String? json)? writeDraft;
+
+  /// 当前已载入的草稿属于哪一项（`active.itemId`）；换项就要重载。
+  String? _draftItemId;
+
   /// 答复出口（`interaction.respond`）。**装配时注入**：控制器不认识 `AppModel`，
   /// 于是"答一次"在单测里可以只断言产出了什么批次，而不必起一个假客户端。
   ///
@@ -134,10 +151,121 @@ class TakeoverController extends ChangeNotifier {
     _questionIndex = 0;
     _minimized = false;
     notifyListeners();
+    // 换会话就换草稿（懒读一次；同一项不重复读）。
+    unawaited(_syncDraft());
   }
 
   /// 当前会话。
   String? get currentSid => _currentSid;
+
+  // ---- 提问草稿：读 / 写 / 忘 ----
+  //
+  // 形状（与桌面 `draft-store.ts` 的 `progressByRequest` 同构，但键是
+  // **itemId + questionId**，因为手机的多题向导本来就按 question id 记）：
+  //   {"item":"t:<callId>","index":1,
+  //    "questions":{"<qid>":{"selected":["A"],"custom":"…","skipped":false}}}
+
+  /// 载入当前项对应的草稿（换项 / 切会话 / 入队后调）。
+  ///
+  /// **只认 `item` 相同的那份**：迟到的旧草稿（上一项还没答完就来了新项）
+  /// 套到新项上会把"没答"显示成"答过"。
+  Future<void> _syncDraft() async {
+    final item = active;
+    final read = readDraft;
+    if (item == null || read == null) {
+      if (_draftItemId != null) {
+        _draftItemId = null;
+        _clearQuestionDraft();
+        notifyListeners();
+      }
+      return;
+    }
+    if (item.itemId == _draftItemId) return;
+    _draftItemId = item.itemId;
+    _clearQuestionDraft();
+    notifyListeners();
+    final raw = await read(item.sid);
+    if (_draftItemId != item.itemId) return; // 读盘期间换了项
+    if (!_applyDraft(raw, item)) return;
+    notifyListeners();
+  }
+
+  void _clearQuestionDraft() {
+    _selected.clear();
+    _custom.clear();
+    _skipped.clear();
+    _questionIndex = 0;
+  }
+
+  /// 把 JSON 套进内存；返回是否真的套上了。
+  bool _applyDraft(String? raw, InteractionItem item) {
+    if (raw == null || raw.isEmpty) return false;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return false;
+      if (decoded['item'] != item.itemId) return false;
+      final index = decoded['index'];
+      if (index is int && index >= 0 && index < item.questions.length) {
+        _questionIndex = index;
+      }
+      final questions = decoded['questions'];
+      if (questions is Map) {
+        for (final entry in questions.entries) {
+          final id = entry.key;
+          final value = entry.value;
+          if (id is! String || value is! Map) continue;
+          final selected = value['selected'];
+          if (selected is List) {
+            final labels = selected.whereType<String>().toList();
+            if (labels.isNotEmpty) _selected[id] = labels.toSet();
+          }
+          final custom = value['custom'];
+          if (custom is String && custom.isNotEmpty) _custom[id] = custom;
+          if (value['skipped'] == true) _skipped.add(id);
+        }
+      }
+      return true;
+    } on FormatException {
+      // 盘上坏了：当没有（不把卡片弄坏）。
+      return false;
+    }
+  }
+
+  /// 记一次作答进度（勾选 / 自定义 / 跳过 / 翻题）。
+  void _saveDraft() {
+    final write = writeDraft;
+    final item = active;
+    if (write == null || item == null) return;
+    final questions = <String, Object?>{};
+    for (final question in item.questions) {
+      final selected = _selected[question.id];
+      final custom = _custom[question.id];
+      final skipped = _skipped.contains(question.id);
+      if (selected == null && custom == null && !skipped) continue;
+      questions[question.id] = <String, Object?>{
+        'selected': selected == null ? const <String>[] : selected.toList(),
+        'custom': custom ?? '',
+        'skipped': skipped,
+      };
+    }
+    write(
+      item.sid,
+      jsonEncode(<String, Object?>{
+        'item': item.itemId,
+        'index': _questionIndex,
+        'questions': questions,
+      }),
+    );
+  }
+
+  /// 这一项收束了 ⇒ 它的草稿没有语义（照桌面的 `clear(requestKey)`）。
+  void _forgetDraft(String? sid) {
+    final write = writeDraft;
+    final owner = sid ?? _currentSid;
+    if (write == null || owner == null) return;
+    if (owner == _currentSid) _draftItemId = null;
+    write(owner, null);
+  }
 
   /// 当前会话的队（只读快照）。
   List<InteractionItem> get queue => List.unmodifiable(_queueOf(_currentSid));
@@ -210,6 +338,8 @@ class TakeoverController extends ChangeNotifier {
       _minimized = false;
     }
     notifyListeners();
+    // 新项入队：如果它成了队首，载入它自己的草稿。
+    unawaited(_syncDraft());
     return true;
   }
 
@@ -240,7 +370,11 @@ class TakeoverController extends ChangeNotifier {
         _minimized = false;
         _questionIndex = 0;
       }
+      // 这一项已经答完/被电脑侧定了 ⇒ 它的草稿没有语义。
+      if (itemId == _draftItemId) _forgetDraft(key);
       notifyListeners();
+      // 队首可能换人：换人就载入新队首的草稿。
+      unawaited(_syncDraft());
       return true;
     }
     return false;
@@ -266,6 +400,7 @@ class TakeoverController extends ChangeNotifier {
     if (item == null || _busy) return;
     if (index < 0 || index >= item.questions.length) return;
     _questionIndex = index;
+    _saveDraft();
     notifyListeners();
   }
 
@@ -288,6 +423,7 @@ class TakeoverController extends ChangeNotifier {
     }
     // 选了东西就不再是"跳过"—— 两个状态互斥。
     _skipped.remove(question.id);
+    _saveDraft();
     notifyListeners();
   }
 
@@ -304,6 +440,7 @@ class TakeoverController extends ChangeNotifier {
     if (question == null || _busy) return;
     _custom[question.id] = text;
     _skipped.remove(question.id);
+    _saveDraft();
     notifyListeners();
   }
 
@@ -384,6 +521,7 @@ class TakeoverController extends ChangeNotifier {
     _skipped.add(question.id);
     _selected.remove(question.id);
     _custom.remove(question.id);
+    _saveDraft();
     notifyListeners();
   }
 
@@ -396,6 +534,7 @@ class TakeoverController extends ChangeNotifier {
     if (item == null || _busy || !answered) return;
     if (_questionIndex < item.questions.length - 1) {
       _questionIndex += 1;
+      _saveDraft();
       notifyListeners();
       return;
     }

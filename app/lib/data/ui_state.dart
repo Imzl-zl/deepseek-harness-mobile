@@ -57,9 +57,15 @@ abstract final class UiKey {
   /// 每会话草稿（形状照桌面的 `DraftSnapshot`，今天只有 `text`）。
   static const String sessionDraftPrefix = '${hostPrefix}session_draft.';
 
+  /// 每会话的**提问作答进度**（哪些题勾了什么、答到第几题）。
+  /// 形状与桌面 `draft-store.ts` 的 `progressByRequest` 同构，键用 itemId + questionId。
+  static const String questionDraftPrefix = '${hostPrefix}question_draft.';
+
   static String sessionView(String sid) => '$sessionViewPrefix$sid';
 
   static String sessionDraft(String sid) => '$sessionDraftPrefix$sid';
+
+  static String questionDraft(String sid) => '$questionDraftPrefix$sid';
 }
 
 /// 设备本地 UI 状态。**不是 `ChangeNotifier`**：它的读者是 `AppModel` 与页面，
@@ -240,6 +246,22 @@ class UiStateStore {
     });
   }
 
+  /// 一个会话的**提问作答进度**（JSON；`null` = 没存过）。
+  ///
+  /// 形状由 `ui/takeover.dart` 决定（`{item, index, questions:{qid:{selected,custom,skipped}}}`），
+  /// 这里只当字符串存取 —— 存储层不认识交互语义。
+  Future<String?> questionDraftOf(String sid) =>
+      _prefs.read(UiKey.questionDraft(sid));
+
+  /// 写一个会话的提问进度；`null` = 删（这一项已收束）。
+  Future<void> setQuestionDraft(String sid, String? json) {
+    final key = UiKey.questionDraft(sid);
+    if (json == null) {
+      return _enqueue(() => _prefs.delete(key, includePrefixed: false));
+    }
+    return _write(key, json);
+  }
+
   /// 把在途草稿立刻写下去（发送后 / 切会话前 / `paused` 时调）。
   Future<void> flushDrafts() async {
     _draftTimer?.cancel();
@@ -293,6 +315,13 @@ class UiStateStore {
     final drafts = await _prefs.readAll(UiKey.sessionDraftPrefix);
     for (final key in drafts.keys) {
       final sid = key.substring(UiKey.sessionDraftPrefix.length);
+      if (liveSids.contains(sid)) continue;
+      await _enqueue(() => _prefs.delete(key, includePrefixed: false));
+    }
+    // 提问进度同理：会话没了，它的作答进度没有语义。
+    final questions = await _prefs.readAll(UiKey.questionDraftPrefix);
+    for (final key in questions.keys) {
+      final sid = key.substring(UiKey.questionDraftPrefix.length);
       if (liveSids.contains(sid)) continue;
       await _enqueue(() => _prefs.delete(key, includePrefixed: false));
     }

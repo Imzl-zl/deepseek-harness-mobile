@@ -1396,6 +1396,16 @@ class AppModel extends ChangeNotifier {
   /// 把在途草稿立刻落盘（发送后 / 切会话前 / 退到后台）。
   Future<void> flushDrafts() => _uiState?.flushDrafts() ?? Future<void>.value();
 
+  /// 一个会话的**提问作答进度**（JSON；形状由 `ui/takeover.dart` 决定）。
+  ///
+  /// 存储层不认识交互语义，只当字符串存取 —— 解析在控制器里（那里知道题目与选项）。
+  Future<String?> questionDraftOf(String sid) =>
+      _uiState?.questionDraftOf(sid) ?? Future<String?>.value();
+
+  /// 写提问进度；`null` = 删（这一项已收束）。
+  void saveQuestionDraft(String sid, String? json) =>
+      _uiState?.setQuestionDraft(sid, json);
+
   /// 换电脑（重新配对）：清掉属于某台电脑的那一段（`host.*`），`device.*` 留着。
   Future<void> clearHostUiState() async {
     _views.clear();
