@@ -3,7 +3,7 @@
 > 快照 + 最近窗口，**覆盖更新**，不做流水追加。历史在 git 与 `.agents/notes/`；
 > 稳定命令与坑点在 `tools.md`；现状事实在 `docs/`。
 
-## 现在（2026-10-26）
+## 现在（2026-10-27）
 
 - **通道**：`protocol/`（配对 / 握手 / AEAD / 流控 / 恢复）+ `relay/`（中转）+ `connector/`（电脑侧网关）
   全部落地；手机侧 `app/lib/core/` 是连接层，`app/lib/wire/` 是**线上形状的唯一解码层**。
@@ -29,6 +29,13 @@
   桌面"当前打开哪个"是浏览器本地状态，宿主没有，手机不追。文档 `connect-landing.md`；
   笔记 `implemented/2026-10-26-connect-landing.md`。运行态来自 `session.list.running` +
   `api-session/status` 帧（落点选中在跑的会话就直接显示运行条）。
+- **真机 UI 状态复验（2026-10-27，设备 d61cf622）**：抽屉折叠跨重启、页签按会话 +
+  跨重启、草稿恢复不弹键盘、门槛四态(3/4)、模型回落宿主默认、设备库 schema=2 均**实测通过**。
+  途中抓到并修掉两个真问题：①连上后落点被 blank 复用抢占（`ba534b8`，真机上曾让页签/草稿
+  看起来"没恢复"，还覆盖 `host.last_session`）；②抽屉每组全渲染 + 搜索框是死控件
+  （`490fa5f`，按桌面 watermark=5 + 「展开其余 N 个会话」+ 接通搜索）。
+  真机**未测**：子智能体在跑可见、提问草稿、发送模式真值、断连重连（免费渠道 403/503 与
+  USB 掉线挡住；判据与截图目录见 `docs/subsystems/ui-state.md` §8）。
 - **UI**：会话/抽屉/输入区/审批与提问/任务/文件/@ 候选/插件/设置/用量/轨迹页全部接真数据；
   真机验收到 2026-10-24（W3/W4 四项）。
 - **换网连不上（2026-10-26）**：连接 sheet 加「手动填写电脑地址」—— 只加进表、不自动拨，
@@ -42,19 +49,11 @@
 
 ## 下一步
 
-0. **状态语义对齐（主线，A–H 全落地，共 13 个提交）**：现状事实已进 `docs/subsystems/ui-state.md`
-   （三类主人 / 键方案 / 迁移与清理 / 门槛入口 / 连接瞬间复合状态），索引在 `docs/AGENTS.md`。
-   - 已落地并各自一个提交：A 发送门槛 `8cbda30`、B 设备本地缝+抽屉+页签 `0a54d2a`、
-     C 草稿 `f487e35`、D 选择记忆默认 `c6c4b76`、E 子智能体在跑可见 `4e8f8fb`、
-     F 提问草稿 `1712bac`、G1 统一与优化 `8aa775b`、G2 `HostCatalogs` `a317129`、
-     H 发送模式走宿主 `f71f83f`。
-   - G3 四个提交：`5d54eae`（端点特征用例）+ `06dd9f7`（EndpointBook）、
-     `d10e0da`（ItemDerivations，并修掉 changedFiles 排序与注释不一致）、
-     `d29cbe8`（SessionRows）、`a17b595`（FilePreview）。
-   - 因果：`implemented/2026-10-27-state-semantics-mechanism-decisions.md`（五条裁定）、
-     `implemented/2026-10-27-appmodel-narrowing.md`（六步落地顺序 + 不做 guarded 的理由）；
-     审计与设计仍在 `proposed/`（`state-semantics-audit.md` / `ui-state-design.md`）。
-   - `guarded.dart` **决定不做**（47 处 catch 各不相同，统一模板会把"吞错"变成默认动作）。
+0. **状态语义对齐（A–H 已全落地）**：现状事实在 `docs/subsystems/ui-state.md`；
+   因果在 `implemented/2026-10-27-state-semantics-mechanism-decisions.md` 与
+   `implemented/2026-10-27-appmodel-narrowing.md`；`guarded.dart` **决定不做**。
+   真机复验补齐 4 条：子智能体在跑可见、提问草稿、发送模式真值、断连重连
+   （要一次能跑完的模型请求 + 在线设备）。
 1. 跑一轮真机复验改动卡 / 差异 / 提及（要模型请求 —— 先报价再跑）。
 2. `usage.summary` 的 byDay 时区；`plugin.installStatus` 的 4 键/8 键两形态
    （真出现第二种时 `readPluginJob` 会红，属**已知的下一处**）。
@@ -78,10 +77,10 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 613 项（25 条规则自检 + 142 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | 629 项（25 条规则自检 + 146 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1468 项 |
+| `cd app && flutter test` | 1495 项 |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + 686 项 |
 | `cd relay && pnpm typecheck && pnpm test` | 类型 + 87 条 |
@@ -98,14 +97,12 @@
 
 ## 仍未注意就会翻车
 
-- **改源码只用编辑工具**，不用 shell 字符串替换（shell 出错是静默的）。
-- **`dart format` 会重排文件**；之后再编辑同一文件要**重新读一遍**。
+- **改源码只用编辑工具**（shell 替换静默出错）；**`dart format` 会重排文件**，之后再编辑要重读。
 - 其余稳定坑点见 `tools.md` → Pitfalls。
 
 ## 已知缺口（仍在）
 
-- 计划审查卡手机上不存在（**有意**，契约 §15）。
-- 停用设备的"明说"在**中转链路**看不到，直连能看到（写进契约 §15）。
+- 计划审查卡手机上不存在（**有意**，契约 §15）；停用设备的"明说"在**中转链路**看不到（直连能看到）。
 - 上述"未验"各项（含桌面四件事的真机验收）。
 
 ## 已落地索引
@@ -121,3 +118,5 @@
 - 2026-10-26 真机对照修正（模型 pill fallback / 分支静默）+ 连通落点 — `implemented/2026-10-26-device-alignment-fixes.md`、`2026-10-26-connect-landing.md`
 - 2026-10-27 UI 状态语义（审计 → 机制 → A–H 批）— `implemented/2026-10-27-state-semantics-mechanism-decisions.md`；
   现状事实 `docs/subsystems/ui-state.md`；审计/设计仍 `proposed/2026-10-27-*`
+- 2026-10-27 真机复验修正 — `implemented/2026-10-27-connect-landing-single-path.md`（落点单一路径）、
+  `implemented/2026-10-27-drawer-watermark-and-search.md`（抽屉 watermark + 搜索接线）
