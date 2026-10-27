@@ -62,7 +62,6 @@ import '../wire/rpc/interaction.dart' as wire;
 import '../wire/rpc/job.dart' as wire;
 import '../wire/rpc/permission.dart' as wire;
 import '../wire/rpc/plugin.dart' as wire;
-import '../wire/rpc/preset.dart' as wire;
 import '../wire/rpc/projections.dart' as wire;
 import '../wire/rpc/refs.dart' as wire;
 import '../wire/rpc/repo.dart' as wire;
@@ -71,6 +70,7 @@ import '../wire/rpc/settings.dart' as wire;
 import '../wire/rpc/usage.dart' as wire;
 import '../wire/rpc/workspace.dart' as wire;
 import 'cache.dart';
+import 'host_catalogs.dart';
 import 'ids.dart';
 import 'projection.dart';
 import 'session_store.dart';
@@ -116,6 +116,18 @@ class AppModel extends ChangeNotifier {
 
   /// 偏好缝（`meta` 表的窄接口）；`null` = 不落盘（测试 / 未装配）。
   final PreferenceStore? _prefs;
+
+  /// 宿主侧只读目录面（模型 / 权限 / Agent 预设）。
+  ///
+  /// 三类目录同形（一次只读请求 → 解析 → 缓存 → getter），收窄计划的**第一簇**
+  /// （`.agents/notes/proposed/2026-10-27-appmodel-narrowing.md`）。
+  /// 这里只建一次；`onChange` 走守卫过的 `notifyListeners`。
+  late final HostCatalogs _catalogs = HostCatalogs(
+    client: client,
+    onChange: () {
+      if (!_disposed) notifyListeners();
+    },
+  );
 
   /// 设备本地 UI 状态的唯一缝（`data/ui_state.dart`）。
   ///
@@ -711,9 +723,7 @@ class AppModel extends ChangeNotifier {
   /// （2026-10-15 之前输入栏的权限档正是三个写死的枚举值）。
   /// 预设表是**部署可配**的（DSH `bundle/base/cordis.patch.yml:262-271`），
   /// 手抄一份就是第二份真值。
-  PermissionCatalog? get permissionCatalog => _permissionCatalog;
-
-  PermissionCatalog? _permissionCatalog;
+  PermissionCatalog? get permissionCatalog => _catalogs.permissionCatalog;
 
   /// 当前会话的权限档（`permissions` 投影的 `currentValue`）。
   ///
@@ -732,11 +742,9 @@ class AppModel extends ChangeNotifier {
   /// 由来与"为什么手机不写死这些数"见 `model/image_limits.dart` 的文件头。
   DshImageLimits? get imageLimits => projections?.imageLimits;
 
-  /// 存一份预设目录（连接器 `permission.catalog` 的应答）。
-  void setPermissionCatalog(PermissionCatalog? catalog) {
-    _permissionCatalog = catalog;
-    notifyListeners();
-  }
+  /// 存一份预设目录（连接器 `permission.catalog` 的应答）。转发给 [HostCatalogs]。
+  void setPermissionCatalog(PermissionCatalog? catalog) =>
+      _catalogs.setPermissionCatalog(catalog);
 
   /// 切这个会话的权限预设。**与 Web 同一条写路径**：
   /// DSH 的 `/permission <档位>` 斜杠命令
@@ -1273,8 +1281,7 @@ class AppModel extends ChangeNotifier {
   /// 2026-10-17 修：解析器原来认的是一个臆想形状（`List<{provider, models}>`），
   /// 而真形状是 `{default, routableProviders, groups, failures}` —— 顶层是对象，
   /// 于是目录在生产里**一次都没解析成功过**。详见 `model/model_catalog.dart` 文件头。
-  ModelCatalog? get modelCatalog => _modelCatalog;
-  ModelCatalog? _modelCatalog;
+  ModelCatalog? get modelCatalog => _catalogs.modelCatalog;
 
   /// 当前会话的模型（`modelSelection` 投影，`next ?? lastUsed`）。
   ///
@@ -1294,7 +1301,7 @@ class AppModel extends ChangeNotifier {
     if (sid == null) return null;
     final recorded = sessionOf(sid)?.model;
     if (recorded != null) return recorded;
-    final fallback = _modelCatalog?.defaultSelection;
+    final fallback = _catalogs.modelCatalog?.defaultSelection;
     if (fallback == null) return null;
     if (fallback.provider.isEmpty || fallback.model.isEmpty) return null;
     return fallback;
@@ -2986,16 +2993,16 @@ class AppModel extends ChangeNotifier {
 
     // 模型目录：**与会话清单同源但不同周期** —— 它很少变，所以跟清单一起拉。
     // 失败只留声：拿不到目录时 picker 说"拿不到"，而不是弹四个假名字。
-    await _refreshModelCatalog();
+    await _catalogs.refreshModels();
     // 权限预设目录同理（进程级，与会话无关）。失败只留声：
     // 拿不到时权限 sheet 说"拿不到目录"，而不是摆三档手抄的名字。
-    await _refreshPermissionCatalog();
+    await _catalogs.refreshPermissions();
     // 工作区清单：会话列表**按它分组**（Web 的侧栏就是 工作区 → 会话）。
     // 失败只留声：拿不到时列表退回不分组，而不是按 `cwd` 猜一个分组。
     await refreshWorkspaces();
     // Agent 预设目录（hero 上那枚模式 chip 的名字来源）。同样只留声：
     // 拿不到时 chip 说"拿不到目录"，而不是摆一份手抄的四个内置预设。
-    await _refreshAgentPresets();
+    await _catalogs.refreshPresets();
     // 设置面（三行：默认权限档 / 默认 Agent 预设 / Session Log 开关）。
     // 拿不到时那三行**不出现**（不是摆一个假开关），与 `settings.describe` 的能力位同一条。
     await refreshSettings();
@@ -3076,24 +3083,8 @@ class AppModel extends ChangeNotifier {
     return null;
   }
 
-  Future<void> _refreshAgentPresets() async {
-    try {
-      // 方法名与参数形状在 `wire/rpc/preset.dart`；目录本体（`roster.presets`
-      // 逐项：`broken` 跳过、`isDefault`、`name`/`description` 可空）仍由
-      // `model/agent_preset.dart` 解析。
-      final roster = await wire.loadAgentPresets(client);
-      if (_disposed) return;
-      _agentPresetRoster = roster;
-      if (!_disposed) notifyListeners();
-    } catch (_) {
-      // **兜住所有异常** —— 与 `_refreshPermissionCatalog` 同一条纪律：
-      // 目录是附属信息，不该把"拉不到预设目录"升级成"会话列表也失败了"。
-    }
-  }
-
-  /// Agent 预设目录（`agentPresets.list`）；没拉过是 `null`。
-  AgentPresetRoster? get agentPresetRoster => _agentPresetRoster;
-  AgentPresetRoster? _agentPresetRoster;
+  /// Agent 预设目录（`agentPresets.list`）；没拉过是 `null`。转发给 [HostCatalogs]。
+  AgentPresetRoster? get agentPresetRoster => _catalogs.agentPresetRoster;
 
   /// 当前会话跑的是哪个预设（`agentPreset` 投影的 `string | null`）。
   ///
@@ -3153,19 +3144,6 @@ class AppModel extends ChangeNotifier {
     final sid = _currentSid;
     if (sid == null) return false;
     return sessionOf(sid)?.blank ?? false;
-  }
-
-  Future<void> _refreshPermissionCatalog() async {
-    try {
-      // 形状（`{available, catalog}`）在 `wire/rpc/permission.dart`：
-      // `available: false` 是电脑侧的明说（⇒ null），`true` 却不给 catalog 才是漂移。
-      final catalog = await wire.loadPermissionCatalog(client);
-      if (_disposed) return;
-      setPermissionCatalog(catalog);
-    } catch (_) {
-      // **兜住所有异常** —— 与 `_refreshModelCatalog` 同一条纪律。
-      // 目录是附属信息，不该把"拉不到权限目录"升级成"会话列表也失败了"。
-    }
   }
 
   /// 拉一次工作区清单（会话列表按它分组）。
@@ -3434,22 +3412,6 @@ class AppModel extends ChangeNotifier {
         ? error
         : ProtocolException(ErrorCode.internal, '$what：$error');
     if (!_disposed) notifyListeners();
-  }
-
-  Future<void> _refreshModelCatalog() async {
-    try {
-      // 形状（`{available, catalog}` 与目录本体）在 `wire/rpc/session.dart` 的
-      // `readModelCatalog`；这里只知道"目录可能拿不到"。
-      final catalog = await wire.loadModelCatalog(client);
-      if (catalog == _modelCatalog) return;
-      _modelCatalog = catalog;
-      if (!_disposed) notifyListeners();
-    } catch (_) {
-      // **兜住所有异常，不只 `ProtocolException`** —— 与 `refreshSessions`
-      // 同一条纪律。目录是附属信息：解析出错 / 类型不对 / 超时都不该逃逸成
-      // 未处理的异步错误，更不该把"拉不到模型目录"升级成"会话列表也失败了"。
-      // picker 自己会说"拿不到"。
-    }
   }
 
   /// 某个会话此刻有几个**未决**待处理（审批/提问，从本地投影数）。
