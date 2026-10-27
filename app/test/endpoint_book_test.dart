@@ -156,11 +156,7 @@ void main() {
       isTrue,
       reason: '手填的豁免',
     );
-    expect(
-      app.endpoints.first.url,
-      'ws://e0:1',
-      reason: '淘汰从末尾走，前面用户的顺序不动',
-    );
+    expect(app.endpoints.first.url, 'ws://e0:1', reason: '淘汰从末尾走，前面用户的顺序不动');
   });
 
   test('报一条拨通的端点 ⇒ 记住它 + 加进成功集', () async {
@@ -234,10 +230,18 @@ void main() {
     addTearDown(app.dispose);
 
     await app.moveEndpoint(0, 2);
-    expect(app.endpoints.map((e) => e.url), ['ws://b:2', 'ws://c:3', 'ws://a:1']);
+    expect(app.endpoints.map((e) => e.url), [
+      'ws://b:2',
+      'ws://c:3',
+      'ws://a:1',
+    ]);
 
     await app.preferEndpoint(_ep('ws://a:1'));
-    expect(app.endpoints.map((e) => e.url), ['ws://a:1', 'ws://b:2', 'ws://c:3']);
+    expect(app.endpoints.map((e) => e.url), [
+      'ws://a:1',
+      'ws://b:2',
+      'ws://c:3',
+    ]);
 
     // 越界即忽略。
     await app.moveEndpoint(-1, 0);

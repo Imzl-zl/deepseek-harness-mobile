@@ -22,8 +22,7 @@ library;
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart'
-    show ChangeNotifier, listEquals, visibleForTesting;
+import 'package:flutter/foundation.dart' show ChangeNotifier, visibleForTesting;
 
 import '../core/connection.dart';
 import '../core/endpoint.dart';
@@ -70,6 +69,7 @@ import '../wire/rpc/settings.dart' as wire;
 import '../wire/rpc/usage.dart' as wire;
 import '../wire/rpc/workspace.dart' as wire;
 import 'cache.dart';
+import 'endpoint_book.dart';
 import 'host_catalogs.dart';
 import 'ids.dart';
 import 'projection.dart';
@@ -105,10 +105,10 @@ class AppModel extends ChangeNotifier {
     NotifyPort? notify,
   }) : _prefs = prefs,
        _notify = notify,
-       _endpoints = List<Endpoint>.of(endpoints),
-       _rememberedEndpointUrl = rememberedEndpointUrl,
-       _hiddenEndpointIds = Set<String>.of(hiddenEndpointIds),
-       _succeededEndpointIds = Set<String>.of(succeededEndpointIds),
+       _initialEndpoints = List<Endpoint>.of(endpoints),
+       _initialRememberedEndpointUrl = rememberedEndpointUrl,
+       _initialHiddenEndpointIds = Set<String>.of(hiddenEndpointIds),
+       _initialSucceededEndpointIds = Set<String>.of(succeededEndpointIds),
        _myLanIpv4Of = myLanIpv4Of;
 
   /// 通道客户端（连接 / 订阅 / 写操作的唯一 owner）。
@@ -170,39 +170,51 @@ class AppModel extends ChangeNotifier {
   /// 本连接周期是否已呈递过终态失败（避免重复触发重新配对）。
   bool _connectionTerminatedSurfaced = false;
 
+  /// 端点簿（表 + 附属路由记忆）。**唯一所有者**，本类只转发。
+  ///
+  /// 搬出去的理由与判据集中在 `data/endpoint_book.dart` 的文件头；
+  /// 行为钉子见 `app/test/endpoint_book_test.dart`。
+  final List<Endpoint> _initialEndpoints;
+  final String? _initialRememberedEndpointUrl;
+  final Set<String> _initialHiddenEndpointIds;
+  final Set<String> _initialSucceededEndpointIds;
+
+  /// 读本机 LAN 地址的实现（装配层注入 `platform/lan_address.dart`；
+  /// `data/` 不认识 `dart:io`）。
+  final Future<String?> Function()? _myLanIpv4Of;
+
+  late final EndpointBook _endpointsBook = EndpointBook(
+    endpoints: _initialEndpoints,
+    rememberedEndpointUrl: _initialRememberedEndpointUrl,
+    hiddenEndpointIds: _initialHiddenEndpointIds,
+    succeededEndpointIds: _initialSucceededEndpointIds,
+    myLanIpv4Of: _myLanIpv4Of,
+    onTableChanged: onEndpointsChanged,
+    onMetaChanged: onEndpointsMetaChanged,
+    onChange: () {
+      if (!_disposed) notifyListeners();
+    },
+  );
+
   /// 有序端点表。**序即偏好**：`connect()` 按这个顺序拨，第一个通的赢。
   ///
-  /// 它的所有者是这里（界面要读、设置页要改），而拨号方
+  /// 它的所有者是 [EndpointBook]（界面要读、设置页要改），而拨号方
   /// （`platform/transport_factory.dart` 经 `EndpointTransport`）每次
   /// `connect()` 现读它 —— 所以"发现了一条直连"立刻生效，不用重启 App。
-  List<Endpoint> get endpoints => _endpoints;
-  List<Endpoint> _endpoints;
+  List<Endpoint> get endpoints => _endpointsBook.endpoints;
 
   /// 当前拨通的那个端点（`null` = 还没连上）。
   ///
   /// 由装配层把 `EndpointTransport.onActivated` 接到这里。
-  Endpoint? get activeEndpoint => _activeEndpoint;
-  Endpoint? _activeEndpoint;
+  Endpoint? get activeEndpoint => _endpointsBook.activeEndpoint;
 
   /// 报一次"这条连接走的是哪个端点"。
   ///
   /// **顺带记住它**：拨号顺序的第一优先就是"上次拨通的那条"
   /// （见 `core/endpoint.dart` 的 `dialOrder`）。同一台电脑很少换地址，
   /// 先试它最省 —— 而"换地点之后同网段优先"是它失败之后的第二手。
-  void reportActiveEndpoint(Endpoint endpoint) {
-    final movedOn = _activeEndpoint?.id != endpoint.id;
-    _activeEndpoint = endpoint;
-    final newlySucceeded = _succeededEndpointIds.add(endpoint.id);
-    final memoryMoved = _rememberedEndpointUrl != endpoint.url;
-    _rememberedEndpointUrl = endpoint.url;
-    if (!movedOn && !newlySucceeded && !memoryMoved) return;
-    notifyListeners();
-    if (newlySucceeded || memoryMoved) {
-      unawaited(
-        onEndpointsMetaChanged?.call(endpointMeta) ?? Future<void>.value(),
-      );
-    }
-  }
+  void reportActiveEndpoint(Endpoint endpoint) =>
+      _endpointsBook.reportActiveEndpoint(endpoint);
 
   /// 把连接器自报的端点并进表里（`endpoint.describe` 的结果）。
   ///
@@ -216,124 +228,30 @@ class AppModel extends ChangeNotifier {
   /// 只增不删的表会无限变长：连接器的 IPv6 隐私地址每次轮换都是新的一条，
   /// 旧的永远留在表里（2026-10-17 真机实测：三个拨不通的 IPv6 地址，
   /// 冷启动每个等满超时，合计 30 秒——用户原话"退出软件怎么就连不上了"）。
-  Future<void> mergeDiscoveredEndpoints(List<Endpoint> discovered) async {
-    // 用户藏掉的条目**不再加回来**（否则设置页的"删除"删了白删）。
-    final visible = discovered
-        .where((e) => !_hiddenEndpointIds.contains(e.id))
-        .toList();
-    final merged = mergeEndpoints(_endpoints, visible);
-    final reported = visible.map((e) => e.id).toSet();
-
-    final kept = merged.where((e) {
-      if (e.manual) return true; // 用户手填的：永不自动删
-      if (reported.contains(e.id)) return true; // 连接器还在报：留
-      // **成功过的永不删**：它只是"此刻不在那个网络"。家里那条在公司拨不通，
-      // 但它成功过 —— 回老家要靠它自动连上，而不是再扫一次码。
-      if (_succeededEndpointIds.contains(e.id)) return true;
-      // 剩下的只删"从没成功过 + 这次拨过并失败"（IPv6 轮换出来的旧地址）。
-      return _endpointAttempts[e.id]?.ok != false;
-    }).toList();
-
-    final bounded = _boundedByCap(kept, reported);
-    if (_sameEndpointTable(bounded, _endpoints)) {
-      return; // 没有变化：不落盘、不通知（否则每次重连都会写一次存储）
-    }
-    _endpoints = bounded;
-    notifyListeners();
-    await onEndpointsChanged?.call(bounded);
-  }
-
-  /// 上限保险丝：条目超 [maxEndpoints] 时，从**末尾**淘汰"从没成功过、
-  /// 且不是手填"的条目。
-  ///
-  /// 为什么是末尾：新发现的端点追加在末尾，而用户手动排在前面的顺序
-  /// 是他的意图 —— 淘汰从后往前才不动它。**手填的豁免**：那是用户明确要的。
-  List<Endpoint> _boundedByCap(List<Endpoint> entries, Set<String> reported) {
-    if (entries.length <= maxEndpoints) return entries;
-    final out = List<Endpoint>.of(entries);
-    var index = out.length - 1;
-    while (out.length > maxEndpoints && index >= 0) {
-      final endpoint = out[index];
-      final evictable =
-          !endpoint.manual && !_succeededEndpointIds.contains(endpoint.id);
-      if (evictable) {
-        out.removeAt(index);
-      }
-      index -= 1;
-    }
-    // 全是"成功过"或"手填"的（不常见的极端）：宁可超限也不删用户要的。
-    return out;
-  }
-
-  /// 两张端点表是否**完全一样**（url + label + manual；顺序也算）。
-  ///
-  /// 不能用 `contains`：它只比 url，于是"label 变了""manual 标记变了"
-  /// 都会被当成"没有变化"而不落盘。
-  bool _sameEndpointTable(List<Endpoint> a, List<Endpoint> b) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i += 1) {
-      if (a[i].url != b[i].url ||
-          a[i].label != b[i].label ||
-          a[i].manual != b[i].manual ||
-          a[i].kind != b[i].kind) {
-        return false;
-      }
-    }
-    return true;
-  }
+  Future<void> mergeDiscoveredEndpoints(List<Endpoint> discovered) =>
+      _endpointsBook.mergeDiscoveredEndpoints(discovered);
 
   /// 上限保险丝的值。用户自己的删除总是优先于它 —— 它只防"表无限变长"。
-  static const int maxEndpoints = 12;
+  static const int maxEndpoints = EndpointBook.maxEndpoints;
 
   /// 上次拨通的端点地址（`dialOrder` 的第一优先）。
-  String? get rememberedEndpointUrl => _rememberedEndpointUrl;
-  String? _rememberedEndpointUrl;
+  String? get rememberedEndpointUrl => _endpointsBook.rememberedEndpointUrl;
 
   /// 用户藏掉的端点 id（连接器再报也不加回来）。
-  Set<String> get hiddenEndpointIds =>
-      Set<String>.unmodifiable(_hiddenEndpointIds);
-  final Set<String> _hiddenEndpointIds;
-
-  /// **曾经成功过**的端点 id（不是"上次成功"，是"曾经成功"）。
-  final Set<String> _succeededEndpointIds;
+  Set<String> get hiddenEndpointIds => _endpointsBook.hiddenEndpointIds;
 
   /// 本机在**当前局域网**里的 IPv4（`null` = 还不知道 / 拿不到）。
   ///
   /// 拨号排序用它判"这条直连端点是不是和我同一网段"（`core/endpoint.dart`
   /// 的 `dialOrder`）。**缓存着**：真实现要调 `dart:io`，而 `dialOrder`
   /// 在同步的 `endpointsOf()` 里跑。
-  String? get myLanIpv4 => _myLanIpv4;
-  String? _myLanIpv4;
+  String? get myLanIpv4 => _endpointsBook.myLanIpv4;
 
-  /// 读本机 LAN 地址的实现（装配层注入 `platform/lan_address.dart`；
-  /// `data/` 不认识 `dart:io`）。
-  final Future<String?> Function()? _myLanIpv4Of;
-
-  /// 刷新本机 LAN 地址。
-  ///
-  /// **在"拨不通"之后才调**（见 [reportEndpointAttempt]）：用户的原话是
-  /// "连接失败才会查下自己 IP"。平时不必付这个代价，而真正需要它的那一刻
-  /// ——换了地点、记住的那条拨不通—— 正好就是失败的那一拍。
-  Future<void> refreshMyLanIpv4() async {
-    final read = _myLanIpv4Of;
-    if (read == null) return;
-    String? next;
-    try {
-      next = await read();
-    } on Object {
-      return; // 读不到就是不知道（不猜），排序退化成"用户顺序"
-    }
-    if (next == _myLanIpv4) return;
-    _myLanIpv4 = next;
-    notifyListeners();
-  }
+  /// 刷新本机 LAN 地址（**在"拨不通"之后才调**，见 `EndpointBook`）。
+  Future<void> refreshMyLanIpv4() => _endpointsBook.refreshMyLanIpv4();
 
   /// 端点表的附属状态（落盘用）。
-  EndpointMeta get endpointMeta => EndpointMeta(
-    rememberedEndpointUrl: _rememberedEndpointUrl,
-    hiddenEndpointIds: _hiddenEndpointIds,
-    succeededEndpointIds: _succeededEndpointIds,
-  );
+  EndpointMeta get endpointMeta => _endpointsBook.endpointMeta;
 
   // ---------------------------------------------------------------------------
   // 点名连接（与"自动队列"是两个功能）
@@ -372,7 +290,7 @@ class AppModel extends ChangeNotifier {
     _requestedEndpoint = endpoint;
     _requestResult = null;
     // 先清掉这台的旧结论：不然界面会把上一次的失败当成这一次的。
-    _endpointAttempts.remove(endpoint.id);
+    _endpointsBook.clearAttempt(endpoint.id);
     notifyListeners();
 
     request(endpoint);
@@ -383,7 +301,7 @@ class AppModel extends ChangeNotifier {
       // 那才是判断"通没通"的唯一依据（这里 await 到的只是"发起完了"）。
     }
 
-    final attempt = _endpointAttempts[endpoint.id];
+    final attempt = _endpointsBook.attemptOf(endpoint);
     final ok = attempt?.ok == true;
     _requestResult = EndpointRequestResult(
       endpoint: endpoint,
@@ -405,102 +323,36 @@ class AppModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 用户手填一条端点。
-  ///
-  /// **地址校验由调用方做**（设置页走 `checkedRelayUri` + `isPrivateOrLoopback`）：
-  /// `data/` 只存值，不判安全边界 —— 那是 `core/endpoint.dart` 的职责，
-  /// 而两处各判一遍就会漂。
-  Future<void> addManualEndpoint(Endpoint endpoint) async {
-    final manual = endpoint.withManual(true);
-    // 之前藏过的话，这次是用户明确要它 —— 顺手解除隐藏。
-    _hiddenEndpointIds.remove(manual.id);
-    final next = List<Endpoint>.of(_endpoints);
-    final index = next.indexWhere((e) => e.id == manual.id);
-    if (index >= 0) {
-      next[index] = manual; // 已经是它：只把标记刷成手填
-    } else {
-      next.add(manual);
-    }
-    _endpoints = next;
-    notifyListeners();
-    await onEndpointsChanged?.call(next);
-    await onEndpointsMetaChanged?.call(endpointMeta);
-  }
+  /// 用户手填一条端点（地址校验由调用方做，见 `EndpointBook`）。
+  Future<void> addManualEndpoint(Endpoint endpoint) =>
+      _endpointsBook.addManualEndpoint(endpoint);
 
-  /// 删一条端点。
-  ///
-  /// 连接器自报的**进隐藏集**（否则下次 `describe` 又把它加回来，删了白删）；
-  /// 手填的直接从表里去掉（没有"会被报回来"的问题）。
-  Future<void> removeEndpoint(Endpoint endpoint) async {
-    final next = _endpoints.where((e) => e.id != endpoint.id).toList();
-    if (!endpoint.manual) _hiddenEndpointIds.add(endpoint.id);
-    _succeededEndpointIds.remove(endpoint.id);
-    _endpoints = next;
-    if (_rememberedEndpointUrl == endpoint.id) _rememberedEndpointUrl = null;
-    notifyListeners();
-    await onEndpointsChanged?.call(next);
-    await onEndpointsMetaChanged?.call(endpointMeta);
-  }
+  /// 删一条端点（自报的进隐藏集，手填的直接去掉）。
+  Future<void> removeEndpoint(Endpoint endpoint) =>
+      _endpointsBook.removeEndpoint(endpoint);
 
   /// 把藏掉的端点放回来（设置页的"已隐藏"区用）。
-  Future<void> unhideEndpoint(String id) async {
-    if (!_hiddenEndpointIds.remove(id)) return;
-    notifyListeners();
-    await onEndpointsMetaChanged?.call(endpointMeta);
-  }
+  Future<void> unhideEndpoint(String id) => _endpointsBook.unhideEndpoint(id);
 
   /// 拖动换位置（队列的顺序就是自动拨号的优先级）。
   ///
   /// 参数是**表下标**，且 [newIndex] 已经是"移动后的目标下标"（调用方负责把
   /// `ReorderableListView` 的"插入位置"换算成它 —— 那是个 UI 框架概念，
-  /// 不该漏到这里）。越界即忽略：拖动结束时会话可能已经变了。
-  Future<void> moveEndpoint(int oldIndex, int newIndex) async {
-    if (oldIndex == newIndex) return;
-    if (oldIndex < 0 || oldIndex >= _endpoints.length) return;
-    if (newIndex < 0 || newIndex >= _endpoints.length) return;
-    final reordered = List<Endpoint>.of(_endpoints);
-    final moved = reordered.removeAt(oldIndex);
-    reordered.insert(newIndex, moved);
-    _endpoints = reordered;
-    notifyListeners();
-    await onEndpointsChanged?.call(reordered);
-  }
+  /// 不该漏到这里）。
+  Future<void> moveEndpoint(int oldIndex, int newIndex) =>
+      _endpointsBook.moveEndpoint(oldIndex, newIndex);
 
   /// 手动挑一个端点当首选（设置页用）。**只改顺序，不删条目**。
-  Future<void> preferEndpoint(Endpoint endpoint) async {
-    final index = _endpoints.indexWhere((e) => e.id == endpoint.id);
-    if (index < 0) return;
-    final reordered = <Endpoint>[
-      _endpoints[index],
-      ..._endpoints.where((e) => e.id != endpoint.id),
-    ];
-    if (listEquals(reordered, _endpoints)) return;
-    _endpoints = reordered;
-    notifyListeners();
-    await onEndpointsChanged?.call(reordered);
-  }
+  Future<void> preferEndpoint(Endpoint endpoint) =>
+      _endpointsBook.preferEndpoint(endpoint);
 
-  /// 每个端点**最近一次拨号**的结果（端点 id = url → 结果）。
-  ///
-  /// 由传输层报事实（`EndpointTransport.onAttempt`，装配在 `main.dart`），
-  /// 这里只记账。设置页的"通不通"读它：**没有记录就没有结论** ——
-  /// 不猜，也不为了显示去主动探测（探测是第二条拨号路径，
-  /// 会让"通不通"取决于探测时机而不是真实拨号）。
-  final Map<String, EndpointAttempt> _endpointAttempts = {};
-
+  /// 某个端点**最近一次拨号**的结果（没有记录就没有结论 —— 不猜、不探测）。
   EndpointAttempt? attemptOf(Endpoint endpoint) =>
-      _endpointAttempts[endpoint.id];
+      _endpointsBook.attemptOf(endpoint);
 
-  /// 记一次拨号结果。**同一个结果不重复通知**：退避重连时每一轮都会把
-  /// 所有端点重报一遍，不判重会让界面每隔几秒重建一次。
-  void reportEndpointAttempt(Endpoint endpoint, EndpointAttempt attempt) {
-    if (_endpointAttempts[endpoint.id] == attempt) return;
-    _endpointAttempts[endpoint.id] = attempt;
-    notifyListeners();
-    // **拨不通才去查本机 IP**：这一拍正是"换了地点、记住的那条不通"的时刻，
-    // 而下一轮重连的 `dialOrder` 需要新网段才能把同网段那条排上来。
-    if (!attempt.ok) unawaited(refreshMyLanIpv4());
-  }
+  /// 记一次拨号结果（由传输层报事实，见 `EndpointBook`）。
+  void reportEndpointAttempt(Endpoint endpoint, EndpointAttempt attempt) =>
+      _endpointsBook.reportEndpointAttempt(endpoint, attempt);
 
   // ---------------------------------------------------------------------------
   // 会话投影（`session.projections`，契约 §5.7）—— 一个方法打开全部只读面
