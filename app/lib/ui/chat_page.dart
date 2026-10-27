@@ -41,6 +41,7 @@ import '../core/errors.dart';
 import '../core/job.dart';
 import '../data/app_model.dart';
 import '../data/composer_gate.dart';
+import '../data/ids.dart';
 import '../model/agent_preset.dart';
 import '../model/changes.dart';
 import '../model/chat_item.dart';
@@ -645,7 +646,7 @@ class ChatPageState extends State<ChatPage> {
         _toast('电脑上没有这条命令，按普通消息发送');
       }
 
-      final requestId = 'p-${DateTime.now().microsecondsSinceEpoch}';
+      final requestId = newRequestId('p');
       // **带上发送模式**（排队 / 插话）：DSH 原生二选一，我们这边一个方法
       // 带 `mode` 参数（`connector/src/handlers.ts` 的 `session.prompt`）。
       // 不给这个字段时电脑侧按默认的 queue 走 —— 与本文默认值一致。

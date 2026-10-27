@@ -70,6 +70,8 @@ import '../wire/rpc/session.dart' as wire;
 import '../wire/rpc/settings.dart' as wire;
 import '../wire/rpc/usage.dart' as wire;
 import '../wire/rpc/workspace.dart' as wire;
+import 'cache.dart';
+import 'ids.dart';
 import 'projection.dart';
 import 'session_store.dart';
 import 'store.dart';
@@ -756,7 +758,7 @@ class AppModel extends ChangeNotifier {
         client,
         sid: sid,
         preset: preset,
-        requestId: 'perm-${DateTime.now().microsecondsSinceEpoch}',
+        requestId: newRequestId('perm'),
       );
       if (switched == null) {
         // 回执认不出：**如实报错**，别让界面读上一条错误（`_commandOutcomeOf` 的旧账）。
@@ -797,7 +799,7 @@ class AppModel extends ChangeNotifier {
         client,
         sid: sid,
         line: line,
-        requestId: 'cmd-${DateTime.now().microsecondsSinceEpoch}',
+        requestId: newRequestId('cmd'),
       );
       if (outcome == null) {
         // 形状认不出也要留声：只回 null 的话，调用方读到的 lastError 会是上一条错误。
@@ -917,7 +919,7 @@ class AppModel extends ChangeNotifier {
           QueueActionKind.remove => {'kind': 'remove'},
           QueueActionKind.steer => {'kind': 'steer'},
         },
-        requestId: 'q-${DateTime.now().microsecondsSinceEpoch}',
+        requestId: newRequestId('q'),
       );
       return true;
     } on ProtocolException catch (error) {
@@ -1173,12 +1175,29 @@ class AppModel extends ChangeNotifier {
   /// 输入栏的模型名走它（`chat_page.dart` 的 `_modelLabel`）——
   /// 直接从 `sessions` 里 `firstWhereOrNull` 会让"当前会话不在列表里"变成一个异常，
   /// 而那是正常情况（刚 `openSession` 一个还没被 `session.list` 刷到的会话）。
-  SessionSummary? sessionOf(String sid) {
-    for (final s in _sessions) {
-      if (s.sid == sid) return s;
+  SessionSummary? sessionOf(String sid) => _sessionIndexMap()[sid];
+
+  /// `_sessions` 换成新列表的**同一性**判据 + 按 sid 的索引。
+  ///
+  /// ## 为什么用"身份"而不是在每个赋值点重建
+  ///
+  /// `_sessions` 在 7 个地方被整体替换（列表刷新 / 新建会话 / 计数更新 / 标题更新…），
+  /// 逐个去记得重建索引 = 7 个会漏的地方。这里只认"列表对象换了没有"：
+  /// 换了就重建一次（O(n)），没换就 O(1) 查 —— 换来的是**少 7 个必须同步的入口**。
+  ///
+  /// 它替掉的是原来每次调用都线性扫（10 处调用点，其中几处在 `build` 里）。
+  Map<String, SessionSummary> _sessionIndexMap() {
+    if (!identical(_indexedSessions, _sessions)) {
+      _indexedSessions = _sessions;
+      _sessionIndex = <String, SessionSummary>{
+        for (final s in _sessions) s.sid: s,
+      };
     }
-    return null;
+    return _sessionIndex;
   }
+
+  List<SessionSummary>? _indexedSessions;
+  Map<String, SessionSummary> _sessionIndex = const {};
 
   /// 当前会话的条目（只读快照；没打开会话时是空表）。
   List<ChatItem> get items =>
@@ -1210,16 +1229,18 @@ class AppModel extends ChangeNotifier {
   /// `List.unmodifiable`（`session_store.dart:118`），所以
   /// `identical` 为假等于"条目真的变了"；没变就复用上次的结果。
   /// 这比加一个 `revision` 计数更稳 —— 少一处可能与真实状态漂移的真值。
-  ({
-    List<ChatItem> source,
-    List<({String path, ({int added, int removed})? stat})> rows,
-  })?
-  _changedFilesCache;
+  final SourceCache<List<({String path, ({int added, int removed})? stat})>>
+  _changedFilesCache =
+      SourceCache<List<({String path, ({int added, int removed})? stat})>>();
 
   List<({String path, ({int added, int removed})? stat})> get changedFiles {
     final source = items;
-    final cached = _changedFilesCache;
-    if (cached != null && identical(cached.source, source)) return cached.rows;
+    return _changedFilesCache.read(source, () => _buildChangedFiles(source));
+  }
+
+  List<({String path, ({int added, int removed})? stat})> _buildChangedFiles(
+    List<ChatItem> source,
+  ) {
     final indexOf = <String, int>{};
     final rows = <({String path, ({int added, int removed})? stat})>[];
     for (final item in source) {
@@ -1238,12 +1259,9 @@ class AppModel extends ChangeNotifier {
         );
       }
     }
-    final result =
-        List<({String path, ({int added, int removed})? stat})>.unmodifiable(
-          rows.reversed,
-        );
-    _changedFilesCache = (source: source, rows: result);
-    return result;
+    return List<({String path, ({int added, int removed})? stat})>.unmodifiable(
+      rows.reversed,
+    );
   }
 
   // ---- 模型（`session/modelCatalog` + `modelSelection` 投影）----
@@ -1308,7 +1326,7 @@ class AppModel extends ChangeNotifier {
         provider: provider,
         model: model,
         reasoningEffort: reasoningEffort,
-        requestId: 'sel-${DateTime.now().microsecondsSinceEpoch}',
+        requestId: newRequestId('sel'),
       );
       // 切完立刻重拉一次清单：`session.list` 的行带 `model` 字段，
       // 而输入栏的模型名走的是它。不拉就要等下一次自然刷新才变。
@@ -1713,7 +1731,7 @@ class AppModel extends ChangeNotifier {
         path: [path],
         value: value,
         expectedRevision: _settingsRevision[ns],
-        requestId: 'set-${DateTime.now().microsecondsSinceEpoch}',
+        requestId: newRequestId('set'),
       );
       // `section: null` 是合法应答（宿主没给新快照）⇒ 这一行不刷新，但写已生效。
       if (section != null && section.ns == ns && !_disposed) {
@@ -2047,14 +2065,13 @@ class AppModel extends ChangeNotifier {
   }
 
   /// `turn → 这一轮的产出路径`。失效判据与 [changedFiles] 同一条（列表同一性）。
-  ({List<ChatItem> source, Map<int, List<String>> byTurn})? _pathsByTurnCache;
+  final SourceCache<Map<int, List<String>>> _pathsByTurnCache =
+      SourceCache<Map<int, List<String>>>();
 
-  Map<int, List<String>> get _pathsByTurn {
-    final source = items;
-    final cached = _pathsByTurnCache;
-    if (cached != null && identical(cached.source, source)) {
-      return cached.byTurn;
-    }
+  Map<int, List<String>> get _pathsByTurn =>
+      _pathsByTurnCache.read(items, () => _buildPathsByTurn(items));
+
+  Map<int, List<String>> _buildPathsByTurn(List<ChatItem> source) {
     final byTurn = <int, List<String>>{};
     final seen = <int, Set<String>>{};
     for (final item in source) {
@@ -2068,12 +2085,10 @@ class AppModel extends ChangeNotifier {
       if (!(paths[turn] ??= <String>{}).add(path)) continue;
       (turns[turn] ??= <String>[]).add(path);
     }
-    final frozen = <int, List<String>>{
+    return <int, List<String>>{
       for (final entry in byTurn.entries)
         entry.key: List<String>.unmodifiable(entry.value),
     };
-    _pathsByTurnCache = (source: source, byTurn: frozen);
-    return frozen;
   }
 
   /// 某条消息里的**文件提及表**（`token → path`），没有提及就是 `null`。
@@ -2088,23 +2103,21 @@ class AppModel extends ChangeNotifier {
     return _mentionTables[item.itemId];
   }
 
-  ({List<ChatItem> source, Map<String, Map<String, String>> byItem})?
-  _mentionTableCache;
+  final SourceCache<Map<String, Map<String, String>>> _mentionTableCache =
+      SourceCache<Map<String, Map<String, String>>>();
 
   /// 每一轮**收口的那条助手正文**（`turn → 条目`）。
   ///
   /// 判据照桌面（`ui-chat/src/client/chat/AssistantNodeView.tsx:19-27`）：
   /// 轮次要**已收口**（有轮次过程行 `p:<turn>`），且这条是这一轮**最后一条**
   /// 带正文的助手消息（桌面的 `tail.closing.finalNode`）。
-  ({List<ChatItem> source, Map<int, MessageItem> byTurn})?
-  _closingAssistantCache;
+  final SourceCache<Map<int, MessageItem>> _closingAssistantCache =
+      SourceCache<Map<int, MessageItem>>();
 
-  Map<int, MessageItem> get _closingAssistantByTurn {
-    final source = items;
-    final cached = _closingAssistantCache;
-    if (cached != null && identical(cached.source, source)) {
-      return cached.byTurn;
-    }
+  Map<int, MessageItem> get _closingAssistantByTurn =>
+      _closingAssistantCache.read(items, () => _buildClosingAssistant(items));
+
+  Map<int, MessageItem> _buildClosingAssistant(List<ChatItem> source) {
     final closed = <int>{};
     final last = <int, MessageItem>{};
     for (final item in source) {
@@ -2121,20 +2134,16 @@ class AppModel extends ChangeNotifier {
       }
       last[item.turn!] = item;
     }
-    final byTurn = <int, MessageItem>{
+    return <int, MessageItem>{
       for (final turn in closed)
         if (last[turn] != null) turn: last[turn]!,
     };
-    _closingAssistantCache = (source: source, byTurn: byTurn);
-    return byTurn;
   }
 
-  Map<String, Map<String, String>> get _mentionTables {
-    final source = items;
-    final cached = _mentionTableCache;
-    if (cached != null && identical(cached.source, source)) {
-      return cached.byItem;
-    }
+  Map<String, Map<String, String>> get _mentionTables =>
+      _mentionTableCache.read(items, _buildMentionTables);
+
+  Map<String, Map<String, String>> _buildMentionTables() {
     final byItem = <String, Map<String, String>>{};
     for (final entry in _closingAssistantByTurn.entries) {
       final item = entry.value;
@@ -2146,7 +2155,6 @@ class AppModel extends ChangeNotifier {
       if (spans.isEmpty) continue;
       byItem[item.itemId] = fileMentionTargets(spans);
     }
-    _mentionTableCache = (source: source, byItem: byItem);
     return byItem;
   }
 
@@ -2298,7 +2306,7 @@ class AppModel extends ChangeNotifier {
         client,
         id: id,
         enabled: enabled,
-        requestId: 'plug-${DateTime.now().microsecondsSinceEpoch}',
+        requestId: newRequestId('plug'),
       );
       if (toggled == null) {
         _recordError('启停插件失败', StateError('电脑侧的回执形状认不出'));
@@ -2332,7 +2340,7 @@ class AppModel extends ChangeNotifier {
       return await wire.startPluginInstall(
         client,
         spec: spec,
-        requestId: 'plug-${DateTime.now().microsecondsSinceEpoch}',
+        requestId: newRequestId('plug'),
       );
     } catch (error) {
       _recordError('发起插件任务失败', error);
@@ -2347,7 +2355,7 @@ class AppModel extends ChangeNotifier {
       return await wire.removePluginBundle(
         client,
         name: name,
-        requestId: 'plug-${DateTime.now().microsecondsSinceEpoch}',
+        requestId: newRequestId('plug'),
       );
     } catch (error) {
       _recordError('发起插件任务失败', error);
@@ -3099,8 +3107,21 @@ class AppModel extends ChangeNotifier {
   WorkspaceGroup? get currentWorkspace {
     final sid = _currentSid;
     if (sid == null) return null;
-    return workspaceGroupOf(sid, _workspaces);
+    // 索引按 `_workspaces` 的**同一性**重建（同 `_sessionIndexMap` 的理由：
+    // 逐处记重建 = 会漏）。原来这里是 `workspaceGroupOf`，O(工作区×成员) 且
+    // 在 hero / sheet 的 build 里被问三次。
+    if (!identical(_indexedWorkspaces, _workspaces)) {
+      _indexedWorkspaces = _workspaces;
+      _workspaceIndex = <String, WorkspaceGroup>{
+        for (final group in _workspaces)
+          for (final member in group.sessionIds) member: group,
+      };
+    }
+    return _workspaceIndex[sid];
   }
+
+  List<WorkspaceGroup>? _indexedWorkspaces;
+  Map<String, WorkspaceGroup> _workspaceIndex = const {};
 
   /// 新建会话会落在哪个工作区（`null` = 这台电脑一个工作区都没有）。
   ///
@@ -3221,7 +3242,7 @@ class AppModel extends ChangeNotifier {
         client,
         sid: sid,
         stopActivity: stopActivity,
-        requestId: 'arc-${DateTime.now().microsecondsSinceEpoch}',
+        requestId: newRequestId('arc'),
       );
       // 应答认不出就**不动**：有损地落一个归档集会让"哪条是归档的"错位，
       // 而症状只是"列表里少了一条"。**但归档本身已经成功**（宿主回的 ok），
@@ -3243,7 +3264,7 @@ class AppModel extends ChangeNotifier {
       final archived = await wire.workspaceUnarchive(
         client,
         sid: sid,
-        requestId: 'unarc-${DateTime.now().microsecondsSinceEpoch}',
+        requestId: newRequestId('unarc'),
       );
       if (archived != null && !_disposed) {
         _archivedSids = archived;
@@ -3267,7 +3288,7 @@ class AppModel extends ChangeNotifier {
       final pinned = await wire.workspacePin(
         client,
         sid: sid,
-        requestId: 'pin-${DateTime.now().microsecondsSinceEpoch}',
+        requestId: newRequestId('pin'),
       );
       if (pinned == null) {
         // 置顶**是写操作但应答是"整份真值"**：读不出就没法把本地的集合对齐，
@@ -3291,7 +3312,7 @@ class AppModel extends ChangeNotifier {
       final pinned = await wire.workspaceUnpin(
         client,
         sid: sid,
-        requestId: 'unpin-${DateTime.now().microsecondsSinceEpoch}',
+        requestId: newRequestId('unpin'),
       );
       if (pinned == null) {
         _recordError('取消置顶失败', StateError('应答缺少 pinnedSessionIds'));
@@ -3326,7 +3347,7 @@ class AppModel extends ChangeNotifier {
         workspaceId: group.workspaceId,
         sid: sid,
         beforeSid: beforeSid,
-        requestId: 'mv-${DateTime.now().microsecondsSinceEpoch}',
+        requestId: newRequestId('mv'),
       );
       if (order == null) {
         _recordError('移动会话失败', StateError('应答缺少 sessionIds'));
@@ -3354,7 +3375,7 @@ class AppModel extends ChangeNotifier {
         client,
         workspaceId: workspaceId,
         beforeWorkspaceId: beforeWorkspaceId,
-        requestId: 'mvw-${DateTime.now().microsecondsSinceEpoch}',
+        requestId: newRequestId('mvw'),
       );
       if (order == null) {
         _recordError('移动工作区失败', StateError('应答缺少 workspaceIds'));
@@ -3435,13 +3456,12 @@ class AppModel extends ChangeNotifier {
   ///
   /// 与 UI 层 `TakeoverController` 的桶同源而未连通：那里管"输入栏显示哪个"，
   /// 这里管"列表里告诉用户有几个"。**故意不合成一个** —— 数据层不认识 UI 状态机。
-  int _pendingCountOf(String sid) {
-    var count = 0;
-    for (final item in _storeOf(sid).items) {
-      if (item is ApprovalItem && !item.decided) count += 1;
-    }
-    return count;
-  }
+  /// 会话行的待处理计数。
+  ///
+  /// 直接读 `SessionStore.pendingCount`（**它自己按条目列表同一性缓存**，
+  /// `session_store.dart:114-122`），不再每次列表刷新都重扫全部条目：
+  /// 原来这条在"会话数 × 条目数"上是 O(n²) 的。
+  int _pendingCountOf(String sid) => _storeOf(sid).pendingCount;
 
   /// 新建会话。
   ///
@@ -3476,7 +3496,7 @@ class AppModel extends ChangeNotifier {
       client,
       workspaceId: targetWorkspaceId,
       agentPreset: agentPreset,
-      requestId: 'new-${DateTime.now().microsecondsSinceEpoch}',
+      requestId: newRequestId('new'),
     );
     if (sid == null) {
       throw const ProtocolException(
