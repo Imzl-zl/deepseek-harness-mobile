@@ -107,3 +107,7 @@
 - `app/test/question_draft_test.dart`：答一半离开回来还在、收束即删。
 - `app/test/subagent_running_test.dart`：计数公式、会话页一行、360dp × 字号 1.3 × 键盘态不溢出。
 - `app/test/send_mode_host_test.dart` + `connector/tests/settings-face.test.ts`：发送模式以宿主为准、老连接器退路。
+- `app/integration_test/ui_state_live_probe_test.dart`（**真机**，复用设备上已有配对、不花模型钱）：
+  真宿主上 `settings.describe` 确有 `ui-conversation.busyEnter`（取值只有 `queue` / `steer`）、
+  `settings.update` 写得进并回读得到、`session.list` 的行确实带 `values.subagentCatalog`。
+  2026-10-27 实测：302 行里 123 行带该键、15 行有子级。
