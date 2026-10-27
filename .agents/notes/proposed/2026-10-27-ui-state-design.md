@@ -325,8 +325,16 @@ int runningChildrenOf(String parentSid) => subagentIdsOf(parentSid)
 | D | 选择记忆默认 | `app_model.dart`（`currentModel`）、`chat_page.dart` | 新会话显示宿主默认模型/推理等级；目录拿不到时说"拿不到" |
 | E | 连接瞬间复合 | `wire/rpc/session.dart`、`session_rows.dart`、`chat_page.dart`、`main.dart`、`model/session_dot.dart`（改注释） | 列表行带 `subagentCatalog`；`runningChildrenOf` 公式逐条对桌面；**先量再改** `_BottomBudget` 三常量 + 棘轮用例；会话页一行可见；抽屉副标题 |
 | F | 提问草稿 | `ui/takeover.dart` | 答到第 2 题关掉再开还在；收束后 prune |
-| G | 统一与优化 | `cache.dart`/`ids.dart`/`guarded.dart`/`session_rows.dart`/`host_catalogs.dart`/`file_preview.dart`/`endpoint_book.dart` | 现有 1381 项全绿 + 索引/派生各一条 |
+| G | 统一与优化（**拆成三簇**，见下） | `cache.dart`/`ids.dart`/`guarded.dart`/`session_rows.dart`/`host_catalogs.dart`/`file_preview.dart`/`endpoint_book.dart` | 现有全绿 + 索引/派生各一条 |
 | H | `send_mode` → 宿主 | `connector/src/dsh/settings-face.ts`、`app_model.dart`、`data/store.dart`（删键） | 连接器 settings 用例 + 手机读宿主值/写回 |
+
+**G 的实际拆分与状态（2026-10-27）**：
+
+| 子批 | 内容 | 状态 |
+|---|---|---|
+| G1 | `ids.dart`（16 处幂等键）、`cache.dart`（4 处源缓存）、三处索引（`sessionOf` / 工作区 / 待处理计数） | **已落地** |
+| G2 | `host_catalogs.dart`（模型/权限/预设目录） | **已落地** |
+| G3 | `endpoint_book.dart` / `file_preview.dart` / `session_rows.dart` / `guarded.dart` | **未做**（纯重构、无行为变化；`guarded` 要逐个替换 47 个 try，风险与 G3 同批评估） |
 
 门禁（每批都跑）：`dart analyze --fatal-infos lib test integration_test`、
 `dart format --output=none --set-exit-if-changed …`、`flutter test`、
@@ -372,7 +380,21 @@ int runningChildrenOf(String parentSid) => subagentIdsOf(parentSid)
    读时容错沿用本仓既有的 `fromWire` 风格（如 `SendMode.fromWire`）。
 6. **状态库**：仍是 `ChangeNotifier` + `ListenableBuilder`；新类不 import flutter（门禁可判）。
 
-### 11.3 本次复核**没有**改的
+### 11.3 复核结论：HEAD 上八套门禁全绿（2026-10-27，`e25e120` 之后）
+
+| 门禁 | 结果 |
+|---|---|
+| `node protocol/verify-fixtures.mjs` | 454 项断言 / 15 fixture |
+| `node protocol/verify-loopback.mjs` | 26 项 |
+| `node protocol/verify-vectors.mjs` | 49 项 |
+| `node app/tools/verify-platform-boundary.mjs` | 613 项（25 条规则自检 + 142 个 Dart 文件） |
+| `node app/tools/verify-rpc-single-caller.mjs` | PASS |
+| `node mock/proto/tools/verify-icons.cjs` / `verify-tool-paths.mjs` | PASS / 24 个脚本、0 处硬编码盘符 |
+| `cd app`：analyze / format / test | 0 / 0 changed / **1468 项全绿** |
+| `cd connector`：tsc / build / test | 0 / OK / **686 项全绿** |
+| `cd relay`：typecheck / test | 0 / **87 项全绿** |
+
+### 11.4 本次复核**没有**改的
 
 - 审计表的结论与行号引用（§C 的四处更正、D-1 的报错穷举）不变。
 - 机制裁定五条（`state-semantics-mechanism-decisions.md`）不变 —— 上面的修改都在其判据之内
