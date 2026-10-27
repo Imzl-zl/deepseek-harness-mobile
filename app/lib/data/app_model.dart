@@ -1264,10 +1264,22 @@ class AppModel extends ChangeNotifier {
   /// （`app/lib/wire/rpc/session.dart` 的 `readSessionRow`：`values.modelSelection`
   /// 先于行顶层 `model`）—— 子会话没有活 agent，只有这条能给出模型。
   /// 输入栏的模型名 / 推理等级 / 模型选择面板的"当前"标记都走这里，不各自取。
+  ///
+  /// **会话没记录选择时回落宿主默认**（桌面 `directory.ts:162,180`：
+  /// `projected.next ?? catalog.value.default`；会话侧也活跟随默认，
+  /// `api/session-controller/src/agent.ts:464-472`）。少了这一档，
+  /// 新会话就显示「请选择模型」—— 而桌面从不显示它，因为默认一直在。
+  /// 目录拿不到时 `defaultSelection` 是空 provider/model：照实返回 null
+  /// （界面说"拿不到"，不编一个）。
   ModelRef? get currentModel {
     final sid = _currentSid;
     if (sid == null) return null;
-    return sessionOf(sid)?.model;
+    final recorded = sessionOf(sid)?.model;
+    if (recorded != null) return recorded;
+    final fallback = _modelCatalog?.defaultSelection;
+    if (fallback == null) return null;
+    if (fallback.provider.isEmpty || fallback.model.isEmpty) return null;
+    return fallback;
   }
 
   /// 切这个会话的模型。**与 Web 用同一个 DSH 方法**（`session/select-model`），

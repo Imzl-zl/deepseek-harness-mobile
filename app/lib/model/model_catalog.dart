@@ -27,6 +27,8 @@
 /// 见 .agents/notes/implemented/2026-10-17-model-catalog-real-shape-and-effort.md
 library;
 
+import 'chat_item.dart' show ModelRef;
+
 /// 一个可选项的推理等级（DSH `ModelReasoningEffort`：`{id, name, description?}`）。
 class ModelEffort {
   const ModelEffort({required this.id, required this.name, this.description});
@@ -112,7 +114,11 @@ class ModelCatalog {
   });
 
   /// 部署默认（未配置会话用的那个）。
-  final ({String provider, String model}) defaultSelection;
+  ///
+  /// 用 [ModelRef] 而不是 `(provider, model)` 记录：DSH 的 `default` 就是**整个选择**
+  /// （`api/session-controller/src/catalog.ts:66-71` 展开 `defaultSelection`，含
+  /// `reasoningEffort`），丢了等级就得"选过一次才显示"。
+  final ModelRef defaultSelection;
   final List<String> routableProviders;
   final List<ModelProviderGroup> groups;
   final List<ModelCatalogFailure> failures;
@@ -238,10 +244,16 @@ ModelCatalog? parseModelCatalogValue(Object? raw) {
   final defaultRaw = raw['default'];
   final defaultProvider = defaultRaw is Map ? defaultRaw['provider'] : null;
   final defaultModel = defaultRaw is Map ? defaultRaw['model'] : null;
+  final defaultEffort = defaultRaw is Map
+      ? defaultRaw['reasoningEffort']
+      : null;
   return ModelCatalog(
-    defaultSelection: (
+    defaultSelection: ModelRef(
       provider: defaultProvider is String ? defaultProvider : '',
       model: defaultModel is String ? defaultModel : '',
+      reasoningEffort: defaultEffort is String && defaultEffort.isNotEmpty
+          ? defaultEffort
+          : null,
     ),
     routableProviders: (raw['routableProviders'] is List
         ? (raw['routableProviders'] as List).whereType<String>().toList()
