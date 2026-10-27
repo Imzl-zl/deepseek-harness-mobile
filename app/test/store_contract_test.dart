@@ -83,8 +83,14 @@ class _TempDirStore implements ItemStore {
   @override
   Future<String?> readMeta(String key) => _inner.readMeta(key);
   @override
+  Future<Map<String, String>> readMetaPrefix(String prefix) =>
+      _inner.readMetaPrefix(prefix);
+  @override
   Future<void> writeMeta(String key, String value) =>
       _inner.writeMeta(key, value);
+  @override
+  Future<void> deleteMeta(String prefix, {bool includePrefixed = true}) =>
+      _inner.deleteMeta(prefix, includePrefixed: includePrefixed);
   @override
   Future<void> clear() => _inner.clear();
   @override
@@ -239,6 +245,67 @@ void main() {
         expect(await store.itemsOf('s1'), isEmpty);
         expect(await store.cursorOf('s1'), 0);
         expect(await store.allCursors(), isEmpty);
+      });
+
+      test('deleteMeta 按前缀删（换电脑清 host.* 靠它）', () async {
+        await store.writeMeta('device.theme_mode', 'dark');
+        await store.writeMeta('host.last_session', 'sid-1');
+        await store.writeMeta('host.session_view.sid-1', 'trajectory');
+        await store.deleteMeta('host.');
+        expect(await store.readMeta('host.last_session'), isNull);
+        expect(await store.readMeta('host.session_view.sid-1'), isNull);
+        expect(
+          await store.readMeta('device.theme_mode'),
+          'dark',
+          reason: 'device.* 与某台电脑无关，换电脑后必须还在',
+        );
+      });
+
+      test('deleteMeta 也按**精确键**删（prune 一条会话时用它）', () async {
+        await store.writeMeta('host.session_view.sid-1', 'trajectory');
+        await store.writeMeta('host.session_view.sid-10', 'chat');
+        await store.deleteMeta(
+          'host.session_view.sid-1',
+          includePrefixed: false,
+        );
+        expect(await store.readMeta('host.session_view.sid-1'), isNull);
+        expect(
+          await store.readMeta('host.session_view.sid-10'),
+          'chat',
+          reason: '精确删除不许把 sid-10 连带删掉（前缀必须是边界，不是字符串前缀）',
+        );
+      });
+
+      test('readMetaPrefix 一次取一组，其它键不混进来', () async {
+        await store.writeMeta('device.theme_mode', 'dark');
+        await store.writeMeta('host.last_session', 'sid-1');
+        await store.writeMeta('host.drawer_expansion', '{}');
+        expect(await store.readMetaPrefix('host.'), {
+          'host.last_session': 'sid-1',
+          'host.drawer_expansion': '{}',
+        });
+      });
+
+      test('数据迁移（v1→v2）把旧偏好键改名，且**幂等**', () async {
+        // 迁移前：旧键（`ui-state-design.md` §2.3 的清单）。
+        await store.writeMeta('theme.mode', 'light');
+        await store.writeMeta('ui_scale_index', '2');
+        await store.writeMeta('last_session', 'sid-9');
+        await store.writeMeta('send_mode', 'steer');
+
+        await storeDataMigrations[1](store);
+
+        expect(await store.readMeta('device.theme_mode'), 'light');
+        expect(await store.readMeta('device.ui_scale_index'), '2');
+        expect(await store.readMeta('host.last_session'), 'sid-9');
+        expect(await store.readMeta('theme.mode'), isNull, reason: '旧键要删掉');
+        // `send_mode` 这一代**不动**：改走宿主 `ui-conversation.busyEnter` 是批 H，
+        // 那一批才删它（同一批里删会让发送模式静默回到默认值）。
+        expect(await store.readMeta('send_mode'), 'steer');
+
+        // 幂等：再跑一遍不炸、不改写。
+        await storeDataMigrations[1](store);
+        expect(await store.readMeta('device.theme_mode'), 'light');
       });
 
       test('close 幂等', () async {

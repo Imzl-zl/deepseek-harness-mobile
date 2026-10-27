@@ -80,7 +80,21 @@ class _MemoryPrefs implements PreferenceStore {
   Future<String?> read(String key) async => values[key];
 
   @override
+  Future<Map<String, String>> readAll(String prefix) async => {
+    for (final entry in values.entries)
+      if (entry.key == prefix || entry.key.startsWith(prefix))
+        entry.key: entry.value,
+  };
+
+  @override
   Future<void> write(String key, String value) async => values[key] = value;
+
+  @override
+  Future<void> delete(String prefix, {bool includePrefixed = true}) async =>
+      values.removeWhere(
+        (key, _) =>
+            key == prefix || (includePrefixed && key.startsWith(prefix)),
+      );
 }
 
 Map<String, Object?> _wireRow(

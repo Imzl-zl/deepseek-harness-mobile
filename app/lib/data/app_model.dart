@@ -73,6 +73,7 @@ import '../wire/rpc/workspace.dart' as wire;
 import 'projection.dart';
 import 'session_store.dart';
 import 'store.dart';
+import 'ui_state.dart';
 
 /// 应用级状态。
 ///
@@ -113,6 +114,16 @@ class AppModel extends ChangeNotifier {
 
   /// 偏好缝（`meta` 表的窄接口）；`null` = 不落盘（测试 / 未装配）。
   final PreferenceStore? _prefs;
+
+  /// 设备本地 UI 状态的唯一缝（`data/ui_state.dart`）。
+  ///
+  /// `null` = 这个宿主没装配（单测里常见）。**所有 `device.*` / `host.*` 的读写都经它**，
+  /// 页面不许自己拼键名；未装配时各 getter 退到"无持久化"的默认值。
+  UiStateStore? get uiState => _uiState;
+  UiStateStore? _uiState;
+
+  /// 每会话页签（内存缓存，`sid → viewId`）。落盘由 [UiStateStore] 负责。
+  final Map<String, String?> _views = <String, String?>{};
 
   /// 通知与后台保活的端口（`core/notify.dart` 的接口，实现在 `platform/`）。
   ///
@@ -1327,6 +1338,51 @@ class AppModel extends ChangeNotifier {
     return _sessions.where((s) => s.sid == sid).firstOrNull?.displayTitle;
   }
 
+  // ---- 设备本地 UI 状态（`data/ui_state.dart` 的消费者）----
+  //
+  // 这几条是"会话级/列表级"的状态，**它们不属于 widget**：关一次抽屉、
+  // 切一次会话、重启一次 App 都不该丢。落盘与迁移全在 `UiStateStore` 里，
+  // 这里只做内存缓存与转发（`notifyListeners` 只发给真正变化的那一次）。
+
+  /// 一个会话的页签 id（`chat` / `trajectory`）；`null` = 还没读过（UI 回 `chat`）。
+  String? viewOf(String sid) => _views[sid];
+
+  /// 切页签。存的是**注册项 id**，不是下标（桌面 `ui-conversation/src/client/stores.ts:23-25`）。
+  Future<void> setView(String sid, String viewId) async {
+    if (_views[sid] == viewId) return;
+    _views[sid] = viewId;
+    if (!_disposed) notifyListeners();
+    await _uiState?.setView(sid, viewId);
+  }
+
+  /// 抽屉里一个组（工作区）的展开态；`null` = 没记过，UI 按"展开"处理。
+  ///
+  /// 键是 `workspaceId`（或非真工作区分组的 `label`），**不是显示标题** ——
+  /// 桌面也是按工作区身份记（`ui-workspace/src/client/stores.ts:25-26`）。
+  bool? drawerExpandedOf(String groupKey) =>
+      _uiState?.drawerExpandedOf(groupKey);
+
+  Future<void> setWorkspaceExpanded(String groupKey, bool expanded) async {
+    await _uiState?.setWorkspaceExpanded(groupKey, expanded);
+  }
+
+  /// 换电脑（重新配对）：清掉属于某台电脑的那一段（`host.*`），`device.*` 留着。
+  Future<void> clearHostUiState() async {
+    _views.clear();
+    await _uiState?.clearHostScope();
+  }
+
+  /// 懒读一个会话的页签（`openSession` 时调一次；**不在 `build` 里读盘**）。
+  Future<void> _loadView(String sid) async {
+    final ui = _uiState;
+    if (ui == null) return;
+    final view = await ui.viewOf(sid);
+    if (_disposed) return;
+    if (_views.containsKey(sid) && _views[sid] == view) return;
+    _views[sid] = view;
+    notifyListeners();
+  }
+
   /// 连接状态（界面视图）。
   ConnectionStateView get connection => _connection;
 
@@ -1390,6 +1446,35 @@ class AppModel extends ChangeNotifier {
   void emitInteractionForTest(InteractionSignal signal) =>
       _interactions.add(signal);
 
+  /// **首帧前**把设备本地 UI 状态读回来（装配层在 `main.dart` 的 `_assemble` 里调）。
+  ///
+  /// 为什么不在 `start()` 里读（2026-10-27 之前就是）：`start()` 在内容首帧**之后**才跑，
+  /// 于是首帧用的是默认值，字号与主题会跳一下。桌面是同步 `localStorage`（首帧前），
+  /// 手机要做到同一件事只能把这一步提前到 boot splash 期间。
+  Future<void> loadUiState() async {
+    final prefs = _prefs;
+    if (prefs == null) return;
+    final store = UiStateStore(prefs: prefs);
+    await store.open();
+    if (_disposed) return;
+    _uiState = store;
+    _applyDevicePreferences();
+  }
+
+  /// 把 `device.*` 落进现有字段。**认不出就保持默认**（与 `fromWire` 同一条纪律）。
+  void _applyDevicePreferences() {
+    final store = _uiState;
+    if (store == null) return;
+    final transcript = TranscriptView.fromWire(store.transcriptView);
+    if (transcript != null) _transcriptView = transcript;
+    final performance = PerformanceUsage.fromWire(store.performanceView);
+    if (performance != null) _performanceUsage = performance;
+    final collapse = CollapseTiming.fromWire(store.collapseTiming);
+    if (collapse != null) _collapseTiming = collapse;
+    final scale = store.uiScaleIndex;
+    if (scale != null) _uiScaleIndex = scale.clamp(0, kUiScaleSteps.length - 1);
+  }
+
   /// 启动：连通道。
   Future<void> start() async {
     _stateSub = client.connection.listen(_onConnectionChanged);
@@ -1414,8 +1499,9 @@ class AppModel extends ChangeNotifier {
     final stored = await _prefs?.read(kSendModeKey);
     final restored = SendMode.fromWire(stored);
     if (restored != null) _sendMode = restored;
-    // 其余本地偏好（工作步骤展示 / 性能与用量）同一条路。
-    await _restorePreferences();
+    // 其余本地偏好（工作步骤展示 / 性能与用量）：装配层已经用 `loadUiState()`
+    // 在**首帧前**读过了；没装配这条缝时（单测）才退到旧的单键读法。
+    if (_uiState == null) await _restorePreferences();
     notifyListeners();
     await client.start();
   }
@@ -1461,7 +1547,12 @@ class AppModel extends ChangeNotifier {
     if (_disposed || view == _transcriptView) return;
     _transcriptView = view;
     notifyListeners();
-    await _prefs?.write(kTranscriptViewKey, view.wire);
+    final store = _uiState;
+    if (store != null) {
+      await store.setTranscriptView(view.wire);
+    } else {
+      await _prefs?.write(kTranscriptViewKey, view.wire);
+    }
   }
 
   /// 切性能与用量的详细程度。落盘；同一个值重复切是空操作。
@@ -1469,7 +1560,12 @@ class AppModel extends ChangeNotifier {
     if (_disposed || usage == _performanceUsage) return;
     _performanceUsage = usage;
     notifyListeners();
-    await _prefs?.write(kPerformanceUsageKey, usage.wire);
+    final store = _uiState;
+    if (store != null) {
+      await store.setPerformanceView(usage.wire);
+    } else {
+      await _prefs?.write(kPerformanceUsageKey, usage.wire);
+    }
   }
 
   /// 切"过程什么时候收起"。落盘；同一个值重复切是空操作。
@@ -1480,7 +1576,12 @@ class AppModel extends ChangeNotifier {
     if (_disposed || timing == _collapseTiming) return;
     _collapseTiming = timing;
     notifyListeners();
-    await _prefs?.write(kCollapseTimingKey, timing.wire);
+    final store = _uiState;
+    if (store != null) {
+      await store.setCollapseTiming(timing.wire);
+    } else {
+      await _prefs?.write(kCollapseTimingKey, timing.wire);
+    }
   }
 
   /// 落盘的 meta 键：**界面字号档位**（App 内倍率的下标，0–3）。
@@ -1503,7 +1604,12 @@ class AppModel extends ChangeNotifier {
     if (_disposed || clamped == _uiScaleIndex) return;
     _uiScaleIndex = clamped;
     notifyListeners();
-    await _prefs?.write(kUiScaleKey, '$clamped');
+    final store = _uiState;
+    if (store != null) {
+      await store.setUiScaleIndex(clamped);
+    } else {
+      await _prefs?.write(kUiScaleKey, '$clamped');
+    }
   }
 
   // ---- 电脑侧设置（`settings.describe` / `settings.update`，契约 §5.7）----
@@ -2797,7 +2903,10 @@ class AppModel extends ChangeNotifier {
   /// 连上之后落到 [landingSessionOf] 挑出来的那个会话（已经有会话就不动）。
   Future<void> _landOnSession() async {
     if (_disposed || _currentSid != null) return;
-    final remembered = await _prefs?.read(kLastSessionKey);
+    // 唯一缝优先（`host.last_session`）；没装配缝时退到旧键（单测）。
+    final remembered = _uiState != null
+        ? _uiState!.lastSession
+        : await _prefs?.read(kLastSessionKey);
     if (_disposed || _currentSid != null) return;
     final target = landingSessionOf(remembered: remembered);
     if (target == null) return;
@@ -2811,6 +2920,12 @@ class AppModel extends ChangeNotifier {
   Future<void> refreshSessions() async {
     try {
       _applySessionList(await _fetchSessionRows());
+      // **设备本地状态跟着清单失效**：清单里没有的会话，它的页签/草稿没有意义
+      // （桌面从不清理 `dsh.conversation.<sid>`，那是 localStorage 的便宜，不是产品要求）。
+      final ui = _uiState;
+      if (ui != null) {
+        unawaited(ui.pruneSessions({for (final s in _sessions) s.sid}));
+      }
       _lastError = null;
       if (!_disposed) notifyListeners();
     } catch (error) {
@@ -3010,6 +3125,14 @@ class AppModel extends ChangeNotifier {
       // "列表看过一眼、归档/置顶集还是旧的"。
       _archivedSids = snapshot.archivedSessionIds;
       _pinnedSids = snapshot.pinnedSessionIds;
+      // 工作区被删 ⇒ 裁掉它的折叠记忆（照桌面 `retainAccountKeys`，
+      // `ui-workspace/src/client/stores.ts:100-109`）。
+      final ui = _uiState;
+      if (ui != null) {
+        unawaited(
+          ui.pruneWorkspaces({for (final g in snapshot.groups) g.workspaceId}),
+        );
+      }
       if (!_disposed) notifyListeners();
     } catch (_) {
       // 附属信息：不把"拉不到工作区"升级成"会话列表也失败了"。
@@ -3369,7 +3492,14 @@ class AppModel extends ChangeNotifier {
     });
 
     // 记住"上次看的是哪个"：下次连上（或冷启动）落回它 —— 见 [landingSessionOf]。
-    unawaited(_prefs?.write(kLastSessionKey, sid));
+    final ui = _uiState;
+    if (ui != null) {
+      unawaited(ui.setLastSession(sid));
+    } else {
+      unawaited(_prefs?.write(kLastSessionKey, sid));
+    }
+    // 页签：**按会话懒读一次**（不在 `build` 里读盘），读到的 id 进内存。
+    unawaited(_loadView(sid));
 
     try {
       await client.subscribe(sid, since: since);

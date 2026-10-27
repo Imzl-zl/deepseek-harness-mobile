@@ -64,6 +64,25 @@ class SqfliteItemStore implements ItemStore {
         }
       },
     );
+    // **数据迁移在库打开之后跑**（DDL 那一步在 onCreate/onUpgrade 里）。
+    // 不能塞进 onCreate/onUpgrade：那时 `_db` 还没赋值，迁移函数读不了键。
+    await _runDataMigrations();
+  }
+
+  /// 跑 `data/store.dart` 的 `storeDataMigrations` 里还没跑过的那几代。
+  ///
+  /// 计数用 `meta` 的 `schema.data_version`（与 SQL 的 version **同一个号**）：
+  /// - 新库：没这个键 ⇒ 从 v0 开始，但每一代都幂等（旧键不存在就跳过），
+  ///   所以"空库跑一遍"是空操作；
+  /// - 老库：从记录的那一代往后接着跑，跑完落盘 ⇒ 半途崩可自愈。
+  Future<void> _runDataMigrations() async {
+    final stored = await readMeta(kStoreDataVersionKey);
+    final applied = int.tryParse(stored ?? '') ?? 0;
+    if (applied >= storeSchemaVersion) return;
+    for (var v = applied; v < storeSchemaVersion; v += 1) {
+      await storeDataMigrations[v](this);
+    }
+    await writeMeta(kStoreDataVersionKey, '$storeSchemaVersion');
   }
 
   Database get _requireDb {
@@ -184,6 +203,20 @@ class SqfliteItemStore implements ItemStore {
   }
 
   @override
+  Future<Map<String, String>> readMetaPrefix(String prefix) async {
+    final db = _requireDb;
+    final rows = await db.query(
+      'meta',
+      columns: <String>['k', 'v'],
+      where: "k = ? OR k LIKE ? ESCAPE '\\'",
+      whereArgs: <Object?>[prefix, '${_escapeLike(prefix)}%'],
+    );
+    return <String, String>{
+      for (final row in rows) row['k']! as String: row['v']! as String,
+    };
+  }
+
+  @override
   Future<void> writeMeta(String key, String value) async {
     final db = _requireDb;
     await db.insert('meta', <String, Object?>{
@@ -191,6 +224,24 @@ class SqfliteItemStore implements ItemStore {
       'v': value,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
+
+  @override
+  Future<void> deleteMeta(String prefix, {bool includePrefixed = true}) async {
+    final db = _requireDb;
+    await db.delete(
+      'meta',
+      where: includePrefixed ? "k = ? OR k LIKE ? ESCAPE '\\'" : 'k = ?',
+      whereArgs: includePrefixed
+          ? <Object?>[prefix, '${_escapeLike(prefix)}%']
+          : <Object?>[prefix],
+    );
+  }
+
+  /// 把 LIKE 的通配符转义掉，避免会话 id 里的 `_` / `%` 变成"任意字符"。
+  static String _escapeLike(String value) => value
+      .replaceAll(r'\', r'\\')
+      .replaceAll('%', r'\%')
+      .replaceAll('_', r'\_');
 
   @override
   Future<void> clear() async {
@@ -292,7 +343,21 @@ class InMemoryItemStore implements ItemStore {
   bool _open = false;
 
   @override
-  Future<void> open() async => _open = true;
+  Future<void> open() async {
+    _open = true;
+    // 与 sqflite 那份同一条：数据迁移也在这个实现上跑一遍，
+    // 否则"单测全绿、真机行为不同"会从迁移这一步开始分叉。
+    final applied = int.tryParse(_meta[kStoreDataVersionKey] ?? '') ?? 0;
+    if (applied >= storeSchemaVersion) return;
+    for (var v = applied; v < storeSchemaVersion; v += 1) {
+      await storeDataMigrations[v](this);
+    }
+    _meta[kStoreDataVersionKey] = '$storeSchemaVersion';
+  }
+
+  /// 与 sqflite 那份的 `k = prefix OR k LIKE prefix%` 同一条边界规则。
+  static bool _matchesPrefix(String key, String prefix) =>
+      key == prefix || key.startsWith(prefix);
 
   void _requireOpen() {
     if (!_open) throw StateError('ItemStore 还没 open()');
@@ -354,9 +419,26 @@ class InMemoryItemStore implements ItemStore {
   }
 
   @override
+  Future<Map<String, String>> readMetaPrefix(String prefix) async {
+    _requireOpen();
+    return <String, String>{
+      for (final entry in _meta.entries)
+        if (_matchesPrefix(entry.key, prefix)) entry.key: entry.value,
+    };
+  }
+
+  @override
   Future<void> writeMeta(String key, String value) async {
     _requireOpen();
     _meta[key] = value;
+  }
+
+  @override
+  Future<void> deleteMeta(String prefix, {bool includePrefixed = true}) async {
+    _requireOpen();
+    _meta.removeWhere(
+      (key, _) => key == prefix || (includePrefixed && key.startsWith(prefix)),
+    );
   }
 
   @override

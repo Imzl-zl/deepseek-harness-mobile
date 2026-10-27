@@ -120,8 +120,23 @@ class _FakePrefs implements PreferenceStore {
   Future<String?> read(String key) async => rows[key] as String?;
 
   @override
+  Future<Map<String, String>> readAll(String prefix) async => {
+    for (final entry in rows.entries)
+      if ((entry.key == prefix || entry.key.startsWith(prefix)) &&
+          entry.value is String)
+        entry.key: entry.value! as String,
+  };
+
+  @override
   Future<void> write(String key, String value) async {
     writes.add(key);
     rows[key] = value;
   }
+
+  @override
+  Future<void> delete(String prefix, {bool includePrefixed = true}) async =>
+      rows.removeWhere(
+        (key, _) =>
+            key == prefix || (includePrefixed && key.startsWith(prefix)),
+      );
 }

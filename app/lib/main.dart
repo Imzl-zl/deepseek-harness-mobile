@@ -266,6 +266,10 @@ class _DshMobileAppState extends State<DshMobileApp>
       // 界面照常渲染（会话列表会是空的，能进各屏）。
       final app = await _assembleWithoutCredentials(_recovery.onTerminated);
       if (!mounted) return;
+      // **首帧前**把设备本地 UI 状态读回来（字号/主题/密度/上次会话）：
+      // 放在 `_booting = false` 之前，首帧就是正确的，不会先画默认值再跳。
+      await app.loadUiState();
+      if (!mounted) return;
       setState(() {
         _app = app;
         _booting = false;
@@ -273,6 +277,8 @@ class _DshMobileAppState extends State<DshMobileApp>
       return;
     }
     final app = await _assemble(saved, _recovery.onTerminated);
+    if (!mounted) return;
+    await app.loadUiState();
     if (!mounted) return;
     setState(() {
       _credentials = saved;
@@ -324,6 +330,12 @@ class _DshMobileAppState extends State<DshMobileApp>
     );
     await PairingStore.save(credentials);
     final app = await _assemble(credentials, _recovery.onTerminated);
+    if (!mounted) return;
+    await app.loadUiState();
+    if (!mounted) return;
+    // **换电脑 ⇒ 清掉属于上一台的那一段**（`host.*`：上次会话、抽屉折叠、
+    // 每会话页签/草稿）。`device.*`（主题、字号…）留着 —— 它们与哪台电脑无关。
+    await app.clearHostUiState();
     if (!mounted) return;
     setState(() {
       // **旧客户端必须dispose**：它持着传输层（socket）。不 dispose 就换掉，
@@ -579,6 +591,12 @@ class _DshMobileAppState extends State<DshMobileApp>
             ),
           ],
           onNewSession: _newSession,
+          // 折叠态**不属于抽屉 widget**：关一次抽屉/重启都要还在，
+          // 而键是工作区身份（`ui/session_drawer.dart` 的注释与
+          // `ui_state_test` 各钉一条）。
+          expandedOf: app.drawerExpandedOf,
+          onExpandedChanged: (groupKey, expanded) =>
+              unawaited(app.setWorkspaceExpanded(groupKey, expanded)),
           onOpenSession: (session) {
             _closeDrawer();
             unawaited(app.openSession(session.sid));

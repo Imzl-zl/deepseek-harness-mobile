@@ -47,7 +47,8 @@ host.question_draft.<sid>  {"<itemId>": {"index":n,"drafts":[{"selected":[],"cus
 
 - 现有键的迁移：`theme.mode` → `device.theme_mode`；`ui_scale_index` / `transcript_view` /
   `performance_usage` / `collapse_timing` → `device.*`（补前缀）；`last_session` → `host.last_session`。
-- `send_mode` **删除**（改走宿主 `ui-conversation.busyEnter`，见 §9 批 H）。
+- `send_mode` **这一代不动**（改走宿主 `ui-conversation.busyEnter` 是 §9 批 H；
+  在同一代迁移里删它会让发送模式静默回到默认值 —— 批 B 的迁移只搬键、不删它）。
 - 会话级两条用**行**（一会话一行），不用一个 JSON 大 map：草稿写得频繁，
   大 map 每次都要重写全部会话；行粒度下每次只写那一条。
 
@@ -64,11 +65,18 @@ host.question_draft.<sid>  {"<itemId>": {"index":n,"drafts":[{"selected":[],"cus
 
 ```dart
 // data/store.dart
-Future<void> deleteMeta(String key);   // 按前缀删：SQL 用 LIKE 的参数化形式
+Future<void> deleteMeta(String key, {bool includePrefixed = true});
+Future<Map<String, String>> readMetaPrefix(String prefix);
 ```
 
-代价明确：接口 +1、`platform/sqflite_item_store.dart` 与内存实现各 +5 行、
-共享存储断言 +1 条。**判据**：`ItemStore` 新增方法数 = 1，且只此一个。
+**实现时发现"按前缀删"与"删这一个键"不是一回事**（原设计只写了一个 方法，落地时被
+`store_contract_test` 的"精确键"用例抓住）：`host.session_view.sid-1` 是
+`host.session_view.sid-10` 的字符串前缀，prune 一个会话时必须**精确删**
+（`includePrefixed: false`），换电脑清 `host.*` 才按前缀。所以方法 +1 但带一个开关。
+
+代价明确：接口 +2（`deleteMeta` / `readMetaPrefix`）、两个实现各 ~10 行、
+共享存储断言 **+4 条**（前缀删 / 精确删 / 范围读 / 迁移幂等）。**判据**：`ItemStore`
+新增方法数 = 2，且只有这两个。
 
 另外给 `PreferenceStore`（`data/` 自己的窄缝，不是 `ItemStore`）补两个批量口：
 

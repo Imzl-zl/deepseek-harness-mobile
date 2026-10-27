@@ -25,7 +25,21 @@ class _MemoryPrefs implements PreferenceStore {
   Future<String?> read(String key) async => _map[key];
 
   @override
+  Future<Map<String, String>> readAll(String prefix) async => {
+    for (final entry in _map.entries)
+      if (entry.key == prefix || entry.key.startsWith(prefix))
+        entry.key: entry.value,
+  };
+
+  @override
   Future<void> write(String key, String value) async => _map[key] = value;
+
+  @override
+  Future<void> delete(String prefix, {bool includePrefixed = true}) async =>
+      _map.removeWhere(
+        (key, _) =>
+            key == prefix || (includePrefixed && key.startsWith(prefix)),
+      );
 }
 
 /// 只回答 start 的假客户端（本组用例只走 `AppModel.start` 的偏好读取）。

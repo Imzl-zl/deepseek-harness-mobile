@@ -151,7 +151,19 @@ class SessionDrawer extends StatefulWidget {
     this.onMove,
     this.onMoveWorkspace,
     this.onSearch,
+    this.expandedOf,
+    this.onExpandedChanged,
   });
+
+  /// 一个组的展开态；`null` = 没记过（按"展开"处理）。
+  ///
+  /// **态不在这个 widget 里**：关一次抽屉、切一次页面、重启一次 App 都不该丢
+  /// （2026-10-27 之前它就是 widget 局部字段，关一次抽屉即回到全展开）。
+  /// 键由 [groupKeyOf] 决定 —— **工作区身份**，不是显示标题。
+  final bool? Function(String groupKey)? expandedOf;
+
+  /// 展开态变了（由装配层落到 `data/ui_state.dart` 的 `host.drawer_expansion`）。
+  final void Function(String groupKey, bool expanded)? onExpandedChanged;
 
   final List<DrawerSection> sections;
   final DrawerConnection connection;
@@ -188,16 +200,31 @@ class SessionDrawer extends StatefulWidget {
 class _SessionDrawerState extends State<SessionDrawer> {
   final _search = TextEditingController();
 
-  /// 每个项目组的展开态（`label → 展开?`）。
+  /// 没接外部存储时的本地记忆（单测 / 未装配）。
   ///
-  /// **缺省视为展开**：`_expanded[key] ?? true`。第一次看到就展开，
-  /// 不要"默认全折叠"—— 那会让用户以为会话少了一半。
+  /// **缺省视为展开**：`?? true`。第一次看到就展开，不要"默认全折叠"——
+  /// 那会让用户以为会话少了一半。装配了 [SessionDrawer.expandedOf] 时，
+  /// 以外部值为准（落盘、跨抽屉开关与重启）。
+  final Map<String, bool> _localExpanded = <String, bool>{};
+
+  /// 一个组的稳定键：**工作区身份**优先，兜底桶用标题。
   ///
-  /// **不落盘**：DSH 是 `setGroupExpanded(key, expanded)`
-  /// （`ui-workspace/.../WorkspaceBrowser.tsx:281`），手机侧一期只记
-  /// 这一次打开期间的记忆。落盘要知道每个组的稳定 key，而
-  /// `WorkspaceGroup` 没有 id（只有 `workspaceId`，见 `model/workspace.dart`）。
-  final Map<String, bool> _expanded = <String, bool>{};
+  /// 桌面也是按工作区身份记（`ui-workspace/src/client/stores.ts:25-26,50,99`），
+  /// 按标题记会在改标题后把记忆丢在旧名字下 —— 2026-10-27 之前正是那样。
+  static String groupKeyOf(DrawerSection section) =>
+      section.workspaceId ?? section.label;
+
+  bool _expandedOf(DrawerSection section) {
+    final key = groupKeyOf(section);
+    return widget.expandedOf?.call(key) ?? _localExpanded[key] ?? true;
+  }
+
+  void _toggleSection(DrawerSection section) {
+    final key = groupKeyOf(section);
+    final next = !_expandedOf(section);
+    setState(() => _localExpanded[key] = next);
+    widget.onExpandedChanged?.call(key, next);
+  }
 
   /// 拖动时"最后扫过的那一格"（标记 + 松手提交）。会话行与项目头共用一份 ——
   /// 同一时刻只可能有一次拖动。机制见 [_DropHover]。
@@ -359,13 +386,8 @@ class _SessionDrawerState extends State<SessionDrawer> {
                           // "下一个工作区"当锚点，没有下一个就是移到末尾）。
                           CollapsibleGroup(
                             label: widget.sections[i].label,
-                            expanded:
-                                _expanded[widget.sections[i].label] ?? true,
-                            onToggle: () => setState(
-                              () => _expanded[widget.sections[i].label] =
-                                  !(_expanded[widget.sections[i].label] ??
-                                      true),
-                            ),
+                            expanded: _expandedOf(widget.sections[i]),
+                            onToggle: () => _toggleSection(widget.sections[i]),
                             childCount: widget.sections[i].sessions.length,
                             // 当前会话在这个组里 ⇒ 折叠时也高亮
                             // （DSH 的 `containsCurrentDescendant`）。

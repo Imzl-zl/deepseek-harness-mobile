@@ -213,7 +213,16 @@ class ChatPageState extends State<ChatPage> {
 
   /// 本页 `Scaffold` 的 key —— [openDrawer] 靠它开抽屉。
   final _scaffoldKey = GlobalKey<ScaffoldState>();
-  int _tab = 0;
+
+  /// 页签的**唯一真值在 `AppModel`**（落盘 `host.session_view.<sid>`，存 id）。
+  ///
+  /// 2026-10-27 之前这里是 `int _tab`：重启回「对话」，切会话还带着上一个会话的页签。
+  /// 存 id 而不是下标：桌面存的就是注册项 id（`ui-conversation/src/client/stores.ts:23-25`），
+  /// 将来页签集合变了也不会指错。
+  static const String _kChatView = 'chat';
+  static const String _kTrajectoryView = 'trajectory';
+
+  String _viewOf(String sid) => widget.app.viewOf(sid) ?? _kChatView;
   bool _sending = false;
   final List<PendingAttachment> _attachments = [];
 
@@ -896,11 +905,20 @@ class ChatPageState extends State<ChatPage> {
               if (sid != null && !widget.app.currentIsBlank)
                 DshSegmented(
                   labels: const ['对话', '轨迹'],
-                  index: _tab,
-                  onChanged: (i) => setState(() => _tab = i),
+                  index: _viewOf(sid) == _kTrajectoryView ? 1 : 0,
+                  // 写的是**会话级状态**（落盘），不是页面局部字段。
+                  onChanged: (i) => unawaited(
+                    widget.app.setView(
+                      sid,
+                      i == 1 ? _kTrajectoryView : _kChatView,
+                    ),
+                  ),
                 ),
               Expanded(
-                child: _tab == 0 || widget.app.currentIsBlank
+                child:
+                    sid == null ||
+                        _viewOf(sid) != _kTrajectoryView ||
+                        widget.app.currentIsBlank
                     ? _ChatTab(
                         app: widget.app,
                         items: items,

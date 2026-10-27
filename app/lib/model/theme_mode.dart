@@ -24,7 +24,15 @@ import 'package:flutter/foundation.dart';
 import '../theme/dsh_colors.dart';
 
 /// 主题模式在盘上的键（偏好表用）。
-const String kThemeModeKey = 'theme.mode';
+///
+/// 带 `device.` 前缀 = **与某台电脑无关**（换电脑保留），见
+/// `data/ui_state.dart` 的 `UiKey`。旧键 `theme.mode` 由库的数据迁移改名
+/// （`data/store.dart` 的 `storeDataMigrations[1]`，2026-10-27）。
+///
+/// 这里写字面量而不是 import `data/ui_state.dart`：`model/` 不该依赖 `data/`
+/// 的存储层（依赖方向是 `data → model`）。两处必须同值，`ui_state_test` 与
+/// `preferences_test` 各有一条断言会在漂移时红。
+const String kThemeModeKey = 'device.theme_mode';
 
 /// 主题模式 + 当前亮暗的真值。
 ///
