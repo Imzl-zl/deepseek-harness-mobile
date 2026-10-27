@@ -68,6 +68,7 @@ import '../wire/rpc/settings.dart' as wire;
 import '../wire/rpc/usage.dart' as wire;
 import '../wire/rpc/workspace.dart' as wire;
 import 'endpoint_book.dart';
+import 'file_preview.dart';
 import 'host_catalogs.dart';
 import 'ids.dart';
 import 'item_derivations.dart';
@@ -1728,66 +1729,45 @@ class AppModel extends ChangeNotifier {
   /// 读一页文本（`offset` / `limit` 不传就用宿主的页默认）。
   ///
   /// 二进制文件由宿主拒（`workspace-file/not-text`），原因同样进 [lastError]。
-  Future<FilePage?> readFile(String path, {int? offset, int? limit}) async {
-    if (!_filesAvailable) return null;
-    final sid = _currentSid;
-    if (sid == null) {
-      _recordError('读取文件失败', StateError('还没有选中的会话'));
-      return null;
-    }
-    try {
-      // 形状（`{page}` 信封 + 本体）在 `wire/rpc/file.dart`。
-      final page = await wire.loadFilePage(
-        client,
-        sid: sid,
-        path: path,
-        offset: offset,
-        limit: limit,
-      );
-      if (page == null) {
-        _recordError('读取文件失败', StateError('电脑侧的文件应答形状认不出'));
-        return null;
-      }
-      return page;
-    } catch (error) {
-      _recordError('读取文件失败', error);
-      return null;
-    }
-  }
+  Future<FilePage?> readFile(String path, {int? offset, int? limit}) =>
+      _preview.readPage(path, offset: offset, limit: limit);
 
   // ---- 打开一个文件（**唯一动作**，四个入口都走它）----
 
-  /// 最近一次打开请求（`null` = 当前没有打开文件）。
-  FileOpenRequest? get fileOpenRequest => _fileOpenRequest;
-  FileOpenRequest? _fileOpenRequest;
+  late final FilePreview _preview = FilePreview(
+    client: client,
+    sidOf: () => _currentSid,
+    filesAvailable: () => _filesAvailable,
+    changesAvailable: () => _changesAvailable,
+    repoInfoKnown: () => _repoInfoKnown,
+    recordError: _recordError,
+    lastErrorMessage: () => _lastError?.message,
+    onChange: () {
+      if (!_disposed) notifyListeners();
+    },
+  );
 
-  /// 请求序号：**每次 `openFile` 都 +1**。
-  ///
-  /// 界面据此判断"这是一次新的打开动作"——同一个路径连点两次也要再开一次，
-  /// 所以不能拿请求值本身当判据（它按值相等）。
-  int get fileOpenTicket => _fileOpenTicket;
-  int _fileOpenTicket = 0;
+  /// 最近一次打开请求（`null` = 当前没有打开文件）。
+  FileOpenRequest? get fileOpenRequest => _preview.request;
+
+  /// 请求序号：**每次 `openFile` 都 +1**（同一路径连点两次也要再开一次，
+  /// 所以不能拿请求值本身当判据 —— 它按值相等）。
+  int get fileOpenTicket => _preview.ticket;
 
   /// 已读到的那份内容（`null` = 正在读 / 读失败 / 没打开）。
-  OpenedFile? get openedFile => _openedFile;
-  OpenedFile? _openedFile;
+  OpenedFile? get openedFile => _preview.openedFile;
 
-  bool get fileLoading => _fileLoading;
-  bool _fileLoading = false;
+  bool get fileLoading => _preview.loading;
 
   /// 上一次打开的失败原因（电脑侧原话；`null` = 没失败）。
-  String? get fileFailure => _fileFailure;
-  String? _fileFailure;
+  String? get fileFailure => _preview.failure;
 
   /// 逐行差异（`FileOpenMode.diff` 的那一份；`null` = 还没读到 / 电脑侧没有记录）。
-  FileDiff? get openedDiff => _openedDiff;
-  FileDiff? _openedDiff;
+  FileDiff? get openedDiff => _preview.diff;
 
-  bool get diffLoading => _diffLoading;
-  bool _diffLoading = false;
+  bool get diffLoading => _preview.diffLoading;
 
-  String? get diffFailure => _diffFailure;
-  String? _diffFailure;
+  String? get diffFailure => _preview.diffFailure;
 
   /// 打开一个文件。**所有入口只走它**（正文提及 / 改动卡行 / 侧栏差异行 / 文件页）。
   ///
@@ -1798,123 +1778,13 @@ class AppModel extends ChangeNotifier {
   /// `.agents/notes/implemented/2026-10-26-file-mentions-and-open-file.md`
   ///
   /// 只读第一页；"加载更多"走 [loadMoreOpenedFile]。
-  Future<void> openFile(FileOpenRequest request) async {
-    _fileOpenTicket += 1;
-    _fileOpenRequest = request;
-    _openedFile = null;
-    _openedDiff = null;
-    _fileFailure = null;
-    _diffFailure = null;
-    _diffLoading = false;
-    // **没有能力位就不发请求**（与 `listFiles` 同一条）：老连接器上 `file.read`
-    // 不存在，发出去只会拿一个 `connector/unsupported`，而它会被画成"读取失败"。
-    if (request.mode == FileOpenMode.diff) {
-      // 差异面与文件面**同一个能力位**（宿主 `workspaceChanges` 在不在）。
-      if (!_changesAvailable) {
-        _diffFailure = _repoInfoKnown
-            ? '这台电脑没有改动记录：连接器版本较旧，或没装 workspace-changes。'
-            : '还没连上电脑：连上后再看改动。';
-        if (!_disposed) notifyListeners();
-        return;
-      }
-      final seq = request.seq;
-      final index = request.index;
-      if (seq == null || index == null) {
-        // 坐标不全会请求到"另一个文件的 diff"——那是比报错更坏的结果。
-        _diffFailure = '缺少这一轮的坐标（seq / index），打不开逐行差异。';
-        if (!_disposed) notifyListeners();
-        return;
-      }
-      _diffLoading = true;
-      if (!_disposed) notifyListeners();
-      try {
-        final diff = await wire.loadFileDiff(
-          client,
-          sid: _currentSid!,
-          seq: seq,
-          index: index,
-        );
-        if (_disposed) return;
-        _openedDiff = diff;
-      } catch (error) {
-        if (_disposed) return;
-        _recordError('读取改动失败', error);
-        _diffFailure = _lastError?.message ?? '读取改动失败';
-      } finally {
-        _diffLoading = false;
-        if (!_disposed) notifyListeners();
-      }
-      return;
-    }
-    if (!_filesAvailable) {
-      _fileFailure = _repoInfoKnown
-          ? '这台电脑没有文件服务：连接器版本较旧，或没装 workspace-files。'
-          : '还没连上电脑：连上后再看文件。';
-      if (!_disposed) notifyListeners();
-      return;
-    }
-    _fileLoading = true;
-    if (!_disposed) notifyListeners();
-    final page = await readFile(request.path);
-    if (_disposed) return;
-    _fileLoading = false;
-    if (page == null) {
-      _fileFailure = _lastError?.message ?? '读取文件失败';
-    } else {
-      _openedFile = OpenedFile(
-        request: request,
-        text: page.text,
-        lines: page.lines,
-        eof: page.eof,
-        nextOffset: page.nextOffset,
-        bytes: page.bytes,
-      );
-    }
-    notifyListeners();
-  }
+  Future<void> openFile(FileOpenRequest request) => _preview.open(request);
 
   /// 接着读下一页（`eof` 之后是空操作）。
-  Future<void> loadMoreOpenedFile() async {
-    final current = _openedFile;
-    if (current == null || current.eof || _fileLoading) return;
-    _fileLoading = true;
-    notifyListeners();
-    final page = await readFile(
-      current.request.path,
-      offset: current.nextOffset,
-    );
-    if (_disposed) return;
-    _fileLoading = false;
-    if (page == null) {
-      _fileFailure = _lastError?.message ?? '读取文件失败';
-    } else {
-      _openedFile = current.appended(
-        text: page.text,
-        lines: page.lines,
-        eof: page.eof,
-        nextOffset: page.nextOffset,
-        bytes: page.bytes,
-      );
-    }
-    notifyListeners();
-  }
+  Future<void> loadMoreOpenedFile() => _preview.loadMore();
 
   /// 收起当前打开的文件（侧栏回到改动清单 / 文件页返回列表）。
-  void closeFile() {
-    if (_fileOpenRequest == null &&
-        _openedFile == null &&
-        _fileFailure == null) {
-      return;
-    }
-    _fileOpenRequest = null;
-    _openedFile = null;
-    _openedDiff = null;
-    _fileFailure = null;
-    _diffFailure = null;
-    _fileLoading = false;
-    _diffLoading = false;
-    notifyListeners();
-  }
+  void closeFile() => _preview.close();
 
   /// 某一轮**产出过**的路径 —— 正文提及的词表。
   ///
