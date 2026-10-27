@@ -22,6 +22,7 @@
 library;
 
 import '../core/endpoint.dart';
+import '../core/job.dart' show SubagentRow;
 import 'session_stats.dart' show TokenUsage, formatTokenCount;
 import 'subagent.dart' show SubagentTiming;
 import 'tool_view.dart';
@@ -815,7 +816,16 @@ class SessionSummary {
     this.cwd,
     this.subagentTiming,
     this.tokenUsage,
+    this.subagents = const [],
   });
+
+  /// 这一行是**父会话**时，它的直接子智能体目录（行投影 `values.subagentCatalog`）。
+  ///
+  /// 为什么它出现在列表行里：DSH 的 `subagentCatalog` 是 summary 键（默认携带），
+  /// 桌面据此在**客户端**算"有几个子智能体在跑"
+  /// （`ui-workspace/src/client/tree.ts:381-386` 的 `runningChildCount`），
+  /// 而不是读一个宿主字段。手机照同一条，所以这里只是把行里已有的东西解出来。
+  final List<SubagentRow> subagents;
 
   /// 会话别名（电脑侧分配的不透明 id，契约 §5.1）。
   final String sid;
@@ -964,6 +974,7 @@ class SessionSummary {
     cwd: cwd ?? this.cwd,
     subagentTiming: subagentTiming ?? this.subagentTiming,
     tokenUsage: tokenUsage ?? this.tokenUsage,
+    subagents: subagents,
   );
 
   /// 只换**易变计数**（更新时间 / 条目数 / 待处理数）。
@@ -994,6 +1005,7 @@ class SessionSummary {
     cwd: cwd,
     subagentTiming: subagentTiming,
     tokenUsage: tokenUsage,
+    subagents: subagents,
   );
 
   /// 只换标题（电脑侧的 `title` 投影 / `session/title` 事件落地时用）。
@@ -1011,6 +1023,7 @@ class SessionSummary {
     cwd: cwd,
     subagentTiming: subagentTiming,
     tokenUsage: tokenUsage,
+    subagents: subagents,
   );
 }
 

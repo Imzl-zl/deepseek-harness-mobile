@@ -247,7 +247,15 @@ class SubagentRow {
 /// 而硬填会让"没有子智能体"和"投影形状变了"看起来一模一样。
 List<SubagentRow> parseSubagentCatalog(Object? raw) {
   if (raw is! Map) return const [];
-  final list = raw['subagentCatalog'];
+  return parseSubagentCatalogValue(raw['subagentCatalog']);
+}
+
+/// 解析**裸的** `subagentCatalog` 值。
+///
+/// `session.list` 行的 `values.subagentCatalog` 就是这一项本身（summary 键默认携带，
+/// `session/session-projection/src/index.ts:109-115,367`；连接器原样透传），
+/// 所以两个入口必须共用这一份解析 —— 分两份写就会漂。
+List<SubagentRow> parseSubagentCatalogValue(Object? list) {
   if (list is! List) return const [];
   final out = <SubagentRow>[];
   for (final entry in list) {

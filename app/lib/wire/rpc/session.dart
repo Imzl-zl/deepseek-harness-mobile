@@ -40,6 +40,7 @@
 /// 与 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
+import '../../core/job.dart' show parseSubagentCatalogValue;
 import '../../core/sync_client.dart';
 import '../../model/chat_item.dart';
 import '../../model/model_catalog.dart'
@@ -295,6 +296,10 @@ SessionSummary _buildSessionRow(WireFields fields) {
     // 两个投影值解析器仍住 `model/`：它们是**投影值**的解析，这里只管"从信封的哪一层取"。
     subagentTiming: parseSubagentTiming(values?['subagentTiming']),
     tokenUsage: parseTokenUsage(values?['tokenUsage']),
+    // **父行的直接子目录**：`subagentCatalog` 是 summary 键（默认携带），连接器原样透传。
+    // 桌面据此在客户端算"几个子智能体在跑"（`tree.ts:381-386`），手机同一条；
+    // 少了这一步，连接瞬间只能进子智能体页才看得见后台任务。
+    subagents: parseSubagentCatalogValue(values?['subagentCatalog']),
   );
 }
 

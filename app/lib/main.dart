@@ -940,6 +940,11 @@ class _DshMobileAppState extends State<DshMobileApp>
       // （DSH 的待处理是 per-session 的，切过去才看得见）。
       preview: [
         if (s.pendingCount > 0) '${s.pendingCount} 个待处理',
+        // **子智能体在跑**：桌面在行里画第二枚点，手机塞进副标题
+        // （360dp 放不下两枚点，见 `ui/chat_page.dart` 的 `_SubagentRunningLine`）。
+        // 数是客户端算的（桌面 `tree.ts:381-386` 同一条），不是宿主字段。
+        if (app.runningChildrenOf(s.sid) > 0)
+          '${app.runningChildrenOf(s.sid)} 个子智能体在跑',
         if (s.itemCount > 0) '${s.itemCount} 条',
         if (s.pendingCount == 0 && s.itemCount == 0) s.sid,
       ].join(' · '),

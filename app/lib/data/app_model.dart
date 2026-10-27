@@ -3696,6 +3696,30 @@ class AppModel extends ChangeNotifier {
   /// 已经随宿主推送的接入整块删掉。
   bool runningOf(String sid) => _runningSids.contains(sid);
 
+  /// 这个会话有几个**直接子智能体**此刻在跑。
+  ///
+  /// 公式照桌面 `ui-workspace/src/client/tree.ts:381-386`：
+  /// 父行 `values.subagentCatalog` 里的每个子 id，`running` 为真就计数
+  /// （状态帧优先、列表行兜底）。
+  ///
+  /// **它不是宿主字段**（`SessionSummary` 里没有 `runningSubagentCount`）——
+  /// 桌面也是客户端算的，所以这里不新增协议，只读行里已有的两样东西。
+  int runningChildrenOf(String sid) {
+    final children = sessionOf(sid)?.subagents;
+    if (children == null || children.isEmpty) return 0;
+    var count = 0;
+    for (final child in children) {
+      // 桌面写的是 `statuses.get(id)?.running ?? list.byId[id]?.running`；
+      // 手机上这两条已经被 [`_runningSids`] 合成一份（列表快照走
+      // `_applySessionList` → `_setRunning`，实时走 `status` 帧），所以这里
+      // 只读那一份就等价 —— 不再写"状态优先、列表兜底"的第二套判据。
+      if (runningOf(child.id)) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
   /// 这个会话"跑完了、但我没看着"—— DSH 的 `completionUnread`。
   ///
   /// ## 为什么是派生、不是落盘

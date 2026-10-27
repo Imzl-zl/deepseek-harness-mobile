@@ -1035,6 +1035,15 @@ class ChatPageState extends State<ChatPage> {
                       // 这里列出来并可编辑 / 删除 / 插话。空队列整条不占位。
                       if (_subagentReadOnlyReason == null && sid != null)
                         QueueDock(app: widget.app, sid: sid, running: _running),
+                      // **连接瞬间就该看见"还有子智能体在跑"**：一进入这个会话页
+                      // 就有这一行（不点进右抽屉也能知道），点它落到子智能体面板。
+                      // 数据是行里已有的两样（父行 `subagentCatalog` × 子行 running），
+                      // 公式照桌面 `tree.ts:381-386`，没有第二个真值。
+                      if (sid != null && widget.app.runningChildrenOf(sid) > 0)
+                        _SubagentRunningLine(
+                          count: widget.app.runningChildrenOf(sid),
+                          onTap: () => _openSidePanel(SidePanel.subs),
+                        ),
                       // 一次性 / 模式未知的子会话：**整条输入栏换成只读状态框**
                       // （DSH 的 `SubagentReadOnlyComposer`，同一个判据）。
                       if (_subagentReadOnlyReason != null)
@@ -4834,6 +4843,64 @@ class _TrajectoryTab extends StatelessWidget {
       onTapSegment: onTapSegment,
       truncationLabel: trajectoryTruncationLabel(trajectory),
       timelineMissing: trajectory == null,
+    );
+  }
+}
+
+/// 「N 个子智能体在运行」—— 会话页里那一行，点它进子智能体面板。
+///
+/// ## 为什么是"一行文字 + 一枚点"，不是桌面的两枚点
+///
+/// 桌面在侧栏行里画两枚状态点（`ui-workspace/src/client/rows/Rows.tsx:352-362`），
+/// 因为它的行宽 240–420px。手机上整行只有 360dp：两枚点会把标题挤到第三行，
+/// 所以数量进文字、点仍只有一枚（`SessionDot` 的优先级不变）。
+/// 这是**形态偏离**，语义（"有几个在跑"）与桌面同源。
+///
+/// 高度用 `minHeight` 不写死：字号放大行高会变（`docs/subsystems/type-scale.md` §5）。
+class _SubagentRunningLine extends StatelessWidget {
+  const _SubagentRunningLine({required this.count, required this.onTap});
+
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 2, 12, 4),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 32),
+          child: Row(
+            children: [
+              // 一枚**静态**小点（不用 `DshStateDot`：那是会转的 ongoing 点，
+              // 常驻 ticker 会让 `pumpAndSettle` 永远不settle）。
+              Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: c.accentBlue,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  '$count 个子智能体在运行',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 16 / 12,
+                    color: c.labelSecondary,
+                  ),
+                ),
+              ),
+              DshIcon('chevronRight', size: 12, color: c.labelCaption),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
