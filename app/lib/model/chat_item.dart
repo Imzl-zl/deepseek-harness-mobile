@@ -164,6 +164,8 @@ class MessageItem extends ChatItem {
     this.reasoning = '',
     this.systemLabel,
     this.systemHint,
+    this.trigger = false,
+    this.systemIcon,
     this.usage,
   });
 
@@ -212,6 +214,17 @@ class MessageItem extends ChatItem {
   /// 认角色 ⇒ 这些注入在手机上**冒充用户消息**（一条会话里冒出三条气泡）。
   /// 判据与标签见 `projection.dart` 的 `contextSourceKind` / `kContextInjectionLabel`。
   final String? systemHint;
+
+  /// 这一行是**唤醒新一轮的通知**（DSH 的 `turn-trigger` 节点），不是普通注入。
+  ///
+  /// 展开后多一句 `这条通知触发了本轮回复。`（DSH `message.trigger.explanation`，
+  /// `locale.ts:63`；`TurnTriggerNodeView.tsx:44-47`）；标题与图标也按 `source.kind`
+  /// 换（`chat/turn-trigger.ts:29-70`）。
+  final bool trigger;
+
+  /// 这一行的图标名（DSH 按 `source.kind` 选图标，映射见
+  /// [turnTriggerIcon]）；`null` = 交给渲染层按标题兜底。
+  final String? systemIcon;
 
   /// 这条助手消息那一次请求的 token 用量；`null` = 事件没带（老日志 / 用户消息）。
   ///

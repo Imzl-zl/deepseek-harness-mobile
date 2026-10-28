@@ -77,6 +77,26 @@ String? contextSourceKind(Object? data) =>
 /// - 唤醒一轮（`inbox-next-turn` 的 claim）→ `turn-trigger`，用这张表；
 /// - 只是注入（运行时上下文 / 技能目录…）→ `context`，用「上下文注入」。
 ///
+/// 唤醒通知的图标（DSH `TurnTriggerNodeView.tsx:15-26` 的 `TRIGGER_ICONS`）。
+///
+/// 名字是我们图标集里的（`theme/dsh_icons.dart`），对应关系与 DSH 同一张表：
+/// `subagent` / `team` → 预设图标、`agent` → 纸飞机、`job` → 队列、
+/// `schedule` → 时钟、`webhook` → 地球、`github` → 分支、`plugin` → 插件。
+String turnTriggerIcon(String? kind) => switch (kind) {
+  'goal' => 'goal',
+  'agent-message' => 'paperPlane',
+  'team-message' => 'agentPreset',
+  'subagent-settled' => 'agentPreset',
+  'webhook' => 'globe',
+  'schedule' => 'clock',
+  'tool-jobs' => 'queue',
+  'cordis-host-runner' => 'cordisPlugin',
+  _ => 'contextInjection',
+};
+
+/// 唤醒通知展开后的那句说明（DSH `locale.ts:63` 的 `message.trigger.explanation`）。
+const String kTurnTriggerExplanation = '这条通知触发了本轮回复。';
+
 /// 表外 kind 走 DSH 的默认（`message.trigger.request` = 「收到执行请求」）。
 String turnTriggerTitle(String? kind) => switch (kind) {
   'goal' => '继续执行目标',
@@ -274,6 +294,11 @@ ChatProjection projectEvent({
             : type == 'developer/message'
             ? contextProducerLabel(data)
             : null,
+        // 唤醒通知：展开后多一句「这条通知触发了本轮回复。」（DSH
+        // `TurnTriggerNodeView.tsx:44-47`），图标按 kind 换
+        // （`TurnTriggerNodeView.tsx:15-26`）。
+        trigger: isContext && waking,
+        systemIcon: isContext && waking ? turnTriggerIcon(contextKind) : null,
       ),
     );
   }

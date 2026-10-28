@@ -20,6 +20,9 @@ import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/data/projection.dart';
 import 'package:dsh_mobile/model/chat_item.dart';
+import 'package:dsh_mobile/theme/dsh_theme.dart';
+import 'package:dsh_mobile/ui/chat_turns.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_sync_client.dart';
@@ -79,12 +82,70 @@ void main() {
     final item = _project(waking: true);
     expect(item.systemLabel, '子任务状态更新');
     expect(item.systemHint, isNull);
+    // 唤醒通知有自己的标记与图标（DSH `TurnTriggerNodeView.tsx:15-26,44-47`）。
+    expect(item.trigger, isTrue);
+    expect(item.systemIcon, 'agentPreset');
   });
 
   test('只是注入（没唤醒新一轮）：仍是「上下文注入 · kind」', () {
     final item = _project(waking: false);
     expect(item.systemLabel, '上下文注入');
     expect(item.systemHint, 'subagent-settled');
+    expect(item.trigger, isFalse);
+    expect(item.systemIcon, isNull);
+  });
+
+  test('kind → 图标逐条照 DSH 的 TRIGGER_ICONS', () {
+    expect(turnTriggerIcon('goal'), 'goal');
+    expect(turnTriggerIcon('agent-message'), 'paperPlane');
+    expect(turnTriggerIcon('team-message'), 'agentPreset');
+    expect(turnTriggerIcon('subagent-settled'), 'agentPreset');
+    expect(turnTriggerIcon('webhook'), 'globe');
+    expect(turnTriggerIcon('schedule'), 'clock');
+    expect(turnTriggerIcon('tool-jobs'), 'queue');
+    expect(turnTriggerIcon('cordis-host-runner'), 'cordisPlugin');
+    expect(turnTriggerIcon('unknown'), 'contextInjection');
+  });
+
+  testWidgets('唤醒通知展开后多一句「这条通知触发了本轮回复。」', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: DshTheme.dark(),
+        home: const Scaffold(
+          body: SystemTurn(
+            'Background subagent finished.',
+            label: '子任务状态更新',
+            trigger: true,
+            icon: 'agentPreset',
+          ),
+        ),
+      ),
+    );
+    expect(find.text('这条通知触发了本轮回复。'), findsNothing);
+
+    await tester.tap(find.text('子任务状态更新'));
+    await tester.pump();
+
+    expect(find.text('这条通知触发了本轮回复。'), findsOneWidget);
+    expect(find.text('Background subagent finished.'), findsOneWidget);
+  });
+
+  testWidgets('普通注入展开后**没有**那句说明', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: DshTheme.dark(),
+        home: const Scaffold(
+          body: SystemTurn(
+            'runtime context',
+            label: '上下文注入',
+            hint: 'subagent-settled',
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('上下文注入'));
+    await tester.pump();
+    expect(find.text('这条通知触发了本轮回复。'), findsNothing);
   });
 
   test('kind → 标题逐条照 DSH 的 zh 文案', () {

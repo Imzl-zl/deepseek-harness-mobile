@@ -1394,7 +1394,14 @@ class TakeoverHint extends StatelessWidget {
 /// 思考是 compact Markdown，这两种是代码字体的 141px 滚动区
 /// （`ui-chat/src/client/chat/ContextInjectionRow.module.css:50-64`）。
 class SystemTurn extends StatelessWidget {
-  const SystemTurn(this.text, {super.key, this.label, this.hint});
+  const SystemTurn(
+    this.text, {
+    super.key,
+    this.label,
+    this.hint,
+    this.trigger = false,
+    this.icon,
+  });
 
   /// 正文（展开后才看）。
   final String text;
@@ -1404,6 +1411,14 @@ class SystemTurn extends StatelessWidget {
 
   /// 标题后那个分隔点之后的**生产者**（`runtime-context` 之类）；`null` = 不显示。
   final String? hint;
+
+  /// 这是**唤醒新一轮的通知**（DSH `turn-trigger`）：展开后多一句说明
+  /// （`message.trigger.explanation` = 「这条通知触发了本轮回复。」，
+  /// `TurnTriggerNodeView.tsx:44-47`）。
+  final bool trigger;
+
+  /// 图标名；`null` = 按标题兜底（系统提示词 `browse` / 注入 `contextInjection`）。
+  final String? icon;
 
   @override
   Widget build(BuildContext context) {
@@ -1420,12 +1435,17 @@ class SystemTurn extends StatelessWidget {
         // `IconBrowseOutlineRegular`，抽取进我们图标集时叫 `browse`）；
         // 上下文注入是 `contextInjection`（`ContextInjectionRow.tsx:55`）。
         // 原来系统提示词用的 `info` 是我们自己挑的，没有出处。
-        icon: label == null || label == kSystemPromptLabel
-            ? 'browse'
-            : 'contextInjection',
+        icon:
+            icon ??
+            (label == null || label == kSystemPromptLabel
+                ? 'browse'
+                : 'contextInjection'),
         label: label ?? kSystemPromptLabel,
         text: text,
         collapsedPreview: hint ?? '',
+        // 唤醒通知多一句说明（DSH `TurnTriggerNodeView.tsx:44-47` 的
+        // `message.trigger.explanation`）；普通注入没有这句。
+        explanation: trigger ? kTurnTriggerExplanation : '',
       ),
     );
   }
@@ -1572,7 +1592,11 @@ class _CollapsibleNote extends StatefulWidget {
     required this.text,
     this.markdownBody = false,
     this.collapsedPreview = '',
+    this.explanation = '',
   });
+
+  /// 展开后、正文上方的一句说明（DSH `context.explanation` 那一档）。
+  final String explanation;
 
   final String icon;
   final String label;
@@ -1625,29 +1649,48 @@ class _CollapsibleNoteState extends State<_CollapsibleNote> {
     //   color: label-tertiary; font: 400 11px/16px <code family>
     // 141px 是 Figma 10:2482 的"代码块上限"（同文件 :1-2 的注释）：
     // 一份上万字的系统提示词展开后不该把对话顶到屏幕外。
-    return Padding(
-      padding: const EdgeInsets.only(left: 22, top: 4, bottom: 4),
-      child: Container(
-        decoration: BoxDecoration(
-          color: c.codeBlock,
-          borderRadius: BorderRadius.circular(DshRadius.md),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 141),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(12, 10, 16, 12),
-            child: SelectableText(
-              widget.text,
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 11,
-                height: 16 / 11,
-                color: c.labelTertiary,
-              ),
+    final code = Container(
+      decoration: BoxDecoration(
+        color: c.codeBlock,
+        borderRadius: BorderRadius.circular(DshRadius.md),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 141),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(12, 10, 16, 12),
+          child: SelectableText(
+            widget.text,
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 11,
+              height: 16 / 11,
+              color: c.labelTertiary,
             ),
           ),
         ),
+      ),
+    );
+    // 唤醒通知（DSH `TurnTriggerNodeView.tsx:44-47`）：正文上方一句说明，
+    // 用说明色而不是代码字体 —— 它是给人读的，不是给模型看的原文。
+    if (widget.explanation.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(left: 22, top: 4, bottom: 4),
+        child: code,
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(left: 22, top: 4, bottom: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            widget.explanation,
+            style: TextStyle(fontSize: 12, color: c.labelSecondary),
+          ),
+          const SizedBox(height: 8),
+          code,
+        ],
       ),
     );
   }

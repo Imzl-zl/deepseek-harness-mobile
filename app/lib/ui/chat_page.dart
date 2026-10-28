@@ -3765,6 +3765,8 @@ class _TurnView extends StatelessWidget {
         :final reasoning,
         :final systemLabel,
         :final systemHint,
+        :final trigger,
+        :final systemIcon,
       ) =>
         switch (role) {
           MessageRole.user => UserTurn(
@@ -3793,6 +3795,8 @@ class _TurnView extends StatelessWidget {
             text,
             label: systemLabel,
             hint: systemHint,
+            trigger: trigger,
+            icon: systemIcon,
           ),
         },
       ToolCallItem(
