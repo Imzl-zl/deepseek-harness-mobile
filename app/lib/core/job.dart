@@ -70,13 +70,19 @@ class JobRow {
   bool get isLive => status == 'running' || status == 'stopping';
 
   /// 人类可读状态。**与 DSH 的状态词一一对应**,不自己造第二套说法。
+  ///
+  /// DSH 的 `JobStatus` 是封闭五档（`packages/jobs/jobs/src/view.ts:19`），
+  /// 所以正常数据一定命中前五支。第六支只服务**版本漂移**：那时刻意**不回显原词**
+  /// —— 回显就等于把宿主的状态字（英文）直接画进中文句子，而桌面从不打印状态词，
+  /// 它只把状态映射成文案或 `data-state`（`ui-jobs/src/client/JobListAction.tsx:148-150`、
+  /// `ui-primitives/src/TerminalBlock.tsx:153`）。
   String get statusText => switch (status) {
     'running' => '进行中',
     'stopping' => '停止中',
     'completed' => '已完成',
     'killed' => '已停止',
     'failed' => '失败',
-    _ => status,
+    _ => '状态未知',
   };
 }
 
