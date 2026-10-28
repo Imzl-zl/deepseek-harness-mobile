@@ -67,7 +67,7 @@ test('两连接的 ping、业务应答和配对应答都只走自己的端口', 
   assert.deepEqual(b.sent, [])
 
   const pairing = createPairing({ pcId: 'pc-1', relayUrl: 'wss://relay.example', pcPubEd: 'a'.repeat(64), pcPubDh: 'b'.repeat(64) })
-  const endpoint = createPairingEndpoint({ pairing, pcId: 'pc-1', putDevice: async () => { throw new Error('坏 JSON 不得写库') }, findPreviousPairing: () => null, removeDevice: async () => {}, announce: async () => {} })
+  const endpoint = createPairingEndpoint({ pairing, pcId: 'pc-1', putDevice: async () => { throw new Error('坏 JSON 不得写库') }, findPreviousPairing: () => null, announce: async () => {} })
   t.after(() => endpoint.dispose())
   const scopeB = createConnectionScope(b.port, deps, {
     candidate: { offerId: 'A'.repeat(22), devPubEd: 'c'.repeat(64), devPubDh: 'd'.repeat(64), name: '手机' }, endpoint,

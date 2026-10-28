@@ -4,10 +4,11 @@ import { createPairing, type PairingCandidate } from '../src/pairing.js'
 import {
   createPairingEndpoint,
   findPreviousPairingRow,
+  replacedRowsOf,
   type PairedDeviceRow,
 } from '../src/pairing-endpoint.js'
 
-/** 测试用的设备表：`devId → 行`，另记操作顺序（put/remove）供断言。 */
+/** 测试用的设备表：`devId → 行`，另记 put 顺序供断言（提交这一步**不删行**）。 */
 function setup(t: TestContext, options: {
   now?: () => number
   putDevice?: (id: string, row: PairedDeviceRow) => Promise<void>
@@ -26,10 +27,6 @@ function setup(t: TestContext, options: {
     putDevice,
     // 与装配层（`index.ts`）用**同一个纯函数**，别在测试里重写一份查找逻辑。
     findPreviousPairing: (pairingId) => findPreviousPairingRow([...table], pairingId),
-    removeDevice: async (id: string) => {
-      order.push(`remove:${id}`)
-      table.delete(id)
-    },
     announce: async () => { order.push('announce') },
   })
   t.after(() => endpoint.dispose())
@@ -128,7 +125,7 @@ async function pairOnce(t: TestContext): Promise<{
   return { table: f.table, oldDevId: old[0], oldPairingId: old[1].pairingId, oldPairedAt: old[1].pairedAt }
 }
 
-test('previousPairingId 命中旧行：换密钥换令牌写进行，旧行删除，pairedAt 保留首次配对', async (t) => {
+test('previousPairingId 命中旧行：新行记下 replaces，旧行**先留着**（等新身份连上再裁）', async (t) => {
   const first = await pairOnce(t)
   // 第二次配对：新密钥（新 devId）+ 自报旧 pairingId。用同一份 pairing 再出一张码。
   const f = setup(t, { keys: NEW_KEYS })
@@ -139,15 +136,18 @@ test('previousPairingId 命中旧行：换密钥换令牌写进行，旧行删�
     f.candidate,
   )
   assert.ok(result.ok)
-  assert.equal(f.table.size, 1, '替换而不是新增：还是 1 行')
   const row = f.table.get(result.devId)
   assert.ok(row !== undefined, '新行按新 devId 写入')
   assert.notEqual(result.devId, first.oldDevId, '密钥换了 ⇒ devId 换')
   assert.equal(row.pairingId.length, 43)
   assert.notEqual(row.pairingId, first.oldPairingId, 'pairingId 换了（新配对码派生）')
   assert.equal(row.pairedAt, first.oldPairedAt, 'pairedAt 保留首次配对时刻')
-  assert.equal(f.table.has(first.oldDevId), false, '旧行被删除')
-  assert.equal(f.order.includes(`remove:${first.oldDevId}`), true, '删的是旧 devId 那一行')
+  assert.equal(row.replaces, first.oldDevId, '新行写明它替换了谁')
+  // **旧行必须还在**：`pair-result` 可能没送到手机，那时手机手里仍是旧凭据；
+  // 提前删掉就成了孤儿（现场症状："凭据莫名失效" → 清凭据 → 白扫一次码）。
+  assert.equal(f.table.has(first.oldDevId), true, '旧行留到新身份握手成功')
+  assert.equal(replacedRowsOf([...f.table], result.devId).length, 1, '连上之后能算出要裁的那一行')
+  assert.deepEqual(replacedRowsOf([...f.table], result.devId), [first.oldDevId])
 })
 
 test('previousPairingId 没命中（首配/凭据丢过/被清理过）：照旧写新行，不删任何行', async (t) => {
@@ -158,7 +158,6 @@ test('previousPairingId 没命中（首配/凭据丢过/被清理过）：照旧
   assert.ok(result.ok)
   assert.equal(f.table.size, 2, '没有旧行可替换就写新行')
   assert.equal(f.table.has(first.oldDevId), true, '旧行原样留着')
-  assert.equal(f.order.some((entry) => entry.startsWith('remove:')), false, '没有删除动作')
 })
 
 test('不带 previousPairingId（首配形状）：行为与从前一致', async (t) => {
@@ -166,7 +165,6 @@ test('不带 previousPairingId（首配形状）：行为与从前一致', async
   const result = await f.endpoint.handle(f.body(), f.candidate)
   assert.ok(result.ok)
   assert.equal(f.table.size, 1)
-  assert.equal(f.order.some((entry) => entry.startsWith('remove:')), false)
 })
 
 test('previousPairingId 格式不对 → 拒（invalid），不写库也不删行', async (t) => {
@@ -186,7 +184,7 @@ test('previousPairingId 格式不对 → 拒（invalid），不写库也不删�
   assert.equal(f.table.size, 1, '表还是原来那一行')
 })
 
-test('替换是幂等的：同一候选重复提交不会删第二次或写第二行', async (t) => {
+test('替换是幂等的：同一候选重复提交不会写第二行新行', async (t) => {
   const first = await pairOnce(t)
   const f = setup(t, { keys: NEW_KEYS })
   for (const [id, row] of first.table) f.table.set(id, row)
@@ -197,8 +195,12 @@ test('替换是幂等的：同一候选重复提交不会删第二次或写第�
   ])
   assert.ok(a.ok && b.ok)
   assert.deepEqual(a, b)
-  assert.equal(f.table.size, 1, '还是 1 行')
-  assert.equal(f.order.filter((entry) => entry.startsWith('remove:')).length, 1, '旧行只删一次')
+  assert.equal(f.table.size, 2, '旧行 + 新行；旧行的裁剪等新身份连上（不是提交这一步）')
+  assert.equal(
+    f.order.filter((entry) => entry === `put:${a.devId}`).length,
+    1,
+    '同一次邀请只写一次新行',
+  )
 })
 
 test('findPreviousPairingRow：停用的旧行也命中（重新扫码就是恢复路径）', () => {

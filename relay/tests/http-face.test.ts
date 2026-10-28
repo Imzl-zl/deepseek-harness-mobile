@@ -130,6 +130,15 @@ test('凭据不对 → 401（客户端据此换凭据，而不是拿同一个重
   assert.equal(face.handle({ method: 'POST', path: '/ws-ticket', body: {} }).status, 401)
 })
 
+test('401 带原因：没见过 → device-unknown，已停用 → device-revoked（手机据此说不同的话）', () => {
+  const { devices, face } = setup()
+  // 没见过：多半是名册还没同步（电脑刚启动 / 刚重配完），重试可能就好。
+  assert.deepEqual(face.handle(ticketByToken('nope')).body, { error: 'device-unknown' })
+  // 已停用：行还在、只是带 `revokedAt` —— 这一步能分辨，是因为软吊销保留了原行。
+  devices.register('conn-1', [{ ...rosterRow(DEVICE_ID, DEVICE_TOKEN), revokedAt: 1 }])
+  assert.deepEqual(face.handle(ticketByToken(DEVICE_TOKEN)).body, { error: 'device-revoked' })
+})
+
 test('配对登记不可用 → 409 / 候选不合形状 → 400，而且**一张票都不许发**', () => {
   const { core, tickets, face } = setup()
   assert.equal(face.handle(ticketByOffer()).status, 409, '没登记')

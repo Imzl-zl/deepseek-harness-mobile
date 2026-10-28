@@ -65,7 +65,7 @@ import { registerTrajectoryProjection } from './dsh/trajectory.js'
 import { deriveIdentity } from './protocol/crypto.js'
 import { loadOrCreateIdentity, type Identity } from './dsh/identity.js'
 import { PAIRING_TTL_MS, createPairing } from './pairing.js'
-import { createPairingEndpoint, findPreviousPairingRow, type PairingEndpoint, type PairedDeviceRow } from './pairing-endpoint.js'
+import { createPairingEndpoint, findPreviousPairingRow, replacedRowsOf, type PairingEndpoint, type PairedDeviceRow } from './pairing-endpoint.js'
 import type { DeviceBinding } from '../../protocol/relay-control.mjs'
 import { createRelayLink, type RelayLink } from './transport/relay-link.js'
 import { relayUrlOf } from './transport/relay-url.js'
@@ -520,6 +520,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             pairingId: row.pairingId,
             // 摘要随行存住：它是"中转重启后这台设备还能回来"的唯一依据（I7）。
             ...(row.tokenHash === undefined ? {} : { tokenHash: row.tokenHash }),
+            // 重新配对写下的"我替换了谁"：等新身份握手成功再裁（`pruneReplaced`）。
+            ...(row.replaces === undefined ? {} : { replaces: row.replaces }),
           })
         }
 
@@ -565,6 +567,32 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           tokenSource: () => readRelayToken(ctx.credentials, relayTokenSecretRef ?? ''),
           log: logger,
         })
+        /**
+         * 裁掉"被这台设备替换掉"的旧行（重新配对的收尾）。
+         *
+         * 为什么等握手成功才裁：配对提交时旧行必须留着兜底 —— `pair-result` 可能
+         * 没送到手机，那时手机手里仍是旧凭据，删了就成了孤儿（症状是下次握手
+         * `protocol/not-paired`，手机清凭据，用户看到"凭据莫名失效"）。
+         * 新身份真的连上来 = 新凭据已经在用，旧行才确定没人再用。
+         *
+         * 幂等：只删 `replaces === devId` 的行，没命中就什么都不做。
+         */
+        const pruneReplaced = async (devId: string): Promise<void> => {
+          const table = devicesTable
+          if (table === null) return
+          const doomed = replacedRowsOf(
+            [...table.keys()].flatMap((id) => {
+              const record = table.get(id)
+              return record === undefined ? [] : [[id, record] as const]
+            }),
+            devId,
+          )
+          if (doomed.length === 0) return
+          for (const id of doomed) await table.delete(id)
+          logger.info(`设备 ${devId} 已用新凭据连上：裁掉被它替换的 ${doomed.length} 行`)
+          await publishDevices()
+        }
+
         /**
          * 出码：登记 → 生成二维码 SVG。
          *
@@ -928,6 +956,13 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           // presence 上报面（挂载级的那一份）。方法面拿到的 `connection.deviceId()`
           // 由 `createConnectionScope` 自己构造，所以这里只需要 sink 本身。
           presence,
+          // 新身份**握手成功**了：它替换掉的旧行现在可以裁了（重新配对的收尾）。
+          // 失败只记日志：这条路已经建立，不该因为收尾失败把连接打掉。
+          onDeviceEstablished: (devId) => {
+            void pruneReplaced(devId).catch((error: unknown) => {
+              logger.warn('裁掉被替换的设备行失败（旧行还会留在名册里）', error)
+            })
+          },
           // 在途 ask 的重投来源（挂载级的 claim 表）。订阅恢复之后按原 seq 再发一遍，
           // 与 DSH gateway 把 pending 重投给新 client 同形。
           pendingAsks: (sid) => interactionPort.pendingAsks(sid),
@@ -968,6 +1003,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           // `findPreviousPairingRow` 是纯函数（`pairing-endpoint.ts`），**不按
           // `revokedAt` 过滤** —— 重新扫码本身就是恢复路径，新行天然不带吊销标记。
           // 取舍与威胁模型：`.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`。
+          // 旧行的清理**不在这里**：提交只写新行 + `replaces`，等新身份握手成功
+          // 由 `pruneReplaced` 裁（`pair-result` 可能没送到手机，见那里的说明）。
           findPreviousPairing: (pairingId) => {
             const table = devicesTable
             if (table === null) return null
@@ -978,12 +1015,6 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
               }),
               pairingId,
             )
-          },
-          removeDevice: async (devId) => {
-            if (devicesTable === null) {
-              throw new Error('devices 表尚未就绪：装配顺序有误')
-            }
-            await devicesTable.delete(devId)
           },
         })
         pairingEndpoint = enrollment

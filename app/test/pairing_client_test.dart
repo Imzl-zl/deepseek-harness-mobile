@@ -222,6 +222,59 @@ void main() {
       expect(error.code, ErrorCode.relayOffline);
       expect(error.clientAction, ClientAction.showOffline, reason: '退避重试，不清凭据');
     });
+
+    test('已配对 401 + `device-revoked` → 终态（停用：去解禁或重扫）', () async {
+      // 中转能分辨这件事（行还在、带 `revokedAt`，`relay/src/device-registry.ts`
+      // 的 `classify`），所以手机不该再把"被停用"和"名册没同步"说成同一句。
+      final http = _FakeHttp([
+        const HttpResult(status: 401, body: '{"error":"device-revoked"}'),
+      ]);
+      final client = PairingClient(
+        relayUrl: 'ws://127.0.0.1:8787',
+        send: http.call,
+        allowInsecureLocal: true,
+      );
+
+      final error = await () async {
+        try {
+          await client.ticketByDeviceToken('device-token-1');
+        } on ProtocolException catch (error) {
+          return error;
+        }
+        fail('device-revoked 应当抛 ProtocolException');
+      }();
+
+      expect(error.code, ErrorCode.revoked);
+      expect(error.clientAction, ClientAction.rePair, reason: '停用是终态');
+      expect(error.message, contains('停用'));
+    });
+
+    test('已配对 401 + `device-unknown` → 离线态，且明说"不必重新配对"', () async {
+      // 名册由电脑推、中转重启后是空的：重试就可能好。把这句话说成"凭据失效"
+      // 会让用户去扫一次没必要的码（今天的现场就是这个）。
+      final http = _FakeHttp([
+        const HttpResult(status: 401, body: '{"error":"device-unknown"}'),
+      ]);
+      final client = PairingClient(
+        relayUrl: 'ws://127.0.0.1:8787',
+        send: http.call,
+        allowInsecureLocal: true,
+      );
+
+      final error = await () async {
+        try {
+          await client.ticketByDeviceToken('device-token-1');
+        } on ProtocolException catch (error) {
+          return error;
+        }
+        fail('device-unknown 应当抛 ProtocolException');
+      }();
+
+      expect(error.code, ErrorCode.relayOffline);
+      expect(error.clientAction, ClientAction.showOffline);
+      expect(error.message, contains('名册'));
+      expect(error.message, contains('不必重新配对'));
+    });
   });
 
   group('响应形状坏掉时不静默降级', () {

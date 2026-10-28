@@ -84,14 +84,56 @@ class PairingClient {
     ),
   );
 
+  /// 从中转的错误体里取 `error` 字段（不是合法 JSON / 没有该字段 ⇒ `null`）。
+  ///
+  /// **只读、不猜**：拿不到就按最保守的那句说，绝不把"没见过"当成"被停用"。
+  static String? _errorOf(String body) {
+    try {
+      final parsed = jsonDecode(body);
+      if (parsed is Map<String, Object?>) {
+        final error = parsed['error'];
+        if (error is String && error.isNotEmpty) return error;
+      }
+    } catch (_) {
+      // 非 JSON 错误体：交给调用方的兜底措辞。
+    }
+    return null;
+  }
+
   Future<Ticket> _ticket(HttpCall call, {required bool paired}) async {
     final response = await send(call);
     if (!response.ok) {
+      // **401 的含义取决于这是哪一跳，而且中转现在会给出原因**（`device-unknown` /
+      // `device-revoked`，`relay/src/http-face.ts`）。按原因说不同的话、给不同动作：
+      // - 首配（未配对）：邀请不对/过期 ⇒ 终态，让电脑重新出码；
+      // - 已配对 + `device-revoked`：电脑停用了本机 ⇒ 终态，去解禁或重扫；
+      // - 已配对 + `device-unknown`：中转还没收到名册 ⇒ **可恢复**，重试即可。
+      // 中间那一档以前和最后一档混成一句"可能已停用，或凭据已失效"，用户只能重扫。
+      if (response.status == 401 || response.status == 409) {
+        if (!paired) {
+          throw ProtocolException(
+            ErrorCode.notPaired,
+            response.status == 409
+                ? '配对码尚未在中转登记成功，请让电脑重新出码'
+                : '配对码无效或已过期，请让电脑重新出码',
+          );
+        }
+        final reason = _errorOf(response.body);
+        if (reason == 'device-revoked') {
+          throw const ProtocolException(
+            ErrorCode.revoked,
+            '本机已被这台电脑停用（在电脑的「已配对设备」里解禁，或重新扫码配对）',
+          );
+        }
+        throw ProtocolException(
+          ErrorCode.relayOffline,
+          reason == 'device-unknown'
+              ? '中转还没收到这台电脑的设备名册（电脑刚启动或名册未同步），稍后重试即可，不必重新配对'
+              : '换票被拒（HTTP ${response.status}）',
+        );
+      }
       throw ProtocolException(switch (response.status) {
         400 => ErrorCode.badFrame,
-        // 401 的含义**取决于这是哪一跳**：首配是"邀请不对"（终态），已配对是
-        // "中转名册里没有你"（可恢复 —— 名册由电脑推、重启后为空）。
-        401 || 409 => paired ? ErrorCode.relayOffline : ErrorCode.notPaired,
         426 => ErrorCode.unsupportedVersion,
         429 => ErrorCode.rateLimited,
         _ => ErrorCode.relayOffline,

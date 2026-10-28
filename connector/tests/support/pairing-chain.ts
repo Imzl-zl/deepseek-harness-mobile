@@ -65,7 +65,6 @@ export async function startChain(t: Cleanup): Promise<Chain> {
       }
       return null
     },
-    removeDevice: async (id) => { devices.delete(id) },
   })
   const sessions = {
     list: async () => [], page: async () => ({ records: [], hasMore: false }),

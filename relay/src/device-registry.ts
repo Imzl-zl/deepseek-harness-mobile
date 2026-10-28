@@ -72,6 +72,9 @@ export interface DeviceRegistryOptions {
   log?: ChannelLogger
 }
 
+/** 一枚设备令牌在中转眼里的三种状态（`classify` 的产出）。 */
+export type DeviceTokenVerdict = 'ok' | 'revoked' | 'unknown'
+
 export interface DeviceRegistry {
   /**
    * 电脑侧报名册：用 `(id, tokenHash)` 认下一行，并把归属记到 `connectorId`。
@@ -88,6 +91,18 @@ export interface DeviceRegistry {
    * @returns 该设备 id；令牌无效 / 已吊销 / 没见过 → `undefined`（调用方回 401）。
    */
   authenticate(token: string): string | undefined
+  /**
+   * **令牌的诊断**：`ok` / `revoked` / `unknown`。
+   *
+   * 只为**把 401 说清楚**而存在：`authenticate` 把"已吊销"与"没见过"都折成
+   * `undefined`，于是调用方只能回一句含糊的 `unauthorized`，手机也就只能显示
+   * "可能已停用，或凭据已失效"（用户看到的是"凭据莫名失效"）。
+   *
+   * 两者在电脑侧的处置**不同**：`revoked` 要操作者去解禁（或重扫），
+   * `unknown` 多半是名册还没同步过来（电脑刚启动 / 刚重配完），**重试就能好**。
+   * 所以诊断必须过线，不能在下游靠猜。
+   */
+  classify(token: string): DeviceTokenVerdict
   /** 某设备归哪台连接器。**只有电脑侧报过名的设备才有归属**。 */
   connectorOf(deviceId: string): string | undefined
   /** 连接器断开：它的设备失去归属（但**行留着** —— 设备要靠令牌自己回来）。 */
@@ -137,6 +152,20 @@ export function createDeviceRegistry(options: DeviceRegistryOptions = {}): Devic
     return pruned
   }
 
+  /**
+   * 一枚令牌现在的状态。
+   *
+   * **"已吊销"与"没见过"必须分开**：行还在但带 `revokedAt` 是操作者停用了这台设备
+   * （电脑侧解禁或重扫），而压根没这行通常只是名册还没同步过来。
+   * 软吊销保留原行正是为了能分辨这两件事（`issue-token.ts:84-90` 的说明）。
+   */
+  const verdictOf = (token: string): DeviceTokenVerdict => {
+    if (token === '') return 'unknown'
+    const deviceId = byToken.get(hashOf(token))
+    if (deviceId === undefined) return 'unknown'
+    return rows.get(deviceId)?.revokedAt === undefined ? 'ok' : 'revoked'
+  }
+
   return {
     get stats() {
       let bound = 0
@@ -174,12 +203,12 @@ export function createDeviceRegistry(options: DeviceRegistryOptions = {}): Devic
     },
 
     authenticate(token) {
-      if (token === '') return undefined
-      const deviceId = byToken.get(hashOf(token))
-      if (deviceId === undefined) return undefined
-      // 已吊销的行认不下：与 `digest-auth.ts` 的软吊销同一条纪律（行留着是为了可辨识）。
-      if (rows.get(deviceId)?.revokedAt !== undefined) return undefined
-      return deviceId
+      if (verdictOf(token) !== 'ok') return undefined
+      return byToken.get(hashOf(token))
+    },
+
+    classify(token) {
+      return verdictOf(token)
     },
 
     connectorOf(deviceId) {

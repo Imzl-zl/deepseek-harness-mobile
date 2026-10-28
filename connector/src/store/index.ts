@@ -69,6 +69,17 @@ const deviceSchema = z.object({
    * 这是如实的结果，不是静默降级。
    */
   tokenHash: z.string().optional(),
+  /**
+   * 这一行**替换掉的上一个 devId**（重新配对时写）。
+   *
+   * 重新配对是"同一台手机换一套密钥与令牌"。旧行**不能在新令牌送达之前删**：
+   * `pair-result` 丢失时手机手里还是旧凭据，旧行一删就成了孤儿（症状是下次握手
+   * `protocol/not-paired`，手机按契约清凭据 —— 用户看到"凭据莫名失效"）。
+   * 所以先写新行并记下"我替换了谁"，等新身份**真的握手成功**再裁旧行。
+   * 裁剪见 `index.ts` 的 `pruneReplaced`，取舍见
+   * `.agents/notes/implemented/2026-10-28-atomic-repair-keeps-old-device-row.md`。
+   */
+  replaces: z.string().optional(),
   /** 吊销时间；存在即已吊销（电脑侧删除公钥）。 */
   revokedAt: z.number().optional(),
 })

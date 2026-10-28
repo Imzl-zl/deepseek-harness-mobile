@@ -16,6 +16,13 @@ export interface PairedDeviceRow {
   pairingId: string
   pairedAt: number
   tokenHash?: string
+  /**
+   * 这一行替换掉的上一个 devId（重新配对才有）。
+   *
+   * 写进设备行，由装配层在新身份握手成功时据此裁掉旧行 —— 见
+   * `pairing-endpoint.ts` 的 `commit` 与 `index.ts` 的 `pruneReplaced`。
+   */
+  replaces?: string
 }
 
 /** 重新配对要找的**上一行**（按手机自报的 `previousPairingId` 定位）。 */
@@ -44,6 +51,26 @@ export function findPreviousPairingRow(
   return null
 }
 
+/**
+ * 这台设备（`devId`）替换掉的旧行 —— 重新配对的收尾要删的那一条。
+ *
+ * **纯函数**：装配层照它删，单测不需要真域表。判据在**自己这行**上：
+ * `replaces` 指着的就是它取代的旧 devId。方向不能反 —— 旧行上没有
+ * "我被谁替换了"的字段（那样需要改动旧行，且崩溃窗口里会两边都不一致）。
+ *
+ * @returns 旧 devId（没有 `replaces` 或指向自己 ⇒ 空数组）
+ */
+export function replacedRowsOf(
+  rows: Iterable<readonly [string, { replaces?: string }]>,
+  devId: string,
+): string[] {
+  for (const [id, row] of rows) {
+    if (id !== devId) continue
+    return row.replaces === undefined || row.replaces === devId ? [] : [row.replaces]
+  }
+  return []
+}
+
 export interface PairingEndpointOptions {
   issueCredentials?: () => Promise<IssuedDeviceTokens>
   pcId: string
@@ -57,8 +84,6 @@ export interface PairingEndpointOptions {
    * 而那种退化没有任何报错。
    */
   findPreviousPairing: (pairingId: string) => PreviousPairingRow | null
-  /** 删掉被替换掉的旧行（换密钥 ⇒ 换 devId ⇒ 旧行必须消失）。 */
-  removeDevice: (devId: string) => Promise<void>
   announce: () => Promise<void>
   log?: ChannelLogger
 }
@@ -97,19 +122,23 @@ export function createPairingEndpoint(options: PairingEndpointOptions): PairingE
         // 一个新设备"）：手机自报的 `previousPairingId` 是**行定位符，不是凭据**
         // —— 授权已由一次性二维码秘密 + 候选持钥证明完成（`pairing.accept` 先验
         // 秘密才 accept）。据此找到这台手机上一次的记录，换密钥 / 换令牌 /
-        // 换 pairingId 写进行，**保留首次配对的 pairedAt**。没有旧行（首配、
+        // 换 pairingId 写成新行，**保留首次配对的 pairedAt**。没有旧行（首配、
         // 凭据丢过、被管理面清理过）就照旧写新行。
         // 威胁模型与取舍：`.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`。
         const previous = accepted.previousPairingId === undefined
           ? null
           : options.findPreviousPairing(accepted.previousPairingId)
-        // **先删旧行再写新行**。反过来（先写后删）崩在中间会留下两行，且旧令牌
-        // 在中转侧仍然有效（名册是全量快照，两行都报）；这个顺序崩在中间只是
-        // "这次配对没成"，手机重扫一次就好（旧行已删，不会攒行）。
-        // 同一个 devId（手机复用密钥，今天不发生）就只覆盖、不删。
-        if (previous !== null && previous.devId !== accepted.device.devId) {
-          await options.removeDevice(previous.devId)
-        }
+        // **旧行先留着**，只在新行上记下"我替换了谁"。
+        //
+        // 不能在这里删旧行：轮换与"新令牌送达手机"不是一件事，而 `pair-result`
+        // 可能根本没到手机（`:197-199` 就有这条 warn）。旧行一删，手机手里那把
+        // 凭据就成了孤儿 —— 下次握手 `protocol/not-paired`，手机按契约清凭据，
+        // 用户看到的是"凭据莫名失效"。裁剪改在**新身份真的握手成功之后**
+        // （装配层 `pruneReplaced`），那时旧行才确定没人用了。
+        // 同一个 devId（手机复用密钥）就只覆盖 —— 那种情况没有两行可留。
+        const replaces = previous !== null && previous.devId !== accepted.device.devId
+          ? previous.devId
+          : undefined
         await options.putDevice(accepted.device.devId, {
           name: accepted.device.name,
           edPubHex: accepted.device.edPubHex,
@@ -117,6 +146,7 @@ export function createPairingEndpoint(options: PairingEndpointOptions): PairingE
           pairingId: accepted.pairingId,
           pairedAt: previous?.pairedAt ?? accepted.device.pairedAt,
           tokenHash: tokenHashOf(credentials.deviceToken),
+          ...(replaces === undefined ? {} : { replaces }),
         })
         state.registered = true
       }

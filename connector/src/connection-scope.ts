@@ -75,6 +75,14 @@ export interface ConnectionScopeDeps {
    * 得由挂载级广播给每一条在服务的连接。**可缺**：只测方法面的装配不需要它。
    */
   registerScope?: (scope: ConnectionScope) => () => void
+  /**
+   * 一台设备**完成业务鉴权**时通知挂载级（`deviceEstablished` 之后）。
+   *
+   * 重新配对的收尾靠它：新身份真的连上来才说明新凭据已经在用，那时才能裁掉
+   * 被它替换的旧行（见 `index.ts` 的 `pruneReplaced`）。**可缺**：只测方法面的
+   * 装配不需要它。
+   */
+  onDeviceEstablished?: (devId: string) => void
 }
 export interface PairingScope {
   candidate: PairingCandidate
@@ -166,6 +174,8 @@ export function createConnectionScope(
       // 鉴权完成 = 这台设备在线了。**前台态此时仍为 false**（还没收到 `sync.hello`），
       // 于是一个刚连上的设备不会被 `foreground` 档误判成"用户正看着手机"。
       deps.presence?.online(devId)
+      // 新身份真的连上了：重新配对替换掉的旧行现在才能裁（`index.ts` 的 `pruneReplaced`）。
+      deps.onDeviceEstablished?.(devId)
     },
     pairingEstablished() {
       if (pairing === undefined) throw new Error('普通设备连接不能激活配对通道')

@@ -1,3 +1,5 @@
+> 已被 `2026-10-28-atomic-repair-keeps-old-device-row.md` 取代：记录单位仍是手机、替换而不是攒行的结论不变，但旧行**不再在提交时删除**（等新身份握手成功再裁）。归档，不再改动。
+
 # Agent Note: 重新配对替换旧设备行 —— 记录的单位是手机，不是每次扫码
 
 Status: implemented

@@ -72,9 +72,22 @@ export function createHttpFace(options: HttpFaceOptions): HttpFace {
       // 连接器令牌只可能在摘要表里 —— 两者不重叠，所以顺序不影响结果；写成"先名册"
       // 是为了让"设备凭据面在名册"这条分层不依赖别处的校验也成立。
       const token = request.token ?? ''
-      const deviceId = token === '' ? undefined : devices.authenticate(token)
+      // **先诊断、再认证**：`authenticate` 把"已吊销"与"没见过"折成同一个 `undefined`，
+      // 而那两件事在手机侧的下一步不同（重试 vs 解禁/重扫）。诊断过线不是为了别的。
+      const verdict = token === '' ? 'unknown' : devices.classify(token)
+      const deviceId = verdict === 'ok' && token !== '' ? devices.authenticate(token) : undefined
       const caller = deviceId === undefined && token !== '' ? authenticate(token) : undefined
-      if (caller === undefined && deviceId === undefined) return { status: 401, body: { error: 'unauthorized' } }
+      if (caller === undefined && deviceId === undefined) {
+        return {
+          status: 401,
+          body: {
+            // 没带令牌 = 调用方发错了；带了但不认 = 设备凭据问题（分两种）。
+            error: token === ''
+              ? 'unauthorized'
+              : verdict === 'revoked' ? 'device-revoked' : 'device-unknown',
+          },
+        }
+      }
       const denied = limited(`${caller?.kind ?? 'device'}:${caller?.id ?? deviceId}`)
       if (denied !== undefined) return denied
 

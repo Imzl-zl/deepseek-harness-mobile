@@ -35,6 +35,21 @@ test('报到即建行：令牌认得出、归属查得到、计数对', () => {
   assert.deepEqual(devices.stats, { devices: 1, bound: 1 })
 })
 
+test('令牌诊断：ok / revoked / unknown 三者分开（手机据此决定重试还是解禁）', () => {
+  // 为什么必须分开：`authenticate` 把"已停用"与"没见过"折成同一个 `undefined`，
+  // 于是 401 只能回一句含糊的 `unauthorized` —— 手机就显示"可能已停用，或凭据已失效"。
+  // 而用户真正需要知道的是"重连可能就好"还是"要去电脑上解禁/重扫"。
+  const devices = createDeviceRegistry()
+  devices.register('conn-1', [
+    row('d1', 't1'),
+    { ...row('d2', 't2'), revokedAt: 1 },
+  ])
+  assert.equal(devices.classify('t1'), 'ok')
+  assert.equal(devices.classify('t2'), 'revoked')
+  assert.equal(devices.classify('nope'), 'unknown')
+  assert.equal(devices.classify(''), 'unknown')
+})
+
 test('差集即删除：这次没报到的行必须消失（行 + 令牌索引 + 计数）', () => {
   const devices = createDeviceRegistry()
   devices.register('conn-1', [row('d1', 't1'), row('d2', 't2')])
