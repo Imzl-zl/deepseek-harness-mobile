@@ -3394,7 +3394,14 @@ class AppModel extends ChangeNotifier {
         // 推送里没有它。
         if (event.type == 'turn/start') {
           _rows.noteTurnStart(sid, time: event.time);
+          // 唤醒判据要**这一轮从哪个 seq 开始**（DSH 的 `location.turn.start.seq`）。
+          tracker.noteTurnStart(event.seq);
         }
+        // 唤醒判据还要**这一条消息落在第几步**（DSH 的 `location.step.step`）：
+        // 只有"本轮第 1 步"的非人消息才可能是唤醒（见 [_InboxTracker.claimIfWaking]）。
+        // 这两类事件照旧投影成 `OtherItem`，只是顺手记一笔状态。
+        if (event.type == 'step/start') tracker.noteStepStart(event.data);
+        if (event.type == 'step/end') tracker.noteStepEnd();
         // **`session/title` 不是条目，是标题的真值**：DSH 生成/改名时落一条
         // （`session-title/src/index.ts` 的 fold 就认这个 type）。它进条目表
         // 只会渲染出一条莫名其妙的"其它事件"，所以在这里截住并落地成标题。
@@ -3412,7 +3419,10 @@ class AppModel extends ChangeNotifier {
         // 所以在这里记一笔，循环结束后重读投影。
         if (event.type == 'agent/inbox/spliced') {
           if (event.data is Map) {
-            tracker.applySplice(Map<String, Object?>.from(event.data as Map));
+            tracker.applySplice(
+              Map<String, Object?>.from(event.data as Map),
+              event.seq,
+            );
           }
           inboxChanged = true;
           continue;
@@ -3811,97 +3821,193 @@ class AppModel extends ChangeNotifier {
   }
 }
 
-/// 收件箱追踪器：从 `agent/inbox/spliced` 事件流里认出**插话**消息。
+/// 收件箱追踪器：从 `agent/inbox/spliced` 事件流里认出**插话**与**唤醒新一轮**。
 ///
-/// **逐字移植 DSH Web 的 `SteeringHistory`**
-/// （`packages/client/ui-chat/src/client/model/steering-history.ts`）：
+/// **逐条移植 DSH 的两个 inbox 节点**（`ui-chat` 的
+/// `conversation-nodes/inbox.ts`，构建产物 `@deepseek-ai/dsh-client-ui-chat/lib/client.js:9745-9819`）：
 ///
-/// - 维护 next-turn / next-step 两个列表（`splice(start, removedCount, ...inserted)`）；
-/// - 从 **next-step 被 claim 掉**（splice 的 removed 部分）的 id 进候选集；
-/// - 插入会把 id 从候选集去掉；
-/// - 随后到达的 `user/message` 带候选 id 且 `source.kind === 'user'` → 插话。
+/// - 每个 inbox（`next-turn` / `next-step`）各存四样东西：
+///   **队列内容**（`splice` 依次应用后的 id 列表）、**这次 claim 走了哪几条**
+///   （`currentClaimed`）、**claim 发生在哪个 seq**（`claimSeq`）、
+///   **被 claim 的这一批里有没有人发的消息**（`claimedHuman`）；
+/// - `currentClaimed` 在每次 claim（`removedCount > 0` 且 `outcome !== 'canceled'`）
+///   时**整体替换**，插入的 id 会从上一批里摘掉（`withoutInserted`，`:9751-9761`）；
+/// - 非人消息的 `waking` 判据（`conversation-nodes/message.js`，`:9857-9866`）：
+///   ① id 在 `next-turn.currentClaimed` 里；**或**
+///   ② `idleSteer` —— 这一条落在**本轮第 1 步**，`next-step` 的 claim 晚于本轮
+///   `turn/start`、`next-turn` 的 claim 早于它，且那批 claim 里**没有人**发的消息，
+///   而这条 id 就在 `next-step.currentClaimed` 里；
+/// - 人发的消息是**插话**（`:9868`）⇔ id 在 `next-step.currentClaimed` 里。
+///
+/// 为什么 ② 必须照抄而不是"非人消息一律算唤醒"：真实的子智能体收尾走的就是
+/// `next-step` —— 它把消息排进运行中的轮次；**只有"空闲时被 claim 走、随即开了一轮"**
+/// 那一种才是唤醒（2026-10-28 真机：只认 `next-turn` 时，桌面上是「收到任务消息」的
+/// 那一行，手机上显示成「上下文注入 · agent-message」）。取舍见
+/// `.agents/notes/implemented/2026-10-28-turn-trigger-idle-steer.md`。
 ///
 /// 为什么不猜"running 期间的用户消息就是插话"：排队发送的消息也是运行期间
 /// 到达的，而它**不是**插话（它排下一个轮次）。判据只有这一个，猜就会把
 /// 排队消息标成插话。
 class _InboxTracker {
-  final Map<String, List<String>> _lists = {
-    'next-turn': <String>[],
-    'next-step': <String>[],
+  final Map<String, _InboxState> _states = {
+    'next-turn': const _InboxState(),
+    'next-step': const _InboxState(),
   };
 
-  final Set<String> _claimedNextStep = <String>{};
+  /// 最近一次 `turn/start` 的 seq（DSH 的 `location.turn.start.seq`）。
+  int? _turnStartSeq;
 
-  /// 从 **next-turn** 被 claim 掉的 id：随后到达的非人消息就是**唤醒该轮**的那条
-  /// （DSH `conversation-nodes/message.ts:97,110` 的 `inbox-next-turn.currentClaimed`）。
-  final Set<String> _claimedNextTurn = <String>{};
+  /// 当前第几步（`step/start` 设、`step/end` 清；DSH 的 `location.step.step`）。
+  int? _step;
+
+  _InboxState _stateOf(String target) => _states[target] ?? const _InboxState();
+
+  void noteTurnStart(int seq) {
+    _turnStartSeq = seq;
+    _step = null;
+  }
+
+  void noteStepStart(Object? data) {
+    final step = data is Map ? data['step'] : null;
+    _step = step is int ? step : null;
+  }
+
+  void noteStepEnd() {
+    _step = null;
+  }
 
   /// 用投影里的当前收件箱播种（恢复/打开会话时调一次）。
+  ///
+  /// **只播队列**：`currentClaimed` / `claimSeq` 是"这次 claim"的事实，投影里没有
+  /// （它只给队列），所以按 DSH 的初值留空 —— 于是"打开会话前就已 claim 掉"的
+  /// 那一条只能按上下文注入显示。这是记录在案的边界，不是兜底。
   void seed(Map<String, Object?> inbox) {
     for (final target in const ['next-turn', 'next-step']) {
       final rows = inbox[target];
       if (rows is! List) continue;
-      _lists[target] = [
+      final pending = <_InboxEntry>[
         for (final row in rows)
-          if (row is Map && row['id'] is String) row['id'] as String,
+          if (row is Map && row['id'] is String) _InboxEntry.of(row),
       ];
+      final previous = _stateOf(target);
+      _states[target] = _InboxState(
+        pending: pending,
+        claimed: previous.claimed,
+        claimSeq: previous.claimSeq,
+        claimedHuman: previous.claimedHuman,
+      );
     }
   }
 
-  /// 应用一条 splice 事件。
-  void applySplice(Map<String, Object?> data) {
+  /// 应用一条 splice 事件（`agent/inbox/spliced`）。
+  void applySplice(Map<String, Object?> data, int seq) {
     final target = data['target'];
-    final start = data['start'];
-    if (target is! String || start is! int) return;
-    final list = _lists[target];
-    if (list == null) return;
-    final removedCount = data['removedCount'];
-    final count = removedCount is int ? removedCount : 0;
-    final inserted = <String>[
+    if (target is! String) return;
+    if (!_states.containsKey(target)) return;
+    final previous = _stateOf(target);
+    final start = data['start'] is int ? data['start'] as int : 0;
+    final removedCount = data['removedCount'] is int
+        ? data['removedCount'] as int
+        : 0;
+    final inserted = <_InboxEntry>[
       for (final item
           in data['inserted'] is List ? data['inserted'] as List : const [])
-        if (item is Map && item['id'] is String) item['id'] as String,
+        if (item is Map && item['id'] is String) _InboxEntry.of(item),
     ];
-    // 与 DSH 同一条算术：从 `start` 处删 `count` 个、插入 `inserted`。
-    final safeStart = start.clamp(0, list.length);
-    final safeEnd = (safeStart + count).clamp(safeStart, list.length);
-    final removed = list.sublist(safeStart, safeEnd);
-    list
-      ..removeRange(safeStart, safeEnd)
-      ..insertAll(safeStart, inserted);
-    // 插入的 id 不再是被 claim 的候选。
-    for (final id in inserted) {
-      _claimedNextStep.remove(id);
-      _claimedNextTurn.remove(id);
+    // 与 DSH 同一条算术：从 `start` 处删 `removedCount` 个、插入 `inserted`。
+    final pending = List<_InboxEntry>.from(previous.pending);
+    final safeStart = start.clamp(0, pending.length);
+    final safeEnd = (safeStart + removedCount).clamp(safeStart, pending.length);
+    final removed = pending.sublist(safeStart, safeEnd);
+    pending.replaceRange(safeStart, safeEnd, inserted);
+    // 取消的 splice 不算 claim（消息又回到队列里）—— 与 DSH 的 `outcome !== "canceled"` 同一条。
+    if (removedCount > 0 && data['outcome'] != 'canceled') {
+      _states[target] = _InboxState(
+        pending: pending,
+        claimed: {for (final row in removed) row.id},
+        claimSeq: seq,
+        claimedHuman: removed.any((row) => row.human),
+      );
+      return;
     }
-    // 取消的 splice 不算 claim（消息又回到队列里）。
-    if (data['outcome'] == 'canceled') return;
-    // **只有从 next-step 被 claim 掉的才是插话候选**。
-    if (target == 'next-step') _claimedNextStep.addAll(removed);
-    // 从 next-turn 被 claim 掉的：这条非人消息**唤醒了新一轮**（turn-trigger）。
-    if (target == 'next-turn') _claimedNextTurn.addAll(removed);
+    // 插入把 id 从**上一次**的 claim 集合里摘掉（`withoutInserted`）。
+    final claimed = <String>{...previous.claimed};
+    for (final row in inserted) {
+      claimed.remove(row.id);
+    }
+    _states[target] = _InboxState(
+      pending: pending,
+      claimed: claimed,
+      claimSeq: previous.claimSeq,
+      claimedHuman: previous.claimedHuman,
+    );
   }
 
-  /// 一条**非人**的 `user/message` 是不是唤醒了新一轮（消费掉那个候选）。
+  /// 一条**非人**的 `user/message` 是不是唤醒了新一轮。
   ///
-  /// 判据照 DSH：`source.kind !== 'user'` 且 id 在 `next-turn` 的 claim 里
-  /// （`conversation-nodes/message.ts:96-111`）。
+  /// 判据逐条照 DSH（`lib/client.js:9857-9866`）：见类注释的 ① / ②。
   bool claimIfWaking(Object? data) {
     if (data is! Map) return false;
     final id = data['id'];
     if (id is! String || id.isEmpty) return false;
-    if (!_claimedNextTurn.remove(id)) return false;
     final source = data['source'];
-    return source is Map && source['kind'] != 'user';
+    // `source.kind === 'user'` 的那一支走插话，不走这里（DSH 同一条分叉）。
+    if (source is Map && source['kind'] == 'user') return false;
+    final nextTurn = _stateOf('next-turn');
+    if (nextTurn.claimed.contains(id)) return true;
+    // `idleSteer`：空闲时被 `next-step` claim 走、随即开了这一轮。
+    final nextStep = _stateOf('next-step');
+    final turnStart = _turnStartSeq;
+    final step = _step;
+    return step == 1 &&
+        turnStart != null &&
+        nextStep.claimSeq > turnStart &&
+        nextTurn.claimSeq < turnStart &&
+        !nextStep.claimedHuman &&
+        nextStep.claimed.contains(id);
   }
 
-  /// 一条 `user/message` 是不是插话（**会消费掉那个候选**，与 DSH 的 delete 同义）。
+  /// 一条 `user/message` 是不是插话。
+  ///
+  /// **不消费**（DSH 是状态查询，不是取走）：一次 claim 可以同时 claim 走多条，
+  /// 消费掉第一条会让第二条变成普通用户消息。
   bool claimIfSteering(Object? data) {
     if (data is! Map) return false;
     final id = data['id'];
     if (id is! String || id.isEmpty) return false;
-    if (!_claimedNextStep.remove(id)) return false;
     final source = data['source'];
-    return source is Map && source['kind'] == 'user';
+    if (source is! Map || source['kind'] != 'user') return false;
+    return _stateOf('next-step').claimed.contains(id);
   }
+}
+
+/// 收件箱里的一条：id + **是不是人发的**（`source.kind === 'user'`）。
+class _InboxEntry {
+  const _InboxEntry(this.id, {required this.human});
+
+  factory _InboxEntry.of(Map<Object?, Object?> row) {
+    final source = row['source'];
+    return _InboxEntry(
+      row['id']! as String,
+      human: source is Map && source['kind'] == 'user',
+    );
+  }
+
+  final String id;
+  final bool human;
+}
+
+/// 一个 inbox 的快照（DSH `applySplice` 的返回形状）。
+class _InboxState {
+  const _InboxState({
+    this.pending = const <_InboxEntry>[],
+    this.claimed = const <String>{},
+    this.claimSeq = -1,
+    this.claimedHuman = false,
+  });
+
+  final List<_InboxEntry> pending;
+  final Set<String> claimed;
+  final int claimSeq;
+  final bool claimedHuman;
 }

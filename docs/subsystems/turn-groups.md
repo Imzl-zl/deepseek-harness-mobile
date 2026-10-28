@@ -121,14 +121,27 @@ DSH 的整轮控制行在**轮次开头**（`turn.start.seq − 0.1`，
 | DSH 节点 | 判据 | 标题 |
 |---|---|---|
 | `context` | 注入，但**不是**它唤醒这一轮 | 「上下文注入」+ 生产者 kind（`runtime-context` …） |
-| `turn-trigger` | 注入，且被 `inbox-next-turn` claim 走 | 按 `source.kind` 换词：`subagent-settled` =「子任务状态更新」、`agent-message` =「收到任务消息」、`tool-jobs` =「后台任务状态更新」…（表外 →「收到执行请求」） |
+| `turn-trigger` | 注入，且 `waking`（下表两条之一） | 按 `source.kind` 换词：`subagent-settled` =「子任务状态更新」、`agent-message` =「收到任务消息」、`tool-jobs` =「后台任务状态更新」…（表外 →「收到执行请求」） |
 
-出处：分类 `ui-chat/src/client/conversation-nodes/message.ts:96-111`；标题表
-`chat/turn-trigger.ts:29-70` + `locale.ts:53-62`；形状
+`waking` 的两条判据（`ui-chat/src/client/conversation-nodes/message.ts:96-111`；
+构建产物 `@deepseek-ai/dsh-client-ui-chat/lib/client.js:9857-9866`）：
+
+1. 这条 id 在 `inbox-next-turn` 的**本次** claim 里（人发的消息走这里）；
+2. `idleSteer` —— 这条 id 在 `inbox-next-step` 的本次 claim 里，且
+   **落在本轮第 1 步**、`next-step` 的 claim 晚于本轮 `turn/start`、
+   `next-turn` 的 claim 早于它、那批 claim 里**没有人**发的消息。
+   子智能体的 `agent-message` / `subagent-settled` 走的就是这条：
+   宿主先把消息排进 `next-step`，空闲时由 claim 本身开一轮。
+
+标题表 `chat/turn-trigger.ts:29-70` + `locale.ts:53-62`；形状
 `TurnTriggerNodeView.tsx:39-42`（只有标题 + 时间 + 箭头，**没有**「· 生产者」尾巴）。
 
 分类只在 `app/lib/data/projection.dart`；"谁被 claim"只在 `AppModel` 的
-`_InboxTracker`（`claimIfWaking` / `claimIfSteering`）—— 投影层是纯函数。
+`_InboxTracker`（`claimIfWaking` / `claimIfSteering`，两个 inbox 各存
+队列 + `currentClaimed` + `claimSeq` + `claimedHuman`）—— 投影层是纯函数。
+
+**边界**：`currentClaimed` / `claimSeq` 只存在于在线事件流。打开会话时投影只给队列，
+所以"打开之前就被 claim 掉"的那条按 `context` 显示（桌面靠回放整份会话日志能认出）。
 
 ## 7. 已知边界
 

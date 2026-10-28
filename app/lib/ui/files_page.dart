@@ -320,7 +320,12 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
             children: [
               if (failure != null) ...[
-                _FileHint(text: '读取失败：$failure', color: c.stateError),
+                // **不再加「读取失败：」前缀**：`app.fileFailure` 已经是
+                // `model/file_failure.dart` 给出的**整句**（四类码各有自己的中文，
+                // 表外码才带「读取失败：{宿主原话}」）。加前缀会把四类文案改成
+                // 「读取失败：找不到这个文件」、把表外码变成双前缀 ——
+                // 桌面 `failureLine()` 只画那一句（`failure-line.ts:24-35`）。
+                _FileHint(text: failure, color: c.stateError),
                 const SizedBox(height: 8),
                 TextButton(
                   onPressed: () => unawaited(

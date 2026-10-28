@@ -393,12 +393,12 @@ class DshMarkdown extends StatelessWidget {
 /// （`packages/client/locale/src/locales/zh.ts:7`）。
 const String _codeBlockLabel = '代码块';
 
-/// 我们**真能高亮**的语言集合。
+/// 我们**真能高亮**的语言集合 —— 定义在 `dsh_code_highlight.dart` 一处
+/// （`isHighlightedLanguage`，语言表只有一份），判断处不用改。
 ///
-/// 现在是空的（高亮还没接，见文件末"仍未做"）—— 于是标签恒为 [codeBlockLabel]，
-/// 与 DSH 对一个"它不高亮的语言"（比如 ```` ```rust ````）的表现**完全同形**。
-/// 接上高亮后只填这张表，判断处不用改（DSH 支持的是 ts / bash / json 三种，
-/// `markdown/highlight.ts:42`）。
+/// DSH 只高亮 ts / bash / json 三种（`markdown/highlight.ts:42`），手机侧接了
+/// 28 种（`re_highlight` 按需注册）；对表外的语言（比如 ```` ```rust ```` 之外
+/// 的 ```` ```toml ````）标签仍报 [codeBlockLabel]，与 DSH 同形。
 // 认识的语法 id 在 `dsh_code_highlight.dart` 一处定义（语言表只有一份）。
 
 /// `pre` → DSH 风格的代码块。
@@ -685,21 +685,22 @@ class _CodeToolButton extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // 仍未做（如实记录，见 `app-channel-client.md` §7 与 §4 的性能对策）
 //
-// 1. **代码语法高亮**：DSH 用 shiki（JS 引擎）高亮 **ts / bash / json** 三种
-//    （`markdown/highlight.ts:42`），**只在代码块首次进入视口时高亮一次并缓存**
-//    （`useViewportHighlighting.ts:17,48`），未知语言退纯文本（`:17`），
-//    单行超长（>1000 字符）不 tokenize（`highlight.ts:286`）。手机侧候选仍是
-//    `highlight`（纯 Dart）；接的时候照这三条做，别每次重建就重算。
-//    接上后把语言填进 `_highlightedLanguages`，标签与高亮就一起生效。
-//
-// 2. **分块渲染**（§4 的"长 Markdown 按段落切"）：现在整段交给 `MarkdownBody`，
+// 1. **分块渲染**（§4 的"长 Markdown 按段落切"）：现在整段交给 `MarkdownBody`，
 //    而它在长文上要一次排版完 —— 那正是 §4 想避免的（`dart:ui` 排版只能在主 isolate）。
 //    查过 DSH 的做法供参考：它**没有**正文虚拟化/段落切分，只在流式期间
 //    冻结除末尾两块以外的所有块（`ui-primitives/src/markdown/incremental.ts:9-14,38`
 //    的 `UNSTABLE_TAIL_BLOCKS = 2`）。所以手机侧的对策应是"流式期间只重排末尾"，
 //    不是引入虚拟列表。
 //
-// 3. **数学公式**：DSH 支持 `$…$` 行内与 ```` ```math ```` 围栏（KaTeX，
+// 2. **数学公式**：DSH 支持 `$…$` 行内与 ```` ```math ```` 围栏（KaTeX，
 //    `MarkdownText.tsx:36` 的 `parseGfmWithMath`、`render.tsx:388`），手机侧没有。
 //    这是独立一块（要么纯 Dart 的数学排版，要么放弃），不在"把 Markdown 渲染出来"里。
+//
+// 3. **代码高亮已接**（2026-10-28，`dsh_code_highlight.dart`）：纯 Dart 的
+//    `re_highlight`，28 种语言按需注册；未知语言退纯文本（与 DSH 的
+//    `useViewportHighlighting.ts:17` 同一条）。仍与 DSH 差的两处：
+//    ① DSH **只在代码块首次进入视口时高亮一次并缓存**（`highlight.ts:286` 的单行
+//    1000 字符上限也在那条路上），手机侧是构建时算 —— 长会话里重复构建会重复算；
+//    ② DSH 的 shiki 语言集与我们不同（ts/bash/json 对 28 种），于是"报语言名还是
+//    报「代码块」"的判定在边缘语言上会不同。
 // ---------------------------------------------------------------------------

@@ -3,8 +3,18 @@
 > 快照 + 最近窗口，**覆盖更新**，不做流水追加。历史在 git 与 `.agents/notes/`；
 > 稳定命令与坑点在 `tools.md`；现状事实在 `docs/`。
 
-## 现在（2026-10-27）
+## 现在（2026-10-28）
 
+- **真机验收（2026-10-28，设备 d61cf622，隔离 home `D:\tmp\dsh-mobile-home`）**：
+  代码高亮 / Markdown 预览 / 唤醒通知 / 任务状态 / 文件四类错误码七条全过，
+  途中抓到并修掉一处真问题：**唤醒判据只认 `inbox-next-turn`** —— 宿主给子智能体的
+  `agent-message` / `subagent-settled` 走的是 `next-step`（空闲时由 claim 开一轮），
+  于是桌面上是「收到任务消息」的那一行手机上显示「上下文注入 · agent-message」，
+  「子任务状态更新」一次都不出现。修法是照抄 DSH 的 `idleSteer` 分支
+  （`dsh-client-ui-chat/lib/client.js:9857-9866`）；笔记
+  `implemented/2026-10-28-turn-trigger-idle-steer.md`，现状事实 `docs/subsystems/turn-groups.md` §6.1。
+  同批把预览页的「读取失败：」前缀去掉（四类码的整句由 `model/file_failure.dart` 给，
+  加前缀会变成「读取失败：找不到这个文件」，桌面只画那一句）。
 - **通道**：`protocol/`（配对 / 握手 / AEAD / 流控 / 恢复）+ `relay/`（中转）+ `connector/`（电脑侧网关）
   全部落地；手机侧 `app/lib/core/` 是连接层，`app/lib/wire/` 是**线上形状的唯一解码层**。
 - **RPC 应答面（2026-10-26）**：`wire/rpc/` 18 个面文件、46 个方法；`app/lib`（`wire/` 外）
@@ -79,13 +89,13 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 629 项（25 条规则自检 + 146 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | 639 项（25 条规则自检 + 148 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1495 项 |
+| `cd app && flutter test` | 1528 项 |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + 686 项 |
-| `cd relay && pnpm typecheck && pnpm test` | 类型 + 87 条 |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + 689 项 |
+| `cd relay && pnpm typecheck && pnpm test` | 类型 + 89 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
 
@@ -122,3 +132,8 @@
   现状事实 `docs/subsystems/ui-state.md`；审计/设计仍 `proposed/2026-10-27-*`
 - 2026-10-27 真机复验修正 — `implemented/2026-10-27-connect-landing-single-path.md`（落点单一路径）、
   `implemented/2026-10-27-drawer-watermark-and-search.md`（抽屉 watermark + 搜索接线）
+- 2026-10-28 渲染批次（高亮 / Markdown / 唤醒通知 / 错误码 / 配对生命周期）—
+  `implemented/2026-10-28-code-highlight-with-re-highlight.md`、
+  `implemented/2026-10-28-file-preview-error-codes.md`、
+  `implemented/2026-10-28-atomic-repair-keeps-old-device-row.md`、
+  **`implemented/2026-10-28-turn-trigger-idle-steer.md`**（真机验收抓到的唤醒判据缺陷）

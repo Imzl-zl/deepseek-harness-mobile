@@ -265,4 +265,153 @@ void main() {
     expect(item.systemLabel, '子任务状态更新');
     expect(item.systemHint, isNull);
   });
+
+  // ---------------------------------------------------------------------------
+  // `idleSteer`：真机上子智能体收尾走的是 **next-step**，不是 next-turn
+  // （2026-10-28 真机日志 `session-bc31f325` 的 seq=114/115/116/117/118 与
+  // 120/123/124/125）。判据照 DSH `lib/client.js:9857-9866`：消息落在**本轮第 1 步**、
+  // `next-step` 的 claim 晚于 `turn/start`、`next-turn` 的 claim 早于它、
+  // 那批 claim 里没有人发的消息 —— 这时它唤醒了一轮。
+  // ---------------------------------------------------------------------------
+
+  /// 一批"空闲时被 next-step claim 走"的事件（seq 1..5，与真机同序）。
+  SessionDelta idleSteerBatch({
+    required String kind,
+    required int step,
+    List<Map<String, Object?>> queued = const [
+      {
+        'id': 'm1',
+        'source': {'kind': 'agent-message'},
+      },
+    ],
+  }) => SessionDelta(
+    sid: 's1',
+    transient: const <String, Object?>{},
+    events: [
+      SessionEvent(
+        itemId: 'inbox-1',
+        type: 'agent/inbox/spliced',
+        seq: 1,
+        time: 1,
+        data: {
+          'target': 'next-step',
+          'start': 0,
+          'removedCount': 0,
+          'inserted': queued,
+        },
+      ),
+      const SessionEvent(
+        itemId: 'turn-1',
+        type: 'turn/start',
+        seq: 2,
+        time: 2,
+        data: {'turn': 1},
+      ),
+      const SessionEvent(
+        itemId: 'inbox-2',
+        type: 'agent/inbox/spliced',
+        seq: 3,
+        time: 3,
+        data: {
+          'target': 'next-step',
+          'start': 0,
+          'removedCount': 1,
+          'inserted': <Object?>[],
+        },
+      ),
+      SessionEvent(
+        itemId: 'step-1',
+        type: 'step/start',
+        seq: 4,
+        time: 4,
+        data: {'turn': 1, 'step': step},
+      ),
+      SessionEvent(
+        itemId: 'm1',
+        type: 'user/message',
+        seq: 5,
+        time: 5,
+        data: {
+          'id': 'm1',
+          'role': 'user',
+          'content': [
+            {'type': 'text', 'text': 'Agent 6cebf3b3 sent a message: 统计完成'},
+          ],
+          'source': {'kind': kind, 'form': 'relay'},
+        },
+      ),
+    ],
+  );
+
+  Future<MessageItem> projectBatch(
+    SessionDelta batch, {
+    required void Function(AppModel app) dispose,
+  }) async {
+    final client = _Client();
+    final app = AppModel(client: client);
+    dispose(app);
+    await app.openSession('s1');
+    await Future<void>.delayed(Duration.zero);
+    client.updates.add(batch);
+    await Future<void>.delayed(Duration.zero);
+    return app.items.whereType<MessageItem>().single;
+  }
+
+  test(
+    'idleSteer：next-step 在 turn/start 后被 claim、消息落在第 1 步 → 「收到任务消息」',
+    () async {
+      final item = await projectBatch(
+        idleSteerBatch(kind: 'agent-message', step: 1),
+        dispose: (app) => addTearDown(app.dispose),
+      );
+      expect(item.systemLabel, '收到任务消息');
+      expect(item.systemHint, isNull);
+      expect(item.trigger, isTrue);
+      expect(item.systemIcon, 'paperPlane');
+    },
+  );
+
+  test('idleSteer 不成立：同一条消息落在第 2 步 → 仍是「上下文注入 · agent-message」', () async {
+    final item = await projectBatch(
+      idleSteerBatch(kind: 'agent-message', step: 2),
+      dispose: (app) => addTearDown(app.dispose),
+    );
+    expect(item.systemLabel, '上下文注入');
+    expect(item.systemHint, 'agent-message');
+    expect(item.trigger, isFalse);
+  });
+
+  test('idleSteer 不成立：那批 claim 里有**人**发的消息 → 不算唤醒', () async {
+    final item = await projectBatch(
+      idleSteerBatch(
+        kind: 'agent-message',
+        step: 1,
+        queued: const [
+          {
+            'id': 'h1',
+            'source': {'kind': 'user'},
+          },
+          {
+            'id': 'm1',
+            'source': {'kind': 'agent-message'},
+          },
+        ],
+      ),
+      dispose: (app) => addTearDown(app.dispose),
+    );
+    expect(item.systemLabel, '上下文注入');
+    expect(item.systemHint, 'agent-message');
+    expect(item.trigger, isFalse);
+  });
+
+  test('idleSteer：子智能体收尾（subagent-settled）走同一条 → 「子任务状态更新」', () async {
+    final item = await projectBatch(
+      idleSteerBatch(kind: 'subagent-settled', step: 1),
+      dispose: (app) => addTearDown(app.dispose),
+    );
+    expect(item.systemLabel, '子任务状态更新');
+    expect(item.systemHint, isNull);
+    expect(item.trigger, isTrue);
+    expect(item.systemIcon, 'agentPreset');
+  });
 }
