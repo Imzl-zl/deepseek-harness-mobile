@@ -56,4 +56,17 @@
   `internal` 说清"这个会话没有工作目录"）。
 - **预览只读一页**：默认页由宿主的 `maxLines` / `maxBytes` 定；很长的大文件要按「加载更多」
   逐页读，且每次翻页都是一次请求。
-- **二进制文件**由宿主拒（`workspace-file/not-text`），手机显示那句原话。
+- **只读文本**：宿主对四种"读得懂但打不开"各回一个码，手机按码换文案
+  （`app/lib/model/file_failure.dart`，照桌面
+  `ui-sidebar-documentpreview/src/client/failure-line.ts:24-35` 与 `locales.ts:27-31`）：
+
+  | 码 | 手机显示 |
+  |---|---|
+  | `workspace-file/not-text` | 该格式文件暂时无法预览 |
+  | `workspace-file/too-large` | 单页内容超过上限，无法读取 |
+  | `workspace-file/not-found` | 找不到这个文件 |
+  | `workspace-file/not-regular-file` | 该路径不是普通文件，没有可显示的内容 |
+
+  这四类**不重试**（`disable-and-annotate`，§3.1）。桌面在 `not-text` / `too-large`
+  上还提供"用外部程序打开"；手机没有这条能力，所以只说不能预览。
+  其它码保留 `读取失败：{宿主原文}`（桌面 `error.unavailable` 同一句）。

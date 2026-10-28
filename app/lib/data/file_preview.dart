@@ -16,8 +16,10 @@
 /// - 通知走 [onChange]，`_disposed` 守卫在装配方。
 library;
 
+import '../core/errors.dart' show ErrorCode;
 import '../core/sync_client.dart';
 import '../model/file_diff.dart';
+import '../model/file_failure.dart';
 import '../model/file_open.dart';
 import '../model/workspace_files.dart' show FilePage;
 import '../wire/rpc/changes.dart' as wire;
@@ -32,6 +34,7 @@ class FilePreview {
     required this.repoInfoKnown,
     required this.recordError,
     required this.lastErrorMessage,
+    required this.lastErrorCode,
     required this.onChange,
   });
 
@@ -49,6 +52,10 @@ class FilePreview {
 
   /// 最近一次错误的消息（失败原因的**唯一来源**）。
   final String? Function() lastErrorMessage;
+
+  /// 最近一次错误的**码**：文案按码换（`model/file_failure.dart`），
+  /// 宿主原话只在"认不出的码"时兜底显示。
+  final ErrorCode? Function() lastErrorCode;
 
   final void Function() onChange;
 
@@ -170,7 +177,7 @@ class FilePreview {
     final page = await readPage(next.path);
     _loading = false;
     if (page == null) {
-      _failure = lastErrorMessage() ?? '读取文件失败';
+      _failure = fileFailureText(lastErrorCode(), lastErrorMessage());
     } else {
       _opened = OpenedFile(
         request: next,
@@ -196,7 +203,7 @@ class FilePreview {
     );
     _loading = false;
     if (page == null) {
-      _failure = lastErrorMessage() ?? '读取文件失败';
+      _failure = fileFailureText(lastErrorCode(), lastErrorMessage());
     } else {
       _opened = current.appended(
         text: page.text,

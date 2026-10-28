@@ -1742,6 +1742,9 @@ class AppModel extends ChangeNotifier {
     repoInfoKnown: () => _repoInfoKnown,
     recordError: _recordError,
     lastErrorMessage: () => _lastError?.message,
+    // 文案按**码**换（`model/file_failure.dart`）：四类"读得懂但打不开"的文件
+    // 说中文结论，其余码保留宿主原话 —— 与桌面 `failureLine()` 同一条。
+    lastErrorCode: () => _lastError?.code,
     onChange: () {
       if (!_disposed) notifyListeners();
     },

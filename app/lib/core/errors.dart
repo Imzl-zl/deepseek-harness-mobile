@@ -151,6 +151,36 @@ enum ErrorCode {
   /// agent 预设冲突（`commands.ts:539`）。
   agentPresetConflict('agent-preset/conflict', ClientAction.disableAndAnnotate),
 
+  // ---- 文件预览：读得懂但打不开（**不是连接问题**）----
+  //
+  // 桌面按这四个码换文案与动作（`ui-sidebar-documentpreview/src/client/failure-line.ts:24-56`、
+  // `locales.ts:28-31`），手机照同一套：都是"这一份文件不能这样看"，
+  // 所以是置灰并说明，不是重试。
+
+  /// 不是文本（二进制 / 编码不认识）：`该格式文件暂时无法预览`。
+  workspaceFileNotText(
+    'workspace-file/not-text',
+    ClientAction.disableAndAnnotate,
+  ),
+
+  /// 单页超过宿主上限：`单页内容超过上限，无法读取`。
+  workspaceFileTooLarge(
+    'workspace-file/too-large',
+    ClientAction.disableAndAnnotate,
+  ),
+
+  /// 文件不存在：只说一次，不重试。
+  workspaceFileNotFound(
+    'workspace-file/not-found',
+    ClientAction.disableAndAnnotate,
+  ),
+
+  /// 不是普通文件（目录 / 设备 / 管道）：没有可显示的内容。
+  workspaceFileNotRegularFile(
+    'workspace-file/not-regular-file',
+    ClientAction.disableAndAnnotate,
+  ),
+
   /// 我们发的参数宿主不认（`commands.ts:107` 等）= **我们的缺陷**，
   /// 要响亮失败并记录，绝不是让用户重试。
   gatewayBadRequest('gateway/bad-request', ClientAction.reportDefect),

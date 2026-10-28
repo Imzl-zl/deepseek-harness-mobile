@@ -176,6 +176,10 @@ type Frame =
 | `session/conflict` | 预设等冲突 | 置灰并注明 |
 | `workspace/not-found` | 新建会话时 workspace 不存在 | 置灰并注明 |
 | `workspace/session-active` | 归档不被接受:会话还有在跑的活动(轮次 / 子智能体 / 后台任务) | **弹"停止并归档"**,带 `stopActivity` 重发;不是报错了事 |
+| `workspace-file/not-text` | 这份文件不是文本(二进制 / 编码不认识),不能按文本预览 | 置灰并注明「该格式文件暂时无法预览」,**不重试** |
+| `workspace-file/too-large` | 单页内容超过宿主上限 | 置灰并注明「单页内容超过上限,无法读取」,**不重试** |
+| `workspace-file/not-found` | 文件不存在 | 置灰并注明「找不到这个文件」,**不重试** |
+| `workspace-file/not-regular-file` | 路径不是普通文件(目录 / 设备 / 管道) | 置灰并注明「该路径不是普通文件,没有可显示的内容」,**不重试** |
 | `agent-preset/conflict` | agent 预设冲突 | 置灰并注明 |
 | `gateway/bad-request` | **我们发的参数宿主不认 = 我们的缺陷** | 响亮失败并记录,**不让用户重试** |
 | `gateway/cancelled` | 调用被中止 | 重连一次 |

@@ -38,7 +38,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 
-import { ProtocolError } from '../protocol/errors.js'
+import { asProtocolError, ProtocolError } from '../protocol/errors.js'
 
 /** typert 注册表里本层用到的部分（`ctx.typert`，`types.ts:947-950`）。 */
 interface TypertRegistry {
@@ -154,24 +154,31 @@ export function createFilesFace(ctx: Context, deps: FilesDeps): FilesFace {
   }
 
   return {
-    async list(sid, path) {
-      const raw = await serviceOf().list(
-        (await scopeOf(sid)) as never,
-        path,
-        AbortSignal.timeout(FILE_TIMEOUT_MS),
-      )
-      return listingOf(raw, path)
-    },
+    // **宿主的拒绝要抬成协议错误**：`workspace-file/not-text` / `-too-large` /
+    // `-not-found` / `-not-regular-file` 都在 §3.1 的封闭表里（桌面按它们换文案，
+    // `ui-sidebar-documentpreview/src/client/failure-line.ts:24-35`）。
+    // 不抬的话 `protocol/methods.ts:361-370` 会把它们归成 `internal`，
+    // 手机只剩宿主的英文原文可显示 —— 真机上就是「读取失败：<english>」。
+    list: (sid, path) =>
+      asProtocolError(async () => {
+        const raw = await serviceOf().list(
+          (await scopeOf(sid)) as never,
+          path,
+          AbortSignal.timeout(FILE_TIMEOUT_MS),
+        )
+        return listingOf(raw, path)
+      }),
 
-    async read(sid, path, range) {
-      const raw = await serviceOf().read(
-        (await scopeOf(sid)) as never,
-        path,
-        { ...(range.offset === undefined ? {} : { offset: range.offset }), ...(range.limit === undefined ? {} : { limit: range.limit }) },
-        AbortSignal.timeout(FILE_TIMEOUT_MS),
-      )
-      return pageOf(raw)
-    },
+    read: (sid, path, range) =>
+      asProtocolError(async () => {
+        const raw = await serviceOf().read(
+          (await scopeOf(sid)) as never,
+          path,
+          { ...(range.offset === undefined ? {} : { offset: range.offset }), ...(range.limit === undefined ? {} : { limit: range.limit }) },
+          AbortSignal.timeout(FILE_TIMEOUT_MS),
+        )
+        return pageOf(raw)
+      }),
   }
 }
 

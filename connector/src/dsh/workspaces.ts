@@ -27,7 +27,7 @@ import type {
   WorkspaceInsertSessionBeforeRequest,
 } from '@deepseek-ai/dsh-api-workspace-controller'
 
-import { isErrorCode, ProtocolError } from '../protocol/errors.js'
+import { asProtocolError } from '../protocol/errors.js'
 
 /** DSH 的会话 id 类型（`SessionId` 是带品牌的字符串，跨界要显式转一次）。 */
 type DshSessionId = WorkspaceArchiveSessionRequest['sessionId']
@@ -136,51 +136,6 @@ export interface WorkspacesPort {
  * 显示"没有工作区"，而真因是读取失败。
  */
 const BASELINE_TIMEOUT_MS = 10_000
-
-/**
- * 宿主错误对象上的 `code`。
- *
- * `RemoteError` 带它；这里只**结构化地读**（`dsh/jobs.ts:186-190` 同一条读法），
- * 不依赖宿主的类型 —— 适配层的测试替身只需抛一个带 `code` 的普通对象。
- */
-function errorCodeOf(error: unknown): string | undefined {
-  const code = (error as { code?: unknown } | null)?.code
-  return typeof code === 'string' ? code : undefined
-}
-
-/**
- * 把宿主的**封闭错误码**（`protocol/errors.ts` 的 `ERROR_TABLE` 里有的那些）
- * 抬成协议错误，其余原样抛。
- *
- * ## 为什么需要这一层
- *
- * `protocol/methods.ts` 的分发器只保留 `ProtocolError` 自己的码，其余一律归
- * `internal`（`:265-275`）。而 DSH 的工作区写方法抛的是**宿主自己的**错误对象：
- * 归档一个还在跑的会话是 `workspace/session-active`（`commands.ts:160-167`），
- * 跨工作区搬会话是 `workspace/move-invalid`（`:137-149`）。不抬一遍，前者那张
- * 早已写进 `ERROR_TABLE` 的行就是死代码，手机只会看到 `internal`
- * ——§3.1 给 `internal` 的客户端动作是 `log-and-retry`，而这两件事都不是重试能好的。
- *
- * ## 为什么不是"把所有宿主码都透传"
- *
- * 手机的码集是**封闭**的（§3.1）。表里没有的码（如 `workspace/move-invalid`）
- * 透传过去就是发一个手机不认识的码。所以判据是 `isErrorCode`：表里有的原样过线，
- * 没有的按统一规则降成 `internal`，**原文进 message**（不丢信息，不伪装成功）。
- */
-async function asProtocolError<T>(work: () => Promise<T>): Promise<T> {
-  try {
-    return await work()
-  } catch (error) {
-    const code = errorCodeOf(error)
-    if (code !== undefined && isErrorCode(code)) {
-      throw new ProtocolError(
-        code,
-        error instanceof Error ? error.message : String(error),
-      )
-    }
-    throw error
-  }
-}
 
 export function createWorkspacesPort(
   controller: WorkspaceController,

@@ -60,6 +60,14 @@ export const ERROR_TABLE = {
   'workspace/session-active': 'disable-and-annotate',
   'gateway/cancelled': 'reconnect-once', // 调用被中止，等价于连接层的事
   'gateway/internal': 'backoff-retry', // 宿主内部错，稍后
+  // 文件预览(ui-sidebar-documentpreview/src/client/failure-line.ts:24-33)：
+  // 四个码都是"这一份文件不能这样看"，不是网络问题 —— 置灰并让界面说格式/大小，
+  // 绝不重试。不放进这张表的话，宿主码会被 ProtocolError 归成 `internal`，
+  // 手机只能显示宿主的英文原文（`「读取失败：<english>」`）。
+  'workspace-file/not-text': 'disable-and-annotate',
+  'workspace-file/too-large': 'disable-and-annotate',
+  'workspace-file/not-found': 'disable-and-annotate',
+  'workspace-file/not-regular-file': 'disable-and-annotate',
   // 设置与凭据(settings-controller/src/index.ts:267、credentials.ts)
   'settings/rejected': 'disable-and-annotate',
   'settings/conflict': 'refresh-settings', // expectedRevision 过期，重新 describe 再改
@@ -98,6 +106,45 @@ export function isErrorCode(value: unknown): value is ErrorCode {
 
 export function clientActionOf(code: ErrorCode): ClientAction {
   return ERROR_TABLE[code]
+}
+
+/** 宿主错误对象上的 `code`（`RemoteError` 带它；这里只结构化地读，不依赖它的类型）。 */
+export function errorCodeOf(error: unknown): string | undefined {
+  const code = (error as { code?: unknown } | null)?.code
+  return typeof code === 'string' ? code : undefined
+}
+
+/**
+ * 把宿主的**封闭错误码**（[ERROR_TABLE] 里有的那些）抬成协议错误，其余原样抛。
+ *
+ * ## 为什么必须有这一层
+ *
+ * `protocol/methods.ts` 的分发器只保留 `ProtocolError` 自己的码，其余一律归
+ * `internal`（`:361-370`）。而 DSH 抛的是**宿主自己的**错误对象：归档一个还在跑的
+ * 会话是 `workspace/session-active`，读二进制文件是 `workspace-file/not-text`。
+ * 不抬一遍，`ERROR_TABLE` 里那些行就是死代码，手机只会看到 `internal` +
+ * 宿主的英文原文（§3.1 给 `internal` 的动作是 `log-and-retry`，而"文件不是文本"
+ * 重试一万次也不会变）。
+ *
+ * ## 为什么不是"把所有宿主码都透传"
+ *
+ * 手机的码集是**封闭**的（§3.1）。表里没有的码透传过去就是发一个手机不认识的码。
+ * 所以判据是 [isErrorCode]：表里有的原样过线，没有的按统一规则降成 `internal`，
+ * **原文进 message**（不丢信息，不伪装成功）。
+ */
+export async function asProtocolError<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work()
+  } catch (error) {
+    const code = errorCodeOf(error)
+    if (code !== undefined && isErrorCode(code)) {
+      throw new ProtocolError(
+        code,
+        error instanceof Error ? error.message : String(error),
+      )
+    }
+    throw error
+  }
 }
 
 /**
