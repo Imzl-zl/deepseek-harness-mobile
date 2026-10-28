@@ -701,6 +701,16 @@ class ChatPageState extends State<ChatPage> {
     return ListenableBuilder(
       listenable: widget.app,
       builder: (context, _) {
+        // **落点未定时画加载态，不画"没有会话"那一屏**。
+        //
+        // 刚连上时 `currentSid` 还是 null，而落点要等 `session.list` 回来；
+        // 不拦就变成"列表 → hero → 会话"连续跳（真机反馈）。
+        // 未配对时不拦：那时"没有会话"就是事实，加载态反而挡住配对入口。
+        if (widget.paired &&
+            widget.app.currentSid == null &&
+            !widget.app.landingDone) {
+          return const _LandingLoading();
+        }
         return Stack(
           children: [
             // 主界面（聊天页）。两个抽屉都是**原生 Drawer**（在 Scaffold 里）：
@@ -4849,6 +4859,44 @@ class _TrajectoryTab extends StatelessWidget {
       onTapSegment: onTapSegment,
       truncationLabel: trajectoryTruncationLabel(trajectory),
       timelineMissing: trajectory == null,
+    );
+  }
+}
+
+/// 连接后、落点前的唯一加载态。
+///
+/// 只占"从连上到落到某一屏"这段窗口：文案说清在等什么（读会话清单），
+/// 形状与启动时的转圈同一档，不给它配按钮（没有可做的决定）。
+class _LandingLoading extends StatelessWidget {
+  const _LandingLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return Scaffold(
+      backgroundColor: c.bgBase,
+      body: SafeArea(
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: c.labelSecondary,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                '正在连接电脑…',
+                style: TextStyle(fontSize: 13, color: c.labelSecondary),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

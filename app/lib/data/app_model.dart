@@ -2192,7 +2192,7 @@ class AppModel extends ChangeNotifier {
     // 收帧路径上的回调不该被一个网络往返挡住（§2.2 的状态迁移通知是同步派发的）。
     if (state == ConnectionState.serving) {
       // 拉完列表再落会话：落点要用 `updatedAt` / `running`，那是列表里的字段。
-      unawaited(refreshSessions().then((_) => _landOnSession()));
+      unawaited(landAfterConnect());
       // **一进服务态就问一次"你还在哪些地址"**。
       //
       // 这是"局域网直连"能自愈的唯一时机：连接器只在**连上之后**才说得出自己
@@ -2573,8 +2573,49 @@ class AppModel extends ChangeNotifier {
     return best;
   }
 
+  /// **有没有在途的落点**（`true` = 还在等清单/落点，界面画加载态）。
+  ///
+  /// 默认 `true`（没有在途落点）：没连电脑、测试里的空模型都按原样画，
+  /// 只有真的"进了服务态且还没落过"那一段才是 `false`。
+  ///
+  /// 不这么定的话，所有"没会话"的正常场景（未配对、列表空）都会被加载态挡住。
+  /// 真机反馈与判据见 `app/test/landing_loading_test.dart` 的文件头。
+  bool get landingDone => _landingDone;
+  bool _landingDone = true;
+
+  /// 是否已经落过一次（只在**第一次**落点时给界面加载态；重连不再闪）。
+  bool _everLanded = false;
+
+  /// 进服务态后的那一串：拉清单 → 落点。
+  ///
+  /// 界面在 `landingDone == false` 的这段窗口画加载态 —— 那正是"清单还没回来、
+  /// 却已经画出没有会话那一屏"的来源（真机"连续跳好几个页面"）。
+  Future<void> landAfterConnect() async {
+    if (!_everLanded && _currentSid == null) {
+      _landingDone = false;
+      if (!_disposed) notifyListeners();
+    }
+    await refreshSessions();
+    await landOnSession();
+  }
+
   /// 连上之后落到 [landingSessionOf] 挑出来的那个会话（已经有会话就不动）。
-  Future<void> _landOnSession() async {
+  ///
+  /// **任何出口都要置 [landingDone]**（`finally`）：清单为空 / 只有子会话也是
+  /// 一次"尝试过了"—— 不置的话界面会一直转圈。
+  Future<void> landOnSession() async {
+    try {
+      await _landOnSessionBody();
+    } finally {
+      if (!_landingDone) {
+        _landingDone = true;
+        _everLanded = true;
+        if (!_disposed) notifyListeners();
+      }
+    }
+  }
+
+  Future<void> _landOnSessionBody() async {
     if (_disposed || _currentSid != null) return;
     // 唯一缝优先（`host.last_session`）；没装配缝时退到旧键（单测）。
     final remembered = _uiState != null
