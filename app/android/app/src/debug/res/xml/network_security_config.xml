@@ -9,12 +9,13 @@
   而 Android 9（API 28）起**默认禁止明文 HTTP** —— 于是那个请求在应用层就被拒，
   表现是"配对页一直转圈"，而中转侧**一条日志都没有**（请求根本没发出去）。
 
-  ## 为什么不是 `android:usesCleartextTraffic="true"`
+  ## 为什么 debug 里连局域网地址也要放行
 
-  那个开关是**全局**的：它把整个 App 的明文流量都放开，包括将来真实的
-  `wss://` 之外的一切。而这里需要的只是"本机回环地址可以走明文" ——
-  用 network security config 能把范围钉死在 `localhost` / `127.0.0.1` / `10.0.2.2`
-  （模拟器映射宿主机的地址），其余一律仍然要求 TLS。
+  二维码里的中转地址是**电脑上报的局域网地址**（`ws://192.168.x.x:8787`）。
+  network security config 只认**具体主机名**，写不出 `192.168.0.0/16` 这种网段 ——
+  只列回环地址便只覆盖 `adb reverse` 那一条，走 WiFi 的直连会被 Android 直接拦掉：
+  表现是 `SocketException … errno = 103`，而中转侧**一条日志都没有**（请求没发出去）。
+  2026-10-28 真机上的"扫了没反应"就是这条。
 
   ## 为什么只放 debug
 
@@ -22,14 +23,9 @@
   所以这份配置只挂在 `src/debug/` 的 manifest 上（release 不合并它）。
 -->
 <network-security-config>
-  <!-- 默认仍然要求 TLS：这一条是**基线**，下面的例外才是有意放松的部分。 -->
-  <base-config cleartextTrafficPermitted="false" />
-
-  <domain-config cleartextTrafficPermitted="true">
-    <!-- 本机中转：`adb reverse tcp:8787 tcp:8787` 把手机的 8787 接到电脑。 -->
-    <domain includeSubdomains="false">127.0.0.1</domain>
-    <domain includeSubdomains="false">localhost</domain>
-    <!-- 安卓模拟器里宿主机的固定地址（真机用 adb reverse，不走这个）。 -->
-    <domain includeSubdomains="false">10.0.2.2</domain>
-  </domain-config>
+  <!--
+    **debug 构建整体放开明文**：局域网网段写不进来（见上），而联调就是走
+    `http://<LAN IP>:8787` + `ws://<LAN IP>:8787`。release 不含这份文件。
+  -->
+  <base-config cleartextTrafficPermitted="true" />
 </network-security-config>

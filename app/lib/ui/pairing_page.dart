@@ -254,6 +254,12 @@ class _PairingPageState extends State<PairingPage> {
       _showError('${error.message}（${error.code.wire}）');
     } on TransportException catch (error) {
       _showError('${error.message}（连不上中转）');
+    } catch (error) {
+      // **兜底必须说出来**：换票用的是 `http.Client`，它抛的是 `SocketException` /
+      // `TimeoutException` 这类**既不是** ProtocolException **也不是** TransportException
+      // 的东西（Android 的明文拦截就是这种：`SocketException … errno = 103`）。
+      // 少了这一支，用户看到的是"点了没反应"——今天真机上就是这么白等了十几分钟。
+      _showError('配对没走通：$error');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -297,6 +303,10 @@ class _PairingPageState extends State<PairingPage> {
       if (mounted) setState(() => _attempt = null);
     } on TransportException catch (error) {
       _showError('${error.message}（配对连接断了，请到电脑上核对这台设备是否已登记）');
+      if (mounted) setState(() => _attempt = null);
+    } catch (error) {
+      // 同 `_connect`：任何别的异常也必须出现在用户眼前（结果仍然"待确认"）。
+      _showError('提交没走通：$error（去电脑上核对这台设备是否已登记）');
       if (mounted) setState(() => _attempt = null);
     } finally {
       if (mounted) setState(() => _busy = false);
