@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "DSH 插件:手机端远程通道的电脑侧桥接",
-  "packageManager": "pnpm@11.13.0",
+  "packageManager": "pnpm@11.13.1",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
   "exports": {
