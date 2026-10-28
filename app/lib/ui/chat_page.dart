@@ -4668,15 +4668,21 @@ class _OpenedFileBody extends StatelessWidget {
                           color: c.layer1,
                           borderRadius: BorderRadius.circular(DshRadius.md),
                         ),
-                        child: SelectableText(
-                          opened.text,
-                          style: TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 12,
-                            height: 19 / 12,
-                            color: c.labelSecondary,
-                          ),
-                        ),
+                        // **Markdown 按 Markdown 渲染**（桌面
+                        // `ui-sidebar-documentpreview/src/client/markdown/index.ts:17`
+                        // 把 md/markdown 交给 Markdown viewer）；其余仍按代码字体
+                        // —— 它们是给模型看的原文，换字体只会更难扫。
+                        child: isMarkdownPath(opened.request.path)
+                            ? DshMarkdown(opened.text)
+                            : SelectableText(
+                                opened.text,
+                                style: TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 12,
+                                  height: 19 / 12,
+                                  color: c.labelSecondary,
+                                ),
+                              ),
                       ),
                       const SizedBox(height: 10),
                       if (opened.lines > 0)

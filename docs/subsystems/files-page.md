@@ -70,3 +70,9 @@
   这四类**不重试**（`disable-and-annotate`，§3.1）。桌面在 `not-text` / `too-large`
   上还提供"用外部程序打开"；手机没有这条能力，所以只说不能预览。
   其它码保留 `读取失败：{宿主原文}`（桌面 `error.unavailable` 同一句）。
+- **按后缀选渲染器**（与桌面 viewer 注册表同一张表）：`.md` / `.markdown` 走 `DshMarkdown`
+  （`app/lib/model/file_open.dart` 的 `isMarkdownPath`，照 `markdown/index.ts:17`），
+  其余按等宽代码字体（`text/index.ts:16` 的纯文本兜底）。
+  **代码高亮未做**（要引第三方语法库）；图片 / PDF / Excel / Office 需要 `file.readBytes`,
+  它不在能力位里（`connector/src/dsh/files.ts:14`、`caps.ts:146`：原样字节撞单帧预算），
+  属于协议扩展，未做。

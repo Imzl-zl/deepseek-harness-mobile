@@ -40,6 +40,17 @@ String fileNameOf(String path) {
   return cut == -1 ? path : path.substring(cut + 1);
 }
 
+/// 这个路径按 **Markdown** 渲染吗（桌面 `markdown/index.ts:17` 的
+/// `extensions: ['md', 'markdown']`）。
+///
+/// 判据是**后缀**（与桌面 viewer 注册表同一张表），不是内容嗅探：
+/// 一个 `.md` 里写满 HTML 也仍按 Markdown 渲染，反过来 `.txt` 里的 Markdown
+/// 仍按纯文本显示 —— 桌面就是这样分的。
+bool isMarkdownPath(String path) {
+  final name = fileNameOf(path).toLowerCase();
+  return name.endsWith('.md') || name.endsWith('.markdown');
+}
+
 /// 打开这个文件想看到什么。
 enum FileOpenMode {
   /// 文件内容（`file.read`，当前已接）。
