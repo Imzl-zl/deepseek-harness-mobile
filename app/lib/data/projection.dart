@@ -68,6 +68,28 @@ const String kContextInjectionLabel = '上下文注入';
 String? contextSourceKind(Object? data) =>
     stringField(fieldOf(data, 'source'), 'kind');
 
+/// 「唤醒新一轮的非人消息」的标题（DSH `turn-trigger` 的一行标题）。
+///
+/// 逐条照 `ui-chat/src/client/chat/turn-trigger.ts:29-70` 的 kind → locale key
+/// 与 `locale.ts:53-63` 的 zh 值。**这是"谁触发了这一轮"**，与
+/// [kContextInjectionLabel]（"有东西被注入进上下文"）是两种节点：
+///
+/// - 唤醒一轮（`inbox-next-turn` 的 claim）→ `turn-trigger`，用这张表；
+/// - 只是注入（运行时上下文 / 技能目录…）→ `context`，用「上下文注入」。
+///
+/// 表外 kind 走 DSH 的默认（`message.trigger.request` = 「收到执行请求」）。
+String turnTriggerTitle(String? kind) => switch (kind) {
+  'goal' => '继续执行目标',
+  'agent-message' => '收到任务消息',
+  'team-message' => '收到团队消息',
+  'subagent-settled' => '子任务状态更新',
+  'webhook' => '收到外部事件',
+  'schedule' => '自动化任务',
+  'tool-jobs' => '后台任务状态更新',
+  'cordis-host-runner' => '插件状态更新',
+  _ => '收到执行请求',
+};
+
 /// 工具名缺失时的占位（DSH 同处是空串 `''`；空串在卡片上什么也不说，
 /// 而"这是个工具但不知道是哪个"本身是信息，所以给一个明说的占位）。
 const String kUnknownToolName = '工具';
@@ -157,6 +179,11 @@ ChatProjection projectEvent({
   required Object? data,
   int time = 0,
   bool steering = false,
+
+  /// 这条**非人**消息唤醒了新一轮（DSH `turn-trigger` 节点）。
+  /// 判据在 `AppModel` 的收件箱追踪（`inbox-next-turn` 的 claim）——
+  /// 投影层是纯函数，不认识跨事件状态。
+  bool waking = false,
   ChatItem? previous,
   TurnStats? turnStats,
 
@@ -229,17 +256,21 @@ ChatProjection projectEvent({
         // 系统 / 上下文注入行的**标题**（DSH 的 `system-prompt` 与 `context`
         // 两个节点各有一个标题行，见 `register-node-renderers.ts:45,49`）。
         // 用户与助手消息没有它（它们有头像与名字）。
+        // **唤醒新一轮的通知有自己的标题**（DSH `turn-trigger`）：
+        // 「子任务状态更新」/「收到任务消息」…，而不是笼统的「上下文注入」。
         systemLabel: type == 'system/message'
             ? kSystemPromptLabel
             : type == 'developer/message'
             ? kContextInjectionLabel
             : isContext
-            ? kContextInjectionLabel
+            ? (waking ? turnTriggerTitle(contextKind) : kContextInjectionLabel)
             : null,
         // 上下文行的**生产者**（`runtime-context` / `skill-catalog` / …），
         // 渲染在标题后面那个分隔点之后（DSH `ContextInjectionRow.tsx:63-69`）。
+        // **唤醒通知没有这一段**：DSH 的 `TurnTriggerNodeView` 只画
+        // 标题 + 时间 + 箭头（`TurnTriggerNodeView.tsx:39-42`）。
         systemHint: isContext
-            ? contextProducerLabel(data)
+            ? (waking ? null : contextProducerLabel(data))
             : type == 'developer/message'
             ? contextProducerLabel(data)
             : null,

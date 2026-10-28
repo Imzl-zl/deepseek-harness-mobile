@@ -113,6 +113,23 @@ DSH 的整轮控制行在**轮次开头**（`turn.start.seq − 0.1`，
   只剩提示 + 回答 + `第 5 轮 ⌄`）与 `n2-expanded.png`（展开：`run_code` 卡回到提示与回答之间）；
   设置页 `n3-settings-row.png`（「工作步骤收起时机 · 回答结束后」）。
 
+## 6.1 非人消息：上下文注入 vs 唤醒通知（2026-10-28 对齐 DSH）
+
+`user/message` 不一定"人说的"：`data.source.kind !== 'user'` 的都是**注入**
+（运行时上下文 / 技能目录 / 子代理完成通知…）。桌面拆成两种节点，手机照同一条：
+
+| DSH 节点 | 判据 | 标题 |
+|---|---|---|
+| `context` | 注入，但**不是**它唤醒这一轮 | 「上下文注入」+ 生产者 kind（`runtime-context` …） |
+| `turn-trigger` | 注入，且被 `inbox-next-turn` claim 走 | 按 `source.kind` 换词：`subagent-settled` =「子任务状态更新」、`agent-message` =「收到任务消息」、`tool-jobs` =「后台任务状态更新」…（表外 →「收到执行请求」） |
+
+出处：分类 `ui-chat/src/client/conversation-nodes/message.ts:96-111`；标题表
+`chat/turn-trigger.ts:29-70` + `locale.ts:53-62`；形状
+`TurnTriggerNodeView.tsx:39-42`（只有标题 + 时间 + 箭头，**没有**「· 生产者」尾巴）。
+
+分类只在 `app/lib/data/projection.dart`；"谁被 claim"只在 `AppModel` 的
+`_InboxTracker`（`claimIfWaking` / `claimIfSteering`）—— 投影层是纯函数。
+
 ## 7. 已知边界
 
 - **历史窗口不全**时，那一轮的 `turn/start` 可能没加载：该组仍是未归属、不折（如实降级，

@@ -3469,6 +3469,14 @@ class AppModel extends ChangeNotifier {
             steering:
                 event.type == 'user/message' &&
                 tracker.claimIfSteering(event.data),
+            // **唤醒新一轮的非人消息**：DSH 按 `inbox-next-turn` 的 claim 认它
+            // （`conversation-nodes/message.ts:96-111`），判成 `turn-trigger` 节点，
+            // 标题按 `source.kind` 换词（「子任务状态更新」/「收到任务消息」…，
+            // `chat/turn-trigger.ts:29-70` + `locale.ts:53-62`）。
+            // 不认这条，界面上就只剩「上下文注入」——用户看不到"是谁触发了这一轮"。
+            waking:
+                event.type == 'user/message' &&
+                tracker.claimIfWaking(event.data),
             // **upsert 的前一个值**：`tool/result` 要靠它把工具名与参数
             // 从 `tool/call` 继承过来（DSH `rootResult(match, previous)`，
             // 真日志里结果消息不带名字）。投影层自己是纯函数，所以
@@ -3824,6 +3832,10 @@ class _InboxTracker {
 
   final Set<String> _claimedNextStep = <String>{};
 
+  /// 从 **next-turn** 被 claim 掉的 id：随后到达的非人消息就是**唤醒该轮**的那条
+  /// （DSH `conversation-nodes/message.ts:97,110` 的 `inbox-next-turn.currentClaimed`）。
+  final Set<String> _claimedNextTurn = <String>{};
+
   /// 用投影里的当前收件箱播种（恢复/打开会话时调一次）。
   void seed(Map<String, Object?> inbox) {
     for (final target in const ['next-turn', 'next-step']) {
@@ -3860,10 +3872,27 @@ class _InboxTracker {
     // 插入的 id 不再是被 claim 的候选。
     for (final id in inserted) {
       _claimedNextStep.remove(id);
+      _claimedNextTurn.remove(id);
     }
-    // **只有从 next-step 被 claim 掉的才是插话候选**；取消的 splice 不算。
-    if (target != 'next-step' || data['outcome'] == 'canceled') return;
-    _claimedNextStep.addAll(removed);
+    // 取消的 splice 不算 claim（消息又回到队列里）。
+    if (data['outcome'] == 'canceled') return;
+    // **只有从 next-step 被 claim 掉的才是插话候选**。
+    if (target == 'next-step') _claimedNextStep.addAll(removed);
+    // 从 next-turn 被 claim 掉的：这条非人消息**唤醒了新一轮**（turn-trigger）。
+    if (target == 'next-turn') _claimedNextTurn.addAll(removed);
+  }
+
+  /// 一条**非人**的 `user/message` 是不是唤醒了新一轮（消费掉那个候选）。
+  ///
+  /// 判据照 DSH：`source.kind !== 'user'` 且 id 在 `next-turn` 的 claim 里
+  /// （`conversation-nodes/message.ts:96-111`）。
+  bool claimIfWaking(Object? data) {
+    if (data is! Map) return false;
+    final id = data['id'];
+    if (id is! String || id.isEmpty) return false;
+    if (!_claimedNextTurn.remove(id)) return false;
+    final source = data['source'];
+    return source is Map && source['kind'] != 'user';
   }
 
   /// 一条 `user/message` 是不是插话（**会消费掉那个候选**，与 DSH 的 delete 同义）。
