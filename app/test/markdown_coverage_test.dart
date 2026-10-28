@@ -105,8 +105,10 @@ void main() {
     // `tests/markdown.client.spec.tsx:281` 的 "a growing unclosed fence
     // extends highlighting"）。所以"途中显示成代码块"不是缺陷；
     // 要证的是**围栏闭合那一帧形态不变**（不变就不会抖）。
-    const open = '前言\n```dart\nvoid main() {}';
-    const closed = '前言\n```dart\nvoid main() {}\n```';
+    // **用未注册高亮的语言**（`toml`）：这一组测的是"未闭合围栏的形状不抖"，
+    // 与高亮无关；用 `dart` 会走 `SelectableText.rich` 分支，把正文断言搅进来。
+    const open = '前言\n```toml\nkey = 1';
+    const closed = '前言\n```toml\nkey = 1\n```';
 
     /// 只数**我们自己的代码正文**（`SelectableText` 的 data 分支）；
     /// 段落是 `SelectableText.rich`（textSpan 分支），不算。
@@ -119,7 +121,7 @@ void main() {
     testWidgets('未闭合围栏：一块代码块 + 前置段落仍在', (tester) async {
       await pumpMarkdown(tester, open);
       expect(find.text('代码块'), findsOneWidget, reason: 'banner 要在');
-      expect(codeBodies(tester), ['void main() {}'], reason: '围栏内容进代码块');
+      expect(codeBodies(tester), ['key = 1'], reason: '围栏内容进代码块');
       expect(rendered(tester, '前言'), isTrue, reason: '前置段落不该被吞进代码块');
     });
 

@@ -72,6 +72,7 @@ import 'connection_summary_block.dart';
 import 'conversation_hero.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_brand.dart';
+import 'dsh_code_highlight.dart';
 import 'dsh_composer.dart';
 import 'dsh_diff.dart';
 import 'dsh_markdown.dart';
@@ -4674,15 +4675,7 @@ class _OpenedFileBody extends StatelessWidget {
                         // —— 它们是给模型看的原文，换字体只会更难扫。
                         child: isMarkdownPath(opened.request.path)
                             ? DshMarkdown(opened.text)
-                            : SelectableText(
-                                opened.text,
-                                style: TextStyle(
-                                  fontFamily: 'monospace',
-                                  fontSize: 12,
-                                  height: 19 / 12,
-                                  color: c.labelSecondary,
-                                ),
-                              ),
+                            : _openedCodeBody(context, opened),
                       ),
                       const SizedBox(height: 10),
                       if (opened.lines > 0)
@@ -4704,6 +4697,27 @@ class _OpenedFileBody extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  /// 文本 / 代码正文：**认得出的后缀就上语法高亮**（`dsh_code_highlight.dart`），
+  /// 认不出就按等宽纯文本 —— 与 Markdown 那档同一条原则：能做的本地做，不做假。
+  Widget _openedCodeBody(BuildContext context, OpenedFile opened) {
+    final c = context.dshColors;
+    final style = TextStyle(
+      fontFamily: 'monospace',
+      fontSize: 12,
+      height: 19 / 12,
+      color: c.labelSecondary,
+    );
+    final span = highlightCode(
+      opened.text,
+      languageForPath(opened.request.path),
+      base: style,
+      dark: Theme.of(context).brightness == Brightness.dark,
+    );
+    return span == null
+        ? SelectableText(opened.text, style: style)
+        : SelectableText.rich(span);
   }
 
   /// 逐行差异（`file.diff`）的五种结局，文案与桌面同一份词典

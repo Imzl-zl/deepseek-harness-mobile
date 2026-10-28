@@ -82,6 +82,7 @@ dependencies:
   # 契约 §2 的凭据都走**头**（`Authorization: Bearer`）与请求体，不走 URL ——
   # 这一条与 WebSocket 那侧同一个理由（URL 会进日志、进代理记录）。
   http: ^1.6.0
+  re_highlight: ^0.0.3
 
 dev_dependencies:
   flutter_test:

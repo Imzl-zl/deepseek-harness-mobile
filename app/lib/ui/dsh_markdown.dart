@@ -42,6 +42,7 @@ import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 import '../theme/dsh_type.dart';
+import 'dsh_code_highlight.dart';
 
 /// 把**常见行内 HTML** 归一成等价的 Markdown 标记。
 ///
@@ -398,7 +399,7 @@ const String _codeBlockLabel = '代码块';
 /// 与 DSH 对一个"它不高亮的语言"（比如 ```` ```rust ````）的表现**完全同形**。
 /// 接上高亮后只填这张表，判断处不用改（DSH 支持的是 ts / bash / json 三种，
 /// `markdown/highlight.ts:42`）。
-const Set<String> _highlightedLanguages = <String>{};
+// 认识的语法 id 在 `dsh_code_highlight.dart` 一处定义（语言表只有一份）。
 
 /// `pre` → DSH 风格的代码块。
 ///
@@ -533,13 +534,9 @@ class _DshCodeBlockState extends State<_DshCodeBlock> {
   }
 
   /// 头部左侧那句话：支持高亮就报语言，否则报"代码块"（见 [_codeBlockLabel]）。
-  String get _languageLabel {
-    final language = widget.language;
-    if (language != null && _highlightedLanguages.contains(language)) {
-      return language;
-    }
-    return _codeBlockLabel;
-  }
+  String get _languageLabel => isHighlightedLanguage(widget.language)
+      ? widget.language!
+      : _codeBlockLabel;
 
   /// 复制正文。**成功后才切成"复制成功"** —— DSH 同款（`CodeBlock.tsx:165-169`）。
   Future<void> _copy() async {
@@ -560,18 +557,26 @@ class _DshCodeBlockState extends State<_DshCodeBlock> {
     // **换行与否由布局决定，不是 `softWrap`**：`SelectableText` 没有这个参数。
     // 自动换行时它拿到的是有界宽度（照常折行）；关掉换行时它被放进横向滚动区，
     // 宽度约束是无界的 —— 于是整块按内在宽度排成一行，横向滚动看。
-    final body = SelectableText(
-      widget.code,
-      style: DshTheme.mono.copyWith(
-        // DSH 的代码正文是 `--dsw-font-markdown-code-block` = **11/19**
-        // （`ui-theme/src/styles/gradient-shadow-text.css:170`）。
-        // **有意偏离**：手机上一行代码 11px 太小，这里用 12/18
-        // （比 DSH 大一档、行高略紧），与正文 14/24 的比例仍接近 DSH。
-        fontSize: 12,
-        height: 1.5,
-        color: c.labelPrimary,
-      ),
+    final codeStyle = DshTheme.mono.copyWith(
+      // DSH 的代码正文是 `--dsw-font-markdown-code-block` = **11/19**
+      // （`ui-theme/src/styles/gradient-shadow-text.css:170`）。
+      // **有意偏离**：手机上一行代码 11px 太小，这里用 12/18
+      // （比 DSH 大一档、行高略紧），与正文 14/24 的比例仍接近 DSH。
+      fontSize: 12,
+      height: 1.5,
+      color: c.labelPrimary,
     );
+    // **高亮只覆颜色**，字号/行高/字体仍用上面这一份 —— 认不出语言时退回纯文本，
+    // 两种形态的排版逐像素一致（`dsh_code_highlight.dart`）。
+    final highlighted = highlightCode(
+      widget.code,
+      widget.language,
+      base: codeStyle,
+      dark: Theme.of(context).brightness == Brightness.dark,
+    );
+    final body = highlighted == null
+        ? SelectableText(widget.code, style: codeStyle)
+        : SelectableText.rich(highlighted);
     // **整块的容器与 16px 外边距都在这里**（2026-10-20）。
     //
     // 为什么不靠 `styleSheet.codeblockDecoration`：

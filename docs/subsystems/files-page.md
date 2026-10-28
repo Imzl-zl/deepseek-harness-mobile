@@ -73,6 +73,7 @@
 - **按后缀选渲染器**（与桌面 viewer 注册表同一张表）：`.md` / `.markdown` 走 `DshMarkdown`
   （`app/lib/model/file_open.dart` 的 `isMarkdownPath`，照 `markdown/index.ts:17`），
   其余按等宽代码字体（`text/index.ts:16` 的纯文本兜底）。
-  **代码高亮未做**（要引第三方语法库）；图片 / PDF / Excel / Office 需要 `file.readBytes`,
-  它不在能力位里（`connector/src/dsh/files.ts:14`、`caps.ts:146`：原样字节撞单帧预算），
-  属于协议扩展，未做。
+- **代码高亮**：认得出的后缀上 `re_highlight`（纯 Dart，28 种语言，
+  `app/lib/ui/dsh_code_highlight.dart`），认不出按纯文本；聊天里的围栏代码块同一套。
+  图片 / PDF / Excel / Office 需要 `file.readBytes`，它不在能力位里
+  （`connector/src/dsh/files.ts:14`、`caps.ts:146`：原样字节撞单帧预算），属于协议扩展，未做。

@@ -128,10 +128,10 @@ void main() {
       (w) => w is SingleChildScrollView && w.scrollDirection == Axis.horizontal,
     );
 
-    testWidgets('头部两个按钮都在；没接高亮前语言标签是"代码块"', (tester) async {
+    testWidgets('头部两个按钮都在；认识的语言报语言名（`dart`）', (tester) async {
       await _pump(tester, '看这段：\n\n```dart\nvoid main() {}\n```\n');
       expect(
-        find.text('代码块'),
+        find.text('dart'),
         findsOneWidget,
         reason:
             'CodeToolbar.tsx:44 是 supportsHighlighting(lang) ? lang : codeLabel',
@@ -139,6 +139,12 @@ void main() {
       expect(find.byTooltip('取消自动换行'), findsOneWidget, reason: '默认已换行');
       expect(find.byTooltip('自动换行'), findsNothing);
       expect(find.byTooltip('复制'), findsOneWidget);
+    });
+
+    testWidgets('不认识的语言 ⇒ 标签仍是"代码块"', (tester) async {
+      await _pump(tester, '```toml\nkey = 1\n```\n');
+      expect(find.text('代码块'), findsOneWidget);
+      expect(find.text('toml'), findsNothing);
     });
 
     testWidgets('默认自动换行；关掉之后正文进横向滚动区', (tester) async {
