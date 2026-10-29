@@ -40,6 +40,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/crypto.dart';
+import '../core/endpoint.dart' show isPrivateOrLoopback;
 import '../core/errors.dart';
 import '../core/frame.dart';
 import '../core/pairing.dart';
@@ -93,6 +94,15 @@ class PairingResult {
   final String devId;
 }
 
+/// 这个中转地址是不是"公网 + 明文"（= 需要用户显式同意的那一档）。
+///
+/// 判据与 `core/endpoint.dart` 的地址边界同源：`ws://` 且主机不是非公网。
+bool _plaintextPublicRelay(String relayUrl) {
+  final uri = Uri.tryParse(relayUrl);
+  if (uri == null || uri.scheme != 'ws' || uri.host.isEmpty) return false;
+  return !isPrivateOrLoopback(uri.host);
+}
+
 /// 配对页。
 class PairingPage extends StatefulWidget {
   const PairingPage({
@@ -103,6 +113,7 @@ class PairingPage extends StatefulWidget {
     this.onCancel,
     this.deviceName = '我的手机',
     this.allowInsecureLocal = false,
+    this.allowInsecurePublic = false,
     this.notice,
     this.previousPairingIdOf,
   });
@@ -129,8 +140,13 @@ class PairingPage extends StatefulWidget {
   ///
   /// 它与 [PairingOffer.fromQrPayload] 的同名参数是**同一条边界的两处**：解析二维码时
   /// 放行的地址，换票与升级时也必须放行（否则会出现"码认了、票换不了"的裂缝）。
-  /// 生产为 `false`：明文只在显式开启的本机调试里可用（`pairing-v2.md` §3）。
   final bool allowInsecureLocal;
+
+  /// 允许**公网明文**的中转（用户自部署、暂无域名/证书）。
+  ///
+  /// 这一档不是"默认放宽"：配对页会把"明文、元数据可见"摆在确认卡上，
+  /// 用户点「确认并配对」那一下就是显式同意（见 `core/endpoint.dart` 的注释）。
+  final bool allowInsecurePublic;
 
   /// 顶部常驻的一句话（**为什么会被送到这一页**）。
   ///
@@ -218,6 +234,7 @@ class _PairingPageState extends State<PairingPage> {
       final offer = PairingOffer.fromQrPayload(
         text,
         allowInsecureLocal: widget.allowInsecureLocal,
+        allowInsecurePublic: widget.allowInsecurePublic,
       );
       // 旧配对标识：**只有扫的是同一台电脑**（pcId 相同）才报上去。
       // 换一台电脑时它是 null —— 那边没有旧行可替换，报了也白报。
@@ -238,6 +255,7 @@ class _PairingPageState extends State<PairingPage> {
         transportFor: widget.transportFor,
         onStage: _setBusy,
         allowInsecureLocal: widget.allowInsecureLocal,
+        allowInsecurePublic: widget.allowInsecurePublic,
       );
       if (!mounted) {
         // 页面已经退了：把刚建起来的候选连接收掉，别留在中转上。
@@ -617,6 +635,26 @@ class _IdentityCard extends StatelessWidget {
             '确认之后，配对码才会加密发过去 —— 电脑此刻还没有这台设备的任何记录。',
             style: TextStyle(fontSize: 11, color: c.labelTertiary),
           ),
+          // **公网明文**（用户自部署中转）：必须摆明代价，并让"确认并配对"这一下
+          // 成为**显式同意**。判据与地址边界同一条（`core/endpoint.dart`）：
+          // 公网 + `ws://` 才提示；非公网（局域网/组网）不打扰。
+          if (_plaintextPublicRelay(offer.relayUrl)) ...[
+            const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                DshIcon('info', size: 14, color: c.stateError),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '这台电脑的中转是明文连接（ws://，自部署）：内容仍然端到端加密，'
+                    '但网络上的元数据（帧大小与时序）可见。点「确认并配对」即表示接受。',
+                    style: TextStyle(fontSize: 11, color: c.stateError),
+                  ),
+                ),
+              ],
+            ),
+          ],
           if (replacing) ...[
             const SizedBox(height: 8),
             // 重新配对的后果：换新密钥与新令牌，电脑侧**替换**这台手机的旧记录

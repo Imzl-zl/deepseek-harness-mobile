@@ -28,8 +28,16 @@ class HttpResult {
 
 typedef HttpSender = Future<HttpResult> Function(HttpCall call);
 
-String httpBaseOf(String relayUrl, {bool allowInsecureLocal = false}) {
-  final uri = checkedRelayUri(relayUrl, allowInsecureLocal: allowInsecureLocal);
+String httpBaseOf(
+  String relayUrl, {
+  bool allowInsecureLocal = false,
+  bool allowInsecurePublic = false,
+}) {
+  final uri = checkedRelayUri(
+    relayUrl,
+    allowInsecureLocal: allowInsecureLocal,
+    allowInsecurePublic: allowInsecurePublic,
+  );
   return '${uri.scheme == 'wss' ? 'https' : 'http'}://${uri.authority}';
 }
 
@@ -44,10 +52,14 @@ class PairingClient {
     required this.relayUrl,
     required this.send,
     this.allowInsecureLocal = false,
+    this.allowInsecurePublic = false,
   });
   final String relayUrl;
   final HttpSender send;
   final bool allowInsecureLocal;
+
+  /// 公网明文（自部署中转）。由装配层按"用户是否确认过"传入。
+  final bool allowInsecurePublic;
 
   /// 重连换票（**已配对**设备，凭设备令牌）。
   ///
@@ -61,7 +73,7 @@ class PairingClient {
     HttpCall(
       method: 'POST',
       url:
-          '${httpBaseOf(relayUrl, allowInsecureLocal: allowInsecureLocal)}/ws-ticket',
+          '${httpBaseOf(relayUrl, allowInsecureLocal: allowInsecureLocal, allowInsecurePublic: allowInsecurePublic)}/ws-ticket',
       headers: {
         'authorization': 'Bearer $deviceToken',
         'content-type': 'application/json',
@@ -78,7 +90,7 @@ class PairingClient {
     HttpCall(
       method: 'POST',
       url:
-          '${httpBaseOf(relayUrl, allowInsecureLocal: allowInsecureLocal)}/ws-ticket',
+          '${httpBaseOf(relayUrl, allowInsecureLocal: allowInsecureLocal, allowInsecurePublic: allowInsecurePublic)}/ws-ticket',
       headers: {'content-type': 'application/json'},
       body: jsonEncode(candidate.toWire()),
     ),

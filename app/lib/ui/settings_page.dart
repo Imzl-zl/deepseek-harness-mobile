@@ -1161,7 +1161,13 @@ class _AddEndpointButton extends StatelessWidget {
   Future<void> _add(BuildContext context) async {
     final added = await showAddEndpointDialog(context);
     if (added == null || !context.mounted) return;
-    await app.addManualEndpoint(added);
+    // 用户勾了"公网明文"的确认：**先记下来**，否则下一次换票会被地址边界拒
+    // （`net.allow_plaintext_public`，见 `AppModel.allowPlaintextPublic`）。
+    if (added.allowPlaintextPublic) {
+      await app.setAllowPlaintextPublic(true);
+      if (!context.mounted) return;
+    }
+    await app.addManualEndpoint(added.endpoint);
     if (!context.mounted) return;
     DshToast.show(context, '已添加，下次重连会试它');
   }

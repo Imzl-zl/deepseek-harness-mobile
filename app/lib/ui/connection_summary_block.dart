@@ -87,9 +87,14 @@ Future<void> pickEndpointToConnect(BuildContext context, AppModel app) async {
 Future<void> addEndpointOnly(BuildContext context, AppModel app) async {
   final added = await showAddEndpointDialog(context);
   if (added == null || !context.mounted) return;
-  await app.addManualEndpoint(added);
+  // 勾了"公网明文"的确认就先记下来（否则下一次换票会被地址边界拒）。
+  if (added.allowPlaintextPublic) {
+    await app.setAllowPlaintextPublic(true);
+    if (!context.mounted) return;
+  }
+  await app.addManualEndpoint(added.endpoint);
   if (!context.mounted) return;
-  DshToast.show(context, '已添加 ${added.url}（在「换个连接方式」里选它连接）');
+  DshToast.show(context, '已添加 ${added.endpoint.url}（在「换个连接方式」里选它连接）');
 }
 
 /// **重新拨一次**：不改偏好、不换端点。

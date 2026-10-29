@@ -103,6 +103,9 @@ Future<PairingAttempt> beginPairing({
   String Function()? newNonceHex,
   Duration handshakeTimeout = pairingHandshakeTimeout,
   bool allowInsecureLocal = false,
+
+  /// 公网明文（用户自部署中转）：由配对页"看过电脑身份并确认"的那一步传 true。
+  bool allowInsecurePublic = false,
 }) async {
   final candidate = offer.candidate(identity, deviceName);
   final devId = await candidate.deviceId();
@@ -111,12 +114,13 @@ Future<PairingAttempt> beginPairing({
   // 首配这一跳**没有令牌**：凭据就是公开邀请 + 候选公钥。这一条是整条链能起步的原因
   // —— 换票要设备令牌，而设备令牌是配对的产物，那会成环。
   //
-  // `allowInsecureLocal` 一路透到地址边界（`core/endpoint.dart`）：生产只认 WSS，
-  // 明文只给显式开启的本机调试（`pairing-v2.md` §3）。
+  // `allowInsecureLocal` 一路透到地址边界（`core/endpoint.dart`）：默认只认 WSS，
+  // 明文分两档 —— 非公网（局域网/组网）与**用户确认过的公网自部署中转**。
   final ticket = await PairingClient(
     relayUrl: offer.relayUrl,
     send: send,
     allowInsecureLocal: allowInsecureLocal,
+    allowInsecurePublic: allowInsecurePublic,
   ).ticketByOffer(candidate);
 
   onStage?.call('连接电脑…');

@@ -1,18 +1,26 @@
-/// 中转地址的统一边界：生产 WSS，显式调试仅允许回环 WS。
+/// 中转地址的统一边界：默认 WSS；明文 `ws://` 分两档放行。
 library;
 
 import 'errors.dart';
 
-/// 校验中转/直连地址：生产 WSS，显式调试仅允许**非公网**的明文 WS。
+/// 校验中转/直连地址：默认 WSS，明文 `ws://` 分两档放行。
+///
+/// - **非公网**（回环 / 私网 / CGNAT / link-local / ULA）：[allowInsecureLocal]。
+///   局域网直连、组网（Tailscale 的 100.64/10）都走这一档。
+/// - **公网**：[allowInsecurePublic]，**只给用户显式确认过的自部署中转**。
+///
+/// 两档的安全前提同一条：握手提供双向身份认证（公钥在配对时钉死，契约 §12.1），
+/// 握手之后**每一帧都 AEAD 封箱**（`core/box.dart`）。所以明文的代价是
+/// **元数据可见**（帧的大小与时序），不是"内容能被读"。WSS 保护的是那一层元数据。
 ///
 /// 判据从"仅回环"扩到"回环 + 私网 + CGNAT + link-local + ULA"的取舍见
-/// `.agents/notes/implemented/2026-10-14-endpoint-switching-lan-direct.md`：
-/// 局域网直连的意义就是低延迟，而握手本身提供双向身份认证
-/// （公钥在配对时钉死，契约 §12.1），所以明文的代价是**元数据可见**
-/// （帧的大小与时序），不是"能被伪装"。
+/// `.agents/notes/implemented/2026-10-14-endpoint-switching-lan-direct.md`；
+/// 公网明文这一档的取舍见
+/// `.agents/notes/implemented/2026-10-29-plaintext-public-relay-for-self-hosting.md`。
 Uri checkedRelayUri(
   String value, {
   bool allowInsecureLocal = false,
+  bool allowInsecurePublic = false,
   bool allowQuery = false,
 }) {
   final uri = Uri.tryParse(value);
@@ -24,13 +32,15 @@ Uri checkedRelayUri(
       (!allowQuery && uri.hasQuery)) {
     throw const ProtocolException(ErrorCode.badFrame, '中转地址不合法，不能包含凭据或额外参数');
   }
-  if (uri.scheme != 'wss' &&
-      !(allowInsecureLocal &&
-          isPrivateOrLoopback(uri.host) &&
-          uri.scheme == 'ws')) {
+  final plaintext = uri.scheme == 'ws';
+  final allowedPlaintext =
+      plaintext &&
+      ((allowInsecureLocal && isPrivateOrLoopback(uri.host)) ||
+          allowInsecurePublic);
+  if (uri.scheme != 'wss' && !allowedPlaintext) {
     throw const ProtocolException(
       ErrorCode.badFrame,
-      '必须使用 WSS；明文仅限显式开启的非公网地址（回环 / 私网 / CGNAT / link-local / ULA）',
+      '必须使用 WSS；明文仅限非公网地址，或用户已确认的自部署中转',
     );
   }
   return uri;

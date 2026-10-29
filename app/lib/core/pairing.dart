@@ -28,6 +28,10 @@ class PairingOffer {
   factory PairingOffer.fromQrPayload(
     String payload, {
     bool allowInsecureLocal = false,
+
+    /// 公网明文（用户自部署中转）：**只由"用户看过电脑身份并确认"的那一步**
+    /// 传 true（配对页的确认按钮），不是全局默认。
+    bool allowInsecurePublic = false,
   }) {
     final Object? parsed;
     try {
@@ -45,7 +49,11 @@ class PairingOffer {
       );
     }
     final relay = _requireString(parsed, 'relay');
-    checkedRelayUri(relay, allowInsecureLocal: allowInsecureLocal);
+    checkedRelayUri(
+      relay,
+      allowInsecureLocal: allowInsecureLocal,
+      allowInsecurePublic: allowInsecurePublic,
+    );
     final pcId = _requireString(parsed, 'pcId');
     final pcEd = _requireString(parsed, 'pcPubEd');
     final pcDh = _requireString(parsed, 'pcPubDh');

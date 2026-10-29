@@ -39,6 +39,12 @@
   白等 `3s×2`。理由与三个被否方案见 `implemented/2026-10-29-endpoint-host-scoped-pruning.md`；
   设计面 `docs/subsystems/app-channel-client.md` §6.2（一张表）。adb 转发不是端点的一种：
   真实用法是公网中转或局域网直连。
+- **明文放行分两档（2026-10-29）**：非公网 `ws://`（局域网 / 回环 / 组网 CGNAT）**所有构建都用**；
+  公网 `ws://`（自部署中转、暂无域名/证书）**只认用户显式确认**（偏好 `net.allow_plaintext_public`，
+  确认点只有两个：手填端点勾选、配对页确认卡）。`wss://` 任何主机始终放行。
+  理由：原来 `allowInsecureLocal: kDebugMode` 让 release 连局域网/组网直连都用不了；
+  取舍与被否方案见 `implemented/2026-10-29-plaintext-public-relay-for-self-hosting.md`，
+  现状 `docs/subsystems/app-channel-client.md` §6.2。自签证书 + 钉指纹仍留作下一步。
 - **通道**：`protocol/`（配对 / 握手 / AEAD / 流控 / 恢复）+ `relay/`（中转）+ `connector/`（电脑侧网关）
   全部落地；手机侧 `app/lib/core/` 是连接层，`app/lib/wire/` 是**线上形状的唯一解码层**。
 - **RPC 应答面（2026-10-26）**：`wire/rpc/` 18 个面文件、46 个方法；`app/lib`（`wire/` 外）

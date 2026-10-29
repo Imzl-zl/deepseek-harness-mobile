@@ -323,6 +323,16 @@ class _DshMobileAppState extends State<DshMobileApp>
   void _closePairing() => setState(() => _pairing = false);
 
   Future<void> _onPaired(PairingResult result) async {
+    // **配对页的确认卡就是"公网明文"的同意书**：那一步把中转地址与电脑身份
+    // 摆给用户看，并（地址是公网 `ws://` 时）明写"元数据可见，点确认即接受"。
+    // 这里把这次同意落成用户级偏好 —— 否则配对成功之后，每一次换票都会被
+    // 地址边界拒（症状是"配上了、一直连不上"）。
+    final relayUri = Uri.tryParse(result.offer.relayUrl);
+    if (relayUri != null &&
+        relayUri.scheme == 'ws' &&
+        !isPrivateOrLoopback(relayUri.host)) {
+      await _app?.setAllowPlaintextPublic(true);
+    }
     // 端点表的种子：配对那一刻走的那条中转。之后连接器会自报直连地址，
     // 由 `endpoint.describe` 合并进来（见 `_discoverEndpoints`）。
     final endpoints = <Endpoint>[
@@ -530,9 +540,11 @@ class _DshMobileAppState extends State<DshMobileApp>
         // 真实实现在 `platform/`，而"用哪个实现"只发生在装配点（本文件）。
         send: _httpSender,
         transportFor: _pairingTransport,
-        // 本机调试（`ws://127.0.0.1`）只在 debug 构建里放行：契约 §12.1 的
-        // 生产纪律是 WSS，而 release 里放行明文等于把"以为加密了"的链路走成明文。
-        allowInsecureLocal: kDebugMode,
+        // **明文分两档**（`core/endpoint.dart`）：非公网一律放行；公网明文由配对页
+        // 的确认卡征得同意（那一步把电脑身份摆出来，地址是公网 `ws://` 时还会
+        // 明写"元数据可见"）。同意记录在 `_onPaired` 里落成用户级偏好。
+        allowInsecureLocal: true,
+        allowInsecurePublic: true,
         // **为什么会被送到这一页**：常驻横幅（身份被拒 / 手动重配各一句话）。
         // 不用 SnackBar：它 4 秒就消失，而用户是被自动送到这里的。
         notice: _pairingNotice,
@@ -1214,6 +1226,11 @@ Future<AppModel> _assemble(
   //
   // 每个中转端点各持一个 `PairingClient`（按地址缓存）：换端点不该让
   // "票从哪来"这件事有第二个答案。
+  //
+  // **"公网明文已确认"要晚绑定**：`AppModel` 建在下面，而用户在设置页/配对页
+  // 确认之后，下一次换票就必须放行 —— 建库时抓一次值会让"换了没用"。
+  // 与 `endpointsOf` 用同一个手法（读 `appRef`），不另立第二个真值。
+  var allowPlaintextPublicOf = () => false;
   final pairingClients = <String, PairingClient>{};
   TicketSource? ticketSourceFor(Endpoint endpoint) {
     if (endpoint.kind != EndpointKind.relay) return null;
@@ -1228,13 +1245,14 @@ Future<AppModel> _assemble(
         // （`core/pairing_client.dart` 的 `allowInsecureLocal` 默认 false），
         // 而症状正是"码认了、票换不了"—— 真机实测踩到（2026-10-13）。
         //
-        // **明文放行只有 `kDebugMode` 这一道闸**（`PairingPage` 的同一判据也在
-        // `main.dart:535`）。别指望 Android 侧再拦一层：仓库里既没有
-        // `network_security_config.xml`，manifest 也没有 `usesCleartextTraffic`
-        // —— 而 Flutter 的 `dart:io` 本来就不走平台那套 cleartext 策略。
-        // 推论：**release 包只认 `wss://`**，局域网直连与"组网地址直连"都只在
-        // debug 可用（见 `docs/subsystems/app-channel-client.md` §6.2）。
-        allowInsecureLocal: kDebugMode,
+        // **明文分两档**（`core/endpoint.dart` 的 `checkedRelayUri`）：
+        // ① 非公网（局域网 / 回环 / 组网 CGNAT）**一律放行** —— 电脑侧直连面本来
+        //    就不终结 TLS，通道在握手后逐帧 AEAD，明文只暴露元数据；
+        // ② 公网明文**只给用户确认过的自部署中转**（`net.allow_plaintext_public`）。
+        // 别指望 Android 侧再拦一层：仓库里既没有 `network_security_config.xml`，
+        // manifest 也没有 `usesCleartextTraffic` —— Flutter 的 `dart:io` 不走那套。
+        allowInsecureLocal: true,
+        allowInsecurePublic: allowPlaintextPublicOf(),
       ),
     );
     return () async =>
@@ -1306,6 +1324,11 @@ Future<AppModel> _assemble(
     ),
   );
 
+  // "公网明文"的确认是**用户级偏好**（`net.allow_plaintext_public`）：
+  // 自部署中转、暂无域名/证书的用户在这里确认一次，之后重启也认。
+  final allowPlaintextPublic =
+      (await MetaPreferences(store).read('net.allow_plaintext_public')) == '1';
+
   final app = AppModel(
     // 偏好走同一个库的 `meta` 表（见 `_assembleWithoutCredentials` 同一处）。
     prefs: MetaPreferences(store),
@@ -1325,6 +1348,8 @@ Future<AppModel> _assemble(
     // 不用 `pcId` —— 连接器 id 默认就是 `"local"`，两台电脑会撞。
     // 换一台电脑后旧电脑的地址会被剪掉（永远拨不通，留着只拖慢每轮拨号）。
     hostIdOf: () => credentials.pcSignPubHex,
+    // 用户级"公网明文"确认（见上面那次偏好读）。
+    allowPlaintextPublic: allowPlaintextPublic,
     // **点名连接**的两根线（设置页"用这个连接"用）：
     // ① 告诉传输层"下一次只试这一条"；② 立刻断开重拨。
     // 分开是因为传输层不认识连接层 —— 谁拨号、谁重拨，各管一段。
@@ -1336,6 +1361,8 @@ Future<AppModel> _assemble(
     onConnectionTerminated: onConnectionTerminated,
   );
   appRef = app;
+  // 现在起，"公网明文已确认"以 `AppModel` 为准（用户在设置页/配对页确认后立刻生效）。
+  allowPlaintextPublicOf = () => app.allowPlaintextPublic;
   // 起一次：第一轮拨号就有网段可比（否则第一轮只能按用户顺序）。
   unawaited(app.refreshMyLanIpv4());
   // 拨通了就报给界面：设置页据此显示"当前走哪条"。**只报事实** ——

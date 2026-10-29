@@ -134,25 +134,42 @@ void main() {
     expect(source.contains('StoreItemPersister(store)'), isTrue);
   });
 
-  test('PairingClient 与 PairingPage 用同一个明文放行判据', () {
+  test('PairingClient 与 PairingPage 用同一个明文放行判据（两档）', () {
     // **这条守的是一个真 bug**（2026-10-13 真机实测）：`PairingPage` 放了明文，
     // 于是配对成功；而装配里的 `PairingClient` 没放，于是**换不到票** ——
     // 症状正是文档里那句"码认了、票换不了"，而两端日志都看不出原因。
     //
-    // 两处必须是同一个判据（`kDebugMode`）：放行的范围是"debug 构建的本机回环"，
-    // 不是"某个调用点忘了"。
+    // 2026-10-29 起明文分两档（`core/endpoint.dart`）：
+    // ① 非公网（局域网/回环/组网）**常开**；② 公网**只认用户确认**。
     final client = _callTextOf(source, 'PairingClient(');
     expect(client, isNotNull, reason: '装配点应有 PairingClient(...) 调用');
     expect(
-      client!.contains('allowInsecureLocal: kDebugMode'),
+      client!.contains('allowInsecureLocal: true'),
       isTrue,
-      reason: '换票也必须放行本机明文；只放 PairingPage 会出现"配对成功但永远换不到票"',
+      reason: '非公网明文换票也要放行；只放 PairingPage 会出现"配对成功但永远换不到票"',
     );
-    // 反向也钉：别把放行写成无条件 true（那会让 release 也走明文）。
     expect(
-      client.contains('allowInsecureLocal: true'),
+      client.contains('allowInsecurePublic: allowPlaintextPublicOf()'),
+      isTrue,
+      reason: '公网明文必须按用户确认（`net.allow_plaintext_public`），不是常量',
+    );
+    // 反向钉两条：明文不再由构建类型决定（release 也要能局域网直连），
+    // 也不能把公网那一档写成无条件 true。
+    expect(client.contains('kDebugMode'), isFalse, reason: '明文放行不再跟着构建类型走');
+    expect(
+      client.contains('allowInsecurePublic: true'),
       isFalse,
-      reason: 'release 构建不允许明文（契约 §2：手机侧恒为 wss）',
+      reason: '公网明文不能无条件放行',
+    );
+
+    // 配对页与换票同源：两档都接上（配对页的确认卡就是公网那一档的同意书）。
+    final page = _callTextOf(source, 'PairingPage(');
+    expect(page, isNotNull, reason: '装配点应有 PairingPage(...) 调用');
+    expect(page!.contains('allowInsecureLocal: true'), isTrue);
+    expect(
+      page.contains('allowInsecurePublic: true'),
+      isTrue,
+      reason: '配对页把"明文、元数据可见"摆在确认卡上，点确认即同意',
     );
   });
 

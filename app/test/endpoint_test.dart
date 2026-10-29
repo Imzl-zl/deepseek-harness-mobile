@@ -95,5 +95,48 @@ void main() {
         );
       }
     });
+
+    // -------------------------------------------------------------------------
+    // 公网明文（用户自部署中转、暂无域名/证书）：**只认显式确认的那一档**。
+    // -------------------------------------------------------------------------
+    test('公网 ws 默认被拒；只有 allowInsecurePublic 才放行', () {
+      expect(
+        () => checkedRelayUri('ws://203.0.113.7:8787'),
+        throwsA(isA<ProtocolException>()),
+        reason: '公网明文不是默认能力',
+      );
+      expect(
+        checkedRelayUri(
+          'ws://203.0.113.7:8787',
+          allowInsecurePublic: true,
+        ).host,
+        '203.0.113.7',
+        reason: '用户确认过的自部署中转放行',
+      );
+      // 自部署也可以用自己的域名 + 明文
+      expect(
+        checkedRelayUri('ws://relay.example', allowInsecurePublic: true).host,
+        'relay.example',
+      );
+    });
+
+    test('两档互不越界：非公网开关不覆盖公网，公网开关覆盖两者', () {
+      expect(
+        checkedRelayUri(
+          'ws://192.168.1.4:8790',
+          allowInsecurePublic: true,
+        ).host,
+        '192.168.1.4',
+        reason: '用户确认过的明文同样适用于局域网地址',
+      );
+      expect(
+        () =>
+            checkedRelayUri('ws://203.0.113.7:8787', allowInsecureLocal: true),
+        throwsA(isA<ProtocolException>()),
+        reason: '只开非公网那一档时，公网仍然拒',
+      );
+      // wss 任何主机都放行（域名与 IP 都行）
+      expect(checkedRelayUri('wss://203.0.113.7').host, '203.0.113.7');
+    });
   });
 }

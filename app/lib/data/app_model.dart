@@ -105,6 +105,12 @@ class AppModel extends ChangeNotifier {
     /// 永远拨不通（对端身份不同，握手必被 `protocol/not-paired` 拒），
     /// 留着只会让每轮拨号多等一个超时。没装配时返回空串 = 不知道，剪枝退回旧规则。
     String Function()? hostIdOf,
+
+    /// 用户是否已经确认过"自部署中转走公网明文"（偏好里持久化，默认 false）。
+    ///
+    /// 它是 [Endpoint] 地址边界里 `allowInsecurePublic` 的那一半：
+    /// 公网 `ws://` 只在用户显式同意后才放行（手填端点时勾选 / 配对确认卡）。
+    bool allowPlaintextPublic = false,
     this.onRequestEndpoint,
     this.onReconnect,
     this.onEndpointsChanged,
@@ -118,7 +124,20 @@ class AppModel extends ChangeNotifier {
        _initialHiddenEndpointIds = Set<String>.of(hiddenEndpointIds),
        _initialSucceededEndpointIds = Set<String>.of(succeededEndpointIds),
        _myLanIpv4Of = myLanIpv4Of,
-       _hostIdOf = hostIdOf;
+       _hostIdOf = hostIdOf,
+       _allowPlaintextPublic = allowPlaintextPublic;
+
+  /// 用户是否已确认"自部署中转走公网明文"（`net.allow_plaintext_public`）。
+  bool get allowPlaintextPublic => _allowPlaintextPublic;
+  bool _allowPlaintextPublic;
+
+  /// 记住用户的这次确认（配对页确认卡 / 手填端点的勾选都会走到这里）。
+  Future<void> setAllowPlaintextPublic(bool value) async {
+    if (_allowPlaintextPublic == value) return;
+    _allowPlaintextPublic = value;
+    notifyListeners();
+    await _prefs?.write('net.allow_plaintext_public', value ? '1' : '0');
+  }
 
   /// 通道客户端（连接 / 订阅 / 写操作的唯一 owner）。
   final SyncClient client;

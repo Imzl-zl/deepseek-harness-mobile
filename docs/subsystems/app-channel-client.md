@@ -261,21 +261,22 @@ app/packages/
 "非公网、允许明文"那一档；真实用法是**公网中转或局域网直连**。端点表里出现回环地址
 只可能是手填（或手机被改过路由，见 `tools.md` 那条劫持判据）。
 
-**明文放行只有 `kDebugMode` 一道闸**（`main.dart` 的 `allowInsecureLocal: kDebugMode`，
-配对页与换票两处同一判据）。推论，部署前必须知道：
+**明文分两档放行**（`core/endpoint.dart` 的 `checkedRelayUri`，两个开关互不替代）：
 
-| 构建 | 可拨的地址 | 含义 |
-|---|---|---|
-| debug | `ws://` 非公网（回环/私网/CGNAT/link-local/ULA）+ `wss://` 任意 | 局域网直连、组网地址直连**只在 debug 可用** |
-| release | **只认 `wss://`** | 局域网直连、组网地址直连都不可用（私网 IP 拿不到公开 CA 证书） |
+| 档 | 判据 | 谁给 | 用于 |
+|---|---|---|---|
+| 非公网 | `ws://` 且主机是回环/私网/CGNAT/link-local/ULA | 装配层常开（`allowInsecureLocal: true`） | 局域网直连、组网（Tailscale 100.64/10） |
+| 公网 | `ws://` 且主机是公网地址 | **用户显式确认**（`net.allow_plaintext_public`） | 自部署中转、暂无域名/证书 |
 
-中转**自己不终结 TLS**（`relay/src/server.ts` 用 `node:http` + `WebSocketServer`），
-公网必须由前置反向代理（Caddy/nginx）持证书；`docs/cookbook/relay-on-a-server.md` 的
-先决条件因此写的是"公网 IP **与一个域名**"。手机侧没有任何"接受自签证书"的缝
-（全仓无 `badCertificateCallback` / `SecurityContext` / `onBadCertificate`）——
-**只有公网 IP 而没有域名，现行 release 构建无法在公网工作**。要让"纯 IP / 组网地址"
-在 release 也可用，必须显式改那道闸（代价：元数据走明文，内容仍由握手 + AEAD 保护），
-并且先改本节 + 留决策笔记。
+公网那一档的确认点只有两个：手填端点对话框里的勾选、配对页确认卡上的警告+确认
+（那一步会把电脑身份摆出来）。**默认不开**，且确认文案必须写明"元数据可见"。
+`wss://` 任何主机始终放行（域名或 IP 都行）。
+
+中转**自己不终结 TLS**（`relay/src/server.ts` 用 `node:http` + `WebSocketServer`）：
+要 `wss` 就得由前置反向代理（Caddy/nginx）持证书 —— 域名用 Let's Encrypt，
+纯 IP 可用 [Let's Encrypt 2025 起的 IP 证书](https://letsencrypt.org/2025/01/16/6-day-and-ip-certs)
+（6 天短期，需自动续期）或商业 IP 证书。手机侧没有"接受自签证书"的缝
+（全仓无 `badCertificateCallback` / `SecurityContext`），自签要走就得改代码（钉指纹，尚未做）。
 
 ---
 
