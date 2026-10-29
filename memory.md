@@ -15,6 +15,20 @@
   `implemented/2026-10-28-turn-trigger-idle-steer.md`，现状事实 `docs/subsystems/turn-groups.md` §6.1。
   同批把预览页的「读取失败：」前缀去掉（四类码的整句由 `model/file_failure.dart` 给，
   加前缀会变成「读取失败：找不到这个文件」，桌面只画那一句）。
+- **配对生命周期真机复验（2026-10-29，公司 wifi / Windows 判成「公用」）**：
+  `07df938` 通过 —— 同机重配走 `replaces`：新行先与旧行并存、旧令牌仍可用，
+  新身份握手成功后旧行被裁，且 `pairedAt` 沿用被替换那行（真机：3 行 → 2 行 → 清理后 1 行）；
+  确认页会写「这次会换新密钥并替换那条记录，不会新增一行」。
+  `dc3ce54` 通过 —— 故意改坏 `code` 的一位后确认，页面如实报
+  「配对秘密或连接身份不匹配，请重新核对二维码（protocol/not-paired）」，不是静默；
+  格式坏的载荷报「二维码不是合法 JSON（protocol/not-paired）」。
+  环境两条：① 公用网络下 8787/8790 的入站被拦（规则只对 `node.exe` / `DeepSeek Harness.exe`
+  放行，其它端口一律 RST），要么改专用网络、要么 `adb reverse` 走环回；
+  ② 手机灭屏时 `input tap` 全被吞（`svc power stayon` 与 30 分钟超时都不管用），
+  只能 `input keyevent 26` 唤醒 + `82` 解屏，且**别连按两次 26**（会把刚亮的屏再关掉）。
+- **代码高亮语言集比桌面宽（28 种 vs ts/bash/json）**：这是渲染能力的扩展，数据源同一处
+  （围栏 info string），已写进 `docs/subsystems/app-channel-client.md` §4.1 的「有意偏离」，
+  笔记 `implemented/2026-10-29-code-highlight-language-set-wider-than-desktop.md`。
 - **通道**：`protocol/`（配对 / 握手 / AEAD / 流控 / 恢复）+ `relay/`（中转）+ `connector/`（电脑侧网关）
   全部落地；手机侧 `app/lib/core/` 是连接层，`app/lib/wire/` 是**线上形状的唯一解码层**。
 - **RPC 应答面（2026-10-26）**：`wire/rpc/` 18 个面文件、46 个方法；`app/lib`（`wire/` 外）

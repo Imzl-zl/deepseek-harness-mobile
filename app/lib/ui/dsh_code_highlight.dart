@@ -53,6 +53,12 @@ import 'package:re_highlight/styles/github-dark.dart';
 import 'package:re_highlight/styles/github.dart';
 
 /// 认识的语法 id（也是代码块头部标签的判据）。
+///
+/// **比桌面宽**：DSH 只高亮 ts / bash / json 三种（`markdown/highlight.ts:42`），
+/// 这里 28 种。数据源相同（围栏的 info string），判据结构也相同
+/// （表里有 ⇒ 报语言名 + 高亮；没有 ⇒ 报「代码块」+ 纯文本），差别只在表的宽度。
+/// Note: 为什么允许比桌面宽、为什么不按扩展名猜 —— 见
+/// `.agents/notes/implemented/2026-10-29-code-highlight-language-set-wider-than-desktop.md`
 final Map<String, Mode> _languages = <String, Mode>{
   'bash': langBash,
   'c': langC,

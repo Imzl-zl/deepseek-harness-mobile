@@ -134,7 +134,7 @@ abstract class Outbox {
 | 长会话列表排版卡顿(`dart:ui` 排版只能在主 isolate,见 flutter#30604) | 按块懒加载:已完成消息冻结为不可变 widget 并缓存;只对可见块做 layout |
 | 流式更新触发整段重排 | 累加器 16 ms 节流 + 段级缓存;不用 `SelectableText` 包整段(开销大) |
 | 大对象(base64 图片、diff)阻塞 UI | >1 MiB 走 `refetch`;JSON 解码放 `compute`;图片走 `Image.memory` + 缓存,不逐帧解码 |
-| 代码高亮开销 | 只在条目首次可见时高亮一次并缓存 token 结果;不随流式每帧重算 |
+| 代码高亮开销 | 构建时按块算：`highlightCode` 在 `_DshCodeBlock.build` 里跑，`Highlight` 引擎只建一次（`dsh_code_highlight.dart` 的 `_engine`），token 结果**不缓存**。已知差异：DSH 只在代码块首次进入视口时高亮一次并缓存（`packages/client/ui-primitives/src/markdown/highlight.ts:286`、`useViewportHighlighting.ts:17,48`），手机侧同一块每次重建都会重算 |
 | 长 Markdown | **不做段落切分**:查过 DSH,它也没有正文虚拟化/按段切,只在**流式期间冻结除末尾两块以外的块**(`packages/client/ui-primitives/src/markdown/incremental.ts:9-14,38` 的 `UNSTABLE_TAIL_BLOCKS = 2`)⇒ 手机侧照同一条做"流式只重排末尾" |
 
 ---
@@ -158,6 +158,9 @@ abstract class Outbox {
 | 用户消息正文 | **纯文本，不跑 Markdown** | `ui-primitives/src/user-text.tsx:18-20`（`UserTextRun`：without Markdown or reference recognition） |
 | 上下文注入 | `user/message` 里 **`source.kind !== 'user'` 的一律是上下文**（标题「上下文注入」+ 生产者），不是用户气泡 | `ui-chat/src/client/conversation-nodes/message.ts:79`、`ui-chat/src/client/locale.ts:126`、`ContextInjectionRow.tsx:57` |
 | 原始 HTML | DSH 把标签当**字面文本**显示 | `ui-primitives/src/markdown/render.tsx:333-335` |
+| 代码块头部 | 左 `[语言名 / 「代码块」]` + 右 `[自动换行][复制]`，按钮 28×28，banner 内边距 9/14/10/9 | `ui-primitives/src/markdown/CodeBlock.tsx:118`（正文 trim）、`CodeToolbar.tsx:44,51`（`supportsHighlighting(lang) ? lang : codeLabel`）、`CodeBlock.module.css:40-46` |
+| 代码块默认换行 | 默认自动换行；点一次切横滚（`SingleChildScrollView` 横向），按钮图标在 `nowrapFill`/`wrapFill` 之间换 | `CodeBlock.tsx:157` 的 `useState(true)` |
+| 复制反馈 | 复制成功后 1 秒内变对勾，文案 `复制` → `复制成功` | `CodeBlock.tsx:165-169`、`ui-chat/src/client/locale/zh.ts:6,8-9` |
 
 实现侧的三个关键落点：
 
@@ -191,6 +194,7 @@ abstract class Outbox {
 | 表格单元格首/末列不归零内边距、窄表不铺满、无 `min-width:100px`/`max-width:30vw` | `tableCellsPadding` 与列宽策略在 flutter_markdown 里都是整表一个值，做不到按列/按表分支 |
 | 行内 HTML 归一成 Markdown（DSH 显示标签原文） | Flutter 没有 HTML 注入面；`<br>/<b>/<i>/<code>` 四种确定等价，其余去标签保文字（宁可丢样式，不丢文字） |
 | 用户消息没有 `@文件` / `/skill` 引用 chip | 那是 `ui-reference` / `ui-skill` 的匹配器与写面，未接；正文仍是纯文本，与 DSH 同形 |
+| **高亮语言集 28 种**（DSH 只高亮 ts / bash / json） | 数据源相同（围栏的 CommonMark info string），差别只在"认不认这门语言"：```` ```rust ```` / ```` ```python ```` 这类块桌面报「代码块」+ 单色，手机报语言名 + 彩色。手机上多认几种是**渲染能力**的扩展，不动数据面、不动标签判据的结构（判据仍是 `supportsHighlighting` 的同一条）。清单在 `app/lib/ui/dsh_code_highlight.dart:55-82`；取舍见 `.agents/notes/implemented/2026-10-29-code-highlight-language-set-wider-than-desktop.md` |
 
 ---
 
