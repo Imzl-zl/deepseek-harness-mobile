@@ -71,11 +71,15 @@
 | `relayTokenRef` | — | 连接器令牌的凭据引用(本体走 `ctx.credentials`) |
 | `listenPort` | 0(不监听) | **直连拓扑**的监听端口;`0` = 关(只走中转,行为与不监听完全一致) |
 | `listenHost` | `127.0.0.1` | 监听地址。直连要走 Tailscale 时显式写 tailnet 地址;默认只在本机 |
-| `deviceLimit` | 8 | 允许配对的设备数 |
 | `pushDigest` | `'rich'` | `rich` / `doorbell` |
 | `frameLimitBytes` | 8388608 | 单帧上限 |
 | `refetchThresholdBytes` | 1048576 | 大对象阈值 |
 | `windowFrames` / `windowMaxBytes` | 10000 / 16777216 | 增量缓冲上界 |
+
+**没有设备数上限**:这是契约定的(`remote-channel.md` 的规模标定表「设备上限 | 不设上限」),不是漏了字段。
+理由:每设备一把密钥 ⇒ 吊销粒度小;重新配对即新身份,记录随用户主动重配而增加,清理走管理面。
+2026-10-29 之前 schema 里那个 `deviceLimit`(默认 8)**全仓没人读**,已删;理由见
+`.agents/notes/implemented/2026-10-29-drop-inert-device-limit.md`。
 
 ### 1.2 目录结构
 

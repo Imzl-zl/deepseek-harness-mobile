@@ -22,7 +22,7 @@
  *
  * ## 为什么只有这两组键
  *
- * 别的 volatile 字段（`deviceLimit`、`frameLimitBytes`、四个窗口上界…）改完
+ * 别的 volatile 字段（`frameLimitBytes`、`refetchThresholdBytes`、四个窗口上界…）改完
  * **下次读写时自然生效**，没有"已经建立的连接还握着旧值"这回事 —— 顺手重启通道
  * 的代价是一次无故掉线。所以不进这张表不是遗漏，是判断。
  */

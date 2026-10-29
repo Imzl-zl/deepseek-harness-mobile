@@ -52,7 +52,7 @@ test('channelsToRebuild：直连那两格只重建直连（不能让中转跟着
 test('channelsToRebuild：没列进来的 volatile 字段不重建任何通道', () => {
   // 这些改完"下次读写时自然生效"，没有"已建立的连接还握着旧值"这回事 ——
   // 顺手重启通道只会白掉一次线（`REBUILD_KEYS` 的注释写了这条判断）。
-  for (const key of ['deviceLimit', 'frameLimitBytes', 'windowFrames', 'sweepIntervalMs']) {
+  for (const key of ['frameLimitBytes', 'refetchThresholdBytes', 'pushDigest', 'sweepIntervalMs']) {
     assert.deepEqual(channelsToRebuild(paths(key)), [], `${key} 不该触发重建`)
   }
 })
