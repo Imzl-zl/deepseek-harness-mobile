@@ -368,17 +368,25 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
 ## Pitfalls
 
 - **提交纪律三条**(2026-10-19 从 `memory.md` 归位到此处):①**提交信息里避免反引号** —— pwsh 会把它当 Unicode 转义,整条命令在**解析阶段**就失败;长消息写临时文件用 `git commit -F`。②**提交前看 `git status` 完整清单**,重点是**意外的文件**(空的、消失的、没见过的新文件)。③**别把"重启后的第一次成功"当能力** —— 判据要包含"连续重连 N 次都成立"(端点切换那条就是这么验的:3 次重连都落在同一条上)。
-- **"手机→电脑通了"必须用 A/B 证明那条路不是 `adb reverse`**（2026-10-29 公司 wifi，连着误判三次）：
-  现象 —— 手机 `ping` 电脑通（0.27ms），电脑 `ping` 手机 100% 丢，手机到电脑**任何端口**的 TCP
-  都在 1-2ms 内被拒（`curl` 报 `Failed to connect … after 1-2 ms`），而电脑自连 405/426 正常。
-  **两个判据（都要做）**：
-  1. `adb reverse --remove-all` 后同一条 `curl http://<电脑IP>:8790/` 从 `426` 变 `000`，
-     `adb reverse tcp:8790 tcp:8790` 加回去又变 `426` ⇒ 那个"通"走的是 USB 转发（回环到电脑时源是 127.0.0.1）。
-  2. 手机发起连接的同时在电脑上轮询
-     `Get-NetTCPConnection -State SynReceived | ? LocalPort -in 8787,8790`：**全程为空 ⇒ SYN 压根没到电脑**，
-     于是"电脑防火墙 / 杀软 / 灭屏"这些解释全部不成立（`TCPv4\Connections Reset` 的 +1/+2 是别的流量，别拿它当证据）。
-  结论：这台公司 AP 在客户端之间**拒 TCP、放行 ICMP**，PC 自连走的是 loopback 语义（不代表局域网通）。
-  真机联调要么换**不隔离**的网（手机开热点给电脑），要么把中转放到公网；隔离网里只剩 `adb reverse` 这条路。
+- **手机"连不上电脑"先查手机有没有把电脑 IP 劫持到本机**（2026-10-29 公司 wifi，绕了三圈才找到）：
+  现象 —— 手机到电脑**任何端口**的 TCP 都在 1–2ms 内 `Connection refused`，而电脑自连 405/426 正常、
+  防火墙规则齐全。**关键判据是"包到底发出去没有"**：
+  1. 电脑侧轮询 `Get-NetTCPConnection -State SynReceived | ? LocalPort -in 8787,8790` —— **空**；
+  2. `pktmon`（管理员）抓到 **0 个来自手机的 SYN**。
+  两条一起说明包压根没出手机，于是"防火墙 / 杀软 / AP 隔离 / 灭屏"全部不成立（`TCPv4\Connections Reset`
+  的 +1/+2 是无关流量，别拿它当证据）。
+  **真因（本次）**：手机上有残留 —— `lo` 挂着 `192.168.110.79/32`（正是电脑的 IP），
+  外加 `iptables -t nat -A OUTPUT -d 192.168.110.79/32 -p tcp --dport 8787 -j REDIRECT --to-ports 8787`，
+  于是"连电脑的 8787"被重定向到手机自己，`ip route get <电脑IP>` 直接返回 `local … dev lo`。
+  **排查三行**：
+  ```powershell
+  adb shell 'ip route get <电脑IP>'                      # 出现 local/dev lo 就是被劫持
+  adb shell 'ip -o -f inet addr show | grep <电脑IP>'    # lo 上多出来的 /32
+  adb shell 'iptables -t nat -S | grep <电脑IP>'         # REDIRECT / DNAT
+  ```
+  **清理**：`ip addr del <电脑IP>/32 dev lo` + `iptables -t nat -D OUTPUT -d <电脑IP>/32 -p tcp --dport 8787 -j REDIRECT --to-ports 8787`。
+  清完手机 curl 从 000 变 405/426，App 连接表里出现 `8787 ← 192.168.110.28`，全程没有 `adb reverse`。
+  **教训**：先问"包发出去了吗"，再问"谁拦的"；`adb reverse` 能让 8787 变通，是因为劫持规则同样命中了回环。
 - **判"手机在不在线"别信 App 顶部那个绿点**（旧状态会留着）：看**电脑侧连接表**
   （`Get-NetTCPConnection -State Established -LocalPort 8787,8790`；经 `adb reverse` 进来的是 `127.0.0.1`，
   局域网进来的才是 `192.168.x.x`）与**手机侧游标**（`cursors` 表最上面那行 `updated_at` 有没有往前走）。
