@@ -48,7 +48,7 @@ export async function startChain(t: Cleanup): Promise<Chain> {
   }
   const pairing = createPairing({ pcId: CONNECTOR_ID, relayUrl: wsBase, pcPubEd: pc.sign.publicKeyHex, pcPubDh: pc.dh.publicKeyHex })
   let published = 0
-  const publisher = createDevicePublisher({ relayUrl: wsBase, allowInsecureLocal: true, tokenSource: async () => CONNECTOR_TOKEN })
+  const publisher = createDevicePublisher({ relayUrl: () => wsBase, allowInsecureLocal: () => true, tokenSource: async () => CONNECTOR_TOKEN })
   const publish = async (): Promise<void> => {
     await publisher([...devices].map(([id, row]) => ({
       id, name: row.name, pairingId: row.pairingId, devPubEd: row.edPubHex, devPubDh: row.dhPubHex,
@@ -104,7 +104,7 @@ export async function startChain(t: Cleanup): Promise<Chain> {
   t.after(() => { link.stop(); enrollment.dispose() })
   link.start()
   await waitFor('控制面连接并发布名册', () => published > 0)
-  const register = createPairingRegistrar({ relayUrl: wsBase, allowInsecureLocal: true, tokenSource: async () => CONNECTOR_TOKEN })
+  const register = createPairingRegistrar({ relayUrl: () => wsBase, allowInsecureLocal: () => true, tokenSource: async () => CONNECTOR_TOKEN })
   return {
     relay, httpBase, wsBase, link, devices, connections, diagnostics,
     published: () => published,

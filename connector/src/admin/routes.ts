@@ -68,6 +68,7 @@
 import type { Caps } from '../dsh/caps.js'
 import type { ChannelState } from '../transport/channels.js'
 import type { AdvertiseKind, AdvertiseView } from './advertise.js'
+import type { ConnectionSaveResult, ConnectionView } from './connection-card.js'
 
 /**
  * Connection 的精确 Fetch 路由（`packages/client/connection/src/rpc.ts:144-153`）。
@@ -173,6 +174,17 @@ export interface AdminDeps {
    * @returns 实际删了几台，以及**跳过几台在线的**（按状态批量绝不误伤）
    */
   removeScope(scope: 'revoked' | 'all'): Promise<{ removed: number; skippedOnline: number }>
+  /**
+   * 面板「连接」卡的读写面。
+   *
+   * **逻辑全在 `connection-card.ts`**：白名单、`relayUrlOf` 校验、一次写入、
+   * 冲突归一都在那边；本文件只把 HTTP 形状接上 —— 路由层不认识 settings、
+   * 也不认识凭据 seam，这样那三条判据才能脱 DSH 单测。
+   */
+  connection: {
+    read(): Promise<ConnectionView>
+    save(body: unknown): Promise<ConnectionSaveResult>
+  }
 }
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' }
@@ -205,6 +217,7 @@ const TRANSPORT_PATH = '/api/dsh-mobile/transport'
 const ADVERTISE_PATH = '/api/dsh-mobile/advertise'
 const ENABLED_PATH = '/api/dsh-mobile/devices/enabled'
 const REMOVE_PATH = '/api/dsh-mobile/devices/remove'
+const CONNECTION_PATH = '/api/dsh-mobile/connection'
 
 export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
   const routes: ConnectionFetchRoute[] = [
@@ -221,6 +234,27 @@ export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
             devices: deps.devices(),
           }),
         ),
+    },
+
+    // 「连接」卡：**一条路由按方法分支**（同 `/advertise` 的理由 —— DSH 的精确
+    // 路由不能同 path 注册两条，`rpc-host.ts:141` 的 `fetchRoutes.get(pathname)`）。
+    {
+      path: CONNECTION_PATH,
+      methods: ['GET', 'POST'],
+      requestBody: 'buffered',
+      fetch: async (request: Request) => {
+        if (request.method === 'GET') return json(await deps.connection.read())
+        let body: unknown
+        try {
+          body = await request.json()
+        } catch {
+          return badRequest(new Error('请求体不是合法 JSON'))
+        }
+        // 失败的**形状也由卡片决定**（带 `field` 与保存后的真值），
+        // 路由层不再自己拼错误体 —— 否则两处各有一套错误词表。
+        const result = await deps.connection.save(body)
+        return json(result.body, result.status)
+      },
     },
 
     // 传输面：**按通道**列与停启。停 ≠ 卸载：不清凭据、不动身份，

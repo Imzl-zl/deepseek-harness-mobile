@@ -9,7 +9,14 @@ import { test } from 'node:test'
 
 import { credentialKey, type CredentialKey, type CredentialRecord } from '@deepseek-ai/dsh-credentials'
 
-import { RelayTokenError, readRelayToken } from '../src/dsh/relay-token.js'
+import {
+  RelayTokenError,
+  clearRelayToken,
+  relayTokenKey,
+  relayTokenStatusOf,
+  readRelayToken,
+  writeRelayToken,
+} from '../src/dsh/relay-token.js'
 
 const KEY = credentialKey('dsh-mobile-connector', 'relay-token')
 
@@ -64,4 +71,69 @@ test('载荷里没有非空 token：抛（空串会退化成匿名连接，症�
       (error: unknown) => error instanceof RelayTokenError && /没有非空的 token/.test(error.message),
     )
   }
+})
+
+// ---------------------------------------------------------------------------
+// 写面（面板「连接」卡用）—— 记录面的唯一写路径是 `modifyRecord`，删除是 `deleteRecord`。
+// ---------------------------------------------------------------------------
+
+/** 假的记录面：只实现写/删/状态三个窄方法，并记下写了什么。 */
+function store(initial?: CredentialRecord) {
+  let current = initial
+  const calls: string[] = []
+  return {
+    calls,
+    get written() { return current },
+    describeRecord: () => Promise.resolve({
+      configured: current !== undefined,
+      ...(current === undefined ? {} : { kind: current.kind }),
+      writable: true,
+    }),
+    readRecord: () => Promise.resolve(current),
+    modifyRecord: (
+      _key: CredentialKey,
+      mutate: (row: CredentialRecord | undefined) => Promise<CredentialRecord | undefined>,
+    ) => {
+      calls.push('modifyRecord')
+      return mutate(current).then((next) => {
+        current = next
+        return next
+      })
+    },
+    deleteRecord: () => {
+      calls.push('deleteRecord')
+      current = undefined
+      return Promise.resolve()
+    },
+  }
+}
+
+test('写：走 modifyRecord，键是 <scope>/<id> 记录，值去掉首尾空白', async () => {
+  const s = store()
+  await writeRelayToken(s, 'relay-connector', '  tok-1  ')
+  assert.deepEqual(s.calls, ['modifyRecord'])
+  assert.deepEqual(s.written, { kind: 'grant', payload: { token: 'tok-1' } })
+  assert.equal(String(relayTokenKey('relay-connector')), 'dsh-mobile-connector/relay-connector')
+})
+
+test('写：空串与含空白/控制字符的值一律拒（它要进 Authorization 头）', async () => {
+  for (const bad of ['   ', 'a b', 'tok\r\nX-Injected: 1', 'tok\u0000']) {
+    const s = store()
+    await assert.rejects(() => writeRelayToken(s, 'relay-connector', bad), RelayTokenError)
+    assert.deepEqual(s.calls, [], `「${JSON.stringify(bad)}」不该碰记录面`)
+  }
+})
+
+test('删：走 deleteRecord（不是写一条空值 —— 空值表达不了"没有"）', async () => {
+  const s = store({ kind: 'grant', payload: { token: 'tok-1' } } as CredentialRecord)
+  await clearRelayToken(s, 'relay-connector')
+  assert.deepEqual(s.calls, ['deleteRecord'])
+  assert.equal(s.written, undefined)
+})
+
+test('状态：只回「设没设 + 能不能写」，**没有能装值的槽**', async () => {
+  const present = await relayTokenStatusOf(store({ kind: 'grant', payload: { token: 'tok' } } as CredentialRecord), 'relay-connector')
+  assert.deepEqual(present, { configured: true, writable: true })
+  const absent = await relayTokenStatusOf(store(), 'relay-connector')
+  assert.deepEqual(absent, { configured: false, writable: true })
 })

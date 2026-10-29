@@ -266,10 +266,12 @@ app/packages/
 | 档 | 判据 | 谁给 | 用于 |
 |---|---|---|---|
 | 非公网 | `ws://` 且主机是回环/私网/CGNAT/link-local/ULA | 装配层常开（`allowInsecureLocal: true`） | 局域网直连、组网（Tailscale 100.64/10） |
-| 公网 | `ws://` 且主机是公网地址 | **用户显式确认**（`net.allow_plaintext_public`） | 自部署中转、暂无域名/证书 |
+| 公网 | `ws://` 且主机是公网地址 | **用户显式确认**：手机侧 `net.allow_plaintext_public`、电脑侧 `allowInsecurePublic`（两端各判各的，互不替代） | 自部署中转、暂无域名/证书 |
 
-公网那一档的确认点只有两个：手填端点对话框里的勾选、配对页确认卡上的警告+确认
-（那一步会把电脑身份摆出来）。**默认不开**，且确认文案必须写明"元数据可见"。
+公网那一档的确认点有三个：手机手填端点对话框里的勾选、手机配对页确认卡上的警告+确认
+（那一步会把电脑身份摆出来）、电脑侧「手机」面板 →「连接」卡里的勾选。
+**默认不开**，且确认文案必须写明"元数据可见"。电脑侧同一个判据在
+`connector/src/transport/relay-url.ts` 的 `relayUrlOf`（写入前校验，schema 不管这件事）。
 `wss://` 任何主机始终放行（域名或 IP 都行）。
 
 中转**自己不终结 TLS**（`relay/src/server.ts` 用 `node:http` + `WebSocketServer`）：

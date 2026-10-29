@@ -62,6 +62,22 @@ export interface SettingsPort {
     value: unknown,
     expectedRevision?: unknown,
   ): Promise<void>
+  /**
+   * 一次写多个字段。
+   *
+   * **为什么不是循环调 `setField`**：`mutate` 每次写入都会让 revision +1
+   * （`packages/settings/settings/src/index.ts:315-317` 的 revision 递推），
+   * 而乐观锁比的是本轮读到的那个值 —— 第二次调用拿旧 revision 必抛
+   * `SETTINGS_CONFLICT`。面板一次保存改三个字段，必须是**一次写入**。
+   *
+   * 用 `update`（合并）而不是 `replace`（重建）：后者会拿脱敏文档覆盖
+   * 密钥字段，正是本文件首要要防的那件事。
+   */
+  setFields(
+    ns: string,
+    patch: Readonly<Record<string, unknown>>,
+    expectedRevision?: unknown,
+  ): Promise<void>
   /** 写一个凭据。明文只进不出。 */
   setSecret(ref: CredentialRef, value: string): Promise<void>
   unsetSecret(ref: CredentialRef): Promise<void>
@@ -124,6 +140,12 @@ export function createSettingsPort(services: SettingsServices): SettingsPort {
         [{ op: 'set', path: [...path], value }],
         expectedRevision as never,
       )
+    },
+
+    async setFields(ns, patch, expectedRevision) {
+      // `update(ns, patch, expectedRevision?)`：合并进该条目的 config，
+      // 一次 `configEditor.edit`（`packages/settings/settings/src/index.ts:348-351`）。
+      await requireSettings().update(ns, { ...patch }, expectedRevision as never)
     },
 
     async setSecret(ref, value) {

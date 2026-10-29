@@ -21,6 +21,10 @@
  * - **配置不全就拒绝挂载**，不是"空跑等配置"。一个连着中转却没有 relayUrl 的插件
  *   会在服务端制造一条永远不完整的配对记录，排查起来比挂载失败难得多。
  *   身份同理：拿不到身份种子就不启动通道，而不是每次重启换一套新身份。
+ * - **唯一的例外是"凭据里还没有连接器令牌"**（2026-10-29）：那时只让中转通道起不来
+ *   （面板「连接」卡显示原因、也能把令牌贴回去），插件照常挂载、直连照常可用。
+ *   理由很硬：令牌可以在面板里删，而"删了以后重启就连面板都打不开"会把人锁在门外。
+ *   见 `.agents/notes/implemented/2026-10-29-panel-connection-card.md` 的「无令牌可挂载」。
  *
  * `credentials` 从"可选"升成了必需服务（`caps.ts` 有 cite）：电脑侧身份种子存在凭据 seam 里，
  * 没有它连握手都构造不出来 —— 把这种前提当可选项，只会得到一个永远握不了手的空壳。
@@ -78,12 +82,19 @@ import {
 } from './transport/channels.js'
 import { relayHintFor } from './pairing.js'
 import { defaultRouteIPv4 } from './lan-address.js'
-import { readRelayToken } from './dsh/relay-token.js'
+import {
+  clearRelayToken,
+  readRelayToken,
+  relayTokenStatusOf,
+  writeRelayToken,
+  RelayTokenError,
+} from './dsh/relay-token.js'
 import { createPairingRegistrar } from './pairing-register.js'
 import { createDevicePublisher } from './device-publish.js'
 import { offerForScanning, issuePairingOffer } from './pairing-offer.js'
 import { pairingQrSvg } from './pairing-qr.js'
 import { mountAdminFace } from './admin/mount.js'
+import { createConnectionCard } from './admin/connection-card.js'
 import { createDeviceAdmin, type DeviceTablePort } from './admin/device-admin.js'
 import {
   advertiseMapOf,
@@ -135,6 +146,15 @@ const DEFAULT_CONNECTOR_ID = 'local'
 export const inject: string[] = [...REQUIRED_SERVICES]
 
 /**
+ * 哪些配置键变了要重建哪条通道。
+ *
+ * 只有这两组 —— 别的 volatile 字段（`deviceLimit`、`frameLimitBytes`、四个窗口上界…）
+ * 改完下次读写时自然生效，没有"已经建立的连接还握着旧值"这回事，不该顺手重启通道。
+ */
+const RELAY_CONFIG_KEYS = ['relayUrl', 'allowInsecureLocal', 'allowInsecurePublic', 'relayTokenRef'] as const
+const DIRECT_CONFIG_KEYS = ['listenPort', 'listenHost'] as const
+
+/**
  * 设备行的展示排序：**此刻对操作者的意义从高到低**。
  *
  * 1. 在线的（用户正在用的那台）—— 永远在最上面；
@@ -173,6 +193,30 @@ export interface ConnectorService {
   setChannel(id: string, running: boolean): Promise<void>
 }
 
+/**
+ * 当前配置的**读取面**。
+ *
+ * 每一格都是"用时取值"，**不是挂载时快照**：面板可以在不重启 DSH 的前提下改
+ * `relayUrl` / `listenPort`（`settings.update` → loader 的 `loader/volatile-update`，
+ * 提交点在 `vendor/loader/src/config/entry.ts:184,191`）。
+ *
+ * 为什么必须全局一致：说"哪台中转"的地方有四处 —— 拨号、出配对码、名册上报、
+ * 端点自报。只让拨号读新值的话，会出现"连接已经连到新中转，而十秒后出的二维码
+ * 还写着旧地址"，手机照着扫就是拨一个死地址。
+ *
+ * 取舍见 `.agents/notes/implemented/2026-10-29-panel-connection-card.md`。
+ */
+interface LiveConfig {
+  relayUrl(): string | undefined
+  allowInsecureLocal(): boolean
+  /** 公网明文（用户自部署中转）：与 `allowInsecureLocal` 同一条两档判据的公网那一档。 */
+  allowInsecurePublic(): boolean
+  relayTokenRef(): string | undefined
+  /** 直连监听面（§1.7）：`0` = 不监听。 */
+  listenPort(): number
+  listenHost(): string
+}
+
 /** 装配需要的东西。抽成一个对象，便于将来按需替换某一层。 */
 interface Assembly {
   ctx: Context
@@ -180,26 +224,12 @@ interface Assembly {
   metrics: ChannelMetrics
   /** dispose 时用来打断在途异步。 */
   abort: AbortController
-  /**
-   * 中转地址与令牌引用，**在挂载时各取一次**。
-   *
-   * `Volatile<T>` 是稳定引用（`{ get() }`）而不是普通值，文档明说「保留引用，或为单次操作取值」。
-   * 这两个值在挂载时就校验并用来建连，之后改它们需要**重新挂载** —— 参数是响应式的，
-   * 但已经建立的连接不会自己换地址。如实写在这里，比假装支持热改要好。
-   */
-  relayUrl: string | undefined
-  allowInsecureLocal: boolean
-  /** 公网明文（用户自部署中转）：与 llowInsecureLocal 同一条两档判据的公网那一档。 */
-  allowInsecurePublic: boolean
-  relayTokenSecretRef: string | undefined
-  /** 直连监听面（§1.7）：`0` = 不监听。同样是挂载时取一次快照。 */
-  listenPort: number
-  listenHost: string
+  /** 当前配置（每次用时取，见 {@link LiveConfig}）。 */
+  config: LiveConfig
 }
 
 function buildSteps(assembly: Assembly): LifecycleStep[] {
-  const { ctx, relayUrl, allowInsecureLocal, allowInsecurePublic, relayTokenSecretRef, listenPort, listenHost, logger, metrics, abort } =
-    assembly
+  const { ctx, config, logger, metrics, abort } = assembly
 
   let closeStore: (() => Promise<void>) | null = null
   let connection: RelayLink | null = null
@@ -242,6 +272,14 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
   let unregisterPairingCommand: (() => void) | null = null
   /** 管理面 RPC（`/api/dsh-mobile/*`）的注销。**不用 ctx.effect**，理由见 `admin/mount.ts`。 */
   let unregisterAdminFace: (() => void) | null = null
+  /**
+   * 配置热改监听（`loader/volatile-update`）的注销。
+   *
+   * 与 `unregisterAdminFace` 同一个口径：`start-transport` 的 `run()` 是异步的，
+   * 而这里的事件监听是**同步**注册、由 `undo` 摘掉 —— 用 `ctx.effect` 会静默失效
+   * （fiber 已走过那个阶段，见 `admin/mount.ts` 的说明）。
+   */
+  let offVolatileUpdate: (() => void) | null = null
 
   /** 设备状态。真值在 store 里，这里给出 transport 需要的读取面。 */
   /**
@@ -314,13 +352,18 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
     {
       name: 'validate-config',
       run() {
+        const relayUrl = config.relayUrl()
         if (relayUrl === undefined || relayUrl === '') {
           throw new Error('relayUrl 未配置：拒绝挂载，而不是连上一个不完整的中转')
         }
-        relayUrlOf(relayUrl, allowInsecureLocal, allowInsecurePublic)
-        if (relayTokenSecretRef === undefined || relayTokenSecretRef === '') {
+        relayUrlOf(relayUrl, config.allowInsecureLocal(), config.allowInsecurePublic())
+        const ref = config.relayTokenRef()
+        if (ref === undefined || ref === '') {
           throw new Error('relayTokenRef 未配置：连接器令牌的凭据引用缺失')
         }
+        // **令牌记录本身不在这里校验**：记录缺失只让中转通道起不来，不让整个插件
+        // 挂不上 —— 否则在面板里删掉令牌再重启，连"把令牌贴回去"的界面都打不开了。
+        // 见 .agents/notes/implemented/2026-10-29-panel-connection-card.md 的「无令牌可挂载」。
       },
     },
 
@@ -346,8 +389,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           await core.global.set(
             initialMeta({
               connectorId: DEFAULT_CONNECTOR_ID,
-              relayUrl: relayUrl ?? '',
-              connTokenSecretRef: relayTokenSecretRef ?? '',
+              relayUrl: config.relayUrl() ?? '',
+              connTokenSecretRef: config.relayTokenRef() ?? '',
             }),
           )
         }
@@ -493,7 +536,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           // 二维码带的是当前地址 —— 用户不用回去改 yml 再重启 DSH
           // （2026-10-17 真机踩到：配置里写着已不属于本机的 192.168.2.43，
           //  手机拨存量端点全超时，而二维码再出码也还是那个死地址）。
-          relayUrl: () => relayHintFor(relayUrl ?? '', lanHint),
+          // 出码时**现取**：面板改完地址，下一张码立刻写新地址。
+          relayUrl: () => relayHintFor(config.relayUrl() ?? '', lanHint),
           pcPubEd: pcIdentity.sign.publicKeyHex,
           pcPubDh: pcIdentity.dh.publicKeyHex,
         })
@@ -504,10 +548,11 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
          * 两者打的是同一台中转的 HTTP 面，各自写一份派生迟早会不一致。
          */
         const publisher = createDevicePublisher({
-          allowInsecureLocal,
-          allowInsecurePublic,
-          relayUrl: relayUrl ?? '',
-          tokenSource: () => readRelayToken(ctx.credentials, relayTokenSecretRef ?? ''),
+          // 三格都是现取：地址与明文开关都能被面板热改，令牌本来就每次现读。
+          allowInsecureLocal: () => config.allowInsecureLocal(),
+          allowInsecurePublic: () => config.allowInsecurePublic(),
+          relayUrl: () => config.relayUrl() ?? '',
+          tokenSource: () => readRelayToken(ctx.credentials, config.relayTokenRef() ?? ''),
           log: logger,
         })
         /** 字段名在这一层对齐（配对的设备行叫 `edPubHex`，域表叫 `edPub`）。 */
@@ -563,12 +608,12 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         // 出码的**登记面**（`offerId` → 中转）。斜杠命令与管理页面共用同一个实例 ——
         // 两处各建一个的话，"令牌换了哪边先生效"会有两个答案。
         const registerPairing = createPairingRegistrar({
-          allowInsecureLocal,
-          allowInsecurePublic,
-          relayUrl: relayUrl ?? '',
+          allowInsecureLocal: () => config.allowInsecureLocal(),
+          allowInsecurePublic: () => config.allowInsecurePublic(),
+          relayUrl: () => config.relayUrl() ?? '',
           // 令牌**现读**（`readRelayToken` 不缓存）：出码是人工动作，换令牌后立刻生效；
           // 也省得为这个只在出码时用到的值安排装配顺序。
-          tokenSource: () => readRelayToken(ctx.credentials, relayTokenSecretRef ?? ''),
+          tokenSource: () => readRelayToken(ctx.credentials, config.relayTokenRef() ?? ''),
           log: logger,
         })
         /**
@@ -681,6 +726,19 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         // 抽出去是为了让"解禁要把 `revokedAt` 从行上拿掉""在线豁免按形状生效"这两条
         // 不变量有单测可钉（2026-10-15 事故后最不能错的两条）。
         /**
+         * 设置/凭据端口的**唯一实例**。
+         *
+         * 手机面的 `settings.describe|update` 与面板的「连接」卡共用同一个 ——
+         * "读已脱敏、写只发新值"因此只有一份实现，两个面不会各自漂
+         * （见 `dsh/settings.ts` 的文件头三条）。
+         */
+        const settingsService = ctx.get('settings') as SettingsForms | undefined
+        const settingsPort =
+          settingsService === undefined
+            ? null
+            : createSettingsPort({ settings: settingsService, credentials: ctx.credentials })
+
+        /**
          * 方法面的挂载级依赖。**每连接的那三个端口不在这里** ——
          * `createHandlers` 的 deps 类型上已经不收它们（见 `ConnectionScopeDeps.handlers`）。
          */
@@ -691,20 +749,20 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           // 手机那边显示"未读到"—— 见 `dsh/host-version.ts` 的三条取法。
           dshVersion: () => hostDshVersion(),
           sessions,
-          // 端点自报：**没有监听面就不给**（`endpoint.describe` 于是不出现）。
-          // 它现取 `listener`：监听面在后面的 `start-transport` 步才起，
-          // 而这个 deps 对象在挂载时就构造好了。
-          ...(listenPort === 0
-            ? {}
-            : {
-                endpoints: createEndpointsPort({
-                  relayUrl,
-                  lanHintOf: () => lanHint,
-                  listenerOf: () => listener,
-                  // 用户藏掉 / 追加的上报地址（现取：管理面改完立刻生效）。
-                  advertiseOf: () => advertiseMapOf(advertiseRows),
-                }),
-              }),          // 会话投影：**按能力位挂**（`sessionProjections` 服务在不在）。
+          // 端点自报：**总是挂**。
+          //
+          // 曾经是"挂载时 `listenPort !== 0` 才挂"，但面板现在能把直连从 0 改成
+          // 8790（热改，不重启）—— 那时方法却不存在，手机永远拿不到那条新端点，
+          // "开直连"就成了假动作。方法在、监听面不在时它只报中转那一条，
+          // 形状不变；手机侧要不要直连看 `caps.direct`（现取 `listener !== null`）。
+          endpoints: createEndpointsPort({
+            relayUrlOf: () => config.relayUrl(),
+            lanHintOf: () => lanHint,
+            listenerOf: () => listener,
+            // 用户藏掉 / 追加的上报地址（现取：管理面改完立刻生效）。
+            advertiseOf: () => advertiseMapOf(advertiseRows),
+          }),
+          // 会话投影：**按能力位挂**（`sessionProjections` 服务在不在）。
           ...(ctx.get('sessionProjections') === undefined
             ? {}
             : { projections: createProjectionsPort(ctx.sessionController) }),
@@ -738,16 +796,10 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           // 设置面（`settings.describe` / `settings.update`）：只有 `settings` 服务在时才挂。
           // 读已脱敏、写只发新值 —— 三条安全规则在 `dsh/settings.ts` 里，范围在
           // `dsh/settings-face.ts` 的两张 allowlist 里。
-          ...(ctx.get('settings') === undefined
-            ? {}
-            : {
-                settings: createSettingsFace(
-                  createSettingsPort({
-                    settings: ctx.get('settings') as SettingsForms,
-                    credentials: ctx.credentials,
-                  }),
-                ),
-              }),
+          //
+          // `settingsPort` 建在更上面（面板的「连接」卡也用它）：同一个端口实例，
+          // "读已脱敏、写只发新值"因此只有一份实现，两个面不会各自漂。
+          ...(settingsPort === null ? {} : { settings: createSettingsFace(settingsPort) }),
           aliases: {
             ensure: (dshSessionId) => {
               if (aliases === null) {
@@ -998,8 +1050,9 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           for (const scope of liveScopes) scope.sendStatus(sid, running)
         }))
 
-        // 连接器令牌（§12.2）：**拨号与出码登记共用同一个值**，所以在这一步开头读一次。
-        // 读不到就**大声失败**（`readRelayToken` 的契约）：起来一个连不上中转的插件没有意义。
+        // 配对端点（§12.1）。**连接器令牌不在这里读**：拨号时现读（`startRelayChannel`），
+        // 出码登记也现读（`registerPairing` 的 `tokenSource`）—— 换令牌后两者都立刻生效，
+        // 而且"没有令牌"不再是挂载失败（见 `transportStart` 的说明）。
         const enrollment = createPairingEndpoint({
           pairing: pairingCore, pcId: connectorId, putDevice, announce: publishDevices, log: logger,
           // 重新配对的替换钩子：手机自报的 `previousPairingId` 只是**行定位符**
@@ -1022,7 +1075,6 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           },
         })
         pairingEndpoint = enrollment
-        const relayToken = await readRelayToken(ctx.credentials, relayTokenSecretRef ?? '')
 
         /**
          * 每连接的装配产物。
@@ -1060,6 +1112,14 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
          * 分别报出来，批量端点只会把其中一个的失败藏掉。
          */
 
+        /**
+         * 中转通道起不来时的那句话（`channels().detail` 与「连接」卡都读它）。
+         *
+         * 为什么留在这里而不是只写日志：缺令牌是**可修复状态**（在面板里贴回去即可），
+         * 而操作者看到的是"中转：未运行" —— 不带原因的话，下一步只能去翻日志。
+         */
+        let relayError: string | null = null
+
         /** 通道一：中转拨号。**自愈** —— 断开后退避重连 `relayUrl`。 */
         const startRelayChannel = async (): Promise<void> => {
           if (connection !== null) return
@@ -1069,15 +1129,23 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
            * **连接器令牌走升级头的 `Authorization`**（§2.2）：实测 Node 的全局 `WebSocket`
            * 支持第二参数传 options 对象（undici 的非标准扩展，见笔记），所以这里能带头 ——
            * 三参数形式与裸调用都收不到（服务端只会看到 `(none)`）。
-           * 令牌在装配时读一次（`readRelayToken` 不缓存，但**每次拨号都由同一个连接对象发起**，
-           * 于是运行期换令牌需要重连 —— 这是可接受的：换令牌本来就意味着换一次连接）。
+           *
+           * 令牌、地址、两档明文开关**每次拨号现取**：换令牌或换地址后重建连接即可生效
+           * （`readRelayToken` 有意不缓存，见 `dsh/relay-token.ts` 的三条判断）。
            */
+          let token: string
+          try {
+            token = await readRelayToken(ctx.credentials, config.relayTokenRef() ?? '')
+          } catch (error) {
+            relayError = error instanceof Error ? error.message : String(error)
+            throw error
+          }
           connection = createRelayLink({
-            url: relayUrl ?? '',
-    token: relayToken,
-    allowInsecureLocal,
-    allowInsecurePublic,
-    log: logger,
+            url: config.relayUrl() ?? '',
+            token,
+            allowInsecureLocal: config.allowInsecureLocal(),
+            allowInsecurePublic: config.allowInsecurePublic(),
+            log: logger,
             onConnected: publishDevices,
             allows: (binding) => {
               if (binding.purpose === 'pairing') return pairingCore.allows(binding.candidate)
@@ -1086,6 +1154,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             },
             createData: makeConnection,
           })
+          relayError = null
           connection.start()
         }
         const stopRelayChannel = async (): Promise<void> => {
@@ -1106,13 +1175,14 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
          */
         const startDirectChannel = async (): Promise<void> => {
           if (listener !== null) return
-          if (listenPort === 0) throw new Error(DIRECT_UNCONFIGURED)
+          const port = config.listenPort()
+          if (port === 0) throw new Error(DIRECT_UNCONFIGURED)
           // **先解析局域网地址再起监听面**：第一次 `endpoint.describe`（手机连上后
           // 立刻会调）要用它给 direct 排序、给中转条目算手机可达地址。
           await refreshLanHint()
           listener = await startListener({
-            port: listenPort,
-            host: listenHost,
+            port,
+            host: config.listenHost(),
             log: logger,
             accept: () => {
               const accepted = makeConnection()
@@ -1133,9 +1203,48 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           }
         }
 
+        /**
+         * 通道重建的**串行队列**。
+         *
+         * 两个触发源：配置被改（`loader/volatile-update`）与面板写令牌（令牌不进
+         * volatile 引用，因此不会发那条事件，由管理面显式排一次）。手改 yml 连点两次
+         * 就会排两次 —— 并发 stop/start 会互踩（第二次 stop 可能落在第一次 start 的半途），
+         * 所以只排队、不并发。队列本身**不抛**：失败记进 `rebuildError` 让"连接"卡报出来。
+         */
+        let rebuildQueue: Promise<void> = Promise.resolve()
+        let rebuildError: string | null = null
+        const enqueueRebuild = (id: 'relay' | 'direct'): Promise<void> => {
+          const run = rebuildQueue.then(async () => {
+            rebuildError = null
+            try {
+              if (id === 'relay') {
+                await stopRelayChannel()
+                if ((config.relayUrl() ?? '') !== '') await startRelayChannel()
+              } else {
+                await stopDirectChannel()
+                // 端口改回 0 = 用户明说"不监听"：停在未运行，不是失败。
+                if (config.listenPort() !== 0) await startDirectChannel()
+              }
+            } catch (error) {
+              rebuildError = error instanceof Error ? error.message : String(error)
+              logger.warn(`重建传输通道 ${id} 失败（该通道已停在未运行）`, error)
+            }
+          })
+          rebuildQueue = run
+          return run
+        }
+
         transportStart = async () => {
-          await startRelayChannel()
-          await startDirectChannel()
+          // 逐通道起，只放过两种"配置里本来就允许的缺席"：
+          //  1. 凭据里还没有令牌 —— 插件必须挂上：删掉令牌再重启，面板得还能打开
+          //     （否则再也没地方把令牌贴回去）。见决策笔记的「无令牌可挂载」。
+          //  2. `listenPort = 0` —— 配置明说"不监听"（`config.ts:26-29`），不是失败。
+          // 其他失败（坏地址、端口被占）照旧整体抛出：真正的故障必须吵。
+          await startRelayChannel().catch((error: unknown) => {
+            if (!(error instanceof RelayTokenError)) throw error
+            logger.warn('中转通道未启动：凭据里没有连接器令牌（可在「手机」面板的「连接」卡里设置）')
+          })
+          if (config.listenPort() !== 0) await startDirectChannel()
         }
         transportStop = async () => {
           // 先停监听面：不再接受新连接，再收已接受的（它们的连接由监听面自己 stop）。
@@ -1154,9 +1263,16 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             id: 'relay',
             label: '中转拨号',
             running: () => connection !== null,
+            // "跑着"与"连上了"是两件事：`running` 从 start() 起就为真，
+            // 而控制面要等到 open 才是通的。见 `ChannelState.connected`。
+            connected: () => connection?.connected === true,
             start: startRelayChannel,
             stop: stopRelayChannel,
-            detail: () => relayUrl ?? '未配置中转',
+            // 没跑起来时优先说**原因**（缺令牌/坏地址），否则说拨向哪。
+            detail: () =>
+              connection === null && relayError !== null
+                ? relayError
+                : config.relayUrl() ?? '未配置中转',
           },
           {
             id: 'direct',
@@ -1165,13 +1281,90 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             start: startDirectChannel,
             stop: stopDirectChannel,
             detail: () =>
-              listenPort === 0 ? DIRECT_UNCONFIGURED : `${listenHost}:${listener?.port ?? listenPort}`,
+              config.listenPort() === 0
+                ? DIRECT_UNCONFIGURED
+                : `${config.listenHost()}:${listener?.port ?? config.listenPort()}`,
           },
         ])
 
         await transportStart()
 
-        // 插件面板的 RPC（`/api/dsh-mobile/{status,pair,transport,devices/*}`）。
+        /**
+         * 配置热改的通知面。
+         *
+         * loader 只在"**仅** volatile 字段变了"的变更上发这条事件，而且**值已经提交**
+         * 进运行中的 `Volatile` 引用（`vendor/loader/src/config/entry.ts:184,191`）——
+         * 所以这里只管"重建哪条通道"，不必自己取值。事件只送达本插件的 fiber
+         * （`:188-189` 的过滤器），面板保存与手改 `cordis.patch.yml` 都走它。
+         */
+        // 事件签名住在 loader 包自己的 `Events` 增强里（`vendor/loader/src/index.ts:34`），
+        // 而本工程的 Context 类型不含它（我们不依赖那个包的类型）。按形状收窄一次，
+        // 不新增一套本地类型定义 —— 载荷形状就是 `paths`。
+        const loaderEvents = ctx as unknown as {
+          on(event: 'loader/volatile-update', listener: (paths: readonly (readonly string[])[]) => void): () => void
+        }
+        offVolatileUpdate = loaderEvents.on('loader/volatile-update', (paths) => {
+          const changed = new Set(paths.map((path) => path.join('.')))
+          if (RELAY_CONFIG_KEYS.some((key) => changed.has(key))) void enqueueRebuild('relay')
+          if (DIRECT_CONFIG_KEYS.some((key) => changed.has(key))) void enqueueRebuild('direct')
+        })
+
+        /**
+         * 面板「连接」卡的读写面。
+         *
+         * 读：`settings.describe({redactSecrets:true})` 的**白名单投影** + 凭据记录状态 +
+         * 两条通道的真值。写：一次 `settings.update`（`dsh/settings.ts` 的 `setFields`）
+         * + 记录面的 `modifyRecord`/`deleteRecord`。
+         *
+         * 判据（白名单、`relayUrlOf` 校验、一次写入、冲突归一）全在
+         * `admin/connection-card.ts` —— 这里只接装配物，别把逻辑再写一遍。
+         */
+        const connectionCard = createConnectionCard({
+          async read() {
+            const snapshot = settingsPort?.snapshot(name)
+            const value = (snapshot?.values ?? {}) as Record<string, unknown>
+            const ref = typeof value['relayTokenRef'] === 'string' ? value['relayTokenRef'] : undefined
+            const channels = transportChannels?.channels() ?? []
+            const relay = channels.find((row) => row.id === 'relay')
+            const direct = channels.find((row) => row.id === 'direct')
+            return {
+              revision: typeof snapshot?.revision === 'number' ? snapshot.revision : undefined,
+              relayUrl: typeof value['relayUrl'] === 'string' ? value['relayUrl'] : undefined,
+              allowInsecurePublic: value['allowInsecurePublic'] === true,
+              // 只服务地址校验的第一档（`relayUrlOf`），**不上卡**。
+              allowInsecureLocal: value['allowInsecureLocal'] === true,
+              listenPort:
+                typeof value['listenPort'] === 'number' ? value['listenPort'] : config.listenPort(),
+              relayTokenRef: ref,
+              // 令牌状态只回"设没设 + 能不能写"，值永不出凭据面。
+              token:
+                ref === undefined || ref === ''
+                  ? { configured: false, writable: false }
+                  : await relayTokenStatusOf(ctx.credentials, ref),
+              relay: { running: relay?.running ?? false, connected: relay?.connected === true },
+              direct: { running: direct?.running ?? false },
+            }
+          },
+          async writeFields(patch, expected) {
+            if (settingsPort === null) throw new Error('这个部署没有设置服务（settings）')
+            await settingsPort.setFields(name, patch, expected)
+          },
+          async writeToken(ref, token) {
+            await writeRelayToken(ctx.credentials, ref, token)
+            // 令牌不进 volatile 引用 ⇒ 不会有 `loader/volatile-update`，显式排一次重建。
+            await enqueueRebuild('relay')
+          },
+          async clearToken(ref) {
+            await clearRelayToken(ctx.credentials, ref)
+            await enqueueRebuild('relay')
+          },
+          async settle() {
+            await rebuildQueue
+            return rebuildError ?? undefined
+          },
+        })
+
+        // 插件面板的 RPC（`/api/dsh-mobile/{status,pair,transport,devices/*,connection}`）。
         // **必须在 `transportChannels` 创建之后**：按通道生成的起停路由
         // （`POST /transport/{id}/{start,stop}`）在挂载时一次性生成，挂早了
         // `channels()` 还是空数组 —— 2026-10-17 真机实测到这个顺序 bug
@@ -1181,7 +1374,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           mountAdminFace(ctx, {
             caps: () => readCaps(ctx, { direct: listener !== null }),
             metrics: () => metrics.snapshot(),
-            relayUrl: () => relayUrl ?? null,
+            relayUrl: () => config.relayUrl() ?? null,
+            connection: connectionCard,
             // 启停开关：**按通道**（两个方式两个开关，2026-10-17 用户要求）。
             channels: () => transportChannels?.channels() ?? [],
             advertise: advertiseAdmin,
@@ -1226,6 +1420,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           void transportStop?.()
           unregisterAdminFace?.()
           unregisterAdminFace = null
+          offVolatileUpdate?.()
+          offVolatileUpdate = null
           pairingEndpoint?.dispose()
           pairingEndpoint = null
         })
@@ -1236,6 +1432,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         void transportStop?.()
         unregisterAdminFace?.()
         unregisterAdminFace = null
+        offVolatileUpdate?.()
+        offVolatileUpdate = null
         pairingEndpoint?.dispose()
         pairingEndpoint = null
         // 出码命令**在这一步注册**，所以也在这一步注销（它一度挂在 `register-answerers`
@@ -1250,13 +1448,21 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
 export function apply(ctx: Context, config: ConnectorConfig): void {
   const logger = createChannelLogger(ctx.logger(name))
   const metrics = createMetrics()
-  // `Volatile<T>` 是稳定引用而非普通值：取一次快照，之后不再重新读（见 `Assembly` 的说明）。
-  const relayUrl = config.relayUrl.get()
-  const allowInsecureLocal = config.allowInsecureLocal.get()
-  const allowInsecurePublic = config.allowInsecurePublic.get()
-  const relayTokenSecretRef = config.relayTokenRef.get()
-  const listenPort = config.listenPort.get()
-  const listenHost = config.listenHost.get()
+  /**
+   * 配置读取面：**保留 `Volatile` 引用、每次用时取一次值**，而不是挂载时快照。
+   *
+   * `Volatile<T>` 的契约原文是「保留引用，或为单次操作取值」（`@deepseek-ai/cosmokit`
+   * 的 `src/volatile.ts:8`）—— 面板热改配置时 loader 会把新值写进同一个引用并
+   * 通知本 fiber（`vendor/loader/src/config/entry.ts:184,191`），所以这里必须留引用。
+   */
+  const live: LiveConfig = {
+    relayUrl: () => config.relayUrl.get(),
+    allowInsecureLocal: () => config.allowInsecureLocal.get(),
+    allowInsecurePublic: () => config.allowInsecurePublic.get(),
+    relayTokenRef: () => config.relayTokenRef.get(),
+    listenPort: () => config.listenPort.get(),
+    listenHost: () => config.listenHost.get(),
+  }
 
   // 轨迹投影（`trajectory` 键，契约 §5.7）：**可选注册**。
   // 拿不到 `sessionProjections` 服务时什么都不发生（没有日志、没有报错）——
@@ -1271,12 +1477,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const started = mount(
       buildSteps({
         ctx,
-        relayUrl,
-        allowInsecureLocal,
-        allowInsecurePublic,
-        relayTokenSecretRef,
-        listenPort,
-        listenHost,
+        config: live,
         logger,
         metrics,
         abort,

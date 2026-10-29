@@ -16,11 +16,17 @@ import type { ChannelLogger } from './observability.js'
 import { relayUrlOf } from './transport/relay-url.js'
 
 export interface PairingRegistrarOptions {
-  /** 连接层用的 WSS 地址（配置里的 `relayUrl`）。 */
-  relayUrl: string
-  allowInsecureLocal?: boolean
+  /**
+   * 连接层用的 WSS 地址（配置里的 `relayUrl`）。
+   *
+   * 是**函数**：面板可以热改地址（`loader/volatile-update`），而登记打的是
+   * "当前那台中转"的 HTTP 面 —— 存成字符串就会出现"连接已经换到新中转，
+   * 出码却还登记到旧中转"（那张码手机扫了配不上）。
+   */
+  relayUrl: () => string
+  allowInsecureLocal?: () => boolean
   /** 公网明文（自部署中转）：与手机侧 checkedRelayUri 的第二档同一判据。 */
-  allowInsecurePublic?: boolean
+  allowInsecurePublic?: () => boolean
   /**
    * 取连接器令牌。
    *
@@ -49,9 +55,15 @@ export function createPairingRegistrar(
   options: PairingRegistrarOptions,
 ): (offerId: string) => Promise<void> {
   const doFetch = options.fetchImpl ?? fetch
-  const endpoint = `${httpBaseOf(options.relayUrl, options.allowInsecureLocal, options.allowInsecurePublic)}/pairing/register`
+  const endpointOf = (): string =>
+    `${httpBaseOf(
+      options.relayUrl(),
+      options.allowInsecureLocal?.() ?? false,
+      options.allowInsecurePublic?.() ?? false,
+    )}/pairing/register`
 
   return async (offerId) => {
+    const endpoint = endpointOf()
     const token = await options.tokenSource()
     const response = await doFetch(endpoint, {
       method: 'POST',

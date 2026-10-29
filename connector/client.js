@@ -135,6 +135,10 @@ window.__ModuleLoader__.load({
     const ADVERTISE = '/api/dsh-mobile/advertise'
     const ENABLED = '/api/dsh-mobile/devices/enabled'
     const REMOVE = '/api/dsh-mobile/devices/remove'
+    // 「连接」卡（2026-10-29）：中转地址 / 公网明文开关 / 直连端口 / 令牌。
+    // 值的写入走 DSH 的 `settings.update`（落当前 profile 的 cordis.patch.yml），
+    // 令牌走凭据记录面 —— 判据全在电脑侧（`src/admin/connection-card.ts`）。
+    const CONNECTION = '/api/dsh-mobile/connection'
 
     /** 侧边栏条目与主面板共用的 id（标准槽用字符串键，不 branded）。 */
     const PANEL_ID = 'dsh-mobile'
@@ -145,6 +149,41 @@ window.__ModuleLoader__.load({
       // 侧边栏入口（`sidebar.panellist`，order 5：插件 0 之下、自动化任务 10 之上）。
       // 走标准列表槽、带 order —— 不硬编码位置，别的插件同样注册进来各自排序。
       entry: '手机',
+      // ---- 「连接」卡（2026-10-29）----
+      // 这一版把"这台电脑怎么连中转"摆上界面：地址、公网明文那一档、直连端口、令牌。
+      // 每一格的写入都不需要重启 DSH（loader 的 `loader/volatile-update` 会通知插件重建通道）。
+      connectTitle: '连接',
+      relayLabel: '中转',
+      relayConnected: '已连接',
+      relayConnecting: '重连中',
+      relayStopped: '未运行',
+      relayPublic: '公网',
+      relayPrivate: '内网',
+      addressLabel: '地址',
+      addressPlaceholder: 'wss://relay.example.com/ws/connector',
+      // 文案必须写明"内容仍端到端加密"：明文的代价只是元数据（契约两档判据的同一句话）。
+      allowPublicPlain: '允许公网明文 ws://（内容仍端到端加密，元数据可见）',
+      allowPublicPlainInert: '当前地址是 wss://，这项不生效',
+      tokenLabel: '令牌',
+      tokenSet: '已设置（来源：本机凭据）',
+      tokenUnset: '未设置',
+      tokenPlaceholder: '留空 = 不改',
+      tokenClear: '清除令牌',
+      // 后果句必须写清"会发生什么 + 怎么恢复"：删掉后重建中转通道会立刻断开，
+      // 而恢复要在服务器上重签令牌（面板里贴回来即可，不用改文件）。
+      tokenClearTitle: '清除连接器令牌？',
+      tokenClearDescription: '这台电脑会立刻连不上中转（同一 WiFi 下的直连不受影响）。恢复需要先在服务器上重新签发令牌，再在这里填回来。',
+      tokenRefLabel: '凭据引用',
+      listenLabel: '直连端口',
+      listenOff: '停用直连',
+      listenPortRequired: '取消「停用直连」后要填一个端口（0 表示不监听）',
+      save: '保存',
+      saving: '保存中…',
+      reconnecting: '正在重连…',
+      settingsUnavailable: '这个部署没有设置服务（settings），无法在这里改配置',
+      failedConnection: '保存失败：{reason}',
+      failedToken: '令牌没写进去：{reason}（配置已生效）',
+      failedClearToken: '清除令牌失败：{reason}',
       // 传输面**按方式分开关**（2026-10-17 用户：「不是有两中方式为啥就开关？
       // 后面我要是再加新的方式也就一个开关吗？」）。每个通道一个开关，
       // 加新方式时这个列表自动变长（数据来自 GET /transport），不为它改形状。
@@ -235,6 +274,36 @@ window.__ModuleLoader__.load({
     const en = {
       title: 'Mobile link',
       entry: 'Phone',
+      // ---- Connection card (2026-10-29) ----
+      connectTitle: 'Connection',
+      relayLabel: 'Relay',
+      relayConnected: 'Connected',
+      relayConnecting: 'Reconnecting',
+      relayStopped: 'Stopped',
+      relayPublic: 'public',
+      relayPrivate: 'private',
+      addressLabel: 'Address',
+      addressPlaceholder: 'wss://relay.example.com/ws/connector',
+      allowPublicPlain: 'Allow plaintext ws:// to a public host (payloads stay end-to-end encrypted; metadata is visible)',
+      allowPublicPlainInert: 'The current address is wss://, so this has no effect',
+      tokenLabel: 'Token',
+      tokenSet: 'Set (source: local credential store)',
+      tokenUnset: 'Not set',
+      tokenPlaceholder: 'Leave empty to keep',
+      tokenClear: 'Clear token',
+      tokenClearTitle: 'Clear the connector token?',
+      tokenClearDescription: 'This computer will immediately stop reaching the relay (direct connections on the same WiFi keep working). To recover, issue a new token on the server and paste it back here.',
+      tokenRefLabel: 'Credential reference',
+      listenLabel: 'Direct port',
+      listenOff: 'Disable direct connections',
+      listenPortRequired: 'Enter a port after turning off "Disable direct connections" (0 means no listener)',
+      save: 'Save',
+      saving: 'Saving…',
+      reconnecting: 'Reconnecting…',
+      settingsUnavailable: 'This deployment has no settings service, so configuration cannot be edited here',
+      failedConnection: 'Could not save: {reason}',
+      failedToken: 'The token was not stored: {reason} (the rest was saved)',
+      failedClearToken: 'Could not clear the token: {reason}',
       // Per-method transport switches (2026-10-17). One switch per channel;
       // a new method grows this list (data from GET /transport) — the shape
       // never changes.
@@ -336,6 +405,18 @@ window.__ModuleLoader__.load({
       warn: { color: 'var(--dsw-alias-state-warn-label)' },
       err: { color: 'var(--dsw-alias-state-error-primary)' },
       ok: { color: 'var(--dsw-alias-state-success-primary)' },
+      /** 文本/数字输入框（「连接」卡与上报地址那两处共用这一份）。 */
+      input: {
+        flex: 1,
+        minWidth: 0,
+        padding: '6px 8px',
+        borderRadius: 8,
+        border: '1px solid var(--dsw-alias-border-inverted)',
+        background: 'transparent',
+        color: 'inherit',
+        font: 'inherit',
+        fontSize: 12,
+      },
       btn: {
         font: 'inherit', fontSize: 13, cursor: 'pointer', borderRadius: 6,
         border: '1px solid var(--dsw-alias-border-inverted)',
@@ -489,6 +570,189 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * 服务端真值 → 表单草稿。
+     *
+     * `listenDisabled` 由 `listenPort === 0` 推出（`0 = 不监听`，与配置同一语义，
+     * `src/config.ts:26-29`）—— 界面**不发明**"上次用的那个端口"。
+     */
+    const draftOf = (view) => ({
+      relayUrl: view && view.value ? view.value.relayUrl || '' : '',
+      allowInsecurePublic: Boolean(view && view.value && view.value.allowInsecurePublic),
+      listenPort: view && view.value ? String(view.value.listenPort) : '',
+      listenDisabled: !view || !view.value || view.value.listenPort === 0,
+      tokenInput: '',
+    })
+
+    /**
+     * 「连接」卡：这台电脑怎么连中转。
+     *
+     * 四行 + 一个保存键，**只显示白名单那四格**（地址 / 公网明文 / 令牌 / 直连端口）。
+     * 电脑侧的 `describe` 会把该条目 12 个 volatile 字段全给出来，全摆上来只是把
+     * "改配置"的爆炸半径变大 —— 理由与判据见 `src/admin/connection-card.ts` 文件头。
+     *
+     * 纯渲染、无 hook：状态在 `AdminPanel` 里（它同时要驱动通道开关与刷新）。
+     */
+    function ConnectionCard(props) {
+      const t = props.t
+      const view = props.view
+      const draft = props.draft
+      const busy = props.busy
+      const error = props.error
+      const relayChannel = props.relayChannel
+
+      if (view === null) {
+        return h('div', { key: 'conn', style: S.card },
+          h('h3', { style: { ...S.value, margin: '0 0 8px' } }, t('connectTitle')),
+          h('p', { style: S.dim }, '…'),
+        )
+      }
+      if (view.capable !== true) {
+        return h('div', { key: 'conn', style: S.card },
+          h('h3', { style: { ...S.value, margin: '0 0 8px' } }, t('connectTitle')),
+          h('p', { key: 'na', style: { ...S.label, ...S.warn, margin: 0, lineHeight: 1.6 } }, t('settingsUnavailable')),
+        )
+      }
+
+      const status = view.relay.connected
+        ? t('relayConnected')
+        : view.relay.running ? t('relayConnecting') : t('relayStopped')
+      const dotColor = view.relay.connected
+        ? 'var(--dsw-alias-state-success-primary)'
+        : view.relay.running ? 'var(--dsw-alias-state-warn-label)' : 'var(--dsw-alias-state-idle-primary)'
+      const scope = view.relay.public ? t('relayPublic') : t('relayPrivate')
+      const plaintext = draft.relayUrl.startsWith('ws:')
+      const editable = busy !== ''
+      const errorOf = (slot) => (error !== null && error.slot === slot ? error.message : null)
+
+      return h('div', { key: 'conn', style: S.card },
+        h('h3', { style: { ...S.value, margin: '0 0 8px' } }, t('connectTitle')),
+
+        // 冲突/整卡失败放**卡片顶部**：它不属于任何一格，放到某一格下面会让人以为只影响那一格。
+        errorOf('card') === null
+          ? null
+          : h('p', { role: 'alert', style: { ...S.label, ...S.err, margin: '0 0 8px', lineHeight: 1.6 } }, errorOf('card')),
+
+        // ① 中转状态 —— 最高频的一问
+        h('div', { style: S.row },
+          h('span', { style: S.label }, t('relayLabel')),
+          h('span', { style: S.dot(dotColor) }),
+          h('span', { style: S.value }, status),
+          h('span', { style: S.label }, `· ${scope}`),
+        ),
+        // 没跑起来时把原因接在下面（缺令牌 / 地址坏 / 端口占）：原因来自通道真值，
+        // 不在这里另拼一套说法。
+        view.relay.running || !relayChannel
+          ? null
+          : h('p', { style: { ...S.label, margin: '4px 0 0', lineHeight: 1.6 } }, relayChannel.detail),
+
+        // ② 地址
+        h('div', { style: { ...S.row, marginTop: 10 } },
+          h('span', { style: { ...S.label, width: 56, flex: 'none' } }, t('addressLabel')),
+          h('input', {
+            type: 'text',
+            value: draft.relayUrl,
+            placeholder: t('addressPlaceholder'),
+            disabled: editable,
+            onChange: (event) => props.onDraft({ relayUrl: event.target.value }),
+            style: S.input,
+          }),
+        ),
+        errorOf('address') === null
+          ? null
+          : h('p', { role: 'alert', style: { ...S.label, ...S.err, margin: '4px 0 0' } }, errorOf('address')),
+
+        // ③ 公网明文那一档（与手机侧 `net.allow_plaintext_public` 同一判据的电脑侧开关）
+        h('label', { style: { ...S.row, marginTop: 6, cursor: plaintext ? 'pointer' : 'default' } },
+          h('input', {
+            type: 'checkbox',
+            checked: draft.allowInsecurePublic,
+            disabled: editable || !plaintext,
+            onChange: (event) => props.onDraft({ allowInsecurePublic: event.target.checked }),
+          }),
+          h('span', { style: { ...S.label, flex: 1 } }, t('allowPublicPlain')),
+        ),
+        plaintext
+          ? null
+          : h('p', { style: { ...S.label, ...S.dim, margin: '2px 0 0 24px' } }, t('allowPublicPlainInert')),
+
+        // ④ 令牌：**只写不读**。留空=不改；清除是单独的破坏性动作。
+        h('div', { style: { ...S.row, marginTop: 10 } },
+          h('span', { style: { ...S.label, width: 56, flex: 'none' } }, t('tokenLabel')),
+          h('span', { style: { ...S.value, fontSize: 12 } }, view.token.configured ? t('tokenSet') : t('tokenUnset')),
+          h('span', { style: { flex: 1 } }),
+          view.token.configured
+            ? h('button', {
+                type: 'button',
+                style: editable ? { ...S.btnDanger, ...S.btnDisabled } : { ...S.btnDanger, padding: '3px 10px' },
+                disabled: editable,
+                onClick: props.onClearToken,
+              }, t('tokenClear'))
+            : null,
+        ),
+        h('div', { style: { ...S.row, marginTop: 6 } },
+          // `type=password` + 空值：浏览器/读屏不会把令牌念出来；`autocomplete` 关掉，
+          // 免得密码管理器把这里的"连接器令牌"当成某个网站的登录口令。
+          h('input', {
+            type: 'password',
+            value: draft.tokenInput,
+            placeholder: t('tokenPlaceholder'),
+            autoComplete: 'new-password',
+            disabled: editable,
+            onChange: (event) => props.onDraft({ tokenInput: event.target.value }),
+            style: S.input,
+          }),
+        ),
+        errorOf('token') === null
+          ? null
+          : h('p', { role: 'alert', style: { ...S.label, ...S.err, margin: '4px 0 0' } }, errorOf('token')),
+        h('p', { style: { ...S.label, ...S.dim, margin: '4px 0 0' } },
+          `${t('tokenRefLabel')}：${view.value.relayTokenRef || '—'}`),
+
+        // ⑤ 直连端口（0 = 停用直连）
+        h('div', { style: { ...S.row, marginTop: 10 } },
+          h('span', { style: { ...S.label, width: 56, flex: 'none' } }, t('listenLabel')),
+          h('input', {
+            type: 'number',
+            min: 0,
+            max: 65535,
+            value: draft.listenPort,
+            disabled: editable || draft.listenDisabled,
+            onChange: (event) => props.onDraft({ listenPort: event.target.value }),
+            style: { ...S.input, maxWidth: 120, flex: 'none' },
+          }),
+          h('label', { style: { ...S.row, cursor: editable ? 'default' : 'pointer' } },
+            h('input', {
+              type: 'checkbox',
+              checked: draft.listenDisabled,
+              disabled: editable,
+              onChange: (event) => props.onDraft({
+                listenDisabled: event.target.checked,
+                // 取消停用但当前是 0：清空端口框，等用户自己填（**不猜默认端口**）。
+                ...(event.target.checked || draft.listenPort !== '0' ? {} : { listenPort: '' }),
+              }),
+            }),
+            h('span', { style: S.label }, t('listenOff')),
+          ),
+        ),
+        errorOf('port') === null
+          ? null
+          : h('p', { role: 'alert', style: { ...S.label, ...S.err, margin: '4px 0 0' } }, errorOf('port')),
+
+        // ⑥ 保存（靠右：卡内其他行都是"标签左、控件右"，保存键跟着那一列）
+        h('div', { style: { ...S.row, marginTop: 12 } },
+          h('span', { style: { flex: 1 } }),
+          h('button', {
+            type: 'button',
+            style: editable ? { ...S.btn, ...S.btnDisabled } : S.btn,
+            disabled: editable,
+            onClick: props.onSave,
+          }, busy === 'connection' ? t('saving') : t('save')),
+          busy === 'connection' ? h('span', { style: S.label }, t('reconnecting')) : null,
+        ),
+      )
+    }
+
     /** 管理面板本体（状态 + 启停 + 设备 + 配对）。**只有一个视图** ——
      *  2026-10-17 从插件页卡迁到侧边栏弹框后，'summary' 卡片行那个视图
      *  随入口一起没了，留着就是死代码。 */
@@ -498,6 +762,13 @@ window.__ModuleLoader__.load({
       const [channels, setChannels] = useState([])
       const [advertise, setAdvertiseView] = useState(null)
       const [advertiseInput, setAdvertiseInput] = useState('')
+      // ---- 「连接」卡 ----
+      /** 电脑侧的真值（`GET /connection`）。`null` = 还没读回来。 */
+      const [connection, setConnection] = useState(null)
+      /** 表单草稿。**与服务端真值分开**：没保存前界面显示用户改的，保存失败时能被服务端值覆盖回去。 */
+      const [draft, setDraft] = useState(null)
+      /** 卡内的字段级错误：`{ field, message }`（地址/端口/令牌各报各的）。 */
+      const [connectionError, setConnectionError] = useState(null)
       const [error, setError] = useState('')
       const [qr, setQr] = useState(null)
       const [busy, setBusy] = useState('')
@@ -516,11 +787,11 @@ window.__ModuleLoader__.load({
 
       const refresh = useCallback(async () => {
         try {
-          // **三个读面一起拉**：status 管设备与连接态，/transport 管按方式的
-          // 通道开关，/advertise 管"上报给手机哪些地址"。只拉一个的话，
-          // 另一个面永远停在空态（假数据）。
-          const [statusResponse, transportResponse, advertiseResponse] = await Promise.all([
-            fetch(STATUS), fetch(TRANSPORT), fetch(ADVERTISE),
+          // **四个读面一起拉**：status 管设备与连接态，/transport 管按方式的
+          // 通道开关，/advertise 管"上报给手机哪些地址"，/connection 管
+          // "这台电脑怎么连中转"。只拉一个的话，另一个面永远停在空态（假数据）。
+          const [statusResponse, transportResponse, advertiseResponse, connectionResponse] = await Promise.all([
+            fetch(STATUS), fetch(TRANSPORT), fetch(ADVERTISE), fetch(CONNECTION),
           ])
           if (!statusResponse.ok) throw new Error(`${t('loadFailed')}：HTTP ${statusResponse.status}`)
           if (!transportResponse.ok) throw new Error(`${t('loadFailed')}：HTTP ${transportResponse.status}`)
@@ -538,6 +809,16 @@ window.__ModuleLoader__.load({
             hidden: Array.isArray(advertiseBody.hidden) ? advertiseBody.hidden : [],
             candidates: Array.isArray(advertiseBody.candidates) ? advertiseBody.candidates : [],
           })
+          // `/connection` 同样**不参与硬失败**（理由同上）。读到了就回填真值；
+          // 草稿只在**还没有草稿**时（首次）由真值生成 —— 否则刷新会把用户
+          // 正在编辑的地址冲掉，而保存失败时我们已经显式回填过。
+          if (connectionResponse.ok) {
+            const connectionBody = await connectionResponse.json()
+            setConnection(connectionBody)
+            // 已有草稿就不动它：自动刷新（停启通道 / 改上报地址后都会重拉）
+            // 不能把用户正在编辑的地址冲掉。冲突时由 409 的回执显式覆盖。
+            setDraft((current) => (current === null ? draftOf(connectionBody) : current))
+          }
           setError('')
         } catch (caught) {
           // **失败要留声**：静默的空面板会让人以为"没有设备"。
@@ -715,6 +996,121 @@ window.__ModuleLoader__.load({
         }
       }
 
+      /**
+       * 打一次 `/connection` 的 POST。
+       *
+       * **回执里的真值先回填、再判成败**：409（配置在别处改过）与 400 都带着
+       * 保存之后的真值，界面据此回到"电脑侧的事实"，而不是停在用户那一版草稿上。
+       *
+       * @returns 200 时为 true；失败时错误已经落到 `connectionError`（字段级）。
+       */
+      const sendConnection = async (payload) => {
+        setBusy('connection')
+        setConnectionError(null)
+        try {
+          const response = await fetch(CONNECTION, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          })
+          const body = await response.json()
+          if (body !== null && typeof body === 'object' && body.view) {
+            setConnection(body.view)
+            setDraft(draftOf(body.view))
+          }
+          if (!response.ok) {
+            const field = body !== null && typeof body === 'object' && typeof body.field === 'string'
+              ? body.field
+              : 'body'
+            const slot = field === 'relayUrl' ? 'address'
+              : field === 'listenPort' ? 'port'
+                : field === 'token' ? 'token'
+                  : 'card'
+            const reason = body !== null && typeof body === 'object' && typeof body.error === 'string'
+              ? body.error
+              : `HTTP ${response.status}`
+            // 令牌那一格的失败**不许**说成"保存失败"：配置那一半确实已经生效了
+            // （电脑侧回执里带 `configApplied`），两件事分开报。
+            const message = slot !== 'token'
+              ? (slot === 'address' || slot === 'port' ? reason : t('failedConnection', { reason }))
+              : t(body.configApplied === true ? 'failedToken' : 'failedClearToken', { reason })
+            setConnectionError({ slot, message })
+            return false
+          }
+          if (typeof body.relayError === 'string' && body.relayError !== '') setError(body.relayError)
+          return true
+        } catch (caught) {
+          setConnectionError({ slot: 'card', message: t('failedConnection', { reason: messageOf(caught) }) })
+          return false
+        } finally {
+          setBusy('')
+        }
+      }
+
+      /**
+       * 保存「连接」卡。
+       *
+       * **只发真的变了的键**（地址/开关/端口/令牌各一格）。端口为「停用直连」时发 0。
+       * 取消勾选后端口框还是空的话在本层就拦住 —— 发个 0 上去会把"我想开直连"
+       * 静默变成"继续不监听"。
+       */
+      const saveConnection = async () => {
+        if (connection === null || draft === null) return
+        const payload = { revision: connection.revision }
+        const before = connection.value || {}
+        if (draft.relayUrl !== (before.relayUrl || '')) payload.relayUrl = draft.relayUrl
+        if (draft.allowInsecurePublic !== Boolean(before.allowInsecurePublic)) {
+          payload.allowInsecurePublic = draft.allowInsecurePublic
+        }
+        if (!draft.listenDisabled && !/^\d+$/.test(String(draft.listenPort).trim())) {
+          setConnectionError({ slot: 'port', message: t('listenPortRequired') })
+          return
+        }
+        const port = draft.listenDisabled ? 0 : Number(draft.listenPort)
+        if (port !== before.listenPort) payload.listenPort = port
+        if (draft.tokenInput.trim() !== '') payload.token = { op: 'set', value: draft.tokenInput }
+
+        const touched = 'relayUrl' in payload || 'allowInsecurePublic' in payload
+          || 'listenPort' in payload || 'token' in payload
+        if (await sendConnection(payload)) {
+          if (!touched) return
+          // 改了连接参数 ⇒ 电脑侧会重建通道。等真值落地再收工（最多 ~6s）：
+          // 否则面板刚点完保存就显示上一秒的"已连接"。
+          setBusy('connection')
+          try {
+            let latest = null
+            for (let attempt = 0; attempt < 12; attempt += 1) {
+              const response = await fetch(CONNECTION)
+              if (!response.ok) break
+              latest = await response.json()
+              setConnection(latest)
+              // 连上了，或者干脆没在跑（缺令牌/坏地址）—— 两种都是"到头了"。
+              if (latest.relay && (latest.relay.connected || !latest.relay.running)) break
+              if (attempt < 11) await new Promise((resolve) => setTimeout(resolve, 500))
+            }
+            if (latest !== null) setDraft(draftOf(latest))
+          } finally {
+            setBusy('')
+          }
+        }
+      }
+
+      /** 清除令牌：破坏性，走页面内确认框（后果句在 locale 里）。 */
+      const askClearToken = () => {
+        if (connection === null) return
+        askConfirm({
+          title: t('tokenClearTitle'),
+          description: t('tokenClearDescription'),
+          confirmLabel: t('tokenClear'),
+          run: async () => {
+            await sendConnection({ revision: connection.revision, token: { op: 'clear' } })
+            await refresh()
+          },
+        })
+      }
+
+      const setDraftField = (patch) => setDraft((current) => ({ ...(current || {}), ...patch }))
+
       // ---- 派生值：全部只由 `status` 算出来，放在动作前面，免得闭包向前引用 ----
       const devices = status && status.devices ? status.devices : []
       const live = devices.filter((d) => !d.revoked)
@@ -780,6 +1176,21 @@ window.__ModuleLoader__.load({
         // 消息却出现在最下面那张配对卡上，用户根本不会往那儿看。
         error !== '' ? h('p', { key: 'e', role: 'alert', style: { ...S.label, ...S.err, margin: 0 } }, error) : null,
 
+        // ⓪ 「连接」—— 这台电脑怎么连中转（地址 / 公网明文 / 令牌 / 直连端口）。
+        // 放在最上：出问题时第一件事是"地址对不对、令牌在不在"。
+        h(ConnectionCard, {
+          key: 'conn-card',
+          t,
+          view: connection,
+          draft: draft || draftOf(connection),
+          busy,
+          error: connectionError,
+          relayChannel: channels.find((row) => row.id === 'relay') || null,
+          onDraft: setDraftField,
+          onSave: saveConnection,
+          onClearToken: askClearToken,
+        }),
+
         // ① 状态 —— 最高频的那一问："我的手机连上了吗"
         h(
           'div',
@@ -791,12 +1202,8 @@ window.__ModuleLoader__.load({
             h('strong', { style: S.value }, onlineCount > 0 ? t('online') : t('offline')),
             h('span', { style: S.label }, `${onlineCount} / ${pairedCount} 台在线`),
           ),
-          h(
-            'div',
-            { style: { ...S.row, marginTop: 6 } },
-            h('span', { style: S.label }, '拨向'),
-            h('code', { style: { ...S.value, ...S.dim } }, status && status.relayUrl ? status.relayUrl : '未配置中转'),
-          ),
+          // 「拨向哪条路」**不再在这里重复**：上面的「连接」卡就是这条事实的唯一位置
+          // （两处显示同一件事，迟早一先一后地漂）。
           // **传输方式**：每个通道一个开关（2026-10-17 用户：「不是有两中方式
           // 为啥就一个开关？后面我要是再加新的方式也就一个开关吗？」）。
           // 列表来自 `GET /transport` —— 加新方式这里自动长一行，不为它改形状。
@@ -889,7 +1296,7 @@ window.__ModuleLoader__.load({
                   value: advertiseInput,
                   placeholder: t('advertiseAddPlaceholder'),
                   onChange: (event) => setAdvertiseInput(event.target.value),
-                  style: { flex: 1, minWidth: 0, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--dsw-alias-border-inverted)', background: 'transparent', color: 'inherit', font: 'inherit', fontSize: 12 },
+                  style: S.input,
                 }),
                 h('button', {
                   type: 'button',

@@ -39,6 +39,14 @@ export interface ChannelState {
   readonly label: string
   /** 此刻在跑吗。 */
   readonly running: boolean
+  /**
+   * 跑着的这条**真的连上了吗**。只有"拨出去"的通道有这件事实（中转控制面）；
+   * 直连是监听面，没有"连上"这个状态，所以缺省不报。
+   *
+   * 面板的「连接」卡要答"手机那头通没通"，`running` 答不了
+   * （`start()` 之后到 `open` 之前也是 running）。
+   */
+  readonly connected?: boolean
   /** 一行事实：拨向哪 / 监听在哪 / 为什么没配。 */
   readonly detail: string
 }
@@ -48,6 +56,8 @@ export interface ChannelPort {
   readonly id: string
   readonly label: string
   running(): boolean
+  /** 「真的连上了吗」。只有拨出去的通道给得出，直连不给。 */
+  connected?(): boolean
   /** 启动。失败（端口被占等）**抛出**，由调用方把原因带回界面。 */
   start(): Promise<void>
   /** 停止。幂等。 */
@@ -76,6 +86,9 @@ export function createTransportChannels(ports: readonly ChannelPort[]): Transpor
       id: port.id,
       label: port.label,
       running: port.running(),
+      // 只在端口给得出时带上：不给就是"这个通道没有这个事实"，
+      // 而不是"连上了/没连上"。
+      ...(port.connected === undefined ? {} : { connected: port.connected() }),
       detail: port.detail(),
     })),
     async setChannel(id, running) {

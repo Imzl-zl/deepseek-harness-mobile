@@ -78,7 +78,7 @@ export function mountAdminFace(ctx: Context, deps: AdminMountDeps): (() => void)
     const disposeRoute = connection.fetch.register(route)
     disposers.push(() => void disposeRoute())
   }
-  console.error('[dsh-mobile] 管理面 RPC 已挂：/api/dsh-mobile/{status,pair,transport,devices/enabled,devices/remove}')
+  console.error('[dsh-mobile] 管理面 RPC 已挂：/api/dsh-mobile/{status,pair,transport,advertise,connection,devices/enabled,devices/remove}')
 
   return () => {
     // 反序清：后注册的先摘，避免摘的过程中还有请求打到一个半拆的路由。

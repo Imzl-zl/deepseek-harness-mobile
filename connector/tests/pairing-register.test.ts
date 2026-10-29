@@ -32,7 +32,7 @@ test('地址派生：ws→http、wss→https，并且**丢掉路径**（HTTP 端
 test('成功：POST /pairing/register，带 Bearer 令牌与 codeHash', async () => {
   const { impl, calls } = fakeFetch(201)
   const register = createPairingRegistrar({
-    relayUrl: 'wss://relay.example/ws',
+    relayUrl: () => 'wss://relay.example/ws',
     tokenSource: () => Promise.resolve(TOKEN),
     fetchImpl: impl,
   })
@@ -52,7 +52,7 @@ test('成功：POST /pairing/register，带 Bearer 令牌与 codeHash', async ()
 test('非 2xx：抛，并且把**状态码**带进消息（401 与 409 的下一步动作不同）', async () => {
   const { impl } = fakeFetch(409, '{"error":"pairing-unavailable"}')
   const register = createPairingRegistrar({
-    relayUrl: 'wss://relay.example/ws',
+    relayUrl: () => 'wss://relay.example/ws',
     tokenSource: () => Promise.resolve(TOKEN),
     fetchImpl: impl,
   })
@@ -66,7 +66,7 @@ test('非 2xx：抛，并且把**状态码**带进消息（401 与 409 的下一
 test('网络错误：照原样抛（不吞、不重试 —— 出码是人工触发的一次动作）', async () => {
   const impl = (() => Promise.reject(new Error('connect ECONNREFUSED'))) as unknown as typeof fetch
   const register = createPairingRegistrar({
-    relayUrl: 'wss://relay.example/ws',
+    relayUrl: () => 'wss://relay.example/ws',
     tokenSource: () => Promise.resolve(TOKEN),
     fetchImpl: impl,
   })

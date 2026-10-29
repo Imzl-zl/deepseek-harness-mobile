@@ -30,7 +30,7 @@ function fakePort(options: {
   conflict?: boolean
   rows?: Record<string, SettingsSnapshot>
 } = {}) {
-  const calls = { setField: [] as unknown[][] }
+  const calls = { setField: [] as unknown[][], setFields: [] as unknown[][] }
   const rows = options.rows ?? {}
   const port: SettingsPort = {
     snapshot: (ns) => rows[ns],
@@ -47,6 +47,22 @@ function fakePort(options: {
         ns,
         revision: 'rev-2',
         values: { ...(before?.values as Record<string, unknown> | undefined), [path[0]!]: value },
+        secrets: before?.secrets ?? [],
+      }
+    },
+    // 面板的「连接」卡走这条（一次写多字段）；手机面的三行设置走 `setField`。
+    setFields: async (ns, patch, expectedRevision) => {
+      calls.setFields.push([ns, patch, expectedRevision])
+      if (options.conflict === true) {
+        const error = new Error('conflict') as Error & { code: string }
+        error.code = 'SETTINGS_CONFLICT'
+        throw error
+      }
+      const before = rows[ns]
+      rows[ns] = {
+        ns,
+        revision: 'rev-2',
+        values: { ...(before?.values as Record<string, unknown> | undefined), ...patch },
         secrets: before?.secrets ?? [],
       }
     },

@@ -71,6 +71,21 @@ const CHANNELS = [
   { id: 'direct', label: '直连监听', running: true, detail: '0.0.0.0:8790' },
 ]
 
+/** 「连接」卡的读形状（真值由 `admin/connection-card.ts` 算，这里只做路由层替身）。 */
+const CONNECTION_VIEW = {
+  capable: true,
+  revision: 0,
+  value: {
+    relayUrl: 'ws://127.0.0.1:8787/ws/connector',
+    allowInsecurePublic: true,
+    listenPort: 8790,
+    relayTokenRef: 'relay-connector',
+  },
+  token: { configured: true, writable: true },
+  relay: { running: true, connected: true, public: false },
+  direct: { running: true },
+}
+
 function deps(over: Partial<AdminDeps> = {}): AdminDeps {
   return {
     caps: () => CAPS,
@@ -87,6 +102,13 @@ function deps(over: Partial<AdminDeps> = {}): AdminDeps {
     setEnabled: async () => {},
     remove: async () => ({ removed: 0, skippedOnline: 0 }),
     removeScope: async () => ({ removed: 0, skippedOnline: 0 }),
+    connection: {
+      read: async () => CONNECTION_VIEW,
+      save: async () => ({
+        status: 200,
+        body: { ok: true, applied: [], tokenApplied: 'none', view: CONNECTION_VIEW },
+      }),
+    },
     ...over,
   }
 }
@@ -124,6 +146,7 @@ test('端点：路径、方法、形状', async () => {
       // 同 path 写两条会在挂载期抛 "already registered"（0.2.1 起校验，
       // 0.2.0 不校验 —— 所以这条断言在升级前是绿的）。
       '/api/dsh-mobile/advertise GET,POST',
+      '/api/dsh-mobile/connection GET,POST',
       '/api/dsh-mobile/devices/enabled POST',
       '/api/dsh-mobile/devices/remove POST',
       '/api/dsh-mobile/pair POST',

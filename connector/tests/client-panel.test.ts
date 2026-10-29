@@ -60,11 +60,13 @@ const buttonWith = (tree: unknown, label: string): Element | undefined =>
 
 /** 按类型找控件。 */
 /**
- * 设备行的勾选框。
+ * 树里的**勾选框**（设备行的多选框 + 「连接」卡的两个选项）。
  *
- * **只认 `type === 'checkbox'`**：面板上还有别的输入框（2026-10-18 起
- * "上报地址"那块有一个填地址的文本框）。按"是不是 input"数会把文本框
- * 也算成一个勾选框，于是"每行行首一个勾选框"这条断言数出 3 个。
+ * **只认 `type === 'checkbox'`**：面板上还有文本框与数字框。按"是不是 input"数
+ * 会把它们也算成勾选框。
+ *
+ * **要数"设备行行首的勾选框"就按行取**（`inputsOf(某一行)`），不要数整棵树 ——
+ * 2026-10-29 起「连接」卡自己也带两个勾选框（公网明文 / 停用直连）。
  */
 const inputsOf = (tree: unknown): Element[] =>
   flatten(tree).filter(
@@ -175,11 +177,48 @@ const CHANNELS = [
   { id: 'direct', label: '直连监听', running: true, detail: '0.0.0.0:8790' },
 ]
 
-/** status 与 /transport 两份读面的默认桩。 */
+/** 「连接」卡的默认真值（与电脑侧 `GET /connection` 同形；令牌**只报"设没设"**）。 */
+const CONNECTION_VIEW = {
+  capable: true,
+  revision: 0,
+  value: {
+    relayUrl: 'ws://127.0.0.1:8787/ws/connector',
+    allowInsecurePublic: true,
+    listenPort: 8790,
+    relayTokenRef: 'relay-connector',
+  },
+  token: { configured: true, writable: true },
+  relay: { running: true, connected: true, public: false },
+  direct: { running: true },
+}
+
+/** status / transport / connection 三个读面的默认桩。 */
 const defaultFetch = (channels: unknown[] = CHANNELS) => async (url: string) =>
-  String(url).includes('/transport')
-    ? { ok: true, status: 200, json: async () => ({ channels }) }
-    : { ok: true, status: 200, json: async () => ({ relayUrl: 'ws://127.0.0.1:8787/ws/connector', devices: DEVICES }) }
+  String(url).includes('/connection')
+    ? { ok: true, status: 200, json: async () => CONNECTION_VIEW }
+    : String(url).includes('/transport')
+      ? { ok: true, status: 200, json: async () => ({ channels }) }
+      : { ok: true, status: 200, json: async () => ({ relayUrl: 'ws://127.0.0.1:8787/ws/connector', devices: DEVICES }) }
+
+/** 按 `type` 找输入框（`text` / `password` / `number`）。 */
+const inputOfType = (tree: unknown, type: string): Element | undefined =>
+  flatten(tree).find((element) => element.type === 'input' && element.props.type === type)
+
+/**
+ * 「连接」卡的**地址框**。
+ *
+ * 按占位符认，不按 `type === 'text'` 认：面板上还有"上报地址"那个文本框
+ * （占位符是 `ws://192.168.1.4:8790`），混起来会断言错控件。
+ */
+const addressInput = (tree: unknown): Element | undefined =>
+  flatten(tree).find(
+    (element) => element.type === 'input'
+      && element.props.type === 'text'
+      && element.props.placeholder === 'wss://relay.example.com/ws/connector',
+  )
+
+/** 等异步动作（保存 → 轮询真值）把 state 写完。 */
+const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 10))
 
 /** 把 `client.js` 装起来，交出「渲染函数」与「它注册的 locale 字典」。 */
 function loadClient(fetchImpl?: (url: string, init?: unknown) => unknown) {
@@ -300,8 +339,8 @@ test('面板：每行的动作按钮与状态词对上新行为', async () => {
     false,
     '没有"清掉当前离线"这个按钮',
   )
-  // 行首有勾选框（多选入口）。
-  assert.equal(inputsOf(tree).length, 2, '每行行首一个勾选框')
+  // 行首有勾选框（多选入口）。按**行**数：整棵树还含「连接」卡的两个勾选框。
+  assert.equal(bodyRows(tree).flatMap((row) => inputsOf(row)).length, 2, '每行行首一个勾选框')
   // 对话框没开时页面上不该有它。
   assert.equal(buttonWith(tree, '取消'), undefined, '没开确认框时不出现「取消」')
 })
@@ -310,8 +349,8 @@ test('面板：勾选后出现浮现操作栏，不改变行本身', async () =>
   const { react, panel, props, tree } = await mountPanel()
   assert.equal(buttonWith(tree, '删除所选'), undefined, '没勾选时不出现操作栏')
 
-  // 勾第一行的 checkbox（那台在线的我的手机）。
-  const checkbox = inputsOf(tree)[0]
+  // 勾第一行的 checkbox（那台在线的我的手机）。**按行取**，不数整棵树。
+  const checkbox = inputsOf(bodyRows(tree)[0] as Element)[0]
   assert.ok(checkbox !== undefined, '每行行首有一个勾选框')
   ;(checkbox.props.onChange as () => void)()
 
@@ -497,7 +536,7 @@ test('对话框：删除所选时，有在线报"其中 {s} 台在线"，无在�
   // 会互相覆盖（真 React 在两次事件之间会重渲染；这是桩，得手动补上那两步）。
   let current: unknown = tree
   for (let row = 0; row < 2; row += 1) {
-    const checkbox = inputsOf(current)[row]
+    const checkbox = inputsOf(bodyRows(current)[row] as Element)[0]
     assert.ok(checkbox !== undefined, `第 ${row} 行应有勾选框`)
     ;(checkbox.props.onChange as () => void)()
     current = react.render(panel, props)
@@ -515,7 +554,7 @@ test('对话框：删除所选时，有在线报"其中 {s} 台在线"，无在�
 
   // 只勾离线那台：句子不该出现"其中 0 台在线"。
   const offlineOnly = await mountPanel()
-  const offlineCheckbox = inputsOf(offlineOnly.tree)[1]
+  const offlineCheckbox = inputsOf(bodyRows(offlineOnly.tree)[1] as Element)[0]
   assert.ok(offlineCheckbox !== undefined)
   ;(offlineCheckbox.props.onChange as () => void)()
   const onePicked = offlineOnly.react.render(offlineOnly.panel, offlineOnly.props)
@@ -599,5 +638,196 @@ test('失败必须带原因显示在面板顶部（照 DSH `停用失败：{reas
   assert.match(allText(after), /停用失败：名册上报失败：中转不应答/, '失败要带原因，且要能被看见')
   // 对话框已经关掉：跑起来之后不该还挂着一层遮罩。
   assert.equal(dialogOf(after), undefined, '跑起来就关框')
+})
+
+// ---------------------------------------------------------------------------
+// 「连接」卡（2026-10-29）
+//
+// 这一组钉的是**界面侧的三个判据**：令牌值永不下发、保存只发真的变了的键、
+// 冲突后回到电脑侧的事实。字段校验与写入语义在 `admin-connection.test.ts`。
+// ---------------------------------------------------------------------------
+
+test('连接卡：四行都在，令牌只显示"已设置"，凭据引用只读', async () => {
+  const { tree } = await mountPanel()
+  const text = allText(tree)
+  assert.match(text, /连接/)
+  assert.match(text, /中转/)
+  assert.match(text, /已连接/)
+  assert.match(text, /地址/)
+  assert.match(text, /允许公网明文 ws:\/\//)
+  assert.match(text, /令牌/)
+  assert.match(text, /已设置（来源：本机凭据）/)
+  assert.match(text, /凭据引用：relay-connector/)
+  assert.match(text, /直连端口/)
+  assert.match(text, /停用直连/)
+
+  // 地址框预填服务端真值；令牌框是 password 且**空**（值永不过线）。
+  assert.equal(addressInput(tree)?.props.value, 'ws://127.0.0.1:8787/ws/connector')
+  const token = inputOfType(tree, 'password')
+  assert.ok(token !== undefined, '令牌输入框必须存在')
+  assert.equal(token.props.value, '', '令牌值永不下发，输入框只能是空的')
+  assert.equal(inputOfType(tree, 'number')?.props.value, '8790')
+})
+
+test('连接卡：改地址后保存，body 里只有地址那一格（不发默认值、不发令牌）', async () => {
+  const calls: Array<{ url: string; method: string; body: unknown }> = []
+  const fetchImpl = async (url: string, rawInit?: unknown) => {
+    const init = rawInit as { method?: string; body?: string } | undefined
+    calls.push({ url: String(url), method: init?.method ?? 'GET', body: init?.body })
+    if (String(url).includes('/connection')) {
+      if (init?.method === 'POST') {
+        const parsed = JSON.parse(String(init.body)) as { relayUrl?: string }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            applied: ['relayUrl'],
+            tokenApplied: 'none',
+            view: { ...CONNECTION_VIEW, revision: 1, value: { ...CONNECTION_VIEW.value, relayUrl: parsed.relayUrl } },
+          }),
+        }
+      }
+      return { ok: true, status: 200, json: async () => CONNECTION_VIEW }
+    }
+    return defaultFetch()(url)
+  }
+  const { react, panel, props, tree } = await mountPanel({}, fetchImpl)
+  const address = addressInput(tree)
+  assert.ok(address !== undefined)
+  ;(address.props.onChange as (event: unknown) => void)({ target: { value: 'wss://relay2.example.com/ws/connector' } })
+
+  const save = buttonWith(react.render(panel, props), '保存')
+  assert.ok(save !== undefined)
+  ;(save.props.onClick as () => void)()
+  await settle()
+
+  const post = calls.find((call) => call.method === 'POST' && call.url.includes('/connection'))
+  assert.ok(post !== undefined, '保存必须打 POST /connection')
+  const body = JSON.parse(String(post.body)) as Record<string, unknown>
+  assert.equal(body['relayUrl'], 'wss://relay2.example.com/ws/connector')
+  assert.equal(body['allowInsecurePublic'], undefined, '没改的开关不进 body')
+  assert.equal(body['listenPort'], undefined, '没改的端口不进 body')
+  assert.equal(body['token'], undefined, '令牌留空 = 不改')
+  assert.equal(body['revision'], CONNECTION_VIEW.revision, '乐观锁要带上次读到的 revision')
+})
+
+test('连接卡：409 冲突时把服务端的最新值填回来，并在卡顶说明原因', async () => {
+  const stale = {
+    ...CONNECTION_VIEW,
+    revision: 7,
+    value: { ...CONNECTION_VIEW.value, relayUrl: 'wss://elsewhere.example/ws/connector' },
+  }
+  const fetchImpl = async (url: string, rawInit?: unknown) => {
+    const init = rawInit as { method?: string } | undefined
+    if (String(url).includes('/connection')) {
+      if (init?.method === 'POST') {
+        return {
+          ok: false,
+          status: 409,
+          json: async () => ({
+            ok: false,
+            conflict: true,
+            error: '配置在别处被改过（另开的页面，或直接改了 cordis.patch.yml）',
+            view: stale,
+          }),
+        }
+      }
+      return { ok: true, status: 200, json: async () => CONNECTION_VIEW }
+    }
+    return defaultFetch()(url)
+  }
+  const { react, panel, props, tree } = await mountPanel({}, fetchImpl)
+  const address = addressInput(tree)
+  assert.ok(address !== undefined)
+  ;(address.props.onChange as (event: unknown) => void)({ target: { value: 'wss://relay2.example.com/ws/connector' } })
+
+  const save = buttonWith(react.render(panel, props), '保存')
+  assert.ok(save !== undefined)
+  ;(save.props.onClick as () => void)()
+  await settle()
+
+  const after = react.render(panel, props)
+  assert.match(allText(after), /配置在别处被改过/)
+  assert.equal(addressInput(after)?.props.value, 'wss://elsewhere.example/ws/connector',
+    '冲突后界面回到电脑侧的事实，而不是停在用户那一版')
+})
+
+test('连接卡：端口框在「停用直连」勾上时禁用；取消勾选后端口清空、保存被本层拦住', async () => {
+  const view = { ...CONNECTION_VIEW, value: { ...CONNECTION_VIEW.value, listenPort: 0 } }
+  const fetchImpl = async (url: string) => String(url).includes('/connection')
+    ? { ok: true, status: 200, json: async () => view }
+    : defaultFetch()(url)
+  const { react, panel, props, tree } = await mountPanel({}, fetchImpl)
+  assert.equal(inputOfType(tree, 'number')?.props.disabled, true, 'listenPort=0 时端口框禁用')
+
+  // 取消勾选 ⇒ 端口框清空（**不猜一个默认端口**），此时保存被本层拦住。
+  // 按**标签文字**取那个勾选框：卡上还有一个"允许公网明文"的勾选框，也是勾上的。
+  const listenOffLabel = flatten(tree).find(
+    (element) => element.type === 'label' && textOf(element.props.children).trim() === '停用直连',
+  )
+  assert.ok(listenOffLabel !== undefined, '「停用直连」标签必须存在')
+  const disable = flatten(listenOffLabel).find((element) => element.type === 'input')
+  assert.ok(disable !== undefined, '「停用直连」应处于勾上状态')
+  ;(disable.props.onChange as (event: unknown) => void)({ target: { checked: false } })
+  const unchecked = react.render(panel, props)
+  assert.equal(inputOfType(unchecked, 'number')?.props.value, '', '取消停用后端口框为空')
+
+  const save = buttonWith(unchecked, '保存')
+  assert.ok(save !== undefined)
+  ;(save.props.onClick as () => void)()
+  await settle()
+  assert.match(allText(react.render(panel, props)), /取消「停用直连」后要填一个端口/)
+})
+
+test('连接卡：清除令牌走页面内确认，后果句写明"要在服务器重签"，确认后发 op=clear', async () => {
+  const calls: unknown[] = []
+  const fetchImpl = async (url: string, rawInit?: unknown) => {
+    const init = rawInit as { method?: string; body?: string } | undefined
+    if (String(url).includes('/connection')) {
+      if (init?.method === 'POST') {
+        calls.push(JSON.parse(String(init.body)))
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            applied: [],
+            tokenApplied: 'clear',
+            view: { ...CONNECTION_VIEW, token: { configured: false, writable: true } },
+          }),
+        }
+      }
+      return { ok: true, status: 200, json: async () => CONNECTION_VIEW }
+    }
+    return defaultFetch()(url)
+  }
+  const { react, panel, props, tree } = await mountPanel({}, fetchImpl)
+  const clear = buttonWith(tree, '清除令牌')
+  assert.ok(clear !== undefined, '已设置时才有「清除令牌」')
+  ;(clear.props.onClick as () => void)()
+
+  const withDialog = react.render(panel, props)
+  const dialogText = allText(dialogOf(withDialog))
+  assert.match(dialogText, /清除连接器令牌？/)
+  assert.match(dialogText, /重新签发令牌/, '后果句必须写清恢复路径')
+
+  const confirm = buttonWith(dialogOf(withDialog), '清除令牌')
+  assert.ok(confirm !== undefined)
+  ;(confirm.props.onClick as () => void)()
+  await settle()
+  assert.deepEqual(calls[0], { revision: 0, token: { op: 'clear' } })
+})
+
+test('连接卡：这个部署没有设置服务时只显示一句说明，不给编辑入口', async () => {
+  const view = { ...CONNECTION_VIEW, capable: false, revision: undefined, token: { configured: false, writable: false } }
+  const fetchImpl = async (url: string) => String(url).includes('/connection')
+    ? { ok: true, status: 200, json: async () => view }
+    : defaultFetch()(url)
+  const { tree } = await mountPanel({}, fetchImpl)
+  const text = allText(tree)
+  assert.match(text, /这个部署没有设置服务/)
+  assert.equal(addressInput(tree), undefined, 'capable=false 不给地址输入框')
+  assert.equal(buttonWith(tree, '保存'), undefined, 'capable=false 不给保存键')
 })
 

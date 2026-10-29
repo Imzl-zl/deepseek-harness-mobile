@@ -109,12 +109,13 @@ function hintRank(url: string, hint: string | null | undefined): number {
 /**
  * 建端点面。
  *
- * `listener` 与 `lanHint` 都是**现取**（传 getter 而不是值）：监听面在挂载
- * 过程中才起，而局域网地址在换 WiFi 后会变 —— `endpoint.describe` 可能在之后
- * 的任何时刻被调，取到的必须是当时的真值。
+ * `relayUrl` / `listener` / `lanHint` 全是**现取**（传 getter 而不是值）：
+ * 监听面在挂载过程中才起、局域网地址在换 WiFi 后会变、而 `relayUrl` 还能被面板
+ * 热改（`loader/volatile-update`）—— `endpoint.describe` 可能在之后的任何时刻被调，
+ * 取到的必须是当时的真值。
  */
 export function createEndpointsPort(deps: {
-  relayUrl: string | undefined
+  relayUrlOf: () => string | undefined
   lanHintOf: () => string | null
   listenerOf: () => Listener | null
   /** 用户显式藏掉 / 额外加的上报地址（现取：管理面随时可改）。 */
@@ -123,7 +124,7 @@ export function createEndpointsPort(deps: {
   return {
     describe() {
       return describeEndpoints({
-        relayUrl: deps.relayUrl,
+        relayUrl: deps.relayUrlOf(),
         lanHint: deps.lanHintOf(),
         listener: deps.listenerOf(),
         advertise: deps.advertiseOf?.(),

@@ -68,8 +68,10 @@ node -e "const W=require('ws');const w=new W('ws://127.0.0.1:8787/ws/connector',
      node src/main.ts --config /config/relay.config.json --issue-token connector home-pc
    ```
    输出里那串令牌只出现一次，交给电脑侧。
-3. **连接器**（`cordis.patch.yml`）：`relayUrl: ws://<公网IP>:8787/ws/connector`，
-   并显式打开公网明文那一档：`allowInsecurePublic: true`（`allowInsecureLocal` 只管非公网）。
+3. **连接器**：在这台电脑的 DSH 里打开「手机」面板 →「连接」卡，地址填
+   `ws://<公网IP>:8787/ws/connector`、勾上「允许公网明文 ws://」，保存即可（**不用重启 DSH**，
+   通道会自动重连）。也可以改 `cordis.patch.yml` 的 `relayUrl` + `allowInsecurePublic: true`
+   （`allowInsecureLocal` 只管非公网）后重启。
 4. **令牌**进 DSH 凭据：`dsh-mobile-connector/relay-connector` 那条记录的 `payload.token`。
 5. **手机**：出码后二维码里的 relay 就是 `ws://<公网IP>:8787`；配对页的确认卡会多一行
    红字「这台电脑的中转是明文连接……元数据可见」，点「确认并配对」即同意
@@ -91,7 +93,8 @@ docker compose up -d caddy
 
 ## 5. 让电脑侧连过来
 
-电脑上的连接器配置（profile 的 `cordis.patch.yml`）：
+在电脑的 DSH 里打开「手机」面板 →「连接」卡：地址、直连端口、令牌都在那里改，
+保存后通道自动重连。等价的配置文件写法（profile 的 `cordis.patch.yml`）：
 
 ```yaml
 - id: dsh-mobile-connector

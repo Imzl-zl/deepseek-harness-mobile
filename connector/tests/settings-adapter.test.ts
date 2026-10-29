@@ -17,13 +17,22 @@ import type { SettingsForms } from '@deepseek-ai/dsh-settings'
 
 import { createSettingsPort, type SettingsServices } from '../src/dsh/settings.js'
 
-/** 记录调用参数的 settings 替身：`describe` / `mutate` / `replace` 三面都在，便于断言"没调哪个"。 */
+/** 记录调用参数的 settings 替身：`describe` / `update` / `mutate` / `replace` 四面都在，便于断言"没调哪个"。 */
 function fakeSettings(rows: unknown[]) {
-  const calls = { describe: [] as unknown[], mutate: [] as unknown[][], replace: [] as unknown[] }
+  const calls = {
+    describe: [] as unknown[],
+    update: [] as unknown[][],
+    mutate: [] as unknown[][],
+    replace: [] as unknown[],
+  }
   const forms = {
     describe: (options?: unknown) => {
       calls.describe.push(options)
       return rows
+    },
+    update: (...args: unknown[]) => {
+      calls.update.push(args)
+      return Promise.resolve()
     },
     mutate: (...args: unknown[]) => {
       calls.mutate.push(args)
@@ -105,6 +114,22 @@ test('setField：走 mutate，且**绝不**走 replace（replace 会静默删密
   assert.deepEqual(calls.replace, [], 'replace 拿脱敏文档重建会删掉客户端没收到过的密钥')
 })
 
+test('setFields：一次写多字段走 update（不是循环 mutate，也不是 replace）', async () => {
+  const { forms, calls } = fakeSettings([])
+  const port = createSettingsPort(services({ settings: forms }))
+
+  await port.setFields('dsh-mobile-connector', { relayUrl: 'wss://r/ws', listenPort: 0 }, 3)
+
+  assert.deepEqual(calls.update, [[
+    'dsh-mobile-connector',
+    { relayUrl: 'wss://r/ws', listenPort: 0 },
+    3,
+  ]])
+  // 循环 mutate 会让 revision 每次都 +1，第二次必 409；replace 会静默删密钥。
+  assert.deepEqual(calls.mutate, [], '一次保存只能有一次写入')
+  assert.deepEqual(calls.replace, [])
+})
+
 test('凭据：只发新值、删除用 unset；状态查询只有三态布尔（没有能装值的槽）', async () => {
   const { provider, calls } = fakeCredentials({ configured: true, writable: false })
   const port = createSettingsPort(services({ credentials: provider }))
@@ -137,6 +162,7 @@ test('服务缺失：显式抛错（能力位该已把它标成 false），绝�
 
   assert.throws(() => port.snapshot('ns'), /settings 服务不可用/)
   await assert.rejects(() => port.setField('ns', ['a'], 1), /settings 服务不可用/)
+  await assert.rejects(() => port.setFields('ns', { a: 1 }, 1), /settings 服务不可用/)
   await assert.rejects(() => port.setSecret('REF' as CredentialRef, 'v'), /credentials 服务不可用/)
   await assert.rejects(() => port.unsetSecret('REF' as CredentialRef), /credentials 服务不可用/)
   await assert.rejects(() => port.secretStatus('REF' as CredentialRef), /credentials 服务不可用/)

@@ -23,6 +23,15 @@ export interface RelayLink {
   start(): void
   stop(): void
   readonly connections: number
+  /**
+   * 控制面此刻**真的连上了吗**。
+   *
+   * 与"link 对象存在"是两件事：`start()` 之后到 `open` 之前、以及每次断开到退避
+   * 重连成功之间，对象都在、连接不在。面板要答"我的手机连上了吗"，只能看这个 ——
+   * 看 `connections`（数据通道条数）也不对：没有手机在线时它恒为 0，
+   * 但中转控制面明明是通的。
+   */
+  readonly connected: boolean
 }
 interface DataConnection { socket: WebSocket; connection: Connection | null; binding: DeviceBinding }
 
@@ -153,5 +162,6 @@ export function createRelayLink(options: RelayLinkOptions): RelayLink {
       socket?.close(1000, 'connector stopped')
     },
     get connections() { return data.size },
+    get connected() { return control !== null && control.readyState === WebSocket.OPEN },
   }
 }

@@ -29,6 +29,7 @@ function fakePort(spec: {
   label?: string
   running?: () => boolean
   detail?: () => string
+  connected?: () => boolean
   failStart?: boolean
 }): ChannelPort & { starts: number; stops: number } {
   const port = {
@@ -36,6 +37,7 @@ function fakePort(spec: {
     label: spec.label ?? spec.id,
     running: spec.running ?? ((): boolean => false),
     detail: spec.detail ?? ((): string => ''),
+    ...(spec.connected === undefined ? {} : { connected: spec.connected }),
     starts: 0,
     stops: 0,
     async start() {
@@ -56,6 +58,15 @@ test('channels()：按注册顺序给出每个通道的状态（管理面与 UI 
     { id: 'relay', label: '中转拨号', running: true, detail: 'ws://127.0.0.1:8787' },
     { id: 'direct', label: '直连监听', running: false, detail: DIRECT_UNCONFIGURED },
   ])
+})
+
+test('channels()：只有拨出去的通道给 connected；监听面不给（它没有"连上"这个事实）', () => {
+  // `running` 与 `connected` 是两件事：`start()` 之后到 open 之前，对象在跑、连接不在。
+  const relay = fakePort({ id: 'relay', running: () => true, connected: () => false, detail: () => 'ws://r' })
+  const direct = fakePort({ id: 'direct', running: () => true, detail: () => '0.0.0.0:8790' })
+  const [relayState, directState] = createTransportChannels([relay, direct]).channels()
+  assert.equal(relayState?.connected, false, '在跑但没连上')
+  assert.equal('connected' in (directState ?? {}), false, '直连没有这个键，而不是"false"')
 })
 
 test('setChannel：起停只打到目标通道，另一条原样不动', async () => {
