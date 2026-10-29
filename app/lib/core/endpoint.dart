@@ -93,7 +93,8 @@ class Endpoint {
   /// **它永不被自动剪枝**：用户自己输进来的地址是他的意图，而"连接器这次没报"
   /// 只说明电脑此刻不在那个网络 —— 家里与公司两个地址必须能同时留着。
   ///
-  /// 剪枝规则见 `data/app_model.dart` 的 `mergeDiscoveredEndpoints`。
+  /// 剪枝规则见 `data/endpoint_book.dart` 的 `mergeDiscoveredEndpoints`
+  /// （`data/app_model.dart` 上那个同名方法是转发，不是第二份实现）。
   final bool manual;
 
   /// 稳定标识。**就是 url** —— 同一个地址只有一个端点。
@@ -378,14 +379,14 @@ bool isPrivateOrLoopback(String host) {
   // 主机名只有这一个算非公网（其余一概当公网 —— 宁可严一格）。
   if (host == 'localhost') return true;
 
-  final v4 = _parseIpv4(host);
+  final v4 = _ipv4(host);
   if (v4 != null) return _ipv4IsPrivate(v4);
 
   // IPv4-mapped（`::ffff:192.168.1.1`）：按**里面的** IPv4 判。
   // 安卓会报这种地址，按前缀判会把它当成公网而拒掉一个其实在私网里的端点。
   final mapped = RegExp(r'^::ffff:(\d+\.\d+\.\d+\.\d+)$').firstMatch(host);
   if (mapped != null) {
-    final inner = _parseIpv4(mapped.group(1)!);
+    final inner = _ipv4(mapped.group(1)!);
     return inner != null && _ipv4IsPrivate(inner);
   }
 
@@ -398,20 +399,6 @@ bool isPrivateOrLoopback(String host) {
   if (v6 != null) return _ipv6PrefixIsPrivate(v6);
 
   return false;
-}
-
-/// IPv4 四段；不是 IPv4 文本时返回 `null`。
-List<int>? _parseIpv4(String host) {
-  final parts = host.split('.');
-  if (parts.length != 4) return null;
-  final out = <int>[];
-  for (final part in parts) {
-    if (part.isEmpty || part.length > 3) return null;
-    final value = int.tryParse(part);
-    if (value == null || value < 0 || value > 255) return null;
-    out.add(value);
-  }
-  return out;
 }
 
 bool _ipv4IsPrivate(List<int> b) {
