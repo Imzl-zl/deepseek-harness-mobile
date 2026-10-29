@@ -368,6 +368,15 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
 ## Pitfalls
 
 - **提交纪律三条**(2026-10-19 从 `memory.md` 归位到此处):①**提交信息里避免反引号** —— pwsh 会把它当 Unicode 转义,整条命令在**解析阶段**就失败;长消息写临时文件用 `git commit -F`。②**提交前看 `git status` 完整清单**,重点是**意外的文件**(空的、消失的、没见过的新文件)。③**别把"重启后的第一次成功"当能力** —— 判据要包含"连续重连 N 次都成立"(端点切换那条就是这么验的:3 次重连都落在同一条上)。
+- **手机灭屏时，手机→电脑的**新 TCP** 会被丢，ICMP 却照通**（2026-10-29 公司 wifi 实测，白查半小时）：
+  灭屏期间 `adb shell curl http://<电脑IP>:8787/` 一律 `Failed to connect … after 1-2 ms`（像是被 RST），
+  而同一时刻 `ping` 0% 丢包、电脑自连该端口 405/426 正常、防火墙对 `node.exe` / `DeepSeek Harness.exe`
+  在「公用」档也是 Allow —— 于是很容易误判成"防火墙拦了"或"AP 做了客户端隔离"。
+  **判据**：亮屏（`input keyevent 224`，必要时 `26`→`26`→`82`）后**同一条命令立刻变 405/426**。
+  推论：真机联调期间要么 `svc power stayon true` 真的生效，要么每步操作前先亮屏。
+- **判"手机在不在线"别信 App 顶部那个绿点**（旧状态会留着）：看**电脑侧连接表**
+  （`Get-NetTCPConnection -State Established -LocalPort 8787,8790`，经 `adb reverse` 进来的是 `127.0.0.1`）
+  与**手机侧游标**（`cursors` 表最上面那行 `updated_at` 有没有往前走）。这两项一起看才判得准"是断线还是只是没新数据"。
 - **给多替身接口加方法要给默认实现**(2026-10-18):`SyncClient` 这类接口全仓有 24 个 `implements` 替身,而 **`implements` 不继承默认方法** —— 加 `reconnect()` 时 23 个测试文件当场编译失败。做法:接口上给一个退化的默认实现(`=> start()`),真有别行为的只有实现类一处 override;或者先改接口再逐个补。**别指望 IDE 帮你找到全部替身**。
   - **2026-10-22 更正**:接口上的默认实现**救不了 `implements` 的替身**(Dart 只认接口面)。真正的缝是 `app/test/fake_sync_client.dart` 那个 `abstract class FakeSyncClient implements SyncClient` —— 替身都 `extends` 它,所以加方法时**改基类一处**就够。数法:`Select-String 'implements SyncClient'` 全仓 5 处 = 真实现 `_SyncClient` + 基类 `FakeSyncClient` + `integration_test/ui_flow_test.dart` 里那个自实现替身(它有意不 extends,见该文件注释)+ `connection_recovery_test.dart` 的 `extends FakeSyncClient implements SyncClientProbe`(只加 Probe 面)。加 `refetch()` 实测只改 3 处。
   - **`refetch` 这类没有"退化成成功"语义的方法,默认实现要抛**:返回一条假事件会让"大条目出现了"这个断言在假数据上变绿。
