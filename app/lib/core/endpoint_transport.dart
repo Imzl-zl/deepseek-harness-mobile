@@ -132,7 +132,13 @@ class EndpointTransport implements ChannelTransport {
         _active = transport;
         _activeEndpoint = endpoint;
         onActivated?.call(endpoint);
-        onAttempt?.call(endpoint, const EndpointAttempt(ok: true));
+        onAttempt?.call(
+          endpoint,
+          EndpointAttempt(
+            ok: true,
+            atMs: DateTime.now().millisecondsSinceEpoch,
+          ),
+        );
         return stream;
       } on TransportException catch (error) {
         debugPrint(
@@ -148,7 +154,11 @@ class EndpointTransport implements ChannelTransport {
         // 而设置页要能显示"为什么这条连不上"。
         onAttempt?.call(
           endpoint,
-          EndpointAttempt(ok: false, reason: error.message),
+          EndpointAttempt(
+            ok: false,
+            reason: error.message,
+            atMs: DateTime.now().millisecondsSinceEpoch,
+          ),
         );
         if (error.code?.clientAction == ClientAction.rePair) rethrow;
         // 其余：拨不通是该换下一条。别的异常（工厂里的 bug）照旧抛出去 ——

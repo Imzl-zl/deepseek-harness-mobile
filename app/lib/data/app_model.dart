@@ -343,8 +343,19 @@ class AppModel extends ChangeNotifier {
   }
 
   /// 用户手填一条端点（地址校验由调用方做，见 `EndpointBook`）。
+  ///
+  /// **手填的也要标上是哪台电脑**：手填不走剪枝（用户意图永不自动删），但拨号时
+  /// 要能把它排在"别的电脑"那一桶（`dialOrder`）——否则换机之后它仍会跟当前电脑
+  /// 的地址抢时间。
   Future<void> addManualEndpoint(Endpoint endpoint) =>
-      _endpointsBook.addManualEndpoint(endpoint);
+      _endpointsBook.addManualEndpoint(_stampHost(endpoint));
+
+  /// 给一条**还没标主机**的端点盖上当前配对电脑（不知道就原样返回）。
+  Endpoint _stampHost(Endpoint endpoint) {
+    final host = _hostIdOf?.call() ?? '';
+    if (endpoint.hostId.isNotEmpty || host.isEmpty) return endpoint;
+    return endpoint.withHost(host);
+  }
 
   /// 删一条端点（自报的进隐藏集，手填的直接去掉）。
   Future<void> removeEndpoint(Endpoint endpoint) =>
@@ -368,6 +379,9 @@ class AppModel extends ChangeNotifier {
   /// 某个端点**最近一次拨号**的结果（没有记录就没有结论 —— 不猜、不探测）。
   EndpointAttempt? attemptOf(Endpoint endpoint) =>
       _endpointsBook.attemptOf(endpoint);
+
+  /// 全部端点的最近一次拨号结论（只读快照）。`dialOrder` 判"冷却中"读它。
+  Map<String, EndpointAttempt> get endpointAttempts => _endpointsBook.attempts;
 
   /// 记一次拨号结果（由传输层报事实，见 `EndpointBook`）。
   void reportEndpointAttempt(Endpoint endpoint, EndpointAttempt attempt) =>

@@ -300,5 +300,126 @@ void main() {
       final discovered = [_relay('wss://a'), _relay('wss://a')];
       expect(mergeEndpoints(stored, discovered).length, 1);
     });
+
+    // -------------------------------------------------------------------------
+    // 冷却与"按电脑排序"：真实体验是远程/换网，死地址不该每轮都占一次超时。
+    // 规则见 `core/endpoint.dart` 的 `isCooling` / `dialOrder`。
+    // -------------------------------------------------------------------------
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    test('dialOrder：刚失败过的排最后，**连记住的那条也不例外**', () {
+      final relay = _relay('wss://relay.example');
+      final lan = _direct('ws://192.168.1.5:8788');
+      final dead = _direct('ws://192.168.40.1:8790');
+      final table = [dead, relay, lan];
+
+      expect(
+        dialOrder(
+          table,
+          rememberedEndpointUrl: dead.url,
+          attempts: {
+            dead.url: EndpointAttempt(
+              ok: false,
+              reason: '超时',
+              atMs: now - 5000,
+            ),
+          },
+          nowMs: now,
+        ).map((e) => e.url).toList(),
+        [relay.url, lan.url, dead.url],
+        reason: '记住的那条刚失败 → 它也要排队尾，不再首试',
+      );
+    });
+
+    test('dialOrder：冷却窗口一过就回到原位（**不永久降权**）', () {
+      final relay = _relay('wss://relay.example');
+      final dead = _direct('ws://192.168.40.1:8790');
+      final attempt = EndpointAttempt(
+        ok: false,
+        reason: '超时',
+        atMs: now - kEndpointCooldown.inMilliseconds - 1000,
+      );
+
+      expect(isCooling(attempt, nowMs: now), isFalse);
+      expect(
+        dialOrder(
+          [dead, relay],
+          rememberedEndpointUrl: dead.url,
+          attempts: {dead.url: attempt},
+          nowMs: now,
+        ).map((e) => e.url).toList(),
+        [dead.url, relay.url],
+        reason: '窗口过了，记住的那条重新排第一',
+      );
+    });
+
+    test('dialOrder：成功过 / 没有时间戳的记录都不算冷却', () {
+      final a = _direct('ws://a:1');
+      final b = _direct('ws://b:2');
+      expect(
+        isCooling(EndpointAttempt(ok: true, atMs: now - 1000), nowMs: now),
+        isFalse,
+        reason: '成功即清',
+      );
+      expect(
+        isCooling(
+          const EndpointAttempt(ok: false, reason: '旧的记录没有时间'),
+          nowMs: now,
+        ),
+        isFalse,
+        reason: '不知道什么时候失败的 → 不猜、不冷却',
+      );
+      expect(
+        dialOrder(
+          [a, b],
+          attempts: {
+            a.url: EndpointAttempt(ok: true, atMs: now - 1000),
+            b.url: const EndpointAttempt(ok: false, reason: '没时间戳'),
+          },
+          nowMs: now,
+        ).map((e) => e.url).toList(),
+        [a.url, b.url],
+        reason: '两条都不冷却，顺序照旧',
+      );
+    });
+
+    test('dialOrder：别的电脑报的排在**当前电脑之后**，冷却的排更后', () {
+      final mine = _relay('wss://mine');
+      final other = _relay('wss://other').withHost('pc-other');
+      final mineDead = _direct('ws://mine-dead:1').withHost('pc-mine');
+      final table = [other, mineDead, mine];
+
+      expect(
+        dialOrder(
+          table,
+          currentHostId: 'pc-mine',
+          attempts: {
+            mineDead.url: EndpointAttempt(
+              ok: false,
+              reason: '超时',
+              atMs: now - 1000,
+            ),
+          },
+          nowMs: now,
+        ).map((e) => e.url).toList(),
+        [mine.url, other.url, mineDead.url],
+        reason: '当前电脑的 → 别的电脑的 → 冷却的',
+      );
+    });
+
+    test('dialOrder：全都冷却时仍然全都返回（不会"没得拨"）', () {
+      final a = _direct('ws://a:1');
+      final b = _direct('ws://b:2');
+      final attempt = EndpointAttempt(ok: false, reason: '超时', atMs: now - 1);
+      expect(
+        dialOrder(
+          [a, b],
+          attempts: {a.url: attempt, b.url: attempt},
+          nowMs: now,
+        ).map((e) => e.url).toList(),
+        [a.url, b.url],
+        reason: '全冷却也照原序试一遍，避免把自己锁死',
+      );
+    });
   });
 }

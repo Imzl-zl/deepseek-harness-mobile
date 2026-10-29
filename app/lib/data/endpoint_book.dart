@@ -315,16 +315,28 @@ class EndpointBook {
     await _onTableChanged?.call(reordered);
   }
 
-  /// 记一次拨号结果。**同一个结果不重复通知**：退避重连时每一轮都会把
+  /// 记一次拨号结果。**同一个结论不重复通知**：退避重连时每一轮都会把
   /// 所有端点重报一遍，不判重会让界面每隔几秒重建一次。
+  ///
+  /// 判重只看"结论"（`ok` + `reason`），**不看 `atMs`** —— 时间戳每次拨号都会变，
+  /// 把它算进相等性就等于每轮都通知。但记录本身要换成新的（冷却要靠它）。
   void reportEndpointAttempt(Endpoint endpoint, EndpointAttempt attempt) {
-    if (_attempts[endpoint.id] == attempt) return;
+    final previous = _attempts[endpoint.id];
+    final sameVerdict =
+        previous != null &&
+        previous.ok == attempt.ok &&
+        previous.reason == attempt.reason;
     _attempts[endpoint.id] = attempt;
+    if (sameVerdict) return;
     _onChange();
     // **拨不通才去查本机 IP**：这一拍正是"换了地点、记住的那条不通"的时刻，
     // 而下一轮重连的 `dialOrder` 需要新网段才能把同网段那条排上来。
     if (!attempt.ok) unawaited(refreshMyLanIpv4());
   }
+
+  /// 每个端点最近一次拨号的结论（只读快照，`dialOrder` 判冷却用）。
+  Map<String, EndpointAttempt> get attempts =>
+      Map<String, EndpointAttempt>.unmodifiable(_attempts);
 
   /// 清掉某个端点的拨号记录（点名连接前用：别把上一次的失败当这一次的）。
   void clearAttempt(String endpointId) {

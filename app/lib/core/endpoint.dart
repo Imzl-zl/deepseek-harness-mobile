@@ -266,7 +266,33 @@ int subnetScore(String myIpv4, String endpointUrl) {
 bool sameSubnet(String myIpv4, String endpointUrl) =>
     subnetScore(myIpv4, endpointUrl) >= 3;
 
-/// 拨号顺序：**记住的那条先试 → 同网段的次之 → 其余按用户排的顺序。**
+/// 端点失败后的**冷却窗口**：这段时间内把它排到队尾（不删、不永久降权）。
+///
+/// 取值依据（不是拍脑袋）：直连超时 3s、中转 10s（`platform/transport_factory.dart`），
+/// 而连接层的退避重连上限是 10s（`app-channel-client.md` §2.2 的恢复语义）。
+/// 60s ≈ 好几轮退避重试 —— 刚好够"这台机器这次真的不在那儿"沉淀下来，
+/// 又短到"网络回来了"能在一分钟内被重新用上。**成功即清**，不留任何长期惩罚。
+const Duration kEndpointCooldown = Duration(seconds: 60);
+
+/// 这条端点此刻是不是**刚失败过、还在冷却里**。
+///
+/// 没有时间戳（旧记录 / 装配层没给）时一律当"没冷却"：**不猜**。
+/// 时钟回拨（`nowMs < atMs`）也当没冷却 —— 宁可多试一次，不要因为时间跳变把一个
+/// 好端点的机会永久拿掉。
+bool isCooling(
+  EndpointAttempt? attempt, {
+  required int nowMs,
+  Duration cooldown = kEndpointCooldown,
+}) {
+  if (attempt == null || attempt.ok) return false;
+  final at = attempt.atMs;
+  if (at == null) return false;
+  final age = nowMs - at;
+  if (age < 0) return false;
+  return age < cooldown.inMilliseconds;
+}
+
+/// 拨号顺序：**记住的那条 → 同网段的 → 其余（本机）→ 别的电脑报的 → 冷却中的。**
 ///
 /// ## 为什么是这个顺序
 ///
@@ -276,16 +302,35 @@ bool sameSubnet(String myIpv4, String endpointUrl) =>
 ///   （家 ⇄ 公司）时，用户列表里另一条地址正躺在**当前**这个网段里。
 ///   这一步要的是 `myIpv4`，而它是**当前**的真实地址，所以换网后自动对。
 /// - **其余按用户排的顺序**：用户的手动排序在"都不是同网段"时就是唯一依据。
+/// - **别的电脑报的排在后面**：它们永远拨不通（对端身份不同），但**不删**
+///   —— 换回那台电脑时还要用；只是不该跟当前电脑的地址抢时间。
+/// - **冷却中的排最后**：刚失败过的地址这一轮不该再占一次超时；条目仍在，
+///   窗口一过自动回到它原来的桶（`kEndpointCooldown`）。
 ///
 /// 它**不删任何条目**：排序只是尝试顺序，全试完仍然全失败才是真失败。
+/// 也不做"永久降权"：那是"出门一次就再也回不到直连"的来源。
 ///
 /// [myIpv4] 拿不到（移动网络、权限受限）时退化成"记住的 + 用户顺序" —— 不猜。
+/// [currentHostId] 空（未装配 / 旧凭据）时不按电脑分桶。
+/// [nowMs] 不给就不判冷却（排序与旧版完全一致）。
 List<Endpoint> dialOrder(
   List<Endpoint> endpoints, {
   String? myIpv4,
   String? rememberedEndpointUrl,
+  String? currentHostId,
+  Map<String, EndpointAttempt> attempts = const {},
+  int? nowMs,
 }) {
   if (endpoints.length <= 1) return List<Endpoint>.of(endpoints);
+
+  bool isThisHost(Endpoint endpoint) =>
+      currentHostId == null ||
+      currentHostId.isEmpty ||
+      endpoint.hostId.isEmpty ||
+      endpoint.hostId == currentHostId;
+
+  bool cooled(Endpoint endpoint) =>
+      nowMs != null && isCooling(attempts[endpoint.url], nowMs: nowMs);
 
   Endpoint? remembered;
   if (rememberedEndpointUrl != null) {
@@ -295,19 +340,33 @@ List<Endpoint> dialOrder(
         break;
       }
     }
+    // 记住的那条刚刚失败：它也要排队尾，不再首试（否则每轮都为它白等一个超时）。
+    if (remembered != null && cooled(remembered)) remembered = null;
   }
 
   final inSubnet = <Endpoint>[];
   final rest = <Endpoint>[];
+  final otherHost = <Endpoint>[];
+  final cooling = <Endpoint>[];
   for (final endpoint in endpoints) {
     if (remembered != null && endpoint.url == remembered.url) continue;
-    if (myIpv4 != null && sameSubnet(myIpv4, endpoint.url)) {
+    if (cooled(endpoint)) {
+      cooling.add(endpoint);
+    } else if (!isThisHost(endpoint)) {
+      otherHost.add(endpoint);
+    } else if (myIpv4 != null && sameSubnet(myIpv4, endpoint.url)) {
       inSubnet.add(endpoint);
     } else {
       rest.add(endpoint);
     }
   }
-  return <Endpoint>[?remembered, ...inSubnet, ...rest];
+  return <Endpoint>[
+    ?remembered,
+    ...inSubnet,
+    ...rest,
+    ...otherHost,
+    ...cooling,
+  ];
 }
 
 /// 端点表的**附属状态**：拨号顺序要用的那几样路由记忆。
@@ -377,11 +436,11 @@ List<int>? _ipv4OfUrl(String url) {
 /// 一次**拨号**的结果（`EndpointTransport` 每试一个端点报一次）。
 ///
 /// 它是**事实的记录，不是状态的推断**：`ok = false` 只说明"这一轮没拨通"，
-/// 而端点会不会恢复是另一件事 —— 所以 `endpoint_transport.dart` 据此**不降权**
-/// （失败过的端点下一轮仍在原位置）。设置页的"通不通"读它；
-/// **没有拨号记录就没有结论**，不猜、也不主动探测。
+/// 而端点会不会恢复是另一件事 —— 失败**不降权**（条目与用户顺序都不动），
+/// 只按 [atMs] 参与 [isCooling] 的短期排队（见 [dialOrder]）。
+/// 设置页的"通不通"读它；**没有拨号记录就没有结论**，不猜、也不主动探测。
 class EndpointAttempt {
-  const EndpointAttempt({required this.ok, this.reason});
+  const EndpointAttempt({required this.ok, this.reason, this.atMs});
 
   /// 这一轮拨通了（WS 已建立；握手还没开始）。
   final bool ok;
@@ -389,6 +448,16 @@ class EndpointAttempt {
   /// 拨不通的原因（`ok = true` 时为 `null`）。
   final String? reason;
 
+  /// 这次拨号发生在哪一刻（毫秒时间戳；`null` = 不知道，**不参与冷却判断**）。
+  ///
+  /// 没有它就没法回答"这个失败是刚才还是昨天"—— 冷却、以及界面上"这条还能不能试"
+  /// 都无从谈起（`core/endpoint.dart` 的 `isCooling` / `dialOrder`）。
+  final int? atMs;
+
+  /// **相等性只比结论（`ok` + `reason`），不比 [atMs]**。
+  ///
+  /// 时间戳回答的是"什么时候说的"，不是"说了什么"：把它算进相等性，
+  /// "同一轮退避里重复报同一个失败"就会每次都不相等（界面每几秒重建一次）。
   @override
   bool operator ==(Object other) =>
       other is EndpointAttempt && other.ok == ok && other.reason == reason;

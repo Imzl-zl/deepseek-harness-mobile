@@ -1255,6 +1255,11 @@ Future<AppModel> _assemble(
         table,
         myIpv4: app?.myLanIpv4,
         rememberedEndpointUrl: app?.rememberedEndpointUrl,
+        // 只有**当前这台电脑**的地址排前面；别的电脑报的排后面（不删，换回去还要用）。
+        currentHostId: credentials.pcSignPubHex,
+        // 刚失败过的排最后：避免每轮退避重连都为同一个死地址白等一次超时。
+        attempts: app?.endpointAttempts ?? const {},
+        nowMs: DateTime.now().millisecondsSinceEpoch,
       );
     },
     factory: (endpoint) =>

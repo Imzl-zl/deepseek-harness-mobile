@@ -32,9 +32,12 @@
 - **端点表按"哪台电脑报的"剪枝（2026-10-29）**：`Endpoint` 多一个客户端字段 `hostId`
   （= 那台电脑的 Ed25519 公钥 `pcSignPubHex`；**不用 `pcId`**，它是连接器 id，默认
   `"local"` 会撞），换电脑后旧电脑报过的自动条目直接剪掉（手填的永不动），
-  并顺手清掉指向已删条目的"记住的那条"、把成功集裁到表内。理由与三个被否方案见
-  `implemented/2026-10-29-endpoint-host-scoped-pruning.md`；设计面 `docs/subsystems/app-channel-client.md` §6.2
-  （端点身份/归属/次序/超时/全失败语义/明文边界一张表）。adb 转发不是端点的一种：
+  并顺手清掉指向已删条目的"记住的那条"、把成功集裁到表内。
+  同批给 `dialOrder` 加了**失败冷却**（失败距今 < 60s 的排队尾，**连记住的那条也不例外**，
+  窗口一过回原位、成功即清）和**按电脑排序**（别的电脑报的排当前电脑之后、不删），
+  `EndpointAttempt` 因此带了 `atMs`。真机账：表里两条 VMware 死地址原本每次冷启动
+  白等 `3s×2`。理由与三个被否方案见 `implemented/2026-10-29-endpoint-host-scoped-pruning.md`；
+  设计面 `docs/subsystems/app-channel-client.md` §6.2（一张表）。adb 转发不是端点的一种：
   真实用法是公网中转或局域网直连。
 - **通道**：`protocol/`（配对 / 握手 / AEAD / 流控 / 恢复）+ `relay/`（中转）+ `connector/`（电脑侧网关）
   全部落地；手机侧 `app/lib/core/` 是连接层，`app/lib/wire/` 是**线上形状的唯一解码层**。
