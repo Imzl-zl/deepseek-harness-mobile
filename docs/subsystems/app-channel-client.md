@@ -260,6 +260,6 @@ app/packages/
 **选型现状(2026-10-16 校准)**:
 
 - Markdown 渲染:**已定** `flutter_markdown_plus`(唯一传递依赖 `markdown`,Dart 团队维护;`flutter_markdown` 已 discontinued)。选型表与理由见 `app/lib/ui/dsh_markdown.dart` 文件头。
-- 代码块:**已照 DSH 的 `CodeBlock` / `CodeToolbar` 落地**头部工具条(语言标签 / 自动换行 / 复制;默认自动换行),见同文件。**仍未做**:语法高亮 —— 候选 `highlight`(纯 Dart);接的时候照 DSH 的三条纪律:**只支持 ts/bash/json**、**首次进入视口才高亮一次并缓存**、未知语言退纯文本(`packages/client/ui-primitives/src/markdown/highlight.ts:42,17`、`useViewportHighlighting.ts:48`)。
+- 代码块：**已照 DSH 的 `CodeBlock` / `CodeToolbar` 落地**头部工具条(语言标签 / 自动换行 / 复制;默认自动换行),见 `dsh_markdown.dart`。语法高亮走纯 Dart 的 `re_highlight`,认 28 种语言（比桌面的 ts/bash/json 宽，见 §4.1「有意偏离」），标签判据与桌面同构（认得报语言名、认不得报「代码块」），未知语言退纯文本。与 DSH 的两处差异：① 高亮在构建时算、token 不缓存（DSH 是首次进视口算一次并缓存，`ui-primitives/src/markdown/highlight.ts:286`、`useViewportHighlighting.ts:17,48`），见 §4 的"代码高亮开销"；② **换行开关的状态不跨重建**——块被列表回收后重建会回到默认（自动换行），因为 `_DshCodeBlock` 的 `_wrapped` 只活在 `State` 里，未接 `PageStorage`（2026-10-29 真机实测：滚出视口再滚回来，按钮回到「取消自动换行」）。
 - 数学公式:**不做**。DSH 支持 `$…$` 与 ```` ```math ```` 围栏(KaTeX),手机侧没有纯 Dart 的等价物,而它是独立一块(不属"把 Markdown 渲染出来")。如实记在 `dsh_markdown.dart` 文件末。
 - 图片:`cached_network_image` 不适用(内容不来自网络),用 `Image.memory` + 自建 LRU。
