@@ -98,6 +98,13 @@ class AppModel extends ChangeNotifier {
     Set<String> hiddenEndpointIds = const {},
     Set<String> succeededEndpointIds = const {},
     Future<String?> Function()? myLanIpv4Of,
+
+    /// 当前配对那台电脑的身份 = 它的 Ed25519 公钥（`pcSignPubHex`）。
+    ///
+    /// 端点表靠它区分"同一台电脑换了地址"与"换了一台电脑"：后者报过的地址
+    /// 永远拨不通（对端身份不同，握手必被 `protocol/not-paired` 拒），
+    /// 留着只会让每轮拨号多等一个超时。没装配时返回空串 = 不知道，剪枝退回旧规则。
+    String Function()? hostIdOf,
     this.onRequestEndpoint,
     this.onReconnect,
     this.onEndpointsChanged,
@@ -110,7 +117,8 @@ class AppModel extends ChangeNotifier {
        _initialRememberedEndpointUrl = rememberedEndpointUrl,
        _initialHiddenEndpointIds = Set<String>.of(hiddenEndpointIds),
        _initialSucceededEndpointIds = Set<String>.of(succeededEndpointIds),
-       _myLanIpv4Of = myLanIpv4Of;
+       _myLanIpv4Of = myLanIpv4Of,
+       _hostIdOf = hostIdOf;
 
   /// 通道客户端（连接 / 订阅 / 写操作的唯一 owner）。
   final SyncClient client;
@@ -189,6 +197,7 @@ class AppModel extends ChangeNotifier {
   /// 读本机 LAN 地址的实现（装配层注入 `platform/lan_address.dart`；
   /// `data/` 不认识 `dart:io`）。
   final Future<String?> Function()? _myLanIpv4Of;
+  final String Function()? _hostIdOf;
 
   late final EndpointBook _endpointsBook = EndpointBook(
     endpoints: _initialEndpoints,
@@ -236,7 +245,10 @@ class AppModel extends ChangeNotifier {
   /// 旧的永远留在表里（2026-10-17 真机实测：三个拨不通的 IPv6 地址，
   /// 冷启动每个等满超时，合计 30 秒——用户原话"退出软件怎么就连不上了"）。
   Future<void> mergeDiscoveredEndpoints(List<Endpoint> discovered) =>
-      _endpointsBook.mergeDiscoveredEndpoints(discovered);
+      _endpointsBook.mergeDiscoveredEndpoints(
+        discovered,
+        hostId: _hostIdOf?.call(),
+      );
 
   /// 上限保险丝的值。用户自己的删除总是优先于它 —— 它只防"表无限变长"。
   static const int maxEndpoints = EndpointBook.maxEndpoints;

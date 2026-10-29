@@ -29,6 +29,13 @@
 - **代码高亮语言集比桌面宽（28 种 vs ts/bash/json）**：这是渲染能力的扩展，数据源同一处
   （围栏 info string），已写进 `docs/subsystems/app-channel-client.md` §4.1 的「有意偏离」，
   笔记 `implemented/2026-10-29-code-highlight-language-set-wider-than-desktop.md`。
+- **端点表按"哪台电脑报的"剪枝（2026-10-29）**：`Endpoint` 多一个客户端字段 `hostId`
+  （= 那台电脑的 Ed25519 公钥 `pcSignPubHex`；**不用 `pcId`**，它是连接器 id，默认
+  `"local"` 会撞），换电脑后旧电脑报过的自动条目直接剪掉（手填的永不动），
+  并顺手清掉指向已删条目的"记住的那条"、把成功集裁到表内。理由与三个被否方案见
+  `implemented/2026-10-29-endpoint-host-scoped-pruning.md`；设计面 `docs/subsystems/app-channel-client.md` §6.2
+  （端点身份/归属/次序/超时/全失败语义/明文边界一张表）。adb 转发不是端点的一种：
+  真实用法是公网中转或局域网直连。
 - **通道**：`protocol/`（配对 / 握手 / AEAD / 流控 / 恢复）+ `relay/`（中转）+ `connector/`（电脑侧网关）
   全部落地；手机侧 `app/lib/core/` 是连接层，`app/lib/wire/` 是**线上形状的唯一解码层**。
 - **RPC 应答面（2026-10-26）**：`wire/rpc/` 18 个面文件、46 个方法；`app/lib`（`wire/` 外）

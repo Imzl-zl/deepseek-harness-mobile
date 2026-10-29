@@ -77,6 +77,7 @@ class Endpoint {
     required this.url,
     this.label = '',
     this.manual = false,
+    this.hostId = '',
   });
 
   final EndpointKind kind;
@@ -97,6 +98,19 @@ class Endpoint {
   /// （`data/app_model.dart` 上那个同名方法是转发，不是第二份实现）。
   final bool manual;
 
+  /// 这条地址是哪台电脑报的（那台电脑的 Ed25519 公钥 `pcSignPubHex`；空 = 不知道）。
+  ///
+  /// **不用配对载荷里的 `pcId`**：它是连接器 id，默认就是 `"local"`，两台电脑会撞。
+  /// 公钥是配对时钉死的（契约 §12.1），天生唯一。
+  ///
+  /// **它让"同一台电脑换了地址"与"换了一台电脑"区别得开**：前者要保留
+  /// （只是暂时拨不通），后者永远拨不通（对端身份不同，握手必被
+  /// `protocol/not-paired` 拒）—— 留着它只会让每一轮拨号多等一个超时。
+  ///
+  /// 与 [manual] 同一条先例：**只在手机自己的落盘里出现**，连接器的
+  /// `endpoint.describe` 不报它（它不知道也不该知道"这台手机曾经连过谁"）。
+  final String hostId;
+
   /// 稳定标识。**就是 url** —— 同一个地址只有一个端点。
   ///
   /// 不另设 id 字段：那会出现"两个字段谁是身份"的问题，而 url 本身已经唯一。
@@ -106,8 +120,22 @@ class Endpoint {
   String get id => url;
 
   /// 换来源标记（合并时保留已存条目的 manual 标记用）。
-  Endpoint withManual(bool manual) =>
-      Endpoint(kind: kind, url: url, label: label, manual: manual);
+  Endpoint withManual(bool manual) => Endpoint(
+    kind: kind,
+    url: url,
+    label: label,
+    manual: manual,
+    hostId: hostId,
+  );
+
+  /// 盖上"这条地址来自哪台电脑"（合并时由 `EndpointBook` 用当前凭据的电脑公钥盖）。
+  Endpoint withHost(String hostId) => Endpoint(
+    kind: kind,
+    url: url,
+    label: label,
+    manual: manual,
+    hostId: hostId,
+  );
 
   @override
   bool operator ==(Object other) => other is Endpoint && other.url == url;
@@ -133,6 +161,7 @@ Map<String, Object?> endpointToJson(Endpoint endpoint) => {
   'url': endpoint.url,
   if (endpoint.label.isNotEmpty) 'label': endpoint.label,
   if (endpoint.manual) 'manual': true,
+  if (endpoint.hostId.isNotEmpty) 'hostId': endpoint.hostId,
 };
 
 /// JSON → 端点。认不出返回 `null`（**不猜**：缺 `kind` 或 `url` 的条目
@@ -149,11 +178,13 @@ Endpoint? endpointFromJson(Object? raw) {
   };
   if (resolved == null) return null;
   final label = raw['label'];
+  final hostId = raw['hostId'];
   return Endpoint(
     kind: resolved,
     url: url,
     label: label is String ? label : '',
     manual: raw['manual'] == true,
+    hostId: hostId is String ? hostId : '',
   );
 }
 
@@ -201,6 +232,9 @@ List<Endpoint> mergeEndpoints(
         url: fresh.url,
         label: fresh.label.isEmpty ? kept.label : fresh.label,
         manual: kept.manual,
+        // 连接器**不报** hostId（它不知道这台手机连过谁）；报里空着就沿用已存的，
+        // 否则一处漏盖会让"换了一台电脑"判不出来。
+        hostId: fresh.hostId.isEmpty ? kept.hostId : fresh.hostId,
       );
     } else {
       merged.add(fresh);

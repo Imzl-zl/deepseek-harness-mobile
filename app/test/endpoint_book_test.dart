@@ -281,4 +281,68 @@ void main() {
     expect(lanReads, 1, reason: '拨不通那一拍才查本机 IP');
     expect(app.myLanIpv4, '192.168.1.9');
   });
+
+  // ---------------------------------------------------------------------------
+  // 端点的"归属"：同一台电脑换地址要留，换了一台电脑要剪。
+  // 真实场景是**远程**（公网中转 / 换网络）：旧电脑报过的地址永远拨不通
+  // （对端身份不同，握手必被 not-paired 拒），而"曾经成功过"恰恰是最容易
+  // 把它们永远留在表里的理由。
+  // ---------------------------------------------------------------------------
+
+  test('换一台电脑：旧电脑报的地址被剪掉（即使成功过），手填的保留', () async {
+    var host = 'pc-A';
+    final app = AppModel(
+      client: _IdleClient(),
+      endpoints: [_ep('ws://mine:7', manual: true)],
+      hostIdOf: () => host,
+    );
+    addTearDown(app.dispose);
+
+    // 第一台电脑自报一条，并且**成功过**（旧规则下它会永远留在表里）。
+    await app.mergeDiscoveredEndpoints([
+      _ep('ws://pc-a:1', kind: EndpointKind.relay),
+    ]);
+    expect(app.endpoints.map((e) => e.url), ['ws://mine:7', 'ws://pc-a:1']);
+    expect(app.endpoints.last.hostId, 'pc-A', reason: '合并时盖上当前电脑身份');
+    app.reportActiveEndpoint(_ep('ws://pc-a:1', kind: EndpointKind.relay));
+
+    // 换成第二台电脑：它只报自己的地址。
+    host = 'pc-B';
+    await app.mergeDiscoveredEndpoints([
+      _ep('ws://pc-b:2', kind: EndpointKind.relay),
+    ]);
+
+    expect(app.endpoints.map((e) => e.url), [
+      'ws://mine:7',
+      'ws://pc-b:2',
+    ], reason: '别的电脑报的剪掉；手填的永不自动删；新电脑的并进来');
+    expect(app.endpoints.last.hostId, 'pc-B');
+  });
+
+  test('剪掉"记住的那条"时，可拨记忆一并清空并落盘', () async {
+    var host = 'pc-A';
+    var metaSaves = 0;
+    final app = AppModel(
+      client: _IdleClient(),
+      endpoints: [],
+      hostIdOf: () => host,
+      onEndpointsMetaChanged: (_) async => metaSaves += 1,
+    );
+    addTearDown(app.dispose);
+
+    await app.mergeDiscoveredEndpoints([
+      _ep('ws://pc-a:1', kind: EndpointKind.relay),
+    ]);
+    app.reportActiveEndpoint(_ep('ws://pc-a:1', kind: EndpointKind.relay));
+    expect(app.rememberedEndpointUrl, 'ws://pc-a:1');
+    final before = metaSaves;
+
+    host = 'pc-B';
+    await app.mergeDiscoveredEndpoints([
+      _ep('ws://pc-b:2', kind: EndpointKind.relay),
+    ]);
+
+    expect(app.rememberedEndpointUrl, isNull, reason: '记住的地址已不在表里');
+    expect(metaSaves, before + 1, reason: '记忆变了要落盘');
+  });
 }

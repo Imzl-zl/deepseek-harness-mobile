@@ -244,6 +244,21 @@ app/packages/
    **只加进表、不自动拨**;用户在「换个连接方式」里选它才连(与设置页「添加端点」同一个
    对话框、同一句承诺)。配对凭据与地址无关,**不需要重新扫码**。
 
+### 6.2 端点的身份、归属与拨号次序
+
+| 面 | 规则 | 出处 |
+|---|---|---|
+| 身份 | `id = url`（一个地址一条）；`kind` / `label` / `manual` / `hostId` 是属性，不是身份 | `core/endpoint.dart` 的 `Endpoint` |
+| 归属 | 连接器自报的端点盖上**当前配对那台电脑的 Ed25519 公钥**（`pcSignPubHex` → `hostId`，客户端字段，不上线）；**换了一台电脑后，旧电脑报过的自动条目直接剪掉**，手填的永不动。用公钥不用 `pcId`：后者是连接器 id，默认 `"local"`，两台电脑会撞 | `data/endpoint_book.dart` 的 `mergeDiscoveredEndpoints`、`.agents/notes/implemented/2026-10-29-endpoint-host-scoped-pruning.md` |
+| 拨号次序 | 记住的那条 → 同 /24 的 → 其余按用户顺序；**失败不降权**（降权等于"出门一次就再也回不到直连"） | `core/endpoint.dart` 的 `dialOrder`、`core/endpoint_transport.dart` |
+| 建连超时 | 直连 3s、中转 10s —— 直连是同一局域网（死的地址立刻知道），中转可能在公网 | `platform/transport_factory.dart` |
+| 全失败时的语义 | 抛一条 `TransportException`，**只带最后一个端点的原因与 code**；前面几条为什么失败不逐条上报（界面显示一条即可，逐条要另开面） | `core/endpoint_transport.dart` |
+| 明文边界 | 公网必须 `wss`；明文 `ws` 只放行非公网（回环/私网/CGNAT/link-local/ULA/IPv4-mapped）。IPv6 按前两字节分类，`::ffff:c0a8:101` 这种十六进制映射会被判成公网（**宁可严一格**） | `core/endpoint.dart` 的 `checkedRelayUri` / `isPrivateOrLoopback` |
+
+**adb 转发不是端点的一种**：它只是把手机的 `127.0.0.1` 接到电脑，回环地址本来就落在
+"非公网、允许明文"那一档；真实用法是**公网中转或局域网直连**。端点表里出现回环地址
+只可能是手填（或手机被改过路由，见 `tools.md` 那条劫持判据）。
+
 ---
 
 ## 7. 测试策略

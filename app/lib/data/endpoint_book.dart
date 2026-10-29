@@ -126,9 +126,21 @@ class EndpointBook {
   /// **合并后剪枝**：连接器不再自报、且本机拨过并失败的条目删掉。两个条件
   /// 同时成立才删 —— ① 这次 describe 没报它；② 本机拨过且记录是失败。
   /// （2026-10-17 真机：三个拨不通的 IPv6 地址让冷启动每个等满超时，合计 30 秒。）
-  Future<void> mergeDiscoveredEndpoints(List<Endpoint> discovered) async {
+  Future<void> mergeDiscoveredEndpoints(
+    List<Endpoint> discovered, {
+    String? hostId,
+  }) async {
+    // **盖上"来自哪台电脑"**：连接器不报这个（它不知道这台手机连过谁），
+    // 而剪枝要靠它区分"同一台电脑换了地址"与"换了一台电脑"。
+    final currentHost = hostId ?? '';
+    final stamped = <Endpoint>[
+      for (final endpoint in discovered)
+        endpoint.hostId.isEmpty && currentHost.isNotEmpty
+            ? endpoint.withHost(currentHost)
+            : endpoint,
+    ];
     // 用户藏掉的条目**不再加回来**（否则设置页的"删除"删了白删）。
-    final visible = discovered
+    final visible = stamped
         .where((e) => !_hiddenEndpointIds.contains(e.id))
         .toList();
     final merged = mergeEndpoints(_endpoints, visible);
@@ -136,6 +148,14 @@ class EndpointBook {
 
     final kept = merged.where((e) {
       if (e.manual) return true; // 用户手填的：永不自动删
+      // **别的电脑报的地址永不留**：换过电脑之后它们只会让每一轮拨号多等一个
+      // 超时（对端身份不同，握手必被 `protocol/not-paired` 拒），而"曾经成功过"
+      // 恰恰是它们最容易被留下的理由。手填的除外（那是用户明确要的）。
+      if (currentHost.isNotEmpty &&
+          e.hostId.isNotEmpty &&
+          e.hostId != currentHost) {
+        return false;
+      }
       if (reported.contains(e.id)) return true; // 连接器还在报：留
       // **成功过的永不删**：它只是"此刻不在那个网络"。
       if (_succeededEndpointIds.contains(e.id)) return true;
@@ -144,12 +164,23 @@ class EndpointBook {
     }).toList();
 
     final bounded = _boundedByCap(kept);
+    // 成功集只留表里还在的 id：换电脑裁掉的条目不该在"曾经成功"里留名
+    // （否则同名地址再次出现时会被当成"成功过"而逃过剪枝）。
+    _succeededEndpointIds.retainAll(bounded.map((e) => e.id));
+    var metaChanged = false;
+    if (_rememberedEndpointUrl != null &&
+        !bounded.any((e) => e.url == _rememberedEndpointUrl)) {
+      _rememberedEndpointUrl = null;
+      metaChanged = true;
+    }
     if (_sameEndpointTable(bounded, _endpoints)) {
+      if (metaChanged) await _onMetaChanged?.call(endpointMeta);
       return; // 没有变化：不落盘、不通知（否则每次重连都会写一次存储）
     }
     _endpoints = bounded;
     _onChange();
     await _onTableChanged?.call(bounded);
+    if (metaChanged) await _onMetaChanged?.call(endpointMeta);
   }
 
   /// 上限保险丝：条目超 [maxEndpoints] 时，从**末尾**淘汰"从没成功过、
@@ -174,7 +205,7 @@ class EndpointBook {
     return out;
   }
 
-  /// 两张端点表是否**完全一样**（url + label + manual + kind；顺序也算）。
+  /// 两张端点表是否**完全一样**（url + label + manual + kind + hostId；顺序也算）。
   ///
   /// 不能用 `contains`：它只比 url，于是"label 变了""manual 标记变了"
   /// 都会被当成"没有变化"而不落盘。
@@ -184,7 +215,8 @@ class EndpointBook {
       if (a[i].url != b[i].url ||
           a[i].label != b[i].label ||
           a[i].manual != b[i].manual ||
-          a[i].kind != b[i].kind) {
+          a[i].kind != b[i].kind ||
+          a[i].hostId != b[i].hostId) {
         return false;
       }
     }
