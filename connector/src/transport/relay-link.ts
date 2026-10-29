@@ -12,6 +12,8 @@ export interface RelayLinkOptions {
   url: string
   token: string
   allowInsecureLocal?: boolean
+  /** 公网明文（自部署中转）：与手机侧 checkedRelayUri 的第二档同一判据。 */
+  allowInsecurePublic?: boolean
   allows(binding: DeviceBinding): boolean
   createData(binding: DeviceBinding): Connection
   onConnected(): Promise<void>
@@ -39,7 +41,7 @@ function asDialSocket(ws: WebSocket): DialSocket {
 }
 
 export function createRelayLink(options: RelayLinkOptions): RelayLink {
-  const base = relayUrlOf(options.url, options.allowInsecureLocal)
+  const base = relayUrlOf(options.url, options.allowInsecureLocal, options.allowInsecurePublic)
   base.pathname = '/ws/connector'
   const backoff = createBackoff()
   const data = new Map<string, DataConnection>()

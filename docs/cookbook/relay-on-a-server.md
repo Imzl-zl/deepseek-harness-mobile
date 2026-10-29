@@ -3,7 +3,7 @@
 把中转放到一台有公网地址的机器上，手机在**任何网络**下都能连到家里的电脑。
 中转只转发与记账，不存会话内容（契约 §2 / §12）。
 
-> **先决条件**：这台服务器有公网 IP 与一个域名（A 记录指过去）。
+> **先决条件**：这台服务器有公网 IP；**有域名**就走 §4 的 TLS（推荐）。只有 IP、没证书时按 §3.1 的明文路径先跑（两处开关要显式打开）。
 > 手机对**非私网**地址强制 `wss://`（`app/lib/core/endpoint.dart` 的
 > `isPrivateOrLoopback`），所以公网必须有 TLS；中转自己不终结 TLS。
 
@@ -56,7 +56,28 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8787/     # 期望：4
 node -e "const W=require('ws');const w=new W('ws://127.0.0.1:8787/ws/connector',{headers:{authorization:'Bearer <TOKEN>'}});w.on('open',()=>{console.log('ok');process.exit(0)});w.on('unexpected-response',(_,r)=>{console.log('status',r.statusCode);process.exit(1)})"
 ```
 
-## 4. 打开 TLS（公网必须）
+## 3.1 只有公网 IP、还没有域名时（明文，可先用）
+
+2026-10-29 实机验证过的路径。判据：内容仍端到端加密（握手后逐帧 AEAD），明文的代价是
+**元数据可见**；所以公网明文必须由用户显式打开两处开关（手机侧一次确认 + 连接器配置）。
+
+1. **配置里 `host` 必须是 `0.0.0.0`**（示例文件给的是 `127.0.0.1`，容器里那样映射出去连不上）。
+2. **令牌在容器里签**（不用手算 sha256，摘要会自动写回挂载的配置）：
+   ```bash
+   docker compose run --rm relay \
+     node src/main.ts --config /config/relay.config.json --issue-token connector home-pc
+   ```
+   输出里那串令牌只出现一次，交给电脑侧。
+3. **连接器**（`cordis.patch.yml`）：`relayUrl: ws://<公网IP>:8787/ws/connector`，
+   并显式打开公网明文那一档：`allowInsecurePublic: true`（`allowInsecureLocal` 只管非公网）。
+4. **令牌**进 DSH 凭据：`dsh-mobile-connector/relay-connector` 那条记录的 `payload.token`。
+5. **手机**：出码后二维码里的 relay 就是 `ws://<公网IP>:8787`；配对页的确认卡会多一行
+   红字「这台电脑的中转是明文连接……元数据可见」，点「确认并配对」即同意
+   （那一下同时落成用户级偏好 `net.allow_plaintext_public`）。
+6. **验收**：手机关 WiFi 只留移动数据，App 仍显示「已连接」（= 走的是公网中转）。
+7. 上云安全组要放行该端口（例：TCP 8787）；以后有域名/证书时按第 4 步换成 `wss://`。
+
+## 4. 打开 TLS（有域名时）
 
 ```bash
 cd relay
@@ -122,3 +143,4 @@ App 仍显示「已连接」，且能在会话里收到新消息 ——
 绕过办法（不改防火墙）：`adb reverse tcp:8787 tcp:8787` + 配对载荷里的 `relay` 写成
 `ws://127.0.0.1:8787/ws/connector`（手机拨自己的回环，经 USB 到宿主）。
 服务器上没有这道防火墙，公网部署不需要这个绕法。
+

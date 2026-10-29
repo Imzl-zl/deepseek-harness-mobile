@@ -19,6 +19,8 @@ export interface PairingRegistrarOptions {
   /** 连接层用的 WSS 地址（配置里的 `relayUrl`）。 */
   relayUrl: string
   allowInsecureLocal?: boolean
+  /** 公网明文（自部署中转）：与手机侧 checkedRelayUri 的第二档同一判据。 */
+  allowInsecurePublic?: boolean
   /**
    * 取连接器令牌。
    *
@@ -33,8 +35,12 @@ export interface PairingRegistrarOptions {
 }
 
 /** `wss://host/path` → `https://host`（**丢掉路径**：HTTP 端点不在 WS 的那条路径上）。 */
-export function httpBaseOf(relayUrl: string, allowInsecureLocal = false): string {
-  const url = relayUrlOf(relayUrl, allowInsecureLocal)
+export function httpBaseOf(
+  relayUrl: string,
+  allowInsecureLocal = false,
+  allowInsecurePublic = false,
+): string {
+  const url = relayUrlOf(relayUrl, allowInsecureLocal, allowInsecurePublic)
   const protocol = url.protocol === 'wss:' ? 'https:' : url.protocol === 'ws:' ? 'http:' : url.protocol
   return `${protocol}//${url.host}`
 }
@@ -43,7 +49,7 @@ export function createPairingRegistrar(
   options: PairingRegistrarOptions,
 ): (offerId: string) => Promise<void> {
   const doFetch = options.fetchImpl ?? fetch
-  const endpoint = `${httpBaseOf(options.relayUrl, options.allowInsecureLocal)}/pairing/register`
+  const endpoint = `${httpBaseOf(options.relayUrl, options.allowInsecureLocal, options.allowInsecurePublic)}/pairing/register`
 
   return async (offerId) => {
     const token = await options.tokenSource()

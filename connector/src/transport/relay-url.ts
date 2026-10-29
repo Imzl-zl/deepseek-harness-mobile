@@ -110,8 +110,19 @@ function ipv6PrefixIsPrivate([hi, lo]: [number, number]): boolean {
   return false
 }
 
-/** 生产只用 WSS；本机明文必须由调用方显式允许。 */
-export function relayUrlOf(value: string, allowInsecureLocal = false): URL {
+/** 默认只用 WSS；明文分两档，必须由调用方显式允许。 */
+export function relayUrlOf(
+  value: string,
+  allowInsecureLocal = false,
+  /**
+   * 允许**公网明文**（用户自部署中转、暂无域名/证书）。
+   *
+   * 与手机侧同一条两档判据（`app/lib/core/endpoint.dart` 的 `checkedRelayUri`）：
+   * 非公网看 `allowInsecureLocal`，公网明文看这个开关。握手后每帧 AEAD，
+   * 所以明文的代价是元数据可见 —— 这一档由用户显式承担。
+   */
+  allowInsecurePublic = false,
+): URL {
   let url: URL
   try {
     url = new URL(value)
@@ -128,8 +139,10 @@ export function relayUrlOf(value: string, allowInsecureLocal = false): URL {
   if (url.username !== '' || url.password !== '' || url.hash !== '' || url.search !== '') {
     throw new Error('中转地址不能包含凭据、查询参数或片段')
   }
-  if (url.protocol !== 'wss:' && !(allowInsecureLocal && isNonPublicHost(host) && url.protocol === 'ws:')) {
-    throw new Error('中转必须使用 WSS；仅显式开启的本机调试允许明文')
+  const plaintextAllowed =
+    (allowInsecureLocal && isNonPublicHost(host)) || allowInsecurePublic
+  if (url.protocol !== 'wss:' && !(plaintextAllowed && url.protocol === 'ws:')) {
+    throw new Error('中转必须使用 WSS；明文仅限非公网地址，或用户确认过的自部署中转')
   }
   return url
 }

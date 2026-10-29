@@ -106,3 +106,34 @@ test('地址里不许夹带凭据 / 查询 / 片段', () => {
   )
   assert.throws(() => relayUrlOf('wss://127.0.0.1:8787/ws/connector#f', true), /片段/)
 })
+// ---------------------------------------------------------------------------
+// 公网明文（用户自部署中转、暂无域名/证书）：与手机侧 `checkedRelayUri` 的第二档
+// 同一判据。**默认不开**；只有 `allowInsecurePublic` 显式打开才放行。
+// ---------------------------------------------------------------------------
+test('公网 ws 默认被拒；allowInsecurePublic 才放行', () => {
+  assert.throws(
+    () => relayUrlOf('ws://203.0.113.7:8787/ws/connector'),
+    /必须使用 WSS/,
+  )
+  assert.throws(
+    () => relayUrlOf('ws://203.0.113.7:8787/ws/connector', true),
+    /必须使用 WSS/,
+    '只开非公网那一档时，公网仍然拒',
+  )
+  assert.equal(
+    relayUrlOf('ws://203.0.113.7:8787/ws/connector', false, true).hostname,
+    '203.0.113.7',
+    '用户确认过的自部署中转放行',
+  )
+  // 自部署也可以用自己的域名 + 明文
+  assert.equal(relayUrlOf('ws://relay.example/ws/connector', false, true).hostname, 'relay.example')
+})
+
+test('两档互不越界：wss 任何主机放行，公网开关不改变解析规则', () => {
+  assert.equal(relayUrlOf('wss://203.0.113.7/ws/connector').hostname, '203.0.113.7')
+  assert.throws(
+    () => relayUrlOf('ws://u:p@203.0.113.7:8787/ws/connector', false, true),
+    /凭据/,
+    '公网明文放行不等于放宽地址形状',
+  )
+})

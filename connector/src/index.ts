@@ -189,6 +189,8 @@ interface Assembly {
    */
   relayUrl: string | undefined
   allowInsecureLocal: boolean
+  /** 公网明文（用户自部署中转）：与 llowInsecureLocal 同一条两档判据的公网那一档。 */
+  allowInsecurePublic: boolean
   relayTokenSecretRef: string | undefined
   /** 直连监听面（§1.7）：`0` = 不监听。同样是挂载时取一次快照。 */
   listenPort: number
@@ -196,7 +198,7 @@ interface Assembly {
 }
 
 function buildSteps(assembly: Assembly): LifecycleStep[] {
-  const { ctx, relayUrl, allowInsecureLocal, relayTokenSecretRef, listenPort, listenHost, logger, metrics, abort } =
+  const { ctx, relayUrl, allowInsecureLocal, allowInsecurePublic, relayTokenSecretRef, listenPort, listenHost, logger, metrics, abort } =
     assembly
 
   let closeStore: (() => Promise<void>) | null = null
@@ -315,7 +317,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         if (relayUrl === undefined || relayUrl === '') {
           throw new Error('relayUrl 未配置：拒绝挂载，而不是连上一个不完整的中转')
         }
-        relayUrlOf(relayUrl, allowInsecureLocal)
+        relayUrlOf(relayUrl, allowInsecureLocal, allowInsecurePublic)
         if (relayTokenSecretRef === undefined || relayTokenSecretRef === '') {
           throw new Error('relayTokenRef 未配置：连接器令牌的凭据引用缺失')
         }
@@ -503,6 +505,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
          */
         const publisher = createDevicePublisher({
           allowInsecureLocal,
+          allowInsecurePublic,
           relayUrl: relayUrl ?? '',
           tokenSource: () => readRelayToken(ctx.credentials, relayTokenSecretRef ?? ''),
           log: logger,
@@ -561,6 +564,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         // 两处各建一个的话，"令牌换了哪边先生效"会有两个答案。
         const registerPairing = createPairingRegistrar({
           allowInsecureLocal,
+          allowInsecurePublic,
           relayUrl: relayUrl ?? '',
           // 令牌**现读**（`readRelayToken` 不缓存）：出码是人工动作，换令牌后立刻生效；
           // 也省得为这个只在出码时用到的值安排装配顺序。
@@ -1069,7 +1073,11 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
            * 于是运行期换令牌需要重连 —— 这是可接受的：换令牌本来就意味着换一次连接）。
            */
           connection = createRelayLink({
-            url: relayUrl ?? '', token: relayToken, allowInsecureLocal, log: logger,
+            url: relayUrl ?? '',
+    token: relayToken,
+    allowInsecureLocal,
+    allowInsecurePublic,
+    log: logger,
             onConnected: publishDevices,
             allows: (binding) => {
               if (binding.purpose === 'pairing') return pairingCore.allows(binding.candidate)
@@ -1245,6 +1253,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   // `Volatile<T>` 是稳定引用而非普通值：取一次快照，之后不再重新读（见 `Assembly` 的说明）。
   const relayUrl = config.relayUrl.get()
   const allowInsecureLocal = config.allowInsecureLocal.get()
+  const allowInsecurePublic = config.allowInsecurePublic.get()
   const relayTokenSecretRef = config.relayTokenRef.get()
   const listenPort = config.listenPort.get()
   const listenHost = config.listenHost.get()
@@ -1264,6 +1273,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         ctx,
         relayUrl,
         allowInsecureLocal,
+        allowInsecurePublic,
         relayTokenSecretRef,
         listenPort,
         listenHost,

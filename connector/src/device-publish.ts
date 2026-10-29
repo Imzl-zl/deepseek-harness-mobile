@@ -42,6 +42,8 @@ export interface DevicePublisherOptions {
   /** 连接层用的 WSS 地址（配置里的 `relayUrl`）。 */
   relayUrl: string
   allowInsecureLocal?: boolean
+  /** 公网明文（自部署中转）：与配对登记同一个判据。 */
+  allowInsecurePublic?: boolean
   /** 取连接器令牌（**函数而不是字符串**：与出码登记同一个理由，见那里的说明）。 */
   tokenSource: () => Promise<string>
   /** 注入 `fetch` 以便测（装配层用全局的那个）。 */
@@ -53,7 +55,7 @@ export function createDevicePublisher(
   options: DevicePublisherOptions,
 ): (rows: readonly DeviceRegistration[]) => Promise<void> {
   const doFetch = options.fetchImpl ?? fetch
-  const endpoint = `${httpBaseOf(options.relayUrl, options.allowInsecureLocal)}/devices`
+  const endpoint = `${httpBaseOf(options.relayUrl, options.allowInsecureLocal, options.allowInsecurePublic)}/devices`
 
   return async (rows) => {
     // 空名册也要报：那正是"这台电脑上已经没有设备了"的形状（比如全部吊销）。
