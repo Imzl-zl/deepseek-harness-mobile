@@ -269,7 +269,7 @@ void main() {
 
     expect(find.text('现在用这条连'), findsOneWidget, reason: '立刻连的入口在这里');
     expect(find.text('会断开当前连接，只试这一条'), findsOneWidget, reason: '要提前说清副作用');
-    expect(find.text('禁用这个端点'), findsOneWidget);
+    expect(find.text('删除这个端点'), findsOneWidget);
     addTearDown(app.dispose);
   });
 
@@ -386,10 +386,10 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
-  // 管理：禁用 / 手填 / 已禁用
+  // 管理：删除 / 手填 / 已删除
   // ---------------------------------------------------------------------------
 
-  testWidgets('禁用一个自报端点：确认后从表里去掉并进禁用集', (tester) async {
+  testWidgets('删自报端点：确认后从表里去掉并进已删除集', (tester) async {
     final app = buildApp();
     await tester.pumpWidget(_host(app));
     await tester.pumpAndSettle();
@@ -397,9 +397,9 @@ void main() {
     await _scrollTo(tester, find.text('中转'));
     await tester.tap(_moreOf('中转'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('禁用这个端点'));
+    await tester.tap(find.text('删除这个端点'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('禁用'));
+    await tester.tap(find.text('删除'));
     await tester.pumpAndSettle();
 
     expect(
@@ -412,11 +412,11 @@ void main() {
       contains(_relay.url),
       reason: '自报的端点要靠隐藏集挡住，否则下次 describe 又加回来',
     );
-    expect(find.text('已禁用 1 条端点 · 点这里启用'), findsOneWidget);
+    expect(find.text('已删除 1 条端点 · 点这里恢复'), findsOneWidget);
     addTearDown(app.dispose);
   });
 
-  testWidgets('禁用要确认：点"取消"不动表', (tester) async {
+  testWidgets('删除要确认：点"取消"不动表', (tester) async {
     final app = buildApp();
     await tester.pumpWidget(_host(app));
     await tester.pumpAndSettle();
@@ -424,7 +424,7 @@ void main() {
     await _scrollTo(tester, find.text('中转'));
     await tester.tap(_moreOf('中转'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('禁用这个端点'));
+    await tester.tap(find.text('删除这个端点'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
@@ -480,7 +480,7 @@ void main() {
     addTearDown(app.dispose);
   });
 
-  testWidgets('已禁用区：点一下启用', (tester) async {
+  testWidgets('已删除区：点一下恢复', (tester) async {
     final app = buildApp();
     await tester.pumpWidget(_host(app));
     await tester.pumpAndSettle();
@@ -488,16 +488,16 @@ void main() {
     await app.removeEndpoint(_relay);
     await tester.pumpAndSettle();
     // 设置页是懒加载 ListView：这一行在连接方式组下面，先滚到可见。
-    await _scrollTo(tester, find.text('已禁用 1 条端点 · 点这里启用'));
-    expect(find.text('已禁用 1 条端点 · 点这里启用'), findsOneWidget);
+    await _scrollTo(tester, find.text('已删除 1 条端点 · 点这里恢复'));
+    expect(find.text('已删除 1 条端点 · 点这里恢复'), findsOneWidget);
 
-    await tester.tap(find.text('已禁用 1 条端点 · 点这里启用'));
+    await tester.tap(find.text('已删除 1 条端点 · 点这里恢复'));
     await tester.pumpAndSettle();
-    expect(find.text('已禁用的端点（1）'), findsOneWidget, reason: '先确认 sheet 真的开了');
+    expect(find.text('已删除的端点（1）'), findsOneWidget, reason: '先确认 sheet 真的开了');
     // 点标签而不是那行很长的地址：地址被 ellipsis 截断后，
     // `tester.tap` 取其几何中心可能落在文字外（那一拍就变成点遮罩，
     // sheet 以 null 收场 → 看起来像"点了没反应"）。
-    await tester.tap(find.text('点一下启用'));
+    await tester.tap(find.text('点一下恢复'));
     await tester.pumpAndSettle();
 
     expect(app.hiddenEndpointIds, isEmpty);
