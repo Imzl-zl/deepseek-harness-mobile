@@ -30,7 +30,12 @@
    连接器 `listenPort: 8790` + `listenHost: '0.0.0.0'`;
 2. 重启后 `Get-NetTCPConnection -State Listen -LocalPort 8790` 应显示 **`0.0.0.0`**;
 3. 连接器状态面 `caps.direct` 必须是 `true`
-   (`(Invoke-RestMethod http://127.0.0.1:<port>/api/dsh-mobile/status -WebSession $sess).caps.direct`)。
+   (`(Invoke-RestMethod http://127.0.0.1:<port>/api/dsh-mobile/status -WebSession $sess).caps.direct`)；
+4. **手机侧选路必须真的出网卡**：`adb shell 'ip route get <电脑IP>'` 要落到 `dev wlan0`。
+   若返回 `local <电脑IP> … dev lo`，说明手机被加过 `<电脑IP>/32`（常见搭配
+   `iptables -t nat` 的 `REDIRECT`），于是"连电脑"变成"连自己"—— 表现为 1-2ms 内
+   `Connection refused`、电脑侧 `SynReceived` 为空、抓包一个 SYN 都没有。
+   三行定位与清理见 `tools.md` 的「手机'连不上电脑'先查手机有没有把电脑 IP 劫持到本机」。
 
 **换局域网的后果**:手机落盘学到的 direct 端点(`192.168.x.x:8790`)已失效,第一次得先经
 relay 连上,`endpoint.describe` 才会把新地址教给它并按"direct 先于 relay"并入端点表。
