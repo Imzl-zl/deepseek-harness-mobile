@@ -160,11 +160,11 @@ window.__ModuleLoader__.load({
       // ---- 上报哪些地址（2026-10-18）----
       // 监听面**按设计枚举全部非内部网卡**（`transport/listener.ts:134-138`：
       // 过滤虚拟网卡靠名字匹配"又脆又漏"）。所以装了 VMware 的机器会多报几条
-      // 手机永远拨不通的地址 —— 由用户点名藏掉，比猜网卡名可靠。
+      // 手机永远拨不通的地址 —— 由用户点名禁用，比猜网卡名可靠。
       advertiseTitle: '上报给手机的地址',
-      advertiseNote: '这块电脑上的地址会全部报给手机,让它挑一条拨。装了虚拟网卡(VMware / Docker)的机器会多报几条永远拨不通的 —— 在这里藏掉。也可以额外加一条不在列表里的(如 Tailscale 的 100.x)。',
-      advertiseHide: '藏掉',
-      advertiseShow: '恢复上报',
+      advertiseNote: '这块电脑上的地址会全部报给手机,让它挑一条拨。装了虚拟网卡(VMware / Docker)的机器会多报几条永远拨不通的 —— 在这里禁用。也可以额外加一条不在列表里的(如 Tailscale 的 100.x)。',
+      advertiseHide: '禁用',
+      advertiseShow: '启用',
       advertiseExtra: '手动添加',
       advertiseAddPlaceholder: 'ws://192.168.1.4:8790',
       advertiseAdd: '添加',
@@ -248,9 +248,9 @@ window.__ModuleLoader__.load({
       failedChannel: 'Could not {action}: {reason}',
       transportNote: 'The two channels are independent: stopping one leaves the other alone. Stopping transport keeps credentials and identities — a restart needs no re-pairing.',
       advertiseTitle: 'Addresses reported to the phone',
-      advertiseNote: 'Every address on this computer is reported so the phone can pick one. Machines with virtual adapters (VMware / Docker) also report ones the phone can never reach — hide them here. You can also add an address that is not in the list (e.g. a Tailscale 100.x).',
-      advertiseHide: 'Hide',
-      advertiseShow: 'Report again',
+      advertiseNote: 'Every address on this computer is reported so the phone can pick one. Machines with virtual adapters (VMware / Docker) also report ones the phone can never reach — disable them here. You can also add an address that is not in the list (e.g. a Tailscale 100.x).',
+      advertiseHide: 'Disable',
+      advertiseShow: 'Enable',
       advertiseExtra: 'added',
       advertiseAddPlaceholder: 'ws://192.168.1.4:8790',
       advertiseAdd: 'Add',

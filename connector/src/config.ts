@@ -45,12 +45,37 @@ export interface ConnectorConfig {
 }
 
 export const Config = z.object({
-  relayUrl: z.string().volatile(),
-  allowInsecureLocal: z.boolean().default(false).volatile(),
-  allowInsecurePublic: z.boolean().default(false).volatile(),
-  relayTokenRef: z.string().role('credential-ref').volatile(),
+  relayUrl: z
+    .string()
+    .volatile()
+    .description(
+      '中转地址，要带 /ws/connector 路径。自部署填自己的域名或公网 IP：' +
+        'wss://relay.example.com/ws/connector，或（无证书时）ws://1.2.3.4:8787/ws/connector。',
+    ),
+  allowInsecureLocal: z
+    .boolean()
+    .default(false)
+    .volatile()
+    .description('允许非公网地址的明文 ws://（局域网直连、组网）。默认关。'),
+  allowInsecurePublic: z
+    .boolean()
+    .default(false)
+    .volatile()
+    .description('允许公网地址的明文 ws://（自部署中转、暂无域名/证书）。默认关。'),
+  relayTokenRef: z
+    .string()
+    .role('credential-ref')
+    .volatile()
+    .description('连接器令牌的凭据引用（令牌本体在 DSH 凭据里，不写进配置）。'),
   // `0` = 关。范围到 65535;`.min(0)` 允许"显式关掉"这个写法。
-  listenPort: z.number().step(1).min(0).max(65535).default(0).volatile(),
+  listenPort: z
+    .number()
+    .step(1)
+    .min(0)
+    .max(65535)
+    .default(0)
+    .volatile()
+    .description('局域网直连监听端口（0 = 关）。手机在同一 WiFi 下会直连它。'),
   listenHost: z.string().default('127.0.0.1').volatile(),
   deviceLimit: z.number().step(1).min(1).default(8).volatile(),
   pushDigest: z.union([z.const('rich'), z.const('doorbell')]).default('rich').volatile(),

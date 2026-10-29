@@ -997,10 +997,12 @@ class _EndpointRow extends StatelessWidget {
             onTap: () => Navigator.of(context).pop('connect'),
           ),
           DshPickerRow(
-            name: '删除这个端点',
-            tags: [endpoint.manual ? '手填的地址，删了就没了' : '删掉后连接器再报也不会加回来'],
+            // **禁用 / 删除是两件事**：自动上报的端点禁用后还能在「已禁用的端点」里启用；
+            // 手填的端点删了就是删了（没有"上报"这条来源可以加回来）。
+            name: endpoint.manual ? '删除这个端点' : '禁用这个端点',
+            tags: [endpoint.manual ? '手填的地址，删了就没了' : '禁用后不再尝试，可在「已禁用的端点」里启用'],
             selected: false,
-            icon: 'trash',
+            icon: endpoint.manual ? 'trash' : 'pause',
             onTap: () => Navigator.of(context).pop('remove'),
           ),
         ],
@@ -1021,11 +1023,12 @@ class _EndpointRow extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: c.layer1,
-        title: const Text('删除这个端点？'),
+        title: Text(endpoint.manual ? '删除这个端点？' : '禁用这个端点？'),
         content: Text(
           '${_addressLine()}\n\n'
-          '这只是从这台手机上移除一条路由，不影响配对 ——'
-          '凭据还在，随时可以手填地址加回来。',
+          '${endpoint.manual ? '手填的这条地址会从手机里移除。' : '它不会再被尝试，也不会被连接器自动加回来；'
+                    '之后可以在「已禁用的端点」里重新启用。'}\n\n'
+          '不影响配对 —— 凭据还在，随时可以手填地址加回来。',
           style: const TextStyle(fontSize: 13),
         ),
         actions: [
@@ -1035,7 +1038,10 @@ class _EndpointRow extends StatelessWidget {
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: Text('删除', style: TextStyle(color: c.error)),
+            child: Text(
+              endpoint.manual ? '删除' : '禁用',
+              style: TextStyle(color: c.error),
+            ),
           ),
         ],
       ),
@@ -1100,14 +1106,14 @@ class _HiddenEndpoints extends StatelessWidget {
         onTap: () async {
           final id = await showDshSheet<String>(
             context: context,
-            title: '已隐藏的端点（${hidden.length}）',
+            title: '已禁用的端点（${hidden.length}）',
             body: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 for (final url in hidden)
                   DshPickerRow(
                     name: url,
-                    tags: const ['点一下放回来'],
+                    tags: const ['点一下启用'],
                     selected: false,
                     icon: 'unarchive',
                     onTap: () => Navigator.of(context).pop(url),
@@ -1121,7 +1127,7 @@ class _HiddenEndpoints extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
           child: Text(
-            '已隐藏 ${hidden.length} 条端点 · 点这里放回来',
+            '已禁用 ${hidden.length} 条端点 · 点这里启用',
             style: TextStyle(fontSize: 12, color: c.labelTertiary),
           ),
         ),
