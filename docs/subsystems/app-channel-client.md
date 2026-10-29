@@ -261,6 +261,22 @@ app/packages/
 "非公网、允许明文"那一档；真实用法是**公网中转或局域网直连**。端点表里出现回环地址
 只可能是手填（或手机被改过路由，见 `tools.md` 那条劫持判据）。
 
+**明文放行只有 `kDebugMode` 一道闸**（`main.dart` 的 `allowInsecureLocal: kDebugMode`，
+配对页与换票两处同一判据）。推论，部署前必须知道：
+
+| 构建 | 可拨的地址 | 含义 |
+|---|---|---|
+| debug | `ws://` 非公网（回环/私网/CGNAT/link-local/ULA）+ `wss://` 任意 | 局域网直连、组网地址直连**只在 debug 可用** |
+| release | **只认 `wss://`** | 局域网直连、组网地址直连都不可用（私网 IP 拿不到公开 CA 证书） |
+
+中转**自己不终结 TLS**（`relay/src/server.ts` 用 `node:http` + `WebSocketServer`），
+公网必须由前置反向代理（Caddy/nginx）持证书；`docs/cookbook/relay-on-a-server.md` 的
+先决条件因此写的是"公网 IP **与一个域名**"。手机侧没有任何"接受自签证书"的缝
+（全仓无 `badCertificateCallback` / `SecurityContext` / `onBadCertificate`）——
+**只有公网 IP 而没有域名，现行 release 构建无法在公网工作**。要让"纯 IP / 组网地址"
+在 release 也可用，必须显式改那道闸（代价：元数据走明文，内容仍由握手 + AEAD 保护），
+并且先改本节 + 留决策笔记。
+
 ---
 
 ## 7. 测试策略

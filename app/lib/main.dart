@@ -1227,8 +1227,13 @@ Future<AppModel> _assemble(
         // 少了它，配对成功也换不到票：`PairingClient` 默认拒绝 `ws://`
         // （`core/pairing_client.dart` 的 `allowInsecureLocal` 默认 false），
         // 而症状正是"码认了、票换不了"—— 真机实测踩到（2026-10-13）。
-        // 这是明文放行的**第三处**：另两处是 Android 的
-        // `network_security_config.xml` 与 `PairingPage.allowInsecureLocal`。
+        //
+        // **明文放行只有 `kDebugMode` 这一道闸**（`PairingPage` 的同一判据也在
+        // `main.dart:535`）。别指望 Android 侧再拦一层：仓库里既没有
+        // `network_security_config.xml`，manifest 也没有 `usesCleartextTraffic`
+        // —— 而 Flutter 的 `dart:io` 本来就不走平台那套 cleartext 策略。
+        // 推论：**release 包只认 `wss://`**，局域网直连与"组网地址直连"都只在
+        // debug 可用（见 `docs/subsystems/app-channel-client.md` §6.2）。
         allowInsecureLocal: kDebugMode,
       ),
     );
