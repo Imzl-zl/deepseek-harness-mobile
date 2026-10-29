@@ -27,6 +27,7 @@
  * 取舍见 `.agents/notes/implemented/2026-10-29-panel-connection-card.md`。
  */
 import { RelayTokenError } from '../dsh/relay-token.js'
+import type { ChannelState } from '../transport/channels.js'
 import { isNonPublicHost, relayUrlOf } from '../transport/relay-url.js'
 
 /** 卡片可写字段（**白名单**，顺序即界面顺序）。 */
@@ -152,6 +153,70 @@ function toView(state: ConnectionState): ConnectionView {
 
 function asInt(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) ? value : undefined
+}
+
+/**
+ * `settings.describe` 那条快照里本层用到的两格（其余一概不看）。
+ *
+ * 两格都是 `unknown`，与 `dsh/settings.ts` 的 `SettingsSnapshot` 同形
+ * （`revision: unknown` / `values: unknown`）—— 本层负责收窄，不假设上游给对了形状。
+ */
+export interface SettingsSnapshotLike {
+  revision?: unknown
+  values?: unknown
+}
+
+/** {@link readConnectionState} 的输入：三个真值来源 + 一格兜底。 */
+export interface ConnectionReadInputs {
+  snapshot: SettingsSnapshotLike | undefined
+  /** 通道注册表给的真值；注册表还没建时是空列表（如实"未运行"）。 */
+  channels: readonly ChannelState[]
+  /** 令牌状态：只回「设没设 + 能不能写」，**值永不过线**。 */
+  tokenStatusOf(ref: string): Promise<{ configured: boolean; writable: boolean }>
+  /** 快照里没有 `listenPort` 时的兜底（配置活读的值）。 */
+  configuredListenPort: number
+}
+
+/**
+ * 拼出卡片要读的**真值**（三个来源合成一份 {@link ConnectionState}）。
+ *
+ * 三个来源都是"用时取"的：settings 快照（面板改完立刻变）、通道注册表（起停是活状态）、
+ * 凭据记录状态。原来的写法是 `index.ts` 装配闭包里的一个 `read()`，只能靠隔离实例
+ * 手工 e2e；抽出来的理由与每格的错法见 `tests/assembly-wiring.test.ts` 的文件头 ——
+ * 简言之，**它的错法都不报错**（猜一个地址、把没配的端口回成 0、注册表没建就抛）。
+ *
+ * 取舍与"为什么抽出来"见 `.agents/notes/implemented/2026-10-29-assembly-regression-net.md`
+ * （上轮这张卡只有隔离实例手工 e2e）。三格刻意的判据：
+ *
+ * - 快照里没有的格如实回"空"（`undefined` / `false`），**不猜**一个默认值；
+ * - `listenPort` 取不到时回**配置活读的那个值**（`configuredListenPort`）—— 回 `0`
+ *   会让面板显示"不监听"，而监听面其实在跑；
+ * - `relayTokenRef` 缺席时**根本不问凭据面**（不自造一个 ref 去读，那样会读到别人的记录）。
+ */
+export async function readConnectionState(
+  inputs: ConnectionReadInputs,
+): Promise<ConnectionState> {
+  const value = (inputs.snapshot?.values ?? {}) as Record<string, unknown>
+  const revision = inputs.snapshot?.revision
+  const ref = typeof value['relayTokenRef'] === 'string' ? value['relayTokenRef'] : undefined
+  const relay = inputs.channels.find((row) => row.id === 'relay')
+  const direct = inputs.channels.find((row) => row.id === 'direct')
+  return {
+    revision: typeof revision === 'number' ? revision : undefined,
+    relayUrl: typeof value['relayUrl'] === 'string' ? value['relayUrl'] : undefined,
+    // **只认真 `true`**：`Boolean('false')` 是 true，那会把"公网明文"偷偷打开。
+    allowInsecurePublic: value['allowInsecurePublic'] === true,
+    allowInsecureLocal: value['allowInsecureLocal'] === true,
+    listenPort:
+      typeof value['listenPort'] === 'number' ? value['listenPort'] : inputs.configuredListenPort,
+    relayTokenRef: ref,
+    token:
+      ref === undefined || ref === ''
+        ? { configured: false, writable: false }
+        : await inputs.tokenStatusOf(ref),
+    relay: { running: relay?.running ?? false, connected: relay?.connected === true },
+    direct: { running: direct?.running ?? false },
+  }
 }
 
 /** 卡片本体。路由层只调这两个方法。 */

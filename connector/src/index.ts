@@ -87,14 +87,13 @@ import {
   readRelayToken,
   relayTokenStatusOf,
   writeRelayToken,
-  RelayTokenError,
 } from './dsh/relay-token.js'
 import { createPairingRegistrar } from './pairing-register.js'
 import { createDevicePublisher } from './device-publish.js'
 import { offerForScanning, issuePairingOffer } from './pairing-offer.js'
 import { pairingQrSvg } from './pairing-qr.js'
 import { mountAdminFace } from './admin/mount.js'
-import { createConnectionCard } from './admin/connection-card.js'
+import { createConnectionCard, readConnectionState } from './admin/connection-card.js'
 import { createDeviceAdmin, type DeviceTablePort } from './admin/device-admin.js'
 import {
   advertiseMapOf,
@@ -131,6 +130,8 @@ import type { WorkspaceController } from '@deepseek-ai/dsh-api-workspace-control
 import { coreDomain, initialMeta, migrateMeta, windowsDomain } from './store/index.js'
 import type { Connection, DialSocket } from './transport/connection.js'
 import { startListener, type Listener } from './transport/listener.js'
+import { channelsToRebuild, createRebuildQueue } from './transport/rebuild.js'
+import { createTransportStarter } from './transport/startup.js'
 
 export const name = 'dsh-mobile-connector'
 
@@ -145,14 +146,9 @@ const DEFAULT_CONNECTOR_ID = 'local'
 /** 只有必需服务进 `inject`；可选能力走 `ctx.get`（见文件头）。 */
 export const inject: string[] = [...REQUIRED_SERVICES]
 
-/**
- * 哪些配置键变了要重建哪条通道。
- *
- * 只有这两组 —— 别的 volatile 字段（`deviceLimit`、`frameLimitBytes`、四个窗口上界…）
- * 改完下次读写时自然生效，没有"已经建立的连接还握着旧值"这回事，不该顺手重启通道。
- */
-const RELAY_CONFIG_KEYS = ['relayUrl', 'allowInsecureLocal', 'allowInsecurePublic', 'relayTokenRef'] as const
-const DIRECT_CONFIG_KEYS = ['listenPort', 'listenHost'] as const
+// 「哪些配置键变了要重建哪条通道」在 `transport/rebuild.ts`（`REBUILD_KEYS`）：
+// 只有中转那四格与直连那两格，别的 volatile 字段改完下次读写时自然生效 ——
+// 顺手重启通道等于白掉一次线。那张表为什么不许加键，写在那里。
 
 /**
  * 设备行的展示排序：**此刻对操作者的意义从高到低**。
@@ -1204,48 +1200,37 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         }
 
         /**
-         * 通道重建的**串行队列**。
+         * 通道重建的**串行队列**（实现在 `transport/rebuild.ts`）。
          *
          * 两个触发源：配置被改（`loader/volatile-update`）与面板写令牌（令牌不进
-         * volatile 引用，因此不会发那条事件，由管理面显式排一次）。手改 yml 连点两次
-         * 就会排两次 —— 并发 stop/start 会互踩（第二次 stop 可能落在第一次 start 的半途），
-         * 所以只排队、不并发。队列本身**不抛**：失败记进 `rebuildError` 让"连接"卡报出来。
+         * volatile 引用，因此不会发那条事件，由管理面显式排一次）。
          */
-        let rebuildQueue: Promise<void> = Promise.resolve()
-        let rebuildError: string | null = null
-        const enqueueRebuild = (id: 'relay' | 'direct'): Promise<void> => {
-          const run = rebuildQueue.then(async () => {
-            rebuildError = null
-            try {
-              if (id === 'relay') {
-                await stopRelayChannel()
-                if ((config.relayUrl() ?? '') !== '') await startRelayChannel()
-              } else {
-                await stopDirectChannel()
-                // 端口改回 0 = 用户明说"不监听"：停在未运行，不是失败。
-                if (config.listenPort() !== 0) await startDirectChannel()
-              }
-            } catch (error) {
-              rebuildError = error instanceof Error ? error.message : String(error)
-              logger.warn(`重建传输通道 ${id} 失败（该通道已停在未运行）`, error)
+        const rebuildQueue = createRebuildQueue(
+          async (channel) => {
+            if (channel === 'relay') {
+              await stopRelayChannel()
+              if ((config.relayUrl() ?? '') !== '') await startRelayChannel()
+            } else {
+              await stopDirectChannel()
+              // 端口改回 0 = 用户明说"不监听"：停在未运行，不是失败。
+              if (config.listenPort() !== 0) await startDirectChannel()
             }
-          })
-          rebuildQueue = run
-          return run
-        }
+          },
+          (channel, error) => {
+            logger.warn(`重建传输通道 ${channel} 失败（该通道已停在未运行）`, error)
+          },
+        )
 
-        transportStart = async () => {
-          // 逐通道起，只放过两种"配置里本来就允许的缺席"：
-          //  1. 凭据里还没有令牌 —— 插件必须挂上：删掉令牌再重启，面板得还能打开
-          //     （否则再也没地方把令牌贴回去）。见决策笔记的「无令牌可挂载」。
-          //  2. `listenPort = 0` —— 配置明说"不监听"（`config.ts:26-29`），不是失败。
-          // 其他失败（坏地址、端口被占）照旧整体抛出：真正的故障必须吵。
-          await startRelayChannel().catch((error: unknown) => {
-            if (!(error instanceof RelayTokenError)) throw error
+        // 起传输的两种容忍（缺令牌 / `listenPort = 0`）在 `transport/startup.ts` ——
+        // 判据与回指见 `.agents/notes/implemented/2026-10-29-assembly-regression-net.md`。
+        transportStart = createTransportStarter({
+          startRelay: startRelayChannel,
+          startDirect: startDirectChannel,
+          listenPort: () => config.listenPort(),
+          onTolerated: () => {
             logger.warn('中转通道未启动：凭据里没有连接器令牌（可在「手机」面板的「连接」卡里设置）')
-          })
-          if (config.listenPort() !== 0) await startDirectChannel()
-        }
+          },
+        })
         transportStop = async () => {
           // 先停监听面：不再接受新连接，再收已接受的（它们的连接由监听面自己 stop）。
           // 收口失败只留声：卸载是尽力而为（`lifecycle.ts`），这里抛会盖住后面的步骤。
@@ -1304,9 +1289,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           on(event: 'loader/volatile-update', listener: (paths: readonly (readonly string[])[]) => void): () => void
         }
         offVolatileUpdate = loaderEvents.on('loader/volatile-update', (paths) => {
-          const changed = new Set(paths.map((path) => path.join('.')))
-          if (RELAY_CONFIG_KEYS.some((key) => changed.has(key))) void enqueueRebuild('relay')
-          if (DIRECT_CONFIG_KEYS.some((key) => changed.has(key))) void enqueueRebuild('direct')
+          // 键集合 → 通道的判据在 `transport/rebuild.ts`（`channelsToRebuild`）。
+          for (const channel of channelsToRebuild(paths)) void rebuildQueue.enqueue(channel)
         })
 
         /**
@@ -1316,34 +1300,19 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
          * 两条通道的真值。写：一次 `settings.update`（`dsh/settings.ts` 的 `setFields`）
          * + 记录面的 `modifyRecord`/`deleteRecord`。
          *
-         * 判据（白名单、`relayUrlOf` 校验、一次写入、冲突归一）全在
-         * `admin/connection-card.ts` —— 这里只接装配物，别把逻辑再写一遍。
+         * 判据（白名单、`relayUrlOf` 校验、一次写入、冲突归一）与读取投影
+         * （`readConnectionState`）全在 `admin/connection-card.ts` ——
+         * 这里只接装配物，别把逻辑再写一遍。
          */
         const connectionCard = createConnectionCard({
           async read() {
-            const snapshot = settingsPort?.snapshot(name)
-            const value = (snapshot?.values ?? {}) as Record<string, unknown>
-            const ref = typeof value['relayTokenRef'] === 'string' ? value['relayTokenRef'] : undefined
-            const channels = transportChannels?.channels() ?? []
-            const relay = channels.find((row) => row.id === 'relay')
-            const direct = channels.find((row) => row.id === 'direct')
-            return {
-              revision: typeof snapshot?.revision === 'number' ? snapshot.revision : undefined,
-              relayUrl: typeof value['relayUrl'] === 'string' ? value['relayUrl'] : undefined,
-              allowInsecurePublic: value['allowInsecurePublic'] === true,
-              // 只服务地址校验的第一档（`relayUrlOf`），**不上卡**。
-              allowInsecureLocal: value['allowInsecureLocal'] === true,
-              listenPort:
-                typeof value['listenPort'] === 'number' ? value['listenPort'] : config.listenPort(),
-              relayTokenRef: ref,
+            return readConnectionState({
+              snapshot: settingsPort?.snapshot(name),
+              channels: transportChannels?.channels() ?? [],
               // 令牌状态只回"设没设 + 能不能写"，值永不出凭据面。
-              token:
-                ref === undefined || ref === ''
-                  ? { configured: false, writable: false }
-                  : await relayTokenStatusOf(ctx.credentials, ref),
-              relay: { running: relay?.running ?? false, connected: relay?.connected === true },
-              direct: { running: direct?.running ?? false },
-            }
+              tokenStatusOf: (ref) => relayTokenStatusOf(ctx.credentials, ref),
+              configuredListenPort: config.listenPort(),
+            })
           },
           async writeFields(patch, expected) {
             if (settingsPort === null) throw new Error('这个部署没有设置服务（settings）')
@@ -1352,15 +1321,15 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           async writeToken(ref, token) {
             await writeRelayToken(ctx.credentials, ref, token)
             // 令牌不进 volatile 引用 ⇒ 不会有 `loader/volatile-update`，显式排一次重建。
-            await enqueueRebuild('relay')
+            await rebuildQueue.enqueue('relay')
           },
           async clearToken(ref) {
             await clearRelayToken(ctx.credentials, ref)
-            await enqueueRebuild('relay')
+            await rebuildQueue.enqueue('relay')
           },
           async settle() {
-            await rebuildQueue
-            return rebuildError ?? undefined
+            await rebuildQueue.settle()
+            return rebuildQueue.failure()
           },
         })
 
