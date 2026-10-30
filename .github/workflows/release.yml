@@ -1,0 +1,97 @@
+# 发版：推送 `v*` 标签时构建两个产物并挂到 GitHub Release。
+#
+#   connector → dsh-mobile-connector-<version>.tgz（DSH 插件包）
+#   app       → dsh-mobile-<tag>.apk（有签名 Secrets 就签，没有就是 debug 签名）
+#
+# 签名密钥怎么生成、Secrets 叫什么，见 docs/cookbook/release.md。
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  connector:
+    name: connector / tgz
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: connector/pnpm-lock.yaml
+      - name: 构建并打包
+        working-directory: connector
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec tsc --noEmit
+          pnpm build
+          pnpm pack
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: connector/*.tgz
+          generate_release_notes: true
+
+  android:
+    name: app / apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.9'
+          channel: stable
+          cache: true
+
+      # 有密钥就签；没有就什么都不做，gradle 会退到 debug 签名（release 构建照样能装）。
+      # 注意：`secrets` 不能写进 `if:`，所以用 shell 判断（见 docs/cookbook/release.md）。
+      - name: 写入签名配置（可选）
+        working-directory: app/android
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -z "$KEYSTORE" ]; then
+            echo "没有 ANDROID_KEYSTORE_BASE64：本次用 debug 签名"
+            exit 0
+          fi
+          echo "$KEYSTORE" | base64 -d > app/release.jks
+          cat > key.properties <<EOF
+          storePassword=$STORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=release.jks
+          EOF
+
+      - name: 构建 APK
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter build apk --release \
+            --build-name="${GITHUB_REF_NAME#v}" \
+            --build-number="$GITHUB_RUN_NUMBER"
+
+      - name: 收集产物
+        run: |
+          mkdir -p out
+          cp app/build/app/outputs/flutter-apk/app-release.apk "out/dsh-mobile-${GITHUB_REF_NAME}.apk"
+          ls -lh out
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*.apk

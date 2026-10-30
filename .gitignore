@@ -26,3 +26,13 @@ relay/relay.config.json
 # 本地起服务时的临时日志(排查用)
 *.boot.log
 .connector-boot.log
+
+# git worktree 目录(本地多分支并行工作,不入库)
+.worktrees/
+
+# Android 发版签名:密钥本体与口令**永不进库**(CI 从 Secrets 解出来,
+# 生成与配置步骤见 docs/cookbook/release.md)。丢了就再也无法覆盖升级。
+app/android/key.properties
+app/android/app/*.jks
+*.jks
+*.keystore

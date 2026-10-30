@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="DSH Mobile">
+  <defs>
+    <linearGradient id="dsh" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2dd4bf"/>
+      <stop offset="1" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#dsh)"/>
+  <g fill="none" stroke="#0b1220" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity="0.92">
+    <rect x="28" y="24" width="32" height="32" rx="9"/>
+    <rect x="68" y="72" width="32" height="32" rx="9"/>
+    <path d="M60 40h12a10 10 0 0 1 10 10v12"/>
+    <path d="M68 88H56a10 10 0 0 1-10-10V66"/>
+  </g>
+</svg>

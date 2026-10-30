@@ -1,0 +1,96 @@
+# CI：与本地门禁跑同一组命令（README 的"开发与门禁"表是同一份清单）。
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  protocol:
+    name: protocol / 边界
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node protocol/verify-fixtures.mjs
+      - run: node protocol/verify-loopback.mjs
+      - run: node protocol/verify-vectors.mjs
+      - run: node app/tools/verify-platform-boundary.mjs
+      - run: node app/tools/verify-rpc-single-caller.mjs
+      - run: node mock/proto/tools/verify-icons.cjs
+      - run: node mock/proto/tools/verify-tool-paths.mjs
+
+  relay:
+    name: relay
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: relay/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: node --test
+
+  connector:
+    name: connector
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: connector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: connector/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm build
+      - run: pnpm test
+
+  app:
+    name: app
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.9'
+          channel: stable
+          cache: true
+      - working-directory: app
+        run: flutter pub get
+      - working-directory: app
+        run: dart format --output=none --set-exit-if-changed lib test integration_test
+      - working-directory: app
+        run: dart analyze --fatal-infos lib test integration_test
+      - working-directory: app
+        run: flutter test

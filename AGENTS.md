@@ -16,7 +16,8 @@
 - 语言/运行时:原型 = 纯浏览器 JS/CSS/HTML(无构建步骤、无 npm 依赖);App = Dart / Flutter(仅主题层已落地)。
 - 主要技术栈:Flutter(目标 iOS / 安卓 / 鸿蒙 OHOS fork);原型用原生 DOM + 手写手势。
 - 版本控制:git;远端 `github.com/Imzl-zl/deepseek-harness-mobile`(`main`)。`mock/proto/shots/`(生成物,约 9 MB)与 `setup-collaboration-files.backup/` 不入库。
-- 配置根目录:`connector/` 与 `relay/` 是两个独立 pnpm 工程(各有 `package.json` + `pnpm-lock.yaml`,都不是 DSH workspace 成员);`app/` 尚无 Flutter 工程文件(`pubspec.yaml` 未建);本仓库**没有 CI**。
+- 配置根目录:`connector/` 与 `relay/` 是两个独立 pnpm 工程(各有 `package.json` + `pnpm-lock.yaml`,都不是 DSH workspace 成员);`app/` 是 Flutter 工程(`pubspec.yaml`)。
+- CI:`.github/workflows/`(GitHub Actions)—— `ci.yml` 跑与本地同一组门禁,`release.yml` 在 `v*` 标签出插件 tgz 与 APK;发版步骤与签名 Secrets 见 `docs/cookbook/release.md`。
 - 标准验证命令(完整清单、断言条数与截图命令见 §5 与 `tools.md`):
   - `node protocol/verify-fixtures.mjs` / `verify-loopback.mjs` / `verify-vectors.mjs` —— 通道协议(不需要浏览器)
   - `node app/tools/verify-platform-boundary.mjs` —— 多端边界(不需要 Flutter 工程)
