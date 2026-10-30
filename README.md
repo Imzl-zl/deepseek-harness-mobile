@@ -63,7 +63,7 @@
 
 ## 友链
 
-[Linux.do](https://linux.do) —— 一个友善的技术社区。
+<a href="https://linux.do" title="Linux.do —— 友善的技术社区"><img src="docs/assets/linuxdo.svg" height="40" alt="Linux.do"></a>
 
 ## License
 

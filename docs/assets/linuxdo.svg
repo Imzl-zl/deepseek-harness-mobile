@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="176" height="40" viewBox="0 0 176 40" role="img" aria-label="Linux.do">
+  <rect width="176" height="40" rx="9" fill="#2563eb"/>
+  <g fill="#ffffff">
+    <path d="M14 13h14a4 4 0 0 1 4 4v6a4 4 0 0 1-4 4h-8l-5 4v-4h-1a4 4 0 0 1-4-4v-6a4 4 0 0 1 4-4z" opacity="0.95"/>
+    <circle cx="18" cy="20" r="1.6" fill="#2563eb"/>
+    <circle cx="23" cy="20" r="1.6" fill="#2563eb"/>
+    <circle cx="28" cy="20" r="1.6" fill="#2563eb"/>
+    <text x="42" y="26" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif"
+          font-size="17" font-weight="600" letter-spacing="0.2">Linux.do</text>
+  </g>
+</svg>
