@@ -75,7 +75,7 @@ void main() {
     );
 
     // **先清掉上一次跑留下的凭据**（否则下面的"重启后仍在"会假通过）。
-    await PairingStore.clear();
+    await pairingStore.clear();
 
     await tester.enterText(find.byType(TextField), _qrPayload);
     await tester.tap(find.text('连接电脑'));
@@ -95,8 +95,8 @@ void main() {
 
   testWidgets('密钥真的落到设备安全存储，且重启后还能读回来', (tester) async {
     // 这一段**只有真机能验**：`flutter_secure_storage` 在纯单测里没有实现。
-    await PairingStore.clear();
-    expect(await PairingStore.load(), isNull, reason: '清空后应为空');
+    await pairingStore.clear();
+    expect(await pairingStore.load(), isNull, reason: '清空后应为空');
 
     const credentials = PairedCredentials(
       relayUrl: 'wss://relay.example.test/ws/connector',
@@ -116,11 +116,11 @@ void main() {
       pcId: 'conn-1',
       devId: 'dev-1',
     );
-    await PairingStore.save(credentials);
+    await pairingStore.save(credentials);
 
     // 读回来：**逐字段比**（少一个字段就得重新配对，而"部分可用"会让失败
     // 发生在很后面 —— 那时没人会想到是存储缺字段）。
-    final loaded = await PairingStore.load();
+    final loaded = await pairingStore.load();
     expect(loaded, isNotNull);
     expect(loaded!.masterSeedHex, credentials.masterSeedHex);
     expect(loaded.pairingId, credentials.pairingId);
@@ -138,6 +138,6 @@ void main() {
     expect(await loaded.derivedDeviceId(), isNotEmpty);
 
     // 收尾：清掉，免得影响下一次跑。
-    await PairingStore.clear();
+    await pairingStore.clear();
   });
 }

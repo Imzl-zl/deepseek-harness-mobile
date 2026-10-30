@@ -69,7 +69,7 @@
 | `node app/tools/verify-platform-boundary.mjs` | 639 项（25 条规则自检 + 148 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1544 项（约 1 分钟） |
+| `cd app && flutter test` | 1552 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **749** 项 |
 | `cd relay && pnpm typecheck && node --test` | 类型 + **89** 条 |

@@ -17,7 +17,7 @@
 ///
 /// ## 为什么凭据不清掉
 ///
-/// `channel_e2e_test.dart` 结尾 `PairingStore.clear()`（它验的是"令牌落进 Keystore"，
+/// `channel_e2e_test.dart` 结尾 `pairingStore.clear()`（它验的是"令牌落进 Keystore"，
 /// 清掉免得留下凭据）。这一条**必须保留凭据**：后面的建连用的就是它。
 /// 所以这条用例自己负责收尾，且收尾也清掉。
 ///
@@ -272,7 +272,7 @@ void main() {
     );
 
     // ---- 第一段：清掉旧凭据后走两段配对（凭据**保留**给后面用）----
-    await PairingStore.clear();
+    await pairingStore.clear();
     PairingResult? captured;
     await tester.pumpWidget(
       MaterialApp(
@@ -283,7 +283,7 @@ void main() {
           allowInsecureLocal: true,
           onPaired: (result) async {
             captured = result;
-            await PairingStore.save(
+            await pairingStore.save(
               PairedCredentials(
                 relayUrl: result.offer.relayUrl,
                 pcSignPubHex: result.offer.pcSignPubHex,
@@ -337,14 +337,14 @@ void main() {
     await tester.pumpAndSettle();
 
     // **等凭据真的落进安全存储**，不能只看 `captured`：`onPaired` 在最开头就给它赋值，
-    // 而 `PairingStore.save` 是异步的（第一版就在这里竞态 —— `captured` 有值、
+    // 而 `pairingStore.save` 是异步的（第一版就在这里竞态 —— `captured` 有值、
     // 存储里还没有，于是后面每一步都建不起连）。
     final landed = await _waitFor(
       tester,
-      () async => (await PairingStore.load()) != null,
+      () async => (await pairingStore.load()) != null,
     );
     expect(landed, isTrue, reason: '凭据必须真的落进安全存储（flutter_secure_storage）');
-    final credentials = await PairingStore.load();
+    final credentials = await pairingStore.load();
     expect(credentials, isNotNull, reason: '凭据必须真的落进安全存储');
 
     // ---- 第二段：用真凭据装配真 AppModel 并建连 ----
@@ -405,7 +405,7 @@ void main() {
       app.dispose();
       await client.close();
       await store.close();
-      await PairingStore.clear();
+      await pairingStore.clear();
     });
 
     await app.start();

@@ -202,12 +202,12 @@ void main() {
       isTrue,
       reason: '装配点必须把旧配对标识接进配对页，否则替换退化成新增',
     );
-    // 清凭据的缝必须先抓快照再清。直接传静态方法（`clearCredentials:
-    // PairingStore.clear`）就抓不到 —— 顺序反了快照永远是 null。
+    // 清凭据的缝必须先抓快照再清。直接传方法引用（`clearCredentials:
+    // pairingStore.clear`）就抓不到 —— 顺序反了快照永远是 null。
     expect(
-      source.contains('clearCredentials: PairingStore.clear'),
+      source.contains('clearCredentials: pairingStore.clear'),
       isFalse,
-      reason: '清凭据之前必须先抓旧配对标识快照，直接传静态方法抓不到',
+      reason: '清凭据之前必须先抓旧配对标识快照，直接传方法引用抓不到',
     );
   });
 

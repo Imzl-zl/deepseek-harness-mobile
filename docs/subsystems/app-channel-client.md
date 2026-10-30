@@ -281,6 +281,23 @@ app/packages/
 （6 天短期，需自动续期）或商业 IP 证书。手机侧没有"接受自签证书"的缝
 （全仓无 `badCertificateCallback` / `SecurityContext`），自签要走就得改代码（钉指纹，尚未做）。
 
+### 6.3 凭据：一台电脑一个槽
+
+安全存储里的键是 `dsh.pairing.<hostId>.<field>`，外加 `dsh.pairing.active`（当前那台）；
+`hostId` 是那台电脑的 Ed25519 公钥（`pcSignPubHex`，配对时钉死）。配对第二台是**新增槽**，
+不覆盖第一台。端点表与路由记忆（`endpoints` / `endpoint_meta`）也在槽里，写回时按当前凭据的
+`hostId` 定位（装配层 `main.dart` 的闭包）。
+
+- **写**：先写完整槽、最后写 `active` —— 崩在中途时半个槽不会被选中。
+- **读**：`load({hostId})` 不给就读 `active`；槽里必填字段缺一个就回 `null`（不拼半份）。
+- **迁**：首次读取时（没有 `active`）把升级前的平铺键 `dsh.<field>` 一次性搬进槽并删旧键；
+  槽优先、不覆盖。第二次读取不再写任何键。
+- **清**：`clear()` 只删这一台（当前槽），删的是当前那台时顺手清 `active`，**不自动挑另一台**；
+  `clearAll()` 才是"撤销所有配对"。连接终态失败（身份被拒）走 `clear()`，
+  用户在设置里"清除配对"走 `clearAll()`。
+
+时机与代价见 `.agents/notes/implemented/2026-10-30-pairing-slots.md`。
+
 ---
 
 ## 7. 测试策略

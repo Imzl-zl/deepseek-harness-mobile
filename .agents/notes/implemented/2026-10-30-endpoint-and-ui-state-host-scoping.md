@@ -29,8 +29,8 @@ Status: implemented
 - `hidden` / `succeeded` / `attempts` / `remembered` 因此**自动按电脑分桶**，
   不需要四份平行表。
 - "记住的那条"从 **url 改成 id**（`rememberedEndpointUrl` → `rememberedEndpointId`）：
-  存 url 在多机下一定会串。落盘键名仍是 `remembered`，读取端按"带不带 `://`"
-  区分旧形状（url）与新形状（id）。
+  存 url 在多机下一定会串。落盘键名仍是 `remembered`；读取端按**开头**区分形状 ——
+  `ws://` / `wss://` 是旧形状（裸 url），十六进制 `hostId|` 是新形状。
 - 配对种子的端点（`app/lib/main.dart` 的 `_onPaired`）也盖上 `hostId`：否则连接器
   第一次自报同一条地址时 id 对不上，会追加出一条重复记录。
 
@@ -126,8 +126,8 @@ Status: implemented
   名字与身份（`pcSignPubHex`）的分工写死在注释里。
 - 代价：端点的 id 变成不透明字符串（`hostId|url`），排序/调试时要记得它不再等于 url；
   `hidden` / `succeeded` 的落盘形状随之变化（读时迁移，旧新两种都认）。
-- 代价：`remembered` 的落盘键名沿用旧名但值换成 id —— 只有"带不带 `://`"能区分两种形状，
-  这条兼容分支要活到"确认没有旧安装"为止（下一次大版本）。
+- 代价：`remembered` 的落盘键名沿用旧名但值换成 id —— 只能靠开头（`ws[s]://` 还是
+  十六进制 `hostId|`）区分两种形状，这条兼容分支要活到"确认没有旧安装"为止（下一次大版本）。
 - 代价：`UiStateStore` 不再是"一段键"，`open()` 多了一次 `host.` 范围查与最多一次搬写；
   未配对时写的是旧平铺键，与桶并存一段时间（迁移后旧键消失）。
 - 未覆盖：端点表"别的电脑报的自动条目直接剪掉"仍是现行规则（换回去靠重新自报）；

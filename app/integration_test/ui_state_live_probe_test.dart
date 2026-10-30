@@ -68,7 +68,7 @@ void main() {
   testWidgets('真机：宿主有 ui-conversation.busyEnter 且可写；列表行带 subagentCatalog', (
     tester,
   ) async {
-    final credentials = await PairingStore.load();
+    final credentials = await pairingStore.load();
     if (credentials == null) {
       markTestSkipped('设备上没有配对凭据：先跑一次真机配对，再跑这条探针');
       return;

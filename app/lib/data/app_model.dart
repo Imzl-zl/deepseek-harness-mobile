@@ -179,7 +179,7 @@ class AppModel extends ChangeNotifier {
   /// **不做假成功**。
   final NotifyPort? _notify;
 
-  /// 端点表变了之后落盘（装配层注入：`PairingStore.saveEndpoints`）。
+  /// 端点表变了之后落盘（装配层注入：`pairingStore.saveEndpoints`，写当前槽）。
   ///
   /// **在这里而不是在 `AppModel` 里直接写存储**：`data/` 不认识 `platform/`
   /// （`verify-platform-boundary.mjs` 的 `core-no-platform-import` 管的是 `core/`，

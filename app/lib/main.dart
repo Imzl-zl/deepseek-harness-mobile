@@ -186,7 +186,7 @@ class _DshMobileAppState extends State<DshMobileApp>
 
   /// 连接终态失败的恢复编排（议题 2 的 `ClientAction` 唯一执行处）。
   ///
-  /// 三个缝都指向本 State：清凭据 = `PairingStore.clear`，回配对页 =
+  /// 三个缝都指向本 State：清凭据 = `pairingStore.clear()`，回配对页 =
   /// [_enterPairing]，上报 = [_reportConnectionDefect]。手动"重新配对"
   /// （议题 3，用户点）与自动"身份被拒"（议题 2，连接层呈递）都经它，
   /// 收敛到同一个动作 —— 别处不再各自判 `notPaired`。
@@ -200,7 +200,8 @@ class _DshMobileAppState extends State<DshMobileApp>
       // 旧行，而清完之后手机就没有"我上次配过"的记忆了。
       clearCredentials: () async {
         _refreshRePairHint();
-        await PairingStore.clear();
+        // **只清这一台**：身份被某台电脑拒掉，不该顺手把别的电脑的配对也删了。
+        await pairingStore.clear();
       },
       openPairing: _enterPairing,
       report: _reportConnectionDefect,
@@ -272,7 +273,7 @@ class _DshMobileAppState extends State<DshMobileApp>
   }
 
   Future<void> _boot() async {
-    final saved = await PairingStore.load();
+    final saved = await pairingStore.load();
     if (!mounted) return;
     if (saved == null) {
       // **没配对也进主界面**。
@@ -362,7 +363,7 @@ class _DshMobileAppState extends State<DshMobileApp>
       pcId: result.pcId,
       devId: result.devId,
     );
-    await PairingStore.save(credentials);
+    await pairingStore.save(credentials);
     final app = await _assemble(credentials, _recovery.onTerminated);
     if (!mounted) return;
     await app.loadUiState();
@@ -1088,12 +1089,15 @@ class _DshMobileAppState extends State<DshMobileApp>
     return '${at.month}/${at.day}';
   }
 
-  /// 清掉配对（换设备 / 连不上时重来）。
+  /// 清掉**全部**配对（换设备 / 连不上时重来）。
+  ///
+  /// 这是"撤销所有配对"，不是"忘掉这一台"：多机之后两者是两个动作，
+  /// 后者只删当前槽（并保留切换回去的可能）—— 见 `pairingStore.clear()`。
   Future<void> _resetPairing() async {
     // 同"重新配对"：先抓旧配对标识，再清。之后扫同一台电脑的码是**替换**
     // 旧行，不是又攒一行。
     _refreshRePairHint();
-    await PairingStore.clear();
+    await pairingStore.clearAll();
     await _reassembleUnpaired();
   }
 
@@ -1362,8 +1366,15 @@ Future<AppModel> _assemble(
     // 分开是因为传输层不认识连接层 —— 谁拨号、谁重拨，各管一段。
     onRequestEndpoint: transport.requestEndpoint,
     onReconnect: client.reconnect,
-    onEndpointsChanged: PairingStore.saveEndpoints,
-    onEndpointsMetaChanged: PairingStore.saveEndpointMeta,
+    // **写回这一台的槽**：端点表与路由记忆都属于当前配对的这台电脑。
+    onEndpointsChanged: (list) => pairingStore.saveEndpoints(
+      hostId: credentials.pcSignPubHex,
+      endpoints: list,
+    ),
+    onEndpointsMetaChanged: (meta) => pairingStore.saveEndpointMeta(
+      hostId: credentials.pcSignPubHex,
+      meta: meta,
+    ),
     // 连接终态失败（身份不被认）→ 清凭据回配对页。见 `_recovery`。
     onConnectionTerminated: onConnectionTerminated,
   );

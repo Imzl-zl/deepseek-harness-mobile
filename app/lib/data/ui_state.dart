@@ -379,7 +379,7 @@ class UiStateStore {
 
   /// **忘掉这一台**：只删当前桶（`host.<hostId>.`），`device.*` 与别的电脑的桶不动。
   ///
-  /// 与"撤销所有配对"（`PairingStore.clearAll`，凭据那一步）是两个动作：
+  /// 与"撤销所有配对"（`pairingStore.clearAll()`）是两个动作：
   /// 这个只让这台电脑的界面记忆回到默认值。
   Future<void> clearHostScope() async {
     _lastSession = null;

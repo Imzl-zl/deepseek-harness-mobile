@@ -158,60 +158,135 @@ Future<String> deriveDeviceId(String devDhPubHex) async {
   return base64UrlNoPad(digest.bytes.sublist(0, 16));
 }
 
-/// 安全存储的键（**前缀化**：同一个存储里将来还会有别的键）。
-abstract final class _Keys {
-  static const relayUrl = 'dsh.relay_url';
-  static const endpoints = 'dsh.endpoints';
-  static const endpointMeta = 'dsh.endpoint_meta';
-  static const pcSignPub = 'dsh.pc_sign_pub';
-  static const pcDhPub = 'dsh.pc_dh_pub';
-  static const pairingId = 'dsh.pairing_id';
-  static const masterSeed = 'dsh.master_seed';
-  static const devSignPub = 'dsh.dev_sign_pub';
-  static const devDhPub = 'dsh.dev_dh_pub';
-  static const pcId = 'dsh.pc_id';
-  static const devId = 'dsh.dev_id';
-  static const deviceToken = 'dsh.device_token';
-  static const refreshToken = 'dsh.refresh_token';
+/// 安全存储的窄缝：本文件只用到"整份读 / 单键写 / 单键删 / 全清"。
+///
+/// 有它，分槽与迁移的判据（**写次数**、槽隔离）才能在纯 Dart 单测里驱动；
+/// 真实现是 [FlutterSecureStore]（系统密钥库）。缝留在 `platform/`：
+/// `core/` 与 `data/` 只认识 [PairedCredentials] 这个值类型。
+abstract interface class SecureStore {
+  Future<Map<String, String>> readAll();
+
+  Future<void> write(String key, String value);
+
+  Future<void> delete(String key);
+
+  Future<void> deleteAll();
 }
 
-/// 配对凭据的读写。
-abstract final class PairingStore {
-  static const _storage = FlutterSecureStorage(
-    // 安卓：v11 的默认构造就是强加密（**已核实包源码**
-    // `lib/options/android_options.dart`）：AES-GCM 存数据 + RSA-OAEP 包裹密钥，
-    // 要求 API 23+。所以**不需要**再传选项 ——
-    // 早期版本那个 `encryptedSharedPreferences: true` 在 v11 已不存在
-    //（写它是**编译错误**，这比"静默不生效"好）。
-    //
-    // iOS：`afterFirstUnlockThisDeviceOnly` —— 锁屏也能读（后台收推送时要读），
-    // 但**不随备份迁移到新设备**（设备身份不该被备份复制，契约 §12.2）。
-    iOptions: IOSOptions(
-      accessibility: KeychainAccessibility.first_unlock_this_device,
+/// 系统密钥库（安卓 Keystore / iOS Keychain）上的 [SecureStore]。
+class FlutterSecureStore implements SecureStore {
+  const FlutterSecureStore([
+    this._storage = const FlutterSecureStorage(
+      // 安卓：v11 的默认构造就是强加密（**已核实包源码**
+      // `lib/options/android_options.dart`）：AES-GCM 存数据 + RSA-OAEP 包裹密钥，
+      // 要求 API 23+。所以**不需要**再传选项 ——
+      // 早期版本那个 `encryptedSharedPreferences: true` 在 v11 已不存在
+      //（写它是**编译错误**，这比"静默不生效"好）。
+      //
+      // iOS：`afterFirstUnlockThisDeviceOnly` —— 锁屏也能读（后台收推送时要读），
+      // 但**不随备份迁移到新设备**（设备身份不该被备份复制，契约 §12.2）。
+      iOptions: IOSOptions(
+        accessibility: KeychainAccessibility.first_unlock_this_device,
+      ),
     ),
-  );
+  ]);
+
+  final FlutterSecureStorage _storage;
+
+  @override
+  Future<Map<String, String>> readAll() => _storage.readAll();
+
+  @override
+  Future<void> write(String key, String value) =>
+      _storage.write(key: key, value: value);
+
+  @override
+  Future<void> delete(String key) => _storage.delete(key: key);
+
+  @override
+  Future<void> deleteAll() => _storage.deleteAll();
+}
+
+/// 配对凭据的读写：**一台电脑一个槽**。
+///
+/// 键的形状 `dsh.pairing.<hostId>.<field>`，外加 `dsh.pairing.active`（当前那台）。
+/// `hostId` 是那台电脑的 Ed25519 公钥（`pcSignPubHex`，配对时钉死、不可改）——
+/// 所以配对第二台是**新增一个槽**，不是覆盖第一台（`proposed/2026-10-29-one-phone-many-computers.md`
+/// 决策 3）。
+///
+/// 升级前的平铺键 `dsh.<field>` 在首次 `load()` 时一次性搬进槽并删掉；
+/// 判断迁移是否做过看落盘（旧键在不在），不靠内存标志。
+class PairingStore {
+  PairingStore(this._secure);
+
+  final SecureStore _secure;
+
+  static const String keyPrefix = 'dsh.pairing.';
+
+  /// 当前那台电脑（`hostId`）。
+  static const String activeKey = '${keyPrefix}active';
+
+  /// 槽内的字段名（与升级前的平铺键共用同一组名字）。
+  ///
+  /// **改动等于作废已配对设备**（读不出就回 `null`）；要改必须配一次迁移。
+  static const List<String> fields = <String>[
+    'relay_url',
+    'endpoints',
+    'endpoint_meta',
+    'pc_sign_pub',
+    'pc_dh_pub',
+    'pairing_id',
+    'master_seed',
+    'dev_sign_pub',
+    'dev_dh_pub',
+    'pc_id',
+    'dev_id',
+    'device_token',
+    'refresh_token',
+  ];
+
+  /// 一台电脑的一个字段键。
+  static String slotKey(String hostId, String field) =>
+      '$keyPrefix$hostId.$field';
+
+  /// 升级前的平铺键（`dsh.<field>`）。只给迁移用。
+  static String legacyKey(String field) => 'dsh.$field';
 
   /// 读出已存的凭据；没有或不完整时返回 `null`。
   ///
-  /// **不完整就当没有**：缺任一字段都用不了（缺 `pairingId` 算不出 `master`，
+  /// [hostId] 为空 = 当前那台（`dsh.pairing.active`）。给 [hostId] 是为了
+  /// "切回另一台"与用例读指定槽 —— 它不改变 `active`。
+  ///
+  /// **不完整就当没有**：缺任一必填字段都用不了（缺 `pairingId` 算不出 `master`，
   /// 缺 `deviceToken` 换不到票），而"部分可用"会让失败发生在很后面 ——
   /// 那时没人会想到是存储缺字段。
   ///
-  /// **端点表的一次性迁移**：2026-10-14 之前存的凭据只有 `dsh.relay_url`，
-  /// 没有 `dsh.endpoints`。那时拨号地址就是 relayUrl 一个，所以从它造一条
-  /// relay 端点即可 —— 这不是"猜一个默认值"，而是把旧形状读成新形状。
-  /// 下次 `save` 就落成端点表，迁移只发生一次。
-  static Future<PairedCredentials?> load() async {
-    final values = await _storage.readAll();
-    final relayUrl = values[_Keys.relayUrl];
-    final pcSignPub = values[_Keys.pcSignPub];
-    final pcDhPub = values[_Keys.pcDhPub];
-    final pairingId = values[_Keys.pairingId];
-    final masterSeed = values[_Keys.masterSeed];
-    final devSignPub = values[_Keys.devSignPub];
-    final devDhPub = values[_Keys.devDhPub];
-    final deviceToken = values[_Keys.deviceToken];
-    final refreshToken = values[_Keys.refreshToken];
+  /// 首次读取时（没有 `active`）先把升级前的平铺键迁进槽；见 [_migrateLegacy]。
+  Future<PairedCredentials?> load({String? hostId}) async {
+    final values = await _secure.readAll();
+    var target = hostId;
+    if (target == null || target.isEmpty) {
+      final active = values[activeKey];
+      target = active == null || active.isEmpty
+          ? await _migrateLegacy(values)
+          : active;
+    }
+    if (target == null || target.isEmpty) return null;
+    return _decodeSlot(values, target);
+  }
+
+  /// 解一个槽。**槽里必须齐**（必填字段缺一个就回 `null`，不拼半份）。
+  PairedCredentials? _decodeSlot(Map<String, String> values, String hostId) {
+    String? read(String field) => values[slotKey(hostId, field)];
+    final relayUrl = read('relay_url');
+    final pcSignPub = read('pc_sign_pub');
+    final pcDhPub = read('pc_dh_pub');
+    final pairingId = read('pairing_id');
+    final masterSeed = read('master_seed');
+    final devSignPub = read('dev_sign_pub');
+    final devDhPub = read('dev_dh_pub');
+    final deviceToken = read('device_token');
+    final refreshToken = read('refresh_token');
 
     if (relayUrl == null ||
         pcSignPub == null ||
@@ -228,11 +303,7 @@ abstract final class PairingStore {
     // **端点归属在读取时补齐**：这份凭据就是这一台电脑的（`pcSignPub` 是它的身份），
     // 所以表里没有 `hostId` 的条目（升级前落的 / 配对种子）都归它。
     // 端点身份是 `hostId|url`（`core/endpoint.dart` 的 `endpointIdOf`）。
-    final endpoints = _decodeEndpoints(
-      values[_Keys.endpoints],
-      relayUrl,
-      pcSignPub,
-    );
+    final endpoints = _decodeEndpoints(read('endpoints'), relayUrl, pcSignPub);
 
     return PairedCredentials(
       relayUrl: relayUrl,
@@ -249,20 +320,52 @@ abstract final class PairingStore {
       // 这里按同一台电脑补前缀；不补的话升级后"成功过的永不删"与"记住的那条"
       // 会全部失配（症状是死地址重新参与每轮拨号）。
       endpointMeta: _decodeEndpointMeta(
-        values[_Keys.endpointMeta],
+        read('endpoint_meta'),
         endpoints: endpoints,
         hostId: pcSignPub,
       ),
-      pcId: values[_Keys.pcId] ?? '',
-      devId: values[_Keys.devId] ?? '',
+      pcId: read('pc_id') ?? '',
+      devId: read('dev_id') ?? '',
     );
+  }
+
+  /// 一次性迁移：升级前是平铺键 `dsh.<field>`，没有 `active` / 槽。
+  ///
+  /// 判据是"旧键在（`dsh.pc_sign_pub`）且没有 `active`"：槽里已有的字段**不覆盖**
+  /// （半迁移时以槽为准），搬完逐个删旧键 —— 所以第二次 `load()` **一次写都不产生**
+  /// （判据是写次数，不是"看起来一样"）。旧数据只可能属于这一份凭据的那台电脑。
+  ///
+  /// [`values`] 是刚读到的整份存储；迁移写下的键会同步进它，避免再读一遍。
+  Future<String?> _migrateLegacy(Map<String, String> values) async {
+    final hostId = values[legacyKey('pc_sign_pub')];
+    if (hostId == null || hostId.isEmpty) return null;
+    for (final field in fields) {
+      final value = values[legacyKey(field)];
+      if (value == null) continue;
+      final key = slotKey(hostId, field);
+      // **槽优先**：半迁移（槽写了一半就崩）时不拿旧键覆盖已有字段。
+      if (values.containsKey(key)) continue;
+      await _secure.write(key, value);
+      values[key] = value;
+    }
+    // **`active` 最后写**：中途崩了也不会选出半个槽。
+    await _secure.write(activeKey, hostId);
+    values[activeKey] = hostId;
+    for (final field in fields) {
+      final key = legacyKey(field);
+      if (!values.containsKey(key)) continue;
+      await _secure.delete(key);
+      values.remove(key);
+    }
+    return hostId;
   }
 
   /// 解端点表的附属状态。缺或坏都退化成"空的记忆"（**不猜**）：
   /// 丢的只是"上次连哪条"这类优化信息，拨号照样能work。
   ///
-  /// **旧 id 是裸 url**（升级前的形状），新 id 是 `hostId|url`。判别只看形状：
-  /// url 一定带 `://`，而 hostId 是十六进制 —— 两者不会撞。
+  /// **旧 id 是裸 url**（`ws://` / `wss://` 开头，升级前的形状），
+  /// 新 id 是 `hostId|url`（十六进制开头）—— 判别看**开头**，不看中间有没有 `://`
+  /// （新 id 里也有）。新形状原样保留（再补一次前缀会变成 `host|host|url`）。
   /// 迁移是**读时**做的（不额外写一次盘），下一次 [saveEndpointMeta] 落成新 id。
   //
   // Note: 为什么读时补前缀而不是写离线迁移 —— 见
@@ -274,7 +377,9 @@ abstract final class PairingStore {
   }) {
     if (raw == null || raw.isEmpty) return const EndpointMeta();
     String idOf(String value) =>
-        value.contains('://') ? endpointIdOf(value, hostId: hostId) : value;
+        value.startsWith('ws://') || value.startsWith('wss://')
+        ? endpointIdOf(value, hostId: hostId)
+        : value;
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return const EndpointMeta();
@@ -344,72 +449,95 @@ abstract final class PairingStore {
         : out;
   }
 
-  /// 写入凭据（**先写全部再算成功**：半份凭据比没有更糟）。
-  static Future<void> save(PairedCredentials credentials) async {
-    await _storage.write(key: _Keys.relayUrl, value: credentials.relayUrl);
-    await _storage.write(
-      key: _Keys.endpoints,
-      value: jsonEncode(credentials.endpoints.map(endpointToJson).toList()),
+  /// 写入凭据：**先写完整槽、最后写 `active`**。
+  ///
+  /// 半份凭据比没有更糟 —— 崩在中途时 `active` 还指着上一台（或没有），
+  /// 这个不完整的槽永远不会被 `load()` 选中。
+  Future<void> save(PairedCredentials credentials) async {
+    final hostId = credentials.pcSignPubHex;
+    await _write(hostId, 'relay_url', credentials.relayUrl);
+    await _write(
+      hostId,
+      'endpoints',
+      jsonEncode(credentials.endpoints.map(endpointToJson).toList()),
     );
-    await saveEndpointMeta(credentials.endpointMeta);
-    await _storage.write(key: _Keys.pcSignPub, value: credentials.pcSignPubHex);
-    await _storage.write(key: _Keys.pcDhPub, value: credentials.pcDhPubHex);
-    await _storage.write(key: _Keys.pairingId, value: credentials.pairingId);
-    await _storage.write(
-      key: _Keys.masterSeed,
-      value: credentials.masterSeedHex,
+    await _write(
+      hostId,
+      'endpoint_meta',
+      _encodeMeta(credentials.endpointMeta),
     );
-    await _storage.write(
-      key: _Keys.devSignPub,
-      value: credentials.devSignPubHex,
-    );
-    await _storage.write(key: _Keys.devDhPub, value: credentials.devDhPubHex);
-    await _storage.write(
-      key: _Keys.deviceToken,
-      value: credentials.deviceToken,
-    );
-    await _storage.write(
-      key: _Keys.refreshToken,
-      value: credentials.refreshToken,
-    );
+    await _write(hostId, 'pc_sign_pub', credentials.pcSignPubHex);
+    await _write(hostId, 'pc_dh_pub', credentials.pcDhPubHex);
+    await _write(hostId, 'pairing_id', credentials.pairingId);
+    await _write(hostId, 'master_seed', credentials.masterSeedHex);
+    await _write(hostId, 'dev_sign_pub', credentials.devSignPubHex);
+    await _write(hostId, 'dev_dh_pub', credentials.devDhPubHex);
     if (credentials.pcId.isNotEmpty) {
-      await _storage.write(key: _Keys.pcId, value: credentials.pcId);
+      await _write(hostId, 'pc_id', credentials.pcId);
     }
     if (credentials.devId.isNotEmpty) {
-      await _storage.write(key: _Keys.devId, value: credentials.devId);
+      await _write(hostId, 'dev_id', credentials.devId);
     }
+    await _write(hostId, 'device_token', credentials.deviceToken);
+    await _write(hostId, 'refresh_token', credentials.refreshToken);
+    // **最后才把这一台设为当前**：槽写全之前，它不该被选中。
+    await _secure.write(activeKey, hostId);
   }
 
-  /// 只更新端点表。
+  Future<void> _write(String hostId, String field, String value) =>
+      _secure.write(slotKey(hostId, field), value);
+
+  /// 只更新**这一台**的端点表。
   ///
   /// **不重写整份凭据**：端点表的刷新频率远高于凭据（每次经中转连上都会拉一次
-  /// `endpoint.describe`），而主种子与设备令牌也在同一批键里 —— 每次刷新都把
+  /// `endpoint.describe`），而主种子与设备令牌也在同一个槽里 —— 每次刷新都把
   /// 它们重写一遍，既浪费也给"写一半"多一次机会。
-  static Future<void> saveEndpoints(List<Endpoint> endpoints) async {
-    await _storage.write(
-      key: _Keys.endpoints,
-      value: jsonEncode(endpoints.map(endpointToJson).toList()),
-    );
-  }
+  Future<void> saveEndpoints({
+    required String hostId,
+    required List<Endpoint> endpoints,
+  }) => _write(
+    hostId,
+    'endpoints',
+    jsonEncode(endpoints.map(endpointToJson).toList()),
+  );
 
-  /// 只更新端点表的附属状态（记住的那条 / 隐藏集 / 成功过的集）。
+  /// 只更新**这一台**端点表的附属状态（记住的那条 / 隐藏集 / 成功过的集）。
   ///
   /// 与 [saveEndpoints] 分开：**每次拨通都会改"记住的那条"**，
   /// 而整张表不需要跟着重写。
-  static Future<void> saveEndpointMeta(EndpointMeta meta) async {
-    await _storage.write(
-      key: _Keys.endpointMeta,
-      value: jsonEncode(<String, Object?>{
-        // **是 id（`hostId|url`）不是裸 url**：落盘形状沿用旧键名，读取端按
-        // 是否带 `://` 区分旧形状（见 `_decodeEndpointMeta`）。
-        if (meta.rememberedEndpointId != null)
-          'remembered': meta.rememberedEndpointId,
-        'hidden': meta.hiddenEndpointIds.toList(),
-        'succeeded': meta.succeededEndpointIds.toList(),
-      }),
-    );
+  Future<void> saveEndpointMeta({
+    required String hostId,
+    required EndpointMeta meta,
+  }) => _write(hostId, 'endpoint_meta', _encodeMeta(meta));
+
+  String _encodeMeta(EndpointMeta meta) => jsonEncode(<String, Object?>{
+    // **是 id（`hostId|url`）不是裸 url**：落盘形状沿用旧键名，读取端按
+    // 开头（`ws[s]://` = 旧）区分两种形状（见 `_decodeEndpointMeta`）。
+    if (meta.rememberedEndpointId != null)
+      'remembered': meta.rememberedEndpointId,
+    'hidden': meta.hiddenEndpointIds.toList(),
+    'succeeded': meta.succeededEndpointIds.toList(),
+  });
+
+  /// **删这一台**（[hostId] 为空 = 当前那台）：只删这个槽。
+  ///
+  /// 键集合从整份存储里现扫（前缀 `dsh.pairing.<hostId>.`），所以将来加字段
+  /// 不会漏删。删的是**当前那台**时顺手清 `active`（其余槽仍可被切回）；
+  /// 别的电脑的槽一律不碰。
+  Future<void> clear({String? hostId}) async {
+    final values = await _secure.readAll();
+    final target = hostId ?? values[activeKey];
+    if (target == null || target.isEmpty) return;
+    final prefix = '$keyPrefix$target.';
+    for (final key in values.keys.where((k) => k.startsWith(prefix)).toList()) {
+      await _secure.delete(key);
+    }
+    if (values[activeKey] == target) await _secure.delete(activeKey);
   }
 
-  /// 清空（吊销 / 重新配对时用）。
-  static Future<void> clear() => _storage.deleteAll();
+  /// **撤销所有配对**：清空整个安全存储（用户明确要"这台手机谁都不认"）。
+  Future<void> clearAll() => _secure.deleteAll();
 }
+
+/// 真实现（装配层与真机用例共用这一份）。
+final PairingStore pairingStore = PairingStore(const FlutterSecureStore());

@@ -121,7 +121,7 @@ void main() {
     }
 
     // 清掉上一次的凭据：否则"配对成功"可能来自旧凭据，用例会假通过。
-    await PairingStore.clear();
+    await pairingStore.clear();
 
     PairingResult? captured;
     await tester.pumpWidget(
@@ -135,7 +135,7 @@ void main() {
           onPaired: (result) async {
             captured = result;
             // 与装配点同一条路径：配对结果进安全存储。
-            await PairingStore.save(
+            await pairingStore.save(
               PairedCredentials(
                 relayUrl: result.offer.relayUrl,
                 pcSignPubHex: result.offer.pcSignPubHex,
@@ -221,12 +221,12 @@ void main() {
     expect(captured!.pairingId.length, 43);
 
     // **真的落到设备密钥库**：这是纯单测验不了的一段（插件在 Dart VM 里没有实现）。
-    final stored = await PairingStore.load();
+    final stored = await pairingStore.load();
     expect(stored, isNotNull, reason: '配对结果必须真的落进安全存储');
     expect(stored!.deviceToken, captured!.deviceToken);
     expect(stored.devId, captured!.devId);
 
     // 收尾：清掉，免得影响下一次跑（也会让凭据留在设备上）。
-    await PairingStore.clear();
+    await pairingStore.clear();
   });
 }

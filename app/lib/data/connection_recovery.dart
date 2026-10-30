@@ -54,7 +54,7 @@ class ConnectionRecovery {
   /// —— 三者的恢复动作相同（重新扫码），照实说"不再认可本机 + 请重新扫码"即可。
   static const String rejectedMessage = '这台电脑已不再认可本机（可能已停用，或凭据已失效）。请重新扫码配对。';
 
-  /// 清掉本地配对凭据（真实现：`PairingStore.clear()`）。
+  /// 清掉本地配对凭据（真实现：`pairingStore.clear()`，**只清这一台**）。
   final Future<void> Function() clearCredentials;
 
   /// 跳到配对页并显示一句话（真实现：根 State 的 `_enterPairing`）。
