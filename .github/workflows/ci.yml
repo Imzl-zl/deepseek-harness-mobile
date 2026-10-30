@@ -76,6 +76,16 @@ jobs:
       - name: 装中转依赖（接缝用例会 spawn 真中转进程）
         working-directory: relay
         run: pnpm install --frozen-lockfile
+      # 跨语言一致性用例会跑 `app/tool/cross_initiator.dart`（产品的 Dart 实现），
+      # 所以这个 job 也要有 Dart —— 用 Flutter 的 SDK 顺带拿到 `dart`。
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.9'
+          channel: stable
+          cache: true
+      - name: 装 App 依赖（Dart 探针要能解析 imports）
+        working-directory: app
+        run: flutter pub get
       - run: pnpm exec tsc --noEmit
       - run: pnpm build
       - run: pnpm test
