@@ -56,23 +56,24 @@ keytool -genkeypair -v -keystore dsh-mobile.jks -alias dsh-mobile \
 包名 **`dsh-mobile-connector`**（不带 scope：与本仓其他插件包 `dsh-*` 一致，也不需要建 npm 组织）。
 `connector/package.json` 已去掉 `private`，`publishConfig.access = public`，`prepack` 先构建。
 
-### 首次发布：必须一次性 token（bootstrap）
+### 首次发布：staged publish（不需要命令行 OTP）
 
-npm 的**可信发布（OIDC）不能发一个新包的第一个版本**（官方在
-[npm/cli#8544](https://github.com/npm/cli/issues/8544) 确认过）。所以第一次：
+npm 的**可信发布（OIDC）不能发一个新包的第一个版本**（[npm/cli#8544](https://github.com/npm/cli/issues/8544)）。
+但 npm 现在有 **staged publish**：`npm stage publish` 不需要终端里的 6 位 OTP，
+发布后**在网页上审批**（那一步用 2FA/安全密钥）即可。账号只有安全密钥（WebAuthn）时，
+这是唯一顺畅的引导路径（本包 0.0.0-stage 与 0.1.0 就是这么发的）。
 
-1. npm → Access Tokens → **Classic Token · Automation**，7 天过期即可
-2. 仓库 Secrets 加 `NPM_TOKEN`
-3. 触发：`gh workflow run publish-connector.yml`（或推 `connector-v0.1.0` 标签）
-4. 成功后**立刻撤销那个 token**、删掉 `NPM_TOKEN`
-5. 到 https://www.npmjs.com/package/dsh-mobile-connector/access 配 Trusted Publisher：
-   Organization or user = `Imzl-zl`，Repository = `deepseek-harness-mobile`，
-   Workflow filename = `publish-connector.yml`，Environment 留空
+### 然后：配可信发布，之后 CI 全自动
 
-### 之后：OIDC，不再需要 token
+https://www.npmjs.com/package/dsh-mobile-connector/access → Add Trusted Publisher：
+Publisher `GitHub Actions`、organization or user `Imzl-zl`、repository
+`deepseek-harness-mobile`、workflow filename `publish-connector.yml`，勾 **Allow npm publish**。
+建好是 `Pending validation`，**用一次 OIDC 发布即转 `Valid`**（本仓用 0.1.1 验的）。
+
+### 之后每次发版
 
 改 `connector/package.json` 的 `version` → `git tag connector-vX.Y.Z` → push。
-流水线校验 `标签 == version`，用 OIDC 发布并带 provenance（仓库已公开，provenance 可用）。
+流水线校验 `标签 == version`，用 OIDC 发布并带 **provenance（SLSA v1）**，不需要任何 token。
 
 ## 3. 插件包
 
