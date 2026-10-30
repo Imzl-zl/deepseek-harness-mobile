@@ -70,7 +70,18 @@ class EndpointTransport implements ChannelTransport {
     this.onActivated,
     this.onAttempt,
     this.dialStagger = const Duration(milliseconds: 250),
+    this.totalBudget = const Duration(seconds: 15),
   });
+
+  /// **一轮拨号的总预算**（方案决策 7：15 s 是硬上限）。
+  ///
+  /// 为什么需要它：竞速让总耗时不再随端点条数线性增长，但**单条上限本身**就是 3 s（直连）
+  /// / 10 s（中转），再加错开与在飞的输家，"全都拨不通"最坏仍可能超过人在看时的耐心。
+  /// 15 s 到点必须有**结论**：这一轮失败照实抛出去，界面给「连不上」+ 手动重试，
+  /// 之后的自动重试由连接层的静默慢重试接管（60 s ± 20%，`core/connection.dart`）。
+  ///
+  /// **不在每请求上加超时**：总预算只在这一层（拨号），请求与心跳照旧各有自己的 60 s。
+  final Duration totalBudget;
 
   /// 相邻两条端点的启动间隔（Happy Eyeballs 的 250ms）。
   ///
@@ -150,6 +161,12 @@ class EndpointTransport implements ChannelTransport {
         settle(_AllFailed(failures));
       }
     }
+
+    // **总预算的表**：到点就给结论。已经在飞的连接收不回来（没有取消缝），
+    // 但它们连上后会看到 `sealed` 并立刻关（不握手、不留半开）。
+    final budget = Timer(totalBudget, () {
+      settle(_AllFailed(failures, timedOut: true));
+    });
 
     Future<void> dial(Endpoint endpoint, int index) async {
       // **中转端点串行**：同一时刻只让一条 relay 换票 + 建数据通道，
@@ -251,6 +268,8 @@ class EndpointTransport implements ChannelTransport {
     }());
 
     final result = await outcome.future;
+    // 结论已经出来了（赢家 / 致命错 / 全失败 / 预算到点）：这一轮的表收掉。
+    budget.cancel();
     if (result is _DialWin) return result.stream;
     if (result is _Fatal) {
       final error = result.error;
@@ -263,8 +282,13 @@ class EndpointTransport implements ChannelTransport {
     final last = all.failures.isEmpty
         ? null
         : all.failures.reduce((a, b) => a.index >= b.index ? a : b);
+    // 到点与"全都拨完"分开说：前者是"还有在飞的没回来"，后者是"每条都试完了"。
+    // 两者对用户是同一件事（连不上），但对排查是两件事，所以不合并成一句话。
+    final head = all.timedOut
+        ? '${totalBudget.inSeconds} 秒内没有端点拨通（共 ${endpoints.length} 个）'
+        : '所有端点都拨不通（共 ${endpoints.length} 个）';
     throw TransportException(
-      '所有端点都拨不通（共 ${endpoints.length} 个）：${last?.error.message ?? '无'}',
+      '$head：${last?.error.message ?? (all.timedOut ? '还在尝试中，已按总预算收口' : '无')}',
       code: last?.error.code,
     );
   }
@@ -302,9 +326,12 @@ class _DialWin {
 
 /// 全部端点都没拨通（`failures` 按表下标带位置，聚合原因用最后一条）。
 class _AllFailed {
-  const _AllFailed(this.failures);
+  const _AllFailed(this.failures, {this.timedOut = false});
 
   final List<_DialFailure> failures;
+
+  /// 是不是**总预算到点**收口的（而不是每条都试完了）。
+  final bool timedOut;
 }
 
 class _DialFailure {

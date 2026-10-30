@@ -160,6 +160,10 @@ class _RecoveryFakeClient extends FakeSyncClient implements SyncClientProbe {
   @override
   ConnectionState get state => _state;
 
+  /// 本组只关心"身份被拒"这一档终态；被占用是另一条路（`connection_busy_test`）。
+  @override
+  bool get lastConnectBusy => false;
+
   @override
   Stream<ConnectionState> get connection => _states.stream;
 

@@ -519,6 +519,58 @@ class PairingStore {
     'succeeded': meta.succeededEndpointIds.toList(),
   });
 
+  /// 槽里缓存电脑**自报的名字**（展示值：可改、可伪造、会重名）。
+  ///
+  /// 它不属于凭据（缺了照样连得上），所以**不放进 [fields]**：那一组是"必填槽字段"，
+  /// 加进去等于让升级前的槽全部判成不完整。切换电脑的列表用它显示"这是哪台"，
+  /// 读不到就退回 hostId 短码（`PairedHost.label`）。
+  static const String hostNameField = 'host_name';
+
+  Future<void> saveHostName(String hostId, String name) async {
+    if (name.isEmpty) return;
+    await _secure.write(slotKey(hostId, hostNameField), name);
+  }
+
+  /// 列出**所有能用的槽**（切换电脑用）。槽不完整（缺必填字段）的不列。
+  ///
+  /// 顺序：**当前那台最前**，其余按 hostId 字典序 —— 那台是"我正连着的"，
+  /// 用户在列表里第一眼要找的就是它。
+  Future<List<PairedHost>> hosts() async {
+    final values = await _secure.readAll();
+    final active = values[activeKey] ?? '';
+    final ids = <String>{};
+    for (final key in values.keys) {
+      if (!key.startsWith(keyPrefix) || key == activeKey) continue;
+      final rest = key.substring(keyPrefix.length);
+      final dot = rest.indexOf('.');
+      if (dot <= 0) continue;
+      ids.add(rest.substring(0, dot));
+    }
+    final rows =
+        <PairedHost>[
+          for (final id in ids)
+            if (_decodeSlot(values, id) != null)
+              PairedHost(hostId: id, name: values[slotKey(id, hostNameField)]),
+        ]..sort((a, b) {
+          if (a.hostId == active) return -1;
+          if (b.hostId == active) return 1;
+          return a.hostId.compareTo(b.hostId);
+        });
+    return rows;
+  }
+
+  /// 把**当前槽**切到 [hostId]：只写 `active`，不重写槽、不动别的电脑。
+  ///
+  /// 槽不完整时抛（调用方本该先 `load` 成功）：让一个半个槽变成当前，
+  /// 换来的是启动时"有 active、却读不出凭据"——那种状态没有任何出路。
+  Future<void> activate(String hostId) async {
+    final values = await _secure.readAll();
+    if (_decodeSlot(values, hostId) == null) {
+      throw StateError('这台电脑的配对凭据不完整：$hostId');
+    }
+    await _secure.write(activeKey, hostId);
+  }
+
   /// **删这一台**（[hostId] 为空 = 当前那台）：只删这个槽。
   ///
   /// 键集合从整份存储里现扫（前缀 `dsh.pairing.<hostId>.`），所以将来加字段
@@ -537,6 +589,35 @@ class PairingStore {
 
   /// **撤销所有配对**：清空整个安全存储（用户明确要"这台手机谁都不认"）。
   Future<void> clearAll() => _secure.deleteAll();
+}
+
+/// 一台**已配对电脑**的展示信息（切换电脑的列表用）。
+///
+/// [hostId] 是那台电脑的 Ed25519 公钥（`pcSignPubHex`，配对时钉死、不可改）；
+/// [name] 是电脑自报的展示名（缓存，可能已过期 / 没学到）。
+///
+/// **名字从不参与判据**：两台同名时靠 [shortCode] 区分（Syncthing 显示 Device ID
+/// 的同一种做法），切换本身只认 [hostId]。
+class PairedHost {
+  const PairedHost({required this.hostId, this.name});
+
+  final String hostId;
+  final String? name;
+
+  /// hostId 的短码（前 6 + 后 4）：名字可改可重名，短码不会。
+  String get shortCode => hostId.length >= 10
+      ? '${hostId.substring(0, 6)}…${hostId.substring(hostId.length - 4)}'
+      : hostId;
+
+  /// 列表里显示的那一行：有名字用名字，没有就用短码。
+  String get label => (name == null || name!.isEmpty) ? shortCode : name!;
+
+  @override
+  bool operator ==(Object other) =>
+      other is PairedHost && other.hostId == hostId;
+
+  @override
+  int get hashCode => hostId.hashCode;
 }
 
 /// 真实现（装配层与真机用例共用这一份）。

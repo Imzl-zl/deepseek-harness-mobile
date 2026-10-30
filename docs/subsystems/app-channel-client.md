@@ -297,7 +297,43 @@ app/packages/
   `clearAll()` 才是"撤销所有配对"。连接终态失败（身份被拒）走 `clear()`，
   用户在设置里"清除配对"走 `clearAll()`。
 
+- **切换**：`activate(hostId)` 只写 `active`（槽不完整时抛，不让指针指向读不出的凭据）；
+  `hosts()` 是列表的派生读（只列能用的槽，当前那台排最前），名字取槽里的 `host_name`
+  （电脑自报的展示值缓存，读不到就显示 `hostId` 短码：前 6 + 后 4）。**没有"已配对电脑清单"这第二份真值**。
+
 时机与代价见 `.agents/notes/implemented/2026-10-30-pairing-slots.md`。
+
+### 6.4 切换电脑与独占（1:1）
+
+一台手机任一时刻只连一台电脑，一台电脑任一时刻只服务一台设备。手机侧的三条定案：
+
+1. **切换立即生效**：先 `dispose` 旧客户端（socket 随之关闭，电脑侧占用位释放）→
+   换凭据槽（`PairingStore.activate`）→ 用**另一个槽**重新装配 `AppModel` → `start()`。
+   与配对成功走同一条线（`main.dart` 的 `_assemble` / `_onPaired` / `_switchTo`）；
+   `AppModel` 里**不存"当前是哪台"**，真值是凭据槽的 `active` + 装配层的 `_credentials`。
+   界面立刻只显示目标那台的数据（此刻为空），**绝不允许"B 的名字下面挂着 A 的数据"**。
+2. **失败不回滚**：切换后连不上就停在目标那台的「未连接（原因）」，给
+   「重试连接」与「切回上一台」两个显式出口（连接操作 sheet）。回滚会让人以为切成功了。
+3. **不自动挑、不自动抢占**：没有"自动选一台能连的"这回事；电脑侧被别的设备占着时
+   只回 `device/busy`，**不踢人**（契约 §4.1 的准入条）。
+
+被占用时手机侧的动作是 `busy-wait`（`core/errors.dart` 的 `ClientAction.busyWait`）：
+**不自动重连**，界面显示「未连接 · 电脑被占用」+ 占用者名字（来自关闭理由的说明部分，
+`connectionSummary` 的 `note`），手动重试走 `reconnect()`（它清掉这条结论）。
+
+**时间预算**（方案决策 7 的表，每一层只有一个判据处）：
+
+| 层 | 值 | 出处 |
+|---|---|---|
+| 单条直连 / 中转拨号 | 3s / 10s | `platform/transport_factory.dart` |
+| **拨号总预算** | **15s**（到点抛失败，已成结论） | `core/endpoint_transport.dart` 的 `totalBudget` |
+| 握手 / 首同步 / 请求与心跳 | 10s / 15s / 60s | 契约 §4.1、`core/handshake_driver.dart`、现有请求层 |
+| 提示时序 | 2s 出阶段 → 8s 「网络很慢」 → 15s 出结论 + 手动重试 | `model/chat_item.dart` 的 `connectionHintAt`（**只负责文案**） |
+| 结论之后 | 静默慢重试 60s ± 20% | `core/connection.dart` 的 `Backoff.nextSlow` + `sync_client_impl.dart` 的 `_onStateChanged` |
+
+慢重试与快退避**共用同一份抖动算术**（`Backoff._jittered`），只是基准值与上界不同；
+"给过结论"由 `SyncClientProbe.lastConnectGaveUp` 表达，界面停在「连接不上」而不是每轮跳一次
+「连接中…」。取舍见 `.agents/notes/implemented/2026-10-30-device-switch-and-budgets.md`。
 
 ---
 

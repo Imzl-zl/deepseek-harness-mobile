@@ -66,12 +66,14 @@ void main() {
     Map<String, Future<void>> gates = const {},
     void Function(Endpoint)? onActivated,
     void Function(Endpoint, EndpointAttempt)? onAttempt,
+    Duration totalBudget = const Duration(seconds: 15),
   }) {
     log = <Endpoint>[];
     created = <String, _FakeTransport>{};
     return EndpointTransport(
       // 竞速用例默认零错开：断言的是"同时启动"，不是 250ms 的节拍。
       dialStagger: Duration.zero,
+      totalBudget: totalBudget,
       endpointsOf: () => endpoints,
       onActivated: onActivated,
       onAttempt: onAttempt,
@@ -153,6 +155,58 @@ void main() {
       ),
     );
     expect(log, [direct, relay]);
+  });
+
+  test('**15 s 总预算**：全都不通时到点给结论，之后连上的输家立刻关', () async {
+    // 方案决策 7："15 s 是硬上限（不许 N 条 × 单条上限全交给用户等）"。
+    // 三个端点都"永远连不上"（既不通也不报错）—— 那正是慢网 / 半死的形状。
+    const second = Endpoint(kind: EndpointKind.direct, url: 'ws://x:1');
+    const third = Endpoint(kind: EndpointKind.direct, url: 'ws://y:2');
+    final g1 = Completer<void>();
+    final g2 = Completer<void>();
+    final g3 = Completer<void>();
+    final transport = build(
+      [direct, second, third],
+      gates: {
+        direct.url: g1.future,
+        second.url: g2.future,
+        third.url: g3.future,
+      },
+      totalBudget: const Duration(milliseconds: 200),
+    );
+
+    final started = DateTime.now();
+    await expectLater(
+      transport.connect(),
+      throwsA(
+        isA<TransportException>()
+            .having((e) => e.message, 'message', contains('没有端点拨通'))
+            .having((e) => e.message, 'message', contains('共 3 个')),
+      ),
+      reason: '到点必须给结论，而不是继续等',
+    );
+    expect(
+      DateTime.now().difference(started).inMilliseconds,
+      lessThan(2000),
+      reason: '总预算到点即收口（不随端点条数线性增长）',
+    );
+    // 结论之后仪表上不该挂着"当前走哪条"。
+    expect(transport.activeEndpoint, isNull);
+
+    // 到点之后才"连上"的那几条：看到结论已出就立刻关，**不进握手、不留半开**。
+    g1.complete();
+    g2.complete();
+    g3.complete();
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    for (final endpoint in [direct, second, third]) {
+      expect(
+        created[endpoint.url]?.closed,
+        isTrue,
+        reason: '${endpoint.url} 在结论之后才连上，必须立刻关',
+      );
+    }
+    expect(transport.activeEndpoint, isNull, reason: '它们不是这一轮的连接');
   });
 
   test('**不降权**：同一个实例的下一轮仍先试失败过的端点（直连恢复后能回去）', () async {

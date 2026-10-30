@@ -1083,7 +1083,26 @@ String connectionLabel(ConnectionStateView state) => switch (state) {
   /// 连续失败太多次、已停止自动重连。**给结论，不给转圈**：
   /// 电脑关机 / 中转挂着时，用户该看到"连不上"，而不是一个永远在转的东西。
   ConnectionStateView.gaveUp => '连接不上',
+
+  /// **这台电脑正被另一台设备占用**（独占 1:1，`device/busy`）。
+  ///
+  /// 与「连接不上」分开：那台设备走了就能连，而"再等一会儿"毫无意义 ——
+  /// 所以文案要说清"是谁占着"，动作是重试或换一台，不是等。
+  ConnectionStateView.busy => '未连接 · 电脑被占用',
 };
+
+/// 拨号阶段的提示文案（方案决策 7 的时序：2 s 出阶段、8 s 说"网络很慢"）。
+///
+/// **判据只有时间**（[elapsed] 是这一轮拨了多久），15 s 的硬上限不在这里 ——
+/// 那个在 `core/endpoint_transport.dart`（到点抛失败），这里只负责"说到哪一句"。
+/// 返回 `null` = 还没到该说话的时点（前 2 秒什么都不说，别一上来就报"慢"）。
+String? connectionHintAt(Duration elapsed) {
+  if (elapsed >= const Duration(seconds: 8)) {
+    return '网络很慢，仍在尝试…（最长 15 秒）';
+  }
+  if (elapsed >= const Duration(seconds: 2)) return '正在连接…';
+  return null;
+}
 
 /// 端点种类在界面上的说法（连接 sheet、设置页共用，**只有这一套**）。
 String endpointKindLabel(EndpointKind kind) =>
@@ -1132,15 +1151,20 @@ ConnectionSummary connectionSummary({
   required Endpoint? active,
   required List<Endpoint> endpoints,
   required EndpointAttempt? Function(Endpoint) attemptOf,
+
+  /// 拨号阶段的提示（`AppModel.connectionHint`：2 s 出阶段、8 s 说慢）。
+  String? hint,
+
+  /// 具体的失败原因（目前只有"被谁占着"：`AppModel.busyOccupant`）。
+  /// **比「连接不上」更该被看见**，所以优先于其它诊断句。
+  String? detail,
 }) {
   if (state != ConnectionStateView.serving || active == null) {
     // 没连上：给状态名；**端点表里每一条都拨不通时补一句诊断** ——
     // 那是"电脑不在线 / 换了网络地址"与"正在重连"的唯一区分，而空态与
     // 连接 sheet 都靠它说人话（议题：连接方式选择器第 3 步）。
-    return (
-      line: connectionLabel(state),
-      note: _allFailedNote(endpoints, attemptOf),
-    );
+    final note = detail ?? hint ?? _allFailedNote(endpoints, attemptOf);
+    return (line: connectionLabel(state), note: note);
   }
   final line = '当前连接：${endpointLine(active)}';
   // 当前就走第一位：没有"为什么没走首选"可解释。
@@ -1204,4 +1228,9 @@ enum ConnectionStateView {
   /// "连接层是否已放弃"推出来的。所以映射写在 `AppModel._viewOf` 里，
   /// 而这里只负责文案。
   gaveUp,
+
+  /// 被另一台设备占着（`device/busy`，独占 1:1）。同样不是协议状态：
+  /// core 的连接层停在 `closed`（不自动重连），这一档由 `AppModel._viewOf`
+  /// 按诊断面的"被占用"推出 —— 所以"哪台占着"也由 AppModel 给（`busyOccupant`）。
+  busy,
 }

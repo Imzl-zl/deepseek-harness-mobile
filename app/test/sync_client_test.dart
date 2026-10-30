@@ -99,9 +99,15 @@ class FakeClock {
   int _now = 0;
   int _nextId = 0;
 
+  /// 每次 `schedule(fn, ms)` 里的 `ms`（按调用顺序）。
+  ///
+  /// 退避间隔是"连接层决定了多久"的唯一可见证据 —— 慢重试那 60 s 只能靠它断言。
+  final List<int> delays = [];
+
   int now() => _now;
 
   void Function() schedule(void Function() fn, int ms) {
+    delays.add(ms);
     final id = _nextId++;
     _pending.add((at: _now + ms, fn: fn, id: id));
     return () {
@@ -780,6 +786,92 @@ void main() {
         );
         await client.close();
       }
+    });
+
+    test('被另一台设备占用（4003 + `device/busy 名字`）→ 不自动重连，说得出是谁', () async {
+      // 独占 1:1：电脑侧在握手处拒第二台（`connector/src/protocol/handshake-driver.ts`），
+      // 理由的形状是 `协议码 说明`（契约 §4.1）—— 说明里是占用者的展示名。
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await pump(); // hello 已发出，等电脑侧回 hello-ack 之前被拒
+
+      f.transport.dropFromPeer(code: 4003, reason: 'device/busy 我的手机');
+      await pump();
+
+      final probe = client as SyncClientProbe;
+      expect(probe.lastConnectBusy, isTrue, reason: '被占用要能被界面认出来');
+      expect(probe.lastConnectWasTerminal, isFalse, reason: '凭据是好的：绝不清凭据');
+      expect(probe.lastProtocolError?.code, ErrorCode.deviceBusy);
+      expect(
+        probe.lastProtocolError?.message,
+        '我的手机',
+        reason: '占用者名字来自关闭理由，不许在 App 侧另造一句',
+      );
+      expect(client.state, ConnectionState.closed, reason: '不进退避（不自动撞门）');
+
+      // **不自动重连**：等过任何一段退避间隔都不会再连。
+      f.clock.advance(120000);
+      await pump();
+      expect(f.transport.connectCount, 1, reason: '占用位什么时候空不是我们能决定的');
+
+      // **手动重试照常放行**：它是用户动作（连接 sheet 的「重试连接」）。
+      await client.reconnect();
+      await pump();
+      expect(f.transport.connectCount, 2);
+      expect(probe.lastConnectBusy, isFalse, reason: '重试之后结论作废');
+
+      await client.close();
+    });
+
+    test('被占用但理由不带说明：给一句人话，不把裸码当名字', () async {
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await pump();
+      f.transport.dropFromPeer(code: 4003, reason: 'device/busy');
+      await pump();
+
+      final probe = client as SyncClientProbe;
+      expect(probe.lastConnectBusy, isTrue);
+      expect(probe.lastProtocolError?.message, '这台电脑正被另一台设备连接');
+      await client.close();
+    });
+
+    test('连续失败到阈值：结论给过之后改成 60 s 静默慢重试（不是再也不试）', () async {
+      // 方案决策 7 的表："结论之后 | 静默慢重试 60 s + ±20% 抖动 | 用户已拿到结论，
+      // 重试不该再打扰；抖动防惊群"。
+      final f = buildDeps(failConnect: true);
+      final client = createSyncClient(f.deps);
+      await client.start();
+      final probe = client as SyncClientProbe;
+
+      // 快退避：1,2,4,8,16,30,30,30,30,30（10 次到阈值）。每轮推进都够走完一个间隔。
+      for (var i = 0; i < 10; i += 1) {
+        f.clock.advance(31000);
+        await pump();
+      }
+      expect(probe.lastConnectGaveUp, isTrue, reason: '到阈值必须给结论');
+      // 退避间隔里先是快退避（≤30 s），到阈值之后变成 60 s（含抖动前是整 60 s）。
+      final backoffDelays = f.clock.delays
+          .where((ms) => ms != 25 && ms != 15000)
+          .toList();
+      expect(backoffDelays.take(10).last, 30000, reason: '快退避封顶 30 s');
+      expect(backoffDelays[10], 60000, reason: '结论之后是 60 s 慢重试');
+
+      // **还在试**：慢重试到点仍会发起建连（不是再也不试）。
+      final before = f.transport.connectCount;
+      f.clock.advance(60000);
+      await pump();
+      expect(f.transport.connectCount, before + 1, reason: '慢重试照样会拨');
+      expect(probe.lastConnectGaveUp, isTrue, reason: '结论不被一次静默重试抹掉');
+
+      // **手动重试**把结论与退避一起清掉（回到 1 s 起点）。
+      await client.reconnect();
+      expect(probe.lastConnectGaveUp, isFalse);
+      await pump();
+
+      await client.close();
     });
 
     test('换票被限流（429 → rateLimited）→ **照旧退避重试**，不是终态', () async {

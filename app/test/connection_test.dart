@@ -156,6 +156,32 @@ void main() {
       expect(backoff.exhausted, isTrue);
     });
 
+    test('结论之后的慢重试：60 s ± 20%，且不被 30 s 上界夹住', () {
+      // 方案决策 7 的表："结论之后 | 静默慢重试 60 s + ±20% 抖动"。
+      // 快退避的 30 s 上界不能把它夹回去 —— 两者是两条不同的间隔。
+      expect(
+        Backoff(random: () => 0.5).nextSlow(),
+        60000,
+        reason: '无抖动时就是 60 s',
+      );
+      expect(
+        Backoff(random: () => 0.0).nextSlow(),
+        48000,
+        reason: '60 s × 0.8',
+      );
+      expect(
+        Backoff(random: () => 1.0).nextSlow(),
+        72000,
+        reason: '60 s × 1.2（快退避的上界在这里不适用）',
+      );
+      // 一直慢重试也不退回快退避：间隔恒在 48–72 s。
+      final backoff = Backoff(random: () => 0.5);
+      for (var i = 0; i < 20; i += 1) {
+        expect(backoff.nextSlow(), 60000);
+      }
+      expect(backoff.exhausted, isTrue, reason: '慢重试照样累计失败次数');
+    });
+
     test('reset 同时清掉放弃标记（否则手动重试后会立刻又判放弃）', () {
       final backoff = Backoff(random: () => 0.5, maxAttempts: 1);
       backoff.next();

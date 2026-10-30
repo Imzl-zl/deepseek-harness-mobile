@@ -165,6 +165,7 @@ class ChatPage extends StatefulWidget {
     this.onConnect,
     this.onRePair,
     this.onDisconnect,
+    this.hostSwitch,
   });
 
   final AppModel app;
@@ -195,6 +196,11 @@ class ChatPage extends StatefulWidget {
 
   /// 「断开并清掉凭据」但**不**进配对页（装配层注入；聊天页自己不给这个入口）。
   final VoidCallback? onDisconnect;
+
+  /// 连接 sheet 的「切换电脑 / 切回上一台」（装配层注入：它持有凭据槽）。
+  ///
+  /// 聊天页只**转发**：切换要换凭据 + 换整个 `AppModel`，那不是这一层能做的事。
+  final HostSwitchSeam? hostSwitch;
 
   @override
   State<ChatPage> createState() => ChatPageState();
@@ -1424,7 +1430,11 @@ class ChatPageState extends State<ChatPage> {
           active: widget.app.activeEndpoint,
           endpoints: widget.app.endpoints,
           attemptOf: widget.app.attemptOf,
+          hint: widget.app.connectionHint,
+          detail: widget.app.busyOccupant,
         ),
+        // **换电脑**（已配对两台以上才给这一行）：装配层注入，页面只转发。
+        hostSwitch: widget.hostSwitch,
         onRePair: () => widget.onRePair?.call(),
         onOpenSide: openSide,
         onDisconnect: () => widget.onDisconnect?.call(),
@@ -1446,10 +1456,17 @@ class ChatPageState extends State<ChatPage> {
         onReconnect: () => unawaited(
           _afterCurrentSheet(() => reconnectNow(context, widget.app)),
         ),
-        // **已经放弃自动重连时才给「重试连接」**：再试一轮，不清凭据。
-        // `client.start()` 会清掉放弃标记并把退避表带回起点。
-        onRetry: widget.app.connection == ConnectionStateView.gaveUp
-            ? () => unawaited(widget.app.client.start())
+        // **已经给了结论才给「重试连接」**：连不上（放弃自动重连）与被另一台设备
+        // 占着，两种都是"再试一轮"的明确时机，且都**不清凭据**。
+        // 被占用走 `reconnect()`（它会清掉占用结论）；放弃走 `start()`（清退避）。
+        onRetry:
+            widget.app.connection == ConnectionStateView.gaveUp ||
+                widget.app.connection == ConnectionStateView.busy
+            ? () => unawaited(
+                widget.app.connection == ConnectionStateView.busy
+                    ? widget.app.client.reconnect()
+                    : widget.app.client.start(),
+              )
             : null,
       ),
     );

@@ -181,15 +181,39 @@ class Backoff {
     return value < backoffMaxMs ? value : backoffMaxMs;
   }
 
+  /// 结论之后的**静默慢重试**间隔（毫秒，方案决策 7 的表：60 s + ±20% 抖动）。
+  ///
+  /// 它不是"更长的退避"：快退避负责"短抖动尽快恢复"，慢重试负责"结论给过之后
+  /// 仍然继续试、但别再打扰"。同一个抖动实现，只是基准值不同。
+  static const int slowRetryMs = 60_000;
+
   /// 取下一次退避时长并推进（含抖动）。
   int next() {
     final raw = _rawAt(_attempt);
     _attempt += 1;
-    // `[0,1) → [-1,1)`，再乘幅度。抖动后仍夹住上界：上界不能被抖动顶破。
+    return _jittered(raw);
+  }
+
+  /// 取下一次**慢重试**间隔并推进（含抖动）。
+  ///
+  /// 上界是 `60 s × (1 + 抖动幅度)` = 72 s，**不是** [backoffMaxMs] ——
+  /// 用 60 s 当上界会把抖动的高半边整个削掉（实测：`random = 1` 本该是 72 s）。
+  int nextSlow() {
+    _attempt += 1;
+    return _jittered(
+      slowRetryMs,
+      cap: (slowRetryMs * (1 + backoffJitter)).round(),
+    );
+  }
+
+  /// 抖动**只写这一处**：快退避与慢重试共用，免得两份算术各自漂。
+  ///
+  /// `[0,1) → [-1,1)`，再乘幅度。抖动后仍夹住上界：上界不能被抖动顶破。
+  int _jittered(int raw, {int cap = backoffMaxMs}) {
     final jitter = (_random() * 2 - 1) * backoffJitter;
     final value = (raw * (1 + jitter)).round();
     if (value < 0) return 0;
-    return value > backoffMaxMs ? backoffMaxMs : value;
+    return value > cap ? cap : value;
   }
 
   /// 回到起点。**连接成功进入 `serving` 后必须调用**，否则下次掉线会从上次的大间隔开始。

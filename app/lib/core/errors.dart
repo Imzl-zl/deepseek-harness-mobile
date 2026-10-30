@@ -240,6 +240,22 @@ enum ErrorCode {
   bool get isKnown => this != ErrorCode.internal;
 }
 
+/// 切一条**电脑侧拒绝的关闭理由**（契约 §4.1：`协议码` 或 `协议码 说明`）。
+///
+/// 电脑侧在握手层拒绝时用关闭码 4003 + 这段文本送达，理由可能带一句给人看的说明
+/// （例：`device/busy 我的手机`）。**码是第一个空格之前的全部字节** ——
+/// 所以这里只按第一个空格切，不按空白切、也不做任何修剪：
+/// 切坏了就会归成 [ErrorCode.internal]，用户看到的是"未知错误"。
+({String wire, String? detail}) splitCloseReason(String reason) {
+  final at = reason.indexOf(' ');
+  if (at <= 0) return (wire: reason, detail: null);
+  final detail = reason.substring(at + 1).trim();
+  return (
+    wire: reason.substring(0, at),
+    detail: detail.isEmpty ? null : detail,
+  );
+}
+
 /// 协议错误。
 ///
 /// 与电脑侧的 `ProtocolError` 对应，但 `code` 是**枚举**（见文件头）。

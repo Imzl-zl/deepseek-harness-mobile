@@ -210,6 +210,96 @@ void main() {
     });
   });
 
+  group('切换：列表 / activate / 名字缓存（多机第 4 步）', () {
+    test('hosts()：只列能用的槽，当前那台排最前', () async {
+      final secure = _MemorySecure();
+      final store = PairingStore(secure);
+      await store.save(_credentials(hostA));
+      await store.save(_credentials(hostB));
+
+      final hosts = await store.hosts();
+      expect(hosts.map((h) => h.hostId).toList(), [
+        hostB,
+        hostA,
+      ], reason: '当前那台最前');
+      // 读不到名字时退回短码（前 6 + 后 4）—— 名字可改可重名，短码不会。
+      expect(hosts.first.label, 'bbbbbb…bbbb');
+      expect(hosts.first.shortCode, 'bbbbbb…bbbb');
+    });
+
+    test('半份槽不进列表（点它只会得到"凭据不完整"）', () async {
+      final secure = _MemorySecure();
+      final store = PairingStore(secure);
+      await store.save(_credentials(hostA));
+      // 造一个只有 pc_sign_pub 的半槽（模拟写一半崩掉）。
+      secure.values[PairingStore.slotKey(hostB, 'pc_sign_pub')] = hostB;
+
+      final hosts = await store.hosts();
+      expect(hosts.map((h) => h.hostId).toList(), [hostA]);
+    });
+
+    test('activate：只改 active（指针），不重写槽、不动别的电脑', () async {
+      final secure = _MemorySecure();
+      final store = PairingStore(secure);
+      await store.save(_credentials(hostA));
+      await store.save(_credentials(hostB));
+      final writesBefore = secure.writes;
+
+      await store.activate(hostA);
+
+      expect(secure.values[PairingStore.activeKey], hostA);
+      expect(
+        secure.writes,
+        writesBefore + 1,
+        reason: '切槽只该写一次 active：重写整份槽既浪费也多一次"写一半"的机会',
+      );
+      _expectSameCredentials((await store.load())!, _credentials(hostA));
+      _expectSameCredentials(
+        (await store.load(hostId: hostB))!,
+        _credentials(hostB),
+      );
+    });
+
+    test('activate 拒绝半份槽：不让 active 指向读不出的凭据', () async {
+      final secure = _MemorySecure();
+      final store = PairingStore(secure);
+      await store.save(_credentials(hostA));
+
+      await expectLater(
+        store.activate(hostB),
+        throwsA(isA<StateError>()),
+        reason: '半个槽被选中 = 启动时有 active 却读不出凭据，那状态没有出路',
+      );
+      expect(
+        secure.values[PairingStore.activeKey],
+        hostA,
+        reason: 'active 不该被改坏',
+      );
+    });
+
+    test('电脑名缓存进那一台的槽：列表据此显示名字，clear 时一并删掉', () async {
+      final secure = _MemorySecure();
+      final store = PairingStore(secure);
+      await store.save(_credentials(hostA));
+      await store.save(_credentials(hostB));
+
+      await store.saveHostName(hostB, '客厅那台');
+      final hosts = await store.hosts();
+      expect(hosts.first.hostId, hostB);
+      expect(hosts.first.label, '客厅那台');
+      expect(hosts.first.name, '客厅那台');
+
+      // 名字是槽的一部分（前缀扫描）→ 清槽就没了，不会留在存储里。
+      await store.clear(hostId: hostB);
+      expect(
+        secure.values.containsKey(
+          PairingStore.slotKey(hostB, PairingStore.hostNameField),
+        ),
+        isFalse,
+      );
+    });
+  });
+
   group('迁移：旧平铺键 → 槽，一次性且幂等', () {
     test('迁一次后 load() 与原值逐字相等；旧键消失；第二次不写盘', () async {
       final secure = _MemorySecure();

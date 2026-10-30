@@ -254,6 +254,13 @@ abstract interface class SyncClientProbe {
   /// 下一次回前台仍会再试一轮。
   bool get lastConnectGaveUp;
 
+  /// 上一次建连失败是**被另一台设备占用**（`device/busy`，独占 1:1）。
+  ///
+  /// 与 [lastConnectWasTerminal] 分开：那个要清凭据回配对页，这个**什么都不清**，
+  /// 只是不自动重连（占用位什么时候空出来不是我们能决定的）。
+  /// 具体的占用者在 [lastProtocolError] 的 message 里（电脑侧随关闭理由一起送来）。
+  bool get lastConnectBusy;
+
   /// 已声明的订阅集（`sid → since`）—— `sync.hello` 会把它整份重新声明（契约 §5.4）。
   ///
   /// 暴露给测试与诊断：**断线之后 UI 不会重新 `subscribe`**（用户没有重新点开），

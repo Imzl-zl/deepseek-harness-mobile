@@ -116,6 +116,7 @@ class AppModel extends ChangeNotifier {
     this.onEndpointsChanged,
     this.onEndpointsMetaChanged,
     this.onConnectionTerminated,
+    this.onHostName,
     NotifyPort? notify,
   }) : _prefs = prefs,
        _notify = notify,
@@ -191,6 +192,13 @@ class AppModel extends ChangeNotifier {
   /// 与 [onEndpointsChanged] 分开：那几个是"表格之外的路由记忆"，
   /// 而每次拨号成功都会改"记住的那条" —— 混在一起会让每拨一次就重写整张表。
   final Future<void> Function(EndpointMeta)? onEndpointsMetaChanged;
+
+  /// 读到电脑自报的名字时通知装配层（它写进那个 hostId 的槽：`host_name`）。
+  ///
+  /// 为什么在数据层不做持久化：`data/` 不认识 `platform/`（存储是平台侧的事）。
+  /// 为什么值得存：切换电脑的列表要说得出"这是哪台"，而名字只在**连上之后**
+  /// 才读得到 —— 不缓存的话，非当前那台永远只有一串公钥短码。
+  final void Function(String name)? onHostName;
 
   /// 连接**终态**失败时呈递一次那个协议错误（身份不被认 → 清凭据回配对页）。
   ///
@@ -1327,6 +1335,58 @@ class AppModel extends ChangeNotifier {
   /// 连接状态（界面视图）。
   ConnectionStateView get connection => _connection;
 
+  /// **这台电脑正被哪台设备占着**（`device/busy` 随关闭理由带来的展示名）。
+  ///
+  /// `null` = 没被占用（或根本没被拒过）。名字是电脑侧给的展示值 ——
+  /// 可改、可重名，只用来给人看，不参与任何判据。
+  String? get busyOccupant {
+    final probe = client is SyncClientProbe ? client as SyncClientProbe : null;
+    if (probe == null || !probe.lastConnectBusy) return null;
+    return probe.lastProtocolError?.message;
+  }
+
+  /// 拨号阶段的提示（2 s 出阶段、8 s 说"网络很慢"），`null` = 还不到 2 s。
+  ///
+  /// 它**只是文案**：判据（15 s 总预算）在 `core/endpoint_transport.dart`，
+  /// 结论态由连接层给（`connection` / [busyOccupant]）。手机上不该有第二套计时判据。
+  String? get connectionHint => _connectionHint;
+  String? _connectionHint;
+
+  /// 本轮拨号的起点（进入 `connecting` 时盖一次）；`null` = 不在拨号。
+  DateTime? _dialStartedAt;
+  Timer? _hintTicker;
+
+  /// 起一次提示时钟（**每次进入 `connecting` 重置**：提示是"这一轮拨了多久"）。
+  void _startHintClock() {
+    _dialStartedAt = DateTime.now();
+    _hintTicker?.cancel();
+    _setConnectionHint(null);
+    _hintTicker = Timer.periodic(
+      const Duration(milliseconds: 500),
+      (_) => _refreshConnectionHint(),
+    );
+  }
+
+  void _stopHintClock() {
+    _hintTicker?.cancel();
+    _hintTicker = null;
+    _dialStartedAt = null;
+    _setConnectionHint(null);
+  }
+
+  void _refreshConnectionHint() {
+    final started = _dialStartedAt;
+    if (started == null || _disposed) return;
+    // 文案在 model 层（与 `connectionLabel` 同一处），这里只负责"什么时候换"。
+    _setConnectionHint(connectionHintAt(DateTime.now().difference(started)));
+  }
+
+  void _setConnectionHint(String? value) {
+    if (_connectionHint == value) return;
+    _connectionHint = value;
+    if (!_disposed) notifyListeners();
+  }
+
   /// 最近一次错误。
   ProtocolException? get lastError => _lastError;
 
@@ -1733,6 +1793,9 @@ class AppModel extends ChangeNotifier {
       }
       _dshVersion = info.dshVersion;
       _hostName = info.hostName;
+      // 名字是展示值，缓存一份给"切换电脑"的列表用（非当前那台只有它认得出）。
+      final name = info.hostName;
+      if (name != null && name.isNotEmpty) onHostName?.call(name);
       _slashCommands = info.slashCommands;
       _mentionsAvailable = info.mentionsAvailable;
       _filesAvailable = info.filesAvailable;
@@ -2215,6 +2278,12 @@ class AppModel extends ChangeNotifier {
   void _onConnectionChanged(ConnectionState state) {
     if (_disposed) return;
     _connection = _viewOf(state, client);
+    // 拨号提示时钟：只有"正在拨"的那一档在跑（2 s 出阶段、8 s 说慢）。
+    if (state == ConnectionState.connecting) {
+      _startHintClock();
+    } else {
+      _stopHintClock();
+    }
     // **连上了就清掉上一次的失败**（它可能是好几轮之前那次断开留下的）。
     //
     // 少了这一行，界面会一边显示"拉取会话失败"一边正常收发 ——
@@ -2305,10 +2374,12 @@ class AppModel extends ChangeNotifier {
   /// （`SyncClientProbe.lastConnectGaveUp`）推出来的。事实仍然只有一个来源
   /// （连接层），这里只做映射。
   static ConnectionStateView _viewOf(ConnectionState state, SyncClient client) {
-    if (state == ConnectionState.backoff) {
-      final probe = client is SyncClientProbe
-          ? client as SyncClientProbe
-          : null;
+    final probe = client is SyncClientProbe ? client as SyncClientProbe : null;
+    // 两档"已给结论"的状态**先于协议状态**：它们说的是"为什么没连上"，
+    // 而慢重试期间协议状态会在 connecting / closed / backoff 之间循环 ——
+    // 让界面跟着变，等于每次静默重试都往用户眼前跳一次「连接中…」。
+    if (state != ConnectionState.serving) {
+      if (probe?.lastConnectBusy ?? false) return ConnectionStateView.busy;
       if (probe?.lastConnectGaveUp ?? false) return ConnectionStateView.gaveUp;
     }
     return switch (state) {
@@ -3861,6 +3932,9 @@ class AppModel extends ChangeNotifier {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    // 提示时钟随宿主一起走（它只是文案，但定时器必须收干净）。
+    _hintTicker?.cancel();
+    _hintTicker = null;
     unawaited(_stateSub?.cancel());
     unawaited(_jobSub?.cancel());
     unawaited(_statusSub?.cancel());

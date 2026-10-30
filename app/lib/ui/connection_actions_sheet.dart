@@ -28,6 +28,18 @@ import '../theme/dsh_icons.dart';
 import 'connection_summary_block.dart';
 import 'dsh_popover.dart';
 
+/// 连接 sheet 里"换电脑"那几行需要的缝（装配层注入，页面只转发）。
+///
+/// 收成一条记录而不是四个参数：**它们总是一起出现**（有台数才有入口，
+/// 有入口才谈得上"切回上一台"），拆开传只会多三处可能漏。
+typedef HostSwitchSeam = ({
+  /// 除了当前这台还有几台（0 = 不给「切换电脑」这一行）。
+  int otherHostCount,
+  VoidCallback? onSwitch,
+  VoidCallback? onSwitchBack,
+  String? switchBackLabel,
+});
+
 /// 弹出连接操作面板。取消（点遮罩 / 「取消」行）不触发任何动作。
 ///
 /// [connection] 是顶部的「当前连接」块（连接方式选择器第 1 步：一眼能看
@@ -57,10 +69,18 @@ Future<void> showConnectionActionsSheet(
   /// **不自动拨**：连不连是用户的动作。
   VoidCallback? onManualEndpoint,
 
+  /// **切换电脑**的入口与"切回上一台"（`HostSwitchSeam`）。
+  ///
+  /// 切换是**用户动作**（方案决策 6/9）：这里只给入口，不自动挑一台、
+  /// 也不在"连不上"时偷偷换 —— 那会变成"手机自己换了个电脑"。
+  HostSwitchSeam? hostSwitch,
+
   /// 触发点矩形。`null` = 底部 sheet。
   Rect? anchor,
 }) {
   final c = context.dshColors;
+  // 只在确实有"上一台"时才有这一行（`null` / 空串都不给）。
+  final switchBackLabel = hostSwitch?.switchBackLabel;
   // 内容只画一份（形态不同，动作与文案不许漂移）。
   //
   // `inner` 必须是**面板路由自己的** context：行里的 `Navigator.pop()`
@@ -73,6 +93,46 @@ Future<void> showConnectionActionsSheet(
         // 块本身在面板里**不可点**：面板已经展开，再点它没有去处。
         // 两个动作在下面各有自己的一行，比"点块里某处"更好找。
       ),
+      // **切换电脑**排在最前：多机之后它比"换个连接方式"更常被用
+      // （换的是"连哪台"，那一步同时换了凭据、端点表与界面桶）。
+      if (hostSwitch != null &&
+          hostSwitch.otherHostCount > 0 &&
+          hostSwitch.onSwitch != null)
+        ListTile(
+          leading: const DshIcon(
+            'workspaceTree',
+            size: 18,
+            color: DshColors.labelSecondary,
+          ),
+          title: const Text('切换电脑'),
+          subtitle: Text(
+            hostSwitch.otherHostCount == 1
+                ? '还有 1 台已配对的电脑'
+                : '还有 ${hostSwitch.otherHostCount} 台已配对的电脑',
+          ),
+          onTap: () {
+            Navigator.of(inner).pop();
+            hostSwitch.onSwitch?.call();
+          },
+        ),
+      if (hostSwitch?.onSwitchBack != null)
+        ListTile(
+          leading: const DshIcon(
+            'chevronLeft',
+            size: 18,
+            color: DshColors.labelSecondary,
+          ),
+          title: const Text('切回上一台'),
+          subtitle: Text(
+            switchBackLabel == null || switchBackLabel.isEmpty
+                ? '回到刚才那台电脑'
+                : '回到「$switchBackLabel」',
+          ),
+          onTap: () {
+            Navigator.of(inner).pop();
+            hostSwitch?.onSwitchBack?.call();
+          },
+        ),
       if (onPickEndpoint != null)
         ListTile(
           leading: const DshIcon(

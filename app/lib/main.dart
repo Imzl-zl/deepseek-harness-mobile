@@ -59,6 +59,7 @@ import 'ui/dsh_brand.dart';
 import 'ui/dsh_shimmer.dart';
 import 'ui/dsh_toast.dart';
 import 'ui/files_page.dart';
+import 'ui/host_picker_sheet.dart';
 import 'ui/pairing_page.dart';
 import 'ui/plugins_page.dart';
 import 'ui/session_drawer.dart';
@@ -113,6 +114,18 @@ class _DshMobileAppState extends State<DshMobileApp>
 
   AppModel? _app;
   bool _booting = true;
+
+  /// **已配对的电脑**（凭据层的派生读：`PairingStore.hosts()`）。
+  ///
+  /// 不另存"电脑清单"：槽本身就是那份事实，这里只是它的一份**会过期的缓存**
+  /// （配对成功 / 切换之后重读一次）。台数只用来决定"要不要给切换入口"。
+  List<PairedHost> _pairedHosts = const <PairedHost>[];
+
+  /// 刚切走的那一台（`hostId`）：给「切回上一台」那一键。
+  ///
+  /// 切换**失败不回滚**（方案决策 6：回滚会让人以为切成功了），
+  /// 所以"回去"只能是用户点一下这个显式出口。
+  String? _previousHostId;
 
   /// 抽屉搜索框里当前的查询（空 = 不过滤）。
   ///
@@ -274,7 +287,9 @@ class _DshMobileAppState extends State<DshMobileApp>
 
   Future<void> _boot() async {
     final saved = await pairingStore.load();
+    final hosts = await pairingStore.hosts();
     if (!mounted) return;
+    _pairedHosts = hosts;
     if (saved == null) {
       // **没配对也进主界面**。
       //
@@ -364,6 +379,9 @@ class _DshMobileAppState extends State<DshMobileApp>
       devId: result.devId,
     );
     await pairingStore.save(credentials);
+    // 配对可能新增了一台（也可能是替换同一台的行）：列表重读一次。
+    final hosts = await pairingStore.hosts();
+    if (!mounted) return;
     final app = await _assemble(credentials, _recovery.onTerminated);
     if (!mounted) return;
     await app.loadUiState();
@@ -382,10 +400,116 @@ class _DshMobileAppState extends State<DshMobileApp>
       _credentials = credentials;
       _app = app;
       _pairing = false;
+      _pairedHosts = hosts;
     });
     // 下一次重新配对要报**新**的 pairingId（旧的那一行已经被替换掉了）。
     _refreshRePairHint();
     await app.start();
+  }
+
+  /// **切换电脑**（一台手机配多台电脑）：换凭据槽 → 重新装配 → 连新的。
+  ///
+  /// 与 `_onPaired` 走**同一条线**（读槽 + 装配 + dispose 旧的），因为"切到另一台"
+  /// 与"刚配上那台"在系统里是同一件事：换一份凭据、换一份端点表、换一个界面桶。
+  /// 所以 `AppModel` 里**不存"当前是哪台"** —— 唯一真值是凭据槽的 `active`
+  /// 与本 State 的 `_credentials`。
+  ///
+  /// ## 三条已定案的边界（方案决策 6）
+  ///
+  /// 1. **先 close 旧的**：旧客户端的 `dispose()` 收掉 socket，电脑侧的占用位随之释放
+  ///    （下一次心跳之前就空）。这里先 dispose 再 `start()` 新的 —— 顺序反了会出现
+  ///    "两台同时在服务"。
+  /// 2. **立刻生效、不回滚**：`active` 与 `_credentials` 在这次调用里就换了，
+  ///    界面只会显示目标那台的数据（此刻是空的）。失败停在它的"未连接（原因）"，
+  ///    **不回到上一台** —— 回滚会让人以为切成功了。
+  /// 3. **绝不自动挑一台 / 不自动抢占**：这是用户点的；失败只给「重试连接」与
+  ///    「切回上一台」两个显式出口。
+  Future<void> _switchTo(String hostId) async {
+    if (!mounted) return;
+    if (_credentials?.pcSignPubHex == hostId) {
+      // 点的是同一台：等同于"立刻重连一次"（手动动作，不清凭据）。
+      await _app?.client.reconnect();
+      return;
+    }
+    final next = await pairingStore.load(hostId: hostId);
+    if (next == null) {
+      // 槽不完整（半份凭据 / 被别处删了）：停在原地并说明。
+      _reportConnectionDefect(
+        const ProtocolException(ErrorCode.internal, '切换电脑失败：这台电脑的配对凭据不完整'),
+      );
+      return;
+    }
+    try {
+      // **换凭据槽**：`active` 指向新那台（槽本身早就写全了，这里只改指针）。
+      await pairingStore.activate(hostId);
+    } catch (error) {
+      // 切不过去就停在原地：不动 `active`、不动 `_credentials`。
+      // 这不是"回滚"，是"压根没切"（`active` 还没变过）。
+      _reportConnectionDefect(
+        ProtocolException(ErrorCode.internal, '切换电脑失败：$error'),
+      );
+      return;
+    }
+    final previous = _credentials?.pcSignPubHex;
+    final app = await _assemble(next, _recovery.onTerminated);
+    if (!mounted) return;
+    await app.loadUiState();
+    if (!mounted) return;
+    setState(() {
+      // **先 close 旧的**（`dispose` 收掉 socket）：电脑侧立刻释放占用位，
+      // 新那台才不会撞上自己刚才这条连接。
+      _app?.dispose();
+      _credentials = next;
+      _app = app;
+      _previousHostId = previous;
+    });
+    await app.start();
+  }
+
+  /// 打开电脑列表并切过去（连接 sheet 的「切换电脑」）。
+  Future<void> _openHostPicker() async {
+    if (!mounted) return;
+    final hosts = await pairingStore.hosts();
+    if (!mounted) return;
+    setState(() => _pairedHosts = hosts);
+    final hostId = await pickPairedHost(
+      _navContext,
+      hosts: hosts,
+      currentHostId: _credentials?.pcSignPubHex,
+    );
+    if (hostId == null) return;
+    await _switchTo(hostId);
+  }
+
+  /// 「切回上一台」的那个 `hostId`（没有就 `null`）。
+  String? get _switchBackTarget {
+    final previous = _previousHostId;
+    if (previous == null || previous.isEmpty) return null;
+    if (previous == _credentials?.pcSignPubHex) return null;
+    return previous;
+  }
+
+  /// 一台已配对电脑的展示名（读不到名字就用短码）。
+  String _hostLabelOf(String hostId) {
+    for (final host in _pairedHosts) {
+      if (host.hostId == hostId) return host.label;
+    }
+    return PairedHost(hostId: hostId).label;
+  }
+
+  /// 连接 sheet 的「切换电脑 / 切回上一台」那一组缝（没配对时 `null`）。
+  HostSwitchSeam? get _hostSwitchSeam {
+    final current = _credentials?.pcSignPubHex;
+    if (current == null) return null;
+    final back = _switchBackTarget;
+    return (
+      otherHostCount: _pairedHosts
+          .where((host) => host.hostId != current)
+          .length,
+      onSwitch: () => unawaited(_openHostPicker()),
+      onSwitchBack: back == null ? null : () => unawaited(_switchTo(back)),
+      switchBackLabel: back == null ? null : _hostLabelOf(back),
+    );
   }
 
   @override
@@ -575,6 +699,7 @@ class _DshMobileAppState extends State<DshMobileApp>
         // 议题 3：连接操作 sheet 的"重新配对 / 断开并清掉凭据"。
         onRePair: _repair,
         onDisconnect: () => unawaited(_resetPairing()),
+        hostSwitch: _hostSwitchSeam,
         onOpenDrawer: () => _chatKey.currentState?.openDrawer(),
         onNewSession: _newSession,
         // 主界面上的内联会话列表：与抽屉走**同一条**通路（`openSession`），
@@ -845,7 +970,11 @@ class _DshMobileAppState extends State<DshMobileApp>
         active: app.activeEndpoint,
         endpoints: app.endpoints,
         attemptOf: app.attemptOf,
+        hint: app.connectionHint,
+        detail: app.busyOccupant,
       ),
+      // **换电脑**（与聊天页顶栏那个 sheet 同一份缝）。
+      hostSwitch: _hostSwitchSeam,
       onRePair: _repair,
       onOpenSide: () => _chatKey.currentState?.openSide(),
       onDisconnect: () => unawaited(_resetPairing()),
@@ -946,6 +1075,7 @@ class _DshMobileAppState extends State<DshMobileApp>
     ConnectionStateView.backoff => '重连中…',
     ConnectionStateView.connecting => '连接中…',
     ConnectionStateView.handshaking => '握手中…',
+    ConnectionStateView.busy => '被另一台设备占用',
     _ => '未连接',
   };
 
@@ -1377,6 +1507,10 @@ Future<AppModel> _assemble(
     ),
     // 连接终态失败（身份不被认）→ 清凭据回配对页。见 `_recovery`。
     onConnectionTerminated: onConnectionTerminated,
+    // **电脑自报的名字缓存到那一台的槽**：切换列表要说得出"这是哪台"。
+    // 名字是展示值（可改 / 可重名），不参与判据，所以写失败也不该影响连接。
+    onHostName: (name) =>
+        pairingStore.saveHostName(credentials.pcSignPubHex, name),
   );
   appRef = app;
   // 现在起，"公网明文已确认"以 `AppModel` 为准（用户在设置页/配对页确认后立刻生效）。

@@ -19,6 +19,7 @@ Widget _host({
   required ConnectionSummary connection,
   required VoidCallback onRePair,
   Rect? anchor,
+  HostSwitchSeam? hostSwitch,
 }) => MaterialApp(
   theme: DshTheme.dark(),
   home: Scaffold(
@@ -29,6 +30,7 @@ Widget _host({
           connection: connection,
           onRePair: onRePair,
           anchor: anchor,
+          hostSwitch: hostSwitch,
         ),
         child: const Text('open'),
       ),
@@ -79,6 +81,55 @@ void main() {
 
     expect(rePair, 1);
     expect(find.text('重新配对（换一台电脑）'), findsNothing, reason: 'sheet 已关');
+  });
+
+  testWidgets('切换电脑：多机入口与「切回上一台」都在，且各自回调一次', (tester) async {
+    var switched = 0;
+    var back = 0;
+    await tester.pumpWidget(
+      _host(
+        connection: fellBack,
+        onRePair: () {},
+        hostSwitch: (
+          otherHostCount: 1,
+          onSwitch: () => switched++,
+          onSwitchBack: () => back++,
+          switchBackLabel: '客厅那台',
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('切换电脑'), findsOneWidget);
+    expect(find.text('还有 1 台已配对的电脑'), findsOneWidget);
+    expect(find.text('切回上一台'), findsOneWidget);
+    expect(find.text('回到「客厅那台」'), findsOneWidget);
+
+    await tester.tap(find.text('切回上一台'));
+    await tester.pumpAndSettle();
+    expect(back, 1);
+    expect(switched, 0, reason: '两个动作不许互相触发');
+  });
+
+  testWidgets('只有一台电脑时不摆「切换电脑」（没有可换的）', (tester) async {
+    await tester.pumpWidget(
+      _host(
+        connection: fellBack,
+        onRePair: () {},
+        hostSwitch: (
+          otherHostCount: 0,
+          onSwitch: () {},
+          onSwitchBack: null,
+          switchBackLabel: null,
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('切换电脑'), findsNothing);
+    expect(find.text('切回上一台'), findsNothing);
   });
 
   testWidgets('没回落时只有一行（不摆空的原因行）', (tester) async {
