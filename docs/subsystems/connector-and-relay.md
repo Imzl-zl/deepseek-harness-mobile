@@ -76,10 +76,10 @@
 | `refetchThresholdBytes` | 1048576 | 大对象阈值 |
 | `windowFrames` / `windowMaxBytes` | 10000 / 16777216 | 增量缓冲上界 |
 
-**没有设备数上限**:这是契约定的(`remote-channel.md` 的规模标定表「设备上限 | 不设上限」),不是漏了字段。
-理由:每设备一把密钥 ⇒ 吊销粒度小;重新配对即新身份,记录随用户主动重配而增加,清理走管理面。
-2026-10-29 之前 schema 里那个 `deviceLimit`(默认 8)**全仓没人读**,已删;理由见
-`.agents/notes/implemented/2026-10-29-drop-inert-device-limit.md`。
+**设备数不设上限,这里也没有 `deviceLimit` 这类字段**:这是契约定的(`remote-channel.md` 规模标定表
+「设备上限 | 不设上限」)。理由:每设备一把密钥 ⇒ 吊销粒度小;重新配对即新身份,记录随用户主动重配而增加,
+清理走管理面。所以配对路径上**没有**"第 N 台拒绝"这个判据;一个只进手机端通用表单、却没人读的数
+不该出现在 schema 里。取舍见 `.agents/notes/implemented/2026-10-29-drop-inert-device-limit.md`。
 
 ### 1.2 目录结构
 
@@ -124,7 +124,7 @@ dispose
 
 - **传输面按"方式"分开关**(`transport/channels.ts`,2026-10-17):每条通道有 id / 标签 / start / stop / running,管理面 `GET /api/dsh-mobile/transport` 列通道、`POST /api/dsh-mobile/transport/{id}/{start,stop}` 各停各的(**路由按注册表生成** —— 加第三种方式不改管理面与 UI 形状)。停一条不碰另一条:停拨号只关控制面与它的数据连接,停监听只关已接受的直连。批量启停是 UI 的顺序调用,不设服务端批量端点(两条各自的成败要能分别报回来)。
 
-- **配置热改的后果只有两处判据**(`transport/rebuild.ts` 与 `transport/startup.ts`):前者由 `REBUILD_KEYS` 决定"哪些键变了重建哪条通道"(中转四格 `relayUrl` / `allowInsecureLocal` / `allowInsecurePublic` / `relayTokenRef`,直连两格 `listenPort` / `listenHost`;其余 volatile 字段改完下次读写自然生效,不重建),重建走**串行队列**(同一时刻只有一次停/起,失败落成「连接」卡的一句话);后者决定"起传输时哪些缺席可容忍"—— 凭据里没有连接器令牌、`listenPort = 0` 两种,其余失败(坏地址 / 端口被占)整体抛出。两侧各有回归用例(`tests/transport-rebuild.test.ts` / `tests/transport-startup.test.ts`),装配层是否真的接上由 `tests/assembly-wiring.test.ts` 读源码盯;面板读取投影(`readConnectionState`)的每格判据在同一份用例里。
+- **配置热改的后果只有两处判据**(`transport/rebuild.ts` 与 `transport/startup.ts`):前者由 `REBUILD_KEYS` 决定"哪些键变了重建哪条通道"(中转四格 `relayUrl` / `allowInsecureLocal` / `allowInsecurePublic` / `relayTokenRef`,直连两格 `listenPort` / `listenHost`;其余 volatile 字段改完下次读写自然生效,不重建),重建走**串行队列**(同一时刻只有一次停/起;失败落成保存回执里的 `relayError`,GET 视图不含错误格);后者决定"起传输时哪些缺席可容忍"—— 凭据里没有连接器令牌、`listenPort = 0` 两种,其余失败(坏地址 / 端口被占)整体抛出。两侧各有回归用例(`tests/transport-rebuild.test.ts` / `tests/transport-startup.test.ts`),装配层是否真的接上由 `tests/assembly-wiring.test.ts` 读源码盯;面板读取投影(`readConnectionState`)的每格判据在同一份用例里。
 - **订阅是显式的**:`session.subscribe` 才建立 `follow`;`session.unsubscribe` 关闭它。不订阅 50 个会话(每个 follow 都是 DSH 侧的开销)。
 - **基线快照用 `page()` 分页构造,不重开 `follow`**:`page()` 本身按消息对齐、有页预算、冷安全(`packages/api/session-controller/src/history.ts:77-112`),正好对应契约 §5.4 的 `cursor = "b:<beforeSeq>"`;重开 follow 会多建一个订阅并触发 promote 路径。
 - **不读会话落盘文件**(格式为 v4 且仍在演进,见 `../channel-review-notes.md` §2.7):一律走服务层。

@@ -9,7 +9,7 @@
   （`GET/POST /api/dsh-mobile/connection`，逻辑在 `admin/connection-card.ts`）：中转地址 /
   公网明文开关 / 令牌 / 直连端口 + "已连接"真信号（`ChannelState.connected`，原来只有
   `running`，答不了"手机那头通没通"）。四条已定案：① 只碰白名单三格（`relayUrl` /
-  `allowInsecurePublic` / `listenPort`），该条目另外 9 个 volatile 字段不上卡；② 地址在写入
+  `allowInsecurePublic` / `listenPort`），该条目另外 8 个 volatile 字段不上卡；② 地址在写入
   **之前**用 `relayUrlOf` 校验"保存之后的完整状态"（schema 不管语义）；③ 一次保存只有一次
   `settings.update`（逐字段 mutate 会让 revision +1、第二次必 409）；④ 令牌三态（留空/替换/
   清除），**值永不过线**（GET 只回 `{configured, writable}`）。保存顺序：配置优先、令牌其次，
@@ -57,7 +57,9 @@
 1. 跑一轮真机复验改动卡 / 差异 / 提及（要模型请求 —— 先报价再跑）。
 2. `usage.summary` 的 byDay 时区；`plugin.installStatus` 的 4 键/8 键两形态
    （真出现第二种时 `readPluginJob` 会红，属**已知的下一处**）。
-3. 大改后巡检一次 `docs/` 与代码的漂移。
+3. 大改后巡检一次 `docs/` 与代码的漂移。**已知一处**：`connector/src/dsh/interaction-client.ts:63`
+   import 了 `transport/backoff.js`，而 `connector-and-relay.md` §1.2 写着「`dsh/` 不 import `transport/`」；
+   两者选一个改（补机械规则会立刻红，改文档则承认这条方向可用）。
 
 ## 门禁（改代码后必须全绿，项数以 `tools.md` 为准）
 
@@ -88,17 +90,15 @@
 
 ## 真机联调的成本纪律
 
-- 隔离实例：`$env:DSH_HOME='D:\tmp\dsh-mobile-home'` + `dsh --profile dsh-mobile-test`；
-  `--profile` 只隔进程/插件/端口，`~/.dsh/{.credentials.yaml,sessions,storages}` 全局共用 ——
-  **跑之前报轮次并拿到准**（模型请求花用户的钱）。
+- 隔离实例：`$env:DSH_HOME='D:\tmp\dsh-mobile-home'` + `dsh --profile dsh-mobile-test`；`--profile` 只隔
+  进程/插件/端口，`~/.dsh/{.credentials.yaml,sessions,storages}` 共用 —— **跑之前报轮次并拿到准**（花用户的钱）。
 - 装 App 一律 `flutter build apk --debug` + `adb install -r`（`flutter install` 会先卸载）。
 
 ## 仍未注意就会翻车
 
 - **改源码只用编辑工具**（shell 替换静默出错）；**`dart format` 会重排文件**，之后再编辑要重读。
-- **同一件事只有一处判据**：重建哪条通道、起传输容忍什么、面板读什么，都已有同名模块 +
-  回归用例（`transport/rebuild.ts`、`transport/startup.ts`、`connection-card.ts`），
-  别在 `index.ts` 里再写一份。其余稳定坑点见 `tools.md` → Pitfalls。
+- **同一件事只有一处判据**（重建哪条通道 / 起传输容忍什么 / 面板读什么）：都已有同名模块 + 回归用例
+  （`transport/rebuild.ts`、`transport/startup.ts`、`connection-card.ts`），别在 `index.ts` 再写；坑点见 `tools.md`。
 
 ## 已知缺口（仍在）
 
@@ -116,5 +116,5 @@
 - 2026-10-26 评审六批 + 真实清单进金样 + 桌面四件事 + 连通落点 — `implemented/2026-10-26-*`
 - 2026-10-27 UI 状态语义（审计 → 机制 → A–H 批） — `implemented/2026-10-27-*`；现状 `docs/subsystems/ui-state.md`
 - 2026-10-28 渲染批次 + 唤醒判据修正 — `implemented/2026-10-28-*`
-- 2026-10-29 连接卡 / 无令牌可挂载 / 装配层回归网 / 端点剪枝 / 明文两档 / 高亮语言集 —
-  `implemented/2026-10-29-*`（五篇）
+- 2026-10-29 连接卡 / 无令牌可挂载 / 装配层回归网 / 删掉空转的 `deviceLimit` / 端点剪枝 /
+  明文两档 / 高亮语言集 — `implemented/2026-10-29-*`（六篇）；多机方案仍 `proposed/2026-10-29-*`

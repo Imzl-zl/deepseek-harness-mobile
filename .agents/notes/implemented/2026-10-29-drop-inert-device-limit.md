@@ -44,7 +44,9 @@ Status: implemented
 
 准入门槛（落地时逐条可机械判定）：
 
-1. 全仓 `deviceLimit` 只剩笔记与 `archived/`：`src/`、`tests/`、`docs/` 各 0 处。
+1. **没有任何一行读它**：`connector/src` 里 `config.deviceLimit` 0 处、`connector/tests` 里 0 处断言它
+   （字段名本身允许出现在三类"解释它为什么不在"的地方：`config.ts` 的那段注释、`docs` 里那段说明、
+   以及本笔记 —— 这三处是防"有人又加回来"，不是使用）。
 2. `cd connector; pnpm exec tsc --noEmit` 0；`pnpm test` **748/748**（删字段不改任何用例的断言数）。
 3. 隔离实例按上面第 3、4 条复验（patch 带多余键 → 挂载 + `/status` 200；面板保存后该行仍在）。
 4. `dart analyze` / `flutter test` 不受影响（本轮不碰 `app/`）—— 但若将来手机端通用表单缓存了

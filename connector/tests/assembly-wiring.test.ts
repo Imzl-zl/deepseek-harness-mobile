@@ -28,6 +28,19 @@ import { test } from 'node:test'
 import { readConnectionState, type ConnectionReadInputs } from '../src/admin/connection-card.js'
 import type { ChannelState } from '../src/transport/channels.js'
 
+/**
+ * 去注释 + 压空白：让"接线"断言落在代码上。
+ *
+ * 只剥块注释与**整行**的 `//` 注释（不碰行尾注释，免得把 `'ws://…'` 这类字符串切坏），
+ * 再把连续空白压成一个空格 —— 多行实参因此能用一行正则匹配，普通重排/换行不会假阴。
+ */
+function codeOf(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/^[ \t]*\/\/.*$/gm, ' ')
+    .replace(/\s+/g, ' ')
+}
+
 /** 一条通道状态（只有 `id` 与 `running` / `connected` 参与投影）。 */
 function channel(over: Partial<ChannelState> & { id: string }): ChannelState {
   return {
@@ -61,7 +74,7 @@ function inputs(over: Partial<ConnectionReadInputs> = {}): ConnectionReadInputs 
       asked.push(ref)
       return { configured: true, writable: true }
     },
-    configuredListenPort: 0,
+    configuredListenPort: () => 0,
     ...over,
   }
 }
@@ -122,7 +135,7 @@ test('投影：没有 settings 服务时 revision 是 undefined（卡片据此�
 test('投影：快照里 `listenPort` 不是数字时用配置活读的那个值（不擅自回 0）', async () => {
   const state = await readConnectionState(inputs({
     snapshot: { revision: 0, values: { relayUrl: 'ws://127.0.0.1:8787/ws/connector', listenPort: '8790' } },
-    configuredListenPort: 8790,
+    configuredListenPort: () => 8790,
   }))
   assert.equal(state.listenPort, 8790)
 })
@@ -167,18 +180,43 @@ test('投影：只有 running、没有 connected 的通道（监听面）不会�
   assert.equal(state.relay.connected, false)
 })
 
-test('装配层确实用的是抽出来的那几处（不是本地又留了一份副本）', () => {
-  const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')
+/**
+ * 装配层的接线：**四处在用、而且实参接对**。
+ *
+ * 只断言"名字出现过"是不够的 —— 下面这些接错全都过 `tsc`、也过其余全部用例，
+ * 而症状是"手机连不上 / 面板读错"：
+ *
+ * ① `startRelay` 与 `startDirect` 对调（缺令牌时被当成直连失败 → 整体抛出 → 插件不挂）；
+ * ② `listenPort` 写成常量 0（面板改端口不再生效，直连永远起不来）；
+ * ③ 键集合事件里不再用 `paths`、或投影去读别的注册表/别的存（重建与面板显示跟真值脱钩）；
+ * ④ 写/清令牌漏排重建（令牌不进 volatile 引用，不会有 `loader/volatile-update`）。
+ *
+ * 所以断言做在**实参**上，并且先**去注释 + 压空白**：普通重排、换行、缩进不会假阴，
+ * 注释里提到同名符号也不会假阳（模式里是 `key: value` 与调用的实参形状）。
+ * 它仍是文本级（证明不了运行时行为），所以 `transport-*` 两组替身用例与真机验收照样要跑。
+ */
+test('装配层确实用的是抽出来的那几处，且实参接对（不是本地又留了一份副本）', () => {
+  const code = codeOf(readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8'))
 
   // 四处抽取物必须都在装配层被**调用**：抽出来不接上，回归网保护的就是死代码。
-  for (const call of [
-    'channelsToRebuild(',
-    'createRebuildQueue(',
-    'createTransportStarter(',
-    'readConnectionState(',
-  ]) {
-    assert.ok(source.includes(call), `index.ts 没有调用 ${call}`)
+  for (const call of ['channelsToRebuild(', 'createRebuildQueue(', 'createTransportStarter(', 'readConnectionState(']) {
+    assert.ok(code.includes(call), `index.ts 没有调用 ${call}`)
   }
   // 配置热改的入口仍是那条事件（接线断了的话，面板保存就不再生效）。
-  assert.ok(source.includes("'loader/volatile-update'"), 'index.ts 不再订阅 loader/volatile-update')
+  assert.ok(code.includes("'loader/volatile-update'"), 'index.ts 不再订阅 loader/volatile-update')
+
+  const pins: Array<[RegExp, string]> = [
+    [/startRelay: startRelayChannel/, '起传输时"中转"那一格没接 startRelayChannel'],
+    [/startDirect: startDirectChannel/, '起传输时"直连"那一格没接 startDirectChannel'],
+    [/listenPort: \(\) => config\.listenPort\(\)/, '直连端口不是"用时读配置"（写成常量后热改不生效）'],
+    [/for \(const channel of channelsToRebuild\(paths\)\) void rebuildQueue\.enqueue\(channel\)/, '配置热改没有把事件里的 paths 交给 channelsToRebuild'],
+    [/channels: transportChannels\?\.channels\(\) \?\? \[\]/, '面板投影没读通道注册表'],
+    [/tokenStatusOf: \(ref\) => relayTokenStatusOf\(ctx\.credentials, ref\)/, '面板的令牌状态没接凭据面'],
+    [/await rebuildQueue\.settle\(\) return rebuildQueue\.failure\(\)/, '保存回执没有等重建落地并带回失败原因'],
+  ]
+  for (const [pattern, why] of pins) assert.match(code, pattern, why)
+
+  // 写令牌与清令牌各要显式排一次中转重建（一共 2 处，少一处就是"换了令牌不重连"）。
+  const explicitRebuilds = code.match(/await rebuildQueue\.enqueue\('relay'\)/g) ?? []
+  assert.equal(explicitRebuilds.length, 2, '写令牌与清令牌各要排一次中转重建（现在不是 2 处）')
 })

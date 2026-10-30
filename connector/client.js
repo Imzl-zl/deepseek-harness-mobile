@@ -588,7 +588,7 @@ window.__ModuleLoader__.load({
      * 「连接」卡：这台电脑怎么连中转。
      *
      * 四行 + 一个保存键，**只显示白名单那四格**（地址 / 公网明文 / 令牌 / 直连端口）。
-     * 电脑侧的 `describe` 会把该条目 12 个 volatile 字段全给出来，全摆上来只是把
+     * 电脑侧的 `describe` 会把该条目 11 个 volatile 字段全给出来，全摆上来只是把
      * "改配置"的爆炸半径变大 —— 理由与判据见 `src/admin/connection-card.ts` 文件头。
      *
      * 纯渲染、无 hook：状态在 `AdminPanel` 里（它同时要驱动通道开关与刷新）。

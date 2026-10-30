@@ -75,10 +75,9 @@ export const Config = z.object({
     .volatile()
     .description('局域网直连监听端口（0 = 关）。手机在同一 WiFi 下会直连它。'),
   listenHost: z.string().default('127.0.0.1').volatile(),
-  // **这里没有 `deviceLimit`**（2026-10-29 删）：它从来没有被任何一行读过，而契约本就写着
-  // 「设备上限：不设上限」（`docs/subsystems/remote-channel.md:811`）。留一个不生效的旋钮
-  // 会进手机端通用表单（`.volatile()` 的字段都在里面）。取舍见
-  // `.agents/notes/implemented/2026-10-29-drop-inert-device-limit.md`。
+  // **这里不设 `deviceLimit`**：契约规定「设备上限：不设上限」（`docs/subsystems/remote-channel.md:811`），
+  // 配对路径上没有"第 N 台拒绝"这个判据；而一个没人读的 `.volatile()` 字段只会进手机端通用表单
+  // （假旋钮）。别再加回来：取舍见 `.agents/notes/implemented/2026-10-29-drop-inert-device-limit.md`。
   pushDigest: z.union([z.const('rich'), z.const('doorbell')]).default('rich').volatile(),
   frameLimitBytes: z.number().step(1).min(1).default(8_388_608).volatile(),
   refetchThresholdBytes: z.number().step(1).min(1).default(1_048_576).volatile(),

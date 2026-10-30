@@ -1311,7 +1311,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
               channels: transportChannels?.channels() ?? [],
               // 令牌状态只回"设没设 + 能不能写"，值永不出凭据面。
               tokenStatusOf: (ref) => relayTokenStatusOf(ctx.credentials, ref),
-              configuredListenPort: config.listenPort(),
+              // 兜底是**访问器**：快照里没有 `listenPort` 时才去读配置（与另外两个来源同一条"用时取"）。
+              configuredListenPort: () => config.listenPort(),
             })
           },
           async writeFields(patch, expected) {

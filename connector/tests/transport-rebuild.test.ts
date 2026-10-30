@@ -10,7 +10,8 @@
  * 1. 哪些键归哪条通道（`relayUrl` 改了不该重启直连监听面，反之亦然）；
  * 2. 手改 yml 连点两次时**两次重建必须串行**（并发 stop/start 会互踩：
  *    第二次 stop 可能落在第一次 start 的半途）；
- * 3. 重建失败要**落成界面上的原因**（`「连接」卡` 的 `relayError`），而不是只进日志。
+ * 3. 重建失败要**落成一句可显示的原因**（保存回执里的 `relayError`，见
+ *    `connection-card.ts` 的 200/400 body），而不是只进日志。
  *
  * 所以这三条抽成纯函数/纯状态机放这里钉住，装配层（`index.ts`）只做接线。
  * 线上那条路是否真的用上了本模块，由 `tests/assembly-wiring.test.ts` 盯
@@ -52,7 +53,9 @@ test('channelsToRebuild：直连那两格只重建直连（不能让中转跟着
 test('channelsToRebuild：没列进来的 volatile 字段不重建任何通道', () => {
   // 这些改完"下次读写时自然生效"，没有"已建立的连接还握着旧值"这回事 ——
   // 顺手重启通道只会白掉一次线（`REBUILD_KEYS` 的注释写了这条判断）。
-  for (const key of ['frameLimitBytes', 'refetchThresholdBytes', 'pushDigest', 'sweepIntervalMs']) {
+  // 清单里的每个名字都必须是 `config.ts` 里**真实存在**的 volatile 字段 ——
+  // 编一个不存在的键会让这条断言空转（它本来就不会触发重建）。
+  for (const key of ['frameLimitBytes', 'refetchThresholdBytes', 'pushDigest', 'windowFrames', 'windowMaxBytes']) {
     assert.deepEqual(channelsToRebuild(paths(key)), [], `${key} 不该触发重建`)
   }
 })

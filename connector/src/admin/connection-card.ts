@@ -7,8 +7,8 @@
  * 而它们都只能靠单测证明，不能靠在浏览器里点一下：
  *
  * 1. **白名单**：卡片只碰 `relayUrl` / `allowInsecurePublic` / `listenPort`
- *    三个字段。`describe()` 会把该条目全部 12 个 volatile 字段摆出来
- *    （实测），把 `windowFrames`、`frameLimitBytes` 之类顺手写回界面没有任何一行会用到，
+ *    三个字段。`describe()` 会把该条目 11 个 volatile 字段全给出来（隔离实例实测），
+ *    剩下的 8 格（`windowFrames`、`frameLimitBytes` 之类）顺手写回界面没有任何一行会用到，
  *    却让"改配置"这件事的爆炸半径变大。
  * 2. **地址校验在写入之前**：schema 不管这件事 —— 实测
  *    `relayUrl: "http://example.com/not-a-relay"` 能被 `settings.update` 成功写进
@@ -34,7 +34,7 @@ import { isNonPublicHost, relayUrlOf } from '../transport/relay-url.js'
 export const CONNECTION_FIELDS = ['relayUrl', 'allowInsecurePublic', 'listenPort'] as const
 export type ConnectionField = (typeof CONNECTION_FIELDS)[number]
 
-/** 端口范围与 schema 同一条（`config.ts:71-78` 的 `.min(0).max(65535)`）。 */
+/** 端口范围与 schema 同一条（`config.ts:69-76` 的 `.min(0)` / `.max(65535)`）。 */
 const PORT_RANGE = { min: 0, max: 65_535 } as const
 
 /** 端口面读到的真值（`index.ts` 的通道注册表 + settings + 凭据）。 */
@@ -173,8 +173,14 @@ export interface ConnectionReadInputs {
   channels: readonly ChannelState[]
   /** 令牌状态：只回「设没设 + 能不能写」，**值永不过线**。 */
   tokenStatusOf(ref: string): Promise<{ configured: boolean; writable: boolean }>
-  /** 快照里没有 `listenPort` 时的兜底（配置活读的值）。 */
-  configuredListenPort: number
+  /**
+   * 快照里没有 `listenPort` 时的兜底（配置活读的值）。
+   *
+   * **是访问器不是值**：与另外两个来源一样"用时取"。写成一个数字，调用点就得在每次
+   * `read()` 之前先求值一遍 —— 那既白读（快照里有 `listenPort` 时用不到），也把
+   * "活读"这件事挪到了调用方的义务里（本文件第 183 行那句说明会变成假的）。
+   */
+  configuredListenPort(): number
 }
 
 /**
@@ -208,7 +214,7 @@ export async function readConnectionState(
     allowInsecurePublic: value['allowInsecurePublic'] === true,
     allowInsecureLocal: value['allowInsecureLocal'] === true,
     listenPort:
-      typeof value['listenPort'] === 'number' ? value['listenPort'] : inputs.configuredListenPort,
+      typeof value['listenPort'] === 'number' ? value['listenPort'] : inputs.configuredListenPort(),
     relayTokenRef: ref,
     token:
       ref === undefined || ref === ''

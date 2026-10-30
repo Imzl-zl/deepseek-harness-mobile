@@ -6,7 +6,7 @@ Status: proposed
 
 手机现在只能记住**一台**电脑。这不是"少一个功能"，而是四处单槽假设串在一起，任何一处单独改都只是把冲突推后：
 
-1. **凭据单槽**：`app/lib/platform/pairing_store.dart:162-176` 是一张平铺的键表（12 个 `dsh.*`），
+1. **凭据单槽**：`app/lib/platform/pairing_store.dart:162-176` 是一张平铺的键表（13 个 `dsh.*` 常量），
    `load()`（`:204-243`）只回一份 `PairedCredentials?`，`save()`（`:298-331`）把整组键重写，
    `clear()`（`:362`）是 `deleteAll()`。所以配第二台电脑 = **覆盖**第一台（不是"多一台"，是"换一台"）。
 2. **设备身份按配对生成**：`app/lib/ui/pairing_page.dart:244` 每次都 `toHex(randomBytes(32))` 当
@@ -99,7 +99,7 @@ Status: proposed
 
 - 收益：一台手机可以记住多台电脑并随时切回；`host.*` 与端点表从"单桶 + 剪枝"变成"分桶 + 保留"，
   两处第一次有了同一个归属维度（`hostId`）；连接器 id 的冲突从"静默踢下线"变成一条可读的拒绝。
-- 代价（凭据层）：`PairingStore` 的 12 个常量键变成"前缀 + 槽"，`save/load/clear` 全部要走
+- 代价（凭据层）：`PairingStore` 的 13 个常量键变成"前缀 + 槽"，`save/load/clear` 全部要走
   "先算 hostId 再读写"；迁移代码要活一段时间（旧键 → 新槽），而 `clear()` 的语义变了 ——
   "撤销配对"与"忘掉这一台"成了两个动作，界面必须分开表达。
 - 代价（UI 状态）：`host.*` 全量键要按 hostId 重排，`pruneSessions` 必须带桶参数 —— 这是本轮

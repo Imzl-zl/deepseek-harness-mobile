@@ -12,8 +12,9 @@
  *    （改面板 → 看日志里有没有重建、另一条有没有被无辜重启）。
  * 2. **重建必须串行**：手改 `cordis.patch.yml` 连点两次就会排两次，而并发
  *    stop/start 会互踩 —— 第二次 stop 可能落在第一次 start 的半途，结果是一条
- *    "显示已启动、实际没连上"的通道。队列本身**不抛**：失败是界面上的一个原因
- *    （「连接」卡的 `relayError`），不是装配层的异常。
+ *    "显示已启动、实际没连上"的通道。队列本身**不抛**：失败是保存回执里的一个原因
+ *    （`「连接」卡` 的 `relayError`，只在 `POST /connection` 的应答里；GET 视图没有错误格），
+ *    不是装配层的异常。
  *
  * 两者都是纯判据/纯状态机，抽出来由 `tests/transport-rebuild.test.ts` 钉住；
  * 装配层只做接线（`tests/assembly-wiring.test.ts` 断言它真的接上了）。
@@ -22,7 +23,7 @@
  *
  * ## 为什么只有这两组键
  *
- * 别的 volatile 字段（`frameLimitBytes`、`refetchThresholdBytes`、四个窗口上界…）改完
+ * 别的 volatile 字段（`frameLimitBytes`、`refetchThresholdBytes`、两个窗口上界…）改完
  * **下次读写时自然生效**，没有"已经建立的连接还握着旧值"这回事 —— 顺手重启通道
  * 的代价是一次无故掉线。所以不进这张表不是遗漏，是判断。
  */
