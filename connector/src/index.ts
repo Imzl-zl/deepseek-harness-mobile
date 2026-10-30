@@ -1131,6 +1131,14 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
               onDeviceEstablished: (devId) => {
                 if (self !== null) servingConnections.set(devId, self)
                 scopeDeps.onDeviceEstablished?.(devId)
+                // **行在握手中被停用/删除**：`peerOf` 是 `hello` 那一刻判的，
+                // 而吊销可能发生在那之后、`established` 之前。这里再判一次，
+                // 否则这台设备会带着一条"已吊销"的连接继续服务（占用位已空，
+                // 下一台被放进来 —— 两台同时在服务）。与 `disconnect` 同一条不变式。
+                const record = devicesTable?.get(devId)
+                if (self !== null && (record === undefined || record.revokedAt !== undefined)) {
+                  self.stop()
+                }
               },
             },
             // **独占准入**（握手处判，`device/busy`）。配对候选自己会跳过它（见 `device-connection.ts`）。
