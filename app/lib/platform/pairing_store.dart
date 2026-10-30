@@ -225,6 +225,15 @@ abstract final class PairingStore {
       return null;
     }
 
+    // **端点归属在读取时补齐**：这份凭据就是这一台电脑的（`pcSignPub` 是它的身份），
+    // 所以表里没有 `hostId` 的条目（升级前落的 / 配对种子）都归它。
+    // 端点身份是 `hostId|url`（`core/endpoint.dart` 的 `endpointIdOf`）。
+    final endpoints = _decodeEndpoints(
+      values[_Keys.endpoints],
+      relayUrl,
+      pcSignPub,
+    );
+
     return PairedCredentials(
       relayUrl: relayUrl,
       pcSignPubHex: pcSignPub,
@@ -235,8 +244,15 @@ abstract final class PairingStore {
       devDhPubHex: devDhPub,
       deviceToken: deviceToken,
       refreshToken: refreshToken,
-      endpoints: _decodeEndpoints(values[_Keys.endpoints], relayUrl),
-      endpointMeta: _decodeEndpointMeta(values[_Keys.endpointMeta]),
+      endpoints: endpoints,
+      // **id 同批迁移**：旧落盘里 `remembered` / `hidden` / `succeeded` 是裸 url，
+      // 这里按同一台电脑补前缀；不补的话升级后"成功过的永不删"与"记住的那条"
+      // 会全部失配（症状是死地址重新参与每轮拨号）。
+      endpointMeta: _decodeEndpointMeta(
+        values[_Keys.endpointMeta],
+        endpoints: endpoints,
+        hostId: pcSignPub,
+      ),
       pcId: values[_Keys.pcId] ?? '',
       devId: values[_Keys.devId] ?? '',
     );
@@ -244,23 +260,41 @@ abstract final class PairingStore {
 
   /// 解端点表的附属状态。缺或坏都退化成"空的记忆"（**不猜**）：
   /// 丢的只是"上次连哪条"这类优化信息，拨号照样能work。
-  static EndpointMeta _decodeEndpointMeta(String? raw) {
+  ///
+  /// **旧 id 是裸 url**（升级前的形状），新 id 是 `hostId|url`。判别只看形状：
+  /// url 一定带 `://`，而 hostId 是十六进制 —— 两者不会撞。
+  /// 迁移是**读时**做的（不额外写一次盘），下一次 [saveEndpointMeta] 落成新 id。
+  //
+  // Note: 为什么读时补前缀而不是写离线迁移 —— 见
+  // `.agents/notes/implemented/2026-10-30-endpoint-and-ui-state-host-scoping.md`。
+  static EndpointMeta _decodeEndpointMeta(
+    String? raw, {
+    required List<Endpoint> endpoints,
+    required String hostId,
+  }) {
     if (raw == null || raw.isEmpty) return const EndpointMeta();
+    String idOf(String value) =>
+        value.contains('://') ? endpointIdOf(value, hostId: hostId) : value;
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return const EndpointMeta();
       final remembered = decoded['remembered'];
       final hidden = decoded['hidden'];
       final succeeded = decoded['succeeded'];
+      final rememberedId = remembered is String && remembered.isNotEmpty
+          ? idOf(remembered)
+          : null;
       return EndpointMeta(
-        rememberedEndpointUrl: remembered is String && remembered.isNotEmpty
-            ? remembered
+        // 记住的那条若已不在表里，留着只会让 `dialOrder` 白找一次 —— 直接丢。
+        rememberedEndpointId:
+            rememberedId != null && endpoints.any((e) => e.id == rememberedId)
+            ? rememberedId
             : null,
         hiddenEndpointIds: hidden is List
-            ? hidden.whereType<String>().toSet()
+            ? {for (final id in hidden.whereType<String>()) idOf(id)}
             : const <String>{},
         succeededEndpointIds: succeeded is List
-            ? succeeded.whereType<String>().toSet()
+            ? {for (final id in succeeded.whereType<String>()) idOf(id)}
             : const <String>{},
       );
     } on FormatException {
@@ -272,25 +306,41 @@ abstract final class PairingStore {
   ///
   /// **解不出的条目直接丢**：一个拨不出去的端点会让整条链在很后面才失败，
   /// 而那时没人会想到是存储里躺着一条废条目。
-  static List<Endpoint> _decodeEndpoints(String? raw, String relayUrl) {
+  static List<Endpoint> _decodeEndpoints(
+    String? raw,
+    String relayUrl,
+    String hostId,
+  ) {
+    Endpoint stamp(Endpoint endpoint) =>
+        endpoint.hostId.isEmpty && hostId.isNotEmpty
+        ? endpoint.withHost(hostId)
+        : endpoint;
     if (raw == null || raw.isEmpty) {
-      return [Endpoint(kind: EndpointKind.relay, url: relayUrl, label: '中转')];
+      return [
+        stamp(Endpoint(kind: EndpointKind.relay, url: relayUrl, label: '中转')),
+      ];
     }
     final List<dynamic> decoded;
     try {
       decoded = jsonDecode(raw) as List<dynamic>;
     } on FormatException {
-      return [Endpoint(kind: EndpointKind.relay, url: relayUrl, label: '中转')];
+      return [
+        stamp(Endpoint(kind: EndpointKind.relay, url: relayUrl, label: '中转')),
+      ];
     }
     final out = <Endpoint>[];
     for (final entry in decoded) {
       final endpoint = endpointFromJson(entry);
-      if (endpoint != null) out.add(endpoint);
+      if (endpoint != null) out.add(stamp(endpoint));
     }
     // 整表都解不出来时退回迁移形状：空表会让 `EndpointTransport` 抛
     // "没有可拨的端点"，而用户看到的是"连不上"而不是"存储坏了"。
     return out.isEmpty
-        ? [Endpoint(kind: EndpointKind.relay, url: relayUrl, label: '中转')]
+        ? [
+            stamp(
+              Endpoint(kind: EndpointKind.relay, url: relayUrl, label: '中转'),
+            ),
+          ]
         : out;
   }
 
@@ -350,8 +400,10 @@ abstract final class PairingStore {
     await _storage.write(
       key: _Keys.endpointMeta,
       value: jsonEncode(<String, Object?>{
-        if (meta.rememberedEndpointUrl != null)
-          'remembered': meta.rememberedEndpointUrl,
+        // **是 id（`hostId|url`）不是裸 url**：落盘形状沿用旧键名，读取端按
+        // 是否带 `://` 区分旧形状（见 `_decodeEndpointMeta`）。
+        if (meta.rememberedEndpointId != null)
+          'remembered': meta.rememberedEndpointId,
         'hidden': meta.hiddenEndpointIds.toList(),
         'succeeded': meta.succeededEndpointIds.toList(),
       }),

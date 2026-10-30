@@ -142,6 +142,20 @@ export interface HandlerDeps {
    * 拿不到就**不报这个字段** —— 手机那边说"未读到"。
    */
   dshVersion?: () => string | undefined
+  /**
+   * 电脑名（`repo.info.hostName`）：`os.hostname()` 的原值。
+   *
+   * **展示值，不是身份**：手机侧只拿它给人看（可被手机改名覆盖），
+   * 从不参与任何判据，也不进握手 transcript —— 名字可改、可伪造、会重名。
+   * 身份是 `pcSignPubHex`（配对时钉死），两者别混。
+   *
+   * 是取值函数而不是字符串：与 [dshVersion] 同一条先例（装配层每次现取），
+   * 取不到 / 为空就**不报这个字段**（手机那边不显示名字，而不是一个空名字）。
+   *
+   * Note: 为什么名字不进握手 transcript —— 见
+   * `.agents/notes/implemented/2026-10-30-endpoint-and-ui-state-host-scoping.md`。
+   */
+  hostName?: () => string
   /** 已配对设备（含已吊销的，便于手机显示"这台已被移除"）。 */
   devices: () => readonly DeviceRow[]
   /**
@@ -1642,6 +1656,11 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
     ...(deps.dshVersion === undefined || deps.dshVersion() === undefined
       ? {}
       : { dshVersion: deps.dshVersion() }),
+    // **电脑名（纯展示值）**：取不到或为空就不报 —— 手机那边不显示名字，
+    // 而不是显示一个空串。见 `HandlerDeps.hostName`。
+    ...(deps.hostName === undefined || deps.hostName() === ''
+      ? {}
+      : { hostName: deps.hostName() }),
     methods: Object.keys(handlers).sort(),
     // **斜杠命令白名单原样过线**（候选菜单用）。仍然是**一处**真值：
     // 手机上那张菜单只画这里给的名字，加/减一个名字不需要改手机。

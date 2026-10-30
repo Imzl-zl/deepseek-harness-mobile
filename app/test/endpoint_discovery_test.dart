@@ -384,7 +384,7 @@ void main() {
         contains(home.url),
         reason: '成功过的地址只是"此刻不在那个网络"，删了回老家就得再扫码',
       );
-      expect(app.rememberedEndpointUrl, home.url, reason: '记住上次连上的那条');
+      expect(app.rememberedEndpointId, home.id, reason: '记住上次连上的那条');
       app.dispose();
     });
 

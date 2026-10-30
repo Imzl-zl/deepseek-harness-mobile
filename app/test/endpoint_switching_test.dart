@@ -163,11 +163,21 @@ void main() {
       }
     });
 
-    test('id 就是 url（同一个地址只有一个端点）', () {
+    test('id = 归属 + url（没有归属时就是 url）', () {
       expect(_direct('ws://a:1').id, 'ws://a:1');
       expect(_relay('wss://b').id, 'wss://b');
       // 同 url 不同 kind 仍算同一个端点：url 是身份，kind 只是拨法。
       expect(_direct('ws://a:1'), _relay('ws://a:1'));
+    });
+
+    test('同一个 url 属于两台电脑 ⇒ 两条不同的记录（多机不串）', () {
+      final onA = _direct('ws://192.168.1.5:8788').withHost('pc-A');
+      final onB = _direct('ws://192.168.1.5:8788').withHost('pc-B');
+      expect(onA.id, isNot(onB.id), reason: 'id 带归属，两台电脑不共用记录');
+      expect(onA, isNot(onB), reason: '相等性同样按 id');
+      expect(onA.id, endpointIdOf(onA.url, hostId: 'pc-A'));
+      // 同一台电脑 + 同一地址才是同一条。
+      expect(onA, _direct('ws://192.168.1.5:8788').withHost('pc-A'));
     });
   });
 
@@ -253,7 +263,7 @@ void main() {
         dialOrder(
           table,
           myIpv4: '192.168.1.29',
-          rememberedEndpointUrl: office.url,
+          rememberedEndpointId: office.id,
         ).map((e) => e.url).toList(),
         [office.url, home.url, relay.url],
         reason: '记住的排第一；它失败之后同网段那条紧跟',
@@ -263,7 +273,7 @@ void main() {
       expect(
         dialOrder(
           table,
-          rememberedEndpointUrl: office.url,
+          rememberedEndpointId: office.id,
         ).map((e) => e.url).toList(),
         [office.url, relay.url, home.url],
       );
@@ -316,13 +326,9 @@ void main() {
       expect(
         dialOrder(
           table,
-          rememberedEndpointUrl: dead.url,
+          rememberedEndpointId: dead.id,
           attempts: {
-            dead.url: EndpointAttempt(
-              ok: false,
-              reason: '超时',
-              atMs: now - 5000,
-            ),
+            dead.id: EndpointAttempt(ok: false, reason: '超时', atMs: now - 5000),
           },
           nowMs: now,
         ).map((e) => e.url).toList(),
@@ -344,8 +350,8 @@ void main() {
       expect(
         dialOrder(
           [dead, relay],
-          rememberedEndpointUrl: dead.url,
-          attempts: {dead.url: attempt},
+          rememberedEndpointId: dead.id,
+          attempts: {dead.id: attempt},
           nowMs: now,
         ).map((e) => e.url).toList(),
         [dead.url, relay.url],
@@ -394,7 +400,9 @@ void main() {
           table,
           currentHostId: 'pc-mine',
           attempts: {
-            mineDead.url: EndpointAttempt(
+            // **按 id 记账**（`hostId|url`）：这台端点带归属，
+            // 用裸 url 会查不到冷却记录（那正是"死地址每轮都占一次超时"的旧形态）。
+            mineDead.id: EndpointAttempt(
               ok: false,
               reason: '超时',
               atMs: now - 1000,

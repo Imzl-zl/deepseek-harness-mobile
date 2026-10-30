@@ -719,7 +719,7 @@ void main() {
 
   // ---- B3：能力面（repo.info）与端点自报（endpoint.describe）----
 
-  test('repo.info：三个能力位等于金样里的 caps，methods 只数条数', () {
+  test('repo.info：三个能力位等于金样里的 caps，版本/电脑名照抄，methods 只数条数', () {
     final sample = _sampleOf(golden, 'repo.info');
     final caps = (sample['caps']! as Map).cast<String, Object?>();
     final reading = readRepoInfo(sample);
@@ -731,6 +731,18 @@ void main() {
     // 金样采样时把 `methods` 归一掉了（它会随任何方法增减而变），所以这里是 0 条。
     expect(info.methodCount, 0);
     expect(info.dshVersion, sample['dshVersion']);
+    expect(info.hostName, sample['hostName'], reason: '电脑名是展示值，连接器报什么就存什么');
+    expect(WireDiagnostics.badCount, 0);
+  });
+
+  test('repo.info 不报 hostName（老连接器）⇒ null，不是空串', () {
+    final reading = readRepoInfo({
+      'protocol': 1,
+      'caps': <String, Object?>{},
+      'hostName': '',
+    });
+    expect(reading, isA<WireOk<RepoInfoWire>>());
+    expect((reading as WireOk<RepoInfoWire>).value.hostName, isNull);
     expect(WireDiagnostics.badCount, 0);
   });
 

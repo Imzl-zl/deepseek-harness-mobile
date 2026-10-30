@@ -83,7 +83,7 @@ class EndpointTransport implements ChannelTransport {
   /// 用户点名的那个端点（`null` = 走自动队列）。
   ///
   /// **只影响下一次 `connect()`**：点名是"这一次就用它"，不是"以后都用它" ——
-  /// 后者是顺序（`preferEndpoint`）与顶点（`rememberedEndpointUrl`）的事。
+  /// 后者是顺序（`preferEndpoint`）与顶点（`rememberedEndpointId`）的事。
   /// 拨通或失败后由调用方清掉（失败即回到自动，见 `AppModel.useEndpointNow`）。
   Endpoint? get requestedEndpoint => _requested;
   Endpoint? _requested;

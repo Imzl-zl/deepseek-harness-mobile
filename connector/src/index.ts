@@ -45,6 +45,8 @@
  * | `ctx.get(name)` 探测服务（裸读会抛） | `vendor/cordis/src/reflect.ts:233-243`（裸读抛在 `:144`、`:159-161`） |
  * | `export const inject` 的语义（缺服务则永不激活） | `vendor/cordis/src/registry.ts:105-106`（`ctx.inject` 在 `:169-176`） |
  */
+import { hostname } from 'node:os'
+
 import type { Context } from '@deepseek-ai/cordis'
 
 import { type ConnectorConfig, Config } from './config.js'
@@ -744,6 +746,11 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           // 宿主运行时的 DSH 版本（不是构建期常量）：取不到就**不报这个字段**，
           // 手机那边显示"未读到"—— 见 `dsh/host-version.ts` 的三条取法。
           dshVersion: () => hostDshVersion(),
+          // **电脑名（展示值）**：`os.hostname()` 自报，只用来给人看 —— 可改、
+          // 可伪造、会重名，从不参与任何判据，也**不进握手 transcript**
+          //（否则"改个名字"就等于重新配对）。见
+          // `.agents/notes/implemented/2026-10-30-endpoint-and-ui-state-host-scoping.md`。
+          hostName: () => hostname(),
           sessions,
           // 端点自报：**总是挂**。
           //

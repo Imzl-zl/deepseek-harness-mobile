@@ -110,6 +110,7 @@ class _Client extends FakeSyncClient {
               'protocol': 1,
               'caps': <String, Object?>{},
               'dshVersion': '0.2.1-rc.2',
+              'hostName': 'build-machine',
             }
             as T;
       case 'settings.update':
@@ -136,13 +137,15 @@ class _Client extends FakeSyncClient {
 }
 
 void main() {
-  test('refreshRepoInfo：读电脑侧 DSH 版本；拿不到就是 null（不编）', () async {
+  test('refreshRepoInfo：读电脑侧 DSH 版本与电脑名；没读到就是 null（不编）', () async {
     final client = _Client();
     final app = AppModel(client: client);
     addTearDown(app.dispose);
     expect(app.dshVersion, isNull);
+    expect(app.hostName, isNull, reason: '还没读到，不编一个名字');
     await app.refreshRepoInfo();
     expect(app.dshVersion, '0.2.1-rc.2');
+    expect(app.hostName, 'build-machine');
     final call = client.calls.firstWhere((c) => c.method == 'repo.info');
     expect(call.requestId, isNull, reason: '读方法不带幂等键');
   });

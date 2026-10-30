@@ -94,7 +94,7 @@ class AppModel extends ChangeNotifier {
     required this.client,
     PreferenceStore? prefs,
     List<Endpoint> endpoints = const [],
-    String? rememberedEndpointUrl,
+    String? rememberedEndpointId,
     Set<String> hiddenEndpointIds = const {},
     Set<String> succeededEndpointIds = const {},
     Future<String?> Function()? myLanIpv4Of,
@@ -120,7 +120,7 @@ class AppModel extends ChangeNotifier {
   }) : _prefs = prefs,
        _notify = notify,
        _initialEndpoints = List<Endpoint>.of(endpoints),
-       _initialRememberedEndpointUrl = rememberedEndpointUrl,
+       _initialRememberedEndpointId = rememberedEndpointId,
        _initialHiddenEndpointIds = Set<String>.of(hiddenEndpointIds),
        _initialSucceededEndpointIds = Set<String>.of(succeededEndpointIds),
        _myLanIpv4Of = myLanIpv4Of,
@@ -209,7 +209,7 @@ class AppModel extends ChangeNotifier {
   /// 搬出去的理由与判据集中在 `data/endpoint_book.dart` 的文件头；
   /// 行为钉子见 `app/test/endpoint_book_test.dart`。
   final List<Endpoint> _initialEndpoints;
-  final String? _initialRememberedEndpointUrl;
+  final String? _initialRememberedEndpointId;
   final Set<String> _initialHiddenEndpointIds;
   final Set<String> _initialSucceededEndpointIds;
 
@@ -220,7 +220,7 @@ class AppModel extends ChangeNotifier {
 
   late final EndpointBook _endpointsBook = EndpointBook(
     endpoints: _initialEndpoints,
-    rememberedEndpointUrl: _initialRememberedEndpointUrl,
+    rememberedEndpointId: _initialRememberedEndpointId,
     hiddenEndpointIds: _initialHiddenEndpointIds,
     succeededEndpointIds: _initialSucceededEndpointIds,
     myLanIpv4Of: _myLanIpv4Of,
@@ -272,8 +272,8 @@ class AppModel extends ChangeNotifier {
   /// 上限保险丝的值。用户自己的删除总是优先于它 —— 它只防"表无限变长"。
   static const int maxEndpoints = EndpointBook.maxEndpoints;
 
-  /// 上次拨通的端点地址（`dialOrder` 的第一优先）。
-  String? get rememberedEndpointUrl => _endpointsBook.rememberedEndpointUrl;
+  /// 上次拨通的那个端点 id（`dialOrder` 的第一优先）。**带电脑归属**。
+  String? get rememberedEndpointId => _endpointsBook.rememberedEndpointId;
 
   /// 用户藏掉的端点 id（连接器再报也不加回来）。
   Set<String> get hiddenEndpointIds => _endpointsBook.hiddenEndpointIds;
@@ -1303,7 +1303,11 @@ class AppModel extends ChangeNotifier {
   void saveQuestionDraft(String sid, String? json) =>
       _uiState?.setQuestionDraft(sid, json);
 
-  /// 换电脑（重新配对）：清掉属于某台电脑的那一段（`host.*`），`device.*` 留着。
+  /// **忘掉这一台**：清掉当前电脑那一段界面记忆（`host.<hostId>.*`），
+  /// `device.*` 与别的电脑的桶都不动。
+  ///
+  /// 它**不是**"配对成功"的副作用：配对成功时不清（分桶已经把两台电脑分开）；
+  /// 由"忘掉这台"这类用户动作显式调用（见 `data/ui_state.dart` 的 `clearHostScope`）。
   Future<void> clearHostUiState() async {
     _views.clear();
     await _uiState?.clearHostScope();
@@ -1391,7 +1395,9 @@ class AppModel extends ChangeNotifier {
   Future<void> loadUiState() async {
     final prefs = _prefs;
     if (prefs == null) return;
-    final store = UiStateStore(prefs: prefs);
+    // **`host.*` 按电脑分桶**（`data/ui_state.dart`）：读的是当前这台电脑那一段，
+    // 而不是一份全局的"上次看的会话/草稿"。没装配身份时退回旧的平铺键（单测常见）。
+    final store = UiStateStore(prefs: prefs, hostId: _hostIdOf?.call() ?? '');
     await store.open();
     if (_disposed) return;
     _uiState = store;
@@ -1672,6 +1678,15 @@ class AppModel extends ChangeNotifier {
   String? get dshVersion => _dshVersion;
   String? _dshVersion;
 
+  /// 电脑自报的名字（`repo.info.hostName`，`os.hostname()` 的原值）。
+  ///
+  /// **纯展示值**：可改、可伪造、会重名，从不参与任何判据
+  /// （`proposed/2026-10-29-one-phone-many-computers.md` 决策 2）。
+  /// 手机侧改名（`host.<hostId>.name`）在切换那一步落地；这里只如实保存电脑自报的。
+  /// `null` = 没读到 / 老连接器不报。
+  String? get hostName => _hostName;
+  String? _hostName;
+
   /// 斜杠命令白名单（`repo.info.commands`，**电脑侧原样过线**）。
   ///
   /// 空表 = **不知道**（老连接器不报这个键）⇒ `/` 不出候选菜单。
@@ -1700,13 +1715,15 @@ class AppModel extends ChangeNotifier {
   /// 那时界面说"未读到"，而不是显示连接器自己的 `package.json` 版本冒充。
   Future<void> refreshRepoInfo() async {
     try {
-      // 形状（`{protocol, caps, aliasVersion, methods, dshVersion?, commands?}`）在
-      // `wire/rpc/repo.dart`：手机只消费四个键（三个能力位 + commands + dshVersion），
+      // 形状（`{protocol, caps, aliasVersion, methods, dshVersion?, hostName?, commands?}`）在
+      // `wire/rpc/repo.dart`：手机只消费四个键（三个能力位 + commands + dshVersion）
+      // 外加 `hostName`（电脑自报的名字，只供展示），
       // `protocol` / `aliasVersion` / `methods` 不声明（前者在帧头 `v` 里校验）。
       final info = await wire.loadRepoInfo(client);
       if (info == null) {
         // 应答读不出来：能力位一律 false（界面退回"没有那个面"），并如实记下。
         _dshVersion = null;
+        _hostName = null;
         _slashCommands = const <SlashCommand>[];
         _mentionsAvailable = false;
         _filesAvailable = false;
@@ -1715,6 +1732,7 @@ class AppModel extends ChangeNotifier {
         return;
       }
       _dshVersion = info.dshVersion;
+      _hostName = info.hostName;
       _slashCommands = info.slashCommands;
       _mentionsAvailable = info.mentionsAvailable;
       _filesAvailable = info.filesAvailable;
@@ -1726,6 +1744,7 @@ class AppModel extends ChangeNotifier {
       if (!_disposed) notifyListeners();
     } catch (error) {
       _dshVersion = null;
+      _hostName = null;
       _recordError('读取电脑侧版本失败', error);
     }
   }

@@ -169,8 +169,8 @@ void main() {
 
     app.reportActiveEndpoint(_ep('ws://a:1'));
 
-    expect(app.rememberedEndpointUrl, 'ws://a:1');
-    expect(saved?.rememberedEndpointUrl, 'ws://a:1');
+    expect(app.rememberedEndpointId, _ep('ws://a:1').id);
+    expect(saved?.rememberedEndpointId, _ep('ws://a:1').id);
     expect(saved?.succeededEndpointIds, contains(_ep('ws://a:1').id));
   });
 
@@ -184,7 +184,7 @@ void main() {
 
     await app.removeEndpoint(_ep('ws://a:1'));
     expect(app.hiddenEndpointIds, contains(_ep('ws://a:1').id));
-    expect(app.rememberedEndpointUrl, isNull);
+    expect(app.rememberedEndpointId, isNull);
     expect(app.endpoints.map((e) => e.url), ['ws://mine:1']);
 
     await app.removeEndpoint(_ep('ws://mine:1', manual: true));
@@ -304,7 +304,8 @@ void main() {
     ]);
     expect(app.endpoints.map((e) => e.url), ['ws://mine:7', 'ws://pc-a:1']);
     expect(app.endpoints.last.hostId, 'pc-A', reason: '合并时盖上当前电脑身份');
-    app.reportActiveEndpoint(_ep('ws://pc-a:1', kind: EndpointKind.relay));
+    // 报的就是表里那条（带归属）—— 传输层 `onActivated` 传的也是表里的对象。
+    app.reportActiveEndpoint(app.endpoints.last);
 
     // 换成第二台电脑：它只报自己的地址。
     host = 'pc-B';
@@ -333,8 +334,8 @@ void main() {
     await app.mergeDiscoveredEndpoints([
       _ep('ws://pc-a:1', kind: EndpointKind.relay),
     ]);
-    app.reportActiveEndpoint(_ep('ws://pc-a:1', kind: EndpointKind.relay));
-    expect(app.rememberedEndpointUrl, 'ws://pc-a:1');
+    app.reportActiveEndpoint(app.endpoints.last);
+    expect(app.rememberedEndpointId, app.endpoints.last.id);
     final before = metaSaves;
 
     host = 'pc-B';
@@ -342,7 +343,37 @@ void main() {
       _ep('ws://pc-b:2', kind: EndpointKind.relay),
     ]);
 
-    expect(app.rememberedEndpointUrl, isNull, reason: '记住的地址已不在表里');
+    expect(app.rememberedEndpointId, isNull, reason: '记住的条目已不在表里');
     expect(metaSaves, before + 1, reason: '记忆变了要落盘');
+  });
+
+  test('同一 URL 属于两台电脑：成功集与"记住的那条"都不继承', () async {
+    var host = 'pc-A';
+    const url = 'ws://192.168.1.5:8790';
+    final app = AppModel(client: _IdleClient(), hostIdOf: () => host);
+    addTearDown(app.dispose);
+
+    await app.mergeDiscoveredEndpoints([_ep(url)]);
+    final onA = app.endpoints.single;
+    expect(onA.id, endpointIdOf(url, hostId: 'pc-A'));
+    app.reportActiveEndpoint(onA); // A 成功过一次
+    expect(app.rememberedEndpointId, onA.id);
+
+    // 同一个地址，另一台电脑：它们是两条记录。
+    host = 'pc-B';
+    await app.mergeDiscoveredEndpoints([_ep(url)]);
+    final onB = app.endpoints.single;
+    expect(onB.hostId, 'pc-B');
+    expect(onB.id, isNot(onA.id), reason: '身份带归属，不共用一条记录');
+    expect(app.rememberedEndpointId, isNull, reason: 'B 不继承 A 的"记住的那条"');
+
+    // B 这条没成功过：给一次失败，再让连接器"不再报它" ⇒ 必须被剪掉。
+    // 若"成功过"仍按 url 记账（旧形状），B 会继承 A 的成功而永远留着。
+    app.reportEndpointAttempt(
+      onB,
+      const EndpointAttempt(ok: false, reason: '超时'),
+    );
+    await app.mergeDiscoveredEndpoints(const []);
+    expect(app.endpoints, isEmpty);
   });
 }

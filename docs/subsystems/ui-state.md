@@ -26,13 +26,18 @@
 | `device.transcript_view` | `compact` / `standard` / `detailed` / `fully-open` |
 | `device.performance_view` | `compact` / `detailed` |
 | `device.collapse_timing` | `completion` / `next-input` |
-| `host.last_session` | sid |
-| `host.drawer_expansion` | `{"<workspaceId>": bool}` |
-| `host.session_view.<sid>` | 页签**注册项 id**（`chat` / `trajectory`），不是下标 |
-| `host.session_draft.<sid>` | `{"text": "...", "references": []}`（照桌面 `DraftSnapshot`） |
-| `host.question_draft.<sid>` | `{"item": "<itemId>", "index": n, "questions": {"<qid>": {"selected": [], "custom": "", "skipped": false}}}` |
+| `host.<hostId>.last_session` | sid |
+| `host.<hostId>.drawer_expansion` | `{"<workspaceId>": bool}` |
+| `host.<hostId>.session_view.<sid>` | 页签**注册项 id**（`chat` / `trajectory`），不是下标 |
+| `host.<hostId>.session_draft.<sid>` | `{"text": "...", "references": []}`（照桌面 `DraftSnapshot`） |
+| `host.<hostId>.question_draft.<sid>` | `{"item": "<itemId>", "index": n, "questions": {"<qid>": {"selected": [], "custom": "", "skipped": false}}}` |
 
 一个键如果离开某台电脑就没有意义（会话 id / 工作区 id），它必须是 `host.`。
+
+`<hostId>` 是那台电脑的 Ed25519 公钥（`pcSignPubHex`，配对时钉死）。**一台电脑一个桶**：
+切到另一台只换桶，不删任何桶 —— 否则"切走再切回"会看不到上次的页签与草稿。
+没有电脑身份时（未配对）键退回 `host.<field>` 的平铺形状（旧形状），
+`UiStateStore.open()` 在拿到身份后把平铺键一次性搬进 `host.<hostId>.` 并删旧键。
 
 ## 3. 存储、迁移与清理
 
@@ -43,9 +48,10 @@
   真正的改写在 `storeDataMigrations[1]`（`app/lib/data/store.dart`）：
   旧键改名 → 删旧键，幂等；`schema.data_version` 记账，半途崩可自愈。
   执行点是 `platform/sqflite_item_store.dart` 的 `open()`（DDL 之后）。
-- 清理：`UiStateStore.clearHostScope()`（换电脑删 `host.*`）由
-  `main.dart` 的 `_onPaired` 调；`pruneSessions(liveSids)` / `pruneWorkspaces(liveIds)`
-  由 `refreshSessions` / `refreshWorkspaces` 调。`device.*` 不参与任何清理。
+- 清理：`UiStateStore.clearHostScope()` 只删**当前桶**（"忘掉这一台"），
+  它是用户动作，不是配对成功的副作用；`pruneSessions(liveSids)` 只剪**当前桶**
+  （`liveSids` 来自当前那台电脑的清单）；`pruneWorkspaces(liveIds)` 由
+  `refreshWorkspaces` 调。`device.*` 与别的电脑的桶不参与任何清理。
 - 写：非高频值走串行链立即写；**草稿防抖 300 ms**，`AppLifecycleState.paused`、
   切会话、发送成功、`dispose` 时 flush。代价：进程在窗口内被杀最多丢这段输入。
 

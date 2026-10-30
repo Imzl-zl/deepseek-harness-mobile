@@ -188,6 +188,125 @@ void main() {
     });
   });
 
+  group('按电脑分桶（host.<hostId>.*）', () {
+    test('A 的 host.* 在 B 上看不到；切回 A 还在（不删）', () async {
+      final onA = UiStateStore(prefs: prefs, hostId: 'pc-A');
+      await onA.open();
+      await onA.setLastSession('sid-a');
+      await onA.setWorkspaceExpanded('w1', false);
+      await onA.setView('sid-a', 'trajectory');
+      await onA.setSessionDraft('sid-a', '写到一半');
+
+      expect(prefs.values['host.pc-A.last_session'], 'sid-a');
+      expect(
+        prefs.values['host.pc-A.session_draft.sid-a'],
+        contains('写到一半'),
+        reason: '键的形状是 host.<hostId>.<field>',
+      );
+
+      final onB = UiStateStore(prefs: prefs, hostId: 'pc-B');
+      await onB.open();
+      expect(onB.lastSession, isNull, reason: 'B 不该看到 A 的落点');
+      expect(onB.drawerExpandedOf('w1'), isNull);
+      expect(await onB.viewOf('sid-a'), isNull);
+      expect(await onB.sessionDraftOf('sid-a'), isNull);
+
+      final backToA = UiStateStore(prefs: prefs, hostId: 'pc-A');
+      await backToA.open();
+      expect(backToA.lastSession, 'sid-a');
+      expect(backToA.drawerExpandedOf('w1'), isFalse);
+      expect(await backToA.viewOf('sid-a'), 'trajectory');
+      expect(await backToA.sessionDraftOf('sid-a'), '写到一半');
+    });
+
+    test('pruneSessions 只剪当前桶：B 的清单不清掉 A 的页签/草稿', () async {
+      final onA = UiStateStore(prefs: prefs, hostId: 'pc-A');
+      await onA.open();
+      await onA.setView('sid-1', 'trajectory');
+      await onA.setSessionDraft('sid-1', 'A 的草稿');
+      await onA.setQuestionDraft('sid-1', '{"item":"t:1"}');
+
+      final onB = UiStateStore(prefs: prefs, hostId: 'pc-B');
+      await onB.open();
+      await onB.setView('sid-1', 'chat');
+      // B 的清单里没有 sid-1（两台电脑的 sid 各自独立）。
+      await onB.pruneSessions(<String>{'sid-b-other'});
+
+      expect(prefs.values['host.pc-B.session_view.sid-1'], isNull);
+      expect(
+        prefs.values['host.pc-A.session_view.sid-1'],
+        'trajectory',
+        reason: '拿 B 的清单剪 A 的桶 = 把"切走"变成"删掉"',
+      );
+      expect(prefs.values['host.pc-A.session_draft.sid-1'], contains('A 的草稿'));
+      expect(prefs.values['host.pc-A.question_draft.sid-1'], '{"item":"t:1"}');
+
+      final backToA = UiStateStore(prefs: prefs, hostId: 'pc-A');
+      await backToA.open();
+      expect(await backToA.viewOf('sid-1'), 'trajectory');
+      expect(await backToA.sessionDraftOf('sid-1'), 'A 的草稿');
+    });
+
+    test('旧的平铺键一次性迁进当前桶；第二次 open 不写第二遍', () async {
+      prefs.values[UiKey.lastSession] = 'sid-1';
+      prefs.values['${UiKey.sessionViewPrefix}sid-1'] = 'trajectory';
+      prefs.values['${UiKey.sessionDraftPrefix}sid-1'] =
+          '{"text":"半截","references":[]}';
+      prefs.values[UiKey.questionDraft('sid-1')] = '{"item":"t:1"}';
+      prefs.values[UiKey.drawerExpansion] = '{"w1":false}';
+
+      final migrated = UiStateStore(prefs: prefs, hostId: 'pc-A');
+      await migrated.open();
+
+      expect(migrated.lastSession, 'sid-1');
+      expect(migrated.drawerExpandedOf('w1'), isFalse);
+      expect(await migrated.viewOf('sid-1'), 'trajectory');
+      expect(await migrated.sessionDraftOf('sid-1'), '半截');
+      expect(await migrated.questionDraftOf('sid-1'), '{"item":"t:1"}');
+      expect(prefs.values['host.pc-A.last_session'], 'sid-1');
+      expect(
+        prefs.values.containsKey(UiKey.lastSession),
+        isFalse,
+        reason: '迁完要删旧键，否则下次还会再搬一遍',
+      );
+
+      final writesAfterMigration = prefs.writes;
+      final again = UiStateStore(prefs: prefs, hostId: 'pc-A');
+      await again.open();
+      expect(again.lastSession, 'sid-1');
+      expect(
+        prefs.writes,
+        writesAfterMigration,
+        reason: '迁移幂等：判据是写次数，不是"看起来一样"',
+      );
+    });
+
+    test('clearHostScope 只删当前桶，别的电脑的桶不动', () async {
+      final onA = UiStateStore(prefs: prefs, hostId: 'pc-A');
+      await onA.open();
+      await onA.setLastSession('sid-a');
+      await onA.setView('sid-a', 'trajectory');
+
+      final onB = UiStateStore(prefs: prefs, hostId: 'pc-B');
+      await onB.open();
+      await onB.setLastSession('sid-b');
+
+      await onA.clearHostScope();
+
+      expect(onA.lastSession, isNull);
+      expect(await onA.viewOf('sid-a'), isNull);
+      expect(
+        prefs.values.keys.where((k) => k.startsWith('host.pc-A.')),
+        isEmpty,
+      );
+      expect(
+        prefs.values['host.pc-B.last_session'],
+        'sid-b',
+        reason: '忘掉这一台不等于撤销所有配对',
+      );
+    });
+  });
+
   group('草稿：按会话、旁路写、防抖', () {
     test('写进去的是 JSON（形状照 DraftSnapshot），读回来是正文', () async {
       await ui.setSessionDraft('sid-1', '你好');

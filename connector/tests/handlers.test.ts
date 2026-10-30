@@ -118,6 +118,21 @@ test('repo.info：协议版本、能力位、别名版本，以及**表的键**'
   ])
 })
 
+test('repo.info：电脑名是展示值；取不到或为空就**不报这个字段**', async () => {
+  const named = build({ hostName: () => 'my-pc' })
+  const info = (await named['repo.info']!(undefined, {})) as { hostName?: string }
+  assert.equal(info.hostName, 'my-pc')
+
+  // 空串 / 没有这个依赖都不报：手机那边不显示名字，而不是显示一个空名字。
+  const empty = build({ hostName: () => '' })
+  const emptyInfo = (await empty['repo.info']!(undefined, {})) as Record<string, unknown>
+  assert.equal('hostName' in emptyInfo, false)
+
+  const absent = build()
+  const absentInfo = (await absent['repo.info']!(undefined, {})) as Record<string, unknown>
+  assert.equal('hostName' in absentInfo, false)
+})
+
 // 2026-10-21 真机：可继续子会话里输入框是正常的，但发出去被宿主拒成
 // `internal: session "…" is owned by subagent routing` —— 手机上表现成「发送失败」。
 // 子会话的写入口只有一个：`subagents.prompt`，父级从清单行取。

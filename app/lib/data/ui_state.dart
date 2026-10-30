@@ -11,12 +11,20 @@
 ///
 /// ## 两类键（换电脑时行为不同，这是它们唯一的分界）
 ///
-/// | 前缀 | 例子 | 换电脑（重新配对）时 |
+/// | 前缀 | 例子 | 换电脑（切到另一台）时 |
 /// |---|---|---|
 /// | `device.` | 主题、界面字号、工作步骤密度、收起时机、性能用量 | **保留**（与某台电脑无关） |
-/// | `host.` | 上次看的会话、抽屉折叠、每会话页签、每会话草稿 | **整段清空** |
+/// | `host.<hostId>.` | 上次看的会话、抽屉折叠、每会话页签、每会话草稿 | **只切桶，不删除** |
 ///
 /// 判据：一个键如果它的值离开这台电脑就没有意义（会话 id / 工作区 id），它必须是 `host.`。
+///
+/// **为什么要分桶**：`hostId` 是那台电脑的身份（`pcSignPubHex`，配对时钉死）。
+/// 不分桶时"切到 B 再切回 A"会把 A 的草稿与页签统一按 B 的清单剪掉 ——
+/// 那不是同一个事实。分桶之后 `pruneSessions` 只允许剪**当前桶**
+/// （取舍见 `proposed/2026-10-29-one-phone-many-computers.md` 决策 4）。
+///
+/// **没有电脑身份时**（没配对 / 单测没装配 `hostIdOf`）用旧的平铺键
+/// `host.<field>`：那是升级前就有的形状，`open()` 在拿到身份后一次性搬进桶里。
 ///
 /// ## 读写时机（移动端约束）
 ///
@@ -37,8 +45,19 @@ abstract final class UiKey {
   /// `device.*` 与某台电脑无关。
   static const String devicePrefix = 'device.';
 
-  /// `host.*` 属于某台电脑（重新配对时整段清空）。
+  /// `host.*` 属于某台电脑：正常形状是 `host.<hostId>.<field>`。
   static const String hostPrefix = 'host.';
+
+  /// 字段名（桶内与旧的平铺键共用同一组名字）。
+  static const String lastSessionField = 'last_session';
+  static const String drawerExpansionField = 'drawer_expansion';
+  static const String sessionViewField = 'session_view';
+  static const String sessionDraftField = 'session_draft';
+  static const String questionDraftField = 'question_draft';
+
+  /// 一台电脑的桶前缀；[hostId] 为空时退回升级前的平铺形状。
+  static String hostBucket(String hostId) =>
+      hostId.isEmpty ? hostPrefix : '$hostPrefix$hostId.';
 
   static const String themeMode = '${devicePrefix}theme_mode';
   static const String uiScaleIndex = '${devicePrefix}ui_scale_index';
@@ -46,8 +65,9 @@ abstract final class UiKey {
   static const String performanceView = '${devicePrefix}performance_view';
   static const String collapseTiming = '${devicePrefix}collapse_timing';
 
-  static const String lastSession = '${hostPrefix}last_session';
-  static const String drawerExpansion = '${hostPrefix}drawer_expansion';
+  /// 旧形状（没有电脑身份时的桶）：`host.last_session`。
+  static const String lastSession = '$hostPrefix$lastSessionField';
+  static const String drawerExpansion = '$hostPrefix$drawerExpansionField';
 
   /// 每会话页签：存的是**注册项 id**（`chat` / `trajectory`），不是下标 ——
   /// 桌面存的也是 id（`ui-conversation/src/client/stores.ts:8,23-25`），
@@ -73,11 +93,28 @@ abstract final class UiKey {
 class UiStateStore {
   UiStateStore({
     required PreferenceStore prefs,
+    String hostId = '',
     Duration draftDebounce = const Duration(milliseconds: 300),
   }) : _prefs = prefs,
+       _hostId = hostId,
        _draftDebounce = draftDebounce;
 
   final PreferenceStore _prefs;
+
+  /// 当前那台电脑的身份（`pcSignPubHex`）；空 = 还没配对 / 没装配身份。
+  ///
+  /// **不可变**：换电脑在装配层是换一个 `AppModel`（新 `UiStateStore`），
+  /// 而不是把同一个 store 指向另一个桶 —— 那会让"读了一半"的缓存跨桶。
+  //
+  // Note: 分桶、迁移与"只剪当前桶"的取舍见
+  // `.agents/notes/implemented/2026-10-30-endpoint-and-ui-state-host-scoping.md`。
+  final String _hostId;
+
+  String get _bucket => UiKey.hostBucket(_hostId);
+
+  String _hostKey(String field) => '$_bucket$field';
+
+  String _sessionKey(String field, String sid) => '$_bucket$field.$sid';
 
   String? _themeMode;
   int? _uiScaleIndex;
@@ -104,17 +141,62 @@ class UiStateStore {
 
   /// 首帧前跑一次。**只做固定几次读**（`device.*` 一次范围查 + 两个 host 键），
   /// 不随会话数增长。
+  ///
+  /// 拿到电脑身份时先把升级前的平铺键 `host.<field>` **一次性**搬进当前桶
+  /// （幂等：搬完就删旧键，第二次进来没有可搬的）。
   Future<void> open() async {
+    await _migrateLegacyHostKeys();
     final device = await _prefs.readAll(UiKey.devicePrefix);
     _themeMode = device[UiKey.themeMode];
     _uiScaleIndex = int.tryParse(device[UiKey.uiScaleIndex] ?? '');
     _transcriptView = device[UiKey.transcriptView];
     _performanceView = device[UiKey.performanceView];
     _collapseTiming = device[UiKey.collapseTiming];
-    _lastSession = await _prefs.read(UiKey.lastSession);
+    _lastSession = await _prefs.read(_hostKey(UiKey.lastSessionField));
     _drawerExpansion = _decodeExpansion(
-      await _prefs.read(UiKey.drawerExpansion),
+      await _prefs.read(_hostKey(UiKey.drawerExpansionField)),
     );
+  }
+
+  /// 把升级前的平铺 `host.<field>` 搬进 `host.<hostId>.<field>`。
+  ///
+  /// 判据是"**旧键的形状**"，不是"看起来一样"：`host.` 后面的第一段若是
+  /// 字段名（`last_session` / `drawer_expansion` / `session_view` …），它就是旧键；
+  /// 桶里的第一段是 64 位十六进制电脑公钥，两者不可能撞。
+  ///
+  /// **不覆盖桶里已有的值**（半迁移时桶优先），搬完逐个删旧键 —— 所以第二次
+  /// 运行**一次写都不产生**（准入门槛 2 的"写次数"判据）。
+  Future<void> _migrateLegacyHostKeys() async {
+    if (_hostId.isEmpty) return;
+    final all = await _prefs.readAll(UiKey.hostPrefix);
+    final legacy = <String, String>{};
+    final inBucket = <String>{};
+    for (final entry in all.entries) {
+      if (entry.key.startsWith(_bucket)) {
+        inBucket.add(entry.key);
+      } else if (_isLegacyHostKey(entry.key)) {
+        legacy[entry.key] = entry.value;
+      }
+    }
+    if (legacy.isEmpty) return;
+    for (final entry in legacy.entries) {
+      final target = '$_bucket${entry.key.substring(UiKey.hostPrefix.length)}';
+      if (inBucket.contains(target)) continue;
+      await _prefs.write(target, entry.value);
+    }
+    for (final key in legacy.keys) {
+      await _prefs.delete(key, includePrefixed: false);
+    }
+  }
+
+  static bool _isLegacyHostKey(String key) {
+    if (!key.startsWith(UiKey.hostPrefix)) return false;
+    final head = key.substring(UiKey.hostPrefix.length).split('.').first;
+    return head == UiKey.lastSessionField ||
+        head == UiKey.drawerExpansionField ||
+        head == UiKey.sessionViewField ||
+        head == UiKey.sessionDraftField ||
+        head == UiKey.questionDraftField;
   }
 
   // ---- device.*（换电脑保留）----
@@ -165,11 +247,14 @@ class UiStateStore {
     _lastSession = sid;
     if (sid == null) {
       await _enqueue(
-        () => _prefs.delete(UiKey.lastSession, includePrefixed: false),
+        () => _prefs.delete(
+          _hostKey(UiKey.lastSessionField),
+          includePrefixed: false,
+        ),
       );
       return;
     }
-    await _write(UiKey.lastSession, sid);
+    await _write(_hostKey(UiKey.lastSessionField), sid);
   }
 
   /// 某个工作区组的展开态；`null` = 没记过（调用方按"展开"处理）。
@@ -179,19 +264,22 @@ class UiStateStore {
     if (_drawerExpansion[workspaceId] == expanded) return;
     _drawerExpansion = Map<String, bool>.from(_drawerExpansion)
       ..[workspaceId] = expanded;
-    await _write(UiKey.drawerExpansion, jsonEncode(_drawerExpansion));
+    await _write(
+      _hostKey(UiKey.drawerExpansionField),
+      jsonEncode(_drawerExpansion),
+    );
   }
 
   /// 一个会话的页签 id；`null` = 没存过（调用方回 `chat`）。
   Future<String?> viewOf(String sid) async {
     if (_views.containsKey(sid)) return _views[sid];
-    final raw = await _prefs.read(UiKey.sessionView(sid));
+    final raw = await _prefs.read(_sessionKey(UiKey.sessionViewField, sid));
     _views[sid] = raw;
     return raw;
   }
 
   Future<void> setView(String sid, String viewId) async {
-    final key = UiKey.sessionView(sid);
+    final key = _sessionKey(UiKey.sessionViewField, sid);
     if (_views.containsKey(sid) && _views[sid] == viewId) return;
     _views[sid] = viewId;
     await _write(key, viewId);
@@ -206,7 +294,7 @@ class UiStateStore {
   Future<String?> sessionDraftOf(String sid) async {
     final pending = _pendingDrafts[sid];
     if (pending != null) return pending.isEmpty ? null : pending;
-    final raw = await _prefs.read(UiKey.sessionDraft(sid));
+    final raw = await _prefs.read(_sessionKey(UiKey.sessionDraftField, sid));
     if (raw == null || raw.isEmpty) return null;
     if (!raw.startsWith('{')) return raw; // 旧形态
     try {
@@ -224,7 +312,10 @@ class UiStateStore {
     _pendingDrafts.remove(sid);
     if (text.isEmpty) {
       await _enqueue(
-        () => _prefs.delete(UiKey.sessionDraft(sid), includePrefixed: false),
+        () => _prefs.delete(
+          _sessionKey(UiKey.sessionDraftField, sid),
+          includePrefixed: false,
+        ),
       );
       return;
     }
@@ -251,11 +342,11 @@ class UiStateStore {
   /// 形状由 `ui/takeover.dart` 决定（`{item, index, questions:{qid:{selected,custom,skipped}}}`），
   /// 这里只当字符串存取 —— 存储层不认识交互语义。
   Future<String?> questionDraftOf(String sid) =>
-      _prefs.read(UiKey.questionDraft(sid));
+      _prefs.read(_sessionKey(UiKey.questionDraftField, sid));
 
   /// 写一个会话的提问进度；`null` = 删（这一项已收束）。
   Future<void> setQuestionDraft(String sid, String? json) {
-    final key = UiKey.questionDraft(sid);
+    final key = _sessionKey(UiKey.questionDraftField, sid);
     if (json == null) {
       return _enqueue(() => _prefs.delete(key, includePrefixed: false));
     }
@@ -270,7 +361,7 @@ class UiStateStore {
     final batch = Map<String, String>.of(_pendingDrafts);
     _pendingDrafts.clear();
     for (final entry in batch.entries) {
-      final key = UiKey.sessionDraft(entry.key);
+      final key = _sessionKey(UiKey.sessionDraftField, entry.key);
       if (entry.value.isEmpty) {
         await _enqueue(() => _prefs.delete(key, includePrefixed: false));
       } else {
@@ -280,48 +371,75 @@ class UiStateStore {
   }
 
   Future<void> _writeDraft(String sid, String text) => _write(
-    UiKey.sessionDraft(sid),
+    _sessionKey(UiKey.sessionDraftField, sid),
     jsonEncode(<String, Object?>{'text': text, 'references': const []}),
   );
 
   // ---- 清理与失效 ----
 
-  /// 换电脑：删光 `host.*`（`device.*` 一个不动）。
+  /// **忘掉这一台**：只删当前桶（`host.<hostId>.`），`device.*` 与别的电脑的桶不动。
+  ///
+  /// 与"撤销所有配对"（`PairingStore.clearAll`，凭据那一步）是两个动作：
+  /// 这个只让这台电脑的界面记忆回到默认值。
   Future<void> clearHostScope() async {
     _lastSession = null;
     _drawerExpansion = const <String, bool>{};
     _views.clear();
-    await _enqueue(() => _prefs.delete(UiKey.hostPrefix));
+    if (_hostId.isEmpty) {
+      // 没有电脑身份时用的是旧平铺键。**逐个前缀删**，不能删整个 `host.` ——
+      // 那会把别的电脑的桶一起端掉。
+      await _enqueue(() async {
+        await _prefs.delete(UiKey.lastSession, includePrefixed: false);
+        await _prefs.delete(UiKey.drawerExpansion, includePrefixed: false);
+        await _prefs.delete(UiKey.sessionViewPrefix);
+        await _prefs.delete(UiKey.sessionDraftPrefix);
+        await _prefs.delete(UiKey.questionDraftPrefix);
+      });
+      return;
+    }
+    await _enqueue(() => _prefs.delete(_bucket));
   }
 
   /// 会话从清单消失：删掉它的页签与草稿（别在盘上留死数据）。
+  ///
+  /// **只剪当前桶**：`liveSids` 来自当前这台电脑的清单，拿它去剪别的电脑的桶
+  /// 会把"切走"变成"删掉"（准入门槛 3）。
   Future<void> pruneSessions(Set<String> liveSids) async {
+    final viewPrefix = _sessionKey(UiKey.sessionViewField, '');
+    final draftPrefix = _sessionKey(UiKey.sessionDraftField, '');
+    final questionPrefix = _sessionKey(UiKey.questionDraftField, '');
     for (final sid in _views.keys.toList()) {
       if (liveSids.contains(sid)) continue;
       _views.remove(sid);
       await _enqueue(() async {
         // **精确删**：`sid-1` 是 `sid-10` 的字符串前缀，按前缀删会误伤。
-        await _prefs.delete(UiKey.sessionView(sid), includePrefixed: false);
-        await _prefs.delete(UiKey.sessionDraft(sid), includePrefixed: false);
+        await _prefs.delete(
+          _sessionKey(UiKey.sessionViewField, sid),
+          includePrefixed: false,
+        );
+        await _prefs.delete(
+          _sessionKey(UiKey.sessionDraftField, sid),
+          includePrefixed: false,
+        );
       });
     }
     // 没进缓存的会话级键也要扫一遍（比如上次跑完页签没读过）。
-    final stored = await _prefs.readAll(UiKey.sessionViewPrefix);
+    final stored = await _prefs.readAll(viewPrefix);
     for (final key in stored.keys) {
-      final sid = key.substring(UiKey.sessionViewPrefix.length);
+      final sid = key.substring(viewPrefix.length);
       if (liveSids.contains(sid)) continue;
       await _enqueue(() => _prefs.delete(key, includePrefixed: false));
     }
-    final drafts = await _prefs.readAll(UiKey.sessionDraftPrefix);
+    final drafts = await _prefs.readAll(draftPrefix);
     for (final key in drafts.keys) {
-      final sid = key.substring(UiKey.sessionDraftPrefix.length);
+      final sid = key.substring(draftPrefix.length);
       if (liveSids.contains(sid)) continue;
       await _enqueue(() => _prefs.delete(key, includePrefixed: false));
     }
     // 提问进度同理：会话没了，它的作答进度没有语义。
-    final questions = await _prefs.readAll(UiKey.questionDraftPrefix);
+    final questions = await _prefs.readAll(questionPrefix);
     for (final key in questions.keys) {
-      final sid = key.substring(UiKey.questionDraftPrefix.length);
+      final sid = key.substring(questionPrefix.length);
       if (liveSids.contains(sid)) continue;
       await _enqueue(() => _prefs.delete(key, includePrefixed: false));
     }
@@ -336,7 +454,10 @@ class UiStateStore {
     };
     if (kept.length == _drawerExpansion.length) return;
     _drawerExpansion = kept;
-    await _write(UiKey.drawerExpansion, jsonEncode(_drawerExpansion));
+    await _write(
+      _hostKey(UiKey.drawerExpansionField),
+      jsonEncode(_drawerExpansion),
+    );
   }
 
   /// 等所有在途写落盘（测试与"退到后台"用）。

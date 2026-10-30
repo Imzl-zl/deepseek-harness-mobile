@@ -280,6 +280,9 @@ export function fixtureHandlers(
   return createHandlers({
     caps: () => ({ ...CAPS }),
     aliasVersion: () => 7,
+    // **定值电脑名**：`repo.info.hostName` 进金样，用真 `os.hostname()` 会让
+    // 同一份夹具在不同机器上产出不同金样（文件就得跟着机器改）。
+    hostName: () => 'build-machine',
     devices: () => [{ id: 'dev-1', name: '我的手机', pairedAt: 1000, revoked: false }],
     sessions: {
       // **不是手写的端口行**：DSH 对象走真实适配器（见上方 `DSH_SESSION_ITEMS`）。

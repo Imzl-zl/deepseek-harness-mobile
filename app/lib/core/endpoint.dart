@@ -76,6 +76,24 @@ enum EndpointKind {
   direct,
 }
 
+/// 端点的稳定 id：**归属 + 地址**。
+///
+/// `hostId` 是那台电脑的 Ed25519 公钥（空 = 不知道归属，退回旧形状：id 就是 url）。
+/// 两台电脑先后用同一个局域网地址时，它们是**两条不同的记录**：
+///
+/// - `hidden` / `succeeded` / `attempts` / "记住的那条" 全按这个 id 记账，
+///   所以 B 不会继承 A 的"成功过"与"记住"（`proposed/2026-10-29-one-phone-many-computers.md`
+///   决策 9）；
+/// - 分隔符只是拼接，**没有谁去拆它**（id 是不透明身份，不是可解析的复合键）。
+///
+/// 迁移：旧落盘里的 id 是裸 url，`platform/pairing_store.dart` 在读取时
+/// 按当时那份凭据的电脑公钥补上前缀（一次性、幂等）。
+//
+// Note: 为什么身份要带归属 —— 见
+// `.agents/notes/implemented/2026-10-30-endpoint-and-ui-state-host-scoping.md`。
+String endpointIdOf(String url, {String hostId = ''}) =>
+    hostId.isEmpty ? url : '$hostId|$url';
+
 /// 一个可拨的连接端点。
 ///
 /// **值是身份，不是秘密**：它可以安全地落盘、进日志、显示在设置页上。
@@ -121,13 +139,16 @@ class Endpoint {
   /// `endpoint.describe` 不报它（它不知道也不该知道"这台手机曾经连过谁"）。
   final String hostId;
 
-  /// 稳定标识。**就是 url** —— 同一个地址只有一个端点。
+  /// 稳定标识：`hostId|url`（没有归属时就是 url，见 [endpointIdOf]）。
   ///
-  /// 不另设 id 字段：那会出现"两个字段谁是身份"的问题，而 url 本身已经唯一。
-  /// [operator ==] 与 [hashCode] **同样只按 url**（kind 与 label 是属性，
+  /// 不另设 id 字段：那会出现"两个字段谁是身份"的问题。
+  /// [operator ==] 与 [hashCode] **同样按 id**（kind 与 label 是属性，
   /// 不是身份）—— 否则"`contains(endpoint)`"与"按 id 找"会给出不同答案，
   /// 而合并规则用的是后者。
-  String get id => url;
+  ///
+  /// **带上 hostId 是多机的前提**：只按 url 记身份时，两台电脑先后用同一个
+  /// 局域网地址会共用一条记录、一份"成功过"与一个"记住的那条"。
+  String get id => endpointIdOf(url, hostId: hostId);
 
   /// 换来源标记（合并时保留已存条目的 manual 标记用）。
   Endpoint withManual(bool manual) => Endpoint(
@@ -148,10 +169,10 @@ class Endpoint {
   );
 
   @override
-  bool operator ==(Object other) => other is Endpoint && other.url == url;
+  bool operator ==(Object other) => other is Endpoint && other.id == id;
 
   @override
-  int get hashCode => url.hashCode;
+  int get hashCode => id.hashCode;
 
   @override
   String toString() =>
@@ -326,7 +347,7 @@ bool isCooling(
 List<Endpoint> dialOrder(
   List<Endpoint> endpoints, {
   String? myIpv4,
-  String? rememberedEndpointUrl,
+  String? rememberedEndpointId,
   String? currentHostId,
   Map<String, EndpointAttempt> attempts = const {},
   int? nowMs,
@@ -340,12 +361,14 @@ List<Endpoint> dialOrder(
       endpoint.hostId == currentHostId;
 
   bool cooled(Endpoint endpoint) =>
-      nowMs != null && isCooling(attempts[endpoint.url], nowMs: nowMs);
+      nowMs != null && isCooling(attempts[endpoint.id], nowMs: nowMs);
 
   Endpoint? remembered;
-  if (rememberedEndpointUrl != null) {
+  if (rememberedEndpointId != null) {
     for (final endpoint in endpoints) {
-      if (endpoint.url == rememberedEndpointUrl) {
+      // **按 id 找，不按 url**：同一地址属于两台电脑时，"记住的那条"只该是
+      // 当前这台的那一条（`endpointIdOf`）。
+      if (endpoint.id == rememberedEndpointId) {
         remembered = endpoint;
         break;
       }
@@ -359,7 +382,7 @@ List<Endpoint> dialOrder(
   final otherHost = <Endpoint>[];
   final cooling = <Endpoint>[];
   for (final endpoint in endpoints) {
-    if (remembered != null && endpoint.url == remembered.url) continue;
+    if (remembered != null && endpoint.id == remembered.id) continue;
     if (cooled(endpoint)) {
       cooling.add(endpoint);
     } else if (!isThisHost(endpoint)) {
@@ -385,13 +408,16 @@ List<Endpoint> dialOrder(
 /// 三者都**不含秘密**（就是地址与集合），所以落盘不需要加密存储。
 class EndpointMeta {
   const EndpointMeta({
-    this.rememberedEndpointUrl,
+    this.rememberedEndpointId,
     this.hiddenEndpointIds = const {},
     this.succeededEndpointIds = const {},
   });
 
-  /// 上次拨通的地址（`dialOrder` 的第一优先）。
-  final String? rememberedEndpointUrl;
+  /// 上次拨通的那个端点（`dialOrder` 的第一优先）—— **存 id 不存 url**。
+  ///
+  /// 存 url 会在多机下串台：两台电脑共用同一个局域网地址时，切到 B 之后
+  /// "记住的那条"仍指向 A 的那一条（`endpointIdOf` 的解释）。
+  final String? rememberedEndpointId;
 
   /// 用户藏掉的端点 id（连接器再报也不加回来）。
   final Set<String> hiddenEndpointIds;

@@ -3,13 +3,14 @@
 /// 形状出处 `connector/src/handlers.ts:1544-1560`：
 /// `{protocol, caps, aliasVersion, methods, dshVersion?, commands?}`。
 ///
-/// ## 手机只用其中四样
+/// ## 手机只用其中五样
 ///
 /// | 键 | 手机拿它做什么 | 缺了怎么办 |
 /// |---|---|---|
 /// | `caps.references` / `caps.files` / `caps.changes` / `caps.plugins` | 决定 `@` 面板 / 文件页 / 改动卡 / 插件页**显不显示** | 按 `false`（老连接器） |
 /// | `commands` | `/` 候选菜单的**唯一**内容来源 | 空表 ⇒ 不出菜单 |
 /// | `dshVersion` | 与 App 版本并排显示（排错用） | `null` ⇒ 显示"未读到" |
+/// | `hostName` | 电脑自报的名字（展示值，`os.hostname()`） | `null` ⇒ 不显示名字 |
 /// | `methods` | **不读**（只用它数条数做形状检查） | 见下 |
 ///
 /// `protocol` / `aliasVersion` 手机**不读**（前者在上线帧的 `v` 里校验，后者是连接器内部账），
@@ -41,7 +42,7 @@ export '../reading.dart';
 
 const String _kRepoInfo = 'repo.info';
 
-/// `repo.info` 里**手机消费的那四样**。
+/// `repo.info` 里**手机消费的那五样**。
 final class RepoInfoWire {
   const RepoInfoWire({
     required this.slashCommands,
@@ -50,6 +51,7 @@ final class RepoInfoWire {
     required this.changesAvailable,
     required this.pluginsAvailable,
     required this.dshVersion,
+    required this.hostName,
     required this.methodCount,
   });
 
@@ -74,6 +76,12 @@ final class RepoInfoWire {
   /// 电脑侧 DSH 运行时版本（拿不到就是 `null`，不编一个）。
   final String? dshVersion;
 
+  /// 电脑自报的名字（`os.hostname()` 原值；老连接器不报 ⇒ `null`）。
+  ///
+  /// **纯展示值**：可改、可伪造、会重名，从不参与判据
+  /// （`proposed/2026-10-29-one-phone-many-computers.md` 决策 2）。
+  final String? hostName;
+
   /// `methods` 的**条数**（形状检查用；方法名手机不读）。
   final int methodCount;
 }
@@ -88,7 +96,7 @@ Future<RepoInfoWire?> loadRepoInfo(SyncClient client) async {
 ///
 /// **`caps` 是必填**（连接器无条件写出它）；三个能力位各自"缺了 ⇒ false"
 /// （老连接器 / 没装那个面），**不计数** —— 那是如实的降级，不是漂移。
-/// `methods` / `commands` / `dshVersion` 都是可选。
+/// `methods` / `commands` / `dshVersion` / `hostName` 都是可选。
 WireReading<RepoInfoWire> readRepoInfo(Object? result) =>
     readObject(_kRepoInfo, result, (fields) {
       final caps = fields.requireMap('caps');
@@ -101,6 +109,7 @@ WireReading<RepoInfoWire> readRepoInfo(Object? result) =>
         changesAvailable: caps['changes'] == true,
         pluginsAvailable: caps['plugins'] == true,
         dshVersion: fields.optionalNonEmptyString('dshVersion'),
+        hostName: fields.optionalNonEmptyString('hostName'),
         methodCount: _methodCountOf(fields),
       );
     });

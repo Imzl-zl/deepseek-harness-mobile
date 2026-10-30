@@ -28,7 +28,7 @@ import '../core/endpoint.dart';
 class EndpointBook {
   EndpointBook({
     required List<Endpoint> endpoints,
-    String? rememberedEndpointUrl,
+    String? rememberedEndpointId,
     required Set<String> hiddenEndpointIds,
     required Set<String> succeededEndpointIds,
     Future<String?> Function()? myLanIpv4Of,
@@ -36,7 +36,7 @@ class EndpointBook {
     Future<void> Function(EndpointMeta)? onMetaChanged,
     required void Function() onChange,
   }) : _endpoints = List<Endpoint>.of(endpoints),
-       _rememberedEndpointUrl = rememberedEndpointUrl,
+       _rememberedEndpointId = rememberedEndpointId,
        _hiddenEndpointIds = Set<String>.of(hiddenEndpointIds),
        _succeededEndpointIds = Set<String>.of(succeededEndpointIds),
        _myLanIpv4Of = myLanIpv4Of,
@@ -67,9 +67,12 @@ class EndpointBook {
   Endpoint? get activeEndpoint => _activeEndpoint;
   Endpoint? _activeEndpoint;
 
-  /// 上次拨通的端点地址（`dialOrder` 的第一优先）。
-  String? get rememberedEndpointUrl => _rememberedEndpointUrl;
-  String? _rememberedEndpointUrl;
+  /// 上次拨通的那个端点 id（`dialOrder` 的第一优先）。
+  ///
+  /// **id 带电脑归属**（`core/endpoint.dart` 的 `endpointIdOf`）：同一地址属于
+  /// 两台电脑时，各记各的。
+  String? get rememberedEndpointId => _rememberedEndpointId;
+  String? _rememberedEndpointId;
 
   /// 用户藏掉的端点 id（连接器再报也不加回来）。
   Set<String> get hiddenEndpointIds =>
@@ -93,7 +96,7 @@ class EndpointBook {
 
   /// 端点表的附属状态（落盘用）。
   EndpointMeta get endpointMeta => EndpointMeta(
-    rememberedEndpointUrl: _rememberedEndpointUrl,
+    rememberedEndpointId: _rememberedEndpointId,
     hiddenEndpointIds: _hiddenEndpointIds,
     succeededEndpointIds: _succeededEndpointIds,
   );
@@ -107,8 +110,8 @@ class EndpointBook {
     final movedOn = _activeEndpoint?.id != endpoint.id;
     _activeEndpoint = endpoint;
     final newlySucceeded = _succeededEndpointIds.add(endpoint.id);
-    final memoryMoved = _rememberedEndpointUrl != endpoint.url;
-    _rememberedEndpointUrl = endpoint.url;
+    final memoryMoved = _rememberedEndpointId != endpoint.id;
+    _rememberedEndpointId = endpoint.id;
     if (!movedOn && !newlySucceeded && !memoryMoved) return;
     _onChange();
     if (newlySucceeded || memoryMoved) {
@@ -168,9 +171,9 @@ class EndpointBook {
     // （否则同名地址再次出现时会被当成"成功过"而逃过剪枝）。
     _succeededEndpointIds.retainAll(bounded.map((e) => e.id));
     var metaChanged = false;
-    if (_rememberedEndpointUrl != null &&
-        !bounded.any((e) => e.url == _rememberedEndpointUrl)) {
-      _rememberedEndpointUrl = null;
+    if (_rememberedEndpointId != null &&
+        !bounded.any((e) => e.id == _rememberedEndpointId)) {
+      _rememberedEndpointId = null;
       metaChanged = true;
     }
     if (_sameEndpointTable(bounded, _endpoints)) {
@@ -272,7 +275,7 @@ class EndpointBook {
     if (!endpoint.manual) _hiddenEndpointIds.add(endpoint.id);
     _succeededEndpointIds.remove(endpoint.id);
     _endpoints = next;
-    if (_rememberedEndpointUrl == endpoint.id) _rememberedEndpointUrl = null;
+    if (_rememberedEndpointId == endpoint.id) _rememberedEndpointId = null;
     _onChange();
     await _onTableChanged?.call(next);
     await _onMetaChanged?.call(endpointMeta);

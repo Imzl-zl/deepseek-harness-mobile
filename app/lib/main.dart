@@ -335,11 +335,16 @@ class _DshMobileAppState extends State<DshMobileApp>
     }
     // 端点表的种子：配对那一刻走的那条中转。之后连接器会自报直连地址，
     // 由 `endpoint.describe` 合并进来（见 `_discoverEndpoints`）。
+    //
+    // **种子上就盖归属**（`hostId` = 配对钉死的电脑公钥）：端点的身份是
+    // `hostId|url`（`core/endpoint.dart` 的 `endpointIdOf`），不带归属的话
+    // 连接器第一次自报同一条地址会认不出"这是同一条"而追加出重复项。
     final endpoints = <Endpoint>[
       Endpoint(
         kind: EndpointKind.relay,
         url: result.offer.relayUrl,
         label: '中转',
+        hostId: result.offer.pcSignPubHex,
       ),
     ];
     final credentials = PairedCredentials(
@@ -362,10 +367,12 @@ class _DshMobileAppState extends State<DshMobileApp>
     if (!mounted) return;
     await app.loadUiState();
     if (!mounted) return;
-    // **换电脑 ⇒ 清掉属于上一台的那一段**（`host.*`：上次会话、抽屉折叠、
-    // 每会话页签/草稿）。`device.*`（主题、字号…）留着 —— 它们与哪台电脑无关。
-    await app.clearHostUiState();
-    if (!mounted) return;
+    // **这里不清 `host.*`**。`host.<hostId>.*` 已经按电脑分桶：同一台电脑重配
+    // 之后那一段仍然属于它（会话/草稿不该因为换了一次身份就丢），换了另一台
+    // 电脑则读到的是另一个桶。"忘掉这一台"是用户动作（`clearHostUiState`），
+    // 不是"每次配对成功"的副作用 —— 否则切走再切回永远看不到上次的草稿。
+    // 取舍与准入门槛见
+    // `.agents/notes/implemented/2026-10-30-endpoint-and-ui-state-host-scoping.md`。
     setState(() {
       // **旧客户端必须dispose**：它持着传输层（socket）。不 dispose 就换掉，
       // 旧连接会一直挂在电脑侧（真机实测出现过两条直连 socket 同时
@@ -1277,7 +1284,7 @@ Future<AppModel> _assemble(
       return dialOrder(
         table,
         myIpv4: app?.myLanIpv4,
-        rememberedEndpointUrl: app?.rememberedEndpointUrl,
+        rememberedEndpointId: app?.rememberedEndpointId,
         // 只有**当前这台电脑**的地址排前面；别的电脑报的排后面（不删，换回去还要用）。
         currentHostId: credentials.pcSignPubHex,
         // 刚失败过的排最后：避免每轮退避重连都为同一个死地址白等一次超时。
@@ -1339,7 +1346,7 @@ Future<AppModel> _assemble(
     // `EndpointTransport` 每次 `connect()` 经 `appRef` 现读它。
     endpoints: credentials.endpoints,
     // 路由记忆（上次连哪条 / 藏了哪些 / 哪些成功过）—— 它们决定拨号顺序。
-    rememberedEndpointUrl: credentials.endpointMeta.rememberedEndpointUrl,
+    rememberedEndpointId: credentials.endpointMeta.rememberedEndpointId,
     hiddenEndpointIds: credentials.endpointMeta.hiddenEndpointIds,
     succeededEndpointIds: credentials.endpointMeta.succeededEndpointIds,
     // 本机 LAN 地址（拨号排序判"同网段"用）。拿不到就退化，不猜。

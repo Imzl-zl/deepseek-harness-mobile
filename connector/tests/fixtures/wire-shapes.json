@@ -2243,6 +2243,7 @@
         "direct": false
       },
       "aliasVersion": 7,
+      "hostName": "build-machine",
       "commands": [
         {
           "name": "goal",
