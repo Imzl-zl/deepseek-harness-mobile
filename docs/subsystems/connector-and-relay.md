@@ -291,6 +291,7 @@ relay/
 | 配对尝试 | 走**同一套按身份限流**(配对请求本身已由设备令牌认证,所以那时有身份可用);配对码一次性 |
 | WS 升级 | **与 HTTP 端点共用同一个桶**:升级比换票贵得多(长连 + 内存状态 + 一次握手),不共用的话换票被限住后转手刷升级即可绕过 |
 | 帧速率 | **待定**:上线前按 §2.5 压测确定 —— 不许拿估算当结论(本表的默认值同理,它们只是"默认不敞开") |
+| 按人流量额度 | 配置 `quota`(整段不配 = 只转发、不记账)。主体是**人**:`owner`,没配退回 `connector:<id>`(多开一台电脑不多领额度)。**只算业务通道的双向帧**,配对候选不计量 —— 额度用满的人仍要能重新扫码。口径:`period` = `month`/`day`/`none`(UTC 周期,惰性结算)、`defaultBytes`、`owners` 按人覆盖、`persist`。用满时:`enforce: "cut"` 把这个人名下**所有**通道以 **4003 + `rate-limited quota`** 收口,之后换票与升级回 **429 + `retryAfterMs`**(月额度给到下一个 UTC 月边界);`"block"` 只挡新建、不踢已有;`"off"` 只记账。计数默认在内存,`persist: true` 才写 `statePath`(默认与配置同目录的 `relay.state.json`,原子替换、5 s 节流) |
 | 吊销 | 令牌摘要**软吊销**(`revokedAt` 留行,重签即轮换):被吊销的令牌认证即失败(401)。**停用的行照样上报**(带 `revokedAt`,`rosterEntry`),中转据此回 `device-revoked` ⇒ 手机按 `revoked` 清这一台的凭据回配对页;**删除的行不再上报**,中转按差集丢掉它,那枚令牌只剩 `device-unknown`(与"名册还没重放"不可区分 ⇒ 手机持续重试,要区分得让名册带墓碑,属契约改动)。判据在 `relay/src/device-registry.ts` 的 `classify`,名册形状在 `http-face.ts` 的 `parseRegistrations`。真正"电脑不认这台设备"的终态信号仍是握手层的 `peerOf` 拒绝,以**关闭码 4003 + `protocol/not-paired`** 到达 |
 | 审计 | 连接建立/断开、配对、吊销、限流命中;只记元数据,不记内容 |
 | 管理面 | `GET /admin/api/state`：**只读**计数快照(在线连接器/通道/票/名册行数),本期**零写路径**。凭据是配置里的 `admin`(只存 `sha256`),走 `Authorization: Bearer`。**没配 `admin` 时 `/admin*` 一律 404**(与未知路径同形);配了则缺/错令牌 401 且 `cache-control: no-store`,认证不过的请求按来源地址分桶、通过的按 `admin:<id>` 分桶。管理令牌用 `--issue-admin <id>` 签发(与连接器令牌同规格,明文只打印一次) |

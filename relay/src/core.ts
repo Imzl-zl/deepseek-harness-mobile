@@ -18,6 +18,17 @@ export interface Delivery {
   to: 'device' | 'data'
   raw: string
 }
+/**
+ * 一帧的处理结果：要投递的帧 + **这帧的字节数**。
+ *
+ * 字节数由 core 算一次带出来（`Buffer.byteLength` 对 8 MiB 的帧是一次完整扫描），
+ * 投递层的背压判断与计量共用它 —— 否则同一帧会被扫两三遍。
+ */
+export interface LineResult {
+  readonly deliveries: readonly Delivery[]
+  /** 计入额度的字节数；**没有被转发**的帧（通道不在、未知 sid 丢弃）记 0。 */
+  readonly bytes: number
+}
 export interface RelayCoreOptions {
   pairing?: PairingRegistry
   log?: ChannelLogger
@@ -33,7 +44,7 @@ export interface RelayCore {
   closeChannel(channelId: string): RelayChannel | undefined
   channel(channelId: string): RelayChannel | undefined
   channelOf(connectorId: string, deviceId: string): string | undefined
-  onLine(from: { kind: 'device' | 'data'; channelId: string }, raw: string): readonly Delivery[]
+  onLine(from: { kind: 'device' | 'data'; channelId: string }, raw: string): LineResult
   /**
    * 计数快照。
    *
@@ -47,7 +58,13 @@ export interface RelayCore {
 export function createRelayCore(options: RelayCoreOptions = {}): RelayCore {
   const pairing = options.pairing ?? createPairingRegistry(options)
   const connectors = new Set<string>()
-  const channels = new Map<string, { binding: DeviceBinding; connected: boolean; pending: string[]; bytes: number }>()
+  const channels = new Map<string, {
+    binding: DeviceBinding
+    connected: boolean
+    pending: string[]
+    /** **待投递缓冲**的字节数（不是累计转发量 —— 那个在 `server.ts` 的 `Link` 上）。 */
+    pendingBytes: number
+  }>()
   const byDevice = new Map<string, string>()
   let dropped = 0
   const key = (connectorId: string, deviceId: string): string => JSON.stringify([connectorId, deviceId])
@@ -100,7 +117,7 @@ export function createRelayCore(options: RelayCoreOptions = {}): RelayCore {
         if (count >= MAX_PAIRING_CANDIDATES) throw new Error('待配对连接数量已达上限')
         if (pairing.lookup(binding.candidate.offerId) !== binding.connectorId) throw new Error('公开邀请已失效')
       }
-      channels.set(channelId, { binding, connected: false, pending: [], bytes: 0 })
+      channels.set(channelId, { binding, connected: false, pending: [], pendingBytes: 0 })
       byDevice.set(deviceKey, channelId)
     },
     attachData(connectorId, deviceId, channelId) {
@@ -112,7 +129,7 @@ export function createRelayCore(options: RelayCoreOptions = {}): RelayCore {
       channel.connected = true
       const deliveries = channel.pending.map((raw): Delivery => ({ channelId, to: 'data', raw }))
       channel.pending = []
-      channel.bytes = 0
+      channel.pendingBytes = 0
       return deliveries
     },
     closeChannel,
@@ -120,18 +137,20 @@ export function createRelayCore(options: RelayCoreOptions = {}): RelayCore {
     channelOf(connectorId, deviceId) { return byDevice.get(key(connectorId, deviceId)) },
     onLine(from, raw) {
       const channel = channels.get(from.channelId)
-      if (channel === undefined) { dropped += 1; return [] }
+      // 通道不在：丢弃。**不计字节** —— 它没有被转发，记进额度就是多收钱。
+      if (channel === undefined) { dropped += 1; return { deliveries: [], bytes: 0 } }
       const bytes = Buffer.byteLength(raw, 'utf8')
       if (bytes > MAX_WIRE_BYTES) throw new Error('帧超过通道上限')
       if (from.kind === 'data') {
         if (!channel.connected) throw new Error('数据连接尚未绑定')
-        return [{ channelId: from.channelId, to: 'device', raw }]
+        return { deliveries: [{ channelId: from.channelId, to: 'device', raw }], bytes }
       }
-      if (channel.connected) return [{ channelId: from.channelId, to: 'data', raw }]
-      if (channel.bytes + bytes > MAX_PENDING_BYTES) throw new Error('等待数据连接的缓冲已满')
+      if (channel.connected) return { deliveries: [{ channelId: from.channelId, to: 'data', raw }], bytes }
+      if (channel.pendingBytes + bytes > MAX_PENDING_BYTES) throw new Error('等待数据连接的缓冲已满')
       channel.pending.push(raw)
-      channel.bytes += bytes
-      return []
+      channel.pendingBytes += bytes
+      // 暂存的首批帧将来会被投递（`attachData` 交还），所以现在就计入额度。
+      return { deliveries: [], bytes }
     },
   }
 }

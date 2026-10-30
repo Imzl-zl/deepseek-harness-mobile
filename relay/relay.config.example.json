@@ -10,6 +10,13 @@
     }
   ],
   "rateLimit": { "capacity": 60, "refillPerSecond": 6 },
+  "quota": {
+    "period": "month",
+    "enforce": "cut",
+    "defaultBytes": 104857600,
+    "owners": { "alice": 209715200 },
+    "persist": false
+  },
   "admin": {
     "id": "ops",
     "hash": "0000000000000000000000000000000000000000000000000000000000000000"

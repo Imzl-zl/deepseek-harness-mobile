@@ -20,7 +20,7 @@ test('连接隔离：相同 sid 和请求 id 也只回自己的设备', () => {
   core.attachData('pc-1', 'phone-a', 'channel-a')
   core.attachData('pc-1', 'phone-b', 'channel-b')
   for (const raw of ['{"t":"credit"}', '{"t":"res","id":"same","sid":"same"}', '{"t":"ev","sid":"same"}']) {
-    assert.deepEqual(core.onLine({ kind: 'data', channelId: 'channel-a' }, raw), [{ channelId: 'channel-a', to: 'device', raw }])
+    assert.deepEqual(core.onLine({ kind: 'data', channelId: 'channel-a' }, raw).deliveries, [{ channelId: 'channel-a', to: 'device', raw }])
   }
   assert.equal(core.stats.channels, 2)
 })
@@ -39,7 +39,7 @@ test('连接隔离：旧连接失效不会清掉新连接，也不影响另一�
   core.closeChannel('channel-a')
   core.openDevice('channel-new', binding('phone-a'))
   core.attachData('pc-1', 'phone-a', 'channel-new')
-  assert.deepEqual(core.onLine({ kind: 'data', channelId: 'channel-a' }, 'old'), [])
+  assert.deepEqual(core.onLine({ kind: 'data', channelId: 'channel-a' }, 'old').deliveries, [])
   assert.equal(core.closeChannel('channel-a'), undefined)
   assert.equal(core.channelOf('pc-1', 'phone-a'), 'channel-new')
   assert.equal(core.channel('channel-b')?.connected, true)
@@ -47,7 +47,7 @@ test('连接隔离：旧连接失效不会清掉新连接，也不影响另一�
 
 test('连接隔离：首帧等待电脑连接，缓冲有硬上界', () => {
   const core = setup()
-  assert.deepEqual(core.onLine({ kind: 'device', channelId: 'channel-a' }, 'hello'), [])
+  assert.deepEqual(core.onLine({ kind: 'device', channelId: 'channel-a' }, 'hello').deliveries, [])
   assert.deepEqual(core.attachData('pc-1', 'phone-a', 'channel-a'), [{ channelId: 'channel-a', to: 'data', raw: 'hello' }])
   assert.throws(() => core.onLine({ kind: 'device', channelId: 'channel-b' }, 'x'.repeat(MAX_PENDING_BYTES + 1)), /缓冲/)
 })

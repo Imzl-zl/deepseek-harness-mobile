@@ -30,25 +30,25 @@ test('无 sid 的握手帧沿通道投给连接器；回帧沿同一条通道回
 
   const hello = line({ t: 'hello', id: 'h1', box: '{}' })
   assert.deepEqual(
-    core.onLine({ kind: 'device', channelId: 'channel-a' }, hello),
+    core.onLine({ kind: 'device', channelId: 'channel-a' }, hello).deliveries,
     [{ channelId: 'channel-a', to: 'data', raw: hello }],
     '握手帧没有 sid —— 靠通道绑定路由，而不是被当成"没有归属"丢掉',
   )
 
   const ack = line({ t: 'hello-ack', id: 'h1', box: '{}' })
   assert.deepEqual(
-    core.onLine({ kind: 'data', channelId: 'channel-a' }, ack),
+    core.onLine({ kind: 'data', channelId: 'channel-a' }, ack).deliveries,
     [{ channelId: 'channel-a', to: 'device', raw: ack }],
     '电脑侧的回帧同样没有 sid —— 靠通道绑定找回发起方',
   )
 
   // 逐字相同的 `id` 出现在另一条通道上：各回各的（"按 id 找设备"会在这里串台）。
   assert.deepEqual(
-    core.onLine({ kind: 'data', channelId: 'channel-c' }, ack),
+    core.onLine({ kind: 'data', channelId: 'channel-c' }, ack).deliveries,
     [{ channelId: 'channel-c', to: 'device', raw: ack }],
   )
   assert.deepEqual(
-    core.onLine({ kind: 'device', channelId: 'channel-c' }, hello),
+    core.onLine({ kind: 'device', channelId: 'channel-c' }, hello).deliveries,
     [{ channelId: 'channel-c', to: 'data', raw: hello }],
   )
 })
@@ -58,11 +58,11 @@ test('没有通道（未换票）时，无 sid 的帧被丢弃并计数（而不
   core.attachConnector('pc-1')
 
   assert.deepEqual(
-    core.onLine({ kind: 'device', channelId: 'channel-x' }, line({ t: 'hello', id: 'h1', box: '{}' })),
+    core.onLine({ kind: 'device', channelId: 'channel-x' }, line({ t: 'hello', id: 'h1', box: '{}' })).deliveries,
     [],
   )
   assert.deepEqual(
-    core.onLine({ kind: 'device', channelId: 'channel-x' }, line({ t: 'pair-commit', id: 'p1', box: '{}' })),
+    core.onLine({ kind: 'device', channelId: 'channel-x' }, line({ t: 'pair-commit', id: 'p1', box: '{}' })).deliveries,
     [],
   )
   assert.equal(core.stats.dropped, 2, '两次丢弃都要计数（静默丢弃最难查）')
@@ -70,7 +70,7 @@ test('没有通道（未换票）时，无 sid 的帧被丢弃并计数（而不
   // 对比：通道存在、只是电脑侧的数据连接还没到 —— 那**不是**丢弃，那条帧进有界缓冲。
   core.openDevice('channel-a', binding('phone-a'))
   assert.deepEqual(
-    core.onLine({ kind: 'device', channelId: 'channel-a' }, line({ t: 'hello', id: 'h2', box: '{}' })),
+    core.onLine({ kind: 'device', channelId: 'channel-a' }, line({ t: 'hello', id: 'h2', box: '{}' })).deliveries,
     [],
   )
   assert.equal(core.stats.dropped, 2, '缓冲不算丢弃')
@@ -85,7 +85,7 @@ test('通道关闭：旧通道上的握手回帧不再指向任何东西（重�
 
   core.closeChannel('channel-a')
   assert.deepEqual(
-    core.onLine({ kind: 'data', channelId: 'channel-a' }, line({ t: 'hello-ack', id: 'h1', box: '{}' })),
+    core.onLine({ kind: 'data', channelId: 'channel-a' }, line({ t: 'hello-ack', id: 'h1', box: '{}' })).deliveries,
     [],
     '设备走了，那条通道的关联不该再指向任何东西',
   )
@@ -95,7 +95,7 @@ test('通道关闭：旧通道上的握手回帧不再指向任何东西（重�
   core.openDevice('channel-new', binding('phone-a'))
   core.attachData('pc-1', 'phone-a', 'channel-new')
   const ack = line({ t: 'hello-ack', id: 'h1', box: '{}' })
-  assert.deepEqual(core.onLine({ kind: 'data', channelId: 'channel-new' }, ack), [
+  assert.deepEqual(core.onLine({ kind: 'data', channelId: 'channel-new' }, ack).deliveries, [
     { channelId: 'channel-new', to: 'device', raw: ack },
   ])
 })

@@ -23,9 +23,11 @@
  * 不做"接住所有异常继续跑"：那是把故障藏起来。
  */
 import { readFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 
 import { createDigestAuthenticator, type TokenDigest } from './digest-auth.ts'
 import { appendTokenToConfig, issueToken, revokeTokenInConfig, setAdminInConfig } from './issue-token.ts'
+import { readMeteringState } from './metering-state.ts'
 import { startRelay } from './server.ts'
 
 interface RelayConfig {
@@ -46,6 +48,20 @@ interface RelayConfig {
    * 结构性保证 —— 不靠端口绑在哪、也不靠反代配置对不对。
    */
   admin?: { id: string; hash: string }
+  /**
+   * 按人的流量额度。**整段不配 = 只转发、不记账**。
+   *
+   * `period` 用 UTC 结算；`owners` 按人覆盖 `defaultBytes`；`persist: true` 才落盘
+   * （默认内存态，重启清零 —— 与名册/票同一条纪律）。
+   */
+  quota?: {
+    period: 'month' | 'day' | 'none'
+    enforce: 'cut' | 'block' | 'off'
+    defaultBytes: number
+    owners?: Record<string, number>
+    persist?: boolean
+    statePath?: string
+  }
 }
 
 function argValue(name: string): string | undefined {
@@ -74,6 +90,37 @@ if (config.admin !== undefined) {
   if (typeof id !== 'string' || id === '' || typeof hash !== 'string' || !/^[0-9a-fA-F]{64}$/.test(hash)) {
     console.error('配置里的 admin 段不合法：需要 { "id": "<非空>", "hash": "<sha256 十六进制，64 位>" }')
     process.exit(2)
+  }
+}
+
+/**
+ * 额度段校验。配错就**启动失败**（与"没有 tokens 直接退出"同一条纪律）：
+ * 一个"额度永远算 0"或"永远超"的中转，比一开始就说清哪里写错难查得多。
+ */
+function quotaProblem(quota: NonNullable<RelayConfig['quota']>): string | undefined {
+  if (!['month', 'day', 'none'].includes(quota.period)) return `period 只能是 month / day / none（收到 ${String(quota.period)}）`
+  if (!['cut', 'block', 'off'].includes(quota.enforce)) return `enforce 只能是 cut / block / off（收到 ${String(quota.enforce)}）`
+  if (!Number.isInteger(quota.defaultBytes) || quota.defaultBytes <= 0) return 'defaultBytes 必须是正整数（不限额请删掉整个 quota 段）'
+  for (const [owner, bytes] of Object.entries(quota.owners ?? {})) {
+    if (!Number.isInteger(bytes) || bytes <= 0) return `owners.${owner} 必须是正整数`
+  }
+  if (quota.persist === true && quota.statePath !== undefined && quota.statePath === '') {
+    return 'persist: true 时 statePath 不能是空串'
+  }
+  return undefined
+}
+if (config.quota !== undefined) {
+  const problem = quotaProblem(config.quota)
+  if (problem !== undefined) {
+    console.error(`配置里的 quota 段不合法：${problem}`)
+    process.exit(2)
+  }
+  // 默认落盘位置与配置同目录 —— 那个目录在容器里已经可写（compose 的挂载）。
+  config.quota = {
+    ...config.quota,
+    ...(config.quota.persist === true && config.quota.statePath === undefined
+      ? { statePath: join(dirname(configPath), 'relay.state.json') }
+      : {}),
   }
 }
 
@@ -172,6 +219,21 @@ try {
   console.error(`配置里的令牌摘要表不可用：${error instanceof Error ? error.message : String(error)}`)
   process.exit(2)
 }
+// 额度主体来自**配置**（令牌条目里的 `owner`），不是运行时状态：连接器掉线不该让
+// "算在谁名下"跟着变。吊销的条目不参与（它连不上，也不该占着额度）。
+const owners = new Map<string, string>()
+for (const entry of entries) {
+  if (entry.owner !== undefined && entry.revokedAt === undefined) owners.set(entry.id, entry.owner)
+}
+const quotaState = config.quota?.persist === true && config.quota.statePath !== undefined
+  ? await readMeteringState(config.quota.statePath, {
+    error: (message, detail) => console.error(`[relay] ${message}`, detail ?? ''),
+    warn: () => { /* 读状态只用 error */ },
+    info: () => { /* 同上 */ },
+    debug: () => { /* 同上 */ },
+  })
+  : undefined
+
 const relay = await startRelay({
   port: config.port ?? 8787,
   host: config.host ?? '127.0.0.1',
@@ -180,6 +242,10 @@ const relay = await startRelay({
   ...(config.rateLimit === undefined ? {} : { rateLimit: config.rateLimit }),
   // 没配 `admin` 就不传：那张面不存在（`/admin*` 一律 404）。
   ...(config.admin === undefined ? {} : { admin: config.admin }),
+  // 没配 `quota` 就不传：只转发、不记账。
+  ...(config.quota === undefined ? {} : { quota: config.quota }),
+  ownerOf: (connectorId: string) => owners.get(connectorId),
+  ...(quotaState === undefined ? {} : { quotaState }),
   // 中转必须**留声**：它只转发与记账，出问题时（投递目标不在、丢弃、认证被拒）
   // 日志是唯一的线索。级别用 debug 之外的 info/warn，默认就能看见。
   log: {

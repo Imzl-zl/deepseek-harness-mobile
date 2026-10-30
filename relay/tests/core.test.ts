@@ -47,12 +47,12 @@ test('通道绑定即订阅：两侧的帧只投给同一条通道的另一端�
   // 三个方向都拿**逐字相同**的帧（同一个 `sid`、同一个 `id`）：绑定即订阅，不看内容。
   const raw = ev('sid_1', 1)
   assert.deepEqual(
-    core.onLine({ kind: 'device', channelId: 'channel-a' }, raw),
+    core.onLine({ kind: 'device', channelId: 'channel-a' }, raw).deliveries,
     [{ channelId: 'channel-a', to: 'data', raw }],
     '设备侧的帧投给它自己那条通道的电脑侧',
   )
   assert.deepEqual(
-    core.onLine({ kind: 'data', channelId: 'channel-a' }, raw),
+    core.onLine({ kind: 'data', channelId: 'channel-a' }, raw).deliveries,
     [{ channelId: 'channel-a', to: 'device', raw }],
     '电脑侧的帧投给该通道的设备（另一台设备在听同一个 sid 也不算听众）',
   )
@@ -81,13 +81,13 @@ test('配对用途通道：候选帧沿它自己那条通道投给连接器，�
 
   const commit = line({ t: 'pair-commit', id: 'p1', fc: 1, box: '{}' })
   assert.deepEqual(
-    core.onLine({ kind: 'device', channelId: 'pair-channel' }, commit),
+    core.onLine({ kind: 'device', channelId: 'pair-channel' }, commit).deliveries,
     [{ channelId: 'pair-channel', to: 'data', raw: commit }],
     '配对提交没有 sid —— 靠通道绑定路由，而不是被当成"没有归属"丢掉',
   )
   const result = line({ t: 'pair-result', id: 'p1', fc: 1, box: '{}' })
   assert.deepEqual(
-    core.onLine({ kind: 'data', channelId: 'pair-channel' }, result),
+    core.onLine({ kind: 'data', channelId: 'pair-channel' }, result).deliveries,
     [{ channelId: 'pair-channel', to: 'device', raw: result }],
     '没有 sid 的回帧靠通道绑定找回发起方，而不是靠帧头 id 猜',
   )
@@ -110,10 +110,10 @@ test('丢弃要计数、要有理由：没有这条通道的帧一律丢弃并�
   const core = setup()
   core.attachData('pc-1', 'phone-a', 'channel-a')
 
-  assert.deepEqual(core.onLine({ kind: 'device', channelId: 'channel-x' }, 'not json'), [], '坏行不由中转判定')
-  assert.deepEqual(core.onLine({ kind: 'data', channelId: 'channel-x' }, ev('sid_x', 1)), [], '未知 sid 不由中转判定')
+  assert.deepEqual(core.onLine({ kind: 'device', channelId: 'channel-x' }, 'not json').deliveries, [], '坏行不由中转判定')
+  assert.deepEqual(core.onLine({ kind: 'data', channelId: 'channel-x' }, ev('sid_x', 1)).deliveries, [], '未知 sid 不由中转判定')
   assert.deepEqual(
-    core.onLine({ kind: 'device', channelId: 'channel-gone' }, line({ t: 'pair', id: 'p1', box: '{}' })),
+    core.onLine({ kind: 'device', channelId: 'channel-gone' }, line({ t: 'pair', id: 'p1', box: '{}' })).deliveries,
     [],
     '没有这条通道：不知道该给谁',
   )
@@ -121,7 +121,7 @@ test('丢弃要计数、要有理由：没有这条通道的帧一律丢弃并�
 
   // 反面：已绑定的通道上**逐字转发**，它是不是 JSON、携不携 sid 都与中转无关。
   const opaque = 'not json at all'
-  assert.deepEqual(core.onLine({ kind: 'device', channelId: 'channel-a' }, opaque), [
+  assert.deepEqual(core.onLine({ kind: 'device', channelId: 'channel-a' }, opaque).deliveries, [
     { channelId: 'channel-a', to: 'data', raw: opaque },
   ])
   assert.equal(core.stats.dropped, 3, '转发成功不产生丢弃')
@@ -144,7 +144,7 @@ test('连接器断开：它的通道全部关闭、登记失效（不留指向�
   assert.equal(core.lookupPairing(offerB), undefined, '没用上的公开邀请随连接器一起失效')
   assert.equal(core.stats.registrations, 0)
   assert.deepEqual(
-    core.onLine({ kind: 'device', channelId: 'channel-a' }, line({ t: 'pair', id: 'p2', box: '{}' })),
+    core.onLine({ kind: 'device', channelId: 'channel-a' }, line({ t: 'pair', id: 'p2', box: '{}' })).deliveries,
     [],
     '设备失去了通道：不能把帧投给一条已消失的连接',
   )

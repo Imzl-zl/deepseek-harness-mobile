@@ -16,6 +16,12 @@ export interface HttpFaceOptions {
   authenticate: (token: string) => Authenticated | undefined
   devices: DeviceRegistry
   rateLimit?: (key: string) => { allowed: boolean; retryAfterMs: number | null }
+  /**
+   * 按人的流量额度已用满时返回"多久之后可再试"（`null` = 这个周期不会自行恢复）。
+   *
+   * 只在**业务**换票那一跳判：配对候选不受额度约束（它是恢复路径）。
+   */
+  quotaDenied?: (connectorId: string) => { retryAfterMs: number | null } | undefined
   log?: ChannelLogger
 }
 export interface HttpRequest {
@@ -100,6 +106,12 @@ export function createHttpFace(options: HttpFaceOptions): HttpFace {
         // 设备凭据有效而电脑离线不是“需要重新配对”。
         if (connectorId === undefined || !core.isConnectorOnline(connectorId)) {
           return { status: 503, body: { error: 'connector-offline' } }
+        }
+        // 额度用满：**在换票这步就拒**（票是一次性的，绕不过去）。
+        // 形状沿用既有的 `rate-limited`（§3.1 不动），手机按退避重试。
+        const quota = options.quotaDenied?.(connectorId)
+        if (quota !== undefined) {
+          return { status: 429, body: { error: 'rate-limited', retryAfterMs: quota.retryAfterMs } }
         }
         const issued = tickets.issue({ connectorId, deviceId, purpose: 'paired' })
         return { status: 201, body: { ticket: issued.ticket, expiresAt: issued.expiresAt } }

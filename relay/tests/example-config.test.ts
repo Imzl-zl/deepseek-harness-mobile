@@ -25,6 +25,13 @@ interface ExampleConfig {
   tokens: { kind: 'connector'; id: string; hash: string }[]
   rateLimit?: { capacity: number; refillPerSecond: number }
   admin?: { id: string; hash: string }
+  quota?: {
+    period: 'month' | 'day' | 'none'
+    enforce: 'cut' | 'block' | 'off'
+    defaultBytes: number
+    owners?: Record<string, number>
+    persist?: boolean
+  }
 }
 
 test('样例配置能真的把中继起起来（样例坏了，操作者会遇到"服务起不来"）', async (t) => {
@@ -39,6 +46,13 @@ test('样例配置能真的把中继起起来（样例坏了，操作者会遇�
   if (config.admin !== undefined) {
     assert.equal(typeof config.admin.id, 'string')
     assert.match(config.admin.hash, /^[0-9a-fA-F]{64}$/, '管理面凭据只放摘要')
+  }
+  // 额度段：样例里的值必须过 `main.ts` 的启动校验（否则操作者照着改会起不来）。
+  if (config.quota !== undefined) {
+    assert.ok(['month', 'day', 'none'].includes(config.quota.period))
+    assert.ok(['cut', 'block', 'off'].includes(config.quota.enforce))
+    assert.equal(Number.isInteger(config.quota.defaultBytes), true)
+    for (const bytes of Object.values(config.quota.owners ?? {})) assert.equal(Number.isInteger(bytes), true)
   }
 
   const authenticate = createDigestAuthenticator(config.tokens)
