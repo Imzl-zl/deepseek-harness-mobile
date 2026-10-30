@@ -20,8 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
       - run: node protocol/verify-fixtures.mjs
@@ -40,11 +40,11 @@ jobs:
       run:
         working-directory: relay
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
         with:
           version: 11.13.1
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
           cache: pnpm
@@ -61,16 +61,21 @@ jobs:
       run:
         working-directory: connector
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
         with:
           version: 11.13.1
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
           cache: pnpm
-          cache-dependency-path: connector/pnpm-lock.yaml
+          cache-dependency-path: |
+            connector/pnpm-lock.yaml
+            relay/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - name: 装中转依赖（接缝用例会 spawn 真中转进程）
+        working-directory: relay
+        run: pnpm install --frozen-lockfile
       - run: pnpm exec tsc --noEmit
       - run: pnpm build
       - run: pnpm test
@@ -80,7 +85,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.41.9'
@@ -94,3 +99,4 @@ jobs:
         run: dart analyze --fatal-infos lib test integration_test
       - working-directory: app
         run: flutter test
+
