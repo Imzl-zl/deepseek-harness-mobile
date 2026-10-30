@@ -115,7 +115,7 @@ test('配了 admin：缺/错令牌 401 且 no-store；对的给页面与快照�
   const html = await page.text()
   assert.match(html, /管理令牌/, '页面上有令牌输入框')
   assert.match(html, /id="login"/, '先登录：有一个登录屏')
-  assert.match(html, /id="app" hidden/, '看板默认隐藏 —— 打开 URL 不该先看到一半界面')
+  assert.match(html, /id="app"[^>]*\shidden/, '看板默认隐藏 —— 打开 URL 不该先看到一半界面')
   assert.equal(/<script[^>]+src=/.test(html), false, '单文件：没有任何外链脚本')
   assert.equal(/<link[^>]+href=/.test(html), false, '单文件：没有任何外链样式表')
 

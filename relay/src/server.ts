@@ -93,6 +93,8 @@ function reply(response: ServerResponse, status: number, body: unknown): void {
 
 export async function startRelay(options: RelayServerOptions): Promise<RelayServer> {
   const log = options.log
+  /** 进程启动时刻（面板的“已运行”）。 */
+  const startedAt = Date.now()
   const devices = createDeviceRegistry(log === undefined ? {} : { log })
   const core = createRelayCore(log === undefined ? {} : { log })
   const tickets = createTicketStore(log === undefined ? {} : { log })
@@ -185,6 +187,8 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         return {
           v: 1,
           now: Date.now(),
+          uptimeMs: Date.now() - startedAt,
+          traffic: metering.traffic(),
           connectors,
           channels,
           totals: { connectors: controls.size, channels: links.size },

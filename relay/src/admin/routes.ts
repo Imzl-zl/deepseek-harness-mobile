@@ -31,6 +31,10 @@ export interface AdminRequest {
 export interface AdminStateView {
   v: 1
   now: number
+  /** 进程已运行毫秒数。 */
+  uptimeMs: number
+  /** 近 60 分钟整台服务的转发字节（面板曲线；最后一个是当前分钟）。 */
+  traffic: { perMinute: readonly number[]; total: number }
   connectors: readonly {
     connectorId: string
     owner?: string

@@ -92,6 +92,8 @@ export interface Metering {
   usedOf(subject: string): number
   /** `null` = 不限制。 */
   limitOf(subject: string): number | null
+  /** 近 60 分钟**整台中转**的字节数（面板的曲线；全局也只有一份，不按人拆）。 */
+  traffic(): { perMinute: readonly number[]; total: number }
   /**
    * 运行时改上限（面板）：`null` = 取消上限。只改内存覆盖值，落盘由装配方负责。
    */
@@ -150,6 +152,23 @@ export function createMetering(options: MeteringOptions): Metering {
    * 由令牌条数封顶，扫描者无法给它灌内存。
    */
   const meters = new Map<string, { period: string; bytes: number }>()
+  /**
+   * 近 60 分钟的流量序列（整台服务）。只存 60 个整数，按分钟滚动；
+   * 面板的曲线读它 —— **不是抽样、不是估算**，就是这段时间真正转发过的字节。
+   */
+  const TRAFFIC_MINUTES = 60
+  const traffic = new Array<number>(TRAFFIC_MINUTES).fill(0)
+  let trafficMinute = Math.floor(now() / 60_000)
+  const rollTraffic = (minute: number): void => {
+    if (minute === trafficMinute) return
+    const gap = Math.min(TRAFFIC_MINUTES, minute - trafficMinute)
+    if (gap >= TRAFFIC_MINUTES) traffic.fill(0)
+    else {
+      traffic.splice(0, gap)
+      for (let index = 0; index < gap; index += 1) traffic.push(0)
+    }
+    trafficMinute = minute
+  }
   let dirty = false
 
   if (options.state !== undefined) {
@@ -190,6 +209,9 @@ export function createMetering(options: MeteringOptions): Metering {
       const row = rowOf(subject)
       row.bytes += bytes
       dirty = true
+      const minute = Math.floor(now() / 60_000)
+      rollTraffic(minute)
+      traffic[TRAFFIC_MINUTES - 1] = (traffic[TRAFFIC_MINUTES - 1] ?? 0) + bytes
       const limit = limitOfSubject(subject)
       // **用满就算满**（`>=`）：到恰好上限时这个人已经没有额度了，下一帧必然超。
       // 与 `check` 同一个判据，否则会出现"charge 说没超、check 说超了"的两套话。
@@ -210,6 +232,13 @@ export function createMetering(options: MeteringOptions): Metering {
 
     usedOf(subject) { return rowOf(subject).bytes },
     limitOf(subject) { return limitOfSubject(subject) },
+
+    traffic() {
+      rollTraffic(Math.floor(now() / 60_000))
+      let total = 0
+      for (const value of traffic) total += value
+      return { perMinute: [...traffic], total }
+    },
 
     setLimit(subject, bytes) {
       // 只接受**已知主体**：已有计数行，或配置里点名的人。面板不该成为"新额度主体"的入口。

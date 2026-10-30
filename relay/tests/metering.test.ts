@@ -71,6 +71,25 @@ test('用满就算满（>=），未用满不挡；off 只记账不挡', () => {
   assert.equal(lax.usedOf('connector:c'), 1_000)
 })
 
+test('近 60 分钟序列：按分钟滚动，跨分钟补零，跨过整个窗口就清空', () => {
+  let now = OCT_30
+  const metering = createMetering({ quota: {}, ownerOf: () => undefined, now: () => now })
+  metering.charge('c', 5)
+  now += 60_000
+  metering.charge('c', 7)
+
+  const first = metering.traffic()
+  assert.equal(first.perMinute.length, 60)
+  assert.equal(first.perMinute[58], 5, '上一分钟的落在倒数第二格')
+  assert.equal(first.perMinute[59], 7, '当前分钟在最后一格')
+  assert.equal(first.total, 12)
+
+  now += 120 * 60_000
+  const later = metering.traffic()
+  assert.equal(later.total, 0, '两小时后，窗口里已经没有那两分钟')
+  assert.equal(later.perMinute.every((value) => value === 0), true)
+})
+
 test('周期滚动：跨月自动归零（惰性结算，不靠定时器）', () => {
   let now = OCT_30
   const metering = createMetering({ quota: config({ defaultBytes: 10 }), ownerOf: () => undefined, now: () => now })
