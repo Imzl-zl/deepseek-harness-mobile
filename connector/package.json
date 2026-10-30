@@ -1,6 +1,6 @@
 {
   "name": "dsh-mobile-connector",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "DSH 插件:手机端远程通道的电脑侧桥接",
   "keywords": [
@@ -38,7 +38,8 @@
     "lib",
     "client.js",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {
