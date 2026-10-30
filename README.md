@@ -8,6 +8,7 @@
   <a href="https://github.com/Imzl-zl/deepseek-harness-mobile/actions/workflows/ci.yml"><img src="https://github.com/Imzl-zl/deepseek-harness-mobile/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <a href="https://github.com/Imzl-zl/deepseek-harness-mobile/releases"><img src="https://img.shields.io/github/v/release/Imzl-zl/deepseek-harness-mobile?include_prereleases" alt="release"></a>
   <a href="https://www.npmjs.com/package/dsh-mobile-connector"><img src="https://img.shields.io/npm/v/dsh-mobile-connector" alt="npm"></a>
+  <a href="https://www.npmjs.com/package/dsh-mobile-connector"><img src="https://img.shields.io/npm/dm/dsh-mobile-connector" alt="npm downloads"></a>
   <a href="https://www.npmjs.com/package/dsh-mobile-connector"><img src="https://img.shields.io/badge/provenance-sigstore-blueviolet" alt="provenance"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="license"></a>
 </p>
