@@ -143,8 +143,15 @@ function parseRegistrations(value: unknown): DeviceRegistration[] | undefined {
     if (typeof id !== 'string' || id === '' || typeof tokenHash !== 'string' || tokenHash === ''
       || typeof pairingId !== 'string' || typeof devPubEd !== 'string' || typeof devPubDh !== 'string') return undefined
     const name = record['name']
+    // **停用的行照样收**（带 `revokedAt`）：它是 401 `device-revoked` 的来源。
+    // 丢掉这个字段会让中转只剩 `device-unknown`，手机分不出"被停用"与"名册还没同步"。
+    const revokedAt = record['revokedAt']
+    if (revokedAt !== undefined && (typeof revokedAt !== 'number' || !Number.isFinite(revokedAt))) {
+      return undefined
+    }
     rows.push({
       id, tokenHash, pairingId, devPubEd, devPubDh, name: typeof name === 'string' ? name : '',
+      ...(revokedAt === undefined ? {} : { revokedAt }),
     })
   }
   return rows

@@ -36,6 +36,45 @@ export interface DeviceRegistration {
   name: string
   /** `sha256(设备令牌)` 的十六进制。 */
   tokenHash: string
+  /**
+   * 吊销时间（停用）。
+   *
+   * **停用的行照样上报**，带这个字段：中转据此把换票 401 说成 `device-revoked`
+   * （手机侧是终态 → 清这一台的凭据回配对页）。不报的话中转只剩"没见过"，
+   * 停用与"名册还没同步"在手机侧完全同一个症状（一直重试）。
+   */
+  revokedAt?: number
+}
+
+/** 一行设备记录（名册来源的形状：`devices` 表的一行）。 */
+export interface RosterSourceRow {
+  pairingId: string
+  edPub: string
+  dhPub: string
+  name: string
+  /** 没有摘要的行**报不进名册**（换不到票，报了只会让中转留一份过期的归属）。 */
+  tokenHash?: string
+  revokedAt?: number
+}
+
+/**
+ * 把设备表的一行翻成名册的一行；**报不进名册就回 `undefined`**。
+ *
+ * 两条规则：
+ * 1. 没有 `tokenHash` 的行不能报（缺摘要 = 换不到票，报了也没用）；
+ * 2. **停用的行照样报**（带 `revokedAt`）—— 这是 `device-revoked` 唯一的来源。
+ */
+export function rosterEntry(id: string, row: RosterSourceRow): DeviceRegistration | undefined {
+  if (row.tokenHash === undefined) return undefined
+  return {
+    id,
+    pairingId: row.pairingId,
+    devPubEd: row.edPub,
+    devPubDh: row.dhPub,
+    name: row.name,
+    tokenHash: row.tokenHash,
+    ...(row.revokedAt === undefined ? {} : { revokedAt: row.revokedAt }),
+  }
 }
 
 export interface DevicePublisherOptions {

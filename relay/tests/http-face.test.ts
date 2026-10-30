@@ -139,6 +139,30 @@ test('401 带原因：没见过 → device-unknown，已停用 → device-revoke
   assert.deepEqual(face.handle(ticketByToken(DEVICE_TOKEN)).body, { error: 'device-revoked' })
 })
 
+test('名册**走 HTTP** 带上 revokedAt：停用才会变成 device-revoked（不是 unknown）', () => {
+  // 这一条钉的是**名册的形状**：`device-registry` 早就支持带 revokedAt 的行，
+  // 但真正决定"手机看得见停用"的是两处过滤 —— 连接器上报时有没有把停用行带上、
+  // 中转解析时有没有保留 `revokedAt`。任何一处漏掉，401 都会退化成 device-unknown
+  // （与"名册还没同步"同一个症状 ⇒ 手机一直重试，停用在他那边等于没发生）。
+  const { face } = setup()
+  const roster = {
+    method: 'POST',
+    path: '/devices',
+    token: 'connector-token-1',
+    body: { devices: [{ ...rosterRow(DEVICE_ID, DEVICE_TOKEN), revokedAt: 1760000000000 }] },
+  }
+  assert.equal(face.handle(roster).status, 201, '带 revokedAt 的名册是合法形状')
+  assert.deepEqual(
+    face.handle(ticketByToken(DEVICE_TOKEN)).body,
+    { error: 'device-revoked' },
+    '停用的设备换票必须说"被停用"，而不是"没见过"',
+  )
+
+  // 形状不合（revokedAt 不是数字）→ 400，而不是静默丢掉这个字段。
+  const bad = { ...roster, body: { devices: [{ ...rosterRow(DEVICE_ID, DEVICE_TOKEN), revokedAt: 'yesterday' }] } }
+  assert.equal(face.handle(bad).status, 400)
+})
+
 test('配对登记不可用 → 409 / 候选不合形状 → 400，而且**一张票都不许发**', () => {
   const { core, tickets, face } = setup()
   assert.equal(face.handle(ticketByOffer()).status, 409, '没登记')

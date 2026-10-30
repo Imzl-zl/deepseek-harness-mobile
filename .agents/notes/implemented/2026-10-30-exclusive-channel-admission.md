@@ -233,7 +233,13 @@ serving(): DeviceState | undefined   // devices() 里 online 的那一条（独�
 - **"删除"与"名册未同步"在中转侧不可区分**（停用**没有**这个问题，别混）：
   - 停用：行留着、带 `revokedAt` → 401 body `device-revoked` → 手机侧
     `ErrorCode.revoked`（`pairing_client.dart:134-139`）→ `clientAction == rePair`
-    → 终态、清这一台的凭据回配对页。**这条早就通了**（`implemented/2026-10-24-terminal-identity-from-pc.md`）。
+    → 终态、清这一台的凭据回配对页。**注意：这条链今天之前是断的** ——
+    手机与中转两半都在（`implemented/2026-10-24-terminal-identity-from-pc.md`），
+    但连接器上报名册时把停用行过滤掉了（`publishDevices`），中转解析名册时又把
+    `revokedAt` 丢掉（`parseRegistrations`），于是 `device-revoked` 没有任何生产者，
+    停用在手机侧与"名册还没同步"同一个症状。同批补上了这两处
+    （`rosterEntry` 带 `revokedAt` + 解析保留它），用例见 `device-publish.test.ts`
+    与 `http-face.test.ts`「名册走 HTTP 带上 revokedAt」。
   - 删除：行被名册差集删掉（`device-registry.ts` 纪律 4），令牌哈希查不到 →
     401 body `device-unknown` → 手机按 `relayOffline` 退避重试（**这是刻意的**：
     `device-unknown` 也覆盖"电脑刚启动、名册还没重放"，那种情况重试就能好）。

@@ -91,7 +91,7 @@ import {
   writeRelayToken,
 } from './dsh/relay-token.js'
 import { createPairingRegistrar } from './pairing-register.js'
-import { createDevicePublisher } from './device-publish.js'
+import { createDevicePublisher, rosterEntry } from './device-publish.js'
 import { offerForScanning, issuePairingOffer } from './pairing-offer.js'
 import { pairingQrSvg } from './pairing-qr.js'
 import { mountAdminFace } from './admin/mount.js'
@@ -600,20 +600,15 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           if (table === null) {
             throw new Error('devices 表尚未就绪：装配顺序有误')
           }
+          // **停用的行也报**（带 `revokedAt`）：那是中转把换票 401 说成
+          // `device-revoked` 的唯一来源（手机据此清凭据回配对页）。只报未停用的行
+          // 会让"停用"与"名册还没同步"在手机侧完全同一个症状（一直重试）。
+          // 行本身什么时候消失？用户删除时才删（`device-admin` 的显式删除）。
           const rows = [...table.keys()].flatMap((id) => {
             const record = table.get(id)
-            if (record === undefined || record.revokedAt !== undefined) return []
-            if (record.tokenHash === undefined) return []
-            return [
-              {
-                id,
-                pairingId: record.pairingId,
-                devPubEd: record.edPub,
-                devPubDh: record.dhPub,
-                name: record.name,
-                tokenHash: record.tokenHash,
-              },
-            ]
+            if (record === undefined) return []
+            const entry = rosterEntry(id, record)
+            return entry === undefined ? [] : [entry]
           })
           await publisher(rows)
         }

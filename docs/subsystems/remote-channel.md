@@ -418,7 +418,7 @@ type SyncSnapshot = {
 | `settings.describe` | 手机→电脑 | — | 读设置(密钥面见下)。**只读**,不带幂等键 |
 | `settings.update` | 手机→电脑 | `requestId` | 写设置:带 `expectedRevision` 乐观锁,过期回 `settings/conflict` |
 | `credentials.set` / `credentials.unset` | 手机→电脑 | `requestId` | **单向写面**,无读方法。DSH 侧是 `settings-controller/src/credentials.ts:100` 的 `set(ref, value)` 与 `:113` 的 `unset(ref)`;`value` 是明文(§7.5 的"改密钥只发新值"由此天然成立),而读面 `describe`(:83)**默认脱敏**(`redactSecrets`) |
-| `devices.list` | 手机→电脑 | — | 设备管理。**吊销不是方法**:名册的写入方本来就是电脑侧,吊销 = 不再把该设备报进名册 + 本地标 `revokedAt`(§8.2) |
+| `devices.list` | 手机→电脑 | — | 设备管理。**吊销不是方法**:名册的写入方本来就是电脑侧,吊销 = 本地标 `revokedAt` 并**照样把该行报进名册(带 `revokedAt`)**(§8.2)。报漏这一行会让中转只剩"没见过"这一档,手机分不出"被停用"与"名册还没同步";**删除**行则不再上报(中转按名册差集删掉,手机侧落到"不认识") |
 | `workspace.list` | 手机→电脑 | — | **只读**的工作区清单 + 每个工作区的会话 id(会话列表按它分组) + **已归档会话清单** `archivedSessionIds` + **置顶会话清单** `pinnedSessionIds`(最近置顶的在前,`types.ts:147-158`)。形状与 DSH 的 `WorkspaceView` 逐字一致(`packages/api/workspace-controller/src/types.ts:18-30`、`:152-157` 的基线带归档集与置顶集)。"会话属于哪个工作区"只存在于这一侧 —— `SessionSummary` 里**没有** `workspaceId`(`types.ts:177-190`),所以照 Web 分组只能读这里;按 `cwd` 猜是第二份真值。**归档清单、置顶清单与会话 id 一起过别名**(同一份载荷里两种 id 约定只换一半,手机就永远对不上)。按能力位挂:缺 `workspaceController` 时方法不出现,手机退回不分组 |
 | `workspace.archive` | 手机→电脑 | `requestId` | 归档一个会话。DSH 的 `WorkspaceController.archiveSession`(`packages/api/workspace-controller/src/index.ts:154`,请求 `{sessionId, stopActivity?}`,`types.ts:115-125`)——**与 Web 同一个方法**(Web 点归档就是调它,`ui-workspace/src/client/navigation.ts:300`)。不带 `stopActivity` 时,有活动的会话被拒为 `workspace/session-active`(**原码到手机**,它已在错误表里;§3.1);Web 由"停止并归档"对话框带 `true` 重发(`ui-workspace/src/client/index.ts:190-208`),手机照同一条。返回**归档全集**(`{archivedSessionIds}`,id 已换成手机见的 `sid`) |
 | `workspace.unarchive` | 手机→电脑 | `requestId` | 取消归档。DSH 的 `unarchiveSession`(`index.ts:164`)。**幂等**:没归档过的 id 也成功(`commands.ts:185-195` 原注释)。同样回归档全集 |
@@ -748,10 +748,14 @@ window(sid, seq, frame_routing_json, box, received_at)      -- 有界:1000 条/�
 
 - `window` 是**缓存**:允许被清空;清空后正确性不变(I7)。
 - 令牌只存摘要;配对秘密只存哈希(而**哈希也不登记**);公开邀请一次性、5 分钟有效。
+- **名册行的形状**:`{id, pairingId, devPubEd, devPubDh, name, tokenHash, revokedAt?}`。
+  **停用的行照样上报**(带 `revokedAt`);中转据此把换票 401 说成 `device-revoked`
+  (手机侧终态:清这一台的凭据回配对页)。**删除**的行不再上报,中转按差集删掉
+  —— 那枚令牌只剩"不认识"这一档(见 §2.4 的已知边界)。
 - **刷新令牌的摘要不在名册里**。轮换流程本期不做(决定见
   `.agents/notes/implemented/2026-10-09-token-and-scope-decisions.md`):设备令牌长期有效,
   轮换等于重新扫码。代价如实说:设备令牌泄露后在手动吊销前一直有效;补偿是吊销可用
-  (电脑侧不再把该设备报进名册 + 本地标 `revoked_at`)。刷新令牌本身仍会签给手机并存进
+  (电脑侧标 `revoked_at` 并**带着这个字段**继续上报该行)。刷新令牌本身仍会签给手机并存进
   安全存储——它是**本机凭据**,只是不上中转(中转多存一份没有人读的摘要,只会让人以为
   轮换已经实现)。
 - **`devices` 是归属的真值**(不是内存里的 ticket 绑定表):设备重连要能自己回来,所以"这台设备属于哪台连接器"
