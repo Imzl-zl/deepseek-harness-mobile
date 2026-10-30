@@ -4,5 +4,5 @@
 # 工程形态与版本策略见 .agents/notes/implemented/2026-10-01-connector-workspace-shape.md
 - insert:
     - id: dsh-mobile-connector
-      name: '@dsh-mobile/connector'
+      name: 'dsh-mobile-connector'
       config: {}
