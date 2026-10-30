@@ -2,6 +2,11 @@
 
 Status: implemented
 
+> 后续：本篇的「显式点名可以删在线的」那条已被
+> `implemented/2026-10-30-revoke-then-purge.md` 取代（撤销与清理分开：删除只对
+> 已停用的行开放）。其余结论（解禁可逆、确认必带后果、按状态批量绝不动在线的）
+> 仍然成立。
+
 ## Problem
 
 管理面(渲染在 DSH「插件」页本组合包详情面板的 `connector/client.js`)改造前:

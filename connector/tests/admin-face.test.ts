@@ -100,8 +100,8 @@ function deps(over: Partial<AdminDeps> = {}): AdminDeps {
     },
     offer: async () => ({ svg: 'P', expiresAt: 123 }),
     setEnabled: async () => {},
-    remove: async () => ({ removed: 0, skippedOnline: 0 }),
-    removeScope: async () => ({ removed: 0, skippedOnline: 0 }),
+    remove: async () => ({ removed: 0, skippedOnline: 0, refusedActive: [] }),
+    removeScope: async () => ({ removed: 0, skippedOnline: 0, refusedActive: [] }),
     connection: {
       read: async () => CONNECTION_VIEW,
       save: async () => ({
@@ -414,7 +414,7 @@ test('停用/启用：请求体不是 JSON → 400（不炸成 500）', async ()
 test('删除：多选 —— devIds 原样交给 remove，removed/skippedOnline 回给界面', async () => {
   const seen: string[][] = []
   const routes = createAdminRoutes(deps({
-    remove: async (devIds) => { seen.push([...devIds]); return { removed: 2, skippedOnline: 1 } },
+    remove: async (devIds) => { seen.push([...devIds]); return { removed: 2, skippedOnline: 1, refusedActive: [] } },
   }))
   const res = await post(routes, '/api/dsh-mobile/devices/remove', {
     devIds: ['dev-idle', 'dev-gone', 'dev-live'],
@@ -430,7 +430,7 @@ test('删除：多选 —— devIds 原样交给 remove，removed/skippedOnline 
 test('删除：单台就是长度 1 的多选，走同一条服务端路', async () => {
   const seen: string[][] = []
   const routes = createAdminRoutes(deps({
-    remove: async (devIds) => { seen.push([...devIds]); return { removed: 1, skippedOnline: 0 } },
+    remove: async (devIds) => { seen.push([...devIds]); return { removed: 1, skippedOnline: 0, refusedActive: [] } },
   }))
   const res = await post(routes, '/api/dsh-mobile/devices/remove', { devIds: ['dev-idle'] })
   const body = await jsonOf(res)
@@ -442,7 +442,7 @@ test('删除：单台就是长度 1 的多选，走同一条服务端路', async
 test('删除：不认识的 id 不当成功（400，不能回 ok）', async () => {
   let called = false
   const routes = createAdminRoutes(deps({
-    remove: async () => { called = true; return { removed: 0, skippedOnline: 0 } },
+    remove: async () => { called = true; return { removed: 0, skippedOnline: 0, refusedActive: [] } },
   }))
   const res = await post(routes, '/api/dsh-mobile/devices/remove', { devIds: ['dev-idle', 'dev-nope'] })
   // 400 而不是 404：本文件其余失败都走 `badRequest`，404 是异类。
@@ -455,7 +455,7 @@ test('删除：不认识的 id 不当成功（400，不能回 ok）', async () =
 test('删除：devIds 空数组或含非字符串 → 400', async () => {
   let called = false
   const routes = createAdminRoutes(deps({
-    remove: async () => { called = true; return { removed: 0, skippedOnline: 0 } },
+    remove: async () => { called = true; return { removed: 0, skippedOnline: 0, refusedActive: [] } },
   }))
   for (const body of [
     { devIds: [] }, { devIds: ['dev-idle', 7] }, { devIds: ['dev-idle', ''] }, { devIds: 'dev-idle' },
@@ -469,7 +469,7 @@ test('删除：devIds 空数组或含非字符串 → 400', async () => {
 test('删除：scope 只剩 revoked / all —— 跳过的在线台数要回给界面', async () => {
   const seen: string[] = []
   const routes = createAdminRoutes(deps({
-    removeScope: async (scope) => { seen.push(scope); return { removed: 30, skippedOnline: 1 } },
+    removeScope: async (scope) => { seen.push(scope); return { removed: 30, skippedOnline: 1, refusedActive: [] } },
   }))
   for (const scope of ['revoked', 'all']) {
     const res = await post(routes, '/api/dsh-mobile/devices/remove', { scope })
@@ -486,11 +486,23 @@ test('删除：scope 只剩 revoked / all —— 跳过的在线台数要回给�
   assert.equal(bad.status, 400, 'scope 是封闭集，别放过拼错的')
 })
 
+test('删除：没停用的行被拒时回 400 + id（界面据此把人引到「先停用」）', async () => {
+  const routes = createAdminRoutes(deps({
+    remove: async () => ({ removed: 0, skippedOnline: 0, refusedActive: ['dev-live'] }),
+  }))
+  const res = await post(routes, '/api/dsh-mobile/devices/remove', { devIds: ['dev-live'] })
+  assert.equal(res.status, 400, '不能回 ok：一台都没删')
+  const body = await jsonOf(res)
+  assert.equal(body['ok'], false)
+  assert.match(String(body['error']), /先停用再删除/, '原话要能指导下一步动作')
+  assert.match(String(body['error']), /dev-live/, '要点名是哪几台')
+})
+
 test('删除：按当前离线批量硬删不许回来（2026-10-15 事故就是它删掉用户自己那台）', async () => {
   let called = false
   const routes = createAdminRoutes(deps({
-    remove: async () => { called = true; return { removed: 0, skippedOnline: 0 } },
-    removeScope: async () => { called = true; return { removed: 0, skippedOnline: 0 } },
+    remove: async () => { called = true; return { removed: 0, skippedOnline: 0, refusedActive: [] } },
+    removeScope: async () => { called = true; return { removed: 0, skippedOnline: 0, refusedActive: [] } },
     setEnabled: async () => { called = true },
   }))
   // 老形状 `{scope:'offline'}` 与 `{allOffline:true}` 都必须被拒，且一个 dep 都不碰。
@@ -510,8 +522,8 @@ test('删除：按当前离线批量硬删不许回来（2026-10-15 事故就是
 test('删除：devIds 与 scope 都缺 → 400，不碰 remove', async () => {
   let called = false
   const routes = createAdminRoutes(deps({
-    remove: async () => { called = true; return { removed: 0, skippedOnline: 0 } },
-    removeScope: async () => { called = true; return { removed: 0, skippedOnline: 0 } },
+    remove: async () => { called = true; return { removed: 0, skippedOnline: 0, refusedActive: [] } },
+    removeScope: async () => { called = true; return { removed: 0, skippedOnline: 0, refusedActive: [] } },
   }))
   const res = await post(routes, '/api/dsh-mobile/devices/remove', {})
   assert.equal(res.status, 400)

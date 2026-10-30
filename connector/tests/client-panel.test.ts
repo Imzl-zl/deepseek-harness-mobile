@@ -14,7 +14,7 @@
  *
  * 1. zh / en 两份字典的**键集合相同** —— 少一个键，界面上就是一段 `undefined`；
  * 2. 源码里没有 `window.confirm`，也没有 `offline` scope 的按钮（事故的两个入口）；
- * 3. 每行的动作按钮与状态词对上新行为（未停用 → 停用+删除；已停用 → 启用+删除）；
+ * 3. 每行的动作按钮与状态词对上新行为（未停用 → 接管?+停用；已停用 → 启用+删除）；
  * 4. 点「停用」/「删除」弹出的对话框，**标题与后果句逐字符合预期** ——
  *    事故里确认框写"已吊销记录"而实际删的是离线记录，这类张冠李戴由这里钉住。
  *
@@ -323,12 +323,14 @@ test('面板：每行的动作按钮与状态词对上新行为', async () => {
   // 已停用默认折叠，有一行展开入口。
   assert.match(text, /已停用 1 台 · 展开/)
 
-  // 未停用的行（在线的我那台）：「停用」+「删除」。
+  // 未停用的行（在线的我那台）：只有「停用」（在服务时多一个「接管」）。
+  // **活跃行没有「删除」**：手机只能通过"行还在名册里"收到撤销结论，硬删会把那份
+  // 记录一起抹掉（`device-admin.ts` 不变量 2：先停用，再在「已停用」里删除）。
   const rows = bodyRows(tree)
   assert.equal(rows.length, 2, '默认只显示未停用的两行')
   const liveRow = rows[0] as Element
   assert.equal(buttonWith(liveRow, '停用') !== undefined, true, '未停用的行有「停用」')
-  assert.equal(buttonWith(liveRow, '删除') !== undefined, true, '未停用的行有「删除」')
+  assert.equal(buttonWith(liveRow, '删除'), undefined, '未停用的行没有「删除」')
   assert.equal(buttonWith(liveRow, '启用'), undefined, '未停用的行不该有「启用」')
 
   // 按状态清只剩两种，且**没有"清掉当前离线"**。
@@ -347,7 +349,7 @@ test('面板：每行的动作按钮与状态词对上新行为', async () => {
 
 test('面板：勾选后出现浮现操作栏，不改变行本身', async () => {
   const { react, panel, props, tree } = await mountPanel()
-  assert.equal(buttonWith(tree, '删除所选'), undefined, '没勾选时不出现操作栏')
+  assert.equal(buttonWith(tree, '停用所选'), undefined, '没勾选时不出现操作栏')
 
   // 勾第一行的 checkbox（那台在线的我的手机）。**按行取**，不数整棵树。
   const checkbox = inputsOf(bodyRows(tree)[0] as Element)[0]
@@ -357,12 +359,12 @@ test('面板：勾选后出现浮现操作栏，不改变行本身', async () =>
   const after = react.render(panel, props)
   const text = allText(after)
   assert.match(text, /已选 1 台/, '浮现栏显示已选几台')
-  assert.equal(buttonWith(after, '删除所选') !== undefined, true, '浮现栏有「删除所选」')
+  assert.equal(buttonWith(after, '停用所选') !== undefined, true, '浮现栏的动作是「停用所选」，不是删除')
   assert.equal(buttonWith(after, '取消') !== undefined, true, '浮现栏有「取消」')
   // **行本身没变**：还是那两个按钮，没有被勾选框挤掉。
   const rows = bodyRows(after)
   assert.equal(buttonWith(rows[0] as Element, '停用') !== undefined, true, '勾选不改变行级按钮')
-  assert.equal(buttonWith(rows[0] as Element, '删除') !== undefined, true, '勾选不改变行级按钮')
+  assert.equal(buttonWith(rows[0] as Element, '删除'), undefined, '勾选不改变行级按钮（活跃行仍无删除）')
 })
 
 test('面板：正在服务的那台多一个「在服务」与「接管」，其余行没有', async () => {
@@ -412,33 +414,23 @@ test('对话框：停用的后果写明"下次重连就会失败"，确认键是
   assert.equal(buttonWith(shown, '取消') !== undefined, true, '有取消')
 })
 
-test('对话框：删除在线那台的后果句是"正在使用 + 要重新配对"，不是"不会删除"', async () => {
+test('对话框：只有已停用的行能删，且后果句是"那台手机需要重新配对"', async () => {
   const { react, panel, props, tree } = await mountPanel()
 
-  const remove = buttonWith(bodyRows(tree)[0] as Element, '删除')
-  assert.ok(remove !== undefined)
-  ;(remove.props.onClick as () => void)()
+  // 活跃行没有删除键 —— 先停用（让手机拿到 `device-revoked` 终态）再清理。
+  assert.equal(buttonWith(bodyRows(tree)[1] as Element, '删除'), undefined)
+
+  // 展开「已停用」，那一行才有删除键。
+  ;(buttonWith(tree, '已停用 1 台 · 展开')?.props.onClick as () => void)()
+  const shown = react.render(panel, props)
+  const revokedRow = bodyRows(shown).find(
+    (row) => buttonWith(row, '删除') !== undefined,
+  )
+  assert.ok(revokedRow !== undefined, '已停用的行有「删除」')
+  ;(buttonWith(revokedRow, '删除')?.props.onClick as () => void)()
 
   const dialog = allText(react.render(panel, props))
-  assert.match(dialog, /删除「我的手机」？/)
-  // **显式删除可以删在线的**（不变量 2）：手机丢了还在线，要立刻弄死它，
-  // 为此先"让那台手机断开连接"是荒谬的。所以既不能说"不会删除"（假），
-  // 也不能不提它在用。
-  assert.match(dialog, /这台在线,正在使用。删除后它需要重新配对。/)
-  assert.doesNotMatch(dialog, /不会删除/, '在线那台照样删，不许承诺"不会删除"')
-  assert.doesNotMatch(dialog, /会跳过/, '"跳过"只属于按状态批量')
-})
-
-test('对话框：删除离线那台的后果句是"那台手机需要重新配对"', async () => {
-  const { react, panel, props, tree } = await mountPanel()
-
-  // 第二行是离线未停用的平板。
-  const remove = buttonWith(bodyRows(tree)[1] as Element, '删除')
-  assert.ok(remove !== undefined)
-  ;(remove.props.onClick as () => void)()
-
-  const dialog = allText(react.render(panel, props))
-  assert.match(dialog, /删除「平板」？/)
+  assert.match(dialog, /删除「旧手机」？/)
   assert.match(dialog, /那台手机需要重新配对。/)
 })
 
@@ -558,7 +550,7 @@ test('设备表有「配对于」列：同一台手机扫几次码就有几条�
   assert.match(pairedCell, /\d/, '配对于列渲染出可读的时间')
 })
 
-test('对话框：删除所选时，有在线报"其中 {s} 台在线"，无在线就不提', async () => {
+test('对话框：停用所选（不是删除）—— 多选的动作只会让手机失联、记录仍保留', async () => {
   const { react, panel, props, tree } = await mountPanel()
   // 两行都勾：一台在线、一台离线。**每勾一下都要重渲染、并且重新取那一行的
   // checkbox** —— `onChange` 闭包捕获的是当次渲染的 `selected`，沿用旧树上的控件
@@ -571,29 +563,15 @@ test('对话框：删除所选时，有在线报"其中 {s} 台在线"，无在�
     current = react.render(panel, props)
   }
   const picked = current
-  const removeSelected = buttonWith(picked, '删除所选')
-  assert.ok(removeSelected !== undefined)
-  ;(removeSelected.props.onClick as () => void)()
+  const disableSelected = buttonWith(picked, '停用所选')
+  assert.ok(disableSelected !== undefined)
+  ;(disableSelected.props.onClick as () => void)()
 
   const dialog = allText(react.render(panel, props))
-  assert.match(dialog, /删除所选的 2 台设备？/)
-  // 一台在线：说明规模里有几台在用，但**不提"跳过"**（显式删除一台都不跳）。
-  assert.match(dialog, /其中 1 台在线,正在使用。被删的设备都需要重新配对。/)
-  assert.doesNotMatch(dialog, /会跳过/, '显式删除不许承诺"跳过"')
-
-  // 只勾离线那台：句子不该出现"其中 0 台在线"。
-  const offlineOnly = await mountPanel()
-  const offlineCheckbox = inputsOf(bodyRows(offlineOnly.tree)[1] as Element)[0]
-  assert.ok(offlineCheckbox !== undefined)
-  ;(offlineCheckbox.props.onChange as () => void)()
-  const onePicked = offlineOnly.react.render(offlineOnly.panel, offlineOnly.props)
-  const again = buttonWith(onePicked, '删除所选')
-  assert.ok(again !== undefined)
-  ;(again.props.onClick as () => void)()
-  const solo = allText(offlineOnly.react.render(offlineOnly.panel, offlineOnly.props))
-  assert.match(solo, /删除所选的 1 台设备？/)
-  assert.match(solo, /被删的那几台手机都需要重新配对。/)
-  assert.doesNotMatch(solo, /其中 0 台在线/)
+  assert.match(dialog, /停用所选的 2 台设备？/)
+  // 与单台停用同一句后果：失联要重新配对、记录仍保留。
+  assert.match(dialog, /那台手机下次重连就会失败,需要重新配对才能恢复。记录仍会保留。/)
+  assert.doesNotMatch(dialog, /删除/, '多选的动作不是删除')
 })
 
 test('对话框：按状态清的后果句必带"那几台手机需要重新配对"，全部还要带跳过数', async () => {

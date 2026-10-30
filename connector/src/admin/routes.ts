@@ -167,13 +167,18 @@ export interface AdminDeps {
    * 删除把行抹掉。用户要的是"把这些记录弄干净"，只有删除能做到。
    * **单台就是长度 1 的数组** —— 没有单独的单删形状，两条路必须同一条规则。
    *
-   * **显式点名，可以删在线的**：操作者指着某一行 / 逐个勾的，意图无歧义
-   * （手机丢了还在线，要立刻弄死它）。见 `device-admin.ts` 不变量 2。
+   * **只允许删已停用的行**（`refusedActive` 非空时一台都不删，路由回 400）：
+   * 手机唯一能"知道被移除"的通道是换票 401 带原因，而那只在行还在名册里时成立 ——
+   * 直接硬删会把撤销记录一起抹掉，那台手机只会一直重试。「手机丢了还在线，要立刻
+   * 弄死它」现在是**停用**的事（停用会立刻收连接），删除只负责清理。
    *
-   * @returns 实际删了几台。**恒为 0 的 `skippedOnline`** 也一并回，形状与
-   *   {@link removeScope} 保持一致
+   * @returns 实际删了几台、跳过几台在线的（恒为 0），以及被拒的未停用 id。
    */
-  remove(devIds: readonly string[]): Promise<{ removed: number; skippedOnline: number }>
+  remove(devIds: readonly string[]): Promise<{
+    removed: number
+    skippedOnline: number
+    refusedActive: readonly string[]
+  }>
   /**
    * 按状态真删除。
    *
@@ -181,7 +186,11 @@ export interface AdminDeps {
    *   专门命中"暂时离线但还在用"的设备，2026-10-15 事故删掉的正是用户自己那台。
    * @returns 实际删了几台，以及**跳过几台在线的**（按状态批量绝不误伤）
    */
-  removeScope(scope: 'revoked' | 'all'): Promise<{ removed: number; skippedOnline: number }>
+  removeScope(scope: 'revoked' | 'all'): Promise<{
+    removed: number
+    skippedOnline: number
+    refusedActive: readonly string[]
+  }>
   /**
    * 面板「连接」卡的读写面。
    *
@@ -400,6 +409,13 @@ export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
         // 400 而不是 404 —— 本文件其余失败都走 `badRequest`，404 是异类。
         if (unknown !== undefined) return badRequest(new Error(`未知设备：${unknown}`))
         const result = await deps.remove(ids)
+        // **没停用的行不许直接删**（全有或全无）：手机唯一能知道"被移除"的通道是
+        // 换票 401 带原因，硬删会把撤销记录一起抹掉 → 那台手机一直重试。
+        if (result.refusedActive.length > 0) {
+          return badRequest(
+            new Error(`这些设备还在用，请先停用再删除：${result.refusedActive.join('、')}`),
+          )
+        }
         return json({ ok: true, ...result, devices: deps.devices() })
       },
     },

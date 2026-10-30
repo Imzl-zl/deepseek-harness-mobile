@@ -242,7 +242,8 @@ window.__ModuleLoader__.load({
       confirmTakeOverTitle: '接管这台电脑？（「{name}」正在服务）',
       confirmTakeOverDescription: '接管 = 停用占用者：它立刻下线、占用位立刻释放，下一台手机可以连上；它下次连回来需要重新配对。',
       failedTakeOver: '接管失败：{reason}',
-      removeSelected: '删除所选',
+      disableSelected: '停用所选',
+      selectedAllDisabled: '选中的设备都已停用；要清理记录请到下面「已停用」里删除',
       selectedCount: '已选 {n} 台',
       cancel: '取消',
       cleanRevoked: '清掉已停用记录（{n}）',
@@ -265,11 +266,7 @@ window.__ModuleLoader__.load({
       confirmRemoveDescription: '那台手机需要重新配对。',
       // 显式删除**可以删在线的**（见文件头），所以在线那台不是"不会删除"，
       // 而是"它在用，删了就得重新配对"——"跳过"只属于按状态批量。
-      confirmRemoveOnlineDescription: '这台在线,正在使用。删除后它需要重新配对。',
-      confirmRemoveSelectedTitle: '删除所选的 {n} 台设备？',
-      // 有在线时说明规模里有几台在用；一台在线都没有就只剩"都要重新配对"。
-      confirmRemoveSelectedDescription: '其中 {s} 台在线,正在使用。被删的设备都需要重新配对。',
-      confirmRemoveSelectedAllDescription: '被删的那几台手机都需要重新配对。',
+      confirmDisableSelectedTitle: '停用所选的 {n} 台设备？',
       confirmCleanRevokedTitle: '删除已停用的 {n} 台设备？',
       confirmCleanRevokedDescription: '那几台手机需要重新配对。',
       confirmClearAllTitle: '删除全部 {n} 台设备？',
@@ -358,7 +355,8 @@ window.__ModuleLoader__.load({
       confirmTakeOverTitle: 'Take over this computer? ("{name}" is serving)',
       confirmTakeOverDescription: 'Taking over disables the current device: it is disconnected immediately, its slot is freed so the next phone can connect, and it must pair again to come back.',
       failedTakeOver: 'Could not take over: {reason}',
-      removeSelected: 'Delete selected',
+      disableSelected: 'Disable selected',
+      selectedAllDisabled: 'Every selected device is already disabled. Use "disabled" below to purge records.',
       selectedCount: '{n} selected',
       cancel: 'Cancel',
       cleanRevoked: 'Delete disabled records ({n})',
@@ -376,10 +374,7 @@ window.__ModuleLoader__.load({
       confirmDisableDescription: 'That phone fails its next reconnect and must pair again to come back. The record is kept.',
       confirmRemoveTitle: 'Delete "{name}"?',
       confirmRemoveDescription: 'That phone will need to pair again.',
-      confirmRemoveOnlineDescription: 'This one is online and in use. It will need to pair again after deletion.',
-      confirmRemoveSelectedTitle: 'Delete the {n} selected devices?',
-      confirmRemoveSelectedDescription: '{s} of them are online and in use. Every deleted device must pair again.',
-      confirmRemoveSelectedAllDescription: 'Every deleted phone must pair again.',
+      confirmDisableSelectedTitle: 'Disable the {n} selected devices?',
       confirmCleanRevokedTitle: 'Delete the {n} disabled devices?',
       confirmCleanRevokedDescription: 'Those phones must pair again.',
       confirmClearAllTitle: 'Delete all {n} devices?',
@@ -892,16 +887,21 @@ window.__ModuleLoader__.load({
         takeOver: (reason) => t('failedTakeOver', { reason }),
       }
 
+      /** 单个端点的原始调用（不碰 busy / error）：批量停用要复用它，别复制一遍请求。 */
+      const callEnabled = async (devId, enabled) => {
+        const response = await fetch(ENABLED, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ devId, enabled }),
+        })
+        const body = await response.json()
+        if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
+      }
+
       const setEnabled = async (device, enabled, failText = enabled ? FAIL_TEXT.enable : FAIL_TEXT.disable) => {
         setBusy(device.id)
         try {
-          const response = await fetch(ENABLED, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ devId: device.id, enabled }),
-          })
-          const body = await response.json()
-          if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
+          await callEnabled(device.id, enabled)
           await refresh()
         } catch (caught) {
           setError(failText(messageOf(caught)))
@@ -1157,25 +1157,45 @@ window.__ModuleLoader__.load({
       const onlineCount = live.filter((d) => d.online).length
       const pairedCount = live.length
 
-      /** 删除一台。在线那台说清"它在用"，但**照样删**（显式点名，见文件头）。 */
+      /** 删除一台。**只在已停用的行上出现**（先停用 → 再清理，见 `device-admin` 不变量 2）。 */
       const removeOne = (device) => askConfirm({
         title: t('confirmRemoveTitle', { name: device.name }),
-        description: device.online ? t('confirmRemoveOnlineDescription') : t('confirmRemoveDescription'),
+        description: t('confirmRemoveDescription'),
         confirmLabel: t('remove'),
         run: async () => { await postRemove({ devIds: [device.id] }, device.id) },
       })
 
-      /** 删除勾选的几台。有在线就报出来，但一台都不跳过。 */
-      const removeSelected = (ids) => {
-        const online = ids.filter((id) => deviceById.get(id)?.online).length
+      /**
+       * 停用勾选的几台。**多选的动作是停用，不是删除**。
+       *
+       * 删除只允许作用在已停用的行上：手机唯一能"知道被移除"的通道是换票 401 带原因，
+       * 而硬删会把撤销记录一起抹掉（那台手机只会一直重试）。批量停用因此顺序调用
+       * 同一个单台端点 —— 不新开批量接口（服务端每台仍是一次写入 + 一次名册重发）。
+       */
+      const disableSelected = (ids) => {
+        const active = ids
+          .map((id) => deviceById.get(id))
+          .filter((device) => device !== undefined && !device.revoked)
+        if (active.length === 0) {
+          setError(t('selectedAllDisabled'))
+          return
+        }
         askConfirm({
-          title: t('confirmRemoveSelectedTitle', { n: ids.length }),
-          // 一台在线的都没有时，句子不该出现"其中 0 台在线"。
-          description: online > 0
-            ? t('confirmRemoveSelectedDescription', { s: online })
-            : t('confirmRemoveSelectedAllDescription'),
-          confirmLabel: t('remove'),
-          run: async () => { await postRemove({ devIds: ids }, 'selected') },
+          title: t('confirmDisableSelectedTitle', { n: active.length }),
+          description: t('confirmDisableDescription'),
+          confirmLabel: t('disable'),
+          run: async () => {
+            setBusy('selected')
+            try {
+              for (const device of active) await callEnabled(device.id, false)
+              await refresh()
+              setSelected(new Set())
+            } catch (caught) {
+              setError(t('failedDisable', { reason: messageOf(caught) }))
+            } finally {
+              setBusy('')
+            }
+          },
         })
       }
 
@@ -1348,7 +1368,7 @@ window.__ModuleLoader__.load({
           ),
         ),
 
-        // ② 设备 —— 在线的排最前（服务端已排序）；每台可停用(软)/启用(解禁)/删除(硬)
+        // ② 设备 —— 在线的排最前（服务端已排序）；活跃行可停用(软)/接管，已停用的行可启用(解禁)/删除(清理)
         h(
           'div',
           { key: 'devices', style: S.card },
@@ -1358,12 +1378,15 @@ window.__ModuleLoader__.load({
             ? null
             : h('div', { key: 'sel', style: S.bar },
                 h('span', { style: { ...S.label, flex: 'none' } }, t('selectedCount', { n: selectedIds.length })),
+                // 多选的动作是**停用**，不是删除：删除只允许作用在已停用的行上
+                // （见 `device-admin.ts` 不变量 2）。停用会立刻收连接、手机拿到终态；
+                // 想清理记录就到下面的「已停用」里删。
                 h('button', {
                   type: 'button',
-                  style: busy === 'selected' ? { ...S.btnDangerSolid, ...S.btnDisabled } : S.btnDangerSolid,
+                  style: busy === 'selected' ? { ...S.btnDanger, ...S.btnDisabled } : S.btnDanger,
                   disabled: busy !== '',
-                  onClick: () => removeSelected(selectedIds),
-                }, t('removeSelected')),
+                  onClick: () => disableSelected(selectedIds),
+                }, t('disableSelected')),
                 h('button', {
                   type: 'button', style: S.btn, disabled: busy !== '',
                   onClick: () => setSelected(new Set()),
@@ -1438,18 +1461,16 @@ window.__ModuleLoader__.load({
                                 onClick: () => takeOver(device),
                               }, t('takeOver'))
                             : null,
+                          // **活跃行没有「删除」**：删除只出现在已停用的行上（清理）。
+                          // 先停用（它立刻下线、手机拿到 device-revoked）再删，是唯一
+                          // 能让那台手机"知道自己被移除"的顺序 —— 硬删会把撤销记录一起
+                          // 抹掉，它只会一直重试。
                           h('button', {
                             type: 'button',
                             style: busy === device.id ? { ...S.btnDanger, ...S.btnDisabled } : S.btnDanger,
                             disabled: busy !== '',
                             onClick: () => disableOne(device),
                           }, t('disable')),
-                          h('button', {
-                            type: 'button',
-                            style: busy === device.id ? { ...S.btnDangerSolid, ...S.btnDisabled } : S.btnDangerSolid,
-                            disabled: busy !== '',
-                            onClick: () => removeOne(device),
-                          }, t('remove')),
                         ),
                   ),
                 ))),

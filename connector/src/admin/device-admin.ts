@@ -20,17 +20,20 @@
  *    域表的 `put` 不重新过 zod（`packages/storage/storage-domain/src/domain.ts:307-313`
  *    直接存对象、读时才校验），写 `undefined` 会让键留着、值悬空，只能靠读取处
  *    `!== undefined` 的判断碰巧救回来。解构剔除才是"这行没有被停用过"的如实表达。
- * 2. **在线豁免属于按状态批量，不属于显式点名的 id**（全文最重要的一条）。
- *    多选与按状态走的是同一条 `purge`，差别只在"要不要跳过在线的"这个开关，
- *    而它**由形状决定**：
- *    - `removeScope(scope)`（按状态清）**绝不碰在线的**。它的人口是**隐式**的
+ * 2. **删除只允许作用在已停用的行上**（全文最重要的一条）。
+ *    多选与按状态走的是同一条 `purge`，三档规则：
+ *    - `remove(devIds)`（显式点名）：**没停用的一律拒**，整批都不删
+ *      （`refusedActive` 原样回给界面）。手机唯一能"知道被移除"的通道是换票 401
+ *      带原因，而那只在**行还在名册里**时成立 —— 硬删活跃行会把撤销记录一起抹掉，
+ *      那台手机只会拿到 `device-unknown`（与"名册还没同步"同一个症状）并一直重试。
+ *      「手机丢了还在线，要立刻弄死它」现在是**停用**的事：停用会立刻收连接，
+ *      删除只负责清理。取舍见 `implemented/2026-10-30-revoke-then-purge.md`。
+ *    - `removeScope('revoked')`（清掉已停用）**绝不碰在线的**。它的人口是**隐式**的
  *      （一整类），而 2026-10-15 事故的危险正来自隐式人口。注意"跳过在线"
  *      保护不了当时那台 —— 用户的手机是**离线**态，所以真正的修法是把 `offline`
  *      scope 删掉（见 `routes.ts`），不是把豁免做得更严。
- *    - `remove(devIds)`（显式）**可以删在线的**。操作者指着某一行、或者逐个勾的，
- *      意图无歧义。真实场景：手机丢了还在线，要立刻弄死它，为此先"让那台手机
- *      断开连接"是荒谬的。**悄悄收回一项既有能力比危险更糟** —— 改这条之前，
- *      单台删除一直是允许删在线的。
+ *    - `removeScope('all')`（重置这台电脑）是唯一还能删"未停用但离线"的口子：
+ *      那些手机会一直重试到重新配对，界面上有单独的、写明后果的确认框。
  *    - 于是 `skippedOnline` 对显式删除恒为 0（语义没变，只是不再触发）。
  * 3. **改完要重发名册**。中转按名册认设备（契约 §8.2 / I7），不重发的话
  *    停用的行还换得到票、删掉的行也还换得到票。停用/启用**每次**都发
@@ -58,6 +61,15 @@ export interface DeviceTablePort {
 export interface PurgeResult {
   removed: number
   skippedOnline: number
+  /**
+   * **没停用就被点名删除**的设备（显式删除时）。非空 = 这一批**一台都没删**。
+   *
+   * 为什么拒绝：手机唯一能"知道被移除"的通道是换票 401 带原因，而那只在
+   * **行还在名册里**时成立。硬删一行 = 连撤销记录一起删掉，那台手机只会拿到
+   * `device-unknown`（与"名册还没同步"同一个症状）→ 一直重试、永远回不到配对页。
+   * 正确顺序是**先停用（它立刻下线、手机拿到终态）→ 再删除**（清理）。
+   */
+  refusedActive: readonly string[]
 }
 
 export interface DeviceAdmin {
@@ -109,10 +121,22 @@ export function createDeviceAdmin(deps: DeviceAdminDeps): DeviceAdmin {
   const purge = async (
     matches: (id: string, record: DeviceRecord) => boolean,
     skipOnline: boolean,
+    refuseActive: boolean,
   ): Promise<PurgeResult> => {
     const table = deps.tableOf()
     if (table === null) throw new Error('devices 表尚未就绪：装配顺序有误')
     const online = deps.onlineIds()
+    // **显式删除先整批判一遍**（全有或全无）：只要有没停用的行，就一台都不删 ——
+    // 半成功会让操作者以为"删了的那几台手机知道了"，而它们其实拿不到任何终态信号。
+    if (refuseActive) {
+      const refused = [...table.keys()].filter((id) => {
+        const record = table.get(id)
+        return record !== undefined && matches(id, record) && record.revokedAt === undefined
+      })
+      if (refused.length > 0) {
+        return { removed: 0, skippedOnline: 0, refusedActive: refused }
+      }
+    }
     let removed = 0
     let skippedOnline = 0
     const deleted: string[] = []
@@ -134,7 +158,7 @@ export function createDeviceAdmin(deps: DeviceAdminDeps): DeviceAdmin {
     if (deleted.length > 0) deps.disconnect?.(deleted)
     // 一台都没删就不重发：无事可报，不打扰中转。删过才发 —— 删掉的行不该再报给中转。
     if (removed > 0) await deps.publish()
-    return { removed, skippedOnline }
+    return { removed, skippedOnline, refusedActive: [] }
   }
 
   return {
@@ -163,15 +187,18 @@ export function createDeviceAdmin(deps: DeviceAdminDeps): DeviceAdmin {
       await deps.publish()
     },
 
-    // **显式**：操作者指着某一行 / 逐个勾的，意图无歧义 —— 不跳过在线的
-    // （不变量 2）。手机丢了还在线，要立刻弄死它。
+    // **显式**：处理器指着某一行 / 逐个勾的。**只允许删已停用的行**
+    // （不变量 2 改写：先停用再删除）。「手机丢了还在线，要立刻弄死它」现在是
+    // 停用的事 —— 停用会立刻收掉那条连接，而删除只负责清理记录。
     remove: (devIds) => {
       const wanted = new Set(devIds)
-      return purge((id) => wanted.has(id), false)
+      return purge((id) => wanted.has(id), false, true)
     },
 
     // **按状态**：人口是隐式的一整类，在线的绝不碰（不变量 2）。
+    // `revoked` 是清理的唯一常规入口；`all` 是"重置这台电脑"，会连还在用的
+    // 离线设备一起删（那些手机只会重试到重新配对）—— 界面上有单独的确认框。
     removeScope: (scope) =>
-      purge((_id, record) => (scope === 'revoked' ? record.revokedAt !== undefined : true), true),
+      purge((_id, record) => (scope === 'revoked' ? record.revokedAt !== undefined : true), true, false),
   }
 }

@@ -201,7 +201,9 @@ test('推演 4：停用占用者 → 它立刻下线，B 才能进（门槛 8e �
   presence.online('dev-b')
   assert.equal(presence.serving()?.id, 'dev-b')
 
-  // 删行同理：行没了 → 不占位；连接也必须被收掉。
+  // 清理已停用的行同理：行没了 → 不占位；连接也必须被收掉。
+  // （活跃行不许直接删 —— 先停用，见 `device-admin` 不变量 2。）
+  await admin.setEnabled('dev-b', false)
   const bConnection = connectionOf('dev-b')
   await admin.remove(['dev-b'])
   assert.equal(bConnection.stopped, true)

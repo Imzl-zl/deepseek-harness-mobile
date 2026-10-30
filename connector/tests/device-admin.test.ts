@@ -129,43 +129,65 @@ test('停用/启用：未知设备 id 抛错，且不当成功', async () => {
   assert.equal(table.snapshot().get('dev1')?.revokedAt, undefined)
 })
 
-test('删除：多选删指定几台，行从表里抹掉', async () => {
+test('删除：多选删指定几台（已停用的），行从表里抹掉', async () => {
   const table = tableOf({
-    dev1: row(), dev2: row({ name: '平板' }), dev3: row({ name: '旧手机' }),
+    dev1: row(),
+    dev2: row({ name: '平板', revokedAt: 1760000000000 }),
+    dev3: row({ name: '旧手机', revokedAt: 1760000000000 }),
   })
   const published: number[] = []
   const result = await adminOf(table, [], published).remove(['dev2', 'dev3'])
 
-  assert.deepEqual(result, { removed: 2, skippedOnline: 0 })
+  assert.deepEqual(result, { removed: 2, skippedOnline: 0, refusedActive: [] })
   assert.deepEqual([...table.snapshot().keys()], ['dev1'])
   assert.equal(published.length, 1, '删完了要重发名册')
 })
 
 test('删除：单台就是长度 1 的多选，同一条路', async () => {
-  const table = tableOf({ dev1: row(), dev2: row() })
+  const table = tableOf({
+    dev1: row({ revokedAt: 1760000000000 }), dev2: row(),
+  })
   const result = await adminOf(table).remove(['dev1'])
-  assert.deepEqual(result, { removed: 1, skippedOnline: 0 })
+  assert.deepEqual(result, { removed: 1, skippedOnline: 0, refusedActive: [] })
   assert.deepEqual([...table.snapshot().keys()], ['dev2'])
 })
 
-test('删除：显式点名的 id 可以删在线的（单台与多选都算）', async () => {
-  // **在线豁免只属于按状态批量**（不变量 2）。显式 = 操作者指着某一行 / 逐个勾的，
-  // 意图无歧义 —— 手机丢了还在线，要立刻弄死它，为此先"让那台手机断开连接"是荒谬的。
-  // 改这条之前，单台删除一直是允许删在线的；悄悄收回能力比危险更糟。
+test('删除：**没停用的行一律拒删**（一台都不删，id 原样回给界面）', async () => {
+  // 手机唯一能"知道被移除"的通道是换票 401 带原因，而那只在行还在名册里时成立。
+  // 硬删活跃行 = 连撤销记录一起抹掉 → 那台手机只会一直重试、永远回不到配对页。
+  // 「手机丢了还在线，要立刻弄死它」现在是**停用**的事（停用会立刻收连接）。
   const seed = {
     live: row({ name: '我的手机' }),
     idle: row({ name: '平板' }),
+    gone: row({ name: '旧手机', revokedAt: 1760000000000 }),
   }
 
-  // 单台（长度 1 的数组）：点名了在线那台，就删它。
+  // 单台点名活跃行：拒，且表不动、不重发名册。
   const single = tableOf(seed)
-  assert.deepEqual(await adminOf(single, ['live']).remove(['live']), { removed: 1, skippedOnline: 0 })
-  assert.deepEqual([...single.snapshot().keys()], ['idle'], '在线那台被删掉了')
+  const published: number[] = []
+  assert.deepEqual(
+    await adminOf(single, ['live'], published).remove(['live']),
+    { removed: 0, skippedOnline: 0, refusedActive: ['live'] },
+  )
+  assert.equal(single.snapshot().size, 3, '一台都没删')
+  assert.equal(published.length, 0, '什么都没发生就不打扰中转')
 
-  // 多选：一台在线一台离线，两台都删。
-  const multi = tableOf(seed)
-  assert.deepEqual(await adminOf(multi, ['live']).remove(['live', 'idle']), { removed: 2, skippedOnline: 0 })
-  assert.equal(multi.snapshot().size, 0, '显式删除一台都不跳过')
+  // 多选里混一台活跃的：**整批拒**（全有或全无）—— 半成功会让操作者以为
+  // "删掉的那几台知道了"，而它们其实拿不到任何终态信号。
+  const mixed = tableOf(seed)
+  assert.deepEqual(
+    await adminOf(mixed).remove(['gone', 'idle']),
+    { removed: 0, skippedOnline: 0, refusedActive: ['idle'] },
+  )
+  assert.equal(mixed.snapshot().size, 3, '混批一台都不删')
+
+  // 只点名已停用的：照删。
+  const ok = tableOf(seed)
+  assert.deepEqual(
+    await adminOf(ok).remove(['gone']),
+    { removed: 1, skippedOnline: 0, refusedActive: [] },
+  )
+  assert.deepEqual([...ok.snapshot().keys()], ['live', 'idle'])
 })
 
 test('删除：按状态批量绝不碰在线的（scope 两种都算）', async () => {
@@ -177,12 +199,18 @@ test('删除：按状态批量绝不碰在线的（scope 两种都算）', async
 
   // scope 'all'：在线那台留下。
   const all = tableOf(seed)
-  assert.deepEqual(await adminOf(all, ['live']).removeScope('all'), { removed: 2, skippedOnline: 1 })
+  assert.deepEqual(
+    await adminOf(all, ['live']).removeScope('all'),
+    { removed: 2, skippedOnline: 1, refusedActive: [] },
+  )
   assert.deepEqual([...all.snapshot().keys()], ['live'])
 
   // scope 'revoked'：只删已停用的，未停用的一台不动。
   const revoked = tableOf(seed)
-  assert.deepEqual(await adminOf(revoked, ['live']).removeScope('revoked'), { removed: 1, skippedOnline: 0 })
+  assert.deepEqual(
+    await adminOf(revoked, ['live']).removeScope('revoked'),
+    { removed: 1, skippedOnline: 0, refusedActive: [] },
+  )
   assert.deepEqual([...revoked.snapshot().keys()], ['live', 'idle'])
 })
 
@@ -194,14 +222,14 @@ test('删除：skippedOnline 只数"本来要删、因在线而没删"的行', a
     gone: row({ name: '旧手机', revokedAt: 1760000000000 }),
   })
   const result = await adminOf(table, ['live', 'gone']).removeScope('revoked')
-  assert.deepEqual(result, { removed: 0, skippedOnline: 1 })
+  assert.deepEqual(result, { removed: 0, skippedOnline: 1, refusedActive: [] })
 })
 
 test('删除：一台都没删就不重发名册（无事不打扰中转）', async () => {
   const table = tableOf({ dev1: row() })
   const published: number[] = []
   const result = await adminOf(table, ['dev1'], published).removeScope('all')
-  assert.deepEqual(result, { removed: 0, skippedOnline: 1 })
+  assert.deepEqual(result, { removed: 0, skippedOnline: 1, refusedActive: [] })
   assert.equal(published.length, 0, '一台都没动就不必打扰中转')
 })
 
@@ -220,11 +248,11 @@ test('停用/删除要**真的让那台下线**（独占：占用位释放时连
   await adminOf(enabled, [], [], enabledIds).setEnabled('live', true)
   assert.deepEqual(enabledIds, [])
 
-  // 显式删除在线的：删掉之后连接必须收掉。
-  const removed = tableOf(seed)
+  // 清理已停用的行：删掉之后连接必须收掉（僵尸 socket 不论怎么来的都要收）。
+  const removed = tableOf({ gone: row({ revokedAt: 1 }) })
   const removedIds: string[] = []
-  await adminOf(removed, ['live'], [], removedIds).remove(['live'])
-  assert.deepEqual(removedIds, ['live'])
+  await adminOf(removed, [], [], removedIds).remove(['gone'])
+  assert.deepEqual(removedIds, ['gone'])
 
   // 按状态批量：只对**真删掉**的收连接（在线被跳过的那台不踢）。
   const scoped = tableOf({ live: row(), gone: row({ revokedAt: 1 }) })
@@ -238,6 +266,9 @@ test('删除：scope=revoked 只删已停用的，未停用的一台不动', asy
     idle: row({ name: '平板' }),
     gone: row({ name: '旧手机', revokedAt: 1760000000000 }),
   })
-  assert.deepEqual(await adminOf(table).removeScope('revoked'), { removed: 1, skippedOnline: 0 })
+  assert.deepEqual(
+    await adminOf(table).removeScope('revoked'),
+    { removed: 1, skippedOnline: 0, refusedActive: [] },
+  )
   assert.deepEqual([...table.snapshot().keys()], ['idle'])
 })
