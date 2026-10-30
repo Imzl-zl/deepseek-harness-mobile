@@ -11,13 +11,14 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="license"></a>
 </p>
 
-<p align="center"><img src="docs/assets/console.png" alt="中转控制台" width="860"></p>
+<p align="center"><img src="docs/assets/app-chat.png" alt="手机端会话页" width="300"></p>
 
-## 它解决什么
+## 在手机上用什么
 
-- **在手机上看自己的 DSH**：会话、轨迹、改动、任务，不是网页缩略版。
-- **端到端加密**：手机与电脑直接握手，中转只转发密文与路由元数据，不持密钥、不解析内容。
-- **两种连法**：同局域网/Tailscale 直连；不在家时走公网中转。
+- **完整的会话**：对话、轨迹、改动卡、文件预览，不是网页缩略版。
+- **审批与提问就地答**：DSH 的 composer takeover 原样搬过来（截图中"等待审批 / 等待回答"），不用切回电脑。
+- **子智能体与后台任务**：谁在跑、跑了多久、产出什么，一屏看完。
+- **两种连法**：同局域网/Tailscale 直连；出门在外走公网中转（端到端加密，中转只见密文与路由元数据）。
 - **一台手机记多台电脑**，同一时刻只服务一台（独占 1:1），切换是显式动作。
 
 ## 组成
