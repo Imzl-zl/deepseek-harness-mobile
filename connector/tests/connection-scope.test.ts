@@ -79,8 +79,13 @@ test('两连接的 ping、业务应答和配对应答都只走自己的端口', 
   assert.deepEqual(a.sent.map((frame) => frame.t), ['pong', 'res'])
 })
 
-test('设备身份独立，共享缓冲只按所有设备的持久水位裁剪', () => {
-  const buffer = createSessionBuffer({ pairedDevices: () => ['dev-a', 'dev-b'] })
+test('设备身份独立，共享缓冲按**在服务**设备的持久水位裁剪', () => {
+  // 两台都连着（在线）⇒ 都按各自水位保护；**没连过的已配对设备**不参与
+  //（否则配 N 台只连 1 台时缓冲永不裁剪，见 `session-buffer.test.ts` 的同组用例）。
+  const buffer = createSessionBuffer({
+    pairedDevices: () => ['dev-a', 'dev-b'],
+    onlineDevices: () => ['dev-a', 'dev-b'],
+  })
   const deps = makeDeps({ buffer })
   const a = createConnectionScope(fakePort().port, deps)
   const b = createConnectionScope(fakePort().port, deps)

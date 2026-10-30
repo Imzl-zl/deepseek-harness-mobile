@@ -12,7 +12,11 @@ import { createSessionBuffer } from '../src/session-buffer.js'
 const body = (n: number): string => `{"seq":${n}}`
 const event = (seq: number): { seq: number; body: string } => ({ seq, body: body(seq) })
 
-function setup(paired: string[] = ['dev-1'], limits: { maxFrames?: number; maxBytes?: number } = {}) {
+function setup(
+  paired: string[] = ['dev-1'],
+  limits: { maxFrames?: number; maxBytes?: number } = {},
+  online: string[] = [],
+) {
   const warnings: string[] = []
   const log = {
     info: () => {},
@@ -22,10 +26,11 @@ function setup(paired: string[] = ['dev-1'], limits: { maxFrames?: number; maxBy
   }
   const buffer = createSessionBuffer({
     pairedDevices: () => paired,
+    onlineDevices: () => online,
     log,
     ...limits,
   })
-  return { buffer, warnings, paired }
+  return { buffer, warnings, paired, online }
 }
 
 test('未获确认时一行都不裁（发出去不等于对方写下去了）', () => {
@@ -41,24 +46,58 @@ test('未获确认时一行都不裁（发出去不等于对方写下去了）',
   )
 })
 
-test('全部配对设备都确认过，才裁掉那段头部', () => {
+test('配 3 台只连 1 台：**从没连过**的设备不再钉住裁剪点', () => {
+  // 独占模型下"配了 3 台只连 1 台"是常态。旧规则把它们按 0 算，
+  // 于是缓冲永远裁不动 → 涨到上限 → 每次切回都是一次全量快照。
+  const { buffer } = setup(['dev-1', 'dev-2', 'dev-3'], {}, ['dev-1'])
+  for (const seq of [1, 2, 3, 4]) buffer.record('sid_1', event(seq))
+
+  assert.equal(buffer.ack('sid_1', 'dev-1', 3), 3, '只按在服务的那台裁 1..3')
+  assert.equal(buffer.stats.frames, 1)
+  assert.deepEqual(
+    buffer.tailFrom('sid_1', 3)?.map((item) => item.seq),
+    [4],
+    '从确认过的水位接着恢复仍是增量的',
+  )
+})
+
+test('**服务过又离开**的设备仍保护自己的水位（它回来时要接着收）', () => {
+  // 有 ack 记录 = 这一轮真的收过 → 它不在线也要按它的水位保留。
   const { buffer } = setup(['dev-1', 'dev-2'])
   for (const seq of [1, 2, 3, 4]) buffer.record('sid_1', event(seq))
 
-  // 一台确认到 3 不够：另一台还没确认，裁了它就会丢 1..3。
-  assert.equal(buffer.ack('sid_1', 'dev-1', 3), 0)
-  assert.equal(buffer.stats.frames, 4, '慢的那台没确认之前不许裁')
-
-  assert.equal(buffer.ack('sid_1', 'dev-2', 2), 2, '两台都覆盖到 2 之后才可以裁 1..2')
-  assert.deepEqual(
-    buffer.tailFrom('sid_1', 0),
-    undefined,
-    '裁过 1..2 之后，从 0 恢复已经覆盖不到（要求快照）',
-  )
+  assert.equal(buffer.ack('sid_1', 'dev-2', 2), 2, '只按 dev-2 的水位裁 1..2')
+  assert.equal(buffer.ack('sid_1', 'dev-1', 3), 0, 'dev-2 仍停在 2，不能再裁 3')
   assert.deepEqual(
     buffer.tailFrom('sid_1', 2)?.map((item) => item.seq),
     [3, 4],
-    '从确认过的水位接着恢复是增量的',
+  )
+})
+
+test('在线但还没确认的设备按 0 保护（刚连上、还没写盘）', () => {
+  const { buffer } = setup(['dev-1', 'dev-2'], {}, ['dev-1', 'dev-2'])
+  for (const seq of [1, 2, 3]) buffer.record('sid_1', event(seq))
+
+  assert.equal(buffer.ack('sid_1', 'dev-1', 3), 0, 'dev-2 在线但没 ack过 ⇒ 不能裁')
+  assert.equal(buffer.stats.frames, 3)
+})
+
+test('已吊销 / 已删除设备的旧水位不参与（不占坑）', () => {
+  const paired = ['dev-1', 'dev-gone']
+  const { buffer } = setup(paired)
+  for (const seq of [1, 2, 3, 4]) buffer.record('sid_1', event(seq))
+
+  assert.equal(buffer.ack('sid_1', 'dev-gone', 1), 1)
+  assert.equal(buffer.ack('sid_1', 'dev-1', 1), 0)
+  assert.equal(buffer.stats.frames, 3)
+
+  // 这台被撤销/删掉了：它的旧水位不该再拦着裁剪。
+  paired.splice(paired.indexOf('dev-gone'), 1)
+  assert.equal(buffer.ack('sid_1', 'dev-1', 3), 2, '按仍有效的 dev-1 裁 2..3')
+  assert.equal(buffer.stats.frames, 1)
+  assert.deepEqual(
+    buffer.tailFrom('sid_1', 3)?.map((item) => item.seq),
+    [4],
   )
 })
 

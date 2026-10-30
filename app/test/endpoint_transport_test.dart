@@ -21,16 +21,22 @@ import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/transport.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// 可配置成败的假传输。
+/// 可配置成败与"什么时候连上"的假传输。
 class _FakeTransport implements ChannelTransport {
-  _FakeTransport(this.endpoint, {this.failWith});
+  _FakeTransport(this.endpoint, {this.failWith, this.gate});
 
   final Endpoint endpoint;
   final TransportException? failWith;
+
+  /// 等它完成才算"连接建立"（在飞期间用于竞速用例）。
+  final Future<void>? gate;
   int closeCount = 0;
+
+  bool get closed => closeCount > 0;
 
   @override
   Future<Stream<TransportEvent>> connect() async {
+    if (gate != null) await gate;
     if (failWith != null) throw failWith!;
     return const Stream<TransportEvent>.empty();
   }
@@ -53,38 +59,57 @@ void main() {
 
   /// 记下每次工厂调用，并按 url 决定成败。
   late List<Endpoint> log;
+  late Map<String, _FakeTransport> created;
   EndpointTransport build(
     List<Endpoint> endpoints, {
     Set<String> failing = const {},
+    Map<String, Future<void>> gates = const {},
     void Function(Endpoint)? onActivated,
     void Function(Endpoint, EndpointAttempt)? onAttempt,
   }) {
     log = <Endpoint>[];
+    created = <String, _FakeTransport>{};
     return EndpointTransport(
+      // 竞速用例默认零错开：断言的是"同时启动"，不是 250ms 的节拍。
+      dialStagger: Duration.zero,
       endpointsOf: () => endpoints,
       onActivated: onActivated,
       onAttempt: onAttempt,
       factory: (endpoint) {
         log.add(endpoint);
-        return _FakeTransport(
+        final transport = _FakeTransport(
           endpoint,
           failWith: failing.contains(endpoint.url)
               ? TransportException('拨不通 ${endpoint.url}')
               : null,
+          gate: gates[endpoint.url],
         );
+        created[endpoint.url] = transport;
+        return transport;
       },
     );
   }
 
-  test('第一个端点就通：只用它，onActivated 报它', () async {
+  test('第一个先通：它是赢家；其余连上也不进握手、立刻关', () async {
+    // 用两条直连：relay 有闸（第一条同步、第二条排队），直连之间才是真正的并发。
+    const second = Endpoint(
+      kind: EndpointKind.direct,
+      url: 'ws://192.168.2.9:8788',
+    );
     Endpoint? activated;
-    final transport = build([direct, relay], onActivated: (e) => activated = e);
+    final transport = build([
+      direct,
+      second,
+    ], onActivated: (e) => activated = e);
 
     await transport.connect();
 
-    expect(log, [direct], reason: '第一个通了就不该再试第二个');
+    // **竞速**：两条都启动了（零错开），但只有先到的那条被采用。
+    expect(log, [direct, second]);
     expect(activated, direct);
     expect(transport.activeEndpoint, direct);
+    expect(created[direct.url]!.closed, isFalse, reason: '赢家要留着');
+    expect(created[second.url]!.closed, isTrue, reason: '输家必须立刻关，不留半开');
   });
 
   test('第一个拨不通：自动换下一个', () async {
@@ -198,10 +223,13 @@ void main() {
 
     await transport.connect();
 
-    expect(attempts.map((r) => r.$1.url), [direct.url, relay.url]);
-    expect(attempts[0].$2.ok, isFalse);
-    expect(attempts[0].$2.reason, contains('拨不通 ${direct.url}'));
-    expect(attempts[1].$2.ok, isTrue);
+    // 竞速下"失败"与"赢"的到达顺序不保证；判据是**内容**而不是次序。
+    expect(attempts.map((r) => r.$1.url).toSet(), {direct.url, relay.url});
+    final failed = attempts.firstWhere((r) => !r.$2.ok);
+    final won = attempts.firstWhere((r) => r.$2.ok);
+    expect(failed.$1.url, direct.url);
+    expect(failed.$2.reason, contains('拨不通 ${direct.url}'));
+    expect(won.$1.url, relay.url);
   });
 
   test('终态错误也报拨号结果（它是事实），然后照旧抛出', () async {
@@ -264,7 +292,10 @@ void main() {
         ),
       ),
     );
-    expect(seen, [relay], reason: '终态时不该再去试 direct（那会掩盖 401）');
+    // 竞速下 direct 也会被启动（零错开），但终态一结算就不再等它：
+    // `activeEndpoint` 仍是空的，错误码是 401 那一档。
+    expect(seen, contains(relay));
+    expect(transport.activeEndpoint, isNull, reason: '终态时不该把任何一条当赢家');
   });
 
   test('非终态的带码错误照旧换端点；全失败时保留最后一个码', () async {
@@ -343,7 +374,9 @@ void main() {
 
     mutable.add(relay);
     await transport.connect();
-    expect(log, [direct], reason: '这一次只有 direct');
+    // 竞速把两条都启动了；直的先连上，所以赢的仍是 direct。
+    expect(log, [direct, relay]);
+    expect(transport.activeEndpoint, direct);
 
     // 再连一次：表变了，顺序也变了。
     log.clear();
@@ -366,6 +399,102 @@ void main() {
         ),
       ),
     );
+  });
+
+  // ---------------------------------------------------------------------------
+  // 竞速：并行建 socket、赢家才进握手、输家立刻关（准入门槛 8d）
+  // ---------------------------------------------------------------------------
+
+  group('拨号竞速', () {
+    test('两条死端点不再拖累：慢的那条还在飞时，赢家已经返回', () async {
+      const dead1 = Endpoint(kind: EndpointKind.direct, url: 'ws://dead-1:1');
+      const dead2 = Endpoint(kind: EndpointKind.direct, url: 'ws://dead-2:1');
+      final slow1 = Completer<void>();
+      final slow2 = Completer<void>();
+      final attempts = <(Endpoint, EndpointAttempt)>[];
+      final transport = build(
+        [dead1, dead2, direct],
+        gates: {dead1.url: slow1.future, dead2.url: slow2.future},
+        onAttempt: (e, a) => attempts.add((e, a)),
+      );
+
+      final stream = await transport.connect();
+
+      expect(stream, isNotNull);
+      expect(transport.activeEndpoint, direct, reason: '第二条还在飞也不影响赢家');
+      expect(log, [dead1, dead2, direct], reason: '零错开时三条都会启动');
+      // 慢的两条此刻还没结算：只有赢家被报 ok。
+      expect(attempts.map((r) => r.$1.url), [direct.url]);
+
+      // 收尾：让在飞的死端点"失败"，它们会被关掉且不会被当成赢家。
+      slow1.complete();
+      slow2.complete();
+      await Future<void>.delayed(Duration.zero);
+      expect(transport.activeEndpoint, direct, reason: '迟到的成功不能换掉赢家');
+      expect(created[dead1.url]!.closed, isTrue);
+      expect(created[dead2.url]!.closed, isTrue);
+    });
+
+    test('输家连上：立刻关，且不报 ok（它不是这一轮的连接）', () async {
+      const second = Endpoint(
+        kind: EndpointKind.direct,
+        url: 'ws://192.168.2.9:8788',
+      );
+      final attempts = <(Endpoint, EndpointAttempt)>[];
+      final transport = build([
+        direct,
+        second,
+      ], onAttempt: (e, a) => attempts.add((e, a)));
+
+      await transport.connect();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(created[second.url]!.closed, isTrue);
+      expect(
+        attempts.where((r) => r.$2.ok).map((r) => r.$1.url),
+        [direct.url],
+        reason: '输家也是"连上了"的 socket，但它不是这一轮的连接，不该报 ok',
+      );
+    });
+
+    test('中转端点串行：前一条 relay 还在飞时，下一条 relay 不开始', () async {
+      const relay2 = Endpoint(kind: EndpointKind.relay, url: 'wss://relay-2');
+      final slowRelay = Completer<void>();
+      final slowDirect = Completer<void>();
+      final attempts = <(Endpoint, EndpointAttempt)>[];
+      final transport = build(
+        [relay, relay2, direct],
+        failing: {relay.url},
+        gates: {relay.url: slowRelay.future, direct.url: slowDirect.future},
+        onAttempt: (e, a) => attempts.add((e, a)),
+      );
+
+      final connecting = transport.connect();
+      await Future<void>.delayed(Duration.zero);
+
+      // 第一条 relay 与 direct 都在飞；**第二条 relay 还没被造出来**。
+      expect(log, [relay, direct]);
+      expect(created.containsKey(relay2.url), isFalse);
+      expect(transport.activeEndpoint, isNull);
+
+      // 第一条 relay 失败（非终态）⇒ 让出闸，第二条 relay 才开始并先连上。
+      slowRelay.complete();
+      await connecting;
+
+      expect(log, [
+        relay,
+        direct,
+        relay2,
+      ], reason: '第二条 relay 在闸放开之后才被造出来（它在队尾）');
+      expect(transport.activeEndpoint, relay2);
+      expect(attempts.first.$2.ok, isFalse, reason: '第一条 relay 的失败照实报');
+
+      // direct 晚到：赢家已经定了，它连上也要立刻关。
+      slowDirect.complete();
+      await Future<void>.delayed(Duration.zero);
+      expect(transport.activeEndpoint, relay2);
+      expect(created[direct.url]!.closed, isTrue);
+    });
   });
 
   // ---------------------------------------------------------------------------

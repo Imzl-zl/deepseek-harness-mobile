@@ -4,13 +4,18 @@
  * 手机断线重连后要"从上次的水位接着收"，而不是每次都被灌一份完整快照。为此电脑侧给
  * **每个被订阅的会话**留一段增量缓冲，并把裁剪权交给手机：
  *
- * - **只有全部配对设备都 `persisted` 覆盖过的区间**才允许裁掉头部（§5.5）。
+ * - **只有这一轮真正在服务的设备都 `persisted` 覆盖过的区间**才允许裁掉头部（§5.5）。
  *   未确认的部分**永不裁剪** —— 宁可内存吃紧（先停推、再要求快照），也不丢事件。
+ *   "在服务" = 此刻在线 ∪ 本轮确认过（有 ack）且未吊销。**从没连过的已配对设备不参与**：
+ *   否则"配 3 台只连 1 台"是常态，缓冲永远裁不动，切回就是一次全量快照。
  * - 上限 **16 MiB 或 10000 条**（取先到者，§5.5 与 §10 的同一组数）。
  * - 一个设备都没确认过时，一行都不裁：这是"未被确认"的最小例子，
  *   而它恰好是最常见的初始状态（刚连上、还没写盘）。
  *
  * 裁剪的判据是**逐设备的落盘水位**，不是"发出去多久了" —— 发出去不等于对方写下去了。
+ *
+ * Note: 为什么裁剪点是"在服务的设备"而不是"全部配对设备" —— 见
+ * `.agents/notes/implemented/2026-10-30-dial-racing-and-buffer-trim.md`。
  *
  * ## 为什么要按 `devId` 分开记
  *
@@ -32,8 +37,14 @@ export interface SessionBufferOptions {
   maxFrames?: number
   /** 字节上限（契约 §5.5 / §10：16 MiB）。 */
   maxBytes?: number
-  /** 当前**配对且未吊销**的设备（裁剪点取这些设备水位的最小值）。 */
+  /** **配对且未吊销**的设备（用来判"这个 ack 是否还有效"；撤销后不再占坑）。 */
   pairedDevices: () => readonly string[]
+  /**
+   * 此刻**在线**的设备（正在收事件，可能还没写盘 ⇒ 按水位 0 保护）。
+   *
+   * 不给 = 没有在线信息（单测的默认）：此时只按"本轮确认过且未吊销"的设备裁。
+   */
+  onlineDevices?: () => readonly string[]
   log?: ChannelLogger
 }
 
@@ -97,14 +108,26 @@ export function createSessionBuffer(options: SessionBufferOptions): SessionBuffe
     return created
   }
 
-  /** 裁剪点：全部配对设备水位的最小值；有设备没确认过就是 0。 */
+  /**
+   * 裁剪点：**在服务的设备**水位最小值。
+   *
+   * 在服务 = 此刻在线 ∪ 本轮确认过；两者都要**配对且未吊销**才参与。
+   * 在线但没确认过 ⇒ 按 0（它刚连上，还没写盘）；没在服务的一律不看。
+   */
   const trimPointOf = (entry: Entry): number => {
+    const valid = new Set(options.pairedDevices())
     let point = Number.POSITIVE_INFINITY
-    for (const devId of options.pairedDevices()) {
+    for (const [devId, ack] of entry.acks) {
+      if (!valid.has(devId)) continue
+      if (ack < point) point = ack
+    }
+    for (const devId of options.onlineDevices?.() ?? []) {
+      if (!valid.has(devId)) continue
       const ack = entry.acks.get(devId) ?? 0
       if (ack < point) point = ack
     }
-    // 一台设备都没配对：按 0 处理（一行都不裁）。
+    // 没有在服务的设备：按 0 处理（一行都不裁）——
+    // 宁可留着等下一次重连，也不因为"名册里有设备但都不在线"就丢事件。
     return Number.isFinite(point) ? point : 0
   }
 

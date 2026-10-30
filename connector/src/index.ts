@@ -513,7 +513,9 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         // 会话面适配器是纯闭包、无状态 —— 挂载时建一次，订阅流与翻页共用同一个。
         const sessions = createSessionsAdapter(ctx.sessionController)
 
-        // 增量缓冲（§5.5）：每个被订阅的会话一段，裁剪权在手机手里（全部配对设备确认过才裁）。
+        // 增量缓冲（§5.5）：每个被订阅的会话一段，裁剪权在手机手里。
+        // **在服务的设备**确认过才裁（在线 ∪ 本轮确认过且未吊销）—— 从没连过的
+        // 已配对设备不参与，否则"配 3 台只连 1 台"会让缓冲永远裁不动。
         // **挂载级**：它的存在理由就是"断线重连后按 `since` 接着收"，跟着连接走会退化成每次灌快照
         //（完整理由见 `connection-scope.ts` 的文件头）。
         const sessionBuffer = createSessionBuffer({
@@ -521,6 +523,9 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             devicesTable === null
               ? []
               : [...devicesTable.keys()].filter((id) => devicesTable?.get(id)?.revokedAt === undefined),
+          // 在线但还没 `persisted` 的设备按水位 0 保护（刚连上、还没写盘）。
+          onlineDevices: () =>
+            presence.devices().filter((device) => device.online).map((device) => device.id),
           log: logger,
         })
 
