@@ -16,27 +16,30 @@ Android 要求所有 APK 都带签名。"开源不签名"是误会：开源项�
 把密钥放进 CI Secrets；F-Droid 则是用它自己的密钥重新构建并签名。**debug 签名的包
 能装，但换机器/换 CI 就签名不一致，装不上更新**，所以只适合试用。
 
-### 生成一次（在你自己的机器上）
-
-```bash
-keytool -genkeypair -v -keystore dsh-mobile.jks -alias dsh-mobile \
-  -keyalg RSA -keysize 4096 -validity 10000
-```
-
-口令自己定。**这个文件丢了，就再也无法覆盖升级**（用户只能卸载重装）。备份两处。
-
-### 放进 GitHub Secrets（三个 + 一个 base64）
-
-把 `.jks` 转成 base64 再上传（仓库 Settings → Secrets and variables → Actions）：
+### 生成一次（脚本，口令不进命令行）
 
 ```powershell
-# Windows / PowerShell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("dsh-mobile.jks")) | Set-Clipboard
+pwsh -File app/tools/android-signing.ps1                 # 生成密钥 + key.properties
+pwsh -File app/tools/android-signing.ps1 -SetSecrets      # 顺手写四个 GitHub Secrets
 ```
+
+脚本做的事：读口令（`Read-Host -AsSecureString`，只活在这一个进程里）→ 用
+`keytool -storepass:env` 生成 `app/android/app/release.jks` → 写 `app/android/key.properties`
+（本机 `flutter build apk --release` 用）→ 打印证书摘要 → 可选地把四个 Secrets 写进仓库。
+两个产物都在 `.gitignore` 里；提交前 `git status` 看一眼。
+
+手动等价命令（不想跑脚本时）：
+
+```bash
+keytool -genkeypair -v -keystore app/android/app/release.jks -alias dsh-mobile \
+  -keyalg RSA -keysize 4096 -validity 36500
+```
+
+**这个文件丢了，就再也无法覆盖升级**（用户只能卸载重装）。备份两处：密码管理器 + 离线。
 
 | Secret | 内容 |
 |---|---|
-| `ANDROID_KEYSTORE_BASE64` | 上面那段 base64 |
+| `ANDROID_KEYSTORE_BASE64` | `release.jks` 的 base64 |
 | `ANDROID_STORE_PASSWORD` | keystore 口令 |
 | `ANDROID_KEY_PASSWORD` | key 口令（一般同上） |
 | `ANDROID_KEY_ALIAS` | `dsh-mobile` |
