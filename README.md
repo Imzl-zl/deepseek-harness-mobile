@@ -16,7 +16,7 @@
 ## 在手机上用什么
 
 - **完整的会话**：对话、轨迹、改动卡、文件预览，不是网页缩略版。
-- **审批与提问就地答**：DSH 的 composer takeover 原样搬过来（截图中"等待审批 / 等待回答"），不用切回电脑。
+- **审批与提问就地答**：DSH 的 composer takeover 原样搬过来，不用切回电脑。
 - **子智能体与后台任务**：谁在跑、跑了多久、产出什么，一屏看完。
 - **两种连法**：同局域网/Tailscale 直连；出门在外走公网中转（端到端加密，中转只见密文与路由元数据）。
 - **一台手机记多台电脑**，同一时刻只服务一台（独占 1:1），切换是显式动作。
@@ -29,6 +29,10 @@
 | `connector/` | DSH 插件：电脑侧网关 | `dsh plugin add dsh-mobile-connector` |
 | `relay/` | 公网中转（独立 Node 服务，无构建步骤） | `docker compose up -d` |
 | `protocol/` | 通道协议：握手、AEAD、流控、恢复 | 被上面两者引用 |
+
+<p align="center"><img src="docs/assets/plugin-panel.png" alt="电脑侧插件面板" width="620"></p>
+
+<p align="center"><sub>电脑侧：「手机」面板里填中转、看在线设备、出配对码（地址已打码）</sub></p>
 
 ## 快速开始
 
