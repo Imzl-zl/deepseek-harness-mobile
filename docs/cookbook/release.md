@@ -53,15 +53,26 @@ keytool -genkeypair -v -keystore dsh-mobile.jks -alias dsh-mobile \
 
 ## 2.5 发布插件到 npm
 
-`connector/package.json` 已去掉 `private`，`publishConfig.access = public`，`prepack` 会先构建。
+包名 **`dsh-mobile-connector`**（不带 scope：与本仓其他插件包 `dsh-*` 一致，也不需要建 npm 组织）。
+`connector/package.json` 已去掉 `private`，`publishConfig.access = public`，`prepack` 先构建。
 
-1. 改 `connector/package.json` 的 `version`（如 `0.2.0`）
-2. 打标签：`git tag connector-v0.2.0 && git push origin connector-v0.2.0`
-3. `.github/workflows/publish-connector.yml` 校验 `标签 == version` 后 `npm publish`
+### 首次发布：必须一次性 token（bootstrap）
 
-**前置**：仓库 Secrets 里的 `NPM_TOKEN`（npm 的 Automation token），且你的 npm 账号拥有
-`@dsh-mobile` 这个 scope（没有就先在 npm 建 org，否则发布会 403）。没有 token 时那一步
-会明确失败，不会静默跳过。
+npm 的**可信发布（OIDC）不能发一个新包的第一个版本**（官方在
+[npm/cli#8544](https://github.com/npm/cli/issues/8544) 确认过）。所以第一次：
+
+1. npm → Access Tokens → **Classic Token · Automation**，7 天过期即可
+2. 仓库 Secrets 加 `NPM_TOKEN`
+3. 触发：`gh workflow run publish-connector.yml`（或推 `connector-v0.1.0` 标签）
+4. 成功后**立刻撤销那个 token**、删掉 `NPM_TOKEN`
+5. 到 https://www.npmjs.com/package/dsh-mobile-connector/access 配 Trusted Publisher：
+   Organization or user = `Imzl-zl`，Repository = `deepseek-harness-mobile`，
+   Workflow filename = `publish-connector.yml`，Environment 留空
+
+### 之后：OIDC，不再需要 token
+
+改 `connector/package.json` 的 `version` → `git tag connector-vX.Y.Z` → push。
+流水线校验 `标签 == version`，用 OIDC 发布并带 provenance（仓库已公开，provenance 可用）。
 
 ## 3. 插件包
 

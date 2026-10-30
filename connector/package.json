@@ -1,8 +1,16 @@
 {
-  "name": "@dsh-mobile/connector",
+  "name": "dsh-mobile-connector",
   "version": "0.1.0",
   "type": "module",
   "description": "DSH 插件:手机端远程通道的电脑侧桥接",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "remote",
+    "mobile"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",

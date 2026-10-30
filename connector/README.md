@@ -1,4 +1,4 @@
-# @dsh-mobile/connector
+# dsh-mobile-connector
 
 DSH 插件：手机端远程通道的**电脑侧桥接**。装进 DSH 后，手机扫码即可连到这台电脑；
 也可以只走局域网/Tailscale 直连（不经过公网中转）。
@@ -6,7 +6,7 @@ DSH 插件：手机端远程通道的**电脑侧桥接**。装进 DSH 后，手�
 ## 安装
 
 ```bash
-dsh plugin --profile <名字> add @dsh-mobile/connector
+dsh plugin --profile <名字> add dsh-mobile-connector
 # 或者用本地路径/打包产物：
 dsh plugin --profile <名字> add ./connector
 ```

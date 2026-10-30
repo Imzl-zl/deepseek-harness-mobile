@@ -31,7 +31,7 @@
 
 ## 快速开始
 
-**电脑侧**：`dsh plugin --profile <名字> add ./connector`（发布后也可用 npm 包名 `@dsh-mobile/connector`），然后在「手机」面板 →「连接」卡填中转地址与令牌，保存即连。
+**电脑侧**：`dsh plugin --profile <名字> add ./connector`（发布后也可用 npm 包名 `dsh-mobile-connector`），然后在「手机」面板 →「连接」卡填中转地址与令牌，保存即连。
 
 **中转（可选，公网用）**：`cd relay && docker compose up -d --build`，签发连接器令牌 `--issue-token connector <id>`，细节见 [在服务器上跑中转](docs/cookbook/relay-on-a-server.md)。
 

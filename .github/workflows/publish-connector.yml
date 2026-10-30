@@ -1,7 +1,9 @@
 # 发布插件到 npm：推 `connector-v*` 标签，或手动 workflow_dispatch。
 #
-# 前置：仓库 Secrets 里要有 NPM_TOKEN（npm 账号的 Automation token，能发 @dsh-mobile 这个 scope）。
-# 没有 token 时这一步会明确失败，不会静默跳过。
+# 两条路径：
+# - **首次发布**（bootstrap）：npm 的可信发布不能发新包的第一个版本（npm/cli#8544），
+#   所以要一次性 NPM_TOKEN（Classic Automation，用完即撤）。
+# - **之后**：包上配了 Trusted Publisher 就什么都不用，走 OIDC + provenance。
 name: publish-connector
 
 on:
@@ -11,6 +13,8 @@ on:
 
 permissions:
   contents: read
+  # 可信发布 / provenance：npm CLI 用 GitHub 的 OIDC 换短期凭据。
+  id-token: write
 
 jobs:
   publish:
@@ -50,9 +54,11 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "没有 NPM_TOKEN：先在仓库 Secrets 里加一个能发 @dsh-mobile scope 的 token"
-            exit 1
+          if [ -n "$NODE_AUTH_TOKEN" ]; then
+            echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > "$HOME/.npmrc"
+            echo "路径：一次性 token（首次 bootstrap）"
+          else
+            echo "路径：可信发布（OIDC）—— 需要包上已配 Trusted Publisher"
           fi
-          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > "$HOME/.npmrc"
-          npm publish --access public
+          # `--provenance` 两种路径都成立：仓库是公开的，OIDC 可用。
+          npm publish --access public --provenance
