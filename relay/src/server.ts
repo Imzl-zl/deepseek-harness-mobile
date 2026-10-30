@@ -15,6 +15,7 @@ import { ADMIN_PAGE } from './admin/page.ts'
 import { createAdminRoutes, type AdminApi, type AdminOps, type AdminStateView } from './admin/routes.ts'
 import { rateKeyOf } from './digest-auth.ts'
 import { createRateLimiter } from './rate-limit.ts'
+import { createEventRing, mirrorToRing } from './events.ts'
 import { createMetering, type Metering, type QuotaConfig, type MeteringState } from './metering.ts'
 import { createMeteringStateWriter, FLUSH_EVERY_MS } from './metering-state.ts'
 import { createTicketStore } from './tickets.ts'
@@ -92,7 +93,10 @@ function reply(response: ServerResponse, status: number, body: unknown): void {
 }
 
 export async function startRelay(options: RelayServerOptions): Promise<RelayServer> {
-  const log = options.log
+  /** 最近 100 条事件的环形缓冲（面板"动态"分区）。 */
+  const events = createEventRing()
+  // 日志与环形缓冲同源：写日志的同时丢一条进环，不维护第二套事件口径。
+  const log = mirrorToRing(options.log, events)
   /** 进程启动时刻（面板的“已运行”）。 */
   const startedAt = Date.now()
   const devices = createDeviceRegistry(log === undefined ? {} : { log })
@@ -189,6 +193,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
           now: Date.now(),
           uptimeMs: Date.now() - startedAt,
           traffic: metering.traffic(),
+          events: events.list(),
           connectors,
           channels,
           totals: { connectors: controls.size, channels: links.size },

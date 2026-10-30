@@ -43,6 +43,10 @@ Status: implemented
 - 概览多一条**真实的**近 60 分钟转发曲线：`metering.traffic()` 按分钟累计 60 个整数
   （滚动窗口，`rollTraffic` 补零），不是抽样也不是编的；KPI 与曲线共用一个读面。
 - 登录屏先于看板；401 退回登录；「退出」清 `sessionStorage`。
+- **动态分区**读一个 100 条的环形缓冲（`relay/src/events.ts`）：它由 `mirrorToRing`
+  从 `ChannelLogger` 镜像而来 —— 写日志的同时丢一条进环，**不维护第二套事件口径**；
+  `debug` 不进环（帧级噪声不占"最近发生了什么"），非字面量 detail（如 `Error`）
+  折成字符串。只存元数据（id / 关闭码 / 字节数），帧载荷与令牌照旧不进来。
 
 ## Alternatives considered
 

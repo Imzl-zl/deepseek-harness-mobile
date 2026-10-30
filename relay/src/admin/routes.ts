@@ -13,6 +13,7 @@
  * 3. **每个写操作都回 `AdminResponse`**，由 `AdminApi` 决定成功/失败 —— 路由不猜
  *    "落盘失败该回什么"。
  */
+import type { RelayEvent } from '../events.ts'
 import type { TokenRow } from '../token-table.ts'
 
 export interface AdminReply {
@@ -35,6 +36,8 @@ export interface AdminStateView {
   uptimeMs: number
   /** 近 60 分钟整台服务的转发字节（面板曲线；最后一个是当前分钟）。 */
   traffic: { perMinute: readonly number[]; total: number }
+  /** 最近事件（最新在前，最多 100 条；只有元数据）。 */
+  events: readonly RelayEvent[]
   connectors: readonly {
     connectorId: string
     owner?: string

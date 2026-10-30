@@ -124,6 +124,7 @@ test('配了 admin：缺/错令牌 401 且 no-store；对的给页面与快照�
   assert.deepEqual(state.connectors, [])
   assert.deepEqual(state.channels, [])
   assert.deepEqual(state.roster, { devices: 0, bound: 0, published: {} })
+  assert.equal(Array.isArray(state.events), true, '动态分区读的是最近事件环')
   assert.deepEqual(state.quota, { period: 'month', enforce: 'cut', rows: [] }, '默认不限制：没有上限行，但计量面在')
   assert.deepEqual(state.tokens.map((row) => row.id), ['conn-1', 'old-pc'], '令牌清单来自落盘点，且不含摘要')
 })

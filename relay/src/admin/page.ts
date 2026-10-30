@@ -243,6 +243,7 @@ td.id{color:var(--ink)}
       <a href="#/channels" data-view="channels">通道<em id="n-channels"></em></a>
       <a href="#/usage" data-view="usage">用量<em id="n-usage"></em></a>
       <a href="#/tokens" data-view="tokens">令牌<em id="n-tokens"></em></a>
+      <a href="#/events" data-view="events">动态<em id="n-events"></em></a>
     </nav>
     <div class="sidefoot">
       <span id="pill" class="pill"><i class="dot"></i><span id="pill-text">连接中…</span></span>
@@ -285,7 +286,40 @@ td.id{color:var(--ink)}
     connectors: ['连接器', '已连上来的电脑（控制面）'],
     channels: ['通道', '正在转发的一对一连接'],
     usage: ['用量', '按人（或按电脑）的流量与本周期上限'],
-    tokens: ['令牌', '谁能连这台中转']
+    tokens: ['令牌', '谁能连这台中转'],
+    events: ['动态', '最近发生在这台中转上的事（只记元数据）']
+  }
+
+  var EVENT_LABELS = {
+    'connector.open': '电脑连上',
+    'connector.close': '电脑断开',
+    'connector.id-mismatch': '身份不一致',
+    'connector.error': '控制面错误',
+    'roster.applied': '名册更新',
+    'roster.refused': '名册被拒',
+    'ticket.issued': '换票',
+    'ticket.rejected': '换票被拒',
+    'channel.open': '通道建立',
+    'channel.close': '通道关闭',
+    'admission.rejected': '准入拒绝',
+    'channel.error': '通道错误',
+    'delivery.failed': '投递失败',
+    'quota.rejected': '超限',
+    'admin.action': '管理操作'
+  }
+
+  function describe(detail) {
+    var parts = []
+    if (detail.connectorId) parts.push(detail.connectorId)
+    if (detail.deviceId) parts.push(detail.deviceId)
+    if (detail.subject) parts.push(detail.subject)
+    if (detail.action) parts.push(detail.action)
+    if (detail.code) parts.push('关闭码 ' + detail.code)
+    if (detail.reason) parts.push(detail.reason)
+    if (detail.used !== undefined && detail.limit !== undefined) parts.push(bytes(detail.used) + ' / ' + bytes(detail.limit))
+    else if (detail.bytes) parts.push(bytes(detail.bytes))
+    if (detail.actor) parts.push('操作人 ' + detail.actor)
+    return parts.join(' · ')
   }
 
   function viewOf() {
@@ -429,6 +463,7 @@ td.id{color:var(--ink)}
     document.getElementById('n-channels').textContent = String(state.totals.channels)
     document.getElementById('n-usage').textContent = state.quota ? String(state.quota.rows.length) : ''
     document.getElementById('n-tokens').textContent = String(activeTokens)
+    document.getElementById('n-events').textContent = String(state.events.length)
     viewEl.textContent = ''
 
     if (view === 'overview') {
@@ -568,6 +603,20 @@ td.id{color:var(--ink)}
       uBody.appendChild(note)
       usage.appendChild(uBody)
       viewEl.appendChild(usage)
+      return
+    }
+
+    if (view === 'events') {
+      var eventsCard = el('section', undefined, 'card')
+      var eHead = el('header'); eHead.appendChild(el('h2', '最近事件')); eHead.appendChild(el('span', String(state.events.length) + ' 条（最多留 100）', 'meta')); eventsCard.appendChild(eHead)
+      var eBody = el('div', undefined, 'body')
+      eBody.appendChild(table(['时间', '事件', '对象与细节'], state.events.map(function (row) {
+        var label = EVENT_LABELS[row.evt] || row.evt
+        var tag = el('span', label, 'tag' + (row.level === 'warn' || row.level === 'error' ? ' bad' : ''))
+        return [new Date(row.at).toLocaleTimeString(), tag, describe(row.detail || {})]
+      }), '还没有事件 — 有人连上来就会有'))
+      eventsCard.appendChild(eBody)
+      viewEl.appendChild(eventsCard)
       return
     }
 
