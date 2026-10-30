@@ -247,38 +247,20 @@ void main() {
       expect(await backToA.sessionDraftOf('sid-1'), 'A 的草稿');
     });
 
-    test('旧的平铺键一次性迁进当前桶；第二次 open 不写第二遍', () async {
+    test('不做旧数据兼容：平铺键不会被搬进桶，也不被删', () async {
+      // 协议没发版、没有存量安装 —— 平铺键是"状态不属于任何一台电脑"那一档，
+      // 拿到身份之后**不会**被当成需要迁移的旧数据（少一条会漂的双形状）。
       prefs.values[UiKey.lastSession] = 'sid-1';
-      prefs.values['${UiKey.sessionViewPrefix}sid-1'] = 'trajectory';
-      prefs.values['${UiKey.sessionDraftPrefix}sid-1'] =
-          '{"text":"半截","references":[]}';
-      prefs.values[UiKey.questionDraft('sid-1')] = '{"item":"t:1"}';
       prefs.values[UiKey.drawerExpansion] = '{"w1":false}';
+      final writesBefore = prefs.writes;
 
-      final migrated = UiStateStore(prefs: prefs, hostId: 'pc-A');
-      await migrated.open();
+      final onA = UiStateStore(prefs: prefs, hostId: 'pc-A');
+      await onA.open();
 
-      expect(migrated.lastSession, 'sid-1');
-      expect(migrated.drawerExpandedOf('w1'), isFalse);
-      expect(await migrated.viewOf('sid-1'), 'trajectory');
-      expect(await migrated.sessionDraftOf('sid-1'), '半截');
-      expect(await migrated.questionDraftOf('sid-1'), '{"item":"t:1"}');
-      expect(prefs.values['host.pc-A.last_session'], 'sid-1');
-      expect(
-        prefs.values.containsKey(UiKey.lastSession),
-        isFalse,
-        reason: '迁完要删旧键，否则下次还会再搬一遍',
-      );
-
-      final writesAfterMigration = prefs.writes;
-      final again = UiStateStore(prefs: prefs, hostId: 'pc-A');
-      await again.open();
-      expect(again.lastSession, 'sid-1');
-      expect(
-        prefs.writes,
-        writesAfterMigration,
-        reason: '迁移幂等：判据是写次数，不是"看起来一样"',
-      );
+      expect(onA.lastSession, isNull, reason: '桶里没有就是没有，不从平铺键补');
+      expect(prefs.writes, writesBefore, reason: 'open() 不写盘（没有迁移步骤）');
+      expect(prefs.values[UiKey.lastSession], 'sid-1', reason: '不认识的键不删');
+      expect(prefs.values.containsKey('host.pc-A.last_session'), isFalse);
     });
 
     test('clearHostScope 只删当前桶，别的电脑的桶不动', () async {

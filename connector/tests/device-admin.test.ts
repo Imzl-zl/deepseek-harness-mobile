@@ -65,12 +65,22 @@ function tableOf(seed: Record<string, DeviceRecord>): DeviceTablePort & { snapsh
   }
 }
 
-/** 在线的设备 id 集合。每台建一次 admin，避免跨用例串味。 */
-function adminOf(table: DeviceTablePort, online: readonly string[] = [], published: number[] = []) {
+/**
+ * 在线的设备 id 集合。每台建一次 admin，避免跨用例串味。
+ *
+ * [disconnected] 收下"被要求下线的设备 id"（独占：停用/删除必须真的收连接）。
+ */
+function adminOf(
+  table: DeviceTablePort,
+  online: readonly string[] = [],
+  published: number[] = [],
+  disconnected: string[] = [],
+) {
   return createDeviceAdmin({
     tableOf: () => table,
     onlineIds: () => new Set(online),
     publish: async () => { published.push(Date.now()) },
+    disconnect: (ids) => { disconnected.push(...ids) },
   })
 }
 
@@ -193,6 +203,34 @@ test('删除：一台都没删就不重发名册（无事不打扰中转）', as
   const result = await adminOf(table, ['dev1'], published).removeScope('all')
   assert.deepEqual(result, { removed: 0, skippedOnline: 1 })
   assert.equal(published.length, 0, '一台都没动就不必打扰中转')
+})
+
+test('停用/删除要**真的让那台下线**（独占：占用位释放时连接不能还活着）', async () => {
+  const seed = { live: row({ name: '我的手机' }), idle: row({ name: '平板' }) }
+
+  // 停用：立刻下线（否则占用位释放了、旧 socket 还在收发）。
+  const disabled = tableOf(seed)
+  const disabledIds: string[] = []
+  await adminOf(disabled, ['live'], [], disabledIds).setEnabled('live', false)
+  assert.deepEqual(disabledIds, ['live'])
+
+  // 解禁不该踢人（它本来就没在线）。
+  const enabled = tableOf({ live: row({ revokedAt: 1 }) })
+  const enabledIds: string[] = []
+  await adminOf(enabled, [], [], enabledIds).setEnabled('live', true)
+  assert.deepEqual(enabledIds, [])
+
+  // 显式删除在线的：删掉之后连接必须收掉。
+  const removed = tableOf(seed)
+  const removedIds: string[] = []
+  await adminOf(removed, ['live'], [], removedIds).remove(['live'])
+  assert.deepEqual(removedIds, ['live'])
+
+  // 按状态批量：只对**真删掉**的收连接（在线被跳过的那台不踢）。
+  const scoped = tableOf({ live: row(), gone: row({ revokedAt: 1 }) })
+  const scopedIds: string[] = []
+  await adminOf(scoped, ['live'], [], scopedIds).removeScope('revoked')
+  assert.deepEqual(scopedIds, ['gone'])
 })
 
 test('删除：scope=revoked 只删已停用的，未停用的一台不动', async () => {

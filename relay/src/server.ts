@@ -105,6 +105,35 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
   http.headersTimeout = CHANNEL_CONNECT_TIMEOUT_MS
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_WIRE_BYTES })
 
+  /**
+   * 把一端的关闭码/理由转给**另一端**（关闭码只能是 3000–4999 的应用/私有区间）。
+   *
+   * 为什么必须有它：电脑侧在握手层拒绝时用 **4003 + 协议码/说明**（契约 §4.1），
+   * 手机要靠这串东西区分"被另一台设备占用"（`device/busy`，停机等用户）
+   * 与"网络断了"（退避重连）。中转若只送默认的 `4000 channel closed`，
+   * 手机就只会退避重试 —— **撞门而没有结论**。
+   *
+   * 只转发 3000–4999：`1005` / `1006` / `1015` 是本地判定值，按 RFC 6455 §7.4.1
+   * 不得出现在线上（`ws` 也会拒绝发送）。
+   */
+  function forwardableClose(code: number): boolean {
+    return code >= 3000 && code <= 4999
+  }
+
+  /** 理由按 UTF-8 截到 ≤120 字节（WS 硬上限 123），不切断多字节字符。 */
+  function closeReason(reason: string): string {
+    if (Buffer.byteLength(reason, 'utf8') <= 120) return reason
+    let used = 0
+    let out = ''
+    for (const char of reason) {
+      const size = Buffer.byteLength(char, 'utf8')
+      if (used + size > 120) break
+      out += char
+      used += size
+    }
+    return out
+  }
+
   function closeLink(channelId: string, code = 4000, reason = 'channel closed'): void {
     const link = links.get(channelId)
     if (link === undefined) return
@@ -157,8 +186,15 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         closeLink(channelId, 4008, 'channel limit exceeded')
       }
     })
-    ws.on('close', () => {
-      if (links.get(channelId)?.[kind] === ws) closeLink(channelId)
+    ws.on('close', (code, reason) => {
+      if (links.get(channelId)?.[kind] !== ws) return
+      // **一端的关闭码/理由要转给另一端**（见 `forwardableClose` 的说明）。
+      // 电脑侧拒绝（4003 + `device/busy …`）只有经过这一跳才能到手机。
+      closeLink(
+        channelId,
+        forwardableClose(code) ? code : 4000,
+        forwardableClose(code) && reason.length > 0 ? closeReason(reason.toString()) : 'channel closed',
+      )
     })
     ws.on('error', (error) => {
       log?.warn('数据连接出错', error)
@@ -213,15 +249,15 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
       const deviceId = url.searchParams.get('dev')
       const channelId = url.searchParams.get('channel')
       if (deviceId === null && channelId === null) {
-        // **连接器自报身份**（`?id=`）：必须与令牌的 id 一致。
+        // **连接器自报身份**（`?id=`）：**必带**且必须与令牌的 id 一致。
         // 两者不一致时，二维码里的 `pcId` 与中转眼里的 id 是两个值，而此前
         // **没有任何一处会报**（见 `connector/src/transport/relay-link.ts` 的 `connectorId`）。
-        //
-        // **兼容分支**：不带 `?id=` 的是老连接器 —— 放行。下个 minor 删（到期后
-        // 老连接器会因为没有这个参数**根本连不上**，所以删之前要确认没有存量部署）。
+        // 不带 `?id=` 一律拒 —— 没有"老连接器"这回事：这套协议还没发版。
         const declared = url.searchParams.get('id')
-        if (declared !== null && declared !== caller.id) {
-          log?.warn(`连接器自报的 id(${declared}) 与令牌 id(${caller.id}) 不一致，拒绝控制面`)
+        if (declared === null || declared !== caller.id) {
+          log?.warn(
+            `连接器自报的 id(${declared ?? '缺'}) 与令牌 id(${caller.id}) 不一致，拒绝控制面`,
+          )
           refuse(socket, 403, 'Forbidden')
           return
         }

@@ -716,6 +716,12 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           tableOf: () => devicesTable,
           onlineIds: () => new Set(presence.devices().filter((row) => row.online).map((row) => row.id)),
           publish: publishDevices,
+          // **停用/删除 = 立刻下线**：占用位是"在线且未吊销"，所以行失效的同时
+          // 那条连接也必须收掉 —— 否则它的 socket 还活着，下一台手机被放进来，
+          // 就成了两台同时在服务。映射由 `makeConnection` 在握手成功时登记。
+          disconnect: (ids) => {
+            for (const id of ids) servingConnections.get(id)?.stop()
+          },
         })
         // 「上报哪些地址」的管理面。候选表是**网卡枚举的原始结果**（含被藏掉的），
         // 因为界面要画的是"这台机器上都有哪些地址，各自报不报"。
@@ -1016,6 +1022,13 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         const liveScopes = new Set<ConnectionScope>()
 
         /**
+         * 已鉴权设备的连接（`devId → Connection`）。**只给管理面的"停用/删除"用**：
+         * 它是"把某台设备的连接显式收掉"的唯一入口（`deviceAdmin.disconnect`）。
+         * 同一台设备重连会覆盖旧条目；旧连接由拨号层/中转的 `replaced` 收口。
+         */
+        const servingConnections = new Map<string, Connection>()
+
+        /**
          * 每连接装配的输入。**拨号路径与将来的监听面共用这一份** ——
          * 一条 socket 一份的是 `port`，不是这里的东西。
          */
@@ -1105,18 +1118,34 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
          * 抽成工厂是因为**拨号与接受两条路各要一份**（监听面每 accept 一条就调一次）。
          * 两者共用同一份 `scopeDeps`，差别只有 `dial`：接受来的连接没有拨号目标。
          */
-        const makeConnection = (binding?: DeviceBinding): Connection => createDeviceConnection({
-          identity: pcIdentity, pcId: connectorId, pairing: pairingCore, enrollment, scope: scopeDeps,
-          // **独占准入**（握手处判，`device/busy`）。配对候选自己会跳过它（见 `device-connection.ts`）。
-          occupantOf: exclusive.occupantOf,
-          ...(binding === undefined ? {} : { binding }),
-          peerOf: (devId) => {
-            const record = devicesTable?.get(devId)
-            return record === undefined || record.revokedAt !== undefined ? undefined : {
-              edPubHex: record.edPub, dhPubHex: record.dhPub, pairingId: record.pairingId,
-            }
-          },
-        })
+        const makeConnection = (binding?: DeviceBinding): Connection => {
+          // 自己的引用（`onDeviceEstablished` 回调里要用它登记 `devId → Connection`）。
+          let self: Connection | null = null
+          const connection = createDeviceConnection({
+            identity: pcIdentity, pcId: connectorId, pairing: pairingCore, enrollment,
+            scope: {
+              ...scopeDeps,
+              // 握手成功时**登记这台设备的连接**：管理面停用/删除要能显式把它收掉
+              // （见 `deviceAdmin` 的 `disconnect`）。同一台设备重连会覆盖旧条目，
+              // 旧连接本身已经被拨号层收口（`replaced`）。
+              onDeviceEstablished: (devId) => {
+                if (self !== null) servingConnections.set(devId, self)
+                scopeDeps.onDeviceEstablished?.(devId)
+              },
+            },
+            // **独占准入**（握手处判，`device/busy`）。配对候选自己会跳过它（见 `device-connection.ts`）。
+            occupantOf: exclusive.occupantOf,
+            ...(binding === undefined ? {} : { binding }),
+            peerOf: (devId) => {
+              const record = devicesTable?.get(devId)
+              return record === undefined || record.revokedAt !== undefined ? undefined : {
+                edPubHex: record.edPub, dhPubHex: record.dhPub, pairingId: record.pairingId,
+              }
+            },
+          })
+          self = connection
+          return connection
+        }
 
         /**
          * 传输面的起 / 停。**在这里定义**（`makeConnection` / `pairingCore` /

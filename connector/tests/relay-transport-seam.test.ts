@@ -108,7 +108,8 @@ test('连接器带令牌拨号到**独立进程中转**：升级成功、连接�
   const relay = await startRelayProcess(t, [{ kind: 'connector', id: 'conn-1', token: TOKEN }])
 
   const connection = createConnection({
-    url: `ws://127.0.0.1:${relay.port}/ws/connector`,
+    // 控制面 URL **必带** `?id=<令牌 id>`（中转侧强制，见 `relay/src/server.ts`）。
+    url: `ws://127.0.0.1:${relay.port}/ws/connector?id=conn-1`,
     // 与产品同一个写法：令牌走升级头。
     dial: (url) =>
       new WebSocket(url, {
@@ -126,7 +127,7 @@ test('令牌不对：升级被拒，连接层进入退避重连而不是停在�
   const relay = await startRelayProcess(t, [{ kind: 'connector', id: 'conn-1', token: TOKEN }])
 
   const connection = createConnection({
-    url: `ws://127.0.0.1:${relay.port}/ws/connector`,
+    url: `ws://127.0.0.1:${relay.port}/ws/connector?id=conn-1`,
     dial: (url) =>
       new WebSocket(url, { headers: { authorization: 'Bearer wrong' } } as never) as never,
     onFrame: () => {},

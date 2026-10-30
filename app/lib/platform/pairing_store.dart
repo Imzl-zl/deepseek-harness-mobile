@@ -214,8 +214,9 @@ class FlutterSecureStore implements SecureStore {
 /// 所以配对第二台是**新增一个槽**，不是覆盖第一台（`proposed/2026-10-29-one-phone-many-computers.md`
 /// 决策 3）。
 ///
-/// 升级前的平铺键 `dsh.<field>` 在首次 `load()` 时一次性搬进槽并删掉；
-/// 判断迁移是否做过看落盘（旧键在不在），不靠内存标志。
+/// **不做旧数据兼容**：这套协议还没发版、没有存量安装，所以旧平铺键 `dsh.<field>`
+/// 不再被识别（读到就当作没有）。少一条迁移分支 = 少一处会漂的二值形状。
+/// 取舍见 `.agents/notes/implemented/2026-10-30-drop-legacy-compat.md`。
 class PairingStore {
   PairingStore(this._secure);
 
@@ -226,31 +227,9 @@ class PairingStore {
   /// 当前那台电脑（`hostId`）。
   static const String activeKey = '${keyPrefix}active';
 
-  /// 槽内的字段名（与升级前的平铺键共用同一组名字）。
-  ///
-  /// **改动等于作废已配对设备**（读不出就回 `null`）；要改必须配一次迁移。
-  static const List<String> fields = <String>[
-    'relay_url',
-    'endpoints',
-    'endpoint_meta',
-    'pc_sign_pub',
-    'pc_dh_pub',
-    'pairing_id',
-    'master_seed',
-    'dev_sign_pub',
-    'dev_dh_pub',
-    'pc_id',
-    'dev_id',
-    'device_token',
-    'refresh_token',
-  ];
-
   /// 一台电脑的一个字段键。
   static String slotKey(String hostId, String field) =>
       '$keyPrefix$hostId.$field';
-
-  /// 升级前的平铺键（`dsh.<field>`）。只给迁移用。
-  static String legacyKey(String field) => 'dsh.$field';
 
   /// 读出已存的凭据；没有或不完整时返回 `null`。
   ///
@@ -261,16 +240,12 @@ class PairingStore {
   /// 缺 `deviceToken` 换不到票），而"部分可用"会让失败发生在很后面 ——
   /// 那时没人会想到是存储缺字段。
   ///
-  /// 首次读取时（没有 `active`）先把升级前的平铺键迁进槽；见 [_migrateLegacy]。
+  /// 没有 `active` 也没有指定 [hostId] 时回 `null`（**不猜哪一台**）。
   Future<PairedCredentials?> load({String? hostId}) async {
     final values = await _secure.readAll();
-    var target = hostId;
-    if (target == null || target.isEmpty) {
-      final active = values[activeKey];
-      target = active == null || active.isEmpty
-          ? await _migrateLegacy(values)
-          : active;
-    }
+    final target = hostId == null || hostId.isEmpty
+        ? values[activeKey]
+        : hostId;
     if (target == null || target.isEmpty) return null;
     return _decodeSlot(values, target);
   }
@@ -316,70 +291,26 @@ class PairingStore {
       deviceToken: deviceToken,
       refreshToken: refreshToken,
       endpoints: endpoints,
-      // **id 同批迁移**：旧落盘里 `remembered` / `hidden` / `succeeded` 是裸 url，
-      // 这里按同一台电脑补前缀；不补的话升级后"成功过的永不删"与"记住的那条"
-      // 会全部失配（症状是死地址重新参与每轮拨号）。
+      // id 一律是 `hostId|url`（`endpointIdOf`），**不做旧形状识别**。
       endpointMeta: _decodeEndpointMeta(
         read('endpoint_meta'),
         endpoints: endpoints,
-        hostId: pcSignPub,
       ),
       pcId: read('pc_id') ?? '',
       devId: read('dev_id') ?? '',
     );
   }
 
-  /// 一次性迁移：升级前是平铺键 `dsh.<field>`，没有 `active` / 槽。
-  ///
-  /// 判据是"旧键在（`dsh.pc_sign_pub`）且没有 `active`"：槽里已有的字段**不覆盖**
-  /// （半迁移时以槽为准），搬完逐个删旧键 —— 所以第二次 `load()` **一次写都不产生**
-  /// （判据是写次数，不是"看起来一样"）。旧数据只可能属于这一份凭据的那台电脑。
-  ///
-  /// [`values`] 是刚读到的整份存储；迁移写下的键会同步进它，避免再读一遍。
-  Future<String?> _migrateLegacy(Map<String, String> values) async {
-    final hostId = values[legacyKey('pc_sign_pub')];
-    if (hostId == null || hostId.isEmpty) return null;
-    for (final field in fields) {
-      final value = values[legacyKey(field)];
-      if (value == null) continue;
-      final key = slotKey(hostId, field);
-      // **槽优先**：半迁移（槽写了一半就崩）时不拿旧键覆盖已有字段。
-      if (values.containsKey(key)) continue;
-      await _secure.write(key, value);
-      values[key] = value;
-    }
-    // **`active` 最后写**：中途崩了也不会选出半个槽。
-    await _secure.write(activeKey, hostId);
-    values[activeKey] = hostId;
-    for (final field in fields) {
-      final key = legacyKey(field);
-      if (!values.containsKey(key)) continue;
-      await _secure.delete(key);
-      values.remove(key);
-    }
-    return hostId;
-  }
-
   /// 解端点表的附属状态。缺或坏都退化成"空的记忆"（**不猜**）：
   /// 丢的只是"上次连哪条"这类优化信息，拨号照样能work。
   ///
-  /// **旧 id 是裸 url**（`ws://` / `wss://` 开头，升级前的形状），
-  /// 新 id 是 `hostId|url`（十六进制开头）—— 判别看**开头**，不看中间有没有 `://`
-  /// （新 id 里也有）。新形状原样保留（再补一次前缀会变成 `host|host|url`）。
-  /// 迁移是**读时**做的（不额外写一次盘），下一次 [saveEndpointMeta] 落成新 id。
-  //
-  // Note: 为什么读时补前缀而不是写离线迁移 —— 见
-  // `.agents/notes/implemented/2026-10-30-endpoint-and-ui-state-host-scoping.md`。
+  /// 三份集合里存的都是 `Endpoint.id`（`hostId|url`）**原样**，不在读取时补前缀 ——
+  /// 没有"裸 url 的旧形状"需要识别（协议没发版）。
   static EndpointMeta _decodeEndpointMeta(
     String? raw, {
     required List<Endpoint> endpoints,
-    required String hostId,
   }) {
     if (raw == null || raw.isEmpty) return const EndpointMeta();
-    String idOf(String value) =>
-        value.startsWith('ws://') || value.startsWith('wss://')
-        ? endpointIdOf(value, hostId: hostId)
-        : value;
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return const EndpointMeta();
@@ -387,7 +318,7 @@ class PairingStore {
       final hidden = decoded['hidden'];
       final succeeded = decoded['succeeded'];
       final rememberedId = remembered is String && remembered.isNotEmpty
-          ? idOf(remembered)
+          ? remembered
           : null;
       return EndpointMeta(
         // 记住的那条若已不在表里，留着只会让 `dialOrder` 白找一次 —— 直接丢。
@@ -396,10 +327,10 @@ class PairingStore {
             ? rememberedId
             : null,
         hiddenEndpointIds: hidden is List
-            ? {for (final id in hidden.whereType<String>()) idOf(id)}
+            ? {for (final id in hidden.whereType<String>()) id}
             : const <String>{},
         succeededEndpointIds: succeeded is List
-            ? {for (final id in succeeded.whereType<String>()) idOf(id)}
+            ? {for (final id in succeeded.whereType<String>()) id}
             : const <String>{},
       );
     } on FormatException {
@@ -407,7 +338,8 @@ class PairingStore {
     }
   }
 
-  /// 解端点表。缺表时从 `relayUrl` 造一条 relay 端点（一次性迁移，见 [load]）。
+  /// 解端点表。缺表 / 坏表时从 `relayUrl` 造一条 relay 端点（**唯一**的种子，
+  /// 不是"旧数据迁移"：空表会让 `EndpointTransport` 抛"没有可拨的端点"）。
   ///
   /// **解不出的条目直接丢**：一个拨不出去的端点会让整条链在很后面才失败，
   /// 而那时没人会想到是存储里躺着一条废条目。
@@ -511,8 +443,7 @@ class PairingStore {
   }) => _write(hostId, 'endpoint_meta', _encodeMeta(meta));
 
   String _encodeMeta(EndpointMeta meta) => jsonEncode(<String, Object?>{
-    // **是 id（`hostId|url`）不是裸 url**：落盘形状沿用旧键名，读取端按
-    // 开头（`ws[s]://` = 旧）区分两种形状（见 `_decodeEndpointMeta`）。
+    // **是 id（`hostId|url`）不是裸 url**，读取端原样用（没有旧形状要识别）。
     if (meta.rememberedEndpointId != null)
       'remembered': meta.rememberedEndpointId,
     'hidden': meta.hiddenEndpointIds.toList(),

@@ -61,7 +61,7 @@ test('真服务器：容量用尽后回 429，且按身份分桶（一台设备�
   const wsBase = `ws://127.0.0.1:${relay.port}`
 
   // 连接器的桶（容量 3）：控制面升级(1) → 名册上报(2) → 出码登记(3)
-  const connector = await open(`${wsBase}/ws/connector`, {
+  const connector = await open(`${wsBase}/ws/connector?id=conn-1`, {
     authorization: 'Bearer connector-token-1',
   })
   t.after(() => connector.close())

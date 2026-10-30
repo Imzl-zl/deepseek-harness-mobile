@@ -34,8 +34,14 @@ export interface ExclusiveAdmission {
 }
 
 export interface ExclusiveAdmissionOptions {
-  /** 占用位的事实来源（挂载级的那一份 `presence`）。 */
-  presence: Pick<DevicePresence, 'serving'>
+  /**
+   * 占用位的事实来源（挂载级的那一份 `presence`）。
+   *
+   * **看整份 `devices()` 而不只是 `serving()` 的第一条**：`serving()` 是"占用位"
+   * 的展示读法，而准入要判的是"**有没有任何别的**在线有效设备"。两者在独占下
+   * 等价；一旦出现"两台同时在线"（握手竞速那一瞬），按第一条判会放过第二台。
+   */
+  presence: Pick<DevicePresence, 'devices' | 'serving'>
   /** 设备在名册里的名字（展示值；取不到就退回短码）。 */
   nameOf(devId: string): string | undefined
 }
@@ -55,11 +61,18 @@ export function createExclusiveAdmission(
 ): ExclusiveAdmission {
   return {
     occupantOf(devId) {
-      const serving = options.presence.serving()
-      // **同一台设备的重连照旧放行**（见文件头约束 2）。
-      if (serving === undefined || serving.id === devId) return undefined
-      const name = options.nameOf(serving.id)
-      return name === undefined || name === '' ? shortIdOf(serving.id) : name
+      // **占用者本人先放行**：换网重连时旧连接还在服务，正是要被放行的那一种
+      // （见文件头约束 2）。`serving()` 是"先来的占着"，所以它给出的是当前在位者。
+      const seat = options.presence.serving()
+      if (seat !== undefined && seat.id === devId) return undefined
+      // 剩下就是"**任何一台别的**在线有效设备都算占用"—— 不只看 `serving()` 的第一条：
+      // 握手竞速那一瞬可能有两台同时在线，按第一条判会放过第二/第三台。
+      for (const row of options.presence.devices()) {
+        if (!row.online || row.id === devId) continue
+        const name = options.nameOf(row.id)
+        return name === undefined || name === '' ? shortIdOf(row.id) : name
+      }
+      return undefined
     },
   }
 }

@@ -24,10 +24,15 @@ import type { ConnectionPort } from './transport/connection.js'
  * 实现是挂载级的 `presence.ts`；这里只持有窄接口，于是"每连接装配"不认识挂载级的状态表。
  */
 export interface DevicePresenceSink {
-  /** 设备完成鉴权、连接进入服务态。 */
-  online(devId: string): void
-  /** 连接离开服务态。 */
-  offline(devId: string): void
+  /**
+   * 设备完成鉴权、连接进入服务态。
+   *
+   * @param holder - 这条连接的令牌：同一台设备换网重连时，旧连接迟到的 `offline`
+   *   靠它认出"记录已经不属于我了"（见 `presence.ts` 的 `offline`）。
+   */
+  online(devId: string, holder?: object): void
+  /** 连接离开服务态（令牌不同则视为旧连接迟到，不删记录）。 */
+  offline(devId: string, holder?: object): void
   /** 手机声明前后台态（`sync.hello`）。 */
   app(devId: string, state: DeviceAppState): void
   /** 订阅集整体覆盖。 */
@@ -113,6 +118,13 @@ export function createConnectionScope(
   let deviceId: string | null = null
   let pairingReady = false
   let generation = 0
+  /**
+   * 本连接在 presence 里的**占位令牌**（每连接一个）。
+   *
+   * 同一台设备换网重连时新旧两条连接会重叠一小段：新连接把记录接管到自己的令牌上，
+   * 旧连接迟到的 `offline(devId, 旧令牌)` 因此不会删掉新连接的服务位。
+   */
+  const holder = Object.freeze({})
   const jobSubscriptions = deps.jobControl === null ? null : createJobSubscriptions({
     source: deps.jobControl,
     send: (sid, output) => {
@@ -173,7 +185,7 @@ export function createConnectionScope(
       deviceId = devId
       // 鉴权完成 = 这台设备在线了。**前台态此时仍为 false**（还没收到 `sync.hello`），
       // 于是一个刚连上的设备不会被 `foreground` 档误判成"用户正看着手机"。
-      deps.presence?.online(devId)
+      deps.presence?.online(devId, holder)
       // 新身份真的连上了：重新配对替换掉的旧行现在才能裁（`index.ts` 的 `pruneReplaced`）。
       deps.onDeviceEstablished?.(devId)
     },
@@ -185,8 +197,9 @@ export function createConnectionScope(
       generation += 1
       pairingReady = false
       // 断开 = 这台设备下线。**整条记录作废**（订阅集属于这条连接）——
-      // 见 `presence.ts` 的 `offline`。
-      if (deviceId !== null) deps.presence?.offline(deviceId)
+      // 见 `presence.ts` 的 `offline`。带令牌：同一台设备的新连接已经接管记录时，
+      // 这里什么都不做（否则会把新连接的服务位抹掉）。
+      if (deviceId !== null) deps.presence?.offline(deviceId, holder)
       deviceId = null
       jobSubscriptions?.stopAll()
       sessionSubscriptions.stopAll()

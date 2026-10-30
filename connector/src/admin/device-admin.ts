@@ -76,6 +76,15 @@ export interface DeviceAdminDeps {
   onlineIds: () => ReadonlySet<string>
   /** 名册重发（§8.2 / I7）。 */
   publish: () => Promise<void>
+  /**
+   * 停掉这些设备**已经建立的连接**（装配层给：`devId → Connection.stop()`）。
+   *
+   * 为什么必须有：独占 1:1 的占用位是"在线且未吊销"，所以停用/删除一行的同时
+   * **必须真的把那条连接收掉** —— 否则它的 socket 还活着、还在收发，而占用位
+   * 已经释放，下一台手机就会被放进来（两台同时在服务）。
+   * 这一步也让面板的「接管」名副其实：接管 = 停用占用者 = 它立刻下线。
+   */
+  disconnect?: (devIds: readonly string[]) => void
 }
 
 /**
@@ -106,6 +115,7 @@ export function createDeviceAdmin(deps: DeviceAdminDeps): DeviceAdmin {
     const online = deps.onlineIds()
     let removed = 0
     let skippedOnline = 0
+    const deleted: string[] = []
     for (const id of table.keys()) {
       const record = table.get(id)
       if (record === undefined) continue
@@ -116,8 +126,12 @@ export function createDeviceAdmin(deps: DeviceAdminDeps): DeviceAdmin {
         continue
       }
       await table.delete(id)
+      deleted.push(id)
       removed += 1
     }
+    // 行没了 ⇒ 那台设备的连接也必须收掉（占用位是"在线且未吊销"，
+    // 不收就会出现"占用位已释放、旧 socket 还在收发"）。
+    if (deleted.length > 0) deps.disconnect?.(deleted)
     // 一台都没删就不重发：无事可报，不打扰中转。删过才发 —— 删掉的行不该再报给中转。
     if (removed > 0) await deps.publish()
     return { removed, skippedOnline }
@@ -141,6 +155,9 @@ export function createDeviceAdmin(deps: DeviceAdminDeps): DeviceAdmin {
         // —— 标记即停用（契约 §5.7 `devices.list` 那行的原文："吊销 = 不再把该设备
         // 报进名册 + 本地标 `revokedAt`"）。
         await table.put(devId, { ...record, revokedAt: Date.now() })
+        // 停用 = 立刻下线（见 `disconnect` 的说明）：占用位随"未吊销"一起消失，
+        // 而那条连接不能还活着。
+        deps.disconnect?.([devId])
       }
       // 名册要重新发布：停用要摘掉、解禁要接回（中转按名册认设备）。
       await deps.publish()

@@ -1,16 +1,14 @@
-/// 配对凭据的**分槽**与**迁移**判据（多机第 2 步）。
+/// 配对凭据的**分槽**判据（多机第 2 步；**不做旧数据兼容**）。
 ///
 /// 判据来自 `proposed/2026-10-29-one-phone-many-computers.md` 的准入门槛 1、2：
 ///
 /// 1. 两个槽互不影响：配对 A → 配对 B → A 的 `deviceToken` / `masterSeed` 逐字未变，
 ///    且 `active == B`。
-/// 2. 迁移幂等：旧平铺键迁一次后 `load()` 与原值逐字相等，**再跑一次不写第二遍**
+/// 2. 不迁移：只有旧平铺键 `dsh.<field>` 时 `load()` 回 `null`，一个键都不写（没发版）
 ///    —— 判据是写次数，不是"看起来一样"。
 ///
 /// 这里用内存 [SecureStore] 驱动；真实现是系统密钥库（真机用例才验它）。
 library;
-
-import 'dart:convert';
 
 import 'package:dsh_mobile/core/endpoint.dart';
 import 'package:dsh_mobile/platform/pairing_store.dart';
@@ -103,40 +101,6 @@ void _expectSameCredentials(
     actual.endpointMeta.succeededEndpointIds,
     expected.endpointMeta.succeededEndpointIds,
   );
-}
-
-/// 把一份凭据按**升级前的平铺形状**写进存储（`dsh.<field>`，没有 active / 槽）。
-void _seedLegacy(_MemorySecure secure, PairedCredentials credentials) {
-  void put(String field, String value) {
-    secure.values[PairingStore.legacyKey(field)] = value;
-  }
-
-  put('relay_url', credentials.relayUrl);
-  put(
-    'endpoints',
-    jsonEncode(credentials.endpoints.map(endpointToJson).toList()),
-  );
-  // **旧形状的元数据是裸 url**（不是 `hostId|url`）：三份都按 url 写，
-  // 迁移后必须解成带归属的 id。
-  put(
-    'endpoint_meta',
-    jsonEncode(<String, Object?>{
-      if (credentials.endpointMeta.rememberedEndpointId != null)
-        'remembered': credentials.relayUrl,
-      'hidden': [credentials.relayUrl],
-      'succeeded': [credentials.relayUrl],
-    }),
-  );
-  put('pc_sign_pub', credentials.pcSignPubHex);
-  put('pc_dh_pub', credentials.pcDhPubHex);
-  put('pairing_id', credentials.pairingId);
-  put('master_seed', credentials.masterSeedHex);
-  put('dev_sign_pub', credentials.devSignPubHex);
-  put('dev_dh_pub', credentials.devDhPubHex);
-  put('pc_id', credentials.pcId);
-  put('dev_id', credentials.devId);
-  put('device_token', credentials.deviceToken);
-  put('refresh_token', credentials.refreshToken);
 }
 
 void main() {
@@ -300,69 +264,30 @@ void main() {
     });
   });
 
-  group('迁移：旧平铺键 → 槽，一次性且幂等', () {
-    test('迁一次后 load() 与原值逐字相等；旧键消失；第二次不写盘', () async {
+  group('不做旧数据兼容：平铺键 `dsh.<field>` 当作没有', () {
+    test('只有旧平铺键时 load() 回 null，且一个键都不写', () async {
+      // 协议没发版、没有存量安装：旧形状不识别、不迁移，也不顺手删用户数据。
       final secure = _MemorySecure();
-      final legacy = _credentials(hostA);
-      _seedLegacy(secure, legacy);
-      expect(secure.writes, 0);
-
+      secure.values['dsh.pc_sign_pub'] = hostA;
+      secure.values['dsh.device_token'] = 'token-old';
       final store = PairingStore(secure);
-      final loaded = await store.load();
-      expect(loaded, isNotNull);
-      _expectSameCredentials(loaded!, legacy);
-
-      expect(secure.values[PairingStore.activeKey], hostA);
-      expect(
-        secure.values[PairingStore.slotKey(hostA, 'device_token')],
-        'token-$hostA',
-      );
-      expect(
-        secure.values.keys.where((k) => !k.startsWith(PairingStore.keyPrefix)),
-        isEmpty,
-        reason: '旧平铺键必须删掉，否则下次还会再搬一遍',
-      );
-
-      final writesAfterMigration = secure.writes;
-      final again = await store.load();
-      expect(again, isNotNull);
-      _expectSameCredentials(again!, legacy);
-      expect(
-        secure.writes,
-        writesAfterMigration,
-        reason: '迁移幂等：判据是写次数，不是"看起来一样"',
-      );
-    });
-
-    test('新槽已有值时不覆盖（半迁移以槽为准），但旧键仍要清掉', () async {
-      final secure = _MemorySecure();
-      final legacy = _credentials(hostA);
-      _seedLegacy(secure, legacy);
-      // 模拟"槽写了一半就崩"：槽里已有一条不同的 relay_url。
-      secure.values[PairingStore.slotKey(hostA, 'relay_url')] = 'ws://slot:1';
-
-      final store = PairingStore(secure);
-      final loaded = await store.load();
-
-      expect(loaded?.relayUrl, 'ws://slot:1', reason: '槽优先，不拿旧键覆盖');
-      expect(
-        secure.values.containsKey(PairingStore.legacyKey('relay_url')),
-        isFalse,
-        reason: '旧键该清掉（其余字段仍按缺失从旧键补齐）',
-      );
-      expect(
-        secure.values[PairingStore.slotKey(hostA, 'master_seed')],
-        'seed-$hostA',
-        reason: '槽里没有的字段从旧键补',
-      );
-    });
-
-    test('没有旧键也没有槽 ⇒ null（不编一份凭据）', () async {
-      final store = PairingStore(_MemorySecure());
       expect(await store.load(), isNull);
+      expect(secure.writes, 0, reason: '不迁移就不该写盘');
+      expect(secure.deletes, 0, reason: '不认识的键也不该被删');
+      expect(secure.values['dsh.device_token'], 'token-old');
+    });
+
+    test('旧平铺键与槽并存：只认槽（不拿旧键补缺字段）', () async {
+      final secure = _MemorySecure();
+      final store = PairingStore(secure);
+      // 槽里少 master_seed（不完整）；旧平铺键里恰好有它。
+      final a = _credentials(hostA);
+      await store.save(a);
+      secure.values.remove(PairingStore.slotKey(hostA, 'master_seed'));
+      secure.values['dsh.master_seed'] = 'seed-legacy';
+      expect(await store.load(), isNull, reason: '槽不完整就是没有，不从旧键拼半份');
     });
   });
-
   group('清理：clear 只删这一台，clearAll 才撤销全部', () {
     test('clear(hostA)：A 的槽全删，B 与 active 不动', () async {
       final secure = _MemorySecure();

@@ -46,6 +46,24 @@ test('别的有效设备在服务：拒绝并给出占用者的名字', () => {
   assert.equal(admission.occupantOf('dev-a'), undefined, '占用者本人的重连照旧放行')
 })
 
+test('两台同时在线（握手竞速那一瞬）：**任何一台别的**都算占用', () => {
+  // 独占下不该有两条，但准入是防"两人同时进门"的那道闸：判据必须是
+  // "所有在线设备里有没有别的"，而不是"serving() 的第一条是不是我"。
+  const { presence, admission } = makeAdmission(
+    { 'dev-a': 100, 'dev-b': 50 },
+    { 'dev-a': '我的手机', 'dev-b': '平板' },
+  )
+  presence.online('dev-a')
+  presence.online('dev-b')
+
+  const occupant = admission.occupantOf('dev-c')
+  assert.notEqual(occupant, undefined, '已有两台在线时必须拒第三台')
+  // **在位者（先来的那台）照旧放行**：不踢人、也不锁死它自己的重连。
+  assert.equal(admission.occupantOf('dev-a'), undefined, 'dev-a 是占用者本人')
+  // 第二台本来就不该在里面：它现在也被判成"被占用"（不会因为它在位就放行下一台）。
+  assert.equal(admission.occupantOf('dev-b'), '我的手机', '第二台那条是竞速的漏网之鱼')
+})
+
 test('同一台设备换网重连：旧通道还没 detach 也放行（连接器不再加门）', () => {
   const { presence, admission } = makeAdmission({ 'dev-a': 100 }, { 'dev-a': '我的手机' })
   presence.online('dev-a')

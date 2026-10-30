@@ -240,7 +240,7 @@ window.__ModuleLoader__.load({
       // （没有第二条"踢人"接口），所以后果句必须把"会释放什么 / 不会断什么"说全。
       takeOver: '接管',
       confirmTakeOverTitle: '接管这台电脑？（「{name}」正在服务）',
-      confirmTakeOverDescription: '接管 = 停用占用者：它的占用位立刻释放，下一台手机可以连上；这台下次连回来需要重新配对。它已经建立的连接不会被这一步主动断开（幽灵连接由心跳半开收口）。',
+      confirmTakeOverDescription: '接管 = 停用占用者：它立刻下线、占用位立刻释放，下一台手机可以连上；它下次连回来需要重新配对。',
       failedTakeOver: '接管失败：{reason}',
       removeSelected: '删除所选',
       selectedCount: '已选 {n} 台',
@@ -356,7 +356,7 @@ window.__ModuleLoader__.load({
       remove: 'Delete',
       takeOver: 'Take over',
       confirmTakeOverTitle: 'Take over this computer? ("{name}" is serving)',
-      confirmTakeOverDescription: 'Taking over disables the current device: its slot is freed immediately so the next phone can connect, and it must pair again to come back. Its already-open connection is not closed by this step (ghost links are reaped by the heartbeat).',
+      confirmTakeOverDescription: 'Taking over disables the current device: it is disconnected immediately, its slot is freed so the next phone can connect, and it must pair again to come back.',
       failedTakeOver: 'Could not take over: {reason}',
       removeSelected: 'Delete selected',
       selectedCount: '{n} selected',

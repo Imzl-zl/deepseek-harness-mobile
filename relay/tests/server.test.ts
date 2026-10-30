@@ -103,7 +103,7 @@ test('端到端：名册 → 换票 → 控制面 relay.open → 数据面双向
   const wsBase = `ws://127.0.0.1:${relay.port}`
 
   // 1. 连接器先连上控制面（准入、登记与数据面都要求它在线）
-  const connector = await connect(`${wsBase}/ws/connector`, {
+  const connector = await connect(`${wsBase}/ws/connector?id=conn-1`, {
     authorization: 'Bearer connector-token-1',
   })
   t.after(() => connector.ws.close())
@@ -167,6 +167,49 @@ test('端到端：名册 → 换票 → 控制面 relay.open → 数据面双向
   assert.equal(relay.core.channel(notice.channelId), undefined, '通道随数据面的断开一起消失')
 })
 
+test('数据面的关闭码要转给另一端：电脑侧 4003 + device/busy 必须原样到手机', async (t) => {
+  // 这一跳是"独占"能不能被手机看见的关键：电脑侧在握手层拒绝第二台设备时用
+  // **4003 + `device/busy <占用者>`**（契约 §4.1）。中转若把关闭码吞成默认的
+  // `4000 channel closed`，手机只会退避重连（撞门），永远说不出"被谁占着"。
+  const relay = await startRelay({ port: 0, authenticate: (token) => TOKENS[token] })
+  t.after(() => relay.close())
+  const base = `http://127.0.0.1:${relay.port}`
+  const wsBase = `ws://127.0.0.1:${relay.port}`
+
+  const connector = await connect(`${wsBase}/ws/connector?id=conn-1`, {
+    authorization: 'Bearer connector-token-1',
+  })
+  t.after(() => connector.ws.close())
+  assert.equal(
+    (await postJson(base, '/devices', 'connector-token-1', { devices: ROSTER })).status,
+    201,
+  )
+  const ticketed = await postJson(base, '/ws-ticket', DEVICE_TOKEN, {})
+  const { ticket } = (await ticketed.json()) as { ticket: string }
+  const device = await connect(`${wsBase}/ws/device?ticket=${encodeURIComponent(ticket)}`)
+  t.after(() => device.ws.close())
+
+  // 收下设备那端的关闭码与理由（**这一条就是手机的视角**）。
+  let closed: { code: number; reason: string } | null = null
+  device.ws.on('close', (code, reason) => { closed = { code, reason: reason.toString() } })
+
+  const notice = JSON.parse(await waitFor('控制面收到 relay.open', () => connector.lines[0])) as {
+    channelId: string
+  }
+  const data = await connect(
+    `${wsBase}/ws/connector?dev=dev-1&channel=${encodeURIComponent(notice.channelId)}`,
+    { authorization: 'Bearer connector-token-1' },
+  )
+  t.after(() => data.ws.close())
+
+  // 电脑侧拒绝（与 `transport/connection.ts` 的 `socket.close(4003, reason)` 同一形状）。
+  data.ws.close(4003, 'device/busy 我的手机')
+
+  const seen = await waitFor('设备收到关闭', () => closed ?? undefined)
+  assert.equal(seen.code, 4003, '关闭码必须原样转发（不是 4000）')
+  assert.equal(seen.reason, 'device/busy 我的手机', '理由里的占用者名字也要到手机')
+})
+
 test('升级认证：票不对 / 令牌不对 / 凭据类型不对 / 数据面对不上通道 / 路径不对，都进不了协议层', async (t) => {
   const relay = await startRelay({ port: 0, authenticate: (token) => TOKENS[token] })
   t.after(() => relay.close())
@@ -176,11 +219,11 @@ test('升级认证：票不对 / 令牌不对 / 凭据类型不对 / 数据面�
   await assert.rejects(() => open(`${wsBase}/ws/device?ticket=nope`), /401/)
   await assert.rejects(() => open(`${wsBase}/ws/device`), /401/)
   // 没有令牌的连接器：401
-  await assert.rejects(() => open(`${wsBase}/ws/connector`), /401/)
+  await assert.rejects(() => open(`${wsBase}/ws/connector?id=conn-1`), /401/)
   // 不认识的令牌（比如 v1 时代签的设备令牌）：401 —— 中转不认识它，
   // 而它也不该被认识：设备凭据面在名册（由电脑侧写入）。
   await assert.rejects(
-    () => open(`${wsBase}/ws/connector`, { authorization: 'Bearer v1-device-token' }),
+    () => open(`${wsBase}/ws/connector?id=conn-1`, { authorization: 'Bearer v1-device-token' }),
     /401/,
   )
   // 数据面：路径对了但那条通道不存在（或不属于它）→ 403，而不是"先连上再说"
@@ -192,7 +235,7 @@ test('升级认证：票不对 / 令牌不对 / 凭据类型不对 / 数据面�
   await assert.rejects(() => open(`${wsBase}/ws/nope`), /404/)
 })
 
-test('控制面自报 id：与令牌一致才放行，不一致 403，不带（老连接器）放行', async (t) => {
+test('控制面自报 id：**必带**且必须与令牌一致（不一致或缺参数都是 403）', async (t) => {
   const relay = await startRelay({ port: 0, authenticate: (token) => TOKENS[token] })
   t.after(() => relay.close())
   const wsBase = `ws://127.0.0.1:${relay.port}`
@@ -211,10 +254,12 @@ test('控制面自报 id：与令牌一致才放行，不一致 403，不带（�
     '自报 id 与令牌 id 不一致必须拒',
   )
 
-  // **兼容分支**：不带 `?id=` 的是老连接器 —— 放行（下个 minor 删）。
-  const legacy = await open(`${wsBase}/ws/connector`, auth)
-  t.after(() => legacy.close())
-  assert.equal(legacy.readyState, WebSocket.OPEN, '老连接器不带 id 时必须照旧能连')
+  // **不带也拒**：协议还没发版，没有"老连接器"这回事（不做旧兼容）。
+  await assert.rejects(
+    () => open(`${wsBase}/ws/connector`, auth),
+    /403/,
+    '控制面必须自报 id',
+  )
 })
 
 test('摘要表里带 device 条目：**启动即失败**（不留下"起来了但谁都连不上"的中转）', async (t) => {
@@ -259,8 +304,8 @@ test('同一个身份再连上来：旧的被替换掉（投递不会打到僵�
   t.after(() => relay.close())
   const wsBase = `ws://127.0.0.1:${relay.port}`
 
-  const first = await open(`${wsBase}/ws/connector`, { authorization: 'Bearer connector-token-1' })
-  const second = await open(`${wsBase}/ws/connector`, { authorization: 'Bearer connector-token-1' })
+  const first = await open(`${wsBase}/ws/connector?id=conn-1`, { authorization: 'Bearer connector-token-1' })
+  const second = await open(`${wsBase}/ws/connector?id=conn-1`, { authorization: 'Bearer connector-token-1' })
   t.after(() => second.close())
 
   await waitFor('旧连接被关掉', () => (first.readyState === WebSocket.CLOSED ? true : undefined))

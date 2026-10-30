@@ -439,20 +439,24 @@ class _DshMobileAppState extends State<DshMobileApp>
       );
       return;
     }
+    final previous = _credentials?.pcSignPubHex;
+    // **先装配、后改 `active`**：装配是本地动作（开库 + 派生身份），失败时
+    // `active` 还指着上一台 —— 下一次启动仍然起得来。反过来的话，一次失败的
+    // 切换会让 App 每次启动都落到"读得出槽但装配不起来"的那一台上。
+    final app = await _assemble(next, _recovery.onTerminated);
+    if (!mounted) return;
     try {
       // **换凭据槽**：`active` 指向新那台（槽本身早就写全了，这里只改指针）。
       await pairingStore.activate(hostId);
     } catch (error) {
       // 切不过去就停在原地：不动 `active`、不动 `_credentials`。
       // 这不是"回滚"，是"压根没切"（`active` 还没变过）。
+      app.dispose();
       _reportConnectionDefect(
         ProtocolException(ErrorCode.internal, '切换电脑失败：$error'),
       );
       return;
     }
-    final previous = _credentials?.pcSignPubHex;
-    final app = await _assemble(next, _recovery.onTerminated);
-    if (!mounted) return;
     await app.loadUiState();
     if (!mounted) return;
     setState(() {

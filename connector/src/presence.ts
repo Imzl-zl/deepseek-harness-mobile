@@ -47,6 +47,14 @@ export interface LiveDeviceRecord {
   foreground: boolean
   subscribed: string[]
   lastInteractedAt?: Record<string, number>
+  /**
+   * 占着这条记录的那一条连接（不透明令牌，由连接层给）。
+   *
+   * 存在的理由：同一台设备**换网重连**时旧连接与新连接会重叠一小段 ——
+   * 旧连接迟到的 `offline` 若照直删记录，会把**新连接**刚占上的服务位抹掉
+   * （面板显示离线，下一台设备因此被放进来）。所以 `offline` 只在令牌相同时才删。
+   */
+  holder?: object
 }
 
 /** 读取面：配对行是否存在且未吊销。返回 `undefined` = 这台设备不参与仲裁。 */
@@ -56,10 +64,19 @@ export interface PresenceDevices {
 }
 
 export interface DevicePresence extends PresenceDevices {
-  /** 设备完成鉴权、连接进入服务态。 */
-  online(devId: string): void
-  /** 连接离开服务态（断开 / 重连中 / 插件卸载）。**整条记录作废**，不只是置离线。 */
-  offline(devId: string): void
+  /**
+   * 设备完成鉴权、连接进入服务态。
+   *
+   * @param holder - 这条连接的令牌（连接层给）。同一台设备重连时新令牌覆盖旧令牌，
+   *   之后旧连接的 `offline` 不会误删新连接占上的服务位。
+   */
+  online(devId: string, holder?: object): void
+  /**
+   * 连接离开服务态（断开 / 重连中 / 插件卸载）。**整条记录作废**，不只是置离线。
+   *
+   * @param holder - 这条连接的令牌；与记录上的**不同**则什么都不做（见 `online`）。
+   */
+  offline(devId: string, holder?: object): void
   /** 手机声明前后台态（`sync.hello`）。 */
   app(devId: string, state: DeviceAppState): void
   /** 订阅集**整体**覆盖（订阅 / 退订 / `sync.hello` 声明之后调用）。 */
@@ -135,14 +152,23 @@ export function createDevicePresence(options: PresenceDevices): DevicePresence {
   return {
     pairedAtOf: options.pairedAtOf,
 
-    online(devId) {
-      recordOf(devId).online = true
+    online(devId, holder) {
+      const record = recordOf(devId)
+      record.online = true
+      // **新连接接管记录**：同一台设备换网重连时，旧连接之后迟到的 offline
+      // 会因为这个令牌不同而**什么都不做**（见 `offline`）。
+      if (holder !== undefined) record.holder = holder
     },
 
-    offline(devId) {
+    offline(devId, holder) {
       // **整条作废而不是只置 `online: false`**：订阅集属于那条连接，连接没了订阅就没了。
       // 留着旧订阅集会让管理面显示"这台设备还订阅着这个会话"。
       //
+      // **令牌不同就不删**：那是"旧连接迟到的断开"——记录现在属于新连接。
+      // 少了这一条，换网重连之后面板显示离线、服务位丢失，下一台设备会被放进来。
+      const record = live.get(devId)
+      if (record === undefined) return
+      if (holder !== undefined && record.holder !== undefined && record.holder !== holder) return
       // **这里不通知任何人**：断线不是任何交互的终态（DSH 的 gateway 断线只撤投递、
       // 不结算，`packages/api/gateway/src/index.ts:717-721`），在途 claim 挂在 Host 上、
       // 等手机回来还能答（契约 §6.2）。

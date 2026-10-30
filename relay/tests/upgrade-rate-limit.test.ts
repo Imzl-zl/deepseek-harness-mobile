@@ -23,7 +23,7 @@ const TOKENS: Record<string, Authenticated> = {
 /** 升级一次连接器连接；返回 HTTP 状态码（101 → 用 0 表示成功）。 */
 const attemptConnectorUpgrade = (wsBase: string) =>
   new Promise<number>((resolve, reject) => {
-    const ws = new WebSocket(`${wsBase}/ws/connector`, {
+    const ws = new WebSocket(`${wsBase}/ws/connector?id=conn-1`, {
       headers: { authorization: 'Bearer connector-token-1' },
     })
     ws.on('open', () => {

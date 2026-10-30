@@ -7,7 +7,7 @@
 /// 各自 `read`、各自猜默认值，下一次加功能再漏一遍。
 ///
 /// 所以这里只做一件事：把"属于这台手机的 UI 状态"收成一组**带作用域的键**，
-/// 由一处读写、一处迁移、一处清理。UI 层不许再拼键名（`verify-platform-boundary` 的精神）。
+/// 由一处读写、一处清理。UI 层不许再拼键名（`verify-platform-boundary` 的精神）。
 ///
 /// ## 两类键（换电脑时行为不同，这是它们唯一的分界）
 ///
@@ -23,8 +23,9 @@
 /// 那不是同一个事实。分桶之后 `pruneSessions` 只允许剪**当前桶**
 /// （取舍见 `proposed/2026-10-29-one-phone-many-computers.md` 决策 4）。
 ///
-/// **没有电脑身份时**（没配对 / 单测没装配 `hostIdOf`）用旧的平铺键
-/// `host.<field>`：那是升级前就有的形状，`open()` 在拿到身份后一次性搬进桶里。
+/// **没有电脑身份时**（没配对 / 单测没装配 `hostIdOf`）用平铺键 `host.<field>`：
+/// 那是"这一份状态不属于任何一台电脑"，**不是旧数据兼容** —— 拿到身份之后
+/// 不会把平铺键搬进桶里（协议没发版，没有需要迁移的存量安装）。
 ///
 /// ## 读写时机（移动端约束）
 ///
@@ -40,7 +41,7 @@ import 'dart:convert';
 
 import 'store.dart';
 
-/// 键名**唯一拼写处**。改动等于作废用户的偏好，必须配一次数据迁移。
+/// 键名**唯一拼写处**。改动等于作废用户的偏好。
 abstract final class UiKey {
   /// `device.*` 与某台电脑无关。
   static const String devicePrefix = 'device.';
@@ -48,14 +49,14 @@ abstract final class UiKey {
   /// `host.*` 属于某台电脑：正常形状是 `host.<hostId>.<field>`。
   static const String hostPrefix = 'host.';
 
-  /// 字段名（桶内与旧的平铺键共用同一组名字）。
+  /// 字段名（桶内与"没有电脑身份时"共用同一组名字）。
   static const String lastSessionField = 'last_session';
   static const String drawerExpansionField = 'drawer_expansion';
   static const String sessionViewField = 'session_view';
   static const String sessionDraftField = 'session_draft';
   static const String questionDraftField = 'question_draft';
 
-  /// 一台电脑的桶前缀；[hostId] 为空时退回升级前的平铺形状。
+  /// 一台电脑的桶前缀；[hostId] 为空时用平铺形状（状态不属于任何一台电脑）。
   static String hostBucket(String hostId) =>
       hostId.isEmpty ? hostPrefix : '$hostPrefix$hostId.';
 
@@ -65,7 +66,7 @@ abstract final class UiKey {
   static const String performanceView = '${devicePrefix}performance_view';
   static const String collapseTiming = '${devicePrefix}collapse_timing';
 
-  /// 旧形状（没有电脑身份时的桶）：`host.last_session`。
+  /// 没有电脑身份时的键：`host.last_session`。
   static const String lastSession = '$hostPrefix$lastSessionField';
   static const String drawerExpansion = '$hostPrefix$drawerExpansionField';
 
@@ -106,7 +107,7 @@ class UiStateStore {
   /// **不可变**：换电脑在装配层是换一个 `AppModel`（新 `UiStateStore`），
   /// 而不是把同一个 store 指向另一个桶 —— 那会让"读了一半"的缓存跨桶。
   //
-  // Note: 分桶、迁移与"只剪当前桶"的取舍见
+  // Note: 分桶与"只剪当前桶"的取舍见
   // `.agents/notes/implemented/2026-10-30-endpoint-and-ui-state-host-scoping.md`。
   final String _hostId;
 
@@ -142,10 +143,9 @@ class UiStateStore {
   /// 首帧前跑一次。**只做固定几次读**（`device.*` 一次范围查 + 两个 host 键），
   /// 不随会话数增长。
   ///
-  /// 拿到电脑身份时先把升级前的平铺键 `host.<field>` **一次性**搬进当前桶
-  /// （幂等：搬完就删旧键，第二次进来没有可搬的）。
+  /// **没有迁移步骤**：分桶是这套存储的第一版形状，不存在"升级前落在平铺键上的
+  /// 存量"（协议没发版）。少一步迁移 = `open()` 的写次数恒为 0。
   Future<void> open() async {
-    await _migrateLegacyHostKeys();
     final device = await _prefs.readAll(UiKey.devicePrefix);
     _themeMode = device[UiKey.themeMode];
     _uiScaleIndex = int.tryParse(device[UiKey.uiScaleIndex] ?? '');
@@ -156,47 +156,6 @@ class UiStateStore {
     _drawerExpansion = _decodeExpansion(
       await _prefs.read(_hostKey(UiKey.drawerExpansionField)),
     );
-  }
-
-  /// 把升级前的平铺 `host.<field>` 搬进 `host.<hostId>.<field>`。
-  ///
-  /// 判据是"**旧键的形状**"，不是"看起来一样"：`host.` 后面的第一段若是
-  /// 字段名（`last_session` / `drawer_expansion` / `session_view` …），它就是旧键；
-  /// 桶里的第一段是 64 位十六进制电脑公钥，两者不可能撞。
-  ///
-  /// **不覆盖桶里已有的值**（半迁移时桶优先），搬完逐个删旧键 —— 所以第二次
-  /// 运行**一次写都不产生**（准入门槛 2 的"写次数"判据）。
-  Future<void> _migrateLegacyHostKeys() async {
-    if (_hostId.isEmpty) return;
-    final all = await _prefs.readAll(UiKey.hostPrefix);
-    final legacy = <String, String>{};
-    final inBucket = <String>{};
-    for (final entry in all.entries) {
-      if (entry.key.startsWith(_bucket)) {
-        inBucket.add(entry.key);
-      } else if (_isLegacyHostKey(entry.key)) {
-        legacy[entry.key] = entry.value;
-      }
-    }
-    if (legacy.isEmpty) return;
-    for (final entry in legacy.entries) {
-      final target = '$_bucket${entry.key.substring(UiKey.hostPrefix.length)}';
-      if (inBucket.contains(target)) continue;
-      await _prefs.write(target, entry.value);
-    }
-    for (final key in legacy.keys) {
-      await _prefs.delete(key, includePrefixed: false);
-    }
-  }
-
-  static bool _isLegacyHostKey(String key) {
-    if (!key.startsWith(UiKey.hostPrefix)) return false;
-    final head = key.substring(UiKey.hostPrefix.length).split('.').first;
-    return head == UiKey.lastSessionField ||
-        head == UiKey.drawerExpansionField ||
-        head == UiKey.sessionViewField ||
-        head == UiKey.sessionDraftField ||
-        head == UiKey.questionDraftField;
   }
 
   // ---- device.*（换电脑保留）----
@@ -290,13 +249,13 @@ class UiStateStore {
   /// 盘上是 **JSON**（形状照桌面的 `DraftSnapshot`：`{text, references: []}`，
   /// `ui-conversation/src/client/contract/draft-editor.ts:43-56`）—— 今天只用到 `text`，
   /// 但格式先立住：将来加 `@` chip 不必换盘上格式。
-  /// 旧形态（纯字符串）也认；坏数据当"没有"（不抛）。
+  /// 纯字符串与对象两种形状都认（页签的旧形状是字符串）；坏数据当"没有"（不抛）。
   Future<String?> sessionDraftOf(String sid) async {
     final pending = _pendingDrafts[sid];
     if (pending != null) return pending.isEmpty ? null : pending;
     final raw = await _prefs.read(_sessionKey(UiKey.sessionDraftField, sid));
     if (raw == null || raw.isEmpty) return null;
-    if (!raw.startsWith('{')) return raw; // 旧形态
+    if (!raw.startsWith('{')) return raw; // 纯字符串（早期页签值）
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return null;
@@ -386,7 +345,7 @@ class UiStateStore {
     _drawerExpansion = const <String, bool>{};
     _views.clear();
     if (_hostId.isEmpty) {
-      // 没有电脑身份时用的是旧平铺键。**逐个前缀删**，不能删整个 `host.` ——
+      // 没有电脑身份时用的是平铺键。**逐个前缀删**，不能删整个 `host.` ——
       // 那会把别的电脑的桶一起端掉。
       await _enqueue(() async {
         await _prefs.delete(UiKey.lastSession, includePrefixed: false);

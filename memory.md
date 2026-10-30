@@ -11,7 +11,7 @@
   ③ 拨号竞速 + 缓冲按"在服务的设备"裁剪（ba9e438）；
   ④ 独占与切换（**今天三次提交**）：`device/busy` 四处门禁同批（错误码 35→36）、
   占用位 = `presence.serving()`、握手 `acceptHello` 准入（同一 devId 放行）、
-  拒绝理由带占用者（`协议码 说明`，≤120 字节）、控制面 `?id=` 自报 + 老连接器放行、
+  拒绝理由带占用者（`协议码 说明`，≤120 字节）、控制面 `?id=` 必带自报、
   面板「在服务」档 + 显式「接管」（走既有停用写路径）（eb9696e）；
   手机侧「切换电脑」= 换槽 + 重新装配 + 「切回上一台」、被占用停机（`busy-wait`）、
   15s 拨号总预算、2s/8s 提示、结论后 60s±20% 静默慢重试（e2a2499）；
@@ -19,17 +19,20 @@
   笔记四篇 `implemented/2026-10-30-*`。
 - **真机验收（10-30）**：`serving` 随连接出现/断开（关 App 后 **873ms** 内释放），
   relay-only 与直连两条路径都能进 serving；面板实测那一行是
-  `运行中 · 前台 · 在服务` 且只有它有「接管」；`?id=` 三种形状实测
-  OPEN / 403 / 老连接器 OPEN。
+  `运行中 · 前台 · 在服务` 且只有它有「接管」；`?id=` 实测 OPEN / 403 / **不带也 403**。
+- **第二台设备 = 逐跳静态审查**（没有第二台真机）：出票 → 中转开通道 → 拨数据面 →
+  `hello` → `peerOf` → `occupantOf` → 4003 → 中转转发 → `busy-wait` → 界面，逐跳核对后
+  抓到并修掉**两个真漏洞**：① 中转把 4003 吞成 4000（门槛 4 走中转必失效）；② 停用只标
+  `revokedAt` 而不收连接（占用位已释放、旧 socket 还在收发）。另收紧两处竞态：换网重连
+  的迟到 `offline` 不删新记录（每连接令牌）；准入判"任何别的在线设备"（不只第一条）。
+  **旧数据/旧客户端兼容全删**（`?id=` 必带、凭据/UI 状态的平铺键迁移、端点元数据旧 id
+  补前缀）—— 协议未发版，没有存量。笔记 `implemented/2026-10-30-drop-legacy-compat.md`。
 
-- **面板与装配（10-29）**：「连接」卡（`admin/connection-card.ts`）只碰白名单三格 + 令牌三态
-  （值永不过线）；`start-transport` 放过两种本来就允许的缺席（缺令牌 / `listenPort = 0`）；
-  装配层三处判据搬出 `index.ts`（`transport/rebuild.ts`、`transport/startup.ts`、
-  `readConnectionState`），是否真接上由 `assembly-wiring.test.ts` 读源码盯。笔记
-  `implemented/2026-10-29-{panel-connection-card,assembly-regression-net}.md`。
-- **端点与明文（10-29）**：`Endpoint.hostId` = 那台电脑的 Ed25519 公钥（不用 `pcId`，会撞）；
-  `dialOrder` 有失败冷却（60s 排尾）；明文 `ws://` 非公网一律放行、公网只认用户显式确认
-  （`net.allow_plaintext_public`）。笔记 `implemented/2026-10-29-*`。
+- **面板 / 装配 / 端点 / 明文（10-29）**：「连接」卡只碰白名单三格 + 令牌三态（值永不过线）；
+  `start-transport` 放过两种允许的缺席（缺令牌 / `listenPort = 0`）；装配层三处判据搬出
+  `index.ts`（`rebuild.ts` / `startup.ts` / `readConnectionState`，由 `assembly-wiring`
+  读源码盯）；`Endpoint.hostId` = 电脑公钥（不用 `pcId`，会撞），`dialOrder` 带失败冷却；
+  明文 `ws://` 非公网放行、公网只认用户确认。笔记 `implemented/2026-10-29-*`（六篇）。
 - **通道全景**：`protocol/`（配对/握手/AEAD/流控/恢复）+ `relay/`（中转）+ `connector/`（电脑侧
   网关）全部落地；手机侧 `app/lib/core/` 是连接层，`app/lib/wire/` 是**线上形状的唯一解码层**
   （`wire/rpc/` 18 个面文件、46 个方法；`wire/` 外零 `call<`；方法面 52/50，差额 2 =
@@ -63,10 +66,10 @@
 | `node app/tools/verify-platform-boundary.mjs` | 645 项（25 条规则自检 + 149 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1580 项（约 1 分钟） |
+| `cd app && flutter test` | 1579 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **762** 项 |
-| `cd relay && pnpm typecheck && node --test` | 类型 + **90** 条 |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **765** 项 |
+| `cd relay && pnpm typecheck && node --test` | 类型 + **91** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
 
