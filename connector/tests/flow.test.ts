@@ -101,9 +101,9 @@ test('流控窗口：默认上限与契约一致', () => {
 })
 
 test('错误码表：封闭、满射、未知码归一成 internal', () => {
-  // 契约 §3.1 的表有 35 个码(15 个协议层 + 16 个 DSH 宿主层 + 4 个文件预览面)；
-  // 数量变化必须是有意的。
-  assert.equal(ERROR_CODES.length, 35)
+  // 契约 §3.1 的表有 36 个码(16 个协议层 + 16 个 DSH 宿主层 + 4 个文件预览面)；
+  // 数量变化必须是有意的。2026-10-30 多机第 4 步加了 `device/busy`(独占 1:1)。
+  assert.equal(ERROR_CODES.length, 36)
 
   // 每个码都有客户端行为 —— 表是满射，手机侧的分支不会漏。
   for (const code of ERROR_CODES) {

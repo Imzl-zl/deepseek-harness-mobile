@@ -114,6 +114,7 @@ import { createChangesFace } from './dsh/changes.js'
 import { createFilesFace } from './dsh/files.js'
 import { createPluginInstallFace } from './dsh/plugin-install.js'
 import { createDevicePresence } from './presence.js'
+import { createExclusiveAdmission } from './exclusive.js'
 import { createInteractionPort } from './interaction-claims.js'
 import { createInteractionFace } from './interaction-face.js'
 import { createDeviceConnection } from './device-connection.js'
@@ -319,6 +320,15 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
       const record = devicesTable?.get(devId)
       return record === undefined || record.revokedAt !== undefined ? undefined : record.pairedAt
     },
+  })
+
+  /**
+   * 独占准入（1:1）：占用位就是上面那份 `presence`（**不另立第二份状态**）。
+   * 名字取自设备行（展示值），取不到就用 devId 短码。
+   */
+  const exclusive = createExclusiveAdmission({
+    presence,
+    nameOf: (devId) => devicesTable?.get(devId)?.name,
   })
 
   /**
@@ -1097,6 +1107,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
          */
         const makeConnection = (binding?: DeviceBinding): Connection => createDeviceConnection({
           identity: pcIdentity, pcId: connectorId, pairing: pairingCore, enrollment, scope: scopeDeps,
+          // **独占准入**（握手处判，`device/busy`）。配对候选自己会跳过它（见 `device-connection.ts`）。
+          occupantOf: exclusive.occupantOf,
           ...(binding === undefined ? {} : { binding }),
           peerOf: (devId) => {
             const record = devicesTable?.get(devId)
@@ -1151,6 +1163,10 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           connection = createRelayLink({
             url: config.relayUrl() ?? '',
             token,
+            // **控制面自报 id**：中转拿它核对令牌 id（不一致就拒）。`connectorId`
+            // 与配对二维码里的 `pcId` 是同一个值，所以"码里的身份"与"中转眼里的身份"
+            // 从此不可能静默地不是同一个（见 `transport/relay-link.ts` 的 `connectorId`）。
+            connectorId,
             allowInsecureLocal: config.allowInsecureLocal(),
             allowInsecurePublic: config.allowInsecurePublic(),
             log: logger,
@@ -1366,6 +1382,9 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
               if (devicesTable === null) return []
               const live = presence.devices()
               const liveOf = new Map(live.map((row) => [row.id, row]))
+              // **"此刻在服务"只有一格**（独占 1:1）：面板据此把那一行标出来，
+              // 并给出显式的"接管"（走 `deviceAdmin.setEnabled(false)` 那条既有写路径）。
+              const servingId = presence.serving()?.id
               return [...devicesTable.keys()].flatMap((id) => {
                 const record = devicesTable?.get(id)
                 if (record === undefined) return []
@@ -1378,6 +1397,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
                     pairedAt: record.pairedAt,
                     revoked: record.revokedAt !== undefined,
                     online: present?.online ?? false,
+                    /** 这一台**正占着服务位**（独占 1:1 只可能有一台）。 */
+                    serving: id === servingId,
                     foreground: present?.foreground ?? false,
                     ...(lastInteractedAt === undefined
                       ? {}

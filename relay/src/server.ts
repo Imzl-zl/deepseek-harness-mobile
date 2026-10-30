@@ -213,6 +213,18 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
       const deviceId = url.searchParams.get('dev')
       const channelId = url.searchParams.get('channel')
       if (deviceId === null && channelId === null) {
+        // **连接器自报身份**（`?id=`）：必须与令牌的 id 一致。
+        // 两者不一致时，二维码里的 `pcId` 与中转眼里的 id 是两个值，而此前
+        // **没有任何一处会报**（见 `connector/src/transport/relay-link.ts` 的 `connectorId`）。
+        //
+        // **兼容分支**：不带 `?id=` 的是老连接器 —— 放行。下个 minor 删（到期后
+        // 老连接器会因为没有这个参数**根本连不上**，所以删之前要确认没有存量部署）。
+        const declared = url.searchParams.get('id')
+        if (declared !== null && declared !== caller.id) {
+          log?.warn(`连接器自报的 id(${declared}) 与令牌 id(${caller.id}) 不一致，拒绝控制面`)
+          refuse(socket, 403, 'Forbidden')
+          return
+        }
         wss.handleUpgrade(request, socket, head, (ws) => acceptControl(ws, caller.id))
         return
       }

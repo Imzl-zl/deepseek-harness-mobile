@@ -11,6 +11,16 @@ import type { ChannelLogger } from '../observability.js'
 export interface RelayLinkOptions {
   url: string
   token: string
+  /**
+   * 本连接器的通道 id（`connectorId`），随控制面升级 URL 的 `?id=` 一起自报。
+   *
+   * **中转据此核对"你是不是你以为的那台"**：令牌的 id 与自报的 id 不一致会被拒
+   * （`relay/src/server.ts` 的控制面分支）。没有这一格时两者不一致**没有任何一处会报**
+   * —— 症状是二维码里的 `pcId` 与中转眼里的 id 不是同一个值，而两端都"看起来正常"。
+   *
+   * 老连接器不带这个参数，中转照旧放行（兼容分支在中转侧，到期即删）。
+   */
+  connectorId: string
   allowInsecureLocal?: boolean
   /** 公网明文（自部署中转）：与手机侧 checkedRelayUri 的第二档同一判据。 */
   allowInsecurePublic?: boolean
@@ -52,6 +62,15 @@ function asDialSocket(ws: WebSocket): DialSocket {
 export function createRelayLink(options: RelayLinkOptions): RelayLink {
   const base = relayUrlOf(options.url, options.allowInsecureLocal, options.allowInsecurePublic)
   base.pathname = '/ws/connector'
+  /**
+   * 控制面 URL（带 `?id=`）。**数据面不带**：数据通道靠 `dev` + `channel` 认领，
+   * 而 `id` 只在"连接器自报身份"这一处有意义。
+   */
+  const controlUrl = (): URL => {
+    const url = new URL(base)
+    url.searchParams.set('id', options.connectorId)
+    return url
+  }
   const backoff = createBackoff()
   const data = new Map<string, DataConnection>()
   let control: WebSocket | null = null
@@ -116,7 +135,7 @@ export function createRelayLink(options: RelayLinkOptions): RelayLink {
   }
   const connect = (): void => {
     if (stopped || control !== null) return
-    const socket = new WebSocket(base, { headers: { authorization: `Bearer ${options.token}` }, handshakeTimeout: 10_000 })
+    const socket = new WebSocket(controlUrl(), { headers: { authorization: `Bearer ${options.token}` }, handshakeTimeout: 10_000 })
     control = socket
     socket.on('open', () => {
       if (stopped || control !== socket) return

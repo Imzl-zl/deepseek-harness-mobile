@@ -166,9 +166,9 @@ const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve
 
 /** 三行设备：一台在线前台、一台离线未停用、一台已停用。 */
 const DEVICES = [
-  { id: 'dev-live', name: '我的手机', pairedAt: 1760000000000, revoked: false, online: true, foreground: true, lastInteractedAt: 1760000600000 },
-  { id: 'dev-idle', name: '平板', pairedAt: 1750000000000, revoked: false, online: false, foreground: false },
-  { id: 'dev-gone', name: '旧手机', pairedAt: 1740000000000, revoked: true, online: false, foreground: false },
+  { id: 'dev-live', name: '我的手机', pairedAt: 1760000000000, revoked: false, online: true, serving: true, foreground: true, lastInteractedAt: 1760000600000 },
+  { id: 'dev-idle', name: '平板', pairedAt: 1750000000000, revoked: false, online: false, serving: false, foreground: false },
+  { id: 'dev-gone', name: '旧手机', pairedAt: 1740000000000, revoked: true, online: false, serving: false, foreground: false },
 ]
 
 /** 两条传输通道（按"方式"分开关，2026-10-17）。 */
@@ -363,6 +363,40 @@ test('面板：勾选后出现浮现操作栏，不改变行本身', async () =>
   const rows = bodyRows(after)
   assert.equal(buttonWith(rows[0] as Element, '停用') !== undefined, true, '勾选不改变行级按钮')
   assert.equal(buttonWith(rows[0] as Element, '删除') !== undefined, true, '勾选不改变行级按钮')
+})
+
+test('面板：正在服务的那台多一个「在服务」与「接管」，其余行没有', async () => {
+  const { tree } = await mountPanel()
+
+  // 独占 1:1："在服务"与"在线"不是一回事 —— 操作者要能指出是谁占着这台电脑。
+  const rows = bodyRows(tree)
+  assert.match(textOf(rows[0]), /运行中 · 前台 · 在服务/, '占用位那一行带「在服务」')
+  assert.doesNotMatch(textOf(rows[1]), /在服务/, '没在服务的那行不带这一档')
+  assert.equal(buttonWith(rows[0] as Element, '接管') !== undefined, true, '占用位那行有「接管」')
+  assert.equal(buttonWith(rows[1] as Element, '接管'), undefined, '没在服务的行没有「接管」')
+})
+
+test('对话框：接管的后果把"释放占用位 / 不断开已建连接"说全', async () => {
+  const { react, panel, props, tree } = await mountPanel()
+
+  const takeOver = buttonWith(bodyRows(tree)[0] as Element, '接管')
+  assert.ok(takeOver !== undefined)
+  ;(takeOver.props.onClick as () => void)()
+
+  const shown = react.render(panel, props)
+  const dialog = allText(shown)
+  assert.match(dialog, /接管这台电脑？（「我的手机」正在服务）/, '标题点明占用者')
+  assert.match(
+    dialog,
+    /接管 = 停用占用者：它的占用位立刻释放，下一台手机可以连上；这台下次连回来需要重新配对。/,
+    '后果句：释放的是什么、代价是什么',
+  )
+  assert.match(
+    dialog,
+    /已经建立的连接不会被这一步主动断开/,
+    '不许暗示"立刻踢下线"：停用只标 revokedAt，已建连接靠心跳半开收口',
+  )
+  assert.equal(buttonWith(shown, '接管') !== undefined, true, '确认键是「接管」')
 })
 
 test('对话框：停用的后果写明"下次重连就会失败"，确认键是「停用」', async () => {

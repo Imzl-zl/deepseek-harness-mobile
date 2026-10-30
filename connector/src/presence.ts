@@ -67,7 +67,16 @@ export interface DevicePresence extends PresenceDevices {
   /** 手机在这个会话上答了一次话（`lastInteractedAt` 由**连接器**盖时间戳）。 */
   interacted(devId: string, sid: string, at: number): void
   /** 状态快照（只含已配对且未吊销的设备）。 */
-  devices(): readonly DeviceState[]
+  devices(): readonly DeviceState[];
+  /**
+   * **占用位（独占 1:1）**：此刻在服务的那台有效设备。没有就 `undefined`。
+   *
+   * 它就是 {@link devices} 里 `online` 的那一条 —— **不另立第二份状态**：
+   * 停用（`revokedAt`）/ 已删除的行被 `devices()` 滤掉，自然不占位；
+   * 幽灵占用靠 keepalive 的半开判定收口（`transport/keepalive.ts`）。
+   * 握手准入拿它判 `device/busy`（`exclusive.ts`），面板拿它显示"此刻在服务"。
+   */
+  serving(): DeviceState | undefined;
   /** 一台设备的瞬时记录；不在线（或从未上报）时是 `undefined`。 */
   liveOf(devId: string): LiveDeviceRecord | undefined
   /** 当前记录数（指标与测试用）。 */
@@ -104,6 +113,25 @@ export function createDevicePresence(options: PresenceDevices): DevicePresence {
    */
   const updateOf = (devId: string): LiveDeviceRecord | undefined => live.get(devId)
 
+  /** 状态快照。`devices()` 与 `serving()` 共用它 —— 两条读取面不许各判一遍"有效"。 */
+  const snapshot = (): readonly DeviceState[] => {
+    const rows: DeviceState[] = []
+    for (const [id, record] of live) {
+      // **连接层认证过不等于授权过**：没配过对、或已吊销的设备一律不列出。
+      const pairedAt = options.pairedAtOf(id)
+      if (pairedAt === undefined) continue
+      rows.push({
+        id,
+        pairedAt,
+        online: record.online,
+        foreground: record.foreground,
+        subscribed: record.subscribed,
+        ...(record.lastInteractedAt === undefined ? {} : { lastInteractedAt: record.lastInteractedAt }),
+      })
+    }
+    return rows
+  }
+
   return {
     pairedAtOf: options.pairedAtOf,
 
@@ -139,22 +167,14 @@ export function createDevicePresence(options: PresenceDevices): DevicePresence {
       record.lastInteractedAt = { ...record.lastInteractedAt, [sid]: at }
     },
 
-    devices() {
-      const rows: DeviceState[] = []
-      for (const [id, record] of live) {
-        // **连接层认证过不等于授权过**：没配过对、或已吊销的设备一律不列出。
-        const pairedAt = options.pairedAtOf(id)
-        if (pairedAt === undefined) continue
-        rows.push({
-          id,
-          pairedAt,
-          online: record.online,
-          foreground: record.foreground,
-          subscribed: record.subscribed,
-          ...(record.lastInteractedAt === undefined ? {} : { lastInteractedAt: record.lastInteractedAt }),
-        })
+    devices: snapshot,
+
+    serving() {
+      // 遍历的就是 `devices()` 的同一份事实（同一个过滤），所以"有效"的判据只有一处。
+      for (const row of snapshot()) {
+        if (row.online) return row
       }
-      return rows
+      return undefined
     },
 
     liveOf(devId) {

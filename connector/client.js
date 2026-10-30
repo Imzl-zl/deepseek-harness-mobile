@@ -223,6 +223,9 @@ window.__ModuleLoader__.load({
       idle: '未运行',
       foreground: '前台',
       background: '后台',
+      // **独占（1:1）**：同一时刻只有一台设备在服务。它与"在线"不是一回事 ——
+      // 面板要能指出"就是它占着这台电脑"，那才是新手机连不上的原因。
+      serving: '在服务',
       disabled: '已停用',
       neverSeen: '从未交互',
       justNow: '刚刚',
@@ -233,6 +236,12 @@ window.__ModuleLoader__.load({
       disable: '停用',
       enable: '启用',
       remove: '删除',
+      // **接管**：占用者正在服务时把它换下来。它走的还是**停用**那条写路径
+      // （没有第二条"踢人"接口），所以后果句必须把"会释放什么 / 不会断什么"说全。
+      takeOver: '接管',
+      confirmTakeOverTitle: '接管这台电脑？（「{name}」正在服务）',
+      confirmTakeOverDescription: '接管 = 停用占用者：它的占用位立刻释放，下一台手机可以连上；这台下次连回来需要重新配对。它已经建立的连接不会被这一步主动断开（幽灵连接由心跳半开收口）。',
+      failedTakeOver: '接管失败：{reason}',
       removeSelected: '删除所选',
       selectedCount: '已选 {n} 台',
       cancel: '取消',
@@ -335,6 +344,7 @@ window.__ModuleLoader__.load({
       idle: 'idle',
       foreground: 'foreground',
       background: 'background',
+      serving: 'serving',
       disabled: 'disabled',
       neverSeen: 'never used',
       justNow: 'just now',
@@ -344,6 +354,10 @@ window.__ModuleLoader__.load({
       disable: 'Disable',
       enable: 'Enable',
       remove: 'Delete',
+      takeOver: 'Take over',
+      confirmTakeOverTitle: 'Take over this computer? ("{name}" is serving)',
+      confirmTakeOverDescription: 'Taking over disables the current device: its slot is freed immediately so the next phone can connect, and it must pair again to come back. Its already-open connection is not closed by this step (ghost links are reaped by the heartbeat).',
+      failedTakeOver: 'Could not take over: {reason}',
       removeSelected: 'Delete selected',
       selectedCount: '{n} selected',
       cancel: 'Cancel',
@@ -868,7 +882,17 @@ window.__ModuleLoader__.load({
        * 只有 `uninstall` 走 `pendingConfirm`）—— 启用是可逆的、不破坏任何东西，
        * 给它加一道确认只会训练用户见框就点。停用要弹：它会让那台手机失联。
        */
-      const setEnabled = async (device, enabled) => {
+      /**
+       * 失败文案。**收成一张表**而不是把键名当参数传：`client-i18n.test.ts` 要求
+       * 每个键都出现在一处 `t('…')` 字面量调用里（变量键会被判成"零调用点的废弃键"）。
+       */
+      const FAIL_TEXT = {
+        disable: (reason) => t('failedDisable', { reason }),
+        enable: (reason) => t('failedEnable', { reason }),
+        takeOver: (reason) => t('failedTakeOver', { reason }),
+      }
+
+      const setEnabled = async (device, enabled, failText = enabled ? FAIL_TEXT.enable : FAIL_TEXT.disable) => {
         setBusy(device.id)
         try {
           const response = await fetch(ENABLED, {
@@ -880,11 +904,25 @@ window.__ModuleLoader__.load({
           if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
           await refresh()
         } catch (caught) {
-          setError(t(enabled ? 'failedEnable' : 'failedDisable', { reason: messageOf(caught) }))
+          setError(failText(messageOf(caught)))
         } finally {
           setBusy('')
         }
       }
+
+      /**
+       * **接管**：占用者正在服务，操作者明确要把它换下来。
+       *
+       * 它**走的是停用那条写路径**（`POST /devices/enabled {enabled:false}`）——
+       * 没有第二条"踢人"接口，也不该有（决策 6：不自动抢占，接管是显式动作）。
+       * 占用位是 `presence` 的在线记录，所以停用一次就释放（已吊销的行不占位）。
+       */
+      const takeOver = (device) => askConfirm({
+        title: t('confirmTakeOverTitle', { name: device.name }),
+        description: t('confirmTakeOverDescription'),
+        confirmLabel: t('takeOver'),
+        run: async () => { await setEnabled(device, false, FAIL_TEXT.takeOver) },
+      })
 
       /** 停用要确认：那台手机下次重连就会失败。 */
       const disableOne = (device) => askConfirm({
@@ -1365,7 +1403,11 @@ window.__ModuleLoader__.load({
                     device.revoked
                       ? h('span', { style: S.dim }, t('disabled'))
                       : h('span', { style: device.online ? S.ok : S.dim },
-                          `${device.online ? t('running') : t('idle')}${device.online ? ` · ${device.foreground ? t('foreground') : t('background')}` : ''}`),
+                          // **"在服务"跟着在线态报**：独占 1:1 下多出来的那一档，
+                          // 否则操作者只看到"有台设备在线"，分不出是谁占着（新手机连不上的原因）。
+                          `${device.online ? t('running') : t('idle')}`
+                          + `${device.online ? ` · ${device.foreground ? t('foreground') : t('background')}` : ''}`
+                          + `${device.serving ? ` · ${t('serving')}` : ''}`),
                   ),
                   // 三个动作分开：**停用**是软的（断连、留记录、可解禁），
                   // **删除**是硬的（抹掉行）。用户说"记录删不了"指的就是只有前者。
@@ -1387,6 +1429,15 @@ window.__ModuleLoader__.load({
                           }, t('remove')),
                         )
                       : h('span', { style: S.row },
+                          // 只有**正在服务**的那一行才有"接管"：别的行没有可接管的占用位。
+                          device.serving
+                            ? h('button', {
+                                type: 'button',
+                                style: busy === device.id ? { ...S.btn, ...S.btnDisabled } : S.btn,
+                                disabled: busy !== '',
+                                onClick: () => takeOver(device),
+                              }, t('takeOver'))
+                            : null,
                           h('button', {
                             type: 'button',
                             style: busy === device.id ? { ...S.btnDanger, ...S.btnDisabled } : S.btnDanger,

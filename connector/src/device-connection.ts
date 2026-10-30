@@ -19,6 +19,13 @@ export interface DeviceConnectionOptions {
   enrollment: PairingEndpoint
   scope: ConnectionScopeDeps
   binding?: DeviceBinding
+  /**
+   * 独占准入（1:1）：已有**别的**有效设备在服务时返回占用者展示名（`exclusive.ts`）。
+   *
+   * 只挂在业务握手上 —— 配对候选（`binding.purpose === 'pairing'`）照旧放行：
+   * 电脑被用着不该挡住"另一台手机扫码配对"。
+   */
+  occupantOf?(devId: string): string | undefined
 }
 
 export function createDeviceConnection(options: DeviceConnectionOptions): Connection {
@@ -47,6 +54,10 @@ export function createDeviceConnection(options: DeviceConnectionOptions): Connec
           }
           return options.peerOf(devId)
         },
+        // **配对通道不参与独占**：扫码时电脑可能正被别人用着（见 `occupantOf` 的说明）。
+        ...(candidate !== undefined || options.occupantOf === undefined
+          ? {}
+          : { occupantOf: options.occupantOf }),
         ...(candidate === undefined ? {} : {
           keyInfo: PAIRING_KEY_INFO,
           transcriptContext: pairingHandshakeContext({

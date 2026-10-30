@@ -192,6 +192,31 @@ test('升级认证：票不对 / 令牌不对 / 凭据类型不对 / 数据面�
   await assert.rejects(() => open(`${wsBase}/ws/nope`), /404/)
 })
 
+test('控制面自报 id：与令牌一致才放行，不一致 403，不带（老连接器）放行', async (t) => {
+  const relay = await startRelay({ port: 0, authenticate: (token) => TOKENS[token] })
+  t.after(() => relay.close())
+  const wsBase = `ws://127.0.0.1:${relay.port}`
+  const auth = { authorization: 'Bearer connector-token-1' }
+
+  // 一致：放行（正常连接器的路径）。
+  const matched = await open(`${wsBase}/ws/connector?id=conn-1`, auth)
+  t.after(() => matched.close())
+  assert.equal(matched.readyState, WebSocket.OPEN)
+
+  // 不一致：403 —— 这正是"二维码里的 pcId 与中转眼里的 id 不是同一个"那一刻，
+  // 多机之后它会让路由把通知发给错的一台，所以在准入处就拒。
+  await assert.rejects(
+    () => open(`${wsBase}/ws/connector?id=conn-2`, auth),
+    /403/,
+    '自报 id 与令牌 id 不一致必须拒',
+  )
+
+  // **兼容分支**：不带 `?id=` 的是老连接器 —— 放行（下个 minor 删）。
+  const legacy = await open(`${wsBase}/ws/connector`, auth)
+  t.after(() => legacy.close())
+  assert.equal(legacy.readyState, WebSocket.OPEN, '老连接器不带 id 时必须照旧能连')
+})
+
 test('摘要表里带 device 条目：**启动即失败**（不留下"起来了但谁都连不上"的中转）', async (t) => {
   // 这是上面那条 401 的完整路径版：v1 的配置里常有 device 摘要条目，而 v2 的中转
   // 认不出它（设备凭据在名册）。若照常启动，操作者看到的是"手机 403、电脑侧一切正常"，

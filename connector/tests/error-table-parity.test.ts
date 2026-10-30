@@ -72,6 +72,7 @@ const ACTION_OF: Record<string, ClientAction> = {
   disableAndAnnotate: 'disable-and-annotate',
   refreshSettings: 'refresh-settings',
   showOffline: 'show-offline',
+  busyWait: 'busy-wait',
   disable: 'disable',
   reportDefect: 'report-defect',
   logAndRetry: 'log-and-retry',

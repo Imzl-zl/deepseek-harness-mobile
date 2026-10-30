@@ -86,7 +86,7 @@ export async function startChain(t: Cleanup): Promise<Chain> {
     },
   }
   const link = createRelayLink({
-    url: wsBase, token: CONNECTOR_TOKEN, allowInsecureLocal: true, log: logger,
+    url: wsBase, token: CONNECTOR_TOKEN, connectorId: CONNECTOR_ID, allowInsecureLocal: true, log: logger,
     onConnected: publish,
     allows: (binding) => binding.purpose === 'pairing' ? pairing.allows(binding.candidate) : devices.has(binding.deviceId),
     createData: (binding) => {

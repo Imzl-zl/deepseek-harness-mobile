@@ -60,9 +60,9 @@ const CAPS = {
 
 /** 三行设备：一台在线前台、一台离线未吊销、一台已吊销。 */
 const DEVICES: AdminDeviceRow[] = [
-  { id: 'dev-live', name: '我的手机', pairedAt: 1760000000000, revoked: false, online: true, foreground: true, lastInteractedAt: 1760000600000 },
-  { id: 'dev-idle', name: '平板', pairedAt: 1750000000000, revoked: false, online: false, foreground: false },
-  { id: 'dev-gone', name: '旧手机', pairedAt: 1740000000000, revoked: true, online: false, foreground: false },
+  { id: 'dev-live', name: '我的手机', pairedAt: 1760000000000, revoked: false, online: true, serving: true, foreground: true, lastInteractedAt: 1760000600000 },
+  { id: 'dev-idle', name: '平板', pairedAt: 1750000000000, revoked: false, online: false, serving: false, foreground: false },
+  { id: 'dev-gone', name: '旧手机', pairedAt: 1740000000000, revoked: true, online: false, serving: false, foreground: false },
 ]
 
 /** 两条传输通道（2026-10-17 起按"方式"分开关）。 */

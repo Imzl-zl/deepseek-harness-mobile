@@ -39,6 +39,7 @@ import {
   type KeyPair,
   type SessionKeys,
 } from './crypto.js'
+import { refusalReason } from './close-reason.js'
 import { ProtocolError } from './errors.js'
 import { newFrameId, type WireFrame } from './frame.js'
 import {
@@ -79,6 +80,18 @@ export interface HandshakeDriverOptions {
    * 在这里区分只会让调用方有机会把"已吊销"写成放行。
    */
   peerOf(devId: string): HandshakePeer | undefined
+  /**
+   * **独占准入（1:1）**：这台设备现在能不能进来。
+   *
+   * - 返回 `undefined` = 放行；
+   * - 返回**占用者的展示名** = 已有一台**别的**有效设备在服务，拒绝（`device/busy`），
+   *   且这个名字会进关闭理由（契约 §4.1 的 `协议码 说明`），手机据此说出"被谁占着"。
+   *
+   * 判据实现在 `exclusive.ts`（占用位 = `presence` 的在线记录，不另立状态）。
+   * **配对通道不提供它**：新手机扫码时电脑可能正被别人用着，那不该挡住配对
+   * （配对只写一行名册，不占用服务位）。
+   */
+  occupantOf?(devId: string): string | undefined
   /** 配对通道的身份/用途绑定；正常业务握手不提供。 */
   transcriptContext?: string
   /** 配对与业务密钥必须域分离。 */
@@ -162,6 +175,20 @@ export function createHandshakeDriver(options: HandshakeDriverOptions): Handshak
       if (peer === undefined) {
         // 与"验签不过"同一个码：对手机来说这就是"这一端不是我以为的那一端"。
         throw new ProtocolError('protocol/not-paired', `设备 ${hello.devId} 未配对或已吊销`)
+      }
+
+      // **独占准入**：设备有效，但这台电脑已经有一台别的有效设备在服务。
+      // 位置刻意在 `peerOf` 之后、生成临时密钥与回 `hello-ack` 之前 ——
+      // 先确认"这台设备是谁"，再判"现在轮不轮得到它"，最后才做密码学的事。
+      // 拒绝**不改动占用者**（不踢人）：占用者那条连接一帧都不受影响。
+      const occupant = options.occupantOf?.(hello.devId)
+      if (occupant !== undefined) {
+        // 理由带占用者的展示名（只给人看，从不参与判据）。
+        fail(
+          refusalReason('device/busy', occupant),
+          new ProtocolError('device/busy', `这台电脑正被「${occupant}」使用`),
+        )
+        return
       }
 
       // 每连接新生成（§4.1）：复用临时密钥会让 fc 从 0 重数 ⇒ nonce 重用 ⇒ 破掉 AEAD。

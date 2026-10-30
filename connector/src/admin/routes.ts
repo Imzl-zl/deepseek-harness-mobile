@@ -102,6 +102,14 @@ export interface AdminDeviceRow {
   /** 这台设备**现在**连着吗。**只对本次进程运行期间连过的设备准确** ——
    *  presence 的 live 表在内存里，重启即空（`presence.ts:38-44`）。 */
   online: boolean
+  /**
+   * 这台设备**正占着服务位**（独占 1:1，`presence.serving()`）。
+   *
+   * 与 `online` 的关系：此刻在服务的那台 `online` 必为 true；反过来不一定 ——
+   * 面板要能分出"有台设备在线"与"就是它占着这台电脑"（后者才是新手机连不上的原因）。
+   * 非在线的行恒为 false。
+   */
+  serving: boolean
   /** 它的 App 在前台吗（决定审批仲裁选它还是退给桌面）。 */
   foreground: boolean
   /** 最后交互时刻（毫秒）；从未交互过就没有这个字段。 */

@@ -194,6 +194,25 @@ test('未配对的 devId：一帧都不发，直接 not-paired', () => {
   assert.equal(h.established.length, 0)
 })
 
+test('已被别的设备占用：一帧不发、不派生密钥，理由是 device/busy + 占用者名字', () => {
+  // 独占 1:1：设备有效（配对过、没吊销），但这台电脑已经有一台别的东西在服务。
+  // **位置**：判据在 `peerOf` 之后、生成临时密钥与回 `hello-ack` 之前 ——
+  // 被拒的对端不该拿到我们的临时公钥，也不该让我们白算一次握手。
+  const h = buildHarness({ occupantOf: () => '我的手机' })
+  h.session.onFrame(helloFrame(h.phone.helloBox()))
+
+  assert.deepEqual(h.sent, [], '被占用时一帧都不发（连 hello-ack 都不回）')
+  assert.equal(h.established.length, 0, '绝不能派生密钥')
+  // 关闭理由 = `协议码 说明`（契约 §4.1）：手机切出第一个空格前的码查表，
+  // 后面的说明直接显示给人看。
+  assert.equal(h.failures[0]?.reason, 'device/busy 我的手机')
+  assert.equal(
+    h.failures[0]?.error instanceof Error ? (h.failures[0]?.error as { code?: string }).code : undefined,
+    'device/busy',
+    '协议错误码必须是封闭表里的那一个（不是 internal）',
+  )
+})
+
 test('confirm 的签名是别人签的：not-paired，且不派生密钥', () => {
   const h = buildHarness()
   const { confirmBox, phoneKeys } = exchangeHello(h)

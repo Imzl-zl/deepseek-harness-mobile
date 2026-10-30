@@ -81,6 +81,24 @@ test('断开整条作废：订阅集不留下次连接的影子', () => {
   ])
 })
 
+test('占用位：只有当在线且有效的那一台占着，断开即空', () => {
+  const presence = makePresence({ 'dev-a': 100, 'dev-b': 50, 'dev-gone': undefined })
+  // 没人连：没有占用者。
+  assert.equal(presence.serving(), undefined)
+
+  presence.online('dev-a')
+  assert.equal(presence.serving()?.id, 'dev-a', '在线即占位')
+
+  // **已吊销 / 没有配对行的设备连上来也不占位**（占坑 DoS 的判据：停用一台旧手机
+  // 不能让它把占用位永久挂着）。
+  presence.online('dev-gone')
+  assert.equal(presence.serving()?.id, 'dev-a', '已吊销的那台不占位')
+
+  // 占位者离开：下一次心跳前后都不该再有人占着（主动 close 的判据）。
+  presence.offline('dev-a')
+  assert.equal(presence.serving(), undefined, '断开即释放占用位')
+})
+
 test('未在线的设备问 liveOf 是 undefined（读取面据此显示"离线"，不猜一条幽灵记录）', () => {
   const presence = makePresence(PAIRED)
   assert.equal(presence.liveOf('dev-a'), undefined)
