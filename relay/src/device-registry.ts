@@ -203,21 +203,16 @@ export function createDeviceRegistry(options: DeviceRegistryOptions = {}): Devic
         accepted += 1
       }
       if (refused > 0) {
-        log?.warn(
-          `名册拒绝 ${refused} 行：设备 id 已属于另一连接器（连接器 ${connectorId} 不能覆盖别人的键）`,
-        )
+        // 只记行数与被拒的连接器：设备 id 本身不是秘密，但也不必进日志。
+        log?.warn('roster.refused', { connectorId, refused })
       }
       // **差集即删除**（纪律 4）：上次报到、这次没报到的行必须消失。
       // 只增不减的话，电脑侧删掉/吊销一台设备后它在中转层还换得到票 ——
       // 2026-10-15 真机实测到这条（手机通过换票、死在连接器握手，无限"重连中…"）。
       const pruned = dropUnpublished(connectorId, next)
       published.set(connectorId, next)
-      if (accepted > 0) {
-        log?.debug(`名册已更新：${accepted} 行（共 ${rows.size} 台，归属 ${connectorId}）`)
-      }
-      if (pruned > 0) {
-        log?.debug(`名册已收敛：连接器 ${connectorId} 去掉 ${pruned} 行（共 ${rows.size} 台）`)
-      }
+      // 一次上报一个事件：面板要知道"这台电脑此刻有几台设备、这次收敛掉几行"。
+      log?.debug('roster.applied', { connectorId, accepted, pruned, rows: rows.size })
       return accepted
     },
 

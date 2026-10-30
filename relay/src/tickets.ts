@@ -51,7 +51,10 @@ export function createTicketStore(options: TicketStoreOptions = {}): TicketStore
       const ticket = Buffer.from(random(TICKET_BYTES)).toString('base64url')
       const expiresAt = now() + ttlMs
       tickets.set(hashOf(ticket), { binding, expiresAt })
-      options.log?.debug(`已发票给 ${binding.purpose} 设备 ${binding.deviceId}`)
+      // 票本身**不进日志**（它是一次性 bearer 凭据），只记"给谁、什么用途"。
+      options.log?.debug('ticket.issued', {
+        connectorId: binding.connectorId, deviceId: binding.deviceId, purpose: binding.purpose,
+      })
       return { ticket, expiresAt, deviceId: binding.deviceId }
     },
     consume(ticket) {

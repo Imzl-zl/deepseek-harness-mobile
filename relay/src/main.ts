@@ -27,6 +27,7 @@ import { dirname, join } from 'node:path'
 
 import { createDigestAuthenticator, type TokenDigest } from './digest-auth.ts'
 import { appendTokenToConfig, issueToken, revokeTokenInConfig, setAdminInConfig } from './issue-token.ts'
+import { createJsonLogger } from './json-logger.ts'
 import { readMeteringState } from './metering-state.ts'
 import { startRelay } from './server.ts'
 
@@ -247,15 +248,9 @@ const relay = await startRelay({
   ownerOf: (connectorId: string) => owners.get(connectorId),
   ...(quotaState === undefined ? {} : { quotaState }),
   // 中转必须**留声**：它只转发与记账，出问题时（投递目标不在、丢弃、认证被拒）
-  // 日志是唯一的线索。级别用 debug 之外的 info/warn，默认就能看见。
-  log: {
-    info: (message, detail) => console.log(`[relay] ${message}`, detail ?? ''),
-    warn: (message, detail) => console.warn(`[relay] ${message}`, detail ?? ''),
-    error: (message, detail) => console.error(`[relay] ${message}`, detail ?? ''),
-    debug: (message, detail) => {
-      if (process.env['DSH_RELAY_DEBUG'] === '1') console.log(`[relay:debug] ${message}`, detail ?? '')
-    },
-  },
+  // 日志是唯一的线索。一行一个 JSON 事件（`json-logger.ts`）：容器里能 grep 字段，
+  // 面板与排障读同一份东西。`debug` 级默认关（`DSH_RELAY_DEBUG=1` 打开）。
+  log: createJsonLogger({ debug: process.env['DSH_RELAY_DEBUG'] === '1' }),
 })
 
 console.log(

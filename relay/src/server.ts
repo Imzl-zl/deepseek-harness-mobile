@@ -236,14 +236,30 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
     if (control?.readyState === WebSocket.OPEN) {
       control.send(JSON.stringify({ v: 1, t: 'relay.close', channelId }))
     }
+    // 关闭事件只在这里记一次（所有收口路径都经过它），带关闭码与理由 —— 手机看到的
+    // 就是这两个值，排障时不用猜"是谁关的、为什么"。
+    log?.info('channel.close', {
+      channelId,
+      connectorId: link.binding.connectorId,
+      deviceId: link.binding.deviceId,
+      purpose: link.binding.purpose,
+      code,
+      reason,
+      bytes: link.forwardedBytes,
+      ms: Date.now() - link.startedAt,
+    })
   }
   function detachControl(connectorId: string): void {
-    controls.delete(connectorId)
+    const existed = controls.delete(connectorId)
+    let closed = 0
     for (const [channelId, link] of links) {
-      if (link.binding.connectorId === connectorId) closeLink(channelId, 4000, 'connector offline')
+      if (link.binding.connectorId !== connectorId) continue
+      closeLink(channelId, 4000, 'connector offline')
+      closed += 1
     }
     core.detachConnector(connectorId)
     devices.detachConnector(connectorId)
+    if (existed) log?.info('connector.close', { connectorId, channels: closed })
   }
   function deliver(deliveries: readonly Delivery[]): void {
     for (const delivery of deliveries) {
@@ -260,7 +276,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
       }
       target.send(delivery.raw, (error) => {
         if (error == null) return
-        log?.warn('数据帧投递失败', error)
+        log?.warn('delivery.failed', { channelId: delivery.channelId, error })
         closeLink(delivery.channelId, 4000, 'delivery failed')
       })
     }
@@ -310,7 +326,12 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
       deliver(result.deliveries)
       // 这一帧已经交出去了再断：允许超出一帧（帧是原子的，不能在中间切）。
       if (charged?.over === true && metering?.enforce === 'cut') {
-        cutSubject(metering.subjectOf(link.binding.connectorId), 'rate-limited quota')
+        const subject = metering.subjectOf(link.binding.connectorId)
+        log?.warn('quota.rejected', {
+          subject, used: charged.used, limit: charged.limit, mode: 'cut',
+          connectorId: link.binding.connectorId, deviceId: link.binding.deviceId,
+        })
+        cutSubject(subject, 'rate-limited quota')
       }
     })
     ws.on('close', (code, reason) => {
@@ -324,7 +345,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
       )
     })
     ws.on('error', (error) => {
-      log?.warn('数据连接出错', error)
+      log?.warn('channel.error', { channelId, kind, error })
       if (links.get(channelId)?.[kind] === ws) closeLink(channelId)
     })
   }
@@ -340,15 +361,17 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
     ws.on('pong', () => { if (controls.get(connectorId) === state) state.alive = true })
     ws.on('message', () => ws.close(1008, 'control channel is notification only'))
     ws.on('close', () => { if (controls.get(connectorId) === state) detachControl(connectorId) })
-    ws.on('error', (error) => { log?.warn('控制连接出错', error); ws.close() })
-    log?.info(`连接器 ${connectorId} 控制面已连接${owner === undefined ? '' : `（owner=${owner}）`}`)
+    ws.on('error', (error) => { log?.warn('connector.error', { connectorId, error }); ws.close() })
+    log?.info('connector.open', { connectorId, ...(owner === undefined ? {} : { owner }) })
   }
   function acceptDevice(ws: WebSocket, binding: DeviceBinding): void {
     const previous = core.channelOf(binding.connectorId, binding.deviceId)
     if (previous !== undefined) closeLink(previous, 4000, 'replaced')
     const channelId = randomBytes(16).toString('base64url')
     try { core.openDevice(channelId, binding) } catch (error) {
-      log?.warn('设备连接准入失败', error)
+      log?.warn('admission.rejected', {
+        connectorId: binding.connectorId, deviceId: binding.deviceId, purpose: binding.purpose, error,
+      })
       ws.close(4008, 'admission rejected')
       return
     }
@@ -357,6 +380,9 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
       startedAt: Date.now(), forwardedBytes: 0,
     }
     links.set(channelId, link)
+    log?.info('channel.open', {
+      channelId, connectorId: binding.connectorId, deviceId: binding.deviceId, purpose: binding.purpose,
+    })
     observeData(ws, channelId, 'device')
     link.setupTimer = setTimeout(() => closeLink(channelId, 4000, 'data connection timeout'), CHANNEL_CONNECT_TIMEOUT_MS)
     if (binding.purpose === 'pairing') {
@@ -396,9 +422,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         // 不带 `?id=` 一律拒 —— 没有"老连接器"这回事：这套协议还没发版。
         const declared = url.searchParams.get('id')
         if (declared === null || declared !== caller.id) {
-          log?.warn(
-            `连接器自报的 id(${declared ?? '缺'}) 与令牌 id(${caller.id}) 不一致，拒绝控制面`,
-          )
+          log?.warn('connector.id-mismatch', { declared: declared ?? '', tokenId: caller.id })
           refuse(socket, 403, 'Forbidden')
           return
         }

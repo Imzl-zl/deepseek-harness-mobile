@@ -84,15 +84,13 @@ export function createHttpFace(options: HttpFaceOptions): HttpFace {
       const deviceId = verdict === 'ok' && token !== '' ? devices.authenticate(token) : undefined
       const caller = deviceId === undefined && token !== '' ? authenticate(token) : undefined
       if (caller === undefined && deviceId === undefined) {
-        return {
-          status: 401,
-          body: {
-            // 没带令牌 = 调用方发错了；带了但不认 = 设备凭据问题（分两种）。
-            error: token === ''
-              ? 'unauthorized'
-              : verdict === 'revoked' ? 'device-revoked' : 'device-unknown',
-          },
-        }
+        // 没带令牌 = 调用方发错了；带了但不认 = 设备凭据问题（分两种）。
+        // 原因码要进日志（手机拿到的也是它），**令牌不进**。
+        const reason = token === ''
+          ? 'unauthorized'
+          : verdict === 'revoked' ? 'device-revoked' : 'device-unknown'
+        options.log?.info('ticket.rejected', { path: request.path, reason })
+        return { status: 401, body: { error: reason } }
       }
       // 连接器按 `owner`（配了的话）分桶，设备按自己的 id 分桶 —— 见 `rateKeyOf`。
       const denied = limited(caller === undefined ? `device:${deviceId ?? ''}` : rateKeyOf(caller))
@@ -111,6 +109,7 @@ export function createHttpFace(options: HttpFaceOptions): HttpFace {
         // 形状沿用既有的 `rate-limited`（§3.1 不动），手机按退避重试。
         const quota = options.quotaDenied?.(connectorId)
         if (quota !== undefined) {
+          options.log?.info('ticket.rejected', { path: request.path, reason: 'quota', connectorId })
           return { status: 429, body: { error: 'rate-limited', retryAfterMs: quota.retryAfterMs } }
         }
         const issued = tickets.issue({ connectorId, deviceId, purpose: 'paired' })
