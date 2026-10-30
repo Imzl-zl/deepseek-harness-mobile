@@ -175,18 +175,37 @@ export function createDeviceRegistry(options: DeviceRegistryOptions = {}): Devic
 
     register(connectorId, incoming) {
       let accepted = 0
+      let refused = 0
       const next = new Set<string>()
       for (const row of incoming) {
         // 首配那一跳的临时身份**永不落表**（它不是设备，只是让 `pair` 能进门）。
         if (isPendingDevice(row.id)) continue
         if (row.tokenHash === '') continue
-        next.add(row.id)
         const previous = rows.get(row.id)
+        // **归属校验：别的连接器的行不许被覆盖**。这张表的键是设备 id，**不带租户前缀**
+        // （设备 id 由设备公钥派生，正常不会撞）。没有这道闸，任何持有合法连接器令牌的
+        // 人只要知道对方的设备 id，就能把那一行换成自己的摘要 —— 原设备从此换票
+        // `401 device-unknown`（定向 DoS），而中转看不出异常。多连接器共用一个进程
+        // 时这不是"会不会串"的问题，是"谁能写谁的键"的问题：答案必须是"只有主人"。
+        if (
+          previous !== undefined
+          && previous.connectorId !== undefined
+          && previous.connectorId !== connectorId
+        ) {
+          refused += 1
+          continue
+        }
+        next.add(row.id)
         // 换令牌 = 同一 id 换摘要：旧摘要必须**立刻失效**，否则"换令牌"等于"多一把钥匙"。
         if (previous !== undefined) byToken.delete(previous.tokenHash)
         rows.set(row.id, { ...row, connectorId })
         byToken.set(row.tokenHash, row.id)
         accepted += 1
+      }
+      if (refused > 0) {
+        log?.warn(
+          `名册拒绝 ${refused} 行：设备 id 已属于另一连接器（连接器 ${connectorId} 不能覆盖别人的键）`,
+        )
       }
       // **差集即删除**（纪律 4）：上次报到、这次没报到的行必须消失。
       // 只增不减的话，电脑侧删掉/吊销一台设备后它在中转层还换得到票 ——

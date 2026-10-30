@@ -71,7 +71,7 @@
 | `cd app && flutter test` | 1579 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **773** 项 |
-| `cd relay && pnpm typecheck && node --test` | 类型 + **92** 条 |
+| `cd relay && pnpm typecheck && node --test` | 类型 + **93** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
 

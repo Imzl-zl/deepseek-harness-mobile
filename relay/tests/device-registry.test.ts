@@ -142,3 +142,29 @@ test('吊销的行认不下（行留着是为了可辨识）', () => {
   assert.equal(devices.connectorOf('d1'), undefined)
   assert.equal(devices.stats.devices, 1, '行还在')
 })
+
+test('多连接器共用一个进程：**别的连接器的行不许被覆盖**（键是设备 id，不带租户前缀）', () => {
+  // 这张表按设备 id 存（设备 id 由公钥派生，正常不会撞）。没有归属校验的话，
+  // 任何持有合法连接器令牌的人只要知道对方的 id，就能把那一行换成自己的摘要 ——
+  // 原设备从此换票 401 device-unknown（定向 DoS），中转完全看不出异常。
+  const devices = createDeviceRegistry()
+  assert.equal(devices.register('conn-1', [row('d1', 't1')]), 1, '先来的认下')
+
+  // 第二个连接器报了**同一个设备 id**、但换了自己的令牌摘要：拒绝，且一个字都不写。
+  assert.equal(devices.register('conn-2', [row('d1', 't2')]), 0, '不许覆盖别的连接器的行')
+  assert.equal(devices.authenticate('t1'), 'd1', '原设备的令牌仍然有效')
+  assert.equal(devices.authenticate('t2'), undefined, '入侵者的令牌拿不到身份')
+  assert.equal(devices.connectorOf('d1'), 'conn-1', '归属没变')
+  assert.deepEqual(devices.stats, { devices: 1, bound: 1 })
+
+  // 各报各的设备：互不影响，两张表一起长。
+  assert.equal(devices.register('conn-2', [row('d2', 't2')]), 1)
+  assert.equal(devices.connectorOf('d1'), 'conn-1')
+  assert.equal(devices.connectorOf('d2'), 'conn-2')
+
+  // 连接器 2 断开：只清自己的归属，连接器 1 的行一位不动。
+  devices.detachConnector('conn-2')
+  assert.equal(devices.connectorOf('d1'), 'conn-1')
+  assert.equal(devices.connectorOf('d2'), undefined, '自己的行清归属（行留着）')
+  assert.equal(devices.authenticate('t1'), 'd1')
+})

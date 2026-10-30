@@ -195,6 +195,7 @@ const stream = await ctx.get('typertGateway').wireStream.open('$events', { args:
 完整协议见 [首配 v2 与独立数据连接](pairing-v2.md)。
 
 - 连接器用一条 `/ws/connector?id=<connectorId>` 控制连接接收设备上线/下线通知、重放名册。`?id=` **必带**且必须等于**令牌的 id**，否则 403（不一致时二维码里的 `pcId` 与中转眼里的 id 是两个值，而两端都不会报；不带就没有可核对的声明）。**不做旧客户端兼容**：协议未发版，没有"不带 `?id=` 的连接器"。
+- **一台中转可以服务多台电脑（多租户）**：连接器之间的边界是 `connectorId` —— 控制面按令牌认、数据面必须由票上的归属连接器来拨（`server.ts` 的 `attachData` 校验 `binding.connectorId === caller.id`）、通道按 `(connectorId, deviceId)` 键控；名册虽然按**设备 id**（不带租户前缀，正常由公钥派生不会撞）存，但 `register` 会**拒绝覆盖别人的行**（`device-registry.ts`）。唯一共享的资源是进程与带宽：没有按租户配额与计量，所以它是"可信用户共用一台"，不是"对外公共服务"。
 - 每次手机连接获得独立的 `channelId`，电脑为它拨 `/ws/connector?dev=<deviceId>&channel=<channelId>`；中转同时校验连接器归属和当前代次。
 - 配对候选也有独立数据连接，只允许受限配对；候选握手不能激活普通业务方法。
 - 数据帧成对转发；不按 `sid` 广播，不按请求 `id` 解复用。连接、密钥、计数器、流控和订阅一同销毁重建。
