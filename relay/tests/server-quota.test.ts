@@ -230,8 +230,13 @@ test('落盘：persist 时重启接着算；不 persist 时重启清零（如实
   assert.equal(fresh.metering?.usedOf('connector:conn-1'), 42)
 })
 
-test('没配 quota：只转发、不记账（metering 是 undefined）', async (t) => {
+test('默认不限制：没配 quota 也在记账，但谁都不会被挡住', async (t) => {
+  // "默认不限制、管理员可配置"是常态：计量一直在跑（面板看得到用量），
+  // 上限只有管理员给某个人设了才会有。
   const relay = await startRelay({ port: 0, authenticate: () => undefined })
   t.after(() => relay.close())
-  assert.equal(relay.metering, undefined)
+  assert.equal(relay.metering.limitOf('connector:conn-1'), null, '没设上限 = null，不是 0')
+  relay.metering.charge('conn-1', 10 * 1024 * 1024)
+  assert.equal(relay.metering.usedOf('connector:conn-1'), 10 * 1024 * 1024, '照样记账')
+  assert.equal(relay.metering.check('conn-1').exceeded, false, '不限制就不会超')
 })

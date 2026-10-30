@@ -55,8 +55,8 @@ export interface RelayServer {
   port: number
   core: RelayCore
   devices: DeviceRegistry
-  /** 额度面（没配 `quota` 时是 `undefined`）：面板与自检读它。 */
-  readonly metering: Metering | undefined
+  /** 额度面：**一直存在**（默认不限制），面板与自检读它。 */
+  readonly metering: Metering
   close(): Promise<void>
 }
 interface Link {
@@ -104,20 +104,23 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
    * 配额被拒时返回的是既有错误码 `rate-limited`（契约 §3.1 不动）：手机两侧都已经
    * 认识它（429 → `rateLimited` → 退避重试），新加一个码只会多四处要改的东西。
    */
-  const metering = options.quota === undefined
-    ? undefined
-    : createMetering({
-      quota: options.quota,
-      ownerOf: options.ownerOf ?? (() => undefined),
-      ...(options.quotaState === undefined ? {} : { state: options.quotaState }),
-      ...(log === undefined ? {} : { log }),
-    })
-  const quotaDenied = metering === undefined
-    ? undefined
-    : (connectorId: string): { retryAfterMs: number | null } | undefined => {
-      const verdict = metering.check(connectorId)
-      return verdict.exceeded ? { retryAfterMs: verdict.retryAfterMs } : undefined
-    }
+  /**
+   * 额度计量**一直在跑**（每人一个整数），但**默认不限制**：没有上限的人
+   * `limitOf` 是 `null`，`check` 永不超。上限由管理员在面板上给某人设（写回配置）。
+   *
+   * 为什么不做成"配了 `quota` 才记账"：那样管理员想给某人设上限时，那个人的历史用量
+   * 是空的、面板上也没有这一行 —— "先配再管"的顺序会变成"必须先改配置重启"。
+   */
+  const metering = createMetering({
+    quota: options.quota ?? {},
+    ownerOf: options.ownerOf ?? (() => undefined),
+    ...(options.quotaState === undefined ? {} : { state: options.quotaState }),
+    ...(log === undefined ? {} : { log }),
+  })
+  const quotaDenied = (connectorId: string): { retryAfterMs: number | null } | undefined => {
+    const verdict = metering.check(connectorId)
+    return verdict.exceeded ? { retryAfterMs: verdict.retryAfterMs } : undefined
+  }
   const quotaWriter = options.quota?.persist === true && options.quota.statePath !== undefined
     ? createMeteringStateWriter({
       path: options.quota.statePath, ...(log === undefined ? {} : { log }),
@@ -126,7 +129,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
   const face = createHttpFace({
     core, tickets, devices, authenticate: options.authenticate,
     rateLimit: (key) => limiter.take(key), ...(log === undefined ? {} : { log }),
-    ...(quotaDenied === undefined ? {} : { quotaDenied }),
+    quotaDenied,
   })
   const controls = new Map<string, {
     socket: WebSocket
@@ -190,15 +193,13 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
             bound: devices.stats.bound,
             published: devices.publishedCounts(),
           },
-          quota: metering === undefined
-            ? null
-            : { period: metering.period, enforce: metering.enforce, rows: metering.snapshot() },
+          // 额度面**一直有**：没设上限的人 `limit` 是 null，面板显示"不限"。
+          quota: { period: metering.period, enforce: metering.enforce, rows: metering.snapshot() },
           tokens: options.adminOps?.tokens() ?? [],
         }
       },
 
       async setQuota(subject, bytes) {
-        if (metering === undefined) return adminJson(409, { error: 'quota-not-configured' })
         try { metering.setLimit(subject, bytes) } catch { return adminJson(404, { error: 'unknown-subject' }) }
         // 按人的覆盖写回配置；按连接器的覆盖只在本进程有效（配置里没有这一格）。
         let persisted = false
@@ -212,7 +213,6 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
       },
 
       async resetQuota(subject) {
-        if (metering === undefined) return adminJson(409, { error: 'quota-not-configured' })
         if (!metering.reset(subject)) return adminJson(404, { error: 'unknown-subject' })
         log?.info('admin.action', { actor, action: 'quota.reset', subject })
         return adminJson(200, { ok: true })
@@ -438,7 +438,6 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
    * 之后到达的帧会被 `links.get(...) !== ws` 丢弃（同一轮同步代码里，不会重入）。
    */
   function cutSubject(subject: string, reason: string): void {
-    if (metering === undefined) return
     for (const channelId of [...links.keys()]) {
       const link = links.get(channelId)
       if (link === undefined) continue
@@ -466,15 +465,13 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
        * 仍然要能重新扫码。
        */
       // 热路径只做一次 Map 查询 + 一次整数加法；**不在这里序列化、不写盘**（见下面的节流器）。
-      const charged = metering !== undefined && link.binding.purpose === 'paired'
+      const charged = link.binding.purpose === 'paired'
         ? metering.charge(link.binding.connectorId, result.bytes)
         : undefined
-      if (metering !== undefined && link.binding.purpose === 'paired') {
-        link.forwardedBytes += result.bytes
-      }
+      if (charged !== undefined) link.forwardedBytes += result.bytes
       deliver(result.deliveries)
       // 这一帧已经交出去了再断：允许超出一帧（帧是原子的，不能在中间切）。
-      if (charged?.over === true && metering?.enforce === 'cut') {
+      if (charged?.over === true && metering.enforce === 'cut') {
         const subject = metering.subjectOf(link.binding.connectorId)
         log?.warn('quota.rejected', {
           subject, used: charged.used, limit: charged.limit, mode: 'cut',
@@ -593,7 +590,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         return
       }
       // 额度用满：连数据面也不给拨（配对通道不在此列 —— 它是恢复路径）。
-      if (channel.binding.purpose === 'paired' && quotaDenied?.(caller.id) !== undefined) {
+      if (channel.binding.purpose === 'paired' && quotaDenied(caller.id) !== undefined) {
         refuse(socket, 429, 'Too Many Requests')
         return
       }
@@ -616,7 +613,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
       if (!core.isConnectorOnline(binding.connectorId)) { refuse(socket, 503, 'Service Unavailable'); return }
       if (!limiter.take(`device:${binding.deviceId}`).allowed) { refuse(socket, 429, 'Too Many Requests'); return }
       // 额度用满：新连接在建连这一步就被拒（票是一次性的，绕不过去）。
-      if (binding.purpose === 'paired' && quotaDenied?.(binding.connectorId) !== undefined) {
+      if (binding.purpose === 'paired' && quotaDenied(binding.connectorId) !== undefined) {
         refuse(socket, 429, 'Too Many Requests')
         return
       }
@@ -632,7 +629,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
    * 热路径**不序列化、不写盘**（每帧一次 `JSON.stringify` 会把转发成本翻倍）；
    * 这里读多写少，代价最多是"重启丢掉最后 5 秒的用量"。
    */
-  const quotaFlushTimer = quotaWriter === undefined || metering === undefined
+  const quotaFlushTimer = quotaWriter === undefined
     ? null
     : setInterval(() => {
       if (!metering.dirty) return
@@ -665,7 +662,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
       clearInterval(heartbeat)
       if (quotaFlushTimer !== null) clearInterval(quotaFlushTimer)
       // 先冲最后一份用量再收连接：晚到的 socket 事件不再改计数。
-      if (quotaWriter !== undefined && metering !== undefined && metering.dirty) {
+      if (quotaWriter !== undefined && metering.dirty) {
         quotaWriter.save(metering.serialize())
         metering.markClean()
         await quotaWriter.flush()

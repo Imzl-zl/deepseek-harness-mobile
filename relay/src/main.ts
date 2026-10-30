@@ -60,9 +60,9 @@ interface RelayConfig {
    * （默认内存态，重启清零 —— 与名册/票同一条纪律）。
    */
   quota?: {
-    period: 'month' | 'day' | 'none'
-    enforce: 'cut' | 'block' | 'off'
-    defaultBytes: number
+    period?: 'month' | 'day' | 'none'
+    enforce?: 'cut' | 'block' | 'off'
+    defaultBytes?: number
     owners?: Record<string, number>
     persist?: boolean
     statePath?: string
@@ -103,11 +103,18 @@ if (config.admin !== undefined) {
  * 一个"额度永远算 0"或"永远超"的中转，比一开始就说清哪里写错难查得多。
  */
 function quotaProblem(quota: NonNullable<RelayConfig['quota']>): string | undefined {
-  if (!['month', 'day', 'none'].includes(quota.period)) return `period 只能是 month / day / none（收到 ${String(quota.period)}）`
-  if (!['cut', 'block', 'off'].includes(quota.enforce)) return `enforce 只能是 cut / block / off（收到 ${String(quota.enforce)}）`
-  if (!Number.isInteger(quota.defaultBytes) || quota.defaultBytes <= 0) return 'defaultBytes 必须是正整数（不限额请删掉整个 quota 段）'
+  if (quota.period !== undefined && !['month', 'day', 'none'].includes(quota.period)) {
+    return `period 只能是 month / day / none（收到 ${String(quota.period)}）`
+  }
+  if (quota.enforce !== undefined && !['cut', 'block', 'off'].includes(quota.enforce)) {
+    return `enforce 只能是 cut / block / off（收到 ${String(quota.enforce)}）`
+  }
+  // `defaultBytes` 不写 = 不限制（默认）。写了就必须是正整数。
+  if (quota.defaultBytes !== undefined && (!Number.isInteger(quota.defaultBytes) || quota.defaultBytes <= 0)) {
+    return 'defaultBytes 必须是正整数（不限制就别写这一格）'
+  }
   for (const [owner, bytes] of Object.entries(quota.owners ?? {})) {
-    if (!Number.isInteger(bytes) || bytes <= 0) return `owners.${owner} 必须是正整数`
+    if (!Number.isInteger(bytes) || bytes <= 0) return `owners.${owner} 必须是正整数（取消某人的上限请删掉那一格）`
   }
   if (quota.persist === true && quota.statePath !== undefined && quota.statePath === '') {
     return 'persist: true 时 statePath 不能是空串'
@@ -251,7 +258,7 @@ const adminOps = config.admin === undefined ? undefined : {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
   },
-  async persistQuota(owner: string, bytes: number): Promise<{ ok: boolean; error?: string }> {
+  async persistQuota(owner: string, bytes: number | null): Promise<{ ok: boolean; error?: string }> {
     try {
       await setQuotaOwnerInConfig(configPath, owner, bytes)
       return { ok: true }

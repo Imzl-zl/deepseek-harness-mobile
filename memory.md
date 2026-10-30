@@ -29,10 +29,10 @@
   （活跃行拒删，「删除」只在已停用段；多选的动作是停用）——笔记
   `implemented/2026-10-30-revoke-then-purge.md`。
 - **中转可观测/限额/面板（10-30，四批）**：摘要表可变（吊销即生效 + 接受前重验）；按人流量额度
-  （`quota`：UTC 周期惰性结算、`cut`/`block`/`off`、默认内存态、`persist` 才落盘、配对通道不计量）；
-  日志一行一个 JSON 事件（`json-logger.ts`，固定事件名，不记帧/令牌）；`/admin` 面板同端口、
-  管理摘要 Bearer、2 s 轮询、单文件（改额度/重置/断开/吊销；页面本身免令牌）。笔记
-  `implemented/2026-10-30-relay-*.md`（四篇）。
+  （**默认不限制**、计量常开，上限由管理员在面板设：UTC 周期惰性结算、`cut`/`block`/`off`、
+  默认内存态、`persist` 才落盘、配对通道不计量）；
+  日志一行一个 JSON 事件（固定事件名，不记帧/令牌）；`/admin` 同端口、管理摘要 Bearer、
+  2 s 轮询、单文件（设上限/重置/断开/吊销；页面本身免令牌）。笔记 `2026-10-30-relay-*`（四篇）。
 - **面板 / 装配 / 端点 / 明文（10-29）**：「连接」卡只碰白名单三格 + 令牌三态（值永不过线）；
   `start-transport` 放过两种允许的缺席（缺令牌 / `listenPort = 0`）；装配层三处判据搬出
   `index.ts`；`Endpoint.hostId` = 电脑公钥（不用 `pcId`，会撞），`dialOrder` 带失败冷却；
@@ -72,7 +72,7 @@
 | `cd app && flutter test` | 1579 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **773** 项 |
-| `cd relay && pnpm typecheck && node --test` | 类型 + **125** 条 |
+| `cd relay && pnpm typecheck && node --test` | 类型 + **126** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
 

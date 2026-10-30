@@ -152,23 +152,29 @@ export async function restoreTokenInConfig(
 }
 
 /**
- * 把某人的额度覆盖写进配置（面板的"改额度"）。
+ * 把某人的上限写进配置（面板的"设上限 / 取消上限"）。
  *
- * **没有 `quota` 段就直接报错**：只写 `owners` 会造出一段缺 `period`/`enforce`/
- * `defaultBytes` 的半截配置，下次启动会被 `main.ts` 的校验拒掉 —— 那是把面板的
- * 一次误操作变成"中转起不来"。
+ * `bytes === null` = **取消这个人的上限**（删掉 `owners` 里那一格；删空了连 `owners`
+ * 一起去掉）。配置里**没有 `quota` 段也能写**：只写 `owners` 是合法的半截配置，
+ * `period`/`enforce` 都有默认值，不会让中转起不来。
  */
 export async function setQuotaOwnerInConfig(
   configPath: string,
   owner: string,
-  bytes: number,
+  bytes: number | null,
 ): Promise<void> {
   const raw = await readFile(configPath, 'utf8')
   const config = JSON.parse(raw) as { quota?: { owners?: Record<string, number> } }
-  if (config.quota === undefined) {
-    throw new Error('配置里没有 quota 段：先加一段再改额度（只写 owners 会造出半截配置）')
+  const owners = { ...(config.quota?.owners ?? {}) }
+  if (bytes === null) {
+    if (!(owner in owners)) return
+    delete owners[owner]
+  } else {
+    owners[owner] = bytes
   }
-  const quota = { ...config.quota, owners: { ...(config.quota.owners ?? {}), [owner]: bytes } }
+  const quota: { owners?: Record<string, number> } = { ...(config.quota ?? {}) }
+  if (Object.keys(owners).length === 0) delete quota.owners
+  else quota.owners = owners
   await writeFile(configPath, `${JSON.stringify({ ...config, quota }, null, 2)}\n`, 'utf8')
 }
 

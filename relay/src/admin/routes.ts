@@ -49,7 +49,8 @@ export interface AdminStateView {
   /** 列表封顶后的总数（面板据此说"共 N，显示前 500"）。 */
   totals: { connectors: number; channels: number }
   roster: { devices: number; bound: number; published: Readonly<Record<string, number>> }
-  quota: { period: string; enforce: string; rows: readonly { subject: string; used: number; limit: number }[] } | null
+  /** `limit === null` = 这个人不设上限（默认）。 */
+  quota: { period: string; enforce: string; rows: readonly { subject: string; used: number; limit: number | null }[] } | null
   tokens: readonly TokenRow[]
 }
 
@@ -59,14 +60,15 @@ export interface AdminOps {
   tokens(): readonly TokenRow[]
   /** 吊销 / 恢复一台连接器令牌；实现负责写回配置。 */
   setTokenEnabled(id: string, enabled: boolean): Promise<{ ok: boolean; error?: string }>
-  /** 把某人（`user:<owner>`）的新额度写回配置；按连接器主体的覆盖不落盘。 */
-  persistQuota(owner: string, bytes: number): Promise<{ ok: boolean; error?: string }>
+  /** 把某人（`user:<owner>`）的新上限写回配置（`null` = 取消）；按连接器主体的覆盖不落盘。 */
+  persistQuota(owner: string, bytes: number | null): Promise<{ ok: boolean; error?: string }>
 }
 
 export interface AdminApi {
   /** 读面。每次轮询调一次，必须**同步**（不 await、不读盘）。 */
   state(): AdminStateView
-  setQuota(subject: string, bytes: number): Promise<AdminReply>
+  /** `bytes === null` = 取消上限（默认就是"不限"）。 */
+  setQuota(subject: string, bytes: number | null): Promise<AdminReply>
   resetQuota(subject: string): Promise<AdminReply>
   disconnect(connectorId: string, deviceId?: string): Promise<AdminReply>
   setTokenEnabled(id: string, enabled: boolean): Promise<AdminReply>
@@ -100,10 +102,12 @@ export function createAdminRoutes(api: AdminApi, page: string): { handle(request
         if (typeof subject !== 'string' || !SUBJECT.test(subject)) {
           return json(400, { error: 'subject-invalid' })
         }
-        if (typeof bytes !== 'number' || !Number.isInteger(bytes) || bytes <= 0) {
+        // `bytes: null`（或干脆不带）= 取消上限；数字必须是正整数（0 不是"取消"）。
+        if (bytes !== null && bytes !== undefined
+          && (typeof bytes !== 'number' || !Number.isInteger(bytes) || bytes <= 0)) {
           return json(400, { error: 'bytes-invalid' })
         }
-        return api.setQuota(subject, bytes)
+        return api.setQuota(subject, typeof bytes === 'number' ? bytes : null)
       }
 
       if (request.path === '/admin/api/quota/reset') {

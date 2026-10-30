@@ -159,16 +159,21 @@ button{font:inherit;padding:2px 8px;cursor:pointer}
       quotaBox.textContent = '未配置额度（quota 段不存在）'
     } else {
       quotaBox.replaceChildren(table(
-        ['主体', '已用 / 额度（' + state.quota.enforce + '）', '操作'],
+        ['主体', '已用（默认不限制）', '操作'],
         state.quota.rows.map(function (row) {
-          var used = el('span', bytes(row.used) + ' / ' + bytes(row.limit))
-          if (row.used >= row.limit) { used.className = 'warn'; used.textContent += ' · 已用满' }
+          var used = el('span', bytes(row.used) + (row.limit === null ? ' · 不限制' : ' / ' + bytes(row.limit)))
+          if (row.limit !== null && row.used >= row.limit) { used.className = 'warn'; used.textContent += ' · 已用满' }
           var actions = el('span')
-          actions.appendChild(button('改额度', function () {
-            var next = prompt('新的额度（字节）', String(row.limit))
+          actions.appendChild(button(row.limit === null ? '设上限' : '改上限', function () {
+            var next = prompt('新的上限（字节）；留空 = 取消上限（不限制）', row.limit === null ? '' : String(row.limit))
             if (next === null) return
-            var value = parseInt(next, 10)
-            if (!isFinite(value) || value <= 0) { alert('要一个正整数（字节）'); return }
+            var trimmed = next.trim()
+            if (trimmed === '') {
+              post('/admin/api/quota', { subject: row.subject, bytes: null }).then(refresh)
+              return
+            }
+            var value = parseInt(trimmed, 10)
+            if (!isFinite(value) || value <= 0) { alert('要一个正整数（字节），或者留空取消上限'); return }
             post('/admin/api/quota', { subject: row.subject, bytes: value }).then(refresh)
           }))
           actions.appendChild(document.createTextNode(' '))

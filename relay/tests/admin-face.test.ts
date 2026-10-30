@@ -73,7 +73,7 @@ const opsOf = (calls: string[]): AdminOps => ({
     return { ok: true }
   },
   async persistQuota(owner, bytes) {
-    calls.push(`quota:${owner}:${bytes}`)
+    calls.push(`quota:${owner}:${String(bytes)}`)
     return { ok: true }
   },
 })
@@ -122,7 +122,7 @@ test('配了 admin：缺/错令牌 401 且 no-store；对的给页面与快照�
   assert.deepEqual(state.connectors, [])
   assert.deepEqual(state.channels, [])
   assert.deepEqual(state.roster, { devices: 0, bound: 0, published: {} })
-  assert.equal(state.quota, null, '没配额度就是 null（面板据此显示"未配置"）')
+  assert.deepEqual(state.quota, { period: 'month', enforce: 'cut', rows: [] }, '默认不限制：没有上限行，但计量面在')
   assert.deepEqual(state.tokens.map((row) => row.id), ['conn-1', 'old-pc'], '令牌清单来自落盘点，且不含摘要')
 })
 
@@ -170,10 +170,15 @@ test('面板能管：改额度写回配置、重置用量、断开连接器、�
   assert.deepEqual(before.quota?.rows.map((row) => row.subject), ['user:alice'], '没流量的人也在面板上')
   assert.equal(before.quota?.rows[0]?.used, 0)
 
-  // 改额度：内存立刻生效 + 写回配置（按人）
+  // 设上限：内存立刻生效 + 写回配置（按人）
   assert.equal((await post(base, '/admin/api/quota', AUTH, { subject: 'user:alice', bytes: 2_048 })).status, 200)
-  assert.equal(relay.metering?.limitOf('user:alice'), 2_048)
+  assert.equal(relay.metering.limitOf('user:alice'), 2_048)
   assert.deepEqual(calls, ['quota:alice:2048'])
+
+  // 取消上限：`bytes: null` = 不限制（默认就是这个状态）
+  assert.equal((await post(base, '/admin/api/quota', AUTH, { subject: 'user:alice', bytes: null })).status, 200)
+  assert.equal(relay.metering.limitOf('user:alice'), null)
+  assert.deepEqual(calls, ['quota:alice:2048', 'quota:alice:null'])
 
   // 重置用量
   relay.metering?.charge('conn-1', 10)
@@ -190,7 +195,8 @@ test('面板能管：改额度写回配置、重置用量、断开连接器、�
 
   assert.deepEqual(
     actions.map((action) => action['action']),
-    ['quota.set', 'quota.reset', 'token.revoke'],
+    ['quota.set', 'quota.set', 'quota.reset', 'token.revoke'],
+    '设上限、取消上限、重置、吊销各留一条审计',
   )
   assert.equal(actions[0]?.['actor'], 'ops')
 })

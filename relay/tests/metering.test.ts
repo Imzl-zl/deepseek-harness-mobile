@@ -29,6 +29,16 @@ test('周期键用 UTC：日/月滚动，none 永不清零', () => {
   assert.equal(nextBoundaryOf(OCT_30, 'none'), undefined, '永不清零 = 不会自行恢复')
 })
 
+test('默认不限制：没写 defaultBytes 时 limit 是 null，charge 永不超、check 永不挡', () => {
+  const metering = createMetering({
+    quota: {}, ownerOf: () => undefined, now: () => OCT_30,
+  })
+  assert.equal(metering.limitOf('connector:c'), null)
+  assert.equal(metering.charge('c', 10 ** 9).over, false, '一个 GB 也不超 —— 没设上限')
+  assert.equal(metering.check('c').exceeded, false)
+  assert.deepEqual(metering.snapshot(), [{ subject: 'connector:c', used: 10 ** 9, limit: null, period: '2026-10' }])
+})
+
 test('额度按人：两台电脑共用一个桶；没配 owner 退回连接器键', () => {
   const metering = createMetering({
     quota: config({ defaultBytes: 100, owners: { alice: 50 } }),
