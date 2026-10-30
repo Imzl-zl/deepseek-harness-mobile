@@ -27,8 +27,8 @@ import { dirname, join } from 'node:path'
 
 import type { TokenDigest } from './digest-auth.ts'
 import {
-  appendTokenToConfig, issueToken, restoreTokenInConfig, revokeTokenInConfig,
-  setAdminInConfig, setQuotaOwnerInConfig,
+  appendTokenToConfig, issueToken, removeTokenFromConfig, restoreTokenInConfig,
+  revokeTokenInConfig, setAdminInConfig, setQuotaOwnerInConfig,
 } from './issue-token.ts'
 import { createTokenTable } from './token-table.ts'
 import { createJsonLogger } from './json-logger.ts'
@@ -253,6 +253,15 @@ const adminOps = config.admin === undefined ? undefined : {
       }
       if (!table.revoke(id)) return { ok: false, error: `配置里没有 id 为 ${id} 的令牌` }
       await revokeTokenInConfig(configPath, { kind: 'connector', id })
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+  async removeToken(id: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      if (!table.remove(id)) return { ok: false, error: `配置里没有 id 为 ${id} 的令牌` }
+      await removeTokenFromConfig(configPath, { kind: 'connector', id })
       return { ok: true }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }

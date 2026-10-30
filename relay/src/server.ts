@@ -259,6 +259,25 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         log?.info('admin.action', { actor, action: enabled ? 'token.restore' : 'token.revoke', id })
         return adminJson(200, { ok: true })
       },
+
+      async removeToken(id) {
+        if (options.adminOps === undefined) return adminJson(501, { error: 'admin-ops-not-wired' })
+        // **先吊销再删除**：活跃凭据不能一把删掉（那会让一台在线电脑莫名失联），
+        // 这条顺序与电脑侧"删除只对已停用的行开放"同源。
+        const row = options.adminOps.tokens().find((item) => item.id === id)
+        if (row === undefined) return adminJson(404, { error: 'token-not-found' })
+        if (row.revokedAt === undefined) return adminJson(409, { error: 'revoke-first' })
+        const saved = await options.adminOps.removeToken(id)
+        if (!saved.ok) return adminJson(500, { error: 'persist-failed', detail: saved.error ?? '' })
+        // 已吊销的连接器理论上已经下线；万一还在（面板与吊销竞速），顺手收掉。
+        const control = controls.get(id)
+        if (control !== undefined) {
+          detachControl(id)
+          control.socket.close(4000, 'token removed')
+        }
+        log?.info('admin.action', { actor, action: 'token.remove', id })
+        return adminJson(200, { ok: true })
+      },
     }
     adminRoutes = createAdminRoutes(api, ADMIN_PAGE)
   }

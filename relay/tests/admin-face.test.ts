@@ -72,6 +72,10 @@ const opsOf = (calls: string[]): AdminOps => ({
     calls.push(`token:${id}:${enabled}`)
     return { ok: true }
   },
+  async removeToken(id) {
+    calls.push(`remove:${id}`)
+    return { ok: true }
+  },
   async persistQuota(owner, bytes) {
     calls.push(`quota:${owner}:${String(bytes)}`)
     return { ok: true }
@@ -202,6 +206,29 @@ test('面板能管：改额度写回配置、重置用量、断开连接器、�
     '设上限、取消上限、重置、吊销各留一条审计',
   )
   assert.equal(actions[0]?.['actor'], 'ops')
+})
+
+test('删除令牌：只能删已吊销的（先吊销再删，防手滑删掉在线凭据）', async (t) => {
+  const calls: string[] = []
+  const { log, actions } = recorder()
+  const relay = await startRelay({
+    port: 0, authenticate: () => undefined, admin: ADMIN, adminOps: opsOf(calls), log,
+  })
+  t.after(() => relay.close())
+  const base = baseOf(relay.port)
+
+  // 活跃的那条：409，什么都不动
+  assert.equal((await post(base, '/admin/api/tokens/remove', AUTH, { id: 'conn-1' })).status, 409)
+  assert.deepEqual(calls, [])
+
+  // 已吊销的那条：删掉，并留审计
+  assert.equal((await post(base, '/admin/api/tokens/remove', AUTH, { id: 'old-pc' })).status, 200)
+  assert.deepEqual(calls, ['remove:old-pc'])
+  assert.equal(actions.at(-1)?.['action'], 'token.remove')
+  assert.equal(actions.at(-1)?.['id'], 'old-pc')
+
+  // 不存在的：404（不假装成功）
+  assert.equal((await post(base, '/admin/api/tokens/remove', AUTH, { id: 'nobody' })).status, 404)
 })
 
 test('断开：按连接器整条收掉；按设备只收那一条通道', async (t) => {

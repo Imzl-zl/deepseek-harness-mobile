@@ -178,6 +178,26 @@ export async function setQuotaOwnerInConfig(
   await writeFile(configPath, `${JSON.stringify({ ...config, quota }, null, 2)}\n`, 'utf8')
 }
 
+/**
+ * 从配置里**删掉**一条令牌记录（不可恢复）。
+ *
+ * 与 `revokeTokenInConfig` 分开：吊销是"留着行、标时间"（可恢复、有审计），
+ * 删除是"这条记录不存在了"。只有确认过"已吊销"的调用方才该走这里 ——
+ * 那条顺序由面板强制（先吊销、再删除），不是这里猜。
+ */
+export async function removeTokenFromConfig(
+  configPath: string,
+  spec: TokenKind,
+): Promise<{ tokens: TokenConfigEntry[]; removed: boolean }> {
+  const raw = await readFile(configPath, 'utf8')
+  const config = JSON.parse(raw) as { tokens?: TokenConfigEntry[] }
+  const existing = config.tokens ?? []
+  const tokens = existing.filter((entry) => !(entry.kind === spec.kind && entry.id === spec.id))
+  const removed = tokens.length !== existing.length
+  if (removed) await writeFile(configPath, `${JSON.stringify({ ...config, tokens }, null, 2)}\n`, 'utf8')
+  return { tokens, removed }
+}
+
 /** 配置里的管理面段（`admin`）：只放摘要。 */
 export interface AdminConfigEntry {
   id: string

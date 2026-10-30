@@ -49,6 +49,13 @@ export interface TokenTable {
   revoke(id: string, at?: number): boolean
   /** 把一条软吊销的条目放回认证索引。返回它现在是否可用。 */
   restore(id: string): boolean
+  /**
+   * **硬删除**一条记录（行与摘要一起消失，不可恢复）。
+   *
+   * 调用方必须先确认它已吊销：这里只负责删，不替你判"该不该删"——
+   * 那条规矩（先停用再删）在路由层，因为它对用户可见。
+   */
+  remove(id: string): boolean
   /** 当前**可用**条目数（已吊销的不算，与旧 `size` 同义）。 */
   readonly size: number
 }
@@ -128,6 +135,14 @@ export function createTokenTable(
       // 先摘索引再记账：任何顺序下"索引里没有它"都是立刻成立的。
       byHash.delete(entry.hash)
       if (entry.revokedAt === undefined) byId.set(id, { ...entry, revokedAt: at })
+      return true
+    },
+
+    remove(id) {
+      const entry = byId.get(id)
+      if (entry === undefined) return false
+      byHash.delete(entry.hash)
+      byId.delete(id)
       return true
     },
 

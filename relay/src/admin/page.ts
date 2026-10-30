@@ -624,11 +624,23 @@ td.id{color:var(--ink)}
     var tHead = el('header'); tHead.appendChild(el('h2', '连接器令牌')); tHead.appendChild(el('span', '有效 ' + activeTokens + ' / ' + state.tokens.length, 'meta')); tokens.appendChild(tHead)
     var tBody = el('div', undefined, 'body')
     tBody.appendChild(table(['id', '所属人', '状态', ''], state.tokens.map(function (row) {
-      return [row.id, row.owner || '—', el('span', row.revokedAt ? '已吊销' : '有效', 'tag ' + (row.revokedAt ? 'bad' : 'ok')),
-        btn(row.revokedAt ? '恢复' : '吊销', function () {
-          if (!confirm((row.revokedAt ? '恢复' : '吊销') + '令牌 ' + row.id + '？')) return
-          post(row.revokedAt ? '/admin/api/tokens/restore' : '/admin/api/tokens/revoke', { id: row.id }).then(refresh)
-        }, !row.revokedAt)]
+      var actions = el('span')
+      if (row.revokedAt) {
+        actions.appendChild(btn('恢复', function () {
+          if (!confirm('恢复令牌 ' + row.id + '？') ) return
+          post('/admin/api/tokens/restore', { id: row.id }).then(refresh)
+        }))
+        actions.appendChild(btn('删除', function () {
+          if (!confirm('永久删除 ' + row.id + ' 的令牌记录？删了就查不到了（不可恢复）')) return
+          post('/admin/api/tokens/remove', { id: row.id }).then(refresh)
+        }, true))
+      } else {
+        actions.appendChild(btn('吊销', function () {
+          if (!confirm('吊销令牌 ' + row.id + '？吊销后它立刻下线；要彻底删掉，先吊销再删除')) return
+          post('/admin/api/tokens/revoke', { id: row.id }).then(refresh)
+        }, true))
+      }
+      return [row.id, row.owner || '—', el('span', row.revokedAt ? '已吊销' : '有效', 'tag ' + (row.revokedAt ? 'bad' : 'ok')), actions]
     }), '还没有连接器令牌'))
     tokens.appendChild(tBody)
     viewEl.appendChild(tokens)

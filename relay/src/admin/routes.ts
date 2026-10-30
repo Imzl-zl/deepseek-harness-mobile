@@ -67,6 +67,8 @@ export interface AdminOps {
   tokens(): readonly TokenRow[]
   /** 吊销 / 恢复一台连接器令牌；实现负责写回配置。 */
   setTokenEnabled(id: string, enabled: boolean): Promise<{ ok: boolean; error?: string }>
+  /** **硬删除**一条已吊销的令牌记录（实现负责从配置里移除）。 */
+  removeToken(id: string): Promise<{ ok: boolean; error?: string }>
   /** 把某人（`user:<owner>`）的新上限写回配置（`null` = 取消）；按连接器主体的覆盖不落盘。 */
   persistQuota(owner: string, bytes: number | null): Promise<{ ok: boolean; error?: string }>
 }
@@ -79,6 +81,7 @@ export interface AdminApi {
   resetQuota(subject: string): Promise<AdminReply>
   disconnect(connectorId: string, deviceId?: string): Promise<AdminReply>
   setTokenEnabled(id: string, enabled: boolean): Promise<AdminReply>
+  removeToken(id: string): Promise<AdminReply>
 }
 
 const json = (status: number, body: unknown): AdminReply => ({
@@ -141,6 +144,12 @@ export function createAdminRoutes(api: AdminApi, page: string): { handle(request
         const id = body['id']
         if (typeof id !== 'string' || id === '') return json(400, { error: 'id-invalid' })
         return api.setTokenEnabled(id, request.path.endsWith('/restore'))
+      }
+
+      if (request.path === '/admin/api/tokens/remove') {
+        const id = body['id']
+        if (typeof id !== 'string' || id === '') return json(400, { error: 'id-invalid' })
+        return api.removeToken(id)
       }
 
       return json(404, { error: 'not-found' })

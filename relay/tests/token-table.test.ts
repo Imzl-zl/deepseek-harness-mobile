@@ -48,6 +48,15 @@ test('吊销不存在的 id：false，且不动别人的', () => {
   assert.deepEqual(table.authenticate('t-solo'), { kind: 'connector', id: 'solo' })
 })
 
+test('硬删除：行与摘要一起消失，之后认不出；再删回 false', () => {
+  const table = createTokenTable(ENTRIES)
+  assert.equal(table.remove('solo'), true)
+  assert.equal(table.authenticate('t-solo'), undefined, '摘要也从索引里摘掉了')
+  assert.equal(table.size, 2)
+  assert.equal(table.list().some((row) => row.id === 'solo'), false, '记录本身不存在了')
+  assert.equal(table.remove('solo'), false)
+})
+
 test('同一个 id 出现两次：**拒绝建表**（否则"吊销的是哪一条"是猜）', () => {
   const duplicated = [...ENTRIES, { kind: 'connector' as const, id: 'solo', hash: hash('t-solo-2') }]
   assert.throws(() => createTokenTable(duplicated), /同一个 id 出现两次/)
