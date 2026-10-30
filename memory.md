@@ -3,42 +3,33 @@
 > 快照 + 最近窗口，**覆盖更新**，不做流水追加。历史在 git 与 `.agents/notes/`；
 > 稳定命令与坑点在 `tools.md`；现状事实在 `docs/`。
 
-## 现在（2026-10-29）
+## 现在（2026-10-30）
 
-- **连接配置进面板（`2c9876f`）**：「手机」面板顶部「连接」卡
-  （`GET/POST /api/dsh-mobile/connection`，逻辑在 `admin/connection-card.ts`）：中转地址 /
-  公网明文开关 / 令牌 / 直连端口 + "已连接"真信号（`ChannelState.connected`，原来只有
-  `running`，答不了"手机那头通没通"）。四条已定案：① 只碰白名单三格（`relayUrl` /
-  `allowInsecurePublic` / `listenPort`），该条目另外 8 个 volatile 字段不上卡；② 地址在写入
-  **之前**用 `relayUrlOf` 校验"保存之后的完整状态"（schema 不管语义）；③ 一次保存只有一次
-  `settings.update`（逐字段 mutate 会让 revision +1、第二次必 409）；④ 令牌三态（留空/替换/
-  清除），**值永不过线**（GET 只回 `{configured, writable}`）。保存顺序：配置优先、令牌其次，
-  令牌失败回 400 带 `configApplied=true`。取舍见
-  `implemented/2026-10-29-panel-connection-card.md`。
-- **无令牌可挂载（同批）**：`start-transport` 只放过两种"配置里本来就允许的缺席" ——
-  `RelayTokenError`（凭据里还没令牌）与 `listenPort = 0`（明说"不监听"）；坏地址、端口被占
-  照旧整体抛出。原行为是"删令牌 → 重启 → 管理面没挂上 → 面板 404"，删一次就锁在门外。
-  `endpoint.describe` 因此**总是挂**（否则面板把直连从 0 改成 8790 后手机拿不到新端点）。
-- **装配层回归网（`7d1e6a1`，今天）**：三处判据搬出 `index.ts` 闭包 ——
-  `transport/rebuild.ts`（键集合 → 重建哪条通道 + 重建串行队列，失败落成「连接」卡一句话）、
-  `transport/startup.ts`（上面那两种容忍的判据与起停顺序）、
-  `admin/connection-card.ts` 的 `readConnectionState`（面板读取投影）。装配层是否真接上由
-  `tests/assembly-wiring.test.ts` **读 `index.ts` 源码**盯。connector 719 → **748 项**。
-  笔记 `implemented/2026-10-29-assembly-regression-net.md`。
-- **配置改成用时读取（`2c9876f`）**：`Assembly.config` 从挂载快照换成 accessor；说"哪台中转"
-  的四处（拨号、出码、名册上报、端点自报）都读当前值 —— 只让拨号读新值会出现"连接连到新
-  中转，二维码还写着死地址"。已知 UX 缺口：保存后只轮询 6 秒（12×500ms）看是否连上。
-- **端点按电脑剪枝 + 失败冷却（10-29）**：`Endpoint.hostId` = 那台电脑的 Ed25519 公钥
-  （**不用 `pcId`**，它是连接器 id、默认 `"local"` 会撞）；换电脑后旧电脑报过的自动条目剪掉，
-  手填的永不动。`dialOrder` 加失败冷却（60s 内排尾，连"记住的那条"也不例外）+ 按电脑排序。
-  笔记 `implemented/2026-10-29-endpoint-host-scoped-pruning.md`，设计面 `app-channel-client.md` §6.2。
-- **明文放行分两档（10-29）**：非公网 `ws://`（局域网/回环/组网 CGNAT）**所有构建都用**；
-  公网 `ws://` 只认用户显式确认（偏好 `net.allow_plaintext_public`，确认点只有手填端点勾选
-  与配对页确认卡）；`wss://` 任何主机始终放行。笔记 `implemented/2026-10-29-plaintext-*`。
-- **配对生命周期真机复验（10-29，公司 wifi 判成「公用」）**：重配走 `replaces`（新行先与旧行
-  并存、旧令牌仍可用，新身份握手成功后旧行被裁，`pairedAt` 沿用）与"改坏一位 code 如实报
-  `protocol/not-paired`"两条实测通过。公用网络下 8787/8790 入站被拦，要么改专用网络、
-  要么 `adb reverse` 走环回。
+- **多机四步全部落地**（方案 `proposed/2026-10-29-one-phone-many-computers.md`）：
+  ① 归属（`Endpoints.id = hostId|url` / `host.<hostId>.*` / `repo.info.hostName`，120ea3a）；
+  ② 凭据分槽（`dsh.pairing.<hostId>.*` + `active`，cb2bd1d）；
+  ③ 拨号竞速 + 缓冲按"在服务的设备"裁剪（ba9e438）；
+  ④ 独占与切换（**今天三次提交**）：`device/busy` 四处门禁同批（错误码 35→36）、
+  占用位 = `presence.serving()`、握手 `acceptHello` 准入（同一 devId 放行）、
+  拒绝理由带占用者（`协议码 说明`，≤120 字节）、控制面 `?id=` 自报 + 老连接器放行、
+  面板「在服务」档 + 显式「接管」（走既有停用写路径）（eb9696e）；
+  手机侧「切换电脑」= 换槽 + 重新装配 + 「切回上一台」、被占用停机（`busy-wait`）、
+  15s 拨号总预算、2s/8s 提示、结论后 60s±20% 静默慢重试（e2a2499）；
+  过期的一轮拨号不许动连接（真机抓到的 `backoff→handshake` 崩溃）（129b1a0）。
+  笔记四篇 `implemented/2026-10-30-*`。
+- **真机验收（10-30）**：`serving` 随连接出现/断开（关 App 后 **873ms** 内释放），
+  relay-only 与直连两条路径都能进 serving；面板实测那一行是
+  `运行中 · 前台 · 在服务` 且只有它有「接管」；`?id=` 三种形状实测
+  OPEN / 403 / 老连接器 OPEN。
+
+- **面板与装配（10-29）**：「连接」卡（`admin/connection-card.ts`）只碰白名单三格 + 令牌三态
+  （值永不过线）；`start-transport` 放过两种本来就允许的缺席（缺令牌 / `listenPort = 0`）；
+  装配层三处判据搬出 `index.ts`（`transport/rebuild.ts`、`transport/startup.ts`、
+  `readConnectionState`），是否真接上由 `assembly-wiring.test.ts` 读源码盯。笔记
+  `implemented/2026-10-29-{panel-connection-card,assembly-regression-net}.md`。
+- **端点与明文（10-29）**：`Endpoint.hostId` = 那台电脑的 Ed25519 公钥（不用 `pcId`，会撞）；
+  `dialOrder` 有失败冷却（60s 排尾）；明文 `ws://` 非公网一律放行、公网只认用户显式确认
+  （`net.allow_plaintext_public`）。笔记 `implemented/2026-10-29-*`。
 - **通道全景**：`protocol/`（配对/握手/AEAD/流控/恢复）+ `relay/`（中转）+ `connector/`（电脑侧
   网关）全部落地；手机侧 `app/lib/core/` 是连接层，`app/lib/wire/` 是**线上形状的唯一解码层**
   （`wire/rpc/` 18 个面文件、46 个方法；`wire/` 外零 `call<`；方法面 52/50，差额 2 =
@@ -52,12 +43,15 @@
 
 ## 下一步
 
-0. **状态语义对齐（A–H 已全落地）**：现状 `docs/subsystems/ui-state.md`；真机复验还差 4 条
+0. **多机第 4 步的真机复验**：只剩两条要**两台设备**才能做的（第二台被
+   `device/busy` 拒并说出占用者、切回上一台的真实链路）—— 单测已覆盖，
+   真机可用"第二个 DSH_HOME + 另一份连接器身份"补；命中不了的按未验证如实说。
+1. **状态语义对齐（A–H 已全落地）**：现状 `docs/subsystems/ui-state.md`；真机复验还差 4 条
    （子智能体在跑可见、提问草稿、发送模式真值、断连重连）。因果见 `implemented/2026-10-27-*`。
-1. 跑一轮真机复验改动卡 / 差异 / 提及（要模型请求 —— 先报价再跑）。
-2. `usage.summary` 的 byDay 时区；`plugin.installStatus` 的 4 键/8 键两形态
+2. 跑一轮真机复验改动卡 / 差异 / 提及（要模型请求 —— 先报价再跑）。
+3. `usage.summary` 的 byDay 时区；`plugin.installStatus` 的 4 键/8 键两形态
    （真出现第二种时 `readPluginJob` 会红，属**已知的下一处**）。
-3. 大改后巡检一次 `docs/` 与代码的漂移。**已知一处**：`connector/src/dsh/interaction-client.ts:63`
+4. 大改后巡检一次 `docs/` 与代码的漂移。**已知一处**：`connector/src/dsh/interaction-client.ts:63`
    import 了 `transport/backoff.js`，而 `connector-and-relay.md` §1.2 写着「`dsh/` 不 import `transport/`」；
    两者选一个改（补机械规则会立刻红，改文档则承认这条方向可用）。
 
@@ -66,13 +60,13 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 639 项（25 条规则自检 + 148 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | 645 项（25 条规则自检 + 149 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1555 项（约 1 分钟） |
+| `cd app && flutter test` | 1580 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **752** 项 |
-| `cd relay && pnpm typecheck && node --test` | 类型 + **89** 条 |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **762** 项 |
+| `cd relay && pnpm typecheck && node --test` | 类型 + **90** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
 
@@ -117,4 +111,6 @@
 - 2026-10-27 UI 状态语义（审计 → 机制 → A–H 批） — `implemented/2026-10-27-*`；现状 `docs/subsystems/ui-state.md`
 - 2026-10-28 渲染批次 + 唤醒判据修正 — `implemented/2026-10-28-*`
 - 2026-10-29 连接卡 / 无令牌可挂载 / 装配层回归网 / 删掉空转的 `deviceLimit` / 端点剪枝 /
-  明文两档 / 高亮语言集 — `implemented/2026-10-29-*`（六篇）；多机方案仍 `proposed/2026-10-29-*`
+  明文两档 / 高亮语言集 — `implemented/2026-10-29-*`（六篇）
+- 2026-10-30 多机四步（归属 / 凭据分槽 / 拨号竞速与缓冲裁剪 / 独占与切换） —
+  `implemented/2026-10-30-*`（五篇，方案页仍留在 `proposed/` 作为决策源）
