@@ -13,7 +13,7 @@
 ```jsonc
 // connector/package.json(照参考插件的形状)
 {
-  "name": "@dsh-mobile/connector",
+  "name": "dsh-mobile-connector",
   "version": "0.1.0",
   "type": "module",
   "packageManager": "pnpm@11.13.0",
@@ -55,7 +55,7 @@
 # connector/cordis.patch.yml —— 全部接入样板就这 4 行
 - insert:
     - id: dsh-mobile-connector
-      name: '@dsh-mobile/connector'
+      name: 'dsh-mobile-connector'
       config: {}
 ```
 

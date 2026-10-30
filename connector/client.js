@@ -118,7 +118,7 @@
  * 提示行放在**面板顶部**：停用失败了，消息却出现在最下面那张配对卡上，用户不会往那儿看。
  */
 window.__ModuleLoader__.load({
-  id: '@dsh-mobile/connector',
+  id: 'dsh-mobile-connector',
 
   factory(require) {
     const React = require('react')

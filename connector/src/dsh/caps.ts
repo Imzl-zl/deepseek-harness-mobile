@@ -10,7 +10,7 @@
  *
  *   ```text
  *   dsh: warning: 1 entry did not activate
- *   dsh-mobile-connector (@dsh-mobile/connector): pending (waiting for service: sessionController)
+ *   dsh-mobile-connector: pending (waiting for service: sessionController)
  *   ```
  *
  *   所以它**不是静默降级**（早先版本的注释说它"无异常、无日志"，那是错的，已按实测改正）。

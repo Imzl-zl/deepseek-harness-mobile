@@ -58,7 +58,7 @@ pnpm add -D @deepseek-ai/dsh-agent@next @deepseek-ai/dsh-api-session-controller@
 ```yaml
 - insert:
     - id: dsh-mobile-connector
-      name: '@dsh-mobile/connector'
+      name: 'dsh-mobile-connector'
       config: {}
 ```
 
