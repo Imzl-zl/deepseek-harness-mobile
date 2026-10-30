@@ -159,7 +159,7 @@ Apple 官方:静默推送在用户强杀 App 后由系统丢弃;受设备级 ene
 | 设置写路径 | 非 loopback 页面:写操作不发线并返回 false,镜像态 `unavailable` | `client/ui-settings/src/client/config-form.ts:175`、`settings-mirror.ts:86,89`(一手) |
 | loopback 判定 | 依据**页面 authority**,不是网络路径 | `client/connection/src/client/index.ts:248`、`loopback-hostname.ts:12-17`(一手) |
 | webserver 座位 | 重复路由 / 重复 upgrade / fallback 二次注册均抛错 | `packages/host/webserver/src/index.ts:169,183,198-199`(一手) |
-| 插件兼容性 | **`engines.dsh` 不被强制**;兼容性由 `peerDependencies` 对 `@deepseek-ai/dsh*` 的范围决定,不匹配则跳过并记入 `skippedBundles` | `packages/util/package-manifest/README.md:93`、`boot/app-boot/src/plugin-compatibility.ts:68`、`profile.ts:675-681`(一手) |
+| 插件兼容性 | 包声明 `engines.dsh` 时**只按它判**并忽略 `@deepseek-ai/dsh*` 的 peer;没有时才逐条比对 peer 范围。不匹配则跳过并记入 `skippedBundles`,可用 `dsh plugin allow-version` 按"插件@版本 × 宿主精确版本"豁免 | `boot/app-boot/src/plugin-compatibility.ts:55-61`、`docs/upgrade-guide/v0.2.1-alpha.3/plugin-engines-dsh/guide.zh.md`(一手) |
 
 ---
 

@@ -9,7 +9,7 @@ DSH 插件：手机端远程通道的**电脑侧网关**。装进 DSH 后，手�
 
 ## 要求
 
-- DSH `0.2.1-rc.3`（`@deepseek-ai/cordis@4.0.5`、`@deepseek-ai/schemastery@3.18.5`）
+- DSH `>=0.2.1-rc.5 <0.2.2`（`@deepseek-ai/cordis@4.0.5`、`@deepseek-ai/schemastery@3.18.5`）
 - Node `^22.19.0 || >=24.0.0`
 
 ## 安装
