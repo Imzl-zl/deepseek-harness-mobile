@@ -1,9 +1,19 @@
 {
   "name": "@dsh-mobile/connector",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "DSH 插件:手机端远程通道的电脑侧桥接",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Imzl-zl/deepseek-harness-mobile.git",
+    "directory": "connector"
+  },
+  "homepage": "https://github.com/Imzl-zl/deepseek-harness-mobile/tree/main/connector",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "packageManager": "pnpm@11.13.1",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
@@ -31,6 +41,7 @@
     }
   },
   "scripts": {
+    "prepack": "pnpm build",
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts"

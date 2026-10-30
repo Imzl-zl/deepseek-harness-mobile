@@ -51,6 +51,18 @@ keytool -genkeypair -v -keystore dsh-mobile.jks -alias dsh-mobile \
 `key.properties`（`storeFile=release.jks` + 三个口令），然后 `flutter build apk --release`。
 两个文件都在 `.gitignore` 里。
 
+## 2.5 发布插件到 npm
+
+`connector/package.json` 已去掉 `private`，`publishConfig.access = public`，`prepack` 会先构建。
+
+1. 改 `connector/package.json` 的 `version`（如 `0.2.0`）
+2. 打标签：`git tag connector-v0.2.0 && git push origin connector-v0.2.0`
+3. `.github/workflows/publish-connector.yml` 校验 `标签 == version` 后 `npm publish`
+
+**前置**：仓库 Secrets 里的 `NPM_TOKEN`（npm 的 Automation token），且你的 npm 账号拥有
+`@dsh-mobile` 这个 scope（没有就先在 npm 建 org，否则发布会 403）。没有 token 时那一步
+会明确失败，不会静默跳过。
+
 ## 3. 插件包
 
 `connector` 是 DSH 插件（`dsh.bundle.patch` 指向 `cordis.patch.yml`），发版产物就是

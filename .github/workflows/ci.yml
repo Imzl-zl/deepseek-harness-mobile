@@ -117,4 +117,16 @@ jobs:
         run: dart analyze --fatal-infos lib test integration_test
       - working-directory: app
         run: flutter test
+      # 每次 push 都出一版 debug APK 当产物（PR 不打包，省时间）。
+      - name: 构建 debug APK
+        if: github.event_name != 'pull_request'
+        working-directory: app
+        run: flutter build apk --debug
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          name: dsh-mobile-debug-apk
+          path: app/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
 

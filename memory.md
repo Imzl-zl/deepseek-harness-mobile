@@ -30,9 +30,10 @@
   默认内存态、`persist` 才落盘、配对通道不计量）；
   日志一行一个 JSON 事件（固定事件名，不记帧/令牌）；`/admin` 是独立控制台（同端口、Bearer、
   分区导航 + 近 60 分钟真曲线；设上限/重置/断开/吊销·删除；页面免令牌）。笔记 `relay-*`（五篇）。
-- **工程化（10-30）**：README（logo + Linux.do 友链 + 门禁表）；Actions `ci.yml`（协议/中转/插件/App）
-  与 `release.yml`（v* 出插件 tgz + APK）；签名「有 key.properties 就签、没有退 debug」，
-  步骤见 `docs/cookbook/release.md`；applicationId = `io.github.imzlzl.dsh_mobile`（发版后不可改）。
+- **工程化（10-30）**：仓库已**公开**；README（logo + Linux.do 徽章 + 门禁表）；`ci.yml` 四 job +
+  每次 push 出 **debug APK 产物**；`release.yml`（v* 出 tgz + APK）、`publish-connector.yml`
+  （connector-v* → npm，要 NPM_TOKEN）；签名「有 key.properties 就签、没有退 debug」，步骤见
+  `docs/cookbook/release.md`；applicationId = `io.github.imzlzl.dsh_mobile`（发版后不可改）。
 - **面板 / 装配 / 端点 / 明文（10-29）**：「连接」卡只碰白名单三格 + 令牌三态（值永不过线）；
   `start-transport` 放过两种允许的缺席（缺令牌 / `listenPort = 0`）；装配层三处判据搬出
   `index.ts`；`Endpoint.hostId` = 电脑公钥（不用 `pcId`，会撞），`dialOrder` 带失败冷却；

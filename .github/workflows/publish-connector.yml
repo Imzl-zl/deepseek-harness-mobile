@@ -1,0 +1,58 @@
+# 发布插件到 npm：推 `connector-v*` 标签，或手动 workflow_dispatch。
+#
+# 前置：仓库 Secrets 里要有 NPM_TOKEN（npm 账号的 Automation token，能发 @dsh-mobile 这个 scope）。
+# 没有 token 时这一步会明确失败，不会静默跳过。
+name: publish-connector
+
+on:
+  push:
+    tags: ['connector-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: connector/pnpm-lock.yaml
+
+      - name: 构建并自检
+        working-directory: connector
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec tsc --noEmit
+          pnpm build
+
+      - name: 标签与 package.json 版本一致
+        if: startsWith(github.ref, 'refs/tags/')
+        working-directory: connector
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="${GITHUB_REF_NAME#connector-v}"
+          if [ "$VERSION" != "$TAG" ]; then
+            echo "package.json 的 $VERSION 与标签 $TAG 不一致：先改版本再打标签"
+            exit 1
+          fi
+
+      - name: 发布到 npm
+        working-directory: connector
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "没有 NPM_TOKEN：先在仓库 Secrets 里加一个能发 @dsh-mobile scope 的 token"
+            exit 1
+          fi
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > "$HOME/.npmrc"
+          npm publish --access public
