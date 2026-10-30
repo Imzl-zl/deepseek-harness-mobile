@@ -21,9 +21,25 @@ services:
       context: ..
       dockerfile: relay/Dockerfile
     image: dsh-mobile-relay:local
-    restart: unless-stopped
+    # **炸了别无限重启**：配置写错（JSON 坏、端口被占）是"每次都立刻退"的形状，
+    # `unless-stopped` 会把它变成一台永远在重启的容器（刷日志、吃 CPU）。
+    # 五次都没起来就停在那里，等人看日志。
+    restart: on-failure:5
+    # **日志要封顶**：Docker 默认 json-file 无上限，一个被刷的端口能把宿主磁盘写满 ——
+    # 那是最常见的"容器把服务器拖垮"。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # **资源上限**：泄漏或洪水先在容器里炸，别把宿主机拖下水。
+    # 中转只转发与记账（进程内表 + 几条长连接），256M / 1 核足够。
+    mem_limit: 256m
+    cpus: 1.0
     ports:
-      # 只在本机暴露时改成 "127.0.0.1:8787:8787"（配合反代更安全）。
+      # **公网部署请绑 127.0.0.1**：`"8787:8787"` 会把中转直接挂到公网 ——
+      # 明文 http/ws 上，连接器令牌（`Authorization: Bearer`）对链路上的任何人都可见，
+      # 拿到它就能替你的电脑向中转报名册。柜台（Caddy）终结 TLS 之后再用这一行。
       - "8787:8787"
     volumes:
       # **读写**挂载：`--issue-token` / `--revoke-token` 会改这份文件。

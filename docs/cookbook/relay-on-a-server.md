@@ -117,6 +117,36 @@ docker compose up -d caddy
 App 仍显示「已连接」，且能在会话里收到新消息 ——
 说明走的是 `wss://relay.example.com` 而不是局域网直连。
 
+## 6.5 上线前的四道闸（容器不会拖垮宿主）
+
+容器的隔离只覆盖进程，不覆盖**端口、磁盘、内存、重启循环**。`relay/docker-compose.yml`
+的四项按"炸了也只在容器里"配好：
+
+| 闸 | 配置 | 不配会怎样 |
+|---|---|---|
+| 重启循环 | `restart: on-failure:5` | 配置写错时容器**每次都立刻退**，`unless-stopped` 把它变成永远重启：刷日志、吃 CPU |
+| 日志封顶 | `logging: json-file, max-size 10m, max-file 3` | 默认无上限，被刷的端口把宿主磁盘写满（最常见的拖垮方式） |
+| 资源上限 | `mem_limit: 256m`、`cpus: 1.0` | 泄漏或洪水先在宿主上表现出来（OOM 杀别人） |
+| 端口暴露 | 公网绑 `127.0.0.1:8787:8787` + Caddy | `8787:8787` 明文挂公网：链路上任何人可读到连接器令牌，拿到就能替这台电脑报名册 |
+
+**验收**：`docker compose config -q` 无输出；`docker compose up -d` 后 `docker compose ps`
+是 `(healthy)`；`docker stats --no-stream` 里中转的 MEM USAGE 远低于上限。
+
+## 6.6 更新镜像（两端版本要对齐）
+
+```bash
+cd ~/dsh-mobile            # 服务器上的仓库目录
+git pull                   # 取到中转侧的新代码
+docker compose -f relay/docker-compose.yml build relay
+docker compose -f relay/docker-compose.yml up -d relay
+docker compose -f relay/docker-compose.yml logs --tail 3 relay   # 期望：中转已监听 ws://0.0.0.0:8787（摘要表 N 条）
+```
+
+- **`relay.config.json` 是挂载的**（不进镜像），重建不会丢令牌摘要；`N` 条应与更新前一致。
+- **重启会断开所有手机**：它们退避后自动换票重连；连接器重连后重放名册，`serving` 恢复。
+- **连接器要先于或同时更新**：中转的控制面要求 `?id=<connectorId>`，旧连接器不带它就 403
+  （`docs/subsystems/connector-and-relay.md` §1.6）。
+
 ## 7. 已知边界
 
 - **中转重启会清空设备名册**：手机换票先拿到 401，但**这不是终态** —— 名册是电脑侧在
