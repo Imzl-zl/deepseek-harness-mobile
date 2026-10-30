@@ -123,6 +123,55 @@ test('重连换票：凭**设备令牌** → 201，票绑名册里的真实设�
   )
 })
 
+test('一台手机配了两台电脑 = 两条独立名册行：票各绑各的连接器，停用一台不影响另一台', () => {
+  // 这是"一个用户多台电脑 + 一台手机连多台电脑"在中转侧的真实形状：
+  // 每次配对都是**新的设备身份**（2026-10-15「每次配对换新身份」），于是同一台手机
+  // 在名册里是两条行、两枚令牌，分属两台连接器。中转要做的只有一件事：
+  // 票里写死 `(connectorId, deviceId)`，绝不按"这台手机"去猜。
+  const core = createRelayCore()
+  const devices = createDeviceRegistry()
+  const tickets = createTicketStore({
+    randomBytes: (size) => Uint8Array.from({ length: size }, (_, i) => (i * 37 + 11) % 256),
+  })
+  const face = createHttpFace({
+    tickets,
+    core,
+    devices,
+    authenticate: (token) => TOKENS[token],
+  })
+  core.attachConnector('conn-1')
+  core.attachConnector('conn-2')
+
+  // 电脑 A：这台手机 + 一台平板；电脑 B：同一台手机的第二次配对（新身份）。
+  devices.register('conn-1', [rosterRow('phone-on-a', 'tok-a'), rosterRow('tablet-on-a', 'tok-tablet')])
+  devices.register('conn-2', [rosterRow('phone-on-b', 'tok-b')])
+
+  const ticketFor = (token: string) => {
+    const response = face.handle(ticketByToken(token))
+    assert.equal(response.status, 201, `${token} 应当换得到票`)
+    return tickets.consume((response.body as { ticket: string }).ticket)
+  }
+
+  assert.deepEqual(ticketFor('tok-a'), { connectorId: 'conn-1', deviceId: 'phone-on-a', purpose: 'paired' })
+  assert.deepEqual(ticketFor('tok-tablet'), { connectorId: 'conn-1', deviceId: 'tablet-on-a', purpose: 'paired' })
+  assert.deepEqual(ticketFor('tok-b'), { connectorId: 'conn-2', deviceId: 'phone-on-b', purpose: 'paired' })
+  // 两枚令牌不能互换身份：各自解出自己那条行，解出的设备 id 不同。
+  assert.equal(devices.authenticate('tok-a'), 'phone-on-a')
+  assert.equal(devices.authenticate('tok-b'), 'phone-on-b')
+  assert.notEqual(devices.authenticate('tok-a'), devices.authenticate('tok-b'))
+
+  // 停用电脑 A 上那台：只有它变 revoked；平板的、电脑 B 的都不动。
+  devices.register('conn-1', [
+    { ...rosterRow('phone-on-a', 'tok-a'), revokedAt: 1 },
+    rosterRow('tablet-on-a', 'tok-tablet'),
+  ])
+  assert.equal(devices.classify('tok-a'), 'revoked')
+  assert.equal(devices.classify('tok-tablet'), 'ok')
+  assert.equal(devices.classify('tok-b'), 'ok')
+  assert.deepEqual(face.handle(ticketByToken('tok-a')).body, { error: 'device-revoked' })
+  assert.equal(face.handle(ticketByToken('tok-b')).status, 201, '另一台电脑的票照发')
+})
+
 test('凭据不对 → 401（客户端据此换凭据，而不是拿同一个重试）', () => {
   const { face } = setup()
   // 既不是连接器令牌、也不在名册里
