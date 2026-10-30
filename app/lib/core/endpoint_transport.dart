@@ -223,10 +223,19 @@ class EndpointTransport implements ChannelTransport {
           );
           settle(_DialWin(stream));
           return;
-        } on TransportException catch (error) {
+        } catch (error) {
+          // 传输自己抛的东西都算"这条端点没拨通"：`TransportException` 原样用，
+          // 其它（例如换票链上漏出来的 `dart:io` 错误）包一层并**带上原文**。
+          //
+          // 少了这一层，非 TransportException 会从 `unawaited(dial(...))` 里飞出去，
+          // 变成一条 unhandled 异步错误 —— 而这一轮**永远收不到"失败"**
+          // （真机实测：断网时每轮一次，症状是"列表空、日志里一条网络异常"）。
+          final failure = error is TransportException
+              ? error
+              : TransportException('建连失败：$error');
           debugPrint(
             '[dial] ${endpoint.kind.name} ${endpoint.url} 失败 '
-            '(${DateTime.now().difference(attemptStart).inMilliseconds}ms): ${error.message}',
+            '(${DateTime.now().difference(attemptStart).inMilliseconds}ms): ${failure.message}',
           );
           await _closeQuietly(transport);
           // 终态也照旧报一次拨号结果：它是事实（这一轮确实没通），
@@ -235,17 +244,17 @@ class EndpointTransport implements ChannelTransport {
             endpoint,
             EndpointAttempt(
               ok: false,
-              reason: error.message,
+              reason: failure.message,
               atMs: DateTime.now().millisecondsSinceEpoch,
             ),
           );
-          failures.add(_DialFailure(index, endpoint, error));
+          failures.add(_DialFailure(index, endpoint, failure));
           // **终态错误不再换端点**：身份不被认（换票被拒 → `notPaired`）时，
           // 换端点只会把"为什么连不上"弄丢（直连要到握手处才失败，
           // reason 变成 close 4003，而 401 那个"电脑不认本机"的信号会被掩盖）。
           // 已经在飞的连接收不回来（没有取消缝），但**尚未开始的端点不再拨**。
-          if (error.code?.clientAction == ClientAction.rePair) {
-            settle(_Fatal(error, StackTrace.current));
+          if (failure.code?.clientAction == ClientAction.rePair) {
+            settle(_Fatal(failure, StackTrace.current));
           }
           return;
         }

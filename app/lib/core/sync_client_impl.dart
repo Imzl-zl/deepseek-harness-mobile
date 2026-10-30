@@ -276,6 +276,9 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     if (_machine.isAnyOf([
       ConnectionState.serving,
       ConnectionState.handshake,
+      // **`connecting` 也要挡**：启动与回前台可能各调一次 `start()`，
+      // 而对 `connecting` 再 `to(connecting)` 就是非法迁移（真机启动那一拍双触发的形状）。
+      ConnectionState.connecting,
     ])) {
       return;
     }
@@ -307,6 +310,11 @@ class _SyncClient implements SyncClient, SyncClientProbe {
 
   Future<void> _connect() async {
     if (_closed) return;
+    // **这一轮的代号**：拨号要跨 `await`，而"上一轮的收口 / 定时器 / 保持在途的
+    // 拨号"都可能在这期间落地。过期的那一轮回来后**不许再动连接**
+    // （否则就是"backoff → handshake"这种非法迁移，真机实测每轮重连都撞）。
+    // 同一个手法在电脑侧的 `connection-scope.ts` 里叫 `generation`。
+    final attempt = ++_attemptSeq;
     _machine.to(ConnectionState.connecting);
     // 每次建连换**一整份**每连接资源（新密钥、新计数器、新分帧器）—— §4.2。
     _res = ConnectionResources();
@@ -315,6 +323,9 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     try {
       events = await _deps.transport.connect();
     } catch (error) {
+      // 过了 `await` 就先判"这一轮还算不算数"：已收口 / 已被新一轮顶替时，
+      // 这里再收口一次只会把**新那一轮**推成 backoff（真机症状见上面的注释）。
+      if (_closed || attempt != _attemptSeq) return;
       // 建连失败：关掉（如果还开着）并进退避。
       //
       // **必须记进诊断面**：这条路上原先什么都不留 —— 于是"连不上"在界面上
@@ -335,10 +346,18 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       return;
     }
 
+    // 拨号回来了：这一轮仍是当前那一轮，才把流交出去并进握手态。
+    //
+    // 过期的那一轮**什么都不做**：它的 socket 由拨号层自己收（下一次 `connect()`
+    // 开头的 `_disposeActive` 会关掉"当前活跃"的那条），这里绝不能去关整个传输 ——
+    // 那会把**新一轮**刚赢下来的 socket 一起关掉（同一个 transport 实例）。
+    if (_closed || attempt != _attemptSeq) return;
     _res.attachSubscription(
       events.listen(
         _onTransportEvent,
-        onError: (Object error) => _enterClosed(),
+        onError: (Object error) {
+          if (attempt == _attemptSeq) _enterClosed();
+        },
         cancelOnError: false,
       ),
     );
@@ -1218,6 +1237,10 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   void _onStateChanged(ConnectionState from, ConnectionState to) {
     // **终态不进退避**：身份不被认（`_lastConnectWasTerminal`）时，连接停在这里
     // 等上层清凭据回配对页；自动退避只会每次都拿到同一个 401（议题 2）。
+    if (to == ConnectionState.closed && !_closed) {
+      // 收口 = 这一轮作废：在途的拨号回来后看到代号变了，就不会再动连接。
+      _attemptSeq += 1;
+    }
     if (to == ConnectionState.closed &&
         !_closed &&
         !_lastConnectWasTerminal &&
@@ -1233,9 +1256,12 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       // 但也不是再也不试。抖动与快退避同一处实现（`core/connection.dart`）。
       if (_backoff.exhausted) _connectGaveUp = true;
       final delay = _backoff.exhausted ? _backoff.nextSlow() : _backoff.next();
+      // 定时器也带上代号：到点时若已经有一轮在跑（例如回前台刚发起过一次），
+      // 它**不许**再发起第二轮 —— 两轮同时在飞，先回来的那条会把状态机推歪。
+      final scheduledFor = _attemptSeq;
       _cancelBackoff = _schedule(() {
         _cancelBackoff = null;
-        if (_closed) return;
+        if (_closed || scheduledFor != _attemptSeq) return;
         if (_appState != AppState.foreground) {
           _machine.to(ConnectionState.idle);
           return;
@@ -1247,13 +1273,16 @@ class _SyncClient implements SyncClient, SyncClientProbe {
 
   void _startTicking() {
     _cancelTick?.call();
+    // 心跳/半开判定也带代号：上一轮的 tick 若在收口的同时落地，
+    // 它不许去收口**新一轮**（这正是真机上"每轮重连都撞 backoff→handshake"的一种来源）。
+    final tickingFor = _attemptSeq;
     // 判定周期取心跳的 1/4：够密，又不必为每次判定设一个精确到毫秒的闹钟。
     final period = (_keepalive.halfOpenAfterMs ~/ (halfOpenPeriods * 4)).clamp(
       10,
       1 << 30,
     );
     void run() {
-      if (_closed) return;
+      if (_closed || tickingFor != _attemptSeq) return;
       final action = _keepalive.tick(_now());
       switch (action) {
         case KeepalivePing():
@@ -1386,6 +1415,14 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   /// 而被占用**什么都不该清**，只停自动重连（决策 9：连哪台、什么时候连是用户的动作）。
   /// `reconnect()`（手动重试）照常放行。
   bool _lastConnectBusy = false;
+
+  /// 建连轮次的代号（每次 `_connect()` +1，每次收口 +1）。
+  ///
+  /// 拨号要跨 `await`，而"上一轮的收口 / 退避定时器 / 在途的半开判定"都可能
+  /// 在这期间落地。**过期的一轮不许再动连接** —— 少了这个判据，真机上每次
+  /// 重连都会撞"backoff → handshake"的非法迁移（实测：换网/弱网时每轮都撞，
+  /// 于是永远连不上，而两端日志各自看起来都正常）。
+  int _attemptSeq = 0;
 
   /// 连续失败太多次、已经停止自动重连（见 `_onStateChanged`）。
   ///

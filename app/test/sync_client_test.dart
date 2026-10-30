@@ -35,6 +35,12 @@ class FakeTransport implements ChannelTransport {
   /// 连接建立是否失败（测退避用）。
   bool failConnect;
 
+  /// 从第几次建连开始失败（默认 1 = 每次）。
+  ///
+  /// 用于"首轮在飞、次轮失败"的场景：光有 [failConnect] 会让**首轮**回来时
+  /// 也失败 —— 那样测到的是失败分支，成功分支的过期判据就没人守。
+  int failConnectFrom = 1;
+
   /// 建连时抛一个**带错误码**的传输错误（测"换票被拒 → 终态不进退避"）。
   ///
   /// 优先于 [failConnect]：给了它就抛它（如 `TransportException(..., code: notPaired)`）。
@@ -46,15 +52,28 @@ class FakeTransport implements ChannelTransport {
   /// 建立连接的次数（测重连）。
   int connectCount = 0;
 
+  /// 首轮 `connect()` 卡在它上面（模拟"这一轮拨号还在飞"）。
+  ///
+  /// 用于回归"过期的一轮拨号回来后不许动连接"：真机上断网 / 换网时，
+  /// 上一轮的拨号可能比收口晚回来好几秒。
+  Completer<void>? firstConnectGate;
+
   /// 关闭次数。
   int closeCount = 0;
 
   @override
   Future<Stream<TransportEvent>> connect() async {
     connectCount += 1;
+    // **这一通电话是第几通**要在入口记下来：卡在 gate 上时后来可能又发起过几次，
+    // 用字段值判断会把"第 1 通回来"错当成"第 N 通"（那条成功路径就没人测了）。
+    final thisCall = connectCount;
+    final gate = firstConnectGate;
+    if (thisCall == 1 && gate != null) await gate.future;
     final coded = failConnectWith;
     if (coded != null) throw coded;
-    if (failConnect) throw const TransportException('连不上');
+    if (failConnect && thisCall >= failConnectFrom) {
+      throw const TransportException('连不上');
+    }
     _controller = StreamController<TransportEvent>();
     return _controller!.stream;
   }
@@ -68,9 +87,16 @@ class FakeTransport implements ChannelTransport {
   @override
   Future<void> close() async {
     closeCount += 1;
-    if (_controller != null && !_controller!.isClosed) {
-      await _controller!.close();
+    final controller = _controller;
+    if (controller == null || controller.isClosed) return;
+    // **没人听的流，`close()` 的 future 永远不完成**（单订阅控制器的 done 事件
+    // 要等一个监听者才会投递）。真实传输没有这个形状；替身里必须分开处理，
+    // 否则"过期的那一轮没把流交出去"会把测试挂死在 close 上（实测 30 s 超时）。
+    if (!controller.hasListener) {
+      unawaited(controller.close());
+      return;
     }
+    await controller.close();
   }
 
   /// 从"对端"喂一片原始数据。
@@ -82,6 +108,9 @@ class FakeTransport implements ChannelTransport {
   void dropFromPeer({int? code, String? reason}) {
     _controller?.add(TransportClosed(code: code, reason: reason));
   }
+
+  /// 有没有人在听最近这份流（"过期的一轮把流交出去"的判据）。
+  bool get hasListener => _controller?.hasListener ?? false;
 
   /// 已发出的帧（解析后的）。
   List<Map<String, Object?>> get sentFrames => sent
@@ -872,6 +901,92 @@ void main() {
       await pump();
 
       await client.close();
+    });
+
+    test('过期的一轮拨号回来：不许动连接（真机那次 backoff→handshake 崩溃）', () async {
+      // 真机实测（断网 / 换网）：第 1 轮拨号还在飞时连接被收口、进了退避；
+      // 退避到点发起第 2 轮，第 2 轮很快失败 → 停在 backoff；
+      // 这时第 1 轮的拨号才回来（成功）。它若照旧 `to(handshake)`，
+      // 就是非法迁移 —— 每轮重连都崩一次，永远连不上，而两端日志都"正常"。
+      // 过期的一轮若照旧走下去，会先把这条流**交出去**（`attachSubscription`），
+      // 再撞非法迁移。所以判据是"它的流有没有被听"—— 比抓异步异常稳，
+      // 也不依赖 zone。
+      final errors = <Object>[];
+      await runZonedGuarded(
+        () async {
+          final f = buildDeps();
+          final gate = Completer<void>();
+          f.transport.firstConnectGate = gate;
+          final client = createSyncClient(f.deps);
+          unawaited(client.start());
+          await pump();
+          expect(
+            client.state,
+            ConnectionState.connecting,
+            reason: '第 1 轮卡在拨号里',
+          );
+
+          // 第 2 轮：立刻失败 → 停在 backoff（**首轮不在失败范围内**：它待会儿要
+          // 带着一条成功的流回来，正是要验的那条路径）。
+          f.transport.failConnect = true;
+          f.transport.failConnectFrom = 2;
+          await client.reconnect();
+          await pump();
+          expect(client.state, ConnectionState.backoff);
+
+          // 第 1 轮的拨号现在才回来（成功）：这一轮已经过期。
+          gate.complete();
+          await pump();
+
+          expect(
+            client.state,
+            ConnectionState.backoff,
+            reason: '过期的一轮不许把状态推到 handshake',
+          );
+          expect(
+            f.transport.hasListener,
+            isFalse,
+            reason: '过期那一轮的流不许交给当前连接（交出去就是又进了握手）',
+          );
+          await client.close();
+        },
+        (error, stack) {
+          errors.add(error);
+        },
+      );
+
+      expect(
+        errors,
+        isEmpty,
+        reason: '过期的一轮不许动连接：真机那次非法迁移（backoff → handshake）就是这么来的',
+      );
+    });
+
+    test('已经在连接中再调 start()：不重复发起（启动那一拍会双触发）', () async {
+      // 启动与"回前台"各会调一次 `start()`；第二次撞上 `connecting` 时若照旧
+      // `to(connecting)`，就是非法迁移（真机启动那一拍的形状）。
+      final errors = <Object>[];
+      await runZonedGuarded(() async {
+        final f = buildDeps();
+        final gate = Completer<void>();
+        f.transport.firstConnectGate = gate;
+        final client = createSyncClient(f.deps);
+        unawaited(client.start());
+        await pump();
+        expect(client.state, ConnectionState.connecting);
+
+        await client.start(); // 第二次：应当原地返回
+        expect(f.transport.connectCount, 1, reason: '已在连接中，不重复发起');
+
+        gate.complete();
+        await pump();
+        expect([
+          ConnectionState.handshake,
+          ConnectionState.serving,
+        ], contains(client.state));
+        await client.close();
+      }, (error, stack) => errors.add(error));
+      expect(errors, isEmpty);
     });
 
     test('换票被限流（429 → rateLimited）→ **照旧退避重试**，不是终态', () async {
