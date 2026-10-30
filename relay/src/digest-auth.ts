@@ -27,6 +27,24 @@ import { createHash } from 'node:crypto'
 export interface Authenticated {
   kind: 'connector'
   id: string
+  /**
+   * 多少台连接器属于同一个人（可选，来自配置里的 `owner`）。
+   *
+   * 中转本身不需要"用户"这个概念：路由、名册、票全都按 `(connectorId, deviceId)` 走，
+   * 已经分得清"这台手机在哪台电脑名下"。`owner` 只服务**按人**的那些东西 ——
+   * 限流（一个人的三台电脑共用一个桶，而不是每台各 60 rps）与日志归属。
+   */
+  owner?: string
+}
+
+/**
+ * 限流桶的键。
+ *
+ * 配了 `owner` 就按人分桶：那台用户的三台电脑共用一个预算 —— 否则"多开两台电脑"
+ * 就是绕过限流的免费办法。没配就退回按连接器分桶（保底行为，与旧配置一致）。
+ */
+export function rateKeyOf(who: Authenticated): string {
+  return who.owner === undefined ? `connector:${who.id}` : `user:${who.owner}`
 }
 
 /** 一条令牌摘要（配置里的一行）。 */
@@ -36,6 +54,8 @@ export interface TokenDigest {
   id: string
   /** `sha256(令牌)` 的十六进制。 */
   hash: string
+  /** 这台连接器属于谁（可选；同一人的多台电脑写同一个值）。见 `Authenticated.owner`。 */
+  owner?: string
   /**
    * 吊销时间（§12 的中转表里就是 `revoked_at`：**软吊销**，行留着）。
    *
@@ -76,7 +96,11 @@ export function createDigestAuthenticator(entries: readonly TokenDigest[]): Dige
     if (table.has(entry.hash)) {
       throw new Error(`令牌摘要表里有重复条目（${entry.hash.slice(0, 8)}…）：拒绝启动，先修配置`)
     }
-    table.set(entry.hash, { kind: 'connector', id: entry.id })
+    table.set(entry.hash, {
+      kind: 'connector',
+      id: entry.id,
+      ...(entry.owner === undefined || entry.owner === '' ? {} : { owner: entry.owner }),
+    })
   }
 
   const authenticate = ((token: string) => table.get(digestOf(token))) as DigestAuthenticator & {

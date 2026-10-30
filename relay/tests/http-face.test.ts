@@ -172,6 +172,30 @@ test('一台手机配了两台电脑 = 两条独立名册行：票各绑各的�
   assert.equal(face.handle(ticketByToken('tok-b')).status, 201, '另一台电脑的票照发')
 })
 
+test('限流桶的键：连接器配了 owner 就按人分桶，没配按连接器，设备按设备', () => {
+  // 键由 `http-face` 拼、桶由 `server.ts` 的 limiter 存。这里钉住"拼出来的是什么"，
+  // 否则 `owner` 配了也白配（一个人多开电脑就等于多领预算）。
+  const seen: string[] = []
+  const core = createRelayCore()
+  const devices = createDeviceRegistry()
+  const tickets = createTicketStore({ randomBytes: (size) => new Uint8Array(size).fill(7) })
+  const face = createHttpFace({
+    tickets,
+    core,
+    devices,
+    authenticate: (token) => TOKENS[token],
+    rateLimit: (key) => { seen.push(key); return { allowed: true, retryAfterMs: null } },
+  })
+  core.attachConnector('conn-1')
+  devices.register('conn-1', [rosterRow(DEVICE_ID, DEVICE_TOKEN)])
+
+  face.handle(ticketByToken(DEVICE_TOKEN))
+  assert.equal(seen.at(-1), `device:${DEVICE_ID}`, '设备按它自己的 id 分桶')
+
+  face.handle({ method: 'POST', path: '/devices', token: 'connector-token-1', body: { devices: [] } })
+  assert.equal(seen.at(-1), 'connector:conn-1', '连接器没配 owner 时按连接器分桶')
+})
+
 test('凭据不对 → 401（客户端据此换凭据，而不是拿同一个重试）', () => {
   const { face } = setup()
   // 既不是连接器令牌、也不在名册里

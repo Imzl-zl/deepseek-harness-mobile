@@ -14,7 +14,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 
-import { createDigestAuthenticator, type TokenDigest } from '../src/digest-auth.ts'
+import { createDigestAuthenticator, rateKeyOf, type TokenDigest } from '../src/digest-auth.ts'
 
 const hash = (token: string): string => createHash('sha256').update(token, 'utf8').digest('hex')
 
@@ -43,6 +43,23 @@ test('摘要表里有重复：**拒绝启动**（否则"谁是谁"看运气）',
     () => createDigestAuthenticator([...ENTRIES, { kind: 'connector', id: 'conn-3', hash: hash('connector-token-1') }]),
     /重复条目/,
   )
+})
+
+test('owner：同一人的多台电脑带同一个值，限流桶按**人**算（没配就退回按连接器）', () => {
+  // 中转本身不需要"用户"：路由与名册全按 (connectorId, deviceId) 走，已经分得清
+  // "这台手机在哪台电脑名下"。`owner` 只服务按人的东西 —— 限流与日志归属。
+  // 没有它，一个人多开几台电脑就等于多领几份限流预算（绕过限流的免费办法）。
+  const authenticate = createDigestAuthenticator([
+    { kind: 'connector', id: 'home-pc', hash: hash('t-home'), owner: 'alice' },
+    { kind: 'connector', id: 'work-pc', hash: hash('t-work'), owner: 'alice' },
+    { kind: 'connector', id: 'solo', hash: hash('t-solo') },
+  ])
+  assert.deepEqual(authenticate('t-home'), { kind: 'connector', id: 'home-pc', owner: 'alice' })
+  assert.equal(rateKeyOf(authenticate('t-home')!), rateKeyOf(authenticate('t-work')!), '同一个人的两台电脑共用一个桶')
+  assert.equal(rateKeyOf(authenticate('t-work')!), 'user:alice')
+  assert.equal(rateKeyOf(authenticate('t-solo')!), 'connector:solo', '没配 owner 按连接器分桶（旧行为）')
+  // owner 不参与路由：同一人的两台电脑仍然是两个独立身份。
+  assert.notEqual(authenticate('t-home')!.id, authenticate('t-work')!.id)
 })
 
 test('表里出现 device 条目：**拒绝建表**（v2 起中转只签连接器令牌）', () => {

@@ -46,6 +46,13 @@ export interface TokenConfigEntry {
   kind: 'connector'
   id: string
   hash: string
+  /**
+   * 这台连接器属于谁（可选）。同一人的多台电脑写同一个值。
+   *
+   * 只影响**按人**的东西：限流桶与日志归属（见 `digest-auth.ts` 的 `rateKeyOf`）。
+   * 路由、名册、票都不看它 —— 那些按 `(connectorId, deviceId)` 走。
+   */
+  owner?: string
   /** 吊销时间（§12 的 `revoked_at`：**软吊销**）。见 `digest-auth.ts` 的说明。 */
   revokedAt?: number
 }

@@ -1,6 +1,6 @@
 /** HTTP 边界：公开邀请只准入候选，正式设备仍由电脑登记的令牌认证。 */
 import { deviceIdOf, parsePairingCandidate } from '../../protocol/relay-control.mjs'
-import type { Authenticated } from './digest-auth.ts'
+import { rateKeyOf, type Authenticated } from './digest-auth.ts'
 import type { RelayCore } from './core.ts'
 import type { DeviceRegistry, DeviceRegistration } from './device-registry.ts'
 import type { TicketStore } from './tickets.ts'
@@ -88,7 +88,8 @@ export function createHttpFace(options: HttpFaceOptions): HttpFace {
           },
         }
       }
-      const denied = limited(`${caller?.kind ?? 'device'}:${caller?.id ?? deviceId}`)
+      // 连接器按 `owner`（配了的话）分桶，设备按自己的 id 分桶 —— 见 `rateKeyOf`。
+      const denied = limited(caller === undefined ? `device:${deviceId ?? ''}` : rateKeyOf(caller))
       if (denied !== undefined) return denied
 
       if (request.path === '/ws-ticket') {

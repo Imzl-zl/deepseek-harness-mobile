@@ -10,6 +10,7 @@ import {
 import { createRelayCore, type RelayCore, type Delivery } from './core.ts'
 import { createDeviceRegistry, type DeviceRegistry } from './device-registry.ts'
 import { createHttpFace, type Authenticated } from './http-face.ts'
+import { rateKeyOf } from './digest-auth.ts'
 import { createRateLimiter } from './rate-limit.ts'
 import { createTicketStore } from './tickets.ts'
 import { PAIRING_REGISTRATION_TTL_MS } from './pairing-registry.ts'
@@ -201,7 +202,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
       if (links.get(channelId)?.[kind] === ws) closeLink(channelId)
     })
   }
-  function acceptControl(ws: WebSocket, connectorId: string): void {
+  function acceptControl(ws: WebSocket, connectorId: string, owner?: string): void {
     const previous = controls.get(connectorId)
     if (previous !== undefined) {
       detachControl(connectorId)
@@ -214,7 +215,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
     ws.on('message', () => ws.close(1008, 'control channel is notification only'))
     ws.on('close', () => { if (controls.get(connectorId) === state) detachControl(connectorId) })
     ws.on('error', (error) => { log?.warn('控制连接出错', error); ws.close() })
-    log?.info(`连接器 ${connectorId} 控制面已连接`)
+    log?.info(`连接器 ${connectorId} 控制面已连接${owner === undefined ? '' : `（owner=${owner}）`}`)
   }
   function acceptDevice(ws: WebSocket, binding: DeviceBinding): void {
     const previous = core.channelOf(binding.connectorId, binding.deviceId)
@@ -245,7 +246,8 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
     if (url.pathname === '/ws/connector') {
       const caller = options.authenticate(bearerOf(request.headers.authorization) ?? '')
       if (caller?.kind !== 'connector') { refuse(socket, 401, 'Unauthorized'); return }
-      if (!limiter.take(`connector:${caller.id}`).allowed) { refuse(socket, 429, 'Too Many Requests'); return }
+      // 配了 `owner` 的连接器按**人**分桶：多开几台电脑不该等于多领几个预算。
+      if (!limiter.take(rateKeyOf(caller)).allowed) { refuse(socket, 429, 'Too Many Requests'); return }
       const deviceId = url.searchParams.get('dev')
       const channelId = url.searchParams.get('channel')
       if (deviceId === null && channelId === null) {
@@ -261,7 +263,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
           refuse(socket, 403, 'Forbidden')
           return
         }
-        wss.handleUpgrade(request, socket, head, (ws) => acceptControl(ws, caller.id))
+        wss.handleUpgrade(request, socket, head, (ws) => acceptControl(ws, caller.id, caller.owner))
         return
       }
       const channel = channelId === null ? undefined : core.channel(channelId)

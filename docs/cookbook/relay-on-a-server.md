@@ -66,6 +66,8 @@ node -e "const W=require('ws');const w=new W('ws://127.0.0.1:8787/ws/connector',
    ```bash
    docker compose run --rm relay \
      node src/main.ts --config /config/relay.config.json --issue-token connector home-pc
+     # 同一个人的第二台电脑：加 --owner，限流按人共用一个桶（不配则按连接器各算各的）
+     node src/main.ts --config /config/relay.config.json --issue-token connector office-pc --owner alice
    ```
    输出里那串令牌只出现一次，交给电脑侧。
 3. **连接器**：在这台电脑的 DSH 里打开「手机」面板 →「连接」卡，地址填

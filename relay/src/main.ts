@@ -73,12 +73,21 @@ if (issueArgs.length === 2) {
     process.exit(2)
   }
   if (id === undefined || id === '') {
-    console.error('用法: --issue-token connector <连接器 id>')
+    console.error('用法: --issue-token connector <连接器 id> [--owner <用户>]')
     process.exit(2)
   }
+  // `--owner <名字>`（可选）：同一人的多台电脑写同一个 owner，限流按**人**分桶。
+  // 不配就按连接器分桶 —— 那是旧行为，也是"每人一台电脑"时的等价形状。
+  const owner = argValue('--owner')
   const issued = issueToken({ kind, id })
-  const tokens = await appendTokenToConfig(configPath, { kind, id, hash: issued.hash })
-  console.log(`已签发 ${kind} 令牌（id=${id}）。摘要已写进 ${configPath}（现在 ${tokens.length} 条）。`)
+  const tokens = await appendTokenToConfig(configPath, {
+    kind, id, hash: issued.hash,
+    ...(owner === undefined || owner === '' ? {} : { owner }),
+  })
+  console.log(
+    `已签发 ${kind} 令牌（id=${id}${owner === undefined ? '' : `，owner=${owner}`}）。`
+    + `摘要已写进 ${configPath}（现在 ${tokens.length} 条）。`,
+  )
   console.log('令牌**只显示这一次**，请立刻交给对端：')
   console.log(issued.token)
   process.exit(0)
