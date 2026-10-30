@@ -73,6 +73,8 @@ export interface MeteringOptions {
 
 export interface Metering {
   readonly enforce: QuotaEnforce
+  /** 结算周期（面板显示用）。 */
+  readonly period: QuotaPeriod
   /** 这条连接器算在谁名下（额度主体）。 */
   subjectOf(connectorId: string): string
   /** 记一笔字节（帧边界调用，同步、无分配）。 */
@@ -81,6 +83,8 @@ export interface Metering {
   check(connectorId: string): { exceeded: boolean; retryAfterMs: number | null }
   usedOf(subject: string): number
   limitOf(subject: string): number
+  /** 运行时改额度（面板）：只改内存里的覆盖值，落盘由装配方负责。 */
+  setLimit(subject: string, bytes: number): void
   reset(subject: string): boolean
   snapshot(): readonly MeterRow[]
   /** 落盘用的快照（只含当前周期有效的行）。 */
@@ -110,7 +114,16 @@ export function nextBoundaryOf(at: number, period: QuotaPeriod): number | undefi
 export function createMetering(options: MeteringOptions): Metering {
   const { quota } = options
   const now = options.now ?? (() => Date.now())
+  /**
+   * 运行时的额度覆盖（面板改的那一格）。
+   *
+   * 与配置里的 `quota.owners` **不是**两份真相：面板改完会把它写回配置（装配方负责），
+   * 重启后从这里读回来的是配置值。内存里这份只是"不必重启就生效"的那一步。
+   */
+  const overrides = new Map<string, number>()
   const limitOfSubject = (subject: string): number => {
+    const runtime = overrides.get(subject)
+    if (runtime !== undefined) return runtime
     if (subject.startsWith('user:')) {
       const owner = subject.slice('user:'.length)
       return quota.owners?.[owner] ?? quota.defaultBytes
@@ -156,6 +169,7 @@ export function createMetering(options: MeteringOptions): Metering {
 
   return {
     enforce: quota.enforce,
+    period: quota.period,
     subjectOf,
 
     charge(connectorId, bytes) {
@@ -183,6 +197,14 @@ export function createMetering(options: MeteringOptions): Metering {
     usedOf(subject) { return rowOf(subject).bytes },
     limitOf(subject) { return limitOfSubject(subject) },
 
+    setLimit(subject, bytes) {
+      // 只接受**已知主体**：已有计数行，或配置里点名的人。面板不该成为"新额度主体"的入口。
+      const known = meters.has(subject)
+        || (subject.startsWith('user:') && Object.hasOwn(quota.owners ?? {}, subject.slice('user:'.length)))
+      if (!known) throw new Error('没有这个额度主体')
+      overrides.set(subject, bytes)
+    },
+
     reset(subject) {
       const row = meters.get(subject)
       if (row === undefined) return false
@@ -195,6 +217,13 @@ export function createMetering(options: MeteringOptions): Metering {
       const rows: MeterRow[] = []
       for (const [subject, row] of meters) {
         rows.push({ subject, used: row.bytes, limit: limitOfSubject(subject), period: row.period })
+      }
+      // 配置里点名的、这个周期还没用过的也要出现在面板上（否则"额度 100 MB"那行
+      // 要等对方传了字节才凭空冒出来）；键来自配置，不放大表。
+      for (const owner of Object.keys(quota.owners ?? {})) {
+        const subject = `user:${owner}`
+        if (meters.has(subject)) continue
+        rows.push({ subject, used: 0, limit: limitOfSubject(subject), period: periodKeyOf(now(), quota.period) })
       }
       return rows
     },

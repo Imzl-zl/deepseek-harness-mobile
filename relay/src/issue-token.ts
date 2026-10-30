@@ -128,6 +128,50 @@ export async function revokeTokenInConfig(
   return { tokens, revoked }
 }
 
+/**
+ * 恢复一条被软吊销的令牌（把 `revokedAt` 拿掉）。
+ *
+ * 与 `revokeTokenInConfig` 对称：面板的"恢复"按钮走这里，**不是**重新签发 ——
+ * 重新签发会让对端那串旧令牌彻底作废，而"恢复"的语义正是"那串还能用"。
+ */
+export async function restoreTokenInConfig(
+  configPath: string,
+  spec: TokenKind,
+): Promise<{ tokens: TokenConfigEntry[]; restored: boolean }> {
+  const raw = await readFile(configPath, 'utf8')
+  const config = JSON.parse(raw) as { tokens?: TokenConfigEntry[] }
+  let restored = false
+  const tokens = (config.tokens ?? []).map((entry) => {
+    if (entry.kind !== spec.kind || entry.id !== spec.id || entry.revokedAt === undefined) return entry
+    restored = true
+    const { revokedAt: _dropped, ...rest } = entry
+    return rest
+  })
+  if (restored) await writeFile(configPath, `${JSON.stringify({ ...config, tokens }, null, 2)}\n`, 'utf8')
+  return { tokens, restored }
+}
+
+/**
+ * 把某人的额度覆盖写进配置（面板的"改额度"）。
+ *
+ * **没有 `quota` 段就直接报错**：只写 `owners` 会造出一段缺 `period`/`enforce`/
+ * `defaultBytes` 的半截配置，下次启动会被 `main.ts` 的校验拒掉 —— 那是把面板的
+ * 一次误操作变成"中转起不来"。
+ */
+export async function setQuotaOwnerInConfig(
+  configPath: string,
+  owner: string,
+  bytes: number,
+): Promise<void> {
+  const raw = await readFile(configPath, 'utf8')
+  const config = JSON.parse(raw) as { quota?: { owners?: Record<string, number> } }
+  if (config.quota === undefined) {
+    throw new Error('配置里没有 quota 段：先加一段再改额度（只写 owners 会造出半截配置）')
+  }
+  const quota = { ...config.quota, owners: { ...(config.quota.owners ?? {}), [owner]: bytes } }
+  await writeFile(configPath, `${JSON.stringify({ ...config, quota }, null, 2)}\n`, 'utf8')
+}
+
 /** 配置里的管理面段（`admin`）：只放摘要。 */
 export interface AdminConfigEntry {
   id: string

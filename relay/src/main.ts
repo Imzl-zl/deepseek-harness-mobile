@@ -25,8 +25,12 @@
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-import { createDigestAuthenticator, type TokenDigest } from './digest-auth.ts'
-import { appendTokenToConfig, issueToken, revokeTokenInConfig, setAdminInConfig } from './issue-token.ts'
+import type { TokenDigest } from './digest-auth.ts'
+import {
+  appendTokenToConfig, issueToken, restoreTokenInConfig, revokeTokenInConfig,
+  setAdminInConfig, setQuotaOwnerInConfig,
+} from './issue-token.ts'
+import { createTokenTable } from './token-table.ts'
 import { createJsonLogger } from './json-logger.ts'
 import { readMeteringState } from './metering-state.ts'
 import { startRelay } from './server.ts'
@@ -210,15 +214,51 @@ if (entries.length === 0) {
   process.exit(2)
 }
 
-let authenticate: ReturnType<typeof createDigestAuthenticator>
+/**
+ * 摘要表在 `main` 里持有（而不是只交出一个 authenticate 函数）：面板的吊销/恢复
+ * 要能在运行中改它，而"改哪里"必须只有一处。
+ */
+let table: ReturnType<typeof createTokenTable>
 try {
-  authenticate = createDigestAuthenticator(entries)
+  table = createTokenTable(entries)
 } catch (error) {
   // 配置错就**明确失败**：带着 device 条目的中转"起来了但谁都连不上"（设备 403、
   // 连接器可能还正常），那种半死状态比起不来难查得多。与下面"没有 tokens 直接退出"
   // 是同一条纪律。
   console.error(`配置里的令牌摘要表不可用：${error instanceof Error ? error.message : String(error)}`)
   process.exit(2)
+}
+const authenticate = (token: string) => table.authenticate(token)
+
+/**
+ * 面板的写动作落到配置文件（**与 CLI 共用同一套写法**：整份重写、保留其他键）。
+ *
+ * 失败一律回 `{ ok: false, error }`，由面板回 500 —— 绝不"界面说改好了、文件没变"。
+ */
+const adminOps = config.admin === undefined ? undefined : {
+  tokens: () => table.list(),
+  async setTokenEnabled(id: string, enabled: boolean): Promise<{ ok: boolean; error?: string }> {
+    try {
+      if (enabled) {
+        if (!table.restore(id)) return { ok: false, error: `配置里没有 id 为 ${id} 的令牌` }
+        await restoreTokenInConfig(configPath, { kind: 'connector', id })
+        return { ok: true }
+      }
+      if (!table.revoke(id)) return { ok: false, error: `配置里没有 id 为 ${id} 的令牌` }
+      await revokeTokenInConfig(configPath, { kind: 'connector', id })
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+  async persistQuota(owner: string, bytes: number): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await setQuotaOwnerInConfig(configPath, owner, bytes)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
 }
 // 额度主体来自**配置**（令牌条目里的 `owner`），不是运行时状态：连接器掉线不该让
 // "算在谁名下"跟着变。吊销的条目不参与（它连不上，也不该占着额度）。
@@ -247,6 +287,8 @@ const relay = await startRelay({
   ...(config.quota === undefined ? {} : { quota: config.quota }),
   ownerOf: (connectorId: string) => owners.get(connectorId),
   ...(quotaState === undefined ? {} : { quotaState }),
+  // 面板的写动作（没配 admin 就没有这张面，也就不传）。
+  ...(adminOps === undefined ? {} : { adminOps }),
   // 中转必须**留声**：它只转发与记账，出问题时（投递目标不在、丢弃、认证被拒）
   // 日志是唯一的线索。一行一个 JSON 事件（`json-logger.ts`）：容器里能 grep 字段，
   // 面板与排障读同一份东西。`debug` 级默认关（`DSH_RELAY_DEBUG=1` 打开）。
@@ -254,7 +296,7 @@ const relay = await startRelay({
 })
 
 console.log(
-  `中转已监听 ws://${config.host ?? '127.0.0.1'}:${relay.port}（摘要表 ${authenticate.size} 条`
+  `中转已监听 ws://${config.host ?? '127.0.0.1'}:${relay.port}（摘要表 ${table.size} 条`
   + `${config.admin === undefined ? '' : `，管理面 /admin 已启用（${config.admin.id}）`}）`,
 )
 

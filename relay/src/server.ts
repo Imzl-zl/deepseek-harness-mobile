@@ -11,6 +11,8 @@ import { createRelayCore, type RelayCore, type Delivery } from './core.ts'
 import { createDeviceRegistry, type DeviceRegistry } from './device-registry.ts'
 import { createHttpFace, type Authenticated } from './http-face.ts'
 import { createAdminAuthenticator, type AdminDigest } from './admin/auth.ts'
+import { ADMIN_PAGE } from './admin/page.ts'
+import { createAdminRoutes, type AdminApi, type AdminOps, type AdminStateView } from './admin/routes.ts'
 import { rateKeyOf } from './digest-auth.ts'
 import { createRateLimiter } from './rate-limit.ts'
 import { createMetering, type Metering, type QuotaConfig, type MeteringState } from './metering.ts'
@@ -22,6 +24,8 @@ import type { ChannelLogger } from './logger.ts'
 const MAX_BODY_BYTES = 1024 * 1024
 const CONTROL_HEARTBEAT_MS = 60_000
 const MAX_SEND_BUFFER_BYTES = 2 * MAX_WIRE_BYTES
+/** 管理面列表的封顶（每类）。超出只报总数：面板不能因为名册膨胀按住事件循环。 */
+const ADMIN_LIST_CAP = 500
 
 export interface RelayServerOptions {
   port: number
@@ -30,6 +34,11 @@ export interface RelayServerOptions {
   rateLimit?: { capacity: number; refillPerSecond: number }
   /** 管理面凭据（只放摘要）。不配 = 这张面不存在（`/admin*` 一律 404）。 */
   admin?: AdminDigest
+  /**
+   * 管理面的写动作落盘点（写配置文件由装配方负责）。不传 = 写操作回 501，
+   * 读面照常（测试与嵌入方可以只要只读面板）。
+   */
+  adminOps?: AdminOps
   /** 按人的流量额度。不配 = 只转发、不记账。 */
   quota?: QuotaConfig
   /**
@@ -119,10 +128,131 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
     rateLimit: (key) => limiter.take(key), ...(log === undefined ? {} : { log }),
     ...(quotaDenied === undefined ? {} : { quotaDenied }),
   })
-  const controls = new Map<string, { socket: WebSocket; alive: boolean }>()
+  const controls = new Map<string, {
+    socket: WebSocket
+    alive: boolean
+    /** 连上多久（面板"连接时长"）。 */
+    since: number
+    /** 最后一次 pong 的时刻（面板"最后心跳"）。 */
+    lastPongAt: number
+  }>()
   const links = new Map<string, Link>()
   /** 管理面认证。`undefined` = 没配凭据 ⇒ 这张面**不存在**（不是"开着但没人能进"）。 */
   const adminAuth = options.admin === undefined ? undefined : createAdminAuthenticator(options.admin)
+  /** 路由层在这里先占位：它的实现要等 `controls`/`links`/`metering` 都就位（HTTP 请求时才读）。 */
+  let adminRoutes: ReturnType<typeof createAdminRoutes> | undefined
+
+  if (adminAuth !== undefined) {
+    const actor = options.admin?.id ?? 'admin'
+    const adminJson = (status: number, body: unknown) =>
+      ({ status, contentType: 'application/json' as const, body: JSON.stringify(body) })
+    const api: AdminApi = {
+      state() {
+        const channelCounts = new Map<string, number>()
+        for (const link of links.values()) {
+          if (link.binding.purpose !== 'paired') continue
+          channelCounts.set(link.binding.connectorId, (channelCounts.get(link.binding.connectorId) ?? 0) + 1)
+        }
+        // 列表封顶：名册行数没有上限（契约"设备上限 不设上限"），面板不该因为一台
+        // 灌了几千行的连接器把事件循环按住；超出的只报总数（面板仍能看出异常）。
+        const connectors: Array<AdminStateView['connectors'][number]> = []
+        for (const [connectorId, state] of controls) {
+          if (connectors.length >= ADMIN_LIST_CAP) break
+          const owner = options.ownerOf?.(connectorId)
+          connectors.push({
+            connectorId,
+            ...(owner === undefined ? {} : { owner }),
+            since: state.since,
+            lastPongAt: state.lastPongAt,
+            channels: channelCounts.get(connectorId) ?? 0,
+          })
+        }
+        const channels: Array<AdminStateView['channels'][number]> = []
+        for (const [channelId, link] of links) {
+          if (channels.length >= ADMIN_LIST_CAP) break
+          channels.push({
+            channelId,
+            connectorId: link.binding.connectorId,
+            deviceId: link.binding.deviceId,
+            purpose: link.binding.purpose,
+            startedAt: link.startedAt,
+            forwardedBytes: link.forwardedBytes,
+          })
+        }
+        return {
+          v: 1,
+          now: Date.now(),
+          connectors,
+          channels,
+          totals: { connectors: controls.size, channels: links.size },
+          roster: {
+            devices: devices.stats.devices,
+            bound: devices.stats.bound,
+            published: devices.publishedCounts(),
+          },
+          quota: metering === undefined
+            ? null
+            : { period: metering.period, enforce: metering.enforce, rows: metering.snapshot() },
+          tokens: options.adminOps?.tokens() ?? [],
+        }
+      },
+
+      async setQuota(subject, bytes) {
+        if (metering === undefined) return adminJson(409, { error: 'quota-not-configured' })
+        try { metering.setLimit(subject, bytes) } catch { return adminJson(404, { error: 'unknown-subject' }) }
+        // 按人的覆盖写回配置；按连接器的覆盖只在本进程有效（配置里没有这一格）。
+        let persisted = false
+        if (subject.startsWith('user:') && options.adminOps !== undefined) {
+          const saved = await options.adminOps.persistQuota(subject.slice('user:'.length), bytes)
+          if (!saved.ok) return adminJson(500, { error: 'persist-failed', detail: saved.error ?? '' })
+          persisted = true
+        }
+        log?.info('admin.action', { actor, action: 'quota.set', subject, bytes, persisted })
+        return adminJson(200, { ok: true, persisted })
+      },
+
+      async resetQuota(subject) {
+        if (metering === undefined) return adminJson(409, { error: 'quota-not-configured' })
+        if (!metering.reset(subject)) return adminJson(404, { error: 'unknown-subject' })
+        log?.info('admin.action', { actor, action: 'quota.reset', subject })
+        return adminJson(200, { ok: true })
+      },
+
+      async disconnect(connectorId, deviceId) {
+        if (deviceId !== undefined) {
+          const channelId = core.channelOf(connectorId, deviceId)
+          if (channelId === undefined) return adminJson(404, { error: 'channel-not-found' })
+          log?.info('admin.action', { actor, action: 'channel.disconnect', connectorId, deviceId })
+          closeLink(channelId, 4000, 'admin disconnect')
+          return adminJson(200, { ok: true })
+        }
+        const control = controls.get(connectorId)
+        if (control === undefined) return adminJson(404, { error: 'connector-not-found' })
+        log?.info('admin.action', { actor, action: 'connector.disconnect', connectorId })
+        // 先摘表再关 socket：关闭事件到达时 `controls` 里已经没有它，不会重复收口。
+        detachControl(connectorId)
+        control.socket.close(4000, 'admin disconnect')
+        return adminJson(200, { ok: true })
+      },
+
+      async setTokenEnabled(id, enabled) {
+        if (options.adminOps === undefined) return adminJson(501, { error: 'admin-ops-not-wired' })
+        const saved = await options.adminOps.setTokenEnabled(id, enabled)
+        if (!saved.ok) return adminJson(500, { error: 'persist-failed', detail: saved.error ?? '' })
+        // 吊销要**立刻**把已在线的连接收掉（否则"已吊销"只是配置文件里的一个字段）。
+        if (!enabled) {
+          const control = controls.get(id)
+          if (control !== undefined) {
+            detachControl(id)
+            control.socket.close(4000, 'token revoked')
+          }
+        }
+        log?.info('admin.action', { actor, action: enabled ? 'token.restore' : 'token.revoke', id })
+        return adminJson(200, { ok: true })
+      },
+    }
+    adminRoutes = createAdminRoutes(api, ADMIN_PAGE)
+  }
 
   const http = createServer((request, response) => {
     void (async () => {
@@ -135,8 +265,28 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         // 未配置凭据：连"有没有这张面"都不回答 —— 404 与未知路径同形。
         // Note: 为什么管理凭据独立于连接器令牌、为什么没配就不存在 —— 见
         // `.agents/notes/implemented/2026-10-30-relay-mutable-token-table-and-admin-credential.md`
-        if (adminAuth === undefined) { reply(response, 404, { error: 'not-found' }); return }
-        if (request.method !== 'GET') { reply(response, 405, { error: 'method-not-allowed' }); return }
+        if (adminAuth === undefined || adminRoutes === undefined) {
+          reply(response, 404, { error: 'not-found' })
+          return
+        }
+        /**
+         * **页面本身不要令牌**：它只有一个输入框与渲染逻辑，没有任何数据。
+         * 要令牌的话浏览器永远进不去（打开 URL 不会带 `Authorization`），
+         * 也就没地方填令牌 —— 那是个自我锁死的设计。
+         * 数据接口（`/admin/api/*`）与写操作一律要 Bearer。
+         */
+        if (url.pathname === '/admin' || url.pathname === '/admin/') {
+          if (request.method !== 'GET') { reply(response, 405, { error: 'method-not-allowed' }); return }
+          const page = await adminRoutes.handle({ method: 'GET', path: '/admin' })
+          response.writeHead(page.status, {
+            'content-type': page.contentType,
+            'cache-control': 'no-store',
+            // 页面没有外链：只允许内联样式与脚本（`json-logger` 之外没有别的来源）。
+            'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+          })
+          response.end(page.body)
+          return
+        }
         response.setHeader('cache-control', 'no-store')
         const who = adminAuth(bearerOf(request.headers.authorization) ?? '')
         if (who === undefined) {
@@ -153,21 +303,20 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
           reply(response, 429, { error: 'rate-limited', retryAfterMs: 1_000 })
           return
         }
-        // 本期只有计数快照（面板的页面与写操作在下一批）。**没有任何写路径**。
-        if (url.pathname === '/admin/api/state') {
-          reply(response, 200, {
-            v: 1,
-            counters: {
-              connectors: core.stats.connectors,
-              channels: core.stats.channels,
-              tickets: tickets.stats.tickets,
-              devices: devices.stats.devices,
-              bound: devices.stats.bound,
-            },
-          })
-          return
+        let adminBody: unknown
+        if (request.method === 'POST') {
+          try { adminBody = await readBody(request) } catch {
+            reply(response, 400, { error: 'bad-request' })
+            return
+          }
         }
-        reply(response, 404, { error: 'not-found' })
+        const handled = await adminRoutes.handle({
+          method: request.method ?? 'GET',
+          path: url.pathname,
+          ...(adminBody === undefined ? {} : { body: adminBody }),
+        })
+        response.writeHead(handled.status, { 'content-type': handled.contentType, 'cache-control': 'no-store' })
+        response.end(handled.body)
         return
       }
       let body: unknown
@@ -355,10 +504,15 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
       detachControl(connectorId)
       previous.socket.close(4000, 'replaced')
     }
-    const state = { socket: ws, alive: true }
+    const startedAt = Date.now()
+    const state = { socket: ws, alive: true, since: startedAt, lastPongAt: startedAt }
     controls.set(connectorId, state)
     core.attachConnector(connectorId)
-    ws.on('pong', () => { if (controls.get(connectorId) === state) state.alive = true })
+    ws.on('pong', () => {
+      if (controls.get(connectorId) !== state) return
+      state.alive = true
+      state.lastPongAt = Date.now()
+    })
     ws.on('message', () => ws.close(1008, 'control channel is notification only'))
     ws.on('close', () => { if (controls.get(connectorId) === state) detachControl(connectorId) })
     ws.on('error', (error) => { log?.warn('connector.error', { connectorId, error }); ws.close() })

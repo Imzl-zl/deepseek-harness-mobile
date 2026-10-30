@@ -149,6 +149,44 @@ docker compose -f relay/docker-compose.yml logs --tail 3 relay   # 期望：中�
 - **连接器要先于或同时更新**：中转的控制面要求 `?id=<connectorId>`，旧连接器不带它就 403
   （`docs/subsystems/connector-and-relay.md` §1.6）。
 
+## 6.7 管理面板（中转自带，服务器上直接看）
+
+中转自己提供一页只读+可管的面板：在线连接器（id / 人 / 连接时长 / 最后心跳）、
+活跃通道（电脑 / 设备 / 用途 / 已转发字节）、按人额度、名册行数、令牌清单；
+能改某人额度、重置用量、断开连接、吊销/恢复令牌。**没有独立的端口** —— 它挂在
+中转同一个 `host:port` 的 `/admin` 下，所以安全组不用多开、反代不用多配。
+
+1. **签一个管理令牌**（在容器里，摘要写回挂载的配置；明文只出现一次）：
+
+   ```bash
+   docker compose run --rm relay \
+     node src/main.ts --config /config/relay.config.json --issue-admin ops
+   ```
+
+   输出里那串令牌存进密码管理器。配置里只会出现 `"admin": { "id": "ops", "hash": "…" }`。
+
+2. **重启中转**让新配置生效（`docker compose up -d relay`），然后打开：
+
+   - 有域名：`https://relay.example.com/admin`
+   - 只有公网 IP：`http://<公网IP>:8787/admin`
+
+3. **验证**（三条都要）：
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8787/admin          # 401
+   curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer <CLI令牌>" http://127.0.0.1:8787/admin   # 200
+   curl -s -H "Authorization: Bearer <CLI令牌>" http://127.0.0.1:8787/admin/api/state   # JSON：connectors/channels/quota/...
+   ```
+
+   4. **两个不要**：
+   - 不要在**明文**（`http://`）路径上长期用面板：管理令牌和连接器令牌是同一个暴露面，
+     链路上可读；有域名就放到 Caddy 后面（TLS 由它终结，面板自动跟着上）。
+   - 不要在面板写配置的同时跑 `--issue-token` / `--revoke-token`：两个进程整份重写
+     同一个 `relay.config.json`，后写的会覆盖先写的。串行操作。
+
+   面板的写操作只改配置里**按人**的额度（`quota.owners`）；按连接器主体的临时覆盖
+   只在本进程有效（配置里没有这一格），重启即回到 `defaultBytes`。
+
 ## 7. 已知边界
 
 - **中转重启会清空设备名册**：手机换票先拿到 401，但**这不是终态** —— 名册是电脑侧在

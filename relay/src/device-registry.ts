@@ -109,6 +109,8 @@ export interface DeviceRegistry {
   detachConnector(connectorId: string): number
   /** 观测：行数、有归属的行数。 */
   readonly stats: { devices: number; bound: number }
+  /** 每台连接器**上次报到**的行数（管理面用；只给数字，不给设备 id）。 */
+  publishedCounts(): Readonly<Record<string, number>>
 }
 
 const hashOf = (token: string): string => createHash('sha256').update(token, 'utf8').digest('hex')
@@ -171,6 +173,12 @@ export function createDeviceRegistry(options: DeviceRegistryOptions = {}): Devic
       let bound = 0
       for (const row of rows.values()) if (row.connectorId !== undefined) bound += 1
       return { devices: rows.size, bound }
+    },
+
+    publishedCounts() {
+      const counts: Record<string, number> = {}
+      for (const [connectorId, ids] of published) counts[connectorId] = ids.size
+      return counts
     },
 
     register(connectorId, incoming) {

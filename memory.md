@@ -21,30 +21,31 @@
 - **第二台设备 = 逐跳静态审查**（没有第二台真机）：出票 → 中转开通道 → 拨数据面 →
   `hello` → `peerOf` → `occupantOf` → 4003 → 中转转发 → `busy-wait` → 界面，逐跳核对后
   抓到并修掉**两个真漏洞**：① 中转把 4003 吞成 4000（门槛 4 走中转必失效）；② 停用只标
-  `revokedAt` 而不收连接（占用位已释放、旧 socket 还在收发）。另收紧两处竞态：换网重连
-  的迟到 `offline` 不删新记录（每连接令牌）；准入判"任何别的在线设备"（不只第一条）。
-  **旧数据/旧客户端兼容全删**（`?id=` 必带、凭据/UI 状态的平铺键迁移、端点元数据旧 id
-  补前缀）—— 协议未发版，没有存量。笔记 `implemented/2026-10-30-drop-legacy-compat.md`。
+  `revokedAt` 而不收连接。另收紧两处竞态（迟到 `offline` 不删新记录、准入判"任何别的在线
+  设备"）。**旧数据/旧客户端兼容全删** —— 协议未发版；笔记 `2026-10-30-drop-legacy-compat.md`。
   审计后仍**证明不了**两台"同时"握手那一瞬（要"在途占位"维度）。**停用**这条路今天
   才补上生产者：名册此前过滤停用行、中转解析又丢掉 `revokedAt`，`device-revoked`
   一直没人产出；现在停用行照样上报（带 `revokedAt`）。**删除改成"撤销后再清理"**
   （活跃行拒删，「删除」只在已停用段；多选的动作是停用）——笔记
   `implemented/2026-10-30-revoke-then-purge.md`。
+- **中转可观测/限额/面板（10-30，四批）**：摘要表可变（吊销即生效 + 接受前重验）；按人流量额度
+  （`quota`：UTC 周期惰性结算、`cut`/`block`/`off`、默认内存态、`persist` 才落盘、配对通道不计量）；
+  日志一行一个 JSON 事件（`json-logger.ts`，固定事件名，不记帧/令牌）；`/admin` 面板同端口、
+  管理摘要 Bearer、2 s 轮询、单文件（改额度/重置/断开/吊销；页面本身免令牌）。笔记
+  `implemented/2026-10-30-relay-*.md`（四篇）。
 - **面板 / 装配 / 端点 / 明文（10-29）**：「连接」卡只碰白名单三格 + 令牌三态（值永不过线）；
   `start-transport` 放过两种允许的缺席（缺令牌 / `listenPort = 0`）；装配层三处判据搬出
-  `index.ts`（`rebuild.ts` / `startup.ts` / `readConnectionState`，由 `assembly-wiring`
-  读源码盯）；`Endpoint.hostId` = 电脑公钥（不用 `pcId`，会撞），`dialOrder` 带失败冷却；
+  `index.ts`；`Endpoint.hostId` = 电脑公钥（不用 `pcId`，会撞），`dialOrder` 带失败冷却；
   明文 `ws://` 非公网放行、公网只认用户确认。笔记 `implemented/2026-10-29-*`（六篇）。
-- **通道全景**：`protocol/`（配对/握手/AEAD/流控/恢复）+ `relay/`（中转）+ `connector/`（电脑侧
-  网关）全部落地；手机侧 `app/lib/core/` 是连接层，`app/lib/wire/` 是**线上形状的唯一解码层**
-  （`wire/rpc/` 18 个面文件、46 个方法；`wire/` 外零 `call<`；方法面 52/50，差额 2 =
-  `credentials.set` / `credentials.unset`）。
+- **通道全景**：`protocol/` + `relay/`（中转）+ `connector/`（电脑侧网关）全部落地；手机侧
+  `app/lib/core/` 是连接层，`app/lib/wire/` 是**线上形状的唯一解码层**（`wire/rpc/` 18 个面、
+  46 个方法；`wire/` 外零 `call<`；方法面 52/50，差额 2 = `credentials.set`/`unset`）。
 - **UI**：各页全部接真数据，真机验收到 10-28。**唤醒判据**已照 DSH 的 `idleSteer` 修好：
   子智能体的 `agent-message` / `subagent-settled` 走 `next-step` 也算唤醒
   （`implemented/2026-10-28-turn-trigger-idle-steer.md`，现状 `turn-groups.md` §6.1）。
 - **未验**：图片上限四条、`readBytes` 预览、插件安装/卸载的真实 pnpm 流程；桌面四件事的真机
-  验收（**分支已通过**；改动卡/差异/提及需要一轮在**当前宿主进程里跑完**的对话 ——
-  记录是内存态，重启即丢）。`caps.changes` 真机 **true**；计划审查卡**有意不接**。
+  验收（分支已通过；改动卡/差异/提及要一轮**当前宿主进程里**跑完的对话，记录是内存态）。
+  `caps.changes` 真机 **true**；计划审查卡**有意不接**；中转面板只在本机浏览器验过。
 
 ## 下一步
 
@@ -71,7 +72,7 @@
 | `cd app && flutter test` | 1579 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **773** 项 |
-| `cd relay && pnpm typecheck && node --test` | 类型 + **96** 条 |
+| `cd relay && pnpm typecheck && node --test` | 类型 + **125** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
 
@@ -116,5 +117,4 @@
 - 2026-10-28 渲染批次 + 唤醒判据修正 — `implemented/2026-10-28-*`
 - 2026-10-29 连接卡 / 无令牌可挂载 / 装配层回归网 / 删掉空转的 `deviceLimit` / 端点剪枝 /
   明文两档 / 高亮语言集 — `implemented/2026-10-29-*`（六篇）
-- 2026-10-30 多机四步（归属 / 凭据分槽 / 拨号竞速与缓冲裁剪 / 独占与切换） —
-  `implemented/2026-10-30-*`（五篇，方案页仍留在 `proposed/` 作为决策源）
+- 2026-10-30 多机四步（归属/凭据分槽/拨号竞速/独占与切换）+ 中转可观测·限额·面板 — `implemented/2026-10-30-*`（九篇；方案页留在 `proposed/`）
