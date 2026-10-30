@@ -67,4 +67,4 @@
 
 ## License
 
-尚未添加 `LICENSE`：发版前必须选定（如 MIT / Apache-2.0）。在此之前保留所有权利。
+[MIT](LICENSE)
