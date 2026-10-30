@@ -29,7 +29,6 @@
   补前缀）—— 协议未发版，没有存量。笔记 `implemented/2026-10-30-drop-legacy-compat.md`。
   审计后仍**证明不了**两件：两台"同时"握手那一瞬（要"在途占位"维度）；停用后手机因
   401 body（`device-revoked`）未被消费而卡在重连 —— 既有缺口，另一批修。
-
 - **面板 / 装配 / 端点 / 明文（10-29）**：「连接」卡只碰白名单三格 + 令牌三态（值永不过线）；
   `start-transport` 放过两种允许的缺席（缺令牌 / `listenPort = 0`）；装配层三处判据搬出
   `index.ts`（`rebuild.ts` / `startup.ts` / `readConnectionState`，由 `assembly-wiring`
