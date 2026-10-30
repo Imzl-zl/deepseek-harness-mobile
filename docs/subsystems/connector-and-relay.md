@@ -293,6 +293,10 @@ relay/
 | 帧速率 | **待定**:上线前按 §2.5 压测确定 —— 不许拿估算当结论(本表的默认值同理,它们只是"默认不敞开") |
 | 吊销 | 令牌摘要**软吊销**(`revokedAt` 留行,重签即轮换):被吊销的令牌认证即失败(401)。**停用的行照样上报**(带 `revokedAt`,`rosterEntry`),中转据此回 `device-revoked` ⇒ 手机按 `revoked` 清这一台的凭据回配对页;**删除的行不再上报**,中转按差集丢掉它,那枚令牌只剩 `device-unknown`(与"名册还没重放"不可区分 ⇒ 手机持续重试,要区分得让名册带墓碑,属契约改动)。判据在 `relay/src/device-registry.ts` 的 `classify`,名册形状在 `http-face.ts` 的 `parseRegistrations`。真正"电脑不认这台设备"的终态信号仍是握手层的 `peerOf` 拒绝,以**关闭码 4003 + `protocol/not-paired`** 到达 |
 | 审计 | 连接建立/断开、配对、吊销、限流命中;只记元数据,不记内容 |
+| 管理面 | `GET /admin/api/state`：**只读**计数快照(在线连接器/通道/票/名册行数),本期**零写路径**。凭据是配置里的 `admin`(只存 `sha256`),走 `Authorization: Bearer`。**没配 `admin` 时 `/admin*` 一律 404**(与未知路径同形);配了则缺/错令牌 401 且 `cache-control: no-store`,认证不过的请求按来源地址分桶、通过的按 `admin:<id>` 分桶。管理令牌用 `--issue-admin <id>` 签发(与连接器令牌同规格,明文只打印一次) |
+
+- **吊销/恢复在内存里立刻生效**（`relay/src/token-table.ts`）：摘要表不再是"启动时建死"，`revoke` 先摘认证索引再记 `revokedAt`，不重启、不波及其他连接。同一 `id` 在配置里出现两次会**拒绝启动**（吊销按 `id` 定位，重复即歧义）。轮换管理令牌仍要重启（`admin` 段只在装配时读一次）。
+- **接受连接前再验一次**：`wss.handleUpgrade` 的回调是异步的，认证与回调之间可能刚好被吊销 —— 控制面与数据面各重验一次，认不出就 `close(4000, 'credential revoked')`。
 
 ### 2.5 部署、成本与合规(上线前置)
 

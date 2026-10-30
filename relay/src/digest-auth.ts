@@ -21,7 +21,7 @@
  *
  * 这一层零依赖、可脱离网络测。
  */
-import { createHash } from 'node:crypto'
+import { createTokenTable } from './token-table.ts'
 
 /** 已认证的调用方。**只有连接器**：设备走名册，不走这张表。 */
 export interface Authenticated {
@@ -65,8 +65,6 @@ export interface TokenDigest {
   revokedAt?: number
 }
 
-const digestOf = (token: string): string => createHash('sha256').update(token, 'utf8').digest('hex')
-
 export interface DigestAuthenticator {
   (token: string): Authenticated | undefined
   /** 自检用：装了几条。 */
@@ -74,36 +72,18 @@ export interface DigestAuthenticator {
 }
 
 /**
- * 从摘要表建出 `authenticate`。
+ * 从摘要表建出**不可变**的 `authenticate`（启动装配用）。
  *
  * 校验失败（未知令牌）返回 `undefined` —— 调用方据此回 401，并把**不区分原因**作为原则
  * （"令牌不对"与"令牌已吊销"对客户端是同一件事：换票或重配）。
+ *
+ * 表本身是可变的（吊销/恢复要立刻生效），实现在 `token-table.ts`；这里只是把
+ * "只需要认证函数"的调用方（`main.ts` 的自检、测试）留在旧形状上，保证校验规则
+ * **只有一份**。
  */
 export function createDigestAuthenticator(entries: readonly TokenDigest[]): DigestAuthenticator {
-  const table = new Map<string, Authenticated>()
-  for (const entry of entries) {
-    // 表里只放连接器令牌：设备凭据在名册（见文件头）。v1 遗留的 device 条目
-    // 会让"起来了但谁都连不上"，所以在入口就拒绝，而不是等它对 403。
-    if (entry.kind !== 'connector') {
-      throw new Error(
-        `令牌摘要表里出现 ${String(entry.kind)} 条目（id=${entry.id}）：v2 起中转只签连接器令牌，`
-        + '设备令牌由电脑侧签发、摘要经 POST /devices 进名册。请删掉这条并重新出码配对。',
-      )
-    }
-    // **已吊销的摘要不进表**：它留在配置里是为了可辨识，不是为了还能用。
-    if (entry.revokedAt !== undefined) continue
-    // 同一条摘要不该出现两次（配置写重了）：后一条覆盖前一条会让"谁是谁"变得看运气。
-    if (table.has(entry.hash)) {
-      throw new Error(`令牌摘要表里有重复条目（${entry.hash.slice(0, 8)}…）：拒绝启动，先修配置`)
-    }
-    table.set(entry.hash, {
-      kind: 'connector',
-      id: entry.id,
-      ...(entry.owner === undefined || entry.owner === '' ? {} : { owner: entry.owner }),
-    })
-  }
-
-  const authenticate = ((token: string) => table.get(digestOf(token))) as DigestAuthenticator & {
+  const table = createTokenTable(entries)
+  const authenticate = ((token: string) => table.authenticate(token)) as DigestAuthenticator & {
     size: number
   }
   Object.defineProperty(authenticate, 'size', { get: () => table.size })

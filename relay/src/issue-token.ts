@@ -29,6 +29,18 @@ import { readFile, writeFile } from 'node:fs/promises'
 /** 令牌长度（16 字节 = 128 位）。 */
 export const TOKEN_BYTES = 16
 
+/** 生成一枚令牌原文（128 位随机，base64url）。管理令牌与连接器令牌同规格。 */
+export function randomToken(
+  random: (size: number) => Uint8Array = (size) => nodeRandomBytes(size),
+): string {
+  return Buffer.from(random(TOKEN_BYTES)).toString('base64url')
+}
+
+/** `sha256(令牌)` 的十六进制。配置里存的就是它。 */
+export function hashOf(token: string): string {
+  return createHash('sha256').update(token, 'utf8').digest('hex')
+}
+
 export interface TokenKind {
   kind: 'connector'
   /** 逻辑身份：连接器 id。 */
@@ -61,11 +73,10 @@ export function issueToken(
   spec: TokenKind,
   random: (size: number) => Uint8Array = (size) => nodeRandomBytes(size),
 ): IssuedToken {
-  const token = Buffer.from(random(TOKEN_BYTES)).toString('base64url')
-  const hash = createHash('sha256').update(token, 'utf8').digest('hex')
+  const token = randomToken(random)
   // `spec` 只用来让调用方一眼看出"这个令牌是给谁的"；它不进任何签名（摘要是唯一的凭据面）。
   void spec
-  return { token, hash }
+  return { token, hash: hashOf(token) }
 }
 
 /**
@@ -115,4 +126,26 @@ export async function revokeTokenInConfig(
   )
   await writeFile(configPath, `${JSON.stringify({ ...config, tokens }, null, 2)}\n`, 'utf8')
   return { tokens, revoked }
+}
+
+/** 配置里的管理面段（`admin`）：只放摘要。 */
+export interface AdminConfigEntry {
+  id: string
+  /** `sha256(令牌)` 的十六进制。 */
+  hash: string
+}
+
+/**
+ * 把管理面摘要写进配置（整份重写，保留其他键）。
+ *
+ * 与 `appendTokenToConfig` 同一形状：**明文只出现在签发者的屏幕上**。
+ * 覆盖旧值就是"轮换管理令牌" —— 旧令牌下次启动即失效（内存里的表由装配方同步替换）。
+ */
+export async function setAdminInConfig(
+  configPath: string,
+  entry: AdminConfigEntry,
+): Promise<void> {
+  const raw = await readFile(configPath, 'utf8')
+  const config = JSON.parse(raw) as { admin?: AdminConfigEntry }
+  await writeFile(configPath, `${JSON.stringify({ ...config, admin: entry }, null, 2)}\n`, 'utf8')
 }

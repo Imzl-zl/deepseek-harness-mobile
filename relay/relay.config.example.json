@@ -9,5 +9,9 @@
       "owner": "alice"
     }
   ],
-  "rateLimit": { "capacity": 60, "refillPerSecond": 6 }
+  "rateLimit": { "capacity": 60, "refillPerSecond": 6 },
+  "admin": {
+    "id": "ops",
+    "hash": "0000000000000000000000000000000000000000000000000000000000000000"
+  }
 }

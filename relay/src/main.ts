@@ -25,7 +25,7 @@
 import { readFile } from 'node:fs/promises'
 
 import { createDigestAuthenticator, type TokenDigest } from './digest-auth.ts'
-import { appendTokenToConfig, issueToken, revokeTokenInConfig } from './issue-token.ts'
+import { appendTokenToConfig, issueToken, revokeTokenInConfig, setAdminInConfig } from './issue-token.ts'
 import { startRelay } from './server.ts'
 
 interface RelayConfig {
@@ -39,6 +39,13 @@ interface RelayConfig {
    * 因为一个默认敞开的转发器是隐患；配了就按配置来，启动时会打印生效值。
    */
   rateLimit?: { capacity: number; refillPerSecond: number }
+  /**
+   * 管理面（`/admin`）的凭据，只放 `sha256(令牌)`。
+   *
+   * **不配就没有这张面**：`server.ts` 对 `/admin*` 一律 404。这是"绝不裸奔"的
+   * 结构性保证 —— 不靠端口绑在哪、也不靠反代配置对不对。
+   */
+  admin?: { id: string; hash: string }
 }
 
 function argValue(name: string): string | undefined {
@@ -55,6 +62,20 @@ if (configPath === undefined) {
 
 const raw = await readFile(configPath, 'utf8')
 const config = JSON.parse(raw) as RelayConfig
+
+/**
+ * 管理面段先校验：摘要不是 64 位十六进制就**启动失败**。
+ *
+ * 与"没有 tokens 直接退出"同一条纪律 —— 一个"面板开了但永远 401"的中转，
+ * 比一开始就说"你的 admin.hash 写错了"难查得多。
+ */
+if (config.admin !== undefined) {
+  const { id, hash } = config.admin
+  if (typeof id !== 'string' || id === '' || typeof hash !== 'string' || !/^[0-9a-fA-F]{64}$/.test(hash)) {
+    console.error('配置里的 admin 段不合法：需要 { "id": "<非空>", "hash": "<sha256 十六进制，64 位>" }')
+    process.exit(2)
+  }
+}
 
 // 签发模式：`--issue-token connector <id>` —— 生成令牌、把**摘要**写进配置、把令牌打印一次。
 // 它**必须能在 `tokens` 为空时运行**（否则没有办法引导第一台连接器）。
@@ -89,6 +110,26 @@ if (issueArgs.length === 2) {
     + `摘要已写进 ${configPath}（现在 ${tokens.length} 条）。`,
   )
   console.log('令牌**只显示这一次**，请立刻交给对端：')
+  console.log(issued.token)
+  process.exit(0)
+}
+
+// 管理面令牌：`--issue-admin <id>` —— 与连接器令牌同规格（128 位随机）、
+// 同样只把**摘要**写进配置、明文只打印这一次。
+//
+// 它**不写进 `tokens` 表**：连接器令牌的权力是"替一台电脑报名册、拨数据面"，
+// 不该交给浏览器。管理面只看与管，权限小一个量级（`admin/auth.ts` 的文件头）。
+if (process.argv.includes('--issue-admin')) {
+  const index = process.argv.indexOf('--issue-admin')
+  const id = process.argv[index + 1]
+  if (id === undefined || id === '') {
+    console.error('用法: --issue-admin <管理身份 id>')
+    process.exit(2)
+  }
+  const issued = issueToken({ kind: 'connector', id })
+  await setAdminInConfig(configPath, { id, hash: issued.hash })
+  console.log(`已签发管理令牌（id=${id}）。摘要已写进 ${configPath}（admin 段）。`)
+  console.log('令牌**只显示这一次**，请立刻存进密码管理器：')
   console.log(issued.token)
   process.exit(0)
 }
@@ -137,6 +178,8 @@ const relay = await startRelay({
   authenticate,
   // 配置里给了就用它，没给就用 `server.ts` 的默认值（默认生效，见那里的说明）。
   ...(config.rateLimit === undefined ? {} : { rateLimit: config.rateLimit }),
+  // 没配 `admin` 就不传：那张面不存在（`/admin*` 一律 404）。
+  ...(config.admin === undefined ? {} : { admin: config.admin }),
   // 中转必须**留声**：它只转发与记账，出问题时（投递目标不在、丢弃、认证被拒）
   // 日志是唯一的线索。级别用 debug 之外的 info/warn，默认就能看见。
   log: {
@@ -149,7 +192,10 @@ const relay = await startRelay({
   },
 })
 
-console.log(`中转已监听 ws://${config.host ?? '127.0.0.1'}:${relay.port}（摘要表 ${authenticate.size} 条）`)
+console.log(
+  `中转已监听 ws://${config.host ?? '127.0.0.1'}:${relay.port}（摘要表 ${authenticate.size} 条`
+  + `${config.admin === undefined ? '' : `，管理面 /admin 已启用（${config.admin.id}）`}）`,
+)
 
 let closing = false
 const shutdown = (signal: string): void => {

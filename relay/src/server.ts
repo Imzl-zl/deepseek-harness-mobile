@@ -10,6 +10,7 @@ import {
 import { createRelayCore, type RelayCore, type Delivery } from './core.ts'
 import { createDeviceRegistry, type DeviceRegistry } from './device-registry.ts'
 import { createHttpFace, type Authenticated } from './http-face.ts'
+import { createAdminAuthenticator, type AdminDigest } from './admin/auth.ts'
 import { rateKeyOf } from './digest-auth.ts'
 import { createRateLimiter } from './rate-limit.ts'
 import { createTicketStore } from './tickets.ts'
@@ -25,6 +26,8 @@ export interface RelayServerOptions {
   host?: string
   authenticate: (token: string) => Authenticated | undefined
   rateLimit?: { capacity: number; refillPerSecond: number }
+  /** 管理面凭据（只放摘要）。不配 = 这张面不存在（`/admin*` 一律 404）。 */
+  admin?: AdminDigest
   log?: ChannelLogger
 }
 export interface RelayServer {
@@ -74,12 +77,53 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
   })
   const controls = new Map<string, { socket: WebSocket; alive: boolean }>()
   const links = new Map<string, Link>()
+  /** 管理面认证。`undefined` = 没配凭据 ⇒ 这张面**不存在**（不是"开着但没人能进"）。 */
+  const adminAuth = options.admin === undefined ? undefined : createAdminAuthenticator(options.admin)
 
   const http = createServer((request, response) => {
     void (async () => {
       const url = new URL(request.url ?? '/', 'http://relay.invalid')
       if (url.pathname === '/healthz' && request.method === 'GET') {
         reply(response, 200, { status: 'ok' })
+        return
+      }
+      if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) {
+        // 未配置凭据：连"有没有这张面"都不回答 —— 404 与未知路径同形。
+        // Note: 为什么管理凭据独立于连接器令牌、为什么没配就不存在 —— 见
+        // `.agents/notes/implemented/2026-10-30-relay-mutable-token-table-and-admin-credential.md`
+        if (adminAuth === undefined) { reply(response, 404, { error: 'not-found' }); return }
+        if (request.method !== 'GET') { reply(response, 405, { error: 'method-not-allowed' }); return }
+        response.setHeader('cache-control', 'no-store')
+        const who = adminAuth(bearerOf(request.headers.authorization) ?? '')
+        if (who === undefined) {
+          // 认证不过的请求按来源地址取桶：它没有任何身份可用，与首配那一跳同一个理由。
+          const refused = limiter.take(`admin-anonymous:${request.socket.remoteAddress ?? 'unknown'}`)
+          if (!refused.allowed) {
+            reply(response, 429, { error: 'rate-limited', retryAfterMs: refused.retryAfterMs })
+            return
+          }
+          reply(response, 401, { error: 'unauthorized' })
+          return
+        }
+        if (!limiter.take(`admin:${who.id}`).allowed) {
+          reply(response, 429, { error: 'rate-limited', retryAfterMs: 1_000 })
+          return
+        }
+        // 本期只有计数快照（面板的页面与写操作在下一批）。**没有任何写路径**。
+        if (url.pathname === '/admin/api/state') {
+          reply(response, 200, {
+            v: 1,
+            counters: {
+              connectors: core.stats.connectors,
+              channels: core.stats.channels,
+              tickets: tickets.stats.tickets,
+              devices: devices.stats.devices,
+              bound: devices.stats.bound,
+            },
+          })
+          return
+        }
+        reply(response, 404, { error: 'not-found' })
         return
       }
       let body: unknown
@@ -244,8 +288,18 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
   http.on('upgrade', (request, socket, head) => {
     const url = new URL(request.url ?? '/', 'http://relay.invalid')
     if (url.pathname === '/ws/connector') {
-      const caller = options.authenticate(bearerOf(request.headers.authorization) ?? '')
+      const presented = bearerOf(request.headers.authorization) ?? ''
+      const caller = options.authenticate(presented)
       if (caller?.kind !== 'connector') { refuse(socket, 401, 'Unauthorized'); return }
+      /**
+       * **接受前重验一次**（这是本批的并发口子）。
+       *
+       * `wss.handleUpgrade` 的回调是**异步**的：从上面那次认证到回调执行之间，
+       * 管理员可能刚好吊销了这台连接器（面板/CLI），或者它被重新签发给了别的 id。
+       * 只认一次会放过"已吊销却连上"的连接 —— 那与"停用一台在线设备却不收连接"
+       * 是同一类错误（`device-admin` 的 `disconnect` 就是为那条加的）。
+       */
+      const stillValid = (): boolean => options.authenticate(presented)?.id === caller.id
       // 配了 `owner` 的连接器按**人**分桶：多开几台电脑不该等于多领几个预算。
       if (!limiter.take(rateKeyOf(caller)).allowed) { refuse(socket, 429, 'Too Many Requests'); return }
       const deviceId = url.searchParams.get('dev')
@@ -263,7 +317,10 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
           refuse(socket, 403, 'Forbidden')
           return
         }
-        wss.handleUpgrade(request, socket, head, (ws) => acceptControl(ws, caller.id, caller.owner))
+        wss.handleUpgrade(request, socket, head, (ws) => {
+          if (!stillValid()) { ws.close(4000, 'credential revoked'); return }
+          acceptControl(ws, caller.id, caller.owner)
+        })
         return
       }
       const channel = channelId === null ? undefined : core.channel(channelId)
@@ -273,6 +330,8 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         return
       }
       wss.handleUpgrade(request, socket, head, (ws) => {
+        // 同一条重验：吊销可能落在"查到通道"与"接受数据面"之间。
+        if (!stillValid()) { ws.close(4000, 'credential revoked'); return }
         const link = links.get(channel.channelId)
         if (link === undefined || link.data !== null) { ws.close(4000, 'stale channel'); return }
         link.data = ws

@@ -24,6 +24,7 @@ interface ExampleConfig {
   // 样例里若出现 device 条目，中转会在启动时明确拒绝（见 issue-token.test.ts 的用例）。
   tokens: { kind: 'connector'; id: string; hash: string }[]
   rateLimit?: { capacity: number; refillPerSecond: number }
+  admin?: { id: string; hash: string }
 }
 
 test('样例配置能真的把中继起起来（样例坏了，操作者会遇到"服务起不来"）', async (t) => {
@@ -34,6 +35,11 @@ test('样例配置能真的把中继起起来（样例坏了，操作者会遇�
   assert.equal(typeof config.port, 'number')
   assert.equal(Array.isArray(config.tokens), true)
   assert.equal(config.tokens.length > 0, true, 'tokens 为空时中继会拒绝启动（引导路径要先签发）')
+  // `admin` 段是第二个凭据面：摘要必须是 64 位十六进制（`main.ts` 在启动时按同一规则校验）。
+  if (config.admin !== undefined) {
+    assert.equal(typeof config.admin.id, 'string')
+    assert.match(config.admin.hash, /^[0-9a-fA-F]{64}$/, '管理面凭据只放摘要')
+  }
 
   const authenticate = createDigestAuthenticator(config.tokens)
   const relay = await startRelay({
