@@ -252,8 +252,13 @@ if (process.argv.includes('--revoke-token')) {
   process.exit(0)
 }
 
-if (entries.length === 0) {
-  console.error('配置里没有 tokens：中转起来也无人能连上（只放摘要，不放明文令牌）')
+// **开放模式下空表是合法起点**：谁都没来兑换过，表本来就是空的。此时拒绝启动等于
+// 把"零管理"这件事做死 —— 而它正是 `connectorAuth: "open"` 的全部意义。
+if (entries.length === 0 && (config.connectorAuth ?? 'open') !== 'open') {
+  console.error(
+    '配置里没有 tokens，且 connectorAuth 是 required：中转起来也无人能连上'
+    + '（只放摘要，不放明文令牌）。要免维护就把 connectorAuth 设成 "open"',
+  )
   process.exit(2)
 }
 
