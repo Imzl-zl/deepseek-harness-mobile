@@ -63,6 +63,7 @@ import 'ui/chat_page.dart';
 import 'ui/connection_actions_sheet.dart';
 import 'ui/dsh_brand.dart';
 import 'ui/dsh_shimmer.dart';
+import 'ui/frame_coalesced.dart';
 import 'ui/dsh_toast.dart';
 import 'ui/dsh_wallpaper.dart';
 import 'ui/files_page.dart';
@@ -847,7 +848,12 @@ class _DshMobileAppState extends State<DshMobileApp>
     // 这一层原先直接 `_drawerSections(app)` 取一次列表就完事 —— 而
     // `AppModel` 是 `ChangeNotifier`：会话列表、连接状态都靠 `notifyListeners()` 通知。
     // 不监听它就等于**列表永远停在首帧**：真实会话拉回来了，抽屉里却还是"还没有会话"。
-    return ListenableBuilder(
+    // **合并成每帧一次**（2026-10-31）：这一层一重建就要现算
+    // `_drawerSections(app)`（过滤 + 分组 + 每行拼副标题），而抽屉即使没打开
+    // 也在树里（SDK 的 `DrawerControllerState.build` 无条件构造 child，
+    // `packages/flutter/lib/src/material/drawer.dart:711-745`）。
+    // 流式输出一秒几十次通知，不合并就等于每秒重算几十遍。
+    return FrameCoalescedBuilder(
       listenable: app,
       builder: (context, _) => ChatPage(
         key: _chatKey,

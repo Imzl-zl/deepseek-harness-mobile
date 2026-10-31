@@ -82,6 +82,7 @@ import 'dsh_shimmer.dart';
 import 'dsh_state_dot.dart';
 import 'dsh_toast.dart';
 import 'edge_stick.dart';
+import 'frame_coalesced.dart';
 import 'input_focus.dart';
 import 'load_older_trigger.dart';
 import 'queue_dock.dart';
@@ -708,7 +709,10 @@ class ChatPageState extends State<ChatPage> {
     _takeover.setCurrentSid(widget.app.currentSid);
     // 任务清单按会话取；`sid` 为 null（列表页）时给空表。
     final jobsSid = widget.app.currentSid;
-    return ListenableBuilder(
+    // **每帧最多重建一次**：整页订阅 `AppModel`，而流式输出一秒通知几十次。
+    // 合并器只改"什么时候重建"，不改任何可见内容（同一帧内多次变化本来就只
+    // 显示最后一次的结果）。见 `ui/frame_coalesced.dart`。
+    return FrameCoalescedBuilder(
       listenable: widget.app,
       builder: (context, _) {
         // **落点未定时画加载态，不画"没有会话"那一屏**。

@@ -17,8 +17,19 @@ Status: implemented
 
 ## Decision
 
-**只修一处确定性的浪费，其余记下不动**：`_onInputChanged` 不再 `setState(() {})`，
-输入栏改用 `ListenableBuilder(listenable: _input)` 局部重画（`ui/chat_page.dart`）。
+三处，按用户要求"有问题就修，别等测量"落地：
+
+1. `_onInputChanged` 不再 `setState(() {})`，输入栏改用
+   `ListenableBuilder(listenable: _input)` 局部重画（`ui/chat_page.dart`）。
+2. **整页订阅合并成"每帧最多一次"**（`ui/frame_coalesced.dart`）：
+   `chat_page.dart` 的根 `ListenableBuilder(widget.app)` 与 `main.dart` 里构造
+   `ChatPage` + 抽屉的那一层都换成 `FrameCoalescedBuilder`。
+   时序上**帧外第一发立刻转发**、同一帧内的后续才合并 —— 否则一次点击要多等一帧，
+   而且会让三条"pump 一次就断言"的用例（`landing_loading_test` /
+   `running_reconnect_test` / `widget_test` 的连接点）变红；这不是改测试，是
+   保持"变一下就立刻反映"。
+3. build 里的 `buildTurnGroups` / `applyTurnCollapse` / `assistantHeadItemIds`
+   按来源同一性缓存（`ChatPageState._derivationFor`）。
 
 原来那句 `setState(() {})` 的代价：`ChatPage.build` 的产物包含整个 `Scaffold`
 （左抽屉 sections、右抽屉面板、会话列表、统计条、输入栏），**每敲一个字重建一次**。
@@ -27,16 +38,15 @@ Status: implemented
 
 ## Alternatives considered
 
-1. **顺带把 `ListenableBuilder(listenable: widget.app)` 换成"每帧最多通知一次"的合并器**
+1. **把整页订阅换成"每帧最多通知一次"的合并器**（**已采用**，见 Decision 2）
    - 最强理由：流式输出时 `AppModel` 一秒通知几十次，每次重建整页（`chat_page.dart:709`），
      而抽屉内容**即使没打开也会重建** —— SDK 的 `DrawerControllerState.build` 无条件构造
      `widget.child`（`packages/flutter/lib/src/material/drawer.dart:711-745`），于是
      `_drawerSections(app)`（`main.dart:1255`：过滤 + 分组 + 每行拼副标题 + `DateTime.now()`）
      跟着每秒算几十遍。
-   - 为何本轮没做：它改的是**全 App 最热的通知路径**，而当前没有任何可靠的前后帧时间
-     数据（见上，gfxinfo 不可用）。在没量到的情况下改通知时序，等于拿手感赌时序；
-     而且延迟一帧的重建会波及一堆"pump 一次就断言"的 widget 用例。先让用户在 profile 包上
-     对比"打字"和"流式输出"两种卡是否都还在，再决定动哪一条。
+   - 曾经被推迟的理由：没有可靠的前后帧时间数据（gfxinfo 对 Flutter 的 Vulkan surface
+     不作数）。**用户明确"有问题就修，别等测量"**，于是按"帧外第一发立刻转发 + 同帧内合并"
+     实现，既有合并收益又不改变即时性。
 2. **把流式文字改成节流刷新（如 10Hz）**
    - 最强理由：直接砍掉 80% 的重绘。
    - 为何被否：那是**产品行为变更**（字会一顿一顿地出），用户没要求；而且真正该省的是
@@ -77,8 +87,8 @@ Status: implemented
 
 | 雷区 | 位置 | 为什么不单独改 |
 |---|---|---|
-| 整页 `ListenableBuilder(app)` | `chat_page.dart:709` | 见 Alternatives 1：缺可信测量，且波及用例 |
-| 抽屉每次通知现算 sections，且关着也在建 | `main.dart:1255` + SDK `material/drawer.dart:711-745` | 与上一条同源，单改一处没用 |
+| 整页 `ListenableBuilder(app)` | `chat_page.dart` 根部 | **已修**：换 `FrameCoalescedBuilder` |
+| 抽屉每次通知现算 sections，且关着也在建 | `main.dart:1255` + SDK `material/drawer.dart:711-745` | **已修（压频）**：外层换 `FrameCoalescedBuilder`，同一帧内不再重算多次。彻底不建抽屉内容需要拆 `Scaffold.drawer`（SDK 无条件构造 child），收益小于风险，不做 |
 | build 里调 `_takeover.setCurrentSid()` | `chat_page.dart:705` | 幂等且有必要（切会话换桶），但"build 里改状态"本身是脆的写法，已在注释写明 |
 | `BackdropFilter` | `dsh_composer.dart`（输入栏毛玻璃） | 用户点名要的效果；修掉整页重建后触发频率已降到人手级 |
 | `ShaderMask` 扫光 | `dsh_shimmer.dart:204-209` | 每行把 child 画两遍 + 一层 `saveLayer`；只在"真的在跑"的行上挂，空闲即摘 |
