@@ -82,15 +82,22 @@
 
 ## 下一步
 
-0. **多机第 4 步的真机复验**：只剩两条要**两台设备**才能做的（第二台被
+0. **重取范围按触发源拆（待评审）**：现在一条 `host` 通知 = 一次
+   `refreshSessions()`，而它是个捆（行 + 模型目录 + 权限目录 + 工作区 + 预设 + 设置 +
+   `repo.info` = **7 个往返**；切模型/标题那两条通知是 8）。方案
+   `proposed/2026-11-01-refetch-scope-by-trigger.md`：拆成 9 个登记 key、bootstrap =
+   registry 的 `connectLanding` 一列、给 `session.modelCatalog` 补上 DSH 自己也用的
+   五条失效事件（顺带补上"电脑上加/换模型后手机不重连也能看到"这个缺口）。
+   已查实的判据：DSH 的目录是懒加载 + 显式失效、清单是行级事件 + 脏缓存重建。
+1. **多机第 4 步的真机复验**：只剩两条要**两台设备**才能做的（第二台被
    `device/busy` 拒并说出占用者、切回上一台的真实链路）—— 单测已覆盖，
    真机可用"第二个 DSH_HOME + 另一份连接器身份"补；命中不了的按未验证如实说。
-1. **状态语义对齐（A–H 已全落地）**：现状 `docs/subsystems/ui-state.md`；真机复验还差 4 条
+2. **状态语义对齐（A–H 已全落地）**：现状 `docs/subsystems/ui-state.md`；真机复验还差 4 条
    （子智能体在跑可见、提问草稿、发送模式真值、断连重连）。因果见 `implemented/2026-10-27-*`。
-2. 跑一轮真机复验改动卡 / 差异 / 提及（要模型请求 —— 先报价再跑）。
-3. `usage.summary` 的 byDay 时区；`plugin.installStatus` 的 4 键/8 键两形态
+3. 跑一轮真机复验改动卡 / 差异 / 提及（要模型请求 —— 先报价再跑）。
+4. `usage.summary` 的 byDay 时区；`plugin.installStatus` 的 4 键/8 键两形态
    （真出现第二种时 `readPluginJob` 会红，属**已知的下一处**）。
-4. 大改后巡检一次 `docs/` 与代码的漂移。**已知一处**：`connector/src/dsh/interaction-client.ts:63`
+5. 大改后巡检一次 `docs/` 与代码的漂移。**已知一处**：`connector/src/dsh/interaction-client.ts:63`
    import 了 `transport/backoff.js`，而 `connector-and-relay.md` §1.2 写着「`dsh/` 不 import `transport/`」；
    两者选一个改（补机械规则会立刻红，改文档则承认这条方向可用）。
 
@@ -99,12 +106,12 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 645 项（25 条规则自检 + 149 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | 673 项（25 条规则自检 + 155 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1579 项（约 1 分钟） |
+| `cd app && flutter test` | 1619 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **773** 项 |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **794** 项 |
 | `cd relay && pnpm typecheck && node --test` | 类型 + **132** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
