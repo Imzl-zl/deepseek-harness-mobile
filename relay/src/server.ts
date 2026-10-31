@@ -225,6 +225,12 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
           // 额度面**一直有**：没设上限的人 `limit` 是 null，面板显示"不限"。
           quota: { period: metering.period, enforce: metering.enforce, rows: metering.snapshot() },
           tokens: options.adminOps?.tokens() ?? [],
+          // 连接器认证面：面板据此显示「必需 / 开放」、名额与已用量。
+          connectorAuth: {
+            mode: options.connectorEnroll?.mode ?? 'required',
+            limit: options.connectorEnroll?.limit ?? null,
+            autoCount: options.connectorEnroll?.count() ?? 0,
+          },
         }
       },
 
