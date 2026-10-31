@@ -136,9 +136,11 @@ class _AddEndpointDialogState extends State<AddEndpointDialog> {
               autofocus: true,
               style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
               decoration: InputDecoration(
+                // **占位不写死别人的 IP**：直连只收局域网明文（`core/endpoint.dart`
+                // 的校验），形状固定成"电脑的局域网地址"；中转那栏给的是域名形状。
                 hintText: _kind == EndpointKind.direct
-                    ? 'ws://192.168.1.4:8790'
-                    : 'wss://relay.example.com',
+                    ? 'ws://电脑局域网IP:8790'
+                    : 'wss://你的域名',
                 hintStyle: const TextStyle(fontSize: 12),
                 errorText: _error,
                 errorMaxLines: 2,

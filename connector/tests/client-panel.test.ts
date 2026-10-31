@@ -208,7 +208,7 @@ const inputOfType = (tree: unknown, type: string): Element | undefined =>
  * 「连接」卡的**地址框**。
  *
  * 按占位符认，不按 `type === 'text'` 认：面板上还有"上报地址"那个文本框
- * （占位符是 `ws://192.168.1.4:8790`），混起来会断言错控件。
+ * （占位符是 `ws://<电脑局域网IP>:8790`），混起来会断言错控件。
  */
 const addressInput = (tree: unknown): Element | undefined =>
   flatten(tree).find(

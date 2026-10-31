@@ -205,7 +205,10 @@ window.__ModuleLoader__.load({
       advertiseHide: '禁用',
       advertiseShow: '启用',
       advertiseExtra: '手动添加',
-      advertiseAddPlaceholder: 'ws://192.168.1.4:8790',
+      // **占位不写死 IP**：这一栏只收局域网明文直连（`advertise.ts` 的
+      // `assertExtraAddress` 只放 `ws://` + 非公网），所以示例只能是"电脑的
+      // 局域网地址"这个形状，不能摆一个别人家网段的 IP 当范例。
+      advertiseAddPlaceholder: 'ws://<电脑局域网IP>:8790',
       advertiseAdd: '添加',
       failedAdvertise: '改上报地址失败：{reason}',
       close: '关闭',
@@ -327,7 +330,7 @@ window.__ModuleLoader__.load({
       advertiseHide: 'Disable',
       advertiseShow: 'Enable',
       advertiseExtra: 'added',
-      advertiseAddPlaceholder: 'ws://192.168.1.4:8790',
+      advertiseAddPlaceholder: 'ws://<LAN-IP-of-this-PC>:8790',
       advertiseAdd: 'Add',
       failedAdvertise: 'Could not change reported addresses: {reason}',
       close: 'Close',
