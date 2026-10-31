@@ -371,6 +371,12 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
           })
           reply(response, 201, { token: issued.token, connectorId: issued.connectorId })
         } catch (error) {
+          const code = error instanceof Error ? error.message : String(error)
+          // 两个是**调用方的错**，不是服务端故障：换一张牌再试才有意义。
+          if (code === 'id-taken' || code === 'pcId-invalid') {
+            reply(response, code === 'id-taken' ? 409 : 400, { error: code })
+            return
+          }
           log?.warn('connector.enroll-failed', error)
           reply(response, 500, { error: 'enroll-failed' })
         }

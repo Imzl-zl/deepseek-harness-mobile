@@ -364,7 +364,22 @@ const connectorEnroll: ConnectorEnroll = {
   get limit() { return autoEnrollLimit },
   count: autoEnrolledCount,
   async issue({ pcId, name }) {
-    const connectorId = `auto-${randomBytes(4).toString('hex')}`
+    /**
+     * **令牌 id 必须等于连接器的 `pcId`**：握手时中转要求 `?id=` 与令牌 id 一致，
+     * 不一致直接 403（`server.ts` 的 `connector.id-mismatch`）。所以这里不能用
+     * 随机 id —— 那样签出来的令牌一次都连不上（这个错只有真连才暴露，单测看不出来）。
+     *
+     * 冒名顶替的防线在下面：**撞到已存在的 id 就拒**（除非那是它自己上次自动签的）。
+     */
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(pcId)) {
+      throw new Error('pcId-invalid')
+    }
+    const existing = table.list().find((row) => row.id === pcId)
+    if (existing !== undefined && (existing.source !== 'auto' || existing.revokedAt !== undefined)) {
+      // 有人拿别人的 id 来兑换，或想救活一条已吊销的自动令牌 —— 都不许。
+      throw new Error('id-taken')
+    }
+    const connectorId = pcId
     const issued = issueToken({ kind: 'connector', id: connectorId })
     await appendTokenToConfig(configPath, {
       kind: 'connector',
@@ -372,7 +387,13 @@ const connectorEnroll: ConnectorEnroll = {
       hash: issued.hash,
       source: 'auto',
     })
-    table.add({ kind: 'connector', id: connectorId, hash: issued.hash, source: 'auto' })
+    // 同一个 pcId 再兑换 = 轮换：旧摘要已在配置里被替换，内存表按 id 覆盖。
+    if (existing === undefined) {
+      table.add({ kind: 'connector', id: connectorId, hash: issued.hash, source: 'auto' })
+    } else {
+      table.remove(connectorId)
+      table.add({ kind: 'connector', id: connectorId, hash: issued.hash, source: 'auto' })
+    }
     console.log(
       `已自动签发连接器令牌（id=${connectorId}，pcId=${pcId}`
       + `${name === undefined ? '' : `，${name}`}）：自动条目现在 ${autoEnrolledCount()} 条`,
