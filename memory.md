@@ -15,6 +15,12 @@
   `docs/subsystems/appearance-wallpaper.md`。同批修掉**启动即崩**：`namespace` 改过而
   Kotlin 源码包名没跟上（`ClassNotFoundException: ...MainActivity`），源码迁到
   `io/github/imzlzl/dsh_mobile/`，笔记 `implemented/2026-10-31-android-namespace-activity-mismatch.md`。
+- **中转上域名 + TLS（10-31）**：`dsh.0t0.me`（华为云 ECS）→ Caddy 终结 TLS、反代 `relay:8787`；
+  证书走 **acme.sh + ZeroSSL http-01**（国内机器出站到 Let's Encrypt 超时、ZeroSSL 不支持
+  tls-alpn，所以 80 必须放行）；Caddy 镜像从**华为云 SWR 加速**拉（Docker Hub 与 DaoCloud 都超时）；
+  relay 端口已收口成 `127.0.0.1:8787`，公网只留 80/443。连接器 `relayUrl` =
+  `wss://dsh.0t0.me/ws/connector`。流程写进 `docs/cookbook/relay-on-a-server.md` §4，
+  取舍见 `implemented/2026-10-31-relay-tls-zerossl.md`。
 - **多机四步全部落地**（方案 `proposed/2026-10-29-one-phone-many-computers.md`）：
   ① 归属（`Endpoints.id = hostId|url` / `host.<hostId>.*` / `repo.info.hostName`，120ea3a）；
   ② 凭据分槽（`dsh.pairing.<hostId>.*` + `active`，cb2bd1d）；

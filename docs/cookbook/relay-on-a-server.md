@@ -83,6 +83,18 @@ node -e "const W=require('ws');const w=new W('ws://127.0.0.1:8787/ws/connector',
 
 ## 4. 打开 TLS（有域名时）
 
+**先解决镜像**：国内服务器直连 Docker Hub 是 `dial tcp ...: i/o timeout`。用**云厂商的官方加速**拉下来
+再打回本地标签，**不要用来源不明的第三方反代**（2026-10-31 在华为云 ECS 实测，`docker.1panel.live` 直接超时）：
+
+```bash
+# 华为云 ECS（SWR 官方加速；其它区域把 cn-north-4 换成本地区域）
+docker pull swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/caddy:2-alpine
+docker tag  swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/caddy:2-alpine caddy:2-alpine
+# 阿里云：docker pull <加速器ID>.mirror.aliyuncs.com/library/caddy:2-alpine
+```
+
+打好本地标签后，compose 里的 `image: caddy:2-alpine` 不必再去公网拉。
+
 ```bash
 cd relay
 cp Caddyfile.example Caddyfile     # 把 relay.example.com 换成你的域名
@@ -92,6 +104,82 @@ docker compose up -d caddy
 
 **验证**：`curl -s -o /dev/null -w '%{http_code}\n' https://relay.example.com/` → `405`
 （与第 3 步同一条：HTTP 面在应答），且 `https` 证书链有效。
+
+### 4.1 证书源：能连 Let's Encrypt 就用上面的自动签发，连不上就换 ZeroSSL
+
+Caddy 内置 ACME 默认走 Let's Encrypt。**国内机器出站到
+`acme-v02.api.letsencrypt.org` 会 `i/o timeout`**（2026-10-31 华为云 ECS 实测；
+同机器到 `acme.zerossl.com` 正常，`api.buypass.com` 也不通）。此时 Caddy 日志是
+`could not get certificate from issuer ... i/o timeout`，且会每 60 秒重试一次。
+
+改用 `acme.sh` + ZeroSSL（**ZeroSSL 只支持 `http-01` / `dns-01`，不支持 `tls-alpn-01`**，
+所以安全组要放行 **80**；证书签发后 80 只做验证与续期，Caddy 会把它的请求 308 跳 443）：
+
+```bash
+git clone --depth 1 https://gitee.com/neilpang/acme.sh.git /opt/acme.sh   # github 常不通，用 gitee 镜像
+cd /opt/acme.sh
+./acme.sh --register-account -m you@example.com --server zerossl      # 自动注册并取 EAB
+./acme.sh --issue -d relay.example.com --standalone --server zerossl --keylength ec-256
+docker compose -f /opt/dsh-mobile-relay/relay/docker-compose.yml stop caddy   # 让出 80
+```
+
+把证书装到 `/opt/dsh-mobile-relay/relay/certs/`，并让续期自动停/起 Caddy：
+
+```bash
+cd /opt/dsh-mobile-relay/relay && mkdir -p certs
+/opt/acme.sh/acme.sh --install-cert -d relay.example.com --ecc \
+  --key-file /opt/dsh-mobile-relay/relay/certs/key.pem \
+  --fullchain-file /opt/dsh-mobile-relay/relay/certs/fullchain.pem \
+  --pre-hook  "docker compose -f /opt/dsh-mobile-relay/relay/docker-compose.yml stop caddy" \
+  --post-hook "docker compose -f /opt/dsh-mobile-relay/relay/docker-compose.yml start caddy" \
+  --reloadcmd "docker exec relay-caddy-1 caddy reload --config /etc/caddy/Caddyfile"
+```
+
+Caddyfile 改成用这张证书（`tls` 指到挂载进来的文件），compose 的 caddy 段加一行只读挂载：
+
+```yaml
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/etc/caddy/certs:ro
+```
+
+```
+relay.example.com {
+	encode gzip
+	tls /etc/caddy/certs/fullchain.pem /etc/caddy/certs/key.pem
+	reverse_proxy relay:8787
+}
+```
+
+```bash
+docker compose up -d caddy
+```
+
+**验证**：`curl -s -o /dev/null -w '%{http_code}\n' https://relay.example.com/` → `405`；
+握手能验到证书链（`echo | openssl s_client -connect relay.example.com:443 -servername relay.example.com`）。
+WebSocket 升级也要验，否则 `wss://` 看着通、实际断：
+
+```bash
+node -e "const W=require('ws');const w=new W('wss://relay.example.com/ws/connector',{headers:{authorization:'Bearer bogus'}});w.on('unexpected-response',(q,r)=>{console.log('status',r.statusCode);process.exit(0)});w.on('open',()=>{console.log('意外: 假令牌也通了');process.exit(0)});w.on('error',e=>{console.log('err',e.message);process.exit(0)})"
+```
+
+期望 `status 401`（或 403）：说明 **TLS + 升级 + 令牌校验**三段都通。
+
+### 4.2 收口：TLS 通了就把 8787 关回本机
+
+Caddy 起来后 8787 仍对公网明文开放，而连接器令牌是 `Authorization: Bearer` ——
+链路上任何人都能拿到它并向中转冒名报名册。
+
+```yaml
+    ports:
+      - "127.0.0.1:8787:8787"
+```
+
+```bash
+docker compose up -d relay     # 只重建中转
+```
+
+**验证**：从**外网**测 `<域名>:8787` 不再通；`https://<域名>/` 仍是 `405`。
 
 ## 5. 让电脑侧连过来
 
