@@ -1,6 +1,6 @@
 # Agent Note: 中转的"连接器是否必须认证"可配
 
-Status: proposed
+Status: implemented
 
 ## Problem
 
