@@ -72,6 +72,10 @@ const opsOf = (calls: string[]): AdminOps => ({
     calls.push(`token:${id}:${enabled}`)
     return { ok: true }
   },
+  async setConnectorAuth(mode, limit) {
+    calls.push(`connectorAuth:${mode}:${String(limit)}`)
+    return { ok: true }
+  },
   async removeToken(id) {
     calls.push(`remove:${id}`)
     return { ok: true }
@@ -292,4 +296,33 @@ test('升级回调里再验一次：认证与回调之间被吊销 ⇒ 建立后
   assert.equal(closed.code, 4000, '不是 4003：控制面拒绝不在握手层')
   assert.equal(closed.reason, 'credential revoked')
   assert.equal(relay.core.stats.connectors, 0, '被吊销的控制面不得留在在线集合里')
+})
+
+test('面板能改「连接器是否必须认证」与名额：落盘点被调用，非法值挡在路由层', async (t) => {
+  const calls: string[] = []
+  const { log, actions } = recorder()
+  const relay = await startRelay({
+    port: 0, authenticate: () => undefined, admin: ADMIN, adminOps: opsOf(calls), log,
+  })
+  t.after(() => relay.close())
+  const base = baseOf(relay.port)
+
+  // 状态里带得出来（面板据此显示「必需 / 开放」与已用量）
+  const state = (await (await get(base, '/admin/api/state', AUTH)).json()) as AdminStateView
+  assert.equal(state.connectorAuth.mode, 'required', '没接兑换面就是 required')
+  assert.equal(state.connectorAuth.limit, null)
+  assert.equal(state.connectorAuth.autoCount, 0)
+
+  assert.equal((await post(base, '/admin/api/connector-auth', AUTH, { mode: 'open', limit: null })).status, 200)
+  assert.deepEqual(calls.at(-1), 'connectorAuth:open:null', '名额 null = 无上限，不是 0')
+  assert.equal((await post(base, '/admin/api/connector-auth', AUTH, { mode: 'open', limit: 5 })).status, 200)
+  assert.deepEqual(calls.at(-1), 'connectorAuth:open:5')
+
+  // 非法值：模式只认两个值，名额必须是正整数（0 不是「取消」，取消用 null）
+  assert.equal((await post(base, '/admin/api/connector-auth', AUTH, { mode: 'opne', limit: null })).status, 400)
+  assert.equal((await post(base, '/admin/api/connector-auth', AUTH, { mode: 'open', limit: 0 })).status, 400)
+  assert.equal((await post(base, '/admin/api/connector-auth', AUTH, { mode: 'open', limit: 1.5 })).status, 400)
+  assert.equal((await post(base, '/admin/api/connector-auth', {}, { mode: 'open' })).status, 401)
+
+  assert.deepEqual(actions.map((action) => action['action']), ['connector-auth.set', 'connector-auth.set'])
 })

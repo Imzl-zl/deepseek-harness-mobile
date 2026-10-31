@@ -181,6 +181,26 @@ export async function setQuotaOwnerInConfig(
 }
 
 /**
+ * 把「连接器是否必须认证」与自动签发名额写进配置（面板那两格）。
+ *
+ * **两个键都显式写出来**：`autoEnrollLimit: null` 是"无上限"这个决定本身，
+ * 不写和写 null 在语义上一样，但写出来 owner 下次打开配置看得见自己选了什么。
+ */
+export async function setConnectorAuthInConfig(
+  configPath: string,
+  mode: 'open' | 'required',
+  limit: number | null,
+): Promise<void> {
+  const raw = await readFile(configPath, 'utf8')
+  const config = JSON.parse(raw) as Record<string, unknown>
+  await writeFile(
+    configPath,
+    `${JSON.stringify({ ...config, connectorAuth: mode, autoEnrollLimit: limit }, null, 2)}\n`,
+    'utf8',
+  )
+}
+
+/**
  * 从配置里**删掉**一条令牌记录（不可恢复）。
  *
  * 与 `revokeTokenInConfig` 分开：吊销是"留着行、标时间"（可恢复、有审计），

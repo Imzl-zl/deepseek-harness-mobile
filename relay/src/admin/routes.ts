@@ -59,6 +59,8 @@ export interface AdminStateView {
   /** `limit === null` = 这个人不设上限（默认）。 */
   quota: { period: string; enforce: string; rows: readonly { subject: string; used: number; limit: number | null }[] } | null
   tokens: readonly TokenRow[]
+  /** 连接器认证面：模式、名额上限（`null` = 无上限）与已自动签发的条数。 */
+  connectorAuth: { mode: 'open' | 'required'; limit: number | null; autoCount: number }
 }
 
 /** 写动作的落盘点（持久化在装配方：配置文件的写入不在这一层）。 */
@@ -71,6 +73,12 @@ export interface AdminOps {
   removeToken(id: string): Promise<{ ok: boolean; error?: string }>
   /** 把某人（`user:<owner>`）的新上限写回配置（`null` = 取消）；按连接器主体的覆盖不落盘。 */
   persistQuota(owner: string, bytes: number | null): Promise<{ ok: boolean; error?: string }>
+  /**
+   * 改「连接器是否必须认证」与自动签发名额（写回配置 + 运行时立即生效）。
+   *
+   * `limit === null` = 无上限（不预设人为限制）。
+   */
+  setConnectorAuth(mode: 'open' | 'required', limit: number | null): Promise<{ ok: boolean; error?: string }>
 }
 
 export interface AdminApi {
@@ -82,6 +90,7 @@ export interface AdminApi {
   disconnect(connectorId: string, deviceId?: string): Promise<AdminReply>
   setTokenEnabled(id: string, enabled: boolean): Promise<AdminReply>
   removeToken(id: string): Promise<AdminReply>
+  setConnectorAuth(mode: 'open' | 'required', limit: number | null): Promise<AdminReply>
 }
 
 const json = (status: number, body: unknown): AdminReply => ({
@@ -150,6 +159,18 @@ export function createAdminRoutes(api: AdminApi, page: string): { handle(request
         const id = body['id']
         if (typeof id !== 'string' || id === '') return json(400, { error: 'id-invalid' })
         return api.removeToken(id)
+      }
+
+      // 「连接器是否必须认证」+ 自动签发名额。**`limit: null` = 无上限**（不预设人为限制）。
+      if (request.path === '/admin/api/connector-auth') {
+        const mode = body['mode']
+        if (mode !== 'open' && mode !== 'required') return json(400, { error: 'mode-invalid' })
+        const limit = body['limit']
+        if (limit !== null && limit !== undefined
+          && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1)) {
+          return json(400, { error: 'limit-invalid' })
+        }
+        return api.setConnectorAuth(mode, typeof limit === 'number' ? limit : null)
       }
 
       return json(404, { error: 'not-found' })

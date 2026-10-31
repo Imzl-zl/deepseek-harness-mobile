@@ -29,7 +29,7 @@ import { dirname, join } from 'node:path'
 import type { TokenDigest } from './digest-auth.ts'
 import {
   appendTokenToConfig, issueToken, removeTokenFromConfig, restoreTokenInConfig,
-  revokeTokenInConfig, setAdminInConfig, setQuotaOwnerInConfig,
+  revokeTokenInConfig, setAdminInConfig, setConnectorAuthInConfig, setQuotaOwnerInConfig,
 } from './issue-token.ts'
 import { createTokenTable } from './token-table.ts'
 import { createJsonLogger } from './json-logger.ts'
@@ -308,6 +308,20 @@ const adminOps = config.admin === undefined ? undefined : {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
   },
+  async setConnectorAuth(
+    mode: 'open' | 'required',
+    limit: number | null,
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await setConnectorAuthInConfig(configPath, mode, limit)
+      connectorAuth = mode
+      autoEnrollLimit = limit
+      console.log(`连接器认证已改为 ${mode}，自动签发上限 ${limit === null ? '无' : `${limit} 条`}`)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
   async persistQuota(owner: string, bytes: number | null): Promise<{ ok: boolean; error?: string }> {
     try {
       await setQuotaOwnerInConfig(configPath, owner, bytes)
@@ -339,13 +353,15 @@ const quotaState = config.quota?.persist === true && config.quota.statePath !== 
  * "要不要认证"只由这里的 `mode` 决定，认证路径没有第二条。
  * **先落盘再进内存表**：写不进配置文件，就不该存在"能连、重启就丢"的令牌。
  */
-const connectorAuth = config.connectorAuth ?? 'open'
-const autoEnrollLimit = config.autoEnrollLimit ?? null
+// **运行时可改**（面板那两格写回配置后立刻生效，不用重启容器）。
+let connectorAuth = config.connectorAuth ?? 'open'
+let autoEnrollLimit = config.autoEnrollLimit ?? null
 const autoEnrolledCount = (): number =>
   table.list().filter((row) => row.source === 'auto' && row.revokedAt === undefined).length
 const connectorEnroll: ConnectorEnroll = {
-  mode: connectorAuth,
-  limit: autoEnrollLimit,
+  // **getter 而不是快照**：面板改完这两个值立刻生效，路由判定读的是当下这一份。
+  get mode() { return connectorAuth },
+  get limit() { return autoEnrollLimit },
   count: autoEnrolledCount,
   async issue({ pcId, name }) {
     const connectorId = `auto-${randomBytes(4).toString('hex')}`

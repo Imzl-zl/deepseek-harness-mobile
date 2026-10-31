@@ -622,6 +622,43 @@ td.id{color:var(--ink)}
 
     var tokens = el('section', undefined, 'card')
     var tHead = el('header'); tHead.appendChild(el('h2', '连接器令牌')); tHead.appendChild(el('span', '有效 ' + activeTokens + ' / ' + state.tokens.length, 'meta')); tokens.appendChild(tHead)
+
+    // 连接器认证：开放 = 谁都能自助兑换一张；必需 = 只有管理员签发的能连。
+    // 名额留空 = 无上限（不预设人为限制，收紧是 owner 的动作）。
+    var auth = state.connectorAuth || { mode: 'required', limit: null, autoCount: 0 }
+    var authBody = el('div', undefined, 'body')
+    var modeLine = el('div')
+    modeLine.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px'
+    modeLine.appendChild(el('span', '连接器认证', 'meta'))
+    modeLine.appendChild(el('span', auth.mode === 'open' ? '开放（可自助兑换）' : '必需（管理员发令牌）', 'tag ' + (auth.mode === 'open' ? 'ok' : '')))
+    modeLine.appendChild(btn('设为开放', function () {
+      post('/admin/api/connector-auth', { mode: 'open', limit: auth.limit }).then(refresh)
+    }))
+    modeLine.appendChild(btn('设为必需', function () {
+      post('/admin/api/connector-auth', { mode: 'required', limit: auth.limit }).then(refresh)
+    }))
+    authBody.appendChild(modeLine)
+
+    var limitLine = el('div')
+    limitLine.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 4px'
+    limitLine.appendChild(el('span', '自动签发上限', 'meta'))
+    var limitInput = el('input')
+    limitInput.type = 'number'
+    limitInput.min = '1'
+    limitInput.placeholder = '留空 = 无上限'
+    limitInput.value = auth.limit === null ? '' : String(auth.limit)
+    limitInput.style.cssText = 'width:120px;padding:8px 10px;border:1px solid var(--line2);border-radius:8px;background:transparent;color:inherit;font:inherit'
+    limitLine.appendChild(limitInput)
+    limitLine.appendChild(btn('保存上限', function () {
+      var raw = limitInput.value.trim()
+      var next = raw === '' ? null : Number(raw)
+      if (next !== null && (!isFinite(next) || next < 1)) { alert('上限要正整数，或留空表示无上限'); return }
+      post('/admin/api/connector-auth', { mode: auth.mode, limit: next }).then(refresh)
+    }))
+    limitLine.appendChild(el('span', '已自动签发 ' + auth.autoCount + ' 条', 'meta'))
+    authBody.appendChild(limitLine)
+    authBody.appendChild(el('p', '开放时任何人拿到地址都能连；内容仍端到端加密，中转只见密文与元数据。', 'hint'))
+    tokens.appendChild(authBody)
     var tBody = el('div', undefined, 'body')
     tBody.appendChild(table(['id', '所属人', '状态', ''], state.tokens.map(function (row) {
       var actions = el('span')

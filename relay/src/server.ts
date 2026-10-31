@@ -286,6 +286,14 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         return adminJson(200, { ok: true })
       },
 
+      async setConnectorAuth(mode, limit) {
+        if (options.adminOps === undefined) return adminJson(501, { error: 'admin-ops-not-wired' })
+        const saved = await options.adminOps.setConnectorAuth(mode, limit)
+        if (!saved.ok) return adminJson(500, { error: 'persist-failed', detail: saved.error ?? '' })
+        log?.info('admin.action', { actor, action: 'connector-auth.set', mode, limit })
+        return adminJson(200, { ok: true })
+      },
+
       async removeToken(id) {
         if (options.adminOps === undefined) return adminJson(501, { error: 'admin-ops-not-wired' })
         // **先吊销再删除**：活跃凭据不能一把删掉（那会让一台在线电脑莫名失联），
