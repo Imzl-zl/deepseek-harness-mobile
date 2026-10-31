@@ -52,63 +52,89 @@ Status: proposed
 4. **清单行带 list 投影提示**(`types.ts:157-163` 的 `projections?: SessionProjectionHints`),
    而连接器本来就原样透传(`connector/src/dsh/sessions.ts:354`);手机侧行解析
    还优先用 `values.modelSelection`(`app/lib/wire/rpc/session.dart:294`)。
-5. **另外四个面没有"它变了"的宿主事件**(逐条查过):
+5. **权限预设目录有它自己的事件**:`permission-presets/catalog-changed`,浏览器侧收到就
+   `invalidate()` + `refresh()`(`ui-permission-presets/src/client/catalog.ts:46-49`)。
+   ⇒ 它**不是**"只连上拉一次"的那种目录(与上一版方案里的判断相反,已改)。
+6. **目录在"连接代次变化"时重拉,而不是跨重连保留**:模型目录的 `resetGeneration()` 挂在
+   `connection/reset` 上(`ui-model-selection/src/client/service.ts:48-51`),权限目录同一条纪律
+   (`:50-56` 的 generation 订阅)。
+7. **仍然没有"它变了"事件的四个面**(逐条查过):
    - `workspace` 包只 emit `workspace/session-activity` / `workspace/session-stop`
      (`packages/workspace/workspace/src/index.ts:129,147`)——那是"会话活动/停止",**不是**
      "工作区表变了";`api/workspace-controller` 一个 `emit(` 都没有;
    - `agent-preset-registry` 只 emit `agent-preset/selected`(`preset/agent-preset-registry/src/index.ts:77`);
-   - `permission.catalog` 读的是部署配置(`cordis.patch.yml` 的预设表);
-   - `repo.info` 是进程级事实(版本 / 能力位)。
-   ⇒ 它们**只该在连上时拉一次**(以及手机自己发起、回执里带回全集的那几笔写)。
+   - `repo.info` 是进程级事实(版本 / 能力位);
+   - `session.list` 那一行的**内容**变化在宿主侧是有事件的(`api-session/activity` 等),
+     但我们**不推数据**(`implemented/2026-10-31-host-state-sync.md` 的「代价 3」那条),
+     所以手机侧只能重取快照 —— 见下方「不做」的第二条。
 
 ## Decision
 
-**按"谁让它过期"把快照拆开登记,让 bootstrap 就是登记表的 `connectLanding` 一列。**
+**总纲:快照按"谁让它过期"拆开登记,`connectLanding` 一列就是首屏。**
 
-两批落地,各自独立可验:
+但**不是照抄 DSH 就够了** —— 它的前提是"桌面浏览器 + 常连 + 同一进程",手机上是
+"单 socket 多路复用 + 可能经计费中转 + 会闪断 + Flutter 整树重建"。所以有三处
+**刻意不照抄**(下面 3/4/5 三条),另有一处**照抄**(第 5 条:重连重拉目录)。
+两批落地,各自独立可验。
 
 ### 第 1 批(app 侧,不动协议)
 
 1. `refreshSessions()` **拆成两半**:
    - `refreshSessionRows()` —— 只做 `session.list` + `_applySessionList` + prune + 报错;
-   - `refreshHostCatalogs()` —— 现在的 2/3/5/7 四件(模型目录、权限目录、预设目录、`repo.info`);
-   - 4(`workspace.list`)与 6(`settings.describe`)已经是独立方法,只是被捆在里面。
-2. **登记表成为"拉什么"的唯一清单**(`app/lib/data/host_state.dart`):把上面每一项
-   各登记成一个 key,`triggers` 写清它该在哪个时机重取:
+   - `refreshHostCatalogs()` —— 模型目录、权限目录、预设目录、`repo.info` 四件。
+   - `workspace.list` 与 `settings.describe` 本来就是独立方法,只是被捆在里面。
+2. **登记表成为"拉什么、何时拉"的唯一清单**(`app/lib/data/host_state.dart`):
 
-   | key | 触发点 |
-   |---|---|
-   | `session.list` | notification / connectLanding / appResume |
-   | `session.projections` | notification / openSession / connectLanding / appResume |
-   | `settings.describe` | notification |
-   | `job.list` | notification / openSession |
-   | `session.modelCatalog` | notification(仅 `llm/*`、`credentials/*`、`settings/document-updated`) / connectLanding |
-   | `permission.catalog` | connectLanding |
-   | `agentPresets.list` | connectLanding |
-   | `workspace.list` | connectLanding |
-   | `repo.info` | connectLanding |
+   | key | 触发点 | 依据 |
+   |---|---|---|
+   | `session.list` | notification / connectLanding / appResume | 行是落点与 chip 的来源 |
+   | `session.projections` | notification / openSession / connectLanding / appResume | 已有 |
+   | `settings.describe` | notification | 已有 |
+   | `job.list` | notification / openSession | 已有 |
+   | `session.modelCatalog` | notification / connectLanding | 判据 2 的五条事件 |
+   | `permission.catalog` | notification / connectLanding | 判据 5 的 `permission-presets/catalog-changed` |
+   | `agentPresets.list` | connectLanding | 判据 7:无事件 |
+   | `workspace.list` | connectLanding | 判据 7:无事件(顺序变化由自己的写带回全集) |
+   | `repo.info` | connectLanding | 判据 7:进程级事实 |
 
-3. **bootstrap 变成"跑登记表的 `connectLanding` 一列"**(`landAfterConnect()` 今天就是
-   调 registry):`refreshSessions()` 这个名字**从产品路径消失**,只留
-   `refreshSessionRows()` 给"自己发起的写"与界面上的重试用。于是
-   - 通知路径:**rows 只拉行**(有 `session.list` 的那条通知 = 1 请求,不再是 7);
-   - 自己的写(切模型 / 分支 / 重试):同样 1 请求;
-   - 连上 / 回前台:整份 bootstrap(9 项)照旧 —— 那是**一次**的事,不是高频路径。
+3. **首屏(决定 3):先等 rows,其余八项并行,并且"目录失败不许拦住落点"。**
+   今天 `refreshSessions()` 是 **6 个 await 串行**(`:2865-2879`)—— 经中转时首屏凭空多
+   6 个 RTT;而落点只需要 rows(行里的 `updatedAt`/`running`)。所以:
+   - `landAfterConnect()` = `await rows` → `landOnSession()`;
+   - 其余八项 `Future.wait` **并行**跑(首屏只多 1 个 RTT),失败各自留声;
+   - **八项里任何一项失败都不影响落点**(今天 `refreshSessions` 内部都 catch,拆开后要
+     显式保证:`landAfterConnect` 不因目录失败而跳过 `landOnSession`)。
+   - **不把"等"收窄成"只等 rows 就完事"**:落点后如果目录还没到,新建 blank 会话的英雄页
+     会先显示"拿不到模型"(它的 `currentModel` 回落到目录默认值)。并行已经拿掉了延迟,
+     不需要再用"闪一下"换那几十毫秒。
+4. **一次通知到一次重建(决定 4)**:四个目录各有 `onChange` → 今天首屏要通知 6 次
+   (`HostCatalogs` 每项一次)。改成**一批只通知一次**(`Future.wait` 之后再 `notifyListeners`)。
+   这不是请求数的问题,是 Flutter 侧整棵树重建 6 次的问题(启动那一下的可见卡顿)。
+5. **重连必须重拉目录(决定 5)**:不缓存跨重连 —— 判据 6 就是 DSH 的做法,而理由在手机上
+   更硬:通知只在服务态到达,**断开期间电脑上换了密钥 / 改了模型,手机收不到任何事件**,
+   所以重连不重拉就永远错。这条同时否掉了我上一版想省的那 4 个请求:在弱网里它很诱人,
+   但它牺牲的恰好是这条通道要保证的东西。
 
-### 第 2 批(连接器侧,加一条触发源)
+### 第 2 批(连接器侧,两条新触发源)
 
-4. 给 `session/modelCatalog` 补通知:听那五条宿主事件
-   (`llm/adapters-updated` / `llm/models-updated` / `settings/document-updated` /
-   `credentials/record-updated` / `credentials/reference-updated`)→ 发
-   `{keys:['session.modelCatalog']}`。
-   这**不只是省请求,是补一个今天没有的能力**:在电脑上加/换模型或改密钥后,
-   手机的模型选择器**不重连就永远看不到**(现在只有连上时才拉目录)。
+6. `session.modelCatalog`:听 `llm/adapters-updated`、`llm/models-updated`、
+   `settings/document-updated`、`credentials/record-updated`、
+   `credentials/reference-updated` → 发 `{keys:['session.modelCatalog']}`(宿主级,无 sid)。
+   **不过是省请求,是补一个今天没有的能力**:电脑上加/换模型或改密钥后,手机的模型
+   选择器不重连就看不到。
+7. `permission.catalog`:听 `permission-presets/catalog-changed` → 发
+   `{keys:['permission.catalog']}`。同理,今天是"部署改了预设表,手机要重连才看到"。
 
-### 不做
+### 不做(每条都写清理由,不是忘了)
 
-- 不给 `permission.catalog` / `agentPresets.list` / `workspace.list` / `repo.info` 编触发源:
-  它们没有宿主事件(见判据 5),编一个"每 N 秒"或"每次通知都拉"就是替宿主做决定。
-- 不把 `session.list` 的整行改成推送(见被否方案 2)。
+- **不给 `agentPresets.list` / `workspace.list` / `repo.info` 编触发源**:没有宿主事件
+  (判据 7);编"每 N 秒"就是替宿主做决定。
+- **不给 `session.row` 这种"只取一行"的新方法面**(见被否方案 2 的补充):真正的大头是
+  `session.list` 的整包(本机 302 行),但**先量再说** —— 下一轮用连接器的字节数指标量
+  一次"一次标题变更实际多少字节",再决定要不要窄口。
+- **不把 `settings/document-updated` 按命名空间过滤**:过滤表就是第二份
+  "哪些设置影响模型"的知识;DSH 浏览器侧同样不过滤(`service.ts:56`)。代价是设置页
+  改一行会带来一次目录重取 —— 那是低频动作,且返回的是缓存内的一整包。
 
 ## Alternatives considered
 
@@ -123,38 +149,52 @@ Status: proposed
    - 为何被否:与上一条笔记的核心决定冲突 —— 那条定的是"**提示重取,不推数据**"
      (推数据 = 第二份真值)。真要走这条,得先推翻"快照方法是宿主权威唯一来源",
      并给清单行引入一套与 `seq`/`itemId` 无关的合并语义(哪一行新?没有序号可比 ——
-     DSH 有 `mergeOrderedBaseline` 与 `asOfSeq`,我们一条都没有)。代价远大于收益,
-     且它解决的是"省一次往返",而本轮的问题是"一次拉太多"。
+     DSH 有 `mergeOrderedBaseline` 与 `asOfSeq`,我们一条都没有)。
+     **它真正省的是字节**(整包 302 行 vs 一行 JSON),不是往返数 —— 所以它属于"量完
+     再议"的第二问(见文末),而不是这一轮该做的事:这一轮先把"一次拉太多"解决掉,
+     字节问题要先用指标量出来,否则就是拿一个不可逆的协议决定去换一个还没量过的收益。
 3. **保持现状**:把 7 个请求当成"一次完整快照刷新"。
    - 最强理由:零改动、行为最稳、没有 bootstrap/通知两条路径要防漂移。
    - 为何被否:它把"通知越准越好"这条投资浪费掉 —— 触发点精确到 `model/selection`,
      落地却是整表刷新;而且"自己的写 7 个往返"与用户点一下要等一次完整快照是同一笔账。
      逐条测试也不需要它:`host_state_test` 已经能断言"这条通知只发出哪些方法"。
-4. **把 `repo.info` / 目录们缓存到本地、只在连上时校准**
-   - 最强理由:理论上目录变化极慢,缓存过夜也能用。
-   - 为何被否:`docs/subsystems/ui-state.md` §1 已经裁定 `host` 类状态"手机不缓存过夜",
-     而目录是 host 权威;缓存日期就会重演"手机显示一个电脑上已经没有的模型"。
-     要省的是**请求数**,不是**新鲜度**。
+4. **把目录缓存在内存里、跨重连保留**(只在失效事件 / 换电脑 / 冷启动时重拉)
+   - 最强理由:弱网里手机一天闪断几十次,每次重连把 4 个目录重拉一遍是实打实的流量与
+     电量;而目录变化极慢,看起来"重拉是浪费"。
+   - 为何被否:**它牺牲的正是这条通道存在的理由**。`host` 通知只在服务态到达 ——
+     断开期间在电脑上换了密钥、加了模型、改了预设表,手机**一条事件都收不到**;
+     跨重连保留缓存就等于"用旧目录相信自己对",那比不刷新更糟(`ui-state.md` §1 的
+     "不缓存过夜"是同一条判断的更粗版本)。DSH 自己也在 `connection/reset` 上重拉
+     (判据 6),不是每代只拉一次。
+5. **把首屏的 6 个串行 await 原样搬进 registry**(只拆登记、不动时序)
+   - 最强理由:改动面最小,`landAfterConnect` 的行为与今天逐字相同,回归风险最低。
+   - 为何被否:经中转/蜂窝时首屏凭空多 6 个 RTT(`app_model.dart:2865-2879` 是串行的),
+     而落点其实只需要 rows。既然已经要把这份清单搬到一处,顺手把"串行等 6 件事"改成
+     "并行等 1 轮"是同一处改动,不额外增加风险(每一件本来都自己 catch)。
 
 ## Consequences
 
 - 收益:
   - 一条通知的往返从 **7~8 → 1~2**(切模型 = rows + projections;标题 = 同;权限 = projections);
     自己发起的写从 **7 → 1**。
-  - **补上一个缺口**:凭据 / 模型提供方在电脑上变化后,手机的选择器能自己跟上(今天不能)。
+  - 首屏:**6 个串行 await → 并行一轮**(经中转时少 5 个 RTT),且目录失败不再能拖住落点;
+    目录到达时**只通知一次**,不再整棵树重建 6 次。
+  - **补上两个今天没有的能力**:电脑上加/换模型或改密钥、改权限预设表后,手机不重连也能跟上。
   - 登记表成为"拉什么、何时拉"的唯一清单;`refreshSessions()` 这个名字消失,捆也就没了
     —— 以后想加"某个新快照",只能登记,不能偷偷塞进一个函数。
-- 代价 1:**协议封闭集 +1 个 key**(`session.modelCatalog`)⇒ 要同步契约 §5.9 的 key 表、
-  连接器的 `HOST_STATE_KEYS`、app 的 `HostStateKey`(有跨端门禁 `host_state_test`),
-  并补一条"事件 → 通知"的连接器用例。
-- 代价 2:**两条路径要防漂移**:bootstrap 是"registry 的 connectLanding 一列",
-  所以"连上时该拉什么"不再由函数体决定 —— 好处是不会漂,坏处是**改 `connectLanding` 一列
-  就等于改首屏行为**,得靠 `landAfterConnect` 的既有落点测试兜(落点依赖行里的
-  `updatedAt`/`running`,所以 rows 必须在落点之前完成)。
-- 代价 3:重新验证面变大 —— 首屏落点、回前台、自己的写、断连重连都要各看一遍
-  (它们今天都在"7 请求"的同一条路上,拆开后各自独立)。
-- 代价 4:`session.modelCatalog` 的触发源有 5 条宿主事件要接,其中 `credentials/*` 两条
-  在连接器里**没有现成用法**(首次出现),要在 `index.ts` 新加两个 `ctx.effect`。
+- 代价 1:**协议封闭集 +2 个 key**(`session.modelCatalog`、`permission.catalog`)⇒ 要同步
+  契约 §5.9 的 key 表、连接器的 `HOST_STATE_KEYS`、app 的 `HostStateKey`(有跨端门禁
+  `host_state_test`),并补"事件 → 通知"的连接器用例。
+- 代价 2:**`connectLanding` 一列就是首屏行为**:好处是不会漂,坏处是改那一列等于改首屏,
+  得靠落点测试兜(rows 必须在 `landOnSession()` 之前完成)。
+- 代价 3:重新验证面变大 —— 首屏落点、回前台、自己的写、断连重连各看一遍(今天它们都在
+  "7 请求"的同一条路上)。
+- 代价 4:`session.modelCatalog` 要接 5 条宿主事件,其中 `credentials/*` 两条在连接器里
+  **没有现成用法**(首次出现),要在 `index.ts` 新加两个 `ctx.effect`;
+  `permission-presets/catalog-changed` 是第三条新监听。
+- 代价 5:首屏从"串行等"改成"并行等"会改变**失败时的可见顺序**(以前第一个失败就停下,
+  现在八个都会跑完再报第一个)。这更好(一次看到全部问题),但"只报第一个"这件事要写在
+  测试里,免得以后有人以为是 bug。
 
 ## Testing
 
@@ -162,31 +202,39 @@ Status: proposed
   - 每个新 key 至少一个触发点(已有机械判据);
   - **一条通知只发出该 key 的方法**:`{keys:['session.list']}` ⇒ 恰好 1 次 `client.call`,
     且方法名就是 `session.list`(现在是 7 次,这条会红);
-  - `connectLanding` ⇒ 9 个方法各一次;
-  - `repo.info` / `permission.catalog` / `workspace.list` / `agentPresets.list`
-    **不接受 notification**(把这三个写进一条通知 ⇒ 零请求)。
-- `app/test/connect_landing_test.dart` / `connect_landing` 相关:落点仍要等 rows
-  (行里的 `updatedAt`/`running`),所以断言"落点前 rows 已到位"。
-- `connector/tests/host-state-notice.test.ts` 扩:五条目录事件的映射
-  (`llm/adapters-updated` 等 ⇒ `{keys:['session.modelCatalog']}`),以及
+  - `connectLanding` ⇒ 9 个方法各一次,且**并行发起**(断言"第一个请求返回前其余 8 个已发出");
+  - `agentPresets.list` / `workspace.list` / `repo.info` **不接受 notification**
+    (写进一条通知 ⇒ 零请求);`session.modelCatalog` / `permission.catalog` **接受**;
+  - 目录失败不拖落点:`refreshHostCatalogs` 抛错时 `landAfterConnect` 仍然 `landOnSession`;
+  - 一次批量只通知一次:`connectLanding` 期间 `notifyListeners` 的调用次数 = 1(计数桩)。
+- `app/test/connect_landing_test.dart`:落点仍要等 rows(行里的 `updatedAt`/`running`),
+  断言"落点前 rows 已到位、目录未跑完也能落点"。
+- `connector/tests/host-state-notice.test.ts` 扩:五条目录事件 ⇒ `{keys:['session.modelCatalog']}`;
+  `permission-presets/catalog-changed` ⇒ `{keys:['permission.catalog']}`;
   "`settings/document-updated` 同时命中 `settings.describe` 与 `session.modelCatalog`"。
-- 真机:在电脑上换一个模型的凭据 / 改 `agent-default-model`,手机**不重连**打开模型选择器
-  应能看到新模型(这是今天做不到的,所以有一条"改前必红"的对照)。
+- 真机(两条对照都必须是"改前红"):①在电脑上换密钥 / 改 `agent-default-model` →
+  手机不重连打开模型选择器能看到新模型;②改权限预设表 → 手机不重连打开权限 sheet 能看到。
 
-## Open questions（实施前要定）
+## 已经定掉的四件(原来列为 Open questions)
 
-1. `session.modelCatalog` 的 5 条事件里,`settings/document-updated` 会让**任何**命名空间的
-   设置写触发一次目录重取(手机可读的那几个之外没有过滤)。要不要只对
-   `llm-*` / `permission` / `agent-preset-registry` 这几个命名空间发?
-   (倾向:不过滤 —— 目录取回的是一整包,过滤表是第二份"哪些设置影响模型"的知识,
-   而 DSH 浏览器侧同样不过滤:`service.ts:56`)
-2. `permission.catalog` 真的没有宿主事件吗?部署配置变化走的是 `configEditor`(插件面板),
-   那条路会不会 emit 什么?**实施前要再核实一次**(查不到就维持 connectLanding-only)。
-3. 首屏是否可以"行到位就落点,目录并行"?今天 `landAfterConnect` 等全部 9 项才落点,
-   拆开后要不要把"等"收窄成"只等 rows"?收益是首屏更快,代价是落点后目录还会再刷一次
-   (界面会闪一下"拿不到目录"→有)。**倾向不动**(首屏是低频路径,不动时序最稳),
-   但要把它写成明确的不做,而不是忘了。
-4. 自己的写要不要也走 registry(立即触发、不压 150ms 窗口)?
-   **倾向要** —— 那样"切模型之后 chip 什么时候变"只有一处实现;代价是 `selectModel`
-   不再直接 `await refreshSessions()`,要改成 `await triggered(ownWrite, sid:)` 并
-   在测试里断言方法名。
+1. **`settings/document-updated` 不过滤命名空间**:过滤表是第二份"哪些设置影响
+   模型/预设"的知识,漏一项就表现为"改了设置手机不跟";DSH 浏览器侧同样不过滤
+   (`service.ts:56`)。低频动作 + 返回缓存内的一整包,这个价钱可以付。
+2. **`permission.catalog` 有事件**(判据 5):`permission-presets/catalog-changed`。
+   上一版写"只连上拉"是查漏,已改。
+3. **首屏先等 rows、其余并行**(第 1 批的第 3 条):不采用"落点后再补目录"—— 那会让
+   blank 会话的英雄页先显示"拿不到模型"。并行已经把延迟拿掉了。
+4. **自己的写也走 registry**(第 1 批之外的补充):`selectModel` / `forkSession` /
+   页面重试改成 `await triggered(ownWrite, sid:)`,**立即执行不压窗口**,方法名由测试断言。
+   **保留"重拉行"这一步**(不用回执直接改本地行):行是电脑侧身份字段,
+   `_touchSummary` 的注释已经写明"只换计数不重建整行";为了省 1 个请求去本地改写宿主
+   派生字段,是把一条便宜的路换成一条会过期的路。
+
+## 仍然不知道、且只能靠量的
+
+- **`session.list` 的包有多大**:本机 302 行,一次标题变更就重拉整表。若实测单包达几十 KB
+  且有明显比例来自与"这一行"无关的字段,下一步才谈"只取一行"(新增 `session.row` 方法面
+  或行级推送)。**先量再改**:`connector` 已有 `connector.frames.outbound` 计数,
+  需要的是字节数 —— 实施第 1 批时顺手加一个 `connector.bytes.outbound`(纯观测)。
+- **中转计费与请求数的关系**:中转有按人流量额度(只计字节,不计请求数)。所以本次收益
+  主要是**延迟与电量**,不是额度;别在文档里把它写成"省流量"。

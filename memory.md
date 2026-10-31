@@ -84,11 +84,13 @@
 
 0. **重取范围按触发源拆（待评审）**：现在一条 `host` 通知 = 一次
    `refreshSessions()`，而它是个捆（行 + 模型目录 + 权限目录 + 工作区 + 预设 + 设置 +
-   `repo.info` = **7 个往返**；切模型/标题那两条通知是 8）。方案
-   `proposed/2026-11-01-refetch-scope-by-trigger.md`：拆成 9 个登记 key、bootstrap =
-   registry 的 `connectLanding` 一列、给 `session.modelCatalog` 补上 DSH 自己也用的
-   五条失效事件（顺带补上"电脑上加/换模型后手机不重连也能看到"这个缺口）。
-   已查实的判据：DSH 的目录是懒加载 + 显式失效、清单是行级事件 + 脏缓存重建。
+   `repo.info` = **7 个往返**；切模型/标题那两条通知是 8；首屏还是 6 个 await 串行）。
+   方案 `proposed/2026-11-01-refetch-scope-by-trigger.md`：9 个登记 key、
+   `connectLanding` 一列就是首屏、首屏**并行**（少 5 个 RTT）且目录失败不拖落点、
+   目录到达**只通知一次**；再给 `session.modelCatalog`（DSH 的五条失效事件）与
+   `permission.catalog`（`permission-presets/catalog-changed`）补通知 —— 顺带补上
+   "电脑上加/换模型、改预设表后手机不重连也能看到"这个缺口。
+   刻意**不**省的一处：目录跨重连不缓存（断开期间的变化收不到事件，重拉才是对的）。
 1. **多机第 4 步的真机复验**：只剩两条要**两台设备**才能做的（第二台被
    `device/busy` 拒并说出占用者、切回上一台的真实链路）—— 单测已覆盖，
    真机可用"第二个 DSH_HOME + 另一份连接器身份"补；命中不了的按未验证如实说。
