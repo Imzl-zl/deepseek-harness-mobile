@@ -62,7 +62,7 @@ Future<T?> showDshSheet<T>({
       ),
       // 最多占 80% 高：留一截能看见背后的界面，让"这是浮层"成立。
       constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.8,
+        maxHeight: MediaQuery.sizeOf(context).height * 0.8,
       ),
       builder: (context) =>
           _SheetFrame(title: title, actions: actions, child: body),

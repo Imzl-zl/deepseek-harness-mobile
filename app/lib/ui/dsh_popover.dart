@@ -71,7 +71,7 @@ Future<T?> showDshPopover<T>({
   double maxWidth = 360,
   double maxHeightFactor = 0.55,
 }) {
-  final size = MediaQuery.of(context).size;
+  final size = MediaQuery.sizeOf(context);
   // 两侧各留 12：既贴不进安全区外，也让"这是浮层不是页面"看得出来。
   final width = (size.width - 24).clamp(0.0, maxWidth);
   final left = anchor.left.clamp(12.0, size.width - width - 12.0).toDouble();

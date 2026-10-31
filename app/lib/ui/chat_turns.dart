@@ -68,7 +68,10 @@ class UserTurn extends StatelessWidget {
               // 右下角 6px 是"贴着发送者"的那一角 —— 这是聊天气泡的惯例，
               // 四角同圆会看不出是谁说的。
               constraints: BoxConstraints(
-                maxWidth: MediaQuery.of(context).size.width * 0.82,
+                // **`sizeOf`**：用户气泡在列表里，而 `MediaQuery.of(context).size`
+                // 会让**每一条气泡**都依赖整份 MediaQueryData —— 键盘弹起时
+                // 一屏气泡全部重建。这里只需要宽度。
+                maxWidth: MediaQuery.sizeOf(context).width * 0.82,
               ),
               padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
               decoration: BoxDecoration(

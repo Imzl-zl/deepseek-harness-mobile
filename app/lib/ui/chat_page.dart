@@ -777,21 +777,19 @@ class ChatPageState extends State<ChatPage> {
     // （工具 / 命令 / 重试 / 压缩），只留用户那句话、正文与收口行。
     // 运行中的一轮不可折叠 —— 组头只在轮次收口后出现
     // （DSH 同一条：`TurnProcessNodeView.tsx:18` 在未 closed 时整行不渲染）。
-    final groups = buildTurnGroups(widget.app.items);
+    // **按来源同一性缓存**（见 [_derivationFor]）：这四步都是 O(条目数) 的纯派生，
+    // 而流式输出一秒能触发几十次整页重建。
+    final derived = _derivationFor(sid);
+    final groups = derived.groups;
     final collapsible = collapsibleTurns(groups);
-    final items = applyTurnCollapse(
-      groups,
-      isExpanded: (turn) => _turnExpanded(sid, turn, groups),
-    );
+    final items = derived.visible;
     // 「助手」头画在每组第一条助手侧条目上方（用户 2026-10-23：
     // 「助手不应该是开始的时候显示吗」）。流式尾条目同理：本轮还没有任何
     // 助手侧条目时才由它自己带头。
     // 头按**折叠后可见的条目**算：被藏掉的那条不能是头像落点
     // （否则收起一轮时头像跟着过程一起消失）。
-    final headAt = assistantHeadItemIds(items);
-    final liveShowHead = groups.isEmpty
-        ? true
-        : !groups.last.items.any(isAssistantSide);
+    final headAt = derived.headAt;
+    final liveShowHead = derived.liveShowHead;
     // **各算一次**：顶栏那两枚计数 chip 与右抽屉三个面板读的是**同一份**。
     //
     // 子智能体那枚 chip 的数是**目录直接子级**（Web 的 `directCount`，
@@ -836,7 +834,10 @@ class ChatPageState extends State<ChatPage> {
       // - **28% 比例顶**：宽屏上 64px 太窄，仍是"从最边缘起手"。
       //   两者取小，于是窄屏 64px、宽屏 28%。
       drawerEdgeDragWidth: math.min(
-        MediaQuery.of(context).size.width * 0.28,
+        // `sizeOf` 而不是 `MediaQuery.of(context).size`：后者依赖整份
+        // `MediaQueryData`，**键盘弹起/收起也会让这里重建**（viewInsets 变了），
+        // 而这里只要尺寸。官方文档在 `MediaQuery.sizeOf` 上写明了这条。
+        MediaQuery.sizeOf(context).width * 0.28,
         64,
       ),
       appBar: ChatAppBar(
@@ -1278,7 +1279,66 @@ class ChatPageState extends State<ChatPage> {
   }
 
   void _toggleTurn(String? sid, int turn, bool expanded) {
-    setState(() => (_turnOpen[sid ?? ''] ??= <int, bool>{})[turn] = expanded);
+    setState(() {
+      (_turnOpen[sid ?? ''] ??= <int, bool>{})[turn] = expanded;
+      // 展开态变了：派上派生缓存（`_derivationFor`）必须重算这一趟。
+      _expandRev += 1;
+    });
+  }
+
+  /// 派生结果的缓存键里的"展开版本"。
+  int _expandRev = 0;
+
+  /// 上一趟派生用的来源与结果（判据见 [_derivationFor]）。
+  _TurnDerivation? _derived;
+
+  /// 轮组 / 折叠 / 助手头 —— **按来源同一性 + 展开版本缓存**。
+  ///
+  /// ## 为什么需要它
+  ///
+  /// `ChatPage` 整个包在 `ListenableBuilder(listenable: widget.app)` 里，而流式输出
+  /// 一秒能通知几十次；`buildTurnGroups` / `applyTurnCollapse` /
+  /// `assistantHeadItemIds` 都是 O(条目数) 的纯派生。不缓存就等于每秒把整份
+  /// 会话重新切一遍组、再扫两遍。
+  ///
+  /// ## 为什么"同一性"是可靠判据
+  ///
+  /// `AppModel.items` 直接返回 `SessionStore._sorted`，而那张表只在内容真的变了
+  /// 才被 `_resort()` 换成新表（`session_store.dart:66-87` 的 `upsertAll` 在没有
+  /// 实际变化时**提前返回**）。所以"同一个 List 实例"等价于"条目没变"。
+  ///
+  /// 另外两个键是必要的：手动展开/收起（[_expandRev]）与「工作步骤收起时机」
+  /// （`collapseTiming`，`_turnExpanded` 的判据之一）；换会话时 `sid` 也进键。
+  _TurnDerivation _derivationFor(String? sid) {
+    final source = widget.app.items;
+    final timing = widget.app.collapseTiming;
+    final cached = _derived;
+    if (cached != null &&
+        identical(cached.source, source) &&
+        cached.sid == sid &&
+        cached.expandRev == _expandRev &&
+        cached.timing == timing) {
+      return cached;
+    }
+    final groups = buildTurnGroups(source);
+    final visible = applyTurnCollapse(
+      groups,
+      isExpanded: (turn) => _turnExpanded(sid, turn, groups),
+    );
+    final next = _TurnDerivation(
+      source: source,
+      sid: sid,
+      expandRev: _expandRev,
+      timing: timing,
+      groups: groups,
+      visible: visible,
+      headAt: assistantHeadItemIds(visible),
+      liveShowHead: groups.isEmpty
+          ? true
+          : !groups.last.items.any(isAssistantSide),
+    );
+    _derived = next;
+    return next;
   }
 
   /// 当前会话是否正在跑（排队条的插话门 + 发送模式 sheet 的禁用判据）。
@@ -4294,7 +4354,7 @@ class _EmptyChat extends StatelessWidget {
       // 内容放得下时居中，放不下时可滚 —— 两个诉求都要满足。
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          minHeight: MediaQuery.of(context).size.height * 0.5,
+          minHeight: MediaQuery.sizeOf(context).height * 0.5,
         ),
         child: Center(
           child: Padding(
@@ -5006,4 +5066,46 @@ class _SubagentRunningLine extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 一次会话派生的四个结果（见 `ChatPageState._derivationFor`）。
+///
+/// 它存在的唯一理由是**缓存判据**：`source` / `sid` / `expandRev` / `timing`
+/// 四个键都没变时，这条会话的轮组、折叠结果、助手头位置与"要不要画流式头"
+/// 一定没变，不必重算。
+class _TurnDerivation {
+  const _TurnDerivation({
+    required this.source,
+    required this.sid,
+    required this.expandRev,
+    required this.timing,
+    required this.groups,
+    required this.visible,
+    required this.headAt,
+    required this.liveShowHead,
+  });
+
+  /// 派生用的条目表（`AppModel.items`，同一性即"没变"）。
+  final List<ChatItem> source;
+
+  /// 会话 id（手动展开态按会话记账）。
+  final String? sid;
+
+  /// 手动展开/收起的版本号（`_expandRev`）。
+  final int expandRev;
+
+  /// 「工作步骤收起时机」（`_turnExpanded` 的判据之一）。
+  final CollapseTiming timing;
+
+  /// 按轮切好的组。
+  final List<TurnGroup> groups;
+
+  /// 折叠后要画的条目。
+  final List<ChatItem> visible;
+
+  /// 每组第一条助手侧条目的 id（助手头像落在它上面）。
+  final Set<String> headAt;
+
+  /// 流式尾条目要不要自己画助手头。
+  final bool liveShowHead;
 }

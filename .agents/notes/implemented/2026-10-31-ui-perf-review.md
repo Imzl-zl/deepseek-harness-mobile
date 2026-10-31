@@ -59,6 +59,39 @@ Status: implemented
   `ListenableBuilder` 里），不能指望父层重建。已在 `_onInputChanged` 的注释里写明。
 - 代价：整页重建（流式通知）这条**仍然存在**，是最可能的主因，留给下一轮带测量再动。
 
+## 静态审查：雷区逐条
+
+判据来源：`State.build` 文档（build 要快、无副作用）、`MediaQuery.sizeOf` 文档
+（只依赖该字段：键盘弹起不重建）、`Opacity` / `ShaderMask` / `BackdropFilter` 文档
+（都提到昂贵/触发 `saveLayer`）、社区共识（`FutureBuilder` 不在 build 里建 future、
+长列表用 builder、动画不可见即停）。
+
+**本轮修掉**
+
+| 雷区 | 位置 | 处置 |
+|---|---|---|
+| build 里做 O(条目数) 派生 | `chat_page.dart` 的 `buildTurnGroups` / `applyTurnCollapse` / `assistantHeadItemIds`，每次通知跑三遍 | 按"items 同一性 + sid + 展开版本 + collapseTiming"缓存（`_derivationFor`）。可靠性来自 `session_store.dart:66-87`：内容没变时 `upsertAll` 提前返回、`_sorted` 不换表 |
+| `MediaQuery.of(context).size` | 6 处（`chat_turns.dart:71` 的用户气泡最重：一屏气泡都依赖整份 MediaQueryData） | 全改 `.sizeOf(context)` |
+
+**确认存在、本轮不动（都指向同一个根因：通知粒度）**
+
+| 雷区 | 位置 | 为什么不单独改 |
+|---|---|---|
+| 整页 `ListenableBuilder(app)` | `chat_page.dart:709` | 见 Alternatives 1：缺可信测量，且波及用例 |
+| 抽屉每次通知现算 sections，且关着也在建 | `main.dart:1255` + SDK `material/drawer.dart:711-745` | 与上一条同源，单改一处没用 |
+| build 里调 `_takeover.setCurrentSid()` | `chat_page.dart:705` | 幂等且有必要（切会话换桶），但"build 里改状态"本身是脆的写法，已在注释写明 |
+| `BackdropFilter` | `dsh_composer.dart`（输入栏毛玻璃） | 用户点名要的效果；修掉整页重建后触发频率已降到人手级 |
+| `ShaderMask` 扫光 | `dsh_shimmer.dart:204-209` | 每行把 child 画两遍 + 一层 `saveLayer`；只在"真的在跑"的行上挂，空闲即摘 |
+| `Opacity` ×6 | 4 处在动画/拖动中，2 处在弹层淡入 | 动画/拖动本就是短暂交互，改色值会让代码绕一大圈 |
+
+**确认没踩（列出来是为了下次别再查一遍）**
+
+- `FutureBuilder` / `StreamBuilder`：**0 处**（社区最经典的"build 里新建 future，每帧重发一次"）。
+- 长列表：聊天用 `ListView.builder`（懒建）；`shrinkWrap` 只出现在设置页的端点小表。
+- 图片解码：壁纸按屏宽 `ResizeImage.resizeIfNeeded`；附件 chip 不渲染位图（只显示文件名/计数）。
+- 常驻动画：扫光只有一个 ticker，一行都没有时 `stop()`；`AnimationController` 全在 `dispose` 里释放。
+- 弹层：没有在 build 里 `showDialog`/`showModalBottomSheet` 的写法。
+
 ## Testing
 
 - `cd app; flutter test` —— 1599 项全绿（含 `composer_layout_test` / `composer_pickers_test` /

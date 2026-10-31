@@ -266,9 +266,11 @@ class _SessionDrawerState extends State<SessionDrawer> {
     return Drawer(
       // 宽度 `min(86%, 360px)`：留一条缝能看见背后的聊天页，
       // 让"这是浮在上面的"这件事成立。
-      width: MediaQuery.of(context).size.width * 0.86 > 360
+      // `sizeOf` 而不是整份 `MediaQuery.of(context)`：只要宽度，不该因为
+      // 键盘弹起（viewInsets 变）重建整个抽屉。
+      width: MediaQuery.sizeOf(context).width * 0.86 > 360
           ? 360
-          : MediaQuery.of(context).size.width * 0.86,
+          : MediaQuery.sizeOf(context).width * 0.86,
       backgroundColor: c.sidebar,
       // **右侧圆角 + 右边框**（`.drawer { border-right:1px solid l1;
       //   border-radius: 0 var(--r-panel) var(--r-panel) 0 }`）——
