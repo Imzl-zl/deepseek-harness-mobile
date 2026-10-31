@@ -1105,6 +1105,7 @@ class ChatPageState extends State<ChatPage> {
                             // 推理等级同样不写死：模型自带 effort 时显示它，否则显示"默认"。
                             modelName: _modelLabel,
                             reasoningLabel: _reasoningLabel,
+                          modelBusy: _switchingModel,
                             access: permissionChipOf(
                               value: widget.app.permissionValue,
                               catalog: widget.app.permissionCatalog,
@@ -2217,6 +2218,10 @@ class ChatPageState extends State<ChatPage> {
       );
       return;
     }
+    // **先把模型面板关掉再开第二级**（2026-10-31 真机：面板不自动消失）。
+    // 原来直接叠一层推理等级 sheet，选完只 pop 掉上面那层 —— 模型面板留在原地，
+    // 用户只能自己往下拖。两级是"选模型 → 选档位"的顺序，不是两个并存的弹层。
+    Navigator.of(context).pop();
     // 预选：当前会话正在用这个模型时用它自己的 effort，否则退到 provider 默认
     // （Web 的 `effectiveEffort`，`ModelSelect.tsx:121`）。
     final current = widget.app.currentModel;
@@ -2317,17 +2322,30 @@ class ChatPageState extends State<ChatPage> {
 
   /// 切模型。**失败要如实说** —— 静默失败会让用户以为"点了没反应"，
   /// 而那正是这一版之前的样子（点完只弹一个"切到 X"的 toast）。
+  /// 正在切模型（输入栏那枚 chip 在此期间显示进度）。
+  ///
+  /// 切模型是一次**远端写**：请求发出到清单刷新回来之间，输入栏上还是旧名字。
+  /// 2026-10-31 真机反馈："切完没变化，等一会儿才变，我以为卡了" —— 所以这段时间
+  /// 必须有个看得见的"正在换"，而不是让用户对着旧值猜。
+  bool _switchingModel = false;
+
   Future<void> _switchModel({
     required String provider,
     required String model,
     required String? effort,
     required String name,
   }) async {
-    final picked = await widget.app.selectModel(
-      provider: provider,
-      model: model,
-      reasoningEffort: effort,
-    );
+    setState(() => _switchingModel = true);
+    final ModelRef? picked;
+    try {
+      picked = await widget.app.selectModel(
+        provider: provider,
+        model: model,
+        reasoningEffort: effort,
+      );
+    } finally {
+      if (mounted) setState(() => _switchingModel = false);
+    }
     if (!mounted) return;
     if (picked == null) {
       _toast(

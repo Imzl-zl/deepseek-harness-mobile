@@ -98,8 +98,20 @@ void main() {
     final send = tester.getRect(find.byTooltip('发送'));
     expect(reasoning.left, greaterThanOrEqualTo(model.right));
     expect(reasoning.right, lessThanOrEqualTo(send.left));
-    // 恒宽 34（与权限 chip 同一档）。
-    expect(reasoning.width, 34);
+    // **不再是恒宽图标（2026-10-31 改）**：这枚 chip 现在把档位写出来
+    // （"选了思考参数却只看到图标，不知道选上没"），所以宽度随档位文字变。
+    // 判据换成方向性的：比纯图标更宽、且不越过模型 chip。
+    expect(reasoning.width, greaterThan(34), reason: '带文字就比图标宽');
+    expect(reasoning.width, lessThan(model.width + 1), reason: '等级比模型名短');
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('composer-reasoning')),
+        // 这个 fixture 的档位是 `max`（`_host` 的默认），断言就用它。
+        matching: find.text('max'),
+      ),
+      findsOneWidget,
+      reason: '档位必须写在 chip 上',
+    );
 
     // 没有等级 ⇒ 那一枚不占位（DSH Web 的 `effortLabel` 条件渲染）。
     await tester.pumpWidget(

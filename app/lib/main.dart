@@ -430,6 +430,19 @@ class _DshMobileAppState extends State<DshMobileApp>
     _theme.onSystemBrightness(PlatformDispatcher.instance.platformBrightness);
   }
 
+  /// 回到前台时**对齐一次远端状态**（2026-10-31 真机：Web 改了模型，手机还显示旧的）。
+  ///
+  /// 模型存在会话清单里，而那条通道没有推送 —— 只在连接 / 切会话 / 自己切换时刷新。
+  /// 切回手机是最自然的对齐点：用户刚在电脑上改完，抬眼看手机的那一刻应该是对的。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state != AppLifecycleState.resumed) return;
+    final app = _app;
+    if (app == null) return;
+    unawaited(app.refreshSessions());
+  }
+
   Future<void> _boot() async {
     final saved = await pairingStore.load();
     final hosts = await pairingStore.hosts();

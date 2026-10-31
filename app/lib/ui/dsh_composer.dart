@@ -149,6 +149,7 @@ class DshComposer extends StatelessWidget {
     required this.attachments,
     required this.modelName,
     required this.reasoningLabel,
+    this.modelBusy = false,
     required this.access,
     required this.sendMode,
     required this.sending,
@@ -209,6 +210,12 @@ class DshComposer extends StatelessWidget {
   /// `{effortLabel !== undefined && …}`）：没有等级就不占位 ——
   /// 390px 屏上那一枚约 40px。
   final String? reasoningLabel;
+
+  /// 正在切模型：模型 chip 显示进度、不可再点。
+  ///
+  /// 切模型是远端写，请求到清单刷新之间有窗口；不显示进度就是在让用户对着旧值猜
+  /// （2026-10-31 真机："切完没变化，等一会儿才变，我以为卡了"）。
+  final bool modelBusy;
 
   /// 点那枚独立的推理等级 chip（`null` = 不可点，chip 仍显示当前值）。
   final VoidCallback? onPickReasoning;
@@ -467,7 +474,7 @@ class DshComposer extends StatelessWidget {
                                     maxWidth: constraints.maxWidth * 0.62,
                                   ),
                                   child: _Chip(
-                                    onPressed: enabled ? onPickModel : null,
+                                    onPressed: enabled && !modelBusy ? onPickModel : null,
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
@@ -503,11 +510,23 @@ class DshComposer extends StatelessWidget {
                                         // 推理等级**不在这里**了：2026-10-19 起它是
                                         // 独立的一枚 chip（见左组后面的那一枚）。
                                         const SizedBox(width: 2),
-                                        DshIcon(
-                                          'chevronDown',
-                                          size: 12,
-                                          color: c.labelCaption,
-                                        ),
+                                        // 切模型中：把下拉箭头换成进度，名字一起变淡 ——
+                                        // 这一格就是"正在换"的唯一可见证据。
+                                        if (modelBusy)
+                                          SizedBox(
+                                            width: 11,
+                                            height: 11,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 1.6,
+                                              color: c.labelCaption,
+                                            ),
+                                          )
+                                        else
+                                          DshIcon(
+                                            'chevronDown',
+                                            size: 12,
+                                            color: c.labelCaption,
+                                          ),
                                       ],
                                     ),
                                   ),
@@ -520,14 +539,34 @@ class DshComposer extends StatelessWidget {
                           // 用户原话「模型选择，思考程度选择分开」）。
                           //
                           // **有等级才显示**（DSH Web 的 `effortLabel` 条件渲染）。
-                          // 图标用 `slidersTwo` 而不是模型那枚 `database`：
-                          // 两枚 chip 挨着，同图标会让人以为"一个选择器的两半"。
+                          //
+                          // **2026-10-31 改成带文字**：原来只有一枚 `slidersTwo` 图标，
+                          // 用户选了档位后看不出选的是哪个（"它显示的还是图标不是思考
+                          // 等级，我不确定选上没"）。模型名可以省（屏窄），等级只有
+                          // 一两个字，必须写出来 —— DSH Web 的 `effortLabel` 也是文字。
                           if (reasoningLabel != null)
-                            _IconChip(
+                            _Chip(
                               key: const Key('composer-reasoning'),
-                              icon: 'slidersTwo',
-                              tooltip: '推理等级：$reasoningLabel',
                               onPressed: onPickReasoning,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  DshIcon(
+                                    'slidersTwo',
+                                    size: 12,
+                                    color: c.labelSecondary,
+                                  ),
+                                  const SizedBox(width: 5),
+                                  Text(
+                                    reasoningLabel!,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: c.labelSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           // **「忙时发送」图标已移除**（2026-10-19，用户原话
                           // "输入框下的忙时发送行为没必要吧，设置中有，这个也不经常
@@ -675,7 +714,7 @@ class _RoundIconButton extends StatelessWidget {
 /// 而 DSH Web 的 chip 也只有 CSS transition（`ui-model-selection` 的
 /// `.trigger` 没有水波纹）。
 class _Chip extends StatelessWidget {
-  const _Chip({required this.child, this.onPressed});
+  const _Chip({super.key, required this.child, this.onPressed});
 
   final Widget child;
   final VoidCallback? onPressed;

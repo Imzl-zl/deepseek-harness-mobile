@@ -155,7 +155,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('推理等级 · 模型一'), findsOneWidget);
-    expect(find.text('高'), findsOneWidget);
+    // 「高」现在**两处**：输入栏那枚 chip（选完要看得见）与面板里那一行。
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('composer-reasoning')),
+        matching: find.text('高'),
+      ),
+      findsOneWidget,
+      reason: 'chip 必须把档位写出来（2026-10-31 真机：只给图标看不出选没选上）',
+    );
+    expect(find.text('高'), findsNWidgets(2));
     expect(find.text('低'), findsOneWidget);
 
     await tester.tap(find.text('低'));

@@ -3516,6 +3516,8 @@ class AppModel extends ChangeNotifier {
       var inboxChanged = false;
       // 这一批里有没有 `turn/end`（循环末尾据此补一次会话行 —— 见下面那段注释）。
       var turnEnded = false;
+      // 这一批里有没有持久的助手消息（决定要不要清掉流式槽位）。
+      var assistantPersisted = false;
       final tracker = _inboxTrackers.putIfAbsent(sid, () => _InboxTracker());
       // **本批已投影的条目**（itemId → 条目）：`tool/call` 与 `tool/result`
       // 可能在同一个 delta 里先后到达，而 `store.upsertAll` 在循环之后才发生 ——
@@ -3541,6 +3543,12 @@ class AppModel extends ChangeNotifier {
         // （`session-title/src/index.ts` 的 fold 就认这个 type）。它进条目表
         // 只会渲染出一条莫名其妙的"其它事件"，所以在这里截住并落地成标题。
         if (event.type == 'turn/end') turnEnded = true;
+        // 这一批里出现了**持久的助手消息** → 流式槽位该让位（见下面清空那段）。
+        if (event.type == 'assistant/message') assistantPersisted = true;
+        // **不在 `turn/start` 刷新清单**（试过，是回归）：`session.list` 的快照会
+        // 把 `running` 一并覆盖，于是"刚到的 `status: true`"被快照里的旧 `false`
+        // 压掉，运行条闪一下就没（`running_reconnect_test` 当场抓到）。
+        // 模型同步的落点改到"回到前台"（`main.dart` 的 `didChangeAppLifecycleState`）。
         if (event.type == 'session/title') {
           final title = event.data is Map ? (event.data as Map)['title'] : null;
           if (title is String && title.isNotEmpty) {
@@ -3673,6 +3681,12 @@ class AppModel extends ChangeNotifier {
         }
       }
       store.upsertAll(items);
+      // **持久形态到了就把流式槽位清掉**（2026-10-31 真机：回复渲染两次）。
+      //
+      // 原来只赋值不清空，于是持久 `assistant/message` 落库后 UI 会**同时**画
+      // "列表里那条"和"流式尾那条虚拟条目"；Web 只画一次，因为它那份 live 状态
+      // 随持久帧一起被替换。`turn/end` 也清：这一轮结束了不该还挂着半截流式文本。
+      if (assistantPersisted || turnEnded) _liveText = null;
       if (inboxChanged) {
         // 队列变了：重读一次投影拿新队列（`inbox` 段）。不等它 ——
         // 收帧路径上的回调不该被一个网络往返挡住。
