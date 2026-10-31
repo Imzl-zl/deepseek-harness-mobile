@@ -65,6 +65,8 @@ export interface TokenConfigEntry {
    * 路由、名册、票都不看它 —— 那些按 `(connectorId, deviceId)` 走。
    */
   owner?: string
+  /** `auto` = 连接器自己在中转上兑换的。见 `digest-auth.ts` 的 `TokenDigest.source`。 */
+  source?: 'auto'
   /** 吊销时间（§12 的 `revoked_at`：**软吊销**）。见 `digest-auth.ts` 的说明。 */
   revokedAt?: number
 }

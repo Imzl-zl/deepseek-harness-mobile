@@ -34,6 +34,8 @@ const digestOf = (token: string): string => createHash('sha256').update(token, '
 export interface TokenRow {
   readonly id: string
   readonly owner?: string
+  /** `auto` = 连接器自己兑换的（面板据此标"来源：自动"，并支持一键清理）。 */
+  readonly source?: 'auto'
   readonly revokedAt?: number
 }
 
@@ -56,6 +58,13 @@ export interface TokenTable {
    * 那条规矩（先停用再删）在路由层，因为它对用户可见。
    */
   remove(id: string): boolean
+  /**
+   * 运行时追加一条**刚签发**的令牌（自动兑换用，见 `server.ts` 的 `/connector/enroll`）。
+   *
+   * 摘要只在本模块内流转：调用方给的是 `TokenDigest`（含 `hash`），本表不回读任何明文。
+   * 重复 `id` / 重复摘要直接抛 —— 与启动时的校验同一条纪律。
+   */
+  add(entry: TokenDigest): void
   /** 当前**可用**条目数（已吊销的不算，与旧 `size` 同义）。 */
   readonly size: number
 }
@@ -123,6 +132,7 @@ export function createTokenTable(
         rows.push({
           id: entry.id,
           ...(entry.owner === undefined ? {} : { owner: entry.owner }),
+          ...(entry.source === undefined ? {} : { source: entry.source }),
           ...(entry.revokedAt === undefined ? {} : { revokedAt: entry.revokedAt }),
         })
       }
@@ -146,6 +156,13 @@ export function createTokenTable(
       return true
     },
 
+    add(entry) {
+      if (byId.has(entry.id)) throw new Error(`令牌表里已经有 id=${entry.id} 的条目`)
+      if (byHash.has(entry.hash)) throw new Error('这条摘要已经在表里')
+      byId.set(entry.id, { ...entry })
+      if (entry.revokedAt === undefined) byHash.set(entry.hash, identityOf(entry))
+    },
+
     restore(id) {
       const entry = byId.get(id)
       if (entry === undefined) return false
@@ -154,6 +171,7 @@ export function createTokenTable(
         id: entry.id,
         hash: entry.hash,
         ...(entry.owner === undefined ? {} : { owner: entry.owner }),
+        ...(entry.source === undefined ? {} : { source: entry.source }),
       }
       byId.set(id, active)
       byHash.set(active.hash, identityOf(active))

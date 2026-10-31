@@ -22,6 +22,7 @@
  * 优雅退出：SIGINT/SIGTERM → `close()`（关所有 socket、停止监听），然后退出。
  * 不做"接住所有异常继续跑"：那是把故障藏起来。
  */
+import { randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
@@ -33,7 +34,7 @@ import {
 import { createTokenTable } from './token-table.ts'
 import { createJsonLogger } from './json-logger.ts'
 import { readMeteringState } from './metering-state.ts'
-import { startRelay } from './server.ts'
+import { startRelay, type ConnectorEnroll } from './server.ts'
 
 interface RelayConfig {
   port?: number
@@ -67,6 +68,20 @@ interface RelayConfig {
     persist?: boolean
     statePath?: string
   }
+  /**
+   * 连接器认证模式。
+   *
+   * - `open`（**默认**）：连接器不带令牌也能连 —— 中转在 `POST /connector/enroll`
+   *   当场给它签一张普通令牌（同一张摘要表、同一个吊销按钮）。
+   * - `required`：只认管理员签发的令牌（`--issue-token` 或管理面板）。
+   */
+  connectorAuth?: 'open' | 'required'
+  /**
+   * 自动签发总数上限（只数 `source: "auto"` 且未吊销的条目）。
+   *
+   * **`null` 或不写 = 无上限**，不预设人为限制；owner 想收紧就写个正整数。
+   */
+  autoEnrollLimit?: number | null
 }
 
 function argValue(name: string): string | undefined {
@@ -96,6 +111,27 @@ if (config.admin !== undefined) {
     console.error('配置里的 admin 段不合法：需要 { "id": "<非空>", "hash": "<sha256 十六进制，64 位>" }')
     process.exit(2)
   }
+}
+
+/**
+ * 连接器认证段校验。同样是"启动时就大声失败"：
+ * 一个模式拼错（`opne`）就会**静默退回默认值**，而默认值是开放的 —— 那是最不该猜的一格。
+ */
+if (
+  config.connectorAuth !== undefined
+  && config.connectorAuth !== 'open'
+  && config.connectorAuth !== 'required'
+) {
+  console.error(`配置里的 connectorAuth 不合法：「${String(config.connectorAuth)}」（只能是 open / required）`)
+  process.exit(2)
+}
+if (
+  config.autoEnrollLimit !== undefined
+  && config.autoEnrollLimit !== null
+  && (!Number.isInteger(config.autoEnrollLimit) || config.autoEnrollLimit < 1)
+) {
+  console.error('配置里的 autoEnrollLimit 不合法：正整数，或 null / 不写（= 无上限）')
+  process.exit(2)
 }
 
 /**
@@ -291,6 +327,39 @@ const quotaState = config.quota?.persist === true && config.quota.statePath !== 
   })
   : undefined
 
+/**
+ * 连接器自助兑换（`POST /connector/enroll`）。
+ *
+ * 签出来的是**一张普通令牌**：进同一张摘要表、同一个吊销按钮、同一条限流 ——
+ * "要不要认证"只由这里的 `mode` 决定，认证路径没有第二条。
+ * **先落盘再进内存表**：写不进配置文件，就不该存在"能连、重启就丢"的令牌。
+ */
+const connectorAuth = config.connectorAuth ?? 'open'
+const autoEnrollLimit = config.autoEnrollLimit ?? null
+const autoEnrolledCount = (): number =>
+  table.list().filter((row) => row.source === 'auto' && row.revokedAt === undefined).length
+const connectorEnroll: ConnectorEnroll = {
+  mode: connectorAuth,
+  limit: autoEnrollLimit,
+  count: autoEnrolledCount,
+  async issue({ pcId, name }) {
+    const connectorId = `auto-${randomBytes(4).toString('hex')}`
+    const issued = issueToken({ kind: 'connector', id: connectorId })
+    await appendTokenToConfig(configPath, {
+      kind: 'connector',
+      id: connectorId,
+      hash: issued.hash,
+      source: 'auto',
+    })
+    table.add({ kind: 'connector', id: connectorId, hash: issued.hash, source: 'auto' })
+    console.log(
+      `已自动签发连接器令牌（id=${connectorId}，pcId=${pcId}`
+      + `${name === undefined ? '' : `，${name}`}）：自动条目现在 ${autoEnrolledCount()} 条`,
+    )
+    return { token: issued.token, connectorId }
+  },
+}
+
 const relay = await startRelay({
   port: config.port ?? 8787,
   host: config.host ?? '127.0.0.1',
@@ -305,6 +374,7 @@ const relay = await startRelay({
   ...(quotaState === undefined ? {} : { quotaState }),
   // 面板的写动作（没配 admin 就没有这张面，也就不传）。
   ...(adminOps === undefined ? {} : { adminOps }),
+  connectorEnroll,
   // 中转必须**留声**：它只转发与记账，出问题时（投递目标不在、丢弃、认证被拒）
   // 日志是唯一的线索。一行一个 JSON 事件（`json-logger.ts`）：容器里能 grep 字段，
   // 面板与排障读同一份东西。`debug` 级默认关（`DSH_RELAY_DEBUG=1` 打开）。
@@ -313,6 +383,8 @@ const relay = await startRelay({
 
 console.log(
   `中转已监听 ws://${config.host ?? '127.0.0.1'}:${relay.port}（摘要表 ${table.size} 条`
+  + `，连接器认证 ${connectorAuth === 'open' ? '开放（可自助兑换）' : '必需'}`
+  + `，自动签发上限 ${autoEnrollLimit === null ? '无' : `${autoEnrollLimit} 条`}`
   + `${config.admin === undefined ? '' : `，管理面 /admin 已启用（${config.admin.id}）`}）`,
 )
 

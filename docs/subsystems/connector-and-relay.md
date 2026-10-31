@@ -299,7 +299,28 @@ relay/
 - **吊销/恢复在内存里立刻生效**（`relay/src/token-table.ts`）：摘要表不再是"启动时建死"，`revoke` 先摘认证索引再记 `revokedAt`，不重启、不波及其他连接。同一 `id` 在配置里出现两次会**拒绝启动**（吊销按 `id` 定位，重复即歧义）。轮换管理令牌仍要重启（`admin` 段只在装配时读一次）。
 - **接受连接前再验一次**：`wss.handleUpgrade` 的回调是异步的，认证与回调之间可能刚好被吊销 —— 控制面与数据面各重验一次，认不出就 `close(4000, 'credential revoked')`。
 
-### 2.5 部署、成本与合规(上线前置)
+### 2.5 连接器认证:必需 / 开放(可自助兑换)
+
+配置两格,都由 owner 定,不预设人为上限:
+
+| 字段 | 取值 | 默认 |
+|---|---|---|
+| `connectorAuth` | `open` = 连接器不带令牌也能连(中转当场签一张**普通**令牌);`required` = 只认管理员签发的令牌 | `open` |
+| `autoEnrollLimit` | 自动签发总数上限:正整数;**`null`/不写 = 无上限** | 无上限 |
+
+- **`POST /connector/enroll`**(HTTP 面,唯一不认证的业务路由):`{ "pcId": "<本机 id>", "name": "<电脑名,可选>" }` →
+  `201 { token, connectorId: "auto-xxxxxxxx" }`;`403 connector-auth-required`(模式是 required);
+  `429 auto-enroll-full`(名额用满,`limit` 非空才算);`429 rate-limited`(按来源地址分桶);
+  `400 pcId-required`(不留匿名身份)。签发走 `issueToken` + `appendTokenToConfig`,条目带
+  `source: "auto"`,**与手工令牌同一张摘要表** —— 认证、吊销、限流、名册、审计都只有一条路径。
+- 名额只数 `source: "auto"` 且未吊销的条目:吊销一条就腾出一个名额。
+- 装配面是 `RelayServerOptions.connectorEnroll`(`relay/src/server.ts`);不传 = 该路由一律 403。
+  `/admin/api/state` 的 `connectorAuth` 字段暴露 `{ mode, limit, autoCount }` 供面板显示。
+- 电脑侧 `relayTokenRef` **不再必填**:空着就在 `start-transport` 里调 `enrollConnector`
+  (`connector/src/enroll.ts`)换一张,写进凭据格 `relay-connector`;`403` 时只记明确日志、不挡住挂载
+  (否则面板打不开,用户没地方贴手工令牌)。
+
+### 2.6 部署、成本与合规(上线前置)
 
 - 部署:单容器 + 托管数据库;反向代理终结 TLS,WS 升级直通;健康检查 `/healthz`(读依赖就绪)。
 - 容量**量级估算**(按契约 §10 参数推算,不是实测):心跳 20 B × 2 次/min ≈ 2.6 MB/月的空转流量/设备;连接内存按 100 KB/设备计,1 GB 内存约 1 万台空闲设备。**真实数字必须在上线前用压测确认**(空闲连接数、转发吞吐、窗口内存)。

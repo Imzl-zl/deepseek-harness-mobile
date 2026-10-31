@@ -50,6 +50,7 @@ import { hostname } from 'node:os'
 import type { Context } from '@deepseek-ai/cordis'
 
 import { type ConnectorConfig, Config } from './config.js'
+import { enrollConnector } from './enroll.js'
 import {
   REQUIRED_SERVICES,
   changesAvailable,
@@ -303,6 +304,50 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
   let connectorId = ''
 
   /**
+   * 自助兑换写回的凭据引用（`relayTokenRef` 没配时用它，与 cookbook 里那条同名）。
+   *
+   * **引用名不随每次兑换变**：它是"令牌放在凭据面的哪一格"，不是一个身份。
+   */
+  const DEFAULT_RELAY_TOKEN_REF = 'relay-connector'
+
+  /** 有效凭据引用：配置优先，没配就落到默认格 —— 三处读令牌都走它。 */
+  const tokenRef = (): string => {
+    const configured = config.relayTokenRef()
+    return configured === undefined || configured === '' ? DEFAULT_RELAY_TOKEN_REF : configured
+  }
+
+  /**
+   * 令牌缺失时向中转**自助兑换**一张（中转为 `connectorAuth: open` 时）。
+   *
+   * 换到的就是一张普通令牌（同一张摘要表、同样的吊销），所以这里不做"自动令牌"特判。
+   * 失败只记日志、**不挡住挂载**：否则面板都打不开，用户没地方贴手工令牌。
+   */
+  async function ensureRelayToken(): Promise<void> {
+    const ref = tokenRef()
+    try {
+      const existing = await readRelayToken(ctx.credentials, ref)
+      if (existing !== '') return
+    } catch {
+      // 记录不存在是**正常首启**，不是错误：继续往下兑换。
+    }
+    const relayUrl = config.relayUrl() ?? ''
+    if (relayUrl === '') return
+    try {
+      const issued = await enrollConnector({
+        relayUrl,
+        pcId: connectorId === '' ? DEFAULT_CONNECTOR_ID : connectorId,
+        name: hostname(),
+      })
+      await writeRelayToken(ctx.credentials, ref, issued.token)
+      logger.info(`已向中转自助兑换连接器令牌（身份 ${issued.connectorId}，凭据引用 ${ref}）`)
+    } catch (error) {
+      logger.warn(
+        `自助兑换连接器令牌失败：${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+
+  /**
    * 已认证设备的**瞬时**状态（在线、前台、已订阅、最近交互）。管理面的设备列表读它；
    * 交互侧**不再**用"在线/前台/订阅"做任何仲裁 —— 手机连着就是 gateway 的一个 client，
    * 和浏览器并列（契约 §6.2）。
@@ -365,9 +410,12 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           throw new Error('relayUrl 未配置：拒绝挂载，而不是连上一个不完整的中转')
         }
         relayUrlOf(relayUrl, config.allowInsecureLocal(), config.allowInsecurePublic())
+        // **`relayTokenRef` 不再必填**：中转开放自助兑换（`connectorAuth: open`）时，
+        // 连接器在 `start-transport` 里自己换一张（`ensureRelayToken`）。空着也允许挂载，
+        // 否则"没令牌"连面板都打不开，用户没地方贴令牌。
         const ref = config.relayTokenRef()
         if (ref === undefined || ref === '') {
-          throw new Error('relayTokenRef 未配置：连接器令牌的凭据引用缺失')
+          logger.info('relayTokenRef 未配置：将尝试向中转自助兑换一张令牌（credential ref 落到 relay-connector）')
         }
         // **令牌记录本身不在这里校验**：记录缺失只让中转通道起不来，不让整个插件
         // 挂不上 —— 否则在面板里删掉令牌再重启，连"把令牌贴回去"的界面都打不开了。
@@ -398,7 +446,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             initialMeta({
               connectorId: DEFAULT_CONNECTOR_ID,
               relayUrl: config.relayUrl() ?? '',
-              connTokenSecretRef: config.relayTokenRef() ?? '',
+              connTokenSecretRef: tokenRef(),
             }),
           )
         }
@@ -500,6 +548,9 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           // 步骤顺序由 `lifecycle.ts` 保证，所以走到这里必然是装配写错了，而不是"还没准备好"。
           throw new Error('start-transport 在身份就绪前被调用：装配顺序有误')
         }
+        // **没有令牌就先兑换**（中转为 `open` 模式时）：这是唯一一条"没令牌也能上线"的路，
+        // 换到的是普通令牌，之后与手工签发的完全一样。失败只记日志，不挡住挂载。
+        await ensureRelayToken()
 
         // 下面这一段全是**挂载级**的东西：与"有几条连接"无关，一条也不该按连接重建。
         // 每连接的装配物（方法面 / 订阅 / 翻页器 / 配对端点）在 `connection-scope.ts` 里，
@@ -565,7 +616,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           allowInsecureLocal: () => config.allowInsecureLocal(),
           allowInsecurePublic: () => config.allowInsecurePublic(),
           relayUrl: () => config.relayUrl() ?? '',
-          tokenSource: () => readRelayToken(ctx.credentials, config.relayTokenRef() ?? ''),
+          tokenSource: () => readRelayToken(ctx.credentials, tokenRef()),
           log: logger,
         })
         /** 字段名在这一层对齐（配对的设备行叫 `edPubHex`，域表叫 `edPub`）。 */
@@ -621,7 +672,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           relayUrl: () => config.relayUrl() ?? '',
           // 令牌**现读**（`readRelayToken` 不缓存）：出码是人工动作，换令牌后立刻生效；
           // 也省得为这个只在出码时用到的值安排装配顺序。
-          tokenSource: () => readRelayToken(ctx.credentials, config.relayTokenRef() ?? ''),
+          tokenSource: () => readRelayToken(ctx.credentials, tokenRef()),
           log: logger,
         })
         /**
@@ -1187,7 +1238,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
            */
           let token: string
           try {
-            token = await readRelayToken(ctx.credentials, config.relayTokenRef() ?? '')
+            token = await readRelayToken(ctx.credentials, tokenRef())
           } catch (error) {
             relayError = error instanceof Error ? error.message : String(error)
             throw error

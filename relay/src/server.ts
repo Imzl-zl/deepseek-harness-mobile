@@ -50,7 +50,27 @@ export interface RelayServerOptions {
   ownerOf?: (connectorId: string) => string | undefined
   /** `persist: true` 时启动读回的状态（由装配方读文件后传进来）。 */
   quotaState?: MeteringState
+  /**
+   * 连接器自助兑换（`POST /connector/enroll`）。
+   *
+   * 不传 = 这条路由一律 403（等价于"只认管理员签发的令牌"）。装配方负责签发与落盘，
+   * 这里只做模式判定、速率分桶与名额判定 —— 签发出来的是**一张普通令牌**，
+   * 走同一张摘要表、同一个吊销按钮。
+   */
+  connectorEnroll?: ConnectorEnroll
   log?: ChannelLogger
+}
+
+/** 自助兑换的装配面（实现见 `main.ts`）。 */
+export interface ConnectorEnroll {
+  /** `open` 才允许兑换；`required` 时路由回 403。 */
+  readonly mode: 'open' | 'required'
+  /** 自动签发总数上限；**`null` = 无上限**。 */
+  readonly limit: number | null
+  /** 现在有多少条"还在用"的自动令牌（已吊销的不占名额）。 */
+  count(): number
+  /** 签发一张：返回明文（只出现这一次）与身份 id。 */
+  issue(input: { pcId: string; name?: string }): Promise<{ token: string; connectorId: string }>
 }
 export interface RelayServer {
   port: number
@@ -287,6 +307,59 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
       const url = new URL(request.url ?? '/', 'http://relay.invalid')
       if (url.pathname === '/healthz' && request.method === 'GET') {
         reply(response, 200, { status: 'ok' })
+        return
+      }
+      /**
+       * **连接器自助兑换**：唯一一条不认证的业务路由（`/healthz` 之外）。
+       *
+       * 它签出来的就是一张普通令牌（同一张摘要表），所以"要不要认证"只由
+       * `connectorEnroll.mode` 决定，认证路径本身没有第二条。
+       * 三条闸：模式 → 速率（按来源地址分桶） → 名额（`null` = 不设上限）。
+       */
+      if (url.pathname === '/connector/enroll') {
+        if ((request.method ?? 'GET') !== 'POST') {
+          reply(response, 405, { error: 'method-not-allowed' })
+          return
+        }
+        const enroll = options.connectorEnroll
+        if (enroll === undefined || enroll.mode !== 'open') {
+          reply(response, 403, { error: 'connector-auth-required' })
+          return
+        }
+        const refused = limiter.take(`enroll-anonymous:${request.socket.remoteAddress ?? 'unknown'}`)
+        if (!refused.allowed) {
+          reply(response, 429, { error: 'rate-limited', retryAfterMs: refused.retryAfterMs })
+          return
+        }
+        if (enroll.limit !== null && enroll.count() >= enroll.limit) {
+          reply(response, 429, { error: 'auto-enroll-full' })
+          return
+        }
+        let enrollBody: unknown
+        try { enrollBody = await readBody(request) } catch {
+          reply(response, 400, { error: 'bad-request' })
+          return
+        }
+        const fields = typeof enrollBody === 'object' && enrollBody !== null && !Array.isArray(enrollBody)
+          ? enrollBody as Record<string, unknown> : {}
+        const pcId = typeof fields['pcId'] === 'string' ? fields['pcId'].trim() : ''
+        if (pcId === '') {
+          reply(response, 400, { error: 'pcId-required' })
+          return
+        }
+        const name = typeof fields['name'] === 'string' ? fields['name'].trim() : undefined
+        try {
+          const issued = await enroll.issue({ pcId, ...(name === undefined || name === '' ? {} : { name }) })
+          log?.info('connector.enrolled', {
+            connectorId: issued.connectorId, pcId,
+            ...(name === undefined ? {} : { name }),
+            remoteAddress: request.socket.remoteAddress ?? 'unknown',
+          })
+          reply(response, 201, { token: issued.token, connectorId: issued.connectorId })
+        } catch (error) {
+          log?.warn('connector.enroll-failed', error)
+          reply(response, 500, { error: 'enroll-failed' })
+        }
         return
       }
       if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) {
