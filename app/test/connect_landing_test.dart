@@ -116,7 +116,7 @@ void main() {
     Future<AppModel> modelWith(List<Map<String, Object?>> rows) async {
       final app = AppModel(client: _LandingClient(rows));
       addTearDown(app.dispose);
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       return app;
     }
 

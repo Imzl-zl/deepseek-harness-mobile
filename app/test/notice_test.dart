@@ -140,7 +140,7 @@ void main() {
     await app.start();
     // 会话清单要先落地：通知的那份"期望集合"是按 `_sessions` 走的
     // （与抽屉/待处理计数同一个数据面）。
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     await app.openSession('b');
     await pump();
   });

@@ -156,6 +156,14 @@ export interface ConnectionOptions {
   schedule?: (fn: () => void, ms: number) => () => void
   heartbeatMs?: number
   batchMs?: number
+  /**
+   * 每发出一帧，报一次**线上字节数**（`encodeFrame` 之后的 UTF-8 长度）。
+   *
+   * 纯观测：连接层不认识指标名，也不知道它在算什么 —— 累计成
+   * `connector.bytes.outbound` 是装配层的事（`device-connection.ts`）。
+   * 不传就等于不观测，行为不变。
+   */
+  onBytesOut?: (bytes: number) => void
 }
 
 /**
@@ -394,7 +402,20 @@ export function createConnection(options: ConnectionOptions): Connection {
    * @returns `false` 表示**这一帧没发出去**（满窗的可补帧，或没有密码器）。
    */
   const write = (frame: OutboundFrame): boolean => {
-    if (socket === null) return false
+    const socketNow = socket
+    if (socketNow === null) return false
+    /**
+     * 线上字符串的**唯一落点**：写 socket，并把字节数交给装配层（`onBytesOut`）。
+     *
+     * 为什么在这一处：`write()` 是出帧的唯一出口（握手帧经 `sendHandshakeFrame`
+     * 也到这里），所以"发出去了多少字节"与"发了哪一帧"在这里天然对齐 ——
+     * 散在三个 `socket.send` 上各记一次，迟早漏一个。
+     * 纯观测：连接层不认识指标名，也不知道它在算什么（见 `observability.ts`）。
+     */
+    const emit = (text: string): void => {
+      socketNow.send(text)
+      options.onBytesOut?.(Buffer.byteLength(text, 'utf8'))
+    }
     // 窗口检查在**分配 `fc` 之前**：没发出去的帧不该消耗序号，否则窗口算术会把没上线的帧也算进去。
     if (!window.canSend(frame.t)) return false
     try {
@@ -422,16 +443,16 @@ export function createConnection(options: ConnectionOptions): Connection {
             return false
           }
           // 明文通道模式（未配 `secure`）：`box` 原样透传。
-          socket.send(encodeFrame(wire))
+          emit(encodeFrame(wire))
           if (frame.t !== 'ping') keepalive.onFrame(now())
           return true
         }
-        socket.send(encodeFrame({ ...wire, box: cipher.sealFrame(wire, wire.box) }))
+        emit(encodeFrame({ ...wire, box: cipher.sealFrame(wire, wire.box) }))
         if (frame.t !== 'ping') keepalive.onFrame(now())
         return true
       }
 
-      socket.send(encodeFrame(wire))
+      emit(encodeFrame(wire))
       if (frame.t !== 'ping') keepalive.onFrame(now())
       return true
     } catch (error) {

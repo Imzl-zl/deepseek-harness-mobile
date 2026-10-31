@@ -264,7 +264,8 @@ void main() {
     );
     final app = AppModel(client: client);
     await app.start();
-    await app.refreshSessions();
+    // 目录是**自己的一份快照**（登记表里的 `session.modelCatalog`）。
+    await app.refreshModelCatalog();
 
     final catalog = app.modelCatalog;
     expect(catalog, isNotNull, reason: '真形状必须解析得出来');
@@ -323,7 +324,8 @@ void main() {
     );
     final app = AppModel(client: client);
     await app.start();
-    await app.refreshSessions();
+    // 目录是**自己的一份快照**（登记表里的 `session.modelCatalog`）。
+    await app.refreshModelCatalog();
     expect(app.modelCatalog, isNull);
     app.dispose();
   });
@@ -337,7 +339,8 @@ void main() {
     );
     final app = AppModel(client: client);
     await app.start();
-    await app.refreshSessions();
+    // 目录是**自己的一份快照**（登记表里的 `session.modelCatalog`）。
+    await app.refreshModelCatalog();
     expect(app.modelCatalog, isNull);
     app.dispose();
   });

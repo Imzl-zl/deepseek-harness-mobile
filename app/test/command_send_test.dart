@@ -123,7 +123,7 @@ Future<void> _pumpChat(WidgetTester tester, AppModel app) async {
 Future<AppModel> _appWith(_CommandClient client) async {
   final app = AppModel(client: client);
   await app.start();
-  await app.refreshSessions();
+  await app.refreshSessionRows();
   await app.openSession('sid_1');
   return app;
 }

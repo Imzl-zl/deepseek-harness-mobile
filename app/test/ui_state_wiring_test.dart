@@ -295,7 +295,7 @@ void main() {
   group('落点：记住的会话优先于 blank 复用', () {
     // 真机 2026-10-27 复现：冷启动不回到上次的会话，而是落到一个 blank 会话上
     // （于是页签/草稿都"没恢复"）。根因是**两条落点路径**：
-    // `refreshSessions()` 末尾先 `_openBlankSessionIfUnselected()` 选中 blank，
+    // 那一版 `refreshSessions()` 末尾先 `_openBlankSessionIfUnselected()` 选中 blank，
     // 之后 `_landOnSession()` 因 `_currentSid != null` 直接早退 ——
     // 记住的会话永远没机会。规则见 `docs/subsystems/connect-landing.md` §2 四档。
     test('冷启动：记住的会话还在 → 落到它，不是那个 blank', () async {

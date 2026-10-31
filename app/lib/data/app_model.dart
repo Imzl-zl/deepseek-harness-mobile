@@ -539,7 +539,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       _subagentCatalogs[sid] = SubagentCatalog.ready(values.subagentCatalog);
       return values;
     } catch (error) {
-      // **兜住所有异常，不只 `ProtocolException`**（与 `refreshSessions` 同一条纪律）：
+      // **兜住所有异常，不只 `ProtocolException`**（与 `refreshSessionRows` 同一条纪律）：
       // 解析出错 / 类型不对 / 超时都只该让"这一批只读面显示空态"，
       // 逃逸成未处理的异步错误会让 `openSession` 半途而废 ——
       // 症状是"会话打开了但统计条/权限档永远空着且不报错"。
@@ -699,7 +699,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       if (switched.succeeded) await refreshProjections(sid);
       return switched;
     } catch (error) {
-      // **兜住所有异常，不只 `ProtocolException`**（与 `refreshSessions`
+      // **兜住所有异常，不只 `ProtocolException`**（与 `refreshSessionRows`
       // 同一条纪律）：解析出错 / 形状不对 / 超时都不该逃逸成未处理的异步错误。
       _recordError('切换权限档失败', error);
       return null;
@@ -1229,7 +1229,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       );
       // 切完立刻重拉一次清单：`session.list` 的行带 `model` 字段，
       // 而输入栏的模型名走的是它。不拉就要等下一次自然刷新才变。
-      if (!_disposed) await refreshSessions();
+      // **走登记表的 `ownWrite` 列**（要的是哪份快照，登记表说得比这里准）。
+      if (!_disposed) await refreshAfterOwnWrite();
       if (_disposed) return null;
       // **认不出回执就用刚发出去的那个值**：切模型是写操作，"我请求了 X、
       // 回执读不出"时显示 X 比显示「未选择」更接近事实（这不是猜电脑侧的状态，
@@ -1528,6 +1529,61 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     await _hostState.triggered(HostStateTrigger.appResume, sid: _currentSid);
   }
 
+  /// **自己发起的写之后**按登记表重取（`ownWrite` 那一列）。
+  ///
+  /// 切模型 / 分支 / 会话页的"重试"都走这里 —— 该重取哪份快照是登记表的一列，
+  /// 写死成一个方法调用就又变成"按函数捆"。**立即执行**（不压 150 ms 窗口）：
+  /// 它不是高频事件，压窗口只让界面白等一帧。
+  ///
+  /// 为重拉行而不是用回执改本地行：行是**电脑侧的身份字段**（模型 / 标题 /
+  /// `updatedAt` / 计数），本地改写就是第二份真值。
+  /// Note: `.agents/notes/implemented/2026-11-01-refetch-scope-by-trigger.md`
+  /// 「已经定掉的四件」第 4 条。
+  Future<void> refreshAfterOwnWrite({String? sid}) async {
+    if (_disposed) return;
+    await _hostState.triggered(
+      HostStateTrigger.ownWrite,
+      sid: sid ?? _currentSid,
+    );
+  }
+
+  /// 通知闸的深度（>0 = 正在跑一个"只通知一次"的批次）。
+  int _notifyHold = 0;
+
+  /// 闸内是否攒下过一次该发的通知。
+  bool _notifyHeld = false;
+
+  /// **通知闸**：批次内的 `notifyListeners` 只记一笔，批次收尾补发一次。
+  ///
+  /// 为什么在 `notifyListeners` 上开这个口子：首屏那一次会同时到达行、设置、
+  /// 工作区、`repo.info` 与三个目录（每个目录的 `onChange` 各通知一次），
+  /// 不合并就是**启动那一下整棵树重建六次以上**（判据见 `app-channel-client.md` §2.3；
+  /// 计数桩实测 8 次）。
+  /// 只合并批次窗口内的通知，窗口外的照旧即时；批次里即使有别的来源（流式帧）
+  /// 也一样只是"晚一次"，收尾那一次一定发得出去。
+  @override
+  void notifyListeners() {
+    if (_notifyHold > 0) {
+      _notifyHeld = true;
+      return;
+    }
+    super.notifyListeners();
+  }
+
+  /// 把一个异步批处理包成"通知合并成一次"（可嵌套：内层批次不再单发）。
+  Future<T> _coalesced<T>(Future<T> Function() body) async {
+    _notifyHold += 1;
+    try {
+      return await body();
+    } finally {
+      _notifyHold -= 1;
+      if (_notifyHold == 0 && _notifyHeld) {
+        _notifyHeld = false;
+        if (!_disposed) super.notifyListeners();
+      }
+    }
+  }
+
   /// 启动：连通道。
   Future<void> start() async {
     _stateSub = client.connection.listen(_onConnectionChanged);
@@ -1744,7 +1800,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       _lastError = null;
       if (!_disposed) notifyListeners();
     } catch (error) {
-      // 与 `refreshSessions` 同一条纪律：兜住所有异常，记下来，界面说"拉不到"。
+      // 与 `refreshSessionRows` 同一条纪律：兜住所有异常，记下来，界面说"拉不到"。
       _recordError('拉取设置失败', error);
     }
   }
@@ -1827,6 +1883,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 连接器只在**拿得到宿主运行时版本**时才报这个字段（见
   /// `connector/src/dsh/host-version.ts`），所以拿不到是正常形态之一 ——
   /// 那时界面说"未读到"，而不是显示连接器自己的 `package.json` 版本冒充。
+  @override
   Future<void> refreshRepoInfo() async {
     try {
       // 形状（`{protocol, caps, aliasVersion, methods, dshVersion?, hostName?, commands?}`）在
@@ -2254,7 +2311,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
         ),
       );
     } catch (error) {
-      // **兜住所有异常**（与 `refreshSessions` / `refreshUsageSummary` 同一条纪律）：
+      // **兜住所有异常**（与 `refreshSessionRows` / `refreshUsageSummary` 同一条纪律）：
       // 只接协议错误的话，解析 / 超时都会逃逸成未处理的异步错误，
       // 而界面会停在"还在找"——那正是最难与"电脑没有匹配"区分的形态。
       _recordError('读取 @ 候选失败', error);
@@ -2281,7 +2338,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       _usageSummary = await wire.loadUsageSummary(client);
       _lastError = null;
     } catch (error) {
-      // **兜住所有异常，不只 `ProtocolException`**（与 `refreshSessions` 同一条纪律）：
+      // **兜住所有异常，不只 `ProtocolException`**（与 `refreshSessionRows` 同一条纪律）：
       // 只接协议错误的话，解析 / 类型 / 超时都会逃逸成未处理的异步错误 ——
       // 界面停在空态且不报错，而那正是"用量页永远是空的"最容易被误判成
       // "电脑上真没有用量"的形态。
@@ -2382,7 +2439,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     // `manager.ts:248-253`），于是断线期间结束的那一轮会在这里被纠正 —— 不再需要
     // "重连按代号重建"那套护栏（那套已随 W4 一起删掉）。
     //
-    // 拉完的结果由 `refreshSessions` 自己 `notifyListeners`，这里不等它：
+    // 拉完的结果由 `refreshSessionRows` / 各目录自己 `notifyListeners`，这里不等它：
     // 收帧路径上的回调不该被一个网络往返挡住（§2.2 的状态迁移通知是同步派发的）。
     if (state == ConnectionState.serving) {
       // 拉完列表再落会话：落点要用 `updatedAt` / `running`，那是列表里的字段。
@@ -2456,7 +2513,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   ///
   /// 子智能体面板一行里的标题、`running`、时长、token 全部来自**子会话自己**
   /// 的 `session.list` 行（`projections.values`），而整包行只在
-  /// **连上 / 建会话**（[refreshSessions] 的两个调用点）时拉过。
+  /// **连上 / 建会话 / 打开会话**这几个时机（登记表的 `connectLanding` /
+  /// `openSession` 等）拉过。
   /// 子会话是父会话**回合里**才出现的，于是真机上打开面板看到的是
   /// 「当前未运行 + 没有 token + 没有时长」，要杀掉 App 重连才变对 ——
   /// 而组件树的单测一直是绿的（替身一开始就把行喂给了 `sessionOf`）。
@@ -2791,15 +2849,30 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       _landingDone = false;
       if (!_disposed) notifyListeners();
     }
-    // **落点的快照走登记表**（`connectLanding` 那一列）：会话清单 / 设置 /
-    // 当前会话的投影都在那里，于是"重连之后手机一定是最新值"只有一处表达
-    // （`data/host_state.dart`）。这里仍要 await 清单：落点读的就是行里的
-    // `updatedAt` / `running`。
-    await _hostState.triggered(
-      HostStateTrigger.connectLanding,
-      sid: _currentSid,
-    );
-    await landOnSession();
+    // **落点的快照走登记表**（`connectLanding` 那一列）：九项同时发起，
+    // 于是"重连之后手机一定是最新值"只有一处表达（`data/host_state.dart`）；
+    // 而且目录不会晚于落点才发起（blank 会话的 hero 会先说"拿不到模型"）。
+    //
+    // 时序（判据见 `connect-landing.md` §2 与 `app-channel-client.md` §2.3）：
+    // 1. 九项并行发起；
+    // 2. 只 `await` 行 —— 落点读的就是行里的 `updatedAt` / `running`；
+    // 3. 落点（`landOnSession`）不等目录，目录失败也不拦它（批次不抛）；
+    // 4. **整批的通知合并成一次**：行 / 投影 / 设置 / 任务表 / 三个目录各自都要
+    //    通知，不闸住的话启动那一下整棵树重建六次以上。
+    //
+    // 闸罩住落点那一次通知（不是只罩"其余八项"）：一次重建把行与目录一起画出来，
+    // 这正是 blank 会话的 hero 不会先闪"拿不到模型"的那一帧。上面"加载态"那一次
+    // 仍在闸外 —— 它必须立刻画出转圈，否则界面会停在上一屏。
+    // Note: `.agents/notes/implemented/2026-11-01-refetch-scope-by-trigger.md`。
+    await _coalesced(() async {
+      final batch = _hostState.startBatch(
+        HostStateTrigger.connectLanding,
+        sid: _currentSid,
+      );
+      await batch.rows;
+      await landOnSession();
+      await batch.others;
+    });
   }
 
   /// 连上之后落到 [landingSessionOf] 挑出来的那个会话（已经有会话就不动）。
@@ -2836,12 +2909,24 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     await openSession(target.sid);
   }
 
-  /// 拉会话列表（`session.list`）。
+  /// 拉会话清单（`session.list`）的**行**：只做行，不碰任何目录。
+  ///
+  /// 这是"行"那一半（`connectLanding` / `appResume` / `ownWrite` 三种时机都要它，
+  /// 登记表在 `data/host_state.dart`）。**它不是"全套再拉一次"的别名**：目录各有
+  /// 各的 key（`session.modelCatalog` / `permission.catalog` / …），要它们请调
+  /// [refreshHostCatalogs] 或按 key 走登记表。
+  ///
+  /// **这里不选会话**：落点是 `landOnSession()` 一个人的事（四档规则见
+  /// `docs/subsystems/connect-landing.md` §2）。
+  /// Note: 为什么不允许两条落点路径 —— 见
+  /// `.agents/notes/implemented/2026-10-27-connect-landing-single-path.md`；
+  /// 为什么把"捆"拆成"行 / 目录"两半 —— 见
+  /// `.agents/notes/implemented/2026-11-01-refetch-scope-by-trigger.md`。
   ///
   /// **失败不吞**：把错误记进 [lastError] 并让界面能显示。
   /// 吞掉的话界面只会显示"空列表"，而用户无从知道是"真没有会话"还是"请求失败了"。
   @override
-  Future<void> refreshSessions() async {
+  Future<void> refreshSessionRows() async {
     try {
       _applySessionList(await _fetchSessionRows());
       // **设备本地状态跟着清单失效**：清单里没有的会话，它的页签/草稿没有意义
@@ -2859,33 +2944,40 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       // 而那正是"连上了却永远没有会话"最容易被误判成"电脑上真没有"的形态。
       _recordError('拉取会话列表失败', error);
     }
-
-    // 模型目录：**与会话清单同源但不同周期** —— 它很少变，所以跟清单一起拉。
-    // 失败只留声：拿不到目录时 picker 说"拿不到"，而不是弹四个假名字。
-    await _catalogs.refreshModels();
-    // 权限预设目录同理（进程级，与会话无关）。失败只留声：
-    // 拿不到时权限 sheet 说"拿不到目录"，而不是摆三档手抄的名字。
-    await _catalogs.refreshPermissions();
-    // 工作区清单：会话列表**按它分组**（Web 的侧栏就是 工作区 → 会话）。
-    // 失败只留声：拿不到时列表退回不分组，而不是按 `cwd` 猜一个分组。
-    await refreshWorkspaces();
-    // Agent 预设目录（hero 上那枚模式 chip 的名字来源）。同样只留声：
-    // 拿不到时 chip 说"拿不到目录"，而不是摆一份手抄的四个内置预设。
-    await _catalogs.refreshPresets();
-    // 设置面（三行：默认权限档 / 默认 Agent 预设 / Session Log 开关）。
-    // 拿不到时那三行**不出现**（不是摆一个假开关），与 `settings.describe` 的能力位同一条。
-    await refreshSettings();
-    // 电脑侧 DSH 版本（`repo.info.dshVersion`）：与 App 版本并排显示，排错用。
-    await refreshRepoInfo();
-    // **这里不选会话**：落点是 `_landOnSession()` 一个人的事（四档规则见
-    // `docs/subsystems/connect-landing.md` §2）。
-    // Note: 为什么不允许两条落点路径 —— 见
-    // `.agents/notes/implemented/2026-10-27-connect-landing-single-path.md`。
-    // 2026-10-27 真机实测：
-    // 这一步原先在这里 `_openBlankSessionIfUnselected()`，把 blank 先选中了，
-    // 于是随后的 `_landOnSession()` 撞上 `_currentSid != null` 直接早退 ——
-    // 记住的会话永远没机会，还顺手把 `host.last_session` 覆盖成那个 blank。
   }
+
+  /// 拉**四个宿主目录**：模型 / 权限预设 / Agent 预设 / `repo.info`。
+  ///
+  /// 它们是"与会话无关、进程级"的一类（口径与逐列判据见
+  /// `app-channel-client.md` §2.3）：产品路径里各自按 key 走登记表
+  /// （`connectLanding` 一列就是首屏），这里是"四件一起"那件事的名字 ——
+  /// 装配与用例需要一份齐全的目录面时用它，**不是**"整套快照"。
+  ///
+  /// **四份到达只通知一次**：每个目录的 `onChange` 都会 `notifyListeners`，
+  /// 不合并的话这四份到达就是四次重建（[_coalesced] 与首屏是同一个闸）。
+  Future<void> refreshHostCatalogs() => _coalesced(() async {
+    await Future.wait(<Future<void>>[
+      refreshModelCatalog(),
+      refreshPermissionCatalog(),
+      refreshAgentPresets(),
+      refreshRepoInfo(),
+    ]);
+  });
+
+  /// 模型目录：**与会话清单不同周期** —— 它只在电脑上换模型 / 改密钥时变。
+  /// 失败只留声：拿不到目录时 picker 说"拿不到"，而不是弹四个假名字。
+  @override
+  Future<void> refreshModelCatalog() => _catalogs.refreshModels();
+
+  /// 权限预设目录（进程级，与会话无关）。失败只留声：
+  /// 拿不到时权限 sheet 说"拿不到目录"，而不是摆三档手抄的名字。
+  @override
+  Future<void> refreshPermissionCatalog() => _catalogs.refreshPermissions();
+
+  /// Agent 预设目录（hero 上那枚模式 chip 的名字来源）。同样只留声：
+  /// 拿不到时 chip 说"拿不到目录"，而不是摆一份手抄的四个内置预设。
+  @override
+  Future<void> refreshAgentPresets() => _catalogs.refreshPresets();
 
   /// 没有选中会话时，落到"那个 blank 会话"上。
   ///
@@ -3027,6 +3119,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 是第二份真值 —— `cwd` 与工作区不是一对一，猜错比不分组更难查。
   /// 方法不存在（老连接器 / 没装 `workspaceController`）与读取失败都走这条：
   /// 分组是增强，不是正确性前提。
+  @override
   Future<void> refreshWorkspaces() async {
     try {
       // 形状（分组 + 两列 id，**同一份应答**）在 `wire/rpc/workspace.dart`。
@@ -3366,7 +3459,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
         _recordError('分支失败', StateError('电脑侧的分支应答形状认不出'));
         return null;
       }
-      await refreshSessions();
+      // 与切模型同一条：自己的写走登记表的 `ownWrite` 列（重拉行）。
+      await refreshAfterOwnWrite(sid: sid);
       return child;
     } catch (error) {
       _recordError('分支失败', error);

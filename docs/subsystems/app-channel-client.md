@@ -124,8 +124,10 @@ abstract class Outbox {
 电脑侧改了模型 / 权限档 / 设置 / 标题 / 任务表时,会来一条 `host` 帧(契约 §5.9):
 **只是"可能过期了"的提示,不带数据**。客户端收到后按 key 重取对应快照。
 
-- **key 是方法名**:`session.list` / `settings.describe` / `session.projections` / `job.list`。
-  前两个是宿主级(帧头 `sid` 忽略),后两个是会话级(必须带 `sid`)。
+- **key 是方法名**(契约 §5.9 的封闭集,九项):`session.list` / `session.projections` /
+  `settings.describe` / `job.list` / `session.modelCatalog` / `permission.catalog` /
+  `agentPresets.list` / `workspace.list` / `repo.info`。会话级只有 `session.projections`
+  与 `job.list`(必须带 `sid`),其余宿主级(帧头 `sid` 忽略)。
 - **同 key 100–300ms 内合并成一次**(`data/host_state.dart` 的 `HostStateRefresher`,
   默认 150ms,启动点注入)。**按 key 分桶**:不同 key 各算各的,不做全局节流 ——
   一次"切模型"会同时发 `session.list` 与 `session.projections`,它们不该互相等。
@@ -136,29 +138,59 @@ abstract class Outbox {
 - **未知 key 忽略并计数**(`AppModel.unknownHostStateKeys`):将来连接器多一个 key 时,
   症状必须是"计数器涨了",而不是"通知到了但什么都没发生"。
 
-**登记表**(唯一拼写处 `app/lib/data/host_state.dart`,一条 `key → 重取函数 → 允许的触发点`):
+**登记表**(唯一拼写处 `app/lib/data/host_state.dart`,一条 `key → 重取函数 → 允许的触发点`)。
+它就是"拉什么、何时拉"的**唯一清单** —— 产品路径上没有"把全套再拉一次"的入口:
 
 | key | 重取 | 触发点 |
 |---|---|---|
-| `session.list` | `AppModel.refreshSessions()` | `notification` / `connectLanding` / `appResume` |
-| `settings.describe` | `AppModel.refreshSettings()` | `notification` |
+| `session.list` | `AppModel.refreshSessionRows()` | `notification` / `connectLanding` / `appResume` / `ownWrite` |
 | `session.projections` | `AppModel.refreshProjections(sid)` | `notification` / `openSession` / `connectLanding` / `appResume` |
-| `job.list` | `AppModel.refreshJobs(sid)` | `notification` / `openSession` |
+| `settings.describe` | `AppModel.refreshSettings()` | `notification` / `connectLanding` |
+| `job.list` | `AppModel.refreshJobs(sid)` | `notification` / `openSession` / `connectLanding` |
+| `session.modelCatalog` | `AppModel.refreshModelCatalog()` | `notification` / `connectLanding` |
+| `permission.catalog` | `AppModel.refreshPermissionCatalog()` | `notification` / `connectLanding` |
+| `agentPresets.list` | `AppModel.refreshAgentPresets()` | `connectLanding` |
+| `workspace.list` | `AppModel.refreshWorkspaces()` | `connectLanding` |
+| `repo.info` | `AppModel.refreshRepoInfo()` | `connectLanding` |
 
-两处不对称都是刻意的,别"顺手补齐":
+五列的判据:
 
-- `settings.describe` 只有 `notification` 一列 —— 连上 / 回前台的设置面由
-  `refreshSessions()` **顺带拉**(它末尾就调 `refreshSettings()`),再挂一列等于每次
-  重连多发一次请求,而"闪断重连不发重复请求"是这一轮的验收判据之一;
-- `job.list` 不挂 `connectLanding` / `appResume` —— 它生在会话里,重连后打开会话
-  (`openSession`) 会重拉,而 `job` 帧本来就在维护行。
+- **`notification`** 只有六个 key 有:它们今天都有生产者(契约 §5.9 的触发点表),而
+  "桌面改了、手机没动静"正是这条通道要消灭的那一类。`agentPresets.list` /
+  `workspace.list` / `repo.info` **不在内** —— 宿主没有"这张表变了"的事件,编一个就是
+  替宿主做决定;`session.modelCatalog` / `permission.catalog` 已经在表里等连接器接上
+  生产者(第 2 批),在那之前它们不会被 `notification` 触发。
+- **`connectLanding`** 是**全部九项**:通知只在服务态到达,断开期间在电脑上改的一切
+  (反了密钥、加了模型、换了预设表、改了工作区)手机**一条事件都收不到**,重连把每份
+  快照重取一遍是唯一的兜底。目录**不跨重连缓存**也是这一条的反面。
+- **`appResume`** 只有行 + 当前会话的投影:回前台的语义是"对齐这一屏",而设置 / 目录
+  要么有通知(`settings.describe`)、要么极低频(四个目录),每次回前台都拉一遍不值。
+- **`openSession`** 只有会话级两个:切过去那一刻任务表与投影都可能是旧的。
+- **`ownWrite`** 只有 `session.list`:自己发起的写(切模型 / 分支 / 会话页"重试")
+  由回执带回值,只需要**重拉行**校验身份字段;不压 150 ms 窗口(不是高频事件),
+  也不拉目录(那些与这次写无关)。**不用回执改本地行**:行是电脑侧的身份字段
+  (模型 / 标题 / `updatedAt` / 计数),本地改写就是第二个真值。
 
-自己发起的写**不在表里**:那些路径（切模型 / 新建 / 分支 / 改设置）由回执带回新值、
-当场刷新,不是"别处改了要跟上"的那一类。
+**首屏 = 一次并行批次,而不是一串 await**(`landAfterConnect`):
 
-机械保证(`app/test/host_state_test.dart`):**每个 key 至少有一个触发点**,且登记表里
-每条的 `fetch` 真的调到对应方法(用记账替身断言线上方法名);新增 key 不配触发点就红。
-"重取函数"与"方法名"的对应关系也由它钉住 —— 登记表的 `key` 拼错一个字符同样会红。
+- 九项**同时发起**;`await` 的只有 `session.list` 那一行(落点读行里的 `updatedAt` /
+  `running`),落点(`landOnSession`)紧跟着跑,其余八项在飞;
+- 经中转时首屏因此从"六件串行"压到"一轮",而不是"先落点、目录后补" ——
+  后者会让 blank 会话的 hero 先显示"拿不到模型"(`blank-session-hero.md`);
+- **八项里任何一项失败都不拦住落点**:每个重取自己 `catch` 并落进 `lastError`,
+  批次本身不抛(用例钉:目录抛错时 `landAfterConnect` 仍会 `landOnSession`);
+- **一批只通知一次**:批内所有 `notifyListeners` 被闸住,批次收尾补发一次 ——
+  否则四个目录各自的 `onChange` 加上行 / 投影 / 设置 / 任务表 / 工作区会让首屏整棵树
+  重建**六次以上**（计数桩实测 8 次）。
+  闸只在批次窗口内生效,批次外的通知照旧即时。
+
+`refreshHostCatalogs()` 是"四个目录(模型 / 权限 / 预设 / `repo.info`)"这一件事的名字,
+它内部同样把四份到达合并成一次通知。
+
+机械保证(`app/test/host_state_test.dart`):两端 key 清单逐字相等、每个 key 至少一个
+触发点、`notification` 可用的 key 恰好是上表那六个、每条 `fetch` 真的调到它名字指向的
+那个方法(记账替身断言线上方法名)、一条 `{keys:['session.list']}` 通知**恰好一次**
+`client.call`。
 
 ---
 

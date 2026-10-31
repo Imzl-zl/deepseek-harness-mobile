@@ -231,7 +231,7 @@ void main() {
             : null,
       );
       final app = AppModel(client: client);
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       await app.openSession('s1');
 
       // ① 插话消息先被插进 next-step。
@@ -325,7 +325,7 @@ void main() {
             : null,
       );
       final app = AppModel(client: client);
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       await app.openSession('s1');
 
       client.emit('s1', [

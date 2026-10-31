@@ -6,14 +6,17 @@
 /// 症状，不是一处 bug。电脑侧因此会来一条 `host` 帧，里面**只有 key**（方法名），
 /// 没有任何值：这条通道的语义是"这些快照可能过期了"。
 ///
-/// ## 三件事，各有唯一出处
+/// ## 四件事，各有唯一出处
 ///
 /// 1. **key 的拼写**只有 [HostStateKey] 一处（与连接器
 ///    `connector/src/protocol/host-state.ts` 的清单逐字一致）；
 /// 2. **"哪个 key 该调谁、允许在哪个时机调"** 只在 [hostStateRegistry] 一处 ——
-///    新增状态没配触发点会被 `app/test/host_state_test.dart` 判红；
+///    它就是"拉什么、何时拉"的唯一清单。产品路径上**没有**"把全套再拉一次"的入口，
+///    新增一份快照只能登记；
 /// 3. **合并与丢弃**在 [HostStateRefresher] 一处：同 key [window] 内合并成一次，
-///    不同 key 各算各的；断连时 [HostStateRefresher.dropPending] 清空待发桶。
+///    不同 key 各算各的；断连时 [HostStateRefresher.dropPending] 清空待发桶；
+/// 4. **首屏那一次是"并行批次"**（[HostStateRefresher.startBatch]）：九项同时发起，
+///    调用方只等 `session.list` 那一行，其余在飞（时序判据见 `connect-landing.md` §2）。
 ///
 /// ## 为什么合并放在 app 侧
 ///
@@ -21,8 +24,9 @@
 /// `modelSelection`），而断线重连时**只有 app 知道"这一批是不是同一屏要的"**。
 /// 合并在连接器还会让"合并窗口"变成又一条连接器策略。
 ///
-/// 取舍与被否方案（每个方法一条事件 / 客户端轮询 / 中转做状态总线）见
-/// `.agents/notes/implemented/2026-10-31-host-state-sync.md`。
+/// 取舍与被否方案（每个方法一条事件 / 客户端轮询 / 中转做状态总线 / 按函数捆着拉）见
+/// `.agents/notes/implemented/2026-10-31-host-state-sync.md` 与
+/// `.agents/notes/implemented/2026-11-01-refetch-scope-by-trigger.md`。
 library;
 
 import 'dart:async';
@@ -38,21 +42,42 @@ abstract final class HostStateKey {
   /// `session.list`：会话清单行（模型 / 标题 / 更新时间 / 计数）。**宿主级**。
   static const String sessionList = 'session.list';
 
-  /// `settings.describe`：设置文档。**宿主级**。
-  static const String settingsDescribe = 'settings.describe';
-
   /// `session.projections`：投影包（权限档 / 标题 / 统计 / 轨迹 / 队列）。**会话级**。
   static const String sessionProjections = 'session.projections';
+
+  /// `settings.describe`：设置文档。**宿主级**。
+  static const String settingsDescribe = 'settings.describe';
 
   /// `job.list`：这个会话的任务表。**会话级**。
   static const String jobList = 'job.list';
 
+  /// `session.modelCatalog`：模型目录（`{default, routableProviders, groups, failures}`）。
+  /// **宿主级**。电脑上加 / 换模型或改密钥后它才变。
+  static const String sessionModelCatalog = 'session.modelCatalog';
+
+  /// `permission.catalog`：权限预设目录（部署侧那张表）。**宿主级**。
+  static const String permissionCatalog = 'permission.catalog';
+
+  /// `agentPresets.list`：Agent 预设目录（hero 上模式 chip 的名字来源）。**宿主级**。
+  static const String agentPresetsList = 'agentPresets.list';
+
+  /// `workspace.list`：工作区表（列表的分组 / 归档 / 置顶都出自这一份）。**宿主级**。
+  static const String workspaceList = 'workspace.list';
+
+  /// `repo.info`：电脑侧版本与能力位（另带 `hostName`）。**宿主级**、进程级事实。
+  static const String repoInfo = 'repo.info';
+
   /// 全部 key（封闭集，顺序与连接器清单一致）。
   static const List<String> all = <String>[
     sessionList,
-    settingsDescribe,
     sessionProjections,
+    settingsDescribe,
     jobList,
+    sessionModelCatalog,
+    permissionCatalog,
+    agentPresetsList,
+    workspaceList,
+    repoInfo,
   ];
 
   /// 这个 key 要不要 `sid` 才能重取（= 那个方法要不要会话参数）。
@@ -65,7 +90,7 @@ enum HostStateTrigger {
   /// 收到 `host` 帧（电脑侧说"可能过期了"）。
   notification,
 
-  /// 连上之后的那一串（`landAfterConnect`）。重连的兜底就在这里。
+  /// 连上之后的那一批（`landAfterConnect`）。重连的兜底就在这里。
   connectLanding,
 
   /// 回到前台（用户刚在电脑上改完，抬眼看手机的那一刻应该是对的）。
@@ -73,18 +98,31 @@ enum HostStateTrigger {
 
   /// 打开 / 切会话。
   openSession,
+
+  /// **自己发起的写**（切模型 / 分支 / 会话页"重试"）：回执已带回值，
+  /// 重取只是让电脑侧的身份字段（行里的模型 / 标题 / 计数）跟上。
+  /// 立即执行，不压 `notification` 的合并窗口。
+  ownWrite,
 }
 
 /// 重取函数需要的那一面（窄接口）。
 ///
 /// 为什么不用 `AppModel`：那会让 `data/host_state.dart` 与 `app_model.dart`
-/// 互相 import，而这里真正需要的只有四个方法 + 一条错误落点。
+/// 互相 import，而这里真正需要的只有九个方法 + 一条错误落点。
 /// 顺带让登记表的机械测试可以用记账替身（断言"这个 key 调的确实是那个方法"）。
+///
+/// **一个 key 一个方法**：`fetch` 不许"顺手把别的也拉一遍" —— 那正是那一版
+/// "一个函数捆七件事"的形态（一次通知七个往返）。
 abstract interface class HostStateTarget {
-  Future<void> refreshSessions();
-  Future<void> refreshSettings();
+  Future<void> refreshSessionRows();
   Future<void> refreshProjections(String sid);
+  Future<void> refreshSettings();
   Future<void> refreshJobs(String sid);
+  Future<void> refreshModelCatalog();
+  Future<void> refreshPermissionCatalog();
+  Future<void> refreshAgentPresets();
+  Future<void> refreshWorkspaces();
+  Future<void> refreshRepoInfo();
 
   /// 重取失败（不打断其它 key）：由实现落进 `lastError`。
   void reportHostStateFailure(String key, Object error);
@@ -111,13 +149,11 @@ class HostStateFetch {
   bool get sessionScoped => HostStateKey.isSessionScoped(key);
 }
 
-/// 会话清单：模型 / 标题 / 更新时间 / 计数都在行里。
-Future<void> _refetchSessionList(HostStateTarget app, String? sid) =>
-    app.refreshSessions();
-
-/// 设置文档（默认权限档 / 默认预设 / Session Log 开关）。
-Future<void> _refetchSettings(HostStateTarget app, String? sid) =>
-    app.refreshSettings();
+/// 会话清单行：模型 / 标题 / 更新时间 / 计数都在行里。
+///
+/// **只做行**，不碰任何目录 —— 目录各有各的 key 与触发点（见 [hostStateRegistry]）。
+Future<void> _refetchSessionRows(HostStateTarget app, String? sid) =>
+    app.refreshSessionRows();
 
 /// 投影包（权限档 / 标题 / 统计 / 轨迹 / 队列）。**只对当前会话有意义**。
 Future<void> _refetchProjections(HostStateTarget app, String? sid) async {
@@ -125,26 +161,65 @@ Future<void> _refetchProjections(HostStateTarget app, String? sid) async {
   await app.refreshProjections(sid);
 }
 
+/// 设置文档（默认权限档 / 默认预设 / Session Log 开关）。
+Future<void> _refetchSettings(HostStateTarget app, String? sid) =>
+    app.refreshSettings();
+
 /// 任务表（增删 / 终态）。
 Future<void> _refetchJobs(HostStateTarget app, String? sid) async {
   if (sid == null) return;
   await app.refreshJobs(sid);
 }
 
+/// 模型目录。
+Future<void> _refetchModelCatalog(HostStateTarget app, String? sid) =>
+    app.refreshModelCatalog();
+
+/// 权限预设目录。
+Future<void> _refetchPermissionCatalog(HostStateTarget app, String? sid) =>
+    app.refreshPermissionCatalog();
+
+/// Agent 预设目录。
+Future<void> _refetchAgentPresets(HostStateTarget app, String? sid) =>
+    app.refreshAgentPresets();
+
+/// 工作区表。
+Future<void> _refetchWorkspaces(HostStateTarget app, String? sid) =>
+    app.refreshWorkspaces();
+
+/// 电脑侧版本与能力位。
+Future<void> _refetchRepoInfo(HostStateTarget app, String? sid) =>
+    app.refreshRepoInfo();
+
 /// **登记表的唯一出处**：一个新宿主状态漏配就会红。
 ///
-/// 触发点的口径：
-/// - `notification` 每条都要有 —— 它才是这条通道存在的理由；
-/// - `connectLanding` 覆盖"断连期间漏收"（重连一定重取一遍）；
-/// - `appResume` 只给宿主级 + 当前会话的投影（任务表生在会话里，回到前台时
-///   它由 `job` 帧维护，重取整份没有必要）；
-/// - `openSession` 只给会话级（切会话就重新拉一次，宿主的写可能发生在我们不在的时候）。
+/// 触发点的口径（五列，逐列的判据在 `app-channel-client.md` §2.3）：
+/// - `notification` 只给**今天有生产者**的六个 key —— 它是这条通道存在的理由；
+///   三个没有宿主事件的目录（预设 / 工作区 / `repo.info`）**不给**，编一个触发源
+///   就是替宿主做决定；
+/// - `connectLanding` 覆盖"断连期间漏收"，所以是**全部九项**：断开期间电脑上的
+///   变化一条事件都收不到（目录因此**不跨重连缓存**）；
+/// - `appResume` 只给宿主级 + 当前会话的投影：回前台是"对齐这一屏"，设置与目录
+///   要么有通知、要么极低频；
+/// - `openSession` 只给会话级（切会话就重新拉一次，宿主的写可能发生在我们不在的时候）；
+/// - `ownWrite` 只给行：自己发起的写由回执带回值，重取是为了电脑侧的身份字段。
 const List<HostStateFetch> hostStateRegistry = <HostStateFetch>[
   HostStateFetch(
     key: HostStateKey.sessionList,
-    fetch: _refetchSessionList,
+    fetch: _refetchSessionRows,
     triggers: <HostStateTrigger>{
       HostStateTrigger.notification,
+      HostStateTrigger.connectLanding,
+      HostStateTrigger.appResume,
+      HostStateTrigger.ownWrite,
+    },
+  ),
+  HostStateFetch(
+    key: HostStateKey.sessionProjections,
+    fetch: _refetchProjections,
+    triggers: <HostStateTrigger>{
+      HostStateTrigger.notification,
+      HostStateTrigger.openSession,
       HostStateTrigger.connectLanding,
       HostStateTrigger.appResume,
     },
@@ -152,19 +227,9 @@ const List<HostStateFetch> hostStateRegistry = <HostStateFetch>[
   HostStateFetch(
     key: HostStateKey.settingsDescribe,
     fetch: _refetchSettings,
-    // **只有通知这一列**：连上 / 回前台的设置面由 `refreshSessions()` 顺带拉
-    // （它末尾就调 `refreshSettings()`，那是既有行为），在这里再挂一列等于
-    // 每次重连多发一次请求 —— 而"闪断重连不发重复请求"是本轮要验的判据之一。
-    triggers: <HostStateTrigger>{HostStateTrigger.notification},
-  ),
-  HostStateFetch(
-    key: HostStateKey.sessionProjections,
-    fetch: _refetchProjections,
     triggers: <HostStateTrigger>{
       HostStateTrigger.notification,
       HostStateTrigger.connectLanding,
-      HostStateTrigger.appResume,
-      HostStateTrigger.openSession,
     },
   ),
   HostStateFetch(
@@ -173,7 +238,46 @@ const List<HostStateFetch> hostStateRegistry = <HostStateFetch>[
     triggers: <HostStateTrigger>{
       HostStateTrigger.notification,
       HostStateTrigger.openSession,
+      HostStateTrigger.connectLanding,
     },
+  ),
+  HostStateFetch(
+    key: HostStateKey.sessionModelCatalog,
+    fetch: _refetchModelCatalog,
+    // `notification` 这一列**暂时没有生产者**（连接器还没接那五条宿主失效事件，
+    // 见 `remote-channel.md` §5.9）。列在表里是为了"接上生产者"不用再改 app。
+    triggers: <HostStateTrigger>{
+      HostStateTrigger.notification,
+      HostStateTrigger.connectLanding,
+    },
+  ),
+  HostStateFetch(
+    key: HostStateKey.permissionCatalog,
+    fetch: _refetchPermissionCatalog,
+    // 同上：`permission-presets/catalog-changed` 还没有接。
+    triggers: <HostStateTrigger>{
+      HostStateTrigger.notification,
+      HostStateTrigger.connectLanding,
+    },
+  ),
+  HostStateFetch(
+    key: HostStateKey.agentPresetsList,
+    fetch: _refetchAgentPresets,
+    // **只有连上这一列**：宿主没有"预设表变了"的事件（`agent-preset/selected`
+    // 是选中、不是目录），编一个轮询就是替宿主做决定。
+    triggers: <HostStateTrigger>{HostStateTrigger.connectLanding},
+  ),
+  HostStateFetch(
+    key: HostStateKey.workspaceList,
+    fetch: _refetchWorkspaces,
+    // 同上：`workspace` 只 emit 会话活动 / 停止。顺序变化由手机自己的写带回全集。
+    triggers: <HostStateTrigger>{HostStateTrigger.connectLanding},
+  ),
+  HostStateFetch(
+    key: HostStateKey.repoInfo,
+    fetch: _refetchRepoInfo,
+    // 同上：进程级事实（版本 / 能力位）。
+    triggers: <HostStateTrigger>{HostStateTrigger.connectLanding},
   ),
 ];
 
@@ -185,12 +289,30 @@ HostStateFetch? hostStateFetchOf(String key) {
   return null;
 }
 
+/// 一次**并行批次**的把手：把"会话清单行"与"其余"分开，好让首屏只等行。
+///
+/// 为什么需要它：落点读的是行里的 `updatedAt` / `running`，而其余八份快照
+/// （目录 / 设置 / 工作区 / 投影 / 任务表）不该挡住落点、也不该等落点之后才发起
+/// —— 目录晚到时 blank hero 会先说"拿不到模型"。
+class HostStateBatch {
+  const HostStateBatch({required this.rows, required this.others});
+
+  /// `session.list` 那一份（登记表里没有它时是已完成的 future）。
+  final Future<void> rows;
+
+  /// 其余 key（并行跑）。
+  final Future<void> others;
+
+  /// 整批收尾。
+  Future<void> get all => Future.wait(<Future<void>>[rows, others]);
+}
+
 /// 按 key 合并的重取器：`host` 帧 → 一条（或几条）快照请求。
 ///
 /// 三条规则：
 /// 1. **同 key 在 [window] 内合并成一次**（默认 150 ms，落在契约给的 100–300 ms 内）；
 /// 2. **不同 key 各算各的** —— 一次"切模型"同时改两个快照，它们不该互相等；
-/// 3. **在飞期间再来同 key**：记一笔，等那次收尾再补一次。直接并发两次会让
+/// 3. **在飞期间再来同 key**：等那次收尾再补一次。直接并发两次会让
 ///    **两个应答乱序落地**（投影包没有版本号可比，后到的旧包会盖掉新包）。
 class HostStateRefresher {
   HostStateRefresher({
@@ -211,8 +333,8 @@ class HostStateRefresher {
   /// 每个 key 最近一次通知带的 `sid`（合并期间后到的那次覆盖前一次）。
   final Map<String, String?> _sids = <String, String?>{};
 
-  /// 正在飞的 key。
-  final Set<String> _inFlight = <String>{};
+  /// 正在飞的 key → 那一次重取的 future（批次要能等它，而不是另发一次）。
+  final Map<String, Future<void>> _inFlight = <String, Future<void>>{};
 
   /// 在飞期间又被要求重取的 key（收尾时补跑一次）。
   final Set<String> _rerun = <String>{};
@@ -246,7 +368,7 @@ class HostStateRefresher {
     }
   }
 
-  /// 自动触发点（连上 / 回前台 / 开会话）：**立即重取**，不压 [window]。
+  /// 自动触发点（连上 / 回前台 / 开会话 / 自己的写）：**立即重取**，不压 [window]。
   ///
   /// 这些时机一次只来一条（不是高频事件），压窗口只会让"连上了但列表还是空的"
   /// 多等一帧。与通知撞在一起时由 [_inFlight] 合流。
@@ -256,16 +378,7 @@ class HostStateRefresher {
   Future<void> triggered(HostStateTrigger trigger, {String? sid}) async {
     final errors = <Object>[];
     final futures = <Future<void>>[];
-    for (final entry in _registry) {
-      if (!entry.triggers.contains(trigger)) continue;
-      if (entry.sessionScoped && sid == null) continue;
-      _sids[entry.key] = sid;
-      // 立刻重取：把这一 key 的待发通知并进来（它们要的是同一份快照）。
-      _timers.remove(entry.key)?.cancel();
-      if (_inFlight.contains(entry.key)) {
-        _rerun.add(entry.key);
-        continue;
-      }
+    for (final entry in _select(trigger, sid)) {
       futures.add(_run(entry.key, errors: errors));
     }
     await Future.wait(futures);
@@ -279,11 +392,34 @@ class HostStateRefresher {
     }
   }
 
+  /// **并行批次**（首屏 / 重连）：所有该跑的 key 同时发起，行与其余分开给。
+  ///
+  /// 与 [triggered] 的差别只有错误语义：批次不往上抛，每个 key 的失败各自
+  /// 落进 `reportHostStateFailure` —— 落点不能被一份目录的失败拦住。
+  HostStateBatch startBatch(HostStateTrigger trigger, {String? sid}) {
+    Future<void>? rows;
+    final others = <Future<void>>[];
+    for (final entry in _select(trigger, sid)) {
+      final future = _run(entry.key);
+      if (entry.key == HostStateKey.sessionList) {
+        rows = future;
+      } else {
+        others.add(future);
+      }
+    }
+    return HostStateBatch(
+      rows: rows ?? Future<void>.value(),
+      others: Future.wait(others),
+    );
+  }
+
   /// 断连：**不排队**。
   ///
   /// 待发桶里的请求在重连那一刻必然已经过期（而且重连会由
   /// `landAfterConnect` → [HostStateTrigger.connectLanding] 整份重取）。
   /// 排队只会让重连瞬间打出一串白跑的请求。
+  ///
+  /// 已发出去的那些**不取消**：它们的应答是真实结果，收尾时自己落地。
   void dropPending() {
     for (final timer in _timers.values) {
       timer.cancel();
@@ -293,13 +429,38 @@ class HostStateRefresher {
     _rerun.clear();
   }
 
-  Future<void> _run(String key, {List<Object>? errors}) async {
+  /// 选出这次该跑的登记项，并把这一批的 `sid` 记下来（供 [_run] 读）。
+  Iterable<HostStateFetch> _select(HostStateTrigger trigger, String? sid) {
+    final selected = <HostStateFetch>[];
+    for (final entry in _registry) {
+      if (!entry.triggers.contains(trigger)) continue;
+      if (entry.sessionScoped && sid == null) continue;
+      _sids[entry.key] = sid;
+      // 立刻重取：把这一 key 的待发通知并进来（它们要的是同一份快照）。
+      _timers.remove(entry.key)?.cancel();
+      selected.add(entry);
+    }
+    return selected;
+  }
+
+  /// 跑一个 key。在飞时不另发一次，而是**返回那一次**并把"再补一次"记下来。
+  Future<void> _run(String key, {List<Object>? errors}) {
+    final running = _inFlight[key];
+    if (running != null) {
+      _rerun.add(key);
+      return running;
+    }
+    final future = _fetchNow(key, errors: errors);
+    _inFlight[key] = future;
+    return future;
+  }
+
+  Future<void> _fetchNow(String key, {List<Object>? errors}) async {
     final entry = hostStateFetchOf(key);
-    if (entry == null) return;
-    final sid = _sids[key];
-    _inFlight.add(key);
     try {
-      await entry.fetch(_app, sid);
+      // 登记表外的 key 不进这里（两个入口都先查过一次），这里只是把兜底写成
+      // `finally` 里的那一格簿记，免得"在飞"标记永远挂着。
+      if (entry != null) await entry.fetch(_app, _sids[key]);
     } catch (error) {
       if (errors != null) {
         errors.add(error);
@@ -307,7 +468,7 @@ class HostStateRefresher {
         _app.reportHostStateFailure(key, error);
       }
     } finally {
-      _inFlight.remove(key);
+      unawaited(_inFlight.remove(key));
       if (_rerun.remove(key)) unawaited(_run(key));
     }
   }

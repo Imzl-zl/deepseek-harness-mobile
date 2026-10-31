@@ -1,6 +1,6 @@
 # Agent Note: 一次重取该拉多少 —— 按触发源拆快照，而不是按函数捆
 
-Status: proposed
+Status: implemented（2026-11-01，**只有第 1 批**；第 2 批的两个新触发源仍未接，见文末）
 
 ## Problem
 
@@ -238,3 +238,66 @@ Status: proposed
   需要的是字节数 —— 实施第 1 批时顺手加一个 `connector.bytes.outbound`(纯观测)。
 - **中转计费与请求数的关系**:中转有按人流量额度(只计字节,不计请求数)。所以本次收益
   主要是**延迟与电量**,不是额度;别在文档里把它写成"省流量"。
+
+## 落地时的事实（2026-11-01，第 1 批）
+
+### 做完了什么
+
+1. `AppModel.refreshSessions()` **从产品路径消失**：拆成 `refreshSessionRows()`（只做行）、
+   `refreshHostCatalogs()`（模型 / 权限 / 预设 / `repo.info` 四件）；
+   `settings.describe` 与 `workspace.list` 本来就是独立方法。没有留"全套再拉一次"的别名。
+2. 登记表长到 **9 个 key**（`app/lib/data/host_state.dart`），`HostStateTrigger` 多一列
+   `ownWrite`；连接器 `HOST_STATE_KEYS` 与契约 §5.9 的 key 表同批长到 9
+   （`app/test/host_state_test.dart` 逐字比对两端）。
+3. 首屏 = **一次并行批次**（`HostStateRefresher.startBatch`）：九项同时发起，`await` 的只有行；
+   落点在行到达后立刻跑，目录失败不拦它（批次不抛，失败各自落 `lastError`）。
+4. **一批只通知一次**：`AppModel.notifyListeners` 上开了一个闸（`_coalesced`）。
+5. 自己的写走登记表的 `ownWrite` 列（`refreshAfterOwnWrite`）：`selectModel` /
+   `forkSession` / `ui/chat_page.dart` 的重试。保留"重拉行"，不用回执改本地行。
+
+### 与初稿的两处出入（初稿自身不自洽的地方，按判据改正）
+
+- **`settings.describe` 与 `job.list` 也要 `connectLanding`。** 初稿的登记表给
+  `settings.describe` 只写 `notification`、给 `job.list` 只写 `notification` / `openSession` ——
+  那两格在"一条通知 = 一次 `refreshSessions()`"的旧形态下成立（设置面是被**顺带**拉的）。
+  捆一拆，"顺带"这条路就没了：断开期间在电脑上改的设置，重连后**永远不会**被读回来
+  （通知只在服务态到达）。所以九项都在 `connectLanding` 一列 —— 这也正是初稿
+  「其余八项并行」与验收「9 个方法各一次」要求的口径。
+- **通知闸罩住整批（含落点那一次）**，而不是只罩"其余八项"。只罩八项时实测通知 **8 次**
+  （行先落地那一次 + 八项各自到达）；罩住整批才是**一次重建**。代价：落点的可见时刻
+  = 目录到达（失败也会 flush，因为批次不抛）。首屏"加载态"那一次通知仍在闸外 ——
+  它必须立刻画出转圈，否则界面停在上一屏。
+
+### 新增的代价（实施才知道的）
+
+- **代价 6（测试装配层）**：`app/test` 与 `app/integration_test` 里 **80 处**
+  `await app.refreshSessions()` 其实是"把模型灌满"的夹具。拆开后改成
+  `refreshSessionRows()`；另有两处**行为性**改写：`permission_test` 的两条
+  （"目录随清单拉"→"目录自己拉"）、以及模型目录 / 权限目录 / 工作区分组那四个文件
+  需要显式再拉那一份目录。夹具照着产品路径长，不是新增行为。
+- **代价 7**：两条错误语义并存 —— `triggered()` 仍"抛第一条错误"（回前台 / 开会话用），
+  `startBatch()` 不抛（首屏用，失败各自落 `lastError`）。判据写在
+  `HostStateRefresher.startBatch` 的注释里，`host_state_test` 用"九项里任何一项抛错都不拦落点"
+  钉住。
+- **代价 8**：`ownWrite` 列只有 `session.list`。切模型的**投影**没有再登记一列 ——
+  宿主会为同一件事发 `model/selection` 通知（合并后一个往返），再登记一列就是
+  同一份快照拉两次。
+
+### 门禁与实测
+
+- `flutter analyze` 干净；`flutter test` **1628 项**（1619 + 新增 9 条）；
+  `node app/tools/verify-platform-boundary.mjs` **673**；`dart analyze --fatal-infos` 干净；
+  connector `pnpm exec tsc --noEmit` 干净 + `pnpm test` **794** 项。
+- 真机（`d61cf622`，直连 8790）：改前一次 Web 侧切模型 = **8 个往返**（19 个入站帧），
+  改后 = **2 个往返**；时延与字节数记在 `memory.md` 的当轮窗口。
+
+## 第 2 批为什么留到下一轮
+
+第 2 批接的是**连接器侧的宿主事件**（`llm/adapters-updated`、`llm/models-updated`、
+`settings/document-updated`、`credentials/record-updated`、`credentials/reference-updated`、
+`permission-presets/catalog-changed`），其中 `credentials` 那两条在连接器里**没有现成用法**
+（首次出现，要新写两个 `ctx.effect`）。它与第 1 批没有共同风险面：第 1 批只改 app 侧
+（+ 两张清单），第 2 批只改连接器；两批各自独立可验，合在一起只会让"哪一侧坏了"更难定位。
+在那之前，`session.modelCatalog` / `permission.catalog` 的 `notification` 列在登记表里
+**没有生产者**（只是已经接好了接收端：`host_state_test` 有一条用例证明这两个 key
+收到通知就会重取；另外三个没有宿主事件的 key 则被另一条用例钉成"写进通知 ⇒ 零请求"）。

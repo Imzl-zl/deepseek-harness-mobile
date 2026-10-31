@@ -26,15 +26,27 @@
 /**
  * 允许出现在 `host` 帧里的 key —— **封闭集**。
  *
- * 加一项要同时改：本清单、契约 §5.9 的触发点表、app 侧的登记表
- * （`app/lib/data/host_state.dart`）。app 侧有一条机械测试钉"每个 key 至少一个触发点"，
+ * 加一项要同时改：本清单、契约 §5.9 的 key 表、app 侧的登记表
+ * （`app/lib/data/host_state.dart`）。app 侧有一条机械测试**逐字比对两端清单**，
  * 所以漏配会红，而不是静静失效。
+ *
+ * 清单里**今天没有生产者的几项**也在这里（`session.modelCatalog` /
+ * `permission.catalog` 等宿主失效事件还没接；`agentPresets.list` /
+ * `workspace.list` / `repo.info` 宿主根本没有"这张表变了"的事件）。
+ * 收进来的理由是：手机侧"能不能推"与"该不该拉"是同一张表的两列，
+ * 让"接上生产者"只改连接器一处，协议与跨端门禁都不用动（§5.9 规则 8）。
+ * 取舍见 `.agents/notes/implemented/2026-11-01-refetch-scope-by-trigger.md`。
  */
 export const HOST_STATE_KEYS = [
   'session.list',
-  'settings.describe',
   'session.projections',
+  'settings.describe',
   'job.list',
+  'session.modelCatalog',
+  'permission.catalog',
+  'agentPresets.list',
+  'workspace.list',
+  'repo.info',
 ] as const
 
 export type HostStateKey = (typeof HOST_STATE_KEYS)[number]

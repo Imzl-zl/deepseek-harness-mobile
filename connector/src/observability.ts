@@ -101,6 +101,16 @@ export const METRIC = {
   inboundFrames: 'connector.frames.inbound',
   /** 发出的帧总数。 */
   outboundFrames: 'connector.frames.outbound',
+  /**
+   * 已发出的**字节数**（线上 `encodeFrame` 之后的 UTF-8 长度，累计）。
+   *
+   * 为什么需要一个字节数（纯观测，不参与任何判据）：中转按人流量额度计费，
+   * 而"一次标题变更到底推了多少字节"此前只能靠猜。它与 `outboundFrames`
+   * 回答的是不同问题 —— 帧数看不出"`session.list` 整包（本机 302 行）占了多大一份"。
+   * 有了它，才谈得上"要不要窄口只取一行"这种不可逆的协议决定
+   * （`.agents/notes/implemented/2026-11-01-refetch-scope-by-trigger.md` 文末）。
+   */
+  bytesOutbound: 'connector.bytes.outbound',
   /** 攒批发出的批次数。 */
   batches: 'connector.batches.sent',
   /** 当前已配对的未吊销设备数。 */

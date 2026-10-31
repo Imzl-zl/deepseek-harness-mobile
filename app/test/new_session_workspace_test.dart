@@ -261,7 +261,10 @@ void main() {
       final app = AppModel(client: client);
       addTearDown(app.dispose);
       await app.start();
-      await app.refreshSessions();
+      await app.refreshSessionRows();
+      // 分组只认 `workspace.list` 的那一份快照（登记表里的 `workspace.list`）：
+      // 行不再顺带把它拉回来。
+      await app.refreshWorkspaces();
       return app;
     }
 
@@ -361,7 +364,8 @@ void main() {
       final app = AppModel(client: client);
       addTearDown(app.dispose);
       await app.start();
-      await app.refreshSessions();
+      await app.refreshSessionRows();
+      await app.refreshWorkspaces();
 
       // 照 DSH `createInWorkspace`：blank && cwd == workspace.path &&
       // workspace.sessionIds.includes(id)（`navigation.ts:220-233`）。
@@ -389,7 +393,8 @@ void main() {
       final app = AppModel(client: client);
       addTearDown(app.dispose);
       await app.start();
-      await app.refreshSessions();
+      await app.refreshSessionRows();
+      await app.refreshWorkspaces();
 
       expect(
         app.workspaces.firstWhere((g) => g.workspaceId == 'empty').createdAt,

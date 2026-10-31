@@ -151,7 +151,7 @@ void main() {
       });
       await app.start();
       await app.openSession('b');
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       expect(app.runningOf('a'), isFalse);
       expect(app.completionUnreadOf('a'), isFalse, reason: '没看着它跑过，就不该说"刚跑完"');
     });
@@ -165,11 +165,11 @@ void main() {
       });
       await app.start();
       await app.openSession('b');
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       expect(app.runningOf('a'), isTrue);
 
       client.rows = [_row('a', running: false)];
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       expect(app.runningOf('a'), isFalse);
       expect(
         app.completionUnreadOf('a'),

@@ -135,7 +135,10 @@ void main() {
       client: _CatalogClient(rows: [_row('s1')], catalog: _catalogReply()),
     );
     addTearDown(app.dispose);
-    await app.refreshSessions();
+    await app.refreshSessionRows();
+    // 目录是**自己的一份快照**（登记表里的 `session.modelCatalog`）：
+    // 行不再顺带把它拉回来，要默认值就得显式拉一次（与首屏 `connectLanding` 同源）。
+    await app.refreshModelCatalog();
     await app.openSession('s1');
 
     expect(app.currentModel, isNotNull, reason: '新会话不该是「请选择模型」');
@@ -154,7 +157,10 @@ void main() {
       ),
     );
     addTearDown(app.dispose);
-    await app.refreshSessions();
+    await app.refreshSessionRows();
+    // 目录是**自己的一份快照**（登记表里的 `session.modelCatalog`）：
+    // 行不再顺带把它拉回来，要默认值就得显式拉一次（与首屏 `connectLanding` 同源）。
+    await app.refreshModelCatalog();
     await app.openSession('s1');
 
     expect(app.currentModel!.provider, 'other');
@@ -166,7 +172,10 @@ void main() {
       client: _CatalogClient(rows: [_row('s1')], catalog: {'available': false}),
     );
     addTearDown(app.dispose);
-    await app.refreshSessions();
+    await app.refreshSessionRows();
+    // 目录是**自己的一份快照**（登记表里的 `session.modelCatalog`）：
+    // 行不再顺带把它拉回来，要默认值就得显式拉一次（与首屏 `connectLanding` 同源）。
+    await app.refreshModelCatalog();
     await app.openSession('s1');
 
     expect(app.currentModel, isNull);

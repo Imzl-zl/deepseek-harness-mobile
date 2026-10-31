@@ -485,17 +485,23 @@ type SyncSnapshot = {
 ### 5.9 宿主状态变更通知(`host` 帧)
 
 手机侧有一批**快照型状态**:会话清单行(模型 / 标题 / 更新时间 / 计数)、投影包(统计 / 权限档 /
-标题 / 轨迹 / 用量 / 排队)、设置文档、会话的任务表。它们只在四个时机重取:连接与重连
-(`sync.hello` → 落点)、打开 / 切会话、回到前台、自己发起的写。于是"在电脑上改了模型 / 权限,
+标题 / 轨迹 / 用量 / 排队)、设置文档、会话的任务表、模型目录、权限预设目录、Agent 预设目录、
+工作区表、`repo.info`。它们只在五个时机重取:连接与重连(`sync.hello` → 落点)、打开 / 切会话、
+回到前台、收到这条通知、自己发起的写。于是"在电脑上改了模型 / 权限,
 手机还显示旧值"是**一类**症状;而"显示旧值 → 用户按旧值再操作 → 电脑按新值校验 → 报错"的连锁
 也会重复出现。这一节是那条推送通道。
 
 ```ts
 type HostStateKey =
-  | 'session.list'        // 宿主级
-  | 'settings.describe'   // 宿主级
-  | 'session.projections' // 会话级:靠帧头 sid 定向
-  | 'job.list'            // 会话级:靠帧头 sid 定向
+  | 'session.list'         // 宿主级
+  | 'session.projections'  // 会话级:靠帧头 sid 定向
+  | 'settings.describe'    // 宿主级
+  | 'job.list'             // 会话级:靠帧头 sid 定向
+  | 'session.modelCatalog' // 宿主级
+  | 'permission.catalog'   // 宿主级
+  | 'agentPresets.list'    // 宿主级
+  | 'workspace.list'       // 宿主级
+  | 'repo.info'            // 宿主级
 
 type HostStateChanged = { keys: HostStateKey[] }   // 整个 box,没有任何值
 ```
@@ -537,8 +543,24 @@ type HostStateChanged = { keys: HostStateKey[] }   // 整个 box,没有任何值
 
    不在此表的状态**不触发**(例如 `workspace.list` 的顺序变化:它由手机自己发起的写
    带回全集,不是"别处改了要跟上"的那一类)。
+
+   **清单里另外四项今天没有生产者**,各自判据:
+   - `session.modelCatalog` / `permission.catalog`:宿主有失效事件
+     (`llm/*-updated`、`settings/document-updated`、`credentials/*-updated`、
+     `permission-presets/catalog-changed`),连接器还没监听 —— 手机侧因此只在连上时重取,
+     断连期间在电脑上加 / 换模型、改预设表仍要重连才看见(判据与被否理由见
+     `.agents/notes/proposed/2026-11-01-refetch-scope-by-trigger.md` 的第 2 批);
+   - `agentPresets.list` / `workspace.list` / `repo.info`:宿主**没有**"这张表变了"的事件
+     (`workspace` 只 emit 会话活动 / 停止,`agent-preset-registry` 只 emit 选中,
+     `repo.info` 是进程级事实)。给它们编"每 N 秒"就是替宿主做决定。
+
+   于是这四个 key **只走"拉"的触发点**(连上重取),不参与"推"。
 7. **老客户端收不到就忽略**:帧类型清单外且无 `id` ⇒ 忽略、不回错、不断连接(§3)。
    它也因此**不为这一帧回 `credit`** —— 累计确认让后一帧的 credit 覆盖这个空洞。
+8. **封闭集与手机侧登记表逐字同形**:`connector/src/protocol/host-state.ts` 的
+   `HOST_STATE_KEYS` 与 `app/lib/data/host_state.dart` 的 `HostStateKey.all` 由
+   `app/test/host_state_test.dart` 比对(解析口径是源码里的 `as const` 数组)。
+   没有生产者的 key 也留在清单里:**接上生产者只改连接器一处**,协议与跨端门禁都不用动。
 
 取舍与被否方案(轮询 / 每个快照方法一条事件 / 中转做状态总线 / 推数据)见
 `.agents/notes/implemented/2026-10-31-host-state-sync.md`。

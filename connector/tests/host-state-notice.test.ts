@@ -116,7 +116,23 @@ test('触发点 → keys 的映射与契约 §5.9 的触发点表一致', () => 
 })
 
 test('清单是封闭集（手写拼错会在这里红）', () => {
-  assert.deepEqual([...HOST_STATE_KEYS].sort(), ['job.list', 'session.list', 'session.projections', 'settings.describe'])
+  // 九项与契约 §5.9 的 key 表、app 的 `HostStateKey.all` 逐字一致
+  // （app 侧按本文件的 `as const` 数组解析，所以**这个形状不许改**）。
+  // **没有生产者的五项也在清单里**：`session.modelCatalog` / `permission.catalog`
+  // 的宿主失效事件还没接；`agentPresets.list` / `workspace.list` / `repo.info`
+  // 宿主根本没有"这张表变了"的事件。收进来的理由见 `protocol/host-state.ts`：
+  // 让"接上生产者"只改连接器一处，协议与跨端门禁都不用动。
+  assert.deepEqual([...HOST_STATE_KEYS].sort(), [
+    'agentPresets.list',
+    'job.list',
+    'permission.catalog',
+    'repo.info',
+    'session.list',
+    'session.modelCatalog',
+    'session.projections',
+    'settings.describe',
+    'workspace.list',
+  ])
   // 每一条被这五个构造函数发出来的 key 都必须在封闭清单里。
   const emitted = new Set<string>()
   for (const notice of [

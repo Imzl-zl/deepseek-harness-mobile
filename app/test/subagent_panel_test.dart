@@ -287,7 +287,7 @@ void main() {
         ),
       );
       await app.start();
-      await app.refreshSessions();
+      await app.refreshSessionRows();
 
       final child = app.sessionOf('child-1')!;
       expect(child.running, isTrue);
@@ -325,7 +325,7 @@ void main() {
         ),
       );
       await app.start();
-      await app.refreshSessions();
+      await app.refreshSessionRows();
 
       final row = app.sessionOf('child-1')!;
       expect(row.subagentTiming, isNull);

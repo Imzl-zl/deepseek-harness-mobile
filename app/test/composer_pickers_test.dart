@@ -122,7 +122,10 @@ Future<AppModel> _seeded(_PickerClient client) async {
   final app = AppModel(client: client);
   addTearDown(app.dispose);
   await app.refreshRepoInfo();
-  await app.refreshSessions();
+  await app.refreshSessionRows();
+  // 两枚 chip 的候选来自四个目录面（`refreshHostCatalogs` = 模型 / 权限 / 预设 /
+  // `repo.info`；它们各有各的 key，不再随会话清单顺带拉）。
+  await app.refreshHostCatalogs();
   await app.openSession('sid_1');
   return app;
 }

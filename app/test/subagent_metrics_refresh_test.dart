@@ -131,7 +131,7 @@ void main() {
 
     final client = _FreshnessClient();
     final app = AppModel(client: client);
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     await app.openSession('sid_A');
     expect(client.listCalls, 1, reason: '连上那一刻只拉过一次');
 
@@ -188,7 +188,7 @@ void main() {
     // 子会话是在回合里出现的，所以"回合结束"是补这一次的天然边界。
     final client = _FreshnessClient();
     final app = AppModel(client: client);
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     await app.openSession('sid_A');
     expect(client.listCalls, 1);
     // 目录里有一个子级（否则这条补拉没有信息量，代码会跳过）。
@@ -224,7 +224,7 @@ void main() {
   test('没有 turn/end 的批次不补拉（普通消息不该带来一次 list）', () async {
     final client = _FreshnessClient();
     final app = AppModel(client: client);
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     await app.openSession('sid_A');
     expect(client.listCalls, 1);
 

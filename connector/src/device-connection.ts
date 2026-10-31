@@ -91,6 +91,9 @@ export function createDeviceConnection(options: DeviceConnectionOptions): Connec
       deps.metrics.increment(METRIC.inboundFrames)
       scopeOf().handleFrame(frame)
     },
+    // 出站字节数（纯观测）：中转按流量计费，"一次标题变更到底推了多少字节"
+    // 靠它回答，而不是靠帧数猜（`observability.ts` 的 `bytesOutbound` 注释）。
+    onBytesOut: (bytes) => deps.metrics.increment(METRIC.bytesOutbound, bytes),
   })
   scope = createConnectionScope(connection, deps,
     candidate === undefined ? undefined : { candidate, endpoint: options.enrollment })

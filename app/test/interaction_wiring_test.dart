@@ -216,7 +216,7 @@ void main() {
         },
       ],
     };
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     expect(app.sessions.map((s) => s.pendingCount), [
       0,
       0,
@@ -237,7 +237,7 @@ void main() {
         'reason': '要删文件',
       },
     );
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     final byId = {for (final s in app.sessions) s.sid: s};
     expect(byId['sid-B']!.pendingCount, 1, reason: 'B 有一个未决审批');
     expect(byId['sid-A']!.pendingCount, 0, reason: 'A 不该被 B 的事件影响');

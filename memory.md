@@ -3,8 +3,21 @@
 > 快照 + 最近窗口，**覆盖更新**，不做流水追加。历史在 git 与 `.agents/notes/`；
 > 稳定命令与坑点在 `tools.md`；现状事实在 `docs/`。
 
-## 现在（2026-10-31）
+## 现在（2026-11-01）
 
+- **重取范围按触发源拆（11-01，第 1 批落地）**：`refreshSessions()` 从产品路径消失 ——
+  拆成 `refreshSessionRows()`（只做行）与 `refreshHostCatalogs()`（模型 / 权限 / 预设 /
+  `repo.info`）；登记表长到 **9 个 key**（`app/lib/data/host_state.dart`），多一列
+  `ownWrite`（切模型 / 分支 / 页面重试立即重取，不压 150 ms 窗口）。
+  **一条通知只花它那一个往返**：切模型 8 → **2**（真机入站帧 **19 → 7**；通知 → 手机
+  首个重取帧 **+63 ms ~ +186 ms**）。首屏是**一次并行批次**（九项同时发起、只 `await` 行、
+  目录失败不拦落点）：实测 17 个入站帧在 `session.list` 的 **1.9 MB 响应到达前 327 ms**
+  全部发出（串行时不可能）。**一批只通知一次**（`AppModel.notifyListeners` 上的闸，
+  首屏整棵树重建 6+ 次 → 1 次）。新增纯观测指标 `connector.bytes.outbound`：
+  **一次切模型出站 1.94 MB**，几乎全是 `session.list` 整包（本机 349 行）——
+  这是下一轮"要不要窄口只取一行"的判据。第 2 批（连接器侧三条新触发源）**没做**。
+  笔记 `implemented/2026-11-01-refetch-scope-by-trigger.md`；现状 `remote-channel.md` §5.9 +
+  `app-channel-client.md` §2.3 + `connect-landing.md` §2。
 - **宿主状态同步（10-31，P1/P3 落地）**：新增 `host` 帧（契约 §5.9）—— 电脑侧改了
   模型 / 权限档 / 标题 / 设置 / 任务表时，推一条**只有 key 的提示**（不进业务 `seq`、
   不带值），手机按 key 重取快照（同 key 150 ms 合并、断连不排队、未知 key 计数）。
@@ -82,15 +95,13 @@
 
 ## 下一步
 
-0. **重取范围按触发源拆（待评审）**：现在一条 `host` 通知 = 一次
-   `refreshSessions()`，而它是个捆（行 + 模型目录 + 权限目录 + 工作区 + 预设 + 设置 +
-   `repo.info` = **7 个往返**；切模型/标题那两条通知是 8；首屏还是 6 个 await 串行）。
-   方案 `proposed/2026-11-01-refetch-scope-by-trigger.md`：9 个登记 key、
-   `connectLanding` 一列就是首屏、首屏**并行**（少 5 个 RTT）且目录失败不拖落点、
-   目录到达**只通知一次**；再给 `session.modelCatalog`（DSH 的五条失效事件）与
-   `permission.catalog`（`permission-presets/catalog-changed`）补通知 —— 顺带补上
-   "电脑上加/换模型、改预设表后手机不重连也能看到"这个缺口。
-   刻意**不**省的一处：目录跨重连不缓存（断开期间的变化收不到事件，重拉才是对的）。
+0. **重取范围第 2 批（连接器侧，接收端已就绪）**：给 `session.modelCatalog` 接五条宿主
+   失效事件（`llm/adapters-updated`、`llm/models-updated`、`settings/document-updated`、
+   `credentials/record-updated`、`credentials/reference-updated`，后两条连接器里**首次出现**）、
+   给 `permission.catalog` 接 `permission-presets/catalog-changed`。手机侧的
+   `notification` 列与用例已经在（`host_state_test` 证明这两个 key 收到通知就会重取），
+   所以接上生产者**只改连接器一处**。顺带把"要不要 `session.row`"定下来：
+   `connector.bytes.outbound` 已经能报字节，先量几次真实变更（首屏一次就 1.94 MB）。
 1. **多机第 4 步的真机复验**：只剩两条要**两台设备**才能做的（第二台被
    `device/busy` 拒并说出占用者、切回上一台的真实链路）—— 单测已覆盖，
    真机可用"第二个 DSH_HOME + 另一份连接器身份"补；命中不了的按未验证如实说。

@@ -222,8 +222,10 @@ Future<(AppModel, _PermissionFakeClient)> _pumpChatWithPermission(
   await tester.pumpAndSettle();
   await app.openSession('preview-1');
   await tester.pumpAndSettle();
-  // 目录随 `refreshSessions` 一起拉（与 `session.modelCatalog` 同一条纪律）。
-  await app.refreshSessions();
+  // 目录面是**自己的一份快照**（登记表里的 `permission.catalog` 等）—— 首屏那一批
+  // 由 `landAfterConnect` 拉，用例里直接拉一次同一份。
+  await app.refreshSessionRows();
+  await app.refreshHostCatalogs();
   await tester.pumpAndSettle();
   _lastApp = app;
   return (app, client);

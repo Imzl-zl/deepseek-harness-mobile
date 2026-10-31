@@ -289,8 +289,10 @@ void main() {
     });
   });
 
-  group('AppModel：目录随清单拉、切换真的发出去', () {
-    test('refreshSessions 顺带拉一次权限目录', () async {
+  group('AppModel：目录单独拉、切换真的发出去', () {
+    test('权限目录是**自己的一份快照**（不再随会话清单捆着拉）', () async {
+      // 登记表（`data/host_state.dart`）里 `permission.catalog` 有自己的 key 与
+      // 触发点；会话清单那一半只做行 —— "顺手把目录也问一遍"那种捆已经拆掉。
       final client = _ProjClient(
         onCall: (m, p) => switch (m) {
           'session.list' => {'sessions': []},
@@ -301,9 +303,14 @@ void main() {
       );
       final app = AppModel(client: client);
       await app.start();
-      await app.refreshSessions();
+      await app.refreshPermissionCatalog();
 
       expect(client.called, contains('permission.catalog'));
+      expect(
+        client.called,
+        isNot(contains('session.list')),
+        reason: '拉目录不该牵动整份会话清单（一条通知只该花它那一个往返）',
+      );
       expect(app.permissionCatalog?.options.length, 3);
       app.dispose();
     });
@@ -318,7 +325,7 @@ void main() {
       );
       final app = AppModel(client: client);
       await app.start();
-      await app.refreshSessions();
+      await app.refreshPermissionCatalog();
 
       expect(
         app.permissionCatalog,

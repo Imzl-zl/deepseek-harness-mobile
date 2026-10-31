@@ -108,7 +108,7 @@ void main() {
       ]),
     );
     addTearDown(app.dispose);
-    await app.refreshSessions();
+    await app.refreshSessionRows();
 
     expect(app.runningChildrenOf('parent'), 2);
   });
@@ -126,7 +126,7 @@ void main() {
       ]),
     );
     addTearDown(app.dispose);
-    await app.refreshSessions();
+    await app.refreshSessionRows();
 
     expect(app.runningChildrenOf('plain'), 0);
   });
@@ -140,7 +140,7 @@ void main() {
       ]),
     );
     addTearDown(app.dispose);
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     await app.openSession('parent');
 
     await tester.pumpWidget(
@@ -177,7 +177,7 @@ void main() {
       ]),
     );
     addTearDown(app.dispose);
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     await app.openSession('parent');
 
     await tester.pumpWidget(

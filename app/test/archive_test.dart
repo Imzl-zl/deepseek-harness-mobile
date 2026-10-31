@@ -136,7 +136,7 @@ class _FakeArchiveClient extends FakeSyncClient {
 
 Future<AppModel> _loaded(_FakeArchiveClient client) async {
   final app = AppModel(client: client);
-  await app.refreshSessions();
+  await app.refreshSessionRows();
   await app.refreshWorkspaces();
   return app;
 }

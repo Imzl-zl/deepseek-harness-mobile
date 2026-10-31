@@ -154,7 +154,7 @@ Future<AppModel> _started(_ReconnectClient client) async {
   final app = AppModel(client: client);
   addTearDown(app.dispose);
   await app.start();
-  await app.refreshSessions();
+  await app.refreshSessionRows();
   await app.openSession('s1');
   return app;
 }
@@ -234,7 +234,7 @@ void main() {
     final app = AppModel(client: client);
     addTearDown(app.dispose);
     await app.start();
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     await app.openSession('s1');
     // 一条可见条目：没有它，`_ChatTab` 会走空态，运行条根本不建。
     //
@@ -270,7 +270,7 @@ void main() {
     final app = AppModel(client: client);
     addTearDown(app.dispose);
     await app.start();
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     await app.openSession('s1');
     client.emit('s1', _userMessage());
     await tester.pumpWidget(_chatPage(app));

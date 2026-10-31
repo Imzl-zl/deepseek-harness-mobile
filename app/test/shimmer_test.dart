@@ -246,7 +246,7 @@ void main() {
     addTearDown(app.dispose);
     await app.start();
     // 打开会话那一刻读到的快照：这一行在跑。
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     await app.openSession('s1');
 
     expect(app.runningOf('s1'), isTrue, reason: '这一笔初值必须生效（否则还没收到帧之前整轮都不出运行条）');

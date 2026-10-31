@@ -441,7 +441,7 @@ void main() {
     );
 
     // ---- ② session.list：遥控电脑看会话 ----
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     expect(
       app.lastError,
       isNull,
@@ -455,7 +455,7 @@ void main() {
     //（实测：上一轮就这么把标记投进了另一个 agent 的会话，把它叫醒）。
     // 判据与步骤 ⑤ 相同：只往**空闲**会话里发；清单要**重新拉**，步骤 ② 那份的
     // `running` 已经过期。
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     // **只给审批靶子留一个会话**（步骤 ⑤ 用的那个），其余全留给标记探针。
     //
     // 两步都**优先落在专用工作区**里：那条工作区是用户专门给联调建的，
@@ -585,7 +585,7 @@ void main() {
     //    只按 `!running` 挑会挑到刚被别人跑完一轮的会话，把探针投进去会把
     //    那个 agent 唤醒（2026-10-13 真机两次都踩到）。
     //    步骤 ② 预留的那个排在首位，其余同工作区会话是备胎。
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     expect(app.lastError, isNull, reason: '挑审批目标前要重新拉清单；失败：${app.lastError}');
     // **靶子钉在专用工作区**，而且是**步骤 ② 预留的那一个**：
     //

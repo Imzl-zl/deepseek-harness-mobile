@@ -284,7 +284,7 @@ void main() {
           ],
         ),
       );
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       await tester.pumpWidget(_wrap(app));
       await tester.pumpAndSettle();
 
@@ -418,7 +418,7 @@ void main() {
           ],
         ),
       );
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       await app.openSession('s1');
       await tester.pumpWidget(_wrap(app));
       await tester.pumpAndSettle();
@@ -460,7 +460,7 @@ void main() {
           ],
         ),
       );
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       await app.openSession('s1');
       await tester.pumpWidget(_wrap(app));
       await tester.pumpAndSettle();
@@ -664,7 +664,7 @@ void main() {
   group('回归：连上电脑之后的三条链（真机上抓到的三个 bug）', () {
     testWidgets('进服务态就**自动拉会话列表** —— 否则界面永远停在"还没有会话"', (tester) async {
       // 守的是一个真 bug（真机：配对连上后抽屉永远是空的）：
-      // `refreshSessions()` 当时**没有任何调用点** —— 定义在、没人调。
+      // 那一版整份快照重取**没有任何调用点** —— 定义在、没人调。
       // 于是"电脑上有 10 个会话"与"电脑上一个都没有"在界面上长得一模一样。
       final client = _StatefulFakeClient(
         sessions: [
@@ -942,7 +942,7 @@ void main() {
           ],
         ),
       );
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       var rePair = 0;
       await tester.pumpWidget(
         _wrap(app, paired: true, onRePair: () => rePair += 1),
@@ -1093,7 +1093,7 @@ void main() {
           },
         ),
       );
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       await app.openSession('s1');
       await tester.pumpWidget(_wrap(app));
       await tester.pumpAndSettle();
@@ -1148,7 +1148,7 @@ void main() {
           },
         ),
       );
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       await app.openSession('s1');
       await tester.pumpWidget(_wrap(app));
       await tester.pumpAndSettle();
@@ -1212,7 +1212,7 @@ void main() {
           },
         ),
       );
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       await app.openSession('s1');
       await tester.pumpWidget(_wrap(app));
       await tester.pumpAndSettle();
@@ -1255,7 +1255,7 @@ void main() {
           ],
         ),
       );
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       await app.openSession('s1');
       await tester.pumpWidget(_wrap(app));
       await tester.pumpAndSettle();
@@ -1278,7 +1278,7 @@ void main() {
           ],
         ),
       );
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       await app.openSession('s1');
       await tester.pumpWidget(_wrap(app));
       await tester.pumpAndSettle();
@@ -1341,7 +1341,7 @@ void main() {
           ],
         ),
       );
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       await tester.pumpWidget(_wrap(app, paired: true));
       await tester.pumpAndSettle();
 

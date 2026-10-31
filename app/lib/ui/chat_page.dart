@@ -574,8 +574,10 @@ class ChatPageState extends State<ChatPage> {
   /// 失败必须可见：空态下那几行字是用户唯一的线索来源，
   /// "拉取失败却什么都不显示"会让人以为"电脑上真的没有会话"——
   /// 而两者的下一步动作完全不同（一个是去电脑上开会话，一个是查连接）。
+  /// **走登记表的 `ownWrite` 列**：重试该重取哪份快照是那张表的一列
+  /// （`.agents/notes/implemented/2026-11-01-refetch-scope-by-trigger.md`）。
   Future<void> _refreshSessions() async {
-    await widget.app.refreshSessions();
+    await widget.app.refreshAfterOwnWrite();
     if (!mounted) return;
     final error = widget.app.lastError;
     if (error == null) return;

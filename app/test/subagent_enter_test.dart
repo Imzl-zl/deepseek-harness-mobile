@@ -281,7 +281,7 @@ void main() {
     final app = AppModel(client: _SubagentClient());
     await app.start();
     // 标题里的父会话名来自 `session.list` 的投影提示，所以先拉一次列表。
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     await app.openSession('sid_A');
 
     final key = await _pumpChat(tester, app);
@@ -481,7 +481,7 @@ void main() {
       client: _SubagentClient(parentTitle: '一个非常非常长的父会话标题用来把顶栏标题预算撑爆'),
     );
     await app.start();
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     await app.openSession('sid_A');
 
     final key = await _pumpChat(tester, app);
@@ -509,7 +509,7 @@ void main() {
     final client = _SubagentClient();
     final app = AppModel(client: client);
     await app.start();
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     // 直接落在孙级上、**不经面板**：没有导航记忆，父级目录也还没读，
     // 于是"父级目录里那一行"一定查不到。
     await app.openSession('grand-1');
@@ -544,7 +544,7 @@ void main() {
     final client = _SubagentClient();
     final app = AppModel(client: client);
     await app.start();
-    await app.refreshSessions();
+    await app.refreshSessionRows();
 
     await app.openSession('sid_A');
 
@@ -615,7 +615,7 @@ void main() {
     // 判据：这里没有走面板、没有记忆，`←` 必须回 `child-1`（`parentSessionId`）。
     final app = AppModel(client: _SubagentClient());
     await app.start();
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     await app.openSession('grand-1');
 
     await _pumpChat(tester, app);
@@ -632,7 +632,7 @@ void main() {
     final client = _SubagentClient(siblings: const ['调研实现', '抽图标']);
     final app = AppModel(client: client);
     await app.start();
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     await app.openSession('sid_A');
 
     final key = await _pumpChat(tester, app);
@@ -725,7 +725,7 @@ void main() {
     final client = _SubagentClient(grandMode: 'continuable');
     final app = AppModel(client: client);
     await app.start();
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     await app.openSession('sid_A');
 
     final key = await _pumpChat(tester, app);
@@ -780,7 +780,7 @@ void main() {
     );
     final app = AppModel(client: client);
     await app.start();
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     await app.openSession('sid_A');
 
     final key = await _pumpChat(tester, app);
@@ -818,7 +818,7 @@ void main() {
     final client = _SubagentClient(failingCatalogs: {'sid_A'});
     final app = AppModel(client: client);
     await app.start();
-    await app.refreshSessions();
+    await app.refreshSessionRows();
     await app.openSession('sid_A');
 
     await _pumpChat(tester, app);

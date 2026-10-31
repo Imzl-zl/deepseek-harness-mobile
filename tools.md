@@ -183,7 +183,8 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
      - **无线局域网直连(2026-10-16 打通并真机验证)**:目标是"手机不插线也能连"。要三件一起对:
        1. profile 的 `cordis.patch.yml`(在 `~/.dsh/profiles/dsh-mobile-test/`,**gitignore,换机器要重配**)里连接器开直连监听面:`listenPort: 8790` + **`listenHost: 0.0.0.0`**(默认 `127.0.0.1` = 手机连不进来,见 `connector/src/config.ts:54-55`);
        2. 重启 profile 后**验证监听面真的起来了**:`Get-NetTCPConnection -State Listen -LocalPort 8790` 应显示 `0.0.0.0`,并且连接器自己的状态面 `caps.direct` 必须是 `true` ——
-          `$t='<启动日志里那个 token>'; Invoke-WebRequest "http://127.0.0.1:8099/?token=$t" -SessionVariable sess; (Invoke-RestMethod http://127.0.0.1:8099/api/dsh-mobile/status -WebSession $sess).caps.direct`
+          `$t='<启动日志里那个 token>'; Invoke-WebRequest "http://127.0.0.1:3080/?token=$t" -SessionVariable sess; (Invoke-RestMethod http://127.0.0.1:3080/api/dsh-mobile/status -WebSession $sess).caps.direct`
+           **管理面在 DSH web 的 3080 上**(`admin/mount.ts` 把它挂在 Connection 的 `/api` 共享通道;2026-11-01 实测)。此前这里写的 `8099` 是过时的独立端口,照它打会被拒。用 node 侧探针取 index 时**必须 `redirect: 'manual'`** —— `?token=` 那一枪是 303,跟着跳到首页之后 `set-cookie` 就没了(2026-11-01 踩过,一度误判成"token 过期")。
           (`caps.direct` 按"监听面起没起来"算,不是按配置里写没写 —— `connector/src/index.ts:326-333`);
        3. **手机侧要一次引导**:端点表里 `direct` 那条是连上之后 `endpoint.describe` 才学到的(`connector/src/endpoints.ts:48-60`,direct 先于 relay),所以第一次得先经 relay 连上 —— 那条是环回 `ws://127.0.0.1:8787`,靠 `adb reverse`。
           引导完再把 `adb reverse --remove-all` 撤掉、重开 App,它就会改用直连(学到的地址已落盘)。

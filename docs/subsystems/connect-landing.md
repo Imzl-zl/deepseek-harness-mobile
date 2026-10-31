@@ -22,13 +22,19 @@
 
 子会话不参与落点：它属于某个父会话的视图，从子智能体页另开一条路进入。
 
-触发时机：进服务态（`ConnectionState.serving`）之后、`refreshSessions()` 回来的那一步
-（`AppModel._landOnSession`）。已经有会话时不覆盖（用户点开的那个优先）。
+触发时机：进服务态（`ConnectionState.serving`）之后、`session.list` 的行回来那一步
+（`AppModel.landAfterConnect` → `landOnSession`）。已经有会话时不覆盖（用户点开的那个优先）。
 
-**只有这一条入口**：`refreshSessions()` 自己**不选会话**。它曾经在末尾复用 blank
-（`reuseOrCreateBlank`），于是 blank 先被选中、`_landOnSession` 随后早退 ——
-落点永远是 blank，`host.last_session` 还被覆盖。现在 blank 复用只是第 4 档兜底
-（`.agents/notes/implemented/2026-10-27-connect-landing-single-path.md`）。
+**只有这一条入口**：快照重取自己**不选会话**。blank 复用只是第 4 档兜底 ——
+放在前面会出现"blank 先被选中、`landOnSession` 随后早退"，落点永远是 blank 且
+`host.last_session` 被覆盖（`.agents/notes/implemented/2026-10-27-connect-landing-single-path.md`）。
+
+**落点等的东西只有一样：`session.list` 的行**（`updatedAt` / `running` 就在行里）。
+其余八份快照（投影 / 设置 / 任务表 / 模型目录 / 权限目录 / 预设目录 / 工作区 /
+`repo.info`）与行**同时发起**，落点不等它们，但也不会推迟到落点之后才发起 ——
+目录到得晚时 blank hero 会先说"拿不到模型"（`blank-session-hero.md`）。
+其中任何一项失败都不拦住落点（各自 `catch` 落 `lastError`；
+`app/test/landing_loading_test.dart` 与 `app/test/host_state_test.dart` 钉住）。
 
 ## 3. "在跑"的显示
 

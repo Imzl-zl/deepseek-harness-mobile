@@ -170,7 +170,7 @@ _measure(
     finishedJobs: finishedJobs,
   );
   final app = AppModel(client: client);
-  await app.refreshSessions();
+  await app.refreshSessionRows();
   await app.openSession('s1');
   await app.refreshJobs('s1');
 

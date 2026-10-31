@@ -92,11 +92,11 @@ void main() {
       );
       final app = AppModel(client: client);
 
-      await app.refreshSessions();
+      await app.refreshSessionRows();
 
-      // **只挑 `session.list` 那几条比**：`refreshSessions` 现在也会顺带拉一次
-      // `session.modelCatalog`（模型目录与会话清单同源但不同周期）。
-      // 断言完整序列会让这条用例在每次加一个"顺带拉的东西"时都红一次 ——
+      // **只挑 `session.list` 那几条比**：行这一半只发 `session.list`
+      // （目录各有各的 key 与触发点，见 `data/host_state.dart` 的登记表）。
+      // 断言完整序列会让这条用例在每次多一个"顺带拉的东西"时都红一次 ——
       // 而它要钉的是**清单的解析形状**，不是调用顺序。
       expect(client.called.where((m) => m == 'session.list').toList(), [
         'session.list',
@@ -135,11 +135,11 @@ void main() {
       );
       final app = AppModel(client: client);
 
-      await app.refreshSessions();
+      await app.refreshSessionRows();
 
-      // **只挑 `session.list` 那几条比**：`refreshSessions` 现在也会顺带拉一次
-      // `session.modelCatalog`（模型目录与会话清单同源但不同周期）。
-      // 断言完整序列会让这条用例在每次加一个"顺带拉的东西"时都红一次 ——
+      // **只挑 `session.list` 那几条比**：行这一半只发 `session.list`
+      // （目录各有各的 key 与触发点，见 `data/host_state.dart` 的登记表）。
+      // 断言完整序列会让这条用例在每次多一个"顺带拉的东西"时都红一次 ——
       // 而它要钉的是**清单的解析形状**，不是调用顺序。
       expect(client.called.where((m) => m == 'session.list').toList(), [
         'session.list',
@@ -180,7 +180,7 @@ void main() {
       );
       final app = AppModel(client: client);
 
-      await app.refreshSessions();
+      await app.refreshSessionRows();
 
       expect(app.sessions, isEmpty, reason: '裸数组是形状错，不是"空清单"');
       expect(
@@ -229,7 +229,7 @@ void main() {
       );
       final app = AppModel(client: client);
 
-      await app.refreshSessions();
+      await app.refreshSessionRows();
 
       final byId = {for (final s in app.sessions) s.sid: s};
       expect(byId['sid_running']!.running, isTrue);
@@ -263,7 +263,7 @@ void main() {
       );
       final app = AppModel(client: client);
 
-      await app.refreshSessions();
+      await app.refreshSessionRows();
 
       expect(app.sessions, isEmpty, reason: '缺恒发键的行不算一条正常的会话');
       expect(WireDiagnostics.badCount, 1, reason: '整行丢要计一次数，否则与"没有会话"分不开');
@@ -307,7 +307,7 @@ void main() {
       );
       final app = AppModel(client: client);
 
-      await app.refreshSessions();
+      await app.refreshSessionRows();
 
       final byId = {for (final s in app.sessions) s.sid: s};
       expect(byId['sid_with_cwd']!.cwd, r'D:\sudy\myproject\dsh-mobile-test');
@@ -360,7 +360,7 @@ void main() {
       );
       final app = AppModel(client: client);
 
-      await app.refreshSessions();
+      await app.refreshSessionRows();
 
       final byId = {for (final s in app.sessions) s.sid: s};
       expect(byId['sid_root']!.parentSid, isNull, reason: '根会话行没有这个键');
@@ -445,7 +445,7 @@ void main() {
       );
       final app = AppModel(client: client);
 
-      await app.refreshSessions();
+      await app.refreshSessionRows();
 
       final byId = {for (final s in app.sessions) s.sid: s};
       expect(byId['sid_child']!.model?.model, 'm-next', reason: 'next 优先');
@@ -488,7 +488,7 @@ void main() {
         },
       );
       final app = AppModel(client: client);
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       await app.openSession('s1');
 
       expect(app.sessions.single.displayTitle, '重构连接层');
@@ -516,7 +516,7 @@ void main() {
         },
       );
       final app = AppModel(client: client);
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       await app.openSession('s1');
 
       expect(app.sessions.single.displayTitle, '未命名');
@@ -529,7 +529,7 @@ void main() {
       // 列表里没有的会话顶栏就不编一个(界面退到 'DSH')。
       final client = _FakeClient(onCall: (method, params) => {'sessions': []});
       final app = AppModel(client: client);
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       await app.openSession('s1');
 
       expect(app.sessions, isEmpty);
@@ -543,7 +543,7 @@ void main() {
       final client = _FakeClient(onCall: (method, params) => {'sessions': []});
       final app = AppModel(client: client);
 
-      await app.refreshSessions();
+      await app.refreshSessionRows();
 
       expect(app.sessions, isEmpty);
       expect(app.lastError, isNull, reason: '真没有会话不是错误');
@@ -558,7 +558,7 @@ void main() {
       );
       final app = AppModel(client: client);
 
-      await app.refreshSessions();
+      await app.refreshSessionRows();
 
       expect(app.lastError, isNotNull);
       expect(app.lastError!.message, contains('不支持'));
@@ -572,7 +572,7 @@ void main() {
       );
       final app = AppModel(client: client);
 
-      await app.refreshSessions();
+      await app.refreshSessionRows();
 
       expect(app.lastError, isNotNull, reason: '任何失败都要能被界面看见');
       expect(app.lastError!.message, contains('形状完全不对'));
@@ -657,13 +657,13 @@ void main() {
       );
       final app = AppModel(client: client);
 
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       expect(app.lastError, isNotNull, reason: '先失败一次');
 
       // 换成一个会成功的客户端行为（同一个模型，改回调）。
       final ok = _FakeClient(onCall: (method, params) => {'sessions': []});
       final app2 = AppModel(client: ok);
-      await app2.refreshSessions();
+      await app2.refreshSessionRows();
       expect(app2.lastError, isNull, reason: '这次成功了，不该再显示上次的错');
     });
   });
@@ -721,7 +721,7 @@ void main() {
     });
 
     test('快照事件到达后：标题、模型、running 一个都不能掉', () async {
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       expect(app.sessions.single.displayTitle, 'IoT 数采设备状态统计脚本');
 
       await app.openSession('s1');
@@ -752,7 +752,7 @@ void main() {
     });
 
     test('session/title 事件：标题实时跟着电脑侧变', () async {
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       await app.openSession('s1');
       deltaClient.emitDelta('s1', events: [_userEvent(seq: 8, text: '第一句')]);
       await Future<void>.delayed(Duration.zero);
@@ -781,7 +781,7 @@ void main() {
     });
 
     test('title 投影比列表提示新：以投影为准', () async {
-      await app.refreshSessions();
+      await app.refreshSessionRows();
       await app.openSession('s1');
       await Future<void>.delayed(Duration.zero);
       // 投影里已是新标题（列表提示是旧的 cached 快照）。
