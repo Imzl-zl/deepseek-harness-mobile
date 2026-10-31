@@ -536,8 +536,9 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
   /// ## 只降"表面"，不降文字
   ///
   /// `labelPrimary` / `accentBlue` / `border*` 一律保持原样：
-  /// 把它们也降 alpha，壁纸上就再也读不出字（那正是 `model/appearance.dart`
-  /// 的 `kSurfaceAlphaMin` 下限与遮罩要挡的那件事）。
+  /// 把它们也降 alpha，壁纸上就再也读不出字。用户把表面调到多透明是
+  /// 他自己的事（`model/appearance.dart` 不设下限），但文字**不该跟着消失**
+  /// —— 那是"没法调回来"，不是"更透明"。
   DshColorTokens withSurfaceAlpha(double surfaceAlpha) {
     if (surfaceAlpha >= 1) return this;
     return DshColorTokens._(

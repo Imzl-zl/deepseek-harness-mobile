@@ -89,21 +89,21 @@ class ThemeController extends ChangeNotifier {
   static Brightness _brightnessOf(DshThemeMode mode, Brightness system) =>
       mode.brightness ?? system;
 
-  /// 通透度（壁纸能透出多少）。1 = 关闭。
+  /// 透明度（`0` = 表面实心，`100` = 完全透明）。
   ///
   /// **放在这里而不是 [AppModel]**：它是"外观"这一维，而这一层已经是
   /// 外观变化的通知源（`MaterialApp.theme` 就听它）。放 `AppModel` 会让
   /// 整个 `MaterialApp` 随每一条会话事件重建 —— 那是流式输出时的每帧成本。
-  double _surfaceAlpha = kSurfaceAlphaOpaque;
+  int _transparency = kTransparencyOpaque;
 
-  /// 当下的通透度（1 = 关闭）。
-  double get surfaceAlpha => _surfaceAlpha;
+  /// 当下的透明度（整数百分数）。
+  int get transparency => _transparency;
 
-  /// 换通透度。同一值重复设置是空操作（避免无意义重画）。
-  void setSurfaceAlpha(double value) {
-    final next = clampSurfaceAlpha(value);
-    if (next == _surfaceAlpha) return;
-    _surfaceAlpha = next;
+  /// 换透明度。同一值重复设置是空操作（避免无意义重画）。
+  void setTransparency(int percent) {
+    final next = clampTransparency(percent);
+    if (next == _transparency) return;
+    _transparency = next;
     notifyListeners();
   }
 

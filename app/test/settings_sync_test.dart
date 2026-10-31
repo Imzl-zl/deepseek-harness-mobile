@@ -230,7 +230,7 @@ void main() {
         app: app,
         theme: ThemeController(),
         onThemeMode: (_) async {},
-        onSurfaceAlpha: (_) async {},
+        onTransparency: (_) async {},
         hasWallpaper: false,
         onPickWallpaper: () async {},
         onClearWallpaper: () async {},
@@ -257,7 +257,7 @@ void main() {
       );
       expect(tile.enabled, isFalse);
 
-      // **列表是懒建的**：2026-10-31 加了「背景 / 通透度」两行之后，
+      // **列表是懒建的**：2026-10-31 加了「背景 / 透明度」两行之后，
       // "新任务默认模式"与"上传 Session Log"都落到首屏之外 ——
       // 不滚过去它们根本不在树里（那是视口问题，不是行没了）。逐行滚、逐行断言。
       await tester.scrollUntilVisible(

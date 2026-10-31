@@ -37,7 +37,7 @@ const List<String> dshMonoFallback = <String>[
 abstract final class DshTheme {
   /// 深色（默认套）。
   ///
-  /// [surfaceAlpha] 是"通透度"（1 = 不透明）。它**只影响表面色**，
+  /// [surfaceAlpha] 由透明度换算（1 = 不透明、0 = 全透）。它**只影响表面色**，
   /// 见 `DshColorTokens.withSurfaceAlpha`。
   static ThemeData dark({double surfaceAlpha = 1}) =>
       _build(Brightness.dark, surfaceAlpha: surfaceAlpha);
@@ -59,7 +59,7 @@ abstract final class DshTheme {
         : const _LightPalette();
     // **表面色走"派生一份"**：`scaffoldBackgroundColor` 必须是半透明的，
     // 否则页面底色这一整层就把壁纸盖住了（壁纸再透也看不见）。
-    // 文字色仍由 `c` 给，不受通透度影响。
+    // 文字色仍由 `c` 给，不受透明度影响。
     final tokens = (brightness == Brightness.dark
             ? const DshColorTokens.dark()
             : const DshColorTokens.light())
@@ -85,7 +85,7 @@ abstract final class DshTheme {
       // **色板扩展**：UI 经 `context.dshColors` 读当下那一套，
       // 亮暗变化时跟着 `ThemeData` 一起换，不需要自己发通知。
       //
-      // 换壁纸时同一件事由**派生的一份**表达（`tokens` 已按通透度降过表面色）：
+      // 换壁纸时同一件事由**派生的一份**表达（`tokens` 已按透明度降过表面色）：
       // 162 处 `c.layer1` 之类不用各改一次。
       extensions: <ThemeExtension<Object?>>[tokens],
       textTheme: _textTheme(base.textTheme, c),

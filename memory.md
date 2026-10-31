@@ -5,10 +5,11 @@
 
 ## 现在（2026-10-31）
 
-- **外观：壁纸 + 通透度（10-31）**：设置页「通用」加两行（背景 / 通透度 55–100%）；
+- **外观：壁纸 + 透明度（10-31）**：设置页「通用」加两行（背景 / 透明度 0–100%）；
   壁纸存 App 私有目录（`files/appearance/wallpaper.img`，路径靠 `getDatabasesPath()` 推，
   不引 `path_provider`）；色板经 `DshColorTokens.withSurfaceAlpha` 派生一份、**只降 10 个表面色**；
-  遮罩随通透度反向增长（0→0.40，下限 0.55）；毛玻璃只贴输入栏一条。**这是 DSH 没有的
+  **不设下限、图上不叠遮罩**（`100%` 就是只剩壁纸；第一版的下限 55% 与遮罩被用户当场退回，
+  理由是"用户怎么搞是用户的事"）；毛玻璃只贴输入栏一条。**这是 DSH 没有的
   手机侧扩展**（它那点通透来自 macOS 窗口材质）。笔记
   `implemented/2026-10-31-wallpaper-and-surface-alpha.md`，现状见
   `docs/subsystems/appearance-wallpaper.md`。同批修掉**启动即崩**：`namespace` 改过而

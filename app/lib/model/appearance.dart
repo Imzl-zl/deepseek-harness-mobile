@@ -1,4 +1,4 @@
-/// 背景与通透度（手机侧自有的外观扩展）。
+/// 背景与透明度（手机侧自有的外观扩展）。
 ///
 /// ## 为什么这是"有意偏离 DSH"
 ///
@@ -12,71 +12,51 @@
 /// 可以自己做出来 —— 这是手机侧**新增**的一项外观偏好，不是搬 DSH 的设置项。
 /// 取舍与代价见 `.agents/notes/implemented/2026-10-31-wallpaper-and-surface-alpha.md`。
 ///
+/// ## 透明度就是透明度，不夹、不挡
+///
+/// 用户把表面调到多透明是用户的事：这里**没有下限**（`0%`..`100%` 全开），
+/// 也**不叠遮罩**去"保可读性"。自作主张加下限或遮罩，等于替用户决定
+/// "你的照片不够格当背景" —— 项目规则里那条"不新增宿主没有的边界"说的就是这件事。
+///
 /// ## 这一层只放纯值逻辑
 ///
 /// 不 import `material`（`app-platform-boundaries.md` §1 的 `core-no-platform-import`），
-/// 所以 `test/appearance_test.dart` 能用纯 Dart 跑：夹取、落盘值、文案、遮罩换算。
+/// 所以 `test/appearance_test.dart` 能用纯 Dart 跑。
 library;
 
-/// 不通透：表面完全不透明，就是加这个功能之前的样子。
-const double kSurfaceAlphaOpaque = 1.0;
+/// 完全不透明：表面实心，就是加这个功能之前的样子。
+const int kTransparencyOpaque = 0;
 
-/// 最通透的下限。
+/// 完全透明：表面一点底色都不留，只剩壁纸。
+const int kTransparencyMax = 100;
+
+/// 刚设好壁纸时的初始透明度。
 ///
-/// **不是 0**：表面 alpha 再低，卡片上的 `labelPrimary` 就直接压在壁纸上了 ——
-/// 无论遮罩怎么加，深色字压浅色壁纸、或反过来，都会出现成片不可读的区域。
-/// 0.55 是"看得透但不糊"的那条线（真机对过三张图：浅色风景 / 深色夜景 / 高对比街拍）。
-const double kSurfaceAlphaMin = 0.55;
+/// **只当初始值**：不透明时壁纸整张被表面盖住，用户会以为"设了没反应"；
+/// 给一个一眼看得见的值起步，之后想调到多少都是用户的自由（包括调回 0）。
+const int kTransparencyOnWallpaper = 12;
 
-/// 刚设好壁纸时给的通透度。
-///
-/// **不这么做就是空操作**：表面不透明时壁纸整张被盖住，用户会以为"设了没反应"。
-/// 0.88 是"一眼能看出换了背景、正文仍清晰"的那一档。
-const double kSurfaceAlphaOnWallpaper = 0.88;
-
-/// 壁纸之上遮罩的最大不透明度（通透度拉到最通透时）。
-///
-/// **遮罩是功能不是保险**：表面越透明，壁纸越"真"，文字对比就越差。
-/// 遮罩随通透度反向增长，把最坏情况压回可读区间。
-const double kScrimOpacityMax = 0.40;
-
-/// 输入栏那块毛玻璃的模糊半径（逻辑像素）。
+/// 输入卡那块毛玻璃的模糊半径（逻辑像素）。
 ///
 /// 只给小面积固定控件用（输入栏 / 底栏）。**全屏实时模糊不给**：手机上每帧
-/// 对整窗口走一遍高斯，滚动必掉帧；壁纸本身保持清晰，观感并不差。
+/// 对整窗口走一遍高斯，滚动必掉帧。
 const double kGlassBlurSigma = 20.0;
 
-/// 把通透度夹进合法区间。`NaN` 当"不通透"（盘上坏值不该把界面画没）。
-double clampSurfaceAlpha(double value) {
-  if (value.isNaN) return kSurfaceAlphaOpaque;
-  return value.clamp(kSurfaceAlphaMin, kSurfaceAlphaOpaque);
-}
-
-/// 落盘用：整数百分数（55..100）。
+/// 把透明度夹进合法区间（整数百分数）。
 ///
-/// 存整数而不是 `double.toString()`：偏好表里出现 `0.7000000000000001`
-/// 这种尾巴时，下一次夹取会把 70% 读成 69%。
-int surfaceAlphaToWire(double value) => (clampSurfaceAlpha(value) * 100).round();
+/// 这是**取值范围**，不是产品下限：`0` 与 `100` 两端都真的可用。
+int clampTransparency(int percent) => percent.clamp(
+  kTransparencyOpaque,
+  kTransparencyMax,
+);
 
-/// 从盘上读回；`null`（没存过）等于"不通透"。
-double surfaceAlphaFromWire(int? percent) {
-  if (percent == null) return kSurfaceAlphaOpaque;
-  return clampSurfaceAlpha(percent / 100);
-}
+/// 透明度 → 表面 alpha（`1.0` 不透明、`0.0` 全透）。
+double surfaceAlphaOf(int transparencyPercent) =>
+    1 - clampTransparency(transparencyPercent) / 100;
 
-/// 设置页那一行右端的文案（**同一套说法只有这一处**）。
-String surfaceAlphaLabel(double value) {
-  final alpha = clampSurfaceAlpha(value);
-  if (alpha >= kSurfaceAlphaOpaque) return '关闭';
-  return '${surfaceAlphaToWire(alpha)}%';
-}
+/// `100`（不透明）算不算"没开"。
+bool isTransparencyOpaque(int transparencyPercent) =>
+    clampTransparency(transparencyPercent) == kTransparencyOpaque;
 
-/// 遮罩不透明度：越通透，遮罩越重。
-///
-/// 线性：`关闭` → 0（表面本来就不透明，遮罩没有意义）；
-/// `最通透` → [kScrimOpacityMax]。没有壁纸时调用方不该用它（没有东西可透）。
-double scrimOpacityFor(double surfaceAlpha) {
-  final alpha = clampSurfaceAlpha(surfaceAlpha);
-  const span = kSurfaceAlphaOpaque - kSurfaceAlphaMin;
-  return (kSurfaceAlphaOpaque - alpha) / span * kScrimOpacityMax;
-}
+/// 设置页那一行与滑杆右端的文案（**同一套说法只有这一处**）。
+String transparencyLabel(int percent) => '${clampTransparency(percent)}%';

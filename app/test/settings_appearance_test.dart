@@ -1,12 +1,12 @@
-/// 设置页「背景 / 通透度」两行（手机侧自有的外观扩展）。
+/// 设置页「背景 / 透明度」两行（手机侧自有的外观扩展）。
 ///
 /// 守四件事：
 ///
 /// 1. 两行在「通用」组里，跟在「主题」之后，值来自 `ThemeController`（活值）；
 /// 2. 没壁纸时，背景 sheet 只有"从相册选一张"，**不摆**"去掉背景"；
 /// 3. 有壁纸时两行都给；
-/// 4. **通透度滑杆拖动即生效**：`onSurfaceAlpha` 收到的是夹取过的值，
-///    行右端的文案随之变（不是等关掉 sheet 才更新）。
+/// 4. **透明度滑杆拖动即生效**：`onTransparency` 收到的是夹取过的值，
+///    行右端的文案随之变（不是等关掉 sheet 才更新），且**能拉到 100%**。
 library;
 
 import 'dart:async';
@@ -44,7 +44,7 @@ Widget _host(
   AppModel app, {
   required ThemeController theme,
   bool hasWallpaper = false,
-  Future<void> Function(double)? onSurfaceAlpha,
+  Future<void> Function(int)? onTransparency,
   Future<void> Function()? onClear,
 }) => MaterialApp(
   theme: DshTheme.dark(),
@@ -52,7 +52,7 @@ Widget _host(
     app: app,
     theme: theme,
     onThemeMode: (_) async {},
-    onSurfaceAlpha: onSurfaceAlpha ?? (_) async {},
+    onTransparency: onTransparency ?? (_) async {},
     hasWallpaper: hasWallpaper,
     onPickWallpaper: () async {},
     onClearWallpaper: onClear ?? () async {},
@@ -60,7 +60,7 @@ Widget _host(
 );
 
 void main() {
-  testWidgets('两行在通用组里：默认「无」+「关闭」', (tester) async {
+  testWidgets('两行在通用组里：默认「无」+「0%」', (tester) async {
     final app = AppModel(client: _Client());
     addTearDown(app.dispose);
     final theme = ThemeController();
@@ -69,10 +69,13 @@ void main() {
 
     expect(find.text('主题'), findsOneWidget);
     expect(find.text('背景'), findsOneWidget);
-    expect(find.text('通透度'), findsOneWidget);
+    expect(find.text('透明度'), findsOneWidget);
     expect(find.text('无'), findsOneWidget);
-    expect(find.text('关闭'), findsOneWidget);
+    expect(find.text('0%'), findsOneWidget);
     expect(find.text('已设置'), findsNothing);
+    // **没有说明文字**：用户自己看得出来，不在这里给他念规则。
+    expect(find.textContaining('遮罩'), findsNothing);
+    expect(find.textContaining('最低'), findsNothing);
   });
 
   testWidgets('没壁纸：背景 sheet 只有选一张，没有"去掉背景"', (tester) async {
@@ -110,42 +113,47 @@ void main() {
     expect(cleared, 1);
   });
 
-  testWidgets('通透度：拖滑杆当场生效，行右端跟着变', (tester) async {
+  testWidgets('透明度：拖滑杆当场生效，行右端跟着变', (tester) async {
     final app = AppModel(client: _Client());
     addTearDown(app.dispose);
     final theme = ThemeController();
-    final seen = <double>[];
+    final seen = <int>[];
     await tester.pumpWidget(
       _host(
         app,
         theme: theme,
-        onSurfaceAlpha: (value) async {
+        onTransparency: (value) async {
           seen.add(value);
           // 真装配层做的事：写进控制器（设置页读的就是它）。
-          theme.setSurfaceAlpha(value);
+          theme.setTransparency(value);
         },
       ),
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('通透度'));
+    await tester.tap(find.text('透明度'));
     await tester.pumpAndSettle();
     expect(find.byType(Slider), findsOneWidget);
 
-    // 从"关闭"往左拖 = 变通透（滑杆右端是不透明、左端是最通透）。
-    await tester.drag(find.byType(Slider), const Offset(-120, 0));
+    // 往右拖 = 更透明（左端 0% 实心、右端 100% 全透）。
+    await tester.drag(find.byType(Slider), const Offset(120, 0));
     await tester.pumpAndSettle();
 
     expect(seen, isNotEmpty, reason: '拖动过程中就要回调，不能等松手/关闭 sheet');
     for (final value in seen) {
       expect(
         value,
-        inInclusiveRange(kSurfaceAlphaMin, kSurfaceAlphaOpaque),
+        inInclusiveRange(kTransparencyOpaque, kTransparencyMax),
         reason: '回调值必须是夹取过的',
       );
     }
-    expect(seen.last, lessThan(kSurfaceAlphaOpaque));
-    // 行右端的文案已经变了（不是"关闭"）。
-    expect(find.text(surfaceAlphaLabel(seen.last)), findsWidgets);
+    expect(seen.last, greaterThan(kTransparencyOpaque));
+    // 行右端的文案已经变了（不是 0%）。
+    expect(find.text(transparencyLabel(seen.last)), findsWidgets);
+
+    // **能拉到完全透明**：一直拖到最右端，回调里出现过 100。
+    await tester.drag(find.byType(Slider), const Offset(600, 0));
+    await tester.pumpAndSettle();
+    expect(seen.last, kTransparencyMax, reason: '不许有隐藏下限');
   });
 }

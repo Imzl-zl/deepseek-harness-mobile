@@ -51,7 +51,7 @@ Widget _host(AppModel app) => MaterialApp(
     app: app,
     theme: ThemeController(),
     onThemeMode: (_) async {},
-    onSurfaceAlpha: (_) async {},
+    onTransparency: (_) async {},
     hasWallpaper: false,
     onPickWallpaper: () async {},
     onClearWallpaper: () async {},

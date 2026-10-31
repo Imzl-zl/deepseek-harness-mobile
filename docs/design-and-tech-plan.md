@@ -210,7 +210,7 @@ dsh-mobile/
 
 **改色板改 Dart 文件,不要改本文档**:本节只留指针,不复制代码(副本必然与代码漂移)。
 
-**壁纸 / 通透度**(手机侧自有的外观扩展,DSH 没有这两项)见
+**壁纸 / 透明度**(手机侧自有的外观扩展,DSH 没有这两项)见
 [appearance-wallpaper.md](subsystems/appearance-wallpaper.md)。
 
 ---

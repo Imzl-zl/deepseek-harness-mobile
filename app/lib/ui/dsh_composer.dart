@@ -570,7 +570,7 @@ class DshComposer extends StatelessWidget {
       ),
     );
     // **毛玻璃只贴在输入栏这一条**：会话内容从它后面滚过去，模糊才有对象。
-    // 判据就一条 —— 表面色是不是半透明（有壁纸且开了通透度）；
+    // 判据就一条 —— 表面色是不是半透明（透明度 > 0）；
     // 不透明时模糊一块纯色是白花 GPU（见 `ui/dsh_glass.dart`）。
     return c.bgBase.a < 1 ? DshGlass(child: band) : band;
   }

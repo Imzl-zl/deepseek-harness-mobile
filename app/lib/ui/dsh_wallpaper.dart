@@ -1,28 +1,23 @@
-/// 壁纸层：一张图 + 一层遮罩，垫在**整个 App** 下面。
+/// 壁纸层：一张图垫在**整个 App** 下面。
 ///
 /// 它挂在 `MaterialApp.builder` 里（`main.dart`），所以所有路由、所有 sheet
 /// 都在它上面 —— 不需要每个页面各铺一次壁纸。
 ///
-/// ## 遮罩为什么必须有
+/// ## 不叠遮罩
 ///
-/// 表面色降到半透明之后，正文色（`labelPrimary`）就是直接压在照片上。
-/// 浅色风景配深色主题、夜景配浅色主题，都会出现成片读不出字的区域。
-/// 遮罩随通透度反向增长（`model/appearance.dart` 的 `scrimOpacityFor`），
-/// 把最坏情况压回可读区间 —— 这是功能，不是保险。
+/// 壁纸就是壁纸：这里不在图上压黑/压白。表面调到多透明、照片亮到什么程度，
+/// 都由用户自己决定（透明度在设置里，`model/appearance.dart`）。
 library;
 
 import 'package:flutter/material.dart';
 
-import '../model/appearance.dart';
 import '../theme/dsh_colors.dart';
 
-/// 壁纸 + 遮罩 + 内容。
+/// 壁纸 + 内容。
 class DshWallpaperLayer extends StatelessWidget {
   const DshWallpaperLayer({
     super.key,
     required this.wallpaper,
-    required this.surfaceAlpha,
-    required this.dark,
     required this.child,
   });
 
@@ -33,19 +28,12 @@ class DshWallpaperLayer extends StatelessWidget {
   /// 「图从哪来」属于装配层的事。
   final ImageProvider? wallpaper;
 
-  /// 通透度（1 = 关闭）。
-  final double surfaceAlpha;
-
-  /// 当下亮暗（决定遮罩压黑还是压白）。
-  final bool dark;
-
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
     final image = wallpaper;
     if (image == null) return child;
-    final scrim = scrimOpacityFor(surfaceAlpha);
     // 按屏幕像素宽解码：4K 原图整张进内存是几十 MB，而壁纸只会被铺满屏幕。
     final media = MediaQuery.maybeOf(context);
     final cacheWidth = media == null
@@ -69,10 +57,6 @@ class DshWallpaperLayer extends StatelessWidget {
                 ColoredBox(color: context.dshColors.bgBase),
           ),
         ),
-        if (scrim > 0)
-          ColoredBox(
-            color: (dark ? Colors.black : Colors.white).withValues(alpha: scrim),
-          ),
         child,
       ],
     );

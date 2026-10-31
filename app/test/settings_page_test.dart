@@ -115,7 +115,7 @@ Widget _host(AppModel app) => MaterialApp(
     // 它们不影响这一组断言的其它行（端点 / 模型 / 偏好）。
     theme: ThemeController(),
     onThemeMode: (_) async {},
-    onSurfaceAlpha: (_) async {},
+    onTransparency: (_) async {},
     hasWallpaper: false,
     onPickWallpaper: () async {},
     onClearWallpaper: () async {},

@@ -247,12 +247,12 @@ class _DshMobileAppState extends State<DshMobileApp>
     unawaited(_boot().then((_) => _restoreAppearance()));
   }
 
-  /// 读回**外观**偏好（主题三档 / 通透度 / 壁纸）并落到界面层。
+  /// 读回**外观**偏好（主题三档 / 透明度 / 壁纸）并落到界面层。
   ///
   /// **失败不影响启动**：这三件都是装饰，拿不到就按默认走。这一点与
   /// "连接/配对必须如实报错"不同 —— 后者拿不到用户就用不了 App。
   ///
-  /// 2026-10-31 从 `_restoreTheme` 扩成外观三件：壁纸与通透度必须与主题
+  /// 2026-10-31 从 `_restoreTheme` 扩成外观三件：壁纸与透明度必须与主题
   /// 在同一处恢复，否则首帧会是"主题对了、背景还没"的半成品。
   Future<void> _restoreAppearance() async {
     String? stored;
@@ -260,7 +260,7 @@ class _DshMobileAppState extends State<DshMobileApp>
       stored = await _readPreference(kThemeModeKey);
     } catch (_) {
       // 偏好读不到（库还没开 / 盘坏了）：主题按默认走 —— 但**不 return**，
-      // 壁纸与通透度还要恢复（它们不依赖这次读）。
+      // 壁纸与透明度还要恢复（它们不依赖这次读）。
       stored = null;
     }
     if (!mounted) return;
@@ -269,25 +269,25 @@ class _DshMobileAppState extends State<DshMobileApp>
       systemBrightness: PlatformDispatcher.instance.platformBrightness,
     );
     _theme.setMode(restored.mode);
-    _theme.setSurfaceAlpha(
-      surfaceAlphaFromWire(_app?.uiState?.surfaceAlphaPercent),
+    _theme.setTransparency(
+      clampTransparency(_app?.uiState?.transparency ?? kTransparencyOpaque),
     );
     final wallpaper = await _wallpapers.load();
     if (!mounted) return;
     setState(() => _wallpaper = wallpaper == null ? null : MemoryImage(wallpaper));
   }
 
-  /// 换通透度并落盘。
+  /// 换透明度并落盘。
   ///
   /// 与 [setThemeMode] 同一条：**落盘失败不撤回内存里的选择** ——
   /// 用户已经看到界面变了，撤回来只会更错；下次启动会读回旧值。
-  Future<void> setSurfaceAlpha(double value) async {
-    final alpha = clampSurfaceAlpha(value);
-    final before = _theme.surfaceAlpha;
-    _theme.setSurfaceAlpha(alpha);
-    if (alpha == before) return;
+  Future<void> setTransparency(int percent) async {
+    final next = clampTransparency(percent);
+    final before = _theme.transparency;
+    _theme.setTransparency(next);
+    if (next == before) return;
     try {
-      await _app?.uiState?.setSurfaceAlphaPercent(surfaceAlphaToWire(alpha));
+      await _app?.uiState?.setTransparency(next);
     } catch (_) {
       // 同上：不撤回。
     }
@@ -295,10 +295,11 @@ class _DshMobileAppState extends State<DshMobileApp>
 
   /// 从相册挑一张图做壁纸（另存一份到 App 私有目录，**不引用相册路径**）。
   ///
-  /// Note: 壁纸与通透度整套的取舍见
+  /// Note: 壁纸与透明度整套的取舍见
   /// `.agents/notes/implemented/2026-10-31-wallpaper-and-surface-alpha.md`。
-  /// 这里多做两件事的理由:① 落盘前真解码一次（坏图不写）；② 设完顺手把通透度
-  /// 调到 `kSurfaceAlphaOnWallpaper`（表面不透明时壁纸整张被盖住 = 设了没反应）。
+  /// 这里多做两件事的理由:① 落盘前真解码一次（坏图不写）；② 设完时若透明度还是
+  /// `0`（表面实心 = 壁纸被整张盖住），给一个看得见的初始值 `kTransparencyOnWallpaper`
+  /// —— 只当初始值，用户随时能调回 0。
   Future<void> _pickWallpaper() async {
     final result = await pickPhoto(source: PhotoSource.gallery);
     if (!mounted) return;
@@ -374,10 +375,10 @@ class _DshMobileAppState extends State<DshMobileApp>
     if (!mounted) return;
     // `MemoryImage` 的缓存键是"这堆字节的散列"，所以换了图一定换得出新图。
     setState(() => _wallpaper = MemoryImage(bytes));
-    // **设了壁纸却是"不通透"= 什么都看不见**（表面不透明把图全盖住）。
-    // 顺手给一个默认通透度，这一步是让"设完就能看到效果"成立，不是猜值。
-    if (_theme.surfaceAlpha >= kSurfaceAlphaOpaque) {
-      await setSurfaceAlpha(kSurfaceAlphaOnWallpaper);
+    // **透明度还是 0 = 表面实心，壁纸整张被盖住**（设了看着像没反应）。
+    // 给一个看得见的初始值；它只是起点，调回 0 也完全允许。
+    if (isTransparencyOpaque(_theme.transparency)) {
+      await setTransparency(kTransparencyOnWallpaper);
     }
     if (!mounted) return;
     DshToast.show(_navContext, '背景已设置');
@@ -689,10 +690,12 @@ class _DshMobileAppState extends State<DshMobileApp>
         // **两个 theme 都必须挂色板扩展**（`DshColorTokens`）：UI 经
         // `context.dshColors` 读当下那一套，而它挂在 ThemeData 上 ——
         // 只给一个 theme 挂扩展的话，另一个亮暗下会读到 null 退深色。
-        // **通透度一起给**：表面色降到半透明壁纸才透得出来；两套都给同一个值，
+        // **透明度一起给**：表面色降到半透明壁纸才透得出来；两套都给同一个值，
         // 否则切换亮暗时背景会忽然变实。
-        theme: DshTheme.light(surfaceAlpha: _theme.surfaceAlpha),
-        darkTheme: DshTheme.dark(surfaceAlpha: _theme.surfaceAlpha),
+        theme: DshTheme.light(surfaceAlpha: surfaceAlphaOf(_theme.transparency)),
+        darkTheme: DshTheme.dark(
+          surfaceAlpha: surfaceAlphaOf(_theme.transparency),
+        ),
         themeMode: switch (_theme.mode) {
           DshThemeMode.system => ThemeMode.system,
           DshThemeMode.light => ThemeMode.light,
@@ -739,13 +742,11 @@ class _DshMobileAppState extends State<DshMobileApp>
                   ? Brightness.light
                   : Brightness.dark,
             ),
-            // **壁纸垫在最底下**（好看的顺序：壁纸 → 遮罩 → 全部界面）。
+            // **壁纸垫在最底下**（壁纸 → 全部界面；图上不叠任何遮罩）。
             // 放在 `builder` 里而不是每个页面里：所有路由与 sheet 都在它上面，
             // 换壁纸只需要这一处。
             child: DshWallpaperLayer(
               wallpaper: _wallpaper,
-              surfaceAlpha: _theme.surfaceAlpha,
-              dark: dark,
               child: _uiScaled(
                 DshShimmerHost(child: child ?? const SizedBox.shrink()),
               ),
@@ -980,12 +981,12 @@ class _DshMobileAppState extends State<DshMobileApp>
     _openFromDrawer(
       (_) => SettingsPage(
         app: app,
-        // **传控制器而不是当下的值**：设置页的两行（主题 / 通透度）改完要立刻
+        // **传控制器而不是当下的值**：设置页的两行（主题 / 透明度）改完要立刻
         // 显示新值，而"推过去的那份快照"在下次 push 之前不会更新（这个页面
         // 属于 Navigator 的栈，父层重建不会重建它）。
         theme: _theme,
         onThemeMode: setThemeMode,
-        onSurfaceAlpha: setSurfaceAlpha,
+        onTransparency: setTransparency,
         hasWallpaper: _wallpaper != null,
         onPickWallpaper: _pickWallpaper,
         onClearWallpaper: _clearWallpaper,

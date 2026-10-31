@@ -64,7 +64,7 @@ class SettingsPage extends StatelessWidget {
     required this.app,
     required this.theme,
     required this.onThemeMode,
-    required this.onSurfaceAlpha,
+    required this.onTransparency,
     required this.hasWallpaper,
     required this.onPickWallpaper,
     required this.onClearWallpaper,
@@ -72,7 +72,7 @@ class SettingsPage extends StatelessWidget {
 
   final AppModel app;
 
-  /// 外观真值（主题三档 + 通透度），**读它就是读活值**。
+  /// 外观真值（主题三档 + 透明度），**读它就是读活值**。
   ///
   /// 2026-10-31 起由"传当下的值"改成"传控制器"：这一页是 Navigator 栈里的一条
   /// 路由，父层重建不会重建它，于是"改完主题、行右端还是旧值"直到重开设置页。
@@ -85,8 +85,8 @@ class SettingsPage extends StatelessWidget {
   /// 用 `ValueSetter` 会让类型不匹配，也会让"落盘失败了"无处可等。
   final Future<void> Function(DshThemeMode) onThemeMode;
 
-  /// 换通透度（0.55..1），落盘由装配层负责。
-  final Future<void> Function(double) onSurfaceAlpha;
+  /// 换透明度（`0`..`100` 整数百分数），落盘由装配层负责。
+  final Future<void> Function(int) onTransparency;
 
   /// 有没有壁纸（真值是那张文件在不在，见 `platform/wallpaper_store.dart`）。
   final bool hasWallpaper;
@@ -127,7 +127,7 @@ class SettingsPage extends StatelessWidget {
       ),
       // **整页听 `AppModel`**：端点表、拨号记录、连接状态、偏好都会变，
       // 不监听就等于列表永远停在首帧（与 `main.dart` 听抽屉同一条理由）。
-      // 同时听外观控制器：主题/通透度改完，这两行要立刻显示新值。
+      // 同时听外观控制器：主题/透明度改完，这两行要立刻显示新值。
       body: ListenableBuilder(
         listenable: Listenable.merge([app, theme]),
         builder: (context, _) => ListView(
@@ -178,8 +178,8 @@ class SettingsPage extends StatelessWidget {
                 onPicked: onThemeMode,
               ),
             ),
-            // **背景 / 通透度** —— 2026-10-31 加，手机侧自有的外观（DSH 没有
-            // 这两项）。为什么算"有意偏离"、遮罩与下限怎么定的，见
+            // **背景 / 透明度** —— 2026-10-31 加，手机侧自有的外观（DSH 没有
+            // 这两项）。为什么算"有意偏离"，见
             // `.agents/notes/implemented/2026-10-31-wallpaper-and-surface-alpha.md`。
             _PrefRow(
               icon: 'compareSplit',
@@ -189,13 +189,9 @@ class SettingsPage extends StatelessWidget {
             ),
             _PrefRow(
               icon: 'slidersTwo',
-              label: '通透度',
-              value: surfaceAlphaLabel(theme.surfaceAlpha),
-              onTap: () => unawaited(_pickSurfaceAlpha(context)),
-            ),
-            const _PrefNote(
-              '背景与通透度只在这台手机上生效。通透度越低壁纸越透，'
-              '遮罩会同时加重 —— 否则深色文字压在照片上读不出来。',
+              label: '透明度',
+              value: transparencyLabel(theme.transparency),
+              onTap: () => unawaited(_pickTransparency(context)),
             ),
             // **界面字号**（App 内档位，叠在系统字号之上）。
             //
@@ -396,13 +392,13 @@ class SettingsPage extends StatelessWidget {
     if (action == 'clear') await onClearWallpaper();
   }
 
-  /// 通透度：一张 sheet 里拖滑杆，**拖的时候就生效**（背后整页跟着变）。
-  Future<void> _pickSurfaceAlpha(BuildContext context) => showDshSheet<void>(
+  /// 透明度：一张 sheet 里拖滑杆，**拖的时候就生效**（背后整页跟着变）。
+  Future<void> _pickTransparency(BuildContext context) => showDshSheet<void>(
     context: context,
-    title: '通透度',
-    body: _SurfaceAlphaSlider(
-      initial: theme.surfaceAlpha,
-      onChanged: onSurfaceAlpha,
+    title: '透明度',
+    body: _TransparencySlider(
+      initial: theme.transparency,
+      onChanged: onTransparency,
     ),
   );
 
@@ -776,23 +772,24 @@ class _PrefNote extends StatelessWidget {
   }
 }
 
-/// 通透度的滑杆（在 sheet 里，**拖动即生效**）。
+/// 透明度的滑杆（在 sheet 里，**拖动即生效**）。
 ///
+/// 没有下限、没有说明文字：`0%`（表面实心）到 `100%`（只剩壁纸）都可用。
 /// 为什么自己存一份 `_value`：滑杆跟手要靠本地状态，而真值在
 /// `ThemeController`（经 `onChanged` 写回）。两者同步的代价只是一次 `setState`，
 /// 换来拖动时不掉帧、不跳。
-class _SurfaceAlphaSlider extends StatefulWidget {
-  const _SurfaceAlphaSlider({required this.initial, required this.onChanged});
+class _TransparencySlider extends StatefulWidget {
+  const _TransparencySlider({required this.initial, required this.onChanged});
 
-  final double initial;
-  final Future<void> Function(double) onChanged;
+  final int initial;
+  final Future<void> Function(int) onChanged;
 
   @override
-  State<_SurfaceAlphaSlider> createState() => _SurfaceAlphaSliderState();
+  State<_TransparencySlider> createState() => _TransparencySliderState();
 }
 
-class _SurfaceAlphaSliderState extends State<_SurfaceAlphaSlider> {
-  late double _value = widget.initial;
+class _TransparencySliderState extends State<_TransparencySlider> {
+  late double _value = widget.initial.toDouble();
 
   @override
   Widget build(BuildContext context) {
@@ -800,38 +797,27 @@ class _SurfaceAlphaSliderState extends State<_SurfaceAlphaSlider> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            Text(
-              '壁纸透出多少',
-              style: TextStyle(fontSize: 13, color: c.labelSecondary),
-            ),
-            const Spacer(),
-            Text(
-              surfaceAlphaLabel(_value),
-              style: TextStyle(fontSize: 13, color: c.labelCaption),
-            ),
-          ],
+        Align(
+          alignment: Alignment.centerRight,
+          child: Text(
+            transparencyLabel(_value.round()),
+            style: TextStyle(fontSize: 13, color: c.labelCaption),
+          ),
         ),
         Slider(
           value: _value,
           // 区间与档位都来自 `model/appearance.dart`，不在这里写第二份数。
-          min: kSurfaceAlphaMin,
-          max: kSurfaceAlphaOpaque,
+          min: kTransparencyOpaque.toDouble(),
+          max: kTransparencyMax.toDouble(),
           // 1% 一格：拖到哪儿就是哪儿，落盘的整数百分数不会与显示打架。
-          divisions:
-              ((kSurfaceAlphaOpaque - kSurfaceAlphaMin) * 100).round(),
-          label: surfaceAlphaLabel(_value),
+          divisions: kTransparencyMax - kTransparencyOpaque,
+          label: transparencyLabel(_value.round()),
           activeColor: c.accentBlue,
           inactiveColor: c.layer3,
           onChanged: (value) {
             setState(() => _value = value);
-            unawaited(widget.onChanged(value));
+            unawaited(widget.onChanged(value.round()));
           },
-        ),
-        Text(
-          '最低 ${(kSurfaceAlphaMin * 100).round()}%：再透就压不住正文了。',
-          style: TextStyle(fontSize: 11, height: 17 / 11, color: c.labelTertiary),
         ),
       ],
     );
