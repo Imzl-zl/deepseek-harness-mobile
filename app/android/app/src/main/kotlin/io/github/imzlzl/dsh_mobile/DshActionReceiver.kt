@@ -1,4 +1,4 @@
-package com.example.dsh_mobile
+package io.github.imzlzl.dsh_mobile
 
 import android.content.BroadcastReceiver
 import android.content.Context
