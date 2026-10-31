@@ -530,11 +530,14 @@ class ChatPageState extends State<ChatPage> {
   }
 
   void _onInputChanged() {
-    // **旁路**记一次击键（防抖在 `UiStateStore`）：不走 `notifyListeners`，
-    // 所以打字不会把整页带起来。
+    // **旁路**记一次击键（防抖在 `UiStateStore`）：不走 `notifyListeners`。
     final sid = widget.app.currentSid;
     if (sid != null) widget.app.noteDraft(sid, _input.text);
-    setState(() {});
+    // **这里不再 `setState(() {})`**（2026-10-31）：那是"每次击键重建整棵会话树"
+    // —— 这一页的 build 里含抽屉 sections、右侧面板、列表与统计条，而打字只影响
+    // 输入栏内部（发送键是否点亮、候选项是否出现）。输入栏自己由
+    // `ListenableBuilder(listenable: _input)` 重画，见 `_mainScaffold`。
+    // 别人要跟着文字变，就自己监听 `_input`，别借整页重建。
   }
 
   void _onSessionChangedForDraft() {
@@ -1072,69 +1075,74 @@ class ChatPageState extends State<ChatPage> {
                       if (_subagentReadOnlyReason != null)
                         SubagentReadOnlyBand(reason: _subagentReadOnlyReason!)
                       else
-                        DshComposer(
-                          controller: _input,
-                          attachments: _attachments,
-                          // 候选菜单的名单来自电脑侧（`repo.info.commands`）——
-                          // 手机侧不抄第二份（契约 §5.7 的 `repo.info` 行）。
-                          slashCommands: widget.app.slashCommands,
-                          // **面板的高度上限来自底部预算**：不是屏幕的一个比例，
-                          // 而是"输入卡上方真正剩下的空间"（扣除输入栏固定件、
-                          // 统计条，接管卡在场时再扣它那两行）。
-                          panelMaxHeight: budget.panelMax,
-                          // `@` 候选：能力位与处理器都来自电脑侧（`repo.info.caps.references`
-                          // 与 `refs.files` / `refs.sessions`）。老连接器 ⇒ 能力位 false ⇒
-                          // 面板整块不出现（不是显示一个永远空的列表）。
-                          mentionsEnabled: widget.app.mentionsAvailable,
-                          onQueryMentions: widget.app.mentionsAvailable
-                              ? widget.app.queryMentions
-                              : null,
-                          // 模型名与推理等级：**从真投影来**（见 `_modelLabel`）。
-                          // 推理等级同样不写死：模型自带 effort 时显示它，否则显示"默认"。
-                          modelName: _modelLabel,
-                          reasoningLabel: _reasoningLabel,
-                          access: permissionChipOf(
-                            value: widget.app.permissionValue,
-                            catalog: widget.app.permissionCatalog,
+                        // **只重画输入栏**：文字变化（打字 / 拼音上屏 / 候选面板）
+                        // 只影响这一块，不该把整页带起来（2026-10-31）。
+                        ListenableBuilder(
+                          listenable: _input,
+                          builder: (context, _) => DshComposer(
+                            controller: _input,
+                            attachments: _attachments,
+                            // 候选菜单的名单来自电脑侧（`repo.info.commands`）——
+                            // 手机侧不抄第二份（契约 §5.7 的 `repo.info` 行）。
+                            slashCommands: widget.app.slashCommands,
+                            // **面板的高度上限来自底部预算**：不是屏幕的一个比例，
+                            // 而是"输入卡上方真正剩下的空间"（扣除输入栏固定件、
+                            // 统计条，接管卡在场时再扣它那两行）。
+                            panelMaxHeight: budget.panelMax,
+                            // `@` 候选：能力位与处理器都来自电脑侧（`repo.info.caps.references`
+                            // 与 `refs.files` / `refs.sessions`）。老连接器 ⇒ 能力位 false ⇒
+                            // 面板整块不出现（不是显示一个永远空的列表）。
+                            mentionsEnabled: widget.app.mentionsAvailable,
+                            onQueryMentions: widget.app.mentionsAvailable
+                                ? widget.app.queryMentions
+                                : null,
+                            // 模型名与推理等级：**从真投影来**（见 `_modelLabel`）。
+                            // 推理等级同样不写死：模型自带 effort 时显示它，否则显示"默认"。
+                            modelName: _modelLabel,
+                            reasoningLabel: _reasoningLabel,
+                            access: permissionChipOf(
+                              value: widget.app.permissionValue,
+                              catalog: widget.app.permissionCatalog,
+                            ),
+                            sendMode: widget.app.sendMode,
+                            sending: _sending,
+                            // **整条输入栏是否活着**（chip / 候选面板 / 附件都跟它走）：
+                            // 只有"被挡"才锁。**"正文空"不锁** —— 桌面 `empty` 只禁主键，
+                            // 而 `inert`（无会话 / blank 无工作区）才锁整条
+                            // （`InputBar.tsx:154,343` + `ConversationContent.tsx:142`）。
+                            //
+                            // 2026-10-27 这条被用例抓过一次：把 `enabled` 直接接成
+                            // "能发/能停"，于是空草稿时模型与权限 chip 全灰，
+                            // 用户在打字**之前**根本选不了模型。
+                            enabled: gate is! ComposerGateBlocked,
+                            // **hero 上换一套占位文案**（DSH 的 `placeholder.hero`，
+                            // `locales.ts:23`）：那一屏的动作是"开一个新任务"。
+                            // 只在真的显示了 hero 时才换 —— 与 `_ChatTab` 用同一个判据，
+                            // 免得出现"文案说开新任务、屏幕却是空态"。
+                            //
+                            // **被挡时用门槛给的那句**（桌面把占位文案换成
+                            // `blocked.reason` / "选择工作区"，`ConversationContent.tsx:152,160`）：
+                            // 用户不用点就知道缺什么。
+                            hintText:
+                                gate is ComposerGateBlocked &&
+                                    gate.replacesPlaceholder
+                                ? gate.sentence
+                                : _heroVisible
+                                ? kComposerHintHero
+                                : kComposerHintDefault,
+                            // 运行中且没有草稿时，主键是"停止"（照 Web 的 primaryStops）。
+                            running: _running,
+                            onStop: _stop,
+                            onSend: _send,
+                            onAttach: _showAttachSheet,
+                            onPickModel: _showModelSheet,
+                            // 那枚"思考"chip 之前**没有接线**（`onPressed` 为 null，
+                            // 点了没反应 —— 2026-10-26 用户反馈）。
+                            onPickReasoning: _showReasoningSheet,
+                            onPickAccess: _showAccessSheet,
+                            onRemoveAttachment: (item) =>
+                                setState(() => _attachments.remove(item)),
                           ),
-                          sendMode: widget.app.sendMode,
-                          sending: _sending,
-                          // **整条输入栏是否活着**（chip / 候选面板 / 附件都跟它走）：
-                          // 只有"被挡"才锁。**"正文空"不锁** —— 桌面 `empty` 只禁主键，
-                          // 而 `inert`（无会话 / blank 无工作区）才锁整条
-                          // （`InputBar.tsx:154,343` + `ConversationContent.tsx:142`）。
-                          //
-                          // 2026-10-27 这条被用例抓过一次：把 `enabled` 直接接成
-                          // "能发/能停"，于是空草稿时模型与权限 chip 全灰，
-                          // 用户在打字**之前**根本选不了模型。
-                          enabled: gate is! ComposerGateBlocked,
-                          // **hero 上换一套占位文案**（DSH 的 `placeholder.hero`，
-                          // `locales.ts:23`）：那一屏的动作是"开一个新任务"。
-                          // 只在真的显示了 hero 时才换 —— 与 `_ChatTab` 用同一个判据，
-                          // 免得出现"文案说开新任务、屏幕却是空态"。
-                          //
-                          // **被挡时用门槛给的那句**（桌面把占位文案换成
-                          // `blocked.reason` / "选择工作区"，`ConversationContent.tsx:152,160`）：
-                          // 用户不用点就知道缺什么。
-                          hintText:
-                              gate is ComposerGateBlocked &&
-                                  gate.replacesPlaceholder
-                              ? gate.sentence
-                              : _heroVisible
-                              ? kComposerHintHero
-                              : kComposerHintDefault,
-                          // 运行中且没有草稿时，主键是"停止"（照 Web 的 primaryStops）。
-                          running: _running,
-                          onStop: _stop,
-                          onSend: _send,
-                          onAttach: _showAttachSheet,
-                          onPickModel: _showModelSheet,
-                          // 那枚"思考"chip 之前**没有接线**（`onPressed` 为 null，
-                          // 点了没反应 —— 2026-10-26 用户反馈）。
-                          onPickReasoning: _showReasoningSheet,
-                          onPickAccess: _showAccessSheet,
-                          onRemoveAttachment: (item) =>
-                              setState(() => _attachments.remove(item)),
                         ),
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 8),
