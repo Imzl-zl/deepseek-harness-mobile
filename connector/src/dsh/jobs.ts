@@ -122,6 +122,48 @@ export function createJobsPort(jobs: JobRegistry): JobsPort {
 }
 
 // ---------------------------------------------------------------------------
+// 任务表的变更通知（契约 §5.9 的 `job.list` 触发点）
+// ---------------------------------------------------------------------------
+
+/**
+ * 会改变"这个会话有哪些任务"（或行的**终态**）的宿主事件。
+ *
+ * 为什么不带 `progress` / `stopping`：那两个改的是行的**可变字段**（进度行、状态字），
+ * 而这两个字段本来就走 `job` 帧的 `status`（订阅面）到手机；`job.list` 是一次性快照，
+ * 为它每个 progress 都重取一遍只会把快照拉成轮询。契约 §5.9 的触发点写的是"jobs 增删"。
+ */
+export const JOB_LIST_CHANGING_EVENTS: readonly JobEvent['type'][] = [
+  'registered',
+  'settled',
+  'removed',
+]
+
+/**
+ * 订阅**所有**会话的任务生命周期事件（增删 / 终态），回调只给"属于哪个 DSH 会话"。
+ *
+ * 为什么是 `{ owners: 'all' }` 而不是按会话订：连接器是**挂载级**的，而它要通知的是
+ * "清单里某个会话的任务表变了" —— 事先不知道会变的是哪个会话。`{ owners: 'scope' }`
+ * 只有"这个上下文集成的 owner"才收得到，跨 preset 会漏（`jobs/src/types.ts:284-292`）。
+ *
+ * 返回注销函数（挂到 `ctx.effect` 上，随 fiber 回收）。
+ */
+export function onJobsLifecycle(
+  jobs: JobRegistry,
+  listener: (dshSessionId: string) => void,
+): () => void {
+  return jobs.events.subscribe({ owners: 'all' }, (event) => {
+    // `output` 是**输出帧**，它没有 `job`（只有 id 与 total），也改不了一份任务清单。
+    if (event.type === 'output') return
+    if (!JOB_LIST_CHANGING_EVENTS.includes(event.type)) return
+    // 无主任务（没有 `owner`）不属于任何会话的清单（`listOwnedBy` 已经排掉它），
+    // 通知出去只会让手机白拉一次。
+    const owner = event.job.owner
+    if (owner === undefined) return
+    listener(owner)
+  })
+}
+
+// ---------------------------------------------------------------------------
 // 任务控制：走**宿主的人类发起门面**，不直接调注册表
 // ---------------------------------------------------------------------------
 

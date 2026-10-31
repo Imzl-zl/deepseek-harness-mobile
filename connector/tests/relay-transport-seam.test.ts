@@ -138,10 +138,19 @@ test('令牌不对：升级被拒，连接层进入退避重连而不是停在�
   await waitFor('进入退避重连', () => connection.state === 'backoff')
 })
 
-test('入口配错就在**启动时**失败：没有 tokens 直接退出（不留下"起来了但都 401"的中转）', async (t) => {
+/**
+ * "配错就在启动时失败"的**当前口径**：`connectorAuth: 'required'` 却没有一张令牌摘要表。
+ *
+ * 这条断言在 2026-10-31 才按新规则改过 —— 旧写法是"没有 `tokens` 就退出"，而
+ * `1bc9c7d` / `31f7940` 把**开放模式**（`connectorAuth` 默认 `open`）做成了产品行为：
+ * 空摘要表是"谁都没兑换过"的合法起点。旧断言于是**永远不成立**（中转照常起来、
+ * 这条用例一直等一个不会到来的退出码，整个 `pnpm test` 卡在这里）。
+ * 新写法把"配错"落在那条**仍然非法**的组合上，另加一条钉住开放模式的空表**能**起来。
+ */
+test('入口配错就在**启动时**失败：required 模式却没有 tokens（不留下"起来了但都 401"的中转）', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-relay-bad-'))
   const configPath = join(dir, 'relay.config.json')
-  await writeFile(configPath, JSON.stringify({ port: 0 }), 'utf8')
+  await writeFile(configPath, JSON.stringify({ port: 0, connectorAuth: 'required' }), 'utf8')
   t.after(() => rm(dir, { recursive: true, force: true }))
 
   const child = spawn(process.execPath, [join(RELAY_DIR, 'src', 'main.ts'), '--config', configPath], {
@@ -150,4 +159,9 @@ test('入口配错就在**启动时**失败：没有 tokens 直接退出（不�
   })
   const code = await new Promise<number | null>((resolve) => child.once('exit', (value) => resolve(value)))
   assert.equal(code, 2, '配置错误要以非零码退出')
+})
+
+test('开放模式（默认）下空摘要表**是合法起点**：中转照常监听（`relay/src/main.ts:255-263`）', async (t) => {
+  const relay = await startRelayProcess(t, [])
+  assert.equal(Number.isFinite(relay.port) && relay.port > 0, true, `没读端口：${relay.output()}`)
 })

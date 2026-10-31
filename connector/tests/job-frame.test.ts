@@ -40,6 +40,8 @@ test('帧类型清单只有一份：与契约 §3 的联合逐项相等', () => 
     'persisted',
     'presence',
     'status',
+    // 宿主状态变更提示（契约 §5.9）。加它是**有意的**：手机侧要能按 key 重取快照。
+    'host',
   ]
   assert.deepEqual([...FRAME_TYPES], contract)
   // 编解码那份**不是**第二份真值：同一个对象。

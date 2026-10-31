@@ -107,6 +107,14 @@ export const METRIC = {
   pairedDevices: 'connector.devices.paired',
   /** 当前待处理的审批 / 提问数。 */
   pendingInteractions: 'connector.interactions.pending',
+  /**
+   * 已发出的**宿主状态变更提示**（`host` 帧，契约 §5.9）条数。
+   *
+   * 为什么值得一个计数：这条通道的失败形态是**安静**的 —— 一个触发点没接上，
+   * 手机就"显示旧值"，而两端都不报错。有这个数，`GET /api/dsh-mobile/status`
+   * 就能回答"电脑侧到底推没推"（真机验收时用它区分"没推"与"推了但客户端没刷新"）。
+   */
+  hostStateNotices: 'connector.host.notices',
 } as const
 
 export type MetricName = (typeof METRIC)[keyof typeof METRIC]

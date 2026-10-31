@@ -52,6 +52,9 @@ const List<String> frameTypes = <String>[
   'persisted',
   'presence',
   'status',
+  // 宿主状态变更提示（契约 §5.9）：载荷 `{keys}`，不带数据、不占会话 `seq`。
+  // **它与 `status` 同档要封箱**（不认证的通知能让任何人让手机反复重取）。
+  'host',
 ];
 
 /// 握手三帧（明文例外之一，契约 §4.1）。定义在协议层：这是**帧的语义**。

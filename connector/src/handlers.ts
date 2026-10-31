@@ -20,6 +20,7 @@
  */
 import { WIRE_VERSION } from './protocol/frame.js'
 import { ProtocolError } from './protocol/errors.js'
+
 import type { MethodHandler, MethodName } from './protocol/methods.js'
 import type { Caps } from './dsh/caps.js'
 import type { JobControlPort, JobsPort } from './dsh/jobs.js'
@@ -367,6 +368,7 @@ export interface HandlerDeps {
 }
 
 export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, MethodHandler>> {
+
   /**
    * 把 `subagentCatalog` 投影里的**子会话 id 换成别名**（契约 §5.1）。
    *
@@ -698,13 +700,18 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
     // 带幂等键 —— 切模型是用户指令，重发不该切两次。
     // 方法名带连字符，所以是**字符串 key**（`'session.select-model':`）而不是点号。
     'session.select-model': async (params, context) => {
-      const dshSessionId = requireSession(requireSid(params))
+      const sid = requireSid(params)
+      const dshSessionId = requireSession(sid)
       const provider = requireString(params, 'provider')
       const model = requireString(params, 'model')
       const effort = paramOf(params, 'reasoningEffort')
       if (effort !== undefined && typeof effort !== 'string') {
         throw new ProtocolError('protocol/bad-frame', 'reasoningEffort 必须是字符串')
       }
+      // **这里不发通知**：切模型这件事的真值是宿主落的 `model/selection` 事件，
+      // 由挂载级听 `session/event` 后广播（`protocol/host-state.ts` 的
+      // `hostStateForSessionEvent`）。从 handler 发只覆盖"手机自己改"，
+      // 而 Web 改模型走的是宿主的 `selectModel` —— 那条路不经过这里。
       return deps.sessions.selectModel({
         sessionId: dshSessionId,
         provider,
@@ -1197,6 +1204,9 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       if (preset.trim() === '' || preset !== preset.trim()) {
         throw new ProtocolError('protocol/bad-frame', 'preset 必须是非空且不带首尾空白的字符串')
       }
+      // 同上：权限档的真值是宿主落的 `permission/preset` 事件
+      // （`permission-presets/src/index.ts:416`），挂载级听 `session/event` 后广播，
+      // 于是"Web 改的"与"手机改的"走同一条通知。这里不再自己发。
       return permissions.switchTo(sid, preset)
     }
   }
@@ -1274,6 +1284,9 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
           value: (params as Record<string, unknown>).value,
           expectedRevision: (params as Record<string, unknown>).expectedRevision,
         })
+        // **这里不发通知**：设置文档变了的真值同样是宿主事件
+        // （`settings/document-updated`，`settings/src/index.ts:317,338`），
+        // 由挂载级广播 —— 于是 Web 上改设置也一样能让手机跟上。
         return { section: section ?? null }
       } catch (error) {
         if (error instanceof SettingsScopeError) {

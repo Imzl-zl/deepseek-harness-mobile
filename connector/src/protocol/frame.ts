@@ -39,6 +39,7 @@ export const FRAME_TYPES = [
   'persisted',
   'presence',
   'status',
+  'host',
 ] as const
 
 export type FrameType = (typeof FRAME_TYPES)[number]
@@ -136,6 +137,15 @@ export type WireFrame =
    * 形状与 `ev` 同档（带 box 与 fc），因为它描述的是会话内容面的事。
    */
   | { v: 1; t: 'status'; sid: string; fc: number; box: string }
+  /**
+   * 宿主状态变更提示（契约 §5.9，载荷 `{keys}`）—— **不带数据、不占会话 `seq`**。
+   *
+   * 为什么单独一帧而不是复用 `status`：`status` 讲的是"这个会话在不在跑"（必然有
+   * `sid`），而这一帧讲的是"这些**快照**可能过期了"（宿主级与会话级都有，`sid` 因此可选）。
+   * 两者都"不进业务序号流"不足以共用一个类型：共用会让手机侧的解箱分支按 `sid`
+   * 在猜语义，而漏猜的一支表现成"某类变更永远不刷新"。
+   */
+  | { v: 1; t: 'host'; sid?: string; fc: number; box: string }
   | { v: 1; t: 'presence'; computer: 'online' | 'offline'; app?: 'foreground' | 'background' }
 
 export function wireRoutingOf(frame: WireFrame): WireRoutingView {

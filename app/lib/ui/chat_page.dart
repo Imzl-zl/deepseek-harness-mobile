@@ -34,6 +34,7 @@ library;
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -1105,7 +1106,7 @@ class ChatPageState extends State<ChatPage> {
                             // 推理等级同样不写死：模型自带 effort 时显示它，否则显示"默认"。
                             modelName: _modelLabel,
                             reasoningLabel: _reasoningLabel,
-                          modelBusy: _switchingModel,
+                            modelBusy: _switchingModel,
                             access: permissionChipOf(
                               value: widget.app.permissionValue,
                               catalog: widget.app.permissionCatalog,
@@ -3072,7 +3073,8 @@ class _ChatTab extends StatelessWidget {
       onToggleTurn: onToggleTurn,
       headAt: headAt,
       liveShowHead: liveShowHead,
-      liveText: app.liveText,
+      // **订阅源而不是快照值**：流式期间页面不重建（P3），只有尾条目自己跟。
+      liveTail: app.liveTail,
       // **这一轮还在跑吗**：运行条只在真的在跑时挂（静止的界面不许闪）。
       // 判据来自电脑侧：`turn/start` / `turn/end` 事件（实时）+ `session.list`
       // 的 `running`（打开那一刻的初值）；起点是 `turn/start` 的 `time`。
@@ -3128,7 +3130,7 @@ class _ConversationFlow extends StatefulWidget {
     this.onToggleTurn,
     this.headAt = const <String>{},
     this.liveShowHead = true,
-    this.liveText,
+    required this.liveTail,
     this.running = false,
     this.turnStartedAt,
     this.app,
@@ -3148,12 +3150,22 @@ class _ConversationFlow extends StatefulWidget {
   /// 流式尾条目要不要自己带头。
   final bool liveShowHead;
 
-  /// 流式文本；`null` = 没有正在生成的流。
+  /// 流式文本的**订阅源**（`AppModel.liveTail`；`null` 值 = 没有正在生成的流）。
   ///
   /// 它是**虚拟尾条目**：没有稳定 itemId（不进 store），所以列表数是
-  /// `items.length + (liveText == null ? 0 : 1)`。持久的 `assistant/message`
-  /// 到达后它自动消失（`AppModel` 不再给值）—— 那条消息整体替换它。
-  final String? liveText;
+  /// `items.length + (hasLive ? 1 : 0)`。持久的 `assistant/message` 到达后它自动消失
+  /// （`AppModel` 不再给值）—— 那条消息整体替换它。
+  ///
+  /// **内容由尾条目自己订阅**（`ValueListenableBuilder`）：流式期间每秒几十批，
+  /// 让页面跟着重建等于整棵树白重建（P3）。这里只读"在不在"（[hasLive]），
+  /// 而它在流开始 / 结束时才变。
+  ///
+  /// Note: 判据是"流式期间这一层重建 = 0"（`test/live_tail_test.dart` 的计数桩），
+  /// 取舍见 `.agents/notes/implemented/2026-10-31-host-state-sync.md`。
+  final ValueListenable<String?> liveTail;
+
+  /// 流式尾条目此刻在不在（列表多不多一格）。
+  bool get hasLive => liveTail.value != null;
 
   /// 电脑侧说这一轮还在跑（`session.list` 的 `running`）—— 决定流末尾有没有运行条。
   ///
@@ -3400,9 +3412,14 @@ class _ConversationFlowState extends State<_ConversationFlow> {
             reverse: true,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             // **+1 是流式尾条目，再 +1 是运行条**（两条都是虚拟的，没有 itemId）。
+            //
+            // 格数读的是**存在性**（`liveTail.value == null`）——它在流开始 / 结束时
+            // 才变，而那时 AppModel 会整页通知（`_setLiveTail` 的返回值）。流式期间
+            // 文本一直变、格数不变，所以这一层**不重建**：尾条目的内容由下面那个
+            // `ValueListenableBuilder` 单独跟踪。
             itemCount:
                 widget.items.length +
-                (widget.liveText == null ? 0 : 1) +
+                (widget.hasLive ? 1 : 0) +
                 (widget.running ? 1 : 0),
             itemBuilder: (context, index) {
               // `reverse: true` 下 index 0 在**最下面**，往上递增。
@@ -3412,7 +3429,7 @@ class _ConversationFlowState extends State<_ConversationFlow> {
               // 2026-10-20 真机复现：原来这里是 `items[index - 1]`（正着取），
               // 于是**最早的在上、最新的在下** —— 一整段对话是倒的，
               // 而且"进入会话落在最新一条"也落到了最早一条。
-              final hasLive = widget.liveText != null;
+              final hasLive = widget.hasLive;
               final hasRunning = widget.running;
               // 运行条在最下面（它是流末尾），流式文本在它上面一格。
               if (hasRunning && index == 0) {
@@ -3422,11 +3439,14 @@ class _ConversationFlowState extends State<_ConversationFlow> {
                 );
               }
               if (hasLive && index == (hasRunning ? 1 : 0)) {
+                // **只有这一格跟流式文本**：`ValueListenableBuilder` 的子树是列表里的
+                // 一格，重建范围到它为止 —— 页面、列表、抽屉都不动（P3 的判据）。
                 return KeyedSubtree(
                   key: const ValueKey('live'),
-                  child: _LiveTurn(
-                    widget.liveText!,
-                    showHead: widget.liveShowHead,
+                  child: ValueListenableBuilder<String?>(
+                    valueListenable: widget.liveTail,
+                    builder: (context, text, _) =>
+                        _LiveTurn(text ?? '', showHead: widget.liveShowHead),
                   ),
                 );
               }
@@ -3477,7 +3497,7 @@ class _ConversationFlowState extends State<_ConversationFlow> {
           child: ChatJumper(
             itemCount:
                 widget.items.length +
-                (widget.liveText == null ? 0 : 1) +
+                (widget.hasLive ? 1 : 0) +
                 (widget.running ? 1 : 0),
             onStep: _step,
             onEdge: _edge,

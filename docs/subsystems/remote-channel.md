@@ -118,6 +118,8 @@ type Frame =
   | { v: 1; t: 'persisted'; sid: string; seq: number; fc: number; box: string }
   // 会话运行态:宿主 api-session/status 的原样转发(box = { running }),瞬时事实
   | { v: 1; t: 'status'; sid: string; fc: number; box: string }
+  // 宿主状态变更提示:box = { keys },会话级 key 靠帧头 sid 定向(见 §5.9)
+  | { v: 1; t: 'host'; sid?: string; fc: number; box: string }
   // 投影:在线态(明文,中继可转发)
   | { v: 1; t: 'presence'; computer: 'online' | 'offline'; app?: 'foreground' | 'background' }
 ```
@@ -137,6 +139,11 @@ type Frame =
   ```
   缺字段的位置用**空串**占位。为消除两端 JSON 转义差异,`id` 与 `sid` 限定为 ASCII 安全字符集 `[A-Za-z0-9_-]`(`id` = 16 字节 base64url;`sid` = 16 字节 base64url);数字一律十进制无前导零、无小数点。
 - **中继的路由视图只有四个字段**:`t`、`sid`、`seq`、`fc`。它不解 `box`,也不推断语义。
+- `host` 是**提示重取**的通知(§5.9):不占会话 `seq`、不带数据、不要应答。`sid` 在场时
+  它同时是路由字段(会话级 key 靠它定向),不在场就是宿主级通知。它与 `status` 同档:
+  **必须封箱**(不认证的通知能让任何人让手机反复重取),`fc` 照常占流控额度。
+  老客户端会把它当未知帧忽略、因而**不为它回 `credit`** —— 这不影响它:credit 是
+  累计确认(§4.3),后一帧的确认覆盖前面的空洞。
 - 未知帧类型与未知字段:**忽略并不报错**(向前兼容);未知帧类型若带 `id` 则回 `res ok:false` / `protocol/unsupported-version`。
 - 单帧超 8 MiB:发送侧**不得发出**(见 §5.3 的 refetch 规则);收到即 `protocol/bad-frame` 并关闭连接。
 
@@ -438,7 +445,8 @@ type SyncSnapshot = {
 
 事件(电脑→手机):`ev`(会话事件)、`live`(流式)、`job`(任务输出,订阅式,§5.3)、`status`(会话运行态,
 宿主 `api-session/status` 的原样转发:载荷 `{running}`,与 `presence` 同性质的**瞬时事实**,**不排队、
-不重试**,丢了由下一条或 `session.list` 的 `running` 兜)、`presence`(在线态/前台态)。
+不重试**,丢了由下一条或 `session.list` 的 `running` 兜)、`host`(宿主状态变更提示,§5.9,
+载荷 `{keys}`)、`presence`(在线态/前台态)。
 
 **没有 `pending.changed` 帧**。§6.3 的待处理集合是**会话事件的投影**,随 `ev` 一起到手机 ——
 审批的 ask 就是一条 `approval/asked` 会话事件(`user-approval/src/index.ts:225`),
@@ -473,6 +481,67 @@ type SyncSnapshot = {
 - `askTimed`(同上 `:229`)——前台等待的首次结算由客户端决定(`ASK_TIMED_OUT` → pending)。DSH 已处理好超时语义。
 
 **因此没有阻塞项**:需要 DSH 的全都有现成接口;不需要 DSH 的本就是我们自己的存储面或恢复握手。
+
+### 5.9 宿主状态变更通知(`host` 帧)
+
+手机侧有一批**快照型状态**:会话清单行(模型 / 标题 / 更新时间 / 计数)、投影包(统计 / 权限档 /
+标题 / 轨迹 / 用量 / 排队)、设置文档、会话的任务表。它们只在四个时机重取:连接与重连
+(`sync.hello` → 落点)、打开 / 切会话、回到前台、自己发起的写。于是"在电脑上改了模型 / 权限,
+手机还显示旧值"是**一类**症状;而"显示旧值 → 用户按旧值再操作 → 电脑按新值校验 → 报错"的连锁
+也会重复出现。这一节是那条推送通道。
+
+```ts
+type HostStateKey =
+  | 'session.list'        // 宿主级
+  | 'settings.describe'   // 宿主级
+  | 'session.projections' // 会话级:靠帧头 sid 定向
+  | 'job.list'            // 会话级:靠帧头 sid 定向
+
+type HostStateChanged = { keys: HostStateKey[] }   // 整个 box,没有任何值
+```
+
+规则:
+
+1. **`keys` 是方法名,不是状态键**。判据只有一条:这个名字要能直接回答"该调谁"。
+   状态键(`session.model`)回答不了 —— 它和 `session.permission` 都指向同一个
+   `session.projections`,按状态键走就得再合并一次;而快照方法一次返回一整包,
+   也**不存在"只拉一个字段"**的省法。方法名粒度下新增一个宿主状态**协议一个字都不用改**。
+2. **只提示"可能过期",不带数据、不带版本号**。带值等于再抄一份真值(快照方法是宿主权威的
+   唯一来源);带 `rev` 要定义"每个 key 的 rev 从哪来",而 `session.projections` 根本没有版本号,
+   拼出来的是第二份真值,还会在漏收时让客户端**相信自己是最新的**(比不检测更糟)。
+   丢失的收敛手段仍是 §5.4 / §5.6:任何丢失都收敛到 `snapshotRequired`。
+3. **会话级 key 必须带帧头 `sid`**,宿主级 key 忽略它。`sid` 是路由字段(§3),
+   中继本来就看得见;不把 `sid` 塞进 `box` 是因为它已经在帧头。
+4. **广播给所有已完成业务鉴权的在服务连接**,不按订阅者过滤 —— 这些状态是宿主级的,
+   按订阅者筛等于在连接器里复述"哪个界面读哪个 key",那是客户端的知识。
+5. **不按设备跳过**:五条触发点全都是宿主事件,而宿主事件**不知道是谁改的** ——
+   于是手机自己切一次模型也会收到一条提示、多一次重取(150 ms 合并之后是**一次**请求)。
+   这是"Web 改的也能跟上"的价钱,如实接受:写操作的回执仍然直接更新界面,通知只是让它
+   再核对一次宿主。
+6. **触发点**(电脑侧,封闭集,加一个要在这里登记):
+
+   | 触发 | 发出的 keys | sid |
+   |---|---|---|
+   | 宿主 `session/event` 的 `model/selection`(切模型) | `session.list` + `session.projections` | 该会话 |
+   | 宿主 `session/event` 的 `permission/preset` / `sandbox/mode`(权限档 / 沙箱档) | `session.projections` | 该会话 |
+   | 宿主 `session/event` 的 `session/title`(标题生成 / 改名) | `session.list` + `session.projections` | 该会话(别名未知时只发 `session.list`) |
+   | 宿主 `jobs.events` 的 `registered` / `settled` / `removed` | `job.list` | 该任务所属会话(别名未知时不发) |
+   | `settings.update` 写成功 | `settings.describe` | 无 |
+
+   **模型与权限档听宿主事件,不听我们自己的 handler**:它们可以从桌面 Web 改
+   (Web 直接调宿主的 `selectModel` 与 `/permission`),那条路不经过连接器 ——
+   只听 handler 就只覆盖"手机自己改",而这一节要解决的恰恰是"电脑上改了、手机要跟上"。
+   宿主侧这件事的真值就是它落的持久事件(`model/selection`、`permission/preset`),
+   于是"谁改的"不再影响通知。`request/header` **不在**表内:它也改 `modelSelection` 投影,
+   但改的是 `lastUsed`(这一轮用了什么),每轮都通知等于把快照拉成轮询。
+
+   不在此表的状态**不触发**(例如 `workspace.list` 的顺序变化:它由手机自己发起的写
+   带回全集,不是"别处改了要跟上"的那一类)。
+7. **老客户端收不到就忽略**:帧类型清单外且无 `id` ⇒ 忽略、不回错、不断连接(§3)。
+   它也因此**不为这一帧回 `credit`** —— 累计确认让后一帧的 credit 覆盖这个空洞。
+
+取舍与被否方案(轮询 / 每个快照方法一条事件 / 中转做状态总线 / 推数据)见
+`.agents/notes/implemented/2026-10-31-host-state-sync.md`。
 
 ---
 

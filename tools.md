@@ -368,6 +368,17 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
 
 ## Pitfalls
 
+- **别按"命令行文本"找进程 —— 会先杀掉自己**（2026-10-31 连踩两次）：命令是通过
+  `dsh-subprocess-local/lib/runner.js -- pwsh -Command "<整段脚本>"` 跑的，**脚本正文就在那个 runner 的
+  CommandLine 里**，于是 `Win32_Process | ? CommandLine -like '*dsh-mobile-test*'` 会命中自己的工具进程，
+  `Stop-Process` 之后本回合直接报 `subprocess-local: Windows Job runner exited with exit code 4294967295`。
+  安全判据：**按端口持有者找**（`Get-NetTCPConnection -State Listen -LocalPort 8790 | Select -ExpandProperty OwningProcess`）
+  或精确匹配 exe + 参数结构。另：`$pid` 是**只读自动变量**，`foreach ($pid in $ids)` 静默失败（用 `$item`）。
+- **改了 `connector/src/**` 要让真机吃到新代码，是两步**（2026-10-31）：① `cd connector && pnpm build`
+  —— profile 的 `link:` 指向本仓库，加载的是 `lib/index.js`；② 重启那个 profile 的 host ——
+  它由桌面 App 起（`DeepSeek Harness.exe --expose-internals <...>/dsh-desktop-host/lib/cli.js --profile <名字>`），
+  旧实例不死则新实例静默退出（抢不到 8790/3080），所以**先按端口持有者杀干净再起**。
+  重启会换 Web UI 的 token（每次启动都新打印在日志里）。
 - **提交纪律三条**(2026-10-19 从 `memory.md` 归位到此处):①**提交信息里避免反引号** —— pwsh 会把它当 Unicode 转义,整条命令在**解析阶段**就失败;长消息写临时文件用 `git commit -F`。②**提交前看 `git status` 完整清单**,重点是**意外的文件**(空的、消失的、没见过的新文件)。③**别把"重启后的第一次成功"当能力** —— 判据要包含"连续重连 N 次都成立"(端点切换那条就是这么验的:3 次重连都落在同一条上)。
 - **手机"连不上电脑"先查手机有没有把电脑 IP 劫持到本机**（2026-10-29 公司 wifi，绕了三圈才找到）：
   现象 —— 手机到电脑**任何端口**的 TCP 都在 1–2ms 内 `Connection refused`，而电脑自连 405/426 正常、

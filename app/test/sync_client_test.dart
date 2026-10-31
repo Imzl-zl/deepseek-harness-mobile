@@ -1181,6 +1181,66 @@ void main() {
       await client.close();
     });
 
+    test('host 帧 → 广播成 HostStateChanged；载荷坏了要吵（不是静默丢）', () async {
+      // 契约 §5.9：这是"快照可能过期了"的提示，载荷只有 key。手机侧只做**形状**，
+      // 认识哪些 key 是 `data/host_state.dart` 的事（登记表 + 计数器）。
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+      final keys = await sessionKeysFor(f.transport);
+      final pc = BoxCodec(keys: keys, role: HandshakeRole.responder);
+      final seen = <HostStateChanged>[];
+      final sub = client.hostStateChanges.listen(seen.add);
+      addTearDown(sub.cancel);
+
+      // 会话级（带 sid）：帧头的 sid 原样递给上层。
+      final first = <String, Object?>{
+        'v': 1,
+        't': 'host',
+        'sid': 's1',
+        'fc': 0,
+        'box': '',
+      };
+      final firstBox = await pc.sealFrame(
+        first,
+        jsonEncode({
+          'keys': <String>['session.list', 'session.projections'],
+        }),
+      );
+      f.transport.feed('${jsonEncode({...first, 'box': firstBox})}\n');
+      await pump();
+      expect(seen, hasLength(1));
+      expect(seen.single.keys, <String>['session.list', 'session.projections']);
+      expect(seen.single.sid, 's1');
+
+      // 宿主级（没有 sid）：`sid` 为 null，宿主级 key 忽略它。
+      final second = <String, Object?>{'v': 1, 't': 'host', 'fc': 1, 'box': ''};
+      final secondBox = await pc.sealFrame(
+        second,
+        jsonEncode({
+          'keys': <String>['settings.describe'],
+        }),
+      );
+      f.transport.feed('${jsonEncode({...second, 'box': secondBox})}\n');
+      await pump();
+      expect(seen, hasLength(2));
+      expect(seen.last.sid, isNull);
+
+      // 空 keys 是**形状问题**（连"哪个方法"都读不出来），必须吵 ——
+      // 静默丢掉等于"桌面改了、手机没动静"，而那条症状最难查。
+      final third = <String, Object?>{'v': 1, 't': 'host', 'fc': 2, 'box': ''};
+      final thirdBox = await pc.sealFrame(
+        third,
+        jsonEncode({'keys': <String>[]}),
+      );
+      f.transport.feed('${jsonEncode({...third, 'box': thirdBox})}\n');
+      await pump();
+      expect(f.transport.closeCount, greaterThan(0));
+
+      await client.close();
+    });
+
     test('握手期收到业务帧 = 攻击面 → 关连接', () async {
       final f = buildDeps();
       final client = createSyncClient(f.deps);

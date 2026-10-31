@@ -5,6 +5,20 @@
 
 ## 现在（2026-10-31）
 
+- **宿主状态同步（10-31，P1/P3 落地）**：新增 `host` 帧（契约 §5.9）—— 电脑侧改了
+  模型 / 权限档 / 标题 / 设置 / 任务表时，推一条**只有 key 的提示**（不进业务 `seq`、
+  不带值），手机按 key 重取快照（同 key 150 ms 合并、断连不排队、未知 key 计数）。
+  **触发点全听宿主事件**（`model/selection` / `permission/preset` / `session/title` /
+  `settings/document-updated` / `jobs.events`）—— 这是"Web 改的也能跟上"的唯一来源；
+  原稿"跳过发起者"的规则随之作废。P3：流式文本改成 `ValueListenable`，纯流式 delta
+  不再整页通知（流式期间页面重建 **0** 次，计数桩钉住）。中转窗口落盘（P2）**没做**。
+  笔记 `implemented/2026-10-31-host-state-sync.md`；现状 `remote-channel.md` §5.9 +
+  `app-channel-client.md` §2.3。真机：Web 改模型 / 权限 → 手机 **+71 / +99 ms** 上屏；
+  断开期间改、重连后仍是最新值。
+- **顺带修掉的一条陈旧门禁（10-31）**：`connector/tests/relay-transport-seam.test.ts` 还在断言
+  "没有 tokens 就退出 2"，而 `connectorAuth` 默认 `open` 之后空摘要表是**合法起点** ——
+  这条用例于是永远等一个不会来的退出码，整份 `pnpm test` 卡死。改成断言
+  "`required` 且无 tokens 才失败"，并补一条钉住开放模式的空表能起来。
 - **外观：壁纸 + 透明度（10-31）**：设置页「通用」加两行（背景 / 透明度 0–100%）；
   壁纸存 App 私有目录（`files/appearance/wallpaper.img`，路径靠 `getDatabasesPath()` 推，
   不引 `path_provider`）；色板经 `DshColorTokens.withSurfaceAlpha` 派生一份、**只降 10 个表面色**；

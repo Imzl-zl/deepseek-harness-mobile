@@ -15,6 +15,7 @@ import type { Idempotency } from './idempotency.js'
 import type { SessionBuffer } from './session-buffer.js'
 import type { DeviceAppState } from './presence.js'
 import type { WireFrame } from './protocol/frame.js'
+import { hostStatePayload, type HostStateKey } from './protocol/host-state.js'
 import { ProtocolError } from './protocol/errors.js'
 import type { ConnectionPort } from './transport/connection.js'
 
@@ -107,6 +108,20 @@ export interface ConnectionScope {
    * 手机侧还有首包 `session.list.running` 当初值。
    */
   sendStatus(sid: string, running: boolean): boolean
+  /**
+   * 推一条**宿主状态变更提示**（`host` 帧，契约 §5.9）。
+   *
+   * 与 [sendStatus] 同一条纪律：只在这台设备已完成鉴权时发，窗口满 / 不在服务态时
+   * `port.send` 自己回 `false`，**不排队、不重试** —— 提示丢了由"下一次重取"兜
+   * （`sync.hello` 的落点、打开会话、回到前台都会重取）。
+   *
+   * @param keys - 要重取哪些快照（方法名）。
+   * @param sid - 会话级 key 的定向依据；宿主级 key 忽略它。
+   *
+   * Note: 为什么触发点全听宿主事件、为什么不再"跳过发起者" —— 见
+   * `.agents/notes/implemented/2026-10-31-host-state-sync.md`。
+   */
+  sendHostStateChanged(keys: readonly HostStateKey[], sid?: string): boolean
 }
 
 export function createConnectionScope(
@@ -179,6 +194,23 @@ export function createConnectionScope(
     sendStatus(sid, running) {
       if (deviceId === null) return false
       return port.send({ v: 1, t: 'status', sid, box: JSON.stringify({ running }) })
+    },
+    sendHostStateChanged(keys, sid) {
+      // 两个早退都是**有意义的**，不是防御性写法：
+      // ① 未鉴权的连接（待配对通道）不该知道宿主状态；
+      // ② 空清单不发（"可能过期了，但没有东西要重取"没有任何消费者）。
+      if (deviceId === null) return false
+      if (keys.length === 0) return false
+      const sent = port.send({
+        v: 1,
+        t: 'host',
+        ...(sid === undefined ? {} : { sid }),
+        box: hostStatePayload(keys),
+      })
+      // 只有**真的发出去了**才计数：满窗 / 不在服务态时这一条没上线，
+      // 记成"推过"会让真机排查时把"没推"与"推了没生效"混成一件事。
+      if (sent) metrics.increment(METRIC.hostStateNotices)
+      return sent
     },
     deviceEstablished(devId) {
       if (pairing !== undefined) throw new Error('配对候选不能激活普通业务身份')

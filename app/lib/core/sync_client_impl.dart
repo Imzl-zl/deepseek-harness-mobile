@@ -615,6 +615,8 @@ class _SyncClient implements SyncClient, SyncClientProbe {
         _emitJobFrame(frame, plaintext);
       case 'status':
         _onStatus(frame, plaintext);
+      case 'host':
+        _onHost(frame, plaintext);
       case 'credit':
       case 'ping':
       case 'pong':
@@ -1224,6 +1226,8 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     await _jobUpdates.close();
     // 运行态流同理（订阅方是会话页/角标）。
     await _sessionStatus.close();
+    // 宿主状态变更流同理（订阅方是 `AppModel` 的重取器）。
+    await _hostStateChanges.close();
     // 关闭时也要拒掉在途请求（同 `_enterClosed`，但错误码不同：
     // 这里是"客户端被关了"，不是"连接断了" —— 前者不该再重试）。
     _calls.failAll(const ProtocolException(ErrorCode.internal, '客户端已关闭'));
@@ -1496,6 +1500,57 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   /// 会话运行态流（宿主 `api-session/status` 的原样转发）。
   @override
   Stream<SessionStatus> get sessionStatus => _sessionStatus.stream;
+
+  /// 宿主状态变更提示（`host` 帧）。**广播流**：`AppModel` 只订一份。
+  final StreamController<HostStateChanged> _hostStateChanges =
+      StreamController<HostStateChanged>.broadcast();
+
+  @override
+  Stream<HostStateChanged> get hostStateChanges => _hostStateChanges.stream;
+
+  /// 收到一条 `host` 帧：解出 `{keys}` 与帧头 `sid` 就广播（契约 §5.9）。
+  ///
+  /// **载荷坏了要吵**（`bad-frame`，与 `status` 帧缺 `running` 同一条纪律）：
+  /// 静默丢掉等于"桌面改了、手机没动静"，而那正是这条通道要消灭的症状；
+  /// 而"这一帧读不懂"与"没有变更"必须能分开。
+  void _onHost(Map<String, Object?> frame, String plaintext) {
+    final Object? parsed;
+    try {
+      parsed = jsonDecode(plaintext);
+    } on FormatException catch (error) {
+      _protocolFailure(
+        ProtocolException(ErrorCode.badFrame, 'host 载荷不是合法 JSON：$error'),
+      );
+      return;
+    }
+    final rawKeys = parsed is Map ? parsed['keys'] : null;
+    if (rawKeys is! List || rawKeys.isEmpty) {
+      _protocolFailure(
+        const ProtocolException(ErrorCode.badFrame, 'host 载荷缺少非空 keys'),
+      );
+      return;
+    }
+    final keys = <String>[];
+    for (final key in rawKeys) {
+      // 空串 / 非字符串是形状问题（连"哪个方法"都读不出来），不是"我们不认识它"。
+      if (key is! String || key.isEmpty) {
+        _protocolFailure(
+          const ProtocolException(ErrorCode.badFrame, 'host.keys 必须是非空字符串数组'),
+        );
+        return;
+      }
+      if (!keys.contains(key)) keys.add(key);
+    }
+    final sid = frame['sid'];
+    if (!_hostStateChanges.isClosed) {
+      _hostStateChanges.add(
+        HostStateChanged(
+          keys: List<String>.unmodifiable(keys),
+          sid: sid is String && sid.isNotEmpty ? sid : null,
+        ),
+      );
+    }
+  }
 
   /// 收到一条 `status` 帧：解出 `running` 就广播。
   ///

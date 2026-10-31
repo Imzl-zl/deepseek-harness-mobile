@@ -63,10 +63,10 @@ import 'ui/chat_page.dart';
 import 'ui/connection_actions_sheet.dart';
 import 'ui/dsh_brand.dart';
 import 'ui/dsh_shimmer.dart';
-import 'ui/frame_coalesced.dart';
 import 'ui/dsh_toast.dart';
 import 'ui/dsh_wallpaper.dart';
 import 'ui/files_page.dart';
+import 'ui/frame_coalesced.dart';
 import 'ui/host_picker_sheet.dart';
 import 'ui/pairing_page.dart';
 import 'ui/plugins_page.dart';
@@ -432,15 +432,17 @@ class _DshMobileAppState extends State<DshMobileApp>
 
   /// 回到前台时**对齐一次远端状态**（2026-10-31 真机：Web 改了模型，手机还显示旧的）。
   ///
-  /// 模型存在会话清单里，而那条通道没有推送 —— 只在连接 / 切会话 / 自己切换时刷新。
-  /// 切回手机是最自然的对齐点：用户刚在电脑上改完，抬眼看手机的那一刻应该是对的。
+  /// 电脑侧改了东西会来 `host` 帧（契约 §5.9），所以正常情况下抬眼看手机的那一刻
+  /// 已经是对的；这一条是**漏收兜底**（后台被杀、通知在断连窗口里丢了）。
+  /// 刷新哪些快照由登记表的 `appResume` 列决定，这里不点菜 —— 界面层与数据层
+  /// 各写一份"回前台要拉什么"就是两处会漂的判据。
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     if (state != AppLifecycleState.resumed) return;
     final app = _app;
     if (app == null) return;
-    unawaited(app.refreshSessions());
+    unawaited(app.refreshHostStateOnResume());
   }
 
   Future<void> _boot() async {

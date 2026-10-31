@@ -197,6 +197,21 @@ void main() {
       // `needsBox` 对未知类型返回 true（保守方向：宁可要求封箱）。
       expect(needsBox('future-frame'), isTrue);
     });
+
+    test('向前兼容：未来的通知帧变体（无 id）被忽略，不回错、不断连接', () {
+      // **老 app 收到新连接器的 `host` 帧走的就是这条路**（契约 §3：清单外且无 `id`
+      // ⇒ 忽略）。这条通道天生向前兼容：多一种通知只是"这一版不认识它"，
+      // 而正确性靠重连 / 回前台 / 打开会话那几处兜底（`app-channel-client.md` §2.3）。
+      expect(frameTypes, contains('host'));
+      final viaIgnored = decodeFrame('{"v":1,"t":"host-state-changed"}');
+      expect(viaIgnored, isA<IgnoredFrame>());
+      // 带 `id` 的那一档是"对方在等应答"，必须回错（沉默会让它永远挂着）。
+      final viaUnsupported = decodeFrame(
+        '{"v":1,"t":"host-state-changed","id":"r1"}',
+      );
+      expect(viaUnsupported, isA<UnsupportedFrame>());
+      expect((viaUnsupported as UnsupportedFrame).id, 'r1');
+    });
   });
 
   group('握手门禁（契约 §2.2）', () {

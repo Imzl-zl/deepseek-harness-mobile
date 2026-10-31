@@ -22,7 +22,8 @@ library;
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show ChangeNotifier, visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show ChangeNotifier, ValueListenable, ValueNotifier, visibleForTesting;
 
 import '../core/connection.dart';
 import '../core/endpoint.dart';
@@ -70,6 +71,7 @@ import '../wire/rpc/workspace.dart' as wire;
 import 'endpoint_book.dart';
 import 'file_preview.dart';
 import 'host_catalogs.dart';
+import 'host_state.dart';
 import 'ids.dart';
 import 'item_derivations.dart';
 import 'projection.dart';
@@ -89,10 +91,16 @@ import 'ui_state.dart';
 ///
 /// 所以按职责命名：`AppState` 留给协议层（契约里已经这么叫），
 /// 这里叫 `AppModel`（"界面要读的那份应用模型"）。
-class AppModel extends ChangeNotifier {
+class AppModel extends ChangeNotifier implements HostStateTarget {
   AppModel({
     required this.client,
     PreferenceStore? prefs,
+
+    /// `host` 帧的**同 key 合并窗口**（契约 §5.9 给的是 100–300 ms）。
+    ///
+    /// 只在测试里改：产品里永远是 [kHostStateMergeWindow]。做成参数是因为
+    /// "合并生效"这条判据必须能被一条单测钉住，而等 150 ms 的用例既慢又脆。
+    Duration hostStateMergeWindow = kHostStateMergeWindow,
     List<Endpoint> endpoints = const [],
     String? rememberedEndpointId,
     Set<String> hiddenEndpointIds = const {},
@@ -126,7 +134,8 @@ class AppModel extends ChangeNotifier {
        _initialSucceededEndpointIds = Set<String>.of(succeededEndpointIds),
        _myLanIpv4Of = myLanIpv4Of,
        _hostIdOf = hostIdOf,
-       _allowPlaintextPublic = allowPlaintextPublic;
+       _allowPlaintextPublic = allowPlaintextPublic,
+       _hostStateMergeWindow = hostStateMergeWindow;
 
   /// 用户是否已确认"自部署中转走公网明文"（`net.allow_plaintext_public`）。
   bool get allowPlaintextPublic => _allowPlaintextPublic;
@@ -441,6 +450,7 @@ class AppModel extends ChangeNotifier {
   /// 读一次投影。**点开会话时调**（与 `refreshJobs` 同一步）。
   ///
   /// 失败只留声：投影读不到时那些只读面显示空态，而"整个会话打不开"更糟。
+  @override
   Future<void> refreshProjections(String sid) async {
     final values = await _readProjections(sid, what: '读取会话投影失败');
     if (values == null) return;
@@ -902,6 +912,7 @@ class AppModel extends ChangeNotifier {
 
   /// 拉一次任务清单。**只在进服务态与切会话时调** —— 它是一次性快照，
   /// 后续变化走 `job` 帧的 `status`。
+  @override
   Future<void> refreshJobs(String sid) async {
     // **先建桶再早退**：`job` 帧不带 sid，只能靠"这个会话有桶"归位。
     // 桶不存在时帧会被丢 —— 而表现是"任务在跑但没有输出"，最难查的那类。
@@ -1074,6 +1085,7 @@ class AppModel extends ChangeNotifier {
   StreamSubscription<ConnectionState>? _stateSub;
   StreamSubscription<JobFrame>? _jobSub;
   StreamSubscription<SessionStatus>? _statusSub;
+  StreamSubscription<HostStateChanged>? _hostStateSub;
   final Map<String, StreamSubscription<SessionDelta>> _deltaSubs = {};
 
   /// 交互信号流（契约 §6.3：待处理集合是会话事件的投影）。
@@ -1478,9 +1490,50 @@ class AppModel extends ChangeNotifier {
     if (scale != null) _uiScaleIndex = scale.clamp(0, kUiScaleSteps.length - 1);
   }
 
+  // ---------------------------------------------------------------------------
+  // 宿主状态同步（`host` 帧，契约 §5.9）
+  // ---------------------------------------------------------------------------
+
+  /// `host` 帧的重取器：按 key 合并 → 调登记表里的那个快照方法。
+  ///
+  /// `late final` 而不是在构造函数里建：它要一个 `AppModel` 引用（`this`），
+  /// 而初始化列表里拿不到自己。`data/host_state.dart` 是这张表的唯一出处。
+  late final HostStateRefresher _hostState = HostStateRefresher(
+    app: this,
+    window: _hostStateMergeWindow,
+  );
+
+  final Duration _hostStateMergeWindow;
+
+  /// 收到过多少个**登记表不认识**的 key（诊断 / 测试）。
+  ///
+  /// 必须是可观察的数：将来连接器多一个 key，症状要么是"界面跟着变了"，
+  /// 要么是"这个数在涨"；否则就是"通知到了但什么都没发生"，无迹可查。
+  int get unknownHostStateKeys => _hostState.unknownKeys;
+
+  /// 一条重取失败（登记表里的某个 key）：**只留声，不打断其它 key**。
+  ///
+  /// 不往外抛：重取是提示驱动的刷新，失败已经落进 [lastError]（界面能显示），
+  /// 再抛回定时器回调只会变成未处理的异步错误。
+  @override
+  void reportHostStateFailure(String key, Object error) =>
+      _recordError('刷新宿主状态失败（$key）', error);
+
+  /// **回到前台**时对齐一次远端状态（装配层在 `main.dart` 的生命周期回调里调）。
+  ///
+  /// 触发点只有一处（登记表的 `appResume` 行），所以"回前台刷新哪些快照"
+  /// 不会在界面层与数据层各写一遍。
+  Future<void> refreshHostStateOnResume() async {
+    if (_disposed) return;
+    await _hostState.triggered(HostStateTrigger.appResume, sid: _currentSid);
+  }
+
   /// 启动：连通道。
   Future<void> start() async {
     _stateSub = client.connection.listen(_onConnectionChanged);
+    // 宿主状态变更：电脑侧改了模型 / 权限档 / 设置 / 标题 / 任务表 → 按 key 重取快照。
+    // 合并（同 key 100–300 ms）与"断连不排队"都在 [HostStateRefresher] 里。
+    _hostStateSub = client.hostStateChanges.listen(_hostState.notified);
     // 任务输出帧：任务面板与角标都听它。**广播流**，所以这里只订一份。
     _jobSub = client.jobUpdates.listen(_applyJobFrame);
     // 会话运行态：宿主 `api-session/status` 的原样转发（`status` 帧）。
@@ -1665,6 +1718,7 @@ class AppModel extends ChangeNotifier {
   /// 拉一次三个命名空间的设置快照。
   ///
   /// `settings.describe` 是**读方法**（不带幂等键），重发只是再读一次。
+  @override
   Future<void> refreshSettings() async {
     try {
       // 形状（`{sections: [{ns, revision, values, secrets}]}`）在 `wire/rpc/settings.dart`；
@@ -2293,6 +2347,10 @@ class AppModel extends ChangeNotifier {
       _lastError = null;
       // 连上了：重置"已呈递终态"标记（下一次真掉线再按需呈递）。
       _connectionTerminatedSurfaced = false;
+    } else {
+      // **断连期间不排队**（契约 §5.9）：`host` 帧的重取请求在重连那一刻必然过期，
+      // 而重连本身由 `landAfterConnect()` → `connectLanding` 整份重取兜底。
+      _hostState.dropPending();
     }
     // **身份不被认是终态**：连接层确认"不再退避重连"后，把那个终态协议错误
     // 呈递给上层**一次**（`onConnectionTerminated` → `ConnectionRecovery`）。
@@ -2733,7 +2791,14 @@ class AppModel extends ChangeNotifier {
       _landingDone = false;
       if (!_disposed) notifyListeners();
     }
-    await refreshSessions();
+    // **落点的快照走登记表**（`connectLanding` 那一列）：会话清单 / 设置 /
+    // 当前会话的投影都在那里，于是"重连之后手机一定是最新值"只有一处表达
+    // （`data/host_state.dart`）。这里仍要 await 清单：落点读的就是行里的
+    // `updatedAt` / `running`。
+    await _hostState.triggered(
+      HostStateTrigger.connectLanding,
+      sid: _currentSid,
+    );
     await landOnSession();
   }
 
@@ -2775,6 +2840,7 @@ class AppModel extends ChangeNotifier {
   ///
   /// **失败不吞**：把错误记进 [lastError] 并让界面能显示。
   /// 吞掉的话界面只会显示"空列表"，而用户无从知道是"真没有会话"还是"请求失败了"。
+  @override
   Future<void> refreshSessions() async {
     try {
       _applySessionList(await _fetchSessionRows());
@@ -3340,18 +3406,16 @@ class AppModel extends ChangeNotifier {
       if (!_disposed) notifyListeners();
     }
 
-    // 点开会话就拉一次任务清单：任务面板在这一屏里，而清单是**一次性快照**，
-    // 后续变化走 `job` 帧的 `status`。失败只留声 —— 任务面板空着比
-    // 整个会话打不开更可接受，而那正是"拉清单失败就抛"的后果。
+    // 点开会话就拉两个会话级快照：任务表（`job.list`）与投影包
+    // （统计条 / 轨迹 / 子智能体 / 交付物 / 权限档）。**走登记表的 `openSession` 列**
+    // （`data/host_state.dart`），于是"开会话该重取哪些快照"只有一处。
+    // 失败只留声 —— 任务面板空着比整个会话打不开更可接受。
     try {
-      await refreshJobs(sid);
+      await _hostState.triggered(HostStateTrigger.openSession, sid: sid);
     } on ProtocolException catch (error) {
       _lastError = error;
       if (!_disposed) notifyListeners();
     }
-
-    // 同一批只读面（统计条 / 轨迹 / 子智能体 / 交付物 / 权限档）走同一个投影读。
-    await refreshProjections(sid);
     // 换了会话就重判通知：切到的那个会话不该再有一条"等你处理"挂在通知栏里
     // （与"点进去绿点消失"同一条判据）。
     _syncNotices();
@@ -3508,6 +3572,26 @@ class AppModel extends ChangeNotifier {
   void _onDelta(String sid, SessionDelta delta) {
     if (_disposed) return;
     final store = _storeOf(sid);
+
+    // **纯流式的 delta 不进通知路径**（P3）。
+    //
+    // 现状：流式期间一批 delta 只有 `liveText`（没有持久事件），而下面那段
+    // `_touchSummary` + `_syncNotices` 会 `notifyListeners()` —— 于是**整页重建**
+    // 每秒几十次，重建的东西一个字节都没变（列表、抽屉、统计条都读不到流式文本）。
+    //
+    // 现在：这类 delta 只写 [liveTail]（尾条目自己订阅），页面**一次都不重建**。
+    // 尾条目的**存在性**变了（从没有流到有流）仍要通知一次 —— 那是列表格数变了，
+    // 而它不是"流式期间"。
+    //
+    // Note: 判据与计数器证明（"流式期间页面重建 = 0"）见
+    // `.agents/notes/implemented/2026-10-31-host-state-sync.md` 与 `test/live_tail_test.dart`。
+    if (delta.events.isEmpty) {
+      // `_setLiveTail` 的返回值 = "格数变了"，只有那种情况才需要整页通知一次。
+      if (delta.liveText != null && _setLiveTail(delta.liveText)) {
+        notifyListeners();
+      }
+      return;
+    }
 
     // **持久事件** → 投影成界面条目 → upsert。
     // 一次恢复可能带一批：`upsertAll` 内部把通知合并成一次。
@@ -3686,7 +3770,7 @@ class AppModel extends ChangeNotifier {
       // 原来只赋值不清空，于是持久 `assistant/message` 落库后 UI 会**同时**画
       // "列表里那条"和"流式尾那条虚拟条目"；Web 只画一次，因为它那份 live 状态
       // 随持久帧一起被替换。`turn/end` 也清：这一轮结束了不该还挂着半截流式文本。
-      if (assistantPersisted || turnEnded) _liveText = null;
+      if (assistantPersisted || turnEnded) _setLiveTail(null);
       if (inboxChanged) {
         // 队列变了：重读一次投影拿新队列（`inbox` 段）。不等它 ——
         // 收帧路径上的回调不该被一个网络往返挡住。
@@ -3713,11 +3797,11 @@ class AppModel extends ChangeNotifier {
       }
     }
 
-    // **流式文本** → 单独的槽位（UI 从它读"正在生成的这段"）。
+    // **流式文本** → 单独的槽位（尾条目自己订阅，见 [liveTail]）。
     // 它**不进 store**：没有稳定 itemId，且会被随后的持久 `assistant/message`
     // 整体替换（`app-channel-client.md` §2.2：以持久为准）。
     if (delta.liveText != null) {
-      _liveText = delta.liveText;
+      _setLiveTail(delta.liveText);
     }
 
     // 会话列表里的更新时间与计数跟着动。
@@ -3846,11 +3930,32 @@ class AppModel extends ChangeNotifier {
 
   /// 当前会话的流式文本（`null` = 没有正在生成的流）。
   ///
-  /// 它在持久 `assistant/message` 到达后**不清空**（那是 `core/` 的累加器负责的）——
-  /// 界面按"最后一条持久消息"渲染，流式槽位只在没有持久消息时显示。
-  String? get liveText => _liveText;
+  /// ## 为什么它是 `ValueListenable` 而不是 `notifyListeners()` 的一部分
+  ///
+  /// 流式期间一秒几十批，而**只有尾部那一条**读它。走 [ChangeNotifier] 就是整页
+  /// 重建几十次（列表、抽屉、统计条读的东西一个字节都没变）—— P3 的判据是
+  /// "流式期间会话列表 widget 的重建次数 = 0"，所以它独立成一条订阅：
+  /// 尾条目用 `ValueListenableBuilder` 听它（`ui/chat_page.dart`）。
+  ///
+  /// [liveText] 是同一个值的同步读法（单测与"格数"判据用），**不是第二个来源**。
+  ValueListenable<String?> get liveTail => _liveTail;
 
-  String? _liveText;
+  final ValueNotifier<String?> _liveTail = ValueNotifier<String?>(null);
+
+  /// `liveTail` 的当前值（`ValueListenable.value` 的同步读法）。
+  String? get liveText => _liveTail.value;
+
+  /// 写流式文本；**返回"尾条目的存在性变了没有"**（变了才需要整页通知一次）。
+  ///
+  /// 存在性 = `null` 与非 `null` 的区别：它决定列表多不多一格
+  /// （`ui/chat_page.dart` 的 `items.length + (hasLive ? 1 : 0)`）。
+  /// 文本内容的变化不改变格数，所以不通知。
+  bool _setLiveTail(String? value) {
+    final wasEmpty = _liveTail.value == null;
+    if (_liveTail.value == value) return false;
+    _liveTail.value = value;
+    return wasEmpty != (value == null);
+  }
 
   SessionStore _storeOf(String sid) =>
       _stores.putIfAbsent(sid, () => SessionStore(sid));
@@ -3952,6 +4057,10 @@ class AppModel extends ChangeNotifier {
     unawaited(_stateSub?.cancel());
     unawaited(_jobSub?.cancel());
     unawaited(_statusSub?.cancel());
+    unawaited(_hostStateSub?.cancel());
+    // 待发的快照重取一并作废：宿主都释放了，那些请求没有落点。
+    _hostState.dropPending();
+    _liveTail.dispose();
     for (final sub in _deltaSubs.values) {
       unawaited(sub.cancel());
     }

@@ -81,6 +81,13 @@ abstract class FakeSyncClient implements SyncClient {
   Stream<SessionStatus> get sessionStatus =>
       const Stream<SessionStatus>.empty();
 
+  /// 宿主状态变更提示（`host` 帧）：**默认空流** —— `AppModel.start()` 无条件订阅它，
+  /// 而绝大多数用例不关心"电脑侧改了快照"。关心它的用例自己覆盖这个 getter
+  /// （`host_state_wiring_test.dart`）。
+  @override
+  Stream<HostStateChanged> get hostStateChanges =>
+      const Stream<HostStateChanged>.empty();
+
   @override
   Stream<SessionDelta> sessionUpdates(String sid) =>
       throw UnimplementedError('测试替身没有声明 sessionUpdates');

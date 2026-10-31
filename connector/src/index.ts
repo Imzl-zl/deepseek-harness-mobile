@@ -126,7 +126,14 @@ import { mount, type LifecycleStep } from './lifecycle.js'
 import { METRIC, createChannelLogger, createMetrics, type ChannelLogger, type ChannelMetrics } from './observability.js'
 import { createAliases, type Aliases } from './alias.js'
 import type { JobRegistry } from '@deepseek-ai/dsh-jobs'
-import { createJobsPort, createJobControlPort, type JobControlService } from './dsh/jobs.js'
+import { createJobsPort, createJobControlPort, onJobsLifecycle, type JobControlService } from './dsh/jobs.js'
+import {
+  hostStateForSessionEvent,
+  jobListChangedNotice,
+  settingsUpdatedFor,
+  type HostStateNotice,
+} from './protocol/host-state.js'
+import { READABLE_NAMESPACES } from './dsh/settings-face.js'
 import { createSessionBuffer } from './session-buffer.js'
 import { createSessionsAdapter } from './dsh/sessions.js'
 import { createWorkspacesPort } from './dsh/workspaces.js'
@@ -1078,6 +1085,17 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
          * 每连接装配的输入。**拨号路径与将来的监听面共用这一份** ——
          * 一条 socket 一份的是 `port`，不是这里的东西。
          */
+        /**
+         * 广播一条**宿主状态变更提示**（契约 §5.9）。
+         *
+         * 受众是**所有已完成鉴权的在服务连接**，不按订阅者过滤：这些状态是宿主级的
+         * （会话清单 / 设置 / 任务表），按订阅者筛等于在连接器里复述"哪个界面读哪个 key"，
+         * 而那是客户端的知识。跳过谁由 `exceptDeviceId` 说（发起那次写的那台设备）。
+         */
+        const notifyHostState = (notice: HostStateNotice): void => {
+          for (const scope of liveScopes) scope.sendHostStateChanged(notice.keys, notice.sid)
+        }
+
         const scopeDeps: ConnectionScopeDeps = {
           logger,
           metrics,
@@ -1126,6 +1144,48 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           if (sid === undefined) return
           for (const scope of liveScopes) scope.sendStatus(sid, running)
         }))
+
+        /**
+         * 标题生成 / 改名：宿主落的是一条 **`session/title` 会话事件**（契约 §5.5；
+         * `packages/session/session-title/README.md:79` 的原话是 "durable, log-only state"）。
+         *
+         * 为什么听 `session/event` 而不是看投影：`session/title` 就是这件事本身，
+         * 而投影的 `title` 键是它的**折叠结果** —— 没有一条"投影变了"的宿主事件，
+         * 去轮询投影就成了 P1 要消灭的那种做法。
+         *
+         * 别名未知时**只发 `session.list`**：手机还不知道这个会话，`session.projections`
+         * 没有可指定的目标；而列表行里的标题提示照样要刷新。
+         */
+        ctx.effect(() => ctx.on('session/event', (session, event) => {
+          const notice = hostStateForSessionEvent(event.type, aliases?.sidOf(session.id))
+          if (notice !== undefined) notifyHostState(notice)
+        }))
+
+        /**
+         * 任务表的增删 / 终态：宿主 `jobs.events` 的 `registered` / `settled` / `removed`
+         * （判据与理由在 `dsh/jobs.ts` 的 `onJobsLifecycle`）。
+         *
+         * 别名未知时不发：手机不认识这个会话，它的任务表也就无从重取。
+         */
+        /**
+         * 设置文档变了（宿主 `settings/document-updated`，`settings/src/index.ts:317,338`）。
+         *
+         * 过滤成**手机读得到的命名空间**（`READABLE_NAMESPACES`）：宿主每个 ns 的变化都会
+         * 发这条事件，包括手机没有入口的那些 —— 为它们重拉一次只会换回同一份数据。
+         */
+        ctx.effect(() => ctx.on('settings/document-updated', (ns: string) => {
+          const notice = settingsUpdatedFor(ns, READABLE_NAMESPACES)
+          if (notice !== undefined) notifyHostState(notice)
+        }))
+
+        const jobsRegistry = ctx.get('jobs') as JobRegistry | undefined
+        if (jobsRegistry !== undefined) {
+          ctx.effect(() => onJobsLifecycle(jobsRegistry, (dshSessionId) => {
+            const sid = aliases?.sidOf(dshSessionId)
+            if (sid === undefined) return
+            notifyHostState(jobListChangedNotice(sid))
+          }))
+        }
 
         // 配对端点（§12.1）。**连接器令牌不在这里读**：拨号时现读（`startRelayChannel`），
         // 出码登记也现读（`registerPairing` 的 `tokenSource`）—— 换令牌后两者都立刻生效，

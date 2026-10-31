@@ -113,6 +113,52 @@ abstract class Outbox {
 - UI 侧节流到 **每 16 ms 一帧**(把 50–100 ms 的批量再合并成屏幕帧);文本用 `Text.rich` + 段级缓存,不重建整棵子树。
 - 持久事件到达时**替换**累加器内容(以持久为准,避免"流式与最终文本不一致")。
 - **任务输出(`job` 帧)不走累加器**:按 `jobId` 各自维护一个尾部缓冲(客户端尾 128 KiB),`kind: 'output'` 追加、`kind: 'status'` 收口;**`gapBefore` 与流错误必须显式渲染**(不做静默拼接,见 `../plugin-and-jobs-notes.md` §B.4)。
+- **流式文本**独立成一条订阅,不走 `AppModel` 的通知路径:累加器的当前内容是
+  `ValueListenable<String?>`(`AppModel.liveTail`),**只有尾条目**听它;
+  纯流式的 delta(`events` 为空、只有 `liveText`)**不 `notifyListeners()`**。
+  尾条目的**存在性**(列表多不多一格)仍在流开始 / 结束时通知一次 —— 那不是"流式期间"。
+  判据:流式输出期间会话列表 widget 的重建次数 = 0(`app/test/live_tail_test.dart` 的计数桩)。
+
+### 2.3 宿主状态变更(`host` 帧)与快照登记表
+
+电脑侧改了模型 / 权限档 / 设置 / 标题 / 任务表时,会来一条 `host` 帧(契约 §5.9):
+**只是"可能过期了"的提示,不带数据**。客户端收到后按 key 重取对应快照。
+
+- **key 是方法名**:`session.list` / `settings.describe` / `session.projections` / `job.list`。
+  前两个是宿主级(帧头 `sid` 忽略),后两个是会话级(必须带 `sid`)。
+- **同 key 100–300ms 内合并成一次**(`data/host_state.dart` 的 `HostStateRefresher`,
+  默认 150ms,启动点注入)。**按 key 分桶**:不同 key 各算各的,不做全局节流 ——
+  一次"切模型"会同时发 `session.list` 与 `session.projections`,它们不该互相等。
+- **在飞期间再来同 key**:记一笔,等那次收尾再补一次(与 `_refreshProjectionsOnce` 同形)。
+  直接并发两次会让**两个应答乱序落地**(投影包没有版本号可比,后到的旧包会盖掉新包)。
+- **断连期间不排队**:连接断掉时清空所有待发桶 —— 重连由 `landAfterConnect()` 兜底
+  (它把整份快照重取一遍)。排队只会让重连瞬间打出一串必然过期的请求。
+- **未知 key 忽略并计数**(`AppModel.unknownHostStateKeys`):将来连接器多一个 key 时,
+  症状必须是"计数器涨了",而不是"通知到了但什么都没发生"。
+
+**登记表**(唯一拼写处 `app/lib/data/host_state.dart`,一条 `key → 重取函数 → 允许的触发点`):
+
+| key | 重取 | 触发点 |
+|---|---|---|
+| `session.list` | `AppModel.refreshSessions()` | `notification` / `connectLanding` / `appResume` |
+| `settings.describe` | `AppModel.refreshSettings()` | `notification` |
+| `session.projections` | `AppModel.refreshProjections(sid)` | `notification` / `openSession` / `connectLanding` / `appResume` |
+| `job.list` | `AppModel.refreshJobs(sid)` | `notification` / `openSession` |
+
+两处不对称都是刻意的,别"顺手补齐":
+
+- `settings.describe` 只有 `notification` 一列 —— 连上 / 回前台的设置面由
+  `refreshSessions()` **顺带拉**(它末尾就调 `refreshSettings()`),再挂一列等于每次
+  重连多发一次请求,而"闪断重连不发重复请求"是这一轮的验收判据之一;
+- `job.list` 不挂 `connectLanding` / `appResume` —— 它生在会话里,重连后打开会话
+  (`openSession`) 会重拉,而 `job` 帧本来就在维护行。
+
+自己发起的写**不在表里**:那些路径（切模型 / 新建 / 分支 / 改设置）由回执带回新值、
+当场刷新,不是"别处改了要跟上"的那一类。
+
+机械保证(`app/test/host_state_test.dart`):**每个 key 至少有一个触发点**,且登记表里
+每条的 `fetch` 真的调到对应方法(用记账替身断言线上方法名);新增 key 不配触发点就红。
+"重取函数"与"方法名"的对应关系也由它钉住 —— 登记表的 `key` 拼错一个字符同样会红。
 
 ---
 

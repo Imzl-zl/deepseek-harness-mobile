@@ -27,6 +27,12 @@ analyzer:
   exclude:
     - "**/*.g.dart"
     - "**/*.freezed.dart"
+    # `tools/dsh_icons.template.dart` 是**模板**而不是 Dart：它带 `@@ART@@` 之类的
+    # 占位符，由 `tools/extract-dsh-icons.mjs` 渲染成 `lib/theme/dsh_icons.dart`。
+    # 不排除它，本地 `flutter analyze`（整目录）就永远红，而 CI 跑的是
+    # `dart analyze --fatal-infos lib test integration_test`（不含 `tools/`）——
+    # 两条口径必须一致，否则"本地绿 / CI 红"取决于跑哪一条。
+    - "tools/*.template.dart"
     - "build/**"
 
 linter:

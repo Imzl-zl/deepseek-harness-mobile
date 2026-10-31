@@ -159,6 +159,18 @@ abstract interface class SyncClient {
   /// （`packages/api/session-controller/src/client/index.ts:118-119`）。
   Stream<SessionStatus> get sessionStatus;
 
+  /// **宿主状态变更提示**流（`host` 帧，契约 §5.9）。
+  ///
+  /// 载荷只有 key（方法名）：电脑侧改了模型 / 权限档 / 设置 / 标题 / 任务表时，
+  /// 它来说"这些快照可能过期了"。**不带值** —— 值永远由快照方法给，那是宿主的权威。
+  ///
+  /// 这一层只做**形状**（`keys` 是字符串数组、`sid` 可选），不认识哪个 key 是哪个方法：
+  /// 那张表在 `data/host_state.dart`（登记表），合并与丢弃也在那里。
+  ///
+  /// Note: 这条通道为什么存在、触发点为什么全在宿主事件上 —— 见
+  /// `.agents/notes/implemented/2026-10-31-host-state-sync.md`。
+  Stream<HostStateChanged> get hostStateChanges;
+
   /// 前后台切换。
   Future<void> setAppState(AppState state);
 
@@ -369,6 +381,24 @@ class SessionStatus {
 
   final String sid;
   final bool running;
+}
+
+/// 一条**宿主状态变更提示**（`host` 帧，契约 §5.9）。
+///
+/// 与 [SessionStatus] 同性质（瞬时事实、不进业务 `seq`、丢了不要紧），但内容更薄：
+/// **只有 key，没有值**。`sid` 是会话级 key 的定向依据（帧头字段，不是载荷里的数据），
+/// 宿主级 key 忽略它。
+class HostStateChanged {
+  const HostStateChanged({required this.keys, this.sid});
+
+  /// 载荷 `{keys: [...]}`：要重取哪些快照（方法名）。
+  ///
+  /// **这里不筛**"我们认不认识这个 key"：认识哪些是 `data/host_state.dart`
+  /// 的登记表与它的计数器的事，`core/` 只如实转达帧里说了什么。
+  final List<String> keys;
+
+  /// 帧头 `sid`；宿主级通知没有它。
+  final String? sid;
 }
 
 /// 一条会话事件：**原始载荷 + 已推导的身份**。
