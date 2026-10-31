@@ -520,6 +520,81 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
       ? Color.fromRGBO(255, 255, 255, alpha)
       : Color.fromRGBO(0, 0, 0, alpha);
 
+  /// 同一套色板，把**表面色**按 [surfaceAlpha] 降到半透明（壁纸要透出来）。
+  ///
+  /// ## 为什么是"派生一份"而不是给每个字段加 alpha
+  ///
+  /// 表面色有 10 个（底 / 侧栏 / 三层 / 菜单 / 气泡 / 输入卡 / 代码块两块），
+  /// 而 UI 有 162 处直读它们。让每个字段自带 alpha 就要么把字段改成私有
+  /// （`DshColorTokens._` 的命名参数因此得全部改名，45 个字段的构造、`copyWith`、
+  /// 两个具名构造一起动），要么在 162 个调用点各乘一次。
+  /// 派生一份只在这里动，**色值真值源仍然只有那两个 const 类**。
+  ///
+  /// Note: 为什么是派生而不是给每个字段加 alpha —— 见
+  /// `.agents/notes/implemented/2026-10-31-wallpaper-and-surface-alpha.md`。
+  ///
+  /// ## 只降"表面"，不降文字
+  ///
+  /// `labelPrimary` / `accentBlue` / `border*` 一律保持原样：
+  /// 把它们也降 alpha，壁纸上就再也读不出字（那正是 `model/appearance.dart`
+  /// 的 `kSurfaceAlphaMin` 下限与遮罩要挡的那件事）。
+  DshColorTokens withSurfaceAlpha(double surfaceAlpha) {
+    if (surfaceAlpha >= 1) return this;
+    return DshColorTokens._(
+      brightness: brightness,
+      bgBase: _surface(bgBase, surfaceAlpha),
+      sidebar: _surface(sidebar, surfaceAlpha),
+      layer1: _surface(layer1, surfaceAlpha),
+      layer2: _surface(layer2, surfaceAlpha),
+      layer3: _surface(layer3, surfaceAlpha),
+      menu: _surface(menu, surfaceAlpha),
+      bubble: _surface(bubble, surfaceAlpha),
+      composer: _surface(composer, surfaceAlpha),
+      borderL2: borderL2,
+      borderL3: borderL3,
+      borderL4: borderL4,
+      borderL1: borderL1,
+      codeBlock: _surface(codeBlock, surfaceAlpha),
+      codeBlockBanner: _surface(codeBlockBanner, surfaceAlpha),
+      labelPrimary: labelPrimary,
+      labelSecondary: labelSecondary,
+      labelTertiary: labelTertiary,
+      labelCaption: labelCaption,
+      onAccent: onAccent,
+      accentBlue: accentBlue,
+      businessBlue: businessBlue,
+      hover: hover,
+      active: active,
+      stateBusinessTertiary: stateBusinessTertiary,
+      labelPrimaryBluish: labelPrimaryBluish,
+      roleContext: roleContext,
+      roleContextBg: roleContextBg,
+      roleAssistant: roleAssistant,
+      roleTool: roleTool,
+      roleToolBg: roleToolBg,
+      error: error,
+      stateSuccess: stateSuccess,
+      stateError: stateError,
+      stateIdle: stateIdle,
+      stateWarn: stateWarn,
+      ctxSystem: ctxSystem,
+      ctxTools: ctxTools,
+      ctxMessages: ctxMessages,
+      codeDiffAdd: codeDiffAdd,
+      codeDiffDel: codeDiffDel,
+      fileDiffAddBg: fileDiffAddBg,
+      fileDiffAddMarker: fileDiffAddMarker,
+      fileDiffDelBg: fileDiffDelBg,
+      fileDiffDelMarker: fileDiffDelMarker,
+      fileDiffAddGutter: fileDiffAddGutter,
+      fileDiffDelGutter: fileDiffDelGutter,
+    );
+  }
+
+  /// 按比例降一个表面色的 alpha（原色可能本身就带 alpha，比如 mask）。
+  static Color _surface(Color base, double surfaceAlpha) =>
+      base.withValues(alpha: base.a * surfaceAlpha);
+
   /// 逐字段复制。
   ///
   /// 返回类型收到 [ThemeExtension] 的签名约束（`ThemeExtension<T> copyWith()`），

@@ -33,6 +33,7 @@ import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 import '../theme/dsh_type.dart';
+import 'dsh_glass.dart';
 
 /// 待发送附件（`.attach-rail` 里的一项）。
 class PendingAttachment {
@@ -265,7 +266,7 @@ class DshComposer extends StatelessWidget {
     final canSend = enabled && !sending && hasDraft;
     // **主键在运行中且没有草稿时是"停止"**（Web 的 `primaryStops`）。
     final stops = running && !hasDraft && onStop != null;
-    return Container(
+    final Widget band = Container(
       // **底色是页面底色，不是 `sidebar`**（2026-10-20 用户反馈
       // "会话页面和输入框背景这一块设计不和谐"）。
       //
@@ -568,6 +569,10 @@ class DshComposer extends StatelessWidget {
         ],
       ),
     );
+    // **毛玻璃只贴在输入栏这一条**：会话内容从它后面滚过去，模糊才有对象。
+    // 判据就一条 —— 表面色是不是半透明（有壁纸且开了通透度）；
+    // 不透明时模糊一块纯色是白花 GPU（见 `ui/dsh_glass.dart`）。
+    return c.bgBase.a < 1 ? DshGlass(child: band) : band;
   }
 }
 

@@ -14,7 +14,7 @@ import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/model/preferences.dart';
-import 'package:dsh_mobile/theme/dsh_colors.dart';
+import 'package:dsh_mobile/model/theme_mode.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/settings_page.dart';
 import 'package:flutter/material.dart';
@@ -49,8 +49,12 @@ Widget _host(AppModel app) => MaterialApp(
   theme: DshTheme.dark(),
   home: SettingsPage(
     app: app,
-    themeMode: DshThemeMode.system,
+    theme: ThemeController(),
     onThemeMode: (_) async {},
+    onSurfaceAlpha: (_) async {},
+    hasWallpaper: false,
+    onPickWallpaper: () async {},
+    onClearWallpaper: () async {},
   ),
 );
 

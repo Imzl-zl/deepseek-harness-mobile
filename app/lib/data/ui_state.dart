@@ -61,6 +61,13 @@ abstract final class UiKey {
       hostId.isEmpty ? hostPrefix : '$hostPrefix$hostId.';
 
   static const String themeMode = '${devicePrefix}theme_mode';
+
+  /// 通透度（整数百分数 55..100；没存过 = 不通透）。
+  ///
+  /// **壁纸自己不用键**：有没有壁纸由那张文件在不在决定
+  /// （`platform/wallpaper_store.dart`），多一个键就是两份真值。
+  static const String surfaceAlpha = '${devicePrefix}surface_alpha';
+
   static const String uiScaleIndex = '${devicePrefix}ui_scale_index';
   static const String transcriptView = '${devicePrefix}transcript_view';
   static const String performanceView = '${devicePrefix}performance_view';
@@ -118,6 +125,7 @@ class UiStateStore {
   String _sessionKey(String field, String sid) => '$_bucket$field.$sid';
 
   String? _themeMode;
+  int? _surfaceAlphaPercent;
   int? _uiScaleIndex;
   String? _transcriptView;
   String? _performanceView;
@@ -148,6 +156,7 @@ class UiStateStore {
   Future<void> open() async {
     final device = await _prefs.readAll(UiKey.devicePrefix);
     _themeMode = device[UiKey.themeMode];
+    _surfaceAlphaPercent = int.tryParse(device[UiKey.surfaceAlpha] ?? '');
     _uiScaleIndex = int.tryParse(device[UiKey.uiScaleIndex] ?? '');
     _transcriptView = device[UiKey.transcriptView];
     _performanceView = device[UiKey.performanceView];
@@ -161,6 +170,10 @@ class UiStateStore {
   // ---- device.*（换电脑保留）----
 
   String? get themeMode => _themeMode;
+
+  /// 通透度百分数（`null` = 没存过，调用方按"不通透"处理）。
+  int? get surfaceAlphaPercent => _surfaceAlphaPercent;
+
   int? get uiScaleIndex => _uiScaleIndex;
   String? get transcriptView => _transcriptView;
   String? get performanceView => _performanceView;
@@ -170,6 +183,13 @@ class UiStateStore {
     if (wire == _themeMode) return;
     _themeMode = wire;
     await _write(UiKey.themeMode, wire);
+  }
+
+  /// 写通透度（整数百分数）。调用方负责先夹取（`model/appearance.dart`）。
+  Future<void> setSurfaceAlphaPercent(int percent) async {
+    if (percent == _surfaceAlphaPercent) return;
+    _surfaceAlphaPercent = percent;
+    await _write(UiKey.surfaceAlpha, '$percent');
   }
 
   Future<void> setUiScaleIndex(int index) async {

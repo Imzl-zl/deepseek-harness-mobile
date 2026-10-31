@@ -26,6 +26,7 @@
 | `device.transcript_view` | `compact` / `standard` / `detailed` / `fully-open` |
 | `device.performance_view` | `compact` / `detailed` |
 | `device.collapse_timing` | `completion` / `next-input` |
+| `device.surface_alpha` | 整数百分数 `55`..`100`（缺省 = `100`，即"不通透"）；壁纸本身不进键，见 [appearance-wallpaper.md](appearance-wallpaper.md) |
 | `host.<hostId>.last_session` | sid |
 | `host.<hostId>.drawer_expansion` | `{"<workspaceId>": bool}` |
 | `host.<hostId>.session_view.<sid>` | 页签**注册项 id**（`chat` / `trajectory`），不是下标 |

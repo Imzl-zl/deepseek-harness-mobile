@@ -17,7 +17,7 @@ import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/model/permission.dart';
-import 'package:dsh_mobile/theme/dsh_colors.dart';
+import 'package:dsh_mobile/model/theme_mode.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/settings_page.dart';
 import 'package:flutter/material.dart';
@@ -228,8 +228,12 @@ void main() {
       theme: DshTheme.dark(),
       home: SettingsPage(
         app: app,
-        themeMode: DshThemeMode.system,
+        theme: ThemeController(),
         onThemeMode: (_) async {},
+        onSurfaceAlpha: (_) async {},
+        hasWallpaper: false,
+        onPickWallpaper: () async {},
+        onClearWallpaper: () async {},
       ),
     );
 
@@ -241,10 +245,30 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('新会话默认权限'), findsOneWidget);
+      // 权限档的显示名：目录没拿到 ⇒ 照**原值**显示（不翻译、不猜中文名）。
+      // **在这一行还看得见的时候断言**（下面要往下滚，滚走的行会被回收）。
+      expect(find.text('workspace-write'), findsOneWidget);
+      // 点不动：`ListTile.enabled == false`。
+      final tile = tester.widget<ListTile>(
+        find.ancestor(
+          of: find.text('新会话默认权限'),
+          matching: find.byType(ListTile),
+        ),
+      );
+      expect(tile.enabled, isFalse);
+
+      // **列表是懒建的**：2026-10-31 加了「背景 / 通透度」两行之后，
+      // "新任务默认模式"与"上传 Session Log"都落到首屏之外 ——
+      // 不滚过去它们根本不在树里（那是视口问题，不是行没了）。逐行滚、逐行断言。
+      await tester.scrollUntilVisible(
+        find.text('新任务默认模式'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(find.text('新任务默认模式'), findsOneWidget);
-      // **列表是懒建的**：加入「工作步骤收起时机」那一行之后，"上传 Session Log"
-      // 落到首屏之外，不滚过去它根本不在树里（`find.text` 会找不到 —— 那是视口
-      // 问题，不是行没了）。所以先滚到它，再断言。
+      // 名册没拿到 ⇒ 原样显示 id。
+      expect(find.text('standard'), findsOneWidget);
+
       await tester.scrollUntilVisible(
         find.text('上传 Session Log'),
         200,
@@ -262,19 +286,6 @@ void main() {
         ),
         findsOneWidget,
       );
-      // 权限档的显示名：目录没拿到 ⇒ 照**原值**显示（不翻译、不猜中文名）。
-      expect(find.text('workspace-write'), findsOneWidget);
-      // 名册没拿到 ⇒ 原样显示 id。
-      expect(find.text('standard'), findsOneWidget);
-
-      // 点不动：`ListTile.enabled == false`。
-      final tile = tester.widget<ListTile>(
-        find.ancestor(
-          of: find.text('新会话默认权限'),
-          matching: find.byType(ListTile),
-        ),
-      );
-      expect(tile.enabled, isFalse);
     });
 
     testWidgets('没读到那个 ns：不画开关，写"未读到"（不许画成"关"）', (tester) async {

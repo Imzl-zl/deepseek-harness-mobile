@@ -22,6 +22,7 @@ library;
 import 'package:flutter/foundation.dart';
 
 import '../theme/dsh_colors.dart';
+import 'appearance.dart';
 
 /// 主题模式在盘上的键（偏好表用）。
 ///
@@ -87,6 +88,24 @@ class ThemeController extends ChangeNotifier {
   /// "跟随系统"档没有自己的亮暗，用系统那个；浅/深两档用自己那个。
   static Brightness _brightnessOf(DshThemeMode mode, Brightness system) =>
       mode.brightness ?? system;
+
+  /// 通透度（壁纸能透出多少）。1 = 关闭。
+  ///
+  /// **放在这里而不是 [AppModel]**：它是"外观"这一维，而这一层已经是
+  /// 外观变化的通知源（`MaterialApp.theme` 就听它）。放 `AppModel` 会让
+  /// 整个 `MaterialApp` 随每一条会话事件重建 —— 那是流式输出时的每帧成本。
+  double _surfaceAlpha = kSurfaceAlphaOpaque;
+
+  /// 当下的通透度（1 = 关闭）。
+  double get surfaceAlpha => _surfaceAlpha;
+
+  /// 换通透度。同一值重复设置是空操作（避免无意义重画）。
+  void setSurfaceAlpha(double value) {
+    final next = clampSurfaceAlpha(value);
+    if (next == _surfaceAlpha) return;
+    _surfaceAlpha = next;
+    notifyListeners();
+  }
 
   /// 系统亮暗变了（只在"跟随系统"档有意义）。
   ///

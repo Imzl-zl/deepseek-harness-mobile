@@ -36,14 +36,19 @@ const List<String> dshMonoFallback = <String>[
 /// "深色画在浅色底上" —— 图标与文字勉强能看,层级全丢。
 abstract final class DshTheme {
   /// 深色（默认套）。
-  static ThemeData dark() => _build(Brightness.dark);
+  ///
+  /// [surfaceAlpha] 是"通透度"（1 = 不透明）。它**只影响表面色**，
+  /// 见 `DshColorTokens.withSurfaceAlpha`。
+  static ThemeData dark({double surfaceAlpha = 1}) =>
+      _build(Brightness.dark, surfaceAlpha: surfaceAlpha);
 
   /// 浅色（色值见 `DshLightColors`，出处是 `design-platform.css` 的 `:root`）。
-  static ThemeData light() => _build(Brightness.light);
+  static ThemeData light({double surfaceAlpha = 1}) =>
+      _build(Brightness.light, surfaceAlpha: surfaceAlpha);
 
   /// 按亮暗建主题。**色值不在这里写** —— 一律走两个色板类，
   /// 否则会出现第二套色值真值源。
-  static ThemeData _build(Brightness brightness) {
+  static ThemeData _build(Brightness brightness, {required double surfaceAlpha}) {
     final base = brightness == Brightness.dark
         ? ThemeData.dark(useMaterial3: true)
         : ThemeData.light(useMaterial3: true);
@@ -52,11 +57,18 @@ abstract final class DshTheme {
     final c = brightness == Brightness.dark
         ? const _DarkPalette()
         : const _LightPalette();
+    // **表面色走"派生一份"**：`scaffoldBackgroundColor` 必须是半透明的，
+    // 否则页面底色这一整层就把壁纸盖住了（壁纸再透也看不见）。
+    // 文字色仍由 `c` 给，不受通透度影响。
+    final tokens = (brightness == Brightness.dark
+            ? const DshColorTokens.dark()
+            : const DshColorTokens.light())
+        .withSurfaceAlpha(surfaceAlpha);
     // 只覆盖我们关心的那一组：其余（onSecondaryContainer 一类）
     // 由 `ThemeData.light/dark` 的 Material 3 默认给，我们不重造一套。
     final scheme = base.colorScheme.copyWith(
       brightness: brightness,
-      surface: c.bgBase,
+      surface: tokens.bgBase,
       onSurface: c.labelPrimary,
       primary: c.accentBlue,
       onPrimary: c.onAccent,
@@ -67,16 +79,15 @@ abstract final class DshTheme {
 
     return base.copyWith(
       colorScheme: scheme,
-      scaffoldBackgroundColor: c.bgBase,
-      canvasColor: c.bgBase,
+      scaffoldBackgroundColor: tokens.bgBase,
+      canvasColor: tokens.bgBase,
       dividerColor: c.border(0.06),
       // **色板扩展**：UI 经 `context.dshColors` 读当下那一套，
       // 亮暗变化时跟着 `ThemeData` 一起换，不需要自己发通知。
-      extensions: <ThemeExtension<Object?>>[
-        brightness == Brightness.dark
-            ? const DshColorTokens.dark()
-            : const DshColorTokens.light(),
-      ],
+      //
+      // 换壁纸时同一件事由**派生的一份**表达（`tokens` 已按通透度降过表面色）：
+      // 162 处 `c.layer1` 之类不用各改一次。
+      extensions: <ThemeExtension<Object?>>[tokens],
       textTheme: _textTheme(base.textTheme, c),
       splashColor: c.active,
       highlightColor: c.hover,

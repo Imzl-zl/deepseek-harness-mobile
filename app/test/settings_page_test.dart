@@ -19,7 +19,7 @@ import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
-import 'package:dsh_mobile/theme/dsh_colors.dart';
+import 'package:dsh_mobile/model/theme_mode.dart';
 import 'package:dsh_mobile/theme/dsh_icons.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/settings_page.dart';
@@ -111,10 +111,14 @@ Widget _host(AppModel app) => MaterialApp(
   theme: DshTheme.dark(),
   home: SettingsPage(
     app: app,
-    // 主题两参：测试里用默认（跟随系统）+ 空实现。
+    // 外观几参：默认控制器（跟随系统 / 不通透）+ 空实现。
     // 它们不影响这一组断言的其它行（端点 / 模型 / 偏好）。
-    themeMode: DshThemeMode.system,
+    theme: ThemeController(),
     onThemeMode: (_) async {},
+    onSurfaceAlpha: (_) async {},
+    hasWallpaper: false,
+    onPickWallpaper: () async {},
+    onClearWallpaper: () async {},
   ),
 );
 

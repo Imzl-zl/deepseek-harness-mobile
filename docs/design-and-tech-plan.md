@@ -208,8 +208,10 @@ dsh-mobile/
 圆角 / 排版 / 等宽栈在 `app/lib/theme/dsh_theme.dart`(`DshRadius` / `DshTheme` / `dshMonoFallback`)。
 两者按 §5.1–§5.6 的 token 落地,各有 `design-platform.css` 的来源注释。
 
-**改色板改 Dart 文件,不要改本文档** —— 按 `docs/AGENTS.md`「严禁人肉手抄生成物」,
-本节只留指针,不复制代码(副本必然与代码漂移)。
+**改色板改 Dart 文件,不要改本文档**:本节只留指针,不复制代码(副本必然与代码漂移)。
+
+**壁纸 / 通透度**(手机侧自有的外观扩展,DSH 没有这两项)见
+[appearance-wallpaper.md](subsystems/appearance-wallpaper.md)。
 
 ---
 

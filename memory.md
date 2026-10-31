@@ -3,8 +3,17 @@
 > 快照 + 最近窗口，**覆盖更新**，不做流水追加。历史在 git 与 `.agents/notes/`；
 > 稳定命令与坑点在 `tools.md`；现状事实在 `docs/`。
 
-## 现在（2026-10-30）
+## 现在（2026-10-31）
 
+- **外观：壁纸 + 通透度（10-31）**：设置页「通用」加两行（背景 / 通透度 55–100%）；
+  壁纸存 App 私有目录（`files/appearance/wallpaper.img`，路径靠 `getDatabasesPath()` 推，
+  不引 `path_provider`）；色板经 `DshColorTokens.withSurfaceAlpha` 派生一份、**只降 10 个表面色**；
+  遮罩随通透度反向增长（0→0.40，下限 0.55）；毛玻璃只贴输入栏一条。**这是 DSH 没有的
+  手机侧扩展**（它那点通透来自 macOS 窗口材质）。笔记
+  `implemented/2026-10-31-wallpaper-and-surface-alpha.md`，现状见
+  `docs/subsystems/appearance-wallpaper.md`。同批修掉**启动即崩**：`namespace` 改过而
+  Kotlin 源码包名没跟上（`ClassNotFoundException: ...MainActivity`），源码迁到
+  `io/github/imzlzl/dsh_mobile/`，笔记 `implemented/2026-10-31-android-namespace-activity-mismatch.md`。
 - **多机四步全部落地**（方案 `proposed/2026-10-29-one-phone-many-computers.md`）：
   ① 归属（`Endpoints.id = hostId|url` / `host.<hostId>.*` / `repo.info.hostName`，120ea3a）；
   ② 凭据分槽（`dsh.pairing.<hostId>.*` + `active`，cb2bd1d）；

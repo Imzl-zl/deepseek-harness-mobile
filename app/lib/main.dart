@@ -16,6 +16,9 @@
 library;
 
 import 'dart:async';
+import 'dart:convert' show base64Decode;
+import 'dart:typed_data' show Uint8List;
+import 'dart:ui' as ui show instantiateImageCodec;
 import 'dart:ui' show PlatformDispatcher;
 
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
@@ -37,6 +40,7 @@ import 'core/transport.dart';
 import 'data/app_model.dart';
 import 'data/connection_recovery.dart';
 import 'data/store.dart';
+import 'model/appearance.dart';
 import 'model/chat_item.dart';
 import 'model/session_dot.dart';
 import 'model/theme_mode.dart';
@@ -46,9 +50,11 @@ import 'platform/http_sender.dart';
 import 'platform/lan_address.dart';
 import 'platform/notify_factory.dart';
 import 'platform/pairing_store.dart';
+import 'platform/photo_picker.dart';
 import 'platform/sqflite_item_store.dart';
 import 'platform/ticketed_transport.dart';
 import 'platform/transport_factory.dart';
+import 'platform/wallpaper_store.dart';
 import 'platform/websocket_transport.dart';
 import 'theme/dsh_colors.dart';
 import 'theme/dsh_theme.dart';
@@ -58,6 +64,7 @@ import 'ui/connection_actions_sheet.dart';
 import 'ui/dsh_brand.dart';
 import 'ui/dsh_shimmer.dart';
 import 'ui/dsh_toast.dart';
+import 'ui/dsh_wallpaper.dart';
 import 'ui/files_page.dart';
 import 'ui/host_picker_sheet.dart';
 import 'ui/pairing_page.dart';
@@ -150,6 +157,19 @@ class _DshMobileAppState extends State<DshMobileApp>
     systemBrightness: PlatformDispatcher.instance.platformBrightness,
   );
 
+  /// 当前的壁纸图（`null` = 没设）。
+  ///
+  /// **真值是磁盘上那张图**（`platform/wallpaper_store.dart`）：这里只是它的一份
+  /// 已加载副本。放 State 而不是 `AppModel`：它属于"外观"，与连接/会话无关，
+  /// 变更频率也是人手级。
+  ///
+  /// 存 `ImageProvider` 而不是 `File`：`ui/` 不许 import `dart:io`，
+  /// "图从哪来"是装配层的事。
+  ImageProvider? _wallpaper;
+
+  /// 壁纸文件的读写口（App 私有目录）。
+  static const WallpaperStore _wallpapers = WallpaperStore();
+
   /// 是否停在配对页（用户主动进来的，不是"没配对就挡在这里"）。
   bool _pairing = false;
 
@@ -224,20 +244,24 @@ class _DshMobileAppState extends State<DshMobileApp>
     // 而 `_app` 是 `_boot()` 建的。两条 `unawaited` 并行跑的话，
     // 主题恢复会读到 null（`_readPreference` 在 `_app == null` 时返回 null）
     // —— 于是用户选过的主题每次重启都被打回"跟随系统"（2026-10-19 真机复现）。
-    unawaited(_boot().then((_) => _restoreTheme()));
+    unawaited(_boot().then((_) => _restoreAppearance()));
   }
 
-  /// 读回主题偏好并落到控制器上。
+  /// 读回**外观**偏好（主题三档 / 通透度 / 壁纸）并落到界面层。
   ///
-  /// **失败不影响启动**：主题是装饰，拿不到就按默认走。这一点与
+  /// **失败不影响启动**：这三件都是装饰，拿不到就按默认走。这一点与
   /// "连接/配对必须如实报错"不同 —— 后者拿不到用户就用不了 App。
-  Future<void> _restoreTheme() async {
+  ///
+  /// 2026-10-31 从 `_restoreTheme` 扩成外观三件：壁纸与通透度必须与主题
+  /// 在同一处恢复，否则首帧会是"主题对了、背景还没"的半成品。
+  Future<void> _restoreAppearance() async {
     String? stored;
     try {
       stored = await _readPreference(kThemeModeKey);
     } catch (_) {
-      // 偏好读不到（库还没开 / 盘坏了）：按默认走，不阻塞启动。
-      return;
+      // 偏好读不到（库还没开 / 盘坏了）：主题按默认走 —— 但**不 return**，
+      // 壁纸与通透度还要恢复（它们不依赖这次读）。
+      stored = null;
     }
     if (!mounted) return;
     final restored = ThemeController.restore(
@@ -245,6 +269,125 @@ class _DshMobileAppState extends State<DshMobileApp>
       systemBrightness: PlatformDispatcher.instance.platformBrightness,
     );
     _theme.setMode(restored.mode);
+    _theme.setSurfaceAlpha(
+      surfaceAlphaFromWire(_app?.uiState?.surfaceAlphaPercent),
+    );
+    final wallpaper = await _wallpapers.load();
+    if (!mounted) return;
+    setState(() => _wallpaper = wallpaper == null ? null : MemoryImage(wallpaper));
+  }
+
+  /// 换通透度并落盘。
+  ///
+  /// 与 [setThemeMode] 同一条：**落盘失败不撤回内存里的选择** ——
+  /// 用户已经看到界面变了，撤回来只会更错；下次启动会读回旧值。
+  Future<void> setSurfaceAlpha(double value) async {
+    final alpha = clampSurfaceAlpha(value);
+    final before = _theme.surfaceAlpha;
+    _theme.setSurfaceAlpha(alpha);
+    if (alpha == before) return;
+    try {
+      await _app?.uiState?.setSurfaceAlphaPercent(surfaceAlphaToWire(alpha));
+    } catch (_) {
+      // 同上：不撤回。
+    }
+  }
+
+  /// 从相册挑一张图做壁纸（另存一份到 App 私有目录，**不引用相册路径**）。
+  ///
+  /// Note: 壁纸与通透度整套的取舍见
+  /// `.agents/notes/implemented/2026-10-31-wallpaper-and-surface-alpha.md`。
+  /// 这里多做两件事的理由:① 落盘前真解码一次（坏图不写）；② 设完顺手把通透度
+  /// 调到 `kSurfaceAlphaOnWallpaper`（表面不透明时壁纸整张被盖住 = 设了没反应）。
+  Future<void> _pickWallpaper() async {
+    final result = await pickPhoto(source: PhotoSource.gallery);
+    if (!mounted) return;
+    switch (result) {
+      case PhotoPicked():
+        break;
+      case PhotoPickCancelled():
+        return;
+      case PhotoPickUnavailable(:final reason):
+        DshToast.show(
+          _navContext,
+          '这个平台没有接选图通道：$reason',
+          kind: DshToastKind.error,
+        );
+        return;
+      case PhotoPickUnsupportedType(:final mediaType):
+        DshToast.show(
+          _navContext,
+          '这张图的格式不支持（$mediaType）',
+          kind: DshToastKind.error,
+        );
+        return;
+      case PhotoPickTooLarge(:final byteCount):
+        DshToast.show(
+          _navContext,
+          '这张图太大了（$byteCount 字节），换一张小点的',
+          kind: DshToastKind.error,
+        );
+        return;
+      case PhotoPickPermissionDenied(:final reason):
+        DshToast.show(
+          _navContext,
+          '没有相册权限：$reason',
+          kind: DshToastKind.error,
+        );
+        return;
+      case PhotoPickFailed(:final reason):
+        DshToast.show(_navContext, '选图失败：$reason', kind: DshToastKind.error);
+        return;
+    }
+    // 其余分支都在上面 `return` 了，sealed 类的穷尽性让 `result` 在这里已被收窄。
+    final picked = result;
+    final Uint8List bytes;
+    try {
+      bytes = base64Decode(picked.data);
+    } on FormatException catch (error) {
+      // 原生说拿到了、但给的字节不是合法 base64 —— 如实报，不写一张坏图下去。
+      DshToast.show(
+        _navContext,
+        '这张图读不出来：$error',
+        kind: DshToastKind.error,
+      );
+      return;
+    }
+    // **落盘前先真解码一次**：坏图不写进壁纸位置，否则壁纸层只能一直退到底色，
+    // 而用户以为"设了"。这里失败是可解释的错，报出来。
+    if (!mounted) return;
+    try {
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      frame.image.dispose();
+      codec.dispose();
+    } catch (error) {
+      if (!mounted) return;
+      DshToast.show(
+        _navContext,
+        '这张图解码失败：$error',
+        kind: DshToastKind.error,
+      );
+      return;
+    }
+    await _wallpapers.save(bytes);
+    if (!mounted) return;
+    // `MemoryImage` 的缓存键是"这堆字节的散列"，所以换了图一定换得出新图。
+    setState(() => _wallpaper = MemoryImage(bytes));
+    // **设了壁纸却是"不通透"= 什么都看不见**（表面不透明把图全盖住）。
+    // 顺手给一个默认通透度，这一步是让"设完就能看到效果"成立，不是猜值。
+    if (_theme.surfaceAlpha >= kSurfaceAlphaOpaque) {
+      await setSurfaceAlpha(kSurfaceAlphaOnWallpaper);
+    }
+    if (!mounted) return;
+    DshToast.show(_navContext, '背景已设置');
+  }
+
+  /// 去掉壁纸（文件删掉 = 没有壁纸，没有第二个键要改）。
+  Future<void> _clearWallpaper() async {
+    await _wallpapers.clear();
+    if (!mounted) return;
+    setState(() => _wallpaper = null);
   }
 
   /// 读一个字符串偏好（`meta` 表）。
@@ -546,8 +689,10 @@ class _DshMobileAppState extends State<DshMobileApp>
         // **两个 theme 都必须挂色板扩展**（`DshColorTokens`）：UI 经
         // `context.dshColors` 读当下那一套，而它挂在 ThemeData 上 ——
         // 只给一个 theme 挂扩展的话，另一个亮暗下会读到 null 退深色。
-        theme: DshTheme.light(),
-        darkTheme: DshTheme.dark(),
+        // **通透度一起给**：表面色降到半透明壁纸才透得出来；两套都给同一个值，
+        // 否则切换亮暗时背景会忽然变实。
+        theme: DshTheme.light(surfaceAlpha: _theme.surfaceAlpha),
+        darkTheme: DshTheme.dark(surfaceAlpha: _theme.surfaceAlpha),
         themeMode: switch (_theme.mode) {
           DshThemeMode.system => ThemeMode.system,
           DshThemeMode.light => ThemeMode.light,
@@ -594,8 +739,16 @@ class _DshMobileAppState extends State<DshMobileApp>
                   ? Brightness.light
                   : Brightness.dark,
             ),
-            child: _uiScaled(
-              DshShimmerHost(child: child ?? const SizedBox.shrink()),
+            // **壁纸垫在最底下**（好看的顺序：壁纸 → 遮罩 → 全部界面）。
+            // 放在 `builder` 里而不是每个页面里：所有路由与 sheet 都在它上面，
+            // 换壁纸只需要这一处。
+            child: DshWallpaperLayer(
+              wallpaper: _wallpaper,
+              surfaceAlpha: _theme.surfaceAlpha,
+              dark: dark,
+              child: _uiScaled(
+                DshShimmerHost(child: child ?? const SizedBox.shrink()),
+              ),
             ),
           );
         },
@@ -827,8 +980,15 @@ class _DshMobileAppState extends State<DshMobileApp>
     _openFromDrawer(
       (_) => SettingsPage(
         app: app,
-        themeMode: _theme.mode,
+        // **传控制器而不是当下的值**：设置页的两行（主题 / 通透度）改完要立刻
+        // 显示新值，而"推过去的那份快照"在下次 push 之前不会更新（这个页面
+        // 属于 Navigator 的栈，父层重建不会重建它）。
+        theme: _theme,
         onThemeMode: setThemeMode,
+        onSurfaceAlpha: setSurfaceAlpha,
+        hasWallpaper: _wallpaper != null,
+        onPickWallpaper: _pickWallpaper,
+        onClearWallpaper: _clearWallpaper,
       ),
     );
   }
