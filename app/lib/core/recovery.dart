@@ -235,6 +235,20 @@ class DeviceSession {
     _received[sid] = seq - 1;
   }
 
+  /// 冷启动：把本地库里的水位装回来（条目已经由 app 层读回界面）。
+  ///
+  /// 只装"我手里连续到哪"这两个数字（`since` / `received`）。**不装条目文本**：
+  /// 条目属于界面（`data/session_store.dart`），这一层只回答"从哪接着要"。
+  ///
+  /// 判据（避免"声称有到 N、界面空白"）：调用方只有在**真读到条目**时才调它，
+  /// 并且 `since` 取那些条目自己的 `seq` 上界 —— 不是 `cursors` 表里的计数器
+  /// （那个数在"事件因空洞没入库、却照样落了盘"时可能超前于内容）。
+  void restore(String sid, {required int since}) {
+    _since[sid] = since;
+    _received[sid] = since;
+    _freshRuns.remove(sid);
+  }
+
   /// 标记这个会话**即将开一条新流**（`subscribe` 时调）。
   ///
   /// 下一条 `ev` 因此返回 [ReceiveVerdict.baseline]，而不是被当成"空洞"计入。

@@ -28,6 +28,13 @@
   只能给最近窗口），就用现成的 `session.page(beforeSeq: 第一条的 seq)` 往回翻到水位，
   把中间那段补上；**补不到就什么都不做**（不清内容，下次再试）。水位由"连续收到"封顶，
   不越过没到的内容。判据与做法见 `remote-channel.md` §5.4 规则 5。
+  **冷启动也接上了（11-01）**：打开会话先 `itemsOf(sid)` 读回条目 → 界面立刻有内容 →
+  `since` 取**条目自己的 `seq` 上界**（不取 `cursors.last_seq`：计数器在"事件因空洞
+  没入库却照样落盘"时会超前）；一条条目都没有就不认水位。本地条目**按电脑身份分区**
+  （`meta` 的 `local_items.host` vs `pcSignPubHex`，换电脑清库）。真机：冷启动
+  **219 965 → 71 739 B（−67.4%）**，其中 `ev` **147 039 → 0**（两轮一致）；
+  剩下的 70 KB 全是进程首次拉起时的快照正文（摘要表是每进程的）。笔记
+  `implemented/2026-11-01-cold-start-restore-from-local-store.md`。
   笔记 `implemented/2026-11-01-never-pull-unchanged.md` 与
   `implemented/2026-11-01-resume-from-persisted-watermark.md`。
 - **会话列表分页（11-01）**：`session.list` 请求 `{limit?, offset?}`、应答加 `hasMore`
@@ -151,12 +158,14 @@
 
 0. **数据面收敛（"没变就别再搬"三批已全部落地）**：触发源按来源拆、行只带手机读的五个
    投影键、列表分页（50 行 + `hasMore`）、**重连带落盘水位（不再整窗重放）**、
-   **十个只读快照带 `digest`**、出站账补齐到恒等式。connector **816** / app **1640**。
+   **十个只读快照带 `digest`**、出站账补齐到恒等式。connector **816** / app **1649**。
    留给以后的：① **`permission.catalog` 与 `repo.info` 还在 `connectLanding`** —— 它们只在
    权限 sheet / 文件页被读，按这条不变量该改成"首见时无条件拉"（摘要已把代价压到几十字节，
    所以这条的优先级下降）；② `session.projections` 仍是 20+ 键一整包（每会话只拉一次，
    判据同上）；③ 权限预设目录那条真机验收（要装 `dsh-auto-review` 并重启一次宿主，本机没有）；
-   ④ **本地库回读未接线**（`itemsOf` / `allCursors` 零调用点）：冷启动第一次打开会话仍是整窗。
+   ④ **摘要表是每进程的**：冷启动第一次落地仍要拿十份快照正文（约 70 KB）。
+   要再省就得把摘要持久化（键是 `(方法, 参数)` + 那一包的摘要），属于"缓存自证"那一档的
+   下一步 —— 先看这条值不值得（它只影响冷启动一次）。
 1. **多机第 4 步的真机复验**：只剩两条要**两台设备**才能做的（第二台被
    `device/busy` 拒并说出占用者、切回上一台的真实链路）—— 单测已覆盖，
    真机可用"第二个 DSH_HOME + 另一份连接器身份"补；命中不了的按未验证如实说。
@@ -174,10 +183,10 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 690 项（25 条规则自检 + 159 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | 694 项（25 条规则自检 + 160 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1640 项（约 1 分钟） |
+| `cd app && flutter test` | 1649 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **816** 项 |
 | `cd relay && pnpm typecheck && node --test` | 类型 + **132** 条 |

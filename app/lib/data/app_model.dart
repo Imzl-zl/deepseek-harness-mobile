@@ -30,6 +30,8 @@ import '../core/endpoint.dart';
 import '../core/errors.dart';
 import '../core/job.dart';
 import '../core/notify.dart';
+import '../core/recovery.dart' show RecoveryOutcome;
+import '../core/session_restore.dart';
 import '../core/snapshot_call.dart';
 import '../core/snapshot_digest.dart';
 import '../core/sync_client.dart';
@@ -107,6 +109,16 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     required this.client,
     PreferenceStore? prefs,
 
+    /// 冷启动时**读回本地库的条目**（`items` 表，按 `seq` 升序）。
+    ///
+    /// 不传 = 不读（测试与"没有本地库"的装配）。传了之后打开会话的顺序是：
+    /// 读回条目 → 界面立刻有内容 → 水位取这些条目的 `seq` 上界 → 订阅带它。
+    ///
+    /// **判据**（`core/session_restore.dart` 的文件头）：水位取**内容的上界**
+    /// 而不是 `cursors` 表里的计数器 —— 后者在"事件因空洞没入库、却照样落了盘"时
+    /// 可能超前于条目，拿它当 `since` 就是声称"我有到 N"而界面没有。
+    Future<List<StoredItem>> Function(String sid)? readLocalItems,
+
     /// `host` 帧的**同 key 合并窗口**（契约 §5.9 给的是 100–300 ms）。
     ///
     /// 只在测试里改：产品里永远是 [kHostStateMergeWindow]。做成参数是因为
@@ -138,6 +150,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     this.onHostName,
     NotifyPort? notify,
   }) : _prefs = prefs,
+       _readLocalItems = readLocalItems,
        _notify = notify,
        _initialEndpoints = List<Endpoint>.of(endpoints),
        _initialRememberedEndpointId = rememberedEndpointId,
@@ -147,6 +160,10 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
        _hostIdOf = hostIdOf,
        _allowPlaintextPublic = allowPlaintextPublic,
        _hostStateMergeWindow = hostStateMergeWindow;
+
+  /// 冷启动读回本地条目的缝（不传 = 不读本地库）。
+  final Future<List<StoredItem>> Function(String sid)? _readLocalItems;
+
 
   /// 用户是否已确认"自部署中转走公网明文"（`net.allow_plaintext_public`）。
   bool get allowPlaintextPublic => _allowPlaintextPublic;
@@ -3631,6 +3648,53 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     }
   }
 
+  /// 冷启动：把本地库里的条目读回界面，并把水位装回连接层。
+  ///
+  /// ## 三条判据（任何一条不成立就退回"从零开始"，而不是猜）
+  ///
+  /// 1. **只在这个会话内存里还没有内容时做**：已经有内容的会话（同一进程里切回来）
+  ///    不需要读盘，读了反而会把更新的内存态盖成旧的；
+  /// 2. **水位取条目的 `seq` 上界**，不取 `cursors` 表的计数器 —— 计数器在
+  ///    "事件因空洞没入库、却照样落了盘"时可能超前于内容；
+  /// 3. **一条条目都没有 ⇒ 什么都不做**（不调 `restoreSession`）：
+  ///    "声称我有到 N、界面却是空的"是唯一不可接受的方向。
+  Future<void> _restoreLocalHistory(String sid) async {
+    final read = _readLocalItems;
+    if (read == null || _disposed) return;
+    final store = _storeOf(sid);
+    if (store.items.isNotEmpty) return;
+    try {
+      final stored = await read(sid);
+      if (_disposed || stored.isEmpty || store.items.isNotEmpty) return;
+      final items = <ChatItem>[];
+      var highest = 0;
+      for (final row in stored) {
+        final event = row.toEvent();
+        if (event.seq > highest) highest = event.seq;
+        try {
+          final projection = projectEvent(
+            type: event.type,
+            seq: event.seq,
+            data: event.data,
+            time: event.time,
+            previous: null,
+            turn: _turnOfEvent(event, sid),
+          );
+          items.addAll(projection.items);
+        } on StateError catch (error) {
+          _projectionFailures[sid] = '${event.type}(seq=${event.seq})：$error';
+        }
+      }
+      if (items.isEmpty) return;
+      store.replaceAll(items);
+      client.restoreSession(sid, since: highest);
+      if (!_disposed) notifyListeners();
+    } catch (error) {
+      // 读盘失败不是错误：退回"从零开始"，电脑侧会把窗口给回来。
+      _recordError('读取本地会话记录失败', error);
+    }
+  }
+
   /// 打开一个会话：订阅它，并把条目喂给 store。
   ///
   /// **不传水位**：`since` 由连接层按"手里到哪了"自己带（契约 §5.7）。
@@ -3657,6 +3721,11 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     }
     // 页签：**按会话懒读一次**（不在 `build` 里读盘），读到的 id 进内存。
     unawaited(_loadView(sid));
+
+    // **冷启动先把本地库的内容放回界面**（判据见 `core/session_restore.dart`）：
+    // 读回条目 → 界面立刻有内容 → 水位取条目的 `seq` 上界 → 订阅带它。
+    // 读不到就不调 [restoreSession]（保持水位 0 = 电脑侧给整窗，与今天一致）。
+    await _restoreLocalHistory(sid);
 
     try {
       await client.subscribe(sid);
@@ -4024,7 +4093,14 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
           _interactions.add(signal);
         }
       }
-      store.upsertAll(items);
+      // **`outcome == snapshot` 是"整份换掉"**（契约 §5.4 规则 4：快照收口时整体替换）。
+      // 只有一种情况会走到这里：本地库那段历史与电脑侧对不上（会话日志被改写 /
+      // 截断），连接层补不回来 ⇒ 以电脑侧为准，把本地那份换掉（不拼、不合并）。
+      if (delta.outcome == RecoveryOutcome.snapshot) {
+        store.replaceAll(items);
+      } else {
+        store.upsertAll(items);
+      }
       // **持久形态到了就把流式槽位清掉**（2026-10-31 真机：回复渲染两次）。
       //
       // 原来只赋值不清空，于是持久 `assistant/message` 落库后 UI 会**同时**画

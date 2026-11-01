@@ -34,6 +34,7 @@ import 'job.dart';
 import 'keepalive.dart';
 import 'outbox.dart';
 import 'recovery.dart';
+import 'session_restore.dart';
 import 'snapshot_call.dart';
 import 'snapshot_digest.dart';
 import 'sync_client.dart';
@@ -51,7 +52,8 @@ SyncClient createSyncClient(SyncClientDeps deps) => _SyncClient(deps);
 /// 所以"是不是终态"由**理由**决定、由这个码收窄范围：别的 4003（坏帧 / 握手超时）照旧退避。
 const int kHandshakeRefusalCloseCode = 4003;
 
-class _SyncClient implements SyncClient, SyncClientProbe, SnapshotCaller {
+class _SyncClient
+    implements SyncClient, SyncClientProbe, SnapshotCaller, SessionRestorer {
   _SyncClient(this._deps)
     : _machine = ConnectionMachine(),
       _backoff = _deps.backoff ?? Backoff(),
@@ -801,6 +803,15 @@ class _SyncClient implements SyncClient, SyncClientProbe, SnapshotCaller {
     // "去重 / 水位 / 空洞计数"三件事，都与文本无关。
     final verdict = _deps.session.receive(sid, event.itemId, '', seq);
     if (verdict == ReceiveVerdict.buffered) return;
+
+    // 收口窗口开着：窗口这批先攒着（补洞有结论再一次性交付）。
+    final recovering = _recovering[sid];
+    if (recovering != null) {
+      recovering.pending.add(event);
+      _sendPersisted(sid, event, seq);
+      return;
+    }
+
     if (verdict == ReceiveVerdict.baseline || verdict == ReceiveVerdict.hole) {
       // **接管这条流**：它是"我手里到哪了"之外的新起点（重连后电脑侧只能给最近窗口，
       // 或者这条流中间被跳过了）。基线只挪"连续右端"，水位仍由 `commit` 在落盘且连续
@@ -808,9 +819,14 @@ class _SyncClient implements SyncClient, SyncClientProbe, SnapshotCaller {
       final previous = _sinceOf(sid);
       _deps.session.adoptBaseline(sid, seq);
       _deps.session.receive(sid, event.itemId, '', seq);
-      // 中间那段（`previous + 1 … seq - 1`）能补就补：**用的是现成的 `session.page`**，
-      // 不新增协议、不新增帧（判据见 `docs/subsystems/remote-channel.md` §5.4 规则 5）。
-      _maybeBackfill(sid: sid, firstSeq: seq, target: previous);
+      if (previous > 0 && seq > previous + 1) {
+        // 接不上：中间那段（`previous + 1 … seq - 1`）能补就补 —— **用的是现成的
+        // `session.page`**，不新增协议、不新增帧（判据见
+        // `docs/subsystems/remote-channel.md` §5.4 规则 5）。
+        _beginRecovery(sid: sid, first: event, target: previous);
+        _sendPersisted(sid, event, seq);
+        return;
+      }
     }
     _emit(
       sid,
@@ -831,6 +847,13 @@ class _SyncClient implements SyncClient, SyncClientProbe, SnapshotCaller {
   /// 正在补洞的会话（同一会话只跑一轮）。
   final Set<String> _backfilling = <String>{};
 
+  /// "接不上"的收口窗口：**先攒着窗口那批事件**，补洞有了结论再一次性交给上层。
+  ///
+  /// 为什么攒：补洞要几个往返，先发出去的话界面会先闪一段缝再补起来；
+  /// 而如果补不动（本地那段与电脑侧对不上），那批里要换成"整份替换"——
+  /// 已经发出去的事件就既撤不回、也没法重新整体交付。
+  final Map<String, _RecoveryWindow> _recovering = <String, _RecoveryWindow>{};
+
   /// 重连后第一条事件远在水位之上 ⇒ 用 `session.page` 把中间那段往回翻出来。
   ///
   /// 为什么不需要 anchor、也不需要新协议：**电脑侧只保证"它发出来的这段连续"**，
@@ -841,55 +864,92 @@ class _SyncClient implements SyncClient, SyncClientProbe, SnapshotCaller {
   /// 补不到（历史本来就不到那儿 / 分页失败）**什么也不做**：窗口那份照常显示，
   /// 下一次重连还会再试。**绝不清已有内容** —— 清掉是不可逆的用户可见动作，
   /// 而这里的缺口在电脑侧本来就不存在。
-  void _maybeBackfill({
+  /// 接不上时开一个收口窗口，并在后台把缺口补出来。
+  void _beginRecovery({
     required String sid,
-    required int firstSeq,
+    required SessionEvent first,
     required int target,
   }) {
-    if (target <= 0 || firstSeq <= target + 1) return;
-    if (!_backfilling.add(sid)) return;
-    unawaited(
-      _backfill(sid: sid, from: firstSeq, target: target)
-          .whenComplete(() => _backfilling.remove(sid)),
-    );
+    if (_backfilling.contains(sid) || _recovering.containsKey(sid)) return;
+    final window = _RecoveryWindow(target: target)..pending.add(first);
+    _recovering[sid] = window;
+    _backfilling.add(sid);
+    unawaited(_completeRecovery(sid: sid, window: window, from: first.seq));
   }
 
-  Future<void> _backfill({
+  /// 补洞有了结论，把这个窗口一次性交给上层（**不先闪一段缝**）。
+  Future<void> _completeRecovery({
+    required String sid,
+    required _RecoveryWindow window,
+    required int from,
+  }) async {
+    final outcome = await _backfill(sid: sid, from: from, target: window.target);
+    _backfilling.remove(sid);
+    _recovering.remove(sid);
+    if (_closed) return;
+
+    final pending = List<SessionEvent>.of(window.pending)
+      ..sort((a, b) => a.seq.compareTo(b.seq));
+    final transient = _deps.session.transientOf(sid);
+
+    if (outcome == _BackfillOutcome.unsupported) {
+      // 历史本来就不到那儿：本地那段属于**另一段历史**（会话日志被改写 / 截断）。
+      // 以电脑侧为准 —— 整份替换，不拼、不合并（契约 §5.4 规则 4 的同一句话）。
+      _emit(
+        sid,
+        SessionDelta(
+          sid: sid,
+          events: pending,
+          transient: transient,
+          outcome: RecoveryOutcome.snapshot,
+        ),
+      );
+      return;
+    }
+
+    // 补到了：缺口 + 窗口那批按 seq 升序一次交付（正常 upsert）。
+    // 没补到（分页失败 / 连接断了）也走这支 —— **不能**因为一次失败就把本地内容换掉。
+    final filled = outcome == _BackfillOutcome.filled
+        ? window.filled
+        : const <SessionEvent>[];
+    final events = <SessionEvent>[...filled, ...pending]
+      ..sort((a, b) => a.seq.compareTo(b.seq));
+    _emit(sid, SessionDelta(sid: sid, events: events, transient: transient));
+  }
+
+  /// 往回翻到 [target] 为止。三态：补到了 / 历史不够 / 没补成（不知道）。
+  Future<_BackfillOutcome> _backfill({
     required String sid,
     required int from,
     required int target,
   }) async {
+    final window = _recovering[sid];
     var before = from;
-    final filled = <SessionEvent>[];
     try {
       while (before > target + 1) {
         final reply = await page(sid: sid, beforeSeq: before);
-        if (reply.failure != null) return;
+        if (reply.failure != null) return _BackfillOutcome.unknown;
         final events = reply.events
             .where((event) => event.seq > target && event.seq < before)
             .toList();
-        if (events.isEmpty) break;
-        filled.insertAll(0, events);
+        if (events.isEmpty) return _BackfillOutcome.unknown;
+        window?.filled.insertAll(0, events);
         final earliest = events.first.seq;
         // 没有往前推进就不是"一页"，是同一个答案 —— 宁可停，也不要死循环。
-        if (earliest >= before) break;
+        if (earliest >= before) return _BackfillOutcome.unknown;
         before = earliest;
-        if (!reply.hasMore) break;
+        if (!reply.hasMore) {
+          // `hasMore == false` = 电脑侧**明说没有更早的了**：这段历史确实不在。
+          return before > target + 1
+              ? _BackfillOutcome.unsupported
+              : _BackfillOutcome.filled;
+        }
       }
     } catch (_) {
-      // 补洞失败不打扰用户：窗口那份已经在显示，下一次重连还会再试。
-      return;
+      // 分页失败（断连、超时、形状不对）**不是**"历史不够"—— 别拿它当证据去替换内容。
+      return _BackfillOutcome.unknown;
     }
-    if (filled.isEmpty) return;
-    filled.sort((a, b) => a.seq.compareTo(b.seq));
-    _emit(
-      sid,
-      SessionDelta(
-        sid: sid,
-        events: filled,
-        transient: _deps.session.transientOf(sid),
-      ),
-    );
+    return _BackfillOutcome.filled;
   }
 
   /// 落盘的串行链。
@@ -1245,6 +1305,10 @@ class _SyncClient implements SyncClient, SyncClientProbe, SnapshotCaller {
     _pendingSnapshotDigests[key] = await snapshotDigestOf(reply.plaintext);
     return SnapshotReply<Object?>.body(value, key: key);
   }
+
+  @override
+  void restoreSessionFromStore(String sid, {required int since}) =>
+      _deps.session.restore(sid, since: since);
 
   @override
   void commitSnapshotDigest(String key) {
@@ -1868,6 +1932,23 @@ String encodeRequestEnvelope(
   // 会让每个 handler 多一个要忽略的键）。
   'digest': ?digest,
 });
+
+/// 一次"接不上"的收口窗口（见 `_RecoveryWindow` 的说明）。
+class _RecoveryWindow {
+  _RecoveryWindow({required this.target});
+
+  /// 本地水位的右端（补到它为止）。
+  final int target;
+
+  /// 窗口那批事件（先攒着，有结论再一次性交付）。
+  final List<SessionEvent> pending = <SessionEvent>[];
+
+  /// 往回翻到的缺口（升序，交付前再排一次）。
+  final List<SessionEvent> filled = <SessionEvent>[];
+}
+
+/// 补洞的三态：补到了 / 历史不够（明说没有更早的）/ 没补成（失败，不算证据）。
+enum _BackfillOutcome { filled, unsupported, unknown }
 
 /// 一次 `res` 的内部形状：解码后的 `result` + **那一包的明文**。
 ///

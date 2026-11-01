@@ -1492,6 +1492,8 @@ Future<AppModel> _assembleWithoutCredentials([
     // 偏好走同一个库的 `meta` 表（`MetaPreferences` 包一层窄缝）——
     // 发送模式这类"穿过协议"的偏好必须落盘，重启后还是用户选的那个。
     prefs: MetaPreferences(store),
+    // 冷启动读回本地条目：没配对时也能看上次看到的内容（判据同 `_assemble`）。
+    readLocalItems: (sid) => store.itemsOf(sid),
     onConnectionTerminated: onConnectionTerminated,
     client: createSyncClient(
       SyncClientDeps(
@@ -1539,6 +1541,22 @@ class _UnpairedTransport implements ChannelTransport {
 
   @override
   Future<void> close() async {}
+}
+
+/// 本地条目只属于一台电脑：换了电脑就把库清掉（`meta` 里记着上一次是谁的）。
+///
+/// 为什么必须有这道闸（读回本地内容之后才显形）：`sid` 是电脑侧分配的**不透明别名**，
+/// 两台电脑上的别名空间互不相干，撞名完全可能；把 A 的历史喂给 B，
+/// 界面上就是"别处的消息"。同一处置在偏好那边已有先例（换电脑清 `host.*`）。
+///
+/// 判据是**电脑身份**（`pcSignPubHex`），不是地址 —— 同一台电脑换 IP 不该清库。
+Future<void> _scopeLocalItemsToHost(ItemStore store, String hostId) async {
+  const key = 'local_items.host';
+  final previous = await store.readMeta(key);
+  if (previous == hostId) return;
+  // 上一次是谁的：不是这一台（或从没记过但库里已经有东西）就清。
+  if (previous != null) await store.clear();
+  await store.writeMeta(key, hostId);
 }
 
 /// **装配**：把 `core/` 的零件接到一起，产出可用的 `AppModel`。
@@ -1675,10 +1693,17 @@ Future<AppModel> _assemble(
   final allowPlaintextPublic =
       (await MetaPreferences(store).read('net.allow_plaintext_public')) == '1';
 
+  // **本地条目属于一台电脑**：`sid` 是电脑侧分配的不透明别名，换一台电脑可能撞名 ——
+  // 拿那一台的历史去喂这一台，界面上就是"别处的消息"。与 `host.*` 偏好同一条处置：
+  // 换电脑就清掉（`ItemStore.clear()` 连 outbox 一起清，那本来就属于上一台）。
+  await _scopeLocalItemsToHost(store, credentials.pcSignPubHex);
+
   final app = AppModel(
     // 偏好走同一个库的 `meta` 表（见 `_assembleWithoutCredentials` 同一处）。
     prefs: MetaPreferences(store),
     client: client,
+    // 冷启动读回本地条目（判据见 `core/session_restore.dart`）。
+    readLocalItems: (sid) => store.itemsOf(sid),
     // 通知与后台保活：端口在 `core/`、实现按端选（`platform/notify_factory.dart`）。
     notify: createNotifyPort(),
     // 端点表交给 `AppModel` 当所有者：界面要读、设置页要改，而上面的

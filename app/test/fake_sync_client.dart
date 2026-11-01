@@ -32,12 +32,23 @@ import 'dart:async';
 
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/job.dart';
+import 'package:dsh_mobile/core/session_restore.dart';
 import 'package:dsh_mobile/core/snapshot_call.dart';
 import 'package:dsh_mobile/core/snapshot_digest.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 
 /// `SyncClient` 的测试基类。
-abstract class FakeSyncClient implements SyncClient, SnapshotCaller {
+abstract class FakeSyncClient
+    implements SyncClient, SnapshotCaller, SessionRestorer {
+  /// 冷启动恢复被调过几次、带的水位是多少（`sid → since`）。
+  ///
+  /// 它就是"app 层真的把本地库的水位交给了连接层"这条判据的落点。
+  final Map<String, int> restoredSince = <String, int>{};
+
+  @override
+  void restoreSessionFromStore(String sid, {required int since}) {
+    restoredSince[sid] = since;
+  }
   // ---- 只读快照的摘要（契约 §5.7）----
   //
   // 基类实现的是**真的那套**（键 = 方法+参数、应用成功才记）：替身只要实现 `call`，
