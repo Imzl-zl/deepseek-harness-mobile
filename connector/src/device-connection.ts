@@ -9,7 +9,7 @@ import { createBoxCodec } from './protocol/box.js'
 import { type deriveIdentity } from './protocol/crypto.js'
 import { PAIRING_KEY_INFO, pairingHandshakeContext, type Pairing } from './pairing.js'
 import type { PairingEndpoint } from './pairing-endpoint.js'
-import { METRIC } from './observability.js'
+import { METRIC, createOutboundByteMeter } from './observability.js'
 
 export interface DeviceConnectionOptions {
   identity: ReturnType<typeof deriveIdentity>
@@ -93,7 +93,11 @@ export function createDeviceConnection(options: DeviceConnectionOptions): Connec
     },
     // 出站字节数（纯观测）：中转按流量计费，"一次标题变更到底推了多少字节"
     // 靠它回答，而不是靠帧数猜（`observability.ts` 的 `bytesOutbound` 注释）。
-    onBytesOut: (bytes) => deps.metrics.increment(METRIC.bytesOutbound, bytes),
+    //
+    // **按帧类型拆开记在同一个点上**：`out_frame.<t>` 与 `outbound` 出自同一次
+    // `emit`，所以 `Σ out_frame.* === outbound` 是可以核对的恒等式 ——
+    // 记在各发送点上时，`credit` / `ping` / 握手帧必然漏掉（合计占一次回前台的 30%）。
+    onBytesOut: createOutboundByteMeter(deps.metrics),
   })
   scope = createConnectionScope(connection, deps,
     candidate === undefined ? undefined : { candidate, endpoint: options.enrollment })

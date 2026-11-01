@@ -503,7 +503,7 @@ void main() {
     final gotEvent = await _waitFor(tester, () async => firstEvent.isCompleted);
     expect(gotEvent, isTrue, reason: '订阅之后必须有 ev 进来（否则手机上永远看不到内容）');
     expect(
-      probe.declaredSessions.containsKey(sid),
+      probe.declaredSessions.contains(sid),
       isTrue,
       reason: '订阅集要记下来，重连后由 sync.hello 整份重新声明',
     );
@@ -679,7 +679,7 @@ void main() {
     await app.openSession(targetSid);
     final subscribed = await _waitFor(
       tester,
-      () async => probe.declaredSessions.containsKey(targetSid),
+      () async => probe.declaredSessions.contains(targetSid),
     );
     expect(subscribed, isTrue, reason: '接管要求"前台 + 订阅了这个会话"，所以先订阅');
 

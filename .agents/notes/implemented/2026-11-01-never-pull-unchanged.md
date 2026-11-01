@@ -1,6 +1,6 @@
 # Agent Note: 「没变就别再搬」怎么实现 —— 先归因，再给快照一个能自证的摘要
 
-Status: proposed（2026-11-01；本文只到设计，未实施）
+Status: implemented（2026-11-01）
 
 ## Problem
 
@@ -109,11 +109,57 @@ connector.bytes.outbound  +230 864 B      frames.inbound +183
    **继续搁置**，判据：摘要上线后若"内容变了"的那类重取仍是常态大头，再谈。
 5. **什么都不做** —— 每次重连 230 KB、每次改标题 47 KB，按中转的按字节额度算不是小数。
 
-## Testing（实施时）
+## 落地（2026-11-01）
+
+实施时按上面的形状做的，两处与设计稿不同，都在下面说清了代价：
+
+1. **"未计量的 30%"归因是错的（实测推翻）**。补记账时顺手把三个账本对齐了一次：
+   `Σ connector.bytes.out_frame.* === connector.bytes.outbound` 现在是**恒等式**
+   （同一次 `emit` 记两笔，`tests/out-frame-bytes.test.ts` 直接断言差额为 0）。
+   真机一次"什么都没变"的回前台（`d61cf622`，230 920 B）：
+
+   | 帧类型 | 线上字节 | 占比 |
+   |---|---|---|
+   | `ev`（会话事件重放） | **147 037** | 63.7% |
+   | `res`（快照扇出） | 76 638 | 33.2% |
+   | `credit`（流控回执，183 帧 × ~37 B） | 6 859 | 3.0% |
+   | `hello-ack`（握手） | 386 | 0.2% |
+
+   也就是说：**规划稿里"status / job / host / presence / pong 约 69.6 KB"并不存在**
+   （实测为 0），那 30% 几乎全是**封箱后的 base64 放大 + 帧头**（口径不同造成的）：
+   快照 56 536 B 明文 → 76 638 B 线上，重放 104 683 B 明文 → 147 037 B 线上。
+   推论：**省正文省的是线上字节，比例与明文一致**（摘要把 56.5 KB 明文压到 ~0.7 KB）。
+
+2. **摘要做在信封层，白名单从 `HOST_STATE_KEYS` 派生**。请求带 `digest`（不在 `params` 里：
+   它说的是"这一包字节我手里有没有"，与方法的业务参数无关）。白名单 = 那九个 key +
+   `endpoint.describe`，唯一拼写处 `connector/src/protocol/snapshot-digest.ts`。
+   手机侧不抄这份名单：给白名单外的方法带摘要是合法的，只是不比对（多发一次正文）。
+
+3. **手机侧多了一张"待认领"表**。`callSnapshot` 拿到正文时先记 pending，应用成功才
+   `commitSnapshot`。两张表而不是一张，理由就是"记早了 = 声称我手里有它"。
+
+4. **一处口径改动**：`session.projections` 的目录三态在**带摘要的刷新**里不再先置
+   `loading`。"没变"是常态，先闪一下"正在加载"再退回原样是纯噪声；
+   首次读（手里没有那一包）仍然置 `loading`（`test/subagent_panel_test.dart` 同步改了断言）。
+
+## Testing
 
 - 连接器：同参数同内容两次请求 ⇒ 第二次 `notModified`（且 `bytes.outbound` 只涨 ~20 B）；
   内容改一个字段 ⇒ 第三次返回正文；**分页参数不同 ⇒ 摘要不互相命中**；
   不带 `digest` ⇒ 与今天逐字相同（老客户端）。
 - 手机：`notModified` 不触发 `notifyListeners`（没有新数据）、不清空已有行、
-  不落 `lastError`；换连接后第一次请求不带 `digest`。
+  不落 `lastError`；**摘要跨重连继续带**（设计稿曾写"换连接后不带"，
+  实施时按"服务端每次重算 ⇒ 答错只可能多发"取舍，留着更省）。
 - 真机：同一条探针量"什么都没变的重连"，快照那 56.5 KB 应降到 ~1 KB 量级。
+
+实际落地（数字都是实测 / 用例计数，不是估计）：
+
+- connector：`tests/snapshot-digest.test.ts` 9 条 + `tests/out-frame-bytes.test.ts` 2 条
+  + `tests/session-subscriptions.test.ts` 2 条；`pnpm test` **803 → 816**，`tsc` 干净。
+- app：`test/snapshot_digest_test.dart` 3 条 + `test/sync_client_test.dart` 新增 2 条
+  （**真实现 + 假传输**：第二次请求的 `digest` 真的等于上一包明文的 sha256；
+  没 commit 时不带摘要）；`flutter test` **1634 → 1640**，
+  `flutter analyze` / `dart analyze --fatal-infos` 干净，`verify-platform-boundary`
+  **679 → 690**（新增 3 个 Dart 文件），`verify-rpc-single-caller` PASS。
+- 跨端口径向量：`{"ok":true,"result":{"a":1}}` → `C-IwaBxQXATEjck-6Rpr16aLFxI7Ntsn94ThxOhHbV4`
+  （两侧用例各钉一次；Dart 的 `base64Url.encode` 会补 `=`，必须去掉）。

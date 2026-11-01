@@ -32,6 +32,7 @@
 library;
 
 import '../../core/job.dart' show SubagentRow, parseSubagentCatalog;
+import '../../core/snapshot_digest.dart';
 import '../../core/sync_client.dart';
 import '../../model/agent_preset.dart' show parseAgentPresetValue;
 import '../../model/chat_item.dart' show ModelRef;
@@ -50,6 +51,7 @@ import '../../model/turn_outline.dart' show TurnOutlineEntry;
 import '../fields.dart';
 import '../reading.dart';
 import '../values.dart';
+import 'snapshot.dart';
 
 /// 方法名只在这里出现一次（`connector/src/handlers.ts:840`）。
 const String _kProjections = 'session.projections';
@@ -126,13 +128,11 @@ final class SessionProjections {
 /// 发请求 + 解码，**`session.projections` 的唯一调用口**。
 ///
 /// 读不出来 ⇒ `null` + 计数一次（调用方把那些只读面显示空态）。
-Future<SessionProjections?> loadSessionProjections(
+/// 带内容摘要：键含 `sid`，所以不同会话的投影包是两个包（互不命中）。
+Future<SnapshotReply<SessionProjections?>> loadSessionProjections(
   SyncClient client, {
   required String sid,
-}) async {
-  final result = await client.call<Object?>(_kProjections, {'sid': sid});
-  return valueOrReport(readSessionProjections(result), _kProjections);
-}
+}) => loadSnapshot(client, _kProjections, {'sid': sid}, readSessionProjections);
 
 /// 纯解码：应答是**扁平 `values`**（不是信封）。
 ///

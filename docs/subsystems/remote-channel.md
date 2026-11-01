@@ -389,7 +389,7 @@ type SyncSnapshot = {
 | 方法 | 方向 | 幂等键 | 说明 |
 |---|---|---|---|
 | `session.list` | 手机→电脑 | — | **分页的**会话清单(别名 + 最近活动 + 状态)。请求 `{limit?, offset?}`(都是可选非负整数;不传 `limit` = 整表,老客户端行为不变),应答 `{sessions, hasMore}`:`hasMore` 按宿主那份可见清单算(`offset + limit < 总数`),不是 `limit` 的倍数关系;取的是**宿主顺序**(按活动排序)里的第 `offset` 段,所以翻页窗口会随新会话移动,手机按 `sid` 去重。**切在分配别名之前** —— 没发出去的行不在别名表里留条目(否则分页只省了字节、没省 CPU)。手机侧一页 = `kSessionRowPageSize`(50),首屏只要一页,翻过页后刷新问的是"已加载窗口"(不把用户翻过的页丢掉)。取自 `sessionController.list`(`packages/api/session-controller/src/index.ts:251-254`,已按活动排序);**标题在行的投影提示里** —— `projections.values.title`,手机按它取,空标题显示「未命名」。**行只带手机读得到的那五个投影键**(`title` / `modelSelection` / `subagentTiming` / `tokenUsage` / `subagentCatalog`,白名单唯一拼写处 `connector/src/protocol/session-row.ts`):宿主给的是每行**整块** summary(本机 351 行、1 480 778 B,其中 **94.5%** 是投影块,`turnOutline` 645 KB + `trajectory` 353 KB 两项就 1 MB),而手机列表一个键都不读它们 —— 这两项归 `session.projections` 的完整快照(打开会话时那一包)。裁剪后一次标题变更出站 **1 943 515 → 252 000 B**(**-87%**)。白名单与手机侧行解析器由 `connector/tests/session-row-payload.test.ts` 逐字比对(多一个白搬字节、少一个界面缺数据);**`cwd` 只给工作区分组 / 文件面板 / 用量聚合,不做标题兜底** —— 拿目录名当会话名,手机上会是一串工作区目录名冒充标题。**子会话行多一个 `parentSessionId`**(宿主的 `SessionSummary.parentSessionId`,已过别名表换成 `sid`);**根会话不给这个键** —— 不给 = 根。手机用它算子会话头部的父级与 `←` 返回;老连接器没有它时手机退到"目录扫描 / 导航记忆" |
-| `session.subscribe` | 手机→电脑 | — | 开始推送该会话的 `ev` / `live`;带 `since` 即同时完成恢复。**恢复之后会按原 seq 重投该会话上仍在途的 ask 事件**(`approval/asked` / `tool/call`,来自连接器内存里的在途 claim 表)——与 DSH gateway 把 `pendingRemoteEvents` 重投给新 client 同形(`api/gateway/src/index.ts:571`)。重投的是**会话事件本身**,不新增帧类型;App 按 `itemId` upsert,重发天然幂等 |
+| `session.subscribe` | 手机→电脑 | — | 开始推送该会话的 `ev` / `live`;带 `since` 即同时完成恢复。**`since` = 手机最近一条落盘事件的 `seq`**(它自己带,不由调用方传),电脑侧据此决定补增量还是整窗重放:**只有增量缓冲能证明"从 `since+1` 开始连续"时才跳段,覆盖不到就退回整窗**(进程重启过、缓冲已按水位裁过、这段从没记过) —— 方向永远是"多发一次",不"少发一段"。**判据:同一条连接上带有效 `since`、且空闲期间没有新事件时,应答里没有任何 `ev`**(2026-11-01 真机曾退化成一整窗重放,见 `.agents/notes/implemented/2026-11-01-resume-from-persisted-watermark.md`)。**恢复之后会按原 seq 重投该会话上仍在途的 ask 事件**(`approval/asked` / `tool/call`,来自连接器内存里的在途 claim 表)——与 DSH gateway 把 `pendingRemoteEvents` 重投给新 client 同形(`api/gateway/src/index.ts:571`)。重投的是**会话事件本身**,不新增帧类型;App 按 `itemId` upsert,重发天然幂等 |
 | `session.unsubscribe` | 手机→电脑 | — | 停止推送;桥接可释放该会话缓冲(仍需等 persisted) |
 | `session.page` | 手机→电脑 | — | 历史翻页(按消息对齐,用 DSH `page()`) |
 | `session.prompt` | 手机→电脑 | `requestId` | **参数是 `{ sid, content, mode? }`**,不是 `{ sid, text }`。`content` 必须是**非空数组**,每项带 `type`(照 DSH 的 `PromptContentPart`:文本是 `{type:'text', text}`)。**形状以电脑侧为准** —— 它与 DSH 的 `sessionController.prompt` 同构,手机侧没有第二条真值。`mode: 'queue' \| 'steer'` |
@@ -442,6 +442,37 @@ type SyncSnapshot = {
 **没有 `push.configure`**（刻意不声明）。推送本期不做——正确性靠"回前台补课"(I6),
 主链路不依赖它。等三端能力包(§10)落地后**再**把它加进方法表;今天声明一个
 调不通的方法,只会让手机侧多一个必然失败的按钮。
+
+#### 5.7.1 只读快照的**可选内容摘要**（`digest` / `notModified`）
+
+十份快照(`session.list` / `session.projections` / `settings.describe` / `job.list` /
+`session.modelCatalog` / `permission.catalog` / `agentPresets.list` / `workspace.list` /
+`repo.info` / `endpoint.describe`)的请求信封可以多带一个**可选**字段 `digest`:
+
+```text
+req  { method, params, digest?: string }        // base64url(sha256(那一包明文的字节))
+res  { ok: true, result: { notModified: true } } // 比对命中：约 20 B，替代正文
+res  { ok: true, result: <原来的正文> }          // 没带 / 对不上 / 认不了这个方法
+```
+
+- **摘要算在"将要发出的那份字节"上**(`resFrame()` 产出的 `box`),客户端算在它**收到的**
+  同一串字节上。所以"内容变了"必然改变摘要,而两侧不需要任何规范化约定;
+- **服务端每次都重算**:客户端摘要丢了、过期了、换了一条连接,最坏结果是"多发一次正文",
+  **绝不会"服务端说没变、客户端却是旧值"**。方向只有一条:多发,不漏发;
+- **只对上面这十个方法生效**(白名单唯一出处 `connector/src/protocol/snapshot-digest.ts`,
+  前九个直接派生自 §5.9 的 key 表)。其余方法带 `digest` 合法但不比对;
+  写方法的应答带的是这次执行的结果,不是"某一版数据";
+- **形状不对回 `protocol/bad-frame`**(43 个 base64url 字符、无填充):静默忽略的症状是
+  "摘要上线了,一个字节也没省",没有任何一处会报;
+- **`ok:false` 的应答不参与比对**:错误不是某一版数据,拿摘要去省它会让客户端把失败记成"没变";
+- **不带 `digest` 的请求行为逐字不变**(老客户端不需要任何改动)。
+
+手机侧:摘要表按 **`(方法, 参数)`** 分开存(分页后同一方法不同 `limit` / `offset` 是
+**两个包**,共用一个摘要就是错配),并且**只有成功应用之后才记**——记早了等于声称
+"我手里有它",而解码失败时界面并没有那份内容。`notModified` 时手机**什么都不做**:
+不清数据、不报错、不 `notifyListeners`。跨重连可以继续带(服务端重算,安全)。
+四层分工与"缓存的三档判据"见 `app-channel-client.md` §2.3;取舍与被否方案见
+`.agents/notes/implemented/2026-11-01-never-pull-unchanged.md`。
 
 事件(电脑→手机):`ev`(会话事件)、`live`(流式)、`job`(任务输出,订阅式,§5.3)、`status`(会话运行态,
 宿主 `api-session/status` 的原样转发:载荷 `{running}`,与 `presence` 同性质的**瞬时事实**,**不排队、

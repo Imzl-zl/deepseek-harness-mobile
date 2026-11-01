@@ -41,6 +41,8 @@
 library;
 
 import '../../core/job.dart' show parseSubagentCatalogValue;
+import '../../core/snapshot_call.dart';
+import '../../core/snapshot_digest.dart';
 import '../../core/sync_client.dart';
 import '../../model/chat_item.dart';
 import '../../model/model_catalog.dart'
@@ -50,6 +52,7 @@ import '../../model/subagent.dart' show parseSubagentTiming;
 import '../fields.dart';
 import '../reading.dart';
 import '../values.dart';
+import 'snapshot.dart';
 
 /// 消费方一次拿齐"三态内核 + 字段内核 + 会话面解码"（与 `wire/events.dart` 同一条：
 /// 全 app 只有一套失败语义）。
@@ -86,12 +89,15 @@ typedef SessionListPage = ({List<SessionSummary> sessions, bool hasMore});
 /// **`limit` / `offset` 都是可选的**：老连接器不认这两个键（它们落在 `params` 里被
 /// 忽略），照旧回整表 + 不带 `hasMore` —— 这里按 `false` 读，于是"没有再下一页"
 /// 正好是事实，不需要版本判断。
-Future<SessionListPage> loadSessionList(
+/// 带内容摘要：键是 `(session.list, limit, offset)` —— **分页后同方法不同参数是
+/// 两个包**，共用一个摘要会让第二页被当成"与第一页相同"（那是最糟的一种错配：
+/// 界面上什么都不会发生，用户以为没有更多）。
+Future<SnapshotReply<SessionListPage>> loadSessionList(
   SyncClient client, {
   int? limit,
   int? offset,
 }) async {
-  final result = await client.call<Object?>(_kList, <String, Object?>{
+  final params = <String, Object?>{
     // 显式 `if` 而不是 null-aware element：后者的 key 取的是**值的字符串形式**
     // 而不是标识符（`createSession` 上面那条注释记的是同一次实测），
     // `dart analyze` 会反过来建议改过去，别听。
@@ -99,10 +105,18 @@ Future<SessionListPage> loadSessionList(
     if (limit != null) 'limit': limit,
     // `offset = 0` 不写：让首屏的请求体与分页之前逐字相同（抓包对比时少一处噪声）。
     if (offset != null && offset > 0) 'offset': offset,
-  });
+  };
+  final reply = await client.callSnapshot(_kList, params);
+  if (reply.notModified) {
+    return SnapshotReply<SessionListPage>.notModified(key: reply.key);
+  }
+  final result = reply.value;
   final sessions = valueOrReport(readSessionList(result), _kList) ?? const [];
   final map = result is Map ? result : const {};
-  return (sessions: sessions, hasMore: map['hasMore'] == true);
+  return SnapshotReply<SessionListPage>.body(
+    (sessions: sessions, hasMore: map['hasMore'] == true),
+    key: reply.key,
+  );
 }
 
 /// 建会话，回新的 `sid`（读不出来 ⇒ `null` + 计数；调用方据此**大声失败**）。
@@ -211,10 +225,8 @@ Future<void> sendPrompt(
 ///
 /// `available: false` 是**电脑侧的明说**（"目录拿不到"），不是形状错 ⇒ `WireOk(null)`；
 /// 界面显示"拿不到目录"而不是摆一个空列表（`handlers.ts:778-780` 的注释）。
-Future<ModelCatalog?> loadModelCatalog(SyncClient client) async {
-  final result = await client.call<Object?>(_kModelCatalog, const {});
-  return valueOrReport<ModelCatalog?>(readModelCatalog(result), _kModelCatalog);
-}
+Future<SnapshotReply<ModelCatalog?>> loadModelCatalog(SyncClient client) =>
+    loadSnapshot(client, _kModelCatalog, const {}, readModelCatalog);
 
 // ---------------------------------------------------------------------------
 // 纯解码（给回放用例与"已经拿到应答"的调用方：不收 client，用例里不启传输）

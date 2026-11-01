@@ -18,6 +18,8 @@
 /// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
+import '../../core/snapshot_call.dart';
+import '../../core/snapshot_digest.dart';
 import '../../core/sync_client.dart';
 import '../../model/agent_preset.dart'
     show AgentPresetRoster, parseAgentPresetRoster;
@@ -25,13 +27,23 @@ import '../../model/agent_preset.dart'
 /// 方法名只在这里出现一次（`connector/src/handlers.ts:1152`）。
 const String _kList = 'agentPresets.list';
 
-/// 读一次预设目录。
+/// 读一次预设目录（带内容摘要：目录只在部署侧改预设时变）。
 ///
 /// 应答**从不抛**：`parseAgentPresetRoster` 对"不是对象 / `available` 不是 true /
 /// `roster` 不是对象"一律回 `available: false`，界面据此说"拿不到目录"。
 /// 所以这里不需要 `WireReading` —— 加一层只会把"电脑侧没给"改写成"我们读不懂"，
 /// 而那两件事在界面上是同一句话。
-Future<AgentPresetRoster> loadAgentPresets(SyncClient client) async {
-  final result = await client.call<Object?>(_kList, const {});
-  return parseAgentPresetRoster(result);
+Future<SnapshotReply<AgentPresetRoster>> loadAgentPresets(
+  SyncClient client,
+) async {
+  final reply = await client.callSnapshot(_kList, const {});
+  if (reply.notModified) {
+    return SnapshotReply<AgentPresetRoster>.notModified(key: reply.key);
+  }
+  // 解析**从不失败**（见上），所以"没变"与"拿到一份空目录"是两个可区分的结局，
+  // 而后者照样要记摘要（它是一份被应用过的结论）。
+  return SnapshotReply<AgentPresetRoster>.body(
+    parseAgentPresetRoster(reply.value),
+    key: reply.key,
+  );
 }

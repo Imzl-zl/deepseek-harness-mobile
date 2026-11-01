@@ -20,6 +20,7 @@
 /// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
+import '../../core/snapshot_digest.dart';
 import '../../core/sync_client.dart';
 import '../../model/command.dart' show CommandOutcome;
 import '../../model/permission.dart'
@@ -27,6 +28,7 @@ import '../../model/permission.dart'
 import '../fields.dart';
 import '../reading.dart';
 import 'command.dart' show readCommandOutcome;
+import 'snapshot.dart';
 
 /// 消费方一次拿齐"三态内核 + 字段内核 + 权限面解码"。
 export '../fields.dart';
@@ -36,13 +38,9 @@ const String _kCatalog = 'permission.catalog';
 const String _kSwitch = 'permission.switch';
 
 /// 读预设目录（`null` = 电脑侧明说"没有目录"）。
-Future<PermissionCatalog?> loadPermissionCatalog(SyncClient client) async {
-  final result = await client.call<Object?>(_kCatalog, const {});
-  return valueOrReport<PermissionCatalog?>(
-    readPermissionCatalog(result),
-    _kCatalog,
-  );
-}
+Future<SnapshotReply<PermissionCatalog?>> loadPermissionCatalog(
+  SyncClient client,
+) => loadSnapshot(client, _kCatalog, const {}, readPermissionCatalog);
 
 /// 切权限档：回电脑侧的结论（`matched` / `execution`）。
 ///

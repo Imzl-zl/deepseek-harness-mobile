@@ -49,7 +49,7 @@ class _RecordingClient extends FakeSyncClient {
       throw UnimplementedError('本用例只该调 setAppState');
 
   @override
-  Future<SessionAnchor> subscribe(String sid, {required int since}) async =>
+  Future<SessionAnchor> subscribe(String sid) async =>
       throw UnimplementedError('本用例只该调 setAppState');
 
   @override

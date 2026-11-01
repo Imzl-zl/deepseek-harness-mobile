@@ -16,6 +16,7 @@
 ///   （与原来的 catch 语义逐字相同）。
 library;
 
+import '../core/snapshot_call.dart';
 import '../core/sync_client.dart';
 import '../model/agent_preset.dart';
 import '../model/model_catalog.dart';
@@ -52,7 +53,11 @@ class HostCatalogs {
   /// `wire/rpc/session.dart` 的 `readModelCatalog`；这里只知道"目录可能拿不到"。
   Future<void> refreshModels() async {
     try {
-      final catalog = await wire.loadModelCatalog(client);
+      final reply = await wire.loadModelCatalog(client);
+      // 没变 ⇒ 目录原样（`onChange` 都不用调）。
+      if (reply.notModified) return;
+      final catalog = reply.value;
+      client.commitSnapshot(reply.key);
       if (catalog == _modelCatalog) return;
       _modelCatalog = catalog;
       onChange();
@@ -66,8 +71,11 @@ class HostCatalogs {
   /// 拉一次权限预设目录。`available: false` 是电脑侧的明说（⇒ null）。
   Future<void> refreshPermissions() async {
     try {
-      final catalog = await wire.loadPermissionCatalog(client);
-      setPermissionCatalog(catalog);
+      final reply = await wire.loadPermissionCatalog(client);
+      // 没变 ⇒ 目录原样。
+      if (reply.notModified) return;
+      client.commitSnapshot(reply.key);
+      setPermissionCatalog(reply.value);
     } catch (_) {
       // 同 `refreshModels`：只留声，不升级。
     }
@@ -76,7 +84,12 @@ class HostCatalogs {
   /// 拉一次 Agent 预设目录（目录本体的解析仍在 `model/agent_preset.dart`）。
   Future<void> refreshPresets() async {
     try {
-      final roster = await wire.loadAgentPresets(client);
+      final reply = await wire.loadAgentPresets(client);
+      // 没变 ⇒ 目录原样。
+      if (reply.notModified) return;
+      final roster = reply.value;
+      client.commitSnapshot(reply.key);
+      if (roster == null) return;
       _agentPresetRoster = roster;
       onChange();
     } catch (_) {

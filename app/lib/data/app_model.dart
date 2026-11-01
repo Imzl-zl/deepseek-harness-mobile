@@ -30,6 +30,8 @@ import '../core/endpoint.dart';
 import '../core/errors.dart';
 import '../core/job.dart';
 import '../core/notify.dart';
+import '../core/snapshot_call.dart';
+import '../core/snapshot_digest.dart';
 import '../core/sync_client.dart';
 import '../model/agent_preset.dart';
 import '../model/changes.dart';
@@ -461,9 +463,12 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 失败只留声：投影读不到时那些只读面显示空态，而"整个会话打不开"更糟。
   @override
   Future<void> refreshProjections(String sid) async {
-    final values = await _readProjections(sid, what: '读取会话投影失败');
+    final reply = await _readProjections(sid, what: '读取会话投影失败');
+    final values = reply.value;
+    // `notModified`：这一包与手里那份逐字相同 ⇒ 什么都不做（见 [refreshSessionRows]）。
     if (values == null) return;
     _applyProjectionValues(sid, values);
+    client.commitSnapshot(reply.key);
   }
 
   /// 重读投影，但**同一会话不并发**（在飞那次跑完后补一次）。
@@ -507,33 +512,52 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// `_projections`（那一包是当前会话的统计条 / 标题 / 权限档的来源，
   /// 被某个子会话的投影覆盖会让统计条显示别人的数字）。
   Future<void> refreshSubagentCatalog(String sid) async {
-    final values = await _readProjections(sid, what: '读取子智能体目录失败');
+    final reply = await _readProjections(sid, what: '读取子智能体目录失败');
+    final values = reply.value;
     if (values == null) return;
     _applyProjectionValues(sid, values);
+    client.commitSnapshot(reply.key);
   }
 
   /// 读一个会话的投影值包，**顺带把 `subagentCatalog` 落进目录三态**。
   ///
-  /// 返回 `null` = 这次没读到（失败已记进 [lastError]，目录进 `error` 态）。
+  /// 返回 `notModified` = 这一包与手里那份逐字相同（**什么都没做**）；
+  /// `value == null` = 这次没读到（失败已记进 [lastError]，目录进 `error` 态）。
   ///
-  /// ## 为什么读之前先置 `loading`
+  /// ## 为什么读之前先置 `loading`（但带摘要的刷新不置）
   ///
   /// "还没读到"与"读到空"在界面上必须是两句话：前者要等，后者要换地方找。
   /// Web 的判据在同一处（`SubagentHeaderLineage.tsx:465-467` 把 `idle` 当
   /// `loading`；`:212` 只在 `loading` **且 entries 空**时显示"正在加载"）。
   /// 置 `loading` 时**保留上一次的 entries** —— 刷新不闪空（同 Web `:244-245`）。
-  Future<wire.SessionProjections?> _readProjections(
+  ///
+  /// **手里已经有这一包时不进 `loading`**：带着摘要去刷新，多半会得到"没变"，
+  /// 那就不该先闪一下"正在加载"再退回原样（`notModified` 的判据是"什么都不动"）。
+  Future<SnapshotReply<wire.SessionProjections?>> _readProjections(
     String sid, {
     required String what,
   }) async {
-    if (_disposed) return null;
-    _subagentCatalogs[sid] = SubagentCatalog.loading(
-      entries: _subagentCatalogs[sid]?.entries ?? const [],
-    );
-    if (!_disposed) notifyListeners();
+    final key = snapshotKeyOf('session.projections', {'sid': sid});
+    // "手里已经有这一包"的判据是**目录三态**（`ready` = 读到过），不是另记一份标记。
+    final firstRead =
+        _subagentCatalogs[sid]?.state != SubagentCatalogState.ready;
+    if (_disposed) {
+      return SnapshotReply<wire.SessionProjections?>.body(null, key: key);
+    }
+    if (firstRead) {
+      _subagentCatalogs[sid] = SubagentCatalog.loading(
+        entries: _subagentCatalogs[sid]?.entries ?? const [],
+      );
+      if (!_disposed) notifyListeners();
+    }
     try {
-      final values = await wire.loadSessionProjections(client, sid: sid);
-      if (_disposed) return null;
+      final reply = await wire.loadSessionProjections(client, sid: sid);
+      if (_disposed) {
+        return SnapshotReply<wire.SessionProjections?>.body(null, key: reply.key);
+      }
+      // 没变：**不动目录三态、不记错误**，原样往上交（含 `key`）。
+      if (reply.notModified) return reply;
+      final values = reply.value;
       if (values == null) {
         // **形状不对也是失败**，不是"没有子智能体" —— 静默当空会让
         // "这台电脑没装 subagent 插件"与"我们没看懂回复"分不开。
@@ -543,10 +567,10 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
           what,
           const FormatException('session.projections 的应答不是对象'),
         );
-        return null;
+        return reply;
       }
       _subagentCatalogs[sid] = SubagentCatalog.ready(values.subagentCatalog);
-      return values;
+      return reply;
     } catch (error) {
       // **兜住所有异常，不只 `ProtocolException`**（与 `refreshSessionRows` 同一条纪律）：
       // 解析出错 / 类型不对 / 超时都只该让"这一批只读面显示空态"，
@@ -554,7 +578,9 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       // 症状是"会话打开了但统计条/权限档永远空着且不报错"。
       _subagentCatalogs[sid] = const SubagentCatalog.failed();
       _recordError(what, error);
-      return null;
+      // 失败**不是**"没变"：交一个没有正文的 body，调用方据此什么都不应用，
+      // 而错误已经进 `lastError`（与 `notModified` 的安静是两件事）。
+      return SnapshotReply<wire.SessionProjections?>.body(null, key: key);
     }
   }
 
@@ -927,8 +953,12 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     // 桶不存在时帧会被丢 —— 而表现是"任务在跑但没有输出"，最难查的那类。
     _jobs.putIfAbsent(sid, () => <JobRow>[]);
     // 形状（`{jobs: [...]}` 与一行任务）在 `wire/rpc/job.dart`。
-    final rows = await wire.loadJobList(client, sid: sid);
+    final reply = await wire.loadJobList(client, sid: sid);
+    // 没变 ⇒ 桶里已经是这一包（任务表只在任务增删 / 落终态时变）。
+    if (reply.notModified) return;
+    final rows = reply.value;
     if (_disposed || rows == null) return;
+    client.commitSnapshot(reply.key);
     _mergeJobSnapshot(sid, rows);
     notifyListeners();
   }
@@ -1788,10 +1818,13 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     try {
       // 形状（`{sections: [{ns, revision, values, secrets}]}`）在 `wire/rpc/settings.dart`；
       // 这里只把快照落进三张表。
-      final sections = await wire.loadSettings(
+      final reply = await wire.loadSettings(
         client,
         namespaces: kSettingsNamespaces,
       );
+      // 没变 ⇒ 三张表原样（设置是低频动作，重取大多换回同一份）。
+      if (reply.notModified) return;
+      final sections = reply.value;
       if (sections == null) return;
       for (final section in sections) {
         _settingsValues[section.ns] = section.values;
@@ -1806,6 +1839,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
         },
       );
       if (hostMode != null) _sendMode = hostMode;
+      client.commitSnapshot(reply.key);
       _lastError = null;
       if (!_disposed) notifyListeners();
     } catch (error) {
@@ -1899,7 +1933,10 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       // `wire/rpc/repo.dart`：手机只消费四个键（三个能力位 + commands + dshVersion）
       // 外加 `hostName`（电脑自报的名字，只供展示），
       // `protocol` / `aliasVersion` / `methods` 不声明（前者在帧头 `v` 里校验）。
-      final info = await wire.loadRepoInfo(client);
+      final reply = await wire.loadRepoInfo(client);
+      // 没变 ⇒ 什么都不做（版本 / 能力位是进程级事实，一次会话里不会变）。
+      if (reply.notModified) return;
+      final info = reply.value;
       if (info == null) {
         // 应答读不出来：能力位一律 false（界面退回"没有那个面"），并如实记下。
         _dshVersion = null;
@@ -1924,6 +1961,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       // **读到了**才置位：界面靠它区分"这台电脑没有这个面"与"还没读到"
       // （离线时 `caps.files` 只是默认 false，不是电脑的答复）。
       _repoInfoKnown = true;
+      client.commitSnapshot(reply.key);
       if (!_disposed) notifyListeners();
     } catch (error) {
       _dshVersion = null;
@@ -2474,9 +2512,12 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     _discovering = true;
     try {
       // 形状（`{endpoints: [{kind, url, label?}]}`）在 `wire/rpc/endpoint.dart`。
-      final discovered = await wire.loadEndpoints(client);
-      if (discovered.isEmpty) return;
-      await mergeDiscoveredEndpoints(discovered);
+      final reply = await wire.loadEndpoints(client);
+      // 没变 ⇒ 端点表里已经是这一份（每次连上都会问一次，而地址几乎不变）。
+      if (reply.notModified) return;
+      final discovered = reply.value ?? const <Endpoint>[];
+      if (discovered.isNotEmpty) await mergeDiscoveredEndpoints(discovered);
+      client.commitSnapshot(reply.key);
     } on ProtocolException catch (error) {
       // 方法不存在 / 能力没开：老连接器的正常形态，不当故障。
       if (error.code != ErrorCode.connectorUnsupported) {
@@ -2537,10 +2578,14 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     if (_disposed) return;
     try {
       // **面板要整表**：子会话行可能落在已加载窗口之外（见 [ensureFullSessionRows]）。
-      final page = await _fetchSessionRows(
+      final reply = await _fetchSessionRows(
         limit: _sessionsHasMore ? null : _sessionRowWindow,
       );
+      // **没变就什么都不做**：面板已经显示的正是这一包（§5.7 的 notModified）。
+      final page = reply.value;
+      if (page == null) return;
       _applySessionList(page.sessions, hasMore: page.hasMore);
+      client.commitSnapshot(reply.key);
       if (!_disposed) notifyListeners();
     } catch (error) {
       _recordError('拉取会话指标失败', error);
@@ -2552,8 +2597,10 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 方法名、参数形状与应答字段**全在 `app/lib/wire/rpc/session.dart`** ——
   /// 这一层不再知道 `session.list` 长什么样，这正是
   /// `app/tools/verify-rpc-single-caller.mjs` 那个会归零的预算在数的事。
-  Future<wire.SessionListPage> _fetchSessionRows({int? limit, int? offset}) =>
-      wire.loadSessionList(client, limit: limit, offset: offset);
+  Future<SnapshotReply<wire.SessionListPage>> _fetchSessionRows({
+    int? limit,
+    int? offset,
+  }) => wire.loadSessionList(client, limit: limit, offset: offset);
 
   /// 把一包会话行落到 [sessions]（**唯一的赋值口**）。
   ///
@@ -2616,8 +2663,12 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   Future<void> ensureFullSessionRows() async {
     if (_disposed) return;
     try {
-      final page = await _fetchSessionRows();
+      final reply = await _fetchSessionRows();
+      final page = reply.value;
+      // 没变（`notModified`）⇒ 手里那份就是整表，什么都不用做。
+      if (page == null) return;
       _applySessionList(page.sessions, hasMore: false);
+      client.commitSnapshot(reply.key);
       if (!_disposed) notifyListeners();
     } catch (error) {
       _recordError('拉取完整会话清单失败', error);
@@ -2634,11 +2685,15 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     if (_disposed || !_sessionsHasMore || _loadingMore > 0) return;
     _loadingMore += 1;
     try {
-      final page = await _fetchSessionRows(
+      final reply = await _fetchSessionRows(
         limit: kSessionRowPageSize,
         offset: _sessions.length,
       );
+      // 这一页"没变"（同样的 `offset` 上一次就应用过）⇒ 不追加、不通知。
+      final page = reply.value;
+      if (page == null) return;
       _appendSessionList(page.sessions, hasMore: page.hasMore);
+      client.commitSnapshot(reply.key);
       if (!_disposed) notifyListeners();
     } catch (error) {
       // 与 `refreshSessionRows` 同一条纪律：留声，不把整张表打成"空"。
@@ -3022,8 +3077,13 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   @override
   Future<void> refreshSessionRows() async {
     try {
-      final page = await _fetchSessionRows(limit: _sessionRowWindow);
+      final reply = await _fetchSessionRows(limit: _sessionRowWindow);
+      // **没变 ⇒ 什么都不做**（契约 §5.7 的 `notModified`）：不清数据、不报错、
+      // 不 `notifyListeners` —— 这一包与手里那份逐字相同，重建一次界面纯属白做。
+      final page = reply.value;
+      if (page == null) return;
       _applySessionList(page.sessions, hasMore: page.hasMore);
+      client.commitSnapshot(reply.key);
       // **设备本地状态跟着清单失效**：清单里没有的会话，它的页签/草稿没有意义
       // （桌面从不清理 `dsh.conversation.<sid>`，那是 localStorage 的便宜，不是产品要求）。
       //
@@ -3222,9 +3282,13 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   Future<void> refreshWorkspaces() async {
     try {
       // 形状（分组 + 两列 id，**同一份应答**）在 `wire/rpc/workspace.dart`。
-      final snapshot = await wire.loadWorkspaceList(client);
+      final reply = await wire.loadWorkspaceList(client);
+      // 没变 ⇒ 分组 / 归档集 / 置顶集都已经是这一份。
+      if (reply.notModified) return;
+      final snapshot = reply.value;
       if (snapshot == null) return;
       if (_disposed) return;
+      client.commitSnapshot(reply.key);
       _workspaces = snapshot.groups;
       // 归档集、置顶集与工作区分组**同一份应答**（`workspace.list` 同时带
       // `archivedSessionIds` 与 `pinnedSessionIds`）—— 分两次解析会让
@@ -3569,8 +3633,11 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
 
   /// 打开一个会话：订阅它，并把条目喂给 store。
   ///
-  /// [since] 是本地已有的水位（本地库还没做，先给 0 = 从零开始，电脑侧会给快照）。
-  Future<void> openSession(String sid, {int since = 0}) async {
+  /// **不传水位**：`since` 由连接层按"手里到哪了"自己带（契约 §5.7）。
+  /// 这里传过一个默认 0，于是同一进程里第二次打开同一个会话也要求整窗重放
+  /// —— 那正是"没变就别再搬"要消灭的东西。判据见
+  /// `.agents/notes/implemented/2026-11-01-resume-from-persisted-watermark.md`。
+  Future<void> openSession(String sid) async {
     _currentSid = sid;
     // 打开它就是"看见了"：未读的完成点当场消失（DSH 的"在主视图里就清"，`:511`）。
     _rows.markSeen(sid);
@@ -3592,7 +3659,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     unawaited(_loadView(sid));
 
     try {
-      await client.subscribe(sid, since: since);
+      await client.subscribe(sid);
       _lastError = null;
     } on ProtocolException catch (error) {
       _lastError = error;

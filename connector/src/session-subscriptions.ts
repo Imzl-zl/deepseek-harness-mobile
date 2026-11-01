@@ -111,7 +111,11 @@ export interface SessionSubscriptions {
   subscribe(input: {
     sid: string
     dshSessionId: string
-    /** 手机手里的水位；不给就从头开始（宿主会决定给增量还是快照）。 */
+    /**
+     * 手机手里的水位（= 它最近一条**落盘**事件的 `seq`）；不给就从头开始。
+     *
+     * 它只在缓冲**证明覆盖得到**时才用来跳段，否则整窗重放（见 `open` 里的注释）。
+     */
     since?: number
   }): Promise<SessionSubscriptionReply>
   /** 终止一个会话订阅。返回是否真的有一个在跑。 */
@@ -266,8 +270,15 @@ export function createSessionSubscriptions(
           const address = await options.addressOf(input.dshSessionId)
           // **增量优先**：缓冲里覆盖得到 `since` 时，先补发那一段，
           // 不必让手机重新吃一份完整快照（快照只在覆盖不到时才出现）。
-          let lastSeq = input.since ?? 0
+          //
+          // **`since` 只在缓冲能证明覆盖得到时才被用来跳段**：覆盖不到（进程重启过、
+          // 缓冲已按别的设备的水位裁过、这段从没记过）时退回 `lastSeq = 0`，
+          // 也就是"整窗重放" —— 与 `since` 缺省时**一字不差**的行为。
+          // 方向永远是"多发一次"，绝不"少发一段"（契约 §5.7 的恢复判据）。
+          // 早先这里不管覆盖与否都拿 `since` 当 `lastSeq`，于是"手机说它到 800、
+          // 而缓冲只剩 900 以后"会静默跳过 801..899。
           const replay = input.since === undefined ? undefined : buffer?.tailFrom(input.sid, input.since)
+          let lastSeq = replay === undefined ? 0 : input.since ?? 0
           if (replay !== undefined) {
             for (const event of replay) {
               lastSeq = event.seq

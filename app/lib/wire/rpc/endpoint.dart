@@ -19,13 +19,23 @@
 library;
 
 import '../../core/endpoint.dart' show Endpoint, parseEndpointList;
+import '../../core/snapshot_call.dart';
+import '../../core/snapshot_digest.dart';
 import '../../core/sync_client.dart';
 
 /// 方法名只在这里出现一次（`connector/src/handlers.ts:796`）。
 const String _kDescribe = 'endpoint.describe';
 
 /// 拉一次电脑侧自报的端点表（空表 = 这台没有可发现的端点）。
-Future<List<Endpoint>> loadEndpoints(SyncClient client) async {
-  final result = await client.call<Object?>(_kDescribe, const {});
-  return parseEndpointList(result);
+///
+/// 带内容摘要：它是**每次连上都会拉**的一份只读事实，而地址表几乎永不变
+/// （`endpoint.describe` 是白名单里唯一不在 `host` 帧那九个 key 里的）。
+Future<SnapshotReply<List<Endpoint>>> loadEndpoints(SyncClient client) async {
+  final reply = await client.callSnapshot(_kDescribe, const {});
+  if (reply.notModified) return SnapshotReply<List<Endpoint>>.notModified(key: reply.key);
+  // 解析**从不失败**（认不出的条目跳过），所以"没变"与"空表"是两句话。
+  return SnapshotReply<List<Endpoint>>.body(
+    parseEndpointList(reply.value),
+    key: reply.key,
+  );
 }

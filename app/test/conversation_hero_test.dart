@@ -100,9 +100,9 @@ class _HeroClient extends FakeSyncClient {
   /// **必须自己覆写**：它记 `subscribed`（"落上去就要订阅它"那条断言靠它）。
   /// `FakeSyncClient` 的默认实现不记，所以不能靠继承。
   @override
-  Future<SessionAnchor> subscribe(String sid, {required int since}) async {
+  Future<SessionAnchor> subscribe(String sid) async {
     subscribed.add(sid);
-    return SessionAnchor(since: since, hasMore: false);
+    return const SessionAnchor(since: 0, hasMore: false);
   }
 
   @override

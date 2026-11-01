@@ -138,11 +138,40 @@ export type MetricName = (typeof METRIC)[keyof typeof METRIC]
  * 为什么在总数之外还要拆：`connector.bytes.outbound` 只能回答"一共多少"，
  * 而"一次回前台 230 KB 到底是谁"必须逐类回答 —— 快照（`res`）、会话事件重放（`ev`）、
  * 通知（`host`）三者的对策完全不同（缓存 / 恢复策略 / 不该压）。
- * 字节口径是**明文 `box` 的 UTF-8 长度**（线上还要 base64 放大，占比不变）。
+ *
+ * **口径是线上字节**（`encodeFrame` 之后），与 `connector.bytes.outbound` 同一个来源、
+ * 同一次 `emit`，所以可核对的恒等式是 `Σ out_frame.* === outbound`。
+ * 早先 `ev` / `live` 记在会话订阅的发送点上、口径是明文箱长度 —— 那里看不见
+ * `credit` / `ping` / 握手帧，于是"一次回前台"有 30% 无主（2026-11-01 实测）。
+ * 拆到唯一出帧点之后没有残余，"谁都没算"这一档不再存在。
  */
 export const outFrameBytesMetric = (frameType: string): string =>
   `connector.bytes.out_frame.${frameType}`
 
-/** 按 **RPC 方法**的应答字节（纯观测）—— 同上，只拆到方法。 */
+/**
+ * 按 **RPC 方法**的应答字节（纯观测）—— 只拆 `res`，所以它是 `out_frame.res`
+ * 的**内部分解**，口径是**明文 `box` 的 UTF-8 长度**（方法名只有方法面知道，
+ * 那里拿不到封箱后的字节）。两份口径不同是有意的：帧类型那本账要能对总量，
+ * 方法那本账要回答"这一包里正文有多大"。
+ */
 export const outMethodBytesMetric = (method: string): string =>
   `connector.bytes.out_method.${method}`
+
+/**
+ * 出站字节的两个账本（总账 + 按帧类型），**在同一个回调里记两笔**。
+ *
+ * 为什么是一个函数而不是两处 `increment`：两个账本必须来自同一串字节 ——
+ * 分开记的那一版把 `ev` / `live` 记在会话订阅的发送点上，于是
+ * `Σ out_frame.* < outbound` 且差额（`credit` / `ping` / `握手帧`）无人认领。
+ * 现在差额恒为 0，**可以由 `tests/out-frame-bytes.test.ts` 直接断言**。
+ *
+ * 连接层不认识指标名，只回一个 `(字节数, 帧类型)`；怎么记是这里的事。
+ */
+export function createOutboundByteMeter(
+  metrics: ChannelMetrics,
+): (bytes: number, frameType: string) => void {
+  return (bytes, frameType) => {
+    metrics.increment(METRIC.bytesOutbound, bytes)
+    metrics.increment(outFrameBytesMetric(frameType), bytes)
+  }
+}

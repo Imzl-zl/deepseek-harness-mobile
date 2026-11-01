@@ -12,6 +12,7 @@
  *    连接层的关闭只留给协议级错误（帧不合法、重放、握手未完成）。
  */
 import { isErrorCode, ProtocolError, type ErrorCode } from './errors.js'
+import { isSnapshotDigest } from './snapshot-digest.js'
 
 /** 契约 §5.7 的方法表。顺序与文档一致，便于对照。 */
 /**
@@ -259,6 +260,14 @@ export interface RequestEnvelope {
   params?: unknown
   /** 幂等键；哪些方法必须带见 {@link IDEMPOTENT_METHODS}。 */
   requestId?: string
+  /**
+   * 可选：客户端手里那一包的**内容摘要**（契约 §5.7、`protocol/snapshot-digest.ts`）。
+   *
+   * 只对只读快照方法有意义（{@link acceptsSnapshotDigest}）；别的带上也合法，
+   * 只是不参与比对。**不在这里判"这个方法认不认"**：那要等分发完（方法名是封闭集，
+   * 但不认识的方法要回 `connector/unsupported` 而不是 `bad-frame`）。
+   */
+  digest?: string
 }
 
 /** 电脑 → 手机的应答信封。**失败也是一个正常应答**，不是断连理由。 */
@@ -286,9 +295,16 @@ export function decodeRequest(box: string): RequestEnvelope {
   if (requestId !== undefined && (typeof requestId !== 'string' || requestId === '')) {
     throw new ProtocolError('protocol/bad-frame', 'requestId 必须是非空字符串')
   }
+  // 摘要只校验**形状**（43 个 base64url 字符）：认不认它是方法的事，见 `digest` 字段的说明。
+  // 形状不对必须吵：被静默忽略的症状是"摘要上线了，一个字节也没省"，且没人会去查。
+  const digest = record['digest']
+  if (digest !== undefined && !isSnapshotDigest(digest)) {
+    throw new ProtocolError('protocol/bad-frame', 'digest 必须是 base64url(sha256) 形状')
+  }
   return {
     method,
     ...(requestId === undefined ? {} : { requestId }),
+    ...(digest === undefined ? {} : { digest }),
     ...(record['params'] === undefined ? {} : { params: record['params'] }),
   }
 }

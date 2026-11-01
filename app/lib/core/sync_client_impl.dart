@@ -33,6 +33,8 @@ import 'items.dart';
 import 'job.dart';
 import 'keepalive.dart';
 import 'outbox.dart';
+import 'snapshot_call.dart';
+import 'snapshot_digest.dart';
 import 'sync_client.dart';
 import 'transport.dart';
 
@@ -48,7 +50,7 @@ SyncClient createSyncClient(SyncClientDeps deps) => _SyncClient(deps);
 /// 所以"是不是终态"由**理由**决定、由这个码收窄范围：别的 4003（坏帧 / 握手超时）照旧退避。
 const int kHandshakeRefusalCloseCode = 4003;
 
-class _SyncClient implements SyncClient, SyncClientProbe {
+class _SyncClient implements SyncClient, SyncClientProbe, SnapshotCaller {
   _SyncClient(this._deps)
     : _machine = ConnectionMachine(),
       _backoff = _deps.backoff ?? Backoff(),
@@ -128,23 +130,39 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   AppState _appState = AppState.foreground;
   bool _closed = false;
 
-  /// **已声明的订阅集**（`sid → since`）。它跟着连接活：断开即清空，
-  /// 重连后由 `sync.hello` 整份重新声明（契约 §5.4）。
+  /// **已声明的订阅集**（只记 `sid`，**不记水位**）。断开**不清空**：
+  /// 重连后由 `sync.hello` 把它整份重新声明（契约 §5.4）。
   ///
   /// 为什么由本类记着而不是问 UI：UI 打开哪个会话是它的事，而"这条连接声明了哪些会话"
   /// 是连接的状态 —— 断线之后 UI 不会再调一次 `subscribe`（用户没有重新点开），
   /// 于是恢复只能由持有连接的这一层发起。
-  final Map<String, int> _declared = <String, int>{};
+  ///
+  /// **水位不在这里**：`since` 的唯一出处是 [DeviceSession.sinceOf]（"我手里到哪了"）。
+  /// 早先这里存的是 `subscribe` 那一刻的入参，而手机**恒传 0**
+  /// （`AppModel.openSession` 的默认值），于是每次重连都声称"我从零开始"，
+  /// 电脑侧只好把整个会话窗口重放一遍（真机实测：一次什么都没变的回前台 147 KB `ev`）。
+  /// 取舍与证据见 `.agents/notes/implemented/2026-11-01-resume-from-persisted-watermark.md`。
+  final Set<String> _declared = <String>{};
 
-  /// `sync.hello` 的载荷（契约 §5.4）：前后台态 + 整份订阅集。
+  /// 这个会话**手机手里到哪了**（`persisted` 报的就是它）。
+  ///
+  /// 唯一出处：连接层的 [DeviceSession]（事件到达并落盘之后才前进）。
+  /// **不是** `ItemStore.cursorOf`：本地库那条链只写不读（`itemsOf` 还没有调用方），
+  /// 拿库里的水位当 `since` 会让冷启动的手机声称"我有到 N"，而界面是空的。
+  int _sinceOf(String sid) => _deps.session.sinceOf(sid);
+
+  /// `sync.hello` 的载荷（契约 §5.4）：前后台态 + 整份订阅集（**每个会话带当前水位**）。
   ///
   /// **`app` 是必须的**：电脑侧据此判定"用户是否正看着手机"，而 `foreground` 档的
   /// 审批接管判据正是"前台且已订阅该会话"。少了它，手机上永远收不到审批。
+  ///
+  /// 水位在**发这一帧的那一刻**现取（不是订阅那一刻的快照）：两者之间收到的事件
+  /// 已经落盘，重连时要的是"现在到哪了"。
   Map<String, Object?> _helloParams() => <String, Object?>{
     'app': _appState == AppState.foreground ? 'foreground' : 'background',
     'sessions': <Object?>[
-      for (final entry in _declared.entries)
-        <String, Object?>{'sid': entry.key, 'since': entry.value},
+      for (final sid in _declared)
+        <String, Object?>{'sid': sid, 'since': _sinceOf(sid)},
     ],
   };
 
@@ -188,7 +206,8 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     // 而报错栈指向 `close()`，看起来像"关连接关坏了"。
     unawaited(
       pending.future
-          .then(_absorbHelloAnchors)
+          // `_resolveCall` 兑现的是 [_Reply]（明文与结果一起带回来）：这里只关心结果。
+          .then((reply) => _absorbHelloAnchors(reply is _Reply ? reply.value : reply))
           // 连接断开时完成器被 `completeError`（`close()` → `failAll`）——
           // anchor 拿不到只是"这次不知道有没有更多"，不是错误。
           .catchError((_) => null),
@@ -912,8 +931,18 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       return;
     }
     // 迟到或重复的应答：`resolve` 返回 false，忽略即可（不是错误）。
-    _calls.resolve(id, result: _resultOf(plaintext));
+    _calls.resolve(id, result: _replyOf(plaintext));
   }
+
+  /// 一次 `res` 的内部形状：解码后的 `result` + **那一包明文**（摘要的原料）。
+  ///
+  /// 明文必须留到这一层：它是唯一能拿到应答原文的地方。往上只剩解码结果，
+  /// 而"结果的重新序列化"与收到的字节在字段顺序 / 数字格式上可能不同 ——
+  /// 拿它算摘要会永远不命中，而症状只是"摘要上线了、一个字节也没省"。
+  ///
+  /// 摘要**按需算**（只有 `callSnapshot` 要）：`cryptography` 的 SHA-256 是异步的，
+  /// 每次应答都算一遍纯属浪费（写方法的应答与摘要无关）。
+  _Reply _replyOf(String plaintext) => _Reply(_resultOf(plaintext), plaintext);
 
   ErrorCode _errorCodeOf(String plaintext) {
     try {
@@ -956,9 +985,12 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   // -------------------------------------------------------------------------
 
   @override
-  Future<SessionAnchor> subscribe(String sid, {required int since}) async {
+  Future<SessionAnchor> subscribe(String sid) async {
     // 订阅是一次**写操作**（电脑侧要为它建立 follow），所以走 outbox：先落盘再发。
-    _declared[sid] = since;
+    // `since` 取**当前水位**：同一进程里重新打开一个会话时，手里已经有内容就不该
+    // 再让电脑侧从头重放一遍（判据与代价见 [DeviceSession.sinceOf] 的说明）。
+    final since = _sinceOf(sid);
+    _declared.add(sid);
     final requestId = _newId();
     await _deps.outbox.enqueue(
       OutboxEntry(
@@ -1102,11 +1134,62 @@ class _SyncClient implements SyncClient, SyncClientProbe {
     await _deps.outbox.flush();
   }
 
+  /// 上一次**成功应用**那一包的摘要（键 = `snapshotKeyOf`，见 `snapshot_digest.dart`）。
+  ///
+  /// 跨重连**不清**：服务端每次都重算，所以留着只会省字节，答错的多发一次。
+  /// 也在 `close()` 里不清：它绑的是"这个客户端实例"，而换电脑 / 重新配对会换实例。
+  final Map<String, String> _snapshotDigests = <String, String>{};
+
+  /// 刚拿到、还**没被应用**的那一包的摘要（等 `commitSnapshot` 认领）。
+  ///
+  /// 分成两张表而不是一张：`commitSnapshot` 的语义是"应用成功了"，
+  /// 而"收到了"不等于"应用了"（解码可能失败）。混成一张就会在解码失败时
+  /// 声称"我手里有它"，服务端下次答"没变"，那一段内容**再也要不回来**。
+  final Map<String, String> _pendingSnapshotDigests = <String, String>{};
+
+  @override
+  Future<SnapshotReply<Object?>> callSnapshotWithDigest(
+    String method,
+    Map<String, Object?> params,
+  ) async {
+    final key = snapshotKeyOf(method, params);
+    final known = _snapshotDigests[key];
+    final reply = await _callRaw(method, params, digest: known);
+    // 服务端的 `{notModified: true}` 落在 **result** 里（不是新增字段）：
+    // 认它的判据只在这里，因为只有这一层知道"这个结果来自一次带摘要的调用"。
+    final value = reply.value;
+    if (value is Map && value['notModified'] == true) {
+      _pendingSnapshotDigests.remove(key);
+      return SnapshotReply<Object?>.notModified(key: key);
+    }
+    _pendingSnapshotDigests[key] = await snapshotDigestOf(reply.plaintext);
+    return SnapshotReply<Object?>.body(value, key: key);
+  }
+
+  @override
+  void commitSnapshotDigest(String key) {
+    final digest = _pendingSnapshotDigests.remove(key);
+    if (digest == null) return;
+    _snapshotDigests[key] = digest;
+  }
+
   @override
   Future<T> call<T>(
     String method,
     Map<String, Object?> params, {
     String? requestId,
+  }) async => (await _callRaw(method, params, requestId: requestId)).value as T;
+
+  /// [call] 的原始形状：**明文一起带回来**（摘要的原料，见 [_replyOf]）。
+  ///
+  /// 写成不带 `<T>` 的私有方法，是为了让 `tools/verify-rpc-single-caller.mjs` 的
+  /// "`wire/` 之外零 `client.call<`" 继续成立：协议知识留在 `wire/rpc/`，
+  /// 这里只有接线。
+  Future<_Reply> _callRaw(
+    String method,
+    Map<String, Object?> params, {
+    String? requestId,
+    String? digest,
   }) async {
     // 带幂等键的调用**先落盘再发送**（§5.6）：崩溃窗口里那次写操作不能消失。
     if (requestId != null) {
@@ -1115,7 +1198,7 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       // 被覆盖的那个调用方永远挂着（断连才被 `failAll` 收）。
       //
       // 判据是**幂等键**而不是帧号：每次重发都会换一个新帧号，按帧号判就会漏。
-      if (_calls.isPendingRequest(requestId)) return null as T;
+      if (_calls.isPendingRequest(requestId)) return const _Reply(null, '');
       // 帧号在落盘之前铸：调用方必须赶在 `flush()` 之前拿到它才能登记在途等待，
       // 否则 `res` 可能早于登记到达而被当成"迟到的"丢掉。
       final frameId = _newId();
@@ -1161,7 +1244,7 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       // 连接在在途时断掉：`CallRegistry.failAll` 会拒绝这个完成器
       // （否则调用方永远等不到），调用方退避重连后重发 —— 同一个幂等键
       // 保证重发不会造成第二次写。
-      return await completer.future as T;
+      return await completer.future as _Reply;
     }
 
     if (!_machine.acceptsBusinessFrames) {
@@ -1173,14 +1256,19 @@ class _SyncClient implements SyncClient, SyncClientProbe {
       'v': wireVersion,
       't': 'req',
       'id': id,
-      'box': encodeRequestEnvelope(method, params, requestId: requestId),
+      'box': encodeRequestEnvelope(
+        method,
+        params,
+        requestId: requestId,
+        digest: digest,
+      ),
     });
     if (!sent) {
       // 发送失败要**撤销登记**：否则表里留一个永远不兑现的条目。
       _calls.unregister(id);
       throw const ProtocolException(ErrorCode.relayOffline, '发送失败：连接不可用或窗口满');
     }
-    return await completer.future as T;
+    return await completer.future as _Reply;
   }
 
   @override
@@ -1474,9 +1562,9 @@ class _SyncClient implements SyncClient, SyncClientProbe {
   @override
   bool get lastConnectBusy => _lastConnectBusy;
 
-  /// 已声明的订阅集（`sync.hello` 的输入）。
+  /// 已声明的订阅集（`sync.hello` 的输入）。水位不在这里（见 [_sinceOf]）。
   @override
-  Map<String, int> get declaredSessions => Map.unmodifiable(_declared);
+  Set<String> get declaredSessions => Set.unmodifiable(_declared);
 
   /// 已发出的请求信封（**明文**；线上的 `box` 是密文，事后无从知道发过哪个方法）。
   @override
@@ -1689,12 +1777,30 @@ String encodeRequestEnvelope(
   String method,
   Map<String, Object?> params, {
   String? requestId,
+  String? digest,
 }) => jsonEncode({
   'method': method,
   'params': params,
   // null-aware 的 `?` 作用于**值**（键是字面量）：没有幂等键时不写这个字段。
   'requestId': ?requestId,
+  // 可选的内容摘要（契约 §5.7）。**在信封层而不是 `params` 里**：它说的是"这一包
+  // 字节我手里有没有"，与方法的业务参数无关（写方法的参数里塞一个 digest
+  // 会让每个 handler 多一个要忽略的键）。
+  'digest': ?digest,
 });
+
+/// 一次 `res` 的内部形状：解码后的 `result` + **那一包的明文**。
+///
+/// 为什么明文要一路带回来：内容摘要（契约 §5.7）只能算在**收到的字节**上，
+/// 而再往上就只剩解码结果了（重新序列化会改字段顺序 / 数字格式）。
+/// 它只在本文件的 `_resolveCall` → 完成器 → `call` / `callSnapshot` 之间流动，
+/// 不出这个文件（`call` 对外仍只回 `result`）。
+class _Reply {
+  const _Reply(this.value, this.plaintext);
+
+  final Object? value;
+  final String plaintext;
+}
 
 /// 每会话的流式累加器（`app-channel-client.md` §2.2）。
 ///

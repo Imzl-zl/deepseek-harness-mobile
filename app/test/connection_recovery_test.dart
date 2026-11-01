@@ -229,7 +229,7 @@ class _RecoveryFakeClient extends FakeSyncClient implements SyncClientProbe {
   Object? get lastPersistError => null;
 
   @override
-  Map<String, int> get declaredSessions => const {};
+  Set<String> get declaredSessions => const <String>{};
 
   @override
   List<Map<String, Object?>> get sentRequests => const [];

@@ -199,6 +199,76 @@ test('重订走增量：缓冲覆盖得到就补发那一段，并跳过快照�
   )
 })
 
+test('重订带**有效 since** 且没有新事件：一条 ev 都不发（判据：应答只有 res/credit）', async () => {
+  // 这是"没变就别再搬"在恢复语义上的判据（契约 §5.7）：手机报的水位与电脑侧
+  // 已经对齐时，空闲重连**不该产生字节**。2026-11-01 真机实测它退化成了整窗重放
+  // （一次回前台 147 KB `ev`），因为手机恒报 0。
+  const { source, streams, addressOf } = createControllableSessionSource()
+  const sink = collector()
+  const buffer = createSessionBuffer({ pairedDevices: () => ['dev-1'] })
+  const subscriptions = createSessionSubscriptions({
+    source,
+    addressOf,
+    send: sink.send,
+    waitWritable: () => Promise.resolve(),
+    buffer,
+  })
+
+  const first = subscriptions.subscribe({ sid: 'sid_1', dshSessionId: 'dsh-1' })
+  await flush()
+  streams[0]?.push(opening(3, [1, 2, 3]))
+  await first
+  assert.equal(sink.sent.length, 3, '第一轮是整窗（手机手里没有东西）')
+
+  subscriptions.unsubscribe('sid_1')
+  const before = sink.sent.length
+  const again = subscriptions.subscribe({ sid: 'sid_1', dshSessionId: 'dsh-1', since: 3 })
+  await flush()
+  // 宿主照样给整窗 1..3（它不知道我们手里有什么）——手机已有到 3，全部跳过。
+  streams[1]?.push(opening(3, [1, 2, 3]))
+  assert.deepEqual(await again, { since: 3, hasMore: false })
+  await flush()
+  assert.equal(sink.sent.length, before, '水位对齐且没有新事件 ⇒ 一条 ev 都不发')
+})
+
+test('重订带 since 但缓冲**覆盖不到**：退回整窗重放，不是"什么都不发"', async () => {
+  // 覆盖不到 = 进程重启过 / 缓冲已按水位裁过 / 这段从没记过。
+  // 那时绝不能拿 `since` 当 `lastSeq`：中间的 801..899 会被静默跳过，
+  // 而手机以为自己拿到了连续的增量。宁可多发一整窗（与 since 缺省时一字不差）。
+  const { source, streams, addressOf } = createControllableSessionSource()
+  const sink = collector()
+  const buffer = createSessionBuffer({ pairedDevices: () => ['dev-1'] })
+  const subscriptions = createSessionSubscriptions({
+    source,
+    addressOf,
+    send: sink.send,
+    waitWritable: () => Promise.resolve(),
+    buffer,
+  })
+
+  const first = subscriptions.subscribe({ sid: 'sid_1', dshSessionId: 'dsh-1' })
+  await flush()
+  streams[0]?.push(opening(3, [1, 2, 3]))
+  await first
+  // 手机确认落盘到 3 ⇒ 缓冲头部被裁到 3（这段再也要不回来了）。
+  buffer.ack('sid_1', 'dev-1', 3)
+  assert.equal(buffer.tailFrom('sid_1', 1), undefined, '前提：从 1 续传已经不可能')
+
+  subscriptions.unsubscribe('sid_1')
+  const before = sink.sent.length
+  const again = subscriptions.subscribe({ sid: 'sid_1', dshSessionId: 'dsh-1', since: 1 })
+  await flush()
+  streams[1]?.push(opening(5, [1, 2, 3, 4, 5]))
+  await again
+  await flush()
+
+  assert.deepEqual(
+    sink.sent.slice(before).map((frame) => (frame.t === 'ev' ? frame.seq : -1)),
+    [1, 2, 3, 4, 5],
+    '覆盖不到时退回整窗：一条都不能少（多发的方向是安全的）',
+  )
+})
+
 test('subscribe：中断**不补** error 帧（会话内容有持久副本，重订即自愈）', async () => {
   const { source, streams, addressOf } = createControllableSessionSource()
   const sink = collector()

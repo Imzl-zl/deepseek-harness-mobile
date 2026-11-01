@@ -12,7 +12,6 @@ import { createSessionPager } from './session-page.js'
 import { createSessionSubscriptions } from './session-subscriptions.js'
 import {
   METRIC,
-  outFrameBytesMetric,
   outMethodBytesMetric,
   type ChannelLogger,
   type ChannelMetrics,
@@ -165,11 +164,10 @@ export function createConnectionScope(
       const frame = out.t === 'ev'
         ? { v: 1 as const, t: 'ev' as const, sid: out.sid, seq: out.seq, box: out.body }
         : { v: 1 as const, t: 'live' as const, sid: out.sid, stream: out.stream, rev: out.rev, box: out.body }
-      if (!port.send(frame)) return 'paused'
-      // 按帧类型记字节（纯观测）：会话事件重放是"回前台 230 KB"的头号嫌疑，
-      // 而它和治疗快照的那套（缓存/摘要）根本不是一回事。
-      metrics.increment(outFrameBytesMetric(frame.t), Buffer.byteLength(out.body))
-      return 'sent'
+      // 字节记账**不在这里**：`out_frame.<t>` 由连接层在唯一出帧点 `emit` 记，
+      // 否则只有经过本文件的帧才被计量（`status` / `host` / `credit` / 握手帧全漏）。
+      // 见 `transport/connection.ts` 的 `onBytesOut` 与 `observability.ts`。
+      return port.send(frame) ? 'sent' : 'paused'
     },
     waitWritable: () => port.whenWritable('ev'), log: logger,
     // **订阅变化就上报 presence**：`foreground` 档的 claim 判据是"前台且已订阅该 sid"，

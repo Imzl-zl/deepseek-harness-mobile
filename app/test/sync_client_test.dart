@@ -22,6 +22,8 @@ import 'package:dsh_mobile/core/handshake_driver.dart';
 import 'package:dsh_mobile/core/keepalive.dart';
 import 'package:dsh_mobile/core/outbox.dart';
 import 'package:dsh_mobile/core/recovery.dart';
+import 'package:dsh_mobile/core/snapshot_call.dart';
+import 'package:dsh_mobile/core/snapshot_digest.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/core/sync_client_impl.dart';
 import 'package:dsh_mobile/core/transport.dart';
@@ -325,10 +327,12 @@ void main() {
       await answerHello(f.transport);
       final probe = client as SyncClientProbe;
 
-      await client.subscribe('s1', since: 7);
-      await client.subscribe('s2', since: 0);
+      // 水位是**连接层自己的知识**（最近一条落盘事件的 seq），不是 subscribe 的入参。
+      f.session.commit('s1', 7);
+      await client.subscribe('s1');
+      await client.subscribe('s2');
       await client.unsubscribe('s1');
-      expect(probe.declaredSessions, {'s2': 0});
+      expect(probe.declaredSessions, {'s2'}, reason: '声明只记 sid，水位不在这里');
 
       // 断线重连之后**由连接层**重新声明整份订阅集（UI 不会重新点开会话）。
       f.transport.dropFromPeer();
@@ -348,7 +352,56 @@ void main() {
         'sessions': <Object?>[
           {'sid': 's2', 'since': 0},
         ],
-      }, reason: '恢复要的是"所有会话"，不是一个');
+      }, reason: '恢复要的是"所有会话"，不是一个；没收到过事件的会话水位就是 0');
+
+      await client.close();
+    });
+
+    test('重连声明的是**当前**水位：订阅之后收到的事件也算数（空闲重连不该重放）', () async {
+      // 这是"没变就别再搬"在恢复语义上的那一半（真机 2026-11-01：一次什么都没变的
+      // 回前台出站 230 920 B，其中 147 037 B 是 `ev` 重放，因为手机恒报 since=0）。
+      //
+      // 判据：重连时的 `sync.hello` 必须带**那一刻**的落盘水位 —— 订阅那一刻的值
+      // 早已过期（订阅之后还可能收了几百条事件），两者混用就是"每次重连都把
+      // 订阅以来的一切再搬一遍"。
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+      final probe = client as SyncClientProbe;
+
+      // 打开会话时手里什么都没有 ⇒ 第一份声明是 0（电脑侧给整窗）。
+      await client.subscribe('s1');
+      expect(
+        probe.sentRequests
+            .lastWhere((envelope) => envelope['method'] == 'session.subscribe')['params'],
+        {'sid': 's1', 'since': 0},
+      );
+
+      // 随后来了一批事件并落盘（`commit` 是"落盘之后"才调的，见 `_sendPersisted`）。
+      f.session.commit('s1', 41);
+
+      // 断线重连：UI 不会重新 subscribe，恢复由连接层发起。
+      f.transport.dropFromPeer();
+      await pump();
+      f.clock.advance(1000);
+      await pump();
+      await answerHello(f.transport);
+      await pump();
+
+      final hellos = probe.sentRequests
+          .where((envelope) => envelope['method'] == 'sync.hello')
+          .toList();
+      expect(
+        hellos.last['params'],
+        {
+          'app': 'foreground',
+          'sessions': <Object?>[
+            {'sid': 's1', 'since': 41},
+          ],
+        },
+        reason: '水位必须现取：空闲期间没有新事件 ⇒ 电脑侧一条 ev 都不发',
+      );
 
       await client.close();
     });
@@ -358,7 +411,8 @@ void main() {
       final client = createSyncClient(f.deps);
       await client.start();
       await answerHello(f.transport);
-      await client.subscribe('s1', since: 3);
+      f.session.commit('s1', 3);
+      await client.subscribe('s1');
       final probe = client as SyncClientProbe;
 
       await client.setAppState(AppState.background);
@@ -494,37 +548,39 @@ void main() {
     });
   });
 
+  /// 应答**最后一帧 `req`**（真封箱；`fc` 每帧加一，重放守卫才不拦）。
+  ///
+  /// [envelope] 是 `res` 的**明文信封**：成功是 `{ok:true, result:…}` 里的
+  /// `result` 那半边（这里统一写成 `{'result': …}`），失败是 `{code, message}`。
+  ///
+  /// 从"翻页里的 refetch 标记"那组提到 `main()` 作用域：摘要（§5.7）那组也要用它。
+  Future<void> answerLastReq(
+    FakeTransport transport,
+    Map<String, Object?> envelope, {
+    required int fc,
+    bool ok = true,
+  }) async {
+    final frame = <String, Object?>{
+      'v': 1,
+      't': 'res',
+      'id': lastReqId(transport),
+      'ok': ok,
+      'fc': fc,
+    };
+    final box = await BoxCodec(
+      keys: await sessionKeysFor(transport),
+      role: HandshakeRole.responder,
+    ).sealFrame(frame, jsonEncode(envelope));
+    transport.feed('${jsonEncode({...frame, 'box': box})}\n');
+    await pump();
+  }
+
   /// **翻页里的 `refetch` 标记**（契约 §5.3：单个条目 >1 MiB 不推内容、推标记）。
   ///
   /// 2026-10-22 的缺口：`page()` 只留 `{kind:'record'}` 的项，`refetch` 标记
   /// **被直接跳过** ⇒ >1 MiB 的条目（图片内联在 `assistant/message` 里）
   /// 在会话里静默缺失（不报错、不缺页，就是少一条）。
   group('翻页里的 refetch 标记：补取而不是跳过', () {
-    /// 应答**最后一帧 `req`**（真封箱；`fc` 每帧加一，重放守卫才不拦）。
-    ///
-    /// [envelope] 是 `res` 的**明文信封**：成功是 `{ok:true, result:…}` 里的
-    /// `result` 那半边（这里统一写成 `{'result': …}`），失败是 `{code, message}`。
-    Future<void> answerLastReq(
-      FakeTransport transport,
-      Map<String, Object?> envelope, {
-      required int fc,
-      bool ok = true,
-    }) async {
-      final frame = <String, Object?>{
-        'v': 1,
-        't': 'res',
-        'id': lastReqId(transport),
-        'ok': ok,
-        'fc': fc,
-      };
-      final box = await BoxCodec(
-        keys: await sessionKeysFor(transport),
-        role: HandshakeRole.responder,
-      ).sealFrame(frame, jsonEncode(envelope));
-      transport.feed('${jsonEncode({...frame, 'box': box})}\n');
-      await pump();
-    }
-
     test('标记 → 调 session.refetch → 那一条出现在这一页里', () async {
       final f = buildDeps();
       final client = createSyncClient(f.deps);
@@ -1527,7 +1583,9 @@ void main() {
       await client.start();
       await answerHello(f.transport);
 
-      await client.subscribe('s1', since: 7);
+      // 手机手里有到 7（落盘水位）⇒ 订阅要如实报它。
+      f.session.commit('s1', 7);
+      await client.subscribe('s1');
       // `_sendFrame` 是**同步返回、异步封箱**的（它 `unawaited` 了 sealFrame），
       // 所以"发出去了"要等一轮事件循环才看得到。
       await pump();
@@ -1571,7 +1629,7 @@ void main() {
       expect(subscribe['params'], {
         'sid': 's1',
         'since': 7,
-      }, reason: 'sid 与水位原样递下去');
+      }, reason: '水位取的是**落盘水位**（不是调用方给的数）—— 电脑侧据此只补之后那一段');
 
       // 发出之后从队列里移除（电脑侧已收到）。
       expect(await f.store.load(), isEmpty, reason: '已发出的不该留在待发队列里');
@@ -1584,7 +1642,8 @@ void main() {
       final f = buildDeps();
       final client = createSyncClient(f.deps);
       // 不 start：连接不在服务态。
-      await client.subscribe('s1', since: 7);
+      f.session.commit('s1', 7);
+      await client.subscribe('s1');
 
       expect(
         f.transport.sentFrames.where((frame) => frame['t'] == 'req'),
@@ -2174,6 +2233,88 @@ void main() {
       acc.accept(stream: 1, rev: 0, payload: chunk('保留'));
       expect(acc.accept(stream: 1, rev: 1, payload: 'not json'), isFalse);
       expect(acc.text, '保留');
+    });
+  });
+
+  /// 只读快照的内容摘要（契约 §5.7）—— **真实现 + 假传输**。
+  ///
+  /// 这一组存在的理由：手机侧那张摘要表、`pending`/`commit` 的两段式、
+  /// 以及"请求信封里真的要带 `digest`"这些都在 `_SyncClient` 里，
+  /// 而 AppModel 级用例走的是替身（`FakeSyncClient` 自己实现那个口）。
+  /// 没有这一组，"我们真的把摘要发出去了"就没有任何证据 ——
+  /// 摘要上线但一个字节也没省，是这条通道最安静的失败形态。
+  group('只读快照的摘要（§5.7）', () {
+    test('带摘要的第二次请求：digest 就是**上一包明文**的 sha256；命中回 notModified', () async {
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+
+      final params = <String, Object?>{'namespaces': <String>['app']};
+      final first = client.callSnapshot('repo.info', params);
+      await pump();
+
+      // 电脑侧：这一包就是它将要发出的字节（`res` 的明文信封）。
+      final envelope = <String, Object?>{'ok': true, 'result': {'a': 1}};
+      await answerLastReq(f.transport, envelope, fc: 100);
+      final reply = await first;
+      expect(reply.notModified, isFalse);
+      expect(reply.value, {'a': 1});
+
+      // **应用成功之后**才记（这里代替 AppModel 的 apply）。
+      client.commitSnapshot(reply.key);
+
+      // 第二次：请求信封里必须带摘要，且**等于那一包明文的摘要**（独立复算）。
+      final expected = await snapshotDigestOf(jsonEncode(envelope));
+      expect(expected.length, 43, reason: '服务端的白名单只认 43 个 base64url 字符');
+
+      final second = client.callSnapshot('repo.info', params);
+      await pump();
+      final probe = client as SyncClientProbe;
+      final sent = probe.sentRequests.lastWhere(
+        (item) => item['method'] == 'repo.info',
+      );
+      expect(sent['digest'], expected, reason: '摘要按 (方法, 参数) 查表后随信封发出');
+
+      // 服务端比对命中：只回一个 20 B 的 notModified。
+      await answerLastReq(f.transport, {
+        'result': {'notModified': true},
+      }, fc: 102);
+      final hit = await second;
+      expect(hit.notModified, isTrue);
+      expect(hit.value, isNull);
+
+      await client.close();
+    });
+
+    test('没应用过就不要声称"我手里有它"：不 commit 时下一条请求不带 digest', () async {
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+
+      final params = <String, Object?>{};
+      final first = client.callSnapshot('endpoint.describe', params);
+      await pump();
+      await answerLastReq(f.transport, {
+        'result': {'endpoints': <Object?>[]},
+      }, fc: 100);
+      await first;
+      // **故意不 commit**（模拟"解码失败 / 没应用"）。
+
+      final second = client.callSnapshot('endpoint.describe', params);
+      await pump();
+      final probe = client as SyncClientProbe;
+      final sent = probe.sentRequests.lastWhere(
+        (item) => item['method'] == 'endpoint.describe',
+      );
+      expect(sent['digest'], isNull, reason: '应用没成功就不许带摘要（否则那段内容再也回不来）');
+      await answerLastReq(f.transport, {
+        'result': {'endpoints': <Object?>[]},
+      }, fc: 102);
+      await second;
+
+      await client.close();
     });
   });
 }

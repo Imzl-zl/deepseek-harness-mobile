@@ -32,14 +32,44 @@ import 'dart:async';
 
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/job.dart';
+import 'package:dsh_mobile/core/snapshot_call.dart';
+import 'package:dsh_mobile/core/snapshot_digest.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 
 /// `SyncClient` 的测试基类。
-abstract class FakeSyncClient implements SyncClient {
+abstract class FakeSyncClient implements SyncClient, SnapshotCaller {
+  // ---- 只读快照的摘要（契约 §5.7）----
+  //
+  // 基类实现的是**真的那套**（键 = 方法+参数、应用成功才记）：替身只要实现 `call`，
+  // 快照路径就与生产同形，于是"`notModified` 什么都不做"这类用例测的是真逻辑，
+  // 而不是替身自己编的一套。
+
+  /// 已"应用"过的摘要（键 → 摘要）。测试想模拟"服务端说没变"时直接往里塞
+  /// （形状与服务端同一口径：43 个 base64url 字符，值本身不参与断言）。
+  final Map<String, String> appliedSnapshotDigests = <String, String>{};
+
+  @override
+  Future<SnapshotReply<Object?>> callSnapshotWithDigest(
+    String method,
+    Map<String, Object?> params,
+  ) async {
+    final key = snapshotKeyOf(method, params);
+    final value = await call<Object?>(method, params);
+    // 服务端的"没变"就长这样；替身按同一形状作答，用例才测得到那个分支。
+    if (value is Map && value['notModified'] == true) {
+      return SnapshotReply<Object?>.notModified(key: key);
+    }
+    return SnapshotReply<Object?>.body(value, key: key);
+  }
+
+  @override
+  void commitSnapshotDigest(String key) {
+    appliedSnapshotDigests[key] = 'test-digest';
+  }
   // ---- 翻页相关：本版新加的默认值 ----
 
   @override
-  Future<SessionAnchor> subscribe(String sid, {required int since}) async =>
+  Future<SessionAnchor> subscribe(String sid) async =>
       const SessionAnchor(since: 0, hasMore: false);
 
   @override

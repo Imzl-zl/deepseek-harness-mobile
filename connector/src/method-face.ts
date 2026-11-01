@@ -1,7 +1,7 @@
 /**
  * 方法面：把入站 `req` 帧接到分发器上，并把结果封成 `res` 帧（契约 §5.7、§9）。
  *
- * ## 这一层只做接线，不做业务
+ * ## 这一层只做接线（唯一的例外是下面的摘要比对）
  *
  * - **解析**：`box` 到这一层时已经是**明文载荷**（连接层解箱），这里只解信封；
  * - **分发**：交给 `protocol/methods.ts` 的 `createDispatcher`（方法名封闭集、幂等键强制、
@@ -15,6 +15,13 @@
  *    只有协议级错误（帧不合法、重放、握手未完成）才该关连接（§9，与 `methods.ts` 同一条纪律）。
  * 2. **绝不自己分配 `fc`、绝不封箱**。那些是连接层的事：`fc` 是 nonce 来源，封箱与它紧挨着
  *    分配（见 `transport/connection.ts` 的第 5 条接线决定）。这一层只产出"待发帧"。
+ *
+ * ## 唯一一处业务判定：内容摘要
+ *
+ * 请求可带 `digest`（只读快照方法，白名单在 `protocol/snapshot-digest.ts`）：
+ * 与"将要发出的那份字节"的摘要相同就回 `{notModified: true}`。它必须在这一层，
+ * 因为**只有这里同时知道方法名与完整应答**（`res` 帧头不带方法名）。
+ * 取舍见 `.agents/notes/proposed/2026-11-01-never-pull-unchanged.md`。
  *
  * 取舍见 `.agents/notes/implemented/2026-10-01-method-face-wiring.md`
  */
@@ -30,6 +37,7 @@ import {
   type MethodName,
   type ResponseEnvelope,
 } from './protocol/methods.js'
+import { acceptsSnapshotDigest, snapshotDigestOf } from './protocol/snapshot-digest.js'
 import type { Idempotency } from './idempotency.js'
 import type { OutboundFrame } from './transport/connection.js'
 
@@ -118,9 +126,26 @@ export function createMethodFace(options: MethodFaceOptions): MethodFace {
             ? await idempotency.run(request.requestId, execute)
             : await execute()
         const response = resFrame(frame, envelope)
+        // **摘要比对**（契约 §5.7）：算的是"将要发出的那份字节"，所以它只可能
+        // 答成"多发一次"，绝不会"服务端说没变、客户端却是旧值"（服务端每次都重算）。
+        // 三个条件缺一不可：
+        // - 客户端带了 `digest`（老客户端 / 首次拉没有 ⇒ 行为逐字不变）；
+        // - 这个方法**认**摘要（写方法 / 流式方法的应答不是"某一版数据"）；
+        // - 这是一次成功应答 —— `ok:false` **不比**：错误不是某一版数据，
+        //   拿摘要去省它会让客户端把一次失败记成"没变"。
+        const unchanged =
+          request.digest !== undefined
+          && acceptsSnapshotDigest(request.method)
+          && envelope.ok
+          && snapshotDigestOf(response.box) === request.digest
+        const out = unchanged
+          ? resFrame(frame, { ok: true, result: { notModified: true } })
+          : response
         // 记账点：方法名只有这里知道（`res` 帧头不带它）。
-        options.onResponse?.(request.method, Buffer.byteLength(response.box))
-        return response
+        // 记的是**真的发出去的那一包**（`notModified` 时约 20 B），否则真机验收
+        // 会看到"摘要生效了但 byte 没降"。
+        options.onResponse?.(request.method, Buffer.byteLength(out.box))
+        return out
       } catch (error) {
         // 走到这里只可能是**载荷本身**坏了（不是 JSON / 缺 method）—— `dispatch` 从不抛。
         // 它是结构化错误，不是断连理由：回一个错误信封，连接留着。

@@ -68,7 +68,10 @@ abstract interface class SyncClient {
 
   /// 订阅一个会话。
   ///
-  /// [since] 是手机手里的水位（本地库的落盘水位）。电脑侧据此决定给增量还是快照。
+  /// **水位由连接层自己带**（`DeviceSession.sinceOf` = 最近一条落盘事件的 `seq`）：
+  /// 电脑侧按它决定"只补之后那一段"还是"整窗重放"（契约 §5.7 的 `session.subscribe`）。
+  /// 调用方**没有**这个参数的入口 —— 谁手里有内容只有连接层知道，
+  /// 让它当参数，就是给"手机声称自己有到 N、其实界面是空的"开一个口子。
   ///
   /// 返回**基线水位与"还有没有更早的历史"**（契约 §3.1：`session.subscribe` 的回包）。
   /// `hasMore` 为真时更早的历史在电脑侧还有，UI 滚到顶要调 [page] 去翻 ——
@@ -78,7 +81,7 @@ abstract interface class SyncClient {
   ///
   /// 订阅集会跟着连接走：每次进服务态都用 `sync.hello` 把它**整份**重新声明一次
   /// （契约 §5.4：手机回到前台时要恢复的是"所有会话"，不是一个）。
-  Future<SessionAnchor> subscribe(String sid, {required int since});
+  Future<SessionAnchor> subscribe(String sid);
 
   /// 退订一个会话。
   Future<void> unsubscribe(String sid);
@@ -273,11 +276,14 @@ abstract interface class SyncClientProbe {
   /// 具体的占用者在 [lastProtocolError] 的 message 里（电脑侧随关闭理由一起送来）。
   bool get lastConnectBusy;
 
-  /// 已声明的订阅集（`sid → since`）—— `sync.hello` 会把它整份重新声明（契约 §5.4）。
+  /// 已声明的订阅集（**只有 `sid`**）—— `sync.hello` 会把它整份重新声明（契约 §5.4）。
+  ///
+  /// 水位不在这里：它属于连接状态（[subscribe] 的说明），而这份声明只回答
+  /// "用户此刻打开着哪几个会话"。
   ///
   /// 暴露给测试与诊断：**断线之后 UI 不会重新 `subscribe`**（用户没有重新点开），
   /// 于是"恢复"只能由持有连接的这一层发起。看不到这份声明，就无法断言它真的发过。
-  Map<String, int> get declaredSessions;
+  Set<String> get declaredSessions;
 
   /// 已发出的请求信封（**明文**）。
   ///

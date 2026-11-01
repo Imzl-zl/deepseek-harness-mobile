@@ -219,7 +219,7 @@ void main() {
       app.dispose();
     });
 
-    test('刷新时保留旧内容（loading 不闪空）', () async {
+    test('已读到过就不进 loading：刷新期间原地不动（不闪空，也不闪转圈）', () async {
       var calls = 0;
       final gate = Completer<void>();
       final app = AppModel(
@@ -243,9 +243,11 @@ void main() {
       expect(app.subagentCatalogOf('sid_A').entries, hasLength(1));
 
       final pending = app.refreshProjections('sid_A');
-      // 读之前就置 loading —— 但**旧内容还在**（Web `:244-245` 同一条）。
+      // **读之前不再置 loading**（2026-11-01 摘要上线后改的判据）：带摘要的刷新
+      // 多半会得到"没变"，先闪一下"正在加载"再退回原样是纯噪声。
+      // 旧内容照旧保留（Web `:244-245` 的"不闪空"这条没变）。
       final during = app.subagentCatalogOf('sid_A');
-      expect(during.state, SubagentCatalogState.loading);
+      expect(during.state, SubagentCatalogState.ready);
       expect(during.entries, hasLength(1));
       expect(during.isLoadingEmpty, isFalse);
 

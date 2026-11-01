@@ -5,6 +5,22 @@
 
 ## 现在（2026-11-01）
 
+- **「没变就别再搬」第 3 批（11-01，摘要 + 恢复语义 + 记账补齐）**：
+  ① **出站账现在是恒等式** —— 记账点搬到连接层唯一出帧点（`emit`），
+  `Σ connector.bytes.out_frame.* === connector.bytes.outbound`
+  （`tests/out-frame-bytes.test.ts` 直接断言差额为 0）。真机一次"什么都没变的回前台"
+  **230 920 B**：`ev` **147 037**（63.7%）/ `res` 76 638（33.2%）/ `credit` 6 859（3.0%）/
+  `hello-ack` 386。**规划稿里"未计量 30% = status/job/host/presence/pong"实测不存在（0）**
+  —— 那 30% 是封箱后 base64 + 帧头（口径差），账本齐了才看出来。
+  ② **重连不再整窗重放**：手机以前恒报 `since = 0`（`openSession` 的默认值，
+  `ItemStore.cursorOf` 零调用点），连接器只好把宿主窗口逐条重发。现在水位唯一 owner 是
+  连接层的 `DeviceSession.sinceOf`（落盘水位），`sync.hello` / `subscribe` 现取，
+  连接器**只在缓冲能证明覆盖时才跳段**，覆盖不到退回整窗（方向：多发可以、少发不行）。
+  ③ **快照带内容摘要**（契约 §5.7.1）：十个只读方法请求可带 `digest`，命中回
+  `{notModified:true}`（~20 B）；手机按 `(方法, 参数)` 存"上次成功应用那一包"的摘要，
+  `notModified` 时不清数据/不报错/不通知；不带 `digest` 的老客户端逐字不变。
+  笔记 `implemented/2026-11-01-never-pull-unchanged.md` 与
+  `implemented/2026-11-01-resume-from-persisted-watermark.md`。
 - **会话列表分页（11-01）**：`session.list` 请求 `{limit?, offset?}`、应答加 `hasMore`
   （不传 = 整表，老客户端不变）；手机一页 **50** 行，首屏只要一页，**刷新问"已加载窗口"**
   （翻过的页不被打回），加载更多从 `offset = 已加载行数` 接着要、按 `sid` 去重；
@@ -124,12 +140,16 @@
 
 ## 下一步
 
-0. **数据面按"可见 ⇒ 必须准；不可见 ⇒ 打开才拉"收敛（三条已落地）**：触发源按来源拆、
-   行只带手机读的五个投影键、列表分页（50 行 + `hasMore`）。connector **803** / app **1633**。
+0. **数据面收敛（"没变就别再搬"三批已全部落地）**：触发源按来源拆、行只带手机读的五个
+   投影键、列表分页（50 行 + `hasMore`）、**重连带落盘水位（不再整窗重放）**、
+   **十个只读快照带 `digest`**、出站账补齐到恒等式。connector **816** / app **1640**。
    留给以后的：① **`permission.catalog` 与 `repo.info` 还在 `connectLanding`** —— 它们只在
-   权限 sheet / 文件页被读，按这条不变量该改成"首见时无条件拉"；② `session.projections`
-   仍是 20+ 键一整包（每会话只拉一次，判据同上）；③ 权限预设目录那条真机验收
-   （要装 `dsh-auto-review` 并重启一次宿主，本机没有它）。
+   权限 sheet / 文件页被读，按这条不变量该改成"首见时无条件拉"（摘要已把代价压到几十字节，
+   所以这条的优先级下降）；② `session.projections` 仍是 20+ 键一整包（每会话只拉一次，
+   判据同上）；③ 权限预设目录那条真机验收（要装 `dsh-auto-review` 并重启一次宿主，本机没有）；
+   ④ **空洞检测未接线**（`DeviceSession.gaps` 只计数）：连接器丢帧造成的洞不会被自动补
+   —— 上一批的"每次整窗重放"偶然兜住了它，本批之后要靠 anchor 接线 + 空洞即重订；
+   ⑤ **本地库回读未接线**（`itemsOf` / `allCursors` 零调用点）：冷启动第一次打开会话仍是整窗。
 1. **多机第 4 步的真机复验**：只剩两条要**两台设备**才能做的（第二台被
    `device/busy` 拒并说出占用者、切回上一台的真实链路）—— 单测已覆盖，
    真机可用"第二个 DSH_HOME + 另一份连接器身份"补；命中不了的按未验证如实说。
@@ -147,12 +167,12 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 673 项（25 条规则自检 + 155 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | 690 项（25 条规则自检 + 159 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1633 项（约 1 分钟） |
+| `cd app && flutter test` | 1640 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **803** 项 |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **816** 项 |
 | `cd relay && pnpm typecheck && node --test` | 类型 + **132** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。

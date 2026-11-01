@@ -74,7 +74,7 @@ class _Client extends FakeSyncClient {
   @override
   Future<void> unsubscribe(String sid) async {}
   @override
-  Future<SessionAnchor> subscribe(String sid, {required int since}) async =>
+  Future<SessionAnchor> subscribe(String sid) async =>
       const SessionAnchor(since: 0, hasMore: false);
 
   @override

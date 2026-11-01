@@ -17,9 +17,11 @@
 /// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
+import '../../core/snapshot_digest.dart';
 import '../../core/sync_client.dart';
 import '../fields.dart';
 import '../reading.dart';
+import 'snapshot.dart';
 
 /// 消费方一次拿齐"三态内核 + 字段内核 + 设置面解码"。
 export '../fields.dart';
@@ -50,15 +52,12 @@ final class SettingSectionWire {
 ///
 /// 一个 section 认不出就**跳过那一条**（少一行设置优于整个设置页报错）；
 /// `sections` 不是数组才是 [WireBad]。
-Future<List<SettingSectionWire>?> loadSettings(
+Future<SnapshotReply<List<SettingSectionWire>?>> loadSettings(
   SyncClient client, {
   required List<String> namespaces,
-}) async {
-  final result = await client.call<Object?>(_kDescribe, {
-    'namespaces': namespaces,
-  });
-  return valueOrReport(readSettings(result), _kDescribe);
-}
+}) => loadSnapshot(client, _kDescribe, {
+  'namespaces': namespaces,
+}, readSettings);
 
 /// 改一个字段（**只发新值**），回改完之后的快照。
 ///

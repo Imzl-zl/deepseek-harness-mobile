@@ -90,9 +90,9 @@ class _SubagentClient extends FakeSyncClient {
   static const grandLabel = '孙级记录';
 
   @override
-  Future<SessionAnchor> subscribe(String sid, {required int since}) async {
+  Future<SessionAnchor> subscribe(String sid) async {
     subscribes.add(sid);
-    return super.subscribe(sid, since: since);
+    return super.subscribe(sid);
   }
 
   @override

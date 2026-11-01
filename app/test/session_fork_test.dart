@@ -58,7 +58,7 @@ class _ForkClient extends FakeSyncClient {
   Future<void> unsubscribe(String sid) async {}
 
   @override
-  Future<SessionAnchor> subscribe(String sid, {required int since}) async {
+  Future<SessionAnchor> subscribe(String sid) async {
     subscribed.add(sid);
     return const SessionAnchor(since: 0, hasMore: false);
   }

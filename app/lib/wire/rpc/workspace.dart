@@ -30,10 +30,12 @@
 /// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
+import '../../core/snapshot_digest.dart';
 import '../../core/sync_client.dart';
 import '../../model/workspace.dart' show WorkspaceGroup;
 import '../fields.dart';
 import '../reading.dart';
+import 'snapshot.dart';
 
 /// 消费方一次拿齐"三态内核 + 字段内核 + 工作区面解码"。
 export '../fields.dart';
@@ -70,10 +72,8 @@ final class WorkspaceSnapshot {
 ///
 /// 读不出来 ⇒ `null` + 计数一次（调用方"留空 = 不分组"，那是如实的降级：
 /// 缺 `workspaceController` 的部署本来就没这个方法）。
-Future<WorkspaceSnapshot?> loadWorkspaceList(SyncClient client) async {
-  final result = await client.call<Object?>(_kList, const {});
-  return valueOrReport(readWorkspaceList(result), _kList);
-}
+Future<SnapshotReply<WorkspaceSnapshot?>> loadWorkspaceList(SyncClient client) =>
+    loadSnapshot(client, _kList, const {}, readWorkspaceList);
 
 /// 置顶 / 取消置顶：回**置顶全集**（`null` = 应答认不出，调用方如实报错）。
 Future<Set<String>?> workspacePin(

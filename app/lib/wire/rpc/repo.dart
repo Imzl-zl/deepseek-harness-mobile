@@ -31,10 +31,12 @@
 /// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
+import '../../core/snapshot_digest.dart';
 import '../../core/sync_client.dart';
 import '../../model/command.dart' show SlashCommand, parseSlashCommands;
 import '../fields.dart';
 import '../reading.dart';
+import 'snapshot.dart';
 
 /// 消费方一次拿齐"三态内核 + 字段内核 + 能力面解码"。
 export '../fields.dart';
@@ -87,10 +89,10 @@ final class RepoInfoWire {
 }
 
 /// 读一次 `repo.info`（排错要它：手机版本与电脑版本并排看）。
-Future<RepoInfoWire?> loadRepoInfo(SyncClient client) async {
-  final result = await client.call<Object?>(_kRepoInfo, const {});
-  return valueOrReport(readRepoInfo(result), _kRepoInfo);
-}
+///
+/// 带内容摘要：它是**进程级事实**（版本 / 能力位），一次会话里几乎不会变。
+Future<SnapshotReply<RepoInfoWire?>> loadRepoInfo(SyncClient client) =>
+    loadSnapshot(client, _kRepoInfo, const {}, readRepoInfo);
 
 /// `repo.info` 的应答。
 ///

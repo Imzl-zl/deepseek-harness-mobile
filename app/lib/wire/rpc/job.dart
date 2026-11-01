@@ -20,9 +20,11 @@
 library;
 
 import '../../core/job.dart' show JobRow;
+import '../../core/snapshot_digest.dart';
 import '../../core/sync_client.dart';
 import '../fields.dart';
 import '../reading.dart';
+import 'snapshot.dart';
 
 /// 消费方一次拿齐"三态内核 + 字段内核 + 任务面解码"。
 export '../fields.dart';
@@ -34,13 +36,12 @@ const String _kUnfollow = 'job.unfollow';
 const String _kKill = 'job.kill';
 
 /// 拉一次任务清单（快照；后续变化走 `job` 帧的 `status`）。
-Future<List<JobRow>?> loadJobList(
+///
+/// 带内容摘要：摘要的键含 `sid`，所以不同会话的任务表是两个包（互不命中）。
+Future<SnapshotReply<List<JobRow>?>> loadJobList(
   SyncClient client, {
   required String sid,
-}) async {
-  final result = await client.call<Object?>(_kList, {'sid': sid});
-  return valueOrReport(readJobList(result), _kList);
-}
+}) => loadSnapshot(client, _kList, {'sid': sid}, readJobList);
 
 /// 订阅一个任务的输出流（**应答不读**：输出走 `job` 帧）。
 Future<void> followJobOutput(

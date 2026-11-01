@@ -160,10 +160,11 @@ export interface ConnectionOptions {
    * 每发出一帧，报一次**线上字节数**（`encodeFrame` 之后的 UTF-8 长度）。
    *
    * 纯观测：连接层不认识指标名，也不知道它在算什么 —— 累计成
-   * `connector.bytes.outbound` 是装配层的事（`device-connection.ts`）。
+   * `connector.bytes.outbound` 与 `connector.bytes.out_frame.<帧类型>`
+   * 都是装配层的事（`device-connection.ts`）。
    * 不传就等于不观测，行为不变。
    */
-  onBytesOut?: (bytes: number) => void
+  onBytesOut?: (bytes: number, frameType: FrameType) => void
 }
 
 /**
@@ -408,13 +409,16 @@ export function createConnection(options: ConnectionOptions): Connection {
      * 线上字符串的**唯一落点**：写 socket，并把字节数交给装配层（`onBytesOut`）。
      *
      * 为什么在这一处：`write()` 是出帧的唯一出口（握手帧经 `sendHandshakeFrame`
-     * 也到这里），所以"发出去了多少字节"与"发了哪一帧"在这里天然对齐 ——
-     * 散在三个 `socket.send` 上各记一次，迟早漏一个。
+     * 也到这里，`credit` / `ping` 由本层自己产生），所以"发出去了多少字节"与
+     * "发了哪一帧"在这里天然对齐 —— 散在几个 `socket.send` 上各记一次，迟早漏一个。
+     * 帧类型一并交出去，是因为只有这里能看见**全部**帧：`status` / `host` /
+     * `pong` / `job` / `credit` / 握手三帧都不经过方法面或会话订阅，
+     * 记在那些发送点上必然漏掉一部分（2026-11-01 实测：那部分占一次回前台的 30%）。
      * 纯观测：连接层不认识指标名，也不知道它在算什么（见 `observability.ts`）。
      */
-    const emit = (text: string): void => {
+    const emit = (text: string, type: FrameType): void => {
       socketNow.send(text)
-      options.onBytesOut?.(Buffer.byteLength(text, 'utf8'))
+      options.onBytesOut?.(Buffer.byteLength(text, 'utf8'), type)
     }
     // 窗口检查在**分配 `fc` 之前**：没发出去的帧不该消耗序号，否则窗口算术会把没上线的帧也算进去。
     if (!window.canSend(frame.t)) return false
@@ -443,16 +447,16 @@ export function createConnection(options: ConnectionOptions): Connection {
             return false
           }
           // 明文通道模式（未配 `secure`）：`box` 原样透传。
-          emit(encodeFrame(wire))
+          emit(encodeFrame(wire), wire.t)
           if (frame.t !== 'ping') keepalive.onFrame(now())
           return true
         }
-        emit(encodeFrame({ ...wire, box: cipher.sealFrame(wire, wire.box) }))
+        emit(encodeFrame({ ...wire, box: cipher.sealFrame(wire, wire.box) }), wire.t)
         if (frame.t !== 'ping') keepalive.onFrame(now())
         return true
       }
 
-      emit(encodeFrame(wire))
+      emit(encodeFrame(wire), wire.t)
       if (frame.t !== 'ping') keepalive.onFrame(now())
       return true
     } catch (error) {
