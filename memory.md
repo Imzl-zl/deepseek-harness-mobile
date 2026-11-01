@@ -17,8 +17,13 @@
   连接层的 `DeviceSession.sinceOf`（落盘水位），`sync.hello` / `subscribe` 现取，
   连接器**只在缓冲能证明覆盖时才跳段**，覆盖不到退回整窗（方向：多发可以、少发不行）。
   ③ **快照带内容摘要**（契约 §5.7.1）：十个只读方法请求可带 `digest`，命中回
-  `{notModified:true}`（~20 B）；手机按 `(方法, 参数)` 存"上次成功应用那一包"的摘要，
+  `{notModified:true}`（每个 41 B）；手机按 `(方法, 参数)` 存"上次成功应用那一包"的摘要，
   `notModified` 时不清数据/不报错/不通知；不带 `digest` 的老客户端逐字不变。
+  **真机改后（连续两轮一致）：总出站 230 920 → 3 250 B（−98.6%）**，其中
+  `ev` 147 037 → **0**、`res` 76 638 → 2 006、快照明文 56 536 → 410（10 × 41）。
+  内容真变的对照：`session.projections` 回正文 1 114 B 并被应用（标题在那一包里），
+  `session.list` 仍 41 B（那一页字节确实没变），合计 2 030 B（改前同一条探针 47 507 B）。
+  冷启动第一次落地仍是整窗 `ev`（内存里没有内容，必须重放）—— 这是如实的代价。
   笔记 `implemented/2026-11-01-never-pull-unchanged.md` 与
   `implemented/2026-11-01-resume-from-persisted-watermark.md`。
 - **会话列表分页（11-01）**：`session.list` 请求 `{limit?, offset?}`、应答加 `hasMore`

@@ -88,5 +88,9 @@ connector.state.transitions    +4
   ② 带 since 但缓冲**覆盖不到** ⇒ 退回整窗（1..5 一条不少）。
 - app `test/sync_client_test.dart`：新增"重连声明的是**当前**水位"（订阅之后收到的事件
   也算数）；原有两条改成"喂 `DeviceSession` 水位 → 断言 hello / subscribe 带它"。
-- 真机：同一套 `HOME → monkey → 等 8s → 读 metrics` 的探针，改前 `out_frame.ev`
-  147 037 B（见 Problem），改后见 `memory.md` 的数字。
+- 真机（`d61cf622`，新 APK 已装，同一条 `HOME → monkey → 等 10s → 读 metrics` 探针，
+  **连续两轮完全一致**）：`out_frame.ev` **147 037 → 0 B**（一次空闲重连一条 `ev` 都不发），
+  总出站 **230 920 → 3 250 B**（−98.6%）。剩下的 3 250 B = 快照的 `notModified`（10 × 41 B）
+  + `credit` 858 + `hello-ack` 386 + `res` 帧头/封箱放大。
+  顺带印证了"冷启动仍整窗"这条代价：装完新 APK 第一次落地 `ev` 仍是 147 039 B（内存里没有内容，
+  必须重放），从第二轮起才是 0。
