@@ -356,6 +356,10 @@ app/packages/
    **只加进表、不自动拨**;用户在「换个连接方式」里选它才连(与设置页「添加端点」同一个
    对话框、同一句承诺)。配对凭据与地址无关,**不需要重新扫码**。
 
+   对话框里**直连是填、中转是选**:中转那一栏给「内置中转 / 自定义」二选一,默认落在
+   内置(`kBuiltinRelayUrl`,构建期 `--dart-define=BUILTIN_RELAY` 可换),地址就写在选项上 ——
+   用户换了自己的中转之后,想用回内置的那条是点一下,不用背域名。
+
 ### 6.2 端点的身份、归属与拨号次序
 
 | 面 | 规则 | 出处 |
@@ -369,6 +373,7 @@ app/packages/
 | 建连超时 | 直连 3s、中转 10s —— 直连是同一局域网（死的地址立刻知道），中转可能在公网 | `platform/transport_factory.dart` |
 | 全失败时的语义 | 抛一条 `TransportException`，**只带最后一个端点的原因与 code**；前面几条为什么失败不逐条上报（界面显示一条即可，逐条要另开面） | `core/endpoint_transport.dart` |
 | 明文边界 | 公网必须 `wss`；明文 `ws` 只放行非公网（回环/私网/CGNAT/link-local/ULA/IPv4-mapped）。IPv6 按前两字节分类，`::ffff:c0a8:101` 这种十六进制映射会被判成公网（**宁可严一格**） | `core/endpoint.dart` 的 `checkedRelayUri` / `isPrivateOrLoopback` |
+| 中转地址的规范形状 | **只留 `scheme://authority`**（路径/参数丢掉）：路径由协议拼（`/ws-ticket`、`/ws/device`）。电脑侧配置与二维码里的 `wss://host/ws/connector`（那是连接器拨的路径）与根地址是**同一台**中转 —— 不折叠就是表里两条、竞速互踢。直连**不**规范化（可能挂在反代子路径后） | `core/endpoint.dart` 的 `canonicalEndpoint`、`data/endpoint_book.dart` 的三个入口 |
 | 同网段判断 | **只对 IPv4 生效**：`subnetScore` 对 IPv6 与域名一律返回 0（"不猜"）。所以 IPv6-only 或 mDNS 名字的场景没有"同网段优先"，退化成"记住的 + 用户顺序" | `core/endpoint.dart` 的 `subnetScore` / `_ipv4OfUrl` |
 
 **adb 转发不是端点的一种**：它只是把手机的 `127.0.0.1` 接到电脑，回环地址本来就落在

@@ -187,9 +187,13 @@
 | **配置读写** | 支持，但**不在 pluginManager** | `settings.describe` `packages/api/settings-controller/src/index.ts:97-105`、`settings.update` `:115-122`、`settings.replace` `:132-139`、`settings.mutate` `:151-158`、`settings.openSettingsDocument` `:166-185` | `ctx.configForms.get(ns)` `packages/client/ui-settings/src/client/config-form.ts:293-302`；`mutate(ops, expectedRevision)` `:134-153` |
 
 **手机侧已接线的**：清单（`plugin.list`，宿主 `listPlugins:439`）、包清单
-（`plugin.listBundles`，宿主 `:463`）、行级启停（`plugin.setEnabled`，宿主 `:796`）、
+（`plugin.listBundles`，宿主 `:463`，带 `rows[].entryId` 供界面把行挂到包下面）、
+行级启停（`plugin.setEnabled`，宿主 `:796`）、
 安装 / 取消 / 状态（`plugin.install` / `plugin.cancelInstall` / `plugin.installStatus`，
 宿主 `:835` / `:982` / `:972`）与卸载（`plugin.remove`，宿主 `:999`）。
+**卸载按钮在每个装着的包上都给**：`removable` 不拿来隐藏它，判定在 `removeBundle`
+（宿主拒绝时是 `not-removable`，原话照显示）—— 取舍见
+`.agents/notes/implemented/2026-11-01-plugin-page-owns-the-delete.md`。
 
 安装与卸载是**发起即返回 + 轮询**：宿主这两个方法会跑 pnpm 并等它结束，远超契约 §10 的
 60 s 请求超时；`requestId` 既是幂等键也是宿主的安装句柄，进度来自宿主的
@@ -307,7 +311,7 @@ Plugins 页把三个「插件自带配置」的位置留出来，注册方拿到
 2. **bundle 列表 + 版本/安装态/可移除性**：`pluginManager.listBundles()`（`:279-319`）→ `name/version/description/enabled/installed/optional/removable/rows`。
 3. **行级与 bundle 级开关**：`setPluginEnabled(entryId, enabled)`（`:424-435`，**真正的组件级开关**）、`setBundleEnabled(name, enabled)`（`:442-448`）。二者都返回 `ChangeResult.application`，手机必须能把 `restart-required` / `overridden` / `failed` 讲清楚（`types.ts:114`）。
 4. **看安装进度与日志**：订阅 `plugin-manager/install-log`（chunk 带 argv/cwd/stream/exitCode，`types.ts:212-226`）与 `install-state`（`installing` 带第几次 registry / `applying` / `cancelling`，`types.ts:199-205`、白名单 `remote-events.ts:43-44`）。
-5. **安装 / 卸载（带二次确认）**：`inspect` → `installBundle` → `removeBundle`（`:340-417`、`:461-567`、`:600-626`）。
+5. **安装 / 卸载（带二次确认）**：`inspect` → `installBundle` → `removeBundle`（`:340-417`、`:461-567`、`:600-626`）。卸载入口挂在**每个装着的包**上：`removable` 不是手机侧的许可位，`removeBundle` 才是（`:1039` 抛 `not-removable`），所以手机不预筛，只显示宿主的拒绝原话。
 6. **通用 schema 表单（仅 volatile 字段）**：`settings.describe` / `update` / `replace` / `mutate`（`settings-controller/src/index.ts:97-158`），schema 用 `new Schema(json)` rehydrate 后校验（`ui-settings/src/client/schema.ts:50-67`）。
 7. **插件目录元数据展示**：title/description/icon（`package-meta.ts:148-171`）。
 

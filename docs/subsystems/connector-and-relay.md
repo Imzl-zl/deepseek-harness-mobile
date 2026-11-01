@@ -67,7 +67,7 @@
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `relayUrl` | — | 中转地址(wss) |
+| `relayUrl` | — | 中转地址(wss)。**电脑侧**这条是连接器拨的地址,路径由连接器自己拼(`base.pathname = '/ws/connector'`);二维码把它原样带出去,手机收到后规范成根地址(见 `app-channel-client.md` §6.2) |
 | `relayTokenRef` | — | 连接器令牌的凭据引用(本体走 `ctx.credentials`) |
 | `listenPort` | 0(不监听) | **直连拓扑**的监听端口;`0` = 关(只走中转,行为与不监听完全一致) |
 | `listenHost` | `127.0.0.1` | 监听地址。直连要走 Tailscale 时显式写 tailnet 地址;默认只在本机 |

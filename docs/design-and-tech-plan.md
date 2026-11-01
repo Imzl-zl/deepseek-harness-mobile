@@ -637,7 +637,9 @@ DSH 右侧有一条**轮次导航轨**(`ui-chat/TurnNavigator.tsx`):每一轮一
 - **三条策略**:不做逐插件页面适配;给插件作者正路(声明 `.volatile()` + `description` 即自动进手机表单);其余标"在电脑端打开"。
 - 手机**可做**:只读清单 + 状态、行级开关、安装日志、安装卸载(两段确认)。**不该做**:静默批准 build script、安装做成一次点击。
 
-> **有意偏离 DSH 插件管理器范式(2026-10-15)**:电脑侧设备管理面支持**行首 checkbox + 顶部浮现操作栏的多选删除**(DSH 插件管理器逐行开关 + 逐个确认、无多选)。**原因**:真机联调会攒几十行"配对过、连过一次、再没连过"的记录,挑几台删是真实场景;不选"编辑模式"是因为多选是临时动作,模式切换会改变整个列表的交互语义。**其余仍照 DSH 范式**:停用/启用一对布尔端点(照 `setBundleEnabled`)、启用不确认、硬删走页面内命名确认对话框(照 `confirmUninstall`,不用 `window.confirm`)、失败带原因。取舍见 `.agents/notes/implemented/2026-10-15-device-admin-face-dsh-house-style.md`。
+> **有意偏离 DSH 插件管理器范式(2026-10-15)**:电脑侧设备管理面支持**行首 checkbox + 顶部浮现操作栏的多选删除**(DSH 插件管理器逐行开关 + 逐个确认、无多选)。**原因**:真机联调会攒几十行"配对过、连过一次、再没连过"的记录,挑几台删是真实场景;不选"编辑模式"是因为多选是临时动作,模式切换会改变整个列表的交互语义。**其余仍照 DSH 范式**:停用/启用一对布尔端点(照 `setBundleEnabled`)、启用不确认、硬删走命名确认对话框(照 `confirmUninstall`,不用 `window.confirm`)、失败带原因。取舍见 `.agents/notes/implemented/2026-10-15-device-admin-face-dsh-house-style.md`。
+
+> **设备删除与确认框(2026-11-01)**:在用的行也能删(界面先停用、再删除两步);确认框挂 body 居中;中转地址改成选择框(内置 / 自定义)。取舍见 `.agents/notes/implemented/2026-11-01-dsh-panel-owns-the-delete.md`。
 
 ---
 

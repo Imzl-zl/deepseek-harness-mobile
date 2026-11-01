@@ -5,6 +5,19 @@
 
 ## 现在（2026-11-01）
 
+- **插件页能删了 + 设置页去小字（11-01，真机反馈）**：用户原话「只能禁用、停用，
+  没有删除？人家用户自己的东西，你凭啥不让人家删除」。① 卸载按钮**不再按 `removable`
+  隐藏**（判定在宿主 `removeBundle`，被拒时显示 `not-removable` 原话）；② 插件页
+  **按包分组**，归属用连接器新过线的 `BundleInfo.rows[].entryId`（金样随之重生成）；
+  ③ 启停 / 卸载的结论改成**屏幕中央**浮层（`ui/dsh_center_notice.dart`），进度卡钉顶部；
+  ④ 中转是**选**的（内置 `wss://dsh.0t0.me` / 自定义，`--dart-define=BUILTIN_RELAY` 可换）；
+  ⑤ 设置页与连接 sheet 里重复标题的小字删掉（分组标题已经说了）。
+  ⑥ **中转地址一律存根地址**（`canonicalEndpoint`）：二维码带的是电脑侧的
+  `wss://host/ws/connector`（连接器自己拼那条路径），与根地址是同一台中转 ——
+  不折叠就是表里两条、竞速互踢（`relay/src/server.ts` 的 `replaced`）。
+  笔记 `implemented/2026-11-01-plugin-page-owns-the-delete.md`、
+  `implemented/2026-11-01-builtin-relay-is-a-choice.md`、
+  `implemented/2026-11-01-relay-url-is-a-root.md`。
 - **「没变就别再搬」第 3 批（11-01，摘要 + 恢复语义 + 记账补齐）**：
   ① **出站账现在是恒等式** —— 记账点搬到连接层唯一出帧点（`emit`），
   `Σ connector.bytes.out_frame.* === connector.bytes.outbound`
