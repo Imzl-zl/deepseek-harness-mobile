@@ -128,3 +128,21 @@ export const METRIC = {
 } as const
 
 export type MetricName = (typeof METRIC)[keyof typeof METRIC]
+
+/**
+ * 按**帧类型**的出站字节（纯观测）—— 动态指标名。
+ *
+ * 为什么不放进 `METRIC`：那张表的判据是"全是字面量"（`tests/observability.test.ts` 逐条比），
+ * 塞进函数就会破坏它；而这两个名字的键是**运行时才知道的**（帧类型 / 方法名）。
+ *
+ * 为什么在总数之外还要拆：`connector.bytes.outbound` 只能回答"一共多少"，
+ * 而"一次回前台 230 KB 到底是谁"必须逐类回答 —— 快照（`res`）、会话事件重放（`ev`）、
+ * 通知（`host`）三者的对策完全不同（缓存 / 恢复策略 / 不该压）。
+ * 字节口径是**明文 `box` 的 UTF-8 长度**（线上还要 base64 放大，占比不变）。
+ */
+export const outFrameBytesMetric = (frameType: string): string =>
+  `connector.bytes.out_frame.${frameType}`
+
+/** 按 **RPC 方法**的应答字节（纯观测）—— 同上，只拆到方法。 */
+export const outMethodBytesMetric = (method: string): string =>
+  `connector.bytes.out_method.${method}`

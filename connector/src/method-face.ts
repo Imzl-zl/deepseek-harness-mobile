@@ -51,6 +51,14 @@ export interface MethodFaceOptions {
   idempotency?: Idempotency
   /** 分发失败时的留声点。默认静默（测试与无人值守装配用）。 */
   onError?: (message: string, detail?: unknown) => void
+  /**
+   * 一条应答发出前的记账点（**纯观测**，不参与任何判据）。
+   *
+   * 只有这一层同时知道"这是哪个方法"与"这一包多大"：`res` 帧的帧头不带方法名
+   * （方法在加密的 `box` 里），连接层拿到帧时已经无从归因。
+   * 字节口径是**明文 `box` 的 UTF-8 长度**（线上还要 base64 放大，占比不变）。
+   */
+  onResponse?: (method: string, boxBytes: number) => void
 }
 
 export interface MethodFace {
@@ -109,7 +117,10 @@ export function createMethodFace(options: MethodFaceOptions): MethodFace {
           requiresIdempotencyKey(request.method)
             ? await idempotency.run(request.requestId, execute)
             : await execute()
-        return resFrame(frame, envelope)
+        const response = resFrame(frame, envelope)
+        // 记账点：方法名只有这里知道（`res` 帧头不带它）。
+        options.onResponse?.(request.method, Buffer.byteLength(response.box))
+        return response
       } catch (error) {
         // 走到这里只可能是**载荷本身**坏了（不是 JSON / 缺 method）—— `dispatch` 从不抛。
         // 它是结构化错误，不是断连理由：回一个错误信封，连接留着。

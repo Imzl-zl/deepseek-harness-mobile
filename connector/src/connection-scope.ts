@@ -10,7 +10,13 @@ import { createJobSubscriptions } from './job-subscriptions.js'
 import { createMethodFace } from './method-face.js'
 import { createSessionPager } from './session-page.js'
 import { createSessionSubscriptions } from './session-subscriptions.js'
-import { METRIC, type ChannelLogger, type ChannelMetrics } from './observability.js'
+import {
+  METRIC,
+  outFrameBytesMetric,
+  outMethodBytesMetric,
+  type ChannelLogger,
+  type ChannelMetrics,
+} from './observability.js'
 import type { Idempotency } from './idempotency.js'
 import type { SessionBuffer } from './session-buffer.js'
 import type { DeviceAppState } from './presence.js'
@@ -159,7 +165,11 @@ export function createConnectionScope(
       const frame = out.t === 'ev'
         ? { v: 1 as const, t: 'ev' as const, sid: out.sid, seq: out.seq, box: out.body }
         : { v: 1 as const, t: 'live' as const, sid: out.sid, stream: out.stream, rev: out.rev, box: out.body }
-      return port.send(frame) ? 'sent' : 'paused'
+      if (!port.send(frame)) return 'paused'
+      // 按帧类型记字节（纯观测）：会话事件重放是"回前台 230 KB"的头号嫌疑，
+      // 而它和治疗快照的那套（缓存/摘要）根本不是一回事。
+      metrics.increment(outFrameBytesMetric(frame.t), Buffer.byteLength(out.body))
+      return 'sent'
     },
     waitWritable: () => port.whenWritable('ev'), log: logger,
     // **订阅变化就上报 presence**：`foreground` 档的 claim 判据是"前台且已订阅该 sid"，
@@ -188,6 +198,8 @@ export function createConnectionScope(
     }),
     ...(deps.idempotency === null ? {} : { idempotency: deps.idempotency }),
     onError: (message, detail) => logger.warn(message, detail),
+    // 纯观测：按方法记应答字节（哪一份快照贵，先治哪一个）。
+    onResponse: (method, bytes) => metrics.increment(outMethodBytesMetric(method), bytes),
   })
 
   return {
