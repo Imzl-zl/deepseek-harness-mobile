@@ -85,6 +85,7 @@ import 'dsh_toast.dart';
 import 'edge_stick.dart';
 import 'frame_coalesced.dart';
 import 'input_focus.dart';
+import 'load_more_on_scroll.dart';
 import 'load_older_trigger.dart';
 import 'queue_dock.dart';
 import 'side_pane.dart';
@@ -3774,10 +3775,17 @@ class _SessionListInlineState extends State<_SessionListInline> {
           ),
         ),
         Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            itemCount: rows.length,
-            itemBuilder: (context, index) => rows[index],
+          // 滚到快底就自动要下一页（判据见 `load_more_on_scroll.dart`）；
+          // 末尾那一行「加载更多会话」仍然保留 —— 它是"还有更多"的**可见说明**，
+          // 也是自动触发之外的手动兜底（比如惯性滚到底后停在阈值内）。
+          child: LoadMoreOnScroll(
+            hasMore: widget.hasMore,
+            onLoadMore: widget.onLoadMore,
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              itemCount: rows.length,
+              itemBuilder: (context, index) => rows[index],
+            ),
           ),
         ),
       ],
@@ -5183,3 +5191,4 @@ class _TurnDerivation {
   /// 流式尾条目要不要自己画助手头。
   final bool liveShowHead;
 }
+

@@ -2536,7 +2536,10 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   Future<void> refreshSessionMetrics() async {
     if (_disposed) return;
     try {
-      final page = await _fetchSessionRows(limit: _sessionRowWindow);
+      // **面板要整表**：子会话行可能落在已加载窗口之外（见 [ensureFullSessionRows]）。
+      final page = await _fetchSessionRows(
+        limit: _sessionsHasMore ? null : _sessionRowWindow,
+      );
       _applySessionList(page.sessions, hasMore: page.hasMore);
       if (!_disposed) notifyListeners();
     } catch (error) {
@@ -2597,6 +2600,29 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 列表里还有没有更早的会话（`session.list` 的 `hasMore`）。
   bool get hasMoreSessions => _sessionsHasMore;
   bool _sessionsHasMore = false;
+
+  /// **要整表**：分页之后，"只加载了一页"与"整份清单"就不再是同一件事，而有几个动作
+  /// 天然要后者 —— 它们不是"浏览列表"，而是"在这份清单里找一个东西"：
+  ///
+  /// - **会话搜索**（抽屉里输入关键词）：只在已加载的 50 行里搜会把后面的会话判成不存在；
+  /// - **落点**：`host.last_session` 记的那个会话可能早就不在窗口里了，找不到就会
+  ///   悄悄落到别的会话上（比"找不到"更糟：用户以为记忆坏了）；
+  /// - **归档列表**：它按 `archivedSids` 取行，行不在窗口里就整条不见；
+  /// - **子智能体面板**：子会话行不在窗口里，面板那一行就没有时长 / token。
+  ///
+  /// 代价如实记：调用一次，本 App 生命周期内的刷新窗口就变成整表（[_applySessionList]
+  /// 只增不减）—— 也就是说"搜过一次"之后，列表重取又回到整表。这是**用户显式要求
+  /// 全量**换来的，不是回退：不搜、不落旧会话的人一直只付一页的钱。
+  Future<void> ensureFullSessionRows() async {
+    if (_disposed) return;
+    try {
+      final page = await _fetchSessionRows();
+      _applySessionList(page.sessions, hasMore: false);
+      if (!_disposed) notifyListeners();
+    } catch (error) {
+      _recordError('拉取完整会话清单失败', error);
+    }
+  }
 
   /// 已加载窗口：一次要多少行。**只增不减**（见 [_applySessionList]）。
   int _sessionRowWindow = kSessionRowPageSize;
@@ -2959,6 +2985,13 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
         ? _uiState!.lastSession
         : await _prefs?.read(kLastSessionKey);
     if (_disposed || _currentSid != null) return;
+    // **记得的那个会话可能不在已加载的那一页里**（分页之后）：先要整表再判，
+    // 否则 `landingSessionOf` 会按第 2/3 档落到"在跑的"或"最新的"上 ——
+    // 用户看到的是"它忘了我上次在哪"，而不是"这一页里没有它"。
+    if (remembered != null && sessionOf(remembered) == null && _sessionsHasMore) {
+      await ensureFullSessionRows();
+      if (_disposed || _currentSid != null) return;
+    }
     final target = landingSessionOf(remembered: remembered);
     if (target == null) {
       // 第 4 档：列表空 / 只有子会话 ⇒ 不发明会话。此时若电脑侧还有一个 blank，
@@ -2993,8 +3026,12 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       _applySessionList(page.sessions, hasMore: page.hasMore);
       // **设备本地状态跟着清单失效**：清单里没有的会话，它的页签/草稿没有意义
       // （桌面从不清理 `dsh.conversation.<sid>`，那是 localStorage 的便宜，不是产品要求）。
+      //
+      // **但只在"手里是整表"时剪**（2026-11-01 分页之后加的闸）：`liveSids` 原本等于整份
+      // 清单，分页后它只是"已加载那一段" —— 拿它去剪会把窗口外所有会话的页签 / 草稿
+      // **删掉**，而用户并没有删它们。宁可留着死数据，也不能删活草稿。
       final ui = _uiState;
-      if (ui != null) {
+      if (ui != null && !page.hasMore) {
         unawaited(ui.pruneSessions({for (final s in _sessions) s.sid}));
       }
       _lastError = null;

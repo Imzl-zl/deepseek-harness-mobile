@@ -36,6 +36,7 @@ import '../theme/dsh_theme.dart';
 import 'collapsible_group.dart';
 import 'dsh_brand.dart';
 import 'dsh_popover.dart';
+import 'load_more_on_scroll.dart';
 
 /// 抽屉里的一行会话。
 class DrawerSession {
@@ -397,7 +398,11 @@ class _SessionDrawerState extends State<SessionDrawer> {
 
             // ---- 分组会话列表 ----
             Expanded(
-              child: widget.sections.isEmpty
+              // 滚到快底自动要下一页（与首页那份同一个判据）。
+              child: LoadMoreOnScroll(
+                hasMore: widget.hasMore,
+                onLoadMore: widget.onLoadMore,
+                child: widget.sections.isEmpty
                   ? Center(
                       child: Text(
                         '还没有会话。',
@@ -484,6 +489,7 @@ class _SessionDrawerState extends State<SessionDrawer> {
                           ),
                       ],
                     ),
+              ),
             ),
 
             // ---- 底栏五个出口 ----

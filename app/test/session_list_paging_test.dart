@@ -155,6 +155,26 @@ void main() {
     expect(ids.toSet().length, ids.length, reason: '一个 sid 只能有一行');
   });
 
+  test('要整表时一并把窗口撑到整表，之后刷新不再只问一页', () async {
+    // 判据来自 `AppModel.ensureFullSessionRows` 的四条：搜索 / 落点 / 归档 / 子智能体面板
+    // 都需要"整份清单"，它们不是"浏览列表"。这里钉**机制**，四条调用点各自在 UI 层接。
+    final client = _PagingClient(total: 120);
+    final app = await _started(client);
+    addTearDown(app.dispose);
+
+    await app.refreshSessionRows();
+    expect(app.hasMoreSessions, isTrue);
+
+    await app.ensureFullSessionRows();
+    expect(client.requests.last, (limit: null, offset: 0), reason: '整表 = 不带 limit');
+    expect(app.sessions.length, 120);
+    expect(app.hasMoreSessions, isFalse);
+
+    // 窗口被撑到整表：之后的通知刷新照旧拿全量（不再只问一页）。
+    await app.refreshSessionRows();
+    expect(client.requests.last, (limit: 120, offset: 0));
+  });
+
   test('已加载窗口不缩水：翻过页之后刷新问的是"翻过多少"', () async {
     final client = _PagingClient(total: 120);
     final app = await _started(client);

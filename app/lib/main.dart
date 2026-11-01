@@ -945,6 +945,12 @@ class _DshMobileAppState extends State<DshMobileApp>
           onSearch: (value) {
             if (value == _drawerQuery) return;
             setState(() => _drawerQuery = value);
+            // **搜索是全量动作**：过滤在本层按 `app.sessions` 做，而分页之后它只是
+            // 已加载的一段 —— 只在 50 行里搜会把后面的会话判成"不存在"
+            //（见 `AppModel.ensureFullSessionRows` 的四条判据）。
+            if (value.trim().isNotEmpty && app.hasMoreSessions) {
+              unawaited(app.ensureFullSessionRows());
+            }
           },
           // 「展开其余 N 个会话」：这一组不再按 watermark 裁（只活这次抽屉）。
           onRevealMore: (section) =>
@@ -1071,6 +1077,13 @@ class _DshMobileAppState extends State<DshMobileApp>
     final app = _app;
     if (app == null) return;
     _closeDrawer();
+    // **归档列表要整表**：它按 `archivedSids` 去 `app.sessions` 里取行，
+    // 而行可能落在已加载窗口之外 —— 不补全的话，归档过的会话会整条不见
+    //（见 `AppModel.ensureFullSessionRows` 的四条判据）。
+    if (app.hasMoreSessions) {
+      await app.ensureFullSessionRows();
+      if (!mounted) return;
+    }
     await showArchiveSheet(
       _navContext,
       app: app,

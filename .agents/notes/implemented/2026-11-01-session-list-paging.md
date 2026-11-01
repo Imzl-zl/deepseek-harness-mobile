@@ -64,6 +64,31 @@ Status: implemented（2026-11-01）
 - 代价 4（分页只在 App 侧生效）：**新 App 才带 `limit`**，所以真机验收要先装 APK
   （`flutter build apk --debug` + `adb install -r`，配对不丢）。
 
+## 分页补上的四个洞（用户一句"符合实际和用户体验吗"逼出来的）
+
+分页把"已加载的一段"当成了"整份清单"，而 app 里有四处**本来就假设整表**。
+逐条查过、逐条补（都是 app 侧，不动协议）：
+
+| 洞 | 症状 | 修法 |
+|---|---|---|
+| **`pruneSessions`** | `refreshSessionRows` 拿清单当 `liveSids` 去剪设备本地的页签 / 草稿 / 提问草稿 —— 分页后那只是 50 行，**窗口外每个会话的草稿会被删掉**（真丢数据） | **只在 `hasMore == false`（手里是整表）时剪**。宁可留死数据，不能删活草稿 |
+| **落点** | `host.last_session` 记的会话可能不在窗口里 ⇒ `landingSessionOf` 落到第 2/3 档（"在跑的" / "最新的"），用户看到的是"它忘了我上次在哪" | 落点前若记得的会话不在行里且 `hasMore` ⇒ 先 `ensureFullSessionRows()` 再判 |
+| **抽屉搜索** | 过滤在装配层按 `app.sessions` 做 ⇒ **只在 50 行里搜**，后面的会话被判成"不存在" | 关键词非空且 `hasMore` ⇒ 拉一次整表再过滤 |
+| **归档列表 / 子智能体面板** | 归档按 `archivedSids` 取行、面板要子会话行；行不在窗口里就整条不见 / 少时长与 token | 打开归档 sheet 前、面板刷新时都走整表（`refreshSessionMetrics` 在 `hasMore` 时请求不带 `limit`） |
+
+统一入口是 `AppModel.ensureFullSessionRows()`，注释里写明**四条判据**（搜索 / 落点 /
+归档 / 面板）与代价：**调用一次，本 App 生命周期内的刷新窗口就变成整表**
+（窗口只增不减）—— 这是"用户显式要求全量"换来的，不搜不落旧会话的人一直只付一页的钱。
+
+## 手感：自动触发，保留末尾那行
+
+第一版是**显式一行**"加载更多会话"，理由是 `ListView` 会为即将进入视口的内容预构建，
+用"末尾那行被构建"当触发点，在列表短时会首帧吞掉后面几页。用户问"符合体验吗"之后
+改成：**`NotificationListener` + 只认 `ScrollUpdateNotification`**（布局变化不算），
+几何判据**复用** `ui/load_older_trigger.dart` 的 `shouldLoadOlder`（对话流历史翻页用的
+就是它 —— 第一版新写了一个 `shouldLoadMoreOnScroll`，那是同一件事的第二份判据，已删）。
+末尾那行仍保留：它是"还有更多"的可见说明，也是阈值内停住时的手动兜底。
+
 ## Testing
 
 - connector：`tests/session-list-page.test.ts`（4 条）：不传 `limit` = 整表 + `hasMore:false`；
