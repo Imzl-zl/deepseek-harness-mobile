@@ -363,6 +363,15 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
 ## Patterns
 
 - **先查源码再动手**:任何"DSH 是怎么做的"问题,先 grep 出 `packages/...:行号` 再改代码;结论写进 `docs/`,不留在对话里。
+- **`packages/...:行号` 只证明"源码里有",不证明"跑着的宿主里有"**:DSH checkout 领先于已发布产物。涉及**"这条事件 / 服务 / 字段在不在"**时,要再核出厂 bundle —— `resources/app.asar` 是**未压缩**的 asar,字符串可直搜(2026-11-01 靠这一条查出 `llm/models-updated` 在 `0.2.1-rc.5` 里 0 处,而源码 `packages/llm/llm/src/types.ts:30` 有,差点白接一条永不触发的监听):
+  ```powershell
+  $asar='D:\soft\DeepSeek Harness\resources\app.asar'
+  $fs=[System.IO.File]::OpenRead($asar); $buf=New-Object byte[] (4MB); $n=0; $enc=[System.Text.Encoding]::UTF8
+  $targets=@('<事件名>','<对照组,一个确定存在的>'); $hits=@{}; foreach($t in $targets){$hits[$t]=0}
+  while(($n=$fs.Read($buf,0,$buf.Length)) -gt 0){ $c=$enc.GetString($buf,0,$n); foreach($t in $targets){$hits[$t]+=([regex]::Matches($c,[regex]::Escape($t))).Count} }
+  $fs.Close(); $hits
+  ```
+  **控制组是判据**:目标 0 处而同批候选事件都有几十处,才说明"这条真没有";只搜出一个 0 不算证据。宿主 bundle 版本用 `pluginManager/listBundles` 取(`@deepseek-ai/dsh-base`)。
 - **验证脚本是规格**:行为改动先改/加断言,再改实现,最后跑全绿。
 - **结构照 DSH,形态按触屏**:能照抄就照抄;触屏不适用时有意偏离,并在方案文档写明原因。
 - **纯浏览器原型**:`mock/proto/` 无构建步骤,双击 `index.html` 即可验证;所有交互用 Pointer Events 手写,便于真机触屏复现。
