@@ -61,6 +61,52 @@ String deviceUpgradeUrl(String relayUrl, String ticket) {
       '?ticket=${Uri.encodeQueryComponent(ticket)}';
 }
 
+/// 中转端点的**规范形状**：只留 `scheme://authority`（路径与参数都不属于地址）。
+///
+/// 为什么必须规范化：中转的路径是**协议定的**（`/ws-ticket`、`/ws/device`），
+/// 地址里带不带路径在语义上无关 —— 但 `url` 是端点身份的一半（[endpointIdOf]），
+/// 两种写法就成了**两条端点**：同一台中转在表里出现两条，竞速时互相顶掉
+/// （中转对同一设备只留一条数据通道，`relay/src/server.ts` 的 `replaced`）。
+///
+/// 带路径的那种写法从哪来：电脑侧的 `relayUrl` 常写成
+/// `wss://host/ws/connector` —— 那是**连接器**拨号的路径，而且它自己会拼
+/// （`connector/src/transport/relay-link.ts` 的 `base.pathname = '/ws/connector'`）；
+/// 二维码把配置里的值原样带出来（`connector/src/pairing.ts:219`），
+/// 于是手机收到的就是带路径的那一条。
+///
+/// **直连不动**：它可能真的挂在反代的某个路径后面，剥掉就拨错门了。
+///
+/// Note: 为什么在入口处就规范、而不是用到时再剥 —— 见
+/// `.agents/notes/implemented/2026-11-01-relay-url-is-a-root.md`
+Endpoint canonicalEndpoint(Endpoint endpoint) {
+  if (endpoint.kind != EndpointKind.relay) return endpoint;
+  final uri = Uri.tryParse(endpoint.url);
+  if (uri == null || !uri.hasAuthority || uri.host.isEmpty) return endpoint;
+  final url = '${uri.scheme}://${uri.authority}';
+  if (url == endpoint.url) return endpoint;
+  return Endpoint(
+    kind: endpoint.kind,
+    url: url,
+    label: endpoint.label,
+    manual: endpoint.manual,
+    hostId: endpoint.hostId,
+  );
+}
+
+/// 内置中转的根地址（开箱即用的那一个）。
+///
+/// **是可替换的构建参数**：`--dart-define=BUILTIN_RELAY=wss://your.relay`。
+/// 默认值就是这个项目自己的中转（域名来历、TLS 与续期见
+/// `.agents/notes/implemented/2026-10-31-relay-tls-zerossl.md`）。
+///
+/// 地址不是秘密：每一张配对载荷里都带着它（`protocol/` 的 `relay` 字段）。
+/// 它只在这里出现一次，是因为"添加端点"里那一栏要**预选它、并且能一键切回它**
+/// （用户换了自己的中转之后，还想用回内置的那个）。
+const String kBuiltinRelayUrl = String.fromEnvironment(
+  'BUILTIN_RELAY',
+  defaultValue: 'wss://dsh.0t0.me',
+);
+
 /// 端点种类：决定**怎么拨**，不决定"能不能拨"。
 ///
 /// 两者拨通之后的每一帧都走同一条路（握手、封箱、方法面）——

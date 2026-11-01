@@ -381,10 +381,10 @@ void main() {
     await tester.pumpAndSettle();
 
     // 端点组在屏外（通用/主题/模型/关于四组在它上面），先滚到可见。
-    await _scrollTo(tester, find.text('还没有端点。配对成功后，这里会列出可拨的地址。'));
+    await _scrollTo(tester, find.text('还没有端点：配对成功后会自动列在这里。'));
     await tester.pumpAndSettle();
 
-    expect(find.text('还没有端点。配对成功后，这里会列出可拨的地址。'), findsOneWidget);
+    expect(find.text('还没有端点：配对成功后会自动列在这里。'), findsOneWidget);
     expect(find.text('直连'), findsNothing);
     addTearDown(app.dispose);
   });
@@ -505,6 +505,38 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(app.hiddenEndpointIds, isEmpty);
+    addTearDown(app.dispose);
+  });
+
+  testWidgets('点名连接进行中，那一行的「⋯」（含删除）**照样可点**', (tester) async {
+    // 以前这里在 `requestedEndpoint == 这条` 时把整枚按钮禁用，理由是"删了就没地方
+    // 回落"。那是替用户做决定：他自己加的地址，想删就删，回落自然落到表里下一条。
+    final pending = Completer<void>();
+    final app = AppModel(
+      client: _FakeClient(),
+      endpoints: const [_direct, _relay],
+      onRequestEndpoint: (_) {},
+      onReconnect: () => pending.future,
+    );
+    await tester.pumpWidget(_host(app));
+    await tester.pumpAndSettle();
+    await _scrollTo(tester, find.text('中转'));
+
+    final requested = app.useEndpointNow(_relay);
+    await tester.pump();
+    expect(app.requestedEndpoint?.id, _relay.id, reason: '前提：点名还在进行中');
+
+    // 点得开才算数：菜单里那两行（连 / 删）都在。
+    await tester.tap(_moreOf('中转'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('删除这个端点'),
+      findsOneWidget,
+      reason: '不允许我们替用户挡住删除（点名进行中也不行）',
+    );
+
+    pending.complete();
+    await requested;
     addTearDown(app.dispose);
   });
 }

@@ -141,7 +141,6 @@ Future<void> showConnectionActionsSheet(
             color: DshColors.labelSecondary,
           ),
           title: const Text('换个连接方式'),
-          subtitle: const Text('选一条并立刻用它连'),
           onTap: () {
             Navigator.of(inner).pop();
             // 回调必须由**页面**的 context 实现（见下方参数说明）：
@@ -157,7 +156,8 @@ Future<void> showConnectionActionsSheet(
             color: DshColors.labelSecondary,
           ),
           title: const Text('手动填写电脑地址'),
-          subtitle: const Text('换了网络连不上：填新地址，再自己选它连接'),
+          // **"不会自动连"是非显然的**（用户会以为填完就切过去了），其余不必再说。
+          subtitle: const Text('换网络后连不上时用；加了不会自动连'),
           onTap: () {
             Navigator.of(inner).pop();
             onManualEndpoint();
@@ -171,7 +171,6 @@ Future<void> showConnectionActionsSheet(
             color: DshColors.labelSecondary,
           ),
           title: const Text('重新连接'),
-          subtitle: const Text('电脑侧不动，按当前方式再拨一次'),
           onTap: () {
             Navigator.of(inner).pop();
             onReconnect();
@@ -187,7 +186,6 @@ Future<void> showConnectionActionsSheet(
             color: DshColors.labelSecondary,
           ),
           title: const Text('重试连接'),
-          subtitle: const Text('电脑侧不动，只是再试一轮'),
           onTap: () {
             Navigator.of(inner).pop();
             onRetry();

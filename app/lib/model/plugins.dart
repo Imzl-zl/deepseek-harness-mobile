@@ -142,7 +142,12 @@ class PluginToggleOutcome {
 /// 一个**包**（宿主的 `BundleInfo`，`plugin-manager/src/types.ts:84-138`）。
 ///
 /// 与"插件行"是两个东西：一行是一个 Loader entry（可单独启停），一个包可能带来多行；
-/// 而**卸载只按包名**（`removeBundle(name)`）。所以卸载按钮挂在包上，`removable` 由宿主说。
+/// 而**卸载只按包名**（`removeBundle(name)`）。所以卸载按钮挂在包上。
+///
+/// **`removable` 不拿来隐藏按钮**：它只是宿主的一句预告，真正的判定在
+/// `removeBundle` 里（`plugin-manager/src/index.ts:1039` 抛 `not-removable`）。
+/// 用户的东西该由用户决定卸不卸；被拒时把那句话原样显示。
+/// 取舍见 `.agents/notes/implemented/2026-11-01-plugin-page-owns-the-delete.md`。
 class PluginBundle {
   const PluginBundle({
     required this.name,
@@ -151,6 +156,7 @@ class PluginBundle {
     this.enabled = false,
     this.removable = false,
     this.readOnlyReason = '',
+    this.rows = const <PluginBundleRow>[],
   });
 
   static PluginBundle? fromWire(Object? row) {
@@ -159,6 +165,7 @@ class PluginBundle {
     if (name is! String || name.isEmpty) return null;
     final version = row['version'];
     final readOnlyReason = row['readOnlyReason'];
+    final rows = row['rows'];
     return PluginBundle(
       name: name,
       version: version is String ? version : '',
@@ -166,6 +173,12 @@ class PluginBundle {
       enabled: row['enabled'] == true,
       removable: row['removable'] == true,
       readOnlyReason: readOnlyReason is String ? readOnlyReason : '',
+      rows: rows is List
+          ? rows
+                .map(PluginBundleRow.fromWire)
+                .whereType<PluginBundleRow>()
+                .toList(growable: false)
+          : const <PluginBundleRow>[],
     );
   }
 
@@ -180,11 +193,50 @@ class PluginBundle {
   /// 这一层不能在这里改的原因（宿主的 `readOnlyReason`）。
   final String readOnlyReason;
 
+  /// 这个包的 patch 声明了哪些行（宿主 `BundleInfo.rows`，`types.ts:61-70` 原样）。
+  ///
+  /// 有了它，插件页才能把插件行放进**它所属的包**里，卸载按钮就长在那张卡上；
+  /// 没有它就只能按 `moduleName` 猜"哪个插件属于哪个包"，那是第二份判据。
+  final List<PluginBundleRow> rows;
+
   /// 名字短名（`@scope/pkg` → `pkg`），列表里更好读；`-` 分隔的长名也一样。
   String get shortName {
     final at = name.indexOf('/');
     return at >= 0 ? name.substring(at + 1) : name;
   }
+}
+
+/// 包声明的一行（宿主 `BundleRowInfo`，`plugin-manager/src/types.ts:61-70`）。
+class PluginBundleRow {
+  const PluginBundleRow({
+    required this.rowId,
+    this.moduleName = '',
+    this.entryId = '',
+  });
+
+  static PluginBundleRow? fromWire(Object? value) {
+    if (value is! Map) return null;
+    final rowId = value['rowId'];
+    if (rowId is! String || rowId.isEmpty) return null;
+    final moduleName = value['moduleName'];
+    final entryId = value['entryId'];
+    return PluginBundleRow(
+      rowId: rowId,
+      moduleName: moduleName is String ? moduleName : '',
+      entryId: entryId is String ? entryId : '',
+    );
+  }
+
+  /// patch 里声明的行 id。
+  final String rowId;
+
+  /// 这一行 import 的模块（包没启用时插件行不在，靠它显示"这个包会带来什么"）。
+  final String moduleName;
+
+  /// 承载它的 Loader entry（**缺席 = 包没启用 / 行被禁用**，不是"没有这一行"）。
+  ///
+  /// 手机靠它把 `plugin.list` 的行挂到包下面 —— 用的就是宿主给的对应关系。
+  final String entryId;
 }
 
 /// 一次安装/卸载在手机眼里的状态（`plugin.installStatus`）。

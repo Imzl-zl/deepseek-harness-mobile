@@ -35,7 +35,7 @@ class EndpointBook {
     Future<void> Function(List<Endpoint>)? onTableChanged,
     Future<void> Function(EndpointMeta)? onMetaChanged,
     required void Function() onChange,
-  }) : _endpoints = List<Endpoint>.of(endpoints),
+  }) : _endpoints = _canonicalTable(endpoints),
        _rememberedEndpointId = rememberedEndpointId,
        _hiddenEndpointIds = Set<String>.of(hiddenEndpointIds),
        _succeededEndpointIds = Set<String>.of(succeededEndpointIds),
@@ -46,6 +46,22 @@ class EndpointBook {
 
   /// 上限保险丝的值。用户自己的删除总是优先于它 —— 它只防"表无限变长"。
   static const int maxEndpoints = 12;
+
+  /// 把一张表规范成"同一条地址只有一行"（顺序保留，先出现的赢）。
+  ///
+  /// 中转只留 `scheme://authority`（见 `core/endpoint.dart` 的 [canonicalEndpoint]）：
+  /// 电脑侧配置与二维码里的 `wss://host/ws/connector` 和根地址是**同一台中转**，
+  /// 不折叠就会在表里出现两条 —— 竞速时它们互相顶掉，表现是"连上了又断、反复重连"。
+  static List<Endpoint> _canonicalTable(List<Endpoint> endpoints) {
+    final out = <Endpoint>[];
+    final seen = <String>{};
+    for (final endpoint in endpoints) {
+      final canonical = canonicalEndpoint(endpoint);
+      if (!seen.add(canonical.id)) continue;
+      out.add(canonical);
+    }
+    return out;
+  }
 
   final Future<void> Function(List<Endpoint>)? _onTableChanged;
   final Future<void> Function(EndpointMeta)? _onMetaChanged;
@@ -137,7 +153,9 @@ class EndpointBook {
     // 而剪枝要靠它区分"同一台电脑换了地址"与"换了一台电脑"。
     final currentHost = hostId ?? '';
     final stamped = <Endpoint>[
-      for (final endpoint in discovered)
+      // **先规范再盖章**：隐藏集与身份都按规范后的 id 记，否则"藏掉那条带路径的、
+      // 连接器又报一条根地址"会绕开隐藏。
+      for (final endpoint in discovered.map(canonicalEndpoint))
         endpoint.hostId.isEmpty && currentHost.isNotEmpty
             ? endpoint.withHost(currentHost)
             : endpoint,
@@ -250,7 +268,9 @@ class EndpointBook {
   /// **地址校验由调用方做**（设置页走 `checkedRelayUri` + `isPrivateOrLoopback`）：
   /// `data/` 只存值，不判安全边界 —— 那是 `core/endpoint.dart` 的职责。
   Future<void> addManualEndpoint(Endpoint endpoint) async {
-    final manual = endpoint.withManual(true);
+    // 手填的也可能带路径（用户把电脑侧那条 `wss://host/ws/connector` 粘进来）——
+    // 与自报的那条是同一台中转，规范成同一个 id 才不会多出一行。
+    final manual = canonicalEndpoint(endpoint).withManual(true);
     // 之前藏过的话，这次是用户明确要它 —— 顺手解除隐藏。
     _hiddenEndpointIds.remove(manual.id);
     final next = List<Endpoint>.of(_endpoints);

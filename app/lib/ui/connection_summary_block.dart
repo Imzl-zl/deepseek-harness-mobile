@@ -158,13 +158,8 @@ class ConnectionSummaryBlock extends StatelessWidget {
                   style: TextStyle(fontSize: 12, color: c.labelSecondary),
                 ),
               ],
-              if (onTap != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  '点这里换一条 · 右边是重连',
-                  style: TextStyle(fontSize: 11, color: c.labelTertiary),
-                ),
-              ],
+              // **不写"点这里换一条"**：这块整体可点、右边那个图标就是重连，
+              // 一眼就能试出来的一句话不值得每屏都占一行小字。
             ],
           ),
         ),

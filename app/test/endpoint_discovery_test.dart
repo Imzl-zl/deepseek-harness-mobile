@@ -548,4 +548,82 @@ void main() {
       app.dispose();
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // 中转地址的规范形状：`wss://host/ws/connector` 与 `wss://host` 是**同一台中转**
+  //
+  // 带路径的那种写法来自电脑侧配置，二维码原样带出来；而 `url` 是端点身份的一半，
+  // 不折叠就会在表里出现两行 —— 竞速时互相顶掉（中转对同一设备只留一条数据通道）。
+  // ---------------------------------------------------------------------------
+  group('中转地址规范化', () {
+    test('表里两种写法折叠成一行，顺序按先出现的算', () async {
+      final app = AppModel(
+        client: _FakeClient(),
+        endpoints: const [
+          Endpoint(
+            kind: EndpointKind.relay,
+            url: 'wss://dsh.0t0.me',
+            label: '中转',
+          ),
+          Endpoint(
+            kind: EndpointKind.relay,
+            url: 'wss://dsh.0t0.me/ws/connector',
+            label: '中转',
+          ),
+        ],
+      );
+      expect(app.endpoints.map((e) => e.url).toList(), [
+        'wss://dsh.0t0.me',
+      ], reason: '同一台中转只该占一行');
+      app.dispose();
+    });
+
+    test('手填粘进带路径的那条：存的是根地址，也不会多出一行', () async {
+      final persisted = <List<Endpoint>>[];
+      final app = AppModel(
+        client: _FakeClient(),
+        endpoints: const [_relay],
+        onEndpointsChanged: (list) async => persisted.add(list),
+      );
+
+      await app.addManualEndpoint(
+        const Endpoint(
+          kind: EndpointKind.relay,
+          url: 'wss://relay.example/ws/connector',
+        ),
+      );
+
+      expect(app.endpoints.map((e) => e.url).toList(), [
+        'wss://relay.example',
+      ], reason: '路径是协议拼的，不属于地址');
+      expect(app.endpoints.single.manual, isTrue, reason: '这条仍是用户手填的');
+      expect(
+        persisted.last.single.url,
+        'wss://relay.example',
+        reason: '落盘的也必须是规范形状（否则重启后又变成两条）',
+      );
+      app.dispose();
+    });
+
+    test('连接器自报带路径的那条：与表里的根地址是同一个 id，不新增行', () async {
+      final app = await serving(
+        onCall: (method, _) => method == 'endpoint.describe'
+            ? {
+                'endpoints': [
+                  {
+                    'kind': 'relay',
+                    'url': 'wss://relay.example/ws/connector',
+                    'label': '中转',
+                  },
+                ],
+              }
+            : null,
+      );
+
+      expect(app.endpoints.map((e) => e.url).toList(), [
+        'wss://relay.example',
+      ], reason: '自报的那条就是表里那条，不是第二条');
+      app.dispose();
+    });
+  });
 }

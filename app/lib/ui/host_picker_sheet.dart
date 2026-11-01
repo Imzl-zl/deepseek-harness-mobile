@@ -50,7 +50,8 @@ Future<String?> pickPairedHost(
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4),
           child: Text(
-            '切换会立刻断开当前那台，界面只显示新那台的会话；它被别的设备占着时会停在"未连接（被占用）"。',
+            // 只留**后果**（会断开当前那台）；"界面只显示新的那台"是它能自己看见的。
+            '切换会立刻断开当前那台。',
             style: TextStyle(
               fontSize: 12,
               height: 1.45,

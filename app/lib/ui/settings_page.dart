@@ -262,12 +262,9 @@ class SettingsPage extends StatelessWidget {
                 onPicked: app.setSendMode,
               ),
             ),
-            const _PrefNote(
-              '这几项只影响这台手机的呈现，不同步到电脑（DSH 桌面把它们存在'
-              '电脑上，那是跨浏览器跟随；手机只有自己看，这是有意偏离）。',
-            ),
-            // **以下三行是电脑侧真值**（`settings.describe` / `settings.update`）：
-            // 值存在电脑上，手机改的是电脑的设置 —— 与上面那一组"本地偏好"不是一回事。
+            // **以上是手机本地偏好，以下是电脑侧真值**（`settings.describe` /
+            // `settings.update`）：前者只影响这台手机（有意偏离，见文件头），后者改的是
+            // 电脑。界面不为这个区别写一段小字 —— 分组标题与图标已经说了。
             _SettingPickerRow(
               icon: 'agentPreset',
               label: '新任务默认模式',
@@ -316,7 +313,7 @@ class SettingsPage extends StatelessWidget {
                   vertical: 12,
                 ),
                 child: Text(
-                  '还没有端点。配对成功后，这里会列出可拨的地址。',
+                  '还没有端点：配对成功后会自动列在这里。',
                   style: TextStyle(fontSize: 13, color: c.labelSecondary),
                 ),
               )
@@ -864,10 +861,7 @@ class _ModelSection extends StatelessWidget {
             value: failure.message,
             onTap: () {},
           ),
-        const _PrefNote(
-          '提供商与密钥的增删改在电脑上做（DSH 的模型设置页）。'
-          '密钥值不回传手机，这一版也不从手机改。',
-        ),
+        const _PrefNote('提供商与密钥在电脑上改（DSH 的模型设置页）。'),
       ],
     );
   }
@@ -883,9 +877,7 @@ class _EndpointNote extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
       child: Text(
-        '拨号顺序：上次连上的那条先试 → 和你现在同一 WiFi 的次之 → 其余按这里的顺序。'
-        '所以换地点通常不用重扫码；拨不通会自动顺延。'
-        '点一行可以设为首选或删除，也可以手填一个地址。',
+        '按这里的顺序自动拨，拨不通顺延；点一行设为首选。',
         style: TextStyle(fontSize: 12, color: c.labelTertiary),
       ),
     );
@@ -963,9 +955,6 @@ class _EndpointRow extends StatelessWidget {
         app.activeEndpoint?.id == endpoint.id;
     final isFirst = app.endpoints.first.id == endpoint.id;
     final (status, statusColor) = _statusOf(isActive, c);
-    // **正在按用户点名连接**时这一行暂时不可删：连接正在进行，删掉它会让
-    // 失败回落的落点消失。
-    final isRequested = app.requestedEndpoint?.id == endpoint.id;
 
     return InkWell(
       // **点一行 = 设为首选**（回到 2026-10-18 之前的口径）。
@@ -1050,11 +1039,15 @@ class _EndpointRow extends StatelessWidget {
             ),
             SizedBox(
               width: 36,
+              // **永远可点，包括正在按它连接的那一条**：以前这里在"点名连接中"
+              // 会把整枚按钮禁用（连带删除），理由是"删了就没地方回落"。那是替用户
+              // 做决定 —— 用户要删就删，回落自然落到表里下一条。
+              // 取舍见 `.agents/notes/implemented/2026-11-01-plugin-page-owns-the-delete.md`
               child: IconButton(
                 tooltip: '更多',
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
-                onPressed: isRequested ? null : () => _onMore(context),
+                onPressed: () => _onMore(context),
                 icon: DshIcon('ellipsis', size: 18, color: c.labelSecondary),
               ),
             ),

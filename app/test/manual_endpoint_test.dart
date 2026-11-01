@@ -14,6 +14,7 @@ import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
+import 'package:dsh_mobile/ui/add_endpoint_dialog.dart';
 import 'package:dsh_mobile/ui/connection_actions_sheet.dart';
 import 'package:dsh_mobile/ui/connection_summary_block.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
@@ -76,7 +77,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('手动填写电脑地址'), findsOneWidget);
-    expect(find.textContaining('再自己选它连接'), findsOneWidget);
+    expect(
+      find.textContaining('不会自动连'),
+      findsOneWidget,
+      reason: '填完不会自己切过去 —— 这是唯一非显然的一条，要说出来',
+    );
 
     await tester.tap(find.text('手动填写电脑地址'));
     await tester.pumpAndSettle();
@@ -127,9 +132,98 @@ void main() {
     expect(saved, isNotEmpty, reason: '端点表要落盘');
     expect(reconnects, 0, reason: '**不许自动拨**：连不连是用户的事');
   });
+
+  _relayGroup();
 }
 
 /// 把 `addEndpointOnly` 包一层（它要 context，测试里从按钮的 context 拿）。
 void unawaitedAdd(BuildContext context, AppModel app) {
   unawaited(addEndpointOnly(context, app));
+}
+
+/// 一个只会弹「添加端点」的按钮（结果是 `AddedEndpoint`）。
+Widget _dialogOpener(
+  void Function(AddedEndpoint?) onResult,
+  EndpointKind kind,
+) => MaterialApp(
+  theme: DshTheme.dark(),
+  home: Builder(
+    builder: (context) => Scaffold(
+      body: Center(
+        child: TextButton(
+          onPressed: () async =>
+              onResult(await showAddEndpointDialog(context, initialKind: kind)),
+          child: const Text('open'),
+        ),
+      ),
+    ),
+  ),
+);
+
+void _relayGroup() {
+  testWidgets('中转是**选**的：默认内置那条（开箱即用，不用填）', (tester) async {
+    AddedEndpoint? added;
+    await tester.pumpWidget(
+      _dialogOpener((v) => added = v, EndpointKind.relay),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('内置中转'), findsOneWidget);
+    expect(
+      find.text(kBuiltinRelayUrl),
+      findsOneWidget,
+      reason: '地址直接写在选项上 —— 用户不该需要记得那个域名',
+    );
+    expect(
+      find.byType(TextField),
+      findsNothing,
+      reason: '内置 = 不用填（用户原话：开箱即用的东西不该要人填）',
+    );
+
+    await tester.tap(find.text('添加'));
+    await tester.pumpAndSettle();
+    expect(added?.endpoint.kind, EndpointKind.relay);
+    expect(added?.endpoint.url, kBuiltinRelayUrl);
+    expect(added?.allowPlaintextPublic, isFalse, reason: '内置那条是 wss，不需要明文确认');
+  });
+
+  testWidgets('换成自己的中转：只有选了「自定义」才出现输入框，填什么加什么', (tester) async {
+    AddedEndpoint? added;
+    await tester.pumpWidget(
+      _dialogOpener((v) => added = v, EndpointKind.relay),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('自定义'));
+    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'wss://relay.mine.dev');
+    await tester.tap(find.text('添加'));
+    await tester.pumpAndSettle();
+
+    expect(added?.endpoint.url, 'wss://relay.mine.dev');
+    expect(added?.endpoint.kind, EndpointKind.relay, reason: '自定义只是换地址，种类还是中转');
+  });
+
+  testWidgets('再点回「内置中转」就换回那条（用户的地址不会被抹掉，但不再提交它）', (tester) async {
+    AddedEndpoint? added;
+    await tester.pumpWidget(
+      _dialogOpener((v) => added = v, EndpointKind.relay),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('自定义'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'wss://relay.mine.dev');
+    await tester.tap(find.text('内置中转'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('添加'));
+    await tester.pumpAndSettle();
+
+    expect(added?.endpoint.url, kBuiltinRelayUrl);
+  });
 }

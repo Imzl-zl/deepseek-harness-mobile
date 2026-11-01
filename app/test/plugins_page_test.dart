@@ -287,7 +287,14 @@ void main() {
 
       final row = app.plugins.firstWhere((item) => item.entryId == 'entry-a');
       expect(row.enabled, isTrue, reason: '回执里的 enabled 是宿主回读后的真值');
-      expect(find.textContaining('被更高优先级的配置盖住了'), findsOneWidget);
+      final notice = find.textContaining('被更高优先级的配置盖住了');
+      expect(notice, findsOneWidget);
+      // **结论在屏幕中央**（用户原话："不是屏幕居中？？"）：列表可以滚，
+      // 贴在列表顶部的那张卡在他点的那一行看来就是"什么都没发生"。
+      final center = tester.getCenter(notice);
+      final size = tester.view.physicalSize / tester.view.devicePixelRatio;
+      expect((center.dx - size.width / 2).abs(), lessThan(24), reason: '水平居中');
+      expect((center.dy - size.height / 2).abs(), lessThan(40), reason: '垂直居中');
     });
   });
 
@@ -349,7 +356,7 @@ void main() {
       expect(find.text('关闭'), findsOneWidget);
     });
 
-    testWidgets('卸载：只有宿主说 removable 的包有按钮；确认后按包名发请求', (tester) async {
+    testWidgets('卸载：**每个装着的包**都有按钮；确认后按包名发请求', (tester) async {
       final client = _PluginClient(
         rows: _rows,
         bundles: const [
@@ -394,10 +401,16 @@ void main() {
         find.byKey(
           const ValueKey<String>('plugin-remove-dsh-mobile-connector'),
         ),
-        findsNothing,
-        reason: '宿主说不可卸的包不摆按钮 —— 点了必然失败',
+        findsOneWidget,
+        reason:
+            '宿主说 removable=false 也不隐藏按钮 —— 卸不卸是用户的事，'
+            '被拒时显示电脑侧原话',
       );
 
+      await tester.ensureVisible(
+        find.byKey(const ValueKey<String>('plugin-remove-@acme/demo')),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(
         find.byKey(const ValueKey<String>('plugin-remove-@acme/demo')),
       );
@@ -412,6 +425,136 @@ void main() {
       expect(removed.length, 1);
       expect(removed.single.$2, {'name': '@acme/demo'});
       expect(removed.single.$3, isNotNull);
+    });
+
+    testWidgets('宿主标成不可卸载的包，点了**照样发请求**（宿主是权威，手机不替它拦）', (tester) async {
+      final client = _PluginClient(
+        rows: _rows,
+        bundles: const [
+          {
+            'name': 'dsh-mobile-connector',
+            'installed': true,
+            'enabled': true,
+            'removable': false,
+          },
+        ],
+        jobStatuses: const [
+          {
+            'requestId': 'job',
+            'status': 'done',
+            'kind': 'remove',
+            'error': 'not-removable',
+            'result': {'application': 'failed', 'errorCode': 'not-removable'},
+          },
+        ],
+      );
+      final app = await _app(client);
+      addTearDown(app.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: DshTheme.dark(),
+          home: PluginsPageHost(app: app),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final remove = find.byKey(
+        const ValueKey<String>('plugin-remove-dsh-mobile-connector'),
+      );
+      await tester.ensureVisible(remove);
+      await tester.pumpAndSettle();
+      await tester.tap(remove);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('plugin-remove-confirm')),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      final removed = client.sent.where((call) => call.$1 == 'plugin.remove');
+      expect(removed.length, 1, reason: '**不预筛**：这一下是用户的决定');
+      expect(removed.single.$2, {'name': 'dsh-mobile-connector'});
+    });
+  });
+
+  group('按包分组（归属用宿主给的 rows[].entryId）', () {
+    testWidgets('包声明的行挂在那张卡下面；没有归属的行进「其他插件」', (tester) async {
+      final client = _PluginClient(
+        rows: _rows,
+        bundles: const [
+          {
+            'name': '@deepseek-ai/dsh-tool-bash',
+            'version': '0.2.1',
+            'installed': true,
+            'enabled': true,
+            'removable': true,
+            'rows': [
+              {
+                'rowId': 'bash',
+                'moduleName': '@deepseek-ai/dsh-tool-bash',
+                'entryId': 'entry-a',
+              },
+            ],
+          },
+        ],
+      );
+      final app = await _app(client);
+      addTearDown(app.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: DshTheme.dark(),
+          home: PluginsPageHost(app: app),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 行 a 属于那个包 ⇒ 在包卡片里（包名在上面）；行 b 没有归属 ⇒ 单独一段。
+      expect(find.text('其他插件'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('Bash 工具')).dy,
+        greaterThan(tester.getTopLeft(find.text('dsh-tool-bash')).dy),
+        reason: '插件行在它所属的包下面',
+      );
+      expect(find.text('只能在电脑上改'), findsOneWidget);
+    });
+
+    testWidgets('归属用的是 entryId，不是 moduleName（两者同名也不许猜）', (tester) async {
+      final client = _PluginClient(
+        rows: _rows,
+        bundles: const [
+          {
+            'name': '@deepseek-ai/dsh-tool-bash',
+            'installed': true,
+            'enabled': true,
+            'removable': true,
+            // 名字对得上，但宿主说这一行属于**另一个** entry。
+            'rows': [
+              {
+                'rowId': 'bash',
+                'moduleName': '@deepseek-ai/dsh-tool-bash',
+                'entryId': 'entry-b',
+              },
+            ],
+          },
+        ],
+      );
+      final app = await _app(client);
+      addTearDown(app.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: DshTheme.dark(),
+          home: PluginsPageHost(app: app),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // entry-b 被挂进包里，entry-a（moduleName 相同）留在「其他插件」。
+      expect(find.text('其他插件'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('Bash 工具')).dy,
+        greaterThan(tester.getTopLeft(find.text('只能在电脑上改')).dy),
+        reason: '按 moduleName 猜就会把 a 也塞进包里',
+      );
     });
   });
 }
