@@ -5,18 +5,14 @@
 
 ## 现在（2026-11-01）
 
-- **重取范围第 2 批（11-01，连接器侧）**：`session.modelCatalog` 与 `permission.catalog`
-  接上了生产者 —— 五条宿主失效事件（`llm/adapters-updated`、`llm/models-updated`、
-  `settings/document-updated`、`credentials/record-updated`、`credentials/reference-updated`）
-  + `permission-presets/catalog-changed`，宿主级、不带 `sid`、不筛发起者。**只改连接器一处**
-  （协议 / 9 项清单 / app 侧登记表都没动）。`settings/document-updated` 是**一条事件两个 key**：
-  `settings.describe` 仍按 `READABLE_NAMESPACES` 过滤，模型目录**不过滤**（`settingsUpdatedFor`
-  永不为空）。真机（App 未重装、未手动重连）：改 `agent-default-model` 后**通知 +107 ms、
-  手机重取帧 +141 ms**（旧构建同一条写入是 **0 通知 / 0 帧**，因为那个 ns 读不到）。
-  一次标题变更实测出站 **1 943 515 B**（`session.list` 整表 1 941 638 B，键只变一个标题）。
-  **权限预设目录那条未验**：目录只由 `registerAuto` 失效、预设表插件生命周期内固定
-  （`permission-presets/README.md:135`），而这份宿主（195 插件）没有 `dsh-auto-review`。
-  笔记 `implemented/2026-11-01-refetch-scope-by-trigger.md` 文末；契约 `remote-channel.md` §5.9。
+- **重取范围第 2 批（11-01，连接器侧）**：`session.modelCatalog` 接五条宿主失效事件
+  （`llm/*-updated`、`settings/document-updated`、`credentials/*-updated`），
+  `permission.catalog` 接 `permission-presets/catalog-changed`；宿主级、不带 `sid`、
+  不筛发起者，**只改连接器一处**。`settings/document-updated` 一条事件两个 key
+  （`settings.describe` 仍按命名空间过滤，模型目录不过滤）。真机：改默认模型后
+  **通知 +107 ms / 手机重取帧 +141 ms**（旧构建同一条写入 0 通知 0 帧）；一次标题变更
+  出站 **1 943 515 B**（整表 1 941 638 B）。**权限预设目录未验**（这份宿主 195 个插件里
+  没有 `dsh-auto-review`，目录只由 `registerAuto` 失效）。笔记 `…/2026-11-01-…` 文末。
 - **重取范围按触发源拆（11-01，第 1 批落地）**：`refreshSessions()` 从产品路径消失 ——
   拆成 `refreshSessionRows()`（只做行）与 `refreshHostCatalogs()`（模型 / 权限 / 预设 /
   `repo.info`）；登记表长到 **9 个 key**（`app/lib/data/host_state.dart`），多一列

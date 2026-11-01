@@ -134,7 +134,7 @@ import {
   type HostStateNotice,
 } from './protocol/host-state.js'
 import { READABLE_NAMESPACES } from './dsh/settings-face.js'
-import { onModelCatalogInvalidated, onPermissionCatalogChanged } from './dsh/host-events.js'
+import { onModelCatalogChanged, onPermissionCatalogChanged } from './dsh/host-events.js'
 import { createSessionBuffer } from './session-buffer.js'
 import { createSessionsAdapter } from './dsh/sessions.js'
 import { createWorkspacesPort } from './dsh/workspaces.js'
@@ -1189,23 +1189,11 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           }))
         }
 
-        /**
-         * 模型目录失效（契约 §5.9 的触发点表，第 2 批）。
-         *
-         * 这四条 + 上面那条 `settings/document-updated` 就是 DSH 浏览器侧的完整失效表
-         * （`ui-model-selection/src/client/service.ts:54-58`）。**宿主级、不带 `sid`、
-         * 不按发起者 / 订阅者过滤** —— 目录是进程级事实，而宿主事件不知道是谁改的。
-         * 订阅与类型补充在 `dsh/host-events.ts`，映射在 `protocol/host-state.ts`；
-         * 为什么两批分开、以及为什么不过滤命名空间：`.agents/notes/implemented/2026-11-01-refetch-scope-by-trigger.md`。
-         */
-        ctx.effect(() => onModelCatalogInvalidated(ctx, notifyHostState))
-
-        /**
-         * 权限预设目录失效（宿主 `permission-presets/catalog-changed`）。
-         *
-         * 浏览器侧收到就 invalidate + refresh（`ui-permission-presets/src/client/catalog.ts:46-49`）；
-         * 它无载荷、不追加会话事件、不动会话 `seq`（`api/remotes/README.md:51`）。
-         */
+        // 两个宿主级目录的失效事件（契约 §5.9 触发点表的最后两行）：订阅与类型补充在
+        // `dsh/host-events.ts`，映射与出处见那里的注释；再上一行
+        // （`settings/document-updated`）由上面那条设置监听发 —— 它还要过命名空间过滤，
+        // 且同一条事件命中两个 key。
+        ctx.effect(() => onModelCatalogChanged(ctx, notifyHostState))
         ctx.effect(() => onPermissionCatalogChanged(ctx, notifyHostState))
 
         // 配对端点（§12.1）。**连接器令牌不在这里读**：拨号时现读（`startRelayChannel`），

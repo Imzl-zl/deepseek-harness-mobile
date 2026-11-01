@@ -60,7 +60,7 @@ declare module '@deepseek-ai/cordis' {
  * 受众与过滤一律交给 `notify`：这几条事件不认发起者、也不认订阅者（契约 §5.9 规则 4/5），
  * 所以这里一个判据都不加。
  */
-export function onModelCatalogInvalidated(
+export function onModelCatalogChanged(
   ctx: Context,
   notify: (notice: HostStateNotice) => void,
 ): () => void {

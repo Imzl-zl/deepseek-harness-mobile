@@ -35,7 +35,7 @@ import {
   titleChangedNotice,
   type HostStateNotice,
 } from '../src/protocol/host-state.js'
-import { onModelCatalogInvalidated, onPermissionCatalogChanged } from '../src/dsh/host-events.js'
+import { onModelCatalogChanged, onPermissionCatalogChanged } from '../src/dsh/host-events.js'
 import { onJobsLifecycle } from '../src/dsh/jobs.js'
 import { READABLE_NAMESPACES } from '../src/dsh/settings-face.js'
 import { needsBox, wireRoutingOf, type WireFrame } from '../src/protocol/frame.js'
@@ -103,6 +103,23 @@ function makeHandlerDeps(notified: HostStateNotice[], deviceOf?: string) {
 }
 
 const hostFramesOf = (frames: readonly OutboundFrame[]) => frames.filter((frame) => frame.t === 'host')
+
+/**
+ * 只记"订阅了哪个事件"的 `ctx` 替身：目录触发点那两条用例只关心**订阅面**与
+ * **注销干不干净**，不关心 cordis 的派发（那是宿主的事）。
+ */
+function fakeHostEventCtx() {
+  const listeners = new Map<string, () => void>()
+  return {
+    listeners,
+    ctx: {
+      on: (event: string, listener: () => void) => {
+        listeners.set(event, listener)
+        return () => { listeners.delete(event) }
+      },
+    },
+  }
+}
 
 test('触发点 → keys 的映射与契约 §5.9 的触发点表一致', () => {
   // 一张表只在一处代码化（`protocol/host-state.ts`），这里逐条对照契约。
@@ -258,15 +275,9 @@ test('模型目录：四条宿主事件（+ 设置那条）都发 `session.model
     'credentials/reference-updated',
   ])
 
-  const listeners = new Map<string, () => void>()
-  const ctx = {
-    on: (event: string, listener: () => void) => {
-      listeners.set(event, listener)
-      return () => { listeners.delete(event) }
-    },
-  }
+  const { ctx, listeners } = fakeHostEventCtx()
   const notified: HostStateNotice[] = []
-  const stop = onModelCatalogInvalidated(ctx as never, (notice) => { notified.push(notice) })
+  const stop = onModelCatalogChanged(ctx as never, (notice) => { notified.push(notice) })
 
   // 订阅面就是这张名单——**多一条少一条都在这里看得见**。
   assert.deepEqual([...listeners.keys()], [...MODEL_CATALOG_HOST_EVENTS])
@@ -283,13 +294,7 @@ test('模型目录：四条宿主事件（+ 设置那条）都发 `session.model
 test('权限预设目录：`permission-presets/catalog-changed` ⇒ `{keys:[\'permission.catalog\']}`', () => {
   // 浏览器侧收到就 invalidate + refresh（`ui-permission-presets/src/client/catalog.ts:46-49`），
   // 事件无载荷、不动会话 `seq`（`packages/api/remotes/README.md:51`）。
-  const listeners = new Map<string, () => void>()
-  const ctx = {
-    on: (event: string, listener: () => void) => {
-      listeners.set(event, listener)
-      return () => { listeners.delete(event) }
-    },
-  }
+  const { ctx, listeners } = fakeHostEventCtx()
   const notified: HostStateNotice[] = []
   const stop = onPermissionCatalogChanged(ctx as never, (notice) => { notified.push(notice) })
 
