@@ -23,7 +23,9 @@
 - **完整的会话**：对话、轨迹、改动卡、文件预览，不是网页缩略版。
 - **审批与提问就地答**：DSH 的 composer takeover 原样搬过来，不用切回电脑。
 - **子智能体与后台任务**：谁在跑、跑了多久、产出什么，一屏看完。
+- **插件能管**：清单、逐行启停、按包卸载（"是不是内置、能不能卸"由电脑侧的宿主判定，手机只显示它的原话）。
 - **两种连法**：同局域网/Tailscale 直连；出门在外走公网中转（端到端加密，中转只见密文与路由元数据）。
+  中转是**选**出来的：内置一条开箱即用，也可以切成自己的（换回来点一下，不用记域名）。
 - **一台手机记多台电脑**，同一时刻只服务一台（独占 1:1），切换是显式动作。
 
 ## 组成
@@ -37,12 +39,13 @@
 
 <p align="center"><img src="docs/assets/plugin-panel.png" alt="电脑侧插件面板" width="620"></p>
 
-<p align="center"><sub>电脑侧：「手机」面板里填中转、看在线设备、出配对码（地址已打码）</sub></p>
+<p align="center"><sub>电脑侧：「手机」面板——总览（中转 · 在线数 · 直连端口）、连接（中转可选内置/自定义、令牌只在电脑上）、
+通道与地址（逐条启停/删除）、已配对设备（停用/接管/删除）、出配对码</sub></p>
 
 ## 快速开始
 
 ```bash
-# 1. 电脑侧：装插件，在「手机」面板填中转地址与令牌
+# 1. 电脑侧：装插件，在侧边栏「手机」面板选「内置中转」（或自定义）并填令牌
 dsh plugin --profile <名字> add dsh-mobile-connector
 
 # 2. 中转（只在需要公网时）
@@ -65,9 +68,13 @@ cd relay && docker compose up -d --build && docker compose logs -f relay
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 通道协议 454 / 26 / 49 项 |
-| `cd relay && pnpm typecheck && node --test` | 中转，132 项 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 插件，773 项 |
-| `cd app && dart analyze --fatal-infos lib test integration_test && flutter test` | 手机端 |
+| `cd relay && pnpm typecheck && node --test` | 中转，139 项 |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 插件，818 项 |
+| `cd app && dart format --output=none --set-exit-if-changed lib test integration_test && dart analyze --fatal-infos lib test integration_test && flutter test` | 手机端，1659 项 |
+
+> `dart format` 是**先决条件**不是风格偏好：超宽的单行 `if (...) return ...;` 会被它折成
+> 两行无括号形式，而 `curly_braces_in_flow_control_structures` 在 `--fatal-infos` 下就是红。
+> 所以顺序永远是 **format → analyze → test**（CI 里同样是这个顺序，先红就没后面了）。
 
 CI（[`ci.yml`](.github/workflows/ci.yml)）跑同一组命令；每次 push 归档一版 debug APK。
 发版见 [release](docs/cookbook/release.md)：`v*` 出 APK + 插件 tgz，`connector-v*` 发 npm。

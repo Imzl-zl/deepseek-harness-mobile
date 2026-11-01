@@ -5,6 +5,12 @@
 
 ## 现在（2026-11-01）
 
+- **CI 修好 + README 重写（11-02）**：CI 从 10-31 起一直红，**原因与功能无关**——
+  `app` job 第一步 `dart format --set-exit-if-changed` 有 20 个文件没格式化（上一批改动留下的），
+  后面 analyze/test 根本没跑。补齐 format 后又冒出 3 条 `curly_braces`（超宽单行 `if` 被
+  折成无括号两行）：`core/snapshot_call.dart`、`data/app_model.dart`、`wire/rpc/endpoint.dart`
+  各补花括号。README 换成新版面板截图与真实项数（connector 818 / relay 139 / app 1659）。
+  坑点写进 `tools.md` 的 format→analyze 那条。
 - **插件页能删了 + 设置页去小字（11-01，真机反馈）**：用户原话「只能禁用、停用，
   没有删除？人家用户自己的东西，你凭啥不让人家删除」。① 卸载按钮**不再按 `removable`
   隐藏**（判定在宿主 `removeBundle`，被拒时显示 `not-removable` 原话）；② 插件页
