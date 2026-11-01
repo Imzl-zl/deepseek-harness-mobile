@@ -60,7 +60,10 @@ void main() {
     });
 
     test('默认壁纸初始值在范围内且不是"没开"', () {
-      expect(clampTransparency(kTransparencyOnWallpaper), kTransparencyOnWallpaper);
+      expect(
+        clampTransparency(kTransparencyOnWallpaper),
+        kTransparencyOnWallpaper,
+      );
       expect(isTransparencyOpaque(kTransparencyOnWallpaper), isFalse);
     });
   });

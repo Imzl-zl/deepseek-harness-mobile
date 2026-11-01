@@ -275,7 +275,9 @@ class _DshMobileAppState extends State<DshMobileApp>
     );
     final wallpaper = await _wallpapers.load();
     if (!mounted) return;
-    setState(() => _wallpaper = wallpaper == null ? null : MemoryImage(wallpaper));
+    setState(
+      () => _wallpaper = wallpaper == null ? null : MemoryImage(wallpaper),
+    );
   }
 
   /// 换透明度并落盘。
@@ -331,11 +333,7 @@ class _DshMobileAppState extends State<DshMobileApp>
         );
         return;
       case PhotoPickPermissionDenied(:final reason):
-        DshToast.show(
-          _navContext,
-          '没有相册权限：$reason',
-          kind: DshToastKind.error,
-        );
+        DshToast.show(_navContext, '没有相册权限：$reason', kind: DshToastKind.error);
         return;
       case PhotoPickFailed(:final reason):
         DshToast.show(_navContext, '选图失败：$reason', kind: DshToastKind.error);
@@ -348,11 +346,7 @@ class _DshMobileAppState extends State<DshMobileApp>
       bytes = base64Decode(picked.data);
     } on FormatException catch (error) {
       // 原生说拿到了、但给的字节不是合法 base64 —— 如实报，不写一张坏图下去。
-      DshToast.show(
-        _navContext,
-        '这张图读不出来：$error',
-        kind: DshToastKind.error,
-      );
+      DshToast.show(_navContext, '这张图读不出来：$error', kind: DshToastKind.error);
       return;
     }
     // **落盘前先真解码一次**：坏图不写进壁纸位置，否则壁纸层只能一直退到底色，
@@ -365,11 +359,7 @@ class _DshMobileAppState extends State<DshMobileApp>
       codec.dispose();
     } catch (error) {
       if (!mounted) return;
-      DshToast.show(
-        _navContext,
-        '这张图解码失败：$error',
-        kind: DshToastKind.error,
-      );
+      DshToast.show(_navContext, '这张图解码失败：$error', kind: DshToastKind.error);
       return;
     }
     await _wallpapers.save(bytes);
@@ -708,7 +698,9 @@ class _DshMobileAppState extends State<DshMobileApp>
         // 只给一个 theme 挂扩展的话，另一个亮暗下会读到 null 退深色。
         // **透明度一起给**：表面色降到半透明壁纸才透得出来；两套都给同一个值，
         // 否则切换亮暗时背景会忽然变实。
-        theme: DshTheme.light(surfaceAlpha: surfaceAlphaOf(_theme.transparency)),
+        theme: DshTheme.light(
+          surfaceAlpha: surfaceAlphaOf(_theme.transparency),
+        ),
         darkTheme: DshTheme.dark(
           surfaceAlpha: surfaceAlphaOf(_theme.transparency),
         ),

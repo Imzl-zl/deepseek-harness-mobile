@@ -773,7 +773,11 @@ void main() {
         reason: '新流的第一条是基线，不是"空洞"',
       );
       expect(session.gaps['s1'], isNull, reason: '基线不该计成空洞');
-      expect(session.itemsOf('s1').containsKey('m40'), isFalse, reason: '基线先不落库，等调用方裁决');
+      expect(
+        session.itemsOf('s1').containsKey('m40'),
+        isFalse,
+        reason: '基线先不落库，等调用方裁决',
+      );
 
       session.adoptBaseline('s1', 40);
       expect(session.receive('s1', 'm40', '四十', 40), ReceiveVerdict.applied);

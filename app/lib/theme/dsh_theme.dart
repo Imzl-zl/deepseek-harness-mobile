@@ -48,7 +48,10 @@ abstract final class DshTheme {
 
   /// 按亮暗建主题。**色值不在这里写** —— 一律走两个色板类，
   /// 否则会出现第二套色值真值源。
-  static ThemeData _build(Brightness brightness, {required double surfaceAlpha}) {
+  static ThemeData _build(
+    Brightness brightness, {
+    required double surfaceAlpha,
+  }) {
     final base = brightness == Brightness.dark
         ? ThemeData.dark(useMaterial3: true)
         : ThemeData.light(useMaterial3: true);
@@ -60,10 +63,11 @@ abstract final class DshTheme {
     // **表面色走"派生一份"**：`scaffoldBackgroundColor` 必须是半透明的，
     // 否则页面底色这一整层就把壁纸盖住了（壁纸再透也看不见）。
     // 文字色仍由 `c` 给，不受透明度影响。
-    final tokens = (brightness == Brightness.dark
-            ? const DshColorTokens.dark()
-            : const DshColorTokens.light())
-        .withSurfaceAlpha(surfaceAlpha);
+    final tokens =
+        (brightness == Brightness.dark
+                ? const DshColorTokens.dark()
+                : const DshColorTokens.light())
+            .withSurfaceAlpha(surfaceAlpha);
     // 只覆盖我们关心的那一组：其余（onSecondaryContainer 一类）
     // 由 `ThemeData.light/dark` 的 Material 3 默认给，我们不重造一套。
     final scheme = base.colorScheme.copyWith(

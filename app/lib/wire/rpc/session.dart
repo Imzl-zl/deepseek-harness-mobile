@@ -113,10 +113,10 @@ Future<SnapshotReply<SessionListPage>> loadSessionList(
   final result = reply.value;
   final sessions = valueOrReport(readSessionList(result), _kList) ?? const [];
   final map = result is Map ? result : const {};
-  return SnapshotReply<SessionListPage>.body(
-    (sessions: sessions, hasMore: map['hasMore'] == true),
-    key: reply.key,
-  );
+  return SnapshotReply<SessionListPage>.body((
+    sessions: sessions,
+    hasMore: map['hasMore'] == true,
+  ), key: reply.key);
 }
 
 /// 建会话，回新的 `sid`（读不出来 ⇒ `null` + 计数；调用方据此**大声失败**）。

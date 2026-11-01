@@ -164,7 +164,6 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 冷启动读回本地条目的缝（不传 = 不读本地库）。
   final Future<List<StoredItem>> Function(String sid)? _readLocalItems;
 
-
   /// 用户是否已确认"自部署中转走公网明文"（`net.allow_plaintext_public`）。
   bool get allowPlaintextPublic => _allowPlaintextPublic;
   bool _allowPlaintextPublic;
@@ -570,7 +569,10 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     try {
       final reply = await wire.loadSessionProjections(client, sid: sid);
       if (_disposed) {
-        return SnapshotReply<wire.SessionProjections?>.body(null, key: reply.key);
+        return SnapshotReply<wire.SessionProjections?>.body(
+          null,
+          key: reply.key,
+        );
       }
       // 没变：**不动目录三态、不记错误**，原样往上交（含 `key`）。
       if (reply.notModified) return reply;
@@ -2652,11 +2654,14 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     final known = {for (final s in _sessions) s.sid};
     final added = [
       for (final s in list)
-        if (!known.contains(s.sid)) s.copyWith(pendingCount: _pendingCountOf(s.sid)),
+        if (!known.contains(s.sid))
+          s.copyWith(pendingCount: _pendingCountOf(s.sid)),
     ];
     _sessions = [..._sessions, ...added];
     _sessionsHasMore = hasMore;
-    if (_sessions.length > _sessionRowWindow) _sessionRowWindow = _sessions.length;
+    if (_sessions.length > _sessionRowWindow) {
+      _sessionRowWindow = _sessions.length;
+    }
     _rows.applyList(_sessions);
     _syncNotices();
   }
@@ -3060,7 +3065,9 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     // **记得的那个会话可能不在已加载的那一页里**（分页之后）：先要整表再判，
     // 否则 `landingSessionOf` 会按第 2/3 档落到"在跑的"或"最新的"上 ——
     // 用户看到的是"它忘了我上次在哪"，而不是"这一页里没有它"。
-    if (remembered != null && sessionOf(remembered) == null && _sessionsHasMore) {
+    if (remembered != null &&
+        sessionOf(remembered) == null &&
+        _sessionsHasMore) {
       await ensureFullSessionRows();
       if (_disposed || _currentSid != null) return;
     }

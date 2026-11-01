@@ -373,8 +373,9 @@ void main() {
       // 打开会话时手里什么都没有 ⇒ 第一份声明是 0（电脑侧给整窗）。
       await client.subscribe('s1');
       expect(
-        probe.sentRequests
-            .lastWhere((envelope) => envelope['method'] == 'session.subscribe')['params'],
+        probe.sentRequests.lastWhere(
+          (envelope) => envelope['method'] == 'session.subscribe',
+        )['params'],
         {'sid': 's1', 'since': 0},
       );
 
@@ -392,16 +393,12 @@ void main() {
       final hellos = probe.sentRequests
           .where((envelope) => envelope['method'] == 'sync.hello')
           .toList();
-      expect(
-        hellos.last['params'],
-        {
-          'app': 'foreground',
-          'sessions': <Object?>[
-            {'sid': 's1', 'since': 41},
-          ],
-        },
-        reason: '水位必须现取：空闲期间没有新事件 ⇒ 电脑侧一条 ev 都不发',
-      );
+      expect(hellos.last['params'], {
+        'app': 'foreground',
+        'sessions': <Object?>[
+          {'sid': 's1', 'since': 41},
+        ],
+      }, reason: '水位必须现取：空闲期间没有新事件 ⇒ 电脑侧一条 ev 都不发');
 
       await client.close();
     });
@@ -2297,7 +2294,11 @@ void main() {
       );
 
       // 一页就把 6..39 补全（hasMore 为假：更早的历史还有，但已经够接上水位了）。
-      await answerLastReq(f.transport, pageOf([for (var s = 6; s <= 39; s += 1) s]), fc: 401);
+      await answerLastReq(
+        f.transport,
+        pageOf([for (var s = 6; s <= 39; s += 1) s]),
+        fc: 401,
+      );
       await pump();
 
       final filled = deltas
@@ -2307,7 +2308,11 @@ void main() {
           .toList();
       expect(filled.first, 6, reason: '缺口从水位 +1 开始补');
       expect(filled.last, 39, reason: '补到窗口之前一格为止');
-      expect(filled, List<int>.generate(34, (i) => i + 6), reason: '按 seq 升序，不丢不重');
+      expect(
+        filled,
+        List<int>.generate(34, (i) => i + 6),
+        reason: '按 seq 升序，不丢不重',
+      );
 
       // 水位：这一段是**窗口那一份**的连续右端（缺口靠补，不靠水位撒谎）。
       expect(f.session.sinceOf('s1'), 40);
@@ -2352,12 +2357,17 @@ void main() {
       await client.start();
       await answerHello(f.transport);
 
-      final params = <String, Object?>{'namespaces': <String>['app']};
+      final params = <String, Object?>{
+        'namespaces': <String>['app'],
+      };
       final first = client.callSnapshot('repo.info', params);
       await pump();
 
       // 电脑侧：这一包就是它将要发出的字节（`res` 的明文信封）。
-      final envelope = <String, Object?>{'ok': true, 'result': {'a': 1}};
+      final envelope = <String, Object?>{
+        'ok': true,
+        'result': {'a': 1},
+      };
       await answerLastReq(f.transport, envelope, fc: 100);
       final reply = await first;
       expect(reply.notModified, isFalse);

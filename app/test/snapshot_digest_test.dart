@@ -81,9 +81,10 @@ class _ListClient extends FakeSyncClient {
     if (notModified) return <String, Object?>{'notModified': true} as T;
     final offset = (params['offset'] as int?) ?? 0;
     return <String, Object?>{
-      'sessions': <Object?>[_row(offset)],
-      'hasMore': hasMore,
-    } as T;
+          'sessions': <Object?>[_row(offset)],
+          'hasMore': hasMore,
+        }
+        as T;
   }
 }
 
@@ -137,17 +138,22 @@ void main() {
     // ② 第二次：服务端说"没变" ⇒ 三件都不许发生。
     client.notModified = true;
     await app.refreshSessionRows();
-    expect(app.sessions.map((s) => s.sid).toList(), rowsAfterFirst, reason: '不许清数据');
+    expect(
+      app.sessions.map((s) => s.sid).toList(),
+      rowsAfterFirst,
+      reason: '不许清数据',
+    );
     expect(app.lastError, isNull, reason: '不许报错');
-    expect(notifications, notificationsAfterFirst, reason: '不许 notifyListeners');
+    expect(
+      notifications,
+      notificationsAfterFirst,
+      reason: '不许 notifyListeners',
+    );
 
     // ③ 换参数（翻第二页）：那**不是同一个包**，摘要互不命中。
     client.notModified = false; // 内容重新可取（上一拍是服务端说"没变"）
     await app.loadMoreSessionRows();
-    final secondKey = snapshotKeyOf('session.list', {
-      'limit': 50,
-      'offset': 1,
-    });
+    final secondKey = snapshotKeyOf('session.list', {'limit': 50, 'offset': 1});
     expect(secondKey, isNot(firstKey));
     expect(client.appliedSnapshotDigests.keys, contains(secondKey));
     expect(app.sessions, hasLength(2), reason: '第二页照常追加（它不该被摘要挡住）');

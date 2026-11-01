@@ -54,7 +54,12 @@ extension SnapshotCall on SyncClient {
     Map<String, Object?> params,
   ) async {
     final capability = _snapshotCapabilityOf(this);
-    if (capability != null) return capability.callSnapshotWithDigest(method, params);
+    // 花括号不能省：单行 `if (...) return ...;` 一超宽，`dart format` 会把它折成
+    // 两行无括号形式，`curly_braces_in_flow_control_structures` 立刻报 info
+    // （`--fatal-infos` 下就是 CI 红）。见 tools.md「先 format 再 analyze」。
+    if (capability != null) {
+      return capability.callSnapshotWithDigest(method, params);
+    }
     return SnapshotReply<Object?>.body(
       await call(method, params),
       key: snapshotKeyOf(method, params),
@@ -62,7 +67,8 @@ extension SnapshotCall on SyncClient {
   }
 
   /// 应用成功：把这一包的摘要记下来（替身没有摘要表时是 no-op）。
-  void commitSnapshot(String key) => _snapshotCapabilityOf(this)?.commitSnapshotDigest(key);
+  void commitSnapshot(String key) =>
+      _snapshotCapabilityOf(this)?.commitSnapshotDigest(key);
 }
 
 /// `client as SnapshotCaller`，但**用显式类型转换**而不是 `is` 提升。

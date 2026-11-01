@@ -3028,7 +3028,9 @@ class _ChatTab extends StatelessWidget {
           workspaces: app.workspaces,
           // 分页：只显示已加载那一段，末尾一行"加载更多"（契约 §5.7 的 `hasMore`）。
           hasMore: app.hasMoreSessions,
-          onLoadMore: app.hasMoreSessions ? () => unawaited(app.loadMoreSessionRows()) : null,
+          onLoadMore: app.hasMoreSessions
+              ? () => unawaited(app.loadMoreSessionRows())
+              : null,
         );
       }
       return _EmptyChat(
@@ -5191,4 +5193,3 @@ class _TurnDerivation {
   /// 流式尾条目要不要自己画助手头。
   final bool liveShowHead;
 }
-

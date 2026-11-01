@@ -32,7 +32,8 @@ class _PagingClient extends FakeSyncClient {
   final bool repeatFirstRowOfSecondPage;
 
   /// 每次 `session.list` 的参数（按调用顺序）。
-  final List<({int? limit, int? offset})> requests = <({int? limit, int? offset})>[];
+  final List<({int? limit, int? offset})> requests =
+      <({int? limit, int? offset})>[];
 
   Map<String, Object?> _row(int index) => <String, Object?>{
     'sid': 'sid_$index',
@@ -84,9 +85,10 @@ class _PagingClient extends FakeSyncClient {
       rows.insert(0, _row(offset - 1));
     }
     return <String, Object?>{
-      'sessions': rows,
-      'hasMore': limit != null && offset + limit < total,
-    } as T;
+          'sessions': rows,
+          'hasMore': limit != null && offset + limit < total,
+        }
+        as T;
   }
 }
 
@@ -119,7 +121,10 @@ void main() {
     final firstIds = app.sessions.map((s) => s.sid).toList();
 
     await app.loadMoreSessionRows();
-    expect(client.requests.last, (limit: kSessionRowPageSize, offset: kSessionRowPageSize));
+    expect(client.requests.last, (
+      limit: kSessionRowPageSize,
+      offset: kSessionRowPageSize,
+    ));
     expect(app.sessions.length, kSessionRowPageSize * 2);
     // 前一半还是原来那批（顺序不变），新行接在后面。
     expect(app.sessions.take(kSessionRowPageSize).map((s) => s.sid), firstIds);
@@ -166,7 +171,10 @@ void main() {
     expect(app.hasMoreSessions, isTrue);
 
     await app.ensureFullSessionRows();
-    expect(client.requests.last, (limit: null, offset: 0), reason: '整表 = 不带 limit');
+    expect(client.requests.last, (
+      limit: null,
+      offset: 0,
+    ), reason: '整表 = 不带 limit');
     expect(app.sessions.length, 120);
     expect(app.hasMoreSessions, isFalse);
 
@@ -183,11 +191,10 @@ void main() {
     await app.refreshSessionRows();
     await app.loadMoreSessionRows();
     await app.refreshSessionRows();
-    expect(
-      client.requests.last,
-      (limit: kSessionRowPageSize * 2, offset: 0),
-      reason: '一条通知到达时不该把用户翻过的页丢掉',
-    );
+    expect(client.requests.last, (
+      limit: kSessionRowPageSize * 2,
+      offset: 0,
+    ), reason: '一条通知到达时不该把用户翻过的页丢掉');
     expect(app.sessions.length, kSessionRowPageSize * 2);
   });
 }

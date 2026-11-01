@@ -210,7 +210,10 @@ class _SyncClient
     unawaited(
       pending.future
           // `_resolveCall` 兑现的是 [_Reply]（明文与结果一起带回来）：这里只关心结果。
-          .then((reply) => _absorbHelloAnchors(reply is _Reply ? reply.value : reply))
+          .then(
+            (reply) =>
+                _absorbHelloAnchors(reply is _Reply ? reply.value : reply),
+          )
           // 连接断开时完成器被 `completeError`（`close()` → `failAll`）——
           // anchor 拿不到只是"这次不知道有没有更多"，不是错误。
           .catchError((_) => null),
@@ -883,7 +886,11 @@ class _SyncClient
     required _RecoveryWindow window,
     required int from,
   }) async {
-    final outcome = await _backfill(sid: sid, from: from, target: window.target);
+    final outcome = await _backfill(
+      sid: sid,
+      from: from,
+      target: window.target,
+    );
     _backfilling.remove(sid);
     _recovering.remove(sid);
     if (_closed) return;

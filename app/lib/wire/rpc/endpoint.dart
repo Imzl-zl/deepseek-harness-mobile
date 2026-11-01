@@ -32,7 +32,10 @@ const String _kDescribe = 'endpoint.describe';
 /// （`endpoint.describe` 是白名单里唯一不在 `host` 帧那九个 key 里的）。
 Future<SnapshotReply<List<Endpoint>>> loadEndpoints(SyncClient client) async {
   final reply = await client.callSnapshot(_kDescribe, const {});
-  if (reply.notModified) return SnapshotReply<List<Endpoint>>.notModified(key: reply.key);
+  // 花括号：超宽的单行 if 会被 `dart format` 折成无括号两行，`--fatal-infos` 下即红。
+  if (reply.notModified) {
+    return SnapshotReply<List<Endpoint>>.notModified(key: reply.key);
+  }
   // 解析**从不失败**（认不出的条目跳过），所以"没变"与"空表"是两句话。
   return SnapshotReply<List<Endpoint>>.body(
     parseEndpointList(reply.value),

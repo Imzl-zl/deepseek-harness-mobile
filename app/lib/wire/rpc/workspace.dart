@@ -72,8 +72,9 @@ final class WorkspaceSnapshot {
 ///
 /// 读不出来 ⇒ `null` + 计数一次（调用方"留空 = 不分组"，那是如实的降级：
 /// 缺 `workspaceController` 的部署本来就没这个方法）。
-Future<SnapshotReply<WorkspaceSnapshot?>> loadWorkspaceList(SyncClient client) =>
-    loadSnapshot(client, _kList, const {}, readWorkspaceList);
+Future<SnapshotReply<WorkspaceSnapshot?>> loadWorkspaceList(
+  SyncClient client,
+) => loadSnapshot(client, _kList, const {}, readWorkspaceList);
 
 /// 置顶 / 取消置顶：回**置顶全集**（`null` = 应答认不出，调用方如实报错）。
 Future<Set<String>?> workspacePin(

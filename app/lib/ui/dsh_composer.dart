@@ -474,7 +474,9 @@ class DshComposer extends StatelessWidget {
                                     maxWidth: constraints.maxWidth * 0.62,
                                   ),
                                   child: _Chip(
-                                    onPressed: enabled && !modelBusy ? onPickModel : null,
+                                    onPressed: enabled && !modelBusy
+                                        ? onPickModel
+                                        : null,
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [

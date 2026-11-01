@@ -55,9 +55,8 @@ final class SettingSectionWire {
 Future<SnapshotReply<List<SettingSectionWire>?>> loadSettings(
   SyncClient client, {
   required List<String> namespaces,
-}) => loadSnapshot(client, _kDescribe, {
-  'namespaces': namespaces,
-}, readSettings);
+}) =>
+    loadSnapshot(client, _kDescribe, {'namespaces': namespaces}, readSettings);
 
 /// 改一个字段（**只发新值**），回改完之后的快照。
 ///

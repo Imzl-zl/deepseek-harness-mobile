@@ -35,7 +35,8 @@ import 'package:cryptography/cryptography.dart' show Sha256;
 /// 症状就是"形状坏了但界面安静地停在旧值上"。
 class SnapshotReply<T> {
   /// 拿到了正文。[key] 用来在应用成功之后记下这一包的摘要。
-  const SnapshotReply.body(this.value, {required this.key}) : notModified = false;
+  const SnapshotReply.body(this.value, {required this.key})
+    : notModified = false;
 
   /// 服务端说"你手里那包就是最新的"：**不清数据、不报错、不通知**。
   const SnapshotReply.notModified({required this.key})
@@ -57,7 +58,9 @@ class SnapshotReply<T> {
 /// 变成又一个要维护的协议）。
 String snapshotKeyOf(String method, Map<String, Object?> params) {
   final names = params.keys.toList()..sort();
-  final ordered = <String, Object?>{for (final name in names) name: params[name]};
+  final ordered = <String, Object?>{
+    for (final name in names) name: params[name],
+  };
   return '$method|${jsonEncode(ordered)}';
 }
 

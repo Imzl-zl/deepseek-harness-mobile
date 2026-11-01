@@ -45,10 +45,8 @@ const double kGlassBlurSigma = 20.0;
 /// 把透明度夹进合法区间（整数百分数）。
 ///
 /// 这是**取值范围**，不是产品下限：`0` 与 `100` 两端都真的可用。
-int clampTransparency(int percent) => percent.clamp(
-  kTransparencyOpaque,
-  kTransparencyMax,
-);
+int clampTransparency(int percent) =>
+    percent.clamp(kTransparencyOpaque, kTransparencyMax);
 
 /// 透明度 → 表面 alpha（`1.0` 不透明、`0.0` 全透）。
 double surfaceAlphaOf(int transparencyPercent) =>

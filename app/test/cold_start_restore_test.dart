@@ -47,8 +47,8 @@ class _Client extends FakeSyncClient {
   final Map<String, StreamController<SessionDelta>> _deltas =
       <String, StreamController<SessionDelta>>{};
 
-  StreamController<SessionDelta> controllerOf(String sid) =>
-      _deltas.putIfAbsent(sid, () => StreamController<SessionDelta>.broadcast());
+  StreamController<SessionDelta> controllerOf(String sid) => _deltas
+      .putIfAbsent(sid, () => StreamController<SessionDelta>.broadcast());
 
   @override
   ConnectionState get state => ConnectionState.serving;
@@ -142,31 +142,37 @@ void main() {
     expect(app.items, hasLength(2));
 
     // 电脑侧说：你手里那段与我对不上，这份才是我的（was 5、9 → now 40）。
-    client.controllerOf('s1').add(
-      const SessionDelta(
-        sid: 's1',
-        events: [
-          SessionEvent(
-            itemId: 'm40',
-            type: 'user/message',
-            seq: 40,
-            time: 40,
-            data: {
-              'id': 'm40',
-              'role': 'user',
-              'content': [
-                {'type': 'text', 'text': '第 40 条'},
-              ],
-            },
+    client
+        .controllerOf('s1')
+        .add(
+          const SessionDelta(
+            sid: 's1',
+            events: [
+              SessionEvent(
+                itemId: 'm40',
+                type: 'user/message',
+                seq: 40,
+                time: 40,
+                data: {
+                  'id': 'm40',
+                  'role': 'user',
+                  'content': [
+                    {'type': 'text', 'text': '第 40 条'},
+                  ],
+                },
+              ),
+            ],
+            transient: <String, Object?>{},
+            outcome: RecoveryOutcome.snapshot,
           ),
-        ],
-        transient: <String, Object?>{},
-        outcome: RecoveryOutcome.snapshot,
-      ),
-    );
+        );
     await Future<void>.delayed(Duration.zero);
 
     expect(app.items, hasLength(1), reason: '整份替换：旧的 5 / 9 不留在界面上');
-    expect(app.items.single.itemId, 'm:m40', reason: 'itemId 规则是 `m:<messageId>`（§5.2）');
+    expect(
+      app.items.single.itemId,
+      'm:m40',
+      reason: 'itemId 规则是 `m:<messageId>`（§5.2）',
+    );
   });
 }

@@ -403,92 +403,102 @@ class _SessionDrawerState extends State<SessionDrawer> {
                 hasMore: widget.hasMore,
                 onLoadMore: widget.onLoadMore,
                 child: widget.sections.isEmpty
-                  ? Center(
-                      child: Text(
-                        '还没有会话。',
-                        style: TextStyle(fontSize: 13, color: c.labelTertiary),
-                      ),
-                    )
-                  : ListView(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      children: [
-                        for (var i = 0; i < widget.sections.length; i += 1) ...[
-                          // **可折叠的项目组头**（2026-10-19 用户原话：
-                          // 「这个侧边栏会话列表，人家的每个项目的会话可以折叠的，
-                          // 你没有啊」）。形态照 DSH Web 的
-                          // `ui-workspace/src/client/rows/Rows.tsx:259-263`。
-                          //
-                          // **项目头可拖**（2026-10-21 用户原话：「会话和工作区
-                          // 都可以拖拽换位置而不是弹框啊」）：落到另一个头的
-                          // 上半 = 插在它前面，下半 = 插在它后面（后者用
-                          // "下一个工作区"当锚点，没有下一个就是移到末尾）。
-                          CollapsibleGroup(
-                            label: widget.sections[i].label,
-                            expanded: _expandedOf(widget.sections[i]),
-                            onToggle: () => _toggleSection(widget.sections[i]),
-                            childCount: widget.sections[i].sessions.length,
-                            // 当前会话在这个组里 ⇒ 折叠时也高亮
-                            // （DSH 的 `containsCurrentDescendant`）。
-                            containsCurrent: widget.sections[i].sessions.any(
-                              (s) => s.isActive,
-                            ),
-                            headerWrapper: _headerDragFor(i),
-                            children: [
-                              for (final session in widget.sections[i].sessions)
-                                _SessionDrag(
-                                  session: session,
-                                  order: [
-                                    for (final row
-                                        in widget.sections[i].sessions)
-                                      row.sid,
-                                  ],
-                                  pinned: {
-                                    for (final row
-                                        in widget.sections[i].sessions)
-                                      if (row.isPinned) row.sid,
-                                  },
-                                  hover: _hover,
-                                  onMove: widget.onMove,
-                                  child: _SessionRow(
+                    ? Center(
+                        child: Text(
+                          '还没有会话。',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: c.labelTertiary,
+                          ),
+                        ),
+                      )
+                    : ListView(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        children: [
+                          for (
+                            var i = 0;
+                            i < widget.sections.length;
+                            i += 1
+                          ) ...[
+                            // **可折叠的项目组头**（2026-10-19 用户原话：
+                            // 「这个侧边栏会话列表，人家的每个项目的会话可以折叠的，
+                            // 你没有啊」）。形态照 DSH Web 的
+                            // `ui-workspace/src/client/rows/Rows.tsx:259-263`。
+                            //
+                            // **项目头可拖**（2026-10-21 用户原话：「会话和工作区
+                            // 都可以拖拽换位置而不是弹框啊」）：落到另一个头的
+                            // 上半 = 插在它前面，下半 = 插在它后面（后者用
+                            // "下一个工作区"当锚点，没有下一个就是移到末尾）。
+                            CollapsibleGroup(
+                              label: widget.sections[i].label,
+                              expanded: _expandedOf(widget.sections[i]),
+                              onToggle: () =>
+                                  _toggleSection(widget.sections[i]),
+                              childCount: widget.sections[i].sessions.length,
+                              // 当前会话在这个组里 ⇒ 折叠时也高亮
+                              // （DSH 的 `containsCurrentDescendant`）。
+                              containsCurrent: widget.sections[i].sessions.any(
+                                (s) => s.isActive,
+                              ),
+                              headerWrapper: _headerDragFor(i),
+                              children: [
+                                for (final session
+                                    in widget.sections[i].sessions)
+                                  _SessionDrag(
                                     session: session,
-                                    onTap: () => widget.onOpenSession(session),
-                                    onMenu: (anchor) => unawaited(
-                                      _showSessionMenu(session, anchor),
+                                    order: [
+                                      for (final row
+                                          in widget.sections[i].sessions)
+                                        row.sid,
+                                    ],
+                                    pinned: {
+                                      for (final row
+                                          in widget.sections[i].sessions)
+                                        if (row.isPinned) row.sid,
+                                    },
+                                    hover: _hover,
+                                    onMove: widget.onMove,
+                                    child: _SessionRow(
+                                      session: session,
+                                      onTap: () =>
+                                          widget.onOpenSession(session),
+                                      onMenu: (anchor) => unawaited(
+                                        _showSessionMenu(session, anchor),
+                                      ),
                                     ),
                                   ),
-                                ),
-                              // 「展开其余 N 个会话」：文案照桌面
-                              // `sessions.expand`（`locales.ts:34`），只在真被
-                              // watermark 藏掉时才占位（`hiddenCount > 0`）。
-                              if (widget.sections[i].hiddenCount > 0)
-                                _RevealRow(
-                                  hiddenCount: widget.sections[i].hiddenCount,
-                                  onTap: () => widget.onRevealMore?.call(
-                                    widget.sections[i],
+                                // 「展开其余 N 个会话」：文案照桌面
+                                // `sessions.expand`（`locales.ts:34`），只在真被
+                                // watermark 藏掉时才占位（`hiddenCount > 0`）。
+                                if (widget.sections[i].hiddenCount > 0)
+                                  _RevealRow(
+                                    hiddenCount: widget.sections[i].hiddenCount,
+                                    onTap: () => widget.onRevealMore?.call(
+                                      widget.sections[i],
+                                    ),
                                   ),
+                              ],
+                            ),
+                          ],
+                          // **分页尾巴**（与首页那份同一个判据）：还有更早的会话就多一行。
+                          // 抽屉与首页看的是同一份 `AppModel.sessions`，所以两处都能翻；
+                          // 显式一行而不是"滚到底自动拉"——`ListView` 会为即将进入视口的
+                          // 内容预构建，自动触发会在首帧把后面几页一起吞下来（等于没分页）。
+                          if (widget.hasMore && widget.onLoadMore != null)
+                            ListTile(
+                              dense: true,
+                              onTap: widget.onLoadMore,
+                              title: Text(
+                                '加载更多会话',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: c.labelTertiary,
                                 ),
-                            ],
-                          ),
-                        ],
-                        // **分页尾巴**（与首页那份同一个判据）：还有更早的会话就多一行。
-                        // 抽屉与首页看的是同一份 `AppModel.sessions`，所以两处都能翻；
-                        // 显式一行而不是"滚到底自动拉"——`ListView` 会为即将进入视口的
-                        // 内容预构建，自动触发会在首帧把后面几页一起吞下来（等于没分页）。
-                        if (widget.hasMore && widget.onLoadMore != null)
-                          ListTile(
-                            dense: true,
-                            onTap: widget.onLoadMore,
-                            title: Text(
-                              '加载更多会话',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: c.labelTertiary,
                               ),
                             ),
-                          ),
-                      ],
-                    ),
+                        ],
+                      ),
               ),
             ),
 
