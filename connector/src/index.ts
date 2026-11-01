@@ -134,6 +134,7 @@ import {
   type HostStateNotice,
 } from './protocol/host-state.js'
 import { READABLE_NAMESPACES } from './dsh/settings-face.js'
+import { onModelCatalogInvalidated, onPermissionCatalogChanged } from './dsh/host-events.js'
 import { createSessionBuffer } from './session-buffer.js'
 import { createSessionsAdapter } from './dsh/sessions.js'
 import { createWorkspacesPort } from './dsh/workspaces.js'
@@ -1170,12 +1171,13 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         /**
          * 设置文档变了（宿主 `settings/document-updated`，`settings/src/index.ts:317,338`）。
          *
-         * 过滤成**手机读得到的命名空间**（`READABLE_NAMESPACES`）：宿主每个 ns 的变化都会
-         * 发这条事件，包括手机没有入口的那些 —— 为它们重拉一次只会换回同一份数据。
+         * **一条事件命中两个 key**：`settings.describe` 过滤成手机**读得到**的命名空间
+         * （`READABLE_NAMESPACES`），`session.modelCatalog` 不过滤（它也是模型目录的五条
+         * 失效事件之一）。两个 key 的合成只在 `settingsUpdatedFor` 一处
+         * （判据与被否的"按命名空间筛模型目录"见 `.agents/notes/implemented/2026-11-01-refetch-scope-by-trigger.md`）。
          */
         ctx.effect(() => ctx.on('settings/document-updated', (ns: string) => {
-          const notice = settingsUpdatedFor(ns, READABLE_NAMESPACES)
-          if (notice !== undefined) notifyHostState(notice)
+          notifyHostState(settingsUpdatedFor(ns, READABLE_NAMESPACES))
         }))
 
         const jobsRegistry = ctx.get('jobs') as JobRegistry | undefined
@@ -1186,6 +1188,25 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             notifyHostState(jobListChangedNotice(sid))
           }))
         }
+
+        /**
+         * 模型目录失效（契约 §5.9 的触发点表，第 2 批）。
+         *
+         * 这四条 + 上面那条 `settings/document-updated` 就是 DSH 浏览器侧的完整失效表
+         * （`ui-model-selection/src/client/service.ts:54-58`）。**宿主级、不带 `sid`、
+         * 不按发起者 / 订阅者过滤** —— 目录是进程级事实，而宿主事件不知道是谁改的。
+         * 订阅与类型补充在 `dsh/host-events.ts`，映射在 `protocol/host-state.ts`；
+         * 为什么两批分开、以及为什么不过滤命名空间：`.agents/notes/implemented/2026-11-01-refetch-scope-by-trigger.md`。
+         */
+        ctx.effect(() => onModelCatalogInvalidated(ctx, notifyHostState))
+
+        /**
+         * 权限预设目录失效（宿主 `permission-presets/catalog-changed`）。
+         *
+         * 浏览器侧收到就 invalidate + refresh（`ui-permission-presets/src/client/catalog.ts:46-49`）；
+         * 它无载荷、不追加会话事件、不动会话 `seq`（`api/remotes/README.md:51`）。
+         */
+        ctx.effect(() => onPermissionCatalogChanged(ctx, notifyHostState))
 
         // 配对端点（§12.1）。**连接器令牌不在这里读**：拨号时现读（`startRelayChannel`），
         // 出码登记也现读（`registerPairing` 的 `tokenSource`）—— 换令牌后两者都立刻生效，

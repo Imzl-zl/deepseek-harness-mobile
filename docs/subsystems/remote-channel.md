@@ -532,7 +532,9 @@ type HostStateChanged = { keys: HostStateKey[] }   // 整个 box,没有任何值
    | 宿主 `session/event` 的 `permission/preset` / `sandbox/mode`(权限档 / 沙箱档) | `session.projections` | 该会话 |
    | 宿主 `session/event` 的 `session/title`(标题生成 / 改名) | `session.list` + `session.projections` | 该会话(别名未知时只发 `session.list`) |
    | 宿主 `jobs.events` 的 `registered` / `settled` / `removed` | `job.list` | 该任务所属会话(别名未知时不发) |
-   | `settings.update` 写成功 | `settings.describe` | 无 |
+   | 宿主 `settings/document-updated` | `settings.describe` + `session.modelCatalog` | 无 |
+   | 宿主 `llm/adapters-updated` / `llm/models-updated` / `credentials/record-updated` / `credentials/reference-updated` | `session.modelCatalog` | 无 |
+   | 宿主 `permission-presets/catalog-changed` | `permission.catalog` | 无 |
 
    **模型与权限档听宿主事件,不听我们自己的 handler**:它们可以从桌面 Web 改
    (Web 直接调宿主的 `selectModel` 与 `/permission`),那条路不经过连接器 ——
@@ -544,17 +546,27 @@ type HostStateChanged = { keys: HostStateKey[] }   // 整个 box,没有任何值
    不在此表的状态**不触发**(例如 `workspace.list` 的顺序变化:它由手机自己发起的写
    带回全集,不是"别处改了要跟上"的那一类)。
 
-   **清单里另外四项今天没有生产者**,各自判据:
-   - `session.modelCatalog` / `permission.catalog`:宿主有失效事件
-     (`llm/*-updated`、`settings/document-updated`、`credentials/*-updated`、
-     `permission-presets/catalog-changed`),连接器还没监听 —— 手机侧因此只在连上时重取,
-     断连期间在电脑上加 / 换模型、改预设表仍要重连才看见(判据与被否理由见
-     `.agents/notes/proposed/2026-11-01-refetch-scope-by-trigger.md` 的第 2 批);
-   - `agentPresets.list` / `workspace.list` / `repo.info`:宿主**没有**"这张表变了"的事件
-     (`workspace` 只 emit 会话活动 / 停止,`agent-preset-registry` 只 emit 选中,
-     `repo.info` 是进程级事实)。给它们编"每 N 秒"就是替宿主做决定。
+   `settings/document-updated` **一条事件命中两个 key**:`settings.describe` 只对手机
+   读得到的命名空间发(`READABLE_NAMESPACES`),`session.modelCatalog` **不过滤** ——
+   按命名空间筛模型目录就得先知道"哪些设置影响模型",那是第二份知识,漏一项的表现是
+   "改了设置、手机不跟";DSH 浏览器侧同样不筛
+   (`packages/client/ui-model-selection/src/client/service.ts:56`)。代价是设置页改一行
+   带来一次目录重取,那是低频动作,返回的是缓存内的一整包。
 
-   于是这四个 key **只走"拉"的触发点**(连上重取),不参与"推"。
+   两个目录的失效表与 DSH 浏览器侧同源:`ui-model-selection` 把 `llm/adapters-updated` /
+   `llm/models-updated` / `settings/document-updated` / `credentials/record-updated` /
+   `credentials/reference-updated` 五条全接到目录 `refresh()`
+   (`packages/client/ui-model-selection/src/client/service.ts:54-58`;事件声明在
+   `packages/llm/llm/src/types.ts:24,30` 与 `packages/credentials/credentials/src/types.ts:87,99`);
+   `ui-permission-presets` 收到 `permission-presets/catalog-changed` 就 invalidate + refresh
+   (`packages/client/ui-permission-presets/src/client/catalog.ts:46-49`;那条事件无载荷、
+   不动会话 `seq`,`packages/api/remotes/README.md:51`)。两条都**不筛发起者 / 订阅者、
+   不带 `sid`** —— 目录是进程级事实。
+
+   **清单里另外三项没有生产者**:`agentPresets.list` / `workspace.list` / `repo.info` ——
+   宿主**没有**"这张表变了"的事件(`workspace` 只 emit 会话活动 / 停止,
+   `agent-preset-registry` 只 emit 选中,`repo.info` 是进程级事实)。给它们编"每 N 秒"
+   就是替宿主做决定。于是这三个 key **只走"拉"的触发点**(连上重取),不参与"推"。
 7. **老客户端收不到就忽略**:帧类型清单外且无 `id` ⇒ 忽略、不回错、不断连接(§3)。
    它也因此**不为这一帧回 `credit`** —— 累计确认让后一帧的 credit 覆盖这个空洞。
 8. **封闭集与手机侧登记表逐字同形**:`connector/src/protocol/host-state.ts` 的

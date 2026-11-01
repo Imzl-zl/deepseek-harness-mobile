@@ -24,15 +24,18 @@ import { createSessionBuffer } from '../src/session-buffer.js'
 import { createSendWindow, consumesCredit } from '../src/protocol/flow.js'
 import {
   HOST_STATE_KEYS,
+  MODEL_CATALOG_HOST_EVENTS,
   hostStateForSessionEvent,
   jobListChangedNotice,
+  modelCatalogChangedNotice,
   modelSelectedNotice,
+  permissionCatalogChangedNotice,
   permissionSwitchedNotice,
   settingsUpdatedFor,
-  settingsUpdatedNotice,
   titleChangedNotice,
   type HostStateNotice,
 } from '../src/protocol/host-state.js'
+import { onModelCatalogInvalidated, onPermissionCatalogChanged } from '../src/dsh/host-events.js'
 import { onJobsLifecycle } from '../src/dsh/jobs.js'
 import { READABLE_NAMESPACES } from '../src/dsh/settings-face.js'
 import { needsBox, wireRoutingOf, type WireFrame } from '../src/protocol/frame.js'
@@ -107,7 +110,8 @@ test('触发点 → keys 的映射与契约 §5.9 的触发点表一致', () => 
     keys: ['session.list', 'session.projections'], sid: 's1',
   })
   assert.deepEqual(permissionSwitchedNotice('s1'), { keys: ['session.projections'], sid: 's1' })
-  assert.deepEqual(settingsUpdatedNotice(), { keys: ['settings.describe'] })
+  assert.deepEqual(modelCatalogChangedNotice(), { keys: ['session.modelCatalog'] })
+  assert.deepEqual(permissionCatalogChangedNotice(), { keys: ['permission.catalog'] })
   assert.deepEqual(titleChangedNotice('s1'), {
     keys: ['session.list', 'session.projections'], sid: 's1',
   })
@@ -118,10 +122,10 @@ test('触发点 → keys 的映射与契约 §5.9 的触发点表一致', () => 
 test('清单是封闭集（手写拼错会在这里红）', () => {
   // 九项与契约 §5.9 的 key 表、app 的 `HostStateKey.all` 逐字一致
   // （app 侧按本文件的 `as const` 数组解析，所以**这个形状不许改**）。
-  // **没有生产者的五项也在清单里**：`session.modelCatalog` / `permission.catalog`
-  // 的宿主失效事件还没接；`agentPresets.list` / `workspace.list` / `repo.info`
-  // 宿主根本没有"这张表变了"的事件。收进来的理由见 `protocol/host-state.ts`：
-  // 让"接上生产者"只改连接器一处，协议与跨端门禁都不用动。
+  // **没有生产者的三项也在清单里**（`agentPresets.list` / `workspace.list` /
+  // `repo.info`：宿主根本没有"这张表变了"的事件）。收进来的理由见
+  // `protocol/host-state.ts`：清单保持一处，比"用到才加"少一次协议改动。
+  // `session.modelCatalog` / `permission.catalog` 已由本批接上生产者（见下面两条用例）。
   assert.deepEqual([...HOST_STATE_KEYS].sort(), [
     'agentPresets.list',
     'job.list',
@@ -136,7 +140,9 @@ test('清单是封闭集（手写拼错会在这里红）', () => {
   // 每一条被这五个构造函数发出来的 key 都必须在封闭清单里。
   const emitted = new Set<string>()
   for (const notice of [
-    modelSelectedNotice('s'), permissionSwitchedNotice('s'), settingsUpdatedNotice(),
+    modelSelectedNotice('s'), permissionSwitchedNotice('s'), modelCatalogChangedNotice(),
+    permissionCatalogChangedNotice(), settingsUpdatedFor('permission', READABLE_NAMESPACES),
+    settingsUpdatedFor('desktop-only', READABLE_NAMESPACES),
     titleChangedNotice('s'), titleChangedNotice(undefined), jobListChangedNotice('s'),
   ]) for (const key of notice.keys) emitted.add(key)
   for (const key of emitted) {
@@ -240,19 +246,77 @@ test('宿主会话事件 → 通知：模型 / 权限档 / 标题命中，`reque
   assert.equal(hostStateForSessionEvent('permission/preset', undefined), undefined)
 })
 
-test('设置文档变更：只对手机读得到的命名空间发（其余不许白拉一次）', () => {
-  // 宿主每个 ns 的变化都会发 `settings/document-updated`（含手机没有入口的），
-  // 过滤判据就是手机可读的那张表（`READABLE_NAMESPACES`）。
+test('模型目录：四条宿主事件（+ 设置那条）都发 `session.modelCatalog`，宿主级不带 sid', () => {
+  // 名单的出处逐条核过：`llm/adapters-updated` / `llm/models-updated` 在
+  // `packages/llm/llm/src/types.ts:24,30`，`credentials/*` 在
+  // `packages/credentials/credentials/src/types.ts:87,99`；第五条
+  // `settings/document-updated` 由下一个用例覆盖（它同时命中 settings.describe）。
+  assert.deepEqual([...MODEL_CATALOG_HOST_EVENTS], [
+    'llm/adapters-updated',
+    'llm/models-updated',
+    'credentials/record-updated',
+    'credentials/reference-updated',
+  ])
+
+  const listeners = new Map<string, () => void>()
+  const ctx = {
+    on: (event: string, listener: () => void) => {
+      listeners.set(event, listener)
+      return () => { listeners.delete(event) }
+    },
+  }
+  const notified: HostStateNotice[] = []
+  const stop = onModelCatalogInvalidated(ctx as never, (notice) => { notified.push(notice) })
+
+  // 订阅面就是这张名单——**多一条少一条都在这里看得见**。
+  assert.deepEqual([...listeners.keys()], [...MODEL_CATALOG_HOST_EVENTS])
+  for (const event of MODEL_CATALOG_HOST_EVENTS) listeners.get(event)!()
+
+  // 四条事件发出**同一条**通知：宿主级（无 `sid`），只带一个 key。
+  assert.deepEqual(notified, MODEL_CATALOG_HOST_EVENTS.map(() => ({ keys: ['session.modelCatalog'] })))
+  for (const notice of notified) assert.equal('sid' in notice, false, '目录是进程级事实，不带会话')
+
+  stop()
+  assert.deepEqual([...listeners.keys()], [], '注销要把四条都摘掉（随 fiber 回收）')
+})
+
+test('权限预设目录：`permission-presets/catalog-changed` ⇒ `{keys:[\'permission.catalog\']}`', () => {
+  // 浏览器侧收到就 invalidate + refresh（`ui-permission-presets/src/client/catalog.ts:46-49`），
+  // 事件无载荷、不动会话 `seq`（`packages/api/remotes/README.md:51`）。
+  const listeners = new Map<string, () => void>()
+  const ctx = {
+    on: (event: string, listener: () => void) => {
+      listeners.set(event, listener)
+      return () => { listeners.delete(event) }
+    },
+  }
+  const notified: HostStateNotice[] = []
+  const stop = onPermissionCatalogChanged(ctx as never, (notice) => { notified.push(notice) })
+
+  assert.deepEqual([...listeners.keys()], ['permission-presets/catalog-changed'])
+  listeners.get('permission-presets/catalog-changed')!()
+  assert.deepEqual(notified, [{ keys: ['permission.catalog'] }])
+
+  stop()
+  assert.deepEqual([...listeners.keys()], [])
+})
+
+test('`settings/document-updated` 同时命中 settings.describe 与 session.modelCatalog', () => {
+  // 一条事件、两个 key：宿主每个 ns 的变化都会发这条事件（含手机没有入口的），
+  // 而 `settings.describe` 只对手机读得到的那张表（`READABLE_NAMESPACES`）发。
   assert.deepEqual(settingsUpdatedFor('permission', READABLE_NAMESPACES), {
-    keys: ['settings.describe'],
+    keys: ['settings.describe', 'session.modelCatalog'],
   })
   assert.deepEqual(settingsUpdatedFor('ui-conversation', READABLE_NAMESPACES), {
-    keys: ['settings.describe'],
+    keys: ['settings.describe', 'session.modelCatalog'],
   })
-  assert.equal(
+  // 手机没有入口的命名空间：**只**少 `settings.describe`，模型目录照样要刷 ——
+  // 按命名空间筛模型目录等于再写一份"哪些设置影响模型"的知识，而 DSH 浏览器侧不筛
+  // （`ui-model-selection/src/client/service.ts:56`）。
+  assert.deepEqual(
     settingsUpdatedFor('some-desktop-only-ns', READABLE_NAMESPACES),
-    undefined,
-    '手机上根本没有这个入口 —— 重拉一次只会换回同一份数据',
+    { keys: ['session.modelCatalog'] },
+    '读不到的命名空间仍然要刷模型目录（返回空就是"改了设置手机不跟"）',
   )
 })
 

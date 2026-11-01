@@ -30,12 +30,10 @@
  * （`app/lib/data/host_state.dart`）。app 侧有一条机械测试**逐字比对两端清单**，
  * 所以漏配会红，而不是静静失效。
  *
- * 清单里**今天没有生产者的几项**也在这里（`session.modelCatalog` /
- * `permission.catalog` 等宿主失效事件还没接；`agentPresets.list` /
- * `workspace.list` / `repo.info` 宿主根本没有"这张表变了"的事件）。
- * 收进来的理由是：手机侧"能不能推"与"该不该拉"是同一张表的两列，
- * 让"接上生产者"只改连接器一处，协议与跨端门禁都不用动（§5.9 规则 8）。
- * 取舍见 `.agents/notes/implemented/2026-11-01-refetch-scope-by-trigger.md`。
+ * 清单里**今天没有生产者的三项**也在这里（`agentPresets.list` / `workspace.list` /
+ * `repo.info`：宿主根本没有"这张表变了"的事件）。收进来的理由是：手机侧"能不能推"与
+ * "该不该拉"是同一张表的两列，让清单保持一处，比"用到才加"少一次协议改动
+ * （§5.9 规则 8）。取舍见 `.agents/notes/implemented/2026-11-01-refetch-scope-by-trigger.md`。
  */
 export const HOST_STATE_KEYS = [
   'session.list',
@@ -71,10 +69,10 @@ export function hostStatePayload(keys: readonly HostStateKey[]): string {
 // ---------------------------------------------------------------------------
 // 触发点 → 发哪几个 key（契约 §5.9 的触发点表的**唯一代码化**）
 //
-// 五个构造函数 vs 在调用点各写一遍 `['session.list', …]`：触发点分散在
-// `index.ts` 的三处宿主事件监听上，而"哪次变更影响哪些快照"是**同一张表**。
-// 写在调用点就意味着改一次要改五处，且漏一处不报错。
-// 测试直接断言这五个函数的返回值（`tests/host-state-notice.test.ts`）。
+// 构造函数 vs 在调用点各写一遍 `['session.list', …]`：触发点分散在
+// `index.ts` 的几处宿主事件监听上，而"哪次变更影响哪些快照"是**同一张表**。
+// 写在调用点就意味着改一次要改几处，且漏一处不报错。
+// 测试直接断言这些函数与名单的返回值（`tests/host-state-notice.test.ts`）。
 // ---------------------------------------------------------------------------
 
 /** 切了模型：清单行带 `model`（chip 读它），投影包带 `modelSelection`。 */
@@ -130,17 +128,68 @@ export function hostStateForSessionEvent(
   }
 }
 
-/** 写了设置：宿主级，没有会话。 */
-export function settingsUpdatedNotice(): HostStateNotice {
-  return { keys: ['settings.describe'] }
+/**
+ * 模型目录变了：宿主级，没有会话。
+ *
+ * 判据是 DSH 浏览器侧那张失效表 —— `ModelCatalogDirectory` 只在显式 `refresh()` 时重拉，
+ * 而 `ui-model-selection` 把五条宿主事件全接到它上面
+ * （`packages/client/ui-model-selection/src/client/service.ts:54-58`），
+ * 见 {@link MODEL_CATALOG_HOST_EVENTS}。
+ *
+ * **不按发起者 / 订阅者过滤、不带 `sid`**（契约 §5.9 规则 3/4/5）：目录是进程级事实，
+ * 而宿主事件不知道是谁改的。取舍与被否方案见
+ * `.agents/notes/implemented/2026-11-01-refetch-scope-by-trigger.md`（第 2 批）。
+ */
+export function modelCatalogChangedNotice(): HostStateNotice {
+  return { keys: ['session.modelCatalog'] }
 }
 
 /**
- * 设置文档变了（宿主 `settings/document-updated`）—— 只关心手机**读得到**的命名空间。
+ * 权限预设目录变了（宿主 `permission-presets/catalog-changed`）：宿主级，没有会话。
  *
- * 过滤的理由：宿主每个命名空间的变化都会发这条事件（`settings/src/index.ts:317,338`），
- * 包括手机上根本没有入口的那些（主题、插件配置…）。为它们让手机重拉一次 `settings.describe`
- * 只会换回同一份数据 —— 那正是"多一次往返"的价钱，没必要付。
+ * 判据：浏览器侧收到就 `invalidate()` + `refresh()`
+ * （`packages/client/ui-permission-presets/src/client/catalog.ts:46-49`）；
+ * 事件本身无载荷、不追加会话事件、不动会话 `seq`
+ * （`packages/api/remotes/README.md:51`）。
+ */
+export function permissionCatalogChangedNotice(): HostStateNotice {
+  return { keys: ['permission.catalog'] }
+}
+
+/**
+ * 会让**模型目录**过期的宿主事件（除 `settings/document-updated` 外的那四条）。
+ *
+ * 五条的出处逐条核过：`llm/adapters-updated`（声明 `packages/llm/llm/src/types.ts:24`，
+ * emit 在 `packages/llm/llm/src/index.ts:371`）、`llm/models-updated`
+ * （`types.ts:30`，emit 在 `packages/llm/llm-deepseek/src/host.ts:32`）、
+ * `credentials/record-updated`（`packages/credentials/credentials/src/types.ts:99`，emit 在
+ * `src/index.ts:276`）、`credentials/reference-updated`（`types.ts:87`，emit 在 `src/index.ts:267`）。
+ *
+ * `settings/document-updated` **刻意不在这个数组里**：它同时命中 `settings.describe`，
+ * 而那条要过命名空间过滤 —— 两个 key 的合成在 {@link settingsUpdatedFor} 一处表达。
+ * 这张名单与那个函数必须一起读：漏掉一条的表现是"改了模型 / 密钥，手机的模型选择器不动"，
+ * 而 `tests/host-state-notice.test.ts` 逐字钉住它。
+ */
+export const MODEL_CATALOG_HOST_EVENTS = [
+  'llm/adapters-updated',
+  'llm/models-updated',
+  'credentials/record-updated',
+  'credentials/reference-updated',
+] as const
+
+/**
+ * 设置文档变了（宿主 `settings/document-updated`）—— **一条事件命中两个 key**。
+ *
+ * - `settings.describe` **只对手机读得到**的命名空间发：宿主每个命名空间的变化都会发这条事件
+ *   （`packages/settings/settings/src/index.ts:317,338`），包括手机上根本没有入口的那些
+ *   （主题、插件配置…）。为它们重拉一次只会换回同一份数据 —— 那个往返没必要付。
+ * - `session.modelCatalog` **不过滤**：`settings/document-updated` 是模型目录的五条失效
+ *   事件之一（`ui-model-selection/src/client/service.ts:54-58`）。按命名空间筛就得先知道
+ *   "哪些设置影响模型"，那是第二份知识，漏一项的表现是"改了设置、手机不跟"；DSH 浏览器侧
+ *   同样不筛（`service.ts:56`）。代价是设置页改一行带来一次目录重取 —— 低频动作，返回的
+ *   又是缓存内的一整包。
+ *
+ * 两个 key 各自独立，所以返回值**永不为空**（读不到的命名空间照样要刷模型目录）。
  *
  * @param ns - 变化的命名空间。
  * @param readable - 手机可读的命名空间（`dsh/settings-face.ts` 的 `READABLE_NAMESPACES`）。
@@ -148,8 +197,10 @@ export function settingsUpdatedNotice(): HostStateNotice {
 export function settingsUpdatedFor(
   ns: string,
   readable: readonly string[],
-): HostStateNotice | undefined {
-  return readable.includes(ns) ? settingsUpdatedNotice() : undefined
+): HostStateNotice {
+  return readable.includes(ns)
+    ? { keys: ['settings.describe', 'session.modelCatalog'] }
+    : { keys: ['session.modelCatalog'] }
 }
 
 /**

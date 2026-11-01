@@ -1,6 +1,6 @@
 # Agent Note: 一次重取该拉多少 —— 按触发源拆快照，而不是按函数捆
 
-Status: implemented（2026-11-01，**只有第 1 批**；第 2 批的两个新触发源仍未接，见文末）
+Status: implemented（2026-11-01，两批都已落地；第 2 批的事实与新增代价见文末「第 2 批已落地」）
 
 ## Problem
 
@@ -301,3 +301,100 @@ Status: implemented（2026-11-01，**只有第 1 批**；第 2 批的两个新�
 在那之前，`session.modelCatalog` / `permission.catalog` 的 `notification` 列在登记表里
 **没有生产者**（只是已经接好了接收端：`host_state_test` 有一条用例证明这两个 key
 收到通知就会重取；另外三个没有宿主事件的 key 则被另一条用例钉成"写进通知 ⇒ 零请求"）。
+
+## 第 2 批已落地（2026-11-01，连接器侧）
+
+### 做完了什么
+
+1. **两个 key 接上了生产者，只改连接器一处**：协议、`HOST_STATE_KEYS`（九项与顺序都没动）、
+   app 侧登记表与 `host_state_test` 一个字都没改。
+   - `session.modelCatalog` ← `llm/adapters-updated`、`llm/models-updated`、
+     `settings/document-updated`、`credentials/record-updated`、`credentials/reference-updated`；
+   - `permission.catalog` ← `permission-presets/catalog-changed`。
+2. **事件名逐个 grep 核实过**（不照抄初稿）：
+
+   | 事件 | 声明 | emit 点 |
+   |---|---|---|
+   | `llm/adapters-updated` | `packages/llm/llm/src/types.ts:24` | `packages/llm/llm/src/index.ts:371`（注册表提交点） |
+   | `llm/models-updated` | `packages/llm/llm/src/types.ts:30` | `packages/llm/llm-deepseek/src/host.ts:32` 等适配器的 `changed` |
+   | `credentials/record-updated` | `packages/credentials/credentials/src/types.ts:99` | 同包 `src/index.ts:276` |
+   | `credentials/reference-updated` | `packages/credentials/credentials/src/types.ts:87` | 同包 `src/index.ts:267` |
+   | `settings/document-updated` | `packages/settings/settings/src/types.ts:75` | 同包 `src/index.ts:317,338` |
+   | `permission-presets/catalog-changed` | `packages/interaction/permission-presets/src/types.ts:48` | 同包 `src/index.ts:461`（`registerAuto` 的注册 / 撤回） |
+
+3. **触发点 → keys 的映射仍只在 `protocol/host-state.ts`**：
+   `modelCatalogChangedNotice()` / `permissionCatalogChangedNotice()` 两个构造函数，
+   外加四条事件的名单 `MODEL_CATALOG_HOST_EVENTS`。订阅与类型补充在
+   `dsh/host-events.ts` 的 `onModelCatalogInvalidated` / `onPermissionCatalogChanged`
+   （与 `dsh/jobs.ts` 的 `onJobsLifecycle` 同形：收 `ctx` 与 `notify`，返回注销函数），
+   `index.ts` 只写两行 `ctx.effect(() => onXxx(ctx, notifyHostState))`。
+4. **`settings/document-updated` 是一条事件命中两个 key**：`settingsUpdatedFor()` 现在
+   返回 `{settings.describe, session.modelCatalog}`（ns 读得到）或
+   `{session.modelCatalog}`（读不到），**永不为空**；`index.ts` 那条监听因此不再判
+   `undefined`。`settings.describe` 那一半仍然只对 `READABLE_NAMESPACES` 发。
+
+### 新增的代价（实施才知道的）
+
+- **代价 9（类型面）**：`llm/*` 与 `permission-presets/catalog-changed` 三条事件的
+  `Events` 补充进不了本仓的类型程序 —— 对应的包不是连接器的依赖
+  （`@deepseek-ai/dsh-llm` / `dsh-permission-presets` 不在 `package.json`；`credentials/*`
+  则能看见，因为 `@deepseek-ai/dsh-credentials` 是 devDependency）。做法是照
+  `dsh/trajectory.ts:83` 的先例，在 `dsh/host-events.ts` 里补一段
+  `declare module '@deepseek-ai/cordis'`，逐条给出处。**它是类型补充，不是第二份真值**：
+  值仍由宿主发；将来把这些包加成依赖，同名同型的声明可以合并，删不删 `tsc` 都会说话。
+- **代价 10（重新验证面）**：五条失效事件里，**只有 `settings/document-updated` 能在
+  不重启宿主的提前下从 Web 侧触达**（写 `agent-default-model` 这一条设置）。
+  `llm/*` 要加 / 删 provider 或改适配器配置、`credentials/*` 要改密钥 —— 都要动 profile
+  配置或凭据，而重启会换 Web token 并断掉手机，等于把"不重连"这条验收前提拆了。
+- **代价 11（每次可读设置变更多一个往返）**：写的是 `READABLE_NAMESPACES` 里的命名空间
+  （`permission` / `agent-preset-registry` / `session-log-deepseek` / `ui-conversation`）时，
+  一条事件会变成 **2 个请求**（`settings.describe` + `session.modelCatalog`）；写的是别的
+  命名空间（如 `agent-default-model`）时只有 **1 个**（模型目录）。这是"不做命名空间过滤"
+  直接换来的那笔钱，量在下面。
+
+### 门禁与实测
+
+- `cd connector && pnpm exec tsc --noEmit` 干净；`pnpm test` **794 → 796 项**
+  （`tests/host-state-notice.test.ts` 加 2 条：模型目录的四条事件 + 订阅面与注销、
+  权限预设目录的订阅；另把"设置文档变更"那条改写成"一条事件两个 key"）。
+- **变异校验两处**（`git checkout` 不适用的场景 —— 工作树里本来就有本批改动，
+  所以是"改→跑→改回"）：
+  ① 把 `credentials/reference-updated` 从 `MODEL_CATALOG_HOST_EVENTS` 里删掉 →
+  `pnpm exec tsx --test tests/host-state-notice.test.ts` **1 红**，恰好是"模型目录的四条宿主事件"那条；
+  ② 把 `session.modelCatalog` 从 `settingsUpdatedFor` 的可读分支里去掉 → **1 红**，
+  恰好是"`settings/document-updated` 同时命中两个 key"那条。
+- 真机（`d61cf622`，profile `dsh-mobile-test`，直连 `0.0.0.0:8790`，App 未重装、未手动重连；
+  宿主重启后由 App 自己重连，`connector.handshake.established` 1→2）：
+
+  | 验收 | 红（改前 `lib/`，即 HEAD 的构建） | 绿（本批构建） |
+  |---|---|---|
+  | Web 侧写 `agent-default-model`（设置页同一条路径 `POST /api/settings/update`） | 宿主 `default` 变了（`deepseek-official/deepseek-flash` → `lightvela-free/spark-x2.6`），但 `connector.host.notices` **+0**、`connector.frames.inbound` **+0**：手机一个请求都没发 | `notices` **+1**、`inbound` **+3**、`bytes.outbound` **+3 826**（目录响应 ~2.7 KB） |
+  | 30 ms 采样（写入时刻 → 通知 → 手机重取帧） | — | 三次实测：写入 **+0 ms** → notices **+107 / +108 / +84 ms** → 首个入站帧 **+141 / +217 / +328 ms**（同一秒内跟上；每次都是 notices +1、inbound +3、bytes +3 826） |
+  | 权限预设目录 | **未验**（下方说明） | **未验** |
+  | 一次标题变更的代价（Web 侧 `session/rename`，不发 prompt） | — | notices +1、入站 **+5 帧**、出站 **1 943 515 B**；拆开看：`host` 帧 **152 B**（+6 ms）、`session.projections` **~1 725 B**（+341 ms）、`session.list` 整表 **1 941 638 B**（+511 ms） |
+
+### 两个实测才知道的事
+
+1. **红的那一次，连 `settings.describe` 都没发**：`agent-default-model` 不在
+   `READABLE_NAMESPACES` 里，旧代码对这条事件返回 `undefined`。也就是说这条设置写入
+   在旧形态下**完全静默**（手机 0 个请求）—— 这正是"一条事件两个 key"要修的东西，
+   也说明**不能用"notices 涨了没有"当红/绿判据**（旧形态下它压根不涨）。判据只能是
+   "手机有没有重取帧"（`frames.inbound`）+ 目录内容。
+2. **权限预设目录这条验不了**，不是漏了：`permission-presets/catalog-changed` 只由
+   `registerAuto` 的注册 / 撤回发（`src/index.ts:461`），而那份预设表**在插件生命周期内
+   固定**（`packages/interaction/permission-presets/README.md:135` 的原话：
+   "The configured preset table is fixed for the plugin lifetime"）。live 改目录的唯一入口是
+   `@deepseek-ai/dsh-auto-review` 挂上来调 `registerAuto`，而这份宿主（
+   `pluginManager/listPlugins` 实测 **195 个插件**）里**没有**它。改 profile 的
+   `cordis.patch.yml` 再重启是"改配置后重挂载"，不是"目录在跑动中变了"，而且重启会断手机 ——
+   所以这条**如实记未验**，判据只剩单测（订阅面 + 通知形状）与"同一套 `notifyHostState` →
+   `sendHostStateChanged` 出口已被模型目录那条真机验过"。补验的最小代价：装 auto-review
+   （要一次重启）后把它启用 / 停用一次。
+
+### 顺带：一次标题变更到底多少字节（笔记文末"先量再改"的答案）
+
+**1.94 MB**（`connector.bytes.outbound` delta 1 943 515 B），其中 **99.9% 是 `session.list`
+的整表响应**（1 941 638 B，本机 302+ 行）；真正与"这一行"有关的信息只有标题一个字段。
+于是"要不要 `session.row` 这种窄口"的判据有了数字：**改一次标题 ≈ 1.9 MB，而一行 JSON
+是 ~1 KB 量级**。这仍是一个不可逆的协议决定（备选方案 2 的两个障碍没变：与"只推提示不推
+数据"冲突、且需要一套我们没有的行级合并语义），所以**本批只记数，不改协议**。

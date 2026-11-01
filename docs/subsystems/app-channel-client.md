@@ -121,8 +121,8 @@ abstract class Outbox {
 
 ### 2.3 宿主状态变更(`host` 帧)与快照登记表
 
-电脑侧改了模型 / 权限档 / 设置 / 标题 / 任务表时,会来一条 `host` 帧(契约 §5.9):
-**只是"可能过期了"的提示,不带数据**。客户端收到后按 key 重取对应快照。
+电脑侧改了模型 / 权限档 / 设置 / 标题 / 任务表 / 模型目录 / 权限预设目录时,会来一条
+`host` 帧(契约 §5.9):**只是"可能过期了"的提示,不带数据**。客户端收到后按 key 重取对应快照。
 
 - **key 是方法名**(契约 §5.9 的封闭集,九项):`session.list` / `session.projections` /
   `settings.describe` / `job.list` / `session.modelCatalog` / `permission.catalog` /
@@ -155,11 +155,12 @@ abstract class Outbox {
 
 五列的判据:
 
-- **`notification`** 只有六个 key 有:它们今天都有生产者(契约 §5.9 的触发点表),而
-  "桌面改了、手机没动静"正是这条通道要消灭的那一类。`agentPresets.list` /
-  `workspace.list` / `repo.info` **不在内** —— 宿主没有"这张表变了"的事件,编一个就是
-  替宿主做决定;`session.modelCatalog` / `permission.catalog` 已经在表里等连接器接上
-  生产者(第 2 批),在那之前它们不会被 `notification` 触发。
+- **`notification`** 只有六个 key 有:它们都有生产者(契约 §5.9 的触发点表),而
+  "桌面改了、手机没动静"正是这条通道要消灭的那一类。`session.modelCatalog` 由五条宿主
+  失效事件触发(`llm/*-updated`、`settings/document-updated`、`credentials/*-updated`),
+  `permission.catalog` 由 `permission-presets/catalog-changed` 触发;
+  `agentPresets.list` / `workspace.list` / `repo.info` **不在内** —— 宿主没有
+  "这张表变了"的事件,编一个就是替宿主做决定。
 - **`connectLanding`** 是**全部九项**:通知只在服务态到达,断开期间在电脑上改的一切
   (反了密钥、加了模型、换了预设表、改了工作区)手机**一条事件都收不到**,重连把每份
   快照重取一遍是唯一的兜底。目录**不跨重连缓存**也是这一条的反面。

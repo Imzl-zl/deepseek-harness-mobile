@@ -5,6 +5,18 @@
 
 ## 现在（2026-11-01）
 
+- **重取范围第 2 批（11-01，连接器侧）**：`session.modelCatalog` 与 `permission.catalog`
+  接上了生产者 —— 五条宿主失效事件（`llm/adapters-updated`、`llm/models-updated`、
+  `settings/document-updated`、`credentials/record-updated`、`credentials/reference-updated`）
+  + `permission-presets/catalog-changed`，宿主级、不带 `sid`、不筛发起者。**只改连接器一处**
+  （协议 / 9 项清单 / app 侧登记表都没动）。`settings/document-updated` 是**一条事件两个 key**：
+  `settings.describe` 仍按 `READABLE_NAMESPACES` 过滤，模型目录**不过滤**（`settingsUpdatedFor`
+  永不为空）。真机（App 未重装、未手动重连）：改 `agent-default-model` 后**通知 +107 ms、
+  手机重取帧 +141 ms**（旧构建同一条写入是 **0 通知 / 0 帧**，因为那个 ns 读不到）。
+  一次标题变更实测出站 **1 943 515 B**（`session.list` 整表 1 941 638 B，键只变一个标题）。
+  **权限预设目录那条未验**：目录只由 `registerAuto` 失效、预设表插件生命周期内固定
+  （`permission-presets/README.md:135`），而这份宿主（195 插件）没有 `dsh-auto-review`。
+  笔记 `implemented/2026-11-01-refetch-scope-by-trigger.md` 文末；契约 `remote-channel.md` §5.9。
 - **重取范围按触发源拆（11-01，第 1 批落地）**：`refreshSessions()` 从产品路径消失 ——
   拆成 `refreshSessionRows()`（只做行）与 `refreshHostCatalogs()`（模型 / 权限 / 预设 /
   `repo.info`）；登记表长到 **9 个 key**（`app/lib/data/host_state.dart`），多一列
@@ -15,7 +27,7 @@
   全部发出（串行时不可能）。**一批只通知一次**（`AppModel.notifyListeners` 上的闸，
   首屏整棵树重建 6+ 次 → 1 次）。新增纯观测指标 `connector.bytes.outbound`：
   **一次切模型出站 1.94 MB**，几乎全是 `session.list` 整包（本机 349 行）——
-  这是下一轮"要不要窄口只取一行"的判据。第 2 批（连接器侧三条新触发源）**没做**。
+  这是"要不要窄口只取一行"的判据（第 2 批已量：改一次标题同量级）。
   笔记 `implemented/2026-11-01-refetch-scope-by-trigger.md`；现状 `remote-channel.md` §5.9 +
   `app-channel-client.md` §2.3 + `connect-landing.md` §2。
 - **宿主状态同步（10-31，P1/P3 落地）**：新增 `host` 帧（契约 §5.9）—— 电脑侧改了
@@ -95,13 +107,11 @@
 
 ## 下一步
 
-0. **重取范围第 2 批（连接器侧，接收端已就绪）**：给 `session.modelCatalog` 接五条宿主
-   失效事件（`llm/adapters-updated`、`llm/models-updated`、`settings/document-updated`、
-   `credentials/record-updated`、`credentials/reference-updated`，后两条连接器里**首次出现**）、
-   给 `permission.catalog` 接 `permission-presets/catalog-changed`。手机侧的
-   `notification` 列与用例已经在（`host_state_test` 证明这两个 key 收到通知就会重取），
-   所以接上生产者**只改连接器一处**。顺带把"要不要 `session.row`"定下来：
-   `connector.bytes.outbound` 已经能报字节，先量几次真实变更（首屏一次就 1.94 MB）。
+0. **重取范围第 2 批已落地**（上方「现在」第一条）：两个 key 都有生产者，
+   connector `pnpm test` **796** 项。留给以后的只有三件：① 权限预设目录那条真机验收
+   （要装 `dsh-auto-review` 并重启一次宿主，本机没有它）；② `session.row` 要不要做 ——
+   数字已量（改一次标题 **1.94 MB**，一行 JSON ≈1 KB），决定未做；③ `llm/*` 与
+   `credentials/*` 四条事件只能在"改配置 / 改密钥"时触达，未单独真机验。
 1. **多机第 4 步的真机复验**：只剩两条要**两台设备**才能做的（第二台被
    `device/busy` 拒并说出占用者、切回上一台的真实链路）—— 单测已覆盖，
    真机可用"第二个 DSH_HOME + 另一份连接器身份"补；命中不了的按未验证如实说。
@@ -124,7 +134,7 @@
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
 | `cd app && flutter test` | 1619 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **794** 项 |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **796** 项 |
 | `cd relay && pnpm typecheck && node --test` | 类型 + **132** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
