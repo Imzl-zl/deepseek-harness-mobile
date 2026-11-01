@@ -308,24 +308,25 @@ Status: implemented（2026-11-01，两批都已落地；第 2 批的事实与新
 
 1. **两个 key 接上了生产者，只改连接器一处**：协议、`HOST_STATE_KEYS`（九项与顺序都没动）、
    app 侧登记表与 `host_state_test` 一个字都没改。
-   - `session.modelCatalog` ← `llm/adapters-updated`、`llm/models-updated`、
-     `settings/document-updated`、`credentials/record-updated`、`credentials/reference-updated`；
+   - `session.modelCatalog` ← `llm/adapters-updated`、`settings/document-updated`、
+     `credentials/record-updated`、`credentials/reference-updated`（**四条**，不是五条 ——
+     `llm/models-updated` 在出厂宿主里不存在，见「三个实测 / 查证才知道的事」第 3 条）；
    - `permission.catalog` ← `permission-presets/catalog-changed`。
-2. **事件名逐个 grep 核实过**（不照抄初稿）：
+2. **事件名逐个核实过：源码给声明与 emit 点，bundle 给"它到底在不在这台宿主里"**：
 
-   | 事件 | 声明 | emit 点 |
-   |---|---|---|
-   | `llm/adapters-updated` | `packages/llm/llm/src/types.ts:24` | `packages/llm/llm/src/index.ts:371`（注册表提交点） |
-   | `llm/models-updated` | `packages/llm/llm/src/types.ts:30` | `packages/llm/llm-deepseek/src/host.ts:32` 等适配器的 `changed` |
-   | `credentials/record-updated` | `packages/credentials/credentials/src/types.ts:99` | 同包 `src/index.ts:276` |
-   | `credentials/reference-updated` | `packages/credentials/credentials/src/types.ts:87` | 同包 `src/index.ts:267` |
-   | `settings/document-updated` | `packages/settings/settings/src/types.ts:75` | 同包 `src/index.ts:317,338` |
-   | `permission-presets/catalog-changed` | `packages/interaction/permission-presets/src/types.ts:48` | 同包 `src/index.ts:461`（`registerAuto` 的注册 / 撤回） |
+   | 事件 | 声明 | emit 点 | 出厂 `0.2.1-rc.5` 的 `app.asar` |
+   |---|---|---|---|
+   | `llm/adapters-updated` | `packages/llm/llm/src/types.ts:24` | `packages/llm/llm/src/index.ts:371`（注册表提交点） | 38 处 |
+   | `credentials/record-updated` | `packages/credentials/credentials/src/types.ts:99` | 同包 `src/index.ts:276` | 在 |
+   | `credentials/reference-updated` | `packages/credentials/credentials/src/types.ts:87` | 同包 `src/index.ts:267` | 29 处 |
+   | `settings/document-updated` | `packages/settings/settings/src/types.ts:75` | 同包 `src/index.ts:317,338` | 22 处 |
+   | `permission-presets/catalog-changed` | `packages/interaction/permission-presets/src/types.ts:44` | 同包 `src/index.ts:461`（`registerAuto` 的注册 / 撤回） | 13 处 |
+   | ~~`llm/models-updated`~~ | `packages/llm/llm/src/types.ts:30`（源码有） | `packages/llm/llm-deepseek/src/host.ts:32` | **0 处 → 未接** |
 
 3. **触发点 → keys 的映射仍只在 `protocol/host-state.ts`**：
    `modelCatalogChangedNotice()` / `permissionCatalogChangedNotice()` 两个构造函数，
-   外加四条事件的名单 `MODEL_CATALOG_HOST_EVENTS`。订阅与类型补充在
-   `dsh/host-events.ts` 的 `onModelCatalogInvalidated` / `onPermissionCatalogChanged`
+   外加三条事件的名单 `MODEL_CATALOG_HOST_EVENTS`。订阅在
+   `dsh/host-events.ts` 的 `onModelCatalogChanged` / `onPermissionCatalogChanged`
    （与 `dsh/jobs.ts` 的 `onJobsLifecycle` 同形：收 `ctx` 与 `notify`，返回注销函数），
    `index.ts` 只写两行 `ctx.effect(() => onXxx(ctx, notifyHostState))`。
 4. **`settings/document-updated` 是一条事件命中两个 key**：`settingsUpdatedFor()` 现在
@@ -335,17 +336,21 @@ Status: implemented（2026-11-01，两批都已落地；第 2 批的事实与新
 
 ### 新增的代价（实施才知道的）
 
-- **代价 9（类型面）**：`llm/*` 与 `permission-presets/catalog-changed` 三条事件的
-  `Events` 补充进不了本仓的类型程序 —— 对应的包不是连接器的依赖
-  （`@deepseek-ai/dsh-llm` / `dsh-permission-presets` 不在 `package.json`；`credentials/*`
-  则能看见，因为 `@deepseek-ai/dsh-credentials` 是 devDependency）。做法是照
-  `dsh/trajectory.ts:83` 的先例，在 `dsh/host-events.ts` 里补一段
-  `declare module '@deepseek-ai/cordis'`，逐条给出处。**它是类型补充，不是第二份真值**：
-  值仍由宿主发；将来把这些包加成依赖，同名同型的声明可以合并，删不删 `tsc` 都会说话。
-- **代价 10（重新验证面）**：五条失效事件里，**只有 `settings/document-updated` 能在
-  不重启宿主的提前下从 Web 侧触达**（写 `agent-default-model` 这一条设置）。
-  `llm/*` 要加 / 删 provider 或改适配器配置、`credentials/*` 要改密钥 —— 都要动 profile
-  配置或凭据，而重启会换 Web token 并断掉手机，等于把"不重连"这条验收前提拆了。
+- **代价 9（类型面，第一次做错了、已改）**：初版在手抄 `declare module '@deepseek-ai/cordis'`
+  补三条事件名。那是**一份会静默漂移的字符串表**：宿主改名后 `tsc` 不报，症状是
+  "通知再也不来"。改成**引包**：`@deepseek-ai/dsh-llm` 与 `@deepseek-ai/dsh-permission-presets`
+  进 `devDependencies`（只为 `.d.ts`，不参与运行时），`dsh/host-events.ts` 用
+  `import type { … }` 引一个真实成员把它们的 `Events` 合并进类型程序
+  （DSH 自己也这么干：`packages/bundle/headless/src/index.ts:18`）。
+  **两个副作用都是好的**：`import type {}` 这种空绑定会被 `verbatimModuleSyntax` 裁掉，
+  所以不得不引真实成员；而删掉 import 会让事件键退回"未知事件"、当场编译失败 ——
+  这两行不会被当成 unused 误删。实测判据：把名单里的 `'llm/adapters-updated'` 改成少一个字母，
+  `tsc` 立刻报 `"llm/adapters-update" is not assignable to keyof Events … Did you mean "llm/adapters-updated"?`。
+- **代价 10（重新验证面）**：四条失效事件里，**只有 `settings/document-updated` 能在
+  不重启宿主的前提下从 Web 侧触达**（写 `agent-default-model` 这一条设置）。
+  `llm/adapters-updated` 要加 / 删 provider 或改适配器配置、`credentials/*` 要改密钥 ——
+  都要动 profile 配置或凭据，而重启会换 Web token 并断掉手机，等于把"不重连"这条
+  验收前提拆了。
 - **代价 11（每次可读设置变更多一个往返）**：写的是 `READABLE_NAMESPACES` 里的命名空间
   （`permission` / `agent-preset-registry` / `session-log-deepseek` / `ui-conversation`）时，
   一条事件会变成 **2 个请求**（`settings.describe` + `session.modelCatalog`）；写的是别的
@@ -377,7 +382,7 @@ Status: implemented（2026-11-01，两批都已落地；第 2 批的事实与新
   | 权限预设目录 | **未验**（下方说明） | **未验** |
   | 一次标题变更的代价（Web 侧 `session/rename`，不发 prompt） | — | notices +1、入站 **+5 帧**、出站 **1 943 515 B**；拆开看：`host` 帧 **152 B**（+6 ms）、`session.projections` **~1 725 B**（+341 ms）、`session.list` 整表 **1 941 638 B**（+511 ms） |
 
-### 两个实测才知道的事
+### 三个实测 / 查证才知道的事
 
 1. **红的那一次，连 `settings.describe` 都没发**：`agent-default-model` 不在
    `READABLE_NAMESPACES` 里，旧代码对这条事件返回 `undefined`。也就是说这条设置写入
@@ -394,6 +399,18 @@ Status: implemented（2026-11-01，两批都已落地；第 2 批的事实与新
    所以这条**如实记未验**，判据只剩单测（订阅面 + 通知形状）与"同一套 `notifyHostState` →
    `sendHostStateChanged` 出口已被模型目录那条真机验过"。补验的最小代价：装 auto-review
    （要一次重启）后把它启用 / 停用一次。
+3. **`llm/models-updated` 在出厂宿主里根本不存在**（这条是查来的，不是推的）：初版按
+   DSH **源码**（`packages/llm/llm/src/types.ts:30`，emit 在各适配器的 `changed`）把它接上了，
+   而问了一句"这条事件在跑起来的那个 bundle 里有吗"之后，对
+   `D:\soft\DeepSeek Harness\resources\app.asar`（174 MB，未压缩，字符串可直搜）逐块扫全文：
+   **0 处**。同批核过的控制组：`llm/adapters-updated` **38** 处、
+   `settings/document-updated` **22** 处、`model/selection` **28** 处、
+   `permission-presets/catalog-changed` **13** 处、`credentials/reference-updated` **29** 处；
+   宿主 bundle 版本实测 `@deepseek-ai/dsh-base 0.2.1-rc.5`。
+   ⇒ 那条监听在**这个宿主上是死代码**，已删（本仓对死代码的判据与
+   `2026-10-31-host-state-sync.md` 里删 `exceptDeviceId` 时是同一条）。
+   **教训**：DSH 的 checkout 领先于已发布产物，`packages/...:行号` 只能证明"源码里有"，
+   证明不了"跑着的宿主里有"；涉及"某条事件会不会来"时，**要么看 bundle，要么看真机计数**。
 
 ### 顺带：一次标题变更到底多少字节（笔记文末"先量再改"的答案）
 

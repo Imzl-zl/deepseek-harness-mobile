@@ -263,14 +263,14 @@ test('宿主会话事件 → 通知：模型 / 权限档 / 标题命中，`reque
   assert.equal(hostStateForSessionEvent('permission/preset', undefined), undefined)
 })
 
-test('模型目录：四条宿主事件（+ 设置那条）都发 `session.modelCatalog`，宿主级不带 sid', () => {
-  // 名单的出处逐条核过：`llm/adapters-updated` / `llm/models-updated` 在
-  // `packages/llm/llm/src/types.ts:24,30`，`credentials/*` 在
-  // `packages/credentials/credentials/src/types.ts:87,99`；第五条
+test('模型目录：三条宿主事件（+ 设置那条）都发 `session.modelCatalog`，宿主级不带 sid', () => {
+  // 名单的出处逐条核过：`llm/adapters-updated` 在 `packages/llm/llm/src/types.ts:24`，
+  // `credentials/*` 在 `packages/credentials/credentials/src/types.ts:87,99`；第四条
   // `settings/document-updated` 由下一个用例覆盖（它同时命中 settings.describe）。
+  // **`llm/models-updated` 刻意不在内**：DSH 源码里有它（`types.ts:30`），但出厂宿主
+  // `0.2.1-rc.5` 的 `app.asar` 全文 0 处 —— 接一条永远不来的事件就是死代码。
   assert.deepEqual([...MODEL_CATALOG_HOST_EVENTS], [
     'llm/adapters-updated',
-    'llm/models-updated',
     'credentials/record-updated',
     'credentials/reference-updated',
   ])
@@ -283,12 +283,12 @@ test('模型目录：四条宿主事件（+ 设置那条）都发 `session.model
   assert.deepEqual([...listeners.keys()], [...MODEL_CATALOG_HOST_EVENTS])
   for (const event of MODEL_CATALOG_HOST_EVENTS) listeners.get(event)!()
 
-  // 四条事件发出**同一条**通知：宿主级（无 `sid`），只带一个 key。
+  // 每条事件发出**同一条**通知：宿主级（无 `sid`），只带一个 key。
   assert.deepEqual(notified, MODEL_CATALOG_HOST_EVENTS.map(() => ({ keys: ['session.modelCatalog'] })))
   for (const notice of notified) assert.equal('sid' in notice, false, '目录是进程级事实，不带会话')
 
   stop()
-  assert.deepEqual([...listeners.keys()], [], '注销要把四条都摘掉（随 fiber 回收）')
+  assert.deepEqual([...listeners.keys()], [], '注销要把每一条都摘掉（随 fiber 回收）')
 })
 
 test('权限预设目录：`permission-presets/catalog-changed` ⇒ `{keys:[\'permission.catalog\']}`', () => {

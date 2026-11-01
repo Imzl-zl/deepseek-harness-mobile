@@ -157,22 +157,30 @@ export function permissionCatalogChangedNotice(): HostStateNotice {
 }
 
 /**
- * 会让**模型目录**过期的宿主事件（除 `settings/document-updated` 外的那四条）。
+ * 会让**模型目录**过期的宿主事件（`settings/document-updated` 除外，见下）。
  *
- * 五条的出处逐条核过：`llm/adapters-updated`（声明 `packages/llm/llm/src/types.ts:24`，
- * emit 在 `packages/llm/llm/src/index.ts:371`）、`llm/models-updated`
- * （`types.ts:30`，emit 在 `packages/llm/llm-deepseek/src/host.ts:32`）、
- * `credentials/record-updated`（`packages/credentials/credentials/src/types.ts:99`，emit 在
- * `src/index.ts:276`）、`credentials/reference-updated`（`types.ts:87`，emit 在 `src/index.ts:267`）。
+ * 三条的出处逐条核过：`llm/adapters-updated`（声明 `packages/llm/llm/src/types.ts:24`，
+ * emit 在 `packages/llm/llm/src/index.ts:371`）、`credentials/record-updated`
+ * （`packages/credentials/credentials/src/types.ts:99`，emit 在 `src/index.ts:276`）、
+ * `credentials/reference-updated`（`types.ts:87`，emit 在 `src/index.ts:267`）。
  *
  * `settings/document-updated` **刻意不在这个数组里**：它同时命中 `settings.describe`，
  * 而那条要过命名空间过滤 —— 两个 key 的合成在 {@link settingsUpdatedFor} 一处表达。
  * 这张名单与那个函数必须一起读：漏掉一条的表现是"改了模型 / 密钥，手机的模型选择器不动"，
  * 而 `tests/host-state-notice.test.ts` 逐字钉住它。
+ *
+ * ## 为什么没有 `llm/models-updated`
+ *
+ * DSH 的**源码**里它是模型目录的失效事件之一（`packages/llm/llm/src/types.ts:30`，
+ * 由各适配器的 `changed` 回调 emit），但**出厂宿主里没有这条事件**：`0.2.1-rc.5` 的
+ * `app.asar` 全文 0 处（同批核过的 `llm/adapters-updated` 38 处、`settings/document-updated`
+ * 22 处、`permission-presets/catalog-changed` 13 处、`credentials/reference-updated` 29 处）。
+ * 接一条永远不来的事件就是死代码（`.agents/notes/implemented/2026-10-31-host-state-sync.md`
+ * 对 `exceptDeviceId` 用的是同一条判断），所以**等宿主发版再加回来**：加的时候只动这个数组
+ * 与它的用例，别的都不用碰。
  */
 export const MODEL_CATALOG_HOST_EVENTS = [
   'llm/adapters-updated',
-  'llm/models-updated',
   'credentials/record-updated',
   'credentials/reference-updated',
 ] as const
@@ -219,3 +227,5 @@ export function titleChangedNotice(sid: string | undefined): HostStateNotice {
 export function jobListChangedNotice(sid: string): HostStateNotice {
   return { keys: ['job.list'], sid }
 }
+
+

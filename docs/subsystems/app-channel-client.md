@@ -156,8 +156,8 @@ abstract class Outbox {
 五列的判据:
 
 - **`notification`** 只有六个 key 有:它们都有生产者(契约 §5.9 的触发点表),而
-  "桌面改了、手机没动静"正是这条通道要消灭的那一类。`session.modelCatalog` 由五条宿主
-  失效事件触发(`llm/*-updated`、`settings/document-updated`、`credentials/*-updated`),
+  "桌面改了、手机没动静"正是这条通道要消灭的那一类。`session.modelCatalog` 由四条宿主
+  失效事件触发(`llm/adapters-updated`、`settings/document-updated`、`credentials/*-updated`),
   `permission.catalog` 由 `permission-presets/catalog-changed` 触发;
   `agentPresets.list` / `workspace.list` / `repo.info` **不在内** —— 宿主没有
   "这张表变了"的事件,编一个就是替宿主做决定。

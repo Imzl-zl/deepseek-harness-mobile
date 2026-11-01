@@ -5,14 +5,15 @@
 
 ## 现在（2026-11-01）
 
-- **重取范围第 2 批（11-01，连接器侧）**：`session.modelCatalog` 接五条宿主失效事件
-  （`llm/*-updated`、`settings/document-updated`、`credentials/*-updated`），
+- **重取范围第 2 批（11-01，连接器侧）**：`session.modelCatalog` 接**四条**宿主失效事件
+  （`llm/adapters-updated`、`settings/document-updated`、`credentials/*-updated`），
   `permission.catalog` 接 `permission-presets/catalog-changed`；宿主级、不带 `sid`、
-  不筛发起者，**只改连接器一处**。`settings/document-updated` 一条事件两个 key
-  （`settings.describe` 仍按命名空间过滤，模型目录不过滤）。真机：改默认模型后
-  **通知 +107 ms / 手机重取帧 +141 ms**（旧构建同一条写入 0 通知 0 帧）；一次标题变更
-  出站 **1 943 515 B**（整表 1 941 638 B）。**权限预设目录未验**（这份宿主 195 个插件里
-  没有 `dsh-auto-review`，目录只由 `registerAuto` 失效）。笔记 `…/2026-11-01-…` 文末。
+  不筛发起者，**只改连接器一处**。事件类型靠 devDependency 带入（改名 = 编译错误）。
+  `settings/document-updated` 一条事件两个 key。真机：改默认模型后**通知 +107 ms /
+  手机重取帧 +141 ms**（旧构建同一条写入 0 通知 0 帧）；一次标题变更出站 **1 943 515 B**
+  （整表 1 941 638 B）。**`llm/models-updated` 没接**：DSH 源码有、出厂 `0.2.1-rc.5`
+  的 `app.asar` 里 0 处（死代码）。**权限预设目录未验**（宿主 195 插件里没有
+  `dsh-auto-review`）。笔记 `…/2026-11-01-…` 文末。
 - **重取范围按触发源拆（11-01，第 1 批落地）**：`refreshSessions()` 从产品路径消失 ——
   拆成 `refreshSessionRows()`（只做行）与 `refreshHostCatalogs()`（模型 / 权限 / 预设 /
   `repo.info`）；登记表长到 **9 个 key**（`app/lib/data/host_state.dart`），多一列

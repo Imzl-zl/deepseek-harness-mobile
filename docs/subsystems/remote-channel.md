@@ -533,7 +533,7 @@ type HostStateChanged = { keys: HostStateKey[] }   // 整个 box,没有任何值
    | 宿主 `session/event` 的 `session/title`(标题生成 / 改名) | `session.list` + `session.projections` | 该会话(别名未知时只发 `session.list`) |
    | 宿主 `jobs.events` 的 `registered` / `settled` / `removed` | `job.list` | 该任务所属会话(别名未知时不发) |
    | 宿主 `settings/document-updated` | `settings.describe` + `session.modelCatalog` | 无 |
-   | 宿主 `llm/adapters-updated` / `llm/models-updated` / `credentials/record-updated` / `credentials/reference-updated` | `session.modelCatalog` | 无 |
+   | 宿主 `llm/adapters-updated` / `credentials/record-updated` / `credentials/reference-updated` | `session.modelCatalog` | 无 |
    | 宿主 `permission-presets/catalog-changed` | `permission.catalog` | 无 |
 
    **模型与权限档听宿主事件,不听我们自己的 handler**:它们可以从桌面 Web 改
@@ -553,15 +553,22 @@ type HostStateChanged = { keys: HostStateKey[] }   // 整个 box,没有任何值
    (`packages/client/ui-model-selection/src/client/service.ts:56`)。代价是设置页改一行
    带来一次目录重取,那是低频动作,返回的是缓存内的一整包。
 
-   两个目录的失效表与 DSH 浏览器侧同源:`ui-model-selection` 把 `llm/adapters-updated` /
-   `llm/models-updated` / `settings/document-updated` / `credentials/record-updated` /
-   `credentials/reference-updated` 五条全接到目录 `refresh()`
+   两个目录的失效表与 DSH 浏览器侧同源:DSH 源码里 `ui-model-selection` 把
+   `llm/adapters-updated` / `llm/models-updated` / `settings/document-updated` /
+   `credentials/record-updated` / `credentials/reference-updated` 五条全接到目录 `refresh()`
    (`packages/client/ui-model-selection/src/client/service.ts:54-58`;事件声明在
    `packages/llm/llm/src/types.ts:24,30` 与 `packages/credentials/credentials/src/types.ts:87,99`);
    `ui-permission-presets` 收到 `permission-presets/catalog-changed` 就 invalidate + refresh
    (`packages/client/ui-permission-presets/src/client/catalog.ts:46-49`;那条事件无载荷、
    不动会话 `seq`,`packages/api/remotes/README.md:51`)。两条都**不筛发起者 / 订阅者、
    不带 `sid`** —— 目录是进程级事实。
+
+   **连接器接的是四条,不是五条**:出厂宿主 `0.2.1-rc.5` 的 bundle 里**不存在**
+   `llm/models-updated`(2026-11-01 实测:`app.asar` 全文 0 处;同批核过的
+   `llm/adapters-updated` 38 处、`settings/document-updated` 22 处、
+   `permission-presets/catalog-changed` 13 处、`credentials/reference-updated` 29 处)。
+   接一条永不触发的宿主事件就是死代码,所以等宿主发版再补 —— 补的时候只改连接器一处
+   (`protocol/host-state.ts` 的名单与它的用例),协议与手机侧都不用动。
 
    **清单里另外三项没有生产者**:`agentPresets.list` / `workspace.list` / `repo.info` ——
    宿主**没有**"这张表变了"的事件(`workspace` 只 emit 会话活动 / 停止,
