@@ -5,6 +5,13 @@
 
 ## 现在（2026-11-01）
 
+- **会话列表分页（11-01）**：`session.list` 请求 `{limit?, offset?}`、应答加 `hasMore`
+  （不传 = 整表，老客户端不变）；手机一页 **50** 行，首屏只要一页，**刷新问"已加载窗口"**
+  （翻过的页不被打回），加载更多从 `offset = 已加载行数` 接着要、按 `sid` 去重；
+  首页内联列表与抽屉各有一行"加载更多会话"（显式点击，不自动 —— `ListView` 预构建
+  会把后面几页一次吞掉）。真机（新 APK）：一次标题变更 **252 000 → 47 507 B**
+  （其中 `session.list` **250 122 → 45 630**，50 行），相对最初 1 943 515 B 是 **-97.6%**；
+  首屏 landing ~2.1 MB → **918 263 B**。笔记 `implemented/2026-11-01-session-list-paging.md`。
 - **列表行只搬手机读的五个投影键（11-01）**：`session.list` 的每行原本带宿主整块
   projection summary（本机 94.5% 的包体，`turnOutline` 645 KB + `trajectory` 353 KB
   两项就 1 MB），而手机 `readSessionSummary` 只读 `title` / `modelSelection` /
@@ -113,12 +120,12 @@
 
 ## 下一步
 
-0. **重取范围两批都已落地**（上方「现在」前两条）：两个目录 key 都有生产者、
-   `session.list` 已按手机读面裁到五键，connector `pnpm test` **799** 项。留给以后的：
-   ① 权限预设目录那条真机验收（要装 `dsh-auto-review` 并重启一次宿主，本机没有它）；
-   ② `session.projections` 仍是 20+ 键一整包（每个会话只拉一次，本批有意不动；
-   要收窄时判据同样是"手机读哪几个键"）；③ `llm/adapters-updated` 与 `credentials/*`
-   只能在"改配置 / 改密钥"时触达，未单独真机验。
+0. **数据面按"可见 ⇒ 必须准；不可见 ⇒ 打开才拉"收敛（三条已落地）**：触发源按来源拆、
+   行只带手机读的五个投影键、列表分页（50 行 + `hasMore`）。connector **803** / app **1633**。
+   留给以后的：① **`permission.catalog` 与 `repo.info` 还在 `connectLanding`** —— 它们只在
+   权限 sheet / 文件页被读，按这条不变量该改成"首见时无条件拉"；② `session.projections`
+   仍是 20+ 键一整包（每会话只拉一次，判据同上）；③ 权限预设目录那条真机验收
+   （要装 `dsh-auto-review` 并重启一次宿主，本机没有它）。
 1. **多机第 4 步的真机复验**：只剩两条要**两台设备**才能做的（第二台被
    `device/busy` 拒并说出占用者、切回上一台的真实链路）—— 单测已覆盖，
    真机可用"第二个 DSH_HOME + 另一份连接器身份"补；命中不了的按未验证如实说。
@@ -139,9 +146,9 @@
 | `node app/tools/verify-platform-boundary.mjs` | 673 项（25 条规则自检 + 155 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1619 项（约 1 分钟） |
+| `cd app && flutter test` | 1633 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **799** 项 |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **803** 项 |
 | `cd relay && pnpm typecheck && node --test` | 类型 + **132** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。

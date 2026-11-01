@@ -77,9 +77,32 @@ const String _kModelCatalog = 'session.modelCatalog';
 /// 依赖方向也是对的：适配器（`wire/rpc`）依赖端口（`SyncClient`）。
 ///
 /// 形状错的计数与出声走 `valueOrReport`（唯一出口）；`null` 只剩"读不出来"一个含义。
-Future<List<SessionSummary>> loadSessionList(SyncClient client) async {
-  final result = await client.call<Object?>(_kList, const {});
-  return valueOrReport(readSessionList(result), _kList) ?? const [];
+/// 一页会话行 + "还有没有下一段"（连接器 `hasMore`，见 `connector/src/handlers.ts`
+/// 的 `session.list`：不传 `limit` 就是整表 + `hasMore: false`）。
+typedef SessionListPage = ({List<SessionSummary> sessions, bool hasMore});
+
+/// 要一页会话行。
+///
+/// **`limit` / `offset` 都是可选的**：老连接器不认这两个键（它们落在 `params` 里被
+/// 忽略），照旧回整表 + 不带 `hasMore` —— 这里按 `false` 读，于是"没有再下一页"
+/// 正好是事实，不需要版本判断。
+Future<SessionListPage> loadSessionList(
+  SyncClient client, {
+  int? limit,
+  int? offset,
+}) async {
+  final result = await client.call<Object?>(_kList, <String, Object?>{
+    // 显式 `if` 而不是 null-aware element：后者的 key 取的是**值的字符串形式**
+    // 而不是标识符（`createSession` 上面那条注释记的是同一次实测），
+    // `dart analyze` 会反过来建议改过去，别听。
+    // ignore: use_null_aware_elements
+    if (limit != null) 'limit': limit,
+    // `offset = 0` 不写：让首屏的请求体与分页之前逐字相同（抓包对比时少一处噪声）。
+    if (offset != null && offset > 0) 'offset': offset,
+  });
+  final sessions = valueOrReport(readSessionList(result), _kList) ?? const [];
+  final map = result is Map ? result : const {};
+  return (sessions: sessions, hasMore: map['hasMore'] == true);
 }
 
 /// 建会话，回新的 `sid`（读不出来 ⇒ `null` + 计数；调用方据此**大声失败**）。

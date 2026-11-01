@@ -802,8 +802,23 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       return { sid: await deps.aliases.ensure(created.childSessionId) };
     },
 
-    'session.list': async () => {
+    'session.list': async (params) => {
       const rows = await deps.sessions.list()
+      // **分页**（2026-11-01）：`{limit, offset}` 都是可选非负整数。
+      // 不传 `limit` = **整表**，老手机的行为一个字不变；传了才切。
+      //
+      // 切在**分配别名之前**：没发出去的行不该在别名表里留下条目 —— 否则每翻一页
+      // 都给整表铸一遍别名，分页省下的字节又拿 CPU 还回去，而别名表是有上限的。
+      //
+      // `hasMore` 数的是"宿主这一份可见清单里还有没有下一段"，**不是** `limit` 的倍数
+      // 关系：会话数随时会变，手机据此决定还要不要显示"加载更多"。
+      // 顺序归宿主（它按活动排序，`session-controller/src/index.ts:272-282`），
+      // 所以 `offset` 是"离最新那一端第几行"—— 这段时间里有新会话进来会整体后移，
+      // 手机按 `sid` 去重（同一条不会出现两遍），最坏是少看一行、滑一下就来。
+      const limit = optionalCount(params, 'limit')
+      const offset = optionalCount(params, 'offset') ?? 0
+      const page = limit === undefined ? rows.slice(offset) : rows.slice(offset, offset + limit)
+      const hasMore = limit === undefined ? false : offset + limit < rows.length
       // 别名可以**并发**分配：不同会话之间互不影响，同一个会话则由 `ensure` 自己合流
       // （见 `alias.ts` 的说明）。逐字段构造给手机的行，**不 spread** ——
       // `dshSessionId` 绝不能过线（中继与手机只见 `sid`）。
@@ -815,7 +830,7 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       // 也不为 `undefined` / 空串建别名（前者会塞一行空映射，后者会铸出一个
       // 不存在的父级 —— 手机拿到它会让 `←` 打开一个空会话）。
       const assigned = await Promise.all(
-        rows.map(async (row) => ({
+        page.map(async (row) => ({
           row,
           sid: await deps.aliases.ensure(row.dshSessionId),
           parentSid:
@@ -874,6 +889,7 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
                 }),
           })),
         ),
+        hasMore,
       }
     },
   }

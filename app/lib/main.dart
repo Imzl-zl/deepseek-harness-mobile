@@ -949,6 +949,12 @@ class _DshMobileAppState extends State<DshMobileApp>
           // 「展开其余 N 个会话」：这一组不再按 watermark 裁（只活这次抽屉）。
           onRevealMore: (section) =>
               setState(() => _revealedGroups.add(SessionDrawer.keyOf(section))),
+          // 分页：抽屉与首页看的是同一份 `app.sessions`，两处都能往下翻
+          //（契约 §5.7 的 `hasMore`；一页多少行见 `data/app_model.dart` 的 `kSessionRowPageSize`）。
+          hasMore: app.hasMoreSessions,
+          onLoadMore: app.hasMoreSessions
+              ? () => unawaited(app.loadMoreSessionRows())
+              : null,
           onOpenSession: (session) {
             _closeDrawer();
             unawaited(app.openSession(session.sid));

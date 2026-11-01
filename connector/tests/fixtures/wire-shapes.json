@@ -82,7 +82,8 @@
             }
           }
         }
-      ]
+      ],
+      "hasMore": false
     },
     {
       "sessions": [
@@ -718,7 +719,8 @@
             }
           }
         }
-      ]
+      ],
+      "hasMore": false
     }
   ],
   "session.projections": [

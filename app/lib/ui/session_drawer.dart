@@ -162,7 +162,15 @@ class SessionDrawer extends StatefulWidget {
     this.expandedOf,
     this.onExpandedChanged,
     this.onRevealMore,
+    this.hasMore = false,
+    this.onLoadMore,
   });
+
+  /// 还有更早的会话没加载（`AppModel.hasMoreSessions`，契约 §5.7 的 `hasMore`）。
+  final bool hasMore;
+
+  /// 加载下一页（`AppModel.loadMoreSessionRows`）。缺省 = 不显示"加载更多"那一行。
+  final VoidCallback? onLoadMore;
 
   /// 点了「展开其余 N 个会话」：把这一组**全部**放出来。
   ///
@@ -457,6 +465,23 @@ class _SessionDrawerState extends State<SessionDrawer> {
                             ],
                           ),
                         ],
+                        // **分页尾巴**（与首页那份同一个判据）：还有更早的会话就多一行。
+                        // 抽屉与首页看的是同一份 `AppModel.sessions`，所以两处都能翻；
+                        // 显式一行而不是"滚到底自动拉"——`ListView` 会为即将进入视口的
+                        // 内容预构建，自动触发会在首帧把后面几页一起吞下来（等于没分页）。
+                        if (widget.hasMore && widget.onLoadMore != null)
+                          ListTile(
+                            dense: true,
+                            onTap: widget.onLoadMore,
+                            title: Text(
+                              '加载更多会话',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: c.labelTertiary,
+                              ),
+                            ),
+                          ),
                       ],
                     ),
             ),

@@ -91,6 +91,15 @@ import 'ui_state.dart';
 ///
 /// 所以按职责命名：`AppState` 留给协议层（契约里已经这么叫），
 /// 这里叫 `AppModel`（"界面要读的那份应用模型"）。
+
+/// 会话列表**一页多少行**（`session.list` 的 `limit`，契约 §5.7）。
+///
+/// 为什么是 50：一屏抽屉大约 8–12 行、主界面列表约 6–10 行，50 行 ≈ 4–6 屏，
+/// 滚动时不会一眼见底；而整表（本机 351 行）的代价是每次标题变更都重取一遍。
+/// **它不是"宿主给的边界"**：超过这一页的会话不是不存在，是"还没翻到"
+/// （`hasMore` 说了算），滑动 / 点"加载更多"照样能看到全部。
+const int kSessionRowPageSize = 50;
+
 class AppModel extends ChangeNotifier implements HostStateTarget {
   AppModel({
     required this.client,
@@ -2527,7 +2536,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   Future<void> refreshSessionMetrics() async {
     if (_disposed) return;
     try {
-      _applySessionList(await _fetchSessionRows());
+      final page = await _fetchSessionRows(limit: _sessionRowWindow);
+      _applySessionList(page.sessions, hasMore: page.hasMore);
       if (!_disposed) notifyListeners();
     } catch (error) {
       _recordError('拉取会话指标失败', error);
@@ -2539,8 +2549,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 方法名、参数形状与应答字段**全在 `app/lib/wire/rpc/session.dart`** ——
   /// 这一层不再知道 `session.list` 长什么样，这正是
   /// `app/tools/verify-rpc-single-caller.mjs` 那个会归零的预算在数的事。
-  Future<List<SessionSummary>> _fetchSessionRows() =>
-      wire.loadSessionList(client);
+  Future<wire.SessionListPage> _fetchSessionRows({int? limit, int? offset}) =>
+      wire.loadSessionList(client, limit: limit, offset: offset);
 
   /// 把一包会话行落到 [sessions]（**唯一的赋值口**）。
   ///
@@ -2553,12 +2563,63 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 它拿到 `session.list` 之后就是 `session.handleRunning(summary.running)`
   /// （`packages/api/session-controller/src/client/sessions/manager.ts:248-253`、`:450`）。
   /// 之后的变化由 `status` 帧维护（宿主 `api-session/status` 的转发）。
-  void _applySessionList(List<SessionSummary> list) {
+  void _applySessionList(List<SessionSummary> list, {bool hasMore = false}) {
     _sessions = [
       for (final s in list) s.copyWith(pendingCount: _pendingCountOf(s.sid)),
     ];
+    _sessionsHasMore = hasMore;
+    // **已加载窗口不缩水**：这一包回来多少行，下次刷新就至少还问这么多行 ——
+    // 否则"翻到第 3 页后被一条通知打回第 1 页"，用户得重新滚一遍。
+    if (_sessions.length > _sessionRowWindow) {
+      _sessionRowWindow = _sessions.length;
+    }
     _rows.applyList(_sessions);
     _syncNotices();
+  }
+
+  /// 追加一页（`loadMoreSessionRows` 用）：**按 `sid` 去重**，顺序照宿主给的。
+  ///
+  /// 为什么去重是必须的：宿主的顺序是"按活动"，两次翻页之间若有会话活动变化，
+  /// 同一条会跨页出现。出现两遍比少一行更糟 —— 列表里会出现两个一样的标题。
+  void _appendSessionList(List<SessionSummary> list, {bool hasMore = false}) {
+    final known = {for (final s in _sessions) s.sid};
+    final added = [
+      for (final s in list)
+        if (!known.contains(s.sid)) s.copyWith(pendingCount: _pendingCountOf(s.sid)),
+    ];
+    _sessions = [..._sessions, ...added];
+    _sessionsHasMore = hasMore;
+    if (_sessions.length > _sessionRowWindow) _sessionRowWindow = _sessions.length;
+    _rows.applyList(_sessions);
+    _syncNotices();
+  }
+
+  /// 列表里还有没有更早的会话（`session.list` 的 `hasMore`）。
+  bool get hasMoreSessions => _sessionsHasMore;
+  bool _sessionsHasMore = false;
+
+  /// 已加载窗口：一次要多少行。**只增不减**（见 [_applySessionList]）。
+  int _sessionRowWindow = kSessionRowPageSize;
+  int _loadingMore = 0;
+
+  /// 往回翻一页（列表滚到底时调）。**可重入保护**：在飞时再来一次直接忽略，
+  /// 否则快速滑动会同时发好几页、把同一段行叠进列表。
+  Future<void> loadMoreSessionRows() async {
+    if (_disposed || !_sessionsHasMore || _loadingMore > 0) return;
+    _loadingMore += 1;
+    try {
+      final page = await _fetchSessionRows(
+        limit: kSessionRowPageSize,
+        offset: _sessions.length,
+      );
+      _appendSessionList(page.sessions, hasMore: page.hasMore);
+      if (!_disposed) notifyListeners();
+    } catch (error) {
+      // 与 `refreshSessionRows` 同一条纪律：留声，不把整张表打成"空"。
+      _recordError('加载更多会话失败', error);
+    } finally {
+      _loadingMore -= 1;
+    }
   }
 
   /// 宿主推来的一条运行态（`status` 帧）。
@@ -2928,7 +2989,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   @override
   Future<void> refreshSessionRows() async {
     try {
-      _applySessionList(await _fetchSessionRows());
+      final page = await _fetchSessionRows(limit: _sessionRowWindow);
+      _applySessionList(page.sessions, hasMore: page.hasMore);
       // **设备本地状态跟着清单失效**：清单里没有的会话，它的页签/草稿没有意义
       // （桌面从不清理 `dsh.conversation.<sid>`，那是 localStorage 的便宜，不是产品要求）。
       final ui = _uiState;

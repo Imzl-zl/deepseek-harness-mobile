@@ -3025,6 +3025,9 @@ class _ChatTab extends StatelessWidget {
           onRefresh: paired ? onRefreshSessions : null,
           // **同一套工作区分组**（与抽屉共用 `bucketSessionsByWorkspace`）。
           workspaces: app.workspaces,
+          // 分页：只显示已加载那一段，末尾一行"加载更多"（契约 §5.7 的 `hasMore`）。
+          hasMore: app.hasMoreSessions,
+          onLoadMore: app.hasMoreSessions ? () => unawaited(app.loadMoreSessionRows()) : null,
         );
       }
       return _EmptyChat(
@@ -3624,11 +3627,19 @@ class _SessionListInline extends StatefulWidget {
     required this.archived,
     this.onRefresh,
     this.workspaces = const [],
+    this.hasMore = false,
+    this.onLoadMore,
   });
 
   final List<SessionSummary> sessions;
   final void Function(SessionSummary session) onOpen;
   final VoidCallback? onRefresh;
+
+  /// 还有更早的会话没加载（`AppModel.hasMoreSessions`，`session.list` 的 `hasMore`）。
+  final bool hasMore;
+
+  /// 加载下一页（`AppModel.loadMoreSessionRows`）。缺省 = 不显示"加载更多"那一行。
+  final VoidCallback? onLoadMore;
 
   /// 已归档的 sid（`AppModel.archivedSids`）。**默认不列**，见 `sessionVisible`
   /// ——归档不是删除：它们在抽屉底栏「归档」那张列表里，取消归档即回原位。
@@ -3711,6 +3722,25 @@ class _SessionListInlineState extends State<_SessionListInline> {
           ),
           childCount: bucket.sessionIds.length,
           children: sessionRows,
+        ),
+      );
+    }
+
+    // **分页尾巴**：还有更早的会话时，列表末尾多一行"加载更多"。
+    //
+    // 为什么是显式一行而不是"滚到底自动拉"：`ListView.builder` 会为即将进入视口的
+    // 行预先构建（cacheExtent），自动触发会在首帧就把后面几页一起吞下来 ——
+    // 那等于把分页又变回整表，只是没人看得出来。显式一行是"用户要才拉"。
+    if (widget.hasMore && widget.onLoadMore != null) {
+      rows.add(
+        ListTile(
+          dense: true,
+          onTap: widget.onLoadMore,
+          title: Text(
+            '加载更多会话',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12, color: c.labelTertiary),
+          ),
         ),
       );
     }
