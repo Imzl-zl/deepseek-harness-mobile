@@ -33,6 +33,7 @@ import 'items.dart';
 import 'job.dart';
 import 'keepalive.dart';
 import 'outbox.dart';
+import 'recovery.dart';
 import 'snapshot_call.dart';
 import 'snapshot_digest.dart';
 import 'sync_client.dart';
@@ -798,7 +799,19 @@ class _SyncClient implements SyncClient, SyncClientProbe, SnapshotCaller {
     // 那是 `data/projection.dart` 的事（它认识 `type` 的语义，这一层不认识）。
     // 传空串是如实的：这一层不知道内容，只知道序号。会话状态用它做的也只有
     // "去重 / 水位 / 空洞计数"三件事，都与文本无关。
-    _deps.session.receive(sid, event.itemId, '', seq);
+    final verdict = _deps.session.receive(sid, event.itemId, '', seq);
+    if (verdict == ReceiveVerdict.buffered) return;
+    if (verdict == ReceiveVerdict.baseline || verdict == ReceiveVerdict.hole) {
+      // **接管这条流**：它是"我手里到哪了"之外的新起点（重连后电脑侧只能给最近窗口，
+      // 或者这条流中间被跳过了）。基线只挪"连续右端"，水位仍由 `commit` 在落盘且连续
+      // 时前进 —— 于是水位永不越过没到的内容（契约 §5.3）。
+      final previous = _sinceOf(sid);
+      _deps.session.adoptBaseline(sid, seq);
+      _deps.session.receive(sid, event.itemId, '', seq);
+      // 中间那段（`previous + 1 … seq - 1`）能补就补：**用的是现成的 `session.page`**，
+      // 不新增协议、不新增帧（判据见 `docs/subsystems/remote-channel.md` §5.4 规则 5）。
+      _maybeBackfill(sid: sid, firstSeq: seq, target: previous);
+    }
     _emit(
       sid,
       SessionDelta(
@@ -813,6 +826,70 @@ class _SyncClient implements SyncClient, SyncClientProbe, SnapshotCaller {
     // 由 `_sendPersisted` 自己在落盘完成后发帧。顺序由 `_persistChain` 串起来
     // （见那一处：落盘必须**按到达顺序**做，否则水位会倒退）。
     _sendPersisted(sid, event, seq);
+  }
+
+  /// 正在补洞的会话（同一会话只跑一轮）。
+  final Set<String> _backfilling = <String>{};
+
+  /// 重连后第一条事件远在水位之上 ⇒ 用 `session.page` 把中间那段往回翻出来。
+  ///
+  /// 为什么不需要 anchor、也不需要新协议：**电脑侧只保证"它发出来的这段连续"**，
+  /// 而"它从哪个 seq 开始"由第一条 `ev` 自己给出（拿它跟本地水位一比就知道缺哪些）。
+  /// 这正是契约 §5.4 规则 5 的落点 —— 差的是"接下来做什么"，而"做什么"就用
+  /// 已经存在的分页方法（DSH 浏览器面对窗口之外的历史也是这么补的）。
+  ///
+  /// 补不到（历史本来就不到那儿 / 分页失败）**什么也不做**：窗口那份照常显示，
+  /// 下一次重连还会再试。**绝不清已有内容** —— 清掉是不可逆的用户可见动作，
+  /// 而这里的缺口在电脑侧本来就不存在。
+  void _maybeBackfill({
+    required String sid,
+    required int firstSeq,
+    required int target,
+  }) {
+    if (target <= 0 || firstSeq <= target + 1) return;
+    if (!_backfilling.add(sid)) return;
+    unawaited(
+      _backfill(sid: sid, from: firstSeq, target: target)
+          .whenComplete(() => _backfilling.remove(sid)),
+    );
+  }
+
+  Future<void> _backfill({
+    required String sid,
+    required int from,
+    required int target,
+  }) async {
+    var before = from;
+    final filled = <SessionEvent>[];
+    try {
+      while (before > target + 1) {
+        final reply = await page(sid: sid, beforeSeq: before);
+        if (reply.failure != null) return;
+        final events = reply.events
+            .where((event) => event.seq > target && event.seq < before)
+            .toList();
+        if (events.isEmpty) break;
+        filled.insertAll(0, events);
+        final earliest = events.first.seq;
+        // 没有往前推进就不是"一页"，是同一个答案 —— 宁可停，也不要死循环。
+        if (earliest >= before) break;
+        before = earliest;
+        if (!reply.hasMore) break;
+      }
+    } catch (_) {
+      // 补洞失败不打扰用户：窗口那份已经在显示，下一次重连还会再试。
+      return;
+    }
+    if (filled.isEmpty) return;
+    filled.sort((a, b) => a.seq.compareTo(b.seq));
+    _emit(
+      sid,
+      SessionDelta(
+        sid: sid,
+        events: filled,
+        transient: _deps.session.transientOf(sid),
+      ),
+    );
   }
 
   /// 落盘的串行链。
@@ -990,6 +1067,9 @@ class _SyncClient implements SyncClient, SyncClientProbe, SnapshotCaller {
     // `since` 取**当前水位**：同一进程里重新打开一个会话时，手里已经有内容就不该
     // 再让电脑侧从头重放一遍（判据与代价见 [DeviceSession.sinceOf] 的说明）。
     final since = _sinceOf(sid);
+    // 告诉会话状态"这条流要重开"：它的第一条 `ev` 是一条**新基线**，
+    // 不是"空洞"（洞要补，基线只需接管）。
+    _deps.session.beginRun(sid);
     _declared.add(sid);
     final requestId = _newId();
     await _deps.outbox.enqueue(

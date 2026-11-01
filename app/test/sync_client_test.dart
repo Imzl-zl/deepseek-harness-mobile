@@ -575,6 +575,42 @@ void main() {
     await pump();
   }
 
+  /// 造一帧真的 `ev`（电脑侧封箱）。从"落盘与 persisted"那组提到 `main()` 作用域：
+  /// 补洞那组也要用它。
+  Future<void> feedEvent(
+    Harness f,
+    int seq, {
+    required String itemId,
+    int? fc,
+    String sid = 's1',
+  }) async {
+    final keys = await sessionKeysFor(f.transport);
+    final pc = BoxCodec(keys: keys, role: HandshakeRole.responder);
+    final event = <String, Object?>{
+      'type': 'assistant/message',
+      'seq': seq,
+      'time': 1000 + seq,
+      'data': {
+        'message': {'id': itemId},
+      },
+    };
+    final frame = <String, Object?>{
+      'v': 1,
+      't': 'ev',
+      'sid': sid,
+      'seq': seq,
+      // **`fc` 必须逐帧递增**：收帧侧有重放守卫（契约 §4.2），
+      // 重复的 `fc` 会被判成重放并关连接 —— 第一版固定写 0，
+      // 连发三帧时第三帧就把连接关了（症状是
+      // `Bad state: Cannot add event after closing`，指向的是测试工具而不是真因）。
+      'fc': fc ?? (seq - 1),
+      'box': '',
+    };
+    final box = await pc.sealFrame(frame, jsonEncode(event));
+    f.transport.feed('${jsonEncode({...frame, 'box': box})}\n');
+    await pump();
+  }
+
   /// **翻页里的 `refetch` 标记**（契约 §5.3：单个条目 >1 MiB 不推内容、推标记）。
   ///
   /// 2026-10-22 的缺口：`page()` 只留 `{kind:'record'}` 的项，`refetch` 标记
@@ -1421,40 +1457,6 @@ void main() {
     });
 
     group('落盘与 persisted（契约 §5.3：水位永不超过落盘内容）', () {
-      /// 造一帧真的 `ev`（电脑侧封箱）。
-      Future<void> feedEvent(
-        Harness f,
-        int seq, {
-        required String itemId,
-        int? fc,
-      }) async {
-        final keys = await sessionKeysFor(f.transport);
-        final pc = BoxCodec(keys: keys, role: HandshakeRole.responder);
-        final event = <String, Object?>{
-          'type': 'assistant/message',
-          'seq': seq,
-          'time': 1000 + seq,
-          'data': {
-            'message': {'id': itemId},
-          },
-        };
-        final frame = <String, Object?>{
-          'v': 1,
-          't': 'ev',
-          'sid': 's1',
-          'seq': seq,
-          // **`fc` 必须逐帧递增**：收帧侧有重放守卫（契约 §4.2），
-          // 重复的 `fc` 会被判成重放并关连接 —— 第一版固定写 0，
-          // 连发三帧时第三帧就把连接关了（症状是
-          // `Bad state: Cannot add event after closing`，指向的是测试工具而不是真因）。
-          'fc': fc ?? (seq - 1),
-          'box': '',
-        };
-        final box = await pc.sealFrame(frame, jsonEncode(event));
-        f.transport.feed('${jsonEncode({...frame, 'box': box})}\n');
-        await pump();
-      }
-
       /// `persisted` 帧（按 `seq`）。
       List<int> persistedSeqs(Harness f) => f.transport.sentFrames
           .where((frame) => frame['t'] == 'persisted')
@@ -2233,6 +2235,106 @@ void main() {
       acc.accept(stream: 1, rev: 0, payload: chunk('保留'));
       expect(acc.accept(stream: 1, rev: 1, payload: 'not json'), isFalse);
       expect(acc.text, '保留');
+    });
+  });
+
+  /// **重连后补洞**（契约 §5.4 规则 5）—— 真实现 + 假传输。
+  ///
+  /// 判据：「电脑侧只保证它发出来的这段连续」，而**它从哪个 seq 开始**由第一条 `ev`
+  /// 自己给出。拿它跟本地水位一比：落后就是"最近窗口"（缺口得补），追上就是续传。
+  /// 补缺口用的是现成的 `session.page` —— 不新增协议、不新增帧、不新增字段。
+  group('重连后补洞（§5.4 规则 5）', () {
+    /// 一页 `session.page` 的应答（`{items, hasMore}`，item 是 `record`）。
+    Map<String, Object?> pageOf(List<int> seqs, {bool hasMore = false}) => {
+      'result': {
+        'items': [
+          for (final seq in seqs)
+            {
+              'kind': 'record',
+              'record': {
+                'type': 'event',
+                'event': {
+                  'type': 'assistant/message',
+                  'seq': seq,
+                  'time': 1000 + seq,
+                  'data': {
+                    'message': {'id': 'm$seq'},
+                  },
+                },
+              },
+            },
+        ],
+        'hasMore': hasMore,
+      },
+    };
+
+    test('第一条 ev 远在水位之上 ⇒ 用 session.page 往回翻，并把补到的按 seq 升序交给上层', () async {
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+
+      // 手机手里连续到 5（水位）。电脑侧重启过，只能给最近窗口（从 40 开始）。
+      f.session.commit('s1', 5);
+      await client.subscribe('s1');
+      await pump();
+
+      final deltas = <SessionDelta>[];
+      final sub = client.sessionUpdates('s1').listen(deltas.add);
+      addTearDown(sub.cancel);
+
+      await feedEvent(f, 40, itemId: 'm40', fc: 400);
+
+      // 补洞请求：正好从窗口起点往回翻。
+      final probe = client as SyncClientProbe;
+      final pageReq = probe.sentRequests.lastWhere(
+        (item) => item['method'] == 'session.page',
+      );
+      expect(
+        (pageReq['params']! as Map)['beforeSeq'],
+        40,
+        reason: '从"窗口的第一条"往回翻，不是从水位往后猜',
+      );
+
+      // 一页就把 6..39 补全（hasMore 为假：更早的历史还有，但已经够接上水位了）。
+      await answerLastReq(f.transport, pageOf([for (var s = 6; s <= 39; s += 1) s]), fc: 401);
+      await pump();
+
+      final filled = deltas
+          .expand((delta) => delta.events)
+          .where((event) => event.seq < 40)
+          .map((event) => event.seq)
+          .toList();
+      expect(filled.first, 6, reason: '缺口从水位 +1 开始补');
+      expect(filled.last, 39, reason: '补到窗口之前一格为止');
+      expect(filled, List<int>.generate(34, (i) => i + 6), reason: '按 seq 升序，不丢不重');
+
+      // 水位：这一段是**窗口那一份**的连续右端（缺口靠补，不靠水位撒谎）。
+      expect(f.session.sinceOf('s1'), 40);
+
+      await client.close();
+    });
+
+    test('补不动就不补：历史不到那儿 ⇒ 一条 page 都不发（水位为 0 = 手里没有内容）', () async {
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+
+      // 冷启动：水位 0（内存里什么都没有）。窗口从 40 开始也**不需要补** ——
+      // 冷启动等于"以窗口为准"，这正是 DSH 的默认形态。
+      await client.subscribe('s1');
+      await pump();
+      await feedEvent(f, 40, itemId: 'm40', fc: 400);
+
+      final probe = client as SyncClientProbe;
+      expect(
+        probe.sentRequests.where((item) => item['method'] == 'session.page'),
+        isEmpty,
+        reason: '水位 0 时没有"缺"可言，凭空补等于替用户翻历史',
+      );
+
+      await client.close();
     });
   });
 

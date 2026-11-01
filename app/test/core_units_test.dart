@@ -750,6 +750,50 @@ void main() {
       expect(session.sinceOf('s1'), 5, reason: '旧的 commit 不该把水位拉回去');
     });
 
+    test('水位**不越过**没到的内容：commit 被"连续右端"封顶', () {
+      // 契约 §5.3/§5.4：水位不能超前于落盘内容。越过的后果不是当次可见的错，
+      // 而是**下一次重连从那之后开始**，中间那段永远不再发。
+      final session = DeviceSession();
+      session.receive('s1', 'm1', '一', 1);
+      session.receive('s1', 'm2', '二', 2);
+      session.commit('s1', 9);
+      expect(session.sinceOf('s1'), 2, reason: '只连续收到 2，就不许声称有到 9');
+    });
+
+    test('beginRun：重连后的第一条是**新基线**（不当成空洞），接管后照常入库', () {
+      final session = DeviceSession();
+      // 手里有到 5 的水位（不是这个用例重点，但要是真的）。
+      session.receive('s1', 'm1', '一', 1);
+      session.commit('s1', 1);
+      session.beginRun('s1');
+      // 电脑侧只能给最近窗口，从 40 开始。
+      expect(
+        session.receive('s1', 'm40', '四十', 40),
+        ReceiveVerdict.baseline,
+        reason: '新流的第一条是基线，不是"空洞"',
+      );
+      expect(session.gaps['s1'], isNull, reason: '基线不该计成空洞');
+      expect(session.itemsOf('s1').containsKey('m40'), isFalse, reason: '基线先不落库，等调用方裁决');
+
+      session.adoptBaseline('s1', 40);
+      expect(session.receive('s1', 'm40', '四十', 40), ReceiveVerdict.applied);
+      expect(session.itemsOf('s1').containsKey('m40'), isTrue);
+      expect(session.received['s1'], 40);
+      // 水位仍由 commit 决定：接管本身不抬水位。
+      expect(session.sinceOf('s1'), 1);
+    });
+
+    test('接管之后中间的缺口仍算空洞（那是"这段没来"，不是新基线）', () {
+      final session = DeviceSession();
+      session.beginRun('s1');
+      session.receive('s1', 'm40', '四十', 40);
+      session.adoptBaseline('s1', 40);
+      session.receive('s1', 'm40', '四十', 40);
+      expect(session.receive('s1', 'm45', '四十五', 45), ReceiveVerdict.hole);
+      expect(session.gaps['s1'], 1);
+      expect(session.received['s1'], 40, reason: '没到的 41..44 不许被跳过');
+    });
+
     test('快照分页期间 ev 只缓存不落库；收口时按 seq 合并', () {
       final session = DeviceSession();
       // 第一页（hasMore = true）：此时不落库。

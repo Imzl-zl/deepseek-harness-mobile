@@ -71,13 +71,18 @@ connector.state.transitions    +4
 - 代价 2（一处删除）：`SyncClient.subscribe` 的 `since` 参数删了，
   `declaredSessions` 从 `Map<String,int>` 收成 `Set<String>`（水位不再有第二份）。
   测试替身按"给 `DeviceSession` 喂水位"来构造场景，比原来更接近真实路径。
-- 代价 3（如实记）：**空洞检测仍未接线**。契约 §5.4 规则 5 要求"出现 `seq > 水位 + 1`
-  就触发一次重订"，但 `DeviceSession.gaps` 今天只计数、没有动作，而 `session.subscribe`
-  的应答里也拿不到 anchor（走 outbox，`_sendHello` 之前的那条路见
-  `sync_client_impl.dart` 的 `subscribe` 注释）。所以：**连接器丢帧造成的洞不会被自动补**。
-  上一批的"每次整窗重放"偶然兜住了它，这条兜底随本批一起消失 —— 但兜底的前提是
-  "每次都重放"，那正是本批要治的病。真正的补法是 anchor 接线 + 空洞即重订，
-  它不属于这一批（判据：真机上出现"少一条"再谈，那时证据会在 `DeviceSession.gaps` 上）。
+- 代价 3（**已在本批之后补齐**）：空洞检测。第一版只把水位接上，于是"接管后第一条
+  `ev` 跳过一段"时中间那段没人补。补法**不是** anchor + 重订（anchor 换不到新信息：
+  "从哪开始"由第一条 `ev` 自己给出，"还有没有更早"已由 `sync.hello` 的应答送到），
+  而是"**接管基线 + 用现成的 `session.page` 往回翻到水位**"：
+  - `DeviceSession.beginRun` 让重连后的第一条 `ev` 是**基线**而不是"空洞"；
+  - 接管只挪"连续右端"，**水位仍由 `commit` 在"落盘且连续"时前进**（封顶），
+    于是不会出现"水位超前于内容"；
+  - 缺口用 `session.page(beforeSeq: 第一条 ev 的 seq)` 补，补到水位为止；
+    **补不到就什么都不做**（窗口照常显示，下次重连再试）—— 绝不清已有内容。
+  `gaps` / `duplicates` 两个计数保留：它们是 `protocol/fixtures` 的既有口径
+  （`14-seen-seq-dedupe-and-gap.json` 直接断言），但"接下来做什么"只看
+  `ReceiveVerdict` —— 一处判据。
 - 代价 4（跨进程仍全量）：冷启动第一次打开会话仍是整窗（内存里没有内容，**必须**要）。
   这是如实的成本，不是退化。
 
@@ -87,7 +92,12 @@ connector.state.transitions    +4
   ① 带**有效 since** 且没有新事件 ⇒ **一条 `ev` 都不发**（这就是本批的判据）；
   ② 带 since 但缓冲**覆盖不到** ⇒ 退回整窗（1..5 一条不少）。
 - app `test/sync_client_test.dart`：新增"重连声明的是**当前**水位"（订阅之后收到的事件
-  也算数）；原有两条改成"喂 `DeviceSession` 水位 → 断言 hello / subscribe 带它"。
+  也算数）；原有两条改成"喂 `DeviceSession` 水位 → 断言 hello / subscribe 带它"；
+  补洞两条（真实现 + 假传输）：① 第一条 `ev` 在 40、水位 5 ⇒ 恰好发一次
+  `session.page(beforeSeq: 40)`，补到的 6..39 按升序交给上层；② 水位 0（冷启动）⇒
+  **一条 page 都不发**（"没有缺"就不该替用户翻历史）。
+- app `test/core_units_test.dart` +3：`beginRun` 后的第一条是 `baseline` 且不计空洞 /
+  接管之后中间的缺口仍算 `hole`（41..44 不许被跳过）/ `commit` 被连续右端封顶。
 - 真机（`d61cf622`，新 APK 已装，同一条 `HOME → monkey → 等 10s → 读 metrics` 探针，
   **连续两轮完全一致**）：`out_frame.ev` **147 037 → 0 B**（一次空闲重连一条 `ev` 都不发），
   总出站 **230 920 → 3 250 B**（−98.6%）。剩下的 3 250 B = 快照的 `notModified`（10 × 41 B）

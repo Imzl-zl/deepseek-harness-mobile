@@ -360,7 +360,17 @@ type SyncSnapshot = {
    - 分页期间到达的 `ev` 帧(其 `seq > asOfSeq`)一律**缓存不丢弃、不渲染**;
    - 分页结束后:以快照 items 建立基线 → 合并缓存的 `ev`(按 `seq` 排序、按 itemId upsert)→ 落盘 → 用最后一页的 `asOfSeq` 作为新水位,开始正常渲染。
    - 分页期间若快照请求失败:整轮重来(不半途拼接)。
-5. **接收端按 `seq` 去重、按空洞判断**:`seq ≤ 已落盘水位` 的 `ev` 丢弃;出现 `seq > 水位 + 1` 的前向空洞即触发一次 `SyncHello`(结果自然是 `snapshotRequired`)。与 DSH `follow()` 的"跳号即抛错、倒退静默跳过"等价(`packages/api/session-controller/src/history.ts:226-231`)。
+5. **接收端按 `seq` 去重,并按"接不接得上"分两种结局**(与 DSH `follow()` 的"跳号即抛错、倒退静默跳过"等价,`packages/api/session-controller/src/history.ts:226-231`):
+
+   | 第一条 `ev` 与本地水位 | 结局 |
+   |---|---|
+   | `seq ≤ 水位 + 1` | **续传**:按 `seq` 丢弃重复、其余 upsert,水位继续前进 |
+   | `seq > 水位 + 1` | **接管 + 补洞**:这条流从 `seq` 起接管;`(水位, seq)` 那段用 `session.page(beforeSeq: seq)` 往回翻补到水位为止 |
+
+   - **不需要 anchor**:电脑侧只保证"它发出来的这段连续",而"它从哪个 seq 开始"由**第一条 `ev` 自己给出** —— 与本地水位一比就知道缺哪些。多一个字段换不到任何新信息。
+   - **补洞就用现成的 `session.page`**(DSH 浏览器面对窗口之外的历史也是这么补的),不新增帧、不新增方法。
+   - **补不到就什么也不做**(历史本来就不到那儿 / 分页失败):窗口那份照常显示,下一次重连还会再试。**绝不清已有内容** —— 那是不可逆的用户可见动作,而缺口在电脑侧本来就不存在。
+   - **水位只到"连续收到"为止**(`DeviceSession.commit` 被连续右端封顶):越过没到的 `seq` 会让下一次重连从那之后开始,那段内容永久缺失(§5.3)。
 6. **中转窗口是缓存不是存档**:默认每会话最近 **1000 条或 30 分钟**(取先到者),允许丢失;丢了走 `snapshotRequired`。
 7. 持久增量**可以**由中转窗口给出,但**瞬时事实永远由电脑侧给出**;中转被清空后正确性不变(I7)。
 
@@ -389,7 +399,7 @@ type SyncSnapshot = {
 | 方法 | 方向 | 幂等键 | 说明 |
 |---|---|---|---|
 | `session.list` | 手机→电脑 | — | **分页的**会话清单(别名 + 最近活动 + 状态)。请求 `{limit?, offset?}`(都是可选非负整数;不传 `limit` = 整表,老客户端行为不变),应答 `{sessions, hasMore}`:`hasMore` 按宿主那份可见清单算(`offset + limit < 总数`),不是 `limit` 的倍数关系;取的是**宿主顺序**(按活动排序)里的第 `offset` 段,所以翻页窗口会随新会话移动,手机按 `sid` 去重。**切在分配别名之前** —— 没发出去的行不在别名表里留条目(否则分页只省了字节、没省 CPU)。手机侧一页 = `kSessionRowPageSize`(50),首屏只要一页,翻过页后刷新问的是"已加载窗口"(不把用户翻过的页丢掉)。取自 `sessionController.list`(`packages/api/session-controller/src/index.ts:251-254`,已按活动排序);**标题在行的投影提示里** —— `projections.values.title`,手机按它取,空标题显示「未命名」。**行只带手机读得到的那五个投影键**(`title` / `modelSelection` / `subagentTiming` / `tokenUsage` / `subagentCatalog`,白名单唯一拼写处 `connector/src/protocol/session-row.ts`):宿主给的是每行**整块** summary(本机 351 行、1 480 778 B,其中 **94.5%** 是投影块,`turnOutline` 645 KB + `trajectory` 353 KB 两项就 1 MB),而手机列表一个键都不读它们 —— 这两项归 `session.projections` 的完整快照(打开会话时那一包)。裁剪后一次标题变更出站 **1 943 515 → 252 000 B**(**-87%**)。白名单与手机侧行解析器由 `connector/tests/session-row-payload.test.ts` 逐字比对(多一个白搬字节、少一个界面缺数据);**`cwd` 只给工作区分组 / 文件面板 / 用量聚合,不做标题兜底** —— 拿目录名当会话名,手机上会是一串工作区目录名冒充标题。**子会话行多一个 `parentSessionId`**(宿主的 `SessionSummary.parentSessionId`,已过别名表换成 `sid`);**根会话不给这个键** —— 不给 = 根。手机用它算子会话头部的父级与 `←` 返回;老连接器没有它时手机退到"目录扫描 / 导航记忆" |
-| `session.subscribe` | 手机→电脑 | — | 开始推送该会话的 `ev` / `live`;带 `since` 即同时完成恢复。**`since` = 手机最近一条落盘事件的 `seq`**(它自己带,不由调用方传),电脑侧据此决定补增量还是整窗重放:**只有增量缓冲能证明"从 `since+1` 开始连续"时才跳段,覆盖不到就退回整窗**(进程重启过、缓冲已按水位裁过、这段从没记过) —— 方向永远是"多发一次",不"少发一段"。**判据:同一条连接上带有效 `since`、且空闲期间没有新事件时,应答里没有任何 `ev`**(2026-11-01 真机曾退化成一整窗重放,见 `.agents/notes/implemented/2026-11-01-resume-from-persisted-watermark.md`)。**恢复之后会按原 seq 重投该会话上仍在途的 ask 事件**(`approval/asked` / `tool/call`,来自连接器内存里的在途 claim 表)——与 DSH gateway 把 `pendingRemoteEvents` 重投给新 client 同形(`api/gateway/src/index.ts:571`)。重投的是**会话事件本身**,不新增帧类型;App 按 `itemId` upsert,重发天然幂等 |
+| `session.subscribe` | 手机→电脑 | — | 开始推送该会话的 `ev` / `live`;带 `since` 即同时完成恢复。**`since` = 手机最近一条落盘事件的 `seq`**(它自己带,不由调用方传),电脑侧据此决定补增量还是整窗重放:**只有增量缓冲能证明"从 `since+1` 开始连续"时才跳段,覆盖不到就退回整窗**(进程重启过、缓冲已按水位裁过、这段从没记过) —— 方向永远是"多发一次",不"少发一段"。**判据:同一条连接上带有效 `since`、且空闲期间没有新事件时,应答里没有任何 `ev`**(2026-11-01 真机曾退化成一整窗重放,见 `.agents/notes/implemented/2026-11-01-resume-from-persisted-watermark.md`)。**手机侧对"接不上"的处理见 §5.4 规则 5**(接管基线 + 用 `session.page` 补洞),`session.subscribe` 的应答里因此**不需要** `snapshotRequired` 这种第三态。**恢复之后会按原 seq 重投该会话上仍在途的 ask 事件**(`approval/asked` / `tool/call`,来自连接器内存里的在途 claim 表)——与 DSH gateway 把 `pendingRemoteEvents` 重投给新 client 同形(`api/gateway/src/index.ts:571`)。重投的是**会话事件本身**,不新增帧类型;App 按 `itemId` upsert,重发天然幂等 |
 | `session.unsubscribe` | 手机→电脑 | — | 停止推送;桥接可释放该会话缓冲(仍需等 persisted) |
 | `session.page` | 手机→电脑 | — | 历史翻页(按消息对齐,用 DSH `page()`) |
 | `session.prompt` | 手机→电脑 | `requestId` | **参数是 `{ sid, content, mode? }`**,不是 `{ sid, text }`。`content` 必须是**非空数组**,每项带 `type`(照 DSH 的 `PromptContentPart`:文本是 `{type:'text', text}`)。**形状以电脑侧为准** —— 它与 DSH 的 `sessionController.prompt` 同构,手机侧没有第二条真值。`mode: 'queue' \| 'steer'` |

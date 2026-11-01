@@ -29,6 +29,21 @@ import 'items.dart';
 /// 恢复只有两种结果（不变量 I3）。
 enum RecoveryOutcome { delta, snapshot }
 
+/// 一条 `ev` 落到本地时的结局（连续性判据的唯一出口，见 `DeviceSession.receive`）。
+enum ReceiveVerdict {
+  /// 接上了（重复投递也算 —— 条目 upsert，重发幂等）。
+  applied,
+
+  /// 这条流从这个 `seq` 开始（刚订阅 / 重连后的第一条）：基线由调用方定。
+  baseline,
+
+  /// 与手里的连续区间断开（`seq > 连续右端 + 1`）：中间那段这次没来。
+  hole,
+
+  /// 快照分页期间：只缓存，收口时按 seq 合并。
+  buffered,
+}
+
 /// 快照必须**带原因**（契约 §5.4）。
 enum SnapshotReason {
   /// 增量缓冲已经裁过这个水位（手机落后太多）。
@@ -157,6 +172,9 @@ class DeviceSession {
   /// 重复投递丢弃次数。
   final Map<String, int> duplicates = <String, int>{};
 
+  /// 已 `beginRun`、还没等到第一条 `ev` 的会话（下一条按"新基线"处理）。
+  final Set<String> _freshRuns = <String>{};
+
   /// 收到的每一次应答（按顺序）—— fixtures 按它断言"恢复应答次数与形状"。
   final List<RecoveryAnswer> answers = <RecoveryAnswer>[];
 
@@ -180,10 +198,18 @@ class DeviceSession {
   /// 是否有一个未收口的快照分页。
   bool hasOpenSnapshot(String sid) => _snapshots.containsKey(sid);
 
-  /// 收到一条 `ev`（或补课事件）时的接收规则（契约 §5.4 规则 5）。
+  /// 一条 `ev` 的接收判据（**连续性只在这里判，别处不问**）。
   ///
-  /// 分页期间只缓存不落库 —— 分页收口时会按 seq 合并。
-  void receive(String sid, String itemId, String text, int seq) {
+  /// 三个出口都对应真实发生过的形态，不是防御性写法：
+  /// - [applied]：接上了（含重复 —— 条目按 `itemId` upsert，重发天然幂等）；
+  /// - [baseline]：这条流**从这个 seq 开始**（刚订阅 / 重连后的第一条）——
+  ///   基线本身由调用方裁决（它才知道"我本来到哪了"）；
+  /// - [hole]：与手里的连续区间断开了（`seq > 连续右端 + 1`）—— 中间那段这次没来。
+  ///
+  /// `gaps` / `duplicates` 这两个计数是**协议 fixture 的既有口径**（`protocol/fixtures`
+  /// 直接断言它们，见 `14-seen-seq-dedupe-and-gap.json`），所以保留；但"接下来做什么"
+  /// 不看计数，只看返回值 —— 一处判据。
+  ReceiveVerdict receive(String sid, String itemId, String text, int seq) {
     final snapshot = _snapshots[sid];
     if (snapshot != null) {
       snapshot.buffered[itemId] = ItemRecord(
@@ -191,32 +217,62 @@ class DeviceSession {
         text: text,
         seq: seq,
       );
-      return;
+      return ReceiveVerdict.buffered;
     }
-    _upsert(sid, itemId, text, seq);
+    // 刚订阅：这一条是**新基线**，先不落库 —— 调用方要先决定它接不接得上。
+    if (_freshRuns.remove(sid)) return ReceiveVerdict.baseline;
+    return _upsert(sid, itemId, text, seq);
+  }
+
+  /// 这条流从这个 seq 开始（重连 / 重订之后的第一条）。
+  ///
+  /// 连续右端落在 **`seq - 1`**：基线的那一条本身还没入库，调用方随后把它再喂一次
+  /// 就会走"接上了"的正常分支（而不是被判成重复丢掉）。
+  ///
+  /// **不动水位**：水位仍由 [commit] 在"落盘且连续"时前进，于是"水位超前于内容"
+  /// 不会发生（契约 §5.3）。
+  void adoptBaseline(String sid, int seq) {
+    _received[sid] = seq - 1;
+  }
+
+  /// 标记这个会话**即将开一条新流**（`subscribe` 时调）。
+  ///
+  /// 下一条 `ev` 因此返回 [ReceiveVerdict.baseline]，而不是被当成"空洞"计入。
+  void beginRun(String sid) {
+    _freshRuns.add(sid);
   }
 
   /// upsert 的三条规则：重复丢弃、空洞不入库、其余按 seq 前进。
-  void _upsert(String sid, String itemId, String text, int seq) {
+  ReceiveVerdict _upsert(String sid, String itemId, String text, int seq) {
     final seen = _received[sid] ?? 0;
     if (seq <= seen) {
       duplicates[sid] = (duplicates[sid] ?? 0) + 1;
-      return;
+      return ReceiveVerdict.applied;
     }
     if (seq > seen + 1) {
       gaps[sid] = (gaps[sid] ?? 0) + 1;
-      return;
+      return ReceiveVerdict.hole;
     }
     final map = _items.putIfAbsent(sid, () => <String, String>{});
     // upsert-only：同 itemId 覆盖，不新增。
     map[itemId] = text;
     _received[sid] = seq;
+    return ReceiveVerdict.applied;
   }
 
   /// 落盘水位前进（渲染/落盘之后才调 —— 快照分页期间**不动**）。
+  ///
+  /// **只到"连续收到"的位置为止**：越过中间没到的 seq 会让水位撒谎
+  /// （契约 §5.3/§5.4：水位不能超前于落盘内容），而撒谎的后果是
+  /// **下一次重连从那之后开始、那段内容永久缺失**。
   void commit(String sid, int seq) {
+    // 闸只在**知道连续右端**时生效：不知道（这个会话还没收到过任何 `ev`）就没有
+    // 可比对的事实，此时按调用方给的来 —— 编一个 0 当上界会把"重启后恢复的种子水位"
+    // 与 fixture 的 `ackSeq` 一起压成 0。
+    final seen = _received[sid];
+    final target = seen == null ? seq : (seq < seen ? seq : seen);
     final current = _since[sid] ?? 0;
-    if (seq > current) _since[sid] = seq;
+    if (target > current) _since[sid] = target;
   }
 
   /// 把一次恢复应答落到本地（契约 §5.4）。
