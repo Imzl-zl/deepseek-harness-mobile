@@ -5,6 +5,15 @@
 
 ## 现在（2026-11-01）
 
+- **列表行只搬手机读的五个投影键（11-01）**：`session.list` 的每行原本带宿主整块
+  projection summary（本机 94.5% 的包体，`turnOutline` 645 KB + `trajectory` 353 KB
+  两项就 1 MB），而手机 `readSessionSummary` 只读 `title` / `modelSelection` /
+  `subagentTiming` / `tokenUsage` / `subagentCatalog`。白名单在
+  `connector/src/protocol/session-row.ts`，与 Dart 解析器由
+  `tests/session-row-payload.test.ts` **逐字比对**（变异校验 2 红 / 3 红）。
+  真机：一次标题变更出站 **1 943 515 → 252 000 B（-87%）**，通知与重取帧数不变。
+  **不做 `session.row`**：裁键已拿 87%，窄口只剩行本体那 3%（77 KB），不值得为它引入
+  行级合并语义。笔记 `implemented/2026-11-01-list-row-payload.md`。
 - **重取范围第 2 批（11-01，连接器侧）**：`session.modelCatalog` 接**四条**宿主失效事件
   （`llm/adapters-updated`、`settings/document-updated`、`credentials/*-updated`），
   `permission.catalog` 接 `permission-presets/catalog-changed`；宿主级、不带 `sid`、
@@ -104,11 +113,12 @@
 
 ## 下一步
 
-0. **重取范围第 2 批已落地**（上方「现在」第一条）：两个 key 都有生产者，
-   connector `pnpm test` **796** 项。留给以后的只有三件：① 权限预设目录那条真机验收
-   （要装 `dsh-auto-review` 并重启一次宿主，本机没有它）；② `session.row` 要不要做 ——
-   数字已量（改一次标题 **1.94 MB**，一行 JSON ≈1 KB），决定未做；③ `llm/*` 与
-   `credentials/*` 四条事件只能在"改配置 / 改密钥"时触达，未单独真机验。
+0. **重取范围两批都已落地**（上方「现在」前两条）：两个目录 key 都有生产者、
+   `session.list` 已按手机读面裁到五键，connector `pnpm test` **799** 项。留给以后的：
+   ① 权限预设目录那条真机验收（要装 `dsh-auto-review` 并重启一次宿主，本机没有它）；
+   ② `session.projections` 仍是 20+ 键一整包（每个会话只拉一次，本批有意不动；
+   要收窄时判据同样是"手机读哪几个键"）；③ `llm/adapters-updated` 与 `credentials/*`
+   只能在"改配置 / 改密钥"时触达，未单独真机验。
 1. **多机第 4 步的真机复验**：只剩两条要**两台设备**才能做的（第二台被
    `device/busy` 拒并说出占用者、切回上一台的真实链路）—— 单测已覆盖，
    真机可用"第二个 DSH_HOME + 另一份连接器身份"补；命中不了的按未验证如实说。
@@ -131,7 +141,7 @@
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
 | `cd app && flutter test` | 1619 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **796** 项 |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **799** 项 |
 | `cd relay && pnpm typecheck && node --test` | 类型 + **132** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。

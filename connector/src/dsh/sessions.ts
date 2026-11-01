@@ -30,6 +30,8 @@ import type {
   SessionWireHeader,
 } from '@deepseek-ai/dsh-api-session-controller/types'
 
+import { pickSessionRowProjectionValues } from '../protocol/session-row.js'
+
 /**
  * DSH 的会话 id 与序号游标都是 branded 类型，定义在 `@deepseek-ai/dsh-session/types` ——
  * 那个包**不是**本插件声明的依赖，直接 import 会变成幽灵依赖。
@@ -351,15 +353,20 @@ export function createSessionsAdapter(controller: SessionController): SessionsPo
           ? { parentSessionId: item.parentSessionId }
           : {}),
         ...(item.cwd === undefined ? {} : { cwd: item.cwd }),
-        // **投影提示原样透传**：`values.title` 就是列表标题（Web 同源）。
-        // 冷行（没打开过的会话）也有 —— DSH 为它读持久缓存，见 `list.ts:301-305`。
+        // **投影提示只挑手机读的那几个键**（白名单在 `protocol/session-row.ts`）。
+        // 宿主给的是整块 summary —— 本机 94.5% 的包体在这里，其中时间轴两项就 1 MB，
+        // 而手机读一行只用五个键；`turnOutline` / `trajectory` 归"打开会话"那条路
+        // （`session.projections` 的完整快照），不该搭每次列表重取的便车。
+        // 冷行（没打开过的会话）也有投影提示：DSH 为它读持久缓存，见 `list.ts:301-305`。
         ...(item.projections === undefined
           ? {}
           : {
               projections: {
                 kind: item.projections.kind,
                 asOfSeq: item.projections.asOfSeq,
-                values: item.projections.values as Record<string, unknown>,
+                values: pickSessionRowProjectionValues(
+                  item.projections.values as Record<string, unknown>,
+                ),
               },
             }),
       }))
