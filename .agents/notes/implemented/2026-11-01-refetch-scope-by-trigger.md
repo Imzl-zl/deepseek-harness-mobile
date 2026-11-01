@@ -350,7 +350,11 @@ Status: implemented（2026-11-01，两批都已落地；第 2 批的事实与新
   （`permission` / `agent-preset-registry` / `session-log-deepseek` / `ui-conversation`）时，
   一条事件会变成 **2 个请求**（`settings.describe` + `session.modelCatalog`）；写的是别的
   命名空间（如 `agent-default-model`）时只有 **1 个**（模型目录）。这是"不做命名空间过滤"
-  直接换来的那笔钱，量在下面。
+  直接换来的那笔钱，量在下面。附带的边角：没有模型能力的部署里 `session.modelCatalog`
+  方法根本没挂（`handlers.ts` 的能力位），而 `settings/document-updated` 照旧会发这个 key ——
+  手机那次请求会失败并被 `HostCatalogs.refreshModels` 的 catch 吞掉（`host_catalogs.dart:53-64`）。
+  不崩、不拖落点，代价就是一个白跑的请求；要根治得让通知知道能力位，那是把 app 的知识搬进
+  连接器，不值。
 
 ### 门禁与实测
 

@@ -244,8 +244,8 @@ const List<HostStateFetch> hostStateRegistry = <HostStateFetch>[
   HostStateFetch(
     key: HostStateKey.sessionModelCatalog,
     fetch: _refetchModelCatalog,
-    // `notification` 这一列**暂时没有生产者**（连接器还没接那五条宿主失效事件，
-    // 见 `remote-channel.md` §5.9）。列在表里是为了"接上生产者"不用再改 app。
+    // `notification` 列由五条宿主失效事件驱动（`llm/*-updated`、`settings/document-updated`、
+    // `credentials/*-updated`，触发点表在 `remote-channel.md` §5.9）。
     triggers: <HostStateTrigger>{
       HostStateTrigger.notification,
       HostStateTrigger.connectLanding,
@@ -254,7 +254,7 @@ const List<HostStateFetch> hostStateRegistry = <HostStateFetch>[
   HostStateFetch(
     key: HostStateKey.permissionCatalog,
     fetch: _refetchPermissionCatalog,
-    // 同上：`permission-presets/catalog-changed` 还没有接。
+    // `notification` 列由 `permission-presets/catalog-changed` 驱动（同上那张表的最后一行）。
     triggers: <HostStateTrigger>{
       HostStateTrigger.notification,
       HostStateTrigger.connectLanding,
