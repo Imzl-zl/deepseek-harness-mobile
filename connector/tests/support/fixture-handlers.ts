@@ -514,6 +514,7 @@ export function fixtureHandlers(
           installed: true,
           enabled: true,
           removable: true,
+          rows: [{ rowId: 'plugin-1', moduleName: 'dsh-mobile', entryId: 'plugin-1' }],
         },
       ],
       setEnabled: async (_id: string, enabled: boolean) => ({

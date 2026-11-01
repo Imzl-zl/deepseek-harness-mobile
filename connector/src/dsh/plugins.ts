@@ -1,5 +1,5 @@
 /**
- * 插件清单与启停（`plugin.list` / `plugin.setEnabled`，契约 §5.7）。
+ * 插件清单与启停（`plugin.list` / `plugin.setEnabled` / `plugin.listBundles`，契约 §5.7）。
  *
  * ## 方法面在哪（2026-10-24 二次核实的结论）
  *
@@ -7,16 +7,15 @@
  * `PluginInventorySnapshot`）—— **它没有 `@Remote`**，不是方法面。
  * 真正的方法面在 `packages/boot/plugin-manager/src/index.ts`：`PluginManager`
  * （服务键 `pluginManager`，`super(ctx, 'pluginManager')` 在 `:333`）有 14 个 `@Remote`，
- * 本任务只透传其中三个：
+ * 这个文件透传其中三个：
  *
  * - `listPlugins(): Promise<PluginInfo[]>`（`:439`）
  * - `setPluginEnabled(id: PluginEntryId, enabled: boolean): Promise<ChangeResult>`（`:796`）
+ * - `listBundles(): Promise<BundleInfo[]>`（`:463`）
  * - （bundle 级 `setBundleEnabled`（`:814`）**不做**：bundle 是"一层 patch"，
  *   手机上摆一道会连带改一堆行，风险面另议。）
  *
- * **安装 / 卸载 / 升级不做**（`installBundle:835` / `removeBundle:999` /
- * `updateBundle:677`）：它们动的是 profile 的 `package.json` 与 `pnpm-lock`，
- * 失败面在手机上既看不见也修不了。
+ * 安装 / 卸载 / 取消 / 看进度在 `plugin-install.ts`（它们跑 pnpm，形状是发起即返回）。
  *
  * ## 行与回执都不翻译
  *
@@ -28,6 +27,10 @@
  * **`meta` 原样过线，不在连接器挑语言**：`LocalizedText` 是
  * `string | {en, [locale]}`（`types.ts:44`），挑哪一档是**界面**的事（手机按自己的语言挑）。
  * 连接器翻译一遍就是第二份语言规则。
+ *
+ * **包的 `rows` 也过线**：`BundleInfo.rows` 里每行带 `entryId`（`types.ts:61-70`），
+ * 手机据此把插件行挂到它所属的包下面 —— 少了它，手机只能按 `moduleName` 猜
+ * "哪个插件属于哪个可卸载的包"，那就是第二份判据。
  *
  * ## 启停回的是**回读后的真值**
  *
@@ -94,6 +97,24 @@ export interface BundleRow {
   removable: boolean
   /** 这一层能不能在这里启停（宿主给了 `readOnlyReason` 就是不能）。 */
   readOnlyReason?: string
+  /** 这个包的 patch 声明了哪些行（宿主 `BundleInfo.rows`，`types.ts:61-70` 原样）。 */
+  rows: readonly BundleRowInfo[]
+}
+
+/**
+ * 包声明的一行（宿主 `BundleRowInfo`，`types.ts:61-70`）。
+ *
+ * `entryId` 是"这一行此刻由哪个 Loader entry 承载"（宿主只在**恰好一条活 entry**
+ * 用这个 id 时给）—— 手机靠它把 `plugin.list` 的行挂到这个包下面，
+ * 于是"哪个插件属于哪个可卸载的包"不需要手机自己猜（按 moduleName 猜就是第二份判据）。
+ */
+export interface BundleRowInfo {
+  /** patch 里声明的行 id。 */
+  rowId: string
+  /** 这一行 import 的模块。 */
+  moduleName: string
+  /** 承载它的 Loader entry（没有就是缺席：包没启用 / 行被禁用 / id 撞了）。 */
+  entryId?: string
 }
 
 export interface PluginsFace {
@@ -103,14 +124,37 @@ export interface PluginsFace {
 }
 
 /**
+ * 包的 `rows` → 手机要的形状（**只留认得出的行**）。
+ *
+ * 没有 `rowId` 的行丢掉：它是"包声明了什么"的下标，手机拿它挂 `plugin.list` 的 entry；
+ * 编一个空串会让"这一行属于哪个包"变成一场猜谜。`entryId` 缺席是**正常状态**
+ * （包没启用 / 行被禁用），照原样不带。
+ */
+function declaredRowsOf(value: unknown): readonly BundleRowInfo[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item): BundleRowInfo[] => {
+    if (typeof item !== 'object' || item === null) return []
+    const record = item as Record<string, unknown>
+    const rowId = record['rowId']
+    if (typeof rowId !== 'string' || rowId === '') return []
+    return [
+      {
+        rowId,
+        moduleName: typeof record['moduleName'] === 'string' ? record['moduleName'] : '',
+        ...(typeof record['entryId'] === 'string' ? { entryId: record['entryId'] } : {}),
+      },
+    ]
+  })
+}
+
+/**
  * 建插件面。
  *
  * 服务键走 `ctx.get`，**缺席的判定在装配层**（`index.ts` 按
  * `pluginsAvailable(ctx)` 决定挂不挂方法）；走到这里缺键只可能是装配写错了，
  * 那时如实抛 —— 回空数组会被手机读成"这台电脑一个插件都没有"。
  */
-export function createPluginsFace(ctx: Context): PluginsFace {
-  const managerOf = (): PluginManagerService => {
+export function createPluginsFace(ctx: Context): PluginsFace {  const managerOf = (): PluginManagerService => {
     const manager = ctx.get('pluginManager') as PluginManagerService | undefined
     if (manager === undefined) {
       throw new ProtocolError('internal', 'pluginManager 服务不在：插件面不可用')
@@ -164,6 +208,7 @@ export function createPluginsFace(ctx: Context): PluginsFace {
             ...(typeof record['readOnlyReason'] === 'string'
               ? { readOnlyReason: record['readOnlyReason'] }
               : {}),
+            rows: declaredRowsOf(record['rows']),
           },
         ]
       })

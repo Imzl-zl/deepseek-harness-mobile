@@ -80,7 +80,11 @@ function hostCtx(
           installed: true,
           enabled: true,
           removable: true,
-          rows: [{ rowId: 'bash' }],
+          rows: [
+            { rowId: 'bash', moduleName: '@deepseek-ai/dsh-tool-bash', entryId: 'entry-a' },
+            // 认不出（没有 `rowId`）的行丢掉：空串会让"它属于哪个包"变成猜谜。
+            { moduleName: '@deepseek-ai/dsh-broken' },
+          ],
           overrides: [],
         },
         {
@@ -162,6 +166,9 @@ test('plugin.listBundles：只带手机用得上的字段（卸载按包名，re
         installed: true,
         enabled: true,
         removable: true,
+        rows: [
+          { rowId: 'bash', moduleName: '@deepseek-ai/dsh-tool-bash', entryId: 'entry-a' },
+        ],
       },
       {
         name: 'dsh-mobile-connector',
@@ -169,11 +176,12 @@ test('plugin.listBundles：只带手机用得上的字段（卸载按包名，re
         enabled: true,
         removable: false,
         readOnlyReason: 'management-required',
+        rows: [],
       },
     ],
   })
-  // 宿主的 `rows` / `overrides` 不过线（手机不渲染包内行）。
-  assert.equal(JSON.stringify(result).includes('rowId'), false)
+  // 宿主的 `overrides` 不过线（手机不渲染"包改了哪些内建行"）。
+  assert.equal(JSON.stringify(result).includes('overrides'), false)
 })
 
 test('plugin.list：宿主没有插件时是空数组（不是错误）', async () => {

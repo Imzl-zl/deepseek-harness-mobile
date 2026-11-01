@@ -1282,7 +1282,14 @@
           "version": "0.1.0",
           "installed": true,
           "enabled": true,
-          "removable": true
+          "removable": true,
+          "rows": [
+            {
+              "rowId": "plugin-1",
+              "moduleName": "dsh-mobile",
+              "entryId": "plugin-1"
+            }
+          ]
         }
       ]
     }

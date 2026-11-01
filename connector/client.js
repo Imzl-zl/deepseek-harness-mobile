@@ -140,6 +140,17 @@ window.__ModuleLoader__.load({
     // 令牌走凭据记录面 —— 判据全在电脑侧（`src/admin/connection-card.ts`）。
     const CONNECTION = '/api/dsh-mobile/connection'
 
+    /**
+     * 内置中转（开箱即用的那条）。**电脑侧拨号形状，带 `/ws/connector`**：
+     * 连接器自己拼这条路径（`src/transport/relay-link.ts` 的 `base.pathname`），
+     * 而手机侧用的是根地址（它自己拼 `/ws-ticket` 与 `/ws/device`）。
+     *
+     * 写在这里是为了让「连接」卡的中转**是选出来的**：内置那条默认就在，
+     * 用户换了自己的之后还能切回来，不用记地址（用户原话：「你这个应该是选择框的吧，
+     * 可以选我的，可以自己输入」）。
+     */
+    const BUILTIN_RELAY_URL = 'wss://dsh.0t0.me/ws/connector'
+
     /** 侧边栏条目与主面板共用的 id（标准槽用字符串键，不 branded）。 */
     const PANEL_ID = 'dsh-mobile'
 
@@ -153,14 +164,22 @@ window.__ModuleLoader__.load({
       // 这一版把"这台电脑怎么连中转"摆上界面：地址、公网明文那一档、直连端口、令牌。
       // 每一格的写入都不需要重启 DSH（loader 的 `loader/volatile-update` 会通知插件重建通道）。
       connectTitle: '连接',
+      connectHint: '改完点保存',
+      channelsTitle: '通道与地址',
+      devicesTitle: '已配对设备',
+      pairTitle: '配对新手机',
+      pairHint: '二维码 5 分钟有效；同一台手机重扫会替换旧记录。',
+      thisOne: '本次',
       relayLabel: '中转',
       relayConnected: '已连接',
       relayConnecting: '重连中',
       relayStopped: '未运行',
       relayPublic: '公网',
       relayPrivate: '内网',
-      addressLabel: '地址',
+      addressLabel: '中转',
       addressPlaceholder: 'wss://relay.example.com/ws/connector',
+      addressBuiltin: '内置中转',
+      addressCustom: '自定义',
       // 文案必须写明"内容仍端到端加密"：明文的代价只是元数据（契约两档判据的同一句话）。
       allowPublicPlain: '允许公网明文 ws://（内容仍端到端加密，元数据可见）',
       allowPublicPlainInert: '当前地址是 wss://，这项不生效',
@@ -187,7 +206,6 @@ window.__ModuleLoader__.load({
       // 传输面**按方式分开关**（2026-10-17 用户：「不是有两中方式为啥就开关？
       // 后面我要是再加新的方式也就一个开关吗？」）。每个通道一个开关，
       // 加新方式时这个列表自动变长（数据来自 GET /transport），不为它改形状。
-      transportTitle: '传输方式',
       allStart: '全部启动',
       allStop: '全部停止',
       channelRunning: '运行中',
@@ -195,15 +213,18 @@ window.__ModuleLoader__.load({
       channelStart: '启动',
       channelStop: '停止',
       failedChannel: '{action}失败：{reason}',
-      transportNote: '两条通道各自独立：停一条不碰另一条。停传输不清凭据、不动身份，再启动不用重扫。',
+      transportNote: '停一条不碰另一条；停传输不清凭据，再启动不用重扫。',
       // ---- 上报哪些地址（2026-10-18）----
       // 监听面**按设计枚举全部非内部网卡**（`transport/listener.ts:134-138`：
       // 过滤虚拟网卡靠名字匹配"又脆又漏"）。所以装了 VMware 的机器会多报几条
       // 手机永远拨不通的地址 —— 由用户点名禁用，比猜网卡名可靠。
       advertiseTitle: '上报给手机的地址',
-      advertiseNote: '这块电脑上的地址会全部报给手机,让它挑一条拨。装了虚拟网卡(VMware / Docker)的机器会多报几条永远拨不通的 —— 在这里禁用。也可以额外加一条不在列表里的(如 Tailscale 的 100.x)。',
-      advertiseHide: '禁用',
-      advertiseShow: '启用',
+      advertiseNote: '报给手机的是这块电脑的地址；拨不通的（虚拟网卡）在这里禁用。',
+      // 界面词与设备那一段一致：**删除**（= 不再报给手机；网卡还在，可恢复）。
+      advertiseHide: '删除',
+      advertiseShow: '恢复',
+      advertiseShowHidden: '已删除 {n} 条 · 展开',
+      advertiseHideHidden: '收起已删除',
       advertiseExtra: '手动添加',
       // **占位不写死 IP**：这一栏只收局域网明文直连（`advertise.ts` 的
       // `assertExtraAddress` 只放 `ws://` + 非公网），所以示例只能是"电脑的
@@ -217,11 +238,9 @@ window.__ModuleLoader__.load({
       // 新设备"）：手机重新扫码时自报旧 pairingId，电脑侧按它替换同一行
       // （换密钥/换令牌，配对于保留首次时刻）。首配（没有旧行）才写新行。
       // 取舍：.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md
-      pairNote: '同一台手机重新扫码会替换它在这台电脑上的旧记录（换新密钥与新令牌，配对于保留首次配对的时刻）—— 记录不再随重配攒行；换一台手机或首次配对才会新增一行。',
+      pairNote: '同一台手机重新扫码会替换旧记录（配对于保留首次那次）。',
       // 连接态（桥接拨通了吗）与设备态（这台在跑吗）是两问，用词因此不同：
       // 前者答"我的手机连上了吗"，后者照 DSH 的状态词（`locales.ts:54,63`）。
-      online: '在线',
-      offline: '离线',
       running: '运行中',
       idle: '未运行',
       foreground: '前台',
@@ -267,6 +286,10 @@ window.__ModuleLoader__.load({
       confirmDisableDescription: '那台手机下次重连就会失败,需要重新配对才能恢复。记录仍会保留。',
       confirmRemoveTitle: '删除「{name}」？',
       confirmRemoveDescription: '那台手机需要重新配对。',
+      // 处理中的设备：**先停用再删除**（一步到位的删除）。顺序不是界面偏好：
+      // 停用会立刻收连接、让那台手机拿到终态；先删行会让它永远收不到"你被移除了"。
+      confirmRemoveActiveTitle: '删除「{name}」？它现在还在用。',
+      confirmRemoveActiveDescription: '会先停用它（立刻下线、拿到终态），再抹掉这条记录。那台手机必须重新扫码配对。',
       // 显式删除**可以删在线的**（见文件头），所以在线那台不是"不会删除"，
       // 而是"它在用，删了就得重新配对"——"跳过"只属于按状态批量。
       confirmDisableSelectedTitle: '停用所选的 {n} 台设备？',
@@ -285,14 +308,22 @@ window.__ModuleLoader__.load({
       entry: 'Phone',
       // ---- Connection card (2026-10-29) ----
       connectTitle: 'Connection',
+      connectHint: 'Save to apply',
+      channelsTitle: 'Channels & addresses',
+      devicesTitle: 'Paired devices',
+      pairTitle: 'Pair a new phone',
+      pairHint: 'The code is valid for 5 minutes; re-scanning from the same phone replaces its old record.',
+      thisOne: 'this session',
       relayLabel: 'Relay',
       relayConnected: 'Connected',
       relayConnecting: 'Reconnecting',
       relayStopped: 'Stopped',
       relayPublic: 'public',
       relayPrivate: 'private',
-      addressLabel: 'Address',
+      addressLabel: 'Relay',
       addressPlaceholder: 'wss://relay.example.com/ws/connector',
+      addressBuiltin: 'Built-in',
+      addressCustom: 'Custom',
       allowPublicPlain: 'Allow plaintext ws:// to a public host (payloads stay end-to-end encrypted; metadata is visible)',
       allowPublicPlainInert: 'The current address is wss://, so this has no effect',
       tokenLabel: 'Token',
@@ -316,7 +347,6 @@ window.__ModuleLoader__.load({
       // Per-method transport switches (2026-10-17). One switch per channel;
       // a new method grows this list (data from GET /transport) — the shape
       // never changes.
-      transportTitle: 'Transport',
       allStart: 'Start all',
       allStop: 'Stop all',
       channelRunning: 'running',
@@ -324,11 +354,13 @@ window.__ModuleLoader__.load({
       channelStart: 'Start',
       channelStop: 'Stop',
       failedChannel: 'Could not {action}: {reason}',
-      transportNote: 'The two channels are independent: stopping one leaves the other alone. Stopping transport keeps credentials and identities — a restart needs no re-pairing.',
+      transportNote: 'Stopping one channel leaves the other alone; stopping transport keeps credentials.',
       advertiseTitle: 'Addresses reported to the phone',
-      advertiseNote: 'Every address on this computer is reported so the phone can pick one. Machines with virtual adapters (VMware / Docker) also report ones the phone can never reach — disable them here. You can also add an address that is not in the list (e.g. a Tailscale 100.x).',
-      advertiseHide: 'Disable',
-      advertiseShow: 'Enable',
+      advertiseNote: 'Addresses reported to the phone; disable the ones it can never reach (virtual adapters).',
+      advertiseHide: 'Delete',
+      advertiseShow: 'Restore',
+      advertiseShowHidden: '{n} removed · show',
+      advertiseHideHidden: 'hide removed',
       advertiseExtra: 'added',
       advertiseAddPlaceholder: 'ws://<LAN-IP-of-this-PC>:8790',
       advertiseAdd: 'Add',
@@ -337,9 +369,7 @@ window.__ModuleLoader__.load({
       pairedAt: 'Paired',
       // Re-pairing REPLACES the row: the phone reports its previous pairingId,
       // the computer swaps keys and token in place (first pairing time kept).
-      pairNote: 'Re-scanning from the same phone REPLACES its previous record on this computer (new keys and token; the first pairing time is kept) — records no longer accumulate; only a first pairing or a different phone adds a row.',
-      online: 'online',
-      offline: 'offline',
+      pairNote: 'Re-scanning from the same phone replaces its old record (first paired-at is kept).',
       running: 'running',
       idle: 'idle',
       foreground: 'foreground',
@@ -377,6 +407,8 @@ window.__ModuleLoader__.load({
       confirmDisableDescription: 'That phone fails its next reconnect and must pair again to come back. The record is kept.',
       confirmRemoveTitle: 'Delete "{name}"?',
       confirmRemoveDescription: 'That phone will need to pair again.',
+      confirmRemoveActiveTitle: 'Delete "{name}"? It is still in use.',
+      confirmRemoveActiveDescription: 'It is disabled first (drops offline at once, gets a terminal state), then the record is removed. That phone must pair again.',
       confirmDisableSelectedTitle: 'Disable the {n} selected devices?',
       confirmCleanRevokedTitle: 'Delete the {n} disabled devices?',
       confirmCleanRevokedDescription: 'Those phones must pair again.',
@@ -394,10 +426,62 @@ window.__ModuleLoader__.load({
       wrap: { display: 'flex', flexDirection: 'column', gap: 16, margin: '12px 0', position: 'relative' },
       card: {
         border: '1px solid var(--dsw-alias-border-inverted)',
-        borderRadius: 8,
-        padding: '12px 14px',
+        borderRadius: 10,
+        // 卡片用 DSH 的图层底色（`layer-1`）：以前是纯描边，在深色底上像一块虚线框，
+        // 视觉层级全靠字重硬撑。
+        background: 'var(--dsw-alias-bg-layer-1)',
+        padding: '14px 16px',
+      },
+      /** 分段选择（两档，替代原生 `<select>`：原生弹层没法用 token 上色）。 */
+      segment: {
+        display: 'inline-flex', flex: 'none',
+        border: '1px solid var(--dsw-alias-border-inverted)',
+        borderRadius: 8, overflow: 'hidden',
       },
       row: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+      /** 卡里的分区标题：比正文高一档字重，不再靠 inline 拼。 */
+      h3: { margin: '0 0 10px', fontSize: 13, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' },
+      /** 卡头：标题 + 右侧动作（保存 / 批量 / 清空都在这条线上，不沉到卡底）。 */
+      cardHead: { display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 10px' },
+      /** 顶部总览条：中转 / 在线 / 直连三件事一行读完。 */
+      hero: {
+        display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        padding: '10px 14px', borderRadius: 10,
+        background: 'var(--dsw-alias-bg-layer-2)',
+        border: '1px solid var(--dsw-alias-border-inverted)',
+      },
+      sep: { width: 1, height: 16, background: 'var(--dsw-alias-border-inverted)', flex: 'none' },
+      /** 字段行：`[标签 64px][控件][值]`，卡内所有行同一套。 */
+      field: { display: 'flex', alignItems: 'center', gap: 10, minHeight: 30, flexWrap: 'wrap' },
+      fieldK: { width: 64, flex: 'none', fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' },
+      /** 列表行：状态点 + 两行文字 + 行尾动作。 */
+      rowLine: {
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '8px 0', borderTop: '1px solid var(--dsw-alias-border-inverted)',
+      },
+      /** 输入框获得焦点：DSH 的焦点环（`--dsw-focus-ring-*` 的等价形态）。 */
+      inputFocus: {
+        borderColor: 'var(--dsw-alias-state-business-primary)',
+        boxShadow: '0 0 0 1px var(--dsw-alias-state-business-primary)',
+      },
+      /** 空态 / 失败态：同一套造型，只换颜色（不再一处一句散装小字）。 */
+      notice: (color) => ({
+        display: 'flex', alignItems: 'flex-start', gap: 8,
+        padding: '12px 14px', borderRadius: 8, fontSize: 12.5, lineHeight: 1.6,
+        color, border: `1px solid ${color}`, background: 'transparent',
+      }),
+      /** 窄窗下的设备行（表格换成卡片）。 */
+      devCard: {
+        display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8,
+        padding: '10px 2px', borderTop: '1px solid var(--dsw-alias-border-inverted)',
+      },
+      /** 胶囊（已设置 / 在服务 / 台数）。 */
+      pill: (color) => ({
+        fontSize: 11, lineHeight: 1.5, padding: '2px 8px', borderRadius: 999,
+        color, background: 'transparent', border: `1px solid ${color}`,
+      }),
+      /** 卡里的小分区（传输方式 / 上报地址）：一条细分隔线 + 一档更弱的标题。 */
+      subhead: { margin: '12px 0 6px', fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' },
       dot: (color) => ({
         width: 8, height: 8, borderRadius: '50%', background: color, flex: 'none',
       }),
@@ -405,12 +489,12 @@ window.__ModuleLoader__.load({
       value: { color: 'var(--dsw-alias-label-primary)', fontSize: 13 },
       table: { width: '100%', borderCollapse: 'collapse', fontSize: 13 },
       th: {
-        textAlign: 'left', padding: '6px 8px', fontWeight: 500, fontSize: 12,
+        textAlign: 'left', padding: '4px 8px', fontWeight: 500, fontSize: 11.5,
         color: 'var(--dsw-alias-label-tertiary)',
         borderBottom: '1px solid var(--dsw-alias-border-inverted)',
       },
       td: {
-        padding: '6px 8px', color: 'var(--dsw-alias-label-primary)',
+        padding: '7px 8px', color: 'var(--dsw-alias-label-primary)', fontSize: 12.5,
         borderBottom: '1px solid var(--dsw-alias-border-inverted)',
       },
       dim: { color: 'var(--dsw-alias-label-caption)' },
@@ -430,45 +514,53 @@ window.__ModuleLoader__.load({
         fontSize: 12,
       },
       btn: {
-        font: 'inherit', fontSize: 13, cursor: 'pointer', borderRadius: 6,
+        font: 'inherit', fontSize: 12.5, cursor: 'pointer', borderRadius: 6,
         border: '1px solid var(--dsw-alias-border-inverted)',
         background: 'var(--dsw-alias-interactive-bg-hover)',
         color: 'var(--dsw-alias-label-primary)',
-        padding: '5px 12px',
+        padding: '4px 11px', whiteSpace: 'nowrap',
       },
       /** 软停用：描边红。可逆，但确实会打断那台手机。 */
       btnDanger: {
-        font: 'inherit', fontSize: 13, cursor: 'pointer', borderRadius: 6,
+        font: 'inherit', fontSize: 12.5, cursor: 'pointer', borderRadius: 6,
         border: '1px solid var(--dsw-alias-state-error-primary)',
         background: 'transparent',
         color: 'var(--dsw-alias-state-error-primary)',
-        padding: '5px 12px',
+        padding: '4px 11px', whiteSpace: 'nowrap',
       },
       /** 硬删：实心红（照 DSH `dangerButton` 把 primary fill 换成 error 的做法）。 */
       btnDangerSolid: {
-        font: 'inherit', fontSize: 13, cursor: 'pointer', borderRadius: 6,
+        font: 'inherit', fontSize: 12.5, cursor: 'pointer', borderRadius: 6,
         border: '1px solid var(--dsw-alias-state-error-primary)',
         background: 'var(--dsw-alias-state-error-primary)',
         color: 'var(--dsw-alias-label-primary-foreground)',
-        padding: '5px 12px',
+        padding: '4px 11px', whiteSpace: 'nowrap',
       },
       btnDisabled: { opacity: 0.5, cursor: 'default' },
+      /** 分段里的一个选项（选中的那一档用 active 底色，未选的是透明）。 */
+      segBtn: (active) => ({
+        font: 'inherit', fontSize: 12.5, cursor: 'pointer', border: 'none',
+        padding: '5px 12px',
+        background: active ? 'var(--dsw-alias-interactive-bg-active)' : 'transparent',
+        color: active ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
+      }),
       /** 多选浮现栏：不占行高，只在有勾选时出现。 */
       bar: {
         display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
         margin: '0 0 8px', padding: '6px 8px', borderRadius: 6,
         background: 'var(--dsw-alias-interactive-bg-active)',
       },
-      /** 页面内确认对话框（照 DSH `Modal`：遮罩 + 居中卡片，`Modal.module.css:6-15`）。
-       *  **绝对定位于面板自身，不用 `position: fixed`**：本面板渲染在 DSH「插件」页的
-       *  组合包详情页里，那一页有滑入过渡、很可能带 `transform`，而 fixed 在带
-       *  transform 的祖先里会改成**相对该祖先**定位 —— 对话框会跑位、甚至被裁。
-       *  遮罩只盖面板，代价是对话框不会盖住整页；换来的是不会被页面变换带跑。 */
+      /** 确认对话框的遮罩：**挂到 body 上 + `position: fixed`**（渲染处用
+       *  `ReactDOM.createPortal`，与主面板同一个做法）。
+       *
+       *  早先这里是 `position: absolute` 于面板自己的 `.wrap` 上，理由是"内嵌页可能
+       *  带 transform"。代价是：**清单很长时，对话框钉在内容顶部**——用户滚到下面点
+       *  「停用」，框出现在他看不见的地方（用户原话："居然弹框在上面都被遮挡了？
+       *  不是屏幕居中？？"）。挂到 body 之后既居中又不会被任何滚动容器裁掉。 */
       mask: {
-        position: 'absolute', inset: 0, zIndex: 1000,
+        position: 'fixed', inset: 0, zIndex: 1000,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         background: 'var(--dsw-alias-bg-mask-1)',
-        borderRadius: 8,
       },
       dialog: {
         boxSizing: 'border-box', width: 'min(400px, calc(100vw - 48px))',
@@ -615,13 +707,13 @@ window.__ModuleLoader__.load({
 
       if (view === null) {
         return h('div', { key: 'conn', style: S.card },
-          h('h3', { style: { ...S.value, margin: '0 0 8px' } }, t('connectTitle')),
+          h('h3', { style: S.h3 }, t('connectTitle')),
           h('p', { style: S.dim }, '…'),
         )
       }
       if (view.capable !== true) {
         return h('div', { key: 'conn', style: S.card },
-          h('h3', { style: { ...S.value, margin: '0 0 8px' } }, t('connectTitle')),
+          h('h3', { style: S.h3 }, t('connectTitle')),
           h('p', { key: 'na', style: { ...S.label, ...S.warn, margin: 0, lineHeight: 1.6 } }, t('settingsUnavailable')),
         )
       }
@@ -634,11 +726,30 @@ window.__ModuleLoader__.load({
         : view.relay.running ? 'var(--dsw-alias-state-warn-label)' : 'var(--dsw-alias-state-idle-primary)'
       const scope = view.relay.public ? t('relayPublic') : t('relayPrivate')
       const plaintext = draft.relayUrl.startsWith('ws:')
+      // 「选中转」那两档：等于内置值 = 内置那一档，其余一律算自定义
+      // （空串也算自定义：还没填过，得给他输入框）。
+      const usingBuiltinRelay = draft.relayUrl === BUILTIN_RELAY_URL
       const editable = busy !== ''
       const errorOf = (slot) => (error !== null && error.slot === slot ? error.message : null)
+      // 焦点环：`adminPanel` 持有"哪一格有焦点"，这里只按名字套样式
+      // （不用 `:focus` 伪类 —— 手写 bundle 没有样式表，inline style 碰不到伪类）。
+      const ring = (slot) => (props.focused === slot ? S.inputFocus : null)
 
       return h('div', { key: 'conn', style: S.card },
-        h('h3', { style: { ...S.value, margin: '0 0 8px' } }, t('connectTitle')),
+        // 卡头：标题 + 保存。保存**留在改它的那一行旁边**，不再沉到卡底
+        // （用户改完地址要往上/往下找按钮，是最常见的"改了半天没生效"）。
+        h('div', { key: 'hd', style: S.cardHead },
+          h('span', { style: { fontSize: 13, fontWeight: 600 } }, t('connectTitle')),
+          h('span', { style: { flex: 1 } }),
+          h('span', { style: S.label }, t('connectHint')),
+          h('button', {
+            type: 'button',
+            style: editable ? { ...S.btn, ...S.btnDisabled } : S.btn,
+            disabled: editable,
+            onClick: props.onSave,
+          }, busy === 'connection' ? t('saving') : t('save')),
+          busy === 'connection' ? h('span', { style: S.label }, t('reconnecting')) : null,
+        ),
 
         // 冲突/整卡失败放**卡片顶部**：它不属于任何一格，放到某一格下面会让人以为只影响那一格。
         errorOf('card') === null
@@ -658,17 +769,42 @@ window.__ModuleLoader__.load({
           ? null
           : h('p', { style: { ...S.label, margin: '4px 0 0', lineHeight: 1.6 } }, relayChannel.detail),
 
-        // ② 地址
+        // ② 中转地址：**先选，再（需要时）填**。
+        // 内置那条是这个项目自己的中转；「自定义」才出输入框。换回来只要选一下，
+        // 不必记得那个域名。
         h('div', { style: { ...S.row, marginTop: 10 } },
-          h('span', { style: { ...S.label, width: 56, flex: 'none' } }, t('addressLabel')),
-          h('input', {
-            type: 'text',
-            value: draft.relayUrl,
-            placeholder: t('addressPlaceholder'),
-            disabled: editable,
-            onChange: (event) => props.onDraft({ relayUrl: event.target.value }),
-            style: S.input,
-          }),
+          h('span', { style: S.fieldK }, t('addressLabel')),
+          // **分段，不用原生 `<select>`**：下拉的弹层是浏览器画的，没法吃 DSH 的
+          // token（深色主题下第二项直接看不清），而且多一次点击。
+          h('div', { style: S.segment, role: 'group', 'aria-label': t('addressLabel') },
+            h('button', {
+              type: 'button',
+              disabled: editable,
+              'aria-pressed': usingBuiltinRelay,
+              style: S.segBtn(usingBuiltinRelay),
+              onClick: () => props.onDraft({ relayUrl: BUILTIN_RELAY_URL }),
+            }, t('addressBuiltin')),
+            h('button', {
+              type: 'button',
+              disabled: editable,
+              'aria-pressed': !usingBuiltinRelay,
+              style: S.segBtn(!usingBuiltinRelay),
+              // 从内置切到自定义时清空：输入框里摆着内置那条，会让人以为改过了。
+              onClick: () => props.onDraft({ relayUrl: usingBuiltinRelay ? '' : draft.relayUrl }),
+            }, t('addressCustom')),
+          ),
+          usingBuiltinRelay
+            ? h('span', { style: { ...S.value, fontSize: 12, ...S.dim } }, BUILTIN_RELAY_URL)
+            : h('input', {
+                type: 'text',
+                value: draft.relayUrl,
+                placeholder: t('addressPlaceholder'),
+                disabled: editable,
+                onChange: (event) => props.onDraft({ relayUrl: event.target.value }),
+                onFocus: () => props.onFocusField('relay'),
+                onBlur: () => props.onBlurField(),
+                style: { ...S.input, ...ring('relay') },
+              }),
         ),
         errorOf('address') === null
           ? null
@@ -690,8 +826,12 @@ window.__ModuleLoader__.load({
 
         // ④ 令牌：**只写不读**。留空=不改；清除是单独的破坏性动作。
         h('div', { style: { ...S.row, marginTop: 10 } },
-          h('span', { style: { ...S.label, width: 56, flex: 'none' } }, t('tokenLabel')),
-          h('span', { style: { ...S.value, fontSize: 12 } }, view.token.configured ? t('tokenSet') : t('tokenUnset')),
+          h('span', { style: S.fieldK }, t('tokenLabel')),
+          h('span', {
+            style: S.pill(view.token.configured
+              ? 'var(--dsw-alias-state-success-primary)'
+              : 'var(--dsw-alias-label-tertiary)'),
+          }, view.token.configured ? t('tokenSet') : t('tokenUnset')),
           h('span', { style: { flex: 1 } }),
           view.token.configured
             ? h('button', {
@@ -712,7 +852,9 @@ window.__ModuleLoader__.load({
             autoComplete: 'new-password',
             disabled: editable,
             onChange: (event) => props.onDraft({ tokenInput: event.target.value }),
-            style: S.input,
+            onFocus: () => props.onFocusField('token'),
+            onBlur: () => props.onBlurField(),
+            style: { ...S.input, ...ring('token') },
           }),
         ),
         errorOf('token') === null
@@ -723,7 +865,7 @@ window.__ModuleLoader__.load({
 
         // ⑤ 直连端口（0 = 停用直连）
         h('div', { style: { ...S.row, marginTop: 10 } },
-          h('span', { style: { ...S.label, width: 56, flex: 'none' } }, t('listenLabel')),
+          h('span', { style: S.fieldK }, t('listenLabel')),
           h('input', {
             type: 'number',
             min: 0,
@@ -731,7 +873,9 @@ window.__ModuleLoader__.load({
             value: draft.listenPort,
             disabled: editable || draft.listenDisabled,
             onChange: (event) => props.onDraft({ listenPort: event.target.value }),
-            style: { ...S.input, maxWidth: 120, flex: 'none' },
+            onFocus: () => props.onFocusField('port'),
+            onBlur: () => props.onBlurField(),
+            style: { ...S.input, maxWidth: 120, flex: 'none', ...ring('port') },
           }),
           h('label', { style: { ...S.row, cursor: editable ? 'default' : 'pointer' } },
             h('input', {
@@ -751,17 +895,6 @@ window.__ModuleLoader__.load({
           ? null
           : h('p', { role: 'alert', style: { ...S.label, ...S.err, margin: '4px 0 0' } }, errorOf('port')),
 
-        // ⑥ 保存（靠右：卡内其他行都是"标签左、控件右"，保存键跟着那一列）
-        h('div', { style: { ...S.row, marginTop: 12 } },
-          h('span', { style: { flex: 1 } }),
-          h('button', {
-            type: 'button',
-            style: editable ? { ...S.btn, ...S.btnDisabled } : S.btn,
-            disabled: editable,
-            onClick: props.onSave,
-          }, busy === 'connection' ? t('saving') : t('save')),
-          busy === 'connection' ? h('span', { style: S.label }, t('reconnecting')) : null,
-        ),
       )
     }
 
@@ -774,6 +907,12 @@ window.__ModuleLoader__.load({
       const [channels, setChannels] = useState([])
       const [advertise, setAdvertiseView] = useState(null)
       const [advertiseInput, setAdvertiseInput] = useState('')
+      // 被"删除"（= 不上报）的地址默认收起：网卡还在，但它们不该占着列表。
+      const [showHiddenAddresses, setShowHiddenAddresses] = useState(false)
+      /** 哪一格输入框有焦点（手写 bundle 没有样式表，焦点环只能靠 state 套）。 */
+      const [focusedField, setFocusedField] = useState('')
+      /** 窄窗：侧边栏弹框在窄屏/手机浏览器上会把设备表压扁，这里收起两列。 */
+      const [narrow, setNarrow] = useState(false)
       // ---- 「连接」卡 ----
       /** 电脑侧的真值（`GET /connection`）。`null` = 还没读回来。 */
       const [connection, setConnection] = useState(null)
@@ -840,6 +979,17 @@ window.__ModuleLoader__.load({
 
       // 首渲染就把状态与通道列表拉回来（面板的唯一数据源）。
       useEffect(() => { refresh() }, [refresh])
+
+      // 窄窗判定：`matchMedia` 不存在（测试桩/非浏览器环境）就当宽窗，
+      // 不猜一个宽度 —— 那会让测试里的形状随机器变化。
+      useEffect(() => {
+        if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+        const query = window.matchMedia('(max-width: 720px)')
+        setNarrow(query.matches === true)
+        const onChange = (event) => setNarrow(event.matches === true)
+        query.addEventListener('change', onChange)
+        return () => query.removeEventListener('change', onChange)
+      }, [])
 
       // 有二维码时才需要每秒走字（倒计时）；没有就一个定时器都不挂。
       useEffect(() => {
@@ -1160,12 +1310,47 @@ window.__ModuleLoader__.load({
       const onlineCount = live.filter((d) => d.online).length
       const pairedCount = live.length
 
-      /** 删除一台。**只在已停用的行上出现**（先停用 → 再清理，见 `device-admin` 不变量 2）。 */
+      /** 删除**已停用**的一台（清理）。 */
       const removeOne = (device) => askConfirm({
         title: t('confirmRemoveTitle', { name: device.name }),
         description: t('confirmRemoveDescription'),
         confirmLabel: t('remove'),
         run: async () => { await postRemove({ devIds: [device.id] }, device.id) },
+      })
+
+      /**
+       * 删除**还在用**的一台 —— **先停用、再删除**，一次点击两步。
+       *
+       * 为什么不直接删：手机唯一能"知道自己被移除"的通道是换票时的 401 带原因，
+       * 而那只在**行还在名册里**时成立（`device-admin.ts` 不变量 2）。先停用一步
+       * 让它立刻下线并拿到终态，再抹记录，两条都成立。
+       *
+       * 为什么界面上要给出这一步：用户原话「连接的都不能删除？那我想删除咋办？」
+       * —— 他要的是"我的设备我能删"，而不是"先停用再找地方删"。
+       */
+      const removeActive = (device) => askConfirm({
+        title: t('confirmRemoveActiveTitle', { name: device.name }),
+        description: t('confirmRemoveActiveDescription'),
+        confirmLabel: t('remove'),
+        run: async () => {
+          setBusy(device.id)
+          try {
+            await callEnabled(device.id, false)
+            const response = await fetch(REMOVE, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ devIds: [device.id] }),
+            })
+            const body = await response.json()
+            if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
+            await refresh()
+            setSelected(new Set())
+          } catch (caught) {
+            setError(t('failedRemove', { reason: messageOf(caught) }))
+          } finally {
+            setBusy('')
+          }
+        },
       })
 
       /**
@@ -1229,13 +1414,50 @@ window.__ModuleLoader__.load({
         setSelected(next)
       }
 
+      // 总览条用的三个事实：中转状态、直连端口、在线数。读不到就说读不到。
+      const relayView = connection === null ? null : connection.relay
+      const relayHeroColor = relayView === null
+        ? 'var(--dsw-alias-state-idle-primary)'
+        : relayView.connected
+          ? 'var(--dsw-alias-state-success-primary)'
+          : relayView.running
+            ? 'var(--dsw-alias-state-warn-label)'
+            : 'var(--dsw-alias-state-idle-primary)'
+      const relayHeroText = relayView === null
+        ? '—'
+        : relayView.connected
+          ? t('relayConnected')
+          : relayView.running ? t('relayConnecting') : t('relayStopped')
+      const directPort = connection === null || connection.value === undefined
+        ? '—'
+        : connection.value.listenPort
+
       return h(
         'div',
         { style: S.wrap },
 
         // 失败与提示**放在面板顶部**，不放在某一张卡里：停用/删除失败了，
         // 消息却出现在最下面那张配对卡上，用户根本不会往那儿看。
-        error !== '' ? h('p', { key: 'e', role: 'alert', style: { ...S.label, ...S.err, margin: 0 } }, error) : null,
+        error !== ''
+          ? h('div', {
+              key: 'e', role: 'alert',
+              style: S.notice('var(--dsw-alias-state-error-primary)'),
+            }, error)
+          : null,
+
+        // **总览条**：中转有没有连、几台在线、直连开在哪个端口 —— 一行读完。
+        // 以前这些散在两张卡里，要逐块读才知道这台电脑现在健不健康。
+        h('div', { key: 'hero', style: S.hero },
+          h('span', { style: S.dot(relayHeroColor) }),
+          h('span', { style: S.value }, relayHeroText),
+          h('span', { style: S.sep }),
+          h('span', { style: S.value }, `${onlineCount} / ${pairedCount} 台在线`),
+          onlineCount > 0
+            ? h('span', { style: S.label }, `· ${onlineCount === 1 ? '正在服务 1 台' : '有设备在线'}`)
+            : null,
+          h('span', { style: S.sep }),
+          h('span', { style: S.value }, `${t('listenLabel')} ${directPort}`),
+        ),
 
         // ⓪ 「连接」—— 这台电脑怎么连中转（地址 / 公网明文 / 令牌 / 直连端口）。
         // 放在最上：出问题时第一件事是"地址对不对、令牌在不在"。
@@ -1250,47 +1472,40 @@ window.__ModuleLoader__.load({
           onDraft: setDraftField,
           onSave: saveConnection,
           onClearToken: askClearToken,
+          focused: focusedField,
+          onFocusField: setFocusedField,
+          onBlurField: () => setFocusedField(''),
         }),
 
-        // ① 状态 —— 最高频的那一问："我的手机连上了吗"
+        // ① **通道与地址**：传输方式 + 上报地址合成一张卡。
+        // 「拨向哪条路」**不在这里重复**：上面的「连接」卡就是这条事实的唯一位置
+        // （两处显示同一件事，迟早一先一后地漂）。
+        // 传输方式每个通道一个开关（2026-10-17 用户：「不是有两中方式为啥就一个开关？
+        // 后面我要是再加新的方式也就一个开关吗？」），列表来自 `GET /transport`。
+        // 批量入口在卡头：同时开 / 同时关是常态，单条是例外。
+        // 取舍：.agents/notes/implemented/2026-10-17-transport-channels-registry.md
         h(
           'div',
           { key: 'status', style: S.card },
-          h(
-            'div',
-            { style: S.row },
-            h('span', { style: S.dot(onlineCount > 0 ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-idle-primary)') }),
-            h('strong', { style: S.value }, onlineCount > 0 ? t('online') : t('offline')),
-            h('span', { style: S.label }, `${onlineCount} / ${pairedCount} 台在线`),
+          h('div', { style: S.cardHead },
+            h('span', { style: { fontSize: 13, fontWeight: 600 } }, t('channelsTitle')),
+            h('span', { style: { flex: 1 } }),
+            h('button', {
+              type: 'button',
+              style: busy !== '' ? { ...S.btn, ...S.btnDisabled } : S.btn,
+              disabled: busy !== '',
+              onClick: () => runAll(true),
+            }, t('allStart')),
+            h('button', {
+              type: 'button',
+              style: busy !== '' ? { ...S.btn, ...S.btnDisabled } : S.btn,
+              disabled: busy !== '',
+              onClick: () => runAll(false),
+            }, t('allStop')),
           ),
-          // 「拨向哪条路」**不再在这里重复**：上面的「连接」卡就是这条事实的唯一位置
-          // （两处显示同一件事，迟早一先一后地漂）。
-          // **传输方式**：每个通道一个开关（2026-10-17 用户：「不是有两中方式
-          // 为啥就一个开关？后面我要是再加新的方式也就一个开关吗？」）。
-          // 列表来自 `GET /transport` —— 加新方式这里自动长一行，不为它改形状。
-          // 取舍：.agents/notes/implemented/2026-10-17-transport-channels-registry.md
-          // 批量入口放在最上面：同时开 / 同时关是常态，单条是例外。
           h(
             'div',
-            { key: 'transport', style: { marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--dsw-alias-border-inverted)' } },
-            h(
-              'div',
-              { style: S.row },
-              h('span', { style: S.label }, t('transportTitle')),
-              h('span', { style: { flex: 1 } }),
-              h('button', {
-                type: 'button',
-                style: busy !== '' ? { ...S.btn, ...S.btnDisabled } : S.btn,
-                disabled: busy !== '',
-                onClick: () => runAll(true),
-              }, t('allStart')),
-              h('button', {
-                type: 'button',
-                style: busy !== '' ? { ...S.btn, ...S.btnDisabled } : S.btn,
-                disabled: busy !== '',
-                onClick: () => runAll(false),
-              }, t('allStop')),
-            ),
+            { key: 'transport' },
             channels.map((channel) => h(
               'div',
               { key: channel.id, style: { ...S.row, marginTop: 6 } },
@@ -1316,26 +1531,47 @@ window.__ModuleLoader__.load({
               'div',
               { key: 'advertise', style: { marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--dsw-alias-border-inverted)' } },
               h('div', { style: S.row },
-                h('span', { style: S.label }, t('advertiseTitle')),
+                h('span', { style: S.subhead }, t('advertiseTitle')),
                 h('span', { style: { flex: 1 } }),
+                // 被删除（= 不上报）的自报地址默认收起 —— 网卡还在，但它们不该占着列表。
+                advertise !== null && advertise.hidden.length > 0
+                  ? h('button', {
+                      type: 'button',
+                      style: S.btn,
+                      onClick: () => setShowHiddenAddresses(!showHiddenAddresses),
+                    }, showHiddenAddresses
+                      ? t('advertiseHideHidden')
+                      : t('advertiseShowHidden', { n: advertise.hidden.length }))
+                  : null,
               ),
+              // 会报给手机的地址：**删除 = 不再上报**（自报的那种，网卡还在，
+              // 所以删掉的进下面那排「已删除」，可恢复）。
               advertise === null
                 ? null
                 : advertise.candidates.map((candidate) => {
                     const hidden = advertise.hidden.includes(candidate.url)
+                    // 被删掉的只在展开时才画。
+                    if (hidden && !showHiddenAddresses) return null
                     return h('div', { key: `c:${candidate.url}`, style: { ...S.row, marginTop: 6 } },
                       h('span', { style: S.dot(hidden ? 'var(--dsw-alias-state-idle-primary)' : 'var(--dsw-alias-state-success-primary)') }),
                       h('span', { style: S.value }, candidate.label || candidate.url),
                       h('span', { style: { ...S.label, flex: 1 } }, candidate.url),
-                      h('button', {
-                        type: 'button',
-                        style: busy === `advertise:${candidate.url}` ? { ...S.btn, ...S.btnDisabled } : S.btn,
-                        disabled: busy !== '',
-                        onClick: () => runAdvertise(candidate.url, hidden ? 'clear' : 'hide'),
-                      }, hidden ? t('advertiseShow') : t('advertiseHide')),
+                      hidden
+                        ? h('button', {
+                            type: 'button',
+                            style: busy === `advertise:${candidate.url}` ? { ...S.btn, ...S.btnDisabled } : S.btn,
+                            disabled: busy !== '',
+                            onClick: () => runAdvertise(candidate.url, 'clear'),
+                          }, t('advertiseShow'))
+                        : h('button', {
+                            type: 'button',
+                            style: busy === `advertise:${candidate.url}` ? { ...S.btnDanger, ...S.btnDisabled } : S.btnDanger,
+                            disabled: busy !== '',
+                            onClick: () => runAdvertise(candidate.url, 'hide'),
+                          }, t('advertiseHide')),
                     )
                   }),
-              // 手动追加的地址（不在网卡枚举里）：单独列出来，能移除。
+              // 手动追加的地址（不在网卡枚举里）：删掉 = 真从表态里清掉。
               advertise === null
                 ? null
                 : advertise.advertised
@@ -1346,7 +1582,7 @@ window.__ModuleLoader__.load({
                       h('span', { style: { ...S.label, flex: 1 } }, entry.url),
                       h('button', {
                         type: 'button',
-                        style: busy === `advertise:${entry.url}` ? { ...S.btn, ...S.btnDisabled } : S.btn,
+                        style: busy === `advertise:${entry.url}` ? { ...S.btnDanger, ...S.btnDisabled } : S.btnDanger,
                         disabled: busy !== '',
                         onClick: () => runAdvertise(entry.url, 'clear'),
                       }, t('remove')),
@@ -1375,7 +1611,21 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { key: 'devices', style: S.card },
-          h('h3', { key: 'h', style: { ...S.value, margin: '0 0 8px' } }, '已配对设备'),
+          // 卡头：标题 + 台数 + **清空全部记录**。批量清理属于"这张卡的事"，
+          // 放在标题那一行比压在表格下面更容易找到。
+          h('div', { key: 'h', style: S.cardHead },
+            h('span', { style: { fontSize: 13, fontWeight: 600 } }, t('devicesTitle')),
+            h('span', { style: S.pill('var(--dsw-alias-label-tertiary)') }, String(pairedCount)),
+            h('span', { style: { flex: 1 } }),
+            devices.length > 0
+              ? h('button', {
+                  type: 'button',
+                  style: busy === 'all' ? { ...S.btnDanger, ...S.btnDisabled } : S.btnDanger,
+                  disabled: busy !== '',
+                  onClick: clearAll,
+                }, t('clearAll', { n: devices.length }))
+              : null,
+          ),
           // 多选浮现栏：**只在有勾选时出现**，不改变行本身的交互（见文件头）。
           selectedIds.length === 0
             ? null
@@ -1396,7 +1646,7 @@ window.__ModuleLoader__.load({
                 }, t('cancel')),
               ),
           visible.length === 0
-            ? h('p', { key: 'z', style: S.dim }, status === null ? '…' : t('noDevices'))
+            ? h('div', { key: 'z', style: S.notice('var(--dsw-alias-label-tertiary)') }, status === null ? '…' : t('noDevices'))
             : h(
                 'table',
                 { key: 'tb', style: S.table },
@@ -1406,8 +1656,9 @@ window.__ModuleLoader__.load({
                   // **配对于**：每次扫码都是一条新记录，用户要能认出"哪条是我现在
                   // 这部手机"（2026-10-17 真机：同一个手机扫了 5 次，5 条同名行，
                   //  用户问"我只有一个手机怎么显示五个"）。
-                  h('th', { style: S.th }, t('pairedAt')),
-                  h('th', { style: S.th }, '最后活跃'),
+                  // **窄窗收起这两列**，把时间并进名称那一格（同一份数据，不复制）。
+                  narrow ? null : h('th', { style: S.th }, t('pairedAt')),
+                  narrow ? null : h('th', { style: S.th }, '最后活跃'),
                   h('th', { style: S.th }, '状态'),
                   h('th', { style: { ...S.th, textAlign: 'right' } }, ''),
                 )),
@@ -1422,9 +1673,20 @@ window.__ModuleLoader__.load({
                       onChange: () => toggle(device.id),
                     }),
                   ),
-                  h('td', { style: S.td }, device.name),
-                  h('td', { style: { ...S.td, ...S.dim } }, fmtWhen(device.pairedAt, t)),
-                  h('td', { style: { ...S.td, ...S.dim } }, device.revoked ? '—' : fmtAgo(device.lastInteractedAt, t)),
+                  // **本次会话那一台标出来**：9 行全叫「我的手机」时，用户没法一眼认出
+                  // "哪台是现在我手里这部"（2026-10-17 真机问过"我只有一个手机怎么显示五个"）。
+                  h('td', { style: S.td },
+                    device.name,
+                    device.serving
+                      ? h('span', { style: { ...S.label, color: 'var(--dsw-alias-state-success-primary)', marginLeft: 6 } }, t('thisOne'))
+                      : null,
+                    narrow
+                      ? h('div', { style: { ...S.dim, fontSize: 11, marginTop: 2 } },
+                          `${fmtWhen(device.pairedAt, t)} · ${device.revoked ? '—' : fmtAgo(device.lastInteractedAt, t)}`)
+                      : null,
+                  ),
+                  narrow ? null : h('td', { style: { ...S.td, ...S.dim } }, fmtWhen(device.pairedAt, t)),
+                  narrow ? null : h('td', { style: { ...S.td, ...S.dim } }, device.revoked ? '—' : fmtAgo(device.lastInteractedAt, t)),
                   h('td', { style: S.td },
                     device.revoked
                       ? h('span', { style: S.dim }, t('disabled'))
@@ -1449,7 +1711,7 @@ window.__ModuleLoader__.load({
                           }, t('enable')),
                           h('button', {
                             type: 'button',
-                            style: busy === device.id ? { ...S.btnDangerSolid, ...S.btnDisabled } : S.btnDangerSolid,
+                            style: busy === device.id ? { ...S.btnDanger, ...S.btnDisabled } : S.btnDanger,
                             disabled: busy !== '',
                             onClick: () => removeOne(device),
                           }, t('remove')),
@@ -1464,16 +1726,21 @@ window.__ModuleLoader__.load({
                                 onClick: () => takeOver(device),
                               }, t('takeOver'))
                             : null,
-                          // **活跃行没有「删除」**：删除只出现在已停用的行上（清理）。
-                          // 先停用（它立刻下线、手机拿到 device-revoked）再删，是唯一
-                          // 能让那台手机"知道自己被移除"的顺序 —— 硬删会把撤销记录一起
-                          // 抹掉，它只会一直重试。
+                          h('button', {
+                            type: 'button',
+                            style: busy === device.id ? { ...S.btn, ...S.btnDisabled } : S.btn,
+                            disabled: busy !== '',
+                            onClick: () => disableOne(device),
+                          }, t('disable')),
+                          // **还在用的那台也能删**（用户原话："连接的都不能删除？"）。
+                          // 点下去是"先停用、再删除"两步（见 `removeActive`）——
+                          // 顺序保证了那台手机先拿到终态，再丢掉记录。
                           h('button', {
                             type: 'button',
                             style: busy === device.id ? { ...S.btnDanger, ...S.btnDisabled } : S.btnDanger,
                             disabled: busy !== '',
-                            onClick: () => disableOne(device),
-                          }, t('disable')),
+                            onClick: () => removeActive(device),
+                          }, t('remove')),
                         ),
                   ),
                 ))),
@@ -1487,41 +1754,37 @@ window.__ModuleLoader__.load({
                 }, showRevoked ? t('hideRevoked') : t('showRevoked', { n: revoked.length })),
               )
             : null,
-          // 按状态清：**只剩"已停用 / 全部"两种**。"按当前离线批量硬删"已删 ——
-          // 它的人口专门命中"暂时离线但还在用"的设备，2026-10-15 事故删掉的正是
-          // 用户自己那台（他当时在排查重连，是离线态）。要删具体的几台用上面的多选。
-          h('div', { key: 'clean', style: { ...S.row, marginTop: 10, gap: 8, flexWrap: 'wrap' } },
-            revoked.length > 0
-              ? h('button', {
+          // 按状态清：**只剩 `revoked` 一种**（`all` 已移到卡头）。
+          // "按当前离线批量硬删"早已删掉 —— 它的人口专门命中"暂时离线但还在用"的设备，
+          // 2026-10-15 事故删掉的正是用户自己那台。
+          revoked.length > 0
+            ? h('div', { key: 'clean', style: { ...S.row, marginTop: 8 } },
+                h('button', {
                   type: 'button',
-                  style: busy === 'revoked' ? { ...S.btnDangerSolid, ...S.btnDisabled } : S.btnDangerSolid,
+                  style: busy === 'revoked' ? { ...S.btnDanger, ...S.btnDisabled } : S.btnDanger,
                   disabled: busy !== '',
                   onClick: cleanRevoked,
-                }, t('cleanRevoked', { n: revoked.length }))
-              : null,
-            devices.length > 0
-              ? h('button', {
-                  type: 'button',
-                  style: busy === 'all' ? { ...S.btnDangerSolid, ...S.btnDisabled } : S.btnDangerSolid,
-                  disabled: busy !== '',
-                  onClick: clearAll,
-                }, t('clearAll', { n: devices.length }))
-              : null,
-          ),
+                }, t('cleanRevoked', { n: revoked.length })),
+              )
+            : null,
         ),
 
         // ③ 配对新手机 —— 最低频，所以放最下面
         h(
           'div',
           { key: 'pair', style: S.card },
-          h('h3', { key: 'h', style: { ...S.value, margin: '0 0 8px' } }, '配对新手机'),
-          h('p', { key: 'd', style: { ...S.label, margin: '0 0 10px' } }, '二维码一次性、5 分钟有效；登记不到中转就不出码。'),
-          h('button', {
-            key: 'b', type: 'button',
-            style: busy === 'pair' ? { ...S.btn, ...S.btnDisabled } : S.btn,
-            disabled: busy !== '',
-            onClick: pair,
-          }, busy === 'pair' ? t('pairing') : t('pair')),
+          // 卡头就是操作行：出码是这张卡唯一的主按钮，放标题右边。
+          h('div', { key: 'h', style: S.cardHead },
+            h('span', { style: { fontSize: 13, fontWeight: 600 } }, t('pairTitle')),
+            h('span', { style: { flex: 1 } }),
+            h('button', {
+              key: 'b', type: 'button',
+              style: busy === 'pair' ? { ...S.btn, ...S.btnDisabled } : S.btn,
+              disabled: busy !== '',
+              onClick: pair,
+            }, busy === 'pair' ? t('pairing') : t('pair')),
+          ),
+          h('p', { key: 'd', style: { ...S.label, margin: 0 } }, t('pairHint')),
           qr === null
             ? null
             : countdown === null
@@ -1537,7 +1800,8 @@ window.__ModuleLoader__.load({
         // 标题问句 + 一句后果 + 取消/确认。
         pending === null
           ? null
-          : h('div', { key: 'cf', style: S.mask, onClick: closeConfirm },
+          : ReactDOM.createPortal(
+            h('div', { key: 'cf', style: S.mask, onClick: closeConfirm },
               h('div', {
                 style: S.dialog, role: 'alertdialog', 'aria-modal': true, 'aria-label': pending.title,
                 onClick: (event) => event.stopPropagation(),
@@ -1562,6 +1826,8 @@ window.__ModuleLoader__.load({
                 ),
               ),
             ),
+            document.body,
+          ),
       )
     }
 

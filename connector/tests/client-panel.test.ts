@@ -323,14 +323,14 @@ test('面板：每行的动作按钮与状态词对上新行为', async () => {
   // 已停用默认折叠，有一行展开入口。
   assert.match(text, /已停用 1 台 · 展开/)
 
-  // 未停用的行（在线的我那台）：只有「停用」（在服务时多一个「接管」）。
-  // **活跃行没有「删除」**：手机只能通过"行还在名册里"收到撤销结论，硬删会把那份
-  // 记录一起抹掉（`device-admin.ts` 不变量 2：先停用，再在「已停用」里删除）。
+  // 未停用的行（在线的我那台）：**停用 + 删除**（在服务时还多一个「接管」）。
+  // 「删除」在活跃行上也给（用户原话："连接的都不能删除？我想删除咋办？"）；
+  // 点下去是"先停用（拿到终态）再删记录"两步，顺序由 `removeActive` 保证。
   const rows = bodyRows(tree)
   assert.equal(rows.length, 2, '默认只显示未停用的两行')
   const liveRow = rows[0] as Element
   assert.equal(buttonWith(liveRow, '停用') !== undefined, true, '未停用的行有「停用」')
-  assert.equal(buttonWith(liveRow, '删除'), undefined, '未停用的行没有「删除」')
+  assert.equal(buttonWith(liveRow, '删除') !== undefined, true, '未停用的行也有「删除」')
   assert.equal(buttonWith(liveRow, '启用'), undefined, '未停用的行不该有「启用」')
 
   // 按状态清只剩两种，且**没有"清掉当前离线"**。
@@ -364,7 +364,7 @@ test('面板：勾选后出现浮现操作栏，不改变行本身', async () =>
   // **行本身没变**：还是那两个按钮，没有被勾选框挤掉。
   const rows = bodyRows(after)
   assert.equal(buttonWith(rows[0] as Element, '停用') !== undefined, true, '勾选不改变行级按钮')
-  assert.equal(buttonWith(rows[0] as Element, '删除'), undefined, '勾选不改变行级按钮（活跃行仍无删除）')
+  assert.equal(buttonWith(rows[0] as Element, '删除') !== undefined, true, '行级「删除」一直在')
 })
 
 test('面板：正在服务的那台多一个「在服务」与「接管」，其余行没有', async () => {
@@ -414,17 +414,32 @@ test('对话框：停用的后果写明"下次重连就会失败"，确认键是
   assert.equal(buttonWith(shown, '取消') !== undefined, true, '有取消')
 })
 
-test('对话框：只有已停用的行能删，且后果句是"那台手机需要重新配对"', async () => {
+test('对话框：**还在用的那行也能删**（一步里先停用再删除）', async () => {
   const { react, panel, props, tree } = await mountPanel()
 
-  // 活跃行没有删除键 —— 先停用（让手机拿到 `device-revoked` 终态）再清理。
-  assert.equal(buttonWith(bodyRows(tree)[1] as Element, '删除'), undefined)
+  // 用户原话："连接的都不能删除？我想删除咋办？" —— 活跃行必须给删除键。
+  const activeRow = bodyRows(tree)[1] as Element
+  const removeButton = buttonWith(activeRow, '删除')
+  assert.ok(removeButton !== undefined, '活跃行有「删除」')
+  ;(removeButton.props.onClick as () => void)()
 
-  // 展开「已停用」，那一行才有删除键。
+  const dialog = allText(react.render(panel, props))
+  assert.match(dialog, /删除「平板」？它现在还在用。/)
+  assert.match(
+    dialog,
+    /会先停用它（立刻下线、拿到终态），再抹掉这条记录。那台手机必须重新扫码配对。/,
+    '后果句说清两步：先停用（拿终态）再删记录',
+  )
+})
+
+test('对话框：已停用的行删除，后果句是"那台手机需要重新配对"', async () => {
+  const { react, panel, props, tree } = await mountPanel()
+
+  // 展开「已停用」，那一行也有删除键 —— 按**名字**挑，因为活跃行现在也有删除。
   ;(buttonWith(tree, '已停用 1 台 · 展开')?.props.onClick as () => void)()
   const shown = react.render(panel, props)
   const revokedRow = bodyRows(shown).find(
-    (row) => buttonWith(row, '删除') !== undefined,
+    (row) => textOf(row).includes('旧手机') && buttonWith(row, '删除') !== undefined,
   )
   assert.ok(revokedRow !== undefined, '已停用的行有「删除」')
   ;(buttonWith(revokedRow, '删除')?.props.onClick as () => void)()
@@ -571,7 +586,8 @@ test('对话框：停用所选（不是删除）—— 多选的动作只会让�
   assert.match(dialog, /停用所选的 2 台设备？/)
   // 与单台停用同一句后果：失联要重新配对、记录仍保留。
   assert.match(dialog, /那台手机下次重连就会失败,需要重新配对才能恢复。记录仍会保留。/)
-  assert.doesNotMatch(dialog, /删除/, '多选的动作不是删除')
+  // 多选的动作仍是**停用**：这条框里不出现"先停用再删除"那句（那是单台删除才有的）。
+  assert.doesNotMatch(dialog, /会先停用它/, '多选的动作不是删除')
 })
 
 test('对话框：按状态清的后果句必带"那几台手机需要重新配对"，全部还要带跳过数', async () => {
@@ -592,23 +608,23 @@ test('对话框：按状态清的后果句必带"那几台手机需要重新配�
   assert.match(dialog, /在线的 1 台会跳过。那几台手机需要重新配对。/)
 })
 
-test('弹框遮罩用 fixed（主面板是框架根级区域，没有带 transform 的祖先）', async () => {
+test('两个遮罩都用 fixed：主面板 + **确认对话框**（后者挂 body 后滚动也不会被裁）', async () => {
   const { react, panel, props, tree } = await mountPanel()
   // 2026-10-17 迁到侧边栏弹框后，定位基准从"插件页卡片"换成"主面板"——
   // 主面板是 `main` keyed 槽的根级区域，`createPortal` 挂到 body，
-  // 没有带 transform 的祖先，fixed  therefore 安全且能盖住整页。
-  assert.equal(positionOf(tree as Element), 'fixed', '遮罩 fixed：盖住整页')
+  // 没有带 transform 的祖先，fixed 因此安全且能盖住整页。
+  assert.equal(positionOf(tree as Element), 'fixed', '主面板遮罩 fixed：盖住整页')
 
   const disable = buttonWith(bodyRows(tree)[0] as Element, '停用')
   assert.ok(disable !== undefined)
   ;(disable.props.onClick as () => void)()
   const shown = react.render(panel, props)
-  // 面板内的确认对话框仍用 absolute：它的基准是 S.wrap（position: relative），
-  // 盖住弹框本体就够了 —— 不需要也不该盖到整页。
-  const mask = flatten(shown).find((element) => positionOf(element) === 'absolute')
-  assert.ok(mask !== undefined, '确认对话框遮罩绝对定位于面板自身')
-  const wrap = flatten(shown).find((element) => positionOf(element) === 'relative')
-  assert.ok(wrap !== undefined, 'S.wrap 仍是定位基准')
+  // **确认对话框也是 fixed**：早先它 absolute 于面板自己的 `.wrap`，清单很长时
+  // 会钉在内容顶部 —— 用户滚到下面点「停用」，框出现在看不见的地方
+  // （"居然弹框在上面都被遮挡了？不是屏幕居中？？"）。
+  const positions = flatten(shown).map((element) => positionOf(element))
+  assert.ok(positions.includes('fixed'), '确认对话框遮罩 fixed')
+  assert.equal(positions.includes('absolute'), false, '不再有 absolute 遮罩')
 })
 
 test('失败必须带原因显示在面板顶部（照 DSH `停用失败：{reason}`）', async () => {
@@ -824,6 +840,59 @@ test('连接卡：清除令牌走页面内确认，后果句写明"要在服务�
   ;(confirm.props.onClick as () => void)()
   await settle()
   assert.deepEqual(calls[0], { revision: 0, token: { op: 'clear' } })
+})
+
+test('上报地址：自报的能「删除」（= 不再上报），删掉的进「已删除」可恢复', async () => {
+  let hidden: string[] = []
+  const posts: Array<Record<string, unknown>> = []
+  const WLAN = { url: 'ws://192.168.2.52:8790', label: 'WLAN 2' }
+  const VMNET = { url: 'ws://192.168.40.1:8790', label: 'VMnet1' }
+  const CANDIDATES = [WLAN, VMNET]
+  const fetchImpl = async (url: string, init?: unknown) => {
+    if (!String(url).includes('/advertise')) return defaultFetch()(url)
+    const method = (init as { method?: string } | undefined)?.method ?? 'GET'
+    if (method === 'POST') {
+      const body = JSON.parse(String((init as { body?: string }).body)) as { url: string; kind: string }
+      posts.push(body)
+      if (body.kind === 'hide') hidden = [...hidden, body.url]
+      if (body.kind === 'clear') hidden = hidden.filter((entry) => entry !== body.url)
+      return { ok: true, status: 200, json: async () => ({ ok: true }) }
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        advertised: [{ url: WLAN.url, label: WLAN.label, source: 'auto' }],
+        hidden,
+        candidates: CANDIDATES,
+      }),
+    }
+  }
+  const { react, panel, props, tree } = await mountPanel({}, fetchImpl)
+
+  // 每行自报地址都有「删除」（不是"禁用"那种只换开关的词）。
+  const row = flatten(tree).find((element) => {
+    if (element.type !== 'div') return false
+    const text = textOf(element.props.children)
+    // **要那一行本身**，不是包着它的整段：包含 VMnet1、且不含另一条地址。
+    return text.includes('VMnet1')
+      && !text.includes('WLAN 2')
+      && flatten(element.props.children).some((child) => child.type === 'button')
+  })
+  assert.ok(row !== undefined, '网卡地址那一行在')
+  const remove = buttonWith(row.props.children, '删除')
+  assert.ok(remove !== undefined, '自报地址有「删除」')
+  assert.equal(buttonWith(row.props.children, '禁用'), undefined, '不再是"禁用"这个词')
+  ;(remove.props.onClick as () => void)()
+  await settle()
+
+  assert.deepEqual(posts, [{ url: VMNET.url, kind: 'hide' }])
+
+  // 删掉的那条从列表里收进「已删除 N 条」，默认不占位。
+  const after = react.render(panel, props)
+  const text = allText(after)
+  assert.match(text, /已删除 1 条 · 展开/)
+  assert.doesNotMatch(text, /VMnet1/, '收起时不占列表')
 })
 
 test('连接卡：这个部署没有设置服务时只显示一句说明，不给编辑入口', async () => {
