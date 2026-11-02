@@ -236,7 +236,6 @@ window.__ModuleLoader__.load({
       tokenPlaceholder: '留空 = 不改',
       tokenClear: '清除令牌',
       tokenOpenConsole: '去注册 / 登录',
-      tokenOpenConsoleHint: '没有令牌？先在浏览器打开中转，注册并登录后进控制台「添加电脑」，再把令牌贴回来。',
       // 后果句必须写清"会发生什么 + 怎么恢复"：删掉后重建中转通道会立刻断开，
       // 而恢复要在服务器上重签令牌（面板里贴回来即可，不用改文件）。
       tokenClearTitle: '清除连接器令牌？',
@@ -389,7 +388,6 @@ window.__ModuleLoader__.load({
       tokenPlaceholder: 'Leave empty to keep',
       tokenClear: 'Clear token',
       tokenOpenConsole: 'Sign up / sign in',
-      tokenOpenConsoleHint: 'No token? Open the relay in your browser, sign up and sign in, add a computer in the console, then paste the token here.',
       tokenClearTitle: 'Clear the connector token?',
       tokenClearDescription: 'This computer will immediately stop reaching the relay (direct connections on the same WiFi keep working). To recover, issue a new token on the server and paste it back here.',
       tokenRefLabel: 'Credential reference',
@@ -954,10 +952,6 @@ window.__ModuleLoader__.load({
           : h('p', { role: 'alert', style: { ...S.label, ...S.err, margin: '4px 0 0' } }, errorOf('token')),
         h('p', { style: { ...S.label, ...S.dim, margin: '4px 0 0' } },
           `${t('tokenRefLabel')}：${view.value.relayTokenRef || '—'}`),
-        consoleUrl === null || view.token.configured
-          ? null
-          : h('p', { style: { ...S.label, ...S.dim, margin: '4px 0 0', lineHeight: 1.6 } },
-              t('tokenOpenConsoleHint')),
 
         // ⑤ 直连端口（0 = 停用直连）
         h('div', { style: { ...S.row, marginTop: 10 } },

@@ -23,15 +23,15 @@ export const AUTH_PAGE = `<!doctype html>
       <span>DSH 中转</span>
     </div>
     <div>
-      <h1>把电脑上的 DSH，带到任何一台手机上。</h1>
-      <p class="lead">这台中转只做两件事：转发端到端加密的帧、按账号记账。它看不到你的会话内容。</p>
+      <h1>把 DSH 带到手机上。</h1>
+      <p class="lead">端到端加密 · 按账号计量</p>
       <ul class="points">
-        <li><i>01</i><span><b>端到端加密</b>　中转搬的是密文，密钥只在电脑和手机上。</span></li>
-        <li><i>02</i><span><b>一个账号管住所有电脑</b>　每台电脑一枚令牌，停用即下线。</span></li>
-        <li><i>03</i><span><b>按月计量</b>　流量用超即停，不悄悄续费。</span></li>
+        <li><i>01</i><span><b>端到端加密</b></span></li>
+        <li><i>02</i><span><b>每台电脑一枚令牌</b></span></li>
+        <li><i>03</i><span><b>按月计量</b></span></li>
       </ul>
     </div>
-    <div class="auth-foot">self-hosted · 只转发与记账</div>
+    <div class="auth-foot">self-hosted</div>
   </aside>
 
   <main class="auth-main">
@@ -42,7 +42,6 @@ export const AUTH_PAGE = `<!doctype html>
       </div>
       <div class="mark">${'<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="6" height="6" rx="1.6"/><rect x="15" y="14" width="6" height="6" rx="1.6"/><path d="M9 7h4a2 2 0 0 1 2 2v1"/><path d="M15 17h-4a2 2 0 0 1-2-2v-1"/></svg>'}</div>
       <h2 id="title">登录</h2>
-      <p class="sub" id="sub">用邮箱和密码进入控制台</p>
 
       <form id="form" autocomplete="on" novalidate>
         <label class="field">
@@ -137,13 +136,11 @@ export const AUTH_PAGE = `<!doctype html>
   // 标题与字段显隐
   if (mode === 'login') {
     setText('title', '登录')
-    setText('sub', '用邮箱和密码进入控制台')
     setText('submit', '登录')
     q('password').placeholder = '输入密码'
     q('password').setAttribute('autocomplete', 'current-password')
   } else if (mode === 'register') {
     setText('title', '创建账号')
-    setText('sub', '验证邮箱后即可添加电脑')
     setText('submit', '创建账号')
     setText('password-label', '密码')
     q('password').setAttribute('autocomplete', 'new-password')
@@ -153,7 +150,6 @@ export const AUTH_PAGE = `<!doctype html>
     show('alt-register', true)
   } else {
     setText('title', '重置密码')
-    setText('sub', '验证邮箱后设置一个新密码')
     setText('submit', '重置密码')
     setText('password-label', '新密码')
     q('password').setAttribute('autocomplete', 'new-password')
@@ -173,7 +169,7 @@ export const AUTH_PAGE = `<!doctype html>
     var domains = (data.registration && data.registration.emailDomains) || []
     if (domains.length > 0 && mode !== 'login') {
       var hint = q('domain-hint')
-      hint.textContent = '注册只接受 ' + domains.map(function (item) { return '@' + item }).join('、') + ' 邮箱。'
+      hint.textContent = '只接受 ' + domains.map(function (item) { return '@' + item }).join('、') + ' 邮箱'
       hint.hidden = false
     }
     if (mode !== 'login' && data.registration && data.registration.requireEmailVerification === false) {

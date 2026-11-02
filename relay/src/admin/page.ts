@@ -614,7 +614,7 @@ td.id{color:var(--ink)}
         })
       }))
       mailBody.appendChild(mailRow)
-      mailBody.appendChild(el('p', '用当前 auth.smtp 配置发一封。AhaSend 的发件域名必须先校验，否则会 502。', 'hintline'))
+      mailBody.appendChild(el('p', 'AhaSend 发件域名需先校验。', 'hintline'))
       mailCard.appendChild(mailBody)
       viewEl.appendChild(mailCard)
       return
@@ -780,7 +780,7 @@ td.id{color:var(--ink)}
           }),
           '还没有账号'
         ))
-        usageBody.appendChild(el('p', '按账号列出全部用户（含零用量）；「改额度」写账号库，立即生效。', 'hintline'))
+        usageBody.appendChild(el('p', '含零用量；改额度立即生效。', 'hintline'))
         userUsage.appendChild(usageBody)
         viewEl.appendChild(userUsage)
 
@@ -821,7 +821,7 @@ td.id{color:var(--ink)}
             }))
             return [row.subject, used, limitCell, actions]
           }), '没有未归属的用量'))
-          legacyBody.appendChild(el('p', '这些是账号模式之前或没配 owner 的令牌；迁移到账号后从这张表消失。', 'hintline'))
+          legacyBody.appendChild(el('p', '旧令牌 / 未配 owner；迁入账号后消失。', 'hintline'))
           legacyCard.appendChild(legacyBody)
           viewEl.appendChild(legacyCard)
         }
@@ -885,21 +885,16 @@ td.id{color:var(--ink)}
     // 名额留空 = 无上限（不预设人为限制，收紧是 owner 的动作）。
     var auth = state.connectorAuth || { mode: 'required', limit: null, autoCount: 0 }
     var authBody = el('div', undefined, 'body')
-    // 管理台只管理已有令牌；"给自己电脑发令牌"在用户控制台。把入口放在找令牌的人眼前。
-    var selfUse = el('div')
-    selfUse.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px'
-    selfUse.appendChild(el('span', '给自己用', 'meta'))
-    var selfHint = el('span', '这里只管理令牌；给你自己的电脑发令牌在用户控制台的「添加电脑」。', 'hint')
-    selfHint.style.margin = '0'
-    selfHint.style.flex = '1'
-    selfUse.appendChild(selfHint)
-    var selfLink = el('a', '去控制台添加电脑', 'btn')
+    // 管理台只管理已有令牌；"给自己电脑发令牌"在用户控制台。
+    var selfRow = el('div')
+    selfRow.style.cssText = 'display:flex;justify-content:flex-end;margin:0 0 10px'
+    var selfLink = el('a', '添加我的电脑', 'btn')
     selfLink.href = '/console'
     selfLink.style.textDecoration = 'none'
     selfLink.style.display = 'inline-flex'
     selfLink.style.alignItems = 'center'
-    selfUse.appendChild(selfLink)
-    authBody.appendChild(selfUse)
+    selfRow.appendChild(selfLink)
+    authBody.appendChild(selfRow)
     var modeLine = el('div')
     modeLine.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px'
     modeLine.appendChild(el('span', '连接器认证', 'meta'))
@@ -913,9 +908,7 @@ td.id{color:var(--ink)}
       }))
     }
     authBody.appendChild(modeLine)
-    if (state.auth) {
-      authBody.appendChild(el('p', '账号模式已开启：连接器认证被强制为必需，匿名兑换已关闭。', 'hint'))
-    } else {
+    if (!state.auth) {
       var limitLine = el('div')
       limitLine.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 4px'
       limitLine.appendChild(el('span', '自动签发上限', 'meta'))
@@ -934,11 +927,10 @@ td.id{color:var(--ink)}
       }))
       limitLine.appendChild(el('span', '已自动签发 ' + auth.autoCount + ' 条', 'meta'))
       authBody.appendChild(limitLine)
-      authBody.appendChild(el('p', '开放时任何人拿到地址都能连；内容仍端到端加密，中转只见密文与元数据。', 'hint'))
     }
     tokens.appendChild(authBody)
     var tBody = el('div', undefined, 'body')
-    tBody.appendChild(table(['id', '所属人', '状态', ''], state.tokens.map(function (row) {
+    tBody.appendChild(table(['名称', '账号', '状态', ''], state.tokens.map(function (row) {
       var actions = el('span')
       if (row.revokedAt) {
         actions.appendChild(btn('恢复', function () {
@@ -955,8 +947,14 @@ td.id{color:var(--ink)}
           post('/admin/api/tokens/revoke', { id: row.id }).then(refresh)
         }, true))
       }
-      var label = row.name ? row.name + ' · ' + row.id : row.id
-      return [label, row.userId || row.owner || '—', el('span', row.revokedAt ? '已吊销' : '有效', 'tag ' + (row.revokedAt ? 'bad' : 'ok')), actions]
+      var label = el('span', row.name || row.id)
+      label.title = row.id
+      var owner = row.owner || '—'
+      if (row.userId) {
+        var ownerUser = (state.users || []).find(function (user) { return user.id === row.userId })
+        owner = ownerUser ? ownerUser.email : row.userId
+      }
+      return [label, owner, el('span', row.revokedAt ? '已吊销' : '有效', 'tag ' + (row.revokedAt ? 'bad' : 'ok')), actions]
     }), '还没有连接器令牌'))
     tokens.appendChild(tBody)
     viewEl.appendChild(tokens)

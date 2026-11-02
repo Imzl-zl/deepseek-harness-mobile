@@ -279,14 +279,10 @@ export const CONSOLE_PAGE = `<!doctype html>
     host.appendChild(kpis)
 
     if (active.length === 0) {
-      var onboarding = card('先把一台电脑接上来')
-      var steps = el('ol', null, 'steps')
-      ;['点右上角「添加电脑」，给它起个名字，复制只显示一次的令牌。',
-        '在电脑的 DSH 里打开「手机 → 连接」，把令牌粘进去；relayTokenRef 空着时按默认格 relay-connector 读写，不用先改配置。',
-        '保存后电脑会自己连上来，再用手机扫码配对。'].forEach(function (line) {
-        steps.appendChild(el('li', line))
-      })
-      onboarding.body.appendChild(steps)
+      var onboarding = card('还没有电脑')
+      var intro = el('p', '添加一台电脑，把令牌粘贴到 DSH 的「手机 → 连接」卡。', 'muted')
+      intro.style.margin = '0 0 16px'
+      onboarding.body.appendChild(intro)
       var addNow = button('添加电脑', 'primary', openAddComputer)
       var actions = el('div', null, 'actions')
       actions.style.marginTop = '16px'
@@ -318,10 +314,7 @@ export const CONSOLE_PAGE = `<!doctype html>
     ))
     host.appendChild(list.card)
 
-    var hint = el('div', null, 'note')
-    hint.appendChild(el('b', '令牌只显示一次。'))
-    hint.appendChild(document.createTextNode(' 丢了就停用这台电脑，再新建一台 —— 不要试图找回来，中转只存摘要。'))
-    host.appendChild(hint)
+    host.appendChild(el('p', '令牌只显示一次；丢了就停用后重建。', 'note'))
   }
 
   function renderComputers(host) {
@@ -358,12 +351,7 @@ export const CONSOLE_PAGE = `<!doctype html>
     ))
     host.appendChild(section.card)
 
-    var note = el('div', null, 'note')
-    note.appendChild(el('b', '停用 / 删除的区别：'))
-    note.appendChild(document.createTextNode(
-      '停用会立刻收掉那台电脑的连接，但记录留着（可恢复）；删除是不可恢复的清理，只对已停用的电脑开放。',
-    ))
-    host.appendChild(note)
+    host.appendChild(el('p', '停用会立刻断线；删除只对已停用的电脑开放。', 'note'))
   }
 
   function renderAccount(host) {
@@ -451,7 +439,7 @@ export const CONSOLE_PAGE = `<!doctype html>
     openModal(function (box) {
       var head = el('header')
       head.appendChild(el('h3', '添加一台电脑'))
-      head.appendChild(el('p', '给它起个名字（比如「家里的台式机」），令牌只显示一次。', 'sub'))
+      head.appendChild(el('p', '令牌只显示一次。', 'sub'))
       box.appendChild(head)
       var body = el('div', null, 'body')
       var field = el('label', null, 'field')
@@ -461,11 +449,6 @@ export const CONSOLE_PAGE = `<!doctype html>
       input.maxLength = 40
       field.appendChild(input)
       body.appendChild(field)
-      var note = el('p', null, 'hint')
-      note.appendChild(document.createTextNode('创建后把这串令牌粘进电脑的 DSH「手机 → 连接」卡即可；relayTokenRef 空着时按默认格 '))
-      note.appendChild(el('code', 'relay-connector'))
-      note.appendChild(document.createTextNode(' 读写，不用先改配置。'))
-      body.appendChild(note)
       box.appendChild(body)
       var foot = el('footer')
       foot.appendChild(button('取消', '', closeModal))
@@ -490,7 +473,7 @@ export const CONSOLE_PAGE = `<!doctype html>
     openModal(function (box) {
       var head = el('header')
       head.appendChild(el('h3', '「' + name + '」的令牌'))
-      head.appendChild(el('p', '只显示这一次。关掉这个窗口就再也拿不到了。', 'sub'))
+      head.appendChild(el('p', '只显示一次。', 'sub'))
       box.appendChild(head)
       var body = el('div', null, 'body')
       var codebox = el('div', null, 'codebox')
@@ -508,13 +491,10 @@ export const CONSOLE_PAGE = `<!doctype html>
       })
       codebox.appendChild(copy)
       body.appendChild(codebox)
-      var step = el('p', null, 'hint')
-      step.appendChild(document.createTextNode('电脑上打开 DSH →「手机」→「连接」：地址填这台中转，令牌粘贴上面这串。'))
-      body.appendChild(step)
       var check = el('label', null, 'check')
       var checkbox = el('input'); checkbox.type = 'checkbox'
       check.appendChild(checkbox)
-      check.appendChild(el('span', '我已经保存好了（令牌只出现这一次）'))
+      check.appendChild(el('span', '我已保存'))
       body.appendChild(check)
       box.appendChild(body)
       var foot = el('footer')
