@@ -233,7 +233,27 @@ function loadClient(fetchImpl?: (url: string, init?: unknown) => unknown) {
     removeEventListener: () => {},
   }
   // 首渲染的 effect 会拉 status 与 /transport；这里回一份和 `DEVICES` 一致的。
-  ;(globalThis as { fetch?: unknown }).fetch = fetchImpl ?? defaultFetch()
+  //
+  // **应答桩统一补 `text()`**：`client.js` 的 `jsonOf` 先读 `text()` 再 `JSON.parse`
+  // （这样才能在管理面没挂时把 `not found` 说成人话）。真 `Response` 两个都有；
+  // 这里的桩只写了 `json`，所以在这一处补 —— 而不是让产品代码去兼容测试桩的形状。
+  const baseFetch = fetchImpl ?? defaultFetch()
+  ;(globalThis as { fetch?: unknown }).fetch = async (
+    url: string,
+    init?: unknown,
+  ) => {
+    const response = (await baseFetch(url, init)) as {
+      text?: unknown
+      json?: () => Promise<unknown>
+    }
+    if (typeof response.text === 'function' || typeof response.json !== 'function') {
+      return response
+    }
+    return {
+      ...response,
+      text: async () => JSON.stringify(await response.json!()),
+    }
+  }
   new Function('window', source)(window)
   assert.ok(loaded !== null, 'client.js 必须调用 window.__ModuleLoader__.load')
 

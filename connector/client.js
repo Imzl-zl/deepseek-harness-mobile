@@ -141,6 +141,23 @@ window.__ModuleLoader__.load({
     const CONNECTION = '/api/dsh-mobile/connection'
 
     /**
+     * 读应答体，**失败也要说人话**。
+     *
+     * 以前各处直接 `await response.json()`：管理面没挂上时 DSH 的共享通道回的是
+     * 纯文本 `not found`，`json()` 抛的是 `Unexpected token 'o', "not found" is not
+     * valid JSON` —— 用户看到的是**解析器原话**，看不出"接口没挂"（2026-11-01 真机）。
+     * 这里统一成 `HTTP <状态>: <正文前 80 字>`，正文不是 JSON 就当错误抛。
+     */
+    const jsonOf = async (response) => {
+      const text = await response.text()
+      try {
+        return text === '' ? {} : JSON.parse(text)
+      } catch {
+        throw new Error(`HTTP ${response.status}: ${text.slice(0, 80).trim() || '空应答'}`)
+      }
+    }
+
+    /**
      * 内置中转（开箱即用的那条）。**电脑侧拨号形状，带 `/ws/connector`**：
      * 连接器自己拼这条路径（`src/transport/relay-link.ts` 的 `base.pathname`），
      * 而手机侧用的是根地址（它自己拼 `/ws-ticket` 与 `/ws/device`）。
@@ -643,7 +660,7 @@ window.__ModuleLoader__.load({
     const setChannel = async (id, running, refresh) => {
       try {
         const response = await fetch(`${TRANSPORT}/${encodeURIComponent(id)}/${running ? 'start' : 'stop'}`, { method: 'POST' })
-        const body = await response.json()
+        const body = await jsonOf(response)
         if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
         await refresh()
       } catch (caught) {
@@ -665,7 +682,7 @@ window.__ModuleLoader__.load({
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ url, kind }),
         })
-        const body = await response.json()
+        const body = await jsonOf(response)
         if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
         await refresh()
         return true
@@ -1009,7 +1026,7 @@ window.__ModuleLoader__.load({
         setError('')
         try {
           const response = await fetch(PAIR, { method: 'POST' })
-          const body = await response.json()
+          const body = await jsonOf(response)
           if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
           if (typeof body.svg !== 'string') throw new Error('电脑侧没有返回二维码')
           // SVG 是 UTF-8 文本，用 encodeURIComponent 转 data URI —— btoa 只吃 Latin1。
@@ -1047,7 +1064,7 @@ window.__ModuleLoader__.load({
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ devId, enabled }),
         })
-        const body = await response.json()
+        const body = await jsonOf(response)
         if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
       }
 
@@ -1094,7 +1111,7 @@ window.__ModuleLoader__.load({
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(payload),
           })
-          const body = await response.json()
+          const body = await jsonOf(response)
           if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
           await refresh()
           if (body.skippedOnline > 0) {
@@ -1204,7 +1221,7 @@ window.__ModuleLoader__.load({
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(payload),
           })
-          const body = await response.json()
+          const body = await jsonOf(response)
           if (body !== null && typeof body === 'object' && body.view) {
             setConnection(body.view)
             setDraft(draftOf(body.view))
@@ -1273,7 +1290,7 @@ window.__ModuleLoader__.load({
             for (let attempt = 0; attempt < 12; attempt += 1) {
               const response = await fetch(CONNECTION)
               if (!response.ok) break
-              latest = await response.json()
+              latest = await jsonOf(response)
               setConnection(latest)
               // 连上了，或者干脆没在跑（缺令牌/坏地址）—— 两种都是"到头了"。
               if (latest.relay && (latest.relay.connected || !latest.relay.running)) break
@@ -1341,7 +1358,7 @@ window.__ModuleLoader__.load({
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ devIds: [device.id] }),
             })
-            const body = await response.json()
+            const body = await jsonOf(response)
             if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
             await refresh()
             setSelected(new Set())

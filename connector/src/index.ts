@@ -435,8 +435,31 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
       name: 'open-store',
       async run() {
         const facility = ctx.storageDomain
-        const core = await facility.open(coreDomain)
-        const windows = await facility.open(windowsDomain)
+        // **装插件会触发热重载，重载那一拍 storage 后端正在关**：
+        // 直接开就撞 `StorageError: json backend is closed`，而 `lifecycle.ts`
+        // 会因此中止整个 mount —— 症状是 `/api/dsh-mobile/*` 全 404、手机离线，
+        // 日志里只有一句 `挂载失败，通道未启动`（2026-11-01 真机踩到）。
+        //
+        // 只对 code === 'closed' 退避重试三次（~700 ms），别的错（schema 不兼容 /
+        // 权限）一次都不等，立刻抛 —— 那不是"等一会儿就好了"的形状。
+        const openDomain = async <D extends Parameters<typeof facility.open>[0]>(
+          domain: D,
+        ) => {
+          let lastError: unknown
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            try {
+              return await facility.open(domain)
+            } catch (error) {
+              lastError = error
+              const code = (error as { code?: unknown } | null)?.code
+              if (code !== 'closed') throw error
+              await new Promise((resolve) => setTimeout(resolve, 120 * (attempt + 1)))
+            }
+          }
+          throw lastError
+        }
+        const core = await openDomain(coreDomain)
+        const windows = await openDomain(windowsDomain)
         closeStore = async () => {
           await core.close()
           await windows.close()
