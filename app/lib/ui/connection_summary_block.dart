@@ -98,11 +98,14 @@ Future<void> addEndpointOnly(BuildContext context, AppModel app) async {
 }
 
 /// **重新拨一次**：不改偏好、不换端点。
+///
+/// 走 [AppModel.reconnectLink] 而不是直接 `onReconnect`：用户按过「断开连接」
+/// 之后，这里同时是**恢复**动作（清掉"我要离线"那条意图），否则拨了也还是断的。
 Future<void> reconnectNow(BuildContext context, AppModel app) async {
   final reconnect = app.onReconnect;
   if (reconnect == null) return;
   DshToast.show(context, '正在重连…');
-  await reconnect();
+  await app.reconnectLink();
   if (!context.mounted) return;
   // 状态点要等握手才有变化，"点了没点上"这一拍需要回执。
   DshToast.show(context, '已重新发起连接');

@@ -867,9 +867,11 @@ class _DshMobileAppState extends State<DshMobileApp>
         app: app,
         paired: _credentials != null,
         onConnect: _openPairing,
-        // 议题 3：连接操作 sheet 的"重新配对 / 断开并清掉凭据"。
+        // 连接操作 sheet 的「重新配对」（清凭据、回配对页）与「断开连接」。
+        // **断开只断链**：凭据留着，用户随时点「重新连接」回来 —— 清凭据是
+        // 「重新配对」的事，一个动作不该顺手把配对抹了（误触代价太大）。
         onRePair: _repair,
-        onDisconnect: () => unawaited(_resetPairing()),
+        onDisconnect: () => unawaited(app.disconnectLink()),
         hostSwitch: _hostSwitchSeam,
         onOpenDrawer: () => _chatKey.currentState?.openDrawer(),
         onNewSession: _newSession,
@@ -1169,12 +1171,14 @@ class _DshMobileAppState extends State<DshMobileApp>
         attemptOf: app.attemptOf,
         hint: app.connectionHint,
         detail: app.busyOccupant,
+        userDisconnected: app.userDisconnected,
       ),
       // **换电脑**（与聊天页顶栏那个 sheet 同一份缝）。
       hostSwitch: _hostSwitchSeam,
       onRePair: _repair,
       onOpenSide: () => _chatKey.currentState?.openSide(),
-      onDisconnect: () => unawaited(_resetPairing()),
+      // 断开连接：**只断链，不动凭据**（清凭据是「重新配对」的事，藏在设置里）。
+      onDisconnect: () => unawaited(app.disconnectLink()),
     );
   }
 
@@ -1414,18 +1418,6 @@ class _DshMobileAppState extends State<DshMobileApp>
     if (days == 1) return '昨天';
     if (days < 7) return '$days 天前';
     return '${at.month}/${at.day}';
-  }
-
-  /// 清掉**全部**配对（换设备 / 连不上时重来）。
-  ///
-  /// 这是"撤销所有配对"，不是"忘掉这一台"：多机之后两者是两个动作，
-  /// 后者只删当前槽（并保留切换回去的可能）—— 见 `pairingStore.clear()`。
-  Future<void> _resetPairing() async {
-    // 同"重新配对"：先抓旧配对标识，再清。之后扫同一台电脑的码是**替换**
-    // 旧行，不是又攒一行。
-    _refreshRePairHint();
-    await pairingStore.clearAll();
-    await _reassembleUnpaired();
   }
 
   /// 换一个"没配对"的 AppModel（**不清凭据** —— 清不清由调用方决定）。

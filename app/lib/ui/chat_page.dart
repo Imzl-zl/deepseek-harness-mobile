@@ -1509,6 +1509,7 @@ class ChatPageState extends State<ChatPage> {
           attemptOf: widget.app.attemptOf,
           hint: widget.app.connectionHint,
           detail: widget.app.busyOccupant,
+          userDisconnected: widget.app.userDisconnected,
         ),
         // **换电脑**（已配对两台以上才给这一行）：装配层注入，页面只转发。
         hostSwitch: widget.hostSwitch,

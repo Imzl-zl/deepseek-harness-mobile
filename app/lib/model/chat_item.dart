@@ -1158,7 +1158,13 @@ ConnectionSummary connectionSummary({
   /// 具体的失败原因（目前只有"被谁占着"：`AppModel.busyOccupant`）。
   /// **比「连接不上」更该被看见**，所以优先于其它诊断句。
   String? detail,
+
+  /// 用户自己按了「断开连接」——**优先级最高**：这不是故障，别用"未连接"糊过去。
+  bool userDisconnected = false,
 }) {
+  if (userDisconnected) {
+    return (line: '已断开连接', note: '凭据还在，点「重新连接」随时回来');
+  }
   if (state != ConnectionStateView.serving || active == null) {
     // 没连上：给状态名；**端点表里每一条都拨不通时补一句诊断** ——
     // 那是"电脑不在线 / 换了网络地址"与"正在重连"的唯一区分，而空态与

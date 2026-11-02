@@ -53,7 +53,12 @@ SyncClient createSyncClient(SyncClientDeps deps) => _SyncClient(deps);
 const int kHandshakeRefusalCloseCode = 4003;
 
 class _SyncClient
-    implements SyncClient, SyncClientProbe, SnapshotCaller, SessionRestorer {
+    implements
+        SyncClient,
+        SyncClientProbe,
+        SnapshotCaller,
+        SessionRestorer,
+        LinkControl {
   _SyncClient(this._deps)
     : _machine = ConnectionMachine(),
       _backoff = _deps.backoff ?? Backoff(),
@@ -281,9 +286,30 @@ class _SyncClient
   // -------------------------------------------------------------------------
 
   /// 建立连接并走握手。**幂等**：已在连接中或已服务时不重复建。
+  /// 用户按了「断开连接」：断链 + **不再自动重连**，直到 [reconnect]（[LinkControl]）。
+  ///
+  /// 为什么必须在这里挡：`start()` 是自动触发的（启动 / 回前台 / 退避到点），
+  /// 只关掉 socket 不挡 `start()` 的话，几秒后自己又连回来 —— 用户会看到
+  /// "我明明断了，它自己又连上了"，那正是"替用户猜场景"。
+  @override
+  Future<void> disconnect() async {
+    if (_closed) return;
+    _userDisconnected = true;
+    _cancelBackoff?.call();
+    _cancelBackoff = null;
+    _closeTransport();
+    _enterClosed();
+  }
+
+  /// 用户主动断开过（UI 据此说"已按你的要求断开"）。
+  bool get userDisconnected => _userDisconnected;
+  bool _userDisconnected = false;
+
   @override
   Future<void> start() async {
     if (_closed) return;
+    // 用户要离线：自动触发一律不动（手动恢复走 `reconnect()`）。
+    if (_userDisconnected) return;
     // **终态不重连**：身份不被认（换票被拒）后，机器停在 `closed` 等上层重新配对
     // （装配点会换一个新客户端）。这里再 `start()` 只会又拿到同一个 401；
     // 且 `closed → connecting` 是**非法迁移**（`setAppState(foreground)` 会在
@@ -319,6 +345,8 @@ class _SyncClient
     _cancelBackoff = null;
     _closeTransport();
     _enterClosed();
+    // 这是**用户的连接动作**：把"我要离线"那条意图清掉，否则下面 `start()` 会直接返回。
+    _userDisconnected = false;
     // `closed` 是终态，`start()` 会直接返回；恢复意图要显式回到起点。
     // 但**终态失败（身份不被认）不复活**：那种情况该走重新配对。
     if (_lastConnectWasTerminal) return;

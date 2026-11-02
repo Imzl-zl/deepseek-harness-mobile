@@ -200,6 +200,17 @@ abstract interface class SyncClient {
   Future<void> close();
 }
 
+/// 「链路开关」—— 用户主动断开 / 恢复（`AppModel` 经能力判定使用）。
+///
+/// **不塞进 [SyncClient]**：全仓二十多个替身是 `implements SyncClient` 的，
+/// 加一个抽象方法就得改二十多处，而它们只测状态与投影、根本不关心断开语义。
+/// 用能力接口（与 `SyncClientProbe` 同一个手法）比"默认实现"更省，也不说谎：
+/// 不支持就是没有这个能力，调用方按 `is` 判定（见 `AppModel.disconnectLink`）。
+abstract interface class LinkControl {
+  /// 断链并**停止自动重连**，直到 [SyncClient.reconnect] 被显式调用。
+  Future<void> disconnect();
+}
+
 /// 诊断面：**不参与产品逻辑**，只给测试与日志用。
 ///
 /// 单独一个接口而不是塞进 [SyncClient]：UI 不该看到"收到的帧列表"这种东西

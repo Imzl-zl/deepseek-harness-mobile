@@ -1406,6 +1406,38 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 连接状态（界面视图）。
   ConnectionStateView get connection => _connection;
 
+  /// **用户主动断开了连接**（凭据仍在，随时能连回来）。
+  ///
+  /// 与"连不上"不是一回事：这是用户的意图，界面要如实说"已按你的要求断开"，
+  /// 并且**不自动重连** —— 连接层的 `start()`（启动 / 回前台 / 退避到点）都会被挡。
+  /// 恢复只走 [reconnectLink]（连接 sheet 的「重新连接」）。
+  bool get userDisconnected => _userDisconnected;
+  bool _userDisconnected = false;
+
+  /// 用户按「断开连接」：断链 + 停止自动重连（**不动凭据、不回配对页**）。
+  ///
+  /// 客户端不支持 [LinkControl]（测试替身 / 别的实现）时就只置意图位 —— 界面照样
+  /// 如实显示"已断开"，不假装做了没做的事。
+  Future<void> disconnectLink() async {
+    if (_userDisconnected) return;
+    _userDisconnected = true;
+    notifyListeners();
+    final link = client is LinkControl ? client as LinkControl : null;
+    await link?.disconnect();
+  }
+
+  /// 用户按「重新连接」：把"我要离线"那条意图清掉再拨。
+  Future<void> reconnectLink() async {
+    _userDisconnected = false;
+    notifyListeners();
+    final reconnect = onReconnect;
+    if (reconnect != null) {
+      await reconnect();
+      return;
+    }
+    await client.reconnect();
+  }
+
   /// **这台电脑正被哪台设备占着**（`device/busy` 随关闭理由带来的展示名）。
   ///
   /// `null` = 没被占用（或根本没被拒过）。名字是电脑侧给的展示值 ——

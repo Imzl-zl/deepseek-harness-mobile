@@ -219,8 +219,16 @@ Future<void> showConnectionActionsSheet(
         ),
       if (onDisconnect != null)
         ListTile(
-          leading: const DshIcon('trash', size: 18, color: DshColors.error),
-          title: const Text('断开并清掉凭据'),
+          // **只断链，不动凭据**：清凭据是「重新配对」的事。以前这一行写的是
+          // "断开并清掉凭据"——一个日常动作顺手把配对抹了，误触之后得重新扫码
+          // （用户原话："一般人谁会断开并清掉？误触怎么办？"）。
+          leading: const DshIcon(
+            'link',
+            size: 18,
+            color: DshColors.labelSecondary,
+          ),
+          title: const Text('断开连接'),
+          subtitle: const Text('凭据保留，随时可以连回来'),
           onTap: () {
             Navigator.of(inner).pop();
             onDisconnect();

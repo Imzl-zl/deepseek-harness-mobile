@@ -142,6 +142,7 @@ class SettingsPage extends StatelessWidget {
                 active: app.activeEndpoint,
                 endpoints: app.endpoints,
                 attemptOf: app.attemptOf,
+                userDisconnected: app.userDisconnected,
               ),
               onTap: () => pickEndpointToConnect(context, app),
               onReconnect: () => reconnectNow(context, app),
