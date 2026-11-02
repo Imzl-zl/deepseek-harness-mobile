@@ -69,6 +69,7 @@ import type { Caps } from '../dsh/caps.js'
 import type { ChannelState } from '../transport/channels.js'
 import type { AdvertiseKind, AdvertiseView } from './advertise.js'
 import type { ConnectionSaveResult, ConnectionView } from './connection-card.js'
+import type { UpdateInfo } from './update.js'
 
 /**
  * Connection 的精确 Fetch 路由（`packages/client/connection/src/rpc.ts:144-153`）。
@@ -117,6 +118,8 @@ export interface AdminDeviceRow {
 }
 
 export interface AdminDeps {
+  /** 「有没有新版本」的查询（电脑代查 npm，带缓存；见 `admin/update.ts`）。 */
+  update: { check(): Promise<UpdateInfo> }
   caps(): Caps
   metrics(): Readonly<Record<string, number>>
   devices(): readonly AdminDeviceRow[]
@@ -235,6 +238,8 @@ const ADVERTISE_PATH = '/api/dsh-mobile/advertise'
 const ENABLED_PATH = '/api/dsh-mobile/devices/enabled'
 const REMOVE_PATH = '/api/dsh-mobile/devices/remove'
 const CONNECTION_PATH = '/api/dsh-mobile/connection'
+/** 「有没有新版本」—— 只读，用户在面板上点一下才查（电脑代查 npm，见 admin/update.ts）。 */
+const UPDATE_PATH = '/api/dsh-mobile/update'
 
 export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
   const routes: ConnectionFetchRoute[] = [
@@ -332,6 +337,14 @@ export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
         }
         return json({ ok: true, ...deps.advertise.view() })
       },
+    },
+
+    {
+      // 查更新：**GET 而不是 POST** —— 它没有副作用（带缓存，见 update.ts）。
+      path: UPDATE_PATH,
+      methods: ['GET'],
+      requestBody: 'buffered',
+      fetch: async () => json(await deps.update.check()),
     },
 
     {

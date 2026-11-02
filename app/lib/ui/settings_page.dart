@@ -29,6 +29,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/app_update.dart';
 import '../core/endpoint.dart';
 import '../data/app_model.dart';
 import '../model/agent_preset.dart';
@@ -46,16 +47,6 @@ import 'connection_summary_block.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_sheet.dart';
 import 'dsh_toast.dart';
-
-/// App 版本（排错必需：手机侧这一行与电脑侧 DSH 版本互相印证）。
-///
-/// **没有 `package_info_plus`**：那是一个新依赖，而版本号对设置页只是
-/// 一行文字。构建期由 `--dart-define` 注入；没注入时显示 "dev"——
-/// 不猜一个版本号。
-const String kAppVersion = String.fromEnvironment(
-  'APP_VERSION',
-  defaultValue: 'dev',
-);
 
 /// 设置页（从抽屉底栏「设置」 push 进来）。
 class SettingsPage extends StatelessWidget {
@@ -330,6 +321,16 @@ class SettingsPage extends StatelessWidget {
               value: kAppVersion,
               onTap: () => _copy(context, kAppVersion),
             ),
+            // 查更新：**用户点才查**（启动时也静默查一次，结论落在这行）。
+            // 查不到如实说"查不到最新版本"，绝不显示"已是最新"。
+            _PrefRow(
+              icon: 'refresh',
+              label: '检查更新',
+              value: app.updateChecking
+                  ? '查询中…'
+                  : (app.appUpdate?.label ?? '点这里检查'),
+              onTap: () => unawaited(_checkUpdate(context, app)),
+            ),
             // **两个版本并排**（排错必需）：手机是哪一版、电脑上的 DSH 是哪一版。
             // 电脑侧版本来自 `repo.info.dshVersion`（宿主运行时真值）；拿不到说"未读到"，
             // 绝不拿连接器自己的 package.json 版本冒充。
@@ -405,6 +406,21 @@ class SettingsPage extends StatelessWidget {
     await Clipboard.setData(ClipboardData(text: text));
     if (!context.mounted) return;
     DshToast.show(context, '已复制');
+  }
+
+  /// 查一次更新并给回执。**失败用 error 色**（查不到不是"已是最新"）。
+  Future<void> _checkUpdate(BuildContext context, AppModel app) async {
+    await app.checkAppUpdate();
+    if (!context.mounted) return;
+    final update = app.appUpdate;
+    if (update == null) return;
+    DshToast.show(
+      context,
+      update.hasUpdate
+          ? '有新版本 v${update.latest}（去 GitHub Releases 页下载）'
+          : update.label,
+      kind: update.error == null ? DshToastKind.info : DshToastKind.error,
+    );
   }
 }
 

@@ -888,6 +888,38 @@ test('中转没配置过 ⇒ 预选「内置中转」，地址直接显示（不
   )
 })
 
+test('版本卡：点「检查更新」查到新版 ⇒ 显示版号与打开按钮', async () => {
+  const fetchImpl = async (url: string) =>
+    String(url).includes('/update')
+      ? {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            current: '0.1.8',
+            latest: '0.1.9',
+            hasUpdate: true,
+            url: 'https://www.npmjs.com/package/dsh-mobile-connector/v/0.1.9',
+            checkedAt: 1,
+          }),
+        }
+      : defaultFetch()(url)
+  const { react, panel, props, tree } = await mountPanel({}, fetchImpl)
+
+  // 还没查：版本位是「—」，只有一句提示。
+  assert.match(allText(tree), /点「检查更新」/)
+
+  const check = buttonWith(tree, '检查更新')
+  assert.ok(check !== undefined, '有「检查更新」')
+  ;(check.props.onClick as () => void)()
+  await settle()
+
+  const after = react.render(panel, props)
+  const text = allText(after)
+  assert.match(text, /0\.1\.8/, '查完后显示当前版本')
+  assert.match(text, /有新版本 0\.1\.9/)
+  assert.equal(buttonWith(after, '打开 npm 页面') !== undefined, true, '有新版时给落地页')
+})
+
 test('上报地址：自报的能「删除」（= 不再上报），删掉的进「已删除」可恢复', async () => {
   let hidden: string[] = []
   const posts: Array<Record<string, unknown>> = []

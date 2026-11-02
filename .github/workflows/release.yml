@@ -84,7 +84,8 @@ jobs:
           flutter pub get
           flutter build apk --release \
             --build-name="${GITHUB_REF_NAME#v}" \
-            --build-number="$GITHUB_RUN_NUMBER"
+            --build-number="$GITHUB_RUN_NUMBER" \
+            --dart-define=APP_VERSION="${GITHUB_REF_NAME#v}"
 
       - name: 收集产物
         run: |

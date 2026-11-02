@@ -18,7 +18,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # of the product and file versions while build-number is used as the build suffix.
 # 发版时 CI 用 `--build-name="${tag#v}"` 覆盖，所以**这里跟着标签走**：
 # 标签是 `v0.2.0`，这里就写 `0.2.0+1`（build-number 由 CI 覆盖）。
-version: 0.2.2+1
+version: 0.2.3+1
 
 environment:
   sdk: ^3.11.5

@@ -25,6 +25,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart'
     show ChangeNotifier, ValueListenable, ValueNotifier, visibleForTesting;
 
+import '../core/app_update.dart';
 import '../core/connection.dart';
 import '../core/endpoint.dart';
 import '../core/errors.dart';
@@ -130,6 +131,10 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     Set<String> succeededEndpointIds = const {},
     Future<String?> Function()? myLanIpv4Of,
 
+    /// 查最新 App 版本（装配层注入 `platform/update_checker.dart`；
+    /// `null` = 这个装配不查更新，界面显示"还没查过"）。
+    Future<String?> Function()? latestAppTag,
+
     /// 当前配对那台电脑的身份 = 它的 Ed25519 公钥（`pcSignPubHex`）。
     ///
     /// 端点表靠它区分"同一台电脑换了地址"与"换了一台电脑"：后者报过的地址
@@ -157,12 +162,48 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
        _initialHiddenEndpointIds = Set<String>.of(hiddenEndpointIds),
        _initialSucceededEndpointIds = Set<String>.of(succeededEndpointIds),
        _myLanIpv4Of = myLanIpv4Of,
+       _latestAppTag = latestAppTag,
        _hostIdOf = hostIdOf,
        _allowPlaintextPublic = allowPlaintextPublic,
        _hostStateMergeWindow = hostStateMergeWindow;
 
   /// 冷启动读回本地条目的缝（不传 = 不读本地库）。
   final Future<List<StoredItem>> Function(String sid)? _readLocalItems;
+
+  /// 查最新 App 版本的缝（不传 = 这一版不查更新）。
+  final Future<String?> Function()? _latestAppTag;
+
+  /// 最近一次版本查询的结论（`null` = 还没查过）。
+  AppUpdate? get appUpdate => _appUpdate;
+  AppUpdate? _appUpdate;
+
+  /// 正在查（界面显示"查询中…"）。
+  bool get updateChecking => _updateChecking;
+  bool _updateChecking = false;
+
+  /// 查一次最新版本。**失败也留结论**（`AppUpdate.error`），不把失败画成"已是最新"。
+  ///
+  /// 幂等：正在查时再点直接返回（不并发打两次网络）。
+  Future<void> checkAppUpdate() async {
+    final fetch = _latestAppTag;
+    if (fetch == null || _updateChecking) return;
+    _updateChecking = true;
+    notifyListeners();
+    try {
+      final latest = await fetch();
+      _appUpdate = AppUpdate(current: kAppVersion, latest: latest);
+    } on Object catch (error) {
+      _appUpdate = AppUpdate(
+        current: kAppVersion,
+        error: error is Exception
+            ? error.toString().replaceFirst('Exception: ', '')
+            : '$error',
+      );
+    } finally {
+      _updateChecking = false;
+      notifyListeners();
+    }
+  }
 
   /// 用户是否已确认"自部署中转走公网明文"（`net.allow_plaintext_public`）。
   bool get allowPlaintextPublic => _allowPlaintextPublic;

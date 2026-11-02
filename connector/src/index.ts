@@ -45,6 +45,7 @@
  * | `ctx.get(name)` 探测服务（裸读会抛） | `vendor/cordis/src/reflect.ts:233-243`（裸读抛在 `:144`、`:159-161`） |
  * | `export const inject` 的语义（缺服务则永不激活） | `vendor/cordis/src/registry.ts:105-106`（`ctx.inject` 在 `:169-176`） |
  */
+import { readFileSync } from 'node:fs'
 import { hostname } from 'node:os'
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -96,6 +97,7 @@ import { createDevicePublisher, rosterEntry } from './device-publish.js'
 import { offerForScanning, issuePairingOffer } from './pairing-offer.js'
 import { pairingQrSvg } from './pairing-qr.js'
 import { mountAdminFace } from './admin/mount.js'
+import { createUpdateChecker } from './admin/update.js'
 import { createConnectionCard, readConnectionState } from './admin/connection-card.js'
 import { createDeviceAdmin, type DeviceTablePort } from './admin/device-admin.js'
 import {
@@ -156,6 +158,23 @@ export { Config }
 const DEFAULT_CONNECTOR_ID = 'local'
 
 /** 只有必需服务进 `inject`；可选能力走 `ctx.get`（见文件头）。 */
+/**
+ * 这份插件自己的版本号（`connector/package.json` 的 `version`）。
+ *
+ * **读文件而不是写常量**：发版只改那一处（`pnpm pack` 的包名也用同一个字段），
+ * 写死一份就是第二个真值。构建产物在 `lib/index.js`，所以往上跳一层。
+ * 读不到就回 `'0.0.0'`（比对时等价于"永远有新版"，比假装最新要好）。
+ */
+function connectorVersion(): string {
+  try {
+    const url = new URL('../package.json', import.meta.url)
+    const parsed = JSON.parse(readFileSync(url, 'utf8')) as { version?: unknown }
+    return typeof parsed.version === 'string' ? parsed.version : '0.0.0'
+  } catch {
+    return '0.0.0'
+  }
+}
+
 export const inject: string[] = [...REQUIRED_SERVICES]
 
 // 「哪些配置键变了要重建哪条通道」在 `transport/rebuild.ts`（`REBUILD_KEYS`）：
@@ -1545,6 +1564,9 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         // 停传输时管理面照常工作（出码、设备管理都不依赖它）。
         unregisterAdminFace =
           mountAdminFace(ctx, {
+            // 查更新：**电脑侧代查 npm**（浏览器直连 registry 会被 CORS / 内网代理分叉）。
+            // 版本号读自己这份 package.json —— 不写死，发版只改那一处。
+            update: createUpdateChecker({ current: connectorVersion() }),
             caps: () => readCaps(ctx, { direct: listener !== null }),
             metrics: () => metrics.snapshot(),
             relayUrl: () => config.relayUrl() ?? null,

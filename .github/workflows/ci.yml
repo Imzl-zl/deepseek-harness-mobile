@@ -127,7 +127,9 @@ jobs:
       - name: 构建 debug APK
         if: github.event_name != 'pull_request'
         working-directory: app
-        run: flutter build apk --debug
+        # `APP_VERSION` 与发版同一个注入点（设置页「App 版本」/「检查更新」读它）。
+        # CI 没有标签，用短 sha 当版本 —— 写成 "dev" 之后连自己都认不出是哪一版。
+        run: flutter build apk --debug --dart-define=APP_VERSION="ci-${GITHUB_SHA::7}"
       - uses: actions/upload-artifact@v4
         if: github.event_name != 'pull_request'
         with:

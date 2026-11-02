@@ -54,6 +54,7 @@ import 'platform/photo_picker.dart';
 import 'platform/sqflite_item_store.dart';
 import 'platform/ticketed_transport.dart';
 import 'platform/transport_factory.dart';
+import 'platform/update_checker.dart';
 import 'platform/wallpaper_store.dart';
 import 'platform/websocket_transport.dart';
 import 'theme/dsh_colors.dart';
@@ -471,6 +472,9 @@ class _DshMobileAppState extends State<DshMobileApp>
       _booting = false;
     });
     await app.start();
+    // **启动时静默查一次更新**（结论落在设置页那一行；不弹窗、不打断）。
+    // 与连接无关：没连上电脑也该知道自己是不是新版。
+    unawaited(app.checkAppUpdate());
   }
 
   /// 进配对页（**用户主动**：`没配对`时的入口按钮，或设置里"重新配对"）。
@@ -1478,6 +1482,8 @@ Future<AppModel> _assembleWithoutCredentials([
     prefs: MetaPreferences(store),
     // 冷启动读回本地条目：没配对时也能看上次看到的内容（判据同 `_assemble`）。
     readLocalItems: (sid) => store.itemsOf(sid),
+    // 没配对也照样能查更新（版本与连接无关）。
+    latestAppTag: fetchLatestAppVersion,
     onConnectionTerminated: onConnectionTerminated,
     client: createSyncClient(
       SyncClientDeps(
@@ -1699,6 +1705,8 @@ Future<AppModel> _assemble(
     succeededEndpointIds: credentials.endpointMeta.succeededEndpointIds,
     // 本机 LAN 地址（拨号排序判"同网段"用）。拿不到就退化，不猜。
     myLanIpv4Of: currentLanIpv4,
+    // 查更新：只问 GitHub Release（平台层实现，见 `platform/update_checker.dart`）。
+    latestAppTag: fetchLatestAppVersion,
     // **这条地址是哪台电脑报的**：用配对时钉死的电脑公钥（`pcSignPubHex`），
     // 不用 `pcId` —— 连接器 id 默认就是 `"local"`，两台电脑会撞。
     // 换一台电脑后旧电脑的地址会被剪掉（永远拨不通，留着只拖慢每轮拨号）。

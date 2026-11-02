@@ -88,6 +88,16 @@ const CONNECTION_VIEW = {
 
 function deps(over: Partial<AdminDeps> = {}): AdminDeps {
   return {
+    // 查更新：默认"没有新版"，个别用例按需覆盖。
+    update: {
+      check: async () => ({
+        current: '0.1.8',
+        latest: '0.1.8',
+        hasUpdate: false,
+        url: null,
+        checkedAt: 0,
+      }),
+    },
     caps: () => CAPS,
     metrics: () => ({ pairedDevices: 2, failClosed: 0 }),
     devices: () => DEVICES,
@@ -156,6 +166,8 @@ test('端点：路径、方法、形状', async () => {
       '/api/dsh-mobile/transport/direct/stop POST',
       '/api/dsh-mobile/transport/relay/start POST',
       '/api/dsh-mobile/transport/relay/stop POST',
+      // 查更新：只读、GET、无副作用（带缓存，见 `admin/update.ts`）。
+      '/api/dsh-mobile/update GET',
     ],
   )
 

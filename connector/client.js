@@ -139,6 +139,8 @@ window.__ModuleLoader__.load({
     // 值的写入走 DSH 的 `settings.update`（落当前 profile 的 cordis.patch.yml），
     // 令牌走凭据记录面 —— 判据全在电脑侧（`src/admin/connection-card.ts`）。
     const CONNECTION = '/api/dsh-mobile/connection'
+    /** 查更新（只读；电脑侧代查 npm，见 `src/admin/update.ts`）。 */
+    const UPDATE = '/api/dsh-mobile/update'
 
     /**
      * 读应答体，**失败也要说人话**。
@@ -182,6 +184,14 @@ window.__ModuleLoader__.load({
       // 每一格的写入都不需要重启 DSH（loader 的 `loader/volatile-update` 会通知插件重建通道）。
       connectTitle: '连接',
       connectHint: '改完点保存',
+      versionTitle: '版本',
+      versionCheck: '检查更新',
+      versionChecking: '查询中…',
+      versionIdle: '点「检查更新」查一下 npm 上的最新版。',
+      versionNew: '有新版本 {v}',
+      versionUpToDate: '已是最新',
+      versionUnknown: '查不到最新版本：{reason}',
+      versionOpen: '打开 npm 页面',
       channelsTitle: '通道与地址',
       devicesTitle: '已配对设备',
       pairTitle: '配对新手机',
@@ -326,6 +336,14 @@ window.__ModuleLoader__.load({
       // ---- Connection card (2026-10-29) ----
       connectTitle: 'Connection',
       connectHint: 'Save to apply',
+      versionTitle: 'Version',
+      versionCheck: 'Check for updates',
+      versionChecking: 'Checking…',
+      versionIdle: 'Press "Check for updates" to ask npm for the latest version.',
+      versionNew: 'Update available: {v}',
+      versionUpToDate: 'Up to date',
+      versionUnknown: 'Could not check: {reason}',
+      versionOpen: 'Open npm page',
       channelsTitle: 'Channels & addresses',
       devicesTitle: 'Paired devices',
       pairTitle: 'Pair a new phone',
@@ -651,6 +669,21 @@ window.__ModuleLoader__.load({
     const messageOf = (caught) => (caught instanceof Error ? caught.message : String(caught))
 
     /**
+     * 「版本」卡片下面那一句。**四种结论都说实话**：
+     * 还没查 / 有新版 / 已是最新 / 查不到（带原话）。
+     */
+    const versionLine = (t, info) => {
+      if (info === null) return t('versionIdle')
+      if (typeof info.error === 'string' && info.error !== '') {
+        return t('versionUnknown', { reason: info.error })
+      }
+      if (info.hasUpdate === true && typeof info.latest === 'string') {
+        return t('versionNew', { v: info.latest })
+      }
+      return t('versionUpToDate')
+    }
+
+    /**
      * 起停**一条**传输通道。**停 ≠ 卸载**：只收这一条，配对记录与凭据
      * 原样留着，再启动时配对过的手机一条都不用重扫。
      *
@@ -942,6 +975,9 @@ window.__ModuleLoader__.load({
       const [connectionError, setConnectionError] = useState(null)
       const [error, setError] = useState('')
       const [qr, setQr] = useState(null)
+      // 「检查更新」：一次只查一次，结论留在卡片上（不弹框）。
+      const [updateInfo, setUpdateInfo] = useState(null)
+      const [updateBusy, setUpdateBusy] = useState(false)
       const [busy, setBusy] = useState('')
       const [now, setNow] = useState(() => Date.now())
       // **已停用默认收起**：真机联调会攒下几十行停用记录，全展开等于列表永远在长。
@@ -1191,6 +1227,31 @@ window.__ModuleLoader__.load({
           }
         } finally {
           setBusy('')
+        }
+      }
+
+      /**
+       * 查一次更新。**失败也要把原话显示出来** —— 查不到不等于"已是最新"。
+       *
+       * 结论留在卡片上（不弹框）：这是"看一眼"的事，弹框会挡住下面正在做的事。
+       */
+      const checkUpdate = async () => {
+        setUpdateBusy(true)
+        try {
+          const response = await fetch(UPDATE)
+          const body = await jsonOf(response)
+          if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
+          setUpdateInfo(body)
+        } catch (caught) {
+          setUpdateInfo({
+            current: updateInfo === null ? '—' : updateInfo.current,
+            latest: null,
+            hasUpdate: false,
+            url: null,
+            error: messageOf(caught),
+          })
+        } finally {
+          setUpdateBusy(false)
         }
       }
 
@@ -1789,7 +1850,33 @@ window.__ModuleLoader__.load({
             : null,
         ),
 
-        // ③ 配对新手机 —— 最低频，所以放最下面
+        // ③ 版本与更新 —— 只读查询，用户点一下才查（电脑代查 npm，见 admin/update.ts）
+        h(
+          'div',
+          { key: 'version', style: S.card },
+          h('div', { key: 'h', style: S.cardHead },
+            h('span', { style: { fontSize: 13, fontWeight: 600 } }, t('versionTitle')),
+            h('span', { style: S.pill('var(--dsw-alias-label-tertiary)') },
+              updateInfo === null ? '—' : updateInfo.current),
+            h('span', { style: { flex: 1 } }),
+            h('button', {
+              key: 'check', type: 'button',
+              style: updateBusy ? { ...S.btn, ...S.btnDisabled } : S.btn,
+              disabled: updateBusy,
+              onClick: checkUpdate,
+            }, updateBusy ? t('versionChecking') : t('versionCheck')),
+          ),
+          h('p', { key: 'd', style: { ...S.label, margin: 0 } }, versionLine(t, updateInfo)),
+          updateInfo !== null && updateInfo.hasUpdate && typeof updateInfo.url === 'string'
+            ? h('button', {
+                key: 'open', type: 'button',
+                style: { ...S.btn, marginTop: 8, alignSelf: 'flex-start' },
+                onClick: () => window.open(updateInfo.url, '_blank', 'noopener'),
+              }, t('versionOpen'))
+            : null,
+        ),
+
+        // ④ 配对新手机 —— 最低频，所以放最下面
         h(
           'div',
           { key: 'pair', style: S.card },
