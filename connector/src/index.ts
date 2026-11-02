@@ -87,6 +87,7 @@ import {
 import { relayHintFor } from './pairing.js'
 import { defaultRouteIPv4 } from './lan-address.js'
 import {
+  DEFAULT_RELAY_TOKEN_REF,
   clearRelayToken,
   readRelayToken,
   relayTokenStatusOf,
@@ -331,13 +332,11 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
   let connectorId = ''
 
   /**
-   * 自助兑换写回的凭据引用（`relayTokenRef` 没配时用它，与 cookbook 里那条同名）。
+   * 有效凭据引用：配置优先，没配就落到默认格（`DEFAULT_RELAY_TOKEN_REF`）。
    *
    * **引用名不随每次兑换变**：它是"令牌放在凭据面的哪一格"，不是一个身份。
+   * 自动兑换、拨号读取、面板「连接」卡读写都走这一个名字。
    */
-  const DEFAULT_RELAY_TOKEN_REF = 'relay-connector'
-
-  /** 有效凭据引用：配置优先，没配就落到默认格 —— 三处读令牌都走它。 */
   const tokenRef = (): string => {
     const configured = config.relayTokenRef()
     return configured === undefined || configured === '' ? DEFAULT_RELAY_TOKEN_REF : configured

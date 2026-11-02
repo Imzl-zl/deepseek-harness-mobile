@@ -99,17 +99,17 @@ test('投影：令牌只回「设没设 + 能不能写」，没有能装值的�
   assert.deepEqual(Object.keys(state.token).sort(), ['configured', 'writable'])
 })
 
-test('投影：`relayTokenRef` 缺席时不问凭据面，直接回"没设"（不自造一个 ref 去读）', async () => {
+test('投影：`relayTokenRef` 缺席/空串/类型不对时落到默认格（自动兑换与拨号读同一个名字）', async () => {
   const asked: string[] = []
-  const cases: Array<{ values: Record<string, unknown>; ref: string | undefined }> = [
+  const cases: Array<{ values: Record<string, unknown> }> = [
     // 根本没有这一格
-    { values: { relayUrl: 'ws://127.0.0.1:8787/ws/connector' }, ref: undefined },
-    // 空串 = 未配置（`save()` 也把空串当未配置，见 connection-card.ts）
-    { values: { relayUrl: 'ws://127.0.0.1:8787/ws/connector', relayTokenRef: '' }, ref: '' },
-    // 类型不对的不是 ref：不认，也不猜成 `String(42)`
-    { values: { relayUrl: 'ws://127.0.0.1:8787/ws/connector', relayTokenRef: 42 }, ref: undefined },
+    { values: { relayUrl: 'ws://127.0.0.1:8787/ws/connector' } },
+    // 空串 = 未配置，落到默认格
+    { values: { relayUrl: 'ws://127.0.0.1:8787/ws/connector', relayTokenRef: '' } },
+    // 类型不对的不是 ref：不猜 `String(42)`，同样落到默认格
+    { values: { relayUrl: 'ws://127.0.0.1:8787/ws/connector', relayTokenRef: 42 } },
   ]
-  for (const { values, ref } of cases) {
+  for (const { values } of cases) {
     const state = await readConnectionState(inputs({
       snapshot: { revision: 0, values },
       tokenStatusOf: async (askedRef) => {
@@ -117,10 +117,10 @@ test('投影：`relayTokenRef` 缺席时不问凭据面，直接回"没设"（�
         return { configured: true, writable: true }
       },
     }))
-    assert.deepEqual(state.token, { configured: false, writable: false })
-    assert.equal(state.relayTokenRef, ref)
+    assert.equal(state.relayTokenRef, 'relay-connector')
+    assert.deepEqual(state.token, { configured: true, writable: true })
   }
-  assert.deepEqual(asked, [], '没有可用的 ref 就不该碰凭据面')
+  assert.deepEqual(asked, ['relay-connector', 'relay-connector', 'relay-connector'])
 })
 
 test('投影：没有 settings 服务时 revision 是 undefined（卡片据此说"此部署没有设置服务"）', async () => {

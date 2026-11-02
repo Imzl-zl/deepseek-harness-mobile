@@ -74,6 +74,14 @@ export class RelayTokenError extends Error {
  */
 const TOKEN_SHAPE = /^[\x21-\x7e]{1,512}$/
 
+/**
+ * 配置里 `relayTokenRef` 为空时的默认凭据引用。
+ *
+ * **一个名字，三处用**：自动兑换写回的格、拨号读取的格、面板「连接」卡读写的格。
+ * 分成两个常量就会出现"面板说没设、拨号其实读到了"这种最难查的错位。
+ */
+export const DEFAULT_RELAY_TOKEN_REF = 'relay-connector'
+
 /** 记录键：配置里的 `relayTokenRef` 只是 `<scope>/<id>` 的 id 半边。 */
 export function relayTokenKey(ref: string): CredentialKey {
   return credentialKey(SCOPE, ref)

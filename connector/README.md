@@ -48,7 +48,7 @@ dsh plugin --profile <profile> add \
 **A. 面板（推荐）** —— DSH 侧边栏「手机」→「连接」卡：
 
 - **中转**：`内置中转`（开箱即用）/ `自定义`（填自己的中转根地址）
-- **令牌**：粘贴中转的连接器令牌（只写不读，界面上不显示值）
+- **令牌**：粘贴中转的连接器令牌（只写不读，界面上不显示值）；令牌行可点「去注册 / 登录」打开中转。
 - **直连**：`8790`（局域网点对点用；`0` = 不开）
 
 **B. profile 的 `cordis.patch.yml`：**
@@ -57,7 +57,7 @@ dsh plugin --profile <profile> add \
 - id: dsh-mobile-connector
   config:
     relayUrl: wss://relay.example.com/ws/connector   # 连接器拨的地址，带 /ws/connector
-    relayTokenRef: relay-connector                   # 指向 DSH 凭据面里的令牌
+    relayTokenRef: relay-connector                   # 可选；不写就用默认格 relay-connector
     listenPort: 8790                                 # 局域直连端口，0 = 不开
     listenHost: 0.0.0.0
 ```

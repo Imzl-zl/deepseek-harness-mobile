@@ -26,7 +26,7 @@
  *
  * 取舍见 `.agents/notes/implemented/2026-10-29-panel-connection-card.md`。
  */
-import { RelayTokenError } from '../dsh/relay-token.js'
+import { DEFAULT_RELAY_TOKEN_REF, RelayTokenError } from '../dsh/relay-token.js'
 import type { ChannelState } from '../transport/channels.js'
 import { isNonPublicHost, relayUrlOf } from '../transport/relay-url.js'
 
@@ -46,6 +46,7 @@ export interface ConnectionState {
   /** 只服务地址校验（`relayUrlOf` 的第一档），**不上卡**。 */
   allowInsecureLocal: boolean
   listenPort: number
+  /** 有效凭据引用：配置为空时是 `DEFAULT_RELAY_TOKEN_REF`，不是 `undefined`。 */
   relayTokenRef: string | undefined
   token: { configured: boolean; writable: boolean }
   relay: { running: boolean; connected: boolean }
@@ -197,14 +198,20 @@ export interface ConnectionReadInputs {
  * - 快照里没有的格如实回"空"（`undefined` / `false`），**不猜**一个默认值；
  * - `listenPort` 取不到时回**配置活读的那个值**（`configuredListenPort`）—— 回 `0`
  *   会让面板显示"不监听"，而监听面其实在跑；
- * - `relayTokenRef` 缺席时**根本不问凭据面**（不自造一个 ref 去读，那样会读到别人的记录）。
+ * - `relayTokenRef` 缺席或空串时落到**默认格** `DEFAULT_RELAY_TOKEN_REF`：自动兑换与拨号
+ *   读的就是这个格，面板不落过去就会显示"未设置"、并且拒绝写令牌。类型不对的仍不当 ref
+ *   （不猜 `String(42)`），落默认格。
+ *
+ * Note: 为什么空 ref 落默认格、为什么不改写配置 —— 见
+ * `.agents/notes/implemented/2026-11-02-connection-card-default-token-ref.md`
  */
 export async function readConnectionState(
   inputs: ConnectionReadInputs,
 ): Promise<ConnectionState> {
   const value = (inputs.snapshot?.values ?? {}) as Record<string, unknown>
   const revision = inputs.snapshot?.revision
-  const ref = typeof value['relayTokenRef'] === 'string' ? value['relayTokenRef'] : undefined
+  const rawRef = typeof value['relayTokenRef'] === 'string' ? value['relayTokenRef'] : undefined
+  const ref = rawRef === undefined || rawRef === '' ? DEFAULT_RELAY_TOKEN_REF : rawRef
   const relay = inputs.channels.find((row) => row.id === 'relay')
   const direct = inputs.channels.find((row) => row.id === 'direct')
   return {
@@ -216,10 +223,7 @@ export async function readConnectionState(
     listenPort:
       typeof value['listenPort'] === 'number' ? value['listenPort'] : inputs.configuredListenPort(),
     relayTokenRef: ref,
-    token:
-      ref === undefined || ref === ''
-        ? { configured: false, writable: false }
-        : await inputs.tokenStatusOf(ref),
+    token: await inputs.tokenStatusOf(ref),
     relay: { running: relay?.running ?? false, connected: relay?.connected === true },
     direct: { running: direct?.running ?? false },
   }
@@ -324,9 +328,11 @@ export function createConnectionCard(ports: ConnectionPorts): {
           return failure('token', new Error('token.op 必须是 keep / set / clear'))
         }
       }
-      if (before.relayTokenRef === undefined || before.relayTokenRef === '') {
-        return failure('body', new Error('relayTokenRef 未配置：不知道令牌该写进哪条记录'))
-      }
+      // `before.relayTokenRef` 已经是有效引用（`readConnectionState` 会落到默认格）；
+      // 这里再兜一次，防止装配方给出空串时把令牌写到没有名字的记录上。
+      const tokenRef = before.relayTokenRef === undefined || before.relayTokenRef === ''
+        ? DEFAULT_RELAY_TOKEN_REF
+        : before.relayTokenRef
 
       // 什么都没改：不写、不动 revision，回当前真值。
       if (applied.length === 0 && tokenOp.op === 'keep') {
@@ -370,8 +376,8 @@ export function createConnectionCard(ports: ConnectionPorts): {
       let tokenApplied: 'none' | 'set' | 'clear' = 'none'
       if (tokenOp.op !== 'keep') {
         try {
-          if (tokenOp.op === 'set') await ports.writeToken(before.relayTokenRef, tokenOp.value)
-          else await ports.clearToken(before.relayTokenRef)
+          if (tokenOp.op === 'set') await ports.writeToken(tokenRef, tokenOp.value)
+          else await ports.clearToken(tokenRef)
           tokenApplied = tokenOp.op
         } catch (error) {
           return failure('token', error, applied.length > 0)

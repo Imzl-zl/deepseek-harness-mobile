@@ -247,6 +247,13 @@ test('令牌：空白值不许当"清除"用（那是两种意图）；非法字
   }
 })
 
+test('令牌：relayTokenRef 为空时写到默认格（面板不再因"未配置"拒绝）', async () => {
+  const h = harness({ over: { relayTokenRef: undefined } })
+  const result = await h.card.save({ token: { op: 'set', value: 'tok-default' } })
+  assert.equal(result.status, 200)
+  assert.deepEqual(h.calls.writeToken, [['dsh-mobile-connector/relay-connector', 'tok-default']])
+})
+
 test('半成功：配置已写、令牌写失败 ⇒ 400 field=token 且 configApplied=true', async () => {
   const { card, calls } = harness({ tokenError: new Error('凭据存储只读') })
   const result = await card.save({

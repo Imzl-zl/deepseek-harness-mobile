@@ -292,7 +292,7 @@ td.id{color:var(--ink)}
     users: ['用户', '账号、电脑归属与额度'],
     connectors: ['连接器', '已连上来的电脑（控制面）'],
     channels: ['通道', '正在转发的一对一连接'],
-    usage: ['用量', '按人（或按电脑）的流量与本周期上限'],
+    usage: ['用量', '按账号看用量、额度与电脑/设备'],
     tokens: ['令牌', '谁能连这台中转'],
     events: ['动态', '最近发生在这台中转上的事（只记元数据）']
   }
@@ -392,6 +392,17 @@ td.id{color:var(--ink)}
     if (n >= 1024) return (n / 1024).toFixed(1) + ' KB'
     return n + ' B'
   }
+  /** 用量条：只在有上限时调用；满 100% 红、80% 黄。 */
+  function usageBar(used, limit) {
+    var bar = el('span', undefined, 'bar')
+    var fill = el('i')
+    var ratio = limit === null || limit <= 0 ? 0 : Math.min(100, Math.round(used * 100 / limit))
+    fill.style.width = ratio + '%'
+    if (limit !== null && used >= limit) fill.className = 'bad'
+    else if (limit !== null && ratio >= 80) fill.className = 'warn'
+    bar.appendChild(fill)
+    return bar
+  }
   function duration(ms) {
     var seconds = Math.max(0, Math.round(ms / 1000))
     if (seconds < 90) return seconds + ' 秒'
@@ -480,7 +491,9 @@ td.id{color:var(--ink)}
     document.getElementById('n-users').textContent = String((state.users || []).length)
     document.getElementById('n-connectors').textContent = String(state.totals.connectors)
     document.getElementById('n-channels').textContent = String(state.totals.channels)
-    document.getElementById('n-usage').textContent = state.quota ? String(state.quota.rows.length) : ''
+    document.getElementById('n-usage').textContent = state.auth
+      ? String(state.users.length)
+      : (state.quota ? String(state.quota.rows.length) : '')
     document.getElementById('n-tokens').textContent = String(activeTokens)
     document.getElementById('n-events').textContent = String(state.events.length)
     viewEl.textContent = ''
@@ -516,7 +529,7 @@ td.id{color:var(--ink)}
       usersCard.appendChild(usersHead)
       var usersBody = el('div', null, 'body')
       usersBody.appendChild(table(
-        ['邮箱', '角色', '状态', '#电脑', '#在线', '#设备', '#本月用量', ''],
+        ['邮箱', '角色', '状态', '#电脑', '#在线', '#设备', '本月用量', '最近登录', ''],
         state.users.map(function (row) {
           var actions = el('div')
           actions.appendChild(btn(row.status === 'active' ? '停用' : '恢复', function () {
@@ -555,6 +568,11 @@ td.id{color:var(--ink)}
             if (!confirm('把 ' + row.email + ' 的本期用量归零？')) return
             post('/admin/api/quota/reset', { subject: 'user:' + row.id }).then(refresh)
           }))
+          var usageCell = el('div')
+          usageCell.appendChild(el('div',
+            bytes(row.usedBytes) + (row.quotaBytes === null ? ' / 不限' : ' / ' + bytes(row.quotaBytes)),
+            'num'))
+          if (row.quotaBytes !== null) usageCell.appendChild(usageBar(row.usedBytes, row.quotaBytes))
           return [
             row.email,
             row.role === 'admin' ? '管理员' : '用户',
@@ -562,7 +580,8 @@ td.id{color:var(--ink)}
             row.activeConnectors + ' / ' + row.connectors,
             String(row.online),
             String(row.devices),
-            bytes(row.usedBytes) + (row.quotaBytes === null ? ' / 不限' : ' / ' + bytes(row.quotaBytes)),
+            usageCell,
+            row.lastLoginAt ? ago(row.lastLoginAt) : '—',
             actions
           ]
         }),
@@ -696,6 +715,117 @@ td.id{color:var(--ink)}
     }
 
     if (view === 'usage') {
+      if (state.auth) {
+        var totalUsed = (state.quota ? state.quota.rows : []).reduce(function (sum, row) { return sum + row.used }, 0)
+        var totalOnline = state.users.reduce(function (sum, row) { return sum + row.online }, 0)
+        var totalDevices = state.users.reduce(function (sum, row) { return sum + row.devices }, 0)
+        var usageKpis = el('div', undefined, 'kpis')
+        ;[
+          ['账号', state.users.length, ''],
+          ['本月总用量', bytes(totalUsed), 'accent'],
+          ['在线电脑', totalOnline, ''],
+          ['已配对设备', totalDevices, '']
+        ].forEach(function (item) {
+          var box = el('div', undefined, 'kpi ' + item[2])
+          box.appendChild(el('div', String(item[1]), 'v'))
+          box.appendChild(el('div', item[0], 'k'))
+          usageKpis.appendChild(box)
+        })
+        viewEl.appendChild(usageKpis)
+
+        var userUsage = el('section', undefined, 'card')
+        var usageHead = el('header')
+        usageHead.appendChild(el('h2', '用户用量'))
+        usageHead.appendChild(el('span', '按已用降序', 'meta'))
+        userUsage.appendChild(usageHead)
+        var usageBody = el('div', undefined, 'body')
+        var sortedUsers = state.users.slice().sort(function (a, b) { return b.usedBytes - a.usedBytes })
+        usageBody.appendChild(table(
+          ['账号', '状态', '#电脑', '#在线', '#设备', '本月用量', '最近登录', ''],
+          sortedUsers.map(function (row) {
+            var usageCell = el('div')
+            usageCell.appendChild(el('div',
+              bytes(row.usedBytes) + (row.quotaBytes === null ? ' / 不限' : ' / ' + bytes(row.quotaBytes)),
+              'num'))
+            if (row.quotaBytes !== null) usageCell.appendChild(usageBar(row.usedBytes, row.quotaBytes))
+            var actions = el('span')
+            actions.appendChild(btn('改额度', function () {
+              var current = row.quotaBytes === null ? '' : (row.quotaBytes / 1073741824).toFixed(2)
+              var next = prompt('本月额度（GB）；留空 = 不限', current)
+              if (next === null) return
+              if (next.trim() === '') {
+                post('/admin/api/users/limits', { id: row.id, quotaBytes: null }).then(refresh)
+                return
+              }
+              var value = parseFloat(next)
+              if (!isFinite(value) || value <= 0) { alert('要一个正数'); return }
+              post('/admin/api/users/limits', { id: row.id, quotaBytes: Math.round(value * 1073741824) }).then(refresh)
+            }))
+            actions.appendChild(btn('重置', function () {
+              if (!confirm('把 ' + row.email + ' 的本期用量归零？')) return
+              post('/admin/api/quota/reset', { subject: 'user:' + row.id }).then(refresh)
+            }))
+            return [
+              row.email,
+              row.status === 'active' ? '正常' : '已停用',
+              String(row.activeConnectors),
+              String(row.online),
+              String(row.devices),
+              usageCell,
+              row.lastLoginAt ? ago(row.lastLoginAt) : '—',
+              actions
+            ]
+          }),
+          '还没有账号'
+        ))
+        usageBody.appendChild(el('p', '按账号列出全部用户（含零用量）；「改额度」写账号库，立即生效。', 'hintline'))
+        userUsage.appendChild(usageBody)
+        viewEl.appendChild(userUsage)
+
+        var accountSubjects = {}
+        state.users.forEach(function (user) { accountSubjects['user:' + user.id] = true })
+        var legacyRows = (state.quota ? state.quota.rows : []).filter(function (row) {
+          return accountSubjects[row.subject] !== true
+        })
+        if (legacyRows.length > 0) {
+          var legacyCard = el('section', undefined, 'card')
+          var legacyHead = el('header')
+          legacyHead.appendChild(el('h2', '未归属账号的主体'))
+          legacyHead.appendChild(el('span', '旧令牌 / 未配 owner', 'meta'))
+          legacyCard.appendChild(legacyHead)
+          var legacyBody = el('div', undefined, 'body')
+          legacyBody.appendChild(table(['主体', '已用', '上限', ''], legacyRows.map(function (row) {
+            var used = el('span', bytes(row.used), 'num')
+            if (row.limit !== null && row.used >= row.limit) used.style.color = 'var(--bad)'
+            var limitCell = el('span')
+            limitCell.appendChild(el('span', row.limit === null ? '不限制' : bytes(row.limit)))
+            if (row.limit !== null) {
+              limitCell.appendChild(document.createTextNode(' '))
+              limitCell.appendChild(usageBar(row.used, row.limit))
+            }
+            var actions = el('span')
+            actions.appendChild(btn(row.limit === null ? '设上限' : '改上限', function () {
+              var next = prompt('上限（字节）；留空 = 取消上限', row.limit === null ? '' : String(row.limit))
+              if (next === null) return
+              var trimmed = next.trim()
+              if (trimmed === '') { post('/admin/api/quota', { subject: row.subject, bytes: null }).then(refresh); return }
+              var value = parseInt(trimmed, 10)
+              if (!isFinite(value) || value <= 0) { alert('要一个正整数（字节），或留空取消'); return }
+              post('/admin/api/quota', { subject: row.subject, bytes: value }).then(refresh)
+            }))
+            actions.appendChild(btn('重置', function () {
+              if (!confirm('把 ' + row.subject + ' 的本期用量归零？')) return
+              post('/admin/api/quota/reset', { subject: row.subject }).then(refresh)
+            }))
+            return [row.subject, used, limitCell, actions]
+          }), '没有未归属的用量'))
+          legacyBody.appendChild(el('p', '这些是账号模式之前或没配 owner 的令牌；迁移到账号后从这张表消失。', 'hintline'))
+          legacyCard.appendChild(legacyBody)
+          viewEl.appendChild(legacyCard)
+        }
+        return
+      }
+
       var usage = el('section', undefined, 'card')
       var uHead = el('header'); uHead.appendChild(el('h2', '用量与上限')); uHead.appendChild(el('span', state.quota ? (state.quota.period === 'month' ? '按月' : state.quota.period === 'day' ? '按天' : '不重置') : '', 'meta')); usage.appendChild(uHead)
       var uBody = el('div', undefined, 'body')
@@ -706,15 +836,8 @@ td.id{color:var(--ink)}
         var limitCell = el('span')
         limitCell.appendChild(el('span', row.limit === null ? '不限制' : bytes(row.limit)))
         if (row.limit !== null) {
-          var bar = el('span', undefined, 'bar')
-          var fill = el('i')
-          var ratio = Math.min(100, Math.round(row.used * 100 / row.limit))
-          fill.style.width = ratio + '%'
-          if (ratio >= 100) fill.className = 'bad'
-          else if (ratio >= 80) fill.className = 'warn'
-          bar.appendChild(fill)
           limitCell.appendChild(document.createTextNode(' '))
-          limitCell.appendChild(bar)
+          limitCell.appendChild(usageBar(row.used, row.limit))
         }
         var actions = el('span')
         actions.appendChild(btn(row.limit === null ? '设上限' : '改上限', function () {

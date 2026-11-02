@@ -170,6 +170,26 @@ window.__ModuleLoader__.load({
      */
     const BUILTIN_RELAY_URL = 'wss://dsh.0t0.me/ws/connector'
 
+    /**
+     * 从中转拨号地址推导出浏览器控制台地址。
+     *
+     * 连接器拨的是 `wss://host/ws/connector`，而账号页在中转根上（`/login`）：
+     * 只换协议、丢路径，不猜子路径。解析失败 / 空串 → `null`（不渲染链接）。
+     * 已登录时 `/login` 会 302 到 `/console`，所以一个链接同时覆盖"注册/登录"与"看用量"。
+     *
+     * Note: 为什么按 host 推导、为什么链到 /login —— 见
+     * `.agents/notes/implemented/2026-11-02-connection-card-opens-relay-console.md`
+     */
+    const relayConsoleUrlOf = (relayUrl) => {
+      try {
+        const url = new URL(relayUrl)
+        if (url.protocol !== 'wss:' && url.protocol !== 'ws:') return null
+        return `${url.protocol === 'wss:' ? 'https:' : 'http:'}//${url.host}/login`
+      } catch {
+        return null
+      }
+    }
+
     /** 侧边栏条目与主面板共用的 id（标准槽用字符串键，不 branded）。 */
     const PANEL_ID = 'dsh-mobile'
 
@@ -215,6 +235,8 @@ window.__ModuleLoader__.load({
       tokenUnset: '未设置',
       tokenPlaceholder: '留空 = 不改',
       tokenClear: '清除令牌',
+      tokenOpenConsole: '去注册 / 登录',
+      tokenOpenConsoleHint: '没有令牌？先在浏览器打开中转，注册并登录后进控制台「添加电脑」，再把令牌贴回来。',
       // 后果句必须写清"会发生什么 + 怎么恢复"：删掉后重建中转通道会立刻断开，
       // 而恢复要在服务器上重签令牌（面板里贴回来即可，不用改文件）。
       tokenClearTitle: '清除连接器令牌？',
@@ -366,6 +388,8 @@ window.__ModuleLoader__.load({
       tokenUnset: 'Not set',
       tokenPlaceholder: 'Leave empty to keep',
       tokenClear: 'Clear token',
+      tokenOpenConsole: 'Sign up / sign in',
+      tokenOpenConsoleHint: 'No token? Open the relay in your browser, sign up and sign in, add a computer in the console, then paste the token here.',
       tokenClearTitle: 'Clear the connector token?',
       tokenClearDescription: 'This computer will immediately stop reaching the relay (direct connections on the same WiFi keep working). To recover, issue a new token on the server and paste it back here.',
       tokenRefLabel: 'Credential reference',
@@ -782,6 +806,7 @@ window.__ModuleLoader__.load({
       // 「选中转」那两档：等于内置值 = 内置那一档，其余一律算自定义
       // （空串也算自定义：还没填过，得给他输入框）。
       const usingBuiltinRelay = draft.relayUrl === BUILTIN_RELAY_URL
+      const consoleUrl = relayConsoleUrlOf(draft.relayUrl)
       const editable = busy !== ''
       const errorOf = (slot) => (error !== null && error.slot === slot ? error.message : null)
       // 焦点环：`adminPanel` 持有"哪一格有焦点"，这里只按名字套样式
@@ -886,6 +911,20 @@ window.__ModuleLoader__.load({
               : 'var(--dsw-alias-label-tertiary)'),
           }, view.token.configured ? t('tokenSet') : t('tokenUnset')),
           h('span', { style: { flex: 1 } }),
+          consoleUrl === null
+            ? null
+            : h('a', {
+                href: consoleUrl,
+                target: '_blank',
+                rel: 'noopener noreferrer',
+                style: {
+                  ...S.btn,
+                  textDecoration: 'none',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  marginRight: 6,
+                },
+              }, t('tokenOpenConsole')),
           view.token.configured
             ? h('button', {
                 type: 'button',
@@ -915,6 +954,10 @@ window.__ModuleLoader__.load({
           : h('p', { role: 'alert', style: { ...S.label, ...S.err, margin: '4px 0 0' } }, errorOf('token')),
         h('p', { style: { ...S.label, ...S.dim, margin: '4px 0 0' } },
           `${t('tokenRefLabel')}：${view.value.relayTokenRef || '—'}`),
+        consoleUrl === null || view.token.configured
+          ? null
+          : h('p', { style: { ...S.label, ...S.dim, margin: '4px 0 0', lineHeight: 1.6 } },
+              t('tokenOpenConsoleHint')),
 
         // ⑤ 直连端口（0 = 停用直连）
         h('div', { style: { ...S.row, marginTop: 10 } },

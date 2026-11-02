@@ -282,7 +282,7 @@ export const CONSOLE_PAGE = `<!doctype html>
       var onboarding = card('先把一台电脑接上来')
       var steps = el('ol', null, 'steps')
       ;['点右上角「添加电脑」，给它起个名字，复制只显示一次的令牌。',
-        '在电脑的 DSH 里打开「手机 → 连接」，把令牌粘进去；relayTokenRef 空着就先填 relay-connector。',
+        '在电脑的 DSH 里打开「手机 → 连接」，把令牌粘进去；relayTokenRef 空着时按默认格 relay-connector 读写，不用先改配置。',
         '保存后电脑会自己连上来，再用手机扫码配对。'].forEach(function (line) {
         steps.appendChild(el('li', line))
       })
@@ -462,11 +462,9 @@ export const CONSOLE_PAGE = `<!doctype html>
       field.appendChild(input)
       body.appendChild(field)
       var note = el('p', null, 'hint')
-      note.appendChild(document.createTextNode('创建后把这串令牌粘进电脑的 DSH「手机 → 连接」卡；'))
-      note.appendChild(el('code', 'relayTokenRef'))
-      note.appendChild(document.createTextNode(' 为空时先填 '))
+      note.appendChild(document.createTextNode('创建后把这串令牌粘进电脑的 DSH「手机 → 连接」卡即可；relayTokenRef 空着时按默认格 '))
       note.appendChild(el('code', 'relay-connector'))
-      note.appendChild(document.createTextNode('。'))
+      note.appendChild(document.createTextNode(' 读写，不用先改配置。'))
       body.appendChild(note)
       box.appendChild(body)
       var foot = el('footer')

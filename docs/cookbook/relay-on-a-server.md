@@ -333,7 +333,7 @@ docker compose -f relay/docker-compose.yml logs --tail 3 relay   # 期望：中�
    然后用该账号登录 `/login`，再打开 `/admin`（账号会话会自动识别；break-glass 令牌仍可用）。
 
 4. **添加电脑**:`/console` →「添加电脑」→ 复制只显示一次的令牌 → 电脑的 DSH「手机 → 连接」粘贴。
-   `relayTokenRef` 空着时先填 `relay-connector`。第一次连上时中转把令牌绑定到该电脑的 `pcId`；
+   `relayTokenRef` 空着时按默认格 `relay-connector` 读写，不用先改配置。第一次连上时中转把令牌绑定到该电脑的 `pcId`；
    之后换电脑必须新建令牌或先「重置绑定」。
 
 5. **数据卷**：compose 必须挂 `./data:/config/data`（整目录，不要单文件）——SQLite 的 WAL 会生成
