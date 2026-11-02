@@ -47,3 +47,26 @@ export async function setRegistrationInConfig(
     },
   })
 }
+
+export async function setLimitsDefaultsInConfig(
+  configPath: string,
+  defaultMaxConnectors: number,
+  defaultQuotaBytes: number | null,
+): Promise<void> {
+  const config = await readConfig(configPath)
+  const auth = config.auth ?? {}
+  const current = typeof auth['limits'] === 'object' && auth['limits'] !== null
+    ? auth['limits'] as Record<string, unknown>
+    : {}
+  await writeConfig(configPath, {
+    ...config,
+    auth: {
+      ...auth,
+      limits: {
+        ...current,
+        defaultMaxConnectors,
+        defaultQuotaBytes,
+      },
+    },
+  })
+}

@@ -84,6 +84,10 @@ const opsOf = (calls: string[]): AdminOps => ({
     calls.push(`registration:${mode}:${domains.join(',')}`)
     return { ok: true }
   },
+  async setLimitsDefaults(maxConnectors, quotaBytes) {
+    calls.push(`limitsDefaults:${maxConnectors}:${String(quotaBytes)}`)
+    return { ok: true }
+  },
   async removeToken(id) {
     calls.push(`remove:${id}`)
     return { ok: true }
@@ -364,5 +368,16 @@ test('设置页：SMTP 与注册策略写回落点，非法值挡在路由层', 
   })).status, 400)
   assert.equal((await post(base, '/admin/api/registration', AUTH, {
     mode: 'opne', emailDomains: [],
+  })).status, 400)
+
+  assert.equal((await post(base, '/admin/api/limits-defaults', AUTH, {
+    maxConnectors: 3, quotaBytes: null,
+  })).status, 200)
+  assert.deepEqual(calls.at(-1), 'limitsDefaults:3:null')
+  assert.equal((await post(base, '/admin/api/limits-defaults', AUTH, {
+    maxConnectors: 0, quotaBytes: null,
+  })).status, 400)
+  assert.equal((await post(base, '/admin/api/limits-defaults', AUTH, {
+    maxConnectors: 3, quotaBytes: 0,
   })).status, 400)
 })

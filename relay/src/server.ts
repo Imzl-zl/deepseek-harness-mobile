@@ -621,6 +621,16 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         return adminJson(200, { ok: true })
       },
 
+      async setLimitsDefaults(defaultMaxConnectors, defaultQuotaBytes) {
+        if (options.adminOps?.setLimitsDefaults === undefined) return adminJson(501, { error: 'admin-ops-not-wired' })
+        const saved = await options.adminOps.setLimitsDefaults(defaultMaxConnectors, defaultQuotaBytes)
+        if (!saved.ok) return adminJson(500, { error: 'persist-failed', detail: saved.error ?? '' })
+        log?.info('admin.action', {
+          actor, action: 'limits.defaults', maxConnectors: defaultMaxConnectors, quotaBytes: defaultQuotaBytes,
+        })
+        return adminJson(200, { ok: true })
+      },
+
       async removeToken(id) {
         if (options.adminOps === undefined) return adminJson(501, { error: 'admin-ops-not-wired' })
         // **先吊销再删除**：活跃凭据不能一把删掉（那会让一台在线电脑莫名失联），

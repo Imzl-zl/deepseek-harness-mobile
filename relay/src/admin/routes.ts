@@ -132,6 +132,11 @@ export interface AdminOps {
   setSmtp(input: AdminSmtpInput): Promise<{ ok: boolean; error?: string }>
   /** 写回注册开关与邮箱域名白名单（运行时立即生效）。 */
   setRegistration(mode: 'open' | 'closed', emailDomains: readonly string[]): Promise<{ ok: boolean; error?: string }>
+  /** 写回新账号的默认电脑数 / 默认月额度。 */
+  setLimitsDefaults(
+    defaultMaxConnectors: number,
+    defaultQuotaBytes: number | null,
+  ): Promise<{ ok: boolean; error?: string }>
 }
 
 export interface AdminApi {
@@ -153,6 +158,7 @@ export interface AdminApi {
   testMail(to: string): Promise<AdminReply>
   setSmtp(input: AdminSmtpInput): Promise<AdminReply>
   setRegistration(mode: 'open' | 'closed', emailDomains: readonly string[]): Promise<AdminReply>
+  setLimitsDefaults(defaultMaxConnectors: number, defaultQuotaBytes: number | null): Promise<AdminReply>
 }
 
 const json = (status: number, body: unknown): AdminReply => ({
@@ -321,6 +327,20 @@ export function createAdminRoutes(api: AdminApi, page: string): { handle(request
           if (!domains.includes(domain)) domains.push(domain)
         }
         return api.setRegistration(mode, domains)
+      }
+
+      if (request.path === '/admin/api/limits-defaults') {
+        const maxConnectors = body['maxConnectors']
+        if (typeof maxConnectors !== 'number' || !Number.isInteger(maxConnectors)
+          || maxConnectors < 1 || maxConnectors > 100) {
+          return json(400, { error: 'max-connectors-invalid' })
+        }
+        const quotaBytes = body['quotaBytes']
+        if (quotaBytes !== null && (typeof quotaBytes !== 'number'
+          || !Number.isInteger(quotaBytes) || quotaBytes < 1)) {
+          return json(400, { error: 'quota-invalid' })
+        }
+        return api.setLimitsDefaults(maxConnectors, quotaBytes as number | null)
       }
 
       if (request.path === '/admin/api/mail/test') {

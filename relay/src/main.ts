@@ -41,7 +41,7 @@ import { createAccountsDb, type AccountsDb } from './accounts/db.ts'
 import { createSmtpMailer, sendSmtpMail, type SmtpConfig } from './accounts/smtp.ts'
 import { createAccountsLimiters } from './accounts/face.ts'
 import { normalizeEmail, type Mailer } from './accounts/email.ts'
-import { setRegistrationInConfig, setSmtpInConfig } from './accounts/config-write.ts'
+import { setLimitsDefaultsInConfig, setRegistrationInConfig, setSmtpInConfig } from './accounts/config-write.ts'
 import type { AdminOps, AdminSmtpInput } from './admin/routes.ts'
 
 interface RelayConfig {
@@ -518,6 +518,21 @@ const adminOps: AdminOps | undefined = config.admin === undefined && authConfig 
       runtimeAuth.registration.mode = mode
       runtimeAuth.registration.emailDomains = [...emailDomains]
       console.log(`注册策略已更新：${mode}，域名 ${emailDomains.length === 0 ? '不限' : emailDomains.join(', ')}`)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+  async setLimitsDefaults(
+    defaultMaxConnectors: number,
+    defaultQuotaBytes: number | null,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (runtimeAuth === undefined) return { ok: false, error: '账号模式未开启' }
+    try {
+      await setLimitsDefaultsInConfig(configPath, defaultMaxConnectors, defaultQuotaBytes)
+      runtimeAuth.limits.defaultMaxConnectors = defaultMaxConnectors
+      runtimeAuth.limits.defaultQuotaBytes = defaultQuotaBytes
+      console.log(`默认额度已更新：${defaultMaxConnectors} 台电脑，${defaultQuotaBytes === null ? '不限' : `${defaultQuotaBytes} 字节`}`)
       return { ok: true }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }

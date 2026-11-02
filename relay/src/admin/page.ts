@@ -310,7 +310,19 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
 .seg button:last-child{border-right:0}
 .seg button.on{background:var(--ink);color:var(--panel)}
 @media (max-width:1080px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.two{grid-template-columns:1fr}.settings-grid{grid-template-columns:1fr}}
-@media (max-width:860px){.side{width:auto;padding:12px 16px}.topbar{padding:20px 16px 14px}.content{padding:18px 16px 48px}}
+@media (max-width:860px){
+  .side{width:auto;flex-direction:row;align-items:center;gap:10px;padding:10px 12px;overflow-x:auto;flex-wrap:nowrap}
+  .brand{flex:none}
+  .brand span{display:none}
+  nav{flex-direction:row;flex-wrap:nowrap;margin-top:0;gap:0}
+  nav a{border-top:0;border-bottom:2px solid transparent;padding:8px 10px;white-space:nowrap}
+  nav a:before,nav em{display:none}
+  nav a:last-child{border-bottom:2px solid transparent}
+  .sidefoot{display:none}
+  .topbar{position:static;padding:16px}
+  .topbar h1{font-size:30px}
+  .content{padding:14px}
+}
 </style>
 </head>
 <body>
@@ -639,7 +651,7 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
       usersCard.appendChild(usersHead)
       var usersBody = el('div', null, 'body')
       usersBody.appendChild(table(
-        ['邮箱', '角色', '状态', '#电脑', '#在线', '#设备', '本月用量', '最近登录', ''],
+        ['邮箱', '操作', '角色', '状态', '#电脑', '#在线', '#设备', '本月用量', '最近登录'],
         state.users.map(function (row) {
           var actions = el('div')
           actions.appendChild(btn(row.status === 'active' ? '停用' : '恢复', function () {
@@ -655,14 +667,15 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
               role: row.role === 'admin' ? 'user' : 'admin'
             }).then(refresh)
           }))
-          actions.appendChild(btn('电脑上限', function () {
-            var next = prompt('这个账号最多几台电脑（1–100）', String(row.maxConnectors))
+          actions.appendChild(btn('改电脑数', function () {
+            var current = row.maxConnectors === null ? state.auth.defaultMaxConnectors : row.maxConnectors
+            var next = prompt('这个账号最多几台电脑（1–100）', String(current))
             if (next === null) return
             var value = parseInt(next, 10)
             if (!isFinite(value)) { alert('要一个整数'); return }
             post('/admin/api/users/limits', { id: row.id, maxConnectors: value }).then(refresh)
           }))
-          actions.appendChild(btn('额度', function () {
+          actions.appendChild(btn('改额度', function () {
             var current = row.quotaBytes === null ? '' : (row.quotaBytes / 1073741824).toFixed(2)
             var next = prompt('本月额度（GB）；留空 = 不限', current)
             if (next === null) return
@@ -674,7 +687,7 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
             if (!isFinite(value) || value <= 0) { alert('要一个正数'); return }
             post('/admin/api/users/limits', { id: row.id, quotaBytes: Math.round(value * 1073741824) }).then(refresh)
           }))
-          actions.appendChild(btn('重置用量', function () {
+          actions.appendChild(btn('重置', function () {
             if (!confirm('把 ' + row.email + ' 的本期用量归零？')) return
             post('/admin/api/quota/reset', { subject: 'user:' + row.id }).then(refresh)
           }))
@@ -685,14 +698,14 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
           if (row.quotaBytes !== null) usageCell.appendChild(usageBar(row.usedBytes, row.quotaBytes))
           return [
             row.email,
+            actions,
             row.role === 'admin' ? '管理员' : '用户',
             row.status === 'active' ? '正常' : '已停用',
             row.activeConnectors + ' / ' + row.connectors,
             String(row.online),
             String(row.devices),
             usageCell,
-            row.lastLoginAt ? ago(row.lastLoginAt) : '—',
-            actions
+            row.lastLoginAt ? ago(row.lastLoginAt) : '—'
           ]
         }),
         '还没有账号'
@@ -964,6 +977,31 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
         wrap.appendChild(input); wrap.appendChild(el('span', label))
         return { wrap: wrap, input: input }
       }
+
+      var limitsCard = el('section', undefined, 'card')
+      var limitsHead = el('header'); limitsHead.appendChild(el('h2', '默认')); limitsCard.appendChild(limitsHead)
+      var limitsBody = el('div', undefined, 'body')
+      var limitsGrid = el('div', undefined, 'settings-grid')
+      var defaultComputers = fieldOf('默认电脑数', authState.defaultMaxConnectors, 'number', '2')
+      var defaultQuota = fieldOf('新账号月额度（GB）',
+        authState.defaultQuotaBytes === null ? '' : (authState.defaultQuotaBytes / 1073741824).toFixed(2),
+        'number', '留空 = 不限')
+      limitsGrid.appendChild(defaultComputers.wrap)
+      limitsGrid.appendChild(defaultQuota.wrap)
+      limitsBody.appendChild(limitsGrid)
+      var saveLimits = btn('保存', function () {
+        var max = parseInt(defaultComputers.input.value, 10)
+        if (!isFinite(max) || max < 1 || max > 100) { alert('电脑数要 1–100'); return }
+        var rawQuota = defaultQuota.input.value.trim()
+        var quota = rawQuota === '' ? null : Math.round(parseFloat(rawQuota) * 1073741824)
+        if (rawQuota !== '' && (!isFinite(quota) || quota < 1)) { alert('额度要一个正数'); return }
+        saveLimits.disabled = true
+        post('/admin/api/limits-defaults', { maxConnectors: max, quotaBytes: quota }).then(function (data) {
+          if (data) refresh(true); else saveLimits.disabled = false
+        })
+      })
+      limitsBody.appendChild(saveLimits)
+      limitsCard.appendChild(limitsBody); viewEl.appendChild(limitsCard)
 
       var regCard = el('section', undefined, 'card')
       var regHead = el('header'); regHead.appendChild(el('h2', '注册')); regCard.appendChild(regHead)

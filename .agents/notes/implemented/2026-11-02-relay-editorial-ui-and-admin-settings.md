@@ -1,4 +1,4 @@
-# Agent Note: 编辑风 UI + 管理台可改 SMTP 与注册策略
+# Agent Note: 编辑风 UI + 管理台可改 SMTP、注册与默认额度
 
 Status: implemented
 
@@ -16,8 +16,10 @@ Status: implemented
 
 ### 设置页
 
-- `/admin` 新增「设置」：SMTP（host/port/secure/starttls/user/pass/from/fromName）与注册
-  （open/closed、邮箱域名白名单）。
+- `/admin` 新增「设置」：SMTP（host/port/secure/starttls/user/pass/from/fromName）、注册
+  （open/closed、邮箱域名白名单）与默认额度（默认电脑数、新账号默认月额度）。
+- 默认电脑数写 `auth.limits.defaultMaxConnectors`，对没单独覆盖的用户生效；默认额度写
+  `auth.limits.defaultQuotaBytes`，在注册时快照进用户行，所以只影响新账号。
 - 保存顺序固定：**先写回 `relay.config.json`，再改运行时**。写失败回 500，界面不假装成功。
 - 发信用一个门面 `Mailer`：`createAccountsFace` 启动时抓住门面，管理台换 SMTP 时只替换
   `currentMailer`，不重建账号面；测试邮件与验证码都走同一扇门。
