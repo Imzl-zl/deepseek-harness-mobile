@@ -1,6 +1,14 @@
-# 发布插件到 npm：推 `connector-v*` 标签，或手动 workflow_dispatch。
+# 发布插件到 npm：推 `v*`（与 Release 同一个标签）或 `connector-v*`，或手动 dispatch。
 #
-# 两条路径：
+# ## 为什么 `v*` 也触发
+#
+# 以前只有 `connector-v*` 触发，于是"推 `v*` 出 Release 和 APK"看起来像发版了，
+# 而 npm 上一直停在上一个版本 —— 用户按包名装插件拿到的还是旧的
+# （2026-11-02 就这么踩了一次：Release 已经 0.1.9，npm 还是 0.1.6）。
+# 现在两个入口都触发；同版本重复触发会被"npm 上已有这个版本"挡掉（幂等）。
+#
+# ## 两条认证路径
+#
 # - **首次发布**（bootstrap）：npm 的可信发布不能发新包的第一个版本（npm/cli#8544），
 #   所以要一次性 NPM_TOKEN（Classic Automation，用完即撤）。
 # - **之后**：包上配了 Trusted Publisher 就什么都不用，走 OIDC + provenance。
@@ -8,7 +16,7 @@ name: publish-connector
 
 on:
   push:
-    tags: ['connector-v*']
+    tags: ['v*', 'connector-v*']
   workflow_dispatch:
 
 permissions:
@@ -38,8 +46,10 @@ jobs:
           pnpm exec tsc --noEmit
           pnpm build
 
-      - name: 标签与 package.json 版本一致
-        if: startsWith(github.ref, 'refs/tags/')
+      # `connector-v1.2.3` 这种标签要求与 package.json 一致；`v1.2.3` 是**整仓发布**
+      # 标签（App 与插件版本不同号），所以只校验插件版本号是 semver、不比对标签。
+      - name: 版本与标签一致（仅 connector-v*）
+        if: startsWith(github.ref, 'refs/tags/connector-v')
         working-directory: connector
         run: |
           VERSION=$(node -p "require('./package.json').version")
@@ -59,6 +69,13 @@ jobs:
             echo "路径：一次性 token（首次 bootstrap）"
           else
             echo "路径：可信发布（OIDC）—— 需要包上已配 Trusted Publisher"
+          fi
+          # **幂等**：npm 上已经有这个版本就跳过（同一个 `v*` 标签重推、或
+          # connector-v 与 v 两个标签指向同一次发布，都不该让流水线红）。
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "dsh-mobile-connector@$VERSION" version >/dev/null 2>&1; then
+            echo "npm 上已经有 $VERSION，跳过发布"
+            exit 0
           fi
           # `--provenance` 两种路径都成立：仓库是公开的，OIDC 可用。
           npm publish --access public --provenance
