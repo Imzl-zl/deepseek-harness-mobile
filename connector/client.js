@@ -698,7 +698,10 @@ window.__ModuleLoader__.load({
      * `src/config.ts:26-29`）—— 界面**不发明**"上次用的那个端口"。
      */
     const draftOf = (view) => ({
-      relayUrl: view && view.value ? view.value.relayUrl || '' : '',
+      // **没配置过 ⇒ 预选内置那条**（"开箱即用"不是一句口号）：
+      // 空串会让「中转」落在「自定义」+ 空输入框上，用户看到的是"地址没显示"，
+      // 还得自己去点一下「内置中转」。配置里已经有别的值（自部署）时原样回填。
+      relayUrl: view && view.value ? view.value.relayUrl || BUILTIN_RELAY_URL : BUILTIN_RELAY_URL,
       allowInsecurePublic: Boolean(view && view.value && view.value.allowInsecurePublic),
       listenPort: view && view.value ? String(view.value.listenPort) : '',
       listenDisabled: !view || !view.value || view.value.listenPort === 0,

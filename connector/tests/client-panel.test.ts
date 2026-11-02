@@ -862,6 +862,32 @@ test('连接卡：清除令牌走页面内确认，后果句写明"要在服务�
   assert.deepEqual(calls[0], { revision: 0, token: { op: 'clear' } })
 })
 
+test('中转没配置过 ⇒ 预选「内置中转」，地址直接显示（不是空输入框）', async () => {
+  // 用户在桌面 profile 里从没填过 relayUrl：旧实现把空串当"自定义"，
+  // 面板上就只剩一个空输入框 —— 看起来像"内置中转地址没显示"。
+  const empty = {
+    ...CONNECTION_VIEW,
+    value: { ...CONNECTION_VIEW.value, relayUrl: '' },
+  }
+  const fetchImpl = async (url: string) =>
+    String(url).includes('/connection')
+      ? { ok: true, status: 200, json: async () => empty }
+      : defaultFetch()(url)
+  const { tree } = await mountPanel({}, fetchImpl)
+
+  const text = allText(tree)
+  assert.match(
+    text,
+    /wss:\/\/dsh\.0t0\.me\/ws\/connector/,
+    '内置中转的地址要直接显示出来，不用用户去点一下才看得到',
+  )
+  assert.equal(
+    addressInput(tree),
+    undefined,
+    '内置选中时不该有地址输入框（那是「自定义」才有的）',
+  )
+})
+
 test('上报地址：自报的能「删除」（= 不再上报），删掉的进「已删除」可恢复', async () => {
   let hidden: string[] = []
   const posts: Array<Record<string, unknown>> = []
