@@ -204,6 +204,113 @@ td.id{color:var(--ink)}
   .card .body{overflow-x:auto}
 }
 @media (prefers-reduced-motion:reduce){ *{transition:none!important} }
+
+/* ---------- editorial skin（覆盖上面的旧 token） ---------- */
+:root{
+  --display:Georgia,"Times New Roman","Songti SC","Noto Serif SC",serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --bg:#f4f1ea; --panel:#fffdf8; --panel2:#ebe6db; --line:#ddd6c8; --line2:#c6bdab;
+  --ink:#171614; --ink2:#3d3932; --ink3:#6d675c; --cap:#8b8477;
+  --accent:#e8451f; --accent-ink:#fff8f2; --accent-soft:rgba(232,69,31,.10);
+  --ok:#1f7a4d; --warn:#a86a00; --bad:#b3261e;
+  --shadow:none;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#121110; --panel:#1a1816; --panel2:#231f1c; --line:#332f2a; --line2:#4a443c;
+  --ink:#f3eee4; --ink2:#d8d0c2; --ink3:#a69d8e; --cap:#8a8173;
+  --accent:#ff5a2f; --accent-ink:#1a0c08; --accent-soft:rgba(255,90,47,.12);
+  --ok:#5bd39a; --warn:#e0a33a; --bad:#ff7a6b;
+}}
+body{background:var(--bg);color:var(--ink);font:14px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans SC",sans-serif}
+.login{background:var(--bg);padding:24px}
+.login-card{width:min(380px,100%);background:transparent;border:0;border-top:1px solid var(--line2);
+  border-radius:0;padding:32px 0 0;box-shadow:none}
+.login-card h1{font-family:var(--display);font-size:34px;font-weight:500;margin:20px 0 6px}
+.login-card .sub{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--cap);margin:0 0 24px}
+.login-card .mark{background:var(--accent);border-color:var(--accent)}
+.login-card .mark svg{stroke:var(--accent-ink)}
+.login-card input{width:100%;height:44px;border:0;border-bottom:1px solid var(--line2);border-radius:0;
+  background:transparent;color:var(--ink);font:inherit;font-size:15px;outline:none}
+.login-card input:focus{border-color:var(--accent);box-shadow:none}
+.login-card .primary{width:100%;height:42px;background:var(--accent);border:1px solid var(--accent);
+  border-radius:0;color:var(--accent-ink);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase}
+.login-card .hint{color:var(--cap);font-size:11.5px}
+.app{background:var(--bg)}
+.side{width:240px;background:var(--panel);border-right:1px solid var(--line);padding:28px 20px}
+.brand b{font-family:var(--display);font-size:19px;font-weight:500;letter-spacing:-.01em}
+.brand span{font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--cap)}
+.brand .mark{background:var(--accent);border-color:var(--accent)}
+.brand .mark svg{stroke:var(--accent-ink)}
+nav{margin-top:26px;counter-reset:nav}
+nav a{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line);
+  border-radius:0;color:var(--ink3);font-size:13px}
+nav a:before{counter-increment:nav;content:counter(nav,decimal-leading-zero);width:18px;
+  font-family:var(--mono);font-size:9.5px;color:var(--cap)}
+nav a:last-child{border-bottom:1px solid var(--line)}
+nav a:hover{background:transparent;color:var(--ink)}
+nav a.active{background:transparent;color:var(--accent);font-weight:600}
+nav a.active:before{color:var(--accent)}
+nav em{font-family:var(--mono);font-size:10px;color:var(--cap)}
+.sidefoot{border-top:1px solid var(--line);padding-top:16px}
+.pill{height:24px;border-radius:0;border:1px solid var(--line2);background:transparent;
+  font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.topbar{padding:32px 40px 20px;background:var(--bg);border-bottom:1px solid var(--line);backdrop-filter:none}
+.topbar h1{font-family:var(--display);font-size:40px;font-weight:500;line-height:1;letter-spacing:-.02em}
+.topbar p{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--cap)}
+.ghost{height:32px;border:1px solid var(--line2);border-radius:0;background:transparent;
+  font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink2)}
+.ghost:hover{background:var(--ink);border-color:var(--ink);color:var(--panel)}
+.content{padding:28px 40px 64px;max-width:1180px;gap:24px}
+.kpis{grid-template-columns:repeat(4,minmax(0,1fr));gap:0;border-top:1px solid var(--line);
+  border-bottom:1px solid var(--line)}
+.kpi{background:transparent;border:0;border-right:1px solid var(--line);border-radius:0;padding:20px}
+.kpi:last-child{border-right:0}
+.kpi .v{font-family:var(--display);font-size:42px;font-weight:500;line-height:1}
+.kpi .k{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--cap)}
+.card{background:transparent;border:0;border-top:1px solid var(--line);border-radius:0;
+  box-shadow:none;overflow:visible}
+.card > header{padding:16px 0 10px}
+.card h2{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--cap)}
+.card .body{padding:0 0 12px}
+th{font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--cap);padding:0 8px 8px}
+td{padding:12px 8px;border-bottom:1px solid var(--line);font-size:13px}
+tbody tr:hover td{background:var(--accent-soft)}
+.btn{height:30px;border:1px solid var(--line2);border-radius:0;background:transparent;
+  font-size:9.5px;letter-spacing:.08em;text-transform:uppercase}
+.btn:hover{background:var(--ink);border-color:var(--ink);color:var(--panel)}
+.btn.danger{border-color:var(--bad);color:var(--bad)}
+.btn.danger:hover{background:var(--bad);color:var(--panel)}
+.tag{border-radius:0;font-size:9px;letter-spacing:.08em;text-transform:uppercase;height:20px;
+  padding:0 7px;background:transparent}
+.bar{height:2px;border-radius:0}
+.spark .line{stroke:var(--accent)}
+.spark .area{fill:var(--accent-soft)}
+.two{gap:24px}
+.kv .row{padding:9px 0;border-bottom:1px solid var(--line)}
+.kv .row:last-child{border-bottom:0}
+.kv .row span:first-child{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--cap)}
+.hintline{font-size:11.5px;color:var(--cap)}
+a.ghost{display:inline-flex;align-items:center;text-decoration:none}
+a.btn{display:inline-flex;align-items:center;text-decoration:none}
+.settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 28px}
+.settings-grid .full{grid-column:1/-1}
+.field{display:block;margin:0 0 18px}
+.field > span{display:block;font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--cap);margin:0 0 6px}
+.input{width:100%;height:42px;padding:0;border:0;border-bottom:1px solid var(--line2);border-radius:0;
+  background:transparent;color:var(--ink);font:inherit;font-size:14px;outline:none}
+.field input.input{width:100%;height:42px;padding:0;border:0;border-bottom:1px solid var(--line2);
+  border-radius:0;background:transparent;color:var(--ink);font:inherit;font-size:14px;outline:none}
+.input:focus,.field input.input:focus{border-color:var(--accent);box-shadow:none}
+.check{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--ink3);margin:0 0 18px}
+.check input{accent-color:var(--accent)}
+.seg{display:inline-flex;border:1px solid var(--line2)}
+.seg button{height:34px;padding:0 16px;border:0;border-right:1px solid var(--line2);
+  background:transparent;color:var(--ink3);font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--ink);color:var(--panel)}
+@media (max-width:1080px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.two{grid-template-columns:1fr}.settings-grid{grid-template-columns:1fr}}
+@media (max-width:860px){.side{width:auto;padding:12px 16px}.topbar{padding:20px 16px 14px}.content{padding:18px 16px 48px}}
 </style>
 </head>
 <body>
@@ -250,6 +357,7 @@ td.id{color:var(--ink)}
       <a href="#/usage" data-view="usage">用量<em id="n-usage"></em></a>
       <a href="#/tokens" data-view="tokens">令牌<em id="n-tokens"></em></a>
       <a href="#/events" data-view="events">动态<em id="n-events"></em></a>
+      <a href="#/settings" data-view="settings">设置</a>
     </nav>
     <div class="sidefoot">
       <span id="pill" class="pill"><i class="dot"></i><span id="pill-text">连接中…</span></span>
@@ -296,7 +404,8 @@ td.id{color:var(--ink)}
     channels: ['通道', '正在转发的一对一连接'],
     usage: ['用量', '按账号看用量、额度与电脑/设备'],
     tokens: ['令牌', '谁能连这台中转'],
-    events: ['动态', '最近发生在这台中转上的事（只记元数据）']
+    events: ['动态', '最近发生在这台中转上的事（只记元数据）'],
+    settings: ['设置', '注册与发信']
   }
 
   var EVENT_LABELS = {
@@ -447,7 +556,7 @@ td.id{color:var(--ink)}
     appEl.hidden = false
     if (timer === null) timer = setInterval(refresh, 2000)
   }
-  function refresh() {
+  function refresh(force) {
     fetch('/admin/api/state', { credentials: 'same-origin', headers: headers() }).then(function (response) {
       if (response.status === 401) {
         toLogin(sessionMode ? '账号会话已失效，请重新登录（或输入管理令牌）' : '令牌无效或已过期')
@@ -459,8 +568,10 @@ td.id{color:var(--ink)}
       if (!state) return
       toApp()
       setPill('ok', '已连接')
+      var first = lastState === null
       lastState = state
-      render(state)
+      // 设置页有未保存的输入：2 s 轮询不能把表单重画掉。保存成功后传 true 强制重画。
+      if (first || force === true || viewOf() !== 'settings') render(state)
     }).catch(function () { setPill('bad', '连不上中转') })
   }
 
@@ -591,32 +702,6 @@ td.id{color:var(--ink)}
       ))
       usersCard.appendChild(usersBody)
       viewEl.appendChild(usersCard)
-
-      var mailCard = el('section', undefined, 'card')
-      var mailHead = el('header'); mailHead.appendChild(el('h2', '发信测试')); mailCard.appendChild(mailHead)
-      var mailBody = el('div', null, 'body')
-      var mailRow = el('div', null, 'actions')
-      var mailInput = el('input')
-      mailInput.type = 'email'
-      mailInput.placeholder = '收件邮箱'
-      mailInput.style.padding = '7px 10px'
-      mailInput.style.border = '1px solid var(--line2)'
-      mailInput.style.borderRadius = '8px'
-      mailInput.style.background = 'var(--bg)'
-      mailInput.style.color = 'var(--ink)'
-      mailInput.style.minWidth = '240px'
-      mailRow.appendChild(mailInput)
-      mailRow.appendChild(btn('发测试邮件', function () {
-        var to = mailInput.value.trim()
-        if (to === '') return
-        post('/admin/api/mail/test', { to: to }).then(function (data) {
-          if (data) alert('已交给 SMTP，去收件箱看看')
-        })
-      }))
-      mailBody.appendChild(mailRow)
-      mailBody.appendChild(el('p', 'AhaSend 发件域名需先校验。', 'hintline'))
-      mailCard.appendChild(mailBody)
-      viewEl.appendChild(mailCard)
       return
     }
 
@@ -864,6 +949,120 @@ td.id{color:var(--ink)}
       return
     }
 
+    if (view === 'settings') {
+      if (!state.auth) {
+        var noAuth = el('section', undefined, 'card')
+        var noHead = el('header'); noHead.appendChild(el('h2', '账号模式未启用')); noAuth.appendChild(noHead)
+        var noBody = el('div', undefined, 'body')
+        noBody.appendChild(el('p', '在 relay.config.json 里加 auth 段并重启。', 'hintline'))
+        noAuth.appendChild(noBody); viewEl.appendChild(noAuth); return
+      }
+      var authState = state.auth
+      var fieldOf = function (label, value, type, placeholder) {
+        var wrap = el('label', null, 'field')
+        wrap.appendChild(el('span', label))
+        var input = el('input', null, 'input')
+        input.type = type || 'text'
+        input.value = value === undefined || value === null ? '' : String(value)
+        if (placeholder) input.placeholder = placeholder
+        wrap.appendChild(input)
+        return { wrap: wrap, input: input }
+      }
+      var checkOf = function (label, checked) {
+        var wrap = el('label', null, 'check')
+        var input = el('input'); input.type = 'checkbox'; input.checked = checked
+        wrap.appendChild(input); wrap.appendChild(el('span', label))
+        return { wrap: wrap, input: input }
+      }
+
+      var regCard = el('section', undefined, 'card')
+      var regHead = el('header'); regHead.appendChild(el('h2', '注册')); regCard.appendChild(regHead)
+      var regBody = el('div', undefined, 'body')
+      var modeRow = el('div')
+      modeRow.style.cssText = 'display:flex;align-items:center;gap:14px;margin:0 0 20px'
+      modeRow.appendChild(el('span', '状态', 'cap'))
+      var currentMode = authState.registration === 'closed' ? 'closed' : 'open'
+      var seg = el('div', undefined, 'seg')
+      var modeButtons = []
+      ;[['open', '开放'], ['closed', '关闭']].forEach(function (pair) {
+        var b = el('button', pair[1])
+        b.type = 'button'
+        if (currentMode === pair[0]) b.className = 'on'
+        b.addEventListener('click', function () {
+          currentMode = pair[0]
+          modeButtons.forEach(function (item) { item.className = item === b ? 'on' : '' })
+        })
+        modeButtons.push(b); seg.appendChild(b)
+      })
+      modeRow.appendChild(seg); regBody.appendChild(modeRow)
+      var domains = fieldOf('邮箱域名白名单', (authState.emailDomains || []).join(', '), 'text', '留空 = 不限；多个用逗号分隔')
+      regBody.appendChild(domains.wrap)
+      var saveReg = btn('保存', function () {
+        saveReg.disabled = true
+        post('/admin/api/registration', { mode: currentMode, emailDomains: domains.input.value }).then(function (data) {
+          if (data) refresh(true); else saveReg.disabled = false
+        })
+      })
+      regBody.appendChild(saveReg)
+      regCard.appendChild(regBody); viewEl.appendChild(regCard)
+
+      var smtp = authState.smtp || { host: '', port: 587, secure: false, starttls: true, user: '', from: '', fromName: '' }
+      var mailCard = el('section', undefined, 'card')
+      var mailHead = el('header')
+      mailHead.appendChild(el('h2', '发信'))
+      mailHead.appendChild(el('span', smtp.host ? smtp.host + ':' + smtp.port : '未配置', 'meta'))
+      mailCard.appendChild(mailHead)
+      var mailBody = el('div', undefined, 'body')
+      var grid = el('div', undefined, 'settings-grid')
+      var host = fieldOf('服务器', smtp.host, 'text', 'send.ahasend.com')
+      var port = fieldOf('端口', smtp.port, 'number', '587')
+      var user = fieldOf('用户名', smtp.user, 'text', 'SMTP 用户名')
+      var pass = fieldOf('密码', '', 'password', '留空 = 不改')
+      var from = fieldOf('发件人', smtp.from, 'email', 'noreply@example.com')
+      var fromName = fieldOf('发件人名称', smtp.fromName || '', 'text', 'DSH 中转')
+      ;[host, port, user, pass, from, fromName].forEach(function (item) { grid.appendChild(item.wrap) })
+      var tls = el('div', null, 'full')
+      var secure = checkOf('SSL / TLS（465）', smtp.secure === true)
+      var starttls = checkOf('STARTTLS（587）', smtp.starttls === true)
+      tls.appendChild(secure.wrap); tls.appendChild(starttls.wrap); grid.appendChild(tls)
+      mailBody.appendChild(grid)
+      var mailActions = el('div', null, 'actions')
+      var saveMail = btn('保存', function () {
+        saveMail.disabled = true
+        post('/admin/api/smtp', {
+          host: host.input.value.trim(),
+          port: Number(port.input.value),
+          secure: secure.input.checked,
+          starttls: starttls.input.checked,
+          user: user.input.value.trim(),
+          pass: pass.input.value,
+          from: from.input.value.trim(),
+          fromName: fromName.input.value.trim(),
+        }).then(function (data) { if (data) refresh(true); else saveMail.disabled = false })
+      })
+      mailActions.appendChild(saveMail)
+      mailBody.appendChild(mailActions)
+      var testRow = el('div')
+      testRow.style.cssText = 'display:flex;gap:10px;align-items:flex-end;margin-top:18px;max-width:420px'
+      var testTo = fieldOf('测试收件人', '', 'email', 'you@example.com')
+      testTo.wrap.style.margin = '0'
+      testTo.wrap.style.flex = '1'
+      testRow.appendChild(testTo.wrap)
+      var testBtn = btn('发送测试', function () {
+        var to = testTo.input.value.trim()
+        if (to === '') return
+        testBtn.disabled = true
+        post('/admin/api/mail/test', { to: to }).then(function (data) {
+          testBtn.disabled = false
+          if (data) alert('已交给 SMTP')
+        })
+      })
+      testRow.appendChild(testBtn)
+      mailBody.appendChild(testRow)
+      mailCard.appendChild(mailBody); viewEl.appendChild(mailCard)
+      return
+    }
+
     if (view === 'events') {
       var eventsCard = el('section', undefined, 'card')
       var eHead = el('header'); eHead.appendChild(el('h2', '最近事件')); eHead.appendChild(el('span', String(state.events.length) + ' 条（最多留 100）', 'meta')); eventsCard.appendChild(eHead)
@@ -982,7 +1181,7 @@ td.id{color:var(--ink)}
     tokenInput.value = ''
     toLogin(null)
   })
-  document.getElementById('refresh').addEventListener('click', refresh)
+  document.getElementById('refresh').addEventListener('click', function () { refresh(true) })
   window.addEventListener('hashchange', function () { if (lastState) render(lastState) })
 
   // 先看有没有管理员账号会话；没有再看有没有 break-glass 令牌。

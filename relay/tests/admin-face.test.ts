@@ -76,6 +76,14 @@ const opsOf = (calls: string[]): AdminOps => ({
     calls.push(`connectorAuth:${mode}:${String(limit)}`)
     return { ok: true }
   },
+  async setSmtp(input) {
+    calls.push(`smtp:${input.host}:${input.port}`)
+    return { ok: true }
+  },
+  async setRegistration(mode, domains) {
+    calls.push(`registration:${mode}:${domains.join(',')}`)
+    return { ok: true }
+  },
   async removeToken(id) {
     calls.push(`remove:${id}`)
     return { ok: true }
@@ -325,4 +333,36 @@ test('面板能改「连接器是否必须认证」与名额：落盘点被调�
   assert.equal((await post(base, '/admin/api/connector-auth', {}, { mode: 'open' })).status, 401)
 
   assert.deepEqual(actions.map((action) => action['action']), ['connector-auth.set', 'connector-auth.set'])
+})
+
+test('设置页：SMTP 与注册策略写回落点，非法值挡在路由层', async (t) => {
+  const calls: string[] = []
+  const { log } = recorder()
+  const relay = await startRelay({
+    port: 0, authenticate: () => undefined, admin: ADMIN, adminOps: opsOf(calls), log,
+  })
+  t.after(() => relay.close())
+  const base = baseOf(relay.port)
+
+  const smtp = {
+    host: 'send.ahasend.com', port: 587, secure: false, starttls: true,
+    user: 'smtp-user', pass: 'smtp-pass', from: 'noreply@0t0.me',
+  }
+  assert.equal((await post(base, '/admin/api/smtp', AUTH, smtp)).status, 200)
+  assert.deepEqual(calls.at(-1), 'smtp:send.ahasend.com:587')
+  assert.equal((await post(base, '/admin/api/smtp', AUTH, { ...smtp, host: '' })).status, 400)
+  assert.equal((await post(base, '/admin/api/smtp', AUTH, { ...smtp, port: 0 })).status, 400)
+  assert.equal((await post(base, '/admin/api/smtp', AUTH, { ...smtp, secure: false, starttls: false })).status, 400)
+  assert.equal((await post(base, '/admin/api/smtp', AUTH, { ...smtp, from: 'not-an-email' })).status, 400)
+
+  assert.equal((await post(base, '/admin/api/registration', AUTH, {
+    mode: 'closed', emailDomains: 'qq.com, @foxmail.com',
+  })).status, 200)
+  assert.deepEqual(calls.at(-1), 'registration:closed:qq.com,foxmail.com')
+  assert.equal((await post(base, '/admin/api/registration', AUTH, {
+    mode: 'open', emailDomains: ['not a domain'],
+  })).status, 400)
+  assert.equal((await post(base, '/admin/api/registration', AUTH, {
+    mode: 'opne', emailDomains: [],
+  })).status, 400)
 })

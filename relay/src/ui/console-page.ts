@@ -268,10 +268,10 @@ export const CONSOLE_PAGE = `<!doctype html>
     var devices = state.devices.length
     var kpis = el('div', null, 'kpis')
     kpis.appendChild(kpi(
-      state.quota.period === 'day' ? '今日' : '本月',
       state.quota.limit === null
-        ? bytes(state.quota.used) + ' 已用'
+        ? bytes(state.quota.used)
         : bytes(state.quota.used) + ' / ' + bytes(state.quota.limit),
+      state.quota.period === 'day' ? '今日用量' : '本月用量',
       quotaExtra(),
     ))
     kpis.appendChild(kpi(online + ' / ' + state.limits.maxConnectors, '在线电脑'))

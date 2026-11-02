@@ -85,9 +85,31 @@ export interface AdminStateView {
   auth: {
     mode: 'accounts'
     registration: string
+    emailDomains: readonly string[]
     defaultMaxConnectors: number
     defaultQuotaBytes: number | null
+    smtp: {
+      host: string
+      port: number
+      secure: boolean
+      starttls: boolean
+      user: string
+      from: string
+      fromName?: string
+    } | null
   } | null
+}
+
+/** 管理台「设置」页的 SMTP 输入（密码留空 = 保持原值）。 */
+export interface AdminSmtpInput {
+  host: string
+  port: number
+  secure: boolean
+  starttls: boolean
+  user: string
+  pass?: string
+  from: string
+  fromName?: string
 }
 
 /** 写动作的落盘点（持久化在装配方：配置文件的写入不在这一层）。 */
@@ -106,6 +128,10 @@ export interface AdminOps {
    * `limit === null` = 无上限（不预设人为限制）。
    */
   setConnectorAuth(mode: 'open' | 'required', limit: number | null): Promise<{ ok: boolean; error?: string }>
+  /** 写回 SMTP 并重建发信通道（密码留空 = 保持原值）。 */
+  setSmtp(input: AdminSmtpInput): Promise<{ ok: boolean; error?: string }>
+  /** 写回注册开关与邮箱域名白名单（运行时立即生效）。 */
+  setRegistration(mode: 'open' | 'closed', emailDomains: readonly string[]): Promise<{ ok: boolean; error?: string }>
 }
 
 export interface AdminApi {
@@ -125,6 +151,8 @@ export interface AdminApi {
   setUserLimits(id: string, patch: { maxConnectors?: number | null; quotaBytes?: number | null }): Promise<AdminReply>
   /** 发一封测试邮件（验证 SMTP 配置）。 */
   testMail(to: string): Promise<AdminReply>
+  setSmtp(input: AdminSmtpInput): Promise<AdminReply>
+  setRegistration(mode: 'open' | 'closed', emailDomains: readonly string[]): Promise<AdminReply>
 }
 
 const json = (status: number, body: unknown): AdminReply => ({
@@ -245,6 +273,54 @@ export function createAdminRoutes(api: AdminApi, page: string): { handle(request
           ...(maxConnectors === undefined ? {} : { maxConnectors: maxConnectors as number | null }),
           ...(quotaBytes === undefined ? {} : { quotaBytes: quotaBytes as number | null }),
         })
+      }
+
+      if (request.path === '/admin/api/smtp') {
+        const host = body['host']
+        if (typeof host !== 'string' || host.trim() === '') return json(400, { error: 'host-invalid' })
+        const port = body['port']
+        if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65_535) {
+          return json(400, { error: 'port-invalid' })
+        }
+        const secure = body['secure'] === true
+        const starttls = body['starttls'] === true
+        if (!secure && !starttls) return json(400, { error: 'tls-required' })
+        const user = typeof body['user'] === 'string' ? body['user'].trim() : ''
+        const rawPass = body['pass']
+        if (rawPass !== undefined && typeof rawPass !== 'string') return json(400, { error: 'pass-invalid' })
+        const from = typeof body['from'] === 'string' ? body['from'].trim().toLowerCase() : ''
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(from)) return json(400, { error: 'from-invalid' })
+        const fromName = typeof body['fromName'] === 'string' ? body['fromName'].trim() : undefined
+        return api.setSmtp({
+          host: host.trim(),
+          port,
+          secure,
+          starttls,
+          user,
+          ...(typeof rawPass === 'string' ? { pass: rawPass } : {}),
+          from,
+          ...(fromName === undefined || fromName === '' ? {} : { fromName }),
+        })
+      }
+
+      if (request.path === '/admin/api/registration') {
+        const mode = body['mode']
+        if (mode !== 'open' && mode !== 'closed') return json(400, { error: 'mode-invalid' })
+        const raw = body['emailDomains']
+        let items: unknown[]
+        if (raw === undefined || raw === null) items = []
+        else if (typeof raw === 'string') items = raw.split(',')
+        else if (Array.isArray(raw)) items = raw
+        else return json(400, { error: 'domains-invalid' })
+        const domains: string[] = []
+        for (const item of items) {
+          if (typeof item !== 'string') return json(400, { error: 'domains-invalid' })
+          const domain = item.trim().toLowerCase().replace(/^@/, '')
+          if (domain === '') continue
+          if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)) return json(400, { error: 'domains-invalid' })
+          if (!domains.includes(domain)) domains.push(domain)
+        }
+        return api.setRegistration(mode, domains)
       }
 
       if (request.path === '/admin/api/mail/test') {

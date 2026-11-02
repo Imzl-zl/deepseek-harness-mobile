@@ -77,7 +77,7 @@
 | POST | `/api/console/connectors` | 新建电脑,返回只显示一次的令牌 |
 | POST | `/api/console/connectors/action` | `rename` / `revoke` / `restore` / `remove` / `reset-binding` |
 
-管理面新增 `/admin/api/users/{status,role,limits}` 与 `/admin/api/mail/test`;账号会话(`role = admin`)与 break-glass Bearer 都能进 `/admin`。
+管理面新增 `/admin/api/users/{status,role,limits}`、`/admin/api/mail/test`、`/admin/api/smtp` 与 `/admin/api/registration`;账号会话(`role = admin`)与 break-glass Bearer 都能进 `/admin`。
 
 ## 6. 存续、备份与部署
 
@@ -91,14 +91,16 @@
 
 - `--check-smtp [--to <地址>]`:只连 SMTP、做 STARTTLS/隐式 TLS 与 AUTH,然后发一封自检邮件;不读账号库、不起监听。部署时先跑它。
 - AhaSend 的 `from` 必须落在**已校验的域名**上(当前是 `0t0.me`,不是 `dsh.0t0.me`);域名未校验时 `MAIL FROM` 会回 `556 Tenant or Domain not found`。
+- 管理台「设置」可直接改 SMTP 与注册开关/邮箱域名:保存先写回 `relay.config.json`,再替换运行时发信门面/注册策略,不用重启容器;密码留空 = 保持原值。
 - `--promote <已注册邮箱>`:把已有账号提升为管理员;不把密码放命令行。
 
 ## 8. UI
 
-- 认证页与用户控制台共用 `relay/src/ui/theme.ts` 的设计 token;单文件内联、无外链、CSP 维持 `default-src 'none'`。
+- 认证页与用户控制台共用 `relay/src/ui/theme.ts` 的设计 token;视觉为纸张底色 + 衬线标题 + 细线分隔 + 单色强调,亮/暗跟随系统。单文件内联、无外链、CSP 维持 `default-src 'none'`。
 - 登录页:左品牌、右表单;注册/重置共用一张壳,按路径显示字段。
-- 控制台:概览 / 我的电脑 / 账号;空状态给三步引导;添加电脑后令牌弹窗必须勾选"已保存"才能关闭。
-- 管理台:`/admin` 的"用户"分区显示账号、角色、状态、电脑/在线/设备数、本月用量(带用量条)、最近登录;可停用/恢复、改角色、改电脑上限、改额度、重置用量、发测试邮件。
+- 控制台:概览 / 我的电脑 / 账号;空状态一句话;添加电脑后令牌弹窗必须勾选"已保存"才能关闭。
+- 管理台:`/admin` 的"用户"分区显示账号、角色、状态、电脑/在线/设备数、本月用量(带用量条)、最近登录;可停用/恢复、改角色、改电脑上限、改额度、重置用量。
+- 管理台「设置」:SMTP 服务器/端口/TLS/用户名/密码/发件人,以及注册开放/关闭与邮箱域名白名单;保存即写回配置并立即生效,密码留空 = 不改。
 - **管理台不签发自己的令牌**:顶栏「我的电脑」与令牌页的「添加我的电脑」都指向 `/console`;管理员和普通用户走同一个「添加电脑」流程。
 - 管理台"用量"分区:账号数 / 本月总用量 / 在线电脑 / 已配对设备四个 KPI;按已用降序列出全部账号(含零用量)、额度条、最近登录,并可改额度或重置;**未归属账号的主体(旧令牌 / 没配 owner)单独一张表**,不会因为开了账号模式就从面板消失。
 - 电脑侧「连接」卡的令牌行有「去注册 / 登录」外链:按当前 `relayUrl` 推导 `http(s)://host/login`,`/login` 已登录会 302 到 `/console`;取舍见 `.agents/notes/implemented/2026-11-02-connection-card-opens-relay-console.md`。
@@ -107,6 +109,7 @@
 ![用户控制台概览](../assets/relay-user-console.png)
 ![添加电脑](../assets/relay-user-add-computer.png)
 ![令牌只显示一次](../assets/relay-user-token.png)
+![管理台设置：注册与发信](../assets/relay-admin-settings.png)
 ![管理台令牌页：顶栏「我的电脑」+「添加我的电脑」](../assets/relay-admin-tokens.png)
 
 ## 9. 已知边界
@@ -122,7 +125,7 @@
 ```pwsh
 cd relay
 pnpm exec tsc --noEmit -p tsconfig.json
-node --test                                  # 当前 151 条
+node --test                                  # 当前 152 条
 node src/main.ts --config relay.config.json --check-smtp   # 需要 auth.smtp
 ```
 

@@ -10,15 +10,18 @@
   首次 `?id=` 绑定 `connectorId`；默认 **2 台电脑 / 5 GiB 月额度**，管理员可在 `/admin` 用户区改；
   管理台「用量」面板给出账号数 / 总用量 / 在线电脑 / 已配对设备 KPI，以及按已用降序的用户表（含零用量）、未归属主体单表；
   管理台自己不签发令牌，顶栏「我的电脑」和令牌页「添加我的电脑」都指向 `/console`（管理员与普通用户同一套添加电脑流程）。
+  管理台「设置」可直接改 SMTP 与注册开关/邮箱域名：先写回配置，再替换运行时发信门面与注册策略，不用重启；密码留空 = 不改。
+  用户端与管理台视觉统一为纸张底色 + 衬线标题 + 细线分隔 + 朱红强调，亮/暗跟随系统。
   电脑侧「连接」卡令牌行加了「去注册 / 登录」外链（按 `relayUrl` 推导 `/login`，插件 0.1.10）；
   空 `relayTokenRef` 时面板按默认格 `relay-connector` 读写，不再拒绝贴令牌。
   账号库 SQLite `relay/data/relay.db`（挂目录，WAL）；SMTP 走 AhaSend `send.ahasend.com:587`，
   发件人 `noreply@0t0.me`（AhaSend 已校验域名），`--check-smtp` 自检、`--promote` 提管理员。
-  浏览器实测：登录 → 控制台 → 添加电脑（令牌只显示一次）→ `/admin` 用户/用量视图。relay **151** 条全绿；
+  浏览器实测：登录 → 控制台 → 添加电脑（令牌只显示一次）→ `/admin` 设置/令牌/用户/用量视图。relay **152** 条全绿；
   文档 `docs/subsystems/relay-accounts.md`，笔记
   `implemented/2026-11-02-relay-accounts-and-connector-binding.md`、
   `implemented/2026-11-02-connection-card-opens-relay-console.md`、
-  `implemented/2026-11-02-connection-card-default-token-ref.md`。
+  `implemented/2026-11-02-connection-card-default-token-ref.md`、
+  `implemented/2026-11-02-relay-editorial-ui-and-admin-settings.md`。
 
 - **CI 修好 + README 重写（11-02）**：CI 从 10-31 起一直红，**原因与功能无关**——
   `app` job 第一步 `dart format --set-exit-if-changed` 有 20 个文件没格式化（上一批改动留下的），
@@ -223,7 +226,7 @@
 | `cd app && flutter test` | 1649 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **826** 项 |
-| `cd relay && pnpm typecheck && node --test` | 类型 + **151** 条 |
+| `cd relay && pnpm typecheck && node --test` | 类型 + **152** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
 

@@ -38,9 +38,11 @@ import { readMeteringState } from './metering-state.ts'
 import { startRelay, type AccountsRuntime, type ConnectorEnroll } from './server.ts'
 import { parseAuthConfig, type AuthConfig } from './accounts/config.ts'
 import { createAccountsDb, type AccountsDb } from './accounts/db.ts'
-import { createSmtpMailer, sendSmtpMail } from './accounts/smtp.ts'
+import { createSmtpMailer, sendSmtpMail, type SmtpConfig } from './accounts/smtp.ts'
 import { createAccountsLimiters } from './accounts/face.ts'
-import { normalizeEmail } from './accounts/email.ts'
+import { normalizeEmail, type Mailer } from './accounts/email.ts'
+import { setRegistrationInConfig, setSmtpInConfig } from './accounts/config-write.ts'
+import type { AdminOps, AdminSmtpInput } from './admin/routes.ts'
 
 interface RelayConfig {
   port?: number
@@ -354,7 +356,42 @@ if (authConfig !== undefined) {
   }
   accountsDb.deleteExpiredSessions(Date.now())
 }
-const mailer = authConfig?.smtp === undefined ? undefined : createSmtpMailer(authConfig.smtp)
+/**
+ * 运行时可改的账号策略（管理台「设置」页写的就是这一份）。
+ *
+ * `parseAuthConfig` 返回的是只读快照；这里复制出可变对象，配置写回成功后再改它。
+ * 面板的读面（`server.ts` 的 `auth` 摘要）读的也是这一份，所以改完立刻能看到。
+ *
+ * 决策见 `.agents/notes/implemented/2026-11-02-relay-editorial-ui-and-admin-settings.md`。
+ */
+type RuntimeAuthConfig = {
+  mode: 'accounts'
+  baseUrl?: string
+  dbPath: string
+  serverName: string
+  registration: { mode: 'open' | 'closed'; requireEmailVerification: boolean; emailDomains: string[] }
+  limits: { defaultMaxConnectors: number; defaultQuotaBytes: number | null }
+  adminEmails: readonly string[]
+  smtp?: SmtpConfig
+  trustProxy: boolean
+  sessionDays: number
+}
+const runtimeAuth: RuntimeAuthConfig | undefined = authConfig === undefined ? undefined : {
+  ...authConfig,
+  registration: { ...authConfig.registration, emailDomains: [...authConfig.registration.emailDomains] },
+  limits: { ...authConfig.limits },
+}
+let currentMailer = authConfig?.smtp === undefined ? undefined : createSmtpMailer(authConfig.smtp)
+/**
+ * 发信门面：`createAccountsFace` 在启动时抓住这个对象，管理台改 SMTP 时只换
+ * 后面的 `currentMailer`，不用重建整个账号面。
+ */
+const mailer: Mailer | undefined = runtimeAuth === undefined ? undefined : {
+  send(message) {
+    if (currentMailer === undefined) return Promise.reject(new Error('SMTP 未配置'))
+    return currentMailer.send(message)
+  },
+}
 const accountsLimiters = createAccountsLimiters(
   process.env['DSH_RELAY_DEBUG'] === '1' ? createJsonLogger({ debug: true }) : undefined,
 )
@@ -392,7 +429,7 @@ if (process.argv.includes('--promote')) {
  * **账号模式下也要装上**：没有 break-glass `admin` 段时，管理员用账号会话进 `/admin`，
  * 令牌清单与改额度的写动作同样要走这里；不装的话面板看得见用户却看不见令牌。
  */
-const adminOps = config.admin === undefined && authConfig === undefined ? undefined : {
+const adminOps: AdminOps | undefined = config.admin === undefined && authConfig === undefined ? undefined : {
   tokens: () => table.list(),
   async setTokenEnabled(id: string, enabled: boolean): Promise<{ ok: boolean; error?: string }> {
     try {
@@ -442,6 +479,45 @@ const adminOps = config.admin === undefined && authConfig === undefined ? undefi
         return { ok: true }
       }
       await setQuotaOwnerInConfig(configPath, owner, bytes)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+  async setSmtp(input: AdminSmtpInput): Promise<{ ok: boolean; error?: string }> {
+    if (runtimeAuth === undefined) return { ok: false, error: '账号模式未开启' }
+    try {
+      const existing = runtimeAuth.smtp
+      const pass = input.pass === undefined || input.pass === '' ? existing?.pass : input.pass
+      const smtp: SmtpConfig = {
+        host: input.host,
+        port: input.port,
+        secure: input.secure,
+        starttls: input.starttls,
+        ...(input.user === '' ? {} : { user: input.user }),
+        ...(pass === undefined || pass === '' ? {} : { pass }),
+        from: input.from,
+        ...(input.fromName === undefined || input.fromName === '' ? {} : { fromName: input.fromName }),
+      }
+      await setSmtpInConfig(configPath, smtp)
+      runtimeAuth.smtp = smtp
+      currentMailer = createSmtpMailer(smtp)
+      console.log(`SMTP 已更新：${smtp.host}:${smtp.port}，发件人 ${smtp.from}`)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+  async setRegistration(
+    mode: 'open' | 'closed',
+    emailDomains: readonly string[],
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (runtimeAuth === undefined) return { ok: false, error: '账号模式未开启' }
+    try {
+      await setRegistrationInConfig(configPath, mode, emailDomains)
+      runtimeAuth.registration.mode = mode
+      runtimeAuth.registration.emailDomains = [...emailDomains]
+      console.log(`注册策略已更新：${mode}，域名 ${emailDomains.length === 0 ? '不限' : emailDomains.join(', ')}`)
       return { ok: true }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -526,19 +602,19 @@ const connectorEnroll: ConnectorEnroll = {
  * `.agents/notes/implemented/2026-11-02-relay-accounts-and-connector-binding.md`
  */
 const accountsRuntime: AccountsRuntime | undefined =
-  authConfig === undefined || accountsDb === undefined ? undefined : {
+  runtimeAuth === undefined || accountsDb === undefined ? undefined : {
     db: accountsDb,
-    config: authConfig,
+    config: runtimeAuth,
     tokens: table,
     ...(mailer === undefined ? {} : { mailer }),
-    secureCookies: authConfig.baseUrl?.startsWith('https://') === true,
+    secureCookies: runtimeAuth.baseUrl?.startsWith('https://') === true,
     limiters: accountsLimiters,
     statusOf(userId) {
       const user = accountsDb.findById(userId)
       return user === undefined ? 'missing' : user.status
     },
     async createToken(user, name) {
-      const limit = user.maxConnectors ?? authConfig.limits.defaultMaxConnectors
+      const limit = user.maxConnectors ?? runtimeAuth.limits.defaultMaxConnectors
       if (table.countForUser(user.id) >= limit) throw new Error('connector-limit')
       const id = `tk_${randomBytes(9).toString('base64url')}`
       const issued = issueToken({ kind: 'connector', id })

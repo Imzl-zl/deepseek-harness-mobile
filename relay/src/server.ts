@@ -460,8 +460,21 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
           auth: accountsRuntime === undefined ? null : {
             mode: 'accounts',
             registration: accountsRuntime.config.registration.mode,
+            emailDomains: [...accountsRuntime.config.registration.emailDomains],
             defaultMaxConnectors: accountsRuntime.config.limits.defaultMaxConnectors,
             defaultQuotaBytes: accountsRuntime.config.limits.defaultQuotaBytes,
+            smtp: accountsRuntime.config.smtp === undefined ? null : {
+              host: accountsRuntime.config.smtp.host,
+              port: accountsRuntime.config.smtp.port,
+              secure: accountsRuntime.config.smtp.secure,
+              starttls: accountsRuntime.config.smtp.starttls,
+              user: accountsRuntime.config.smtp.user ?? '',
+              from: accountsRuntime.config.smtp.from,
+              ...(accountsRuntime.config.smtp.fromName === undefined
+                || accountsRuntime.config.smtp.fromName === ''
+                ? {}
+                : { fromName: accountsRuntime.config.smtp.fromName }),
+            },
           },
         }
       },
@@ -589,6 +602,22 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
           })
         }
         log?.info('admin.action', { actor, action: 'mail.test', to })
+        return adminJson(200, { ok: true })
+      },
+
+      async setSmtp(input) {
+        if (options.adminOps?.setSmtp === undefined) return adminJson(501, { error: 'admin-ops-not-wired' })
+        const saved = await options.adminOps.setSmtp(input)
+        if (!saved.ok) return adminJson(500, { error: 'persist-failed', detail: saved.error ?? '' })
+        log?.info('admin.action', { actor, action: 'smtp.set', host: input.host, from: input.from })
+        return adminJson(200, { ok: true })
+      },
+
+      async setRegistration(mode, emailDomains) {
+        if (options.adminOps?.setRegistration === undefined) return adminJson(501, { error: 'admin-ops-not-wired' })
+        const saved = await options.adminOps.setRegistration(mode, emailDomains)
+        if (!saved.ok) return adminJson(500, { error: 'persist-failed', detail: saved.error ?? '' })
+        log?.info('admin.action', { actor, action: 'registration.set', mode, domains: emailDomains.length })
         return adminJson(200, { ok: true })
       },
 
