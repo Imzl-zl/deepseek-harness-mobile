@@ -15,8 +15,8 @@
 library;
 
 import 'package:dsh_mobile/model/session_dot.dart';
-import 'package:dsh_mobile/theme/dsh_colors.dart';
 import 'package:dsh_mobile/ui/dsh_popover.dart';
+import 'package:dsh_mobile/ui/session_dot_view.dart';
 import 'package:dsh_mobile/ui/session_drawer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -521,18 +521,40 @@ void main() {
       ),
     );
 
-    final c = tester.element(find.byType(SessionDrawer)).dshColors;
-    Color? dotOf(String sid) {
-      final box = tester.widget<Container>(
-        find.byKey(ValueKey<String>('drawer-dot-$sid')),
+    // 断言读**语义**（哪一态），不读颜色：颜色由主题给，换主题不该让用例红。
+    SessionDot dotOf(String sid) {
+      final view = tester.widget<SessionDotView>(
+        find.descendant(
+          of: find.byKey(ValueKey<String>('drawer-dot-$sid')),
+          matching: find.byType(SessionDotView),
+        ),
       );
-      return (box.decoration! as BoxDecoration).color;
+      return view.dot;
     }
 
-    expect(dotOf('a'), c.stateWarn, reason: '待处理 = 琥珀（Rows.tsx 的 warning）');
-    expect(dotOf('b'), c.accentBlue, reason: '运行中 = 蓝（ongoing）');
-    expect(dotOf('c'), c.stateSuccess, reason: '已完成 = 绿（done）');
-    expect(dotOf('d'), c.stateIdle, reason: '空闲 = 灰（idle）');
-    expect(dotOf('e'), c.stateIdle);
+    expect(dotOf('a'), SessionDot.warning, reason: '待处理（Rows.tsx 的 warning）');
+    expect(dotOf('b'), SessionDot.ongoing, reason: '运行中');
+    expect(dotOf('c'), SessionDot.done, reason: '已完成未读');
+    expect(dotOf('d'), SessionDot.idle, reason: '空闲');
+    expect(dotOf('e'), SessionDot.idle);
+
+    // **运行中要转圈**（与桌面 `StateDot.tsx:51-68` 同形）：那一格里是一枚自定义
+    // 绘制的 spinner，而不是实心点。
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('drawer-dot-b')),
+        matching: find.byType(CustomPaint),
+      ),
+      findsOneWidget,
+      reason: 'ongoing 画旋转的弧',
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('drawer-dot-c')),
+        matching: find.byType(CustomPaint),
+      ),
+      findsNothing,
+      reason: '已完成是实心点，不转',
+    );
   });
 }

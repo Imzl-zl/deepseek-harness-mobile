@@ -37,6 +37,7 @@ import 'collapsible_group.dart';
 import 'dsh_brand.dart';
 import 'dsh_popover.dart';
 import 'load_more_on_scroll.dart';
+import 'session_dot_view.dart';
 
 /// 抽屉里的一行会话。
 class DrawerSession {
@@ -304,15 +305,22 @@ class _SessionDrawerState extends State<SessionDrawer> {
                   // logo = **DSH 的图标**（与启动图标、助手头像同一枚图）。
                   const DshBrandMark(size: 28),
                   const SizedBox(width: 10),
-                  Text(
-                    kAppName,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: c.labelPrimary,
+                  // **标题吃掉剩余宽度并省略**（不是 `Spacer` 推着走）：
+                  // 界面字号调到「大 / 特大」时，这行文字会比抽屉还宽 —— 2026-11-02
+                  // 用 `screen_fit_test` 在 Ahem 字体下量到 56px 溢出（真字体下更大字号
+                  // 同样会撞上），改成 Expanded + ellipsis 后任何字号都不溢出。
+                  Expanded(
+                    child: Text(
+                      kAppName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: c.labelPrimary,
+                      ),
                     ),
                   ),
-                  const Spacer(),
                   _Ib(
                     icon: 'newChat',
                     tooltip: '新建会话',
@@ -867,21 +875,14 @@ class _SessionRow extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(12, 11, 4, 11),
             child: Row(
               children: [
-                // 状态点（照 DSH 的 `StateDot`）：待处理琥珀 / 运行中蓝 /
+                // 状态点（照 DSH 的 `StateDot`）：待处理琥珀 / **运行中转圈** /
                 // 已完成绿 / 空闲灰。**它不代表"当前会话"** —— 当前由底色说。
-                Container(
+                // 尺寸按最宽的那一态（转圈 14px）占位，避免行内文字左右跳。
+                SizedBox(
                   key: ValueKey<String>('drawer-dot-${session.sid}'),
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: switch (session.dot) {
-                      SessionDot.warning => c.stateWarn,
-                      SessionDot.ongoing => c.accentBlue,
-                      SessionDot.done => c.stateSuccess,
-                      SessionDot.idle => c.stateIdle,
-                    },
-                    shape: BoxShape.circle,
-                  ),
+                  width: 14,
+                  height: 14,
+                  child: Center(child: SessionDotView(dot: session.dot)),
                 ),
                 const SizedBox(width: 11),
                 Expanded(
