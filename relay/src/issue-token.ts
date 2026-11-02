@@ -65,6 +65,14 @@ export interface TokenConfigEntry {
    * 路由、名册、票都不看它 —— 那些按 `(connectorId, deviceId)` 走。
    */
   owner?: string
+  /** accounts 模式下的账号 id（控制台签发的令牌）。 */
+  userId?: string
+  /** 第一次连上时绑定的连接器 id；空着 = 待绑定。 */
+  connectorId?: string
+  /** 控制台里给这台电脑起的名字。 */
+  name?: string
+  /** 签发时间（只用于展示）。 */
+  createdAt?: number
   /** `auto` = 连接器自己在中转上兑换的。见 `digest-auth.ts` 的 `TokenDigest.source`。 */
   source?: 'auto'
   /** 吊销时间（§12 的 `revoked_at`：**软吊销**）。见 `digest-auth.ts` 的说明。 */
@@ -79,6 +87,88 @@ export function issueToken(
   // `spec` 只用来让调用方一眼看出"这个令牌是给谁的"；它不进任何签名（摘要是唯一的凭据面）。
   void spec
   return { token, hash: hashOf(token) }
+}
+
+/**
+ * 改一条令牌记录的展示/归属字段（`name` / `userId`）。返回是否找到并写入。
+ *
+ * `userId: null` = 取消归属（删掉那一格），不是写一个空串。
+ */
+export async function patchTokenInConfig(
+  configPath: string,
+  spec: TokenKind,
+  patch: { name?: string; userId?: string | null },
+): Promise<boolean> {
+  const raw = await readFile(configPath, 'utf8')
+  const config = JSON.parse(raw) as { tokens?: TokenConfigEntry[] }
+  let found = false
+  const tokens = (config.tokens ?? []).map((entry) => {
+    if (entry.kind !== spec.kind || entry.id !== spec.id) return entry
+    found = true
+    const next: TokenConfigEntry = { ...entry }
+    if (patch.name !== undefined) next.name = patch.name
+    if (patch.userId !== undefined) {
+      if (patch.userId === null) delete next.userId
+      else next.userId = patch.userId
+    }
+    return next
+  })
+  if (found) await writeFile(configPath, `${JSON.stringify({ ...config, tokens }, null, 2)}\n`, 'utf8')
+  return found
+}
+
+/**
+ * 把一枚新令牌绑定到第一次连上来的连接器 id。
+ *
+ * **已绑定的记录不改**：一致返回 `true`，不一致返回 `false`（调用方据此 403）。
+ * 这是"控制台建令牌时还不知道 pcId"的收口 —— 绑定只发生一次。
+ */
+export async function bindConnectorInConfig(
+  configPath: string,
+  spec: TokenKind,
+  connectorId: string,
+): Promise<boolean> {
+  const raw = await readFile(configPath, 'utf8')
+  const config = JSON.parse(raw) as { tokens?: TokenConfigEntry[] }
+  let bound = false
+  let changed = false
+  const tokens = (config.tokens ?? []).map((entry) => {
+    if (entry.kind !== spec.kind || entry.id !== spec.id) return entry
+    if (entry.connectorId !== undefined) {
+      bound = entry.connectorId === connectorId
+      return entry
+    }
+    bound = true
+    changed = true
+    return { ...entry, connectorId }
+  })
+  if (changed) await writeFile(configPath, `${JSON.stringify({ ...config, tokens }, null, 2)}\n`, 'utf8')
+  return bound
+}
+
+/**
+ * 清掉一条令牌的 `connectorId` 绑定（那台电脑重装过、pcId 变了时用）。
+ *
+ * 只对**离线**的电脑开放 —— 在线的还握着旧绑定，清掉会让它下一次数据面被 403。
+ */
+export async function clearConnectorBindingInConfig(
+  configPath: string,
+  spec: TokenKind,
+): Promise<boolean> {
+  const raw = await readFile(configPath, 'utf8')
+  const config = JSON.parse(raw) as { tokens?: TokenConfigEntry[] }
+  let found = false
+  let changed = false
+  const tokens = (config.tokens ?? []).map((entry) => {
+    if (entry.kind !== spec.kind || entry.id !== spec.id) return entry
+    found = true
+    if (entry.connectorId === undefined) return entry
+    changed = true
+    const { connectorId: _dropped, ...rest } = entry
+    return rest
+  })
+  if (changed) await writeFile(configPath, `${JSON.stringify({ ...config, tokens }, null, 2)}\n`, 'utf8')
+  return found
 }
 
 /**

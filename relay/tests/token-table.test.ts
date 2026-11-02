@@ -80,3 +80,21 @@ test('校验规则只有一份：createDigestAuthenticator 与表同义', () => 
   assert.equal(authenticate('t-old'), undefined)
   assert.equal(authenticate.size, table.size)
 })
+
+test('首连绑定：未绑定按令牌 id 索引，绑定后只按 connectorId；重置回到未绑定', () => {
+  const table = createTokenTable([
+    { kind: 'connector', id: 'tk_1', hash: hash('t-tk'), userId: 'u_1' },
+  ])
+  assert.equal(table.ownerOf('tk_1'), 'u_1', '未绑定时用令牌 id 当索引键')
+  assert.equal(table.ownerOf('pc-1'), undefined)
+
+  assert.equal(table.bindConnector('tk_1', 'pc-1'), true)
+  assert.equal(table.ownerOf('pc-1'), 'u_1')
+  assert.equal(table.ownerOf('tk_1'), undefined, '绑定后旧的令牌 id 键要清掉')
+  assert.equal(table.bindConnector('tk_1', 'pc-2'), false, '绑定之后不许换 pcId')
+
+  assert.equal(table.clearConnectorBinding('tk_1'), true)
+  assert.equal(table.ownerOf('pc-1'), undefined)
+  assert.equal(table.ownerOf('tk_1'), 'u_1', '重置后回到令牌 id 键，等下一次首连')
+  assert.equal(table.list().find((row) => row.id === 'tk_1')?.connectorId, undefined)
+})

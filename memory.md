@@ -3,7 +3,16 @@
 > 快照 + 最近窗口，**覆盖更新**，不做流水追加。历史在 git 与 `.agents/notes/`；
 > 稳定命令与坑点在 `tools.md`；现状事实在 `docs/`。
 
-## 现在（2026-11-01）
+## 现在（2026-11-02）
+
+- **中转账号模式（11-02）**：`auth` 段开启后 `connectorAuth` 必须 `required`，匿名兑换关闭；
+  邮箱注册（默认只限 `qq.com`，6 位码 / 10 分钟 / scrypt）、会话 cookie + CSRF、控制台建电脑、
+  首次 `?id=` 绑定 `connectorId`；默认 **2 台电脑 / 5 GiB 月额度**，管理员可在 `/admin` 用户区改。
+  账号库 SQLite `relay/data/relay.db`（挂目录，WAL）；SMTP 走 AhaSend `send.ahasend.com:587`，
+  发件人 `noreply@0t0.me`（AhaSend 已校验域名），`--check-smtp` 自检、`--promote` 提管理员。
+  浏览器实测：登录 → 控制台 → 添加电脑（令牌只显示一次）→ `/admin` 用户视图。relay **151** 条全绿；
+  文档 `docs/subsystems/relay-accounts.md`，笔记
+  `implemented/2026-11-02-relay-accounts-and-connector-binding.md`。
 
 - **CI 修好 + README 重写（11-02）**：CI 从 10-31 起一直红，**原因与功能无关**——
   `app` job 第一步 `dart format --set-exit-if-changed` 有 20 个文件没格式化（上一批改动留下的），
@@ -208,7 +217,7 @@
 | `cd app && flutter test` | 1649 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **816** 项 |
-| `cd relay && pnpm typecheck && node --test` | 类型 + **132** 条 |
+| `cd relay && pnpm typecheck && node --test` | 类型 + **151** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
 

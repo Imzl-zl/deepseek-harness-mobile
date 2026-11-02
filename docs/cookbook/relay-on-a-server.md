@@ -279,6 +279,79 @@ docker compose -f relay/docker-compose.yml logs --tail 3 relay   # 期望：中�
    点「改上限」留空 = 取消上限。面板写的是**按人**的上限；按连接器主体的临时覆盖
    只在本进程有效（配置里没有这一格），重启即回到"不限"。
 
+## 6.8 账号模式（注册登录 + 按人限额）
+
+公开中转要挡住匿名占用时开这一档。**它和 §6.7 的 break-glass 管理令牌不是二选一**:账号用于日常,令牌用于救急。
+
+1. **配置**（`relay.config.json`，与 `tokens` 同级）:
+
+   ```json
+   {
+     "connectorAuth": "required",
+     "auth": {
+       "mode": "accounts",
+       "baseUrl": "https://relay.example.com",
+       "registration": { "mode": "open", "requireEmailVerification": true, "emailDomains": ["qq.com"] },
+       "limits": { "defaultMaxConnectors": 2, "defaultQuotaBytes": 5368709120 },
+       "adminEmails": ["you@qq.com"],
+       "trustProxy": true,
+       "smtp": {
+         "host": "send.ahasend.com", "port": 587, "starttls": true,
+         "user": "<SMTP 用户名>", "pass": "env:RELAY_SMTP_PASS",
+         "from": "noreply@<AhaSend 已校验域名>", "fromName": "DSH 中转"
+       }
+     }
+   }
+   ```
+
+   `connectorAuth` 必须是 `required` —— 同时开着 `open` 会**拒绝启动**（否则登录只是装饰，匿名仍能兑换令牌）。
+
+2. **先验 SMTP，再起服务**（不读账号库、不起监听）:
+
+   ```bash
+   docker compose run --rm relay \
+     node src/main.ts --config /config/relay.config.json --check-smtp --to you@qq.com
+   ```
+
+   期望：`SMTP 自检已把邮件交给 send.ahasend.com:587`。`from` 的域名必须已在 AhaSend 校验；
+   未校验会回 `556 Invalid account. Tenant or Domain not found`。
+
+3. **起服务并注册**:
+
+   ```bash
+   docker compose up -d relay
+   ```
+
+   打开 `https://relay.example.com/register`，用 QQ 邮箱收验证码注册。第一个管理员：
+   在服务器上执行（**不要把密码放命令行**）:
+
+   ```bash
+   docker compose run --rm relay \
+     node src/main.ts --config /config/relay.config.json --promote you@qq.com
+   ```
+
+   然后用该账号登录 `/login`，再打开 `/admin`（账号会话会自动识别；break-glass 令牌仍可用）。
+
+4. **添加电脑**:`/console` →「添加电脑」→ 复制只显示一次的令牌 → 电脑的 DSH「手机 → 连接」粘贴。
+   `relayTokenRef` 空着时先填 `relay-connector`。第一次连上时中转把令牌绑定到该电脑的 `pcId`；
+   之后换电脑必须新建令牌或先「重置绑定」。
+
+5. **数据卷**：compose 必须挂 `./data:/config/data`（整目录，不要单文件）——SQLite 的 WAL 会生成
+   `relay.db-wal` / `relay.db-shm`。备份用停容器后复制 `data/`，或 `sqlite3 data/relay.db ".backup ..."`。
+
+6. **反代**：Caddy 必须保留 Host，并建议覆盖 `X-Real-IP`（见 `Caddyfile.example`）。否则登录/发码
+   的按 IP 限流会把所有客户端塌成一个地址。
+
+7. **验证**：
+
+   ```bash
+   curl -s https://relay.example.com/api/auth/config          # registration.mode / emailDomains
+   curl -s -o /dev/null -w '%{http_code}\n' https://relay.example.com/console   # 302（未登录）
+   docker compose logs relay | tail -3                        # 账号 N 个（注册 open，只限 @qq.com）
+   ```
+
+**默认两台电脑、5 GiB/月**：在 `/admin` 的「用户」分区逐人改；降低电脑上限不踢已有电脑，要立刻收线用「停用」。
+
 ## 7. 已知边界
 
 - **中转重启会清空设备名册**：手机换票先拿到 401，但**这不是终态** —— 名册是电脑侧在

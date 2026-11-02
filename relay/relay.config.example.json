@@ -9,9 +9,38 @@
       "owner": "alice"
     }
   ],
+  "connectorAuth": "required",
   "rateLimit": { "capacity": 60, "refillPerSecond": 6 },
   "admin": {
     "id": "ops",
     "hash": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "auth": {
+    "mode": "accounts",
+    "baseUrl": "https://relay.example.com",
+    "dbPath": "/config/data/relay.db",
+    "serverName": "DSH 中转",
+    "registration": {
+      "mode": "open",
+      "requireEmailVerification": true,
+      "emailDomains": ["qq.com"]
+    },
+    "limits": {
+      "defaultMaxConnectors": 2,
+      "defaultQuotaBytes": 5368709120
+    },
+    "adminEmails": ["you@qq.com"],
+    "trustProxy": true,
+    "sessionDays": 30,
+    "smtp": {
+      "host": "send.ahasend.com",
+      "port": 587,
+      "secure": false,
+      "starttls": true,
+      "user": "smtp-user",
+      "pass": "env:RELAY_SMTP_PASS",
+      "from": "noreply@relay.example.com",
+      "fromName": "DSH 中转"
+    }
   }
 }

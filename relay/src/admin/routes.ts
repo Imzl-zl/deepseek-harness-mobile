@@ -28,6 +28,24 @@ export interface AdminRequest {
   body?: unknown
 }
 
+/** 用户行（管理台）：**没有摘要**，只有展示与策略字段。 */
+export interface AdminUserRow {
+  id: string
+  email: string
+  displayName: string
+  role: 'admin' | 'user'
+  status: 'active' | 'suspended'
+  createdAt: number
+  lastLoginAt: number | null
+  maxConnectors: number
+  quotaBytes: number | null
+  connectors: number
+  activeConnectors: number
+  devices: number
+  online: number
+  usedBytes: number
+}
+
 /** 面板能看到的读面（形状由 `server.ts` 组）。 */
 export interface AdminStateView {
   v: 1
@@ -61,6 +79,15 @@ export interface AdminStateView {
   tokens: readonly TokenRow[]
   /** 连接器认证面：模式、名额上限（`null` = 无上限）与已自动签发的条数。 */
   connectorAuth: { mode: 'open' | 'required'; limit: number | null; autoCount: number }
+  /** 账号模式下的用户清单（最多 500 行）。没开账号模式就是空数组。 */
+  users: readonly AdminUserRow[]
+  /** 账号模式的策略摘要；没开就是 `null`。 */
+  auth: {
+    mode: 'accounts'
+    registration: string
+    defaultMaxConnectors: number
+    defaultQuotaBytes: number | null
+  } | null
 }
 
 /** 写动作的落盘点（持久化在装配方：配置文件的写入不在这一层）。 */
@@ -91,6 +118,13 @@ export interface AdminApi {
   setTokenEnabled(id: string, enabled: boolean): Promise<AdminReply>
   removeToken(id: string): Promise<AdminReply>
   setConnectorAuth(mode: 'open' | 'required', limit: number | null): Promise<AdminReply>
+  /** 停用 / 恢复一个账号；停用会立刻收掉它名下所有连接。 */
+  setUserStatus(id: string, status: 'active' | 'suspended'): Promise<AdminReply>
+  setUserRole(id: string, role: 'admin' | 'user'): Promise<AdminReply>
+  /** `null` = 回落到默认 / 不限（字段含义见 `AdminUserRow`）。 */
+  setUserLimits(id: string, patch: { maxConnectors?: number | null; quotaBytes?: number | null }): Promise<AdminReply>
+  /** 发一封测试邮件（验证 SMTP 配置）。 */
+  testMail(to: string): Promise<AdminReply>
 }
 
 const json = (status: number, body: unknown): AdminReply => ({
@@ -171,6 +205,54 @@ export function createAdminRoutes(api: AdminApi, page: string): { handle(request
           return json(400, { error: 'limit-invalid' })
         }
         return api.setConnectorAuth(mode, typeof limit === 'number' ? limit : null)
+      }
+
+      // ---- 账号 ----
+      if (request.path === '/admin/api/users/status') {
+        const id = body['id']
+        const status = body['status']
+        if (typeof id !== 'string' || id === '') return json(400, { error: 'id-invalid' })
+        if (status !== 'active' && status !== 'suspended') return json(400, { error: 'status-invalid' })
+        return api.setUserStatus(id, status)
+      }
+
+      if (request.path === '/admin/api/users/role') {
+        const id = body['id']
+        const role = body['role']
+        if (typeof id !== 'string' || id === '') return json(400, { error: 'id-invalid' })
+        if (role !== 'admin' && role !== 'user') return json(400, { error: 'role-invalid' })
+        return api.setUserRole(id, role)
+      }
+
+      if (request.path === '/admin/api/users/limits') {
+        const id = body['id']
+        if (typeof id !== 'string' || id === '') return json(400, { error: 'id-invalid' })
+        const maxConnectors = body['maxConnectors']
+        if (maxConnectors !== undefined && maxConnectors !== null
+          && (typeof maxConnectors !== 'number' || !Number.isInteger(maxConnectors)
+            || maxConnectors < 1 || maxConnectors > 100)) {
+          return json(400, { error: 'max-connectors-invalid' })
+        }
+        const quotaBytes = body['quotaBytes']
+        if (quotaBytes !== undefined && quotaBytes !== null
+          && (typeof quotaBytes !== 'number' || !Number.isInteger(quotaBytes) || quotaBytes < 1)) {
+          return json(400, { error: 'quota-invalid' })
+        }
+        if (maxConnectors === undefined && quotaBytes === undefined) {
+          return json(400, { error: 'nothing-to-update' })
+        }
+        return api.setUserLimits(id, {
+          ...(maxConnectors === undefined ? {} : { maxConnectors: maxConnectors as number | null }),
+          ...(quotaBytes === undefined ? {} : { quotaBytes: quotaBytes as number | null }),
+        })
+      }
+
+      if (request.path === '/admin/api/mail/test') {
+        const to = body['to']
+        if (typeof to !== 'string' || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) {
+          return json(400, { error: 'email-invalid' })
+        }
+        return api.testMail(to.trim().toLowerCase())
       }
 
       return json(404, { error: 'not-found' })

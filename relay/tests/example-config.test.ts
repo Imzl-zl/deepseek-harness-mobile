@@ -14,6 +14,7 @@ import { test } from 'node:test'
 
 import { createDigestAuthenticator } from '../src/digest-auth.ts'
 import { startRelay } from '../src/server.ts'
+import { parseAuthConfig } from '../src/accounts/config.ts'
 
 const EXAMPLE = new URL('../relay.config.example.json', import.meta.url)
 
@@ -67,4 +68,22 @@ test('样例配置能真的把中继起起来（样例坏了，操作者会遇�
 
   assert.equal(relay.port > 0, true, '样例配置能让中继监听')
   assert.equal(authenticate.size, config.tokens.length, '样例里的摘要都被装进表')
+})
+
+test('样例 auth 段能通过启动校验（SMTP 密码走 env）', async () => {
+  const raw = await readFile(EXAMPLE, 'utf8')
+  const config = JSON.parse(raw) as { auth?: unknown }
+  assert.ok(config.auth !== undefined, '样例必须带 auth 段，否则账号模式没有可抄的模板')
+
+  process.env['RELAY_SMTP_PASS'] = 'example-pass'
+  try {
+    const auth = parseAuthConfig(config.auth, { configDir: 'C:/tmp/dsh-relay-example' })
+    assert.equal(auth.mode, 'accounts')
+    assert.equal(auth.registration.emailDomains[0], 'qq.com')
+    assert.equal(auth.limits.defaultMaxConnectors, 2)
+    assert.equal(auth.smtp?.host, 'send.ahasend.com')
+    assert.equal(auth.smtp?.pass, 'example-pass', 'env: 前缀在解析时被换成了真实值')
+  } finally {
+    delete process.env['RELAY_SMTP_PASS']
+  }
 })

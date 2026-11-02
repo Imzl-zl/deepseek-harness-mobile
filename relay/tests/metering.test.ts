@@ -117,6 +117,18 @@ test('手动重置与快照', () => {
   assert.equal(metering.reset('nobody'), false)
 })
 
+test('已知账号即使没有计数行也能重置为零（管理台幂等）', () => {
+  const metering = createMetering({
+    quota: {},
+    ownerOf: () => undefined,
+    now: () => OCT_30,
+    isKnownSubject: (subject) => subject === 'user:u1',
+  })
+  assert.equal(metering.reset('user:u1'), true)
+  assert.equal(metering.usedOf('user:u1'), 0)
+  assert.equal(metering.reset('user:unknown'), false)
+})
+
 test('落盘形状：同周期读回接着算，跨周期的行丢掉', () => {
   const first = createMetering({ quota: config({ defaultBytes: 10 }), ownerOf: () => undefined, now: () => OCT_30 })
   first.charge('c', 7)

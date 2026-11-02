@@ -28,18 +28,31 @@ import { dirname, join } from 'node:path'
 
 import type { TokenDigest } from './digest-auth.ts'
 import {
-  appendTokenToConfig, issueToken, removeTokenFromConfig, restoreTokenInConfig,
+  appendTokenToConfig, bindConnectorInConfig, clearConnectorBindingInConfig, issueToken,
+  patchTokenInConfig, removeTokenFromConfig, restoreTokenInConfig,
   revokeTokenInConfig, setAdminInConfig, setConnectorAuthInConfig, setQuotaOwnerInConfig,
 } from './issue-token.ts'
 import { createTokenTable } from './token-table.ts'
 import { createJsonLogger } from './json-logger.ts'
 import { readMeteringState } from './metering-state.ts'
-import { startRelay, type ConnectorEnroll } from './server.ts'
+import { startRelay, type AccountsRuntime, type ConnectorEnroll } from './server.ts'
+import { parseAuthConfig, type AuthConfig } from './accounts/config.ts'
+import { createAccountsDb, type AccountsDb } from './accounts/db.ts'
+import { createSmtpMailer, sendSmtpMail } from './accounts/smtp.ts'
+import { createAccountsLimiters } from './accounts/face.ts'
+import { normalizeEmail } from './accounts/email.ts'
 
 interface RelayConfig {
   port?: number
   host?: string
   tokens?: TokenDigest[]
+  /**
+   * 账号模式（`auth.mode: "accounts"`）。
+   *
+   * 不写 = 旧行为：没有登录页、没有控制台、匿名兑换按 `connectorAuth` 走。
+   * 写了就必须同时把 `connectorAuth` 设成 `"required"`（匿名兑换必须关掉）。
+   */
+  auth?: unknown
   /**
    * 限流参数（§12 的"按设备限流与审计"）。
    *
@@ -111,6 +124,52 @@ if (config.admin !== undefined) {
     console.error('配置里的 admin 段不合法：需要 { "id": "<非空>", "hash": "<sha256 十六进制，64 位>" }')
     process.exit(2)
   }
+}
+
+/**
+ * 账号段先解析：`auth.mode: "accounts"` 一旦出现，匿名兑换就必须关掉。
+ *
+ * 两个开关都开着（`connectorAuth: "open"` + 登录）等于"登录只是装饰" ——
+ * 任何人仍然能 POST `/connector/enroll` 拿到令牌。这里直接拒绝启动。
+ */
+let authConfig: AuthConfig | undefined
+if (config.auth !== undefined) {
+  try {
+    authConfig = parseAuthConfig(config.auth, { configDir: dirname(configPath) })
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error))
+    process.exit(2)
+  }
+  if ((config.connectorAuth ?? 'open') !== 'required') {
+    console.error(
+      '配置里开了 auth（账号模式），connectorAuth 必须是 "required"：'
+      + '不能一边要求登录，一边还允许匿名兑换连接器令牌。',
+    )
+    process.exit(2)
+  }
+}
+
+// SMTP 自检：`--check-smtp [--to <地址>]`。只走 SMTP，不读账号库，也不起监听。
+// 部署时先跑它，能分清"邮件发不出去"是 SMTP 的问题还是注册流程的问题。
+if (process.argv.includes('--check-smtp')) {
+  if (authConfig?.smtp === undefined) {
+    console.error('没有 auth.smtp 段：先在配置里填 host / port / user / pass / from')
+    process.exit(2)
+  }
+  const to = argValue('--to') ?? authConfig.smtp.from
+  try {
+    await sendSmtpMail(authConfig.smtp, {
+      to,
+      subject: `${authConfig.serverName} · SMTP 自检`,
+      text: '如果你收到这封，说明 SMTP 主机、端口、TLS、认证与发件地址都可用。',
+      html: '<p>如果你收到这封，说明 SMTP 主机、端口、TLS、认证与发件地址都可用。</p>',
+    })
+  } catch (error) {
+    console.error(`SMTP 自检失败：${error instanceof Error ? error.message : String(error)}`)
+    process.exit(1)
+  }
+  console.log(`SMTP 自检已把邮件交给 ${authConfig.smtp.host}:${authConfig.smtp.port}（收件人 ${to}）`)
+  process.exit(0)
 }
 
 /**
@@ -254,7 +313,8 @@ if (process.argv.includes('--revoke-token')) {
 
 // **开放模式下空表是合法起点**：谁都没来兑换过，表本来就是空的。此时拒绝启动等于
 // 把"零管理"这件事做死 —— 而它正是 `connectorAuth: "open"` 的全部意义。
-if (entries.length === 0 && (config.connectorAuth ?? 'open') !== 'open') {
+// 账号模式下空表更是正常起点：第一台电脑要等用户注册后在控制台建。
+if (authConfig === undefined && entries.length === 0 && (config.connectorAuth ?? 'open') !== 'open') {
   console.error(
     '配置里没有 tokens，且 connectorAuth 是 required：中转起来也无人能连上'
     + '（只放摘要，不放明文令牌）。要免维护就把 connectorAuth 设成 "open"',
@@ -279,11 +339,60 @@ try {
 const authenticate = (token: string) => table.authenticate(token)
 
 /**
+ * 账号库：**只在账号模式打开**。
+ *
+ * 打开失败（schema 比本进程新、目录不可写）直接退出 —— 一个"登录页在、但注册永远
+ * 500"的中转比不起来难查得多。顺手清掉过期会话。
+ */
+let accountsDb: AccountsDb | undefined
+if (authConfig !== undefined) {
+  try {
+    accountsDb = createAccountsDb(authConfig.dbPath)
+  } catch (error) {
+    console.error(`账号库打不开：${error instanceof Error ? error.message : String(error)}`)
+    process.exit(2)
+  }
+  accountsDb.deleteExpiredSessions(Date.now())
+}
+const mailer = authConfig?.smtp === undefined ? undefined : createSmtpMailer(authConfig.smtp)
+const accountsLimiters = createAccountsLimiters(
+  process.env['DSH_RELAY_DEBUG'] === '1' ? createJsonLogger({ debug: true }) : undefined,
+)
+
+// 管理员提升：`--promote <email>`（先注册，再在服务器上提升）。
+// 不把密码放命令行：那会进 shell 历史与容器 inspect。
+if (process.argv.includes('--promote')) {
+  const index = process.argv.indexOf('--promote')
+  const raw = process.argv[index + 1]
+  if (accountsDb === undefined || authConfig === undefined) {
+    console.error('--promote 只在 auth.mode: "accounts" 下可用（先配账号段并重启过一次）')
+    process.exit(2)
+  }
+  const email = raw === undefined ? undefined : normalizeEmail(raw)
+  if (email === undefined) {
+    console.error('用法: --promote <已注册的邮箱>')
+    process.exit(2)
+  }
+  const user = accountsDb.findByEmail(email)
+  if (user === undefined) {
+    console.error(`账号库里没有 ${email}：先在 /register 注册，再执行这一条`)
+    process.exit(2)
+  }
+  accountsDb.setRole(user.id, 'admin')
+  console.log(`已把 ${email}（${user.id}）设为管理员。`)
+  accountsDb.close()
+  process.exit(0)
+}
+
+/**
  * 面板的写动作落到配置文件（**与 CLI 共用同一套写法**：整份重写、保留其他键）。
  *
  * 失败一律回 `{ ok: false, error }`，由面板回 500 —— 绝不"界面说改好了、文件没变"。
+ *
+ * **账号模式下也要装上**：没有 break-glass `admin` 段时，管理员用账号会话进 `/admin`，
+ * 令牌清单与改额度的写动作同样要走这里；不装的话面板看得见用户却看不见令牌。
  */
-const adminOps = config.admin === undefined ? undefined : {
+const adminOps = config.admin === undefined && authConfig === undefined ? undefined : {
   tokens: () => table.list(),
   async setTokenEnabled(id: string, enabled: boolean): Promise<{ ok: boolean; error?: string }> {
     try {
@@ -313,6 +422,9 @@ const adminOps = config.admin === undefined ? undefined : {
     limit: number | null,
   ): Promise<{ ok: boolean; error?: string }> {
     try {
+      if (authConfig !== undefined && mode === 'open') {
+        return { ok: false, error: '账号模式下不能开放匿名兑换（注册登录是唯一的准入）' }
+      }
       await setConnectorAuthInConfig(configPath, mode, limit)
       connectorAuth = mode
       autoEnrollLimit = limit
@@ -324,6 +436,11 @@ const adminOps = config.admin === undefined ? undefined : {
   },
   async persistQuota(owner: string, bytes: number | null): Promise<{ ok: boolean; error?: string }> {
     try {
+      // 账号额度写库（`null` = 不限）；旧 owner 字符串仍写配置。
+      if (accountsDb?.findById(owner) !== undefined) {
+        accountsDb.setLimits(owner, { quotaBytes: bytes })
+        return { ok: true }
+      }
       await setQuotaOwnerInConfig(configPath, owner, bytes)
       return { ok: true }
     } catch (error) {
@@ -331,12 +448,8 @@ const adminOps = config.admin === undefined ? undefined : {
     }
   },
 }
-// 额度主体来自**配置**（令牌条目里的 `owner`），不是运行时状态：连接器掉线不该让
-// "算在谁名下"跟着变。吊销的条目不参与（它连不上，也不该占着额度）。
-const owners = new Map<string, string>()
-for (const entry of entries) {
-  if (entry.owner !== undefined && entry.revokedAt === undefined) owners.set(entry.id, entry.owner)
-}
+// 额度主体来自**令牌表**（账号 id 或旧配置的 owner），不是运行时状态：连接器掉线不该让
+// "算在谁名下"跟着变。吊销的条目不参与认证，也就不会被记账。
 const quotaState = config.quota?.persist === true && config.quota.statePath !== undefined
   ? await readMeteringState(config.quota.statePath, {
     error: (message, detail) => console.error(`[relay] ${message}`, detail ?? ''),
@@ -354,7 +467,8 @@ const quotaState = config.quota?.persist === true && config.quota.statePath !== 
  * **先落盘再进内存表**：写不进配置文件，就不该存在"能连、重启就丢"的令牌。
  */
 // **运行时可改**（面板那两格写回配置后立刻生效，不用重启容器）。
-let connectorAuth = config.connectorAuth ?? 'open'
+// 账号模式下默认就是 `required`：匿名兑换必须关掉，登录才是唯一准入。
+let connectorAuth: 'open' | 'required' = config.connectorAuth ?? (authConfig === undefined ? 'open' : 'required')
 let autoEnrollLimit = config.autoEnrollLimit ?? null
 const autoEnrolledCount = (): number =>
   table.list().filter((row) => row.source === 'auto' && row.revokedAt === undefined).length
@@ -402,6 +516,69 @@ const connectorEnroll: ConnectorEnroll = {
   },
 }
 
+/**
+ * 账号模式的装配面：把"库 + 令牌表 + 配置写入"收成 `server.ts` 认识的一组回调。
+ *
+ * 令牌仍在配置里（这轮不迁），但**控制台建的令牌**多两格：`userId`（归属）与
+ * `connectorId`（第一次连上时绑定）。旧令牌没有这两格，行为不变。
+ *
+ * Note: 为什么账号只做"电脑与额度"、为什么令牌首连才绑定 —— 见
+ * `.agents/notes/implemented/2026-11-02-relay-accounts-and-connector-binding.md`
+ */
+const accountsRuntime: AccountsRuntime | undefined =
+  authConfig === undefined || accountsDb === undefined ? undefined : {
+    db: accountsDb,
+    config: authConfig,
+    tokens: table,
+    ...(mailer === undefined ? {} : { mailer }),
+    secureCookies: authConfig.baseUrl?.startsWith('https://') === true,
+    limiters: accountsLimiters,
+    statusOf(userId) {
+      const user = accountsDb.findById(userId)
+      return user === undefined ? 'missing' : user.status
+    },
+    async createToken(user, name) {
+      const limit = user.maxConnectors ?? authConfig.limits.defaultMaxConnectors
+      if (table.countForUser(user.id) >= limit) throw new Error('connector-limit')
+      const id = `tk_${randomBytes(9).toString('base64url')}`
+      const issued = issueToken({ kind: 'connector', id })
+      const createdAt = Date.now()
+      await appendTokenToConfig(configPath, {
+        kind: 'connector', id, hash: issued.hash, userId: user.id, name, createdAt,
+      })
+      table.add({ kind: 'connector', id, hash: issued.hash, userId: user.id, name, createdAt })
+      return { token: issued.token, id }
+    },
+    async renameToken(id, name) {
+      if (!(await patchTokenInConfig(configPath, { kind: 'connector', id }, { name }))) return false
+      return table.setName(id, name)
+    },
+    async setTokenEnabled(id, enabled) {
+      if (enabled) {
+        if (!table.restore(id)) return false
+        await restoreTokenInConfig(configPath, { kind: 'connector', id })
+        return true
+      }
+      if (!table.revoke(id)) return false
+      await revokeTokenInConfig(configPath, { kind: 'connector', id })
+      return true
+    },
+    async removeToken(id) {
+      if (!table.remove(id)) return false
+      await removeTokenFromConfig(configPath, { kind: 'connector', id })
+      return true
+    },
+    async resetBinding(id) {
+      if (!(await clearConnectorBindingInConfig(configPath, { kind: 'connector', id }))) return false
+      return table.clearConnectorBinding(id)
+    },
+    async bindToken(id, connectorId) {
+      const bound = await bindConnectorInConfig(configPath, { kind: 'connector', id }, connectorId)
+      if (bound) table.bindConnector(id, connectorId)
+      return bound
+    },
+  }
+
 const relay = await startRelay({
   port: config.port ?? 8787,
   host: config.host ?? '127.0.0.1',
@@ -412,11 +589,14 @@ const relay = await startRelay({
   ...(config.admin === undefined ? {} : { admin: config.admin }),
   // 没配 `quota` 就不传：只转发、不记账。
   ...(config.quota === undefined ? {} : { quota: config.quota }),
-  ownerOf: (connectorId: string) => owners.get(connectorId),
+  // 额度主体来自**令牌表**（账号 id 或旧配置的 owner），不是运行时状态：
+  // 连接器掉线不该让"算在谁名下"跟着变；吊销的条目不参与认证，也就不会被记账。
+  ownerOf: (connectorId: string) => table.ownerOf(connectorId),
   ...(quotaState === undefined ? {} : { quotaState }),
   // 面板的写动作（没配 admin 就没有这张面，也就不传）。
   ...(adminOps === undefined ? {} : { adminOps }),
   connectorEnroll,
+  ...(accountsRuntime === undefined ? {} : { accounts: accountsRuntime }),
   // 中转必须**留声**：它只转发与记账，出问题时（投递目标不在、丢弃、认证被拒）
   // 日志是唯一的线索。一行一个 JSON 事件（`json-logger.ts`）：容器里能 grep 字段，
   // 面板与排障读同一份东西。`debug` 级默认关（`DSH_RELAY_DEBUG=1` 打开）。
@@ -427,7 +607,10 @@ console.log(
   `中转已监听 ws://${config.host ?? '127.0.0.1'}:${relay.port}（摘要表 ${table.size} 条`
   + `，连接器认证 ${connectorAuth === 'open' ? '开放（可自助兑换）' : '必需'}`
   + `，自动签发上限 ${autoEnrollLimit === null ? '无' : `${autoEnrollLimit} 条`}`
-  + `${config.admin === undefined ? '' : `，管理面 /admin 已启用（${config.admin.id}）`}）`,
+  + `${config.admin === undefined ? '' : `，管理面 /admin 已启用（${config.admin.id}）`}`
+  + `${accountsDb === undefined ? '' : `，账号 ${accountsDb.countUsers()} 个（注册 ${authConfig?.registration.mode ?? 'open'}`
+    + `${authConfig === undefined || authConfig.registration.emailDomains.length === 0 ? '' : `，只限 ${authConfig.registration.emailDomains.map((item) => `@${item}`).join('、')}`}）`}`
+  + `）`,
 )
 
 let closing = false
@@ -436,6 +619,7 @@ const shutdown = (signal: string): void => {
   closing = true
   console.log(`收到 ${signal}：正在关闭`)
   void relay.close().then(() => {
+    accountsDb?.close()
     process.exit(0)
   })
 }

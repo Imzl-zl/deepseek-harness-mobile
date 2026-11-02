@@ -26,7 +26,21 @@ import { createTokenTable } from './token-table.ts'
 /** 已认证的调用方。**只有连接器**：设备走名册，不走这张表。 */
 export interface Authenticated {
   kind: 'connector'
+  /**
+   * 令牌的逻辑 id（吊销/删除按它定位）。**旧令牌的 id 就是 connectorId**；
+   * 控制台创建的新令牌 id 是随机的 `tk_…`，真正的连接器 id 在 `connectorId`。
+   */
   id: string
+  /**
+   * 账号 id（可选）。accounts 模式下由控制台创建的令牌带它；
+   * 旧配置里的 `owner` 只是字符串，不是账号。
+   */
+  userId?: string
+  /**
+   * 已绑定的连接器 id（可选）。新令牌第一次连上时由 `?id=` 绑定，之后必须一致。
+   * 没绑定时调用方退到 `id`（旧令牌的行为）。
+   */
+  connectorId?: string
   /**
    * 多少台连接器属于同一个人（可选，来自配置里的 `owner`）。
    *
@@ -40,11 +54,13 @@ export interface Authenticated {
 /**
  * 限流桶的键。
  *
- * 配了 `owner` 就按人分桶：那台用户的三台电脑共用一个预算 —— 否则"多开两台电脑"
- * 就是绕过限流的免费办法。没配就退回按连接器分桶（保底行为，与旧配置一致）。
+ * 账号优先：`userId` 是真正的"人"；旧配置只有 `owner` 字符串时就按它；
+ * 都没有才退回按连接器分桶（保底行为，与旧配置一致）。
  */
 export function rateKeyOf(who: Authenticated): string {
-  return who.owner === undefined ? `connector:${who.id}` : `user:${who.owner}`
+  if (who.userId !== undefined && who.userId !== '') return `user:${who.userId}`
+  if (who.owner !== undefined && who.owner !== '') return `user:${who.owner}`
+  return `connector:${who.id}`
 }
 
 /** 一条令牌摘要（配置里的一行）。 */
@@ -56,6 +72,14 @@ export interface TokenDigest {
   hash: string
   /** 这台连接器属于谁（可选；同一人的多台电脑写同一个值）。见 `Authenticated.owner`。 */
   owner?: string
+  /** 账号 id（accounts 模式下控制台签发的令牌）。 */
+  userId?: string
+  /** 已绑定的连接器 id；空着 = 第一次连上时绑定。 */
+  connectorId?: string
+  /** 控制台里给这台电脑起的名字（只用于展示）。 */
+  name?: string
+  /** 签发时间（只用于展示）。 */
+  createdAt?: number
   /**
    * 这张令牌怎么来的：`auto` = 连接器自己在中转上兑换的（`POST /connector/enroll`）。
    *

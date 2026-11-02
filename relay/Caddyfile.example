@@ -7,9 +7,16 @@
 # Caddy 会自动签证书并处理 WebSocket 升级（中转的 `/ws/connector` 与
 # 设备侧的升级路由都走同一条反代，不需要额外配置）。
 #
+# `X-Real-IP` 必须由反代**覆盖**：中转的注册/登录限流按来源地址分桶，
+# 不覆盖时所有人都会塌成 Caddy 的地址，等于没有限流（`auth.trustProxy` 依赖它）。
+#
 # 之后：
 #   - 连接器的 `relayUrl` 写 `wss://relay.example.com/ws/connector`
 #   - 手机配对载荷里的 `relay` 就是这个域名（`relayHintFor` 对域名原样返回）
 relay.example.com {
-	reverse_proxy relay:8787
+	encode gzip
+	reverse_proxy relay:8787 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
 }

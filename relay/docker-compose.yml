@@ -45,9 +45,15 @@ services:
       # **读写**挂载：`--issue-token` / `--revoke-token` 会改这份文件。
       # 只读部署（令牌在别处签发）可以加 `:ro`。
       - ./relay.config.json:/config/relay.config.json
+      # **账号库要挂目录，不能挂单文件**：SQLite 的 WAL 会生成
+      # `relay.db-wal` / `relay.db-shm` 两个兄弟文件，单文件 bind mount 会把它们
+      # 挡在容器外，WAL 模式直接坏掉。默认 `auth.dbPath` 是 /config/data/relay.db。
+      - ./data:/config/data
     environment:
       # 必须与 relay.config.json 的 `port` 一致：镜像的健康检查按它连端口。
       RELAY_PORT: "8787"
+      # 若 `auth.smtp.pass` 写成 `env:RELAY_SMTP_PASS`，就在这里注入（推荐）。
+      # RELAY_SMTP_PASS: ""
 
   # ---- 公网 TLS（可选，二选一里的 ①）----
   # caddy:

@@ -5,15 +5,17 @@
  *
  * 中转是独立服务（`node src/main.ts`），与 DSH 的 UI 没有共享运行时、也不该借它的
  * 视觉 token。所以这套配色与排版是**自成一体的**：深色海军底 + 青绿强调色，
- * 左边一列分区导航（概览 / 连接器 / 通道 / 用量 / 令牌），右边是内容区。
+ * 左边一列分区导航（概览 / 用户 / 连接器 / 通道 / 用量 / 令牌 / 动态），右边是内容区。
  * 跟随系统亮暗（两套变量），图标是内联 SVG，没有任何外部资源。
  *
- * ## 两屏，不是一屏
+ * ## 两种进入方式
  *
- * 1. **登录屏**：一张卡 + 一个令牌输入。拿到令牌前**不渲染任何看板**。
- * 2. **控制台**：令牌有效才出现；2 s 轮询；任何一次 401 退回登录屏。
+ * 1. **管理员账号会话**：先在 `/login` 登录，再打开 `/admin` 自动识别（cookie + CSRF）。
+ * 2. **break-glass 令牌**：没有账号模式或会话失效时，粘贴 `--issue-admin` 签发的令牌。
  *
- * 不做用户名：中转只有一个管理身份（`admin.id`），多一个填了也校验不了的格子只让人猜。
+ * 数据接口两种都认；写操作在会话模式下要带 `X-CSRF-Token`。
+ *
+ * 账号模式的用户、额度与电脑归属在「用户」分区；没有 `auth` 段时该分区显示未启用。
  *
  * ## 曲线是真数据
  *
@@ -22,11 +24,12 @@
  *
  * ## 凭据怎么带
  *
- * 令牌存 `sessionStorage`，每次 `fetch` 放进 `Authorization` 头 —— 不设 cookie，
- * 浏览器不会自动带凭据，CSRF 无从谈起；页面没有外链脚本可读它。
+ * 会话走 HttpOnly cookie；令牌模式存 `sessionStorage`，每次 `fetch` 放进
+ * `Authorization` 头。页面没有外链脚本可读它。
  *
  * Note: 为什么轮询而不是 WS/SSE、为什么独立凭据 —— 见
- * `.agents/notes/implemented/2026-10-30-relay-admin-panel.md`
+ * `.agents/notes/implemented/2026-10-30-relay-admin-panel.md`；账号与首连绑定见
+ * `.agents/notes/implemented/2026-11-02-relay-accounts-and-connector-binding.md`。
  */
 export const ADMIN_PAGE = `<!doctype html>
 <html lang="zh-CN">
@@ -213,7 +216,7 @@ td.id{color:var(--ink)}
       </svg>
     </div>
     <h1>DSH 中转</h1>
-    <p class="sub">控制台 · 需要管理令牌</p>
+    <p class="sub">控制台 · 管理员账号或管理令牌</p>
     <label class="field">
       <span>管理令牌</span>
       <input id="token" type="password" name="token" autocomplete="current-password"
@@ -223,6 +226,7 @@ td.id{color:var(--ink)}
     <p id="login-error" class="error" hidden></p>
     <p class="hint">服务器上用 <code>--issue-admin &lt;id&gt;</code> 签发的令牌，只显示一次；
       服务器只存它的 sha256 —— 丢了就重签一串，旧的立即失效。</p>
+    <p class="hint">或者先在 <a href="/login">/login</a> 用管理员账号登录，回到这里会自动识别。</p>
   </form>
 </div>
 
@@ -239,6 +243,7 @@ td.id{color:var(--ink)}
     </div>
     <nav id="nav">
       <a href="#/overview" data-view="overview">概览<em id="n-overview"></em></a>
+      <a href="#/users" data-view="users">用户<em id="n-users"></em></a>
       <a href="#/connectors" data-view="connectors">连接器<em id="n-connectors"></em></a>
       <a href="#/channels" data-view="channels">通道<em id="n-channels"></em></a>
       <a href="#/usage" data-view="usage">用量<em id="n-usage"></em></a>
@@ -280,9 +285,11 @@ td.id{color:var(--ink)}
   var uptimeEl = document.getElementById('uptime')
   var timer = null
   var lastState = null
+  var sessionMode = false
 
   var VIEWS = {
     overview: ['概览', '这台中转此刻在做什么'],
+    users: ['用户', '账号、电脑归属与额度'],
     connectors: ['连接器', '已连上来的电脑（控制面）'],
     channels: ['通道', '正在转发的一对一连接'],
     usage: ['用量', '按人（或按电脑）的流量与本周期上限'],
@@ -327,7 +334,12 @@ td.id{color:var(--ink)}
     return VIEWS[hash] ? hash : 'overview'
   }
   function token() { return sessionStorage.getItem(TOKEN_KEY) || '' }
+  function csrf() {
+    var match = document.cookie.match(/(?:^|; )dsh_relay_csrf=([^;]+)/)
+    return match ? decodeURIComponent(match[1]) : ''
+  }
   function headers() {
+    if (sessionMode) return {}
     var value = token()
     return value === '' ? {} : { authorization: 'Bearer ' + value }
   }
@@ -393,9 +405,12 @@ td.id{color:var(--ink)}
     pillText.textContent = text
   }
   function post(path, body) {
+    var requestHeaders = Object.assign({ 'content-type': 'application/json' }, headers())
+    if (sessionMode) requestHeaders['x-csrf-token'] = csrf()
     return fetch(path, {
       method: 'POST',
-      headers: Object.assign({ 'content-type': 'application/json' }, headers()),
+      credentials: 'same-origin',
+      headers: requestHeaders,
       body: JSON.stringify(body || {})
     }).then(function (response) {
       if (response.status === 401) { toLogin('登录已失效，请重新输入令牌'); return null }
@@ -420,8 +435,11 @@ td.id{color:var(--ink)}
     if (timer === null) timer = setInterval(refresh, 2000)
   }
   function refresh() {
-    fetch('/admin/api/state', { headers: headers() }).then(function (response) {
-      if (response.status === 401) { toLogin('令牌无效或已过期'); return null }
+    fetch('/admin/api/state', { credentials: 'same-origin', headers: headers() }).then(function (response) {
+      if (response.status === 401) {
+        toLogin(sessionMode ? '账号会话已失效，请重新登录（或输入管理令牌）' : '令牌无效或已过期')
+        return null
+      }
       if (!response.ok) { setPill('bad', 'HTTP ' + response.status); return null }
       return response.json()
     }).then(function (state) {
@@ -459,12 +477,127 @@ td.id{color:var(--ink)}
     subEl.textContent = VIEWS[view][1]
     uptimeEl.textContent = '运行 ' + duration(state.uptimeMs) + ' · 每 2 秒刷新'
     document.getElementById('n-overview').textContent = ''
+    document.getElementById('n-users').textContent = String((state.users || []).length)
     document.getElementById('n-connectors').textContent = String(state.totals.connectors)
     document.getElementById('n-channels').textContent = String(state.totals.channels)
     document.getElementById('n-usage').textContent = state.quota ? String(state.quota.rows.length) : ''
     document.getElementById('n-tokens').textContent = String(activeTokens)
     document.getElementById('n-events').textContent = String(state.events.length)
     viewEl.textContent = ''
+
+    if (view === 'users') {
+      if (!state.auth) {
+        var emptyCard = el('section', null, 'card')
+        var emptyHead = el('header'); emptyHead.appendChild(el('h2', '账号模式未启用')); emptyCard.appendChild(emptyHead)
+        var emptyBody = el('div', null, 'body')
+        emptyBody.appendChild(el('div', '在 relay.config.json 里加 auth 段并重启，才会有用户。', 'empty'))
+        emptyCard.appendChild(emptyBody)
+        viewEl.appendChild(emptyCard)
+        return
+      }
+      var userKpis = el('div', undefined, 'kpis')
+      ;[
+        ['账号数', state.users.length, ''],
+        ['注册', state.auth.registration === 'open' ? '开放' : '关闭', ''],
+        ['默认电脑数', state.auth.defaultMaxConnectors, ''],
+        ['默认额度', state.auth.defaultQuotaBytes === null ? '不限' : bytes(state.auth.defaultQuotaBytes), '']
+      ].forEach(function (item) {
+        var box = el('div', undefined, 'kpi ' + item[2])
+        box.appendChild(el('div', String(item[1]), 'v'))
+        box.appendChild(el('div', item[0], 'k'))
+        userKpis.appendChild(box)
+      })
+      viewEl.appendChild(userKpis)
+
+      var usersCard = el('section', undefined, 'card')
+      var usersHead = el('header')
+      usersHead.appendChild(el('h2', '用户'))
+      usersHead.appendChild(el('span', state.users.length + ' 个', 'meta'))
+      usersCard.appendChild(usersHead)
+      var usersBody = el('div', null, 'body')
+      usersBody.appendChild(table(
+        ['邮箱', '角色', '状态', '#电脑', '#在线', '#设备', '#本月用量', ''],
+        state.users.map(function (row) {
+          var actions = el('div')
+          actions.appendChild(btn(row.status === 'active' ? '停用' : '恢复', function () {
+            if (row.status === 'active' && !confirm('停用 ' + row.email + '？它名下所有连接会立刻断开')) return
+            post('/admin/api/users/status', {
+              id: row.id,
+              status: row.status === 'active' ? 'suspended' : 'active'
+            }).then(refresh)
+          }, row.status === 'active'))
+          actions.appendChild(btn(row.role === 'admin' ? '降为用户' : '设为管理员', function () {
+            post('/admin/api/users/role', {
+              id: row.id,
+              role: row.role === 'admin' ? 'user' : 'admin'
+            }).then(refresh)
+          }))
+          actions.appendChild(btn('电脑上限', function () {
+            var next = prompt('这个账号最多几台电脑（1–100）', String(row.maxConnectors))
+            if (next === null) return
+            var value = parseInt(next, 10)
+            if (!isFinite(value)) { alert('要一个整数'); return }
+            post('/admin/api/users/limits', { id: row.id, maxConnectors: value }).then(refresh)
+          }))
+          actions.appendChild(btn('额度', function () {
+            var current = row.quotaBytes === null ? '' : (row.quotaBytes / 1073741824).toFixed(2)
+            var next = prompt('本月额度（GB）；留空 = 不限', current)
+            if (next === null) return
+            if (next.trim() === '') {
+              post('/admin/api/users/limits', { id: row.id, quotaBytes: null }).then(refresh)
+              return
+            }
+            var value = parseFloat(next)
+            if (!isFinite(value) || value <= 0) { alert('要一个正数'); return }
+            post('/admin/api/users/limits', { id: row.id, quotaBytes: Math.round(value * 1073741824) }).then(refresh)
+          }))
+          actions.appendChild(btn('重置用量', function () {
+            if (!confirm('把 ' + row.email + ' 的本期用量归零？')) return
+            post('/admin/api/quota/reset', { subject: 'user:' + row.id }).then(refresh)
+          }))
+          return [
+            row.email,
+            row.role === 'admin' ? '管理员' : '用户',
+            row.status === 'active' ? '正常' : '已停用',
+            row.activeConnectors + ' / ' + row.connectors,
+            String(row.online),
+            String(row.devices),
+            bytes(row.usedBytes) + (row.quotaBytes === null ? ' / 不限' : ' / ' + bytes(row.quotaBytes)),
+            actions
+          ]
+        }),
+        '还没有账号'
+      ))
+      usersCard.appendChild(usersBody)
+      viewEl.appendChild(usersCard)
+
+      var mailCard = el('section', undefined, 'card')
+      var mailHead = el('header'); mailHead.appendChild(el('h2', '发信测试')); mailCard.appendChild(mailHead)
+      var mailBody = el('div', null, 'body')
+      var mailRow = el('div', null, 'actions')
+      var mailInput = el('input')
+      mailInput.type = 'email'
+      mailInput.placeholder = '收件邮箱'
+      mailInput.style.padding = '7px 10px'
+      mailInput.style.border = '1px solid var(--line2)'
+      mailInput.style.borderRadius = '8px'
+      mailInput.style.background = 'var(--bg)'
+      mailInput.style.color = 'var(--ink)'
+      mailInput.style.minWidth = '240px'
+      mailRow.appendChild(mailInput)
+      mailRow.appendChild(btn('发测试邮件', function () {
+        var to = mailInput.value.trim()
+        if (to === '') return
+        post('/admin/api/mail/test', { to: to }).then(function (data) {
+          if (data) alert('已交给 SMTP，去收件箱看看')
+        })
+      }))
+      mailBody.appendChild(mailRow)
+      mailBody.appendChild(el('p', '用当前 auth.smtp 配置发一封。AhaSend 的发件域名必须先校验，否则会 502。', 'hintline'))
+      mailCard.appendChild(mailBody)
+      viewEl.appendChild(mailCard)
+      return
+    }
 
     if (view === 'overview') {
       var kpis = el('div', undefined, 'kpis')
@@ -631,33 +764,38 @@ td.id{color:var(--ink)}
     modeLine.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px'
     modeLine.appendChild(el('span', '连接器认证', 'meta'))
     modeLine.appendChild(el('span', auth.mode === 'open' ? '开放（可自助兑换）' : '必需（管理员发令牌）', 'tag ' + (auth.mode === 'open' ? 'ok' : '')))
-    modeLine.appendChild(btn('设为开放', function () {
-      post('/admin/api/connector-auth', { mode: 'open', limit: auth.limit }).then(refresh)
-    }))
-    modeLine.appendChild(btn('设为必需', function () {
-      post('/admin/api/connector-auth', { mode: 'required', limit: auth.limit }).then(refresh)
-    }))
+    if (!state.auth) {
+      modeLine.appendChild(btn('设为开放', function () {
+        post('/admin/api/connector-auth', { mode: 'open', limit: auth.limit }).then(refresh)
+      }))
+      modeLine.appendChild(btn('设为必需', function () {
+        post('/admin/api/connector-auth', { mode: 'required', limit: auth.limit }).then(refresh)
+      }))
+    }
     authBody.appendChild(modeLine)
-
-    var limitLine = el('div')
-    limitLine.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 4px'
-    limitLine.appendChild(el('span', '自动签发上限', 'meta'))
-    var limitInput = el('input')
-    limitInput.type = 'number'
-    limitInput.min = '1'
-    limitInput.placeholder = '留空 = 无上限'
-    limitInput.value = auth.limit === null ? '' : String(auth.limit)
-    limitInput.style.cssText = 'width:120px;padding:8px 10px;border:1px solid var(--line2);border-radius:8px;background:transparent;color:inherit;font:inherit'
-    limitLine.appendChild(limitInput)
-    limitLine.appendChild(btn('保存上限', function () {
-      var raw = limitInput.value.trim()
-      var next = raw === '' ? null : Number(raw)
-      if (next !== null && (!isFinite(next) || next < 1)) { alert('上限要正整数，或留空表示无上限'); return }
-      post('/admin/api/connector-auth', { mode: auth.mode, limit: next }).then(refresh)
-    }))
-    limitLine.appendChild(el('span', '已自动签发 ' + auth.autoCount + ' 条', 'meta'))
-    authBody.appendChild(limitLine)
-    authBody.appendChild(el('p', '开放时任何人拿到地址都能连；内容仍端到端加密，中转只见密文与元数据。', 'hint'))
+    if (state.auth) {
+      authBody.appendChild(el('p', '账号模式已开启：连接器认证被强制为必需，匿名兑换已关闭。', 'hint'))
+    } else {
+      var limitLine = el('div')
+      limitLine.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 4px'
+      limitLine.appendChild(el('span', '自动签发上限', 'meta'))
+      var limitInput = el('input')
+      limitInput.type = 'number'
+      limitInput.min = '1'
+      limitInput.placeholder = '留空 = 无上限'
+      limitInput.value = auth.limit === null ? '' : String(auth.limit)
+      limitInput.style.cssText = 'width:120px;padding:8px 10px;border:1px solid var(--line2);border-radius:8px;background:transparent;color:inherit;font:inherit'
+      limitLine.appendChild(limitInput)
+      limitLine.appendChild(btn('保存上限', function () {
+        var raw = limitInput.value.trim()
+        var next = raw === '' ? null : Number(raw)
+        if (next !== null && (!isFinite(next) || next < 1)) { alert('上限要正整数，或留空表示无上限'); return }
+        post('/admin/api/connector-auth', { mode: auth.mode, limit: next }).then(refresh)
+      }))
+      limitLine.appendChild(el('span', '已自动签发 ' + auth.autoCount + ' 条', 'meta'))
+      authBody.appendChild(limitLine)
+      authBody.appendChild(el('p', '开放时任何人拿到地址都能连；内容仍端到端加密，中转只见密文与元数据。', 'hint'))
+    }
     tokens.appendChild(authBody)
     var tBody = el('div', undefined, 'body')
     tBody.appendChild(table(['id', '所属人', '状态', ''], state.tokens.map(function (row) {
@@ -677,7 +815,8 @@ td.id{color:var(--ink)}
           post('/admin/api/tokens/revoke', { id: row.id }).then(refresh)
         }, true))
       }
-      return [row.id, row.owner || '—', el('span', row.revokedAt ? '已吊销' : '有效', 'tag ' + (row.revokedAt ? 'bad' : 'ok')), actions]
+      var label = row.name ? row.name + ' · ' + row.id : row.id
+      return [label, row.userId || row.owner || '—', el('span', row.revokedAt ? '已吊销' : '有效', 'tag ' + (row.revokedAt ? 'bad' : 'ok')), actions]
     }), '还没有连接器令牌'))
     tokens.appendChild(tBody)
     viewEl.appendChild(tokens)
@@ -687,11 +826,20 @@ td.id{color:var(--ink)}
     event.preventDefault()
     var value = tokenInput.value.trim()
     if (value === '') { errorEl.textContent = '请输入管理令牌'; errorEl.hidden = false; return }
+    sessionMode = false
     sessionStorage.setItem(TOKEN_KEY, value)
     errorEl.hidden = true
     refresh()
   })
   document.getElementById('logout').addEventListener('click', function () {
+    if (sessionMode) {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'x-csrf-token': csrf() }
+      }).catch(function () {}).then(function () { location.href = '/login' })
+      return
+    }
     sessionStorage.removeItem(TOKEN_KEY)
     tokenInput.value = ''
     toLogin(null)
@@ -699,8 +847,21 @@ td.id{color:var(--ink)}
   document.getElementById('refresh').addEventListener('click', refresh)
   window.addEventListener('hashchange', function () { if (lastState) render(lastState) })
 
-  if (token() === '') toLogin(null)
-  else refresh()
+  // 先看有没有管理员账号会话；没有再看有没有 break-glass 令牌。
+  if (token() !== '') {
+    refresh()
+  } else {
+    fetch('/api/auth/me', { credentials: 'same-origin' }).then(function (response) {
+      return response.ok ? response.json() : null
+    }).then(function (data) {
+      if (data && data.user && data.user.role === 'admin') {
+        sessionMode = true
+        refresh()
+      } else {
+        toLogin(null)
+      }
+    }).catch(function () { toLogin(null) })
+  }
 })()
 </script>
 </body>

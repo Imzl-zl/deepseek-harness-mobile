@@ -5,7 +5,7 @@
   "description": "dsh-mobile 中转：只转发与记账（契约 §2 / §12，I10）",
   "type": "module",
   "engines": {
-    "node": ">=22.6"
+    "node": ">=22.13"
   },
   "scripts": {
     "test": "node --test",

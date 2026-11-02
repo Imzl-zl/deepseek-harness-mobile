@@ -73,6 +73,16 @@ export interface MeteringOptions {
   quota: QuotaConfig
   /** `connectorId → owner`。来自配置里的令牌条目（不是运行时状态）。 */
   ownerOf: (connectorId: string) => string | undefined
+  /**
+   * 账号库里的单人额度（accounts 模式）。
+   *
+   * 返回 `undefined` = 这一层不管，回落到 `quota.owners` / `quota.defaultBytes`；
+   * 返回 `null` = 明确不限；返回数字 = 这一层的上限。
+   * 它让"新注册的人有默认额度"不必写进配置文件。
+   */
+  limitOfSubject?: (subject: string) => number | null | undefined
+  /** 面板改额度前的"这个主体存在吗"（账号库里的用户也算存在）。 */
+  isKnownSubject?: (subject: string) => boolean
   now?: () => number
   /** 启动时读回的状态（周期对不上就按 0 起算）。 */
   state?: MeteringState
@@ -139,6 +149,9 @@ export function createMetering(options: MeteringOptions): Metering {
   const overrides = new Map<string, number | null>()
   const limitOfSubject = (subject: string): number | null => {
     if (overrides.has(subject)) return overrides.get(subject) ?? null
+    // accounts 模式的账号额度先问它；`undefined` 表示"这一层没意见"。
+    const external = options.limitOfSubject?.(subject)
+    if (external !== undefined) return external
     if (subject.startsWith('user:')) {
       const owner = subject.slice('user:'.length)
       return quota.owners?.[owner] ?? quota.defaultBytes ?? null
@@ -241,16 +254,19 @@ export function createMetering(options: MeteringOptions): Metering {
     },
 
     setLimit(subject, bytes) {
-      // 只接受**已知主体**：已有计数行，或配置里点名的人。面板不该成为"新额度主体"的入口。
+      // 只接受**已知主体**：已有计数行，或配置里点名的人，或账号库里的用户。
+      // 面板不该成为"新额度主体"的入口。
       const known = meters.has(subject)
         || (subject.startsWith('user:') && Object.hasOwn(quota.owners ?? {}, subject.slice('user:'.length)))
+        || options.isKnownSubject?.(subject) === true
       if (!known) throw new Error('没有这个额度主体')
       overrides.set(subject, bytes)
     },
 
     reset(subject) {
       const row = meters.get(subject)
-      if (row === undefined) return false
+      // 账号库里的用户即使这个周期还没用过，也允许"重置为零"（管理台那一行是存在的）。
+      if (row === undefined && options.isKnownSubject?.(subject) !== true) return false
       meters.set(subject, { period: periodKeyOf(now(), period), bytes: 0 })
       dirty = true
       return true

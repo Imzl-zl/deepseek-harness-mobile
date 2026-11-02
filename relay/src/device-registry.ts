@@ -111,6 +111,15 @@ export interface DeviceRegistry {
   readonly stats: { devices: number; bound: number }
   /** 每台连接器**上次报到**的行数（管理面用；只给数字，不给设备 id）。 */
   publishedCounts(): Readonly<Record<string, number>>
+  /** 某台连接器名下的设备投影（控制台用；不含摘要与公钥）。 */
+  rowsOf(connectorId: string): readonly DeviceRow[]
+}
+
+/** 控制台能看到的设备行：只有展示字段。 */
+export interface DeviceRow {
+  id: string
+  name: string
+  revokedAt?: number
 }
 
 const hashOf = (token: string): string => createHash('sha256').update(token, 'utf8').digest('hex')
@@ -179,6 +188,19 @@ export function createDeviceRegistry(options: DeviceRegistryOptions = {}): Devic
       const counts: Record<string, number> = {}
       for (const [connectorId, ids] of published) counts[connectorId] = ids.size
       return counts
+    },
+
+    rowsOf(connectorId) {
+      const out: DeviceRow[] = []
+      for (const row of rows.values()) {
+        if (row.connectorId !== connectorId) continue
+        out.push({
+          id: row.id,
+          name: row.name,
+          ...(row.revokedAt === undefined ? {} : { revokedAt: row.revokedAt }),
+        })
+      }
+      return out
     },
 
     register(connectorId, incoming) {

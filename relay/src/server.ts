@@ -12,7 +12,7 @@ import { createDeviceRegistry, type DeviceRegistry } from './device-registry.ts'
 import { createHttpFace, type Authenticated } from './http-face.ts'
 import { createAdminAuthenticator, type AdminDigest } from './admin/auth.ts'
 import { ADMIN_PAGE } from './admin/page.ts'
-import { createAdminRoutes, type AdminApi, type AdminOps, type AdminStateView } from './admin/routes.ts'
+import { createAdminRoutes, type AdminApi, type AdminOps, type AdminStateView, type AdminUserRow } from './admin/routes.ts'
 import { rateKeyOf } from './digest-auth.ts'
 import { createRateLimiter } from './rate-limit.ts'
 import { createEventRing, mirrorToRing } from './events.ts'
@@ -21,6 +21,20 @@ import { createMeteringStateWriter, FLUSH_EVERY_MS } from './metering-state.ts'
 import { createTicketStore } from './tickets.ts'
 import { PAIRING_REGISTRATION_TTL_MS } from './pairing-registry.ts'
 import type { ChannelLogger } from './logger.ts'
+import type { TokenTable } from './token-table.ts'
+import type { AuthConfig } from './accounts/config.ts'
+import type { AccountsDb, UserRecord } from './accounts/db.ts'
+import { publicUserOf } from './accounts/db.ts'
+import type { Mailer } from './accounts/email.ts'
+import {
+  createAccountsFace,
+  type AccountsFace,
+  type AccountsLimiters,
+  type ConsoleConnector,
+  type ConsoleDevice,
+  type ConsoleState,
+} from './accounts/face.ts'
+import { safeEqual } from './accounts/session.ts'
 
 const MAX_BODY_BYTES = 1024 * 1024
 const CONTROL_HEARTBEAT_MS = 60_000
@@ -58,7 +72,40 @@ export interface RelayServerOptions {
    * 走同一张摘要表、同一个吊销按钮。
    */
   connectorEnroll?: ConnectorEnroll
+  /**
+   * 账号模式（`auth.mode: "accounts"`）。
+   *
+   * 不传 = 旧行为：没有登录页、没有控制台、匿名兑换按 `connectorEnroll` 的判定走。
+   * 传了就把 `/login`、`/console`、`/api/auth/*`、`/api/console/*` 接进来，
+   * 并对控制面/数据面做账号状态检查。
+   */
+  accounts?: AccountsRuntime
   log?: ChannelLogger
+}
+
+export type AccountStatus = 'active' | 'suspended' | 'missing'
+
+/**
+ * 账号模式的装配面（实现见 `main.ts`；表与配置的写入都在那边）。
+ *
+ * Note: 为什么账号只做"电脑与额度"、为什么令牌首连才绑定 —— 见
+ * `.agents/notes/implemented/2026-11-02-relay-accounts-and-connector-binding.md`
+ */
+export interface AccountsRuntime {
+  db: AccountsDb
+  config: AuthConfig
+  tokens: TokenTable
+  mailer?: Mailer
+  secureCookies: boolean
+  limiters: AccountsLimiters
+  statusOf(userId: string): AccountStatus
+  createToken(user: UserRecord, name: string): Promise<{ token: string; id: string }>
+  renameToken(tokenId: string, name: string): Promise<boolean>
+  setTokenEnabled(tokenId: string, enabled: boolean): Promise<boolean>
+  removeToken(tokenId: string): Promise<boolean>
+  resetBinding(tokenId: string): Promise<boolean>
+  /** 第一次连上时绑定 `?id=`；写回配置 + 改内存表。 */
+  bindToken(tokenId: string, connectorId: string): Promise<boolean>
 }
 
 /** 自助兑换的装配面（实现见 `main.ts`）。 */
@@ -119,6 +166,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
   const log = mirrorToRing(options.log, events)
   /** 进程启动时刻（面板的“已运行”）。 */
   const startedAt = Date.now()
+  const accountsRuntime = options.accounts
   const devices = createDeviceRegistry(log === undefined ? {} : { log })
   const core = createRelayCore(log === undefined ? {} : { log })
   const tickets = createTicketStore(log === undefined ? {} : { log })
@@ -141,6 +189,17 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
     quota: options.quota ?? {},
     ownerOf: options.ownerOf ?? (() => undefined),
     ...(options.quotaState === undefined ? {} : { state: options.quotaState }),
+    ...(accountsRuntime === undefined ? {} : {
+      // 账号额度优先于配置文件：新注册的人有默认额度，不必把每个人写进 `quota.owners`。
+      // `null` = 明确不限；`undefined` = 回落配置（旧 owner 字符串走这条路）。
+      limitOfSubject: (subject: string) => {
+        if (!subject.startsWith('user:')) return undefined
+        const user = accountsRuntime.db.findById(subject.slice('user:'.length))
+        return user === undefined ? undefined : user.quotaBytes
+      },
+      isKnownSubject: (subject: string) =>
+        subject.startsWith('user:') && accountsRuntime.db.findById(subject.slice('user:'.length)) !== undefined,
+    }),
     ...(log === undefined ? {} : { log }),
   })
   const quotaDenied = (connectorId: string): { retryAfterMs: number | null } | undefined => {
@@ -166,15 +225,181 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
     lastPongAt: number
   }>()
   const links = new Map<string, Link>()
+  /**
+   * 账号面在 `controls`/`links` 之后就装配：控制台的状态要读在线连接与名册，
+   * 而这些表在上面两行才出现。HTTP 处理在更后面，引用成立。
+   */
+  let accountsFace: AccountsFace | undefined
+  if (accountsRuntime !== undefined) {
+    const runtime = accountsRuntime
+    accountsFace = createAccountsFace({
+      db: runtime.db,
+      config: runtime.config,
+      ...(runtime.mailer === undefined ? {} : { mailer: runtime.mailer }),
+      ...(log === undefined ? {} : { log }),
+      secureCookies: runtime.secureCookies,
+      limiters: runtime.limiters,
+      console: {
+        state(user) {
+          const rows = runtime.tokens.listForUser(user.id)
+          const connectors: ConsoleConnector[] = []
+          const deviceList: ConsoleDevice[] = []
+          const seen = new Set<string>()
+          for (const row of rows) {
+            const connectorId = row.connectorId ?? row.id
+            const control = controls.get(connectorId)
+            const deviceRows = devices.rowsOf(connectorId)
+            const activeDevices = deviceRows.filter((device) => device.revokedAt === undefined)
+            connectors.push({
+              id: row.id,
+              ...(row.connectorId === undefined ? {} : { connectorId: row.connectorId }),
+              name: row.name ?? '未命名电脑',
+              online: control !== undefined,
+              ...(control === undefined ? {} : { since: control.since, lastPongAt: control.lastPongAt }),
+              devices: activeDevices.length,
+              ...(row.revokedAt === undefined ? {} : { revokedAt: row.revokedAt }),
+              ...(row.createdAt === undefined ? {} : { createdAt: row.createdAt }),
+            })
+            for (const device of activeDevices) {
+              if (seen.has(device.id)) continue
+              seen.add(device.id)
+              deviceList.push({
+                id: device.id,
+                name: device.name,
+                ...(row.connectorId === undefined ? {} : { connectorId: row.connectorId }),
+                ...(device.revokedAt === undefined ? {} : { revokedAt: device.revokedAt }),
+              })
+            }
+          }
+          const subject = `user:${user.id}`
+          return {
+            v: 1,
+            now: Date.now(),
+            user: publicUserOf(user),
+            limits: {
+              maxConnectors: user.maxConnectors ?? runtime.config.limits.defaultMaxConnectors,
+              usedConnectors: runtime.tokens.countForUser(user.id),
+            },
+            quota: {
+              period: metering.period,
+              used: metering.usedOf(subject),
+              limit: metering.limitOf(subject),
+              enforce: metering.enforce,
+            },
+            connectors,
+            devices: deviceList,
+          } satisfies ConsoleState
+        },
+
+        async createConnector(user, name) {
+          return runtime.createToken(user, name)
+        },
+
+        async renameConnector(user, id, name) {
+          const row = runtime.tokens.list().find((item) => item.id === id && item.userId === user.id)
+          if (row === undefined) return 'not-found'
+          return await runtime.renameToken(id, name) ? 'ok' : 'not-found'
+        },
+
+        async setConnectorEnabled(user, id, enabled) {
+          const row = runtime.tokens.list().find((item) => item.id === id && item.userId === user.id)
+          if (row === undefined) return 'not-found'
+          const saved = await runtime.setTokenEnabled(id, enabled)
+          if (!saved) return 'not-found'
+          if (!enabled) {
+            const connectorId = row.connectorId ?? row.id
+            const control = controls.get(connectorId)
+            if (control !== undefined) {
+              detachControl(connectorId)
+              control.socket.close(4000, 'computer revoked')
+            }
+          }
+          return 'ok'
+        },
+
+        async removeConnector(user, id) {
+          const row = runtime.tokens.list().find((item) => item.id === id && item.userId === user.id)
+          if (row === undefined) return 'not-found'
+          if (row.revokedAt === undefined) return 'revoke-first'
+          const connectorId = row.connectorId ?? row.id
+          const control = controls.get(connectorId)
+          if (control !== undefined) {
+            detachControl(connectorId)
+            control.socket.close(4000, 'computer removed')
+          }
+          return await runtime.removeToken(id) ? 'ok' : 'not-found'
+        },
+
+        async resetBinding(user, id) {
+          const row = runtime.tokens.list().find((item) => item.id === id && item.userId === user.id)
+          if (row === undefined) return 'not-found'
+          const connectorId = row.connectorId ?? row.id
+          if (controls.has(connectorId)) return 'online'
+          return await runtime.resetBinding(id) ? 'ok' : 'not-found'
+        },
+      },
+    })
+  }
+  /** 连接器归哪个额度主体（账号优先；旧配置走 owner）。 */
+  const ownerOfConnector = (connectorId: string): string | undefined =>
+    accountsRuntime?.tokens.ownerOf(connectorId) ?? options.ownerOf?.(connectorId)
+
+  /**
+   * 停用一个账号：把它名下的控制面与通道全部收掉。
+   *
+   * **不是只改库里的 status**：状态只在"下一次握手"生效的话，已经在线的电脑与手机会
+   * 继续转发 —— 那正是"停用了但还在用"。顺序与令牌吊销一致：先摘表再关 socket。
+   */
+  function closeUser(userId: string): void {
+    for (const connectorId of [...controls.keys()]) {
+      if (ownerOfConnector(connectorId) !== userId) continue
+      const control = controls.get(connectorId)
+      if (control === undefined) continue
+      detachControl(connectorId)
+      control.socket.close(4000, 'account suspended')
+    }
+  }
+
   /** 管理面认证。`undefined` = 没配凭据 ⇒ 这张面**不存在**（不是"开着但没人能进"）。 */
   const adminAuth = options.admin === undefined ? undefined : createAdminAuthenticator(options.admin)
   /** 路由层在这里先占位：它的实现要等 `controls`/`links`/`metering` 都就位（HTTP 请求时才读）。 */
   let adminRoutes: ReturnType<typeof createAdminRoutes> | undefined
 
-  if (adminAuth !== undefined) {
+  if (adminAuth !== undefined || accountsRuntime !== undefined) {
     const actor = options.admin?.id ?? 'admin'
     const adminJson = (status: number, body: unknown) =>
       ({ status, contentType: 'application/json' as const, body: JSON.stringify(body) })
+    const adminUserRows = (): AdminUserRow[] => {
+      const runtime = accountsRuntime
+      if (runtime === undefined) return []
+      return runtime.db.listUsers(ADMIN_LIST_CAP).map((user) => {
+        const rows = runtime.tokens.listForUser(user.id)
+        let deviceCount = 0
+        let online = 0
+        for (const row of rows) {
+          if (row.revokedAt !== undefined) continue
+          const connectorId = row.connectorId ?? row.id
+          if (controls.has(connectorId)) online += 1
+          deviceCount += devices.rowsOf(connectorId).filter((device) => device.revokedAt === undefined).length
+        }
+        return {
+          id: user.id,
+          email: user.email,
+          displayName: user.displayName,
+          role: user.role,
+          status: user.status,
+          createdAt: user.createdAt,
+          lastLoginAt: user.lastLoginAt,
+          maxConnectors: user.maxConnectors ?? runtime.config.limits.defaultMaxConnectors,
+          quotaBytes: user.quotaBytes,
+          connectors: rows.length,
+          activeConnectors: rows.filter((row) => row.revokedAt === undefined).length,
+          devices: deviceCount,
+          online,
+          usedBytes: metering.usedOf(`user:${user.id}`),
+        }
+      })
+    }
     const api: AdminApi = {
       state() {
         const channelCounts = new Map<string, number>()
@@ -187,7 +412,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         const connectors: Array<AdminStateView['connectors'][number]> = []
         for (const [connectorId, state] of controls) {
           if (connectors.length >= ADMIN_LIST_CAP) break
-          const owner = options.ownerOf?.(connectorId)
+          const owner = ownerOfConnector(connectorId)
           connectors.push({
             connectorId,
             ...(owner === undefined ? {} : { owner }),
@@ -230,6 +455,13 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
             mode: options.connectorEnroll?.mode ?? 'required',
             limit: options.connectorEnroll?.limit ?? null,
             autoCount: options.connectorEnroll?.count() ?? 0,
+          },
+          users: adminUserRows(),
+          auth: accountsRuntime === undefined ? null : {
+            mode: 'accounts',
+            registration: accountsRuntime.config.registration.mode,
+            defaultMaxConnectors: accountsRuntime.config.limits.defaultMaxConnectors,
+            defaultQuotaBytes: accountsRuntime.config.limits.defaultQuotaBytes,
           },
         }
       },
@@ -276,9 +508,11 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         if (!saved.ok) return adminJson(500, { error: 'persist-failed', detail: saved.error ?? '' })
         // 吊销要**立刻**把已在线的连接收掉（否则"已吊销"只是配置文件里的一个字段）。
         if (!enabled) {
-          const control = controls.get(id)
+          const row = options.adminOps.tokens().find((item) => item.id === id)
+          const connectorId = row?.connectorId ?? id
+          const control = controls.get(connectorId)
           if (control !== undefined) {
-            detachControl(id)
+            detachControl(connectorId)
             control.socket.close(4000, 'token revoked')
           }
         }
@@ -294,6 +528,70 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         return adminJson(200, { ok: true })
       },
 
+      async setUserStatus(id, status) {
+        if (accountsRuntime === undefined) return adminJson(501, { error: 'accounts-not-wired' })
+        if (!accountsRuntime.db.setStatus(id, status)) return adminJson(404, { error: 'user-not-found' })
+        if (status === 'suspended') {
+          // 停用是安全动作：浏览器会话也要一起作废，否则"停用了但网页还登着"。
+          accountsRuntime.db.revokeUserSessions(id, Date.now())
+          closeUser(id)
+        }
+        log?.info('admin.action', { actor, action: 'user.status', id, status })
+        return adminJson(200, { ok: true })
+      },
+
+      async setUserRole(id, role) {
+        if (accountsRuntime === undefined) return adminJson(501, { error: 'accounts-not-wired' })
+        const user = accountsRuntime.db.findById(id)
+        if (user === undefined) return adminJson(404, { error: 'user-not-found' })
+        if (user.role === 'admin' && role === 'user') {
+          const admins = accountsRuntime.db.listUsers(ADMIN_LIST_CAP)
+            .filter((row) => row.role === 'admin' && row.status === 'active')
+          if (admins.length <= 1) return adminJson(409, { error: 'last-admin' })
+        }
+        if (!accountsRuntime.db.setRole(id, role)) return adminJson(404, { error: 'user-not-found' })
+        log?.info('admin.action', { actor, action: 'user.role', id, role })
+        return adminJson(200, { ok: true })
+      },
+
+      async setUserLimits(id, patch) {
+        if (accountsRuntime === undefined) return adminJson(501, { error: 'accounts-not-wired' })
+        if (accountsRuntime.db.findById(id) === undefined) return adminJson(404, { error: 'user-not-found' })
+        const saved = accountsRuntime.db.setLimits(id, {
+          ...(patch.maxConnectors === undefined ? {} : { maxConnectors: patch.maxConnectors }),
+          ...(patch.quotaBytes === undefined ? {} : { quotaBytes: patch.quotaBytes }),
+        })
+        if (!saved) return adminJson(404, { error: 'user-not-found' })
+        // 额度要立刻生效：库是真相，`metering` 的内存覆盖是"不用重启"的那一步。
+        if (patch.quotaBytes !== undefined) {
+          try { metering.setLimit(`user:${id}`, patch.quotaBytes) } catch { /* 用户刚建、还没有计数行；下次记账会用库值 */ }
+        }
+        log?.info('admin.action', { actor, action: 'user.limits', id, ...patch })
+        return adminJson(200, { ok: true })
+      },
+
+      async testMail(to) {
+        const runtime = accountsRuntime
+        const mailer = runtime?.mailer
+        if (runtime === undefined || mailer === undefined) return adminJson(501, { error: 'mail-not-configured' })
+        try {
+          await mailer.send({
+            to,
+            subject: `${runtime.config.serverName} · 测试邮件`,
+            text: '这是一封来自 DSH 中转的测试邮件。看到它说明 SMTP 配置可用。',
+            html: '<p>这是一封来自 DSH 中转的测试邮件。</p><p>看到它说明 SMTP 配置可用。</p>',
+          })
+        } catch (error) {
+          log?.warn('admin.mail-test-failed', error)
+          return adminJson(502, {
+            error: 'mail-failed',
+            detail: error instanceof Error ? error.message : String(error),
+          })
+        }
+        log?.info('admin.action', { actor, action: 'mail.test', to })
+        return adminJson(200, { ok: true })
+      },
+
       async removeToken(id) {
         if (options.adminOps === undefined) return adminJson(501, { error: 'admin-ops-not-wired' })
         // **先吊销再删除**：活跃凭据不能一把删掉（那会让一台在线电脑莫名失联），
@@ -304,9 +602,10 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         const saved = await options.adminOps.removeToken(id)
         if (!saved.ok) return adminJson(500, { error: 'persist-failed', detail: saved.error ?? '' })
         // 已吊销的连接器理论上已经下线；万一还在（面板与吊销竞速），顺手收掉。
-        const control = controls.get(id)
+        const connectorId = row.connectorId ?? id
+        const control = controls.get(connectorId)
         if (control !== undefined) {
-          detachControl(id)
+          detachControl(connectorId)
           control.socket.close(4000, 'token removed')
         }
         log?.info('admin.action', { actor, action: 'token.remove', id })
@@ -383,10 +682,10 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         return
       }
       if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) {
-        // 未配置凭据：连"有没有这张面"都不回答 —— 404 与未知路径同形。
+        // 未配置管理令牌、也没有账号模式：连"有没有这张面"都不回答 —— 404 与未知路径同形。
         // Note: 为什么管理凭据独立于连接器令牌、为什么没配就不存在 —— 见
         // `.agents/notes/implemented/2026-10-30-relay-mutable-token-table-and-admin-credential.md`
-        if (adminAuth === undefined || adminRoutes === undefined) {
+        if (adminRoutes === undefined) {
           reply(response, 404, { error: 'not-found' })
           return
         }
@@ -409,7 +708,18 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
           return
         }
         response.setHeader('cache-control', 'no-store')
-        const who = adminAuth(bearerOf(request.headers.authorization) ?? '')
+        const adminSession = accountsFace?.sessionOf({
+          method: request.method ?? 'GET',
+          path: url.pathname,
+          search: url.searchParams,
+          headers: request.headers,
+          ...(request.socket.remoteAddress === undefined ? {} : { remoteAddress: request.socket.remoteAddress }),
+        })
+        const tokenWho = adminAuth?.(bearerOf(request.headers.authorization) ?? '')
+        const sessionWho = adminSession !== undefined && adminSession.user.role === 'admin'
+          ? { id: adminSession.user.id, csrf: adminSession.csrf }
+          : undefined
+        const who = tokenWho ?? sessionWho
         if (who === undefined) {
           // 认证不过的请求按来源地址取桶：它没有任何身份可用，与首配那一跳同一个理由。
           const refused = limiter.take(`admin-anonymous:${request.socket.remoteAddress ?? 'unknown'}`)
@@ -419,6 +729,15 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
           }
           reply(response, 401, { error: 'unauthorized' })
           return
+        }
+        // 管理会话是 cookie 认证：写操作必须带双提交 CSRF；break-glass Bearer 不需要。
+        if (tokenWho === undefined && sessionWho !== undefined && request.method === 'POST') {
+          const raw = request.headers['x-csrf-token']
+          const value = Array.isArray(raw) ? raw[0] : raw
+          if (typeof value !== 'string' || !safeEqual(value, sessionWho.csrf)) {
+            reply(response, 403, { error: 'csrf' })
+            return
+          }
         }
         if (!limiter.take(`admin:${who.id}`).allowed) {
           reply(response, 429, { error: 'rate-limited', retryAfterMs: 1_000 })
@@ -445,8 +764,32 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         reply(response, 400, { error: 'bad-request' })
         return
       }
-      const token = bearerOf(request.headers.authorization)
       const remoteAddress = request.socket.remoteAddress
+      if (accountsFace !== undefined) {
+        const handled = await accountsFace.handle({
+          method: request.method ?? 'GET',
+          path: url.pathname,
+          search: url.searchParams,
+          headers: request.headers,
+          ...(body === undefined ? {} : { body }),
+          ...(remoteAddress === undefined ? {} : { remoteAddress }),
+        })
+        if (handled !== undefined) {
+          const headers: Record<string, string | string[]> = {
+            'cache-control': 'no-store',
+            ...(handled.headers ?? {}),
+          }
+          if (handled.html !== undefined) {
+            response.writeHead(handled.status, { ...headers, 'content-type': 'text/html; charset=utf-8' })
+            response.end(handled.html)
+          } else {
+            response.writeHead(handled.status, { ...headers, 'content-type': 'application/json' })
+            response.end(JSON.stringify(handled.body ?? {}))
+          }
+          return
+        }
+      }
+      const token = bearerOf(request.headers.authorization)
       const result = face.handle({
         method: request.method ?? 'GET', path: url.pathname,
         // 未认证那一跳（首配）按来源地址取桶 —— 它是那一跳唯一能区分的维度。
@@ -669,79 +1012,124 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
     socket.end(`HTTP/1.1 ${status} ${reason}\r\nconnection: close\r\n\r\n`)
   }
   http.on('upgrade', (request, socket, head) => {
-    const url = new URL(request.url ?? '/', 'http://relay.invalid')
-    if (url.pathname === '/ws/connector') {
-      const presented = bearerOf(request.headers.authorization) ?? ''
-      const caller = options.authenticate(presented)
-      if (caller?.kind !== 'connector') { refuse(socket, 401, 'Unauthorized'); return }
-      /**
-       * **接受前重验一次**（这是本批的并发口子）。
-       *
-       * `wss.handleUpgrade` 的回调是**异步**的：从上面那次认证到回调执行之间，
-       * 管理员可能刚好吊销了这台连接器（面板/CLI），或者它被重新签发给了别的 id。
-       * 只认一次会放过"已吊销却连上"的连接 —— 那与"停用一台在线设备却不收连接"
-       * 是同一类错误（`device-admin` 的 `disconnect` 就是为那条加的）。
-       */
-      const stillValid = (): boolean => options.authenticate(presented)?.id === caller.id
-      // 配了 `owner` 的连接器按**人**分桶：多开几台电脑不该等于多领几个预算。
-      if (!limiter.take(rateKeyOf(caller)).allowed) { refuse(socket, 429, 'Too Many Requests'); return }
-      const deviceId = url.searchParams.get('dev')
-      const channelId = url.searchParams.get('channel')
-      if (deviceId === null && channelId === null) {
-        // **连接器自报身份**（`?id=`）：**必带**且必须与令牌的 id 一致。
-        // 两者不一致时，二维码里的 `pcId` 与中转眼里的 id 是两个值，而此前
-        // **没有任何一处会报**（见 `connector/src/transport/relay-link.ts` 的 `connectorId`）。
-        // 不带 `?id=` 一律拒 —— 没有"老连接器"这回事：这套协议还没发版。
-        const declared = url.searchParams.get('id')
-        if (declared === null || declared !== caller.id) {
-          log?.warn('connector.id-mismatch', { declared: declared ?? '', tokenId: caller.id })
+    void (async () => {
+      const url = new URL(request.url ?? '/', 'http://relay.invalid')
+      if (url.pathname === '/ws/connector') {
+        const presented = bearerOf(request.headers.authorization) ?? ''
+        const caller = options.authenticate(presented)
+        if (caller?.kind !== 'connector') { refuse(socket, 401, 'Unauthorized'); return }
+        /**
+         * 账号被停用：控制面与数据面都不给拨。
+         *
+         * 这里检查的是"握手这一刻"；已经在线的连接由管理面的 `closeUser` 收掉，
+         * 两条路径合起来才是"停用即断线"。
+         */
+        if (caller.userId !== undefined && accountsRuntime !== undefined) {
+          const status = accountsRuntime.statusOf(caller.userId)
+          if (status !== 'active') {
+            log?.warn('admission.rejected', { connectorId: caller.id, reason: `account-${status}` })
+            refuse(socket, 403, 'Forbidden')
+            return
+          }
+        }
+        /**
+         * **接受前重验一次**（这是本批的并发口子）。
+         *
+         * `wss.handleUpgrade` 的回调是**异步**的：从上面那次认证到回调执行之间，
+         * 管理员可能刚好吊销了这台连接器（面板/CLI），或者它被重新签发给了别的 id。
+         * 只认一次会放过"已吊销却连上"的连接 —— 那与"停用一台在线设备却不收连接"
+         * 是同一类错误（`device-admin` 的 `disconnect` 就是为那条加的）。
+         */
+        const stillValid = (): boolean => options.authenticate(presented)?.id === caller.id
+        // 配了 `owner` 的连接器按**人**分桶：多开几台电脑不该等于多领几个预算。
+        if (!limiter.take(rateKeyOf(caller)).allowed) { refuse(socket, 429, 'Too Many Requests'); return }
+        const deviceId = url.searchParams.get('dev')
+        const channelId = url.searchParams.get('channel')
+        if (deviceId === null && channelId === null) {
+          // **连接器自报身份**（`?id=`）：**必带**。
+          // - 旧令牌：令牌 id 就是 connectorId，必须相等（旧行为）。
+          // - 控制台建的新令牌：第一次连上时把 `?id=` 绑进去，之后必须相等。
+          // 不带 `?id=` 一律拒 —— 没有"老连接器"这回事：这套协议还没发版。
+          const declared = url.searchParams.get('id')
+          if (declared === null || declared === '') {
+            log?.warn('connector.id-mismatch', { declared: '', tokenId: caller.id })
+            refuse(socket, 403, 'Forbidden')
+            return
+          }
+          let connectorId = caller.connectorId ?? caller.id
+          if (caller.connectorId === undefined && caller.userId !== undefined) {
+            if (accountsRuntime === undefined) { refuse(socket, 403, 'Forbidden'); return }
+            const bound = await accountsRuntime.bindToken(caller.id, declared)
+            if (!bound) {
+              log?.warn('connector.id-mismatch', { declared, tokenId: caller.id, reason: 'bind-failed' })
+              refuse(socket, 403, 'Forbidden')
+              return
+            }
+            connectorId = declared
+          } else if (declared !== connectorId) {
+            log?.warn('connector.id-mismatch', { declared, tokenId: caller.id, connectorId })
+            refuse(socket, 403, 'Forbidden')
+            return
+          }
+          wss.handleUpgrade(request, socket, head, (ws) => {
+            if (!stillValid()) { ws.close(4000, 'credential revoked'); return }
+            if (caller.userId !== undefined && accountsRuntime?.statusOf(caller.userId) !== 'active') {
+              ws.close(4003, 'account suspended')
+              return
+            }
+            acceptControl(ws, connectorId, caller.userId ?? caller.owner)
+          })
+          return
+        }
+        const connectorId = caller.connectorId ?? caller.id
+        const channel = channelId === null ? undefined : core.channel(channelId)
+        if (channel === undefined || channel.connected || channel.binding.connectorId !== connectorId
+          || channel.binding.deviceId !== deviceId || !controls.has(connectorId)) {
           refuse(socket, 403, 'Forbidden')
           return
         }
+        // 额度用满：连数据面也不给拨（配对通道不在此列 —— 它是恢复路径）。
+        if (channel.binding.purpose === 'paired' && quotaDenied(connectorId) !== undefined) {
+          refuse(socket, 429, 'Too Many Requests')
+          return
+        }
         wss.handleUpgrade(request, socket, head, (ws) => {
+          // 同一条重验：吊销可能落在"查到通道"与"接受数据面"之间。
           if (!stillValid()) { ws.close(4000, 'credential revoked'); return }
-          acceptControl(ws, caller.id, caller.owner)
+          const link = links.get(channel.channelId)
+          if (link === undefined || link.data !== null) { ws.close(4000, 'stale channel'); return }
+          link.data = ws
+          observeData(ws, channel.channelId, 'data')
+          if (link.setupTimer !== null) clearTimeout(link.setupTimer)
+          link.setupTimer = null
+          deliver(core.attachData(connectorId, channel.binding.deviceId, channel.channelId))
         })
         return
       }
-      const channel = channelId === null ? undefined : core.channel(channelId)
-      if (channel === undefined || channel.connected || channel.binding.connectorId !== caller.id
-        || channel.binding.deviceId !== deviceId || !controls.has(caller.id)) {
-        refuse(socket, 403, 'Forbidden')
+      if (url.pathname === '/ws/device') {
+        const binding = tickets.consume(url.searchParams.get('ticket') ?? '')
+        if (binding === undefined) { refuse(socket, 401, 'Unauthorized'); return }
+        if (!core.isConnectorOnline(binding.connectorId)) { refuse(socket, 503, 'Service Unavailable'); return }
+        // 账号停用：票还在有效期内也不给建连。
+        const owner = ownerOfConnector(binding.connectorId)
+        if (owner !== undefined && accountsRuntime !== undefined) {
+          const user = accountsRuntime.db.findById(owner)
+          if (user !== undefined && user.status !== 'active') { refuse(socket, 403, 'Forbidden'); return }
+        }
+        if (!limiter.take(`device:${binding.deviceId}`).allowed) { refuse(socket, 429, 'Too Many Requests'); return }
+        // 额度用满：新连接在建连这一步就被拒（票是一次性的，绕不过去）。
+        if (binding.purpose === 'paired' && quotaDenied(binding.connectorId) !== undefined) {
+          refuse(socket, 429, 'Too Many Requests')
+          return
+        }
+        wss.handleUpgrade(request, socket, head, (ws) => acceptDevice(ws, binding))
         return
       }
-      // 额度用满：连数据面也不给拨（配对通道不在此列 —— 它是恢复路径）。
-      if (channel.binding.purpose === 'paired' && quotaDenied(caller.id) !== undefined) {
-        refuse(socket, 429, 'Too Many Requests')
-        return
-      }
-      wss.handleUpgrade(request, socket, head, (ws) => {
-        // 同一条重验：吊销可能落在"查到通道"与"接受数据面"之间。
-        if (!stillValid()) { ws.close(4000, 'credential revoked'); return }
-        const link = links.get(channel.channelId)
-        if (link === undefined || link.data !== null) { ws.close(4000, 'stale channel'); return }
-        link.data = ws
-        observeData(ws, channel.channelId, 'data')
-        if (link.setupTimer !== null) clearTimeout(link.setupTimer)
-        link.setupTimer = null
-        deliver(core.attachData(caller.id, channel.binding.deviceId, channel.channelId))
-      })
-      return
-    }
-    if (url.pathname === '/ws/device') {
-      const binding = tickets.consume(url.searchParams.get('ticket') ?? '')
-      if (binding === undefined) { refuse(socket, 401, 'Unauthorized'); return }
-      if (!core.isConnectorOnline(binding.connectorId)) { refuse(socket, 503, 'Service Unavailable'); return }
-      if (!limiter.take(`device:${binding.deviceId}`).allowed) { refuse(socket, 429, 'Too Many Requests'); return }
-      // 额度用满：新连接在建连这一步就被拒（票是一次性的，绕不过去）。
-      if (binding.purpose === 'paired' && quotaDenied(binding.connectorId) !== undefined) {
-        refuse(socket, 429, 'Too Many Requests')
-        return
-      }
-      wss.handleUpgrade(request, socket, head, (ws) => acceptDevice(ws, binding))
-      return
-    }
-    refuse(socket, 404, 'Not Found')
+      refuse(socket, 404, 'Not Found')
+    })().catch((error: unknown) => {
+      log?.warn('WS 升级处理失败', error)
+      if (!socket.destroyed) socket.destroy()
+    })
   })
 
   /**

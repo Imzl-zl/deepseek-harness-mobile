@@ -23,6 +23,10 @@ relay/node_modules/
 # 换机器就得重签)。可读的样例是 relay.config.example.json,那条入库。
 relay/relay.config.json
 
+# relay 账号库(SQLite):密码摘要、会话摘要、邮箱。属于运行期数据,永不进库。
+# WAL 会生成 -wal / -shm 兄弟文件,所以整目录忽略。
+relay/data/
+
 # 本地起服务时的临时日志(排查用)
 *.boot.log
 .connector-boot.log

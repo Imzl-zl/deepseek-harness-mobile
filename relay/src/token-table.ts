@@ -34,6 +34,13 @@ const digestOf = (token: string): string => createHash('sha256').update(token, '
 export interface TokenRow {
   readonly id: string
   readonly owner?: string
+  /** accounts 模式下的账号 id。 */
+  readonly userId?: string
+  /** 已绑定的连接器 id（新令牌第一次连上时写入）。 */
+  readonly connectorId?: string
+  /** 控制台里给这台电脑起的名字。 */
+  readonly name?: string
+  readonly createdAt?: number
   /** `auto` = 连接器自己兑换的（面板据此标"来源：自动"，并支持一键清理）。 */
   readonly source?: 'auto'
   readonly revokedAt?: number
@@ -67,6 +74,27 @@ export interface TokenTable {
   add(entry: TokenDigest): void
   /** 当前**可用**条目数（已吊销的不算，与旧 `size` 同义）。 */
   readonly size: number
+  /** `connectorId → 额度主体`（userId 优先，旧配置退回 owner）。 */
+  ownerOf(connectorId: string): string | undefined
+  /** `connectorId → 账号 id`（旧令牌没有）。 */
+  userIdOf(connectorId: string): string | undefined
+  /** `connectorId → 令牌 id`（按控制面自报的 id 查签发记录）。 */
+  tokenIdOf(connectorId: string): string | undefined
+  /**
+   * 把一枚新令牌绑定到第一次连上来的 `connectorId`。
+   *
+   * 已绑定的令牌再绑必须一致（`true`）；不一致 / 该 connectorId 已被别的记录占用 → `false`。
+   */
+  bindConnector(id: string, connectorId: string): boolean
+  /** 管理面把一枚旧令牌归属给账号（`null` = 取消归属）。 */
+  setUserId(id: string, userId: string | null): boolean
+  /** 改展示名（控制台重命名）。 */
+  setName(id: string, name: string): boolean
+  /** 清掉绑定（那台电脑重装过、pcId 变了时用）。 */
+  clearConnectorBinding(id: string): boolean
+  /** 这个账号名下的令牌数（默认只数未吊销的）。 */
+  countForUser(userId: string, includeRevoked?: boolean): number
+  listForUser(userId: string): readonly TokenRow[]
 }
 
 export interface TokenTableOptions {
@@ -82,11 +110,28 @@ export function createTokenTable(
   const byId = new Map<string, TokenDigest>()
   /** `摘要 → 身份`（认证热路径，单独一张索引）。 */
   const byHash = new Map<string, Authenticated>()
+  /** `connectorId → 令牌 id`：额度主体、账号归属与控制面自报都对它查。 */
+  const byConnector = new Map<string, string>()
+
+  const connectorKeyOf = (entry: TokenDigest): string => entry.connectorId ?? entry.id
 
   const identityOf = (entry: TokenDigest): Authenticated => ({
     kind: 'connector',
     id: entry.id,
+    ...(entry.userId === undefined || entry.userId === '' ? {} : { userId: entry.userId }),
+    ...(entry.connectorId === undefined || entry.connectorId === '' ? {} : { connectorId: entry.connectorId }),
     ...(entry.owner === undefined || entry.owner === '' ? {} : { owner: entry.owner }),
+  })
+
+  const rowOf = (entry: TokenDigest): TokenRow => ({
+    id: entry.id,
+    ...(entry.owner === undefined ? {} : { owner: entry.owner }),
+    ...(entry.userId === undefined ? {} : { userId: entry.userId }),
+    ...(entry.connectorId === undefined ? {} : { connectorId: entry.connectorId }),
+    ...(entry.name === undefined ? {} : { name: entry.name }),
+    ...(entry.createdAt === undefined ? {} : { createdAt: entry.createdAt }),
+    ...(entry.source === undefined ? {} : { source: entry.source }),
+    ...(entry.revokedAt === undefined ? {} : { revokedAt: entry.revokedAt }),
   })
 
   for (const entry of entries) {
@@ -107,6 +152,15 @@ export function createTokenTable(
       )
     }
     byId.set(entry.id, { ...entry })
+    // **同一个 connectorId 只能有一条记录**：控制面自报的 `?id=`、额度主体与账号归属
+    // 都靠这张索引；两条记录指向同一个连接器时，"吊销的是哪一条"又变成猜。
+    const connectorKey = connectorKeyOf(entry)
+    if (byConnector.has(connectorKey)) {
+      throw new Error(
+        `令牌摘要表里有两个条目指向同一个连接器（${connectorKey}）：拒绝启动，先修配置`,
+      )
+    }
+    byConnector.set(connectorKey, entry.id)
     // **已吊销的摘要不进认证索引**：它留在表里是为了可辨识，不是为了还能用。
     if (entry.revokedAt !== undefined) continue
     // 同一条摘要不该出现两次（配置写重了）：后一条覆盖前一条会让"谁是谁"变得看运气。
@@ -127,16 +181,86 @@ export function createTokenTable(
     },
 
     list() {
-      const rows: TokenRow[] = []
+      return [...byId.values()].map(rowOf)
+    },
+
+    ownerOf(connectorId) {
+      const id = byConnector.get(connectorId)
+      if (id === undefined) return undefined
+      const entry = byId.get(id)
+      if (entry === undefined) return undefined
+      return entry.userId ?? entry.owner
+    },
+
+    userIdOf(connectorId) {
+      const id = byConnector.get(connectorId)
+      return id === undefined ? undefined : byId.get(id)?.userId
+    },
+
+    tokenIdOf(connectorId) {
+      return byConnector.get(connectorId)
+    },
+
+    bindConnector(id, connectorId) {
+      const entry = byId.get(id)
+      if (entry === undefined) return false
+      if (entry.connectorId !== undefined) return entry.connectorId === connectorId
+      // 这个连接器已经有别的记录：两枚令牌抢同一个 `?id=`，不能靠"谁先连上"决定。
+      if (byConnector.has(connectorId)) return false
+      const previousKey = connectorKeyOf(entry)
+      const updated: TokenDigest = { ...entry, connectorId }
+      byId.set(id, updated)
+      // 未绑定时索引键是令牌 id；绑定后应只剩 `connectorId` 这一个键。
+      if (previousKey !== connectorId && byConnector.get(previousKey) === id) byConnector.delete(previousKey)
+      byConnector.set(connectorId, id)
+      if (updated.revokedAt === undefined) byHash.set(updated.hash, identityOf(updated))
+      return true
+    },
+
+    setUserId(id, userId) {
+      const entry = byId.get(id)
+      if (entry === undefined) return false
+      const updated: TokenDigest = { ...entry }
+      if (userId === null) delete updated.userId
+      else updated.userId = userId
+      byId.set(id, updated)
+      if (updated.revokedAt === undefined) byHash.set(updated.hash, identityOf(updated))
+      return true
+    },
+
+    setName(id, name) {
+      const entry = byId.get(id)
+      if (entry === undefined) return false
+      byId.set(id, { ...entry, name })
+      return true
+    },
+
+    clearConnectorBinding(id) {
+      const entry = byId.get(id)
+      if (entry === undefined) return false
+      if (entry.connectorId === undefined) return true
+      const key = connectorKeyOf(entry)
+      if (byConnector.get(key) === id) byConnector.delete(key)
+      const { connectorId: _dropped, ...rest } = entry
+      byId.set(id, rest)
+      // 回到"未绑定"形状：索引键是令牌自己的 id，等下一次首连再绑。
+      byConnector.set(id, id)
+      if (rest.revokedAt === undefined) byHash.set(rest.hash, identityOf(rest))
+      return true
+    },
+
+    countForUser(userId, includeRevoked = false) {
+      let count = 0
       for (const entry of byId.values()) {
-        rows.push({
-          id: entry.id,
-          ...(entry.owner === undefined ? {} : { owner: entry.owner }),
-          ...(entry.source === undefined ? {} : { source: entry.source }),
-          ...(entry.revokedAt === undefined ? {} : { revokedAt: entry.revokedAt }),
-        })
+        if (entry.userId !== userId) continue
+        if (!includeRevoked && entry.revokedAt !== undefined) continue
+        count += 1
       }
-      return rows
+      return count
+    },
+
+    listForUser(userId) {
+      return [...byId.values()].filter((entry) => entry.userId === userId).map(rowOf)
     },
 
     revoke(id, at = now()) {
@@ -153,13 +277,18 @@ export function createTokenTable(
       if (entry === undefined) return false
       byHash.delete(entry.hash)
       byId.delete(id)
+      const key = connectorKeyOf(entry)
+      if (byConnector.get(key) === id) byConnector.delete(key)
       return true
     },
 
     add(entry) {
       if (byId.has(entry.id)) throw new Error(`令牌表里已经有 id=${entry.id} 的条目`)
       if (byHash.has(entry.hash)) throw new Error('这条摘要已经在表里')
+      const key = connectorKeyOf(entry)
+      if (byConnector.has(key)) throw new Error(`连接器 ${key} 已经有别的令牌记录`)
       byId.set(entry.id, { ...entry })
+      byConnector.set(key, entry.id)
       if (entry.revokedAt === undefined) byHash.set(entry.hash, identityOf(entry))
     },
 
@@ -171,6 +300,10 @@ export function createTokenTable(
         id: entry.id,
         hash: entry.hash,
         ...(entry.owner === undefined ? {} : { owner: entry.owner }),
+        ...(entry.userId === undefined ? {} : { userId: entry.userId }),
+        ...(entry.connectorId === undefined ? {} : { connectorId: entry.connectorId }),
+        ...(entry.name === undefined ? {} : { name: entry.name }),
+        ...(entry.createdAt === undefined ? {} : { createdAt: entry.createdAt }),
         ...(entry.source === undefined ? {} : { source: entry.source }),
       }
       byId.set(id, active)
