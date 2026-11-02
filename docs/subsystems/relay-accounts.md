@@ -110,6 +110,7 @@
 ![添加电脑](../assets/relay-user-add-computer.png)
 ![令牌只显示一次](../assets/relay-user-token.png)
 ![管理台设置：默认、注册与发信](../assets/relay-admin-settings.png)
+![管理台用户：操作列可直接改电脑数与额度](../assets/relay-admin-users.png)
 ![管理台令牌页：顶栏「我的电脑」+「添加我的电脑」](../assets/relay-admin-tokens.png)
 
 ## 9. 已知边界
