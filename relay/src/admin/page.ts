@@ -324,17 +324,13 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
       </svg>
     </div>
     <h1>DSH 中转</h1>
-    <p class="sub">控制台 · 管理员账号或管理令牌</p>
     <label class="field">
       <span>管理令牌</span>
       <input id="token" type="password" name="token" autocomplete="current-password"
-             placeholder="粘贴签发时那串 22 位令牌" spellcheck="false">
+             placeholder="令牌" spellcheck="false">
     </label>
     <button id="login-btn" class="primary" type="submit">登录</button>
     <p id="login-error" class="error" hidden></p>
-    <p class="hint">服务器上用 <code>--issue-admin &lt;id&gt;</code> 签发的令牌，只显示一次；
-      服务器只存它的 sha256 —— 丢了就重签一串，旧的立即失效。</p>
-    <p class="hint">或者先在 <a href="/login">/login</a> 用管理员账号登录，回到这里会自动识别。</p>
   </form>
 </div>
 
@@ -865,7 +861,6 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
           }),
           '还没有账号'
         ))
-        usageBody.appendChild(el('p', '含零用量；改额度立即生效。', 'hintline'))
         userUsage.appendChild(usageBody)
         viewEl.appendChild(userUsage)
 
@@ -878,7 +873,6 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
           var legacyCard = el('section', undefined, 'card')
           var legacyHead = el('header')
           legacyHead.appendChild(el('h2', '未归属账号的主体'))
-          legacyHead.appendChild(el('span', '旧令牌 / 未配 owner', 'meta'))
           legacyCard.appendChild(legacyHead)
           var legacyBody = el('div', undefined, 'body')
           legacyBody.appendChild(table(['主体', '已用', '上限', ''], legacyRows.map(function (row) {
@@ -906,7 +900,6 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
             }))
             return [row.subject, used, limitCell, actions]
           }), '没有未归属的用量'))
-          legacyBody.appendChild(el('p', '旧令牌 / 未配 owner；迁入账号后消失。', 'hintline'))
           legacyCard.appendChild(legacyBody)
           viewEl.appendChild(legacyCard)
         }
@@ -941,9 +934,7 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
           post('/admin/api/quota/reset', { subject: row.subject }).then(refresh)
         }))
         return [row.subject, used, limitCell, actions]
-      }), '还没有人用过 — 默认不限制，谁都没有上限'))
-      var note = el('p', '默认不限制：计入用量只用于观察；给某人设了上限才会挡住他。按人算（owner）—— 没配 owner 就按电脑算。', 'hintline')
-      uBody.appendChild(note)
+      }), '还没有用量'))
       usage.appendChild(uBody)
       viewEl.appendChild(usage)
       return
@@ -953,9 +944,7 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
       if (!state.auth) {
         var noAuth = el('section', undefined, 'card')
         var noHead = el('header'); noHead.appendChild(el('h2', '账号模式未启用')); noAuth.appendChild(noHead)
-        var noBody = el('div', undefined, 'body')
-        noBody.appendChild(el('p', '在 relay.config.json 里加 auth 段并重启。', 'hintline'))
-        noAuth.appendChild(noBody); viewEl.appendChild(noAuth); return
+        viewEl.appendChild(noAuth); return
       }
       var authState = state.auth
       var fieldOf = function (label, value, type, placeholder) {
@@ -1097,7 +1086,7 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
     var modeLine = el('div')
     modeLine.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px'
     modeLine.appendChild(el('span', '连接器认证', 'meta'))
-    modeLine.appendChild(el('span', auth.mode === 'open' ? '开放（可自助兑换）' : '必需（管理员发令牌）', 'tag ' + (auth.mode === 'open' ? 'ok' : '')))
+    modeLine.appendChild(el('span', auth.mode === 'open' ? '开放' : '必需', 'tag ' + (auth.mode === 'open' ? 'ok' : '')))
     if (!state.auth) {
       modeLine.appendChild(btn('设为开放', function () {
         post('/admin/api/connector-auth', { mode: 'open', limit: auth.limit }).then(refresh)

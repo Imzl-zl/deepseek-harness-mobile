@@ -313,8 +313,6 @@ export const CONSOLE_PAGE = `<!doctype html>
       }),
     ))
     host.appendChild(list.card)
-
-    host.appendChild(el('p', '令牌只显示一次；丢了就停用后重建。', 'note'))
   }
 
   function renderComputers(host) {
@@ -326,7 +324,7 @@ export const CONSOLE_PAGE = `<!doctype html>
         var name = el('div')
         name.appendChild(el('div', row.name, 'name'))
         name.appendChild(el('div',
-          row.connectorId ? '绑定 ' + row.connectorId : '尚未绑定（第一次连接时自动绑定）',
+          row.connectorId ? '绑定 ' + row.connectorId : '尚未绑定',
           'mono muted'))
         var actions = el('div', null, 'actions')
         actions.appendChild(button('重命名', '', function () { renameComputer(row) }))
@@ -347,11 +345,9 @@ export const CONSOLE_PAGE = `<!doctype html>
           actions,
         ]
       }),
-      '还没有电脑 — 点右上角「添加电脑」开始',
+      '还没有电脑',
     ))
     host.appendChild(section.card)
-
-    host.appendChild(el('p', '停用会立刻断线；删除只对已停用的电脑开放。', 'note'))
   }
 
   function renderAccount(host) {
