@@ -134,6 +134,7 @@ nav em{margin-left:auto;font-style:normal;font-size:11px;color:var(--cap);
   font-size:12.5px;color:var(--ink2);background:var(--panel);
   transition:border-color .12s,color .12s}
 .ghost:hover{border-color:var(--accent);color:var(--accent)}
+a.ghost{display:inline-flex;align-items:center;text-decoration:none}
 .content{padding:24px;max-width:1180px;width:100%;margin:0 auto;display:flex;
   flex-direction:column;gap:16px}
 
@@ -262,6 +263,7 @@ td.id{color:var(--ink)}
         <p id="view-sub"></p>
       </div>
       <div class="grow"></div>
+      <a id="to-console" class="ghost" href="/console">我的电脑</a>
       <button id="refresh" class="ghost" type="button">刷新</button>
       <button id="logout" class="ghost" type="button">退出</button>
     </header>
@@ -883,6 +885,21 @@ td.id{color:var(--ink)}
     // 名额留空 = 无上限（不预设人为限制，收紧是 owner 的动作）。
     var auth = state.connectorAuth || { mode: 'required', limit: null, autoCount: 0 }
     var authBody = el('div', undefined, 'body')
+    // 管理台只管理已有令牌；"给自己电脑发令牌"在用户控制台。把入口放在找令牌的人眼前。
+    var selfUse = el('div')
+    selfUse.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px'
+    selfUse.appendChild(el('span', '给自己用', 'meta'))
+    var selfHint = el('span', '这里只管理令牌；给你自己的电脑发令牌在用户控制台的「添加电脑」。', 'hint')
+    selfHint.style.margin = '0'
+    selfHint.style.flex = '1'
+    selfUse.appendChild(selfHint)
+    var selfLink = el('a', '去控制台添加电脑', 'btn')
+    selfLink.href = '/console'
+    selfLink.style.textDecoration = 'none'
+    selfLink.style.display = 'inline-flex'
+    selfLink.style.alignItems = 'center'
+    selfUse.appendChild(selfLink)
+    authBody.appendChild(selfUse)
     var modeLine = el('div')
     modeLine.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px'
     modeLine.appendChild(el('span', '连接器认证', 'meta'))
