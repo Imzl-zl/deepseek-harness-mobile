@@ -6,10 +6,16 @@
   "keywords": [
     "dsh",
     "dsh-plugin",
+    "deepseek",
     "deepseek-harness",
+    "deepseek-harness-plugin",
     "cordis",
+    "cordis-plugin",
     "remote",
-    "mobile"
+    "mobile",
+    "pairing",
+    "remote-control",
+    "websocket"
   ],
   "license": "MIT",
   "repository": {

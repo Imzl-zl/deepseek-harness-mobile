@@ -18,6 +18,9 @@
   <img src="docs/assets/app-settings.png" alt="手机端设置页" width="264">
 </p>
 
+<p align="center"><sub>手机端 v0.2.3：会话页（新会话）/ 设置页（当前连接 · 通用偏好 · 模型）
+—— 截图与仓库同版本，界面改了会一起换</sub></p>
+
 ## 在手机上用什么
 
 - **完整的会话**：对话、轨迹、改动卡、文件预览，不是网页缩略版。
@@ -35,7 +38,7 @@
 | 目录 | 是什么 | 安装方式 |
 |---|---|---|
 | `app/` | Flutter 手机端：连接层 + 会话界面 | Release 里的 APK |
-| `connector/` | DSH 插件：电脑侧网关 | `dsh plugin add dsh-mobile-connector` |
+| `connector/` | DSH 插件：电脑侧网关 | npm：`dsh plugin add dsh-mobile-connector`<br>或 Release 的 `dsh-mobile-connector-*.tgz` |
 | `relay/` | 公网中转（独立 Node 服务，无构建步骤） | `docker compose up -d` |
 | `protocol/` | 通道协议：握手、AEAD、流控、恢复 | 被上面两者引用 |
 
