@@ -203,11 +203,9 @@ window.__ModuleLoader__.load({
       // 这一版把"这台电脑怎么连中转"摆上界面：地址、公网明文那一档、直连端口、令牌。
       // 每一格的写入都不需要重启 DSH（loader 的 `loader/volatile-update` 会通知插件重建通道）。
       connectTitle: '连接',
-      connectHint: '改完点保存',
       versionTitle: '版本',
       versionCheck: '检查更新',
       versionChecking: '查询中…',
-      versionIdle: '点「检查更新」查一下 npm 上的最新版。',
       versionNew: '有新版本 {v}',
       versionUpToDate: '已是最新',
       versionUnknown: '查不到最新版本：{reason}',
@@ -215,7 +213,7 @@ window.__ModuleLoader__.load({
       channelsTitle: '通道与地址',
       devicesTitle: '已配对设备',
       pairTitle: '配对新手机',
-      pairHint: '二维码 5 分钟有效；同一台手机重扫会替换旧记录。',
+      pairHint: '5 分钟内有效。',
       thisOne: '本次',
       relayLabel: '中转',
       relayConnected: '已连接',
@@ -228,10 +226,10 @@ window.__ModuleLoader__.load({
       addressBuiltin: '内置中转',
       addressCustom: '自定义',
       // 文案必须写明"内容仍端到端加密"：明文的代价只是元数据（契约两档判据的同一句话）。
-      allowPublicPlain: '允许公网明文 ws://（内容仍端到端加密，元数据可见）',
+      allowPublicPlain: '允许公网明文 ws://',
       allowPublicPlainInert: '当前地址是 wss://，这项不生效',
       tokenLabel: '令牌',
-      tokenSet: '已设置（来源：本机凭据）',
+      tokenSet: '已设置',
       tokenUnset: '未设置',
       tokenPlaceholder: '留空 = 不改',
       tokenClear: '清除令牌',
@@ -239,11 +237,10 @@ window.__ModuleLoader__.load({
       // 后果句必须写清"会发生什么 + 怎么恢复"：删掉后重建中转通道会立刻断开，
       // 而恢复要在服务器上重签令牌（面板里贴回来即可，不用改文件）。
       tokenClearTitle: '清除连接器令牌？',
-      tokenClearDescription: '这台电脑会立刻连不上中转（同一 WiFi 下的直连不受影响）。恢复需要先在服务器上重新签发令牌，再在这里填回来。',
-      tokenRefLabel: '凭据引用',
+      tokenClearDescription: '这台电脑会立刻断开中转；恢复要重新签发令牌并填回。',
       listenLabel: '直连端口',
       listenOff: '停用直连',
-      listenPortRequired: '取消「停用直连」后要填一个端口（0 表示不监听）',
+      listenPortRequired: '取消「停用直连」后要填端口',
       save: '保存',
       saving: '保存中…',
       reconnecting: '正在重连…',
@@ -261,13 +258,11 @@ window.__ModuleLoader__.load({
       channelStart: '启动',
       channelStop: '停止',
       failedChannel: '{action}失败：{reason}',
-      transportNote: '停一条不碰另一条；停传输不清凭据，再启动不用重扫。',
       // ---- 上报哪些地址（2026-10-18）----
       // 监听面**按设计枚举全部非内部网卡**（`transport/listener.ts:134-138`：
       // 过滤虚拟网卡靠名字匹配"又脆又漏"）。所以装了 VMware 的机器会多报几条
       // 手机永远拨不通的地址 —— 由用户点名禁用，比猜网卡名可靠。
       advertiseTitle: '上报给手机的地址',
-      advertiseNote: '报给手机的是这块电脑的地址；拨不通的（虚拟网卡）在这里禁用。',
       // 界面词与设备那一段一致：**删除**（= 不再报给手机；网卡还在，可恢复）。
       advertiseHide: '删除',
       advertiseShow: '恢复',
@@ -286,7 +281,6 @@ window.__ModuleLoader__.load({
       // 新设备"）：手机重新扫码时自报旧 pairingId，电脑侧按它替换同一行
       // （换密钥/换令牌，配对于保留首次时刻）。首配（没有旧行）才写新行。
       // 取舍：.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md
-      pairNote: '同一台手机重新扫码会替换旧记录（配对于保留首次那次）。',
       // 连接态（桥接拨通了吗）与设备态（这台在跑吗）是两问，用词因此不同：
       // 前者答"我的手机连上了吗"，后者照 DSH 的状态词（`locales.ts:54,63`）。
       running: '运行中',
@@ -310,7 +304,7 @@ window.__ModuleLoader__.load({
       // （没有第二条"踢人"接口），所以后果句必须把"会释放什么 / 不会断什么"说全。
       takeOver: '接管',
       confirmTakeOverTitle: '接管这台电脑？（「{name}」正在服务）',
-      confirmTakeOverDescription: '接管 = 停用占用者：它立刻下线、占用位立刻释放，下一台手机可以连上；它下次连回来需要重新配对。',
+      confirmTakeOverDescription: '接管会停用占用设备；它下次连回来要重新配对。',
       failedTakeOver: '接管失败：{reason}',
       disableSelected: '停用所选',
       selectedAllDisabled: '选中的设备都已停用；要清理记录请到下面「已停用」里删除',
@@ -356,11 +350,9 @@ window.__ModuleLoader__.load({
       entry: 'Phone',
       // ---- Connection card (2026-10-29) ----
       connectTitle: 'Connection',
-      connectHint: 'Save to apply',
       versionTitle: 'Version',
       versionCheck: 'Check for updates',
       versionChecking: 'Checking…',
-      versionIdle: 'Press "Check for updates" to ask npm for the latest version.',
       versionNew: 'Update available: {v}',
       versionUpToDate: 'Up to date',
       versionUnknown: 'Could not check: {reason}',
@@ -368,7 +360,7 @@ window.__ModuleLoader__.load({
       channelsTitle: 'Channels & addresses',
       devicesTitle: 'Paired devices',
       pairTitle: 'Pair a new phone',
-      pairHint: 'The code is valid for 5 minutes; re-scanning from the same phone replaces its old record.',
+      pairHint: 'Valid for 5 minutes.',
       thisOne: 'this session',
       relayLabel: 'Relay',
       relayConnected: 'Connected',
@@ -380,20 +372,19 @@ window.__ModuleLoader__.load({
       addressPlaceholder: 'wss://relay.example.com/ws/connector',
       addressBuiltin: 'Built-in',
       addressCustom: 'Custom',
-      allowPublicPlain: 'Allow plaintext ws:// to a public host (payloads stay end-to-end encrypted; metadata is visible)',
-      allowPublicPlainInert: 'The current address is wss://, so this has no effect',
+      allowPublicPlain: 'Allow plaintext ws:// to a public host',
+      allowPublicPlainInert: 'No effect on wss://',
       tokenLabel: 'Token',
-      tokenSet: 'Set (source: local credential store)',
+      tokenSet: 'Set',
       tokenUnset: 'Not set',
       tokenPlaceholder: 'Leave empty to keep',
       tokenClear: 'Clear token',
       tokenOpenConsole: 'Sign up / sign in',
       tokenClearTitle: 'Clear the connector token?',
-      tokenClearDescription: 'This computer will immediately stop reaching the relay (direct connections on the same WiFi keep working). To recover, issue a new token on the server and paste it back here.',
-      tokenRefLabel: 'Credential reference',
+      tokenClearDescription: 'This computer will disconnect from the relay; reissue a token and paste it back to recover.',
       listenLabel: 'Direct port',
       listenOff: 'Disable direct connections',
-      listenPortRequired: 'Enter a port after turning off "Disable direct connections" (0 means no listener)',
+      listenPortRequired: 'Enter a port after disabling direct connections',
       save: 'Save',
       saving: 'Saving…',
       reconnecting: 'Reconnecting…',
@@ -411,9 +402,7 @@ window.__ModuleLoader__.load({
       channelStart: 'Start',
       channelStop: 'Stop',
       failedChannel: 'Could not {action}: {reason}',
-      transportNote: 'Stopping one channel leaves the other alone; stopping transport keeps credentials.',
       advertiseTitle: 'Addresses reported to the phone',
-      advertiseNote: 'Addresses reported to the phone; disable the ones it can never reach (virtual adapters).',
       advertiseHide: 'Delete',
       advertiseShow: 'Restore',
       advertiseShowHidden: '{n} removed · show',
@@ -424,9 +413,6 @@ window.__ModuleLoader__.load({
       failedAdvertise: 'Could not change reported addresses: {reason}',
       close: 'Close',
       pairedAt: 'Paired',
-      // Re-pairing REPLACES the row: the phone reports its previous pairingId,
-      // the computer swaps keys and token in place (first pairing time kept).
-      pairNote: 'Re-scanning from the same phone replaces its old record (first paired-at is kept).',
       running: 'running',
       idle: 'idle',
       foreground: 'foreground',
@@ -443,7 +429,7 @@ window.__ModuleLoader__.load({
       remove: 'Delete',
       takeOver: 'Take over',
       confirmTakeOverTitle: 'Take over this computer? ("{name}" is serving)',
-      confirmTakeOverDescription: 'Taking over disables the current device: it is disconnected immediately, its slot is freed so the next phone can connect, and it must pair again to come back.',
+      confirmTakeOverDescription: 'Taking over disables the current device; it must pair again to come back.',
       failedTakeOver: 'Could not take over: {reason}',
       disableSelected: 'Disable selected',
       selectedAllDisabled: 'Every selected device is already disabled. Use "disabled" below to purge records.',
@@ -695,7 +681,7 @@ window.__ModuleLoader__.load({
      * 还没查 / 有新版 / 已是最新 / 查不到（带原话）。
      */
     const versionLine = (t, info) => {
-      if (info === null) return t('versionIdle')
+      if (info === null) return ''
       if (typeof info.error === 'string' && info.error !== '') {
         return t('versionUnknown', { reason: info.error })
       }
@@ -817,7 +803,6 @@ window.__ModuleLoader__.load({
         h('div', { key: 'hd', style: S.cardHead },
           h('span', { style: { fontSize: 13, fontWeight: 600 } }, t('connectTitle')),
           h('span', { style: { flex: 1 } }),
-          h('span', { style: S.label }, t('connectHint')),
           h('button', {
             type: 'button',
             style: editable ? { ...S.btn, ...S.btnDisabled } : S.btn,
@@ -950,8 +935,6 @@ window.__ModuleLoader__.load({
         errorOf('token') === null
           ? null
           : h('p', { role: 'alert', style: { ...S.label, ...S.err, margin: '4px 0 0' } }, errorOf('token')),
-        h('p', { style: { ...S.label, ...S.dim, margin: '4px 0 0' } },
-          `${t('tokenRefLabel')}：${view.value.relayTokenRef || '—'}`),
 
         // ⑤ 直连端口（0 = 停用直连）
         h('div', { style: { ...S.row, marginTop: 10 } },
@@ -1638,7 +1621,6 @@ window.__ModuleLoader__.load({
                 onClick: () => runChannel(channel),
               }, channel.running ? t('channelStop') : t('channelStart')),
             )),
-            h('p', { style: { ...S.label, margin: '8px 0 0', lineHeight: 1.6 } }, t('transportNote')),
 
             // **上报给手机哪些地址**：监听面按设计枚举全部非内部网卡
             // （`transport/listener.ts:134-138` 明确不按网卡名过滤），
@@ -1720,7 +1702,6 @@ window.__ModuleLoader__.load({
                   onClick: () => runAdvertise(advertiseInput.trim(), 'extra'),
                 }, t('advertiseAdd')),
               ),
-              h('p', { style: { ...S.label, margin: '8px 0 0', lineHeight: 1.6 } }, t('advertiseNote')),
             ),
           ),
         ),
@@ -2043,7 +2024,6 @@ window.__ModuleLoader__.load({
             ),
             // 体：原有的管理面板（状态 + 启停 + 设备 + 配对）。
             h(AdminPanel, { view: 'page', t }),
-            h('p', { style: { ...S.label, margin: '4px 2px 0', lineHeight: 1.6 } }, t('pairNote')),
           ),
         ),
         document.body,

@@ -331,6 +331,7 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
     </label>
     <button id="login-btn" class="primary" type="submit">登录</button>
     <p id="login-error" class="error" hidden></p>
+    <p style="margin:14px 0 0;font-size:12px"><a href="/login" style="color:var(--cap)">账号登录</a></p>
   </form>
 </div>
 

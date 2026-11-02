@@ -398,7 +398,7 @@ test('面板：正在服务的那台多一个「在服务」与「接管」，�
   assert.equal(buttonWith(rows[1] as Element, '接管'), undefined, '没在服务的行没有「接管」')
 })
 
-test('对话框：接管的后果把"释放占用位 / 不断开已建连接"说全', async () => {
+test('对话框：接管会停用占用设备并提示重新配对', async () => {
   const { react, panel, props, tree } = await mountPanel()
 
   const takeOver = buttonWith(bodyRows(tree)[0] as Element, '接管')
@@ -410,8 +410,8 @@ test('对话框：接管的后果把"释放占用位 / 不断开已建连接"说
   assert.match(dialog, /接管这台电脑？（「我的手机」正在服务）/, '标题点明占用者')
   assert.match(
     dialog,
-    /接管 = 停用占用者：它立刻下线、占用位立刻释放，下一台手机可以连上；它下次连回来需要重新配对。/,
-    '后果句：立刻下线 + 释放占用位 + 要重新配对（三件事都要说）',
+    /接管会停用占用设备；它下次连回来要重新配对。/,
+    '后果句：停用占用设备 + 要重新配对',
   )
   assert.equal(buttonWith(shown, '接管') !== undefined, true, '确认键是「接管」')
 })
@@ -690,7 +690,7 @@ test('失败必须带原因显示在面板顶部（照 DSH `停用失败：{reas
 // 冲突后回到电脑侧的事实。字段校验与写入语义在 `admin-connection.test.ts`。
 // ---------------------------------------------------------------------------
 
-test('连接卡：四行都在，令牌只显示"已设置"，凭据引用只读', async () => {
+test('连接卡：地址 / 令牌 / 直连端口都在，令牌只显示"已设置"', async () => {
   const { tree } = await mountPanel()
   const text = allText(tree)
   assert.match(text, /连接/)
@@ -699,8 +699,8 @@ test('连接卡：四行都在，令牌只显示"已设置"，凭据引用只读
   assert.match(text, /地址/)
   assert.match(text, /允许公网明文 ws:\/\//)
   assert.match(text, /令牌/)
-  assert.match(text, /已设置（来源：本机凭据）/)
-  assert.match(text, /凭据引用：relay-connector/)
+  assert.match(text, /已设置/)
+  assert.doesNotMatch(text, /凭据引用/)
   assert.match(text, /直连端口/)
   assert.match(text, /停用直连/)
 
@@ -820,7 +820,7 @@ test('连接卡：端口框在「停用直连」勾上时禁用；取消勾选�
   assert.ok(save !== undefined)
   ;(save.props.onClick as () => void)()
   await settle()
-  assert.match(allText(react.render(panel, props)), /取消「停用直连」后要填一个端口/)
+  assert.match(allText(react.render(panel, props)), /取消「停用直连」后要填端口/)
 })
 
 test('连接卡：清除令牌走页面内确认，后果句写明"要在服务器重签"，确认后发 op=clear', async () => {
@@ -905,8 +905,8 @@ test('版本卡：点「检查更新」查到新版 ⇒ 显示版号与打开按
       : defaultFetch()(url)
   const { react, panel, props, tree } = await mountPanel({}, fetchImpl)
 
-  // 还没查：版本位是「—」，只有一句提示。
-  assert.match(allText(tree), /点「检查更新」/)
+  // 还没查：版本位是「—」，不额外写说明。
+  assert.doesNotMatch(allText(tree), /点「检查更新」/)
 
   const check = buttonWith(tree, '检查更新')
   assert.ok(check !== undefined, '有「检查更新」')
