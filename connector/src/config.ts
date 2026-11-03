@@ -64,6 +64,25 @@ export const BUILTIN_RELAY_URL = 'wss://dsh.0t0.me/ws/connector'
 export const relayUrlOrDefault = (value: string | undefined): string =>
   value === undefined || value === '' ? BUILTIN_RELAY_URL : value
 
+/**
+ * 直连监听面的默认值：**装完就开着**（2026-11-03 用户要求「局域网的也能启动」）。
+ *
+ * 为什么默认开：局域网直连是"中转不通时的唯一活路"（同一 WiFi 下不经过任何服务器）。
+ * 代价是每台机器都会多一个监听端口 —— 但那条连接要过设备身份的握手，未配对的
+ * 对端握不上手，所以它不是"开放的门"，只是"开着的窗"。
+ *
+ * **`0` 仍然是"关"**：`undefined`（没配）才落到默认值。这一格不能反 ——
+ * 卡片上的「停用直连」写的就是 `0`，混了就关不掉了。
+ */
+export const DEFAULT_LISTEN_PORT = 8790
+export const DEFAULT_LISTEN_HOST = '0.0.0.0'
+
+export const listenPortOrDefault = (value: number | undefined): number =>
+  value === undefined ? DEFAULT_LISTEN_PORT : value
+
+export const listenHostOrDefault = (value: string | undefined): string =>
+  value === undefined || value === '' ? DEFAULT_LISTEN_HOST : value
+
 export const Config = z.object({
   relayUrl: z
     .string()
@@ -94,10 +113,10 @@ export const Config = z.object({
     .step(1)
     .min(0)
     .max(65535)
-    .default(0)
+    .default(DEFAULT_LISTEN_PORT)
     .volatile()
-    .description('局域网直连监听端口（0 = 关）。手机在同一 WiFi 下会直连它。'),
-  listenHost: z.string().default('127.0.0.1').volatile(),
+    .description('局域网直连监听端口（0 = 关）。默认 8790，手机在同一 WiFi 下会直连它。'),
+  listenHost: z.string().default(DEFAULT_LISTEN_HOST).volatile(),
   // **这里不设 `deviceLimit`**：契约规定「设备上限：不设上限」（`docs/subsystems/remote-channel.md:811`），
   // 配对路径上没有"第 N 台拒绝"这个判据；而一个没人读的 `.volatile()` 字段只会进手机端通用表单
   // （假旋钮）。别再加回来：取舍见 `.agents/notes/implemented/2026-10-29-drop-inert-device-limit.md`。

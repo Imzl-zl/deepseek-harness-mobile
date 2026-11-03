@@ -1,13 +1,14 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { BUILTIN_RELAY_URL, Config, relayUrlOrDefault } from "../src/config.js"
+import { BUILTIN_RELAY_URL, Config, DEFAULT_LISTEN_HOST, DEFAULT_LISTEN_PORT, relayUrlOrDefault } from "../src/config.js"
 
 test("构造期：schema 默认值是内置中转，但**这只影响 Config({}) 这种直接构造**", () => {
   const built = Config({})
   assert.equal(built.relayUrl.get(), BUILTIN_RELAY_URL)
-  // 直连与明文开关仍然是"不配置就不存在"，别被默认值顺手打开。
-  assert.equal(built.listenPort.get(), 0)
+  // 直连默认就开（2026-11-03 产品方要求"局域网也能直接用"），明文两档仍然默认关。
+  assert.equal(built.listenPort.get(), DEFAULT_LISTEN_PORT)
+  assert.equal(built.listenHost.get(), DEFAULT_LISTEN_HOST)
   assert.equal(built.allowInsecureLocal.get(), false)
   assert.equal(built.allowInsecurePublic.get(), false)
 })

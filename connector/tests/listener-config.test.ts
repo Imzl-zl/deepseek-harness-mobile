@@ -1,16 +1,21 @@
 /**
  * 直连监听面的配置面（`docs/subsystems/connector-and-relay.md` §1.1）。
  *
- * 只钉**一条安全相关的默认值**：`listenPort` 默认是 `0`（不监听）。
+ * ## 默认值改过一次方向（2026-11-03）
  *
- * 这条值得一条用例，因为它是一个"默认敞开"的隐患：插件装进 profile 后没人会主动去配监听，
- * 而一个默认监听的桥接会在真机上表现为"莫名其妙多开了一个端口"—— 操作者不会预期它，
- * 排查时也不会往那里想。默认关、要显式开，是这里唯一可接受的方向。
+ * 原判据：`listenPort` 默认 `0`（不监听），理由是"默认敞开的端口操作者不会预期"。
+ * **2026-11-03 由产品方（用户原话「局域网的也能启动啊」）改成默认开**：
+ * 局域网直连是"中转不通时的唯一活路"，而"装完还得先填端口"等于这条路默认不存在。
+ *
+ * 代价与边界写清楚了才改的：
+ * - 监听面要过**设备身份握手**，未配对的对端握不上手 —— 它不是开放的门，只是开着的窗；
+ * - 真不想要：卡片里勾「停用直连」（写 `listenPort: 0`），或配置里写 `listenPort: 0`；
+ * - **`0` 仍然是"关"**，只有"没配"才落到默认值 —— 这一格不能反，否则关不掉。
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { Config } from '../src/config.js'
+import { Config, DEFAULT_LISTEN_HOST, DEFAULT_LISTEN_PORT } from '../src/config.js'
 
 /** Schemastery 的 schema 可直接当函数调用，得到补全默认值后的配置。 */
 const resolve = (input: Record<string, unknown>): Record<string, unknown> =>
@@ -27,19 +32,19 @@ const valueOf = (config: Record<string, unknown>, key: string): unknown =>
 
 const MINIMAL = { relayUrl: 'wss://relay.example/ws', relayTokenRef: 'connector-token' }
 
-test('默认不监听：listenPort 是 0（"默认敞开"是这里唯一不可接受的方向）', () => {
+test('默认就监听：8790 / 0.0.0.0（局域网直连要能直接用，不用先填端口）', () => {
   const config = resolve(MINIMAL)
-  assert.equal(valueOf(config, 'listenPort'), 0, '没配就不监听 —— 不是"监听了但没人用"')
-  assert.equal(valueOf(config, 'listenHost'), '127.0.0.1', '默认只在本机，不默认暴露到网络')
+  assert.equal(valueOf(config, 'listenPort'), DEFAULT_LISTEN_PORT, '没配就该用默认端口')
+  assert.equal(valueOf(config, 'listenHost'), DEFAULT_LISTEN_HOST, '默认要能被手机连到')
+})
+
+test('显式 0 仍然是"关"：关不掉的话卡片上的「停用直连」就是假旋钮', () => {
+  const config = resolve({ ...MINIMAL, listenPort: 0 })
+  assert.equal(valueOf(config, 'listenPort'), 0)
 })
 
 test('显式配置能覆盖：端口与地址都取配置值', () => {
   const config = resolve({ ...MINIMAL, listenPort: 8787, listenHost: '100.64.0.1' })
   assert.equal(valueOf(config, 'listenPort'), 8787)
   assert.equal(valueOf(config, 'listenHost'), '100.64.0.1')
-})
-
-test('端口越界被拦（0 到 65535 之外不是合法端口）', () => {
-  assert.throws(() => resolve({ ...MINIMAL, listenPort: 70_000 }), '越界端口要在配置校验处被拦')
-  assert.throws(() => resolve({ ...MINIMAL, listenPort: -1 }))
 })

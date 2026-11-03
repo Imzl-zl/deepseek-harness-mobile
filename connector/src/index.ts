@@ -54,7 +54,13 @@ import { hostname } from 'node:os'
 
 import type { Context } from '@deepseek-ai/cordis'
 
-import { type ConnectorConfig, Config, relayUrlOrDefault } from './config.js'
+import {
+  type ConnectorConfig,
+  Config,
+  listenHostOrDefault,
+  listenPortOrDefault,
+  relayUrlOrDefault,
+} from './config.js'
 import { enrollConnector } from './enroll.js'
 import {
   REQUIRED_SERVICES,
@@ -356,6 +362,12 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
    * 所以兜底必须写在**读取处**这一处，所有读 `relayUrl` 的地方都走它。
    */
   const relayUrlInUse = (): string => relayUrlOrDefault(config.relayUrl())
+
+  /** 生效的直连端口：没配 = 默认 8790；**显式 0 仍然是"关"**（卡片上的停用写的就是 0）。 */
+  const listenPortInUse = (): number => listenPortOrDefault(config.listenPort())
+
+  /** 生效的监听地址：没配 = 0.0.0.0（手机才连得进来）。 */
+  const listenHostInUse = (): string => listenHostOrDefault(config.listenHost())
 
   /**
    * 令牌缺失时向中转**自助兑换**一张（中转为 `connectorAuth: open` 时）。
@@ -1408,16 +1420,26 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
          * 停它 = `listener.close()`：先停所有已接受的连接再关服务端
          * （`tests/listener.test.ts` 的"卸载时收口"覆盖），**不碰**中转上的连接。
          */
+        /**
+         * 直连通道起不来的那句话（端口被占是最常见的一种）。
+         *
+         * 与 `relayError` 同一条口径：**通道起不来不该把挂载拖死**，而"端口被占"
+         * 恰恰是最需要打开面板去改端口的时刻（2026-11-03 默认端口一开，两台 DSH
+         * 就会抢 8790）。
+         */
+        let directError: string | null = null
+
         const startDirectChannel = async (): Promise<void> => {
           if (listener !== null) return
-          const port = config.listenPort()
+          const port = listenPortInUse()
           if (port === 0) throw new Error(DIRECT_UNCONFIGURED)
           // **先解析局域网地址再起监听面**：第一次 `endpoint.describe`（手机连上后
           // 立刻会调）要用它给 direct 排序、给中转条目算手机可达地址。
           await refreshLanHint()
           listener = await startListener({
             port,
-            host: config.listenHost(),
+            host: listenHostInUse(),
+            // 起来了就清掉上一次的失败原因（与中转 `onFailure(null)` 同一处时机）。
             log: logger,
             accept: () => {
               const accepted = makeConnection()
@@ -1428,6 +1450,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
               }
             },
           })
+          directError = null
         }
         const stopDirectChannel = async (): Promise<void> => {
           if (listener !== null) {
@@ -1452,7 +1475,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             } else {
               await stopDirectChannel()
               // 端口改回 0 = 用户明说"不监听"：停在未运行，不是失败。
-              if (config.listenPort() !== 0) await startDirectChannel()
+              if (listenPortInUse() !== 0) await startDirectChannel()
             }
           },
           (channel, error) => {
@@ -1466,12 +1489,16 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         transportStart = createTransportStarter({
           startRelay: startRelayChannel,
           startDirect: startDirectChannel,
-          listenPort: () => config.listenPort(),
+          listenPort: () => listenPortInUse(),
           onTolerated: (reason) => {
             // 这句话同时进日志与「连接」卡的 `detail`（`channels()` 读 `relayError`）——
             // 面板要能回答"为什么没跑"，而不是只说"未运行"。
             relayError = reason
             logger.warn(`中转通道未启动：${reason}（可在「手机」面板的「连接」卡里设置）`)
+          },
+          onDirectTolerated: (reason) => {
+            directError = reason
+            logger.warn(`直连通道未启动：${reason}（可在「手机」面板的「连接」卡里改端口）`)
           },
         })
         transportStop = async () => {
@@ -1511,9 +1538,11 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             start: startDirectChannel,
             stop: stopDirectChannel,
             detail: () =>
-              config.listenPort() === 0
-                ? DIRECT_UNCONFIGURED
-                : `${config.listenHost()}:${listener?.port ?? config.listenPort()}`,
+              directError !== null && listener === null
+                ? directError
+                : listenPortInUse() === 0
+                  ? DIRECT_UNCONFIGURED
+                  : `${listenHostInUse()}:${listener?.port ?? listenPortInUse()}`,
           },
         ])
 
@@ -1557,7 +1586,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
               // 令牌状态只回"设没设 + 能不能写"，值永不出凭据面。
               tokenStatusOf: (ref) => relayTokenStatusOf(ctx.credentials, ref),
               // 兜底是**访问器**：快照里没有 `listenPort` 时才去读配置（与另外两个来源同一条"用时取"）。
-              configuredListenPort: () => config.listenPort(),
+              configuredListenPort: () => listenPortInUse(),
             })
           },
           async writeFields(patch, expected) {

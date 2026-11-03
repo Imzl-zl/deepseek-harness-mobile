@@ -45,8 +45,16 @@ export interface StartupPorts {
   /** 直连端口：`0` = 配置明说"不监听"。**每次调用现读**（面板能热改）。 */
   listenPort(): number
 
-  /** 容忍时的留痕口（日志 + 「连接」卡的原因）。**给的是人话**，不是 error 对象。 */
+  /** 中转被容忍时的留痕口（日志 + 「连接」卡的原因）。**给的是人话**。 */
   onTolerated(reason: string): void
+  /**
+   * 直连监听面起不来时的留痕口。
+   *
+   * **它也只在留声，不再整体抛出**（2026-11-03 修订）：默认端口一开，两台 DSH 就会
+   * 抢同一个 8790 —— 而"端口被占"恰恰是最需要打开面板去改端口的时刻，把它变成
+   * 整次挂载失败等于把面板一起关掉。原因进 `detail`，界面照样说得出来。
+   */
+  onDirectTolerated(reason: string): void
 }
 
 /**
@@ -64,6 +72,10 @@ export function createTransportStarter(ports: StartupPorts): () => Promise<void>
       if (!toleratesRelayStartFailure(error)) throw error
       ports.onTolerated(error instanceof Error ? error.message : String(error))
     })
-    if (ports.listenPort() !== 0) await ports.startDirect()
+    if (ports.listenPort() !== 0) {
+      await ports.startDirect().catch((error: unknown) => {
+        ports.onDirectTolerated(error instanceof Error ? error.message : String(error))
+      })
+    }
   }
 }

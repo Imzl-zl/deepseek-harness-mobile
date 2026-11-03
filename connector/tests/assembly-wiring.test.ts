@@ -208,7 +208,7 @@ test('装配层确实用的是抽出来的那几处，且实参接对（不是�
   const pins: Array<[RegExp, string]> = [
     [/startRelay: startRelayChannel/, '起传输时"中转"那一格没接 startRelayChannel'],
     [/startDirect: startDirectChannel/, '起传输时"直连"那一格没接 startDirectChannel'],
-    [/listenPort: \(\) => config\.listenPort\(\)/, '直连端口不是"用时读配置"（写成常量后热改不生效）'],
+    [/listenPort: \(\) => listenPortInUse\(\)/, '直连端口不是"用时读配置"（写成常量后热改不生效）'],
     // **拨号必须走 `relayUrlInUse()`**：profile 里没有 config 段时 `config.relayUrl()`
     // 是空（schema 默认值到不了 loader 那份 config），直接拿去拨就是
     // 「中转地址解析失败：」——2026-11-03 真机原话。

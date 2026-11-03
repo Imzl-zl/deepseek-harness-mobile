@@ -15,17 +15,50 @@
   本机 desktop profile 已补 config（`relayUrl: wss://dsh.0t0.me/ws/connector`）并把插件从
   **0.1.6 升到 0.1.11**（lockfile 原先钉死 0.1.6，npm 上 0.1.7/0.1.8 从未发布）。
   笔记 `implemented/2026-11-03-admin-face-must-not-need-config.md`。
-  **遗留**：坏地址 / 直连端口被占仍会让整次 mount 失败 → 面板照样 404（同一类，另开一篇）。
+  **遗留**：坏地址仍会让整次 mount 失败 → 面板照样 404（同一类，另开一篇）。直连端口被占
+  已在 11-03 第五批改成只留声。
 
 - **开箱即用 + 失败说人话（11-03 第二批）**：`relayUrl` 的 schema 默认值 = 内置中转
   （`BUILTIN_RELAY_URL`，面板里可换；显式空串仍算"没配"）；控制面升级被拒时从 `ws` 的
   `unexpected-response` 拿状态码 → `describeUpgradeFailure` 翻成 401/403/404 三句能照做的话 →
   「连接」卡 `detail`，**连上那一刻才清**（重连期间保留上次原因，不再只有「重连中」）；
   出码失败由路由 `try/catch` 归一成**带正文**的 400（以前空正文，面板只剩 `HTTP 400`）。
-  真机现场：令牌是旧中转签的，用真令牌打升级请求回 **HTTP 401**。connector 832 / relay 161。
+  真机现场：令牌是旧中转签的，用真令牌打升级请求回 **HTTP 401**。connector 831 / relay 161。
   中转管理台的「我的电脑 / 添加我的电脑」在**令牌模式**下指向登录页并写明原因
   （没有账号 cookie 时 `/console` 会静默 302 到 `/login`）。
   笔记 `implemented/2026-11-03-builtin-relay-is-the-default.md`。
+
+- **管理台自己发令牌 + 连续失败锁定（11-03 第三批）**：`POST /admin/api/tokens/issue`
+  （面板令牌页「添加我的电脑」，id 预填 `local`）—— 明文只在应答里出现一次，配置只落摘要，
+  审计只记 id；同 id 已有活跃令牌回 **409**。连续失败锁定 `relay/src/lockout.ts`：
+  **连错 5 次锁 15 分钟**，管理面认证失败与登录页失败**共用一份计数**，锁定期内连正确凭据
+  也不放行，成功一次清零，到期自动放行；`lockout.failures: 0` 关闭。按客户端地址算
+  （`clientIpOf` + `auth.trustProxy`，反代后面不配会把所有人并成一个桶）。
+  笔记 `implemented/2026-11-03-admin-lockout-and-token-issue.md`。
+
+- **网页反馈只有一个组件（11-03 第四批）**：`relay/src/ui/kit.ts` —— Toast + 页内弹框
+  （`askConfirm` / `askValue` / `open`），遮罩与 Esc 都算取消并**兑现 Promise**。
+  管理台 22 处 `alert/confirm/prompt` 全换掉，`post(path, body, okText)` 成功后默认
+  toast「已保存」（断开/吊销/重置/签发各传准文案）—— 之前保存成功是**静默**的。
+  控制台保留四个同名包装，实现搬到 Kit。`tests/ui-kit.test.ts` 机械拦"再写原生对话框"。
+  笔记 `implemented/2026-11-03-web-feedback-kit.md`。
+
+- **0.1.12 的"装完即用"只兑现一半（11-03 13:10 真机，0.1.13 修）**：`relayUrl` 是
+  `.volatile()` 字段，schema 的 `.default()` 只作用于 `Config({})` 这种**构造**，
+  loader 交给 `apply()` 的那份 config 在"profile 没有这一格"时给的是**空** ——
+  面板能开，但点通道「启动」报「中转地址解析失败：」（冒号后什么都没有）。
+  修法：兜底搬到读取处 `config.ts` 的 `relayUrlOrDefault()`，拨号/出码/登记/重建/面板投影
+  全走它；"未配置"这一档从 `validate-config` 与 `transport/startup.ts` 删除（不可达）；
+  空地址报错改成能照做的一句。**教训：默认值要写在会被读到的那一层。**
+
+- **局域网直连默认就开（11-03 第五批，0.1.14）**：`listenPort` 默认 **8790**、`listenHost`
+  默认 **0.0.0.0**，没配时由 `listenPortOrDefault()` / `listenHostOrDefault()` 在**读取处**兜底。
+  显式 `0` 仍是"关"（卡片「停用直连」写的就是它）。端口被占不再拖垮挂载：`startDirect`
+  失败只留声（`onDirectTolerated` → `directError` →「连接」卡 detail）。推翻了
+  `listener-config.test.ts` 原来那条"默认敞开不可接受"。
+  **隔离实例实测（真进程、零配置）**：`0.0.0.0:8790` 在监听、`caps.direct = true`、
+  `direct.running = true`、`detail: "0.0.0.0:8790"`。
+  笔记 `implemented/2026-11-03-lan-listener-on-by-default.md`。
 
 - **中转账号模式（11-02）**：`auth` 段开启后 `connectorAuth` 必须 `required`，匿名兑换关闭；
   邮箱注册（默认只限 `qq.com`，6 位码 / 10 分钟 / scrypt）、会话 cookie + CSRF、控制台建电脑、

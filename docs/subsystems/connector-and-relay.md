@@ -69,8 +69,8 @@
 |---|---|---|
 | `relayUrl` | 内置中转 `wss://dsh.0t0.me/ws/connector` | 中转地址(wss)。**电脑侧**这条是连接器拨的地址,路径由连接器自己拼(`base.pathname = '/ws/connector'`);二维码把它原样带出去,手机收到后规范成根地址(见 `app-channel-client.md` §6.2)。空着就是内置中转(读取处兜底 `relayUrlOrDefault()`,schema 默认值只管构造期),面板「连接」卡里可换成自部署地址 |
 | `relayTokenRef` | — | 连接器令牌的凭据引用(本体走 `ctx.credentials`) |
-| `listenPort` | 0(不监听) | **直连拓扑**的监听端口;`0` = 关(只走中转,行为与不监听完全一致) |
-| `listenHost` | `127.0.0.1` | 监听地址。直连要走 Tailscale 时显式写 tailnet 地址;默认只在本机 |
+| `listenPort` | 8790 | **直连拓扑**的监听端口;**默认开**(局域网直连是"中转不通时的唯一活路")。显式 `0` = 关(卡片里的「停用直连」写的就是它);端口被占只让这条通道停在未运行,不拦挂载 |
+| `listenHost` | `0.0.0.0` | 监听地址。默认 `0.0.0.0`(手机才连得进来);要走 Tailscale 时显式写 tailnet 地址 |
 | `pushDigest` | `'rich'` | `rich` / `doorbell` |
 | `frameLimitBytes` | 8388608 | 单帧上限 |
 | `refetchThresholdBytes` | 1048576 | 大对象阈值 |
