@@ -7,6 +7,8 @@
  */
 import { THEME_CSS } from './theme.ts'
 
+import { UI_KIT_JS, UI_KIT_MARKUP } from './kit.ts'
+
 export const CONSOLE_PAGE = `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -51,10 +53,10 @@ export const CONSOLE_PAGE = `<!doctype html>
   </main>
 </div>
 
-<div class="modal-backdrop" id="modal" hidden></div>
-<div class="toast" id="toast" role="status" aria-live="polite"></div>
+${UI_KIT_MARKUP}
 
 <script>
+${UI_KIT_JS}
 (function () {
   var state = null
   var me = null
@@ -99,13 +101,8 @@ export const CONSOLE_PAGE = `<!doctype html>
       })
     })
   }
-  function toast(message, kind) {
-    var node = q('toast')
-    node.textContent = message
-    node.className = 'toast show' + (kind ? ' ' + kind : '')
-    clearTimeout(toastTimer)
-    toastTimer = setTimeout(function () { node.className = 'toast' }, 3200)
-  }
+  // 反馈组件只有一份（ui/kit.ts）：这里保留同名包装，调用点一个字都不用改。
+  function toast(message, kind) { Kit.toast(message, kind) }
   function bytes(n) {
     if (typeof n !== 'number' || !isFinite(n)) return '—'
     if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB'
@@ -175,38 +172,18 @@ export const CONSOLE_PAGE = `<!doctype html>
     wrap.appendChild(table)
     return wrap
   }
-  function openModal(build) {
-    var backdrop = q('modal')
-    backdrop.textContent = ''
-    backdrop.hidden = false
-    var box = el('div', null, 'modal')
-    build(box)
-    backdrop.appendChild(box)
-    return box
-  }
-  function closeModal() {
-    var backdrop = q('modal')
-    backdrop.hidden = true
-    backdrop.textContent = ''
-  }
+  function openModal(build) { return Kit.open(build) }
+  function closeModal() { Kit.close() }
+  /**
+   * 确认框：搭在 Kit 上（页内 DOM，不是 window.confirm）。
+   * 保留旧签名 —— 二十来个调用点写的是「成功才关、失败要回显」。
+   */
   function confirmModal(title, text, confirmText, danger, onConfirm) {
-    openModal(function (box) {
-      var head = el('header')
-      head.appendChild(el('h3', title))
-      head.appendChild(el('p', text, 'sub'))
-      box.appendChild(head)
-      var foot = el('footer')
-      var cancel = button('取消', '', closeModal)
-      var confirm = button(confirmText, danger ? 'danger' : 'primary', function () {
-        confirm.disabled = true
-        Promise.resolve(onConfirm()).then(closeModal).catch(function (error) {
-          confirm.disabled = false
-          toast(error.message || '操作失败', 'bad')
-        })
+    Kit.askConfirm({ title: title, body: text, ok: confirmText, danger: danger }).then(function (yes) {
+      if (!yes) return
+      Promise.resolve(onConfirm()).catch(function (error) {
+        toast(error.message || '操作失败', 'bad')
       })
-      foot.appendChild(cancel); foot.appendChild(confirm)
-      box.appendChild(foot)
-      setTimeout(function () { cancel.focus() }, 0)
     })
   }
 
@@ -617,12 +594,6 @@ export const CONSOLE_PAGE = `<!doctype html>
   window.addEventListener('hashchange', render)
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden) refresh()
-  })
-  q('modal').addEventListener('click', function (event) {
-    if (event.target === q('modal')) closeModal()
-  })
-  document.addEventListener('keydown', function (event) {
-    if (event.key === 'Escape' && !q('modal').hidden) closeModal()
   })
 
   boot()

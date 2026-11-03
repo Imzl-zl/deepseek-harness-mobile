@@ -22,7 +22,7 @@
   `unexpected-response` 拿状态码 → `describeUpgradeFailure` 翻成 401/403/404 三句能照做的话 →
   「连接」卡 `detail`，**连上那一刻才清**（重连期间保留上次原因，不再只有「重连中」）；
   出码失败由路由 `try/catch` 归一成**带正文**的 400（以前空正文，面板只剩 `HTTP 400`）。
-  真机现场：令牌是旧中转签的，用真令牌打升级请求回 **HTTP 401**。connector 832 / relay 158。
+  真机现场：令牌是旧中转签的，用真令牌打升级请求回 **HTTP 401**。connector 832 / relay 161。
   中转管理台的「我的电脑 / 添加我的电脑」在**令牌模式**下指向登录页并写明原因
   （没有账号 cookie 时 `/console` 会静默 302 到 `/login`）。
   笔记 `implemented/2026-11-03-builtin-relay-is-the-default.md`。
@@ -248,7 +248,7 @@
 | `cd app && flutter test` | 1649 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **832** 项 |
-| `cd relay && pnpm typecheck && node --test` | 类型 + **158** 条 |
+| `cd relay && pnpm typecheck && node --test` | 类型 + **161** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
 

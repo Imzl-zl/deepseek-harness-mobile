@@ -73,7 +73,7 @@ cd relay && docker compose up -d --build && docker compose logs -f relay
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 通道协议 454 / 26 / 49 项 |
-| `cd relay && pnpm typecheck && node --test` | 中转，158 项 |
+| `cd relay && pnpm typecheck && node --test` | 中转，161 项 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 插件，832 项 |
 | `cd app && dart format --output=none --set-exit-if-changed lib test integration_test && dart analyze --fatal-infos lib test integration_test && flutter test` | 手机端，1659 项 |
 

@@ -31,6 +31,8 @@
  * `.agents/notes/implemented/2026-10-30-relay-admin-panel.md`；账号与首连绑定见
  * `.agents/notes/implemented/2026-11-02-relay-accounts-and-connector-binding.md`。
  */
+import { UI_KIT_JS, UI_KIT_MARKUP } from '../ui/kit.ts'
+
 export const ADMIN_PAGE = `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -323,8 +325,20 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
   .topbar h1{font-size:30px}
   .content{padding:14px}
 }
-</style>
-</head>
+/* ---------- 反馈组件（toast / 页内弹框）：行为在 ui/kit.ts，这里只给皮肤 ---------- */
+.modal-backdrop{position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:20px;background:rgba(4,7,11,.62)}
+.modal-backdrop[hidden]{display:none}
+.modal{width:min(440px,100%);background:var(--panel);border:1px solid var(--line2);border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,.45)}
+.modal header{padding:22px 24px 0}
+.modal h3{margin:0 0 8px;font-size:19px;font-weight:600}
+.modal .sub{margin:0;color:var(--cap);font-size:13px;line-height:1.6}
+.modal .body{padding:16px 24px}
+.modal footer{display:flex;justify-content:flex-end;gap:8px;padding:0 24px 20px}
+.toast{position:fixed;top:18px;left:50%;transform:translateX(-50%) translateY(-8px);z-index:80;max-width:min(520px,90vw);padding:10px 16px;border-radius:10px;background:var(--panel);border:1px solid var(--line2);color:var(--ink);font-size:13px;box-shadow:0 12px 30px rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.ok{border-color:rgba(45,212,191,.55)}
+.toast.bad{border-color:#e5484d;color:#ffb4b6}
+</style></head>
 <body>
 
 <div id="login" class="login">
@@ -389,6 +403,8 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
 </div>
 
 <script>
+${UI_KIT_JS}
+  Kit.configure({ ok: 'btn', cancel: 'ghost', danger: 'btn danger' })
 (function () {
   var TOKEN_KEY = 'dsh.admin.token'
   var NS = 'http://www.w3.org/2000/svg'
@@ -537,7 +553,7 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
     pill.className = 'pill' + (state === 'ok' ? ' ok' : state === 'bad' ? ' bad' : '')
     pillText.textContent = text
   }
-  function post(path, body) {
+  function post(path, body, okText) {
     var requestHeaders = Object.assign({ 'content-type': 'application/json' }, headers())
     if (sessionMode) requestHeaders['x-csrf-token'] = csrf()
     return fetch(path, {
@@ -548,10 +564,21 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
     }).then(function (response) {
       if (response.status === 401) { toLogin('登录已失效，请重新输入令牌'); return null }
       return response.json().catch(function () { return {} }).then(function (data) {
-        if (!response.ok) { alert((data && data.error) || ('操作失败 HTTP ' + response.status)); return null }
+        if (!response.ok) { Kit.toast((data && data.error) || ('操作失败 HTTP ' + response.status), 'bad'); return null }
+        // 成功也要有回声：这个面板每个写操作都得说一句，否则用户以为没生效。
+        Kit.toast(okText === undefined ? '已保存' : okText, 'ok')
         return data
       })
     }).catch(function () { toLogin('连不上中转'); return null })
+  }
+
+  /** 确认后才跑（Promise 版）：省掉每处的 if (!confirm) 早返回。 */
+  function ifConfirmed(spec, run) {
+    Kit.askConfirm(spec).then(function (yes) { if (yes) run() })
+  }
+  /** 取到值后才跑；取消什么都不做。 */
+  function withValue(spec, run) {
+    Kit.askValue(spec).then(function (value) { if (value !== null) run(value) })
   }
 
   function toLogin(message) {
@@ -669,11 +696,16 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
         state.users.map(function (row) {
           var actions = el('div')
           actions.appendChild(btn(row.status === 'active' ? '停用' : '恢复', function () {
-            if (row.status === 'active' && !confirm('停用 ' + row.email + '？它名下所有连接会立刻断开')) return
-            post('/admin/api/users/status', {
-              id: row.id,
-              status: row.status === 'active' ? 'suspended' : 'active'
-            }).then(refresh)
+            var suspending = row.status === 'active'
+            ifConfirmed({
+              title: (suspending ? '停用 ' : '恢复 ') + row.email + '？',
+              body: suspending ? '它名下所有连接会立刻断开。' : '恢复后它可以重新登录。',
+              ok: suspending ? '停用' : '恢复',
+              danger: suspending
+            }, function () {
+              post('/admin/api/users/status', { id: row.id, status: suspending ? 'suspended' : 'active' },
+                suspending ? '已停用' : '已恢复').then(refresh)
+            })
           }, row.status === 'active'))
           actions.appendChild(btn(row.role === 'admin' ? '降为用户' : '设为管理员', function () {
             post('/admin/api/users/role', {
@@ -683,27 +715,42 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
           }))
           actions.appendChild(btn('改电脑数', function () {
             var current = row.maxConnectors === null ? state.auth.defaultMaxConnectors : row.maxConnectors
-            var next = prompt('这个账号最多几台电脑（1–100）', String(current))
-            if (next === null) return
-            var value = parseInt(next, 10)
-            if (!isFinite(value)) { alert('要一个整数'); return }
-            post('/admin/api/users/limits', { id: row.id, maxConnectors: value }).then(refresh)
+            withValue({
+              title: '这个账号最多几台电脑',
+              body: '1–100 的整数。',
+              value: String(current),
+              validate: function (raw) {
+                return /^\d+$/.test(raw) && Number(raw) >= 1 && Number(raw) <= 100 ? null : '要一个 1–100 的整数'
+              }
+            }, function (raw) {
+              post('/admin/api/users/limits', { id: row.id, maxConnectors: parseInt(raw, 10) }).then(refresh)
+            })
           }))
           actions.appendChild(btn('改额度', function () {
             var current = row.quotaBytes === null ? '' : (row.quotaBytes / 1073741824).toFixed(2)
-            var next = prompt('本月额度（GB）；留空 = 不限', current)
-            if (next === null) return
-            if (next.trim() === '') {
-              post('/admin/api/users/limits', { id: row.id, quotaBytes: null }).then(refresh)
-              return
-            }
-            var value = parseFloat(next)
-            if (!isFinite(value) || value <= 0) { alert('要一个正数'); return }
-            post('/admin/api/users/limits', { id: row.id, quotaBytes: Math.round(value * 1073741824) }).then(refresh)
+            withValue({
+              title: '本月额度（GB）',
+              body: '留空 = 不限。',
+              value: current,
+              validate: function (raw) {
+                if (raw === '') return null
+                var value = parseFloat(raw)
+                return isFinite(value) && value > 0 ? null : '要一个正数，或留空表示不限'
+              }
+            }, function (raw) {
+              var quotaBytes = raw === '' ? null : Math.round(parseFloat(raw) * 1073741824)
+              post('/admin/api/users/limits', { id: row.id, quotaBytes: quotaBytes }).then(refresh)
+            })
           }))
           actions.appendChild(btn('重置', function () {
-            if (!confirm('把 ' + row.email + ' 的本期用量归零？')) return
-            post('/admin/api/quota/reset', { subject: 'user:' + row.id }).then(refresh)
+            ifConfirmed({
+              title: '把 ' + row.email + ' 的本期用量归零？',
+              body: '只清这一期的计数，不动额度与账号。',
+              ok: '归零',
+              danger: true
+            }, function () {
+              post('/admin/api/quota/reset', { subject: 'user:' + row.id }, '已重置').then(refresh)
+            })
           }))
           var usageCell = el('div')
           usageCell.appendChild(el('div',
@@ -800,8 +847,14 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
       body.appendChild(table(['连接器', '所属人', '#连接时长', '#最后心跳', '#通道', ''], state.connectors.map(function (row) {
         return [row.connectorId, row.owner || '—', duration(Date.now() - row.since), ago(row.lastPongAt), String(row.channels),
           btn('断开', function () {
-            if (!confirm('断开连接器 ' + row.connectorId + '？它的通道会一起关掉')) return
-            post('/admin/api/disconnect', { connectorId: row.connectorId }).then(refresh)
+            ifConfirmed({
+              title: '断开连接器 ' + row.connectorId + '？',
+              body: '它的通道会一起关掉，电脑侧会自动重连。',
+              ok: '断开',
+              danger: true
+            }, function () {
+              post('/admin/api/disconnect', { connectorId: row.connectorId }, '已断开').then(refresh)
+            })
           }, true)]
       }), '还没有连接器连上来 — 电脑上的 DSH 一开就会自己连'))
       card.appendChild(body)
@@ -816,8 +869,15 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
       chBody.appendChild(table(['电脑', '手机', '用途', '#已转发', '#起于', ''], state.channels.map(function (row) {
         return [row.connectorId, row.deviceId, el('span', row.purpose === 'paired' ? '业务' : '配对', 'tag'), bytes(row.forwardedBytes), duration(Date.now() - row.startedAt),
           btn('断开', function () {
-            if (!confirm('断开这条通道？')) return
-            post('/admin/api/disconnect', { connectorId: row.connectorId, deviceId: row.deviceId }).then(refresh)
+            ifConfirmed({
+              title: '断开这条通道？',
+              body: '只收这一条，不动这台电脑的其它通道。',
+              ok: '断开',
+              danger: true
+            }, function () {
+              post('/admin/api/disconnect', { connectorId: row.connectorId, deviceId: row.deviceId }, '已断开')
+                .then(refresh)
+            })
           }, true)]
       }), '没有正在使用的通道'))
       channels.appendChild(chBody)
@@ -862,19 +922,29 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
             var actions = el('span')
             actions.appendChild(btn('改额度', function () {
               var current = row.quotaBytes === null ? '' : (row.quotaBytes / 1073741824).toFixed(2)
-              var next = prompt('本月额度（GB）；留空 = 不限', current)
-              if (next === null) return
-              if (next.trim() === '') {
-                post('/admin/api/users/limits', { id: row.id, quotaBytes: null }).then(refresh)
-                return
-              }
-              var value = parseFloat(next)
-              if (!isFinite(value) || value <= 0) { alert('要一个正数'); return }
-              post('/admin/api/users/limits', { id: row.id, quotaBytes: Math.round(value * 1073741824) }).then(refresh)
+              withValue({
+                title: '本月额度（GB）',
+                body: '留空 = 不限。',
+                value: current,
+                validate: function (raw) {
+                  if (raw === '') return null
+                  var value = parseFloat(raw)
+                  return isFinite(value) && value > 0 ? null : '要一个正数，或留空表示不限'
+                }
+              }, function (raw) {
+                var quotaBytes = raw === '' ? null : Math.round(parseFloat(raw) * 1073741824)
+                post('/admin/api/users/limits', { id: row.id, quotaBytes: quotaBytes }).then(refresh)
+              })
             }))
             actions.appendChild(btn('重置', function () {
-              if (!confirm('把 ' + row.email + ' 的本期用量归零？')) return
-              post('/admin/api/quota/reset', { subject: 'user:' + row.id }).then(refresh)
+              ifConfirmed({
+                title: '把 ' + row.email + ' 的本期用量归零？',
+                body: '只清这一期的计数，不动额度与账号。',
+                ok: '归零',
+                danger: true
+              }, function () {
+                post('/admin/api/quota/reset', { subject: 'user:' + row.id }, '已重置').then(refresh)
+              })
             }))
             return [
               row.email,
@@ -914,17 +984,27 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
             }
             var actions = el('span')
             actions.appendChild(btn(row.limit === null ? '设上限' : '改上限', function () {
-              var next = prompt('上限（字节）；留空 = 取消上限', row.limit === null ? '' : String(row.limit))
-              if (next === null) return
-              var trimmed = next.trim()
-              if (trimmed === '') { post('/admin/api/quota', { subject: row.subject, bytes: null }).then(refresh); return }
-              var value = parseInt(trimmed, 10)
-              if (!isFinite(value) || value <= 0) { alert('要一个正整数（字节），或留空取消'); return }
-              post('/admin/api/quota', { subject: row.subject, bytes: value }).then(refresh)
+              withValue({
+                title: '上限（字节）',
+                body: '留空 = 取消上限。',
+                value: row.limit === null ? '' : String(row.limit),
+                validate: function (raw) {
+                  return raw === '' || (/^\d+$/.test(raw) && Number(raw) > 0) ? null : '要一个正整数（字节），或留空取消'
+                }
+              }, function (raw) {
+                var limit = raw === '' ? null : parseInt(raw, 10)
+                post('/admin/api/quota', { subject: row.subject, bytes: limit }).then(refresh)
+              })
             }))
             actions.appendChild(btn('重置', function () {
-              if (!confirm('把 ' + row.subject + ' 的本期用量归零？')) return
-              post('/admin/api/quota/reset', { subject: row.subject }).then(refresh)
+              ifConfirmed({
+                title: '把 ' + row.subject + ' 的本期用量归零？',
+                body: '只清这一期的计数。',
+                ok: '归零',
+                danger: true
+              }, function () {
+                post('/admin/api/quota/reset', { subject: row.subject }, '已重置').then(refresh)
+              })
             }))
             return [row.subject, used, limitCell, actions]
           }), '没有未归属的用量'))
@@ -949,17 +1029,27 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
         }
         var actions = el('span')
         actions.appendChild(btn(row.limit === null ? '设上限' : '改上限', function () {
-          var next = prompt('上限（字节）；留空 = 取消上限', row.limit === null ? '' : String(row.limit))
-          if (next === null) return
-          var trimmed = next.trim()
-          if (trimmed === '') { post('/admin/api/quota', { subject: row.subject, bytes: null }).then(refresh); return }
-          var value = parseInt(trimmed, 10)
-          if (!isFinite(value) || value <= 0) { alert('要一个正整数（字节），或留空取消'); return }
-          post('/admin/api/quota', { subject: row.subject, bytes: value }).then(refresh)
+          withValue({
+            title: '上限（字节）',
+            body: '留空 = 取消上限。',
+            value: row.limit === null ? '' : String(row.limit),
+            validate: function (raw) {
+              return raw === '' || (/^\d+$/.test(raw) && Number(raw) > 0) ? null : '要一个正整数（字节），或留空取消'
+            }
+          }, function (raw) {
+            var limit = raw === '' ? null : parseInt(raw, 10)
+            post('/admin/api/quota', { subject: row.subject, bytes: limit }).then(refresh)
+          })
         }))
         actions.appendChild(btn('重置', function () {
-          if (!confirm('把 ' + row.subject + ' 的本期用量归零？')) return
-          post('/admin/api/quota/reset', { subject: row.subject }).then(refresh)
+          ifConfirmed({
+            title: '把 ' + row.subject + ' 的本期用量归零？',
+            body: '只清这一期的计数。',
+            ok: '归零',
+            danger: true
+          }, function () {
+            post('/admin/api/quota/reset', { subject: row.subject }, '已重置').then(refresh)
+          })
         }))
         return [row.subject, used, limitCell, actions]
       }), '还没有用量'))
@@ -1005,10 +1095,10 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
       limitsBody.appendChild(limitsGrid)
       var saveLimits = btn('保存', function () {
         var max = parseInt(defaultComputers.input.value, 10)
-        if (!isFinite(max) || max < 1 || max > 100) { alert('电脑数要 1–100'); return }
+        if (!isFinite(max) || max < 1 || max > 100) { Kit.toast('电脑数要 1–100', 'bad'); return }
         var rawQuota = defaultQuota.input.value.trim()
         var quota = rawQuota === '' ? null : Math.round(parseFloat(rawQuota) * 1073741824)
-        if (rawQuota !== '' && (!isFinite(quota) || quota < 1)) { alert('额度要一个正数'); return }
+        if (rawQuota !== '' && (!isFinite(quota) || quota < 1)) { Kit.toast('额度要一个正数', 'bad'); return }
         saveLimits.disabled = true
         post('/admin/api/limits-defaults', { maxConnectors: max, quotaBytes: quota }).then(function (data) {
           if (data) refresh(true); else saveLimits.disabled = false
@@ -1094,9 +1184,8 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
         var to = testTo.input.value.trim()
         if (to === '') return
         testBtn.disabled = true
-        post('/admin/api/mail/test', { to: to }).then(function (data) {
+        post('/admin/api/mail/test', { to: to }, '已交给 SMTP').then(function (data) {
           testBtn.disabled = false
-          if (data) alert('已交给 SMTP')
         })
       })
       testRow.appendChild(testBtn)
@@ -1143,7 +1232,7 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
     addBtn.type = 'button'
     addBtn.addEventListener('click', function () {
       addBtn.disabled = true
-      post('/admin/api/tokens/issue', { id: idInput.value.trim(), name: nameInput.value.trim() })
+        post('/admin/api/tokens/issue', { id: idInput.value.trim(), name: nameInput.value.trim() }, '已签发')
         .then(function (data) {
           addBtn.disabled = false
           if (!data) return
@@ -1198,7 +1287,7 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
       limitLine.appendChild(btn('保存上限', function () {
         var raw = limitInput.value.trim()
         var next = raw === '' ? null : Number(raw)
-        if (next !== null && (!isFinite(next) || next < 1)) { alert('上限要正整数，或留空表示无上限'); return }
+        if (next !== null && (!isFinite(next) || next < 1)) { Kit.toast('上限要正整数，或留空表示无上限', 'bad'); return }
         post('/admin/api/connector-auth', { mode: auth.mode, limit: next }).then(refresh)
       }))
       limitLine.appendChild(el('span', '已自动签发 ' + auth.autoCount + ' 条', 'meta'))
@@ -1210,17 +1299,34 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
       var actions = el('span')
       if (row.revokedAt) {
         actions.appendChild(btn('恢复', function () {
-          if (!confirm('恢复令牌 ' + row.id + '？') ) return
-          post('/admin/api/tokens/restore', { id: row.id }).then(refresh)
+          ifConfirmed({
+            title: '恢复令牌 ' + row.id + '？',
+            body: '恢复后那串旧令牌又能用了。',
+            ok: '恢复'
+          }, function () {
+            post('/admin/api/tokens/restore', { id: row.id }, '已恢复').then(refresh)
+          })
         }))
         actions.appendChild(btn('删除', function () {
-          if (!confirm('永久删除 ' + row.id + ' 的令牌记录？删了就查不到了（不可恢复）')) return
-          post('/admin/api/tokens/remove', { id: row.id }).then(refresh)
+          ifConfirmed({
+            title: '永久删除 ' + row.id + ' 的令牌记录？',
+            body: '删了就查不到了，不可恢复。',
+            ok: '删除',
+            danger: true
+          }, function () {
+            post('/admin/api/tokens/remove', { id: row.id }, '已删除').then(refresh)
+          })
         }, true))
       } else {
         actions.appendChild(btn('吊销', function () {
-          if (!confirm('吊销令牌 ' + row.id + '？吊销后它立刻下线；要彻底删掉，先吊销再删除')) return
-          post('/admin/api/tokens/revoke', { id: row.id }).then(refresh)
+          ifConfirmed({
+            title: '吊销令牌 ' + row.id + '？',
+            body: '吊销后它立刻下线；要彻底删掉，先吊销再删除。',
+            ok: '吊销',
+            danger: true
+          }, function () {
+            post('/admin/api/tokens/revoke', { id: row.id }, '已吊销').then(refresh)
+          })
         }, true))
       }
       var label = el('span', row.name || row.id)
@@ -1278,5 +1384,6 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
   }
 })()
 </script>
+${UI_KIT_MARKUP}
 </body>
 </html>`
