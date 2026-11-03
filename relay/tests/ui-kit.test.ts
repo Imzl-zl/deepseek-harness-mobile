@@ -36,3 +36,37 @@ test("组件本身：三个 ask* 在取消时都会兑现 Promise（遮罩 / Esc
   assert.ok(UI_KIT_JS.includes("if (event.key !== 'Escape'"), "Esc 没关")
   assert.ok(UI_KIT_MARKUP.includes('role="status"'), "toast 缺无障碍角色")
 })
+
+/**
+ * 2026-11-03 真机事故：`UI_KIT_JS` 的 IIFE 结尾**漏了分号**，而两个页面在它后面
+ * 紧跟一行 `(function () {` —— JS 把两行连成 `(...)()(function(){…})`，于是
+ * `Kit.configure(...) is not a function`，整页脚本从第一行就死，表现为
+ * "点什么都没反应"（管理台登录、控制台菜单全哑）。typec/perl 都看不出这种错。
+ *
+ * 两道闸：① kit 必须以分号收尾（对**所有**嵌入方生效）；② 页面里调用 Kit 的行
+ * 自己也要带分号，下一行才不会被粘上去。
+ */
+test("内嵌脚本不许和下一行粘连：kit 以分号收尾，调 Kit 的行也带分号", () => {
+  assert.match(UI_KIT_JS.trimEnd(), /;$/, "kit 的 IIFE 必须以分号收尾")
+  for (const [name, page] of [["管理台", ADMIN_PAGE], ["控制台", CONSOLE_PAGE]] as const) {
+    page.split("\n").forEach((line, index) => {
+      const trimmed = line.trim()
+      // 只看**单行写完的调用**（`Kit.xxx(…)` 整行就是一次调用）：跨行调用的首行
+      // 本来就以 `(` 结尾，不该被这条规则误伤。
+      if (!/^Kit\.\w+\(.*\)$/.test(trimmed)) return
+      assert.match(trimmed, /;$/, `${name} 第 ${index + 1} 行调 Kit 之后缺分号`)
+    })
+  }
+})
+
+test("kit 真的挂出一个对象（不是靠页面兜），七个方法都在", () => {
+  // 真跑一遍那段 JS：`new Function` 只查语法，语句粘连是运行期错误 —— 所以这里
+  // 用一个最小 document 替身把它执行到底，断言返回的是对象。
+  const factory = new Function("document", `${UI_KIT_JS}\nreturn Kit;`)
+  const kit = factory({ getElementById: () => null, addEventListener: () => {} }) as Record<string, unknown>
+  assert.equal(typeof kit, "object", "kit 的 IIFE 没返回对象")
+  assert.deepEqual(Object.keys(kit).sort(), [
+    "askConfirm", "askValue", "button", "close", "configure", "open", "toast",
+  ])
+  assert.equal(typeof kit["configure"], "function", "Kit.configure 不可调用")
+})

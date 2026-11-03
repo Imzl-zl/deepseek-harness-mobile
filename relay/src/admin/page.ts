@@ -404,7 +404,7 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
 
 <script>
 ${UI_KIT_JS}
-  Kit.configure({ ok: 'btn', cancel: 'ghost', danger: 'btn danger' })
+  Kit.configure({ ok: 'btn', cancel: 'ghost', danger: 'btn danger' });
 (function () {
   var TOKEN_KEY = 'dsh.admin.token'
   var NS = 'http://www.w3.org/2000/svg'
@@ -566,7 +566,7 @@ ${UI_KIT_JS}
       return response.json().catch(function () { return {} }).then(function (data) {
         if (!response.ok) { Kit.toast((data && data.error) || ('操作失败 HTTP ' + response.status), 'bad'); return null }
         // 成功也要有回声：这个面板每个写操作都得说一句，否则用户以为没生效。
-        Kit.toast(okText === undefined ? '已保存' : okText, 'ok')
+        Kit.toast(okText === undefined ? '已保存' : okText, 'ok');
         return data
       })
     }).catch(function () { toLogin('连不上中转'); return null })
@@ -574,11 +574,11 @@ ${UI_KIT_JS}
 
   /** 确认后才跑（Promise 版）：省掉每处的 if (!confirm) 早返回。 */
   function ifConfirmed(spec, run) {
-    Kit.askConfirm(spec).then(function (yes) { if (yes) run() })
+    Kit.askConfirm(spec).then(function (yes) { if (yes) run() });
   }
   /** 取到值后才跑；取消什么都不做。 */
   function withValue(spec, run) {
-    Kit.askValue(spec).then(function (value) { if (value !== null) run(value) })
+    Kit.askValue(spec).then(function (value) { if (value !== null) run(value) });
   }
 
   function toLogin(message) {

@@ -202,5 +202,5 @@ export const UI_KIT_JS = `
       askValue: askValue,
       button: button
     }
-  })()
+  })();
 `
