@@ -33,6 +33,7 @@ import {
   revokeTokenInConfig, setAdminInConfig, setConnectorAuthInConfig, setQuotaOwnerInConfig,
 } from './issue-token.ts'
 import { createTokenTable } from './token-table.ts'
+import { createFailureLockout } from './lockout.ts'
 import { createJsonLogger } from './json-logger.ts'
 import { readMeteringState } from './metering-state.ts'
 import { startRelay, type AccountsRuntime, type ConnectorEnroll } from './server.ts'
@@ -62,6 +63,11 @@ interface RelayConfig {
    * 因为一个默认敞开的转发器是隐患；配了就按配置来，启动时会打印生效值。
    */
   rateLimit?: { capacity: number; refillPerSecond: number }
+  /**
+   * 按来源地址的连续失败锁定（管理面 + 登录页）。`failures: 0` = 关闭。
+   * 不写 = 默认 5 次 / 15 分钟（见 `lockout.ts`）。
+   */
+  lockout?: { failures?: number; cooldownMs?: number }
   /**
    * 管理面（`/admin`）的凭据，只放 `sha256(令牌)`。
    *
@@ -454,6 +460,31 @@ const adminOps: AdminOps | undefined = config.admin === undefined && authConfig 
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
   },
+  /**
+   * 管理员自己添加一台电脑（面板「添加我的电脑」）。
+   *
+   * 顺序与吊销/恢复同一条：**先动内存表、再落盘**（表是认证热路径的真值）。
+   * 半途失败时内存里多一张、盘上没有 —— 重启即消失，不会留下"盘上有、用不了"。
+   * 明文只经返回值出去一次：日志只记 id。
+   */
+  async issueToken(id: string, name?: string): Promise<{ ok: boolean; token?: string; error?: string }> {
+    try {
+      const minted = issueToken({ kind: 'connector', id })
+      const entry: TokenDigest = {
+        kind: 'connector',
+        id,
+        hash: minted.hash,
+        createdAt: Date.now(),
+        ...(name === undefined ? {} : { name }),
+      }
+      table.add(entry)
+      await appendTokenToConfig(configPath, entry)
+      console.log(`已签发连接器令牌：id=${id}${name === undefined ? '' : `（${name}）`}`)
+      return { ok: true, token: minted.token }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
   async setConnectorAuth(
     mode: 'open' | 'required',
     limit: number | null,
@@ -670,12 +701,23 @@ const accountsRuntime: AccountsRuntime | undefined =
     },
   }
 
+/**
+ * 连续失败锁定（管理面与登录页共用一份计数）：默认 **5 次 / 15 分钟**，
+ * 配置里写 `lockout: { failures: 0 }` 即关闭（见 `lockout.ts`）。
+ */
+const lockout = createFailureLockout({
+  failures: config.lockout?.failures ?? 5,
+  cooldownMs: config.lockout?.cooldownMs ?? 15 * 60_000,
+})
+
 const relay = await startRelay({
   port: config.port ?? 8787,
   host: config.host ?? '127.0.0.1',
   authenticate,
   // 配置里给了就用它，没给就用 `server.ts` 的默认值（默认生效，见那里的说明）。
   ...(config.rateLimit === undefined ? {} : { rateLimit: config.rateLimit }),
+  // 连续失败锁定：默认 5 次 / 15 分钟，`failures: 0` 关掉（见 `lockout.ts`）。
+  lockout,
   // 没配 `admin` 就不传：那张面不存在（`/admin*` 一律 404）。
   ...(config.admin === undefined ? {} : { admin: config.admin }),
   // 没配 `quota` 就不传：只转发、不记账。

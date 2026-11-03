@@ -405,6 +405,8 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
   var timer = null
   var lastState = null
   var sessionMode = false
+  /** 刚签发、还没被收起的令牌（只在内存里活到这一页刷新 —— 明文不落任何地方）。 */
+  var lastIssued = null
 
   var VIEWS = {
     overview: ['概览', '这台中转此刻在做什么'],
@@ -1124,18 +1126,51 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
     // 名额留空 = 无上限（不预设人为限制，收紧是 owner 的动作）。
     var auth = state.connectorAuth || { mode: 'required', limit: null, autoCount: 0 }
     var authBody = el('div', undefined, 'body')
-    // 管理台只管理已有令牌；"给自己电脑发令牌"在用户控制台。
+    // **管理员自己添加一台电脑**（2026-11-03）：以前这里指向用户控制台，而 break-glass
+    // 管理员没有账号 cookie，点过去只会被弹回登录页。现在直接签一张令牌，
+    // 明文**只显示这一次**（配置里只落摘要，见 issue-token.ts 的头注释）。
     var selfRow = el('div')
-    selfRow.style.cssText = 'display:flex;justify-content:flex-end;margin:0 0 10px'
-    // 令牌模式下没有账号 cookie，进「/console」只会被弹回登录页 —— 那就直说。
-    var selfLink = el('a', sessionMode ? '添加我的电脑' : '用账号登录后添加电脑', 'btn')
-    selfLink.href = sessionMode ? '/console' : '/login'
-    selfLink.title = sessionMode ? '' : '当前用管理令牌登录：添加电脑要用账号登录，登录后自动进控制台'
-    selfLink.style.textDecoration = 'none'
-    selfLink.style.display = 'inline-flex'
-    selfLink.style.alignItems = 'center'
-    selfRow.appendChild(selfLink)
+    selfRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;align-items:center;flex-wrap:wrap;margin:0 0 10px'
+    var idInput = document.createElement('input')
+    idInput.value = 'local'
+    idInput.placeholder = '电脑 id'
+    idInput.title = '连接器自报的 ?id=：默认 local；换过 id 的电脑要填它自己的'
+    idInput.style.cssText = 'width:150px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit'
+    var nameInput = document.createElement('input')
+    nameInput.placeholder = '备注名（可空）'
+    nameInput.style.cssText = 'width:130px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit'
+    var addBtn = el('button', '添加我的电脑', 'btn')
+    addBtn.type = 'button'
+    addBtn.addEventListener('click', function () {
+      addBtn.disabled = true
+      post('/admin/api/tokens/issue', { id: idInput.value.trim(), name: nameInput.value.trim() })
+        .then(function (data) {
+          addBtn.disabled = false
+          if (!data) return
+          lastIssued = { id: idInput.value.trim(), token: data.token }
+          render(lastState)
+        })
+        .catch(function () { addBtn.disabled = false })
+    })
+    selfRow.appendChild(idInput)
+    selfRow.appendChild(nameInput)
+    selfRow.appendChild(addBtn)
     authBody.appendChild(selfRow)
+    // 新令牌放在视图里渲染（不是一次性 DOM）：2 秒轮询会重画这一页，挂在外面的会被冲掉。
+    if (lastIssued !== null) {
+      var issuedBox = el('div')
+      issuedBox.style.cssText = 'margin:0 0 12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:12px;line-height:1.7;word-break:break-all'
+      issuedBox.appendChild(el('div', '新令牌（id：' + lastIssued.id + '）只显示这一次，复制后贴到电脑侧「连接」卡的令牌行：'))
+      var issuedCode = el('code', lastIssued.token)
+      issuedCode.style.cssText = 'display:inline-block;margin-top:4px;padding:4px 6px;border-radius:6px;background:var(--panel);user-select:all'
+      issuedBox.appendChild(issuedCode)
+      var dismiss = el('button', '已复制，收起', 'ghost')
+      dismiss.type = 'button'
+      dismiss.style.cssText = 'margin-left:10px'
+      dismiss.addEventListener('click', function () { lastIssued = null; render(lastState) })
+      issuedBox.appendChild(dismiss)
+      authBody.appendChild(issuedBox)
+    }
     var modeLine = el('div')
     modeLine.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px'
     modeLine.appendChild(el('span', '连接器认证', 'meta'))

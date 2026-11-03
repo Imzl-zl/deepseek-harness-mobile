@@ -92,6 +92,10 @@ const opsOf = (calls: string[]): AdminOps => ({
     calls.push(`remove:${id}`)
     return { ok: true }
   },
+  async issueToken(id, name) {
+    calls.push(`issue:${id}:${name ?? ''}`)
+    return { ok: true, token: 'fresh-token' }
+  },
   async persistQuota(owner, bytes) {
     calls.push(`quota:${owner}:${String(bytes)}`)
     return { ok: true }
@@ -380,4 +384,32 @@ test('设置页：SMTP 与注册策略写回落点，非法值挡在路由层', 
   assert.equal((await post(base, '/admin/api/limits-defaults', AUTH, {
     maxConnectors: 3, quotaBytes: 0,
   })).status, 400)
+})
+
+test('管理员添加一台电脑：签出令牌、明文只回一次、审计不记明文', async (t) => {
+  const calls: string[] = []
+  const { log, actions } = recorder()
+  const relay = await startRelay({
+    port: 0, authenticate: () => undefined, admin: ADMIN, adminOps: opsOf(calls), log,
+  })
+  t.after(() => relay.close())
+  const base = baseOf(relay.port)
+
+  // 已存在且活跃的 id：409 —— 不静默换掉一张正在用的令牌（那台电脑会当场失联）。
+  assert.equal((await post(base, '/admin/api/tokens/issue', AUTH, { id: 'conn-1' })).status, 409)
+  assert.deepEqual(calls, [])
+
+  // 新 id：200，令牌只在这条应答里出现
+  const issued = await post(base, '/admin/api/tokens/issue', AUTH, { id: 'pc-2', name: '书房' })
+  assert.equal(issued.status, 200)
+  const body = (await issued.json()) as Record<string, unknown>
+  assert.equal(body['token'], 'fresh-token')
+  assert.deepEqual(calls, ['issue:pc-2:书房'])
+  assert.equal(actions.at(-1)?.['action'], 'token.issue')
+  assert.equal(actions.at(-1)?.['id'], 'pc-2')
+  assert.equal(JSON.stringify(actions).includes('fresh-token'), false, '审计日志里不许出现令牌明文')
+
+  // id 形状不对：400（大写/空格/超长签出来也连不上）
+  assert.equal((await post(base, '/admin/api/tokens/issue', AUTH, { id: 'BAD ID' })).status, 400)
+  assert.equal((await post(base, '/admin/api/tokens/issue', AUTH, {})).status, 400)
 })

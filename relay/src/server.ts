@@ -15,6 +15,7 @@ import { ADMIN_PAGE } from './admin/page.ts'
 import { createAdminRoutes, type AdminApi, type AdminOps, type AdminStateView, type AdminUserRow } from './admin/routes.ts'
 import { rateKeyOf } from './digest-auth.ts'
 import { createRateLimiter } from './rate-limit.ts'
+import type { FailureLockout } from './lockout.ts'
 import { createEventRing, mirrorToRing } from './events.ts'
 import { createMetering, type Metering, type QuotaConfig, type MeteringState } from './metering.ts'
 import { createMeteringStateWriter, FLUSH_EVERY_MS } from './metering-state.ts'
@@ -47,6 +48,11 @@ export interface RelayServerOptions {
   host?: string
   authenticate: (token: string) => Authenticated | undefined
   rateLimit?: { capacity: number; refillPerSecond: number }
+  /**
+   * 按来源地址的**连续失败锁定**（管理面与登录页共用一份计数，见 `lockout.ts`）。
+   * 不传 = 只限流、不锁。
+   */
+  lockout?: FailureLockout
   /** 管理面凭据（只放摘要）。不配 = 这张面不存在（`/admin*` 一律 404）。 */
   admin?: AdminDigest
   /**
@@ -239,6 +245,8 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
       ...(log === undefined ? {} : { log }),
       secureCookies: runtime.secureCookies,
       limiters: runtime.limiters,
+      // 与 `/admin` 共用同一份计数：爆破方不会挑门。
+      ...(options.lockout === undefined ? {} : { lockout: options.lockout }),
       console: {
         state(user) {
           const rows = runtime.tokens.listForUser(user.id)
@@ -650,6 +658,23 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         log?.info('admin.action', { actor, action: 'token.remove', id })
         return adminJson(200, { ok: true })
       },
+
+      async issueToken(id, name) {
+        if (options.adminOps?.issueToken === undefined) return adminJson(501, { error: 'admin-ops-not-wired' })
+        // **同 id 已有活跃令牌就拒绝**：落盘那一步按 `(kind,id)` 替换，静默换掉一张
+        // 正在用的令牌 = 那台电脑当场失联。要轮换请先吊销（或删掉）那条。
+        const existing = options.adminOps.tokens().find((row) => row.id === id)
+        if (existing !== undefined && existing.revokedAt === undefined) {
+          return adminJson(409, { error: 'token-exists' })
+        }
+        const issued = await options.adminOps.issueToken(id, name)
+        if (!issued.ok || issued.token === undefined) {
+          return adminJson(500, { error: 'persist-failed', detail: issued.error ?? '' })
+        }
+        // **只记 id，不记令牌**：日志里出现明文等于把凭据写进日志文件。
+        log?.info('admin.action', { actor, action: 'token.issue', id })
+        return adminJson(200, { ok: true, token: issued.token })
+      },
     }
     adminRoutes = createAdminRoutes(api, ADMIN_PAGE)
   }
@@ -759,6 +784,14 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
           ? { id: adminSession.user.id, csrf: adminSession.csrf }
           : undefined
         const who = tokenWho ?? sessionWho
+        const clientIp = request.socket.remoteAddress ?? 'unknown'
+        // **连续失败锁定**先于限流：锁定期内连正确的管理令牌也不放行 ——
+        // 否则爆破方每 N 次就能试一次，锁定等于没锁（见 `lockout.ts`）。
+        const locked = options.lockout?.stateOf(`admin:${clientIp}`)
+        if (locked?.blocked === true) {
+          reply(response, 429, { error: 'locked-out', retryAfterMs: locked.retryAfterMs })
+          return
+        }
         if (who === undefined) {
           // 认证不过的请求按来源地址取桶：它没有任何身份可用，与首配那一跳同一个理由。
           const refused = limiter.take(`admin-anonymous:${request.socket.remoteAddress ?? 'unknown'}`)
@@ -766,9 +799,15 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
             reply(response, 429, { error: 'rate-limited', retryAfterMs: refused.retryAfterMs })
             return
           }
+          const after = options.lockout?.fail(`admin:${clientIp}`)
+          if (after?.blocked === true) {
+            log?.warn('admin.locked-out', { ip: clientIp, failures: after.failures, retryAfterMs: after.retryAfterMs })
+          }
           reply(response, 401, { error: 'unauthorized' })
           return
         }
+        // 认过了就清零：能成功说明不是爆破方。
+        options.lockout?.clear(`admin:${clientIp}`)
         // 管理会话是 cookie 认证：写操作必须带双提交 CSRF；break-glass Bearer 不需要。
         if (tokenWho === undefined && sessionWho !== undefined && request.method === 'POST') {
           const raw = request.headers['x-csrf-token']

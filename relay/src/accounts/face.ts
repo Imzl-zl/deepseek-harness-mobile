@@ -23,6 +23,7 @@
 import { randomBytes } from 'node:crypto'
 
 import { createRateLimiter, type RateLimiter } from '../rate-limit.ts'
+import type { FailureLockout } from '../lockout.ts'
 import type { ChannelLogger } from '../logger.ts'
 import {
   createCodeStore,
@@ -134,6 +135,11 @@ export interface AccountsFaceOptions {
   log?: ChannelLogger
   console: ConsoleBridge
   limiters: AccountsLimiters
+  /**
+   * 按来源地址的**连续失败锁定**（与 `/admin` 共用同一份计数）。
+   * 不传 = 只限流、不锁（测试里的老用例不受影响）。
+   */
+  lockout?: FailureLockout
   /** cookie 是否带 Secure（由 `auth.baseUrl` 是 https 决定）。 */
   secureCookies: boolean
   now?: () => number
@@ -298,7 +304,27 @@ export function createAccountsFace(options: AccountsFaceOptions): AccountsFace {
     return undefined
   }
 
-  const limited = (limiter: RateLimiter, key: string): AccountsReply | undefined => {
+  /**
+ * 记一次失败；这一下把地址锁上了就直接回 429（带还要等多久）。
+ *
+ * **不告诉对方"你还剩几次"**：那是给爆破方的进度条。锁上之前一律照旧回 401。
+ */
+const lockedOutOr = (
+  options: AccountsFaceOptions,
+  key: string,
+  status: number,
+  code: string,
+  message: string,
+): AccountsReply => {
+  const after = options.lockout?.fail(key)
+  if (after?.blocked === true) {
+    options.log?.info('auth.locked-out', { key, failures: after.failures })
+    return failure(429, 'locked-out', '连续失败次数过多，稍后再试', { retryAfterMs: after.retryAfterMs })
+  }
+  return failure(status, code, message)
+}
+
+const limited = (limiter: RateLimiter, key: string): AccountsReply | undefined => {
     const decision = limiter.take(key)
     if (decision.allowed) return undefined
     return failure(429, 'rate-limited', '请求太频繁，稍后再试', { retryAfterMs: decision.retryAfterMs })
@@ -453,6 +479,14 @@ export function createAccountsFace(options: AccountsFaceOptions): AccountsFace {
       if (path === '/api/auth/login') {
         if (method !== 'POST') return failure(405, 'method-not-allowed', '方法不对')
         if (!originAllowed(request.headers, config.baseUrl)) return failure(403, 'origin', '来源不对')
+        // **连续失败锁定**先于限流：锁定是"猜错就停"，限流只是变慢（见 `lockout.ts`）。
+        // 锁定期内连正确密码也不放行 —— 否则爆破方每 N 次就能试一次。
+        const locked = options.lockout?.stateOf(`login:${ip}`)
+        if (locked?.blocked === true) {
+          return failure(429, 'locked-out', '连续失败次数过多，稍后再试', {
+            retryAfterMs: locked.retryAfterMs,
+          })
+        }
         const denied = limited(options.limiters.loginIp, `login-ip:${ip}`)
         if (denied !== undefined) return denied
         const parsed = emailOf(body, { domains: [] })
@@ -465,17 +499,19 @@ export function createAccountsFace(options: AccountsFaceOptions): AccountsFace {
         if (user === undefined) {
           await verifyPassword(password, await dummyHash())
           options.log?.info('auth.login-failed', { reason: 'unknown', ip })
-          return failure(401, 'bad-credentials', '邮箱或密码不对')
+          return lockedOutOr(options, `login:${ip}`, 401, 'bad-credentials', '邮箱或密码不对')
         }
         const matched = await verifyPassword(password, user.passwordHash)
         if (!matched) {
           options.log?.info('auth.login-failed', { userId: user.id, ip })
-          return failure(401, 'bad-credentials', '邮箱或密码不对')
+          return lockedOutOr(options, `login:${ip}`, 401, 'bad-credentials', '邮箱或密码不对')
         }
         if (user.status !== 'active') {
           options.log?.info('auth.login-failed', { userId: user.id, reason: 'suspended', ip })
           return failure(403, 'account-suspended', '这个账号已被停用，请联系管理员')
         }
+        // 成功一次清零：能成功就说明不是爆破方。
+        options.lockout?.clear(`login:${ip}`)
         db.updateLastLogin(user.id, now())
         const fresh = db.findById(user.id) ?? user
         const session = issueSession(fresh, request)

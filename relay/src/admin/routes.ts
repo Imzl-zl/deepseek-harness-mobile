@@ -120,6 +120,13 @@ export interface AdminOps {
   setTokenEnabled(id: string, enabled: boolean): Promise<{ ok: boolean; error?: string }>
   /** **硬删除**一条已吊销的令牌记录（实现负责从配置里移除）。 */
   removeToken(id: string): Promise<{ ok: boolean; error?: string }>
+  /**
+   * 签发一张**新的连接器令牌**（管理员自己添加一台电脑）。
+   *
+   * 明文只出现在返回值里一次：实现负责把摘要写进配置、把条目加进内存表，
+   * 并且**绝不**把明文写进任何持久形态或日志。
+   */
+  issueToken(id: string, name?: string): Promise<{ ok: boolean; token?: string; error?: string }>
   /** 把某人（`user:<owner>`）的新上限写回配置（`null` = 取消）；按连接器主体的覆盖不落盘。 */
   persistQuota(owner: string, bytes: number | null): Promise<{ ok: boolean; error?: string }>
   /**
@@ -148,6 +155,8 @@ export interface AdminApi {
   disconnect(connectorId: string, deviceId?: string): Promise<AdminReply>
   setTokenEnabled(id: string, enabled: boolean): Promise<AdminReply>
   removeToken(id: string): Promise<AdminReply>
+  /** 管理员添加一台电脑：签发令牌，明文只在这条应答里出现一次。 */
+  issueToken(id: string, name?: string): Promise<AdminReply>
   setConnectorAuth(mode: 'open' | 'required', limit: number | null): Promise<AdminReply>
   /** 停用 / 恢复一个账号；停用会立刻收掉它名下所有连接。 */
   setUserStatus(id: string, status: 'active' | 'suspended'): Promise<AdminReply>
@@ -169,6 +178,13 @@ const html = (status: number, body: string): AdminReply => ({
 })
 
 const SUBJECT = /^(user:[^\s:]{1,64}|connector:[^\s:]{1,64})$/
+/**
+ * 连接器 id 的形状：就是控制面自报的 `?id=`。
+ *
+ * 与令牌表的"同一 id 只能有一条"同一条纪律 —— 这里先挡掉明显写错的（大写、空格、
+ * 超长），免得签出来一张永远连不上的令牌。
+ */
+const CONNECTOR_ID = /^[a-z][a-z0-9-]{0,63}$/
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -227,6 +243,23 @@ export function createAdminRoutes(api: AdminApi, page: string): { handle(request
         const id = body['id']
         if (typeof id !== 'string' || id === '') return json(400, { error: 'id-invalid' })
         return api.removeToken(id)
+      }
+
+      /**
+       * **管理员自己添加一台电脑**（2026-11-03）。
+       *
+       * 以前这里只有吊销/恢复/删除，"添加"被指向用户控制台 —— 而 break-glass 管理员
+       * 没有账号会话，点过去只会被静默弹回登录页。id 就是连接器控制面自报的 `?id=`
+       * （默认 `local`，见 `connector/src/index.ts` 的 `DEFAULT_CONNECTOR_ID`）。
+       */
+      if (request.path === '/admin/api/tokens/issue') {
+        const id = body['id']
+        if (typeof id !== 'string' || !CONNECTOR_ID.test(id)) return json(400, { error: 'id-invalid' })
+        const name = body['name']
+        if (name !== undefined && (typeof name !== 'string' || name.length > 64)) {
+          return json(400, { error: 'name-invalid' })
+        }
+        return api.issueToken(id, typeof name === 'string' && name.trim() !== '' ? name.trim() : undefined)
       }
 
       // 「连接器是否必须认证」+ 自动签发名额。**`limit: null` = 无上限**（不预设人为限制）。

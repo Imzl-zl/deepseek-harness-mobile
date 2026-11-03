@@ -43,6 +43,7 @@
 
 - 验证码 6 位、10 分钟、5 次尝试、60 秒重发;按 IP 与邮箱分桶限流。
 - 密码 scrypt(N=16384, r=8, p=1),长度 10–200;登录失败统一 `bad-credentials`,邮箱不存在时也算一次 dummy 摘要。
+- 登录失败**连续 5 次锁该来源地址 15 分钟**(lockout.ts,与 /admin 认证失败共用一份计数);锁定期内连正确密码也不放行,成功一次清零,到期自动放行;lockout.failures: 0 关闭。锁定按 emoteAddress 算 —— 反代后面要按真实 IP 分桶,得先配好信任边界。
 - 会话 cookie:`dsh_relay_session`(HttpOnly、SameSite=Lax),CSRF 双提交 `dsh_relay_csrf`;`Secure` 只在请求 Host 等于 `baseUrl` 的 host 时加,本地 `127.0.0.1` 调试不会被浏览器拒收。
 - 注册成功即登录;密码重置会吊销该账号全部会话;改密码保留当前会话、吊销其它会话。
 - **Linux.do 未接**:当前没有 OAuth 路由;`auth` 段不读 OAuth 配置。
