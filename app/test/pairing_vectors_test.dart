@@ -20,6 +20,7 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:dsh_mobile/core/endpoint.dart';
 import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/pairing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -152,6 +153,51 @@ void main() {
       expect(offer.pcSignPubHex, 'aa' * 32);
       expect(offer.offerId, 'abL3sSH5gLJpTBBsqPUzJg');
       expect(offer.code, 'zyXWvUTSrqPONMLKjihgfe');
+      // 老载荷没有 `lan`：只能走中转（行为与改造前一致）。
+      expect(offer.lanUrls, isEmpty);
+    });
+
+    test('局域网地址：合法的留下、坏的丢掉，且不因此拒掉整张码', () {
+      // 丢掉而不是整张作废：中转那条路照样能用，而"因为多了一条坏地址就扫不了"
+      // 的代价远大于收益。
+      final payload = jsonEncode({
+        'v': 2,
+        'relay': 'wss://relay.example/ws/connector',
+        'pcId': 'conn-1',
+        'pcPubEd': 'aa' * 32,
+        'pcPubDh': 'bb' * 32,
+        'offerId': 'abL3sSH5gLJpTBBsqPUzJg',
+        'code': 'zyXWvUTSrqPONMLKjihgfe',
+        'lan': [
+          'ws://192.168.1.5:8790',
+          'wss://pc.example/direct',
+          'ws://192.168.1.5:8790', // 重复
+          'http://192.168.1.5:8790', // 不是 ws/wss
+          'ws://8.8.8.8:8790', // 公网明文，没放行
+          'ws://user:pw@192.168.1.5:8790', // 带凭据
+          '', // 空串
+          42, // 不是字符串
+        ],
+      });
+      final offer = PairingOffer.fromQrPayload(
+        payload,
+        allowInsecureLocal: true,
+      );
+      expect(offer.lanUrls, ['ws://192.168.1.5:8790', 'wss://pc.example/direct']);
+    });
+
+    test('lan 里的明文走**同一道边界**：没开 allowInsecureLocal 就一条都不留', () {
+      final payload = jsonEncode({
+        'v': 2,
+        'relay': 'wss://relay.example/ws/connector',
+        'pcId': 'conn-1',
+        'pcPubEd': 'aa' * 32,
+        'pcPubDh': 'bb' * 32,
+        'offerId': 'abL3sSH5gLJpTBBsqPUzJg',
+        'code': 'zyXWvUTSrqPONMLKjihgfe',
+        'lan': ['ws://192.168.1.5:8790'],
+      });
+      expect(PairingOffer.fromQrPayload(payload).lanUrls, isEmpty);
     });
 
     test('旧版（v1）二维码 → unsupported-version（动作是升级，不是重扫）', () {
@@ -213,6 +259,50 @@ void main() {
         () => PairingOffer.fromQrPayload(same),
         throwsA(isA<ProtocolException>()),
       );
+    });
+  });
+
+  group('配对成功后的端点表', () {
+    PairingOffer offerWith({List<String> lan = const []}) => PairingOffer(
+      relayUrl: 'wss://relay.example/ws/connector',
+      pcId: 'conn-1',
+      pcSignPubHex: 'aa' * 32,
+      pcDhPubHex: 'bb' * 32,
+      offerId: 'abL3sSH5gLJpTBBsqPUzJg',
+      code: 'zyXWvUTSrqPONMLKjihgfe',
+      lanUrls: lan,
+    );
+
+    test('局域网直连在前、中转在后，且都盖了这台电脑的归属', () {
+      final endpoints = pairingEndpoints(
+        offerWith(lan: ['ws://192.168.1.5:8790', 'ws://10.0.0.7:8790']),
+      );
+      expect(endpoints.map((e) => e.kind), [
+        EndpointKind.direct,
+        EndpointKind.direct,
+        EndpointKind.relay,
+      ], reason: '直连排前面：关掉中转的机器上，中转那条拨不通');
+      expect(endpoints.take(2).map((e) => e.url), [
+        'ws://192.168.1.5:8790',
+        'ws://10.0.0.7:8790',
+      ], reason: '电脑侧给的顺序（默认路由那张网卡在前）原样保留');
+      expect(endpoints.last.url, 'wss://relay.example/ws/connector');
+      for (final endpoint in endpoints) {
+        expect(
+          endpoint.hostId,
+          'aa' * 32,
+          reason: '不盖归属的话，连接器自报同一条地址会认不出而追加重复项',
+        );
+      }
+      expect(endpoints.take(2).map((e) => e.label), ['局域网', '局域网']);
+    });
+
+    test('老载荷（没有 lan）只有中转那一条 —— 与改造前逐字一致', () {
+      final endpoints = pairingEndpoints(offerWith());
+      expect(endpoints, hasLength(1));
+      expect(endpoints.single.kind, EndpointKind.relay);
+      expect(endpoints.single.url, 'wss://relay.example/ws/connector');
+      expect(endpoints.single.hostId, 'aa' * 32);
     });
   });
 }

@@ -22,7 +22,7 @@
 /// | 二维码版本不对（v1） | 在电脑上升级插件后重新出码 |
 /// | 换票 409（邀请过期/已被认领） | 让电脑重新出码 |
 /// | 换票 401 / 426 | 凭据或版本不对：重新扫码 |
-/// | 网络不通 / 握手不过 | 检查网络与中转；核对二维码是不是这台电脑的 |
+/// | 网络不通 / 握手不过 | 检查网络（同一 WiFi 会直连，否则经中转）；核对二维码是不是这台电脑的 |
 /// | 回执丢失（超时） | **结果待确认**：去电脑上核对这台设备有没有登记上，别直接重扫 |
 ///
 /// 所以错误原样带出（含错误码）而不是笼统的"配对失败"——后者会让人在"码不对"时去查网络。
@@ -116,6 +116,7 @@ class PairingPage extends StatefulWidget {
     this.allowInsecurePublic = false,
     this.notice,
     this.previousPairingIdOf,
+    this.myIpv4,
   });
 
   /// 配对成功时回调（上层负责落盘与建连）。
@@ -165,6 +166,13 @@ class PairingPage extends StatefulWidget {
   /// 装配层（`main.dart`）注入：凭据还在时现算，被"重新配对"清掉之前抓快照。
   /// 取舍与威胁模型：`.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`。
   final String? Function(String pcId)? previousPairingIdOf;
+
+  /// 本机当前的局域网 IPv4（`AppModel.myLanIpv4`）。
+  ///
+  /// **只影响拨号顺序**：二维码里的局域网地址可能有几条（WiFi + 以太网），
+  /// 同一 /24 的那条先拨（`core/endpoint.dart` 的 `dialOrder`）。拿不到就按电脑侧
+  /// 给的顺序拨 —— 不猜。
+  final String? myIpv4;
 
   @override
   State<PairingPage> createState() => _PairingPageState();
@@ -256,6 +264,7 @@ class _PairingPageState extends State<PairingPage> {
         onStage: _setBusy,
         allowInsecureLocal: widget.allowInsecureLocal,
         allowInsecurePublic: widget.allowInsecurePublic,
+        myIpv4: widget.myIpv4,
       );
       if (!mounted) {
         // 页面已经退了：把刚建起来的候选连接收掉，别留在中转上。
@@ -488,6 +497,9 @@ class _PairingPageState extends State<PairingPage> {
               offer: attempt.offer,
               deviceName: widget.deviceName,
               fingerprint: _pcFingerprint ?? '',
+              // **如实说走的是哪条路**：走局域网却写"中转"，会让人以为中转必须开着。
+              dial: attempt.dial,
+              dialUrl: attempt.dialUrl,
               busy: _busy,
               onConfirm: _commit,
               onCancel: _cancelAttempt,
@@ -590,6 +602,8 @@ class _IdentityCard extends StatelessWidget {
     required this.offer,
     required this.deviceName,
     required this.fingerprint,
+    required this.dial,
+    required this.dialUrl,
     required this.busy,
     required this.onConfirm,
     required this.onCancel,
@@ -599,6 +613,11 @@ class _IdentityCard extends StatelessWidget {
   final PairingOffer offer;
   final String deviceName;
   final String fingerprint;
+
+  /// 这条通道实际走的那条路（局域网 / 中转）与它的地址。
+  final PairingDial dial;
+  final String dialUrl;
+
   final bool busy;
   final VoidCallback onConfirm;
   final VoidCallback onCancel;
@@ -677,7 +696,10 @@ class _IdentityCard extends StatelessWidget {
           ],
           const SizedBox(height: 12),
           _Field(label: '电脑 ID', value: offer.pcId),
-          _Field(label: '中转', value: offer.relayUrl),
+          _Field(
+            label: dial == PairingDial.lan ? '局域网' : '中转',
+            value: dialUrl,
+          ),
           // 指纹是**本地算的**（二维码里公钥的哈希前 16 位）：它与电脑上打印的那段
           // 载荷对得上，就是"我扫的确实是这台电脑"的一个可核对值。
           _Field(label: '公钥指纹', value: fingerprint),

@@ -53,10 +53,12 @@ PairingAck parsePairAck(String plaintext) {
   final payload = parsed;
   if (payload['ok'] != true) {
     final reason = payload['reason'];
+    // 电脑侧只有一种失败：**授权没写进去**（写库失败 / 令牌签发失败）。
+    // 名册上报失败不再算失败（`connector/src/pairing-endpoint.ts`）：设备行已落盘、
+    // 令牌已签发，而中转那边没收到名册是**可恢复**的 —— 纯局域网配对根本没有中转。
+    // 所以这里恒为 `notPaired`（终态：重扫），不再有"已保存、待中转确认"那一档。
     throw ProtocolException(
-      payload['registered'] == true
-          ? ErrorCode.relayOffline
-          : ErrorCode.notPaired,
+      ErrorCode.notPaired,
       reason is String && reason.isNotEmpty ? reason : '配对被拒绝',
     );
   }

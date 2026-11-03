@@ -26,7 +26,11 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 /** 起一个服务端 + 一条接受来的连接，返回客户端与它收到的行。 */
 async function acceptOne(
   t: { after(fn: () => void | Promise<void>): void },
-  options: { batchMs?: number; heartbeatMs?: number } = {},
+  options: {
+    batchMs?: number
+    heartbeatMs?: number
+    schedule?: (fn: () => void, ms: number) => () => void
+  } = {},
 ) {
   const server = new WebSocketServer({ port: 0 })
   t.after(() => server.close())
@@ -98,5 +102,31 @@ test('接受路径：半开判得出来（保活判定要跟着起）', async (t
   // 且**不**重连 —— 接受路径不自愈）。
   await waitFor('判出半开并离开服务态', () => f.connection.state !== 'serving', 3_000)
   assert.equal(f.dials(), 0, '半开关闭之后也不许自愈')
+})
+
+test('接受路径：对端断开后两个周期任务要停（不自愈 = 没有下一次）', async (t) => {
+  // 用注入的 `schedule` 记账：定时器链在不在，是这条用例唯一能看见的东西。
+  // 不停的话每断一条就漏两条链（`stop()` 只在卸载时被调，而监听面在对端断开时
+  // 只把这条连接从册子里摘掉），长跑下来定时器越来越多，测试里则表现为进程不退出。
+  const pending = new Set<ReturnType<typeof setTimeout>>()
+  const schedule = (fn: () => void, ms: number): (() => void) => {
+    const id = setTimeout(() => {
+      pending.delete(id)
+      fn()
+    }, ms)
+    pending.add(id)
+    return () => {
+      if (pending.delete(id)) clearTimeout(id)
+    }
+  }
+
+  const f = await acceptOne(t, { schedule })
+  assert.equal(pending.size, 2, '攒批 flush 与保活判定各一条（少了说明定时器根本没起）')
+
+  f.client.close()
+  await waitFor('对端断开被收口', () => f.connection.state === 'closed')
+  await sleep(20)
+  assert.equal(pending.size, 0, '断开后不许留下任何定时器链（接受来的连接没有下一次）')
+  assert.equal(f.dials(), 0)
 })
 

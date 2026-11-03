@@ -23,6 +23,7 @@ import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/pairing.dart';
 import 'package:dsh_mobile/core/pairing_client.dart';
 import 'package:dsh_mobile/core/pairing_flow.dart';
+import 'package:dsh_mobile/core/transport.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/fake_pc.dart';
@@ -128,6 +129,9 @@ void main() {
 
     // 升级 URL 带着刚换到的票，且**路径在根上**。
     expect(chain.urls.single, 'ws://127.0.0.1:8787/ws/device?ticket=TICKET-1');
+    // 老载荷（没有 lan）走中转：确认卡上写的就是"中转 + 根地址"，不是带票的拨号地址。
+    expect(attemptOf[chain.pc]!.dial, PairingDial.relay);
+    expect(attemptOf[chain.pc]!.dialUrl, offer.relayUrl);
 
     // **确认之前**：电脑侧只收到握手两帧，一个字节的秘密都没有。
     await chain.pc.drain();
@@ -254,4 +258,176 @@ void main() {
     );
     expect(chain.urls.single, isNot(contains('/ws/connector')));
   });
+
+  // ---- 局域网直连（二维码的 `lan`）：同一套帧，不经过中转 ----
+
+  /// 同一张码，但电脑侧报了一组局域网地址。
+  PairingOffer offerWithLan(List<String> lan) => PairingOffer(
+    relayUrl: offer.relayUrl,
+    pcId: offer.pcId,
+    pcSignPubHex: offer.pcSignPubHex,
+    pcDhPubHex: offer.pcDhPubHex,
+    offerId: offer.offerId,
+    code: offer.code,
+    lanUrls: lan,
+  );
+
+  test('局域网：有 lan 就先拨它，全程不换票，帧序列与中转那条完全一样', () async {
+    final lan = offerWithLan(['ws://192.168.1.5:8790']);
+    final http = _TicketRecorder();
+    final urls = <String>[];
+    final candidate = lan.candidate(identity, '我的手机');
+    final pc = FakePc(pcSeedHex: _pcSeed, offer: lan, candidate: candidate);
+    final attempt = await beginPairing(
+      offer: lan,
+      identity: identity,
+      deviceName: '我的手机',
+      send: http.call,
+      transportFor: (url) {
+        urls.add(url);
+        return pc;
+      },
+      allowInsecureLocal: true,
+      newFrameIdHex: () => 'p1',
+      newEphemeralSeedHex: () => 'e5' * 32,
+      newNonceHex: () => 'a7' * 32,
+    );
+    addTearDown(attempt.cancel);
+
+    expect(http.calls, isEmpty, reason: '局域网直连不需要换票 —— 那一步就是中转');
+    expect(attempt.dial, PairingDial.lan, reason: '确认卡要如实说这次走的是局域网');
+    expect(attempt.dialUrl, 'ws://192.168.1.5:8790');
+    expect(urls, hasLength(1));
+    final dial = Uri.parse(urls.single);
+    expect(dial.scheme, 'ws');
+    expect(dial.host, '192.168.1.5');
+    expect(dial.port, 8790);
+    expect(dial.queryParameters['pair'], lan.offerId);
+
+    // 候选身份随请求过去（握手第一步就要用它验签），且里面**没有秘密**。
+    final wire =
+        jsonDecode(
+              utf8.decode(
+                base64Url.decode(base64Url.normalize(dial.queryParameters['cand']!)),
+              ),
+            )
+            as Map<String, Object?>;
+    expect(wire['offerId'], lan.offerId);
+    expect(wire['devPubEd'], identity.sign.publicKeyHex);
+    expect(wire['devPubDh'], identity.dh.publicKeyHex);
+    expect(wire['name'], '我的手机');
+    expect(wire.containsKey('code'), isFalse, reason: '候选身份里不许有秘密');
+
+    // **帧本身没改**：局域网只是换了传输。
+    await pc.drain();
+    final types = pc.lines
+        .map((line) => (jsonDecode(line.trim()) as Map<String, Object?>)['t'])
+        .toList();
+    expect(types, ['hello', 'confirm']);
+    expect(pc.lines.join().contains(lan.code), isFalse);
+
+    final ack = await attempt.commit();
+    expect(ack.devId, await candidate.deviceId());
+  });
+
+  test('局域网全拨不通：回落换票，最终错误里点出"局域网也没通"', () async {
+    final lan = offerWithLan(['ws://192.168.1.5:8790']);
+    final http = _TicketRecorder(const [
+      HttpResult(status: 409, body: '{"error":"pairing-unavailable"}'),
+    ]);
+    final urls = <String>[];
+    await expectLater(
+      beginPairing(
+        offer: lan,
+        identity: identity,
+        deviceName: '我的手机',
+        send: http.call,
+        allowInsecureLocal: true,
+        transportFor: (url) {
+          urls.add(url);
+          return _DeadTransport();
+        },
+      ),
+      throwsA(
+        isA<ProtocolException>()
+            // **错误码不能丢**（`clientAction` 靠它决定"重扫"还是"重试"）。
+            .having((e) => e.code, 'code', ErrorCode.notPaired)
+            .having(
+              (e) => e.message,
+              'message',
+              contains('局域网直连没通（1 个地址）'),
+            ),
+      ),
+    );
+    expect(urls, hasLength(1), reason: '换票被拒就不该再去建连');
+    expect(http.calls, hasLength(1), reason: '局域网失败之后要真的回落去换票');
+  });
+
+  test('局域网：一条拨不通就换下一条（电脑侧给的顺序即偏好）', () async {
+    final lan = offerWithLan(['ws://10.0.0.7:8790', 'ws://192.168.1.5:8790']);
+    final http = _TicketRecorder();
+    final urls = <String>[];
+    final candidate = lan.candidate(identity, '我的手机');
+    final pc = FakePc(pcSeedHex: _pcSeed, offer: lan, candidate: candidate);
+    final attempt = await beginPairing(
+      offer: lan,
+      identity: identity,
+      deviceName: '我的手机',
+      send: http.call,
+      transportFor: (url) {
+        urls.add(url);
+        return url.startsWith('ws://10.0.0.7') ? _DeadTransport() : pc;
+      },
+      allowInsecureLocal: true,
+      newFrameIdHex: () => 'p1',
+      newEphemeralSeedHex: () => 'e5' * 32,
+      newNonceHex: () => 'a7' * 32,
+    );
+    addTearDown(attempt.cancel);
+
+    expect(urls, hasLength(2));
+    expect(urls[0], startsWith('ws://10.0.0.7:8790'));
+    expect(urls[1], startsWith('ws://192.168.1.5:8790'));
+    expect(http.calls, isEmpty, reason: '第二条通了就不该再走中转');
+  });
+
+  test('局域网：同一 /24 的那条先拨（换 WiFi 之后不用用户手动排）', () async {
+    final lan = offerWithLan(['ws://10.0.0.7:8790', 'ws://192.168.1.5:8790']);
+    final http = _TicketRecorder();
+    final urls = <String>[];
+    final candidate = lan.candidate(identity, '我的手机');
+    final pc = FakePc(pcSeedHex: _pcSeed, offer: lan, candidate: candidate);
+    final attempt = await beginPairing(
+      offer: lan,
+      identity: identity,
+      deviceName: '我的手机',
+      send: http.call,
+      transportFor: (url) {
+        urls.add(url);
+        return pc;
+      },
+      allowInsecureLocal: true,
+      // 本机在 192.168.1.0/24 上：那条应当被提到最前面。
+      myIpv4: '192.168.1.23',
+      newFrameIdHex: () => 'p1',
+      newEphemeralSeedHex: () => 'e5' * 32,
+      newNonceHex: () => 'a7' * 32,
+    );
+    addTearDown(attempt.cancel);
+
+    expect(urls.single, startsWith('ws://192.168.1.5:8790'));
+  });
+}
+
+/// 一条**拨不通**的传输：局域网地址死掉时 `connect()` 抛（与真机上的超时/拒绝同形）。
+class _DeadTransport implements ChannelTransport {
+  @override
+  Future<Stream<TransportEvent>> connect() async =>
+      throw const TransportException('建连失败：拨不通');
+
+  @override
+  bool send(String line) => false;
+
+  @override
+  Future<void> close() async {}
 }

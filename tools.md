@@ -424,6 +424,22 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
   - `dsh --profile <名字> --dump-config` 组合 profile 树并退出,**不打日志也不起服务**,适合验"有没有被跳过"。看不到 `skipping profile bundle` 就是兼容性检查通过了。
   - **`@deepseek-ai/dsh-base` 里没有 `sessionController`** —— 它由 `@deepseek-ai/dsh-web-app` 带来。所以只装 base 的 profile 会让依赖会话服务的插件停在 `pending (waiting for service: sessionController)`。
   - **`dsh --profile <名字>` 不带 app 参数会真的把 app 跑起来**:web 栈会起 web 服务并**自动打开浏览器**。想只验证挂载就加超时并自己终止,别让它自己跑。
+  - **验「无中转配对」的配方**(2026-11-03 跑通,约 10 分钟):
+    1. `$env:DSH_HOME='D:\tmp\dsh-probe-home'`;profile 的 `cordis.patch.yml` 保持 `[]`(零 dsh-mobile 配置);
+    2. `cd connector; pnpm pack` → `dsh plugin --profile probe add <tgz 绝对路径>`;
+    3. `dsh --profile probe --no-open --port 3099 *> D:\tmp\dsh-probe.log`(后台跑,日志第一行是带 `?token=` 的 URL);
+    4. **中转"没运行"不必真去关**:新 DSH_HOME 里没有连接器令牌,relay 通道自己就是 `running:false`
+       (`GET /api/dsh-mobile/transport` 的 `detail` 会写"凭据里没有连接器令牌记录");
+    5. `POST /api/dsh-mobile/pair`(带 `?token=` 换来的 cookie) → 200 + SVG;用 jsQR 解回载荷,
+       `lan` 里应有 `ws://<局域网IP>:<端口>`(默认路由那张网卡排第一);
+    6. Node 替身拨 `ws://<ip>:<port>/?pair=<offerId>&cand=<base64url(候选)>`,跑握手 + `pair-commit`,
+       拿 `pair-result` 里的 `deviceToken`。脚本在仓库外:`D:\tmp\dsh-e2e\lan-pair-probe.ts`(tsx 跑)。
+    - **坑①:日常那台 DSH 占着 8790** —— 探针实例的直连会 `EADDRINUSE` 停在未运行,`lan` 因此为空,
+      出码按设计拒绝(没有局域网退路)。用面板把 `listenPort` 改到空闲口再验
+      (`POST /api/dsh-mobile/connection {"listenPort":18790}`);**验完把 profile 的
+      `cordis.patch.yml` 恢复成 `[]`** —— 那次写入是落在 profile 里的。
+    - **坑②:SVG 没有 `width`**,尺寸在 `viewBox="0 0 N N"`,黑模块是 `<path stroke="#000000" d="…">`
+      的横向游程(`M x y` + `h n` + `m dx 0`);坐标带 `.5`,铺位图时要取整。
 - **`inject` 缺服务不是静默的**(我先前判断错了,已按实测改正):DSH 会打 `dsh: warning: 1 entry did not activate` 加 `pending (waiting for service: <键名>)`。所以它可查,只是那行容易被启动日志淹没 —— 插件仍值得自报一遍健康。
 - **cordis 的 `Volatile<T>` 是稳定引用,不是值**:Schemastery `.volatile()` 字段的类型是 `{ get(): VolatileSnapshot<T> }`(`@deepseek-ai/cosmokit` 的 `volatile.d.ts:7-10`),所以 `config.relayUrl` **不能当字符串用** —— 直接比较会得到 `TS2367 两个类型没有重叠`。正确写法是 `config.relayUrl.get()`,而且文档明说「保留引用,或为单次操作取值」:要热改就得每次重读,要一次性用就取一次(取了之后改动不会自动生效,连接也不会自己换地址)。
 - **`ctx.logger` 是服务,不是 logger 实例**:要 `ctx.logger(name)` 取具名 logger(`vendor/cordis/src/context.ts:27-28`);方法签名是 **printf 风格** `(format, ...params)`,不是 `(message, detail)`。本插件在 `observability.ts` 里收成两参数形状(`%s` / `%O`),免得每个调用点都记占位符、或者 detail 忘了格式化被吞掉。

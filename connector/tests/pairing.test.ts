@@ -27,6 +27,28 @@ test('offer：二维码固定电脑身份，对外登记只拿公开邀请', () 
   assert.equal(payload.v, 2)
   assert.equal('codeHash' in offer, false)
   assert.ok(offer.expiresAt - Date.now() <= PAIRING_TTL_MS)
+  // 没有局域网地址时**不写** `lan` 这一格：老载荷形状照旧，老客户端按老路换票。
+  assert.equal('lan' in payload, false)
+  assert.deepEqual(offer.lanUrls, [])
+})
+
+test('offer：局域网地址进载荷，且与 offer.lanUrls 同源（出码判断不回头解析 JSON）', () => {
+  const lan = ['ws://192.168.1.5:8790', 'ws://10.0.0.7:8790']
+  let round = 0
+  const pairing = createPairing({
+    pcId: 'pc-test', relayUrl: 'wss://relay.example/ws', pcPubEd: PC_ED, pcPubDh: PC_DH,
+    lanUrls: () => lan,
+    randomBytes: (size) => { round += 1; return Uint8Array.from({ length: size }, (_, i) => (round * 17 + i) % 256) },
+  })
+  const offer = pairing.offer()
+  const payload = JSON.parse(offer.payload)
+  assert.deepEqual(payload.lan, lan, '手机要按这个顺序拨（默认路由的地址排第一）')
+  assert.deepEqual(offer.lanUrls, payload.lan, '`offer.lanUrls` 与载荷必须是同一份答案')
+
+  // **出码时求值**：换 WiFi 之后下一张码带新地址（不是构造时的快照）。
+  lan[0] = 'ws://192.168.9.9:8790'
+  const next = pairing.offer()
+  assert.deepEqual(JSON.parse(next.payload).lan, ['ws://192.168.9.9:8790', 'ws://10.0.0.7:8790'])
 })
 
 test('accept：身份来自候选，正常业务 pairingId 派生不变', () => {

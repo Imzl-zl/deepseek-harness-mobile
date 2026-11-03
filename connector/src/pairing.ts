@@ -25,6 +25,17 @@ export interface PairingOffer {
   readonly code: string
   readonly expiresAt: number
   readonly payload: string
+  /**
+   * 载荷里那组**局域网直连地址**（`ws://<ip>:<port>`，手机在同网段时直接拨它们）。
+   *
+   * 单独给出来是为了让 `issuePairingOffer` 不必回头解析自己刚拼的 JSON：
+   * "有没有局域网这条路"决定登记失败能不能降级（见那里的注释）。
+   * 空数组 = 这次只有中转可走（老载荷形状）。
+   *
+   * Note: 为什么二维码里要带局域网地址 —— 见
+   * `.agents/notes/implemented/2026-11-03-pairing-without-relay.md`
+   */
+  readonly lanUrls: readonly string[]
 }
 
 /** 由该连接的持钥证明绑定的候选；不能从 pair-commit 载荷里再取一份身份。 */
@@ -79,6 +90,16 @@ export interface PairingOptions {
    * 两者不是一回事，见 [relayHintFor]）。
    */
   relayUrl: string | (() => string)
+  /**
+   * 二维码里给手机的**局域网直连地址**（`ws://<ip>:<port>`，不带路径/参数）。
+   *
+   * 由装配层用 `describeEndpoints` 的 direct 那组算出来（那是"这台机器现在
+   * 拨得通哪些地址"的唯一一份答案，见 `endpoints.ts`）；本文件不认识网卡，
+   * 只负责把它写进载荷。**同样是出码时求值**：换 WiFi 之后二维码跟着变。
+   *
+   * 空/缺 = 这次配对只能走中转（老载荷形状，手机按老路换票）。
+   */
+  lanUrls?: () => readonly string[]
   pcId: string
   pcPubEd: string
   pcPubDh: string
@@ -210,13 +231,17 @@ export function createPairing(options: PairingOptions): Pairing {
       }
       const expiresAt = now() + PAIRING_TTL_MS
       current = { offerId, codeHash: hash(code), expiresAt, candidate: null, accepted: null }
+      const lanUrls = [...(options.lanUrls?.() ?? [])]
       return {
-        offerId, code, expiresAt,
+        offerId, code, expiresAt, lanUrls,
         payload: JSON.stringify({
           v: PAIRING_VERSION,
           // **出码时求值**：电脑换 WiFi 后二维码带的是当前地址，
           // 用户不用回去改 yml 再重启（2026-10-17 真机踩到的坑）。
           relay: typeof options.relayUrl === 'function' ? options.relayUrl() : options.relayUrl,
+          // 局域网直连地址：手机先拨这组，全拨不通才回落中转（见 `pairing-lan.ts`）。
+          // **空就不写这一格** —— 老载荷形状照旧，手机按老路走。
+          ...(lanUrls.length === 0 ? {} : { lan: lanUrls }),
           pcId: options.pcId,
           pcPubEd: options.pcPubEd, pcPubDh: options.pcPubDh, offerId, code,
         }),

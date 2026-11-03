@@ -23,6 +23,7 @@ class PairingOffer {
     required this.pcDhPubHex,
     required this.offerId,
     required this.code,
+    this.lanUrls = const [],
   });
 
   factory PairingOffer.fromQrPayload(
@@ -74,6 +75,11 @@ class PairingOffer {
       pcDhPubHex: pcDh,
       offerId: offerId,
       code: code,
+      lanUrls: _lanUrlsOf(
+        parsed['lan'],
+        allowInsecureLocal: allowInsecureLocal,
+        allowInsecurePublic: allowInsecurePublic,
+      ),
     );
   }
 
@@ -85,6 +91,15 @@ class PairingOffer {
 
   /// 仅在用户确认后的加密提交中使用，不登记到中转。
   final String code;
+
+  /// 电脑侧报的**局域网直连地址**（`ws://<ip>:<port>`，不带路径/参数）。
+  ///
+  /// 空 = 老载荷（电脑侧没开监听面、或那份连接器还不报这一格）：只能走中转换票。
+  /// 顺序即偏好（电脑侧把默认路由那张网卡的地址排在前面），拨号时再按同网段重排。
+  ///
+  // Note: 为什么二维码里带局域网地址 —— 见
+  // `.agents/notes/implemented/2026-11-03-pairing-without-relay.md`
+  final List<String> lanUrls;
 
   Future<String> codeHash() => sha256Hex(code);
   Future<String> pairingId() async => base64UrlNoPad(
@@ -108,6 +123,35 @@ class PairingOffer {
     );
   }
 }
+
+/// 配对成功后要种进端点表的条目：**局域网直连在前，中转在后**。
+///
+/// 顺序即偏好。直连在前是因为这次配对很可能就是走它成功的，而中转那条在
+/// "关掉中转的机器"上根本拨不通 —— 把它排前面等于每次冷启动先等一个超时。
+///
+/// `hostId` 盖的是**配对钉死的电脑公钥**（`pcSignPubHex`）：端点身份是
+/// `hostId|url`（`core/endpoint.dart` 的 `endpointIdOf`），不盖的话连接器第一次
+/// 自报同一条地址会认不出"这是同一条"而追加出重复项。
+///
+/// 老载荷（没有 `lan`）只会得到中转那一条 —— 与改造前逐字一致。
+///
+// Note: 为什么配对成功就要把局域网地址种进端点表 —— 见
+// `.agents/notes/implemented/2026-11-03-pairing-without-relay.md`
+List<Endpoint> pairingEndpoints(PairingOffer offer) => [
+  for (final url in offer.lanUrls)
+    Endpoint(
+      kind: EndpointKind.direct,
+      url: url,
+      label: '局域网',
+      hostId: offer.pcSignPubHex,
+    ),
+  Endpoint(
+    kind: EndpointKind.relay,
+    url: offer.relayUrl,
+    label: '中转',
+    hostId: offer.pcSignPubHex,
+  ),
+];
 
 class PairingCandidate {
   const PairingCandidate({
@@ -163,6 +207,57 @@ Future<String> sasOf({
 
 Future<String> sha256Hex(String text) async =>
     toHex((await Sha256().hash(utf8.encode(text))).bytes);
+
+/// 局域网配对要拨的地址：`<lan>?pair=<offerId>&cand=<候选>`。
+///
+/// 与连接器 `connector/src/pairing-lan.ts` 的 `pairingDialUrl` **同一套字段**：
+/// `pair` 是触发参数（电脑侧据此把这条连接按"配对候选"建），`cand` 是候选身份
+/// （握手第一步就要用它验签，而 `hello` 帧里没有公钥 —— 见那里的说明）。
+///
+/// `cand` 是**无填充** base64url 的 JSON：候选里只有公钥与设备名，都不是秘密，
+/// 但它是 URL 的一部分，所以不塞 `=`（有些代理会吃掉它）。
+String pairingDialUrl(String lanUrl, PairingCandidate candidate) {
+  final uri = Uri.parse(lanUrl);
+  final encoded = base64Url
+      .encode(utf8.encode(jsonEncode(candidate.toWire())))
+      .replaceAll('=', '');
+  return uri
+      .replace(
+        // 空路径补成 `/`：与电脑侧 `new URL(lanUrl)` 的规范形一致（`ws://h:p/?pair=`）。
+        path: uri.path.isEmpty ? '/' : uri.path,
+        queryParameters: {'pair': candidate.offerId, 'cand': encoded},
+      )
+      .toString();
+}
+
+/// 解析载荷里的 `lan` 那一格。
+///
+/// **认不出的条目直接丢，不让整张码作废**：中转那条路照样能用，而一张因为多了一条
+/// 坏地址就整张扫不了的码，代价远大于收益。空/缺/不是数组 ⇒ 空表（老载荷）。
+List<String> _lanUrlsOf(
+  Object? raw, {
+  required bool allowInsecureLocal,
+  required bool allowInsecurePublic,
+}) {
+  if (raw is! List) return const [];
+  final out = <String>[];
+  for (final entry in raw) {
+    if (entry is! String || entry.isEmpty || out.contains(entry)) continue;
+    try {
+      // 与中转地址同一道边界（`checkedRelayUri`）：局域网明文要显式放行，
+      // 公网明文要用户确认过。地址里不许带凭据/参数/片段。
+      checkedRelayUri(
+        entry,
+        allowInsecureLocal: allowInsecureLocal,
+        allowInsecurePublic: allowInsecurePublic,
+      );
+    } on ProtocolException {
+      continue;
+    }
+    out.add(entry);
+  }
+  return out;
+}
 
 String _requireString(Map<String, Object?> value, String field) {
   final text = value[field];

@@ -9,6 +9,10 @@
  *    然后把 socket 交给连接层的 `attach()`；
  * 3. 卸载时停止接受并关掉已接受的连接。
  *
+ * 装配层拿得到**升级请求的 URL**（`UpgradeRequest`）：局域网配对要靠 `?pair=` 认出
+ * "这条连接是候选要来的"（见 `pairing-lan.ts`）。本文件只负责把它递过去，
+ * 不解析、不判断用途 —— 那属于装配层。
+ *
  * ## 三条刻意的选择
  *
  * - **默认不监听**：`port` 为 `0` 时直接不建服务端。不配置就等于这个功能不存在，
@@ -29,6 +33,7 @@
  * 取舍与被否方案：`.agents/notes/implemented/2026-10-02-listener-face.md`
  */
 import { networkInterfaces } from 'node:os'
+import type { IncomingMessage } from 'node:http'
 
 import { WebSocketServer, type WebSocket } from 'ws'
 
@@ -48,6 +53,18 @@ export interface AcceptedConnection {
   stop(): void
 }
 
+/**
+ * 一次升级请求里监听面需要知道的东西。
+ *
+ * **只有 URL**：路径与查询串决定"这条连接是谁要来的"（局域网配对靠 `?pair=`，
+ * 见 `pairing-lan.ts`），而头、来源地址、子协议都不参与判据 —— 窄端口的意思
+ * 是"监听面不替装配层做决定"，不是"少传一个字段"。
+ */
+export interface UpgradeRequest {
+  /** 请求行里的路径 + 查询串（`ws` 的 `IncomingMessage.url`，形如 `/?pair=abc`）。 */
+  readonly url: string
+}
+
 export interface ListenerOptions {
   /**
    * 监听端口。**`0` = 由系统分配一个空闲端口**（测试与"随便给个口"用）。
@@ -63,8 +80,11 @@ export interface ListenerOptions {
    *
    * 由装配层提供（它持有挂载级的 `scopeDeps`）。监听面不认识 DSH、不认识 `ctx` ——
    * 与 `connection-scope.ts` 同一条纪律。
+   *
+   * 收 {@link UpgradeRequest} 是因为"这条连接按什么用途建"只有装配层判得了：
+   * 局域网配对要在**建连接之前**就知道候选身份（握手第一步就要用它验签）。
    */
-  accept(): AcceptedConnection
+  accept(request: UpgradeRequest): AcceptedConnection
   log?: ChannelLogger
 }
 
@@ -169,11 +189,14 @@ export async function startListener(options: ListenerOptions): Promise<Listener>
   /** 活着的连接（卸载时逐个停）。 */
   const connections = new Set<AcceptedConnection>()
 
-  server.on('connection', (socket: WebSocket) => {
+  server.on('connection', (socket: WebSocket, request: IncomingMessage) => {
     // **每 accept 一条就装配一次**：方法面 / 订阅 / 翻页器 / 配对端点都是每连接的
     //（`connection-scope.ts` 的文件头写了为什么）。两条连接共用一份会串台 ——
     // 表现为"第二台手机连上了、也握手成功了，但收不到任何事件"。
-    const accepted = options.accept()
+    //
+    // 请求行在这里交给装配层：局域网配对要按 `?pair=` 决定这条连接是不是候选
+    //（`pairing-lan.ts`），而那件事只有装配层知道怎么做。
+    const accepted = options.accept({ url: request.url ?? '' })
     connections.add(accepted)
 
     socket.on('close', () => {

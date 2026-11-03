@@ -713,7 +713,24 @@ export function createConnection(options: ConnectionOptions): Connection {
       transition('closed')
       // **只有拨号连接自愈**：接受来的连接没有拨号目标，重新接受一条是监听面的职责。
       // 让它按拨号那套去 `dial(url)` 的症状是"监听模式下桥接莫名其妙连去中转"。
-      if (!mode.heals) return
+      if (!mode.heals) {
+        // 不自愈 = 这条连接**没有下一次**：两个周期任务必须停在这里。
+        //
+        // 不停的话每断一条就漏两条定时器链（`scheduleTick` / `scheduleFlush` 只看
+        // `stopped`，而 `stopped` 只有 `stop()` 会置位；监听面在对端断开时只把这条
+        // 连接从册子里摘掉，不调 `stop()`）。真机上的表现是"挂一整天后定时器越来越多"，
+        // 而测试里表现为**整个测试进程永不退出**（`connection.test.ts` 的 `track`
+        // 注释记过同一种症状）。监听面每次 accept 都新建一条连接，所以这个漏点
+        // 与"手机重连几次"成正比。
+        //
+        // Note: 为什么接受来的连接断开就必须停表 —— 见
+        // `.agents/notes/implemented/2026-11-03-pairing-without-relay.md`
+        cancelTick?.()
+        cancelFlush?.()
+        cancelTick = null
+        cancelFlush = null
+        return
+      }
       const delay = backoff.next()
       transition('backoff')
       cancelRetry = schedule(() => {

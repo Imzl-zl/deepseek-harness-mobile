@@ -7,7 +7,7 @@ import type { Pairing, PairingCandidate, PairingRequest, PairingAccepted } from 
 
 export type PairingReply =
   | { ok: true; devId: string; sas: string; pcId: string; deviceToken: string; refreshToken: string }
-  | { ok: false; reason: string; registered?: boolean }
+  | { ok: false; reason: string }
 
 export interface PairedDeviceRow {
   name: string
@@ -150,19 +150,34 @@ export function createPairingEndpoint(options: PairingEndpointOptions): PairingE
         })
         state.registered = true
       }
-      await options.announce()
+      // **名册上报失败不是配对失败**（2026-11-03）：
+      //
+      // - 设备行已经落盘、令牌已经签发 —— 手机拿到的是**真凭据**；
+      // - 名册会在下一次连上中转时**整份重放**（`index.ts` 的 `onConnected`），
+      //   中转侧那段时间只会说 `device-unknown`（可恢复，手机提示"稍后重试"）；
+      // - 纯局域网配对根本没有中转，这条上报**必然**失败 —— 把它当失败，
+      //   就会让"关掉中转也能配对"在最后一步前功尽弃。
+      //
+      // 把它当失败的旧行为还有个更贵的代价：手机丢掉刚签发的令牌、用户重扫，
+      // 而电脑侧那一行已经写了 —— 于是同一台手机攒出第二行。
+      //
+      // Note: 为什么名册失败不再算配对失败 —— 见
+      // `.agents/notes/implemented/2026-11-03-pairing-without-relay.md`
+      try {
+        await options.announce()
+      } catch (error) {
+        options.log?.warn(
+          '设备名册未上报（中转不可用或还没连上）：这台设备已配对，名册会在下次连上中转时重发',
+          error,
+        )
+      }
       return {
         ok: true, devId: accepted.device.devId, pcId: options.pcId, sas: accepted.sas,
         deviceToken: credentials.deviceToken, refreshToken: credentials.refreshToken,
       }
     } catch (error) {
       options.log?.warn('配对提交未能完成', error)
-      return {
-        ok: false, registered: state.registered,
-        reason: state.registered
-          ? '电脑已保存授权，但中转尚未确认；请保持同一设备身份重试'
-          : '电脑未能保存授权，请重试',
-      }
+      return { ok: false, reason: '电脑未能保存授权，请重试' }
     }
   }
 

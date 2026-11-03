@@ -105,8 +105,8 @@ test('设备写库失败不能返回成功或伪称已登记', async (t) => {
   const f = setup(t, { putDevice: async () => { throw new Error('磁盘满了') } })
   const result = await f.endpoint.handle(f.body(), f.candidate)
   assert.ok(!result.ok)
-  assert.equal(result.registered, false)
   assert.match(result.reason, /未能保存/)
+  assert.equal(f.table.size, 0, '写库失败 = 这台设备没配上，表里不能有它')
 })
 
 // ---- 重新配对：换凭证、替换旧行（2026-10-17 用户："为啥每次扫都是一个新设备"）----

@@ -32,6 +32,7 @@ import 'core/errors.dart';
 import 'core/frame.dart';
 import 'core/handshake_driver.dart';
 import 'core/outbox.dart';
+import 'core/pairing.dart';
 import 'core/pairing_client.dart';
 import 'core/recovery.dart';
 import 'core/sync_client.dart' hide AppState;
@@ -503,20 +504,17 @@ class _DshMobileAppState extends State<DshMobileApp>
         !isPrivateOrLoopback(relayUri.host)) {
       await _app?.setAllowPlaintextPublic(true);
     }
-    // 端点表的种子：配对那一刻走的那条中转。之后连接器会自报直连地址，
-    // 由 `endpoint.describe` 合并进来（见 `_discoverEndpoints`）。
+    // 端点表的种子：**局域网直连在前、中转在后**（`core/pairing.dart` 的
+    // `pairingEndpoints` —— 那里有单测，这里只负责落盘）。
+    //
+    // 为什么直连必须种下来：这次配对要么就是走它成功的，要么至少是电脑侧当场报得出来的
+    // 地址。不种的话，关掉中转之后第一次连会"没有端点可拨" —— 而"之后纯局域网可用"
+    // 正是这次配对的目的（老载荷没有 `lan`，那就只有中转那一条）。
     //
     // **种子上就盖归属**（`hostId` = 配对钉死的电脑公钥）：端点的身份是
     // `hostId|url`（`core/endpoint.dart` 的 `endpointIdOf`），不带归属的话
     // 连接器第一次自报同一条地址会认不出"这是同一条"而追加出重复项。
-    final endpoints = <Endpoint>[
-      Endpoint(
-        kind: EndpointKind.relay,
-        url: result.offer.relayUrl,
-        label: '中转',
-        hostId: result.offer.pcSignPubHex,
-      ),
-    ];
+    final endpoints = pairingEndpoints(result.offer);
     final credentials = PairedCredentials(
       relayUrl: result.offer.relayUrl,
       endpoints: endpoints,
@@ -852,6 +850,8 @@ class _DshMobileAppState extends State<DshMobileApp>
         notice: _pairingNotice,
         // 旧配对标识（重新配对同一台电脑时电脑侧据此替换旧行）。
         previousPairingIdOf: _previousPairingIdOf,
+        // 局域网地址的拨号顺序要用它（同一 /24 的先拨）；拿不到就是 null（不猜）。
+        myIpv4: app.myLanIpv4,
       );
     }
     // **抽屉必须跟着 `AppModel` 重建**。
@@ -1448,17 +1448,31 @@ class _DshMobileAppState extends State<DshMobileApp>
 /// 实现里每次调用建一个短命的 client 并关掉（见 `platform/http_sender.dart`）。
 final HttpSender _httpSender = createHttpSender();
 
-/// **配对传输的真实实现**：给一条**已经拼好票**的 URL，建一条 WS。
+/// **配对传输的真实实现**：给一条**已经拼好地址**的 URL，建一条 WS。
 ///
 /// 配对那条连接**用完即关**（`PairingChannel.close`）：配对是一次短交互，
 /// 完成后 App 会用正式传输重新连（那一次才是长期连接）。留着这条 socket
 /// 只会让中转上多出一条谁也不用的连接 —— 而同一个身份只该有一条。
 ///
 /// 缝为什么设在这里（"URL 已拼好"，而不是"整个交换"）：URL 的形状是**协议知识**
-/// （唯一 owner 是 `core/endpoint.dart` 的 `deviceUpgradeUrl`），而"怎么拨号"才是
-/// 平台的事。缝设在更外面，就得把换票、握手、封箱在平台层再实现一遍。
-ChannelTransport _pairingTransport(String upgradeUrl) =>
-    WebSocketTransport(WebSocketTransportOptions(url: upgradeUrl));
+/// （owner 是 `core/pairing.dart` 的 `pairingDialUrl` 与 `core/endpoint.dart` 的
+/// `deviceUpgradeUrl`），而"怎么拨号"才是平台的事。缝设在更外面，就得把换票、
+/// 握手、封箱在平台层再实现一遍。
+///
+/// **建连超时按地址分档**（与 `platform/transport_factory.dart` 同一条判据）：
+/// 局域网/回环是"同一局域网，要么毫秒级应答、要么就是死的"，3 s；中转可能在公网，
+/// 保留 10 s。少了这一档，跨网配对会先为每一条死掉的局域网地址等满 10 秒才轮到中转。
+ChannelTransport _pairingTransport(String upgradeUrl) {
+  final host = Uri.tryParse(upgradeUrl)?.host ?? '';
+  return WebSocketTransport(
+    WebSocketTransportOptions(
+      url: upgradeUrl,
+      connectTimeout: isPrivateOrLoopback(host)
+          ? const Duration(seconds: 3)
+          : const Duration(seconds: 10),
+    ),
+  );
+}
 
 /// 没配对时的**装配**：客户端存在但**不连**（没有可信的电脑身份就没法连）。
 ///

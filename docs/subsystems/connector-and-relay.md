@@ -249,6 +249,11 @@ DSH web server 时。届时按上面三笔代价逐条复核对价。
 (`protocol/not-paired`)。这是有意的:在监听面上再加一层令牌,会得到两套"谁能连"的判据,
 而它们迟早会不一致(且第二套没有契约依据)。
 
+**升级请求的 URL 交给装配层**(`accept(UpgradeRequest)`):`?pair=<offerId>&cand=<候选>` 命中时
+这条连接按**配对候选**建(`makeConnection({purpose:'pairing', candidate})`),没有 `pair` 就是已配对
+设备的普通直连。判据仍是 `pairing.allows(candidate)` —— 过期/被新码顶掉的邀请在 `hello` 处被
+`protocol/not-paired` 关掉。局域网配对因此不需要中转(`docs/subsystems/pairing-v2.md` §2、§4)。
+
 ---
 
 ## 2. 中转服务(`relay/`)

@@ -3,14 +3,28 @@
 /// ## 为什么分两段 —— 分段本身就是设计
 ///
 /// ```text
-/// beginPairing(…)         换票(候选) → 带票升级 → 受限握手     ← 秘密还没出去
-///         ↓  把电脑身份给用户看，等用户点确认
+/// beginPairing(…)         局域网直连 → 受限握手
+///                          （载荷没有局域网地址 / 全拨不通时）换票(候选) → 带票升级 → 受限握手
+///         ↓  把电脑身份给用户看，等用户点确认      ← 秘密还没出去
 /// attempt.commit(code)    发 pair-commit → 收 pair-result（设备令牌 + 辅助 SAS）
 /// ```
 ///
 /// v2 的硬不变量是「**用户确认前不发送秘密、不创建有效设备记录、不签发长期令牌**」。
 /// 一个"一条道走到黑"的函数没有地方插进"用户确认"那一步，所以这里给出的是一个
 /// 可以停在「通道已就绪、秘密未发」的对象。
+///
+/// ## 两条路，同一套帧
+///
+/// 局域网那条路**不经过中转**：二维码里带着电脑的 `ws://<ip>:<port>`，手机直接拨过去
+/// （`pairingDialUrl`），握手与提交帧一个字节都不用改 —— 它们本来就与传输无关。
+/// 中转只在"跨网 / 没有局域网"时才需要。
+///
+/// 顺序是**先局域网、全拨不通才回落中转**：同一 WiFi 下直连是毫秒级且不依赖任何服务器，
+/// 而中转要多一次 HTTP 换票 + 一条公网往返。反过来（先中转）会让"中转没开"直接变成
+/// 配对失败，尽管手机和电脑就在同一张桌子上。
+///
+// Note: 为什么先局域网、为什么全不通才回落 —— 见
+// `.agents/notes/implemented/2026-11-03-pairing-without-relay.md`
 ///
 /// ## 这条链上的失败，客户端动作完全不同
 ///
@@ -33,13 +47,15 @@ library;
 
 import 'crypto.dart';
 import 'endpoint.dart';
+import 'errors.dart';
 import 'pairing.dart';
 import 'pairing_channel.dart';
 import 'pairing_client.dart';
 import 'pairing_exchange.dart';
 import 'transport.dart';
 
-/// 建一条**已带票**的传输（`<根>/ws/device?ticket=…`）。
+/// 建一条**已经拼好地址**的传输（中转那条是 `<根>/ws/device?ticket=…`，
+/// 局域网那条是 `<lan>?pair=…&cand=…`）。
 ///
 /// 缝设在"URL 已拼好"这一层，于是本文件不需要认识 WebSocket，而装配层不需要认识协议。
 typedef PairingTransportFactory = ChannelTransport Function(String upgradeUrl);
@@ -51,6 +67,8 @@ class PairingAttempt {
     required this.identity,
     required this.candidate,
     required this.devId,
+    required this.dial,
+    required this.dialUrl,
     required PairingChannel channel,
   }) : _channel = channel;
 
@@ -62,6 +80,15 @@ class PairingAttempt {
 
   /// 电脑侧会用的设备 id（`hello` 里带的那个）。
   final String devId;
+
+  /// 这条受限通道**实际走的是哪条路**。
+  ///
+  /// 确认卡要如实说出来：走局域网却写"中转"，会让人以为中转必须开着。
+  final PairingDial dial;
+
+  /// 给人看的地址：局域网那条就是它的 `ws://` 地址；中转那条是**根地址**
+  /// （拨号地址里带着一次性票，绝不往界面上放）。
+  final String dialUrl;
 
   final PairingChannel _channel;
 
@@ -87,10 +114,22 @@ class PairingAttempt {
   Future<void> cancel() => _channel.close();
 }
 
-/// 第一段：换票 → 带票升级 → 受限握手。
+/// 配对通道实际走的那条路（确认卡据此说清"怎么连上的"）。
+enum PairingDial {
+  /// 局域网直连（二维码里的 `lan`，不经过中转）。
+  lan,
+
+  /// 中转（换票 → 带票升级）。
+  relay,
+}
+
+/// 第一段：局域网直连（拨不通则回落换票 → 带票升级）→ 受限握手。
 ///
 /// **不发送秘密、不创建有效设备记录、不签发任何令牌** —— 那三件事都发生在
 /// [PairingAttempt.commit]。
+///
+/// [myIpv4] 只影响**顺序**（同一 /24 的那条先拨，见 `dialOrder`）；拿不到就按电脑侧
+/// 给的顺序拨，不猜。
 Future<PairingAttempt> beginPairing({
   required PairingOffer offer,
   required IdentityKeys identity,
@@ -106,26 +145,17 @@ Future<PairingAttempt> beginPairing({
 
   /// 公网明文（用户自部署中转）：由配对页"看过电脑身份并确认"的那一步传 true。
   bool allowInsecurePublic = false,
+
+  /// 本机当前的局域网 IPv4（`platform/lan_address.dart`）；只用于排序。
+  String? myIpv4,
 }) async {
   final candidate = offer.candidate(identity, deviceName);
   final devId = await candidate.deviceId();
 
-  onStage?.call('换票…');
-  // 首配这一跳**没有令牌**：凭据就是公开邀请 + 候选公钥。这一条是整条链能起步的原因
-  // —— 换票要设备令牌，而设备令牌是配对的产物，那会成环。
-  //
-  // `allowInsecureLocal` 一路透到地址边界（`core/endpoint.dart`）：默认只认 WSS，
-  // 明文分两档 —— 非公网（局域网/组网）与**用户确认过的公网自部署中转**。
-  final ticket = await PairingClient(
-    relayUrl: offer.relayUrl,
-    send: send,
-    allowInsecureLocal: allowInsecureLocal,
-    allowInsecurePublic: allowInsecurePublic,
-  ).ticketByOffer(candidate);
-
-  onStage?.call('连接电脑…');
-  final channel = PairingChannel(
-    transport: transportFor(deviceUpgradeUrl(offer.relayUrl, ticket.ticket)),
+  /// 造一条受限通道。**两条路共用**：帧序列、密钥派生、超时全都一样，
+  /// 差别只有"往哪拨"。
+  PairingChannel channelFor(String upgradeUrl) => PairingChannel(
+    transport: transportFor(upgradeUrl),
     offer: offer,
     identity: identity,
     candidate: candidate,
@@ -135,14 +165,82 @@ Future<PairingAttempt> beginPairing({
     newNonceHex: newNonceHex,
     handshakeTimeout: handshakeTimeout,
   );
-  await channel.open();
 
-  onStage?.call('等待你确认');
-  return PairingAttempt(
+  PairingAttempt attemptFor(PairingChannel channel, PairingDial dial, String dialUrl) => PairingAttempt(
     offer: offer,
     identity: identity,
     candidate: candidate,
     devId: devId,
+    dial: dial,
+    dialUrl: dialUrl,
     channel: channel,
   );
+
+  // ---- ① 局域网直连（不需要中转）----
+  //
+  // 地址来自二维码的 `lan`：电脑自己持有这次 offer、自己也听得见这个端口，
+  // 所以"保管邀请"与"通知有候选"这两件事在局域网上都不需要服务器。
+  final lanFailures = <String>[];
+  for (final endpoint in dialOrder(
+    [for (final url in offer.lanUrls) Endpoint(kind: EndpointKind.direct, url: url)],
+    myIpv4: myIpv4,
+  )) {
+    onStage?.call('局域网直连…');
+    final channel = channelFor(pairingDialUrl(endpoint.url, candidate));
+    try {
+      await channel.open();
+      onStage?.call('等待你确认');
+      return attemptFor(channel, PairingDial.lan, endpoint.url);
+    } catch (error) {
+      // 这一条不通：收干净再试下一条（半开的 socket 留着只会占端口与超时预算）。
+      await channel.close();
+      lanFailures.add('${endpoint.url}：$error');
+    }
+  }
+
+  // ---- ② 回落中转（跨网 / 没有局域网地址 / 局域网全拨不通）----
+  try {
+    onStage?.call(lanFailures.isEmpty ? '换票…' : '局域网没通，改用中转…');
+    // 首配这一跳**没有令牌**：凭据就是公开邀请 + 候选公钥。这一条是整条链能起步的原因
+    // —— 换票要设备令牌，而设备令牌是配对的产物，那会成环。
+    //
+    // `allowInsecureLocal` 一路透到地址边界（`core/endpoint.dart`）：默认只认 WSS，
+    // 明文分两档 —— 非公网（局域网/组网）与**用户确认过的公网自部署中转**。
+    final ticket = await PairingClient(
+      relayUrl: offer.relayUrl,
+      send: send,
+      allowInsecureLocal: allowInsecureLocal,
+      allowInsecurePublic: allowInsecurePublic,
+    ).ticketByOffer(candidate);
+
+    onStage?.call('连接电脑…');
+    final channel = channelFor(deviceUpgradeUrl(offer.relayUrl, ticket.ticket));
+    await channel.open();
+
+    onStage?.call('等待你确认');
+    return attemptFor(channel, PairingDial.relay, offer.relayUrl);
+  } catch (error, stack) {
+    // 局域网那几条失败过的话，**在原因前面点出来**：否则用户看到"请让电脑重新出码"，
+    // 而真因是"手机不在那个 WiFi"。
+    _rethrowWithLanNote(error, stack, lanFailures);
+  }
 }
+
+/// 把"局域网也试过了"这件事加进最终错误里，**保留原错误码**（`clientAction` 靠它）。
+Never _rethrowWithLanNote(Object error, StackTrace stack, List<String> failures) {
+  if (failures.isEmpty) {
+    Error.throwWithStackTrace(error, stack);
+  }
+  final prefix = '局域网直连没通（${failures.length} 个地址）；';
+  if (error is ProtocolException) {
+    Error.throwWithStackTrace(ProtocolException(error.code, '$prefix${error.message}'), stack);
+  }
+  if (error is TransportException) {
+    Error.throwWithStackTrace(
+      TransportException('$prefix${error.message}', code: error.code),
+      stack,
+    );
+  }
+  Error.throwWithStackTrace(TransportException('$prefix中转也没通：$error'), stack);
+}
+

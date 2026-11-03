@@ -71,7 +71,7 @@ import {
   referencesAvailable,
   type Caps,
 } from './dsh/caps.js'
-import { createEndpointsPort } from './endpoints.js'
+import { createEndpointsPort, describeEndpoints } from './endpoints.js'
 import { createSubagentsPort } from './dsh/subagents.js'
 import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent'
 import { createProjectionsPort } from './dsh/projections.js'
@@ -82,7 +82,8 @@ import type { SettingsForms } from '@deepseek-ai/dsh-settings'
 import { registerTrajectoryProjection } from './dsh/trajectory.js'
 import { deriveIdentity } from './protocol/crypto.js'
 import { loadOrCreateIdentity, type Identity } from './dsh/identity.js'
-import { PAIRING_TTL_MS, createPairing } from './pairing.js'
+import { PAIRING_TTL_MS, createPairing, deviceIdOf } from './pairing.js'
+import { readPairingRequest } from './pairing-lan.js'
 import { createPairingEndpoint, findPreviousPairingRow, replacedRowsOf, type PairingEndpoint, type PairedDeviceRow } from './pairing-endpoint.js'
 import type { DeviceBinding } from '../../protocol/relay-control.mjs'
 import { createRelayLink, type RelayLink } from './transport/relay-link.js'
@@ -154,7 +155,7 @@ import { createWorkspacesPort } from './dsh/workspaces.js'
 import type { WorkspaceController } from '@deepseek-ai/dsh-api-workspace-controller'
 import { coreDomain, initialMeta, migrateMeta, windowsDomain } from './store/index.js'
 import type { Connection, DialSocket } from './transport/connection.js'
-import { startListener, type Listener } from './transport/listener.js'
+import { startListener, type Listener, type UpgradeRequest } from './transport/listener.js'
 import { channelsToRebuild, createRebuildQueue } from './transport/rebuild.js'
 import { createTransportStarter } from './transport/startup.js'
 
@@ -667,6 +668,25 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         // 配对（§12.1）：核心由**主种子派生**（`Identity` 只存种子），与哪条连接无关。
         // `putDevice` 落 `devices` 表 —— 那是**唯一**新增设备的路径；配对成功后握手才认得出这台设备。
         const pcIdentity = deriveIdentity(local.masterSeed)
+        /**
+         * 二维码里的**局域网直连地址**（载荷的 `lan` 那一格）。
+         *
+         * 复用 `describeEndpoints` 的 direct 那组 —— 那是"这台机器现在拨得通哪些地址"
+         * 的唯一一份答案（枚举非内部网卡、默认路由排第一、用户藏掉/追加）。
+         * **不另写一套**：二维码里的地址与 `endpoint.describe` 报给手机的地址必须是
+         * 同一个集合，否则会出现"码里能连、连上之后列表里没有"。
+         *
+         * 监听面没起（`listenPort: 0`、端口被占、或这台机器没有非内部网卡）时它是
+         * 空数组 —— 那正是"这次配对只能走中转"。
+         */
+        const lanUrlsOf = (): readonly string[] => describeEndpoints({
+          relayUrl: relayUrlInUse(),
+          lanHint,
+          listener,
+          advertise: advertiseMapOf(advertiseRows),
+        }).endpoints
+          .filter((endpoint) => endpoint.kind === 'direct')
+          .map((endpoint) => endpoint.url)
         const pairingCore = createPairing({
           pcId: connectorId,
           // 二维码里的地址：**中转地址**（契约 §2 的拓扑里手机连的是中转）。
@@ -676,6 +696,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           //  手机拨存量端点全超时，而二维码再出码也还是那个死地址）。
           // 出码时**现取**：面板改完地址，下一张码立刻写新地址。
           relayUrl: () => relayHintFor(relayUrlInUse(), lanHint),
+          // 局域网直连那一组：手机先拨它，全拨不通才回落中转（`pairing-lan.ts`）。
+          lanUrls: lanUrlsOf,
           pcPubEd: pcIdentity.sign.publicKeyHex,
           pcPubDh: pcIdentity.dh.publicKeyHex,
         })
@@ -1337,6 +1359,36 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         }
 
         /**
+         * 升级请求 → 这条连接按什么用途建（`?pair=` 就是那个判据）。
+         *
+         * - **有 `?pair=`** = 配对候选：候选身份随请求来（握手第一步 `hello` 就要用它
+         *   验签、派生配对密钥，见 `pairing-lan.ts` 的说明），而**放不放行**仍由
+         *   `pairing.allows(candidate)` 判（`device-connection.ts` 的 `peerOf`）——
+         *   过期/已认领/邀请对不上的候选在握手处就被 `protocol/not-paired` 关掉。
+         * - **没有 `?pair=`** = 普通直连（已配对设备，`peerOf` 查设备表）。
+         * - 有 `?pair=` 但候选解不出来：按普通直连建，并留声 —— 握手会给出
+         *   `protocol/not-paired`，而"为什么这条码配不上"要能从日志里读出来。
+         *
+         * Note: 为什么局域网配对要在这里建"配对候选"连接 —— 见
+         * `.agents/notes/implemented/2026-11-03-pairing-without-relay.md`
+         */
+        const bindingOfUpgrade = (request: UpgradeRequest): DeviceBinding | undefined => {
+          const query = readPairingRequest(request.url)
+          if (query.offerId === undefined) return undefined
+          if (query.candidate === undefined) {
+            logger.warn('配对连接没有可用的候选身份（缺 cand / 解不开 / 与 pair 不一致）：按普通直连处理')
+            return undefined
+          }
+          logger.debug(`接受一条局域网配对连接（邀请 ${query.candidate.offerId}）`)
+          return {
+            connectorId,
+            deviceId: deviceIdOf(query.candidate),
+            purpose: 'pairing',
+            candidate: query.candidate,
+          }
+        }
+
+        /**
          * 传输面的起 / 停。**在这里定义**（`makeConnection` / `pairingCore` /
          * `publishDevices` 都是本步的局部物），装进外层占位器给服务面与管理面用。
          *
@@ -1441,8 +1493,10 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             host: listenHostInUse(),
             // 起来了就清掉上一次的失败原因（与中转 `onFailure(null)` 同一处时机）。
             log: logger,
-            accept: () => {
-              const accepted = makeConnection()
+            accept: (request) => {
+              // `?pair=` 在 = 这条连接是配对候选（用途在**建连接之前**就要定，
+              // 握手第一步要拿候选公钥验签）；否则是已配对设备的普通直连。
+              const accepted = makeConnection(bindingOfUpgrade(request))
               return {
                 port: accepted,
                 attach: (socket) => accepted.attach(socket as DialSocket),

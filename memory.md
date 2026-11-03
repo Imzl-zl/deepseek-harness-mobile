@@ -5,6 +5,20 @@
 
 ## 现在（2026-11-03）
 
+- **配对不再依赖中转（11-03 第六批，0.1.15）**：二维码载荷加 `lan`（`describeEndpoints` 的 direct 组，
+  默认路由排第一）；监听面把升级请求 URL 交给 `accept`，`?pair=<offerId>&cand=<候选>` 命中就按配对候选
+  建连接（放行仍只由 `pairing.allows` 判）；出码先试登记，失败时**有 `lan` 就降级出码**、没有才拒绝；
+  手机端先拨 `lan`（同网段优先）、全不通才回落换票，配对成功后把 `lan` 种成 direct 端点。
+  名册上报失败不再算配对失败（纯局域网必然失败，名册在下次连中转时重放）。顺手修掉接受路径的
+  定时器泄漏（不自愈的连接断开后没停两个周期任务）。connector **844** / app **1684**；protocol 454/26/49 不变。
+  **隔离实例实测**：probe profile 零配置、无令牌（relay 未运行）→ `POST /api/dsh-mobile/pair` 200 + SVG，
+  jsQR 解出 `lan: ["ws://192.168.110.79:18790", …]`，node 替身拨 `?pair=` 拿到设备令牌，再用已配对身份
+  直连跑通 `repo.info`；**App 自己的 Dart 代码**（真 `WebSocketTransport`、HTTP 缝做成"一调就抛"）
+  同样拨 `?pair=` 配对成功、零 HTTP。端口是 18790 而非 8790：日常那台 DSH 占着 8790，
+  验完已把 profile 恢复成 `[]`。笔记 `implemented/2026-11-03-pairing-without-relay.md`。
+  **未做**：安卓真机上的新配对（用户选择用接口验；App 没有"再加一台电脑"的入口，
+  进配对页只能走「重新配对」）。
+
 - **装完插件面板 404 的真正原因（11-03）**：不是热重载、不是令牌，是 **profile 里根本没有连接器的
   config 段** —— DSH 装插件只写 `dsh.profile.bundles`，不写 `cordis.patch.yml`；`relayUrl` 没有
   schema 默认值 → `validate-config` 抛 → mount 回滚 → `mountAdminFace` 一步没跑 →
