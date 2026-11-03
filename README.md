@@ -96,7 +96,4 @@ CI（[`ci.yml`](.github/workflows/ci.yml)）跑同一组命令；每次 push 归
 
 ## License
 
-[MIT](LICENSE) —— 随便用，包括商用、闭源、再发布。
-
-> `0.1.17` 与 `0.1.18` 这两个版本曾以 PolyForm Noncommercial 1.0.0 发布；拿到那两个
-> 版本的人对**那两个版本**适用当时的协议。`0.1.19` 起回到 MIT。
+[MIT](LICENSE)
