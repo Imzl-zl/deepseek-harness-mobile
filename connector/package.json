@@ -1,6 +1,6 @@
 {
   "name": "dsh-mobile-connector",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "type": "module",
   "description": "DSH 插件:手机端远程通道的电脑侧桥接",
   "keywords": [
@@ -17,7 +17,7 @@
     "remote-control",
     "websocket"
   ],
-  "license": "PolyForm-Noncommercial-1.0.0",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/Imzl-zl/deepseek-harness-mobile.git",

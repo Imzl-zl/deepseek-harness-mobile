@@ -3,7 +3,7 @@
 <a href="https://www.npmjs.com/package/dsh-mobile-connector"><img src="https://img.shields.io/npm/v/dsh-mobile-connector" alt="npm"></a>
 <a href="https://www.npmjs.com/package/dsh-mobile-connector"><img src="https://img.shields.io/npm/dm/dsh-mobile-connector" alt="npm downloads"></a>
 <a href="https://github.com/Imzl-zl/deepseek-harness-mobile/actions/workflows/ci.yml"><img src="https://github.com/Imzl-zl/deepseek-harness-mobile/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
-<a href="https://github.com/Imzl-zl/deepseek-harness-mobile/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue" alt="license"></a>
+<a href="https://github.com/Imzl-zl/deepseek-harness-mobile/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="license"></a>
 
 **DSH 插件：手机端远程通道的电脑侧网关。** 装进 [DeepSeek Harness](https://github.com/Imzl-zl/deepseek-harness-mobile) 之后，
 手机扫码就能连到这台电脑 —— 对话、轨迹、改动卡、审批与提问、子智能体与后台任务，都在手机上。
@@ -117,5 +117,4 @@ node --check client.js     # 浏览器半侧是手写 JS，没有类型检查
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](https://github.com/Imzl-zl/deepseek-harness-mobile/blob/main/LICENSE)
-—— 可自由使用、修改、分发，**不可商用**。
+[MIT](https://github.com/Imzl-zl/deepseek-harness-mobile/blob/main/LICENSE)

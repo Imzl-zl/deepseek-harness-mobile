@@ -2,7 +2,7 @@
 
 - 日期：2026-11-03
 - 触发：用户要求「不能商用、其它要自由」
-- 状态：implemented
+- 状态：**已被取代** —— 同一天改回 MIT，见 `.agents/notes/implemented/2026-11-03-license-back-to-mit.md`
 
 ## 决定
 

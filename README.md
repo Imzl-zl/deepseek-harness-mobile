@@ -10,7 +10,7 @@
   <a href="https://www.npmjs.com/package/dsh-mobile-connector"><img src="https://img.shields.io/npm/v/dsh-mobile-connector" alt="npm"></a>
   <a href="https://www.npmjs.com/package/dsh-mobile-connector"><img src="https://img.shields.io/npm/dm/dsh-mobile-connector" alt="npm downloads"></a>
   <a href="https://www.npmjs.com/package/dsh-mobile-connector"><img src="https://img.shields.io/badge/provenance-sigstore-blueviolet" alt="provenance"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue" alt="license"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="license"></a>
 </p>
 
 <p align="center">
@@ -96,10 +96,7 @@ CI（[`ci.yml`](.github/workflows/ci.yml)）跑同一组命令；每次 push 归
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE) —— **可以自由使用、修改、分发（个人、研究、教学、
-慈善/公共机构都算允许用途），但不能商用。**
+[MIT](LICENSE) —— 随便用，包括商用、闭源、再发布。
 
-商业用途需要单独授权，请开 issue 联系。
-
-> 0.1.15 及更早版本是以 MIT 分发的：已经拿到那些副本的人，对**那些副本**仍然适用 MIT。
-> 这条不会因为协议变更而追溯收回；本次变更只约束**此后**发布的版本。
+> `0.1.17` 与 `0.1.18` 这两个版本曾以 PolyForm Noncommercial 1.0.0 发布；拿到那两个
+> 版本的人对**那两个版本**适用当时的协议。`0.1.19` 起回到 MIT。

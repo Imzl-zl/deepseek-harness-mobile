@@ -18,6 +18,6 @@ test("包里的 LICENSE 副本与仓库根的正本逐字相同", () => {
   const root = readLicense("../../LICENSE")
   const shipped = readLicense("../LICENSE")
 
-  assert.match(root, /PolyForm Noncommercial License 1\.0\.0/, "根 LICENSE 不是 PolyForm")
+  assert.match(root, /^MIT License/, "根 LICENSE 不是 MIT")
   assert.equal(shipped, root, "connector/LICENSE 与根 LICENSE 漂移了（npm 包会带错协议）")
 })
