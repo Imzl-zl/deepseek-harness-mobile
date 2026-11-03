@@ -35,8 +35,11 @@
 ## 落地
 
 - `LICENSE`：PolyForm 正文（首行保留 `Copyright (c) 2026 Imzl-zl`）。
-- `connector/package.json`：`"license": "PolyForm-Noncommercial-1.0.0"`；发布时 tarball 会
-  带上根 `LICENSE`（`files` 里已列，实测 0.1.15 的 tgz 里就有 `package/LICENSE`）。
-- 版本跳到 **0.1.17**：0.1.16 的 tarball 是在 MIT 状态下发出的，元数据不能事后改；
-  要让 npm 上的包带新协议，只能发一个新版本。
+- `connector/package.json`：`"license": "PolyForm-Noncommercial-1.0.0"`。
+- **`connector/LICENSE` 是给 npm 包的副本**（`files` 里列了它），换协议时容易漏 ——
+  0.1.17 就漏了：`package.json` 已写 PolyForm，而 tarball 里的 LICENSE 正文还是 MIT，
+  对外授权文本自相矛盾。现在 `connector/tests/license.test.ts` 逐字比对副本与正本，
+  漂移立刻红；随后补发 0.1.18 修正。
+- 版本发到 **0.1.18**：0.1.16 是 MIT 状态下发的、0.1.17 的副本没换，元数据的事后修正
+  只能靠新版本。
 - `README.md` / `connector/README.md`：徽章与 License 小节同步，并写明不追溯。
