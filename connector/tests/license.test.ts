@@ -2,9 +2,8 @@
  * `connector/LICENSE` 是给 npm 包用的**副本**（`package.json` 的 `files` 里有它），
  * 根 `LICENSE` 才是正本。
  *
- * 2026-11-03 换协议时就踩过：根换成了 PolyForm，副本还是 MIT，于是 0.1.17 的
- * tarball 里 `package.json` 说 PolyForm、附带的 LICENSE 正文却是 MIT —— 对外
- * 授权的文本自相矛盾。这条用例把那两者钉死：副本与正本必须逐字相同。
+ * 换协议时最容易只改一半：根改了、副本忘了，tarball 里元数据与附带正文对不上，
+ * 等于对外发了两份互相矛盾的授权文本。这条用例把两者钉死：必须逐字相同。
  */
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
