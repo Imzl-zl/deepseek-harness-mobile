@@ -3,7 +3,19 @@
 > 快照 + 最近窗口，**覆盖更新**，不做流水追加。历史在 git 与 `.agents/notes/`；
 > 稳定命令与坑点在 `tools.md`；现状事实在 `docs/`。
 
-## 现在（2026-11-02）
+## 现在（2026-11-03）
+
+- **装完插件面板 404 的真正原因（11-03）**：不是热重载、不是令牌，是 **profile 里根本没有连接器的
+  config 段** —— DSH 装插件只写 `dsh.profile.bundles`，不写 `cordis.patch.yml`；`relayUrl` 没有
+  schema 默认值 → `validate-config` 抛 → mount 回滚 → `mountAdminFace` 一步没跑 →
+  `/api/dsh-mobile/*` 全落共享通道兜底 `not found`（界面能开、接口全 404）。
+  探针实测：缺 `relayUrl` 时注册的管理面路由 **0 条**。
+  修法：缺 `relayUrl` 降级成"只让中转通道起不来"（`transport/startup.ts` 第三种缺席 +
+  `relayConfigured`），原因进 `relayError` →「连接」卡 `detail`。connector **828** 项。
+  本机 desktop profile 已补 config（`relayUrl: wss://dsh.0t0.me/ws/connector`）并把插件从
+  **0.1.6 升到 0.1.11**（lockfile 原先钉死 0.1.6，npm 上 0.1.7/0.1.8 从未发布）。
+  笔记 `implemented/2026-11-03-admin-face-must-not-need-config.md`。
+  **遗留**：坏地址 / 直连端口被占仍会让整次 mount 失败 → 面板照样 404（同一类，另开一篇）。
 
 - **中转账号模式（11-02）**：`auth` 段开启后 `connectorAuth` 必须 `required`，匿名兑换关闭；
   邮箱注册（默认只限 `qq.com`，6 位码 / 10 分钟 / scrypt）、会话 cookie + CSRF、控制台建电脑、
@@ -225,7 +237,7 @@
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
 | `cd app && flutter test` | 1649 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **826** 项 |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **828** 项 |
 | `cd relay && pnpm typecheck && node --test` | 类型 + **152** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。

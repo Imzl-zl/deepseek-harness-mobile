@@ -209,12 +209,23 @@ test('装配层确实用的是抽出来的那几处，且实参接对（不是�
     [/startRelay: startRelayChannel/, '起传输时"中转"那一格没接 startRelayChannel'],
     [/startDirect: startDirectChannel/, '起传输时"直连"那一格没接 startDirectChannel'],
     [/listenPort: \(\) => config\.listenPort\(\)/, '直连端口不是"用时读配置"（写成常量后热改不生效）'],
+    // 缺 relayUrl 时**连 startRelay 都不该调**（拨空地址只会得到更难读的错误），
+    // 而这一格接错/漏接的症状正是 2026-11-03 那次：管理面 404、面板能开、接口全 404。
+    // 见 `.agents/notes/implemented/2026-11-03-admin-face-must-not-need-config.md`。
+    [/relayConfigured: \(\) => \(config\.relayUrl\(\) \?\? ''\) !== ''/, '起传输没接"中转地址配了吗"（缺地址时仍会去拨空地址）'],
     [/for \(const channel of channelsToRebuild\(paths\)\) void rebuildQueue\.enqueue\(channel\)/, '配置热改没有把事件里的 paths 交给 channelsToRebuild'],
     [/channels: transportChannels\?\.channels\(\) \?\? \[\]/, '面板投影没读通道注册表'],
     [/tokenStatusOf: \(ref\) => relayTokenStatusOf\(ctx\.credentials, ref\)/, '面板的令牌状态没接凭据面'],
     [/await rebuildQueue\.settle\(\) return rebuildQueue\.failure\(\)/, '保存回执没有等重建落地并带回失败原因'],
   ]
   for (const [pattern, why] of pins) assert.match(code, pattern, why)
+
+  // **挂载硬门必须消失**（2026-11-03）：`relayUrl` 空着只是"还没配"，
+  // 在这里抛等于把管理面（唯一能填它的界面）一起关掉。
+  assert.ok(
+    !code.includes('relayUrl 未配置：拒绝挂载'),
+    'validate-config 又拿 relayUrl 当挂载硬门了：缺地址会让 /api/dsh-mobile/* 全 404',
+  )
 
   // 写令牌与清令牌各要显式排一次中转重建（一共 2 处，少一处就是"换了令牌不重连"）。
   const explicitRebuilds = code.match(/await rebuildQueue\.enqueue\('relay'\)/g) ?? []

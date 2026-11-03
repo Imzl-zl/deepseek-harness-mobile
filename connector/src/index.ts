@@ -18,13 +18,17 @@
  * - **`inject` 只列必需服务**。可选能力一律 `ctx.get` 读出来当能力位 —— 因为
  *   `inject` 里写了一个不存在的服务会让 fiber 永远 PENDING，而那是**无异常、无日志、
  *   无 UI 报错**的静默降级（`caps.ts` 有完整理由）。
- * - **配置不全就拒绝挂载**，不是"空跑等配置"。一个连着中转却没有 relayUrl 的插件
- *   会在服务端制造一条永远不完整的配对记录，排查起来比挂载失败难得多。
+ * - **"拒绝挂载"只留给写错的形状，不留给"还没配"**（2026-11-03 修订）。
+ *   地址写成 `http://…`、身份种子拿不到 —— 这些是错，照旧抛。
+ *   而 `relayUrl` **空着**是"刚装完插件"的正常形状：装插件只把它加进
+ *   `dsh.profile.bundles`，**不写 config 段**；管理面（唯一能填这个值的界面）又挂在
+ *   最后一步 —— 拦它等于把入口焊死，症状是"面板能开、接口全 404"。
+ *   所以缺 `relayUrl` 只让中转通道起不来，面板照常挂上。
+ *   见 `.agents/notes/implemented/2026-11-03-admin-face-must-not-need-config.md`。
  *   身份同理：拿不到身份种子就不启动通道，而不是每次重启换一套新身份。
- * - **唯一的例外是"凭据里还没有连接器令牌"**（2026-10-29）：那时只让中转通道起不来
- *   （面板「连接」卡显示原因、也能把令牌贴回去），插件照常挂载、直连照常可用。
- *   理由很硬：令牌可以在面板里删，而"删了以后重启就连面板都打不开"会把人锁在门外。
- *   见 `.agents/notes/implemented/2026-10-29-panel-connection-card.md` 的「无令牌可挂载」。
+ * - **另外两个例外同一条口径**（只让那条通道起不来）：
+ *   凭据里还没有连接器令牌（2026-10-29，`panel-connection-card.md` 的「无令牌可挂载」）、
+ *   直连 `listenPort = 0`（用户明说不监听）。
  *
  * `credentials` 从"可选"升成了必需服务（`caps.ts` 有 cite）：电脑侧身份种子存在凭据 seam 里，
  * 没有它连握手都构造不出来 —— 把这种前提当可选项，只会得到一个永远握不了手的空壳。
@@ -432,9 +436,16 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
       name: 'validate-config',
       run() {
         const relayUrl = config.relayUrl()
+        // **空着不是错误**（2026-11-03）：装完插件、还没配地址就是这个形状，
+        // 而管理面（唯一能填这个值的界面）挂在最后一步 —— 在这里抛等于
+        // "面板 404，且没有任何界面能把它填回去"。缺地址只让中转通道起不来
+        // （`transport/startup.ts` 的第三种缺席），面板照常挂。
+        // Note: .agents/notes/implemented/2026-11-03-admin-face-must-not-need-config.md
         if (relayUrl === undefined || relayUrl === '') {
-          throw new Error('relayUrl 未配置：拒绝挂载，而不是连上一个不完整的中转')
+          logger.info('relayUrl 未配置：只让中转通道起不来，管理面照常挂载（在「连接」卡里选一条）')
+          return
         }
+        // 写了但不合法 = 真的写错了，照旧吵（与 `startup.ts` 的"坏地址整体抛出"同一条）。
         relayUrlOf(relayUrl, config.allowInsecureLocal(), config.allowInsecurePublic())
         // **`relayTokenRef` 不再必填**：中转开放自助兑换（`connectorAuth: open`）时，
         // 连接器在 `start-transport` 里自己换一张（`ensureRelayToken`）。空着也允许挂载，
@@ -1442,14 +1453,20 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           },
         )
 
-        // 起传输的两种容忍（缺令牌 / `listenPort = 0`）在 `transport/startup.ts` ——
-        // 判据与回指见 `.agents/notes/implemented/2026-10-29-assembly-regression-net.md`。
+        // 起传输的三种容忍（缺令牌 / `listenPort = 0` / 缺 relayUrl）在 `transport/startup.ts` ——
+        // 判据与回指见 `.agents/notes/implemented/2026-10-29-assembly-regression-net.md`
+        // 与 `2026-11-03-admin-face-must-not-need-config.md`。
         transportStart = createTransportStarter({
           startRelay: startRelayChannel,
           startDirect: startDirectChannel,
           listenPort: () => config.listenPort(),
-          onTolerated: () => {
-            logger.warn('中转通道未启动：凭据里没有连接器令牌（可在「手机」面板的「连接」卡里设置）')
+          // 空串 = 还没配（装完插件就是这个形状）：连 `startRelay` 都不调。
+          relayConfigured: () => (config.relayUrl() ?? '') !== '',
+          onTolerated: (reason) => {
+            // 这句话同时进日志与「连接」卡的 `detail`（`channels()` 读 `relayError`）——
+            // 面板要能回答"为什么没跑"，而不是只说"未运行"。
+            relayError = reason
+            logger.warn(`中转通道未启动：${reason}（可在「手机」面板的「连接」卡里设置）`)
           },
         })
         transportStop = async () => {

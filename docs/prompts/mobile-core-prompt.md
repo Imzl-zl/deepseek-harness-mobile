@@ -240,9 +240,9 @@ app/lib/core/
 **本段（纯 `core/` + `flutter test`）完全不受这两条影响**，但它们是"两条路径都通"的拦路石，
 新会话**不要以为连接器已经万事俱备**（我在 memory.md 里曾把这点说轻了）：
 
-1. **`relayUrl` 是挂载的硬前置**：`connector/src/index.ts:217-225` 的 `validate-config` 里，
-   `relayUrl` 或 `relayTokenRef` 为空就**抛错拒绝挂载**。所以"纯直连、不配中转"**目前挂不起来** ——
-   要用直连得先让 `validate-config` 接受"只配了 `listenPort`"这种形态。
+1. **`relayUrl` 空着不拦挂载**：`connector/src/index.ts` 的 `validate-config` 只留一句日志，
+   缺地址只让中转通道起不来（`transport/startup.ts` 的第三种缺席）。所以"纯直连、不配中转"
+   挂得起来：配 `listenPort` 即可，面板照常可用。
 2. **二维码里的地址永远是中转**：`connector/src/pairing.ts:170` 写的是 `relay: options.relayUrl`，
    而 `index.ts:369` 传进去的也是 `relayUrl`。所以手机扫码后拿到的是**中转地址**，
    直连拓扑下它需要的是**电脑的地址**（`listenHost:listenPort`，且外部已终结 TLS）。

@@ -1,7 +1,7 @@
 /**
- * 起传输时的**容忍判据**：哪两种缺席是"配置里本来就允许的"，其余一律照旧吵。
+ * 起传输时的**容忍判据**：哪几种缺席是"配置里本来就允许的"，其余一律照旧吵。
  *
- * ## 两条规则，各有出处
+ * ## 三条规则，各有出处
  *
  * 1. **凭据里还没有连接器令牌** → 只让中转通道起不来（不再拒绝挂载）。
  *    理由很硬：令牌可以在面板里删，而管理面（`/api/dsh-mobile/*`）挂在
@@ -10,6 +10,10 @@
  *    见 `.agents/notes/implemented/2026-10-29-panel-connection-card.md` 的「无令牌可挂载」。
  * 2. **`listenPort = 0`** → 用户明说"不监听"（`config.ts:26-29`），不是失败，
  *    也不该被当成"起成功了"（所以是"不调"，不是"调了再看"）。
+ * 3. **`relayUrl` 空着**（2026-11-03）→ 装完插件还没配地址的**正常形状**。
+ *    装插件只会把它加进 `dsh.profile.bundles`，**不写 config 段**；而管理面是唯一能
+ *    把这个值填进去的界面。所以这里连 `startRelay` 都不调，只留一句原因。
+ *    见 `.agents/notes/implemented/2026-11-03-admin-face-must-not-need-config.md`。
  *
  * 别的失败（坏地址、端口被占、宿主抛出来的东西）**整体抛出**：静默半挂的插件会让
  * 手机端一直连不上而电脑侧没有线索。
@@ -35,6 +39,9 @@ export function toleratesRelayStartFailure(error: unknown): boolean {
   return error instanceof RelayTokenError
 }
 
+/** 没配中转地址时的那一行事实（「连接」卡的 `detail` 与日志都读它）。 */
+export const RELAY_UNCONFIGURED = '未配置中转地址（relayUrl 空）'
+
 /** 起传输需要的东西（都是装配层现成的函数，本模块不认识连接细节）。 */
 export interface StartupPorts {
   /** 起中转通道。失败抛出（含 `RelayTokenError`）。 */
@@ -43,8 +50,10 @@ export interface StartupPorts {
   startDirect(): Promise<void>
   /** 直连端口：`0` = 配置明说"不监听"。**每次调用现读**（面板能热改）。 */
   listenPort(): number
-  /** 容忍时的留痕口（日志 + 「连接」卡的原因）。 */
-  onTolerated(error: unknown): void
+  /** 中转地址配了吗。`false` = 连 `startRelay` 都不调（见文件头第 3 条）。 */
+  relayConfigured(): boolean
+  /** 容忍时的留痕口（日志 + 「连接」卡的原因）。**给的是人话**，不是 error 对象。 */
+  onTolerated(reason: string): void
 }
 
 /**
@@ -56,12 +65,18 @@ export interface StartupPorts {
  */
 export function createTransportStarter(ports: StartupPorts): () => Promise<void> {
   return async () => {
-    await ports.startRelay().catch((error: unknown) => {
-      // 唯一的例外在这里（见文件头两条）。注意顺序：判据不通过时**原样抛出**，
-      // 于是下面那行不会执行 —— 真故障不该继续起下一条通道（半挂比不挂更难查）。
-      if (!toleratesRelayStartFailure(error)) throw error
-      ports.onTolerated(error)
-    })
+    if (!ports.relayConfigured()) {
+      // 没配地址：不是失败，也不该"调一下看看" —— 拨一个空地址只会得到一个
+      // 更难读的错误，而这句话本身就是操作者要的答案。
+      ports.onTolerated(RELAY_UNCONFIGURED)
+    } else {
+      await ports.startRelay().catch((error: unknown) => {
+        // 唯一的例外在这里（见文件头三条）。注意顺序：判据不通过时**原样抛出**，
+        // 于是下面那行不会执行 —— 真故障不该继续起下一条通道（半挂比不挂更难查）。
+        if (!toleratesRelayStartFailure(error)) throw error
+        ports.onTolerated(error instanceof Error ? error.message : String(error))
+      })
+    }
     if (ports.listenPort() !== 0) await ports.startDirect()
   }
 }
