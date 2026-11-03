@@ -369,3 +369,53 @@ test('方法和路径：非 POST → 405，未知路径 → 404', () => {
   assert.equal(face.handle({ method: 'GET', path: '/ws-ticket' }).status, 405)
   assert.equal(face.handle({ method: 'POST', path: '/nope', token: 'connector-token-1' }).status, 404)
 })
+
+/**
+ * 2026-11-03 线上事故：控制台签发的令牌在**登记**这一步永远找不到自己那台电脑。
+ *
+ * 新令牌的逻辑 id 是随机的 `tk_…`，电脑 id 要到第一次连控制面时才由 `?id=`
+ * 绑进 `connectorId`（`digest-auth.ts` 的 `Authenticated.connectorId`）。
+ * HTTP 面若拿令牌 id 去 `core.connectors` 里找，必然扑空 —— 线上表现就是
+ * 每次出码都回「没能把这次配对登记到中转」+ 日志 `连接器不在线`。
+ *
+ * 这条用例钉的是**身份口径**：路由、名册、登记一律按绑定后的电脑 id。
+ */
+test('控制台令牌（令牌 id ≠ 电脑 id）：登记与名册都按绑定后的电脑 id 走', () => {
+  const core = createRelayCore()
+  const devices = createDeviceRegistry()
+  const TOKEN = 'bound-token'
+  const bound: Authenticated = {
+    kind: 'connector',
+    id: 'tk_4I3EMxVwKB6M',
+    connectorId: 'local',
+    userId: 'u_5j4WI3aXONLU',
+  }
+  const face = createHttpFace({
+    tickets: createTicketStore({ randomBytes: (size) => Uint8Array.from({ length: size }, () => 7) }),
+    core,
+    devices,
+    authenticate: (token) => (token === TOKEN ? bound : undefined),
+  })
+  // 控制面以 `local` 自报上线 —— 这就是"那台电脑"的 id。
+  core.attachConnector('local')
+
+  const registered = face.handle({
+    method: 'POST',
+    path: '/pairing/register',
+    token: TOKEN,
+    body: { v: 2, offerId: OFFER_ID },
+  })
+  assert.equal(registered.status, 201, '登记要按绑定后的电脑 id 找到那台机器')
+  assert.equal(core.lookupPairing(OFFER_ID), 'local')
+
+  const roster = face.handle({
+    method: 'POST',
+    path: '/devices',
+    token: TOKEN,
+    body: { devices: [rosterRow('dev-9', 'tok-9')] },
+  })
+  assert.equal(roster.status, 201)
+  assert.equal((roster.body as { accepted: number }).accepted, 1)
+  assert.equal(devices.rowsOf('local').length, 1, '名册落在那台电脑名下')
+  assert.equal(devices.rowsOf('tk_4I3EMxVwKB6M').length, 0, '不能落在令牌 id 名下')
+})

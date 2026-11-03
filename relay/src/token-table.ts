@@ -22,7 +22,7 @@
  */
 import { createHash } from 'node:crypto'
 
-import type { Authenticated, TokenDigest } from './digest-auth.ts'
+import { connectorIdOf, type Authenticated, type TokenDigest } from './digest-auth.ts'
 
 const digestOf = (token: string): string => createHash('sha256').update(token, 'utf8').digest('hex')
 
@@ -113,7 +113,7 @@ export function createTokenTable(
   /** `connectorId → 令牌 id`：额度主体、账号归属与控制面自报都对它查。 */
   const byConnector = new Map<string, string>()
 
-  const connectorKeyOf = (entry: TokenDigest): string => entry.connectorId ?? entry.id
+  const connectorKeyOf = (entry: TokenDigest): string => connectorIdOf(entry)
 
   const identityOf = (entry: TokenDigest): Authenticated => ({
     kind: 'connector',

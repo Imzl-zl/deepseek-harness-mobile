@@ -13,7 +13,7 @@ import { createHttpFace, type Authenticated } from './http-face.ts'
 import { createAdminAuthenticator, type AdminDigest } from './admin/auth.ts'
 import { ADMIN_PAGE } from './admin/page.ts'
 import { createAdminRoutes, type AdminApi, type AdminOps, type AdminStateView, type AdminUserRow } from './admin/routes.ts'
-import { rateKeyOf } from './digest-auth.ts'
+import { connectorIdOf, rateKeyOf } from './digest-auth.ts'
 import { createRateLimiter } from './rate-limit.ts'
 import type { FailureLockout } from './lockout.ts'
 import { createEventRing, mirrorToRing } from './events.ts'
@@ -261,7 +261,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
           const deviceList: ConsoleDevice[] = []
           const seen = new Set<string>()
           for (const row of rows) {
-            const connectorId = row.connectorId ?? row.id
+            const connectorId = connectorIdOf(row)
             const control = controls.get(connectorId)
             const deviceRows = devices.rowsOf(connectorId)
             const activeDevices = deviceRows.filter((device) => device.revokedAt === undefined)
@@ -322,7 +322,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
           const saved = await runtime.setTokenEnabled(id, enabled)
           if (!saved) return 'not-found'
           if (!enabled) {
-            const connectorId = row.connectorId ?? row.id
+            const connectorId = connectorIdOf(row)
             const control = controls.get(connectorId)
             if (control !== undefined) {
               detachControl(connectorId)
@@ -336,7 +336,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
           const row = runtime.tokens.list().find((item) => item.id === id && item.userId === user.id)
           if (row === undefined) return 'not-found'
           if (row.revokedAt === undefined) return 'revoke-first'
-          const connectorId = row.connectorId ?? row.id
+          const connectorId = connectorIdOf(row)
           const control = controls.get(connectorId)
           if (control !== undefined) {
             detachControl(connectorId)
@@ -348,7 +348,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         async resetBinding(user, id) {
           const row = runtime.tokens.list().find((item) => item.id === id && item.userId === user.id)
           if (row === undefined) return 'not-found'
-          const connectorId = row.connectorId ?? row.id
+          const connectorId = connectorIdOf(row)
           if (controls.has(connectorId)) return 'online'
           return await runtime.resetBinding(id) ? 'ok' : 'not-found'
         },
@@ -393,7 +393,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         let online = 0
         for (const row of rows) {
           if (row.revokedAt !== undefined) continue
-          const connectorId = row.connectorId ?? row.id
+          const connectorId = connectorIdOf(row)
           if (controls.has(connectorId)) online += 1
           deviceCount += devices.rowsOf(connectorId).filter((device) => device.revokedAt === undefined).length
         }
@@ -656,7 +656,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         const saved = await options.adminOps.removeToken(id)
         if (!saved.ok) return adminJson(500, { error: 'persist-failed', detail: saved.error ?? '' })
         // 已吊销的连接器理论上已经下线；万一还在（面板与吊销竞速），顺手收掉。
-        const connectorId = row.connectorId ?? id
+        const connectorId = connectorIdOf(row)
         const control = controls.get(connectorId)
         if (control !== undefined) {
           detachControl(connectorId)
@@ -1142,7 +1142,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
             refuse(socket, 403, 'Forbidden')
             return
           }
-          let connectorId = caller.connectorId ?? caller.id
+          let connectorId = connectorIdOf(caller)
           if (caller.connectorId === undefined && caller.userId !== undefined) {
             if (accountsRuntime === undefined) { refuse(socket, 403, 'Forbidden'); return }
             const bound = await accountsRuntime.bindToken(caller.id, declared)
@@ -1167,7 +1167,7 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
           })
           return
         }
-        const connectorId = caller.connectorId ?? caller.id
+        const connectorId = connectorIdOf(caller)
         const channel = channelId === null ? undefined : core.channel(channelId)
         if (channel === undefined || channel.connected || channel.binding.connectorId !== connectorId
           || channel.binding.deviceId !== deviceId || !controls.has(connectorId)) {

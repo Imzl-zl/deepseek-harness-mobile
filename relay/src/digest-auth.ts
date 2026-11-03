@@ -63,6 +63,18 @@ export function rateKeyOf(who: Authenticated): string {
   return `connector:${who.id}`
 }
 
+/**
+ * 这台调用方**在哪台电脑名下** —— 路由、名册、名额、登记一律按它查。
+ *
+ * `id` 是令牌的逻辑 id（吊销/删除按它定位），不是电脑 id：旧令牌两者相同，
+ * 控制台签发的令牌是随机的 `tk_…`，电脑 id 在第一次连上时由 `?id=` 绑定进
+ * `connectorId`。**凡是要找"那台电脑"的地方都得走这里** —— 直接读 `id` 会让
+ * 新令牌永远找不到自己那台机器（2026-11-03 的事故：登记一直回「连接器不在线」）。
+ */
+export function connectorIdOf(who: Pick<Authenticated, "id" | "connectorId">): string {
+  return who.connectorId ?? who.id
+}
+
 /** 一条令牌摘要（配置里的一行）。 */
 export interface TokenDigest {
   kind: 'connector'

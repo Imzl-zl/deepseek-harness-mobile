@@ -1,6 +1,6 @@
 /** HTTP 边界：公开邀请只准入候选，正式设备仍由电脑登记的令牌认证。 */
 import { deviceIdOf, parsePairingCandidate } from '../../protocol/relay-control.mjs'
-import { rateKeyOf, type Authenticated } from './digest-auth.ts'
+import { connectorIdOf, rateKeyOf, type Authenticated } from './digest-auth.ts'
 import type { RelayCore } from './core.ts'
 import type { DeviceRegistry, DeviceRegistration } from './device-registry.ts'
 import type { TicketStore } from './tickets.ts'
@@ -125,7 +125,7 @@ export function createHttpFace(options: HttpFaceOptions): HttpFace {
           return { status: 400, body: { error: 'offerId-required' } }
         }
         try {
-          return { status: 201, body: { expiresAt: core.registerPairing(caller.id, offerId) } }
+          return { status: 201, body: { expiresAt: core.registerPairing(connectorIdOf(caller), offerId) } }
         } catch (error) {
           options.log?.warn('公开邀请登记失败', error)
           return { status: 409, body: { error: 'pairing-unavailable' } }
@@ -134,7 +134,7 @@ export function createHttpFace(options: HttpFaceOptions): HttpFace {
       if (request.path === '/devices') {
         const rows = parseRegistrations(body['devices'])
         if (rows === undefined) return { status: 400, body: { error: 'devices-required' } }
-        return { status: 201, body: { accepted: devices.register(caller.id, rows) } }
+        return { status: 201, body: { accepted: devices.register(connectorIdOf(caller), rows) } }
       }
       return { status: 404, body: { error: 'not-found' } }
     },
