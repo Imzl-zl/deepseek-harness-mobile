@@ -52,6 +52,10 @@ test('登记失败：**不出码**，回一个说明原因的结果（而不是�
 
   assert.equal(result.kind, 'error')
   assert.match(result.text, /没有出码/)
+  // 文案里要带上**中转的原话**：只写"检查中转是否在运行"会把人引偏
+  // （2026-11-03 的真因是中转按另一个 id 找电脑，字面却像"你没启动中转"）。
+  assert.match(result.text, /中转连不上/)
+  assert.match(result.text, /直连监听/, '没有中转时该指出另一条活路')
   // 关键：失败结果里**不许**夹带任何码/载荷（否则操作者可能照着它去扫）。
   assert.equal(/[A-Za-z0-9_-]{22}/.test(result.text), false, '失败文案里不许出现码')
   assert.equal(result.text.includes('pcPubEd'), false, '也不许出现载荷片段')

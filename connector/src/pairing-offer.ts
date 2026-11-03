@@ -40,6 +40,16 @@ export interface PairingOfferDeps {
 export type OfferResult = { kind: 'success'; text: string } | { kind: 'error'; text: string }
 
 /**
+ * 异常 → 一句能读的原因，嵌进给人看的失败文案里。
+ *
+ * 截断是为了不让中转的应答体把整条提示淹掉（那条信息仍然完整留在 warn 日志里）。
+ */
+const causeText = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.replace(/\s+/g, ' ').trim().slice(0, 180)
+}
+
+/**
  * 斜杠命令那一侧：把出码核心的结果翻译成 `CommandResult`。
  *
  * 与管理页面**共用 `issuePairingOffer`**（"什么时候能出码"只有一条规则），
@@ -79,8 +89,12 @@ export async function issuePairingOffer(deps: PairingOfferDeps): Promise<Pairing
   } catch (error) {
     if (offer.lanUrls.length === 0) {
       deps.log?.warn('配对登记失败：拒绝出码（否则会给出扫了也配不上的二维码）', error)
+      // **把中转的原话带上**（状态码 + 应答体，见 `pairing-register.ts`）：只写
+      // "检查中转是否在运行、令牌是否有效"会把人引向错误的方向 —— 2026-11-03 那
+      // 次真因是中转按另一个 id 找电脑（409），字面却像"你没启动中转"。
       throw new Error(
-        '没能把这次配对登记到中转：请检查中转是否在运行、连接器令牌是否有效。这次没有出码，重新执行即可。',
+        `没能把这次配对登记到中转（${causeText(error)}）。这次没有出码：`
+        + '把「直连监听」打开（同一 WiFi 下手机直接连电脑，不经过中转），或按上面的原因修好中转后重试。',
       )
     }
     // 有局域网地址 = 手机拨得通电脑，登记只影响"跨网也能扫同一张码"。

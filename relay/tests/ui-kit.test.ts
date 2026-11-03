@@ -70,3 +70,31 @@ test("kit 真的挂出一个对象（不是靠页面兜），七个方法都在"
   ])
   assert.equal(typeof kit["configure"], "function", "Kit.configure 不可调用")
 })
+
+/**
+ * 上面那条只盯 `Kit.` 这一族调用；这条扫**整段脚本**。
+ *
+ * ASI 的真实触发条件是：上一行以 `)`/`]`/标识符/字面量收尾（= 一条完整语句），
+ * 下一行以 `(` 或 `[` 开头 —— 两行会被接成一次调用或一次下标。命中即页面从那一行
+ * 起全哑，而 `tsc` 看不出来（页面是模板字符串，不参与类型检查）。
+ */
+test("整段脚本不许出现语句粘连（上一行完整语句 + 下一行以 ( 或 [ 开头）", () => {
+  for (const [name, page] of [["管理台", ADMIN_PAGE], ["控制台", CONSOLE_PAGE]] as const) {
+    const script = (page.match(/<script>([\s\S]*?)<\/script>/) ?? [])[1] ?? ""
+    assert.ok(script.length > 1000, `${name} 的脚本没取到`)
+    const lines = script.split("\n")
+    const hits: string[] = []
+    for (let index = 0; index < lines.length - 1; index += 1) {
+      const current = (lines[index] ?? "").trimEnd()
+      const next = (lines[index + 1] ?? "").trimStart()
+      if (current === "" || /^(\/\/|\*|\/\*)/.test(current)) continue
+      if (!/^[([]/.test(next)) continue
+      // 上一行必须像"一条完整语句"：以 ) ] 或标识符/字符串/数字收尾。
+      if (!/[)\]A-Za-z0-9_'"`]$/.test(current)) continue
+      // 上一行自己就是以 ( 或 [ 开头的续行（例如 `table(`）不算。
+      if (/^[([]/.test(current)) continue
+      hits.push(`${name} 第 ${index + 2} 行：${JSON.stringify(next.slice(0, 16))}`)
+    }
+    assert.deepEqual(hits, [], `语句粘连（缺分号）会让整页脚本从那里起失效：\n${hits.join("\n")}`)
+  }
+})

@@ -6,7 +6,10 @@ import { describeUpgradeFailure } from "../src/transport/relay-link.js"
 test("升级被拒的状态码翻译成人话：401/403/404 各有下一步，别的只说状态码", () => {
   assert.match(describeUpgradeFailure(401), /令牌/)
   assert.match(describeUpgradeFailure(401), /401/)
-  assert.match(describeUpgradeFailure(403), /吊销|不一致/)
+  // 403 在中转那边有四种原因，文案要把"账号被停用"这一支写出来：2026-11-03 的
+  // 那次真因就是它，旧文案只提"id 不一致"，把排查方向带偏了。
+  assert.match(describeUpgradeFailure(403), /账号/)
+  assert.match(describeUpgradeFailure(403), /id/)
   assert.match(describeUpgradeFailure(404), /\/ws\/connector/)
   assert.match(describeUpgradeFailure(502), /502/)
 

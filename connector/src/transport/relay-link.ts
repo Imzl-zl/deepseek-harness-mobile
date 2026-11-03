@@ -76,7 +76,14 @@ function asDialSocket(ws: WebSocket): DialSocket {
  */
 export function describeUpgradeFailure(status: number): string {
   if (status === 401) return '中转不认这张令牌（HTTP 401）：去控制台「添加电脑」重签一张，贴到「连接」卡'
-  if (status === 403) return '中转拒绝了这台电脑（HTTP 403）：令牌与自报的电脑 id 不一致，或已被吊销'
+  if (status === 403) {
+    // 中转对这一档有四种原因（`relay/src/server.ts` 的控制面准入）：账号被停用、
+    // 没带 `?id=`、自报的电脑 id 与令牌绑定不符、以及通道抢占。文案必须把它们
+    // 都覆盖 —— 2026-11-03 那次真因是"账号"这一支，旧文案只提 id 不一致，
+    // 把排查带偏了一整轮。
+    return '中转拒绝了这台电脑（HTTP 403）：账号可能被停用，或令牌与自报的电脑 id 对不上'
+      + ' —— 去控制台看这个账号与这台电脑的状态'
+  }
   if (status === 404) return '中转没有这个地址（HTTP 404）：地址要以 /ws/connector 结尾'
   return `中转拒绝升级（HTTP ${status}）`
 }
