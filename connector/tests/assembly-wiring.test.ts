@@ -209,10 +209,10 @@ test('装配层确实用的是抽出来的那几处，且实参接对（不是�
     [/startRelay: startRelayChannel/, '起传输时"中转"那一格没接 startRelayChannel'],
     [/startDirect: startDirectChannel/, '起传输时"直连"那一格没接 startDirectChannel'],
     [/listenPort: \(\) => config\.listenPort\(\)/, '直连端口不是"用时读配置"（写成常量后热改不生效）'],
-    // 缺 relayUrl 时**连 startRelay 都不该调**（拨空地址只会得到更难读的错误），
-    // 而这一格接错/漏接的症状正是 2026-11-03 那次：管理面 404、面板能开、接口全 404。
-    // 见 `.agents/notes/implemented/2026-11-03-admin-face-must-not-need-config.md`。
-    [/relayConfigured: \(\) => \(config\.relayUrl\(\) \?\? ''\) !== ''/, '起传输没接"中转地址配了吗"（缺地址时仍会去拨空地址）'],
+    // **拨号必须走 `relayUrlInUse()`**：profile 里没有 config 段时 `config.relayUrl()`
+    // 是空（schema 默认值到不了 loader 那份 config），直接拿去拨就是
+    // 「中转地址解析失败：」——2026-11-03 真机原话。
+    [/url: relayUrlInUse\(\)/, '拨号没用 relayUrlInUse()：没有 config 段时会去拨空地址'],
     [/for \(const channel of channelsToRebuild\(paths\)\) void rebuildQueue\.enqueue\(channel\)/, '配置热改没有把事件里的 paths 交给 channelsToRebuild'],
     [/channels: transportChannels\?\.channels\(\) \?\? \[\]/, '面板投影没读通道注册表'],
     [/tokenStatusOf: \(ref\) => relayTokenStatusOf\(ctx\.credentials, ref\)/, '面板的令牌状态没接凭据面'],

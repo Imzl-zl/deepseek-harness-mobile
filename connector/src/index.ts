@@ -54,7 +54,7 @@ import { hostname } from 'node:os'
 
 import type { Context } from '@deepseek-ai/cordis'
 
-import { type ConnectorConfig, Config } from './config.js'
+import { type ConnectorConfig, Config, relayUrlOrDefault } from './config.js'
 import { enrollConnector } from './enroll.js'
 import {
   REQUIRED_SERVICES,
@@ -347,6 +347,17 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
   }
 
   /**
+   * 生效的中转地址：**配置优先，空着就是内置中转**。
+   *
+   * 为什么不能只靠 schema 的 `.default()`（2026-11-03 真机踩到）：`relayUrl` 是
+   * `.volatile()` 字段 —— `Config({})` 这种直接构造会带上默认值（单测因此是绿的），
+   * 而 loader 交给 `apply()` 的那份 config 在"profile 里没有这一格"时给的是空。
+   * 于是"装完即用"在真机上退化成"点启动就报地址解析失败"。
+   * 所以兜底必须写在**读取处**这一处，所有读 `relayUrl` 的地方都走它。
+   */
+  const relayUrlInUse = (): string => relayUrlOrDefault(config.relayUrl())
+
+  /**
    * 令牌缺失时向中转**自助兑换**一张（中转为 `connectorAuth: open` 时）。
    *
    * 换到的就是一张普通令牌（同一张摘要表、同样的吊销），所以这里不做"自动令牌"特判。
@@ -360,8 +371,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
     } catch {
       // 记录不存在是**正常首启**，不是错误：继续往下兑换。
     }
-    const relayUrl = config.relayUrl() ?? ''
-    if (relayUrl === '') return
+    const relayUrl = relayUrlInUse()
     try {
       const issued = await enrollConnector({
         relayUrl,
@@ -435,18 +445,10 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
     {
       name: 'validate-config',
       run() {
-        const relayUrl = config.relayUrl()
-        // **空着不是错误**（2026-11-03）：装完插件、还没配地址就是这个形状，
-        // 而管理面（唯一能填这个值的界面）挂在最后一步 —— 在这里抛等于
-        // "面板 404，且没有任何界面能把它填回去"。缺地址只让中转通道起不来
-        // （`transport/startup.ts` 的第三种缺席），面板照常挂。
+        // **这里没有"未配置"这一档**（2026-11-03）：空着就是内置中转，见 `relayUrlInUse`。
+        // 只校验形状 —— 形状错了照样抛：那是写错，不是还没配。
         // Note: .agents/notes/implemented/2026-11-03-admin-face-must-not-need-config.md
-        if (relayUrl === undefined || relayUrl === '') {
-          logger.info('relayUrl 未配置：只让中转通道起不来，管理面照常挂载（在「连接」卡里选一条）')
-          return
-        }
-        // 写了但不合法 = 真的写错了，照旧吵（与 `startup.ts` 的"坏地址整体抛出"同一条）。
-        relayUrlOf(relayUrl, config.allowInsecureLocal(), config.allowInsecurePublic())
+        relayUrlOf(relayUrlInUse(), config.allowInsecureLocal(), config.allowInsecurePublic())
         // **`relayTokenRef` 不再必填**：中转开放自助兑换（`connectorAuth: open`）时，
         // 连接器在 `start-transport` 里自己换一张（`ensureRelayToken`）。空着也允许挂载，
         // 否则"没令牌"连面板都打不开，用户没地方贴令牌。
@@ -505,7 +507,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           await core.global.set(
             initialMeta({
               connectorId: DEFAULT_CONNECTOR_ID,
-              relayUrl: config.relayUrl() ?? '',
+              relayUrl: relayUrlInUse(),
               connTokenSecretRef: tokenRef(),
             }),
           )
@@ -661,7 +663,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           // （2026-10-17 真机踩到：配置里写着已不属于本机的 192.168.2.43，
           //  手机拨存量端点全超时，而二维码再出码也还是那个死地址）。
           // 出码时**现取**：面板改完地址，下一张码立刻写新地址。
-          relayUrl: () => relayHintFor(config.relayUrl() ?? '', lanHint),
+          relayUrl: () => relayHintFor(relayUrlInUse(), lanHint),
           pcPubEd: pcIdentity.sign.publicKeyHex,
           pcPubDh: pcIdentity.dh.publicKeyHex,
         })
@@ -675,7 +677,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           // 三格都是现取：地址与明文开关都能被面板热改，令牌本来就每次现读。
           allowInsecureLocal: () => config.allowInsecureLocal(),
           allowInsecurePublic: () => config.allowInsecurePublic(),
-          relayUrl: () => config.relayUrl() ?? '',
+          relayUrl: () => relayUrlInUse(),
           tokenSource: () => readRelayToken(ctx.credentials, tokenRef()),
           log: logger,
         })
@@ -729,7 +731,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         const registerPairing = createPairingRegistrar({
           allowInsecureLocal: () => config.allowInsecureLocal(),
           allowInsecurePublic: () => config.allowInsecurePublic(),
-          relayUrl: () => config.relayUrl() ?? '',
+          relayUrl: () => relayUrlInUse(),
           // 令牌**现读**（`readRelayToken` 不缓存）：出码是人工动作，换令牌后立刻生效；
           // 也省得为这个只在出码时用到的值安排装配顺序。
           tokenSource: () => readRelayToken(ctx.credentials, tokenRef()),
@@ -886,7 +888,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           // "开直连"就成了假动作。方法在、监听面不在时它只报中转那一条，
           // 形状不变；手机侧要不要直连看 `caps.direct`（现取 `listener !== null`）。
           endpoints: createEndpointsPort({
-            relayUrlOf: () => config.relayUrl(),
+            relayUrlOf: () => relayUrlInUse(),
             lanHintOf: () => lanHint,
             listenerOf: () => listener,
             // 用户藏掉 / 追加的上报地址（现取：管理面改完立刻生效）。
@@ -1365,7 +1367,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             throw error
           }
           connection = createRelayLink({
-            url: config.relayUrl() ?? '',
+            url: relayUrlInUse(),
             token,
             // **控制面自报 id**：中转拿它核对令牌 id（不一致就拒）。`connectorId`
             // 与配对二维码里的 `pcId` 是同一个值，所以"码里的身份"与"中转眼里的身份"
@@ -1446,7 +1448,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           async (channel) => {
             if (channel === 'relay') {
               await stopRelayChannel()
-              if ((config.relayUrl() ?? '') !== '') await startRelayChannel()
+              await startRelayChannel()
             } else {
               await stopDirectChannel()
               // 端口改回 0 = 用户明说"不监听"：停在未运行，不是失败。
@@ -1465,8 +1467,6 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           startRelay: startRelayChannel,
           startDirect: startDirectChannel,
           listenPort: () => config.listenPort(),
-          // 空串 = 还没配（装完插件就是这个形状）：连 `startRelay` 都不调。
-          relayConfigured: () => (config.relayUrl() ?? '') !== '',
           onTolerated: (reason) => {
             // 这句话同时进日志与「连接」卡的 `detail`（`channels()` 读 `relayError`）——
             // 面板要能回答"为什么没跑"，而不是只说"未运行"。
@@ -1502,7 +1502,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             detail: () =>
               relayError !== null && connection?.connected !== true
                 ? relayError
-                : config.relayUrl() ?? '未配置中转',
+                : relayUrlInUse(),
           },
           {
             id: 'direct',
@@ -1592,7 +1592,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             update: createUpdateChecker({ current: connectorVersion() }),
             caps: () => readCaps(ctx, { direct: listener !== null }),
             metrics: () => metrics.snapshot(),
-            relayUrl: () => config.relayUrl() ?? null,
+            relayUrl: () => relayUrlInUse(),
             connection: connectionCard,
             // 启停开关：**按通道**（两个方式两个开关，2026-10-17 用户要求）。
             channels: () => transportChannels?.channels() ?? [],

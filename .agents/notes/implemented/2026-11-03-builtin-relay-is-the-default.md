@@ -17,9 +17,10 @@ Status: implemented
 
 ## Decision
 
-1. **`relayUrl` 的 schema 默认值 = 内置中转**（`BUILTIN_RELAY_URL`，
-   `wss://dsh.0t0.me/ws/connector`）。它是**默认值不是强制**：卡片里随时能换成自部署地址，
-   换完立刻重建中转通道；显式写空串仍然算"没配"（不会又被默认值填回去）。
+1. **`relayUrl` 空着 = 内置中转**（`BUILTIN_RELAY_URL`，`wss://dsh.0t0.me/ws/connector`）。
+   它是**默认值不是强制**：卡片里随时能换成自部署地址，换完立刻重建中转通道。
+   落点有两层：schema 的 `.default()`（`Config({})` 构造期）+ **读取处的兜底**
+   `relayUrlOrDefault()` —— 后者才是运行时的真值，原因见下面的「更正」。
 2. **升级被拒要说人话**：`relay-link.ts` 接 `ws` 的 `unexpected-response`，把状态码交给
    `describeUpgradeFailure` → `relayError` → 「连接」卡的 `detail`；连上的那一刻由
    `onFailure(null)` 清掉。重连期间保留上一次的原因，否则永远只有「重连中」三个字。
@@ -56,6 +57,22 @@ Status: implemented
   的用例按住。
 - 代价：`relayUrl` 的类型从 `Volatile<string | undefined>` 收窄成 `Volatile<string>`，
   代码里那些 `?? ''` 变成防御性冗余（保留：显式空串仍是合法输入）。
+
+## 更正（同日 13:10）：schema 默认值在 volatile 字段上到不了运行时
+
+0.1.12 发布后真机复现：profile 里没有 config 段时，面板「连接」卡显示「未配置中转」，
+点通道的「启动」报 **「中转地址解析失败：」**（冒号后面什么都没有）。
+
+- `relayUrl` 是 `.volatile()` 字段：`Config({})` 这种**直接构造**会带默认值
+  （单测因此是绿的），而 loader 交给 `apply()` 的那份 config 在"没有这一格"时给的是空。
+- 于是 0.1.12 的"装完即用"只兑现了一半：面板能开（validate-config 不再抛），
+  但拨号拿到的地址是空串。
+- 0.1.13 的修法：兜底搬到**读取处** —— `config.ts` 的 `relayUrlOrDefault()`，
+  所有读 `relayUrl` 的地方（拨号 / 出码 / 登记 / 重建 / 面板投影 / 存储初值）都走它；
+  顺带把"未配置"这一档从 `validate-config` 与 `transport/startup.ts` 里删掉（不可达了），
+  空地址的报错也改成一句能照做的话（「中转地址是空的：在「连接」卡里选一条再保存」）。
+- 教训：**默认值要写在会被读到的那一层**。单测覆盖的是构造，运行时覆盖的是读取，
+  两者之间隔着 loader。
 
 ## 判据
 

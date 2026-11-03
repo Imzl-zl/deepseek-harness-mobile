@@ -129,6 +129,10 @@ export function relayUrlOf(
   } catch {
     // 解析不了就是配置写错了：别让裸 TypeError 冒出去，那看起来像内部 bug
     // （`ws://` 不是 WHATWG 的特殊 scheme，少写端口/写错斜杠都会走到这）。
+    // 空地址单独一句：2026-11-03 真机上只显示了「中转地址解析失败：」后面什么都没有。
+    if (value.trim() === '') {
+      throw new Error('中转地址是空的：在「连接」卡里选一条（内置中转即可）再保存')
+    }
     throw new Error(`中转地址解析失败：${value}`)
   }
   // IPv6 字面量在 `hostname` 里带方括号（`[::1]`），而判据与手机侧的

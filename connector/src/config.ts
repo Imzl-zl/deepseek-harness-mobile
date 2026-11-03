@@ -53,6 +53,17 @@ export interface ConnectorConfig {
  */
 export const BUILTIN_RELAY_URL = 'wss://dsh.0t0.me/ws/connector'
 
+/**
+ * 生效的中转地址：**空着就是内置中转**。
+ *
+ * 为什么必须有这一层（2026-11-03 真机踩到）：`relayUrl` 是 `.volatile()` 字段，
+ * `Config({})` 这种直接构造会带上 schema 默认值（单测因此是绿的），而 loader 交给
+ * `apply()` 的那份 config 在"profile 里没有这一格"时给的是空 —— 于是"装完即用"
+ * 在真机上退化成"点启动就报地址解析失败"。兜底写在读取处，schema 默认值只当文档。
+ */
+export const relayUrlOrDefault = (value: string | undefined): string =>
+  value === undefined || value === '' ? BUILTIN_RELAY_URL : value
+
 export const Config = z.object({
   relayUrl: z
     .string()
