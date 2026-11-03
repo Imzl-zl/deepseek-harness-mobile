@@ -88,3 +88,29 @@ Status: implemented
 - `connector/src/transport/relay-link.ts` 的 `describeUpgradeFailure` 与 `onFailure`。
 - `connector/src/index.ts` 的 `onFailure` 接线与 `channels()` 的 `detail`。
 - `connector/src/admin/routes.ts` 的 `PAIR_PATH` 失败归一。
+
+## 隔离实例实测（2026-11-03 13:40，0.1.13）
+
+不是单测、不是探针 —— **真 DSH 进程 + 真插件 + 零配置**：
+
+```pwsh
+$env:DSH_HOME = 'D:\tmp\dsh-probe-home'          # 隔离，不碰 ~/.dsh
+dsh probe --from-default-profile web --dump-config  # 建一个干净 profile
+dsh plugin --profile probe add dsh-mobile-connector@0.1.13
+dsh --profile probe --no-open --port 3099          # 该 profile 的 cordis.patch.yml 里 dsh-mobile 0 处
+```
+
+启动那一行 stdout 直接给了答案：
+
+```
+[dsh-mobile] 管理面 RPC 已挂：/api/dsh-mobile/{status,pair,transport,advertise,connection,devices/enabled,devices/remove}
+```
+
+带 `?token=` 换会话 cookie 之后：
+
+- `GET /api/dsh-mobile/status` → 200，`relayUrl = "wss://dsh.0t0.me/ws/connector"`；
+- `GET /api/dsh-mobile/connection` → 200，`value.relayUrl` 同上，`token.configured = false`；
+- `POST /api/dsh-mobile/transport/relay/start` → **400 + 正文**
+  「凭据里没有连接器令牌记录…」—— 不再是「中转地址解析失败：」。
+
+也就是：**装完插件 → 面板直接可用 → 地址已经是内置中转 → 只差一张令牌**。
