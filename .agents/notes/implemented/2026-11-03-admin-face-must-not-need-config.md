@@ -63,6 +63,8 @@ B) relayUrl = wss://dsh.0t0.me/ws/connector
      `start-transport` 仍然抛错，`lifecycle` 的回滚照样会把已挂的面板摘掉 —— 真正的解是
      "这条链不抛"，那是另一篇的事（见 Consequences 的遗留）。
 2. **给 `relayUrl` 一个 schema 默认值（内置中转）**
+   - **2026-11-03 当天被推翻并采纳**：用户要求"装完即用、不要让用户改配置"，
+     见 `2026-11-03-builtin-relay-is-the-default.md`（代价与边界写在那篇）。
    - 最强的理由：装完即用、零操作，用户永远不会看到 404。
    - 为何被否：那等于替用户选了我们自己的中转并直接拨出去。中转是**选**出来的
      （`2026-11-01-builtin-relay-is-a-choice.md`），而 schema 默认值会让自部署用户的连接器

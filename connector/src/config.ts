@@ -14,8 +14,8 @@ import type { Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 
 export interface ConnectorConfig {
-  /** 中转地址(wss)。挂载时校验存在性,故无 schema 默认值。 */
-  relayUrl: Volatile<string | undefined>
+  /** 中转地址(wss)。有默认值（内置中转），面板里可换成自部署的。 */
+  relayUrl: Volatile<string>
   /** 仅允许非公网地址的明文联调，默认关闭。 */
   allowInsecureLocal: Volatile<boolean>
   /** 允许公网明文（用户自部署中转、暂无域名/证书）。默认关，由用户显式打开。 */
@@ -42,12 +42,24 @@ export interface ConnectorConfig {
   windowMaxBytes: Volatile<number>
 }
 
+/**
+ * 内置中转（这个项目自己的那台）。**是默认值，不是强制**：
+ * 面板「连接」卡里随时能换成自部署的地址，换完立刻重建中转通道。
+ *
+ * 为什么给默认值（2026-11-03）：装插件只写 `dsh.profile.bundles`、不写 config 段，
+ * 没有默认值就等于"装完还得去编辑 YAML"。而缺地址时管理面连挂都挂不上（它挂在
+ * 最后一步），用户连"在界面里选一条"的机会都没有。
+ * 取舍见 `.agents/notes/implemented/2026-11-03-builtin-relay-is-the-default.md`。
+ */
+export const BUILTIN_RELAY_URL = 'wss://dsh.0t0.me/ws/connector'
+
 export const Config = z.object({
   relayUrl: z
     .string()
+    .default(BUILTIN_RELAY_URL)
     .volatile()
     .description(
-      '中转地址，要带 /ws/connector 路径。自部署填自己的域名或公网 IP：' +
+      '中转地址，要带 /ws/connector 路径。默认是内置中转；自部署填自己的域名或公网 IP：' +
         'wss://relay.example.com/ws/connector，或（无证书时）ws://1.2.3.4:8787/ws/connector。',
     ),
   allowInsecureLocal: z

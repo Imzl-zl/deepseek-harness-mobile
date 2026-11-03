@@ -1374,6 +1374,12 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             allowInsecureLocal: config.allowInsecureLocal(),
             allowInsecurePublic: config.allowInsecurePublic(),
             log: logger,
+            // 连不上 / 被拒的原因进 `relayError`：面板「连接」卡与出码失败都要能说出它。
+            // **成功那一刻由这里给 null 清掉**（不是创建时清）：重连期间保留上一次的原因，
+            // 否则「重连中」永远只有这三个字。
+            onFailure: (reason) => {
+              relayError = reason
+            },
             onConnected: publishDevices,
             allows: (binding) => {
               if (binding.purpose === 'pairing') return pairingCore.allows(binding.candidate)
@@ -1382,7 +1388,6 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             },
             createData: makeConnection,
           })
-          relayError = null
           connection.start()
         }
         const stopRelayChannel = async (): Promise<void> => {
@@ -1491,9 +1496,11 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             connected: () => connection?.connected === true,
             start: startRelayChannel,
             stop: stopRelayChannel,
-            // 没跑起来时优先说**原因**（缺令牌/坏地址），否则说拨向哪。
+            // 没跑起来、或跑着但没连上时，优先说**原因**（401 / 坏地址 / 缺令牌），
+            // 否则说拨向哪。`relayError` 只在连上的那一刻被清掉，所以重连期间
+            // 面板显示的是"上一次为什么失败"，而不是光秃秃的「重连中」。
             detail: () =>
-              connection === null && relayError !== null
+              relayError !== null && connection?.connected !== true
                 ? relayError
                 : config.relayUrl() ?? '未配置中转',
           },

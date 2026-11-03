@@ -669,3 +669,17 @@ test('offerForScanning：成功时文本里带载荷；失败时是 error 而不
   assert.equal(bad.kind, 'error')
   assert.match(bad.kind === 'error' ? bad.text : '', /中转/)
 })
+
+test('出码失败：400 且正文带原因（不是空正文 —— 面板上只剩 HTTP 400 的那个坑）', async () => {
+  const routes = createAdminRoutes(
+    deps({
+      offer: async () => {
+        throw new Error('中转没拨通：HTTP 401')
+      },
+    }),
+  )
+  const res = await post(routes, '/api/dsh-mobile/pair')
+  assert.equal(res.status, 400, '出码失败要是 400，但正文必须说原因')
+  const body = await jsonOf(res)
+  assert.match(String(body['error']), /中转没拨通/, '正文要带失败原因，否则操作者拿不到下一步')
+})

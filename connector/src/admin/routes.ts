@@ -296,8 +296,15 @@ export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
       fetch: async () => {
         // 出码是**有副作用的**（登记一次 offer），所以是 POST 而不是 GET：
         // GET 会被预取/刷新重复触发，那会白烧一堆一次性 offer。
-        const offer = await deps.offer()
-        return json(offer)
+        //
+        // **失败必须带正文**：登记失败（中转没连上 / 令牌不认）以前会抛出路由，
+        // 由 DSH 的桥接回一个**空正文的 400** —— 面板上只剩一句 `HTTP 400`，
+        // 操作者拿不到任何下一步（2026-11-03 真机就卡在这里）。
+        try {
+          return json(await deps.offer())
+        } catch (error) {
+          return badRequest(error)
+        }
       },
     },
 

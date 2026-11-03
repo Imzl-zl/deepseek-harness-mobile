@@ -24,6 +24,14 @@ export interface RelayLinkOptions {
   allowInsecureLocal?: boolean
   /** 公网明文（自部署中转）：与手机侧 checkedRelayUri 的第二档同一判据。 */
   allowInsecurePublic?: boolean
+  /**
+   * 控制面这次**为什么没连上**（一句人话）；连上时给 `null`。
+   *
+   * 没有这一格时，面板只能显示「重连中」—— 而 401（令牌不被承认）、404（地址少了
+   * `/ws/connector`）、网络不通在界面上长得一模一样，操作者只能去翻日志。
+   * 2026-11-03 真机：令牌是旧中转签的，升级回 401，面板一直「重连中」。
+   */
+  onFailure?(reason: string | null): void
   allows(binding: DeviceBinding): boolean
   createData(binding: DeviceBinding): Connection
   onConnected(): Promise<void>
@@ -57,6 +65,20 @@ function asDialSocket(ws: WebSocket): DialSocket {
   ws.on('close', (code, reason) => port.onclose?.({ code, reason: reason.toString() }))
   ws.on('error', (error) => port.onerror?.(error))
   return port
+}
+
+/**
+ * 升级被拒时那句人话。
+ *
+ * `ws` 的 `error` 事件只有一句 "Received network error or non-101 status code"，
+ * 分不出 401 与 404 —— 而这两种的下一步动作完全不同（换令牌 / 改地址）。
+ * 所以状态码从 `unexpected-response` 拿，翻译放在这里（纯函数，可单测）。
+ */
+export function describeUpgradeFailure(status: number): string {
+  if (status === 401) return '中转不认这张令牌（HTTP 401）：去控制台「添加电脑」重签一张，贴到「连接」卡'
+  if (status === 403) return '中转拒绝了这台电脑（HTTP 403）：令牌与自报的电脑 id 不一致，或已被吊销'
+  if (status === 404) return '中转没有这个地址（HTTP 404）：地址要以 /ws/connector 结尾'
+  return `中转拒绝升级（HTTP ${status}）`
 }
 
 export function createRelayLink(options: RelayLinkOptions): RelayLink {
@@ -139,6 +161,7 @@ export function createRelayLink(options: RelayLinkOptions): RelayLink {
     control = socket
     socket.on('open', () => {
       if (stopped || control !== socket) return
+      options.onFailure?.(null)
       armWatchdog(socket)
       // 名册失败不能静默维持一条看似在线的控制连接；重连后重放。
       void options.onConnected().then(() => {
@@ -157,7 +180,16 @@ export function createRelayLink(options: RelayLinkOptions): RelayLink {
       if (message.t === 'relay.close') closeData(message.channelId)
       else openData(message.channelId, message.binding)
     })
-    socket.on('error', (error) => options.log.warn('中转控制连接失败', error))
+    socket.on('error', (error) => {
+      options.onFailure?.(`连不上中转：${error instanceof Error ? error.message : String(error)}`)
+      options.log.warn('中转控制连接失败', error)
+    })
+    // 非 101 的应答：`ws` 只在**没有**监听这条事件时才发 `error`（那句 message 不含状态码）。
+    // 接管它必须自己 `destroy()`，否则请求半挂、`close` 不来，退避重连也就不会发生。
+    socket.on('unexpected-response', (request, response) => {
+      options.onFailure?.(describeUpgradeFailure(response.statusCode ?? 0))
+      request.destroy()
+    })
     socket.on('close', () => {
       if (control !== socket) return
       control = null

@@ -577,6 +577,18 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
       if (!state) return
       toApp()
       setPill('ok', '已连接')
+      // 「我的电脑」只在**账号会话**下能进控制台：令牌模式没有 cookie，
+      // 「/console」会一声不响地 302 到「/login」（2026-11-03 用户原话「什么鬼」）。
+      // 所以令牌模式改成"先去登录"，并把原因写在 title 上。
+      var consoleLink = document.getElementById('to-console')
+      if (consoleLink !== null) {
+        consoleLink.setAttribute('href', sessionMode ? '/console' : '/login')
+        consoleLink.textContent = sessionMode ? '我的电脑' : '登录后添加电脑'
+        consoleLink.setAttribute(
+          'title',
+          sessionMode ? '' : '当前用管理令牌登录：添加电脑要用账号登录，登录后自动进控制台',
+        )
+      }
       var first = lastState === null
       lastState = state
       // 设置页有未保存的输入：2 s 轮询不能把表单重画掉。保存成功后传 true 强制重画。
@@ -1115,8 +1127,10 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
     // 管理台只管理已有令牌；"给自己电脑发令牌"在用户控制台。
     var selfRow = el('div')
     selfRow.style.cssText = 'display:flex;justify-content:flex-end;margin:0 0 10px'
-    var selfLink = el('a', '添加我的电脑', 'btn')
-    selfLink.href = '/console'
+    // 令牌模式下没有账号 cookie，进「/console」只会被弹回登录页 —— 那就直说。
+    var selfLink = el('a', sessionMode ? '添加我的电脑' : '用账号登录后添加电脑', 'btn')
+    selfLink.href = sessionMode ? '/console' : '/login'
+    selfLink.title = sessionMode ? '' : '当前用管理令牌登录：添加电脑要用账号登录，登录后自动进控制台'
     selfLink.style.textDecoration = 'none'
     selfLink.style.display = 'inline-flex'
     selfLink.style.alignItems = 'center'
