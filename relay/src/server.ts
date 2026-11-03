@@ -35,7 +35,7 @@ import {
   type ConsoleDevice,
   type ConsoleState,
 } from './accounts/face.ts'
-import { safeEqual } from './accounts/session.ts'
+import { clientIpOf, safeEqual } from './accounts/session.ts'
 
 const MAX_BODY_BYTES = 1024 * 1024
 const CONTROL_HEARTBEAT_MS = 60_000
@@ -53,6 +53,13 @@ export interface RelayServerOptions {
    * 不传 = 只限流、不锁。
    */
   lockout?: FailureLockout
+  /**
+   * 信任反代给的 `X-Real-IP` / `X-Forwarded-For`（与账号模式同一个 `auth.trustProxy`）。
+   *
+   * 不配时按 `remoteAddress` 分桶 —— 而 Caddy 后面所有请求的来源地址都是反代自己，
+   * 那样一次爆破会把**所有人**（包括管理员自己）一起锁在门外。
+   */
+  trustProxy?: boolean
   /** 管理面凭据（只放摘要）。不配 = 这张面不存在（`/admin*` 一律 404）。 */
   admin?: AdminDigest
   /**
@@ -784,7 +791,8 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
           ? { id: adminSession.user.id, csrf: adminSession.csrf }
           : undefined
         const who = tokenWho ?? sessionWho
-        const clientIp = request.socket.remoteAddress ?? 'unknown'
+        // 与账号模式同一条取 IP 的判据：反代后面必须认 X-Real-IP，否则所有人共用一个桶。
+        const clientIp = clientIpOf(request.headers, request.socket.remoteAddress, options.trustProxy === true)
         // **连续失败锁定**先于限流：锁定期内连正确的管理令牌也不放行 ——
         // 否则爆破方每 N 次就能试一次，锁定等于没锁（见 `lockout.ts`）。
         const locked = options.lockout?.stateOf(`admin:${clientIp}`)

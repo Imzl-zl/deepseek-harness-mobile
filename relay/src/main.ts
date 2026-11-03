@@ -718,6 +718,9 @@ const relay = await startRelay({
   ...(config.rateLimit === undefined ? {} : { rateLimit: config.rateLimit }),
   // 连续失败锁定：默认 5 次 / 15 分钟，`failures: 0` 关掉（见 `lockout.ts`）。
   lockout,
+  // 反代后面按真实 IP 分桶（与账号模式同一个 `auth.trustProxy`），
+  // 否则 Caddy 后面所有人共用一个桶：一次爆破把所有人一起锁死。
+  trustProxy: authConfig?.trustProxy ?? false,
   // 没配 `admin` 就不传：那张面不存在（`/admin*` 一律 404）。
   ...(config.admin === undefined ? {} : { admin: config.admin }),
   // 没配 `quota` 就不传：只转发、不记账。
