@@ -183,7 +183,10 @@ void main() {
         payload,
         allowInsecureLocal: true,
       );
-      expect(offer.lanUrls, ['ws://192.168.1.5:8790', 'wss://pc.example/direct']);
+      expect(offer.lanUrls, [
+        'ws://192.168.1.5:8790',
+        'wss://pc.example/direct',
+      ]);
     });
 
     test('lan 里的明文走**同一道边界**：没开 allowInsecureLocal 就一条都不留', () {

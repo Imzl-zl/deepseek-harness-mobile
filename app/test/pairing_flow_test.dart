@@ -308,7 +308,9 @@ void main() {
     final wire =
         jsonDecode(
               utf8.decode(
-                base64Url.decode(base64Url.normalize(dial.queryParameters['cand']!)),
+                base64Url.decode(
+                  base64Url.normalize(dial.queryParameters['cand']!),
+                ),
               ),
             )
             as Map<String, Object?>;
@@ -352,11 +354,7 @@ void main() {
         isA<ProtocolException>()
             // **错误码不能丢**（`clientAction` 靠它决定"重扫"还是"重试"）。
             .having((e) => e.code, 'code', ErrorCode.notPaired)
-            .having(
-              (e) => e.message,
-              'message',
-              contains('局域网直连没通（1 个地址）'),
-            ),
+            .having((e) => e.message, 'message', contains('局域网直连没通（1 个地址）')),
       ),
     );
     expect(urls, hasLength(1), reason: '换票被拒就不该再去建连');

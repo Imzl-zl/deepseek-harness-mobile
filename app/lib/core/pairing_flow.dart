@@ -166,7 +166,11 @@ Future<PairingAttempt> beginPairing({
     handshakeTimeout: handshakeTimeout,
   );
 
-  PairingAttempt attemptFor(PairingChannel channel, PairingDial dial, String dialUrl) => PairingAttempt(
+  PairingAttempt attemptFor(
+    PairingChannel channel,
+    PairingDial dial,
+    String dialUrl,
+  ) => PairingAttempt(
     offer: offer,
     identity: identity,
     candidate: candidate,
@@ -181,10 +185,10 @@ Future<PairingAttempt> beginPairing({
   // 地址来自二维码的 `lan`：电脑自己持有这次 offer、自己也听得见这个端口，
   // 所以"保管邀请"与"通知有候选"这两件事在局域网上都不需要服务器。
   final lanFailures = <String>[];
-  for (final endpoint in dialOrder(
-    [for (final url in offer.lanUrls) Endpoint(kind: EndpointKind.direct, url: url)],
-    myIpv4: myIpv4,
-  )) {
+  for (final endpoint in dialOrder([
+    for (final url in offer.lanUrls)
+      Endpoint(kind: EndpointKind.direct, url: url),
+  ], myIpv4: myIpv4)) {
     onStage?.call('局域网直连…');
     final channel = channelFor(pairingDialUrl(endpoint.url, candidate));
     try {
@@ -227,13 +231,20 @@ Future<PairingAttempt> beginPairing({
 }
 
 /// 把"局域网也试过了"这件事加进最终错误里，**保留原错误码**（`clientAction` 靠它）。
-Never _rethrowWithLanNote(Object error, StackTrace stack, List<String> failures) {
+Never _rethrowWithLanNote(
+  Object error,
+  StackTrace stack,
+  List<String> failures,
+) {
   if (failures.isEmpty) {
     Error.throwWithStackTrace(error, stack);
   }
   final prefix = '局域网直连没通（${failures.length} 个地址）；';
   if (error is ProtocolException) {
-    Error.throwWithStackTrace(ProtocolException(error.code, '$prefix${error.message}'), stack);
+    Error.throwWithStackTrace(
+      ProtocolException(error.code, '$prefix${error.message}'),
+      stack,
+    );
   }
   if (error is TransportException) {
     Error.throwWithStackTrace(
@@ -243,4 +254,3 @@ Never _rethrowWithLanNote(Object error, StackTrace stack, List<String> failures)
   }
   Error.throwWithStackTrace(TransportException('$prefix中转也没通：$error'), stack);
 }
-

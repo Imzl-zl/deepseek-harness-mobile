@@ -696,10 +696,7 @@ class _IdentityCard extends StatelessWidget {
           ],
           const SizedBox(height: 12),
           _Field(label: '电脑 ID', value: offer.pcId),
-          _Field(
-            label: dial == PairingDial.lan ? '局域网' : '中转',
-            value: dialUrl,
-          ),
+          _Field(label: dial == PairingDial.lan ? '局域网' : '中转', value: dialUrl),
           // 指纹是**本地算的**（二维码里公钥的哈希前 16 位）：它与电脑上打印的那段
           // 载荷对得上，就是"我扫的确实是这台电脑"的一个可核对值。
           _Field(label: '公钥指纹', value: fingerprint),
