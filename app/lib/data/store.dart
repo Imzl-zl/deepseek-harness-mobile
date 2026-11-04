@@ -102,6 +102,14 @@ abstract interface class ItemStore {
   /// 某个会话的条目（按 `seq` 升序，最多 [limit] 条，从末尾取）。
   Future<List<StoredItem>> itemsOf(String sid, {int limit = 500});
 
+  /// 这些 `itemId` 现在盘上的载荷（`itemId → payloadJson`）；没有的行不在表里。
+  ///
+  /// 合并写入用它：同一个 `itemId` 会被**不同事件**更新（`tool/call` →
+  /// `tool/result`、`llm/retry` → `llm/retry-started`），而后来那条事件**不带**
+  /// 前一条的字段。只存最后一条的载荷，冷启动就丢了那些字段 ——
+  /// 工具行显示成「工具」、重试行显示成「重试 1/0」（2026-11-04 真机）。
+  Future<Map<String, String>> payloadsOf(String sid, Iterable<String> itemIds);
+
   /// 某会话的落盘水位（没有记录时返回 0 = 从零开始）。
   ///
   /// 它是 `subscribe(since:)` 的输入：手机重连后用它告诉电脑"我手里到哪了"。
@@ -197,9 +205,13 @@ class MetaPreferences implements PreferenceStore {
 ///
 /// ## 它为什么要序列化 `data`
 ///
-/// 盘上存的是**事件的原始载荷**，不是投影后的界面条目（见 [StoredItem] 的说明）。
+/// 盘上存的是**事件的载荷**，不是投影后的界面条目（见 [StoredItem] 的说明）。
 /// 所以这里 `jsonEncode(event.data)`；反序列化在 [StoredItem.toEvent]。
 /// 投影规则将来会改，而落盘的历史不该因此失效。
+///
+/// **但载荷要合并写**：同一个 `itemId` 会被不同事件更新，而后来那条不带前一条的
+/// 字段（`tool/result` 没有工具名、`llm/retry-started` 没有失败原因）。只存最后
+/// 一条，冷启动就丢字段 —— 见 [_mergedPayload]。
 class StoreItemPersister implements ItemPersister {
   StoreItemPersister(this.store);
 
@@ -212,6 +224,10 @@ class StoreItemPersister implements ItemPersister {
     required int seq,
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
+    // 先读这批 itemId 现在盘上的载荷：合并要它。
+    final previous = await store.payloadsOf(sid, <String>{
+      for (final event in events) event.itemId,
+    });
     await store.commit(sid, <StoredItem>[
       for (final event in events)
         StoredItem(
@@ -219,10 +235,39 @@ class StoreItemPersister implements ItemPersister {
           sid: sid,
           seq: event.seq,
           kind: event.type,
-          payloadJson: event.data == null ? '' : jsonEncode(event.data),
+          payloadJson: _mergedPayload(previous[event.itemId], event.data),
           updatedAt: now,
         ),
     ], seq);
+  }
+}
+
+/// 旧载荷 ∪ 新载荷（**新键覆盖旧键**）；空 / 坏形状退化成新载荷。
+///
+/// 为什么必须合并：同一个 `itemId` 会被**不同事件**更新，而后来那条**不带**
+/// 前一条的字段 —— `tool/result` 没有 `name` / `arguments`（它们在 `tool/call` 上）、
+/// `llm/retry-started` 没有 `maxRetries` / `failure`（在 `llm/retry` 上）。
+/// 只存最后一条的载荷，冷启动就没有那些字段：工具行显示成「工具」、
+/// 重试行显示成「重试 1/0」（2026-11-04 真机，库里 200 条 `tool/result`、0 条 `tool/call`）。
+///
+/// 方向**只加不减**：旧键保留、新键覆盖。投影只读它认识的键，多出来的键不会被误读。
+///
+/// Note: 取舍见 `.agents/notes/implemented/2026-11-04-merged-payload-on-write.md`。
+String _mergedPayload(String? previousJson, Object? next) {
+  final nextJson = next == null ? '' : jsonEncode(next);
+  if (previousJson == null || previousJson.isEmpty) return nextJson;
+  // 只有"对象载荷"才谈得上合并键（线上 `data` 就是对象；不是的话以新的为准）。
+  if (next is! Map) return nextJson;
+  try {
+    final previous = jsonDecode(previousJson);
+    if (previous is! Map) return nextJson;
+    return jsonEncode(<String, Object?>{
+      ...previous.cast<String, Object?>(),
+      ...next.cast<String, Object?>(),
+    });
+  } on FormatException {
+    // 旧载荷坏了：以新的为准，不拿一个读不出来的东西挡住这次写入。
+    return nextJson;
   }
 }
 

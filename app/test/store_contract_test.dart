@@ -74,6 +74,11 @@ class _TempDirStore implements ItemStore {
   Future<List<StoredItem>> itemsOf(String sid, {int limit = 500}) =>
       _inner.itemsOf(sid, limit: limit);
   @override
+  Future<Map<String, String>> payloadsOf(
+    String sid,
+    Iterable<String> itemIds,
+  ) => _inner.payloadsOf(sid, itemIds);
+  @override
   Future<int> cursorOf(String sid) => _inner.cursorOf(sid);
   @override
   Future<Map<String, int>> allCursors() => _inner.allCursors();
@@ -321,6 +326,15 @@ void main() {
         expect(event.seq, 1);
         // 载荷要能解回对象（投影层读的是 `data`）。
         expect(event.data, isA<Map<String, Object?>>());
+      });
+
+      test('payloadsOf：只回问到的那些 itemId，缺的不在表里', () async {
+        // 合并写入（`StoreItemPersister`）靠它读"这一行现在盘上是什么"。
+        await store.commit('s1', [item('a', 1), item('b', 2)], 2);
+        final payloads = await store.payloadsOf('s1', ['a', 'missing']);
+        expect(payloads.keys, ['a'], reason: '没这一行就不该出现在表里');
+        expect(payloads['a'], '{"n":1}');
+        expect(await store.payloadsOf('s1', const []), isEmpty);
       });
     });
   }

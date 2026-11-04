@@ -351,8 +351,19 @@ ChatProjection projectEvent({
     // 它们只在 `tool/call` 上。不继承就会把卡片上已经写好的名字与参数
     // 覆盖成"工具"和 JSON 键名（2026-10-19 真机复现，见决策笔记）。
     final call = previous is ToolCallItem ? previous : null;
+    // **冷启动时 `previous` 不在**：同一个 itemId 上一条 `tool/call` 已被结果覆盖，
+    // 而结果载荷里没有名字与参数。盘上存的是**合并载荷**（`StoreItemPersister`
+    // 的 `_mergedPayload`），`name` / `arguments` 还在 —— 从它读回来，
+    // 否则重启后整行只剩「工具」（2026-11-04 真机，库里 200 条 result / 0 条 call）。
+    final stored = mergedToolCallOf(data);
+    final storedName = stored?.name;
+    final storedArgs = stored?.argumentsRaw ?? '';
     // 结果自己带 name 时照它（部分适配器会写）；否则用调用的名字。
-    final name = stringField(message, 'name') ?? call?.name ?? kUnknownToolName;
+    final name =
+        stringField(message, 'name') ??
+        call?.name ??
+        storedName ??
+        kUnknownToolName;
     // **专用视图**（bash / read / edit|write）从 `data.meta` 解（DSH 的
     // `presentationMeta`，形状见 `model/tool_view.dart` 的文件头）。
     // 其余工具 / 形状不认识 ⇒ `null`，走通用卡。
@@ -369,9 +380,16 @@ ChatProjection projectEvent({
             : ToolCallStatus.completed,
         // **参数摘要只用调用的那一份**：结果里没有参数，而把结果消息
         // 摊平只会得到 `role, source, toolCallId, conten…` 这种键名清单。
-        // 历史翻页可能只落到结果（调用在窗口外），那时没有参数可显示 ——
-        // 留空，不编一个（DSH 同处：`call: previous == null ? null : …`）。
-        summary: call?.summary ?? '',
+        // 冷启动时调用那一半从**合并载荷**读回来（见上面 `storedArgs`）；
+        // 都没有就留空，不编一个（DSH 同处：`call: previous == null ? null : …`）。
+        summary:
+            call?.summary ??
+            (storedName == null && storedArgs.isEmpty
+                ? ''
+                : toolArgumentsSummary(
+                    name: storedName ?? name,
+                    arguments: storedArgs,
+                  )),
         // **结果正文进明细**：工具到底返回了什么，展开才看得见
         // （`ToolCard` 的 `.tool-body` 一直是支持的，只是投影从不填）。
         detail: toolOutputOf(message),
@@ -397,7 +415,15 @@ ChatProjection projectEvent({
         //
         // Note: 为什么必须继承、"失败不算产出"、词表为什么按轮且只给收口正文 ——
         // 见 `.agents/notes/implemented/2026-10-26-file-mentions-and-open-file.md`
-        changedPath: isToolError(data) ? null : call?.changedPath,
+        changedPath: isToolError(data)
+            ? null
+            : call?.changedPath ??
+                  (storedName == null && storedArgs.isEmpty
+                      ? null
+                      : changedPathOf(
+                          name: storedName ?? name,
+                          argumentsJson: storedArgs,
+                        )),
       ),
     );
   }
@@ -523,13 +549,22 @@ ChatProjection projectEvent({
         seq: seq,
         updatedAt: time,
         turn: turn,
-        // 次数从 `llm/retry` 继承（`llm/retry-started` 只有 retryId + retry）。
+        // 次数从 `llm/retry` 继承（`llm/retry-started` 只有 retryId + retry）；
+        // **冷启动时 `previous` 不在**，那就从**合并载荷**读回来
+        // （`StoreItemPersister._mergedPayload`）—— 否则重启后只剩「重试 1/0」，
+        // 连失败原因都没有（2026-11-04 真机）。
         retry: retry ?? call?.retry ?? 0,
-        maxRetries: call?.maxRetries ?? 0,
-        message: call?.message ?? '',
-        code: call?.code,
+        maxRetries: call?.maxRetries ?? intField(data, 'maxRetries') ?? 0,
+        message:
+            call?.message ??
+            stringField(fieldOf(data, 'failure'), 'message') ??
+            '',
+        code: call?.code ?? stringField(fieldOf(data, 'failure'), 'code'),
         started: true,
-        delayMs: call?.delayMs ?? 0,
+        delayMs:
+            call?.delayMs ??
+            (fieldOf(data, 'delayMs') as num?)?.toDouble() ??
+            0,
       ),
     );
   }

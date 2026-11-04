@@ -5,6 +5,16 @@
 
 ## 现在（2026-11-04）
 
+- **同一个 itemId 的载荷合并写（11-04 第三批）**：重启后工具行全变「工具」、重试行变
+  「重试 1/0」的根因是**落盘**——库里每个 itemId 只存最后一条事件的 `data`，而
+  `tool/result` / `llm/retry-started` 不带名字与失败原因（它们在前一条事件上），投影靠
+  内存里的 `previous` 合并。修法：`StoreItemPersister` 写盘前读旧载荷（新接口
+  `ItemStore.payloadsOf`），写**旧 ∪ 新**；投影在 `previous == null` 时从合并载荷读回
+  （字段名只在 `wire/events.dart` 的 `mergedToolCallOf` 断言）。app **1701**、
+  `verify-platform-boundary` **718**。笔记 `implemented/2026-11-04-merged-payload-on-write.md`。
+  **仍欠**：**已经落盘的历史修不回来**（本地只剩结果那一半，原始事件只在电脑侧）——
+  要修历史得单独做一次"重放这一窗"（`session.page` → 重走合并写），本次没做。
+
 - **思考行标题粘顶 + 重试可展开（11-04 第二批真机反馈）**：① 思考正文**不封顶**（照 DSH），
   标题行靠 `StickyNoteHost`（`ui/sticky_note.dart`）钉在列表顶部 —— 量位置必须**在帧后**
   （滚动通知里读到的是上一帧坐标，第一版因此永不出现）；② 重试行改成可展开：

@@ -173,6 +173,27 @@ class SqfliteItemStore implements ItemStore {
   }
 
   @override
+  Future<Map<String, String>> payloadsOf(
+    String sid,
+    Iterable<String> itemIds,
+  ) async {
+    final ids = itemIds.toList(growable: false);
+    if (ids.isEmpty) return const <String, String>{};
+    final db = _requireDb;
+    // 占位符按条数拼，**值仍走参数**（`IN` 的元素数量随批次变，拼值才是注入面）。
+    final marks = List<String>.filled(ids.length, '?').join(', ');
+    final rows = await db.rawQuery(
+      'SELECT item_id, payload_json FROM items '
+      'WHERE sid = ? AND item_id IN ($marks)',
+      <Object?>[sid, ...ids],
+    );
+    return <String, String>{
+      for (final row in rows)
+        row['item_id']! as String: row['payload_json']! as String,
+    };
+  }
+
+  @override
   Future<int> prune(String sid, {int keep = 500}) async {
     final db = _requireDb;
     // 按 `updated_at` 淘汰（契约 §5.3），保留**最近 seq 的 keep 条**。
@@ -383,6 +404,21 @@ class InMemoryItemStore implements ItemStore {
     // 从末尾取（与 sqflite 那份一致）。
     if (all.length <= limit) return all;
     return all.sublist(all.length - limit);
+  }
+
+  @override
+  Future<Map<String, String>> payloadsOf(
+    String sid,
+    Iterable<String> itemIds,
+  ) async {
+    _requireOpen();
+    final bucket = _items[sid] ?? const <String, StoredItem>{};
+    final out = <String, String>{};
+    for (final id in itemIds) {
+      final item = bucket[id];
+      if (item != null) out[id] = item.payloadJson;
+    }
+    return out;
   }
 
   @override

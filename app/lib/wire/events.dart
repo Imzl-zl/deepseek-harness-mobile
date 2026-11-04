@@ -150,6 +150,21 @@ WireReading<ToolCallWire> readToolCall(Object? data) {
   );
 }
 
+/// **合并载荷**里的调用那一半（`name` / `arguments`）；两个都没有就是 `null`。
+///
+/// 为什么单独一个：`readToolCall` 要求 `callId`（那是 `tool/call` 的身份字段），
+/// 而这里读的是**结果行的合并载荷** —— `StoreItemPersister` 把同一个 itemId 上
+/// 前一条 `tool/call` 的字段留在同一行里（`tool/result` 自己不带名字与参数）。
+/// 缺字段是**正常的**：修复之前写下的老载荷就没有它们。
+///
+/// Note: 为什么盘上要合并写 —— 见 `.agents/notes/implemented/2026-11-04-merged-payload-on-write.md`。
+({String? name, String argumentsRaw})? mergedToolCallOf(Object? data) {
+  final name = _string(data, 'name');
+  final raw = _string(data, 'arguments');
+  if (name == null && raw == null) return null;
+  return (name: name, argumentsRaw: raw ?? '');
+}
+
 /// 把 `arguments` 解成对象。**线上是 JSON 字符串**（真机库 `payload_json.arguments`
 /// 的类型就是 `str`），不是对象 —— 按对象读的那一支永远读出 `null`，这就是 2026-10-25 的病。
 Map<String, Object?>? parseArguments(String raw) {
