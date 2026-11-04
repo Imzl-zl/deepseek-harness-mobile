@@ -1044,19 +1044,17 @@ class ChatPageState extends State<ChatPage> {
                         onTapSegment: _showSegmentSheet,
                       ),
               ),
-              // ---- 底部：接管卡 + 输入栏 + 统计条 ----
+              // ---- 底部：接管卡 + 目标条 + 排队条 + 输入栏 + 统计条 ----
               Container(
-                // **`bgBase`，不是 `sidebar`**（2026-10-20 修）。
+                // **这一块不涂底色**：它只负责排布与底部安全区，浮起来的是里面
+                // 每一条 dock（目标条 / 排队条 / 输入卡 / 统计 chip 各自带表面）。
                 //
-                // 用户反馈："下面有一块都没覆盖"。实测（深色，`x=30` 竖向）：
-                // 页面 `#151517` 到 `y=2341`，**`y=2343` 起到底边是 `#1B1B1C`**
-                // —— 正好是 `c.sidebar` 的暗色值，高度 ≈ 系统导航条 + 6。
-                //
-                // 根因：输入栏内部（`DshComposer`）为了去掉灰带已改用 `bgBase`，
-                // 但**外面这层包裹仍是 `sidebar`**，而它下面有一条
-                // `padding.bottom + 6` —— 输入栏盖不到那块，就露出一条 sidebar 色。
-                // 也就是说灰带没被"去掉"，而是被挤到了最底部一条缝里。
-                color: c.bgBase,
+                // 涂过 `bgBase`（2026-10-20，为了盖掉一条 `sidebar` 灰带）—— 那是
+                // "把灰带刷成页面色"，代价是壁纸被一条整宽的实色面板挡到屏幕底部
+                // （2026-11-04 用户原话："背景都上来了，看着不好看，做成悬浮的样式"）。
+                // 灰带本身随底色一起消失，所以这一层不再需要颜色。
+                // Note: 取舍与被否方案见
+                // `.agents/notes/implemented/2026-11-04-floating-dock-over-wallpaper.md`。
                 padding: EdgeInsets.only(
                   bottom: MediaQuery.of(context).padding.bottom + 6,
                 ),

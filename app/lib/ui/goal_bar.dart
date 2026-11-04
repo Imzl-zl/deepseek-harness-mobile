@@ -252,17 +252,16 @@ class _GoalBarState extends State<GoalBar> {
 
   /// 编辑那一行：输入框 + 保存 / 取消（`.editBar`，`GoalBar.tsx:88-127`）。
   ///
-  /// 动作贴最后一行（`.editBar` 的 `align-items: flex-end`）：正文多行时
-  /// 保存 / 取消不该跟着正文往上跑。
+  /// **三段对齐在同一条中线上**：DSH 的 `.editBar` 用 `align-items: flex-end`，
+  /// 那是为了多行正文时把动作贴在最后一行；这一格是**单行**（理由见下面
+  /// `maxLines: 1` 那条注释），用 `end` 会把图标贴到输入框底边、与文字错开
+  /// （真机 2026-11-04 用户反馈"点编辑的时候字和图标不水平"）。
   Widget _editRow(DshColorTokens c) {
     final canSave = !_pending && _draft.text.trim().isNotEmpty;
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: DshIcon('goal', size: 14, color: c.labelTertiary),
-        ),
+        DshIcon('goal', size: 14, color: c.labelTertiary),
         const SizedBox(width: 10),
         Expanded(
           child: TextField(

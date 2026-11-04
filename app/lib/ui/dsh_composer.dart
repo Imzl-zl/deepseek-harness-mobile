@@ -274,15 +274,13 @@ class DshComposer extends StatelessWidget {
     // **主键在运行中且没有草稿时是"停止"**（Web 的 `primaryStops`）。
     final stops = running && !hasDraft && onStop != null;
     final Widget band = Container(
-      // **底色是页面底色，不是 `sidebar`**（2026-10-20 用户反馈
-      // "会话页面和输入框背景这一块设计不和谐"）。
+      // **不涂底色**：DSH 的输入栏 `.root` 自己也没有背景（`InputBar.module.css:2-11`
+      // 只有 `padding`），卡片靠 `box-shadow` 浮在页面/壁纸上。
       //
-      // DSH 的输入栏 `.root` **没有声明背景**（`InputBar.module.css:2-11`：
-      // 只有 `padding`），卡片直接坐在页面底色上、靠 `box-shadow` 浮起来。
-      // 我们原来给它垫了一条 `c.sidebar` 灰带 —— 于是底部像一个**独立的栏**，
-      // 与上面的会话区断开。真机量到的正是这样：
-      // 页面 `#FFFFFF` / 灰带 `#F1F3F5` / 卡内 `#FFFFFF`。
-      color: c.bgBase,
+      // 涂过 `bgBase`（2026-10-20，为了盖掉一条 `sidebar` 灰带）—— 那是"把灰带刷成
+      // 页面色"，代价是壁纸在底部被一条整宽的实色条挡掉（2026-11-04 用户反馈：
+      // "背景都上来了，做成悬浮的样式，不要一大块白色面板"）。灰带随底色一起消失。
+      // Note: 见 `.agents/notes/implemented/2026-11-04-floating-dock-over-wallpaper.md`。
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
       child: Column(
         mainAxisSize: MainAxisSize.min,

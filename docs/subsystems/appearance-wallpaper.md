@@ -45,6 +45,10 @@
 3. 壁纸按屏幕像素宽解码（`ResizeImage.resizeIfNeeded`），独立 `RepaintBoundary`。
 4. **毛玻璃只贴在输入栏一条**（`DshGlass`）：判据是 `context.dshColors.bgBase.a < 1`；
    表面不透明时不挂 `BackdropFilter`（模糊一块纯色是白花 GPU）。
+5. **底部那条 dock 栈不涂底色**（`chat_page.dart` 的包裹层、`dsh_composer.dart` 的 band
+   都只有 `padding`）：壁纸一直铺到屏幕底，浮起来的是输入卡 / 目标条 / 排队条 / 统计药丸
+   各自的表面。2026-10-20 那版给这一层涂过 `bgBase`，壁纸进来之后它就成了一块整宽面板
+   （见 `.agents/notes/implemented/2026-11-04-floating-dock-over-wallpaper.md`）。
 
 ## 边界
 

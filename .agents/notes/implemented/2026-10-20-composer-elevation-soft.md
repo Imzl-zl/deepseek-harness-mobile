@@ -2,6 +2,10 @@
 
 Status: implemented
 
+> **部分被取代（2026-11-04）**：下面第 2 条"输入栏外层底色 `sidebar` → `bgBase`"不再成立 ——
+> 外层与输入栏 band 现在**都不涂底色**（壁纸要透上来），`elevation-soft` 那三层阴影照旧。
+> 见 `implemented/2026-11-04-floating-dock-over-wallpaper.md`。
+
 ## Problem
 
 用户 2026-10-19：「然后整个会话页面和输入框背景这一块设计不和谐吧」。

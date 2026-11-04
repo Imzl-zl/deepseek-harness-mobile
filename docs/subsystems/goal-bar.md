@@ -65,6 +65,9 @@ null
 暂停与恢复**互斥**，所以最多三个动作钮（`GoalBar.tsx:140-153`）。
 编辑是**行内输入框**（同一格里换成 `TextField` + 保存 / 取消），不弹 sheet：
 保存发 `/goal edit <objective>`，空草稿不发（保存钮置灰）。
+编辑器是**单行**（这一格的内容要拼进一条命令行，连接器拒收带换行的 `line`，
+`connector/src/handlers.ts:1242-1246`），三段对齐在同一条中线上 —— DSH 的
+`align-items: flex-end` 是给多行正文用的，单行用 `end` 会让图标与文字错开。
 清除成功后**立刻不画**（`_clearedGoalId` 闩，`GoalBar.tsx:47,86`）——
 投影要等 `goal/change` 那一趟往返，中间那段条子还挂着，用户会以为没清掉而再点一次。
 
