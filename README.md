@@ -72,10 +72,14 @@ cd relay && docker compose up -d --build && docker compose logs -f relay
 
 | 命令 | 覆盖 |
 |---|---|
-| `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 通道协议 454 / 26 / 49 项 |
-| `cd relay && pnpm typecheck && node --test` | 中转，161 项 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 插件，831 项 |
-| `cd app && dart format --output=none --set-exit-if-changed lib test integration_test && dart analyze --fatal-infos lib test integration_test && flutter test` | 手机端，1659 项 |
+| `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 通道协议 **454 / 26 / 49** 项（跨端不变量：两侧实现必须相等） |
+| `cd relay && pnpm typecheck && node --test` | 中转 |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 电脑侧插件（fixtures 断言数须 = **454**、向量须 = **49**） |
+| `cd app && dart format --output=none --set-exit-if-changed lib test integration_test && dart analyze --fatal-infos lib test integration_test && flutter test` | 手机端 |
+
+> **其余项数只写在一处：[`tools.md`](tools.md)。** 同一批数字抄在 README / `memory.md` / `tools.md`
+> 三处，已经漂过三次；而且连接器那条会随环境变（本机没装 Dart SDK 时跨语言用例跳过，
+> 项数与 CI 差 1）。判据是"全绿"，不是"数字对上了"。
 
 > `dart format` 是**先决条件**不是风格偏好：超宽的单行 `if (...) return ...;` 会被它折成
 > 两行无括号形式，而 `curly_braces_in_flow_control_structures` 在 `--fatal-infos` 下就是红。
