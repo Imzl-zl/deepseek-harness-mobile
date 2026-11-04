@@ -802,7 +802,10 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         }
         if (who === undefined) {
           // 认证不过的请求按来源地址取桶：它没有任何身份可用，与首配那一跳同一个理由。
-          const refused = limiter.take(`admin-anonymous:${request.socket.remoteAddress ?? 'unknown'}`)
+          // **用 `clientIp` 而不是裸 socket 地址**：反代后面 socket 地址是反代自己，
+          // 所有人共用一个桶 —— 同一次请求里锁定按 `clientIp`、限流按 socket，等于两套判据
+          // （见 `.agents/notes/implemented/2026-11-04-anonymous-admin-bucket-uses-real-client-ip.md`）。
+          const refused = limiter.take(`admin-anonymous:${clientIp}`)
           if (!refused.allowed) {
             reply(response, 429, { error: 'rate-limited', retryAfterMs: refused.retryAfterMs })
             return

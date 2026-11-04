@@ -11,13 +11,13 @@ Status: implemented
    用户原话：「是不是用户安装开箱即用，你不要让用户安装了还要改配置啥的」。
 2. **连不上时界面不说话**：真机现场面板一直是「重连中 0/1 台在线」，点出码只回
    `HTTP 400`（空正文）。实测根因：连接器存的那张令牌是**旧中转签的**，用真令牌打
-   `wss://dsh.0t0.me/ws/connector?id=local` 的升级请求回 **HTTP 401**（正文空）。
+   `wss://<旧中转域名>/ws/connector?id=local` 的升级请求回 **HTTP 401**（正文空）。
    而 `ws` 的 `error` 事件只有一句 "Received network error or non-101 status code"，
    分不出 401 / 404 —— 前者要换令牌、后者要改地址，操作者拿不到任何下一步。
 
 ## Decision
 
-1. **`relayUrl` 空着 = 内置中转**（`BUILTIN_RELAY_URL`，`wss://dsh.0t0.me/ws/connector`）。
+1. **`relayUrl` 空着 = 内置中转**（`BUILTIN_RELAY_URL`，`wss://<旧中转域名>/ws/connector`）。
    它是**默认值不是强制**：卡片里随时能换成自部署地址，换完立刻重建中转通道。
    落点有两层：schema 的 `.default()`（`Config({})` 构造期）+ **读取处的兜底**
    `relayUrlOrDefault()` —— 后者才是运行时的真值，原因见下面的「更正」。
@@ -79,7 +79,7 @@ Status: implemented
 - connector `pnpm test` → **832 项全绿**（新增：状态码翻译 4 种互不相同、默认值三格
   —— 默认地址/直连关/明文关、显式空串不被填回、出码失败 400 带正文）。
 - `tsc --noEmit` 0、`pnpm build` 过；relay `pnpm typecheck` 0、`node --test` **152 条**。
-- 现场判据：真令牌打 `wss://dsh.0t0.me/ws/connector?id=local` → **HTTP 401**（正文空），
+- 现场判据：真令牌打 `wss://<旧中转域名>/ws/connector?id=local` → **HTTP 401**（正文空），
   即"中转不认这张令牌"，与面板上要显示的那句话一致。
 
 ## 代码入口回指
@@ -108,7 +108,7 @@ dsh --profile probe --no-open --port 3099          # 该 profile 的 cordis.patc
 
 带 `?token=` 换会话 cookie 之后：
 
-- `GET /api/dsh-mobile/status` → 200，`relayUrl = "wss://dsh.0t0.me/ws/connector"`；
+- `GET /api/dsh-mobile/status` → 200，`relayUrl = "wss://<旧中转域名>/ws/connector"`；
 - `GET /api/dsh-mobile/connection` → 200，`value.relayUrl` 同上，`token.configured = false`；
 - `POST /api/dsh-mobile/transport/relay/start` → **400 + 正文**
   「凭据里没有连接器令牌记录…」—— 不再是「中转地址解析失败：」。

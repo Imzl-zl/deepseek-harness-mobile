@@ -1367,7 +1367,7 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       if (!installableFromPhone(spec)) {
         throw new ProtocolError(
           'gateway/bad-request',
-          `手机上只收 registry / git 来源（包名、name@version、git 地址），不收本机路径：${spec}。` +
+          `手机上只收 registry / git 来源（包名、name@version、git 地址），不收本机路径或带空白的写法：${spec}。` +
             '要在电脑上装本地包，请在电脑上操作',
         )
       }

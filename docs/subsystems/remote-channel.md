@@ -450,7 +450,7 @@ type SyncSnapshot = {
 | `session.create` | 手机→电脑 | `requestId` | 新建会话。**与 Web 同一个 DSH 方法**(`session-controller/src/index.ts:280`,请求形状 `{workspaceId?, cwd?, sessionId?, agentPreset?}`,回 `{sessionId, agentPreset?}`)。**`workspaceId` / `cwd` 都不传**:手机侧不知道电脑有哪些工作区(那要另接 `workspace-controller`),而不传时 DSH 用它自己的当前工作区 —— 与 Web 点"新建会话"一致;硬传一个猜的比不传更糟。**只在给了参数时才进请求体**:DSH 对缺省字段有自己的默认,塞空串会被当成"显式选空" |
 
 **没有 `push.configure`**（刻意不声明）。推送本期不做——正确性靠"回前台补课"(I6),
-主链路不依赖它。等三端能力包(§10)落地后**再**把它加进方法表;今天声明一个
+主链路不依赖它。等各端推送能力(`lib/platform/` 的 `push_*`,§10)落地后**再**把它加进方法表;今天声明一个
 调不通的方法,只会让手机侧多一个必然失败的按钮。
 
 #### 5.7.1 只读快照的**可选内容摘要**（`digest` / `notModified`）
@@ -1153,7 +1153,7 @@ job-settled        后台任务终结     turn-failed       轮次异常结束
   不暴露 RFC 4941 的 `temporary` 标记,判据只能靠前缀猜 ⇒ 不猜。代价是候选列表里可能有一两条
   拨不通的地址,顺序已经把 IPv4/局域网地址放在前面(`connector/src/transport/listener.ts` 的 `dialOrder`)。
   **推送本期不做**,所以方法表里**没有** `push.configure`——正确性靠"回前台补课"(I6),
-  主链路不依赖它;等三端能力包(§10)落地后再加进方法表。
+  主链路不依赖它;等各端推送能力(`lib/platform/push_*`,§10)落地后再加进方法表。
 - **后台保活是"尽力而为",不是送达承诺**:前台服务能被用户手动划掉、被国产 ROM 的省电策略杀掉;
   且**通知权限被拒时通知全不可见**(只在 Task Manager 里)——那时本仓**不起服务**(§13)。
   所以"审批必达手机"仍然不成立,成立的只有"打开 App 后状态一定正确"。

@@ -104,8 +104,14 @@ export function createTransportChannels(ports: readonly ChannelPort[]): Transpor
   }
 }
 
-/** 直连通道未配置（`listenPort: 0`）时的一行事实。 */
-export const DIRECT_UNCONFIGURED = '未配置监听端口（listenPort: 0）'
+/**
+ * 直连通道被显式关掉（`listenPort: 0`）时的一行事实。
+ *
+ * 措辞是「已停用」不是「未配置」：没配时现在是默认 **8790 开着**
+ * （`config.ts` 的 `DEFAULT_LISTEN_PORT`），能落到 0 的只有用户按了「停用直连」。
+ * 说成"没配置"会让人以为还得去改配置文件。
+ */
+export const DIRECT_UNCONFIGURED = '直连已停用（listenPort: 0）'
 
 /** 把通道列表压成一行日志（`中转拨号:运行中 直连监听:未运行`）。 */
 export function describeChannels(states: readonly ChannelState[]): string {

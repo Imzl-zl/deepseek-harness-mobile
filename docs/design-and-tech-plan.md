@@ -17,8 +17,12 @@
   `MaterialApp.title`、抽屉头部那一行、顶栏没有会话标题时的兜底、**会话里助手说话者的名字**。
   **品牌图 = DSH 桌面端那枚鲸鱼**(源 `D:\sudy\github\deepseek-harness\apps\desktop\resources\icon.png`),
   显示位置四处:
-  - 启动图标:`mipmap-*/ic_launcher.png`(48/72/96/144/192)+ 自适应前景
-    `mipmap-*/ic_launcher_foreground.png`(108/162/216/324/432,内容占画布 66%),底色 `#FFFFFF`;
+  - 启动图标:`mipmap-*/ic_launcher.png`(48/72/96/144/192,内容占画布 **73%**)+ 自适应前景
+    `mipmap-*/ic_launcher_foreground.png`(108/162/216/324/432,内容占画布 **52%**),底色 `#FFFFFF`;
+    **两套是两个上限,别再统一调**(2026-11-04 真机):自适应图标的可见区是画布中央约 66.7%
+    (圆形遮罩),而鲸鱼是 1.36 的宽幅 —— 按宽度 65% 画时**对角线**已经超出圆形半径,
+    四个角被切(用户截图)。宽度 ≤ 52% 时对角线正好落进圆内,所以前景只能是 52%;
+    旧位图 `ic_launcher.png` 是方形无遮罩,可以取 73%(原 84% 且垂直偏下 19px,那才是"被切"的观感);
   - 侧边抽屉头部 logo、会话流里的「助手」头像:同一个 Flutter 控件
     `app/lib/ui/dsh_brand.dart` 的 `DshBrandMark`(白底圆角方 + `assets/brand/dsh-whale.png`);
   - 新会话页 headline 仍用图标字体的 `fishLogo`(DSH Web 那里就是一枚线性 logo,不是位图)。
@@ -98,20 +102,21 @@ dsh-mobile/
 │   │   ├── core/             纯 Dart 零平台依赖:通道客户端、流帧解析、恢复引擎、消息 reducer
 │   │   ├── data/             DTO / 协议编解码(对齐 protocol/ fixtures)、存储与密钥的注入接口
 │   │   ├── model/            共享领域模型:session / device / timeline item / usage / context
+│   │   ├── wire/             ★ 线上形状的唯一解码层(RPC 面 + 事件字段)
 │   │   ├── theme/            ★ 从 DSH 抽出的 DshTheme(第 5 节)
 │   │   ├── ui/               screens + widgets(逐屏,第 7 节,不含平台分支)
-│   │   ├── platform/         ★ 唯一装配点:选择各能力实现
+│   │   ├── platform/         ★ 各端实现与装配点:端口 `<能力>.dart` / 实现 `<能力>_<端>.dart` / 兜底 `<能力>_memory.dart`
 │   │   └── main.dart
-│   ├── packages/             ★ 按能力切包:secure_store / push / keepalive,各含接口 + 各端实现
-│   ├── ios/ android/ ohos/   壳工程;各端原生代码只住在这里
+│   ├── android/ ios/         壳工程;各端原生代码只住在这里(鸿蒙壳工程尚未创建)
 │   └── tools/                多端边界校验脚本
+├── mock/proto/               交互基线原型(唯一入口 index.html)
 ├── protocol/                 通道规格唯一源:信封定义 + fixtures + 向量 + 校验脚本(两侧共用)
 ├── connector/                电脑侧:DSH 插件(薄适配层,自己持有出站长连接)
 ├── relay/                    中转服务:配对、转发、有界重放窗口、推送投递
 └── docs/                     本文档、子系统规范与 cookbook
 ```
 
-通道四件的职责与契约见 `subsystems/remote-channel.md`;多端边界(核心零平台分支、按能力切包、边界规则)见 `subsystems/app-platform-boundaries.md`;电脑侧与中转的落地设计见 `subsystems/connector-and-relay.md`,手机端客户端见 `subsystems/app-channel-client.md`,开工步骤与验证命令见 `cookbook/channel-bootstrap.md`。
+通道四件的职责与契约见 `subsystems/remote-channel.md`;多端边界(核心零平台分支、平台实现只住 `lib/platform/`、边界规则)见 `subsystems/app-platform-boundaries.md`;电脑侧与中转的落地设计见 `subsystems/connector-and-relay.md`,手机端客户端见 `subsystems/app-channel-client.md`,开工步骤与验证命令见 `cookbook/channel-bootstrap.md`。
 
 分层依赖只向下:`ui → core/model`,`data → model`,`core` 零平台依赖(I/O 注入,可在纯 Dart 单测)。参考 DEEIX 的 `packages/core` 与 AA 的 `android/ARCHITECTURE.md` 分层。
 

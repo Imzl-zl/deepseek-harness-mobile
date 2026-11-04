@@ -91,7 +91,7 @@
 ## 7. 邮件与自检
 
 - `--check-smtp [--to <地址>]`:只连 SMTP、做 STARTTLS/隐式 TLS 与 AUTH,然后发一封自检邮件;不读账号库、不起监听。部署时先跑它。
-- AhaSend 的 `from` 必须落在**已校验的域名**上(当前是 `0t0.me`,不是 `dsh.0t0.me`);域名未校验时 `MAIL FROM` 会回 `556 Tenant or Domain not found`。
+- AhaSend 的 `from` 必须落在**已校验的域名**上(当前是 `0t0.me`;中转自己那个子域名不在校验范围内);域名未校验时 `MAIL FROM` 会回 `556 Tenant or Domain not found`。
 - 管理台「设置」可直接改 SMTP、注册开关/邮箱域名、默认电脑数与新账号默认月额度:保存先写回 `relay.config.json`,再改运行时策略,不用重启容器;密码留空 = 保持原值。
 - `--promote <已注册邮箱>`:把已有账号提升为管理员;不把密码放命令行。
 

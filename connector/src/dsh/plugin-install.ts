@@ -118,13 +118,20 @@ export interface PluginInstallFace {
  * - 本地路径：`/`、`./`、`../`、`~`、盘符（`C:\` / `C:/`）、UNC（`\\`）、任何反斜杠、`file:`；
  * - registry / git：`name`、`@scope/name`、`name@1.2.3`、`git+https://…`、`git@host:path`、
  *   `https://…`、`github:user/repo`、`user/repo`（github 简写）全部放行；
- * - `-` 开头的（会被 `pnpm` 当选项）宿主自己也拒，这里先拒，省一次往返。
+ * - `-` 开头的（会被 `pnpm` 当选项）宿主自己也拒，这里先拒，省一次往返；
+ * - **任何空白字符**：npm / git 的 spec 里没有空白，出现它只可能是"一句话当两个参数"。
+ *   这一条只看形状（不猜宿主怎么把 spec 交给 pnpm），代价是本地带空格的路径也一并拒掉 ——
+ *   那一档本来就整类不收。
  *
  * **不是替宿主判"能不能装"**：版本兼容 / registry 可达性 / 构建脚本，仍然全由宿主说。
+ *
+ * 取舍见 `.agents/notes/implemented/2026-11-04-plugin-spec-shape-tightening.md`。
  */
 export function installableFromPhone(spec: string): boolean {
   const value = spec.trim()
   if (value === '' || value.startsWith('-')) return false
+  // 内部空白：`trim()` 只管两头。见本函数头注的最后一条。
+  if (/\s/u.test(value)) return false
   // 反斜杠只出现在 Windows 路径里（registry / git spec 不用它）。
   if (value.includes('\\')) return false
   if (value.startsWith('/') || value.startsWith('~')) return false

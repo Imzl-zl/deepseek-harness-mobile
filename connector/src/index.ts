@@ -10,7 +10,7 @@
  * 3 publish-service     ctx.provide('dshMobileConnector', api) ← 手机端能力门控读它
  * 4 mount-interactions  接 gateway 的 `$events` 转发流（owner client，§6.2）
  * 5 load-identity       取（或首次生成）本机身份种子（§12.1）
- * 6 start-transport     出站 WSS，并把 §4.1 的握手交给驱动器；配了 `listenPort` 时**同时**起直连监听面
+ * 6 start-transport     出站 WSS，并把 §4.1 的握手交给驱动器；`listenPort` 非 0 时**同时**起直连监听面
  * ```
  *
  * 两处刻意的选择：
@@ -273,7 +273,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
   let closeStore: (() => Promise<void>) | null = null
   let connection: RelayLink | null = null
   let pairingEndpoint: PairingEndpoint | null = null
-  /** 直连监听面（§1.7）。只有配了 `listenPort` 才非空。 */
+  /** 直连监听面（§1.7）。只有 `listenPort` 非 0（默认 8790）才非空。 */
   let listener: Listener | null = null
   /**
    * 传输面的**通道注册表**（2026-10-17 用户要求：两个方式两个开关）。

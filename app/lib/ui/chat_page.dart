@@ -167,6 +167,7 @@ class ChatPage extends StatefulWidget {
     this.paired = true,
     this.onConnect,
     this.onRePair,
+    this.onAddHost,
     this.onDisconnect,
     this.hostSwitch,
   });
@@ -196,6 +197,11 @@ class ChatPage extends StatefulWidget {
   ///
   /// 议题 3 的落点：顶栏连接状态位、空态出路两处点它都经连接操作 sheet 确认。
   final VoidCallback? onRePair;
+
+  /// **添加一台电脑**（进配对页但**不清**当前凭据；装配层注入）。
+  ///
+  /// 与 [onRePair] 是两条路：那个先清再配（同一台换身份/重来），这个只加不删。
+  final VoidCallback? onAddHost;
 
   /// 「断开并清掉凭据」但**不**进配对页（装配层注入；聊天页自己不给这个入口）。
   final VoidCallback? onDisconnect;
@@ -962,8 +968,21 @@ class ChatPageState extends State<ChatPage> {
         if (_sideOpen == open) return;
         setState(() => _sideOpen = open);
       },
-      body: LayoutBuilder(
-        builder: (context, viewport) {
+      // **键盘弹起时"谁缩"只有一处**（2026-11-04，Android 15+ 真机）：
+      // 清单里是 `adjustNothing`（系统不缩窗口），所以这里显式按 `viewInsets.bottom`
+      // 把整页顶上去。`resizeToAvoidBottomInset` 必须关掉 —— 否则 Scaffold 和这一层
+      // 各缩一次，输入栏会被顶到键盘上方两倍高的位置。
+      //
+      // 为什么不做成"只靠 Scaffold 自己缩"：edge-to-edge 下那句 `adjustResize` 被系统
+      // 忽略，实测输入栏被键盘整个盖住（真机截图）。判据与取舍见
+      // `.agents/notes/implemented/2026-11-04-ime-insets-on-android-15.md`。
+      resizeToAvoidBottomInset: false,
+      body: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: LayoutBuilder(
+          builder: (context, viewport) {
           // **底部这一块的预算只算一次**（接管卡与候选面板从同一个数里分空间）。
           // 键盘弹起后可用高度只剩一小半，各算各的"屏幕比例"就会叠出溢出 ——
           // 真机 2026-10-24 抓到的那次是 `BOTTOM OVERFLOWED BY 204 PIXELS`，
@@ -1180,6 +1199,7 @@ class ChatPageState extends State<ChatPage> {
             ],
           );
         },
+        ),
       ),
     );
   }
@@ -1513,6 +1533,8 @@ class ChatPageState extends State<ChatPage> {
         ),
         // **换电脑**（已配对两台以上才给这一行）：装配层注入，页面只转发。
         hostSwitch: widget.hostSwitch,
+        // **添加电脑**：只加不删的那条路（与「重新配对」区分开）。
+        onAddHost: widget.onAddHost,
         onRePair: () => widget.onRePair?.call(),
         onOpenSide: openSide,
         onDisconnect: () => widget.onDisconnect?.call(),

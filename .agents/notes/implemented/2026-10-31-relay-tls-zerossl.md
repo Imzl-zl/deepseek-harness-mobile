@@ -6,7 +6,7 @@ Status: implemented
 
 手机侧对**非私网**地址强制 `wss://`（`app/lib/core/endpoint.dart` 的 `isPrivateOrLoopback`），
 而之前整条链路靠 `ws://127.0.0.1:8787`（`adb reverse`）与局域网直连，出了家门就断。
-用户注册了 `dsh.0t0.me` 指向中转服务器（华为云 ECS），要求换成域名。
+用户注册了 `<旧中转域名>` 指向中转服务器（华为云 ECS），要求换成域名。
 
 上 TLS 时撞到三件在国内机器上才成立的硬事实（2026-10-31 实测）：
 
@@ -30,7 +30,7 @@ Status: implemented
    （http-01 standalone 要独占 80，而 Caddy 占着它），`--reloadcmd` 让容器 reload。
 4. **收口**：compose 的 relay 端口改成 `127.0.0.1:8787:8787` —— Caddy 反代到同网络内的
    `relay:8787`，公网只留 80/443。
-5. 连接器 `relayUrl` → `wss://dsh.0t0.me/ws/connector`（本机 profile 的
+5. 连接器 `relayUrl` → `wss://<旧中转域名>/ws/connector`（本机 profile 的
    `cordis.patch.yml`，改前备份 `.bak-20261031`）。
 
 ## Alternatives considered
@@ -49,14 +49,14 @@ Status: implemented
    - 最强理由：一个端口都不用开，续期全自动，最干净。
    - 为何没走：`0t0.me` 的 DNS 在阿里云，需要把一份**长期 DNS 凭据**放到服务器上
      （会写进 `~/.acme.sh/account.conf`）。开源 80 的代价更小；等真要收掉 80 时再换这条。
-4. **`wss://dsh.0t0.me:8787`（复用已经放行的 8787，不开 443）**
+4. **`wss://<旧中转域名>:8787`（复用已经放行的 8787，不开 443）**
    - 最强理由：安全组一行都不用改。
    - 为何被否：证书仍然要 80 或 DNS 才能签，省不掉那一步；而让 TLS 跑在 8787 上，
      等于把一个"非标准 wss 端口"写进手机端点表与连接器配置，以后每台设备都要记这个例外。
 
 ## Consequences
 
-- 收益：手机在**任何网络**下都能连（走 `wss://dsh.0t0.me`），令牌不再明文过公网；
+- 收益：手机在**任何网络**下都能连（走 `wss://<旧中转域名>`），令牌不再明文过公网；
   仓库侧 `docs/cookbook/relay-on-a-server.md` 补了国内镜像源、ZeroSSL 路径与 `wss` 升级验证。
 - 代价 1：**80 必须长期放行**（续期要用）。它只做验证与 308 跳转，但确实是一个额外的入站口。
 - 代价 2：证书**不由 Caddy 托管**，在 `./certs` 里，服务器重装要重新签一次；
@@ -67,9 +67,9 @@ Status: implemented
 
 ## Testing
 
-- `curl -s -o /dev/null -w '%{http_code}' https://dsh.0t0.me/` → **405**（中转 HTTP 面在应答）。
-- `echo | openssl s_client -connect dsh.0t0.me:443 -servername dsh.0t0.me` → 链能验到
+- `curl -s -o /dev/null -w '%{http_code}' https://<旧中转域名>/` → **405**（中转 HTTP 面在应答）。
+- `echo | openssl s_client -connect <旧中转域名>:443 -servername <旧中转域名>` → 链能验到
   `Sectigo Public Server Authentication Root E46` / `ZeroSSL ECC DV SSL CA 2`。
-- 升级路径：`wss://dsh.0t0.me/ws/connector` 带**假令牌** → `status 401`
+- 升级路径：`wss://<旧中转域名>/ws/connector` 带**假令牌** → `status 401`
   （TLS + WebSocket 升级 + 令牌校验三段都通，且没把真令牌写进任何脚本）。
-- 收口：外网连 `dsh.0t0.me:8787` 被拒；`https://dsh.0t0.me/` 仍是 405。
+- 收口：外网连 `<旧中转域名>:8787` 被拒；`https://<旧中转域名>/` 仍是 405。
