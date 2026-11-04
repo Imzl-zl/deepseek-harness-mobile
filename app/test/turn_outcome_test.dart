@@ -418,5 +418,39 @@ void main() {
       // 已开跑仍显示同一行（同一条目被覆盖，不是多一行）。
       expect(find.text('重试 1/10'), findsOneWidget);
     });
+
+    testWidgets('重试行：点开看得到原因（延迟 + 失败原因 + 错误码）', (tester) async {
+      // DSH 是 `<details>/<summary>`（`ui-chat/.../MessageItem.tsx:63-118`）：
+      // 收起一行状态，展开两行 —— `重试延迟：{n}ms` 与 `失败原因：{message}`。
+      // 手机上原来只有一行省略号，**报错的原因看不到**（用户 2026-11-04 反馈）。
+      final item =
+          projectEvent(type: 'llm/retry', seq: 1545, data: _retry).item
+              as ModelRetryItem;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: Scaffold(
+            body: RetryRow(
+              title: item.title,
+              message: item.message,
+              started: item.started,
+              code: item.code,
+              delayMs: item.delayMs,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 收起：只有一行状态（原因压成预览），没有详情。
+      expect(find.textContaining('失败原因'), findsNothing);
+
+      await tester.tap(find.text('重试 1/10'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('重试延迟：1738ms'), findsOneWidget);
+      expect(find.textContaining('失败原因：Request timed out.'), findsOneWidget);
+      expect(find.textContaining('TIMEOUT'), findsOneWidget);
+    });
   });
 }

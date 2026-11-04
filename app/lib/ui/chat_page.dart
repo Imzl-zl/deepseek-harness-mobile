@@ -89,6 +89,7 @@ import 'load_more_on_scroll.dart';
 import 'load_older_trigger.dart';
 import 'queue_dock.dart';
 import 'side_pane.dart';
+import 'sticky_note.dart';
 import 'subagent_readonly_band.dart';
 import 'subagent_tree.dart';
 import 'takeover.dart';
@@ -3424,89 +3425,93 @@ class _ConversationFlowState extends State<_ConversationFlow> {
             }
             return false;
           },
-          child: ListView.builder(
-            key: _listKey,
-            controller: _scroll,
-            reverse: true,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            // **+1 是流式尾条目，再 +1 是运行条**（两条都是虚拟的，没有 itemId）。
-            //
-            // 格数读的是**存在性**（`liveTail.value == null`）——它在流开始 / 结束时
-            // 才变，而那时 AppModel 会整页通知（`_setLiveTail` 的返回值）。流式期间
-            // 文本一直变、格数不变，所以这一层**不重建**：尾条目的内容由下面那个
-            // `ValueListenableBuilder` 单独跟踪。
-            itemCount:
-                widget.items.length +
-                (widget.hasLive ? 1 : 0) +
-                (widget.running ? 1 : 0),
-            itemBuilder: (context, index) {
-              // `reverse: true` 下 index 0 在**最下面**，往上递增。
-              // `items` 是 **seq 升序**（`session_store.dart:146`），所以 index 要
-              // **倒着取**：最下面那条 = 最新的持久条目（`items.last`）。
+          // 展开中的思考行把标题钉在列表顶部（DSH 的 `position: sticky`；
+          // Flutter 那边的等价实现见 `ui/sticky_note.dart` 的文件头）。
+          child: StickyNoteHost(
+            child: ListView.builder(
+              key: _listKey,
+              controller: _scroll,
+              reverse: true,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              // **+1 是流式尾条目，再 +1 是运行条**（两条都是虚拟的，没有 itemId）。
               //
-              // 2026-10-20 真机复现：原来这里是 `items[index - 1]`（正着取），
-              // 于是**最早的在上、最新的在下** —— 一整段对话是倒的，
-              // 而且"进入会话落在最新一条"也落到了最早一条。
-              final hasLive = widget.hasLive;
-              final hasRunning = widget.running;
-              // 运行条在最下面（它是流末尾），流式文本在它上面一格。
-              if (hasRunning && index == 0) {
-                return KeyedSubtree(
-                  key: const ValueKey('running'),
-                  child: RunningBar(startTime: widget.turnStartedAt),
+              // 格数读的是**存在性**（`liveTail.value == null`）——它在流开始 / 结束时
+              // 才变，而那时 AppModel 会整页通知（`_setLiveTail` 的返回值）。流式期间
+              // 文本一直变、格数不变，所以这一层**不重建**：尾条目的内容由下面那个
+              // `ValueListenableBuilder` 单独跟踪。
+              itemCount:
+                  widget.items.length +
+                  (widget.hasLive ? 1 : 0) +
+                  (widget.running ? 1 : 0),
+              itemBuilder: (context, index) {
+                // `reverse: true` 下 index 0 在**最下面**，往上递增。
+                // `items` 是 **seq 升序**（`session_store.dart:146`），所以 index 要
+                // **倒着取**：最下面那条 = 最新的持久条目（`items.last`）。
+                //
+                // 2026-10-20 真机复现：原来这里是 `items[index - 1]`（正着取），
+                // 于是**最早的在上、最新的在下** —— 一整段对话是倒的，
+                // 而且"进入会话落在最新一条"也落到了最早一条。
+                final hasLive = widget.hasLive;
+                final hasRunning = widget.running;
+                // 运行条在最下面（它是流末尾），流式文本在它上面一格。
+                if (hasRunning && index == 0) {
+                  return KeyedSubtree(
+                    key: const ValueKey('running'),
+                    child: RunningBar(startTime: widget.turnStartedAt),
+                  );
+                }
+                if (hasLive && index == (hasRunning ? 1 : 0)) {
+                  // **只有这一格跟流式文本**：`ValueListenableBuilder` 的子树是列表里的
+                  // 一格，重建范围到它为止 —— 页面、列表、抽屉都不动（P3 的判据）。
+                  return KeyedSubtree(
+                    key: const ValueKey('live'),
+                    child: ValueListenableBuilder<String?>(
+                      valueListenable: widget.liveTail,
+                      builder: (context, text, _) =>
+                          _LiveTurn(text ?? '', showHead: widget.liveShowHead),
+                    ),
+                  );
+                }
+                final itemIndex = chatItemIndexFor(
+                  index,
+                  itemCount: widget.items.length,
+                  hasLive: hasLive,
+                  hasRunning: hasRunning,
                 );
-              }
-              if (hasLive && index == (hasRunning ? 1 : 0)) {
-                // **只有这一格跟流式文本**：`ValueListenableBuilder` 的子树是列表里的
-                // 一格，重建范围到它为止 —— 页面、列表、抽屉都不动（P3 的判据）。
+                // **按 `itemId` 取 key**（跨帧同一个）—— 换 key 会让这一行重新
+                // 挂载，工具卡的展开状态就丢了。见 `_keysById` 的说明。
+                final item = widget.items[itemIndex];
                 return KeyedSubtree(
-                  key: const ValueKey('live'),
-                  child: ValueListenableBuilder<String?>(
-                    valueListenable: widget.liveTail,
-                    builder: (context, text, _) =>
-                        _LiveTurn(text ?? '', showHead: widget.liveShowHead),
+                  key: _keyOf(item.itemId),
+                  child: _TurnView(
+                    item: item,
+                    app: widget.app,
+                    autoOpenDetail: widget.autoOpenDetail,
+                    // **提及表与打开动作都从模型来**：这一层不解析路径、也不决定打开哪里
+                    // （`AppModel.openFile` 是四个入口唯一的那一个动作）。
+                    fileMentions: widget.app?.fileMentionsOf(item),
+                    onOpenFile: widget.app == null
+                        ? null
+                        : (path) => unawaited(
+                            widget.app!.openFile(FileOpenRequest(path: path)),
+                          ),
+                    turnDurationLabel: _durationLabelOf(item),
+                    // 轮组：这一轮的收口行是不是折叠开关、现在展不展开。
+                    collapsibleTurn:
+                        item.turn != null &&
+                        widget.collapsibleTurns.contains(item.turn),
+                    turnExpanded:
+                        item.turn != null &&
+                        (widget.isTurnExpanded?.call(item.turn!) ?? true),
+                    onToggleTurn: widget.onToggleTurn,
+                    // 分支：走 `AppModel.forkSession`（宿主 fork；标题后缀在连接器）。
+                    onFork: widget.app == null ? null : _fork,
+                    // 组头：这一条是该轮第一条助手侧条目时，头像画在它上方。
+                    showHead: widget.headAt.contains(item.itemId),
                   ),
                 );
-              }
-              final itemIndex = chatItemIndexFor(
-                index,
-                itemCount: widget.items.length,
-                hasLive: hasLive,
-                hasRunning: hasRunning,
-              );
-              // **按 `itemId` 取 key**（跨帧同一个）—— 换 key 会让这一行重新
-              // 挂载，工具卡的展开状态就丢了。见 `_keysById` 的说明。
-              final item = widget.items[itemIndex];
-              return KeyedSubtree(
-                key: _keyOf(item.itemId),
-                child: _TurnView(
-                  item: item,
-                  app: widget.app,
-                  autoOpenDetail: widget.autoOpenDetail,
-                  // **提及表与打开动作都从模型来**：这一层不解析路径、也不决定打开哪里
-                  // （`AppModel.openFile` 是四个入口唯一的那一个动作）。
-                  fileMentions: widget.app?.fileMentionsOf(item),
-                  onOpenFile: widget.app == null
-                      ? null
-                      : (path) => unawaited(
-                          widget.app!.openFile(FileOpenRequest(path: path)),
-                        ),
-                  turnDurationLabel: _durationLabelOf(item),
-                  // 轮组：这一轮的收口行是不是折叠开关、现在展不展开。
-                  collapsibleTurn:
-                      item.turn != null &&
-                      widget.collapsibleTurns.contains(item.turn),
-                  turnExpanded:
-                      item.turn != null &&
-                      (widget.isTurnExpanded?.call(item.turn!) ?? true),
-                  onToggleTurn: widget.onToggleTurn,
-                  // 分支：走 `AppModel.forkSession`（宿主 fork；标题后缀在连接器）。
-                  onFork: widget.app == null ? null : _fork,
-                  // 组头：这一条是该轮第一条助手侧条目时，头像画在它上方。
-                  showHead: widget.headAt.contains(item.itemId),
-                ),
-              );
-            },
+              },
+            ),
           ),
         ),
         // 跳转钮：浮在右侧，滚动停下 1.5 秒后自己淡出。
@@ -4020,11 +4025,20 @@ class _TurnView extends StatelessWidget {
       TurnOutcomeItem(:final kind, :final message, :final title) =>
         TurnOutcomeRow(kind: kind, message: message, title: title),
       // 一次模型重试（`llm/retry` + `llm/retry-started`）。
-      ModelRetryItem(:final title, :final message, :final started) => RetryRow(
-        title: title,
-        message: message,
-        started: started,
-      ),
+      ModelRetryItem(
+        :final title,
+        :final message,
+        :final started,
+        :final code,
+        :final delayMs,
+      ) =>
+        RetryRow(
+          title: title,
+          message: message,
+          started: started,
+          code: code,
+          delayMs: delayMs,
+        ),
       // 一轮的过程摘要（`turn/end` 时的收口行）—— 同时是 DSH 的
       // `turn-tail` 操作行（复制 + 用量 pill）。
       final TurnProcessItem process => TurnProcessRow(

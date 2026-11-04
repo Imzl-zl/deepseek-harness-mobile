@@ -82,13 +82,18 @@ DSH 的整轮控制行在**轮次开头**（`turn.start.seq − 0.1`，
 手机这一版把两者合成**一行、落在轮次末尾**：内容本来就在上方，点末尾那行把上面收起来
 比在开头放一条更省手指，也少一行 chrome。代价是"折叠开关在它所控制的内容下方"。
 
-**思考正文封顶（2026-11-04）。** DSH 让展开后的思考正文**不封顶**地跟着对话滚，靠
+**思考行标题粘顶（2026-11-04）。** DSH 让展开后的思考正文**不封顶**地跟着对话滚，靠
 `position: sticky`（`ui-chat/src/client/chat/ReasoningRow.module.css:15-21`）把标题行
 （图标 + 「思考」+ chevron）钉在视口顶部 —— 于是正文再长，"想折叠"永远够得着。
-Flutter 没有 sticky：同一个效果要么把整个聊天流改成 sliver 分组
-（`SliverPersistentHeader`，一次大改），要么把正文**封顶后自己滚**。手机选后者：
-正文上限半屏（`MediaQuery.sizeOf(context).height * 0.5`），标题行恒在它上方，
-读正文时标题一直在视野里。代价是正文内部多一层滚动（与"系统提示词 141px"同一档取舍）。
+
+Flutter 没有 sticky。真正的等价物是 `SliverPersistentHeader`，而它要求标题与正文是
+**两个相邻的 sliver** —— 正文长在消息条目里，拆它等于重写消息渲染。所以这一版用
+`StickyNoteHost`（`app/lib/ui/sticky_note.dart`）：展开的折叠行登记自己的标题/正文位置，
+滚动时若"标题已滚出视口顶、正文还在视口里"，就在列表顶部画**同一份标题**，点它即折叠。
+判据与代价见 `.agents/notes/implemented/2026-11-04-sticky-disclosure-header.md`。
+
+两条必须遵守的实现约束：**位置要在帧后量**（滚动通知里读到的是上一帧坐标，标题会永不出现）；
+**标题只有一份定义**（钉住的那份由 `_buildHeader()` 产出，两处各写一份必然漂）。
 
 ## 5. 「工作步骤收起时机」
 

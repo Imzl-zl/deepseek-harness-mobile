@@ -31,6 +31,7 @@ import 'dsh_brand.dart';
 import 'dsh_markdown.dart';
 import 'dsh_sheet.dart';
 import 'dsh_shimmer.dart';
+import 'sticky_note.dart';
 import 'tool_views.dart';
 
 /// 用户消息（`.turn--u`）。
@@ -826,12 +827,20 @@ class TurnOutcomeRow extends StatelessWidget {
 ///
 /// `retryId` 配对，`retry: 1..N`、`maxRetries`、`delayMs`（可能是小数）、
 /// `failure: {message, code}`（如 `Request timed out.` / `TIMEOUT`）。
-class RetryRow extends StatelessWidget {
+/// ## 为什么能展开（2026-11-04）
+///
+/// DSH 是 `<details>/<summary>`（`ui-chat/src/client/chat/MessageItem.tsx:63-118`）：
+/// 收起时一行状态，展开后两行 —— `重试延迟：{n}ms` 与 `失败原因：{message}`。
+/// 手机上原来只有一行省略号，**报错的原因看不到**（用户原话："像报错这种，
+/// 会需要看原因的"）。
+class RetryRow extends StatefulWidget {
   const RetryRow({
     super.key,
     required this.title,
     required this.message,
     required this.started,
+    this.code,
+    this.delayMs = 0,
   });
 
   /// `重试 2/10`。
@@ -843,44 +852,107 @@ class RetryRow extends StatelessWidget {
   /// 是否已经开始重试（`llm/retry-started` 到达后为真）。
   final bool started;
 
+  /// 失败码（`failure.code`，如 `TIMEOUT`）；`null` = 线上没给。
+  final String? code;
+
+  /// 计划延迟（毫秒，真日志里是小数）。
+  final double delayMs;
+
+  @override
+  State<RetryRow> createState() => _RetryRowState();
+}
+
+class _RetryRowState extends State<RetryRow> {
+  bool _open = false;
+
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          // 计划中与已开跑**图标不同**：前者是钟（在等 delay），
-          // 后者是转圈（在跑）。DSH 的 `ModelRetryItem` 也是
-          // `retryState === 'scheduled'` 时才显示"active"态。
-          DshIcon(
-            started ? 'loading' : 'alarmClock',
-            size: 14,
-            color: started ? c.roleTool : c.labelCaption,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            title,
-            style: TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: started ? c.roleTool : c.labelSecondary,
+    final reason = widget.message;
+    final code = widget.code ?? '';
+    final hasReason = reason.isNotEmpty;
+    final hasDelay = widget.delayMs > 0;
+    final expandable = hasReason || hasDelay || code.isNotEmpty;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          onTap: expandable ? () => setState(() => _open = !_open) : null,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                // 计划中与已开跑**图标不同**：前者是钟（在等 delay），
+                // 后者是转圈（在跑）。DSH 的 `ModelRetryItem` 也是
+                // `retryState === 'scheduled'` 时才显示"active"态。
+                DshIcon(
+                  widget.started ? 'loading' : 'alarmClock',
+                  size: 14,
+                  color: widget.started ? c.roleTool : c.labelCaption,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  widget.title,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: widget.started ? c.roleTool : c.labelSecondary,
+                  ),
+                ),
+                // 收起时把原因压成一行；展开后不再重复（正文里有完整的）。
+                if (hasReason && !_open) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      reason,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12, color: c.labelTertiary),
+                    ),
+                  ),
+                ] else
+                  const Spacer(),
+                if (expandable) ...[
+                  const SizedBox(width: 4),
+                  DshIcon(
+                    _open ? 'chevronDown' : 'chevronRight',
+                    size: 14,
+                    color: c.labelTertiary,
+                  ),
+                ],
+              ],
             ),
           ),
-          if (message.isNotEmpty) ...[
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                message,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12, color: c.labelTertiary),
-              ),
+        ),
+        if (_open)
+          Padding(
+            padding: const EdgeInsets.only(left: 22, bottom: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (hasDelay)
+                  Text(
+                    '重试延迟：${widget.delayMs.round()}ms',
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 19 / 12,
+                      color: c.labelTertiary,
+                    ),
+                  ),
+                if (hasReason)
+                  Text(
+                    '失败原因：$reason${code.isEmpty ? '' : '（$code）'}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 19 / 12,
+                      color: c.labelSecondary,
+                    ),
+                  ),
+              ],
             ),
-          ],
-        ],
-      ),
+          ),
+      ],
     );
   }
 }
@@ -1648,19 +1720,79 @@ class _CollapsibleNote extends StatefulWidget {
 class _CollapsibleNoteState extends State<_CollapsibleNote> {
   bool _open = false;
 
+  /// 行标题与正文的位置（粘顶靠它们算"滚过去了没有"）。
+  final GlobalKey _headerKey = GlobalKey();
+  final GlobalKey _bodyKey = GlobalKey();
+
+  /// 粘顶登记处；不在 [StickyNoteHost] 里就是 `null`（照旧工作，只是不钉）。
+  StickyNoteController? _sticky;
+
+  /// 登记用的身份（一个 State 一条）。
+  int get _stickyId => identityHashCode(this);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _sticky = StickyNotes.maybeOf(context);
+    _syncSticky();
+  }
+
+  @override
+  void dispose() {
+    _sticky?.detach(_stickyId);
+    super.dispose();
+  }
+
+  /// 展开时登记、收起时注销。
+  ///
+  /// **只有思考正文（`markdownBody`）参与粘顶**：系统提示词 / 命令的正文是
+  /// 141px 的滚动区，永远出不了屏幕，钉它没有意义。
+  void _syncSticky() {
+    final sticky = _sticky;
+    if (sticky == null) return;
+    if (_open && widget.markdownBody) {
+      sticky.attach(
+        _stickyId,
+        StickyNote(
+          headerKey: _headerKey,
+          bodyKey: _bodyKey,
+          header: _buildHeader,
+        ),
+      );
+    } else {
+      sticky.detach(_stickyId);
+    }
+  }
+
+  void _toggle() {
+    setState(() => _open = !_open);
+    _syncSticky();
+  }
+
+  /// 钉在顶部时画的那一份（与行标题同一个 widget —— 两处各写一份必然漂）。
+  Widget _buildHeader() => _DisclosureHeader(
+    icon: widget.icon,
+    label: widget.label,
+    open: true,
+    onTap: _toggle,
+  );
+
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _DisclosureHeader(
-          icon: widget.icon,
-          label: widget.label,
-          open: _open,
-          preview: widget.collapsedPreview,
-          onTap: () => setState(() => _open = !_open),
+        KeyedSubtree(
+          key: _headerKey,
+          child: _DisclosureHeader(
+            icon: widget.icon,
+            label: widget.label,
+            open: _open,
+            preview: widget.collapsedPreview,
+            onTap: _toggle,
+          ),
         ),
-        if (_open) _body(context),
+        if (_open) KeyedSubtree(key: _bodyKey, child: _body(context)),
       ],
     );
   }
@@ -1671,22 +1803,13 @@ class _CollapsibleNoteState extends State<_CollapsibleNote> {
       // 思考正文：DSH `ReasoningRow.module.css:73-77` 的 `.thinkBody`
       //   `padding: 4px 0 4px calc(22px + delta)`，正文是 compact Markdown。
       //
-      // **有意偏离（2026-11-04）**：DSH 让正文**不封顶**地跟着对话滚，靠
-      // `position: sticky`（`ReasoningRow.module.css:15-21`）把标题行钉在视口顶部，
-      // 于是"想折叠"永远够得着。Flutter 没有 sticky：同一个效果要么把聊天流改成
-      // sliver 分组（`SliverPersistentHeader`），要么**把正文封顶、自己滚**。
-      // 这里选后者 —— 标题行恒在正文上方、整块不超过半屏，读正文时标题一直在视野里，
-      // 想折叠不用滚回去（用户原话："想点击折叠就要滚动好久"）。
-      // 代价是正文内部多一层滚动，与"系统提示词 141px"同一档取舍。
-      final cap = MediaQuery.sizeOf(context).height * 0.5;
+      // **不封顶**（照 DSH）：正文跟着对话滚，靠 [StickyNoteHost] 把标题行钉在
+      // 视口顶部 —— 于是"想折叠"永远够得着（DSH 用 `position: sticky`，见
+      // `ReasoningRow.module.css:15-21`；Flutter 那边的等价实现见
+      // `ui/sticky_note.dart` 的文件头）。
       return Padding(
         padding: const EdgeInsets.fromLTRB(22, 4, 0, 4),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: cap),
-          child: SingleChildScrollView(
-            child: DshMarkdown(widget.text, compact: true),
-          ),
-        ),
+        child: DshMarkdown(widget.text, compact: true),
       );
     }
     // 系统提示词 / 上下文注入：DSH `ContextInjectionRow.module.css:50-64` 的 `.body`
