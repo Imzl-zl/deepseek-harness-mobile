@@ -87,11 +87,11 @@ const main = await evalJs(async () => {
   pass('目标 dock 挂在输入区上方', !!q('#goalDock .goal-dock'))
   pass('目标显示"进行中的目标"', q('#goalDock .goal-state').textContent.trim() === '进行中的目标')
   q('[data-act="goal-pause"]').click(); await sleep(160)
-  pass('目标可暂停且标注需 bridge',
-    q('#goalDock .goal-state').textContent.trim() === '已暂停的目标' && /bridge goals\.pause/.test(toastText()), toastText())
+  pass('目标可暂停且标注真实命令',
+    q('#goalDock .goal-state').textContent.trim() === '已暂停的目标' && /\/goal pause/.test(toastText()), toastText())
   q('[data-act="goal-resume"]').click(); await sleep(160)
-  pass('目标可恢复且标注需 bridge',
-    q('#goalDock .goal-state').textContent.trim() === '进行中的目标' && /bridge goals\.resume/.test(toastText()), toastText())
+  pass('目标可恢复且标注真实命令',
+    q('#goalDock .goal-state').textContent.trim() === '进行中的目标' && /\/goal resume/.test(toastText()), toastText())
   q('[data-act="goal-edit"]').click(); await sleep(160)
   pass('目标可进入内联编辑', !!q('#goalEditInput'))
   q('#goalEditInput').value = ''

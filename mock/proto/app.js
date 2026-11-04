@@ -3131,7 +3131,8 @@
   /* ============================================================ GoalBar + TodoPanel
      对齐 DSH `ui-goal/GoalBar.tsx` 与 `ui-conversation/skeleton/TodoPanel.tsx`:
      目标是可暂停/恢复、编辑、清除的 dock;任务清单只读且默认收起。
-     注意:这里是原型演示状态,真实动作要等 bridge 暴露 goals/todos。 */
+     注意:这里是原型演示状态;手机上的目标动作走 `/goal pause|resume|clear|edit <objective>`
+     斜杠命令(DSH 那四个 `goals` Remote 不在本仓方法面上),见 docs/subsystems/goal-bar.md §4。 */
   const goalDock = $("#goalDock");
   const todoDock = $("#todoDock");
   const DEMO_GOAL = {
@@ -3882,12 +3883,12 @@
       case "goal-pause":
         DEMO_GOAL.phase = "paused";
         renderGoalDock();
-        toast("目标已暂停(演示;真实动作需 bridge goals.pause)");
+        toast("目标已暂停(演示;真实动作是 /goal pause)");
         break;
       case "goal-resume":
         DEMO_GOAL.phase = "active";
         renderGoalDock();
-        toast("目标已恢复(演示;真实动作需 bridge goals.resume)");
+        toast("目标已恢复(演示;真实动作是 /goal resume)");
         break;
       case "goal-edit":
         DEMO_GOAL.editing = true;
@@ -3905,14 +3906,14 @@
         DEMO_GOAL.revision += 1;
         DEMO_GOAL.editing = false;
         renderGoalDock();
-        toast("目标已编辑(演示;真实动作需 bridge goals.edit)");
+        toast("目标已编辑(演示;真实动作是 /goal edit <objective>)");
         break;
       }
       case "goal-clear":
         DEMO_GOAL.deleted = true;
         DEMO_GOAL.editing = false;
         renderGoalDock();
-        toast("目标已清除(演示;真实动作需 bridge goals.clear)");
+        toast("目标已清除(演示;真实动作是 /goal clear)");
         break;
       case "goal-reopen":
         DEMO_GOAL.deleted = false;

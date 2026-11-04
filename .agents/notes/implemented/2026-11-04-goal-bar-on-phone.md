@@ -18,6 +18,7 @@ DSH 的「目标」是输入框上方的一条 dock（`conversation.input.dock` 
 还有一条形状上的硬约束：**DSH 的四个动作是 `goals` 的 `@Remote`**
 （`packages/goal/goal/src/index.ts:330,353,365,434`），而手机这条通道的方法面里
 **没有** `goal.*`（`connector/src/protocol/methods.ts`）。
+
 ## Decision
 
 **照 DSH 画一条 36dp 的 dock；数据只读 `goal` 投影；四个动作走 `/goal …` 斜杠命令；
@@ -82,6 +83,9 @@ DSH 的「目标」是输入框上方的一条 dock（`conversation.input.dock` 
   （`FULL_PROJECTION_VALUES` 从 14 个键变 15 个），App 的解析因此有**外部真值**盯着。
 - 代价：每次点动作都会在对话流里落一张 `/goal` 命令卡（`command/run` + `command/done`
   是宿主的生命周期事件）—— 这是"不开新方法"的直接后果，要消掉它得走上面第 1 条。
+- 代价：目标编辑器是**单行**，保存前把换行折成空格。连接器在拼命令行之前就拒收
+  带换行的 `line`（`connector/src/handlers.ts:1242-1246`），而 DSH 的 `/goal` 能收
+  多行目标 —— 多行目标到手机上会被压成一行。这是这条传输的限制，不是界面的选择。
 - 代价：**没有 activation**，所以"active 但已 disarmed"在手机上显示成「进行中的目标」+ 暂停钮；
   要修得先给连接器加 `goal.*`。
 - 代价：目标条占了底部预算的 42dp（条 36 + 下边距 6）。出现时 `_BottomBudget` 的

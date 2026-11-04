@@ -1598,14 +1598,10 @@ class ChatPageState extends State<ChatPage> {
 
   /// 目标条会不会画 —— **底部预算要据此让出空间**（[_BottomBudget] 的 `goalActive`）。
   ///
-  /// 判据与 `GoalBar` 自己的 build 同一个来源（`AppModel.goal` + `GoalView.visible`），
-  /// 外加"子会话里不画"那一条（见 `_mainScaffold` 里那段注释）。
-  /// **不含**"刚清掉"那个本地闩（`GoalBar` 内部状态）：那一格最多多让一次往返的空间。
-  bool get _goalBarVisible {
-    if (_subagentParentSid != null) return false;
-    final goal = widget.app.goal;
-    return goal != null && goal.visible;
-  }
+  /// "有没有目标、要不要画"那条判据在 [GoalBar.visibleFor] 里（与条子自己的 build
+  /// 同一个来源）；这里只多一条"子会话里不画"（见 `_mainScaffold` 里那段注释）。
+  bool get _goalBarVisible =>
+      _subagentParentSid == null && GoalBar.visibleFor(widget.app.goal);
 
   /// 当前子会话是否只读，以及原因（`null` = 可以正常输入）。
   ///

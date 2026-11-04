@@ -22,7 +22,11 @@ import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/model/goal.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
+import 'package:dsh_mobile/ui/chat_page.dart';
 import 'package:dsh_mobile/ui/goal_bar.dart';
+import 'package:dsh_mobile/ui/queue_dock.dart';
+import 'package:dsh_mobile/wire/reading.dart';
+import 'package:dsh_mobile/wire/rpc/projections.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
 
@@ -36,12 +40,27 @@ class _GoalClient extends FakeSyncClient {
       <({String method, Map<String, Object?> params, String? requestId})>[];
   final _sessions = <String, StreamController<SessionDelta>>{};
 
+  /// `loadOlderHistory` 会拿到的那一页（默认空 = 没有更早的历史）。
+  List<SessionEvent> pageEvents = const [];
+
   void emit(String sid, SessionEvent event) => _sessions
       .putIfAbsent(sid, () => StreamController<SessionDelta>.broadcast())
       .add(SessionDelta(sid: sid, events: [event], transient: const {}));
 
   int callsOf(String method) =>
       calls.where((call) => call.method == method).length;
+
+  @override
+  bool hasOlderHistory(String sid) => pageEvents.isNotEmpty;
+
+  @override
+  Future<SessionPage> page({
+    required String sid,
+    required int beforeSeq,
+    int maxMessages = SyncClient.kHistoryPageMaxMessages,
+    int minMessages = SyncClient.kHistoryPageMinMessages,
+    int minTurns = SyncClient.kHistoryPageMinTurns,
+  }) async => SessionPage(events: pageEvents, hasMore: false);
 
   @override
   ConnectionState get state => ConnectionState.serving;
@@ -391,6 +410,148 @@ void main() {
       app.dispose();
     });
 
+    testWidgets('编辑：行内输入框抢到焦点（输入栏已握着焦点时 autofocus 会静默失效）', (tester) async {
+      // 真机 2026-11-04 抓到的那一条：点「编辑目标」后打的字全进了消息输入框。
+      // 根因不在这一层 —— `TextField.autofocus` 只在"所在 FocusScope 还没有
+      // 焦点子节点"时生效（`focus_manager.dart:158-171` 的 `applyIfValid`），
+      // 而输入栏永远先握着焦点。所以这里**钉住"焦点真的换了"**。
+      final client = _GoalClient(
+        onCall: (m, p) => switch (m) {
+          'session.projections' => projectionsReply(goalProjection()),
+          _ => null,
+        },
+      );
+      final app = await _opened(client);
+      final composerFocus = FocusNode();
+      addTearDown(composerFocus.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: DshTheme.dark(),
+          home: Scaffold(
+            body: Column(
+              children: [
+                GoalBar(app: app),
+                // 一个"输入栏"替身：它先握着焦点，正是真机上的样子。
+                TextField(focusNode: composerFocus),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      composerFocus.requestFocus();
+      await tester.pumpAndSettle();
+      expect(composerFocus.hasFocus, isTrue, reason: '先让输入栏握着焦点');
+
+      await tester.tap(find.byTooltip(kGoalEditLabel));
+      await tester.pumpAndSettle();
+
+      final draft = tester.widget<TextField>(
+        find.byKey(const Key('goal-draft')),
+      );
+      expect(draft.focusNode?.hasFocus, isTrue, reason: '编辑框必须拿到焦点');
+      expect(composerFocus.hasFocus, isFalse, reason: '输入栏必须让位');
+      app.dispose();
+    });
+
+    testWidgets('编辑：取消不发命令，正文不写回', (tester) async {
+      final client = _GoalClient(
+        onCall: (m, p) => switch (m) {
+          'session.projections' => projectionsReply(goalProjection()),
+          'command.execute' => commandOk('Goal updated'),
+          _ => null,
+        },
+      );
+      final app = await _opened(client);
+      await tester.pumpWidget(wrap(app));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip(kGoalEditLabel));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '不保存的草稿');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip(kGoalCancelLabel));
+      await tester.pumpAndSettle();
+
+      expect(client.callsOf('command.execute'), 0, reason: '取消不碰电脑侧');
+      expect(find.byType(TextField), findsNothing);
+      expect(find.text('把目标条接上手机'), findsOneWidget, reason: '取消不写回');
+      app.dispose();
+    });
+
+    testWidgets('编辑：目标里的换行被折成空格（命令行不许带换行）', (tester) async {
+      // 连接器在拼命令行之前就拒收带换行的 `line`
+      // （`connector/src/handlers.ts:1242-1246`）。目标正文**可能带换行**：
+      // DSH 的 `/goal` 从 Web 的多行输入框收到什么就是什么，投影原样带下来 ——
+      // 不折的话保存必然失败，而用户看到的是协议措辞。
+      final client = _GoalClient(
+        onCall: (m, p) => switch (m) {
+          'session.projections' => projectionsReply(
+            goalProjection(objective: '第一行\n第二行'),
+          ),
+          'command.execute' => commandOk('Goal updated'),
+          _ => null,
+        },
+      );
+      final app = await _opened(client);
+      await tester.pumpWidget(wrap(app));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip(kGoalEditLabel));
+      await tester.pumpAndSettle();
+      // 输入框是单行：这一格要拼进一条命令，摆一个能敲换行的框等于让用户
+      // 打出永远存不上的目标。
+      expect(tester.widget<TextField>(find.byType(TextField)).maxLines, 1);
+      await tester.tap(find.byTooltip(kGoalSaveLabel));
+      await tester.pumpAndSettle();
+
+      final call = client.calls.lastWhere((c) => c.method == 'command.execute');
+      final line = call.params['line']! as String;
+      expect(line.contains('\n'), isFalse, reason: '命令行里不许有换行');
+      expect(line, '/goal edit 第一行 第二行');
+      app.dispose();
+    });
+
+    testWidgets('失败：电脑上没有 /goal 命令 ⇒ 说清，不静默', (tester) async {
+      final client = _GoalClient(
+        onCall: (m, p) => switch (m) {
+          'session.projections' => projectionsReply(goalProjection()),
+          // DSH 的 `commands.execute` 对认不出的命令回 `undefined`。
+          'command.execute' => const {'matched': false},
+          _ => null,
+        },
+      );
+      final app = await _opened(client);
+      await tester.pumpWidget(wrap(app));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip(kGoalPauseLabel));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('没有 /goal 命令'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 6));
+      app.dispose();
+    });
+
+    testWidgets('失败：电脑侧没有给结论 ⇒ 说清，不静默', (tester) async {
+      final client = _GoalClient(
+        onCall: (m, p) => switch (m) {
+          'session.projections' => projectionsReply(goalProjection()),
+          // 应答形状认不出（`executeCommand` 回 null，原因在 lastError）。
+          'command.execute' => null,
+          _ => null,
+        },
+      );
+      final app = await _opened(client);
+      await tester.pumpWidget(wrap(app));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip(kGoalPauseLabel));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('目标操作失败：'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 6));
+      app.dispose();
+    });
+
     testWidgets('失败按 CommandOutcome 的三段式说（原文照显）', (tester) async {
       final client = _GoalClient(
         onCall: (m, p) => switch (m) {
@@ -440,9 +601,13 @@ void main() {
       expect(find.byTooltip(kGoalResumeLabel), findsNothing);
       expect(find.byTooltip(kGoalEditLabel), findsOneWidget);
       expect(find.byTooltip(kGoalClearLabel), findsOneWidget);
+      // **量出来的必须是 36**，不是"等于那个常量"：常量是我们要钉的值，
+      // 拿它跟自己比等于没测（改成 40 也照样绿）。DSH `.bar { height: 36px }`
+      // 在 `ui-goal/src/client/GoalBar.module.css:29`。
+      expect(kGoalBarHeight, 36, reason: '常量本身也不许漂');
       expect(
         tester.getSize(find.byKey(const Key('goal-bar'))).height,
-        kGoalBarHeight,
+        36,
         reason: 'DSH 的 .bar 是 36（标准字号下 minHeight 就是实际高度）',
       );
       app.dispose();
@@ -558,9 +723,16 @@ void main() {
 
     test('别的会话的 goal/change 不触发当前会话的重读', () async {
       final client = _GoalClient(
-        onCall: (m, p) => m == 'session.projections' ? goalProjection() : null,
+        onCall: (m, p) => m == 'session.projections'
+            ? projectionsReply(goalProjection())
+            : null,
       );
-      final app = await _opened(client);
+      final app = await _opened(client); // sid_A
+      // **必须先真的打开 sid_B**：`sessionUpdates` 是按会话建的广播流，
+      // 没人监听时 `emit` 会被丢掉 —— 那样这条用例恒真（第一版就是这样，
+      // 评审 2026-11-04 抓到）。打开 B 再切回 A，B 的订阅仍在。
+      await app.openSession('sid_B');
+      await app.openSession('sid_A');
       final before = client.callsOf('session.projections');
       client.emit(
         'sid_B',
@@ -575,6 +747,137 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
       expect(client.callsOf('session.projections'), before);
+      app.dispose();
+    });
+  });
+
+  group('形状漂移：留声，不吞', () {
+    test('goal 键在但解析不出 ⇒ 整包照收 + 计一次数', () {
+      WireDiagnostics.reset();
+      final value = valueOrReport(
+        readSessionProjections({
+          'goal': {'goal': 'x'},
+          'title': '标题还在',
+        }),
+        'session.projections',
+      );
+      expect(value, isNotNull, reason: '整包照收，只有那一格是 null');
+      expect(value!.goal, isNull);
+      expect(value.title, '标题还在');
+      expect(WireDiagnostics.badCount, 1, reason: '形状漂了要留声，别与"没有目标"混成一档');
+      WireDiagnostics.reset();
+    });
+
+    test('goal 是 null（没有目标）⇒ 不计数', () {
+      WireDiagnostics.reset();
+      final value = valueOrReport(
+        readSessionProjections({'goal': null}),
+        'session.projections',
+      );
+      expect(value!.goal, isNull);
+      expect(WireDiagnostics.badCount, 0, reason: '线上合法的"没有目标"不是漂移');
+      WireDiagnostics.reset();
+    });
+  });
+
+  group('翻页：goal/change 也不落条目', () {
+    test('往回翻到含 goal/change 的一页 ⇒ 条目数不变', () async {
+      final client = _GoalClient(
+        onCall: (m, p) => m == 'session.projections'
+            ? projectionsReply(goalProjection())
+            : null,
+      );
+      final app = await _opened(client);
+      // 先有一条内容，`loadOlderHistory` 才有切点。
+      client.emit(
+        'sid_A',
+        const SessionEvent(
+          itemId: 'm:1',
+          type: 'user/message',
+          seq: 1,
+          time: 0,
+          data: {
+            'id': '1',
+            'role': 'user',
+            'source': {'kind': 'user'},
+            'content': [
+              {'type': 'text', 'text': 'hi'},
+            ],
+          },
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(app.items.length, 1);
+
+      client.pageEvents = const [
+        SessionEvent(
+          itemId: 'goal/change:2',
+          type: 'goal/change',
+          seq: 2,
+          time: 0,
+          data: {'operation': 'pause'},
+        ),
+      ];
+      expect(await app.loadOlderHistory('sid_A'), isTrue, reason: '页里有事件');
+      expect(app.items.length, 1, reason: '状态事件不落条目（与收帧同一条规则）');
+      app.dispose();
+    });
+  });
+
+  group('挂在 chat_page 上：目标条在排队条之上', () {
+    testWidgets('两条 dock 同时在场时的上下顺序', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+
+      final client = _GoalClient(
+        onCall: (m, p) => switch (m) {
+          'session.list' => {'sessions': <Object?>[]},
+          'session.projections' => {
+            ...projectionsReply(goalProjection()),
+            // 排队条要有东西才画（空队列整条不占位）。
+            'inbox': {
+              'next-turn': [
+                {
+                  'id': 'msg-queued-1',
+                  'role': 'user',
+                  'source': {'kind': 'user'},
+                  'content': [
+                    {'type': 'text', 'text': '排着的那句'},
+                  ],
+                },
+              ],
+              'next-step': <Object?>[],
+            },
+          },
+          _ => null,
+        },
+      );
+      final app = await _opened(client);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: DshTheme.dark(),
+          home: ChatPage(
+            app: app,
+            paired: true,
+            onOpenDrawer: () {},
+            onNewSession: () {},
+            drawer: const Drawer(child: SizedBox()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(GoalBar), findsOneWidget);
+      expect(find.byType(QueueDock), findsOneWidget);
+      final goal = tester.getRect(find.byType(GoalBar));
+      final queue = tester.getRect(find.byType(QueueDock));
+      expect(
+        goal.bottom,
+        lessThanOrEqualTo(queue.top),
+        reason: '目标条在排队条之上（DSH 的 dock 顺序：目标 order 10）',
+      );
       app.dispose();
     });
   });

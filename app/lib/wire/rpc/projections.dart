@@ -188,8 +188,24 @@ SessionProjections _buildProjections(
     trajectory: parseTrajectory(values['trajectory']),
     imageLimits: DshImageLimits.fromWire(values['imageLimits']),
     inbox: values['inbox'] is Map ? values['inbox']! as Map : null,
-    goal: parseGoalView(values['goal']),
+    goal: _goalOf(values, fields),
   );
+}
+
+/// `goal` 投影：**键在但解析不出来**要留声。
+///
+/// 其余键的漂移都由各自的解析器计数（`modelSelection` 在 `wire/values.dart`）。
+/// 这一个如果不报，"形状漂了"与"没有目标"在 `WireDiagnostics` 里长得一模一样 ——
+/// 而目标条消失正是最需要线索的那一屏（`docs/subsystems/goal-bar.md` §8）。
+///
+/// `values['goal'] == null` **不计数**：那是线上合法的"没有目标"。
+GoalView? _goalOf(Map<String, Object?> values, WireFields fields) {
+  final raw = values['goal'];
+  final goal = parseGoalView(raw);
+  if (raw != null && goal == null) {
+    fields.report('goal 在但不是 {goal, roundsStarted, createdAt, updatedAt}');
+  }
+  return goal;
 }
 
 String? _nonEmptyString(Object? raw) =>

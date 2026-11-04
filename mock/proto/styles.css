@@ -2115,9 +2115,12 @@ button:focus-visible {
 .goal-dock {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 42px;
-  padding: 5px 6px 5px 10px;
+  gap: 10px;
+  /* DSH `GoalBar.module.css:19-35` 的 `.bar`：height 36、radius md(12)、
+     padding 4px 5px 4px 12px。落地端 `app/lib/ui/goal_bar.dart` 用的是同一组数。 */
+  min-height: 36px;
+  padding: 4px 5px 4px 12px;
+  border-radius: 12px;
 }
 .goal-dock .goal-glyph {
   flex: none;
@@ -2135,14 +2138,14 @@ button:focus-visible {
 .goal-dock .goal-state {
   flex: none;
   color: var(--on2);
-  font-size: 12px;
-  font-weight: 650;
+  font-size: 13px;
+  font-weight: 500;
 }
 .goal-dock .goal-objective {
   min-width: 0;
   overflow: hidden;
   color: var(--on3);
-  font-size: 12px;
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2153,11 +2156,11 @@ button:focus-visible {
   flex: none;
 }
 .goal-dock .goal-action {
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
-  border-radius: 9px;
+  border-radius: 8px;
   color: var(--on3);
 }
 .goal-dock .goal-action:active { background: var(--hover); color: var(--on); }
@@ -2165,7 +2168,7 @@ button:focus-visible {
 .goal-dock .goal-edit {
   flex: 1;
   min-width: 0;
-  height: 32px;
+  height: 28px;
   padding: 0 8px;
   border: 0;
   outline: 0;
@@ -2173,7 +2176,7 @@ button:focus-visible {
   background: var(--layer3);
   color: var(--on);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
 }
 .todo-dock .todo-head {
   display: flex;

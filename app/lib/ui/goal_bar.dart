@@ -84,6 +84,16 @@ class GoalBar extends StatefulWidget {
   /// `executeCommand` 把动作送到电脑侧（见文件头）。
   final AppModel app;
 
+  /// 这个目标要不要画条 —— **判据只有这一处**。
+  ///
+  /// `build` 用它，`chat_page.dart` 的底部预算也用它（`_BottomBudget` 的
+  /// `goalActive`）：两处各写一遍 `phase != complete`，预算与实际高度迟早对不上
+  /// （条子 42dp 白让 / 少让，都是真机上才会看见的那种溢出）。
+  ///
+  /// **不含"刚清掉"那个本地闩**（那是 [State] 里的 `_clearedGoalId`）：
+  /// 它最多让预算多让一次往返的空间，不会让布局错。
+  static bool visibleFor(GoalView? goal) => goal != null && goal.visible;
+
   @override
   State<GoalBar> createState() => _GoalBarState();
 }
@@ -91,6 +101,9 @@ class GoalBar extends StatefulWidget {
 class _GoalBarState extends State<GoalBar> {
   /// 行内编辑的输入框（DSH 的 `InlineEditor` 位置，不弹 sheet）。
   final _draft = TextEditingController();
+
+  /// 行内输入框的焦点（**显式请求**，理由见 [_beginEdit]）。
+  final _draftFocus = FocusNode();
 
   /// 正在编辑吗 —— 与 [_editingGoalId] 合起来才成立。
   bool _editing = false;
@@ -114,6 +127,7 @@ class _GoalBarState extends State<GoalBar> {
   @override
   void dispose() {
     _draft.dispose();
+    _draftFocus.dispose();
     super.dispose();
   }
 
@@ -121,8 +135,8 @@ class _GoalBarState extends State<GoalBar> {
   Widget build(BuildContext context) {
     final goal = widget.app.goal;
     // 三种"没有"共用一条出路：读不到 / 没有目标 / 已完成（`GoalBar.tsx:86`）。
-    if (goal == null || !goal.visible) return const SizedBox.shrink();
-    if (goal.id == _clearedGoalId) return const SizedBox.shrink();
+    if (!GoalBar.visibleFor(goal)) return const SizedBox.shrink();
+    if (goal!.id == _clearedGoalId) return const SizedBox.shrink();
     final editing = _editing && _editingGoalId == goal.id;
     final c = context.dshColors;
 
@@ -252,10 +266,14 @@ class _GoalBarState extends State<GoalBar> {
         const SizedBox(width: 10),
         Expanded(
           child: TextField(
+            key: const Key('goal-draft'),
             controller: _draft,
-            autofocus: true,
+            focusNode: _draftFocus,
+            // **单行**：这一格的内容要拼进一条命令行，而连接器拒收带换行的行
+            // （`connector/src/handlers.ts:1242-1246`：`line 不能包含换行`）。
+            // 摆一个能敲换行的框，等于让用户打出永远存不上的目标。
             minLines: 1,
-            maxLines: 3,
+            maxLines: 1,
             textInputAction: TextInputAction.done,
             // 输入法联想会破坏命令文本（`tools.md` 的配对码那条教训），
             // 目标是用户原话，不该被自动改写。
@@ -305,11 +323,28 @@ class _GoalBarState extends State<GoalBar> {
       _editing = true;
       _editingGoalId = goal.id;
     });
+    // **焦点要显式请求，不能靠 `autofocus`**。
+    //
+    // `TextField.autofocus` 走的是 `FocusScopeNode.autofocus`，而那个请求只在
+    // "所在 FocusScope 还没有焦点子节点"时才被应用（`focus_manager.dart:158-171`
+    // 的 `_Autofocus.applyIfValid`：`scope.focusedChild == null` 是硬条件，
+    // 不满足就**静默丢弃**）。这一条永远与输入栏同时在场，点「编辑目标」时
+    // 输入栏正握着焦点 ⇒ autofocus 失效、键盘还连着输入栏。
+    // 真机 2026-11-04 实测到的就是这个：点编辑后打的字全进了消息输入框。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_editing) return;
+      _draftFocus.requestFocus();
+    });
   }
 
   /// 保存：`/goal edit <objective>`（`command-goal/src/index.ts:43,154-164`）。
   Future<void> _save() async {
-    final objective = _draft.text.trim();
+    // **换行折成空格**：输入框是单行，但粘贴进来的文本仍可能带换行，而连接器
+    // 在拼命令行之前就拒收带换行的 `line`（`connector/src/handlers.ts:1242-1246`）。
+    // 折的是"换行"，不是正文里的空格 —— 目标是一句话，句中的空格照留。
+    final objective = _draft.text
+        .replaceAll(RegExp(r'\s*[\r\n]+\s*'), ' ')
+        .trim();
     if (objective.isEmpty) return;
     final ok = await _run('/goal edit $objective');
     if (!mounted) return;

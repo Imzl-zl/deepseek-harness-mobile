@@ -3926,6 +3926,10 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       // 与 `_onDelta` 同一条路径：逐条投影、逐条隔离、upsert 进 store。
       final items = <ChatItem>[];
       for (final event in page.events) {
+        // **状态事件不落条目**（判据见 [_isStateOnlyEvent]）：翻页这条入口
+        // 与收帧那条必须同一条规则，否则"往回翻一页"就会把 `goal/change`
+        // 变成一行永远不显示的 `OtherItem` 塞进本地库。
+        if (_isStateOnlyEvent(event.type)) continue;
         try {
           final projected = projectEvent(
             type: event.type,
@@ -4010,6 +4014,14 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     final raw = event.data is Map ? (event.data as Map)['turn'] : null;
     return raw is int ? raw : _rows.currentTurnOf(sid);
   }
+
+  /// **状态事件**：只改投影、没有可渲染的正文，所以两条投影入口（收帧 / 翻页）
+  /// 都不落条目。
+  ///
+  /// 今天只有 `goal/change`（目标条那一格，`goal/src/index.ts:142-155` 的 fold）。
+  /// `agent/inbox/spliced` **不在这里**：它还要喂收件箱追踪器，只在收帧路径上
+  /// `continue`（见 [_onDelta]）—— 翻页翻到的旧插队不该重算追踪器。
+  static bool _isStateOnlyEvent(String type) => type == 'goal/change';
 
   void _onDelta(String sid, SessionDelta delta) {
     if (_disposed) return;
@@ -4108,7 +4120,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
         //
         // Note: 为什么是"事件到了就重读"而不是动作成功后自己重读 —— 见
         // `.agents/notes/implemented/2026-11-04-goal-bar-on-phone.md`。
-        if (event.type == 'goal/change') {
+        if (_isStateOnlyEvent(event.type)) {
           goalChanged = true;
           continue;
         }

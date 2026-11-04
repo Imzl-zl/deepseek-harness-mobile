@@ -160,9 +160,10 @@ GoalView? parseGoalView(Object? raw) {
 
   final blockedReason = _blockedReasonOf(snapshot['blockedReason']);
   // 声明了受阻却没有原因：DSH 的 wire schema 允许（`blockedReason` 是可选的），
-  // 而折叠器保证 blocked 一定有它（`goal/src/index.ts:80-81` 的注释 +
-  // `command-goal/src/index.ts:80-81` 的断言）。这里**不补一句自己编的话**：
-  // 缺了就当没有（条子仍然画「受阻的目标」，只是没有 title 可显示）。
+  // 而折叠器保证 blocked 一定有它（`goal/src/fold.ts:101-113`：blocked 的快照
+  // 恰好是六个键、含 `blockedReason`；`command-goal/src/index.ts:80-81` 也断言过）。
+  // 这里**不补一句自己编的话**：缺了就当没有（条子仍然画「受阻的目标」，只是没有
+  // title 可显示）。
   return GoalView(
     id: id,
     revision: revision,

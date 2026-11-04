@@ -88,9 +88,10 @@ DSH 有 `goals` 的 Remote（`pause` / `resume` / `clear` / `edit`），手机�
 `matched:false` ⇒「这台电脑上没有 /goal 命令」；`kind:'error'` ⇒ **DSH 原文照显**。
 **成功不弹**：条子自己会变（§5），而 `DshToast` 的第一条规则就是"结果看得见的不弹"。
 
-代价（如实记）：命令会在对话流里落一张命令卡 —— `command/run` + `command/done`
-是 DSH 的生命周期事件，随会话流到手机。这是"不开新方法"这条决定的直接后果，
-不是缺陷；要消掉它就得给连接器加 `goal.*` 四个方法。
+代价（如实记）：命令会在对话流里落一张 `/goal` 命令卡（标题 `/goal`、摘要 `Goal paused`
+这种，`CommandCard` 读 `command/run` + `command/done`）；它属于执行那一刻的轮次，
+默认收在轮组的**折叠过程**里（展开那一轮才看得见）。这是"不开新方法"这条决定的
+直接后果，不是缺陷；要消掉它就得给连接器加 `goal.*` 四个方法。
 
 ## 5. 刷新：`goal/change` 到达就重读投影
 
@@ -122,14 +123,23 @@ DSH 有 `goals` 的 Remote（`pause` / `resume` / `clear` / `edit`），手机�
    定高会把文字裁掉。标准字号下量到的就是 36（`goal_bar_test.dart` 钉住）。
 4. **底部预算让出空间**：目标条出现时 `_BottomBudget` 的 `reserved` 加
    `kGoalBarBlockHeight`（36 + 下边距 6），否则接管卡 + 候选面板 + 目标条三者相加会顶出屏幕。
+5. **动作钮是 28×28，低于设计文档 §触摸目标 的 44dp**：条高被 DSH 定死在 36
+   （`GoalBar.module.css:29`）、条内上下各 4px 内边距 —— 28 是 36 里放得下的最大值
+   （DSH 自己也是 28，那是鼠标）。要 44 就得把条加高，属于"手机不是缩小版桌面"的另一条路，
+   这一版没走；三个钮之间有 10px 间隙（`.actions { gap: 10px }`），降低点错隔壁的概率。
 
 ## 7. 验证
 
 | 命令 | 覆盖 |
 |---|---|
-| `cd app && flutter test test/goal_bar_test.dart` | **20 项**：解析三态、`AppModel.goal`、四个命令行、阶段/动作可见性、36dp、行内编辑、清除即隐、`goal/change` 重读 |
+| `cd app && flutter test test/goal_bar_test.dart` | **29 项**：解析三态、`AppModel.goal`、四个命令行、阶段/动作可见性、36dp、行内编辑（焦点 / 保存 / 取消 / 换行折叠）、三个失败分支、清除即隐、`goal/change` 重读、形状漂移留声、翻页不落条目、chat_page 里"目标条在排队条之上" |
 | `cd app && flutter test test/wire_shapes_replay_test.dart` | `goal` 键按**连接器金样**回放（两层：`values.goal` 与 `values.goal.goal`） |
 | `node app/tools/verify-platform-boundary.mjs` | 改 `app/lib` 必跑 |
+
+真机（`d61cf622`，2026-11-04，dsh-test 里的一个会话）：`/goal say OK` → 条出现
+（进行中的目标 · say OK）→ 点暂停 → 已暂停的目标 + 恢复钮 → 点恢复 → 进行中的目标 +
+暂停钮 → 点清除 → 条立刻消失。`/goal bar edit check` 建目标 → 编辑 → 打字（焦点在编辑框，
+不再漏进输入栏）→ 保存 → 条上正文变成 `bar edit checkXY` → 清除。命令卡在那一轮的折叠过程里可见。
 
 金样侧的 `goal` 值在 `connector/tests/support/fixture-handlers.ts` 的
 `FULL_PROJECTION_VALUES`（15 个键），由 `connector/tests/wire-shapes.test.ts` 生成并守住。
@@ -142,3 +152,7 @@ DSH 有 `goals` 的 Remote（`pause` / `resume` / `clear` / `edit`），手机�
   命令回执里说 `Rounds: 3/256`）。字段解析了但今天没有消费方。
 - **`/goal <objective>` 建目标不在条上**：DSH 同一条 —— 新建走输入框那条命令。
 - **命令卡**（§4）：每次点动作都会在对话流里多一张 `/goal` 的命令卡。
+- **动作发出后立刻切会话**：命令按发送那一刻的当前会话落地（`executeCommand` 读
+  `AppModel.currentSid`），条子自己不持有 sid。窗口是"点了到应答回来"那几百毫秒，
+  后果是那条命令落到另一个会话上（`/goal pause` 在没目标的会话里回一句
+  `No goal is currently set`）。要同时做两个动作才碰得到，没有为此加参数。

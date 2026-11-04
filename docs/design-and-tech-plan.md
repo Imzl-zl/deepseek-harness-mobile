@@ -425,7 +425,7 @@ DSH 客户端对**非 loopback** 的浏览器把持久化降级为 `memory`,该�
 
 **目标、任务清单和自动化任务是三种不同的会话能力**:
 
-- 目标:DSH `ui-goal/src/client/GoalBar.tsx:1-8,138-176` 挂在 `conversation.input.dock`,展示当前目标与阶段,提供暂停/恢复、内联编辑、清除;新建走 `/goal`,不在条上创建。变更使用 `ctx.remote.goals.edit/pause/resume/clear`(`ui-goal/src/client/index.ts:121-140`),必须带当前 id+revision 做 CAS。手机原型只模拟动作并标示演示,不把本地状态说成电脑已变更。
+- 目标:DSH `ui-goal/src/client/GoalBar.tsx:1-8,138-176` 挂在 `conversation.input.dock`,展示当前目标与阶段,提供暂停/恢复、内联编辑、清除;新建走 `/goal`,不在条上创建。手机这一版**变更也走 `/goal pause|resume|clear|edit <objective>` 斜杠命令**(DSH 那四个 `ctx.remote.goals.*` 不在本仓方法面上;CAS 的 id+revision 由宿主按当前状态取),规格见 `subsystems/goal-bar.md` §4。手机原型只模拟动作并标示演示,不把本地状态说成电脑已变更。
 - 任务清单:DSH `ui-conversation/src/client/skeleton/TodoPanel.tsx:65-108` 同样挂在输入区 dock,默认收起,点击标题展开;列表来自 `useProjection('todos')`,状态仅 pending/in_progress/completed。它是**只读进度**而非「自动化任务」,不能给每项虚构停止/删除按钮。
 - 自动化任务:DSH `ui-schedule/src/client/TaskManagerPage.tsx:99-211` 是独立主面板(schedules),有全部/已开启/已结束、搜索、详情;`TaskDetail.tsx:761-847,850-863` 允许编辑规则与确认删除,删除会停止后续触发并删除记录,保留原会话(`task-manager-locales.ts:269-278`)。不能把「删除」标成「暂停」;任务结束后只读。当前 AA `dsh-bridge/src/bridge-service.ts` 与 `dsh-bridge-next/src/host/dsh-runtime/router.ts` 未找到 goals/schedule/todos 方法,这些远端动作须补桥接,原型不得假装已远程提交。
 
