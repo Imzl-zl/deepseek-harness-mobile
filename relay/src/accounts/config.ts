@@ -23,6 +23,13 @@ export interface AuthConfig {
     readonly requireEmailVerification: boolean
     /** 空数组 = 不限制。 */
     readonly emailDomains: readonly string[]
+    /**
+     * 已注册账号数的上限；`null` = 不限。
+     *
+     * 口径是 `COUNT(*) FROM users`，**含 suspended**：只数 active 会被
+     * "停用 → 再注册"绕开，而停用不是注销（账号还在、还能被恢复）。
+     */
+    readonly maxAccounts: number | null
   }
   readonly limits: {
     readonly defaultMaxConnectors: number
@@ -144,6 +151,15 @@ export function parseAuthConfig(raw: unknown, options: ParseAuthOptions): AuthCo
   }
   const requireEmailVerification = boolOf(registration['requireEmailVerification'], true)
   const emailDomains = domainsOf(registration['emailDomains'])
+  const maxAccountsRaw = registration['maxAccounts']
+  let maxAccounts: number | null = null
+  if (maxAccountsRaw !== undefined && maxAccountsRaw !== null) {
+    const value = intOf(maxAccountsRaw)
+    if (value === undefined || value < 1) {
+      fail('registration.maxAccounts 必须是正整数，或 null（不限）')
+    }
+    maxAccounts = value
+  }
 
   const limitsRaw = raw['limits']
   if (limitsRaw !== undefined && !isRecord(limitsRaw)) fail('limits 必须是对象')
@@ -186,6 +202,7 @@ export function parseAuthConfig(raw: unknown, options: ParseAuthOptions): AuthCo
       mode: registrationMode,
       requireEmailVerification,
       emailDomains,
+      maxAccounts,
     },
     limits: { defaultMaxConnectors, defaultQuotaBytes },
     adminEmails,

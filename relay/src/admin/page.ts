@@ -681,8 +681,11 @@ ${UI_KIT_JS}
       }
       var userKpis = el('div', undefined, 'kpis')
       ;[
-        ['账号数', state.users.length, ''],
-        ['注册', state.auth.registration === 'open' ? '开放' : '关闭', ''],
+        ['账号数', state.auth.registrationCount ?? state.users.length, ''],
+        ['注册', state.auth.registration === 'open'
+          ? (state.auth.maxAccounts !== null && state.auth.registrationCount >= state.auth.maxAccounts
+            ? '名额已满' : '开放')
+          : '关闭', ''],
         ['默认电脑数', state.auth.defaultMaxConnectors, ''],
         ['默认额度', state.auth.defaultQuotaBytes === null ? '不限' : bytes(state.auth.defaultQuotaBytes), '']
       ].forEach(function (item) {
@@ -1135,11 +1138,33 @@ ${UI_KIT_JS}
         modeButtons.push(b); seg.appendChild(b)
       })
       modeRow.appendChild(seg); regBody.appendChild(modeRow)
+      // 名额（registration.maxAccounts，null = 不限）：口径是**含已停用**的账号总数 ——
+      // 停用不是注销，"停用→再注册"不能成为绕开名额的路。所以这行必须写明"含已停用"。
+      regBody.appendChild(el(
+        'p',
+        '已注册 ' + (state.auth.registrationCount ?? 0) + ' 个账号'
+        + (state.auth.maxAccounts === null
+          ? '，当前不限名额。'
+          : '，名额上限 ' + state.auth.maxAccounts + '（含已停用）。'),
+        'cap',
+      ))
+      var maxAccounts = fieldOf('注册名额上限',
+        state.auth.maxAccounts === null ? '' : state.auth.maxAccounts, 'number', '留空 = 不限')
+      regBody.appendChild(maxAccounts.wrap)
       var domains = fieldOf('邮箱域名白名单', (authState.emailDomains || []).join(', '), 'text', '留空 = 不限；多个用逗号分隔')
       regBody.appendChild(domains.wrap)
       var saveReg = btn('保存', function () {
+        var rawLimit = maxAccounts.input.value.trim()
+        var limit = rawLimit === '' ? null : Number(rawLimit)
+        if (limit !== null && (!isFinite(limit) || limit < 1 || Math.floor(limit) !== limit)) {
+          Kit.toast('名额要正整数，或留空表示不限', 'bad'); return
+        }
         saveReg.disabled = true
-        post('/admin/api/registration', { mode: currentMode, emailDomains: domains.input.value }).then(function (data) {
+        post('/admin/api/registration', {
+          mode: currentMode,
+          emailDomains: domains.input.value,
+          maxAccounts: limit,
+        }).then(function (data) {
           if (data) refresh(true); else saveReg.disabled = false
         })
       })

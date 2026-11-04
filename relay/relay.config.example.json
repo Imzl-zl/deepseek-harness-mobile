@@ -23,7 +23,8 @@
     "registration": {
       "mode": "open",
       "requireEmailVerification": true,
-      "emailDomains": ["qq.com"]
+      "emailDomains": ["qq.com"],
+      "maxAccounts": null
     },
     "limits": {
       "defaultMaxConnectors": 2,

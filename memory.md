@@ -5,6 +5,23 @@
 
 ## 现在（2026-11-04）
 
+- **中转三块收口（11-04 第六批）**：
+  ① **管理台令牌可达性**：线上 `/admin` 正文的 sha256 与本地 `ADMIN_PAGE` **逐字节相同**
+  （`82352034…efbcbf`）—— 功能就在线上，不是旧镜像。改的是文档（`relay-accounts.md` §8
+  原写"管理台不签发自己的令牌"）、令牌页那句"不归属账号 / 不占配额"（账号列显示「未归属」），
+  以及顶栏在 Bearer 模式改落 `#/tokens` 并聚焦「添加我的电脑」（不再跳 `/login`）。
+  ② **配对降级可见**：出码登记失败但有 `lan` 时，载荷带 `lanOnly: true`（契约 §12.1）；
+  命令 / 插件面板 / 手机三处显式说"只能同一 WiFi"；手机对降级码**不换票**（那条路注定 409）。
+  同批加 `device.pairing_prefer`（`auto`/`direct`/`relay`，只改先试哪条、失败仍回落）与配对页
+  "两条路 + 正在试哪条"。connector **845** / app **1738**。
+  ③ **注册名额**：`auth.registration.maxAccounts`（`null` = 不限，口径 `COUNT(*)` **含
+  suspended**）；`/api/auth/config` 回 `registration.full`，注册页整页置灰（closed / full
+  文案分开）；发码 403 / 注册 409 `registration-full`；裁决在 `db.createUser` 的**同一个事务**里
+  （并发只进一个）；管理台「设置」可改。relay **173**。
+  笔记 `implemented/2026-11-04-admin-token-page-reachability.md`、
+  `implemented/2026-11-04-pairing-degradation-is-visible.md`、
+  `implemented/2026-11-04-registration-account-quota.md`。真机 C 实测见「未验」。
+
 - **底部 dock 不再是一整块面板（11-04 第五批）**：壁纸被一条整宽的 `bgBase` 挡到屏幕底
   （2026-10-20 为了盖 sidebar 灰带就是这么涂的）。现在**包裹层与输入栏 band 都不涂底色**，
   输入卡 / 目标条 / 排队条 / 统计药丸各自浮起来；顺带修掉目标条编辑行"字与图标不水平"
@@ -151,8 +168,9 @@
   邮箱注册（默认只限 `qq.com`，6 位码 / 10 分钟 / scrypt）、会话 cookie + CSRF、控制台建电脑、
   首次 `?id=` 绑定 `connectorId`；默认 **2 台电脑 / 5 GiB 月额度**，管理员可在 `/admin` 用户区改；
   管理台「用量」面板给出账号数 / 总用量 / 在线电脑 / 已配对设备 KPI，以及按已用降序的用户表（含零用量）、未归属主体单表；
-  管理台自己不签发令牌，顶栏「我的电脑」和令牌页「添加我的电脑」都指向 `/console`（管理员与普通用户同一套添加电脑流程）。
-  管理台「设置」可直接改默认电脑数、新账号默认月额度、SMTP 与注册开关/邮箱域名：先写回配置，再改运行时策略，不用重启；密码留空 = 不改。
+  管理台**能**签发自己的令牌（令牌页「添加我的电脑」），签出的是不归属账号的 break-glass 令牌；
+  顶栏在账号会话下进 `/console`、Bearer 模式落到令牌页（11-04 更正：原先写"管理台自己不签发"，那只是 11-02 那一版）。
+  管理台「设置」可直接改默认电脑数、新账号默认月额度、SMTP 与注册开关/邮箱域名/名额上限：先写回配置，再改运行时策略，不用重启；密码留空 = 不改。
   用户端与管理台视觉统一为纸张底色 + 衬线标题 + 细线分隔 + 朱红强调，亮/暗跟随系统。
   电脑侧「连接」卡令牌行加了「去注册 / 登录」外链（按 `relayUrl` 推导 `/login`，插件 0.1.11）；
   空 `relayTokenRef` 时面板按默认格 `relay-connector` 读写，不再拒绝贴令牌。
@@ -370,10 +388,10 @@
 | `node app/tools/verify-platform-boundary.mjs` | 728 项（25 条规则自检 + 167 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1730 项（约 1 分钟） |
+| `cd app && flutter test` | 1738 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **845** 项 |
-| `cd relay && pnpm typecheck && node --test` | 类型 + **161** 条 |
+| `cd relay && pnpm typecheck && node --test` | 类型 + **173** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
 
@@ -425,3 +443,4 @@
 - 2026-10-30 多机四步（归属/凭据分槽/拨号竞速/独占与切换）+ 中转可观测·限额·面板 — `implemented/2026-10-30-*`（九篇；方案页留在 `proposed/`）
 - 2026-11-04 轨迹页进入即重读（`viewFocus`）+ 空态三态 — `implemented/2026-11-04-trajectory-view-refetch.md`；现状 `subsystems/trajectory-page.md` §2.1/§2.2/§8
 - 2026-11-04 目标条（`goal` 投影第 15 个键 + 四个动作走 `/goal` + `goal/change` 即重读） — `implemented/2026-11-04-goal-bar-on-phone.md`；现状 `subsystems/goal-bar.md`
+- 2026-11-04 中转三块收口：管理台令牌可达性 / 配对降级可见 + 拨号顺序偏好 / 注册名额上限 — `implemented/2026-11-04-admin-token-page-reachability.md`、`implemented/2026-11-04-pairing-degradation-is-visible.md`、`implemented/2026-11-04-registration-account-quota.md`；现状 `relay-accounts.md` §2/§4.1/§8、`remote-channel.md` §12.1、`ui-state.md` §2

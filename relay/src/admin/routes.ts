@@ -86,6 +86,10 @@ export interface AdminStateView {
     mode: 'accounts'
     registration: string
     emailDomains: readonly string[]
+    /** 已注册账号数的上限；`null` = 不限。 */
+    maxAccounts: number | null
+    /** 当前账号总数（**含 suspended**），与 `maxAccounts` 同一口径。 */
+    registrationCount: number
     defaultMaxConnectors: number
     defaultQuotaBytes: number | null
     smtp: {
@@ -137,8 +141,12 @@ export interface AdminOps {
   setConnectorAuth(mode: 'open' | 'required', limit: number | null): Promise<{ ok: boolean; error?: string }>
   /** 写回 SMTP 并重建发信通道（密码留空 = 保持原值）。 */
   setSmtp(input: AdminSmtpInput): Promise<{ ok: boolean; error?: string }>
-  /** 写回注册开关与邮箱域名白名单（运行时立即生效）。 */
-  setRegistration(mode: 'open' | 'closed', emailDomains: readonly string[]): Promise<{ ok: boolean; error?: string }>
+  /** 写回注册开关、邮箱域名白名单与注册名额上限（运行时立即生效）。 */
+  setRegistration(
+    mode: 'open' | 'closed',
+    emailDomains: readonly string[],
+    maxAccounts: number | null,
+  ): Promise<{ ok: boolean; error?: string }>
   /** 写回新账号的默认电脑数 / 默认月额度。 */
   setLimitsDefaults(
     defaultMaxConnectors: number,
@@ -166,7 +174,7 @@ export interface AdminApi {
   /** 发一封测试邮件（验证 SMTP 配置）。 */
   testMail(to: string): Promise<AdminReply>
   setSmtp(input: AdminSmtpInput): Promise<AdminReply>
-  setRegistration(mode: 'open' | 'closed', emailDomains: readonly string[]): Promise<AdminReply>
+  setRegistration(mode: 'open' | 'closed', emailDomains: readonly string[], maxAccounts: number | null): Promise<AdminReply>
   setLimitsDefaults(defaultMaxConnectors: number, defaultQuotaBytes: number | null): Promise<AdminReply>
 }
 
@@ -345,6 +353,11 @@ export function createAdminRoutes(api: AdminApi, page: string): { handle(request
       if (request.path === '/admin/api/registration') {
         const mode = body['mode']
         if (mode !== 'open' && mode !== 'closed') return json(400, { error: 'mode-invalid' })
+        // `maxAccounts` 必须显式给（`null` = 不限）：缺字段当作非法，而不是"顺手取消上限"。
+        const rawMax = body['maxAccounts']
+        if (rawMax !== null && (typeof rawMax !== 'number' || !Number.isInteger(rawMax) || rawMax < 1)) {
+          return json(400, { error: 'max-accounts-invalid' })
+        }
         const raw = body['emailDomains']
         let items: unknown[]
         if (raw === undefined || raw === null) items = []
@@ -359,7 +372,7 @@ export function createAdminRoutes(api: AdminApi, page: string): { handle(request
           if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)) return json(400, { error: 'domains-invalid' })
           if (!domains.includes(domain)) domains.push(domain)
         }
-        return api.setRegistration(mode, domains)
+        return api.setRegistration(mode, domains, rawMax as number | null)
       }
 
       if (request.path === '/admin/api/limits-defaults') {

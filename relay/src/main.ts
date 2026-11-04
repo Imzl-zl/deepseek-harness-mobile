@@ -375,7 +375,12 @@ type RuntimeAuthConfig = {
   baseUrl?: string
   dbPath: string
   serverName: string
-  registration: { mode: 'open' | 'closed'; requireEmailVerification: boolean; emailDomains: string[] }
+  registration: {
+    mode: 'open' | 'closed'
+    requireEmailVerification: boolean
+    emailDomains: string[]
+    maxAccounts: number | null
+  }
   limits: { defaultMaxConnectors: number; defaultQuotaBytes: number | null }
   adminEmails: readonly string[]
   smtp?: SmtpConfig
@@ -542,13 +547,18 @@ const adminOps: AdminOps | undefined = config.admin === undefined && authConfig 
   async setRegistration(
     mode: 'open' | 'closed',
     emailDomains: readonly string[],
+    maxAccounts: number | null,
   ): Promise<{ ok: boolean; error?: string }> {
     if (runtimeAuth === undefined) return { ok: false, error: '账号模式未开启' }
     try {
-      await setRegistrationInConfig(configPath, mode, emailDomains)
+      await setRegistrationInConfig(configPath, mode, emailDomains, maxAccounts)
       runtimeAuth.registration.mode = mode
       runtimeAuth.registration.emailDomains = [...emailDomains]
-      console.log(`注册策略已更新：${mode}，域名 ${emailDomains.length === 0 ? '不限' : emailDomains.join(', ')}`)
+      runtimeAuth.registration.maxAccounts = maxAccounts
+      console.log(
+        `注册策略已更新：${mode}，域名 ${emailDomains.length === 0 ? '不限' : emailDomains.join(', ')}`
+        + `，名额 ${maxAccounts === null ? '不限' : maxAccounts}`,
+      )
       return { ok: true }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }

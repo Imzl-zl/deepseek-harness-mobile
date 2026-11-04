@@ -92,7 +92,14 @@ export interface CreateSessionInput {
 export interface AccountsDb {
   /** 库里那枚 HMAC 密钥（CSRF 派生用）。只在本进程内使用。 */
   readonly secret: string
-  createUser(input: CreateUserInput): PublicUser
+  /**
+   * 建账号。
+   *
+   * `options.maxAccounts` 是**这一次插入时的名额上限**（`null` = 不限）：
+   * "数一遍 + 插入"在同一个事务里完成，名额撞车由数据库而不是调用方裁决。
+   * 满了抛 {@link RegistrationFullError}。
+   */
+  createUser(input: CreateUserInput, options?: { maxAccounts?: number | null }): PublicUser
   findByEmail(email: string): UserRecord | undefined
   findById(id: string): UserRecord | undefined
   listUsers(limit: number): PublicUser[]
@@ -117,6 +124,14 @@ export class EmailTakenError extends Error {
   constructor(email: string) {
     super(`邮箱已被注册：${email}`)
     this.name = 'EmailTakenError'
+  }
+}
+
+/** 注册名额已满。**由插入时的同名事务裁出来**，不是入口处那次预检的产物。 */
+export class RegistrationFullError extends Error {
+  constructor(maxAccounts: number) {
+    super(`注册名额已满（上限 ${maxAccounts}）`)
+    this.name = 'RegistrationFullError'
   }
 }
 
@@ -291,9 +306,9 @@ export function createAccountsDb(path: string): AccountsDb {
   return {
     secret,
 
-    createUser(input) {
+    createUser(input, options) {
       const id = newId('u_')
-      try {
+      const insert = (): void => {
         insertUser.run(
           id,
           input.email,
@@ -305,6 +320,28 @@ export function createAccountsDb(path: string): AccountsDb {
           input.maxConnectors,
           input.quotaBytes,
         )
+      }
+      const maxAccounts = options?.maxAccounts ?? null
+      try {
+        if (maxAccounts === null) {
+          insert()
+        } else {
+          // **数一遍 + 插入在同一个事务里**：两个注册请求只会有一个看到"还差一个名额"。
+          // 单实例 + `node:sqlite` 的同步执行已经让它们不会交错；事务把这条判据
+          // 写进数据库，而不是依赖"Node 是单线程"这个巧合。
+          // Note: 口径（含 suspended）与为何在事务里裁决 —— 见
+          // `.agents/notes/implemented/2026-11-04-registration-account-quota.md`
+          db.exec('BEGIN IMMEDIATE')
+          try {
+            const count = numberOrNull(countUsers.get()?.['n']) ?? 0
+            if (count >= maxAccounts) throw new RegistrationFullError(maxAccounts)
+            insert()
+            db.exec('COMMIT')
+          } catch (error) {
+            try { db.exec('ROLLBACK') } catch { /* 事务已经结束（COMMIT 之后出错） */ }
+            throw error
+          }
+        }
       } catch (error) {
         if (error instanceof Error && error.message.includes('UNIQUE constraint failed: users.email')) {
           throw new EmailTakenError(input.email)
@@ -330,6 +367,7 @@ export function createAccountsDb(path: string): AccountsDb {
       return selectUsers.all(limit).map((row) => publicUserOf(rowToUser(row)))
     },
 
+    /** 库里**全部**账号数（含 `suspended`）。注册名额按这个数判，见 `AuthConfig.registration.maxAccounts`。 */
     countUsers() {
       return numberOrNull(countUsers.get()?.['n']) ?? 0
     },

@@ -89,6 +89,7 @@ export const AUTH_PAGE = `<!doctype html>
 
       <p class="hint" id="domain-hint" hidden></p>
       <p class="hint" id="closed-hint" hidden>这台中转已关闭注册。</p>
+      <p class="hint" id="full-hint" hidden>注册名额已满。</p>
     </section>
   </main>
 </div>
@@ -175,15 +176,19 @@ export const AUTH_PAGE = `<!doctype html>
     if (mode !== 'login' && data.registration && data.registration.requireEmailVerification === false) {
       show('code-field', false)
     }
-    if (data.registration && data.registration.mode === 'closed') {
-      q('closed-hint').hidden = false
-      if (mode === 'register') {
-        q('submit').disabled = true
-        q('email').disabled = true
-        q('code').disabled = true
-        q('password').disabled = true
-        q('send').disabled = true
-      }
+    // 两种"不能注册"：closed（不许注册）与 full（名额用完）。**文案分开**，
+    // 但置灰是同一件事（复用同一条分支）—— 否则用户会以为"登记一下就能进"。
+    // full 只在注册页显示：登录与重置不受名额影响（B5）。
+    var closed = data.registration && data.registration.mode === 'closed'
+    var full = data.registration && data.registration.full === true
+    if (closed) q('closed-hint').hidden = false
+    if (mode === 'register' && (closed || full)) {
+      if (full && !closed) q('full-hint').hidden = false
+      q('submit').disabled = true
+      q('email').disabled = true
+      q('code').disabled = true
+      q('password').disabled = true
+      q('send').disabled = true
     }
   }).catch(function () { /* 配置拉不到不挡提交，服务端还会再判一次 */ })
 

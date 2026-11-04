@@ -51,7 +51,14 @@ import {
   type CookieOptions,
 } from './session.ts'
 import { publicAuthConfig, type AuthConfig } from './config.ts'
-import { publicUserOf, type AccountsDb, type PublicUser, type SessionRecord, type UserRecord } from './db.ts'
+import {
+  RegistrationFullError,
+  publicUserOf,
+  type AccountsDb,
+  type PublicUser,
+  type SessionRecord,
+  type UserRecord,
+} from './db.ts'
 import { AUTH_PAGE } from '../ui/auth-page.ts'
 import { CONSOLE_PAGE } from '../ui/console-page.ts'
 
@@ -333,6 +340,21 @@ const limited = (limiter: RateLimiter, key: string): AccountsReply | undefined =
   const bodyOf = (request: AccountsRequest): Record<string, unknown> =>
     isRecord(request.body) ? request.body : {}
 
+  /**
+   * 注册名额是否已满（`maxAccounts` 为 `null` = 永远不满）。
+   *
+   * 口径是 `COUNT(*) FROM users`，**含 suspended**：停用不是注销，"停用→再注册"
+   * 不能成为绕开名额的路。这里是**入口处的预检**（让页面置灰、别让人拿到码才失败）；
+   * 真正裁决在 `db.createUser` 的同一个事务里 —— 两者都留着，不是二选一。
+   *
+   * Note: 为什么口径含 suspended、为什么裁决必须在事务里 —— 见
+   * `.agents/notes/implemented/2026-11-04-registration-account-quota.md`
+   */
+  const registrationFull = (): boolean => {
+    const max = config.registration.maxAccounts
+    return max !== null && db.countUsers() >= max
+  }
+
   const emailOf = (body: Record<string, unknown>, policy = { domains: config.registration.emailDomains }): { email: string } | AccountsReply => {
     const raw = typeof body['email'] === 'string' ? body['email'] : ''
     const problem = emailProblem(raw, policy)
@@ -371,7 +393,14 @@ const limited = (limiter: RateLimiter, key: string): AccountsReply | undefined =
       // ---- 公共配置 ----
       if (path === '/api/auth/config') {
         if (method !== 'GET') return failure(405, 'method-not-allowed', '方法不对')
-        return json(200, { ...publicAuthConfig(config), accounts: true })
+        const publicConfig = publicAuthConfig(config)
+        return json(200, {
+          ...publicConfig,
+          accounts: true,
+          // `full` 与 `mode` 是**两种状态**：closed 是"不许注册"，full 是"名额用完"。
+          // 页面据此分别置灰并显示不同文案（复用同一条禁填分支）。
+          registration: { ...publicConfig.registration, full: registrationFull() },
+        })
       }
 
       // ---- 发验证码 ----
@@ -384,6 +413,10 @@ const limited = (limiter: RateLimiter, key: string): AccountsReply | undefined =
         // 注册关闭只挡注册；密码重置仍然可用（老用户要能找回密码）。
         if (purpose === 'register' && config.registration.mode === 'closed') {
           return failure(403, 'registration-closed', '注册已关闭')
+        }
+        // 名额满了也**在发码这一关**就拒：让人收到验证码、填完密码再被拒是白跑一趟。
+        if (purpose === 'register' && registrationFull()) {
+          return failure(403, 'registration-full', '注册名额已满')
         }
         const denied = limited(options.limiters.codeIp, `code-ip:${ip}`)
         if (denied !== undefined) return denied
@@ -429,6 +462,10 @@ const limited = (limiter: RateLimiter, key: string): AccountsReply | undefined =
         if (config.registration.mode === 'closed') {
           return failure(403, 'registration-closed', '注册已关闭')
         }
+        // 入口预检（409）：给页面一个能照做的动作；**裁决仍在插入事务里**。
+        if (registrationFull()) {
+          return failure(409, 'registration-full', '注册名额已满')
+        }
         const denied = limited(options.limiters.registerIp, `register-ip:${ip}`)
         if (denied !== undefined) return denied
         const parsed = emailOf(body)
@@ -463,8 +500,15 @@ const limited = (limiter: RateLimiter, key: string): AccountsReply | undefined =
             // 默认额度在注册时就落成具体值：之后管理员改默认值只影响新账号，
             // 不会把老用户的用量突然按新上限截断。`null` = 不限。
             quotaBytes: config.limits.defaultQuotaBytes,
+          }, {
+            // 名额与插入同一个事务：并发注册里只有一个能拿到最后一个位置。
+            maxAccounts: config.registration.maxAccounts,
           })
         } catch (error) {
+          if (error instanceof RegistrationFullError) {
+            options.log?.info('auth.register-full', { limit: config.registration.maxAccounts })
+            return failure(409, 'registration-full', '注册名额已满')
+          }
           options.log?.warn('auth.register-failed', error)
           return failure(409, 'email-taken', '这个邮箱已经注册过，直接登录即可')
         }

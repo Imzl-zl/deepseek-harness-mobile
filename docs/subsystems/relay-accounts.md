@@ -21,6 +21,7 @@
 | `dbPath` | `<配置目录>/data/relay.db` | SQLite 文件;**挂目录,不挂单文件**(WAL 会生成 `-wal` / `-shm`) |
 | `serverName` | `DSH 中转` | 登录页与邮件标题 |
 | `registration.mode` | `"open"` | `open` / `closed`;`closed` 只挡注册,不挡密码重置 |
+| `registration.maxAccounts` | `null` | 已注册账号数上限(`COUNT(*) FROM users`,**含 suspended**);`null` = 不限;到上限时注册页整页置灰,发码 403、注册 409 |
 | `registration.requireEmailVerification` | `true` | 开启时必须有 `smtp` |
 | `registration.emailDomains` | `[]` | 空 = 不限;当前部署是 `["qq.com"]` |
 | `limits.defaultMaxConnectors` | `2` | 每个账号的电脑数;`users.max_connectors` 可单人覆盖 |
@@ -46,6 +47,8 @@
 - 登录失败**连续 5 次锁该来源地址 15 分钟**(lockout.ts,与 /admin 认证失败共用一份计数);锁定期内连正确密码也不放行,成功一次清零,到期自动放行;lockout.failures: 0 关闭。锁定按 emoteAddress 算 —— 反代后面要按真实 IP 分桶,得先配好信任边界。
 - 会话 cookie:`dsh_relay_session`(HttpOnly、SameSite=Lax),CSRF 双提交 `dsh_relay_csrf`;`Secure` 只在请求 Host 等于 `baseUrl` 的 host 时加,本地 `127.0.0.1` 调试不会被浏览器拒收。
 - 注册成功即登录;密码重置会吊销该账号全部会话;改密码保留当前会话、吊销其它会话。
+- **注册名额**:`registration.maxAccounts` 到上限后三处一起拦 —— `/api/auth/config` 的 `registration.full`(页面据此一进来就置灰)、发码 403 `registration-full`(别让人拿到码才失败)、注册 409 `registration-full`(兜底裁决在"数一遍 + 插入"的同一个事务里,并发注册只有一个能拿到最后一个位置)。口径是**含 suspended** 的账号总数:停用不是注销,"停用→再注册"不能绕过名额。
+- `closed` 与 `full` 是**两种状态**:`closed` 优先、各自的状态码与文案;两者都**不影响登录、已登录用户与密码重置**。
 - **Linux.do 未接**:当前没有 OAuth 路由;`auth` 段不读 OAuth 配置。
 
 ### 4.2 电脑令牌与首连绑定
@@ -68,7 +71,7 @@
 |---|---|---|
 | GET | `/login` `/register` `/reset` | 认证页(单文件内联) |
 | GET | `/console` | 用户控制台;未登录 302 到 `/login` |
-| GET | `/api/auth/config` | 注册开关、允许域名、服务名(无密钥) |
+| GET | `/api/auth/config` | 注册开关、允许域名、服务名与名额是否已满（`registration.full`）（无密钥） |
 | POST | `/api/auth/email-code` | 发验证码;注册/重置共用,重置不泄露邮箱是否存在 |
 | POST | `/api/auth/register` `/login` `/logout` | 注册 / 登录 / 退出 |
 | GET | `/api/auth/me` | 当前用户与 CSRF 值 |
@@ -101,7 +104,7 @@
 - 登录页:左品牌、右表单;注册/重置共用一张壳,按路径显示字段。
 - 控制台:概览 / 我的电脑 / 账号;空状态一句话;添加电脑后令牌弹窗必须勾选"已保存"才能关闭。
 - 管理台:`/admin` 的"用户"分区显示账号、角色、状态、电脑/在线/设备数、本月用量(带用量条)、最近登录;每行「操作」列可直接改电脑数、改额度、重置用量,并停用/恢复、改角色。
-- 管理台「设置」:默认电脑数、新账号默认月额度、SMTP 服务器/端口/TLS/用户名/密码/发件人,以及注册开放/关闭与邮箱域名白名单;保存即写回配置并立即生效,密码留空 = 不改。
+- 管理台「设置」:默认电脑数、新账号默认月额度、SMTP 服务器/端口/TLS/用户名/密码/发件人,以及注册开放/关闭、注册名额上限与邮箱域名白名单;保存即写回配置并立即生效,密码留空 = 不改。
 - **管理台令牌页可以签一张 break-glass 令牌**:「添加我的电脑」调 `POST /admin/api/tokens/issue`,id 预填 `local`(连接器的默认 `?id=`,换过 id 的电脑要填它自己的),同 id 已有活跃令牌回 409;明文只在应答里出现一次,配置里只落摘要,审计只记 id。账号会话与 Bearer 两种登录都能用。
 - **这张令牌不归属任何账号**:它 `userId` 为空,**不占任何账号的电脑数**;在「用量」分区出现在「未归属账号的主体」表里,而不是某个用户行下。它是一张能连中转的钥匙,不是某个人的电脑。
 - 顶栏「我的电脑」按登录方式换落点:账号会话进 `/console`(完整的账号电脑管理);Bearer 模式直接落到令牌页并聚焦「添加我的电脑」那行 —— 令牌模式没有 cookie,`/console` 会静默 302 到 `/login`。
@@ -118,7 +121,7 @@
 
 ## 9. 已知边界
 
-- 没有 Linux.do、邀请码、邮箱换绑、用户自删除;注册开关只有 `open` / `closed`。
+- 没有 Linux.do、邀请码、等待名单、邮箱换绑、用户自删除;注册只有 `open` / `closed` 两档加一个名额上限(`maxAccounts`),没有按邮箱域或按 IP 的配额。
 - 旧令牌与管理台签出的 break-glass 令牌都**不归属任何账号**,仍可用;管理台能看与吊销,但不能在 UI 里"归属给某账号"。
 - 单实例:会话与限流都在进程内,多实例会各限一份。
 - 验证码只在内存,重启即失效;用户需要重新发码。
@@ -129,7 +132,7 @@
 ```pwsh
 cd relay
 pnpm exec tsc --noEmit -p tsconfig.json
-node --test                                  # 当前 152 条
+node --test                                  # 当前 173 条
 node src/main.ts --config relay.config.json --check-smtp   # 需要 auth.smtp
 ```
 

@@ -33,6 +33,7 @@ export async function setRegistrationInConfig(
   configPath: string,
   mode: RegistrationMode,
   emailDomains: readonly string[],
+  maxAccounts: number | null,
 ): Promise<void> {
   const config = await readConfig(configPath)
   const auth = config.auth ?? {}
@@ -43,7 +44,7 @@ export async function setRegistrationInConfig(
     ...config,
     auth: {
       ...auth,
-      registration: { ...current, mode, emailDomains: [...emailDomains] },
+      registration: { ...current, mode, emailDomains: [...emailDomains], maxAccounts },
     },
   })
 }

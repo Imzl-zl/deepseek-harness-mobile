@@ -80,8 +80,8 @@ const opsOf = (calls: string[]): AdminOps => ({
     calls.push(`smtp:${input.host}:${input.port}`)
     return { ok: true }
   },
-  async setRegistration(mode, domains) {
-    calls.push(`registration:${mode}:${domains.join(',')}`)
+  async setRegistration(mode, domains, maxAccounts) {
+    calls.push(`registration:${mode}:${domains.join(',')}:${String(maxAccounts)}`)
     return { ok: true }
   },
   async setLimitsDefaults(maxConnectors, quotaBytes) {
@@ -369,14 +369,28 @@ test('设置页：SMTP 与注册策略写回落点，非法值挡在路由层', 
   assert.equal((await post(base, '/admin/api/smtp', AUTH, { ...smtp, from: 'not-an-email' })).status, 400)
 
   assert.equal((await post(base, '/admin/api/registration', AUTH, {
-    mode: 'closed', emailDomains: 'qq.com, @foxmail.com',
+    mode: 'closed', emailDomains: 'qq.com, @foxmail.com', maxAccounts: 10,
   })).status, 200)
-  assert.deepEqual(calls.at(-1), 'registration:closed:qq.com,foxmail.com')
+  assert.deepEqual(calls.at(-1), 'registration:closed:qq.com,foxmail.com:10')
+  // `maxAccounts` 必须显式给（null = 不限）；缺字段不是"顺手取消上限"，是 400。
   assert.equal((await post(base, '/admin/api/registration', AUTH, {
-    mode: 'open', emailDomains: ['not a domain'],
+    mode: 'closed', emailDomains: [],
   })).status, 400)
   assert.equal((await post(base, '/admin/api/registration', AUTH, {
-    mode: 'opne', emailDomains: [],
+    mode: 'closed', emailDomains: [], maxAccounts: 0,
+  })).status, 400)
+  assert.equal((await post(base, '/admin/api/registration', AUTH, {
+    mode: 'closed', emailDomains: [], maxAccounts: 1.5,
+  })).status, 400)
+  assert.equal((await post(base, '/admin/api/registration', AUTH, {
+    mode: 'closed', emailDomains: [], maxAccounts: null,
+  })).status, 200)
+  assert.deepEqual(calls.at(-1), 'registration:closed::null')
+  assert.equal((await post(base, '/admin/api/registration', AUTH, {
+    mode: 'open', emailDomains: ['not a domain'], maxAccounts: null,
+  })).status, 400)
+  assert.equal((await post(base, '/admin/api/registration', AUTH, {
+    mode: 'opne', emailDomains: [], maxAccounts: null,
   })).status, 400)
 
   assert.equal((await post(base, '/admin/api/limits-defaults', AUTH, {

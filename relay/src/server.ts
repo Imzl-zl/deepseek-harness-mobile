@@ -476,6 +476,9 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
             mode: 'accounts',
             registration: accountsRuntime.config.registration.mode,
             emailDomains: [...accountsRuntime.config.registration.emailDomains],
+            maxAccounts: accountsRuntime.config.registration.maxAccounts,
+            // **含 suspended**：与名额判定同一口径（停用不是注销）。
+            registrationCount: accountsRuntime.db.countUsers(),
             defaultMaxConnectors: accountsRuntime.config.limits.defaultMaxConnectors,
             defaultQuotaBytes: accountsRuntime.config.limits.defaultQuotaBytes,
             smtp: accountsRuntime.config.smtp === undefined ? null : {
@@ -628,11 +631,11 @@ export async function startRelay(options: RelayServerOptions): Promise<RelayServ
         return adminJson(200, { ok: true })
       },
 
-      async setRegistration(mode, emailDomains) {
+      async setRegistration(mode, emailDomains, maxAccounts) {
         if (options.adminOps?.setRegistration === undefined) return adminJson(501, { error: 'admin-ops-not-wired' })
-        const saved = await options.adminOps.setRegistration(mode, emailDomains)
+        const saved = await options.adminOps.setRegistration(mode, emailDomains, maxAccounts)
         if (!saved.ok) return adminJson(500, { error: 'persist-failed', detail: saved.error ?? '' })
-        log?.info('admin.action', { actor, action: 'registration.set', mode, domains: emailDomains.length })
+        log?.info('admin.action', { actor, action: 'registration.set', mode, domains: emailDomains.length, maxAccounts })
         return adminJson(200, { ok: true })
       },
 

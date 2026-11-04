@@ -13,7 +13,7 @@ const CONFIG: AuthConfig = {
   baseUrl: 'https://relay.test',
   dbPath: ':memory:',
   serverName: '测试中转',
-  registration: { mode: 'open', requireEmailVerification: true, emailDomains: ['qq.com'] },
+  registration: { mode: 'open', requireEmailVerification: true, emailDomains: ['qq.com'], maxAccounts: null },
   limits: { defaultMaxConnectors: 2, defaultQuotaBytes: 1024 },
   adminEmails: ['admin@qq.com'],
   trustProxy: false,
@@ -205,4 +205,16 @@ test('关闭邮箱验证：注册不需要验证码，也不会发信', async ()
   })
   assert.equal(registered.status, 201)
   assert.equal(h.sent.length, 0)
+})
+
+test('注册页有"名额已满"这一档（与 closed 分开；置灰复用同一条分支）', async () => {
+  const h = harness()
+  const page = await call(h, 'GET', '/register')
+  assert.equal(page.status, 200)
+  const html = page.html ?? ''
+  // 文案分开：closed 是"关闭注册"，full 是"名额已满"。
+  assert.match(html, /id="closed-hint"[^>]*>这台中转已关闭注册。</)
+  assert.match(html, /id="full-hint"[^>]*>注册名额已满。</)
+  // 判据来自服务端现算的 `/api/auth/config`，不是页面里的常量。
+  assert.match(html, /data\.registration\.full === true/)
 })

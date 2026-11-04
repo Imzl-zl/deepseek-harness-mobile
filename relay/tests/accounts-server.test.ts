@@ -25,7 +25,7 @@ const CONFIG: AuthConfig = {
   mode: 'accounts',
   dbPath: ':memory:',
   serverName: '测试中转',
-  registration: { mode: 'open', requireEmailVerification: false, emailDomains: ['qq.com'] },
+  registration: { mode: 'open', requireEmailVerification: false, emailDomains: ['qq.com'], maxAccounts: null },
   limits: { defaultMaxConnectors: 2, defaultQuotaBytes: 1024 },
   adminEmails: ['admin@qq.com'],
   trustProxy: false,

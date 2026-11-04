@@ -80,6 +80,7 @@ test('样例 auth 段能通过启动校验（SMTP 密码走 env）', async () =>
     const auth = parseAuthConfig(config.auth, { configDir: 'C:/tmp/dsh-relay-example' })
     assert.equal(auth.mode, 'accounts')
     assert.equal(auth.registration.emailDomains[0], 'qq.com')
+    assert.equal(auth.registration.maxAccounts, null, '样例默认不限名额（null）')
     assert.equal(auth.limits.defaultMaxConnectors, 2)
     assert.equal(auth.smtp?.host, 'send.ahasend.com')
     assert.equal(auth.smtp?.pass, 'example-pass', 'env: 前缀在解析时被换成了真实值')
