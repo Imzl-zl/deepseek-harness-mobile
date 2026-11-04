@@ -43,7 +43,7 @@
 
 ## 3. 架构与项目结构
 
-- `app/lib/theme/` —— Flutter 主题层(`dsh_colors.dart` / `dsh_theme.dart`),token 抽自 DSH `ui-theme`,三端落地的唯一颜色/字体来源。
+- `app/lib/` —— Flutter 实现七层:`core/`(纯 Dart 零平台依赖)、`data/`、`model/`、`wire/`、`theme/`、`ui/`、`platform/`(各端实现与装配点);`theme/` 是三端颜色/字体的唯一来源。
 - `mock/proto/` —— **交互基线原型**(唯一可运行的完整形态):
   - `index.html` 全部页面标记;`styles.css` 设计 token 与组件样式;`app.js` 手势/抽屉/sheet/文件页/任务/输入栏;`interactions.js` 输入栏接管(审批/提问/计划);`icons.js` 100 个 DSH 图标(机生成,勿手改)。
   - `tools/` 抽取器与验证脚本;`shots/` 截图产物。
