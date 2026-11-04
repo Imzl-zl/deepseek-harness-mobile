@@ -1781,11 +1781,11 @@ window.__ModuleLoader__.load({
                       : null,
                     narrow
                       ? h('div', { style: { ...S.dim, fontSize: 11, marginTop: 2 } },
-                          `${fmtWhen(device.pairedAt, t)} · ${device.revoked ? '—' : fmtAgo(device.lastInteractedAt, t)}`)
+                          `${fmtWhen(device.pairedAt, t)} · ${device.revoked ? '—' : fmtAgo(device.lastActiveAt ?? device.lastInteractedAt, t)}`)
                       : null,
                   ),
                   narrow ? null : h('td', { style: { ...S.td, ...S.dim } }, fmtWhen(device.pairedAt, t)),
-                  narrow ? null : h('td', { style: { ...S.td, ...S.dim } }, device.revoked ? '—' : fmtAgo(device.lastInteractedAt, t)),
+                  narrow ? null : h('td', { style: { ...S.td, ...S.dim } }, device.revoked ? '—' : fmtAgo(device.lastActiveAt ?? device.lastInteractedAt, t)),
                   h('td', { style: S.td },
                     device.revoked
                       ? h('span', { style: S.dim }, t('disabled'))

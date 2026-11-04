@@ -155,6 +155,8 @@ class SessionDrawer extends StatefulWidget {
     required this.onNewSession,
     required this.onOpenSession,
     required this.onClose,
+    /// 「切换 / 添加电脑」（卡片右侧那格）。装配层注入：它持有凭据槽与 `AppModel`。
+    this.onSwitchHost,
     this.onArchive,
     this.onPin,
     this.onUnpin,
@@ -205,6 +207,9 @@ class SessionDrawer extends StatefulWidget {
   final VoidCallback onNewSession;
   final void Function(DrawerSession session) onOpenSession;
   final VoidCallback onClose;
+
+  /// 「切换 / 添加电脑」：卡片右侧那一格。（`null` = 还没配对，不画。）
+  final VoidCallback? onSwitchHost;
 
   /// 行动作（「…」菜单）。`onMove` 的第二个参数是 Host 的 `beforeSid`：
   /// `null` = 移到末尾。
@@ -366,6 +371,7 @@ class _SessionDrawerState extends State<SessionDrawer> {
             _ConnectionRow(
               connection: widget.connection,
               onTap: widget.onClose,
+              onSwitch: widget.onSwitchHost,
             ),
 
             // ---- 搜索 ----
@@ -736,10 +742,18 @@ class _SessionMenuRow extends StatelessWidget {
 
 /// 连接状态行（`.conn`）。
 class _ConnectionRow extends StatelessWidget {
-  const _ConnectionRow({required this.connection, required this.onTap});
+  const _ConnectionRow({
+    required this.connection,
+    required this.onTap,
+    this.onSwitch,
+  });
 
   final DrawerConnection connection;
   final VoidCallback onTap;
+
+  /// 「切换 / 添加电脑」的入口（2026-11-04 用户："在这个我的电脑这里加入新的
+  /// 电脑端的切换选项"）。`null` = 还没配对，不给这一格。
+  final VoidCallback? onSwitch;
 
   @override
   Widget build(BuildContext context) {
@@ -794,6 +808,30 @@ class _ConnectionRow extends StatelessWidget {
                   connection.platform,
                   style: TextStyle(fontSize: 11, color: c.labelCaption),
                 ),
+                // **切换 / 添加电脑**：卡片自己是"看当前连接"，这一格才是"换一台"。
+                // 用独立的按钮而不是把整张卡改成切换 —— 两个动作语义不同，
+                // 合成一个的话"看状态"会变成一次切换。
+                if (onSwitch != null) ...[
+                  const SizedBox(width: 6),
+                  Material(
+                    color: c.layer2,
+                    borderRadius: BorderRadius.circular(DshRadius.sm),
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: onSwitch,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        child: Text(
+                          '切换',
+                          style: TextStyle(fontSize: 11, color: c.labelSecondary),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(width: 4),
                 DshIcon('chevronRight', size: 16, color: c.labelTertiary),
               ],
@@ -915,12 +953,17 @@ class _SessionRow extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 3),
-                      Text(
-                        session.preview,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 12, color: c.labelCaption),
-                      ),
+                      // **看不出内容的 id 串不画**（2026-11-04 用户："那些对话下面的
+                      // 代码不需要显示"）：预览是"最后一条消息的摘录"，而某些会话的
+                      // 最后一条本身就是 `kakZhZZAkM7nMVQUnTqZWg` 这种别名/哈希 ——
+                      // 摆在那里只占一行，读不出任何东西。
+                      if (!looksLikeOpaqueId(session.preview))
+                        Text(
+                          session.preview,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 12, color: c.labelCaption),
+                        ),
                     ],
                   ),
                 ),
@@ -1362,4 +1405,16 @@ class _Ib extends StatelessWidget {
     );
     return tooltip == null ? button : Tooltip(message: tooltip!, child: button);
   }
+}
+
+/// 预览看着是不是"一串看不出内容的 id"（别名 / 哈希 / base64url）。
+///
+/// 判据只有三条，都从真机那条 `kakZhZZAkM7nMVQUnTqZWg` 反推出来的：
+/// **没有空白**（正常消息总有空格或标点）、**长度 ≥ 12**（短串可能是代码/单词）、
+/// **只由 base64url 字符组成**。三条同时成立才当 id —— 宁可偶尔多显示一行，
+/// 也不要把正常的短消息吞掉。
+bool looksLikeOpaqueId(String text) {
+  if (text.length < 12) return false;
+  if (RegExp(r'\s').hasMatch(text)) return false;
+  return RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(text);
 }

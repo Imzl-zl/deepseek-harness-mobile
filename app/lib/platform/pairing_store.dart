@@ -231,6 +231,13 @@ class PairingStore {
   static String slotKey(String hostId, String field) =>
       '$keyPrefix$hostId.$field';
 
+  /// **上次连上这台电脑的时刻**（ISO8601，UTC）。只用于「切换电脑」列表的
+  /// "该切哪台"判断 —— 它不是协议字段，电脑侧不知道也不需要知道。
+  ///
+  /// 放在槽里而不是另存一份清单：`clear()` 按前缀扫键，删槽时它自然跟着走，
+  /// 不会留下一条对不上任何电脑的时间。
+  static const String lastConnectedAtField = 'last_connected_at';
+
   /// 读出已存的凭据；没有或不完整时返回 `null`。
   ///
   /// [hostId] 为空 = 当前那台（`dsh.pairing.active`）。给 [hostId] 是为了
@@ -457,9 +464,29 @@ class PairingStore {
   /// 读不到就退回 hostId 短码（`PairedHost.label`）。
   static const String hostNameField = 'host_name';
 
+  /// **用户在手机上给这台电脑起的名字**。与 [hostNameField] 分开存：
+  /// 后者是电脑自报的（连接时会被覆盖），前者是人手动改的 —— 混在一个键里，
+  /// 下次连上就会被自报名冲掉，用户改了也白改。
+  static const String customNameField = 'custom_name';
+
   Future<void> saveHostName(String hostId, String name) async {
     if (name.isEmpty) return;
     await _secure.write(slotKey(hostId, hostNameField), name);
+  }
+
+  /// 用户手动改这台电脑的显示名（空串 = 改回用电脑自报的名字）。
+  ///
+  /// **一次改名就落盘**：改名发生在"我在一堆电脑里认不出谁是谁"的时候，
+  /// 那一刻的输入必须立刻记住，不能等到下次连接才写。
+  Future<void> saveCustomName(String hostId, String name) async {
+    if (hostId.isEmpty) return;
+    final key = slotKey(hostId, customNameField);
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) {
+      await _secure.delete(key);
+      return;
+    }
+    await _secure.write(key, trimmed);
   }
 
   /// 列出**所有能用的槽**（切换电脑用）。槽不完整（缺必填字段）的不列。
@@ -481,7 +508,14 @@ class PairingStore {
         <PairedHost>[
           for (final id in ids)
             if (_decodeSlot(values, id) != null)
-              PairedHost(hostId: id, name: values[slotKey(id, hostNameField)]),
+              PairedHost(
+                hostId: id,
+                name: values[slotKey(id, hostNameField)],
+                customName: values[slotKey(id, customNameField)],
+                lastConnectedAt: _parseInstant(
+                  values[slotKey(id, lastConnectedAtField)],
+                ),
+              ),
         ]..sort((a, b) {
           if (a.hostId == active) return -1;
           if (b.hostId == active) return 1;
@@ -500,6 +534,25 @@ class PairingStore {
       throw StateError('这台电脑的配对凭据不完整：$hostId');
     }
     await _secure.write(activeKey, hostId);
+  }
+
+  /// 记一次"这台电脑连上了"（写进它自己的槽）。
+  ///
+  /// **只在真的进到 `serving` 时调**（`main.dart` 的连接监听），不是"拨号开始"
+  /// 也不是"配对成功" —— 那两种都会被记成"上次连上过"，而用户看这一行是为了
+  /// 判断该切哪台，谎报一次就会把他引到一台连不上的电脑上。
+  Future<void> markConnected(String hostId) async {
+    if (hostId.isEmpty) return;
+    await _secure.write(
+      slotKey(hostId, lastConnectedAtField),
+      DateTime.now().toUtc().toIso8601String(),
+    );
+  }
+
+  /// 读一个时刻：坏值当"没有"，不让一条脏字符串把整份列表读崩。
+  static DateTime? _parseInstant(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    return DateTime.tryParse(raw)?.toLocal();
   }
 
   /// **删这一台**（[hostId] 为空 = 当前那台）：只删这个槽。
@@ -530,18 +583,49 @@ class PairingStore {
 /// **名字从不参与判据**：两台同名时靠 [shortCode] 区分（Syncthing 显示 Device ID
 /// 的同一种做法），切换本身只认 [hostId]。
 class PairedHost {
-  const PairedHost({required this.hostId, this.name});
+  const PairedHost({
+    required this.hostId,
+    this.name,
+    this.customName,
+    this.lastConnectedAt,
+  });
 
   final String hostId;
   final String? name;
+
+  /// **用户在手机上给它起的名字**。[name] 是电脑自报的，会被连接时覆盖；
+  /// 这一份只有人手动改才会变，所以优先级更高（见 [label]）。
+  final String? customName;
+
+  /// 上次真的连上这台电脑的时刻（本地时区）。`null` = 配过但一次都没连上过。
+  ///
+  /// 只用于「切换电脑」列表的副标题（"3 小时前" / "从未连接"）。
+  final DateTime? lastConnectedAt;
 
   /// hostId 的短码（前 6 + 后 4）：名字可改可重名，短码不会。
   String get shortCode => hostId.length >= 10
       ? '${hostId.substring(0, 6)}…${hostId.substring(hostId.length - 4)}'
       : hostId;
 
-  /// 列表里显示的那一行：有名字用名字，没有就用短码。
-  String get label => (name == null || name!.isEmpty) ? shortCode : name!;
+  /// 列表里显示的那一行：**用户改的名 > 电脑自报的名 > 短码**。
+  String get label {
+    final mine = customName;
+    if (mine != null && mine.isNotEmpty) return mine;
+    final theirs = name;
+    if (theirs != null && theirs.isNotEmpty) return theirs;
+    return shortCode;
+  }
+
+  /// 改名对话框里的初值（与 [label] 一致，用户看到什么就改什么）。
+  String get renameInitial => label;
+
+  /// 只改展示名的那一份拷贝（`''` = 清掉自定义名）。
+  PairedHost copyWith({String? customName}) => PairedHost(
+    hostId: hostId,
+    name: name,
+    customName: customName ?? this.customName,
+    lastConnectedAt: lastConnectedAt,
+  );
 
   @override
   bool operator ==(Object other) =>

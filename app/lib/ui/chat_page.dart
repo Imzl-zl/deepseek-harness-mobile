@@ -58,6 +58,7 @@ import '../model/subagent.dart';
 import '../model/trajectory.dart';
 import '../model/turn_groups.dart';
 import '../model/workspace.dart';
+import '../platform/ime_inset.dart';
 import '../platform/photo_picker.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
@@ -977,9 +978,19 @@ class ChatPageState extends State<ChatPage> {
       // 忽略，实测输入栏被键盘整个盖住（真机截图）。判据与取舍见
       // `.agents/notes/implemented/2026-11-04-ime-insets-on-android-15.md`。
       resizeToAvoidBottomInset: false,
-      body: Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.viewInsetsOf(context).bottom,
+      body: ValueListenableBuilder<double>(
+        // 键盘高度**两个来源取最大**：真机 Android 15 上引擎把
+        // `viewInsets.bottom` 恒报 0（见 `platform/ime_inset.dart`），那时用原生量的；
+        // 引擎正常报的机型上两者相等，取谁都一样 —— 不会叠成两倍。
+        valueListenable: ImeInset.bottom,
+        builder: (context, nativeIme, child) => Padding(
+          padding: EdgeInsets.only(
+            bottom: math.max(
+              MediaQuery.viewInsetsOf(context).bottom,
+              nativeIme,
+            ),
+          ),
+          child: child,
         ),
         child: LayoutBuilder(
           builder: (context, viewport) {

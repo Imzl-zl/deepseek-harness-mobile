@@ -23,6 +23,27 @@ Android 15（API 35）起 **edge-to-edge 强制开启**，`adjustResize` 被系�
    —— 整页按 IME 高度上移一次，`LayoutBuilder` 的约束因此也是"键盘在场"的高度，
    `_BottomBudget` 自动跟着对。
 
+### 这一版被真机否掉了（0.2.6）
+
+真机装上之后输入栏**仍然**被键盘盖住。查证：APK 里的清单确实是
+`windowSoftInputMode=0x30`（adjustNothing），页面也确实按 `viewInsets.bottom` 上移 ——
+所以真因是 **`MediaQuery.viewInsets.bottom` 在那台机器上恒为 0**：Flutter 3.41.9 的引擎
+在这台 Android 15 设备上没把 IME inset 报给 Dart。**Dart 侧怎么改都没用。**
+
+## 现行决定（第二版，未真机验证）
+
+高度**从原生量**，Dart 侧与引擎报的值取 `max`：
+
+1. `MainActivity.registerImeInsets`：在 `android.R.id.content` 上挂
+   `ViewCompat.setOnApplyWindowInsetsListener`，读 `WindowInsetsCompat.Type.ime().bottom`，
+   除以 density 后走 `dsh/ime` 通道报给 Dart。**不改它的 padding** —— 位移只在 Dart 侧做一次。
+2. `app/lib/platform/ime_inset.dart`：`ImeInset.bottom`（`ValueNotifier<double>`），
+   `main()` 里 `attach()` 一次。
+3. `ChatPage`：`resizeToAvoidBottomInset: false` + `Padding(bottom: max(viewInsets, 原生值))`。
+
+**为什么取 max 而不是"一律用原生"**：引擎正常的机型上两个值相等，取谁都一样；两边都加就是
+双倍位移。取 max 让"引擎报不报"在界面上没有第二种表现。
+
 ## 被否掉的
 
 - **只改清单**：如果引擎报 insets，Scaffold 自己就会缩，也能好。但那样"缩"同时存在

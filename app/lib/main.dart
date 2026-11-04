@@ -23,7 +23,7 @@ import 'dart:ui' show PlatformDispatcher;
 
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show SystemUiOverlayStyle;
+import 'package:flutter/services.dart' show SystemNavigator, SystemUiOverlayStyle;
 import 'core/box.dart';
 import 'core/crypto.dart';
 import 'core/endpoint.dart';
@@ -48,6 +48,7 @@ import 'model/theme_mode.dart';
 import 'model/workspace.dart';
 import 'platform/app_state_reporter.dart';
 import 'platform/http_sender.dart';
+import 'platform/ime_inset.dart';
 import 'platform/lan_address.dart';
 import 'platform/notify_factory.dart';
 import 'platform/pairing_store.dart';
@@ -78,6 +79,11 @@ import 'ui/usage_page.dart';
 import 'wire/reading.dart';
 
 void main() {
+  // **必须先建 binding**：下面 `ImeInset.attach()` 会 `setMethodCallHandler`，
+  // 而它要 `ServicesBinding`（binaryMessenger）。没有这一句，挂在 `runApp` 之前
+  // 的那次 attach 会抛 "Binding has not yet been initialized"，**整屏白** ——
+  // 2026-11-04 真机就是这么白屏的。
+  WidgetsFlutterBinding.ensureInitialized();
   // 线上事件形状读不出来时往哪儿说话（`wire/reading.dart` 的 `WireDiagnostics`）。
   //
   // **只在 debug 接**：release 里计数照加，但不去污染日志 —— App 也不打 logcat
@@ -89,6 +95,9 @@ void main() {
       debugPrint('[wire] $event: $detail');
     };
   }
+  // 输入法高度由原生量（`platform/ime_inset.dart`）：某些 Android 15 设备上引擎把
+  // `MediaQuery.viewInsets.bottom` 恒报 0，Dart 侧根本量不到。**只挂一次**。
+  ImeInset.attach();
   runApp(const DshMobileApp());
 }
 
@@ -622,6 +631,21 @@ class _DshMobileAppState extends State<DshMobileApp>
     await app.start();
   }
 
+  /// 抽屉「我的电脑」那格的「切换」：**有别的电脑就开列表，没有就开连接面板**
+  /// （面板里才有「添加电脑」）。
+  ///
+  /// 不在这里判"该给哪个入口"的第二套规则 —— 两处按钮文案都是"切换"，
+  /// 用户点的是同一个意图：换一台。
+  void _switchOrAddHost() {
+    final current = _credentials?.pcSignPubHex;
+    final others = _pairedHosts.where((h) => h.hostId != current).length;
+    if (others > 0) {
+      unawaited(_openHostPicker());
+      return;
+    }
+    unawaited(_showConnectionSheet());
+  }
+
   /// 打开电脑列表并切过去（连接 sheet 的「切换电脑」）。
   Future<void> _openHostPicker() async {
     if (!mounted) return;
@@ -632,6 +656,8 @@ class _DshMobileAppState extends State<DshMobileApp>
       _navContext,
       hosts: hosts,
       currentHostId: _credentials?.pcSignPubHex,
+      // 改名只写这一台的槽，**不切换、不重连**：用户可能只是想给它们区分开。
+      onRename: (hostId, name) => pairingStore.saveCustomName(hostId, name),
     );
     if (hostId == null) return;
     await _switchTo(hostId);
@@ -824,6 +850,27 @@ class _DshMobileAppState extends State<DshMobileApp>
   BuildContext get _navContext => navigatorKey.currentState!.overlay!.context;
 
   Widget _body() {
+    // **系统返回：配对页按"取消"处理**（2026-11-04 用户："有些地方的返回没适配，
+    // 直接就退出到桌面了"）。配对页是 `_body()` 里的一支、不是一条路由 ——
+    // 它没有可 pop 的东西，不拦这一下就退出 App，看起来像"闪退"。
+    //
+    // 其余页面的返回一律放行：聊天页自己要拦的时候自己拦（`ChatPage` 的
+    // `PopScope`：子会话回父会话、抽屉先关），推送出来的页面由 Navigator 弹。
+    return PopScope<Object?>(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (_pairing) {
+          _closePairing();
+          return;
+        }
+        unawaited(SystemNavigator.pop());
+      },
+      child: _pageBody(),
+    );
+  }
+
+  Widget _pageBody() {
     if (_booting) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
@@ -894,6 +941,9 @@ class _DshMobileAppState extends State<DshMobileApp>
             platform: _credentials == null ? '' : 'DSH',
             online: app.connection == ConnectionStateView.serving,
           ),
+          // 「切换 / 添加电脑」：没别的电脑时它就是入口（会开连接面板里的
+          // 「添加电脑」），有别的电脑时直接开电脑列表。两件事都通向"换一台"。
+          onSwitchHost: _credentials == null ? null : _switchOrAddHost,
           footItems: [
             // **文件**：工作区目录浏览 + 文本预览（`file.list` / `file.read`，
             // 契约 §5.7）。只做"看"—— 二进制由宿主拒，`readBytes` / `changes` 不接。
@@ -1772,5 +1822,35 @@ Future<AppModel> _assemble(
   // 每个端点试过的结局也报给界面：设置页的"通不通"与"为什么走了中转"
   // （连接方式选择器第 3 步）都读它。同样只报事实。
   transport.onAttempt = app.reportEndpointAttempt;
+  // 「切换电脑」列表要回答"该切哪台"：记下**这台真的连上了**的时刻。
+  // 判据是 `serving`（不是"开始拨号"也不是"配对成功"）—— 见 `markConnected`。
+  _trackServing(app, credentials.pcSignPubHex);
   return app;
+}
+
+/// 听这一台有没有真的进到 `serving`：进一次就记一次时间（写进它自己的槽）。
+///
+/// 只在**跳变的那一下**写（`was` 闩），否则每次状态变化都会打一次安全存储 ——
+/// 那是密钥库，写一次有真实代价。监听器跟着 [app] 走：它被 dispose 时一并消失。
+///
+/// **不在这里刷界面**：「切换电脑」列表每次打开都会现读 `pairingStore.hosts()`
+/// （`_openHostPicker`），写进去就是下一次打开时看到的那个值 —— 为了一行副标题
+/// 去 `setState` 等于让"记时间"这个副作用反向驱动界面。
+void _trackServing(AppModel app, String hostId) {
+  var was = false;
+  void listener() {
+    final now = app.connection == ConnectionStateView.serving;
+    if (now == was) return;
+    was = now;
+    if (!now) return;
+    unawaited(() async {
+      try {
+        await pairingStore.markConnected(hostId);
+      } catch (_) {
+        // 记时间是**展示用的**：写不进去不该影响连接，也不该弹错误。
+      }
+    }());
+  }
+
+  app.addListener(listener);
 }

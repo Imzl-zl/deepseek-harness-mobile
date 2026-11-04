@@ -61,6 +61,18 @@ export interface LiveDeviceRecord {
 export interface PresenceDevices {
   /** 配对时间（仲裁排序的第二判据）；设备未配对 / 已吊销时返回 `undefined`。 */
   pairedAtOf(devId: string): number | undefined
+
+  /**
+   * **看到这台设备动了**（上线 / 声明前后台 / 改订阅 / 答话）。
+   *
+   * 存在的理由：面板的「最后活跃」列此前只接 `lastInteractedAt`，而那个字段**只由
+   * 审批/提问作答写入** —— 一台天天聊天、但从没答过审批的手机，在面板上一直显示
+   * 「从未交互」（2026-11-04 用户实测撞到）。活动时间必须由**设备发来的任何信号**
+   * 更新，而落盘面在设备表（本文件只管内存态）。
+   *
+   * 实现方负责节流：这里说得上是"每一帧"级别的调用。
+   */
+  onSeen?(devId: string, at: number): void
 }
 
 export interface DevicePresence extends PresenceDevices {
@@ -158,6 +170,7 @@ export function createDevicePresence(options: PresenceDevices): DevicePresence {
       // **新连接接管记录**：同一台设备换网重连时，旧连接之后迟到的 offline
       // 会因为这个令牌不同而**什么都不做**（见 `offline`）。
       if (holder !== undefined) record.holder = holder
+      options.onSeen?.(devId, Date.now())
     },
 
     offline(devId, holder) {
@@ -179,18 +192,21 @@ export function createDevicePresence(options: PresenceDevices): DevicePresence {
       const record = updateOf(devId)
       if (record === undefined) return
       record.foreground = state === 'foreground'
+      options.onSeen?.(devId, Date.now())
     },
 
     subscriptions(devId, sids) {
       const record = updateOf(devId)
       if (record === undefined) return
       record.subscribed = [...sids]
+      options.onSeen?.(devId, Date.now())
     },
 
     interacted(devId, sid, at) {
       const record = updateOf(devId)
       if (record === undefined) return
       record.lastInteractedAt = { ...record.lastInteractedAt, [sid]: at }
+      options.onSeen?.(devId, at)
     },
 
     devices: snapshot,

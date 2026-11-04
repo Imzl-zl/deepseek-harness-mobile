@@ -82,6 +82,16 @@ const deviceSchema = z.object({
   replaces: z.string().optional(),
   /** 吊销时间；存在即已吊销（电脑侧删除公钥）。 */
   revokedAt: z.number().optional(),
+  /**
+   * **上次看到这台设备活动**的时刻（毫秒）。
+   *
+   * 面板的「最后活跃」列读它。与 `presence` 里的瞬时态不同，这一份**跟着设备表落盘** ——
+   * 重启插件/电脑之后，"上次用的是哪台"仍然说得出来。
+   *
+   * 只由 `presence.onSeen` 写（上线 / 声明前后台 / 改订阅 / 答话），并且**节流 60 秒**：
+   * 这些信号是高频的，而设备表是 DSH 的 JSON 存储，写一次有真实代价。
+   */
+  lastActiveAt: z.number().optional(),
 })
 
 const metaSchema = z.object({

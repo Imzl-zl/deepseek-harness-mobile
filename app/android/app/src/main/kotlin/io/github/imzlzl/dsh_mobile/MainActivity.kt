@@ -16,8 +16,11 @@ import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.util.Base64
+import android.view.ViewGroup
 import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
@@ -95,7 +98,34 @@ class MainActivity : FlutterActivity() {
         registerGestureExclusion(flutterEngine)
         registerPhotoPicker(flutterEngine)
         registerNotifications(flutterEngine)
+        registerImeInsets(flutterEngine)
     }
+
+    /**
+     * 把输入法高度报给 Flutter（`dsh/ime` 通道）。
+     *
+     * **为什么不能只靠 `MediaQuery.viewInsets`**：2026-11-04 真机（Android 15+）
+     * 上清单已是 `adjustNothing`、页面也按 `viewInsets.bottom` 上移，输入栏仍被
+     * 键盘盖住 —— 引擎在那台机器上把这个 inset 报成了 0。高度只能在这里量。
+     *
+     * 监听挂在 `android.R.id.content` 上（Flutter 的渲染视图在它下面），
+     * **不动它的 padding**：位移由 Dart 侧统一做一次（见 `platform/ime_inset.dart`），
+     * 两边都改就是双倍位移。
+     */
+    private fun registerImeInsets(flutterEngine: FlutterEngine) {
+        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "dsh/ime")
+        imeChannel = channel
+        val content = findViewById<ViewGroup>(android.R.id.content) ?: return
+        ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            channel.invokeMethod("inset", ime / resources.displayMetrics.density)
+            insets
+        }
+        ViewCompat.requestApplyInsets(content)
+    }
+
+    /** `dsh/ime` 的通道句柄（引擎换掉时旧的会失效，见 `cleanUpFlutterEngine`）。 */
+    private var imeChannel: MethodChannel? = null
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         // 引擎要走的时候把通道摘掉：此后通知上的按钮一律"没人听"（见

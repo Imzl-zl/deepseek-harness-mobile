@@ -418,6 +418,18 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
       const record = devicesTable?.get(devId)
       return record === undefined || record.revokedAt !== undefined ? undefined : record.pairedAt
     },
+    // **「最后活跃」的落盘面**：设备发来的任何信号（上线 / hello / 订阅 / 答话）
+    // 都盖一次时间，写进设备行。面板此前把这一列接到 `lastInteractedAt`，
+    // 而那个字段只由"答审批"写 —— 天天聊天、没答过审批的手机一直显示「从未交互」。
+    //
+    // **节流 60 秒**：`subscriptions` / `app` 是高频信号，而设备表是 DSH 的 JSON
+    // 存储，每次写都要整表落盘。
+    onSeen: (devId, at) => {
+      const record = devicesTable?.get(devId)
+      if (record === undefined || record.revokedAt !== undefined) return
+      if (at - (record.lastActiveAt ?? 0) < 60_000) return
+      void devicesTable?.put(devId, { ...record, lastActiveAt: at })
+    },
   })
 
   /**
@@ -1703,6 +1715,11 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
                     /** 这一台**正占着服务位**（独占 1:1 只可能有一台）。 */
                     serving: id === servingId,
                     foreground: present?.foreground ?? false,
+                    // **「最后活跃」**：设备表里那份（落盘、重启后还在）优先；
+                    // v2 之前没有这个字段的行退回 `lastInteractedAt`（面板照样用）。
+                    ...(record.lastActiveAt === undefined
+                      ? {}
+                      : { lastActiveAt: record.lastActiveAt }),
                     ...(lastInteractedAt === undefined
                       ? {}
                       : { lastInteractedAt: Math.max(0, ...Object.values(lastInteractedAt)) }),

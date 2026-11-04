@@ -113,6 +113,13 @@ export interface AdminDeviceRow {
   serving: boolean
   /** 它的 App 在前台吗（决定审批仲裁选它还是退给桌面）。 */
   foreground: boolean
+  /**
+   * **上次看到它活动**的时刻（毫秒，落盘在设备表）。面板的「最后活跃」用这个。
+   *
+   * 与 [lastInteractedAt] 是两件事：那个只记"答过审批/提问"，一台天天使用、
+   * 从没答过审批的手机永远是空的。
+   */
+  lastActiveAt?: number
   /** 最后交互时刻（毫秒）；从未交互过就没有这个字段。 */
   lastInteractedAt?: number
 }
