@@ -14,11 +14,11 @@
   命令 / 插件面板 / 手机三处**正反两面都说**：成功 =「出门 / 用流量走中转（已登记）」，
   失败 =「只能同一 WiFi」；手机对降级码**不换票**（那条路注定 409）。
   同批加 `device.pairing_prefer`（`auto`/`direct`/`relay`，只改先试哪条、失败仍回落）与配对页
-  "两条路 + 正在试哪条"。connector **845** / app **1738**。
+  "两条路 + 正在试哪条"。connector / app 全绿（项数见 `tools.md`）。
   ③ **注册名额**：`auth.registration.maxAccounts`（`null` = 不限，口径 `COUNT(*)` **含
   suspended**）；`/api/auth/config` 回 `registration.full`，注册页整页置灰（closed / full
   文案分开）；发码 403 / 注册 409 `registration-full`；裁决在 `db.createUser` 的**同一个事务**里
-  （并发只进一个）；管理台「设置」可改。relay **173**。
+  （并发只进一个）；管理台「设置」可改。relay 全绿（项数见 `tools.md`）。
   笔记 `implemented/2026-11-04-admin-token-page-reachability.md`、
   `implemented/2026-11-04-pairing-degradation-is-visible.md`、
   `implemented/2026-11-04-registration-account-quota.md`。C 的**隔离进程实测**已跑
@@ -397,10 +397,10 @@
 | `node app/tools/verify-platform-boundary.mjs` | 728 项（25 条规则自检 + 167 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1738 项（约 1 分钟） |
+| `cd app && flutter test` | 全绿（项数见 `tools.md`） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **845** 项 |
-| `cd relay && pnpm typecheck && node --test` | 类型 + **173** 条 |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + 全绿（项数见 `tools.md`） |
+| `cd relay && pnpm typecheck && node --test` | 类型 + 全绿（项数见 `tools.md`） |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
 
