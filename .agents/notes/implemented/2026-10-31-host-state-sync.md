@@ -4,7 +4,7 @@ Status: implemented（2026-10-31；落地形态与本文初稿的两处出入见
 
 ## Problem
 
-2026-10-31 真机联调（笔记本 + `dsh-mobile-test` profile + `wss://dsh.0t0.me`）暴露的四条症状，
+2026-10-31 真机联调（笔记本 + `dsh-mobile-test` profile + `wss://<旧中转域名>`）暴露的四条症状，
 其中三条当轮已修，这里记下来是为了**不再重复讨论**：
 
 | # | 症状 | 根因 | 状态 |

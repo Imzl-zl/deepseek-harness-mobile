@@ -875,6 +875,8 @@ class _DshMobileAppState extends State<DshMobileApp>
         // **断开只断链**：凭据留着，用户随时点「重新连接」回来 —— 清凭据是
         // 「重新配对」的事，一个动作不该顺手把配对抹了（误触代价太大）。
         onRePair: _repair,
+        // **添加电脑**：进配对页但**不清**当前凭据（`pairingStore.save` 分槽写入）。
+        onAddHost: _addHost,
         onDisconnect: () => unawaited(app.disconnectLink()),
         hostSwitch: _hostSwitchSeam,
         onOpenDrawer: () => _chatKey.currentState?.openDrawer(),
@@ -1179,6 +1181,7 @@ class _DshMobileAppState extends State<DshMobileApp>
       ),
       // **换电脑**（与聊天页顶栏那个 sheet 同一份缝）。
       hostSwitch: _hostSwitchSeam,
+      onAddHost: _addHost,
       onRePair: _repair,
       onOpenSide: () => _chatKey.currentState?.openSide(),
       // 断开连接：**只断链，不动凭据**（清凭据是「重新配对」的事，藏在设置里）。
@@ -1192,6 +1195,16 @@ class _DshMobileAppState extends State<DshMobileApp>
   /// 经 `ConnectionRecovery.onTerminated`）都收敛到 `_recovery.repair()` ——
   /// 那是 `ClientAction.rePair` 的唯一执行处。
   void _repair() => unawaited(_recovery.repair());
+
+  /// **添加一台电脑**：进配对页，但**不先清凭据**。
+  ///
+  /// 与 [_repair] 是两条路：那一条先 `clear()` 再进配对页（同一台电脑换身份、
+  /// 或身份被拒之后重来）；这一条**只加不删** —— `pairingStore.save` 按电脑
+  /// 公钥分槽写，扫的是另一台时旧槽原样保留，于是扫完清单里就有两台，
+  /// 连接 sheet 的「切换电脑」才会出现。
+  ///
+  /// 取舍见 `.agents/notes/implemented/2026-11-04-add-a-second-computer.md`。
+  void _addHost() => _enterPairing('');
 
   /// 身份被拒/重新配对后：换一个"没配对"的 AppModel + 进配对页 + 给一句话。
   ///

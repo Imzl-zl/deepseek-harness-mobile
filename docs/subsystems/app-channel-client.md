@@ -310,24 +310,30 @@ abstract class Outbox {
 
 ---
 
-## 5. 三端能力包(平台差异只住在这里)
+## 5. 三端平台能力(平台差异只住在这里)
+
+**现状**:平台实现只有一处落点 `app/lib/platform/`,按 `<能力>[_<端>].dart` 命名;
+真正按端分叉的只有通知(`notify_factory.dart` → `notify_android.dart` / `notify_memory.dart`),
+其余能力(本地库、传输、选图)要么是一份纯 Dart,要么走跨端插件。
+
+下面是**各端开工时**要落成的目标形态(设计目标,不是现状):
 
 ```text
-app/packages/
-├── secure_store/      接口:read/write/delete(32 字节主种子 + 刷新令牌)
-│   ├── secure_store_ios/       Keychain:kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-│   │                           (Curve25519 无法进 Secure Enclave,只能软件密钥;可选生物识别门控)
-│   ├── secure_store_android/   Keystore:强绑定 + 设备解锁门控(可用时优先 StrongBox)
-│   └── secure_store_ohos/      自写 ArkTS platform channel 接 HUKS:
-│                                 generateRootKey / deriveChildKey / 生成 X25519+Ed25519
-│                                 失败降级:HUKS AES 密钥包裹主种子(绝不落 preferences 明文)
-├── notify/       投递与分类、通知操作按钮(iOS action / Android action / 鸿蒙 wantAgent)
-├── live_surface/ iOS Live Activity(≤4 KB,按状态变化推送,不按固定频率)
-│                 Android 提升通知(仅本机发起的任务)、鸿蒙 不做跑动中进度
-└── keepalive/    Android 前台服务(用户主动开启,尽力而为,不作为必达路径)
+app/lib/platform/
+├── secure_store.dart        端口:read/write/delete(32 字节主种子 + 刷新令牌)
+├── secure_store_ios.dart    Keychain:kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+│                            (Curve25519 无法进 Secure Enclave,只能软件密钥;可选生物识别门控)
+├── secure_store_android.dart Keystore:强绑定 + 设备解锁门控(可用时优先 StrongBox)
+├── secure_store_ohos.dart   自写 ArkTS platform channel 接 HUKS:
+│                            generateRootKey / deriveChildKey / 生成 X25519+Ed25519
+│                            失败降级:HUKS AES 密钥包裹主种子(绝不落 preferences 明文)
+├── notify.dart              投递与分类、通知操作按钮(iOS action / Android action / 鸿蒙 wantAgent)
+├── live_surface_*.dart      iOS Live Activity(≤4 KB,按状态变化推送,不按固定频率)
+│                            Android 提升通知(仅本机发起的任务)、鸿蒙 不做跑动中进度
+└── keepalive_android.dart   Android 前台服务(用户主动开启,尽力而为,不作为必达路径)
 ```
 
-接口只暴露语义(`start(ProgressSnapshot)` / `update(...)` / `end(...)`),平台细节不出包。
+接口只暴露语义(`start(ProgressSnapshot)` / `update(...)` / `end(...)`),平台细节不出这一层。
 
 ---
 

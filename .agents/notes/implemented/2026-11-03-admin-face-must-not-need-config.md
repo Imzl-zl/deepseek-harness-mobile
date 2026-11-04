@@ -29,7 +29,7 @@ A) relayUrl 缺省（= 该 profile 的真实形状）
    注册的管理面路由数 = 0
    挂载错误 = mount 阶段有 1 个步骤失败：
              validate-config(relayUrl 未配置：拒绝挂载，而不是连上一个不完整的中转)
-B) relayUrl = wss://dsh.0t0.me/ws/connector
+B) relayUrl = wss://<旧中转域名>/ws/connector
    越过 validate-config，进到 open-store
 ```
 
@@ -68,7 +68,7 @@ B) relayUrl = wss://dsh.0t0.me/ws/connector
    - 最强的理由：装完即用、零操作，用户永远不会看到 404。
    - 为何被否：那等于替用户选了我们自己的中转并直接拨出去。中转是**选**出来的
      （`2026-11-01-builtin-relay-is-a-choice.md`），而 schema 默认值会让自部署用户的连接器
-     静默拨向 `dsh.0t0.me`。卡片里"没配时预选内置中转"是**待确认的选择**，与"默认值"不是一件事。
+     静默拨向 `<旧中转域名>`。卡片里"没配时预选内置中转"是**待确认的选择**，与"默认值"不是一件事。
 3. **让用户手写 `cordis.patch.yml`（本机就是这么救回来的）**
    - 最强的理由：零代码、立即生效。
    - 为何被否：把"装个插件"变成"还得会编辑 YAML"，而且面板 404 时除了翻文档没有别的入口；

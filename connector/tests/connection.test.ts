@@ -218,13 +218,20 @@ test('端到端：握手前收到业务帧，连接被关闭', async (t) => {
 
 test('端到端：发帧也重置空闲计时（半开判据是「任一方向」）', async (t) => {
   const peer = await startPeer()
-  // 短心跳：半开阈值 = 2 × 40 = 80 ms，用例几百毫秒内就能给出结论。
+  // **半开阈值 = 2 × 200 = 400 ms，用例跑 1200 ms** —— 两个余量都要够：
+  //
+  // - 对"发送间隔 15 ms"：400 ms 是它的 26 倍，并行跑全套时的一次 GC / 调度抖动
+  //   （实测见过 ~80 ms）不会把连接误判成半开；
+  // - 对"用例时长必须超过阈值"：1200 ms 是 400 ms 的 3 倍 —— 如果发帧**不**重置
+  //   空闲计时，200 ms 之后就会翻成 `backoff`，这一条照样会红。
+  //
+  // 原来的 40 ms（阈值 80 ms）只有 5 倍余量，2026-11-04 在全量并行时偶发红过。
   const connection = track(t, peer, (url) =>
     createConnection({
       url,
       dial: (target) => new WebSocket(target) as never,
       onFrame: () => {},
-      heartbeatMs: 40,
+      heartbeatMs: 200,
       batchMs: 30,
     }),
   )
@@ -233,9 +240,9 @@ test('端到端：发帧也重置空闲计时（半开判据是「任一方向�
   await waitFor('进入 handshake', () => connection.state === 'handshake')
   connection.markHandshakeDone()
 
-  // **只发不收**：对端一个字节都不回。若发帧不算「有动静」，80 ms 后就会被判半开 ——
+  // **只发不收**：对端一个字节都不回。若发帧不算「有动静」，400 ms 后就会被判半开 ——
   // 而契约 §2.2 写的是「任一方向」。
-  const until = Date.now() + 300
+  const until = Date.now() + 1200
   while (Date.now() < until) {
     assert.equal(connection.send({ v: 1, t: 'credit', box: '' }), true)
     await new Promise((resolve) => setTimeout(resolve, 15))

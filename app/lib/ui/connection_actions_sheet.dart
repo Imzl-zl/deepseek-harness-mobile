@@ -75,6 +75,13 @@ Future<void> showConnectionActionsSheet(
   /// 也不在"连不上"时偷偷换 —— 那会变成"手机自己换了个电脑"。
   HostSwitchSeam? hostSwitch,
 
+  /// **添加一台电脑**（一台手机配多台电脑的唯一入口）。
+  ///
+  /// 与「重新配对」是两条路：那个**先清再配**（同一台电脑换身份/重来），
+  /// 这个**只加不删** —— `pairingStore.save` 按电脑公钥分槽，旧槽原样保留。
+  /// 取舍见 `.agents/notes/implemented/2026-11-04-add-a-second-computer.md`。
+  VoidCallback? onAddHost,
+
   /// 触发点矩形。`null` = 底部 sheet。
   Rect? anchor,
 }) {
@@ -133,34 +140,20 @@ Future<void> showConnectionActionsSheet(
             hostSwitch?.onSwitchBack?.call();
           },
         ),
-      if (onPickEndpoint != null)
-        ListTile(
-          leading: const DshIcon(
-            'chevronsUpDown',
-            size: 18,
-            color: DshColors.labelSecondary,
-          ),
-          title: const Text('换个连接方式'),
-          onTap: () {
-            Navigator.of(inner).pop();
-            // 回调必须由**页面**的 context 实现（见下方参数说明）：
-            // 它内部要再开一个 sheet，而这个面板的 context 此刻已随路由失效。
-            onPickEndpoint();
-          },
-        ),
-      if (onManualEndpoint != null)
+      // **添加电脑**：没有别的电脑时它就是"多机"的入口；有别的电脑时
+      // 「切换电脑」在上面、这一行仍然留着（想加第三台的人不用先切走）。
+      if (onAddHost != null)
         ListTile(
           leading: const DshIcon(
             'plus',
             size: 18,
             color: DshColors.labelSecondary,
           ),
-          title: const Text('手动填写电脑地址'),
-          // **"不会自动连"是非显然的**（用户会以为填完就切过去了），其余不必再说。
-          subtitle: const Text('换网络后连不上时用；加了不会自动连'),
+          title: const Text('添加电脑'),
+          subtitle: const Text('扫另一台的配对码；当前这台不会被清掉'),
           onTap: () {
             Navigator.of(inner).pop();
-            onManualEndpoint();
+            onAddHost();
           },
         ),
       if (onReconnect != null)
@@ -191,49 +184,12 @@ Future<void> showConnectionActionsSheet(
             onRetry();
           },
         ),
-      ListTile(
-        leading: const DshIcon(
-          'refresh',
-          size: 18,
-          color: DshColors.labelSecondary,
-        ),
-        title: const Text('重新配对（换一台电脑）'),
-        subtitle: const Text('会清掉本机凭据，需要重新扫码'),
-        onTap: () {
-          Navigator.of(inner).pop();
-          onRePair();
-        },
-      ),
-      if (onOpenSide != null)
-        ListTile(
-          leading: const DshIcon(
-            'panelLeft',
-            size: 18,
-            color: DshColors.labelSecondary,
-          ),
-          title: const Text('打开侧面板'),
-          onTap: () {
-            Navigator.of(inner).pop();
-            onOpenSide();
-          },
-        ),
-      if (onDisconnect != null)
-        ListTile(
-          // **只断链，不动凭据**：清凭据是「重新配对」的事。以前这一行写的是
-          // "断开并清掉凭据"——一个日常动作顺手把配对抹了，误触之后得重新扫码
-          // （用户原话："一般人谁会断开并清掉？误触怎么办？"）。
-          leading: const DshIcon(
-            'link',
-            size: 18,
-            color: DshColors.labelSecondary,
-          ),
-          title: const Text('断开连接'),
-          subtitle: const Text('凭据保留，随时可以连回来'),
-          onTap: () {
-            Navigator.of(inner).pop();
-            onDisconnect();
-          },
-        ),
+      // **2026-11-04 收敛**（用户："这里的选项太多了，实际上只有几个有用"）：
+      // 「重新配对」「打开侧面板」「断开连接」三行从这个面板撤掉 ——
+      //   · 重新配对：会清凭据的危险动作，留在空态那条出路与设置页，不摆在最顺手的地方；
+      //   · 打开侧面板：右滑 / 顶栏本来就有入口，这里纯重复；
+      //   · 断开连接：与「重新连接」成对但极低频，用户明确说不需要。
+      // 参数暂时保留签名（调用方与测试还在传），后续搬到设置页时一并删。
       ListTile(
         title: const Center(child: Text('取消')),
         onTap: () => Navigator.of(inner).pop(),

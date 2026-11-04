@@ -5,7 +5,7 @@
 /// 1. 块在 sheet 顶部，两行：走哪条 + 为什么没走首选（回落时）；
 /// 2. **块不可点** —— 它是事实的呈示，不是入口。点它不该弹出任何操作，
 ///    否则"看一眼当前连接"会变成一次误触发的重新配对；
-/// 3. 加块不动原来的动作行（重新配对 / 取消照旧）。
+/// 3. 加块不动原来的动作行（**2026-11-04 起常驻的是「添加电脑」/「重新连接」/「取消」**）。
 library;
 
 import 'package:dsh_mobile/model/chat_item.dart';
@@ -18,6 +18,7 @@ import 'package:flutter_test/flutter_test.dart';
 Widget _host({
   required ConnectionSummary connection,
   required VoidCallback onRePair,
+  VoidCallback? onAddHost,
   Rect? anchor,
   HostSwitchSeam? hostSwitch,
 }) => MaterialApp(
@@ -29,6 +30,8 @@ Widget _host({
           context,
           connection: connection,
           onRePair: onRePair,
+          // 常驻的多机入口：这一屏现在靠它当"动作行"的样本。
+          onAddHost: onAddHost ?? () {},
           anchor: anchor,
           hostSwitch: hostSwitch,
         ),
@@ -65,22 +68,37 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(rePair, 0, reason: '看一眼当前连接不该触发重新配对');
-    expect(find.text('重新配对（换一台电脑）'), findsOneWidget, reason: 'sheet 还开着，没有误动作');
+    expect(find.text('取消'), findsOneWidget, reason: 'sheet 还开着，没有误动作');
   });
 
-  testWidgets('动作行照旧：重新配对 pop 并回调', (tester) async {
-    var rePair = 0;
+  testWidgets('动作行：「添加电脑」pop 并回调（2026-11-04 起它才是常驻入口）', (tester) async {
+    var added = 0;
     await tester.pumpWidget(
-      _host(connection: fellBack, onRePair: () => rePair++),
+      _host(
+        connection: fellBack,
+        onRePair: () {},
+        onAddHost: () => added++,
+      ),
     );
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('重新配对（换一台电脑）'));
+    await tester.tap(find.text('添加电脑'));
     await tester.pumpAndSettle();
 
-    expect(rePair, 1);
-    expect(find.text('重新配对（换一台电脑）'), findsNothing, reason: 'sheet 已关');
+    expect(added, 1);
+    expect(find.text('添加电脑'), findsNothing, reason: 'sheet 已关');
+  });
+
+  testWidgets('撤掉的行不在这屏：重新配对 / 打开侧面板 / 断开连接', (tester) async {
+    await tester.pumpWidget(_host(connection: fellBack, onRePair: () {}));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    // 用户 2026-11-04：「这里的选项太多了，实际上其实是就几个有用的」。
+    expect(find.text('重新配对（换一台电脑）'), findsNothing);
+    expect(find.text('打开侧面板'), findsNothing);
+    expect(find.text('断开连接'), findsNothing);
   });
 
   testWidgets('切换电脑：多机入口与「切回上一台」都在，且各自回调一次', (tester) async {
@@ -167,7 +185,7 @@ void main() {
       reason: '水平方向也要落在状态点这一侧',
     );
     // 内容与底部 sheet 那份逐字相同（形态不同，动作不漂移）。
-    expect(find.text('重新配对（换一台电脑）'), findsOneWidget);
+    expect(find.text('添加电脑'), findsOneWidget);
   });
 
   testWidgets('不给锚点：仍是底部 sheet（空态出路 / 抽屉连接行）', (tester) async {
@@ -176,6 +194,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(popoverPanelKey), findsNothing, reason: '没有锚点就不该长成浮层');
-    expect(find.text('重新配对（换一台电脑）'), findsOneWidget);
+    expect(find.text('添加电脑'), findsOneWidget);
   });
 }

@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-电脑侧 profile 的 `relayUrl` 常写成 `wss://dsh.0t0.me/ws/connector` —— 那是**连接器**
+电脑侧 profile 的 `relayUrl` 常写成 `wss://<旧中转域名>/ws/connector` —— 那是**连接器**
 拨号的路径，而且连接器自己会拼（`connector/src/transport/relay-link.ts`：
 `base.pathname = '/ws/connector'`）。可二维码把配置里的值原样带出来
 （`connector/src/pairing.ts:219`），于是**手机收到的 `relay` 就带着那条路径**。
@@ -18,7 +18,7 @@ Status: implemented
 - 竞速时它们互相顶掉（中转对同一设备只留一条数据通道，`relay/src/server.ts` 的 `replaced`），
   症状是"连上了又断、反复重连"。
 
-用户看到的正是这个不一致：「我怎么看以前不是这样，是 `wss://dsh.0t0.me/ws/connector`
+用户看到的正是这个不一致：「我怎么看以前不是这样，是 `wss://<旧中转域名>/ws/connector`
 这样？」——两种写法都是他见过的，界面没告诉他哪个是手机该用的。
 
 ## Decision

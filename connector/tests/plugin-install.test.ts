@@ -180,7 +180,9 @@ test('宿主抛错：status 变 done 并带上原话（不伪装成未知失败�
   const h = harness({ install: pending.promise })
   await h.dispatcher.dispatch({
     method: 'plugin.install',
-    params: { spec: 'bad spec' },
+    // spec 用一个**合法形状**：这条用例要钉的是"宿主抛错怎么过线"，
+    // 不能顺手拿一个会被形状闸拒掉的串当载体（那会把失败挡在分发之前）。
+    params: { spec: 'dsh-plugin-demo' },
     requestId: 'job-3',
   })
   pending.fail(new Error('invalid-spec'))
@@ -248,6 +250,10 @@ test('本机路径的 spec 一律拒（registry / git 来源放行），且一�
     '\\\\server\\share\\pkg',
     'file:../pkg',
     '-D',
+    // 内部空白：一句话当两个参数那种写法（见 `installableFromPhone` 头注最后一条）。
+    'pkg --registry=https://evil.example',
+    'a\tb',
+    'git+https://x/y.git --force',
   ]) {
     const reply = await dispatcher.dispatch({
       method: 'plugin.install',
