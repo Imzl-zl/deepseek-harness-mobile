@@ -5,6 +5,11 @@
 
 ## 现在（2026-11-04）
 
+- **工具行不再溢出（11-04 真机）**：`mcp__chrome-devtools__evaluate_script` 这类长工具名把
+  `ToolCard` 的 Row 撑破（右下角黄黑斜纹 = Flutter 的 `RIGHT OVERFLOWED BY 202 PIXELS`）。
+  修法：名字按**可用宽度**设上限（有参数 55%、无参数用满）+ 单行省略号；
+  `render_alignment_test.dart` 两条 390dp 用例钉住（变异校验：撤掉修法即 202 / 226 px 溢出）。app **1688**。
+
 - **轨迹页空态：手机手里那份投影包旧了，不是连接器没注册投影（11-04）**：
   真机空态说"连接器没注册 trajectory 投影，升级连接器"，而同一台电脑同一连接器（0.1.16）
   **重启 App 后 20 轮立刻画出来**；电脑侧 `session_projcache` 里 `turnOutline` 20 条、
@@ -296,6 +301,11 @@
 5. 大改后巡检一次 `docs/` 与代码的漂移。**已知一处**：`connector/src/dsh/interaction-client.ts:63`
    import 了 `transport/backoff.js`，而 `connector-and-relay.md` §1.2 写着「`dsh/` 不 import `transport/`」；
    两者选一个改（补机械规则会立刻红，改文档则承认这条方向可用）。
+6. **投影包按消费者拆**（方案已记录，未实现）：一次 `session.projections` **80.6 KB**，其中
+   `trajectory` **72.2 KB（89.6%）**、`turnOutline` 3.7 KB、其余 27 键 4.7 KB —— 而聊天页每轮
+   只需要轮级用时（turns-only 3.3 KB）。W1 拆键 + 可选 `keys` → 每轮 **8 KB（−90%）**；
+   W2 步级带 `sinceTurn` 游标 → 进页面 76 → ~14 KB。笔记
+   `proposed/2026-11-04-projection-payload-split.md`（含被否的五条）。
 
 ## 门禁（改代码后必须全绿，项数以 `tools.md` 为准）
 
@@ -340,6 +350,10 @@
 - 计划审查卡手机上不存在（**有意**，契约 §15）；保存「连接」卡后只轮询 6 秒判是否连上，
   慢网会停在"重连中"；「清空全部记录」会把还在用的离线设备一起删掉，被删那几台只会
   重试到重新配对（确认框里写明）；上述"未验"各项仍在。
+- **重启后工具行显示成"工具"**（11-04 发现，未修）：本地库每个 itemId 只存一条 payload，
+  `tool/result` 覆盖 `tool/call`，而结果事件不带工具名（真机 DB：**200 条 `tool/result`、
+  0 条 `tool/call`**）—— 冷启动后历史行只剩兜底名（`data/projection.dart:317` 的
+  `kUnknownToolName`）。实时那一份对，因为名字来自内存里合并过的 call。
 ## 已落地索引
 
 - 2026-09-30 通道协议定稿 / 配对 v1 / 连接层拆分 — `implemented/2026-09-30-*`、`2026-10-01-*`

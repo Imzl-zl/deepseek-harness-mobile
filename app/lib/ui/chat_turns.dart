@@ -399,85 +399,114 @@ class _ToolCardState extends State<ToolCard> {
                   horizontal: 14,
                   vertical: 13,
                 ),
-                child: Row(
-                  children: [
-                    // `.tool-ic { 24×24; border-radius:8; 底色 rgba(tool,.16) }`
-                    Container(
-                      width: 24,
-                      height: 24,
-                      decoration: BoxDecoration(
-                        color: c.roleTool.withValues(alpha: 0.16),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Center(
-                        child: DshIcon(icon, size: 13, color: tone),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    DshShimmer(
-                      // 只给**真的在跑**的工具行扫光（DSH 的
-                      // `ToolRow.tsx:181-182` 把 `running` 传给 `DisclosureRow`）。
-                      active: widget.status == ToolCallStatus.running,
-                      child: Text(
-                        widget.name,
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          // 工具名是流程行标题，走 secondary 档（DSH 同一条：
-                          // `--dsh-content-font-size-secondary`）。
-                          fontSize: type.secondary,
-                          fontWeight: FontWeight.w500,
-                          color: c.roleTool,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    // 工具名可能很长（`mcp__chrome-devtools__evaluate_script` 是 37 个
+                    // 字符），而它是这一行的标题：**不许把整行撑破**，也不该被参数挤没。
+                    // 上限按**可用宽度**算，不是一个写死的像素：固定件 = 图标 24 +
+                    // 两处间距 10/6 + 展开箭头 8+16 + diffStat 最坏 ~56。
+                    // 有参数时名字最多 55%（参数回答"它干了什么"）；没参数时用满 ——
+                    // 否则长 MCP 名会一直省略号，而右边空着。
+                    final fixed =
+                        24 +
+                        10 +
+                        6 +
+                        (hasDetail ? 8 + 16 : 0) +
+                        (widget.diffStat != null ? 8 + 56 : 0);
+                    final room = (constraints.maxWidth - fixed).clamp(
+                      0.0,
+                      double.infinity,
+                    );
+                    final nameMax = widget.argument.isEmpty
+                        ? room
+                        : room * 0.55;
+                    return Row(
+                      children: [
+                        // `.tool-ic { 24×24; border-radius:8; 底色 rgba(tool,.16) }`
+                        Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            color: c.roleTool.withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Center(
+                            child: DshIcon(icon, size: 13, color: tone),
+                          ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    // `.tool-arg { flex:1; min-width:0; 等宽; 可省略 }`
-                    Expanded(
-                      child: Text(
-                        widget.argument,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 12,
-                          color: c.labelTertiary,
+                        const SizedBox(width: 10),
+                        ConstrainedBox(
+                          constraints: BoxConstraints(maxWidth: nameMax),
+                          child: DshShimmer(
+                            // 只给**真的在跑**的工具行扫光（DSH 的
+                            // `ToolRow.tsx:181-182` 把 `running` 传给 `DisclosureRow`）。
+                            active: widget.status == ToolCallStatus.running,
+                            child: Text(
+                              widget.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              softWrap: false,
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                // 工具名是流程行标题，走 secondary 档（DSH 同一条：
+                                // `--dsh-content-font-size-secondary`）。
+                                fontSize: type.secondary,
+                                fontWeight: FontWeight.w500,
+                                color: c.roleTool,
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-                    if (widget.diffStat != null) ...[
-                      const SizedBox(width: 8),
-                      Text(
-                        '+${widget.diffStat!.added}',
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 11,
-                          color: c.fileDiffAddMarker,
+                        const SizedBox(width: 6),
+                        // `.tool-arg { flex:1; min-width:0; 等宽; 可省略 }`
+                        Expanded(
+                          child: Text(
+                            widget.argument,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 12,
+                              color: c.labelTertiary,
+                            ),
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '−${widget.diffStat!.removed}',
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 11,
-                          color: c.fileDiffDelMarker,
-                        ),
-                      ),
-                    ],
-                    if (hasDetail) ...[
-                      const SizedBox(width: 8),
-                      // `.tool-cv` 展开时旋转 90°（`is-open` 那条规则）。
-                      AnimatedRotation(
-                        turns: _open ? 0.25 : 0,
-                        duration: const Duration(milliseconds: 160),
-                        child: DshIcon(
-                          'chevronRight',
-                          size: 16,
-                          color: c.labelTertiary,
-                        ),
-                      ),
-                    ],
-                  ],
+                        if (widget.diffStat != null) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            '+${widget.diffStat!.added}',
+                            style: TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 11,
+                              color: c.fileDiffAddMarker,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '−${widget.diffStat!.removed}',
+                            style: TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 11,
+                              color: c.fileDiffDelMarker,
+                            ),
+                          ),
+                        ],
+                        if (hasDetail) ...[
+                          const SizedBox(width: 8),
+                          // `.tool-cv` 展开时旋转 90°（`is-open` 那条规则）。
+                          AnimatedRotation(
+                            turns: _open ? 0.25 : 0,
+                            duration: const Duration(milliseconds: 160),
+                            child: DshIcon(
+                              'chevronRight',
+                              size: 16,
+                              color: c.labelTertiary,
+                            ),
+                          ),
+                        ],
+                      ],
+                    );
+                  },
                 ),
               ),
             ),

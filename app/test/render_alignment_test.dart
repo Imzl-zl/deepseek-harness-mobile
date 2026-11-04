@@ -194,6 +194,66 @@ void main() {
     });
   });
 
+  group('工具行：长工具名不许把整行撑破', () {
+    // 2026-11-04 真机：`mcp__chrome-devtools__evaluate_script` 与
+    // `mcp__chrome-devtools__take_screenshot` 两行右下角出现黄黑斜纹
+    // （Flutter 的 `RIGHT OVERFLOWED BY N PIXELS`）—— 名字是 Row 里**唯一没有约束**
+    // 的 Text，长名直接把整行撑破。判据就是"不抛溢出"：溢出会以 FlutterError 抛出。
+    Future<void> pumpRow(WidgetTester tester, Widget card) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: DshTheme.dark(),
+          home: Scaffold(
+            // 真机列表左右各 16 的边距：卡片可用宽度不是整屏。
+            body: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: SingleChildScrollView(child: card),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('390dp + 37 字符的 MCP 名（无参数）：不溢出，名字完整显示', (tester) async {
+      tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+
+      const name = 'mcp__chrome-devtools__evaluate_script';
+      await pumpRow(
+        tester,
+        const ToolCard(name: name, status: ToolCallStatus.completed),
+      );
+
+      expect(tester.takeException(), isNull, reason: '溢出会以 FlutterError 抛出');
+      expect(find.text(name), findsOneWidget);
+    });
+
+    testWidgets('390dp + 长名字 + 长参数：两边都截断，仍然不溢出', (tester) async {
+      tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+
+      await pumpRow(
+        tester,
+        const ToolCard(
+          name: 'mcp__chrome-devtools__take_screenshot',
+          status: ToolCallStatus.completed,
+          argument: '{"fullPage":true,"format":"png","quality":90}',
+          detail: 'ok',
+        ),
+      );
+
+      expect(tester.takeException(), isNull, reason: '溢出会以 FlutterError 抛出');
+      final nameText = tester.widget<Text>(
+        find.text('mcp__chrome-devtools__take_screenshot'),
+      );
+      expect(nameText.maxLines, 1);
+      expect(nameText.overflow, TextOverflow.ellipsis);
+    });
+  });
+
   group('用户消息：DSH 不跑 Markdown', () {
     testWidgets('`**加粗**` 原样显示（与 UserTextRun 一致）', (tester) async {
       await pump(tester, const UserTurn('这是 **加粗** 的原文'));
