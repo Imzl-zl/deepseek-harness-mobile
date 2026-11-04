@@ -20,6 +20,18 @@ import dgram from 'node:dgram'
 import net from 'node:net'
 
 /**
+ * 选路的兜底上限（**通道层参数**，不是业务规则）。
+ *
+ * UDP `connect` 只让内核选路、不发包，正常是毫秒级返回。这一档防的是"既不回调也不
+ * 报错"的退化情形：那会让**启动路径**（出码、端点自报）永远挂在一次本地选路上，
+ * 症状是"局域网功能像没做"，比直接说"拿不到地址"难查得多。
+ *
+ * 超时与"没有默认路由"走同一条退路：回 `null`，调用方把配置里的地址原样用。
+ * 取舍见 `.agents/notes/implemented/2026-11-04-unbounded-waits-in-probe-and-test.md`。
+ */
+const PROBE_TIMEOUT_MS = 500
+
+/**
  * 默认路由网卡上的 IPv4；拿不到回 `null`。
  *
  * **不发真实流量**：UDP `connect` 只做选路，`8.8.8.8:80` 不可达也不影响
@@ -35,9 +47,11 @@ export function defaultRouteIPv4(): Promise<string | null> {
       return
     }
     let settled = false
+    let timer: NodeJS.Timeout | undefined
     const done = (value: string | null): void => {
       if (settled) return
       settled = true
+      if (timer !== undefined) clearTimeout(timer)
       try {
         socket.close()
       } catch {
@@ -45,6 +59,8 @@ export function defaultRouteIPv4(): Promise<string | null> {
       }
       resolve(value)
     }
+    timer = setTimeout(() => done(null), PROBE_TIMEOUT_MS)
+    timer.unref()
     socket.once('error', () => done(null))
     socket.connect(80, '8.8.8.8', () => {
       const address = socket.address()?.address

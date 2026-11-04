@@ -24,6 +24,10 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
+// 内置中转的地址在**两个地方各有一份**：`src/config.ts` 的常量与 `client.js` 里手写的那份
+// （浏览器半侧不进构建）。这里拿服务端那份当期望值 —— 两份一旦不同步，这条就红。
+import { BUILTIN_RELAY_URL } from '../src/config.js'
+
 /** `client.js` 在包根，`exports['./client']` 指向它。 */
 const CLIENT_PATH = new URL('../client.js', import.meta.url)
 
@@ -516,12 +520,12 @@ test('传输方式：每个通道一行开关，行来自 GET /transport（不�
 test('传输方式：电脑侧说停了，那一行的键换成「启动」', async () => {
   const stopped = [
     { id: 'relay', label: '中转拨号', running: false, detail: 'ws://127.0.0.1:8787/ws/connector' },
-    { id: 'direct', label: '直连监听', running: false, detail: '未配置监听端口（listenPort: 0）' },
+    { id: 'direct', label: '直连监听', running: false, detail: '直连已停用（listenPort: 0）' },
   ]
   const { tree } = await mountPanel({}, defaultFetch(stopped))
   const starts = flatten(tree).filter((element) => element.type === 'button' && textOf(element.props.children) === '启动')
   assert.equal(starts.length, 2, '两条停着的通道各一个「启动」')
-  assert.match(allText(tree), /直连监听[\s\S]*未配置监听端口/, '未配置的通道说清原因')
+  assert.match(allText(tree), /直连监听[\s\S]*直连已停用/, '停用的通道说清"是谁关的"，不是"没配"')
 })
 
 test('传输方式：点一行的「停止」打的是 /transport/{id}/stop，跑完重拉状态', async () => {
@@ -878,7 +882,9 @@ test('中转没配置过 ⇒ 预选「内置中转」，地址直接显示（不
   const text = allText(tree)
   assert.match(
     text,
-    /wss:\/\/dsh\.0t0\.me\/ws\/connector/,
+    // **不写死域名**：拿服务端常量当期望值，顺带把"两份副本是否同步"钉住
+    // （2026-11-04 换中转时，此前写死域名的那一版直接红了一条）。
+    new RegExp(BUILTIN_RELAY_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
     '内置中转的地址要直接显示出来，不用用户去点一下才看得到',
   )
   assert.equal(
