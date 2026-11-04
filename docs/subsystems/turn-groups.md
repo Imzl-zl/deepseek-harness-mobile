@@ -82,6 +82,14 @@ DSH 的整轮控制行在**轮次开头**（`turn.start.seq − 0.1`，
 手机这一版把两者合成**一行、落在轮次末尾**：内容本来就在上方，点末尾那行把上面收起来
 比在开头放一条更省手指，也少一行 chrome。代价是"折叠开关在它所控制的内容下方"。
 
+**思考正文封顶（2026-11-04）。** DSH 让展开后的思考正文**不封顶**地跟着对话滚，靠
+`position: sticky`（`ui-chat/src/client/chat/ReasoningRow.module.css:15-21`）把标题行
+（图标 + 「思考」+ chevron）钉在视口顶部 —— 于是正文再长，"想折叠"永远够得着。
+Flutter 没有 sticky：同一个效果要么把整个聊天流改成 sliver 分组
+（`SliverPersistentHeader`，一次大改），要么把正文**封顶后自己滚**。手机选后者：
+正文上限半屏（`MediaQuery.sizeOf(context).height * 0.5`），标题行恒在它上方，
+读正文时标题一直在视野里。代价是正文内部多一层滚动（与"系统提示词 141px"同一档取舍）。
+
 ## 5. 「工作步骤收起时机」
 
 设置页「通用」组的一行（`app/lib/model/preferences.dart` 的 `CollapseTiming`，两档）：

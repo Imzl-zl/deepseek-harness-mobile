@@ -291,7 +291,7 @@ dsh-mobile/
 
 **思考过程 / 附件 / 工具明细 / 插话标**(2026-10-17 补齐,形状照真实会话日志):
 
-- 助手消息的 `{type:'reasoning'}` 块渲染成可折叠的「思考过程」(默认收起);
+- 助手消息的 `{type:'reasoning'}` 块渲染成可折叠的「思考过程」(默认收起);展开后正文**封顶半屏、自己滚**(**有意偏离** —— DSH 用 `position: sticky` 钉标题行,手机用封顶换同一个结果,见 `subsystems/turn-groups.md` §4);
 - 用户消息的图片/文件块**计数显示**(读附件要 `session/attachment`,本期未接);
 - 工具卡展开区显示**结果输出预览**;`metadata.diffs` hunks 折成 +N/−M 小计;
 - 轮次跑到一半插进去的用户消息带「插话」标(判据逐字移植 DSH `SteeringHistory`)。

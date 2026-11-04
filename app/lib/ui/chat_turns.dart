@@ -1660,18 +1660,33 @@ class _CollapsibleNoteState extends State<_CollapsibleNote> {
           preview: widget.collapsedPreview,
           onTap: () => setState(() => _open = !_open),
         ),
-        if (_open) _body(context.dshColors),
+        if (_open) _body(context),
       ],
     );
   }
 
-  Widget _body(DshColorTokens c) {
+  Widget _body(BuildContext context) {
+    final c = context.dshColors;
     if (widget.markdownBody) {
       // 思考正文：DSH `ReasoningRow.module.css:73-77` 的 `.thinkBody`
       //   `padding: 4px 0 4px calc(22px + delta)`，正文是 compact Markdown。
+      //
+      // **有意偏离（2026-11-04）**：DSH 让正文**不封顶**地跟着对话滚，靠
+      // `position: sticky`（`ReasoningRow.module.css:15-21`）把标题行钉在视口顶部，
+      // 于是"想折叠"永远够得着。Flutter 没有 sticky：同一个效果要么把聊天流改成
+      // sliver 分组（`SliverPersistentHeader`），要么**把正文封顶、自己滚**。
+      // 这里选后者 —— 标题行恒在正文上方、整块不超过半屏，读正文时标题一直在视野里，
+      // 想折叠不用滚回去（用户原话："想点击折叠就要滚动好久"）。
+      // 代价是正文内部多一层滚动，与"系统提示词 141px"同一档取舍。
+      final cap = MediaQuery.sizeOf(context).height * 0.5;
       return Padding(
         padding: const EdgeInsets.fromLTRB(22, 4, 0, 4),
-        child: DshMarkdown(widget.text, compact: true),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: cap),
+          child: SingleChildScrollView(
+            child: DshMarkdown(widget.text, compact: true),
+          ),
+        ),
       );
     }
     // 系统提示词 / 上下文注入：DSH `ContextInjectionRow.module.css:50-64` 的 `.body`

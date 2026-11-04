@@ -140,6 +140,21 @@ class SideJob {
   final String? gapNote;
 
   bool get isLive => state == 'running' || state == 'stopping';
+
+  /// 这一行能不能展开（DSH 的 `isObservable`，`JobListAction.tsx:67-69`）：
+  /// **活的 || 有输出**。活行恒为可观察 —— 输出可能还没到，但马上会到。
+  bool get observable => isLive || output.isNotEmpty;
+}
+
+/// 点一行任务之后的展开集合（`ChatPageState._openJobs` 的下一状态）。
+///
+/// **收起必须显式 `remove`**：`Set.add` 在元素已存在时只返回 `false`、集合不变 ——
+/// 早先把它当"收起"用，于是第二次点箭头永远转不回去
+/// （2026-11-04 用户反馈："点击展开，再点击折叠折叠不了"）。
+Set<String> toggledJobIds(Set<String> current, String id) {
+  final next = Set<String>.of(current);
+  if (!next.remove(id)) next.add(id);
+  return next;
 }
 
 /// 右抽屉。
@@ -528,137 +543,152 @@ class _JobRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
+    // DSH 的 `.rowLine`：行按钮 flex 占满，停止按钮是它的**兄弟**（`gap:6px`）。
+    // 放进行按钮里会让"点行展开"和"点按钮停止"抢同一个手势，而且它紧挨着展开
+    // 箭头 —— 2026-11-04 用户原话"后面的×也有一点碍事"。
+    // "可展开"判定在 `SideJob.observable`（DSH `isObservable`：活的 || 有输出）。
     return Column(
       children: [
-        InkWell(
-          onTap: onToggle == null ? null : () => onToggle!(job),
-          child: Container(
-            // `.jrow { min-height:44px; padding:8px 10px 8px 12px;
-            //   border-top:1px solid l1 }`
-            constraints: const BoxConstraints(minHeight: 44),
-            padding: const EdgeInsets.fromLTRB(12, 8, 10, 8),
-            decoration: BoxDecoration(
-              border: Border(top: BorderSide(color: c.layer1)),
-            ),
-            child: Row(
-              children: [
-                // 状态点：在跑是绿的（一眼看出哪个还活着）。
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: switch (job.state) {
-                      'running' => c.roleContext,
-                      'stopping' => c.roleTool,
-                      'failed' => c.error,
-                      _ => c.labelTertiary,
-                    },
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: job.isLive
-                      // 进行中：两行（label / kind + status）。
-                      ? Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              job.label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 12,
-                                color: c.labelPrimary,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Row(
-                              children: [
-                                Text(
-                                  job.kind,
-                                  style: TextStyle(
-                                    fontFamily: 'monospace',
-                                    fontSize: 11,
-                                    color: c.roleTool,
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(
-                                    job.statusText,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: c.labelCaption,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        )
-                      // 已结束：一行 —— label 可省略，status 不许被压没。
-                      : Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                job.label,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontFamily: 'monospace',
-                                  fontSize: 12,
-                                  color: c.labelSecondary,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              job.statusText,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: c.labelCaption,
-                              ),
-                            ),
-                          ],
+        Container(
+          decoration: BoxDecoration(
+            border: Border(top: BorderSide(color: c.layer1)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  onTap: onToggle == null ? null : () => onToggle!(job),
+                  child: Container(
+                    // `.jrow { min-height:44px; padding:8px 10px 8px 12px }`
+                    constraints: const BoxConstraints(minHeight: 44),
+                    padding: const EdgeInsets.fromLTRB(12, 8, 10, 8),
+                    child: Row(
+                      children: [
+                        // 状态点：在跑是绿的（一眼看出哪个还活着）。
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: switch (job.state) {
+                              'running' => c.roleContext,
+                              'stopping' => c.roleTool,
+                              'failed' => c.error,
+                              _ => c.labelTertiary,
+                            },
+                            shape: BoxShape.circle,
+                          ),
                         ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: job.isLive
+                              // 进行中：两行（label / kind + status）。
+                              ? Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      job.label,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontFamily: 'monospace',
+                                        fontSize: 12,
+                                        color: c.labelPrimary,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Row(
+                                      children: [
+                                        Text(
+                                          job.kind,
+                                          style: TextStyle(
+                                            fontFamily: 'monospace',
+                                            fontSize: 11,
+                                            color: c.roleTool,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Expanded(
+                                          child: Text(
+                                            job.statusText,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: c.labelCaption,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                )
+                              // 已结束：一行 —— label 可省略，status 不许被压没。
+                              : Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        job.label,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontFamily: 'monospace',
+                                          fontSize: 12,
+                                          color: c.labelSecondary,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      job.statusText,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: c.labelCaption,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                        ),
+                        if (job.durationText.isNotEmpty) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            job.durationText,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                              color: c.labelCaption,
+                            ),
+                          ),
+                        ],
+                        if (job.observable) ...[
+                          const SizedBox(width: 4),
+                          AnimatedRotation(
+                            turns: open ? 0.5 : 0,
+                            duration: const Duration(milliseconds: 160),
+                            child: DshIcon(
+                              'chevronDown',
+                              size: 14,
+                              color: c.labelTertiary,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                 ),
-                if (job.durationText.isNotEmpty) ...[
-                  const SizedBox(width: 8),
-                  Text(
-                    job.durationText,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                      color: c.labelCaption,
-                    ),
-                  ),
-                ],
-                // 停止按钮：二次点击变"确认停止"（原型 `.jstop[data-kill]`）。
-                if (job.isLive && onStop != null) ...[
-                  const SizedBox(width: 6),
-                  _StopButton(onConfirm: () => onStop!(job)),
-                ],
-                if (job.output.isNotEmpty) ...[
-                  const SizedBox(width: 4),
-                  AnimatedRotation(
-                    turns: open ? 0.5 : 0,
-                    duration: const Duration(milliseconds: 160),
-                    child: DshIcon(
-                      'chevronDown',
-                      size: 14,
-                      color: c.labelTertiary,
-                    ),
-                  ),
-                ],
-              ],
-            ),
+              ),
+              // 停止按钮**只在 `running` 行**出现（DSH `JobListAction.tsx:495-502`）：
+              // `stopping` 行已经不需要它了，再摆一个就是让人重复点。
+              if (job.state == 'running' && onStop != null)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: _StopButton(onConfirm: () => onStop!(job)),
+                ),
+            ],
           ),
         ),
-        if (open && job.output.isNotEmpty)
+        if (open && job.observable)
           Container(
             // `.jrow .out { padding:10px 12px; border-radius:12;
             //   background:#171719; 等宽 12/19; max-height:200 }`
@@ -684,7 +714,9 @@ class _JobRow extends StatelessWidget {
                     const SizedBox(height: 4),
                   ],
                   Text(
-                    job.output,
+                    // 活行可能还没吐字：DSH 的 `terminal.noOutput`（「（无输出）」）——
+                    // 展开后什么都不画会让人以为点了没反应。
+                    job.output.isEmpty ? '（无输出）' : job.output,
                     style: TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 12,
@@ -763,31 +795,41 @@ class _StopButtonState extends State<_StopButton> {
             _arm();
           }
         },
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 30),
-          padding: EdgeInsets.symmetric(horizontal: _armed ? 12 : 9),
-          decoration: BoxDecoration(
-            color: _armed ? c.error.withValues(alpha: 0.9) : c.layer3,
-            borderRadius: BorderRadius.circular(15),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DshIcon(
-                _armed ? 'stopFill' : 'close',
-                size: 14,
-                color: _armed ? Colors.white : c.labelSecondary,
-              ),
-              if (_armed) ...[
-                const SizedBox(width: 5),
-                const Text(
-                  '确认停止',
-                  style: TextStyle(fontSize: 11, color: Colors.white),
+        child: _armed
+            ? Container(
+                constraints: const BoxConstraints(minHeight: 30),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: c.error.withValues(alpha: 0.9),
+                  borderRadius: BorderRadius.circular(15),
                 ),
-              ],
-            ],
-          ),
-        ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DshIcon('stopFill', size: 12, color: Colors.white),
+                    SizedBox(width: 5),
+                    Text(
+                      '确认停止',
+                      style: TextStyle(fontSize: 11, color: Colors.white),
+                    ),
+                  ],
+                ),
+              )
+            // 未 armed：**一个安静的方块**。DSH 的 `.stop` 是 20×20、无填充、细边
+            // （`JobListAction.module.css` 的 `.stop`），字形是 `stopFill` 不是 `close`。
+            // 之前这里是填充胶囊 + `close`：看起来像"关闭 / 删除"，还挤在展开箭头旁边
+            // —— 2026-11-04 用户原话"后面的×也有一点碍事"。
+            : Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  border: Border.all(color: c.layer1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Center(
+                  child: DshIcon('stopFill', size: 12, color: c.labelSecondary),
+                ),
+              ),
       ),
     );
   }

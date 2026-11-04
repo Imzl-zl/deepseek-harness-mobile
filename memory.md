@@ -5,6 +5,15 @@
 
 ## 现在（2026-11-04）
 
+- **后台任务行 + 思考折叠（11-04 真机反馈）**：① "展开后再点折叠回不去"的真因是
+  `Set.add` 只加不删（元素已在集合里时返回 false、集合不变），下一状态改由
+  `toggledJobIds`（`ui/side_pane.dart`）一处算；② 停止按钮照 DSH 挪到行按钮**外面**
+  （`.rowLine` 的兄弟）、只在 `running` 行出现、字形 `close` → `stopFill`（原来像
+  "关闭 / 删除"，还挤着展开箭头）；③ 可展开判定照 `isObservable`（活的 || 有输出），
+  活行没输出也能展开，展开后空输出说"（无输出）"；④ 思考正文**封顶半屏自己滚** ——
+  Flutter 没有 `position: sticky`，用封顶换"标题行一直在视野里"（偏离记在
+  `subsystems/turn-groups.md` §4）。app **1692**。
+
 - **工具行不再溢出（11-04 真机）**：`mcp__chrome-devtools__evaluate_script` 这类长工具名把
   `ToolCard` 的 Row 撑破（右下角黄黑斜纹 = Flutter 的 `RIGHT OVERFLOWED BY 202 PIXELS`）。
   修法：名字按**可用宽度**设上限（有参数 55%、无参数用满）+ 单行省略号；

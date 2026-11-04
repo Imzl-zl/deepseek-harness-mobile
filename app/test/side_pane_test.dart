@@ -10,6 +10,7 @@
 library;
 
 import 'package:dsh_mobile/theme/dsh_colors.dart';
+import 'package:dsh_mobile/theme/dsh_icons.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/dsh_diff.dart';
 import 'package:dsh_mobile/ui/side_pane.dart';
@@ -260,6 +261,89 @@ void main() {
       expect(find.text('确认停止'), findsNothing, reason: '窗口过了要自己解除');
       expect(find.byTooltip('停止'), findsOneWidget);
       expect(stopped, 0, reason: '解除不是"停止"—— 一个任务都不该被杀');
+    });
+
+    test('展开集合：第二次点把 id 移除（`Set.add` 只加不删的那个坑）', () {
+      // 2026-11-04 用户反馈"点击展开，再点击折叠折叠不了"：`Set.add` 在元素已存在时
+      // 只返回 false、集合不变 —— 把它当"收起"用就永远收不起来。
+      final opened = toggledJobIds(const <String>{}, 'j1');
+      expect(opened, {'j1'});
+      final closed = toggledJobIds(opened, 'j1');
+      expect(closed, isEmpty);
+      expect(toggledJobIds(closed, 'j1'), {'j1'}, reason: '第三次点还能再展开');
+    });
+
+    testWidgets('停止按钮**只在 running 行**出现（stopping 行不给）', (tester) async {
+      // DSH `JobListAction.tsx:495-502`：行翻成 stopping 之后按钮就该消失 ——
+      // 再摆一个就是让人重复点。
+      await tester.pumpWidget(
+        _wrap(
+          _pane(
+            panel: SidePanel.jobs,
+            jobs: const [
+              SideJob(
+                id: 'j1',
+                label: 'a',
+                kind: 'pwsh',
+                state: 'stopping',
+                statusText: '正在停止',
+              ),
+            ],
+            onStopJob: (_) {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('停止'), findsNothing);
+    });
+
+    testWidgets('活行**还没有输出也显示 chevron**（可观察 = 活的 || 有输出）', (tester) async {
+      await tester.pumpWidget(
+        _wrap(
+          _pane(
+            panel: SidePanel.jobs,
+            jobs: const [
+              SideJob(
+                id: 'j1',
+                label: 'a',
+                kind: 'pwsh',
+                state: 'running',
+                statusText: '跑着',
+              ),
+            ],
+            onToggleJob: (_) {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byWidgetPredicate((w) => w is DshIcon && w.name == 'chevronDown'),
+        findsOneWidget,
+        reason: '活行恒为可观察：输出可能还没到，但马上会到',
+      );
+    });
+
+    testWidgets('展开但还没有输出：说"（无输出）"，不是一片空白', (tester) async {
+      await tester.pumpWidget(
+        _wrap(
+          _pane(
+            panel: SidePanel.jobs,
+            jobs: const [
+              SideJob(
+                id: 'j1',
+                label: 'a',
+                kind: 'pwsh',
+                state: 'running',
+                statusText: '跑着',
+              ),
+            ],
+            openIds: const {'j1'},
+            onToggleJob: (_) {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('（无输出）'), findsOneWidget);
     });
   });
 

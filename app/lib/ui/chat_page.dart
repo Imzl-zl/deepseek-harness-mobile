@@ -2812,8 +2812,16 @@ class ChatPageState extends State<ChatPage> {
   Future<void> _toggleJob(SideJob job) async {
     final sid = widget.app.currentSid;
     if (sid == null) return;
-    final opening = _openJobs.add(job.id);
-    setState(() {});
+    // 下一状态由 `toggledJobIds` 一处算（**收起必须显式 remove**：`Set.add` 在
+    // 元素已存在时只返回 false、集合不变 —— 早先把它当"收起"用，于是箭头永远
+    // 转不回去）。判据与坑见 `ui/side_pane.dart` 的该函数。
+    final next = toggledJobIds(_openJobs, job.id);
+    final opening = next.contains(job.id);
+    setState(() {
+      _openJobs
+        ..clear()
+        ..addAll(next);
+    });
     if (opening) {
       await widget.app.followJob(sid, job.id);
     } else {
