@@ -15,7 +15,7 @@
 ///   （`session/modelCatalog` + `modelSelection` 投影），拉取失败的 provider
 ///   **列出来**（静默丢掉 = "key 没配"在手机上毫无痕迹）。
 /// - **连接方式**：端点选择器（`AppModel.endpoints`，序即偏好）。
-/// - **关于与连接**：App 版本 + 连接状态。
+/// - **关于与连接**：检查更新 + App 版本（点按复制）+ 连接状态。
 ///
 /// 快捷键（无物理键盘）、内置插件 / Agent 预设 / 账号（都要先扩连接器方法面）
 /// **不进本版** —— 依据见 `docs/settings-porting-notes.md` §10。
@@ -332,14 +332,9 @@ class SettingsPage extends StatelessWidget {
             const SizedBox(height: 8),
             _AddEndpointButton(app: app),
             const _SectionTitle('关于与连接'),
-            _PrefRow(
-              icon: 'info',
-              label: 'App 版本',
-              value: kAppVersion,
-              onTap: () => _copy(context, kAppVersion),
-            ),
-            // 查更新：**用户点才查**（启动时也静默查一次，结论落在这行）。
-            // 查不到如实说"查不到最新版本"，绝不显示"已是最新"。
+            // **「检查更新」放在「App 版本」上面**：用户找"更新"时第一眼看到的是动作，
+            // 而不是"版本号"那行 —— 后者点按是**复制**（为了贴到 issue 里），
+            // 2026-11-04 用户原话：「设置有版本号为啥是复制不是检查更新」。
             _PrefRow(
               icon: 'refresh',
               label: '检查更新',
@@ -347,6 +342,12 @@ class SettingsPage extends StatelessWidget {
                   ? '查询中…'
                   : (app.appUpdate?.label ?? '点这里检查'),
               onTap: () => unawaited(_checkUpdate(context, app)),
+            ),
+            _PrefRow(
+              icon: 'info',
+              label: 'App 版本（点按复制）',
+              value: kAppVersion,
+              onTap: () => unawaited(_copyVersion(context)),
             ),
             // **两个版本并排**（排错必需）：手机是哪一版、电脑上的 DSH 是哪一版。
             // 电脑侧版本来自 `repo.info.dshVersion`（宿主运行时真值）；拿不到说"未读到"，
@@ -425,6 +426,14 @@ class SettingsPage extends StatelessWidget {
     DshToast.show(context, '已复制');
   }
 
+  /// 版本号那行：**复制**（贴到 issue / 群里排错），并说明"检查更新在上一行"，
+  /// 免得把它当成更新入口（2026-11-04 的误会）。
+  Future<void> _copyVersion(BuildContext context) async {
+    await Clipboard.setData(const ClipboardData(text: kAppVersion));
+    if (!context.mounted) return;
+    DshToast.show(context, '版本号已复制（检查更新在上一行）');
+  }
+
   /// 查一次更新并给回执。**失败用 error 色**（查不到不是"已是最新"）。
   Future<void> _checkUpdate(BuildContext context, AppModel app) async {
     await app.checkAppUpdate();
@@ -435,7 +444,11 @@ class SettingsPage extends StatelessWidget {
       context,
       update.hasUpdate
           ? '有新版本 v${update.latest}（去 GitHub Releases 页下载）'
-          : update.label,
+          // **失败带原因**：国内网络下 GitHub API 常常不可达，只说"查不到"
+          // 会让人以为是 App 的锅；把 HTTP 状态 / 超时原话带出来。
+          : update.error == null
+          ? update.label
+          : '查不到最新版本：${update.error}',
       kind: update.error == null ? DshToastKind.info : DshToastKind.error,
     );
   }

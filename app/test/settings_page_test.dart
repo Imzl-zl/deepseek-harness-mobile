@@ -539,6 +539,26 @@ void main() {
     await requested;
     addTearDown(app.dispose);
   });
+
+  testWidgets('关于与连接：检查更新在版本号上面；版本号那行写明"点按复制"', (tester) async {
+    // 2026-11-04 用户原话：「设置有版本号为啥是复制不是检查更新」——
+    // 两行都在，但顺序与文案必须让人一眼分清：上面是动作，下面是复制。
+    final app = AppModel(
+      client: _FakeClient(),
+      latestAppTag: () async => '0.2.7',
+    );
+    addTearDown(app.dispose);
+    await tester.pumpWidget(_host(app));
+    await tester.pumpAndSettle();
+    await _scrollTo(tester, find.text('关于与连接'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('检查更新'), findsOneWidget);
+    expect(find.text('App 版本（点按复制）'), findsOneWidget);
+    final check = tester.getTopLeft(find.text('检查更新')).dy;
+    final version = tester.getTopLeft(find.text('App 版本（点按复制）')).dy;
+    expect(check, lessThan(version), reason: '找更新时第一眼应是「检查更新」，不是版本号');
+  });
 }
 
 const _extra = Endpoint(
