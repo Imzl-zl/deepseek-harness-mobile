@@ -78,7 +78,7 @@
 | POST | `/api/console/connectors` | 新建电脑,返回只显示一次的令牌 |
 | POST | `/api/console/connectors/action` | `rename` / `revoke` / `restore` / `remove` / `reset-binding` |
 
-管理面新增 `/admin/api/users/{status,role,limits}`、`/admin/api/limits-defaults`、`/admin/api/mail/test`、`/admin/api/smtp` 与 `/admin/api/registration`;账号会话(`role = admin`)与 break-glass Bearer 都能进 `/admin`。
+管理面新增 `/admin/api/users/{status,role,limits}`、`/admin/api/limits-defaults`、`/admin/api/mail/test`、`/admin/api/smtp`、`/admin/api/registration` 与 `/admin/api/tokens/issue`;账号会话(`role = admin`)与 break-glass Bearer 都能进 `/admin`。
 
 ## 6. 存续、备份与部署
 
@@ -102,7 +102,9 @@
 - 控制台:概览 / 我的电脑 / 账号;空状态一句话;添加电脑后令牌弹窗必须勾选"已保存"才能关闭。
 - 管理台:`/admin` 的"用户"分区显示账号、角色、状态、电脑/在线/设备数、本月用量(带用量条)、最近登录;每行「操作」列可直接改电脑数、改额度、重置用量,并停用/恢复、改角色。
 - 管理台「设置」:默认电脑数、新账号默认月额度、SMTP 服务器/端口/TLS/用户名/密码/发件人,以及注册开放/关闭与邮箱域名白名单;保存即写回配置并立即生效,密码留空 = 不改。
-- **管理台不签发自己的令牌**:顶栏「我的电脑」与令牌页的「添加我的电脑」都指向 `/console`;管理员和普通用户走同一个「添加电脑」流程。
+- **管理台令牌页可以签一张 break-glass 令牌**:「添加我的电脑」调 `POST /admin/api/tokens/issue`,id 预填 `local`(连接器的默认 `?id=`,换过 id 的电脑要填它自己的),同 id 已有活跃令牌回 409;明文只在应答里出现一次,配置里只落摘要,审计只记 id。账号会话与 Bearer 两种登录都能用。
+- **这张令牌不归属任何账号**:它 `userId` 为空,**不占任何账号的电脑数**;在「用量」分区出现在「未归属账号的主体」表里,而不是某个用户行下。它是一张能连中转的钥匙,不是某个人的电脑。
+- 顶栏「我的电脑」按登录方式换落点:账号会话进 `/console`(完整的账号电脑管理);Bearer 模式直接落到令牌页并聚焦「添加我的电脑」那行 —— 令牌模式没有 cookie,`/console` 会静默 302 到 `/login`。
 - 管理台"用量"分区:账号数 / 本月总用量 / 在线电脑 / 已配对设备四个 KPI;按已用降序列出全部账号(含零用量)、额度条、最近登录,并可改额度或重置;**未归属账号的主体(旧令牌 / 没配 owner)单独一张表**,不会因为开了账号模式就从面板消失。
 - 电脑侧「连接」卡的令牌行有「去注册 / 登录」外链:按当前 `relayUrl` 推导 `http(s)://host/login`,`/login` 已登录会 302 到 `/console`;取舍见 `.agents/notes/implemented/2026-11-02-connection-card-opens-relay-console.md`。
 
@@ -117,7 +119,7 @@
 ## 9. 已知边界
 
 - 没有 Linux.do、邀请码、邮箱换绑、用户自删除;注册开关只有 `open` / `closed`。
-- 旧令牌不归属任何账号,仍可用;管理台能看与吊销,但不能在 UI 里"归属给某账号"。
+- 旧令牌与管理台签出的 break-glass 令牌都**不归属任何账号**,仍可用;管理台能看与吊销,但不能在 UI 里"归属给某账号"。
 - 单实例:会话与限流都在进程内,多实例会各限一份。
 - 验证码只在内存,重启即失效;用户需要重新发码。
 - 手机端不登录;如果以后要"手机也要登录",会与配对 v2 的设备身份重复,需要重画配对流程。

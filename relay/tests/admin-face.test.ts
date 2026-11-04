@@ -142,6 +142,11 @@ test('配了 admin：缺/错令牌 401 且 no-store；对的给页面与快照�
   assert.match(html, /id="app"[^>]*\shidden/, '看板默认隐藏 —— 打开 URL 不该先看到一半界面')
   assert.equal(/<script[^>]+src=/.test(html), false, '单文件：没有任何外链脚本')
   assert.equal(/<link[^>]+href=/.test(html), false, '单文件：没有任何外链样式表')
+  // 顶栏「我的电脑」的落点（2026-11-04）：Bearer 模式没有 cookie，/console 会静默 302 到
+  // /login —— 所以它必须落到**令牌页**（那里能签一张不归属账号的令牌），而不是登录页。
+  assert.match(html, /: '#\/tokens'/, '令牌模式要落到令牌页')
+  assert.equal(html.includes('登录后添加电脑'), false, '旧文案（把人送去登录页加电脑）不许回来')
+  assert.match(html, /不归属任何账号/, '令牌页要写明这张令牌不占账号配额')
 
   const state = (await (await get(base, '/admin/api/state', AUTH)).json()) as AdminStateView
   assert.equal(state.v, 1)

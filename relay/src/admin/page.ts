@@ -30,6 +30,8 @@
  * Note: 为什么轮询而不是 WS/SSE、为什么独立凭据 —— 见
  * `.agents/notes/implemented/2026-10-30-relay-admin-panel.md`；账号与首连绑定见
  * `.agents/notes/implemented/2026-11-02-relay-accounts-and-connector-binding.md`。
+ * Note: 管理台签出的令牌为什么不归属账号、顶栏为什么按登录方式换落点 —— 见
+ * `.agents/notes/implemented/2026-11-04-admin-token-page-reachability.md`。
  */
 import { UI_KIT_JS, UI_KIT_MARKUP } from '../ui/kit.ts'
 
@@ -423,6 +425,8 @@ ${UI_KIT_JS}
   var sessionMode = false
   /** 刚签发、还没被收起的令牌（只在内存里活到这一页刷新 —— 明文不落任何地方）。 */
   var lastIssued = null
+  /** 顶栏「我的电脑」在令牌模式下跳过来时，要让「添加我的电脑」那行**可见可填**。 */
+  var focusIssueRow = false
 
   var VIEWS = {
     overview: ['概览', '这台中转此刻在做什么'],
@@ -606,16 +610,20 @@ ${UI_KIT_JS}
       if (!state) return
       toApp()
       setPill('ok', '已连接')
-      // 「我的电脑」只在**账号会话**下能进控制台：令牌模式没有 cookie，
-      // 「/console」会一声不响地 302 到「/login」（2026-11-03 用户原话「什么鬼」）。
-      // 所以令牌模式改成"先去登录"，并把原因写在 title 上。
+      // 「我的电脑」两套落点（2026-11-04）：
+      // - 账号会话：进 /console，那是完整的账号电脑管理（限额、重命名、设备）。
+      // - 令牌模式（break-glass）：直接落到**令牌页**并聚焦「添加我的电脑」那行 ——
+      //   令牌模式没有 cookie，/console 会一声不响地 302 到 /login
+      //   （2026-11-03 用户原话「什么鬼」）；而令牌页本来就能签一张不归属账号的令牌。
       var consoleLink = document.getElementById('to-console')
       if (consoleLink !== null) {
-        consoleLink.setAttribute('href', sessionMode ? '/console' : '/login')
-        consoleLink.textContent = sessionMode ? '我的电脑' : '登录后添加电脑'
+        consoleLink.setAttribute('href', sessionMode ? '/console' : '#/tokens')
+        consoleLink.textContent = '我的电脑'
         consoleLink.setAttribute(
           'title',
-          sessionMode ? '' : '当前用管理令牌登录：添加电脑要用账号登录，登录后自动进控制台',
+          sessionMode
+            ? '账号里的电脑：限额、重命名、设备'
+            : '当前用管理令牌登录：在这里签一张不归属账号的令牌（明文只显示一次）',
         )
       }
       var first = lastState === null
@@ -1245,6 +1253,14 @@ ${UI_KIT_JS}
     selfRow.appendChild(nameInput)
     selfRow.appendChild(addBtn)
     authBody.appendChild(selfRow)
+    // **归属与配额要说清**（2026-11-04）：管理员签出的令牌 userId 为空 ——
+    // 它不归属任何账号、不占任何账号的电脑数，在「用量」里出现在「未归属账号的主体」表。
+    // 不写这一句，用户会以为"添加我的电脑"要算到某个人的额度上。
+    authBody.appendChild(el(
+      'p',
+      '这张令牌不归属任何账号，也不占任何账号的电脑数；它出现在「用量」分区的「未归属账号的主体」里。',
+      'hint',
+    ))
     // 新令牌放在视图里渲染（不是一次性 DOM）：2 秒轮询会重画这一页，挂在外面的会被冲掉。
     if (lastIssued !== null) {
       var issuedBox = el('div')
@@ -1331,7 +1347,7 @@ ${UI_KIT_JS}
       }
       var label = el('span', row.name || row.id)
       label.title = row.id
-      var owner = row.owner || '—'
+      var owner = row.userId ? '—' : (row.owner || '未归属')
       if (row.userId) {
         var ownerUser = (state.users || []).find(function (user) { return user.id === row.userId })
         owner = ownerUser ? ownerUser.email : row.userId
@@ -1340,6 +1356,13 @@ ${UI_KIT_JS}
     }), '还没有连接器令牌'))
     tokens.appendChild(tBody)
     viewEl.appendChild(tokens)
+    // 顶栏「我的电脑」在令牌模式下跳到这里：把「添加我的电脑」那行送到眼前，
+    // 而不是让用户自己在一屏令牌里找（那一行在令牌页最上面）。
+    if (focusIssueRow) {
+      focusIssueRow = false
+      idInput.focus()
+      if (typeof idInput.scrollIntoView === 'function') idInput.scrollIntoView({ block: 'center' })
+    }
   }
 
   document.getElementById('login-form').addEventListener('submit', function (event) {
@@ -1365,6 +1388,15 @@ ${UI_KIT_JS}
     toLogin(null)
   })
   document.getElementById('refresh').addEventListener('click', function () { refresh(true) })
+  // 令牌模式下「我的电脑」不是外链而是**页面内的落点**：跳到令牌页并聚焦那行。
+  // 账号模式保持原样（/console 才是账号电脑的完整管理面）。
+  document.getElementById('to-console').addEventListener('click', function (event) {
+    if (sessionMode) return
+    event.preventDefault()
+    focusIssueRow = true
+    if (viewOf() === 'tokens' && lastState !== null) render(lastState)
+    else location.hash = '#/tokens'
+  })
   window.addEventListener('hashchange', function () { if (lastState) render(lastState) })
 
   // 先看有没有管理员账号会话；没有再看有没有 break-glass 令牌。
