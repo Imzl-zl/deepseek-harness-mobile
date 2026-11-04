@@ -1251,7 +1251,17 @@ class _DshMobileAppState extends State<DshMobileApp>
     _hostBeforeAdd = _credentials?.pcSignPubHex;
     _addingHost = true;
     unawaited(() async {
-      await _reassembleUnpaired();
+      try {
+        await _reassembleUnpaired();
+      } catch (error) {
+        // 拆客户端失败（开库 / 安全存储 / 装配）时不能留下"标记为添加、页面却没出现"
+        // 的半截状态：下一次取消会拿一个已经死掉的 `_app` 去恢复。
+        if (!mounted) return;
+        _addingHost = false;
+        _hostBeforeAdd = null;
+        DshToast.show(_navContext, '进入配对页失败：$error', kind: DshToastKind.error);
+        return;
+      }
       if (!mounted) return;
       setState(() {
         _pairingNotice = null;
