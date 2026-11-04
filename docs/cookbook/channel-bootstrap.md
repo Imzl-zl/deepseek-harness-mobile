@@ -145,7 +145,7 @@ dsh plugin --profile <name> add <connector 本地路径>
 **只有全部配对设备都确认过的区间才裁**(§5.5)。
 
 所以下面 5.1 的"发一句 / 回一句"缺的**不是"客户端本身"这一件事,而是第 6 节整条链**
-(建工程 → `core/` → `data/`/`model/` → `ui/` → 能力包)。**第 5 节现在做不完**,
+(建工程 → `core/` → `data/`/`model/` → `ui/` → `platform/`)。**第 5 节现在做不完**,
 它的"跑通"是第 6 节之后的验收项 —— 写在这里是为了留下**判据与顺序**,不是让人现在去跑。
 
 5.1 先用 Tailscale 直连做第一跳(契约 §14.6 的顺序):
@@ -184,7 +184,7 @@ flutter test                               # 确认空工程能跑
 3. `test/crypto_vectors_test.dart` 跑 `protocol/vectors/`(跨端互操作);
 4. `data/` + `model/`(DTO、store 接口、会话模型);
 5. `ui/` 逐屏(`design-and-tech-plan.md` §7)+ `platform/` 装配点;
-6. 三端能力包(`secure_store_*` / `notify` / `live_surface` / `keepalive`)最后接。
+6. 按端分叉的平台能力(`lib/platform/` 里的 `notify` / `live_surface` / `keepalive` / `secure_store`)最后接。
 
 判据:第 2、3 步在**没有 UI、没有平台代码**的情况下全绿——这正是 `core/` 零平台依赖的意义。
 **这两步是全仓当前性价比最高的一步**:它们不需要 UI、不需要平台代码、不需要真机,
@@ -225,7 +225,7 @@ node src/main.ts --config relay.config.json --revoke-token connector home-pc
 ```powershell
 node protocol/verify-fixtures.mjs            # 改 protocol/ 或两侧 protocol 层后必跑
 node protocol/verify-loopback.mjs            # 同上
-node app/tools/verify-platform-boundary.mjs  # 改 app/lib 或 app/packages 后必跑
+node app/tools/verify-platform-boundary.mjs  # 改 app/lib 后必跑
 ```
 
 - 改断言 → 必须做一次变异校验并记录结果;

@@ -16,22 +16,22 @@ app/
 │   ├── core/       纯 Dart 零平台依赖:通道客户端、流帧解析、恢复引擎、消息 reducer
 │   ├── data/       DTO / 协议编解码、存储与密钥的注入接口
 │   ├── model/      领域模型(session / item / job / notice)
+│   ├── wire/       线上形状的唯一解码层(RPC 面 + 事件字段)
 │   ├── theme/      DSH token(三端唯一颜色与字体来源)
 │   ├── ui/         逐屏 widget(信息架构与品牌呈现)
 │   │   └── adaptive/   ★ 系统紧耦合控件的平台惯例实现,业务 UI 只调这一层
-│   ├── platform/   ★ 唯一装配点:选择各能力的实现,不写业务
+│   ├── platform/   ★ 平台实现的唯一住处,也是唯一装配点:
+│   │                 `<能力>.dart`        端口(纯 Dart)
+│   │                 `<能力>_<端>.dart`   各端实现(android / ios / ohos)
+│   │                 `<能力>_memory.dart` 兜底(桌面调试用,release 不许被选中)
 │   └── main.dart
-├── packages/       ★ 按能力切,不按端切
-│   ├── secure_store/ (+_ios/_android/_ohos)   系统密钥库
-│   ├── notify/       (+_ios/_android/_ohos)   通知:投递、分类、可操作按钮
-│   ├── live_surface/ (+_ios/_android/_ohos)   不在前台时的持续表达(见 §2)
-│   ├── widgets/      (+_ios/_android/_ohos)   主屏 / 锁屏入口(可选)
-│   └── keepalive/    (+_android)              前台服务(可选,尽力而为)
-├── ios/ android/ ohos/   壳工程;各端原生代码只住在这里
-└── tools/                多端边界校验脚本
+├── android/ ios/   壳工程;各端原生代码只住在这里(鸿蒙壳工程尚未创建)
+└── tools/          多端边界校验脚本
 ```
 
-按能力切而不是按端切:"一个端一个目录"会让"支持第四个平台"变成复制整个 app,而三份 UI 必然漂移。**平台差异的爆炸半径必须限制在 `packages/` 与 `ui/adaptive/` 之内。**
+按能力切而不是按端切:"一个端一个目录"会让"支持第四个平台"变成复制整个 app,而三份 UI 必然漂移。**平台差异的爆炸半径必须限制在 `lib/platform/` 与 `ui/adaptive/` 之内。**
+
+只有**真的按平台分叉**的能力才需要 `<能力>_<端>.dart`(判据是 §3 的 C1);跨端同构的能力(通知之外,sqflite 本地库、WebSocket 传输)就是一份纯 Dart,不按端切。
 
 ## 2. 第三层的真相:三端体验并不对等(已核实)
 
@@ -55,14 +55,14 @@ app/
 
 ## 3. 判据(可判定或可留痕)
 
-1. **C1(机器判定)该能力是否需要在 App 不在前台或已被杀时工作?** 是 ⇒ 必须每端实现,归 `packages/<能力>_<端>/` + 壳工程原生代码;**禁止试图用共享 UI 实现**。
+1. **C1(机器判定)该能力是否需要在 App 不在前台或已被杀时工作?** 是 ⇒ 必须每端实现,归 `lib/platform/<能力>_<端>.dart` + 壳工程原生代码;**禁止试图用共享 UI 实现**。
 2. **C2(机器判定)该控件是否是用户凭肌肉记忆操作的系统紧耦合控件?**(导航转场、返回手势、下拉刷新、文本选择菜单、分享面板、开关/选择器/对话框/进度指示、触觉反馈) 是 ⇒ 必须跟平台惯例:能用官方自适应构造器就用,官方没有的进 `ui/adaptive/`,业务 UI 只调这一层。
 3. **C3(评审留痕)该组件的复杂度是否高到三端重写会显著抬升不一致风险?**(流式 Markdown、时间线/甘特、diff 渲染、轨迹投影) 是 ⇒ 留在共享层。**按复杂度划边界,不按平台划边界。**
 4. **C4(评审留痕)该元素是否承载产品识别度与信息架构?** 是 ⇒ 共享,且禁止按端改。
 5. **C5(禁止项)不得因为"这样写更快"而分叉;也不得因为"看起来整齐"而把 C2 类控件强行统一。**
 6. **C6 每个平台必须有一名 advocate**,持有该平台的惯例清单并对其体验负责。
 
-`lib/core`、`lib/data`、`lib/model` 不得出现 `dart:io`、`package:flutter/services.dart`、`widgets.dart`、`material.dart`、`Platform.`、`defaultTargetPlatform`、`MethodChannel`、`EventChannel`;**平台分支只允许出现在 `packages/*`、`lib/platform/` 与 `lib/ui/adaptive/`**;`ui/adaptive/` 只放"选哪个平台实现"的控件,不放业务。
+`lib/core`、`lib/data`、`lib/model` 不得出现 `dart:io`、`package:flutter/services.dart`、`widgets.dart`、`material.dart`、`Platform.`、`defaultTargetPlatform`、`MethodChannel`、`EventChannel`;**平台分支只允许出现在 `lib/platform/` 与 `lib/ui/adaptive/`**;`ui/adaptive/` 只放"选哪个平台实现"的控件,不放业务。
 
 ### 3.1 官方已自动适配的(不用自己管)
 
@@ -108,12 +108,12 @@ app/
 - **iOS 返回手势 + `PopScope`**:`canPop:false` 时 iOS 边缘返回手势不触发 `onPopInvoked`(flutter#138624,open,P2,91 reactions)。我们的抽屉手势与全屏页正走在这条路径上 → 真机验收必测。
 - **Android 预测性返回**:必须在 manifest 开 `enableOnBackInvokedCallback`,用 `PopScope` + `onPopInvokedWithResult`;自定义转场要自己覆盖 `handleCommitBackGesture`(flutter#184653,open)。
 - **自定义文本选择菜单**:官方只提供默认路径的 `AdaptiveTextSelectionToolbar`;自绘选择区等于两端各实现一遍。
-- **系统"减弱动效"**:本次未找到跨端官方等价 API(LocalSend 的做法是三端各写一条原生通道) → 按 C1 处理,进能力包。
+- **系统"减弱动效"**:本次未找到跨端官方等价 API(LocalSend 的做法是三端各写一条原生通道) → 按 C1 处理,进 `lib/platform/`。
 - **鸿蒙侧已知问题**(CPF 官方 FAQ 索引):`Platform.isOhos` 构建失败、TabBar/TabBarView 手势冲突、输入框长按无法粘贴、安全避让区异常、混淆导致白屏 → 鸿蒙端必须在真机过一遍这份清单。
 
 ## 6. 验证
 
-- `node app/tools/verify-platform-boundary.mjs` —— 静态扫描 `lib/` 与 `packages/`,拦 §3 的 import 与分支规则,外加 **§4 的 `Platform.isOhos` 禁令**。脚本自带规则自检,因此 `lib/` 还没有代码时也不是空转。
+- `node app/tools/verify-platform-boundary.mjs` —— 静态扫描 `app/lib/`,拦 §3 的 import 与分支规则,外加 **§4 的 `Platform.isOhos` 禁令**。脚本自带规则自检(31 条),所以规则本身写错了会先红,而不是"代码干净"的假绿。当前:**8 条规则 / 736 项**(脚本口径:31 条规则自检 + 扫描 167 个 Dart 文件)。
 - 共享 UI 的适配正确性**不能靠"看起来一致"验收**:按 §3.1 的白名单逐项确认"确实是框架自动适配的"、按 §3.2 确认 7 个控件用了 `.adaptive()`、按 §5 的缺口清单在真机上过一遍返回手势与预测性返回。
 - 三端专属表达**必须在真机上验收**(锁屏、强杀后、通知上操作),模拟器与调试构建不作数:iOS 的调试构建与线上在推送预算上行为不同,安卓的 force-stop 只能在真机复现。
 
