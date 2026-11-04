@@ -381,6 +381,15 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
 
 ## Pitfalls
 
+- **"只读面是空态"先分清三种"没有"，别急着升级连接器**（2026-11-04 轨迹页）：
+  ① 手机截图看文案（`没读到` / `缺键` / `没轮次` 三档，见 `docs/subsystems/trajectory-page.md` §2.2）；
+  ② 电脑侧看 `~/.dsh/storages/session_projcache/sessions/session-<dshId>.json` 的 `record.rows`
+  里**有没有那个键**（有值 ⇒ 电脑有数据，问题在手机这一侧）；
+  ③ **重启 App 再进那一屏** —— 好了就是"手机手里那份包旧了"，既不是数据缺，也不是版本旧。
+  真因是**重读时机**：`session.projections` 只在 `notification` / `openSession` /
+  `connectLanding` / `appResume` 重读，一轮跑二十分钟时一个都不来（现在加了 `viewFocus`：
+  进入轨迹页签就重读一次）。判据链与修法见 `.agents/notes/implemented/2026-11-04-trajectory-view-refetch.md`。
+
 - **别按"命令行文本"找进程 —— 会先杀掉自己**（2026-10-31 连踩两次）：命令是通过
   `dsh-subprocess-local/lib/runner.js -- pwsh -Command "<整段脚本>"` 跑的，**脚本正文就在那个 runner 的
   CommandLine 里**，于是 `Win32_Process | ? CommandLine -like '*dsh-mobile-test*'` 会命中自己的工具进程，

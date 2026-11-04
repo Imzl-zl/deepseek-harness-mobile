@@ -99,6 +99,15 @@ enum HostStateTrigger {
   /// 打开 / 切会话。
   openSession,
 
+  /// **切到某一屏**（页签）：这一屏要的快照现在就对齐一次。
+  ///
+  /// 与 [openSession] 的差别是"会话没换，用户换了看哪一屏" —— 那正是"手里这份
+  /// 包旧了"最容易暴露的一刻。轨迹页只有这一条路能换掉旧包：`turn/end` 在一轮
+  /// 跑着的二十分钟里一次都不来（2026-11-04 真机：轨迹页空态，重启 App 才恢复）。
+  ///
+  /// Note: 取舍见 `.agents/notes/implemented/2026-11-04-trajectory-view-refetch.md`。
+  viewFocus,
+
   /// **自己发起的写**（切模型 / 分支 / 会话页"重试"）：回执已带回值，
   /// 重取只是让电脑侧的身份字段（行里的模型 / 标题 / 计数）跟上。
   /// 立即执行，不压 `notification` 的合并窗口。
@@ -222,6 +231,8 @@ const List<HostStateFetch> hostStateRegistry = <HostStateFetch>[
       HostStateTrigger.openSession,
       HostStateTrigger.connectLanding,
       HostStateTrigger.appResume,
+      // 切到轨迹页签：这一包只在这几个时机重读，而轨迹页**整个屏**都靠它。
+      HostStateTrigger.viewFocus,
     },
   ),
   HostStateFetch(

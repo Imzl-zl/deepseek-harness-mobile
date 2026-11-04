@@ -56,6 +56,32 @@
 
 **不摆 0，也不编一个数。**
 
+### 2.1 进入这一屏就重读一次
+
+这一屏的全部内容都在 `session.projections` 一个包里，而那一包的重读时机是**封闭登记表**里的
+一列（`app/lib/data/host_state.dart` 的 `session.projections` 行）：`notification` /
+`openSession` / `connectLanding` / `appResume` / **`viewFocus`**。
+
+前四个都不覆盖"会话没换、一轮还在跑"：一轮跑二十分钟时 `turn/end` 一次都不来，
+手里那份包旧了（或缺键）就一直旧着，页面空着，直到重启 App —— 2026-11-04 真机就是这个形态
+（同一台电脑、同一个连接器，重启后 20 轮立刻画出来）。
+
+所以**进入轨迹页签**本身是触发点：`HostStateTrigger.viewFocus` → `AppModel.focusView(sid)`。
+代价是一次带摘要的往返（内容没变时连接器回 `{notModified:true}`，约 41 B；变了才搬正文）。
+空态里的「重读」走同一个入口 —— 触发点只有登记表一处，页面不自己发明第二个。
+
+### 2.2 空态三种（说错一句就把人指错方向）
+
+| 事实 | 判据 | 文案说的事 | 动作 |
+|---|---|---|---|
+| 这一包没读到 | `app.projections == null` | 这次没读到这个会话的投影 | 「重读」 |
+| 包到了，但没有 `trajectory` 键 | 包非 null、`app.trajectory == null` | 这台电脑没给时间轴（查电脑侧连接器） | 无 |
+| 包与键都在，还没有轮次 | `trajectory.turns` 为空 | 电脑侧跑完一轮后…… | 无 |
+
+三态由 `TrajectoryEmptyReason`（`app/lib/ui/trajectory_page.dart`）一处表达。
+2026-11-04 之前只有两个 bool：一份**缺键的旧包**被说成"连接器没有注册 trajectory 投影，
+升级连接器后才有" —— 而升级连接器什么也解决不了，该做的是重读这一包。
+
 ## 3. 时间轴
 
 ```
@@ -167,7 +193,8 @@
 | 命令 | 覆盖 |
 |---|---|
 | `cd connector && pnpm test tests/trajectory.test.ts` | fold 纯函数（键集合 / `offsetMs` 不变式 / 三个上限）+ 接线（键真的出现在 `session.projections` 里） |
-| `cd app && flutter test test/trajectory_test.dart` | 行规格、时间轴几何（位置 / 长度 / 泳道）、进行中只画标记、合并规则与"一段都不少"、`truncated` 文案、空态两种、无假入口、390dp 不横滑 |
+| `cd app && flutter test test/trajectory_test.dart` | 行规格、时间轴几何（位置 / 长度 / 泳道）、进行中只画标记、合并规则与"一段都不少"、`truncated` 文案、空态三种（含「重读」）、无假入口、390dp 不横滑 |
+| `cd app && flutter test test/ui_state_wiring_test.dart` | 切到轨迹页签**真的重读了一次投影**（触发点没有返回值可断言，判据是"发出了那一个请求"） |
 | `cd app && flutter test test/trajectory_outline_test.dart` | `turnOutline` 解析 + `buildTraceTurns` 的 join（投影缺席 / 进行中 / 结局以投影为准） |
 | `cd app && flutter test test/turn_outcome_test.dart` | 过程摘要**不再**算时长；`statsWith` 只拼串 |
 | `cd app && flutter test test/dsh_sheet_test.dart` | `DshKeyValue.multiline` 在 390dp 下不溢出 |
@@ -193,3 +220,15 @@
 | 顶部 `[时长][轮次][调用]` 三个子分段 | 只有一个轮次视图 | 只有一个视图时摆分段就是假入口 |
 | 竖向 ledger（上下文 / 助手 / 工具 / 错误四类条目） | 一轮一行 | 四类条目的时间与顺序只能从事件窗口推，翻页后不完整；轮次是**投影**给的、覆盖全会话 |
 | 时间轴在客户端用事件 `time` 现算（DSH Web 的做法） | 电脑侧折好 `offsetMs` 下发 | 手机侧的 `SessionEvent.time` 只在已加载窗口内完整，翻页后的轮会退化成"不到 1 秒"（2026-10-22 之前的症状） |
+
+## 8. 已知缺口
+
+- **连接器不区分 DSH 信封的 `kind`。** DSH 的 `projections()` 在会话处于迁移态时回的是
+  **缓存提示**（`packages/api/session-controller/src/history/controller.ts:76-86`：只含
+  版本对得上的行），而不是精确快照；连接器把两者都当 `values` 原样发给手机
+  （`connector/src/dsh/projections.ts:68-72`）。真出现 `migration-required` 时，手机上会是
+  一份**缺键的包**，按 §2.2 会落到"这台电脑没给时间轴"那一档 —— 方向仍然对（去查电脑），
+  但原因说错了。没改的理由：要动契约 §5.7；2026-11-04 那次会话是 `session.v4.jsonl`
+  当前格式、不是迁移态，没有证据说这条路真的发生过。取舍见
+  `.agents/notes/implemented/2026-11-04-trajectory-view-refetch.md`。
+

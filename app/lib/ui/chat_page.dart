@@ -1029,6 +1029,7 @@ class ChatPageState extends State<ChatPage> {
                       )
                     : _TrajectoryTab(
                         app: widget.app,
+                        sid: sid,
                         onTapTurn: _showTraceSheet,
                         onTapSegment: _showSegmentSheet,
                       ),
@@ -5021,38 +5022,89 @@ class _EmptyFilePane extends StatelessWidget {
 /// `onTapEntry`** —— 于是两个表恒为空、轨迹页永远显示"电脑侧跑完一轮后…"。
 /// 契约里 `turnOutline` 投影一直都在（`session.projections`，§5.7），
 /// 手机也早就解析了别的投影，只是从没把它接进来。
-class _TrajectoryTab extends StatelessWidget {
+///
+/// ## 为什么进来要重读一次投影
+///
+/// 这一屏的全部内容都在 `session.projections` 一个包里，而那一包只在
+/// "打开会话 / `turn/end` / 队列变化"时重读。一轮跑二十分钟时**一个触发点都不来**：
+/// 手里那份包旧了（或缺键）就一直旧着，页面空着，直到重启 App —— 2026-11-04 真机
+/// 就是这个形态（同一台电脑、同一个连接器，重启后 20 轮立刻画出来）。
+/// 所以**进入这一屏**本身就是触发点（登记表的 `viewFocus` 列），代价是一次带摘要的
+/// 往返（没变约 41 B）。Note: `.agents/notes/implemented/2026-11-04-trajectory-view-refetch.md`
+class _TrajectoryTab extends StatefulWidget {
   const _TrajectoryTab({
     required this.app,
+    required this.sid,
     required this.onTapTurn,
     required this.onTapSegment,
   });
 
   final AppModel app;
+
+  /// 这一屏是哪个会话的（换会话要重读，包是按会话的）。
+  final String sid;
+
   final void Function(TraceTurn turn) onTapTurn;
   final void Function(TraceTurn turn, List<TrajectoryStep> steps) onTapSegment;
 
   @override
+  State<_TrajectoryTab> createState() => _TrajectoryTabState();
+}
+
+class _TrajectoryTabState extends State<_TrajectoryTab> {
+  @override
+  void initState() {
+    super.initState();
+    _refetch();
+  }
+
+  @override
+  void didUpdateWidget(covariant _TrajectoryTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.sid != widget.sid) _refetch();
+  }
+
+  /// 重读这一屏要的那份快照。
+  ///
+  /// 放到首帧之后：首次读会先置 loading 并 `notifyListeners`，在 `initState` 里
+  /// 同步通知等于在 build 期间 `markNeedsBuild`。
+  void _refetch() {
+    final app = widget.app;
+    final sid = widget.sid;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(app.focusView(sid));
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // **一轮一行**：`turnOutline` 的 wire view 是 `[{turn, seq, prompt, response}]`
+    final app = widget.app;
+    // 空态三态由**事实**决定，不由猜测决定（见 `TrajectoryEmptyReason`）：
+    // 包没到 / 包里没这个键 / 键在但没轮次。
+    final package = app.projections;
+    final trajectory = app.trajectory;
+    final emptyReason = package == null
+        ? TrajectoryEmptyReason.noPackage
+        : trajectory == null
+        ? TrajectoryEmptyReason.noTimelineKey
+        : TrajectoryEmptyReason.noTurns;
+    // 一轮一行：`turnOutline` 的 wire view 是 `[{turn, seq, prompt, response}]`
     // （DSH `session-turn-outline/src/projection.ts:61-75`），用时与时间轴从
     // `trajectory` 投影 join 进来、计数从本会话的 `TurnProcessItem` join 进来
     // （join 规则只有一处：`buildTraceTurns`）。
     // 空表时 `TrajectoryTab` 自己显示空态，不在这里兜假数据。
-    //
-    // `trajectory == null` = 这台电脑没注册投影 —— 与"跑完一轮就有了"是
-    // 两句不同的话，所以把这一位原样传下去。
-    final trajectory = app.trajectory;
     return TrajectoryTab(
       turns: buildTraceTurns(
         outline: app.turnOutline,
         items: app.items,
         trajectory: trajectory,
       ),
-      onTapTurn: onTapTurn,
-      onTapSegment: onTapSegment,
+      onTapTurn: widget.onTapTurn,
+      onTapSegment: widget.onTapSegment,
       truncationLabel: trajectoryTruncationLabel(trajectory),
-      timelineMissing: trajectory == null,
+      emptyReason: emptyReason,
+      // 「重读」与"进来就重读"走同一个入口 —— 触发点只有登记表一处。
+      onRetry: () => unawaited(app.focusView(widget.sid)),
     );
   }
 }

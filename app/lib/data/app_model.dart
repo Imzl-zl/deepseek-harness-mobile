@@ -1660,6 +1660,26 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     await _hostState.triggered(HostStateTrigger.appResume, sid: _currentSid);
   }
 
+  /// **切到某一屏**（页签）时对齐这一屏要的快照（登记表的 `viewFocus` 列）。
+  ///
+  /// 只有轨迹页签用它。那一屏的轮次行与时间轴全在 `session.projections` 这一个包里，
+  /// 而这一包只在"打开会话 / `turn/end` / 队列变化"时重读 —— 一轮跑二十分钟时
+  /// 一个触发点都不来，手里那份包旧了（或缺键）就一直旧着，用户看到的是空态。
+  /// 切到这一屏就重读一次，代价是一次带摘要的往返（没变约 41 B，`notModified`）。
+  ///
+  /// 失败只留声（与 [reportHostStateFailure] 同一条）：这一屏显示"没读到"并给
+  /// 「重读」，不把异常抛进 widget 的 post-frame 回调变成未处理异步错误。
+  ///
+  /// Note: 取舍见 `.agents/notes/implemented/2026-11-04-trajectory-view-refetch.md`。
+  Future<void> focusView(String sid) async {
+    if (_disposed) return;
+    try {
+      await _hostState.triggered(HostStateTrigger.viewFocus, sid: sid);
+    } catch (error) {
+      _recordError('切换到这一屏时重读失败', error);
+    }
+  }
+
   /// **自己发起的写之后**按登记表重取（`ownWrite` 那一列）。
   ///
   /// 切模型 / 分支 / 会话页的"重试"都走这里 —— 该重取哪份快照是登记表的一列，

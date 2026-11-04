@@ -144,7 +144,7 @@ abstract class Outbox {
 | key | 重取 | 触发点 |
 |---|---|---|
 | `session.list` | `AppModel.refreshSessionRows()` | `notification` / `connectLanding` / `appResume` / `ownWrite` |
-| `session.projections` | `AppModel.refreshProjections(sid)` | `notification` / `openSession` / `connectLanding` / `appResume` |
+| `session.projections` | `AppModel.refreshProjections(sid)` | `notification` / `openSession` / `connectLanding` / `appResume` / `viewFocus` |
 | `settings.describe` | `AppModel.refreshSettings()` | `notification` / `connectLanding` |
 | `job.list` | `AppModel.refreshJobs(sid)` | `notification` / `openSession` / `connectLanding` |
 | `session.modelCatalog` | `AppModel.refreshModelCatalog()` | `notification` / `connectLanding` |
@@ -170,6 +170,11 @@ abstract class Outbox {
 - **`appResume`** 只有行 + 当前会话的投影:回前台的语义是"对齐这一屏",而设置 / 目录
   要么有通知(`settings.describe`)、要么极低频(四个目录),每次回前台都拉一遍不值。
 - **`openSession`** 只有会话级两个:切过去那一刻任务表与投影都可能是旧的。
+- **`viewFocus`** 只有 `session.projections`(由轨迹页签发起,`AppModel.focusView(sid)`):
+  那一屏的全部内容都在这一包里,而前四个时机**都不覆盖"会话没换、一轮还在跑"** ——
+  一轮跑二十分钟时 `turn/end` 一次都不来,旧包就一直旧着(2026-11-04 真机:轨迹页空态,
+  重启 App 才恢复)。进入这一屏就问一次,没变只花一个 `{notModified:true}`(约 41 B)。
+  空态里的「重读」走同一个入口 —— 触发点仍只有登记表一处。
 - **`ownWrite`** 只有 `session.list`:自己发起的写(切模型 / 分支 / 会话页"重试")
   由回执带回值,只需要**重拉行**校验身份字段;不压 150 ms 窗口(不是高频事件),
   也不拉目录(那些与这次写无关)。**不用回执改本地行**:行是电脑侧的身份字段

@@ -3,7 +3,20 @@
 > 快照 + 最近窗口，**覆盖更新**，不做流水追加。历史在 git 与 `.agents/notes/`；
 > 稳定命令与坑点在 `tools.md`；现状事实在 `docs/`。
 
-## 现在（2026-11-03）
+## 现在（2026-11-04）
+
+- **轨迹页空态：手机手里那份投影包旧了，不是连接器没注册投影（11-04）**：
+  真机空态说"连接器没注册 trajectory 投影，升级连接器"，而同一台电脑同一连接器（0.1.16）
+  **重启 App 后 20 轮立刻画出来**；电脑侧 `session_projcache` 里 `turnOutline` 20 条、
+  `trajectory` 20 轮 458 步都在。根因链：这一屏只读 `session.projections` 一个包，而重读时机
+  只有 `notification` / `openSession` / `connectLanding` / `appResume` —— 一轮跑二十分钟时
+  `turn/end` 一次都不来，旧包（或缺键的包）换不掉；空态又把"包里没这个键"说成"连接器没注册投影"。
+  修法：**进入轨迹页签本身是触发点**（`HostStateTrigger.viewFocus` → `AppModel.focusView(sid)`），
+  空态分三档（包没到 / 缺键 / 没轮次），只有"包没到"给「重读」。app **1686** 项、
+  `verify-platform-boundary` 712；真机装新包后进轨迹页正常（步数从 110 走到 119，说明真的重读了）。
+  笔记 `implemented/2026-11-04-trajectory-view-refetch.md`，现状 `subsystems/trajectory-page.md`
+  §2.1/§2.2/§8。**仍欠**：连接器不区分 DSH 信封的 `kind`（迁移态下会把缓存提示当精确快照），
+  要动契约 §5.7，未改。
 
 - **配对不再依赖中转（11-03 第六批，0.1.15）**：二维码载荷加 `lan`（`describeEndpoints` 的 direct 组，
   默认路由排第一）；监听面把升级请求 URL 交给 `accept`，`?pair=<offerId>&cand=<候选>` 命中就按配对候选
@@ -341,3 +354,4 @@
 - 2026-10-29 连接卡 / 无令牌可挂载 / 装配层回归网 / 删掉空转的 `deviceLimit` / 端点剪枝 /
   明文两档 / 高亮语言集 — `implemented/2026-10-29-*`（六篇）
 - 2026-10-30 多机四步（归属/凭据分槽/拨号竞速/独占与切换）+ 中转可观测·限额·面板 — `implemented/2026-10-30-*`（九篇；方案页留在 `proposed/`）
+- 2026-11-04 轨迹页进入即重读（`viewFocus`）+ 空态三态 — `implemented/2026-11-04-trajectory-view-refetch.md`；现状 `subsystems/trajectory-page.md` §2.1/§2.2/§8

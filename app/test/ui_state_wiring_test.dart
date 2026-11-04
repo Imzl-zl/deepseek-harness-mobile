@@ -83,6 +83,46 @@ class _IdleClient extends FakeSyncClient {
   }) async => throw const ProtocolException(ErrorCode.relayOffline, '这条用例不连通道');
 }
 
+/// 记下每一次线上方法名的替身。
+///
+/// 存在的理由：**"切到轨迹页会重读投影"是个触发点事实**，而触发点没有返回值可断言 ——
+/// 唯一的判据是"真的发了那一个请求"。其余方法与 [_IdleClient] 同一口径（这条用例不连通道）。
+class _RecordingClient extends FakeSyncClient {
+  /// 依次收到的线上方法名。
+  final List<String> called = <String>[];
+
+  @override
+  conn.ConnectionState get state => conn.ConnectionState.idle;
+  @override
+  Stream<conn.ConnectionState> get connection => const Stream.empty();
+  @override
+  Future<void> start() async {}
+  @override
+  Future<void> reconnect() async {}
+  @override
+  Future<void> setAppState(AppState state) async {}
+  @override
+  Future<void> close() async {}
+  @override
+  Stream<JobFrame> get jobUpdates => const Stream.empty();
+  @override
+  Stream<SessionDelta> sessionUpdates(String sid) => const Stream.empty();
+  @override
+  Future<void> unsubscribe(String sid) async {}
+
+  @override
+  Future<T> call<T>(
+    String method,
+    Map<String, Object?> params, {
+    String? requestId,
+  }) async {
+    called.add(method);
+    // 投影回一份**合法但空**的包：解码成功 ⇒ 走的是"包到了、只是没轮次"那一档。
+    if (method == 'session.projections') return <String, Object?>{} as T;
+    throw const ProtocolException(ErrorCode.relayOffline, '这条用例不连通道');
+  }
+}
+
 /// 能让连接态走一遍 backoff → serving 的替身（落点只在那一步发生）。
 ///
 /// 形状照 `running_reconnect_test.dart` 的 `_ReconnectClient`：
@@ -231,6 +271,43 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(TrajectoryTab), findsNothing);
       expect(prefs.values.containsKey(UiKey.sessionView('s2')), isFalse);
+    });
+
+    testWidgets('切到轨迹页会重读投影（这一屏的包只在这几个时机重读）', (tester) async {
+      // 2026-11-04 真机：一轮跑了二十分钟，`turn/end` 一次都没来，手里那份投影包
+      // 旧了（缺 `trajectory` / `turnOutline`），轨迹页一直是空态 —— 重启 App 才恢复。
+      // 判据只有一条：进入这一屏真的发出了那一个请求。
+      final client = _RecordingClient();
+      final app = AppModel(client: client, prefs: _Prefs());
+      addTearDown(app.dispose);
+      await app.loadUiState();
+      app.seedForTest(sid: 's1', title: 'A', updatedAt: 2, items: const []);
+      await app.openSession('s1');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: DshTheme.dark(),
+          home: ChatPage(
+            app: app,
+            paired: true,
+            onOpenDrawer: () {},
+            onNewSession: () {},
+            drawer: const SizedBox.shrink(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 打开会话那一次已经发生过；从现在起只数"进入轨迹页"引起的那一次。
+      client.called.clear();
+      await tester.tap(find.text('轨迹'));
+      await tester.pumpAndSettle();
+
+      expect(
+        client.called,
+        contains('session.projections'),
+        reason: '进入轨迹页要重读这一屏的包，否则旧包 / 缺键会一直空着',
+      );
     });
   });
 

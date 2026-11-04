@@ -447,10 +447,37 @@ void main() {
   });
 
   testWidgets('这台电脑没给时间轴：空态说的是"去查电脑"，不是"再等等"', (tester) async {
-    await tester.pumpWidget(_wrap(const TrajectoryTab(timelineMissing: true)));
+    await tester.pumpWidget(
+      _wrap(
+        const TrajectoryTab(emptyReason: TrajectoryEmptyReason.noTimelineKey),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.textContaining('这台电脑没给时间轴'), findsOneWidget);
     expect(find.textContaining('trajectory'), findsOneWidget);
+    // 缺键不是"再读一次"能解决的：不许摆一个点了没用的按钮。
+    expect(find.text('重读'), findsNothing);
+  });
+
+  testWidgets('这一包没到：说"没读到"，并给一个真动作「重读」', (tester) async {
+    // 2026-11-04 真机：一份**缺键的旧包**被说成"连接器没注册投影，升级连接器"，
+    // 而重启 App 后同一台电脑立刻画出 20 轮。三态必须分开说（见 `TrajectoryEmptyReason`）。
+    var retried = 0;
+    await tester.pumpWidget(
+      _wrap(
+        TrajectoryTab(
+          emptyReason: TrajectoryEmptyReason.noPackage,
+          onRetry: () => retried += 1,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('没读到这个会话的投影'), findsOneWidget);
+    expect(find.textContaining('升级电脑侧的连接器'), findsNothing);
+    await tester.tap(find.text('重读'));
+    await tester.pumpAndSettle();
+    expect(retried, 1);
   });
 
   testWidgets('**不摆假入口**：没有「时长/轮次/调用」chip，也没有搜索钮', (tester) async {

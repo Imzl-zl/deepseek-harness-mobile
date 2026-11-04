@@ -215,6 +215,29 @@ String traceSummaryLabel(List<TraceTurn> turns) {
   return '$head · ${parts.join(' · ')}';
 }
 
+/// 轨迹页空态是哪一种"没有"。
+///
+/// 三种在界面上必须说成三句话，因为它们各自要求用户做的事不同：
+///
+/// | 值 | 事实 | 用户能做什么 |
+/// |---|---|---|
+/// | [noPackage] | 这一包**没读到**（读失败 / 还没读到） | 重读一次 |
+/// | [noTimelineKey] | 包到了，但里面**没有 `trajectory` 这个键** | 去查电脑侧的连接器 |
+/// | [noTurns] | 包到了、键也在，只是**还没有轮次** | 等电脑侧跑一轮 |
+///
+/// 合成一句就会把人指错方向：2026-11-04 真机上，一份**缺键的旧包**被说成
+/// "连接器没有注册 trajectory 投影，升级连接器"，而升级连接器什么也解决不了。
+enum TrajectoryEmptyReason {
+  /// 这一包没读到（`session.projections` 失败 / 还没落地）。
+  noPackage,
+
+  /// 包到了，但没有 `trajectory` 这个键（这台电脑没注册投影）。
+  noTimelineKey,
+
+  /// 包到了、键也在，只是还没有轮次。
+  noTurns,
+}
+
 /// 轨迹页。
 ///
 /// ## 为什么是 `StatefulWidget`
@@ -231,7 +254,8 @@ class TrajectoryTab extends StatefulWidget {
     this.onTapTurn,
     this.onTapSegment,
     this.truncationLabel,
-    this.timelineMissing = false,
+    this.emptyReason = TrajectoryEmptyReason.noTurns,
+    this.onRetry,
   });
 
   /// 轮次行；`null` / 空 = 空态（不造假的）。
@@ -253,7 +277,15 @@ class TrajectoryTab extends StatefulWidget {
   ///
   /// 与"给了但是空的"是两句不同的话：前者要用户去电脑侧找原因，
   /// 后者只是还没跑完一轮。
-  final bool timelineMissing;
+  ///
+  /// **只有空态读它**（`turns` 为空时）；生产调用方是 `chat_page.dart` 的
+  /// `_TrajectoryTab`，它按"包在不在 / 键在不在 / 有没有轮次"三态算出来。
+  /// 默认值 = "还没轮次"，那是唯一不需要额外事实的一档。
+  final TrajectoryEmptyReason emptyReason;
+
+  /// 空态里的「重读」。**只有 [TrajectoryEmptyReason.noPackage] 给这个动作** ——
+  /// 缺键与没轮次都不是"再读一次"能解决的，摆一个点了没用的按钮就是假入口。
+  final VoidCallback? onRetry;
 
   @override
   State<TrajectoryTab> createState() => _TrajectoryTabState();
@@ -301,7 +333,10 @@ class _TrajectoryTabState extends State<TrajectoryTab> {
     final onTapTurn = widget.onTapTurn;
     final onTapSegment = widget.onTapSegment;
     if (rows.isEmpty) {
-      return _EmptyTrajectory(timelineMissing: widget.timelineMissing);
+      return _EmptyTrajectory(
+        reason: widget.emptyReason,
+        onRetry: widget.onRetry,
+      );
     }
     final truncation = widget.truncationLabel;
     return Column(
@@ -469,14 +504,33 @@ class _TurnRow extends StatelessWidget {
 
 /// 轨迹页的空态。
 class _EmptyTrajectory extends StatelessWidget {
-  const _EmptyTrajectory({this.timelineMissing = false});
+  const _EmptyTrajectory({required this.reason, this.onRetry});
 
-  /// 这台电脑没给 `trajectory` 投影 —— 空态要说清是哪一种"没有"。
-  final bool timelineMissing;
+  /// 哪一种"没有"（见 [TrajectoryEmptyReason] 的表）。
+  final TrajectoryEmptyReason reason;
+
+  /// 「重读」；`null` = 不给这个动作。
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
+    final detail = switch (reason) {
+      // 这一包没到：重读有意义（电脑侧可能只是这次没应答）。
+      TrajectoryEmptyReason.noPackage =>
+        '这次没读到这个会话的投影（电脑侧没应答，或这次读失败）。\n'
+            '重读一次再看。',
+      // 键缺席 = 这台电脑的连接器没注册 trajectory 投影。
+      // 与"跑完一轮就有了"是两句不同的话（一句要查电脑，一句只要等）。
+      TrajectoryEmptyReason.noTimelineKey =>
+        '这台电脑没给时间轴：连接器没有注册 trajectory 投影，'
+            '升级电脑侧的连接器后才有每一步的起止。',
+      // 包与键都在，只是还没有轮次：等。
+      TrajectoryEmptyReason.noTurns =>
+        '电脑侧跑完一轮后，这里会显示每一轮的提问、结果与时间轴。\n'
+            '用时与每一段的起止都由电脑侧算好随投影下发。',
+    };
+    final retry = onRetry;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -491,16 +545,19 @@ class _EmptyTrajectory extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              timelineMissing
-                  // 键缺席 = 这台电脑的连接器没注册 trajectory 投影。
-                  // 与"跑完一轮就有了"是两句不同的话（一句要查电脑，一句只要等）。
-                  ? '这台电脑没给时间轴：连接器没有注册 trajectory 投影，'
-                        '升级电脑侧的连接器后才有每一步的起止。'
-                  : '电脑侧跑完一轮后，这里会显示每一轮的提问、结果与时间轴。\n'
-                        '用时与每一段的起止都由电脑侧算好随投影下发。',
+              detail,
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 12, color: c.labelTertiary),
             ),
+            // 只有"这一包没到"给动作：缺键与没轮次都重读不出东西来。
+            if (reason == TrajectoryEmptyReason.noPackage && retry != null) ...[
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: retry,
+                style: TextButton.styleFrom(foregroundColor: c.labelSecondary),
+                child: const Text('重读'),
+              ),
+            ],
           ],
         ),
       ),
