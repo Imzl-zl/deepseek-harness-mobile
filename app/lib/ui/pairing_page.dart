@@ -608,7 +608,9 @@ class _OfferRoutes extends StatelessWidget {
     final hasRelay = !offer.lanOnly;
     final routes = <String>[
       if (hasLan) '局域网直连（${offer.lanUrls.length} 个地址）',
-      if (hasRelay) '中转',
+      // `lanOnly: false` 的唯一含义就是中转登记成功（契约 §12.1）——
+      // 这里明写"已登记"，用户不用从"没有警告"去猜出门能不能用。
+      if (hasRelay) '中转（已登记）',
     ];
     final lanOnly = offer.lanOnly;
     return Container(
@@ -659,7 +661,7 @@ class _OfferRoutes extends StatelessWidget {
           if (!lanOnly && hasLan && hasRelay) ...[
             const SizedBox(height: 6),
             Text(
-              '一条不通会自动换另一条。',
+              '出门 / 用流量会自动走中转；一条不通会换另一条。',
               style: TextStyle(fontSize: 12, color: c.labelTertiary),
             ),
           ],

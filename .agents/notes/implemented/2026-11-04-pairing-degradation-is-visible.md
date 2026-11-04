@@ -19,9 +19,13 @@ Status: implemented
 
 1. **一条码，一个降级标**：载荷加 `"lanOnly": true`（契约 §12.1），不做两张码；
    仍然"有 `lan` 就出码"（断网 / 中转没开时得能配），只是不再静默。
+   - **正反两面都说**：`lanOnly` 缺省/false 的唯一含义是"中转登记成功"。只在失败时
+     说话仍然回答不了用户真正的问题（"我现在在局域网里出码，等会儿出门还能不能用"），
+     所以登记成功时命令、面板、配对页都要明说「出门 / 用流量走中转（已登记）」；
+     没有局域网地址时说「只有中转这条路（已登记）」。
    - 电脑侧：`issuePairingOffer` 登记失败且 `lanUrls` 非空时返回 `markOfferLanOnly(offer)`
-     （新对象，不改原件）；斜杠命令文案、插件面板（`/api/dsh-mobile/pair` 回 `lanOnly`）
-     与 `warn` 日志三处说同一句话。
+     （新对象，不改原件）；斜杠命令文案、插件面板（`/api/dsh-mobile/pair` 回
+     `lanOnly` + `lanAvailable`）与 `warn` 日志三处说同一句话。
    - 手机侧：`PairingOffer.lanOnly` **只认字面 `true`**；配对页扫完就摆出
      「此码只能在同一 Wi-Fi 下使用（出码时没登记上中转）」；`beginPairing` 对降级码
      **不换票**（那条路这次注定 409），局域网也不通时直接说"只能在同一 WiFi"。
@@ -75,7 +79,8 @@ Status: implemented
 
 - connector：`pnpm exec tsc --noEmit` → 0；`pairing-offer.test.ts` 的降级用例改成断言
   `payload.lanOnly === true`、文案含「只能在同一 WiFi 下使用」、日志含 `lanOnly`；
-  另断言登记成功时载荷里**没有**这一格。
+  另断言登记成功时载荷里**没有**这一格，且命令输出含「出门 / 用流量走中转（已登记）」；
+  `admin-face.test.ts` 的出码应答包含 `lanOnly` 与 `lanAvailable`。
 - app：`pairing_vectors_test`（只认字面 true）、`pairing_flow_test`（降级码不换票 /
   降级码照常配对 / 中转优先先换票 / 中转优先失败回落 / 自动 + 不同网段先中转）、
   `pairing_page_routes_test`（提示与「正在试」）、`ui_state_test` + `ui_state_wiring_test`

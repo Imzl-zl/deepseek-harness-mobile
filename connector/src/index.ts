@@ -810,6 +810,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           svg: string
           expiresAt: number
           lanOnly: boolean
+          lanAvailable: boolean
         }> => {
           // **出码前刷新局域网地址**：二维码里的中转地址必须是"手机拨得通的
           // 当前地址"（配置里写的是环回拨号地址）。换 WiFi 之后第一次出码
@@ -825,8 +826,14 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           // 公钥只在服务端生成 SVG 时用一次（`admin/routes.ts` 的 `offer` 注释）。
           const svg = await pairingQrSvg(offer.payload)
           // 降级可见（契约 §12.1 的 `lanOnly`）：面板要在二维码旁边说
-          // "中转没登记上：这张码只能同一 WiFi 用"，而不是让用户扫了才发现。
-          return { svg, expiresAt: offer.expiresAt, lanOnly: offer.lanOnly }
+          // "中转没登记上：这张码只能同一 WiFi 用"；**登记成功时也要说**，
+          // 否则用户不知道出门还能不能用。`lanAvailable` 决定那句正面的文案怎么写。
+          return {
+            svg,
+            expiresAt: offer.expiresAt,
+            lanOnly: offer.lanOnly,
+            lanAvailable: offer.lanUrls.length > 0,
+          }
         }
 
         // 出码入口：一条斜杠命令。**登记不成就不出码**（`offerForScanning` 的判断），

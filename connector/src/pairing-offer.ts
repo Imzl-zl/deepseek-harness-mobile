@@ -63,14 +63,16 @@ export async function offerForScanning(deps: PairingOfferDeps): Promise<OfferRes
   try {
     const offer = await issuePairingOffer(deps)
     const minutes = Math.round(PAIRING_TTL_MS / 60_000)
-    // 降级要把"少了什么"说在码旁边：**静默**降级会让用户出门才发现这张码配不上
-    // （2026-11-04 的判据：登记失败不是错误，但"只有局域网"必须可见）。
+    // 正反两面都要说：只在失败时说话，用户在局域网里出码时仍不知道"出门能不能用"。
+    // `lanOnly: false` 的唯一含义就是**中转登记成功**（登记失败且有 lan 会被标成 true，
+    // 没有 lan 时登记失败根本不出码）。
     const where = offer.lanOnly
       ? `\n⚠ 中转没登记上：这张码只能在同一 WiFi 下使用（跨网或用流量扫它配不上）`
         + `\n局域网直连：${offer.lanUrls.join(' / ')}`
       : offer.lanUrls.length === 0
-        ? ''
-        : `\n局域网直连：${offer.lanUrls.join(' / ')}（同一 WiFi 下不经过中转）`
+        ? '\n只有中转这条路（已登记）：手机不在同一 WiFi 时也能扫。'
+        : `\n两条路都在：同一 WiFi 直连；出门 / 用流量走中转（已登记）。`
+          + `\n局域网直连：${offer.lanUrls.join(' / ')}`
     return {
       kind: 'success',
       text: `手机扫码配对（${minutes} 分钟内有效，一次性）：\n${offer.payload}${where}`,

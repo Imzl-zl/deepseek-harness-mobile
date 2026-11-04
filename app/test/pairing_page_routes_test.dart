@@ -111,7 +111,11 @@ void main() {
       await tester.pump();
     }
 
-    expect(find.textContaining('这张码有两条路：局域网直连（1 个地址） · 中转。'), findsOneWidget);
+    expect(
+      find.textContaining('这张码有两条路：局域网直连（1 个地址） · 中转（已登记）。'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('出门 / 用流量会自动走中转'), findsOneWidget);
     expect(find.byKey(const Key('pairing-stage')), findsOneWidget);
     expect(find.textContaining('正在试：换票…'), findsOneWidget);
 

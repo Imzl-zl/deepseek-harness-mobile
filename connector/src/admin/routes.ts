@@ -156,8 +156,10 @@ export interface AdminDeps {
    *
    * `lanOnly` 是"登记中转失败、这张码只有局域网那条路"的标记（契约 §12.1）：
    * 面板据此在二维码旁边显式提示，而不是让用户出门才发现配不上。
+   * `lanAvailable` 说明码里还有没有局域网地址，面板据此选择**正面**那句文案
+   * （"两条路都在，出门走中转（已登记）" / "只有中转（已登记）"）。
    */
-  offer(): Promise<{ svg: string; expiresAt: number; lanOnly: boolean }>
+  offer(): Promise<{ svg: string; expiresAt: number; lanOnly: boolean; lanAvailable: boolean }>
   /**
    * 停用（`enabled: false`）或解禁（`enabled: true`）一台设备。
    *

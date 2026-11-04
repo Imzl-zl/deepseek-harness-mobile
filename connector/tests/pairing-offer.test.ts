@@ -44,6 +44,8 @@ test('登记成功才出码：命令结果里带二维码载荷（含码与电�
   // 登记用的必须是**这张码的哈希**（否则中转绑不上，手机扫了也配不上）。
   assert.deepEqual(registered, [payload['offerId']])
   assert.notEqual(registered[0], pairingCodeHash(String(payload['code'])), '登记值不能充当授权校验值')
+  // 没有局域网地址时也要说清"这条码走中转，且已登记"（正面提示，不只是失败时说话）。
+  assert.match(result.text, /只有中转这条路（已登记）/)
 })
 
 test('登记失败：**不出码**，回一个说明原因的结果（而不是给一张配不上的二维码）', async () => {
@@ -85,10 +87,15 @@ test('登记失败但有局域网地址：仍然出码，但载荷标 lanOnly，
 
   // **登记仍然先试过**：中转可用时同一张码在跨网也能用，不能因为"有 lan"就跳过登记。
   const { pairing: healthy, register, registered } = setup(undefined, () => lan)
-  const ok = await issuePairingOffer({ pairing: healthy, register })
-  assert.deepEqual(registered, [JSON.parse(ok.payload).offerId])
-  assert.equal(JSON.parse(ok.payload).lanOnly, undefined, '登记成功时载荷里不该出现 lanOnly')
-  assert.equal(ok.lanOnly, false)
+  const ok = await offerForScanning({ pairing: healthy, register })
+  const okPayload = JSON.parse(ok.kind === 'success' ? ok.text.split('\n')[1] ?? '' : '{}') as Record<string, unknown>
+  assert.deepEqual(registered, [okPayload['offerId']])
+  assert.equal(okPayload['lanOnly'], undefined, '登记成功时载荷里不该出现 lanOnly')
+  // **正面也要说**：用户要能判断"出门还能不能用"，而不是从"没有警告"去猜。
+  assert.match(
+    ok.kind === 'success' ? ok.text : '',
+    /两条路都在：同一 WiFi 直连；出门 \/ 用流量走中转（已登记）/,
+  )
 })
 
 test('成功文案里的有效期**从常量算**（写死数字会变成一句撒谎的提示）', async () => {
