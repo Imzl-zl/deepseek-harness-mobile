@@ -4,9 +4,9 @@
 
 项目分三个层面:
 
-1. **交互基线原型**:`mock/proto/` 是当前唯一完整可运行的移动端交互参考。它用原生 HTML/CSS/JS 模拟聊天主页、左会话抽屉、右侧上下文抽屉、底部 sheet、输入栏接管、文件预览、任务/子代理和设置页。
+1. **交互基线原型**:`mock/proto/` 是移动端交互的**基线**(纯浏览器 JS/CSS/HTML,无构建)。落地端 `app/` 与它同源:改基线要同步改落地端,不允许两边各自漂移。
 2. **跨端协议层**:`protocol/` 是手机 ⇄ 中转 ⇄ 电脑侧桥接的契约与可执行规格。`fixtures/` 是规格真身,`reference/` 只是行为基准(**不是可搬运的产品代码**),`vectors/` 是跨端密码学向量。两侧实现(TS 插件 / Dart 手机端)各写一遍,对着同一批 fixtures 跑。
-3. **Flutter 落地端**:`app/` 目前只有主题层(`app/lib/theme/`)。通道客户端的 core 分层、多端边界与能力包已设计(见 `subsystems/app-channel-client.md`、`subsystems/app-platform-boundaries.md`),Dart 代码尚未开始。
+3. **Flutter 落地端**:`app/` 是**产品实现**,七层 —— `core/`(通道客户端、恢复引擎,纯 Dart)、`data/`(DTO 与存储)、`model/`(领域模型)、`wire/`(线上形状的唯一解码层)、`theme/`、`ui/`(逐屏)、`platform/`(各端实现与唯一装配点)。分层判据见 `subsystems/app-channel-client.md` 与 `subsystems/app-platform-boundaries.md`。
 
 电脑侧事实来源:
 
@@ -24,7 +24,7 @@
 - 远程通道规格(信封、配对与鉴权、端到端加密、修订号与恢复语义、存储边界、推送、DSH 侧数据源适配表)→ `subsystems/remote-channel.md`;评审证据与 DSH 侧行号 → `channel-review-notes.md`
 - 电脑侧桥接与中转的落地设计 → `subsystems/connector-and-relay.md`
 - 手机端通道客户端设计(core 分层、连接状态机、渲染性能、测试策略)→ `subsystems/app-channel-client.md`
-- 手机端多端边界(iOS / 安卓 / 鸿蒙:核心零平台分支、按能力切包、可机械判定的边界规则)→ `subsystems/app-platform-boundaries.md`
+- 手机端多端边界(iOS / 安卓 / 鸿蒙:核心零平台分支、平台实现只住 `lib/platform/`、可机械判定的边界规则)→ `subsystems/app-platform-boundaries.md`
 - 开工步骤与精确验证命令 → `cookbook/channel-bootstrap.md`
 - 本机运行模式 → `design-and-tech-plan.md` §13、`standalone-mode-notes.md`
 - 事故与可复用故障规则 → `postmortem/`
@@ -42,7 +42,7 @@
 - 新增移动端页面先进入原型信息架构,再进入 Flutter 页面;原型与 Flutter 不允许各自发明状态真值。
 - 新增电脑侧能力先核对桥接的**实际实现**,再改协议;不能只按 schema 文件或契约文本枚举能力(审批回应的"不支持"结论就是这么过期的)。
 - 新增通道能力先改 `protocol/fixtures/`,再改两侧实现;两端共用同一批 fixtures,不允许各自维护一份协议说明。
-- 新增平台 = 在 `app/packages/` 加能力包实现 + 在 `app/lib/platform/` 注册,不得修改 `lib/core` / `lib/data` / `lib/model` / `lib/ui`(由 `app/tools/verify-platform-boundary.mjs` 拦)。
+- 新增平台 = 在 `app/lib/platform/` 加 `<能力>_<端>.dart`(端口在 `<能力>.dart`,兜底是 `<能力>_memory.dart`),并在同一个装配点登记;不得修改 `lib/core` / `lib/data` / `lib/model` / `lib/ui`(由 `app/tools/verify-platform-boundary.mjs` 拦)。
 - 新增设置项先在 `settings-porting-notes.md` 逐项给出 DSH 路径、行号、取值来源与处置,再加入页面映射。
 - 新增插件支持优先扩展声明式/Schema 能力,不做逐插件原生页面适配。
 

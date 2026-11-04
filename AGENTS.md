@@ -13,7 +13,7 @@
 ## 0. 实施基线
 
 - 环境:Windows / PowerShell(pwsh);Node.js 可用(`node --check`、验证脚本均以 node 运行)。
-- 语言/运行时:原型 = 纯浏览器 JS/CSS/HTML(无构建步骤、无 npm 依赖);App = Dart / Flutter(仅主题层已落地)。
+- 语言/运行时:原型 = 纯浏览器 JS/CSS/HTML(无构建步骤、无 npm 依赖);App = Dart / Flutter(core / data / model / wire / theme / ui / platform 七层均已落地)。
 - 主要技术栈:Flutter(目标 iOS / 安卓 / 鸿蒙 OHOS fork);原型用原生 DOM + 手写手势。
 - 版本控制:git;远端 `github.com/Imzl-zl/deepseek-harness-mobile`(`main`)。`mock/proto/shots/`(生成物,约 9 MB)与 `setup-collaboration-files.backup/` 不入库。
 - 配置根目录:`connector/` 与 `relay/` 是两个独立 pnpm 工程(各有 `package.json` + `pnpm-lock.yaml`,都不是 DSH workspace 成员);`app/` 是 Flutter 工程(`pubspec.yaml`)。
@@ -43,7 +43,7 @@
 
 ## 3. 架构与项目结构
 
-- `app/lib/theme/` —— Flutter 主题层(`dsh_colors.dart` / `dsh_theme.dart`),token 抽自 DSH `ui-theme`,三端落地的唯一颜色/字体来源。
+- `app/lib/` —— Flutter 实现七层:`core/`(纯 Dart 零平台依赖)、`data/`、`model/`、`wire/`、`theme/`、`ui/`、`platform/`(各端实现与装配点);`theme/` 是三端颜色/字体的唯一来源。
 - `mock/proto/` —— **交互基线原型**(唯一可运行的完整形态):
   - `index.html` 全部页面标记;`styles.css` 设计 token 与组件样式;`app.js` 手势/抽屉/sheet/文件页/任务/输入栏;`interactions.js` 输入栏接管(审批/提问/计划);`icons.js` 100 个 DSH 图标(机生成,勿手改)。
   - `tools/` 抽取器与验证脚本;`shots/` 截图产物。
@@ -68,7 +68,7 @@
 - 语法检查:`node --check <file>`(原型 `app.js` / `interactions.js` / `tools/*.mjs`)。
 - 通道协议验证(不需要浏览器/手机/公网):`node protocol/verify-fixtures.mjs`(15 条 fixture / 454 项:恢复只有"增量或快照"两种结果)、`node protocol/verify-loopback.mjs`(26 项三角色回环,含中转清空后重启)、`node protocol/verify-vectors.mjs`(49 项跨端密码学向量:握手派生 + 设备身份 + transcript 拼串与签名 + AEAD 与箱容器 + 篡改拒绝)。**改 `protocol/` 后三条都必须全绿**;改断言时补一次变异校验(做法见 `tools.md`)。
 - connector 验证(pnpm 工程,细则见 `tools.md`):`cd connector; pnpm exec tsc --noEmit`、`pnpm build`、`pnpm test`(项数见 `tools.md` —— 不在此处复述,免得两处漂移;**fixtures 断言数须 = 454、向量须 = 49**,与参考侧相等)。**改 `connector/src/**` 后必须跑。**
-- 多端边界校验(不需要 Flutter 工程):`node app/tools/verify-platform-boundary.mjs` —— 7 条规则扫 `app/lib` 与 `app/packages`,自带 25 条规则自检(细则与当前项数见 `tools.md`)。**改 `app/lib/` 或 `app/packages/` 后必须跑。**
+- 多端边界校验(不需要 Flutter 工程):`node app/tools/verify-platform-boundary.mjs` —— 8 条规则扫 `app/lib`,自带 31 条规则自检(细则与当前项数见 `tools.md`)。**改 `app/lib/` 后必须跑。**
 - 浏览器验证(独立 headless,不碰日常浏览器):`pwsh -File mock/proto/tools/cdp.ps1 -Port 9400`,然后
   `$env:CDP_URL='http://127.0.0.1:9400'; $env:NO_PROXY='127.0.0.1,localhost'` 再跑对应脚本。
   - `verify-proto.mjs` 布局与交互;`verify-authz.mjs` 授权矩阵 18 项;`verify-picker.mjs` 列表列固定;`verify-settings.mjs` 设置页导航与边界;`verify-tasks.mjs` 对话 dock 与自动化任务页;`measure-composer.mjs` 量尺寸。

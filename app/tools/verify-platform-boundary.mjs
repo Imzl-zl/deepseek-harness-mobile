@@ -5,17 +5,31 @@
  *
  * 判据与取舍见 .agents/notes/proposed/2026-09-30-experience-first-three-layer-split.md
  *
- * 现在 app/lib 只有主题层，真实扫描几乎是空的——所以脚本自带**自检**：
+ * 现在 app/lib 已经有 167 个 Dart 文件，但规则本身仍要能自证有效——所以脚本自带**自检**：
  * 用合成样本证明每条规则真的会拦。自检不过 = 规则写错了，而不是代码干净。
  */
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 
 const ROOT = process.cwd()
-const SCAN_DIRS = ['app/lib', 'app/packages']
+/**
+ * 只扫 `app/lib`。
+ *
+ * 曾经还有 `app/packages`（按能力切包的计划落点），但那个目录从没建起来：
+ * 各端实现现在住在 `app/lib/platform/`（见 `.agents/notes/implemented/2026-11-04-platform-layout-is-lib-platform.md`）。
+ * **别把它加回来当作"以后可能要用"**：扫一个不存在的目录等于给门禁一条永不作废的假绿。
+ * 真要重新引入，先改 `docs/subsystems/app-platform-boundaries.md` §1，再改这一行。
+ */
+const SCAN_DIRS = ['app/lib']
 
-/** 各端实现包的后缀；UI 不允许 import 它们。 */
-const IMPL_SUFFIX = /import\s+['"][^'"]*_(ios|android|ohos)\//
+/**
+ * 各端实现的后缀；UI 不允许 import 它们。
+ *
+ * 两种形态都要认（2026-11-04 前只认第一种，规则因此休眠）：
+ * - 目录形态 `.../secure_store_ohos/secure_store_ohos.dart`
+ * - 文件形态 `.../platform/notify_android.dart` ← **现在的实际写法**
+ */
+const IMPL_SUFFIX = /import\s+['"][^'"]*_(ios|android|ohos)(?:\/|\.dart['"])/
 
 /**
  * 纯 Dart 层禁用的库，**匹配 import / export 指令本身**，不匹配正文。
@@ -83,7 +97,10 @@ const RULES = [
   },
   {
     id: 'ui-no-impl-import',
-    why: 'UI 直接依赖某个端的实现包，等于把平台分支搬进界面层',
+    why: 'UI 直接依赖某个端的实现，等于把平台分支搬进界面层',
+    // 认两种形态：目录式（`packages/<能力>_<端>/…`，遗留）与文件式
+    // （`platform/<能力>_<端>.dart`，现在只有这一种）。UI 只能走端口 / 工厂
+    // （`platform/notify_factory.dart` 之流），不能点某个端的实现。
     appliesTo: (p) => /^app\/lib\/ui\//.test(p),
     match: (content) => firstMatch(content, IMPL_SUFFIX),
   },
@@ -115,11 +132,23 @@ const RULES = [
   },
   {
     id: 'fallback-not-in-release',
-    why: '兜底实现混进 release 装配点（必须由 kDebugMode 守住），禁止静默降级',
-    appliesTo: (p) => p === 'app/lib/platform/registry.dart',
-    match: (content) => (/InMemory|NullPush|Noop/.test(content) && !/kDebugMode/.test(content)
-      ? '装配点引用了兜底实现但没有 kDebugMode 守卫'
-      : null),
+    why: '兜底实现混进 release 装配点（必须由 kReleaseMode / kDebugMode 守住），禁止静默降级',
+    // 装配点 = `lib/platform/` 下按能力选实现的 `<能力>_factory.dart`。
+    // 判据两条：装配点里出现了兜底实现，且**代码里**没有 release 守卫。
+    // 兜底按"内存 / 空实现"这一族认（现在叫 `MemoryNotify`），不再写死旧名字
+    // （旧写法只认 `InMemory` / `NullPush` / `Noop` + 一个不存在的 `registry.dart`，
+    // 于是这条规则休眠了两个月 —— 见 2026-11-04 的 `platform-layout-is-lib-platform.md`）。
+    appliesTo: (p) => /^app\/lib\/platform\/[^/]+_factory\.dart$/.test(p),
+    match: (content) => {
+      const fallback = firstCodeUse(content, /\b(?:Memory[A-Z]\w*|InMemory\w*|NullPush|Noop\w*)\b/g)
+      if (fallback === null) return null
+      // 守卫必须**真的用在分支里**：`kReleaseMode ? …` 或 `if (!kReleaseMode)`。
+      // 光有一行 `import '…' show kReleaseMode;` 不算 —— 2026-11-04 的变异校验就是被它骗过一次
+      // （去掉守卫只留 import，规则照样全绿）。`firstCodeUse` 已剥注释，
+      // 所以"注释里写着必须有守卫"同样不算。
+      const guarded = firstCodeUse(content, /\bk(?:Release|Debug)Mode\b\s*[?)]/g)
+      return guarded === null ? `装配点引用了兜底实现（${fallback}）但没有 release 守卫` : null
+    },
   },
   {
     // 2026-10-25 事故：`tool/call` 的 `arguments` 在线上是 JSON 字符串，
@@ -162,6 +191,11 @@ const SELF_TEST = [
   },
   { rule: 'ui-no-impl-import', path: 'app/lib/ui/chat.dart', content: "import '../../packages/secure_store_ohos/secure_store_ohos.dart';", shouldFail: true },
   { rule: 'ui-no-impl-import', path: 'app/lib/ui/chat.dart', content: "import '../../packages/secure_store/secure_store.dart';", shouldFail: false },
+  // **现在的实际写法是文件式**：`platform/<能力>_<端>.dart`。只认目录式这条规则就会休眠。
+  { rule: 'ui-no-impl-import', path: 'app/lib/ui/chat.dart', content: "import '../platform/notify_android.dart';", shouldFail: true },
+  { rule: 'ui-no-impl-import', path: 'app/lib/ui/chat.dart', content: "import '../platform/notify_factory.dart';", shouldFail: false },
+  // 端口本身不算实现（`photo_picker.dart` / `pairing_store.dart` 就是 UI 该用的）。
+  { rule: 'ui-no-impl-import', path: 'app/lib/ui/chat.dart', content: "import '../platform/photo_picker.dart';", shouldFail: false },
   { rule: 'ui-no-platform-import', path: 'app/lib/ui/chat.dart', content: "import 'dart:io';", shouldFail: true },
   // **界面层必须能 import Material** —— 那是它写 UI 的语言。
   // 缺这条自检时，`ui/` 的规则误用了 core 的禁用表（那张表含 material.dart），
@@ -176,7 +210,7 @@ const SELF_TEST = [
   { rule: 'no-material-icons', path: 'app/lib/ui/chat.dart', content: '// 不用 Icons.send，图标只有一个来源', shouldFail: false },
   // 但别的层可以用（`platform/` 将来可能有自己的原生图标需求）——
   // 这条规则的适用范围就是 UI 层，不该外溢。
-  { rule: 'no-material-icons', path: 'app/lib/platform/registry.dart', content: 'const Icon(Icons.send)', shouldFail: false },
+  { rule: 'no-material-icons', path: 'app/lib/platform/notify_factory.dart', content: 'const Icon(Icons.send)', shouldFail: false },
   { rule: 'branch-whitelist', path: 'app/lib/ui/chat.dart', content: 'if (Platform.isAndroid) {}', shouldFail: true },
   { rule: 'branch-whitelist', path: 'app/lib/ui/adaptive/switcher.dart', content: 'if (Platform.isIOS) {}', shouldFail: false },
   { rule: 'no-platform-isohos', path: 'app/packages/notify_ohos/lib/notify_ohos.dart', content: 'if (Platform.isOhos) {}', shouldFail: true },
@@ -185,15 +219,40 @@ const SELF_TEST = [
   { rule: 'branch-whitelist', path: 'app/lib/platform/registry.dart', content: 'if (Platform.isAndroid) {}', shouldFail: false },
   {
     rule: 'fallback-not-in-release',
-    path: 'app/lib/platform/registry.dart',
-    content: 'final store = InMemorySecureStore();',
+    path: 'app/lib/platform/notify_factory.dart',
+    content: 'NotifyPort createNotifyPort() =>\n    Platform.isAndroid ? AndroidNotify() : MemoryNotify();',
     shouldFail: true,
   },
   {
     rule: 'fallback-not-in-release',
-    path: 'app/lib/platform/registry.dart',
-    content: 'final store = kDebugMode ? InMemorySecureStore() : fail();',
+    path: 'app/lib/platform/notify_factory.dart',
+    content: 'NotifyPort createNotifyPort() => Platform.isAndroid\n'
+      + '    ? AndroidNotify()\n'
+      + '    : kReleaseMode ? throw UnsupportedError("x") : MemoryNotify();',
     shouldFail: false,
+  },
+  // **注释里提到兜底不算违规**：说明"为什么这么选"是好代码（同 `no-material-icons` 那一条）。
+  {
+    rule: 'fallback-not-in-release',
+    path: 'app/lib/platform/notify_factory.dart',
+    content: '// release 下不许回落到 MemoryNotify\nNotifyPort createNotifyPort() => AndroidNotify();',
+    shouldFail: false,
+  },
+  // 作用域只有装配点：兜底自己的文件里当然会出现它的名字。
+  {
+    rule: 'fallback-not-in-release',
+    path: 'app/lib/platform/notify_memory.dart',
+    content: 'class MemoryNotify implements NotifyPort {}',
+    shouldFail: false,
+  },
+  // **import 那一行不算守卫**：2026-11-04 的变异校验正是被它骗过一次 ——
+  // 去掉 `if (!kReleaseMode)` 只留 `show kReleaseMode`，规则照样绿。
+  {
+    rule: 'fallback-not-in-release',
+    path: 'app/lib/platform/notify_factory.dart',
+    content: "import 'package:flutter/foundation.dart' show kReleaseMode;\n"
+      + 'NotifyPort createNotifyPort() => MemoryNotify();',
+    shouldFail: true,
   },
   // 事件字段只有一个读者（`wire-field-single-reader`）。
   // 反例就是 2026-10-25 那一行：从 `data` 上直接取 `arguments`。
