@@ -515,18 +515,18 @@ class _DshMobileAppState extends State<DshMobileApp>
       return;
     }
     unawaited(() async {
-      // `active` 一直指着原电脑（添加是从不清槽的），`_switchTo` 只读槽 + 装配 +
-      // 重新 start；失败会自己报原因。
-      await _switchTo(hostId);
+      try {
+        // `active` 一直指着原电脑（添加是从不清槽的），`_switchTo` 只读槽 + 装配 +
+        // 重新 start；已知失败（槽不完整 / activate 失败）会自己报一次原因。
+        await _switchTo(hostId);
+      } catch (error) {
+        // 装配等未预期异常只在这里报一次；不要再叠 ``_switchTo`` 的已知失败提示，
+        // 否则同一次取消会弹两条。
+        if (!mounted) return;
+        DshToast.show(_navContext, '回到原电脑失败：$error', kind: DshToastKind.error);
+      }
       if (!mounted) return;
       setState(() => _pairing = false);
-      if (_credentials == null) {
-        DshToast.show(
-          _navContext,
-          '回到原电脑失败：配对凭据还在，重启 App 或重新配对',
-          kind: DshToastKind.error,
-        );
-      }
     }());
   }
 
