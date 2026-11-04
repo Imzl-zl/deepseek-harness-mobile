@@ -158,6 +158,34 @@ test('配了 admin：缺/错令牌 401 且 no-store；对的给页面与快照�
   assert.deepEqual(state.tokens.map((row) => row.id), ['conn-1', 'old-pc'], '令牌清单来自落盘点，且不含摘要')
 })
 
+test('反代后面：匿名桶按**真实来源地址**分，不是反代自己的地址', async (t) => {
+  // 桶小、不补充：两次请求就能看出两次用的**是不是同一个桶**（真实配置下要打几百次才看得出来）。
+  const relay = await startRelay({
+    port: 0,
+    authenticate: () => undefined,
+    admin: ADMIN,
+    rateLimit: { capacity: 1, refillPerSecond: 0 },
+    trustProxy: true,
+  })
+  t.after(() => relay.close())
+  const base = baseOf(relay.port)
+
+  // 第一个来源把桶用光。
+  assert.equal((await get(base, '/admin/api/state', { 'x-real-ip': '203.0.113.7' })).status, 401)
+  // 同一个来源再来一次：429 —— 桶确实生效了，否则下面那一条证明不了什么。
+  assert.equal(
+    (await get(base, '/admin/api/state', { 'x-real-ip': '203.0.113.7' })).status,
+    429,
+    '同一个来源应该被自己的桶限住',
+  )
+  // **另一个来源是另一个桶**：取裸 socket 地址时这里会是 429（所有人共用反代那一个桶）。
+  assert.equal(
+    (await get(base, '/admin/api/state', { 'x-real-ip': '198.51.100.9' })).status,
+    401,
+    '别的来源不该被它打光的桶连坐',
+  )
+})
+
 test('写操作都要同一个 Bearer；GET 路径不接受 POST', async (t) => {
   const calls: string[] = []
   const relay = await startRelay({ port: 0, authenticate: () => undefined, admin: ADMIN, adminOps: opsOf(calls) })
