@@ -36,6 +36,18 @@ export interface PairingOffer {
    * `.agents/notes/implemented/2026-11-03-pairing-without-relay.md`
    */
   readonly lanUrls: readonly string[]
+
+  /**
+   * 这张码**只有局域网那一条路**：出码时向中转登记失败，跨网那条腿没有接上。
+   *
+   * 载荷里同时带 `lanOnly: true`（契约 §12.1）：手机据此**显式提示**
+   * 「此码只能在同一 Wi-Fi 下使用」，并且不去拨一条注定失败的换票请求。
+   * 电脑侧的命令文案与插件面板也读它 —— 三处说的是同一个事实。
+   *
+   * Note: 为什么登记失败仍然出码、为什么必须让降级可见 —— 见
+   * `.agents/notes/implemented/2026-11-04-pairing-degradation-is-visible.md`
+   */
+  readonly lanOnly: boolean
 }
 
 /** 由该连接的持钥证明绑定的候选；不能从 pair-commit 载荷里再取一份身份。 */
@@ -206,6 +218,25 @@ export function relayHintFor(configured: string, lanHint: string | null): string
   return url.toString()
 }
 
+/**
+ * 登记失败时的**降级标**：返回一份 `lanOnly: true` 的 offer（载荷里也多这一格）。
+ *
+ * 只改"这张码能怎么走"，不改 offerId / code / 局域网地址 —— 手机拿到的还是同一张码，
+ * 只是它现在知道"别去试中转"。**不可变**：返回新对象，调用方手里的原件不动
+ * （`issuePairingOffer` 里两个分支用同一个 `offer` 变量，就地改会让日志与返回值对不上）。
+ *
+ * Note: 为什么保留"有 lan 就出码"但必须显式标记 —— 见
+ * `.agents/notes/implemented/2026-11-04-pairing-degradation-is-visible.md`
+ */
+export function markOfferLanOnly(offer: PairingOffer): PairingOffer {
+  const payload = JSON.parse(offer.payload) as Record<string, unknown>
+  return {
+    ...offer,
+    lanOnly: true,
+    payload: JSON.stringify({ ...payload, lanOnly: true }),
+  }
+}
+
 export function createPairing(options: PairingOptions): Pairing {
   const now = options.now ?? (() => Date.now())
   const random = options.randomBytes ?? ((size: number) => nodeRandomBytes(size))
@@ -233,7 +264,7 @@ export function createPairing(options: PairingOptions): Pairing {
       current = { offerId, codeHash: hash(code), expiresAt, candidate: null, accepted: null }
       const lanUrls = [...(options.lanUrls?.() ?? [])]
       return {
-        offerId, code, expiresAt, lanUrls,
+        offerId, code, expiresAt, lanUrls, lanOnly: false,
         payload: JSON.stringify({
           v: PAIRING_VERSION,
           // **出码时求值**：电脑换 WiFi 后二维码带的是当前地址，

@@ -214,6 +214,9 @@ window.__ModuleLoader__.load({
       devicesTitle: '已配对设备',
       pairTitle: '配对新手机',
       pairHint: '5 分钟内有效。',
+      // 出码时向中转登记失败 = 这张码只有局域网那条路（契约 §12.1 的 lanOnly）。
+      // 必须写在二维码旁边：用户出门 / 切流量之后才发现"配不上"就太晚了。
+      pairLanOnly: '中转没登记上：这张码只能在同一 WiFi 下使用（跨网或用流量扫它配不上）',
       thisOne: '本次',
       relayLabel: '中转',
       relayConnected: '已连接',
@@ -361,6 +364,7 @@ window.__ModuleLoader__.load({
       devicesTitle: 'Paired devices',
       pairTitle: 'Pair a new phone',
       pairHint: 'Valid for 5 minutes.',
+      pairLanOnly: 'Not registered with the relay: this code only works on the same Wi-Fi (it will not pair over the internet or mobile data).',
       thisOne: 'this session',
       relayLabel: 'Relay',
       relayConnected: 'Connected',
@@ -1089,7 +1093,7 @@ window.__ModuleLoader__.load({
           if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
           if (typeof body.svg !== 'string') throw new Error('电脑侧没有返回二维码')
           // SVG 是 UTF-8 文本，用 encodeURIComponent 转 data URI —— btoa 只吃 Latin1。
-          setQr({ src: `data:image/svg+xml,${encodeURIComponent(body.svg)}`, expiresAt: body.expiresAt })
+          setQr({ src: `data:image/svg+xml,${encodeURIComponent(body.svg)}`, expiresAt: body.expiresAt, lanOnly: body.lanOnly === true })
           setNow(Date.now())
         } catch (caught) {
           setError(messageOf(caught))
@@ -1916,6 +1920,9 @@ window.__ModuleLoader__.load({
               ? h('p', { key: 'x', style: { ...S.label, ...S.warn, marginTop: 10 } }, t('expired'))
               : h('div', { key: 'q', style: { marginTop: 10 } },
                   h('img', { alt: '配对二维码', src: qr.src, width: 260, height: 260, style: { display: 'block', background: '#fff', borderRadius: 6 } }),
+                  qr.lanOnly === true
+                    ? h('p', { key: 'lo', style: { ...S.label, ...S.warn, margin: '8px 0 0' } }, t('pairLanOnly'))
+                    : null,
                   h('p', { key: 'c', style: { ...S.label, margin: '6px 0 0' } }, `${t('scanHint')} · ${t('expiresIn', { t: countdown })}`),
                 ),
         ),

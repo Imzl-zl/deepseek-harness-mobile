@@ -11,7 +11,8 @@
  *
  * 载荷里有局域网直连地址（`lan`）时，手机根本不需要中转保管这次 offer，也不需要中转转告
  * "有候选要连进来" —— 它直接拨电脑，电脑自己持有 offer。于是登记失败**不再**意味着
- * "这张码配不上"，只意味着"跨网那条路没了"：出码照出，降级成一条 warn。
+ * "这张码配不上"，只意味着"跨网那条路没了"：出码照出，**载荷标 `lanOnly`**，
+ * 命令文案与插件面板同时说出来 —— 降级不再只进日志。
  *
  * 反过来（有 lan 就跳过登记）是另一种错误：中转可用时，登记能让**同一张码**在跨网
  * 场景也能用（手机不在同一 WiFi 时拨中转）。所以顺序是"先试着登记，失败再看有没有退路"。
@@ -20,10 +21,12 @@
  * 于是它可以脱离 DSH 与网络测（登记做成端口）。
  *
  * Note: 为什么"登记失败"只在没有局域网退路时才拒绝出码 —— 见
- * `.agents/notes/implemented/2026-11-03-pairing-without-relay.md`
+ * `.agents/notes/implemented/2026-11-03-pairing-without-relay.md`；
+ * 为什么降级必须写进载荷并让三处说出来 —— 见
+ * `.agents/notes/implemented/2026-11-04-pairing-degradation-is-visible.md`。
  */
 import type { ChannelLogger } from './observability.js'
-import { PAIRING_TTL_MS, type Pairing, type PairingOffer } from './pairing.js'
+import { PAIRING_TTL_MS, markOfferLanOnly, type Pairing, type PairingOffer } from './pairing.js'
 
 export interface PairingOfferDeps {
   pairing: Pairing
@@ -60,9 +63,14 @@ export async function offerForScanning(deps: PairingOfferDeps): Promise<OfferRes
   try {
     const offer = await issuePairingOffer(deps)
     const minutes = Math.round(PAIRING_TTL_MS / 60_000)
-    const where = offer.lanUrls.length === 0
-      ? ''
-      : `\n局域网直连：${offer.lanUrls.join(' / ')}（同一 WiFi 下不经过中转）`
+    // 降级要把"少了什么"说在码旁边：**静默**降级会让用户出门才发现这张码配不上
+    // （2026-11-04 的判据：登记失败不是错误，但"只有局域网"必须可见）。
+    const where = offer.lanOnly
+      ? `\n⚠ 中转没登记上：这张码只能在同一 WiFi 下使用（跨网或用流量扫它配不上）`
+        + `\n局域网直连：${offer.lanUrls.join(' / ')}`
+      : offer.lanUrls.length === 0
+        ? ''
+        : `\n局域网直连：${offer.lanUrls.join(' / ')}（同一 WiFi 下不经过中转）`
     return {
       kind: 'success',
       text: `手机扫码配对（${minutes} 分钟内有效，一次性）：\n${offer.payload}${where}`,
@@ -98,11 +106,15 @@ export async function issuePairingOffer(deps: PairingOfferDeps): Promise<Pairing
       )
     }
     // 有局域网地址 = 手机拨得通电脑，登记只影响"跨网也能扫同一张码"。
+    // **降级必须可见**：载荷带上 `lanOnly`，命令与面板把它说出来 —— 以前这条只进 warn 日志，
+    // 用户出门才发现"这张码配不上"。
+    const degraded = markOfferLanOnly(offer)
     deps.log?.warn(
-      `配对登记失败：这次配对只能走局域网直连（${offer.lanUrls.length} 个地址仍在二维码里）`,
+      `配对登记失败：这张码只能走局域网直连（${offer.lanUrls.length} 个地址仍在二维码里）`
+      + ' —— 已在载荷里标 lanOnly，手机与面板都会显式提示',
       error,
     )
-    return offer
+    return degraded
   }
   deps.log?.info(
     `已出码并登记到中转（${Math.round((offer.expiresAt - Date.now()) / 1000)} 秒内有效`

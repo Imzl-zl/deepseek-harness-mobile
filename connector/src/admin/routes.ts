@@ -150,11 +150,14 @@ export interface AdminDeps {
    * 实现是 `issuePairingOffer` + `pairingQrSvg`：登记失败就不出码
    * （否则给出一张扫了也配不上的码）。
    *
-   * **只回 svg 与过期时刻，不回 payload**：载荷里有两把 64 hex 公钥，
+   * **只回 svg、过期时刻与降级标，不回 payload**：载荷里有两把 64 hex 公钥，
    * 而浏览器只负责把它画成图。让 payload 过线等于把密钥材料送到一个
    * 不需要它的地方 —— 少送一个字段就少一处泄漏面。
+   *
+   * `lanOnly` 是"登记中转失败、这张码只有局域网那条路"的标记（契约 §12.1）：
+   * 面板据此在二维码旁边显式提示，而不是让用户出门才发现配不上。
    */
-  offer(): Promise<{ svg: string; expiresAt: number }>
+  offer(): Promise<{ svg: string; expiresAt: number; lanOnly: boolean }>
   /**
    * 停用（`enabled: false`）或解禁（`enabled: true`）一台设备。
    *

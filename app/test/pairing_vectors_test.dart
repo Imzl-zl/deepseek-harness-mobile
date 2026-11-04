@@ -203,6 +203,51 @@ void main() {
       expect(PairingOffer.fromQrPayload(payload).lanUrls, isEmpty);
     });
 
+    test('降级标 lanOnly：只认字面 true，缺省与怪值都当 false（不猜）', () {
+      Map<String, Object?> payloadWith(Object? value) => {
+        'v': 2,
+        'relay': 'wss://relay.example/ws/connector',
+        'pcId': 'conn-1',
+        'pcPubEd': 'aa' * 32,
+        'pcPubDh': 'bb' * 32,
+        'offerId': 'abL3sSH5gLJpTBBsqPUzJg',
+        'code': 'zyXWvUTSrqPONMLKjihgfe',
+        'lan': ['ws://192.168.1.5:8790'],
+        'lanOnly': value,
+      };
+      expect(
+        PairingOffer.fromQrPayload(jsonEncode(payloadWith(true))).lanOnly,
+        isTrue,
+      );
+      expect(
+        PairingOffer.fromQrPayload(jsonEncode(payloadWith(false))).lanOnly,
+        isFalse,
+      );
+      expect(
+        PairingOffer.fromQrPayload(jsonEncode(payloadWith('true'))).lanOnly,
+        isFalse,
+      );
+      expect(
+        PairingOffer.fromQrPayload(jsonEncode(payloadWith(1))).lanOnly,
+        isFalse,
+      );
+      expect(
+        PairingOffer.fromQrPayload(
+          jsonEncode({
+            'v': 2,
+            'relay': 'wss://relay.example/ws/connector',
+            'pcId': 'conn-1',
+            'pcPubEd': 'aa' * 32,
+            'pcPubDh': 'bb' * 32,
+            'offerId': 'abL3sSH5gLJpTBBsqPUzJg',
+            'code': 'zyXWvUTSrqPONMLKjihgfe',
+          }),
+        ).lanOnly,
+        isFalse,
+        reason: '老载荷没有这一格，行为与改造前一致',
+      );
+    });
+
     test('旧版（v1）二维码 → unsupported-version（动作是升级，不是重扫）', () {
       // v1 的码里没有 `offerId`：v2 的电脑侧会直接拒（换票 426）。
       // 报成"二维码坏"会让人反复重扫同一张 —— 而该做的事是去电脑上升级。

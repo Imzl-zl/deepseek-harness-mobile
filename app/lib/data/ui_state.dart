@@ -73,6 +73,12 @@ abstract final class UiKey {
   static const String performanceView = '${devicePrefix}performance_view';
   static const String collapseTiming = '${devicePrefix}collapse_timing';
 
+  /// 配对时先试哪条路（`auto` / `direct` / `relay`，见 `core/pairing_flow.dart`）。
+  ///
+  /// **只影响顺序，失败仍回落**；换电脑也保留（它说的是这台手机的偏好，
+  /// 不是某台电脑的路由）。
+  static const String pairingPrefer = '${devicePrefix}pairing_prefer';
+
   /// 没有电脑身份时的键：`host.last_session`。
   static const String lastSession = '$hostPrefix$lastSessionField';
   static const String drawerExpansion = '$hostPrefix$drawerExpansionField';
@@ -130,6 +136,7 @@ class UiStateStore {
   String? _transcriptView;
   String? _performanceView;
   String? _collapseTiming;
+  String? _pairingPrefer;
   String? _lastSession;
   Map<String, bool> _drawerExpansion = const <String, bool>{};
 
@@ -161,6 +168,7 @@ class UiStateStore {
     _transcriptView = device[UiKey.transcriptView];
     _performanceView = device[UiKey.performanceView];
     _collapseTiming = device[UiKey.collapseTiming];
+    _pairingPrefer = device[UiKey.pairingPrefer];
     _lastSession = await _prefs.read(_hostKey(UiKey.lastSessionField));
     _drawerExpansion = _decodeExpansion(
       await _prefs.read(_hostKey(UiKey.drawerExpansionField)),
@@ -178,6 +186,7 @@ class UiStateStore {
   String? get transcriptView => _transcriptView;
   String? get performanceView => _performanceView;
   String? get collapseTiming => _collapseTiming;
+  String? get pairingPrefer => _pairingPrefer;
 
   Future<void> setThemeMode(String wire) async {
     if (wire == _themeMode) return;
@@ -214,6 +223,12 @@ class UiStateStore {
     if (wire == _collapseTiming) return;
     _collapseTiming = wire;
     await _write(UiKey.collapseTiming, wire);
+  }
+
+  Future<void> setPairingPrefer(String wire) async {
+    if (wire == _pairingPrefer) return;
+    _pairingPrefer = wire;
+    await _write(UiKey.pairingPrefer, wire);
   }
 
   // ---- host.*（换电脑整段清）----

@@ -61,7 +61,7 @@ test('登记失败：**不出码**，回一个说明原因的结果（而不是�
   assert.equal(result.text.includes('pcPubEd'), false, '也不许出现载荷片段')
 })
 
-test('登记失败但有局域网地址：仍然出码（只丢跨网那条路，不是"配不上"）', async () => {
+test('登记失败但有局域网地址：仍然出码，但载荷标 lanOnly，且三处都说清"只能局域网"', async () => {
   const warnings: string[] = []
   const lan = ['ws://192.168.1.5:8790', 'ws://10.0.0.7:8790']
   const { pairing } = setup(() => Promise.reject(new Error('中转连不上')), () => lan)
@@ -74,15 +74,21 @@ test('登记失败但有局域网地址：仍然出码（只丢跨网那条路�
   assert.equal(result.kind, 'success', '手机能直连，就不该把出码拦下来')
   const payload = JSON.parse(result.text.split('\n')[1] ?? '') as Record<string, unknown>
   assert.deepEqual(payload['lan'], lan, '二维码里必须带着局域网地址')
-  assert.match(result.text, /局域网直连/, '命令输出要说明这次走的是局域网')
+  // **降级必须写进载荷**（契约 §12.1）：手机据此显式提示，并跳过一条注定失败的换票。
+  assert.equal(payload['lanOnly'], true, '载荷要标 lanOnly，不能只进日志')
+  assert.match(result.text, /只能在同一 WiFi 下使用/, '命令输出要说明这次降级了')
+  assert.match(result.text, /局域网直连/, '仍要给出这张码实际能走的地址')
 
   assert.equal(warnings.length, 1, '降级要留声（否则"跨网配不上"没人知道为什么）')
   assert.match(warnings[0] ?? '', /只能走局域网直连/)
+  assert.match(warnings[0] ?? '', /lanOnly/, '日志要能解释手机侧那条提示从哪来')
 
   // **登记仍然先试过**：中转可用时同一张码在跨网也能用，不能因为"有 lan"就跳过登记。
   const { pairing: healthy, register, registered } = setup(undefined, () => lan)
   const ok = await issuePairingOffer({ pairing: healthy, register })
   assert.deepEqual(registered, [JSON.parse(ok.payload).offerId])
+  assert.equal(JSON.parse(ok.payload).lanOnly, undefined, '登记成功时载荷里不该出现 lanOnly')
+  assert.equal(ok.lanOnly, false)
 })
 
 test('成功文案里的有效期**从常量算**（写死数字会变成一句撒谎的提示）', async () => {

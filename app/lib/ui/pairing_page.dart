@@ -117,6 +117,7 @@ class PairingPage extends StatefulWidget {
     this.notice,
     this.previousPairingIdOf,
     this.myIpv4,
+    this.prefer = PairingPreference.auto,
   });
 
   /// 配对成功时回调（上层负责落盘与建连）。
@@ -174,6 +175,12 @@ class PairingPage extends StatefulWidget {
   /// 给的顺序拨 —— 不猜。
   final String? myIpv4;
 
+  /// 先试哪条路（`device.pairing_prefer`，默认自动）。
+  ///
+  /// **只影响顺序**：选「中转优先」时如果中转不通，照样回落直连 —— 失败仍回落是这条
+  /// 偏好的前提（见 `core/pairing_flow.dart` 的 [PairingPreference]）。
+  final PairingPreference prefer;
+
   @override
   State<PairingPage> createState() => _PairingPageState();
 }
@@ -188,6 +195,10 @@ class _PairingPageState extends State<PairingPage> {
 
   /// 第一段的产物：受限通道已就绪、**秘密还没发出去**。
   PairingAttempt? _attempt;
+
+  /// 解析出来的二维码（连接失败也留着）：配对页据此**显式**画出这张码有哪几条路、
+  /// 这次是不是降级码（`lanOnly`）—— 不让用户自己从失败文案里猜。
+  PairingOffer? _offer;
 
   /// 本次配对生成的主种子（确认那一步之后才落盘，见 `_commit`）。
   String? _masterSeedHex;
@@ -236,6 +247,7 @@ class _PairingPageState extends State<PairingPage> {
       _busy = true;
       _error = null;
       _result = null;
+      _offer = null;
       _busyLabel = '解析二维码…';
     });
     try {
@@ -244,6 +256,9 @@ class _PairingPageState extends State<PairingPage> {
         allowInsecureLocal: widget.allowInsecureLocal,
         allowInsecurePublic: widget.allowInsecurePublic,
       );
+      // 先把"这张码有哪几条路"摆出来：降级码（`lanOnly`）要在这里就显式提示，
+      // 而不是等用户出门、换票失败之后才从一句"重新出码"里猜。
+      if (mounted) setState(() => _offer = offer);
       // 旧配对标识：**只有扫的是同一台电脑**（pcId 相同）才报上去。
       // 换一台电脑时它是 null —— 那边没有旧行可替换，报了也白报。
       final previousPairingId = widget.previousPairingIdOf?.call(offer.pcId);
@@ -265,6 +280,7 @@ class _PairingPageState extends State<PairingPage> {
         allowInsecureLocal: widget.allowInsecureLocal,
         allowInsecurePublic: widget.allowInsecurePublic,
         myIpv4: widget.myIpv4,
+        prefer: widget.prefer,
       );
       if (!mounted) {
         // 页面已经退了：把刚建起来的候选连接收掉，别留在中转上。
@@ -476,6 +492,12 @@ class _PairingPageState extends State<PairingPage> {
             ),
           ),
           const SizedBox(height: 12),
+          // **这张码有哪几条路**：扫完就摆出来。降级码在这里显式说"只能同一 WiFi"，
+          // 两条都在时说明先试哪条、正在试哪条（`_busyLabel` 就是当前那一步）。
+          if (_offer != null && _result == null) ...[
+            _OfferRoutes(offer: _offer!, busy: _busy, stage: _busyLabel),
+            const SizedBox(height: 12),
+          ],
           FilledButton(
             // 已经有一条候选通道挂着时不许再开一条（中转对同一台设备只该有一条）。
             onPressed: _busy || attempt != null ? null : _connect,
@@ -554,6 +576,93 @@ class _Step extends StatelessWidget {
               style: TextStyle(fontSize: 13, color: c.labelSecondary),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// **这张码有哪几条路**（扫完就摆出来，不等失败才说）。
+///
+/// 两件事都在这里说：
+/// - 降级码（电脑侧出码时没登记上中转）：**只有局域网**，出不了同一个 WiFi 就配不上；
+/// - 两条都在：走哪两条、先试哪条；连接过程中「正在试」跟着 `onStage` 走。
+///
+/// 为什么不让用户从失败文案里推断：换票失败与"不在同一个 WiFi"在文案上很难分，
+/// 而这两件事该做的事完全不同（重新出码 vs 回同一个 WiFi）。
+class _OfferRoutes extends StatelessWidget {
+  const _OfferRoutes({
+    required this.offer,
+    required this.busy,
+    required this.stage,
+  });
+
+  final PairingOffer offer;
+  final bool busy;
+  final String stage;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    final hasLan = offer.lanUrls.isNotEmpty;
+    final hasRelay = !offer.lanOnly;
+    final routes = <String>[
+      if (hasLan) '局域网直连（${offer.lanUrls.length} 个地址）',
+      if (hasRelay) '中转',
+    ];
+    final lanOnly = offer.lanOnly;
+    return Container(
+      key: const Key('pairing-routes'),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: c.layer1,
+        borderRadius: BorderRadius.circular(DshRadius.sm),
+        border: Border.all(color: lanOnly ? c.error : c.borderL2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              DshIcon(
+                lanOnly ? 'warningTriangle' : 'link',
+                size: 16,
+                color: lanOnly ? c.error : c.labelSecondary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  lanOnly
+                      ? '此码只能在同一 Wi-Fi 下使用（出码时没登记上中转）。'
+                      : routes.length > 1
+                      ? '这张码有两条路：${routes.join(' · ')}。'
+                      : '这张码走：${routes.isEmpty ? '中转' : routes.single}。',
+                  key: lanOnly ? const Key('pairing-lan-only') : null,
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.5,
+                    color: lanOnly ? c.labelPrimary : c.labelSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (busy && stage.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              '正在试：$stage',
+              key: const Key('pairing-stage'),
+              style: TextStyle(fontSize: 12, color: c.labelSecondary),
+            ),
+          ],
+          if (!lanOnly && hasLan && hasRelay) ...[
+            const SizedBox(height: 6),
+            Text(
+              '一条不通会自动换另一条。',
+              style: TextStyle(fontSize: 12, color: c.labelTertiary),
+            ),
+          ],
         ],
       ),
     );

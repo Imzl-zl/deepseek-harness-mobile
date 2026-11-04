@@ -31,6 +31,7 @@ import '../core/endpoint.dart';
 import '../core/errors.dart';
 import '../core/job.dart';
 import '../core/notify.dart';
+import '../core/pairing_flow.dart' show PairingPreference;
 import '../core/recovery.dart' show RecoveryOutcome;
 import '../core/session_restore.dart';
 import '../core/snapshot_call.dart';
@@ -1631,6 +1632,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     if (performance != null) _performanceUsage = performance;
     final collapse = CollapseTiming.fromWire(store.collapseTiming);
     if (collapse != null) _collapseTiming = collapse;
+    final prefer = PairingPreference.fromWire(store.pairingPrefer);
+    if (prefer != null) _pairingPreference = prefer;
     final scale = store.uiScaleIndex;
     if (scale != null) _uiScaleIndex = scale.clamp(0, kUiScaleSteps.length - 1);
   }
@@ -1868,6 +1871,27 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       await store.setCollapseTiming(timing.wire);
     } else {
       await _prefs?.write(kCollapseTimingKey, timing.wire);
+    }
+  }
+
+  /// 配对时先试哪条路（只影响顺序，失败仍回落）。
+  PairingPreference _pairingPreference = PairingPreference.auto;
+
+  PairingPreference get pairingPreference => _pairingPreference;
+
+  /// 落盘的 meta 键：配对拨号顺序偏好（`device.pairing_prefer`）。
+  static const String kPairingPreferKey = 'pairing_prefer';
+
+  /// 切配对拨号顺序。落盘；同一个值重复切是空操作。
+  Future<void> setPairingPreference(PairingPreference prefer) async {
+    if (_disposed || prefer == _pairingPreference) return;
+    _pairingPreference = prefer;
+    notifyListeners();
+    final store = _uiState;
+    if (store != null) {
+      await store.setPairingPrefer(prefer.wire);
+    } else {
+      await _prefs?.write(kPairingPreferKey, prefer.wire);
     }
   }
 

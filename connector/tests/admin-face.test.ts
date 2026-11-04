@@ -108,7 +108,7 @@ function deps(over: Partial<AdminDeps> = {}): AdminDeps {
       view: () => ({ advertised: [], hidden: [], candidates: [] }),
       set: async () => {},
     },
-    offer: async () => ({ svg: 'P', expiresAt: 123 }),
+    offer: async () => ({ svg: 'P', expiresAt: 123, lanOnly: false }),
     setEnabled: async () => {},
     remove: async () => ({ removed: 0, skippedOnline: 0, refusedActive: [] }),
     removeScope: async () => ({ removed: 0, skippedOnline: 0, refusedActive: [] }),
@@ -349,14 +349,14 @@ test('传输面：没有按 id 写死的路由表，旧的一把开关端点不�
   )
 })
 
-test('出码端点：POST，回 svg 与过期时刻（不回 payload）', async () => {
+test('出码端点：POST，回 svg、过期时刻与降级标（不回 payload）', async () => {
   let offerCalls = 0
-  const routes = createAdminRoutes(deps({ offer: async () => { offerCalls += 1; return { svg: '<svg/>', expiresAt: 999 } } }))
+  const routes = createAdminRoutes(deps({ offer: async () => { offerCalls += 1; return { svg: '<svg/>', expiresAt: 999, lanOnly: true } } }))
   const res = await routeOf(routes, '/api/dsh-mobile/pair').fetch(
     new Request('http://x/api/dsh-mobile/pair', { method: 'POST' }),
   )
   const body = await jsonOf(res)
-  assert.deepEqual(body, { svg: '<svg/>', expiresAt: 999 })
+  assert.deepEqual(body, { svg: '<svg/>', expiresAt: 999, lanOnly: true })
   assert.equal(offerCalls, 1)
   // **payload 不过线**：它含两把公钥，而浏览器只负责画图（`routes.ts` 的 `offer` 注释）。
   // 这条同时是"别把 payload 加回响应"的看门狗。

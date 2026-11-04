@@ -24,6 +24,7 @@ class PairingOffer {
     required this.offerId,
     required this.code,
     this.lanUrls = const [],
+    this.lanOnly = false,
   });
 
   factory PairingOffer.fromQrPayload(
@@ -80,6 +81,9 @@ class PairingOffer {
         allowInsecureLocal: allowInsecureLocal,
         allowInsecurePublic: allowInsecurePublic,
       ),
+      // **降级标**（契约 §12.1）：电脑侧出码时向中转登记失败，这张码只有局域网那条路。
+      // 只认字面 `true`：别的值（缺、字符串、0）一律当"没这个标记"—— 不猜。
+      lanOnly: parsed['lanOnly'] == true,
     );
   }
 
@@ -100,6 +104,18 @@ class PairingOffer {
   // Note: 为什么二维码里带局域网地址 —— 见
   // `.agents/notes/implemented/2026-11-03-pairing-without-relay.md`
   final List<String> lanUrls;
+
+  /// 这张码**只有局域网那一条路**（电脑侧出码时向中转登记失败）。
+  ///
+  /// 载荷里是 `lanOnly: true`（契约 §12.1）。它不改变配对流程，只改变两件事：
+  /// 配对页**显式提示**「此码只能在同一 Wi-Fi 下使用」，以及拨号时**不去试中转**
+  /// （那条路这次注定换不到票，多试一次只是让用户多等一个超时）。
+  ///
+  /// 老载荷没有这一格读成 `false` —— 与改造前逐字一致。
+  ///
+  // Note: 为什么降级必须可见 —— 见
+  // `.agents/notes/implemented/2026-11-04-pairing-degradation-is-visible.md`
+  final bool lanOnly;
 
   Future<String> codeHash() => sha256Hex(code);
   Future<String> pairingId() async => base64UrlNoPad(

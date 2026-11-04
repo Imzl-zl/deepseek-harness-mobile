@@ -262,15 +262,17 @@ void main() {
   // ---- 局域网直连（二维码的 `lan`）：同一套帧，不经过中转 ----
 
   /// 同一张码，但电脑侧报了一组局域网地址。
-  PairingOffer offerWithLan(List<String> lan) => PairingOffer(
-    relayUrl: offer.relayUrl,
-    pcId: offer.pcId,
-    pcSignPubHex: offer.pcSignPubHex,
-    pcDhPubHex: offer.pcDhPubHex,
-    offerId: offer.offerId,
-    code: offer.code,
-    lanUrls: lan,
-  );
+  PairingOffer offerWithLan(List<String> lan, {bool lanOnly = false}) =>
+      PairingOffer(
+        relayUrl: offer.relayUrl,
+        pcId: offer.pcId,
+        pcSignPubHex: offer.pcSignPubHex,
+        pcDhPubHex: offer.pcDhPubHex,
+        offerId: offer.offerId,
+        code: offer.code,
+        lanUrls: lan,
+        lanOnly: lanOnly,
+      );
 
   test('局域网：有 lan 就先拨它，全程不换票，帧序列与中转那条完全一样', () async {
     final lan = offerWithLan(['ws://192.168.1.5:8790']);
@@ -414,6 +416,144 @@ void main() {
     addTearDown(attempt.cancel);
 
     expect(urls.single, startsWith('ws://192.168.1.5:8790'));
+    expect(http.calls, isEmpty, reason: '同一 /24 直连通了就不该再换票');
+  });
+
+  // ---- 降级码（`lanOnly`）：只有局域网那条路 ----
+
+  test('降级码 + 局域网不通：不换票，直接说"只能在同一 WiFi 下使用"', () async {
+    final lan = offerWithLan(['ws://192.168.1.5:8790'], lanOnly: true);
+    final http = _TicketRecorder();
+    await expectLater(
+      beginPairing(
+        offer: lan,
+        identity: identity,
+        deviceName: '我的手机',
+        send: http.call,
+        allowInsecureLocal: true,
+        transportFor: (_) => _DeadTransport(),
+      ),
+      throwsA(
+        isA<TransportException>().having(
+          (e) => e.message,
+          'message',
+          contains('只能在同一 WiFi 下使用'),
+        ),
+      ),
+    );
+    // **不换票**：那张码这次没在中转登记，换票只会拿到 409 ——
+    // 多一次请求只会把"不在同一个 WiFi"说成"重新出码"。
+    expect(http.calls, isEmpty);
+  });
+
+  test('降级码 + 局域网通：照常配对（只是没有中转那条腿）', () async {
+    final lan = offerWithLan(['ws://192.168.1.5:8790'], lanOnly: true);
+    final http = _TicketRecorder();
+    final candidate = lan.candidate(identity, '我的手机');
+    final pc = FakePc(pcSeedHex: _pcSeed, offer: lan, candidate: candidate);
+    final attempt = await beginPairing(
+      offer: lan,
+      identity: identity,
+      deviceName: '我的手机',
+      send: http.call,
+      allowInsecureLocal: true,
+      transportFor: (_) => pc,
+      newFrameIdHex: () => 'p1',
+      newEphemeralSeedHex: () => 'e5' * 32,
+      newNonceHex: () => 'a7' * 32,
+    );
+    addTearDown(attempt.cancel);
+
+    expect(attempt.dial, PairingDial.lan);
+    expect(http.calls, isEmpty);
+  });
+
+  // ---- 拨号顺序偏好（`device.pairing_prefer`）：只改顺序，失败仍回落 ----
+
+  test('中转优先：两条都在也先换票；局域网那条一个都不拨', () async {
+    final lan = offerWithLan(['ws://192.168.1.5:8790']);
+    final http = _TicketRecorder();
+    final urls = <String>[];
+    final candidate = lan.candidate(identity, '我的手机');
+    final pc = FakePc(pcSeedHex: _pcSeed, offer: lan, candidate: candidate);
+    final attempt = await beginPairing(
+      offer: lan,
+      identity: identity,
+      deviceName: '我的手机',
+      send: http.call,
+      transportFor: (url) {
+        urls.add(url);
+        return pc;
+      },
+      allowInsecureLocal: true,
+      prefer: PairingPreference.relay,
+      newFrameIdHex: () => 'p1',
+      newEphemeralSeedHex: () => 'e5' * 32,
+      newNonceHex: () => 'a7' * 32,
+    );
+    addTearDown(attempt.cancel);
+
+    expect(http.calls, hasLength(1), reason: '中转优先：先换票');
+    expect(attempt.dial, PairingDial.relay);
+    expect(urls.single, startsWith('ws://127.0.0.1:8787/ws/device?ticket='));
+  });
+
+  test('中转优先 + 中转失败：仍回落到局域网直连（"失败仍回落"是前提）', () async {
+    final lan = offerWithLan(['ws://192.168.1.5:8790']);
+    final http = _TicketRecorder(const [
+      HttpResult(status: 409, body: '{"error":"pairing-unavailable"}'),
+    ]);
+    final urls = <String>[];
+    final candidate = lan.candidate(identity, '我的手机');
+    final pc = FakePc(pcSeedHex: _pcSeed, offer: lan, candidate: candidate);
+    final attempt = await beginPairing(
+      offer: lan,
+      identity: identity,
+      deviceName: '我的手机',
+      send: http.call,
+      transportFor: (url) {
+        urls.add(url);
+        return pc;
+      },
+      allowInsecureLocal: true,
+      prefer: PairingPreference.relay,
+      newFrameIdHex: () => 'p1',
+      newEphemeralSeedHex: () => 'e5' * 32,
+      newNonceHex: () => 'a7' * 32,
+    );
+    addTearDown(attempt.cancel);
+
+    expect(http.calls, hasLength(1));
+    expect(urls.single, startsWith('ws://192.168.1.5:8790'));
+    expect(attempt.dial, PairingDial.lan);
+  });
+
+  test('自动 + 不同网段：先中转（出门在外不该先为局域网白等一个超时）', () async {
+    final lan = offerWithLan(['ws://192.168.1.5:8790']);
+    final http = _TicketRecorder();
+    final urls = <String>[];
+    final candidate = lan.candidate(identity, '我的手机');
+    final pc = FakePc(pcSeedHex: _pcSeed, offer: lan, candidate: candidate);
+    final attempt = await beginPairing(
+      offer: lan,
+      identity: identity,
+      deviceName: '我的手机',
+      send: http.call,
+      transportFor: (url) {
+        urls.add(url);
+        return pc;
+      },
+      allowInsecureLocal: true,
+      // 本机在 10.0.0.0/24，而码里只有 192.168.1.5。
+      myIpv4: '10.0.0.7',
+      newFrameIdHex: () => 'p1',
+      newEphemeralSeedHex: () => 'e5' * 32,
+      newNonceHex: () => 'a7' * 32,
+    );
+    addTearDown(attempt.cancel);
+
+    expect(http.calls, hasLength(1));
+    expect(attempt.dial, PairingDial.relay);
   });
 }
 

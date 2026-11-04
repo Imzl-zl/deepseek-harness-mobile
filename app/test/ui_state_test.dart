@@ -60,21 +60,26 @@ void main() {
       expect(ui.transcriptView, isNull);
       expect(ui.performanceView, isNull);
       expect(ui.collapseTiming, isNull);
+      expect(ui.pairingPrefer, isNull);
     });
 
     test('写后能读回，且键就是约定名', () async {
       await ui.setThemeMode('dark');
       await ui.setUiScaleIndex(2);
       await ui.setTranscriptView('detailed');
+      await ui.setPairingPrefer('relay');
       expect(prefs.values[UiKey.themeMode], 'dark');
       expect(prefs.values[UiKey.uiScaleIndex], '2');
       expect(prefs.values[UiKey.transcriptView], 'detailed');
+      // 配对拨号顺序也用 `device.` 前缀：它说的是这台手机的偏好，不是某台电脑的路由。
+      expect(prefs.values[UiKey.pairingPrefer], 'relay');
 
       // 新建一个 store 也能读回（= 重启）。
       final again = UiStateStore(prefs: prefs);
       await again.open();
       expect(again.themeMode, 'dark');
       expect(again.uiScaleIndex, 2);
+      expect(again.pairingPrefer, 'relay');
     });
 
     test('认不出的值保持 null（调用方用默认，不猜）', () async {

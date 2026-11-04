@@ -31,6 +31,7 @@ import 'package:flutter/services.dart';
 
 import '../core/app_update.dart';
 import '../core/endpoint.dart';
+import '../core/pairing_flow.dart' show PairingPreference;
 import '../data/app_model.dart';
 import '../model/agent_preset.dart';
 import '../model/appearance.dart';
@@ -252,6 +253,22 @@ class SettingsPage extends StatelessWidget {
                 labelOf: (v) => v.label,
                 current: app.sendMode,
                 onPicked: app.setSendMode,
+              ),
+            ),
+            // **配对时先试哪条路**（`device.pairing_prefer`）：只影响顺序，失败仍回落。
+            // 默认「自动」= 同一 /24 才先直连，否则先中转 —— 出门在外不该先为一张
+            // 局域网地址白等一个超时。见 `core/pairing_flow.dart` 的 PairingPreference。
+            _PrefRow(
+              icon: 'link',
+              label: '配对时先试',
+              value: app.pairingPreference.label,
+              onTap: () => _pickEnum<PairingPreference>(
+                context: context,
+                title: '配对时先试哪条路',
+                values: PairingPreference.values,
+                labelOf: (v) => v.label,
+                current: app.pairingPreference,
+                onPicked: app.setPairingPreference,
               ),
             ),
             // **以上是手机本地偏好，以下是电脑侧真值**（`settings.describe` /

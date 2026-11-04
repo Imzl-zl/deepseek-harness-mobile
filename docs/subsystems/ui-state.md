@@ -12,7 +12,7 @@
 |---|---|---|---|
 | `host` | 会话行、投影（`subagentCatalog` / `modelSelection` / `permission`…）、`status` 帧、jobs、queue、**设置文档** | 读即用 | 宿主说了算；手机不缓存过夜 |
 | `browser-local-persisted` 的同构替代 | 每会话页签、草稿、提问进度；抽屉分组折叠；上次看的会话 | **首帧前**（`AppModel.loadUiState()`） | 换电脑整段清；会话/工作区消失则 prune |
-| `device-local` | 主题、界面字号、工作步骤密度、收起时机、性能用量 | **首帧前**（同上） | **跨电脑保留**（与某台电脑无关） |
+| `device-local` | 主题、界面字号、工作步骤密度、收起时机、性能用量、配对拨号顺序 | **首帧前**（同上） | **跨电脑保留**（与某台电脑无关） |
 
 发送模式**不在**这三类里：它属于 `host`（`ui-conversation.busyEnter`），
 见 §5。
@@ -27,6 +27,7 @@
 | `device.performance_view` | `compact` / `detailed` |
 | `device.collapse_timing` | `completion` / `next-input` |
 | `device.transparency` | 整数百分数 `0`..`100`（缺省 = `0`，表面实心）；壁纸本身不进键，见 [appearance-wallpaper.md](appearance-wallpaper.md) |
+| `device.pairing_prefer` | `auto` / `direct` / `relay`：配对先试哪条路；**只影响顺序，失败仍回落**（[remote-channel.md](remote-channel.md) §12.1） |
 | `host.<hostId>.last_session` | sid |
 | `host.<hostId>.drawer_expansion` | `{"<workspaceId>": bool}` |
 | `host.<hostId>.session_view.<sid>` | 页签**注册项 id**（`chat` / `trajectory`），不是下标 |

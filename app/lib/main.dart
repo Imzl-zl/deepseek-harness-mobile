@@ -852,6 +852,8 @@ class _DshMobileAppState extends State<DshMobileApp>
         previousPairingIdOf: _previousPairingIdOf,
         // 局域网地址的拨号顺序要用它（同一 /24 的先拨）；拿不到就是 null（不猜）。
         myIpv4: app.myLanIpv4,
+        // 先试哪条路只影响顺序，失败仍回落（`device.pairing_prefer`，默认自动）。
+        prefer: app.pairingPreference,
       );
     }
     // **抽屉必须跟着 `AppModel` 重建**。
