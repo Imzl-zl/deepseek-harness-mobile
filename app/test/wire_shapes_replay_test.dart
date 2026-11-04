@@ -490,7 +490,19 @@ void main() {
     expect(projections.imageLimits?.maxImageBytes, limits['maxImageBytes']);
     expect(projections.inbox, isNotNull);
 
-    expect(WireDiagnostics.badCount, 0, reason: '真实形状的 14 个键一个都不该算漂移');
+    // 目标条（`goal` 投影）：外面一层 + 里面那份快照，两层都要对。
+    final goalView = mapOf(sample['goal']);
+    final goal = mapOf(goalView['goal']);
+    expect(projections.goal?.id, goal['id']);
+    expect(projections.goal?.revision, goal['revision']);
+    expect(projections.goal?.objective, goal['objective']);
+    expect(projections.goal?.phase.wire, goal['phase']);
+    expect(projections.goal?.maxGoalRounds, goal['maxGoalRounds']);
+    expect(projections.goal?.roundsStarted, goalView['roundsStarted']);
+    expect(projections.goal?.createdAt, goalView['createdAt']);
+    expect(projections.goal?.updatedAt, goalView['updatedAt']);
+
+    expect(WireDiagnostics.badCount, 0, reason: '真实形状的 15 个键一个都不该算漂移');
   });
 
   test('session.projections 应答不是对象 ⇒ WireBad + 计数 1', () {

@@ -42,6 +42,7 @@ import '../model/chat_item.dart';
 import '../model/command.dart';
 import '../model/file_diff.dart';
 import '../model/file_open.dart';
+import '../model/goal.dart';
 import '../model/image_limits.dart';
 import '../model/interaction.dart';
 import '../model/mention.dart';
@@ -497,7 +498,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
 
   /// 最近一次读到的投影包（`null` = 还没读过 / 读不到）。
   ///
-  /// **类型是解码结果，不是裸 map**：14 个键的键名与类型只在
+  /// **类型是解码结果，不是裸 map**：15 个键的键名与类型只在
   /// `wire/rpc/projections.dart` 里出现一次（`SessionProjections`），
   /// 各面拿字段而不是 `values['x']`。连接器原样透传整包（不挑键）这一点没变，
   /// 挑键发生在解码层（那一层正好是"知道线上形状"的那一层）。
@@ -758,6 +759,18 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// **不前置拦**，靠 DSH 自己的拒绝码（`IMAGES_TOO_LARGE` / `TOO_MANY_IMAGES`）。
   /// 由来与"为什么手机不写死这些数"见 `model/image_limits.dart` 的文件头。
   DshImageLimits? get imageLimits => projections?.imageLimits;
+
+  /// 当前目标（`goal` 投影，DSH 的「目标条」那一格）。
+  ///
+  /// **`null` = 不画条**，它盖住三种情况：线上是 `null`（没设过 / 清掉了）、
+  /// 这一包没有这个键（老连接器 / 没装目标插件）、形状认不出。
+  /// `phase == complete` 也解析得出一个值，但那是**界面**不画
+  /// （`GoalView.visible`）—— 判据分在两处是因为"已完成"与"读不懂"在
+  /// 投影层必须分得开（`model/goal.dart` 的 [parseGoalView]）。
+  ///
+  /// **不含 `activation`**：那是进程内状态（`goal/src/types.ts:66`），
+  /// 手机没有那条 Remote 读，所以 active 一律当已激活（见 `docs/subsystems/goal-bar.md` §2）。
+  GoalView? get goal => projections?.goal;
 
   /// 存一份预设目录（连接器 `permission.catalog` 的应答）。转发给 [HostCatalogs]。
   void setPermissionCatalog(PermissionCatalog? catalog) =>
@@ -4031,6 +4044,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       var turnEnded = false;
       // 这一批里有没有持久的助手消息（决定要不要清掉流式槽位）。
       var assistantPersisted = false;
+      // 这一批里有没有 `goal/change`（决定要不要重读投影 —— 见循环之后）。
+      var goalChanged = false;
       final tracker = _inboxTrackers.putIfAbsent(sid, () => _InboxTracker());
       // **本批已投影的条目**（itemId → 条目）：`tool/call` 与 `tool/result`
       // 可能在同一个 delta 里先后到达，而 `store.upsertAll` 在循环之后才发生 ——
@@ -4081,6 +4096,20 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
             );
           }
           inboxChanged = true;
+          continue;
+        }
+        // **`goal/change` 是目标条那一格的唯一来源**：目标的身份 / 阶段 / 正文
+        // 只由它改（`packages/goal/goal/src/index.ts:142-155` 的 fold；
+        // 它另外也认 `source.kind === 'goal'` 的用户消息，但那种只推进
+        // `roundsStarted`（`fold.ts:326-330`）—— 而条子不画轮次）。
+        // 它没有可渲染的正文，所以**不落条目**（与 `agent/inbox/spliced` 同一条：
+        // 状态事件不是会话内容）；但投影只在打开会话时读过一次，
+        // 不在这里记一笔，电脑上 `/goal` 改了目标、手机上那条要等到下一轮结束才变。
+        //
+        // Note: 为什么是"事件到了就重读"而不是动作成功后自己重读 —— 见
+        // `.agents/notes/implemented/2026-11-04-goal-bar-on-phone.md`。
+        if (event.type == 'goal/change') {
+          goalChanged = true;
           continue;
         }
         // **`turn/start` 落一条不可见的记账条目**（`OtherItem`）。
@@ -4221,6 +4250,15 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       // 给后台会话补读没有落点；同一次收帧里若已有一次在飞，就并进那次
       // （`turn/end` 可能跟着一串事件到达，一次就够）。
       if (turnEnded && sid == _currentSid) {
+        _refreshProjectionsOnce(sid);
+      }
+      // **目标变了 = 目标条那一格变了**（与上面同一个合并闸：同批两条信号只发一次）。
+      //
+      // 判据只在"当前会话"：`_projections` 只装当前会话那一包
+      // （`_applyProjectionValues`），给后台会话补读没有落点。
+      // 这一条同时覆盖"桌面改了目标、手机跟上"—— `goal/change` 是两边共用的
+      // 唯一来源（Web 也是读这个投影，`ui-goal/src/client/index.ts:91`）。
+      if (goalChanged && sid == _currentSid) {
         _refreshProjectionsOnce(sid);
       }
       // **回合结束 = 子会话那一包行可能变了**（新建 / 跑完 / token 涨）。

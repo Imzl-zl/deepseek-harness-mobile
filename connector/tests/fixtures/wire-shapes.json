@@ -841,6 +841,18 @@
       "inbox": {
         "next-turn": [],
         "next-step": []
+      },
+      "goal": {
+        "goal": {
+          "id": "goal-fixture-1",
+          "revision": 2,
+          "objective": "把目标条接上手机",
+          "phase": "paused",
+          "maxGoalRounds": 256
+        },
+        "roundsStarted": 3,
+        "createdAt": 1700000000000,
+        "updatedAt": 1700000005000
       }
     }
   ],

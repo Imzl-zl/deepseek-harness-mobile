@@ -5,6 +5,21 @@
 
 ## 现在（2026-11-04）
 
+- **目标条（11-04 第四批）**：输入框上方、排队条**之上**一条 36dp 的 dock（DSH `ui-goal`
+  的 GoalBar）：图标 + 阶段标签（进行中 / 已暂停 / 受阻）+ 目标正文（一行省略）+
+  暂停 / 恢复 / 编辑（**行内**，不弹 sheet）/ 清除；`complete` 与没有目标都**不画条**。
+  数据只读 `session.projections` 的 `goal` 键（**第 15 个键**，解析在 `model/goal.dart`
+  三态：`null` / 合法 / **形状不对 = 没有**），`AppModel.goal` 只给当前会话那一包。
+  四个动作**走 `/goal …` 斜杠命令**（DSH 那四个 `goals` Remote 手机这条通道没有；
+  CAS 由宿主按当前状态取 ref，代价是每次动作在对话流里落一张命令卡）。
+  **刷新**：收到 `goal/change` → `_refreshProjectionsOnce(sid)`（与 `turn/end` 同一个
+  合并闸），同时覆盖"桌面改了目标、手机跟上"；子会话里不画（那边没有命令面）。
+  连接器金样的 `FULL_PROJECTION_VALUES` 随之 14 → **15 个键**（app 回放因此有外部真值）。
+  app **1721**、connector **845**、`verify-platform-boundary` **728**。
+  笔记 `implemented/2026-11-04-goal-bar-on-phone.md`，现状 `subsystems/goal-bar.md`。
+  **仍欠**：没有 `GoalActivation`（进程内态），"active 但已 disarmed"在手机上显示成
+  「进行中的目标」+ 暂停钮；**真机验收未做**（`/goal` → 条出现 → 暂停 → 恢复 → 清除）。
+
 - **同一个 itemId 的载荷合并写（11-04 第三批）**：重启后工具行全变「工具」、重试行变
   「重试 1/0」的根因是**落盘**——库里每个 itemId 只存最后一条事件的 `data`，而
   `tool/result` / `llm/retry-started` 不带名字与失败原因（它们在前一条事件上），投影靠
@@ -339,12 +354,12 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 694 项（25 条规则自检 + 160 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | 728 项（25 条规则自检 + 167 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1649 项（约 1 分钟） |
+| `cd app && flutter test` | 1721 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **831** 项 |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **845** 项 |
 | `cd relay && pnpm typecheck && node --test` | 类型 + **161** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
@@ -396,3 +411,4 @@
   明文两档 / 高亮语言集 — `implemented/2026-10-29-*`（六篇）
 - 2026-10-30 多机四步（归属/凭据分槽/拨号竞速/独占与切换）+ 中转可观测·限额·面板 — `implemented/2026-10-30-*`（九篇；方案页留在 `proposed/`）
 - 2026-11-04 轨迹页进入即重读（`viewFocus`）+ 空态三态 — `implemented/2026-11-04-trajectory-view-refetch.md`；现状 `subsystems/trajectory-page.md` §2.1/§2.2/§8
+- 2026-11-04 目标条（`goal` 投影第 15 个键 + 四个动作走 `/goal` + `goal/change` 即重读） — `implemented/2026-11-04-goal-bar-on-phone.md`；现状 `subsystems/goal-bar.md`

@@ -13,7 +13,7 @@
 ///
 /// ## 为什么产出的是一个值对象而不是裸 map
 ///
-/// 14 个键今天散在 `app_model` 的 10 个 getter 里各读一次。那种写法有两个后果：
+/// 15 个键今天散在 `app_model` 的 11 个 getter 里各读一次。那种写法有两个后果：
 /// 键名没有单一归属（同一个键在两处读就必然漂），而"这个键是什么类型"只能靠读代码猜。
 /// 现在**键只在这个文件里出现**，消费方拿字段（[SessionProjections.tokenUsage] 等）。
 ///
@@ -36,6 +36,7 @@ import '../../core/snapshot_digest.dart';
 import '../../core/sync_client.dart';
 import '../../model/agent_preset.dart' show parseAgentPresetValue;
 import '../../model/chat_item.dart' show ModelRef;
+import '../../model/goal.dart' show GoalView, parseGoalView;
 import '../../model/image_limits.dart' show DshImageLimits;
 import '../../model/permission.dart' show parsePermissionValue;
 import '../../model/session_stats.dart'
@@ -56,9 +57,10 @@ import 'snapshot.dart';
 /// 方法名只在这里出现一次（`connector/src/handlers.ts:840`）。
 const String _kProjections = 'session.projections';
 
-/// 一次投影读的**解码结果**：14 个被 App 消费的键各一个字段。
+/// 一次投影读的**解码结果**：15 个被 App 消费的键各一个字段。
 ///
-/// 字段顺序照"屏幕上从哪来"排：统计条 → 上下文 → 权限/预设 → 子智能体 → 轨迹 → 附件上限 → 队列。
+/// 字段顺序照"屏幕上从哪来"排：统计条 → 上下文 → 权限/预设 → 子智能体 → 轨迹 →
+/// 附件上限 → 队列 → 目标条。
 final class SessionProjections {
   const SessionProjections({
     this.title,
@@ -75,6 +77,7 @@ final class SessionProjections {
     this.trajectory,
     this.imageLimits,
     this.inbox,
+    this.goal,
   });
 
   /// `title` 投影（wire view 就是 `string | null`，DSH `session-title/src/index.ts:269-281`）。
@@ -123,6 +126,14 @@ final class SessionProjections {
   /// **不在这里解析**：队列项的解析器在 `model/queue_item.dart`（它同时被别的入口用），
   /// 这里只负责"从哪个键取"。
   final Map<Object?, Object?>? inbox;
+
+  /// `goal` 投影（当前目标，wire view 见 `model/goal.dart` 的文件头）。
+  ///
+  /// **`null` 有两种意思，而界面只有一种表现**（整条不画）：线上真的是 `null`
+  /// （没设过 / 清掉了），或者这一包没有这个键（老连接器 / 没装目标插件）。
+  /// `phase == complete` 也是 `null` 之外的第三种"不画"—— 那条判据在
+  /// [GoalView.visible]，不在这一层（见 `model/goal.dart` 的 [parseGoalView]）。
+  final GoalView? goal;
 }
 
 /// 发请求 + 解码，**`session.projections` 的唯一调用口**。
@@ -153,7 +164,7 @@ WireReading<SessionProjections> readSessionProjections(Object? result) {
 }
 
 // ---------------------------------------------------------------------------
-// 14 个键 → 值（键名只在这个文件里出现）
+// 15 个键 → 值（键名只在这个文件里出现）
 // ---------------------------------------------------------------------------
 
 SessionProjections _buildProjections(
@@ -177,6 +188,7 @@ SessionProjections _buildProjections(
     trajectory: parseTrajectory(values['trajectory']),
     imageLimits: DshImageLimits.fromWire(values['imageLimits']),
     inbox: values['inbox'] is Map ? values['inbox']! as Map : null,
+    goal: parseGoalView(values['goal']),
   );
 }
 

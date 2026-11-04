@@ -84,6 +84,7 @@ import 'dsh_state_dot.dart';
 import 'dsh_toast.dart';
 import 'edge_stick.dart';
 import 'frame_coalesced.dart';
+import 'goal_bar.dart';
 import 'input_focus.dart';
 import 'load_more_on_scroll.dart';
 import 'load_older_trigger.dart';
@@ -133,12 +134,18 @@ class _BottomBudget {
 
   /// [viewportHeight] 是**页面 body 自己的**高度（已经扣掉顶栏与键盘 ——
   /// 这正是 `Scaffold` 按 `viewInsets` 压缩 body 的结果，别再用屏幕高度算一遍）。
-  factory _BottomBudget.of(double viewportHeight, {required bool cardActive}) {
+  factory _BottomBudget.of(
+    double viewportHeight, {
+    required bool cardActive,
+    bool goalActive = false,
+  }) {
     final blockMax = math.max(0.0, viewportHeight - kMinConversationVisible);
     final reserved =
         kComposerFixedHeight +
         kStatsBarHeight +
-        (cardActive ? kTakeoverFixedHeight : 0);
+        (cardActive ? kTakeoverFixedHeight : 0) +
+        // 目标条（`GoalBar`）：条高 + 它自己的下边距。只在它真的画出来时扣。
+        (goalActive ? kGoalBarBlockHeight : 0);
     return _BottomBudget(
       blockMax: blockMax,
       // 设计上限仍然照宿主（400）：空间够时不画一个比桌面还高的菜单。
@@ -972,6 +979,8 @@ class ChatPageState extends State<ChatPage> {
           final budget = _BottomBudget.of(
             viewport.maxHeight,
             cardActive: _takeover.active != null,
+            // 目标条也是这一列里的固定件（36 + 下边距 6），出现时要先让出空间。
+            goalActive: _goalBarVisible,
           );
           // 输入栏的可用性只算一次（`_composerGate` 是唯一判据）。
           final gate = _composerGate;
@@ -1065,9 +1074,19 @@ class ChatPageState extends State<ChatPage> {
                       // 而输入栏仍然是最后一行（用户随时能看到自己在哪打字）。
                       // 原型是把输入栏整块换掉 —— 手机上并排更省高度，
                       // 且不会让用户以为"输入框不见了"。
-                      Flexible(
-                        child: TakeoverPanel(controller: _takeover),
-                      ), // **排队条**（DSH Web 的 `conversation.input.dock` 槽里的
+                      Flexible(child: TakeoverPanel(controller: _takeover)),
+                      // **目标条在排队条之上**（DSH 的 `conversation.input.dock`
+                      // 槽里 order 10 的那一格，`ui-goal/src/client/index.ts:102-106`）：
+                      // 它说的是"这一屏现在往哪跑"，排队条说的是"你刚发的那句排在哪"
+                      // —— 目标在更上面一层。
+                      //
+                      // **子会话里不画**：那条通道没有命令面（`model/command.dart`
+                      // 的文件头 —— 子会话唯一的写入口是 `subagent.prompt`），
+                      // 画出来四个动作发出去必然失败。判据只有 [_goalBarVisible]
+                      // 一处（它同时喂底部预算），里面用的是 `_send` 那同一个
+                      // [_subagentParentSid]。
+                      if (_goalBarVisible) GoalBar(app: widget.app),
+                      // **排队条**（DSH Web 的 `conversation.input.dock` 槽里的
                       // QueueDock）：会话正在跑时发出去的消息排进下一个轮次，
                       // 这里列出来并可编辑 / 删除 / 插话。空队列整条不占位。
                       if (_subagentReadOnlyReason == null && sid != null)
@@ -1575,6 +1594,17 @@ class ChatPageState extends State<ChatPage> {
       _subagentMode = node.row.mode;
     });
     await widget.app.openSession(node.id);
+  }
+
+  /// 目标条会不会画 —— **底部预算要据此让出空间**（[_BottomBudget] 的 `goalActive`）。
+  ///
+  /// 判据与 `GoalBar` 自己的 build 同一个来源（`AppModel.goal` + `GoalView.visible`），
+  /// 外加"子会话里不画"那一条（见 `_mainScaffold` 里那段注释）。
+  /// **不含**"刚清掉"那个本地闩（`GoalBar` 内部状态）：那一格最多多让一次往返的空间。
+  bool get _goalBarVisible {
+    if (_subagentParentSid != null) return false;
+    final goal = widget.app.goal;
+    return goal != null && goal.visible;
   }
 
   /// 当前子会话是否只读，以及原因（`null` = 可以正常输入）。

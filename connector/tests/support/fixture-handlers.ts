@@ -80,7 +80,7 @@ export const MODEL_CATALOG_VALUE = {
 /**
  * 一个子会话的**完整投影包**（`dsh-4` 的行信封与 `session.projections` 的应答共用）。
  *
- * 这里刻意收**App 真消费的全部 14 个键**（`app/lib/wire/rpc/projections.dart` 的字段表）：
+ * 这里刻意收**App 真消费的全部 15 个键**（`app/lib/wire/rpc/projections.dart` 的字段表）：
  * 少一个键，那一面就只在手写假行上测过 —— 而"手写假行"正是三次事故的形态。
  * 值取自 2026-10-25 那棵隔离实例的真实投影（尺寸/上限/统计那几个数是真的）。
  *
@@ -94,6 +94,8 @@ export const MODEL_CATALOG_VALUE = {
  * - `subagentCatalog`：`[{id, createdAt, mode, label?}]`（`app/lib/core/job.dart:215-235`）
  * - `trajectory`：本仓自带（`app/lib/model/trajectory.dart:185-205`）
  * - `imageLimits`：`app/lib/model/image_limits.dart` 的 `fromWire`
+ * - `goal`：`{goal: {id, revision, objective, phase, blockedReason?, maxGoalRounds},
+ *   roundsStarted, createdAt, updatedAt}`（`packages/goal/goal/src/index.ts:62-77`）
  */
 export const FULL_PROJECTION_VALUES = {
   title: '把 token 账算对',
@@ -167,6 +169,21 @@ export const FULL_PROJECTION_VALUES = {
     mediaTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
   },
   inbox: { 'next-turn': [], 'next-step': [] },
+  // 目标投影：wire view 照 `packages/goal/goal/src/index.ts:62-77` 的
+  // `goalProjectionSchema`（外面一层 `{goal, roundsStarted, createdAt, updatedAt}`）。
+  // 手机侧的解码在 `app/lib/model/goal.dart` 的 `parseGoalView`。
+  goal: {
+    goal: {
+      id: 'goal-fixture-1',
+      revision: 2,
+      objective: '把目标条接上手机',
+      phase: 'paused',
+      maxGoalRounds: 256,
+    },
+    roundsStarted: 3,
+    createdAt: 1700000000000,
+    updatedAt: 1700000005000,
+  },
 } as const
 
 /** 普通行的投影提示：**没有标题**（会话开过、但还没生成标题 —— 未命名是正常态，

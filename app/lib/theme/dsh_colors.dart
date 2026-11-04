@@ -77,6 +77,14 @@ abstract final class DshColors {
   static const labelSecondary = Color(0xFFCFD3D6);
   static const labelTertiary = Color(0xFFADB2B8);
   static const labelCaption = Color(0xFF81858C);
+
+  /// 主文字降一档（`--dsw-alias-label-primary-dimmed`，暗色 = neutral-bluish-100）。
+  ///
+  /// 与 [labelSecondary]（neutral-bluish-300）**不是同一档**：它比 primary 只淡一点点，
+  /// 用在"同一行里的次要正文"上 —— 目标条的正文就是这一档
+  /// （`ui-goal/src/client/GoalBar.module.css:64-73` 的 `.objective`）。
+  /// 拿 labelSecondary 顶会让阶段标签与正文的对比比 DSH 大两档。
+  static const labelPrimaryDimmed = Color(0xFFEBEEF2);
   static const onAccent = Color(0xFF0F1115); // accent 填充上的文字
 
   // ---- 强调 / 交互 ----
@@ -242,6 +250,10 @@ abstract final class DshLightColors {
   static const labelSecondary = Color(0xFF61666B); // neutral-bluish-700
   static const labelTertiary = Color(0xFF81858C); // neutral-bluish-600
   static const labelCaption = Color(0xFFADB2B8); // neutral-bluish-400
+
+  /// `--dsw-alias-label-primary-dimmed`（`design-platform.css:235` =
+  /// neutral-bluish-950）。与 [labelPrimary] 只差一档 —— 浅色下它几乎就是黑色。
+  static const labelPrimaryDimmed = Color(0xFF151517); // neutral-bluish-950
   static const onAccent = Color(0xFF0F1115);
 
   // ---- 强调 / 交互 ----
@@ -333,6 +345,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     required this.labelSecondary,
     required this.labelTertiary,
     required this.labelCaption,
+    required this.labelPrimaryDimmed,
     required this.onAccent,
     required this.accentBlue,
     required this.businessBlue,
@@ -385,6 +398,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
         labelSecondary: DshColors.labelSecondary,
         labelTertiary: DshColors.labelTertiary,
         labelCaption: DshColors.labelCaption,
+        labelPrimaryDimmed: DshColors.labelPrimaryDimmed,
         onAccent: DshColors.onAccent,
         accentBlue: DshColors.accentBlue,
         businessBlue: DshColors.businessBlue,
@@ -437,6 +451,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
         labelSecondary: DshLightColors.labelSecondary,
         labelTertiary: DshLightColors.labelTertiary,
         labelCaption: DshLightColors.labelCaption,
+        labelPrimaryDimmed: DshLightColors.labelPrimaryDimmed,
         onAccent: DshLightColors.onAccent,
         accentBlue: DshLightColors.accentBlue,
         businessBlue: DshLightColors.businessBlue,
@@ -486,6 +501,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
   final Color labelSecondary;
   final Color labelTertiary;
   final Color labelCaption;
+  final Color labelPrimaryDimmed;
   final Color onAccent;
   final Color accentBlue;
   final Color businessBlue;
@@ -561,6 +577,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
       labelSecondary: labelSecondary,
       labelTertiary: labelTertiary,
       labelCaption: labelCaption,
+      labelPrimaryDimmed: labelPrimaryDimmed,
       onAccent: onAccent,
       accentBlue: accentBlue,
       businessBlue: businessBlue,
@@ -621,6 +638,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     Color? labelSecondary,
     Color? labelTertiary,
     Color? labelCaption,
+    Color? labelPrimaryDimmed,
     Color? onAccent,
     Color? accentBlue,
     Color? businessBlue,
@@ -669,6 +687,7 @@ class DshColorTokens extends ThemeExtension<DshColorTokens> {
     labelSecondary: labelSecondary ?? this.labelSecondary,
     labelTertiary: labelTertiary ?? this.labelTertiary,
     labelCaption: labelCaption ?? this.labelCaption,
+    labelPrimaryDimmed: labelPrimaryDimmed ?? this.labelPrimaryDimmed,
     onAccent: onAccent ?? this.onAccent,
     accentBlue: accentBlue ?? this.accentBlue,
     businessBlue: businessBlue ?? this.businessBlue,
