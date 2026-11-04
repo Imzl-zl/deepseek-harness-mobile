@@ -23,10 +23,11 @@
   `implemented/2026-11-04-pairing-degradation-is-visible.md`、
   `implemented/2026-11-04-registration-account-quota.md`。C 的**隔离进程实测**已跑
   （本地中转 + 独立 DSH_HOME；降级码零 HTTP 走局域网、正常码死 LAN 回落中转），手机 UI 两条未跑。
-  **已发版 `v0.2.7` / connector `0.1.20`**（Release 两产物 + npm 0.1.20，CI 全绿），
+  **已发版 `v0.2.8`（App）/ connector `0.1.20`**（Release 两产物 + npm 0.1.20，CI 全绿；
+  0.2.8 把「检查更新」移到版本号上面、版本号那行写明「点按复制」），
   生产中转已升到同一提交并 healthy（`/api/auth/config` 回 `registration.full`，管理台有「注册名额上限」）。
   **还剩**：桌面 profile 的 connector 仍是 npm 0.1.16（新提示要装 0.1.20）；手机装的是
-  debug 版（与 Release APK 签名不同，不能覆盖装）。
+  debug 版（与 Release APK 签名不同，不能覆盖装；0.2.8 debug 已构建，但安装时手机不在线）。
 
 - **底部 dock 不再是一整块面板（11-04 第五批）**：壁纸被一条整宽的 `bgBase` 挡到屏幕底
   （2026-10-20 为了盖 sidebar 灰带就是这么涂的）。现在**包裹层与输入栏 band 都不涂底色**，
