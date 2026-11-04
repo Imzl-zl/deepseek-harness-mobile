@@ -2575,6 +2575,11 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       await _prefs?.read(kCollapseTimingKey),
     );
     if (collapse != null) _collapseTiming = collapse;
+    // 配对拨号顺序：与 `device.pairing_prefer` 同一个值，只是没装配 UiState 时的退路。
+    final pairing = PairingPreference.fromWire(
+      await _prefs?.read(kPairingPreferKey),
+    );
+    if (pairing != null) _pairingPreference = pairing;
     // 界面字号档位：存的是下标；认不出（没存过 / 坏了）就保持默认档（1.0）。
     final scaleIndex = int.tryParse(await _prefs?.read(kUiScaleKey) ?? '');
     if (scaleIndex != null) {

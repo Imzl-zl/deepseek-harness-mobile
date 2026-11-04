@@ -218,8 +218,10 @@ window.__ModuleLoader__.load({
       // 必须写在二维码旁边：用户出门 / 切流量之后才发现"配不上"就太晚了。
       pairLanOnly: '中转没登记上：这张码只能在同一 WiFi 下使用（跨网或用流量扫它配不上）',
       // **正面也要说**：登记成功时用户需要知道"出门还能用"，而不是只能从"没有警告"去猜。
-      pairRelayReady: '两条路都在：同一 WiFi 直连；出门 / 用流量走中转（已登记）。',
-      pairRelayOnly: '只有中转这条路（已登记）：不在同一 WiFi 也能扫。',
+      pairRelayReady: '两条路都在：同一 WiFi 直连；出门 / 用流量走中转（出码时已登记）。',
+      pairRelayOnly: '只有中转这条路（出码时已登记）：不在同一 WiFi 也能扫。',
+      // 出码之后中转又断了：登记会随连接器断开失效，**不能继续显示"已登记"**。
+      pairRelayDropped: '中转已断开：这张码的跨网那条路已经失效，请重新出码（同一 WiFi 仍可用）。',
       thisOne: '本次',
       relayLabel: '中转',
       relayConnected: '已连接',
@@ -368,8 +370,9 @@ window.__ModuleLoader__.load({
       pairTitle: 'Pair a new phone',
       pairHint: 'Valid for 5 minutes.',
       pairLanOnly: 'Not registered with the relay: this code only works on the same Wi-Fi (it will not pair over the internet or mobile data).',
-      pairRelayReady: 'Both routes are ready: direct on the same Wi-Fi, or via the relay (registered) when you are away.',
-      pairRelayOnly: 'Relay only (registered): it works away from this Wi-Fi too.',
+      pairRelayReady: 'Both routes are ready: direct on the same Wi-Fi, or via the relay (registered when the code was issued) when you are away.',
+      pairRelayOnly: 'Relay only (registered when the code was issued): it works away from this Wi-Fi too.',
+      pairRelayDropped: 'The relay has disconnected: the away-from-home route of this code is no longer valid — issue a new code (same Wi-Fi still works).',
       thisOne: 'this session',
       relayLabel: 'Relay',
       relayConnected: 'Connected',
@@ -1932,8 +1935,11 @@ window.__ModuleLoader__.load({
                   h('img', { alt: '配对二维码', src: qr.src, width: 260, height: 260, style: { display: 'block', background: '#fff', borderRadius: 6 } }),
                   qr.lanOnly === true
                     ? h('p', { key: 'lo', style: { ...S.label, ...S.warn, margin: '8px 0 0' } }, t('pairLanOnly'))
-                    : h('p', { key: 'lr', style: { ...S.label, margin: '8px 0 0' } },
-                        qr.lanAvailable === true ? t('pairRelayReady') : t('pairRelayOnly')),
+                    : connection !== null && connection.relay !== undefined && connection.relay.connected === false
+                      // 登记会随连接器断开失效：出码后中转断了，不能再显示"已登记"。
+                      ? h('p', { key: 'ld', style: { ...S.label, ...S.warn, margin: '8px 0 0' } }, t('pairRelayDropped'))
+                      : h('p', { key: 'lr', style: { ...S.label, margin: '8px 0 0' } },
+                          qr.lanAvailable === true ? t('pairRelayReady') : t('pairRelayOnly')),
                   h('p', { key: 'c', style: { ...S.label, margin: '6px 0 0' } }, `${t('scanHint')} · ${t('expiresIn', { t: countdown })}`),
                 ),
         ),
