@@ -20,7 +20,8 @@
   （并发只进一个）；管理台「设置」可改。relay **173**。
   笔记 `implemented/2026-11-04-admin-token-page-reachability.md`、
   `implemented/2026-11-04-pairing-degradation-is-visible.md`、
-  `implemented/2026-11-04-registration-account-quota.md`。真机 C 实测见「未验」。
+  `implemented/2026-11-04-registration-account-quota.md`。C 的**隔离进程实测**已跑
+  （本地中转 + 独立 DSH_HOME；降级码零 HTTP 走局域网、正常码死 LAN 回落中转），手机 UI 两条未跑。
 
 - **底部 dock 不再是一整块面板（11-04 第五批）**：壁纸被一条整宽的 `bgBase` 挡到屏幕底
   （2026-10-20 为了盖 sidebar 灰带就是这么涂的）。现在**包裹层与输入栏 band 都不涂底色**，
@@ -350,6 +351,8 @@
 - **未验**：图片上限四条、`readBytes` 预览、插件安装/卸载的真实 pnpm 流程；桌面四件事的真机
   验收（分支已通过；改动卡/差异/提及要一轮**当前宿主进程里**跑完的对话，记录是内存态）。
   `caps.changes` 真机 **true**；计划审查卡**有意不接**；中转面板只在本机浏览器验过。
+  配对页的两条手机 UI 场景（关 WiFi 回落 / 降级码提示）**未跑**：进配对页要清这台手机现有
+  配对凭据，且实测时手机锁屏；隔离进程已验连接器与 Dart 客户端两条路（见 11-04 第六批笔记）。
 
 ## 下一步
 

@@ -83,7 +83,20 @@ Status: implemented
 - 变异校验：把 `issuePairingOffer` 的 `markOfferLanOnly(offer)` 换回 `offer`，
   **恰好那条降级用例红**（本次实测 1 红 / 4 绿）。
 - 真机：同一 WiFi 出码（两条都在）→ 配对 → 关 WiFi / 切流量 → 连接自动落到 relay，
-  不用重扫；另测一张"中转没登记"的码，配对页应显式说"仅局域网"。**结果见提交说明**。
+  不用重扫；另测一张"中转没登记"的码，配对页应显式说"仅局域网"。
+- **隔离进程实测（2026-11-04，不碰 desktop 的 DSH 与现有配对）**：
+  - 本地中转（`ws://127.0.0.1:18787`，`connectorAuth: open`）+ 独立 `DSH_HOME` 的
+    `c-isolated` profile（仓库 connector 的 junction，`listenPort: 18790`）。
+  - 正常出码：面板回 `lanOnly: false`；二维码解回的载荷有 `lan`（三条，WLAN 在前）、
+    没有 `lanOnly`。
+  - **停掉本地中转再出码**：面板回 `lanOnly: true`，载荷 `lanOnly: true` 且 `lan` 仍在。
+  - 用 App 的**真实 Dart 代码**（真 `WebSocketTransport`、HTTP 缝"一调就抛"）扫降级码：
+    **零 HTTP**、`PairingDial.lan`、提交拿到设备令牌。
+  - 正常码 + 把 `lan` 换成一个死地址（同 /24）：先直连失败、**换票一次**、回落
+    `PairingDial.relay`、提交成功 —— 两条路的回落是真的。
+  - 手机侧：新 debug APK 已 `adb install -r`（`firstInstallTime` 不变 = 配对数据保留）；
+    **手机 UI 的两条场景没跑**：进配对页要清掉这台手机现有配对凭据，且当时手机锁屏。
+    页面文案与"正在试"由 `pairing_page_routes_test` 的两个 widget 用例钉住。
 
 ## 代码入口回指
 

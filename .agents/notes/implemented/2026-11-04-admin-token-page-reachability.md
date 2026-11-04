@@ -63,6 +63,7 @@ Status: implemented
 - `cd relay; pnpm typecheck` → 0。
 - `cd relay; node --test` → 全绿（`admin-face.test.ts` 新增三条：Bearer 落点是 `#/tokens`、
   旧文案「登录后添加电脑」不许回来、令牌页有「不归属任何账号」）。
+- 变异校验：把 Bearer 落点改回 `/login`，**恰好那一条页面用例红**（本次实测 1 红 / 8 绿）。
 - 线上复核：`Invoke-WebRequest https://dsh.0t0.me/admin` 的正文哈希 = 本地 `ADMIN_PAGE` 哈希
   （2026-11-04 实测 `82352034b8224469b2f1f1a5fd971baafaa43c470cdfe46c879f608890efbcbf`）。
 
