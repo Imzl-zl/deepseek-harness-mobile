@@ -176,6 +176,12 @@ class _DshMobileAppState extends State<DshMobileApp>
   /// 是否停在配对页（用户主动进来的，不是"没配对就挡在这里"）。
   bool _pairing = false;
 
+  /// 是否在"添加电脑"这条路上（决定取消时要不要把原电脑装回来）。
+  bool _addingHost = false;
+
+  /// 进配对页之前那台（`pcSignPubHex`）；取消时用它 `_switchTo` 回来。
+  String? _hostBeforeAdd;
+
   /// 配对页顶部横幅的一句话（**为什么会被送到这一页**）；主动进来时为 `null`。
   String? _pairingNotice;
 
@@ -491,7 +497,38 @@ class _DshMobileAppState extends State<DshMobileApp>
     });
   }
 
-  void _closePairing() => setState(() => _pairing = false);
+  /// 关配对页。**「添加电脑」取消时要把原电脑装回来**。
+  ///
+  /// [_addHost] 为了进配对页把内存客户端换成了"未配对"那一个（`_credentials`
+  /// 已空），但落盘的槽还在。这里若直接 `_pairing = false`，用户会停在"未配对"，
+  /// 只能重启 App —— 那不是"取消"，是"把当前电脑弄丢了"。
+  void _closePairing() {
+    if (!_addingHost) {
+      setState(() => _pairing = false);
+      return;
+    }
+    final hostId = _hostBeforeAdd;
+    _addingHost = false;
+    _hostBeforeAdd = null;
+    if (hostId == null) {
+      setState(() => _pairing = false);
+      return;
+    }
+    unawaited(() async {
+      // `active` 一直指着原电脑（添加是从不清槽的），`_switchTo` 只读槽 + 装配 +
+      // 重新 start；失败会自己报原因。
+      await _switchTo(hostId);
+      if (!mounted) return;
+      setState(() => _pairing = false);
+      if (_credentials == null) {
+        DshToast.show(
+          _navContext,
+          '回到原电脑失败：配对凭据还在，重启 App 或重新配对',
+          kind: DshToastKind.error,
+        );
+      }
+    }());
+  }
 
   Future<void> _onPaired(PairingResult result) async {
     // **配对页的确认卡就是"公网明文"的同意书**：那一步把中转地址与电脑身份
@@ -553,6 +590,9 @@ class _DshMobileAppState extends State<DshMobileApp>
       _app = app;
       _pairing = false;
       _pairedHosts = hosts;
+      // 配对成功 = "添加"这条路走完了；下次从配对页取消不该再装回旧那台。
+      _addingHost = false;
+      _hostBeforeAdd = null;
     });
     // 下一次重新配对要报**新**的 pairingId（旧的那一行已经被替换掉了）。
     _refreshRePairHint();
@@ -877,6 +917,8 @@ class _DshMobileAppState extends State<DshMobileApp>
         // **断开只断链**：凭据留着，用户随时点「重新连接」回来 —— 清凭据是
         // 「重新配对」的事，一个动作不该顺手把配对抹了（误触代价太大）。
         onRePair: _repair,
+        // **添加电脑**：进配对页但**不清**当前凭据（`pairingStore.save` 分槽写入）。
+        onAddHost: _addHost,
         onDisconnect: () => unawaited(app.disconnectLink()),
         hostSwitch: _hostSwitchSeam,
         onOpenDrawer: () => _chatKey.currentState?.openDrawer(),
@@ -1181,6 +1223,7 @@ class _DshMobileAppState extends State<DshMobileApp>
       ),
       // **换电脑**（与聊天页顶栏那个 sheet 同一份缝）。
       hostSwitch: _hostSwitchSeam,
+      onAddHost: _addHost,
       onRePair: _repair,
       onOpenSide: () => _chatKey.currentState?.openSide(),
       // 断开连接：**只断链，不动凭据**（清凭据是「重新配对」的事，藏在设置里）。
@@ -1194,6 +1237,28 @@ class _DshMobileAppState extends State<DshMobileApp>
   /// 经 `ConnectionRecovery.onTerminated`）都收敛到 `_recovery.repair()` ——
   /// 那是 `ClientAction.rePair` 的唯一执行处。
   void _repair() => unawaited(_recovery.repair());
+
+  /// **添加一台电脑**：进配对页，但**不先清凭据**。
+  ///
+  /// 与 [_repair] 是两条路：那一条先 `clear()` 再进配对页（同一台电脑换身份、
+  /// 或身份被拒之后重来）；这一条**只加不删** —— `pairingStore.save` 按电脑
+  /// 公钥分槽写，扫的是另一台时旧槽原样保留。
+  ///
+  /// **先拆再进页面**：配对页只该看到"未配对"的模型；等 `_reassembleUnpaired`
+  /// 完成再显示，免得用户立刻点取消时和它抢 `_app`（那会把刚装回来的原电脑
+  /// 又覆盖成未配对）。取消时的恢复见 [_closePairing]。
+  void _addHost() {
+    _hostBeforeAdd = _credentials?.pcSignPubHex;
+    _addingHost = true;
+    unawaited(() async {
+      await _reassembleUnpaired();
+      if (!mounted) return;
+      setState(() {
+        _pairingNotice = null;
+        _pairing = true;
+      });
+    }());
+  }
 
   /// 身份被拒/重新配对后：换一个"没配对"的 AppModel + 进配对页 + 给一句话。
   ///

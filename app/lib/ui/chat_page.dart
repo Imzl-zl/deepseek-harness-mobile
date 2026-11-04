@@ -175,6 +175,7 @@ class ChatPage extends StatefulWidget {
     this.paired = true,
     this.onConnect,
     this.onRePair,
+    this.onAddHost,
     this.onDisconnect,
     this.hostSwitch,
   });
@@ -204,6 +205,11 @@ class ChatPage extends StatefulWidget {
   ///
   /// 议题 3 的落点：顶栏连接状态位、空态出路两处点它都经连接操作 sheet 确认。
   final VoidCallback? onRePair;
+
+  /// **添加一台电脑**（进配对页但**不清**当前凭据；装配层注入）。
+  ///
+  /// 与 [onRePair] 是两条路：那个先清再配（同一台换身份/重来），这个只加不删。
+  final VoidCallback? onAddHost;
 
   /// 「断开并清掉凭据」但**不**进配对页（装配层注入；聊天页自己不给这个入口）。
   final VoidCallback? onDisconnect;
@@ -1532,6 +1538,7 @@ class ChatPageState extends State<ChatPage> {
         ),
         // **换电脑**（已配对两台以上才给这一行）：装配层注入，页面只转发。
         hostSwitch: widget.hostSwitch,
+        onAddHost: widget.onAddHost,
         onRePair: () => widget.onRePair?.call(),
         onOpenSide: openSide,
         onDisconnect: () => widget.onDisconnect?.call(),

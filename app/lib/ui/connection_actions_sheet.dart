@@ -75,6 +75,12 @@ Future<void> showConnectionActionsSheet(
   /// 也不在"连不上"时偷偷换 —— 那会变成"手机自己换了个电脑"。
   HostSwitchSeam? hostSwitch,
 
+  /// **添加一台电脑**：进配对页但**不清**当前凭据。
+  ///
+  /// 与「重新配对」是两条路：那个**先清再配**（同一台换身份/重来），
+  /// 这个**只加不删** —— `pairingStore.save` 按电脑公钥分槽，旧槽原样保留。
+  VoidCallback? onAddHost,
+
   /// 触发点矩形。`null` = 底部 sheet。
   Rect? anchor,
 }) {
@@ -131,6 +137,21 @@ Future<void> showConnectionActionsSheet(
           onTap: () {
             Navigator.of(inner).pop();
             hostSwitch?.onSwitchBack?.call();
+          },
+        ),
+      // **添加电脑**：只加不删的那条路；与「重新配对」成对但语义相反。
+      if (onAddHost != null)
+        ListTile(
+          leading: const DshIcon(
+            'plus',
+            size: 18,
+            color: DshColors.labelSecondary,
+          ),
+          title: const Text('添加电脑'),
+          subtitle: const Text('扫另一台的配对码；当前这台不会被清掉'),
+          onTap: () {
+            Navigator.of(inner).pop();
+            onAddHost();
           },
         ),
       if (onPickEndpoint != null)

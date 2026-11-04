@@ -18,6 +18,7 @@ import 'package:flutter_test/flutter_test.dart';
 Widget _host({
   required ConnectionSummary connection,
   required VoidCallback onRePair,
+  VoidCallback? onAddHost,
   Rect? anchor,
   HostSwitchSeam? hostSwitch,
 }) => MaterialApp(
@@ -29,6 +30,7 @@ Widget _host({
           context,
           connection: connection,
           onRePair: onRePair,
+          onAddHost: onAddHost,
           anchor: anchor,
           hostSwitch: hostSwitch,
         ),
@@ -81,6 +83,27 @@ void main() {
 
     expect(rePair, 1);
     expect(find.text('重新配对（换一台电脑）'), findsNothing, reason: 'sheet 已关');
+  });
+
+  testWidgets('动作行：添加电脑 pop 并回调（只加不删的那条路）', (tester) async {
+    var added = 0;
+    await tester.pumpWidget(
+      _host(connection: fellBack, onRePair: () {}, onAddHost: () => added++),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('添加电脑'), findsOneWidget);
+    expect(
+      find.text('扫另一台的配对码；当前这台不会被清掉'),
+      findsOneWidget,
+      reason: '用户唯一担心的是"会不会把我这台清掉"',
+    );
+
+    await tester.tap(find.text('添加电脑'));
+    await tester.pumpAndSettle();
+    expect(added, 1);
+    expect(find.text('添加电脑'), findsNothing, reason: 'sheet 已关');
   });
 
   testWidgets('切换电脑：多机入口与「切回上一台」都在，且各自回调一次', (tester) async {
