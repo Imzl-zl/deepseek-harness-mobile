@@ -192,16 +192,22 @@ Widget _wrap(
   VoidCallback? onConnect,
   VoidCallback? onRePair,
   VoidCallback? onOpenDrawer,
+  EdgeInsets viewInsets = EdgeInsets.zero,
 }) => MaterialApp(
   theme: DshTheme.dark(),
-  home: ChatPage(
-    app: app,
-    paired: paired,
-    onConnect: onConnect,
-    onRePair: onRePair,
-    onOpenDrawer: onOpenDrawer ?? () {},
-    onNewSession: () {},
-    drawer: const Drawer(child: SizedBox()),
+  home: Builder(
+    builder: (context) => MediaQuery(
+      data: MediaQuery.of(context).copyWith(viewInsets: viewInsets),
+      child: ChatPage(
+        app: app,
+        paired: paired,
+        onConnect: onConnect,
+        onRePair: onRePair,
+        onOpenDrawer: onOpenDrawer ?? () {},
+        onNewSession: () {},
+        drawer: const Drawer(child: SizedBox()),
+      ),
+    ),
   ),
 );
 
@@ -1805,5 +1811,41 @@ void main() {
         reason: '换 key 会让这一行重新挂载 ⇒ 展开状态丢失（本用例就是钉这个）',
       );
     });
+  });
+
+  testWidgets('键盘弹起只缩一次：Scaffold 不缩，body 按 viewInsets 让位', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      _wrap(
+        AppModel(client: FakeClient()),
+        viewInsets: const EdgeInsets.only(bottom: 300),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
+    expect(
+      scaffold.resizeToAvoidBottomInset,
+      isFalse,
+      reason: 'Scaffold 再缩一次会把输入栏顶到两倍高',
+    );
+    final pad = tester.widget<Padding>(find.byKey(const ValueKey('ime-inset')));
+    expect(
+      pad.padding,
+      const EdgeInsets.only(bottom: 300),
+      reason: '视图 inset 只在这一层扣一次',
+    );
+
+    final composer = tester.getRect(find.byType(DshComposer));
+    // 输入栏自己还有几像素下边距，所以不钉死 544；关键是它必须留在键盘上沿附近。
+    // 若 Scaffold 也缩，这里会掉到 188 附近；若 body 没让位，会留在 844 附近。
+    expect(composer.bottom, greaterThan(500));
+    expect(
+      composer.bottom,
+      lessThanOrEqualTo(844 - 300 + 1),
+      reason: '输入栏应落在键盘上沿，不能掉到双缩后的位置',
+    );
   });
 }
