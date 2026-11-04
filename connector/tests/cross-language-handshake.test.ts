@@ -37,6 +37,39 @@ const PC_SEED = 'a1'.repeat(32)
 const PAIRING_ID = 'cHJhY3RpY2UtaWQtcHJhY3RpY2UtaWQtcHJhY3RpY2U'
 const DEV_ID = 'tsJs6UgOJFdyfpazdZSQpQ'
 
+/**
+ * 本机有没有 `dart`。
+ *
+ * 为什么要先问一句（2026-11-04）：`spawn` 用了 `shell: true`（Windows 上 `dart` 是
+ * `.bat` shim，Node 不许直接 spawn），于是"找不到 dart"**不会**触发 `error` 事件 ——
+ * shell 自己起得来、然后以非零码退出，`readLine()` 只能等满 180 秒超时。
+ * 而"这台机器没装 SDK"与"两边实现不一致"是两件事：前者该 skip，后者必须红。
+ *
+ * 判据是**退出码**，不是 stderr 文案：后者随系统语言变（中文 Windows 写的是
+ * 「不是内部或外部命令」，Linux 写的是 `not found`）。
+ *
+ * 取舍见 `.agents/notes/implemented/2026-11-04-unbounded-waits-in-probe-and-test.md`。
+ */
+async function hasDart(): Promise<boolean> {
+  return await new Promise((resolve) => {
+    let settled = false
+    const done = (value: boolean): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(value)
+    }
+    // 这一句本身也不能变成新的挂起点：探活只值几秒。
+    const timer = setTimeout(() => done(false), 10_000)
+    timer.unref()
+    const child = spawn('dart', ['--version'], { stdio: 'ignore', shell: true })
+    child.once('error', () => done(false))
+    child.once('close', (code) => done(code === 0))
+  })
+}
+
+const DART_AVAILABLE = await hasDart()
+
 const waitFor = async (what: string, check: () => boolean, timeoutMs = 30_000): Promise<void> => {
   const started = Date.now()
   while (!check()) {
@@ -68,7 +101,11 @@ function startProbe(): {
     stderr += chunk.toString('utf8')
   })
   const queue: string[] = []
-  let waiter: ((line: string) => void) | null = null
+  /** 挂起中的读：子进程提前退出时要**立刻**失败，而不是等满下面那个 180 秒。 */
+  type Waiter = { resolve: (line: string) => void; reject: (error: Error) => void }
+  let waiter: Waiter | null = null
+  /** 子进程退出后记住原因：退出之后**再也没有**帧会来。 */
+  let exited: Error | null = null
   let buffer = ''
   child.stdout.on('data', (chunk: Buffer) => {
     buffer += chunk.toString('utf8')
@@ -80,17 +117,35 @@ function startProbe(): {
       if (waiter !== null) {
         const settle = waiter
         waiter = null
-        settle(line)
+        settle.resolve(line)
       } else {
         queue.push(line)
       }
     }
   })
+  const failPending = (error: Error): void => {
+    exited ??= error
+    if (waiter !== null) {
+      const settle = waiter
+      waiter = null
+      settle.reject(error)
+    }
+  }
+  child.once('error', (error) => failPending(error))
+  child.once('close', (code) => {
+    // 正常收尾不制造错误（所有帧都读完了它本来就该退出）；只有"还有人在等"才算它提前死了。
+    failPending(new Error(`Dart 探针退出（code ${String(code)}）。stderr:\n${stderr}`))
+  })
   const readLine = (): Promise<string> =>
     new Promise((resolve, reject) => {
+      // **先排队**：子进程写完所有帧再退出是正常收尾，那几帧已经在 `queue` 里了。
       const taken = queue.shift()
       if (taken !== undefined) {
         resolve(taken)
+        return
+      }
+      if (exited !== null) {
+        reject(exited)
         return
       }
       // Dart 首次 `run` 要编译 + 跑 build hooks,给宽一点;真跑起来之后是毫秒级。
@@ -98,9 +153,9 @@ function startProbe(): {
         waiter = null
         reject(new Error(`等 Dart 探针输出超时。stderr:\n${stderr}`))
       }, 180_000)
-      waiter = (line) => {
-        clearTimeout(timer)
-        resolve(line)
+      waiter = {
+        resolve: (line) => { clearTimeout(timer); resolve(line) },
+        reject: (error) => { clearTimeout(timer); reject(error) },
       }
     })
   return {
@@ -126,6 +181,11 @@ function startProbe(): {
 }
 
 test('跨实现:Dart 发起方与 TS 应答方真打一次,密钥与双向封箱都一致', async (t) => {
+  // 没装 Dart 就明确跳过 —— 不是失败，也不是"等 180 秒再说"。
+  if (!DART_AVAILABLE) {
+    t.skip('本机没有 Dart SDK（本用例要跑 app/tool/cross_initiator.dart）')
+    return
+  }
   const pc = deriveIdentity(PC_SEED)
   // 手机侧身份从**同一份主种子**派生 —— 驱动器要拿它的 Ed25519 公钥验 `sigA`,
   // 所以这不是"自己证明自己":验不过这条用例就红。
