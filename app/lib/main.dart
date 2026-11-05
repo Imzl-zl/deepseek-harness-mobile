@@ -185,6 +185,11 @@ class _DshMobileAppState extends State<DshMobileApp>
   /// 是否停在配对页（用户主动进来的，不是"没配对就挡在这里"）。
   bool _pairing = false;
 
+  /// 「添加电脑」进行中：配对页开着，但**当前这台客户端继续跑**（不拆、不断线）。
+  ///
+  /// 与 [_repair] 的区别见 [_addHost]；取消时只关页面，当前那台原样在线。
+  bool _addingHost = false;
+
   /// 配对页顶部横幅的一句话（**为什么会被送到这一页**）；主动进来时为 `null`。
   String? _pairingNotice;
 
@@ -500,7 +505,17 @@ class _DshMobileAppState extends State<DshMobileApp>
     });
   }
 
-  void _closePairing() => setState(() => _pairing = false);
+  void _closePairing() => setState(() {
+        final wasAdding = _addingHost;
+        _pairing = false;
+        // **添加流程取消**：当前那台从未被拆过（[_addHost] 不 reassemble），
+        // 所以这里只需清标记，不需要把谁"装回来"。
+        _addingHost = false;
+        if (wasAdding && mounted) {
+          // 让用户确认"取消 ≠ 把当前电脑弄丢"。
+          DshToast.show(context, '已取消添加，当前电脑保持连接');
+        }
+      });
 
   Future<void> _onPaired(PairingResult result) async {
     // **配对页的确认卡就是"公网明文"的同意书**：那一步把中转地址与电脑身份
@@ -553,19 +568,24 @@ class _DshMobileAppState extends State<DshMobileApp>
     // 不是"每次配对成功"的副作用 —— 否则切走再切回永远看不到上次的草稿。
     // 取舍与准入门槛见
     // `.agents/notes/implemented/2026-10-30-endpoint-and-ui-state-host-scoping.md`。
+    final previousApp = _app;
+    final wasAdding = _addingHost;
     setState(() {
-      // **旧客户端必须dispose**：它持着传输层（socket）。不 dispose 就换掉，
-      // 旧连接会一直挂在电脑侧（真机实测出现过两条直连 socket 同时
-      // ESTABLISHED），用户看到的是"连接不稳定"。
-      _app?.dispose();
       _credentials = credentials;
       _app = app;
       _pairing = false;
+      _addingHost = false;
       _pairedHosts = hosts;
     });
     // 下一次重新配对要报**新**的 pairingId（旧的那一行已经被替换掉了）。
     _refreshRePairHint();
+    // **先让新那台开始连，再释放旧的**：添加/配对成功的瞬间不会出现"两边都断"。
+    // （旧客户端的 dispose 仍必须做：它持着 socket，不释放会挂两条连接。）
     await app.start();
+    previousApp?.dispose();
+    if (wasAdding && mounted) {
+      DshToast.show(context, '已添加这台电脑；可在「切换电脑」里来回切');
+    }
   }
 
   /// **切换电脑**（一台手机配多台电脑）：换凭据槽 → 重新装配 → 连新的。
@@ -620,15 +640,37 @@ class _DshMobileAppState extends State<DshMobileApp>
     }
     await app.loadUiState();
     if (!mounted) return;
+    final previousApp = _app;
+    final previousCredentials = _credentials;
     setState(() {
-      // **先 close 旧的**（`dispose` 收掉 socket）：电脑侧立刻释放占用位，
-      // 新那台才不会撞上自己刚才这条连接。
-      _app?.dispose();
       _credentials = next;
       _app = app;
       _previousHostId = previous;
     });
-    await app.start();
+    // **先连新、成功后再拆旧**（2026-11-05 用户要求）：切换的窗口里旧那台仍然在线，
+    // 不会出现"两边都断"；失败则把旧的装回来，停在原来那台并说明原因。
+    try {
+      await app.start();
+    } catch (error) {
+      if (!mounted) return;
+      app.dispose();
+      if (previous != null) {
+        try {
+          await pairingStore.activate(previous);
+        } catch (_) {
+          // 指针回不去也只是下次启动落点不同；当前界面已回旧那台，不再报第二句。
+        }
+      }
+      setState(() {
+        _app = previousApp;
+        _credentials = previousCredentials;
+      });
+      _reportConnectionDefect(
+        ProtocolException(ErrorCode.internal, '切换电脑失败：$error'),
+      );
+      return;
+    }
+    previousApp?.dispose();
   }
 
   /// 抽屉「我的电脑」那格的「切换」：**有别的电脑就开列表，没有就开连接面板**
@@ -1254,7 +1296,16 @@ class _DshMobileAppState extends State<DshMobileApp>
   /// 连接 sheet 的「切换电脑」才会出现。
   ///
   /// 取舍见 `.agents/notes/implemented/2026-11-04-add-a-second-computer.md`。
-  void _addHost() => _enterPairing('');
+  void _addHost() {
+    // **不拆当前那台**：`_enterPairing` 会先 `_reassembleUnpaired()`（把当前客户端
+    // dispose 掉），于是"添加另一台"的页面一开、当前电脑立刻掉线 —— 2026-11-05
+    // 用户明确要求：添加期间当前连接保持在线，取消也只关页面。
+    setState(() {
+      _addingHost = true;
+      _pairingNotice = null;
+      _pairing = true;
+    });
+  }
 
   /// 身份被拒/重新配对后：换一个"没配对"的 AppModel + 进配对页 + 给一句话。
   ///
