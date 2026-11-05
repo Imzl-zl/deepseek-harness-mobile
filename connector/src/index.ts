@@ -858,9 +858,10 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           tableOf: () => devicesTable,
           onlineIds: () => new Set(presence.devices().filter((row) => row.online).map((row) => row.id)),
           publish: publishDevices,
-          // **停用/删除 = 立刻下线**：占用位是"在线且未吊销"，所以行失效的同时
-          // 那条连接也必须收掉 —— 否则它的 socket 还活着，下一台手机被放进来，
-          // 就成了两台同时在服务。映射由 `makeConnection` 在握手成功时登记。
+          // **停用/删除 = 立刻下线**：`revokedAt` 只是名册上的字，那条 socket 得真的
+          // 收掉 —— 否则手机带着一条"已吊销"的连接继续收发、继续以为自己在线。
+          // 停用是操作者"把那台踢下线"的唯一入口，所以它必须断。映射由
+          // `makeConnection` 在握手成功时登记。
           disconnect: (ids) => {
             for (const id of ids) servingConnections.get(id)?.stop()
           },
@@ -1336,8 +1337,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
                 scopeDeps.onDeviceEstablished?.(devId)
                 // **行在握手中被停用/删除**：`peerOf` 是 `hello` 那一刻判的，
                 // 而吊销可能发生在那之后、`established` 之前。这里再判一次，
-                // 否则这台设备会带着一条"已吊销"的连接继续服务（占用位已空，
-                // 下一台被放进来 —— 两台同时在服务）。与 `disconnect` 同一条不变式。
+                // 否则这台设备会带着一条"已吊销"的连接继续收发帧（此时行已经没了或
+                // 已标记，再没有别处会来收它）。与 `disconnect` 同一条不变式。
                 const record = devicesTable?.get(devId)
                 if (self !== null && (record === undefined || record.revokedAt !== undefined)) {
                   self.stop()

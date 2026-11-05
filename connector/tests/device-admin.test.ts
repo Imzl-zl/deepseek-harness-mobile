@@ -68,7 +68,7 @@ function tableOf(seed: Record<string, DeviceRecord>): DeviceTablePort & { snapsh
 /**
  * 在线的设备 id 集合。每台建一次 admin，避免跨用例串味。
  *
- * [disconnected] 收下"被要求下线的设备 id"（独占：停用/删除必须真的收连接）。
+ * [disconnected] 收下"被要求下线的设备 id"（停用/删除必须真的收连接）。
  */
 function adminOf(
   table: DeviceTablePort,
@@ -233,10 +233,10 @@ test('删除：一台都没删就不重发名册（无事不打扰中转）', as
   assert.equal(published.length, 0, '一台都没动就不必打扰中转')
 })
 
-test('停用/删除要**真的让那台下线**（独占：占用位释放时连接不能还活着）', async () => {
+test('停用/删除要**真的让那台下线**（收紧的连接不能还活着）', async () => {
   const seed = { live: row({ name: '我的手机' }), idle: row({ name: '平板' }) }
 
-  // 停用：立刻下线（否则占用位释放了、旧 socket 还在收发）。
+  // 停用：立刻下线（否则名册说"已停用"、那条 socket 还在收发帧）。
   const disabled = tableOf(seed)
   const disabledIds: string[] = []
   await adminOf(disabled, ['live'], [], disabledIds).setEnabled('live', false)

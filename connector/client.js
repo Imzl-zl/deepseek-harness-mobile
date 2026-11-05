@@ -323,7 +323,7 @@ window.__ModuleLoader__.load({
       // **后果句逐字对上新行为**：2026-10-15 事故里确认框写"已吊销记录"而实际删的
       // 是离线记录。这里每一处都写清"到底会发生什么"。
       confirmDisableTitle: '停用「{name}」？',
-      confirmDisableDescription: '那台手机下次重连就会失败,需要重新配对才能恢复。记录仍会保留。',
+      confirmDisableDescription: '那台手机现在就会断开,下次重连也会失败,需要重新配对才能恢复。记录仍会保留。',
       confirmRemoveTitle: '删除「{name}」？',
       confirmRemoveDescription: '那台手机需要重新配对。',
       // 处理中的设备：**先停用再删除**（一步到位的删除）。顺序不是界面偏好：
@@ -443,7 +443,7 @@ window.__ModuleLoader__.load({
       noDevices: 'No device has paired yet.',
       loadFailed: 'Load failed',
       confirmDisableTitle: 'Disable "{name}"?',
-      confirmDisableDescription: 'That phone fails its next reconnect and must pair again to come back. The record is kept.',
+      confirmDisableDescription: 'That phone is disconnected right now, and its next reconnect fails too; it must pair again to come back. The record is kept.',
       confirmRemoveTitle: 'Delete "{name}"?',
       confirmRemoveDescription: 'That phone will need to pair again.',
       confirmRemoveActiveTitle: 'Delete "{name}"? It is still in use.',
@@ -514,7 +514,7 @@ window.__ModuleLoader__.load({
         display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8,
         padding: '10px 2px', borderTop: '1px solid var(--dsw-alias-border-inverted)',
       },
-      /** 胶囊（已设置 / 在服务 / 台数）。 */
+      /** 胶囊（已设置 / 台数 / 在线态）。 */
       pill: (color) => ({
         fontSize: 11, lineHeight: 1.5, padding: '2px 8px', borderRadius: 999,
         color, background: 'transparent', border: `1px solid ${color}`,
@@ -1139,7 +1139,7 @@ window.__ModuleLoader__.load({
         }
       }
 
-      /** 停用要确认：那台手机下次重连就会失败。 */
+      /** 停用要确认：那台手机**现在**就会断开，下次重连也会失败。 */
       const disableOne = (device) => askConfirm({
         title: t('confirmDisableTitle', { name: device.name }),
         description: t('confirmDisableDescription'),
@@ -1539,9 +1539,6 @@ window.__ModuleLoader__.load({
           h('span', { style: S.value }, relayHeroText),
           h('span', { style: S.sep }),
           h('span', { style: S.value }, `${onlineCount} / ${pairedCount} 台在线`),
-          onlineCount > 0
-            ? h('span', { style: S.label }, '· 有设备在线')
-            : null,
           h('span', { style: S.sep }),
           h('span', { style: S.value }, `${t('listenLabel')} ${directPort}`),
         ),
@@ -1692,7 +1689,7 @@ window.__ModuleLoader__.load({
           ),
         ),
 
-        // ② 设备 —— 在线的排最前（服务端已排序）；活跃行可停用(软)/接管，已停用的行可启用(解禁)/删除(清理)
+        // ② 设备 —— 在线的排最前（服务端已排序）；活跃行可停用(软，立刻断开)/删除，已停用的行可启用(解禁)/删除(清理)
         h(
           'div',
           { key: 'devices', style: S.card },
@@ -1758,8 +1755,10 @@ window.__ModuleLoader__.load({
                       onChange: () => toggle(device.id),
                     }),
                   ),
-                  // **本次会话那一台标出来**：9 行全叫「我的手机」时，用户没法一眼认出
-                  // "哪台是现在我手里这部"（2026-10-17 真机问过"我只有一个手机怎么显示五个"）。
+                  // 名字会重名（9 行全叫「我的手机」是常态）。认"哪台是我手里这部"靠两格
+                  // 现成数据：「最后活跃」(`lastInteractedAt`) 与「前台/后台」。**没有专门的
+                  // "本次"标记，也不该有** —— 电脑侧无从知道操作者手里拿的是哪一部，
+                  // 编一个出来就是替用户做决定。
                   h('td', { style: S.td },
                     device.name,
                     narrow

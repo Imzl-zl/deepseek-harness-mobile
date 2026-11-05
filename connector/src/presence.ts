@@ -122,7 +122,7 @@ export function createDevicePresence(options: PresenceDevices): DevicePresence {
    */
   const updateOf = (devId: string): LiveDeviceRecord | undefined => live.get(devId)
 
-  /** 状态快照。`devices()` 与 `serving()` 共用它 —— 两条读取面不许各判一遍"有效"。 */
+  /** 状态快照：`devices()` 的唯一实现 —— "有效"只判一遍（配对过且未吊销）。 */
   const snapshot = (): readonly DeviceState[] => {
     const rows: DeviceState[] = []
     for (const [id, record] of live) {
