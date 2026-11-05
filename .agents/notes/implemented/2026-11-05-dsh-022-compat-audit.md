@@ -64,10 +64,27 @@ DSH 进 `0.2.2` 线后，需要回答一个问题：**连接器要不要改代�
 `{kind:'sequenced', asOfSeq, values}` | `{kind:'migration-required', values}` | `null`
 （`packages/api/session-controller/src/types.ts`），`connector/src/dsh/projections.ts` 的拆信封逻辑继续成立。
 
+## 双轨判定的实测（两代真宿主）
+
+隔离方式：`DSH_HOME` 指向测试目录内的 `home`（0.2.2-rc.1）与 `home021`（0.2.1-rc.5），
+两代宿主互不干扰，未触碰 `~/.dsh`。
+
+| 插件版本 | 0.2.1-rc.5 宿主 | 0.2.2-rc.1 宿主 |
+|---|---|---|
+| `0.1.20`（`>=0.2.1-rc.5 <0.2.2`） | 接受并组合 | **也接受** —— 旧上界的缺陷：放行 0.2.2 预发布 |
+| `0.1.21`（`>=0.2.2-rc.1 <0.2.3-0`） | **拒绝**，原文 `installation rejected: Plugin dsh-mobile-connector@0.1.21 is incompatible with dsh 0.2.1-rc.5: requirements {"engines.dsh":">=0.2.2-rc.1 <0.2.3-0"}`，并回滚 `package.json` / `pnpm-lock.yaml` / `node_modules` | 接受并组合 |
+
+在 0.2.2-rc.1 上另做了运行时确认：连接器激活后
+`GET /api/dsh-mobile/status` 的 13 个能力位全为 `true`
+（`sessions storage approval questions jobs subagents references plugins files changes settings credentials direct`），
+也就是每个 `present(ctx, '<服务键>')` 都在真实宿主上解析到了 —— 上面那张字符串键表从源码级证据升到运行级。
+
 ## 仍未验证 / 一条单向门
 
-- **没有真机验证**：上面四层都是编译期与源码期证据。单测用的是替身，覆盖不到真实宿主的形状 ——
-  这条限制写在 `docs/cookbook/release.md` §3 的抬线 playbook 第 4 步。
+- **三条链没有真实往返**：投影 / 子代理 / 审批需要已配对的手机客户端。真宿主上验过的是
+  加载、激活、能力位与 host 版本读取；数据形状靠类型、847 条单测、Flutter 实测与上面的源码核对，
+  没有一次真实的手机⇄电脑往返。单测用的是替身，覆盖不到真实宿主的形状 —— 这条限制写在
+  `docs/cookbook/release.md` §3 的抬线 playbook 第 4 步。
 - `subagentCatalog` v3 是**持久化单向门**：0.2.2 写下的目录，0.2.1 拒绝打开
   （`docs/persistence-changes/2026-11-02-subagent-catalog-names.zh.md`）。
   它不影响本插件，但决定了「不能靠多留几条版本线求稳」，见
