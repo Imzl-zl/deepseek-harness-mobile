@@ -37,6 +37,31 @@ class SqfliteItemStore implements ItemStore {
 
   Database? _db;
 
+  /// **这台电脑的缓存域**（= `pcSignPubHex`）。
+  ///
+  /// 为什么要有：`sid` 是电脑侧分配的不透明别名，**两台电脑可能撞名** ——
+  /// 早先的做法是"换一台就把整库清空"（`_scopeLocalItemsToHost`），代价是
+  /// 切换回去要**整段重刷信息流**，而用户明确要求"缓存留着、按需读、按需清"。
+  /// 所以改成：条目与水位按 `<host>/<sid>` 存，各占一段，互不覆盖。
+  ///
+  /// 空串 = 没配对（`_assembleWithoutCredentials`），此时用原始 sid。
+  String _host = '';
+
+  /// 设当前缓存域。**必须在任何读写之前调**（装配时、`open()` 之后）。
+  void setHostScope(String hostId) {
+    _host = hostId;
+  }
+
+  /// 磁盘上的键：把 sid 加上这台电脑的前缀。
+  String _keyFor(String sid) => _host.isEmpty ? sid : '$_host/$sid';
+
+  /// 剥离当前电脑的前缀，还原本机 sid / itemId。
+  String _stripHost(String key) {
+    if (_host.isEmpty) return key;
+    final prefix = '$_host/';
+    return key.startsWith(prefix) ? key.substring(prefix.length) : key;
+  }
+
   @override
   Future<void> open() async {
     if (_db != null) return;
@@ -98,6 +123,7 @@ class SqfliteItemStore implements ItemStore {
   @override
   Future<void> commit(String sid, List<StoredItem> items, int seq) async {
     final db = _requireDb;
+    final key = _keyFor(sid);
     // **一个事务**（契约 §5.3）：条目与水位要么一起在盘上，要么都不在。
     // 分开写的话，崩在中间会留下"水位说到了 10，但条目只到 7" ——
     // 而那个状态**无法自愈**（重连时手机会说"我到 10 了"，电脑就不再补 8~10）。
@@ -106,8 +132,8 @@ class SqfliteItemStore implements ItemStore {
       for (final item in items) {
         // upsert：同一个 itemId 再写一次是**覆盖**（重放一个批次是预期行为）。
         batch.insert('items', <String, Object?>{
-          'item_id': item.itemId,
-          'sid': item.sid,
+          'item_id': _host.isEmpty ? item.itemId : '$_host/${item.itemId}',
+          'sid': key,
           'seq': item.seq,
           'kind': item.kind,
           'payload_json': item.payloadJson,
@@ -123,7 +149,7 @@ class SqfliteItemStore implements ItemStore {
           last_seq = MAX(last_seq, excluded.last_seq),
           updated_at = excluded.updated_at
         ''',
-        <Object?>[sid, seq, DateTime.now().millisecondsSinceEpoch],
+        <Object?>[key, seq, DateTime.now().millisecondsSinceEpoch],
       );
       await batch.commit(noResult: true);
     });
@@ -140,7 +166,7 @@ class SqfliteItemStore implements ItemStore {
         SELECT * FROM items WHERE sid = ? ORDER BY seq DESC LIMIT ?
       ) ORDER BY seq ASC
       ''',
-      <Object?>[sid, limit],
+      <Object?>[_keyFor(sid), limit],
     );
     return rows.map(_itemFromRow).toList();
   }
@@ -152,7 +178,7 @@ class SqfliteItemStore implements ItemStore {
       'cursors',
       columns: <String>['last_seq'],
       where: 'sid = ?',
-      whereArgs: <Object?>[sid],
+      whereArgs: <Object?>[_keyFor(sid)],
       limit: 1,
     );
     if (rows.isEmpty) return 0;
@@ -162,19 +188,30 @@ class SqfliteItemStore implements ItemStore {
   @override
   Future<Map<String, int>> allCursors() async {
     final db = _requireDb;
-    final rows = await db.query(
-      'cursors',
-      columns: <String>['sid', 'last_seq'],
-    );
+    final List<Map<String, Object?>> rows;
+    if (_host.isEmpty) {
+      rows = await db.query(
+        'cursors',
+        columns: <String>['sid', 'last_seq'],
+      );
+    } else {
+      rows = await db.query(
+        'cursors',
+        columns: <String>['sid', 'last_seq'],
+        where: "sid LIKE ? ESCAPE '\\'",
+        whereArgs: <Object?>['${_escapeLike(_host)}/%'],
+      );
+    }
     return <String, int>{
       for (final row in rows)
-        row['sid']! as String: (row['last_seq'] as int?) ?? 0,
+        _stripHost(row['sid']! as String): (row['last_seq'] as int?) ?? 0,
     };
   }
 
   @override
   Future<int> prune(String sid, {int keep = 500}) async {
     final db = _requireDb;
+    final key = _keyFor(sid);
     // 按 `updated_at` 淘汰（契约 §5.3），保留**最近 seq 的 keep 条**。
     // 用 seq 而不是 updated_at 做"保留哪些"的判据：seq 是会话内的权威顺序，
     // 而 updated_at 是本地时钟（可能因重放而乱序）。
@@ -184,7 +221,7 @@ class SqfliteItemStore implements ItemStore {
         SELECT item_id FROM items WHERE sid = ? ORDER BY seq DESC LIMIT ?
       )
       ''',
-      <Object?>[sid, sid, keep],
+      <Object?>[key, key, keep],
     );
   }
 
@@ -246,10 +283,46 @@ class SqfliteItemStore implements ItemStore {
   @override
   Future<void> clear() async {
     final db = _requireDb;
+    // **只清这一台的**（2026-11-05）：缓存按电脑分域之后，"清空"不该把
+    // 另一台电脑的条目一起删掉 —— 那正是"切回去要重刷"的老毛病。
+    // 没配对（`_host` 为空）才清全域，但无论如何绝不删 device.* 手机全局设置。
     await db.transaction((txn) async {
-      for (final table in const ['items', 'cursors', 'outbox', 'meta']) {
-        await txn.delete(table);
+      if (_host.isEmpty) {
+        await txn.delete('items');
+        await txn.delete('cursors');
+        await txn.delete('outbox');
+        await txn.delete(
+          'meta',
+          where: "k NOT LIKE 'device.%' AND k != 'net.allow_plaintext_public'",
+        );
+        return;
       }
+      final hostPrefix = '${_escapeLike(_host)}/%';
+      await txn.delete('items', where: "sid LIKE ? ESCAPE '\\'", whereArgs: [hostPrefix]);
+      await txn.delete('cursors', where: "sid LIKE ? ESCAPE '\\'", whereArgs: [hostPrefix]);
+      await txn.delete('outbox', where: "request_id LIKE ? ESCAPE '\\'", whereArgs: [hostPrefix]);
+      await txn.delete(
+        'meta',
+        where: "k LIKE ? ESCAPE '\\'",
+        whereArgs: ['host.${_escapeLike(_host)}.%'],
+      );
+    });
+  }
+
+  /// 明确清空指定一台电脑的本地缓存（用户点「清空此电脑缓存」时调）。
+  Future<void> clearForHost(String hostId) async {
+    if (hostId.isEmpty) return clear();
+    final db = _requireDb;
+    await db.transaction((txn) async {
+      final hostPrefix = '${_escapeLike(hostId)}/%';
+      await txn.delete('items', where: "sid LIKE ? ESCAPE '\\'", whereArgs: [hostPrefix]);
+      await txn.delete('cursors', where: "sid LIKE ? ESCAPE '\\'", whereArgs: [hostPrefix]);
+      await txn.delete('outbox', where: "request_id LIKE ? ESCAPE '\\'", whereArgs: [hostPrefix]);
+      await txn.delete(
+        'meta',
+        where: "k LIKE ? ESCAPE '\\'",
+        whereArgs: ['host.${_escapeLike(hostId)}.%'],
+      );
     });
   }
 
@@ -261,9 +334,9 @@ class SqfliteItemStore implements ItemStore {
     await db.close();
   }
 
-  static StoredItem _itemFromRow(Map<String, Object?> row) => StoredItem(
-    itemId: row['item_id']! as String,
-    sid: row['sid']! as String,
+  StoredItem _itemFromRow(Map<String, Object?> row) => StoredItem(
+    itemId: _stripHost(row['item_id']! as String),
+    sid: _stripHost(row['sid']! as String),
     seq: (row['seq']! as num).toInt(),
     kind: row['kind']! as String,
     payloadJson: row['payload_json']! as String,
@@ -284,16 +357,32 @@ class SqfliteOutboxStore implements OutboxStore {
 
   final SqfliteItemStore _items;
 
+  String _keyFor(String requestId) =>
+      _items._host.isEmpty ? requestId : '${_items._host}/$requestId';
+
+  String _stripHost(String requestId) => _items._stripHost(requestId);
+
   @override
   Future<List<OutboxEntry>> load() async {
-    final rows = await _items._requireDb.query(
-      'outbox',
-      orderBy: 'created_at ASC',
-    );
+    final db = _items._requireDb;
+    final List<Map<String, Object?>> rows;
+    if (_items._host.isEmpty) {
+      rows = await db.query(
+        'outbox',
+        orderBy: 'created_at ASC',
+      );
+    } else {
+      rows = await db.query(
+        'outbox',
+        where: "request_id LIKE ? ESCAPE '\\'",
+        whereArgs: ['${SqfliteItemStore._escapeLike(_items._host)}/%'],
+        orderBy: 'created_at ASC',
+      );
+    }
     return <OutboxEntry>[
       for (final row in rows)
         OutboxEntry(
-          requestId: row['request_id']! as String,
+          requestId: _stripHost(row['request_id']! as String),
           method: row['method']! as String,
           params:
               (jsonDecode(row['payload_json']! as String)
@@ -308,7 +397,7 @@ class SqfliteOutboxStore implements OutboxStore {
   Future<void> append(OutboxEntry entry) async {
     // **抛错即没落盘**（接口约定）：调用方据此拒绝这次写操作。
     await _items._requireDb.insert('outbox', <String, Object?>{
-      'request_id': entry.requestId,
+      'request_id': _keyFor(entry.requestId),
       'method': entry.method,
       'payload_json': jsonEncode(entry.params),
       'created_at': DateTime.now().millisecondsSinceEpoch,
@@ -320,13 +409,21 @@ class SqfliteOutboxStore implements OutboxStore {
     await _items._requireDb.delete(
       'outbox',
       where: 'request_id = ?',
-      whereArgs: <Object?>[requestId],
+      whereArgs: <Object?>[_keyFor(requestId)],
     );
   }
 
   @override
   Future<void> clear() async {
-    await _items._requireDb.delete('outbox');
+    if (_items._host.isEmpty) {
+      await _items._requireDb.delete('outbox');
+    } else {
+      await _items._requireDb.delete(
+        'outbox',
+        where: "request_id LIKE ? ESCAPE '\\'",
+        whereArgs: ['${SqfliteItemStore._escapeLike(_items._host)}/%'],
+      );
+    }
   }
 }
 

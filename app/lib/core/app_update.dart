@@ -24,13 +24,25 @@ const String kAppVersion = String.fromEnvironment(
 
 /// 一次版本比对的结论（**UI 只读它**）。
 class AppUpdate {
-  const AppUpdate({required this.current, this.latest, this.error});
+  const AppUpdate({
+    required this.current,
+    this.latest,
+    this.url,
+    this.changelog,
+    this.error,
+  });
 
   /// 本机版本（[kAppVersion]，或测试注入的值）。
   final String current;
 
   /// 远端最新版本（去掉 `v` 前缀）；`null` = 没查到。
   final String? latest;
+
+  /// 新版本 APK 直链下载地址（`null` = 没给直链，需去 Release 页）。
+  final String? url;
+
+  /// 更新日志说明。
+  final String? changelog;
 
   /// 查询失败的原话（**不吞**：查不到 ≠ 已是最新）。
   final String? error;
@@ -85,4 +97,17 @@ String? latestVersionOfTag(Object? body) {
   if (tag is! String || tag.isEmpty) return null;
   final stripped = tag.startsWith('v') ? tag.substring(1) : tag;
   return stripped.isEmpty ? null : stripped;
+}
+
+/// 版本信息载体（含版本号、直链与更新说明）。
+class AppUpdateInfo {
+  const AppUpdateInfo({
+    required this.version,
+    this.url,
+    this.changelog,
+  });
+
+  final String version;
+  final String? url;
+  final String? changelog;
 }

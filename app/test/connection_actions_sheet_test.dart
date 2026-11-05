@@ -113,6 +113,11 @@ void main() {
           onSwitch: () => switched++,
           onSwitchBack: () => back++,
           switchBackLabel: '客厅那台',
+          hosts: null,
+          currentHostId: null,
+          onSelectHost: null,
+          onRenameHost: null,
+          onClearHostCache: null,
         ),
       ),
     );
@@ -140,6 +145,11 @@ void main() {
           onSwitch: () {},
           onSwitchBack: null,
           switchBackLabel: null,
+          hosts: null,
+          currentHostId: null,
+          onSelectHost: null,
+          onRenameHost: null,
+          onClearHostCache: null,
         ),
       ),
     );

@@ -23,7 +23,9 @@ import 'package:flutter/material.dart';
 
 import '../platform/pairing_store.dart';
 import '../theme/dsh_colors.dart';
+import '../theme/dsh_icons.dart';
 import 'dsh_sheet.dart';
+import 'dsh_toast.dart';
 
 /// 弹出电脑列表；返回被选中的 `hostId`（取消返回 `null`）。
 ///
@@ -35,6 +37,7 @@ Future<String?> pickPairedHost(
   required List<PairedHost> hosts,
   required String? currentHostId,
   Future<void> Function(String hostId, String name)? onRename,
+  Future<void> Function(String hostId)? onClearCache,
 }) {
   return showDshSheet<String>(
     context: context,
@@ -43,6 +46,7 @@ Future<String?> pickPairedHost(
       hosts: hosts,
       currentHostId: currentHostId,
       onRename: onRename,
+      onClearCache: onClearCache,
     ),
   );
 }
@@ -54,11 +58,13 @@ class _HostList extends StatefulWidget {
     required this.hosts,
     required this.currentHostId,
     required this.onRename,
+    this.onClearCache,
   });
 
   final List<PairedHost> hosts;
   final String? currentHostId;
   final Future<void> Function(String hostId, String name)? onRename;
+  final Future<void> Function(String hostId)? onClearCache;
 
   @override
   State<_HostList> createState() => _HostListState();
@@ -83,6 +89,40 @@ class _HostListState extends State<_HostList> {
     });
   }
 
+  Future<void> _confirmClearCache(PairedHost host) async {
+    final onClearCache = widget.onClearCache;
+    if (onClearCache == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (inner) => AlertDialog(
+        title: const Text('清空本地缓存'),
+        content: Text(
+          '确定清空「${host.label}」的本地缓存吗？\n\n'
+          '这会清除该电脑在此手机上的会话消息历史与游标，下次连接重新同步。手机全局设置不受影响。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(inner).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(inner).pop(true),
+            style: TextButton.styleFrom(
+              foregroundColor: context.dshColors.stateError,
+            ),
+            child: const Text('清空'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      await onClearCache(host.hostId);
+      if (mounted) {
+        DshToast.show(context, '已清空「${host.label}」的本地缓存');
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -92,10 +132,6 @@ class _HostListState extends State<_HostList> {
           DshPickerRow(
             name: host.label,
             // 第二行：短码（同名靠它分）+ 状态。名字可改可重名，短码不会。
-            //
-            // **非当前那台显示"上次连接多久之前"**：这一屏唯一的用途是挑一台切过去，
-            // 而"配过但从没连上"与"十分钟前还在用"是两种完全不同的预期 ——
-            // 只写"已配对"时两者长得一模一样。
             tags: [
               host.shortCode,
               host.hostId == widget.currentHostId
@@ -104,13 +140,24 @@ class _HostListState extends State<_HostList> {
             ],
             selected: host.hostId == widget.currentHostId,
             onTap: () => Navigator.of(context).pop(host.hostId),
-            trailing: widget.onRename == null
+            trailing: (widget.onRename == null && widget.onClearCache == null)
                 ? null
-                : IconButton(
-                    icon: const Icon(Icons.edit_outlined, size: 18),
-                    color: context.dshColors.labelSecondary,
-                    tooltip: '给这台电脑改名',
-                    onPressed: () => _rename(host),
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (widget.onRename != null)
+                        IconButton(
+                          icon: DshIcon('edit', size: 16, color: context.dshColors.labelSecondary),
+                          tooltip: '给这台电脑改名',
+                          onPressed: () => _rename(host),
+                        ),
+                      if (widget.onClearCache != null)
+                        IconButton(
+                          icon: DshIcon('trash', size: 16, color: context.dshColors.labelSecondary),
+                          tooltip: '清空此电脑缓存',
+                          onPressed: () => _confirmClearCache(host),
+                        ),
+                    ],
                   ),
           ),
         const SizedBox(height: 6),

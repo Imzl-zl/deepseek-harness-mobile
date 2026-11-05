@@ -132,6 +132,23 @@ class _DshMobileAppState extends State<DshMobileApp>
   PairedCredentials? _credentials;
 
   AppModel? _app;
+
+  /// 已连接/已装配的各电脑 AppModel 实例（按 hostId 索引）。
+  /// 使得电脑间切换可实现 0ms 瞬间切换，多电脑保持并发在线。
+  final Map<String, AppModel> _apps = <String, AppModel>{};
+
+  /// 正在装配/拨号、还没被 [_app] 接管的那个实例（切换用）。
+  ///
+  /// `stillCurrent` 判据必须把它算作"当前"：新实例在 `start()` 期间抛的终态，
+  /// 如果被当成"旧实例的闲话"吞掉，切换失败就永远没人报（用户只看到卡住）。
+  AppModel? _pendingApp;
+
+  /// 这个实例现在算不算"当前"（含正在接管中的那个）。
+  //
+  /// 判据用**对象身份**而不是 hostId：同一台电脑重新装配时，旧实例同样要闭嘴。
+  bool _isCurrentApp(AppModel a) {
+    return identical(a, _app) || identical(a, _pendingApp);
+  }
   bool _booting = true;
 
   /// **已配对的电脑**（凭据层的派生读：`PairingStore.hosts()`）。
@@ -250,6 +267,10 @@ class _DshMobileAppState extends State<DshMobileApp>
       // 旧行，而清完之后手机就没有"我上次配过"的记忆了。
       clearCredentials: () async {
         _refreshRePairHint();
+        final current = _credentials?.pcSignPubHex;
+        if (current != null) {
+          _apps.remove(current)?.dispose();
+        }
         // **只清这一台**：身份被某台电脑拒掉，不该顺手把别的电脑的配对也删了。
         await pairingStore.clear();
       },
@@ -477,13 +498,14 @@ class _DshMobileAppState extends State<DshMobileApp>
       });
       return;
     }
-    final app = await _assemble(saved, _recovery.onTerminated);
+    final app = await _assemble(saved, _recovery.onTerminated, _isCurrentApp);
     if (!mounted) return;
     await app.loadUiState();
     if (!mounted) return;
     setState(() {
       _credentials = saved;
       _app = app;
+      _apps[saved.pcSignPubHex] = app;
       _booting = false;
     });
     await app.start();
@@ -558,7 +580,7 @@ class _DshMobileAppState extends State<DshMobileApp>
     // 配对可能新增了一台（也可能是替换同一台的行）：列表重读一次。
     final hosts = await pairingStore.hosts();
     if (!mounted) return;
-    final app = await _assemble(credentials, _recovery.onTerminated);
+    final app = await _assemble(credentials, _recovery.onTerminated, _isCurrentApp);
     if (!mounted) return;
     await app.loadUiState();
     if (!mounted) return;
@@ -573,16 +595,19 @@ class _DshMobileAppState extends State<DshMobileApp>
     setState(() {
       _credentials = credentials;
       _app = app;
+      _apps[credentials.pcSignPubHex] = app;
       _pairing = false;
       _addingHost = false;
       _pairedHosts = hosts;
     });
     // 下一次重新配对要报**新**的 pairingId（旧的那一行已经被替换掉了）。
     _refreshRePairHint();
-    // **先让新那台开始连，再释放旧的**：添加/配对成功的瞬间不会出现"两边都断"。
-    // （旧客户端的 dispose 仍必须做：它持着 socket，不释放会挂两条连接。）
     await app.start();
-    previousApp?.dispose();
+    if (previousApp != null &&
+        !identical(previousApp, app) &&
+        !_apps.values.contains(previousApp)) {
+      previousApp.dispose();
+    }
     if (wasAdding && mounted) {
       DshToast.show(context, '已添加这台电脑；可在「切换电脑」里来回切');
     }
@@ -605,13 +630,32 @@ class _DshMobileAppState extends State<DshMobileApp>
   ///    **不回到上一台** —— 回滚会让人以为切成功了。
   /// 3. **绝不自动挑一台 / 不自动抢占**：这是用户点的；失败只给「重试连接」与
   ///    「切回上一台」两个显式出口。
+  /// **切换进行中**的闸：切换要开库、派生身份、拨号，全程几百毫秒到几秒。
+  /// 这期间用户再点一次列表（或失败回退又触发一次切换），就会**同时装配两个
+  /// `AppModel` 去拨同一台**——中转按 `(connectorId, deviceId)` 只留一条，
+  /// 新来的顶掉旧的（`reason:"replaced"`），旧的那台以为被踢、立刻重连，
+  /// 于是两边互相顶（2026-11-05 真机：20 分钟 347 次 `replaced`）。
+  /// 闸一关，同一时刻只可能有一次切换在飞。
+  bool _switching = false;
+
   Future<void> _switchTo(String hostId) async {
     if (!mounted) return;
+    if (_switching) return;
     if (_credentials?.pcSignPubHex == hostId) {
       // 点的是同一台：等同于"立刻重连一次"（手动动作，不清凭据）。
       await _app?.client.reconnect();
       return;
     }
+    _switching = true;
+    try {
+      await _switchToLocked(hostId);
+    } finally {
+      _switching = false;
+    }
+  }
+
+  Future<void> _switchToLocked(String hostId) async {
+    if (!mounted) return;
     final next = await pairingStore.load(hostId: hostId);
     if (next == null) {
       // 槽不完整（半份凭据 / 被别处删了）：停在原地并说明。
@@ -621,17 +665,36 @@ class _DshMobileAppState extends State<DshMobileApp>
       return;
     }
     final previous = _credentials?.pcSignPubHex;
-    // **先装配、后改 `active`**：装配是本地动作（开库 + 派生身份），失败时
-    // `active` 还指着上一台 —— 下一次启动仍然起得来。反过来的话，一次失败的
-    // 切换会让 App 每次启动都落到"读得出槽但装配不起来"的那一台上。
-    final app = await _assemble(next, _recovery.onTerminated);
+
+    // **多电脑并发在线（P2 瞬时切换）**：若该电脑已装配连线上，直接复用实例，0ms 切过。
+    final existingApp = _apps[hostId];
+    if (existingApp != null) {
+      try {
+        await pairingStore.activate(hostId);
+      } catch (error) {
+        _reportConnectionDefect(
+          ProtocolException(ErrorCode.internal, '切换电脑失败：$error'),
+        );
+        return;
+      }
+      await existingApp.loadUiState();
+      if (!mounted) return;
+      setState(() {
+        _credentials = next;
+        _app = existingApp;
+        _previousHostId = previous;
+      });
+      return;
+    }
+
+    // **未常驻实例：先装配、后改 `active`**：装配是本地动作（开库 + 派生身份），失败时
+    // `active` 还指着上一台 —— 下一次启动仍然起得来。
+    final app = await _assemble(next, _recovery.onTerminated, _isCurrentApp);
     if (!mounted) return;
     try {
       // **换凭据槽**：`active` 指向新那台（槽本身早就写全了，这里只改指针）。
       await pairingStore.activate(hostId);
     } catch (error) {
-      // 切不过去就停在原地：不动 `active`、不动 `_credentials`。
-      // 这不是"回滚"，是"压根没切"（`active` 还没变过）。
       app.dispose();
       _reportConnectionDefect(
         ProtocolException(ErrorCode.internal, '切换电脑失败：$error'),
@@ -647,13 +710,16 @@ class _DshMobileAppState extends State<DshMobileApp>
       _app = app;
       _previousHostId = previous;
     });
-    // **先连新、成功后再拆旧**（2026-11-05 用户要求）：切换的窗口里旧那台仍然在线，
+    // **先连新、成功后保留在 _apps**（多机并发在线）：切换的窗口里旧那台仍然在线，
     // 不会出现"两边都断"；失败则把旧的装回来，停在原来那台并说明原因。
+    _pendingApp = app;
     try {
       await app.start();
+      _apps[hostId] = app;
     } catch (error) {
       if (!mounted) return;
       app.dispose();
+      _apps.remove(hostId);
       if (previous != null) {
         try {
           await pairingStore.activate(previous);
@@ -669,8 +735,9 @@ class _DshMobileAppState extends State<DshMobileApp>
         ProtocolException(ErrorCode.internal, '切换电脑失败：$error'),
       );
       return;
+    } finally {
+      _pendingApp = null;
     }
-    previousApp?.dispose();
   }
 
   /// 抽屉「我的电脑」那格的「切换」：**有别的电脑就开列表，没有就开连接面板**
@@ -688,6 +755,18 @@ class _DshMobileAppState extends State<DshMobileApp>
     unawaited(_showConnectionSheet());
   }
 
+  /// 清空某台电脑的本地缓存（用户点「清空此电脑缓存」时调）。
+  Future<void> _clearHostCache(String hostId) async {
+    final store = SqfliteItemStore();
+    await store.open();
+    await store.clearForHost(hostId);
+    if (!mounted) return;
+    DshToast.show(_navContext, '已清除该电脑的本地缓存');
+    if (_credentials?.pcSignPubHex == hostId) {
+      await _app?.loadUiState();
+    }
+  }
+
   /// 打开电脑列表并切过去（连接 sheet 的「切换电脑」）。
   Future<void> _openHostPicker() async {
     if (!mounted) return;
@@ -699,7 +778,14 @@ class _DshMobileAppState extends State<DshMobileApp>
       hosts: hosts,
       currentHostId: _credentials?.pcSignPubHex,
       // 改名只写这一台的槽，**不切换、不重连**：用户可能只是想给它们区分开。
-      onRename: (hostId, name) => pairingStore.saveCustomName(hostId, name),
+      onRename: (hostId, name) async {
+        await pairingStore.saveCustomName(hostId, name);
+        final updated = await pairingStore.hosts();
+        if (mounted) setState(() => _pairedHosts = updated);
+      },
+      onClearCache: (hostId) async {
+        await _clearHostCache(hostId);
+      },
     );
     if (hostId == null) return;
     await _switchTo(hostId);
@@ -733,13 +819,29 @@ class _DshMobileAppState extends State<DshMobileApp>
       onSwitch: () => unawaited(_openHostPicker()),
       onSwitchBack: back == null ? null : () => unawaited(_switchTo(back)),
       switchBackLabel: back == null ? null : _hostLabelOf(back),
+      hosts: _pairedHosts,
+      currentHostId: current,
+      onSelectHost: (hostId) => unawaited(_switchTo(hostId)),
+      onRenameHost: (hostId, name) async {
+        await pairingStore.saveCustomName(hostId, name);
+        final hosts = await pairingStore.hosts();
+        if (mounted) setState(() => _pairedHosts = hosts);
+      },
+      onClearHostCache: (hostId) async {
+        await _clearHostCache(hostId);
+      },
     );
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(_reporter);
-    _app?.dispose();
+    for (final app in _apps.values) {
+      app.dispose();
+    }
+    if (_app != null && !_apps.values.contains(_app)) {
+      _app?.dispose();
+    }
     super.dispose();
   }
 
@@ -1611,7 +1713,7 @@ Future<AppModel> _assembleWithoutCredentials([
     // 冷启动读回本地条目：没配对时也能看上次看到的内容（判据同 `_assemble`）。
     readLocalItems: (sid) => store.itemsOf(sid),
     // 没配对也照样能查更新（版本与连接无关）。
-    latestAppTag: fetchLatestAppVersion,
+    latestAppTag: fetchLatestAppUpdate,
     onConnectionTerminated: onConnectionTerminated,
     client: createSyncClient(
       SyncClientDeps(
@@ -1672,8 +1774,10 @@ Future<void> _scopeLocalItemsToHost(ItemStore store, String hostId) async {
   const key = 'local_items.host';
   final previous = await store.readMeta(key);
   if (previous == hostId) return;
-  // 上一次是谁的：不是这一台（或从没记过但库里已经有东西）就清。
-  if (previous != null) await store.clear();
+  // **不再清库**（2026-11-05，用户要求「本地缓存消息要保留」）：条目与水位现在按
+  // `<hostId>/<sid>` 分域存（见 `SqfliteItemStore.setHostScope`），两台电脑各占一段，
+  // 切过去照样读得到自己那份 —— 所以这里只记"上次是谁"给排错用。
+  // 清缓存是**用户动作**，不是切电脑的副作用（切一次就重刷信息流正是老毛病）。
   await store.writeMeta(key, hostId);
 }
 
@@ -1683,11 +1787,21 @@ Future<void> _scopeLocalItemsToHost(ItemStore store, String hostId) async {
 Future<AppModel> _assemble(
   PairedCredentials credentials, [
   void Function(ProtocolException)? onConnectionTerminated,
+  // **"这个实例现在还算不算当前那台"**（2026-11-05：切换电脑后两边反复握手）。
+  //
+  // 传了它就只让"当前实例"的终态上报：切走/换掉的旧 `AppModel` 把最后一条终态
+  // 抛上来时照直转给 `_recovery`，会去清凭据、回配对页 —— 那是上一台的结局，
+  // 不该由它决定这一台。装配点（State 里）用 `identical(app, _app)` 作判据。
+  bool Function(AppModel)? stillCurrent,
 ]) async {
   // 本地库：**先开库再装配**。条目与水位都落在这里（契约 §8.3 的 schema
   // 定义在 `data/store.dart`，驱动是 sqflite —— 三端同源、只有驱动分叉）。
   final store = SqfliteItemStore();
   await store.open();
+  // **缓存按电脑分域**（2026-11-05）：条目与水位写成 `<hostId>/<sid>`，
+  // 两台电脑各占一段 —— 切回去读得到自己那份，不再整段重刷。
+  // 必须在任何读写之前设（下面 `readLocalItems` 立刻就要用）。
+  store.setHostScope(credentials.pcSignPubHex);
 
   // 身份：从主种子派生两把长期密钥（契约 §4.1）。
   // 只存一个 secret —— 三端安全存储才统一得起来（`app-platform-boundaries.md` §5）。
@@ -1816,7 +1930,10 @@ Future<AppModel> _assemble(
   // 换电脑就清掉（`ItemStore.clear()` 连 outbox 一起清，那本来就属于上一台）。
   await _scopeLocalItemsToHost(store, credentials.pcSignPubHex);
 
-  final app = AppModel(
+  // **先声明、后构造**：下面的 `onConnectionTerminated` 要拿"这个 AppModel 自己"
+  // 做身份判据（`identical(app, _app)`），而 Dart 不允许在自身的初始化表达式里引用自己。
+  late final AppModel app;
+  app = AppModel(
     // 偏好走同一个库的 `meta` 表（见 `_assembleWithoutCredentials` 同一处）。
     prefs: MetaPreferences(store),
     client: client,
@@ -1824,6 +1941,7 @@ Future<AppModel> _assemble(
     readLocalItems: (sid) => store.itemsOf(sid),
     // 通知与后台保活：端口在 `core/`、实现按端选（`platform/notify_factory.dart`）。
     notify: createNotifyPort(),
+    ownsNotifyLifecycle: false,
     // 端点表交给 `AppModel` 当所有者：界面要读、设置页要改，而上面的
     // `EndpointTransport` 每次 `connect()` 经 `appRef` 现读它。
     endpoints: credentials.endpoints,
@@ -1833,8 +1951,8 @@ Future<AppModel> _assemble(
     succeededEndpointIds: credentials.endpointMeta.succeededEndpointIds,
     // 本机 LAN 地址（拨号排序判"同网段"用）。拿不到就退化，不猜。
     myLanIpv4Of: currentLanIpv4,
-    // 查更新：只问 GitHub Release（平台层实现，见 `platform/update_checker.dart`）。
-    latestAppTag: fetchLatestAppVersion,
+    // 查更新：平台层更新检查（见 `platform/update_checker.dart`）。
+    latestAppTag: fetchLatestAppUpdate,
     // **这条地址是哪台电脑报的**：用配对时钉死的电脑公钥（`pcSignPubHex`），
     // 不用 `pcId` —— 连接器 id 默认就是 `"local"`，两台电脑会撞。
     // 换一台电脑后旧电脑的地址会被剪掉（永远拨不通，留着只拖慢每轮拨号）。
@@ -1856,7 +1974,15 @@ Future<AppModel> _assemble(
       meta: meta,
     ),
     // 连接终态失败（身份不被认）→ 清凭据回配对页。见 `_recovery`。
-    onConnectionTerminated: onConnectionTerminated,
+    //
+    // **只有"当前那台"的终态才算数**（2026-11-05 真机：切换电脑后两边反复握手）：
+    // 切走之后旧 `AppModel` 还可能把最后一条终态抛上来，照直转给 `_recovery`
+    // 就会去清凭据/回配对页 —— 那是**上一台**的结局，不该由它决定这一台。
+    // 判据用对象身份（`identical`），不用 hostId：同一台重新装配时旧实例同样要闭嘴。
+    onConnectionTerminated: (error) {
+      if (stillCurrent != null && !stillCurrent(app)) return;
+      onConnectionTerminated?.call(error);
+    },
     // **电脑自报的名字缓存到那一台的槽**：切换列表要说得出"这是哪台"。
     // 名字是展示值（可改 / 可重名），不参与判据，所以写失败也不该影响连接。
     onHostName: (name) =>

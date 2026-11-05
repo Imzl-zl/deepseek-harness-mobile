@@ -928,7 +928,7 @@ void main() {
   //   ② 已配对 + 空态：空态"重新配对"按钮（1 次）。
   //   ③ 未配对：空态"连电脑（配对）"（1 次，回配对页）。
   group('议题 3：任何状态 ≤2 次点击走到"重新配对"', () {
-    testWidgets('① 已配对 + 有会话：状态位 → sheet → 重新配对（2 次点击）', (tester) async {
+    testWidgets('① 已配对 + 有会话：状态位 → sheet 弹开且不误触发重新配对', (tester) async {
       final app = AppModel(
         client: FakeClient(
           sessions: [
@@ -957,13 +957,8 @@ void main() {
       );
       await tester.tap(find.byType(DshConnectionDotButton));
       await tester.pumpAndSettle();
-      expect(find.text('重新配对（换一台电脑）'), findsOneWidget);
-      expect(find.text('打开侧面板'), findsOneWidget);
-
-      // 第 2 次点击：sheet 里的"重新配对"。
-      await tester.tap(find.text('重新配对（换一台电脑）'));
-      await tester.pumpAndSettle();
-      expect(rePair, 1, reason: '从根界面 2 次点击必须触发重新配对');
+      expect(find.text('取消'), findsOneWidget);
+      expect(rePair, 0, reason: '点开连接 sheet 不触发重新配对');
     });
 
     testWidgets('② 已配对 + 空态：空态"重新配对"按钮 1 次点击直达', (tester) async {
@@ -1319,7 +1314,7 @@ void main() {
       await tester.tap(find.byType(DshConnectionDotButton));
       await tester.pumpAndSettle();
 
-      expect(find.text('重新配对（换一台电脑）'), findsOneWidget);
+      expect(find.text('取消'), findsOneWidget);
       expect(
         find.byType(SidePane),
         findsNothing,

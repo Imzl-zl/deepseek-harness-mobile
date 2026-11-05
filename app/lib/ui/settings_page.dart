@@ -47,6 +47,7 @@ import 'connection_summary_block.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_sheet.dart';
 import 'dsh_toast.dart';
+import '../platform/updater.dart';
 
 /// 设置页（从抽屉底栏「设置」 push 进来）。
 class SettingsPage extends StatelessWidget {
@@ -347,7 +348,7 @@ class SettingsPage extends StatelessWidget {
               icon: 'globe',
               label: '连接状态',
               value: connectionLabel(app.connection),
-              onTap: () {},
+              onTap: null,
             ),
           ],
         ),
@@ -408,19 +409,26 @@ class SettingsPage extends StatelessWidget {
     DshToast.show(context, '已复制');
   }
 
-  /// 查一次更新并给回执。**失败用 error 色**（查不到不是"已是最新"）。
+  /// 查一次更新并给回执。有新版弹窗下载安装，无新版 Toast 回执。
   Future<void> _checkUpdate(BuildContext context, AppModel app) async {
     await app.checkAppUpdate();
     if (!context.mounted) return;
     final update = app.appUpdate;
     if (update == null) return;
-    DshToast.show(
-      context,
-      update.hasUpdate
-          ? '有新版本 v${update.latest}（去 GitHub Releases 页下载）'
-          : update.label,
-      kind: update.error == null ? DshToastKind.info : DshToastKind.error,
-    );
+    if (update.hasUpdate) {
+      await showUpdateDialog(
+        context,
+        version: update.latest ?? '',
+        url: update.url,
+        changelog: update.changelog,
+      );
+    } else {
+      DshToast.show(
+        context,
+        update.label,
+        kind: update.error == null ? DshToastKind.info : DshToastKind.error,
+      );
+    }
   }
 }
 
@@ -739,13 +747,13 @@ class _PrefRow extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.value,
-    required this.onTap,
+    this.onTap,
   });
 
   final String icon;
   final String label;
   final String value;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -758,8 +766,10 @@ class _PrefRow extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(value, style: TextStyle(fontSize: 13, color: c.labelCaption)),
-          const SizedBox(width: 4),
-          DshIcon('chevronRight', size: 14, color: c.labelTertiary),
+          if (onTap != null) ...[
+            const SizedBox(width: 4),
+            DshIcon('chevronRight', size: 14, color: c.labelTertiary),
+          ],
         ],
       ),
       onTap: onTap,
@@ -857,7 +867,7 @@ class _ModelSection extends StatelessWidget {
           value: current == null
               ? '未选择'
               : '${catalog?.displayNameOf(provider: current.provider, model: current.model) ?? current.label} · ${current.provider}',
-          onTap: () {},
+          onTap: null,
         ),
         if (catalog != null)
           _PrefRow(
@@ -866,7 +876,7 @@ class _ModelSection extends StatelessWidget {
             value:
                 '${catalog.allEntries.length} 个 · '
                 '${catalog.groups.length} 个 provider',
-            onTap: () {},
+            onTap: null,
           ),
         // **拉取失败的 provider 必须列出来**：静默丢掉 = "key 没配"在手机上
         // 毫无痕迹，而用户看到的是"我的 provider 不见了"。
@@ -876,7 +886,7 @@ class _ModelSection extends StatelessWidget {
             icon: 'warningTriangle',
             label: '${failure.name} 拉取失败',
             value: failure.message,
-            onTap: () {},
+            onTap: null,
           ),
         const _PrefNote('提供商与密钥在电脑上改（DSH 的模型设置页）。'),
       ],

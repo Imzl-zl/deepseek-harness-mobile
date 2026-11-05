@@ -1,56 +1,37 @@
-/// 连接操作 sheet —— 议题 3「重新配对」的落点，形状照 `main.dart` 原有的
-/// `_showConnectionSheet`（几个 `ListTile`，无标题框）。
-///
-/// ## 为什么单独一个件
-///
-/// "重新配对"有三个入口：**顶栏连接状态位**、**空态出路**、**抽屉连接行**。
-/// 三者共用同一个 sheet —— 否则"重新配对"的入口会画成三份，迟早有一处漂移
-/// （多一个选项 / 少一句后果 / 文案不一致），而用户卡住时看到的正是漂移的那一处。
-///
-/// 每个入口按自己够得着的缝传回调：
-/// - `onRePair`：重新配对（换一台电脑）—— 清凭据 + 回配对页（装配层注入）。
-/// - `onOpenSide`：打开右侧面板（聊天页内部够得着；抽屉入口也够得着）。
-/// - `onDisconnect`：断开并清掉凭据，但**不**进配对页（装配层注入；聊天页不给）。
+/// 连接操作 sheet —— 议题 3「重新配对」与电脑直切的落点。
 ///
 /// ## 两个形态，同一份内容
 ///
 /// [anchor] 为 `null` ⇒ 底部 sheet（空态出路、抽屉连接行 —— 触发点就在下半屏）；
-/// 给了锚点 ⇒ 锚定浮层（顶栏状态点）。用户 2026-10-21 原话：
-/// 「这个 APP 还有多少这个种不跟手的操作习惯」—— 顶栏点、底部弹是同一类问题。
-/// 内容只画一份：形态不同不该让「重新配对」的入口分成两份。
+/// 给了锚点 ⇒ 锚定浮层（顶栏状态点）。
 library;
 
 import 'package:flutter/material.dart';
 
 import '../model/chat_item.dart';
+import '../platform/pairing_store.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import 'connection_summary_block.dart';
 import 'dsh_popover.dart';
+import 'dsh_toast.dart';
+import 'host_picker_sheet.dart' show lastConnectedLabelOf;
 
 /// 连接 sheet 里"换电脑"那几行需要的缝（装配层注入，页面只转发）。
-///
-/// 收成一条记录而不是四个参数：**它们总是一起出现**（有台数才有入口，
-/// 有入口才谈得上"切回上一台"），拆开传只会多三处可能漏。
 typedef HostSwitchSeam = ({
   /// 除了当前这台还有几台（0 = 不给「切换电脑」这一行）。
   int otherHostCount,
   VoidCallback? onSwitch,
   VoidCallback? onSwitchBack,
   String? switchBackLabel,
+  List<PairedHost>? hosts,
+  String? currentHostId,
+  void Function(String hostId)? onSelectHost,
+  Future<void> Function(String hostId, String name)? onRenameHost,
+  Future<void> Function(String hostId)? onClearHostCache,
 });
 
 /// 弹出连接操作面板。取消（点遮罩 / 「取消」行）不触发任何动作。
-///
-/// [connection] 是顶部的「当前连接」块（连接方式选择器第 1 步：一眼能看
-/// "走的哪条"，不用进设置）。
-///
-/// **2026-10-18 起它也是切换与重连的入口**（用户："页面的右上角的点最好也可以
-/// 点击切换方式重连"）：`onReconnect` / `onPickEndpoint` 两个回调把设置页顶部
-/// 块的两个动作也搬到这里 —— 用户不必为了"换一条"专门进设置。
-///
-/// [anchor]：触发控件的矩形。给了就**长在那个点下面**（顶栏状态点），
-/// 不给就是底部 sheet（空态 / 抽屉连接行）。
 Future<void> showConnectionActionsSheet(
   BuildContext context, {
   required ConnectionSummary connection,
@@ -66,43 +47,79 @@ Future<void> showConnectionActionsSheet(
   VoidCallback? onPickEndpoint,
 
   /// 填一个新地址**只加进表**（换了网络、旧地址全拨不通时的那条出路）。
-  /// **不自动拨**：连不连是用户的动作。
   VoidCallback? onManualEndpoint,
 
   /// **切换电脑**的入口与"切回上一台"（`HostSwitchSeam`）。
-  ///
-  /// 切换是**用户动作**（方案决策 6/9）：这里只给入口，不自动挑一台、
-  /// 也不在"连不上"时偷偷换 —— 那会变成"手机自己换了个电脑"。
   HostSwitchSeam? hostSwitch,
 
-  /// **添加一台电脑**（一台手机配多台电脑的唯一入口）。
-  ///
-  /// 与「重新配对」是两条路：那个**先清再配**（同一台电脑换身份/重来），
-  /// 这个**只加不删** —— `pairingStore.save` 按电脑公钥分槽，旧槽原样保留。
-  /// 取舍见 `.agents/notes/implemented/2026-11-04-add-a-second-computer.md`。
+  /// **添加一台电脑**（一台手机配多台电脑的入口）。
   VoidCallback? onAddHost,
 
   /// 触发点矩形。`null` = 底部 sheet。
   Rect? anchor,
 }) {
   final c = context.dshColors;
-  // 只在确实有"上一台"时才有这一行（`null` / 空串都不给）。
   final switchBackLabel = hostSwitch?.switchBackLabel;
-  // 内容只画一份（形态不同，动作与文案不许漂移）。
-  //
-  // `inner` 必须是**面板路由自己的** context：行里的 `Navigator.pop()`
-  // 要 pop 掉这一层，而不是调用方的页面。
+
   Widget content(BuildContext inner) => Column(
     mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       ConnectionSummaryBlock(
         connection: connection,
-        // 块本身在面板里**不可点**：面板已经展开，再点它没有去处。
-        // 两个动作在下面各有自己的一行，比"点块里某处"更好找。
       ),
-      // **切换电脑**排在最前：多机之后它比"换个连接方式"更常被用
-      // （换的是"连哪台"，那一步同时换了凭据、端点表与界面桶）。
-      if (hostSwitch != null &&
+
+      // **直切已配对电脑列表（1步直达，消灭多级嵌套弹窗）**
+      if (hostSwitch?.hosts != null && hostSwitch!.hosts!.isNotEmpty) ...[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '已配对电脑',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: c.labelSecondary,
+                ),
+              ),
+              if (onAddHost != null)
+                GestureDetector(
+                  onTap: () {
+                    Navigator.of(inner).pop();
+                    onAddHost();
+                  },
+                  child: Row(
+                    children: [
+                      DshIcon('plus', size: 14, color: c.roleContext),
+                      const SizedBox(width: 2),
+                      Text(
+                        '添加新电脑',
+                        style: TextStyle(fontSize: 12, color: c.roleContext),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        for (final host in hostSwitch!.hosts!)
+          _HostInlineTile(
+            host: host,
+            isCurrent: host.hostId == hostSwitch.currentHostId,
+            onTap: () {
+              Navigator.of(inner).pop();
+              hostSwitch.onSelectHost?.call(host.hostId);
+            },
+            onRename: hostSwitch.onRenameHost == null
+                ? null
+                : () => _askRename(inner, host, hostSwitch.onRenameHost!),
+            onClearCache: hostSwitch.onClearHostCache == null
+                ? null
+                : () => _confirmClearCache(inner, host, hostSwitch.onClearHostCache!),
+          ),
+      ] else if (hostSwitch != null &&
           hostSwitch.otherHostCount > 0 &&
           hostSwitch.onSwitch != null)
         ListTile(
@@ -122,6 +139,7 @@ Future<void> showConnectionActionsSheet(
             hostSwitch.onSwitch?.call();
           },
         ),
+
       if (hostSwitch?.onSwitchBack != null)
         ListTile(
           leading: const DshIcon(
@@ -140,9 +158,9 @@ Future<void> showConnectionActionsSheet(
             hostSwitch?.onSwitchBack?.call();
           },
         ),
-      // **添加电脑**：没有别的电脑时它就是"多机"的入口；有别的电脑时
-      // 「切换电脑」在上面、这一行仍然留着（想加第三台的人不用先切走）。
-      if (onAddHost != null)
+
+      // 仅在未内联展示电脑列表时显示独立的「添加电脑」行
+      if (onAddHost != null && (hostSwitch?.hosts == null || hostSwitch!.hosts!.isEmpty))
         ListTile(
           leading: const DshIcon(
             'plus',
@@ -156,6 +174,23 @@ Future<void> showConnectionActionsSheet(
             onAddHost();
           },
         ),
+
+      // **手动填写电脑地址（换网或自建中转直接配 IP 出路）**
+      if (onManualEndpoint != null)
+        ListTile(
+          leading: const DshIcon(
+            'link',
+            size: 18,
+            color: DshColors.labelSecondary,
+          ),
+          title: const Text('手动填写电脑地址'),
+          subtitle: const Text('填完只加进表，不会自动连'),
+          onTap: () {
+            Navigator.of(inner).pop();
+            onManualEndpoint();
+          },
+        ),
+
       if (onReconnect != null)
         ListTile(
           leading: const DshIcon(
@@ -169,8 +204,7 @@ Future<void> showConnectionActionsSheet(
             onReconnect();
           },
         ),
-      // 「重试连接」只在**已经放弃自动重连**时给：那是"再试一轮"，
-      // 与「重新配对（换一台电脑）」是两件事 —— 前者不动物料，后者清凭据。
+
       if (onRetry != null)
         ListTile(
           leading: const DshIcon(
@@ -184,12 +218,7 @@ Future<void> showConnectionActionsSheet(
             onRetry();
           },
         ),
-      // **2026-11-04 收敛**（用户："这里的选项太多了，实际上只有几个有用"）：
-      // 「重新配对」「打开侧面板」「断开连接」三行从这个面板撤掉 ——
-      //   · 重新配对：会清凭据的危险动作，留在空态那条出路与设置页，不摆在最顺手的地方；
-      //   · 打开侧面板：右滑 / 顶栏本来就有入口，这里纯重复；
-      //   · 断开连接：与「重新连接」成对但极低频，用户明确说不需要。
-      // 参数暂时保留签名（调用方与测试还在传），后续搬到设置页时一并删。
+
       ListTile(
         title: const Center(child: Text('取消')),
         onTap: () => Navigator.of(inner).pop(),
@@ -198,8 +227,6 @@ Future<void> showConnectionActionsSheet(
   );
 
   if (anchor != null) {
-    // **动作菜单给 0.8**（默认 0.55 会把「重新配对」挤到滚动区外，
-    // 而它正是这个面板存在的理由之一）。
     return showDshPopover<void>(
       context: context,
       anchor: anchor,
@@ -211,10 +238,174 @@ Future<void> showConnectionActionsSheet(
     context: context,
     backgroundColor: c.layer1,
     builder: (inner) => SafeArea(
-      // **可滚动**：2026-10-18 加了「换个连接方式」「重新连接」两行之后，
-      // 小屏上会 RenderFlex overflow —— 而"选项多到放不下"不该表现成
-      // 一块黄黑条纹。正常屏仍然按内容高度贴底。
       child: SingleChildScrollView(child: content(inner)),
     ),
   );
+}
+
+class _HostInlineTile extends StatelessWidget {
+  const _HostInlineTile({
+    required this.host,
+    required this.isCurrent,
+    required this.onTap,
+    this.onRename,
+    this.onClearCache,
+  });
+
+  final PairedHost host;
+  final bool isCurrent;
+  final VoidCallback onTap;
+  final VoidCallback? onRename;
+  final VoidCallback? onClearCache;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: isCurrent ? c.roleContext : c.labelTertiary,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          host.label,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: isCurrent ? FontWeight.w600 : FontWeight.normal,
+                            color: isCurrent ? c.labelPrimary : c.labelSecondary,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (isCurrent) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: c.layer2,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            '当前',
+                            style: TextStyle(fontSize: 10, color: c.roleContext),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${host.shortCode} · ${lastConnectedLabelOf(host.lastConnectedAt)}',
+                    style: TextStyle(fontSize: 11, color: c.labelCaption),
+                  ),
+                ],
+              ),
+            ),
+            if (onRename != null)
+              IconButton(
+                icon: DshIcon('edit', size: 15, color: c.labelTertiary),
+                tooltip: '改名',
+                onPressed: onRename,
+              ),
+            if (onClearCache != null)
+              IconButton(
+                icon: DshIcon('trash', size: 15, color: c.labelTertiary),
+                tooltip: '清空此电脑缓存',
+                onPressed: onClearCache,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> _askRename(
+  BuildContext context,
+  PairedHost host,
+  Future<void> Function(String hostId, String name) onRename,
+) async {
+  final controller = TextEditingController(text: host.renameInitial);
+  final name = await showDialog<String>(
+    context: context,
+    builder: (inner) => AlertDialog(
+      title: const Text('给这台电脑改名'),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        maxLength: 24,
+        decoration: const InputDecoration(
+          hintText: '比如：办公室那台、家里台式',
+          helperText: '只存在这台手机上；清空则改回电脑自报的名字',
+        ),
+        onSubmitted: (v) => Navigator.of(inner).pop(v.trim()),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(inner).pop(),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(inner).pop(controller.text.trim()),
+          child: const Text('保存'),
+        ),
+      ],
+    ),
+  );
+  if (name == null) return;
+  await onRename(host.hostId, name);
+}
+
+Future<void> _confirmClearCache(
+  BuildContext context,
+  PairedHost host,
+  Future<void> Function(String hostId) onClearCache,
+) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (inner) => AlertDialog(
+      title: const Text('清空本地缓存'),
+      content: Text(
+        '确定清空「${host.label}」的本地缓存吗？\n\n'
+        '这会清除该电脑在此手机上的会话消息历史与游标，下次连接重新同步。手机全局设置不受影响。',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(inner).pop(false),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(inner).pop(true),
+          style: TextButton.styleFrom(
+            foregroundColor: context.dshColors.stateError,
+          ),
+          child: const Text('清空'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed == true && context.mounted) {
+    await onClearCache(host.hostId);
+    if (context.mounted) {
+      DshToast.show(context, '已清空「${host.label}」的本地缓存');
+    }
+  }
 }

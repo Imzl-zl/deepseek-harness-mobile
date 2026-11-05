@@ -64,7 +64,7 @@ void main() {
     expect(find.text('bbbbbb…bbbb'), findsWidgets);
     // "当前"只在当前那台出现一次。
     expect(find.text('当前'), findsOneWidget);
-    expect(find.text('已配对'), findsOneWidget);
+    expect(find.text('从未连接'), findsOneWidget);
 
     // 切换只认身份：点的是"bbbbbb…bbbb"那一台 → 返回 hostB。
     await tester.tap(find.text('bbbbbb…bbbb').last);

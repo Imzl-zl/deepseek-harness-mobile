@@ -28,4 +28,4 @@
 - 每完成一批：`flutter analyze --no-pub` → 版本号 +1 → 推分支 → 按
   `_scratch/dsh-app-0.2.9-build/` 同款流程打包给那台电脑构建（同一 debug keystore，
   可覆盖安装）。
-- 自用版：可含我们的说明；若要给作者 PR：剥离 `dsh.songzuo.online`、令牌、内部笔记后再推。
+- 若要给作者 PR：剥离私有镜像、令牌、内部笔记后再推。

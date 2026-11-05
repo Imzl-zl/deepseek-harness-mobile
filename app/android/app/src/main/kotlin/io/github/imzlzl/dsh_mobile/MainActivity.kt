@@ -99,6 +99,7 @@ class MainActivity : FlutterActivity() {
         registerPhotoPicker(flutterEngine)
         registerNotifications(flutterEngine)
         registerImeInsets(flutterEngine)
+        registerUpdater(flutterEngine)
     }
 
     /**
@@ -645,5 +646,77 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {
             ""
         }
+    }
+
+    /**
+     * 注册应用内升级通道（`dsh/updater`）。
+     * 提供：
+     * - canInstall: 检查当前是否有安装未知来源应用的权限（Android 8.0+ REQUEST_INSTALL_PACKAGES）
+     * - openInstallSettings: 打开系统的未知来源安装权限设置页
+     * - installApk: 传入 APK 本地文件路径，通过 FileProvider 调起系统安装弹窗覆盖安装
+     */
+    private fun registerUpdater(flutterEngine: FlutterEngine) {
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "dsh/updater")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "canInstall" -> {
+                        val can = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            packageManager.canRequestPackageInstalls()
+                        } else {
+                            true
+                        }
+                        result.success(can)
+                    }
+                    "getUpdateDir" -> {
+                        val dir = File(cacheDir, "dsh_updates")
+                        if (!dir.exists()) dir.mkdirs()
+                        result.success(dir.absolutePath)
+                    }
+                    "openInstallSettings" -> {
+                        try {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                                    data = Uri.parse("package:$packageName")
+                                }
+                                startActivity(intent)
+                                result.success(true)
+                            } else {
+                                result.success(true)
+                            }
+                        } catch (e: Exception) {
+                            result.error("OPEN_SETTINGS_FAILED", e.message, null)
+                        }
+                    }
+                    "installApk" -> {
+                        val path = call.argument<String>("path")
+                        if (path.isNullOrEmpty()) {
+                            result.error("INVALID_PATH", "APK path is required", null)
+                            return@setMethodCallHandler
+                        }
+                        val file = File(path)
+                        if (!file.exists()) {
+                            result.error("FILE_NOT_FOUND", "APK file not found at $path", null)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            val apkUri = FileProvider.getUriForFile(
+                                this,
+                                "$packageName.dshfileprovider",
+                                file
+                            )
+                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            startActivity(intent)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("INSTALL_FAILED", e.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
     }
 }

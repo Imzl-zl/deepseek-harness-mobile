@@ -132,8 +132,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     Future<String?> Function()? myLanIpv4Of,
 
     /// 查最新 App 版本（装配层注入 `platform/update_checker.dart`；
-    /// `null` = 这个装配不查更新，界面显示"还没查过"）。
-    Future<String?> Function()? latestAppTag,
+    /// 返回 [AppUpdateInfo]、`Map` 或 `String`；`null` = 不查更新）。
+    Future<Object?> Function()? latestAppTag,
 
     /// 当前配对那台电脑的身份 = 它的 Ed25519 公钥（`pcSignPubHex`）。
     ///
@@ -154,6 +154,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     this.onConnectionTerminated,
     this.onHostName,
     NotifyPort? notify,
+    this.ownsNotifyLifecycle = true,
   }) : _prefs = prefs,
        _readLocalItems = readLocalItems,
        _notify = notify,
@@ -167,11 +168,14 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
        _allowPlaintextPublic = allowPlaintextPublic,
        _hostStateMergeWindow = hostStateMergeWindow;
 
+  /// 是否拥有通知与保活的生命周期（单机时为 true，多电脑并发时由顶层统一管理）。
+  final bool ownsNotifyLifecycle;
+
   /// 冷启动读回本地条目的缝（不传 = 不读本地库）。
   final Future<List<StoredItem>> Function(String sid)? _readLocalItems;
 
   /// 查最新 App 版本的缝（不传 = 这一版不查更新）。
-  final Future<String?> Function()? _latestAppTag;
+  final Future<Object?> Function()? _latestAppTag;
 
   /// 最近一次版本查询的结论（`null` = 还没查过）。
   AppUpdate? get appUpdate => _appUpdate;
@@ -190,8 +194,26 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     _updateChecking = true;
     notifyListeners();
     try {
-      final latest = await fetch();
-      _appUpdate = AppUpdate(current: kAppVersion, latest: latest);
+      final res = await fetch();
+      if (res is AppUpdateInfo) {
+        _appUpdate = AppUpdate(
+          current: kAppVersion,
+          latest: res.version,
+          url: res.url,
+          changelog: res.changelog,
+        );
+      } else if (res is Map) {
+        _appUpdate = AppUpdate(
+          current: kAppVersion,
+          latest: res['version'] as String?,
+          url: res['url'] as String?,
+          changelog: res['changelog'] as String?,
+        );
+      } else if (res is String?) {
+        _appUpdate = AppUpdate(current: kAppVersion, latest: res);
+      } else {
+        _appUpdate = AppUpdate(current: kAppVersion, latest: '$res');
+      }
     } on Object catch (error) {
       _appUpdate = AppUpdate(
         current: kAppVersion,
@@ -4506,7 +4528,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     // 不在了，通知栏里还挂着一条"正在保持连接"的骗人常驻）。
     unawaited(_approvalSub?.cancel());
     final port = _notify;
-    if (port != null) {
+    if (port != null && ownsNotifyLifecycle) {
       unawaited(port.cancelAll());
       unawaited(port.stopKeepAlive());
     }
