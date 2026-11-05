@@ -173,7 +173,7 @@ const stream = await ctx.get('typertGateway').wireStream.open('$events', { args:
 - 管理面设备行只有一格在线态 `online`；「停用」走既有的 `POST /devices/enabled {enabled:false}`。
 - **撤销与清理分开**：活跃行只给「停用」，**删除只对已停用的行开放**（服务端对未停用的 `devIds` 整批拒绝，回 400「先停用再删除」）。理由：手机唯一能"知道被移除"的通道是换票 401 带原因，而行被硬删之后中转只剩 `device-unknown`（与"名册还没同步"不可区分）⇒ 那台手机只会一直重试。取舍见 `implemented/2026-10-30-revoke-then-purge.md`。
 - **停用 / 删除会收掉那台设备已经建立的连接**（`admin/device-admin.ts` 的 `disconnect` → `Connection.stop()`）：只标 `revokedAt` 而不收连接，旧 socket 还在收发，那台手机会一直以为自己在线。按状态批量只对**真删掉**的那些收连接（在线被跳过的不踢）。
-- **数据面的关闭码/理由原样转给另一端**（`relay/src/server.ts` 的 `observeData`，只转 3000–4999）：电脑侧在握手层拒绝时用 `4003 + 协议码/说明`；中转若吞成默认的 `4000`，手机就只会退避重连 —— 撞门而没有结论。
+- **数据面的关闭码/理由原样转给另一端**（`relay/src/server.ts` 的 `observeData`，只转 3000–4999）：电脑侧在握手层拒绝时用 `4003 + 协议码`（码必须在封闭表里，理由的其余部分不塞说明）；中转若吞成默认的 `4000`，手机就只会退避重连 —— 撞门而没有结论。
 
 
 ### 1.7 直连监听面(可选,与中转并存)
