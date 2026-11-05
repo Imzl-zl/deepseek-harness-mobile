@@ -432,7 +432,7 @@ app/packages/
 2. **切不过去就停在原地**：读槽失败或 `activate` 抛错时，`active` 与 `_credentials` 都没动过，旧那台照旧；装配成功但连不上，就停在目标那台的「未连接（原因）」，给「重试连接」与「切回上一台」两个显式出口。
 3. **不自动挑**：没有"自动选一台能连的"这回事，用户点哪台连哪台。
 
-**两台电脑的数据不混，靠分域**：`sid` 是各电脑独立分配的不透明别名，两台电脑可能撞名。装配时用 `pcSignPubHex` 构造 `HostScope`（`data/host_scope.dart`），条目、水位与待发队列经 `ScopedItemStore` / `ScopedOutboxStore`（`data/scoped_store.dart`）落成 `<hostId>/<sid>` 一段。所以**换电脑不清库**、也不会把 A 的历史喂给 B；切回去读得到自己那份。清缓存是用户动作（`clearScope()`），不是切电脑的副作用。取舍见 `ui-state.md` §3 与 `implemented/2026-11-06-s2-host-scope-and-buckets.md`。
+**两台电脑的数据不混，靠分域**：`sid` 是各电脑独立分配的不透明别名，两台电脑可能撞名。装配时用 `pcSignPubHex` 构造 `HostScope`（`data/host_scope.dart`），条目、水位与待发队列经 `ScopedItemStore` / `ScopedOutboxStore`（`data/scoped_store.dart`）落成 `<hostId>/<sid>` 一段。所以**换电脑不清库**、也不会把 A 的历史喂给 B；切回去读得到自己那份。**切电脑不再删任何东西**；将来做"清空此电脑缓存"时走 `ScopedItemStore.clearScope()`（只清这一段），App 里现在还没有那个入口。取舍见 `ui-state.md` §3 与 `implemented/2026-11-06-s2-host-scope-and-buckets.md`。
 
 > **目标（未落地）**：装配层按 `hostId` 持有一池 `AppModel`，切换不拆旧的（`start()` 成功后旧的保持在线），界面按选中那台取数。现在仍是"换槽 + 重新装配 + dispose 旧的"。
 

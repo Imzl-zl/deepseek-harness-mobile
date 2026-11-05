@@ -133,6 +133,9 @@ class ScopedItemStore implements ItemStore {
   /// 这是分域之后"清空"的**唯一入口**：盘上还有别的电脑，它们不是这次的爆炸半径。
   /// 实现是枚举自己的会话逐个 `clearSession` —— 不做 `DELETE FROM items` 那种
   /// 越界删除，也不碰 `meta`（`device.*` / `schema.*` / 别的 `host.*` 一律不在这里）。
+  ///
+  /// **现在没有生产调用方**：App 里还没有"清空此电脑缓存"这个入口（要清只能清 App 数据）。
+  /// 留着它是因为加那个入口时不该再发明第二个形状 —— 尤其不该再出现"清四张表"。
   Future<void> clearScope() async {
     final mine = await inner.allCursors();
     for (final key in mine.keys.where(scope.owns)) {

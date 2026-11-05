@@ -17,8 +17,9 @@
   ③ **S2 存储分域**：`HostScope`（不可变）+ `ScopedItemStore` / `ScopedOutboxStore`
   （装饰器）+ 迁移 v2→v3；**换电脑不再清库**（旧做法会把 `device.*` 与
   `schema.data_version` 一起删掉 ⇒ 切一次电脑主题/字号回默认、切回去整段重刷）。
-  `clear()` 的爆炸半径由作用域决定；两个新原语 `clearSession` / `scopeKeysTo`（`34fbae9`）。
-  门禁：connector **835**；app **1750**；boundary **748**；`dart analyze --fatal-infos` 0。
+  `clear()` 整条删除（唯一调用点就是"换电脑清库"），清空只剩分域的
+  `clearScope()`；两个新原语 `clearSession` / `scopeKeysTo`（`34fbae9` / `61c2b2c`）。
+  门禁：connector **835**；app **1747**；boundary **748**；`dart analyze --fatal-infos` 0。
   审查结论与 6 个 PR 的判定：`proposed/2026-11-06-branch-a-and-pr-audit.md`（待评审）。
   **未做**：S3（AppServices 汇总通知/前台服务）/ S4（HostSessions 池化，切换仍拆旧的）/
   S5（AppModel 切片、chat_page 拆文件）。
