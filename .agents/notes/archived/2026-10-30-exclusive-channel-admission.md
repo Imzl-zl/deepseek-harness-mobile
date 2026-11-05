@@ -1,3 +1,5 @@
+> **已被取代（2026-11-05）**：独占准入整条删除（一台电脑同时服务多台设备），见 `.agents/notes/implemented/2026-11-05-drop-exclusive-channel-admission.md`。本文件按规则冻结保留。
+
 # Agent Note: 独占准入（`device/busy`）、占用位与控制面 `?id=`
 
 Status: implemented

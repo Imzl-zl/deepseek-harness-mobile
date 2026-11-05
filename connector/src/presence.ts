@@ -83,17 +83,9 @@ export interface DevicePresence extends PresenceDevices {
   subscriptions(devId: string, sids: readonly string[]): void
   /** 手机在这个会话上答了一次话（`lastInteractedAt` 由**连接器**盖时间戳）。 */
   interacted(devId: string, sid: string, at: number): void
-  /** 状态快照（只含已配对且未吊销的设备）。 */
+  /** 状态快照（只含已配对且未吊销的设备）。**可以有多台同时在线** —— 一台电脑同时服务
+   *  多台设备，见 `.agents/notes/implemented/2026-11-05-drop-exclusive-channel-admission.md`。 */
   devices(): readonly DeviceState[];
-  /**
-   * **占用位（独占 1:1）**：此刻在服务的那台有效设备。没有就 `undefined`。
-   *
-   * 它就是 {@link devices} 里 `online` 的那一条 —— **不另立第二份状态**：
-   * 停用（`revokedAt`）/ 已删除的行被 `devices()` 滤掉，自然不占位；
-   * 幽灵占用靠 keepalive 的半开判定收口（`transport/keepalive.ts`）。
-   * 握手准入拿它判 `device/busy`（`exclusive.ts`），面板拿它显示"此刻在服务"。
-   */
-  serving(): DeviceState | undefined;
   /** 一台设备的瞬时记录；不在线（或从未上报）时是 `undefined`。 */
   liveOf(devId: string): LiveDeviceRecord | undefined
   /** 当前记录数（指标与测试用）。 */
@@ -194,14 +186,6 @@ export function createDevicePresence(options: PresenceDevices): DevicePresence {
     },
 
     devices: snapshot,
-
-    serving() {
-      // 遍历的就是 `devices()` 的同一份事实（同一个过滤），所以"有效"的判据只有一处。
-      for (const row of snapshot()) {
-        if (row.online) return row
-      }
-      return undefined
-    },
 
     liveOf(devId) {
       return live.get(devId)

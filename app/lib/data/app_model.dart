@@ -1493,20 +1493,10 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     await client.reconnect();
   }
 
-  /// **这台电脑正被哪台设备占着**（`device/busy` 随关闭理由带来的展示名）。
-  ///
-  /// `null` = 没被占用（或根本没被拒过）。名字是电脑侧给的展示值 ——
-  /// 可改、可重名，只用来给人看，不参与任何判据。
-  String? get busyOccupant {
-    final probe = client is SyncClientProbe ? client as SyncClientProbe : null;
-    if (probe == null || !probe.lastConnectBusy) return null;
-    return probe.lastProtocolError?.message;
-  }
-
   /// 拨号阶段的提示（2 s 出阶段、8 s 说"网络很慢"），`null` = 还不到 2 s。
   ///
   /// 它**只是文案**：判据（15 s 总预算）在 `core/endpoint_transport.dart`，
-  /// 结论态由连接层给（`connection` / [busyOccupant]）。手机上不该有第二套计时判据。
+  /// 结论态由连接层给（`connection`）。手机上不该有第二套计时判据。
   String? get connectionHint => _connectionHint;
   String? _connectionHint;
 
@@ -2694,11 +2684,10 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// （连接层），这里只做映射。
   static ConnectionStateView _viewOf(ConnectionState state, SyncClient client) {
     final probe = client is SyncClientProbe ? client as SyncClientProbe : null;
-    // 两档"已给结论"的状态**先于协议状态**：它们说的是"为什么没连上"，
+    // 这一档"已给结论"的状态**先于协议状态**：它说的是"为什么没连上"，
     // 而慢重试期间协议状态会在 connecting / closed / backoff 之间循环 ——
     // 让界面跟着变，等于每次静默重试都往用户眼前跳一次「连接中…」。
     if (state != ConnectionState.serving) {
-      if (probe?.lastConnectBusy ?? false) return ConnectionStateView.busy;
       if (probe?.lastConnectGaveUp ?? false) return ConnectionStateView.gaveUp;
     }
     return switch (state) {

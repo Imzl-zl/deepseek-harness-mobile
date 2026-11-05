@@ -906,56 +906,6 @@ void main() {
       }
     });
 
-    test('被另一台设备占用（4003 + `device/busy 名字`）→ 不自动重连，说得出是谁', () async {
-      // 独占 1:1：电脑侧在握手处拒第二台（`connector/src/protocol/handshake-driver.ts`），
-      // 理由的形状是 `协议码 说明`（契约 §4.1）—— 说明里是占用者的展示名。
-      final f = buildDeps();
-      final client = createSyncClient(f.deps);
-      await client.start();
-      await pump(); // hello 已发出，等电脑侧回 hello-ack 之前被拒
-
-      f.transport.dropFromPeer(code: 4003, reason: 'device/busy 我的手机');
-      await pump();
-
-      final probe = client as SyncClientProbe;
-      expect(probe.lastConnectBusy, isTrue, reason: '被占用要能被界面认出来');
-      expect(probe.lastConnectWasTerminal, isFalse, reason: '凭据是好的：绝不清凭据');
-      expect(probe.lastProtocolError?.code, ErrorCode.deviceBusy);
-      expect(
-        probe.lastProtocolError?.message,
-        '我的手机',
-        reason: '占用者名字来自关闭理由，不许在 App 侧另造一句',
-      );
-      expect(client.state, ConnectionState.closed, reason: '不进退避（不自动撞门）');
-
-      // **不自动重连**：等过任何一段退避间隔都不会再连。
-      f.clock.advance(120000);
-      await pump();
-      expect(f.transport.connectCount, 1, reason: '占用位什么时候空不是我们能决定的');
-
-      // **手动重试照常放行**：它是用户动作（连接 sheet 的「重试连接」）。
-      await client.reconnect();
-      await pump();
-      expect(f.transport.connectCount, 2);
-      expect(probe.lastConnectBusy, isFalse, reason: '重试之后结论作废');
-
-      await client.close();
-    });
-
-    test('被占用但理由不带说明：给一句人话，不把裸码当名字', () async {
-      final f = buildDeps();
-      final client = createSyncClient(f.deps);
-      await client.start();
-      await pump();
-      f.transport.dropFromPeer(code: 4003, reason: 'device/busy');
-      await pump();
-
-      final probe = client as SyncClientProbe;
-      expect(probe.lastConnectBusy, isTrue);
-      expect(probe.lastProtocolError?.message, '这台电脑正被另一台设备连接');
-      await client.close();
-    });
-
     test('连续失败到阈值：结论给过之后改成 60 s 静默慢重试（不是再也不试）', () async {
       // 方案决策 7 的表："结论之后 | 静默慢重试 60 s + ±20% 抖动 | 用户已拿到结论，
       // 重试不该再打扰；抖动防惊群"。

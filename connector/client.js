@@ -222,7 +222,6 @@ window.__ModuleLoader__.load({
       pairRelayOnly: '只有中转这条路（出码时已登记）：不在同一 WiFi 也能扫。',
       // 出码之后中转又断了：登记会随连接器断开失效，**不能继续显示"已登记"**。
       pairRelayDropped: '中转已断开：这张码的跨网那条路已经失效，请重新出码（同一 WiFi 仍可用）。',
-      thisOne: '本次',
       relayLabel: '中转',
       relayConnected: '已连接',
       relayConnecting: '重连中',
@@ -295,9 +294,6 @@ window.__ModuleLoader__.load({
       idle: '未运行',
       foreground: '前台',
       background: '后台',
-      // **独占（1:1）**：同一时刻只有一台设备在服务。它与"在线"不是一回事 ——
-      // 面板要能指出"就是它占着这台电脑"，那才是新手机连不上的原因。
-      serving: '在服务',
       disabled: '已停用',
       neverSeen: '从未交互',
       justNow: '刚刚',
@@ -308,12 +304,6 @@ window.__ModuleLoader__.load({
       disable: '停用',
       enable: '启用',
       remove: '删除',
-      // **接管**：占用者正在服务时把它换下来。它走的还是**停用**那条写路径
-      // （没有第二条"踢人"接口），所以后果句必须把"会释放什么 / 不会断什么"说全。
-      takeOver: '接管',
-      confirmTakeOverTitle: '接管这台电脑？（「{name}」正在服务）',
-      confirmTakeOverDescription: '接管会停用占用设备；它下次连回来要重新配对。',
-      failedTakeOver: '接管失败：{reason}',
       disableSelected: '停用所选',
       selectedAllDisabled: '选中的设备都已停用；要清理记录请到下面「已停用」里删除',
       selectedCount: '已选 {n} 台',
@@ -373,7 +363,6 @@ window.__ModuleLoader__.load({
       pairRelayReady: 'Both routes are ready: direct on the same Wi-Fi, or via the relay (registered when the code was issued) when you are away.',
       pairRelayOnly: 'Relay only (registered when the code was issued): it works away from this Wi-Fi too.',
       pairRelayDropped: 'The relay has disconnected: the away-from-home route of this code is no longer valid — issue a new code (same Wi-Fi still works).',
-      thisOne: 'this session',
       relayLabel: 'Relay',
       relayConnected: 'Connected',
       relayConnecting: 'Reconnecting',
@@ -429,7 +418,6 @@ window.__ModuleLoader__.load({
       idle: 'idle',
       foreground: 'foreground',
       background: 'background',
-      serving: 'serving',
       disabled: 'disabled',
       neverSeen: 'never used',
       justNow: 'just now',
@@ -439,10 +427,6 @@ window.__ModuleLoader__.load({
       disable: 'Disable',
       enable: 'Enable',
       remove: 'Delete',
-      takeOver: 'Take over',
-      confirmTakeOverTitle: 'Take over this computer? ("{name}" is serving)',
-      confirmTakeOverDescription: 'Taking over disables the current device; it must pair again to come back.',
-      failedTakeOver: 'Could not take over: {reason}',
       disableSelected: 'Disable selected',
       selectedAllDisabled: 'Every selected device is already disabled. Use "disabled" below to purge records.',
       selectedCount: '{n} selected',
@@ -1130,7 +1114,6 @@ window.__ModuleLoader__.load({
       const FAIL_TEXT = {
         disable: (reason) => t('failedDisable', { reason }),
         enable: (reason) => t('failedEnable', { reason }),
-        takeOver: (reason) => t('failedTakeOver', { reason }),
       }
 
       /** 单个端点的原始调用（不碰 busy / error）：批量停用要复用它，别复制一遍请求。 */
@@ -1155,20 +1138,6 @@ window.__ModuleLoader__.load({
           setBusy('')
         }
       }
-
-      /**
-       * **接管**：占用者正在服务，操作者明确要把它换下来。
-       *
-       * 它**走的是停用那条写路径**（`POST /devices/enabled {enabled:false}`）——
-       * 没有第二条"踢人"接口，也不该有（决策 6：不自动抢占，接管是显式动作）。
-       * 占用位是 `presence` 的在线记录，所以停用一次就释放（已吊销的行不占位）。
-       */
-      const takeOver = (device) => askConfirm({
-        title: t('confirmTakeOverTitle', { name: device.name }),
-        description: t('confirmTakeOverDescription'),
-        confirmLabel: t('takeOver'),
-        run: async () => { await setEnabled(device, false, FAIL_TEXT.takeOver) },
-      })
 
       /** 停用要确认：那台手机下次重连就会失败。 */
       const disableOne = (device) => askConfirm({
@@ -1571,7 +1540,7 @@ window.__ModuleLoader__.load({
           h('span', { style: S.sep }),
           h('span', { style: S.value }, `${onlineCount} / ${pairedCount} 台在线`),
           onlineCount > 0
-            ? h('span', { style: S.label }, `· ${onlineCount === 1 ? '正在服务 1 台' : '有设备在线'}`)
+            ? h('span', { style: S.label }, '· 有设备在线')
             : null,
           h('span', { style: S.sep }),
           h('span', { style: S.value }, `${t('listenLabel')} ${directPort}`),
@@ -1793,9 +1762,6 @@ window.__ModuleLoader__.load({
                   // "哪台是现在我手里这部"（2026-10-17 真机问过"我只有一个手机怎么显示五个"）。
                   h('td', { style: S.td },
                     device.name,
-                    device.serving
-                      ? h('span', { style: { ...S.label, color: 'var(--dsw-alias-state-success-primary)', marginLeft: 6 } }, t('thisOne'))
-                      : null,
                     narrow
                       ? h('div', { style: { ...S.dim, fontSize: 11, marginTop: 2 } },
                           `${fmtWhen(device.pairedAt, t)} · ${device.revoked ? '—' : fmtAgo(device.lastInteractedAt, t)}`)
@@ -1807,11 +1773,8 @@ window.__ModuleLoader__.load({
                     device.revoked
                       ? h('span', { style: S.dim }, t('disabled'))
                       : h('span', { style: device.online ? S.ok : S.dim },
-                          // **"在服务"跟着在线态报**：独占 1:1 下多出来的那一档，
-                          // 否则操作者只看到"有台设备在线"，分不出是谁占着（新手机连不上的原因）。
                           `${device.online ? t('running') : t('idle')}`
-                          + `${device.online ? ` · ${device.foreground ? t('foreground') : t('background')}` : ''}`
-                          + `${device.serving ? ` · ${t('serving')}` : ''}`),
+                          + `${device.online ? ` · ${device.foreground ? t('foreground') : t('background')}` : ''}`),
                   ),
                   // 三个动作分开：**停用**是软的（断连、留记录、可解禁），
                   // **删除**是硬的（抹掉行）。用户说"记录删不了"指的就是只有前者。
@@ -1833,15 +1796,6 @@ window.__ModuleLoader__.load({
                           }, t('remove')),
                         )
                       : h('span', { style: S.row },
-                          // 只有**正在服务**的那一行才有"接管"：别的行没有可接管的占用位。
-                          device.serving
-                            ? h('button', {
-                                type: 'button',
-                                style: busy === device.id ? { ...S.btn, ...S.btnDisabled } : S.btn,
-                                disabled: busy !== '',
-                                onClick: () => takeOver(device),
-                              }, t('takeOver'))
-                            : null,
                           h('button', {
                             type: 'button',
                             style: busy === device.id ? { ...S.btn, ...S.btnDisabled } : S.btn,

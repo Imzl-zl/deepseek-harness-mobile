@@ -1527,7 +1527,6 @@ class ChatPageState extends State<ChatPage> {
           endpoints: widget.app.endpoints,
           attemptOf: widget.app.attemptOf,
           hint: widget.app.connectionHint,
-          detail: widget.app.busyOccupant,
           userDisconnected: widget.app.userDisconnected,
         ),
         // **换电脑**（已配对两台以上才给这一行）：装配层注入，页面只转发。
@@ -1553,17 +1552,10 @@ class ChatPageState extends State<ChatPage> {
         onReconnect: () => unawaited(
           _afterCurrentSheet(() => reconnectNow(context, widget.app)),
         ),
-        // **已经给了结论才给「重试连接」**：连不上（放弃自动重连）与被另一台设备
-        // 占着，两种都是"再试一轮"的明确时机，且都**不清凭据**。
-        // 被占用走 `reconnect()`（它会清掉占用结论）；放弃走 `start()`（清退避）。
-        onRetry:
-            widget.app.connection == ConnectionStateView.gaveUp ||
-                widget.app.connection == ConnectionStateView.busy
-            ? () => unawaited(
-                widget.app.connection == ConnectionStateView.busy
-                    ? widget.app.client.reconnect()
-                    : widget.app.client.start(),
-              )
+        // **已经给了结论才给「重试连接」**：连不上（放弃自动重连）是"再试一轮"的
+        // 明确时机，且**不清凭据**。走 `start()`（它清退避与放弃标记）。
+        onRetry: widget.app.connection == ConnectionStateView.gaveUp
+            ? () => unawaited(widget.app.client.start())
             : null,
       ),
     );

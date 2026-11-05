@@ -315,9 +315,6 @@ class _SyncClient
     // 且 `closed → connecting` 是**非法迁移**（`setAppState(foreground)` 会在
     // 终态后把 `closed` 当"该重连"调到这里）—— 直接挡掉，两条都避掉。
     if (_lastConnectWasTerminal) return;
-    // **被占用本来就要等用户动作**：`start()` 是自动触发的（启动 / 回前台），
-    // 不该替用户去撞门 —— 手动重试走 `reconnect()`。
-    if (_lastConnectBusy) return;
     // **放弃过的手动重试**：用户点了「重试连接」到这里 —— 清掉放弃标记并把
     // 退避表回到起点，否则下一次 closed 会立刻又判 exhausted。
     if (_connectGaveUp) {
@@ -350,9 +347,6 @@ class _SyncClient
     // `closed` 是终态，`start()` 会直接返回；恢复意图要显式回到起点。
     // 但**终态失败（身份不被认）不复活**：那种情况该走重新配对。
     if (_lastConnectWasTerminal) return;
-    // **被占用要靠手动重试解开**：`reconnect()` 是用户动作（连接 sheet 的
-    // 「重试连接」/ 切换电脑），所以这里清掉结论、照常重拨。
-    _lastConnectBusy = false;
     if (_machine.isAnyOf([ConnectionState.closed, ConnectionState.backoff])) {
       _machine.to(ConnectionState.idle);
     }
@@ -468,8 +462,6 @@ class _SyncClient
     _lastHalfOpenSilentMs = null;
     // 连上了：这条连接不再是"终态停摆"（下次掉线按正常退避判）。
     _lastConnectWasTerminal = false;
-    // 连上了：占用位在我们手里，"被占用"这个结论作废。
-    _lastConnectBusy = false;
     // 连上了：放弃标记与退避表都回到起点（否则下次掉线会从大间隔开始，
     // 甚至立刻又判 exhausted）。
     _connectGaveUp = false;
@@ -535,15 +527,6 @@ class _SyncClient
                 '握手被拒：${detail ?? parsed.wire}',
               );
               _lastConnectWasTerminal = true;
-            case ClientAction.busyWait:
-              // **被占用什么都不清**：凭据是好的，这本就是同一台电脑。
-              // 只停自动重连（占用位什么时候空出来不是我们能决定的），
-              // 手动重试（`reconnect()`）照常放行。
-              _lastProtocolError = ProtocolException(
-                refusal,
-                detail ?? '这台电脑正被另一台设备连接',
-              );
-              _lastConnectBusy = true;
             default:
               break;
           }
@@ -1512,10 +1495,7 @@ class _SyncClient
       // 收口 = 这一轮作废：在途的拨号回来后看到代号变了，就不会再动连接。
       _attemptSeq += 1;
     }
-    if (to == ConnectionState.closed &&
-        !_closed &&
-        !_lastConnectWasTerminal &&
-        !_lastConnectBusy) {
+    if (to == ConnectionState.closed && !_closed && !_lastConnectWasTerminal) {
       // 连接结束 → 进退避 → 到点且前台才重连（§2.2：只在 App 前台重连）。
       _machine.to(ConnectionState.backoff);
       // **失败太多次就给结论**：电脑关机 / 中转挂了时，无限重连意味着用户永远看着
@@ -1680,13 +1660,6 @@ class _SyncClient
   /// 握手成功（[_onEstablished]）时复位。
   bool _lastConnectWasTerminal = false;
 
-  /// 上一次建连失败是**被占用**（`device/busy`，独占 1:1）。
-  ///
-  /// 与 [_lastConnectWasTerminal] 是两个原因、两种处置：身份不被认要清凭据回配对页，
-  /// 而被占用**什么都不该清**，只停自动重连（决策 9：连哪台、什么时候连是用户的动作）。
-  /// `reconnect()`（手动重试）照常放行。
-  bool _lastConnectBusy = false;
-
   /// 建连轮次的代号（每次 `_connect()` +1，每次收口 +1）。
   ///
   /// 拨号要跨 `await`，而"上一轮的收口 / 退避定时器 / 在途的半开判定"都可能
@@ -1737,9 +1710,6 @@ class _SyncClient
 
   @override
   bool get lastConnectGaveUp => _connectGaveUp;
-
-  @override
-  bool get lastConnectBusy => _lastConnectBusy;
 
   /// 已声明的订阅集（`sync.hello` 的输入）。水位不在这里（见 [_sinceOf]）。
   @override

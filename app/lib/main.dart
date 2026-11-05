@@ -1176,7 +1176,6 @@ class _DshMobileAppState extends State<DshMobileApp>
         endpoints: app.endpoints,
         attemptOf: app.attemptOf,
         hint: app.connectionHint,
-        detail: app.busyOccupant,
         userDisconnected: app.userDisconnected,
       ),
       // **换电脑**（与聊天页顶栏那个 sheet 同一份缝）。
@@ -1282,7 +1281,6 @@ class _DshMobileAppState extends State<DshMobileApp>
     ConnectionStateView.backoff => '重连中…',
     ConnectionStateView.connecting => '连接中…',
     ConnectionStateView.handshaking => '握手中…',
-    ConnectionStateView.busy => '被另一台设备占用',
     _ => '未连接',
   };
 
