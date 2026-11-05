@@ -3,7 +3,25 @@
 > 快照 + 最近窗口，**覆盖更新**，不做流水追加。历史在 git 与 `.agents/notes/`；
 > 稳定命令与坑点在 `tools.md`；现状事实在 `docs/`。
 
-## 现在（2026-11-04）
+## 现在（2026-11-06）
+
+- **架构审查 + S0/S1/S2（11-06 第七批，未发版）**：
+  ① **S0 收尾**（`fix/drop-exclusive-admission`）：清掉 11 处仍在解释"占用位 / 接管"的
+  死注释、停用确认文案改成"现在就会断开"（`c30637d`）；补两台设备并发三条判据
+  （停用 A 只断 A、A 答完 B 再答 → `interaction/not-pending`、claim 是挂载级一份，
+  `5cf0973`）；文档收口（`app-channel-client` §6.4 事实化、`remote-channel` §4.1/§4.3、
+  `tools.md` 错误码 36→35、`memory.md` 死链，`dc8a53e`）。
+  ② **S1 去环**：`DiffLine` 归 `model/`、`fieldOf` 等归 `core/json_field.dart`、
+  字号值域归 `core/type_scale.dart` —— `model→ui` / `model→data` / `theme→model`
+  三条反向 import 全部为 **0**（`ff78552` / `5340f54` / `dd2ff4f`）。
+  ③ **S2 存储分域**：`HostScope`（不可变）+ `ScopedItemStore` / `ScopedOutboxStore`
+  （装饰器）+ 迁移 v2→v3；**换电脑不再清库**（旧做法会把 `device.*` 与
+  `schema.data_version` 一起删掉 ⇒ 切一次电脑主题/字号回默认、切回去整段重刷）。
+  `clear()` 的爆炸半径由作用域决定；两个新原语 `clearSession` / `scopeKeysTo`（`34fbae9`）。
+  门禁：connector **835**；app **1750**；boundary **748**；`dart analyze --fatal-infos` 0。
+  审查结论与 6 个 PR 的判定：`proposed/2026-11-06-branch-a-and-pr-audit.md`（待评审）。
+  **未做**：S3（AppServices 汇总通知/前台服务）/ S4（HostSessions 池化，切换仍拆旧的）/
+  S5（AppModel 切片、chat_page 拆文件）。
 
 - **中转三块收口（11-04 第六批）**：
   ① **管理台令牌可达性**：线上 `/admin` 正文的 sha256 与本地 `ADMIN_PAGE` **逐字节相同**
@@ -235,7 +253,7 @@
   **冷启动也接上了（11-01）**：打开会话先 `itemsOf(sid)` 读回条目 → 界面立刻有内容 →
   `since` 取**条目自己的 `seq` 上界**（不取 `cursors.last_seq`：计数器在"事件因空洞
   没入库却照样落盘"时会超前）；一条条目都没有就不认水位。本地条目**按电脑身份分区**
-  （`meta` 的 `local_items.host` vs `pcSignPubHex`，换电脑清库）。真机：冷启动
+  （盘上键是 `<hostId>/<sid>`，`ScopedItemStore` 在装配时注入作用域，换电脑不清库）。真机：冷启动
   **219 965 → 71 739 B（−67.4%）**，其中 `ev` **147 039 → 0**（两轮一致）；
   剩下的 70 KB 全是进程首次拉起时的快照正文（摘要表是每进程的）。笔记
   `implemented/2026-11-01-cold-start-restore-from-local-store.md`。

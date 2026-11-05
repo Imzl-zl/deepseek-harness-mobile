@@ -90,14 +90,25 @@ S1（去环）与 S2（作用域）是目标架构里**不依赖 #8** 的两步�
    它要的是"core 声明、wire 实现"的依赖倒置，动的是热路径，单独一批做并单独留笔记。
 2. **S2**：`HostScope` 不可变 + `ScopedItemStore` 装饰器（`ItemStore` 接口不认识 host，
    作用域构造时注入，**禁止 `setHostScope`**）；键空间三分 `schema.*` / `device.*` / `host.<id>.*`，
-   `clear()` 按桶正写；迁移 v2→v3 把旧行归到 `local_items.host` 记着的那台，
-   没有这个键就删旧行（缓存可重建，不留第二条读路径）。
+   `clear()` 按桶正写；迁移 v2→v3 把旧行归到 `local_items.host` 记着的那台。
+   **没有那个键就什么都不做**（全新安装 / 从没装配过凭据 —— 两种情况下都不存在"该归给谁"的
+   旧数据；实际落地的判据与此同，见 `implemented/2026-11-06-s2-host-scope-and-buckets.md`）。
 
 S3（AppServices 汇总通知/前台服务）、S4（HostSessions 注册表）、S5（AppModel 切片 / chat_page 拆文件）
 不在本轮：S3/S4 依赖池化先落地，S5 是最后做且必须单独评审。
 
-## 五、未验证
+## 五、落地状态（2026-11-06 02:20）
+
+- **S0 五项已落**：`c30637d`（死注释 + 停用文案）、`5cf0973`（两台设备并发三条判据）、
+  `dc8a53e`（文档收口）。
+- **S1 已落**：`ff78552`（DiffLine）、`5340f54`（字号值域）、`dd2ff4f`（JSON 取值助手）。
+  `model→ui` / `model→data` / `theme→model` 三条反向 import 实测为 0。
+- **S2 已落**：`34fbae9`（HostScope + 装饰器 + 迁移 v2→v3 + 键空间三分）。
+- **仍未做**：S3 / S4 / S5；`core→wire`×2 与 `data→wire`×21 的依赖倒置。
+- 门禁现状：connector 835 / app 1750 / boundary 748 / `dart analyze --fatal-infos` 0。
+
+## 六、未验证
 
 - 两台真机端到端（两台同时进服务态、A 答后 B 撤卡、吊销 A 不动 B）：设备 `d61cf622`
-  处于 `unauthorized`，本轮无法驱动真机。
+  处于 `unauthorized`（USB 调试授权没过），本轮无法驱动真机。
 - #8 的 `flutter test` 1685 与 check-runs：旧基线上的自述，本仓未复跑。
