@@ -215,6 +215,7 @@ class SubagentRow {
     required this.createdAt,
     required this.mode,
     this.label,
+    this.name,
   });
 
   final String id;
@@ -226,10 +227,25 @@ class SubagentRow {
   /// `one-shot` / `continuable` / `external` / `unknown`。
   final String mode;
 
-  /// 人类可读名字；缺了就靠 id。
+  /// 人类可读名字；缺了就靠 [name]，再缺才靠 id。
   final String? label;
 
-  String get displayLabel => (label == null || label!.isEmpty) ? id : label!;
+  /// 同级唯一的**代理名**（DSH 0.2.2 的 catalog v3 新增 `name`：
+  /// `packages/subagent/subagent/src/catalog.ts:40`；同一条规则在
+  /// `ui-subagent/src/client/SubagentHeaderLineage.tsx:211-214` 的 `entryName`）。
+  ///
+  /// 只有 `continuable` / `external` 才有名字；更早记录的条目没有这个字段，
+  /// 那时 `entryName` 退回 Session id —— 这里同样不编造。
+  final String? name;
+
+  /// DSH `entryName`：有名字用名字，否则用 Session id。
+  String get agentName => (name == null || name!.isEmpty) ? id : name!;
+
+  /// 行首那行主标签：人类标签 → 代理名 → Session id。
+  ///
+  /// **代理名必须排在 id 前面**：0.2.2 起子代理有了 `agent-1` / `reviewer`
+  /// 这样的名字，而没配 label 的条目在手机上原本显示一串会话 UUID，读不出是谁。
+  String get displayLabel => (label == null || label!.isEmpty) ? agentName : label!;
 
   /// 外部任务：DSH 不给它开子会话（`SubagentHeaderLineage.tsx:279-287` 的
   /// `open()` 第一行 `if (external) return`），也不能展开。
@@ -272,12 +288,14 @@ List<SubagentRow> parseSubagentCatalogValue(Object? list) {
     if (id is! String || id.isEmpty) continue;
     if (createdAt is! num || mode is! String) continue;
     final label = entry['label'];
+    final name = entry['name'];
     out.add(
       SubagentRow(
         id: id,
         createdAt: createdAt.toInt(),
         mode: mode,
         label: label is String && label.isNotEmpty ? label : null,
+        name: name is String && name.isNotEmpty ? name : null,
       ),
     );
   }

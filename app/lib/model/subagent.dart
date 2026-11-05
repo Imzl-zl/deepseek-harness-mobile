@@ -230,6 +230,11 @@ class SubagentNode {
   /// 空的段**整段不出现**（不留下 `· ·`）；全空时是空串。
   String detailLine(int now) => [
     if (title != null && title!.isNotEmpty) title!,
+    // 代理名进了主标签就不再重复；只有 label 占了主标签时才在详情行露出名字
+    // （DSH 同样是「description 当主标签、name 进第二行」，
+    // `ui-subagent/src/client/SubagentHeaderLineage.tsx:289-292`）。
+    if (row.name != null && row.name!.isNotEmpty && row.name != row.displayLabel)
+      row.name!,
     row.modeText,
     // 列表元素用 null-aware element（`?x`）是安全的；
     // **map 里不要这么写**（键会取值的字符串形式，见 `tools.md`）。

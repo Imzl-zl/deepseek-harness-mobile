@@ -65,7 +65,7 @@
 - `ws` 可用;心跳与重连定时器用 `ctx.timer` 的 `interval` / `timeout`,随插件 dispose 自动清理。
 - **状态落插件自己的持久化存储**(见 §8.1):增量缓冲、去重表、设备公钥、会话别名映射。**修订号不落插件存储**(它取自 DSH 的 `seq`)。
 - 不与既有 HTTP 座位冲突:DSH 的 loopback webserver 对重复路由、重复 upgrade、fallback 属主都会抛错(`packages/host/webserver/src/index.ts:169,183,198-199`)。纯出站连接不碰这些。
-- 兼容性由 **`peerDependencies` 对 `@deepseek-ai/dsh*` 的范围**判定(`packages/boot/app-boot/src/plugin-compatibility.ts:68`),不匹配的 bundle 被跳过并记入 `skippedBundles`(`packages/boot/app-boot/src/profile.ts:675-681`)。**`engines.dsh` 不参与判定**(`packages/util/package-manifest/README.md:93`),`engines` 只写 node。
+- 兼容性由包自己的 **`engines.dsh` 范围**单独判定；`peerDependencies` 里的 `@deepseek-ai/dsh*` 只在**缺** `engines.dsh` 时才逐个比对(`packages/boot/app-boot/src/plugin-compatibility.ts:55-73`)，匹配用 `semver.satisfies(..., { includePrerelease: true })`(`:51-53`)。不匹配的 bundle 被跳过并记入 `skippedBundles`(`packages/boot/app-boot/src/profile.ts:687-712`)。上界写成 `<X.Y.Z-0`：`<X.Y.Z` 会放行整条预发布线，由 `connector/tests/manifest-compat.test.ts` 钉住。
 
 ### 2.2 连接状态机
 
