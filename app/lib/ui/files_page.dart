@@ -151,12 +151,7 @@ class _FilesPageHostState extends State<FilesPageHost> {
               child: const Text('上级'),
             ),
           Expanded(
-            child: Text(
-              _path.isEmpty ? '工作区根' : _path,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 12, color: c.labelCaption),
-            ),
+            child: _breadcrumbs(context),
           ),
         ],
       ),
@@ -173,8 +168,41 @@ class _FilesPageHostState extends State<FilesPageHost> {
     ];
   }
 
-  void _open(FileListing listing, FileEntryRow entry) {
-    final path = listing.pathOf(entry);
+  /// 面包屑（目录树的最小形态）：根 → … → 当前目录，每段都可点回去。
+  ///
+  /// 官方 0.2.2 的「常驻目录树」在手机窄屏上放不下一整棵树；这里用可点的路径链
+  /// 提供同一件事（知道自己在哪、能跳回任意祖先），不假装是树。
+  Widget _breadcrumbs(BuildContext context) {
+    final c = context.dshColors;
+    final segments = _path.isEmpty ? const <String>[] : _path.split('/');
+    final crumbs = <Widget>[
+      TextButton(
+        key: const ValueKey<String>('files-crumb-root'),
+        onPressed: _path.isEmpty ? null : () => unawaited(_load('')),
+        child: const Text('工作区根', style: TextStyle(fontSize: 12)),
+      ),
+    ];
+    var accumulated = '';
+    for (final segment in segments) {
+      if (segment.isEmpty) continue;
+      accumulated = accumulated.isEmpty ? segment : '$accumulated/$segment';
+      final target = accumulated;
+      crumbs.add(Text('›', style: TextStyle(fontSize: 12, color: c.labelTertiary)));
+      crumbs.add(
+        TextButton(
+          key: ValueKey<String>('files-crumb-$target'),
+          onPressed: target == _path ? null : () => unawaited(_load(target)),
+          child: Text(segment, style: const TextStyle(fontSize: 12)),
+        ),
+      );
+    }
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(children: crumbs),
+    );
+  }
+
+  void _open(FileListing listing, FileEntryRow entry) {    final path = listing.pathOf(entry);
     if (entry.isDirectory) {
       unawaited(_load(path));
       return;
@@ -289,6 +317,36 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
     super.dispose();
   }
 
+  /// 文件正文 + 行号（官方 0.2.2 文件预览对齐，P1-5，2026-11-05）。
+  ///
+  /// 行号是**装饰**：与正文同色系的弱色等宽；每行一个 span，`SelectableText.rich`
+  /// 仍可整段选中。行数上千时也只构造一次 span 列表（预览本来就有行数上限）。
+  Widget _numberedText(String text) {
+    final c = context.dshColors;
+    final lines = text.split('\n');
+    final width = lines.length.toString().length;
+    return SelectableText.rich(
+      TextSpan(
+        children: [
+          for (var i = 0; i < lines.length; i++) ...[
+            TextSpan(
+              text: '${(i + 1).toString().padLeft(width)} ',
+              style: TextStyle(color: c.labelCaption),
+            ),
+            TextSpan(text: lines[i]),
+            if (i != lines.length - 1) const TextSpan(text: '\n'),
+          ],
+        ],
+      ),
+      style: TextStyle(
+        fontFamily: 'monospace',
+        fontSize: 12,
+        height: 19 / 12,
+        color: c.labelSecondary,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
@@ -341,15 +399,7 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
                     color: c.layer1,
                     borderRadius: BorderRadius.circular(DshRadius.md),
                   ),
-                  child: SelectableText(
-                    opened.text,
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                      height: 19 / 12,
-                      color: c.labelSecondary,
-                    ),
-                  ),
+                  child: _numberedText(opened.text),
                 ),
               const SizedBox(height: 10),
               if (opened != null && opened.lines > 0)
