@@ -10,7 +10,6 @@
 /// 每个入口按自己够得着的缝传回调：
 /// - `onRePair`：重新配对（换一台电脑）—— 清凭据 + 回配对页（装配层注入）。
 /// - `onAddHost`：添加一台电脑 —— **只加不删**，不清当前凭据（装配层注入）。
-/// - `onOpenSide`：打开右侧面板（聊天页内部够得着；抽屉入口也够得着）。
 /// - `onDisconnect`：断开并清掉凭据，但**不**进配对页（装配层注入；聊天页不给）。
 ///
 /// ## 两个形态，同一份内容
@@ -56,7 +55,6 @@ Future<void> showConnectionActionsSheet(
   BuildContext context, {
   required ConnectionSummary connection,
   required VoidCallback onRePair,
-  VoidCallback? onOpenSide,
   VoidCallback? onDisconnect,
   VoidCallback? onRetry,
 
@@ -226,19 +224,6 @@ Future<void> showConnectionActionsSheet(
           onRePair();
         },
       ),
-      if (onOpenSide != null)
-        ListTile(
-          leading: const DshIcon(
-            'panelLeft',
-            size: 18,
-            color: DshColors.labelSecondary,
-          ),
-          title: const Text('打开侧面板'),
-          onTap: () {
-            Navigator.of(inner).pop();
-            onOpenSide();
-          },
-        ),
       if (onDisconnect != null)
         ListTile(
           // **只断链，不动凭据**：清凭据是「重新配对」的事。以前这一行写的是

@@ -958,7 +958,11 @@ void main() {
       await tester.tap(find.byType(DshConnectionDotButton));
       await tester.pumpAndSettle();
       expect(find.text('重新配对（换一台电脑）'), findsOneWidget);
-      expect(find.text('打开侧面板'), findsOneWidget);
+      expect(
+        find.text('打开侧面板'),
+        findsNothing,
+        reason: '右滑 / 顶栏已经有入口，连接面板不再重复放一行',
+      );
 
       // 第 2 次点击：sheet 里的"重新配对"。
       await tester.tap(find.text('重新配对（换一台电脑）'));

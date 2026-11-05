@@ -1225,7 +1225,6 @@ class _DshMobileAppState extends State<DshMobileApp>
       hostSwitch: _hostSwitchSeam,
       onAddHost: _addHost,
       onRePair: _repair,
-      onOpenSide: () => _chatKey.currentState?.openSide(),
       // 断开连接：**只断链，不动凭据**（清凭据是「重新配对」的事，藏在设置里）。
       onDisconnect: () => unawaited(app.disconnectLink()),
     );
