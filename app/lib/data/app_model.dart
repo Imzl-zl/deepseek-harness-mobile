@@ -2946,6 +2946,26 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
             ),
           );
         }
+        // 后台任务完成（官方 0.2.2 对齐）：带一行输出/状态摘要，按 job id 去重；
+        // 只在"刚完成 30 分钟内"提醒，避免每次启动把陈年任务全推一遍。
+        for (final job in _jobs[session.sid] ?? const <JobRow>[]) {
+          final finishedAt = job.finishedAt;
+          if (finishedAt == null || job.isLive) continue;
+          if (DateTime.now().millisecondsSinceEpoch - finishedAt > 30 * 60 * 1000) continue;
+          final detail = (job.detail ?? '').trim();
+          final summary = detail.isEmpty
+              ? (job.progress?.trim().isNotEmpty == true ? job.progress!.trim() : job.statusText)
+              : detail.split('\n').take(2).join(' ').trim();
+          notices.add(
+            AttentionNotice(
+              id: noticeIdOf('job:${job.id}'),
+              kind: NoticeKind.completed,
+              sid: session.sid,
+              title: '后台任务完成 · ${job.label}',
+              body: summary,
+            ),
+          );
+        }
         // 提问：`ask_user_question` 的 `tool/call` 还没有 `tool/result` ——
         // 与连接器认身份的那条规则同一个判据（`connector/src/dsh/question-call.ts`）。
         if (item is ToolCallItem &&
