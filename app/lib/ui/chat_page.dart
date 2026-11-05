@@ -4053,7 +4053,12 @@ class _TurnView extends StatelessWidget {
         :final diffStat,
       ) =>
         ToolCard(
-          name: name,
+          // 问答回看（官方 0.2.2 对齐，P1-3，2026-11-05）：已回答的
+          // `ask_user_question` 不再只是一个普通工具名——标题直接说"问答 · 已回答"，
+          // 展开仍是原来的结果明细（问题与所选答案都在 `detail` 里）。
+          name: name == 'ask_user_question' && status == ToolCallStatus.completed
+              ? '问答 · 已回答'
+              : name,
           status: status,
           argument: summary,
           detail: detail,
