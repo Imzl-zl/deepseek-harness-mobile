@@ -86,6 +86,10 @@ class _TempDirStore implements ItemStore {
   Future<int> prune(String sid, {int keep = 500}) =>
       _inner.prune(sid, keep: keep);
   @override
+  Future<void> clearSession(String sid) => _inner.clearSession(sid);
+  @override
+  Future<void> scopeKeysTo(String prefix) => _inner.scopeKeysTo(prefix);
+  @override
   Future<String?> readMeta(String key) => _inner.readMeta(key);
   @override
   Future<Map<String, String>> readMetaPrefix(String prefix) =>
@@ -242,6 +246,35 @@ void main() {
       test('prune 在条目不够时是空操作', () async {
         await store.commit('s1', [item('a', 1)], 1);
         expect(await store.prune('s1', keep: 10), 0);
+      });
+
+      test('clearSession 只忘掉那一个会话（条目 + 水位），别的会话不动', () async {
+        // `commit` 的行 sid 取的是**条目自己的 `sid`**（不是参数），所以两个会话
+        // 的条目要各自带自己的 sid —— 这里写错就等于两个会话共用一行键。
+        await store.commit('s1', [item('a', 1)], 1);
+        await store.commit('s2', [item('b', 1, sid: 's2')], 1);
+        await store.clearSession('s1');
+        expect(await store.itemsOf('s1'), isEmpty);
+        expect(await store.cursorOf('s1'), 0);
+        expect((await store.itemsOf('s2')).map((i) => i.itemId), ['b']);
+        expect(await store.cursorOf('s2'), 1, reason: '别人家的水位不许被顺手清掉');
+      });
+
+      test('scopeKeysTo 给旧行补前缀，且**幂等**（迁移会重跑）', () async {
+        await store.commit('s1', [item('a', 1)], 3);
+        await store.scopeKeysTo('hostX/');
+
+        final moved = await store.itemsOf('hostX/s1');
+        expect(moved.map((i) => i.itemId), ['hostX/a'], reason: '条目 id 同样带前缀');
+        expect(moved.single.sid, 'hostX/s1');
+        expect(await store.cursorOf('hostX/s1'), 3);
+        expect(await store.itemsOf('s1'), isEmpty, reason: '旧键不再有行');
+        expect(await store.allCursors(), {'hostX/s1': 3});
+
+        // 半途崩过重跑：已分域的行不匹配判据，结果不变。
+        await store.scopeKeysTo('hostX/');
+        expect(await store.cursorOf('hostX/s1'), 3);
+        expect(await store.allCursors(), {'hostX/s1': 3});
       });
 
       test('clear 清空一切（配对失效/换设备）', () async {

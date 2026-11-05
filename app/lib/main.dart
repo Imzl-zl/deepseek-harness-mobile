@@ -40,6 +40,8 @@ import 'core/sync_client_impl.dart';
 import 'core/transport.dart';
 import 'data/app_model.dart';
 import 'data/connection_recovery.dart';
+import 'data/host_scope.dart';
+import 'data/scoped_store.dart';
 import 'data/store.dart';
 import 'model/appearance.dart';
 import 'model/chat_item.dart';
@@ -1481,7 +1483,8 @@ ChannelTransport _pairingTransport(String upgradeUrl) {
 ///
 /// ## 为什么这里能复用真装配的零件
 ///
-/// 因为那些零件**本来就不需要凭据**：本地库、发件箱、落盘缝都与电脑无关。
+/// 因为那些零件**本来就不需要凭据**：本地库、发件箱、落盘缝的**接口**都与电脑无关
+/// （分域是装配时套上去的装饰器，见 `_assemble`；这里没配对，所以不套）。
 /// 只有"握手 ↔ 谁"需要电脑公钥，而这里给一个**不存在的对端**
 /// （空串公钥、空配对标识）—— 它连不上任何真实的电脑，但**也不会被用到**：
 /// 本函数不调 `start()`，而"连"只有一个触发点（配对成功后那一处）。
@@ -1493,8 +1496,11 @@ Future<AppModel> _assembleWithoutCredentials([
   return AppModel(
     // 偏好走同一个库的 `meta` 表（`MetaPreferences` 包一层窄缝）——
     // 发送模式这类"穿过协议"的偏好必须落盘，重启后还是用户选的那个。
+    // **这里不套作用域**：没配对就没有"哪台电脑"，`device.*` / 平铺的 `host.<field>`
+    // 本来也不属于某一台。条目面因此是空的（盘上的行都带 `<hostId>/` 前缀），
+    // 这正是要的 —— 没配对时不该有"上次看过的内容"冒充成某个会话。
     prefs: MetaPreferences(store),
-    // 冷启动读回本地条目：没配对时也能看上次看到的内容（判据同 `_assemble`）。
+    // 冷启动读回本地条目：没配对时没有可归属的电脑，读回空（判据同上）。
     readLocalItems: (sid) => store.itemsOf(sid),
     // 没配对也照样能查更新（版本与连接无关）。
     latestAppTag: fetchLatestAppVersion,
@@ -1547,22 +1553,6 @@ class _UnpairedTransport implements ChannelTransport {
   Future<void> close() async {}
 }
 
-/// 本地条目只属于一台电脑：换了电脑就把库清掉（`meta` 里记着上一次是谁的）。
-///
-/// 为什么必须有这道闸（读回本地内容之后才显形）：`sid` 是电脑侧分配的**不透明别名**，
-/// 两台电脑上的别名空间互不相干，撞名完全可能；把 A 的历史喂给 B，
-/// 界面上就是"别处的消息"。同一处置在偏好那边已有先例（换电脑清 `host.*`）。
-///
-/// 判据是**电脑身份**（`pcSignPubHex`），不是地址 —— 同一台电脑换 IP 不该清库。
-Future<void> _scopeLocalItemsToHost(ItemStore store, String hostId) async {
-  const key = 'local_items.host';
-  final previous = await store.readMeta(key);
-  if (previous == hostId) return;
-  // 上一次是谁的：不是这一台（或从没记过但库里已经有东西）就清。
-  if (previous != null) await store.clear();
-  await store.writeMeta(key, hostId);
-}
-
 /// **装配**：把 `core/` 的零件接到一起，产出可用的 `AppModel`。
 ///
 /// 这是全项目唯一一处"知道用哪个实现"的地方（见文件头）。
@@ -1572,8 +1562,13 @@ Future<AppModel> _assemble(
 ]) async {
   // 本地库：**先开库再装配**。条目与水位都落在这里（契约 §8.3 的 schema
   // 定义在 `data/store.dart`，驱动是 sqflite —— 三端同源、只有驱动分叉）。
-  final store = SqfliteItemStore();
-  await store.open();
+  final inner = SqfliteItemStore();
+  await inner.open();
+  // **条目与水位按电脑分域**（`<hostId>/<sid>`）：两台电脑各占一段，撞名也不互相覆盖。
+  // 作用域是**构造参数**，不是"读写之前记得先设一下"的可变字段 —— 后者忘一次的症状是
+  // "读到别处的内容"而不是崩溃（取舍见 `data/host_scope.dart`）。
+  final scope = HostScope(credentials.pcSignPubHex);
+  final store = ScopedItemStore(inner, scope);
 
   // 身份：从主种子派生两把长期密钥（契约 §4.1）。
   // 只存一个 secret —— 三端安全存储才统一得起来（`app-platform-boundaries.md` §5）。
@@ -1686,7 +1681,8 @@ Future<AppModel> _assemble(
       // 走 `_write`、带 `fc`），所以它在自己构造完之后装上（见
       // `Outbox.attachSender` 的说明：装配点传假实现会让队列**永远发不出去**
       // 而没有任何报错）。
-      outbox: Outbox(store: SqfliteOutboxStore(store)),
+      // 待发项也要分域：`requestId` 是客户端生成的幂等键，两台电脑各自生成、可能撞号。
+      outbox: Outbox(store: ScopedOutboxStore(SqfliteOutboxStore(inner), scope)),
       session: DeviceSession(),
       persistence: StoreItemPersister(store),
     ),
@@ -1697,10 +1693,10 @@ Future<AppModel> _assemble(
   final allowPlaintextPublic =
       (await MetaPreferences(store).read('net.allow_plaintext_public')) == '1';
 
-  // **本地条目属于一台电脑**：`sid` 是电脑侧分配的不透明别名，换一台电脑可能撞名 ——
-  // 拿那一台的历史去喂这一台，界面上就是"别处的消息"。与 `host.*` 偏好同一条处置：
-  // 换电脑就清掉（`ItemStore.clear()` 连 outbox 一起清，那本来就属于上一台）。
-  await _scopeLocalItemsToHost(store, credentials.pcSignPubHex);
+  // **本地条目属于一台电脑**（上面那个 `ScopedItemStore` 已经在做这件事）：
+  // `sid` 是电脑侧分配的不透明别名，换一台电脑可能撞名 —— 拿那一台的历史去喂这一台，
+  // 界面上就是"别处的消息"。分域取代了"换电脑清库"：清库会把 `device.*` 偏好与
+  // `schema.data_version` 一起删掉，代价是切一次电脑主题/字号回默认、切回去整段重刷。
 
   final app = AppModel(
     // 偏好走同一个库的 `meta` 表（见 `_assembleWithoutCredentials` 同一处）。

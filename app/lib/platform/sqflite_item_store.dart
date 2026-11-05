@@ -265,6 +265,39 @@ class SqfliteItemStore implements ItemStore {
       .replaceAll('_', r'\_');
 
   @override
+  Future<void> clearSession(String sid) async {
+    final db = _requireDb;
+    // 条目与水位一个事务：只删一半会留下"水位说到了 10、条目只到 3"的库
+    // （`commit` 的注释里写过这条为什么无法自愈）。
+    await db.transaction((txn) async {
+      await txn.delete('items', where: 'sid = ?', whereArgs: <Object?>[sid]);
+      await txn.delete('cursors', where: 'sid = ?', whereArgs: <Object?>[sid]);
+    });
+  }
+
+  @override
+  Future<void> scopeKeysTo(String prefix) async {
+    final db = _requireDb;
+    // 判据是"键里还没有分隔符"：会话别名（`sid_1`）、条目 id（`m:…` / `t:…`）
+    // 与 `requestId` 都不含它，所以这一条就是"还没分过域"。
+    // 已分域的行不匹配 ⇒ 整个方法幂等。
+    await db.transaction((txn) async {
+      for (final (table, column) in const <(String, String)>[
+        ('items', 'sid'),
+        ('items', 'item_id'),
+        ('cursors', 'sid'),
+        ('outbox', 'request_id'),
+      ]) {
+        await txn.rawUpdate(
+          'UPDATE $table SET $column = ? || $column '
+          'WHERE instr($column, ?) = 0',
+          <Object?>[prefix, kScopeSep],
+        );
+      }
+    });
+  }
+
+  @override
   Future<void> clear() async {
     final db = _requireDb;
     await db.transaction((txn) async {
@@ -446,6 +479,50 @@ class InMemoryItemStore implements ItemStore {
       bucket.remove(item.itemId);
     }
     return drop.length;
+  }
+
+  @override
+  Future<void> clearSession(String sid) async {
+    _requireOpen();
+    _items.remove(sid);
+    _cursors.remove(sid);
+  }
+
+  @override
+  Future<void> scopeKeysTo(String prefix) async {
+    _requireOpen();
+    // 与 sqflite 那份同一条判据：键里还没有分隔符才补前缀。
+    bool unscoped(String key) => !key.contains(kScopeSep);
+    String scoped(String key) => unscoped(key) ? '$prefix$key' : key;
+
+    final nextItems = <String, Map<String, StoredItem>>{};
+    for (final entry in _items.entries) {
+      final sid = scoped(entry.key);
+      final bucket = <String, StoredItem>{};
+      for (final item in entry.value.values) {
+        bucket[scoped(item.itemId)] = StoredItem(
+          itemId: scoped(item.itemId),
+          sid: sid,
+          seq: item.seq,
+          kind: item.kind,
+          payloadJson: item.payloadJson,
+          updatedAt: item.updatedAt,
+        );
+      }
+      nextItems[sid] = bucket;
+    }
+    _items
+      ..clear()
+      ..addAll(nextItems);
+
+    final nextCursors = <String, int>{
+      for (final entry in _cursors.entries) scoped(entry.key): entry.value,
+    };
+    _cursors
+      ..clear()
+      ..addAll(nextCursors);
+    // `outbox` 不在这个实现里（它是另一个对象 `InMemoryOutboxStore`），
+    // 所以这一支不碰它 —— 内存实现本来也不会跨版本升级，迁移在它身上是空跑。
   }
 
   @override

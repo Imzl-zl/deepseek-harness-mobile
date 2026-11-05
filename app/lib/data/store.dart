@@ -38,7 +38,22 @@ import '../core/sync_client.dart';
 ///   见 [storeDataMigrations]）。设备本地 UI 状态复用 `meta` 表，
 ///   因为新建一张表要动 [ItemStore] 接口 + 两个实现，换不来任何能力
 ///   （前缀扫描与按 sid 删行在 `meta` 上都能做）。
-const int storeSchemaVersion = 2;
+/// - v2 → v3：**无 DDL**，把会话键与条目 id 加上电脑前缀（`<hostId>/…`）。
+///   条目与水位从"一台电脑一份库"变成"一台电脑一段"，换电脑不再清库。
+///   前缀取自 `meta.local_items.host`（上一版记下的那台电脑）。
+const int storeSchemaVersion = 3;
+
+/// 作用域分隔符：盘上的会话键是 `<hostId>/<sid>`，条目 id 是 `<hostId>/<itemId>`。
+///
+/// **唯一拼写处**：`data/host_scope.dart` 的 [HostScope]、迁移
+/// （[storeDataMigrations] 的 v2→v3）与两个实现的 `scopeKeysTo` 都用它。
+/// 会话别名（`sid_1`）与条目 id（`m:…` / `t:…` / `i:…`）都不含它，
+/// 所以"键里有没有 `/`"就是"有没有分过域"的判据。
+const String kScopeSep = '/';
+
+/// 上一版记下"库里的条目属于哪台电脑"的键。**只为迁移而存在**：
+/// v2→v3 用它给旧行补前缀，跑完就删（它不是用户偏好，没有第二读者）。
+const String kLegacyItemsHostKey = 'local_items.host';
 
 /// 一条落盘的会话条目。
 ///
@@ -120,6 +135,23 @@ abstract interface class ItemStore {
 
   /// 清理某会话超出 `keep` 的旧条目（契约 §5.3 的淘汰）。
   Future<int> prune(String sid, {int keep = 500});
+
+  /// 忘掉**一个会话**（条目 + 水位）。传的是库里的原始键。
+  ///
+  /// 它是"按桶清空"的最小动作：作用域装饰器（`data/scoped_store.dart` 的
+  /// `ScopedItemStore.clearScope`）枚举出属于自己那台电脑的会话，逐个调它 ——
+  /// 这样"清一台电脑的缓存"不需要 `clear()` 那种"删四张表"的粗动作。
+  Future<void> clearSession(String sid);
+
+  /// 把所有会话键与条目 id 前面加上 [prefix]（迁移用，**幂等**）。
+  ///
+  /// 只改**还没分域**的行（键里没有 [kScopeSep] 的那些）：`items.sid` /
+  /// `items.item_id` / `cursors.sid` / `outbox.request_id`。
+  ///
+  /// 为什么它是接口方法而不是实现里的私货：v2→v3 的迁移函数只拿到 [ItemStore]
+  /// （`storeDataMigrations` 的形状），而"给旧行补前缀"必须两个实现都做一遍 ——
+  /// 否则内存实现跑通的迁移在真库上不成立。
+  Future<void> scopeKeysTo(String prefix);
 
   /// 读一个 `meta` 值（`meta` 表的 k/v）。没有这个键时返回 `null`。
   ///
@@ -295,7 +327,24 @@ const List<StoreDataMigration> storeDataMigrations = <StoreDataMigration>[
   // **`send_mode` 这一代不动**：改走宿主 `ui-conversation.busyEnter` 是批 H，
   // 在那一批之前删它会让发送模式静默回到默认值。
   _scopePreferenceKeys,
+  // v2 -> v3：条目与水位加电脑前缀（一台电脑一段，换电脑不再清库）。
+  _scopeKeysToHost,
 ];
+
+/// v2 → v3：给旧行补上电脑前缀。
+///
+/// 前缀来自上一版在装配时写下的 `meta.local_items.host`（那台电脑的
+/// `pcSignPubHex`）。**没有这个键就什么都不做**：要么是全新安装（表里本来没行），
+/// 要么是从没装配过配对凭据 —— 两种情况下都不存在"该归给谁"的旧数据。
+///
+/// 跑完删掉这个键：它只为迁移存在，留着就是第二个读者（也正是"三份真值"的开头）。
+/// 迁移后未分域的旧行不可能再产生：新写入一律经 `ScopedItemStore` 带前缀。
+Future<void> _scopeKeysToHost(ItemStore store) async {
+  final hostId = await store.readMeta(kLegacyItemsHostKey);
+  if (hostId == null || hostId.isEmpty) return;
+  await store.scopeKeysTo('$hostId$kScopeSep');
+  await store.deleteMeta(kLegacyItemsHostKey, includePrefixed: false);
+}
 
 /// v1 → v2 的具体动作。键名是**契约**（改动等于作废用户的选择）。
 Future<void> _scopePreferenceKeys(ItemStore store) async {
@@ -364,5 +413,9 @@ const List<List<String>> storeMigrations = <List<String>>[
     ''',
   ],
   // v1 -> v2：**无 DDL**（偏好键的搬动在 `storeDataMigrations[1]`）。
+  <String>[],
+  // v2 -> v3：**无 DDL**（给旧行补电脑前缀，在 `storeDataMigrations[2]`）。
+  // 作用域写在键里而不是加一列：`sid` / `item_id` / `request_id` 都是 TEXT 主键，
+  // 多一列就要动三张表的主键与两个实现的所有查询，换不来任何能力。
   <String>[],
 ];
