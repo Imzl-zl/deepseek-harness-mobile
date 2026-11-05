@@ -275,6 +275,20 @@ void main() {
         expect(await store.allCursors(), {'hostX/s1': 3});
       });
 
+      test('v2→v3 数据迁移：给旧行补电脑前缀，并删掉记账键（两个实现各跑一遍）', () async {
+        // 直接跑迁移函数而不是经 `open()`：`open()` 会先把自己那一代记成最新，
+        // 而这里要的是"v2 的库 + 那台电脑的记账键"这个前置状态。
+        await store.commit('s1', [item('a', 1)], 3);
+        await store.writeMeta(kLegacyItemsHostKey, 'hostA');
+
+        await storeDataMigrations[2](store);
+
+        expect(await store.readMeta(kLegacyItemsHostKey), isNull, reason: '只为迁移存在的键');
+        expect(await store.cursorOf('hostA/s1'), 3);
+        expect(await store.allCursors(), {'hostA/s1': 3});
+        expect(await store.itemsOf('s1'), isEmpty, reason: '旧键不再有行');
+      });
+
       test('deleteMeta 按前缀删（换电脑清 host.* 靠它）', () async {
         await store.writeMeta('device.theme_mode', 'dark');
         await store.writeMeta('host.last_session', 'sid-1');

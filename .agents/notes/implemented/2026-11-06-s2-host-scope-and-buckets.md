@@ -69,7 +69,24 @@
 
 - `dart analyze --fatal-infos lib test`：No issues found。
 - `flutter test`：全量通过（本批新增 `test/host_scope_test.dart` 11 项；
-  `test/store_contract_test.dart` 新增 2 项、两个实现各跑一遍 = 42 项）。
+  `test/store_contract_test.dart` 新增 3 项 × 两个实现）。
 - **变异校验**：把 `scopeKeysTo` 里的"键里没有分隔符"判据改成恒真，幂等用例立刻变红；
   还原后全绿（证明这条断言不是自我哄骗）。
 - `node app/tools/verify-platform-boundary.mjs`：748 项全过（扫描 172 个 Dart 文件）。
+- **真机库副本实测**（2026-11-06 02:45，设备 `d61cf622`，`run-as cat` 拉出 `dsh_mobile.db`
+  24.5 MB 到本机，**只读副本**，没在手机上跑任何写操作）：把副本喂给真实现的
+  `open()`（走的就是 v2→v3），前后对比：
+
+  | 项 | 迁移前 | 迁移后 |
+  |---|---|---|
+  | `schema.data_version` | `2` | `3` |
+  | `items` 行数 | 4136 | 4136（一条不少） |
+  | `cursors` 行数 | 14 | 14，键全部变成 `<hostId>/<sid>`；未分域的行 **0** |
+  | `outbox` 行数 | 0 | 0 |
+  | `local_items.host` | 有 | **已删** |
+  | `device.transparency` / `device.surface_alpha` | 23 / 58 | 23 / 58（**原样**） |
+
+  这台设备的 `meta` 一共 11 个键：`device.*` 2 个、`host.<hostId>.*` 7 个、
+  `schema.data_version` 1 个、`local_items.host` 1 个 —— 正好对上"三类主人"的分法。
+  **旁证**：`device.transparency=23` 与 `device.surface_alpha=58` 在旧做法（清四张表）下
+  会被换电脑删掉，也就是用户会看到透明度/表面实心回默认。
