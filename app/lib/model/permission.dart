@@ -32,7 +32,7 @@
 /// 见 `.agents/notes/implemented/2026-10-15-permission-switch-through-dsh-two-doors.md`。
 library;
 
-import '../data/projection.dart';
+import '../core/json_field.dart';
 
 /// 一个可切预设（DSH 的 `PresetOption`，`permission-presets/src/types.ts:13-20`）。
 class PermissionPreset {

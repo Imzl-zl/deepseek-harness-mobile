@@ -19,6 +19,7 @@ library;
 import 'dart:convert';
 
 import '../core/items.dart';
+import '../core/json_field.dart';
 import '../model/changed_path.dart';
 import '../model/chat_item.dart';
 import '../model/interaction.dart';
@@ -1083,29 +1084,9 @@ String _flatten(Object? value) {
   return '$value';
 }
 
-/// 取一个字段（非 Map 返回 `null`）。
-Object? fieldOf(Object? value, String key) => value is Map ? value[key] : null;
-
-/// 取一个字符串字段（非字符串或空串返回 `null`）。
-String? stringField(Object? value, String key) {
-  final field = fieldOf(value, key);
-  return field is String && field.isNotEmpty ? field : null;
-}
-
-/// 取一个整数字段（非 int 返回 `null`）。
-///
-/// **不收 `num`**：JSON 解出来 `1` 是 int、`1.0` 是 double，而 DSH 的
-/// `retry` / `maxRetries` / `turn` 在 schema 里都是 `z.number().int()`
-/// （`llm/retry` 的 `retry.ts:45-48`、`turn/end` 的 turn 号）——
-/// 收到 double 说明形状变了，那时该看不出来，而不是悄悄截断。
-int? intField(Object? value, String key) {
-  final field = fieldOf(value, key);
-  return field is int ? field : null;
-}
-
-/// 同 [stringField]，但名字更短（内部大量使用）。
-String? nonEmptyString(Object? value) =>
-    (value is String && value.isNotEmpty) ? value : null;
+// `fieldOf` / `stringField` / `intField` / `nonEmptyString` 住在
+// `core/json_field.dart`：它们是"对裸 JSON 宽松取值"这一层最底的操作，
+// `model/permission.dart` 也要用（放在这里会让 model 反向 import data）。
 
 // ---------------------------------------------------------------------------
 // 交互投影（契约 §6.3：待处理集合是会话事件的投影）
