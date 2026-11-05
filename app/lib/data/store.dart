@@ -177,9 +177,6 @@ abstract interface class ItemStore {
   ///   否则会把 `host.session_view.sid-10` 一起删掉（`sid-1` 是 `sid-10` 的字符串前缀）。
   Future<void> deleteMeta(String prefix, {bool includePrefixed = true});
 
-  /// 清空（配对失效 / 换设备时用）。
-  Future<void> clear();
-
   /// 关闭（**幂等**）。
   Future<void> close();
 }

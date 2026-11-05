@@ -23,6 +23,13 @@
 /// `meta` 的键**自己就带归属**：`device.*` 跨电脑保留、`schema.*` 是迁移记账、
 /// `host.<hostId>.*` 才是属于某一台的状态（`docs/subsystems/ui-state.md` §2）。
 /// 再给它们套一层前缀就是同一件事两处表达。
+///
+/// ## 接口上没有 `clear()`
+///
+/// `ItemStore` 原本有个"清四张表"的 `clear()`，唯一的生产调用点是"换电脑清库" ——
+/// 它顺手把 `device.*` 偏好与 `schema.data_version` 也删了（切一次电脑主题/字号回默认）。
+/// 现在那个调用点没有了，方法也删掉了：清空只有 [ScopedItemStore.clearScope] 一个入口，
+/// 爆炸半径由作用域决定，误调一次也不会清掉别的电脑。
 library;
 
 import '../core/outbox.dart';
@@ -52,7 +59,9 @@ class ScopedItemStore implements ItemStore {
       for (final item in items)
         StoredItem(
           itemId: scope.keyOf(item.itemId),
-          sid: key,
+          // 行的 `sid` 跟**条目自己的** `sid` 走（与内层实现同一条规则：
+          // `commit` 的参数只决定水位的键）。加了前缀之后这条规则仍然只在一处。
+          sid: scope.keyOf(item.sid),
           seq: item.seq,
           kind: item.kind,
           payloadJson: item.payloadJson,
@@ -121,7 +130,7 @@ class ScopedItemStore implements ItemStore {
 
   /// 清空**这台电脑**的条目与水位。
   ///
-  /// 这是分域之后"清空"的正确含义：盘上还有别的电脑，它们不是这次的爆炸半径。
+  /// 这是分域之后"清空"的**唯一入口**：盘上还有别的电脑，它们不是这次的爆炸半径。
   /// 实现是枚举自己的会话逐个 `clearSession` —— 不做 `DELETE FROM items` 那种
   /// 越界删除，也不碰 `meta`（`device.*` / `schema.*` / 别的 `host.*` 一律不在这里）。
   Future<void> clearScope() async {
@@ -130,11 +139,6 @@ class ScopedItemStore implements ItemStore {
       await inner.clearSession(key);
     }
   }
-
-  /// 接口上的 `clear()`。在分域库里它**就是** [clearScope]：
-  /// "清空"的爆炸半径由作用域决定，否则一次误调就清掉了别的电脑。
-  @override
-  Future<void> clear() => clearScope();
 
   /// **只给迁移用**（迁移跑在内层库上，那时还没有作用域）。
   @override

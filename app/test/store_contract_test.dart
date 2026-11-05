@@ -101,8 +101,6 @@ class _TempDirStore implements ItemStore {
   Future<void> deleteMeta(String prefix, {bool includePrefixed = true}) =>
       _inner.deleteMeta(prefix, includePrefixed: includePrefixed);
   @override
-  Future<void> clear() => _inner.clear();
-  @override
   Future<void> close() async {
     await _inner.close();
     if (_dir.existsSync()) _dir.deleteSync(recursive: true);
@@ -275,14 +273,6 @@ void main() {
         await store.scopeKeysTo('hostX/');
         expect(await store.cursorOf('hostX/s1'), 3);
         expect(await store.allCursors(), {'hostX/s1': 3});
-      });
-
-      test('clear 清空一切（配对失效/换设备）', () async {
-        await store.commit('s1', [item('a', 1)], 1);
-        await store.clear();
-        expect(await store.itemsOf('s1'), isEmpty);
-        expect(await store.cursorOf('s1'), 0);
-        expect(await store.allCursors(), isEmpty);
       });
 
       test('deleteMeta 按前缀删（换电脑清 host.* 靠它）', () async {

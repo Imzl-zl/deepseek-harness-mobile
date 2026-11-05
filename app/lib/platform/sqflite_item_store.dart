@@ -298,16 +298,6 @@ class SqfliteItemStore implements ItemStore {
   }
 
   @override
-  Future<void> clear() async {
-    final db = _requireDb;
-    await db.transaction((txn) async {
-      for (final table in const ['items', 'cursors', 'outbox', 'meta']) {
-        await txn.delete(table);
-      }
-    });
-  }
-
-  @override
   Future<void> close() async {
     final db = _db;
     _db = null;
@@ -552,14 +542,6 @@ class InMemoryItemStore implements ItemStore {
     _meta.removeWhere(
       (key, _) => key == prefix || (includePrefixed && key.startsWith(prefix)),
     );
-  }
-
-  @override
-  Future<void> clear() async {
-    _requireOpen();
-    _items.clear();
-    _cursors.clear();
-    _meta.clear();
   }
 
   @override

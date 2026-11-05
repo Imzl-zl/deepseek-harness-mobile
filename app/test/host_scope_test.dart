@@ -85,14 +85,6 @@ void main() {
       expect(await inner.readMeta('host.hostB.last_session'), 'sid_1');
     });
 
-    test('clear() 在分域库里等于 clearScope()（爆炸半径由作用域决定）', () async {
-      await a.commit('sid_1', [_item('m:1', 'sid_1', 1)], 1);
-      await b.commit('sid_1', [_item('m:2', 'sid_1', 1)], 1);
-      await a.clear();
-      expect(await a.itemsOf('sid_1'), isEmpty);
-      expect(await b.itemsOf('sid_1'), isNotEmpty);
-    });
-
     test('meta 不吃前缀：键自己就带归属（device.* / host.<id>.* 是两种主人）', () async {
       await a.writeMeta('host.hostA.last_session', 'sid_9');
       expect(await inner.readMeta('host.hostA.last_session'), 'sid_9');

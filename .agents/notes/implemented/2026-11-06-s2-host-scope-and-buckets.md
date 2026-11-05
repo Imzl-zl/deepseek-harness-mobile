@@ -29,9 +29,11 @@
    在**构造时**拿到作用域，给 `sid` / `itemId` / `requestId` 加前缀。
    于是 `ItemStore` 接口与两个真实实现**一个字节都不认识 host**，分域规则只有一处，
    内存实现与 sqflite 实现自动一致（它们只需要各自实现两个与 host 无关的新原语，见下）。
-3. **`clear()` 的爆炸半径由作用域决定**：`ScopedItemStore.clear()` 就是 `clearScope()`；
-   `clearScope()` 枚举自己那段会话逐个 `clearSession`。**不做 `DELETE FROM items`**，
-   也不碰 `meta` —— 三类键的主人见 `docs/subsystems/ui-state.md` §3。
+3. **清空只有一个入口**：`ScopedItemStore.clearScope()`，爆炸半径由作用域决定 ——
+   它枚举自己那段会话逐个 `clearSession`，**不做 `DELETE FROM items`**，也不碰 `meta`
+   （三类键的主人见 `docs/subsystems/ui-state.md` §3）。
+   **`ItemStore.clear()` 整条删除**：它唯一的生产调用点就是"换电脑清库"，而那个动作
+   已经不存在；留着一个"清四张表"的接口方法，下一个需要清缓存的人一定会先摸到它。
 4. **`meta` 不吃前缀**：它的键本来就自带归属（`device.*` / `schema.*` / `host.<id>.*`）。
    再套一层前缀就是同一件事两处表达。
 5. **两个新原语（host 无关，写在 `ItemStore` 上）**：
