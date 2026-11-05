@@ -13,7 +13,7 @@
 /// `oldStart` / `newStart`。这里不猜、也不按序号重排 —— 顺序就是宿主给的顺序。
 library;
 
-import '../ui/dsh_diff.dart';
+import 'diff_line.dart';
 
 /// 一个 hunk（宿主 `WorkspaceDiffHunk` 的过线字段）。
 class DiffHunk {

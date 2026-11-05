@@ -27,47 +27,8 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../model/diff_line.dart';
 import '../theme/dsh_colors.dart';
-
-/// 一行差异。
-class DiffLine {
-  const DiffLine({
-    required this.kind,
-    required this.text,
-    this.oldLine,
-    this.newLine,
-  });
-
-  /// hunk 头（`@@ -112,9 +112,14 @@`）。
-  const DiffLine.hunk(this.text)
-    : kind = DiffKind.hunk,
-      oldLine = null,
-      newLine = null;
-
-  final DiffKind kind;
-  final String text;
-
-  /// 旧行号（新增行为 `null`）。
-  final int? oldLine;
-
-  /// 新行号（删除行为 `null`）。
-  final int? newLine;
-}
-
-/// 行的种类。
-enum DiffKind {
-  /// 上下文（两边都有）。
-  context,
-
-  /// 新增。
-  add,
-
-  /// 删除。
-  del,
-
-  /// hunk 头。
-  hunk,
-}
 
 /// 一个 diff（若干行）。
 class DshDiff extends StatelessWidget {
