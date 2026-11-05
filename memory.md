@@ -19,7 +19,10 @@
   `schema.data_version` 一起删掉 ⇒ 切一次电脑主题/字号回默认、切回去整段重刷）。
   `clear()` 整条删除（唯一调用点就是"换电脑清库"），清空只剩分域的
   `clearScope()`；两个新原语 `clearSession` / `scopeKeysTo`（`34fbae9` / `61c2b2c`）。
-  门禁：connector **835**；app **1747**；boundary **748**；`dart analyze --fatal-infos` 0。
+  门禁：connector **835**；app **1749**；boundary **748**；`dart analyze --fatal-infos` 0。
+  另外把**真机库副本**喂给真实现跑了一遍 v2→v3（24.5 MB 的 `dsh_mobile.db`，只读副本）：
+  4136 条条目一条不少、14 个水位键全部带前缀、`device.transparency/surface_alpha` 原样 ——
+  证据在 `implemented/2026-11-06-s2-host-scope-and-buckets.md` 的「验证」。
   审查结论与 6 个 PR 的判定：`proposed/2026-11-06-branch-a-and-pr-audit.md`（待评审）。
   **未做**：S3（AppServices 汇总通知/前台服务）/ S4（HostSessions 池化，切换仍拆旧的）/
   S5（AppModel 切片、chat_page 拆文件）。
@@ -415,7 +418,7 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 728 项（25 条规则自检 + 167 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | 748 项（25 条规则自检 + 172 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
 | `cd app && flutter test` | 1738 项（约 1 分钟） |
