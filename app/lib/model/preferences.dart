@@ -12,41 +12,10 @@
 /// 同一条路（`kSendModeKey`）。
 library;
 
-/// 正文基准字号的范围与默认值 —— 照 DSH 的 `fontSize` 设置
-/// （`packages/client/ui-theme/src/theme-settings.ts:24-30`：整数 10–22、默认 14）。
-///
-/// 常量放在这里（纯 Dart）而不是 `theme/dsh_type.dart`：`data/app_model.dart`
-/// 要读它，而 `theme/` 那个文件依赖 `package:flutter/widgets.dart` ——
-/// `data/` 层不许 import widgets（`app-platform-boundaries.md` 的
-/// `core-no-platform-import`）。
-const int kContentFontSizeMin = 10;
-const int kContentFontSizeMax = 22;
-const int kContentFontSizeDefault = 14;
-
-/// **界面字号**档位（App 内的倍率，叠在系统字号之上）。
-///
-/// ## 为什么是倍率而不是 px
-///
-/// 手机上的"字号"本来就有**两层**：系统字号（Android 的字体大小 / iOS 的 Dynamic Type，
-/// Flutter 通过 `MediaQuery.textScaler` 递进来）与**App 内自己的档位**。主流 App 都是
-/// 两层相乘，而不是二选一 —— 用户在系统里放大过，进 App 还要能再调。
-///
-/// 取倍率的三个理由：
-/// 1. 等比缩放**不改变任何对比关系**（11/14 的比例还是 11/14），所以不会出现
-///    "内容与 chrome 差一倍"那种丑；逐处写 px 才会。
-/// 2. 它天然把**所有**文字一起放大（含 chrome 与 caption）—— 这就是"全局"。
-/// 3. 与平台机制同一条（`TextScaler.linear`），不发明新东西。
-///
-/// 上限 1.3 是实测定的：系统 1.5 时顶栏标题已开始省略、输入框占 1/5 屏；
-/// 1.3 在有工具卡 / 代码块 / diff 的会话上仍然舒服（`shots-2026-10-22/sc-1_3-session.png`）。
-/// 与系统字号叠加后再整体 clamp 到 2.0（系统 2.0 实测不溢出，只是挤）。
-const List<double> kUiScaleSteps = <double>[0.9, 1.0, 1.15, 1.3];
-
-/// 四档的名字（设置行直接用它）。
-const List<String> kUiScaleLabels = <String>['较小', '标准', '较大', '特大'];
-
-/// 默认档的下标（`1.0`）。
-const int kUiScaleDefaultIndex = 1;
+// 字号的值域（正文基准范围 + App 内四档倍率）住在 `core/type_scale.dart`：
+// 它被 `theme/`（换算）、`data/`（读盘 clamp）与 `ui/`（设置行）三层同时读，
+// 而 `theme/` 依赖 widgets、`data/` 又不许 import 它 —— `core/` 是唯一的共同底。
+// 本文件只放**偏好本身**（枚举与键名），不放值域。
 
 /// 工作步骤展示密度（DSH `settings.transcript`，四档）。
 ///

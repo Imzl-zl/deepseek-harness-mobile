@@ -36,7 +36,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
-import '../model/preferences.dart';
+import '../core/type_scale.dart';
 
 /// 一套字号（由设置里的"字号大小"决定）。
 @immutable
@@ -106,7 +106,7 @@ class DshType {
 /// 字号**角色表**（正文 / secondary / 标题阶梯 / caption / code）。
 ///
 /// 2026-10-22 晚改：**不再承载"字号设置"** —— 设置变成了"界面字号的倍率"
-/// （`model/preferences.dart` 的 `kUiScaleSteps`），由 `main.dart` 乘进
+/// （`core/type_scale.dart` 的 `kUiScaleSteps`），由 `main.dart` 乘进
 /// `MediaQuery.textScaler`，让**所有**文字等比放大（含 chrome 与 caption）。
 ///
 /// 这一层继续存在的理由：调用点写 `context.dshType.body` 比写 `14` 多一层语义

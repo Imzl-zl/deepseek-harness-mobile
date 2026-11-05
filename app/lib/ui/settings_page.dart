@@ -32,6 +32,7 @@ import 'package:flutter/services.dart';
 import '../core/app_update.dart';
 import '../core/endpoint.dart';
 import '../core/pairing_flow.dart' show PairingPreference;
+import '../core/type_scale.dart';
 import '../data/app_model.dart';
 import '../model/agent_preset.dart';
 import '../model/appearance.dart';

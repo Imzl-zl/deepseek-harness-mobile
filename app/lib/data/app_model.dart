@@ -37,6 +37,7 @@ import '../core/session_restore.dart';
 import '../core/snapshot_call.dart';
 import '../core/snapshot_digest.dart';
 import '../core/sync_client.dart';
+import '../core/type_scale.dart';
 import '../model/agent_preset.dart';
 import '../model/changes.dart';
 import '../model/chat_item.dart';
