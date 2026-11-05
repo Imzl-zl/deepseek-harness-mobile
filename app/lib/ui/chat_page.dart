@@ -32,6 +32,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show ValueListenable;
@@ -2144,6 +2145,46 @@ class ChatPageState extends State<ChatPage> {
           ],
         ),
         actions: [
+          // 原始 JSON（官方 0.2.2 的 Trajectory 能力对齐，2026-11-05）：
+          // 投影目前只给结构化字段、不给原始事件帧，所以这里展示**段的原始字段**，
+          // 不冒充"原始 payload"。
+          DshSheetAction(
+            label: '原始 JSON',
+            onPressed: () {
+              Navigator.of(context).pop();
+              final raw = const JsonEncoder.withIndent('  ').convert([
+                for (final s in steps)
+                  {
+                    'kind': s.kind.name,
+                    'seq': s.seq,
+                    'startTime': s.startTime,
+                    'endTime': s.endTime,
+                    'offsetMs': s.offsetMs,
+                    'durationMs': s.durationMs,
+                    'isError': s.isError,
+                    'label': s.label,
+                  },
+              ]);
+              unawaited(showDialog<void>(
+                context: context,
+                builder: (dialogContext) => AlertDialog(
+                  title: Text(merged ? '第 ${turn.turn} 轮 · ${steps.length} 段 JSON' : '第 ${turn.turn} 轮 JSON'),
+                  content: SingleChildScrollView(
+                    child: SelectableText(
+                      raw,
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      child: const Text('关闭'),
+                    ),
+                  ],
+                ),
+              ));
+            },
+          ),
           DshSheetAction(
             label: '关闭',
             filled: true,
