@@ -39,23 +39,22 @@
   顺手修掉 S2 遗留：`integration_test/local_store_test.dart` 还在调已删的
   `SqfliteItemStore.clear()`，`integration_test` 自 `61c2b2c` 起编译不过（门禁只 analyze
   `lib test`，看不见）—— 改成 `clearSession('s1')`。
-  **仍未做**：`data` 的 **16 条**（第 1、2 批倒置掉 5 条，见 ⑦），以及**一次真机重连**
+  **仍未做**：`data` 的 **12 条**（第 1、2、3 批倒置掉 9 条，见 ⑦），以及**一次真机重连**
   （改的是收帧热路径，不能只看测试）。
-  ⑦ **P1 后半（能力接口），第 1、2 批已落地（11-06）**：`data → wire` 的 21 条走**能力接口** ——
+  ⑦ **P1 后半（能力接口），第 1–3 批已落地（11-06）**：`data → wire` 的 21 条走**能力接口** ——
   `HostRpc` 声明在 `core/host_rpc.dart`、`WireHostRpc` 实现在 `wire/host_rpc.dart`、
   `_SyncClient implements HostRpcHolder`（**1 个 getter**，九个方法一个都不抄）并把调用转给
   `SyncClientDeps.hostRpc`（**工厂**）造出的 `WireHostRpc`（它自己带着那条连接），
   消费者用 `hostRpcOf(client)` 取（沿用 `LinkControl` 先例，**`SyncClient` 接口零新增成员**）。
   **不给 `AppModel` 加必填端口**：那要动 74 个测试文件，而且夹具会从原始协议 JSON 退化成手搓 DTO，
   等于把解码器从测试路径上摘掉。第 1 批会话族（投影 + 会话行）、第 2 批目录族（设置 / 三个目录 /
-  工作区 / 仓库 / 插件）：6 个值类型搬进 `core/*.dart`，端口九个方法
-  （`projections` / `sessionRows` / `settings` / `modelCatalog` / `permissionCatalog` /
-  `agentPresets` / `workspaces` / `repoInfo` / `plugins`）。
+  工作区 / 仓库 / 插件）、第 3 批预览族（目录列举 / 文件分页 / 改动记录 / 逐行比对，**不搬 DTO**）：
+  6 个值类型搬进 `core/*.dart`，端口十三个方法。
   端口形状：能力自己持有连接（方法不收 `client`），客户端只实现 `HostRpcHolder` 的一个 getter
   —— 起草时"客户端 implements HostRpc + 逐方法转发"那版试过、当天换掉了，理由见
   `.agents/notes/implemented/2026-11-06-p1b-hostrpc-holder.md`。
-  `app_model` 的 `wire/` import 15 → **13**、`host_catalogs` 3 → **0**、`wire.` 44 → **29**，
-  `data/` 21 → **16**。
+  `app_model` 的 `wire/` import 15 → **11**、`host_catalogs` 3 → **0**、`file_preview` 2 → **0**、
+  `wire.` 44 → **27**，`data/` 21 → **12**。
   实测代价：五个测试文件只因"字段名撞端口方法名"改名（`projections` / `workspaces` →
   `…Reply`，值与形状没动）；`wire_shapes_replay_test` 改了 11 处类型名 + 3 条 import（金样没动）；
   端口一律返回 `SnapshotReply<…>`（三态 —— 裸 null 会把 `notModified` 当成失败）。
@@ -63,8 +62,9 @@
   而 `model/` 又 import `core/job.dart` 等）。
   没有真机（读的形状与路径没变）。见
   `.agents/notes/implemented/2026-11-06-p1b-batch1-session-family.md`、
-  `.agents/notes/implemented/2026-11-06-p1b-batch2-catalog-family.md`；剩下 2 批
-  （预览族 → 收尾）见 `proposed/2026-11-06-p1b-host-rpc-port.md`。
+  `implemented/2026-11-06-p1b-batch2-catalog-family.md`、
+  `implemented/2026-11-06-p1b-batch3-preview-family.md`；剩**收尾批**（各写操作 +
+  `projection.dart` 那条）见 `proposed/2026-11-06-p1b-host-rpc-port.md`。
   门禁：connector **836**；app **1759**；boundary **791**；`dart analyze --fatal-infos` 0
   （format 门禁也恢复到 0，HEAD 上遗留的 14 个文件已在 `edad912` 格式化）。
   另外把**真机库副本**喂给真实现跑了一遍 v2→v3（24.5 MB 的 `dsh_mobile.db`，只读副本）：

@@ -72,13 +72,14 @@ UI 一旦开始认事件类型,同一件事就会在两个地方各写一遍。
   已经倒置完的三族:翻页/补取走 `core/history_page.dart` 的 `HistoryReader`(实现在
   `wire/rpc/session_page.dart`),事件身份字段走 `core/items.dart` 的 `EventIdReaders`
   (实现在 `wire/events.dart`),读电脑侧的快照与目录走 `core/host_rpc.dart` 的 `HostRpc`
-  (实现在 `wire/host_rpc.dart`,客户端兼作该能力 —— 会话投影 / 会话行 / 设置 / 三个目录 /
-  工作区 / 仓库 / 插件)。
-  **`data/` 还有 16 条** `wire/` import(`app_model` 13 / `file_preview` 2 / `projection` 1),
+  (实现在 `wire/host_rpc.dart`,客户端以 `HostRpcHolder` 暴露该能力 —— 会话投影 / 会话行 /
+  设置 / 三个目录 / 工作区 / 仓库 / 插件 / 文件预览与改动清单)。
+  **`data/` 还有 12 条** `wire/` import(`app_model` 11 / `projection` 1),
   代价与实测数字见
   `.agents/notes/implemented/2026-11-06-p1-dependency-inversion.md`、
-  `.agents/notes/implemented/2026-11-06-p1b-batch1-session-family.md` 与
-  `.agents/notes/implemented/2026-11-06-p1b-batch2-catalog-family.md`。
+  `.agents/notes/implemented/2026-11-06-p1b-batch1-session-family.md`、
+  `.agents/notes/implemented/2026-11-06-p1b-batch2-catalog-family.md` 与
+  `.agents/notes/implemented/2026-11-06-p1b-batch3-preview-family.md`。
 - **条目身份只算一次**:`itemIdOf`(契约 §5.2 的规则)在**解码边界**跑,结果落在
   `SessionEvent.itemId`;`data/projection.dart` 只**消费**它,不再重推 —— 同一条事件
   两条路径各推一次就会有两个答案。

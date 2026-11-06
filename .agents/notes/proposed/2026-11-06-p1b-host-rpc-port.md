@@ -1,13 +1,12 @@
 # P1 后半：`data → wire` 倒置走「能力接口」，端口跟着客户端走
 
 - 日期：2026-11-06
-- 状态：proposed（**第 1 批（会话族）+ 第 2 批（目录族）已落地**，其余未落码）
+- 状态：proposed（**第 1、2、3 批已落地**，只剩收尾）
 - 前情：`core → wire` 已归零（见 `implemented/2026-11-06-p1-dependency-inversion.md`）。
   这一篇只管 `data/` 剩下的 21 条 import。
-- 进度（2026-11-06）：会话族与目录族都已倒置完（`app_model` 的 wire import 15 → **13**，
-  `host_catalogs` 3 → **0**，`data/` 21 → **16**，`wire.` 44 → **29**），实际代价与偏差见
-  `implemented/2026-11-06-p1b-batch1-session-family.md` 与
-  `implemented/2026-11-06-p1b-batch2-catalog-family.md`。**未动**：预览族、收尾。
+- 进度（2026-11-06）：会话族 / 目录族 / 预览族都已倒置完（`app_model` 的 wire import
+  15 → **11**，`host_catalogs` 3 → **0**，`file_preview` 2 → **0**，`data/` 21 → **12**，
+  `wire.` 44 → **27**），实际代价与偏差见三篇 implemented 笔记。**未动**：收尾批。
 - 前置能力：`SyncClient` 已经是"能力接口"手法的先例（`core/sync_client.dart:207` 的
   `LinkControl`：**不往 `SyncClient` 加抽象方法**，因为全仓二十多个替身都 `implements SyncClient`，
   加一个方法就得改二十多处；改用小接口 + `is` 判定）。
@@ -80,8 +79,11 @@
    3 条 wire import 清零。见 `implemented/2026-11-06-p1b-batch2-catalog-family.md`。
    端口形状当天收成了 `HostRpcHolder`（客户端只多一个 getter），
    见 `implemented/2026-11-06-p1b-hostrpc-holder.md`。
-3. **预览族**：文件预览、目录列举、改动清单。
-4. 最后清 `data/` 的 import 计数到 0（`projection.dart` 那条另算，见下）。
+3. **预览族（已落地，2026-11-06）**：文件预览、目录列举、改动清单。四个读口回的已经是
+   `model/` 的类型，所以这一批只搬调用口、不搬 DTO；`file_preview.dart` 的 2 条 wire import
+   清零。见 `implemented/2026-11-06-p1b-batch3-preview-family.md`。
+4. **收尾（未做）**：各写操作 + `projection.dart` 那条单独一批。目标是把 `data/` 清到
+   **1 个文件 / 1 条**。
 
 ## 不在本方案里的一条
 

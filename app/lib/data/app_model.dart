@@ -64,10 +64,8 @@ import '../model/turn_outline.dart';
 import '../model/usage_summary.dart';
 import '../model/workspace.dart';
 import '../model/workspace_files.dart';
-import '../wire/rpc/changes.dart' as wire;
 import '../wire/rpc/command.dart' as wire;
 import '../wire/rpc/endpoint.dart' as wire;
-import '../wire/rpc/file.dart' as wire;
 import '../wire/rpc/interaction.dart' as wire;
 import '../wire/rpc/job.dart' as wire;
 import '../wire/rpc/permission.dart' as wire;
@@ -2180,7 +2178,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     }
     try {
       // 形状（`{listing}` 信封 + 本体）在 `wire/rpc/file.dart`。
-      final listing = await wire.loadFileListing(client, sid: sid, path: path);
+      final listing = await _rpc.fileListing(sid: sid, path: path);
       if (listing == null) {
         _recordError('读取目录失败', StateError('电脑侧的目录应答形状认不出'));
         return null;
@@ -2341,11 +2339,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     _changesFailures.remove(key);
     if (!_disposed) notifyListeners();
     try {
-      final summary = await wire.loadChangesSummary(
-        client,
-        sid: _currentSid!,
-        seq: seq,
-      );
+      final summary = await _rpc.changesSummary(sid: _currentSid!, seq: seq);
       if (_disposed) return;
       _changesBySeq[key] = summary;
     } catch (error) {

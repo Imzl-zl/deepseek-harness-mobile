@@ -24,8 +24,13 @@ import '../core/snapshot_digest.dart';
 import '../core/sync_client.dart';
 import '../core/workspace_snapshot.dart';
 import '../model/agent_preset.dart' show AgentPresetRoster;
+import '../model/changes.dart' show ChangesSummary;
+import '../model/file_diff.dart' show FileDiff;
 import '../model/model_catalog.dart' show ModelCatalog;
 import '../model/permission.dart' show PermissionCatalog;
+import '../model/workspace_files.dart' show FileListing, FilePage;
+import 'rpc/changes.dart';
+import 'rpc/file.dart';
 import 'rpc/permission.dart';
 import 'rpc/plugin.dart';
 import 'rpc/preset.dart';
@@ -81,4 +86,32 @@ final class WireHostRpc implements HostRpc {
 
   @override
   Future<PluginInventory?> plugins() => loadPluginInventory(client);
+
+  @override
+  Future<FileListing?> fileListing({
+    required String sid,
+    required String path,
+  }) => loadFileListing(client, sid: sid, path: path);
+
+  @override
+  Future<FilePage?> filePage({
+    required String sid,
+    required String path,
+    int? offset,
+    int? limit,
+  }) =>
+      loadFilePage(client, sid: sid, path: path, offset: offset, limit: limit);
+
+  @override
+  Future<ChangesSummary?> changesSummary({
+    required String sid,
+    required int seq,
+  }) => loadChangesSummary(client, sid: sid, seq: seq);
+
+  @override
+  Future<FileDiff?> fileDiff({
+    required String sid,
+    required int seq,
+    required int index,
+  }) => loadFileDiff(client, sid: sid, seq: seq, index: index);
 }

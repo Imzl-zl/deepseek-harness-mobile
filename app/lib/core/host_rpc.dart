@@ -22,8 +22,11 @@
 library;
 
 import '../model/agent_preset.dart' show AgentPresetRoster;
+import '../model/changes.dart' show ChangesSummary;
+import '../model/file_diff.dart' show FileDiff;
 import '../model/model_catalog.dart' show ModelCatalog;
 import '../model/permission.dart' show PermissionCatalog;
+import '../model/workspace_files.dart' show FileListing, FilePage;
 import 'plugin_inventory.dart';
 import 'repo_info.dart';
 import 'session_list_page.dart';
@@ -84,6 +87,35 @@ abstract interface class HostRpc {
   /// **没有摘要三态**：两侧都读不出才回 `null`，一侧坏了就那一侧空表
   /// （与 `loadPluginInventory` 逐字同一条判据，那一层不在端口里复制）。
   Future<PluginInventory?> plugins();
+
+  // ---- 预览族（文件预览 / 目录列举 / 改动清单）----
+  //
+  // 四个方法都**没有摘要三态**（与对应的 `loadXxx` 一样回可空值）：读不出就是 `null`，
+  // 计数与出声在 `wire/` 那一层（`valueOrReport`）。
+
+  /// 列一个目录（`file.list`；[path] 空串 = 工作区根）。
+  Future<FileListing?> fileListing({required String sid, required String path});
+
+  /// 读一页文本（`file.read`；[offset] / [limit] 缺省用宿主的页默认）。
+  Future<FilePage?> filePage({
+    required String sid,
+    required String path,
+    int? offset,
+    int? limit,
+  });
+
+  /// 读一条改动记录（`file.changes`；[seq] 是**事件序号**，不是路径）。
+  Future<ChangesSummary?> changesSummary({
+    required String sid,
+    required int seq,
+  });
+
+  /// 读一个改动文件的逐行比对（`file.diff`；[seq] + [index] 是宿主只认的坐标）。
+  Future<FileDiff?> fileDiff({
+    required String sid,
+    required int seq,
+    required int index,
+  });
 }
 
 /// 「我这一条连接上有一个 `HostRpc`」—— 客户端兼作这个，**只多一个 getter**。
