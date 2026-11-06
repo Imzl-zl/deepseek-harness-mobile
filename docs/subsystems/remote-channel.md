@@ -446,7 +446,7 @@ type SyncSnapshot = {
 | `workspace.unpin` | 手机→电脑 | `requestId` | 取消置顶。DSH 的 `unpinSession`(`index.ts:189-191` → `commands.ts:224-227`)。**幂等**:没置顶过的 id 也成功。返回置顶全集 |
 | `workspace.insertBefore` | 手机→电脑 | `requestId` | 把一个**工作区**挪到另一个之前(侧栏项目头的上下位置;不改会话归属,也不动组内会话顺序)。线上请求 `{workspaceId, beforeWorkspaceId?}`(`beforeWorkspaceId` 缺省 = 移到末尾)。DSH 的 `insertBefore`(`index.ts:135-145` → `commands.ts:108-125`,DSH 侧请求 `{workspaceId, beforeWorkspaceId?}`,`types.ts:97-105`)。返回**整份** `{workspaceIds}`(注册表顺序),手机据此重排分组。与 `workspace.insertSessionBefore` 是两条:**那条改组内会话顺序,这条改工作区自己的顺序**。Web 拖动项目头调的就是它 |
 | `sync.hello` | 手机→电脑 | — | §5.4 的恢复握手。**两个职责**:① 一次声明整份订阅集(手机回到前台时要恢复的是"所有会话",不是一个;断线之后 UI 不会重新 `subscribe`,所以恢复由持有连接的这一层发起);② 上报前后台态(`app`)。每个声明的会话都走同一个 `session.subscribe` 的订阅面,不另起一套恢复语义;失败语义与它逐字一致(一个别名未知就整票失败并回 `session/not-found`) |
-| `endpoint.describe` | 手机→电脑 | — | **端点自报**:当前可拨的地址表(`{ endpoints: [{kind,url,label?}] }`,`kind` ∈ `relay`/`direct`)。没有直连监听面时这个方法**不出现**(能力位 `caps.direct` 为 false),而不是挂上去回 `connector/unsupported`。手机据此建"连接方式"列表,并在 IP 变了之后自愈 —— 顺序即偏好(`direct` 先于 `relay`)。取舍与被否方案(二维码字段 / mDNS / 手填 / 塞进 `sync.hello`)见 `.agents/notes/implemented/2026-10-14-endpoint-switching-lan-direct.md` |
+| `endpoint.describe` | 手机→电脑 | — | **端点自报**:当前可拨的地址表(`{ endpoints: [{kind,url,label?}] }`,`kind` ∈ `relay`/`direct`)。**默认只报默认路由那张网卡的 IPv4 + 中转**(`connector/src/endpoints.ts` 的 `defaultDirectUrls`:内核选路,不发包);网卡枚举里的其余地址(VMware 虚拟网卡、轮换出来的 IPv6 GUA)是**候选不是默认上报**,用户点名 `extra` 才进表,`hide` 仍可藏掉默认那条。没有直连监听面时这个方法**不出现**(能力位 `caps.direct` 为 false),而不是挂上去回 `connector/unsupported`。手机据此建"连接方式"列表,并在 IP 变了之后自愈 —— 顺序即偏好(`direct` 先于 `relay`)。取舍与被否方案(二维码字段 / mDNS / 手填 / 塞进 `sync.hello`)见 `.agents/notes/implemented/2026-10-14-endpoint-switching-lan-direct.md` |
 | `repo.info` | 手机→电脑 | — | 版本、能力位、别名→会话元的映射版本、电脑名。**`hostName` 是电脑自报的名字(`os.hostname()`)**:纯展示值,可改 / 可伪造 / 会重名,不参与任何判据、不进握手 transcript;取不到或为空就**不带这个键**(手机那边不显示名字,而不是一个空名字)。**`commands` 是斜杠命令白名单,形状 `{name, description?}[]`**(`connector/src/handlers.ts` 的 `MOBILE_COMMANDS` 原样过线,手机据此画 `/` 候选菜单)。**说明从宿主的命令定义读**(`commands.list(agent)` 的 `CommandDefinition.description`,`interaction/commands/src/types.ts:56-66`,见 `connector/src/dsh/command-line.ts` 的 `describe`) —— 手抄一份就是第二真值;读不到(一个活 agent 都没有)就**不带这个键**,手机那一列不画说明。**老连接器的 `string[]` 手机也收**(`model/command.dart` 的 `parseSlashCommands`):两种形状是兼容,不是两个真值。老连接器不给这个键 ⇒ 不出菜单(那是"不知道",不是"没有命令可用") |
 | `session.create` | 手机→电脑 | `requestId` | 新建会话。**与 Web 同一个 DSH 方法**(`session-controller/src/index.ts:280`,请求形状 `{workspaceId?, cwd?, sessionId?, agentPreset?}`,回 `{sessionId, agentPreset?}`)。**`workspaceId` / `cwd` 都不传**:手机侧不知道电脑有哪些工作区(那要另接 `workspace-controller`),而不传时 DSH 用它自己的当前工作区 —— 与 Web 点"新建会话"一致;硬传一个猜的比不传更糟。**只在给了参数时才进请求体**:DSH 对缺省字段有自己的默认,塞空串会被当成"显式选空" |
 
@@ -887,6 +887,15 @@ dsh_mobile_windows   表 windows     { sid: { frames: BoundedBuffer, trimmedUpto
 - 设备的**瞬时**状态(在线、前台、已订阅、最近交互)只在内存里(`connector/src/presence.ts`),
   进程重启即清零、重连后由连接层重新上报;它们喂管理面的设备列表与排序,**不参与任何"谁接管"的判定**
   (§6.2 已经没有档位这回事)。
+  - `lastInteractedAt` 只在**手机答过一次审批 / 提问**时更新（`presence.interacted`），
+    不是"最后在线"；管理面把这一列叫「最近答话」，没答过就是「还没答过话」。
+  - 管理面的「此刻连接」就是这份内存态：连接器重启后显示「未连接」，直到手机重连；
+    它不代表这一行废弃，也不代表这台设备被停用。
+- **设备行按配对身份，不按手机聚合**：每次扫码生成新主种子 → 新 `devId` → 新行（决策见
+  `.agents/notes/implemented/2026-10-15-new-identity-per-pairing-is-intentional.md`）。
+  管理面每行显示 `devId` 前 6 位的「设备短码」；手机「设置 → 关于与连接」显示同一个短码，
+  用户据此认出"哪一行是手里这台"。**不做 stable phone id**：那会把"换身份"变成需要额外入口的
+  特殊操作，并让重新配对自动解禁旧行（同一篇笔记的备选 1 已否）。
 - schema 版本与迁移写在 `meta.schema`;**不使用** DSH 的会话落盘格式(v4 且仍在演进,见 `../channel-review-notes.md` §2.7)。
 - **storage domain 本身没有迁移函数**:介质格式的演进靠声明 —— `version` + `compatibleVersions` + `layout` + `invalidRecords`(`packages/storage/storage-domain/src/spec.ts:35-72`);**业务** schema 的逐代迁移要自己按 `meta.schema` 做。两个号互相独立。
 
@@ -1068,16 +1077,17 @@ job-settled        后台任务终结     turn-failed       轮次异常结束
   - **设备令牌的签发在电脑侧**(第 3 步):电脑侧生成 `设备令牌 + 刷新令牌`(各 128 位随机、22 字符 base64url),把两者的**摘要**回交中转(`POST /devices`,连接器令牌鉴权),并在 `pair-result` 的**密文**里带上明文。电脑侧重连时**重放名册**让中转重建 `devices` 投影 —— 这正是 I7 的机制。
   - **`pair-result` 的载荷**(封箱;v2 之前是明文 `pair-ack`,因为那时没有会话密钥;v2 里受限握手已经把密钥谈出来了):
     ```json
-    { "ok": true, "devId": "<22 字符 base64url>", "sas": "123456", "pcId": "local",
+    { "ok": true, "devId": "<22 字符 base64url>", "sas": "123456", "pcId": "pc-…",
       "deviceToken": "<22 字符 base64url>", "refreshToken": "<22 字符 base64url>" }
     ```
   - **二维码载荷**(就是那段字符串,渲染成什么图形两端各自决定):
     ```json
-    { "v": 2, "relay": "wss://…", "lan": ["ws://192.168.1.5:8790"], "pcId": "local",
+    { "v": 2, "relay": "wss://…", "lan": ["ws://192.168.1.5:8790"], "pcId": "pc-…",
       "pcPubEd": "<hex>", "pcPubDh": "<hex>", "offerId": "<22 字符 base64url>", "code": "<22 字符 base64url>" }
     ```
     手机**只信任这里带出的 `pcPubEd` / `pcPubDh`**(§12.1 的硬规则:不接受任何网络下发的电脑公钥)。`v: 1` 的码会被拒(`protocol/unsupported-version`)。
-  - **`lan`(局域网直连地址)**:电脑侧直连监听面此刻可拨的地址(`ws://<ip>:<port>`,默认路由那张网卡排第一)。手机**先拨这组**,全拨不通才回落中转;配对成功后它们与中转一起进端点表(`direct` 在前)。空/缺 = 老载荷,只能走中转。
+    `pcId` 新装是随机 `pc-…`（`connector/src/connector-id.ts`），旧装可能仍是 `local`；它是**配对身份**，不要求跨电脑唯一，中转的连接器身份见 §8.2。
+  - **`lan`(局域网直连地址)**:电脑侧直连监听面此刻**默认会上报**的地址(`ws://<ip>:<port>`,默认路由那张网卡的 IPv4)。手机**先拨这组**,全拨不通才回落中转;配对成功后它们与中转一起进端点表(`direct` 在前)。空/缺 = 老载荷,只能走中转。
   - **`lanOnly`(降级标,可选布尔)**:电脑侧出码时**先把 `offerId` 登记到中转**;登记失败时如果码里还有 `lan`,仍然出码,但载荷带 `"lanOnly": true` —— 这张码**只能在同一 WiFi 下用**。手机见到标记:配对页显式提示「此码只能在同一 Wi-Fi 下使用」,并且**不去换票**(那条路这次注定 409);电脑侧的命令文案与插件面板同步说同一句话。没有 `lan` 时登记失败照旧**不出码**(给一张扫了也配不上的码更糟)。
     - **`lanOnly` 缺省/false 的唯一含义是"中转登记成功"**(这张码跨网可用)。所以三处提示都要说**正反两面**:登记成功时明说「出门 / 用流量走中转(已登记)」,不能只从"没有警告"让用户去猜。
   - **出码的四种情况**(始终**一张码**,不拆两张):
@@ -1169,7 +1179,7 @@ job-settled        后台任务终结     turn-failed       轮次异常结束
 - 待处理集合只覆盖持久日志里的事件;日志被裁剪或会话被替换时随快照刷新。
 - **审批的"迟到即丢弃"不需要桥接兜底**:有人答就结算(gateway 给其余投递发 `cancel`),
   没人答就一直挂着 —— 与浏览器那张卡完全同构,没有"看护计时器"这种东西。
-- **IPv6 隐私地址仍会出现在直连候选里**(只是排在 IPv4 之后):Node 的 `os.networkInterfaces()`
+- **IPv6 隐私地址仍在网卡候选里,但默认不上报**:Node 的 `os.networkInterfaces()`
   不暴露 RFC 4941 的 `temporary` 标记,判据只能靠前缀猜 ⇒ 不猜。代价是候选列表里可能有一两条
   拨不通的地址,顺序已经把 IPv4/局域网地址放在前面(`connector/src/transport/listener.ts` 的 `dialOrder`)。
   **推送本期不做**,所以方法表里**没有** `push.configure`——正确性靠"回前台补课"(I6),

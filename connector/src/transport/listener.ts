@@ -151,10 +151,11 @@ function dialableUrls(host: string, port: number): { url: string; label: string 
       // 只要 IPv4 与 IPv6 的全球/本地地址；link-local 的 IPv6 需要作用域 id
       // （`fe80::1%eth0`），URL 里带 `%` 会被当成转义，所以跳过。
       if (entry.family === 'IPv6' && entry.address.toLowerCase().startsWith('fe80')) continue
-      // **全部上报，不按网卡名过滤**：哪些地址手机拨得通，电脑侧无从得知
+      // **全部枚举，不按网卡名过滤**：哪些地址手机拨得通，电脑侧无从得知
       // （这台机器同时有以太网与 WiFi，还有 VMware 虚拟网卡）。过滤虚拟网卡
-      // 靠名字匹配，又脆又漏；真正的答案在**顺序**——默认路由的地址排第一
-      // （`dialableUrls` 的调用方给 `hint`），手机先拨先通，其余留作回落。
+      // 靠名字匹配，又脆又漏；真正的默认上报集合在 `endpoints.ts` 的
+      // `defaultDirectUrls`（只报默认路由那张网卡的 IPv4），这里枚举的是
+      // **候选池** —— 面板的「更多地址」要靠它才列得出来。
       push(entry.address, name)
     }
   }

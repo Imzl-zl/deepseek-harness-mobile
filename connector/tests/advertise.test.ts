@@ -45,27 +45,38 @@ const directUrls = (advertise: Map<string, 'hide' | 'extra'>): string[] =>
     .endpoints.filter((endpoint) => endpoint.kind === 'direct')
     .map((endpoint) => endpoint.url)
 
-test('上报：默认把网卡枚举到的全报（含虚拟网卡）', () => {
+test('上报：默认只报主地址（默认路由那条），其余进候选/折叠区', () => {
   const urls = directUrls(new Map())
-  assert.equal(urls.length, 4)
-  assert.equal(urls[0], 'ws://192.168.1.4:8790', '默认路由那条排第一')
+  assert.deepEqual(urls, ['ws://192.168.1.4:8790'], 'VMware 与第二张网卡默认不占手机端点列表')
 })
 
-test('上报：hide 掉的两条不再出现（界面上藏了，手机就真的收不到）', () => {
+test('上报：hide 掉主地址后不再出现（界面上藏了，手机就真的收不到）', () => {
+  const urls = directUrls(
+    new Map<string, 'hide' | 'extra'>([['ws://192.168.1.4:8790', 'hide']]),
+  )
+  assert.deepEqual(urls, [], '默认集合只有主地址；藏掉它就是没有直连地址')
+})
+
+test('上报：hide 掉折叠区的地址不影响主地址', () => {
   const urls = directUrls(
     new Map<string, 'hide' | 'extra'>([
       ['ws://192.168.235.1:8790', 'hide'],
       ['ws://192.168.40.1:8790', 'hide'],
     ]),
   )
-  assert.deepEqual(urls, ['ws://192.168.1.4:8790', 'ws://192.168.2.41:8790'])
+  assert.deepEqual(urls, ['ws://192.168.1.4:8790'])
 })
 
-test('上报：extra 追加一条不在枚举里的地址（Tailscale 这类）', () => {
+test('上报：extra 追加一条不在默认集合里的地址（Tailscale 这类）', () => {
   const urls = directUrls(new Map<string, 'hide' | 'extra'>([['ws://100.64.1.9:8790', 'extra']]))
-  assert.equal(urls.length, 5)
-  assert.ok(urls.includes('ws://100.64.1.9:8790'), '追加的地址要在表里')
-  assert.equal(urls[0], 'ws://192.168.1.4:8790', '追加不抢默认路由的第一位')
+  assert.deepEqual(urls, ['ws://192.168.1.4:8790', 'ws://100.64.1.9:8790'])
+})
+
+test('上报：把折叠区的地址点名 extra 后才会报', () => {
+  const urls = directUrls(
+    new Map<string, 'hide' | 'extra'>([['ws://192.168.2.41:8790', 'extra']]),
+  )
+  assert.deepEqual(urls, ['ws://192.168.1.4:8790', 'ws://192.168.2.41:8790'])
 })
 
 test('上报：extra 与已有地址重名时只留一条', () => {
@@ -111,15 +122,19 @@ function tableOf(initial: Record<string, 'hide' | 'extra'> = {}): AdvertiseTable
   }
 }
 
-test('管理面 view：报出会报的、藏掉的、以及全部候选', () => {
+/** 默认集合：与 `defaultDirectUrls` 同口径（主地址只有 192.168.1.4）。 */
+const DEFAULTS = new Set(['ws://192.168.1.4:8790'])
+
+test('管理面 view：报出默认集合与 extra、藏掉的、以及折叠的候选', () => {
   const admin = createAdvertiseAdmin({
     tableOf: () => tableOf({ 'ws://192.168.235.1:8790': 'hide', 'ws://100.64.1.9:8790': 'extra' }),
     candidatesOf: () => listener.urls,
+    defaultUrlsOf: () => DEFAULTS,
   })
   const view = admin.view()
   assert.equal(view.candidates.length, 4, '候选是网卡枚举的原始结果（含被藏掉的）')
   assert.deepEqual(view.hidden, ['ws://192.168.235.1:8790'])
-  assert.equal(view.advertised.length, 4, '4 条自报减去 1 条藏的，加 1 条追加')
+  assert.equal(view.advertised.length, 2, '默认主地址 + 1 条追加')
   assert.ok(
     view.advertised.some((entry) => entry.url === 'ws://100.64.1.9:8790' && entry.source === 'extra'),
     '追加的要标出来源',
@@ -128,19 +143,32 @@ test('管理面 view：报出会报的、藏掉的、以及全部候选', () => 
     view.advertised.every((entry) => entry.url !== 'ws://192.168.235.1:8790'),
     '藏掉的不能在"会上报"里',
   )
+  assert.deepEqual(
+    view.folded.map((entry) => entry.url).sort(),
+    ['ws://192.168.2.41:8790', 'ws://192.168.40.1:8790'],
+    '既不是默认、也没被点名 extra/hide 的地址进折叠区',
+  )
 })
 
-test('管理面 set：clear 回到默认（自报的报、追加的不报）', async () => {
+test('管理面 set：clear 回到默认（主地址报、追加的不报）', async () => {
   const table = tableOf({ 'ws://100.64.1.9:8790': 'extra' })
-  const admin = createAdvertiseAdmin({ tableOf: () => table, candidatesOf: () => listener.urls })
-  assert.equal(admin.view().advertised.length, 5)
+  const admin = createAdvertiseAdmin({
+    tableOf: () => table,
+    candidatesOf: () => listener.urls,
+    defaultUrlsOf: () => DEFAULTS,
+  })
+  assert.equal(admin.view().advertised.length, 2)
   await admin.set('ws://100.64.1.9:8790', 'clear')
-  assert.equal(admin.view().advertised.length, 4)
+  assert.equal(admin.view().advertised.length, 1)
 })
 
 test('管理面 set：extra 先校验，非法地址不落表', async () => {
   const table = tableOf()
-  const admin = createAdvertiseAdmin({ tableOf: () => table, candidatesOf: () => listener.urls })
+  const admin = createAdvertiseAdmin({
+    tableOf: () => table,
+    candidatesOf: () => listener.urls,
+    defaultUrlsOf: () => DEFAULTS,
+  })
   await assert.rejects(() => admin.set('ws://example.com:8790', 'extra'), AdvertiseError)
   assert.equal(advertiseMapOf(table).size, 0, '被拒的地址不许留在表里')
 })

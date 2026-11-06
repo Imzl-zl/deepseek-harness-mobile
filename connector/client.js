@@ -208,6 +208,7 @@ window.__ModuleLoader__.load({
       versionChecking: '查询中…',
       versionNew: '有新版本 {v}',
       versionUpToDate: '已是最新',
+      versionIntro: '本机版本；点「检查更新」查 npm 上的最新版',
       versionUnknown: '查不到最新版本：{reason}',
       versionOpen: '打开 npm 页面',
       channelsTitle: '通道与地址',
@@ -223,6 +224,7 @@ window.__ModuleLoader__.load({
       // 出码之后中转又断了：登记会随连接器断开失效，**不能继续显示"已登记"**。
       pairRelayDropped: '中转已断开：这张码的跨网那条路已经失效，请重新出码（同一 WiFi 仍可用）。',
       relayLabel: '中转',
+      connectorIdLabel: '本机标识（中转「添加我的电脑」时填它）',
       relayConnected: '已连接',
       relayConnecting: '重连中',
       relayStopped: '未运行',
@@ -275,6 +277,10 @@ window.__ModuleLoader__.load({
       advertiseShow: '恢复',
       advertiseShowHidden: '已删除 {n} 条 · 展开',
       advertiseHideHidden: '收起已删除',
+      advertiseMore: '更多地址（{n}）',
+      advertiseMoreHide: '收起更多地址',
+      advertiseReport: '上报',
+      advertiseFoldedHint: '默认不上报；需要时点名上报。',
       advertiseExtra: '手动添加',
       // **占位不写死 IP**：这一栏只收局域网明文直连（`advertise.ts` 的
       // `assertExtraAddress` 只放 `ws://` + 非公网），所以示例只能是"电脑的
@@ -290,12 +296,16 @@ window.__ModuleLoader__.load({
       // 取舍：.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md
       // 连接态（桥接拨通了吗）与设备态（这台在跑吗）是两问，用词因此不同：
       // 前者答"我的手机连上了吗"，后者照 DSH 的状态词（`locales.ts:54,63`）。
-      running: '运行中',
-      idle: '未运行',
+      running: '已连接',
+      idle: '未连接',
       foreground: '前台',
       background: '后台',
       disabled: '已停用',
-      neverSeen: '从未交互',
+      neverSeen: '还没答过话',
+      deviceShort: '短码 {code}',
+      devicesHint: '每行是一条配对身份（重扫 = 新行）；短码对照手机「设置 → 关于与连接」的设备短码。',
+      lastAnswered: '最近答话',
+      connectionNow: '此刻连接',
       justNow: '刚刚',
       minutesAgo: '{n} 分钟前',
       hoursAgo: '{n} 小时前',
@@ -353,6 +363,7 @@ window.__ModuleLoader__.load({
       versionChecking: 'Checking…',
       versionNew: 'Update available: {v}',
       versionUpToDate: 'Up to date',
+      versionIntro: 'Installed version; check for the latest on npm',
       versionUnknown: 'Could not check: {reason}',
       versionOpen: 'Open npm page',
       channelsTitle: 'Channels & addresses',
@@ -364,6 +375,7 @@ window.__ModuleLoader__.load({
       pairRelayOnly: 'Relay only (registered when the code was issued): it works away from this Wi-Fi too.',
       pairRelayDropped: 'The relay has disconnected: the away-from-home route of this code is no longer valid — issue a new code (same Wi-Fi still works).',
       relayLabel: 'Relay',
+      connectorIdLabel: 'Connector ID (use it when adding this computer on the relay)',
       relayConnected: 'Connected',
       relayConnecting: 'Reconnecting',
       relayStopped: 'Stopped',
@@ -408,18 +420,26 @@ window.__ModuleLoader__.load({
       advertiseShow: 'Restore',
       advertiseShowHidden: '{n} removed · show',
       advertiseHideHidden: 'hide removed',
+      advertiseMore: 'More addresses ({n})',
+      advertiseMoreHide: 'Hide more addresses',
+      advertiseReport: 'Report',
+      advertiseFoldedHint: 'Not reported by default; report one explicitly if needed.',
       advertiseExtra: 'added',
       advertiseAddPlaceholder: 'ws://<LAN-IP-of-this-PC>:8790',
       advertiseAdd: 'Add',
       failedAdvertise: 'Could not change reported addresses: {reason}',
       close: 'Close',
       pairedAt: 'Paired',
-      running: 'running',
-      idle: 'idle',
+      running: 'connected',
+      idle: 'not connected',
       foreground: 'foreground',
       background: 'background',
       disabled: 'disabled',
-      neverSeen: 'never used',
+      neverSeen: 'no answers yet',
+      deviceShort: 'code {code}',
+      devicesHint: 'Each row is one pairing identity (re-scan = new row); match the short code with Settings → About on the phone.',
+      lastAnswered: 'Last answered',
+      connectionNow: 'Connected now',
       justNow: 'just now',
       minutesAgo: '{n}m ago',
       hoursAgo: '{n}h ago',
@@ -675,9 +695,12 @@ window.__ModuleLoader__.load({
     /**
      * 「版本」卡片下面那一句。**四种结论都说实话**：
      * 还没查 / 有新版 / 已是最新 / 查不到（带原话）。
+     *
+     * `info === null` 只代表**还没点过「检查更新」**，不代表没有版本 —— 本机版本
+     * 来自 `GET /status` 的 `version`（读 `package.json`，不联网），由卡头的 pill 显示。
      */
     const versionLine = (t, info) => {
-      if (info === null) return ''
+      if (info === null) return t('versionIntro')
       if (typeof info.error === 'string' && info.error !== '') {
         return t('versionUnknown', { reason: info.error })
       }
@@ -812,6 +835,14 @@ window.__ModuleLoader__.load({
         errorOf('card') === null
           ? null
           : h('p', { role: 'alert', style: { ...S.label, ...S.err, margin: '0 0 8px', lineHeight: 1.6 } }, errorOf('card')),
+
+        // **本机标识**：新装是随机 `pc-…`，中转「添加我的电脑」的 id 必须与它一致；
+        // 不显示的话，用户没有别的地方能拿到这个值（旧装可能是 `local`）。
+        props.connectorId
+          ? h('div', { key: 'cid', style: { ...S.row, margin: '0 0 8px' } },
+              h('span', { style: S.label }, t('connectorIdLabel')),
+              h('span', { style: { ...S.value, wordBreak: 'break-all' } }, props.connectorId))
+          : null,
 
         // ① 中转状态 —— 最高频的一问
         h('div', { style: S.row },
@@ -978,6 +1009,9 @@ window.__ModuleLoader__.load({
       const [advertiseInput, setAdvertiseInput] = useState('')
       // 被"删除"（= 不上报）的地址默认收起：网卡还在，但它们不该占着列表。
       const [showHiddenAddresses, setShowHiddenAddresses] = useState(false)
+      // 默认不上报的地址（VMware / 多余 IPv6）也默认收起：**默认只报主地址**，
+      // 这是 2026-11-06 真机反馈的核心 —— 列表不该一上来就摆一堆没用的。
+      const [showFoldedAddresses, setShowFoldedAddresses] = useState(false)
       /** 哪一格输入框有焦点（手写 bundle 没有样式表，焦点环只能靠 state 套）。 */
       const [focusedField, setFocusedField] = useState('')
       /** 窄窗：侧边栏弹框在窄屏/手机浏览器上会把设备表压扁，这里收起两列。 */
@@ -1030,6 +1064,8 @@ window.__ModuleLoader__.load({
           setAdvertiseView({
             advertised: Array.isArray(advertiseBody.advertised) ? advertiseBody.advertised : [],
             hidden: Array.isArray(advertiseBody.hidden) ? advertiseBody.hidden : [],
+            // 旧版连接器没有 `folded`：兜底成空表，不能让它把整个面板崩掉。
+            folded: Array.isArray(advertiseBody.folded) ? advertiseBody.folded : [],
             candidates: Array.isArray(advertiseBody.candidates) ? advertiseBody.candidates : [],
           })
           // `/connection` 同样**不参与硬失败**（理由同上）。读到了就回填真值；
@@ -1249,8 +1285,12 @@ window.__ModuleLoader__.load({
           if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
           setUpdateInfo(body)
         } catch (caught) {
+          // **本机版本不因查询失败而丢**：它来自 status，不是这次网络请求的产物。
+          const localVersion = updateInfo !== null
+            ? updateInfo.current
+            : (status !== null && typeof status.version === 'string' ? status.version : '—')
           setUpdateInfo({
-            current: updateInfo === null ? '—' : updateInfo.current,
+            current: localVersion,
             latest: null,
             hasUpdate: false,
             url: null,
@@ -1396,6 +1436,18 @@ window.__ModuleLoader__.load({
       const deviceById = new Map(devices.map((d) => [d.id, d]))
       const onlineCount = live.filter((d) => d.online).length
       const pairedCount = live.length
+      /**
+       * 卡头那个版本号：**本机版本优先来自 status**（不联网），查过更新之后用
+       * 查询应答里的 `current`（同一份 `package.json`，只是多走了一趟 IPC）。
+       * 两个都是空才显示 `—` —— 那才是真的读不到。
+       *
+       * Note: 为什么本机版本不走 `/update` —— 见
+       * `.agents/notes/implemented/2026-11-06-panel-detail-feedback.md`
+       */
+      const currentVersion = updateInfo !== null
+        && typeof updateInfo.current === 'string' && updateInfo.current !== ''
+        ? updateInfo.current
+        : (status !== null && typeof status.version === 'string' && status.version !== '' ? status.version : '—')
 
       /** 删除**已停用**的一台（清理）。 */
       const removeOne = (device) => askConfirm({
@@ -1552,6 +1604,7 @@ window.__ModuleLoader__.load({
           draft: draft || draftOf(connection),
           busy,
           error: connectionError,
+          connectorId: status !== null && typeof status.connectorId === 'string' ? status.connectorId : '',
           relayChannel: channels.find((row) => row.id === 'relay') || null,
           onDraft: setDraftField,
           onSave: saveConnection,
@@ -1629,32 +1682,23 @@ window.__ModuleLoader__.load({
               ),
               // 会报给手机的地址：**删除 = 不再上报**（自报的那种，网卡还在，
               // 所以删掉的进下面那排「已删除」，可恢复）。
+              // 默认会报的（通常只有主地址一条）：删除 = 不再上报。
               advertise === null
                 ? null
-                : advertise.candidates.map((candidate) => {
-                    const hidden = advertise.hidden.includes(candidate.url)
-                    // 被删掉的只在展开时才画。
-                    if (hidden && !showHiddenAddresses) return null
-                    return h('div', { key: `c:${candidate.url}`, style: { ...S.row, marginTop: 6 } },
-                      h('span', { style: S.dot(hidden ? 'var(--dsw-alias-state-idle-primary)' : 'var(--dsw-alias-state-success-primary)') }),
-                      h('span', { style: S.value }, candidate.label || candidate.url),
-                      h('span', { style: { ...S.label, flex: 1 } }, candidate.url),
-                      hidden
-                        ? h('button', {
-                            type: 'button',
-                            style: busy === `advertise:${candidate.url}` ? { ...S.btn, ...S.btnDisabled } : S.btn,
-                            disabled: busy !== '',
-                            onClick: () => runAdvertise(candidate.url, 'clear'),
-                          }, t('advertiseShow'))
-                        : h('button', {
-                            type: 'button',
-                            style: busy === `advertise:${candidate.url}` ? { ...S.btnDanger, ...S.btnDisabled } : S.btnDanger,
-                            disabled: busy !== '',
-                            onClick: () => runAdvertise(candidate.url, 'hide'),
-                          }, t('advertiseHide')),
-                    )
-                  }),
-              // 手动追加的地址（不在网卡枚举里）：删掉 = 真从表态里清掉。
+                : advertise.advertised
+                    .filter((entry) => entry.source === 'auto')
+                    .map((entry) => h('div', { key: `a:${entry.url}`, style: { ...S.row, marginTop: 6 } },
+                      h('span', { style: S.dot('var(--dsw-alias-state-success-primary)') }),
+                      h('span', { style: S.value }, entry.label || entry.url),
+                      h('span', { style: { ...S.label, flex: 1 } }, entry.url),
+                      h('button', {
+                        type: 'button',
+                        style: busy === `advertise:${entry.url}` ? { ...S.btnDanger, ...S.btnDisabled } : S.btnDanger,
+                        disabled: busy !== '',
+                        onClick: () => runAdvertise(entry.url, 'hide'),
+                      }, t('advertiseHide')),
+                    )),
+              // 手动追加的地址（可能不在网卡枚举里）：删掉 = 真从表态里清掉。
               advertise === null
                 ? null
                 : advertise.advertised
@@ -1670,6 +1714,48 @@ window.__ModuleLoader__.load({
                         onClick: () => runAdvertise(entry.url, 'clear'),
                       }, t('remove')),
                     )),
+              // 被删除（= hide）的：**展开才画**，恢复 = clear。
+              advertise === null || !showHiddenAddresses
+                ? null
+                : advertise.hidden.map((url) => {
+                    const candidate = advertise.candidates.find((entry) => entry.url === url)
+                    return h('div', { key: `h:${url}`, style: { ...S.row, marginTop: 6 } },
+                      h('span', { style: S.dot('var(--dsw-alias-state-idle-primary)') }),
+                      h('span', { style: S.value }, (candidate && candidate.label) || url),
+                      h('span', { style: { ...S.label, flex: 1 } }, url),
+                      h('button', {
+                        type: 'button',
+                        style: busy === `advertise:${url}` ? { ...S.btn, ...S.btnDisabled } : S.btn,
+                        disabled: busy !== '',
+                        onClick: () => runAdvertise(url, 'clear'),
+                      }, t('advertiseShow')),
+                    )
+                  }),
+              // 更多地址：网卡上有、但默认不上报。折叠着，用户点名「上报」才进 extra。
+              advertise !== null && advertise.folded.length > 0
+                ? h('div', { key: 'more', style: { marginTop: 8 } },
+                    h('button', {
+                      type: 'button', style: S.btn,
+                      onClick: () => setShowFoldedAddresses(!showFoldedAddresses),
+                    }, showFoldedAddresses
+                      ? t('advertiseMoreHide')
+                      : t('advertiseMore', { n: advertise.folded.length })))
+                : null,
+              advertise !== null && showFoldedAddresses
+                ? h('div', { key: 'folded' },
+                    h('p', { style: { ...S.label, margin: '6px 0 0' } }, t('advertiseFoldedHint')),
+                    advertise.folded.map((candidate) => h('div', { key: `f:${candidate.url}`, style: { ...S.row, marginTop: 6 } },
+                      h('span', { style: S.dot('var(--dsw-alias-state-idle-primary)') }),
+                      h('span', { style: S.value }, candidate.label || candidate.url),
+                      h('span', { style: { ...S.label, flex: 1 } }, candidate.url),
+                      h('button', {
+                        type: 'button',
+                        style: busy === `advertise:${candidate.url}` ? { ...S.btn, ...S.btnDisabled } : S.btn,
+                        disabled: busy !== '',
+                        onClick: () => runAdvertise(candidate.url, 'extra'),
+                      }, t('advertiseReport')),
+                    )))
+                : null,
               h('div', { style: { ...S.row, marginTop: 8 } },
                 h('input', {
                   type: 'text',
@@ -1709,6 +1795,7 @@ window.__ModuleLoader__.load({
               : null,
           ),
           // 多选浮现栏：**只在有勾选时出现**，不改变行本身的交互（见文件头）。
+          h('p', { key: 'hint', style: { ...S.label, margin: '0 0 8px' } }, t('devicesHint')),
           selectedIds.length === 0
             ? null
             : h('div', { key: 'sel', style: S.bar },
@@ -1740,8 +1827,12 @@ window.__ModuleLoader__.load({
                   //  用户问"我只有一个手机怎么显示五个"）。
                   // **窄窗收起这两列**，把时间并进名称那一格（同一份数据，不复制）。
                   narrow ? null : h('th', { style: S.th }, t('pairedAt')),
-                  narrow ? null : h('th', { style: S.th }, '最后活跃'),
-                  h('th', { style: S.th }, '状态'),
+                  // **最近答话**：`lastInteractedAt` 只在手机答过一次审批 / 提问时更新，
+                  // 不是"最后在线"。手机连上但没答过话，这一格就是「还没答过话」。
+                  narrow ? null : h('th', { style: S.th }, t('lastAnswered')),
+                  // **此刻连接**：presence 是内存态，连接器重启后清零 ——
+                  // 看到「未连接」不代表这行废弃，只代表这一刻没有活连接。
+                  h('th', { style: S.th }, t('connectionNow')),
                   h('th', { style: { ...S.th, textAlign: 'right' } }, ''),
                 )),
                 h('tbody', null, visible.map((device) => h('tr', { key: device.id },
@@ -1761,6 +1852,12 @@ window.__ModuleLoader__.load({
                   // 编一个出来就是替用户做决定。
                   h('td', { style: S.td },
                     device.name,
+                    // **设备短码**：电脑侧能给的稳定身份就是 `devId`；前 6 位与手机
+                    // 「设置 → 关于与连接」那一行同值。每次重扫都是新身份、新短码。
+                    // Note: 为什么不按手机聚合、为什么这两列改名 —— 见
+                    // `.agents/notes/implemented/2026-11-06-device-rows-short-code.md`
+                    h('div', { style: { ...S.dim, fontSize: 11, marginTop: 2 } },
+                      t('deviceShort', { code: device.id.slice(0, 6) })),
                     narrow
                       ? h('div', { style: { ...S.dim, fontSize: 11, marginTop: 2 } },
                           `${fmtWhen(device.pairedAt, t)} · ${device.revoked ? '—' : fmtAgo(device.lastInteractedAt, t)}`)
@@ -1845,7 +1942,7 @@ window.__ModuleLoader__.load({
           h('div', { key: 'h', style: S.cardHead },
             h('span', { style: { fontSize: 13, fontWeight: 600 } }, t('versionTitle')),
             h('span', { style: S.pill('var(--dsw-alias-label-tertiary)') },
-              updateInfo === null ? '—' : updateInfo.current),
+              currentVersion),
             h('span', { style: { flex: 1 } }),
             h('button', {
               key: 'check', type: 'button',

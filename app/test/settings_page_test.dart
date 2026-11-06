@@ -206,8 +206,8 @@ void main() {
     await tester.pumpAndSettle();
 
     // 设置页比"只有连接方式"那版长了（通用/主题/模型/关于四组在它上面）——
-    // 端点卡在屏外，先滚到可见（ListView 懒加载，不滚根本找不到）。
-    await _scrollTo(tester, find.text('直连'));
+    // 端点卡在屏外，先滚到**分区标题**（不是某一行：滚到行会把标题顶出懒加载窗口）。
+    await _scrollTo(tester, find.text('连接方式'));
     await tester.pumpAndSettle();
 
     expect(find.text('连接方式'), findsOneWidget);
@@ -563,6 +563,24 @@ void main() {
     final check = tester.getTopLeft(find.text('检查更新')).dy;
     final version = tester.getTopLeft(find.text('App 版本（点按复制）')).dy;
     expect(check, lessThan(version), reason: '找更新时第一眼应是「检查更新」，不是版本号');
+  });
+
+  testWidgets('关于与连接：设备短码与电脑面板同值（前 6 位，点按复制完整 id）', (tester) async {
+    // 2026-11-06 真机：同一台手机重扫三次 = 三行同名记录。电脑面板每行显示
+    // `devId` 前 6 位，手机这里显示同一个短码，用户才能认出"哪行是手里这台"。
+    final app = AppModel(
+      client: _FakeClient(),
+      deviceId: 'abcdef1234567890abcd',
+    );
+    addTearDown(app.dispose);
+    await tester.pumpWidget(_host(app));
+    await tester.pumpAndSettle();
+    await _scrollTo(tester, find.text('设备短码（点按复制）'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('设备短码（点按复制）'), findsOneWidget);
+    expect(find.text('abcdef'), findsOneWidget, reason: '展示前 6 位，与电脑面板同一口径');
+    expect(app.deviceShortCode, 'abcdef');
   });
 }
 

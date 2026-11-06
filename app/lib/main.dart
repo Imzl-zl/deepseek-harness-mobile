@@ -1806,6 +1806,9 @@ Future<AppModel> _assemble(
     // 偏好走同一个库的 `meta` 表（见 `_assembleWithoutCredentials` 同一处）。
     prefs: MetaPreferences(store),
     client: client,
+    // 本机设备 id：**只用于展示**（设置页的「设备短码」，与电脑面板对照）。
+    // 它不是授权判据；`hello` 里的那个仍由连接层从同一份凭据取。
+    deviceId: deviceId,
     // 冷启动读回本地条目（判据见 `core/session_restore.dart`）。
     readLocalItems: (sid) => store.itemsOf(sid),
     // 通知端口与后台保活：**app 级单例**（`data/app_services.dart`），

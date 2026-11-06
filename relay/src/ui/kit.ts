@@ -114,6 +114,48 @@ export const UI_KIT_JS = `
       box.appendChild(footer)
     }
 
+    /**
+     * 全角数字/符号 → ASCII。
+     *
+     * 为什么必须有：中文输入法开着「全角」时，数字键打出的是 U+FF11 / U+FF12
+     * （１ / ２），而 input.value.trim() **不会**把它变成 ASCII —— 校验器看到
+     * 的不是它以为的那个字符。2026-11-06 真机：填「2」被回「要一个 1–100 的整数」，
+     * 实际收到的是 U+FF12（/^\d+$/ 为 false，trim() 也救不了）。
+     *
+     * 只做**字符级归一化**，不替用户改语义：全角数字、全角小数点/正负号是同一个
+     * 数字的另一种键盘形态；中文数字（「二」）不在其列，照旧校验失败。
+     *
+     * Note: 为什么归一化在 Kit 入口而不是每个校验器 —— 见
+     * .agents/notes/implemented/2026-11-06-panel-detail-feedback.md
+     */
+    function normalizeDigits(value) {
+      return value
+        .replace(/[\\uFF10-\\uFF19]/g, function (ch) {
+          return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0)
+        })
+        .replace(/\\uFF0E/g, '.')
+        .replace(/\\uFF0D/g, '-')
+        .replace(/\\uFF0B/g, '+')
+    }
+
+    /**
+     * 把**实际收到的字符**说清楚：ASCII 原样，非 ASCII 每个都带 U+XXXX。
+     *
+     * 只说「要一个整数」会让用户以为输入法没问题（他看到的明明是 2）。把码位
+     * 一起说出来，才能区分「打错了」与「输入法打了全角」。
+     */
+    function rawDescription(value) {
+      if (value === '') return '空'
+      var out = ''
+      for (var index = 0; index < value.length; index += 1) {
+        var code = value.charCodeAt(index)
+        out += code >= 0x20 && code <= 0x7E
+          ? value.charAt(index)
+          : value.charAt(index) + '(U+' + code.toString(16).toUpperCase() + ')'
+      }
+      return '「' + out + '」'
+    }
+
     /** 确认：Promise<boolean>。 */
     function askConfirm(spec) {
       return new Promise(function (resolve) {
@@ -155,6 +197,12 @@ export const UI_KIT_JS = `
           var input = document.createElement('input')
           input.type = 'text'
           input.value = spec.value === undefined ? '' : String(spec.value)
+          // inputmode 只改**软键盘**（数字键盘），不改值：全角仍可能从输入法里出来，
+          // 所以下面还要归一化。两件事各管一半，缺一条都不够。
+          if (spec.numeric) {
+            input.inputMode = 'numeric'
+            input.setAttribute('inputmode', 'numeric')
+          }
           if (spec.placeholder) input.placeholder = spec.placeholder
           input.style.cssText = 'width:100%;padding:8px 10px;border:1px solid var(--line2,var(--line,#cbd5e1));border-radius:8px;background:transparent;color:inherit;font:inherit'
           body.appendChild(input)
@@ -166,9 +214,21 @@ export const UI_KIT_JS = `
           box.appendChild(body)
           var cancel = button(spec.cancel || '取消', classes.cancel, function () { settle(null) })
           var ok = button(spec.ok || '确定', classes.ok, function () {
-            var value = input.value.trim()
+            var raw = input.value.trim()
+            // **先归一化再校验**：校验器看到的是用户想输入的那个 ASCII 数字。
+            var value = normalizeDigits(raw)
             var problem = spec.validate ? spec.validate(value) : null
-            if (problem) { error.textContent = problem; error.hidden = false; input.focus(); return }
+            if (problem) {
+              // 归一化改过（全角）或原文含非 ASCII：把实际收到的字符连同码位说出来。
+              // 纯 ASCII 的普通输错不啰嗦，保留原来那句短文案。
+              var detail = raw !== value || /[^\\x20-\\x7E]/.test(raw)
+                ? '（收到 ' + rawDescription(raw) + '）'
+                : ''
+              error.textContent = problem + detail
+              error.hidden = false
+              input.focus()
+              return
+            }
             settle(value)
           })
           foot(box, [cancel, ok])

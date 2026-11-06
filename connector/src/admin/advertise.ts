@@ -3,11 +3,11 @@
  *
  * ## 它解决什么
  *
- * 直连监听面**按设计枚举全部非内部网卡**（`transport/listener.ts:134-138`：
- * "过滤虚拟网卡靠名字匹配，又脆又漏"）。一台装了 VMware 的机器因此会多报
- * 两条手机永远拨不通的 `192.168.x.1`。手机侧的同网段排序让它们不占时间
- * （`core/endpoint.dart` 的 `dialOrder`），但它们仍然占列表位置 ——
- * **由用户点名藏掉，比猜网卡名可靠**。
+ * 直连监听面**按设计枚举全部非内部网卡**（`transport/listener.ts:143-167`：
+ * "过滤虚拟网卡靠名字匹配，又脆又漏"），这是**候选池**，不是上报集合。
+ * 默认上报的只有默认路由那张网卡的 IPv4（`endpoints.ts` 的 `defaultDirectUrls`）；
+ * 一台装了 VMware 的机器因此不会再把两条拨不通的 `192.168.x.1` 摆到手机上。
+ * 其余候选走「更多地址（N）」折叠区，用户点名 `extra` 才上报；`hide` 可藏默认那条。
  *
  * 反向的需求同样存在：想额外上报一个**不在网卡枚举里**的地址
  * （典型：Tailscale 的 `100.x`，`isNonPublicHost` 认它属于 CGNAT）。
@@ -47,8 +47,16 @@ export interface AdvertiseCandidate {
 export interface AdvertiseView {
   /** 当前**会**上报的地址，带来源。 */
   advertised: { url: string; label?: string; source: 'auto' | 'extra' }[]
-  /** 被藏掉的自报地址（仍在网卡上，只是不报）。 */
+  /** 被藏掉的地址（仍在网卡上，只是不报）。 */
   hidden: string[]
+  /**
+   * 网卡上有、但**默认不上报**的地址（「更多地址 N」折叠区）。
+   *
+   * 默认集合只含主地址（`endpoints.ts` 的 `defaultDirectUrls`）：VMware 虚拟网卡、
+   * 轮换出来的 IPv6 GUA 都在这里。它们仍然可拨（用户点名上报），只是不该一上来
+   * 就占手机上的端点列表。
+   */
+  folded: AdvertiseCandidate[]
   /** 网卡枚举出来的全部地址（含被藏掉的），供界面画开关。 */
   candidates: AdvertiseCandidate[]
 }
@@ -107,23 +115,41 @@ export interface AdvertiseAdmin {
 export function createAdvertiseAdmin(deps: {
   tableOf: () => AdvertiseTablePort | null
   candidatesOf: () => readonly AdvertiseCandidate[]
+  /**
+   * 默认会上报的候选（`endpoints.ts` 的 `defaultDirectUrls` 算出来的那一组）。
+   *
+   * **必须由调用方给**，不在这里重新判"哪张网卡是主网卡"：默认路由是内核选路
+   * 的事实，只有 `lan-address.ts` 那一处知道；这里再猜一份就是第二套判据。
+   */
+  defaultUrlsOf: () => ReadonlySet<string>
 }): AdvertiseAdmin {
   return {
     view() {
       const table = deps.tableOf()
       const settings = advertiseMapOf(table)
       const candidates = [...deps.candidatesOf()]
+      const defaults = deps.defaultUrlsOf()
       const hidden: string[] = []
+      const folded: AdvertiseCandidate[] = []
       const advertised: AdvertiseView['advertised'] = []
       for (const candidate of candidates) {
-        if (settings.get(candidate.url) === 'hide') {
+        const setting = settings.get(candidate.url)
+        if (setting === 'hide') {
           hidden.push(candidate.url)
           continue
         }
-        advertised.push({
+        if (setting === 'extra' || defaults.has(candidate.url)) {
+          advertised.push({
+            url: candidate.url,
+            ...(candidate.label === undefined ? {} : { label: candidate.label }),
+            source: setting === 'extra' ? 'extra' : 'auto',
+          })
+          continue
+        }
+        // 网卡上确实有，但默认集合没选它：进折叠区，等用户点名上报。
+        folded.push({
           url: candidate.url,
           ...(candidate.label === undefined ? {} : { label: candidate.label }),
-          source: 'auto',
         })
       }
       for (const [url, kind] of settings) {
@@ -131,7 +157,7 @@ export function createAdvertiseAdmin(deps: {
         if (advertised.some((entry) => entry.url === url)) continue
         advertised.push({ url, source: 'extra' })
       }
-      return { advertised, hidden, candidates }
+      return { advertised, hidden, folded, candidates }
     },
 
     async set(url, kind) {

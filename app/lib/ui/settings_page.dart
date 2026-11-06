@@ -368,6 +368,17 @@ class SettingsPage extends StatelessWidget {
               value: connectionLabel(app.connection),
               onTap: () {},
             ),
+            // **设备短码**：电脑面板「已配对设备」每行也有同一个前 6 位。
+            // 每次重新扫码都是一条新身份、新短码 —— 用它认"哪行是手里这台"，
+            // 而不是靠重名。完整 id 点按复制，贴给电脑侧排查。
+            SettingsRow(
+              icon: 'shield',
+              label: '设备短码（点按复制）',
+              value: app.deviceShortCode.isEmpty ? '未配对' : app.deviceShortCode,
+              onTap: () {
+                if (app.deviceId.isNotEmpty) unawaited(_copy(context, app.deviceId));
+              },
+            ),
           ],
         ),
       ),

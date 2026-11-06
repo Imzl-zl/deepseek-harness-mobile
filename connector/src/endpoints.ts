@@ -41,16 +41,19 @@ export interface EndpointsPort {
 /**
  * 算端点表。**纯函数** —— 单测不需要真监听面。
  *
- * 顺序：direct 先于 relay；direct 内部**默认路由的地址排第一**（手机和电脑
- * 同一局域网时它就是对的，先拨先通；顺序拨号下把一个拨不通的地址排在前面
- * 等于每个超时 10 秒）。理由与手机侧 `mergeEndpoints` 的插入规则一致：
- * 第一次发现直连时它自动成为首选，与"同一局域网延迟低"的意图一致。
- * 而用户一旦在手机上手动重排，后续合并只更新字段、不再挪位。
+ * ## 默认只报"主机的 IP"
  *
- * **relay 条目用实时提示**（[relayHintFor]）：配置里的 `relayUrl` 是拨号地址
- * （本机中转是环回），原样报给手机会多一条永远拨不通的端点；而电脑换 WiFi 后
- * 配置里的旧 IP 同样拨不通。出码与自报走同一个函数，"二维码里的地址"与
- * "端点表里的地址"因此不会是两个答案。
+ * 监听面枚举全部非内部网卡是**候选池**（`transport/listener.ts:134-138` 刻意不按
+ * 网卡名过滤：猜名字又脆又漏）。但**自报给手机**的默认集合不是整个候选池 ——
+ * 一台装了 VMware 的机器会多出两条永远拨不通的 `192.168.x.1`，三条 IPv6 GUA，
+ * 手机上每一条都占一行（2026-11-06 真机原话："能用的就是主机的 IP 地址吧？"）。
+ *
+ * 所以默认集合是 {@link defaultDirectUrls}：**默认路由那张网卡的 IPv4**
+ * （`lan-address.ts:40` 的内核选路，不发包），拿不到 hint 时只敢报唯一一条候选。
+ * 其余地址要用户显式 `extra` 才上报；`hide` 仍然对默认那条生效。
+ *
+ * 顺序：direct 先于 relay；direct 内部默认路由的地址排第一（现在默认集合通常
+ * 只有它一条，排序是为"用户追加了 extra"时的稳定顺序）。
  */
 export function describeEndpoints(input: {
   relayUrl?: string | undefined
@@ -59,13 +62,9 @@ export function describeEndpoints(input: {
   /**
    * 用户对**上报哪些地址**的显式表态（`url → 'hide' | 'extra'`）。
    *
-   * 为什么需要它：监听面**按设计枚举全部非内部网卡**（`transport/listener.ts:134-138`
-   * 明确不做按网卡名过滤 —— 那"又脆又漏"）。但一台装了 VMware 的机器会因此多报
-   * 两条手机永远拨不通的 `192.168.x.1`。手机侧的同网段排序让它们不占时间，
-   * 但它们仍然占列表位置 —— 由用户点名藏掉比猜网卡名可靠。
-   *
-   * `extra` 是反向的：用户想额外上报一个地址（如 Tailscale 的 `100.x`），
-   * 它不在网卡枚举里，但确实是这台机器的一个可拨地址。
+   * 为什么需要它：默认集合只含主地址，但一台机器可能有第二条真的可拨的网
+   * （Tailscale / 第二张网卡）。`extra` 让用户点名上报；`hide` 让用户把默认那条
+   * 也藏掉（例如默认路由是 WAN，手机其实在同网段的另一张网卡上）。
    */
   advertise?: ReadonlyMap<string, 'hide' | 'extra'> | undefined
 }): { endpoints: EndpointView[] } {
@@ -78,13 +77,15 @@ export function describeEndpoints(input: {
   }
 
   const endpoints: EndpointView[] = []
-  const direct = [...(input.listener?.urls ?? [])]
-    .filter((entry) => !hidden.has(entry.url))
+  const listenerUrls = input.listener?.urls ?? []
+  const defaults = defaultDirectUrls(listenerUrls, input.lanHint)
+  const direct = listenerUrls
+    .filter((entry) => defaults.has(entry.url) && !hidden.has(entry.url))
     .sort((a, b) => hintRank(a.url, input.lanHint) - hintRank(b.url, input.lanHint))
   for (const entry of direct) {
     endpoints.push({ kind: 'direct', url: entry.url, ...(entry.label === '' ? {} : { label: entry.label }) })
   }
-  // 用户额外加的地址按字面原样上报 —— 它不在网卡枚举里，所以没有网卡名可带。
+  // 用户额外加的地址按字面原样上报 —— 它可能不在网卡枚举里，所以没有网卡名可带。
   for (const url of extra) {
     if (hidden.has(url)) continue
     if (endpoints.some((endpoint) => endpoint.url === url)) continue
@@ -100,10 +101,46 @@ export function describeEndpoints(input: {
   return { endpoints }
 }
 
+/**
+ * 默认上报的直连地址集合。
+ *
+ * 判据只有两条，按优先级：
+ * 1. **默认路由那张网卡**（`lanHint`）：内核选路得来的 IPv4 就是手机同一局域网时
+ *    最可能拨通的那条；同 IP 出现在多张网卡上也只报它。
+ * 2. 拿不到 hint 时**只有唯一一条候选**才默认报：那可能是显式绑定到某个地址
+ *    （`listenHost` 不是 `0.0.0.0`），也可能是单网卡机器。多候选且没有 hint
+ *    就不猜 —— 让用户从「更多地址」里点名上报，比替他选一条可靠的。
+ *
+ * 返回的是**完整 URL 集合**（端口也在内），因为上报/隐藏都按 URL 键控。
+ *
+ * Note: 为什么默认只报主地址、为什么多候选不猜 —— 见
+ * `.agents/notes/implemented/2026-11-06-default-advertise-main-ip.md`
+ */
+export function defaultDirectUrls(
+  urls: readonly { url: string }[],
+  lanHint: string | null | undefined,
+): ReadonlySet<string> {
+  const hint = lanHint
+  if (hint !== null && hint !== undefined && hint !== '') {
+    const matched = urls.filter((entry) => hostOf(entry.url) === hint)
+    if (matched.length > 0) return new Set(matched.map((entry) => entry.url))
+  }
+  return urls.length === 1 ? new Set([urls[0]!.url]) : new Set()
+}
+
+/** 取 URL 的主机部分（IPv6 去掉方括号）；解析失败回空串，不猜。 */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^\[|\]$/g, '')
+  } catch {
+    return ''
+  }
+}
+
 /** 默认路由地址排最前（0），其余排后（1）。 */
 function hintRank(url: string, hint: string | null | undefined): number {
   if (hint === null || hint === undefined || hint === '') return 1
-  return url.includes(hint) ? 0 : 1
+  return hostOf(url) === hint ? 0 : 1
 }
 
 /**

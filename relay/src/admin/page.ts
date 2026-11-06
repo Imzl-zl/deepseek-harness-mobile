@@ -33,6 +33,7 @@
  * Note: 管理台签出的令牌为什么不归属账号、顶栏为什么按登录方式换落点 —— 见
  * `.agents/notes/implemented/2026-11-04-admin-token-page-reachability.md`。
  */
+import { ADMIN_ERROR_TEXT } from './errors.ts'
 import { UI_KIT_JS, UI_KIT_MARKUP } from '../ui/kit.ts'
 
 export const ADMIN_PAGE = `<!doctype html>
@@ -282,8 +283,11 @@ tbody tr:hover td{background:var(--accent-soft)}
 .btn{height:30px;border:1px solid var(--line2);border-radius:0;background:transparent;
   font-size:9.5px;letter-spacing:.08em;text-transform:uppercase}
 .btn:hover{background:var(--ink);border-color:var(--ink);color:var(--panel)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn:disabled:hover{background:transparent;border-color:var(--line2);color:inherit}
 .btn.danger{border-color:var(--bad);color:var(--bad)}
 .btn.danger:hover{background:var(--bad);color:var(--panel)}
+.btn.danger:disabled:hover{background:transparent;border-color:var(--bad);color:var(--bad)}
 .tag{border-radius:0;font-size:9px;letter-spacing:.08em;text-transform:uppercase;height:20px;
   padding:0 7px;background:transparent}
 .bar{height:2px;border-radius:0}
@@ -439,6 +443,17 @@ ${UI_KIT_JS}
     settings: ['设置', '注册与发信']
   }
 
+  /**
+   * 错误码 → 人话。**服务端只回码，页面负责翻译**：把 last-admin 原样弹给
+   * 操作者等于把协议细节当文案（2026-11-06 真机的原话就是「管理员降不了用户」）。
+   * 表与 src/admin/errors.ts 是同一份（构建期 JSON 注入），页面不再抄一遍。
+   */
+  var ERROR_TEXT = ${JSON.stringify(ADMIN_ERROR_TEXT)}
+  function errorText(code, status) {
+    if (typeof code !== 'string' || code === '') return '操作失败（HTTP ' + status + '）'
+    return ERROR_TEXT[code] || ('操作失败；错误码 ' + code + '（HTTP ' + status + '）')
+  }
+
   var EVENT_LABELS = {
     'connector.open': '电脑连上',
     'connector.close': '电脑断开',
@@ -496,10 +511,14 @@ ${UI_KIT_JS}
     Object.keys(attrs).forEach(function (key) { node.setAttribute(key, attrs[key]) })
     return node
   }
-  function btn(text, onClick, danger) {
+  function btn(text, onClick, danger, disabled, title) {
     var node = el('button', text, 'btn' + (danger ? ' danger' : ''))
     node.type = 'button'
     node.addEventListener('click', onClick)
+    // 禁用必须是**真的 disabled**（hrefless 的 button 不会自己失效）：只改样式的话
+    // 键盘/自动化仍能点进去，服务端再回 409 就还是那句 last-admin。
+    node.disabled = disabled === true
+    if (title) node.title = title
     return node
   }
   function table(headers2, rows, emptyText) {
@@ -568,7 +587,7 @@ ${UI_KIT_JS}
     }).then(function (response) {
       if (response.status === 401) { toLogin('登录已失效，请重新输入令牌'); return null }
       return response.json().catch(function () { return {} }).then(function (data) {
-        if (!response.ok) { Kit.toast((data && data.error) || ('操作失败 HTTP ' + response.status), 'bad'); return null }
+        if (!response.ok) { Kit.toast(errorText(data && data.error, response.status), 'bad'); return null }
         // 成功也要有回声：这个面板每个写操作都得说一句，否则用户以为没生效。
         Kit.toast(okText === undefined ? '已保存' : okText, 'ok');
         return data
@@ -702,9 +721,20 @@ ${UI_KIT_JS}
       usersHead.appendChild(el('span', state.users.length + ' 个', 'meta'))
       usersCard.appendChild(usersHead)
       var usersBody = el('div', null, 'body')
+      // 服务端只允许「至少留一个管理员」。提前算一遍：只剩一个活跃管理员时，
+      // 降级按钮直接禁用并解释原因，别等用户点完才弹一句 last-admin。
+      var activeAdmins = state.users.filter(function (row) {
+        return row.role === 'admin' && row.status === 'active'
+      }).length
+      if (activeAdmins <= 1) {
+        usersBody.appendChild(el('p', '当前只有一个管理员。要降级它，先把另一个账号设为管理员。', 'hintline'))
+      }
       usersBody.appendChild(table(
-        ['邮箱', '操作', '角色', '状态', '#电脑', '#在线', '#设备', '本月用量', '最近登录'],
+        ['邮箱', '操作', '角色', '状态', '#电脑 已用/上限', '#在线', '#设备', '本月用量', '最近登录'],
         state.users.map(function (row) {
+          // 「这个账号实际能用几台电脑」**只算这一处**：账号自己覆盖了就用它，
+          // 否则落回全局默认。表格与「改电脑数」的初值共用它，不写第二份。
+          var computerLimit = row.maxConnectors === null ? state.auth.defaultMaxConnectors : row.maxConnectors
           var actions = el('div')
           actions.appendChild(btn(row.status === 'active' ? '停用' : '恢复', function () {
             var suspending = row.status === 'active'
@@ -723,13 +753,15 @@ ${UI_KIT_JS}
               id: row.id,
               role: row.role === 'admin' ? 'user' : 'admin'
             }).then(refresh)
-          }))
+          }, false, row.role === 'admin' && activeAdmins <= 1,
+          row.role === 'admin' && activeAdmins <= 1 ? '至少要保留一个管理员。' : ''))
           actions.appendChild(btn('改电脑数', function () {
-            var current = row.maxConnectors === null ? state.auth.defaultMaxConnectors : row.maxConnectors
             withValue({
               title: '这个账号最多几台电脑',
               body: '1–100 的整数。',
-              value: String(current),
+              value: String(computerLimit),
+              // 软键盘给数字键；Kit.askValue 再把全角数字归一成 ASCII。
+              numeric: true,
               validate: function (raw) {
                 return /^\d+$/.test(raw) && Number(raw) >= 1 && Number(raw) <= 100 ? null : '要一个 1–100 的整数'
               }
@@ -773,7 +805,9 @@ ${UI_KIT_JS}
             actions,
             row.role === 'admin' ? '管理员' : '用户',
             row.status === 'active' ? '正常' : '已停用',
-            row.activeConnectors + ' / ' + row.connectors,
+            // **已用 / 上限**：activeConnectors 是未吊销的电脑数（真正占名额的那批）；
+            // connectors 含已吊销的历史令牌，不能拿来当"已用"。
+            row.activeConnectors + ' / ' + computerLimit,
             String(row.online),
             String(row.devices),
             usageCell,
@@ -1254,9 +1288,11 @@ ${UI_KIT_JS}
     var selfRow = el('div')
     selfRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;align-items:center;flex-wrap:wrap;margin:0 0 10px'
     var idInput = document.createElement('input')
-    idInput.value = 'local'
-    idInput.placeholder = '电脑 id'
-    idInput.title = '连接器自报的 ?id=：默认 local；换过 id 的电脑要填它自己的'
+    // **不预填 local**：新装连接器是随机 pc-…，预填旧默认值会签出一张永远连不上的
+    // 令牌。这个 id 在插件面板「连接」卡里（旧装可能仍是 local）。
+    idInput.value = ''
+    idInput.placeholder = '电脑 id（插件面板「连接」卡）'
+    idInput.title = '连接器自报的 ?id=：新装是随机 pc-…，旧装可能是 local；要与插件面板「连接」卡一致'
     idInput.style.cssText = 'width:150px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit'
     var nameInput = document.createElement('input')
     nameInput.placeholder = '备注名（可空）'

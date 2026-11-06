@@ -1,6 +1,9 @@
 # connector 的 `pcId` 默认 `local`：多租户中转上必然撞车
 
-Status: proposed
+> 已被 `implemented/2026-11-06-connector-id-random-default.md` 落地取代（2026-11-06）：
+> 新装随机、老装无配对时迁移、有配对则保留并告警。本文件结论不改，移入 `archived/` 冻结。
+
+Status: archived
 
 ## 事实
 

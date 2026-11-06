@@ -71,6 +71,130 @@ test("kit 真的挂出一个对象（不是靠页面兜），七个方法都在"
   assert.equal(typeof kit["configure"], "function", "Kit.configure 不可调用")
 })
 
+/** 够 `askValue` 跑完的最小 DOM：元素只实现它真的会碰的那几个属性/方法。 */
+function fakeDom() {
+  interface FakeNode {
+    tagName: string
+    type: string
+    value: string
+    textContent: string
+    className: string
+    hidden: boolean
+    inputMode: string
+    style: { cssText: string }
+    children: FakeNode[]
+    listeners: Record<string, Array<(event?: unknown) => void>>
+    appendChild(child: FakeNode): FakeNode
+    addEventListener(name: string, fn: (event?: unknown) => void): void
+    setAttribute(name: string, value: string): void
+    getAttribute(name: string): string | undefined
+    focus(): void
+    select(): void
+    click(): void
+  }
+  const make = (type: string): FakeNode => {
+    const node: FakeNode = {
+      tagName: type,
+      type,
+      value: "",
+      textContent: "",
+      className: "",
+      hidden: false,
+      inputMode: "",
+      style: { cssText: "" },
+      children: [],
+      listeners: {},
+      appendChild(child) { this.children.push(child); return child },
+      addEventListener(name, fn) { (this.listeners[name] ??= []).push(fn) },
+      setAttribute(name, value) { (this as unknown as Record<string, string>)[name] = value },
+      getAttribute(name) { return (this as unknown as Record<string, string>)[name] },
+      focus() {},
+      select() {},
+      click() { for (const fn of this.listeners["click"] ?? []) fn({ target: this }) },
+    }
+    return node
+  }
+  const nodes: Record<string, FakeNode> = { modal: make("div"), toast: make("div") }
+  nodes["modal"]!.hidden = true
+  return {
+    document: {
+      getElementById: (id: string) => nodes[id] ?? null,
+      createElement: (tag: string) => make(tag),
+      addEventListener: () => {},
+    },
+    modal: nodes["modal"]!,
+  }
+}
+
+const walk = (node: { children: unknown[] }): Array<Record<string, unknown>> => {
+  const out: Array<Record<string, unknown>> = []
+  for (const child of node.children as Array<Record<string, unknown> & { children: unknown[] }>) {
+    out.push(child)
+    out.push(...walk(child))
+  }
+  return out
+}
+
+const findKitButton = (modal: { children: unknown[] }, label: string) =>
+  walk(modal).find((node) => node["type"] === "button" && node["textContent"] === label) as
+    | { click(): void }
+    | undefined
+
+test("askValue：全角 ２ 归一成 2 —— 用户想输入的那个数字才是校验对象", async () => {
+  const { document, modal } = fakeDom()
+  const kit = new Function("document", `${UI_KIT_JS}\nreturn Kit;`)(document) as {
+    askValue(spec: Record<string, unknown>): Promise<string | null>
+  }
+  const answer = kit.askValue({
+    title: "这个账号最多几台电脑",
+    value: "２",
+    numeric: true,
+    validate: (value: string) => (/^\d+$/.test(value) ? null : "要一个 1–100 的整数"),
+  })
+  const input = walk(modal).find((node) => node["tagName"] === "input") as
+    | { inputMode: string; getAttribute(name: string): string | undefined }
+    | undefined
+  assert.ok(input !== undefined, "弹框里必须有输入框")
+  // 软键盘：数字键盘；值仍是 text（number 框会吞掉前导 0 与全角字符）。
+  assert.equal(input.inputMode, "numeric", "数字输入要弹数字键盘")
+  assert.equal(input.getAttribute("inputmode"), "numeric", "inputmode 属性要落到 DOM 上")
+
+  const ok = findKitButton(modal, "确定")
+  assert.ok(ok !== undefined, "必须有确定键")
+  ok.click()
+  // 校验失败时 askValue 不会 settle —— 变异校验要变成"快速红"，而不是挂住套件。
+  const settled = await Promise.race([
+    answer,
+    new Promise<string>((resolve) => setTimeout(() => resolve("<timeout>"), 100)),
+  ])
+  assert.equal(settled, "2", "全角 ２ 必须按 2 通过校验并交回 ASCII 2")
+})
+
+test("askValue：校验失败时把实际收到的字符与码位说出来（不许只说“要整数”）", async () => {
+  const { document, modal } = fakeDom()
+  const kit = new Function("document", `${UI_KIT_JS}\nreturn Kit;`)(document) as {
+    askValue(spec: Record<string, unknown>): Promise<string | null>
+  }
+  const answer = kit.askValue({
+    title: "这个账号最多几台电脑",
+    value: "２",
+    numeric: true,
+    // 故意永远失败，让错误提示留在弹框里。
+    validate: () => "要一个 1–100 的整数",
+  })
+  findKitButton(modal, "确定")!.click()
+  const error = walk(modal).find(
+    (node) => node["className"] === "sub" && String((node["style"] as { cssText?: string }).cssText).includes("color"),
+  )
+  assert.ok(error !== undefined, "校验失败要显示错误行")
+  assert.match(String(error["textContent"]), /收到/)
+  assert.match(String(error["textContent"]), /U\+FF12/, "必须说出收到的是全角 ２（U+FF12）")
+
+  // 让 promise 收口（取消 = null），否则这个用例会把未 settle 的 Promise 留给运行时。
+  findKitButton(modal, "取消")!.click()
+  assert.equal(await answer, null)
+})
+
 /**
  * 上面那条只盯 `Kit.` 这一族调用；这条扫**整段脚本**。
  *

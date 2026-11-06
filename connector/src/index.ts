@@ -71,7 +71,7 @@ import {
   referencesAvailable,
   type Caps,
 } from './dsh/caps.js'
-import { createEndpointsPort, describeEndpoints } from './endpoints.js'
+import { createEndpointsPort, defaultDirectUrls, describeEndpoints } from './endpoints.js'
 import { createSubagentsPort } from './dsh/subagents.js'
 import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent'
 import { createProjectionsPort } from './dsh/projections.js'
@@ -128,6 +128,7 @@ import { createPluginsFace } from './dsh/plugins.js'
 import { createChangesFace } from './dsh/changes.js'
 import { createFilesFace } from './dsh/files.js'
 import { createPluginInstallFace } from './dsh/plugin-install.js'
+import { LEGACY_CONNECTOR_ID, isConnectorId, newConnectorId, resolveConnectorId } from './connector-id.js'
 import { createDevicePresence } from './presence.js'
 import { createInteractionPort } from './interaction-claims.js'
 import { createInteractionFace } from './interaction-face.js'
@@ -163,10 +164,14 @@ export const name = 'dsh-mobile-connector'
 export { Config }
 
 /**
- * `pcId` 的默认值。只在存储里还没有 `connectorId` 时写入一次，之后一直读存储的那个 ——
- * 它参与握手 transcript，换一次就等于所有设备的握手全部验签失败。
+ * `pcId` 是**中转控制面的连接器身份**（`?id=`），也是握手 `hello-ack` 里的
+ * 那个字段（参与 transcript）。它必须**稳定**：换一次，所有已配对设备的握手
+ * 全部验签失败（等价于全部重新扫码）。
+ *
+ * 新装用随机 `pc-…`（`connector-id.ts`）；老装的 `local` 只有在**没有已配对设备**
+ * 时才迁移，有配对就保留并告警 —— 取舍见
+ * `.agents/notes/implemented/2026-11-06-connector-id-random-default.md`。
  */
-const DEFAULT_CONNECTOR_ID = 'local'
 
 /** 只有必需服务进 `inject`；可选能力走 `ctx.get`（见文件头）。 */
 /**
@@ -384,10 +389,16 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
       // 记录不存在是**正常首启**，不是错误：继续往下兑换。
     }
     const relayUrl = relayUrlInUse()
+    // `open-store` 必然已跑过；空串只可能是装配顺序写错。**不临时捏一个值去换票** ——
+    // 那会得到一张与握手 `pcId` 不一致的令牌，症状是"起来了但谁都连不上"。
+    if (connectorId === '') {
+      logger.warn('本机标识尚未就绪，跳过自助兑换连接器令牌（检查 open-store 的装配顺序）')
+      return
+    }
     try {
       const issued = await enrollConnector({
         relayUrl,
-        pcId: connectorId === '' ? DEFAULT_CONNECTOR_ID : connectorId,
+        pcId: connectorId,
         name: hostname(),
       })
       await writeRelayToken(ctx.credentials, ref, issued.token)
@@ -502,25 +513,42 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         // 迁移到当前 schema（契约 §1.4）。低于当前逐代升，高于当前拒绝启动。
         const stored = core.global.get()
         const migrated = migrateMeta(stored)
-        if (migrated !== stored) {
+        // 首装要把 relayUrl / 凭据引用也写成初值；已配置的老装只可能动 connectorId。
+        const configured = migrated.connectorId === ''
+          ? initialMeta({ connectorId: '', relayUrl: relayUrlInUse(), connTokenSecretRef: tokenRef() })
+          : migrated
+        const pairedDevices = [...core.table('devices').keys()].length
+        // **新装随机、老装只在没有已配对设备时迁移**：换 id 会让所有已配对手机的
+        // 握手 transcript 验签失败（等价于全部重新扫码）。取舍见 `connector-id.ts`。
+        const resolved = resolveConnectorId(configured.connectorId, pairedDevices > 0, newConnectorId)
+        if (!isConnectorId(resolved)) {
+          // 存储值来自我们自己，坏值说明有人手改了文件；继续跑会得到一张换不出去的令牌。
+          throw new Error(`connector/unsupported: 本机标识形状不合法（${resolved}）`)
+        }
+        if (resolved !== configured.connectorId) {
+          await core.global.set({ ...configured, connectorId: resolved })
+          logger.info(
+            configured.connectorId === LEGACY_CONNECTOR_ID
+              ? `本机标识已从旧默认值 ${LEGACY_CONNECTOR_ID} 迁移为 ${resolved}（没有已配对设备）`
+              : `已写入新的本机标识 ${resolved}`,
+          )
+        } else if (migrated !== stored) {
           await core.global.set(migrated)
           logger.info(`存储 schema 已从 v${stored.schema} 迁移到 v${migrated.schema}`)
-        } else if (migrated.connectorId === '') {
-          // 「尚未配置」用空串表达（见 store/index.ts）：首次挂载时写入初值。
-          await core.global.set(
-            initialMeta({
-              connectorId: DEFAULT_CONNECTOR_ID,
-              relayUrl: relayUrlInUse(),
-              connTokenSecretRef: tokenRef(),
-            }),
+        }
+        // 老装 `local` + 有配对：换它 = 全部重新扫码，所以保留并**告警**。
+        // 多租户中转上的残留冲突按 cookbook §6.6 处理（重启前先查令牌表）。
+        if (resolved === LEGACY_CONNECTOR_ID && pairedDevices > 0) {
+          logger.warn(
+            `本机标识仍是旧默认值 ${LEGACY_CONNECTOR_ID}：多租户中转上可能与别的电脑撞车。`
+            + '换标识会让所有已配对手机重新扫码；重启中转前按 cookbook §6.6 检查令牌表。',
           )
         }
 
-        metrics.gauge(METRIC.pairedDevices, [...core.table('devices').keys()].length)
+        metrics.gauge(METRIC.pairedDevices, pairedDevices)
 
-        // 本机标识：`pcId` 进 transcript，必须**稳定** —— 换一次，所有在途握手都会验签失败。
-        // 空串是「尚未配置」的哨兵（见 store/index.ts），这里用与写入时同一个默认值。
-        connectorId = migrated.connectorId === '' ? DEFAULT_CONNECTOR_ID : migrated.connectorId
+        // `pcId` 进 transcript（`hello-ack`），也是中转控制面的 `?id=`；换它等于全部重配。
+        connectorId = resolved
 
         // 别名：先对账两个方向再用 —— 崩在两次 put 之间的残留在这一步被清掉，
         // 否则残缺的 by_sid 会让入站 sid 校验失败，或让 ensure 重复分配别名。
@@ -871,6 +899,9 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         const advertiseAdmin = createAdvertiseAdmin({
           tableOf: () => advertiseRows,
           candidatesOf: () => listener?.urls ?? [],
+          // 默认只报主地址：判据在 `endpoints.ts` 的 `defaultDirectUrls`（唯一一处），
+          // 这里只把当前监听面与默认路由提示喂进去，不另判"哪张网卡是主网卡"。
+          defaultUrlsOf: () => defaultDirectUrls(listener?.urls ?? [], lanHint),
         })
         // 插件面板的 RPC（`/api/dsh-mobile/*`）在**传输section 之后**才挂 ——
         // 按通道生成的起停路由要在 `transportChannels` 注册表存在之后才能生成
@@ -1669,6 +1700,11 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         // 停传输时管理面照常工作（出码、设备管理都不依赖它）。
         unregisterAdminFace =
           mountAdminFace(ctx, {
+            // 本机版本：**面板一打开就要有**（不需要联网，读 package.json）。
+            // 与下面的「查更新」分开：后者是用户点一下才发生的 npm 查询。
+            version: connectorVersion(),
+            // 本机标识：中转「添加我的电脑」要填它（随机值之后没有别处可见）。
+            connectorId,
             // 查更新：**电脑侧代查 npm**（浏览器直连 registry 会被 CORS / 内网代理分叉）。
             // 版本号读自己这份 package.json —— 不写死，发版只改那一处。
             update: createUpdateChecker({ current: connectorVersion() }),

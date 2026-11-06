@@ -156,12 +156,19 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     this.onConnectionTerminated,
     this.onHostName,
 
+    /// 本机在这一台电脑上的设备 id（`hello` 里的 `devId`，由配对身份派生）。
+    ///
+    /// 只用于**展示**：电脑面板上的「设备短码」取它的前 6 位，用户据此认出
+    /// "哪一行是手里这台"。它不是新的授权判据 —— 授权仍由握手与凭据决定。
+    String deviceId = '',
+
     /// app 级服务（`data/app_services.dart`）：通知端口 + 前台服务的起停仲裁。
     ///
     /// **不传 = 这个模型没有通知能力**（单测常见），所有通知路径直接跳过。
     /// 传进来的那一份属于 App、多台电脑共用 —— 模型只读它、不关它。
     AppServices? services,
   }) : _prefs = prefs,
+       _deviceId = deviceId,
        _readLocalItems = readLocalItems,
        _services = services,
        _initialEndpoints = List<Endpoint>.of(endpoints),
@@ -2105,6 +2112,17 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// `null` = 没读到 / 老连接器不报。
   String? get hostName => _hostName;
   String? _hostName;
+
+  /// 本机设备 id（`hello` 里的 `devId`）；未装配时是空串。
+  ///
+  /// Note: 为什么按配对身份、不按手机聚合 —— 见
+  /// `.agents/notes/implemented/2026-11-06-device-rows-short-code.md`
+  String get deviceId => _deviceId;
+  final String _deviceId;
+
+  /// 面板上显示的设备短码：**前 6 位**。与电脑侧 `client.js` 同一长度；
+  /// 22 位全量太长，6 位在"一台电脑最多几十行"的规模里够认且不吵。
+  String get deviceShortCode => _deviceId.length <= 6 ? _deviceId : _deviceId.substring(0, 6);
 
   /// 斜杠命令白名单（`repo.info.commands`，**电脑侧原样过线**）。
   ///

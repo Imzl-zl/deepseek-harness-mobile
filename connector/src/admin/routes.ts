@@ -110,6 +110,22 @@ export interface AdminDeviceRow {
 }
 
 export interface AdminDeps {
+  /**
+   * 本机标识（`pcId` / 中转控制面的 `?id=`）。
+   *
+   * 新装是随机 `pc-…`；旧装可能是 `local`。放进 status 是因为**中转「添加我的
+   * 电脑」要填它**（break-glass 令牌的 id 必须与 `?id=` 一致），而随机值之后
+   * 用户没有别的地方能看到它。
+   */
+  connectorId: string
+  /**
+   * 本机装的连接器版本（`connector/package.json` 的 `version`）。
+   *
+   * **与 `update` 分开**：本机版本不需要联网，面板一打开就该看得见；`update.check()`
+   * 才是"点一下才查 npm"的那件事。把两者混成一个字段，就会得到"没点检查更新
+   * 就显示 —"——2026-11-06 真机的原话。
+   */
+  version: string
   /** 「有没有新版本」的查询（电脑代查 npm，带缓存；见 `admin/update.ts`）。 */
   update: { check(): Promise<UpdateInfo> }
   caps(): Caps
@@ -247,6 +263,8 @@ export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
       fetch: () =>
         Promise.resolve(
           json({
+            version: deps.version,
+            connectorId: deps.connectorId,
             caps: deps.caps(),
             metrics: deps.metrics(),
             relayUrl: deps.relayUrl(),

@@ -61,7 +61,7 @@ test('空 label 不上线（它不是身份，缺了让手机自己造）', () =
   assert.deepEqual(result.endpoints[0], { kind: 'direct', url: 'ws://10.0.0.2:8788' })
 })
 
-test('多个网卡就报多条（切网卡时手机侧列表自己变）', () => {
+test('多个网卡且没有默认路由提示：一条都不默认报（多候选不猜）', () => {
   const result = describeEndpoints({
     relayUrl: 'wss://relay.example',
     listener: fakeListener([
@@ -69,14 +69,25 @@ test('多个网卡就报多条（切网卡时手机侧列表自己变）', () =>
       { url: 'ws://100.100.1.2:8788', label: 'Tailscale' },
     ]),
   })
-  assert.equal(result.endpoints.length, 3)
   assert.deepEqual(
-    result.endpoints.filter((e) => e.kind === 'direct').map((e) => e.url),
-    ['ws://192.168.1.5:8788', 'ws://100.100.1.2:8788'],
+    result.endpoints.filter((e) => e.kind === 'direct'),
+    [],
+    '没有内核选路结果时，报哪条都是猜 —— 让用户从「更多地址」点名上报',
   )
 })
 
-test('默认路由的地址排第一（顺序拨号下，错的地址在前 = 每个超时 10 秒）', () => {
+test('只有一个候选时默认报它（显式绑定 / 单网卡机器）', () => {
+  const result = describeEndpoints({
+    relayUrl: 'wss://relay.example',
+    listener: fakeListener([{ url: 'ws://10.0.0.2:8788', label: 'eth0' }]),
+  })
+  assert.deepEqual(
+    result.endpoints.filter((e) => e.kind === 'direct').map((e) => e.url),
+    ['ws://10.0.0.2:8788'],
+  )
+})
+
+test('默认路由那条是唯一默认上报的地址（其余折叠，不占手机端点列表）', () => {
   const result = describeEndpoints({
     relayUrl: 'wss://relay.example',
     lanHint: '192.168.110.79',
@@ -88,12 +99,8 @@ test('默认路由的地址排第一（顺序拨号下，错的地址在前 = �
   })
   assert.deepEqual(
     result.endpoints.filter((e) => e.kind === 'direct').map((e) => e.url),
-    [
-      'ws://192.168.110.79:8788',
-      'ws://192.168.40.1:8788',
-      'ws://192.168.2.41:8788',
-    ],
-    'hint 命中的那条排第一；其余保持原相对顺序（回落仍可按序试）',
+    ['ws://192.168.110.79:8788'],
+    'VMware 与第二张网卡默认不上报；要报由用户点名 extra',
   )
 })
 

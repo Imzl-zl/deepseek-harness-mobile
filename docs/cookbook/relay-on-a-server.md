@@ -225,9 +225,10 @@ App 仍显示「已连接」，且能在会话里收到新消息 ——
 ## 6.6 更新镜像（两端版本要对齐）
 
 **重启前先看一眼令牌表**：中转在启动时会校验"每个 `connectorId` 只能有一条记录"，冲突就
-**拒绝启动**（`relay/src/token-table.ts:157-162`）。账号模式下**每台电脑的连接器 `pcId` 默认
-都是 `local`**（`connector/src/index.ts:169`，首次运行写进存储后不再变），所以第二个人连上
-同一台中转时，他的令牌会绑到已被占用的 `local`：
+**拒绝启动**（`relay/src/token-table.ts:157-162`）。新装连接器的本机标识是随机 `pc-…`
+（`connector/src/connector-id.ts`），不会再重复；但**旧装**可能仍是默认 `local`
+（首次运行写进存储后不再变），所以两台旧电脑连上同一台中转时，第二个人的令牌会绑到
+已被占用的 `local`：
 
 ```bash
 # 命中就说明有冲突（输出里同一个 connectorId 出现两次）
@@ -353,7 +354,8 @@ docker compose -f relay/docker-compose.server.yml --env-file relay/.env logs --t
    然后用该账号登录 `/login`，再打开 `/admin`（账号会话会自动识别；break-glass 令牌仍可用）。
 
 4. **添加电脑**:`/console` →「添加电脑」→ 复制只显示一次的令牌 → 电脑的 DSH「手机 → 连接」粘贴。
-   `relayTokenRef` 空着时按默认格 `relay-connector` 读写，不用先改配置。第一次连上时中转把令牌绑定到该电脑的 `pcId`；
+   `relayTokenRef` 空着时按默认格 `relay-connector` 读写，不用先改配置。第一次连上时中转把令牌绑定到该电脑的 `pcId`
+   （新装是随机 `pc-…`，在插件面板「连接」卡里能看到；旧装可能是 `local`）；
    之后换电脑必须新建令牌或先「重置绑定」。
 
 5. **数据卷**：compose 必须挂 `./data:/config/data`（整目录，不要单文件）——SQLite 的 WAL 会生成

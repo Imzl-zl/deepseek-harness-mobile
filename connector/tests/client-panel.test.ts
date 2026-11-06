@@ -202,7 +202,7 @@ const defaultFetch = (channels: unknown[] = CHANNELS) => async (url: string) =>
     ? { ok: true, status: 200, json: async () => CONNECTION_VIEW }
     : String(url).includes('/transport')
       ? { ok: true, status: 200, json: async () => ({ channels }) }
-      : { ok: true, status: 200, json: async () => ({ relayUrl: 'ws://127.0.0.1:8787/ws/connector', devices: DEVICES }) }
+      : { ok: true, status: 200, json: async () => ({ version: '0.1.21', connectorId: 'pc-test-connector', relayUrl: 'ws://127.0.0.1:8787/ws/connector', devices: DEVICES }) }
 
 /** 按 `type` 找输入框（`text` / `password` / `number`）。 */
 const inputOfType = (tree: unknown, type: string): Element | undefined =>
@@ -336,14 +336,59 @@ test('源码里没有 window.confirm，也没有按离线批量清（事故的�
   assert.doesNotMatch(code, /cleanOffline/, '没有"清掉当前离线"这个按钮')
 })
 
+test('版本：打开面板就显示本机版本；最新版仍要手动查', async () => {
+  let updateCalls = 0
+  const base = defaultFetch()
+  const fetchImpl = async (url: string, init?: unknown) => {
+    if (String(url).includes('/update')) {
+      updateCalls += 1
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          current: '0.1.21',
+          latest: '0.1.21',
+          hasUpdate: false,
+          url: null,
+          checkedAt: 1,
+        }),
+      }
+    }
+    return base(url)
+  }
+  const mounted = await mountPanel({}, fetchImpl)
+  assert.equal(updateCalls, 0, '打开面板不该联网查 npm —— 本机版本来自 status')
+  const before = allText(mounted.tree)
+  assert.match(before, /0\.1\.21/, '卡头必须直接显示本机版本，而不是 —')
+  assert.ok(
+    before.includes(mounted.t('versionIntro')),
+    '没查过更新时要说清"这是本机版本，点一下才查最新版"',
+  )
+
+  const check = buttonWith(mounted.tree, mounted.t('versionCheck'))
+  assert.ok(check !== undefined, '必须有「检查更新」按钮')
+  ;(check.props.onClick as () => void)()
+  await settle()
+  const after = mounted.react.render(mounted.panel, mounted.props)
+  assert.equal(updateCalls, 1, '点一下才发一次 /update')
+  assert.ok(allText(after).includes(mounted.t('versionUpToDate')), '查完要把结论留在卡片上')
+})
+
 test('面板：每行的动作按钮与状态词对上新行为', async () => {
   const { tree } = await mountPanel()
 
   const text = allText(tree)
-  // 状态词照 DSH：运行中 / 未运行 / 已停用。
-  assert.match(text, /运行中/, '在线的行显示"运行中"')
-  assert.match(text, /未运行/, '离线未停用的行显示"未运行"')
+  // 状态词说清"此刻连接"，不是"这台设备在不在跑"（presence 是内存态，重启即空）。
+  assert.match(text, /已连接/, '在线的行显示"已连接"')
+  assert.match(text, /未连接/, '离线未停用的行显示"未连接"')
   assert.match(text, /已停用/, '停用的行显示"已停用"')
+  // 列语义：最近答话（只有答过审批/提问才有）与此刻连接（presence）。
+  assert.match(text, /最近答话/)
+  assert.match(text, /此刻连接/)
+  assert.match(text, /还没答过话/, '没答过话要这么说，而不是"从未交互"')
+  // 设备短码：同一台手机重扫会得到新行，靠短码认出"手里这台"。
+  assert.match(text, /短码 dev-li/, '每行带设备短码')
+  assert.match(text, /每行是一条配对身份/)
   // 已停用默认折叠，有一行展开入口。
   assert.match(text, /已停用 1 台 · 展开/)
 
@@ -678,6 +723,9 @@ test('连接卡：地址 / 令牌 / 直连端口都在，令牌只显示"已设�
   assert.doesNotMatch(text, /凭据引用/)
   assert.match(text, /直连端口/)
   assert.match(text, /停用直连/)
+  // 新装本机标识是随机值；中转「添加我的电脑」要填它，面板必须显示出来。
+  assert.match(text, /本机标识/)
+  assert.match(text, /pc-test-connector/)
 
   // 地址框预填服务端真值；令牌框是 password 且**空**（值永不过线）。
   assert.equal(addressInput(tree)?.props.value, 'ws://127.0.0.1:8787/ws/connector')
@@ -882,8 +930,10 @@ test('版本卡：点「检查更新」查到新版 ⇒ 显示版号与打开按
       : defaultFetch()(url)
   const { react, panel, props, tree } = await mountPanel({}, fetchImpl)
 
-  // 还没查：版本位是「—」，不额外写说明。
-  assert.doesNotMatch(allText(tree), /点「检查更新」/)
+  // 还没查：**本机版本已经显示**，说明也写明"点一下才查最新版"。
+  const before = allText(tree)
+  assert.match(before, /0\.1\.21/)
+  assert.match(before, /点「检查更新」/)
 
   const check = buttonWith(tree, '检查更新')
   assert.ok(check !== undefined, '有「检查更新」')
@@ -897,12 +947,63 @@ test('版本卡：点「检查更新」查到新版 ⇒ 显示版号与打开按
   assert.equal(buttonWith(after, '打开 npm 页面') !== undefined, true, '有新版时给落地页')
 })
 
-test('上报地址：自报的能「删除」（= 不再上报），删掉的进「已删除」可恢复', async () => {
-  let hidden: string[] = []
+test('上报地址：默认只显示主地址；其余在「更多地址」里，点名后才上报', async () => {
   const posts: Array<Record<string, unknown>> = []
   const WLAN = { url: 'ws://192.168.2.52:8790', label: 'WLAN 2' }
   const VMNET = { url: 'ws://192.168.40.1:8790', label: 'VMnet1' }
   const CANDIDATES = [WLAN, VMNET]
+  let extra: string[] = []
+  const fetchImpl = async (url: string, init?: unknown) => {
+    if (!String(url).includes('/advertise')) return defaultFetch()(url)
+    const method = (init as { method?: string } | undefined)?.method ?? 'GET'
+    if (method === 'POST') {
+      const body = JSON.parse(String((init as { body?: string }).body)) as { url: string; kind: string }
+      posts.push(body)
+      if (body.kind === 'extra') extra = [...extra, body.url]
+      if (body.kind === 'clear') extra = extra.filter((entry) => entry !== body.url)
+      return { ok: true, status: 200, json: async () => ({ ok: true }) }
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        advertised: [
+          { url: WLAN.url, label: WLAN.label, source: 'auto' },
+          ...extra.map((entry) => ({ url: entry, source: 'extra' })),
+        ],
+        hidden: [],
+        folded: CANDIDATES.filter((candidate) => candidate.url !== WLAN.url && !extra.includes(candidate.url)),
+        candidates: CANDIDATES,
+      }),
+    }
+  }
+  const { react, panel, props, tree } = await mountPanel({}, fetchImpl)
+
+  // 默认只画主地址；VMnet1 在折叠区里，不占一上来就看到的列表。
+  assert.doesNotMatch(allText(tree), /VMnet1/, '默认不上报的地址不该一打开就列出来')
+  const more = buttonWith(tree, '更多地址（1）')
+  assert.ok(more !== undefined, '有折叠入口，并写明还有几条')
+  ;(more.props.onClick as () => void)()
+  const opened = react.render(panel, props)
+  const row = flatten(opened).find((element) => {
+    if (element.type !== 'div') return false
+    const text = textOf(element.props.children)
+    return text.includes('VMnet1') && !text.includes('WLAN 2')
+      && flatten(element.props.children).some((child) => child.type === 'button')
+  })
+  assert.ok(row !== undefined, '展开后能看到网卡地址')
+  const report = buttonWith(row.props.children, '上报')
+  assert.ok(report !== undefined, '折叠区的地址给「上报」，不是「删除」')
+  ;(report.props.onClick as () => void)()
+  await settle()
+  assert.deepEqual(posts, [{ url: VMNET.url, kind: 'extra' }])
+})
+
+test('上报地址：主地址能「删除」（= 不再上报），删掉的进「已删除」可恢复', async () => {
+  const posts: Array<Record<string, unknown>> = []
+  const WLAN = { url: 'ws://192.168.2.52:8790', label: 'WLAN 2' }
+  const VMNET = { url: 'ws://192.168.40.1:8790', label: 'VMnet1' }
+  let hidden: string[] = []
   const fetchImpl = async (url: string, init?: unknown) => {
     if (!String(url).includes('/advertise')) return defaultFetch()(url)
     const method = (init as { method?: string } | undefined)?.method ?? 'GET'
@@ -917,37 +1018,30 @@ test('上报地址：自报的能「删除」（= 不再上报），删掉的进
       ok: true,
       status: 200,
       json: async () => ({
-        advertised: [{ url: WLAN.url, label: WLAN.label, source: 'auto' }],
+        advertised: hidden.includes(WLAN.url) ? [] : [{ url: WLAN.url, label: WLAN.label, source: 'auto' }],
         hidden,
-        candidates: CANDIDATES,
+        folded: [VMNET],
+        candidates: [WLAN, VMNET],
       }),
     }
   }
   const { react, panel, props, tree } = await mountPanel({}, fetchImpl)
 
-  // 每行自报地址都有「删除」（不是"禁用"那种只换开关的词）。
   const row = flatten(tree).find((element) => {
     if (element.type !== 'div') return false
     const text = textOf(element.props.children)
-    // **要那一行本身**，不是包着它的整段：包含 VMnet1、且不含另一条地址。
-    return text.includes('VMnet1')
-      && !text.includes('WLAN 2')
-      && flatten(element.props.children).some((child) => child.type === 'button')
+    return text.includes('WLAN 2') && flatten(element.props.children).some((child) => child.type === 'button')
   })
-  assert.ok(row !== undefined, '网卡地址那一行在')
+  assert.ok(row !== undefined, '主地址那一行在')
   const remove = buttonWith(row.props.children, '删除')
-  assert.ok(remove !== undefined, '自报地址有「删除」')
-  assert.equal(buttonWith(row.props.children, '禁用'), undefined, '不再是"禁用"这个词')
+  assert.ok(remove !== undefined, '主地址有「删除」')
   ;(remove.props.onClick as () => void)()
   await settle()
+  assert.deepEqual(posts, [{ url: WLAN.url, kind: 'hide' }])
 
-  assert.deepEqual(posts, [{ url: VMNET.url, kind: 'hide' }])
-
-  // 删掉的那条从列表里收进「已删除 N 条」，默认不占位。
   const after = react.render(panel, props)
-  const text = allText(after)
-  assert.match(text, /已删除 1 条 · 展开/)
-  assert.doesNotMatch(text, /VMnet1/, '收起时不占列表')
+  assert.match(allText(after), /已删除 1 条 · 展开/)
+  assert.doesNotMatch(allText(after), /WLAN 2/, '收起时不占列表')
 })
 
 test('连接卡：这个部署没有设置服务时只显示一句说明，不给编辑入口', async () => {

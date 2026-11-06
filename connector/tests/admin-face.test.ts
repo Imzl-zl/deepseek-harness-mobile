@@ -88,6 +88,10 @@ const CONNECTION_VIEW = {
 
 function deps(over: Partial<AdminDeps> = {}): AdminDeps {
   return {
+    // 本机标识：随机值之后，中转「添加我的电脑」要靠面板把它显示出来。
+    connectorId: 'pc-test-connector',
+    // 本机版本：不联网就该有；与「查更新」是两个字段。
+    version: '0.1.21',
     // 查更新：默认"没有新版"，个别用例按需覆盖。
     update: {
       check: async () => ({
@@ -105,7 +109,7 @@ function deps(over: Partial<AdminDeps> = {}): AdminDeps {
     channels: () => CHANNELS,
     setChannel: async () => {},
     advertise: {
-      view: () => ({ advertised: [], hidden: [], candidates: [] }),
+      view: () => ({ advertised: [], hidden: [], folded: [], candidates: [] }),
       set: async () => {},
     },
     offer: async () => ({ svg: 'P', expiresAt: 123, lanOnly: false, lanAvailable: true }),
@@ -176,6 +180,10 @@ test('端点：路径、方法、形状', async () => {
   )
   const body = await jsonOf(status)
   assert.equal(status.status, 200)
+  // 本机版本走 status：面板一打开就有，不依赖用户点「检查更新」。
+  assert.equal(body['version'], '0.1.21')
+  // 本机标识也要走 status：中转「添加我的电脑」要填它。
+  assert.equal(body['connectorId'], 'pc-test-connector')
   assert.deepEqual(body['caps'], CAPS)
   assert.deepEqual(body['metrics'], { pairedDevices: 2, failClosed: 0 })
   assert.equal(body['relayUrl'], 'ws://127.0.0.1:8787/ws/connector',
@@ -253,6 +261,7 @@ test('上报地址：GET 回视图，POST 设表态（kind 是封闭三态）', 
         view: () => ({
           advertised: [{ url: 'ws://192.168.1.4:8790', source: 'auto' as const }],
           hidden: [],
+          folded: [],
           candidates: [{ url: 'ws://192.168.1.4:8790', label: 'WLAN 2' }],
         }),
         set: async (url, kind) => {
@@ -303,7 +312,7 @@ test('上报地址：set 抛错（如 extra 校验不过）归一成 400 并带�
   const routes = createAdminRoutes(
     deps({
       advertise: {
-        view: () => ({ advertised: [], hidden: [], candidates: [] }),
+        view: () => ({ advertised: [], hidden: [], folded: [], candidates: [] }),
         set: async () => {
           throw new Error('直连地址必须是局域网 / 回环 / CGNAT 地址（公网请走中转）')
         },
