@@ -32,6 +32,7 @@ library;
 
 import '../../core/snapshot_digest.dart';
 import '../../core/sync_client.dart';
+import '../../core/workspace_snapshot.dart';
 import '../../model/workspace.dart' show WorkspaceGroup;
 import '../fields.dart';
 import '../reading.dart';
@@ -49,20 +50,8 @@ const String _kUnpin = 'workspace.unpin';
 const String _kArchive = 'workspace.archive';
 const String _kUnarchive = 'workspace.unarchive';
 
-/// `workspace.list` 的一次解码：分组 + 两列 id **同一份应答**。
-///
-/// 分成三次解析会让"列表看过一眼、归档/置顶集还是旧的"，所以它们只能一起出。
-final class WorkspaceSnapshot {
-  const WorkspaceSnapshot({
-    required this.groups,
-    required this.archivedSessionIds,
-    required this.pinnedSessionIds,
-  });
-
-  final List<WorkspaceGroup> groups;
-  final Set<String> archivedSessionIds;
-  final Set<String> pinnedSessionIds;
-}
+// 一次解码的**值类型**（分组 + 两列 id）在 `core/workspace_snapshot.dart`
+// （端口 `HostRpc` 要能返回它）；下面只剩"怎么从同一份应答里一起解出来"。
 
 // ---------------------------------------------------------------------------
 // 发请求（唯一入口）

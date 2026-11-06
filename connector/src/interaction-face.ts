@@ -37,13 +37,28 @@ export interface QuestionOption {
 }
 
 /**
- * DSH `AskUserQuestionIntent`（`types.ts:24-35`）。**意图只改变呈现，不改变协议** ——
+ * DSH `AskUserQuestionIntent`（`types.ts:24-52`）。**意图只改变呈现，不改变协议** ——
  * 计划审查与普通提问共用同一个答案批次（契约 §6.4），所以内核不为它单开一条路。
+ *
+ * 两个分支都要照抄：`plan-review` 之外，`approval` 是 CUA 应用授权那种固定动作卡片。
+ * 本内核只认前者（`dsh/interaction-client.ts` 按 `kind` 过滤），但类型必须与宿主一致 ——
+ * 收窄会让投影状态**根本转不进来**（升 0.2.2 时 tsc 报的就是这个）。
  */
-export interface QuestionIntent {
+export type QuestionIntent = {
   readonly kind: 'plan-review'
   readonly approve: string
   readonly callId?: string
+} | {
+  readonly kind: 'approval'
+  readonly approve: string
+  readonly reject: string
+  readonly always?: string
+  readonly subject?: { readonly name: string; readonly icon?: string }
+  readonly display?: {
+    readonly question: { readonly en: string; readonly [locale: string]: string }
+    readonly detail?: { readonly en: string; readonly [locale: string]: string }
+    readonly approve?: { readonly en: string; readonly [locale: string]: string }
+  }
 }
 
 /** DSH `AskUserQuestionItem`（`types.ts:38-53`）。 */

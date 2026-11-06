@@ -81,43 +81,44 @@ test('断开整条作废：订阅集不留下次连接的影子', () => {
   ])
 })
 
-test('占用位：只有当在线且有效的那一台占着，断开即空', () => {
+test('同时在线：多台有效设备各自在线，已吊销的那台连上来也不上报', () => {
   const presence = makePresence({ 'dev-a': 100, 'dev-b': 50, 'dev-gone': undefined })
-  // 没人连：没有占用者。
-  assert.equal(presence.serving(), undefined)
+  // 没人连：没有任何在线记录。
+  assert.deepEqual(presence.devices(), [])
 
+  // **一台电脑可以同时服务多台设备**（2026-11-05 撤掉独占准入）：
+  // 第二台不会被挡在门外，presence 也不再只留一条"在位者"。
   presence.online('dev-a')
-  assert.equal(presence.serving()?.id, 'dev-a', '在线即占位')
+  presence.online('dev-b')
+  assert.deepEqual(presence.devices().map((row) => row.id).sort(), ['dev-a', 'dev-b'])
 
-  // **已吊销 / 没有配对行的设备连上来也不占位**（占坑 DoS 的判据：停用一台旧手机
-  // 不能让它把占用位永久挂着）。
+  // **已吊销 / 没有配对行的设备连上来也不上报**（名单过滤只在 `devices()` 里做一次）。
   presence.online('dev-gone')
-  assert.equal(presence.serving()?.id, 'dev-a', '已吊销的那台不占位')
+  assert.deepEqual(presence.devices().map((row) => row.id).sort(), ['dev-a', 'dev-b'])
 
-  // 占位者离开：下一次心跳前后都不该再有人占着（主动 close 的判据）。
+  // 一台离开不影响另一台。
   presence.offline('dev-a')
-  assert.equal(presence.serving(), undefined, '断开即释放占用位')
+  assert.deepEqual(presence.devices().map((row) => row.id), ['dev-b'])
 })
 
-test('换网重连：旧连接迟到的 offline 不许抹掉新连接的占用位', () => {
+test('换网重连：旧连接迟到的 offline 不许抹掉新连接的记录', () => {
   // 中转对同一 (connectorId, deviceId) 会先关旧通道再放新通道（`replaced`），
   // 但两条连接走两条 TCP —— 旧连接的 close 完全可能晚于新连接的握手完成。
-  // 没有令牌时，旧连接的 `offline` 会把**新连接**刚占上的记录删掉：
-  // 面板显示离线、下一台设备被放进来（两台同时在服务）。
+  // 没有令牌时，旧连接的 `offline` 会把**新连接**刚写上的记录删掉：
+  // 面板显示离线，而这台设备明明还连着。
   const presence = makePresence(PAIRED)
   const oldConnection = {}
   const newConnection = {}
 
   presence.online('dev-a', oldConnection)
   presence.online('dev-a', newConnection) // 新连接接管记录
-  assert.equal(presence.serving()?.id, 'dev-a')
-
-  presence.offline('dev-a', oldConnection) // 旧连接迟到的断开
-  assert.equal(presence.serving()?.id, 'dev-a', '记录现在属于新连接，不许删')
   assert.equal(presence.liveOf('dev-a')?.online, true)
 
+  presence.offline('dev-a', oldConnection) // 旧连接迟到的断开
+  assert.equal(presence.liveOf('dev-a')?.online, true, '记录现在属于新连接，不许删')
+
   presence.offline('dev-a', newConnection) // 新连接自己断开
-  assert.equal(presence.serving(), undefined, '令牌对上了才真的释放')
+  assert.equal(presence.liveOf('dev-a'), undefined, '令牌对上了才真的释放')
 })
 
 test('未在线的设备问 liveOf 是 undefined（读取面据此显示"离线"，不猜一条幽灵记录）', () => {

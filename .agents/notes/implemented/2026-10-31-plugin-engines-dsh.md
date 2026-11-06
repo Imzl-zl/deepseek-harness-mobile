@@ -21,6 +21,8 @@ rc.5 的判定是：**包里没有 `engines.dsh` 时，逐个 `@deepseek-ai/dsh*
 
 **声明 `engines.dsh: ">=0.2.1-rc.5 <0.2.2"`，让兼容性由一条显式范围决定。**
 
+> 上界写法已更正为 `<0.2.2-0`：`<0.2.2` 在 `includePrerelease` 下会放行整条 0.2.2 预发布线，与本节「不 claim 没测过的线」的意图相反。见 `.agents/notes/implemented/2026-11-05-connector-engines-upper-bound.md`。
+
 - 有 `engines.dsh` 时，peer 里的 `@deepseek-ai/dsh*` **不再参与判定**（同一处源码
   `:57-61`）。范围表达"我们支持 0.2.1 这条线（含其后的 rc）"，而不是"只支持某一个 rc"。
 - 上界写 `<0.2.2` 而不是 `<0.3.0`：`0.2.2-alpha.*` 已在 npm 上，我们没测过；claim 支持

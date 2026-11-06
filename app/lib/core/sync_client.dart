@@ -32,6 +32,9 @@ import 'connection.dart';
 import 'crypto.dart';
 import 'errors.dart';
 import 'handshake_driver.dart';
+import 'history_page.dart';
+import 'host_rpc.dart';
+import 'items.dart' show EventIdReaders;
 import 'job.dart';
 import 'keepalive.dart';
 import 'outbox.dart';
@@ -280,13 +283,6 @@ abstract interface class SyncClientProbe {
   /// 下一次回前台仍会再试一轮。
   bool get lastConnectGaveUp;
 
-  /// 上一次建连失败是**被另一台设备占用**（`device/busy`，独占 1:1）。
-  ///
-  /// 与 [lastConnectWasTerminal] 分开：那个要清凭据回配对页，这个**什么都不清**，
-  /// 只是不自动重连（占用位什么时候空出来不是我们能决定的）。
-  /// 具体的占用者在 [lastProtocolError] 的 message 里（电脑侧随关闭理由一起送来）。
-  bool get lastConnectBusy;
-
   /// 已声明的订阅集（**只有 `sid`**）—— `sync.hello` 会把它整份重新声明（契约 §5.4）。
   ///
   /// 水位不在这里：它属于连接状态（[subscribe] 的说明），而这份声明只回答
@@ -480,6 +476,9 @@ class SyncClientDeps {
     required this.box,
     required this.outbox,
     required this.session,
+    required this.history,
+    required this.eventIds,
+    required this.hostRpc,
     this.persistence,
     this.keepalive,
     this.backoff,
@@ -502,6 +501,30 @@ class SyncClientDeps {
 
   /// 本地会话状态（接收规则、快照拼接、水位）。
   final DeviceSession session;
+
+  /// 翻页与单条补取的**读法**（`session.page` / `session.refetch`）。
+  ///
+  /// 线上形状只有 `wire/` 能断言，而"补取 + 按 seq 归位 + 记住 hasMore"要连接层的
+  /// 状态 —— 两半各守一边，所以这里是个端口（`history_page.dart`）。
+  /// **必填**：不给它就没有历史可翻，而"翻不了页"不该是一个静默的默认值。
+  final HistoryReader history;
+
+  /// 事件**身份字段**的读法（契约 §5.2 的推导规则在 `items.dart`，字段名在 `wire/`）。
+  ///
+  /// 收帧热路径用它：每条 `ev` 帧解出来的 [SessionEvent] 都带 `itemId`，
+  /// 而后者的推导要读 `callId` / `toolCallId` / `approvalId` / `commandId`。
+  /// **必填**：不给就没法给事件一个稳定身份。
+  final EventIdReaders eventIds;
+
+  /// 「读电脑侧 / 改电脑侧」的两个口（`host_rpc.dart`），**是个工厂而不是实例**。
+  ///
+  /// 为什么是工厂：能力属于**这一条连接**，而连接是 `createSyncClient` 拿 deps
+  /// 之后才成立的（`this` 只能在那之后传出去）。实现只在 `wire/`，所以装配点给的是
+  /// `WireHostRpc.new` —— 连接层因此不必 import `wire/`，而消费者照旧
+  /// `hostRpcOf(client)` 就能拿到 `reads` / `writes`。
+  /// **必填**：不给就是"这台电脑的只读面全读不了、写操作一个也发不出去"，
+  /// 而那不是该静默发生的默认值。
+  final HostRpcHolder Function(SyncClient) hostRpc;
 
   /// **落盘缝**（契约 §5.3：`persisted` 只在落盘成功后发）。
   ///

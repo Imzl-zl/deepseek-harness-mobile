@@ -13,9 +13,10 @@
 ///    `user-question-reply` 用户消息（DSH 把迟到的答复 steer 成消息）。
 library;
 
-import 'package:dsh_mobile/data/projection.dart';
 import 'package:dsh_mobile/model/interaction.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'projection_fixture.dart';
 
 /// 造一条 `approval/asked` 事件的 data。
 ///

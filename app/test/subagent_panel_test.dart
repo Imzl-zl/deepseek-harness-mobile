@@ -440,6 +440,50 @@ void main() {
       expect(row.displayLabel, 'child-9');
     });
 
+    // 0.2.2 起 `subagentCatalog` 是 v3 载荷，多一个同级唯一的 `name`
+    // （`packages/subagent/subagent/src/catalog.ts:40`）。DSH 自己的取法是
+    // `entry.name ?? entry.id`（`ui-subagent/src/client/SubagentHeaderLineage.tsx:211-214`），
+    // 所以这里按同一份规则断言，而不是按我们想让它显示成什么。
+    test('catalog v3 的 name：没有 label 时顶替 Session id', () {
+      final rows = parseSubagentCatalogValue([
+        {
+          'id': 'child-1',
+          'createdAt': 0,
+          'mode': 'continuable',
+          'name': 'reviewer',
+        },
+      ]);
+      expect(rows.single.agentName, 'reviewer');
+      expect(rows.single.displayLabel, 'reviewer');
+    });
+
+    test('catalog v3 的 name：有 label 时 label 仍是主标签，name 进详情行', () {
+      final rows = parseSubagentCatalogValue([
+        {
+          'id': 'child-2',
+          'createdAt': 0,
+          'mode': 'continuable',
+          'name': 'checker',
+          'label': '审查',
+        },
+      ]);
+      expect(rows.single.displayLabel, '审查');
+      expect(rows.single.agentName, 'checker');
+      expect(
+        SubagentNode(row: rows.single, running: false).detailLine(0),
+        contains('checker'),
+      );
+    });
+
+    test('catalog v2 条目没有 name 时不编造（仍退回 Session id）', () {
+      final rows = parseSubagentCatalogValue([
+        {'id': 'child-3', 'createdAt': 0, 'mode': 'external', 'label': '外部跑'},
+      ]);
+      expect(rows.single.name, isNull);
+      expect(rows.single.agentName, 'child-3');
+      expect(rows.single.displayLabel, '外部跑');
+    });
+
     test('parseSubagentCatalog：非 Map / 非数组都是空表', () {
       expect(parseSubagentCatalog(null), isEmpty);
       expect(parseSubagentCatalog('x'), isEmpty);

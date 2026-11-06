@@ -15,12 +15,13 @@
 /// DSH 的规则在 `conversation-nodes/command.ts:101-131` 的 `compactSummary`。
 library;
 
-import 'package:dsh_mobile/core/items.dart';
-import 'package:dsh_mobile/data/projection.dart';
+import 'package:dsh_mobile/core/items.dart' hide itemIdOf;
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/ui/chat_turns.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'projection_fixture.dart';
 
 /// 真日志样本（`compaction/start`，seq 4717）。
 const _start = <String, Object?>{

@@ -30,11 +30,8 @@ export const ERROR_TABLE = {
   'protocol/revoked': 're-pair',
   'protocol/bad-frame': 'reconnect-once',
   'protocol/replay': 'reconnect-once',
-  // **独占（多机第 4 步）**：这台电脑已经有一台**有效**设备在服务，第二台被拒。
-  // 不是 `not-paired`（凭据是好的）、也不是超时（它是**明确的结论**）。
-  // 动作刻意不是 `backoff-retry`：那会让手机在后台一遍遍撞门，占用者一走就
-  // 无声连上 —— 而"连哪台、什么时候连"是用户的动作（决策 6 / 9）。
-  'device/busy': 'busy-wait',
+  // **这台电脑可以同时服务多台有效设备**（2026-11-05 撤掉了独占准入）：
+  // 第二台不会被拒，所以没有"被占用"这个码。
   'rate-limited': 'backoff-retry',
   'session/not-found': 'drop-from-list',
   'session/window-missed': 'snapshot',
@@ -83,7 +80,12 @@ export type ErrorCode = keyof typeof ERROR_TABLE
 
 /**
  * 客户端对该错误的处置。刻意是**封闭枚举**而不是自由文本：手机端据此分支，
- * 新增行为要改这张表，不会漏在某个 switch 的 default 里。
+ * 新增行为要改这张表，不会漏在某个 `switch` 的 `default` 里。
+ *
+ * **取值集合必须与 `ERROR_TABLE` 里实际用到的动作相等**：一个声明了却没有任何码
+ * 使用的动作是死配置，读代码的人会以为"这个处置存在"。`'busy-wait'` 就是这样漏下来的
+ * ——2026-11-05 撤独占准入时删了 `device/busy` 行与 Dart 的 `busyWait`，联合类型里这条
+ * 一直留到 11-06。现在由 `error-table-parity.test.ts` 的第三条断言钉住。
  */
 export type ClientAction =
   | 'upgrade-required'
@@ -97,7 +99,6 @@ export type ClientAction =
   | 'disable-and-annotate'
   | 'refresh-settings'
   | 'show-offline'
-  | 'busy-wait'
   | 'disable'
   | 'report-defect'
   | 'log-and-retry'

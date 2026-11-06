@@ -27,7 +27,9 @@ void main() {
     final store = SqfliteItemStore(fileName: 'itest.db');
     await store.open();
     try {
-      await store.clear();
+      // `clear()` 已在 S2 删除（它清的是四张表，而"清空"只该按作用域来）——
+      // 这里要的是"这个会话从头开始"，正是 `clearSession` 的语义。
+      await store.clearSession('s1');
 
       await store.commit('s1', [
         const StoredItem(
@@ -89,7 +91,7 @@ void main() {
       expect(items, isNotEmpty, reason: '关掉再打开数据该还在 —— 否则它没真的落盘');
       expect(await store.cursorOf('s1'), 2);
     } finally {
-      await store.clear();
+      await store.clearSession('s1');
       await store.close();
     }
   });

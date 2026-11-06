@@ -34,7 +34,10 @@ import 'dart:io';
 
 import 'package:dsh_mobile/core/endpoint.dart' show parseEndpointList;
 import 'package:dsh_mobile/core/job.dart' show JobRow;
+import 'package:dsh_mobile/core/repo_info.dart' show RepoInfo;
+import 'package:dsh_mobile/core/setting_section.dart' show SettingSection;
 import 'package:dsh_mobile/core/sync_client.dart' show SessionEvent;
+import 'package:dsh_mobile/core/workspace_snapshot.dart' show WorkspaceSnapshot;
 import 'package:dsh_mobile/model/agent_preset.dart' show parseAgentPresetRoster;
 import 'package:dsh_mobile/model/changes.dart' show ChangesSummary;
 import 'package:dsh_mobile/model/chat_item.dart';
@@ -700,8 +703,8 @@ void main() {
     final sections = (sample['sections']! as List).cast<Object?>();
     final first = (sections.first! as Map).cast<String, Object?>();
     final reading = readSettings(sample);
-    expect(reading, isA<WireOk<List<SettingSectionWire>>>());
-    final list = (reading as WireOk<List<SettingSectionWire>>).value;
+    expect(reading, isA<WireOk<List<SettingSection>>>());
+    final list = (reading as WireOk<List<SettingSection>>).value;
     expect(list.length, sections.length);
     expect(list.first.ns, first['ns']);
     expect(list.first.revision, first['revision']);
@@ -713,19 +716,19 @@ void main() {
     final sample = _sampleOf(golden, 'settings.update');
     final section = (sample['section']! as Map).cast<String, Object?>();
     final reading = readSettingSection(sample);
-    expect(reading, isA<WireOk<SettingSectionWire?>>());
-    final value = (reading as WireOk<SettingSectionWire?>).value;
+    expect(reading, isA<WireOk<SettingSection?>>());
+    final value = (reading as WireOk<SettingSection?>).value;
     expect(value?.ns, section['ns']);
     expect(value?.values, section['values']);
 
     final nullReading = readSettingSection({'section': null});
-    expect(nullReading, isA<WireOk<SettingSectionWire?>>());
-    expect((nullReading as WireOk<SettingSectionWire?>).value, isNull);
+    expect(nullReading, isA<WireOk<SettingSection?>>());
+    expect((nullReading as WireOk<SettingSection?>).value, isNull);
     expect(WireDiagnostics.badCount, 0, reason: 'section:null 不是漂移');
 
     final bad = readSettingSection({'sections': <Object?>[]});
-    expect(bad, isA<WireBad<SettingSectionWire?>>());
-    expect(valueOrReport<SettingSectionWire?>(bad, 'settings.update'), isNull);
+    expect(bad, isA<WireBad<SettingSection?>>());
+    expect(valueOrReport<SettingSection?>(bad, 'settings.update'), isNull);
     expect(WireDiagnostics.badCount, 1);
   });
 
@@ -735,8 +738,8 @@ void main() {
     final sample = _sampleOf(golden, 'repo.info');
     final caps = (sample['caps']! as Map).cast<String, Object?>();
     final reading = readRepoInfo(sample);
-    expect(reading, isA<WireOk<RepoInfoWire>>());
-    final info = (reading as WireOk<RepoInfoWire>).value;
+    expect(reading, isA<WireOk<RepoInfo>>());
+    final info = (reading as WireOk<RepoInfo>).value;
     expect(info.mentionsAvailable, caps['references'] == true);
     expect(info.filesAvailable, caps['files'] == true);
     expect(info.pluginsAvailable, caps['plugins'] == true);
@@ -753,14 +756,14 @@ void main() {
       'caps': <String, Object?>{},
       'hostName': '',
     });
-    expect(reading, isA<WireOk<RepoInfoWire>>());
-    expect((reading as WireOk<RepoInfoWire>).value.hostName, isNull);
+    expect(reading, isA<WireOk<RepoInfo>>());
+    expect((reading as WireOk<RepoInfo>).value.hostName, isNull);
     expect(WireDiagnostics.badCount, 0);
   });
 
   test('repo.info 缺 caps ⇒ WireBad + 计数 1（它由连接器无条件写出）', () {
     final reading = readRepoInfo({'protocol': 1, 'aliasVersion': 7});
-    expect(reading, isA<WireBad<RepoInfoWire>>());
+    expect(reading, isA<WireBad<RepoInfo>>());
     expect(valueOrReport(reading, 'repo.info'), isNull);
     expect(WireDiagnostics.badCount, 1);
   });

@@ -14,7 +14,7 @@
  *
  * 1. zh / en 两份字典的**键集合相同** —— 少一个键，界面上就是一段 `undefined`；
  * 2. 源码里没有 `window.confirm`，也没有 `offline` scope 的按钮（事故的两个入口）；
- * 3. 每行的动作按钮与状态词对上新行为（未停用 → 接管?+停用；已停用 → 启用+删除）；
+ * 3. 每行的动作按钮与状态词对上新行为（未停用 → 停用+删除；已停用 → 启用+删除）；
  * 4. 点「停用」/「删除」弹出的对话框，**标题与后果句逐字符合预期** ——
  *    事故里确认框写"已吊销记录"而实际删的是离线记录，这类张冠李戴由这里钉住。
  *
@@ -170,9 +170,9 @@ const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve
 
 /** 三行设备：一台在线前台、一台离线未停用、一台已停用。 */
 const DEVICES = [
-  { id: 'dev-live', name: '我的手机', pairedAt: 1760000000000, revoked: false, online: true, serving: true, foreground: true, lastInteractedAt: 1760000600000 },
-  { id: 'dev-idle', name: '平板', pairedAt: 1750000000000, revoked: false, online: false, serving: false, foreground: false },
-  { id: 'dev-gone', name: '旧手机', pairedAt: 1740000000000, revoked: true, online: false, serving: false, foreground: false },
+  { id: 'dev-live', name: '我的手机', pairedAt: 1760000000000, revoked: false, online: true, foreground: true, lastInteractedAt: 1760000600000 },
+  { id: 'dev-idle', name: '平板', pairedAt: 1750000000000, revoked: false, online: false, foreground: false },
+  { id: 'dev-gone', name: '旧手机', pairedAt: 1740000000000, revoked: true, online: false, foreground: false },
 ]
 
 /** 两条传输通道（按"方式"分开关，2026-10-17）。 */
@@ -347,7 +347,7 @@ test('面板：每行的动作按钮与状态词对上新行为', async () => {
   // 已停用默认折叠，有一行展开入口。
   assert.match(text, /已停用 1 台 · 展开/)
 
-  // 未停用的行（在线的我那台）：**停用 + 删除**（在服务时还多一个「接管」）。
+  // 未停用的行（在线的我那台）：**停用 + 删除**。
   // 「删除」在活跃行上也给（用户原话："连接的都不能删除？我想删除咋办？"）；
   // 点下去是"先停用（拿到终态）再删记录"两步，顺序由 `removeActive` 保证。
   const rows = bodyRows(tree)
@@ -391,36 +391,7 @@ test('面板：勾选后出现浮现操作栏，不改变行本身', async () =>
   assert.equal(buttonWith(rows[0] as Element, '删除') !== undefined, true, '行级「删除」一直在')
 })
 
-test('面板：正在服务的那台多一个「在服务」与「接管」，其余行没有', async () => {
-  const { tree } = await mountPanel()
-
-  // 独占 1:1："在服务"与"在线"不是一回事 —— 操作者要能指出是谁占着这台电脑。
-  const rows = bodyRows(tree)
-  assert.match(textOf(rows[0]), /运行中 · 前台 · 在服务/, '占用位那一行带「在服务」')
-  assert.doesNotMatch(textOf(rows[1]), /在服务/, '没在服务的那行不带这一档')
-  assert.equal(buttonWith(rows[0] as Element, '接管') !== undefined, true, '占用位那行有「接管」')
-  assert.equal(buttonWith(rows[1] as Element, '接管'), undefined, '没在服务的行没有「接管」')
-})
-
-test('对话框：接管会停用占用设备并提示重新配对', async () => {
-  const { react, panel, props, tree } = await mountPanel()
-
-  const takeOver = buttonWith(bodyRows(tree)[0] as Element, '接管')
-  assert.ok(takeOver !== undefined)
-  ;(takeOver.props.onClick as () => void)()
-
-  const shown = react.render(panel, props)
-  const dialog = allText(shown)
-  assert.match(dialog, /接管这台电脑？（「我的手机」正在服务）/, '标题点明占用者')
-  assert.match(
-    dialog,
-    /接管会停用占用设备；它下次连回来要重新配对。/,
-    '后果句：停用占用设备 + 要重新配对',
-  )
-  assert.equal(buttonWith(shown, '接管') !== undefined, true, '确认键是「接管」')
-})
-
-test('对话框：停用的后果写明"下次重连就会失败"，确认键是「停用」', async () => {
+test('对话框：停用的后果写明"现在就断开 + 下次重连失败"，确认键是「停用」', async () => {
   const { react, panel, props, tree } = await mountPanel()
 
   const disable = buttonWith(bodyRows(tree)[0] as Element, '停用')
@@ -431,8 +402,8 @@ test('对话框：停用的后果写明"下次重连就会失败"，确认键是
   assert.match(allText(shown), /停用「我的手机」？/, '标题是问句')
   assert.match(
     allText(shown),
-    /那台手机下次重连就会失败,需要重新配对才能恢复。记录仍会保留。/,
-    '后果必须逐字对上新行为：停用是软的、可恢复、记录仍会保留',
+    /那台手机现在就会断开,下次重连也会失败,需要重新配对才能恢复。记录仍会保留。/,
+    '后果必须逐字对上新行为：停用是立刻断开的软动作（可解禁、记录仍保留）',
   )
   assert.equal(buttonWith(shown, '停用') !== undefined, true, '确认键是「停用」')
   assert.equal(buttonWith(shown, '取消') !== undefined, true, '有取消')
@@ -608,8 +579,8 @@ test('对话框：停用所选（不是删除）—— 多选的动作只会让�
 
   const dialog = allText(react.render(panel, props))
   assert.match(dialog, /停用所选的 2 台设备？/)
-  // 与单台停用同一句后果：失联要重新配对、记录仍保留。
-  assert.match(dialog, /那台手机下次重连就会失败,需要重新配对才能恢复。记录仍会保留。/)
+  // 与单台停用同一句后果：**现在**就断开、之后失联要重新配对、记录仍保留。
+  assert.match(dialog, /那台手机现在就会断开,下次重连也会失败,需要重新配对才能恢复。记录仍会保留。/)
   // 多选的动作仍是**停用**：这条框里不出现"先停用再删除"那句（那是单台删除才有的）。
   assert.doesNotMatch(dialog, /会先停用它/, '多选的动作不是删除')
 })

@@ -31,9 +31,10 @@
 /// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
+import '../../core/repo_info.dart';
 import '../../core/snapshot_digest.dart';
 import '../../core/sync_client.dart';
-import '../../model/command.dart' show SlashCommand, parseSlashCommands;
+import '../../model/command.dart' show parseSlashCommands;
 import '../fields.dart';
 import '../reading.dart';
 import 'snapshot.dart';
@@ -44,54 +45,13 @@ export '../reading.dart';
 
 const String _kRepoInfo = 'repo.info';
 
-/// `repo.info` 里**手机消费的那五样**。
-final class RepoInfoWire {
-  const RepoInfoWire({
-    required this.slashCommands,
-    required this.mentionsAvailable,
-    required this.filesAvailable,
-    required this.changesAvailable,
-    required this.pluginsAvailable,
-    required this.dshVersion,
-    required this.hostName,
-    required this.methodCount,
-  });
-
-  /// `/` 候选菜单的内容（**电脑侧原样过线**，手机不抄第二份）。
-  final List<SlashCommand> slashCommands;
-
-  /// `caps.references`：`@` 面板显不显示。
-  final bool mentionsAvailable;
-
-  /// `caps.files`：文件页显不显示。
-  final bool filesAvailable;
-
-  /// `caps.changes`：收口改动卡画不画。
-  ///
-  /// 缺了（老连接器 / 没装 `workspace-changes` 的部署）就**不画卡片** ——
-  /// 一张永远读不到的卡比没有更糟。
-  final bool changesAvailable;
-
-  /// `caps.plugins`：插件页显不显示。
-  final bool pluginsAvailable;
-
-  /// 电脑侧 DSH 运行时版本（拿不到就是 `null`，不编一个）。
-  final String? dshVersion;
-
-  /// 电脑自报的名字（`os.hostname()` 原值；老连接器不报 ⇒ `null`）。
-  ///
-  /// **纯展示值**：可改、可伪造、会重名，从不参与判据
-  /// （`proposed/2026-10-29-one-phone-many-computers.md` 决策 2）。
-  final String? hostName;
-
-  /// `methods` 的**条数**（形状检查用；方法名手机不读）。
-  final int methodCount;
-}
+// `repo.info` 的**值类型**在 `core/repo_info.dart`（端口 `HostRpc` 要能返回它）；
+// 下面只剩"怎么从线上那一份解出来"。
 
 /// 读一次 `repo.info`（排错要它：手机版本与电脑版本并排看）。
 ///
 /// 带内容摘要：它是**进程级事实**（版本 / 能力位），一次会话里几乎不会变。
-Future<SnapshotReply<RepoInfoWire?>> loadRepoInfo(SyncClient client) =>
+Future<SnapshotReply<RepoInfo?>> loadRepoInfo(SyncClient client) =>
     loadSnapshot(client, _kRepoInfo, const {}, readRepoInfo);
 
 /// `repo.info` 的应答。
@@ -99,10 +59,10 @@ Future<SnapshotReply<RepoInfoWire?>> loadRepoInfo(SyncClient client) =>
 /// **`caps` 是必填**（连接器无条件写出它）；三个能力位各自"缺了 ⇒ false"
 /// （老连接器 / 没装那个面），**不计数** —— 那是如实的降级，不是漂移。
 /// `methods` / `commands` / `dshVersion` / `hostName` 都是可选。
-WireReading<RepoInfoWire> readRepoInfo(Object? result) =>
+WireReading<RepoInfo> readRepoInfo(Object? result) =>
     readObject(_kRepoInfo, result, (fields) {
       final caps = fields.requireMap('caps');
-      return RepoInfoWire(
+      return RepoInfo(
         slashCommands: parseSlashCommands(
           result is Map ? result['commands'] : null,
         ),

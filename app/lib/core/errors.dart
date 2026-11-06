@@ -58,13 +58,6 @@ enum ClientAction {
   /// 中转不可达：展示离线态。
   showOffline,
 
-  /// 电脑已被**另一台**设备占用（`device/busy`）：**不自动重连**，
-  /// 显示占用者 + 给手动重试与"切回上一台"。
-  ///
-  /// 与 [backoffRetry] 的差别就是"要不要自己一遍遍撞门"：占用者离开后自动连上
-  /// 等于替用户决定"现在就切过来"（决策 6 / 9）。见 `proposed/2026-10-29-one-phone-many-computers.md`。
-  busyWait,
-
   /// 电脑侧不支持这个能力：置灰（能力位模型的延伸）。
   disable,
 
@@ -101,10 +94,6 @@ enum ErrorCode {
   badFrame('protocol/bad-frame', ClientAction.reconnectOnce),
   replay('protocol/replay', ClientAction.reconnectOnce),
 
-  /// 这台电脑已被另一台**有效**设备占用（独占 1:1）：不踢人，等用户动作。
-  ///
-  /// 关闭理由可能带占用者说明（`device/busy <占用者>`，见契约 §4.1）。
-  deviceBusy('device/busy', ClientAction.busyWait),
   rateLimited('rate-limited', ClientAction.backoffRetry),
   sessionNotFound('session/not-found', ClientAction.dropFromList),
   sessionWindowMissed('session/window-missed', ClientAction.snapshot),
@@ -242,8 +231,8 @@ enum ErrorCode {
 
 /// 切一条**电脑侧拒绝的关闭理由**（契约 §4.1：`协议码` 或 `协议码 说明`）。
 ///
-/// 电脑侧在握手层拒绝时用关闭码 4003 + 这段文本送达，理由可能带一句给人看的说明
-/// （例：`device/busy 我的手机`）。**码是第一个空格之前的全部字节** ——
+/// 电脑侧在握手层拒绝时用关闭码 4003 + 这段文本送达，理由**可能**带一句给人看的说明
+/// （形状是 `协议码 说明`）。**码是第一个空格之前的全部字节** ——
 /// 所以这里只按第一个空格切，不按空白切、也不做任何修剪：
 /// 切坏了就会归成 [ErrorCode.internal]，用户看到的是"未知错误"。
 ({String wire, String? detail}) splitCloseReason(String reason) {

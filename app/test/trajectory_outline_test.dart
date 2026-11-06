@@ -29,9 +29,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'fake_sync_client.dart';
 
 class _OutlineClient extends FakeSyncClient {
-  _OutlineClient(this.projections);
+  _OutlineClient(this.projectionReply);
 
-  final Map<String, Object?> projections;
+  /// 名字不叫 `projections`：`FakeSyncClient` 实现了 `HostRpc`，那个能力的成员
+  /// 就叫 `projections`（端口的方法名），同名会变成"用字段覆盖方法"。
+  final Map<String, Object?> projectionReply;
 
   final _sessions = StreamController<SessionDelta>.broadcast();
 
@@ -60,7 +62,7 @@ class _OutlineClient extends FakeSyncClient {
     Map<String, Object?> params, {
     String? requestId,
   }) async {
-    if (method == 'session.projections') return projections as T;
+    if (method == 'session.projections') return projectionReply as T;
     return <String, Object?>{} as T;
   }
 }

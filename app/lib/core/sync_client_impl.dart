@@ -21,14 +21,16 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
-import '../wire/rpc/session_page.dart';
 import 'call_registry.dart';
 import 'connection.dart';
 import 'connection_resources.dart';
 import 'errors.dart';
+import 'event_fields.dart';
 import 'flow.dart';
 import 'frame.dart';
 import 'handshake_driver.dart';
+import 'history_page.dart';
+import 'host_rpc.dart';
 import 'items.dart';
 import 'job.dart';
 import 'keepalive.dart';
@@ -58,7 +60,8 @@ class _SyncClient
         SyncClientProbe,
         SnapshotCaller,
         SessionRestorer,
-        LinkControl {
+        LinkControl,
+        HostRpcHolder {
   _SyncClient(this._deps)
     : _machine = ConnectionMachine(),
       _backoff = _deps.backoff ?? Backoff(),
@@ -282,6 +285,27 @@ class _SyncClient
   }
 
   // -------------------------------------------------------------------------
+  // 能力口：读 / 改电脑侧（`HostRpcHolder`）
+  // -------------------------------------------------------------------------
+  //
+  // 能力**不是我**：活全在 `wire/host_reads.dart` 与 `wire/host_writes.dart`（装配点给的
+  // 工厂造出来）。这里只证明"这一条连接上有那两个口"，所以只有两个 getter ——
+  // 不把这些方法搬进来，否则要么逐方法转发，要么为了转发再造一层基类（第一版试过，
+  // 见 `.agents/notes/implemented/2026-11-06-p1b-hostrpc-holder.md`）。
+  // **在这里 import `wire/` 是不行的**：`core → wire` 就又回来了，那正是这批要拆的方向。
+
+  late final HostRpcHolder _hostRpc = _deps.hostRpc(this);
+
+  @override
+  HostReads get reads => _hostRpc.reads;
+
+  @override
+  HostWrites get writes => _hostRpc.writes;
+
+  @override
+  EventFields get eventFields => _hostRpc.eventFields;
+
+  // -------------------------------------------------------------------------
   // 连接生命周期
   // -------------------------------------------------------------------------
 
@@ -315,9 +339,6 @@ class _SyncClient
     // 且 `closed → connecting` 是**非法迁移**（`setAppState(foreground)` 会在
     // 终态后把 `closed` 当"该重连"调到这里）—— 直接挡掉，两条都避掉。
     if (_lastConnectWasTerminal) return;
-    // **被占用本来就要等用户动作**：`start()` 是自动触发的（启动 / 回前台），
-    // 不该替用户去撞门 —— 手动重试走 `reconnect()`。
-    if (_lastConnectBusy) return;
     // **放弃过的手动重试**：用户点了「重试连接」到这里 —— 清掉放弃标记并把
     // 退避表回到起点，否则下一次 closed 会立刻又判 exhausted。
     if (_connectGaveUp) {
@@ -350,9 +371,6 @@ class _SyncClient
     // `closed` 是终态，`start()` 会直接返回；恢复意图要显式回到起点。
     // 但**终态失败（身份不被认）不复活**：那种情况该走重新配对。
     if (_lastConnectWasTerminal) return;
-    // **被占用要靠手动重试解开**：`reconnect()` 是用户动作（连接 sheet 的
-    // 「重试连接」/ 切换电脑），所以这里清掉结论、照常重拨。
-    _lastConnectBusy = false;
     if (_machine.isAnyOf([ConnectionState.closed, ConnectionState.backoff])) {
       _machine.to(ConnectionState.idle);
     }
@@ -468,8 +486,6 @@ class _SyncClient
     _lastHalfOpenSilentMs = null;
     // 连上了：这条连接不再是"终态停摆"（下次掉线按正常退避判）。
     _lastConnectWasTerminal = false;
-    // 连上了：占用位在我们手里，"被占用"这个结论作废。
-    _lastConnectBusy = false;
     // 连上了：放弃标记与退避表都回到起点（否则下次掉线会从大间隔开始，
     // 甚至立刻又判 exhausted）。
     _connectGaveUp = false;
@@ -535,15 +551,6 @@ class _SyncClient
                 '握手被拒：${detail ?? parsed.wire}',
               );
               _lastConnectWasTerminal = true;
-            case ClientAction.busyWait:
-              // **被占用什么都不清**：凭据是好的，这本就是同一台电脑。
-              // 只停自动重连（占用位什么时候空出来不是我们能决定的），
-              // 手动重试（`reconnect()`）照常放行。
-              _lastProtocolError = ProtocolException(
-                refusal,
-                detail ?? '这台电脑正被另一台设备连接',
-              );
-              _lastConnectBusy = true;
             default:
               break;
           }
@@ -825,7 +832,20 @@ class _SyncClient
       return;
     }
     // 解出的载荷就是一条事件（`itemId` 由事件自身推导，§5.2）。
-    final event = _eventFromPayload(plaintext, seq);
+    //
+    // **推不出身份 = 载荷坏**（`itemIdOf` 在已知类型缺字段时抛，见 `items.dart`）：
+    // 折成 `badFrame` 协议失败，与上面"缺少 sid/seq"同一档。**不许让它裸奔** ——
+    // 从前的写法会让这条 StateError 穿过 `_dispatch` 变成未处理的异步错误
+    // （连接既不报错也不断开，症状是"这一帧之后就安静了"）。
+    final SessionEvent event;
+    try {
+      event = _eventFromPayload(plaintext, seq, _deps.eventIds);
+    } on StateError catch (error) {
+      _protocolFailure(
+        ProtocolException(ErrorCode.badFrame, 'ev 载荷推不出 itemId：$error'),
+      );
+      return;
+    }
     // 本地会话状态只需要"哪一条到了"（它做去重、水位与快照拼接）。
     //
     // 第三个参数是"文本"，而**连接层拿不到文本** —— 文本要从事件的 `data` 投影出来，
@@ -1203,19 +1223,16 @@ class _SyncClient
     int minTurns = SyncClient.kHistoryPageMinTurns,
   }) async {
     try {
-      // 形状（`{items, hasMore}` 与两条 item 的判别联合）与**方法名/参数**
-      // 都在 `wire/rpc/session_page.dart` 的 `loadSessionPage`；
+      // 形状（`{items, hasMore}` 与两条 item 的判别联合）与**方法名/参数**都在
+      // `wire/rpc/session_page.dart`（经 `SyncClientDeps.history` 注入）；
       // 这里只剩"记住还有没有更早的"与补取循环。
-      final decoded = valueOrReport(
-        await loadSessionPage(
-          this,
-          sid: sid,
-          beforeSeq: beforeSeq,
-          maxMessages: maxMessages,
-          turnWindowMinMessages: minMessages,
-          turnWindowMinTurns: minTurns,
-        ),
-        'session.page',
+      final decoded = await _deps.history.loadPage(
+        this,
+        sid: sid,
+        beforeSeq: beforeSeq,
+        maxMessages: maxMessages,
+        minMessages: minMessages,
+        minTurns: minTurns,
       );
       if (decoded == null) {
         // 整页读不出来：**不当成"没有更多"**，保留上一次的结论（与失败分支同一条）。
@@ -1249,24 +1266,22 @@ class _SyncClient
 
   /// 一页的 items → 事件表（**大条目要补取，不许跳过**）。
   ///
-  /// 形状与判别联合在 `wire/rpc/session_page.dart`（`{kind:'record'|'refetch'}`）；
-  /// 这里只做**那一件必须 await 的事**：`refetch` 标记要按 `seq` 单独取回来。
+  /// 判别联合在 `wire/rpc/session_page.dart`（`{kind:'record'|'refetch'}`），
+  /// 到了这一层只剩 [HistoryPage] 的两个分支；这里只做**那一件必须 await 的事**：
+  /// `refetch` 标记要按 `seq` 单独取回来。
   /// **跳过它等于在会话里留一个静默的洞** —— 2026-10-22 之前就是这么做的
   /// （只留 `record`）：>1 MiB 的条目（图片内联在 `assistant/message` 里）
   /// 在手机上**一条都看不到**，而界面不报错、也不缺页。取舍见
   /// `.agents/notes/implemented/2026-10-22-refetch-markers-are-fetched.md`。
   ///
   /// 补取失败**不吞**：异常往上抛，由 [page] 折成 `failure`，上层整页不落。
-  Future<List<SessionEvent>> _eventsOfPage(
-    SessionPageWire page,
-    String sid,
-  ) async {
+  Future<List<SessionEvent>> _eventsOfPage(HistoryPage page, String sid) async {
     final out = <SessionEvent>[];
     for (final item in page.items) {
       switch (item) {
-        case SessionPageRecordWire(:final event):
+        case HistoryRecordItem(:final event):
           out.add(event);
-        case SessionPageRefetchWire(:final seq):
+        case HistoryRefetchItem(:final seq):
           out.add(await refetch(sid: sid, seq: seq));
       }
     }
@@ -1278,11 +1293,8 @@ class _SyncClient
   @override
   Future<SessionEvent> refetch({required String sid, required int seq}) async {
     // 形状（`{record:{type,seq,event}}`）与**方法名/参数**都在
-    // `wire/rpc/session_page.dart` 的 `loadRefetchedEvent`。
-    final event = valueOrReport(
-      await loadRefetchedEvent(this, sid: sid, seq: seq),
-      'session.refetch',
-    );
+    // `wire/rpc/session_page.dart`（经 `SyncClientDeps.history` 注入）。
+    final event = await _deps.history.loadRefetched(this, sid: sid, seq: seq);
     if (event == null) {
       // 回了成功但没有可用事件：如实报缺陷，**不返回一条空事件**。
       throw const ProtocolException(
@@ -1512,10 +1524,7 @@ class _SyncClient
       // 收口 = 这一轮作废：在途的拨号回来后看到代号变了，就不会再动连接。
       _attemptSeq += 1;
     }
-    if (to == ConnectionState.closed &&
-        !_closed &&
-        !_lastConnectWasTerminal &&
-        !_lastConnectBusy) {
+    if (to == ConnectionState.closed && !_closed && !_lastConnectWasTerminal) {
       // 连接结束 → 进退避 → 到点且前台才重连（§2.2：只在 App 前台重连）。
       _machine.to(ConnectionState.backoff);
       // **失败太多次就给结论**：电脑关机 / 中转挂了时，无限重连意味着用户永远看着
@@ -1680,13 +1689,6 @@ class _SyncClient
   /// 握手成功（[_onEstablished]）时复位。
   bool _lastConnectWasTerminal = false;
 
-  /// 上一次建连失败是**被占用**（`device/busy`，独占 1:1）。
-  ///
-  /// 与 [_lastConnectWasTerminal] 是两个原因、两种处置：身份不被认要清凭据回配对页，
-  /// 而被占用**什么都不该清**，只停自动重连（决策 9：连哪台、什么时候连是用户的动作）。
-  /// `reconnect()`（手动重试）照常放行。
-  bool _lastConnectBusy = false;
-
   /// 建连轮次的代号（每次 `_connect()` +1，每次收口 +1）。
   ///
   /// 拨号要跨 `await`，而"上一轮的收口 / 退避定时器 / 在途的半开判定"都可能
@@ -1737,9 +1739,6 @@ class _SyncClient
 
   @override
   bool get lastConnectGaveUp => _connectGaveUp;
-
-  @override
-  bool get lastConnectBusy => _lastConnectBusy;
 
   /// 已声明的订阅集（`sync.hello` 的输入）。水位不在这里（见 [_sinceOf]）。
   @override
@@ -1910,7 +1909,7 @@ class _SyncClient
 /// 这一层只负责"这一条属于哪个 itemId"，**并把原始 `type`/`data` 原样带上**，
 /// 而不是在解析时就把它们丢掉（丢掉会让上层只能从 `text` 里猜，那是"UI 各自解释事件"
 /// 的开端 —— 接线时实测踩到过）。
-SessionEvent _eventFromPayload(String plaintext, int seq) {
+SessionEvent _eventFromPayload(String plaintext, int seq, EventIdReaders ids) {
   final parsed = _jsonDecode(plaintext);
   if (parsed is! Map) {
     throw const ProtocolException(ErrorCode.badFrame, 'ev 载荷必须是 JSON 对象');
@@ -1924,6 +1923,7 @@ SessionEvent _eventFromPayload(String plaintext, int seq) {
   final resolvedSeq = eventSeq is int ? eventSeq : seq;
   final itemId = itemIdOf(
     EventLike(type: type, seq: resolvedSeq, data: event['data']),
+    ids,
   );
   final time = event['time'];
   return SessionEvent(

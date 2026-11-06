@@ -3,7 +3,7 @@
 /// ## 为什么自己写
 ///
 /// `ui/dsh_diff.dart` 只负责**画**（行号槽 + `+`/`−`/空行），它从来没有生产者
-/// （`DiffLine(` 在整个 `app/lib` 里只有那个文件自己）。DSH 的 hunk 是
+/// （`DiffLine(` 只有本文件与 `model/file_diff.dart` 在生产）。DSH 的 hunk 是
 /// `computeHunkDiffs(path, before, after)` 的结果（`packages/fs/tool-fs/src/diff.ts`），
 /// 手机上要自己在 `{oldText,newText}` 上折一次。
 ///
@@ -18,7 +18,7 @@
 /// 新增行没有旧行号、删除行没有新行号（与 DSH 的 `dsh-diff` 同一套语义）。
 library;
 
-import '../ui/dsh_diff.dart';
+import 'diff_line.dart';
 
 /// LCS 的规模上限（两边行数乘积超过它就整段替换）。
 const int maxLcsLines = 400;

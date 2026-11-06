@@ -9,6 +9,7 @@
 /// 3. diff 的行号槽底色与正文不同（那是 diff 的读法，少了它长 diff 是一堵墙）。
 library;
 
+import 'package:dsh_mobile/model/diff_line.dart';
 import 'package:dsh_mobile/theme/dsh_colors.dart';
 import 'package:dsh_mobile/theme/dsh_icons.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';

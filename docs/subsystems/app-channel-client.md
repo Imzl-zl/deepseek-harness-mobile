@@ -24,8 +24,24 @@ app/lib/
 │   ├── transport.dart           ChannelTransport 接口(交出**原始片**,分帧归 frame.dart)
 │   └── sync_client.dart         连接状态机 + 订阅管理(接口与 SessionDelta)
 │       sync_client_impl.dart    上述接口的实现
+│       history_page.dart        翻页/补取解出来之后的形状 + HistoryReader 端口(实现在 wire/)
+│       host_rpc.dart            读/写两个能力口 HostReads + HostWrites(客户端以 HostRpcHolder 暴露)
+│       session_projections.dart 会话投影解好之后的值(键名与字段类型仍只在 wire 断言)
+│       session_list_page.dart   一页会话行解好之后的值(拆包与坏行处置仍只在 wire 断言)
+│       setting_section.dart     目录族解好之后的值:设置分区
+│       repo_info.dart                       仓库信息
+│       plugin_inventory.dart                插件清单
+│       workspace_snapshot.dart              工作区分组 + 归档/置顶两列
+│                                (上面四个的键名与缺键处置仍只在 wire 断言)
 │       connection_resources.dart 每连接资源束(建/废各一处)
 │       call_registry.dart       在途请求表(断连即整体拒绝)
+├── wire/                        线上格式的**唯一断言点**(字段名与类型只在这里)
+│   ├── reading.dart             三态内核(WireReading = Ok | Skip | Bad) + WireDiagnostics
+│   ├── events.dart              会话事件载荷(type + data)
+│   ├── host_reads.dart          HostReads 的实现(一行一个:接到 rpc/<family>.dart 的 loadXxx)
+│   ├── host_writes.dart         HostWrites 的实现(同上;端口名 ↔ 方法名的映射只在这里)
+│   ├── host_rpc.dart            HostRpcHolder 的实现:把这条连接上的两个口装配起来
+│   └── rpc/<family>.dart        一个方法族一个文件:发请求 + 解码
 ├── data/
 │   ├── projection.dart          事件 → 界面条目的**唯一**投影(唯一认识事件语义处)
 │   ├── session_store.dart       条目表(upsert-only、按 seq 排序、通知合并)
@@ -49,7 +65,37 @@ UI 一旦开始认事件类型,同一件事就会在两个地方各写一遍。
 
 - `core/` 与 `data/*.dart`(接口)不得出现 `dart:io`、`package:flutter/*`、`Platform.`、`MethodChannel`。
 - `ui/` 不得 import `packages/*_ios|_android|_ohos`。
+- `data/` 不得把线上字段名当字面量传给取值助手(`fieldOf` / `stringField` / `intField`)
+  —— 事件载荷的字段名只许在 `wire/` 断言,`data/` 只收端口解好的值;违例报文件与行号
+  (`data-no-field-name`)。
 - `core/` 的所有 IO 走注入接口 ⇒ **纯 Dart 单测里可以直接跑 `protocol/fixtures`**。
+- 线上形状的字段名只有两处:**会话事件**在 `wire/events.dart` + `wire/event_fields.dart`;
+  **RPC 应答**由各值类型的解码器(`fromWire` / `parseX`,住在 `model/` 或 `core/` 的类型
+  文件里)断言,`wire/rpc/*` 只认方法名、信封键与组合。消费方拿到的永远是解好的值;
+  事件载荷与 `data/` 之间只许有**端口**(core 声明、wire 实现),且端口按**能力**暴露、
+  不往 `SyncClient` 加成员(`SyncClient` 之外的 `LinkControl` / `HostRpc` 都是这个形状)。
+  客户端以**能力持有者**的方式暴露读能力:只实现 `HostRpcHolder` 的一个 getter
+  (`HostRpc get hostRpc`),能力自己带着那条连接跑。
+  已经倒置完的三族:翻页/补取走 `core/history_page.dart` 的 `HistoryReader`(实现在
+  `wire/rpc/session_page.dart`),事件身份字段走 `core/items.dart` 的 `EventIdReaders`
+  (实现在 `wire/events.dart`),读 / 改电脑侧走 `core/host_rpc.dart` 的
+  `HostReads` + `HostWrites`(实现在 `wire/host_reads.dart` / `wire/host_writes.dart`,
+  客户端以 `HostRpcHolder` 暴露这两个口)。**读写分两个口的判据是失败语义相反**:
+  读不到是空态,写失败必须大声,而写全带幂等键。
+  `core/`、`data/` 与 `ui/` 都**零 `wire/` import**:`projection.dart` 的事件载荷走
+  `core/event_fields.dart` 的 `EventFields` 端口(实现在 `wire/event_fields.dart`,
+  由 `HostRpcHolder.eventFields` 交给投影),端口覆盖工具/审批/提问、消息/内容块、
+  重试/轮次收口/压缩、交互工具入参与工具结果的 presentationMeta(`toolMeta`)。
+  因此 `data/` 里没有按线上字段名取值的地方,`model/tool_view.dart` 也只收解好的 meta。
+  `ui/` 发消息走 `AppModel.sendPrompt` / `sendSubagentPrompt`,界面不认识方法名。
+  代价与实测数字见
+  `.agents/notes/implemented/2026-11-06-p1b-batch1-session-family.md`、
+  `…-batch2-catalog-family.md`、`…-batch3-preview-family.md`、
+  `…-batch4-read-write-ports.md`、`…-ui-send-through-appmodel.md` 与
+  `…-projection-event-fields-port.md`。
+- **条目身份只算一次**:`itemIdOf`(契约 §5.2 的规则)在**解码边界**跑,结果落在
+  `SessionEvent.itemId`;`data/projection.dart` 只**消费**它,不再重推 —— 同一条事件
+  两条路径各推一次就会有两个答案。
 
 ---
 
@@ -424,23 +470,26 @@ app/packages/
 
 时机与代价见 `.agents/notes/implemented/2026-10-30-pairing-slots.md`。
 
-### 6.4 切换电脑与独占（1:1）
+### 6.4 切换电脑（N:M）
 
-一台手机任一时刻只连一台电脑，一台电脑任一时刻只服务一台设备。手机侧的三条定案：
+一台手机可以同时连多台电脑，一台电脑可以同时服务多台设备 —— **两个方向都不设人为上限**（同时用几台是用户的事）。手机侧的三条定案：
 
-1. **切换立即生效**：先 `dispose` 旧客户端（socket 随之关闭，电脑侧占用位释放）→
-   换凭据槽（`PairingStore.activate`）→ 用**另一个槽**重新装配 `AppModel` → `start()`。
-   与配对成功走同一条线（`main.dart` 的 `_assemble` / `_onPaired` / `_switchTo`）；
-   `AppModel` 里**不存"当前是哪台"**，真值是凭据槽的 `active` + 装配层的 `_credentials`。
-   界面立刻只显示目标那台的数据（此刻为空），**绝不允许"B 的名字下面挂着 A 的数据"**。
-2. **失败不回滚**：切换后连不上就停在目标那台的「未连接（原因）」，给
-   「重试连接」与「切回上一台」两个显式出口（连接操作 sheet）。回滚会让人以为切成功了。
-3. **不自动挑、不自动抢占**：没有"自动选一台能连的"这回事；电脑侧被别的设备占着时
-   只回 `device/busy`，**不踢人**（契约 §4.1 的准入条）。
+1. **切换 = 换凭据槽 + 换可见指针**：`PairingStore.activate(hostId)` 改槽指针，界面转向那一台已经装配好的 `AppModel`。每台在池子里各有一份（`data/host_sessions.dart` 的 `HostSessions`，键 = `pcSignPubHex`）：切走的那台**不 dispose、不重启** —— 它的 socket、订阅与会话缓存都留着，切回来立刻是原样。`AppModel` 里**不存"当前是哪台"**，真值是凭据槽的 `active` + 装配层的 `_credentials`。
+2. **切不过去就停在原地**：读槽失败或 `activate` 抛错时，`active` 与 `_credentials` 都没动过，旧那台照旧；装配成功但连不上，就停在目标那台的「未连接（原因）」，给「重试连接」与「切回上一台」两个显式出口。
+3. **不自动挑**：没有"自动选一台能连的"这回事，用户点哪台连哪台。
 
-被占用时手机侧的动作是 `busy-wait`（`core/errors.dart` 的 `ClientAction.busyWait`）：
-**不自动重连**，界面显示「未连接 · 电脑被占用」+ 占用者名字（来自关闭理由的说明部分，
-`connectionSummary` 的 `note`），手动重试走 `reconnect()`（它清掉这条结论）。
+**`dispose` 只出现在"移除这台"**：解绑 / 吊销 / 身份被拒（`_reassembleUnpaired`）/ 重新配对（`HostSessions.replace`，旧模型带的是旧 token）/ app 退出。移除一台**只影响那一台** —— 别的台的 socket、通知与前台服务都不动。**不设台数上限、不设闲置回收**：宿主没有这种边界（电脑侧裁剪缓冲的判据是"这一轮在服务的设备"，见 [remote-channel.md](remote-channel.md) §5.5，手机同时在线几台不改变它），加上去就是新增边界；代价是内存随台数涨（每台一份会话缓存），那是用户自己配了几台的直接后果。
+
+**跨台的三条判据都带电脑身份**：
+
+- **通知 id** 带电脑前缀（`<hostId>|approval:<itemId>`）：`sid` 与 `itemId` 都由每台电脑独立分配，不带前缀时两台会算出同一个 `noticeIdOf`，撤掉一台的那条会把另一台的也撤掉；
+- **前台服务**按"还有没有哪一台在要"起停（`AppServices.syncKeepAlive`）：一条服务、多台各报各的诉求，各自读 `status().keepAlive` 再起停会互相撤销；
+- **前后台态**广播给池子里每一台（`main.dart` 的 `_onAppLifecycle`）：只报可见那台的话，后台里其它台会一直以为自己在前台（心跳照走、长连接不退）。
+
+**两台电脑的数据不混，靠分域**：`sid` 是各电脑独立分配的不透明别名，两台电脑可能撞名。装配时用 `pcSignPubHex` 构造 `HostScope`（`data/host_scope.dart`），条目、水位与待发队列经 `ScopedItemStore` / `ScopedOutboxStore`（`data/scoped_store.dart`）落成 `<hostId>/<sid>` 一段。所以**换电脑不清库**、也不会把 A 的历史喂给 B；切回去读得到自己那份。**切电脑不再删任何东西**；将来做"清空此电脑缓存"时走 `ScopedItemStore.clearScope()`（只清这一段），App 里现在还没有那个入口。取舍见 `ui-state.md` §3 与 `implemented/2026-11-06-s2-host-scope-and-buckets.md`。
+
+
+**app 级的那几件事不进装配**：通知与前台服务只有一条 `dsh/notifications` 通道，而 `MethodChannel` 只认最后一次注册的处理器 —— 所以端口由 `main()` 建一次，经 `AppServices`（`data/app_services.dart`）注入**每一次**装配（有凭据与没配对两条都注入），`AppModel` 只使用它；关闭点是根部 State 的 `dispose`（`AppServices.dispose` → `NotifyPort.close`）。装配点建第二个端口不会报错，只会让先装配的那台收不到通知上的答复（判据见 `notifications.md` §9 那两条测试）。
 
 **时间预算**（方案决策 7 的表，每一层只有一个判据处）：
 

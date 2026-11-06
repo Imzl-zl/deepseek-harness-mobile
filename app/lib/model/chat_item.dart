@@ -196,7 +196,7 @@ class MessageItem extends ChatItem {
   final String reasoning;
 
   /// 系统 / 上下文注入行的标题（`system/message` = 「系统提示词」；
-  /// `developer/message` = 生产者 kind，见 [contextProducerLabel]）。
+  /// `developer/message` = 生产者 kind，见 `EventFields.sourceKind`）。
   ///
   /// **只有 [MessageRole.system] 有它**：用户与助手消息靠头像与名字表意，
   /// 而系统行在 DSH 里本来就是一个带标题的折叠行
@@ -212,7 +212,7 @@ class MessageItem extends ChatItem {
   /// `user/message`，只有 `source.kind === 'user'` 才是人打的字
   /// （`ui-chat/src/client/conversation-nodes/message.ts:79`）。原来我们按事件类型
   /// 认角色 ⇒ 这些注入在手机上**冒充用户消息**（一条会话里冒出三条气泡）。
-  /// 判据与标签见 `projection.dart` 的 `contextSourceKind` / `kContextInjectionLabel`。
+  /// 判据与标签见 `EventFields.sourceKind` / `kContextInjectionLabel`。
   final String? systemHint;
 
   /// 这一行是**唤醒新一轮的通知**（DSH 的 `turn-trigger` 节点），不是普通注入。
@@ -1083,12 +1083,6 @@ String connectionLabel(ConnectionStateView state) => switch (state) {
   /// 连续失败太多次、已停止自动重连。**给结论，不给转圈**：
   /// 电脑关机 / 中转挂着时，用户该看到"连不上"，而不是一个永远在转的东西。
   ConnectionStateView.gaveUp => '连接不上',
-
-  /// **这台电脑正被另一台设备占用**（独占 1:1，`device/busy`）。
-  ///
-  /// 与「连接不上」分开：那台设备走了就能连，而"再等一会儿"毫无意义 ——
-  /// 所以文案要说清"是谁占着"，动作是重试或换一台，不是等。
-  ConnectionStateView.busy => '未连接 · 电脑被占用',
 };
 
 /// 拨号阶段的提示文案（方案决策 7 的时序：2 s 出阶段、8 s 说"网络很慢"）。
@@ -1155,10 +1149,6 @@ ConnectionSummary connectionSummary({
   /// 拨号阶段的提示（`AppModel.connectionHint`：2 s 出阶段、8 s 说慢）。
   String? hint,
 
-  /// 具体的失败原因（目前只有"被谁占着"：`AppModel.busyOccupant`）。
-  /// **比「连接不上」更该被看见**，所以优先于其它诊断句。
-  String? detail,
-
   /// 用户自己按了「断开连接」——**优先级最高**：这不是故障，别用"未连接"糊过去。
   bool userDisconnected = false,
 }) {
@@ -1169,7 +1159,7 @@ ConnectionSummary connectionSummary({
     // 没连上：给状态名；**端点表里每一条都拨不通时补一句诊断** ——
     // 那是"电脑不在线 / 换了网络地址"与"正在重连"的唯一区分，而空态与
     // 连接 sheet 都靠它说人话（议题：连接方式选择器第 3 步）。
-    final note = detail ?? hint ?? _allFailedNote(endpoints, attemptOf);
+    final note = hint ?? _allFailedNote(endpoints, attemptOf);
     return (line: connectionLabel(state), note: note);
   }
   final line = '当前连接：${endpointLine(active)}';
@@ -1234,9 +1224,4 @@ enum ConnectionStateView {
   /// "连接层是否已放弃"推出来的。所以映射写在 `AppModel._viewOf` 里，
   /// 而这里只负责文案。
   gaveUp,
-
-  /// 被另一台设备占着（`device/busy`，独占 1:1）。同样不是协议状态：
-  /// core 的连接层停在 `closed`（不自动重连），这一档由 `AppModel._viewOf`
-  /// 按诊断面的"被占用"推出 —— 所以"哪台占着"也由 AppModel 给（`busyOccupant`）。
-  busy,
 }

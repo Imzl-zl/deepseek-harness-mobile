@@ -149,7 +149,10 @@ void main() {
             sid: 's1',
             events: [
               SessionEvent(
-                itemId: 'm40',
+                // 身份由**解码边界**产出（`core/items.dart` 的 `itemIdOf`）：线上那一条
+                // 会是 `m:m40`，所以夹具也写 `m:m40`。投影不再替你重推一遍 ——
+                // 写错的值现在会被照用（这正是要的：同一条事件不许有两个 id）。
+                itemId: 'm:m40',
                 type: 'user/message',
                 seq: 40,
                 time: 40,

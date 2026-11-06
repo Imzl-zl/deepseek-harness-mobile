@@ -76,6 +76,21 @@ class InteractionOption {
     this.recommended = false,
   });
 
+  /// 从工具入参里的一个选项造：**"（推荐）"从标签里剥出来**单独做徽标（照原型：
+  /// 标签本身干净，徽标位置固定）。DSH 的选项没有 `recommended` 字段，
+  /// 这是从文案里识的 —— 只此一处，别在投影里再写一条同样的正则。
+  factory InteractionOption.fromToolSchema({
+    required String label,
+    String? description,
+  }) => InteractionOption(
+    label: label,
+    description: description,
+    recommended: _recommendedMark.hasMatch(label),
+  );
+
+  /// 标签里的"（推荐）"标记（全角 / 半角括号各一）。
+  static final RegExp _recommendedMark = RegExp(r'[（(]推荐[)）]');
+
   final String label;
 
   /// 选项的补充说明（显示在标签**下面**：同行会挤掉标签）。

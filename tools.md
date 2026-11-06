@@ -93,14 +93,17 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
 
 ## Tools
 
-- 多端边界校验(不需要 Flutter 工程):`node app/tools/verify-platform-boundary.mjs` —— 扫描 `app/lib` 与 `app/packages`,共 6 条规则:  1. `core-no-platform-import`:`app/lib/{core,data,model}` 禁 `dart:io` 与 `package:flutter/{services,widgets,material}.dart`(否则纯 Dart 单测写不了)
+- 多端边界校验(不需要 Flutter 工程):`node app/tools/verify-platform-boundary.mjs` —— 扫描 `app/lib` 与 `app/packages`,共 9 条规则:  1. `core-no-platform-import`:`app/lib/{core,data,model}` 禁 `dart:io` 与 `package:flutter/{services,widgets,material}.dart`(否则纯 Dart 单测写不了)
   2. `ui-no-impl-import`:`app/lib/ui` 禁 import 各端实现包(`*_(ios|android|ohos)/`)
   3. `ui-no-platform-import`:`app/lib/ui` 禁 `dart:io`
   4. `branch-whitelist`:平台分支(`Platform.` / `defaultTargetPlatform` / `MethodChannel` / `EventChannel`)只允许出现在 `app/packages/**`、`app/lib/platform/**`、`app/lib/ui/adaptive/**`
   5. `no-platform-isohos`:全仓禁 `Platform.isOhos`(会导致 `flutter run` / `build har` / `attach` 失败,鸿蒙判断用 `defaultTargetPlatform`)
-  6. `fallback-not-in-release`:`app/lib/platform/registry.dart` 引用兜底实现(`InMemory` / `NullPush` / `Noop`)必须带 `kDebugMode` 守卫
+  6. `no-material-icons`:`app/lib/ui` 禁 `Icons.*` —— 图标只有一个来源(`lib/theme/dsh_icons.dart`)
+  7. `fallback-not-in-release`:`app/lib/platform/registry.dart` 引用兜底实现(`InMemory` / `NullPush` / `Noop`)必须带 `kDebugMode` 守卫
+  8. `wire-field-single-reader`:全仓(除 `app/lib/wire/events.dart`)禁 `'arguments'` / `'toolCallId'` 字面量 —— 事件载荷的字段名只有一个读者
+  9. `data-no-field-name`:`app/lib/data/**` 里不许把线上字段名当字面量传给 `fieldOf` / `stringField` / `intField` —— 事件载荷的字段名只许在 `wire/` 断言,`data/` 只收端口解好的值;违例报文件与行号
 
-  **两条 import 规则只认 `import` / `export` 指令本身,不按正文 grep** —— 否则文件头那句「不许 import `dart:io`」会被自己判成违规(等于惩罚把规则写进代码)。自带规则自检 **25** 条,所以 `lib/` 还没代码时也不是空转(当前输出:`规则自检 25 条 + 扫描 160 个 Dart 文件` = **694 项**)
+  **两条 import 规则只认 `import` / `export` 指令本身,不按正文 grep** —— 否则文件头那句「不许 import `dart:io`」会被自己判成违规(等于惩罚把规则写进代码)。按符号的规则(`no-material-icons` / `wire-field-single-reader` / `data-no-field-name`)同样在**去掉注释**的正文上匹配:注释里写「别用 `Icons.send`」「别再 `fieldOf(`」不算违规。自带规则自检 **29** 条,所以 `lib/` 还没代码时也不是空转(当前输出:`规则自检 29 条 + 扫描 187 个 Dart 文件` = **827 项**)
 - **协议知识只在 `wire/rpc/`**(终态规则,零例外):`node app/tools/verify-rpc-single-caller.mjs` —— 扫 `app/lib` 全域(`wire/` 除外),数 `call<` 的**代码**出现次数(排除端口声明 `call<T>`;适配器的 `client.call<` 与实现里的无前缀 `call<` 都算),要求**为 0**。**2026-10-25 已归零**(从 39 一路降到 0,那行 `BUDGET` 常量已删);**2026-10-26 范围从 `data/`+`ui/` 扩到全域**(`page`/`refetch` 的调用已搬进 `wire/rpc/session_page.dart`)。要加回例外就得在脚本里写第二个数,评审一眼就能看见。它度量的是"方法名 + 参数形状还有几处漏在 `wire/` 外面",不是某个字面量在哪。红了会逐行报出每一处位置(所以行号必须保住:**别改成剥注释再数**)。规则来源与代价见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`,扩范围的理由见 `.agents/notes/implemented/2026-10-26-wire-review-fixes.md`
 - **线上形状金样**:`connector/tests/fixtures/wire-shapes.json` —— 由 `connector/tests/wire-shapes.test.ts` 调**真实 handler** 生成、**深比较**守住(`JSON.parse(JSON.stringify(...))`,比"线上那一层");`app/test/wire_shapes_replay_test.dart` 读**同一份文件**做回放,文件缺失**直接 fail**。**当前收 46 个方法**(`wire/rpc/` 里出现的每个方法名都在里面;`session.page`/`refetch` 也收,它们不占上面的口禁但形状照样钉)。**`session.fork` 的应答只有 `{sid}`**(子会话别名;App 回放里另断言"键集合只有 sid")。**`file.changes` 有两条样本**:一条真记录 + 一条 `{summary:null}`(电脑侧没有这条记录,那是有效应答而不是失败);**`file.diff` 也有两条**:文本 hunks + 二进制(判别联合的两种 kind)。**`session.list` 有两条样本**:4 条手写四形态 + **20 条归一化真实清单**(358 条真实会话按形状签名去重)。真实夹具 `tests/fixtures/real-dsh-sessions.json` 由 `connector/tools/import-real-sessions.mjs` 从网关 dump 生成;原始 dump 含私有数据,**不进 git**。
   - 改连接器应答 ⇒ 连接器红 + App 红,这是有意的。确认改动是**有意的**才重生成:`cd connector; $env:UPDATE_WIRE_SHAPES='1'; pnpm exec tsx --test tests/wire-shapes.test.ts`,并**同一批**改 `app/lib/wire/rpc/` 的解码。
@@ -261,8 +264,8 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
   - `cd connector; pnpm install` —— 装依赖,**必须 0 退出**(见 Pitfalls 的构建脚本闸)
   - `pnpm exec tsc --noEmit` —— 类型检查(开工步骤第 2 步的判据)
   - `pnpm build` —— tsdown 产出 `lib/index.js` + `lib/index.d.ts`,即装进 profile 的那份产物;路径对齐靠 `connector/tsdown.config.ts`
-  - `pnpm test` —— 跑 `protocol/fixtures` 与 `protocol/vectors`,外加握手/封箱/流控/任务帧/订阅骨架/每连接装配/方法面/幂等/四个 DSH 适配器/连接/身份/直连监听面/传输通道注册表/重新配对替换旧行/Agent 预设目录/管理面装配顺序/跨会话用量汇总/斜杠命令执行面/legacy 提问身份/**交互客户端(假 gateway 的 `$events` 帧流 + 结果捕获)**等接线用例 + **`@` 候选的两个只读面(文件/目录 + 跨会话引用,含 caps 与"宿主抛错原样")** + **插件清单与行级启停(回读真值 / overridden 不回声 / 宿主抛错原样)** 等接线用例 + **计划审查卡(身份优先 intent.callId、答复按请求的题 id 与标签重写)** + **工作区文件面(目录清单 / 文本分页 / scope lookup / 宿主抛错原样)** + **插件安装面(发起即返回 / 轮询 / 进度尾窗 / 取消三档 / 包清单 / 本机路径一律拒)** + **改动面(宿主记录逐字段过线 / 没有记录回 null / 别名不认识回 not-found / 宿主抛错原样 / caps 同一判据)** 等接线用例 + **线上形状金样(真实 handler 生成 / 逐字深比较 / 采样确定性 / 键集合不缩水)**(当前 **845 项**;其中 fixtures 的断言数须与 `verify-fixtures.mjs` 的 454 一致、向量的与 `verify-vectors.mjs` 的 49 一致)。其中 **29 项是装配层的回归网**:`tests/transport-rebuild.test.ts`(键集合 → 重建哪条通道 + 重建串行队列)、`tests/transport-startup.test.ts`(起传输的两种容忍:缺令牌 / `listenPort = 0`,其余整体抛出)、`tests/assembly-wiring.test.ts`(面板读取投影的每一格 + 读 `index.ts` 源码断言抽出来的四处**真的被调用**)。理由与被否方案见 `.agents/notes/implemented/2026-10-29-assembly-regression-net.md`
-    - **错误码有四个门禁,改表会同时红**:`tests/error-table-parity.test.ts`(TS `ERROR_TABLE` 与 Dart `ErrorCode` 逐字一致,**做过变异校验**)、`tests/error-code-table.test.ts`(契约 §3.1 与代码一致)、`tests/flow.test.ts`(封闭 + 满射 + 未知码归一,数必须 **36**)、`tests/methods.test.ts`(方法数 **52** 与幂等键集合)。**宿主层漏一个码的后果是被降级成 `internal`** → 用户对着永远重试也不好的操作反复点(2026-10-09 真漏过 15 个)。
+  - `pnpm test` —— 跑 `protocol/fixtures` 与 `protocol/vectors`,外加握手/封箱/流控/任务帧/订阅骨架/每连接装配/方法面/幂等/四个 DSH 适配器/连接/身份/直连监听面/传输通道注册表/重新配对替换旧行/Agent 预设目录/管理面装配顺序/跨会话用量汇总/斜杠命令执行面/legacy 提问身份/**交互客户端(假 gateway 的 `$events` 帧流 + 结果捕获)**等接线用例 + **`@` 候选的两个只读面(文件/目录 + 跨会话引用,含 caps 与"宿主抛错原样")** + **插件清单与行级启停(回读真值 / overridden 不回声 / 宿主抛错原样)** 等接线用例 + **计划审查卡(身份优先 intent.callId、答复按请求的题 id 与标签重写)** + **工作区文件面(目录清单 / 文本分页 / scope lookup / 宿主抛错原样)** + **插件安装面(发起即返回 / 轮询 / 进度尾窗 / 取消三档 / 包清单 / 本机路径一律拒)** + **改动面(宿主记录逐字段过线 / 没有记录回 null / 别名不认识回 not-found / 宿主抛错原样 / caps 同一判据)** 等接线用例 + **线上形状金样(真实 handler 生成 / 逐字深比较 / 采样确定性 / 键集合不缩水)**(当前 **836 项**;其中 fixtures 的断言数须与 `verify-fixtures.mjs` 的 454 一致、向量的与 `verify-vectors.mjs` 的 49 一致)。其中 **29 项是装配层的回归网**:`tests/transport-rebuild.test.ts`(键集合 → 重建哪条通道 + 重建串行队列)、`tests/transport-startup.test.ts`(起传输的两种容忍:缺令牌 / `listenPort = 0`,其余整体抛出)、`tests/assembly-wiring.test.ts`(面板读取投影的每一格 + 读 `index.ts` 源码断言抽出来的四处**真的被调用**)。理由与被否方案见 `.agents/notes/implemented/2026-10-29-assembly-regression-net.md`
+    - **错误码有四个门禁,改表会同时红**:`tests/error-table-parity.test.ts`(TS `ERROR_TABLE` 与 Dart `ErrorCode` 逐字一致,**做过变异校验**)、`tests/error-code-table.test.ts`(契约 §3.1 与代码一致)、`tests/flow.test.ts`(封闭 + 满射 + 未知码归一,数必须 **35**,判据在 `assert.equal(ERROR_CODES.length, 35)`)、`tests/methods.test.ts`(方法数 **52** 与幂等键集合)。**宿主层漏一个码的后果是被降级成 `internal`** → 用户对着永远重试也不好的操作反复点(2026-10-09 真漏过 15 个)。
   - **方法数这一行静默漂移过一次**:`tools.md` 写着 23 而测试断言 21,两边都不对也没人发现 —— 因为这条只是文档,红了也不会指向它。2026-10-14 校准成 22,2026-10-15 加 `session.projections` 后是 23,同日加 `session.select-model` 后是 24,同日再加 `permission.catalog` 与 `permission.switch` 后是 26,**2026-10-16 从代码里数出来是 29**(`METHODS` 数组;同日加的是归档面两个方法);2026-10-17 加 `session.updateQueue`(排队项变异)与 `session.cancel`(打断)后是 30;**同日加 `agentPresets.list`(Agent 预设目录,只读)后是 31**(实现 **27**,差额 4:`settings.describe` / `settings.update` / `credentials.set` / `credentials.unset`);**2026-10-19 加 `usage.summary`(跨会话用量汇总,只读)后是 32**(实现 **28**,差额仍是那 4 个);**2026-10-21 加 `workspace.insertSessionBefore` / `workspace.pin` / `workspace.unpin` 后是 35**(实现 **31**,差额仍是那 4 个);**同日加 `subagent.prompt`(给可继续子会话投递人写的消息)后是 36**(实现 **32**,差额仍是那 4 个);**同日深夜加 `workspace.insertBefore`(侧栏项目头拖动排序)后是 37**(实现 **33**,差额仍是那 4 个)；**2026-10-22 挂上 `settings.describe` / `settings.update`，实现 35、差额 2**(只剩 `credentials.set` / `credentials.unset`)；**2026-10-23 加 `command.execute`(斜杠命令执行面,白名单只放 `/goal` 与 `/plan`)后是 38**(实现 **36**,差额仍是那 2 个)；**2026-10-24 加 `refs.files` / `refs.sessions`(`@` 候选,只读)后是 40**(实现 **38**,差额仍是那 2 个)；**2026-10-24 加 `plugin.list` / `plugin.setEnabled`(插件清单与行级启停)后是 42**(实现 **40**,差额仍是那 2 个)；**2026-10-24 加 `file.list` / `file.read`(工作区目录清单与文本分页)后是 44**(实现 **42**,差额仍是那 2 个)；**2026-10-24 加 `plugin.install` / `plugin.installStatus` / `plugin.cancelInstall` / `plugin.remove` / `plugin.listBundles`(插件安装面:发起即返回 + 轮询)后是 49**(实现 **47**,差额仍是那 2 个)；**2026-10-26 加 `file.changes`(桌面改动记录,只读)后是 50**(实现 **48**,差额仍是那 2 个 `credentials.set` / `credentials.unset`);**同日加 `file.diff`(一个改动文件的逐行比对)后是 51**(实现 **49**,差额仍是那 2 个);**同日加 `session.fork`(收口处分支)后是 52**(实现 **50**,差额仍是那 2 个)。**改方法表必须同改这里、契约 §5.7 与 `memory.md` 的"方法面 x/52"三处。**
     - **这一行曾经把"实现数"也写错**:2026-10-17 深夜那版写"30(实现 25,差额 4)" —— 30 减 4 是 26,而清点出来正是 26。**两个数一起写就会一起错**,所以数它别靠减:**两种注册形态都要数**(对象字面量的 `'x.y': async (…) =>` 与赋值 `handlers['x.y'] = …`),只数前者会漏掉大半(实测:只数前者得 7)。
     - **口径含大写服务名**:方法名的服务段可以是驼峰(`agentPresets.list`),任何"从源码/文档里抽方法名"的正则,服务段都要写 `[A-Za-z]+` 而不是 `[a-z]+` —— 写成后者时**整条匹配不上**,数字静默少 1(2026-10-17 实测:`method-name-table.test.ts` 报"契约定义了 30 个"而表里明明是 31)。方法名段仍只可能是小写加连字符。
@@ -486,7 +489,9 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
 - **覆盖 `.btn` 的 `flex` / `min-height` 必须带 `.btn` 前缀**:`.btn` 在样式表里更靠后,同权重下会盖掉前面对 `.xxx-new` 的覆盖(表现是筛选行被挤到换行)。
 - **别用 `scrollWidth` 判断文字有没有换行**:换行后并不横向溢出,要数文本节点的 `Range.getClientRects().length`。
 - **`[hidden]` 会被 `display:flex` 盖掉**:组件级 `display` 规则要配 `[hidden]{display:none!important}`。
-- **插件兼容性先看 `engines.dsh`**:包里有它就单独决定、忽略 `peerDependencies` 里的 `@deepseek-ai/dsh*`;没有时才逐个比对那些 peer。判定用 `semver.satisfies(..., {includePrerelease:true})`。不匹配则**静默跳过**(记入 `skippedBundles`),提示用 `dsh plugin allow-version <pkg@ver> --dsh-version <exact> --accept-risk` 豁免(`packages/boot/app-boot/src/plugin-compatibility.ts:55-61`;官方迁移说明 `docs/upgrade-guide/v0.2.1-alpha.3/plugin-engines-dsh/guide.zh.md`)。本仓插件写 `engines.dsh: ">=0.2.1-rc.5 <0.2.2"`,取舍见 `.agents/notes/implemented/2026-10-31-plugin-engines-dsh.md`
+- **插件兼容性先看 `engines.dsh`**:包里有它就单独决定、忽略 `peerDependencies` 里的 `@deepseek-ai/dsh*`;没有时才逐个比对那些 peer。判定用 `semver.satisfies(..., {includePrerelease:true})`。不匹配则**静默跳过**(记入 `skippedBundles`),提示用 `dsh plugin allow-version <pkg@ver> --dsh-version <exact> --accept-risk` 豁免(`packages/boot/app-boot/src/plugin-compatibility.ts:57-61`;官方迁移说明 `docs/upgrade-guide/v0.2.1-alpha.3/plugin-engines-dsh/guide.zh.md`)。本仓插件当前写 `engines.dsh: ">=0.2.2-rc.1 <0.2.3-0"`,上界的 `-0` **不是笔误**:写 `<0.2.3` 在 `includePrerelease` 下会放行整条 0.2.3 预发布线(`0.2.2-alpha.2` / `alpha.3` / `rc.1` 全判兼容),要等正式版才拒 —— 正好与「没测过就不 claim」相反。用例 `connector/tests/manifest-compat.test.ts` 钉住,取舍见 `.agents/notes/implemented/2026-11-05-connector-engines-upper-bound.md`
+- **宿主版本线是多条,不是一条**:`0.1.20` 服务 0.2.1 线、`0.1.21` 服务 0.2.2 线,靠 npm 版本不可变 + DSH 的逐版本判定共存(`listVersions` 标 `incompatible`、市场 `defaultVersion` 取最高兼容版)。**不要为了让一个包吃到两条线而放宽范围** —— 判定发生在加载前,装上去再分支已经晚了。窗口是 N-1,矩阵与抬线步骤见 `docs/cookbook/release.md` §3
+- **抬线只跑 `tsc` 会漏两类东西**:① 字符串键(`ctx.get('x')` / `ctx.on('y')`)不受类型保护,改名只会静默失效 —— 服务键看 `provide('x')` 或 `super(ctx,'x')`,事件键看 `declare module ... SessionEventMap`,再用 `packages/bundle/*/cordis.patch.yml` 确认它挂在哪个 bundle;② 升级条目里的**持久化格式**变更(如 `subagentCatalog` v3),旧宿主读不了新数据。0.2.2 的完整核对表在 `.agents/notes/implemented/2026-11-05-dsh-022-compat-audit.md`
 - **DSH 引用行号会漂移**:改文档时顺手核对被引行是否仍指向该内容(已发生过 §7.5 密钥原则从 :313 漂到 :366;`session-controller/src/commands.ts` 的 `hasPromptRequest` 扫描从 :602-614 漂到 **:591-595**,2026-10-23 核对)。
 - **本仓库内的路径必须从 `import.meta.url` 派生,不许写死盘符**(`node mock/proto/tools/verify-tool-paths.mjs` 会拦):环境从 `C:\sudy` 搬到 `D:\sudy` 后,11 个 CDP 脚本里写死的 `file:///C:/.../index.html` 让整组浏览器门禁**静默全红** —— 脚本照常跑完、照常打印 JSON,红的原因是路径而不是代码(最坏的一种红:看起来像回归)。同理 `OUT` 不要写成 `'mock/proto/shots'`(那是依赖 cwd 的第二种硬编码)。参考仓库路径的单一来源是 `AGENTS.md` §5 与 `tools.md`。取舍见 `.agents/notes/implemented/2026-10-02-paths-must-be-derived-not-hardcoded.md`
 - **`start()` 起的周期任务,`attach()` 也得起 —— 否则接受来的连接是"能连上但收不到东西"**:`createConnection` 的两个周期任务(攒批 flush、保活判定)原本只在 `start()` 里起,而接受路径走 `attach()`。少了它们的表现是**静默的**:`send({t:'ev'})` 照样回 `true`,而那一帧进了 batcher 就再没人 flush(可攒批的 `ev`/`live`/`job` **一条都出不去**),`keepalive.tick()` 不被调用则**半开永远判不出来**(连接死了也不收口)。修法是抽一个**幂等**的 `startTimers()`,两条路共用(`attach` 可被调多次,重复起定时器会漏掉旧的)。教训:**"这段接线已经就绪"要读代码确认,不能从测试通过反推** —— `connection-accept.test.ts` 当时有 2 条断言全绿,但它们碰不到定时器。见 `.agents/notes/implemented/2026-10-02-listener-face.md`
@@ -639,6 +644,41 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
   判据好用的原因是"少一行汇总"比"某个用例红"更显眼。**同一形状会再出现**（任何 `setTimeout` 型兜底）：
   测试里注入可推进的假时钟（或 `schedule: () => () => {}` 直接不排），别让它真跑。
   —— 顺带：那只 10 min 看护计时器后来按 DSH 原生删掉了（审批没有超时），所以连接器现在**没有**定时器型兜底。
+- **隔离实例 + 真模型跑一轮的配方**（2026-11-06 跑通，约 15 分钟；用来在真机上压收帧热路径）：
+  1. `$env:DSH_HOME='D:\tmp\<home>'`（**整个 home 隔离**，含凭据与会话）；`cd connector; pnpm pack`；
+     `dsh plugin --profile <p> add <tgz 绝对路径>`（会顺带 `pnpm install`）。
+  2. `dsh --profile <p> --no-open --port 3099 *> <log>`；日志第一行是带 `?token=` 的 URL，第二行确认管理面已挂。
+  3. 直连口 8790 通常被日常实例占着 ⇒ `POST /api/dsh-mobile/connection {"listenPort":18790}`
+     （**会持久化进 profile 的 `cordis.patch.yml`**，不是只改内存）；再 `POST /api/dsh-mobile/pair` 拿
+     `{svg, expiresAt, lanAvailable, lanOnly, ...}`，把 svg 的 `viewBox 0 0 81 81` 放大到整数倍、**四周留 ≥4 模块白边**
+     再出 PNG（不留白边扫不出来）。
+  4. **新 home 没有模型凭据**：设置 → 模型 → 「自定义模型 API」。`API 地址` 只填到 `/v2`
+     （填成 `.../v2/v1` 会 404 `no Route matched with those values`）；协议 OpenAI Chat Completions；
+     该端点的 `/models` 未实现，模型手动加。写入落在 `cordis.patch.yml` 的
+     `@deepseek-ai/dsh-llm-pi-ai.providers.<id>` 与 `.credentials.yaml` 的 `refs.<NAME>`。
+  5. **别往 `sessions/` 里塞空壳**：0 字节的 `session.v*.jsonl.zstd` 会被判 `corrupt session log`
+     （header id 与 cwd 对不上），而且这条错误会**原样透到手机的「拉取会话失败」**。
+     更坏的一种：**DSH 自己留下的 0 字节空白会话目录**（建了没人用）会让 `session.list`
+     整个查询失败（连接器那边 `out_method.session.list` 只剩 ~41 字节），而手机上**抽屉照旧显示缓存的旧行**
+     —— 列表坏了却看不出来。清了那个目录即恢复（1224 字节）。
+  6. **手写会话（自己写 header + 事件）进得了 `session.list`，但 App 抽屉里不出现**（2026-11-06 试了三次）：
+     加 `session/title`、加 `session/end-seed`、清掉空壳会话都不行。要压「>1 MiB 条目的 refetch」，
+     只能走**真实附件**那条路（从手机或网页面板发一个 >1 MiB 的附件，事件自然变大）。
+     顺带：`sessions/**/session.v*.jsonl.zstd` 是**一行一个 zstd 帧**的拼接，
+     node 的 `zstdDecompress` 只解第一帧；按帧走 `frameEnd()`（见 `D:\tmp\dsh-iso-session.js`）才读得全。
+  7. 关进程别按端口名 kill：`dsh` 是通过 `DeepSeek Harness` 那个宿主跑的，杀错会连桌面 App 一起带走
+     （日常实例还在听 8790 就没杀错）。
+  8. **一帧内容必须以换行结尾**：`session.v*.jsonl.zstd` 里每帧解出来是 `{...}\n`；手写补帧漏了
+     那个 `\n`，DSH 报 `complete frame contains a torn JSONL record`，整个会话「历史加载失败」
+     （网页与手机都打不开）。修法：把每帧解出来补 `\n` 再逐帧重压。
+  9. **造 >1 MiB 事件只有文本粘贴这一条路**（2026-11-06 实测）：
+     - 剪贴板放**位图**（`[System.Windows.Forms.Clipboard]::SetImage`，需 `pwsh -Sta`）+ 输入栏 Ctrl+V
+       ⇒ 只变成**附件**（`image.png`），事件仍 ~30 KB；
+     - `@` 引用文件 ⇒ 只是路径引用，事件仍 ~30 KB；
+     - 粘 **1.3 MB 文本** ⇒ `user/message` 真的 1.3 MB（还有一条 `agent/inbox/spliced`）。但它发出去后
+       **讯飞 MaaS 直接 400**（`code 400001`，"rejected by an internal MaaS component"）——
+       事件已落盘，只是这一轮失败。**别把这种载荷发给按量计费的端点**。
+     - 剪贴板里若是**文本**，Ctrl+V 会优先粘文本（曾把一段 `sk-` 密钥误粘进输入栏，没发送）。
 - **真机验「桌面卡被手机撤掉」的配方**（2026-10-23 用一次验完，约 1 轮）：
   - **桌面侧不必开用户日常浏览器**：headless Chrome 里打开隔离实例的 Web GUI 就是**真客户端**
     （同一份 `ui-approval`），截图用 CDP，点按钮用 `document.querySelectorAll('button')` 里按文案点。

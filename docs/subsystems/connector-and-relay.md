@@ -10,46 +10,13 @@
 
 必须是 npm bundle(声明 `dsh.bundle.patch`),装进目标 profile 的 `node_modules`;不能是动态 Cordis 包(沙箱 trap 掉 `fetch` / `setInterval` / `require`)。
 
-```jsonc
-// connector/package.json(照参考插件的形状)
-{
-  "name": "dsh-mobile-connector",
-  "version": "0.1.0",
-  "type": "module",
-  "packageManager": "pnpm@11.13.0",
-  "main": "./lib/index.js",
-  "files": ["lib", "cordis.patch.yml", "README.md"],
-  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
-  "peerDependencies": {
-    "@deepseek-ai/cordis": "4.0.4",
-    "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2",
-    "@deepseek-ai/schemastery": "3.18.4"
-  },
-  "devDependencies": {
-    "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-api-session-controller": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-credentials": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-jobs": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-settings": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-storage": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-storage-domain": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-subagent": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-user-approval": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-user-questions": "0.2.0-rc.2"
-    // 这十个只用于类型检查(DSH 各包已发布到 npm,不必对着源码)。
-    // `dsh-settings` / `dsh-credentials` 不是可选的:适配层靠它们的类型钉住
-    // `describe({ redactSecrets: true })` 这个选项名,见
-    // .agents/notes/implemented/2026-10-01-connector-settings-adapter.md
-  },
-  "dependencies": {
-    // 本插件**唯一**的运行时依赖。监听面要一个 WS 服务端,而 Node 22 的全局
-    // `WebSocket` 只有客户端(没有服务端实现)。`ws` 是纯 JS、无原生依赖。
-    // 它只在 `listenPort` 配置时才被 import —— 见 .agents/notes/implemented/2026-10-02-listener-face.md
-    "ws": "8.18.3"
-  },
-  "engines": { "node": "^22.19.0 || >=24.0.0" }
-}
-```
+包清单以 `connector/package.json` 为准，本文件不复制它（复制品一定会漂移）。固定的规则只有这几条：
+
+- 全部 `@deepseek-ai/dsh*` 包钉**同一个精确版本**，不写 `^` / `~`；`@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` 各钉自己的精确版本。
+- `engines.dsh` 的下界就是被测版本，上界写成 `<下一条线>-0`（见本节末段与 `.agents/notes/implemented/2026-11-05-connector-engines-upper-bound.md`）。
+- 运行时依赖只有 `ws`：监听面要一个 WS 服务端，而 Node 22 的全局 `WebSocket` 只有客户端、没有服务端实现（`.agents/notes/implemented/2026-10-02-listener-face.md`）。
+- 其余 DSH 包只用于类型检查；`dsh-settings` / `dsh-credentials` 不是可选的，适配层靠它们的类型钉住 `describe({ redactSecrets: true })` 这个选项名（`.agents/notes/implemented/2026-10-01-connector-settings-adapter.md`）。
+- 包管理器钉 `pnpm@11.13.1`：connector 是独立 npm bundle、不是 DSH workspace 成员，与 DSH 根的补丁号一致买不到功能，钉一个本机真实存在的版本才能离线可复现（`.agents/notes/implemented/2026-10-01-connector-workspace-shape.md`）。
 
 ```yaml
 # connector/cordis.patch.yml —— 全部接入样板就这 4 行
@@ -59,9 +26,11 @@
       config: {}
 ```
 
-**版本基线(2026-10-01 复核)**:DSH 仓库根为 `@deepseek-ai/dsh-root@0.2.0-rc.2`,对应公共 npm 上 `@deepseek-ai/dsh-*` 的 **`next` dist-tag = `0.2.0-rc.2`**。**不要用 `latest`**——它落后很多(实测:`@deepseek-ai/dsh-jobs` 的 latest 是 `0.0.1-rc.3`、`dsh-api-session-controller` 是 `0.1.2-alpha.2`、`dsh-typert-protocol` 是 `0.1.0-rc.6`,而三者的 `next` 都是 `0.2.0-rc.2`)。`@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` 用 `latest`(4.0.4 / 3.18.4)。包管理器钉 **`pnpm@11.13.0`**:connector 是独立 npm bundle、不是 DSH workspace 成员,与 DSH 根的补丁号一致买不到功能,钉一个本机真实存在的版本才能离线可复现。取舍见 `.agents/notes/implemented/2026-10-01-connector-workspace-shape.md`。
+**版本基线**：DSH 侧版本以 `connector/package.json` 的 `engines.dsh` 下界为准，取 npm 的 `next` dist-tag，不用 `latest`（后者落后于 `next`）。`@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` 各自取自己的版本。
 
-**兼容性只看 `peerDependencies`**(`packages/boot/app-boot/src/plugin-compatibility.ts:68`);不匹配会被静默跳过并记入 `skippedBundles`(`profile.ts:675-681`)。写 `engines.dsh` 没有任何效果(`packages/util/package-manifest/README.md:93`)。peer 用**精确版本**(照参考插件),DSH 升级时要同步改;peer 的比较语义未逐行核实,第一次装进 profile 时按 §4 里程碑 2 确认。
+**兼容性只看 `engines.dsh`**（`packages/boot/app-boot/src/plugin-compatibility.ts:57-61`）；只有缺它时才逐条比对 `@deepseek-ai/dsh*` peer（`:62-73`），匹配用 `semver.satisfies(..., { includePrerelease: true })`（`:51-53`）。不匹配的 bundle 被跳过并记入 `skippedBundles`（`profile.ts:687-712`）。上界写成 `<X.Y.Z-0`：`<X.Y.Z` 会放行整条预发布线，由 `connector/tests/manifest-compat.test.ts` 钉住。
+
+宿主版本线是**多条并行**、窗口 N-1：每个 DSH minor 线各有一个兼容的插件版本，靠 npm 版本不可变 + 宿主逐版本判定共存。版本矩阵与抬线步骤见 [`cookbook/release.md`](../cookbook/release.md) §3，取舍见 `.agents/notes/implemented/2026-11-05-dual-track-host-version-lines.md`。
 
 配置(Schemastery,`.volatile()` 的字段会进手机端通用表单):
 
@@ -200,11 +169,11 @@ const stream = await ctx.get('typertGateway').wireStream.open('$events', { args:
 - 配对候选也有独立数据连接，只允许受限配对；候选握手不能激活普通业务方法。
 - 数据帧成对转发；不按 `sid` 广播，不按请求 `id` 解复用。连接、密钥、计数器、流控和订阅一同销毁重建。
 - 推送摘要仍在电脑侧生成、合并；控制连接断开时关闭相关数据连接，双方退避后重新认证。
-- **独占 1:1**（契约 §4.1 的准入条）：握手收到 `hello`、设备有效之后，若这台电脑**已有一台别的有效设备在服务**，回 `device/busy`（关闭码 4003 + `协议码 说明`，说明里是占用者的名字），**不踢占用者**；同一 `devId` 的重连放行（换网靠中转的 `replaced`，见 §2.3）。占用位**就是** `presence.serving()`（在线且未吊销），所以停用 / 删除即释放；配对候选不受这条限制；**没有**自动抢占、没有定时器。
-- 管理面设备行多一格 `serving`（此刻在服务，独占下至多一行）；「接管」按钮走**既有的停用写路径**（`POST /devices/enabled {enabled:false}`），不另立"踢人"接口。
-- **撤销与清理分开**：活跃行只给「停用」（+ 在服务时的「接管」），**删除只对已停用的行开放**（服务端对未停用的 `devIds` 整批拒绝，回 400「先停用再删除」）。理由：手机唯一能"知道被移除"的通道是换票 401 带原因，而行被硬删之后中转只剩 `device-unknown`（与"名册还没同步"不可区分）⇒ 那台手机只会一直重试。取舍见 `implemented/2026-10-30-revoke-then-purge.md`。
-- **停用 / 删除会收掉那台设备已经建立的连接**（`admin/device-admin.ts` 的 `disconnect` → `Connection.stop()`）：占用位是"在线且未吊销"，只标 `revokedAt` 而不收连接，就会出现"占用位已释放、旧 socket 还在收发"，下一台手机被放进来（两台同时在服务）。按状态批量只对**真删掉**的那些收连接（在线被跳过的不踢）。
-- **数据面的关闭码/理由原样转给另一端**（`relay/src/server.ts` 的 `observeData`，只转 3000–4999）：电脑侧在握手层拒绝时用 `4003 + 协议码/说明`；中转若吞成默认的 `4000`，手机就只会退避重连 —— 撞门而没有结论。
+- **准入**（契约 §4.1）：握手收到 `hello`、设备有效之后即放行 —— 一台电脑可以**同时服务多台设备**，没有"被占用"这一档；已停用 / 已删除的行在 `peerOf` 处回 `protocol/not-paired`。
+- 管理面设备行只有一格在线态 `online`；「停用」走既有的 `POST /devices/enabled {enabled:false}`。
+- **撤销与清理分开**：活跃行只给「停用」，**删除只对已停用的行开放**（服务端对未停用的 `devIds` 整批拒绝，回 400「先停用再删除」）。理由：手机唯一能"知道被移除"的通道是换票 401 带原因，而行被硬删之后中转只剩 `device-unknown`（与"名册还没同步"不可区分）⇒ 那台手机只会一直重试。取舍见 `implemented/2026-10-30-revoke-then-purge.md`。
+- **停用 / 删除会收掉那台设备已经建立的连接**（`admin/device-admin.ts` 的 `disconnect` → `Connection.stop()`）：只标 `revokedAt` 而不收连接，旧 socket 还在收发，那台手机会一直以为自己在线。按状态批量只对**真删掉**的那些收连接（在线被跳过的不踢）。
+- **数据面的关闭码/理由原样转给另一端**（`relay/src/server.ts` 的 `observeData`，只转 3000–4999）：电脑侧在握手层拒绝时用 `4003 + 协议码`（码必须在封闭表里，理由的其余部分不塞说明）；中转若吞成默认的 `4000`，手机就只会退避重连 —— 撞门而没有结论。
 
 
 ### 1.7 直连监听面(可选,与中转并存)

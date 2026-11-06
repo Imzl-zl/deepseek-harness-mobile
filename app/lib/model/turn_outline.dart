@@ -43,4 +43,30 @@ class TurnOutlineEntry {
 
   /// 展示用回复；空串给占位。
   String get responseLabel => response.isEmpty ? kEmptyPreview : response;
+
+  /// 从 `turnOutline` 投影解一张表（DSH `session-turn-outline/src/projection.ts:61-75`）。
+  ///
+  /// 不是列表 ⇒ 空表（轨迹页显示空态，不造一份假的）；缺 `turn` / `seq` 的项跳过
+  /// （没有它们跳不到那条消息）。键名只在这里断言。
+  static List<TurnOutlineEntry> listFromWire(Object? raw) {
+    if (raw is! List) return const [];
+    final out = <TurnOutlineEntry>[];
+    for (final entry in raw) {
+      if (entry is! Map) continue;
+      final turn = entry['turn'];
+      final seq = entry['seq'];
+      if (turn is! int || seq is! int) continue;
+      out.add(
+        TurnOutlineEntry(
+          turn: turn,
+          seq: seq,
+          prompt: entry['prompt'] is String ? entry['prompt'] as String : '',
+          response: entry['response'] is String
+              ? entry['response'] as String
+              : '',
+        ),
+      );
+    }
+    return out;
+  }
 }

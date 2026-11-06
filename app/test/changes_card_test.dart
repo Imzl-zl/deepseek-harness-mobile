@@ -15,23 +15,23 @@ import 'dart:convert';
 
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/errors.dart';
-import 'package:dsh_mobile/core/items.dart';
+import 'package:dsh_mobile/core/items.dart' hide itemIdOf;
 import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
-import 'package:dsh_mobile/data/projection.dart';
 import 'package:dsh_mobile/model/changes.dart';
 import 'package:dsh_mobile/model/chat_item.dart';
+import 'package:dsh_mobile/model/diff_line.dart' show DiffKind;
 import 'package:dsh_mobile/model/file_diff.dart';
 import 'package:dsh_mobile/model/file_open.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/chat_page.dart';
-import 'package:dsh_mobile/ui/dsh_diff.dart' show DiffKind;
 import 'package:dsh_mobile/wire/rpc/changes.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_sync_client.dart';
+import 'projection_fixture.dart';
 
 const String _sid = 'sid_1';
 

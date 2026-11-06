@@ -13,7 +13,6 @@ import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
-import 'package:dsh_mobile/data/projection.dart';
 import 'package:dsh_mobile/data/store.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/chat_page.dart';
@@ -21,6 +20,7 @@ import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_sync_client.dart';
+import 'projection_fixture.dart';
 
 /// 假电脑：先给一套会话行，`subscribe` 记录发起过哪些。
 class _LandingClient extends FakeSyncClient {

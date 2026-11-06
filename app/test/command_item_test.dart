@@ -25,13 +25,15 @@
 /// "Run ids are unique; completion has a prior run" —— 配对靠 `commandId`。
 library;
 
-import 'package:dsh_mobile/core/items.dart';
-import 'package:dsh_mobile/data/projection.dart';
+import 'package:dsh_mobile/core/items.dart' hide itemIdOf;
+import 'package:dsh_mobile/data/projection.dart' hide projectEvent;
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/theme/dsh_icons.dart';
 import 'package:dsh_mobile/ui/chat_turns.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'projection_fixture.dart';
 
 /// 真日志里的 `command/run`（本会话的 goal 创建命令；args 截断显示）。
 const _runEvent = <String, Object?>{

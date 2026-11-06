@@ -1,3 +1,5 @@
+> **已被取代（2026-11-05）**：独占准入整条删除（一台电脑同时服务多台设备），见 `.agents/notes/implemented/2026-11-05-drop-exclusive-channel-admission.md`。本文件按规则冻结保留。
+
 # Agent Note: 一台手机配多台电脑（独占 1:1）
 
 Status: proposed

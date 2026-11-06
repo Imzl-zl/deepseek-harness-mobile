@@ -78,11 +78,48 @@ Publisher `GitHub Actions`、organization or user `Imzl-zl`、repository
 改 `connector/package.json` 的 `version` → `git tag connector-vX.Y.Z` → push。
 流水线校验 `标签 == version`，用 OIDC 发布并带 **provenance（SLSA v1）**，不需要任何 token。
 
-## 3. 插件包
+## 3. 插件包与宿主版本线
 
 `connector` 是 DSH 插件（`dsh.bundle.patch` 指向 `cordis.patch.yml`），发版产物就是
-`pnpm pack` 出来的 `.tgz`。发之前确认 `peerDependencies` 里的 DSH 版本与目标宿主一致
-（现在是 `0.2.1-rc.3`）。
+`pnpm pack` 出来的 `.tgz`。
+
+### 版本矩阵
+
+| 插件版本 | `engines.dsh` | 服务对象 | 维护状态 |
+|---|---|---|---|
+| `0.1.21` | `>=0.2.2-rc.1 <0.2.3-0` | DSH 0.2.2 线 | 当前线，功能跟进 |
+| `0.1.20` | `>=0.2.1-rc.5 <0.2.2` | DSH 0.2.1 线 | 冻结：只修致命问题 |
+
+两条线同时留在 npm 上。宿主按 `engines.dsh` **逐版本**判定（`plugin-manager` 的
+`listVersions` 给每个版本标 `incompatible`，`plugin-market` 的 `defaultVersion` 取
+「最高兼容版」）：0.2.1 的宿主把 0.1.21 判成不兼容、留在 0.1.20；0.2.2 的宿主升到 0.1.21。
+
+**所以不需要为了让一个包吃到两条线而放宽范围** —— 那等于 claim 一个没测过的版本，
+而 DSH 的判定发生在加载前（`packages/boot/app-boot/src/plugin-compatibility.ts:57-61`），
+装上去再分支已经晚了。
+
+`0.1.20` 的上界是旧写法 `<0.2.2`：`includePrerelease` 下它放行整条 0.2.2 预发布线
+（实测 `0.2.2-alpha.2` / `0.2.2-rc.1` 都判兼容，只有正式版 `0.2.2` 被拒）。上界一律写
+`<X.Y.Z-0`。
+
+### 支持窗口
+
+只保留**当前线 + 上一条线**（N-1）。宿主进下一个 minor 时淘汰最老那条线。
+不能靠"多留几条"求稳：0.2.2 的 `subagentCatalog` v3 是持久化单向门
+（`docs/persistence-changes/2026-11-02-subagent-catalog-names.zh.md`），
+升级后再回退，带子代理的会话在旧宿主上打不开 —— 保留一条用户回不去的路没有意义。
+
+### 抬线 playbook
+
+1. 读 DSH 仓库 `docs/upgrade-guide/<新版本>/*` 的全部条目，逐条判命中 / 不命中，
+   命中项写进决策笔记。
+2. 三处同步抬：`peerDependencies`、`devDependencies`、`engines.dsh`
+   （下界 = 被测版本，上界 = 下一条线的 `-0`）。
+3. `pnpm exec tsc --noEmit && pnpm build && pnpm test`；
+   `tests/manifest-compat.test.ts` 机械判定三处是否一致，不一致当场红。
+4. **真机 e2e**：装目标版本宿主，`dsh plugin add` 本包，验投影 / 子代理 / 审批三条主链路。
+   单测用的是替身，绿了不算证据。
+5. 发版；旧线冻结，只修致命问题，不追功能。
 
 ## 4. 本地先跑一遍门禁
 

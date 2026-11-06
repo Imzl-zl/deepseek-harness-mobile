@@ -20,12 +20,14 @@
 /// DSH 的规则在 `conversation-nodes/turn-error.ts:36-51` 的 `endFailure`。
 library;
 
-import 'package:dsh_mobile/core/items.dart';
-import 'package:dsh_mobile/data/projection.dart';
+import 'package:dsh_mobile/core/items.dart' hide itemIdOf;
+import 'package:dsh_mobile/data/projection.dart' hide projectEvent;
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/ui/chat_turns.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'projection_fixture.dart';
 
 /// 真日志样本：`{"turn":7,"reason":{"kind":"error",
 /// "error":{"message":"Connection error.","code":"TRANSPORT"}}}`。

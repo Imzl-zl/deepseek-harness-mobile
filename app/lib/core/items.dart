@@ -5,14 +5,38 @@
 ///
 /// 移植源：`connector/src/protocol/items.ts`（行为基准）。
 ///
-/// ## 身份字段从 `event_wire.dart` 来，不在这里猜
+/// ## 身份怎么读：一个端口，两边各守一半
 ///
-/// 2026-10-25：`tool/call` 的 `arguments` 在线上是 JSON 字符串，本文件知道、
-/// `data/projection.dart` 不知道 ⇒ 计划卡静默消失。现在凡是**载荷字段的类型**都只在
-/// `wire/events.dart` 里断言，这里只取解好的身份字段；缺身份仍然**抛**（比一行打印更响）。
+/// "**哪个事件用什么字段当身份**"是契约 §5.2 的知识，住在这里（`<type>:<seq>` 的兜底、
+/// `m:` / `t:` / `i:` / `c:` / `r:` / `e:` / `x:` / `w:` 八个前缀也在这里）；
+/// 而"那个字段叫什么、在哪一层（`data.callId` 还是 `data.message.toolCallId`）"是
+/// 线上格式，只有 `wire/events.dart` 有权断言。
+///
+/// 所以身份字段的读取走 [EventIdReaders] 这个端口：声明在这里、实现在 wire 侧
+/// （`WireEventIdReaders`），装配点注入。于是 `core/` **不 import `wire/`**，
+/// 而"已知类型缺身份就抛"这条判断（见 [itemIdOf]）仍然只有一处。
+///
+/// 缺身份**仍然抛**（比一行打印更响）：静默退化成 `<type>:<seq>` 会让一条本该稳定的
+/// 条目随读路径换 id。
 library;
 
-import '../wire/events.dart';
+/// 从事件载荷里读**身份字段**的四个读者（实现：`wire/events.dart`）。
+///
+/// 都返回 `null` 表示"读不出来"（形状不对 / 字段缺失）—— 由 [itemIdOf] 决定
+/// 是抛错还是兜底，读者不做决定。
+abstract interface class EventIdReaders {
+  /// `tool/call` 的调用 id。
+  String? toolCallId(Object? data);
+
+  /// `tool/result` 用来与调用配对的 id。
+  String? toolResultId(Object? data);
+
+  /// 审批 id（`approval/asked` 与 `approval/decided` 共用；[decided] 区分两者）。
+  String? approvalId(Object? data, {required bool decided});
+
+  /// 命令 id（`command/run` 与 `command/done` 共用；[done] 区分两者）。
+  String? commandId(Object? data, {required bool done});
+}
 
 /// 持久事件日志里的一条：修订号 + 条目号 + 内容。
 class LogEntry {
@@ -91,7 +115,7 @@ String? _nonEmptyString(Object? value) =>
 /// 已知类型缺了身份字段时**直接抛错**，不静默退化成 `<type>:<seq>`：那会让一条本该
 /// 稳定的条目随读路径换 id，正是 I9 要防的形态。宁可让这一帧失败，也不要静默造出
 /// 一个会漂移的身份。
-String itemIdOf(EventLike event) {
+String itemIdOf(EventLike event, EventIdReaders ids) {
   final type = event.type;
   final seq = event.seq;
   final data = event.data;
@@ -108,27 +132,25 @@ String itemIdOf(EventLike event) {
   }
 
   if (type == 'tool/call') {
-    final call = valueOrNull(readToolCall(data));
-    if (call == null) throw StateError('tool/call(seq=$seq) 缺少 callId');
-    return 't:${call.callId}';
+    final callId = ids.toolCallId(data);
+    if (callId == null) throw StateError('tool/call(seq=$seq) 缺少 callId');
+    return 't:$callId';
   }
 
   if (type == 'tool/result') {
     // 结果与调用共用同一个 itemId，靠 `toolCallId` 配对。
-    final result = valueOrNull(readToolResult(data));
-    if (result == null) {
+    final callId = ids.toolResultId(data);
+    if (callId == null) {
       throw StateError(
         'tool/result(seq=$seq) 缺少 message.toolCallId：无法与 tool/call 配对',
       );
     }
-    return 't:${result.callId}';
+    return 't:$callId';
   }
 
   if (type == 'approval/asked' || type == 'approval/decided') {
     // ask 与 outcome 共用同一个 id，后者覆盖前者即「已决定」。
-    final asked = type == 'approval/asked'
-        ? valueOrNull(readApprovalAsked(data))?.approvalId
-        : valueOrNull(readApprovalDecided(data))?.approvalId;
+    final asked = ids.approvalId(data, decided: type == 'approval/decided');
     if (asked == null) throw StateError('$type(seq=$seq) 缺少 id');
     return 'i:$asked';
   }
@@ -138,9 +160,7 @@ String itemIdOf(EventLike event) {
     // tool/result 同一形状（DSH 的格式不变量逐字同源：
     // `session-format-v3-to-v4/README.md:244` 原话
     // "Run ids are unique; completion has a prior run"）。
-    final commandId = type == 'command/run'
-        ? valueOrNull(readCommandRun(data))?.commandId
-        : valueOrNull(readCommandDone(data))?.commandId;
+    final commandId = ids.commandId(data, done: type == 'command/done');
     if (commandId == null) {
       throw StateError('$type(seq=$seq) 缺少 commandId：无法与另一条配对');
     }

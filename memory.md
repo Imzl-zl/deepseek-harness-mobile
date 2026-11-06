@@ -3,7 +3,87 @@
 > 快照 + 最近窗口，**覆盖更新**，不做流水追加。历史在 git 与 `.agents/notes/`；
 > 稳定命令与坑点在 `tools.md`；现状事实在 `docs/`。
 
-## 现在（2026-11-04）
+## 现在（2026-11-06）
+
+- **架构审查 + S0/S1/S2（11-06 第七批，未发版）**：
+  ① **S0 收尾**（`fix/drop-exclusive-admission`）：清掉 11 处仍在解释"占用位 / 接管"的
+  死注释、停用确认文案改成"现在就会断开"（`c30637d`）；补两台设备并发三条判据
+  （停用 A 只断 A、A 答完 B 再答 → `interaction/not-pending`、claim 是挂载级一份，
+  `5cf0973`）；文档收口（`app-channel-client` §6.4 事实化、`remote-channel` §4.1/§4.3、
+  `tools.md` 错误码 36→35、`memory.md` 死链，`dc8a53e`）。
+  ② **S1 去环**：`DiffLine` 归 `model/`、`fieldOf` 等归 `core/json_field.dart`、
+  字号值域归 `core/type_scale.dart` —— `model→ui` / `model→data` / `theme→model`
+  三条反向 import 全部为 **0**（`ff78552` / `5340f54` / `dd2ff4f`）。
+  ③ **S2 存储分域**：`HostScope`（不可变）+ `ScopedItemStore` / `ScopedOutboxStore`
+  （装饰器）+ 迁移 v2→v3；**换电脑不再清库**（旧做法会把 `device.*` 与
+  `schema.data_version` 一起删掉 ⇒ 切一次电脑主题/字号回默认、切回去整段重刷）。
+  `clear()` 整条删除（唯一调用点就是"换电脑清库"），清空只剩分域的
+  `clearScope()`；两个新原语 `clearSession` / `scopeKeysTo`（`34fbae9` / `61c2b2c`）。
+  ④ **S3 通知端口归 app**：`AppServices`（`data/app_services.dart`）持唯一那个 `NotifyPort`，
+  `main()` 建一次、两处装配都注入（没配对那条此前根本不传端口），关闭点只有
+  `AppServices.dispose`（`8bfed1a`）。前台服务随后也由它汇总起停。
+  ⑤ **S4 池化**：`HostSessions`（`data/host_sessions.dart`）按 `hostId` 记住每一台，
+  **切电脑 = 换可见指针**（切走的不 dispose、不重启，切回来还是原样）；
+  dispose 只在"移除这台"（解绑/吊销/换凭据）与 app 退出。跨台三件都带电脑身份：
+  通知 id 前缀（`<hostId>|approval:<itemId>`）、前台服务按"还有没有人在要"起停、
+  前后台态广播给每一台（"看着它就不提醒"也改成按台算）。
+  另外补了一个真缺口：`AppModel.dispose()` 此前从不 `client.close()`，所以"dispose 旧的"
+  从来没真的断开过 socket。
+  ⑥ **P1 依赖倒置**：`core → wire` **已到 0** —— 翻页/补取的读法走
+  `core/history_page.dart` 的 `HistoryReader`（实现 `WireHistoryReader`），事件身份字段走
+  `core/items.dart` 的 `EventIdReaders`（实现 `wire/events.dart` 的 `kWireEventIdReaders`），
+  `SyncClientDeps.history` / `.eventIds` 必填。**身份只算一次**：`itemIdOf` 在解码边界跑、
+  落 `SessionEvent.itemId`，`projectEvent` 改成收 `itemId` 不再重推；坏载荷在解码处折成
+  `badFrame`（从前是未处理的异步错误）。测试侧用 `app/test/projection_fixture.dart` 按生产
+  规则算 id，55 个 `projectEvent` 调用点只改了 import。
+  顺手修掉 S2 遗留：`integration_test/local_store_test.dart` 还在调已删的
+  `SqfliteItemStore.clear()`，`integration_test` 自 `61c2b2c` 起编译不过（门禁只 analyze
+  `lib test`，看不见）—— 改成 `clearSession('s1')`。
+  **仍未做**：`data` 的 **1 条**（`projection.dart`，按施工图单独一批），以及**一次真机重连**
+  （改的是收帧热路径，不能只看测试）。
+  ⑦ **P1 后半（能力接口），四批全部落地（11-06）**：`data → wire` 的 21 条走**能力接口** ——
+  端口声明在 `core/host_rpc.dart`（**读写两个口**：`HostReads` 18 个方法 / `HostWrites` 22 个，
+  判据是失败语义相反 —— 读不到是空态、写失败必须大声，且写全带幂等键），
+  实现在 `wire/host_reads.dart` / `wire/host_writes.dart`（每个方法一行），
+  `wire/host_rpc.dart` 只做装配；
+  `_SyncClient implements HostRpcHolder`（**2 个 getter**）把 `SyncClientDeps.hostRpc`
+  （**工厂**）造出的那一对交出去，消费者用 `hostRpcOf(client)` 取
+  （沿用 `LinkControl` 先例，**`SyncClient` 接口零新增成员**）。
+  **不给 `AppModel` 加必填端口**：那要动 74 个测试文件，而且夹具会从原始协议 JSON 退化成手搓 DTO，
+  等于把解码器从测试路径上摘掉。6 个值类型搬进 `core/*.dart`。
+  端口形状：能力自己持有连接（方法不收 `client`）—— 起草时"客户端 implements HostRpc +
+  逐方法转发"那版试过、当天换掉了，理由见
+  `.agents/notes/implemented/2026-11-06-p1b-hostrpc-holder.md`。
+  `app_model` 的 `wire/` import 15 → **0**、`host_catalogs` 3 → **0**、`file_preview` 2 → **0**、
+  `wire.` 44 → **0**，`data/` 21 → **0**（`projection.dart` 的事件载荷走
+  `core/event_fields.dart` 的 `EventFields` 端口，实现在 `wire/event_fields.dart`，
+  由 `HostRpcHolder.eventFields` 交给投影；**三族已落地** —— 工具/审批/提问、
+  消息/内容块、重试/轮次收口/压缩/交互工具入参；`ui/` 与 `core/` 也都是 0）。
+  `data/` 的字段名读点 **22 → 0**（`fieldOf` / `stringField` / `intField`）；
+  门禁 `data-no-field-name` 已加（把线上字段名当字面量传给取值助手即红，报文件与行号）。
+  实测代价：五个测试文件只因"字段名撞端口方法名"改名（`projections` / `workspaces` →
+  `…Reply`，值与形状没动）；`wire_shapes_replay_test` 改了 11 处类型名 + 3 条 import（金样没动）；
+  端口一律返回 `SnapshotReply<…>`（三态 —— 裸 null 会把 `notModified` 当成失败）。
+  **遗留**：无（`model/` 的 `fromWire` / `parseX` 是既定分层、`wire → model/core` 单向；
+  `wire/rpc/projections.dart` 里 4 个内联载荷解析器已搬进值类型）。两层判据
+  （会话事件 / RPC 应答）写在 docs 的规则列表里；`model/tool_view.dart` 的 presentationMeta
+  走 `toolMeta` 端口。
+  留下的边界：`core → model` 多了一条**纯类型环**（值对象的字段类型来自 `model/`，
+  而 `model/` 又 import `core/job.dart` 等）。
+  没有真机（读的形状与路径没变）。见
+  `.agents/notes/implemented/2026-11-06-p1b-batch{1-session-family,2-catalog-family,`
+  `3-preview-family,4-read-write-ports}.md`；`projection.dart` 那条另见
+  `proposed/2026-11-06-p1b-host-rpc-port.md` 的末节。
+  门禁：connector **836**；app **1759**；boundary **827**；`dart analyze --fatal-infos` 0
+  （format 门禁也恢复到 0，HEAD 上遗留的 14 个文件已在 `edad912` 格式化）。
+  另外把**真机库副本**喂给真实现跑了一遍 v2→v3（24.5 MB 的 `dsh_mobile.db`，只读副本）：
+  4136 条条目一条不少、14 个水位键全部带前缀、`device.transparency/surface_alpha` 原样 ——
+  证据在 `implemented/2026-11-06-s2-host-scope-and-buckets.md` 的「验证」。
+  **真机也验了**（09:20-09:30，debug 包装机 + 自造 v2 库塞进 app 私有目录 → 真 App 打开它）：
+  迁移后未分域行 0、条目/水位一条不少、`device.*` 两格原样、无崩溃；验完已复原成空 v3。
+  唯一没验的是"两台电脑同时配对后切电脑外观不回默认"（要两次扫码）。
+  审查结论与 6 个 PR 的判定：`proposed/2026-11-06-branch-a-and-pr-audit.md`（待评审）。
+  **未做**：S5（AppModel 切片、chat_page 拆文件）与 `core→wire`×2 / `data→wire`×21 的依赖倒置。
 
 - **中转三块收口（11-04 第六批）**：
   ① **管理台令牌可达性**：线上 `/admin` 正文的 sha256 与本地 `ADMIN_PAGE` **逐字节相同**
@@ -235,7 +315,7 @@
   **冷启动也接上了（11-01）**：打开会话先 `itemsOf(sid)` 读回条目 → 界面立刻有内容 →
   `since` 取**条目自己的 `seq` 上界**（不取 `cursors.last_seq`：计数器在"事件因空洞
   没入库却照样落盘"时会超前）；一条条目都没有就不认水位。本地条目**按电脑身份分区**
-  （`meta` 的 `local_items.host` vs `pcSignPubHex`，换电脑清库）。真机：冷启动
+  （盘上键是 `<hostId>/<sid>`，`ScopedItemStore` 在装配时注入作用域，换电脑不清库）。真机：冷启动
   **219 965 → 71 739 B（−67.4%）**，其中 `ev` **147 039 → 0**（两轮一致）；
   剩下的 70 KB 全是进程首次拉起时的快照正文（摘要表是每进程的）。笔记
   `implemented/2026-11-01-cold-start-restore-from-local-store.md`。
@@ -313,25 +393,25 @@
   relay 端口已收口成 `127.0.0.1:8787`，公网只留 80/443。连接器 `relayUrl` =
   `wss://dsh.0t0.me/ws/connector`。流程写进 `docs/cookbook/relay-on-a-server.md` §4，
   取舍见 `implemented/2026-10-31-relay-tls-zerossl.md`。
-- **多机四步全部落地**（方案 `proposed/2026-10-29-one-phone-many-computers.md`）：
+- **多机四步**（方案 `proposed/2026-10-29-one-phone-many-computers.md`）：
   ① 归属（`Endpoints.id = hostId|url` / `host.<hostId>.*` / `repo.info.hostName`，120ea3a）；
   ② 凭据分槽（`dsh.pairing.<hostId>.*` + `active`，cb2bd1d）；
   ③ 拨号竞速 + 缓冲按"在服务的设备"裁剪（ba9e438）；
-  ④ 独占与切换：`device/busy` 四处门禁同批（错误码 35→36）、占用位 = `presence.serving()`、
-  握手 `acceptHello` 准入（同一 devId 放行）、拒绝理由带占用者（`协议码 说明`，≤120 字节）、
-  控制面 `?id=` 必带自报、面板「在服务」+「接管」（eb9696e）；手机侧「切换电脑」= 换槽 +
-  重新装配 + 「切回上一台」、被占用停机（`busy-wait`）、15s 总预算、2s/8s 提示、结论后
-  60s±20% 静默慢重试（e2a2499）；过期的一轮拨号不许动连接（真机 `backoff→handshake`，129b1a0）。
-  笔记 `implemented/2026-10-30-*`（六篇）。
-- **真机验收（10-30）**：`serving` 随连接出现/断开（关 App 后 **873ms** 释放），两条路径都能进；
-  面板那一行是 `运行中 · 前台 · 在服务` 且只有它有「接管」；`?id=` 实测 OPEN / 403 / 不带也 403。
-- **第二台设备 = 逐跳静态审查**（没有第二台真机）：出票 → 中转开通道 → 拨数据面 →
-  `hello` → `peerOf` → `occupantOf` → 4003 → 中转转发 → `busy-wait` → 界面，逐跳核对后
-  抓到并修掉**两个真漏洞**：① 中转把 4003 吞成 4000（门槛 4 走中转必失效）；② 停用只标
-  `revokedAt` 而不收连接。另收紧两处竞态（迟到 `offline` 不删新记录、准入判"任何别的在线
-  设备"）。**旧数据/旧客户端兼容全删** —— 协议未发版；笔记 `2026-10-30-drop-legacy-compat.md`。
-  仍**证明不了**两台"同时"握手那一瞬（要"在途占位"维度）。**停用**此前没有生产者
-  （名册过滤 + 解析丢字段），现已补上；**删除=先停用再清理**（活跃行拒删）——
+  ④ 切换：控制面 `?id=` 必带自报（eb9696e）；手机侧「切换电脑」= 换槽 + 重新装配 +
+  「切回上一台」、15s 总预算、2s/8s 提示、结论后 60s±20% 静默慢重试（e2a2499）；
+  过期的一轮拨号不许动连接（真机 `backoff→handshake`，129b1a0）。
+- **准入不做独占**（2026-11-05）：一台电脑同时服务多台设备。`presence.serving()`、
+  `device/busy`、`ClientAction.busyWait`、面板「在服务 / 接管」全部删除，`AdminDeviceRow` 只剩
+  `online`；错误码表回到 35 个（TS 与 Dart 两侧同批）。笔记
+  `implemented/2026-11-05-drop-exclusive-channel-admission.md`。
+- **真机验收（10-30）**：在线态随连接出现/断开（关 App 后 **873ms** 释放），两条路径都能进；
+  `?id=` 实测 OPEN / 403 / 不带也 403。
+- **配对的逐跳核对**（没有第二台真机）：出票 → 中转开通道 → 拨数据面 → `hello` →
+  `peerOf` → 界面，逐跳核对后抓到并修掉**两个真漏洞**：① 中转把 4003 吞成 4000
+  （拒绝被降级成"没有结论"，手机只会一直退避撞门）；② 停用只标 `revokedAt` 而不收连接
+  （旧 socket 还在收发，那台手机一直以为自己在线）。另收紧一处竞态：迟到的 `offline`
+  不删新连接的记录。**旧数据/旧客户端兼容全删** —— 协议未发版；笔记
+  `2026-10-30-drop-legacy-compat.md`。**删除 = 先停用再清理**（活跃行拒删）——
   `2026-10-30-revoke-then-purge.md`。
 - **中转可观测/限额/面板（10-30，四批）**：摘要表可变（吊销即生效 + 接受前重验）；按人流量额度
   （**默认不限制**、计量常开，上限由管理员在面板设：UTC 周期惰性结算、`cut`/`block`/`off`、
@@ -372,9 +452,11 @@
    ④ **摘要表是每进程的**：冷启动第一次落地仍要拿十份快照正文（约 70 KB）。
    要再省就得把摘要持久化（键是 `(方法, 参数)` + 那一包的摘要），属于"缓存自证"那一档的
    下一步 —— 先看这条值不值得（它只影响冷启动一次）。
-1. **多机第 4 步的真机复验**：只剩两条要**两台设备**才能做的（第二台被
-   `device/busy` 拒并说出占用者、切回上一台的真实链路）—— 单测已覆盖，
-   真机可用"第二个 DSH_HOME + 另一份连接器身份"补；命中不了的按未验证如实说。
+1. **多设备并发准入的真机复验**（未验）：两台手机同时连同一台电脑，两台都进服务态；
+   吊销 A 后 B 仍在线。**两条关闭路径要分开看**：A 答完时 B 是被会话事件
+   （`approval/decided` / `tool/result`）把卡关掉的；B 迟一步再点答才拿到
+   `interaction/not-pending`。后两条已在单测里钉住（`tests/two-devices-one-pending.test.ts`、
+   `tests/device-admin.test.ts` 的"两台同时在线"），端到端仍要两台真机。
 2. **状态语义对齐（A–H 已全落地）**：现状 `docs/subsystems/ui-state.md`；真机复验还差 4 条
    （子智能体在跑可见、提问草稿、发送模式真值、断连重连）。因果见 `implemented/2026-10-27-*`。
 3. 跑一轮真机复验改动卡 / 差异 / 提及（要模型请求 —— 先报价再跑）。
@@ -394,10 +476,10 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 728 项（25 条规则自检 + 167 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | 827 项（29 条规则自检 + 187 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1738 项（约 1 分钟） |
+| `cd app && flutter test` | 1759 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **845** 项 |
 | `cd relay && pnpm typecheck && node --test` | 类型 + **173** 条 |

@@ -31,15 +31,18 @@ library;
 import 'dart:async';
 
 import 'package:dsh_mobile/core/connection.dart';
+import 'package:dsh_mobile/core/event_fields.dart';
+import 'package:dsh_mobile/core/host_rpc.dart';
 import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/session_restore.dart';
 import 'package:dsh_mobile/core/snapshot_call.dart';
 import 'package:dsh_mobile/core/snapshot_digest.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
+import 'package:dsh_mobile/wire/host_rpc.dart';
 
 /// `SyncClient` 的测试基类。
 abstract class FakeSyncClient
-    implements SyncClient, SnapshotCaller, SessionRestorer {
+    implements SyncClient, SnapshotCaller, SessionRestorer, HostRpcHolder {
   /// 冷启动恢复被调过几次、带的水位是多少（`sid → since`）。
   ///
   /// 它就是"app 层真的把本地库的水位交给了连接层"这条判据的落点。
@@ -77,6 +80,26 @@ abstract class FakeSyncClient
   void commitSnapshotDigest(String key) {
     appliedSnapshotDigests[key] = 'test-digest';
   }
+
+  // ---- 读电脑侧（`HostRpc`）：**转给真的那份实现** ----
+
+  /// 替身**不自己造 DTO**：实现就是 `wire/host_rpc.dart`（与生产同一个类），
+  /// 只把 `this` 给它。于是夹具照旧是**原始协议 JSON**（各用例的 `call` 返回什么
+  /// 就是什么），而解码器仍然在测试路径上 —— 换成手搓 `SessionProjections`
+  /// 就等于把解码器从测试里摘掉，那类改动看不出线上形状漂了。
+  ///
+  /// `late` 是必须的：字段初始化器里只有 `late` 能用 `this`。
+  late final HostRpcHolder _hostRpc = WireHostRpc(this);
+
+  @override
+  HostReads get reads => _hostRpc.reads;
+
+  @override
+  HostWrites get writes => _hostRpc.writes;
+
+  @override
+  EventFields get eventFields => _hostRpc.eventFields;
+
   // ---- 翻页相关：本版新加的默认值 ----
 
   @override
@@ -144,8 +167,15 @@ abstract class FakeSyncClient
   Future<void> setAppState(AppState state) async =>
       throw UnimplementedError('测试替身没有声明 setAppState');
 
+  /// **默认空实现**（不是 `UnimplementedError`）。
+  ///
+  /// `AppModel.dispose()` 一定会调它 —— 那是"释放这台，把传输层也收掉"的那一步
+  /// （池化之后"移除这台电脑"就靠它真的断开）。几乎每个用例的 tearDown 都会走
+  /// `dispose()`，所以这里再抛就成了"每个用例都在报一个与它无关的错"。
+  /// 关心"到底关没关"的用例自己覆盖这个方法来记账
+  /// （`host_sessions_test.dart` 的 `closeCount`）。
   @override
-  Future<void> close() async => throw UnimplementedError('测试替身没有声明 close');
+  Future<void> close() async {}
 
   @override
   Future<void> unsubscribe(String sid) async =>

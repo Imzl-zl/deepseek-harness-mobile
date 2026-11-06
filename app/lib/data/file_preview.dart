@@ -17,13 +17,12 @@
 library;
 
 import '../core/errors.dart' show ErrorCode;
+import '../core/host_rpc.dart';
 import '../core/sync_client.dart';
 import '../model/file_diff.dart';
 import '../model/file_failure.dart';
 import '../model/file_open.dart';
 import '../model/workspace_files.dart' show FilePage;
-import '../wire/rpc/changes.dart' as wire;
-import '../wire/rpc/file.dart' as wire;
 
 class FilePreview {
   FilePreview({
@@ -39,6 +38,11 @@ class FilePreview {
   });
 
   final SyncClient client;
+
+  /// 读电脑侧文件面的能力口（端口在 `core/host_rpc.dart`，实现在 `wire/host_reads.dart`）。
+  ///
+  /// 判据只写在 [hostRpcOf] 一处（缺能力是装配错误，不静默降级）。
+  HostReads get _reads => hostRpcOf(client).reads;
 
   /// 当前会话（`file.read` / `file.diff` 的 scope 由宿主按它解析）。
   final String? Function() sidOf;
@@ -97,8 +101,7 @@ class FilePreview {
     }
     try {
       // 形状（`{page}` 信封 + 本体）在 `wire/rpc/file.dart`。
-      final page = await wire.loadFilePage(
-        client,
+      final page = await _reads.filePage(
         sid: sid,
         path: path,
         offset: offset,
@@ -149,8 +152,7 @@ class FilePreview {
       _diffLoading = true;
       onChange();
       try {
-        final result = await wire.loadFileDiff(
-          client,
+        final result = await _reads.fileDiff(
           sid: sidOf()!,
           seq: seq,
           index: index,

@@ -41,6 +41,7 @@
 library;
 
 import '../../core/job.dart' show parseSubagentCatalogValue;
+import '../../core/session_list_page.dart';
 import '../../core/snapshot_call.dart';
 import '../../core/snapshot_digest.dart';
 import '../../core/sync_client.dart';
@@ -80,9 +81,7 @@ const String _kModelCatalog = 'session.modelCatalog';
 /// 依赖方向也是对的：适配器（`wire/rpc`）依赖端口（`SyncClient`）。
 ///
 /// 形状错的计数与出声走 `valueOrReport`（唯一出口）；`null` 只剩"读不出来"一个含义。
-/// 一页会话行 + "还有没有下一段"（连接器 `hasMore`，见 `connector/src/handlers.ts`
-/// 的 `session.list`：不传 `limit` 就是整表 + `hasMore: false`）。
-typedef SessionListPage = ({List<SessionSummary> sessions, bool hasMore});
+/// 一页会话行这个**值类型**在 `core/session_list_page.dart`（端口 `HostRpc` 要能返回它）。
 
 /// 要一页会话行。
 ///

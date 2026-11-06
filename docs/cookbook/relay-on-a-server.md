@@ -341,6 +341,11 @@ docker compose -f relay/docker-compose.yml logs --tail 3 relay   # 期望：中�
 
 6. **反代**：Caddy 必须保留 Host，并建议覆盖 `X-Real-IP`（见 `Caddyfile.example`）。否则登录/发码
    的按 IP 限流会把所有客户端塌成一个地址。
+   **`trustProxy: true` 的前提是 8787 只绑回环**（§4.2 那种 `- "127.0.0.1:8787:8787"`）：
+   它信任 `X-Real-IP` / `X-Forwarded-For` 是**无条件的**（没有代理地址白名单，
+   `relay/src/accounts/session.ts` 的 `clientIpOf`），所以只要 8787 还能从外面直连，
+   任何人伪造这个头就能绕开按 IP 限流、连续失败锁定与匿名管理桶。§3 那种"公网 IP + 明文 8787"
+   的部署要么别开 `trustProxy`，要么先把端口收回到回环。
 
 7. **验证**：
 

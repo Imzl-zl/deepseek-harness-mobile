@@ -17,6 +17,7 @@
 /// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
+import '../../core/setting_section.dart';
 import '../../core/snapshot_digest.dart';
 import '../../core/sync_client.dart';
 import '../fields.dart';
@@ -30,29 +31,14 @@ export '../reading.dart';
 const String _kDescribe = 'settings.describe';
 const String _kUpdate = 'settings.update';
 
-/// 一个命名空间的设置快照（`settings.describe` / `settings.update` 的同一形状）。
-final class SettingSectionWire {
-  const SettingSectionWire({
-    required this.ns,
-    required this.revision,
-    required this.values,
-  });
-
-  final String ns;
-
-  /// 乐观并发用的版本号：写回时当 `expectedRevision`。**类型不声明**（宿主给 `unknown`，
-  /// 手机只做"原样带回去"这一件事）。
-  final Object? revision;
-
-  /// 已剔除 `role('secret')` 字段的设置值。
-  final Map<String, Object?> values;
-}
+// 一个 section 的**值类型**在 `core/setting_section.dart`（端口 `HostRpc` 要能返回它）；
+// 下面只剩"怎么从线上那一份解出来"。
 
 /// 读若干命名空间的快照（读方法：不带幂等键）。
 ///
 /// 一个 section 认不出就**跳过那一条**（少一行设置优于整个设置页报错）；
 /// `sections` 不是数组才是 [WireBad]。
-Future<SnapshotReply<List<SettingSectionWire>?>> loadSettings(
+Future<SnapshotReply<List<SettingSection>?>> loadSettings(
   SyncClient client, {
   required List<String> namespaces,
 }) =>
@@ -61,7 +47,7 @@ Future<SnapshotReply<List<SettingSectionWire>?>> loadSettings(
 /// 改一个字段（**只发新值**），回改完之后的快照。
 ///
 /// `section: null` ⇒ 返回 `null` 且**不计数**（见文件头）；调用方照"这一行没刷新"处理。
-Future<SettingSectionWire?> updateSettingValue(
+Future<SettingSection?> updateSettingValue(
   SyncClient client, {
   required String ns,
   required List<String> path,
@@ -75,14 +61,11 @@ Future<SettingSectionWire?> updateSettingValue(
     'value': value,
     'expectedRevision': expectedRevision,
   }, requestId: requestId);
-  return valueOrReport<SettingSectionWire?>(
-    readSettingSection(result),
-    _kUpdate,
-  );
+  return valueOrReport<SettingSection?>(readSettingSection(result), _kUpdate);
 }
 
 /// `settings.describe` 的应答：`{sections: [...]}`。
-WireReading<List<SettingSectionWire>> readSettings(Object? result) =>
+WireReading<List<SettingSection>> readSettings(Object? result) =>
     readObjectList(
       result,
       method: _kDescribe,
@@ -91,7 +74,7 @@ WireReading<List<SettingSectionWire>> readSettings(Object? result) =>
     );
 
 /// `settings.update` 的应答：`{section: null | {...}}`。
-WireReading<SettingSectionWire?> readSettingSection(Object? result) =>
+WireReading<SettingSection?> readSettingSection(Object? result) =>
     readObject(_kUpdate, result, (fields) {
       // **用 `containsKey` 而不是"取不到就当缺席"**：`section: null` 是合法应答
       // （宿主没有给出新快照），两者在这里必须分开。
@@ -112,10 +95,10 @@ WireReading<SettingSectionWire?> readSettingSection(Object? result) =>
 ///
 /// 解不出就抛 [WireFieldError]（由 `readObject` 计数一次）——
 /// **不在里面先 `report` 再返回 `null`**，否则同一个缺陷会记两次。
-SettingSectionWire _sectionOf(WireFields fields) {
+SettingSection _sectionOf(WireFields fields) {
   final ns = fields.requireNonEmptyString('ns');
   final values = fields.map['values'];
-  return SettingSectionWire(
+  return SettingSection(
     ns: ns,
     revision: fields.map['revision'],
     // `values` 缺席/不是对象 ⇒ 空映射（"这一行没值"与"没读到"在界面同一表现）。

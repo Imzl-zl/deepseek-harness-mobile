@@ -38,24 +38,43 @@
 
 `<hostId>` 是那台电脑的 Ed25519 公钥（`pcSignPubHex`，配对时钉死）。**一台电脑一个桶**：
 切到另一台只换桶，不删任何桶 —— 否则"切走再切回"会看不到上次的页签与草稿。
-切换本身（连接 sheet 的「切换电脑」）是**换凭据槽 + 重新装配 `AppModel`**，
-所以"只显示当前这台的数据"由装配结构保证，不靠界面过滤（`app-channel-client.md` §6.4）。
+切换本身（连接 sheet 的「切换电脑」）是**换凭据槽 + 换可见指针**：每台在池子里各有一份
+已装配的 `AppModel`（`data/host_sessions.dart`），切走的不拆，所以"只显示当前这台的数据"
+由装配结构保证，不靠界面过滤（`app-channel-client.md` §6.4）。
 没有电脑身份时（未配对 / 单测没装配身份）键用 `host.<field>` 的平铺形状 ——
-那是"状态不属于任何一台电脑"，**不是旧数据迁移**：拿到身份后不搬、不删（协议未发版，没有存量）。
+那是"状态不属于任何一台电脑"，**不是旧数据迁移**：拿到身份后不搬、不删
+（平铺键从不表示某一台电脑，搬它们只会造出第二套拼写）。
 
 ## 3. 存储、迁移与清理
 
-- 存储仍是 `meta` 表（`ItemStore` 的 k/v），**没有新表**；`ItemStore` 为此只加了两个方法：
+**三类键各有主人，清理按桶正写（不用排除法）**：
+
+| 键前缀 | 主人 | 谁可以删 |
+|---|---|---|
+| `schema.*` | 迁移记账（`schema.data_version`） | **任何清理都不碰**：删了只会让迁移重跑 |
+| `device.*` | 设备本地（跨电脑保留） | 只有用户自己改设置时覆盖 |
+| `host.<hostId>.*` | 某一台电脑的状态 | 换电脑 / prune 只删**当前桶** |
+
+- 存储仍是 `meta` 表（`ItemStore` 的 k/v），**没有新表**；`ItemStore` 为此加了
   `readMetaPrefix(prefix)` 与 `deleteMeta(prefix, {includePrefixed: true})`
   （`app/lib/data/store.dart`）。后者必须能**精确删**：`sid-1` 是 `sid-10` 的字符串前缀。
-- 版本：`storeSchemaVersion` 2。`storeMigrations[1]` 是空 DDL，
-  真正的改写在 `storeDataMigrations[1]`（`app/lib/data/store.dart`）：
-  旧键改名 → 删旧键，幂等；`schema.data_version` 记账，半途崩可自愈。
-  执行点是 `platform/sqflite_item_store.dart` 的 `open()`（DDL 之后）。
+- **条目与水位也分域**（不只是偏好）：盘上的会话键是 `<hostId>/<sid>`、条目 id 是
+  `<hostId>/<itemId>`、待发项的 `requestId` 同样带前缀。作用域由 `data/host_scope.dart`
+  的 `HostScope`（不可变值）+ `data/scoped_store.dart` 的 `ScopedItemStore` /
+  `ScopedOutboxStore`（装饰器）在**构造时**注入 —— `ItemStore` 的接口与两个实现都不认识
+  host，也没有"读写之前记得设一下"的可变字段。于是换电脑**不清库**：
+  `ScopedItemStore.clearScope()` 只删自己那段。
+- 版本：`storeSchemaVersion` 3。`storeMigrations[1]` / `[2]` 都是空 DDL，
+  真正的改写分别在 `storeDataMigrations[1]`（偏好键改名）与 `[2]`（旧行补电脑前缀，
+  前缀取自 v2 记下的 `meta.local_items.host`，跑完删掉该键），两者都幂等；
+  `schema.data_version` 记账，半途崩可自愈。执行点是
+  `platform/sqflite_item_store.dart` 的 `open()`（DDL 之后）。
 - 清理：`UiStateStore.clearHostScope()` 只删**当前桶**（"忘掉这一台"），
   它是用户动作，不是配对成功的副作用；`pruneSessions(liveSids)` 只剪**当前桶**
   （`liveSids` 来自当前那台电脑的清单）；`pruneWorkspaces(liveIds)` 由
-  `refreshWorkspaces` 调。`device.*` 与别的电脑的桶不参与任何清理。
+  `refreshWorkspaces` 调。`device.*`、`schema.*` 与别的电脑的桶不参与任何清理。
+  取舍与"为什么不是给实现加个 `hostId` 字段"见
+  `.agents/notes/implemented/2026-11-06-s2-host-scope-and-buckets.md`。
 - 写：非高频值走串行链立即写；**草稿防抖 300 ms**，`AppLifecycleState.paused`、
   切会话、发送成功、`dispose` 时 flush。代价：进程在窗口内被杀最多丢这段输入。
 

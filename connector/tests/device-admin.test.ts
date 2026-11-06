@@ -26,6 +26,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { createDeviceAdmin, type DeviceTablePort } from '../src/admin/device-admin.js'
+import { createDevicePresence } from '../src/presence.js'
 import { coreDomain, type DeviceRecord } from '../src/store/index.js'
 
 /** 一行设备的最小合法形状（schema 见 `store/index.ts`）。 */
@@ -68,7 +69,7 @@ function tableOf(seed: Record<string, DeviceRecord>): DeviceTablePort & { snapsh
 /**
  * 在线的设备 id 集合。每台建一次 admin，避免跨用例串味。
  *
- * [disconnected] 收下"被要求下线的设备 id"（独占：停用/删除必须真的收连接）。
+ * [disconnected] 收下"被要求下线的设备 id"（停用/删除必须真的收连接）。
  */
 function adminOf(
   table: DeviceTablePort,
@@ -233,10 +234,10 @@ test('删除：一台都没删就不重发名册（无事不打扰中转）', as
   assert.equal(published.length, 0, '一台都没动就不必打扰中转')
 })
 
-test('停用/删除要**真的让那台下线**（独占：占用位释放时连接不能还活着）', async () => {
+test('停用/删除要**真的让那台下线**（收紧的连接不能还活着）', async () => {
   const seed = { live: row({ name: '我的手机' }), idle: row({ name: '平板' }) }
 
-  // 停用：立刻下线（否则占用位释放了、旧 socket 还在收发）。
+  // 停用：立刻下线（否则名册说"已停用"、那条 socket 还在收发帧）。
   const disabled = tableOf(seed)
   const disabledIds: string[] = []
   await adminOf(disabled, ['live'], [], disabledIds).setEnabled('live', false)
@@ -271,4 +272,61 @@ test('删除：scope=revoked 只删已停用的，未停用的一台不动', asy
     { removed: 1, skippedOnline: 0, refusedActive: [] },
   )
   assert.deepEqual([...table.snapshot().keys()], ['idle'])
+})
+
+/**
+ * 两台设备**同时在线**时停用其中一台（撤掉独占准入之后才可能的形状）。
+ *
+ * 判据三条，钉的是"停用只作用于被点名的那个连接"：
+ * 1. `disconnect` 收到的 id 集合恰好是 `['dev-a']` —— 装配层据此 `stop()` 那一条
+ *    socket（`index.ts` 的 `servingConnections`），多一台都不行；
+ * 2. B 的记录与在线态原样（**吊销 A 不许把 B 踢掉**）；
+ * 3. A 被吊销后从 `devices()` 快照里消失 —— "有效"的判据只有 `pairedAtOf` 一处。
+ *
+ * 这里接**真 presence**：`online` / `offline` 与 `devices()` 的过滤是同一条链，
+ * 用替身会把"被吊销的行不再占位"这条最关键的环节绕开。
+ */
+test('两台同时在线：停用 A 只断 A，B 原样在线', { timeout: 60_000 }, async () => {
+  const table = tableOf({
+    'dev-a': row({ name: '我的手机' }),
+    'dev-b': row({ name: '平板' }),
+  })
+  const presence = createDevicePresence({
+    pairedAtOf: (id) => {
+      const record = table.get(id)
+      return record === undefined || record.revokedAt !== undefined ? undefined : record.pairedAt
+    },
+  })
+  const holderOf: Record<string, object> = { 'dev-a': {}, 'dev-b': {} }
+  presence.online('dev-a', holderOf['dev-a'])
+  presence.online('dev-b', holderOf['dev-b'])
+  assert.deepEqual(
+    presence.devices().map((state) => state.id).sort(),
+    ['dev-a', 'dev-b'],
+    '两台可以同时在线（没有"服务位"这回事）',
+  )
+
+  const stopped: string[] = []
+  const admin = createDeviceAdmin({
+    tableOf: () => table,
+    onlineIds: () => new Set(presence.devices().filter((state) => state.online).map((state) => state.id)),
+    publish: async () => {},
+    // 装配层的语义：点名谁就收谁，被收掉的那条连接随后自己报 `offline`。
+    disconnect: (ids) => {
+      for (const id of ids) {
+        stopped.push(id)
+        presence.offline(id, holderOf[id])
+      }
+    },
+  })
+
+  await admin.setEnabled('dev-a', false)
+
+  assert.deepEqual(stopped, ['dev-a'], '只收被点名的那个连接')
+  assert.deepEqual(
+    presence.devices().map((state) => state.id),
+    ['dev-b'],
+    'B 仍在线；A 被吊销后不再出现在快照里',
+  )
+  assert.equal(presence.liveOf('dev-b')?.online, true, 'B 的记录一帧都没被动过')
 })

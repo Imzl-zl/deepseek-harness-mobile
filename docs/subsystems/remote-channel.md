@@ -65,7 +65,7 @@
 - `ws` 可用;心跳与重连定时器用 `ctx.timer` 的 `interval` / `timeout`,随插件 dispose 自动清理。
 - **状态落插件自己的持久化存储**(见 §8.1):增量缓冲、去重表、设备公钥、会话别名映射。**修订号不落插件存储**(它取自 DSH 的 `seq`)。
 - 不与既有 HTTP 座位冲突:DSH 的 loopback webserver 对重复路由、重复 upgrade、fallback 属主都会抛错(`packages/host/webserver/src/index.ts:169,183,198-199`)。纯出站连接不碰这些。
-- 兼容性由 **`peerDependencies` 对 `@deepseek-ai/dsh*` 的范围**判定(`packages/boot/app-boot/src/plugin-compatibility.ts:68`),不匹配的 bundle 被跳过并记入 `skippedBundles`(`packages/boot/app-boot/src/profile.ts:675-681`)。**`engines.dsh` 不参与判定**(`packages/util/package-manifest/README.md:93`),`engines` 只写 node。
+- 兼容性由包自己的 **`engines.dsh` 范围**单独判定；`peerDependencies` 里的 `@deepseek-ai/dsh*` 只在**缺** `engines.dsh` 时才逐个比对(`packages/boot/app-boot/src/plugin-compatibility.ts:55-73`)，匹配用 `semver.satisfies(..., { includePrerelease: true })`(`:51-53`)。不匹配的 bundle 被跳过并记入 `skippedBundles`(`packages/boot/app-boot/src/profile.ts:687-712`)。上界写成 `<X.Y.Z-0`：`<X.Y.Z` 会放行整条预发布线，由 `connector/tests/manifest-compat.test.ts` 钉住。
 
 ### 2.2 连接状态机
 
@@ -156,7 +156,6 @@ type Frame =
 | `protocol/revoked` | 设备已被吊销(电脑侧删除公钥) | 清除本地凭据,回到配对页。**当前无生产者**:连接器把"未配对 / 已停用 / 查不到"合并成 `protocol/not-paired`(`connector/src/protocol/handshake-driver.ts`),实际路径见 §11 故障矩阵 |
 | `protocol/bad-frame` | 帧不合法(含握手前发业务帧) | 关闭并重连一次 |
 | `protocol/replay` | 重放或乱序(连接层) | 关闭并重连(重连即换新密钥与计数器) |
-| `device/busy` | 这台电脑已有一台**有效**设备在服务(独占 1:1),被拒的是第二台 | **不踢人**:本机不自动重连,显示占用者,给手动重试与切回上一台 |
 | `rate-limited` | 触发限流 | 退避重试 |
 | `session/not-found` | 会话不存在 | 从列表移除 |
 | `session/window-missed` | 区间超出窗口且缓冲覆盖不到 | 走快照 |
@@ -242,9 +241,10 @@ seed(32B, 存系统安全存储)
 - 握手三帧的 `box` 是**明文编码容器**(§3 已注明例外):此刻会话密钥还没建立。所以「收到对方第一条能解开的 AEAD 帧」是密钥可用的**观测**,不是握手完成的判据 —— 判据只有上面那两条。
 - **每次握手都必须新生成临时密钥对**,不得跨连接复用:复用会让 `fc` 从 0 重数 ⇒ nonce 重用 ⇒ 直接破掉 AEAD。握手失败后的重试同样要重新生成。
 - 握手超时 10 s;失败不计入业务重试次数。
-- **拒绝的关闭理由** = **关闭码 4003** + 一段文本,文本的形状是 `协议码` 或 `协议码 说明`(空格分隔、UTF-8,总长 ≤ 120 字节,超长截断)。手机按**第一个空格**切出协议码,其余是可展示说明(例如占用者是谁);码不在封闭表里照旧归 `internal`。
+- **拒绝的关闭理由** = **关闭码 4003** + 一段文本,文本的形状是 `协议码` 或 `协议码 说明`(空格分隔、UTF-8,总长 ≤ 120 字节 —— 关闭理由硬上限是 WS 的 123 字节,超了 `ws` 会抛 `RangeError` 而整条关闭路径失效;截断按码点做)。手机按**第一个空格**切出协议码,其余是可展示说明;码不在封闭表里照旧归 `internal`。
+  **说明当前只有中转在生产**(`rate-limited quota`);电脑侧的握手拒绝只发裸码 —— 每个拒绝点的理由都写在服务端日志里,不塞进关闭理由(关闭理由里能放的字节数撑不起一句诊断,而手机侧也没有展示它的面)。
 - **4003 有两个发送方**:电脑侧的握手拒绝,以及**中转**在按人流量额度用满时关闭数据面 —— 后者理由是 `rate-limited quota`(`rate-limited` 在 §3.1 的封闭表里,动作是退避重试)。两个发送方共用同一种解析规则,手机不需要区分。
-- **独占准入(1:1)**:电脑侧收到 `hello`、设备有效之后,若这台电脑**已有一台别的有效设备在服务**,回 `device/busy`(说明里带占用者的展示名),**不踢占用者**。同一 `devId` 的重连照旧放行(换网靠中转的 `replaced`,连接器不再加门);已停用(`revokedAt`)与已删除的行**不占位**,并且它们的连接**在停用/删除时就被收掉**(占用位释放与下线是同一件事)。**删除只能作用在已停用的行上**(先停用 → 手机拿到 `device-revoked` 终态 → 再清理记录),硬删活跃行会让那台手机永远不知道自己被移除。
+- **准入**:电脑侧收到 `hello`、设备有效之后即放行。同一台电脑可以**同时服务多台设备**,所以没有"被占用"这一档。已停用(`revokedAt`)与已删除的行在 `peerOf` 处回 `protocol/not-paired`。**删除只能作用在已停用的行上**(先停用 → 手机拿到终态 → 再清理记录),硬删活跃行会让那台手机永远不知道自己被移除。
 
 ### 4.2 计数器、nonce 与重放
 
@@ -277,6 +277,7 @@ seed(32B, 存系统安全存储)
     同 QUIC 的形状:ACK 帧承载确认信息,而它所在的包有**自己的**包号。
   - 把 `ack` 放进箱里同时解决了**伪造**:不经认证的 ack 能让对端误以为窗口已放开,额度形同虚设。
   - **`credit` 自己不再回 `credit`**:如果它也要被确认,两端就会互相刷 ack 停不下来(同 QUIC 里 ACK 帧不是 ack-eliciting 的处理)。
+  - **`ack` 不需要带连接身份**:一台设备一条数据通道(中转侧按 `(channelId, dev)` 各开一条,同一设备重连才替换),而发送窗口是**每连接一份**、`ack` 确认的是这条连接自己的 `fc`。所以跨设备不存在歧义 —— 通道本身就是身份。一台电脑同时服务多台设备时这条依然成立,不需要回复 `id`。
 - 会话层落盘水位用 `persisted { sid, seq }`:手机**落盘后**才发;电脑侧据此裁剪增量缓冲(§5.5),并允许中转裁剪重放窗口。
 - 两层分离的理由:流控要求即时反馈,落盘要求持久确认;混用一个 ack 会让两者互相拖累(等 fsync 才能继续收帧)。
 
@@ -936,8 +937,10 @@ meta(k, v)                                                    -- schema 版本�
   → 订阅的 `since` 取**这些条目自己的 `seq` 上界**。三条判据:
   ① 水位取**内容的上界**,不取 `cursors.last_seq`(计数器在"事件因空洞没入库却照样落了盘"时
   可能超前于内容);② **一条条目都没有就不认水位**(退回 0,"声称有到 N、界面空白"是唯一
-  不可接受的方向);③ 本地条目**按电脑身份分区**(`meta` 的 `local_items.host` 与 `pcSignPubHex`
-  一致才用,换电脑就清库 —— `sid` 是电脑别名,两台电脑的别名空间互不相干)。
+  不可接受的方向);③ 本地条目**按电脑身份分区**:盘上的键是 `<hostId>/<sid>`(条目 id 同样带前缀),
+  `hostId` 就是配对时钉死的 `pcSignPubHex` —— 两台电脑的别名空间互不相干,撞名也不会互相覆盖。
+  分域由 `data/scoped_store.dart` 的 `ScopedItemStore` 在构造时注入(`data/host_scope.dart`),
+  所以换电脑**不清库**、也不会把 A 的历史喂给 B。
   为什么能这么做:条目身份是 DSH 的 `itemId`(§5.2),电脑侧重放同一段时按它 upsert,不会重复。
 
 ---

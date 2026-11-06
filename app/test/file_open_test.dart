@@ -17,12 +17,12 @@ import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
-import 'package:dsh_mobile/data/projection.dart';
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/model/file_open.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_sync_client.dart';
+import 'projection_fixture.dart';
 
 /// 一台假电脑：`repo.info`（能力位）+ `file.read`（按 offset 分页）。
 class _OpenClient extends FakeSyncClient {
