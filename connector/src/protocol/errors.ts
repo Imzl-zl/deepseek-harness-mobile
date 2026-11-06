@@ -80,7 +80,12 @@ export type ErrorCode = keyof typeof ERROR_TABLE
 
 /**
  * 客户端对该错误的处置。刻意是**封闭枚举**而不是自由文本：手机端据此分支，
- * 新增行为要改这张表，不会漏在某个 switch 的 default 里。
+ * 新增行为要改这张表，不会漏在某个 `switch` 的 `default` 里。
+ *
+ * **取值集合必须与 `ERROR_TABLE` 里实际用到的动作相等**：一个声明了却没有任何码
+ * 使用的动作是死配置，读代码的人会以为"这个处置存在"。`'busy-wait'` 就是这样漏下来的
+ * ——2026-11-05 撤独占准入时删了 `device/busy` 行与 Dart 的 `busyWait`，联合类型里这条
+ * 一直留到 11-06。现在由 `error-table-parity.test.ts` 的第三条断言钉住。
  */
 export type ClientAction =
   | 'upgrade-required'
@@ -94,7 +99,6 @@ export type ClientAction =
   | 'disable-and-annotate'
   | 'refresh-settings'
   | 'show-offline'
-  | 'busy-wait'
   | 'disable'
   | 'report-defect'
   | 'log-and-retry'

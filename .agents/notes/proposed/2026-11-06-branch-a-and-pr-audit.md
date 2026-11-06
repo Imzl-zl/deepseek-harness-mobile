@@ -25,6 +25,15 @@
 | `remote-channel.md:244` 举例仍是「占用者是谁」；「≤120 字节截断」的实现已删 | `close-reason.ts` 已删 | 写明说明形态的当前唯一生产者是中转（`rate-limited quota`），连接器只产码 |
 | `connector-and-relay.md:175` 说电脑侧发 `4003 + 协议码/说明` | 连接器现在只发码 | 同上 |
 | `app-channel-client.md` §6.4 把「装配层按 hostId 持有一池实例」「切换不拆旧的」写成当下事实 | 本分支 `app/lib/main.dart:617` 仍是 `_app?.dispose()` | 改回事实（换槽 + 重新装配，旧的会被 dispose），池化降级为 S4 的目标 |
+| **`ClientAction` 联合类型里留着死动作 `'busy-wait'`** | `connector/src/protocol/errors.ts:97` | e42e600 的提交说明写「`ClientAction.busyWait` 两端同批删除」，实际只删了 Dart 的 `busyWait` 与 `device/busy` 那一行；TS 联合类型里这条从 10-30（`eb9696e`）一直留到 11-06。删掉，并补一条门禁（见下） |
+
+**自查又补一条**：上面这条是我第二遍核对时才发现 —— 而它暴露的不只是一个返回值，
+**是门禁本身有个洞**：`error-table-parity.test.ts` 的第二条断言拿 Dart 的**声明集合**
+去比 TS 的**表里用到的集合**，于是"TS 声明了却没任何码使用"这种情况两边都看不见
+（Dart 的声明集合被查了，TS 的声明集合没查）。补的第三条断言读 TS 源码、
+比对「联合类型声明的取值」与「`ERROR_TABLE` 实际用到的取值」，`unused` / `undeclared`
+任一非空即红。变异校验：把 `| 'busy-wait'` 加回去，该断言立刻报
+`actual: { unused: [ 'busy-wait' ], undeclared: [] }`；删掉后全绿。
 
 ### 判为"可接受、不补"的两条
 
@@ -105,7 +114,7 @@ S3（AppServices 汇总通知/前台服务）、S4（HostSessions 注册表）�
   `model→ui` / `model→data` / `theme→model` 三条反向 import 实测为 0。
 - **S2 已落**：`34fbae9`（HostScope + 装饰器 + 迁移 v2→v3 + 键空间三分）。
 - **仍未做**：S3 / S4 / S5；`core→wire`×2 与 `data→wire`×21 的依赖倒置。
-- 门禁现状：connector 835 / app 1750 / boundary 748 / `dart analyze --fatal-infos` 0。
+- 门禁现状：connector 836 / app 1749 / boundary 748 / `dart analyze --fatal-infos` 0。
 
 ## 六、未验证
 

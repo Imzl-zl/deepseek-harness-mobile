@@ -19,7 +19,7 @@
   `schema.data_version` 一起删掉 ⇒ 切一次电脑主题/字号回默认、切回去整段重刷）。
   `clear()` 整条删除（唯一调用点就是"换电脑清库"），清空只剩分域的
   `clearScope()`；两个新原语 `clearSession` / `scopeKeysTo`（`34fbae9` / `61c2b2c`）。
-  门禁：connector **835**；app **1749**；boundary **748**；`dart analyze --fatal-infos` 0。
+  门禁：connector **836**；app **1749**；boundary **748**；`dart analyze --fatal-infos` 0。
   另外把**真机库副本**喂给真实现跑了一遍 v2→v3（24.5 MB 的 `dsh_mobile.db`，只读副本）：
   4136 条条目一条不少、14 个水位键全部带前缀、`device.transparency/surface_alpha` 原样 ——
   证据在 `implemented/2026-11-06-s2-host-scope-and-buckets.md` 的「验证」。

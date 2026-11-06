@@ -27,6 +27,9 @@ import { ERROR_TABLE, type ClientAction } from '../src/protocol/errors.js'
 
 const DART = new URL('../../app/lib/core/errors.dart', import.meta.url)
 
+/** TS 侧自己的源码：联合类型在运行时不存在，只能读文本核对（见 `tsDeclaredActions`）。 */
+const ERRORS_TS = new URL('../src/protocol/errors.ts', import.meta.url)
+
 /** 从 Dart 枚举里抽出 `wire -> clientAction`。
  *
  * 口径要容忍 `dart format` 的排版：短条目是 `  name('wire', ClientAction.x),` 一行，
@@ -117,3 +120,48 @@ test('Dart 的 ClientAction 与 TS 的取值集合一致（没有只存在于一
     'ClientAction 的取值集合两边不一致',
   )
 })
+
+/** 从 TS 的 `export type ClientAction =` 联合类型里抽出声明的取值。
+ *
+ * **必须读源码而不是读类型**：类型在运行时不存在，而"声明了却没用到"正是这里要抓的
+ * 那种漏洞 —— `tsc` 不会因为它没被用而报错（联合类型的成员本来就可以不出现）。 */
+function tsDeclaredActions(source: string): Set<string> {
+  const start = source.indexOf('export type ClientAction =')
+  assert.equal(start >= 0, true, '没找到 TS 的 ClientAction 联合类型')
+  const names = new Set<string>()
+  for (const line of source.slice(start).split('\n').slice(1)) {
+    const match = /^\s*\|\s*'([^']+)'\s*$/.exec(line)
+    // 联合类型结束：第一行不是 `| '...'` 就停（`dart format` 那类排版容忍在这里不需要，
+    // 因为 TS 这份是手写的、格式由本仓固定）。
+    if (match === null) break
+    const value = match[1]
+    if (value !== undefined) names.add(value)
+  }
+  return names
+}
+
+test('TS 声明的 ClientAction 与表里实际用到的相等（没有死配置的处置）', () => {
+  const source = readFileSync(ERRORS_TS, 'utf8')
+  const declared = tsDeclaredActions(source)
+  assert.equal(declared.size > 0, true, '没从 TS 侧抽出任何 ClientAction —— 先检查解析口径')
+  const used = new Set<string>(Object.values(ERROR_TABLE))
+
+  const unused = [...declared].filter((action) => !used.has(action)).sort()
+  const undeclared = [...used].filter((action) => !declared.has(action)).sort()
+  assert.deepEqual(
+    { unused, undeclared },
+    { unused: [], undeclared: [] },
+    '有一侧是空的：`unused` 是"声明了但没有任何错误码使用"的死动作'
+      + '（2026-11-05 撤独占时 `busy-wait` 就这样留了下来）；'
+      + '`undeclared` 是表里用了但联合类型没声明',
+  )
+
+  // 顺带钉住"表的每一行都落在声明集合里"（`ERROR_TABLE` 的 `satisfies` 已由 tsc 保证，
+  // 这条是给读测试的人的第二个证据：35 行、14 种动作，一个不多一个不少）。
+  assert.equal(
+    declared.size,
+    used.size,
+    `声明 ${declared.size} 种动作、表里用 ${used.size} 种 —— 两边必须相等`,
+  )
+})
+
