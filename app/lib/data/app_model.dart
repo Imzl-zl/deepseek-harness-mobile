@@ -670,10 +670,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     try {
       final reply = await rpc.projections(client, sid: sid);
       if (_disposed) {
-        return SnapshotReply<SessionProjections?>.body(
-          null,
-          key: reply.key,
-        );
+        return SnapshotReply<SessionProjections?>.body(null, key: reply.key);
       }
       // 没变：**不动目录三态、不记错误**，原样往上交（含 `key`）。
       if (reply.notModified) return reply;
@@ -3129,10 +3126,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   Future<void> _syncKeepAlive() async {
     final services = _services;
     if (services == null || _disposed) return;
-    final state = await services.syncKeepAlive(
-      _hostKey,
-      want: _wantsKeepAlive,
-    );
+    final state = await services.syncKeepAlive(_hostKey, want: _wantsKeepAlive);
     _notifyGranted = state.granted;
     // 保活撤了而人还在后台 ⇒ 把连接**真的**断掉（否则服务没了、连接还在，
     // 那是"看不见的长连接"，比断开更糟）。

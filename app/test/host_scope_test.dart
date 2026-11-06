@@ -79,7 +79,9 @@ void main() {
       await a.clearScope();
 
       expect(await a.itemsOf('sid_1'), isEmpty, reason: '清的就是这台');
-      expect((await b.itemsOf('sid_1')).map((i) => i.itemId), ['m:2'], reason: '另一台原样');
+      expect((await b.itemsOf('sid_1')).map((i) => i.itemId), [
+        'm:2',
+      ], reason: '另一台原样');
       expect(await inner.readMeta('device.theme_mode'), 'dark');
       expect(await inner.readMeta(kStoreDataVersionKey), '$storeSchemaVersion');
       expect(await inner.readMeta('host.hostB.last_session'), 'sid_1');
@@ -127,7 +129,11 @@ void main() {
 
       await storeDataMigrations[2](inner);
 
-      expect(await inner.readMeta(kLegacyItemsHostKey), isNull, reason: '只为迁移存在的键');
+      expect(
+        await inner.readMeta(kLegacyItemsHostKey),
+        isNull,
+        reason: '只为迁移存在的键',
+      );
       expect(await inner.cursorOf('hostA/s1'), 2);
       // 迁移之后经作用域读得到，不需要第二个读路径。
       expect((await a.itemsOf('s1')).map((i) => i.itemId), ['a']);
@@ -152,4 +158,6 @@ void main() {
 }
 
 /// 取一批待发项的 `requestId`（断言里只关心这个）。
-List<String> rowsOf(List<OutboxEntry> rows) => [for (final row in rows) row.requestId];
+List<String> rowsOf(List<OutboxEntry> rows) => [
+  for (final row in rows) row.requestId,
+];

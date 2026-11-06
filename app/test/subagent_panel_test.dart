@@ -446,7 +446,12 @@ void main() {
     // 所以这里按同一份规则断言，而不是按我们想让它显示成什么。
     test('catalog v3 的 name：没有 label 时顶替 Session id', () {
       final rows = parseSubagentCatalogValue([
-        {'id': 'child-1', 'createdAt': 0, 'mode': 'continuable', 'name': 'reviewer'},
+        {
+          'id': 'child-1',
+          'createdAt': 0,
+          'mode': 'continuable',
+          'name': 'reviewer',
+        },
       ]);
       expect(rows.single.agentName, 'reviewer');
       expect(rows.single.displayLabel, 'reviewer');

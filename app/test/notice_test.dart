@@ -374,11 +374,7 @@ void main() {
 
     other.emitDelta('a', _approvalAsked());
     await pump();
-    expect(
-      port.visible,
-      hasLength(1),
-      reason: '用户在看别台 ⇒ 这一台的当前会话也要提醒',
-    );
+    expect(port.visible, hasLength(1), reason: '用户在看别台 ⇒ 这一台的当前会话也要提醒');
 
     // 对照：同一台变成可见之后，这条就不再是"看不见的"了。
     visible = true;

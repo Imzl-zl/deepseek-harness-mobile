@@ -287,11 +287,7 @@ void main() {
     // S4 之前"切电脑"= 换槽 + 重新装配 + `dispose` 旧的，于是切回去要从零连一遍。
     // 现在池子（`data/host_sessions.dart`）按 `hostId` 记着每一台：
     // **切换只是换可见指针**，dispose 只出现在"移除这台"（解绑/吊销/换凭据）与 app 退出。
-    expect(
-      source.contains('HostSessions'),
-      isTrue,
-      reason: '装配点要用池子，不能退回单槽',
-    );
+    expect(source.contains('HostSessions'), isTrue, reason: '装配点要用池子，不能退回单槽');
     expect(
       source.contains('_sessions.acquire('),
       isTrue,

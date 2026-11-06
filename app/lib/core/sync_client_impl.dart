@@ -1278,10 +1278,7 @@ class _SyncClient
   /// `.agents/notes/implemented/2026-10-22-refetch-markers-are-fetched.md`。
   ///
   /// 补取失败**不吞**：异常往上抛，由 [page] 折成 `failure`，上层整页不落。
-  Future<List<SessionEvent>> _eventsOfPage(
-    HistoryPage page,
-    String sid,
-  ) async {
+  Future<List<SessionEvent>> _eventsOfPage(HistoryPage page, String sid) async {
     final out = <SessionEvent>[];
     for (final item in page.items) {
       switch (item) {
@@ -1915,11 +1912,7 @@ class _SyncClient
 /// 这一层只负责"这一条属于哪个 itemId"，**并把原始 `type`/`data` 原样带上**，
 /// 而不是在解析时就把它们丢掉（丢掉会让上层只能从 `text` 里猜，那是"UI 各自解释事件"
 /// 的开端 —— 接线时实测踩到过）。
-SessionEvent _eventFromPayload(
-  String plaintext,
-  int seq,
-  EventIdReaders ids,
-) {
+SessionEvent _eventFromPayload(String plaintext, int seq, EventIdReaders ids) {
   final parsed = _jsonDecode(plaintext);
   if (parsed is! Map) {
     throw const ProtocolException(ErrorCode.badFrame, 'ev 载荷必须是 JSON 对象');

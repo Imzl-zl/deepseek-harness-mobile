@@ -131,21 +131,13 @@ void main() {
 
       a.reportToClient(false);
       b.reportToClient(false);
-      expect(
-        serving.states,
-        <AppState>[AppState.foreground],
-        reason: '保活生效的那台，后台也照报 foreground（连接要活着，通知上就能答）',
-      );
-      expect(
-        idle.states,
-        <AppState>[AppState.background],
-        reason: '没保活的那台照旧断开 —— 不能因为别的台在保活就连着',
-      );
-      expect(
-        port.keepAliveCount,
-        1,
-        reason: '掉线那台报"不要"不该把另一台的保活撤掉',
-      );
+      expect(serving.states, <AppState>[
+        AppState.foreground,
+      ], reason: '保活生效的那台，后台也照报 foreground（连接要活着，通知上就能答）');
+      expect(idle.states, <AppState>[
+        AppState.background,
+      ], reason: '没保活的那台照旧断开 —— 不能因为别的台在保活就连着');
+      expect(port.keepAliveCount, 1, reason: '掉线那台报"不要"不该把另一台的保活撤掉');
     });
   });
 }

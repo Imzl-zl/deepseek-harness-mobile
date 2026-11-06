@@ -245,7 +245,8 @@ class SubagentRow {
   ///
   /// **代理名必须排在 id 前面**：0.2.2 起子代理有了 `agent-1` / `reviewer`
   /// 这样的名字，而没配 label 的条目在手机上原本显示一串会话 UUID，读不出是谁。
-  String get displayLabel => (label == null || label!.isEmpty) ? agentName : label!;
+  String get displayLabel =>
+      (label == null || label!.isEmpty) ? agentName : label!;
 
   /// 外部任务：DSH 不给它开子会话（`SubagentHeaderLineage.tsx:279-287` 的
   /// `open()` 第一行 `if (external) return`），也不能展开。

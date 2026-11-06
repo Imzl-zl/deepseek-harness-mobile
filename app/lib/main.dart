@@ -158,17 +158,15 @@ class _DshMobileAppState extends State<DshMobileApp>
   final HostSessions _sessions = HostSessions();
 
   /// 界面读的那一份。
-  AppModel? get _app =>
-      _credentials == null ? _unpaired : _sessions.of(_credentials!.pcSignPubHex);
+  AppModel? get _app => _credentials == null
+      ? _unpaired
+      : _sessions.of(_credentials!.pcSignPubHex);
 
   /// 池子里所有活着的模型（**含没配对那个**）：前后台态要广播给每一台。
   ///
   /// 池子空着时自然是空的 —— 那一次无常可报（客户端自己的初相就是前台，
   /// 而移动端冷启动必然在前台），不是兜底。
-  Iterable<AppModel> get _liveApps => <AppModel>[
-    ..._sessions.live,
-    ?_unpaired,
-  ];
+  Iterable<AppModel> get _liveApps => <AppModel>[..._sessions.live, ?_unpaired];
 
   bool _booting = true;
 
@@ -1786,7 +1784,9 @@ Future<AppModel> _assemble(
       // `Outbox.attachSender` 的说明：装配点传假实现会让队列**永远发不出去**
       // 而没有任何报错）。
       // 待发项也要分域：`requestId` 是客户端生成的幂等键，两台电脑各自生成、可能撞号。
-      outbox: Outbox(store: ScopedOutboxStore(SqfliteOutboxStore(inner), scope)),
+      outbox: Outbox(
+        store: ScopedOutboxStore(SqfliteOutboxStore(inner), scope),
+      ),
       session: DeviceSession(),
       persistence: StoreItemPersister(store),
     ),

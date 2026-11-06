@@ -96,10 +96,7 @@ class AppServices {
     final status = await notify.status();
     final shouldRun = _keepAliveWants.isNotEmpty && status.granted;
     if (shouldRun && !status.keepAlive) {
-      await notify.startKeepAlive(
-        title: kKeepAliveTitle,
-        text: kKeepAliveText,
-      );
+      await notify.startKeepAlive(title: kKeepAliveTitle, text: kKeepAliveText);
       return (granted: status.granted, keepAlive: true);
     }
     if (!shouldRun && status.keepAlive) {

@@ -283,7 +283,11 @@ void main() {
 
         await storeDataMigrations[2](store);
 
-        expect(await store.readMeta(kLegacyItemsHostKey), isNull, reason: '只为迁移存在的键');
+        expect(
+          await store.readMeta(kLegacyItemsHostKey),
+          isNull,
+          reason: '只为迁移存在的键',
+        );
         expect(await store.cursorOf('hostA/s1'), 3);
         expect(await store.allCursors(), {'hostA/s1': 3});
         expect(await store.itemsOf('s1'), isEmpty, reason: '旧键不再有行');

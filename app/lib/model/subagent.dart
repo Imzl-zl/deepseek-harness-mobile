@@ -233,7 +233,9 @@ class SubagentNode {
     // 代理名进了主标签就不再重复；只有 label 占了主标签时才在详情行露出名字
     // （DSH 同样是「description 当主标签、name 进第二行」，
     // `ui-subagent/src/client/SubagentHeaderLineage.tsx:289-292`）。
-    if (row.name != null && row.name!.isNotEmpty && row.name != row.displayLabel)
+    if (row.name != null &&
+        row.name!.isNotEmpty &&
+        row.name != row.displayLabel)
       row.name!,
     row.modeText,
     // 列表元素用 null-aware element（`?x`）是安全的；

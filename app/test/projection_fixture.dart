@@ -24,10 +24,9 @@
 library;
 
 import 'package:dsh_mobile/core/items.dart' as core show EventLike, itemIdOf;
-import 'package:dsh_mobile/data/projection.dart' as wire_free show
-    ChatProjection,
-    TurnStats,
-    projectEvent;
+import 'package:dsh_mobile/data/projection.dart'
+    as wire_free
+    show ChatProjection, TurnStats, projectEvent;
 import 'package:dsh_mobile/model/chat_item.dart' show ChatItem;
 import 'package:dsh_mobile/wire/events.dart' show kWireEventIdReaders;
 

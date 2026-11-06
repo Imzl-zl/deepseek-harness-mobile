@@ -87,8 +87,14 @@ class ScopedItemStore implements ItemStore {
   }
 
   @override
-  Future<Map<String, String>> payloadsOf(String sid, Iterable<String> itemIds) async {
-    final raw = await inner.payloadsOf(scope.keyOf(sid), itemIds.map(scope.keyOf));
+  Future<Map<String, String>> payloadsOf(
+    String sid,
+    Iterable<String> itemIds,
+  ) async {
+    final raw = await inner.payloadsOf(
+      scope.keyOf(sid),
+      itemIds.map(scope.keyOf),
+    );
     return <String, String>{
       for (final entry in raw.entries) scope.plainOf(entry.key): entry.value,
     };
@@ -118,7 +124,8 @@ class ScopedItemStore implements ItemStore {
       inner.readMetaPrefix(prefix);
 
   @override
-  Future<void> writeMeta(String key, String value) => inner.writeMeta(key, value);
+  Future<void> writeMeta(String key, String value) =>
+      inner.writeMeta(key, value);
 
   @override
   Future<void> deleteMeta(String prefix, {bool includePrefixed = true}) =>
@@ -175,13 +182,15 @@ class ScopedOutboxStore implements OutboxStore {
   }
 
   @override
-  Future<void> append(OutboxEntry entry) => inner.append(OutboxEntry(
-    requestId: scope.keyOf(entry.requestId),
-    method: entry.method,
-    params: entry.params,
-    sid: entry.sid,
-    frameId: entry.frameId,
-  ));
+  Future<void> append(OutboxEntry entry) => inner.append(
+    OutboxEntry(
+      requestId: scope.keyOf(entry.requestId),
+      method: entry.method,
+      params: entry.params,
+      sid: entry.sid,
+      frameId: entry.frameId,
+    ),
+  );
 
   @override
   Future<void> remove(String requestId) => inner.remove(scope.keyOf(requestId));
