@@ -387,7 +387,7 @@ class SettingsPage extends StatelessWidget {
             name: '从相册选一张',
             // **另存一份**的理由要写在用户看得见的地方：引用相册路径的话，
             // 权限被收回或原图被删，壁纸某天会忽然变白。
-            tags: ['会另存一份到 App 私有目录，不引用相册原图'],
+            tags: ['另存到 App 私有目录'],
             selected: false,
             icon: 'plus',
             onTap: () => Navigator.of(context).pop('pick'),
@@ -395,7 +395,7 @@ class SettingsPage extends StatelessWidget {
           if (hasWallpaper)
             DshPickerRow(
               name: '去掉背景',
-              tags: ['回到纯色底'],
+              tags: const [],
               selected: false,
               icon: 'trash',
               onTap: () => Navigator.of(context).pop('clear'),
@@ -876,7 +876,7 @@ class _ModelSection extends StatelessWidget {
             value: failure.message,
             onTap: () {},
           ),
-        const _PrefNote('提供商与密钥在电脑上改（DSH 的模型设置页）。'),
+        const _PrefNote('提供商与密钥在电脑上改。'),
       ],
     );
   }
@@ -1111,7 +1111,7 @@ class _EndpointRow extends StatelessWidget {
     }
     await app.preferEndpoint(endpoint);
     if (!context.mounted) return;
-    _toast(context, '已设为首选，下次自动连接时优先');
+    _toast(context, '已设为首选');
   }
 
   /// 行尾「⋯」：把这个端点**立刻连上**，或者删掉。
@@ -1131,7 +1131,7 @@ class _EndpointRow extends StatelessWidget {
         children: [
           DshPickerRow(
             name: '现在用这条连',
-            tags: [if (isActive) '已经在用这一条' else '会断开当前连接，只试这一条'],
+            tags: [if (isActive) '已经在用这一条'],
             selected: isActive,
             icon: 'refresh',
             enabled: !isActive,
@@ -1141,10 +1141,11 @@ class _EndpointRow extends StatelessWidget {
             // **删除对任何端点都一样**（用户原话："这玩意不是限制人家删除干嘛？他误删也是他自己的事"）：
             // 手填的直接从表里去掉；自报的进"已删除"集（否则下一次 `describe` 又加回来）。
             // 两条路都先确认，误删可在「已删除的端点」里恢复。
+            //
+            // 后果只写在确认框里（真动手那一刻才看得见）；动作行不再挂解释句。
+            // 判据见 `.agents/notes/implemented/2026-11-06-endpoint-sheet-copy-trim.md`。
             name: '删除这个端点',
-            tags: [
-              endpoint.manual ? '手填的地址，删了就没了' : '删掉后连接器再报也不会加回来，可在「已删除的端点」里恢复',
-            ],
+            tags: const [],
             selected: false,
             icon: 'trash',
             onTap: () => Navigator.of(context).pop('remove'),
@@ -1254,7 +1255,7 @@ class _HiddenEndpoints extends StatelessWidget {
                 for (final url in hidden)
                   DshPickerRow(
                     name: url,
-                    tags: const ['点一下恢复'],
+                    tags: const [],
                     selected: false,
                     icon: 'unarchive',
                     onTap: () => Navigator.of(context).pop(url),

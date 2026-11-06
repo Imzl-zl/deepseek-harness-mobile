@@ -163,7 +163,7 @@ class _AddEndpointDialogState extends State<AddEndpointDialog> {
             if (_kind == EndpointKind.relay) ...[
               DshPickerRow(
                 name: '内置中转',
-                tags: [kBuiltinRelayUrl, '开箱即用，不用填'],
+                tags: [kBuiltinRelayUrl],
                 icon: 'globe',
                 selected: _useBuiltinRelay,
                 onTap: () => setState(() {
@@ -174,7 +174,7 @@ class _AddEndpointDialogState extends State<AddEndpointDialog> {
               ),
               DshPickerRow(
                 name: '自定义',
-                tags: const ['自己部署的中转，或连别人家的'],
+                tags: const ['自建或别人的中转'],
                 icon: 'edit',
                 selected: !_useBuiltinRelay,
                 onTap: () => setState(() {

@@ -22,6 +22,7 @@ import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/model/theme_mode.dart';
 import 'package:dsh_mobile/theme/dsh_icons.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
+import 'package:dsh_mobile/ui/dsh_sheet.dart';
 import 'package:dsh_mobile/ui/settings_page.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
@@ -238,7 +239,7 @@ void main() {
       _direct.url,
     ], reason: '只改顺序，两条都还在');
     expect(persisted, hasLength(1), reason: '改了要落盘，重启后还是这个偏好');
-    expect(find.text('已设为首选，下次自动连接时优先'), findsOneWidget);
+    expect(find.text('已设为首选'), findsOneWidget);
     addTearDown(app.dispose);
   });
 
@@ -272,7 +273,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('现在用这条连'), findsOneWidget, reason: '立刻连的入口在这里');
-    expect(find.text('会断开当前连接，只试这一条'), findsOneWidget, reason: '要提前说清副作用');
     expect(find.text('删除这个端点'), findsOneWidget);
     addTearDown(app.dispose);
   });
@@ -484,7 +484,7 @@ void main() {
     addTearDown(app.dispose);
   });
 
-  testWidgets('已删除区：点一下恢复', (tester) async {
+  testWidgets('已删除区：点一行恢复', (tester) async {
     final app = buildApp();
     await tester.pumpWidget(_host(app));
     await tester.pumpAndSettle();
@@ -498,10 +498,15 @@ void main() {
     await tester.tap(find.text('已删除 1 条端点 · 点这里恢复'));
     await tester.pumpAndSettle();
     expect(find.text('已删除的端点（1）'), findsOneWidget, reason: '先确认 sheet 真的开了');
-    // 点标签而不是那行很长的地址：地址被 ellipsis 截断后，
+    // 点整行而不是那行很长的地址：地址被 ellipsis 截断后，
     // `tester.tap` 取其几何中心可能落在文字外（那一拍就变成点遮罩，
     // sheet 以 null 收场 → 看起来像"点了没反应"）。
-    await tester.tap(find.text('点一下恢复'));
+    await tester.tap(
+      find.ancestor(
+        of: find.text(_relay.url),
+        matching: find.byType(DshPickerRow),
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(app.hiddenEndpointIds, isEmpty);
