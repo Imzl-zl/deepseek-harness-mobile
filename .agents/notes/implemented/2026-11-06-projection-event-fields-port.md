@@ -126,6 +126,23 @@ wire/event_fields.dart      WireEventFields：调 wire 读者 → valueOrReport 
 - `workspace/changes` 的 `turn == null ⇒ skip` 保留：`projectEvent` 的 `itemId` 是**入参**
   （调用方可以给任何 id），纯函数不能假设它由 `data` 算出，所以这条兜底不是死代码。
 
+## 工具结果 meta：`model/tool_view.dart` 的那一整块读者
+
+`tool/result.data.meta`（DSH 的 `presentationMeta`）原先由 `model/tool_view.dart` 自己读：
+`_field(data, 'meta')` / `_string` / `_int`，外加 hunk 与行号的键名（19 处）。同一个
+不变量（事件载荷的字段名只许在 `wire/`），只是破口在 `model/`。
+
+- 端口加 `toolMeta(data)` → `ToolResultMeta`。**类型住在 `model/tool_view.dart`**（与
+  `FileTextLine` / `DiffHunk` 同处），core 只 import：搬进 core 会造一条
+  `core/event_fields ↔ model/tool_view` 的直接环，而这些类型本来就是"这个视图的输入"。
+- `toolResultViewOf({name, meta, text})`：正文由调用方给（`textOfContent(resultMessage.blocks)`），
+  不再自己解一遍 `message.content`；`_field` / `_string` / `_int` / `_parseHunks` /
+  `_contentText` 全删。**hunk 解码只留一处**：`diffHunks` 与 `toolMeta` 共用
+  `_diffHunks`（同一个 `meta.diffs` 原先有两个读者）。
+- 测试：`test/tool_view_fixture.dart` 提供同名转发版（收**原始结果载荷**，meta 与正文都走
+  `WireEventFields`），`tool_views_test.dart` 的 8 个调用点一个字符没改 —— 解码器仍在测试
+  路径上。
+
 ## 门禁（第 3 族落地后加）
 
 `verify-platform-boundary.mjs` 新增 **`data-no-field-name`**：`app/lib/data/**` 里**把线上
@@ -161,6 +178,8 @@ wire/event_fields.dart      WireEventFields：调 wire 读者 → valueOrReport 
     `null` ⇒ `changes_card_test` **14 条红**；把 `approval/decided` 的 `outcome` 丢掉 ⇒
     **0 条红** —— `ApprovalItem.decision` 没有显示读者（只有 `SessionStore` 的 `==`），
     这个字段目前**没有回归网**，记在这里不假装有。
+  - meta 批：`toolMeta` 恒空载荷 ⇒ `tool_views_test` **5 条红**（read 解析、两组 +N−M、
+    两条渲染）。
   - 门禁本身：在 `projection.dart` 临时加一行 `stringField(_probeData, 'toolName')` ⇒
     `data-no-field-name: app/lib/data/projection.dart → 命中「stringField(…, 'toolName')
     （第 1112 行）」`，**1/827 红**；删掉即全绿。
@@ -173,10 +192,15 @@ wire/event_fields.dart      WireEventFields：调 wire 读者 → valueOrReport 
 - **门禁认的形状**是"助手调用 + 字段名字面量"；`map['key']` 这种直接下标不在它的匹配里。
   `data/` 目前没有这种读法（工具参数那一层用的是变量键，见下一条），所以这条门禁对
   `data/` 是完整的；换到别的目录（例如 `model/`）就不完整，别再拿它当"零字段名"的证据。
-- **`app/lib/model/tool_view.dart` 仍在门禁范围外**：它自己有一份
-  `_field(data, 'meta')` / `_string` / `_int` 读者（`presentationMeta` 的
-  `lines` / `path` / `offset` / `totalLines` / `lang` / `diffs` / `operation`，以及
-  hunk 的 `path` / `oldText` / `newText`），是同一个不变量在 `model/` 的剩余破口。
+- **`model/` 里还有一批"按线上字段名取值"的解码器**，都不是事件载荷这条线：
+  `permission.dart`（`session.projections` 的 `permissions.currentValue` + 权限预设的
+  `value`/`name`/`description`）、`agent_preset.dart`（预设目录应答的
+  `available`/`roster`/`presets`/`broken`/`id`/`isDefault`）、`changes.dart`
+  （`file.changes` 应答的 `path`/`display`/`added`/`deleted`/`binary`/`oversized`/`turn`/`total`）、
+  `changed_path.dart`（**工具参数**的 `file_path`/`old_string`/`new_str`/…，属已定口径的
+  "工具 schema，不是事件契约"）。`wire/rpc/projections.dart` 还反向 import
+  `model/permission.dart` 来解码 —— 层次倒置，与 2026-10-25 同一类。
+  要把门禁扩到 `model/`，先得把这些 RPC 应答的读法收回 `wire/rpc/`。
 - **工具参数键名**（`bash` 的 `command`、`read` 的 `path` 等，`_toolSummaryKeys` /
   `_flatten`）不属于这条门禁：那是模型填的工具 schema，不是 DSH 事件契约。口径写在这里，
   下一批要动它得先改这条判据。

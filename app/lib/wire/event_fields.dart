@@ -18,7 +18,7 @@ import '../core/json_field.dart'
     show fieldOf, intField, nonEmptyString, stringField;
 import '../model/chat_item.dart' show TurnTokenUsage;
 import '../model/interaction.dart' show InteractionOption, InteractionQuestion;
-import '../model/tool_view.dart' show DiffHunk;
+import '../model/tool_view.dart' show DiffHunk, FileTextLine, ToolResultMeta;
 import 'events.dart' as wire;
 import 'reading.dart' show valueOrReport;
 
@@ -99,15 +99,22 @@ final class WireEventFields implements EventFields {
         fieldOf(fieldOf(data, 'meta'), 'diffs') ??
         fieldOf(fieldOf(fieldOf(data, 'message'), 'metadata'), 'diffs');
     if (diffs is! List) return null;
-    return [
-      for (final hunk in diffs)
-        if (hunk is Map)
-          DiffHunk(
-            path: hunk['path'] is String ? hunk['path'] as String : '',
-            oldText: hunk['oldText'] is String ? hunk['oldText'] as String : '',
-            newText: hunk['newText'] is String ? hunk['newText'] as String : '',
-          ),
-    ];
+    return _diffHunks(diffs);
+  }
+
+  @override
+  ToolResultMeta toolMeta(Object? data) {
+    // 三个工具的 meta 形状见 `model/tool_view.dart` 的文件头（逐个读过 DSH 源码）。
+    final meta = fieldOf(data, 'meta');
+    return ToolResultMeta(
+      path: stringField(meta, 'path'),
+      operation: stringField(meta, 'operation'),
+      offset: _numToInt(fieldOf(meta, 'offset')),
+      totalLines: _numToInt(fieldOf(meta, 'totalLines')),
+      lang: stringField(meta, 'lang'),
+      lines: _fileLines(fieldOf(meta, 'lines')),
+      diffs: _diffHunks(fieldOf(meta, 'diffs')),
+    );
   }
 
   @override
@@ -222,6 +229,41 @@ final class WireEventFields implements EventFields {
   /// `shadowedTokenCount`：同样只认安全非负整数（DSH `command.ts:117-120`）。
   static int? _shadowedTokenCount(Object? value) =>
       (value is int && value >= 0) ? value : null;
+
+  /// `read` 的结构化窗口：**非空数组才收**（否则 `null`，专用卡退回通用卡）。
+  static List<FileTextLine>? _fileLines(Object? raw) {
+    if (raw is! List || raw.isEmpty) return null;
+    return [
+      for (final line in raw)
+        if (line is Map)
+          FileTextLine(
+            _numToInt(line['number']) ?? 0,
+            line['text'] is String ? line['text'] as String : '',
+          ),
+    ];
+  }
+
+  /// hunk 表（`{path, oldText, newText}`，DSH 的 `computeHunkDiffs` 产物）。
+  static List<DiffHunk> _diffHunks(Object? raw) {
+    if (raw is! List) return const [];
+    return [
+      for (final hunk in raw)
+        if (hunk is Map)
+          DiffHunk(
+            path: hunk['path'] is String ? hunk['path'] as String : '',
+            oldText: hunk['oldText'] is String ? hunk['oldText'] as String : '',
+            newText: hunk['newText'] is String ? hunk['newText'] as String : '',
+          ),
+    ];
+  }
+
+  /// `offset` / `totalLines` / `number`：DSH 写的是数字，`num` 一律折成 `int`
+  /// （与 `model/tool_view.dart` 原来那条宽松读法一致）。
+  static int? _numToInt(Object? value) => switch (value) {
+    int() => value,
+    num() => value.toInt(),
+    _ => null,
+  };
 
   /// `content` → 块表。**两种形状都收**：字符串、块数组（数组里还可能是裸字符串）。
   ///

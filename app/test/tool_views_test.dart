@@ -16,11 +16,13 @@ import 'dart:io';
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/model/diff.dart';
 import 'package:dsh_mobile/model/diff_line.dart';
-import 'package:dsh_mobile/model/tool_view.dart';
+import 'package:dsh_mobile/model/tool_view.dart' hide toolResultViewOf;
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/chat_turns.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'tool_view_fixture.dart';
 
 /// 真机落盘的一帧 `tool/result`（read）。
 Map<String, Object?> _realReadResult() {

@@ -82,8 +82,9 @@ UI 一旦开始认事件类型,同一件事就会在两个地方各写一遍。
   读不到是空态,写失败必须大声,而写全带幂等键。
   `core/`、`data/` 与 `ui/` 都**零 `wire/` import**:`projection.dart` 的事件载荷走
   `core/event_fields.dart` 的 `EventFields` 端口(实现在 `wire/event_fields.dart`,
-  由 `HostRpcHolder.eventFields` 交给投影),端口分三族 —— 工具/审批/提问、消息/内容块、
-  重试/轮次收口/压缩/交互工具入参。因此 `data/` 里没有按线上字段名取值的地方。
+  由 `HostRpcHolder.eventFields` 交给投影),端口覆盖工具/审批/提问、消息/内容块、
+  重试/轮次收口/压缩、交互工具入参与工具结果的 presentationMeta(`toolMeta`)。
+  因此 `data/` 里没有按线上字段名取值的地方,`model/tool_view.dart` 也只收解好的 meta。
   `ui/` 发消息走 `AppModel.sendPrompt` / `sendSubagentPrompt`,界面不认识方法名。
   代价与实测数字见
   `.agents/notes/implemented/2026-11-06-p1b-batch1-session-family.md`、

@@ -362,10 +362,14 @@ ChatProjection projectEvent({
     // 结果自己带 name 时照它（部分适配器会写）；否则用调用的名字。
     final name =
         resultMessage.name ?? call?.name ?? storedName ?? kUnknownToolName;
-    // **专用视图**（bash / read / edit|write）从 `data.meta` 解（DSH 的
+    // **专用视图**（bash / read / edit|write）从解好的 meta 判（DSH 的
     // `presentationMeta`，形状见 `model/tool_view.dart` 的文件头）。
     // 其余工具 / 形状不认识 ⇒ `null`，走通用卡。
-    final view = toolResultViewOf(name: name, data: data);
+    final view = toolResultViewOf(
+      name: name,
+      meta: fields.toolMeta(data),
+      text: textOfContent(resultMessage.blocks),
+    );
     return ChatProjection.item(
       ToolCallItem(
         itemId: itemId,

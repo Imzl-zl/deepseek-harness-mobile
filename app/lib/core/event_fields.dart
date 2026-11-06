@@ -13,7 +13,8 @@
 /// - **读不出就是 `null`**（或空表），不是抛、也不是 `WireBad`：计数与出声在 `wire/`
 ///   那一处（`valueOrReport`），`data/` 因此不必认识三态内核 —— 这也是这一族能把
 ///   `data → wire` 那条 import 关掉的原因；
-/// - 值类型住在这里（"解好的值"，与 `SessionProjections` 同一档）；
+/// - 值类型住在这里（"解好的值"，与 `SessionProjections` 同一档）；已经在 `model/` 里的
+///   形状（`DiffHunk` / `FileTextLine` / `ToolResultMeta`）直接复用，不搬家、不抄第二份；
 /// - **只放 `data/` 真正消费的方法**：`command/run` / `command/done` 的读者只有
 ///   `EventIdReaders` 与回放用例在用，所以不进这个端口（端口上多一个没人调的方法
 ///   就是一处要维护的空转面）。
@@ -36,7 +37,7 @@ library;
 
 import '../model/chat_item.dart' show TurnTokenUsage;
 import '../model/interaction.dart' show InteractionQuestion;
-import '../model/tool_view.dart' show DiffHunk;
+import '../model/tool_view.dart' show DiffHunk, ToolResultMeta;
 
 /// 一条 `tool/call` 的载荷（`{turn, step, callId, name, arguments}`）。
 final class ToolCallPayload {
@@ -317,6 +318,13 @@ abstract interface class EventFields {
 
   /// 工具结果是不是失败：`message.isError` 为布尔就用它，否则看 `status == 'error'`。
   bool isToolError(Object? data);
+
+  /// 一条 `tool/result` 的 `presentationMeta`（`data.meta`）。
+  ///
+  /// **没有 meta 是空载荷，不是 `null`**：三种专用卡各自判"这个工具要的键在不在"
+  /// （那是语义），端口只把形状读出来。`read` 的 `lines` 不是非空数组 ⇒ `null`
+  /// （那时退回通用卡，DSH 同处也是不装作有行号）。
+  ToolResultMeta toolMeta(Object? data);
 
   /// 一条重试事件（`llm/retry` 与 `llm/retry-started` 同形；缺的字段是 `null`）。
   RetryPayload retry(Object? data);

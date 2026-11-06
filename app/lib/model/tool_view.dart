@@ -22,6 +22,9 @@
 ///
 /// 其余工具（`grep` / `glob` / `web_*` / `todo_write` / `subagent` / …）这一版**不专门做**：
 /// 它们继续走通用卡（IN/OUT 文本），见 `docs/subsystems/tool-views.md` §3 的"有意偏离"。
+///
+/// **键名与类型只在 `wire/event_fields.dart` 的 `toolMeta` 里断言**：本文件收
+/// [ToolResultMeta]（解好的值），自己不按线上字段名取。
 library;
 
 import 'diff.dart';
@@ -137,16 +140,53 @@ bool hasDedicatedView(String name) => switch (name) {
   _ => false,
 };
 
-/// 从 `tool/result` 的载荷里解析出专用视图；`null` = 走通用卡。
+/// `tool/result.data.meta`（DSH 的 `presentationMeta`）**解好的值**。
 ///
-/// [data] 是 `tool/result` 的 `data`（含 `message` 与 `meta`）。
+/// 键名与类型只在 `wire/event_fields.dart` 断言（`EventFields.toolMeta`），这里只有字段。
+/// 三个专用卡各取其中几项，见 [toolResultViewOf]。
+final class ToolResultMeta {
+  const ToolResultMeta({
+    this.path,
+    this.operation,
+    this.offset,
+    this.totalLines,
+    this.lang,
+    this.lines,
+    this.diffs = const [],
+  });
+
+  /// 文件路径（`read` / `edit` / `write`）。
+  final String? path;
+
+  /// `write` 的操作名（`create` / `update` …）；`edit` 没有。
+  final String? operation;
+
+  /// `read` 的起始行号（1 基）。
+  final int? offset;
+
+  /// `read` 的文件总行数（`null` = 电脑侧没给）。
+  final int? totalLines;
+
+  /// `read` 的语言标记。
+  final String? lang;
+
+  /// `read` 的结构化窗口；**没有（或空）就是 `null`** —— 那时退回通用卡，
+  /// 不装作有行号（老结果 / 第三方适配器）。
+  final List<FileTextLine>? lines;
+
+  /// `edit` / `write` 的 hunks（缺就是空表）。
+  final List<DiffHunk> diffs;
+}
+
+/// 从 `tool/result` 的**解好的 meta** 与正文文本解析出专用视图；`null` = 走通用卡。
+///
+/// [meta] 由 `EventFields.toolMeta` 解（`data.meta` 的键名只在那里断言）；[text] 是结果
+/// 消息的文本块拼接 —— 调用方已经有解好的消息块，别在这里再解一次。
 ToolResultView? toolResultViewOf({
   required String name,
-  required Object? data,
+  required ToolResultMeta meta,
+  required String text,
 }) {
-  final meta = _field(data, 'meta');
-  final text = _contentText(_field(_field(data, 'message'), 'content'));
-
   switch (name) {
     case 'bash' || 'pwsh':
       // 状态在文本末尾的标记里，meta 只有 cwd —— 所以这一支不要求 meta。
@@ -159,28 +199,21 @@ ToolResultView? toolResultViewOf({
         marker: parsed.marker,
       );
     case 'read':
-      final lines = _field(meta, 'lines');
-      if (lines is! List || lines.isEmpty) {
+      final lines = meta.lines;
+      if (lines == null || lines.isEmpty) {
         // 没有结构化窗口（老结果 / 第三方适配器）：退回通用卡，别装作有行号。
         return null;
       }
       return ReadResultView(
-        path: _string(_field(meta, 'path')) ?? '',
-        offset: _int(_field(meta, 'offset')) ?? 1,
-        lines: [
-          for (final line in lines)
-            if (line is Map)
-              FileTextLine(
-                _int(line['number']) ?? 0,
-                _string(line['text']) ?? '',
-              ),
-        ],
-        totalLines: _int(_field(meta, 'totalLines')),
-        lang: _string(_field(meta, 'lang')),
+        path: meta.path ?? '',
+        offset: meta.offset ?? 1,
+        lines: lines,
+        totalLines: meta.totalLines,
+        lang: meta.lang,
       );
     case 'edit' || 'write':
-      final hunks = _parseHunks(_field(meta, 'diffs'));
-      final path = _string(_field(meta, 'path')) ?? '';
+      final hunks = meta.diffs;
+      final path = meta.path ?? '';
       if (hunks.isEmpty && path.isEmpty) return null;
       // 统计**按折出来的 diff** 算（`{a,b}`→`{a,c}` 是 +1 −1，不是 +2 −2）。
       var added = 0;
@@ -195,28 +228,11 @@ ToolResultView? toolResultViewOf({
         hunks: hunks,
         added: added,
         removed: removed,
-        operation: _string(_field(meta, 'operation')),
+        operation: meta.operation,
       );
     default:
       return null;
   }
-}
-
-/// 解析 hunk 列表（`{path, oldText, newText}`）。
-List<DiffHunk> _parseHunks(Object? raw) {
-  if (raw is! List) return const [];
-  final out = <DiffHunk>[];
-  for (final item in raw) {
-    if (item is! Map) continue;
-    out.add(
-      DiffHunk(
-        path: _string(item['path']) ?? '',
-        oldText: _string(item['oldText']) ?? '',
-        newText: _string(item['newText']) ?? '',
-      ),
-    );
-  }
-  return out;
 }
 
 /// 剥掉文本末尾的状态标记并按 DSH 的 `parseExitStatus` 分类
@@ -275,31 +291,4 @@ _parseExitStatus(String raw) {
     signal: signal,
     marker: marker,
   );
-}
-
-Object? _field(Object? value, String key) => value is Map ? value[key] : null;
-
-String? _string(Object? value) => value is String ? value : null;
-
-int? _int(Object? value) => switch (value) {
-  int() => value,
-  num() => value.toInt(),
-  _ => null,
-};
-
-/// `message.content` 的文本块（与 `data/projection.dart` 的 `textOfContent` 同一条规则：
-/// 只取 `type == 'text'`，不把 reasoning 混进来）。
-String _contentText(Object? content) {
-  if (content is String) return content;
-  if (content is! List) return '';
-  final buffer = StringBuffer();
-  for (final block in content) {
-    if (block is Map && block['type'] == 'text') {
-      final text = block['text'];
-      if (text is String) buffer.write(text);
-    } else if (block is String) {
-      buffer.write(block);
-    }
-  }
-  return buffer.toString();
 }
