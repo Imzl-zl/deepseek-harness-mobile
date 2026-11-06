@@ -6,35 +6,43 @@
 
 ## 现在（2026-11-06）
 
-- **P1 后半已合并（PR #9 → main `47b3472`）**：`data → wire` 走能力口（`HostReads` 18 /
-  `HostWrites` 22，`HostRpcHolder` 两个 getter），事件载荷走 `EventFields` 端口（三族：
-  工具/审批/提问、消息/内容块、重试/轮次收口/压缩/交互入参 + 工具结果 meta；core 声明、
-  wire 实现）。`core → wire` 也到 **0**（`HistoryReader` / `EventIdReaders`；身份在解码边界
-  算一次，`projectEvent` 只收 `itemId`）。`data/` 的字段名读点 **22 → 0**，门禁
+- **v0.2.9 已发版**（标签 `v0.2.9`，`app/pubspec.yaml` `0.2.9+4`）：内容 = P1 能力口与事件载荷
+  端口（`data/` 字段名 22 → 0 + `data-no-field-name` 门禁）、S0–S4（撤独占准入 / 三条反向
+  import 归 0 / 存储分域 / 通知端口 / 主机池化）、设置行值封顶 42%、一批过期与多余的解释句。
+  **connector 仍是 0.1.20 在线上**：`0.1.21` 的代码与清单已提交，但抬线交接的"三条链真实
+  往返"未验，未打 `connector-v0.1.21`（见 `proposed/2026-11-05-022-rollout-handoff.md`）。
+- **P1 后半**（PR #9 → main `47b3472`）：`data → wire` 走能力口（`HostReads` 18 /
+  `HostWrites` 22，`HostRpcHolder` 两个 getter），事件载荷走 `EventFields` 端口（三族；
+  core 声明、wire 实现）。`core → wire` 也到 **0**（`HistoryReader` / `EventIdReaders`；身份在
+  解码边界算一次，`projectEvent` 只收 `itemId`）。`data/` 字段名读点 **22 → 0**，门禁
   `data-no-field-name` 钉住（`app/lib/data/**` 里把线上字段名当字面量传给 `fieldOf` /
   `stringField` / `intField` 即红，报行号）；`data/`、`ui/`、`core/` 零 `wire/` import。
-  connector 随分支升到 0.1.21，app 未升版。实测代价：5 个测试文件因"字段名撞端口方法名"
-  改名（值与形状没动）、金样没动、端口返回 `SnapshotReply` 三态；边界是 `core → model`
-  多了一条纯类型环（值对象字段类型来自 `model/`）。
-- **真机验收**：真机库副本（24.5 MB）喂 v2→v3 —— 4136 条条目一条不少、14 个水位键全部带
-  前缀、`device.*` 原样；09:20–09:30 debug 包装机 + 自造 v2 库实测迁移（未分域行 0、无崩溃，
-  验完复原空 v3）。**唯一没验**：两台电脑同时配对后切电脑外观不回默认（要两次扫码）。
-- **S0–S4（11-06 第七批，未发版）**：S0 撤独占准入的死注释与文案；S1 三条反向 import 归 0
-  （`DiffLine` / `json_field` / `type_scale` 归位）；S2 存储分域（`HostScope` + 装饰器 +
-  v2→v3 迁移，**换电脑不再清库**，`clear()` 删掉只剩 `clearScope()`）；S3 `AppServices`
-  持唯一 `NotifyPort`；S4 `HostSessions` 按 `hostId` 池化（切电脑=换可见指针，跨台通知
-  id 带主机前缀）。**未做**：S5（AppModel 切片、`chat_page` 拆文件）。
+  代价：5 个测试文件因"字段名撞端口方法名"改名、金样没动、端口返回 `SnapshotReply` 三态；
+  边界是 `core → model` 多了一条纯类型环。
+- **真机验收**：真机库副本（24.5 MB）喂 v2→v3 —— 4136 条条目一条不少、14 个水位键全带前缀、
+  `device.*` 原样；debug 包装机实测迁移（未分域行 0、无崩溃，验完复原空 v3）。**唯一没验**：
+  两台电脑同时配对后切电脑外观不回默认（要两次扫码）。
+- **S0–S4**：撤独占准入的死注释与文案；三条反向 import 归 0（`DiffLine` / `json_field` /
+  `type_scale` 归位）；存储分域（`HostScope` + 装饰器 + v2→v3，**换电脑不再清库**，`clear()`
+  删掉只剩 `clearScope()`）；`AppServices` 持唯一 `NotifyPort`；`HostSessions` 按 `hostId`
+  池化（切电脑=换可见指针，跨台通知 id 带主机前缀）。**未做**：S5（AppModel 切片、`chat_page`
+  拆文件）。
 - **门禁**：app 1761 / boundary 833（29 条自检 + 188 文件）/ connector 836 / relay 174 /
   protocol 454·26·49；`dart analyze --fatal-infos` 与 `dart format` 各 0。六个 PR 的审查
   判定见 `proposed/2026-11-06-branch-a-and-pr-audit.md`（待评审）。
 
 ## 下一步
 
-0. **数据面收敛（三批已落地）**：触发源按来源拆、行只带手机读的五个投影键、列表分页、
+0. **connector 0.1.21 发版前必须补的那一步**：三条链真实往返（投影 / 子代理 / 审批）——
+   真宿主上目前只做到"插件起来、能力位全亮"。隔离环境与测法见
+   `proposed/2026-11-05-022-rollout-handoff.md`。已知风险：`0.1.20` 的旧上界在
+   `includePrerelease` 下放行 0.2.2 预发布 —— 0.1.21 发出前，0.2.2 的用户装到的是
+   没在 0.2.2 上验过的 0.1.20。
+1. **数据面收敛（三批已落地）**：触发源按来源拆、行只带手机读的五个投影键、列表分页、
    重连带落盘水位、十个只读快照带 `digest`、出站账补齐。留给以后的：`permission.catalog` /
    `repo.info` 仍在 `connectLanding`；`session.projections` 仍是 20+ 键一整包；权限预设目录
    的真机验收（要装 `dsh-auto-review` 并重启宿主）；摘要表是每进程的（冷启动要十份快照正文）。
-1. **多设备并发准入真机复验**：两台手机同时连同一台电脑；吊销 A 后 B 仍在线。两条关闭路径
+2. **多设备并发准入真机复验**：两台手机同时连同一台电脑；吊销 A 后 B 仍在线。两条关闭路径
    分开看 —— A 答完时 B 由会话事件（`approval/decided` / `tool/result`）关门，B 迟一步再答
    才拿 `interaction/not-pending`；单测已钉，端到端要两台真机。
 2. **状态语义对齐（A–H 已落地）**：真机复验还差 4 条（子智能体在跑可见、提问草稿、
