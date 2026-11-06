@@ -6,11 +6,13 @@
 
 ## 现在（2026-11-06）
 
-- **v0.2.9 已发版**（标签 `v0.2.9`，`app/pubspec.yaml` `0.2.9+4`）：内容 = P1 能力口与事件载荷
-  端口（`data/` 字段名 22 → 0 + `data-no-field-name` 门禁）、S0–S4（撤独占准入 / 三条反向
-  import 归 0 / 存储分域 / 通知端口 / 主机池化）、设置行值封顶 42%、一批过期与多余的解释句。
-  **connector 仍是 0.1.20 在线上**：`0.1.21` 的代码与清单已提交，但抬线交接的"三条链真实
-  往返"未验，未打 `connector-v0.1.21`（见 `proposed/2026-11-05-022-rollout-handoff.md`）。
+- **v0.2.9 已发版**（标签 `v0.2.9`，`app/pubspec.yaml` `0.2.9+4`；Release 里是
+  `dsh-mobile-v0.2.9.apk`（release 签名）+ `dsh-mobile-connector-0.1.21.tgz`）：内容 = P1 能力口
+  与事件载荷端口（`data/` 字段名 22 → 0 + `data-no-field-name` 门禁）、S0–S4（撤独占准入 /
+  三条反向 import 归 0 / 存储分域 / 通知端口 / 主机池化）、设置行值封顶 42%、一批过期与多余的
+  解释句。**connector 0.1.21 一并发了**：`v*` 标签本来就会发插件（`publish-connector.yml:19`
+  同时监听 `v*` 与 `connector-v*`，发布步没有标签守卫），npm `latest` 现在就是 0.1.21（带
+  SLSA provenance）；但它缺的那三条链往返仍未验，见下一步 0。
 - **P1 后半**（PR #9 → main `47b3472`）：`data → wire` 走能力口（`HostReads` 18 /
   `HostWrites` 22，`HostRpcHolder` 两个 getter），事件载荷走 `EventFields` 端口（三族；
   core 声明、wire 实现）。`core → wire` 也到 **0**（`HistoryReader` / `EventIdReaders`；身份在
@@ -33,11 +35,10 @@
 
 ## 下一步
 
-0. **connector 0.1.21 发版前必须补的那一步**：三条链真实往返（投影 / 子代理 / 审批）——
-   真宿主上目前只做到"插件起来、能力位全亮"。隔离环境与测法见
-   `proposed/2026-11-05-022-rollout-handoff.md`。已知风险：`0.1.20` 的旧上界在
-   `includePrerelease` 下放行 0.2.2 预发布 —— 0.1.21 发出前，0.2.2 的用户装到的是
-   没在 0.2.2 上验过的 0.1.20。
+0. **connector 0.1.21 已上线，但三条链真实往返仍未验**（投影 / 子代理 / 审批）—— 真宿主上只做到
+   "插件起来、13 个能力位全亮" + 双轨判定。npm `latest` 已是 0.1.21，所以 0.2.2 线的用户装到的
+   就是它。测法与隔离环境见 `proposed/2026-11-05-022-rollout-handoff.md`；发现问题就
+   `npm deprecate` + 补丁版，别悄悄改 `dist-tag`（0.2.1 宿主靠 `engines` 判到 0.1.20）。
 1. **数据面收敛（三批已落地）**：触发源按来源拆、行只带手机读的五个投影键、列表分页、
    重连带落盘水位、十个只读快照带 `digest`、出站账补齐。留给以后的：`permission.catalog` /
    `repo.info` 仍在 `connectLanding`；`session.projections` 仍是 20+ 键一整包；权限预设目录
