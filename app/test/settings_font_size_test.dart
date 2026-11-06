@@ -17,6 +17,7 @@ import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/model/theme_mode.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/settings_page.dart';
+import 'package:dsh_mobile/ui/settings_row.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -74,7 +75,7 @@ void main() {
     expect(label, findsOneWidget);
     // 行上显示的是「标准」（设置页里「工作步骤展示」也有一档叫标准，
     // 所以必须把 finder 限定到**这一行**）。
-    final row = find.ancestor(of: label, matching: find.byType(ListTile));
+    final row = find.ancestor(of: label, matching: find.byType(SettingsRow));
     expect(find.descendant(of: row, matching: find.text('标准')), findsOneWidget);
     expect(app.uiScaleIndex, kUiScaleDefaultIndex, reason: '默认标准档');
 

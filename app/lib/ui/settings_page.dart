@@ -49,6 +49,7 @@ import 'connection_summary_block.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_sheet.dart';
 import 'dsh_toast.dart';
+import 'settings_row.dart';
 
 /// 设置页（从抽屉底栏「设置」 push 进来）。
 class SettingsPage extends StatelessWidget {
@@ -159,7 +160,7 @@ class SettingsPage extends StatelessWidget {
             // DSH 的 `design-platform.css` 一上来就有两套（浅色是 `:root`、
             // 深色是覆盖块），我们原先只落了深色；现在补齐，入口放在
             // "只影响这台手机的呈现"那一组里 —— 主题正是这么一类设置。
-            _PrefRow(
+            SettingsRow(
               icon: 'dark',
               label: '主题',
               value: theme.mode.label,
@@ -175,13 +176,13 @@ class SettingsPage extends StatelessWidget {
             // **背景 / 透明度** —— 2026-10-31 加，手机侧自有的外观（DSH 没有
             // 这两项）。为什么算"有意偏离"，见
             // `.agents/notes/implemented/2026-10-31-wallpaper-and-surface-alpha.md`。
-            _PrefRow(
+            SettingsRow(
               icon: 'compareSplit',
               label: '背景',
               value: hasWallpaper ? '已设置' : '无',
               onTap: () => unawaited(_pickBackground(context)),
             ),
-            _PrefRow(
+            SettingsRow(
               icon: 'slidersTwo',
               label: '透明度',
               value: transparencyLabel(theme.transparency),
@@ -194,13 +195,13 @@ class SettingsPage extends StatelessWidget {
             // 1.27 拉到 2.0（用户原话「丑」）。这一版改成倍率四档、全局等比放大 ——
             // 等比不改变任何比例，所以不会丑。取舍见
             // `.agents/notes/implemented/2026-10-22-global-ui-scale.md`。
-            _PrefRow(
+            SettingsRow(
               icon: 'personalization',
               label: '界面字号',
               value: kUiScaleLabels[app.uiScaleIndex],
               onTap: () => _pickUiScale(context, app),
             ),
-            _PrefRow(
+            SettingsRow(
               icon: 'checklist',
               label: '工作步骤展示',
               value: app.transcriptView.label,
@@ -217,7 +218,7 @@ class SettingsPage extends StatelessWidget {
             // 那一轮的过程什么时候收起来）。DSH 把它与「工作步骤展示」放在
             // 同一行组件里的第二项（`ui-chat/src/chat-settings.ts:15,21`）；
             // 手机上一行一项，读起来更直白。
-            _PrefRow(
+            SettingsRow(
               icon: 'compact',
               label: '工作步骤收起时机',
               value: app.collapseTiming.label,
@@ -230,7 +231,7 @@ class SettingsPage extends StatelessWidget {
                 onPicked: app.setCollapseTiming,
               ),
             ),
-            _PrefRow(
+            SettingsRow(
               icon: 'gauge',
               label: '性能与用量',
               value: app.performanceUsage.label,
@@ -243,7 +244,7 @@ class SettingsPage extends StatelessWidget {
                 onPicked: app.setPerformanceUsage,
               ),
             ),
-            _PrefRow(
+            SettingsRow(
               icon: 'queue',
               label: '繁忙时发送',
               value: app.sendMode.label,
@@ -259,7 +260,7 @@ class SettingsPage extends StatelessWidget {
             // **配对时先试哪条路**（`device.pairing_prefer`）：只影响顺序，失败仍回落。
             // 默认「自动」= 同一 /24 才先直连，否则先中转 —— 出门在外不该先为一张
             // 局域网地址白等一个超时。见 `core/pairing_flow.dart` 的 PairingPreference。
-            _PrefRow(
+            SettingsRow(
               icon: 'link',
               label: '配对时先试',
               value: app.pairingPreference.label,
@@ -300,7 +301,7 @@ class SettingsPage extends StatelessWidget {
             // **通知不在这里造开关**：声音/震动/重要级归系统渠道（平台规矩 ——
             // 渠道一经创建，App 改不了它们）。这一行只说"系统给了没"，
             // 点它去把权限要回来、或去调系统渠道设置。
-            _PrefRow(
+            SettingsRow(
               icon: 'alarmClock',
               label: '通知与后台保活',
               value: app.notifyGranted == null
@@ -336,7 +337,7 @@ class SettingsPage extends StatelessWidget {
             // **「检查更新」放在「App 版本」上面**：用户找"更新"时第一眼看到的是动作，
             // 而不是"版本号"那行 —— 后者点按是**复制**（为了贴到 issue 里），
             // 2026-11-04 用户原话：「设置有版本号为啥是复制不是检查更新」。
-            _PrefRow(
+            SettingsRow(
               icon: 'refresh',
               label: '检查更新',
               value: app.updateChecking
@@ -344,7 +345,7 @@ class SettingsPage extends StatelessWidget {
                   : (app.appUpdate?.label ?? '点这里检查'),
               onTap: () => unawaited(_checkUpdate(context, app)),
             ),
-            _PrefRow(
+            SettingsRow(
               icon: 'info',
               label: 'App 版本（点按复制）',
               value: kAppVersion,
@@ -353,7 +354,7 @@ class SettingsPage extends StatelessWidget {
             // **两个版本并排**（排错必需）：手机是哪一版、电脑上的 DSH 是哪一版。
             // 电脑侧版本来自 `repo.info.dshVersion`（宿主运行时真值）；拿不到说"未读到"，
             // 绝不拿连接器自己的 package.json 版本冒充。
-            _PrefRow(
+            SettingsRow(
               icon: 'code',
               label: '电脑侧 DSH 版本',
               value: app.dshVersion ?? '未读到',
@@ -362,7 +363,7 @@ class SettingsPage extends StatelessWidget {
                 if (version != null) unawaited(_copy(context, version));
               },
             ),
-            _PrefRow(
+            SettingsRow(
               icon: 'globe',
               label: '连接状态',
               value: connectionLabel(app.connection),
@@ -764,40 +765,6 @@ class _SectionTitle extends StatelessWidget {
   }
 }
 
-/// 一行偏好（`[图标 + 名称] [当前值]`）。
-class _PrefRow extends StatelessWidget {
-  const _PrefRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.onTap,
-  });
-
-  final String icon;
-  final String label;
-  final String value;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.dshColors;
-    return ListTile(
-      dense: true,
-      leading: DshIcon(icon, size: 18, color: c.labelSecondary),
-      title: Text(label, style: TextStyle(fontSize: 14, color: c.labelPrimary)),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(value, style: TextStyle(fontSize: 13, color: c.labelCaption)),
-          const SizedBox(width: 4),
-          DshIcon('chevronRight', size: 14, color: c.labelTertiary),
-        ],
-      ),
-      onTap: onTap,
-    );
-  }
-}
-
 /// 偏好组下方的一行小字（说清这一组的边界）。
 class _PrefNote extends StatelessWidget {
   const _PrefNote(this.text);
@@ -882,7 +849,7 @@ class _ModelSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _PrefRow(
+        SettingsRow(
           icon: 'sparkle',
           label: '当前模型',
           value: current == null
@@ -891,7 +858,7 @@ class _ModelSection extends StatelessWidget {
           onTap: () {},
         ),
         if (catalog != null)
-          _PrefRow(
+          SettingsRow(
             icon: 'listPen',
             label: '可用模型',
             value:
@@ -903,7 +870,7 @@ class _ModelSection extends StatelessWidget {
         // 毫无痕迹，而用户看到的是"我的 provider 不见了"。
         for (final failure
             in catalog?.failures ?? const <ModelCatalogFailure>[])
-          _PrefRow(
+          SettingsRow(
             icon: 'warningTriangle',
             label: '${failure.name} 拉取失败',
             value: failure.message,

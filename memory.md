@@ -24,7 +24,7 @@
   v2→v3 迁移，**换电脑不再清库**，`clear()` 删掉只剩 `clearScope()`）；S3 `AppServices`
   持唯一 `NotifyPort`；S4 `HostSessions` 按 `hostId` 池化（切电脑=换可见指针，跨台通知
   id 带主机前缀）。**未做**：S5（AppModel 切片、`chat_page` 拆文件）。
-- **门禁**：app 1759 / boundary 827（29 条自检 + 187 文件）/ connector 836 / relay 174 /
+- **门禁**：app 1761 / boundary 833（29 条自检 + 188 文件）/ connector 836 / relay 174 /
   protocol 454·26·49；`dart analyze --fatal-infos` 与 `dart format` 各 0。六个 PR 的审查
   判定见 `proposed/2026-11-06-branch-a-and-pr-audit.md`（待评审）。
 
@@ -51,10 +51,10 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 827 项（29 条规则自检 + 187 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | 833 项（29 条规则自检 + 188 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1759 项（约 1 分钟） |
+| `cd app && flutter test` | 1761 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **836** 项 |
 | `cd relay && pnpm typecheck && node --test` | 类型 + **174** 条 |
