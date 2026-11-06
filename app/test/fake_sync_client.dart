@@ -31,15 +31,18 @@ library;
 import 'dart:async';
 
 import 'package:dsh_mobile/core/connection.dart';
+import 'package:dsh_mobile/core/host_rpc.dart';
 import 'package:dsh_mobile/core/job.dart';
+import 'package:dsh_mobile/core/session_projections.dart';
 import 'package:dsh_mobile/core/session_restore.dart';
 import 'package:dsh_mobile/core/snapshot_call.dart';
 import 'package:dsh_mobile/core/snapshot_digest.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
+import 'package:dsh_mobile/wire/host_rpc.dart';
 
 /// `SyncClient` 的测试基类。
 abstract class FakeSyncClient
-    implements SyncClient, SnapshotCaller, SessionRestorer {
+    implements SyncClient, SnapshotCaller, SessionRestorer, HostRpc {
   /// 冷启动恢复被调过几次、带的水位是多少（`sid → since`）。
   ///
   /// 它就是"app 层真的把本地库的水位交给了连接层"这条判据的落点。
@@ -77,6 +80,23 @@ abstract class FakeSyncClient
   void commitSnapshotDigest(String key) {
     appliedSnapshotDigests[key] = 'test-digest';
   }
+
+  // ---- 读电脑侧（`HostRpc`）：**转给真的那份实现** ----
+
+  /// 替身**不自己造 DTO**：实现就是 `wire/host_rpc.dart`（与生产同一个类），
+  /// 只把 `this` 给它。于是夹具照旧是**原始协议 JSON**（各用例的 `call` 返回什么
+  /// 就是什么），而解码器仍然在测试路径上 —— 换成手搓 `SessionProjections`
+  /// 就等于把解码器从测试里摘掉，那类改动看不出线上形状漂了。
+  ///
+  /// `late` 是必须的：字段初始化器里只有 `late` 能用 `this`。
+  late final HostRpc _hostRpc = WireHostRpc(this);
+
+  @override
+  Future<SnapshotReply<SessionProjections?>> projections(
+    SyncClient client, {
+    required String sid,
+  }) => _hostRpc.projections(client, sid: sid);
+
   // ---- 翻页相关：本版新加的默认值 ----
 
   @override

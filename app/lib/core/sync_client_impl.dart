@@ -29,11 +29,13 @@ import 'flow.dart';
 import 'frame.dart';
 import 'handshake_driver.dart';
 import 'history_page.dart';
+import 'host_rpc.dart';
 import 'items.dart';
 import 'job.dart';
 import 'keepalive.dart';
 import 'outbox.dart';
 import 'recovery.dart';
+import 'session_projections.dart';
 import 'session_restore.dart';
 import 'snapshot_call.dart';
 import 'snapshot_digest.dart';
@@ -58,7 +60,8 @@ class _SyncClient
         SyncClientProbe,
         SnapshotCaller,
         SessionRestorer,
-        LinkControl {
+        LinkControl,
+        HostRpc {
   _SyncClient(this._deps)
     : _machine = ConnectionMachine(),
       _backoff = _deps.backoff ?? Backoff(),
@@ -280,6 +283,22 @@ class _SyncClient
     );
     return controller.stream;
   }
+
+  // -------------------------------------------------------------------------
+  // 能力口：读电脑侧的东西（`HostRpc`）
+  // -------------------------------------------------------------------------
+  //
+  // 实现体在 `wire/host_rpc.dart`（装配点给的工厂），这里只转一手。
+  // **转而不在这里实现**：一旦在这里 import `wire/`，`core → wire` 就又回来了 ——
+  // 那正是这一批要拆掉的方向。工厂是这条边界的耦合点：`core` 只认识接口。
+
+  late final HostRpc _rpc = _deps.hostRpc(this);
+
+  @override
+  Future<SnapshotReply<SessionProjections?>> projections(
+    SyncClient client, {
+    required String sid,
+  }) => _rpc.projections(client, sid: sid);
 
   // -------------------------------------------------------------------------
   // 连接生命周期

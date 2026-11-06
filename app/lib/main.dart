@@ -80,6 +80,7 @@ import 'ui/session_drawer.dart';
 import 'ui/settings_page.dart';
 import 'ui/usage_page.dart';
 import 'wire/events.dart' show kWireEventIdReaders;
+import 'wire/host_rpc.dart' show WireHostRpc;
 import 'wire/reading.dart';
 import 'wire/rpc/session_page.dart' show WireHistoryReader;
 
@@ -1596,9 +1597,10 @@ Future<AppModel> _assembleWithoutCredentials(
     onConnectionTerminated: onConnectionTerminated,
     client: createSyncClient(
       SyncClientDeps(
-        // 翻页的读法 + 事件身份字段的读法（两个端口，实现只在 `wire/`）。
+        // 翻页 / 事件身份 / 读电脑侧快照（三个端口，实现只在 `wire/`）。
         history: const WireHistoryReader(),
         eventIds: kWireEventIdReaders,
+        hostRpc: WireHostRpc.new,
         // 没东西可连：一个永远建不起来的传输（它不会被用到）。
         transport: _UnpairedTransport(),
         handshake: createHandshakeDriver(
@@ -1752,9 +1754,10 @@ Future<AppModel> _assemble(
 
   final client = createSyncClient(
     SyncClientDeps(
-      // 翻页的读法 + 事件身份字段的读法（两个端口，实现只在 `wire/`）。
+      // 翻页 / 事件身份 / 读电脑侧快照（三个端口，实现只在 `wire/`）。
       history: const WireHistoryReader(),
       eventIds: kWireEventIdReaders,
+      hostRpc: WireHostRpc.new,
       transport: transport,
       handshake: createHandshakeDriver(
         identity: HandshakeIdentity(

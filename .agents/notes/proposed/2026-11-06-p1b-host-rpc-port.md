@@ -1,16 +1,20 @@
 # P1 后半：`data → wire` 倒置走「能力接口」，端口跟着客户端走
 
 - 日期：2026-11-06
-- 状态：proposed（设计已定，未落码）
+- 状态：proposed（**第 1 批的投影那一半已落地**，其余未落码）
 - 前情：`core → wire` 已归零（见 `implemented/2026-11-06-p1-dependency-inversion.md`）。
   这一篇只管 `data/` 剩下的 21 条 import。
+- 进度（2026-11-06）：`session.projections` 一族已倒置完（`app_model` 15 → **14**，
+  `data/` 21 → **20**），实际代价与两处与本文的偏差见
+  `implemented/2026-11-06-p1b-batch1-session-family.md`。**未动**：`session.list`
+  那一半（`loadSessionList` + `SessionListPage`）与会话族之外的 3 批。
 - 前置能力：`SyncClient` 已经是"能力接口"手法的先例（`core/sync_client.dart:207` 的
   `LinkControl`：**不往 `SyncClient` 加抽象方法**，因为全仓二十多个替身都 `implements SyncClient`，
   加一个方法就得改二十多处；改用小接口 + `is` 判定）。
 
 ## Problem
 
-`data/` 还有 21 条 `import '../wire/…'`，全是"读电脑侧的东西"：
+`data/` 还有 21 条 `import '../wire/…'`（**起草时的基线**；第 1 批落地后是 20 条，见上文进度），全是"读电脑侧的东西"：
 
 | 文件 | 条数 | 用到的东西 |
 |---|---|---|
@@ -55,8 +59,15 @@
 
 ## 落地顺序（一个方法族一批，每批全绿再下一批）
 
-1. **会话族**：`session.list` / `session.page` / `session.projections` / `session.refetch`
-   （`refreshSessionRows` / 打开会话 / 翻页三条路径）—— 用它验证模式，跑全部门禁。
+1. **会话族**
+   - **1a `session.projections`（已落地，2026-11-06）**：`SessionProjections` 搬进
+     `core/session_projections.dart`、端口 `core/host_rpc.dart`、实现 `wire/host_rpc.dart`、
+     `SyncClientDeps.hostRpc` 工厂、`AppModel._rpc`。见
+     `implemented/2026-11-06-p1b-batch1-session-family.md`。
+   - **1b `session.list`（未做）**：`wire.loadSessionList` 与 `SessionListPage` 仍在
+     `wire/rpc/session.dart`，`app_model` 的 `_fetchSessionRows` 直接用它。
+   - `session.page` / `session.refetch` **这一族里已经没有** —— P1 那批已按 `HistoryReader`
+     倒置完（`core/history_page.dart`），本方案不再重复。
 2. **目录族**：设置分区、权限目录、模型目录、Agent 预设、工作区、仓库信息、插件清单。
 3. **预览族**：文件预览、目录列举、改动清单。
 4. 最后清 `data/` 的 import 计数到 0（`projection.dart` 那条另算，见下）。
@@ -71,9 +82,12 @@
 ## 验收
 
 - `git grep -c "import '\.\./wire/" -- app/lib/data` 从 4 个文件 / 21 条降到 **1 个文件 / 1 条**
-  （只剩 `projection.dart`）。
+  （只剩 `projection.dart`）。**当前：4 个文件 / 20 条**（`app_model` 14）。
 - `SyncClient` 接口**没有新增成员**（`git diff app/lib/core/sync_client.dart` 只看得到
   `HostRpc` 的 import 与文档，看不到新方法）。
-- 测试侧只改 2 个文件（两个假客户端），**没有任何测试夹具从 JSON 改成 DTO**。
+- 测试侧**没有任何夹具从 JSON 改成 DTO**（这条是硬约束）。原写"只改 2 个文件（两个假客户端）"，
+  实测撞上第 3 类：三个用例里装原始投影 JSON 的字段本来就叫 `projections`，与能力成员同名
+  ⇒ 编译期 `conflicting_field_and_method`，只改名（`projectionReply`）。合计 5 个测试文件。
 - 门禁：analyze 0、`flutter test` 全过、boundary 全过、协议三条全过。
-- 真机一次重连（改的是会话列表/翻页/设置这些读取路径）。
+- 真机一次重连（改的是会话列表/翻页/设置这些读取路径）。**1a 没做**：读的形状与路径没变；
+  剩下 1b 与 3 批落地后仍要补这一次。

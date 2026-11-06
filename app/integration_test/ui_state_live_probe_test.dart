@@ -44,6 +44,7 @@ import 'package:dsh_mobile/platform/pairing_store.dart';
 import 'package:dsh_mobile/platform/sqflite_item_store.dart';
 import 'package:dsh_mobile/platform/ticketed_transport.dart';
 import 'package:dsh_mobile/wire/events.dart' show kWireEventIdReaders;
+import 'package:dsh_mobile/wire/host_rpc.dart' show WireHostRpc;
 import 'package:dsh_mobile/wire/rpc/session_page.dart' show WireHistoryReader;
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_test/flutter_test.dart';
@@ -96,6 +97,7 @@ void main() {
       SyncClientDeps(
         history: const WireHistoryReader(),
         eventIds: kWireEventIdReaders,
+        hostRpc: WireHostRpc.new,
         transport: transport,
         handshake: createHandshakeDriver(
           identity: HandshakeIdentity(

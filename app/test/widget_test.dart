@@ -44,7 +44,7 @@ class FakeClient extends FakeSyncClient {
   FakeClient({
     this.sessions = const [],
     this.failWith,
-    this.projections,
+    this.projectionReply,
     ConnectionState? state,
   }) : _state = state;
 
@@ -52,7 +52,11 @@ class FakeClient extends FakeSyncClient {
   final ProtocolException? failWith;
 
   /// `session.projections` 的应答（统计条三个值的来源）。默认不给。
-  final Map<String, Object?>? projections;
+  ///
+  /// 名字不叫 `projections`：`FakeSyncClient` 从这个批次起实现 `HostRpc`，
+  /// 那个能力的成员就叫 `projections`（端口的方法名），同名会让这个字段变成
+  /// "用字段覆盖方法"（编译期就红）。
+  final Map<String, Object?>? projectionReply;
 
   /// 连接状态（`null` = 保持历史上的 idle 默认：多数界面用例不关心连接）。
   ///
@@ -109,7 +113,7 @@ class FakeClient extends FakeSyncClient {
     // 这类形状不一致 —— 那正是列表在真机上恒为空的原因，且它不报错。
     if (method == 'session.list') return {'sessions': sessions} as T;
     // 统计条的三个投影（`session.projections`）。**形状照连接器拆信封后的 `values`**。
-    if (method == 'session.projections') return projections as T;
+    if (method == 'session.projections') return projectionReply as T;
     return null as T;
   }
 }
@@ -1070,7 +1074,7 @@ void main() {
               'subagent': false,
             },
           ],
-          projections: const {
+          projectionReply: const {
             'tokenUsage': {
               'uncachedInputTokens': 1000,
               'outputTokens': 200,
@@ -1125,7 +1129,7 @@ void main() {
               'subagent': false,
             },
           ],
-          projections: const {
+          projectionReply: const {
             'tokenUsage': {
               'uncachedInputTokens': 0,
               'outputTokens': 0,
@@ -1189,7 +1193,7 @@ void main() {
               'subagent': false,
             },
           ],
-          projections: const {
+          projectionReply: const {
             'tokenUsage': {
               'uncachedInputTokens': 123456,
               'outputTokens': 12345,

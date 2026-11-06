@@ -33,6 +33,7 @@ import 'crypto.dart';
 import 'errors.dart';
 import 'handshake_driver.dart';
 import 'history_page.dart';
+import 'host_rpc.dart';
 import 'items.dart' show EventIdReaders;
 import 'job.dart';
 import 'keepalive.dart';
@@ -477,6 +478,7 @@ class SyncClientDeps {
     required this.session,
     required this.history,
     required this.eventIds,
+    required this.hostRpc,
     this.persistence,
     this.keepalive,
     this.backoff,
@@ -513,6 +515,15 @@ class SyncClientDeps {
   /// 而后者的推导要读 `callId` / `toolCallId` / `approvalId` / `commandId`。
   /// **必填**：不给就没法给事件一个稳定身份。
   final EventIdReaders eventIds;
+
+  /// 「读电脑侧的东西」的能力（`host_rpc.dart`），**是个工厂而不是实例**。
+  ///
+  /// 为什么是工厂：能力属于**这一条连接**，而连接是 `createSyncClient` 拿 deps
+  /// 之后才成立的（`this` 只能在那之后传出去）。实现只在 `wire/`，所以装配点给的是
+  /// `WireHostRpc.new` —— 连接层因此不必 import `wire/`，而消费者照旧
+  /// `client is HostRpc` 就能拿到它。
+  /// **必填**：不给就是"这台电脑的只读面全读不了"，而那不是该静默发生的默认值。
+  final HostRpc Function(SyncClient) hostRpc;
 
   /// **落盘缝**（契约 §5.3：`persisted` 只在落盘成功后发）。
   ///

@@ -35,14 +35,17 @@ import 'fake_sync_client.dart';
 class _HeroClient extends FakeSyncClient {
   _HeroClient({
     this.sessions = const [],
-    this.projections = const {},
+    this.projectionReply = const {},
     this.workspaces,
     this.presets,
     this.replay = const [],
   });
 
   final List<Object?> sessions;
-  final Map<String, Object?> projections;
+
+  /// 名字不叫 `projections`：`FakeSyncClient` 实现了 `HostRpc`，那个能力的成员
+  /// 就叫 `projections`（端口的方法名），同名会变成"用字段覆盖方法"。
+  final Map<String, Object?> projectionReply;
 
   /// `null` = 这台电脑没有这个方法（回 `null`，与连接器"缺服务就不挂"同形）。
   final Object? workspaces;
@@ -125,7 +128,7 @@ class _HeroClient extends FakeSyncClient {
       case 'session.list':
         return {'sessions': sessions} as T;
       case 'session.projections':
-        return projections as T;
+        return projectionReply as T;
       case 'workspace.list':
         return workspaces as T;
       case 'agentPresets.list':
@@ -219,7 +222,7 @@ void main() {
     List<Object?>? sessions,
     Object? workspaces,
     Object? presets,
-    Map<String, Object?> projections = const {},
+    Map<String, Object?> projectionReply = const {},
   }) {
     final client = _HeroClient(
       // **blank 行必须带 `cwd`**：真实行恒有它（`handlers.ts:760`），而 2026-10-27
@@ -229,7 +232,7 @@ void main() {
       sessions: sessions ?? [blankRow('blank-1', cwd: r'D:\work\dsh-mobile')],
       workspaces: workspaces,
       presets: presets,
-      projections: projections,
+      projectionReply: projectionReply,
     );
     final app = AppModel(client: client);
     unawaited(app.start());
@@ -287,7 +290,7 @@ void main() {
       final (_, app) = connected(
         workspaces: workspaceReply(owningWorkspace: 'w1'),
         presets: presetReply(),
-        projections: {'agentPreset': 'ptc'},
+        projectionReply: {'agentPreset': 'ptc'},
       );
       addTearDown(app.dispose);
       await tester.pumpWidget(host(app));
@@ -321,7 +324,7 @@ void main() {
       final (_, app) = connected(
         workspaces: workspaceReply(owningWorkspace: 'w1'),
         presets: presetReply(),
-        projections: {'agentPreset': 'ptc'},
+        projectionReply: {'agentPreset': 'ptc'},
       );
       addTearDown(app.dispose);
       await tester.pumpWidget(host(app));
@@ -535,7 +538,7 @@ void main() {
       final (client, app) = connected(
         workspaces: workspaceReply(owningWorkspace: 'w1'),
         presets: presetReply(),
-        projections: {'agentPreset': 'standard'},
+        projectionReply: {'agentPreset': 'standard'},
       );
       addTearDown(app.dispose);
       await tester.pumpWidget(host(app));
@@ -583,7 +586,7 @@ void main() {
       final (client, app) = connected(
         workspaces: workspaceReply(owningWorkspace: 'w1'),
         presets: presetReply(),
-        projections: {'agentPreset': 'standard'},
+        projectionReply: {'agentPreset': 'standard'},
       );
       addTearDown(app.dispose);
       await tester.pumpWidget(host(app));

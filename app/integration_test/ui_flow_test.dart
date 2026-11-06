@@ -17,7 +17,10 @@ library;
 
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/errors.dart';
+import 'package:dsh_mobile/core/host_rpc.dart';
 import 'package:dsh_mobile/core/job.dart';
+import 'package:dsh_mobile/core/session_projections.dart';
+import 'package:dsh_mobile/core/snapshot_digest.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
@@ -25,6 +28,7 @@ import 'package:dsh_mobile/ui/chat_page.dart';
 import 'package:dsh_mobile/ui/dsh_brand.dart';
 import 'package:dsh_mobile/ui/dsh_composer.dart';
 import 'package:dsh_mobile/ui/side_pane.dart';
+import 'package:dsh_mobile/wire/host_rpc.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -35,7 +39,18 @@ import 'package:integration_test/integration_test.dart';
 /// 用相对路径跨目录引它会让 `dart analyze` 的继承解析出问题
 /// （`@override` 全报"不 override 任何成员"，2026-10-19 实测）。
 /// 这里自己实现全份 —— 它本来就已经实现了绝大部分。
-class _FakeClient implements SyncClient {
+class _FakeClient implements SyncClient, HostRpc {
+  /// 读电脑侧的能力**转给真的那份实现**（`wire/host_rpc.dart`）：这个替身的
+  /// `call` 照旧如实抛错，端口不会绕过它 —— 造一份手搓的投影包就等于把
+  /// 解码器从这条测试路径上摘掉。
+  late final HostRpc _hostRpc = WireHostRpc(this);
+
+  @override
+  Future<SnapshotReply<SessionProjections?>> projections(
+    SyncClient client, {
+    required String sid,
+  }) => _hostRpc.projections(client, sid: sid);
+
   @override
   ConnectionState get state => ConnectionState.idle;
   @override

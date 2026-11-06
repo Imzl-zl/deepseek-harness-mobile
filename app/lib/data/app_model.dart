@@ -29,10 +29,12 @@ import '../core/app_update.dart';
 import '../core/connection.dart';
 import '../core/endpoint.dart';
 import '../core/errors.dart';
+import '../core/host_rpc.dart';
 import '../core/job.dart';
 import '../core/notify.dart';
 import '../core/pairing_flow.dart' show PairingPreference;
 import '../core/recovery.dart' show RecoveryOutcome;
+import '../core/session_projections.dart';
 import '../core/session_restore.dart';
 import '../core/snapshot_call.dart';
 import '../core/snapshot_digest.dart';
@@ -69,7 +71,6 @@ import '../wire/rpc/interaction.dart' as wire;
 import '../wire/rpc/job.dart' as wire;
 import '../wire/rpc/permission.dart' as wire;
 import '../wire/rpc/plugin.dart' as wire;
-import '../wire/rpc/projections.dart' as wire;
 import '../wire/rpc/refs.dart' as wire;
 import '../wire/rpc/repo.dart' as wire;
 import '../wire/rpc/session.dart' as wire;
@@ -530,13 +531,33 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   // 会话投影（`session.projections`，契约 §5.7）—— 一个方法打开全部只读面
   // ---------------------------------------------------------------------------
 
+  /// 读电脑侧只读面的能力口（端口在 `core/host_rpc.dart`，实现在 `wire/host_rpc.dart`）。
+  ///
+  /// 客户端兼作这个能力（`SyncClientImpl implements HostRpc`），所以这里按 `is` 取 ——
+  /// 与 [disconnectLink] 对 `LinkControl` 是同一个手法，**`SyncClient` 接口一个成员都没加**
+  /// （全仓二十多个替身因此不用跟着改）。
+  ///
+  /// **缺这个能力是装配错误**，不是"这台电脑读不出投影"：前者该由装配点或夹具修，
+  /// 后者只是显示空态。静默降级会让两者在界面上一模一样（只读面全空），所以这里抛。
+  HostRpc get _rpc {
+    final candidate = client;
+    // 显式转换而不是靠 `is` 提升：提升在接口类型上不给交叉类型（同
+    // `core/snapshot_call.dart` 那个能力口的手法）。
+    if (candidate is HostRpc) return candidate as HostRpc;
+    throw StateError(
+      '${candidate.runtimeType} 没有 HostRpc 能力：读不了 session.projections。'
+      '装配点要给 SyncClientDeps.hostRpc（生产是 WireHostRpc.new），'
+      '测试替身要 implements HostRpc。',
+    );
+  }
+
   /// 最近一次读到的投影包（`null` = 还没读过 / 读不到）。
   ///
   /// **类型是解码结果，不是裸 map**：15 个键的键名与类型只在
-  /// `wire/rpc/projections.dart` 里出现一次（`SessionProjections`），
-  /// 各面拿字段而不是 `values['x']`。连接器原样透传整包（不挑键）这一点没变，
-  /// 挑键发生在解码层（那一层正好是"知道线上形状"的那一层）。
-  wire.SessionProjections? _projections;
+  /// `wire/rpc/projections.dart` 里出现一次（解码那一层正好是"知道线上形状"的那一层），
+  /// 值类型 `SessionProjections` 住在 `core/session_projections.dart`（端口要能返回它），
+  /// 这里各面拿字段而不是 `values['x']`。连接器原样透传整包（不挑键）这一点没变。
+  SessionProjections? _projections;
 
   /// 这一包是**哪个会话**的。
   ///
@@ -547,7 +568,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   String? _projectionsSid;
 
   /// 当前会话的投影包；**不匹配就当作没有**（见 [_projectionsSid]）。
-  wire.SessionProjections? get projections =>
+  SessionProjections? get projections =>
       _projectionsSid == _currentSid ? _projections : null;
 
   /// 读一次投影。**点开会话时调**（与 `refreshJobs` 同一步）。
@@ -625,16 +646,19 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   ///
   /// **手里已经有这一包时不进 `loading`**：带着摘要去刷新，多半会得到"没变"，
   /// 那就不该先闪一下"正在加载"再退回原样（`notModified` 的判据是"什么都不动"）。
-  Future<SnapshotReply<wire.SessionProjections?>> _readProjections(
+  Future<SnapshotReply<SessionProjections?>> _readProjections(
     String sid, {
     required String what,
   }) async {
     final key = snapshotKeyOf('session.projections', {'sid': sid});
+    // **能力口在 try 之外取**：缺能力是装配错误（见 [_rpc]），不该被下面那个
+    // "读不到就显示空态"的兜底吞成"这台电脑投影是空的"。
+    final rpc = _rpc;
     // "手里已经有这一包"的判据是**目录三态**（`ready` = 读到过），不是另记一份标记。
     final firstRead =
         _subagentCatalogs[sid]?.state != SubagentCatalogState.ready;
     if (_disposed) {
-      return SnapshotReply<wire.SessionProjections?>.body(null, key: key);
+      return SnapshotReply<SessionProjections?>.body(null, key: key);
     }
     if (firstRead) {
       _subagentCatalogs[sid] = SubagentCatalog.loading(
@@ -643,9 +667,9 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       if (!_disposed) notifyListeners();
     }
     try {
-      final reply = await wire.loadSessionProjections(client, sid: sid);
+      final reply = await rpc.projections(client, sid: sid);
       if (_disposed) {
-        return SnapshotReply<wire.SessionProjections?>.body(
+        return SnapshotReply<SessionProjections?>.body(
           null,
           key: reply.key,
         );
@@ -675,7 +699,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       _recordError(what, error);
       // 失败**不是**"没变"：交一个没有正文的 body，调用方据此什么都不应用，
       // 而错误已经进 `lastError`（与 `notModified` 的安静是两件事）。
-      return SnapshotReply<wire.SessionProjections?>.body(null, key: key);
+      return SnapshotReply<SessionProjections?>.body(null, key: key);
     }
   }
 
@@ -685,7 +709,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 权限档 / 队列的来源）。别名会话（子智能体）的投影覆盖它会让统计条
   /// 显示别人的数字 —— 2026-10-21 之前正是无条件覆盖的
   /// （笔记 §2.1 的既有缺陷）。
-  void _applyProjectionValues(String sid, wire.SessionProjections values) {
+  void _applyProjectionValues(String sid, SessionProjections values) {
     if (sid == _currentSid) {
       _projections = values;
       _projectionsSid = sid;
@@ -747,7 +771,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     return _trajectory;
   }
 
-  wire.SessionProjections? _trajectorySource;
+  SessionProjections? _trajectorySource;
   TrajectoryView? _trajectory;
 
   /// 某一轮的时间轴（对话流的过程摘要读它取用时）。

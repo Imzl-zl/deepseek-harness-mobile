@@ -39,18 +39,23 @@
   顺手修掉 S2 遗留：`integration_test/local_store_test.dart` 还在调已删的
   `SqfliteItemStore.clear()`，`integration_test` 自 `61c2b2c` 起编译不过（门禁只 analyze
   `lib test`，看不见）—— 改成 `clearSession('s1')`。
-  **仍未做**：`data` 的 21 条（真正成本是 74 个测试文件都直接构造 `AppModel`，加必填端口 =
-  100+ 处改动 ⇒ 要先有测试侧 fixture builder），以及**一次真机重连**（改的是收帧热路径，
-  不能只看测试）。
-  ⑦ **P1 后半的设计已定（未落码）**：`data → wire` 剩下的 21 条走**能力接口**——`HostRpc` 声明在
-  `core/`、`WireHostRpc` 实现在 `wire/`、`SyncClientImpl` 兼作该能力，`AppModel` 用
-  `client is HostRpc` 取（沿用 `core/sync_client.dart:207` 的 `LinkControl` 先例，`SyncClient`
-  接口零新增成员）。**不给 `AppModel` 加必填端口**：那要动 74 个测试文件，而且夹具会从原始协议
-  JSON 退化成手搓 DTO，等于把解码器从测试路径上摘掉。测试只改两个假客户端（转给真的
-  `WireHostRpc`）。分四批：会话族 → 目录族 → 预览族 → 收尾（`projection.dart` 那条与
-  `projectEvent` 的 55 处调用点绑在一起，单独一批）。设计见
-  `.agents/notes/proposed/2026-11-06-p1b-host-rpc-port.md`。
-  门禁：connector **836**；app **1759**；boundary **760**；`dart analyze --fatal-infos` 0。
+  **仍未做**：`data` 的 **20 条**（第 1 批倒置掉 1 条，见 ⑦），以及**一次真机重连**
+  （改的是收帧热路径，不能只看测试）。
+  ⑦ **P1 后半（能力接口），第 1 批已落地（11-06）**：`data → wire` 的 21 条走**能力接口** ——
+  `HostRpc` 声明在 `core/host_rpc.dart`、`WireHostRpc` 实现在 `wire/host_rpc.dart`、
+  `_SyncClient implements HostRpc` 并把调用转给 `SyncClientDeps.hostRpc`（**工厂**）造的那一个，
+  `AppModel` 用 `client is HostRpc` 取（沿用 `LinkControl` 先例，**`SyncClient` 接口零新增成员**）。
+  **不给 `AppModel` 加必填端口**：那要动 74 个测试文件，而且夹具会从原始协议 JSON 退化成手搓 DTO，
+  等于把解码器从测试路径上摘掉。第 1 批只做**投影那一半**（`SessionProjections` 搬进
+  `core/session_projections.dart`）：`app_model` 的 `wire/` import 15 → **14**、`wire.` 44 → 35，
+  `data/` 21 → **20**。两处与施工图的偏差：端口返回 `SnapshotReply<SessionProjections?>`（三态 ——
+  裸 null 会把 `notModified` 当成失败）；三个用例里装原始 JSON 的字段 `projections` 改名
+  `projectionReply`（与能力成员同名 = 编译期冲突）。留下的边界：`core → model` 多了一条**纯类型环**
+  （值对象 10 个字段的类型来自 `model/`，而 `model/` 又 import `core/job.dart` 等）。
+  没有真机（读的形状与路径没变）。见
+  `.agents/notes/implemented/2026-11-06-p1b-batch1-session-family.md`；剩下 3 批
+  （`session.list` → 目录族 → 预览族 → 收尾）见 `proposed/2026-11-06-p1b-host-rpc-port.md`。
+  门禁：connector **836**；app **1759**；boundary **771**；`dart analyze --fatal-infos` 0。
   另外把**真机库副本**喂给真实现跑了一遍 v2→v3（24.5 MB 的 `dsh_mobile.db`，只读副本）：
   4136 条条目一条不少、14 个水位键全部带前缀、`device.transparency/surface_alpha` 原样 ——
   证据在 `implemented/2026-11-06-s2-host-scope-and-buckets.md` 的「验证」。
@@ -451,10 +456,10 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 756 项（25 条规则自检 + 174 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | 771 项（25 条规则自检 + 178 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1758 项（约 1 分钟） |
+| `cd app && flutter test` | 1759 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **845** 项 |
 | `cd relay && pnpm typecheck && node --test` | 类型 + **173** 条 |
