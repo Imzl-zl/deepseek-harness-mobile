@@ -90,3 +90,20 @@
   `schema.data_version` 1 个、`local_items.host` 1 个 —— 正好对上"三类主人"的分法。
   **旁证**：`device.transparency=23` 与 `device.surface_alpha=58` 在旧做法（清四张表）下
   会被换电脑删掉，也就是用户会看到透明度/表面实心回默认。
+
+- **真机端到端**（2026-11-06 09:20-09:30，设备 `d61cf622`，debug 包装机）：不是拿测试替身，
+  是**真的 App 进程打开那个库**。
+
+  1. 冷启动空库：`adb install -r` 后启动 → logcat 无 `E/flutter` / `FATAL`，
+     库落成 `user_version=3` + `schema.data_version=3` + 四张表，界面是"还没配对"空态（截图留档）。
+  2. 把自造的 **v2 库**（`items` 4 行含两个会话、`cursors` 2 行、`device.transparency=23`、
+     `device.surface_alpha=58`、一条假 `local_items.host`）用
+     `adb push` + `run-as cp` 塞进 `databases/dsh_mobile.db`，再启动 App。
+  3. 结果（`force-stop` 后 `run-as cat` 拉回来核对）：
+     `user_version=3`、`schema.data_version=3`、`local_items.host` 已删、
+     `cursors` 2 行 / `items` 4 行全部 `<hostId>/…` 前缀、
+     **未分域行 0**、`device.transparency=23`、`device.surface_alpha=58` 原样，无崩溃。
+  4. 复核完把库删掉让 App 重建空 v3，设备回到"未配对"干净态。
+
+  **仍未验的那一条**：两台电脑同时配对 → 切电脑 → 外观不回到默认。它要两个独立 connector
+  身份（两个 DSH_HOME）与两次扫码，而本轮只有 adb、没有摄像头。

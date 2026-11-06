@@ -23,6 +23,9 @@
   另外把**真机库副本**喂给真实现跑了一遍 v2→v3（24.5 MB 的 `dsh_mobile.db`，只读副本）：
   4136 条条目一条不少、14 个水位键全部带前缀、`device.transparency/surface_alpha` 原样 ——
   证据在 `implemented/2026-11-06-s2-host-scope-and-buckets.md` 的「验证」。
+  **真机也验了**（09:20-09:30，debug 包装机 + 自造 v2 库塞进 app 私有目录 → 真 App 打开它）：
+  迁移后未分域行 0、条目/水位一条不少、`device.*` 两格原样、无崩溃；验完已复原成空 v3。
+  唯一没验的是"两台电脑同时配对后切电脑外观不回默认"（要两次扫码）。
   审查结论与 6 个 PR 的判定：`proposed/2026-11-06-branch-a-and-pr-audit.md`（待评审）。
   **未做**：S3（AppServices 汇总通知/前台服务）/ S4（HostSessions 池化，切换仍拆旧的）/
   S5（AppModel 切片、chat_page 拆文件）。
