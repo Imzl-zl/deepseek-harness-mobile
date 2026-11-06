@@ -16,6 +16,11 @@
         android:label="DeepSeek Harness"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- **不要 `adjustResize`**（2026-11-04，Android 15+）：edge-to-edge 强制开启后
+             系统会忽略它，结果是"系统不缩、Flutter 也拿不到可用的压缩" —— 输入栏被键盘
+             整个盖住（真机截图）。改成 `adjustNothing`：窗口不动，IME 以 insets 交给
+             Flutter，由 `ChatPage` 显式把页面顶上去（`resizeToAvoidBottomInset: false`
+             + `viewInsets.bottom` 各只算一次）。 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -24,7 +29,7 @@
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustNothing">
             <!-- Specifies an Android theme to apply to this Activity as soon as
                  the Android process has started. This theme is visible to the user
                  while the Flutter UI initializes. After that, this theme continues
