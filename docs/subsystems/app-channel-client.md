@@ -65,8 +65,9 @@ UI 一旦开始认事件类型,同一件事就会在两个地方各写一遍。
 
 - `core/` 与 `data/*.dart`(接口)不得出现 `dart:io`、`package:flutter/*`、`Platform.`、`MethodChannel`。
 - `ui/` 不得 import `packages/*_ios|_android|_ohos`。
-- `data/` 不得出现 `fieldOf(` —— 事件载荷的字段名只许在 `wire/` 断言,`data/` 只收端口
-  解好的值;违例报文件与行号(`data-no-fieldof`)。
+- `data/` 不得把线上字段名当字面量传给取值助手(`fieldOf` / `stringField` / `intField`)
+  —— 事件载荷的字段名只许在 `wire/` 断言,`data/` 只收端口解好的值;违例报文件与行号
+  (`data-no-field-name`)。
 - `core/` 的所有 IO 走注入接口 ⇒ **纯 Dart 单测里可以直接跑 `protocol/fixtures`**。
 - 线上载荷的字段名与类型只在 `wire/` 里断言,消费方拿到的永远是解好的值;两边之间只许有
   **端口**(core 声明、wire 实现),且端口按**能力**暴露、不往 `SyncClient` 加成员
@@ -82,7 +83,7 @@ UI 一旦开始认事件类型,同一件事就会在两个地方各写一遍。
   `core/`、`data/` 与 `ui/` 都**零 `wire/` import**:`projection.dart` 的事件载荷走
   `core/event_fields.dart` 的 `EventFields` 端口(实现在 `wire/event_fields.dart`,
   由 `HostRpcHolder.eventFields` 交给投影),端口分三族 —— 工具/审批/提问、消息/内容块、
-  重试/轮次收口/压缩/交互工具入参。因此 `data/` 里的 `fieldOf(` 为 **0**。
+  重试/轮次收口/压缩/交互工具入参。因此 `data/` 里没有按线上字段名取值的地方。
   `ui/` 发消息走 `AppModel.sendPrompt` / `sendSubagentPrompt`,界面不认识方法名。
   代价与实测数字见
   `.agents/notes/implemented/2026-11-06-p1b-batch1-session-family.md`、

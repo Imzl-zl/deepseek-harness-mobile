@@ -99,25 +99,57 @@ wire/event_fields.dart      WireEventFields：调 wire 读者 → valueOrReport 
   `retry` / `turnEnd` / `compaction` / 工具入参是**宽松取值**（那些字段本来就可能缺），
   不计数 —— 与 `message` / `sourceKind` / `diffHunks` 同一档。
 
+## 收尾批（命令 / 审批收口 / 改动）：`data/` 的字段名归零
+
+三族之后 `data/` 还剩 9 处 `stringField` / `intField` —— 5 个事件，字段全部照 DSH 的
+事件 schema 对齐：
+
+| 事件 | DSH schema | 端口方法 / 载荷 |
+|---|---|---|
+| `command/run` | `{commandId, name, args?, source}`（`packages/interaction/commands/src/types.ts:105`） | `commandRun` → `CommandRunPayload`（`source` 手机不消费，不搬） |
+| `command/done` | `{commandId, kind: 'success'\|'error', text?, sourceEventSeq?}`（同上 `:112-117`） | `commandDone` → `CommandDonePayload` |
+| `approval/asked` | `{id, toolName, callId?, reason?}`（`user-approval/src/types.ts:44-49`） | 复用已有的 `approvalAsked`（第 1 族就有，投影当时没接） |
+| `approval/decided` | **`{id, outcome}`**（同上 `:55-58`） | `approvalDecided` → 载荷加 `outcome` |
+| `workspace/changes` | `{turn: number}`（`deliverables/workspace-changes/src/types.ts:106`） | `changesTurn` → `int?` |
+
+- **`CommandRunWire` / `CommandDoneWire` 搬进 `core/`** 并改名 `CommandRunPayload` /
+  `CommandDonePayload`：它们本来就是照 DSH 抄的，留在 wire 只是因为第 1 族当时判断
+  "`command/*` 没有手机侧消费者"—— 那个判断错了，消费者是投影，只是它用 `stringField`
+  手读同几个字段，所以没被算成"读者"。现在 `wire/events.dart` 里**一个载荷类型都不留**。
+- **`approval/decided` 没有 `toolName`**：DSH 只写 `{id, outcome}`。投影里那行
+  `stringField(data, 'toolName') ?? '审批'` 是读一个永远不会出现的字段（真实日志下标题
+  恒为「审批」），随这次收口**删掉**，标题改成常量。
+- **缺 `id` 不是展示语义**：`approval/asked` 的 `id` 在 DSH 是必填、由服务端在 append
+  之前铸造（`user-approval/src/index.ts:251-257`），而我们的 `itemIdOf` 缺它直接抛
+  （`core/items.dart:151-155`）—— 缺 id 的事件到不了投影。投影里 `approvalAsked` 为空时
+  仍画一行通用文案，与工具卡在 `toolCall == null` 时的处理同一档：不静默丢事件。
+- `workspace/changes` 的 `turn == null ⇒ skip` 保留：`projectEvent` 的 `itemId` 是**入参**
+  （调用方可以给任何 id），纯函数不能假设它由 `data` 算出，所以这条兜底不是死代码。
+
 ## 门禁（第 3 族落地后加）
 
-`verify-platform-boundary.mjs` 新增 `data-no-fieldof`：`app/lib/data/**` 出现 `fieldOf(`
-即红，**报文件与行号**（`stripComments` 把注释换成等长空白，行号仍对得上；注释里提到
-`fieldOf(` 不算违规）。判据一句话：**事件载荷的字段名只许在 `wire/` 断言，`data/` 只收
-解好的值**。自检两条（代码里出现 ⇒ 红、只在注释里出现 ⇒ 绿）。
+`verify-platform-boundary.mjs` 新增 **`data-no-field-name`**：`app/lib/data/**` 里**把线上
+字段名当字面量传给宽松取值助手**（`fieldOf` / `stringField` / `intField`）即红，**报文件与
+行号**（`stripComments` 把注释换成等长空白，行号仍对得上；注释里提到不算违规）。判据一句
+话：**事件载荷的字段名只许在 `wire/` 断言，`data/` 只收解好的值**。
+
+第一版规则钉的是 `fieldOf(` 这个**拼写**：`fieldOf` 归零时 `data/` 里还留着 9 处
+`stringField`，等于规则自己给绕路留了门（同一天发现、当天收紧）。规则钉"字段名当字面量"
+之后，`fieldOf(x, 'k')` 与 `stringField(x, 'k')` 是同一件事。自检 4 条：两种拼写各一条
+反例、注释一条正例、解好的值一条正例。
 
 ## 验证
 
 - `dart analyze --fatal-infos lib test` / `integration_test` → 各 0。
-- `flutter test` → **1759** 全过（三族前后同数：没有新增用例，行为不变）。
-- `verify-platform-boundary.mjs` → **825** 项全过（自检 **27** 条 + 扫描 **187** 个 Dart
-  文件；`data-no-fieldof` 让 `app/lib/data/` 的 19 个文件各多过一遍 = 804 → 825）。
+- `flutter test` → **1759** 全过（三族与收尾批前后同数：没有新增用例，行为不变）。
+- `verify-platform-boundary.mjs` → **827** 项全过（自检 **29** 条 + 扫描 **187** 个 Dart
+  文件；`data-no-field-name` 让 `app/lib/data/` 的 19 个文件各多过一遍 = 804 → 825 → 827）。
 - `verify-rpc-single-caller.mjs` → PASS；`dart format --set-exit-if-changed` → 0。
 - `git grep -n "^import .*wire/" -- app/lib/data app/lib/ui app/lib/core` → **0 个文件**
   （装配点 `main.dart` 不在这次搬迁范围内，它本来就该认识实现）：`data/projection.dart`
   的最后一条 wire import 也关掉了。
-- `data/` 里 `fieldOf(` → **42 → 22 → 0**（第 1 族搬完 33，第 2 族降到 22，第 3 族归零）。
-- **变异校验**（每族一次，还原后各全绿）：
+- `data/` 里 `fieldOf(` / `stringField(` / `intField(` → **42 → 22 → 0**（9 → 0 是收尾批）。
+- **变异校验**（每批一次，还原后各全绿）：
   - 前两族：`WireEventFields.toolCall` 恒 `null` ⇒ `plan_review_test` +
     `message_rendering_test` + `event_wire_replay_test` **3 条红**；`_blocks` 把 `reasoning`
     当成 `text` ⇒「助手消息的 reasoning 块抽成思考过程」**1 条红**。
@@ -125,18 +157,27 @@ wire/event_fields.dart      WireEventFields：调 wire 读者 → valueOrReport 
     同一文件 **7 条红**；`compaction` 恒空载荷 ⇒ `compaction_item_test` **6 条红**；
     `interactionQuestions` 恒空表 ⇒ `interaction_projection_test` 2 条 +
     `event_wire_replay_test` 1 条 = **3 条红**。
-  - 门禁本身：在 `projection.dart` 临时加一行 `fieldOf(...)` ⇒
-    `data-no-fieldof: app/lib/data/projection.dart → 命中「fieldOf(（第 1104 行）」`，
-    **1/825 红**；删掉即全绿。
+  - 收尾批：`commandRun` 恒 `null` ⇒ `command_item_test` **3 条红**；`changesTurn` 恒
+    `null` ⇒ `changes_card_test` **14 条红**；把 `approval/decided` 的 `outcome` 丢掉 ⇒
+    **0 条红** —— `ApprovalItem.decision` 没有显示读者（只有 `SessionStore` 的 `==`），
+    这个字段目前**没有回归网**，记在这里不假装有。
+  - 门禁本身：在 `projection.dart` 临时加一行 `stringField(_probeData, 'toolName')` ⇒
+    `data-no-field-name: app/lib/data/projection.dart → 命中「stringField(…, 'toolName')
+    （第 1112 行）」`，**1/827 红**；删掉即全绿。
 
 ## 边界（这一版覆盖到哪里）
 
-- `app/lib/data/` 的 `fieldOf(` **为 0**，门禁 `data-no-fieldof` 钉住它：事件载荷的字段名
-  只许在 `wire/` 断言，`data/` 只收解好的值。
-- 端口仍**只放 `data/` 真正消费的方法**：`command/run` / `command/done` 的读者只有
-  `EventIdReaders` 与回放用例在用，不进端口（那两个分支仍用 `stringField` 读自己的
-  `name` / `args` / `kind` / `text`）。
-- 门禁钉的是**直接 `fieldOf(`** 这一种写法。`stringField` / `intField` 是同一层的两步式
-  取值，`data/` 里还有命令、审批、改动几族的读点 —— 这条规则不覆盖它们（口径写在规则
-  注释里，别把"归零"读成"data/ 里一个字段名都没有"）。
+- `app/lib/data/` 里**没有**按线上字段名取值的地方（`fieldOf` / `stringField` /
+  `intField` 全为 0），门禁 `data-no-field-name` 钉住它：事件载荷的字段名只许在 `wire/`
+  断言，`data/` 只收解好的值。
+- **门禁认的形状**是"助手调用 + 字段名字面量"；`map['key']` 这种直接下标不在它的匹配里。
+  `data/` 目前没有这种读法（工具参数那一层用的是变量键，见下一条），所以这条门禁对
+  `data/` 是完整的；换到别的目录（例如 `model/`）就不完整，别再拿它当"零字段名"的证据。
+- **`app/lib/model/tool_view.dart` 仍在门禁范围外**：它自己有一份
+  `_field(data, 'meta')` / `_string` / `_int` 读者（`presentationMeta` 的
+  `lines` / `path` / `offset` / `totalLines` / `lang` / `diffs` / `operation`，以及
+  hunk 的 `path` / `oldText` / `newText`），是同一个不变量在 `model/` 的剩余破口。
+- **工具参数键名**（`bash` 的 `command`、`read` 的 `path` 等，`_toolSummaryKeys` /
+  `_flatten`）不属于这条门禁：那是模型填的工具 schema，不是 DSH 事件契约。口径写在这里，
+  下一批要动它得先改这条判据。
 - `app/lib` 里 `wire/` 之外**零 import**（`core/`、`data/`、`ui/` 都是 0）。

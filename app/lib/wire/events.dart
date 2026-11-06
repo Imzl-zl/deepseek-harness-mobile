@@ -46,35 +46,9 @@ export 'reading.dart';
 // 各事件的载荷（只断言我们消费的字段）
 // ---------------------------------------------------------------------------
 //
-// 工具 / 审批 / 提问这几种载荷的**类型**住在 `core/event_fields.dart`：它们要穿过
-// `EventFields` 端口交给 `data/`，类型跟着端口走才不用在这里再抄一份同样的字段表
-// （抄一份就是两处真值）。`command/*` 的载荷没有手机侧消费者，留在这里。
-
-/// `command/run`：`{commandId, name, args, source}`。
-final class CommandRunWire {
-  const CommandRunWire({
-    required this.commandId,
-    required this.name,
-    required this.args,
-  });
-
-  final String commandId;
-  final String? name;
-  final String? args;
-}
-
-/// `command/done`：`{commandId, kind, text}`（**不带 name**，名字从 run 继承）。
-final class CommandDoneWire {
-  const CommandDoneWire({
-    required this.commandId,
-    required this.kind,
-    required this.text,
-  });
-
-  final String commandId;
-  final String? kind;
-  final String? text;
-}
+// 所有事件的载荷**类型**都住在 `core/event_fields.dart`：它们要穿过 `EventFields`
+// 端口交给 `data/`，类型跟着端口走才不用在这里再抄一份同样的字段表
+// （抄一份就是两处真值）。这里只留"读线上形状 → 交 core 的值"。
 
 // ---------------------------------------------------------------------------
 // decoder：每个类型一个，字段名与类型只在这里断言
@@ -152,14 +126,17 @@ WireReading<ApprovalAskedPayload> readApprovalAsked(Object? data) {
   );
 }
 
-/// 一条 `approval/decided`。
+/// 一条 `approval/decided`（DSH 只写 `{id, outcome}`，`user-approval/src/types.ts:55-58`）。
 WireReading<ApprovalDecidedPayload> readApprovalDecided(Object? data) {
   final approvalId = _string(data, 'id');
   if (approvalId == null) {
     return const WireBad<ApprovalDecidedPayload>('approval/decided 缺 id');
   }
   return WireOk<ApprovalDecidedPayload>(
-    ApprovalDecidedPayload(approvalId: approvalId),
+    ApprovalDecidedPayload(
+      approvalId: approvalId,
+      outcome: _string(data, 'outcome'),
+    ),
   );
 }
 
@@ -181,14 +158,14 @@ WireReading<QuestionReplyPayload> readQuestionReply(Object? data) {
   return WireOk<QuestionReplyPayload>(QuestionReplyPayload(callId: callId));
 }
 
-/// 一条 `command/run`。
-WireReading<CommandRunWire> readCommandRun(Object? data) {
+/// 一条 `command/run`（DSH `commands/src/types.ts:105`）。
+WireReading<CommandRunPayload> readCommandRun(Object? data) {
   final commandId = _string(data, 'commandId');
   if (commandId == null) {
-    return const WireBad<CommandRunWire>('command/run 缺 commandId');
+    return const WireBad<CommandRunPayload>('command/run 缺 commandId');
   }
-  return WireOk<CommandRunWire>(
-    CommandRunWire(
+  return WireOk<CommandRunPayload>(
+    CommandRunPayload(
       commandId: commandId,
       name: _string(data, 'name'),
       args: _string(data, 'args'),
@@ -196,14 +173,14 @@ WireReading<CommandRunWire> readCommandRun(Object? data) {
   );
 }
 
-/// 一条 `command/done`。
-WireReading<CommandDoneWire> readCommandDone(Object? data) {
+/// 一条 `command/done`（DSH `commands/src/types.ts:112-117`）。
+WireReading<CommandDonePayload> readCommandDone(Object? data) {
   final commandId = _string(data, 'commandId');
   if (commandId == null) {
-    return const WireBad<CommandDoneWire>('command/done 缺 commandId');
+    return const WireBad<CommandDonePayload>('command/done 缺 commandId');
   }
-  return WireOk<CommandDoneWire>(
-    CommandDoneWire(
+  return WireOk<CommandDonePayload>(
+    CommandDonePayload(
       commandId: commandId,
       kind: _string(data, 'kind'),
       text: _string(data, 'text'),

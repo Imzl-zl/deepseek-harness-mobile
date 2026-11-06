@@ -59,13 +59,14 @@
   `core/event_fields.dart` 的 `EventFields` 端口，实现在 `wire/event_fields.dart`，
   由 `HostRpcHolder.eventFields` 交给投影；**三族已落地** —— 工具/审批/提问、
   消息/内容块、重试/轮次收口/压缩/交互工具入参；`ui/` 与 `core/` 也都是 0）。
-  `data/` 的 `fieldOf(` **22 → 0**；门禁 `data-no-fieldof` 已加
-  （`app/lib/data/**` 出现 `fieldOf(` 即红，报文件与行号）。
+  `data/` 的字段名读点 **22 → 0**（`fieldOf` / `stringField` / `intField`）；
+  门禁 `data-no-field-name` 已加（把线上字段名当字面量传给取值助手即红，报文件与行号）。
   实测代价：五个测试文件只因"字段名撞端口方法名"改名（`projections` / `workspaces` →
   `…Reply`，值与形状没动）；`wire_shapes_replay_test` 改了 11 处类型名 + 3 条 import（金样没动）；
   端口一律返回 `SnapshotReply<…>`（三态 —— 裸 null 会把 `notModified` 当成失败）。
-  **遗留**：`stringField` / `intField` 在 `data/` 还有命令 / 审批 / 改动几族的读点，
-  门禁 `data-no-fieldof` 不覆盖它们（口径写在规则注释里）；三族的取舍与变异校验见
+  **遗留**：`model/tool_view.dart` 仍有一整块 `presentationMeta` 读者（`_field` /
+  `_string` / `_int`，19 处）在门禁范围外；工具参数键名（`bash` 的 `command` 等）不属这条
+  门禁的口径。三族与收尾批的取舍、变异校验见
   `implemented/2026-11-06-projection-event-fields-port.md`。
   留下的边界：`core → model` 多了一条**纯类型环**（值对象的字段类型来自 `model/`，
   而 `model/` 又 import `core/job.dart` 等）。
@@ -73,7 +74,7 @@
   `.agents/notes/implemented/2026-11-06-p1b-batch{1-session-family,2-catalog-family,`
   `3-preview-family,4-read-write-ports}.md`；`projection.dart` 那条另见
   `proposed/2026-11-06-p1b-host-rpc-port.md` 的末节。
-  门禁：connector **836**；app **1759**；boundary **825**；`dart analyze --fatal-infos` 0
+  门禁：connector **836**；app **1759**；boundary **827**；`dart analyze --fatal-infos` 0
   （format 门禁也恢复到 0，HEAD 上遗留的 14 个文件已在 `edad912` 格式化）。
   另外把**真机库副本**喂给真实现跑了一遍 v2→v3（24.5 MB 的 `dsh_mobile.db`，只读副本）：
   4136 条条目一条不少、14 个水位键全部带前缀、`device.transparency/surface_alpha` 原样 ——
@@ -475,7 +476,7 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 825 项（27 条规则自检 + 187 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | 827 项（29 条规则自检 + 187 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
 | `cd app && flutter test` | 1759 项（约 1 分钟） |

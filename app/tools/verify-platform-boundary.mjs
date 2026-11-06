@@ -84,17 +84,28 @@ function firstCodeUse(content, pattern) {
 }
 
 /**
- * 找代码里第一处 `fieldOf(`（跳过注释），返回它**在第几行**。
+ * 找代码里第一处"把线上字段名当字面量传给宽松取值助手"（跳过注释），返回它**在第几行**。
  *
- * 违例要能直接跳到那一行：只说"这个文件里有"等于让人自己翻 1200 行。
- * 行号来自去注释后的串 —— [stripComments] 逐字符留白、换行不动，所以对得上原文。
+ * 判据是**字段名**，不是某个函数名：`fieldOf(data, 'failure')` 与
+ * `stringField(data, 'toolName')` 是同一个动作的两种拼写，只钉前者会被后者绕过
+ * （2026-11-06 实测：换一条规则前，`fieldOf(` 归零了而 `data/` 里还有 9 处 `stringField`）。
+ *
+ * 认的形状：助手名（`fieldOf` / `stringField` / `intField`）+ 调用里**第一个逗号前**没有
+ * 括号/分号/花括号（避免跨表达式误判）+ 逗号后是字符串字面量。第一个参数是嵌套调用的
+ * 写法（`fieldOf(fieldOf(data, 'meta'), 'diffs')`）由内层命中 —— 违例照样红。
  */
-function firstFieldOfUse(content) {
+const LENIENT_FIELD_READER =
+  /(?<![\w.$])(fieldOf|stringField|intField)\([^,();{}]*,\s*(['"])([^'"]*)\2/g
+
+function firstFieldNameUse(content) {
+  // 行号来自去注释后的串 —— [stripComments] 逐字符留白、换行不动，所以对得上原文。
   const code = stripComments(content)
-  const at = code.indexOf('fieldOf(')
-  if (at === -1) return null
-  const line = code.slice(0, at).split('\n').length
-  return `fieldOf(（第 ${line} 行）`
+  LENIENT_FIELD_READER.lastIndex = 0
+  const found = LENIENT_FIELD_READER.exec(code)
+  if (!found) return null
+  const line = code.slice(0, found.index).split('\n').length
+  const quote = found[2]
+  return `${found[1]}(…, ${quote}${found[3]}${quote})（第 ${line} 行）`
 }
 
 const RULES = [
@@ -156,20 +167,20 @@ const RULES = [
     match: (content) => firstCodeUse(content, /['"](?:arguments|toolCallId)['"]/g),
   },
   {
-    // 投影的"事件载荷读法"分三族搬进 `EventFields` 端口之后（`core/event_fields.dart`
+    // 投影的"事件载荷读法"搬进 `EventFields` 端口之后（`core/event_fields.dart`
     // 声明、`wire/event_fields.dart` 实现，由 `HostRpcHolder.eventFields` 交给投影），
     // `data/` 自己不再按线上字段名取值。
     // 判据：**事件载荷的字段名只许在 `wire/` 断言**，`data/` 只收解好的值。
-    // 钉的是**直接 `fieldOf(`**（"在线上 map 上按名字取字段"那一步）；`stringField` /
-    // `intField` 是同一层的两步式取值，命令 / 审批 / 改动几族在 `data/` 里还有读点，
-    // 这条规则不覆盖它们 —— 别把"归零"读成"data/ 里一个字段名都没有"。
-    id: 'data-no-fieldof',
+    // 钉的是"字段名当字面量传给取值助手"这个动作，不是某个函数名 —— 同一个动作有
+    // `fieldOf` / `stringField` / `intField` 三种拼写，只钉一种等于给绕路留门
+    // （2026-11-06：`fieldOf(` 已归零时 `data/` 里还有 9 处 `stringField`）。
+    id: 'data-no-field-name',
     why: '事件载荷的字段名只许在 wire/ 断言（`EventFields` 端口），'
-      + 'data/ 只收解好的值；出现 `fieldOf(` 说明投影又在按线上字段名取值 —— '
+      + 'data/ 只收解好的值；把线上字段名当字面量传给取值助手说明投影又在按线上形状取值 —— '
       + '那样 DSH 改字段名要进 data/，猜错的那一处还会静默变成空值'
       + '（2026-10-25 计划卡是同一类）',
     appliesTo: (p) => /^app\/lib\/data\//.test(p),
-    match: (content) => firstFieldOfUse(content),
+    match: (content) => firstFieldNameUse(content),
   },
 ]
 
@@ -256,20 +267,33 @@ const SELF_TEST = [
     content: "// 别再按 'arguments' 取字段了，见 wire/events.dart",
     shouldFail: false,
   },
-  // 事件载荷的字段名只许在 wire/ 断言：`data/` 里不得出现 `fieldOf(`。
-  // 反例就是搬进端口之前那一行：投影自己在线上载荷上取 `failure`。
+  // 事件载荷的字段名只许在 wire/ 断言：`data/` 里不得把字段名当字面量传给取值助手。
+  // 反例就是搬进端口之前那两行：投影自己在线上载荷上取 `failure` / `toolName`。
   {
-    rule: 'data-no-fieldof',
+    rule: 'data-no-field-name',
     path: 'app/lib/data/projection.dart',
     content: "final failure = fieldOf(data, 'failure');",
     shouldFail: true,
   },
-  // **注释里提到 `fieldOf(` 不算违规**：说明"为什么不再这么写"是好代码，
+  {
+    rule: 'data-no-field-name',
+    path: 'app/lib/data/projection.dart',
+    content: "final toolName = stringField(data, 'toolName') ?? '工具';",
+    shouldFail: true,
+  },
+  // **注释里提到字段名不算违规**：说明"为什么不再这么写"是好代码，
   // 按正文 grep 会让规则惩罚把理由写下来的人（`no-material-icons` 踩过同一个坑）。
   {
-    rule: 'data-no-fieldof',
+    rule: 'data-no-field-name',
     path: 'app/lib/data/projection.dart',
     content: "// 端口解好的值，别再 fieldOf(data, 'failure')",
+    shouldFail: false,
+  },
+  // 解好的值上没有字段名，当然不违规。
+  {
+    rule: 'data-no-field-name',
+    path: 'app/lib/data/projection.dart',
+    content: 'final questions = fields.interactionQuestions(call.arguments);',
     shouldFail: false,
   },
 ]

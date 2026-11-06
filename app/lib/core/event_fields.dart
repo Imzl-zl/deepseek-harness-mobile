@@ -83,10 +83,45 @@ final class ApprovalAskedPayload {
 }
 
 /// 一条 `approval/decided` 的载荷（与 ask 共用 `id`）。
+///
+/// **DSH 只写这两个字段**（`packages/interaction/user-approval/src/types.ts:55-58`）：
+/// `{id, outcome}` —— **没有 `toolName`**，所以投影里那张已决定卡片的标题是常量。
 final class ApprovalDecidedPayload {
-  const ApprovalDecidedPayload({required this.approvalId});
+  const ApprovalDecidedPayload({required this.approvalId, this.outcome});
 
   final String approvalId;
+
+  /// `outcome`：DSH 的封闭四值（`allowed-once` / `rejected` / `cancelled` /
+  /// `unavailable`，同文件 `:32`）。**不认识的值照原样交出去** —— 上游加档时
+  /// 不该在手机上把一整条事件丢掉。
+  final String? outcome;
+}
+
+/// 一条 `command/run` 的载荷：`{commandId, name, args?, source}`
+/// （DSH `packages/interaction/commands/src/types.ts:105`）。
+///
+/// `name` 在 DSH 是必填；这里**可空**，缺了有既有兜底（`kUnknownCommandName`）——
+/// 与 [ToolCallPayload.name] 同一条判据：展示名缺失不丢整条身份完好的事件。
+/// `source` 手机不消费，不搬。
+final class CommandRunPayload {
+  const CommandRunPayload({required this.commandId, this.name, this.args});
+
+  final String commandId;
+  final String? name;
+  final String? args;
+}
+
+/// 一条 `command/done` 的载荷：`{commandId, kind, text?, sourceEventSeq?}`
+/// （DSH `commands/src/types.ts:112-117`）。
+///
+/// `kind` 在 DSH 是封闭二值 `'success' | 'error'`；正文 `text` 是可选。
+/// **不带 `name`** —— 名字从 `command/run` 继承（同一 `commandId`）。
+final class CommandDonePayload {
+  const CommandDonePayload({required this.commandId, this.kind, this.text});
+
+  final String commandId;
+  final String? kind;
+  final String? text;
 }
 
 /// `user/message` 里 `source.kind === 'user-question-reply'` 的那条：迟到的答复。
@@ -245,6 +280,19 @@ abstract interface class EventFields {
 
   /// 一条 `approval/decided`。
   ApprovalDecidedPayload? approvalDecided(Object? data);
+
+  /// 一条 `command/run`（名字与参数是命令卡的一行摘要）。
+  CommandRunPayload? commandRun(Object? data);
+
+  /// 一条 `command/done`（`kind` 决定成败，正文进摘要与明细）。
+  CommandDonePayload? commandDone(Object? data);
+
+  /// 一条 `workspace/changes` 的轮号（`data.turn`；DSH 必填，
+  /// `packages/deliverables/workspace-changes/src/types.ts:106`）。
+  ///
+  /// 不是整数 ⇒ `null`：改动卡的条目身份 `w:<turn>` 在解码处就要求它
+  /// （`core/items.dart`），这里是纯函数入口的第二次读取。
+  int? changesTurn(Object? data);
 
   /// 一条迟到的提问答复（`user/message` + `source.kind == 'user-question-reply'`）。
   QuestionReplyPayload? questionReply(Object? data);

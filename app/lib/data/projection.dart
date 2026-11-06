@@ -19,7 +19,6 @@ library;
 import 'dart:convert';
 
 import '../core/event_fields.dart';
-import '../core/json_field.dart';
 import '../model/changed_path.dart';
 import '../model/chat_item.dart';
 import '../model/interaction.dart';
@@ -428,42 +427,49 @@ ChatProjection projectEvent({
   }
 
   if (type == 'approval/asked') {
-    final toolName = stringField(data, 'toolName') ?? '工具';
-    final reason = stringField(data, 'reason');
+    // 与接管卡同一个读者（`EventFields.approvalAsked`）：有 reason 照它说，
+    // 否则"工具 X 请求越权执行"。两处各写一份必然漂移。
+    // 载荷解不出来（缺 `id` = 形状错）时仍画一行通用文案 —— 与工具卡在
+    // `toolCall` 为 `null` 时的处理同一档，不静默丢事件。
+    final asked = fields.approvalAsked(data);
+    final toolName = asked?.toolName ?? '工具';
     return ChatProjection.item(
       ApprovalItem(
         itemId: itemId,
         seq: seq,
         updatedAt: time,
         turn: turn,
-        // 与接管卡同一套措辞（`interactionSignalOf`）：有 reason 照它说，
-        // 否则"工具 X 请求越权执行"。两处各写一份必然漂移。
-        title: reason ?? '工具 $toolName 请求越权执行',
+        title: asked?.reason ?? '工具 $toolName 请求越权执行',
         decided: false,
       ),
     );
   }
 
   if (type == 'approval/decided') {
+    // **DSH 的 decided 只带 `{id, outcome}`**（`user-approval/src/types.ts:55-58`），
+    // 没有工具名 —— 标题是常量，「已决定」由 `decision` 表达。
+    final decided = fields.approvalDecided(data);
     return ChatProjection.item(
       ApprovalItem(
         itemId: itemId,
         seq: seq,
         updatedAt: time,
         turn: turn,
-        title: stringField(data, 'toolName') ?? '审批',
+        title: '审批',
         decided: true,
-        decision: stringField(data, 'outcome'),
+        decision: decided?.outcome,
       ),
     );
   }
 
   if (type == 'command/run') {
     // 命令开始。DSH 的 `command/run` 载荷是
-    // `{commandId, name, args, source}`（真日志实测：`goal` / `/compact`）。
+    // `{commandId, name, args?, source}`（`commands/src/types.ts:105`；
+    // 真日志实测：`goal` / `/compact`）。
     // **状态是 running**：结果要等 `command/done`（同一 itemId 覆盖）。
-    final name = stringField(data, 'name');
-    final args = stringField(data, 'args');
+    final run = fields.commandRun(data);
+    final name = run?.name;
+    final args = run?.args;
     return ChatProjection.item(
       CommandItem(
         itemId: itemId,
@@ -482,13 +488,15 @@ ChatProjection projectEvent({
   }
 
   if (type == 'command/done') {
-    // 结果。DSH 的 `command/done` 载荷是 `{commandId, kind, text}`，
-    // `kind` 是 `success` / `error`（真日志实测）。
+    // 结果。DSH 的 `command/done` 载荷是 `{commandId, kind, text?, sourceEventSeq?}`
+    // （`commands/src/types.ts:112-117`），`kind` 是封闭二值
+    // `success` / `error`（真日志实测）。
     // **与 run 共用 itemId**（`c:$commandId`，见 `core/items.dart`）——
     // 所以它到达时是"更新已有条目"，不是新增一条。
     final call = previous is CommandItem ? previous : null;
-    final kind = stringField(data, 'kind');
-    final text = stringField(data, 'text');
+    final done = fields.commandDone(data);
+    final kind = done?.kind;
+    final text = done?.text;
     return ChatProjection.item(
       CommandItem(
         itemId: itemId,
@@ -710,10 +718,10 @@ ChatProjection projectEvent({
   }
 
   if (type == 'workspace/changes') {
-    // 一轮的改动记录（只带轮号，`workspace-changes/src/types.ts:99-108`）。
+    // 一轮的改动记录（只带轮号，`workspace-changes/src/types.ts:106`）。
     // 卡片的**数据不在这里**：它按这条事件的 seq 向电脑要 `file.changes`
     // （宿主 `workspaceChanges` 的记录），手机不自己从工具调用推。
-    final changedTurn = intField(data, 'turn');
+    final changedTurn = fields.changesTurn(data);
     if (changedTurn == null) {
       return const ChatProjection.skip('workspace/changes 缺 turn');
     }
@@ -966,9 +974,9 @@ String _flatten(Object? value) {
   return '$value';
 }
 
-// `fieldOf` / `stringField` / `intField` / `nonEmptyString` 住在
-// `core/json_field.dart`：它们是"对裸 JSON 宽松取值"这一层最底的操作，
-// `model/permission.dart` 也要用（放在这里会让 model 反向 import data）。
+// 本文件**不读线上字段名**：事件载荷一律从 `EventFields` 取解好的值
+// （端口在 `core/event_fields.dart`，实现在 `wire/event_fields.dart`）。
+// 门禁 `data-no-field-name` 钉住它：`data/` 里不得把线上字段名当字面量传给取值助手。
 
 // ---------------------------------------------------------------------------
 // 交互投影（契约 §6.3：待处理集合是会话事件的投影）

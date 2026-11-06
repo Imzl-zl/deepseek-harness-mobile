@@ -34,6 +34,8 @@ final class WireEventFields implements EventFields {
   static const _kToolResult = 'tool/result';
   static const _kApprovalAsked = 'approval/asked';
   static const _kApprovalDecided = 'approval/decided';
+  static const _kCommandRun = 'command/run';
+  static const _kCommandDone = 'command/done';
   static const _kQuestionReply = 'user/message(user-question-reply)';
 
   @override
@@ -51,6 +53,17 @@ final class WireEventFields implements EventFields {
   @override
   ApprovalDecidedPayload? approvalDecided(Object? data) =>
       valueOrReport(wire.readApprovalDecided(data), _kApprovalDecided);
+
+  @override
+  CommandRunPayload? commandRun(Object? data) =>
+      valueOrReport(wire.readCommandRun(data), _kCommandRun);
+
+  @override
+  CommandDonePayload? commandDone(Object? data) =>
+      valueOrReport(wire.readCommandDone(data), _kCommandDone);
+
+  @override
+  int? changesTurn(Object? data) => intField(data, 'turn');
 
   @override
   QuestionReplyPayload? questionReply(Object? data) =>
