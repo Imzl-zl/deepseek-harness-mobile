@@ -93,14 +93,17 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
 
 ## Tools
 
-- 多端边界校验(不需要 Flutter 工程):`node app/tools/verify-platform-boundary.mjs` —— 扫描 `app/lib` 与 `app/packages`,共 6 条规则:  1. `core-no-platform-import`:`app/lib/{core,data,model}` 禁 `dart:io` 与 `package:flutter/{services,widgets,material}.dart`(否则纯 Dart 单测写不了)
+- 多端边界校验(不需要 Flutter 工程):`node app/tools/verify-platform-boundary.mjs` —— 扫描 `app/lib` 与 `app/packages`,共 9 条规则:  1. `core-no-platform-import`:`app/lib/{core,data,model}` 禁 `dart:io` 与 `package:flutter/{services,widgets,material}.dart`(否则纯 Dart 单测写不了)
   2. `ui-no-impl-import`:`app/lib/ui` 禁 import 各端实现包(`*_(ios|android|ohos)/`)
   3. `ui-no-platform-import`:`app/lib/ui` 禁 `dart:io`
   4. `branch-whitelist`:平台分支(`Platform.` / `defaultTargetPlatform` / `MethodChannel` / `EventChannel`)只允许出现在 `app/packages/**`、`app/lib/platform/**`、`app/lib/ui/adaptive/**`
   5. `no-platform-isohos`:全仓禁 `Platform.isOhos`(会导致 `flutter run` / `build har` / `attach` 失败,鸿蒙判断用 `defaultTargetPlatform`)
-  6. `fallback-not-in-release`:`app/lib/platform/registry.dart` 引用兜底实现(`InMemory` / `NullPush` / `Noop`)必须带 `kDebugMode` 守卫
+  6. `no-material-icons`:`app/lib/ui` 禁 `Icons.*` —— 图标只有一个来源(`lib/theme/dsh_icons.dart`)
+  7. `fallback-not-in-release`:`app/lib/platform/registry.dart` 引用兜底实现(`InMemory` / `NullPush` / `Noop`)必须带 `kDebugMode` 守卫
+  8. `wire-field-single-reader`:全仓(除 `app/lib/wire/events.dart`)禁 `'arguments'` / `'toolCallId'` 字面量 —— 事件载荷的字段名只有一个读者
+  9. `data-no-fieldof`:`app/lib/data/**` 禁 `fieldOf(` —— 事件载荷的字段名只许在 `wire/` 断言,`data/` 只收端口解好的值;违例报文件与行号
 
-  **两条 import 规则只认 `import` / `export` 指令本身,不按正文 grep** —— 否则文件头那句「不许 import `dart:io`」会被自己判成违规(等于惩罚把规则写进代码)。自带规则自检 **25** 条,所以 `lib/` 还没代码时也不是空转(当前输出:`规则自检 25 条 + 扫描 160 个 Dart 文件` = **694 项**)
+  **两条 import 规则只认 `import` / `export` 指令本身,不按正文 grep** —— 否则文件头那句「不许 import `dart:io`」会被自己判成违规(等于惩罚把规则写进代码)。按符号的规则(`no-material-icons` / `wire-field-single-reader` / `data-no-fieldof`)同样在**去掉注释**的正文上匹配:注释里写「别用 `Icons.send`」「别再 `fieldOf(`」不算违规。自带规则自检 **27** 条,所以 `lib/` 还没代码时也不是空转(当前输出:`规则自检 27 条 + 扫描 187 个 Dart 文件` = **825 项**)
 - **协议知识只在 `wire/rpc/`**(终态规则,零例外):`node app/tools/verify-rpc-single-caller.mjs` —— 扫 `app/lib` 全域(`wire/` 除外),数 `call<` 的**代码**出现次数(排除端口声明 `call<T>`;适配器的 `client.call<` 与实现里的无前缀 `call<` 都算),要求**为 0**。**2026-10-25 已归零**(从 39 一路降到 0,那行 `BUDGET` 常量已删);**2026-10-26 范围从 `data/`+`ui/` 扩到全域**(`page`/`refetch` 的调用已搬进 `wire/rpc/session_page.dart`)。要加回例外就得在脚本里写第二个数,评审一眼就能看见。它度量的是"方法名 + 参数形状还有几处漏在 `wire/` 外面",不是某个字面量在哪。红了会逐行报出每一处位置(所以行号必须保住:**别改成剥注释再数**)。规则来源与代价见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`,扩范围的理由见 `.agents/notes/implemented/2026-10-26-wire-review-fixes.md`
 - **线上形状金样**:`connector/tests/fixtures/wire-shapes.json` —— 由 `connector/tests/wire-shapes.test.ts` 调**真实 handler** 生成、**深比较**守住(`JSON.parse(JSON.stringify(...))`,比"线上那一层");`app/test/wire_shapes_replay_test.dart` 读**同一份文件**做回放,文件缺失**直接 fail**。**当前收 46 个方法**(`wire/rpc/` 里出现的每个方法名都在里面;`session.page`/`refetch` 也收,它们不占上面的口禁但形状照样钉)。**`session.fork` 的应答只有 `{sid}`**(子会话别名;App 回放里另断言"键集合只有 sid")。**`file.changes` 有两条样本**:一条真记录 + 一条 `{summary:null}`(电脑侧没有这条记录,那是有效应答而不是失败);**`file.diff` 也有两条**:文本 hunks + 二进制(判别联合的两种 kind)。**`session.list` 有两条样本**:4 条手写四形态 + **20 条归一化真实清单**(358 条真实会话按形状签名去重)。真实夹具 `tests/fixtures/real-dsh-sessions.json` 由 `connector/tools/import-real-sessions.mjs` 从网关 dump 生成;原始 dump 含私有数据,**不进 git**。
   - 改连接器应答 ⇒ 连接器红 + App 红,这是有意的。确认改动是**有意的**才重生成:`cd connector; $env:UPDATE_WIRE_SHAPES='1'; pnpm exec tsx --test tests/wire-shapes.test.ts`,并**同一批**改 `app/lib/wire/rpc/` 的解码。

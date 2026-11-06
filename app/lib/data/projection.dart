@@ -344,7 +344,10 @@ ChatProjection projectEvent({
   if (type == 'tool/result') {
     // 结果与调用**共用同一个 itemId**（靠 `toolCallId` 配对，契约 §5.2），
     // 所以它到达时是"更新已有条目"，而不是新增一条。
-    final message = fieldOf(data, 'message');
+    //
+    // 载荷**解一次**：结果消息自带的名字与正文都从同一份解好的值里取
+    // （`message` 在哪、`content` 怎么解都归端口）。
+    final resultMessage = fields.message('tool/result', data);
     // **继承调用那一半**（DSH `conversation-nodes/tool.ts:100-118` 的
     // `rootResult(match, previous)`）：真日志里结果消息不带 `name` 与参数，
     // 它们只在 `tool/call` 上。不继承就会把卡片上已经写好的名字与参数
@@ -359,10 +362,7 @@ ChatProjection projectEvent({
     final storedArgs = stored?.argumentsRaw ?? '';
     // 结果自己带 name 时照它（部分适配器会写）；否则用调用的名字。
     final name =
-        stringField(message, 'name') ??
-        call?.name ??
-        storedName ??
-        kUnknownToolName;
+        resultMessage.name ?? call?.name ?? storedName ?? kUnknownToolName;
     // **专用视图**（bash / read / edit|write）从 `data.meta` 解（DSH 的
     // `presentationMeta`，形状见 `model/tool_view.dart` 的文件头）。
     // 其余工具 / 形状不认识 ⇒ `null`，走通用卡。
@@ -391,13 +391,13 @@ ChatProjection projectEvent({
                   )),
         // **结果正文进明细**：工具到底返回了什么，展开才看得见
         // （`ToolCard` 的 `.tool-body` 一直是支持的，只是投影从不填）。
-        detail: toolOutputOf(fields.message('tool/result', data)),
+        detail: toolOutputOf(resultMessage),
         view: view,
         // 文件变更的 +N/−M：优先用专用视图算好的（`meta.diffs` 的行数），
         // 否则退回按 hunks 折算（老结果只有 `message.metadata.diffs`）。
         diffStat: view is DiffResultView
             ? (added: view.added, removed: view.removed)
-            : diffStatOf(fields.diffHunks(data: data, message: message)),
+            : diffStatOf(fields.diffHunks(data)),
         // **改动的路径必须从调用继承**：结果载荷里没有路径字段
         // （真日志只有 `role / source / toolCallId / content / isError / id`），
         // 而它到达时**覆盖同一个 itemId** —— 不继承的话，"这一轮改了哪些文件"
@@ -516,22 +516,20 @@ ChatProjection projectEvent({
     // 一次计划好的重试。形状见 `model/chat_item.dart` 的 `ModelRetryItem`
     // 文档（真日志实测：`retryId` / `turn` / `step` / `retry` /
     // `maxRetries` / `delayMs` / `failure:{message, code}`）。
-    final retry = intField(data, 'retry');
-    final maxRetries = intField(data, 'maxRetries');
-    final failure = fieldOf(data, 'failure');
+    final attempt = fields.retry(data);
     return ChatProjection.item(
       ModelRetryItem(
         itemId: itemId,
         seq: seq,
         updatedAt: time,
         turn: turn,
-        retry: retry ?? 0,
-        maxRetries: maxRetries ?? 0,
-        message: stringField(failure, 'message') ?? '',
-        code: stringField(failure, 'code'),
+        retry: attempt.retry ?? 0,
+        maxRetries: attempt.maxRetries ?? 0,
+        message: attempt.failureMessage ?? '',
+        code: attempt.failureCode,
         // `delayMs` 可能是小数（真日志：`1737.516418390792`）——
         // 只用来显示"多久后重试"，取整即可。
-        delayMs: (fieldOf(data, 'delayMs') as num?)?.toDouble() ?? 0,
+        delayMs: attempt.delayMs ?? 0,
       ),
     );
   }
@@ -541,7 +539,7 @@ ChatProjection projectEvent({
     // （`r:$retryId:$retry`，见 `core/items.dart`）—— 所以它到达时是
     // "更新已有条目"，不是新增一条。
     final call = previous is ModelRetryItem ? previous : null;
-    final retry = intField(data, 'retry');
+    final attempt = fields.retry(data);
     return ChatProjection.item(
       ModelRetryItem(
         itemId: itemId,
@@ -552,18 +550,12 @@ ChatProjection projectEvent({
         // **冷启动时 `previous` 不在**，那就从**合并载荷**读回来
         // （`StoreItemPersister._mergedPayload`）—— 否则重启后只剩「重试 1/0」，
         // 连失败原因都没有（2026-11-04 真机）。
-        retry: retry ?? call?.retry ?? 0,
-        maxRetries: call?.maxRetries ?? intField(data, 'maxRetries') ?? 0,
-        message:
-            call?.message ??
-            stringField(fieldOf(data, 'failure'), 'message') ??
-            '',
-        code: call?.code ?? stringField(fieldOf(data, 'failure'), 'code'),
+        retry: attempt.retry ?? call?.retry ?? 0,
+        maxRetries: call?.maxRetries ?? attempt.maxRetries ?? 0,
+        message: call?.message ?? attempt.failureMessage ?? '',
+        code: call?.code ?? attempt.failureCode,
         started: true,
-        delayMs:
-            call?.delayMs ??
-            (fieldOf(data, 'delayMs') as num?)?.toDouble() ??
-            0,
+        delayMs: call?.delayMs ?? attempt.delayMs ?? 0,
       ),
     );
   }
@@ -580,9 +572,9 @@ ChatProjection projectEvent({
     // 两条的 itemId 不同（`p:$turn` / `e:$turn`），所以不会互相覆盖。
     // 历史翻页可能只落到 `turn/end`（`turn/start` 在窗口外），那时
     // `turn` 号仍在这条事件自身上，轮次号不依赖跨事件状态。
-    final turn = intField(data, 'turn') ?? 0;
-    final reason = fieldOf(data, 'reason');
-    final kind = stringField(reason, 'kind');
+    final end = fields.turnEnd(data);
+    final turn = end.turn ?? 0;
+    final kind = end.kind;
     final failed = kind == 'error';
     final stopped = kind == 'aborted' || kind == 'interrupted';
     final process = TurnProcessItem(
@@ -604,7 +596,6 @@ ChatProjection projectEvent({
     if (failed) {
       // 模型侧报错：**用 DSH 的原文**（`reason.error.message`），
       // 不编一句"出错了"。真日志例：`Connection error.` / `TRANSPORT`。
-      final error = fieldOf(reason, 'error');
       return ChatProjection.items([
         process,
         TurnOutcomeItem(
@@ -612,8 +603,8 @@ ChatProjection projectEvent({
           seq: seq,
           updatedAt: time,
           kind: TurnOutcomeKind.error,
-          message: stringField(error, 'message') ?? '',
-          code: stringField(error, 'code'),
+          message: end.errorMessage ?? '',
+          code: end.errorCode,
           turn: turn,
         ),
       ]);
@@ -651,11 +642,9 @@ ChatProjection projectEvent({
       // 中止。**只有登出才显示失败行**（DSH `turn-error.ts:42-44`）：
       // 用户主动取消在 Web 上只显示"已停止的轮次摘要"，没有失败行。
       // 判据是 `reason.reason.kind === 'hook'` 且 hook 名是
-      // `deepseek-account/signed-out`。
-      final inner = fieldOf(reason, 'reason');
-      final hook = stringField(inner, 'reason');
-      if (stringField(inner, 'kind') == 'hook' &&
-          hook == 'deepseek-account/signed-out') {
+      // `deepseek-account/signed-out`（第二层由端口读出来，判据仍在这里）。
+      if (end.innerKind == 'hook' &&
+          end.innerReason == 'deepseek-account/signed-out') {
         return ChatProjection.items([
           process,
           TurnOutcomeItem(
@@ -689,7 +678,8 @@ ChatProjection projectEvent({
     // **手动 `/compact` 不走这里**：DSH 的 `match` 对带 `sourceCommandId`
     // 的返回 null（`compaction.ts:42`），那种由命令卡呈现。所以这里
     // 见到 `sourceCommandId` 就跳过（不是失败）。
-    if (stringField(data, 'sourceCommandId') != null) {
+    final compaction = fields.compaction(data);
+    if (compaction.isManual) {
       return const ChatProjection.skip('手动 /compact 由命令卡呈现');
     }
     final call = previous is CompactionItem ? previous : null;
@@ -705,14 +695,15 @@ ChatProjection projectEvent({
         turn: turn,
         // 摘要从 summary 继承（start / end 不带）。
         summary: type == 'compaction/summary'
-            ? _compactSummaryText(data)
+            ? _compactSummaryText(compaction.summary)
             : call?.summary ?? '',
-        // 两个计数照 DSH 的 `compactSummary`：**只认形状可信的值**。
+        // 两个计数照 DSH 的 `compactSummary`：**只认形状可信的值**
+        // （判据在端口那一侧，见 `CompactionPayload.shadowedSeqs`）。
         shadowedItemCount: type == 'compaction/summary'
-            ? _shadowedItemCount(data)
+            ? compaction.shadowedSeqs?.length
             : call?.shadowedItemCount,
         shadowedTokenCount: type == 'compaction/summary'
-            ? _shadowedTokenCount(data)
+            ? compaction.shadowedTokenCount
             : call?.shadowedTokenCount,
       ),
     );
@@ -744,43 +735,17 @@ ChatProjection projectEvent({
   );
 }
 
-/// `compaction/summary.data.summary` 里 text 块的拼接（DSH `command.ts:107-111`）。
+/// 压缩摘要的正文：`summary` 块表里 text 块的拼接（DSH `command.ts:107-111`）。
 ///
-/// 只认 `type === 'text'` 的块；其它类型（图片等）跳过而不是摊平。
-/// 空串 = 没有可显示的摘要。
-String _compactSummaryText(Object? data) {
-  final blocks = fieldOf(data, 'summary');
-  if (blocks is! List) return '';
+/// 只认文本块；其它类型（图片等）跳过而不是摊平。空串 = 没有可显示的摘要。
+String _compactSummaryText(List<ContentBlock> blocks) {
   final buffer = StringBuffer();
   for (final block in blocks) {
-    if (block is! Map) continue;
-    if (block['type'] != 'text') continue;
-    final text = block['text'];
-    if (text is String) buffer.write(text);
+    if (block.kind != ContentBlockKind.text) continue;
+    final text = block.text;
+    if (text != null) buffer.write(text);
   }
   return buffer.toString().trim();
-}
-
-/// 被替换掉的条目数（`shadowedSeqs.length`）。
-///
-/// **DSH 的判据更严**（`command.ts:113-115`）：`shadowedSeqs` 必须是数组、
-/// 且**每个元素都是安全非负整数**，否则整项作 null。不数一个可能不准的数。
-int? _shadowedItemCount(Object? data) {
-  final seqs = fieldOf(data, 'shadowedSeqs');
-  if (seqs is! List) return null;
-  for (final seq in seqs) {
-    if (seq is! int || seq < 0) return null;
-  }
-  return seqs.length;
-}
-
-/// 被压掉的 token 数（`shadowedTokenCount`）。
-///
-/// 同样只认安全非负整数（DSH `command.ts:117-120`）。
-int? _shadowedTokenCount(Object? data) {
-  final count = fieldOf(data, 'shadowedTokenCount');
-  if (count is! int || count < 0) return null;
-  return count;
 }
 
 /// 投影结果：**零到多条**条目，或"这条事件被流式累加器接管了，别渲染"。
@@ -1078,7 +1043,7 @@ InteractionSignal? interactionSignalOf({
     // 与提问卡同一个 `t:<callId>` 身份 —— 连接器的 claim 用的是请求里的
     // `intent.callId`，而它**就是**这次工具调用的 id（`plan-mode/src/index.ts:329`）。
     if (call.name == exitPlanModeTool) {
-      final plan = nonEmptyString(fieldOf(call.arguments, 'plan'));
+      final plan = fields.planText(call.arguments);
       if (plan == null) return null;
       return InteractionOpened(
         InteractionItem(
@@ -1097,7 +1062,7 @@ InteractionSignal? interactionSignalOf({
     if (call.name != askUserQuestionTool) {
       return null;
     }
-    final questions = _questionsOf(call.arguments);
+    final questions = fields.interactionQuestions(call.arguments);
     if (questions.isEmpty) return null;
     final first = questions.first;
     return InteractionOpened(
@@ -1133,64 +1098,4 @@ InteractionSignal? interactionSignalOf({
   }
 
   return null;
-}
-
-/// 从 `ask_user_question` 的**已解开参数**里读出问题清单。
-///
-/// 形状照 DSH 的 `toolArgumentsSchema`（`user-questions/src/projection.ts:43-53`）：
-/// 里层是 `{questions: [{id, question, header?, options?, multi_select?}]}`。
-/// 注意字段名是 **snake_case 的 `multi_select`**（模型看到的形状），
-/// 而应答链上的 `AskUserQuestionItem` 是 camelCase 的 `multiSelect` —— 两处形状不同，
-/// 照错的那个会让多选永远读成单选。
-///
-/// 参数**怎么从线上 JSON 字符串解成 Map** 归 `wire/events.dart` 管（`parseArguments`）；
-/// 这里只处理"解开了的值"。
-///
-/// **读不懂就返回空表**：那是模型的坏参数，工具根本没被调用过，没有卡可显示
-/// （DSH 同一处也是 `return null`，`projection.ts:142-144`）。
-List<InteractionQuestion> _questionsOf(Map<String, Object?>? arguments) {
-  final raw = fieldOf(arguments, 'questions');
-  if (raw is! List) return const [];
-  final out = <InteractionQuestion>[];
-  for (final entry in raw) {
-    final id = nonEmptyString(fieldOf(entry, 'id'));
-    final question = nonEmptyString(fieldOf(entry, 'question'));
-    // 缺 id 就没法把答案配对回去（契约 §5.7 的批次要按 id 对上），
-    // 缺题干就没什么可显示的 —— 两种都跳过这个问题，而不是摆一张空卡。
-    if (id == null || question == null) continue;
-    final rawOptions = fieldOf(entry, 'options');
-    final options = <InteractionOption>[];
-    if (rawOptions is List) {
-      for (final option in rawOptions) {
-        final label = nonEmptyString(fieldOf(option, 'label'));
-        if (label == null) continue;
-        options.add(
-          InteractionOption(
-            label: label,
-            description: nonEmptyString(fieldOf(option, 'description')),
-            // **"（推荐）"从标签里剥出来**单独做徽标（照原型）：标签本身干净，
-            // 徽标位置固定。DSH 的选项没有 recommended 字段，这是从文案里剥的。
-            recommended: _recommendedOf(label),
-          ),
-        );
-      }
-    }
-    out.add(
-      InteractionQuestion(
-        id: id,
-        question: question,
-        detail: nonEmptyString(fieldOf(entry, 'detail')),
-        header: nonEmptyString(fieldOf(entry, 'header')),
-        options: options,
-        multiSelect: fieldOf(entry, 'multi_select') == true,
-      ),
-    );
-  }
-  return out;
-}
-
-/// 标签里带"（推荐）"就算推荐（剥掉它再显示）。
-bool _recommendedOf(String label) {
-  final stripped = label.replaceAll(RegExp(r'[（(]推荐[)）]'), '');
-  return stripped != label;
 }

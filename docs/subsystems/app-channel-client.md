@@ -65,6 +65,8 @@ UI 一旦开始认事件类型,同一件事就会在两个地方各写一遍。
 
 - `core/` 与 `data/*.dart`(接口)不得出现 `dart:io`、`package:flutter/*`、`Platform.`、`MethodChannel`。
 - `ui/` 不得 import `packages/*_ios|_android|_ohos`。
+- `data/` 不得出现 `fieldOf(` —— 事件载荷的字段名只许在 `wire/` 断言,`data/` 只收端口
+  解好的值;违例报文件与行号(`data-no-fieldof`)。
 - `core/` 的所有 IO 走注入接口 ⇒ **纯 Dart 单测里可以直接跑 `protocol/fixtures`**。
 - 线上载荷的字段名与类型只在 `wire/` 里断言,消费方拿到的永远是解好的值;两边之间只许有
   **端口**(core 声明、wire 实现),且端口按**能力**暴露、不往 `SyncClient` 加成员
@@ -77,12 +79,12 @@ UI 一旦开始认事件类型,同一件事就会在两个地方各写一遍。
   `HostReads` + `HostWrites`(实现在 `wire/host_reads.dart` / `wire/host_writes.dart`,
   客户端以 `HostRpcHolder` 暴露这两个口)。**读写分两个口的判据是失败语义相反**:
   读不到是空态,写失败必须大声,而写全带幂等键。
-  **`data/` 只剩 1 条** `wire/` import(`projection.dart` 的事件字段读者,单独一批),
-  **`ui/` 与 `core/` 都是 0**(发消息走 `AppModel.sendPrompt` / `sendSubagentPrompt`,
-  界面不认识方法名)。`data/` 也**零 `wire/` import**:`projection.dart` 的事件载荷走
+  `core/`、`data/` 与 `ui/` 都**零 `wire/` import**:`projection.dart` 的事件载荷走
   `core/event_fields.dart` 的 `EventFields` 端口(实现在 `wire/event_fields.dart`,
-  由 `HostRpcHolder.eventFields` 交给投影),它内部仍有 22 处 `fieldOf(` 直读线上
-  字段名 —— 这些读法尚未进端口,门禁也尚未覆盖。代价与实测数字见
+  由 `HostRpcHolder.eventFields` 交给投影),端口分三族 —— 工具/审批/提问、消息/内容块、
+  重试/轮次收口/压缩/交互工具入参。因此 `data/` 里的 `fieldOf(` 为 **0**。
+  `ui/` 发消息走 `AppModel.sendPrompt` / `sendSubagentPrompt`,界面不认识方法名。
+  代价与实测数字见
   `.agents/notes/implemented/2026-11-06-p1b-batch1-session-family.md`、
   `…-batch2-catalog-family.md`、`…-batch3-preview-family.md`、
   `…-batch4-read-write-ports.md`、`…-ui-send-through-appmodel.md` 与

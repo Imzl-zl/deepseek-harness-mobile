@@ -56,6 +56,18 @@ function firstUiForbiddenImport(content) {
 }
 
 /**
+ * 把注释替换成**等长空白**（换行原样保留），于是行号仍然对得上。
+ *
+ * 与 [firstCodeUse] 同一个判据：**说明为什么不该这么写**是好代码，
+ * 按正文 grep 会让规则惩罚把理由写下来的人。
+ */
+function stripComments(content) {
+  return content
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, ' '))
+}
+
+/**
  * 在**去掉了注释**的源码里找第一个匹配。
  *
  * 用于"某符号的**用法**"这类规则（如 `Icons.*`）。与"只认 import 指令"是同一个道理：
@@ -67,11 +79,22 @@ function firstUiForbiddenImport(content) {
  * 字符串里写 `Icons.send` 不是用法，但它极罕见，且真出现时多报一次比漏报安全。
  */
 function firstCodeUse(content, pattern) {
-  const withoutComments = content
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/\/\/[^\n]*/g, ' ')
-  const found = pattern.exec(withoutComments)
+  const found = pattern.exec(stripComments(content))
   return found ? found[0].trim() : null
+}
+
+/**
+ * 找代码里第一处 `fieldOf(`（跳过注释），返回它**在第几行**。
+ *
+ * 违例要能直接跳到那一行：只说"这个文件里有"等于让人自己翻 1200 行。
+ * 行号来自去注释后的串 —— [stripComments] 逐字符留白、换行不动，所以对得上原文。
+ */
+function firstFieldOfUse(content) {
+  const code = stripComments(content)
+  const at = code.indexOf('fieldOf(')
+  if (at === -1) return null
+  const line = code.slice(0, at).split('\n').length
+  return `fieldOf(（第 ${line} 行）`
 }
 
 const RULES = [
@@ -131,6 +154,22 @@ const RULES = [
       + '同一个字段两处解释，猜错的那一处会静默变成空值（2026-10-25 计划卡）',
     appliesTo: (p) => p !== 'app/lib/wire/events.dart',
     match: (content) => firstCodeUse(content, /['"](?:arguments|toolCallId)['"]/g),
+  },
+  {
+    // 投影的"事件载荷读法"分三族搬进 `EventFields` 端口之后（`core/event_fields.dart`
+    // 声明、`wire/event_fields.dart` 实现，由 `HostRpcHolder.eventFields` 交给投影），
+    // `data/` 自己不再按线上字段名取值。
+    // 判据：**事件载荷的字段名只许在 `wire/` 断言**，`data/` 只收解好的值。
+    // 钉的是**直接 `fieldOf(`**（"在线上 map 上按名字取字段"那一步）；`stringField` /
+    // `intField` 是同一层的两步式取值，命令 / 审批 / 改动几族在 `data/` 里还有读点，
+    // 这条规则不覆盖它们 —— 别把"归零"读成"data/ 里一个字段名都没有"。
+    id: 'data-no-fieldof',
+    why: '事件载荷的字段名只许在 wire/ 断言（`EventFields` 端口），'
+      + 'data/ 只收解好的值；出现 `fieldOf(` 说明投影又在按线上字段名取值 —— '
+      + '那样 DSH 改字段名要进 data/，猜错的那一处还会静默变成空值'
+      + '（2026-10-25 计划卡是同一类）',
+    appliesTo: (p) => /^app\/lib\/data\//.test(p),
+    match: (content) => firstFieldOfUse(content),
   },
 ]
 
@@ -215,6 +254,22 @@ const SELF_TEST = [
     rule: 'wire-field-single-reader',
     path: 'app/lib/data/projection.dart',
     content: "// 别再按 'arguments' 取字段了，见 wire/events.dart",
+    shouldFail: false,
+  },
+  // 事件载荷的字段名只许在 wire/ 断言：`data/` 里不得出现 `fieldOf(`。
+  // 反例就是搬进端口之前那一行：投影自己在线上载荷上取 `failure`。
+  {
+    rule: 'data-no-fieldof',
+    path: 'app/lib/data/projection.dart',
+    content: "final failure = fieldOf(data, 'failure');",
+    shouldFail: true,
+  },
+  // **注释里提到 `fieldOf(` 不算违规**：说明"为什么不再这么写"是好代码，
+  // 按正文 grep 会让规则惩罚把理由写下来的人（`no-material-icons` 踩过同一个坑）。
+  {
+    rule: 'data-no-fieldof',
+    path: 'app/lib/data/projection.dart',
+    content: "// 端口解好的值，别再 fieldOf(data, 'failure')",
     shouldFail: false,
   },
 ]
