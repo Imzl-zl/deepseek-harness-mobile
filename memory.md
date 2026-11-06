@@ -42,6 +42,14 @@
   **仍未做**：`data` 的 21 条（真正成本是 74 个测试文件都直接构造 `AppModel`，加必填端口 =
   100+ 处改动 ⇒ 要先有测试侧 fixture builder），以及**一次真机重连**（改的是收帧热路径，
   不能只看测试）。
+  ⑦ **P1 后半的设计已定（未落码）**：`data → wire` 剩下的 21 条走**能力接口**——`HostRpc` 声明在
+  `core/`、`WireHostRpc` 实现在 `wire/`、`SyncClientImpl` 兼作该能力，`AppModel` 用
+  `client is HostRpc` 取（沿用 `core/sync_client.dart:207` 的 `LinkControl` 先例，`SyncClient`
+  接口零新增成员）。**不给 `AppModel` 加必填端口**：那要动 74 个测试文件，而且夹具会从原始协议
+  JSON 退化成手搓 DTO，等于把解码器从测试路径上摘掉。测试只改两个假客户端（转给真的
+  `WireHostRpc`）。分四批：会话族 → 目录族 → 预览族 → 收尾（`projection.dart` 那条与
+  `projectEvent` 的 55 处调用点绑在一起，单独一批）。设计见
+  `.agents/notes/proposed/2026-11-06-p1b-host-rpc-port.md`。
   门禁：connector **836**；app **1759**；boundary **760**；`dart analyze --fatal-infos` 0。
   另外把**真机库副本**喂给真实现跑了一遍 v2→v3（24.5 MB 的 `dsh_mobile.db`，只读副本）：
   4136 条条目一条不少、14 个水位键全部带前缀、`device.transparency/surface_alpha` 原样 ——
