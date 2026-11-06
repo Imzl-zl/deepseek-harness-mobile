@@ -31,10 +31,10 @@ class HostCatalogs {
   /// 目录变了（**已去重**：值没变就不调）。
   final void Function() onChange;
 
-  /// 读电脑侧目录的能力口（端口在 `core/host_rpc.dart`，实现在 `wire/host_rpc.dart`）。
+  /// 读电脑侧目录的能力口（端口在 `core/host_rpc.dart`，实现在 `wire/host_reads.dart`）。
   ///
   /// 判据只写在 [hostRpcOf] 一处（缺能力是装配错误，不静默降级）。
-  HostRpc get _rpc => hostRpcOf(client);
+  HostReads get _reads => hostRpcOf(client).reads;
 
   ModelCatalog? get modelCatalog => _modelCatalog;
   ModelCatalog? _modelCatalog;
@@ -56,7 +56,7 @@ class HostCatalogs {
   /// `wire/rpc/session.dart` 的 `readModelCatalog`；这里只知道"目录可能拿不到"。
   Future<void> refreshModels() async {
     try {
-      final reply = await _rpc.modelCatalog();
+      final reply = await _reads.modelCatalog();
       // 没变 ⇒ 目录原样（`onChange` 都不用调）。
       if (reply.notModified) return;
       final catalog = reply.value;
@@ -74,7 +74,7 @@ class HostCatalogs {
   /// 拉一次权限预设目录。`available: false` 是电脑侧的明说（⇒ null）。
   Future<void> refreshPermissions() async {
     try {
-      final reply = await _rpc.permissionCatalog();
+      final reply = await _reads.permissionCatalog();
       // 没变 ⇒ 目录原样。
       if (reply.notModified) return;
       client.commitSnapshot(reply.key);
@@ -87,7 +87,7 @@ class HostCatalogs {
   /// 拉一次 Agent 预设目录（目录本体的解析仍在 `model/agent_preset.dart`）。
   Future<void> refreshPresets() async {
     try {
-      final reply = await _rpc.agentPresets();
+      final reply = await _reads.agentPresets();
       // 没变 ⇒ 目录原样。
       if (reply.notModified) return;
       final roster = reply.value;

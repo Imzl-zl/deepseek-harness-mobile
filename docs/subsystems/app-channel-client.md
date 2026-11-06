@@ -25,7 +25,7 @@ app/lib/
 │   └── sync_client.dart         连接状态机 + 订阅管理(接口与 SessionDelta)
 │       sync_client_impl.dart    上述接口的实现
 │       history_page.dart        翻页/补取解出来之后的形状 + HistoryReader 端口(实现在 wire/)
-│       host_rpc.dart            读电脑侧快照/目录的能力口 HostRpc(实现在 wire/host_rpc.dart)
+│       host_rpc.dart            读/写两个能力口 HostReads + HostWrites(客户端以 HostRpcHolder 暴露)
 │       session_projections.dart 会话投影解好之后的值(键名与字段类型仍只在 wire 断言)
 │       session_list_page.dart   一页会话行解好之后的值(拆包与坏行处置仍只在 wire 断言)
 │       setting_section.dart     目录族解好之后的值:设置分区
@@ -38,7 +38,9 @@ app/lib/
 ├── wire/                        线上格式的**唯一断言点**(字段名与类型只在这里)
 │   ├── reading.dart             三态内核(WireReading = Ok | Skip | Bad) + WireDiagnostics
 │   ├── events.dart              会话事件载荷(type + data)
-│   ├── host_rpc.dart            HostRpc 的实现(薄层:只把端口的方法接到 rpc/<family>.dart)
+│   ├── host_reads.dart          HostReads 的实现(一行一个:接到 rpc/<family>.dart 的 loadXxx)
+│   ├── host_writes.dart         HostWrites 的实现(同上;端口名 ↔ 方法名的映射只在这里)
+│   ├── host_rpc.dart            HostRpcHolder 的实现:把这条连接上的两个口装配起来
 │   └── rpc/<family>.dart        一个方法族一个文件:发请求 + 解码
 ├── data/
 │   ├── projection.dart          事件 → 界面条目的**唯一**投影(唯一认识事件语义处)
@@ -71,15 +73,15 @@ UI 一旦开始认事件类型,同一件事就会在两个地方各写一遍。
   能力自己带着那条连接跑。
   已经倒置完的三族:翻页/补取走 `core/history_page.dart` 的 `HistoryReader`(实现在
   `wire/rpc/session_page.dart`),事件身份字段走 `core/items.dart` 的 `EventIdReaders`
-  (实现在 `wire/events.dart`),读电脑侧的快照与目录走 `core/host_rpc.dart` 的 `HostRpc`
-  (实现在 `wire/host_rpc.dart`,客户端以 `HostRpcHolder` 暴露该能力 —— 会话投影 / 会话行 /
-  设置 / 三个目录 / 工作区 / 仓库 / 插件 / 文件预览与改动清单)。
-  **`data/` 还有 12 条** `wire/` import(`app_model` 11 / `projection` 1),
+  (实现在 `wire/events.dart`),读 / 改电脑侧走 `core/host_rpc.dart` 的
+  `HostReads` + `HostWrites`(实现在 `wire/host_reads.dart` / `wire/host_writes.dart`,
+  客户端以 `HostRpcHolder` 暴露这两个口)。**读写分两个口的判据是失败语义相反**:
+  读不到是空态,写失败必须大声,而写全带幂等键。
+  **`data/` 只剩 1 条** `wire/` import(`projection.dart` 的事件字段读者,单独一批),
   代价与实测数字见
-  `.agents/notes/implemented/2026-11-06-p1-dependency-inversion.md`、
   `.agents/notes/implemented/2026-11-06-p1b-batch1-session-family.md`、
-  `.agents/notes/implemented/2026-11-06-p1b-batch2-catalog-family.md` 与
-  `.agents/notes/implemented/2026-11-06-p1b-batch3-preview-family.md`。
+  `…-batch2-catalog-family.md`、`…-batch3-preview-family.md` 与
+  `…-batch4-read-write-ports.md`。
 - **条目身份只算一次**:`itemIdOf`(契约 §5.2 的规则)在**解码边界**跑,结果落在
   `SessionEvent.itemId`;`data/projection.dart` 只**消费**它,不再重推 —— 同一条事件
   两条路径各推一次就会有两个答案。

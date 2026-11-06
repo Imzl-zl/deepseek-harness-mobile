@@ -64,17 +64,6 @@ import '../model/turn_outline.dart';
 import '../model/usage_summary.dart';
 import '../model/workspace.dart';
 import '../model/workspace_files.dart';
-import '../wire/rpc/command.dart' as wire;
-import '../wire/rpc/endpoint.dart' as wire;
-import '../wire/rpc/interaction.dart' as wire;
-import '../wire/rpc/job.dart' as wire;
-import '../wire/rpc/permission.dart' as wire;
-import '../wire/rpc/plugin.dart' as wire;
-import '../wire/rpc/refs.dart' as wire;
-import '../wire/rpc/session.dart' as wire;
-import '../wire/rpc/settings.dart' as wire;
-import '../wire/rpc/usage.dart' as wire;
-import '../wire/rpc/workspace.dart' as wire;
 import 'app_services.dart';
 import 'endpoint_book.dart';
 import 'file_preview.dart';
@@ -529,16 +518,19 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   // 会话投影（`session.projections`，契约 §5.7）—— 一个方法打开全部只读面
   // ---------------------------------------------------------------------------
 
-  /// 读电脑侧只读面的能力口（端口在 `core/host_rpc.dart`，实现在 `wire/host_rpc.dart`）。
+  /// 电脑侧的两个能力口（端口在 `core/host_rpc.dart`，实现在
+  /// `wire/host_reads.dart` / `wire/host_writes.dart`）。
   ///
-  /// 客户端兼作这个能力（`_SyncClient implements HostRpcHolder`，只多一个 getter），
-  /// 所以这里按 `is` 取 ——
-  /// 与 [disconnectLink] 对 `LinkControl` 是同一个手法，**`SyncClient` 接口一个成员都没加**
-  /// （全仓二十多个替身因此不用跟着改）。
+  /// 客户端兼作这个能力（`_SyncClient implements HostRpcHolder`，只多两个 getter），
+  /// 所以这里按 `is` 取 —— 与 [disconnectLink] 对 `LinkControl` 是同一个手法，
+  /// **`SyncClient` 接口一个成员都没加**（全仓二十多个替身因此不用跟着改）。
   ///
-  /// 取不到的判据与错误文案只写在 `hostRpcOf` 一处（`HostCatalogs` 也用它）：
+  /// 取不到的判据与错误文案只写在 `hostRpcOf` 一处（`HostCatalogs` / `FilePreview` 也用它）：
   /// 缺能力是装配错误，不是"这台电脑读不出东西"，所以抛而不是静默降级。
-  HostRpc get _rpc => hostRpcOf(client);
+  HostReads get _reads => hostRpcOf(client).reads;
+
+  /// 写口：**失败必须大声**（操作没进去不能装成功）。
+  HostWrites get _writes => hostRpcOf(client).writes;
 
   /// 最近一次读到的投影包（`null` = 还没读过 / 读不到）。
   ///
@@ -640,9 +632,9 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     required String what,
   }) async {
     final key = snapshotKeyOf('session.projections', {'sid': sid});
-    // **能力口在 try 之外取**：缺能力是装配错误（见 [_rpc]），不该被下面那个
+    // **能力口在 try 之外取**：缺能力是装配错误（见 [_reads]），不该被下面那个
     // "读不到就显示空态"的兜底吞成"这台电脑投影是空的"。
-    final rpc = _rpc;
+    final reads = _reads;
     // "手里已经有这一包"的判据是**目录三态**（`ready` = 读到过），不是另记一份标记。
     final firstRead =
         _subagentCatalogs[sid]?.state != SubagentCatalogState.ready;
@@ -656,7 +648,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       if (!_disposed) notifyListeners();
     }
     try {
-      final reply = await rpc.projections(sid: sid);
+      final reply = await reads.projections(sid: sid);
       if (_disposed) {
         return SnapshotReply<SessionProjections?>.body(null, key: reply.key);
       }
@@ -836,8 +828,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     if (sid == null) return null;
     try {
       // 方法名、参数形状与`{matched, execution?}` 的回执都在 `wire/rpc/permission.dart`。
-      final switched = await wire.switchPermissionPreset(
-        client,
+      final switched = await _writes.switchPermission(
         sid: sid,
         preset: preset,
         requestId: newRequestId('perm'),
@@ -877,8 +868,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     if (sid == null) return null;
     try {
       // 方法名 / 参数形状 / 回执形状都在 `wire/rpc/command.dart`。
-      final outcome = await wire.executeCommand(
-        client,
+      final outcome = await _writes.executeCommand(
         sid: sid,
         line: line,
         requestId: newRequestId('cmd'),
@@ -946,7 +936,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// @returns 成功与否；失败原因在 [lastError]。
   Future<bool> cancel(String sid) async {
     try {
-      await wire.cancelSession(client, sid: sid);
+      await _writes.cancelSession(sid: sid);
       return true;
     } on ProtocolException catch (error) {
       _lastError = error;
@@ -987,8 +977,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     String? text,
   }) async {
     try {
-      await wire.updateQueueAction(
-        client,
+      await _writes.updateQueue(
         sid: sid,
         itemId: itemId,
         action: switch (kind) {
@@ -1070,7 +1059,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     // 桶不存在时帧会被丢 —— 而表现是"任务在跑但没有输出"，最难查的那类。
     _jobs.putIfAbsent(sid, () => <JobRow>[]);
     // 形状（`{jobs: [...]}` 与一行任务）在 `wire/rpc/job.dart`。
-    final reply = await wire.loadJobList(client, sid: sid);
+    final reply = await _reads.jobList(sid: sid);
     // 没变 ⇒ 桶里已经是这一包（任务表只在任务增删 / 落终态时变）。
     if (reply.notModified) return;
     final rows = reply.value;
@@ -1101,7 +1090,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     _jobErrors.remove(jobId);
     try {
       // **应答不读**：开流的作用在服务端，输出走 `job` 帧。
-      await wire.followJobOutput(client, sid: sid, jobId: jobId);
+      await _writes.followJob(sid: sid, jobId: jobId);
     } on ProtocolException catch (error) {
       // 订阅没开成：把本地标记撤掉，否则 UI 会显示"已订阅"却永远没有输出。
       followed.remove(jobId);
@@ -1114,7 +1103,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   Future<void> unfollowJob(String sid, String jobId) async {
     _followedJobs[sid]?.remove(jobId);
     try {
-      await wire.unfollowJobOutput(client, sid: sid, jobId: jobId);
+      await _writes.unfollowJob(sid: sid, jobId: jobId);
     } on ProtocolException catch (error) {
       _jobErrors[jobId] = error.message;
     }
@@ -1124,7 +1113,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 停一个任务。**走宿主的人类发起门面**，返回电脑侧的结论。
   Future<String?> killJob(String sid, String jobId) async {
     try {
-      return await wire.killJob(client, sid: sid, jobId: jobId);
+      return await _writes.killJob(sid: sid, jobId: jobId);
     } on ProtocolException catch (error) {
       _jobErrors[jobId] = error.message;
       notifyListeners();
@@ -1375,8 +1364,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     final sid = _currentSid;
     if (sid == null) return null;
     try {
-      final selected = await wire.selectModel(
-        client,
+      final selected = await _writes.selectModel(
         sid: sid,
         provider: provider,
         model: model,
@@ -2000,7 +1988,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     try {
       // 形状（`{sections: [{ns, revision, values, secrets}]}`）在 `wire/rpc/settings.dart`；
       // 这里只把快照落进三张表。
-      final reply = await _rpc.settings(namespaces: kSettingsNamespaces);
+      final reply = await _reads.settings(namespaces: kSettingsNamespaces);
       // 没变 ⇒ 三张表原样（设置是低频动作，重取大多换回同一份）。
       if (reply.notModified) return;
       final sections = reply.value;
@@ -2032,8 +2020,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 下一次点击就会带上新的 revision，用户不必自己"刷新页面"。
   Future<bool> updateSetting(String ns, String path, Object? value) async {
     try {
-      final section = await wire.updateSettingValue(
-        client,
+      final section = await _writes.updateSetting(
         ns: ns,
         path: [path],
         value: value,
@@ -2112,7 +2099,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       // `wire/rpc/repo.dart`：手机只消费四个键（三个能力位 + commands + dshVersion）
       // 外加 `hostName`（电脑自报的名字，只供展示），
       // `protocol` / `aliasVersion` / `methods` 不声明（前者在帧头 `v` 里校验）。
-      final reply = await _rpc.repoInfo();
+      final reply = await _reads.repoInfo();
       // 没变 ⇒ 什么都不做（版本 / 能力位是进程级事实，一次会话里不会变）。
       if (reply.notModified) return;
       final info = reply.value;
@@ -2178,7 +2165,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     }
     try {
       // 形状（`{listing}` 信封 + 本体）在 `wire/rpc/file.dart`。
-      final listing = await _rpc.fileListing(sid: sid, path: path);
+      final listing = await _reads.fileListing(sid: sid, path: path);
       if (listing == null) {
         _recordError('读取目录失败', StateError('电脑侧的目录应答形状认不出'));
         return null;
@@ -2339,7 +2326,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     _changesFailures.remove(key);
     if (!_disposed) notifyListeners();
     try {
-      final summary = await _rpc.changesSummary(sid: _currentSid!, seq: seq);
+      final summary = await _reads.changesSummary(sid: _currentSid!, seq: seq);
       if (_disposed) return;
       _changesBySeq[key] = summary;
     } catch (error) {
@@ -2389,7 +2376,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     try {
       // 两个面各一发（并发）：插件行与包是两张表，卸载按包名走。形状在
       // `wire/rpc/plugin.dart`（行本体仍由 `model/plugins.dart` 的 fromWire 解）。
-      final inventory = await _rpc.plugins();
+      final inventory = await _reads.plugins();
       if (inventory == null) {
         _recordError('读取插件清单失败', StateError('电脑侧的插件应答形状认不出'));
         _pluginsFailure = '电脑侧的插件应答形状认不出';
@@ -2415,8 +2402,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   Future<PluginToggleOutcome?> setPluginEnabled(String id, bool enabled) async {
     try {
       // 回执的 `enabled` 是**宿主回读后的真值**（`wire/rpc/plugin.dart`）。
-      final toggled = await wire.setPluginEnabled(
-        client,
+      final toggled = await _writes.setPluginEnabled(
         id: id,
         enabled: enabled,
         requestId: newRequestId('plug'),
@@ -2450,8 +2436,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   Future<String?> installPlugin(String spec) async {
     if (!_pluginsAvailable) return null;
     try {
-      return await wire.startPluginInstall(
-        client,
+      return await _writes.installPlugin(
         spec: spec,
         requestId: newRequestId('plug'),
       );
@@ -2465,8 +2450,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   Future<String?> removePluginBundle(String name) async {
     if (!_pluginsAvailable) return null;
     try {
-      return await wire.removePluginBundle(
-        client,
+      return await _writes.removePlugin(
         name: name,
         requestId: newRequestId('plug'),
       );
@@ -2479,7 +2463,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 问一次任务状态（`plugin.installStatus`）。失败原因在 [lastError]。
   Future<PluginJob?> pluginJobStatus(String requestId) async {
     try {
-      return await wire.pluginJobStatus(client, requestId: requestId);
+      return await _reads.pluginJobStatus(requestId: requestId);
     } catch (error) {
       _recordError('读取插件任务状态失败', error);
       return null;
@@ -2489,7 +2473,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 取消一次安装（`plugin.cancelInstall`）。回宿主的三档状态（原样）。
   Future<String?> cancelPluginInstall(String requestId) async {
     try {
-      return await wire.cancelPluginInstall(client, requestId: requestId);
+      return await _writes.cancelPluginInstall(requestId: requestId);
     } catch (error) {
       _recordError('取消安装失败', error);
       return null;
@@ -2515,11 +2499,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     try {
       // 形状（`{files:[…]}` / `{sessions:[…]}`，并发查一次）在 `wire/rpc/refs.dart`；
       // 行本体仍由 `AtCandidate.fromFileRow` / `fromSessionRow` 解析（认不出的行跳过）。
-      final answers = await wire.loadMentionCandidates(
-        client,
-        sid: sid,
-        query: query,
-      );
+      final answers = await _reads.mentionCandidates(sid: sid, query: query);
       // 任一侧读不出来 ⇒ 那一侧当"没有"（另一侧照常给）—— 两列独立。
       final files = answers.files;
       final sessions = answers.sessions;
@@ -2557,7 +2537,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     try {
       // 形状（`{totals, byDay, bySession, byProject, grandTotal}`）在 `wire/rpc/usage.dart`；
       // 聚合规则不在这层（连接器自己遍历可见会话聚出来的）。
-      _usageSummary = await wire.loadUsageSummary(client);
+      _usageSummary = await _reads.usageSummary();
       _lastError = null;
     } catch (error) {
       // **兜住所有异常，不只 `ProtocolException`**（与 `refreshSessionRows` 同一条纪律）：
@@ -2692,7 +2672,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     _discovering = true;
     try {
       // 形状（`{endpoints: [{kind, url, label?}]}`）在 `wire/rpc/endpoint.dart`。
-      final reply = await wire.loadEndpoints(client);
+      final reply = await _reads.endpoints();
       // 没变 ⇒ 端点表里已经是这一份（每次连上都会问一次，而地址几乎不变）。
       if (reply.notModified) return;
       final discovered = reply.value ?? const <Endpoint>[];
@@ -2778,7 +2758,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   Future<SnapshotReply<SessionListPage>> _fetchSessionRows({
     int? limit,
     int? offset,
-  }) => _rpc.sessionRows(limit: limit, offset: offset);
+  }) => _reads.sessionRows(limit: limit, offset: offset);
 
   /// 把一包会话行落到 [sessions]（**唯一的赋值口**）。
   ///
@@ -3491,7 +3471,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   Future<void> refreshWorkspaces() async {
     try {
       // 形状（分组 + 两列 id，**同一份应答**）在 `wire/rpc/workspace.dart`。
-      final reply = await _rpc.workspaces();
+      final reply = await _reads.workspaces();
       // 没变 ⇒ 分组 / 归档集 / 置顶集都已经是这一份。
       if (reply.notModified) return;
       final snapshot = reply.value;
@@ -3556,8 +3536,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 时该走"停止并归档"）。
   Future<bool> archiveSession(String sid, {bool stopActivity = false}) async {
     try {
-      final archived = await wire.workspaceArchive(
-        client,
+      final archived = await _writes.archiveSession(
         sid: sid,
         stopActivity: stopActivity,
         requestId: newRequestId('arc'),
@@ -3579,8 +3558,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 取消归档（**宿主侧幂等**：没归档过的 id 也成功）。
   Future<bool> unarchiveSession(String sid) async {
     try {
-      final archived = await wire.workspaceUnarchive(
-        client,
+      final archived = await _writes.unarchiveSession(
         sid: sid,
         requestId: newRequestId('unarc'),
       );
@@ -3603,8 +3581,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 已归档行，所以这里不预判，出错照实显示。
   Future<bool> pinSession(String sid) async {
     try {
-      final pinned = await wire.workspacePin(
-        client,
+      final pinned = await _writes.pinSession(
         sid: sid,
         requestId: newRequestId('pin'),
       );
@@ -3627,8 +3604,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 取消置顶（宿主侧幂等：没置顶过的 id 也成功）。
   Future<bool> unpinSession(String sid) async {
     try {
-      final pinned = await wire.workspaceUnpin(
-        client,
+      final pinned = await _writes.unpinSession(
         sid: sid,
         requestId: newRequestId('unpin'),
       );
@@ -3660,8 +3636,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       return false;
     }
     try {
-      final order = await wire.workspaceInsertSessionBefore(
-        client,
+      final order = await _writes.moveSession(
         workspaceId: group.workspaceId,
         sid: sid,
         beforeSid: beforeSid,
@@ -3689,8 +3664,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     required String? beforeWorkspaceId,
   }) async {
     try {
-      final order = await wire.workspaceInsertBefore(
-        client,
+      final order = await _writes.moveWorkspace(
         workspaceId: workspaceId,
         beforeWorkspaceId: beforeWorkspaceId,
         requestId: newRequestId('mvw'),
@@ -3794,8 +3768,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     final targetWorkspaceId = workspaceId ?? defaultNewSessionWorkspaceId;
     // 方法名与参数形状（含"两个可选键只发有值的那个"）在
     // `wire/rpc/session.dart` 的 `createSession`；`sid` 缺失会在那边计数并回 null。
-    final sid = await wire.createSession(
-      client,
+    final sid = await _writes.createSession(
       workspaceId: targetWorkspaceId,
       agentPreset: agentPreset,
       requestId: newRequestId('new'),
@@ -3826,7 +3799,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// **不假装成功**（fork 是宿主状态，客户端伪造不了）。
   Future<String?> forkSession(String sid, {int? atSeq}) async {
     try {
-      final child = await wire.forkSession(client, sid: sid, atSeq: atSeq);
+      final child = await _writes.forkSession(sid: sid, atSeq: atSeq);
       if (child == null) {
         _recordError('分支失败', StateError('电脑侧的分支应答形状认不出'));
         return null;
@@ -4557,8 +4530,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   Future<void> respondInteraction(InteractionAnswer answer) async {
     // 形状（`{sid, itemId, answers}` + 幂等键 = itemId）在 `wire/rpc/interaction.dart`；
     // 这一层只负责把答复批次**原样**递过去（一个字段都不翻译）。
-    await wire.respondInteraction(
-      client,
+    await _writes.respondInteraction(
       sid: answer.sid,
       itemId: answer.itemId,
       answers: <Map<String, Object?>>[

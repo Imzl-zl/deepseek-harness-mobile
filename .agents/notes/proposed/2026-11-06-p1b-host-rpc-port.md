@@ -1,12 +1,13 @@
 # P1 后半：`data → wire` 倒置走「能力接口」，端口跟着客户端走
 
 - 日期：2026-11-06
-- 状态：proposed（**第 1、2、3 批已落地**，只剩收尾）
+- 状态：proposed（**四批全部落地**；`projection.dart` 那一条按本文不属本方案，未做）
 - 前情：`core → wire` 已归零（见 `implemented/2026-11-06-p1-dependency-inversion.md`）。
   这一篇只管 `data/` 剩下的 21 条 import。
-- 进度（2026-11-06）：会话族 / 目录族 / 预览族都已倒置完（`app_model` 的 wire import
-  15 → **11**，`host_catalogs` 3 → **0**，`file_preview` 2 → **0**，`data/` 21 → **12**，
-  `wire.` 44 → **27**），实际代价与偏差见三篇 implemented 笔记。**未动**：收尾批。
+- 进度（2026-11-06）：**四批全部落地**。`app_model` 的 wire import 15 → **0**、
+  `host_catalogs` 3 → **0**、`file_preview` 2 → **0**、`data/` 21 → **1**
+  （只剩 `projection.dart`），`app_model` 的 `wire.` 44 → **0**。
+  代价与偏差见四篇 implemented 笔记（会话族 / 目录族 / 预览族 / 读写两口）。
 - 前置能力：`SyncClient` 已经是"能力接口"手法的先例（`core/sync_client.dart:207` 的
   `LinkControl`：**不往 `SyncClient` 加抽象方法**，因为全仓二十多个替身都 `implements SyncClient`，
   加一个方法就得改二十多处；改用小接口 + `is` 判定）。
@@ -82,8 +83,10 @@
 3. **预览族（已落地，2026-11-06）**：文件预览、目录列举、改动清单。四个读口回的已经是
    `model/` 的类型，所以这一批只搬调用口、不搬 DTO；`file_preview.dart` 的 2 条 wire import
    清零。见 `implemented/2026-11-06-p1b-batch3-preview-family.md`。
-4. **收尾（未做）**：各写操作 + `projection.dart` 那条单独一批。目标是把 `data/` 清到
-   **1 个文件 / 1 条**。
+4. **收尾（已落地，2026-11-06）**：切**读 / 写两个口**（`HostReads` 18 个方法 /
+   `HostWrites` 22 个），`data/` 的 `wire/` import 只剩 `projection.dart` 那 1 条 ——
+   即本文的终态。见 `implemented/2026-11-06-p1b-batch4-read-write-ports.md`
+   （含"`sendPrompt` 的调用点在 `ui/`、未搬"这条遗留）。
 
 ## 不在本方案里的一条
 
@@ -95,7 +98,7 @@
 ## 验收
 
 - `git grep -c "import '\.\./wire/" -- app/lib/data` 从 4 个文件 / 21 条降到 **1 个文件 / 1 条**
-  （只剩 `projection.dart`）。**当前：3 个文件 / 16 条**（`app_model` 13）。
+  （只剩 `projection.dart`）。**已达成。**
 - `SyncClient` 接口**没有新增成员**（`git diff app/lib/core/sync_client.dart` 只看得到
   `HostRpc` 的 import 与文档，看不到新方法）。
 - 测试侧**没有任何夹具从 JSON 改成 DTO**（这条是硬约束）。原写"只改 2 个文件（两个假客户端）"，

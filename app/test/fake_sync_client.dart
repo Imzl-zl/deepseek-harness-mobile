@@ -88,8 +88,13 @@ abstract class FakeSyncClient
   /// 就等于把解码器从测试里摘掉，那类改动看不出线上形状漂了。
   ///
   /// `late` 是必须的：字段初始化器里只有 `late` 能用 `this`。
+  late final HostRpcHolder _hostRpc = WireHostRpc(this);
+
   @override
-  late final HostRpc hostRpc = WireHostRpc(this);
+  HostReads get reads => _hostRpc.reads;
+
+  @override
+  HostWrites get writes => _hostRpc.writes;
 
   // ---- 翻页相关：本版新加的默认值 ----
 

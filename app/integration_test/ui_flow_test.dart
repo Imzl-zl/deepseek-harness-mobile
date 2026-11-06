@@ -41,8 +41,13 @@ class _FakeClient implements SyncClient, HostRpcHolder {
   /// 读电脑侧的能力**转给真的那份实现**（`wire/host_rpc.dart`）：这个替身的
   /// `call` 照旧如实抛错，端口不会绕过它 —— 造一份手搓的投影包就等于把
   /// 解码器从这条测试路径上摘掉。
+  late final HostRpcHolder _hostRpc = WireHostRpc(this);
+
   @override
-  late final HostRpc hostRpc = WireHostRpc(this);
+  HostReads get reads => _hostRpc.reads;
+
+  @override
+  HostWrites get writes => _hostRpc.writes;
 
   @override
   ConnectionState get state => ConnectionState.idle;

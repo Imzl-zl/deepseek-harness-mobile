@@ -284,17 +284,22 @@ class _SyncClient
   }
 
   // -------------------------------------------------------------------------
-  // 能力口：读电脑侧的东西（`HostRpc`）
+  // 能力口：读 / 改电脑侧（`HostRpcHolder`）
   // -------------------------------------------------------------------------
   //
-  // 能力**不是我**：活全在 `wire/host_rpc.dart`（装配点给的工厂）。这里只证明
-  // "这一条连接上有一个 HostRpc"，所以只有这一个 getter —— 不把这九个方法搬进来，
-  // 否则要么逐方法转发，要么为了转发再造一层基类（两版都试过，第一版被这一版换掉了，
+  // 能力**不是我**：活全在 `wire/host_reads.dart` 与 `wire/host_writes.dart`（装配点给的
+  // 工厂造出来）。这里只证明"这一条连接上有那两个口"，所以只有两个 getter ——
+  // 不把这些方法搬进来，否则要么逐方法转发，要么为了转发再造一层基类（第一版试过，
   // 见 `.agents/notes/implemented/2026-11-06-p1b-hostrpc-holder.md`）。
   // **在这里 import `wire/` 是不行的**：`core → wire` 就又回来了，那正是这批要拆的方向。
 
+  late final HostRpcHolder _hostRpc = _deps.hostRpc(this);
+
   @override
-  late final HostRpc hostRpc = _deps.hostRpc(this);
+  HostReads get reads => _hostRpc.reads;
+
+  @override
+  HostWrites get writes => _hostRpc.writes;
 
   // -------------------------------------------------------------------------
   // 连接生命周期
