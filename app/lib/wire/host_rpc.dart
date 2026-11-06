@@ -9,8 +9,10 @@
 /// `.agents/notes/implemented/2026-11-06-p1b-hostrpc-holder.md`。
 library;
 
+import '../core/event_fields.dart';
 import '../core/host_rpc.dart';
 import '../core/sync_client.dart';
+import 'event_fields.dart';
 import 'host_reads.dart';
 import 'host_writes.dart';
 
@@ -26,4 +28,9 @@ final class WireHostRpc implements HostRpcHolder {
 
   @override
   late final HostWrites writes = WireHostWrites(client);
+
+  /// 纯解码，不碰连接 —— 一个 `const` 实例就够了（`WireHostRpc` 因为它不是 `const`
+  /// 才用 `late final`，这里没必要跟着）。
+  @override
+  EventFields get eventFields => const WireEventFields();
 }

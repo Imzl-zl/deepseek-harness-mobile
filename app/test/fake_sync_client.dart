@@ -31,6 +31,7 @@ library;
 import 'dart:async';
 
 import 'package:dsh_mobile/core/connection.dart';
+import 'package:dsh_mobile/core/event_fields.dart';
 import 'package:dsh_mobile/core/host_rpc.dart';
 import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/session_restore.dart';
@@ -95,6 +96,9 @@ abstract class FakeSyncClient
 
   @override
   HostWrites get writes => _hostRpc.writes;
+
+  @override
+  EventFields get eventFields => _hostRpc.eventFields;
 
   // ---- 翻页相关：本版新加的默认值 ----
 

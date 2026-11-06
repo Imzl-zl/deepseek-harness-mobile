@@ -20,10 +20,12 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:dsh_mobile/data/projection.dart';
+import 'package:dsh_mobile/core/event_fields.dart' show ToolCallPayload;
 import 'package:dsh_mobile/model/interaction.dart';
 import 'package:dsh_mobile/wire/events.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'projection_fixture.dart';
 
 Map<String, Object?> _fixture() =>
     jsonDecode(
@@ -123,8 +125,8 @@ void main() {
     );
 
     final call = readToolCall(data);
-    expect(call, isA<WireOk<ToolCallWire>>());
-    final wire = (call as WireOk<ToolCallWire>).value;
+    expect(call, isA<WireOk<ToolCallPayload>>());
+    final wire = (call as WireOk<ToolCallPayload>).value;
     expect(wire.name, 'exit_plan_mode');
     expect(wire.arguments, isNotNull, reason: '字符串解不开就说明形状又漂了');
 
@@ -177,14 +179,14 @@ void main() {
       'name': 'exit_plan_mode',
       'arguments': '{ 不是 JSON',
     });
-    expect(call, isA<WireOk<ToolCallWire>>());
-    expect((call as WireOk<ToolCallWire>).value.arguments, isNull);
+    expect(call, isA<WireOk<ToolCallPayload>>());
+    expect((call as WireOk<ToolCallPayload>).value.arguments, isNull);
     expect(WireDiagnostics.badCount, 0);
   });
 
   test('身份字段缺失算形状错：出声、计数加一，不静默', () {
     final call = readToolCall(const {'name': 'read'});
-    expect(call, isA<WireBad<ToolCallWire>>());
+    expect(call, isA<WireBad<ToolCallPayload>>());
     expect(valueOrReport(call, 'tool/call'), isNull);
     expect(WireDiagnostics.badCount, 1);
     expect(reported.single, contains('callId'));

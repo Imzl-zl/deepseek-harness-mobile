@@ -12,12 +12,14 @@ library;
 
 import 'dart:convert';
 
-import 'package:dsh_mobile/data/projection.dart';
+import 'package:dsh_mobile/data/projection.dart' hide interactionSignalOf;
 import 'package:dsh_mobile/model/interaction.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/takeover.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
+
+import 'projection_fixture.dart';
 
 /// 一条 `exit_plan_mode` 的 `tool/call`，**形状取真机落下来的事件**（不是手捏的理想形状）。
 ///

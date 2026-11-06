@@ -26,11 +26,14 @@ library;
 import 'package:dsh_mobile/core/items.dart' as core show EventLike, itemIdOf;
 import 'package:dsh_mobile/data/projection.dart'
     as wire_free
-    show ChatProjection, TurnStats, projectEvent;
+    show ChatProjection, TurnStats, interactionSignalOf, projectEvent;
 import 'package:dsh_mobile/model/chat_item.dart' show ChatItem;
+import 'package:dsh_mobile/model/interaction.dart' show InteractionSignal;
+import 'package:dsh_mobile/wire/event_fields.dart' show WireEventFields;
 import 'package:dsh_mobile/wire/events.dart' show kWireEventIdReaders;
 
-/// 同 `data/projection.dart` 的 `projectEvent`，但 `itemId` 按生产规则算好。
+/// 同 `data/projection.dart` 的 `projectEvent`，但 `itemId` 按生产规则算好、
+/// 事件载荷用**生产的那份读者**（`WireEventFields`，与真机同一条解码路）。
 wire_free.ChatProjection projectEvent({
   required String type,
   required int seq,
@@ -52,6 +55,19 @@ wire_free.ChatProjection projectEvent({
   previous: previous,
   turnStats: turnStats,
   turn: turn,
+  fields: const WireEventFields(),
+);
+
+/// 同 `data/projection.dart` 的 `interactionSignalOf`，载荷读者用生产的那一份。
+InteractionSignal? interactionSignalOf({
+  required String type,
+  required int seq,
+  required Object? data,
+}) => wire_free.interactionSignalOf(
+  type: type,
+  seq: seq,
+  data: data,
+  fields: const WireEventFields(),
 );
 
 /// 同 `core/items.dart` 的 `itemIdOf`，身份字段用生产的那份读法。

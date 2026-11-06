@@ -79,10 +79,14 @@ UI 一旦开始认事件类型,同一件事就会在两个地方各写一遍。
   读不到是空态,写失败必须大声,而写全带幂等键。
   **`data/` 只剩 1 条** `wire/` import(`projection.dart` 的事件字段读者,单独一批),
   **`ui/` 与 `core/` 都是 0**(发消息走 `AppModel.sendPrompt` / `sendSubagentPrompt`,
-  界面不再认识方法名)。代价与实测数字见
+  界面不认识方法名)。`data/` 也**零 `wire/` import**:`projection.dart` 的事件载荷走
+  `core/event_fields.dart` 的 `EventFields` 端口(实现在 `wire/event_fields.dart`,
+  由 `HostRpcHolder.eventFields` 交给投影),它内部仍有 33 处 `fieldOf(` 直读线上
+  字段名 —— 这些读法尚未进端口,门禁也尚未覆盖。代价与实测数字见
   `.agents/notes/implemented/2026-11-06-p1b-batch1-session-family.md`、
   `…-batch2-catalog-family.md`、`…-batch3-preview-family.md`、
-  `…-batch4-read-write-ports.md` 与 `…-ui-send-through-appmodel.md`。
+  `…-batch4-read-write-ports.md`、`…-ui-send-through-appmodel.md` 与
+  `…-projection-event-fields-port.md`。
 - **条目身份只算一次**:`itemIdOf`(契约 §5.2 的规则)在**解码边界**跑,结果落在
   `SessionEvent.itemId`;`data/projection.dart` 只**消费**它,不再重推 —— 同一条事件
   两条路径各推一次就会有两个答案。

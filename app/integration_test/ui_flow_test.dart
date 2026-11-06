@@ -17,6 +17,7 @@ library;
 
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/errors.dart';
+import 'package:dsh_mobile/core/event_fields.dart';
 import 'package:dsh_mobile/core/host_rpc.dart';
 import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
@@ -48,6 +49,9 @@ class _FakeClient implements SyncClient, HostRpcHolder {
 
   @override
   HostWrites get writes => _hostRpc.writes;
+
+  @override
+  EventFields get eventFields => _hostRpc.eventFields;
 
   @override
   ConnectionState get state => ConnectionState.idle;

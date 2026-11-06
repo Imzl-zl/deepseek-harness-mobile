@@ -29,6 +29,7 @@ import '../core/app_update.dart';
 import '../core/connection.dart';
 import '../core/endpoint.dart';
 import '../core/errors.dart';
+import '../core/event_fields.dart';
 import '../core/host_rpc.dart';
 import '../core/job.dart';
 import '../core/notify.dart';
@@ -531,6 +532,9 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
 
   /// 写口：**失败必须大声**（操作没进去不能装成功）。
   HostWrites get _writes => hostRpcOf(client).writes;
+
+  /// 事件载荷的读法（纯解码，不碰连接）：投影要它来解 `data`，这一层不认识字段名。
+  EventFields get _eventFields => hostRpcOf(client).eventFields;
 
   /// 最近一次读到的投影包（`null` = 还没读过 / 读不到）。
   ///
@@ -3878,6 +3882,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
             type: event.type,
             seq: event.seq,
             data: event.data,
+            fields: _eventFields,
             time: event.time,
             previous: null,
             turn: _turnOfEvent(event, sid),
@@ -4025,6 +4030,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
             type: event.type,
             seq: event.seq,
             data: event.data,
+            fields: _eventFields,
             time: event.time,
             previous: store.byId(event.itemId),
           );
@@ -4263,6 +4269,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
             type: event.type,
             seq: event.seq,
             data: event.data,
+            fields: _eventFields,
             time: event.time,
             steering:
                 event.type == 'user/message' &&
@@ -4317,6 +4324,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
           type: event.type,
           seq: event.seq,
           data: event.data,
+          fields: _eventFields,
         );
         if (signal is InteractionOpened) {
           // 信号要带上 `sid`（投影层不认识会话别名，那是这一层的事）。

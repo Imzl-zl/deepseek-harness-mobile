@@ -31,6 +31,7 @@ library;
 
 import 'dart:convert';
 
+import '../core/event_fields.dart';
 import '../core/items.dart' show EventIdReaders;
 import 'reading.dart';
 
@@ -44,66 +45,10 @@ export 'reading.dart';
 // ---------------------------------------------------------------------------
 // 各事件的载荷（只断言我们消费的字段）
 // ---------------------------------------------------------------------------
-
-/// `tool/call`：`{turn, step, callId, name, arguments}`。
-final class ToolCallWire {
-  const ToolCallWire({
-    required this.callId,
-    required this.name,
-    required this.argumentsRaw,
-    required this.arguments,
-  });
-
-  final String callId;
-
-  /// 工具名。**可空**：身份是 `callId`（`items.dart` 的 `itemIdOf` 只认它），
-  /// 名字是**展示**用的，缺了有既有兜底（`kUnknownToolName`）——
-  /// 把"没有名字"判成形状错会把一条身份完好的事件整条丢掉（2026-10-25 被一条旧用例拦下）。
-  final String? name;
-
-  /// 原始串（DSH 落盘的就是它，摘要与"改了哪个文件"都要原文）。
-  final String argumentsRaw;
-
-  /// 解开的参数。**解不开是 `null`，不是错误**：流式中断 / 被拒的调用会把原始文本留着
-  /// （`toolArgumentsSummary` 的同一条：退回首行）。调用方据此决定"这张卡能不能开"。
-  final Map<String, Object?>? arguments;
-}
-
-/// `tool/result`：身份在 `message.toolCallId`（与 `tool/call` 配对）。
-final class ToolResultWire {
-  const ToolResultWire({required this.callId});
-
-  final String callId;
-}
-
-/// `approval/asked`：身份是服务铸的 `id`，`callId` 只是关联字段（可能没有）。
-final class ApprovalAskedWire {
-  const ApprovalAskedWire({
-    required this.approvalId,
-    required this.callId,
-    required this.toolName,
-    required this.reason,
-  });
-
-  final String approvalId;
-  final String? callId;
-  final String? toolName;
-  final String? reason;
-}
-
-/// `approval/decided`：与 ask 共用 `id`。
-final class ApprovalDecidedWire {
-  const ApprovalDecidedWire({required this.approvalId});
-
-  final String approvalId;
-}
-
-/// `user/message` 里 `source.kind === 'user-question-reply'` 的那条：迟到的答复。
-final class QuestionReplyWire {
-  const QuestionReplyWire({required this.callId});
-
-  final String callId;
-}
+//
+// 工具 / 审批 / 提问这几种载荷的**类型**住在 `core/event_fields.dart`：它们要穿过
+// `EventFields` 端口交给 `data/`，类型跟着端口走才不用在这里再抄一份同样的字段表
+// （抄一份就是两处真值）。`command/*` 的载荷没有手机侧消费者，留在这里。
 
 /// `command/run`：`{commandId, name, args, source}`。
 final class CommandRunWire {
@@ -136,13 +81,15 @@ final class CommandDoneWire {
 // ---------------------------------------------------------------------------
 
 /// 一条 `tool/call`。`callId` 缺失是**形状错**（身份都丢了），不静默；`name` 缺失不是
-/// （见 [ToolCallWire.name]）。
-WireReading<ToolCallWire> readToolCall(Object? data) {
+/// （见 [ToolCallPayload.name]）。
+WireReading<ToolCallPayload> readToolCall(Object? data) {
   final callId = _string(data, 'callId');
-  if (callId == null) return const WireBad<ToolCallWire>('tool/call 缺 callId');
+  if (callId == null) {
+    return const WireBad<ToolCallPayload>('tool/call 缺 callId');
+  }
   final raw = _string(data, 'arguments') ?? '';
-  return WireOk<ToolCallWire>(
-    ToolCallWire(
+  return WireOk<ToolCallPayload>(
+    ToolCallPayload(
       callId: callId,
       name: _string(data, 'name'),
       argumentsRaw: raw,
@@ -180,23 +127,23 @@ Map<String, Object?>? parseArguments(String raw) {
 }
 
 /// 一条 `tool/result`。
-WireReading<ToolResultWire> readToolResult(Object? data) {
+WireReading<ToolResultPayload> readToolResult(Object? data) {
   final message = _map(data, 'message');
   final callId = message == null ? null : _string(message, 'toolCallId');
   if (callId == null) {
-    return const WireBad<ToolResultWire>('tool/result 缺 message.toolCallId');
+    return const WireBad<ToolResultPayload>('tool/result 缺 message.toolCallId');
   }
-  return WireOk<ToolResultWire>(ToolResultWire(callId: callId));
+  return WireOk<ToolResultPayload>(ToolResultPayload(callId: callId));
 }
 
 /// 一条 `approval/asked`。
-WireReading<ApprovalAskedWire> readApprovalAsked(Object? data) {
+WireReading<ApprovalAskedPayload> readApprovalAsked(Object? data) {
   final approvalId = _string(data, 'id');
   if (approvalId == null) {
-    return const WireBad<ApprovalAskedWire>('approval/asked 缺 id');
+    return const WireBad<ApprovalAskedPayload>('approval/asked 缺 id');
   }
-  return WireOk<ApprovalAskedWire>(
-    ApprovalAskedWire(
+  return WireOk<ApprovalAskedPayload>(
+    ApprovalAskedPayload(
       approvalId: approvalId,
       callId: _string(data, 'callId'),
       toolName: _string(data, 'toolName'),
@@ -206,32 +153,32 @@ WireReading<ApprovalAskedWire> readApprovalAsked(Object? data) {
 }
 
 /// 一条 `approval/decided`。
-WireReading<ApprovalDecidedWire> readApprovalDecided(Object? data) {
+WireReading<ApprovalDecidedPayload> readApprovalDecided(Object? data) {
   final approvalId = _string(data, 'id');
   if (approvalId == null) {
-    return const WireBad<ApprovalDecidedWire>('approval/decided 缺 id');
+    return const WireBad<ApprovalDecidedPayload>('approval/decided 缺 id');
   }
-  return WireOk<ApprovalDecidedWire>(
-    ApprovalDecidedWire(approvalId: approvalId),
+  return WireOk<ApprovalDecidedPayload>(
+    ApprovalDecidedPayload(approvalId: approvalId),
   );
 }
 
 /// 一条迟到的提问答复（`user/message` 且 `source.kind === 'user-question-reply'`）。
 ///
 /// 其它 `user/message` 一律 [WireSkip] —— 绝大多数用户消息与交互无关。
-WireReading<QuestionReplyWire> readQuestionReply(Object? data) {
+WireReading<QuestionReplyPayload> readQuestionReply(Object? data) {
   final source = _map(data, 'source');
-  if (source == null) return const WireSkip<QuestionReplyWire>();
+  if (source == null) return const WireSkip<QuestionReplyPayload>();
   if (_string(source, 'kind') != 'user-question-reply') {
-    return const WireSkip<QuestionReplyWire>();
+    return const WireSkip<QuestionReplyPayload>();
   }
   final callId = _string(source, 'callId');
   if (callId == null) {
-    return const WireBad<QuestionReplyWire>(
+    return const WireBad<QuestionReplyPayload>(
       'user-question-reply 缺 source.callId（认不出答的是哪一问）',
     );
   }
-  return WireOk<QuestionReplyWire>(QuestionReplyWire(callId: callId));
+  return WireOk<QuestionReplyPayload>(QuestionReplyPayload(callId: callId));
 }
 
 /// 一条 `command/run`。

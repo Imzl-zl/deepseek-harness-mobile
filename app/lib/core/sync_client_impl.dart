@@ -25,6 +25,7 @@ import 'call_registry.dart';
 import 'connection.dart';
 import 'connection_resources.dart';
 import 'errors.dart';
+import 'event_fields.dart';
 import 'flow.dart';
 import 'frame.dart';
 import 'handshake_driver.dart';
@@ -300,6 +301,9 @@ class _SyncClient
 
   @override
   HostWrites get writes => _hostRpc.writes;
+
+  @override
+  EventFields get eventFields => _hostRpc.eventFields;
 
   // -------------------------------------------------------------------------
   // 连接生命周期

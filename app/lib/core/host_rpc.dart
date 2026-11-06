@@ -43,6 +43,7 @@ import '../model/plugins.dart' show PluginJob;
 import '../model/usage_summary.dart' show UsageSummary;
 import '../model/workspace_files.dart' show FileListing, FilePage;
 import 'endpoint.dart' show Endpoint;
+import 'event_fields.dart';
 import 'job.dart' show JobRow;
 import 'plugin_inventory.dart';
 import 'repo_info.dart';
@@ -302,13 +303,19 @@ abstract interface class HostWrites {
   Future<String?> killJob({required String sid, required String jobId});
 }
 
-/// 「我这一条连接上有那两个口」—— 客户端兼作这个，**只多两个 getter**。
+/// 「我这一条连接上有那两个口」—— 客户端兼作这个，**只多三个 getter**。
 abstract interface class HostRpcHolder {
   /// 读能力（读不到就是空态）。
   HostReads get reads;
 
   /// 写能力（失败必须大声）。
   HostWrites get writes;
+
+  /// 事件载荷的读法（`data/` 拿它解事件，字段名仍在 `wire/`）。
+  ///
+  /// 它不跟连接说话（纯解码），搭在这里只是因为**能力本来就由这一条连接造出来**，
+  /// 而 `projection.dart` 的调用方（`AppModel`）手里正好只有 `client`。
+  EventFields get eventFields;
 }
 
 /// 取一个客户端的能力口；没有就**抛出**。

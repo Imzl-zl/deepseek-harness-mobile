@@ -18,12 +18,12 @@ library;
 
 import 'dart:convert';
 
+import '../core/event_fields.dart';
 import '../core/json_field.dart';
 import '../model/changed_path.dart';
 import '../model/chat_item.dart';
 import '../model/interaction.dart';
 import '../model/tool_view.dart';
-import '../wire/events.dart';
 
 /// `ask_user_question` 的工具名（DSH：
 /// `packages/interaction/user-questions/src/projection.ts:28` 的 `ASK_USER_QUESTION_TOOL`）。
@@ -219,6 +219,11 @@ ChatProjection projectEvent({
   /// `turn/start` 落的记账条目靠它把"这一组是第几轮"钉住
   /// （`docs/subsystems/turn-groups.md` 的分组算法）。
   int? turn,
+
+  /// 事件载荷的读法（端口在 `core/event_fields.dart`，实现在 `wire/event_fields.dart`）。
+  ///
+  /// 这一层**不读线上字段名**：`data` 原样进来，交给它解。
+  required EventFields fields,
 }) {
   if (isMessageEvent(type)) {
     final message = messageProjectionOf(type, data);
@@ -310,7 +315,7 @@ ChatProjection projectEvent({
     // **名字与参数都从解码层来**：`arguments` 是 JSON 字符串这件事只在
     // `wire/events.dart` 里被断言一次（2026-10-25 之前这里按对象读，
     // 计划卡因此静默消失，见 `readToolCall` 的头注）。
-    final call = valueOrReport(readToolCall(data), type);
+    final call = fields.toolCall(data);
     return ChatProjection.item(
       ToolCallItem(
         itemId: itemId,
@@ -358,7 +363,7 @@ ChatProjection projectEvent({
     // 而结果载荷里没有名字与参数。盘上存的是**合并载荷**（`StoreItemPersister`
     // 的 `_mergedPayload`），`name` / `arguments` 还在 —— 从它读回来，
     // 否则重启后整行只剩「工具」（2026-11-04 真机，库里 200 条 result / 0 条 call）。
-    final stored = mergedToolCallOf(data);
+    final stored = fields.mergedToolCall(data);
     final storedName = stored?.name;
     final storedArgs = stored?.argumentsRaw ?? '';
     // 结果自己带 name 时照它（部分适配器会写）；否则用调用的名字。
@@ -1128,10 +1133,11 @@ InteractionSignal? interactionSignalOf({
   required String type,
   required int seq,
   required Object? data,
+  required EventFields fields,
 }) {
   if (type == 'approval/asked') {
     // 身份是 `id`（`ApprovalRequestId`）；`callId` 只作为"针对哪次工具调用"的关联字段。
-    final asked = valueOrReport(readApprovalAsked(data), type);
+    final asked = fields.approvalAsked(data);
     if (asked == null) return null;
     final toolName = asked.toolName ?? '工具';
     return InteractionOpened(
@@ -1148,7 +1154,7 @@ InteractionSignal? interactionSignalOf({
   }
 
   if (type == 'approval/decided') {
-    final decided = valueOrReport(readApprovalDecided(data), type);
+    final decided = fields.approvalDecided(data);
     if (decided == null) return null;
     return InteractionSettled('i:${decided.approvalId}');
   }
@@ -1156,7 +1162,7 @@ InteractionSignal? interactionSignalOf({
   if (type == 'tool/call') {
     // 名字、callId 与**解开的参数**都来自解码层：`arguments` 是 JSON 字符串这件事
     // 只在 `wire/events.dart` 里被断言（2026-10-25 之前这里按对象读 ⇒ 计划卡静默消失）。
-    final call = valueOrReport(readToolCall(data), type);
+    final call = fields.toolCall(data);
     if (call == null) return null;
     // **计划审查**：卡从这次 `tool/call` 造（`exit_plan_mode` 的 `arguments.plan` 就是整份计划）。
     // 与提问卡同一个 `t:<callId>` 身份 —— 连接器的 claim 用的是请求里的
@@ -1202,7 +1208,7 @@ InteractionSignal? interactionSignalOf({
 
   if (type == 'tool/result') {
     // 结果与调用共用同一个 itemId（`core/items.dart` 的配对规则）。
-    final result = valueOrReport(readToolResult(data), type);
+    final result = fields.toolResult(data);
     if (result == null) return null;
     return InteractionSettled('t:${result.callId}');
   }
@@ -1211,7 +1217,7 @@ InteractionSignal? interactionSignalOf({
     // 迟到的答复：DSH 把它 steer 成一条 `source.kind='user-question-reply'` 的
     // 用户消息，而那条消息同时是投影里"这个问题已关闭"的记录
     // （`user-questions/src/index.ts:186-191`）。
-    final reply = valueOrReport(readQuestionReply(data), type);
+    final reply = fields.questionReply(data);
     if (reply == null) return null;
     return InteractionSettled('t:${reply.callId}');
   }
