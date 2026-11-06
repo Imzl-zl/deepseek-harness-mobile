@@ -27,6 +27,7 @@ import 'package:dsh_mobile/core/snapshot_digest.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/core/sync_client_impl.dart';
 import 'package:dsh_mobile/core/transport.dart';
+import 'package:dsh_mobile/wire/events.dart' show kWireEventIdReaders;
 import 'package:dsh_mobile/wire/reading.dart' show WireDiagnostics;
 import 'package:dsh_mobile/wire/rpc/session_page.dart' show WireHistoryReader;
 import 'package:flutter_test/flutter_test.dart';
@@ -218,6 +219,7 @@ void main() {
     final deps = SyncClientDeps(
       // 翻页的读法：本用例不走翻页，但要有个真的实现（端口是必填的）。
       history: const WireHistoryReader(),
+      eventIds: kWireEventIdReaders,
       transport: transport,
       handshake: createHandshakeDriver(
         identity: HandshakeIdentity(
@@ -1309,6 +1311,29 @@ void main() {
       f.transport.feed('${jsonEncode({'v': 1, 't': 'credit', 'fc': 0})}\n');
       await Future<void>.delayed(Duration.zero);
       expect(f.transport.closeCount, greaterThan(0), reason: '缺 box 必须关连接');
+
+      await client.close();
+    });
+
+    test('ev 载荷推不出 itemId ⇒ badFrame（坏帧要显形，不许静默吞一条）', () async {
+      // 身份由**解码边界**产出（`core/items.dart` 的 `itemIdOf`：已知类型缺身份就抛）。
+      // 那条 StateError 从前的路子是穿过 `_dispatch` 变成**未处理的异步错误**
+      // （连接既不报错也不断开，症状是"这一帧之后就安静了"）。现在折成 `badFrame`：
+      // 与"ev 帧缺少 sid/seq"同一档，关连接并留声。
+      final f = buildDeps();
+      final client = createSyncClient(f.deps);
+      await client.start();
+      await answerHello(f.transport);
+
+      // `message.id` 给空串 ⇒ `_nonEmptyString` 判它没有 id ⇒ `itemIdOf` 抛。
+      await feedEvent(f, 1, itemId: '');
+
+      expect(client.state, isNot(ConnectionState.serving));
+      expect(
+        f.transport.closeCount,
+        greaterThan(0),
+        reason: '坏帧必须关连接并留声 —— 静默跳过会让"少一条"根本查不出来',
+      );
 
       await client.close();
     });

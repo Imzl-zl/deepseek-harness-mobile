@@ -18,7 +18,7 @@ import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
-import 'package:dsh_mobile/data/projection.dart';
+import 'package:dsh_mobile/data/projection.dart' hide projectEvent;
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/chat_turns.dart';
@@ -26,6 +26,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_sync_client.dart';
+import 'projection_fixture.dart';
 
 /// 只关心"推一批事件进来"的替身（其余一律 relayOffline）。
 class _Client extends FakeSyncClient {

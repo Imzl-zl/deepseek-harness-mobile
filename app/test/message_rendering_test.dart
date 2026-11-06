@@ -20,12 +20,12 @@ import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
-import 'package:dsh_mobile/data/projection.dart';
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/ui/chat_turns.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
 import 'fake_sync_client.dart';
+import 'projection_fixture.dart';
 
 class _RenderClient extends FakeSyncClient {
   _RenderClient({this.onCall});
@@ -313,8 +313,8 @@ void main() {
     });
   });
 
-  group('逐条错误隔离（一条坏事件不再炸掉整批）', () {
-    test('坏事件记下来，好事件照常渲染', () async {
+  group('条目身份来自解码边界（投影不再重推一遍）', () {
+    test('事件带什么 itemId 就用什么：同样的载荷、两个 id 各成一条', () async {
       final client = _RenderClient(
         onCall: (m, p) => m == 'session.list'
             ? {
@@ -329,36 +329,39 @@ void main() {
       await app.openSession('s1');
 
       client.emit('s1', [
-        // 坏事件：user/message 缺 id（itemIdOf 抛 StateError）。
         const SessionEvent(
-          itemId: 'user/message:7',
+          itemId: 'm:a',
           type: 'user/message',
           seq: 7,
           time: 1,
           data: <String, Object?>{
+            'id': 'a',
             'content': [
-              {'type': 'text', 'text': '没有 id 的消息'},
+              {'type': 'text', 'text': '甲'},
             ],
           },
         ),
-        // 好事件：紧随其后。
-        _userEvent(
+        const SessionEvent(
+          itemId: 'm:b',
+          type: 'user/message',
           seq: 8,
-          id: 'good-1',
-          content: [
-            {'type': 'text', 'text': '这条必须渲染'},
-          ],
+          time: 2,
+          data: <String, Object?>{
+            'id': 'b',
+            'content': [
+              {'type': 'text', 'text': '乙'},
+            ],
+          },
         ),
       ]);
       await Future<void>.delayed(Duration.zero);
 
-      expect(
-        app.items.whereType<MessageItem>().length,
-        1,
-        reason: '坏事件不能把好事件一起带走',
-      );
-      expect((app.items.single as MessageItem).text, '这条必须渲染');
-      expect(app.projectionFailureOf('s1'), contains('user/message'));
+      // 投影**不再自己推 itemId**（那会让同一条事件有两个来源）。所以这里断言的是
+      // "带什么就用什么"：两个不同的 id 各成一条，而不是按载荷里的 `id` 重算。
+      expect(app.items.map((item) => item.itemId), <String>['m:a', 'm:b']);
+
+      // **坏载荷（缺 `message.id`）到不了这一层**：它在解码边界就被拒
+      // （`sync_client_test.dart` 的「ev 载荷推不出 itemId ⇒ badFrame」）。
       app.dispose();
     });
   });

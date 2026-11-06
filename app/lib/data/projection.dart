@@ -18,7 +18,6 @@ library;
 
 import 'dart:convert';
 
-import '../core/items.dart';
 import '../core/json_field.dart';
 import '../model/changed_path.dart';
 import '../model/chat_item.dart';
@@ -195,6 +194,13 @@ class TurnStats {
 /// **未知类型不丢**：返回 [OtherItem]，而不是 `null`。
 /// 丢掉会让"事件总数与条目数对不上"这类问题无从排查，而 DSH 的事件类型会随上游增加。
 ChatProjection projectEvent({
+  /// 这条事件的条目身份（`SessionEvent.itemId`）。
+  ///
+  /// **由解码边界算好一次**（`core/items.dart` 的 `itemIdOf`，wire 侧调用时用
+  /// `kWireEventIdReaders`）。投影只**消费**身份、不再推一遍：推两遍就有两个答案，
+  /// 而"同一条事件两条路径给出不同 id"是本仓最贵的一类 bug（2026-10-25 计划卡
+  /// 静默消失就是同一个病）。缺身份在解码处就抛，不在这里兜。
+  required String itemId,
   required String type,
   required int seq,
   required Object? data,
@@ -214,10 +220,6 @@ ChatProjection projectEvent({
   /// （`docs/subsystems/turn-groups.md` 的分组算法）。
   int? turn,
 }) {
-  // `itemId` 的推导只走 `core/items.dart`（契约 §5.2）：那是**唯一**一处，
-  // 而它可能在已知类型缺字段时抛错（宁可让这一帧失败，也不要造一个会漂移的身份）。
-  final itemId = itemIdOf(EventLike(type: type, seq: seq, data: data));
-
   if (isMessageEvent(type)) {
     final message = messageProjectionOf(type, data);
     // **"谁说的话"由 `source.kind` 决定，不是事件类型**（2026-10-20 真机 + 真日志）。

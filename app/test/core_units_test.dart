@@ -22,9 +22,11 @@ import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/flow.dart';
 import 'package:dsh_mobile/core/frame.dart';
 import 'package:dsh_mobile/core/handshake.dart';
-import 'package:dsh_mobile/core/items.dart';
+import 'package:dsh_mobile/core/items.dart' hide itemIdOf;
 import 'package:dsh_mobile/core/recovery.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'projection_fixture.dart';
 
 void main() {
   group('itemIdOf：itemId 由事件自身推导（契约 §5.2，不变量 I9）', () {

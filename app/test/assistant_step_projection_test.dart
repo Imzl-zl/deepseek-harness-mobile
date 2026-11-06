@@ -18,9 +18,10 @@
 /// | 思考与正文都空（只有 `tool-call`） | `skip`（不占条目） |
 library;
 
-import 'package:dsh_mobile/data/projection.dart';
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'projection_fixture.dart';
 
 Object? _assistant(List<Object?> content) => <String, Object?>{
   'turn': 1,

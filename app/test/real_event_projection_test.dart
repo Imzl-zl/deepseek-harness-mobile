@@ -24,9 +24,11 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:dsh_mobile/data/projection.dart';
+import 'package:dsh_mobile/data/projection.dart' hide projectEvent;
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'projection_fixture.dart';
 
 /// 读真事件 fixture（字段一个都没改，只有两处长文本被截断并标注）。
 Map<String, Object?> _fixture() {

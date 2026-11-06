@@ -32,6 +32,7 @@ library;
 import '../../core/history_page.dart';
 import '../../core/items.dart' show EventLike, itemIdOf;
 import '../../core/sync_client.dart';
+import '../events.dart' show kWireEventIdReaders;
 import '../fields.dart';
 import '../reading.dart';
 
@@ -226,7 +227,10 @@ SessionEvent? _eventOfRecord(Object? record) {
   final seq = event['seq'];
   if (type is! String || seq is! int) return null;
   return SessionEvent(
-    itemId: itemIdOf(EventLike(type: type, seq: seq, data: event['data'])),
+    itemId: itemIdOf(
+      EventLike(type: type, seq: seq, data: event['data']),
+      kWireEventIdReaders,
+    ),
     type: type,
     seq: seq,
     // `time` 可缺（老记录）：**退到 seq 而不是当前时钟** —— 用当前时间会让

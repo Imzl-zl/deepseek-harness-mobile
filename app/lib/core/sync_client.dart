@@ -33,6 +33,7 @@ import 'crypto.dart';
 import 'errors.dart';
 import 'handshake_driver.dart';
 import 'history_page.dart';
+import 'items.dart' show EventIdReaders;
 import 'job.dart';
 import 'keepalive.dart';
 import 'outbox.dart';
@@ -475,6 +476,7 @@ class SyncClientDeps {
     required this.outbox,
     required this.session,
     required this.history,
+    required this.eventIds,
     this.persistence,
     this.keepalive,
     this.backoff,
@@ -504,6 +506,13 @@ class SyncClientDeps {
   /// 状态 —— 两半各守一边，所以这里是个端口（`history_page.dart`）。
   /// **必填**：不给它就没有历史可翻，而"翻不了页"不该是一个静默的默认值。
   final HistoryReader history;
+
+  /// 事件**身份字段**的读法（契约 §5.2 的推导规则在 `items.dart`，字段名在 `wire/`）。
+  ///
+  /// 收帧热路径用它：每条 `ev` 帧解出来的 [SessionEvent] 都带 `itemId`，
+  /// 而后者的推导要读 `callId` / `toolCallId` / `approvalId` / `commandId`。
+  /// **必填**：不给就没法给事件一个稳定身份。
+  final EventIdReaders eventIds;
 
   /// **落盘缝**（契约 §5.3：`persisted` 只在落盘成功后发）。
   ///

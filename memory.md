@@ -29,17 +29,20 @@
   前后台态广播给每一台（"看着它就不提醒"也改成按台算）。
   另外补了一个真缺口：`AppModel.dispose()` 此前从不 `client.close()`，所以"dispose 旧的"
   从来没真的断开过 socket。
-  ⑥ **P1 依赖倒置（第一批）**：翻页/补取的读法收进端口 —— 端口
-  `core/history_page.dart` 的 `HistoryReader`、实现 `wire/rpc/session_page.dart` 的
-  `WireHistoryReader`，报缺陷的两个标签（`session.page` / `session.refetch`）跟着搬进 wire；
-  `SyncClientDeps.history` 必填。顺手修掉 S2 遗留：`integration_test/local_store_test.dart`
-  还在调已删的 `SqfliteItemStore.clear()`，`integration_test` 自 `61c2b2c` 起编译不过
-  （门禁只 analyze `lib test`，看不见）—— 改成 `clearSession('s1')`，现在
-  `dart analyze integration_test` 也是 0。
-  **P1 未做完**：`core` 还剩 1 条（`items.dart → events.dart`，见笔记里两条路的实测代价：
-  55 处 `projectEvent` 调用）；`data` 21 条没动（真正成本是 74 个测试文件都直接构造
-  `AppModel`，加必填端口 = 100+ 处改动）。两批都还要一次真机重连（收帧热路径）。
-  门禁：connector **836**；app **1758**；boundary **760**；`dart analyze --fatal-infos` 0。
+  ⑥ **P1 依赖倒置**：`core → wire` **已到 0** —— 翻页/补取的读法走
+  `core/history_page.dart` 的 `HistoryReader`（实现 `WireHistoryReader`），事件身份字段走
+  `core/items.dart` 的 `EventIdReaders`（实现 `wire/events.dart` 的 `kWireEventIdReaders`），
+  `SyncClientDeps.history` / `.eventIds` 必填。**身份只算一次**：`itemIdOf` 在解码边界跑、
+  落 `SessionEvent.itemId`，`projectEvent` 改成收 `itemId` 不再重推；坏载荷在解码处折成
+  `badFrame`（从前是未处理的异步错误）。测试侧用 `app/test/projection_fixture.dart` 按生产
+  规则算 id，55 个 `projectEvent` 调用点只改了 import。
+  顺手修掉 S2 遗留：`integration_test/local_store_test.dart` 还在调已删的
+  `SqfliteItemStore.clear()`，`integration_test` 自 `61c2b2c` 起编译不过（门禁只 analyze
+  `lib test`，看不见）—— 改成 `clearSession('s1')`。
+  **仍未做**：`data` 的 21 条（真正成本是 74 个测试文件都直接构造 `AppModel`，加必填端口 =
+  100+ 处改动 ⇒ 要先有测试侧 fixture builder），以及**一次真机重连**（改的是收帧热路径，
+  不能只看测试）。
+  门禁：connector **836**；app **1759**；boundary **760**；`dart analyze --fatal-infos` 0。
   另外把**真机库副本**喂给真实现跑了一遍 v2→v3（24.5 MB 的 `dsh_mobile.db`，只读副本）：
   4136 条条目一条不少、14 个水位键全部带前缀、`device.transparency/surface_alpha` 原样 ——
   证据在 `implemented/2026-11-06-s2-host-scope-and-buckets.md` 的「验证」。

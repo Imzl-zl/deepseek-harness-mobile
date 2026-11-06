@@ -56,10 +56,15 @@ UI 一旦开始认事件类型,同一件事就会在两个地方各写一遍。
 - `ui/` 不得 import `packages/*_ios|_android|_ohos`。
 - `core/` 的所有 IO 走注入接口 ⇒ **纯 Dart 单测里可以直接跑 `protocol/fixtures`**。
 - 线上载荷的字段名与类型只在 `wire/` 里断言,消费方拿到的永远是解好的值;两边之间只许有
-  **端口**(core 声明、wire 实现)。翻页/补取已经这样:端口在 `core/history_page.dart`、
-  实现在 `wire/rpc/session_page.dart`。**还没倒置的**:`core/items.dart` 的身份字段读者
-  与 `data/` 的 21 条 `wire/` import(代价与实测数字见
-  `.agents/notes/implemented/2026-11-06-p1-dependency-inversion.md`)。
+  **端口**(core 声明、wire 实现)。`core/` 现在两条都不欠:翻页/补取走
+  `core/history_page.dart` 的 `HistoryReader`,事件身份字段走 `core/items.dart` 的
+  `EventIdReaders`(实现分别是 `wire/rpc/session_page.dart` 与 `wire/events.dart`)。
+  **`data/` 还有 21 条** `wire/` import(`app_model` 15 / `host_catalogs` 3 /
+  `file_preview` 2 / `projection` 1),代价与实测数字见
+  `.agents/notes/implemented/2026-11-06-p1-dependency-inversion.md`。
+- **条目身份只算一次**:`itemIdOf`(契约 §5.2 的规则)在**解码边界**跑,结果落在
+  `SessionEvent.itemId`;`data/projection.dart` 只**消费**它,不再重推 —— 同一条事件
+  两条路径各推一次就会有两个答案。
 
 ---
 

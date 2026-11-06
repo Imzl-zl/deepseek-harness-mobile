@@ -808,7 +808,20 @@ class _SyncClient
       return;
     }
     // 解出的载荷就是一条事件（`itemId` 由事件自身推导，§5.2）。
-    final event = _eventFromPayload(plaintext, seq);
+    //
+    // **推不出身份 = 载荷坏**（`itemIdOf` 在已知类型缺字段时抛，见 `items.dart`）：
+    // 折成 `badFrame` 协议失败，与上面"缺少 sid/seq"同一档。**不许让它裸奔** ——
+    // 从前的写法会让这条 StateError 穿过 `_dispatch` 变成未处理的异步错误
+    // （连接既不报错也不断开，症状是"这一帧之后就安静了"）。
+    final SessionEvent event;
+    try {
+      event = _eventFromPayload(plaintext, seq, _deps.eventIds);
+    } on StateError catch (error) {
+      _protocolFailure(
+        ProtocolException(ErrorCode.badFrame, 'ev 载荷推不出 itemId：$error'),
+      );
+      return;
+    }
     // 本地会话状态只需要"哪一条到了"（它做去重、水位与快照拼接）。
     //
     // 第三个参数是"文本"，而**连接层拿不到文本** —— 文本要从事件的 `data` 投影出来，
@@ -1875,7 +1888,11 @@ class _SyncClient
 /// 这一层只负责"这一条属于哪个 itemId"，**并把原始 `type`/`data` 原样带上**，
 /// 而不是在解析时就把它们丢掉（丢掉会让上层只能从 `text` 里猜，那是"UI 各自解释事件"
 /// 的开端 —— 接线时实测踩到过）。
-SessionEvent _eventFromPayload(String plaintext, int seq) {
+SessionEvent _eventFromPayload(
+  String plaintext,
+  int seq,
+  EventIdReaders ids,
+) {
   final parsed = _jsonDecode(plaintext);
   if (parsed is! Map) {
     throw const ProtocolException(ErrorCode.badFrame, 'ev 载荷必须是 JSON 对象');
@@ -1889,6 +1906,7 @@ SessionEvent _eventFromPayload(String plaintext, int seq) {
   final resolvedSeq = eventSeq is int ? eventSeq : seq;
   final itemId = itemIdOf(
     EventLike(type: type, seq: resolvedSeq, data: event['data']),
+    ids,
   );
   final time = event['time'];
   return SessionEvent(

@@ -3866,6 +3866,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
         if (event.seq > highest) highest = event.seq;
         try {
           final projection = projectEvent(
+            itemId: event.itemId,
             type: event.type,
             seq: event.seq,
             data: event.data,
@@ -4012,6 +4013,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
         if (_isStateOnlyEvent(event.type)) continue;
         try {
           final projected = projectEvent(
+            itemId: event.itemId,
             type: event.type,
             seq: event.seq,
             data: event.data,
@@ -4249,6 +4251,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
           // 批次里（翻页 / 快照加载时前者在更早的批次）。只靠 store 里那条
           // `OtherItem`（`turn/start` 落表用的）就能拿到区间。
           final projection = projectEvent(
+            itemId: event.itemId,
             type: event.type,
             seq: event.seq,
             data: event.data,

@@ -10,11 +10,12 @@
 library;
 
 import 'package:dsh_mobile/core/sync_client.dart';
-import 'package:dsh_mobile/data/projection.dart';
 import 'package:dsh_mobile/data/store.dart';
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/platform/sqflite_item_store.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'projection_fixture.dart';
 
 SessionEvent _event(
   String type,

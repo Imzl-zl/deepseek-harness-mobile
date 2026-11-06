@@ -31,6 +31,7 @@ library;
 
 import 'dart:convert';
 
+import '../core/items.dart' show EventIdReaders;
 import 'reading.dart';
 
 /// 消费方一次拿齐"三态内核 + 事件 decoder"（`items.dart` / `projection.dart` 只需要这一行 import）。
@@ -281,4 +282,33 @@ String? _string(Object? value, String key) {
   if (value is! Map) return null;
   final field = value[key];
   return (field is String && field.isNotEmpty) ? field : null;
+}
+
+/// [EventIdReaders] 的**实现**：把四个身份字段的读取转给本文件的 decoder。
+///
+/// 为什么实现在这里：字段名叫什么、在哪一层（`data.callId` 与
+/// `data.message.toolCallId` 不是同一处）只有本文件有权断言；而"哪个事件用哪个字段
+/// 当身份、缺了就抛"留在 `core/items.dart`。装配点把这个常量交给
+/// `SyncClientDeps.eventIds`（解码边界）与 `wire/rpc/session_page.dart`。
+const EventIdReaders kWireEventIdReaders = _WireEventIdReaders();
+
+final class _WireEventIdReaders implements EventIdReaders {
+  const _WireEventIdReaders();
+
+  @override
+  String? toolCallId(Object? data) => valueOrNull(readToolCall(data))?.callId;
+
+  @override
+  String? toolResultId(Object? data) =>
+      valueOrNull(readToolResult(data))?.callId;
+
+  @override
+  String? approvalId(Object? data, {required bool decided}) => decided
+      ? valueOrNull(readApprovalDecided(data))?.approvalId
+      : valueOrNull(readApprovalAsked(data))?.approvalId;
+
+  @override
+  String? commandId(Object? data, {required bool done}) => done
+      ? valueOrNull(readCommandDone(data))?.commandId
+      : valueOrNull(readCommandRun(data))?.commandId;
 }

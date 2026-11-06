@@ -22,12 +22,13 @@
 /// —— 所以 `inputTokens` 是**未缓存**输入，不是"全部输入"。
 library;
 
-import 'package:dsh_mobile/data/projection.dart';
 import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/ui/chat_turns.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'projection_fixture.dart';
 
 /// 真日志里那一条（见文件头）。
 const _realUsage = <String, Object?>{
