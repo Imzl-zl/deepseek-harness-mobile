@@ -69,11 +69,13 @@ UI 一旦开始认事件类型,同一件事就会在两个地方各写一遍。
   —— 事件载荷的字段名只许在 `wire/` 断言,`data/` 只收端口解好的值;违例报文件与行号
   (`data-no-field-name`)。
 - `core/` 的所有 IO 走注入接口 ⇒ **纯 Dart 单测里可以直接跑 `protocol/fixtures`**。
-- 线上载荷的字段名与类型只在 `wire/` 里断言,消费方拿到的永远是解好的值;两边之间只许有
-  **端口**(core 声明、wire 实现),且端口按**能力**暴露、不往 `SyncClient` 加成员
-  (`SyncClient` 之外的 `LinkControl` / `HostRpc` 都是这个形状)。客户端以**能力持有者**
-  的方式暴露读能力:只实现 `HostRpcHolder` 的一个 getter(`HostRpc get hostRpc`),
-  能力自己带着那条连接跑。
+- 线上形状的字段名只有两处:**会话事件**在 `wire/events.dart` + `wire/event_fields.dart`;
+  **RPC 应答**由各值类型的解码器(`fromWire` / `parseX`,住在 `model/` 或 `core/` 的类型
+  文件里)断言,`wire/rpc/*` 只认方法名、信封键与组合。消费方拿到的永远是解好的值;
+  事件载荷与 `data/` 之间只许有**端口**(core 声明、wire 实现),且端口按**能力**暴露、
+  不往 `SyncClient` 加成员(`SyncClient` 之外的 `LinkControl` / `HostRpc` 都是这个形状)。
+  客户端以**能力持有者**的方式暴露读能力:只实现 `HostRpcHolder` 的一个 getter
+  (`HostRpc get hostRpc`),能力自己带着那条连接跑。
   已经倒置完的三族:翻页/补取走 `core/history_page.dart` 的 `HistoryReader`(实现在
   `wire/rpc/session_page.dart`),事件身份字段走 `core/items.dart` 的 `EventIdReaders`
   (实现在 `wire/events.dart`),读 / 改电脑侧走 `core/host_rpc.dart` 的

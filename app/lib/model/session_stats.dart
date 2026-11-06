@@ -166,6 +166,25 @@ class SessionStats {
     if (decodeMs <= 0 || decodeTokens <= 0) return null;
     return decodeTokens / (decodeMs / 1000);
   }
+
+  /// 从 `sessionStats` 投影的 wire view 解（DSH `session-stats/src/projection.ts:72-81`）。
+  ///
+  /// 八项都是计数：**缺一项按 0** —— "缺一个"与"它是 0"在界面上同一表现
+  /// （与 `tokenUsage` 的四桶不同：那是**桶**，缺一个桶必须整份作废，见
+  /// [parseTokenUsage]）。键名只在这里断言。
+  static SessionStats? fromWire(Object? raw) {
+    if (raw is! Map) return null;
+    return SessionStats(
+      turns: _intOf(raw['turns']),
+      steps: _intOf(raw['steps']),
+      llmMs: _intOf(raw['llmMs']),
+      toolMs: _intOf(raw['toolMs']),
+      ttftMs: _intOf(raw['ttftMs']),
+      ttftSteps: _intOf(raw['ttftSteps']),
+      decodeMs: _intOf(raw['decodeMs']),
+      decodeTokens: _intOf(raw['decodeTokens']),
+    );
+  }
 }
 
 /// 上下文占用压力（DSH 的 `contextPressure` 投影）。
@@ -208,6 +227,22 @@ class ContextPressure {
       contextWindow: window,
     );
   }
+
+  /// 从 `contextPressure` 投影解（`token-meter/src/usage-projection.ts:67-75`）。
+  ///
+  /// 三个字段都没有 ⇒ `null`（`contextWindow` 是分母，没有它无解）。
+  static ContextPressure? fromWire(Object? raw) {
+    if (raw is! Map) return null;
+    final pressure = raw['pressureTokens'];
+    final projected = raw['projectedTokens'];
+    final window = raw['contextWindow'];
+    if (pressure is! num && projected is! num && window is! num) return null;
+    return ContextPressure(
+      pressureTokens: pressure is num ? pressure.toInt() : null,
+      projectedTokens: projected is num ? projected.toInt() : null,
+      contextWindow: window is num ? window.toInt() : null,
+    );
+  }
 }
 
 /// 上下文占用读数（照 Web 的 `ContextOccupancy`）。
@@ -245,7 +280,24 @@ class ContextBreakdown {
   final int messageTokens;
 
   int get total => systemTokens + toolsTokens + messageTokens;
+
+  /// 从 `contextBreakdown` 投影解（`token-meter/src/breakdown-projection.ts:24-28,77-80`）。
+  ///
+  /// 三项全 0 时当没有（与"没有这个投影"同一表现：上下文 sheet 只画百分比条，
+  /// 不画分段图例）。
+  static ContextBreakdown? fromWire(Object? raw) {
+    if (raw is! Map) return null;
+    final breakdown = ContextBreakdown(
+      systemTokens: _intOf(raw['systemTokens']),
+      toolsTokens: _intOf(raw['toolsTokens']),
+      messageTokens: _intOf(raw['messageTokens']),
+    );
+    return breakdown.total == 0 ? null : breakdown;
+  }
 }
+
+/// 缺失/非数字按 0（只给"全是计数"的投影用，见 [SessionStats.fromWire]）。
+int _intOf(Object? value) => value is num ? value.toInt() : 0;
 
 // ---------------------------------------------------------------------------
 // 格式化（与 Web 逐字一致的几个纯函数）

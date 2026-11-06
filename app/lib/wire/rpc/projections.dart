@@ -24,6 +24,10 @@
 /// ——它们各自只碰一个键，且落在 `model/` 与 `core/` 里各有自己的用例；
 /// 改签名只会让那些用例跟着搬，不增加任何保证。**键名仍只有一处**：它们各自那一个。
 ///
+/// **载荷字段归值类型的解码器**（`SessionStats.fromWire` / `parseTokenUsage` /
+/// `parsePermissionValue` …），本文件只读**投影键**（`values['key']`）并把值组合起来。
+/// 两层判据见 `docs/subsystems/app-channel-client.md` 的规则列表。
+///
 /// ## 失败语义
 ///
 /// 应答不是对象 ⇒ [WireBad]（整天读不出来，计数 1）。
@@ -99,10 +103,10 @@ SessionProjections _buildProjections(
     title: _nonEmptyString(values['title']),
     modelSelection: modelSelectionOf(values['modelSelection'], fields),
     tokenUsage: parseTokenUsage(values['tokenUsage']),
-    sessionStats: _sessionStatsOf(values['sessionStats']),
-    contextPressure: _contextPressureOf(values['contextPressure']),
-    contextBreakdown: _contextBreakdownOf(values['contextBreakdown']),
-    turnOutline: _turnOutlineOf(values['turnOutline']),
+    sessionStats: SessionStats.fromWire(values['sessionStats']),
+    contextPressure: ContextPressure.fromWire(values['contextPressure']),
+    contextBreakdown: ContextBreakdown.fromWire(values['contextBreakdown']),
+    turnOutline: TurnOutlineEntry.listFromWire(values['turnOutline']),
     permissionValue: parsePermissionValue(values),
     agentPreset: parseAgentPresetValue(values),
     subagentCatalog: parseSubagentCatalog(values),
@@ -134,79 +138,6 @@ GoalView? _goalOf(Map<String, Object?> values, WireFields fields) {
 
 String? _nonEmptyString(Object? raw) =>
     raw is String && raw.isNotEmpty ? raw : null;
-
-int _intOf(Object? value) => value is num ? value.toInt() : 0;
-
-/// `sessionStats` 投影（`packages/session/session-stats/src/projection.ts:72-81`）。
-///
-/// `decodeMs` / `decodeTokens` 是输出速率的唯一来源；`ttftMs` / `ttftSteps` 是
-/// 统计 sheet 里 TTFT 那一行的来源。缺字段按 0 —— 这个投影的全部字段都是计数，
-/// "缺一个"与"它是 0"在界面上同一表现（与 `tokenUsage` 的四桶不同：那是**桶**，
-/// 缺一个桶就必须整份作废，见 `parseTokenUsage` 的注释）。
-SessionStats? _sessionStatsOf(Object? raw) {
-  if (raw is! Map) return null;
-  return SessionStats(
-    turns: _intOf(raw['turns']),
-    steps: _intOf(raw['steps']),
-    llmMs: _intOf(raw['llmMs']),
-    toolMs: _intOf(raw['toolMs']),
-    ttftMs: _intOf(raw['ttftMs']),
-    ttftSteps: _intOf(raw['ttftSteps']),
-    decodeMs: _intOf(raw['decodeMs']),
-    decodeTokens: _intOf(raw['decodeTokens']),
-  );
-}
-
-/// `contextPressure` 投影。三个字段都没有就是 `null`（`contextWindow` 是分母，没有它无解）。
-ContextPressure? _contextPressureOf(Object? raw) {
-  if (raw is! Map) return null;
-  final pressure = raw['pressureTokens'];
-  final projected = raw['projectedTokens'];
-  final window = raw['contextWindow'];
-  if (pressure is! num && projected is! num && window is! num) return null;
-  return ContextPressure(
-    pressureTokens: pressure is num ? pressure.toInt() : null,
-    projectedTokens: projected is num ? projected.toInt() : null,
-    contextWindow: window is num ? window.toInt() : null,
-  );
-}
-
-/// `contextBreakdown` 投影。三项全 0 时当没有（与"没有这个投影"同一表现：
-/// 上下文 sheet 只画百分比条，不画分段图例）。
-ContextBreakdown? _contextBreakdownOf(Object? raw) {
-  if (raw is! Map) return null;
-  final breakdown = ContextBreakdown(
-    systemTokens: _intOf(raw['systemTokens']),
-    toolsTokens: _intOf(raw['toolsTokens']),
-    messageTokens: _intOf(raw['messageTokens']),
-  );
-  return breakdown.total == 0 ? null : breakdown;
-}
-
-/// `turnOutline` 投影（`session-turn-outline/src/projection.ts:61-75`）。
-///
-/// 拿不到就是空表 —— 轨迹页显示空态，不造一份假的。
-List<TurnOutlineEntry> _turnOutlineOf(Object? raw) {
-  if (raw is! List) return const [];
-  final out = <TurnOutlineEntry>[];
-  for (final entry in raw) {
-    if (entry is! Map) continue;
-    final turn = entry['turn'];
-    final seq = entry['seq'];
-    if (turn is! int || seq is! int) continue;
-    out.add(
-      TurnOutlineEntry(
-        turn: turn,
-        seq: seq,
-        prompt: entry['prompt'] is String ? entry['prompt'] as String : '',
-        response: entry['response'] is String
-            ? entry['response'] as String
-            : '',
-      ),
-    );
-  }
-  return out;
-}
 
 /// `modelSelection` 投影 → `next ?? lastUsed`。
 ///

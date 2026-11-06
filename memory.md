@@ -64,11 +64,10 @@
   实测代价：五个测试文件只因"字段名撞端口方法名"改名（`projections` / `workspaces` →
   `…Reply`，值与形状没动）；`wire_shapes_replay_test` 改了 11 处类型名 + 3 条 import（金样没动）；
   端口一律返回 `SnapshotReply<…>`（三态 —— 裸 null 会把 `notModified` 当成失败）。
-  **遗留**：`model/` 还有一批按线上字段名取值的解码器 —— `permission.dart` /
-  `agent_preset.dart` / `changes.dart`（RPC 应答）与 `changed_path.dart`（工具参数，已定
-  口径不算事件契约），`wire/rpc/projections.dart` 还反向 import `model/permission.dart`。
-  `model/tool_view.dart` 的 presentationMeta 已走端口（`toolMeta`）；门禁仍只扫 `data/`。
-  取舍与变异校验见 `implemented/2026-11-06-projection-event-fields-port.md`。
+  **遗留**：无（`model/` 的 `fromWire` / `parseX` 是既定分层、`wire → model/core` 单向；
+  `wire/rpc/projections.dart` 里 4 个内联载荷解析器已搬进值类型）。两层判据
+  （会话事件 / RPC 应答）写在 docs 的规则列表里；`model/tool_view.dart` 的 presentationMeta
+  走 `toolMeta` 端口。
   留下的边界：`core → model` 多了一条**纯类型环**（值对象的字段类型来自 `model/`，
   而 `model/` 又 import `core/job.dart` 等）。
   没有真机（读的形状与路径没变）。见

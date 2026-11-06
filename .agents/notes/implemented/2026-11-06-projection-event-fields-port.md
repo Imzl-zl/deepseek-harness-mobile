@@ -192,15 +192,17 @@ wire/event_fields.dart      WireEventFields：调 wire 读者 → valueOrReport 
 - **门禁认的形状**是"助手调用 + 字段名字面量"；`map['key']` 这种直接下标不在它的匹配里。
   `data/` 目前没有这种读法（工具参数那一层用的是变量键，见下一条），所以这条门禁对
   `data/` 是完整的；换到别的目录（例如 `model/`）就不完整，别再拿它当"零字段名"的证据。
-- **`model/` 里还有一批"按线上字段名取值"的解码器**，都不是事件载荷这条线：
-  `permission.dart`（`session.projections` 的 `permissions.currentValue` + 权限预设的
-  `value`/`name`/`description`）、`agent_preset.dart`（预设目录应答的
-  `available`/`roster`/`presets`/`broken`/`id`/`isDefault`）、`changes.dart`
-  （`file.changes` 应答的 `path`/`display`/`added`/`deleted`/`binary`/`oversized`/`turn`/`total`）、
-  `changed_path.dart`（**工具参数**的 `file_path`/`old_string`/`new_str`/…，属已定口径的
-  "工具 schema，不是事件契约"）。`wire/rpc/projections.dart` 还反向 import
-  `model/permission.dart` 来解码 —— 层次倒置，与 2026-10-25 同一类。
-  要把门禁扩到 `model/`，先得把这些 RPC 应答的读法收回 `wire/rpc/`。
+- **`model/` 里的 `fromWire` / `parseX` 是既定分层，不是倒置**：`wire → model/core` 单向
+  （`model/` 与 `core/` 零 wire import），值类型自己断言自己的载荷字段，`wire/rpc/*` 只读
+  信封键与方法名。这条在 `docs/subsystems/app-channel-client.md` 的规则列表里写成两层判据
+  （会话事件 / RPC 应答），此前那句"线上载荷的字段名只在 `wire/` 断言"只对事件成立。
+- 真正的不一致已收口：`wire/rpc/projections.dart` 里 4 个**内联**载荷解析器
+  （`_sessionStatsOf` / `_contextPressureOf` / `_contextBreakdownOf` / `_turnOutlineOf`）
+  搬进值类型 —— `SessionStats.fromWire` / `ContextPressure.fromWire` /
+  `ContextBreakdown.fromWire` / `TurnOutlineEntry.listFromWire`。那个文件现在只读投影键
+  （`values['key']`）。
+- **工具参数**（`changed_path.dart` 的 `file_path` / `old_string`…、`_toolSummaryKeys`）
+  不属这两层：它是模型填的工具 schema，不是 DSH 的事件 / RPC 契约。口径写在这里。
 - **工具参数键名**（`bash` 的 `command`、`read` 的 `path` 等，`_toolSummaryKeys` /
   `_flatten`）不属于这条门禁：那是模型填的工具 schema，不是 DSH 事件契约。口径写在这里，
   下一批要动它得先改这条判据。
