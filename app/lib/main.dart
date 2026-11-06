@@ -39,6 +39,7 @@ import 'core/sync_client.dart' hide AppState;
 import 'core/sync_client_impl.dart';
 import 'core/transport.dart';
 import 'data/app_model.dart';
+import 'data/app_services.dart';
 import 'data/connection_recovery.dart';
 import 'data/host_scope.dart';
 import 'data/scoped_store.dart';
@@ -91,12 +92,27 @@ void main() {
       debugPrint('[wire] $event: $detail');
     };
   }
-  runApp(const DshMobileApp());
+  // **绑定先初始化，再建端口**：`platform/notify_factory.dart` 造出来的那个端口
+  // 在构造时就向 `dsh/notifications` 注册方法处理器，而 `setMethodCallHandler`
+  // 断言"绑定已初始化"（`packages/flutter/lib/src/services/platform_channel.dart:587-593`）。
+  // `runApp` 内部也会 ensure 一次，但它的**实参先求值** —— 那时还没有绑定。
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(
+    DshMobileApp(
+      // **app 级单例，全进程一份**：通知与前台服务只有一个端口（理由见
+      // `data/app_services.dart`）。它随根部 State 一起走到 `dispose`。
+      services: AppServices(notify: createNotifyPort()),
+    ),
+  );
 }
 
 /// 应用根。
 class DshMobileApp extends StatefulWidget {
-  const DshMobileApp({super.key});
+  const DshMobileApp({super.key, required this.services});
+
+  /// app 级服务（`data/app_services.dart`）。**整个进程只有一份** ——
+  /// 由 [main] 建、交给每次装配（`_assemble`）注入 `AppModel`。
+  final AppServices services;
 
   @override
   State<DshMobileApp> createState() => _DshMobileAppState();
@@ -453,7 +469,10 @@ class _DshMobileAppState extends State<DshMobileApp>
       //
       // 所以：没有凭据时**建一个不连的客户端**（`client` 存在但不 start），
       // 界面照常渲染（会话列表会是空的，能进各屏）。
-      final app = await _assembleWithoutCredentials(_recovery.onTerminated);
+      final app = await _assembleWithoutCredentials(
+        widget.services,
+        _recovery.onTerminated,
+      );
       if (!mounted) return;
       // **首帧前**把设备本地 UI 状态读回来（字号/主题/密度/上次会话）：
       // 放在 `_booting = false` 之前，首帧就是正确的，不会先画默认值再跳。
@@ -465,7 +484,11 @@ class _DshMobileAppState extends State<DshMobileApp>
       });
       return;
     }
-    final app = await _assemble(saved, _recovery.onTerminated);
+    final app = await _assemble(
+      widget.services,
+      saved,
+      _recovery.onTerminated,
+    );
     if (!mounted) return;
     await app.loadUiState();
     if (!mounted) return;
@@ -536,7 +559,11 @@ class _DshMobileAppState extends State<DshMobileApp>
     // 配对可能新增了一台（也可能是替换同一台的行）：列表重读一次。
     final hosts = await pairingStore.hosts();
     if (!mounted) return;
-    final app = await _assemble(credentials, _recovery.onTerminated);
+    final app = await _assemble(
+      widget.services,
+      credentials,
+      _recovery.onTerminated,
+    );
     if (!mounted) return;
     await app.loadUiState();
     if (!mounted) return;
@@ -597,7 +624,11 @@ class _DshMobileAppState extends State<DshMobileApp>
     // **先装配、后改 `active`**：装配是本地动作（开库 + 派生身份），失败时
     // `active` 还指着上一台 —— 下一次启动仍然起得来。反过来的话，一次失败的
     // 切换会让 App 每次启动都落到"读得出槽但装配不起来"的那一台上。
-    final app = await _assemble(next, _recovery.onTerminated);
+    final app = await _assemble(
+      widget.services,
+      next,
+      _recovery.onTerminated,
+    );
     if (!mounted) return;
     try {
       // **换凭据槽**：`active` 指向新那台（槽本身早就写全了，这里只改指针）。
@@ -674,6 +705,10 @@ class _DshMobileAppState extends State<DshMobileApp>
   void dispose() {
     WidgetsBinding.instance.removeObserver(_reporter);
     _app?.dispose();
+    // **端口由 app 关**（`data/app_services.dart`）：模型撤通知、停前台服务，
+    // 但不关端口 —— 关掉等于让还活着的那台电脑一起收不到通知（池化之后就是那样）。
+    // 顺序：先让模型撤它贴过的那批，再注销通道处理器。
+    unawaited(widget.services.dispose());
     super.dispose();
   }
 
@@ -1432,7 +1467,10 @@ class _DshMobileAppState extends State<DshMobileApp>
   /// 不要再清一次。旧客户端已终态停摆（换票被拒 → 不重连），换掉即可。
   Future<void> _reassembleUnpaired() async {
     if (!mounted) return;
-    final app = await _assembleWithoutCredentials(_recovery.onTerminated);
+    final app = await _assembleWithoutCredentials(
+      widget.services,
+      _recovery.onTerminated,
+    );
     if (!mounted) return;
     setState(() {
       // 同 `_onPaired`：旧客户端持着传输层，换掉前必须 dispose，
@@ -1488,7 +1526,8 @@ ChannelTransport _pairingTransport(String upgradeUrl) {
 /// 只有"握手 ↔ 谁"需要电脑公钥，而这里给一个**不存在的对端**
 /// （空串公钥、空配对标识）—— 它连不上任何真实的电脑，但**也不会被用到**：
 /// 本函数不调 `start()`，而"连"只有一个触发点（配对成功后那一处）。
-Future<AppModel> _assembleWithoutCredentials([
+Future<AppModel> _assembleWithoutCredentials(
+  AppServices services, [
   void Function(ProtocolException)? onConnectionTerminated,
 ]) async {
   final store = SqfliteItemStore();
@@ -1504,6 +1543,10 @@ Future<AppModel> _assembleWithoutCredentials([
     readLocalItems: (sid) => store.itemsOf(sid),
     // 没配对也照样能查更新（版本与连接无关）。
     latestAppTag: fetchLatestAppVersion,
+    // 通知端口与真装配**是同一个**：端口属于 App，不属于"哪台电脑"。
+    // 这台模型不 `start()`（没有可连的对端），所以它不会贴提醒；但它退到后台时
+    // 照样对齐前台服务（`setAppForeground` → `_syncKeepAlive`）—— 那是 App 级的事。
+    notify: services.notify,
     onConnectionTerminated: onConnectionTerminated,
     client: createSyncClient(
       SyncClientDeps(
@@ -1556,7 +1599,12 @@ class _UnpairedTransport implements ChannelTransport {
 /// **装配**：把 `core/` 的零件接到一起，产出可用的 `AppModel`。
 ///
 /// 这是全项目唯一一处"知道用哪个实现"的地方（见文件头）。
+///
+/// [services] 是 **app 级单例**（`data/app_services.dart`）：装配只**注入**它带的东西，
+/// 不自己造 —— 端口这类"全进程只能有一个"的东西一旦每次装配各建一个，
+/// 后建的那个会把先建的顶掉，而症状是静默的。
 Future<AppModel> _assemble(
+  AppServices services,
   PairedCredentials credentials, [
   void Function(ProtocolException)? onConnectionTerminated,
 ]) async {
@@ -1704,8 +1752,11 @@ Future<AppModel> _assemble(
     client: client,
     // 冷启动读回本地条目（判据见 `core/session_restore.dart`）。
     readLocalItems: (sid) => store.itemsOf(sid),
-    // 通知与后台保活：端口在 `core/`、实现按端选（`platform/notify_factory.dart`）。
-    notify: createNotifyPort(),
+    // 通知与后台保活：端口是 **app 级单例**（`data/app_services.dart`），
+    // 这里只注入、不新建 —— 每次装配新建一个的话，后建的那个会把
+    // `dsh/notifications` 的方法处理器顶掉，先装配的那台于是收不到通知上的答复。
+    // Note: `.agents/notes/implemented/2026-11-06-s3-app-services.md`
+    notify: services.notify,
     // 端点表交给 `AppModel` 当所有者：界面要读、设置页要改，而上面的
     // `EndpointTransport` 每次 `connect()` 经 `appRef` 现读它。
     endpoints: credentials.endpoints,

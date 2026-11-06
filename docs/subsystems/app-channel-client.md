@@ -436,6 +436,8 @@ app/packages/
 
 > **目标（未落地）**：装配层按 `hostId` 持有一池 `AppModel`，切换不拆旧的（`start()` 成功后旧的保持在线），界面按选中那台取数。现在仍是"换槽 + 重新装配 + dispose 旧的"。
 
+**app 级的那几件事不进装配**：通知与前台服务只有一条 `dsh/notifications` 通道，而 `MethodChannel` 只认最后一次注册的处理器 —— 所以端口由 `main()` 建一次，经 `AppServices`（`data/app_services.dart`）注入**每一次**装配（有凭据与没配对两条都注入），`AppModel` 只使用它；关闭点是根部 State 的 `dispose`（`AppServices.dispose` → `NotifyPort.close`）。装配点建第二个端口不会报错，只会让先装配的那台收不到通知上的答复（判据见 `notifications.md` §9 那两条测试）。
+
 **时间预算**（方案决策 7 的表，每一层只有一个判据处）：
 
 | 层 | 值 | 出处 |

@@ -273,4 +273,36 @@ void main() {
       reason: '上报目标要现取当前那个客户端，不能持有一个不放',
     );
   });
+
+  test('通知端口是 app 级单例：装配只注入，不自己建', () {
+    // **这条守的是一个静默失败**：安卓实现 `AndroidNotify` 构造时就向
+    // `dsh/notifications` 调 `setMethodCallHandler`，而 `MethodChannel` 只认
+    // *最后*注册的那个处理器（`packages/flutter/lib/src/services/platform_channel.dart:578-593`）。
+    // 所以"每次装配各建一个端口"的写法在第二台电脑上等于让先装配的那台
+    // **永远收不到通知上的答复** —— 点了允许没反应，两端都没有异常也没有日志。
+    //
+    // 端口只在 `main()` 建一次，两处装配（有凭据 / 没配对）都从同一个
+    // `AppServices` 取；关闭点只有根部 State 的 `dispose`（`data/app_services.dart`
+    // 说明为什么不做 `ownsNotifyLifecycle: false` 那种布尔标记）。
+    expect(
+      RegExp(r'createNotifyPort\(\)').allMatches(source).length,
+      1,
+      reason: '端口全进程只该有一份（`main()` 里那一处）',
+    );
+    expect(
+      RegExp(r'AppServices\(').allMatches(source).length,
+      1,
+      reason: 'app 级服务也只该建一份',
+    );
+    expect(
+      RegExp(r'notify:\s*services\.notify').allMatches(source).length,
+      2,
+      reason: '两处装配都要注入**同一个**端口实例（`_assemble` 与没配对那条）',
+    );
+    expect(
+      source.contains('widget.services.dispose()'),
+      isTrue,
+      reason: '端口要有人关：不关的话方法处理器与 approvals 流随进程一直留着',
+    );
+  });
 }

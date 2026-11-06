@@ -132,8 +132,12 @@ Flutter 引擎随之销毁，Dart 侧的连接与服务一起没了（不做缓�
 
 ## 9. 验证
 
-- `cd app && flutter test test/notice_test.dart` —— 8 项：保活三条判据、审批/完成两类提醒、
+- `cd app && flutter test test/notice_test.dart` —— 9 项：保活三条判据、审批/完成两类提醒、
   "看着它就不提醒"、"decided 就撤"、两个按钮的载荷（`allowed-once` / 空 `selected`）。
+- `cd app && flutter test test/app_services_test.dart` —— 2 项：两次装配拿到**同一个**端口
+  （两台的提醒落在同一份记录里）、模型释放不关端口（关闭点只有 `AppServices.dispose`）。
+- `cd app && flutter test test/assembly_invariants_test.dart` —— 装配点形状：端口只建一次、
+  两处装配都注入同一个实例、根 State 的 `dispose` 关它。
 - 真机（原生部分进不了 `flutter test`）：装包 → 授予通知权限 → 发一句长跑 → 按 Home →
   锁屏 10 分钟，按 `dumpsys activity services` / `dumpsys notification` / 服务里 `Log.i("DshFgs", …)`
   取证据；反面对照是"不起服务"那一次（锁屏 2 分钟后连接必断）。
