@@ -196,7 +196,7 @@ class MessageItem extends ChatItem {
   final String reasoning;
 
   /// 系统 / 上下文注入行的标题（`system/message` = 「系统提示词」；
-  /// `developer/message` = 生产者 kind，见 [contextProducerLabel]）。
+  /// `developer/message` = 生产者 kind，见 `EventFields.sourceKind`）。
   ///
   /// **只有 [MessageRole.system] 有它**：用户与助手消息靠头像与名字表意，
   /// 而系统行在 DSH 里本来就是一个带标题的折叠行
@@ -212,7 +212,7 @@ class MessageItem extends ChatItem {
   /// `user/message`，只有 `source.kind === 'user'` 才是人打的字
   /// （`ui-chat/src/client/conversation-nodes/message.ts:79`）。原来我们按事件类型
   /// 认角色 ⇒ 这些注入在手机上**冒充用户消息**（一条会话里冒出三条气泡）。
-  /// 判据与标签见 `projection.dart` 的 `contextSourceKind` / `kContextInjectionLabel`。
+  /// 判据与标签见 `EventFields.sourceKind` / `kContextInjectionLabel`。
   final String? systemHint;
 
   /// 这一行是**唤醒新一轮的通知**（DSH 的 `turn-trigger` 节点），不是普通注入。

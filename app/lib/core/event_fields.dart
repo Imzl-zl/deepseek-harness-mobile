@@ -26,6 +26,9 @@
 /// `.agents/notes/implemented/2026-11-06-projection-event-fields-port.md`。
 library;
 
+import '../model/chat_item.dart' show TurnTokenUsage;
+import '../model/tool_view.dart' show DiffHunk;
+
 /// 一条 `tool/call` 的载荷（`{turn, step, callId, name, arguments}`）。
 final class ToolCallPayload {
   const ToolCallPayload({
@@ -90,6 +93,29 @@ final class QuestionReplyPayload {
 /// （2026-11-04 真机：库里 200 条 result / 0 条 call）。
 typedef MergedToolCall = ({String? name, String argumentsRaw});
 
+/// `content` 块的种类：投影只区分得到这几档，其余一律 [other]（不丢块）。
+enum ContentBlockKind { text, reasoning, image, file, other }
+
+/// 一个 `content` 块（已解开）。[text] 只对 [ContentBlockKind.text] 与
+/// [ContentBlockKind.reasoning] 有意义。
+final class ContentBlock {
+  const ContentBlock({required this.kind, this.text});
+
+  final ContentBlockKind kind;
+  final String? text;
+}
+
+/// 一条消息的载荷：`content` 已按块解好，用量在 `data` **顶层**（不在 `message` 里）。
+final class MessagePayload {
+  const MessagePayload({this.blocks = const [], this.usage});
+
+  /// 按线上顺序解好的块。**缺 `content` 是空表**（历史上两种形状都出现过）。
+  final List<ContentBlock> blocks;
+
+  /// `assistant/message` 那一次请求的用量；别的类型没有。
+  final TurnTokenUsage? usage;
+}
+
 /// 事件载荷的读法（实现在 `wire/event_fields.dart`）。
 ///
 /// 每个方法**只读字段、不判语义**：读不出 ⇒ `null`（已经计过数）。
@@ -111,4 +137,21 @@ abstract interface class EventFields {
 
   /// 从落盘条目里被合并过的载荷读回 `{name, argumentsRaw}`。
   MergedToolCall? mergedToolCall(Object? data);
+
+  /// 一条消息的 `content`（按块解好）与用量。
+  ///
+  /// **`user/message` 的载荷就是消息本身**，其余消息类型在 `data.message` 上 ——
+  /// 这处结构知识只在这里（`core/items.dart` 的 `itemIdOf` 有同一处，两处都在描述
+  /// DSH 的形状，必须一起改）。
+  MessagePayload message(String type, Object? data);
+
+  /// `source.kind`（上下文注人行的判据与标签来源）。没有 `source` ⇒ `null`。
+  String? sourceKind(Object? data);
+
+  /// 工具结果的 diff hunks：先看 `data.meta.diffs`（DSH 的 `presentationMeta`），
+  /// **再退回老的 `message.metadata.diffs`**。不是列表 ⇒ `null`。
+  List<DiffHunk>? diffHunks({Object? data, Object? message});
+
+  /// 工具结果是不是失败：`message.isError` 为布尔就用它，否则看 `status == 'error'`。
+  bool isToolError(Object? data);
 }

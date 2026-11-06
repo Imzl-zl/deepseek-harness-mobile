@@ -60,13 +60,9 @@ const String kSystemPromptLabel = '系统提示词';
 /// 上下文注入行的标题（DSH `ui-chat/src/client/locale.ts:126` 的
 /// `message.contextInjection` = `上下文注入`）。
 ///
-/// **它不是** [contextProducerLabel]：标题说"这是注入"，生产者（`runtime-context`
+/// **它不是**生产者那个标签：标题说"这是注入"，生产者（`runtime-context`
 /// 之类）渲染在标题后面的分隔点之后（`ContextInjectionRow.tsx:57,63-69`）。
 const String kContextInjectionLabel = '上下文注入';
-
-/// 一条 `user/message` 的 `source.kind`；没有 `source` 时 `null`。
-String? contextSourceKind(Object? data) =>
-    stringField(fieldOf(data, 'source'), 'kind');
 
 /// 「唤醒新一轮的非人消息」的标题（DSH `turn-trigger` 的一行标题）。
 ///
@@ -122,16 +118,6 @@ const String kUnknownCommandName = '命令';
 
 /// 命令运行中的摘要（DSH 的 `t('command.running')`）。
 const String kCommandRunningSummary = '正在执行…';
-
-/// 上下文注入行的标签：**照 DSH 的 `contextProducer`**
-/// （`conversation-nodes/event-projection.ts:60-76`）—— 有 `source.kind`
-/// 就照它说（`tool-registry` / `skill-invocation` / `agent-instructions` …），
-/// 没有说话才退回 `上下文`。DSH 对未知 kind 的原话是
-/// "keep an unknown producer visible by its durable kind"。
-String contextProducerLabel(Object? data) {
-  final kind = stringField(fieldOf(data, 'source'), 'kind');
-  return kind ?? '上下文';
-}
 
 /// 把一条 DSH 会话事件投影成界面条目。
 ///
@@ -226,7 +212,12 @@ ChatProjection projectEvent({
   required EventFields fields,
 }) {
   if (isMessageEvent(type)) {
-    final message = messageProjectionOf(type, data);
+    // 载荷解一次，后面只消费解好的块表（正文 / 思考 / 附件数 / 用量）。
+    final payload = fields.message(type, data);
+    final messageText = textOfContent(payload.blocks);
+    final messageReasoning = type == 'assistant/message'
+        ? reasoningOf(payload.blocks)
+        : '';
     // **"谁说的话"由 `source.kind` 决定，不是事件类型**（2026-10-20 真机 + 真日志）。
     //
     // DSH 把运行时上下文、技能目录、时间快照都记成 `user/message`：
@@ -244,7 +235,7 @@ ChatProjection projectEvent({
     //
     // **缺 `source` 时按用户消息处理**（`source.kind == null`）：那是 v3 时代的形状，
     // 把它当上下文会**藏掉真人说的话** —— 两个方向的错法里，这一边更坏。
-    final contextKind = type == 'user/message' ? contextSourceKind(data) : null;
+    final contextKind = type == 'user/message' ? fields.sourceKind(data) : null;
     final isContext = contextKind != null && contextKind != 'user';
     // **一步"只有思考/工具、没有正文"的助手消息 → 过程行**，不画助手头。
     //
@@ -254,8 +245,8 @@ ChatProjection projectEvent({
     // `ui-chat/src/client/contract/assistant-content.ts:9-15`），中间的思考是过程
     // （`ChatNodeSeat.tsx:78-83` 的 `processMember`）—— 与工具卡同级、随轮组收起。
     // 不改的话屏幕上会出现好几个「助手」头像（用户当场指出）。
-    if (type == 'assistant/message' && message.text.trim().isEmpty) {
-      if (message.reasoning.isEmpty) {
+    if (type == 'assistant/message' && messageText.trim().isEmpty) {
+      if (messageReasoning.isEmpty) {
         return const ChatProjection.skip('只有工具调用的助手步：没有正文也没有思考');
       }
       return ChatProjection.item(
@@ -264,8 +255,8 @@ ChatProjection projectEvent({
           seq: seq,
           updatedAt: time,
           turn: turn,
-          text: message.reasoning,
-          usage: message.usage,
+          text: messageReasoning,
+          usage: payload.usage,
         ),
       );
     }
@@ -276,11 +267,11 @@ ChatProjection projectEvent({
         updatedAt: time,
         turn: turn,
         role: isContext ? MessageRole.system : roleOfEvent(type),
-        text: message.text,
-        attachmentCount: message.attachmentCount,
+        text: messageText,
+        attachmentCount: attachmentCountOf(payload.blocks),
         steering: steering,
-        reasoning: message.reasoning,
-        usage: message.usage,
+        reasoning: messageReasoning,
+        usage: payload.usage,
         // 系统 / 上下文注入行的**标题**（DSH 的 `system-prompt` 与 `context`
         // 两个节点各有一个标题行，见 `register-node-renderers.ts:45,49`）。
         // 用户与助手消息没有它（它们有头像与名字）。
@@ -298,9 +289,9 @@ ChatProjection projectEvent({
         // **唤醒通知没有这一段**：DSH 的 `TurnTriggerNodeView` 只画
         // 标题 + 时间 + 箭头（`TurnTriggerNodeView.tsx:39-42`）。
         systemHint: isContext
-            ? (waking ? null : contextProducerLabel(data))
+            ? (waking ? null : fields.sourceKind(data) ?? '上下文')
             : type == 'developer/message'
-            ? contextProducerLabel(data)
+            ? fields.sourceKind(data) ?? '上下文'
             : null,
         // 唤醒通知：展开后多一句「这条通知触发了本轮回复。」（DSH
         // `TurnTriggerNodeView.tsx:44-47`），图标按 kind 换
@@ -383,7 +374,7 @@ ChatProjection projectEvent({
         updatedAt: time,
         turn: turn,
         name: name,
-        status: isToolError(data)
+        status: fields.isToolError(data)
             ? ToolCallStatus.failed
             : ToolCallStatus.completed,
         // **参数摘要只用调用的那一份**：结果里没有参数，而把结果消息
@@ -400,13 +391,13 @@ ChatProjection projectEvent({
                   )),
         // **结果正文进明细**：工具到底返回了什么，展开才看得见
         // （`ToolCard` 的 `.tool-body` 一直是支持的，只是投影从不填）。
-        detail: toolOutputOf(message),
+        detail: toolOutputOf(fields.message('tool/result', data)),
         view: view,
         // 文件变更的 +N/−M：优先用专用视图算好的（`meta.diffs` 的行数），
         // 否则退回按 hunks 折算（老结果只有 `message.metadata.diffs`）。
         diffStat: view is DiffResultView
             ? (added: view.added, removed: view.removed)
-            : diffStatOf(message, data: data),
+            : diffStatOf(fields.diffHunks(data: data, message: message)),
         // **改动的路径必须从调用继承**：结果载荷里没有路径字段
         // （真日志只有 `role / source / toolCallId / content / isError / id`），
         // 而它到达时**覆盖同一个 itemId** —— 不继承的话，"这一轮改了哪些文件"
@@ -423,7 +414,7 @@ ChatProjection projectEvent({
         //
         // Note: 为什么必须继承、"失败不算产出"、词表为什么按轮且只给收口正文 ——
         // 见 `.agents/notes/implemented/2026-10-26-file-mentions-and-open-file.md`
-        changedPath: isToolError(data)
+        changedPath: fields.isToolError(data)
             ? null
             : call?.changedPath ??
                   (storedName == null && storedArgs.isEmpty
@@ -844,108 +835,44 @@ MessageRole roleOfEvent(String type) => switch (type) {
   _ => MessageRole.system,
 };
 
-/// 一条消息投影出来的三样东西：正文、附件数、思考过程。
-class MessageProjection {
-  const MessageProjection({
-    required this.text,
-    this.attachmentCount = 0,
-    this.reasoning = '',
-    this.usage,
-  });
+/// content 里图片 / 文件块的个数（附件标签用）。
+int attachmentCountOf(List<ContentBlock> blocks) => blocks
+    .where(
+      (b) =>
+          b.kind == ContentBlockKind.image || b.kind == ContentBlockKind.file,
+    )
+    .length;
 
-  final String text;
-  final int attachmentCount;
-  final String reasoning;
-
-  /// 这条助手消息那一次请求的用量（`assistant/message` 的 `data.usage`）。
-  ///
-  /// **在 `data` 顶层，不在 `data.message` 里** —— 真日志实测：
-  /// `data` 的键是 `turn, step, message, usage, stream`
-  /// （`assistant/message` 共 8634 条都带 `usage`）。
-  /// 它也是 DSH 折 turn 用量的入口（`turn-usage.ts:246`）。
-  final TurnTokenUsage? usage;
-}
-
-/// 取消息正文（以及附件数与思考过程）。
-///
-/// **`user/message` 的载荷就是消息本身**，其余类型在 `data.message` 上
-/// （`core/items.dart` 的 `itemIdOf` 有同一处结构知识 —— 两处都在描述 DSH 的形状，
-/// 所以它们必须一起改；这一点在 `docs/` 里由契约 §5.2 那张表钉着）。
-MessageProjection messageProjectionOf(String type, Object? data) {
-  final holder = type == 'user/message' ? data : fieldOf(data, 'message');
-  // DSH 的消息体是 `{id, role, content: [...]}` 形状；正文**只取纯文本块**，
-  // 复杂块（图片、工具调用）由渲染层按需处理 —— 这一层不做富文本投影。
-  final content = fieldOf(holder, 'content');
-  return MessageProjection(
-    text: textOfContent(content),
-    attachmentCount: attachmentCountOf(content),
-    // 助手消息的 content 里可能有 `{type:'reasoning', text}` 块
-    // （真实会话日志里就有）；用户消息没有。
-    reasoning: type == 'assistant/message' ? reasoningOf(content) : '',
-    // 用量在 `data` 顶层（见 [MessageProjection.usage]）。
-    usage: type == 'assistant/message'
-        ? TurnTokenUsage.fromWire(fieldOf(data, 'usage'))
-        : null,
-  );
-}
-
-/// content 里图片 / 文件块的个数。
-int attachmentCountOf(Object? content) {
-  if (content is! List) return 0;
-  var count = 0;
-  for (final block in content) {
-    if (block is Map) {
-      final type = block['type'];
-      if (type == 'image' || type == 'file') count += 1;
-    }
-  }
-  return count;
-}
-
-/// 助手的思考过程（content 里全部 `reasoning` 块拼接）。
-String reasoningOf(Object? content) {
-  if (content is! List) return '';
+/// 助手的思考过程（全部 `reasoning` 块拼接）。
+String reasoningOf(List<ContentBlock> blocks) {
   final buffer = StringBuffer();
-  for (final block in content) {
-    if (block is! Map) continue;
-    if (block['type'] != 'reasoning') continue;
-    final text = block['text'];
-    if (text is String) buffer.write(text);
+  for (final block in blocks) {
+    if (block.kind != ContentBlockKind.reasoning) continue;
+    final text = block.text;
+    if (text != null) buffer.write(text);
   }
   return buffer.toString();
 }
 
-/// 从 DSH 的 `content` 取纯文本。
+/// 从解好的块表取纯文本。
 ///
-/// `content` 可能是字符串，也可能是块数组（`{type: 'text', text: '…'}`）。
-/// **两种都收**：DSH 的 `user/message` 历史上两种形状都出现过，
-/// 而只认一种会让另一种静默显示成空 —— 那是"消息发出去但界面是空的"这类 bug。
-///
-/// **只取 `type == 'text'` 的块**：`{type:'reasoning', text}` 也是 `text` 字段，
-/// 不按 type 滤就会把思考过程混进正文（真机日志里两种块并存）。
-String textOfContent(Object? content) {
-  if (content is String) return content;
-  if (content is List) {
-    final buffer = StringBuffer();
-    for (final block in content) {
-      if (block is Map) {
-        if (block['type'] != 'text') continue;
-        final text = block['text'];
-        if (text is String) buffer.write(text);
-      } else if (block is String) {
-        buffer.write(block);
-      }
-    }
-    return buffer.toString();
+/// **只取 `text` 块**：`reasoning` 块也带文本，不按种类滤就会把思考过程混进正文
+/// （真机日志里两种块并存）。块的种类由 `wire/` 判，这里只做"拼接"这件语义事。
+String textOfContent(List<ContentBlock> blocks) {
+  final buffer = StringBuffer();
+  for (final block in blocks) {
+    if (block.kind != ContentBlockKind.text) continue;
+    final text = block.text;
+    if (text != null) buffer.write(text);
   }
-  return '';
+  return buffer.toString();
 }
 
-/// 工具结果的输出文本（`message.content` 的文本块，截断成明细）。
+/// 工具结果的输出文本（文本块拼接，截断成明细）。
 ///
 /// **截断**：一次 `ls` 可以有几十万字符，而明细是展开才看的一行区域。
-String toolOutputOf(Object? message, {int maxLength = 4000}) {
-  final text = textOfContent(fieldOf(message, 'content')).trim();
+String toolOutputOf(MessagePayload message, {int maxLength = 4000}) {
+  final text = textOfContent(message.blocks).trim();
   if (text.isEmpty) return '';
   final single = text.replaceAll(RegExp(r'\r\n?'), '\n');
   return single.length <= maxLength
@@ -953,45 +880,28 @@ String toolOutputOf(Object? message, {int maxLength = 4000}) {
       : '${single.substring(0, maxLength)}…';
 }
 
-/// 从 `tool/result` 的 `metadata.diffs` 折算 +N/−M。
+/// 从工具结果的 diff hunks 折算 +N/−M。
 ///
-/// DSH 的 `diff-card-model.ts:29-41` 认的 hunk 形状是
-/// `{path, oldText, newText}`；这里只取**行数统计**（手机这一版不画 diff
-/// 正文，画正文是 `ui-tool` 的 DiffBlock，属于独立一块）。
-/// 按行折算：旧文本行数 = 删除，新文本行数 = 新增。
-({int added, int removed})? diffStatOf(Object? message, {Object? data}) {
-  // **真日志里 diffs 在 `data.meta.diffs`**（DSH 的 `presentationMeta`，
-  // `tool-fs/src/edit.ts:113-117`），不在 `message.metadata` 上 ——
-  // 这里以前只读后者，于是生产里 +N/−M 永远是 null（2026-10-22 用真 fixture 核到）。
-  // 老形状（`message.metadata.diffs`）保留作兜底。
-  final diffs =
-      fieldOf(fieldOf(data, 'meta'), 'diffs') ??
-      fieldOf(fieldOf(message, 'metadata'), 'diffs');
-  if (diffs is! List || diffs.isEmpty) return null;
+/// DSH 的 `diff-card-model.ts:29-41` 认的 hunk 形状是 `{path, oldText, newText}`；
+/// 这里只取**行数统计**（手机这一版不画 diff 正文，画正文是 `ui-tool` 的
+/// DiffBlock，属于独立一块）。按行折算：旧文本行数 = 删除，新文本行数 = 新增。
+///
+/// **hunks 从哪来**（`data.meta.diffs` 还是 `message.metadata.diffs`）不在这里判 ——
+/// `EventFields.diffHunks` 已经把两处合成一份。
+({int added, int removed})? diffStatOf(List<DiffHunk>? hunks) {
+  if (hunks == null || hunks.isEmpty) return null;
   var added = 0;
   var removed = 0;
-  for (final hunk in diffs) {
-    if (hunk is! Map) continue;
-    final oldText = hunk['oldText'];
-    final newText = hunk['newText'];
-    if (oldText is String && oldText.isNotEmpty) {
-      removed += oldText.split('\n').length;
+  for (final hunk in hunks) {
+    if (hunk.oldText.isNotEmpty) {
+      removed += hunk.oldText.split('\n').length;
     }
-    if (newText is String && newText.isNotEmpty) {
-      added += newText.split('\n').length;
+    if (hunk.newText.isNotEmpty) {
+      added += hunk.newText.split('\n').length;
     }
   }
   if (added == 0 && removed == 0) return null;
   return (added: added, removed: removed);
-}
-
-/// 工具结果是不是失败。
-bool isToolError(Object? data) {
-  final message = fieldOf(data, 'message');
-  final isError = fieldOf(message, 'isError');
-  if (isError is bool) return isError;
-  final status = fieldOf(message, 'status');
-  return status is String && status == 'error';
 }
 
 /// 一行摘要（**截断**：它是列表里的一行，不是详情）。

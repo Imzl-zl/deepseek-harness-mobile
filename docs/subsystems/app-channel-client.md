@@ -81,7 +81,7 @@ UI 一旦开始认事件类型,同一件事就会在两个地方各写一遍。
   **`ui/` 与 `core/` 都是 0**(发消息走 `AppModel.sendPrompt` / `sendSubagentPrompt`,
   界面不认识方法名)。`data/` 也**零 `wire/` import**:`projection.dart` 的事件载荷走
   `core/event_fields.dart` 的 `EventFields` 端口(实现在 `wire/event_fields.dart`,
-  由 `HostRpcHolder.eventFields` 交给投影),它内部仍有 33 处 `fieldOf(` 直读线上
+  由 `HostRpcHolder.eventFields` 交给投影),它内部仍有 22 处 `fieldOf(` 直读线上
   字段名 —— 这些读法尚未进端口,门禁也尚未覆盖。代价与实测数字见
   `.agents/notes/implemented/2026-11-06-p1b-batch1-session-family.md`、
   `…-batch2-catalog-family.md`、`…-batch3-preview-family.md`、
