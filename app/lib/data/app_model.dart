@@ -34,6 +34,7 @@ import '../core/job.dart';
 import '../core/notify.dart';
 import '../core/pairing_flow.dart' show PairingPreference;
 import '../core/recovery.dart' show RecoveryOutcome;
+import '../core/session_list_page.dart';
 import '../core/session_projections.dart';
 import '../core/session_restore.dart';
 import '../core/snapshot_call.dart';
@@ -2795,12 +2796,11 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 向电脑侧要一包会话行（**唯一的 `session.list` 出口**）。
   ///
   /// 方法名、参数形状与应答字段**全在 `app/lib/wire/rpc/session.dart`** ——
-  /// 这一层不再知道 `session.list` 长什么样，这正是
-  /// `app/tools/verify-rpc-single-caller.mjs` 那个会归零的预算在数的事。
-  Future<SnapshotReply<wire.SessionListPage>> _fetchSessionRows({
+  /// 这一层只认 `HostRpc` 交回来的那一页（`core/session_list_page.dart`）。
+  Future<SnapshotReply<SessionListPage>> _fetchSessionRows({
     int? limit,
     int? offset,
-  }) => wire.loadSessionList(client, limit: limit, offset: offset);
+  }) => _rpc.sessionRows(client, limit: limit, offset: offset);
 
   /// 把一包会话行落到 [sessions]（**唯一的赋值口**）。
   ///

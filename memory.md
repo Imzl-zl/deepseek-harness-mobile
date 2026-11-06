@@ -46,16 +46,19 @@
   `_SyncClient implements HostRpc` 并把调用转给 `SyncClientDeps.hostRpc`（**工厂**）造的那一个，
   `AppModel` 用 `client is HostRpc` 取（沿用 `LinkControl` 先例，**`SyncClient` 接口零新增成员**）。
   **不给 `AppModel` 加必填端口**：那要动 74 个测试文件，而且夹具会从原始协议 JSON 退化成手搓 DTO，
-  等于把解码器从测试路径上摘掉。第 1 批只做**投影那一半**（`SessionProjections` 搬进
-  `core/session_projections.dart`）：`app_model` 的 `wire/` import 15 → **14**、`wire.` 44 → 35，
-  `data/` 21 → **20**。两处与施工图的偏差：端口返回 `SnapshotReply<SessionProjections?>`（三态 ——
-  裸 null 会把 `notModified` 当成失败）；三个用例里装原始 JSON 的字段 `projections` 改名
-  `projectionReply`（与能力成员同名 = 编译期冲突）。留下的边界：`core → model` 多了一条**纯类型环**
-  （值对象 10 个字段的类型来自 `model/`，而 `model/` 又 import `core/job.dart` 等）。
+  等于把解码器从测试路径上摘掉。第 1 批把会话族**整族**做完（投影 + 会话行）：
+  `SessionProjections` → `core/session_projections.dart`、`SessionListPage` →
+  `core/session_list_page.dart`，端口两个方法 `projections` / `sessionRows`。
+  `app_model` 的 `wire/` import 15 → **14**、`wire.` 44 → 33，`data/` 21 → **20**
+  （import 条数只降一条：`wire/rpc/session.dart` 仍被 create/fork/selectModel/cancel/queue 用着）。
+  两处与施工图的偏差：端口返回 `SnapshotReply<…>`（三态 —— 裸 null 会把 `notModified` 当成失败）；
+  三个用例里装原始 JSON 的字段 `projections` 改名 `projectionReply`（与能力成员同名 = 编译期冲突）。
+  留下的边界：`core → model` 多了一条**纯类型环**（值对象 10 个字段的类型来自 `model/`，
+  而 `model/` 又 import `core/job.dart` 等）。
   没有真机（读的形状与路径没变）。见
   `.agents/notes/implemented/2026-11-06-p1b-batch1-session-family.md`；剩下 3 批
-  （`session.list` → 目录族 → 预览族 → 收尾）见 `proposed/2026-11-06-p1b-host-rpc-port.md`。
-  门禁：connector **836**；app **1759**；boundary **771**；`dart analyze --fatal-infos` 0。
+  （目录族 → 预览族 → 收尾）见 `proposed/2026-11-06-p1b-host-rpc-port.md`。
+  门禁：connector **836**；app **1759**；boundary **775**；`dart analyze --fatal-infos` 0。
   另外把**真机库副本**喂给真实现跑了一遍 v2→v3（24.5 MB 的 `dsh_mobile.db`，只读副本）：
   4136 条条目一条不少、14 个水位键全部带前缀、`device.transparency/surface_alpha` 原样 ——
   证据在 `implemented/2026-11-06-s2-host-scope-and-buckets.md` 的「验证」。
@@ -456,7 +459,7 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 771 项（25 条规则自检 + 178 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | 775 项（25 条规则自检 + 179 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
 | `cd app && flutter test` | 1759 项（约 1 分钟） |

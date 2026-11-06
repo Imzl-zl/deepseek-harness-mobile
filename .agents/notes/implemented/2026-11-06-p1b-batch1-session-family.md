@@ -1,7 +1,8 @@
 # P1 后半第 1 批：会话族走 `HostRpc`（`data → wire`：app_model 15 → 14）
 
 - 日期：2026-11-06
-- 状态：implemented（**第 1 批 / 共 4 批**；目录族、预览族、收尾仍在
+- 状态：implemented（**第 1 批 / 共 4 批**，两半都在这一篇：1a `session.projections`、
+  1b `session.list`；目录族、预览族、收尾仍在
   `proposed/2026-11-06-p1b-host-rpc-port.md`）
 - 前情：`core → wire` 已归零（`implemented/2026-11-06-p1-dependency-inversion.md`），
   `data → wire` 剩 21 条、分四批倒置。
@@ -10,8 +11,9 @@
 
 `data/app_model.dart` 认识线上形状：`session.projections` 的解码结果
 `SessionProjections` 与调用口 `loadSessionProjections` 都从 `wire/rpc/projections.dart`
-来，在这一族上一共出现 9 次（8 处类型 + 1 处调用）。方向问题与 P1 同源：`data` 应该只认
-"解好的值"，字段名与类型只该在 `wire/` 断言。
+来（9 次字面量），`session.list` 的一页类型 `SessionListPage` 与调用口 `loadSessionList`
+从 `wire/rpc/session.dart` 来（2 次）。方向问题与 P1 同源：`data` 应该只认"解好的值"，
+字段名与类型只该在 `wire/` 断言。
 
 ## Decision
 
@@ -39,6 +41,16 @@
    `test/sync_client_test.dart`。
 7. 测试侧两个假客户端（`test/fake_sync_client.dart`、`integration_test/ui_flow_test.dart`
    的 `_FakeClient`）`implements HostRpc`，实现**就是** `WireHostRpc(this)`。
+8. **1b `session.list`（同一天的第二个提交）**：`SessionListPage`（`sessions` + `hasMore`
+   那个 record）搬进 `core/session_list_page.dart`，端口加
+   `sessionRows(client, {limit, offset})`，`WireHostRpc` 一行转到 `loadSessionList`，
+   `app_model._fetchSessionRows` 改成 `_rpc.sessionRows(...)`。
+   **`data/app_model.dart` 的 wire import 计数不变（14）** —— `wire/rpc/session.dart`
+   仍被 `createSession` / `forkSession` / `selectModel` / `cancelSession` /
+   `updateQueueAction` 用着，这一半省下的是 `wire.` 字面量（35 → 33），不是 import 条数。
+   加端口成员时**只有三处**跟着改：`_SyncClient`、`FakeSyncClient`、`ui_flow_test.dart`
+   的 `_FakeClient`（各一个 `@override`）—— 21 个 `SyncClient` 替身一处都没动，
+   这正是能力口相对"往 `SyncClient` 加抽象方法"的差别。
 
 ## 两处与施工图的偏差（都是实测撞出来的）
 
@@ -84,23 +96,29 @@
 
 ## 验证
 
+1a 与 1b 各跑了一遍全部门禁，数字都记在下面（1b 那一遍是最终值）。
+
 - `cd app; dart analyze --fatal-infos lib test` → No issues found；
   `dart analyze --fatal-infos integration_test` → No issues found。
-- `cd app; flutter test` → **1759** 全过（与本批前同数：没有新增用例，也没有删）。
-- `node app/tools/verify-platform-boundary.mjs` → **771** 项全过（175 → **178** 个 Dart 文件，
-  本批新增 3 个）。
+- `cd app; flutter test` → **1759** 全过（两批都与改前同数：没有新增用例，也没有删）。
+- `node app/tools/verify-platform-boundary.mjs` → **775** 项全过（175 → **179** 个 Dart 文件；
+  1a 加 3 个、1b 加 1 个）。
 - `node protocol/verify-{fixtures,loopback,vectors}.mjs` → 454 / 26 / 49 全过（没动 `protocol/`）。
 - `node app/tools/verify-rpc-single-caller.mjs` → PASS（`wire/` 外没有 `call<`）。
-- `git grep -c "import '\.\./wire/" -- app/lib/data` → `app_model` **15 → 14**，其余三个文件不动；
-  `-- app/lib/core` 仍是 **0**（新端口没把这条边带回来）。
-- `app_model.dart` 里 `wire.` 出现次数：44 → **35**。
+- `git grep -c "import '\.\./wire/" -- app/lib/data` → `app_model` **15 → 14**（1b 不再降，
+  原因见 Decision 第 8 条），其余三个文件不动；`-- app/lib/core` 仍是 **0**（新端口没把这条边带回来）。
+- `app_model.dart` 里 `wire.` 出现次数：44 → **33**（1a 去掉 9 处、1b 去掉 2 处）。
 - `git diff app/lib/core/sync_client.dart` 只看得到 import 与 `SyncClientDeps` 那一个必填项，
   **`SyncClient` 接口成员一处没动**。
-- **变异校验**：把 `WireHostRpc.projections` 改成恒返回 `body(null)` ⇒
-  `trajectory_outline_test` + `goal_bar_test` **19 条红**（例：goal_bar 的
-  "两条 dock 同时在场时的上下顺序" 找不到 `GoalBar`）；还原后两个文件 40 条全绿。
+- **变异校验（两批各一次）**：
+  - 1a：`WireHostRpc.projections` 改成恒返回 `body(null)` ⇒ `trajectory_outline_test` +
+    `goal_bar_test` **19 条红**（例：goal_bar 的"两条 dock 同时在场时的上下顺序"找不到
+    `GoalBar`）；还原后两个文件 40 条全绿。
+  - 1b：`WireHostRpc.sessionRows` 改成恒返回空页 ⇒ `session_list_paging_test` +
+    `session_list_wiring_test` + `session_drawer_test` **14 条红**（三个文件共 37 条）；
+    还原后 37 条全绿。
 - `dart format --output=none --set-exit-if-changed lib test integration_test`：本批**没有新增**
-  不合规文件（HEAD 上本来就有 14 个，逐条比对过；本批新写的文件全绿）。
+  不合规文件（HEAD 上本来就有 14 个，逐条比对过；本批新写的 4 个文件全绿）。
 
 ## 没做的
 

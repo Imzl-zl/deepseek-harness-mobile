@@ -35,6 +35,7 @@ import 'job.dart';
 import 'keepalive.dart';
 import 'outbox.dart';
 import 'recovery.dart';
+import 'session_list_page.dart';
 import 'session_projections.dart';
 import 'session_restore.dart';
 import 'snapshot_call.dart';
@@ -299,6 +300,13 @@ class _SyncClient
     SyncClient client, {
     required String sid,
   }) => _rpc.projections(client, sid: sid);
+
+  @override
+  Future<SnapshotReply<SessionListPage>> sessionRows(
+    SyncClient client, {
+    int? limit,
+    int? offset,
+  }) => _rpc.sessionRows(client, limit: limit, offset: offset);
 
   // -------------------------------------------------------------------------
   // 连接生命周期

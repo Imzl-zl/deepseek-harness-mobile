@@ -33,6 +33,7 @@ import 'dart:async';
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/host_rpc.dart';
 import 'package:dsh_mobile/core/job.dart';
+import 'package:dsh_mobile/core/session_list_page.dart';
 import 'package:dsh_mobile/core/session_projections.dart';
 import 'package:dsh_mobile/core/session_restore.dart';
 import 'package:dsh_mobile/core/snapshot_call.dart';
@@ -96,6 +97,13 @@ abstract class FakeSyncClient
     SyncClient client, {
     required String sid,
   }) => _hostRpc.projections(client, sid: sid);
+
+  @override
+  Future<SnapshotReply<SessionListPage>> sessionRows(
+    SyncClient client, {
+    int? limit,
+    int? offset,
+  }) => _hostRpc.sessionRows(client, limit: limit, offset: offset);
 
   // ---- 翻页相关：本版新加的默认值 ----
 

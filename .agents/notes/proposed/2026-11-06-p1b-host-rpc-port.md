@@ -1,13 +1,12 @@
 # P1 后半：`data → wire` 倒置走「能力接口」，端口跟着客户端走
 
 - 日期：2026-11-06
-- 状态：proposed（**第 1 批的投影那一半已落地**，其余未落码）
+- 状态：proposed（**第 1 批（会话族）整族已落地**，其余未落码）
 - 前情：`core → wire` 已归零（见 `implemented/2026-11-06-p1-dependency-inversion.md`）。
   这一篇只管 `data/` 剩下的 21 条 import。
-- 进度（2026-11-06）：`session.projections` 一族已倒置完（`app_model` 15 → **14**，
-  `data/` 21 → **20**），实际代价与两处与本文的偏差见
-  `implemented/2026-11-06-p1b-batch1-session-family.md`。**未动**：`session.list`
-  那一半（`loadSessionList` + `SessionListPage`）与会话族之外的 3 批。
+- 进度（2026-11-06）：会话族两半都已倒置完（`app_model` 15 → **14**，`data/` 21 → **20**，
+  `wire.` 44 → **33**），实际代价与两处与本文的偏差见
+  `implemented/2026-11-06-p1b-batch1-session-family.md`。**未动**：目录族、预览族、收尾。
 - 前置能力：`SyncClient` 已经是"能力接口"手法的先例（`core/sync_client.dart:207` 的
   `LinkControl`：**不往 `SyncClient` 加抽象方法**，因为全仓二十多个替身都 `implements SyncClient`，
   加一个方法就得改二十多处；改用小接口 + `is` 判定）。
@@ -64,8 +63,10 @@
      `core/session_projections.dart`、端口 `core/host_rpc.dart`、实现 `wire/host_rpc.dart`、
      `SyncClientDeps.hostRpc` 工厂、`AppModel._rpc`。见
      `implemented/2026-11-06-p1b-batch1-session-family.md`。
-   - **1b `session.list`（未做）**：`wire.loadSessionList` 与 `SessionListPage` 仍在
-     `wire/rpc/session.dart`，`app_model` 的 `_fetchSessionRows` 直接用它。
+   - **1b `session.list`（已落地，2026-11-06）**：`SessionListPage` 搬进
+     `core/session_list_page.dart`、端口加 `sessionRows(...)`。`wire/rpc/session.dart`
+     仍被 create/fork/selectModel/cancel/queue 用着，所以 `data/` 的 import 条数不降
+     （省下的是 `wire.` 字面量）。同上那篇笔记。
    - `session.page` / `session.refetch` **这一族里已经没有** —— P1 那批已按 `HistoryReader`
      倒置完（`core/history_page.dart`），本方案不再重复。
 2. **目录族**：设置分区、权限目录、模型目录、Agent 预设、工作区、仓库信息、插件清单。

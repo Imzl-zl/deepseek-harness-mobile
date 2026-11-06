@@ -15,11 +15,13 @@
 library;
 
 import '../core/host_rpc.dart';
+import '../core/session_list_page.dart';
 import '../core/snapshot_digest.dart';
 import '../core/sync_client.dart';
 import 'rpc/projections.dart';
+import 'rpc/session.dart';
 
-/// 端口 `HostRpc` 的唯一实现（本轮只有会话投影那一族）。
+/// 端口 `HostRpc` 的唯一实现（本轮：会话投影 + 会话行两族）。
 final class WireHostRpc implements HostRpc {
   /// 构造参数是**这个能力属于哪条连接**（工厂 `hostRpc` 收到的就是它）。
   ///
@@ -33,4 +35,11 @@ final class WireHostRpc implements HostRpc {
     SyncClient client, {
     required String sid,
   }) => loadSessionProjections(client, sid: sid);
+
+  @override
+  Future<SnapshotReply<SessionListPage>> sessionRows(
+    SyncClient client, {
+    int? limit,
+    int? offset,
+  }) => loadSessionList(client, limit: limit, offset: offset);
 }

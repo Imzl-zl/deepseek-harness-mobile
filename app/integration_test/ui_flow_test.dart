@@ -19,6 +19,7 @@ import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/host_rpc.dart';
 import 'package:dsh_mobile/core/job.dart';
+import 'package:dsh_mobile/core/session_list_page.dart';
 import 'package:dsh_mobile/core/session_projections.dart';
 import 'package:dsh_mobile/core/snapshot_digest.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
@@ -50,6 +51,13 @@ class _FakeClient implements SyncClient, HostRpc {
     SyncClient client, {
     required String sid,
   }) => _hostRpc.projections(client, sid: sid);
+
+  @override
+  Future<SnapshotReply<SessionListPage>> sessionRows(
+    SyncClient client, {
+    int? limit,
+    int? offset,
+  }) => _hostRpc.sessionRows(client, limit: limit, offset: offset);
 
   @override
   ConnectionState get state => ConnectionState.idle;

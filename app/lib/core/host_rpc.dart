@@ -22,6 +22,7 @@
 /// `.agents/notes/implemented/2026-11-06-p1b-batch1-session-family.md`。
 library;
 
+import 'session_list_page.dart';
 import 'session_projections.dart';
 import 'snapshot_digest.dart';
 import 'sync_client.dart';
@@ -40,5 +41,15 @@ abstract interface class HostRpc {
   Future<SnapshotReply<SessionProjections?>> projections(
     SyncClient client, {
     required String sid,
+  });
+
+  /// 要一页会话行（`session.list`，契约 §5.7）。
+  ///
+  /// [limit] / [offset] 都可选：分页后**同方法不同参数是两个包**（摘要键含它们），
+  /// 不传就是整表。带摘要 —— `notModified` 时调用方什么都不做。
+  Future<SnapshotReply<SessionListPage>> sessionRows(
+    SyncClient client, {
+    int? limit,
+    int? offset,
   });
 }

@@ -27,6 +27,7 @@ app/lib/
 │       history_page.dart        翻页/补取解出来之后的形状 + HistoryReader 端口(实现在 wire/)
 │       host_rpc.dart            读电脑侧快照/目录的能力口 HostRpc(实现在 wire/host_rpc.dart)
 │       session_projections.dart 会话投影解好之后的值(键名与字段类型仍只在 wire 断言)
+│       session_list_page.dart   一页会话行解好之后的值(拆包与坏行处置仍只在 wire 断言)
 │       connection_resources.dart 每连接资源束(建/废各一处)
 │       call_registry.dart       在途请求表(断连即整体拒绝)
 ├── wire/                        线上格式的**唯一断言点**(字段名与类型只在这里)
