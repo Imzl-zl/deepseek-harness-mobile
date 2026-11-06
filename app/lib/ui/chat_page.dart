@@ -173,6 +173,7 @@ class ChatPage extends StatefulWidget {
     this.paired = true,
     this.onConnect,
     this.onRePair,
+    this.onAddHost,
     this.onDisconnect,
     this.hostSwitch,
   });
@@ -202,6 +203,11 @@ class ChatPage extends StatefulWidget {
   ///
   /// 议题 3 的落点：顶栏连接状态位、空态出路两处点它都经连接操作 sheet 确认。
   final VoidCallback? onRePair;
+
+  /// **添加一台电脑**（进配对页但**不清**当前凭据；装配层注入）。
+  ///
+  /// 与 [onRePair] 是两条路：那个先清再配（同一台换身份/重来），这个只加不删。
+  final VoidCallback? onAddHost;
 
   /// 「断开并清掉凭据」但**不**进配对页（装配层注入；聊天页自己不给这个入口）。
   final VoidCallback? onDisconnect;
@@ -341,7 +347,8 @@ class ChatPageState extends State<ChatPage> {
 
   /// 打开右侧抽屉（文件 / 任务 / 子智能体）。
   ///
-  /// 连接操作 sheet 的「打开侧面板」与 chip 行都经它落。
+  /// 顶栏右侧那个独立按钮与 chip 行都经它落（连接操作 sheet 不再放这一项——
+  /// 右滑已经能开，重复一行只会挤占面板）。
   /// **它就是 `Scaffold.openEndDrawer()`** —— 原生抽屉自带跟手拖出与遮罩关闭，
   /// 自己维护一个 `_sideOpen` 布尔值只会多出一套会跟原生状态漂移的真值。
   /// （`_sideOpen` 现在**只用来决定右缘那条棒棒的显隐**，由
@@ -1492,7 +1499,7 @@ class ChatPageState extends State<ChatPage> {
 
   /// 顶栏状态点的点击。
   ///
-  /// **统一弹连接操作 sheet**（重试连接 / 重新配对 / 打开侧面板 / 断开）：
+  /// **统一弹连接操作 sheet**（重试连接 / 重新配对 / 添加电脑 / 断开）：
 
   /// - **没配对** → 去配对页（与空态的「连电脑（配对）」同义）；
   /// - **已配对** → sheet。**不再按"serving 时开右抽屉"分叉**：右抽屉入口已经搬到
@@ -1528,8 +1535,8 @@ class ChatPageState extends State<ChatPage> {
         ),
         // **换电脑**（已配对两台以上才给这一行）：装配层注入，页面只转发。
         hostSwitch: widget.hostSwitch,
+        onAddHost: widget.onAddHost,
         onRePair: () => widget.onRePair?.call(),
-        onOpenSide: openSide,
         onDisconnect: () => widget.onDisconnect?.call(),
         // **右上角那个点也管"换方式"与"重连"**（用户原话："页面的右上角的点
         // 最好也可以点击切换方式重连"）。两个动作与设置页顶部块**同一份实现**：

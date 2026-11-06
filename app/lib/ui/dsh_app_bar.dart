@@ -102,7 +102,7 @@ class DshAppBarButton extends StatelessWidget {
 ///
 /// DSH 的异常/重连指示器**本身就是"立即重连"按钮**
 /// （`ConnectionIndicator.tsx:75-81`：`onClick={onReconnect}`）。
-/// 手机上把"点它"统一成**连接操作 sheet**：重试连接 / 重新配对 / 打开侧面板 / 断开。
+/// 手机上把"点它"统一成**连接操作 sheet**：重试连接 / 重新配对 / 添加电脑 / 断开。
 /// 这样"任何状态 ≤2 步走到重新配对"的硬判据仍然成立（点 1 → sheet 里选 1），
 /// 而右抽屉的入口移交给了隔壁那个独立按钮（见 [ChatAppBar.onOpenSide]）。
 class DshConnectionDotButton extends StatelessWidget {

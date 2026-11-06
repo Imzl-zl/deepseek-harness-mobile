@@ -9,7 +9,7 @@
 ///
 /// 每个入口按自己够得着的缝传回调：
 /// - `onRePair`：重新配对（换一台电脑）—— 清凭据 + 回配对页（装配层注入）。
-/// - `onOpenSide`：打开右侧面板（聊天页内部够得着；抽屉入口也够得着）。
+/// - `onAddHost`：添加一台电脑 —— **只加不删**，不清当前凭据（装配层注入）。
 /// - `onDisconnect`：断开并清掉凭据，但**不**进配对页（装配层注入；聊天页不给）。
 ///
 /// ## 两个形态，同一份内容
@@ -55,7 +55,6 @@ Future<void> showConnectionActionsSheet(
   BuildContext context, {
   required ConnectionSummary connection,
   required VoidCallback onRePair,
-  VoidCallback? onOpenSide,
   VoidCallback? onDisconnect,
   VoidCallback? onRetry,
 
@@ -74,6 +73,12 @@ Future<void> showConnectionActionsSheet(
   /// 切换是**用户动作**（方案决策 6/9）：这里只给入口，不自动挑一台、
   /// 也不在"连不上"时偷偷换 —— 那会变成"手机自己换了个电脑"。
   HostSwitchSeam? hostSwitch,
+
+  /// **添加一台电脑**：进配对页但**不清**当前凭据。
+  ///
+  /// 与「重新配对」是两条路：那个**先清再配**（同一台换身份/重来），
+  /// 这个**只加不删** —— `pairingStore.save` 按电脑公钥分槽，旧槽原样保留。
+  VoidCallback? onAddHost,
 
   /// 触发点矩形。`null` = 底部 sheet。
   Rect? anchor,
@@ -131,6 +136,21 @@ Future<void> showConnectionActionsSheet(
           onTap: () {
             Navigator.of(inner).pop();
             hostSwitch?.onSwitchBack?.call();
+          },
+        ),
+      // **添加电脑**：只加不删的那条路；与「重新配对」成对但语义相反。
+      if (onAddHost != null)
+        ListTile(
+          leading: const DshIcon(
+            'plus',
+            size: 18,
+            color: DshColors.labelSecondary,
+          ),
+          title: const Text('添加电脑'),
+          subtitle: const Text('扫另一台的配对码；当前这台不会被清掉'),
+          onTap: () {
+            Navigator.of(inner).pop();
+            onAddHost();
           },
         ),
       if (onPickEndpoint != null)
@@ -204,19 +224,6 @@ Future<void> showConnectionActionsSheet(
           onRePair();
         },
       ),
-      if (onOpenSide != null)
-        ListTile(
-          leading: const DshIcon(
-            'panelLeft',
-            size: 18,
-            color: DshColors.labelSecondary,
-          ),
-          title: const Text('打开侧面板'),
-          onTap: () {
-            Navigator.of(inner).pop();
-            onOpenSide();
-          },
-        ),
       if (onDisconnect != null)
         ListTile(
           // **只断链，不动凭据**：清凭据是「重新配对」的事。以前这一行写的是
