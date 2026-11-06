@@ -665,6 +665,17 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
      node 的 `zstdDecompress` 只解第一帧；按帧走 `frameEnd()`（见 `D:\tmp\dsh-iso-session.js`）才读得全。
   7. 关进程别按端口名 kill：`dsh` 是通过 `DeepSeek Harness` 那个宿主跑的，杀错会连桌面 App 一起带走
      （日常实例还在听 8790 就没杀错）。
+  8. **一帧内容必须以换行结尾**：`session.v*.jsonl.zstd` 里每帧解出来是 `{...}\n`；手写补帧漏了
+     那个 `\n`，DSH 报 `complete frame contains a torn JSONL record`，整个会话「历史加载失败」
+     （网页与手机都打不开）。修法：把每帧解出来补 `\n` 再逐帧重压。
+  9. **造 >1 MiB 事件只有文本粘贴这一条路**（2026-11-06 实测）：
+     - 剪贴板放**位图**（`[System.Windows.Forms.Clipboard]::SetImage`，需 `pwsh -Sta`）+ 输入栏 Ctrl+V
+       ⇒ 只变成**附件**（`image.png`），事件仍 ~30 KB；
+     - `@` 引用文件 ⇒ 只是路径引用，事件仍 ~30 KB；
+     - 粘 **1.3 MB 文本** ⇒ `user/message` 真的 1.3 MB（还有一条 `agent/inbox/spliced`）。但它发出去后
+       **讯飞 MaaS 直接 400**（`code 400001`，"rejected by an internal MaaS component"）——
+       事件已落盘，只是这一轮失败。**别把这种载荷发给按量计费的端点**。
+     - 剪贴板里若是**文本**，Ctrl+V 会优先粘文本（曾把一段 `sk-` 密钥误粘进输入栏，没发送）。
 - **真机验「桌面卡被手机撤掉」的配方**（2026-10-23 用一次验完，约 1 轮）：
   - **桌面侧不必开用户日常浏览器**：headless Chrome 里打开隔离实例的 Web GUI 就是**真客户端**
     （同一份 `ui-approval`），截图用 CDP，点按钮用 `document.querySelectorAll('button')` 里按文案点。
