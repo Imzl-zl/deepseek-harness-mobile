@@ -82,6 +82,30 @@ import 它 —— 方向成了"消费者依赖形状"。`core/` 这两条各是�
      报 `Expected: ['m:a','m:b'] / Actual: ['mutation:7','mutation:8']`
      （证明投影真的用传进来的身份）。
 
+## 真机验收（2026-11-06 晚，隔离实例，真模型 `spark-x2.6`）
+
+按"改完必须手连一次"跑的。隔离实例：`DSH_HOME=D:\tmp\dsh-probe-home` + profile `probe`
+（connector 0.1.21 的 tgz），直连 `0.0.0.0:18790`（8790 被日常实例占着），设备 `我的手机`
+扫码配对。
+
+| 验的东西 | 证据（电脑侧读数，不靠肉眼） |
+|---|---|
+| 配对 + 启动全套 `res` 解码 | `settings.describe / permission.catalog / session.modelCatalog / agentPresets.list / repo.info / endpoint.describe / workspace.list / session.list` 全部有 outbound 字节数 |
+| **打开已有会话（历史解码 + 投影）** | 手机渲染出系统提示词、三条上下文注入、回答、轮次统计；`session.projections=6107` |
+| **手机发消息 → 实时 `ev` 流** | `out_method.session.prompt=38`、`out_frame.ev=113251` 字节；回答流式出现（第 2 轮 7 秒 / 8.4K tok）；**全程 `logcat` 无 `[wire]`、无 `E/flutter`** |
+| 退后台 → 回前台 | `online:false,foreground:false` → `online:true,foreground:true`（§2.2 行为未变） |
+| 连接器进程重启 | App 自己重连回 `online:true`，无需人工干预 |
+| force-stop 冷启动 | 重新起来即 `online:true` |
+
+`ev=113251` 这一项是本批的靶心：它证明 `_eventFromPayload` 的 `itemIdOf(+EventIdReaders)`
+与"投影只消费 itemId"在真事件上不报形状缺陷（有缺陷必打 `[wire]`）。
+
+**没验到的**：翻页 `session.page` 的 `refetch` 分支（这次那 16 KB 会话里没有 >1 MiB 条目）；
+它由 `sync_client_test` 的 refetch 用例覆盖（真封箱 `ev` + 真解码）。
+
+隔离实例的配置落在 `D:\tmp\dsh-probe-home`（provider 与密钥都在那儿），不在仓库里。
+配方与两个坑（`/v2/v1` 会 404、塞空壳会话会报 `corrupt session log`）记在 `tools.md`。
+
 ## 剩下的（实测）
 
 **`data` 的 21 条**：`app_model.dart` 15、`host_catalogs.dart` 3、`file_preview.dart` 2、

@@ -641,6 +641,22 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
   判据好用的原因是"少一行汇总"比"某个用例红"更显眼。**同一形状会再出现**（任何 `setTimeout` 型兜底）：
   测试里注入可推进的假时钟（或 `schedule: () => () => {}` 直接不排），别让它真跑。
   —— 顺带：那只 10 min 看护计时器后来按 DSH 原生删掉了（审批没有超时），所以连接器现在**没有**定时器型兜底。
+- **隔离实例 + 真模型跑一轮的配方**（2026-11-06 跑通，约 15 分钟；用来在真机上压收帧热路径）：
+  1. `$env:DSH_HOME='D:\tmp\<home>'`（**整个 home 隔离**，含凭据与会话）；`cd connector; pnpm pack`；
+     `dsh plugin --profile <p> add <tgz 绝对路径>`（会顺带 `pnpm install`）。
+  2. `dsh --profile <p> --no-open --port 3099 *> <log>`；日志第一行是带 `?token=` 的 URL，第二行确认管理面已挂。
+  3. 直连口 8790 通常被日常实例占着 ⇒ `POST /api/dsh-mobile/connection {"listenPort":18790}`
+     （**会持久化进 profile 的 `cordis.patch.yml`**，不是只改内存）；再 `POST /api/dsh-mobile/pair` 拿
+     `{svg, expiresAt, lanAvailable, lanOnly, ...}`，把 svg 的 `viewBox 0 0 81 81` 放大到整数倍、**四周留 ≥4 模块白边**
+     再出 PNG（不留白边扫不出来）。
+  4. **新 home 没有模型凭据**：设置 → 模型 → 「自定义模型 API」。`API 地址` 只填到 `/v2`
+     （填成 `.../v2/v1` 会 404 `no Route matched with those values`）；协议 OpenAI Chat Completions；
+     该端点的 `/models` 未实现，模型手动加。写入落在 `cordis.patch.yml` 的
+     `@deepseek-ai/dsh-llm-pi-ai.providers.<id>` 与 `.credentials.yaml` 的 `refs.<NAME>`。
+  5. **别往 `sessions/` 里塞空壳**：0 字节的 `session.v*.jsonl.zstd` 会被判 `corrupt session log`
+     （header id 与 cwd 对不上），而且这条错误会**原样透到手机的「拉取会话失败」**。
+  6. 关进程别按端口名 kill：`dsh` 是通过 `DeepSeek Harness` 那个宿主跑的，杀错会连桌面 App 一起带走
+     （日常实例还在听 8790 就没杀错）。
 - **真机验「桌面卡被手机撤掉」的配方**（2026-10-23 用一次验完，约 1 轮）：
   - **桌面侧不必开用户日常浏览器**：headless Chrome 里打开隔离实例的 Web GUI 就是**真客户端**
     （同一份 `ui-approval`），截图用 CDP，点按钮用 `document.querySelectorAll('button')` 里按文案点。
