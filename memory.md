@@ -61,6 +61,7 @@
   消息/内容块、重试/轮次收口/压缩/交互工具入参；`ui/` 与 `core/` 也都是 0）。
   `data/` 的字段名读点 **22 → 0**（`fieldOf` / `stringField` / `intField`）；
   门禁 `data-no-field-name` 已加（把线上字段名当字面量传给取值助手即红，报文件与行号）。
+  **PR #9 已 squash 合并进 main（`47b3472`，2026-11-06）**，CI 四项全绿。
   实测代价：五个测试文件只因"字段名撞端口方法名"改名（`projections` / `workspaces` →
   `…Reply`，值与形状没动）；`wire_shapes_replay_test` 改了 11 处类型名 + 3 条 import（金样没动）；
   端口一律返回 `SnapshotReply<…>`（三态 —— 裸 null 会把 `notModified` 当成失败）。
@@ -481,8 +482,8 @@
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
 | `cd app && flutter test` | 1759 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **845** 项 |
-| `cd relay && pnpm typecheck && node --test` | 类型 + **173** 条 |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **836** 项 |
+| `cd relay && pnpm typecheck && node --test` | 类型 + **174** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
 
