@@ -40,8 +40,8 @@ import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/wire/host_rpc.dart';
 
 /// `SyncClient` 的测试基类。
-abstract class FakeSyncClient extends ForwardingHostRpc
-    implements SyncClient, SnapshotCaller, SessionRestorer {
+abstract class FakeSyncClient
+    implements SyncClient, SnapshotCaller, SessionRestorer, HostRpcHolder {
   /// 冷启动恢复被调过几次、带的水位是多少（`sid → since`）。
   ///
   /// 它就是"app 层真的把本地库的水位交给了连接层"这条判据的落点。
@@ -88,12 +88,8 @@ abstract class FakeSyncClient extends ForwardingHostRpc
   /// 就等于把解码器从测试里摘掉，那类改动看不出线上形状漂了。
   ///
   /// `late` 是必须的：字段初始化器里只有 `late` 能用 `this`。
-  late final HostRpc _hostRpc = WireHostRpc(this);
-
-  /// 端口每个方法都转发到它（转发体在 `core/host_rpc.dart` 的 `ForwardingHostRpc`
-  /// 一处 —— 九个方法各抄一遍的话，加一个方法就要改三处替身基类）。
   @override
-  HostRpc get target => _hostRpc;
+  late final HostRpc hostRpc = WireHostRpc(this);
 
   // ---- 翻页相关：本版新加的默认值 ----
 

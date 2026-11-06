@@ -35,15 +35,19 @@
    - 应答 DTO 搬进 core（6 个）：`SessionListPage` / `SessionProjections` / `SettingSection` /
      `RepoInfo` / `PluginInventory` / `WorkspaceSnapshot`。它们**只描述"解好的值"**，
      字段名与线上类型仍只在 `wire/` 断言。
-2. `wire/host_rpc.dart`：`final class WireHostRpc implements HostRpc`，包一层 `SyncClient`
-   并复用现有的 `loadXxx` 解码函数与 `WireDiagnostics` 标签（报缺陷的那一处仍是知道形状的那一处）。
-3. `SyncClientImpl` **同时 implements `HostRpc`**（把调用转给注入的 `WireHostRpc`）。
-   这样 `AppModel` 只需 `client is HostRpc`，**`SyncClient` 接口一个方法都不加** —— 二十多个替身
-   一个都不用改。
-4. `AppModel` 内部：`HostRpc get _rpc`（`client is HostRpc ? client : throw 明确错误`），
+2. `wire/host_rpc.dart`：`final class WireHostRpc implements HostRpc`，**持有那条
+   `SyncClient`**（构造时给一次，方法不再收 `client`），并复用现有的 `loadXxx` 解码函数与
+   `WireDiagnostics` 标签（报缺陷的那一处仍是知道形状的那一处）。
+3. 客户端**只证明"我有一条 `HostRpc`"**：`abstract interface class HostRpcHolder`
+   （1 个 `HostRpc get hostRpc`）。这样消费者只需 `hostRpcOf(client)`，
+   **`SyncClient` 接口一个方法都不加** —— 二十多个替身一个都不用改。
+   *（起草时写的是"`SyncClientImpl` 同时 implements `HostRpc`"；那一版会逼出
+   "每个方法转发一遍"或一层转发基类，已被 `implemented/2026-11-06-p1b-hostrpc-holder.md`
+   换掉。后面两批按**这一条**的形状做。）*
+4. `AppModel` 内部：`HostRpc get _rpc`（`hostRpcOf(client)`，缺能力抛明确错误），
    44 处 `wire.loadXxx(client, …)` 变成 `_rpc.xxx(…)`；失败仍是 `null` + 诊断，行为不变。
 5. 测试侧：`app/test/fake_sync_client.dart` 与 `app/integration_test/ui_flow_test.dart` 的
-   `_FakeClient` 各加 `implements HostRpc`，**实现全部转给真的 `WireHostRpc(this)`** ——
+   `_FakeClient` 各加 `implements HostRpcHolder`，`hostRpc` **就是真的 `WireHostRpc(this)`** ——
    于是现有 `onCall: (m, p) => {raw JSON}` 的夹具**一行都不用改**，而且仍然在跑真的解码器
    （这是本方案相对"给 AppModel 加必填端口"的关键好处：那会逼所有夹具从原始 JSON 改写成 DTO，
    等于把解码器从测试路径上摘掉）。
@@ -73,8 +77,9 @@
 2. **目录族（已落地，2026-11-06）**：设置分区、权限目录、模型目录、Agent 预设、工作区、
    仓库信息、插件清单。四个值类型搬进 core（`SettingSection` / `RepoInfo` /
    `PluginInventory` / `WorkspaceSnapshot`），端口加七个方法；`host_catalogs.dart` 的
-   3 条 wire import 清零。见 `implemented/2026-11-06-p1b-batch2-catalog-family.md`
-   （含新增的 `ForwardingHostRpc`：九个方法的转发收成一处）。
+   3 条 wire import 清零。见 `implemented/2026-11-06-p1b-batch2-catalog-family.md`。
+   端口形状当天收成了 `HostRpcHolder`（客户端只多一个 getter），
+   见 `implemented/2026-11-06-p1b-hostrpc-holder.md`。
 3. **预览族**：文件预览、目录列举、改动清单。
 4. 最后清 `data/` 的 import 计数到 0（`projection.dart` 那条另算，见下）。
 

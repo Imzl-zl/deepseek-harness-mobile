@@ -533,7 +533,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
 
   /// 读电脑侧只读面的能力口（端口在 `core/host_rpc.dart`，实现在 `wire/host_rpc.dart`）。
   ///
-  /// 客户端兼作这个能力（`_SyncClient extends ForwardingHostRpc`），所以这里按 `is` 取 ——
+  /// 客户端兼作这个能力（`_SyncClient implements HostRpcHolder`，只多一个 getter），
+  /// 所以这里按 `is` 取 ——
   /// 与 [disconnectLink] 对 `LinkControl` 是同一个手法，**`SyncClient` 接口一个成员都没加**
   /// （全仓二十多个替身因此不用跟着改）。
   ///
@@ -657,7 +658,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       if (!_disposed) notifyListeners();
     }
     try {
-      final reply = await rpc.projections(client, sid: sid);
+      final reply = await rpc.projections(sid: sid);
       if (_disposed) {
         return SnapshotReply<SessionProjections?>.body(null, key: reply.key);
       }
@@ -2001,10 +2002,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     try {
       // 形状（`{sections: [{ns, revision, values, secrets}]}`）在 `wire/rpc/settings.dart`；
       // 这里只把快照落进三张表。
-      final reply = await _rpc.settings(
-        client,
-        namespaces: kSettingsNamespaces,
-      );
+      final reply = await _rpc.settings(namespaces: kSettingsNamespaces);
       // 没变 ⇒ 三张表原样（设置是低频动作，重取大多换回同一份）。
       if (reply.notModified) return;
       final sections = reply.value;
@@ -2116,7 +2114,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       // `wire/rpc/repo.dart`：手机只消费四个键（三个能力位 + commands + dshVersion）
       // 外加 `hostName`（电脑自报的名字，只供展示），
       // `protocol` / `aliasVersion` / `methods` 不声明（前者在帧头 `v` 里校验）。
-      final reply = await _rpc.repoInfo(client);
+      final reply = await _rpc.repoInfo();
       // 没变 ⇒ 什么都不做（版本 / 能力位是进程级事实，一次会话里不会变）。
       if (reply.notModified) return;
       final info = reply.value;
@@ -2397,7 +2395,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     try {
       // 两个面各一发（并发）：插件行与包是两张表，卸载按包名走。形状在
       // `wire/rpc/plugin.dart`（行本体仍由 `model/plugins.dart` 的 fromWire 解）。
-      final inventory = await _rpc.plugins(client);
+      final inventory = await _rpc.plugins();
       if (inventory == null) {
         _recordError('读取插件清单失败', StateError('电脑侧的插件应答形状认不出'));
         _pluginsFailure = '电脑侧的插件应答形状认不出';
@@ -2786,7 +2784,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   Future<SnapshotReply<SessionListPage>> _fetchSessionRows({
     int? limit,
     int? offset,
-  }) => _rpc.sessionRows(client, limit: limit, offset: offset);
+  }) => _rpc.sessionRows(limit: limit, offset: offset);
 
   /// 把一包会话行落到 [sessions]（**唯一的赋值口**）。
   ///
@@ -3499,7 +3497,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   Future<void> refreshWorkspaces() async {
     try {
       // 形状（分组 + 两列 id，**同一份应答**）在 `wire/rpc/workspace.dart`。
-      final reply = await _rpc.workspaces(client);
+      final reply = await _rpc.workspaces();
       // 没变 ⇒ 分组 / 归档集 / 置顶集都已经是这一份。
       if (reply.notModified) return;
       final snapshot = reply.value;

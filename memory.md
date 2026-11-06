@@ -43,15 +43,17 @@
   （改的是收帧热路径，不能只看测试）。
   ⑦ **P1 后半（能力接口），第 1、2 批已落地（11-06）**：`data → wire` 的 21 条走**能力接口** ——
   `HostRpc` 声明在 `core/host_rpc.dart`、`WireHostRpc` 实现在 `wire/host_rpc.dart`、
-  `_SyncClient extends ForwardingHostRpc` 并把调用转给 `SyncClientDeps.hostRpc`（**工厂**）造的那一个，
+  `_SyncClient implements HostRpcHolder`（**1 个 getter**，九个方法一个都不抄）并把调用转给
+  `SyncClientDeps.hostRpc`（**工厂**）造出的 `WireHostRpc`（它自己带着那条连接），
   消费者用 `hostRpcOf(client)` 取（沿用 `LinkControl` 先例，**`SyncClient` 接口零新增成员**）。
   **不给 `AppModel` 加必填端口**：那要动 74 个测试文件，而且夹具会从原始协议 JSON 退化成手搓 DTO，
   等于把解码器从测试路径上摘掉。第 1 批会话族（投影 + 会话行）、第 2 批目录族（设置 / 三个目录 /
   工作区 / 仓库 / 插件）：6 个值类型搬进 `core/*.dart`，端口九个方法
   （`projections` / `sessionRows` / `settings` / `modelCatalog` / `permissionCatalog` /
   `agentPresets` / `workspaces` / `repoInfo` / `plugins`）。
-  转发样板收在 `core/host_rpc.dart` 的 `ForwardingHostRpc`（实现方只给 `target`；
-  否则九个方法要在连接层 + 两个假客户端各抄一遍）。
+  端口形状：能力自己持有连接（方法不收 `client`），客户端只实现 `HostRpcHolder` 的一个 getter
+  —— 起草时"客户端 implements HostRpc + 逐方法转发"那版试过、当天换掉了，理由见
+  `.agents/notes/implemented/2026-11-06-p1b-hostrpc-holder.md`。
   `app_model` 的 `wire/` import 15 → **13**、`host_catalogs` 3 → **0**、`wire.` 44 → **29**，
   `data/` 21 → **16**。
   实测代价：五个测试文件只因"字段名撞端口方法名"改名（`projections` / `workspaces` →

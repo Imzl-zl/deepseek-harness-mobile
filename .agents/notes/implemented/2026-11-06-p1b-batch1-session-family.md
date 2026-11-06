@@ -30,17 +30,19 @@
    必须是同一处）。
 4. `SyncClientDeps.hostRpc`（必填，类型是**工厂** `HostRpc Function(SyncClient)`）：
    能力属于这一条连接，而连接是 `createSyncClient` 拿到 deps 之后才成立的。
-   `_SyncClient implements HostRpc`，方法转给 `late final _rpc = _deps.hostRpc(this)`。
+   `_SyncClient implements HostRpcHolder`，只多一个 `late final HostRpc hostRpc =
+   _deps.hostRpc(this)`（第一版是 `implements HostRpc` + 逐方法转发，
+   已被 `implemented/2026-11-06-p1b-hostrpc-holder.md` 换掉）。
    连接层因此**不必 import `wire/`**。
-5. `AppModel._rpc`：`client is HostRpc` 取能力（显式转换，与
-   `core/snapshot_call.dart` 同一个手法），取不到就 `throw StateError`（缺能力是装配错误，
+5. `AppModel._rpc`：`hostRpcOf(client)` 取能力（`client is HostRpcHolder`，
+   与 `core/snapshot_call.dart` 同一个手法），取不到就 `throw StateError`（缺能力是装配错误，
    不是"这台电脑读不出投影"）。6 处 `wire.SessionProjections` / `wire.loadSessionProjections`
-   换成 core 类型与 `_rpc.projections(client, sid: sid)`；`import '../wire/rpc/projections.dart'`
+   换成 core 类型与 `_rpc.projections(sid: sid)`；`import '../wire/rpc/projections.dart'`
    随之删掉（analyze 的 `unused_import` 也会拦）。
 6. 装配点各加一行 `hostRpc: WireHostRpc.new`：`main.dart` ×2、两个 `integration_test/`、
    `test/sync_client_test.dart`。
 7. 测试侧两个假客户端（`test/fake_sync_client.dart`、`integration_test/ui_flow_test.dart`
-   的 `_FakeClient`）`implements HostRpc`，实现**就是** `WireHostRpc(this)`。
+   的 `_FakeClient`）`implements HostRpcHolder`，`hostRpc` 就是 `WireHostRpc(this)`。
 8. **1b `session.list`（同一天的第二个提交）**：`SessionListPage`（`sessions` + `hasMore`
    那个 record）搬进 `core/session_list_page.dart`，端口加
    `sessionRows(client, {limit, offset})`，`WireHostRpc` 一行转到 `loadSessionList`，

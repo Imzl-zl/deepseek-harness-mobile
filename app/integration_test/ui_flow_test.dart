@@ -37,14 +37,12 @@ import 'package:integration_test/integration_test.dart';
 /// 用相对路径跨目录引它会让 `dart analyze` 的继承解析出问题
 /// （`@override` 全报"不 override 任何成员"，2026-10-19 实测）。
 /// 这里自己实现全份 —— 它本来就已经实现了绝大部分。
-class _FakeClient extends ForwardingHostRpc implements SyncClient {
+class _FakeClient implements SyncClient, HostRpcHolder {
   /// 读电脑侧的能力**转给真的那份实现**（`wire/host_rpc.dart`）：这个替身的
   /// `call` 照旧如实抛错，端口不会绕过它 —— 造一份手搓的投影包就等于把
   /// 解码器从这条测试路径上摘掉。
-  late final HostRpc _hostRpc = WireHostRpc(this);
-
   @override
-  HostRpc get target => _hostRpc;
+  late final HostRpc hostRpc = WireHostRpc(this);
 
   @override
   ConnectionState get state => ConnectionState.idle;

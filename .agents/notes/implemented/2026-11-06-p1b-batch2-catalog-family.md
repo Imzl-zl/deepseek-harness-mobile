@@ -29,7 +29,8 @@
    `agentPresets` / `workspaces` / `repoInfo` / `plugins`。其中三个直接回
    `model/` 里的既有类型（`ModelCatalog` / `PermissionCatalog` / `AgentPresetRoster`）——
    **没有 DTO 要搬，只搬调用口**。
-3. **`ForwardingHostRpc`（core，本批唯一的结构决定）**：连接层与两个测试假客户端都是
+3. **`ForwardingHostRpc`（core，本批当时的结构决定；已被取代，见末尾）**：
+   连接层与两个测试假客户端都是
    "能力在我身上、活儿在 `wire/`"的同一形状。九个方法让三处各抄一遍 = 27 处样板，
    加一个方法要改四处、漏一处还是编译错误或某个替身悄悄不转发。收成一处：
    实现方只给一个 `HostRpc get target`。于是
@@ -37,8 +38,12 @@
    `ui_flow_test.dart` 的 `_FakeClient extends ForwardingHostRpc` 各只剩一个 getter。
    **真正的实现仍只有 `wire/host_rpc.dart` 一处**（它直接 `implements HostRpc`，
    不转发给谁，避免"能力的实现只是转发给能力"的空转）。
+   **这一条已被取代**：`ForwardingHostRpc` 当天就换成了 `HostRpcHolder`（1 个 getter）
+   —— 那层转发与"方法还要收一个 `client`"都是自造问题，见
+   `implemented/2026-11-06-p1b-hostrpc-holder.md`。
 4. **`hostRpcOf(client)`（core）**：缺能力时的判据与错误文案只写一处
-   （`AppModel._rpc` 与 `HostCatalogs._rpc` 都调它）。缺能力是装配错误 ⇒ 抛，不静默降级。
+   （`AppModel._rpc` 与 `HostCatalogs._rpc` 都调它，判的是 `client is HostRpcHolder`）。
+   缺能力是装配错误 ⇒ 抛，不静默降级。
 5. `HostCatalogs` 的三条 wire import 全部消失（改用 `_rpc`）；`app_model` 四个读口改 `_rpc`，
    `wire/rpc/repo.dart` 那条 import 随之删掉（`loadRepoInfo` 是它唯一的用处）。
 

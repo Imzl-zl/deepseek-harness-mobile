@@ -53,13 +53,14 @@ SyncClient createSyncClient(SyncClientDeps deps) => _SyncClient(deps);
 /// 所以"是不是终态"由**理由**决定、由这个码收窄范围：别的 4003（坏帧 / 握手超时）照旧退避。
 const int kHandshakeRefusalCloseCode = 4003;
 
-class _SyncClient extends ForwardingHostRpc
+class _SyncClient
     implements
         SyncClient,
         SyncClientProbe,
         SnapshotCaller,
         SessionRestorer,
-        LinkControl {
+        LinkControl,
+        HostRpcHolder {
   _SyncClient(this._deps)
     : _machine = ConnectionMachine(),
       _backoff = _deps.backoff ?? Backoff(),
@@ -286,15 +287,14 @@ class _SyncClient extends ForwardingHostRpc
   // 能力口：读电脑侧的东西（`HostRpc`）
   // -------------------------------------------------------------------------
   //
-  // 实现体在 `wire/host_rpc.dart`（装配点给的工厂）。转发本身由
-  // `core/host_rpc.dart` 的 `ForwardingHostRpc` 一处写完（九个方法只在这里给一个 target）。
-  // **转而不在这里实现**：一旦在这里 import `wire/`，`core → wire` 就又回来了 ——
-  // 那正是这一批要拆掉的方向。工厂是这条边界的耦合点：`core` 只认识接口。
-
-  late final HostRpc _rpc = _deps.hostRpc(this);
+  // 能力**不是我**：活全在 `wire/host_rpc.dart`（装配点给的工厂）。这里只证明
+  // "这一条连接上有一个 HostRpc"，所以只有这一个 getter —— 不把这九个方法搬进来，
+  // 否则要么逐方法转发，要么为了转发再造一层基类（两版都试过，第一版被这一版换掉了，
+  // 见 `.agents/notes/implemented/2026-11-06-p1b-hostrpc-holder.md`）。
+  // **在这里 import `wire/` 是不行的**：`core → wire` 就又回来了，那正是这批要拆的方向。
 
   @override
-  HostRpc get target => _rpc;
+  late final HostRpc hostRpc = _deps.hostRpc(this);
 
   // -------------------------------------------------------------------------
   // 连接生命周期

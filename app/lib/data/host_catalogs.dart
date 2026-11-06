@@ -56,7 +56,7 @@ class HostCatalogs {
   /// `wire/rpc/session.dart` 的 `readModelCatalog`；这里只知道"目录可能拿不到"。
   Future<void> refreshModels() async {
     try {
-      final reply = await _rpc.modelCatalog(client);
+      final reply = await _rpc.modelCatalog();
       // 没变 ⇒ 目录原样（`onChange` 都不用调）。
       if (reply.notModified) return;
       final catalog = reply.value;
@@ -74,7 +74,7 @@ class HostCatalogs {
   /// 拉一次权限预设目录。`available: false` 是电脑侧的明说（⇒ null）。
   Future<void> refreshPermissions() async {
     try {
-      final reply = await _rpc.permissionCatalog(client);
+      final reply = await _rpc.permissionCatalog();
       // 没变 ⇒ 目录原样。
       if (reply.notModified) return;
       client.commitSnapshot(reply.key);
@@ -87,7 +87,7 @@ class HostCatalogs {
   /// 拉一次 Agent 预设目录（目录本体的解析仍在 `model/agent_preset.dart`）。
   Future<void> refreshPresets() async {
     try {
-      final reply = await _rpc.agentPresets(client);
+      final reply = await _rpc.agentPresets();
       // 没变 ⇒ 目录原样。
       if (reply.notModified) return;
       final roster = reply.value;
