@@ -6,32 +6,31 @@
 
 ## 现在（2026-11-06）
 
-- **v0.2.9 已发版**（标签 `v0.2.9`，`app/pubspec.yaml` `0.2.9+4`；Release 里是
-  `dsh-mobile-v0.2.9.apk`（release 签名）+ `dsh-mobile-connector-0.1.21.tgz`）：内容 = P1 能力口
-  与事件载荷端口（`data/` 字段名 22 → 0 + `data-no-field-name` 门禁）、S0–S4（撤独占准入 /
-  三条反向 import 归 0 / 存储分域 / 通知端口 / 主机池化）、设置行值封顶 42%、一批过期与多余的
-  解释句。**connector 0.1.21 一并发了**：`v*` 标签本来就会发插件（`publish-connector.yml:19`
-  同时监听 `v*` 与 `connector-v*`，发布步没有标签守卫），npm `latest` 现在就是 0.1.21（带
-  SLSA provenance）；但它缺的那三条链往返仍未验，见下一步 0。
-- **P1 后半**（PR #9 → main `47b3472`）：`data → wire` 走能力口（`HostReads` 18 /
-  `HostWrites` 22，`HostRpcHolder` 两个 getter），事件载荷走 `EventFields` 端口（三族；
-  core 声明、wire 实现）。`core → wire` 也到 **0**（`HistoryReader` / `EventIdReaders`；身份在
-  解码边界算一次，`projectEvent` 只收 `itemId`）。`data/` 字段名读点 **22 → 0**，门禁
-  `data-no-field-name` 钉住（`app/lib/data/**` 里把线上字段名当字面量传给 `fieldOf` /
-  `stringField` / `intField` 即红，报行号）；`data/`、`ui/`、`core/` 零 `wire/` import。
-  代价：5 个测试文件因"字段名撞端口方法名"改名、金样没动、端口返回 `SnapshotReply` 三态；
-  边界是 `core → model` 多了一条纯类型环。
+- **v0.2.9 已发版**（`app/pubspec.yaml` `0.2.9+4`；Release：`dsh-mobile-v0.2.9.apk`（release 签名）
+  + `dsh-mobile-connector-0.1.21.tgz`）：内容 = P1 能力口与事件载荷端口、S0–S4、设置行值封顶 42%、
+  一批过期与多余的解释句。**connector 0.1.21 一并发了**：`v*` 标签本来就会发插件
+  （`publish-connector.yml:19` 同时监听 `v*` 与 `connector-v*`，发布步没有标签守卫），npm
+  `latest` 现在就是 0.1.21（带 SLSA provenance）；它缺的三条链往返仍未验，见下一步 0。
+- **分层现状**（PR #9 → main `47b3472`）：`data → wire` 走能力口（`HostReads` 18 / `HostWrites`
+  22，`HostRpcHolder` 两个 getter），事件载荷走 `EventFields` 端口（core 声明、wire 实现）；
+  `core → wire` 与 `data/`、`ui/`、`core/` 的 `wire/` import 都是 **0**。`data/` 字段名读点
+  **22 → 0**，门禁 `data-no-field-name` 钉住（把线上字段名当字面量传给 `fieldOf` /
+  `stringField` / `intField` 即红，报行号）。代价：5 个测试文件因"字段名撞端口方法名"改名、
+  端口返回 `SnapshotReply` 三态、`core → model` 多了一条纯类型环。
+- **存储与主机**：`HostScope` + 装饰器 + v2→v3 迁移，**换电脑不再清库**（`clear()` 删掉只剩
+  `clearScope()`）；`HostSessions` 按 `hostId` 池化（切电脑 = 换可见指针，跨台通知 id 带主机
+  前缀）；`AppServices` 持唯一 `NotifyPort`。**未做**：S5（AppModel 切片、`chat_page` 拆文件）。
 - **真机验收**：真机库副本（24.5 MB）喂 v2→v3 —— 4136 条条目一条不少、14 个水位键全带前缀、
   `device.*` 原样；debug 包装机实测迁移（未分域行 0、无崩溃，验完复原空 v3）。**唯一没验**：
   两台电脑同时配对后切电脑外观不回默认（要两次扫码）。
-- **S0–S4**：撤独占准入的死注释与文案；三条反向 import 归 0（`DiffLine` / `json_field` /
-  `type_scale` 归位）；存储分域（`HostScope` + 装饰器 + v2→v3，**换电脑不再清库**，`clear()`
-  删掉只剩 `clearScope()`）；`AppServices` 持唯一 `NotifyPort`；`HostSessions` 按 `hostId`
-  池化（切电脑=换可见指针，跨台通知 id 带主机前缀）。**未做**：S5（AppModel 切片、`chat_page`
-  拆文件）。
+- **生产中转已更新到 v0.2.9 代码**（`dsh.0t0.me`，华为云 `/opt/dsh-mobile`，`6c9d906`）：镜像重建 +
+  重启，含"匿名管理桶按真实来源地址分"那条修复。重启踩到一颗雷 —— 令牌表里两条记录都绑
+  `connectorId: local`（两个租户的电脑都用默认 `pcId`），中转**拒绝启动**，停了约 4 分钟；清掉
+  其中一条的绑定后恢复。根因与候选修法见
+  `proposed/2026-11-06-connector-pcid-collides-across-tenants.md`，重启前自检步骤已写进
+  `docs/cookbook/relay-on-a-server.md` §6.6。
 - **门禁**：app 1761 / boundary 833（29 条自检 + 188 文件）/ connector 836 / relay 174 /
-  protocol 454·26·49；`dart analyze --fatal-infos` 与 `dart format` 各 0。六个 PR 的审查
-  判定见 `proposed/2026-11-06-branch-a-and-pr-audit.md`（待评审）。
+  protocol 454·26·49；`dart analyze --fatal-infos` 与 `dart format` 各 0。
 
 ## 下一步
 
@@ -39,21 +38,23 @@
    "插件起来、13 个能力位全亮" + 双轨判定。npm `latest` 已是 0.1.21，所以 0.2.2 线的用户装到的
    就是它。测法与隔离环境见 `proposed/2026-11-05-022-rollout-handoff.md`；发现问题就
    `npm deprecate` + 补丁版，别悄悄改 `dist-tag`（0.2.1 宿主靠 `engines` 判到 0.1.20）。
-1. **数据面收敛（三批已落地）**：触发源按来源拆、行只带手机读的五个投影键、列表分页、
+1. **`pcId` 默认 `local` 在多租户中转上必撞**（选址待定）：新装用随机 id，还是由
+   `pcSignPubHex` 派生（后者等于全部重新配对）—— 见上面那条 proposed 笔记。
+2. **数据面收敛（三批已落地）**：触发源按来源拆、行只带手机读的五个投影键、列表分页、
    重连带落盘水位、十个只读快照带 `digest`、出站账补齐。留给以后的：`permission.catalog` /
    `repo.info` 仍在 `connectLanding`；`session.projections` 仍是 20+ 键一整包；权限预设目录
-   的真机验收（要装 `dsh-auto-review` 并重启宿主）；摘要表是每进程的（冷启动要十份快照正文）。
-2. **多设备并发准入真机复验**：两台手机同时连同一台电脑；吊销 A 后 B 仍在线。两条关闭路径
+   的真机验收；摘要表是每进程的（冷启动要十份快照正文）。
+3. **多设备并发准入真机复验**：两台手机同时连同一台电脑；吊销 A 后 B 仍在线。两条关闭路径
    分开看 —— A 答完时 B 由会话事件（`approval/decided` / `tool/result`）关门，B 迟一步再答
    才拿 `interaction/not-pending`；单测已钉，端到端要两台真机。
-2. **状态语义对齐（A–H 已落地）**：真机复验还差 4 条（子智能体在跑可见、提问草稿、
+4. **状态语义对齐（A–H 已落地）**：真机复验还差 4 条（子智能体在跑可见、提问草稿、
    发送模式真值、断连重连）。
-3. 真机复验改动卡 / 差异 / 提及（要模型请求 —— 先报价再跑）。
-4. `usage.summary` 的 byDay 时区；`plugin.installStatus` 的 4 键/8 键两形态。
-5. 大改后巡检 `docs/` 与代码漂移。已知一处：`connector/src/dsh/interaction-client.ts:63`
+5. 真机复验改动卡 / 差异 / 提及（要模型请求 —— 先报价再跑）。
+6. `usage.summary` 的 byDay 时区；`plugin.installStatus` 的 4 键/8 键两形态。
+7. 大改后巡检 `docs/` 与代码漂移。已知一处：`connector/src/dsh/interaction-client.ts:63`
    import 了 `transport/backoff.js`，与 `connector-and-relay.md` §1.2 的「`dsh/` 不 import
    `transport/`」矛盾。
-6. **投影包按消费者拆**（方案 `proposed/2026-11-04-projection-payload-split.md`，未实现）。
+8. **投影包按消费者拆**（方案 `proposed/2026-11-04-projection-payload-split.md`，未实现）。
 
 ## 门禁（改代码后必须全绿，项数以 `tools.md` 为准）
 

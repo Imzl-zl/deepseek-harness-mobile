@@ -224,18 +224,38 @@ App 仍显示「已连接」，且能在会话里收到新消息 ——
 
 ## 6.6 更新镜像（两端版本要对齐）
 
+**重启前先看一眼令牌表**：中转在启动时会校验"每个 `connectorId` 只能有一条记录"，冲突就
+**拒绝启动**（`relay/src/token-table.ts:157-162`）。账号模式下**每台电脑的连接器 `pcId` 默认
+都是 `local`**（`connector/src/index.ts:169`，首次运行写进存储后不再变），所以第二个人连上
+同一台中转时，他的令牌会绑到已被占用的 `local`：
+
+```bash
+# 命中就说明有冲突（输出里同一个 connectorId 出现两次）
+python3 -c "
+import json;c=json.load(open('relay/relay.config.json'))
+print([(t['id'],t.get('connectorId')) for t in c['tokens'] if t.get('connectorId')])"
+```
+
+修法是给其中一条**清掉 `connectorId`**（令牌本身仍然有效，下次首连再绑；等效于控制台的
+「重置绑定」），再重启。不要靠"删令牌"解决 —— 那会断掉那个人的电脑。
+
 ```bash
 cd ~/dsh-mobile            # 服务器上的仓库目录
 git pull                   # 取到中转侧的新代码
-docker compose -f relay/docker-compose.yml build relay
-docker compose -f relay/docker-compose.yml up -d relay
-docker compose -f relay/docker-compose.yml logs --tail 3 relay   # 期望：中转已监听 ws://0.0.0.0:8787（摘要表 N 条）
+docker compose -f relay/docker-compose.server.yml --env-file relay/.env build relay
+docker compose -f relay/docker-compose.server.yml --env-file relay/.env up -d relay
+docker compose -f relay/docker-compose.server.yml --env-file relay/.env logs --tail 3 relay   # 期望：中转已监听 ws://0.0.0.0:8787（摘要表 N 条）
 ```
 
 - **`relay.config.json` 是挂载的**（不进镜像），重建不会丢令牌摘要；`N` 条应与更新前一致。
 - **重启会断开所有手机**：它们退避后自动换票重连；连接器重连后重放名册，`serving` 恢复。
+  名册是内存态，所以连接器回来的那一小段时间里，手机拿到的是 `401` / `ticket.rejected
+  device-unknown` —— 那不是配对失效。
 - **连接器要先于或同时更新**：中转的控制面要求 `?id=<connectorId>`，旧连接器不带它就 403
   （`docs/subsystems/connector-and-relay.md` §1.6）。
+
+**验证（账号模式）**：`GET /` 与 `GET /admin` 给 `302`（跳登录页），`GET /admin/api/state`
+给 `401`，`/ws/connector` 带假令牌给 `401`（经 Caddy 也要试一次 `wss://`）。
 
 ## 6.7 管理面板（中转自带，服务器上直接看）
 
