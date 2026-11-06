@@ -945,6 +945,42 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     }
   }
 
+  // ---- 发送（界面层发消息的唯一入口：`ui/` 不 import `wire/`）----
+
+  /// 发一条人写的消息（`session.prompt`，契约 §5.7）。
+  ///
+  /// **失败照原样抛**（输入栏据此说"发送失败：…"）：吞掉它会让用户以为发出去了，
+  /// 而那条消息从未进会话。方法名 / 参数形状在 `wire/rpc/session.dart`，
+  /// 界面只知道"发一条消息"。
+  Future<void> sendPrompt({
+    required String sid,
+    required List<Object?> content,
+    required String mode,
+    required String requestId,
+  }) => _writes.sendPrompt(
+    sid: sid,
+    content: content,
+    mode: mode,
+    requestId: requestId,
+  );
+
+  /// 给**子会话**发一条消息（`subagent.prompt`）。
+  ///
+  /// 子会话直接吃 `session.prompt` 会被宿主拒成
+  /// `internal: session "…" is owned by subagent routing`（2026-10-21 真机实测），
+  /// 所以这是另一个方法名，不能与 [sendPrompt] 合并。
+  Future<void> sendSubagentPrompt({
+    required String sid,
+    required List<Object?> content,
+    required String mode,
+    required String requestId,
+  }) => _writes.sendSubagentPrompt(
+    sid: sid,
+    content: content,
+    mode: mode,
+    requestId: requestId,
+  );
+
   // ---- 排队消息（`inbox` 投影的 next-turn 段）----
 
   /// 当前会话排队中的消息（**按 sid 取**：投影包是最近一次读的那个会话的）。

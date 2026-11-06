@@ -23,6 +23,7 @@ import 'rpc/permission.dart' as wire;
 import 'rpc/plugin.dart' as wire;
 import 'rpc/session.dart' as wire;
 import 'rpc/settings.dart' as wire;
+import 'rpc/subagent.dart' as wire;
 import 'rpc/workspace.dart' as wire;
 
 /// 端口 `HostWrites` 的唯一实现。
@@ -79,6 +80,34 @@ final class WireHostWrites implements HostWrites {
     sid: sid,
     itemId: itemId,
     action: action,
+    requestId: requestId,
+  );
+
+  @override
+  Future<void> sendPrompt({
+    required String sid,
+    required List<Object?> content,
+    required String mode,
+    required String requestId,
+  }) => wire.sendPrompt(
+    client,
+    sid: sid,
+    content: content,
+    mode: mode,
+    requestId: requestId,
+  );
+
+  @override
+  Future<void> sendSubagentPrompt({
+    required String sid,
+    required List<Object?> content,
+    required String mode,
+    required String requestId,
+  }) => wire.sendSubagentPrompt(
+    client,
+    sid: sid,
+    content: content,
+    mode: mode,
     requestId: requestId,
   );
 

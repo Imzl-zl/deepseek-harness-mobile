@@ -78,10 +78,11 @@ UI 一旦开始认事件类型,同一件事就会在两个地方各写一遍。
   客户端以 `HostRpcHolder` 暴露这两个口)。**读写分两个口的判据是失败语义相反**:
   读不到是空态,写失败必须大声,而写全带幂等键。
   **`data/` 只剩 1 条** `wire/` import(`projection.dart` 的事件字段读者,单独一批),
-  代价与实测数字见
+  **`ui/` 与 `core/` 都是 0**(发消息走 `AppModel.sendPrompt` / `sendSubagentPrompt`,
+  界面不再认识方法名)。代价与实测数字见
   `.agents/notes/implemented/2026-11-06-p1b-batch1-session-family.md`、
-  `…-batch2-catalog-family.md`、`…-batch3-preview-family.md` 与
-  `…-batch4-read-write-ports.md`。
+  `…-batch2-catalog-family.md`、`…-batch3-preview-family.md`、
+  `…-batch4-read-write-ports.md` 与 `…-ui-send-through-appmodel.md`。
 - **条目身份只算一次**:`itemIdOf`(契约 §5.2 的规则)在**解码边界**跑,结果落在
   `SessionEvent.itemId`;`data/projection.dart` 只**消费**它,不再重推 —— 同一条事件
   两条路径各推一次就会有两个答案。

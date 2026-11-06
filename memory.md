@@ -59,8 +59,10 @@
   实测代价：五个测试文件只因"字段名撞端口方法名"改名（`projections` / `workspaces` →
   `…Reply`，值与形状没动）；`wire_shapes_replay_test` 改了 11 处类型名 + 3 条 import（金样没动）；
   端口一律返回 `SnapshotReply<…>`（三态 —— 裸 null 会把 `notModified` 当成失败）。
-  **遗留**：`ui/chat_page.dart` 直接 import `wire/rpc/session.dart` 调 `sendPrompt`（ui→wire，
-  另一条病，所以 `sendPrompt` 没进写口）。
+  **遗留**：`ui/chat_page.dart` 曾是最后一处 `ui → wire`（直接调 `sendPrompt`），
+  已在 `implemented/2026-11-06-ui-send-through-appmodel.md` 收掉 ——
+  发消息改走 `AppModel.sendPrompt` / `sendSubagentPrompt`，`app/lib` 里只剩
+  `data/projection.dart` 一处认线上形状。
   留下的边界：`core → model` 多了一条**纯类型环**（值对象的字段类型来自 `model/`，
   而 `model/` 又 import `core/job.dart` 等）。
   没有真机（读的形状与路径没变）。见

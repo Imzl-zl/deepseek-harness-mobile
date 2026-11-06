@@ -63,8 +63,6 @@ import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 import '../theme/dsh_type.dart';
-import '../wire/rpc/session.dart' show sendPrompt;
-import '../wire/rpc/subagent.dart' show sendSubagentPrompt;
 import 'chat_jumper.dart';
 import 'chat_turns.dart';
 import 'collapsible_group.dart';
@@ -679,21 +677,20 @@ class ChatPageState extends State<ChatPage> {
       // 手机上就是一句「发送失败」）。子会话唯一的写入口是 `subagent.prompt`
       // （契约 §5.7），参数形状与这里逐字相同。
       //
-      // 两个方法名与参数形状都在 `app/lib/wire/rpc/` 里（`session.dart` /
-      // `subagent.dart`）——界面层不再知道线上方法的形状。
+      // 两个方法名与参数形状都由 `AppModel` 的 `sendPrompt` / `sendSubagentPrompt`
+      // 收着（那一层转给 `HostWrites`，实现与形状在 `app/lib/wire/rpc/`）——
+      // 这一层只决定"发给谁、带什么"，不认识线上方法名。
       final content = promptContentOf(text: text, attachments: _attachments);
       final mode = widget.app.sendMode.wire;
       if (route == SendRoute.subagentPrompt) {
-        await sendSubagentPrompt(
-          widget.app.client,
+        await widget.app.sendSubagentPrompt(
           sid: sid,
           content: content,
           mode: mode,
           requestId: requestId,
         );
       } else {
-        await sendPrompt(
-          widget.app.client,
+        await widget.app.sendPrompt(
           sid: sid,
           content: content,
           mode: mode,

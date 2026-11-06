@@ -173,6 +173,26 @@ abstract interface class HostWrites {
     required String requestId,
   });
 
+  /// 发一条人写的消息（`session.prompt`；应答不读，`{accepted}` 没人消费）。
+  Future<void> sendPrompt({
+    required String sid,
+    required List<Object?> content,
+    required String mode,
+    required String requestId,
+  });
+
+  /// 给**子会话**发一条消息（`subagent.prompt`）。
+  ///
+  /// 子会话直接吃 `session.prompt` 会被宿主拒成
+  /// `internal: session "…" is owned by subagent routing`（2026-10-21 真机实测），
+  /// 所以这是**另一个方法名**，不能与 [sendPrompt] 合并成一个。
+  Future<void> sendSubagentPrompt({
+    required String sid,
+    required List<Object?> content,
+    required String mode,
+    required String requestId,
+  });
+
   /// 跑一条斜杠命令（`command.execute`）。回执认不出 ⇒ `null`（调用方如实报错）。
   Future<CommandOutcome?> executeCommand({
     required String sid,
