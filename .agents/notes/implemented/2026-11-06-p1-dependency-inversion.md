@@ -100,8 +100,17 @@ import 它 —— 方向成了"消费者依赖形状"。`core/` 这两条各是�
 `ev=113251` 这一项是本批的靶心：它证明 `_eventFromPayload` 的 `itemIdOf(+EventIdReaders)`
 与"投影只消费 itemId"在真事件上不报形状缺陷（有缺陷必打 `[wire]`）。
 
-**没验到的**：翻页 `session.page` 的 `refetch` 分支（这次那 16 KB 会话里没有 >1 MiB 条目）；
-它由 `sync_client_test` 的 refetch 用例覆盖（真封箱 `ev` + 真解码）。
+**没验到的**：翻页 `session.page` 的 `refetch` 分支（这次那 16 KB 会话里没有 >1 MiB 条目）。
+三种零成本造法都试过、都不通（细节记在 `tools.md`）：① 从日常 home 拷会话日志 —— 那边的
+`session.v*.jsonl.zstd` 是 0 字节壳、内容不在文件里；② 手写一个含 1.24 MB `user/message` 的会话 ——
+`session.list` 认它（653 字节），但 App 抽屉里就是不出现（补 `session/title`、`session/end-seed`
+也不出现）；③ 往库里塞空壳 —— 反而让整个列表查询失败。结论：要压这条，只能从手机或网页面板发一个
+真 >1 MiB 的附件，让事件自己变大。它目前由 `sync_client_test` 的 refetch 用例（真封箱 `ev` + 真解码）覆盖。
+
+**顺带发现（不是本批改的，值得记）**：DSH 那边 `session.list` 整体失败时，App 抽屉**照旧显示缓存的旧行**
+（只有空态才会显示「拉取会话失败 <原因>」），也就是"列表已经坏了"在界面上看不出来。
+这次的触发是库里一个 0 字节的空白会话目录（不是 App 的问题）。要不要在抽屉上加一个有缓存时的失败标识，
+是产品判断，留给后面定。
 
 隔离实例的配置落在 `D:\tmp\dsh-probe-home`（provider 与密钥都在那儿），不在仓库里。
 配方与两个坑（`/v2/v1` 会 404、塞空壳会话会报 `corrupt session log`）记在 `tools.md`。

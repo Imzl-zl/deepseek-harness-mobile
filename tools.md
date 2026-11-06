@@ -655,7 +655,15 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
      `@deepseek-ai/dsh-llm-pi-ai.providers.<id>` 与 `.credentials.yaml` 的 `refs.<NAME>`。
   5. **别往 `sessions/` 里塞空壳**：0 字节的 `session.v*.jsonl.zstd` 会被判 `corrupt session log`
      （header id 与 cwd 对不上），而且这条错误会**原样透到手机的「拉取会话失败」**。
-  6. 关进程别按端口名 kill：`dsh` 是通过 `DeepSeek Harness` 那个宿主跑的，杀错会连桌面 App 一起带走
+     更坏的一种：**DSH 自己留下的 0 字节空白会话目录**（建了没人用）会让 `session.list`
+     整个查询失败（连接器那边 `out_method.session.list` 只剩 ~41 字节），而手机上**抽屉照旧显示缓存的旧行**
+     —— 列表坏了却看不出来。清了那个目录即恢复（1224 字节）。
+  6. **手写会话（自己写 header + 事件）进得了 `session.list`，但 App 抽屉里不出现**（2026-11-06 试了三次）：
+     加 `session/title`、加 `session/end-seed`、清掉空壳会话都不行。要压「>1 MiB 条目的 refetch」，
+     只能走**真实附件**那条路（从手机或网页面板发一个 >1 MiB 的附件，事件自然变大）。
+     顺带：`sessions/**/session.v*.jsonl.zstd` 是**一行一个 zstd 帧**的拼接，
+     node 的 `zstdDecompress` 只解第一帧；按帧走 `frameEnd()`（见 `D:\tmp\dsh-iso-session.js`）才读得全。
+  7. 关进程别按端口名 kill：`dsh` 是通过 `DeepSeek Harness` 那个宿主跑的，杀错会连桌面 App 一起带走
      （日常实例还在听 8790 就没杀错）。
 - **真机验「桌面卡被手机撤掉」的配方**（2026-10-23 用一次验完，约 1 轮）：
   - **桌面侧不必开用户日常浏览器**：headless Chrome 里打开隔离实例的 Web GUI 就是**真客户端**
