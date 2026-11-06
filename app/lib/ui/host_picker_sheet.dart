@@ -18,7 +18,6 @@ library;
 import 'package:flutter/material.dart';
 
 import '../platform/pairing_store.dart';
-import '../theme/dsh_colors.dart';
 import 'dsh_sheet.dart';
 
 /// 弹出电脑列表；返回被选中的 `hostId`（取消返回 `null`）。
@@ -46,19 +45,6 @@ Future<String?> pickPairedHost(
             selected: host.hostId == currentHostId,
             onTap: () => Navigator.of(context).pop(host.hostId),
           ),
-        const SizedBox(height: 6),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Text(
-            // 只留**后果**（会断开当前那台）；"界面只显示新的那台"是它能自己看见的。
-            '切换会立刻断开当前那台。',
-            style: TextStyle(
-              fontSize: 12,
-              height: 1.45,
-              color: context.dshColors.labelSecondary,
-            ),
-          ),
-        ),
       ],
     ),
   );

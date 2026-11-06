@@ -316,7 +316,6 @@ class SettingsPage extends StatelessWidget {
             const _SectionTitle('模型'),
             _ModelSection(app: app),
             const _SectionTitle('连接方式'),
-            const _EndpointNote(),
             if (app.endpoints.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(
@@ -878,23 +877,6 @@ class _ModelSection extends StatelessWidget {
           ),
         const _PrefNote('提供商与密钥在电脑上改。'),
       ],
-    );
-  }
-}
-
-/// 连接方式组上方的一行小字。
-class _EndpointNote extends StatelessWidget {
-  const _EndpointNote();
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.dshColors;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-      child: Text(
-        '按这里的顺序自动拨，拨不通顺延；点一行设为首选。',
-        style: TextStyle(fontSize: 12, color: c.labelTertiary),
-      ),
     );
   }
 }

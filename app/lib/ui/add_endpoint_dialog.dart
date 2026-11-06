@@ -206,8 +206,8 @@ class _AddEndpointDialogState extends State<AddEndpointDialog> {
               const SizedBox(height: 8),
               Text(
                 _kind == EndpointKind.direct
-                    ? '直连不走中转、不要票：填电脑侧直连监听面的地址（局域网 ip，或映射到公网的自部署地址）。'
-                    : '中转要换票：填中转的根地址（不带路径）。有域名用 wss；只有公网 IP 时可以用 ws（明文）。',
+                    ? '电脑侧直连地址（局域网 IP，或映射到公网的自部署地址）。'
+                    : '中转根地址（不带路径）；有域名用 wss。',
                 style: TextStyle(fontSize: 11, color: c.labelTertiary),
               ),
             ],
