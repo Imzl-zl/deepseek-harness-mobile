@@ -36,7 +36,7 @@ class _HeroClient extends FakeSyncClient {
   _HeroClient({
     this.sessions = const [],
     this.projectionReply = const {},
-    this.workspaces,
+    this.workspacesReply,
     this.presets,
     this.replay = const [],
   });
@@ -48,7 +48,9 @@ class _HeroClient extends FakeSyncClient {
   final Map<String, Object?> projectionReply;
 
   /// `null` = 这台电脑没有这个方法（回 `null`，与连接器"缺服务就不挂"同形）。
-  final Object? workspaces;
+  /// 名字不叫 `workspaces`：`FakeSyncClient` 实现了 `HostRpc`，那个能力的成员
+  /// 就叫 `workspaces`（端口的方法名），同名会变成"用字段覆盖方法"。
+  final Object? workspacesReply;
   final Object? presets;
 
   /// 订阅后要推的**持久事件**（真形状用）。
@@ -130,7 +132,7 @@ class _HeroClient extends FakeSyncClient {
       case 'session.projections':
         return projectionReply as T;
       case 'workspace.list':
-        return workspaces as T;
+        return workspacesReply as T;
       case 'agentPresets.list':
         return presets as T;
       case 'session.create':
@@ -220,7 +222,7 @@ void main() {
   /// 纯 `test()` 里补一句真实延迟，`testWidgets` 里靠 `pumpWidget` + `pumpAndSettle`。
   (_HeroClient, AppModel) connected({
     List<Object?>? sessions,
-    Object? workspaces,
+    Object? workspacesReply,
     Object? presets,
     Map<String, Object?> projectionReply = const {},
   }) {
@@ -230,7 +232,7 @@ void main() {
       // （桌面 `ConversationContent.tsx:142` 的 `inert`）。没有 `cwd` 又没有
       // 工作区清单 ⇒ 解析不出来 ⇒ 占位文案被换成「选择工作区」，这一屏就不是 hero 了。
       sessions: sessions ?? [blankRow('blank-1', cwd: r'D:\work\dsh-mobile')],
-      workspaces: workspaces,
+      workspacesReply: workspacesReply,
       presets: presets,
       projectionReply: projectionReply,
     );
@@ -288,7 +290,7 @@ void main() {
   group('那一屏长成 hero', () {
     testWidgets('鱼 + 「探索未至之境」+ 「预览版」+ 两枚 chip 都在', (tester) async {
       final (_, app) = connected(
-        workspaces: workspaceReply(owningWorkspace: 'w1'),
+        workspacesReply: workspaceReply(owningWorkspace: 'w1'),
         presets: presetReply(),
         projectionReply: {'agentPreset': 'ptc'},
       );
@@ -322,7 +324,7 @@ void main() {
       // 所以这一条同时钉住两件事：**不贴底**（`end` 会红）与
       // **不置顶**（`start` 会红）—— 居中偏上才是 DSH 的 hero 阶段。
       final (_, app) = connected(
-        workspaces: workspaceReply(owningWorkspace: 'w1'),
+        workspacesReply: workspaceReply(owningWorkspace: 'w1'),
         presets: presetReply(),
         projectionReply: {'agentPreset': 'ptc'},
       );
@@ -519,7 +521,7 @@ void main() {
     testWidgets('清单到了但没有归属：工作区 chip 是占位，不拿已删目录名顶上', (tester) async {
       final (_, app) = connected(
         sessions: [blankRow('blank-1', cwd: r'D:\old\deleted-workspace')],
-        workspaces: workspaceReply(),
+        workspacesReply: workspaceReply(),
         presets: presetReply(),
       );
       addTearDown(app.dispose);
@@ -536,7 +538,7 @@ void main() {
       tester,
     ) async {
       final (client, app) = connected(
-        workspaces: workspaceReply(owningWorkspace: 'w1'),
+        workspacesReply: workspaceReply(owningWorkspace: 'w1'),
         presets: presetReply(),
         projectionReply: {'agentPreset': 'standard'},
       );
@@ -567,7 +569,7 @@ void main() {
 
     testWidgets('选工作区 → session.create 带 workspaceId', (tester) async {
       final (client, app) = connected(
-        workspaces: workspaceReply(owningWorkspace: 'w1'),
+        workspacesReply: workspaceReply(owningWorkspace: 'w1'),
         presets: presetReply(),
       );
       addTearDown(app.dispose);
@@ -584,7 +586,7 @@ void main() {
 
     testWidgets('选中当前那一项：什么都不建（点一下不该多出一个 blank 会话）', (tester) async {
       final (client, app) = connected(
-        workspaces: workspaceReply(owningWorkspace: 'w1'),
+        workspacesReply: workspaceReply(owningWorkspace: 'w1'),
         presets: presetReply(),
         projectionReply: {'agentPreset': 'standard'},
       );
@@ -631,7 +633,7 @@ void main() {
       addTearDown(tester.view.reset);
 
       final (_, app) = connected(
-        workspaces: {
+        workspacesReply: {
           'workspaces': [
             {
               'workspaceId': 'w1',

@@ -28,10 +28,13 @@ import 'fake_sync_client.dart';
 
 /// 记录 `session.create` 请求体、按方法给固定应答的替身。
 class _CreateClient extends FakeSyncClient {
-  _CreateClient({required this.rows, required this.workspaces});
+  _CreateClient({required this.rows, required this.workspacesReply});
 
   final List<Map<String, Object?>> rows;
-  final Map<String, Object?> workspaces;
+
+  /// 名字不叫 `workspaces`：`FakeSyncClient` 实现了 `HostRpc`，那个能力的成员
+  /// 就叫 `workspaces`（端口的方法名），同名会变成"用字段覆盖方法"。
+  final Map<String, Object?> workspacesReply;
 
   /// 每次 `session.create` 的请求体（断言"到底带没带 workspaceId"）。
   final List<Map<String, Object?>> createParams = <Map<String, Object?>>[];
@@ -65,7 +68,7 @@ class _CreateClient extends FakeSyncClient {
       case 'session.list':
         return <String, Object?>{'sessions': rows} as T;
       case 'workspace.list':
-        return workspaces as T;
+        return workspacesReply as T;
       case 'session.create':
         createParams.add(params);
         // **宿主的行为**：给了 `workspaceId` 就把它记进该工作区的账本
@@ -73,7 +76,8 @@ class _CreateClient extends FakeSyncClient {
         // 否则"建完重读清单"那条断言测不到真东西。
         final wid = params['workspaceId'];
         if (wid is String) {
-          for (final group in (workspaces['workspaces'] as List? ?? const [])) {
+          for (final group
+              in (workspacesReply['workspaces'] as List? ?? const [])) {
             if (group is Map && group['workspaceId'] == wid) {
               (group['sessionIds'] as List).add('new-1');
             }
@@ -274,7 +278,7 @@ void main() {
           _row('s1', cwd: r'D:\w2', updatedAt: 10),
           _row('s2', cwd: r'D:\w1', updatedAt: 99),
         ],
-        workspaces: _workspaces([
+        workspacesReply: _workspaces([
           _group('w1', r'D:\w1', ['s2']),
           _group('w2', r'D:\w2', ['s1']),
         ]),
@@ -302,7 +306,7 @@ void main() {
           _row('s1', cwd: r'D:\w2', updatedAt: 10),
           _row('s2', cwd: r'D:\w1', updatedAt: 99),
         ],
-        workspaces: _workspaces([
+        workspacesReply: _workspaces([
           _group('w1', r'D:\w1', ['s2']),
           _group('w2', r'D:\w2', ['s1']),
         ]),
@@ -321,7 +325,7 @@ void main() {
     test('一个工作区都没有 ⇒ **不塞** workspaceId（未分组是事实）', () async {
       final client = _CreateClient(
         rows: [_row('s1', cwd: r'D:\w', updatedAt: 10)],
-        workspaces: _workspaces(const []),
+        workspacesReply: _workspaces(const []),
       );
       final app = await open(client);
 
@@ -335,7 +339,7 @@ void main() {
     test('显式给的工作区压过链（hero 的 chip 走这条）', () async {
       final client = _CreateClient(
         rows: [_row('s1', cwd: r'D:\w2', updatedAt: 10)],
-        workspaces: _workspaces([
+        workspacesReply: _workspaces([
           _group('w1', r'D:\w1', ['s9']),
           _group('w2', r'D:\w2', ['s1']),
         ]),
@@ -356,7 +360,7 @@ void main() {
           _row('b1', cwd: r'D:\w2', updatedAt: 5, blank: true),
           _row('b2', cwd: r'D:\w1', updatedAt: 4, blank: true),
         ],
-        workspaces: _workspaces([
+        workspacesReply: _workspaces([
           _group('w1', r'D:\w1', ['b2']),
           _group('w2', r'D:\w2', ['b1']),
         ]),
@@ -379,7 +383,7 @@ void main() {
     test('原样落到 WorkspaceGroup.createdAt（空工作区当"最近"要靠它）', () async {
       final client = _CreateClient(
         rows: const [],
-        workspaces: _workspaces([
+        workspacesReply: _workspaces([
           _group(
             'empty',
             r'D:\e',

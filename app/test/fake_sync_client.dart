@@ -33,8 +33,6 @@ import 'dart:async';
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/host_rpc.dart';
 import 'package:dsh_mobile/core/job.dart';
-import 'package:dsh_mobile/core/session_list_page.dart';
-import 'package:dsh_mobile/core/session_projections.dart';
 import 'package:dsh_mobile/core/session_restore.dart';
 import 'package:dsh_mobile/core/snapshot_call.dart';
 import 'package:dsh_mobile/core/snapshot_digest.dart';
@@ -42,8 +40,8 @@ import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/wire/host_rpc.dart';
 
 /// `SyncClient` 的测试基类。
-abstract class FakeSyncClient
-    implements SyncClient, SnapshotCaller, SessionRestorer, HostRpc {
+abstract class FakeSyncClient extends ForwardingHostRpc
+    implements SyncClient, SnapshotCaller, SessionRestorer {
   /// 冷启动恢复被调过几次、带的水位是多少（`sid → since`）。
   ///
   /// 它就是"app 层真的把本地库的水位交给了连接层"这条判据的落点。
@@ -92,18 +90,10 @@ abstract class FakeSyncClient
   /// `late` 是必须的：字段初始化器里只有 `late` 能用 `this`。
   late final HostRpc _hostRpc = WireHostRpc(this);
 
+  /// 端口每个方法都转发到它（转发体在 `core/host_rpc.dart` 的 `ForwardingHostRpc`
+  /// 一处 —— 九个方法各抄一遍的话，加一个方法就要改三处替身基类）。
   @override
-  Future<SnapshotReply<SessionProjections?>> projections(
-    SyncClient client, {
-    required String sid,
-  }) => _hostRpc.projections(client, sid: sid);
-
-  @override
-  Future<SnapshotReply<SessionListPage>> sessionRows(
-    SyncClient client, {
-    int? limit,
-    int? offset,
-  }) => _hostRpc.sessionRows(client, limit: limit, offset: offset);
+  HostRpc get target => _hostRpc;
 
   // ---- 翻页相关：本版新加的默认值 ----
 

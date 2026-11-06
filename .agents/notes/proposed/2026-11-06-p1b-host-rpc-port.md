@@ -1,12 +1,13 @@
 # P1 后半：`data → wire` 倒置走「能力接口」，端口跟着客户端走
 
 - 日期：2026-11-06
-- 状态：proposed（**第 1 批（会话族）整族已落地**，其余未落码）
+- 状态：proposed（**第 1 批（会话族）+ 第 2 批（目录族）已落地**，其余未落码）
 - 前情：`core → wire` 已归零（见 `implemented/2026-11-06-p1-dependency-inversion.md`）。
   这一篇只管 `data/` 剩下的 21 条 import。
-- 进度（2026-11-06）：会话族两半都已倒置完（`app_model` 15 → **14**，`data/` 21 → **20**，
-  `wire.` 44 → **33**），实际代价与两处与本文的偏差见
-  `implemented/2026-11-06-p1b-batch1-session-family.md`。**未动**：目录族、预览族、收尾。
+- 进度（2026-11-06）：会话族与目录族都已倒置完（`app_model` 的 wire import 15 → **13**，
+  `host_catalogs` 3 → **0**，`data/` 21 → **16**，`wire.` 44 → **29**），实际代价与偏差见
+  `implemented/2026-11-06-p1b-batch1-session-family.md` 与
+  `implemented/2026-11-06-p1b-batch2-catalog-family.md`。**未动**：预览族、收尾。
 - 前置能力：`SyncClient` 已经是"能力接口"手法的先例（`core/sync_client.dart:207` 的
   `LinkControl`：**不往 `SyncClient` 加抽象方法**，因为全仓二十多个替身都 `implements SyncClient`，
   加一个方法就得改二十多处；改用小接口 + `is` 判定）。
@@ -69,7 +70,11 @@
      （省下的是 `wire.` 字面量）。同上那篇笔记。
    - `session.page` / `session.refetch` **这一族里已经没有** —— P1 那批已按 `HistoryReader`
      倒置完（`core/history_page.dart`），本方案不再重复。
-2. **目录族**：设置分区、权限目录、模型目录、Agent 预设、工作区、仓库信息、插件清单。
+2. **目录族（已落地，2026-11-06）**：设置分区、权限目录、模型目录、Agent 预设、工作区、
+   仓库信息、插件清单。四个值类型搬进 core（`SettingSection` / `RepoInfo` /
+   `PluginInventory` / `WorkspaceSnapshot`），端口加七个方法；`host_catalogs.dart` 的
+   3 条 wire import 清零。见 `implemented/2026-11-06-p1b-batch2-catalog-family.md`
+   （含新增的 `ForwardingHostRpc`：九个方法的转发收成一处）。
 3. **预览族**：文件预览、目录列举、改动清单。
 4. 最后清 `data/` 的 import 计数到 0（`projection.dart` 那条另算，见下）。
 
@@ -83,7 +88,7 @@
 ## 验收
 
 - `git grep -c "import '\.\./wire/" -- app/lib/data` 从 4 个文件 / 21 条降到 **1 个文件 / 1 条**
-  （只剩 `projection.dart`）。**当前：4 个文件 / 20 条**（`app_model` 14）。
+  （只剩 `projection.dart`）。**当前：3 个文件 / 16 条**（`app_model` 13）。
 - `SyncClient` 接口**没有新增成员**（`git diff app/lib/core/sync_client.dart` 只看得到
   `HostRpc` 的 import 与文档，看不到新方法）。
 - 测试侧**没有任何夹具从 JSON 改成 DTO**（这条是硬约束）。原写"只改 2 个文件（两个假客户端）"，

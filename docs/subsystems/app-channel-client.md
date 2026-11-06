@@ -28,6 +28,11 @@ app/lib/
 │       host_rpc.dart            读电脑侧快照/目录的能力口 HostRpc(实现在 wire/host_rpc.dart)
 │       session_projections.dart 会话投影解好之后的值(键名与字段类型仍只在 wire 断言)
 │       session_list_page.dart   一页会话行解好之后的值(拆包与坏行处置仍只在 wire 断言)
+│       setting_section.dart     目录族解好之后的值:设置分区
+│       repo_info.dart                       仓库信息
+│       plugin_inventory.dart                插件清单
+│       workspace_snapshot.dart              工作区分组 + 归档/置顶两列
+│                                (上面四个的键名与缺键处置仍只在 wire 断言)
 │       connection_resources.dart 每连接资源束(建/废各一处)
 │       call_registry.dart       在途请求表(断连即整体拒绝)
 ├── wire/                        线上格式的**唯一断言点**(字段名与类型只在这里)
@@ -61,15 +66,18 @@ UI 一旦开始认事件类型,同一件事就会在两个地方各写一遍。
 - `core/` 的所有 IO 走注入接口 ⇒ **纯 Dart 单测里可以直接跑 `protocol/fixtures`**。
 - 线上载荷的字段名与类型只在 `wire/` 里断言,消费方拿到的永远是解好的值;两边之间只许有
   **端口**(core 声明、wire 实现),且端口按**能力**暴露、不往 `SyncClient` 加成员
-  (`SyncClient` 之外的 `LinkControl` / `HostRpc` 都是这个形状)。已经倒置完的三族:
-  翻页/补取走 `core/history_page.dart` 的 `HistoryReader`(实现在
+  (`SyncClient` 之外的 `LinkControl` / `HostRpc` 都是这个形状)。`SyncClient` 兼作能力时,
+  转发体收在 `core/host_rpc.dart` 的 `ForwardingHostRpc` 一处(实现方只给 `target`)。
+  已经倒置完的三族:翻页/补取走 `core/history_page.dart` 的 `HistoryReader`(实现在
   `wire/rpc/session_page.dart`),事件身份字段走 `core/items.dart` 的 `EventIdReaders`
-  (实现在 `wire/events.dart`),读电脑侧的快照走 `core/host_rpc.dart` 的 `HostRpc`
-  (实现在 `wire/host_rpc.dart`,客户端兼作该能力)。
-  **`data/` 还有 20 条** `wire/` import(`app_model` 14 / `host_catalogs` 3 /
-  `file_preview` 2 / `projection` 1),代价与实测数字见
-  `.agents/notes/implemented/2026-11-06-p1-dependency-inversion.md` 与
-  `.agents/notes/implemented/2026-11-06-p1b-batch1-session-family.md`。
+  (实现在 `wire/events.dart`),读电脑侧的快照与目录走 `core/host_rpc.dart` 的 `HostRpc`
+  (实现在 `wire/host_rpc.dart`,客户端兼作该能力 —— 会话投影 / 会话行 / 设置 / 三个目录 /
+  工作区 / 仓库 / 插件)。
+  **`data/` 还有 16 条** `wire/` import(`app_model` 13 / `file_preview` 2 / `projection` 1),
+  代价与实测数字见
+  `.agents/notes/implemented/2026-11-06-p1-dependency-inversion.md`、
+  `.agents/notes/implemented/2026-11-06-p1b-batch1-session-family.md` 与
+  `.agents/notes/implemented/2026-11-06-p1b-batch2-catalog-family.md`。
 - **条目身份只算一次**:`itemIdOf`(契约 §5.2 的规则)在**解码边界**跑,结果落在
   `SessionEvent.itemId`;`data/projection.dart` 只**消费**它,不再重推 —— 同一条事件
   两条路径各推一次就会有两个答案。

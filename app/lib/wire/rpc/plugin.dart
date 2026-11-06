@@ -25,6 +25,7 @@
 /// Note: 布局与批次见 `.agents/notes/implemented/2026-10-25-wire-rpc-layer-layout.md`。
 library;
 
+import '../../core/plugin_inventory.dart';
 import '../../core/sync_client.dart';
 import '../../model/plugins.dart' show PluginBundle, PluginJob, PluginRow;
 import '../fields.dart';
@@ -42,21 +43,14 @@ const String _kRemove = 'plugin.remove';
 const String _kStatus = 'plugin.installStatus';
 const String _kCancel = 'plugin.cancelInstall';
 
-/// 一次插件清单读的结论：**两张表**（插件行 + 包）。
-///
-/// 两个面各一发（并发）：卸载按包名走，所以包清单不是插件行的派生品。
-final class PluginInventoryWire {
-  const PluginInventoryWire({required this.rows, required this.bundles});
-
-  final List<PluginRow> rows;
-  final List<PluginBundle> bundles;
-}
+// 清单的**值类型**（两张表）在 `core/plugin_inventory.dart`（端口 `HostRpc` 要能返回它）；
+// 下面只剩"两发怎么合、坏一侧怎么降级"。
 
 /// 读插件清单与包清单（两发并发）。
 ///
 /// 任一侧读不出来 ⇒ 那一侧空表（另一侧照常给），并计一次数；
 /// **两侧都读不出来**才返回 `null`（调用方把插件页画成"读取失败"）。
-Future<PluginInventoryWire?> loadPluginInventory(SyncClient client) async {
+Future<PluginInventory?> loadPluginInventory(SyncClient client) async {
   final (rowsReading, bundlesReading) = await (
     _loadList(client, _kList, readPluginList),
     _loadList(client, _kBundles, readPluginBundles),
@@ -64,7 +58,7 @@ Future<PluginInventoryWire?> loadPluginInventory(SyncClient client) async {
   final rows = valueOrReport(rowsReading, _kList);
   final bundles = valueOrReport(bundlesReading, _kBundles);
   if (rows == null && bundles == null) return null;
-  return PluginInventoryWire(
+  return PluginInventory(
     rows: rows ?? const <PluginRow>[],
     bundles: bundles ?? const <PluginBundle>[],
   );

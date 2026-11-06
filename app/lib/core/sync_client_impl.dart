@@ -35,8 +35,6 @@ import 'job.dart';
 import 'keepalive.dart';
 import 'outbox.dart';
 import 'recovery.dart';
-import 'session_list_page.dart';
-import 'session_projections.dart';
 import 'session_restore.dart';
 import 'snapshot_call.dart';
 import 'snapshot_digest.dart';
@@ -55,14 +53,13 @@ SyncClient createSyncClient(SyncClientDeps deps) => _SyncClient(deps);
 /// 所以"是不是终态"由**理由**决定、由这个码收窄范围：别的 4003（坏帧 / 握手超时）照旧退避。
 const int kHandshakeRefusalCloseCode = 4003;
 
-class _SyncClient
+class _SyncClient extends ForwardingHostRpc
     implements
         SyncClient,
         SyncClientProbe,
         SnapshotCaller,
         SessionRestorer,
-        LinkControl,
-        HostRpc {
+        LinkControl {
   _SyncClient(this._deps)
     : _machine = ConnectionMachine(),
       _backoff = _deps.backoff ?? Backoff(),
@@ -289,24 +286,15 @@ class _SyncClient
   // 能力口：读电脑侧的东西（`HostRpc`）
   // -------------------------------------------------------------------------
   //
-  // 实现体在 `wire/host_rpc.dart`（装配点给的工厂），这里只转一手。
+  // 实现体在 `wire/host_rpc.dart`（装配点给的工厂）。转发本身由
+  // `core/host_rpc.dart` 的 `ForwardingHostRpc` 一处写完（九个方法只在这里给一个 target）。
   // **转而不在这里实现**：一旦在这里 import `wire/`，`core → wire` 就又回来了 ——
   // 那正是这一批要拆掉的方向。工厂是这条边界的耦合点：`core` 只认识接口。
 
   late final HostRpc _rpc = _deps.hostRpc(this);
 
   @override
-  Future<SnapshotReply<SessionProjections?>> projections(
-    SyncClient client, {
-    required String sid,
-  }) => _rpc.projections(client, sid: sid);
-
-  @override
-  Future<SnapshotReply<SessionListPage>> sessionRows(
-    SyncClient client, {
-    int? limit,
-    int? offset,
-  }) => _rpc.sessionRows(client, limit: limit, offset: offset);
+  HostRpc get target => _rpc;
 
   // -------------------------------------------------------------------------
   // 连接生命周期

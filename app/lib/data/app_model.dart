@@ -73,7 +73,6 @@ import '../wire/rpc/job.dart' as wire;
 import '../wire/rpc/permission.dart' as wire;
 import '../wire/rpc/plugin.dart' as wire;
 import '../wire/rpc/refs.dart' as wire;
-import '../wire/rpc/repo.dart' as wire;
 import '../wire/rpc/session.dart' as wire;
 import '../wire/rpc/settings.dart' as wire;
 import '../wire/rpc/usage.dart' as wire;
@@ -534,23 +533,13 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
 
   /// 读电脑侧只读面的能力口（端口在 `core/host_rpc.dart`，实现在 `wire/host_rpc.dart`）。
   ///
-  /// 客户端兼作这个能力（`SyncClientImpl implements HostRpc`），所以这里按 `is` 取 ——
+  /// 客户端兼作这个能力（`_SyncClient extends ForwardingHostRpc`），所以这里按 `is` 取 ——
   /// 与 [disconnectLink] 对 `LinkControl` 是同一个手法，**`SyncClient` 接口一个成员都没加**
   /// （全仓二十多个替身因此不用跟着改）。
   ///
-  /// **缺这个能力是装配错误**，不是"这台电脑读不出投影"：前者该由装配点或夹具修，
-  /// 后者只是显示空态。静默降级会让两者在界面上一模一样（只读面全空），所以这里抛。
-  HostRpc get _rpc {
-    final candidate = client;
-    // 显式转换而不是靠 `is` 提升：提升在接口类型上不给交叉类型（同
-    // `core/snapshot_call.dart` 那个能力口的手法）。
-    if (candidate is HostRpc) return candidate as HostRpc;
-    throw StateError(
-      '${candidate.runtimeType} 没有 HostRpc 能力：读不了 session.projections。'
-      '装配点要给 SyncClientDeps.hostRpc（生产是 WireHostRpc.new），'
-      '测试替身要 implements HostRpc。',
-    );
-  }
+  /// 取不到的判据与错误文案只写在 `hostRpcOf` 一处（`HostCatalogs` 也用它）：
+  /// 缺能力是装配错误，不是"这台电脑读不出东西"，所以抛而不是静默降级。
+  HostRpc get _rpc => hostRpcOf(client);
 
   /// 最近一次读到的投影包（`null` = 还没读过 / 读不到）。
   ///
@@ -2012,7 +2001,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     try {
       // 形状（`{sections: [{ns, revision, values, secrets}]}`）在 `wire/rpc/settings.dart`；
       // 这里只把快照落进三张表。
-      final reply = await wire.loadSettings(
+      final reply = await _rpc.settings(
         client,
         namespaces: kSettingsNamespaces,
       );
@@ -2127,7 +2116,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       // `wire/rpc/repo.dart`：手机只消费四个键（三个能力位 + commands + dshVersion）
       // 外加 `hostName`（电脑自报的名字，只供展示），
       // `protocol` / `aliasVersion` / `methods` 不声明（前者在帧头 `v` 里校验）。
-      final reply = await wire.loadRepoInfo(client);
+      final reply = await _rpc.repoInfo(client);
       // 没变 ⇒ 什么都不做（版本 / 能力位是进程级事实，一次会话里不会变）。
       if (reply.notModified) return;
       final info = reply.value;
@@ -2408,7 +2397,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     try {
       // 两个面各一发（并发）：插件行与包是两张表，卸载按包名走。形状在
       // `wire/rpc/plugin.dart`（行本体仍由 `model/plugins.dart` 的 fromWire 解）。
-      final inventory = await wire.loadPluginInventory(client);
+      final inventory = await _rpc.plugins(client);
       if (inventory == null) {
         _recordError('读取插件清单失败', StateError('电脑侧的插件应答形状认不出'));
         _pluginsFailure = '电脑侧的插件应答形状认不出';
@@ -3510,7 +3499,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   Future<void> refreshWorkspaces() async {
     try {
       // 形状（分组 + 两列 id，**同一份应答**）在 `wire/rpc/workspace.dart`。
-      final reply = await wire.loadWorkspaceList(client);
+      final reply = await _rpc.workspaces(client);
       // 没变 ⇒ 分组 / 归档集 / 置顶集都已经是这一份。
       if (reply.notModified) return;
       final snapshot = reply.value;

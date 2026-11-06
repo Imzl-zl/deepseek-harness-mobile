@@ -15,13 +15,28 @@
 library;
 
 import '../core/host_rpc.dart';
+import '../core/plugin_inventory.dart';
+import '../core/repo_info.dart';
 import '../core/session_list_page.dart';
+import '../core/setting_section.dart';
 import '../core/snapshot_digest.dart';
 import '../core/sync_client.dart';
+import '../core/workspace_snapshot.dart';
+import '../model/agent_preset.dart' show AgentPresetRoster;
+import '../model/model_catalog.dart' show ModelCatalog;
+import '../model/permission.dart' show PermissionCatalog;
+import 'rpc/permission.dart';
+import 'rpc/plugin.dart';
+import 'rpc/preset.dart';
 import 'rpc/projections.dart';
+import 'rpc/repo.dart';
 import 'rpc/session.dart';
+import 'rpc/settings.dart';
+import 'rpc/workspace.dart';
 
-/// 端口 `HostRpc` 的唯一实现（本轮：会话投影 + 会话行两族）。
+/// 端口 `HostRpc` 的唯一实现（会话族 + 目录族）。
+///
+/// 每个方法一行：**判据全在被它转过去的那个 `loadXxx` 里**（形状、三态、计数）。
 final class WireHostRpc implements HostRpc {
   /// 构造参数是**这个能力属于哪条连接**（工厂 `hostRpc` 收到的就是它）。
   ///
@@ -42,4 +57,35 @@ final class WireHostRpc implements HostRpc {
     int? limit,
     int? offset,
   }) => loadSessionList(client, limit: limit, offset: offset);
+
+  @override
+  Future<SnapshotReply<List<SettingSection>?>> settings(
+    SyncClient client, {
+    required List<String> namespaces,
+  }) => loadSettings(client, namespaces: namespaces);
+
+  @override
+  Future<SnapshotReply<ModelCatalog?>> modelCatalog(SyncClient client) =>
+      loadModelCatalog(client);
+
+  @override
+  Future<SnapshotReply<PermissionCatalog?>> permissionCatalog(
+    SyncClient client,
+  ) => loadPermissionCatalog(client);
+
+  @override
+  Future<SnapshotReply<AgentPresetRoster>> agentPresets(SyncClient client) =>
+      loadAgentPresets(client);
+
+  @override
+  Future<SnapshotReply<WorkspaceSnapshot?>> workspaces(SyncClient client) =>
+      loadWorkspaceList(client);
+
+  @override
+  Future<SnapshotReply<RepoInfo?>> repoInfo(SyncClient client) =>
+      loadRepoInfo(client);
+
+  @override
+  Future<PluginInventory?> plugins(SyncClient client) =>
+      loadPluginInventory(client);
 }
