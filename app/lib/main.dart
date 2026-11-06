@@ -80,6 +80,7 @@ import 'ui/session_drawer.dart';
 import 'ui/settings_page.dart';
 import 'ui/usage_page.dart';
 import 'wire/reading.dart';
+import 'wire/rpc/session_page.dart' show WireHistoryReader;
 
 void main() {
   // 线上事件形状读不出来时往哪儿说话（`wire/reading.dart` 的 `WireDiagnostics`）。
@@ -1594,6 +1595,8 @@ Future<AppModel> _assembleWithoutCredentials(
     onConnectionTerminated: onConnectionTerminated,
     client: createSyncClient(
       SyncClientDeps(
+        // 翻页的读法（`core/history_page.dart` 的端口，实现只在 `wire/`）。
+        history: const WireHistoryReader(),
         // 没东西可连：一个永远建不起来的传输（它不会被用到）。
         transport: _UnpairedTransport(),
         handshake: createHandshakeDriver(
@@ -1747,6 +1750,8 @@ Future<AppModel> _assemble(
 
   final client = createSyncClient(
     SyncClientDeps(
+      // 翻页的读法（`core/history_page.dart` 的端口，实现只在 `wire/`）。
+      history: const WireHistoryReader(),
       transport: transport,
       handshake: createHandshakeDriver(
         identity: HandshakeIdentity(

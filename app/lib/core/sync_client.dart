@@ -32,6 +32,7 @@ import 'connection.dart';
 import 'crypto.dart';
 import 'errors.dart';
 import 'handshake_driver.dart';
+import 'history_page.dart';
 import 'job.dart';
 import 'keepalive.dart';
 import 'outbox.dart';
@@ -473,6 +474,7 @@ class SyncClientDeps {
     required this.box,
     required this.outbox,
     required this.session,
+    required this.history,
     this.persistence,
     this.keepalive,
     this.backoff,
@@ -495,6 +497,13 @@ class SyncClientDeps {
 
   /// 本地会话状态（接收规则、快照拼接、水位）。
   final DeviceSession session;
+
+  /// 翻页与单条补取的**读法**（`session.page` / `session.refetch`）。
+  ///
+  /// 线上形状只有 `wire/` 能断言，而"补取 + 按 seq 归位 + 记住 hasMore"要连接层的
+  /// 状态 —— 两半各守一边，所以这里是个端口（`history_page.dart`）。
+  /// **必填**：不给它就没有历史可翻，而"翻不了页"不该是一个静默的默认值。
+  final HistoryReader history;
 
   /// **落盘缝**（契约 §5.3：`persisted` 只在落盘成功后发）。
   ///

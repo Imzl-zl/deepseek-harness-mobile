@@ -74,6 +74,7 @@ import 'package:dsh_mobile/platform/websocket_transport.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/chat_page.dart';
 import 'package:dsh_mobile/ui/pairing_page.dart';
+import 'package:dsh_mobile/wire/rpc/session_page.dart' show WireHistoryReader;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -377,6 +378,7 @@ void main() {
     );
     final client = createSyncClient(
       SyncClientDeps(
+        history: const WireHistoryReader(),
         transport: recorder,
         handshake: createHandshakeDriver(
           identity: HandshakeIdentity(

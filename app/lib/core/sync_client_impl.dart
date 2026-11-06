@@ -21,7 +21,6 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
-import '../wire/rpc/session_page.dart';
 import 'call_registry.dart';
 import 'connection.dart';
 import 'connection_resources.dart';
@@ -29,6 +28,7 @@ import 'errors.dart';
 import 'flow.dart';
 import 'frame.dart';
 import 'handshake_driver.dart';
+import 'history_page.dart';
 import 'items.dart';
 import 'job.dart';
 import 'keepalive.dart';
@@ -1186,19 +1186,16 @@ class _SyncClient
     int minTurns = SyncClient.kHistoryPageMinTurns,
   }) async {
     try {
-      // 形状（`{items, hasMore}` 与两条 item 的判别联合）与**方法名/参数**
-      // 都在 `wire/rpc/session_page.dart` 的 `loadSessionPage`；
+      // 形状（`{items, hasMore}` 与两条 item 的判别联合）与**方法名/参数**都在
+      // `wire/rpc/session_page.dart`（经 `SyncClientDeps.history` 注入）；
       // 这里只剩"记住还有没有更早的"与补取循环。
-      final decoded = valueOrReport(
-        await loadSessionPage(
-          this,
-          sid: sid,
-          beforeSeq: beforeSeq,
-          maxMessages: maxMessages,
-          turnWindowMinMessages: minMessages,
-          turnWindowMinTurns: minTurns,
-        ),
-        'session.page',
+      final decoded = await _deps.history.loadPage(
+        this,
+        sid: sid,
+        beforeSeq: beforeSeq,
+        maxMessages: maxMessages,
+        minMessages: minMessages,
+        minTurns: minTurns,
       );
       if (decoded == null) {
         // 整页读不出来：**不当成"没有更多"**，保留上一次的结论（与失败分支同一条）。
@@ -1232,8 +1229,9 @@ class _SyncClient
 
   /// 一页的 items → 事件表（**大条目要补取，不许跳过**）。
   ///
-  /// 形状与判别联合在 `wire/rpc/session_page.dart`（`{kind:'record'|'refetch'}`）；
-  /// 这里只做**那一件必须 await 的事**：`refetch` 标记要按 `seq` 单独取回来。
+  /// 判别联合在 `wire/rpc/session_page.dart`（`{kind:'record'|'refetch'}`），
+  /// 到了这一层只剩 [HistoryPage] 的两个分支；这里只做**那一件必须 await 的事**：
+  /// `refetch` 标记要按 `seq` 单独取回来。
   /// **跳过它等于在会话里留一个静默的洞** —— 2026-10-22 之前就是这么做的
   /// （只留 `record`）：>1 MiB 的条目（图片内联在 `assistant/message` 里）
   /// 在手机上**一条都看不到**，而界面不报错、也不缺页。取舍见
@@ -1241,15 +1239,15 @@ class _SyncClient
   ///
   /// 补取失败**不吞**：异常往上抛，由 [page] 折成 `failure`，上层整页不落。
   Future<List<SessionEvent>> _eventsOfPage(
-    SessionPageWire page,
+    HistoryPage page,
     String sid,
   ) async {
     final out = <SessionEvent>[];
     for (final item in page.items) {
       switch (item) {
-        case SessionPageRecordWire(:final event):
+        case HistoryRecordItem(:final event):
           out.add(event);
-        case SessionPageRefetchWire(:final seq):
+        case HistoryRefetchItem(:final seq):
           out.add(await refetch(sid: sid, seq: seq));
       }
     }
@@ -1261,11 +1259,8 @@ class _SyncClient
   @override
   Future<SessionEvent> refetch({required String sid, required int seq}) async {
     // 形状（`{record:{type,seq,event}}`）与**方法名/参数**都在
-    // `wire/rpc/session_page.dart` 的 `loadRefetchedEvent`。
-    final event = valueOrReport(
-      await loadRefetchedEvent(this, sid: sid, seq: seq),
-      'session.refetch',
-    );
+    // `wire/rpc/session_page.dart`（经 `SyncClientDeps.history` 注入）。
+    final event = await _deps.history.loadRefetched(this, sid: sid, seq: seq);
     if (event == null) {
       // 回了成功但没有可用事件：如实报缺陷，**不返回一条空事件**。
       throw const ProtocolException(

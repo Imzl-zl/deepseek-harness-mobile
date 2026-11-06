@@ -28,6 +28,7 @@ import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/core/sync_client_impl.dart';
 import 'package:dsh_mobile/core/transport.dart';
 import 'package:dsh_mobile/wire/reading.dart' show WireDiagnostics;
+import 'package:dsh_mobile/wire/rpc/session_page.dart' show WireHistoryReader;
 import 'package:flutter_test/flutter_test.dart';
 
 /// 假的传输：把发出去的行记下来，并允许测试"从对端"注入行。
@@ -215,6 +216,8 @@ void main() {
     var ephSeq = 0;
 
     final deps = SyncClientDeps(
+      // 翻页的读法：本用例不走翻页，但要有个真的实现（端口是必填的）。
+      history: const WireHistoryReader(),
       transport: transport,
       handshake: createHandshakeDriver(
         identity: HandshakeIdentity(

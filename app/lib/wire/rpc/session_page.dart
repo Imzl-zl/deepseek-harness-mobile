@@ -29,6 +29,7 @@
 /// `.agents/notes/implemented/2026-10-26-wire-review-fixes.md`。
 library;
 
+import '../../core/history_page.dart';
 import '../../core/items.dart' show EventLike, itemIdOf;
 import '../../core/sync_client.dart';
 import '../fields.dart';
@@ -74,6 +75,61 @@ Future<WireReading<SessionEvent>> loadRefetchedEvent(
 }) async {
   final reply = await client.call<Object?>(_kRefetch, {'sid': sid, 'seq': seq});
   return readRefetchedEvent(reply);
+}
+
+/// `core/history_page.dart` 那个端口的**实现**：解码 + 报缺陷都在这里，
+/// 连接层只拿到 [HistoryPage] / [SessionEvent]。
+///
+/// 为什么补取循环不在这里：它要 `await` 连接层自己的 `refetch`（还要按 `seq` 归位、
+/// 记住 `hasMore`），那是 `SyncClient` 的状态。这里只负责"一页怎么读"。
+///
+/// `loadSessionPage` / `loadRefetchedEvent` 仍然对外（`wire_shapes_replay_test.dart`
+/// 直接回放它们的解码结果），本类只是把它们接到端口上。
+final class WireHistoryReader implements HistoryReader {
+  const WireHistoryReader();
+
+  @override
+  Future<HistoryPage?> loadPage(
+    SyncClient client, {
+    required String sid,
+    required int beforeSeq,
+    required int maxMessages,
+    required int minMessages,
+    required int minTurns,
+  }) async {
+    final page = valueOrReport(
+      await loadSessionPage(
+        client,
+        sid: sid,
+        beforeSeq: beforeSeq,
+        maxMessages: maxMessages,
+        turnWindowMinMessages: minMessages,
+        turnWindowMinTurns: minTurns,
+      ),
+      'session.page',
+    );
+    if (page == null) return null;
+    return HistoryPage(
+      items: [
+        for (final item in page.items)
+          switch (item) {
+            SessionPageRecordWire(:final event) => HistoryRecordItem(event),
+            SessionPageRefetchWire(:final seq) => HistoryRefetchItem(seq),
+          },
+      ],
+      hasMore: page.hasMore,
+    );
+  }
+
+  @override
+  Future<SessionEvent?> loadRefetched(
+    SyncClient client, {
+    required String sid,
+    required int seq,
+  }) async => valueOrReport(
+    await loadRefetchedEvent(client, sid: sid, seq: seq),
+    'session.refetch',
+  );
 }
 
 /// 一页里的一条：要么是记录（已解成事件），要么是"需要单独补取"的标记。
