@@ -19,7 +19,17 @@
   `schema.data_version` 一起删掉 ⇒ 切一次电脑主题/字号回默认、切回去整段重刷）。
   `clear()` 整条删除（唯一调用点就是"换电脑清库"），清空只剩分域的
   `clearScope()`；两个新原语 `clearSession` / `scopeKeysTo`（`34fbae9` / `61c2b2c`）。
-  门禁：connector **836**；app **1749**；boundary **748**；`dart analyze --fatal-infos` 0。
+  ④ **S3 通知端口归 app**：`AppServices`（`data/app_services.dart`）持唯一那个 `NotifyPort`，
+  `main()` 建一次、两处装配都注入（没配对那条此前根本不传端口），关闭点只有
+  `AppServices.dispose`（`8bfed1a`）。前台服务随后也由它汇总起停。
+  ⑤ **S4 池化**：`HostSessions`（`data/host_sessions.dart`）按 `hostId` 记住每一台，
+  **切电脑 = 换可见指针**（切走的不 dispose、不重启，切回来还是原样）；
+  dispose 只在"移除这台"（解绑/吊销/换凭据）与 app 退出。跨台三件都带电脑身份：
+  通知 id 前缀（`<hostId>|approval:<itemId>`）、前台服务按"还有没有人在要"起停、
+  前后台态广播给每一台（"看着它就不提醒"也改成按台算）。
+  另外补了一个真缺口：`AppModel.dispose()` 此前从不 `client.close()`，所以"dispose 旧的"
+  从来没真的断开过 socket。
+  门禁：connector **836**；app **1758**；boundary **756**；`dart analyze --fatal-infos` 0。
   另外把**真机库副本**喂给真实现跑了一遍 v2→v3（24.5 MB 的 `dsh_mobile.db`，只读副本）：
   4136 条条目一条不少、14 个水位键全部带前缀、`device.transparency/surface_alpha` 原样 ——
   证据在 `implemented/2026-11-06-s2-host-scope-and-buckets.md` 的「验证」。
@@ -27,8 +37,7 @@
   迁移后未分域行 0、条目/水位一条不少、`device.*` 两格原样、无崩溃；验完已复原成空 v3。
   唯一没验的是"两台电脑同时配对后切电脑外观不回默认"（要两次扫码）。
   审查结论与 6 个 PR 的判定：`proposed/2026-11-06-branch-a-and-pr-audit.md`（待评审）。
-  **未做**：S3（AppServices 汇总通知/前台服务）/ S4（HostSessions 池化，切换仍拆旧的）/
-  S5（AppModel 切片、chat_page 拆文件）。
+  **未做**：S5（AppModel 切片、chat_page 拆文件）与 `core→wire`×2 / `data→wire`×21 的依赖倒置。
 
 - **中转三块收口（11-04 第六批）**：
   ① **管理台令牌可达性**：线上 `/admin` 正文的 sha256 与本地 `ADMIN_PAGE` **逐字节相同**
@@ -421,10 +430,10 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 748 项（25 条规则自检 + 172 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | 756 项（25 条规则自检 + 174 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1738 项（约 1 分钟） |
+| `cd app && flutter test` | 1758 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **845** 项 |
 | `cd relay && pnpm typecheck && node --test` | 类型 + **173** 条 |

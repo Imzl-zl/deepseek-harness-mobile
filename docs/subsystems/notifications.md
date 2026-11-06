@@ -4,7 +4,8 @@ App 退到后台之后还能不能提醒、以及靠什么保住那条连接。
 
 ## 1. 三条判据（缺一不可）
 
-前台服务只在**同时**满足下面三条时起（`AppModel._syncKeepAlive`）：
+前台服务只在**同时**满足下面三条时起（`AppModel._syncKeepAlive` 算出前两条，
+`AppServices.syncKeepAlive` 读第三条并汇总）：
 
 | 判据 | 来源 |
 |---|---|
@@ -13,6 +14,11 @@ App 退到后台之后还能不能提醒、以及靠什么保住那条连接。
 | 连接在服务态 | `client.state == serving` |
 
 回前台、掉出服务态、或权限被收回 ⇒ 停服务。
+
+**一条服务、多台电脑**：手机可以同时连几台（`app-channel-client.md` §6.4），每台各报各的
+"要不要"，起停只在 `AppServices.syncKeepAlive` 汇总 —— **只要还有一台要就留着**，
+最后一台也不要了才停。各自读 `status().keepAlive` 再起停的话，A 要、B 不要就会把 A 的
+保活撤掉（B 掉线时就是那样）。
 
 **为什么没权限就不起**：平台明文 —— 拒绝 `POST_NOTIFICATIONS` 时前台服务的通知**进不了
 通知抽屉**（只在 Task Manager 里可见）。那条服务唯一可观察的产出就没了，起了只是白耗电。
@@ -100,7 +106,12 @@ App 退到后台之后还能不能提醒、以及靠什么保住那条连接。
 ## 5. 撤销口径
 
 - 那个 `itemId` 离开待处理集合（有人答了 / `approval/decided` 到）⇒ `cancel`。
-- 切到那个会话、或 App 回前台且看着它 ⇒ `cancel`。
+- 切到那个会话、或 App 回前台且看着它 ⇒ `cancel`。**"看着它"按台算**：池化之后只有
+  界面上那一台的当前会话算"在眼前"（`AppModel` 的 `visibleOf`），别台的当前会话照旧提醒
+  —— 否则 A 上等着的审批在用户看着 B 时永远收不到提醒。
+- **按台撤**：`AppModel.dispose()`（移除这一台 / 退出）只撤**自己贴过的那批**，通知 id 带
+  电脑前缀（`<hostId>|approval:<itemId>`）。撤全部只有一处：app 退出时的
+  `AppServices.dispose()`。
 - **不做"已提醒"落盘**：撤销靠派生，重启后重新派生的那批自然重贴（这正是要的）。
 
 ## 6. 通道协议（`dsh/notifications`）
@@ -132,12 +143,18 @@ Flutter 引擎随之销毁，Dart 侧的连接与服务一起没了（不做缓�
 
 ## 9. 验证
 
-- `cd app && flutter test test/notice_test.dart` —— 9 项：保活三条判据、审批/完成两类提醒、
-  "看着它就不提醒"、"decided 就撤"、两个按钮的载荷（`allowed-once` / 空 `selected`）。
+- `cd app && flutter test test/notice_test.dart` —— 12 项：保活三条判据、审批/完成两类提醒、
+  "看着它就不提醒"、**别台的当前会话照旧提醒**、"decided 就撤"、两个按钮的载荷
+  （`allowed-once` / 空 `selected`）、**同一 `sid` 两台算出不同 id**、**移除一台不撤别台的通知**。
 - `cd app && flutter test test/app_services_test.dart` —— 2 项：两次装配拿到**同一个**端口
   （两台的提醒落在同一份记录里）、模型释放不关端口（关闭点只有 `AppServices.dispose`）。
+- `cd app && flutter test test/host_sessions_test.dart` —— 3 项：切 A→B→A 不重启、
+  移除 B 只拆 B、重新配对换掉这一台。
+- `cd app && flutter test test/app_state_reporter_test.dart` —— 3 项：只有 `resumed` 算前台、
+  摘掉观察者后不再派发、**同一个"退到后台"两台得到不同的连接态**（保活那台报 foreground）。
 - `cd app && flutter test test/assembly_invariants_test.dart` —— 装配点形状：端口只建一次、
-  两处装配都注入同一个实例、根 State 的 `dispose` 关它。
+  两处装配都注入同一份 `AppServices`、根 State 的 `dispose` 关它、池化四件套在位、
+  切电脑不再 `_app?.dispose()`。
 - 真机（原生部分进不了 `flutter test`）：装包 → 授予通知权限 → 发一句长跑 → 按 Home →
   锁屏 10 分钟，按 `dumpsys activity services` / `dumpsys notification` / 服务里 `Log.i("DshFgs", …)`
   取证据；反面对照是"不起服务"那一次（锁屏 2 分钟后连接必断）。

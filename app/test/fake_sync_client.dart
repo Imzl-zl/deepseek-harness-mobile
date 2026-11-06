@@ -144,8 +144,15 @@ abstract class FakeSyncClient
   Future<void> setAppState(AppState state) async =>
       throw UnimplementedError('测试替身没有声明 setAppState');
 
+  /// **默认空实现**（不是 `UnimplementedError`）。
+  ///
+  /// `AppModel.dispose()` 一定会调它 —— 那是"释放这台，把传输层也收掉"的那一步
+  /// （池化之后"移除这台电脑"就靠它真的断开）。几乎每个用例的 tearDown 都会走
+  /// `dispose()`，所以这里再抛就成了"每个用例都在报一个与它无关的错"。
+  /// 关心"到底关没关"的用例自己覆盖这个方法来记账
+  /// （`host_sessions_test.dart` 的 `closeCount`）。
   @override
-  Future<void> close() async => throw UnimplementedError('测试替身没有声明 close');
+  Future<void> close() async {}
 
   @override
   Future<void> unsubscribe(String sid) async =>

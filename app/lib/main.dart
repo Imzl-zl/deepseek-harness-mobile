@@ -42,6 +42,7 @@ import 'data/app_model.dart';
 import 'data/app_services.dart';
 import 'data/connection_recovery.dart';
 import 'data/host_scope.dart';
+import 'data/host_sessions.dart';
 import 'data/scoped_store.dart';
 import 'data/store.dart';
 import 'model/appearance.dart';
@@ -138,9 +139,34 @@ class _DshMobileAppState extends State<DshMobileApp>
   ///
   /// **它不再是"要不要显示界面"的依据** —— 没配对也进主界面（见 `_boot`）。
   /// 它只决定"要不要去连"。
+  ///
+  /// 它同时是**"哪台可见"的真值**：可见模型 = 池子里 `pcSignPubHex` 那一份
+  /// （没凭据时是 [_unpaired]）。所以"只显示当前这台的数据"由装配结构保证，
+  /// 不靠界面过滤。
   PairedCredentials? _credentials;
 
-  AppModel? _app;
+  /// 没配对时那个模型（**不进池**：它不属于任何电脑）。
+  AppModel? _unpaired;
+
+  /// **按电脑池化的模型**：切走不拆，移除才拆（`data/host_sessions.dart`）。
+  ///
+  /// 装配仍是本文件的事（它是唯一知道用哪个实现的地方），所以池子只负责记账：
+  /// "有没有这一台"与"什么时候拆"。
+  final HostSessions _sessions = HostSessions();
+
+  /// 界面读的那一份。
+  AppModel? get _app =>
+      _credentials == null ? _unpaired : _sessions.of(_credentials!.pcSignPubHex);
+
+  /// 池子里所有活着的模型（**含没配对那个**）：前后台态要广播给每一台。
+  ///
+  /// 池子空着时自然是空的 —— 那一次无常可报（客户端自己的初相就是前台，
+  /// 而移动端冷启动必然在前台），不是兜底。
+  Iterable<AppModel> get _liveApps => <AppModel>[
+    ..._sessions.live,
+    ?_unpaired,
+  ];
+
   bool _booting = true;
 
   /// **已配对的电脑**（凭据层的派生读：`PairingStore.hosts()`）。
@@ -217,26 +243,39 @@ class _DshMobileAppState extends State<DshMobileApp>
         pcId.isNotEmpty && pcId == scannedPcId ? pairingId : null;
   }
 
-  /// 前后台态的上报者（契约 §2.2、§9）。
+  /// 前后台态的上报者（契约 §2.2、§9）：**唯一的**那个观察者。
   ///
-  /// 它跟着根 State 活，而客户端跟着 [_app] 活 —— 所以报的是"当前那个"
-  /// （重新配对会换 `AppModel`，observer 只注册一次）。
-  late final AppStateReporter _reporter = AppStateReporter(
-    () => _app?.client,
-    // 同一个态变化的第二处收口：通知要它（"看着那个会话就不提醒"）与
-    // 保活要它（退到后台才起前台服务）。判据仍然只有 `isForeground` 一处。
-    onState: (state) {
-      final app = _app;
-      app?.setAppForeground(isForeground(state));
+  /// 它只把 Flutter 的态翻成"前台/后台"，扇出在 [_onAppLifecycle] ——
+  /// 一台手机可能同时连着几台电脑，每台都要知道（判据仍只有 `isForeground` 一处）。
+  late final AppStateReporter _reporter = AppStateReporter(_onAppLifecycle);
+
+  /// 前后台态变了：**每台都收**。
+  ///
+  /// 池化之后"当前可见"只是其中一台，而通知、保活与连接三件都按这个态算：
+  /// 只报可见那台的话，后台里其它台会一直以为自己是前台（心跳照走、长连接不退），
+  /// 它们的提醒判据也会停在旧值上。
+  void _onAppLifecycle(bool foreground) {
+    final live = _liveApps.toList();
+    for (final app in live) {
+      app.setAppForeground(foreground);
+      // 报给连接层的态：保活生效时后台也照报 `foreground`
+      // （判据在 `AppModel.connectionForeground`，这里只转达）。
+      app.reportToClient(foreground);
+    }
+    if (foreground) {
+      // 回到前台时**对齐一次远端状态**（2026-10-31 真机：Web 改了模型，手机还显示旧的）。
+      // 刷新哪些快照由登记表的 `appResume` 列决定，这里不点菜。
+      for (final app in live) {
+        unawaited(app.refreshHostStateOnResume());
+      }
+    } else {
       // 退到后台就把在途草稿写下去：Android 可能随时杀进程，
       // 而防抖窗口（300ms）内的最后几个字不该因此丢（设计 §2.4 的代价收窄）。
-      if (!isForeground(state)) unawaited(app?.flushDrafts());
-    },
-    // 报给连接层的态：保活生效时后台也照报 `foreground`（判据在
-    // `AppModel.connectionForeground`，这里只转达）。
-    activeFor: (state) =>
-        _app?.connectionForeground(isForeground(state)) ?? isForeground(state),
-  );
+      for (final app in live) {
+        unawaited(app.flushDrafts());
+      }
+    }
+  }
 
   /// 连接终态失败的恢复编排（议题 2 的 `ClientAction` 唯一执行处）。
   ///
@@ -445,16 +484,8 @@ class _DshMobileAppState extends State<DshMobileApp>
   /// 电脑侧改了东西会来 `host` 帧（契约 §5.9），所以正常情况下抬眼看手机的那一刻
   /// 已经是对的；这一条是**漏收兜底**（后台被杀、通知在断连窗口里丢了）。
   /// 刷新哪些快照由登记表的 `appResume` 列决定，这里不点菜 —— 界面层与数据层
-  /// 各写一份"回前台要拉什么"就是两处会漂的判据。
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    super.didChangeAppLifecycleState(state);
-    if (state != AppLifecycleState.resumed) return;
-    final app = _app;
-    if (app == null) return;
-    unawaited(app.refreshHostStateOnResume());
-  }
-
+  /// 各写一份"回前台要拉什么"就是两处会漂的判据；**每台各拉各的**（扇出在
+  /// [_onAppLifecycle]）。
   Future<void> _boot() async {
     final saved = await pairingStore.load();
     final hosts = await pairingStore.hosts();
@@ -469,39 +500,52 @@ class _DshMobileAppState extends State<DshMobileApp>
       //
       // 所以：没有凭据时**建一个不连的客户端**（`client` 存在但不 start），
       // 界面照常渲染（会话列表会是空的，能进各屏）。
-      final app = await _assembleWithoutCredentials(
-        widget.services,
-        _recovery.onTerminated,
-      );
+      final app = await _assembleUnpaired();
       if (!mounted) return;
       // **首帧前**把设备本地 UI 状态读回来（字号/主题/密度/上次会话）：
       // 放在 `_booting = false` 之前，首帧就是正确的，不会先画默认值再跳。
       await app.loadUiState();
       if (!mounted) return;
       setState(() {
-        _app = app;
+        _unpaired = app;
         _booting = false;
       });
       return;
     }
-    final app = await _assemble(
-      widget.services,
-      saved,
-      _recovery.onTerminated,
+    final session = await _sessions.acquire(
+      saved.pcSignPubHex,
+      build: () => _assembleHost(saved),
     );
     if (!mounted) return;
-    await app.loadUiState();
+    await session.app.loadUiState();
     if (!mounted) return;
     setState(() {
       _credentials = saved;
-      _app = app;
       _booting = false;
     });
-    await app.start();
+    await session.app.start();
     // **启动时静默查一次更新**（结论落在设置页那一行；不弹窗、不打断）。
     // 与连接无关：没连上电脑也该知道自己是不是新版。
-    unawaited(app.checkAppUpdate());
+    unawaited(session.app.checkAppUpdate());
   }
+
+  /// **装配某一台**（配对 / 启动 / 切换都走这里）。
+  ///
+  /// 只为一件事存在：把"这一台可不可见"这根晚绑定的线接上 —— 它在
+  /// `_assemble` 里无处可取（那是顶层函数，不认识"当前是哪台"）。
+  Future<AppModel> _assembleHost(PairedCredentials credentials) => _assemble(
+    widget.services,
+    credentials,
+    onConnectionTerminated: _recovery.onTerminated,
+    visibleOf: () => _credentials?.pcSignPubHex == credentials.pcSignPubHex,
+  );
+
+  /// 装配"没配对"那个模型（它可见当且仅当没有凭据）。
+  Future<AppModel> _assembleUnpaired() => _assembleWithoutCredentials(
+    widget.services,
+    onConnectionTerminated: _recovery.onTerminated,
+    visibleOf: () => _credentials == null,
+  );
 
   /// 进配对页（**用户主动**：`没配对`时的入口按钮，或设置里"重新配对"）。
   ///
@@ -559,10 +603,12 @@ class _DshMobileAppState extends State<DshMobileApp>
     // 配对可能新增了一台（也可能是替换同一台的行）：列表重读一次。
     final hosts = await pairingStore.hosts();
     if (!mounted) return;
-    final app = await _assemble(
-      widget.services,
-      credentials,
-      _recovery.onTerminated,
+    // **重新配对 = 换掉这一台**：旧模型手里是旧 token（设备行已被替换），
+    // 复用它等于拿作废的凭据去连 —— 症状是"配上了、一直连不上"。
+    // 换的是**同一台**的槽，别的电脑的模型不受影响（池子里各占一格）。
+    final app = await _sessions.replace(
+      credentials.pcSignPubHex,
+      build: () => _assembleHost(credentials),
     );
     if (!mounted) return;
     await app.loadUiState();
@@ -574,12 +620,7 @@ class _DshMobileAppState extends State<DshMobileApp>
     // 取舍与准入门槛见
     // `.agents/notes/implemented/2026-10-30-endpoint-and-ui-state-host-scoping.md`。
     setState(() {
-      // **旧客户端必须dispose**：它持着传输层（socket）。不 dispose 就换掉，
-      // 旧连接会一直挂在电脑侧（真机实测出现过两条直连 socket 同时
-      // ESTABLISHED），用户看到的是"连接不稳定"。
-      _app?.dispose();
       _credentials = credentials;
-      _app = app;
       _pairing = false;
       _pairedHosts = hosts;
     });
@@ -588,21 +629,22 @@ class _DshMobileAppState extends State<DshMobileApp>
     await app.start();
   }
 
-  /// **切换电脑**（一台手机配多台电脑）：换凭据槽 → 重新装配 → 连新的。
+  /// **切换电脑**（一台手机配多台电脑）：换凭据槽 + 换可见指针。
   ///
-  /// 与 `_onPaired` 走**同一条线**（读槽 + 装配 + dispose 旧的），因为"切到另一台"
-  /// 与"刚配上那台"在系统里是同一件事：换一份凭据、换一份端点表、换一个界面桶。
-  /// 所以 `AppModel` 里**不存"当前是哪台"** —— 唯一真值是凭据槽的 `active`
-  /// 与本 State 的 `_credentials`。
+  /// ## 池化之后，"切换"不再是"重新装配"
+  ///
+  /// 每台在池子里各有一份 `AppModel`（`data/host_sessions.dart`）：
+  /// 切过去只是把它变成**当前可见的那个**，切走的那台**不 dispose、不重启** ——
+  /// 它的连接、订阅与界面缓存都留着，切回来立刻就是原样（不必重新拨号、重刷信息流）。
+  /// 两台同时在网是正常状态：电脑侧"在服务的设备"那条判据本来就不限台数。
   ///
   /// ## 三条已定案的边界（方案决策 6）
   ///
-  /// 1. **先 close 旧的**：旧客户端的 `dispose()` 收掉 socket，电脑侧的占用位随之释放
-  ///    （下一次心跳之前就空）。这里先 dispose 再 `start()` 新的 —— 顺序反了会出现
-  ///    "两台同时在服务"。
-  /// 2. **立刻生效、不回滚**：`active` 与 `_credentials` 在这次调用里就换了，
-  ///    界面只会显示目标那台的数据（此刻是空的）。失败停在它的"未连接（原因）"，
+  /// 1. **立刻生效、不回滚**：`active` 与 `_credentials` 在这次调用里就换了，
+  ///    界面只会显示目标那台的数据。失败停在它的"未连接（原因）"，
   ///    **不回到上一台** —— 回滚会让人以为切成功了。
+  /// 2. **先装配、后改 `active`**：装配是本地动作（开库 + 派生身份），失败时
+  ///    `active` 还指着上一台 —— 下一次启动仍然起得来。
   /// 3. **绝不自动挑一台 / 不自动抢占**：这是用户点的；失败只给「重试连接」与
   ///    「切回上一台」两个显式出口。
   Future<void> _switchTo(String hostId) async {
@@ -621,14 +663,15 @@ class _DshMobileAppState extends State<DshMobileApp>
       return;
     }
     final previous = _credentials?.pcSignPubHex;
-    // **先装配、后改 `active`**：装配是本地动作（开库 + 派生身份），失败时
-    // `active` 还指着上一台 —— 下一次启动仍然起得来。反过来的话，一次失败的
-    // 切换会让 App 每次启动都落到"读得出槽但装配不起来"的那一台上。
-    final app = await _assemble(
-      widget.services,
-      next,
-      _recovery.onTerminated,
+    // 池子里有就复用（**不 restart**）；没有才装配。
+    final session = await _sessions.acquire(
+      hostId,
+      build: () => _assembleHost(next),
     );
+    if (!mounted) return;
+    // 只有新装配的要读回本地 UI 状态（首帧前）；已经在池子里的那份早读过了，
+    // 再读一次就是拿盘上的值覆盖用户这期间改过的界面状态。
+    if (session.created) await session.app.loadUiState();
     if (!mounted) return;
     try {
       // **换凭据槽**：`active` 指向新那台（槽本身早就写全了，这里只改指针）。
@@ -636,23 +679,18 @@ class _DshMobileAppState extends State<DshMobileApp>
     } catch (error) {
       // 切不过去就停在原地：不动 `active`、不动 `_credentials`。
       // 这不是"回滚"，是"压根没切"（`active` 还没变过）。
-      app.dispose();
+      // 只丢掉**这次新建**的那份；复用的那份是别人正在用的，不能拆。
+      if (session.created) _sessions.forget(hostId);
       _reportConnectionDefect(
         ProtocolException(ErrorCode.internal, '切换电脑失败：$error'),
       );
       return;
     }
-    await app.loadUiState();
-    if (!mounted) return;
     setState(() {
-      // **先 close 旧的**（`dispose` 收掉 socket）：电脑侧立刻释放占用位，
-      // 新那台才不会撞上自己刚才这条连接。
-      _app?.dispose();
       _credentials = next;
-      _app = app;
       _previousHostId = previous;
     });
-    await app.start();
+    if (session.created) await session.app.start();
   }
 
   /// 打开电脑列表并切过去（连接 sheet 的「切换电脑」）。
@@ -704,10 +742,14 @@ class _DshMobileAppState extends State<DshMobileApp>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(_reporter);
-    _app?.dispose();
-    // **端口由 app 关**（`data/app_services.dart`）：模型撤通知、停前台服务，
+    // app 走了：池子里每一台各自收（socket、订阅、它贴过的通知），
+    // 没配对那个也收，最后才轮到 app 级的端口与服务。
+    _sessions.disposeAll();
+    _unpaired?.dispose();
+    _unpaired = null;
+    // **端口由 app 关**（`data/app_services.dart`）：模型撤通知、报"不再需要保活"，
     // 但不关端口 —— 关掉等于让还活着的那台电脑一起收不到通知（池化之后就是那样）。
-    // 顺序：先让模型撤它贴过的那批，再注销通道处理器。
+    // 顺序：先让模型收尾，再注销通道处理器。
     unawaited(widget.services.dispose());
     super.dispose();
   }
@@ -1464,21 +1506,20 @@ class _DshMobileAppState extends State<DshMobileApp>
   /// 换一个"没配对"的 AppModel（**不清凭据** —— 清不清由调用方决定）。
   ///
   /// 分离出来：`ConnectionRecovery` 已经自己清过凭据，回配对页时只要"换客户端"，
-  /// 不要再清一次。旧客户端已终态停摆（换票被拒 → 不重连），换掉即可。
+  /// 不要再清一次。
+  ///
+  /// **这是"移除这台"的一条路**：凭据已被清掉（身份被拒 / 重新配对），
+  /// 那一台的模型连同它的 socket 一起从池子里移除 —— 别的电脑不动。
   Future<void> _reassembleUnpaired() async {
     if (!mounted) return;
-    final app = await _assembleWithoutCredentials(
-      widget.services,
-      _recovery.onTerminated,
-    );
+    final app = await _assembleUnpaired();
     if (!mounted) return;
+    final goneHostId = _credentials?.pcSignPubHex;
     setState(() {
-      // 同 `_onPaired`：旧客户端持着传输层，换掉前必须 dispose，
-      // 否则旧连接一直挂在电脑侧（重配对 / 断开后的"幽灵连接"）。
-      _app?.dispose();
+      _unpaired = app;
       _credentials = null;
-      _app = app;
     });
+    if (goneHostId != null) _sessions.forget(goneHostId);
   }
 }
 
@@ -1527,9 +1568,10 @@ ChannelTransport _pairingTransport(String upgradeUrl) {
 /// （空串公钥、空配对标识）—— 它连不上任何真实的电脑，但**也不会被用到**：
 /// 本函数不调 `start()`，而"连"只有一个触发点（配对成功后那一处）。
 Future<AppModel> _assembleWithoutCredentials(
-  AppServices services, [
+  AppServices appServices, {
   void Function(ProtocolException)? onConnectionTerminated,
-]) async {
+  bool Function()? visibleOf,
+}) async {
   final store = SqfliteItemStore();
   await store.open();
   return AppModel(
@@ -1543,10 +1585,12 @@ Future<AppModel> _assembleWithoutCredentials(
     readLocalItems: (sid) => store.itemsOf(sid),
     // 没配对也照样能查更新（版本与连接无关）。
     latestAppTag: fetchLatestAppVersion,
+    // 这一台（没配对那个）在"没有凭据"时就是界面上那一台（提醒判据用）。
+    visibleOf: visibleOf,
     // 通知端口与真装配**是同一个**：端口属于 App，不属于"哪台电脑"。
     // 这台模型不 `start()`（没有可连的对端），所以它不会贴提醒；但它退到后台时
     // 照样对齐前台服务（`setAppForeground` → `_syncKeepAlive`）—— 那是 App 级的事。
-    notify: services.notify,
+    services: appServices,
     onConnectionTerminated: onConnectionTerminated,
     client: createSyncClient(
       SyncClientDeps(
@@ -1604,10 +1648,11 @@ class _UnpairedTransport implements ChannelTransport {
 /// 不自己造 —— 端口这类"全进程只能有一个"的东西一旦每次装配各建一个，
 /// 后建的那个会把先建的顶掉，而症状是静默的。
 Future<AppModel> _assemble(
-  AppServices services,
-  PairedCredentials credentials, [
+  AppServices appServices,
+  PairedCredentials credentials, {
   void Function(ProtocolException)? onConnectionTerminated,
-]) async {
+  bool Function()? visibleOf,
+}) async {
   // 本地库：**先开库再装配**。条目与水位都落在这里（契约 §8.3 的 schema
   // 定义在 `data/store.dart`，驱动是 sqflite —— 三端同源、只有驱动分叉）。
   final inner = SqfliteItemStore();
@@ -1752,11 +1797,11 @@ Future<AppModel> _assemble(
     client: client,
     // 冷启动读回本地条目（判据见 `core/session_restore.dart`）。
     readLocalItems: (sid) => store.itemsOf(sid),
-    // 通知与后台保活：端口是 **app 级单例**（`data/app_services.dart`），
+    // 通知端口与后台保活：**app 级单例**（`data/app_services.dart`），
     // 这里只注入、不新建 —— 每次装配新建一个的话，后建的那个会把
     // `dsh/notifications` 的方法处理器顶掉，先装配的那台于是收不到通知上的答复。
     // Note: `.agents/notes/implemented/2026-11-06-s3-app-services.md`
-    notify: services.notify,
+    services: appServices,
     // 端点表交给 `AppModel` 当所有者：界面要读、设置页要改，而上面的
     // `EndpointTransport` 每次 `connect()` 经 `appRef` 现读它。
     endpoints: credentials.endpoints,
@@ -1774,6 +1819,9 @@ Future<AppModel> _assemble(
     hostIdOf: () => credentials.pcSignPubHex,
     // 用户级"公网明文"确认（见上面那次偏好读）。
     allowPlaintextPublic: allowPlaintextPublic,
+    // **这一台是不是界面上那一台**（提醒判据要它：池化之后别台的"当前会话"
+    // 用户看不见，照旧要提醒）。晚绑定：切换只换指针，不问也不通知模型。
+    visibleOf: visibleOf,
     // **点名连接**的两根线（设置页"用这个连接"用）：
     // ① 告诉传输层"下一次只试这一条"；② 立刻断开重拨。
     // 分开是因为传输层不认识连接层 —— 谁拨号、谁重拨，各管一段。

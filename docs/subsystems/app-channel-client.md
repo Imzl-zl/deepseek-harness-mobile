@@ -428,13 +428,20 @@ app/packages/
 
 一台手机可以同时连多台电脑，一台电脑可以同时服务多台设备 —— **两个方向都不设人为上限**（同时用几台是用户的事）。手机侧的三条定案：
 
-1. **切换 = 换凭据槽 + 重新装配**：`PairingStore.activate(hostId)` 改槽指针，再用那份凭据装配一个新的 `AppModel` 并 `start()`；旧实例与它的 socket 在这一步被 `dispose`（`app/lib/main.dart` 的 `_switchTo`）。`AppModel` 里**不存"当前是哪台"**，真值是凭据槽的 `active` + 装配层的 `_credentials`。
+1. **切换 = 换凭据槽 + 换可见指针**：`PairingStore.activate(hostId)` 改槽指针，界面转向那一台已经装配好的 `AppModel`。每台在池子里各有一份（`data/host_sessions.dart` 的 `HostSessions`，键 = `pcSignPubHex`）：切走的那台**不 dispose、不重启** —— 它的 socket、订阅与会话缓存都留着，切回来立刻是原样。`AppModel` 里**不存"当前是哪台"**，真值是凭据槽的 `active` + 装配层的 `_credentials`。
 2. **切不过去就停在原地**：读槽失败或 `activate` 抛错时，`active` 与 `_credentials` 都没动过，旧那台照旧；装配成功但连不上，就停在目标那台的「未连接（原因）」，给「重试连接」与「切回上一台」两个显式出口。
 3. **不自动挑**：没有"自动选一台能连的"这回事，用户点哪台连哪台。
 
+**`dispose` 只出现在"移除这台"**：解绑 / 吊销 / 身份被拒（`_reassembleUnpaired`）/ 重新配对（`HostSessions.replace`，旧模型带的是旧 token）/ app 退出。移除一台**只影响那一台** —— 别的台的 socket、通知与前台服务都不动。**不设台数上限、不设闲置回收**：宿主没有这种边界（电脑侧裁剪缓冲的判据是"这一轮在服务的设备"，见 [remote-channel.md](remote-channel.md) §5.5，手机同时在线几台不改变它），加上去就是新增边界；代价是内存随台数涨（每台一份会话缓存），那是用户自己配了几台的直接后果。
+
+**跨台的三条判据都带电脑身份**：
+
+- **通知 id** 带电脑前缀（`<hostId>|approval:<itemId>`）：`sid` 与 `itemId` 都由每台电脑独立分配，不带前缀时两台会算出同一个 `noticeIdOf`，撤掉一台的那条会把另一台的也撤掉；
+- **前台服务**按"还有没有哪一台在要"起停（`AppServices.syncKeepAlive`）：一条服务、多台各报各的诉求，各自读 `status().keepAlive` 再起停会互相撤销；
+- **前后台态**广播给池子里每一台（`main.dart` 的 `_onAppLifecycle`）：只报可见那台的话，后台里其它台会一直以为自己在前台（心跳照走、长连接不退）。
+
 **两台电脑的数据不混，靠分域**：`sid` 是各电脑独立分配的不透明别名，两台电脑可能撞名。装配时用 `pcSignPubHex` 构造 `HostScope`（`data/host_scope.dart`），条目、水位与待发队列经 `ScopedItemStore` / `ScopedOutboxStore`（`data/scoped_store.dart`）落成 `<hostId>/<sid>` 一段。所以**换电脑不清库**、也不会把 A 的历史喂给 B；切回去读得到自己那份。**切电脑不再删任何东西**；将来做"清空此电脑缓存"时走 `ScopedItemStore.clearScope()`（只清这一段），App 里现在还没有那个入口。取舍见 `ui-state.md` §3 与 `implemented/2026-11-06-s2-host-scope-and-buckets.md`。
 
-> **目标（未落地）**：装配层按 `hostId` 持有一池 `AppModel`，切换不拆旧的（`start()` 成功后旧的保持在线），界面按选中那台取数。现在仍是"换槽 + 重新装配 + dispose 旧的"。
 
 **app 级的那几件事不进装配**：通知与前台服务只有一条 `dsh/notifications` 通道，而 `MethodChannel` 只认最后一次注册的处理器 —— 所以端口由 `main()` 建一次，经 `AppServices`（`data/app_services.dart`）注入**每一次**装配（有凭据与没配对两条都注入），`AppModel` 只使用它；关闭点是根部 State 的 `dispose`（`AppServices.dispose` → `NotifyPort.close`）。装配点建第二个端口不会报错，只会让先装配的那台收不到通知上的答复（判据见 `notifications.md` §9 那两条测试）。
 

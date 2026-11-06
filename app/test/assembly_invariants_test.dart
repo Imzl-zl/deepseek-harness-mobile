@@ -263,14 +263,60 @@ void main() {
       isTrue,
       reason: 'dispose 不摘 = 往一个已经 close 的客户端上继续写',
     );
-    // 客户端必须**现取**：`_app` 会被换掉（重新配对 / 清凭据都重建 AppModel），
-    // 持有一个就会在换掉之后往旧的（已 close 的）上报 —— 无声的空转。
-    final reporter = _callTextOf(source, 'AppStateReporter(');
-    expect(reporter, isNotNull, reason: '装配点应有 AppStateReporter(...) 调用');
+    // **扇出**：池化之后一台手机同时连着几台，同一个态要交给每一台 ——
+    // 只报可见那台的话，后台里其它台会一直以为自己在前台（心跳照走、长连接不退），
+    // 它们的提醒判据也停在旧值上。
     expect(
-      reporter!.contains('_app?.client'),
+      source.contains('AppStateReporter(_onAppLifecycle)'),
       isTrue,
-      reason: '上报目标要现取当前那个客户端，不能持有一个不放',
+      reason: '观察者只挂一个，派发口就是那个扇出处',
+    );
+    expect(
+      source.contains('app.setAppForeground(foreground)'),
+      isTrue,
+      reason: '通知/保活按这个态算（每台各算各的）',
+    );
+    expect(
+      source.contains('app.reportToClient(foreground)'),
+      isTrue,
+      reason: '连接层的 setAppState 也要每台各报各的',
+    );
+  });
+
+  test('模型按电脑池化：切走不拆、移除才拆', () {
+    // S4 之前"切电脑"= 换槽 + 重新装配 + `dispose` 旧的，于是切回去要从零连一遍。
+    // 现在池子（`data/host_sessions.dart`）按 `hostId` 记着每一台：
+    // **切换只是换可见指针**，dispose 只出现在"移除这台"（解绑/吊销/换凭据）与 app 退出。
+    expect(
+      source.contains('HostSessions'),
+      isTrue,
+      reason: '装配点要用池子，不能退回单槽',
+    );
+    expect(
+      source.contains('_sessions.acquire('),
+      isTrue,
+      reason: '切换走 acquire：已有就复用（不重启）',
+    );
+    expect(
+      source.contains('_sessions.replace('),
+      isTrue,
+      reason: '重新配对必须换掉那一台（旧模型带的是旧 token）',
+    );
+    expect(
+      source.contains('_sessions.forget('),
+      isTrue,
+      reason: '"移除这台"是 dispose 的唯一入口',
+    );
+    expect(
+      source.contains('_sessions.disposeAll()'),
+      isTrue,
+      reason: 'app 退出要收掉池子里每一台',
+    );
+    // 反面对照：切走时 dispose 旧的写法不许回来（那正是池化要解决的问题）。
+    expect(
+      source.contains('_app?.dispose()'),
+      isFalse,
+      reason: '切电脑不许再拆旧的 —— 那会让切回去从零拨号',
     );
   });
 
@@ -295,9 +341,9 @@ void main() {
       reason: 'app 级服务也只该建一份',
     );
     expect(
-      RegExp(r'notify:\s*services\.notify').allMatches(source).length,
+      RegExp(r'services:\s*appServices,').allMatches(source).length,
       2,
-      reason: '两处装配都要注入**同一个**端口实例（`_assemble` 与没配对那条）',
+      reason: '两处装配都要注入**同一份** app 级服务（`_assemble` 与没配对那条）',
     );
     expect(
       source.contains('widget.services.dispose()'),

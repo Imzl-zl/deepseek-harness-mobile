@@ -129,8 +129,8 @@ void main() {
     final clientA = _Client(rows: [_row('a'), _row('b')]);
     final clientB = _Client(rows: [_row('c')]);
     // 装配层做的事就是这个形状：同一个 `services` 分别交给两处装配。
-    final a = AppModel(client: clientA, notify: services.notify);
-    final b = AppModel(client: clientB, notify: services.notify);
+    final a = AppModel(client: clientA, services: services);
+    final b = AppModel(client: clientB, services: services);
     addTearDown(() async {
       a.dispose();
       b.dispose();
@@ -173,7 +173,7 @@ void main() {
     final port = MemoryNotify();
     final services = AppServices(notify: port);
     final client = _Client(rows: [_row('a')]);
-    final app = AppModel(client: client, notify: services.notify);
+    final app = AppModel(client: client, services: services);
     addTearDown(() async {
       await services.dispose();
       await client.closeAll();

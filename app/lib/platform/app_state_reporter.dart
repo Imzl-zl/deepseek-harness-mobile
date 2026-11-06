@@ -1,9 +1,8 @@
-/// 把 Flutter 的前后台态翻译成协议的 [AppState] 报给连接（契约 §2.2、§5.4、§9）。
+/// 把 Flutter 的前后台态翻译成"前台 / 后台"两个值，交给装配层扇出。
 ///
 /// ## 为什么需要它（此前的缺口）
 ///
-/// [SyncClient.setAppState] 是"要不要维持连接"的唯一入口，而在它挂上
-/// [WidgetsBindingObserver] 之前，`app/lib` 里**没有任何调用点** ——
+/// [SyncClient.setAppState] 是"要不要维持连接"的唯一入口，而在它挂上/// [WidgetsBindingObserver] 之前，`app/lib` 里**没有任何调用点** ——
 /// 客户端从构造起就以为自己在**前台**。两个后果，都只在真机上看得见：
 ///
 /// 1. 电脑侧 `foreground` 档的审批接管判据是"前台且已订阅该 sid"
@@ -18,71 +17,47 @@
 ///
 /// ## 为什么住在 `platform/`
 ///
-/// 它读的是 Flutter 绑定的前后台态（平台知识），产出的是 `core/` 的接口调用。
+/// 它读的是 Flutter 绑定的前后台态（平台知识），产出的是**一个布尔值**。
 /// `core/` 禁止 import `package:flutter/*`（`app-platform-boundaries.md` §3 的
 /// C1/C2 边界，由 `app/tools/verify-platform-boundary.mjs` 的
-/// `core-no-platform-import` 机械判定），所以"Flutter 态 → 协议态"的翻译
+/// `core-no-platform-import` 机械判定），所以"Flutter 态 → 前台/后台"的翻译
 /// 只能发生在 `core/` 之外。它与本目录其他文件是同一种东西：**平台耦合的适配器**。
 ///
-/// ## 为什么持的是"取值函数"而不是客户端
+/// ## 为什么只翻一个值、不直接调 `setAppState`
 ///
-/// 装配点的 `_app` 会被换掉（重新配对、清凭据都重建 `AppModel`），而 observer
-/// 在 `initState` 只注册一次。直接持一个客户端，就会在换掉之后继续往**旧的
-/// 那个**上报 —— 而旧客户端已经 `close()` 过，上报全是无声的空转。
+/// 一台手机可以同时连几台电脑（`docs/subsystems/app-channel-client.md` §6.4），
+/// 每台各有一条连接，而且"退到后台要不要报 foreground"各判各的
+/// （`AppModel.connectionForeground`：保活生效时后台也照报）。观察者**只能有一个**
+/// —— 挂两个会让"谁先看到"变成一个没人盯的顺序问题 —— 所以它只把那个态翻出来，
+/// 扇出交给认识池子的装配层（`main.dart`）。
 library;
-
-import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 
-import '../core/sync_client.dart';
-
 // Note: 只把 resumed 当前台、其余 fail-closed 报后台，以及"客户端现取不持有"的
 // 取舍 —— 见 .agents/notes/implemented/2026-10-13-app-lifecycle-observer.md
-/// 前后台态的上报者：把每次态变化翻译成一次 [SyncClient.setAppState]。
+/// 前后台态的上报者：**唯一的** `WidgetsBindingObserver`。
 ///
 /// 用 `with` 而不是 `implements`：`WidgetsBindingObserver` 是 `mixin class`，
 /// 其余十几个回调要的是它的**默认空实现**（`implements` 会要求全部自己实现一遍，
 /// 而那正是"每个文件抄 16 个空方法"的来源）。
 class AppStateReporter with WidgetsBindingObserver {
-  AppStateReporter(this._clientOf, {this.onState, this.activeFor});
+  AppStateReporter(this.onChanged);
 
-  /// 当前那个客户端。**每次现取**：理由见文件头"为什么持的是取值函数"。
-  final SyncClient? Function() _clientOf;
-
-  /// 同一个态变化的第二个消费者（装配点是 `AppModel.setAppForeground`）。
+  /// 态变化（**只有 `resumed` 算前台**，判据见 [isForeground]）。
   ///
-  /// **为什么共用这一个观察者**：`AppLifecycleState` 只从 `WidgetsBinding` 来，
-  /// 挂两个观察者会让"谁先看到"变成一个没人盯的顺序问题；而"只有 `resumed`
-  /// 算前台"这条判据也只该有一份（[isForeground]）。
-  final void Function(AppLifecycleState state)? onState;
-
-  /// **给连接层报哪个态**（装配点是 `AppModel.connectionForeground`）。
-  ///
-  /// 为什么需要它：切后台**不再等于断开**。起了前台服务保活时，连接要活着、
-  /// 心跳要继续、而且这台设备仍然能直接答（通知上的两个按钮就是答案入口）——
-  /// 那时照报 `foreground`。没保活时仍报 `background`（照旧断开，§2.2）。
-  /// **判据只有一处**（`AppModel.connectionForeground`），这里只负责问。
-  final bool Function(AppLifecycleState state)? activeFor;
+  /// 装配层拿它做三件事，都在**同一个扇出处**：每台的通知/保活
+  /// （`AppModel.setAppForeground`）、每台连接层的 `setAppState`
+  /// （`AppModel.reportToClient`）、退到后台时把在途草稿写下去。
+  /// 观察者只有一个，所以"谁先看到"这个问题不存在。
+  final void Function(bool foreground) onChanged;
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    onState?.call(state);
-    final client = _clientOf();
-    // 启动过程里还没有客户端：那一次无可上报。**这不是静默兜底** ——
-    // 客户端自己的初相就是 `foreground`，而移动端的冷启动必然在前台
-    // （引擎要附着到视图上才会走到这里），所以"跳过"与"报 foreground"等价。
-    if (client == null) return;
-    final foreground = activeFor?.call(state) ?? isForeground(state);
-    unawaited(
-      client.setAppState(
-        foreground ? AppState.foreground : AppState.background,
-      ),
-    );
-  }
+  void didChangeAppLifecycleState(AppLifecycleState state) =>
+      onChanged(isForeground(state));
 }
 
-/// Flutter 的前后台态 → 协议的 [AppState]（契约只有两档）。
+/// 这个生命周期态算不算"用户正看着手机"。
 ///
 /// **只有 `resumed` 算前台，其余一律后台**。依据是一手的：Flutter 引擎对
 /// `resumed` 的定义是"可见**且有输入焦点**"，对 `inactive` 的定义是
@@ -98,13 +73,5 @@ class AppStateReporter with WidgetsBindingObserver {
 /// 代价（如实记录）：分屏失焦、通知栏下拉这类"可见但没焦点"的态也会断开并
 /// 还桌面。契约 §2.2 明说"重连是常态，不是异常路径"，回前台立刻重连，
 /// 所以代价是一次秒级重连，而不是功能缺失。
-AppState appStateOf(AppLifecycleState state) =>
-    isForeground(state) ? AppState.foreground : AppState.background;
-
-/// 这个生命周期态算不算"用户正看着手机"。
-///
-/// **判据只有这一处**：协议侧（[appStateOf]）与通知侧
-/// （`AppModel.setAppForeground`）都读它 —— 两处各写一遍
-/// `state == resumed` 就是同一条规则两个表达。
 bool isForeground(AppLifecycleState state) =>
     state == AppLifecycleState.resumed;

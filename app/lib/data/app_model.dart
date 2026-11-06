@@ -76,6 +76,7 @@ import '../wire/rpc/session.dart' as wire;
 import '../wire/rpc/settings.dart' as wire;
 import '../wire/rpc/usage.dart' as wire;
 import '../wire/rpc/workspace.dart' as wire;
+import 'app_services.dart';
 import 'endpoint_book.dart';
 import 'file_preview.dart';
 import 'host_catalogs.dart';
@@ -145,6 +146,15 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     /// 留着只会让每轮拨号多等一个超时。没装配时返回空串 = 不知道，剪枝退回旧规则。
     String Function()? hostIdOf,
 
+    /// 这一台此刻是不是界面上那一台。
+    ///
+    /// 只影响一件事：**提醒**里"看着它就不提醒"那条判据（`_desiredNotices`）。
+    /// 池化之后几台同时在池子里，只有可见那台的"当前会话"真的在眼前 ——
+    /// 别台的当前会话用户看不见，照旧要提醒。
+    ///
+    /// 不传 = 永远算可见（单测与单台装配）。
+    bool Function()? visibleOf,
+
     /// 用户是否已经确认过"自部署中转走公网明文"（偏好里持久化，默认 false）。
     ///
     /// 它是 [Endpoint] 地址边界里 `allowInsecurePublic` 的那一半：
@@ -156,10 +166,15 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     this.onEndpointsMetaChanged,
     this.onConnectionTerminated,
     this.onHostName,
-    NotifyPort? notify,
+
+    /// app 级服务（`data/app_services.dart`）：通知端口 + 前台服务的起停仲裁。
+    ///
+    /// **不传 = 这个模型没有通知能力**（单测常见），所有通知路径直接跳过。
+    /// 传进来的那一份属于 App、多台电脑共用 —— 模型只读它、不关它。
+    AppServices? services,
   }) : _prefs = prefs,
        _readLocalItems = readLocalItems,
-       _notify = notify,
+       _services = services,
        _initialEndpoints = List<Endpoint>.of(endpoints),
        _initialRememberedEndpointId = rememberedEndpointId,
        _initialHiddenEndpointIds = Set<String>.of(hiddenEndpointIds),
@@ -167,6 +182,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
        _myLanIpv4Of = myLanIpv4Of,
        _latestAppTag = latestAppTag,
        _hostIdOf = hostIdOf,
+       _visibleOf = visibleOf,
        _allowPlaintextPublic = allowPlaintextPublic,
        _hostStateMergeWindow = hostStateMergeWindow;
 
@@ -254,11 +270,27 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 每会话页签（内存缓存，`sid → viewId`）。落盘由 [UiStateStore] 负责。
   final Map<String, String?> _views = <String, String?>{};
 
-  /// 通知与后台保活的端口（`core/notify.dart` 的接口，实现在 `platform/`）。
+  /// 通知与后台保活的**端口**（`core/notify.dart` 的接口，实现在 `platform/`）。
+  ///
+  /// 它属于 App 而不属于这台电脑（`data/app_services.dart` 的文件头讲了为什么），
+  /// 所以这里只是从 [AppServices] 上取—— **不持有、不关闭**。
   ///
   /// `null` = 这个宿主没有通知能力（测试 / 未装配）—— 所有通知路径直接跳过，
   /// **不做假成功**。
-  final NotifyPort? _notify;
+  NotifyPort? get _notify => _services?.notify;
+
+  /// app 级服务（端口 + 前台服务的起停仲裁）。`null` = 单测里没装配。
+  final AppServices? _services;
+
+  /// 这台电脑的身份（`hostId` = 配对时钉死的 Ed25519 公钥）；没装配身份时是空串。
+  ///
+  /// 两个用处都要求"同一台电脑同一个键"：**通知 id 的前缀**（两台撞名也得撤得对）
+  /// 与**前台服务的诉求记账**（一条服务，多台各报各的）。
+  String get _hostKey => _hostIdOf?.call() ?? '';
+
+  /// 这一台此刻是不是界面上那一台（没装配这条缝 = 算可见）。
+  final bool Function()? _visibleOf;
+  bool get _visible => _visibleOf?.call() ?? true;
 
   /// 端点表变了之后落盘（装配层注入：`pairingStore.saveEndpoints`，写当前槽）。
   ///
@@ -2881,6 +2913,19 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
 
   StreamSubscription<NotifyApproval>? _approvalSub;
 
+  /// 通知 id 的键：**带电脑前缀**。
+  ///
+  /// `sid` 是电脑侧独立分配的不透明别名，条目 id 同样是各电脑自己生成的 ——
+  /// 两台撞名完全可能。不带前缀时同一条审批在两台上算出同一个 `noticeIdOf`，
+  /// 于是撤掉 B 的那条会把 A 的也撤掉（`cancel(id)` 只按 id 认人）。
+  ///
+  /// 没有电脑身份时（未配对 / 单测）保持平铺形状：那种状态下不存在"哪一台"，
+  /// 与 `meta` 表里 `host.<field>` 的平铺键同一条理由（`docs/subsystems/ui-state.md` §2）。
+  String _noticeKeyOf(String kind, String id) {
+    final hostId = _hostKey;
+    return hostId.isEmpty ? '$kind:$id' : '$hostId|$kind:$id';
+  }
+
   /// 前后台态变化（装配点从 `AppStateReporter` 转过来）。
   ///
   /// 它同时是两件事的输入：**通知**（前台且看着那个会话 ⇒ 不提醒）与
@@ -2931,7 +2976,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     if (sid == null) {
       // 找不到那个待处理项（已答 / 会话不在列表里）：撤掉通知，什么都不答。
       // 不猜一个 sid —— 答错会话比不答更糟。
-      final stale = noticeIdOf('approval:${action.itemId}');
+      final stale = noticeIdOf(_noticeKeyOf('approval', action.itemId));
       _activeNotices.remove(stale);
       await _notify?.cancel(stale);
       return;
@@ -2954,7 +2999,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       // 并撤掉那条通知 —— 让用户去 App 里看到真实状态，而不是对着一个
       // 已经无效的按钮反复按。
       _recordError('通知上的答复没能送达', error);
-      final id = noticeIdOf('approval:${action.itemId}');
+      final id = noticeIdOf(_noticeKeyOf('approval', action.itemId));
       _activeNotices.remove(id);
       await _notify?.cancel(id);
     }
@@ -2980,14 +3025,15 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   List<AttentionNotice> _desiredNotices() {
     final notices = <AttentionNotice>[];
     for (final session in _sessions) {
-      // 前台且正看着它 ⇒ 不提醒：结果就在眼前（与"完成绿点"同一条判据）。
-      if (_appForeground && session.sid == _currentSid) continue;
+      // 前台、**这一台可见**、且正看着它 ⇒ 不提醒：结果就在眼前（与"完成绿点"同一条判据）。
+      // "可见"这一条是池化之后才需要的：别的电脑的"当前会话"用户根本没在看着。
+      if (_appForeground && _visible && session.sid == _currentSid) continue;
       final title = session.displayTitle;
       for (final item in _storeOf(session.sid).items) {
         if (item is ApprovalItem && !item.decided) {
           notices.add(
             AttentionNotice(
-              id: noticeIdOf('approval:${item.itemId}'),
+              id: noticeIdOf(_noticeKeyOf('approval', item.itemId)),
               kind: NoticeKind.approval,
               sid: session.sid,
               title: '等你审批 · $title',
@@ -3005,7 +3051,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
             item.status == ToolCallStatus.running) {
           notices.add(
             AttentionNotice(
-              id: noticeIdOf('question:${item.itemId}'),
+              id: noticeIdOf(_noticeKeyOf('question', item.itemId)),
               kind: NoticeKind.question,
               sid: session.sid,
               title: '有人在问你 · $title',
@@ -3017,7 +3063,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       if (completionUnreadOf(session.sid)) {
         notices.add(
           AttentionNotice(
-            id: noticeIdOf('completed:${session.sid}'),
+            id: noticeIdOf(_noticeKeyOf('completed', session.sid)),
             kind: NoticeKind.completed,
             sid: session.sid,
             title: '跑完了 · $title',
@@ -3053,30 +3099,45 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 三条判据都是既有的：前后台态来自 `AppStateReporter`，权限是平台真值，
   /// "连接在服务态"就是 `client.state`。**没有第四条**。
   ///
-  /// 为什么没权限就不起：平台原文说清 —— 拒绝 `POST_NOTIFICATIONS` 时前台服务的
-  /// 通知进不了通知抽屉；那条服务唯一可观察的产出就没了，起了只是白耗电。
+  /// **起停不在这里**：一条服务、多台电脑各有各的诉求，所以这里只报"我这台
+  /// 要不要"，由 `AppServices.syncKeepAlive` 汇总（`data/app_services.dart`）——
+  /// 各自读 `status().keepAlive` 再起停的话，A 要、B 不要就会把 A 的保活撤掉。
   Future<void> _syncKeepAlive() async {
-    final port = _notify;
-    if (port == null || _disposed) return;
-    final status = await port.status();
-    _notifyGranted = status.granted;
-    final want =
-        !_appForeground &&
-        status.granted &&
-        client.state == ConnectionState.serving;
-    if (want && !status.keepAlive) {
-      await port.startKeepAlive(
-        title: 'DeepSeek Harness',
-        // **不承诺"连接还在"**：进程会被系统冻结 / 被 ROM 杀掉，那时这句话就是假的
-        // （2026-10-24 真机实测，见 `docs/subsystems/notifications.md` §2）。
-        text: '后台保活已开启',
-      );
-    } else if (!want && status.keepAlive) {
-      await port.stopKeepAlive();
-      // 保活撤了而人还在后台 ⇒ 把连接**真的**断掉（否则服务没了、连接还在，
-      // 那是"看不见的长连接"，比断开更糟）。
-      if (!_appForeground) unawaited(client.setAppState(AppState.background));
+    final services = _services;
+    if (services == null || _disposed) return;
+    final state = await services.syncKeepAlive(
+      _hostKey,
+      want: _wantsKeepAlive,
+    );
+    _notifyGranted = state.granted;
+    // 保活撤了而人还在后台 ⇒ 把连接**真的**断掉（否则服务没了、连接还在，
+    // 那是"看不见的长连接"，比断开更糟）。
+    if (!state.keepAlive && !_appForeground) {
+      unawaited(client.setAppState(AppState.background));
     }
+  }
+
+  /// 这台此刻要不要前台服务（三条判据里的前两条；第三条"有权限"由
+  /// `AppServices` 读平台真值，那是设备级事实）。
+  bool get _wantsKeepAlive =>
+      !_appForeground && client.state == ConnectionState.serving;
+
+  /// 把前后台态报给**自己这条连接**（`setAppState` 的产品调用点之一，
+  /// 另一处是保活撤掉时的那句）。
+  ///
+  /// 判据是 [connectionForeground]：保活生效时后台也照报 `foreground`
+  /// （连接要活着、心跳要继续，通知上那两个按钮就是答案入口）。
+  /// 池化之后**每台各报各的** —— 观察者只有一个（`AppStateReporter`），
+  /// 扇出在装配层（`main.dart`），免得"谁先看到"变成没人盯的顺序问题。
+  void reportToClient(bool appForeground) {
+    if (_disposed) return;
+    unawaited(
+      client.setAppState(
+        connectionForeground(appForeground)
+            ? AppState.foreground
+            : AppState.background,
+      ),
+    );
   }
 
   /// 连上（或冷启动）之后落到哪个会话 —— **只用宿主已有的数据**。
@@ -4571,13 +4632,21 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     }
     _deltaSubs.clear();
     unawaited(_interactions.close());
-    // 通知：**收尾要干净** —— 撤掉自己贴的那批、停掉前台服务（否则 App 已经
-    // 不在了，通知栏里还挂着一条"正在保持连接"的骗人常驻）。
+    // 传输层是**这台电脑**的资源：`close` 才收 transport。不关的话电脑侧会一直
+    // 挂着一条没人用的连接（池化之后"移除这台"必须真的断开它）。
+    unawaited(client.close());
+    // 通知：**只撤自己贴过的那批**。池化之后别的电脑还有自己的通知，而
+    // `cancelAll` 会把它们一起撤掉 —— 通知 id 带电脑前缀，所以按 id 撤得准。
     unawaited(_approvalSub?.cancel());
-    final port = _notify;
-    if (port != null) {
-      unawaited(port.cancelAll());
-      unawaited(port.stopKeepAlive());
+    for (final id in _activeNotices.keys.toList()) {
+      unawaited(_notify?.cancel(id));
+    }
+    _activeNotices.clear();
+    // 前台服务同理：只报"我这台不要再要了"，起停由 app 级汇总决定
+    // （还有别的电脑在要就留着，见 `data/app_services.dart`）。
+    final services = _services;
+    if (services != null) {
+      unawaited(services.syncKeepAlive(_hostKey, want: false));
     }
     for (final store in _stores.values) {
       unawaited(store.dispose());

@@ -21,6 +21,7 @@ import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/notify.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
+import 'package:dsh_mobile/data/app_services.dart';
 import 'package:dsh_mobile/platform/notify_memory.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -131,12 +132,14 @@ SessionEvent _approvalDecided() => const SessionEvent(
 void main() {
   late _Client client;
   late MemoryNotify notify;
+  late AppServices services;
   late AppModel app;
 
   setUp(() async {
     client = _Client(rows: [_row('a'), _row('b')]);
     notify = MemoryNotify();
-    app = AppModel(client: client, notify: notify);
+    services = AppServices(notify: notify);
+    app = AppModel(client: client, services: services);
     await app.start();
     // 会话清单要先落地：通知的那份"期望集合"是按 `_sessions` 走的
     // （与抽屉/待处理计数同一个数据面）。
@@ -286,6 +289,153 @@ void main() {
       notify.visible.containsKey(noticeIdOf('completed:a')),
       isFalse,
       reason: '看见了就不该还挂着',
+    );
+  });
+
+  test('同一 sid / 同一 itemId 在两台电脑下算出不同的通知 id：撤一台不动另一台', () async {
+    // `sid` 是电脑侧独立分配的别名，`itemId` 也是各电脑自己生成的 ——
+    // 两台撞名完全可能。不带电脑前缀时两条审批会算出同一个 `noticeIdOf`，
+    // 于是撤掉一台的那条会把另一台的也撤掉（`cancel(id)` 只按 id 认人）。
+    final port = MemoryNotify();
+    final shared = AppServices(notify: port);
+    final clientA = _Client(rows: [_row('a'), _row('b')]);
+    final clientB = _Client(rows: [_row('a'), _row('b')]);
+    final a = AppModel(
+      client: clientA,
+      services: shared,
+      hostIdOf: () => 'hostA',
+    );
+    final b = AppModel(
+      client: clientB,
+      services: shared,
+      hostIdOf: () => 'hostB',
+    );
+    addTearDown(() async {
+      a.dispose();
+      b.dispose();
+      await clientA.closeAll();
+      await clientB.closeAll();
+    });
+    await a.start();
+    await b.start();
+    await a.refreshSessionRows();
+    await b.refreshSessionRows();
+    // 两台都"看着 b"，同一个 sid 的审批发生在 a。
+    await a.openSession('a');
+    await a.openSession('b');
+    await b.openSession('a');
+    await b.openSession('b');
+    await pump();
+
+    clientA.emitDelta('a', _approvalAsked());
+    await pump();
+    expect(port.visible, hasLength(1));
+    final idA = port.visible.keys.single;
+
+    clientB.emitDelta('a', _approvalAsked());
+    await pump();
+    expect(port.visible, hasLength(2), reason: '同样的 sid 与 itemId，两台各一条');
+    final idB = port.visible.keys.firstWhere((id) => id != idA);
+    expect(idB, isNot(idA));
+
+    // A 那台的人答了 ⇒ 只撤 A 的；B 的还在。
+    clientA.emitDelta('a', _approvalDecided());
+    await pump();
+    expect(port.visible.containsKey(idA), isFalse);
+    expect(
+      port.visible.containsKey(idB),
+      isTrue,
+      reason: 'B 的那条不该被 A 的撤销带走 —— 这就是电脑前缀要解决的问题',
+    );
+  });
+
+  test('池子里另一台的"当前会话"照样提醒：那一台不可见', () async {
+    // 池化之后几台同时在池子里，只有**可见那台**的当前会话真的在眼前。
+    // 别台的当前会话用户看不见 —— "看着它就不提醒"不该跨台生效，
+    // 否则 A 上等着审批的东西在 B 上永远收不到提醒。
+    final port = MemoryNotify();
+    final shared = AppServices(notify: port);
+    final other = _Client(rows: [_row('a')]);
+    var visible = false;
+    final app = AppModel(
+      client: other,
+      services: shared,
+      hostIdOf: () => 'hostA',
+      visibleOf: () => visible,
+    );
+    addTearDown(() async {
+      app.dispose();
+      await other.closeAll();
+    });
+    await app.start();
+    await app.refreshSessionRows();
+    await app.openSession('a'); // 这是**这台**的当前会话
+    await pump();
+
+    other.emitDelta('a', _approvalAsked());
+    await pump();
+    expect(
+      port.visible,
+      hasLength(1),
+      reason: '用户在看别台 ⇒ 这一台的当前会话也要提醒',
+    );
+
+    // 对照：同一台变成可见之后，这条就不再是"看不见的"了。
+    visible = true;
+    app.setAppForeground(false);
+    app.setAppForeground(true); // 回前台会重算一遍提醒（撤掉"看得见"的那些）
+    await pump();
+    expect(port.visible, isEmpty, reason: '看得见就不该还挂着');
+  });
+
+  test('移除一台只撤它贴的那批：另一台的通知不动', () async {
+    // 池化之后"移除这台"（解绑 / 吊销 / 删除）会 `dispose` 它。旧写法在 dispose 里
+    // `cancelAll()` —— 那会把**另一台**的通知一起撤掉，用户看到的是"我只解绑了 B，
+    // A 的待办全没了"。所以撤的范围按台算（id 带电脑前缀）。
+    final port = MemoryNotify();
+    final shared = AppServices(notify: port);
+    final clientA = _Client(rows: [_row('a'), _row('b')]);
+    final clientB = _Client(rows: [_row('a'), _row('b')]);
+    final a = AppModel(
+      client: clientA,
+      services: shared,
+      hostIdOf: () => 'hostA',
+    );
+    final b = AppModel(
+      client: clientB,
+      services: shared,
+      hostIdOf: () => 'hostB',
+    );
+    addTearDown(() async {
+      a.dispose();
+      await clientA.closeAll();
+      await clientB.closeAll();
+    });
+    await a.start();
+    await b.start();
+    await a.refreshSessionRows();
+    await b.refreshSessionRows();
+    await a.openSession('a');
+    await a.openSession('b');
+    await b.openSession('a');
+    await b.openSession('b');
+    await pump();
+
+    clientA.emitDelta('a', _approvalAsked());
+    await pump();
+    final idA = port.visible.keys.single;
+    clientB.emitDelta('a', _approvalAsked());
+    await pump();
+    final idB = port.visible.keys.firstWhere((id) => id != idA);
+    expect(port.visible, hasLength(2));
+
+    b.dispose();
+    await pump();
+    expect(port.visible.containsKey(idB), isFalse, reason: '自己贴的要撤');
+    expect(
+      port.visible.containsKey(idA),
+      isTrue,
+      reason: '移除别台不许动这一台的通知（`cancelAll()` 会动）',
     );
   });
 }
