@@ -2122,7 +2122,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
 
   /// 面板上显示的设备短码：**前 6 位**。与电脑侧 `client.js` 同一长度；
   /// 22 位全量太长，6 位在"一台电脑最多几十行"的规模里够认且不吵。
-  String get deviceShortCode => _deviceId.length <= 6 ? _deviceId : _deviceId.substring(0, 6);
+  String get deviceShortCode =>
+      _deviceId.length <= 6 ? _deviceId : _deviceId.substring(0, 6);
 
   /// 斜杠命令白名单（`repo.info.commands`，**电脑侧原样过线**）。
   ///

@@ -376,7 +376,9 @@ class SettingsPage extends StatelessWidget {
               label: '设备短码（点按复制）',
               value: app.deviceShortCode.isEmpty ? '未配对' : app.deviceShortCode,
               onTap: () {
-                if (app.deviceId.isNotEmpty) unawaited(_copy(context, app.deviceId));
+                if (app.deviceId.isNotEmpty) {
+                  unawaited(_copy(context, app.deviceId));
+                }
               },
             ),
           ],
