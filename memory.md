@@ -12,6 +12,10 @@
   思考走 `ReasoningRow(running: true)`（摘要 = 最后完成段落首行），正文 `selectable: false`。
   决策笔记 `implemented/2026-11-07-live-message-shape.md`。**未做**：流式块级冻结、
   阅读位置补偿（倒序列表最新端插入/增长会顶走阅读内容，已量到 100 px）。
+- **插件面板给出 App 下载入口（2026-11-07）**：「配对新手机」卡里加「还没装手机 App？下载最新版」
+  → `releases/latest`；插件版本提到 **0.1.22**（面板文案属插件产物）。笔记
+  `implemented/2026-11-07-download-entry-in-panel.md`。README 重排：**下载**单独成节，
+  截图换成 0.2.10 真机（会话 / 设置 / 面板配对卡）。
 - **v0.2.10 已发版**（`app/pubspec.yaml` `0.2.10+5`；Release：`dsh-mobile-v0.2.10.apk`（release 签名）
   + `dsh-mobile-connector-0.1.21.tgz`）：内容 = 流式思考与正文分流（`LiveMessage`，思考不再混进正文）、
   **思考随轮组折叠的两处判据**（答复自带的思考算过程证据 / 未收口的一轮过程保持展开，

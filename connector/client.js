@@ -141,6 +141,13 @@ window.__ModuleLoader__.load({
     const CONNECTION = '/api/dsh-mobile/connection'
     /** 查更新（只读；电脑侧代查 npm，见 `src/admin/update.ts`）。 */
     const UPDATE = '/api/dsh-mobile/update'
+    /**
+     * 手机 App 的下载页（GitHub Release 的 latest 永远指向最新一版）。
+     *
+     * 为什么放在面板里：插件是从 npm 装的，App 不是 —— 用户装完插件、看到「配对新手机」
+     * 那一刻手里往往还没有 App。把出口放在同一张卡上，比让人去翻 README 靠谱。
+     */
+    const APP_RELEASES = 'https://github.com/Imzl-zl/deepseek-harness-mobile/releases/latest'
 
     /**
      * 读应答体，**失败也要说人话**。
@@ -215,6 +222,9 @@ window.__ModuleLoader__.load({
       devicesTitle: '已配对设备',
       pairTitle: '配对新手机',
       pairHint: '5 分钟内有效。',
+      // 装了插件不等于装了 App：出口就放在"出码"这张卡上。
+      noAppHint: '还没装手机 App？',
+      downloadApp: '下载最新版',
       // 出码时向中转登记失败 = 这张码只有局域网那条路（契约 §12.1 的 lanOnly）。
       // 必须写在二维码旁边：用户出门 / 切流量之后才发现"配不上"就太晚了。
       pairLanOnly: '中转没登记上：这张码只能在同一 WiFi 下使用（跨网或用流量扫它配不上）',
@@ -370,6 +380,8 @@ window.__ModuleLoader__.load({
       devicesTitle: 'Paired devices',
       pairTitle: 'Pair a new phone',
       pairHint: 'Valid for 5 minutes.',
+      noAppHint: 'No app installed yet?',
+      downloadApp: 'Download the latest build',
       pairLanOnly: 'Not registered with the relay: this code only works on the same Wi-Fi (it will not pair over the internet or mobile data).',
       pairRelayReady: 'Both routes are ready: direct on the same Wi-Fi, or via the relay (registered when the code was issued) when you are away.',
       pairRelayOnly: 'Relay only (registered when the code was issued): it works away from this Wi-Fi too.',
@@ -1977,6 +1989,15 @@ window.__ModuleLoader__.load({
             }, busy === 'pair' ? t('pairing') : t('pair')),
           ),
           h('p', { key: 'd', style: { ...S.label, margin: 0 } }, t('pairHint')),
+          // 「还没装 App？」——放在出码按钮下面：走到这一步的人正好缺这个。
+          h('div', { key: 'dl', style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 } },
+            h('span', { style: { ...S.label, margin: 0 } }, t('noAppHint')),
+            h('button', {
+              key: 'b', type: 'button',
+              style: S.btn,
+              onClick: () => window.open(APP_RELEASES, '_blank', 'noopener'),
+            }, t('downloadApp')),
+          ),
           qr === null
             ? null
             : countdown === null
