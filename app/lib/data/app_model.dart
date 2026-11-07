@@ -2843,6 +2843,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     }
     _rows.applyList(_sessions);
     _syncNotices();
+    _probeWorkspaceLedger();
   }
 
   /// 追加一页（`loadMoreSessionRows` 用）：**按 `sid` 去重**，顺序照宿主给的。
@@ -2863,7 +2864,35 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     }
     _rows.applyList(_sessions);
     _syncNotices();
+    _probeWorkspaceLedger();
   }
+
+  /// 有没有会话是账本（`workspace.list`）**还不知道**的；有就去补问一次。
+  ///
+  /// 为什么需要：抽屉的分组只认账本的 `sessionIds`（`bucketSessionsByWorkspace`），
+  /// 而"在电脑上新建了一个会话"到我们这边只是清单里**多一行** —— 清单与账本
+  /// 是两个包，登记表里账本没有 `notification` 触发点（`host_state.dart` 的口径：
+  /// 工作区没有宿主事件）。于是那一行会先落到「未分组」，直到下一次
+  /// 回前台 / 重连 / 切会话才归位（2026-11-07 真机：新建的会话在抽屉里先显示未分组）。
+  ///
+  /// 这不是替宿主决定分组：归哪个工作区仍由宿主的账本说了算，我们只是**去问**。
+  /// 每个 sid 只问一次 —— 问过还没归组，说明宿主此刻确实没把它放进任何工作区，
+  /// 再问就变成我们自己发明重试了。
+  void _probeWorkspaceLedger() {
+    // 账本还没到手（空）时界面本来就不分组，无从判断"缺人"。
+    if (_workspaces.isEmpty) return;
+    final live = <String>{for (final s in _sessions) s.sid};
+    _ledgerProbed.retainAll(live);
+    final unclaimed = <String>{
+      for (final sid in live)
+        if (workspaceGroupOf(sid, _workspaces) == null) sid,
+    };
+    if (!unclaimed.any(_ledgerProbed.add)) return;
+    unawaited(refreshWorkspaces());
+  }
+
+  /// 已经为哪些会话补问过账本（见 [_probeWorkspaceLedger]）。
+  final Set<String> _ledgerProbed = <String>{};
 
   /// 列表里还有没有更早的会话（`session.list` 的 `hasMore`）。
   bool get hasMoreSessions => _sessionsHasMore;

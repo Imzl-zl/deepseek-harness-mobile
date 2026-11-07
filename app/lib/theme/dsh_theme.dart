@@ -95,6 +95,18 @@ abstract final class DshTheme {
       textTheme: _textTheme(base.textTheme, c),
       splashColor: c.active,
       highlightColor: c.hover,
+      // **滚动条**：Markdown 表格与代码块的横向滚动条是第三方组件自带的
+      // （`flutter_markdown_plus` 的 `Scrollbar`，`builder.dart:451`），
+      // 不设主题就会用 Material 默认值 —— 8 px 粗、`onSurface` 全黑，
+      // 压在正文里像一根分割线（2026-11-07 真机："又黑又粗有点丑"）。
+      // 统一成 3 px 细条 + 半透明拇指：与设计稿的 `--dsw-alias-scrollbar` 同一档。
+      scrollbarTheme: ScrollbarThemeData(
+        thickness: const WidgetStatePropertyAll(3),
+        radius: const Radius.circular(2),
+        thumbColor: WidgetStatePropertyAll(c.border(0.28)),
+        trackColor: const WidgetStatePropertyAll(Colors.transparent),
+        trackVisibility: const WidgetStatePropertyAll(false),
+      ),
     );
   }
 

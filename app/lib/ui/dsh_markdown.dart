@@ -362,6 +362,10 @@ class DshMarkdown extends StatelessWidget {
       // - DSH 的 `td { max-width: min(30vw, 320px); min-width: 100px }`
       //   （`:250-262`）在 `IntrinsicColumnWidth` 下没有等价物。
       tableColumnWidth: const IntrinsicColumnWidth(),
+      // **别常驻一根拇指**：表格那层是 `thumbVisibility: true` 的
+      // `Scrollbar`（`builder.dart:451-455`），表格一出现就压一条粗条在正文里。
+      // 关掉之后只在手指拖动时出现，粗细与颜色由主题的 `scrollbarTheme` 给。
+      tableScrollbarThumbVisibility: false,
       tableHead: body.copyWith(fontWeight: FontWeight.w600),
       tableBody: body,
       // DSH `th { text-align: start }`（`:245`）；默认是居中。
