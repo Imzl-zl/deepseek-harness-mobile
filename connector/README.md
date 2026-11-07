@@ -108,6 +108,8 @@ node --check client.js     # 浏览器半侧是手写 JS，没有类型检查
 
 协议与设计文档：`docs/subsystems/connector-and-relay.md`、`docs/subsystems/remote-channel.md`（在仓库里）。
 
+市场截图清单：同目录 `screenshots.json`。为什么用绝对地址而不是相对路径、为什么不把图片复制进来，见 `.agents/notes/implemented/2026-11-07-marketplace-screenshots-declaration.md`。
+
 ## 链接
 
 [仓库](https://github.com/Imzl-zl/deepseek-harness-mobile) ·
