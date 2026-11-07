@@ -18,7 +18,7 @@
   <img src="docs/assets/app-settings.png" alt="手机端设置页：当前连接与通用偏好" width="258">
 </p>
 
-<p align="center"><sub>手机端 <b>v0.2.10</b>：一个轮次里「思考」是折叠的一行、工具是逐张卡、正文始终可见；
+<p align="center"><sub>手机端 <b>v0.2.11</b>：一个轮次里「思考」是折叠的一行、工具是逐张卡、正文始终可见；
 设置页管连接与通用偏好。截图与仓库同版本，界面改了会一起换。</sub></p>
 
 ## 下载
@@ -88,8 +88,8 @@ cd relay && docker compose up -d --build && docker compose logs -f relay
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 通道协议 454 / 26 / 49 项 |
 | `cd relay && pnpm typecheck && node --test` | 中转，183 项 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 插件，844 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 多端边界，837 项 |
-| `cd app && dart format --output=none --set-exit-if-changed lib test integration_test && dart analyze --fatal-infos lib test integration_test && flutter test` | 手机端，1775 项 |
+| `node app/tools/verify-platform-boundary.mjs` | 多端边界，843 项 |
+| `cd app && dart format --output=none --set-exit-if-changed lib test integration_test && dart analyze --fatal-infos lib test integration_test && flutter test` | 手机端，1779 项 |
 
 > `dart format` 是**先决条件**不是风格偏好：超宽的单行 `if (...) return ...;` 会被它折成
 > 两行无括号形式，而 `curly_braces_in_flow_control_structures` 在 `--fatal-infos` 下就是红。

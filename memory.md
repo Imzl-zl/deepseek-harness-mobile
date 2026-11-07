@@ -6,6 +6,10 @@
 
 ## 现在（2026-11-07）
 
+- **v0.2.11 已发版**（`app/pubspec.yaml` `0.2.11+6`；Release：`dsh-mobile-v0.2.11.apk`（release 签名）
+  + `dsh-mobile-connector-0.1.22.tgz`）：内容 = 抽屉分组补问账本（新建会话不再先落「未分组」）、
+  Markdown 表格横滚条改细条且不常驻、顶栏开抽屉换回基线 `☰`；插件 0.1.22 的「配对新手机」
+  卡加了 App 下载入口。README 重排（**下载**单独成节）并换成这一版的真机截图。
 - **流式条目与持久条目同形（2026-11-07）**：累加器按 `chunk.type` 分流成
   `LiveMessage {reasoning, text}`（`app/lib/core/live_message.dart`），思考不再冒充正文；
   尾条目搬到 `chat_turns.dart` 的 `LiveAssistantTurn`，与 `AssistantTurn` 并排，
