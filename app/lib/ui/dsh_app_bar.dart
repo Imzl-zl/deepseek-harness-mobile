@@ -27,6 +27,7 @@ import '../model/chat_item.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
+import 'dsh_menu_glyph.dart';
 import 'dsh_popover.dart';
 import 'dsh_state_dot.dart';
 
@@ -41,10 +42,16 @@ class DshAppBarButton extends StatelessWidget {
     this.tooltip,
     this.size = 16,
     this.mirrorX = false,
+    this.glyph,
   });
 
   /// DSH 图标名（必须是 [DshIcons.names] 里的一员）。
+  ///
+  /// [glyph] 给了就只当兜底（图标表的判据仍要过：名字必须合法）。
   final String icon;
+
+  /// 自画字形。图标集里没有的字形走它（例如 `☰`，见 `dsh_menu_glyph.dart`）。
+  final Widget? glyph;
 
   final VoidCallback? onPressed;
   final String? tooltip;
@@ -71,12 +78,15 @@ class DshAppBarButton extends StatelessWidget {
         child: InkWell(
           onTap: onPressed,
           child: Center(
-            child: mirrorX
-                ? Transform.flip(
-                    flipX: true,
-                    child: DshIcon(icon, size: size, color: c.labelSecondary),
-                  )
-                : DshIcon(icon, size: size, color: c.labelSecondary),
+            child: Builder(
+              builder: (context) {
+                final mark =
+                    glyph ?? DshIcon(icon, size: size, color: c.labelSecondary);
+                return mirrorX
+                    ? Transform.flip(flipX: true, child: mark)
+                    : mark;
+              },
+            ),
           ),
         ),
       ),
@@ -396,7 +406,12 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
             )
           else
             DshAppBarButton(
-              icon: 'panelLeft',
+              // **有意偏离 DSH**：桌面顶栏那枚是 `panelLeft`（折叠侧栏），
+              // 手机这里开的是**会话列表抽屉**；16px 的面板图标在 24dp 下就是
+              // 一个空方框（2026-11-07 真机："左上角图标有点丑"）。
+              // 设计基线画的是 `☰`，图标集里没有它 ⇒ 自画（`dsh_menu_glyph.dart`）。
+              icon: 'flatList',
+              glyph: DshMenuGlyph(size: 20, color: c.labelSecondary),
               tooltip: '打开会话抽屉',
               onPressed: onOpenDrawer,
             ),

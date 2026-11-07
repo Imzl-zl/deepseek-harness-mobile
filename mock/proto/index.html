@@ -18,7 +18,8 @@
       <header class="appbar">
         <!-- 顶栏左侧是 ☰(图标就该在顶栏左侧)。两个抽屉都还能**从边跟手拖出**:
              左 = .edge--open,右 = .edge--side(上面那条小棒棒是"这侧能划"的标识)。 -->
-        <button class="ib" data-act="drawer-open" data-icon="panelLeft" aria-label="打开会话抽屉"></button>
+        <!-- 三横线（☰）自画：DSH 图标集里没有它，设计基线画的却是它（见 app/lib/ui/dsh_menu_glyph.dart 的注释）。坐标与 Flutter 端同一组。 -->
+        <button class="ib" data-act="drawer-open" aria-label="打开会话抽屉"><svg viewBox="0 0 16 16" width="20" height="20" fill="none" aria-hidden="true" stroke="currentColor" stroke-width="1.875" stroke-linecap="round"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/></svg></button>
         <h1 class="ttl">手机端控制电脑DSH方案</h1>
         <!-- 计数 chip(§7.8):子智能体 / 后台任务计数,**有才显示**(没有整枚不占位),
              点它开右抽屉对应面板。与标题**同一行** —— DSH 就是这么放的(header 的

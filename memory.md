@@ -12,6 +12,9 @@
   思考走 `ReasoningRow(running: true)`（摘要 = 最后完成段落首行），正文 `selectable: false`。
   决策笔记 `implemented/2026-11-07-live-message-shape.md`。**未做**：流式块级冻结、
   阅读位置补偿（倒序列表最新端插入/增长会顶走阅读内容，已量到 100 px）。
+- **顶栏开抽屉改回基线 `☰`（2026-11-07）**：自画三横线（`ui/dsh_menu_glyph.dart`，
+  不进机生成的图标表；原型同一组坐标的 inline SVG）。`DshAppBarButton` 增 `glyph`。
+  笔记 `implemented/2026-11-07-drawer-toggle-icon.md`。
 - **抽屉分组与滚动条（2026-11-07）**：会话清单落地后若有会话不在任何工作区里，
   补问一次 `workspace.list`（`_probeWorkspaceLedger`，一个 sid 一次）—— 桌面新建的会话
   不再先落「未分组」；Markdown 表格的横向滚动条改由主题给（3 px 细条、半透明拇指、
@@ -56,7 +59,7 @@
   其中一条的绑定后恢复。根因与落地修法见
   `implemented/2026-11-07-connector-id-force-random.md`：新装随机，旧装 `local` 强制迁移
   （手机重扫、旧令牌清除）；中转侧的旧 `local` 条目按墓碑处理（不再阻止启动、令牌失效）。
-- **门禁**：app 1778 / boundary 837（29 条自检 + 189 文件）/ connector 844 / relay 183 /
+- **门禁**：app 1779 / boundary 843（29 条自检 + 190 文件）/ connector 844 / relay 183 /
   protocol 454·26·49；`dart analyze --fatal-infos` 与 `dart format` 各 0。
 
 ## 下一步
@@ -87,7 +90,7 @@
 | `node app/tools/verify-platform-boundary.mjs` | 837 项（29 条规则自检 + 189 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1778 项（约 1 分钟） |
+| `cd app && flutter test` | 1779 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **844** 项 |
 | `cd relay && pnpm typecheck && node --test` | 类型 + **183** 条 |

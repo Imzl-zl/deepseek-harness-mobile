@@ -76,6 +76,7 @@ import 'dsh_code_highlight.dart';
 import 'dsh_composer.dart';
 import 'dsh_diff.dart';
 import 'dsh_markdown.dart';
+import 'dsh_menu_glyph.dart';
 import 'dsh_popover.dart';
 import 'dsh_sheet.dart';
 import 'dsh_shimmer.dart';
@@ -4463,7 +4464,8 @@ class _EmptyChat extends StatelessWidget {
                 if (hasSessions || paired)
                   FilledButton.icon(
                     onPressed: onOpenDrawer,
-                    icon: DshIcon('panelLeft', size: 14, color: c.onAccent),
+                    // 与顶栏同一枚字形（`☰`，会话列表抽屉；见 `dsh_menu_glyph.dart`）。
+                    icon: DshMenuGlyph(size: 14, color: c.onAccent),
                     label: const Text('打开会话抽屉'),
                   ),
                 // 已配对但列表是空的：给一条"重新拉一次"的出路。
