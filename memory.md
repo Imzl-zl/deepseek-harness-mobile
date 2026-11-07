@@ -16,8 +16,9 @@
 - **面板六条反馈 + 连接器标识（2026-11-06/07，`f441462`）**：本机版本读 `/status`（不联网）、
   Kit 全角数字归一 + 错误带码位、`#电脑` 改已用/上限、服务端错误码统一翻人话、最后一名
   管理员降级按钮真禁用、默认只报默认路由 IPv4（其余进「更多地址」）、设备行短码与
-  「最近答话 / 此刻连接」两列。connector 新装随机 `pc-…`，老装无配对自动迁移、有配对保留
-  `local` 并告警；面板显示本机标识。决策笔记 `implemented/2026-11-06-*`（五篇）。
+  「最近答话 / 此刻连接」两列。connector **新装随机；旧装 `local` 强制迁移**（已配对
+  手机重扫、旧中转令牌清除），不再保留 `local`。决策笔记 `implemented/2026-11-06-*` 与
+  `implemented/2026-11-07-connector-id-force-random.md`。
 - **分层现状**（PR #9 → main `47b3472`）：`data → wire` 走能力口（`HostReads` 18 / `HostWrites`
   22，`HostRpcHolder` 两个 getter），事件载荷走 `EventFields` 端口（core 声明、wire 实现）；
   `core → wire` 与 `data/`、`ui/`、`core/` 的 `wire/` import 都是 **0**。`data/` 字段名读点
@@ -34,16 +35,15 @@
   重启，含"匿名管理桶按真实来源地址分"那条修复。重启踩到一颗雷 —— 令牌表里两条记录都绑
   `connectorId: local`（两个租户的电脑都用默认 `pcId`），中转**拒绝启动**，停了约 4 分钟；清掉
   其中一条的绑定后恢复。根因与落地修法见
-  `implemented/2026-11-06-connector-id-random-default.md`：新装随机、无配对老装迁移、
-  有配对老装保留 `local` 并告警；重启前自检步骤仍在 `docs/cookbook/relay-on-a-server.md` §6.6。
-- **门禁**：app 1762 / boundary 833（29 条自检 + 188 文件）/ connector 844 / relay 182 /
+  `implemented/2026-11-07-connector-id-force-random.md`：新装随机，旧装 `local` 强制迁移
+  （手机重扫、旧令牌清除）；中转侧的旧 `local` 条目按墓碑处理（不再阻止启动、令牌失效）。
+- **门禁**：app 1762 / boundary 833（29 条自检 + 188 文件）/ connector 844 / relay 183 /
   protocol 454·26·49；`dart analyze --fatal-infos` 与 `dart format` 各 0。
 
 ## 下一步
 
-0. **老装 `local` 的残留冲突**：新装已随机、无配对老装自动迁移；**有配对的老装仍可能跨租户
-   撞车**，只能按 cookbook §6.6 清掉一条绑定，或让用户主动重新配对换新身份。这不是"已修好"，
-   是"新装不再复发 + 老装可见"。
+0. **旧装升级是一次性迁移**：所有 `local` 强制换随机，已配对手机重扫；`required` 模式需在
+   管理台重签令牌。中转侧的旧 `local` 令牌是墓碑（不阻止启动、不能再用），管理台可删。
 1. **数据面收敛（三批已落地）**：触发源按来源拆、行只带手机读的五个投影键、列表分页、
    重连带落盘水位、十个只读快照带 `digest`、出站账补齐。留给以后的：`permission.catalog` /
    `repo.info` 仍在 `connectLanding`；`session.projections` 仍是 20+ 键一整包；权限预设目录
@@ -71,7 +71,7 @@
 | `cd app && flutter test` | 1762 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **844** 项 |
-| `cd relay && pnpm typecheck && node --test` | 类型 + **182** 条 |
+| `cd relay && pnpm typecheck && node --test` | 类型 + **183** 条 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
 ## 八条教训
@@ -117,4 +117,4 @@
 - 2026-10-30 多机四步 + 中转可观测·限额·面板 — `implemented/2026-10-30-*`
 - 2026-11-04 轨迹页重读、目标条、中转三块收口 — `implemented/2026-11-04-*`
 - 2026-11-05..07 双轨版本线 / S2/S4 / 面板六条 / connector 随机标识 / 0.2.2 三条链 —
-  `implemented/2026-11-05-*`、`2026-11-06-*`、`2026-11-05-022-rollout-handoff.md`
+  `implemented/2026-11-05-*`、`2026-11-06-*`、`2026-11-07-connector-id-force-random.md`

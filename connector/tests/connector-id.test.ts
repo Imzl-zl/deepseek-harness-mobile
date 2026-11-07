@@ -1,9 +1,10 @@
 /**
- * 连接器标识：新装随机、老装 `local` 只在没有已配对设备时迁移。
+ * 连接器标识：首装与旧装 `local` 都生成随机值。
  *
  * 2026-11-06 生产事故：两个账号的电脑都用旧默认 `local`，令牌表出现两条指向
- * 同一 `connectorId` 的记录，中转重启拒绝启动（停了 4 分钟）。这条用例钉住
- * "新装不再产生 `local`"与"有配对的老装不被动换 id"两个边界。
+ * 同一 `connectorId` 的记录，中转重启拒绝启动（停了 4 分钟）。2026-11-07 用户
+ * 拍板：用户少、未宣发，**旧装也强制迁移**，不留 `local` 兼容尾巴。这条用例钉住
+ * "任何存储里的 local 都不会被原样返回"。
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -27,23 +28,18 @@ test('newConnectorId：不是 local，形状合法，多次生成不重复', () 
   }
 })
 
-test('resolveConnectorId：首装 / 老装无配对 → 迁移；有配对 → 保留 local', () => {
+test('resolveConnectorId：首装 / 旧装 local 都生成；已是随机值则保留', () => {
   let n = 0
   const generate = (): string => `pc-gen${++n}`
 
-  assert.equal(resolveConnectorId('', false, generate), 'pc-gen1', '首装要生成')
+  assert.equal(resolveConnectorId('', generate), 'pc-gen1', '首装要生成')
   assert.equal(
-    resolveConnectorId(LEGACY_CONNECTOR_ID, false, generate),
+    resolveConnectorId(LEGACY_CONNECTOR_ID, generate),
     'pc-gen2',
-    '老装但没有已配对设备：迁移是免费的',
+    '旧装 local 即使有已配对设备也强制迁移（用户 2026-11-07 拍板）',
   )
   assert.equal(
-    resolveConnectorId(LEGACY_CONNECTOR_ID, true, generate),
-    LEGACY_CONNECTOR_ID,
-    '有已配对设备：换 id 会让它们全部验签失败，必须保留',
-  )
-  assert.equal(
-    resolveConnectorId('pc-already-unique', true, generate),
+    resolveConnectorId('pc-already-unique', generate),
     'pc-already-unique',
     '已经是新标识的装机不动',
   )

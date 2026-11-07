@@ -416,7 +416,7 @@ app/packages/
 | 面 | 规则 | 出处 |
 |---|---|---|
 | 身份 | `id = hostId|url`（没有归属时退回 url，见 `endpointIdOf`）；`kind` / `label` / `manual` 是属性，不是身份 | `core/endpoint.dart` 的 `Endpoint` |
-| 归属 | 连接器自报的端点盖上**当前配对那台电脑的 Ed25519 公钥**（`pcSignPubHex` → `hostId`，客户端字段，不上线）；**换了一台电脑后，旧电脑报过的自动条目直接剪掉**，手填的永不动。用公钥不用 `pcId`：后者是连接器 id（新装随机 `pc-…`，旧装可能是 `local`），两台旧电脑仍可能撞 | `data/endpoint_book.dart` 的 `mergeDiscoveredEndpoints`、`.agents/notes/implemented/2026-10-29-endpoint-host-scoped-pruning.md` |
+| 归属 | 连接器自报的端点盖上**当前配对那台电脑的 Ed25519 公钥**（`pcSignPubHex` → `hostId`，客户端字段，不上线）；**换了一台电脑后，旧电脑报过的自动条目直接剪掉**，手填的永不动。用公钥不用 `pcId`：后者是连接器路由标签（随机 `pc-…`，可被复制/重装），不是加密身份；端点归属要的是密钥 | `data/endpoint_book.dart` 的 `mergeDiscoveredEndpoints`、`.agents/notes/implemented/2026-10-29-endpoint-host-scoped-pruning.md` |
 | 按 id 记账的四样 | `hidden` / `succeeded` / 拨号记录（`attempts`）/ "记住的那条"（`remembered`）都按 `Endpoint.id`；**同一个 url 属于两台电脑时互不继承**（B 不会因为 A 成功过而保留 A 的死地址） | `core/endpoint.dart` 的 `endpointIdOf` / `EndpointMeta`、`data/endpoint_book.dart`、`.agents/notes/implemented/2026-10-30-endpoint-and-ui-state-host-scoping.md` |
 | 拨号次序 | 记住的那条 → 同 /24 的 → 本机其余 → **别的电脑报的** → **冷却中的**；**不删、不永久降权**（降权等于"出门一次就再也回不到直连"） | `core/endpoint.dart` 的 `dialOrder`、`core/endpoint_transport.dart` |
 | 拨号方式 | **竞速**：按表顺序错开 250ms 启动，第一个建立 socket 的赢，其余立刻关（**不进握手**）。中转端点同一时刻只让一条在飞（`replaced` 语义会顶掉前一条），直连可并发。总耗时 ≈ 单条上限 + 错开，不随端点条数线性增长 | `core/endpoint_transport.dart`、`.agents/notes/implemented/2026-10-30-dial-racing-and-buffer-trim.md` |

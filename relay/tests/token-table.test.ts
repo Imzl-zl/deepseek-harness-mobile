@@ -81,6 +81,20 @@ test('校验规则只有一份：createDigestAuthenticator 与表同义', () => 
   assert.equal(authenticate.size, table.size)
 })
 
+test('旧 local 绑定是墓碑：两条也不阻止建表，令牌本身失效、仍可管理', () => {
+  const legacy: readonly TokenDigest[] = [
+    { kind: 'connector', id: 'tk_a', hash: hash('t-a'), userId: 'u_1', connectorId: 'local' },
+    { kind: 'connector', id: 'tk_b', hash: hash('t-b'), userId: 'u_2', connectorId: 'local' },
+  ]
+  const table = createTokenTable(legacy)
+  assert.equal(table.authenticate('t-a'), undefined, '旧 local 令牌不再能认证')
+  assert.equal(table.authenticate('t-b'), undefined)
+  assert.equal(table.ownerOf('local'), undefined, '不再有 local 这个路由身份')
+  assert.equal(table.size, 0, '可用条数为 0')
+  assert.equal(table.list().length, 2, '记录还在，管理台能吊销/删除')
+  assert.equal(table.revoke('tk_a'), true, '墓碑仍可按 id 吊销')
+})
+
 test('首连绑定：未绑定按令牌 id 索引，绑定后只按 connectorId；重置回到未绑定', () => {
   const table = createTokenTable([
     { kind: 'connector', id: 'tk_1', hash: hash('t-tk'), userId: 'u_1' },

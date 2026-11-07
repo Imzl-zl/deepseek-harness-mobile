@@ -518,31 +518,32 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           ? initialMeta({ connectorId: '', relayUrl: relayUrlInUse(), connTokenSecretRef: tokenRef() })
           : migrated
         const pairedDevices = [...core.table('devices').keys()].length
-        // **新装随机、老装只在没有已配对设备时迁移**：换 id 会让所有已配对手机的
-        // 握手 transcript 验签失败（等价于全部重新扫码）。取舍见 `connector-id.ts`。
-        const resolved = resolveConnectorId(configured.connectorId, pairedDevices > 0, newConnectorId)
+        // **所有 `local` 一律迁移成随机值**（2026-11-07 用户拍板：用户少、未宣发，
+        // 不留兼容尾巴）。换 id 会让已配对手机的握手 transcript 验签失败，这是
+        // 有意的代价；旧中转令牌也绑在 `local` 上，必须一起清掉，见下。
+        const legacyId = configured.connectorId === LEGACY_CONNECTOR_ID
+        const resolved = resolveConnectorId(configured.connectorId, newConnectorId)
         if (!isConnectorId(resolved)) {
           // 存储值来自我们自己，坏值说明有人手改了文件；继续跑会得到一张换不出去的令牌。
           throw new Error(`connector/unsupported: 本机标识形状不合法（${resolved}）`)
         }
         if (resolved !== configured.connectorId) {
+          if (legacyId) {
+            // 旧令牌一定绑在 `local` 上，新 id 对不上；先清掉，避免下次启动拿旧票
+            // 反复 403 却看不出原因。清掉后 `ensureRelayToken` 会重新兑换（open）
+            // 或如实报"没有令牌"（required，用户需要在管理台重签）。
+            await clearRelayToken(ctx.credentials, tokenRef())
+          }
           await core.global.set({ ...configured, connectorId: resolved })
           logger.info(
-            configured.connectorId === LEGACY_CONNECTOR_ID
-              ? `本机标识已从旧默认值 ${LEGACY_CONNECTOR_ID} 迁移为 ${resolved}（没有已配对设备）`
+            legacyId
+              ? `本机标识已从旧默认值 ${LEGACY_CONNECTOR_ID} 迁移为 ${resolved}：`
+                + '旧中转令牌已清除，所有已配对手机需重新扫码'
               : `已写入新的本机标识 ${resolved}`,
           )
         } else if (migrated !== stored) {
           await core.global.set(migrated)
           logger.info(`存储 schema 已从 v${stored.schema} 迁移到 v${migrated.schema}`)
-        }
-        // 老装 `local` + 有配对：换它 = 全部重新扫码，所以保留并**告警**。
-        // 多租户中转上的残留冲突按 cookbook §6.6 处理（重启前先查令牌表）。
-        if (resolved === LEGACY_CONNECTOR_ID && pairedDevices > 0) {
-          logger.warn(
-            `本机标识仍是旧默认值 ${LEGACY_CONNECTOR_ID}：多租户中转上可能与别的电脑撞车。`
-            + '换标识会让所有已配对手机重新扫码；重启中转前按 cookbook §6.6 检查令牌表。',
-          )
         }
 
         metrics.gauge(METRIC.pairedDevices, pairedDevices)

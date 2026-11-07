@@ -225,20 +225,22 @@ App 仍显示「已连接」，且能在会话里收到新消息 ——
 ## 6.6 更新镜像（两端版本要对齐）
 
 **重启前先看一眼令牌表**：中转在启动时会校验"每个 `connectorId` 只能有一条记录"，冲突就
-**拒绝启动**（`relay/src/token-table.ts:157-162`）。新装连接器的本机标识是随机 `pc-…`
-（`connector/src/connector-id.ts`），不会再重复；但**旧装**可能仍是默认 `local`
-（首次运行写进存储后不再变），所以两台旧电脑连上同一台中转时，第二个人的令牌会绑到
-已被占用的 `local`：
+**拒绝启动**（`relay/src/token-table.ts`）。新装连接器的本机标识是随机 `pc-…`
+（`connector/src/connector-id.ts`）；旧装的 `local` 在升级时**强制迁移成随机值**
+（所有已配对手机要重扫，旧令牌同时清掉）。升级完成后不会再产生 `local`，但配置里可能
+还留着升级前的旧条目：
 
 ```bash
-# 命中就说明有冲突（输出里同一个 connectorId 出现两次）
+# 看还有哪些绑定（local 是旧默认值的墓碑）
 python3 -c "
 import json;c=json.load(open('relay/relay.config.json'))
 print([(t['id'],t.get('connectorId')) for t in c['tokens'] if t.get('connectorId')])"
 ```
 
-修法是给其中一条**清掉 `connectorId`**（令牌本身仍然有效，下次首连再绑；等效于控制台的
-「重置绑定」），再重启。不要靠"删令牌"解决 —— 那会断掉那个人的电脑。
+`local` 条目**不会再阻止启动**：中转把它当墓碑跳过（令牌失效、不进路由索引），管理台仍能
+看见并删除。其余重复的随机 id 仍按老规矩处理：给其中一条清掉 `connectorId`（令牌仍有效，
+下次首连再绑；等效于控制台的「重置绑定」）。不要靠"删令牌"解决非 `local` 的冲突 ——
+那会断掉那个人的电脑。
 
 ```bash
 cd ~/dsh-mobile            # 服务器上的仓库目录
@@ -355,8 +357,8 @@ docker compose -f relay/docker-compose.server.yml --env-file relay/.env logs --t
 
 4. **添加电脑**:`/console` →「添加电脑」→ 复制只显示一次的令牌 → 电脑的 DSH「手机 → 连接」粘贴。
    `relayTokenRef` 空着时按默认格 `relay-connector` 读写，不用先改配置。第一次连上时中转把令牌绑定到该电脑的 `pcId`
-   （新装是随机 `pc-…`，在插件面板「连接」卡里能看到；旧装可能是 `local`）；
-   之后换电脑必须新建令牌或先「重置绑定」。
+   （新装/升级后都是随机 `pc-…`，在插件面板「连接」卡里能看到；旧装的 `local` 在升级时
+   强制迁移，手机要重扫）；之后换电脑必须新建令牌或先「重置绑定」。
 
 5. **数据卷**：compose 必须挂 `./data:/config/data`（整目录，不要单文件）——SQLite 的 WAL 会生成
    `relay.db-wal` / `relay.db-shm`。备份用停容器后复制 `data/`，或 `sqlite3 data/relay.db ".backup ..."`。

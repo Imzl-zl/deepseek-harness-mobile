@@ -9,23 +9,25 @@
  * 共用中转上两台电脑都叫 `local` 时，令牌表会出现两条指向同一个 `connectorId`
  * 的记录，中转重启直接拒绝启动（`relay/src/token-table.ts` 的启动校验）。
  *
- * ## 为什么新装随机、老装有配对就保留
+ * ## 为什么老装也强制迁移
  *
- * 换 `pcId` 等于**所有已配对设备的握手 transcript 全部验签失败**（它们存着配对时
- * 的 `pcId`），也就是全部重新扫码。所以：
- * - 新装：随机 `pc-…`，一次写死，不再复发；
- * - 老装且**没有任何已配对设备**：没有东西可破坏，顺手迁到随机值；
- * - 老装有已配对设备：保留 `local`，只记一条告警。多租户中转上的残留冲突按
- *   `docs/cookbook/relay-on-a-server.md` §6.6 处理（清掉一条令牌绑定），
- *   或者由用户主动重新配对换新身份。
+ * 2026-11-07 用户拍板：现在用户很少、还没宣发，**不要为 `local` 留兼容尾巴**。
+ * 所有 `local` 一律迁移成随机值。代价是明确的：
+ * - 所有已配对手机都要重新扫码（它们存着配对时的 `pcId`，transcript 对不上）；
+ * - 旧中转令牌绑在 `local` 上，迁移时必须清掉，重新自助兑换或由管理员签发。
+ *
+ * 这不影响"加密身份"：手机真正钉的是 `pcSignPubHex`；`pcId` 只是路由标签。
+ * 换标签不改密钥，只是让旧配对作废 —— 这正是"换一台电脑身份"的语义。
  *
  * 取舍与被否方案见
- * `.agents/notes/implemented/2026-11-06-connector-id-random-default.md`。
+ * `.agents/notes/implemented/2026-11-07-connector-id-force-random.md`。
  */
 import { randomBytes } from 'node:crypto'
 
 /** 旧装的默认值。只用于识别"这是历史值"，不再作为新装默认。 */
-export const LEGACY_CONNECTOR_ID = 'local'/** 令牌表/中转控制面接受的 id 形状（`main.ts` 的自动签发校验同一条）。 */
+export const LEGACY_CONNECTOR_ID = 'local'
+
+/** 令牌表/中转控制面接受的 id 形状（`main.ts` 的自动签发校验同一条）。 */
 const CONNECTOR_ID = /^[A-Za-z0-9._-]{1,64}$/
 
 /**
@@ -43,18 +45,15 @@ export function newConnectorId(): string {
  * 决定这次启动用哪个标识。
  *
  * @param stored - 存储里的值；空串是"尚未配置"的哨兵。
- * @param hasPairedDevices - 设备表里有没有已配对行（有 = 换 id 会让它们全部验签失败）。
  * @param generate - 生成函数（测试注入；产品用 {@link newConnectorId}）。
  */
 export function resolveConnectorId(
   stored: string,
-  hasPairedDevices: boolean,
   generate: () => string = newConnectorId,
 ): string {
-  if (stored === '') return generate()
-  // 旧默认值 + 没有已配对设备：迁移是免费的，顺手做掉。
-  if (stored === LEGACY_CONNECTOR_ID && !hasPairedDevices) return generate()
-  // 其余（包括老装 `local` + 有配对）原样保留：换它等于让所有手机重新扫码。
+  // 首装，或旧默认值：都生成新的。旧装即使有已配对设备也照换 ——
+  // 用户 2026-11-07 拍板"没多少用户，直接换新的"，不再留 `local` 兼容尾巴。
+  if (stored === '' || stored === LEGACY_CONNECTOR_ID) return generate()
   return stored
 }
 

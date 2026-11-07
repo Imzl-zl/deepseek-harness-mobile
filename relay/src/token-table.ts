@@ -27,6 +27,18 @@ import { connectorIdOf, type Authenticated, type TokenDigest } from './digest-au
 const digestOf = (token: string): string => createHash('sha256').update(token, 'utf8').digest('hex')
 
 /**
+ * 旧默认连接器 id（2026-11-07 起只作为墓碑）。
+ *
+ * 连接器升级时会把 `local` 强制迁成随机 `pc-…`，并清掉自己那份旧令牌。中转这边
+ * 仍可能从旧配置里读到绑在 `local` 上的令牌：它们**不能再作为路由身份**，否则两台
+ * 旧电脑仍会撞 `byConnector` 的唯一性、阻止启动。这里保留 `byId`（管理台可吊销/
+ * 删除、审计认得出），但不进 `byConnector` 与 `byHash` —— 令牌本身失效，启动也不再
+ * 因两条 `local` 拒绝。理由见
+ * `.agents/notes/implemented/2026-11-07-connector-id-force-random.md`。
+ */
+const LEGACY_CONNECTOR_ID = 'local'
+
+/**
  * 面板能看到的行：**没有 `hash`**。
  *
  * 摘要也不该离开这个模块 —— 管理面只需要"有哪几个身份、谁被吊销了"。
@@ -152,9 +164,12 @@ export function createTokenTable(
       )
     }
     byId.set(entry.id, { ...entry })
+    // **旧默认 `local` 是墓碑**：保留记录供管理台吊销/删除，但不进路由索引与认证索引。
+    // 这样旧配置里两条 `local` 不会阻止启动，旧令牌也不会再连上来。
+    const connectorKey = connectorKeyOf(entry)
+    if (connectorKey === LEGACY_CONNECTOR_ID) continue
     // **同一个 connectorId 只能有一条记录**：控制面自报的 `?id=`、额度主体与账号归属
     // 都靠这张索引；两条记录指向同一个连接器时，"吊销的是哪一条"又变成猜。
-    const connectorKey = connectorKeyOf(entry)
     if (byConnector.has(connectorKey)) {
       throw new Error(
         `令牌摘要表里有两个条目指向同一个连接器（${connectorKey}）：拒绝启动，先修配置`,

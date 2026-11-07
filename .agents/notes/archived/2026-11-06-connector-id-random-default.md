@@ -1,6 +1,10 @@
 # 连接器标识：新装随机，老装只在没有配对时迁移
 
-Status: implemented
+> 已被 `implemented/2026-11-07-connector-id-force-random.md` 取代（2026-11-07）：
+> 用户拍板用户少、未宣发，所有 `local` 一律强制迁移，不再保留有配对的老装。
+> 本文件结论不改，移入 `archived/` 冻结。
+
+Status: archived
 
 ## Problem
 
