@@ -57,12 +57,19 @@
 - **真机验收**：真机库副本（24.5 MB）喂 v2→v3 —— 4136 条条目一条不少、14 个水位键全带前缀、
   `device.*` 原样；debug 包装机实测迁移（未分域行 0、无崩溃，验完复原空 v3）。**唯一没验**：
   两台电脑同时配对后切电脑外观不回默认（要两次扫码）。
-- **生产中转已更新到 v0.2.9 代码**（`dsh.0t0.me`，华为云 `/opt/dsh-mobile`，`6c9d906`）：镜像重建 +
-  重启，含"匿名管理桶按真实来源地址分"那条修复。重启踩到一颗雷 —— 令牌表里两条记录都绑
-  `connectorId: local`（两个租户的电脑都用默认 `pcId`），中转**拒绝启动**，停了约 4 分钟；清掉
-  其中一条的绑定后恢复。根因与落地修法见
-  `implemented/2026-11-07-connector-id-force-random.md`：新装随机，旧装 `local` 强制迁移
-  （手机重扫、旧令牌清除）；中转侧的旧 `local` 条目按墓碑处理（不再阻止启动、令牌失效）。
+- **中转踩过的雷（v0.2.9 那次）**：令牌表里两条记录都绑 `connectorId: local`（两个租户的电脑都用
+  默认 `pcId`）时，中转**拒绝启动**（停了约 4 分钟）；清掉其中一条的绑定后恢复。修法见
+  `implemented/2026-11-07-connector-id-force-random.md`：新装随机 id、旧装 `local` 强制迁移
+  （手机重扫、旧令牌清除），中转侧把旧 `local` 当墓碑 —— v0.2.11 起这条已在生产生效，不会再触发。
+- **生产中转已更新到 v0.2.11 代码**（`dsh.0t0.me`，华为云 `/opt/dsh-mobile`，`v0.2.11` 标签 /
+  `841bc33`，镜像 `sha256:4e309b47…`）：`git fetch && git checkout v0.2.11` + `docker compose -f
+  docker-compose.server.yml up -d --build`，容器 healthy。本次中转侧变更 = **旧 `local` 令牌按
+  墓碑处理**（`token-table.ts`：保留在 `byId` 供管理台吊销，不进 `byConnector`/`byHash`）+
+  管理台页面与 UI kit。启动日志「摘要表 **3** 条」即墓碑生效（配置里 4 条，`local` 那条被排除）；
+  上次那颗"两条 `local` 拒绝启动"的雷因此不会复发。更新后实测：配置里 `local` 绑定已由连接器
+  侧迁移清掉（那台电脑换了随机 id `pc-Wjg3E1COkdC-` 并重新登记），重启中转后半秒内
+  `connector.open` 就回来了 —— 旧令牌失效没有造成掉线，走的是既定的迁移路径。
+  回滚：`git checkout 6c9d906 && docker compose -f docker-compose.server.yml up -d --build`。
 - **门禁**：app 1779 / boundary 843（29 条自检 + 190 文件）/ connector 844 / relay 183 /
   protocol 454·26·49；`dart analyze --fatal-infos` 与 `dart format` 各 0。
 
