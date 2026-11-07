@@ -6,6 +6,17 @@
 
 ## 现在（2026-11-07）
 
+- **流式条目与持久条目同形（2026-11-07）**：累加器按 `chunk.type` 分流成
+  `LiveMessage {reasoning, text}`（`app/lib/core/live_message.dart`），思考不再冒充正文；
+  尾条目搬到 `chat_turns.dart` 的 `LiveAssistantTurn`，与 `AssistantTurn` 并排，
+  思考走 `ReasoningRow(running: true)`（摘要 = 最后完成段落首行），正文 `selectable: false`。
+  决策笔记 `implemented/2026-11-07-live-message-shape.md`。**未做**：流式块级冻结、
+  阅读位置补偿（倒序列表最新端插入/增长会顶走阅读内容，已量到 100 px）。
+- **v0.2.10 已发版**（`app/pubspec.yaml` `0.2.10+5`；Release：`dsh-mobile-v0.2.10.apk`（release 签名）
+  + `dsh-mobile-connector-0.1.21.tgz`）：内容 = 流式思考与正文分流（`LiveMessage`，思考不再混进正文）、
+  **思考随轮组折叠的两处判据**（答复自带的思考算过程证据 / 未收口的一轮过程保持展开，
+  笔记 `implemented/2026-11-07-reasoning-is-process.md`）、端点动作弹框改「立即连接」并去掉
+  冗余状态句（笔记 `implemented/2026-11-07-endpoint-action-label-and-disabled-state.md`）。
 - **v0.2.9 已发版**（`app/pubspec.yaml` `0.2.9+4`；Release：`dsh-mobile-v0.2.9.apk`（release 签名）
   + `dsh-mobile-connector-0.1.21.tgz`）：内容 = P1 能力口与事件载荷端口、S0–S4、设置行值封顶 42%、
   一批过期与多余的解释句。**connector 0.1.21 一并发了**：`v*` 标签本来就会发插件
@@ -37,7 +48,7 @@
   其中一条的绑定后恢复。根因与落地修法见
   `implemented/2026-11-07-connector-id-force-random.md`：新装随机，旧装 `local` 强制迁移
   （手机重扫、旧令牌清除）；中转侧的旧 `local` 条目按墓碑处理（不再阻止启动、令牌失效）。
-- **门禁**：app 1762 / boundary 833（29 条自检 + 188 文件）/ connector 844 / relay 183 /
+- **门禁**：app 1775 / boundary 837（29 条自检 + 189 文件）/ connector 844 / relay 183 /
   protocol 454·26·49；`dart analyze --fatal-infos` 与 `dart format` 各 0。
 
 ## 下一步
@@ -65,10 +76,10 @@
 | 命令 | 覆盖 |
 |---|---|
 | `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 833 项（29 条规则自检 + 188 个 Dart 文件） |
+| `node app/tools/verify-platform-boundary.mjs` | 837 项（29 条规则自检 + 189 个 Dart 文件） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1762 项（约 1 分钟） |
+| `cd app && flutter test` | 1775 项（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **844** 项 |
 | `cd relay && pnpm typecheck && node --test` | 类型 + **183** 条 |
