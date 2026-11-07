@@ -83,6 +83,8 @@ List<Map<String, Object?>> _closedTurn(
   String tool = 'bash',
   bool emptyAnswer = false,
   bool withThinkingStep = false,
+  bool withReasoningOnAnswer = false,
+  bool closeTurn = true,
 }) => [
   {
     'type': 'turn/start',
@@ -167,21 +169,27 @@ List<Map<String, Object?>> _closedTurn(
         'content': emptyAnswer
             ? <Object?>[]
             : [
+                // 最终答复**自带的思考**：它不是独立条目，但同样属于过程
+                // （DSH 的 `processMember`）。真实形状：同一个
+                // `assistant/message` 里 reason 段在前、text 段在后。
+                if (withReasoningOnAnswer)
+                  {'type': 'reasoning', 'text': '第 $turn 轮的思考'},
                 {'type': 'text', 'text': '第 $turn 答'},
               ],
       },
     },
   },
-  {
-    'type': 'turn/end',
-    'seq': turn * 10 + 6,
-    'itemId': 'e:$turn',
-    'time': 6,
-    'data': {
-      'turn': turn,
-      'reason': {'kind': 'completed'},
+  if (closeTurn)
+    {
+      'type': 'turn/end',
+      'seq': turn * 10 + 6,
+      'itemId': 'e:$turn',
+      'time': 6,
+      'data': {
+        'turn': turn,
+        'reason': {'kind': 'completed'},
+      },
     },
-  },
 ];
 
 Future<AppModel> _pump(WidgetTester tester, _FeedClient client) async {
@@ -305,5 +313,43 @@ void main() {
     await _settle(tester);
     expect(find.text('bash'), findsNothing, reason: '上一轮该收了');
     expect(find.text('read'), findsOneWidget);
+  });
+
+  testWidgets('答复里只有思考、没有工具：该轮仍可折，展开后思考可见', (tester) async {
+    final client = _FeedClient();
+    final app = await _pump(tester, client);
+    addTearDown(app.dispose);
+
+    // 这一轮没有工具调用：唯一的"过程"是最终答复里带的思考。
+    // 判据错了的话这一轮会被当成"没有过程" —— 收口行没有箭头（点不开），
+    // 而展开态按设置又是 false ⇒ 思考既不可见、也没有入口能看见
+    // （2026-11-07 真机：桌面上有「思考」，手机上没有）。
+    client.emit('s1', _closedTurn(1, withReasoningOnAnswer: true));
+    await _settle(tester);
+
+    expect(find.text('第 1 答'), findsOneWidget);
+    expect(find.text('思考过程'), findsNothing, reason: '收口后按「回答结束后」收起');
+
+    await tester.tap(find.textContaining('第 1 轮'));
+    await _settle(tester);
+    expect(find.text('思考过程'), findsOneWidget, reason: '展开后思考必须回来');
+  });
+
+  testWidgets('还没收口的一轮：过程保持展开（DSH：尚未结束 ⇒ 过程不收起）', (tester) async {
+    final client = _FeedClient();
+    final app = await _pump(tester, client);
+    addTearDown(app.dispose);
+
+    // 没有 `turn/end`：这一轮还在跑。设置仍是「回答结束后」，
+    // 而 DSH 的规则是「尚未结束 ⇒ 过程内容保持展开」。
+    client.emit(
+      's1',
+      _closedTurn(1, withReasoningOnAnswer: true, closeTurn: false),
+    );
+    await _settle(tester);
+
+    expect(find.text('思考过程'), findsOneWidget, reason: '跑步中思考不收起');
+    expect(find.text('bash'), findsOneWidget, reason: '跑步中工具不收起');
+    expect(find.text('第 1 答'), findsOneWidget);
   });
 }

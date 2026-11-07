@@ -34,6 +34,7 @@ import 'host_rpc.dart';
 import 'items.dart';
 import 'job.dart';
 import 'keepalive.dart';
+import 'live_message.dart';
 import 'outbox.dart';
 import 'recovery.dart';
 import 'session_restore.dart';
@@ -1035,11 +1036,11 @@ class _SyncClient
     _liveAccumulate(sid, stream, rev, plaintext);
   }
 
-  /// 每会话一个 `LiveAccumulator`（`app-channel-client.md` §2.2）。
-  final Map<String, LiveAccumulator> _live = {};
+  /// 每会话一个 `LiveMessageAssembler`（`app-channel-client.md` §2.2）。
+  final Map<String, LiveMessageAssembler> _live = {};
 
   void _liveAccumulate(String sid, int stream, int rev, String plaintext) {
-    final acc = _live.putIfAbsent(sid, LiveAccumulator.new);
+    final acc = _live.putIfAbsent(sid, LiveMessageAssembler.new);
     final changed = acc.accept(stream: stream, rev: rev, payload: plaintext);
     // 跳号时 `changed` 为 false：**丢弃该流已累积内容并停止渲染**，
     // 等持久 `assistant/message` 到达（自愈，不请求重传）。
@@ -1048,9 +1049,9 @@ class _SyncClient
       sid,
       SessionDelta(
         sid: sid,
-        // **流式文本走 `liveText`，不进 `events`**：它没有稳定 itemId，
-        // 且会被随后的持久 `assistant/message` 整体替换（见 `SessionDelta.liveText`）。
-        liveText: acc.text,
+        // **流式内容走 `liveMessage`，不进 `events`**：它没有稳定 itemId，
+        // 且会被随后的持久 `assistant/message` 整体替换（见 `SessionDelta.liveMessage`）。
+        liveMessage: acc.message,
         transient: _deps.session.transientOf(sid),
       ),
     );
@@ -1996,81 +1997,6 @@ class _Reply {
 
   final Object? value;
   final String plaintext;
-}
-
-/// 每会话的流式累加器（`app-channel-client.md` §2.2）。
-///
-/// 读法（**顺序即语义**）：
-/// - `stream` 变大 ⇒ 换流（上一次尝试结束），重置累加器；
-/// - `rev == last + 1` ⇒ 追加；
-/// - `rev` 跳跃 ⇒ **丢弃该流已累积内容并停止渲染**，等持久 `assistant/message` 到达
-///   （自愈，**不请求重传**）。
-///
-/// 它**不碰任务输出**（`job` 帧）：任务输出的"修订号"是字节偏移、会跳号，
-/// 而这个累加器把跳号读成"丢流" —— 两者不能共用一个累加器（契约 §3 的术语表）。
-class LiveAccumulator {
-  int? _stream;
-  int? _lastRev;
-  final StringBuffer _text = StringBuffer();
-
-  /// 当前累积的文本（跳号后为空 —— 那是"停止渲染"的意思）。
-  String get text => _text.toString();
-
-  /// 当前流 id。
-  int? get stream => _stream;
-
-  /// 最近一次修订号。
-  int? get lastRev => _lastRev;
-
-  /// 收一帧 `live`。
-  ///
-  /// @returns 内容是否变化（`false` = 跳号，调用方**不该**重绘）。
-  bool accept({
-    required int stream,
-    required int rev,
-    required String payload,
-  }) {
-    if (_stream != stream) {
-      // 换流：上一次尝试结束了。重置累加器（旧内容由持久事件负责替换）。
-      _stream = stream;
-      _lastRev = null;
-      _text.clear();
-    }
-    final last = _lastRev;
-    if (last != null && rev != last + 1) {
-      // 跳跃：丢弃已累积内容并**停止渲染**，等持久事件到达。
-      _lastRev = rev;
-      _text.clear();
-      return false;
-    }
-    _lastRev = rev;
-
-    // 载荷形状见 `session-subscriptions.ts` 的 `expand`：`{type, time?, chunk?, ...}`。
-    try {
-      final parsed = _jsonDecode(payload);
-      if (parsed is Map) {
-        final chunk = parsed['chunk'];
-        if (chunk is Map) {
-          final text = chunk['text'];
-          if (text is String && text.isNotEmpty) {
-            _text.write(text);
-            return true;
-          }
-        }
-      }
-    } catch (_) {
-      // 载荷读不懂不该断连（它只是流式输出）：停在当前内容上。
-      return false;
-    }
-    return false;
-  }
-
-  /// 持久事件到达：**替换**累加器内容（以持久为准，避免"流式与最终文本不一致"）。
-  void replaceWith(String finalText) {
-    _text
-      ..clear()
-      ..write(finalText);
-  }
 }
 
 /// 取一个整数字段（不是 int 就是 `null`，**不收 num**）。

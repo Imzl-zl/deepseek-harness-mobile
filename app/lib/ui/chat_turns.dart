@@ -18,6 +18,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/live_message.dart';
 import '../data/projection.dart';
 import '../model/chat_item.dart';
 import '../model/session_stats.dart'
@@ -215,6 +216,70 @@ class AssistantTurn extends StatelessWidget {
   }
 }
 
+/// **流式尾条目**：正在生成的助手内容（思考 + 正文）。
+///
+/// ## 与 [AssistantTurn] 是同一个骨架
+///
+/// 头像、思考行、正文三段与持久条目**逐一对应**，只有两点不同：
+///
+/// 1. 思考行标 `running`（标题扫光、摘要走"最后完成段落"）；
+/// 2. 正文**不给选择器** —— 流式文本每 50 ms 整段重排，选择注册是这条链上
+///    最贵的一段（`docs/subsystems/app-channel-client.md` §4）。
+///
+/// 为什么骨架必须一致：流结束那一帧，条目从"虚拟尾"换成持久消息；两套构造
+/// 会让整行高度变一次，正文**跳一下**（2026-10-20 第 7 条）。DSH 的流式尾与
+/// 落定条目是同一个节点类型（`ui-chat/src/client/chat/AssistantNodeView.tsx`）。
+///
+/// ## 它为什么是"虚拟条目"
+///
+/// `AppModel.liveTail` 没有稳定 itemId（它是累加器的当前内容，会被随后的
+/// 持久 `assistant/message` **整体替换**）—— 所以不进 store、不当 ChatItem，
+/// 只在列表末尾多占一格。
+///
+/// 形状与持久条目共用 [LiveMessage]（`core/live_message.dart`）：两段（思考、
+/// 正文）。曾经把 `reasoning-delta` 也倒进正文，于是生成中满屏是思考、
+/// 且没有可点的折叠行。
+class LiveAssistantTurn extends StatelessWidget {
+  const LiveAssistantTurn(this.message, {super.key, this.showHead = true});
+
+  /// 正在生成的内容（思考 + 正文，与持久条目同形）。
+  final LiveMessage message;
+
+  /// 要不要带头像。**本轮已经有过程条目时不再画** —— 那一组的头已经在开头
+  /// 画过了（否则同一条回答上会出现两个头像）。
+  final bool showHead;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (showHead) const AssistantHead(),
+          // **思考**：与持久条目同一个折叠行，只是标 `running`。
+          // 正文不展开、标题扫光、摘要只说"最后完成那一段的首行"。
+          if (message.reasoning.trim().isNotEmpty)
+            ReasoningRow(text: message.reasoning, running: true),
+          // **正在生成的正文**（Markdown，与持久消息同一套渲染）。
+          if (message.text.isNotEmpty)
+            DshMarkdown(message.text, selectable: false)
+          // 两段都空才占位：只有思考时上面那行已经是反馈了。
+          else if (message.reasoning.trim().isEmpty)
+            Text(
+              '正在生成…',
+              // 占位与正文同一档（它出现的下一帧就会被正文替换，字号跳一下更刺眼）。
+              style: TextStyle(
+                fontSize: context.dshType.body,
+                color: context.dshColors.labelTertiary,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 /// 助手消息的头部：DSH 鲸鱼徽标 + 说话者名字（**DeepSeek Harness**）。
 ///
 /// 抽出来是因为**流式尾条目与持久条目必须是同一个头**：原来
@@ -280,11 +345,19 @@ class AssistantHead extends StatelessWidget {
 ///   是"过程"而不是"一条助手消息"。一个 turn 里出现好几次「助手」头像正是
 ///   因为这一点没分开（用户 2026-10-22 当场指出）。
 class ReasoningRow extends StatelessWidget {
-  const ReasoningRow({super.key, required this.text});
+  const ReasoningRow({super.key, required this.text, this.running = false});
 
   final String text;
 
-  /// 收起时显示的第一行（DSH `ReasoningRow.tsx:56` 的 `firstLine`）。
+  /// 这是**还在生成的那一段**（流式尾条目）：标题扫光，摘要跟着走到
+  /// "最后一段已完成段落的首行"（DSH `ReasoningRow.tsx:64` 的
+  /// `running ? latestCompletedParagraphFirstLine(text) : firstLine(text)`）。
+  ///
+  /// 为什么流式不用"首行"：思考的第一行在生成十秒后早就滚过去了，
+  /// 一直显示同一句等于没有反馈。
+  final bool running;
+
+  /// 收起时显示的第一行（DSH `ReasoningRow.tsx:12-15` 的 `firstLine`）。
   static String _firstLine(String text) {
     final newline = text.indexOf('\n');
     return newline == -1 ? text : text.substring(0, newline);
@@ -292,14 +365,52 @@ class ReasoningRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final preview = running
+        ? latestCompletedParagraphFirstLine(text)
+        : _firstLine(text);
     return _CollapsibleNote(
       icon: 'sparkle',
       label: '思考过程',
       text: text,
       markdownBody: true,
-      collapsedPreview: _firstLine(text).replaceAll('**', ''),
+      running: running,
+      collapsedPreview: preview.replaceAll('**', ''),
     );
   }
+}
+
+/// 流式中思考的折叠摘要：**最后一个已完成段落的第一行**。
+///
+/// 逐条照 DSH `ReasoningRow.tsx:17-33` 的 `latestCompletedParagraphFirstLine`：
+/// 段落分隔是"一个换行 + 至少一个只含空白的行"；每遇到一个分隔，就取分隔前
+/// 那一段的**首行**（非空才记），最后再取末尾那一段。于是摘要随着段落完成
+/// 往前推进，而不会停在开场那句。
+///
+/// 它只决定**摘要**，不决定正文：正文永远是完整思考（展开才看）。
+String latestCompletedParagraphFirstLine(String text) {
+  var summary = '';
+  var start = 0;
+  for (final match in _paragraphBreak.allMatches(text)) {
+    final group = match.group(0)!;
+    final lineBreak = group.indexOf('\n');
+    final end = lineBreak == -1 ? match.end : match.start + lineBreak;
+    final candidate = _firstLineBetween(text, start, end);
+    if (candidate.isNotEmpty) summary = candidate;
+    start = match.end;
+  }
+  final last = _firstLineBetween(text, start, text.length);
+  if (last.isNotEmpty) summary = last;
+  return summary;
+}
+
+/// 段落分隔：`\r?\n` 之后再来至少一个"只含空白的行"（DSH 的同一条正则）。
+final RegExp _paragraphBreak = RegExp(r'\r?\n(?:[\t ]*\r?\n)+');
+
+/// `[start, end)` 里的第一行（到第一个 `\n` 或 `end` 为止），去掉首尾空白。
+String _firstLineBetween(String text, int start, int end) {
+  final newline = text.indexOf('\n', start);
+  final stop = newline == -1 || newline > end ? end : newline;
+  return text.substring(start, stop).trim();
 }
 
 /// 助手头像：26×26、圆角 9、**品牌渐变**（`.a-ava`）。
@@ -1697,7 +1808,13 @@ class _CollapsibleNote extends StatefulWidget {
     this.markdownBody = false,
     this.collapsedPreview = '',
     this.explanation = '',
+    this.running = false,
   });
+
+  /// 这一行**真的在生成**（流式尾条目的思考行）：标题扫光。
+  ///
+  /// 静止的行不许闪（`running-cues.md` §1），所以只有流式那一份传 true。
+  final bool running;
 
   /// 展开后、正文上方的一句说明（DSH `context.explanation` 那一档）。
   final String explanation;
@@ -1774,6 +1891,7 @@ class _CollapsibleNoteState extends State<_CollapsibleNote> {
     icon: widget.icon,
     label: widget.label,
     open: true,
+    running: widget.running,
     onTap: _toggle,
   );
 
@@ -1788,6 +1906,7 @@ class _CollapsibleNoteState extends State<_CollapsibleNote> {
             icon: widget.icon,
             label: widget.label,
             open: _open,
+            running: widget.running,
             preview: widget.collapsedPreview,
             onTap: _toggle,
           ),

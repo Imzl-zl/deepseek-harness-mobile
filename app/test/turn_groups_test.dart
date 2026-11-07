@@ -248,6 +248,29 @@ void main() {
       expect(groups.single.hasProcess, isFalse);
       expect(groups.single.collapsible, isFalse);
     });
+
+    test('答复里带思考 ⇒ 算有过程（思考是 processMember，不是独立条目）', () {
+      // 真实形状：一轮只发一次 `assistant/message`，reasoning 与 text 同在
+      // 那一条消息里；没有任何工具。只查过程条目会把它判成"没有过程" ——
+      // 于是收口行没有箭头、思考也没法展开（2026-11-07 真机）。
+      final groups = buildTurnGroups([
+        start(1, 1),
+        user(2, '问'),
+        const MessageItem(
+          itemId: 'a:3',
+          seq: 3,
+          updatedAt: 0,
+          turn: 1,
+          role: MessageRole.assistant,
+          text: '答',
+          reasoning: '先想一想',
+        ),
+        process(1, 4),
+      ]);
+      expect(groups.single.hasProcess, isTrue);
+      expect(groups.single.collapsible, isTrue);
+      expect(collapsibleTurns(groups), {1});
+    });
   });
 
   group('助手头落在哪（一轮一个、且在最上面）', () {

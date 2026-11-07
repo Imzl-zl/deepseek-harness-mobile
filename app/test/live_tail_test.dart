@@ -21,6 +21,7 @@ import 'dart:async';
 
 import 'package:dsh_mobile/core/connection.dart' as conn;
 import 'package:dsh_mobile/core/job.dart';
+import 'package:dsh_mobile/core/live_message.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/ui/frame_coalesced.dart';
@@ -29,17 +30,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'fake_sync_client.dart';
 
-/// 能推 `live` 帧的替身（`SessionDelta.liveText`）。
+/// 能推 `live` 帧的替身（`SessionDelta.liveMessage`）。
 class _LiveClient extends FakeSyncClient {
   final _sessions = StreamController<SessionDelta>.broadcast();
 
-  void emitLive(String sid, String text) {
+  void emitLive(String sid, String text, {String reasoning = ''}) {
     _sessions.add(
       SessionDelta(
         sid: sid,
         events: const [],
         transient: const {},
-        liveText: text,
+        liveMessage: LiveMessage(reasoning: reasoning, text: text),
       ),
     );
   }
@@ -92,15 +93,15 @@ class _CountedPage extends StatelessWidget {
 class _CountedTail extends StatelessWidget {
   const _CountedTail({required this.tail, required this.onBuild});
 
-  final ValueListenable<String?> tail;
-  final void Function(String? text) onBuild;
+  final ValueListenable<LiveMessage?> tail;
+  final void Function(LiveMessage? message) onBuild;
 
   @override
-  Widget build(BuildContext context) => ValueListenableBuilder<String?>(
+  Widget build(BuildContext context) => ValueListenableBuilder<LiveMessage?>(
     valueListenable: tail,
-    builder: (context, text, child) {
-      onBuild(text);
-      return Text(text ?? '', textDirection: TextDirection.ltr);
+    builder: (context, message, child) {
+      onBuild(message);
+      return Text(message?.text ?? '', textDirection: TextDirection.ltr);
     },
   );
 }
@@ -115,7 +116,7 @@ void main() {
 
     var pageBuilds = 0;
     var tailBuilds = 0;
-    String? tailText;
+    LiveMessage? tailMessage;
     await tester.pumpWidget(
       MaterialApp(
         home: Column(
@@ -123,9 +124,9 @@ void main() {
             _CountedPage(app: app, onBuild: () => pageBuilds += 1),
             _CountedTail(
               tail: app.liveTail,
-              onBuild: (text) {
+              onBuild: (message) {
                 tailBuilds += 1;
-                tailText = text;
+                tailMessage = message;
               },
             ),
           ],
@@ -140,8 +141,8 @@ void main() {
     // 重建会被推到下一帧（交替掉帧，计数看起来"少了一半"）。
     await tester.idle();
     await tester.pump();
-    expect(app.liveText, '第一');
-    expect(tailText, '第一');
+    expect(app.liveTail.value?.text, '第一');
+    expect(tailMessage?.text, '第一');
     final pageAtStreamStart = pageBuilds;
     final tailAtStreamStart = tailBuilds;
 
@@ -162,7 +163,7 @@ void main() {
       5,
       reason: '尾条目应当逐批更新（实际 ${tailBuilds - tailAtStreamStart} 次）',
     );
-    expect(tailText, '第6');
+    expect(tailMessage?.text, '第6');
   });
 
   testWidgets('持久消息到达：尾条目消失 + 页面重建一次（那是形态变了）', (tester) async {
@@ -181,7 +182,7 @@ void main() {
 
     client.emitLive('s1', '正文');
     await tester.pump();
-    expect(app.liveTail.value, '正文');
+    expect(app.liveTail.value?.text, '正文');
 
     // 持久 `assistant/message` 到了：流式槽位让位（§2.2 以持久为准）。
     client.emitPersisted('s1');
@@ -201,7 +202,7 @@ void main() {
     client.emitLive('s1', '正文');
     await Future<void>.delayed(Duration.zero);
     expect(app.items, isEmpty);
-    expect(app.liveText, '正文');
+    expect(app.liveTail.value?.text, '正文');
   });
 }
 

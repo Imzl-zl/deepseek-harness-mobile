@@ -44,11 +44,9 @@ Future<void> pickEndpointToConnect(BuildContext context, AppModel app) async {
         for (final endpoint in app.endpoints)
           DshPickerRow(
             name: endpointKindLabel(endpoint.kind),
-            tags: [
-              endpoint.url,
-              if (endpoint.label.isNotEmpty) endpoint.label,
-              if (app.activeEndpoint?.id == endpoint.id) '当前连接',
-            ],
+            tags: [endpoint.url, if (endpoint.label.isNotEmpty) endpoint.label],
+            // 正在用的那条**置灰 + 打勾**；状态由控件自己表达，
+            // 不再额外挂一句「当前连接」（同一个事实说两遍）。
             selected: app.activeEndpoint?.id == endpoint.id,
             icon: endpoint.kind == EndpointKind.direct ? 'link' : 'globe',
             enabled: app.activeEndpoint?.id != endpoint.id,

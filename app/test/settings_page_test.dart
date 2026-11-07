@@ -139,7 +139,7 @@ Future<void> _scrollTo(WidgetTester tester, Finder target) async {
 
 /// 某一行行尾的「⋯」（次要动作入口）。
 ///
-/// 整行可点是**设为首选**；"现在用这条连"与"删除"走这个按钮。
+/// 整行可点是**设为首选**；"立即连接"与"删除"走这个按钮。
 /// 按行内文字先找到那一行，再取它里面的 IconButton，而不是 `.first`
 /// （`.first` 永远命中第一条，而用例要的是"中转"那一行）。
 Finder _moreOf(String rowText) => find
@@ -263,7 +263,7 @@ void main() {
     addTearDown(app.dispose);
   });
 
-  testWidgets('行尾「⋯」里有「现在用这条连」（立刻连，与首选分开）', (tester) async {
+  testWidgets('行尾「⋯」：动作行只写动作（立刻连与首选分开）', (tester) async {
     final app = buildApp();
     await tester.pumpWidget(_host(app));
     await tester.pumpAndSettle();
@@ -272,8 +272,11 @@ void main() {
     await tester.tap(_moreOf('中转'));
     await tester.pumpAndSettle();
 
-    expect(find.text('现在用这条连'), findsOneWidget, reason: '立刻连的入口在这里');
+    expect(find.text('立即连接'), findsOneWidget, reason: '立刻连的入口在这里');
     expect(find.text('删除这个端点'), findsOneWidget);
+    // **正在用的那条不再挂状态句**：置灰 + 打勾已经把这件事说完了
+    //（2026-11-07 用户："置灰按钮就行，有必要多此一举吗"）。
+    expect(find.text('已经在用这一条'), findsNothing);
     addTearDown(app.dispose);
   });
 

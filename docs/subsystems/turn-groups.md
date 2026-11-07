@@ -68,8 +68,16 @@ seq 93 → 95 → 96），所以用户那句话属于**它前面那个** `turn/s
 `TurnProcessItem` / `TurnOutcomeItem`）。判"已收口"看的是"出现过"而不是"最后一条"
 —— `turn/end` 之后还会落几条没有轮号的记账事件，判最后一条会让已收口的一轮没有箭头。
 
+**"有过程"包括最终回答自带的思考**：`reasoning` 与正文同在一条 `assistant/message` 里，
+它不是独立条目，但折叠时同样被藏（§2）—— 所以它也是"这一轮有东西可收"的证据。
+只查独立过程条目会漏掉"这一轮没有工具、只有思考"的轮次：收口行没有箭头（点不开），
+而默认收起态又是 false ⇒ 思考既不可见、也没有入口能看见（2026-11-07 真机）。
+
 运行中的一轮不可折：DSH 的整轮控制行在 `turn.status !== 'closed'` 时整行不渲染
-（`TurnProcessNodeView.tsx:18`），我们同一条。
+（`TurnProcessNodeView.tsx:18`），我们同一条。**同时它的过程保持展开** ——
+DSH 的整轮折叠表写明「尚未结束 / 已停止或失败 ⇒ 过程内容保持展开，不能收起整轮」
+（`conversation-nodes/README.zh.md`）。少了这一支，"回答结束后"那一档会把还在跑的一轮
+按下去：生成中看不到思考与工具，跑完才出现。
 
 组头右侧一枚箭头：**收起朝下、展开朝上**（DSH 是 `chevronDown` + `rotate(180deg)`，
 `TurnProcessNodeView.module.css:37-39`；落地端 `chat_turns.dart` 的 `TurnProcessRow` 同一条）。
@@ -110,12 +118,15 @@ Flutter 没有 sticky。真正的等价物是 `SliverPersistentHeader`，而它�
 
 ## 6. 判据
 
-- 纯函数 `app/test/turn_groups_test.dart`（17 条）：切分、重复 `turn/start`、
-  历史窗口按轮号分组、可折条件三种、收藏范围、未归属组不折、按轮分别判、
+- 纯函数 `app/test/turn_groups_test.dart`（18 条）：切分、重复 `turn/start`、
+  历史窗口按轮号分组、可折条件三种、**答复里带思考也算过程（可折）**、收藏范围、
+  未归属组不折、按轮分别判、
   助手头落点（含"折叠后按可见条目算""命令卡不拿头""夹记账事件也只画一个头"）。
-- 页面 `app/test/turn_group_collapse_test.dart`（4 条）：收口后默认收起 → 点开 → 再收；
+- 页面 `app/test/turn_group_collapse_test.dart`（6 条）：收口后默认收起 → 点开 → 再收；
   **一轮多步只画一个助手头且头在最上面**（位置断言 + 思考与工具随组收起）；
-  空正文的助手消息不留空行；`next-input` 档最新一轮默认展开、上一轮收起。
+  空正文的助手消息不留空行；`next-input` 档最新一轮默认展开、上一轮收起；
+  **只有思考、没有工具的一轮仍可折且展开后思考可见**；
+  **还没收口的一轮：思考与工具都保持展开**。
 - 投影 `app/test/assistant_step_projection_test.dart`（3 条）：有正文 → 助手消息；
   只有思考 → 过程行；都没有 → 不占条目。
 - 原型 `mock/proto/tools/verify-turns.mjs`（60 项，需 headless）：未归属组不折、

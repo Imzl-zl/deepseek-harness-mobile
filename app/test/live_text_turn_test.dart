@@ -2,22 +2,23 @@
 ///
 /// ## 这一组守什么
 ///
-/// 2026-10-19 摸到的"没有输出"**实时版**：`AppModel.liveText` 有 getter
+/// 2026-10-19 摸到的"没有输出"**实时版**：`AppModel.liveTail` 有内容
 /// （`core/sync_client_impl.dart:715` 一直在填它），而 **UI 从不读它** ——
 /// 用户发一句话后要盯着"什么都没有"等到整步跑完。
 ///
 /// 三条判据：
-/// 1. `liveText` 非空时列表**多一格**，且那一格在最新一端（`reverse: true` 下
+/// 1. `liveTail` 非空时列表**多一格**，且那一格在最新一端（`reverse: true` 下
 ///    index 0），显示正在生成的文本；
 /// 2. 空串时显示"正在生成…"占位（这一步开始了但还没有文本，可能在等工具结果）——
 ///    说"正在生成"比一片白诚实；
-/// 3. `liveText` 为 `null` 时**不多格**（没有流就不占位）。
+/// 3. `liveTail` 为 `null` 时**不多格**（没有流就不占位）。
 library;
 
 import 'dart:async';
 
 import 'package:dsh_mobile/core/connection.dart' as conn;
 import 'package:dsh_mobile/core/job.dart';
+import 'package:dsh_mobile/core/live_message.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/ui/chat_turns.dart';
@@ -26,7 +27,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'fake_sync_client.dart';
 
-/// 能推 `live` 帧的替身（`sessionUpdates` 的 `SessionDelta.liveText`）。
+/// 能推 `live` 帧的替身（`sessionUpdates` 的 `SessionDelta.liveMessage`）。
 class _LiveClient extends FakeSyncClient {
   final _sessions = StreamController<SessionDelta>.broadcast();
 
@@ -36,7 +37,7 @@ class _LiveClient extends FakeSyncClient {
         sid: sid,
         events: const [],
         transient: const {},
-        liveText: text,
+        liveMessage: LiveMessage(text: text),
       ),
     );
   }
@@ -96,7 +97,7 @@ void main() {
     });
   });
 
-  group('AppModel.liveText 的赋值路径', () {
+  group('AppModel.liveTail 的赋值路径', () {
     test('live 帧到达后 getter 有值', () async {
       final client = _LiveClient();
       final app = AppModel(client: client);
@@ -105,18 +106,18 @@ void main() {
       await app.openSession('s1');
 
       // 没有流时是 null（列表不多格）。
-      expect(app.liveText, isNull);
+      expect(app.liveTail.value, isNull);
 
       // 流式帧到达 ⇒ getter 有值（UI 从它读"正在生成的这段"）。
       client.emitLive('s1', '正在写的正文');
       await Future<void>.delayed(Duration.zero);
-      expect(app.liveText, '正在写的正文');
+      expect(app.liveTail.value?.text, '正在写的正文');
     });
   });
 
-  group('AppModel.liveText 的契约', () {
+  group('AppModel.liveTail 的契约', () {
     test('null 与空串是两件事（列表格数不同）', () {
-      // 手机侧 `liveText` 的读法：`null` = 没有流 ⇒ 列表**不多格**；
+      // 手机侧 `liveTail` 的读法：`null` = 没有流 ⇒ 列表**不多格**；
       // 空串 = 有流但还没有文本 ⇒ 多一格、显示"正在生成…"占位。
       // 合成一件事的症状：有流时列表抖一下多出一格又消失（空串被当 null）。
       //

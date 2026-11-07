@@ -20,6 +20,7 @@ import 'package:dsh_mobile/core/frame.dart' show idPattern;
 import 'package:dsh_mobile/core/handshake.dart';
 import 'package:dsh_mobile/core/handshake_driver.dart';
 import 'package:dsh_mobile/core/keepalive.dart';
+import 'package:dsh_mobile/core/live_message.dart';
 import 'package:dsh_mobile/core/outbox.dart';
 import 'package:dsh_mobile/core/recovery.dart';
 import 'package:dsh_mobile/core/snapshot_call.dart';
@@ -2164,54 +2165,97 @@ void main() {
     });
   });
 
-  group('LiveAccumulator（app-channel-client.md §2.2）', () {
-    String chunk(String text) => jsonEncode({
-      'type': 'chunk',
-      'time': 1,
-      'chunk': {'text': text},
+  group('LiveMessageAssembler（app-channel-client.md §2.2）', () {
+    // **载荷形状按线上抓**（`packages/llm/llm/src/assistant-stream.ts:57-70`）：
+    // `{type, time, chunk:{type, index, text}}`。`chunk.type` 是判据，
+    // 少了它这条链就会把思考当正文（2026-11-07 真机症状）。
+    String frame(Map<String, Object?> chunk) =>
+        jsonEncode({'type': 'chunk', 'time': 1, 'chunk': chunk});
+    String textDelta(String text) =>
+        frame({'type': 'text-delta', 'index': 0, 'text': text});
+    String reasoningDelta(String text) =>
+        frame({'type': 'reasoning-delta', 'index': 0, 'text': text});
+
+    test('rev 连续则追加正文', () {
+      final acc = LiveMessageAssembler();
+      expect(acc.accept(stream: 1, rev: 0, payload: textDelta('你')), isTrue);
+      expect(acc.accept(stream: 1, rev: 1, payload: textDelta('好')), isTrue);
+      expect(acc.message.text, '你好');
+      expect(acc.message.reasoning, '');
     });
 
-    test('rev 连续则追加', () {
-      final acc = LiveAccumulator();
-      expect(acc.accept(stream: 1, rev: 0, payload: chunk('你')), isTrue);
-      expect(acc.accept(stream: 1, rev: 1, payload: chunk('好')), isTrue);
-      expect(acc.text, '你好');
+    test('思考与正文分两段，思考不混进正文', () {
+      final acc = LiveMessageAssembler();
+      acc.accept(stream: 1, rev: 0, payload: reasoningDelta('先想想'));
+      acc.accept(stream: 1, rev: 1, payload: reasoningDelta('再想想'));
+      acc.accept(stream: 1, rev: 2, payload: textDelta('答案'));
+      expect(acc.message.reasoning, '先想想再想想');
+      expect(acc.message.text, '答案', reason: '思考一个字都不许进正文');
     });
 
-    test('stream 变大 ⇒ 换流并重置', () {
-      final acc = LiveAccumulator();
-      acc.accept(stream: 1, rev: 0, payload: chunk('旧'));
-      expect(acc.accept(stream: 2, rev: 0, payload: chunk('新')), isTrue);
-      expect(acc.text, '新', reason: '换流要重置累加器');
+    test('块边界与工具参数不是正文', () {
+      final acc = LiveMessageAssembler();
+      acc.accept(stream: 1, rev: 0, payload: reasoningDelta('想'));
+      expect(
+        acc.accept(
+          stream: 1,
+          rev: 1,
+          payload: frame({
+            'type': 'block-start',
+            'index': 1,
+            'blockType': 'text',
+          }),
+        ),
+        isFalse,
+      );
+      expect(
+        acc.accept(
+          stream: 1,
+          rev: 2,
+          payload: frame({
+            'type': 'tool-call-delta',
+            'index': 2,
+            'id': 'c1',
+            'name': 'bash',
+            'argumentsDelta': '{"command":"ls"}',
+          }),
+        ),
+        isFalse,
+      );
+      expect(acc.message.text, '');
+      expect(acc.message.reasoning, '想');
+    });
+
+    test('stream 变大 ⇒ 换流并重置两段', () {
+      final acc = LiveMessageAssembler();
+      acc.accept(stream: 1, rev: 0, payload: textDelta('旧'));
+      acc.accept(stream: 1, rev: 1, payload: reasoningDelta('旧想'));
+      expect(acc.accept(stream: 2, rev: 0, payload: textDelta('新')), isTrue);
+      expect(acc.message.text, '新', reason: '换流要重置累加器');
+      expect(acc.message.reasoning, '', reason: '换流要重置累加器');
       expect(acc.stream, 2);
     });
 
     test('rev 跳跃 ⇒ 丢弃已累积内容并停止渲染（自愈，不请求重传）', () {
-      final acc = LiveAccumulator();
-      acc.accept(stream: 1, rev: 0, payload: chunk('一'));
-      acc.accept(stream: 1, rev: 1, payload: chunk('二'));
-      expect(acc.text, '一二');
+      final acc = LiveMessageAssembler();
+      acc.accept(stream: 1, rev: 0, payload: textDelta('一'));
+      acc.accept(stream: 1, rev: 1, payload: reasoningDelta('想二'));
+      expect(acc.message.text, '一');
       // 跳到 rev=5：丢流。
-      expect(acc.accept(stream: 1, rev: 5, payload: chunk('三')), isFalse);
-      expect(acc.text, '', reason: '丢弃该流已累积内容，等持久事件到达');
+      expect(acc.accept(stream: 1, rev: 5, payload: textDelta('三')), isFalse);
+      expect(acc.message.text, '', reason: '丢弃该流已累积内容，等持久事件到达');
+      expect(acc.message.reasoning, '', reason: '两段一起丢');
       expect(acc.lastRev, 5);
       // 从 5 之后继续（+1）就能接着走。
-      expect(acc.accept(stream: 1, rev: 6, payload: chunk('四')), isTrue);
-      expect(acc.text, '四');
-    });
-
-    test('持久事件到达时替换累加器内容（以持久为准）', () {
-      final acc = LiveAccumulator();
-      acc.accept(stream: 1, rev: 0, payload: chunk('流式'));
-      acc.replaceWith('最终文本');
-      expect(acc.text, '最终文本');
+      expect(acc.accept(stream: 1, rev: 6, payload: textDelta('四')), isTrue);
+      expect(acc.message.text, '四');
     });
 
     test('读不懂的载荷不断连，只停在当前内容', () {
-      final acc = LiveAccumulator();
-      acc.accept(stream: 1, rev: 0, payload: chunk('保留'));
+      final acc = LiveMessageAssembler();
+      acc.accept(stream: 1, rev: 0, payload: textDelta('保留'));
       expect(acc.accept(stream: 1, rev: 1, payload: 'not json'), isFalse);
-      expect(acc.text, '保留');
+      expect(acc.message.text, '保留');
     });
   });
 

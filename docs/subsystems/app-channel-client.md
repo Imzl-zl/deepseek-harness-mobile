@@ -153,15 +153,18 @@ abstract class Outbox {
 ### 2.2 流式渲染(`live` 帧)
 
 - **先按帧类型分派**:assistant 流走 `live`,任务输出走 `job`(契约 §3 的术语表说明了两者为什么**不能**共用一个帧类型:任务输出的"修订号"是字节偏移,会跳号,而这里的累加器把跳号读成"丢流")。
-- 每会话一个 `LiveAccumulator`:`{stream, rev, text}`。收到 `live`:
+- 每会话一个 `LiveMessageAssembler`:`{stream, rev, reasoning, text}`。收到 `live`:
   - `stream` 变大 ⇒ 换流(上一次尝试结束),重置累加器;
   - `rev == last + 1` ⇒ 追加;`rev` 跳跃 ⇒ **丢弃该流已累积内容并停止渲染**,等持久 `assistant/message` 到达(自愈,不请求重传);
-- UI 侧节流到 **每 16 ms 一帧**(把 50–100 ms 的批量再合并成屏幕帧);文本用 `Text.rich` + 段级缓存,不重建整棵子树。
-- 持久事件到达时**替换**累加器内容(以持久为准,避免"流式与最终文本不一致")。
+  - **按 `chunk.type` 分流**:`text-delta` 进正文、`reasoning-delta` 进思考;`start` / `end`、`block-*`、`tool-call-delta`、`usage`、`finish` 都不是可显示内容,只推进修订号。
+  - 两段的形状与持久 `assistant/message` 折出来的两段一致(思考一段、正文一段),于是落定那一帧不换构造;块的先后顺序两边都不保留。
+- 尾条目的渲染:思考走折叠行(`running`,摘要取**最后完成段落的首行**,DSH `ReasoningRow.tsx:64`);正文是 Markdown 但**不挂选择器**(§4 的同一条)。
+- 持久事件到达时槽位清空,不再回写累加器(以持久为准,避免"流式与最终文本不一致")。
 - **任务输出(`job` 帧)不走累加器**:按 `jobId` 各自维护一个尾部缓冲(客户端尾 128 KiB),`kind: 'output'` 追加、`kind: 'status'` 收口;**`gapBefore` 与流错误必须显式渲染**(不做静默拼接,见 `../plugin-and-jobs-notes.md` §B.4)。
-- **流式文本**独立成一条订阅,不走 `AppModel` 的通知路径:累加器的当前内容是
-  `ValueListenable<String?>`(`AppModel.liveTail`),**只有尾条目**听它;
-  纯流式的 delta(`events` 为空、只有 `liveText`)**不 `notifyListeners()`**。
+- **流式内容**独立成一条订阅,不走 `AppModel` 的通知路径:累加器的当前内容是
+  `ValueListenable<LiveMessage?>`(`AppModel.liveTail`),**只有尾条目**听它;
+  纯流式的 delta(`events` 为空、只有 `liveMessage`)**不 `notifyListeners()`**。
+  一条通知带两段:拆成两条会让尾条目一帧重建两次,还可能画出中间态。
   尾条目的**存在性**(列表多不多一格)仍在流开始 / 结束时通知一次 —— 那不是"流式期间"。
   判据:流式输出期间会话列表 widget 的重建次数 = 0(`app/test/live_tail_test.dart` 的计数桩)。
 
@@ -295,7 +298,7 @@ abstract class Outbox {
 | 风险 | 对策 |
 |---|---|
 | 长会话列表排版卡顿(`dart:ui` 排版只能在主 isolate,见 flutter#30604) | 按块懒加载:已完成消息冻结为不可变 widget 并缓存;只对可见块做 layout |
-| 流式更新触发整段重排 | 累加器 16 ms 节流 + 段级缓存;不用 `SelectableText` 包整段(开销大) |
+| 流式更新触发整段重排 | 流式尾条目不挂选择器(`selectable: false`)——选择注册是这条链上最贵的一段;块级冻结见下一行 |
 | 大对象(base64 图片、diff)阻塞 UI | >1 MiB 走 `refetch`;JSON 解码放 `compute`;图片走 `Image.memory` + 缓存,不逐帧解码 |
 | 代码高亮开销 | 构建时按块算：`highlightCode` 在 `_DshCodeBlock.build` 里跑，`Highlight` 引擎只建一次（`dsh_code_highlight.dart` 的 `_engine`），token 结果**不缓存**。已知差异：DSH 只在代码块首次进入视口时高亮一次并缓存（`packages/client/ui-primitives/src/markdown/highlight.ts:286`、`useViewportHighlighting.ts:17,48`），手机侧同一块每次重建都会重算 |
 | 长 Markdown | **不做段落切分**:查过 DSH,它也没有正文虚拟化/按段切,只在**流式期间冻结除末尾两块以外的块**(`packages/client/ui-primitives/src/markdown/incremental.ts:9-14,38` 的 `UNSTABLE_TAIL_BLOCKS = 2`)⇒ 手机侧照同一条做"流式只重排末尾" |

@@ -40,6 +40,7 @@ import 'package:flutter/services.dart';
 
 import '../core/errors.dart';
 import '../core/job.dart';
+import '../core/live_message.dart';
 import '../data/app_model.dart';
 import '../data/composer_gate.dart';
 import '../data/ids.dart';
@@ -1296,6 +1297,20 @@ class ChatPageState extends State<ChatPage> {
     final key = sid ?? '';
     final manual = _turnOpen[key]?[turn];
     if (manual != null) return manual;
+    // **还没收口的一轮：过程保持展开。**
+    //
+    // 这是 DSH 的明文规则（`conversation-nodes/README.zh.md` 的整轮折叠表：
+    // 「尚未结束 / 已停止或失败 ⇒ 过程内容保持展开，不能收起整轮」）。
+    // 少了这一支，边跑边看时过程会被"回答结束后"那一档按下去 ——
+    // 症状是生成中看不到思考与工具，跑完才出现（或永远不出现）。
+    TurnGroup? group;
+    for (final candidate in groups) {
+      if (candidate.turn == turn) {
+        group = candidate;
+        break;
+      }
+    }
+    if (group == null || !group.closed) return true;
     if (widget.app.collapseTiming != CollapseTiming.nextInput) return false;
     // 「下次有新消息时」：只有**最新那一轮**保持展开。用 groups.last 而不是
     // "最后一个可折的轮" —— 用户一发出下一句，上一轮就该收起来，
@@ -3094,7 +3109,7 @@ class _ChatTab extends StatelessWidget {
     // **快速跳转钮浮在右侧**（rikkahub 的 `MessageJumper`）：它要一个
     // `ScrollController` 才能跳，而 `_ChatTab` 是无状态的 —— 所以包一层
     // 有状态的 `_ConversationFlow`（见下），控制器与 jumper 都住在那儿。
-    // **流式文本**（`AppModel.liveText`）也喂进去：生成过程中它一直在变，
+    // **流式内容**（`AppModel.liveTail`）也喂进去：生成过程中它一直在变，
     // 而持久的 `assistant/message` 要等这一步结束才落。不显示它，用户发一句话后
     // 要盯着"什么都没有"等到整步跑完（2026-10-19 摸到的"没有输出"实时版）。
     return _ConversationFlow(
@@ -3182,7 +3197,7 @@ class _ConversationFlow extends StatefulWidget {
   /// 流式尾条目要不要自己带头。
   final bool liveShowHead;
 
-  /// 流式文本的**订阅源**（`AppModel.liveTail`；`null` 值 = 没有正在生成的流）。
+  /// 流式内容的**订阅源**（`AppModel.liveTail`；`null` 值 = 没有正在生成的流）。
   ///
   /// 它是**虚拟尾条目**：没有稳定 itemId（不进 store），所以列表数是
   /// `items.length + (hasLive ? 1 : 0)`。持久的 `assistant/message` 到达后它自动消失
@@ -3194,14 +3209,14 @@ class _ConversationFlow extends StatefulWidget {
   ///
   /// Note: 判据是"流式期间这一层重建 = 0"（`test/live_tail_test.dart` 的计数桩），
   /// 取舍见 `.agents/notes/implemented/2026-10-31-host-state-sync.md`。
-  final ValueListenable<String?> liveTail;
+  final ValueListenable<LiveMessage?> liveTail;
 
   /// 流式尾条目此刻在不在（列表多不多一格）。
   bool get hasLive => liveTail.value != null;
 
   /// 电脑侧说这一轮还在跑（`session.list` 的 `running`）—— 决定流末尾有没有运行条。
   ///
-  /// **它是虚拟尾条目**（与 [liveText] 同一种东西）：两个工具之间没有正文可显示，
+  /// **它是虚拟尾条目**（与 [liveTail] 同一种东西）：两个工具之间没有正文可显示，
   /// 那条"深度求索中，用时 N 秒"就是屏幕上唯一在动的东西。
   final bool running;
 
@@ -3474,14 +3489,16 @@ class _ConversationFlowState extends State<_ConversationFlow> {
                   );
                 }
                 if (hasLive && index == (hasRunning ? 1 : 0)) {
-                  // **只有这一格跟流式文本**：`ValueListenableBuilder` 的子树是列表里的
+                  // **只有这一格跟流式内容**：`ValueListenableBuilder` 的子树是列表里的
                   // 一格，重建范围到它为止 —— 页面、列表、抽屉都不动（P3 的判据）。
                   return KeyedSubtree(
                     key: const ValueKey('live'),
-                    child: ValueListenableBuilder<String?>(
+                    child: ValueListenableBuilder<LiveMessage?>(
                       valueListenable: widget.liveTail,
-                      builder: (context, text, _) =>
-                          _LiveTurn(text ?? '', showHead: widget.liveShowHead),
+                      builder: (context, message, _) => LiveAssistantTurn(
+                        message ?? const LiveMessage(),
+                        showHead: widget.liveShowHead,
+                      ),
                     ),
                   );
                 }
@@ -3824,69 +3841,6 @@ class _SessionListInlineState extends State<_SessionListInline> {
 }
 
 /// 一条条目 → 对应的渲染组件（**按类型分派**）。
-/// 流式尾条目：正在生成的助手文本。
-///
-/// ## 它为什么是"虚拟条目"
-///
-/// `AppModel.liveText` 没有稳定 itemId（它是累加器的当前内容，会被随后的
-/// 持久 `assistant/message` **整体替换**）—— 所以不进 store、不当 ChatItem，
-/// 只在列表末尾多占一格。
-///
-/// ## 与 DSH Web 的对应
-///
-/// Web 的 `AssistantNodeView` 在流式期间就是同一条：头像 + 名字 + 正在增长的
-/// Markdown（`ui-chat/src/client/chat/AssistantNodeView.tsx`）。手机同一条。
-///
-/// ## 为什么要显示它
-///
-/// 2026-10-19 摸到：`AppModel.liveText` 有 getter，而 **UI 从不读它** ——
-/// 用户发一句话后要盯着"什么都没有"等到整步跑完。这正是"没有输出"的**实时版**：
-/// 最终会显示，但生成过程中不显示。
-class _LiveTurn extends StatelessWidget {
-  const _LiveTurn(this.text, {this.showHead = true});
-
-  /// 正在生成的文本（`AppModel.liveText`）。
-  final String text;
-
-  /// 要不要带头像。**本轮已经有过程条目时不再画** —— 那一组的头已经在开头
-  /// 画过了（否则同一条回答上会出现两个头像）。
-  final bool showHead;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.dshColors;
-    // **与持久条目同一个骨架**（2026-10-20 第 7 条）：`AssistantTurn` 的
-    // 上下留白（18）、`AssistantHead`、`DshMarkdown` 三样都照抄它 ——
-    // 原来这里自己写了一套（留白 10、手抄的头像行、写死颜色），
-    // 于是流结束、条目从"虚拟尾"换成持久消息时，整行的高度与构造都变，
-    // 正文会**跳一下**。DSH 的流式尾与落定条目是**同一个节点类型**
-    // （`ui-chat/src/client/chat/AssistantNodeView.tsx`），所以那边没有这一跳。
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (showHead) const AssistantHead(),
-          // **正在生成的正文**（Markdown，与持久消息同一套渲染）。
-          // 空文本时给一行占位 —— 那表示"这一步开始了但还没有文本"
-          // （可能在等工具结果），说"正在生成"比一片白诚实。
-          if (text.isEmpty)
-            Text(
-              '正在生成…',
-              // 占位与正文同一档（它出现的下一帧就会被正文替换，字号跳一下更刺眼）。
-              style: TextStyle(
-                fontSize: context.dshType.body,
-                color: c.labelTertiary,
-              ),
-            )
-          else
-            DshMarkdown(text),
-        ],
-      ),
-    );
-  }
-}
-
 class _TurnView extends StatelessWidget {
   const _TurnView({
     required this.item,

@@ -1125,8 +1125,12 @@ class _EndpointRow extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           DshPickerRow(
-            name: '现在用这条连',
-            tags: [if (isActive) '已经在用这一条'],
+            // **动作行只写动作**（`2026-11-06-endpoint-sheet-copy-trim.md`）：
+            // 正在用的那条已经置灰 + 打勾，状态由控件自己表达 ——
+            // 再挂一句「已经在用这一条」是把同一个事实说两遍
+            // （2026-11-07 用户：置灰就行，多此一举）。
+            name: '立即连接',
+            tags: const [],
             selected: isActive,
             icon: 'refresh',
             enabled: !isActive,

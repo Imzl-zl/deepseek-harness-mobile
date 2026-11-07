@@ -1,7 +1,8 @@
 # 动作行不再挂解释句：设置页与端点弹框的文案收口
 
 - 日期：2026-11-06
-- 状态：implemented
+- 状态：implemented（「保留状态类」那条被 `2026-11-07-endpoint-action-label-and-disabled-state.md` 收窄：
+  控件自己能表达的状态不写文字）
 - 触发：真机反馈（原话大意）——「这个弹框，我是看不懂这个功能吗？给我整这些解释？不 low 吗？」
 
 ## Problem

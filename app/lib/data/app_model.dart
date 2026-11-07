@@ -32,6 +32,7 @@ import '../core/errors.dart';
 import '../core/event_fields.dart';
 import '../core/host_rpc.dart';
 import '../core/job.dart';
+import '../core/live_message.dart';
 import '../core/notify.dart';
 import '../core/pairing_flow.dart' show PairingPreference;
 import '../core/recovery.dart' show RecoveryOutcome;
@@ -4144,9 +4145,9 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
 
     // **纯流式的 delta 不进通知路径**（P3）。
     //
-    // 现状：流式期间一批 delta 只有 `liveText`（没有持久事件），而下面那段
+    // 流式期间一批 delta 只有 `liveMessage`（没有持久事件），而下面那段
     // `_touchSummary` + `_syncNotices` 会 `notifyListeners()` —— 于是**整页重建**
-    // 每秒几十次，重建的东西一个字节都没变（列表、抽屉、统计条都读不到流式文本）。
+    // 每秒几十次，重建的东西一个字节都没变（列表、抽屉、统计条都读不到流式内容）。
     //
     // 现在：这类 delta 只写 [liveTail]（尾条目自己订阅），页面**一次都不重建**。
     // 尾条目的**存在性**变了（从没有流到有流）仍要通知一次 —— 那是列表格数变了，
@@ -4156,7 +4157,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     // `.agents/notes/implemented/2026-10-31-host-state-sync.md` 与 `test/live_tail_test.dart`。
     if (delta.events.isEmpty) {
       // `_setLiveTail` 的返回值 = "格数变了"，只有那种情况才需要整页通知一次。
-      if (delta.liveText != null && _setLiveTail(delta.liveText)) {
+      final live = delta.liveMessage;
+      if (live != null && _setLiveTail(live)) {
         notifyListeners();
       }
       return;
@@ -4401,11 +4403,11 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       }
     }
 
-    // **流式文本** → 单独的槽位（尾条目自己订阅，见 [liveTail]）。
+    // **流式内容** → 单独的槽位（尾条目自己订阅，见 [liveTail]）。
     // 它**不进 store**：没有稳定 itemId，且会被随后的持久 `assistant/message`
     // 整体替换（`app-channel-client.md` §2.2：以持久为准）。
-    if (delta.liveText != null) {
-      _setLiveTail(delta.liveText);
+    if (delta.liveMessage != null) {
+      _setLiveTail(delta.liveMessage);
     }
 
     // 会话列表里的更新时间与计数跟着动。
@@ -4541,20 +4543,20 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// "流式期间会话列表 widget 的重建次数 = 0"，所以它独立成一条订阅：
   /// 尾条目用 `ValueListenableBuilder` 听它（`ui/chat_page.dart`）。
   ///
-  /// [liveText] 是同一个值的同步读法（单测与"格数"判据用），**不是第二个来源**。
-  ValueListenable<String?> get liveTail => _liveTail;
+  /// **一条通知带着思考与正文两段**（[LiveMessage]）：分成两条订阅会让尾条目
+  /// 一帧里重建两次，还可能画出一帧"只有正文、没有思考"的中间态。
+  ValueListenable<LiveMessage?> get liveTail => _liveTail;
 
-  final ValueNotifier<String?> _liveTail = ValueNotifier<String?>(null);
+  final ValueNotifier<LiveMessage?> _liveTail = ValueNotifier<LiveMessage?>(
+    null,
+  );
 
-  /// `liveTail` 的当前值（`ValueListenable.value` 的同步读法）。
-  String? get liveText => _liveTail.value;
-
-  /// 写流式文本；**返回"尾条目的存在性变了没有"**（变了才需要整页通知一次）。
+  /// 写流式内容；**返回"尾条目的存在性变了没有"**（变了才需要整页通知一次）。
   ///
   /// 存在性 = `null` 与非 `null` 的区别：它决定列表多不多一格
   /// （`ui/chat_page.dart` 的 `items.length + (hasLive ? 1 : 0)`）。
-  /// 文本内容的变化不改变格数，所以不通知。
-  bool _setLiveTail(String? value) {
+  /// 内容的变化不改变格数，所以不通知。
+  bool _setLiveTail(LiveMessage? value) {
     final wasEmpty = _liveTail.value == null;
     if (_liveTail.value == value) return false;
     _liveTail.value = value;

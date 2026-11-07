@@ -37,6 +37,7 @@ import 'host_rpc.dart';
 import 'items.dart' show EventIdReaders;
 import 'job.dart';
 import 'keepalive.dart';
+import 'live_message.dart';
 import 'outbox.dart';
 import 'recovery.dart';
 import 'transport.dart';
@@ -353,7 +354,7 @@ class SessionDelta {
   const SessionDelta({
     required this.sid,
     this.events = const [],
-    this.liveText,
+    this.liveMessage,
     required this.transient,
     this.outcome,
     this.reason,
@@ -364,7 +365,7 @@ class SessionDelta {
   /// 这一批**持久**事件（`ev` 帧）。快照收口时是整表。
   final List<SessionEvent> events;
 
-  /// 当前**流式**文本（`live` 帧累加器的内容）；`null` = 这一批没有流式更新。
+  /// 当前**流式**内容（`live` 帧累加器的内容）；`null` = 这一批没有流式更新。
   ///
   /// 它**不在 [events] 里**，因为两者是不同性质的东西（契约 §3 的术语表）：
   /// 持久事件有稳定的 `itemId` 与会话 `seq`，而流式 chunk 没有 ——
@@ -373,7 +374,9 @@ class SessionDelta {
   ///
   /// 混进 [events] 会让 UI 需要"从 itemId 猜这是不是流式内容"，而那个判据
   /// 迟早写歪；分开之后"持久"与"流式"在类型上就是两件事。
-  final String? liveText;
+  ///
+  /// **形状与持久条目一致**（思考一段 + 正文一段），见 [LiveMessage] 的文件头。
+  final LiveMessage? liveMessage;
 
   /// 瞬时事实（不变量 I4：每次恢复都无条件回带）。
   final TransientFacts transient;

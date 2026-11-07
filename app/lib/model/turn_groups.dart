@@ -57,7 +57,15 @@ class TurnGroup {
   final List<ChatItem> items;
 
   /// 这一组有没有可折的过程条目。
-  bool get hasProcess => items.any(isProcessItem);
+  ///
+  /// **答复里带的思考也算过程**：DSH 把 reasoning 归进 `processMember`
+  /// （`ChatNodeSeat.tsx:78-83`），而最终答复的 reasoning 与正文同在一条
+  /// `assistant/message` 里 —— 它不是独立条目，所以只查 [isProcessItem]
+  /// 会漏掉"这一轮只有思考、没有工具"的那种轮次（症状：轮次没有折叠箭头，
+  /// 思考既不可见也没有入口点开）。
+  bool get hasProcess =>
+      items.any(isProcessItem) ||
+      items.any((item) => item is MessageItem && item.reasoning.isNotEmpty);
 
   /// 这一轮是否已经收口：组里**出现过**过程摘要 / 异常结局行。
   ///

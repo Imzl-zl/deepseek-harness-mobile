@@ -149,12 +149,21 @@ class DshMarkdown extends StatelessWidget {
     super.key,
     this.baseColor,
     this.compact = false,
+    this.selectable = true,
     this.fileMentions,
     this.onOpenFile,
   });
 
   /// Markdown 正文。
   final String data;
+
+  /// 正文可选（落定内容的选择、复制）。
+  ///
+  /// **流式尾条目传 `false`**：`selectable` 让每个文本块都挂一份选择注册，
+  /// 而流式文本每 50 ms 整段重排一次 —— 量到 4 KB 时它是整条链上最贵的一段
+  /// （4–9 倍，见 `docs/subsystems/app-channel-client.md` §4）。
+  /// 生成中本来也没人会去划选；正文落定成持久条目后照常可选。
+  final bool selectable;
 
   /// `行内代码原文 → 文件路径`：**只认这里面的 token**。
   ///
@@ -202,7 +211,7 @@ class DshMarkdown extends StatelessWidget {
       // **行内 HTML 先归一成 Markdown**：否则 `<b>` 会原样露出
       //（探针实测，见 `normalizeInlineHtml` 的说明）。
       data: normalizeInlineHtml(data),
-      selectable: true,
+      selectable: selectable,
       // `softLineBreak`：Markdown 里的单个换行**也换行**。
       //
       // 这是刻意的偏离：CommonMark 规定单个换行当空格，而**聊天场景里
