@@ -75,6 +75,19 @@ Future<void> showConnectionActionsSheet(
   /// 也不在"连不上"时偷偷换 —— 那会变成"手机自己换了个电脑"。
   HostSwitchSeam? hostSwitch,
 
+  /// **添加电脑**：进配对页**但不清凭据**（`null` = 不画这一行）。
+  ///
+  /// 与下面那行「重新配对（换一台电脑）」是两条路：那一条先 `clear()` 当前槽
+  /// 再进页面（同一台换身份 / 身份被拒后重来），这一条**只加不删** ——
+  /// `PairingStore.save` 按 `pcSignPubHex` 分槽写，另一台原样留着。
+  ///
+  /// 只在**已配对**时给：没配对时"添加"与"连电脑"是同一件事，多一行只会让人
+  /// 在两个同义入口之间多看一眼。
+  ///
+  /// Note: 为什么它必须是"只加不删"的那一条 —— 见
+  /// `.agents/notes/implemented/2026-11-08-add-computer-without-clearing.md`
+  VoidCallback? onAddHost,
+
   /// 触发点矩形。`null` = 底部 sheet。
   Rect? anchor,
 }) {
@@ -189,6 +202,23 @@ Future<void> showConnectionActionsSheet(
           onTap: () {
             Navigator.of(inner).pop();
             onRetry();
+          },
+        ),
+      // **「添加电脑」紧挨在「重新配对」上面**：两行的后果相反（一个保留、
+      // 一个清掉），分开摆等于让用户靠回忆区分。副标题那句"现在这台保留"
+      // 是这一行的全部价值 —— 不写，它和下面那行在标题上看不出差别。
+      if (onAddHost != null)
+        ListTile(
+          leading: const DshIcon(
+            'projectAdd',
+            size: 18,
+            color: DshColors.labelSecondary,
+          ),
+          title: const Text('添加电脑'),
+          subtitle: const Text('再配一台；现在这台保留'),
+          onTap: () {
+            Navigator.of(inner).pop();
+            onAddHost();
           },
         ),
       ListTile(

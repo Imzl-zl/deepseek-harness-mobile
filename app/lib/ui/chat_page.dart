@@ -1544,6 +1544,10 @@ class ChatPageState extends State<ChatPage> {
         ),
         // **换电脑**（已配对两台以上才给这一行）：装配层注入，页面只转发。
         hostSwitch: widget.hostSwitch,
+        // **已配对时「添加电脑」走的是同一条 `onConnect`**（进配对页、**不清凭据**）。
+        // 装配层只有一个动作 —— `_openPairing`；没配对时它是"连电脑"，配对后
+        // 它就是"再配一台"。不另加一条缝：两条缝迟早对不上（一条会清槽）。
+        onAddHost: widget.paired ? () => widget.onConnect?.call() : null,
         onRePair: () => widget.onRePair?.call(),
         onOpenSide: openSide,
         onDisconnect: () => widget.onDisconnect?.call(),

@@ -564,6 +564,11 @@ class _DshMobileAppState extends State<DshMobileApp>
   void _closePairing() => setState(() => _pairing = false);
 
   Future<void> _onPaired(PairingResult result) async {
+    // **进这一趟之前是哪台**：在第一个 `await` 之前取。
+    // 「添加电脑」走完要能一步切回原来那台（`_switchBackTarget`），而这个指针
+    // 平时只由 `_switchTo` 记 —— 新增这一路不是"切换"，不在这里补就永远没有
+    // 「切回上一台」那一行。
+    final previousHost = _credentials?.pcSignPubHex;
     // **配对页的确认卡就是"公网明文"的同意书**：那一步把中转地址与电脑身份
     // 摆给用户看，并（地址是公网 `ws://` 时）明写"元数据可见，点确认即接受"。
     // 这里把这次同意落成用户级偏好 —— 否则配对成功之后，每一次换票都会被
@@ -624,6 +629,11 @@ class _DshMobileAppState extends State<DshMobileApp>
       _credentials = credentials;
       _pairing = false;
       _pairedHosts = hosts;
+      // 换了一台才记"上一台"（同一台重新配对时它等于当前，`_switchBackTarget`
+      // 自己会滤掉；不写这一条是为了别把更早的那次指针冲掉）。
+      if (previousHost != null && previousHost != credentials.pcSignPubHex) {
+        _previousHostId = previousHost;
+      }
     });
     // 下一次重新配对要报**新**的 pairingId（旧的那一行已经被替换掉了）。
     _refreshRePairHint();
@@ -1260,6 +1270,9 @@ class _DshMobileAppState extends State<DshMobileApp>
       ),
       // **换电脑**（与聊天页顶栏那个 sheet 同一份缝）。
       hostSwitch: _hostSwitchSeam,
+      // **添加电脑**：同一个 `_openPairing` —— 它只把配对页推到前面，**不动凭据**。
+      // 没配对时不给这一行（那时"连电脑"就是它本身）。
+      onAddHost: _credentials == null ? null : _openPairing,
       onRePair: _repair,
       onOpenSide: () => _chatKey.currentState?.openSide(),
       // 断开连接：**只断链，不动凭据**（清凭据是「重新配对」的事，藏在设置里）。

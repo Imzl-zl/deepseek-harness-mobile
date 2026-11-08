@@ -20,6 +20,7 @@ Widget _host({
   required VoidCallback onRePair,
   Rect? anchor,
   HostSwitchSeam? hostSwitch,
+  VoidCallback? onAddHost,
 }) => MaterialApp(
   theme: DshTheme.dark(),
   home: Scaffold(
@@ -31,6 +32,7 @@ Widget _host({
           onRePair: onRePair,
           anchor: anchor,
           hostSwitch: hostSwitch,
+          onAddHost: onAddHost,
         ),
         child: const Text('open'),
       ),
@@ -110,6 +112,39 @@ void main() {
     await tester.pumpAndSettle();
     expect(back, 1);
     expect(switched, 0, reason: '两个动作不许互相触发');
+  });
+
+  testWidgets('给了「添加电脑」：副标题写明后果，点它只走添加（不动重新配对）', (tester) async {
+    var add = 0;
+    var rePair = 0;
+    await tester.pumpWidget(
+      _host(
+        connection: fellBack,
+        onRePair: () => rePair++,
+        onAddHost: () => add++,
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('添加电脑'), findsOneWidget);
+    // 两行后果相反（一个保留、一个清掉），副标题必须把这件事写出来。
+    expect(find.text('再配一台；现在这台保留'), findsOneWidget);
+
+    await tester.tap(find.text('添加电脑'));
+    await tester.pumpAndSettle();
+
+    expect(add, 1);
+    expect(rePair, 0, reason: '「添加」绝不能顺带清凭据');
+    expect(find.text('添加电脑'), findsNothing, reason: 'sheet 已关');
+  });
+
+  testWidgets('没给「添加电脑」时不摆这一行（没配对时"连电脑"就是它本身）', (tester) async {
+    await tester.pumpWidget(_host(connection: fellBack, onRePair: () {}));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('添加电脑'), findsNothing);
   });
 
   testWidgets('只有一台电脑时不摆「切换电脑」（没有可换的）', (tester) async {
