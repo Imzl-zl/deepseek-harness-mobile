@@ -6,6 +6,14 @@
 
 ## 现在（2026-11-08）
 
+- **v0.2.12 已发版（2026-11-08）**：Release `dsh-mobile-v0.2.12.apk`（release 签名，
+  `CN=dsh-mobile, OU=release`，75 MB）+ `dsh-mobile-connector-0.1.23.tgz`（0.19 MB）；
+  npm `latest` = **0.1.23**（OIDC + provenance）。内容 = 新建会话在途合并、用量页换源与
+  按天活动分批（见下两条）。CI 首轮 `connector` 红：Dart 探针下载
+  `libsqlite3.x64.linux.so` 的哈希与 sqlite3 构建钩子的期望值不符（**远端资产 flake，
+  与本次改动无关**），`gh run rerun --failed` 后四个 job 全绿。**真机注意**：手机上装的是
+  本地 debug 签名（versionName 0.2.11 / code 6），与 CI 的 release 签名不同 —— 要换官方包
+  必须先卸载（配对凭据一起没，要重新扫码）。
 - **新建会话不再"连点成好几个"（2026-11-08）**：`createSession` 照 DSH 的 `connectBlank`
   按 `(工作区, 预设)` **在途合流**（同一目标连点只发一次 `session.create`）；本地那一行按
   真值写 `blank: true` + `cwd`（原来默认 false 且没 cwd：App 把它画成正常会话、桌面按
