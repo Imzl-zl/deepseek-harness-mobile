@@ -2586,17 +2586,50 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   UsageSummary? get usageSummary => _usageSummary;
   UsageSummary? _usageSummary;
 
-  /// 拉一次跨会话用量汇总。
+  /// 总量那次请求是否在途。页面用它区分"正在读"与"电脑侧没有数据"。
+  bool get usageSummaryLoading => _usageSummaryLoading;
+  bool _usageSummaryLoading = false;
+
+  /// 按天活动（`usage.summary {days}` 的 `byDay`）；空表 = 没拉到 / 这段时间没有活动。
+  List<UsageDay> get usageDays => _usageDays;
+  List<UsageDay> _usageDays = const [];
+
+  /// 当前按天活动的窗口（天）；`null` = 还没选过。
+  int? get usageDaysWindow => _usageDaysWindow;
+  int? _usageDaysWindow;
+
+  /// 按天活动那次请求是否在途。
+  bool get usageDaysLoading => _usageDaysLoading;
+  bool _usageDaysLoading = false;
+
+  /// 按天活动的扫描进度（`scanned / total` 个会话）；`null` = 老连接器没报。
+  ({int scanned, int total})? get usageDaysProgress => _usageDaysProgress;
+  ({int scanned, int total})? _usageDaysProgress;
+
+  /// 补批的定时器（电脑侧一次只扫几个会话，扫完一批要接着要下一批）。
+  Timer? _usageDaysPoll;
+
+  /// 按天活动拉取失败的原因；`null` = 没失败。
+  ///
+  /// **不写进 [lastError]**：活动区块拉不到不该把整页说成"拉不到用量" ——
+  /// 总量已经在屏幕上，那一块自己说原因。
+  String? get usageDaysFailure => _usageDaysFailure;
+  String? _usageDaysFailure;
+
+  /// 拉一次跨会话用量汇总的**总量**（`usage.summary`，不带 `days`）。
   ///
   /// **只读、不落盘**：它是"此刻的总量"，而总量随时在变（别的客户端也在跑），
-  /// 落一份本地快照只会多一个会过期的第二真值源。设置页 / 统计条每次进入时拉。
+  /// 落一份本地快照只会多一个会过期的第二真值源。页面每次进入时拉。
   ///
   /// 拿不到就回 `null` 并把原因留在 [lastError]：手机显示"拉不到"，
   /// 而不是摆一个 `0 tok` —— 那会把"没数据"说成"用了 0"。
   Future<void> refreshUsageSummary() async {
+    if (_disposed) return;
+    _usageSummaryLoading = true;
+    if (!_disposed) notifyListeners();
     try {
-      // 形状（`{totals, byDay, bySession, byProject, grandTotal}`）在 `wire/rpc/usage.dart`；
-      // 聚合规则不在这层（连接器自己遍历可见会话聚出来的）。
+      // 形状（`{totals, byProject, bySession, grandTotal}`）在 `wire/rpc/usage.dart`；
+      // 聚合规则不在这层（连接器读清单行的投影提示聚出来的）。
       _usageSummary = await _reads.usageSummary();
       _lastError = null;
     } catch (error) {
@@ -2606,9 +2639,54 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       // "电脑上真没有用量"的形态。
       _usageSummary = null;
       _recordError('拉取用量汇总失败', error);
-      return;
+    } finally {
+      _usageSummaryLoading = false;
+      if (!_disposed) notifyListeners();
     }
-    if (!_disposed) notifyListeners();
+  }
+
+  /// 拉一段**按天活动**（`usage.summary {days}`）。
+  ///
+  /// 窗口取 `2 × windowDays`：页面要画"这段时间 vs 前一段"的对比，而多要的
+  /// 天数只是同一批会话 `trajectory` 里相邻的几格，**不增加会话数**。
+  /// 峰值封在 366 天（连接器的上限）。
+  ///
+  /// 电脑侧**分批**扫（一次 4 个会话，见 `connector/src/handlers.ts` 的
+  /// `DAY_SCAN_BATCH`）：`daysProgress.scanned < total` 时继续要下一批
+  /// （[quiet] 让补批不闪"正在读取"），直到扫完。
+  Future<void> refreshUsageDays(int windowDays, {bool quiet = false}) async {
+    if (_disposed) return;
+    final requestDays = (windowDays * 2).clamp(1, 366);
+    final sameWindow = _usageDaysWindow == windowDays;
+    _usageDaysWindow = windowDays;
+    _usageDaysPoll?.cancel();
+    // 换窗口 / 首次进来要显示"正在读取活动…"；同一窗口的补批不闪。
+    if (!quiet || !sameWindow) {
+      _usageDaysLoading = true;
+      if (!_disposed) notifyListeners();
+    }
+    try {
+      final summary = await _reads.usageSummary(days: requestDays);
+      _usageDays = summary?.byDay ?? const [];
+      _usageDaysProgress = summary?.daysProgress;
+      _usageDaysFailure = summary == null ? '电脑侧没有回可读的用量' : null;
+      final progress = _usageDaysProgress;
+      if (!_disposed &&
+          windowDays == _usageDaysWindow &&
+          progress != null &&
+          progress.scanned < progress.total) {
+        _usageDaysPoll = Timer(const Duration(milliseconds: 350), () {
+          unawaited(refreshUsageDays(windowDays, quiet: true));
+        });
+      }
+    } catch (error) {
+      _usageDays = const [];
+      _usageDaysProgress = null;
+      _usageDaysFailure = error is ProtocolException ? error.message : '$error';
+    } finally {
+      _usageDaysLoading = false;
+      if (!_disposed) notifyListeners();
+    }
   }
 
   /// 读一个**通用字符串偏好**（`meta` 表的 k/v）。  ///
@@ -3539,6 +3617,19 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     },
   );
 
+  /// 一个工作区的目录。本地行（刚建的 blank）的 `cwd` 用它 —— DSH 的复用判据
+  /// 比的就是 `summary.cwd == workspace.path`（`navigation.ts:238-244`）。
+  ///
+  /// `null` = 清单里没有这个工作区（或这台电脑一个工作区都没有）：
+  /// 那时 `cwd` 留空，复用判据本来也不成立。
+  String? _workspacePathOf(String? workspaceId) {
+    if (workspaceId == null) return null;
+    for (final group in _workspaces) {
+      if (group.workspaceId == workspaceId) return group.path;
+    }
+    return null;
+  }
+
   /// 当前会话是不是 blank（"从没被 agent 跑过"）。
   ///
   /// 用它决定主界面显示 hero 还是空态。**会话不在列表里时是 `false`**
@@ -3833,8 +3924,16 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// **会话由电脑侧建**（它才是会话的 owner），所以这里走 `session.create`，
   /// 然后把新 sid 加进列表并打开它。
   ///
-  /// 它走 `outbox`（带幂等键的写操作）：点了两次不会建出两个会话 ——
-  /// 重发复用同一个 `requestId`，电脑侧去重。
+  /// ## 同一时刻只发一次（照 DSH Web 的 `connecting` 表）
+  ///
+  /// `ui-workspace/src/client/navigation.ts:224-231` 的 `connectBlank` 对
+  /// "同一个工作区 + 同一个预设"的重复调用**合流到同一个 promise**。
+  /// 我们原来没有这一层：`session.create` 往返期间再点几次就发几次，
+  /// 每次一个新 `requestId`，于是电脑侧多出几个空会话（2026-11-07 真机：
+  /// 1 秒内 3 个只有会话头的文件）。
+  ///
+  /// 键是"目标工作区 + 预设"而不只是会话：DSH 允许同一工作区里同时开
+  /// 不同预设的新会话，那两次点击本来就该各建一个。
   ///
   /// [workspaceId] / [agentPreset] 是 hero 上那两枚 chip 的选择。
   ///
@@ -3845,7 +3944,9 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 解析不出来（这台电脑一个工作区都没有）时才真的不塞：那时"未分组"是事实。
   ///
   /// Note: 链的来源、被否方案（`cwd` / 本地塞组 / 默认工作区）与代价 ——
-  /// 见 `.agents/notes/implemented/2026-10-22-new-session-lands-in-a-workspace.md`。
+  /// 见 `.agents/notes/implemented/2026-10-22-new-session-lands-in-a-workspace.md`；
+  /// 在途合并与"本地行不再自称非空"见
+  /// `.agents/notes/implemented/2026-11-08-new-session-inflight-guard.md`。
   ///
   /// [agentPreset] 仍然是"不给就不塞"（DSH 有默认预设）。
   ///
@@ -3853,12 +3954,45 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// （`agent-preset/locked`，`agent-preset-registry/src/index.ts:351`），
   /// 而建会话时带上根本不会碰到那条限制。取舍见
   /// `.agents/notes/implemented/2026-10-17-blank-session-hero.md`。
-  Future<void> createSession({String? workspaceId, String? agentPreset}) async {
+  Future<void> createSession({String? workspaceId, String? agentPreset}) {
     final targetWorkspaceId = workspaceId ?? defaultNewSessionWorkspaceId;
+    final key = '${targetWorkspaceId ?? ''}\u0000${agentPreset ?? ''}';
+    final running = _creatingSessions[key];
+    if (running != null) return running;
+    late final Future<void> attempt;
+    attempt =
+        _createSession(
+          workspaceId: targetWorkspaceId,
+          agentPreset: agentPreset,
+        ).whenComplete(() {
+          // **只清掉自己**：合流的后来者拿到的仍是同一个 future，
+          // 而下一轮点击该起一次新请求。
+          if (identical(_creatingSessions[key], attempt)) {
+            // 表里存的是"那一次请求的 future"：移除时它已经完成，返回值只是同一个
+            // future —— `ignore()` 明说"这里不关心它"，否则 lint 会把取返回值当成丢异常。
+            _creatingSessions.remove(key)?.ignore();
+          }
+        });
+    _creatingSessions[key] = attempt;
+    return attempt;
+  }
+
+  /// 在途的"新建会话"（键 = 工作区 + 预设），值 = 那一次请求。
+  final Map<String, Future<void>> _creatingSessions = {};
+
+  /// 某个工作区有没有"新建会话"正在路上。界面据此只提示一次，
+  /// 而不是每点一下弹一句。
+  bool get creatingNewSession => _creatingSessions.isNotEmpty;
+
+  /// [createSession] 的实际执行体（只有一次，由在途表保证）。
+  Future<void> _createSession({
+    required String? workspaceId,
+    required String? agentPreset,
+  }) async {
     // 方法名与参数形状（含"两个可选键只发有值的那个"）在
     // `wire/rpc/session.dart` 的 `createSession`；`sid` 缺失会在那边计数并回 null。
     final sid = await _writes.createSession(
-      workspaceId: targetWorkspaceId,
+      workspaceId: workspaceId,
       agentPreset: agentPreset,
       requestId: newRequestId('new'),
     );
@@ -3868,12 +4002,36 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
         '新建会话没有返回 sid（电脑侧实现不对？）',
       );
     }
+    // **本地这一行必须自称 blank**：刚从 `session.create` 回来的会话
+    // **一定是空会话**（宿主只会复用一个 blank 或造一个新的，两者都还没开轮次，
+    // `api/session-controller/src/commands.ts:120-142` 的 `reusable` 判据）。
+    //
+    // 原来这里写的是 `SessionSummary(sid, title:'', updatedAt:0)` —— `blank`
+    // 默认 `false`（`model/chat_item.dart:825`），于是这一行同时撒了两个谎：
+    // ① App 把"桌面按 `sessionVisible` 藏起来的空会话"画成了一行正常会话；
+    // ② 下一次 `findBlankSession` 看不见它（它说自己是空会话吗？不是），
+    //    复用保护形同虚设 —— 连点几次就真的建出几个（2026-11-07 真机）。
+    //
+    // `cwd` 也必须带上：DSH 的复用判据是
+    // `blank && cwd == workspace.path && workspace.sessionIds.includes(id)`
+    // （`ui-workspace/src/client/navigation.ts:238-244`）。少了它，清单刷新
+    // 失败 / 还没到时这一行**不会被下一次「新建会话」复用**。
     _sessions = [
-      SessionSummary(sid: sid, title: '', updatedAt: 0),
+      SessionSummary(
+        sid: sid,
+        title: '',
+        updatedAt: 0,
+        blank: true,
+        cwd: _workspacePathOf(workspaceId),
+      ),
       ..._sessions.where((s) => s.sid != sid),
     ];
     if (!_disposed) notifyListeners();
     await openSession(sid);
+    // **建完立刻重读会话清单**：标题 / 更新时间 / blank 的真值都在电脑侧，
+    // 本地那一行只是"先摆上"，不是账本（2026-10-22 那条重读工作区同理）。
+    // 失败由 `refreshSessionRows` 自己记进 [lastError]，不影响"会话已经建好"。
+    await refreshSessionRows();
     // **建完立刻重读工作区清单**：分组只认 `workspace.list` 的 `sessionIds`
     // （`workspaceGroupOf`），而刚建出来的会话还没进那份快照 ——
     // 不重读的话抽屉会把它摆在「未分组」，直到下一次刷新（实测：杀 App 重开才对）。
@@ -4688,6 +4846,9 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     // 提示时钟随宿主一起走（它只是文案，但定时器必须收干净）。
     _hintTicker?.cancel();
     _hintTicker = null;
+    // 活动补批也一样：页面都走了，不该再向电脑侧要下一批。
+    _usageDaysPoll?.cancel();
+    _usageDaysPoll = null;
     unawaited(_stateSub?.cancel());
     unawaited(_jobSub?.cancel());
     unawaited(_statusSub?.cancel());

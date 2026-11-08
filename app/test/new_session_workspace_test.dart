@@ -28,7 +28,7 @@ import 'fake_sync_client.dart';
 
 /// 记录 `session.create` 请求体、按方法给固定应答的替身。
 class _CreateClient extends FakeSyncClient {
-  _CreateClient({required this.rows, required this.workspacesReply});
+  _CreateClient({required this.rows, required this.workspacesReply, this.gate});
 
   final List<Map<String, Object?>> rows;
 
@@ -38,6 +38,12 @@ class _CreateClient extends FakeSyncClient {
 
   /// 每次 `session.create` 的请求体（断言"到底带没带 workspaceId"）。
   final List<Map<String, Object?>> createParams = <Map<String, Object?>>[];
+
+  /// `session.list` 被拉了几次（"建完重读清单"的判据）。
+  int listCalls = 0;
+
+  /// 让 `session.create` 停在半路（在途合并那条用）。
+  final Completer<void>? gate;
 
   @override
   ConnectionState get state => ConnectionState.serving;
@@ -58,6 +64,16 @@ class _CreateClient extends FakeSyncClient {
   @override
   Future<void> unsubscribe(String sid) async {}
 
+  /// 某个工作区的目录（建出来的会话要落在这个 cwd 上，`findBlankSession` 才认）。
+  String _pathOf(Object? workspaceId) {
+    for (final group in (workspacesReply['workspaces'] as List? ?? const [])) {
+      if (group is Map && group['workspaceId'] == workspaceId) {
+        return group['path'] as String? ?? '';
+      }
+    }
+    return '';
+  }
+
   @override
   Future<T> call<T>(
     String method,
@@ -66,15 +82,19 @@ class _CreateClient extends FakeSyncClient {
   }) async {
     switch (method) {
       case 'session.list':
+        listCalls += 1;
         return <String, Object?>{'sessions': rows} as T;
       case 'workspace.list':
         return workspacesReply as T;
       case 'session.create':
         createParams.add(params);
-        // **宿主的行为**：给了 `workspaceId` 就把它记进该工作区的账本
-        // （`session-controller/src/commands.ts:138-148`）。替身照做，
-        // 否则"建完重读清单"那条断言测不到真东西。
+        // 在途闸门：先挂在这里，让第二次点击确实落在"还没回来"的窗口里。
+        await (gate?.future ?? Future<void>.value());
         final wid = params['workspaceId'];
+        // **宿主的行为**：给了 `workspaceId` 就把它记进该工作区的账本
+        // （`session-controller/src/commands.ts:138-148`），并且清单里
+        // 立刻多出一条 **blank: true** 的会话。替身照做，否则"建完重读清单"
+        // 与"本地行不撒谎"两条断言都测不到真东西。
         if (wid is String) {
           for (final group
               in (workspacesReply['workspaces'] as List? ?? const [])) {
@@ -83,6 +103,7 @@ class _CreateClient extends FakeSyncClient {
             }
           }
         }
+        rows.add(_row('new-1', cwd: _pathOf(wid), updatedAt: 1, blank: true));
         return <String, Object?>{'sid': 'new-1'} as T;
       default:
         return <String, Object?>{} as T;
@@ -376,6 +397,89 @@ void main() {
       expect(await app.findBlankSession(workspaceId: 'w1'), 'b2');
       // 不给工作区时保持原行为（第一个 blank），供"启动时落到 blank"用。
       expect(await app.findBlankSession(), 'b1');
+    });
+  });
+
+  group('createSession 的在途合并与本地行（2026-11-07 真机：一秒内 3 个空会话）', () {
+    Future<AppModel> open(_CreateClient client) async {
+      final app = AppModel(client: client);
+      addTearDown(app.dispose);
+      await app.start();
+      await app.refreshSessionRows();
+      await app.refreshWorkspaces();
+      await app.openSession('s1');
+      return app;
+    }
+
+    _CreateClient clientWith({Completer<void>? gate}) => _CreateClient(
+      rows: [_row('s1', cwd: r'D:\w2', updatedAt: 10)],
+      workspacesReply: _workspaces([
+        _group('w2', r'D:\w2', ['s1']),
+      ]),
+      gate: gate,
+    );
+
+    test('同一工作区连点两次 ⇒ 只发一次 session.create', () async {
+      final gate = Completer<void>();
+      final client = clientWith(gate: gate);
+      final app = await open(client);
+
+      final first = app.createSession();
+      final second = app.createSession();
+      expect(app.creatingNewSession, isTrue, reason: '界面据此只说一次"正在新建"');
+
+      gate.complete();
+      await Future.wait([first, second]);
+
+      expect(
+        client.createParams.length,
+        1,
+        reason: '第二次点击合流到第一次（DSH 的 connecting 表）',
+      );
+      expect(app.creatingNewSession, isFalse, reason: '回来之后要能再建下一个');
+      expect(app.currentSid, 'new-1');
+    });
+
+    test('本地那一行**自称 blank**：既是真值，也让下次复用找得到它', () async {
+      final app = await open(clientWith());
+
+      // 抓"清单刷新之前"的那一帧：`createSession` 先把本地行摆上、再重读清单，
+      // 而重读之后这一行就归电脑侧的真值管了。被钉住的正是**本地那一行**。
+      bool? seenBlank;
+      String? seenCwd;
+      app.addListener(() {
+        if (seenBlank != null) return;
+        final row = app.sessionOf('new-1');
+        if (row != null) {
+          seenBlank = row.blank;
+          seenCwd = row.cwd;
+        }
+      });
+
+      await app.createSession();
+
+      expect(seenBlank, isTrue, reason: '宿主刚建的会话一定是空会话；本地行自称非空就是撒谎');
+      // **cwd 是复用判据的一半**（`navigation.ts:238-244` 比 `cwd == workspace.path`）：
+      // 少了它，清单刷新失败时下一次「新建会话」会再建一个。
+      expect(seenCwd, r'D:\w2');
+      final row = app.sessionOf('new-1');
+      expect(row, isNotNull);
+      expect(row!.blank, isTrue, reason: '刷新之后由电脑侧的真值接管，仍然是 blank');
+      expect(
+        await app.findBlankSession(workspaceId: 'w2'),
+        'new-1',
+        reason: '下一次「新建会话」要能复用它 —— 否则又会建出第二个',
+      );
+    });
+
+    test('建完重读一次会话清单（真值以电脑侧为准）', () async {
+      final client = clientWith();
+      final app = await open(client);
+      final before = client.listCalls;
+
+      await app.createSession();
+
+      expect(client.listCalls, before + 1, reason: '标题 / 更新时间 / blank 都在电脑侧');
     });
   });
 

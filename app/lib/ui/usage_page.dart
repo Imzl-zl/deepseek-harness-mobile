@@ -35,23 +35,21 @@ import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 
-/// 用量页 + 它的数据缝：**进来就拉一次，拉到就重画**。
+/// 用量页 + 它的数据缝：**进来先拉总量，再拉一段按天活动**。
 ///
-/// ## 为什么要有这一层（2026-10-21 真机抓到）
+/// ## 为什么是两次请求
 ///
-/// 原来的接线是（`main.dart` 的 `_openUsage`）：
+/// 总量 / 分项 / 项目 / 会话榜都来自 `session.list` 行自带的 `tokenUsage` 投影提示
+/// （一次往返）；按天活动要读每个会话的 `trajectory`（日志），**只能按窗口、
+/// 按需读**（`connector/src/handlers.ts` 的 `usage.summary`）。
+/// 先出总量、活动后补，页面不会为了热力图空转。
 ///
-/// ```dart
-/// unawaited(app.refreshUsageSummary());        // 异步开始拉
-/// push(UsagePage(summary: app.usageSummary))   // 立刻读 —— 这时还是 null
-/// ```
+/// ## 为什么不把快照塞进来
 ///
-/// 而 [UsagePage] 是**无状态**的、只拿一份快照、**不监听 `AppModel`**，
-/// 于是拉回来的数据没有触发任何重画：真机上永远是「还没有用量数据」，
-/// 而电脑侧明明有几十万 token（同屏的统计条就摆着 92.7K）。
-///
-/// 判据见 `app/test/usage_page_test.dart` 的「先空态、拉到后自己重画」——
-/// 少了这一层，那条用例在拉完之后仍看到空态。
+/// 原来的接线是 `unawaited(app.refreshUsageSummary())` 之后立刻
+/// `push(UsagePage(summary: app.usageSummary))` —— 这时还是 null，而 `UsagePage`
+/// 不监听 `AppModel`，于是真机上永远停在空态（2026-10-21 抓到）。
+/// 现在这一层 `ListenableBuilder` 听 `AppModel`，拉到之后自己重画。
 class UsagePageHost extends StatefulWidget {
   const UsagePageHost({super.key, required this.app, this.onOpenSession});
 
@@ -63,11 +61,15 @@ class UsagePageHost extends StatefulWidget {
 }
 
 class _UsagePageHostState extends State<UsagePageHost> {
+  /// 首次进入的活动窗口。30 天：够看"最近在不在干活"，读的会话也不多。
+  static const int _initialWindow = 30;
+
   @override
   void initState() {
     super.initState();
-    // 不等它：页面先以空态出现，拉到之后由下面的 `ListenableBuilder` 重画。
+    // 不等它们：页面先以"正在读取"出现，拉到之后由 `ListenableBuilder` 重画。
     unawaited(widget.app.refreshUsageSummary());
+    unawaited(widget.app.refreshUsageDays(_initialWindow));
   }
 
   @override
@@ -76,11 +78,23 @@ class _UsagePageHostState extends State<UsagePageHost> {
       // **页面是独立路由**：`ChatPage` 的重建到不了它，所以它必须自己听
       // `AppModel`（与「切换子智能体」面板同一条纪律）。
       listenable: widget.app,
-      builder: (context, _) => UsagePage(
-        summary: widget.app.usageSummary,
-        failure: widget.app.lastError?.message,
-        onOpenSession: widget.onOpenSession,
-      ),
+      builder: (context, _) {
+        final window = widget.app.usageDaysWindow ?? _initialWindow;
+        return UsagePage(
+          summary: widget.app.usageSummary,
+          loading: widget.app.usageSummaryLoading,
+          failure: widget.app.lastError?.message,
+          days: widget.app.usageDays,
+          daysWindow: window,
+          daysLoading: widget.app.usageDaysLoading,
+          daysProgress: widget.app.usageDaysProgress,
+          daysFailure: widget.app.usageDaysFailure,
+          onSelectWindow: (value) =>
+              unawaited(widget.app.refreshUsageDays(value)),
+          onRetryDays: () => unawaited(widget.app.refreshUsageDays(window)),
+          onOpenSession: widget.onOpenSession,
+        );
+      },
     );
   }
 }
@@ -88,7 +102,20 @@ class _UsagePageHostState extends State<UsagePageHost> {
 /// 用量页。数据由调用方拉好传进来（**这一页不自己发请求**）——
 /// 与设置页同一约定：拉取是 `AppModel` 的事，页面只显示。
 class UsagePage extends StatelessWidget {
-  const UsagePage({super.key, this.summary, this.onOpenSession, this.failure});
+  const UsagePage({
+    super.key,
+    this.summary,
+    this.onOpenSession,
+    this.failure,
+    this.loading = false,
+    this.days = const [],
+    this.daysWindow = 30,
+    this.daysLoading = false,
+    this.daysProgress,
+    this.daysFailure,
+    this.onSelectWindow,
+    this.onRetryDays,
+  });
 
   /// 汇总；`null` = 还没拉到（或形状不认识）—— 页面显示空态。
   final UsageSummary? summary;
@@ -96,8 +123,29 @@ class UsagePage extends StatelessWidget {
   /// 点一个会话行（打开那个会话）。`null` = 不可点。
   final void Function(String sid)? onOpenSession;
 
-  /// 拉取失败的原因（`null` = 没失败）。
+  /// 总量拉取失败的原因（`null` = 没失败）。
   final String? failure;
+
+  /// 总量那次请求是否在途（空态用它区分"正在读"与"没有数据"）。
+  final bool loading;
+
+  /// 按天活动（`usage.summary {days}` 的 `byDay`）。
+  final List<UsageDay> days;
+
+  /// 活动的窗口（天）。
+  final int daysWindow;
+
+  final bool daysLoading;
+  final String? daysFailure;
+
+  /// 按天活动的扫描进度（`scanned / total` 个会话）；`null` = 老连接器没报。
+  final ({int scanned, int total})? daysProgress;
+
+  /// 切换活动窗口（7 / 30 / 90 天）—— 会重新拉一次。
+  final void Function(int days)? onSelectWindow;
+
+  /// 活动拉取失败后重试。
+  final VoidCallback? onRetryDays;
 
   @override
   Widget build(BuildContext context) {
@@ -107,7 +155,10 @@ class UsagePage extends StatelessWidget {
       backgroundColor: c.bgBase,
       appBar: AppBar(title: const Text('用量'), backgroundColor: c.layer1),
       body: data == null
-          ? _EmptyUsage(failure: failure)
+          ? _EmptyUsage(failure: failure, loading: loading)
+          // **真的没有用量**（0 个有数据的会话）：说一句人话，不摆一张 0 卡。
+          : data.grandTotalTokens == 0 && data.bySession.isEmpty
+          ? const _EmptyUsage()
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
               children: [
@@ -116,13 +167,20 @@ class UsagePage extends StatelessWidget {
                 // 不摆四个 0。
                 if (data.totals != null) ...[
                   const SizedBox(height: 12),
-                  _BreakdownGrid(totals: data.totals!, turns: data.totalTurns),
+                  _BreakdownGrid(totals: data.totals!),
                 ],
-                // 热力图：**没有按天数据就整块不出现**（同上）。
-                if (data.byDay.isNotEmpty) ...[
-                  const SizedBox(height: 20),
-                  _HeatmapCard(days: data.byDay),
-                ],
+                const SizedBox(height: 20),
+                _ActivityCard(
+                  // **老连接器把 `byDay` 放在总量应答里**（那版没有 `days`），
+                  // 新连接器只在带 `days` 的那次里给 —— 两边都认，界面不用分叉。
+                  days: days.isEmpty ? data.byDay : days,
+                  window: daysWindow,
+                  loading: daysLoading,
+                  progress: daysProgress,
+                  failure: daysFailure,
+                  onSelectWindow: onSelectWindow,
+                  onRetry: onRetryDays,
+                ),
                 const SizedBox(height: 24),
                 ..._projectSections(context, data),
               ],
@@ -139,6 +197,7 @@ class UsagePage extends StatelessWidget {
         for (final entry in data.bySession)
           _SessionRow(
             entry: entry,
+            totalTokens: data.grandTotalTokens,
             onTap: onOpenSession == null
                 ? null
                 : () => onOpenSession!(entry.sid),
@@ -147,7 +206,11 @@ class UsagePage extends StatelessWidget {
     }
     return [
       for (final group in groups) ...[
-        _ProjectSection(group: group, onOpenSession: onOpenSession),
+        _ProjectSection(
+          group: group,
+          totalTokens: data.grandTotalTokens,
+          onOpenSession: onOpenSession,
+        ),
         const SizedBox(height: 12),
       ],
     ];
@@ -204,35 +267,151 @@ class _TotalCard extends StatelessWidget {
             '来自 ${summary.sessions} 个会话（子智能体不计入）',
             style: TextStyle(fontSize: 12, color: c.labelTertiary),
           ),
+          if (summary.totals != null) ...[
+            const SizedBox(height: 14),
+            // **构成条**：四个桶按比例占宽 —— 一眼看出"钱花在输入、输出还是
+            // 缓存重读上"。没有分项（老连接器）就不画。
+            _CompositionBar(totals: summary.totals!),
+            const SizedBox(height: 8),
+            if (summary.totals!.cacheHitText != null)
+              Text(
+                '缓存命中 ${summary.totals!.cacheHitText}%',
+                style: TextStyle(fontSize: 11, color: c.labelSecondary),
+              ),
+          ],
         ],
       ),
     );
   }
 }
 
-/// 四个分项的小卡片（2×2）：输入 / 输出 / 缓存 / 轮次。
+/// 四个桶的构成条（按 token 比例分宽；全零时只留一条底色轨道）。
+class _CompositionBar extends StatelessWidget {
+  const _CompositionBar({required this.totals});
+
+  final UsageTotals totals;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    final parts = <({int value, Color color})>[
+      (value: totals.uncachedInputTokens, color: c.accentBlue),
+      (value: totals.cacheReadTokens, color: c.ctxTools),
+      (value: totals.cacheWriteTokens, color: c.labelCaption),
+      (value: totals.outputTokens, color: c.stateWarn),
+    ];
+    final sum = parts.fold<int>(0, (acc, part) => acc + part.value);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(99),
+      child: SizedBox(
+        key: const Key('usage-composition'),
+        height: 8,
+        child: sum == 0
+            ? ColoredBox(color: c.layer2)
+            : Row(
+                // **stretch 是必须的**：`ColoredBox` 没有子节点，在 Row 的
+                // 松高度约束下会取 0 高 —— 条子于是"存在但看不见"
+                // （2026-11-08 真机截图抓到的）。
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final part in parts)
+                    if (part.value > 0)
+                      Expanded(
+                        flex: part.value,
+                        child: ColoredBox(color: part.color),
+                      ),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+/// 占比文字（`62%` / `<1%`）；`null` 原样给 `null`（合计为 0 时不编一个 0%）。
+///
+/// 公开给用例直接断言：格式化口径只有这一处（四个小卡片、项目行、会话行共用）。
+String? percentTextOf(double? fraction) {
+  if (fraction == null) return null;
+  final percent = fraction * 100;
+  if (percent > 0 && percent < 0.5) return '<1%';
+  return '${percent.round()}%';
+}
+
+/// 一条按比例填充的细条（项目 / 会话的占比）。
+class _ShareBar extends StatelessWidget {
+  const _ShareBar({required this.fraction, required this.color});
+
+  /// 0..1（越界会被夹住）。
+  final double fraction;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(99),
+      child: SizedBox(
+        height: 4,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ColoredBox(color: c.layer2),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FractionallySizedBox(
+                widthFactor: fraction.clamp(0.0, 1.0),
+                heightFactor: 1,
+                child: ColoredBox(color: color),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 四个分项的小卡片（2×2）：未缓存输入 / 输出 / 缓存读·写。
 ///
 /// 为什么是"小卡片"而不是一行字：用量页的动作是**看趋势与构成**，
 /// 四格并排比四行文字更快扫到（参照 rikkahub 的 `StatsGrid` + `StatCard`，
 /// `ui/pages/stats/StatsPage.kt:277-360`）。
+///
+/// **轮次不在这里**：全库轮次没有可靠来源（`trajectory` 只保留每会话最近 200 轮），
+/// 摆一个"看起来是总量"的轮次就是编 —— 轮次归「近期活动」那一段，带窗口。
 class _BreakdownGrid extends StatelessWidget {
-  const _BreakdownGrid({required this.totals, required this.turns});
+  const _BreakdownGrid({required this.totals});
 
   final UsageTotals totals;
 
-  /// 轮次总数；`null` = 没有按天数据（那一格不出现，而不是显示 0）。
-  final int? turns;
-
   @override
   Widget build(BuildContext context) {
+    final c = context.dshColors;
     final cells = <Widget>[
       _MiniCard(
         label: '输入（未命中缓存）',
         value: formatTokenCount(totals.uncachedInputTokens),
+        color: c.accentBlue,
+        hint: percentTextOf(totals.shareOf(totals.uncachedInputTokens)),
       ),
-      _MiniCard(label: '输出', value: formatTokenCount(totals.outputTokens)),
-      _MiniCard(label: '缓存读 / 写', value: formatTokenCount(totals.cacheTokens)),
-      if (turns != null) _MiniCard(label: '轮次', value: '$turns'),
+      _MiniCard(
+        label: '输出',
+        value: formatTokenCount(totals.outputTokens),
+        color: c.stateWarn,
+        hint: percentTextOf(totals.shareOf(totals.outputTokens)),
+      ),
+      _MiniCard(
+        label: '缓存读',
+        value: formatTokenCount(totals.cacheReadTokens),
+        color: c.ctxTools,
+        hint: percentTextOf(totals.shareOf(totals.cacheReadTokens)),
+      ),
+      _MiniCard(
+        label: '缓存写',
+        value: formatTokenCount(totals.cacheWriteTokens),
+        color: c.labelCaption,
+        hint: percentTextOf(totals.shareOf(totals.cacheWriteTokens)),
+      ),
     ];
     return Column(
       children: [
@@ -254,10 +433,21 @@ class _BreakdownGrid extends StatelessWidget {
 }
 
 class _MiniCard extends StatelessWidget {
-  const _MiniCard({required this.label, required this.value});
+  const _MiniCard({
+    required this.label,
+    required this.value,
+    required this.color,
+    this.hint,
+  });
 
   final String label;
   final String value;
+
+  /// 与构成条同一色：四格与那条带子的颜色必须对得上（否则读比例时得猜）。
+  final Color color;
+
+  /// 这一项占合计的百分比（`62%`）；`null` = 合计为 0，不显示。
+  final String? hint;
 
   @override
   Widget build(BuildContext context) {
@@ -271,7 +461,33 @@ class _MiniCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: TextStyle(fontSize: 11, color: c.labelCaption)),
+          Row(
+            children: [
+              Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: c.labelCaption),
+                ),
+              ),
+              if (hint != null)
+                Text(
+                  hint!,
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: c.labelCaption,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+            ],
+          ),
           const SizedBox(height: 6),
           Text(
             value,
@@ -287,7 +503,279 @@ class _MiniCard extends StatelessWidget {
   }
 }
 
-/// 活动热力图：**最近 52 周**，一格一天，**颜色 = 那天用掉的 token**。
+/// 一段活动窗口的读数（今日 / 本段 / 前段）。
+typedef ActivityStats = ({
+  int todayTokens,
+  int todayTurns,
+  int windowTokens,
+  int windowTurns,
+  int previousTokens,
+});
+
+/// 从**已经拉回来的一段 `byDay`** 里切出今日 / 本窗口 / 前一窗口。
+///
+/// [days] 覆盖 `2 × window` 天（`AppModel.refreshUsageDays` 就是这么要的），
+/// 所以"前一段"不需要再发一次请求。纯函数：界面只调它，测试直接断言。
+ActivityStats activityStatsOf(List<UsageDay> days, int window, DateTime today) {
+  final todayDate = DateTime(today.year, today.month, today.day);
+  final todayKey = _dateKey(todayDate);
+  final windowStart = _dateKey(todayDate.subtract(Duration(days: window - 1)));
+  final previousStart = _dateKey(
+    todayDate.subtract(Duration(days: window * 2 - 1)),
+  );
+  var todayTokens = 0;
+  var todayTurns = 0;
+  var windowTokens = 0;
+  var windowTurns = 0;
+  var previousTokens = 0;
+  for (final day in days) {
+    if (day.date == todayKey) {
+      todayTokens += day.tokens;
+      todayTurns += day.turns;
+    }
+    if (day.date.compareTo(windowStart) >= 0) {
+      windowTokens += day.tokens;
+      windowTurns += day.turns;
+    } else if (day.date.compareTo(previousStart) >= 0) {
+      previousTokens += day.tokens;
+    }
+  }
+  return (
+    todayTokens: todayTokens,
+    todayTurns: todayTurns,
+    windowTokens: windowTokens,
+    windowTurns: windowTurns,
+    previousTokens: previousTokens,
+  );
+}
+
+/// "较前 N 天"那段话。前一段没有数据就说没有，**不编一个 +100%**。
+String? deltaTextOf(int current, int previous, int window) {
+  if (previous <= 0) return current <= 0 ? null : '前一段没有数据';
+  final percent = ((current - previous) * 100 / previous).round();
+  return '较前 $window 天 ${percent >= 0 ? '+' : ''}$percent%';
+}
+
+/// 近期活动：窗口胶囊 + 今日 / 本段 / 前段对比 + 热力图。
+///
+/// ## 为什么窗口在这里、而且会重新请求
+///
+/// 按天活动要读每个会话的 `trajectory`（日志），所以"看最近 90 天"不能靠
+/// 本地切片（那要把一年全读回来）。三档窗口各自是一次有界请求
+/// （`usage.summary {days}`），数据量只随窗口里的会话数长。
+class _ActivityCard extends StatelessWidget {
+  const _ActivityCard({
+    required this.days,
+    required this.window,
+    required this.loading,
+    this.progress,
+    this.failure,
+    this.onSelectWindow,
+    this.onRetry,
+  });
+
+  final List<UsageDay> days;
+  final int window;
+  final bool loading;
+
+  /// 扫描进度；`scanned < total` 时数字还会长，界面要说出来。
+  final ({int scanned, int total})? progress;
+  final String? failure;
+  final void Function(int days)? onSelectWindow;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    final stats = activityStatsOf(days, window, DateTime.now());
+    // 已经有一段数据时，切窗口**继续显示旧读数**（旁边放小转圈），
+    // 而不是把整块藏掉再闪回来。
+    final showHeatmap = failure == null && days.isNotEmpty;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+          decoration: BoxDecoration(
+            color: c.layer1,
+            borderRadius: BorderRadius.circular(DshRadius.lg),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    '近期活动',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: c.labelPrimary,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (loading && days.isNotEmpty) ...[
+                    const SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  for (final option in UsageRange.values)
+                    _RangeChip(
+                      key: ValueKey<String>('usage-range-${option.name}'),
+                      label: option.label,
+                      selected: option.days == window,
+                      onTap: () => onSelectWindow?.call(option.days),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (loading && days.isEmpty)
+                Row(
+                  children: [
+                    const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '正在读取活动…',
+                      style: TextStyle(fontSize: 12, color: c.labelTertiary),
+                    ),
+                  ],
+                )
+              else if (failure != null)
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '拉不到活动：$failure',
+                        style: TextStyle(fontSize: 12, color: c.labelTertiary),
+                      ),
+                    ),
+                    TextButton(
+                      key: const Key('usage-days-retry'),
+                      onPressed: onRetry,
+                      child: const Text('重试'),
+                    ),
+                  ],
+                )
+              else if (days.isEmpty &&
+                  (progress == null || progress!.scanned >= progress!.total))
+                Text(
+                  '这段时间电脑上没有记录到活动',
+                  style: TextStyle(fontSize: 12, color: c.labelTertiary),
+                )
+              else ...[
+                _ActivityLine(
+                  label: '今天',
+                  tokens: stats.todayTokens,
+                  turns: stats.todayTurns,
+                ),
+                const SizedBox(height: 6),
+                _ActivityLine(
+                  label: '近 $window 天',
+                  tokens: stats.windowTokens,
+                  turns: stats.windowTurns,
+                  note: deltaTextOf(
+                    stats.windowTokens,
+                    stats.previousTokens,
+                    window,
+                  ),
+                ),
+                if (stats.windowTurns > 0) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    '日均 ${formatTokenCount((stats.windowTokens / window).round())} tok'
+                    ' · 平均每轮 ${formatTokenCount((stats.windowTokens / stats.windowTurns).round())} tok',
+                    style: TextStyle(fontSize: 10.5, color: c.labelCaption),
+                  ),
+                ],
+                // **数字还在长**：电脑侧一次只扫几个会话，明说统计到哪了，
+                // 别让人把"半份账"当成完整结果。
+                if (progress != null &&
+                    progress!.scanned < progress!.total) ...[
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      const SizedBox(
+                        width: 10,
+                        height: 10,
+                        child: CircularProgressIndicator(strokeWidth: 1.6),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        '正在统计活动：${progress!.scanned}/${progress!.total} 个会话…',
+                        style: TextStyle(fontSize: 10.5, color: c.labelCaption),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ],
+          ),
+        ),
+        if (showHeatmap) ...[
+          const SizedBox(height: 10),
+          _HeatmapCard(days: days, range: UsageRange.ofDays(window)),
+        ],
+      ],
+    );
+  }
+}
+
+/// 一行活动读数：`今天  12.4K tok · 3 轮`，右侧可带一句对比。
+class _ActivityLine extends StatelessWidget {
+  const _ActivityLine({
+    required this.label,
+    required this.tokens,
+    required this.turns,
+    this.note,
+  });
+
+  final String label;
+  final int tokens;
+  final int turns;
+  final String? note;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dshColors;
+    return Row(
+      children: [
+        SizedBox(
+          width: 64,
+          child: Text(
+            label,
+            style: TextStyle(fontSize: 11, color: c.labelCaption),
+          ),
+        ),
+        Text(
+          '${formatTokenCount(tokens)} tok',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: c.labelPrimary,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          '$turns 轮',
+          style: TextStyle(fontSize: 11, color: c.labelTertiary),
+        ),
+        const Spacer(),
+        if (note != null)
+          Text(note!, style: TextStyle(fontSize: 10.5, color: c.labelCaption)),
+      ],
+    );
+  }
+}
+
+/// 活动热力图：一格一天，**颜色 = 那天用掉的 token**。
 ///
 /// ## 它凭什么不再"只是一张图"
 ///
@@ -308,9 +796,12 @@ class _MiniCard extends StatelessWidget {
 /// `assistant/message` 的 `data.usage`（连接器在 `trajectory` 里累进本轮）。
 /// 覆盖范围是各会话 `trajectory` 保留的最近 200 轮。
 class _HeatmapCard extends StatefulWidget {
-  const _HeatmapCard({required this.days});
+  const _HeatmapCard({required this.days, required this.range});
 
   final List<UsageDay> days;
+
+  /// 窗口（与上面那排胶囊同一档）—— 只决定画几列，不再自己切数据。
+  final UsageRange range;
 
   @override
   State<_HeatmapCard> createState() => _HeatmapCardState();
@@ -326,15 +817,12 @@ class _HeatmapCardState extends State<_HeatmapCard> {
   /// 选中的那天（`YYYY-MM-DD`）；`null` = 还没点（显示"点一格"）。
   String? _selected;
 
-  /// 当前窗口（**纯前端切片**：`usage.summary.byDay` 已经带全部保留日期）。
-  UsageRange _range = UsageRange.all;
-
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
     final today = DateTime.now();
     final todayDate = DateTime(today.year, today.month, today.day);
-    final window = usageWindowOf(widget.days, _range, today);
+    final window = usageWindowOf(widget.days, widget.range, today);
     final byDate = {for (final day in window.days) day.date: day};
     // 本周周一（`DateTime.weekday` 的 1 = 周一）。
     final thisMonday = todayDate.subtract(
@@ -359,15 +847,14 @@ class _HeatmapCardState extends State<_HeatmapCard> {
           Row(
             children: [
               Text(
-                _range.isAll
-                    ? '最近 $_fullCalendarWeeks 周'
-                    : '最近 ${_range.days} 天',
+                '最近 ${widget.range.days} 天',
                 style: TextStyle(fontSize: 12, color: c.labelSecondary),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   selected == null ? '点一格看当天' : _readoutOf(selected),
+                  key: const Key('usage-readout'),
                   textAlign: TextAlign.right,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -378,23 +865,6 @@ class _HeatmapCardState extends State<_HeatmapCard> {
                   ),
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          // 7 / 30 / 90 / 全部：**只切窗口**，不新增任何请求 ——
-          // `byDay` 本来就带着全部保留日期（契约 §5.7 的规则⑤）。
-          Row(
-            children: [
-              for (final range in UsageRange.values)
-                _RangeChip(
-                  key: ValueKey<String>('usage-range-${range.name}'),
-                  label: range.label,
-                  selected: range == _range,
-                  onTap: () => setState(() {
-                    _range = range;
-                    _selected = null;
-                  }),
-                ),
             ],
           ),
           const SizedBox(height: 8),
@@ -670,28 +1140,30 @@ String _dateKey(DateTime date) =>
 
 /// 热力图的时间范围。
 ///
-/// **纯前端切片**，不改契约、不加参数：`usage.summary.byDay` 本来就带着全部保留日期的
-/// `{date, turns, tokens}`（契约 §5.7 的规则⑤），所以"看最近 N 天"只是**取窗口**。
+/// **这三档就是连接器的 `days` 窗口**（7 / 30 / 90）：按天活动要读每个会话的
+/// `trajectory`（日志），所以切窗口是**重新拉一次**，不是本地切片。
+/// 没有"全部"：一年窗口要把全部会话的日志读一遍，代价与收益不成比例
+/// （见 `.agents/notes/implemented/2026-11-08-usage-summary-from-list-rows.md`）。
 enum UsageRange {
   d7('7 天', 7),
   d30('30 天', 30),
-  d90('90 天', 90),
-  all('全部', null);
+  d90('90 天', 90);
 
   const UsageRange(this.label, this.days);
 
   /// 胶囊上的字。
   final String label;
 
-  /// 窗口天数；`null` = 全部保留日期。
-  final int? days;
+  /// 窗口天数。
+  final int days;
 
-  /// 是不是"全部保留日期"那一档。
-  bool get isAll => days == null;
+  /// 窗口天数 → 档位（窗口只可能是这三档；认不出按最近的那档算）。
+  static UsageRange ofDays(int days) => days <= 7
+      ? UsageRange.d7
+      : days >= 90
+      ? UsageRange.d90
+      : UsageRange.d30;
 }
-
-/// 「全部」时画的周数（一年左右的连续日历）。
-const int _fullCalendarWeeks = 52;
 
 /// 把 `byDay` 切成一个窗口，并算出这一屏要画**几周**。
 ///
@@ -707,11 +1179,7 @@ const int _fullCalendarWeeks = 52;
   DateTime today,
 ) {
   final todayDate = DateTime(today.year, today.month, today.day);
-  final dayCount = range.days;
-  if (dayCount == null) {
-    return (days: [...days], weeks: _fullCalendarWeeks);
-  }
-  final start = todayDate.subtract(Duration(days: dayCount - 1));
+  final start = todayDate.subtract(Duration(days: range.days - 1));
   final startKey = _dateKey(start);
   final kept = [
     for (final day in days)
@@ -801,15 +1269,19 @@ double heatAlphaAt(int tokens, List<int> scale) {
   };
 }
 
-/// 一个项目的标题行（名字 · 用量 · 几个会话）。
+/// 一个项目的标题行（名字 · 用量 · 几个会话 · 占全库的比例）。
 class _ProjectHeader extends StatelessWidget {
   const _ProjectHeader({
     required this.group,
+    required this.totalTokens,
     required this.open,
     required this.onTap,
   });
 
   final ({UsageProject project, List<UsageEntry> entries}) group;
+
+  /// 全库总量（占比的分母）。
+  final int totalTokens;
 
   /// 这一个项目展开着没有（决定箭头朝向）。
   final bool open;
@@ -821,48 +1293,76 @@ class _ProjectHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.dshColors;
     final project = group.project;
+    final share = totalTokens <= 0 ? 0.0 : project.tokens / totalTokens;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(DshRadius.sm),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
+        child: Column(
           children: [
-            DshIcon('workspaceTree', size: 14, color: c.labelSecondary),
-            const SizedBox(width: 7),
-            Expanded(
-              child: Text(
-                project.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: c.labelPrimary,
+            Row(
+              children: [
+                DshIcon('workspaceTree', size: 14, color: c.labelSecondary),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Text(
+                    project.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: c.labelPrimary,
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(width: 8),
+                Text(
+                  formatTokenCount(project.tokens),
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: c.labelSecondary,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '${project.sessions} 个会话',
+                  style: TextStyle(fontSize: 11, color: c.labelCaption),
+                ),
+                const SizedBox(width: 2),
+                // 箭头朝向照落地端既有口径：收起朝右、展开朝下。
+                DshIcon(
+                  open ? 'chevronDown' : 'chevronRight',
+                  size: 14,
+                  color: c.labelTertiary,
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
-            Text(
-              formatTokenCount(project.tokens),
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: c.labelSecondary,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              '${project.sessions} 个会话',
-              style: TextStyle(fontSize: 11, color: c.labelCaption),
-            ),
-            const SizedBox(width: 2),
-            // 箭头朝向照落地端既有口径：收起朝右、展开朝下。
-            DshIcon(
-              open ? 'chevronDown' : 'chevronRight',
-              size: 14,
-              color: c.labelTertiary,
+            const SizedBox(height: 5),
+            // **占比条**：一眼看出"这台电脑的用量主要花在哪个项目"。
+            Row(
+              children: [
+                const SizedBox(width: 21),
+                Expanded(
+                  child: _ShareBar(fraction: share, color: c.accentBlue),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 34,
+                  child: Text(
+                    percentTextOf(share) ?? '',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: c.labelCaption,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -875,9 +1375,14 @@ class _ProjectHeader extends StatelessWidget {
 ///
 /// 默认**展开**：折叠是省屏的手段，不该把信息默认藏起来。
 class _ProjectSection extends StatefulWidget {
-  const _ProjectSection({required this.group, this.onOpenSession});
+  const _ProjectSection({
+    required this.group,
+    required this.totalTokens,
+    this.onOpenSession,
+  });
 
   final ({UsageProject project, List<UsageEntry> entries}) group;
+  final int totalTokens;
   final void Function(String sid)? onOpenSession;
 
   @override
@@ -898,6 +1403,7 @@ class _ProjectSectionState extends State<_ProjectSection> {
           key: ValueKey<String>('usage-project-${widget.group.project.path}'),
           child: _ProjectHeader(
             group: widget.group,
+            totalTokens: widget.totalTokens,
             open: _open,
             onTap: () => setState(() => _open = !_open),
           ),
@@ -907,6 +1413,7 @@ class _ProjectSectionState extends State<_ProjectSection> {
             if (ids.contains(entry.sid))
               _SessionRow(
                 entry: entry,
+                totalTokens: widget.group.project.tokens,
                 onTap: widget.onOpenSession == null
                     ? null
                     : () => widget.onOpenSession!(entry.sid),
@@ -916,11 +1423,18 @@ class _ProjectSectionState extends State<_ProjectSection> {
   }
 }
 
-/// 一个会话的行（标题 + 用量）。
+/// 一个会话的行（标题 + 用量 + 在本项目里的占比）。
 class _SessionRow extends StatelessWidget {
-  const _SessionRow({required this.entry, this.onTap});
+  const _SessionRow({
+    required this.entry,
+    required this.totalTokens,
+    this.onTap,
+  });
 
   final UsageEntry entry;
+
+  /// 占比的分母：扁平榜里是全库，项目段里是那个项目。
+  final int totalTokens;
   final VoidCallback? onTap;
 
   @override
@@ -929,6 +1443,7 @@ class _SessionRow extends StatelessWidget {
     // 标题空串按 DSH 的链退到「未命名」（`SessionSummary.displayTitle`
     // 同一条规则），不在这里兜一个目录名。
     final title = entry.title.isEmpty ? '未命名' : entry.title;
+    final share = totalTokens <= 0 ? null : entry.tokens / totalTokens;
     return ListTile(
       contentPadding: const EdgeInsets.only(left: 21, right: 4),
       dense: true,
@@ -939,13 +1454,28 @@ class _SessionRow extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
         style: TextStyle(fontSize: 13, color: c.labelSecondary),
       ),
-      trailing: Text(
-        formatTokenCount(entry.tokens),
-        style: TextStyle(
-          fontFamily: 'monospace',
-          fontSize: 12,
-          color: c.labelTertiary,
-        ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (share != null)
+            Text(
+              percentTextOf(share)!,
+              style: TextStyle(
+                fontSize: 10,
+                color: c.labelCaption,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          const SizedBox(width: 8),
+          Text(
+            formatTokenCount(entry.tokens),
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 12,
+              color: c.labelTertiary,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -974,11 +1504,15 @@ class _SectionTitle extends StatelessWidget {
   }
 }
 
-/// 空态：拉不到 / 还没有数据。
+/// 空态：正在读 / 拉不到 / 还没有数据。
 class _EmptyUsage extends StatelessWidget {
-  const _EmptyUsage({this.failure});
+  const _EmptyUsage({this.failure, this.loading = false});
 
   final String? failure;
+
+  /// 请求是否在途。**在途时不能说"还没有用量数据"** —— 那句话会被读成
+  /// "电脑上真的没有"，而真相只是还没回来（2026-11-08 用户反馈的形态）。
+  final bool loading;
 
   @override
   Widget build(BuildContext context) {
@@ -992,11 +1526,22 @@ class _EmptyUsage extends StatelessWidget {
           children: [
             DshIcon('gauge', size: 40, color: c.labelTertiary),
             const SizedBox(height: 14),
+            if (loading)
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            if (loading) const SizedBox(height: 12),
             Text(
-              reason == null ? '还没有用量数据' : '拉不到用量',
+              loading
+                  ? '正在读取…'
+                  : reason == null
+                  ? '还没有用量数据'
+                  : '拉不到用量',
               style: TextStyle(fontSize: 14, color: c.labelSecondary),
             ),
-            if (reason != null) ...[
+            if (!loading && reason != null) ...[
               const SizedBox(height: 6),
               Text(
                 reason,

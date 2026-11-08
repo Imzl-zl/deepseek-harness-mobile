@@ -1322,6 +1322,10 @@ class _DshMobileAppState extends State<DshMobileApp>
     final app = _app;
     if (app == null) return;
     unawaited(() async {
+      // **在第一个 await 之前拿好 context**：`_navContext` 是个 getter，
+      // 跨 await 再用会被 `use_build_context_synchronously` 拦（它没有错，
+      // 只是读不出来"这个 context 属于本 State 的 Navigator 且一直活着"）。
+      final navContext = _navContext;
       // 目标工作区照 DSH 的链（显式没有 → 当前会话工作区 → 最近工作区，
       // 见 `AppModel.defaultNewSessionWorkspaceId`）：
       // **不带 `workspaceId` 建的会话不会进任何工作区的账本**，于是它在抽屉里
@@ -1335,16 +1339,20 @@ class _DshMobileAppState extends State<DshMobileApp>
       }
       // ② 没有才建。建失败照实说，不吞。
       try {
+        // **只说一次**：在途合并之后，连点几下也只会建一个（`AppModel.createSession`
+        // 的 `connecting` 表）；没有这句时"半天没反应"会被读成"没点上"。
+        if (navContext.mounted && !app.creatingNewSession) {
+          DshToast.show(navContext, '正在新建会话…');
+        }
         await app.createSession(workspaceId: workspaceId);
       } catch (error) {
-        _notYet('新建会话（$error）');
+        // **不借用 `_notYet`**：那是"这个功能还没做"，而这里是"电脑侧拒绝了"。
+        // 两句话混在一起会让用户以为功能缺失（2026-11-08 顺带修）。
+        if (navContext.mounted) {
+          DshToast.show(navContext, '新建会话失败：$error', kind: DshToastKind.error);
+        }
       }
     }());
-  }
-
-  void _notYet(String what) {
-    _closeDrawer();
-    DshToast.show(_navContext, '$what 还没做');
   }
 
   /// 抽屉连接行的详情（换设备 / 断开重配）。
@@ -1399,16 +1407,21 @@ class _DshMobileAppState extends State<DshMobileApp>
       title: s.displayTitle,
       // **待处理数进副标题**：多会话并行时，用户靠它知道该切去哪个会话
       // （DSH 的待处理是 per-session 的，切过去才看得见）。
-      preview: [
-        if (s.pendingCount > 0) '${s.pendingCount} 个待处理',
-        // **子智能体在跑**：桌面在行里画第二枚点，手机塞进副标题
-        // （360dp 放不下两枚点，见 `ui/chat_page.dart` 的 `_SubagentRunningLine`）。
-        // 数是客户端算的（桌面 `tree.ts:381-386` 同一条），不是宿主字段。
-        if (app.runningChildrenOf(s.sid) > 0)
-          '${app.runningChildrenOf(s.sid)} 个子智能体在跑',
-        if (s.itemCount > 0) '${s.itemCount} 条',
-        if (s.pendingCount == 0 && s.itemCount == 0) s.sid,
-      ].join(' · '),
+      //
+      // blank 会话不数条目：它刚建出来，宿主落的 3 条系统事件会被投影成条目，
+      // 写"2 条"会让一个**什么都没聊过**的会话看起来有内容（2026-11-08 真机）。
+      preview: s.blank
+          ? '尚未开始'
+          : [
+              if (s.pendingCount > 0) '${s.pendingCount} 个待处理',
+              // **子智能体在跑**：桌面在行里画第二枚点，手机塞进副标题
+              // （360dp 放不下两枚点，见 `ui/chat_page.dart` 的 `_SubagentRunningLine`）。
+              // 数是客户端算的（桌面 `tree.ts:381-386` 同一条），不是宿主字段。
+              if (app.runningChildrenOf(s.sid) > 0)
+                '${app.runningChildrenOf(s.sid)} 个子智能体在跑',
+              if (s.itemCount > 0) '${s.itemCount} 条',
+              if (s.pendingCount == 0 && s.itemCount == 0) s.sid,
+            ].join(' · '),
       timeLabel: _relativeTime(
         DateTime(
           now.year,

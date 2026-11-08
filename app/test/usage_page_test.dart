@@ -81,17 +81,24 @@ void main() {
     expect(find.text('dsh-mobile'), findsOneWidget);
     // 没有 `cwd` 的那个项目档显示成「未关联项目」。
     expect(find.text(UsageProject.kUnlinkedProjectLabel), findsOneWidget);
+    // 项目占比（249M / 298M ≈ 84%，49M / 298M ≈ 16%）—— 一眼看出花在哪。
+    expect(find.text('84%'), findsOneWidget);
+    expect(find.text('16%'), findsOneWidget);
 
     // ③ 会话行：标题空串按 DSH 的链退到「未命名」。
     expect(find.text('插件UI与交互体验优化'), findsOneWidget);
     expect(find.text('未命名'), findsOneWidget);
     // 挂在「未关联项目」下的那个会话。
     expect(find.text('另一个项目'), findsOneWidget);
+    // 会话在所属项目里的占比（200M / 249M ≈ 80%，49M / 249M ≈ 20%）。
+    expect(find.text('80%'), findsOneWidget);
+    expect(find.text('20%'), findsOneWidget);
 
-    // 老连接器（没有 `totals` / `byDay`）：两块都**不出现** ——
-    // 不摆四个 0、也不画一张空热力图（对照组，证明上面那条不是恒真）。
+    // 老连接器（没有 `totals`）：四格分项**整块不出现** —— 不摆四个 0。
+    // 没有按天活动时也不画热力图（对照组，证明上面那条不是恒真）。
     expect(find.text('输入（未命中缓存）'), findsNothing);
-    expect(find.text('最近 52 周'), findsNothing);
+    expect(find.text('点一格看当天'), findsNothing);
+    expect(find.text('这段时间电脑上没有记录到活动'), findsOneWidget);
   });
 
   testWidgets('项目头可折叠：点一下收起，再点展开（默认展开）', (tester) async {
@@ -112,11 +119,15 @@ void main() {
     expect(find.text('插件UI与交互体验优化'), findsOneWidget);
   });
 
-  testWidgets('四个分项 + 热力图：有数据才出现；轮次是轮次，不是 token', (tester) async {
+  testWidgets('四个分项 + 近期活动：有数据才出现', (tester) async {
+    final today = DateTime.now();
+    final todayDate = DateTime(today.year, today.month, today.day);
+    final todayKey = _dayAgo(todayDate, 0);
+    final yesterdayKey = _dayAgo(todayDate, 1);
     await tester.pumpWidget(
-      const MaterialApp(
+      MaterialApp(
         home: UsagePage(
-          summary: UsageSummary(
+          summary: const UsageSummary(
             sessions: 2,
             grandTotalTokens: 1234,
             bySession: [],
@@ -126,12 +137,12 @@ void main() {
               cacheReadTokens: 30,
               cacheWriteTokens: 4,
             ),
-            byDay: [
-              UsageDay(date: '2026-10-01', turns: 2, tokens: 1200),
-              UsageDay(date: '2026-10-02', turns: 3, tokens: 8400),
-              UsageDay(date: '2026-10-03', turns: 1, tokens: 300),
-            ],
           ),
+          days: [
+            UsageDay(date: yesterdayKey, turns: 2, tokens: 1200),
+            UsageDay(date: todayKey, turns: 3, tokens: 8400),
+          ],
+          daysWindow: 30,
         ),
       ),
     );
@@ -139,11 +150,27 @@ void main() {
 
     expect(find.text('输入（未命中缓存）'), findsOneWidget);
     expect(find.text('输出'), findsOneWidget);
-    expect(find.text('缓存读 / 写'), findsOneWidget);
-    // 轮次 = `byDay` 之和（2+3+1）。
-    expect(find.text('轮次'), findsOneWidget);
-    expect(find.text('6'), findsOneWidget);
-    expect(find.text('最近 52 周'), findsOneWidget);
+    expect(find.text('缓存读'), findsOneWidget);
+    expect(find.text('缓存写'), findsOneWidget);
+    // 累计卡里的缓存命中率（同一个格式化函数：30 / (1000+30+4) ⇒ 3%）。
+    expect(find.text('缓存命中 3%'), findsOneWidget);
+
+    // 构成条**真的看得见**：8dp 高、有宽度（`ColoredBox` 在松高度约束下会取 0 高，
+    // 2026-11-08 真机截图里那条是"有但看不见"）。
+    final bar = find.byKey(const Key('usage-composition'));
+    expect(bar, findsOneWidget);
+    expect(tester.getSize(bar).height, 8);
+    expect(tester.getSize(bar).width, greaterThan(100));
+
+    // 近期活动：今天 / 近 30 天两行读数（数字来自 `days`）。
+    expect(find.text('近期活动'), findsOneWidget);
+    expect(find.text('今天'), findsOneWidget);
+    expect(find.text('近 30 天'), findsOneWidget);
+    expect(find.text('8.4K tok'), findsOneWidget);
+    expect(find.text('3 轮'), findsOneWidget);
+
+    // 热力图（窗口 30 天 ⇒ 连续日历）。
+    expect(find.text('最近 30 天'), findsOneWidget);
     // 还没点格子：那行是操作提示（不是空着，也不是假装有数据）。
     expect(find.text('点一格看当天'), findsOneWidget);
     // 图例两侧的刻度词。
@@ -219,9 +246,10 @@ void main() {
     await tester.pumpAndSettle();
 
     // 读出行由**生产数据**算出来：4 轮、15000 tok（`formatTokenCount` 格式化）。
-    final readout = find.textContaining('4 轮');
+    final readout = find.byKey(const Key('usage-readout'));
     expect(readout, findsOneWidget);
     final text = tester.widget<Text>(readout).data!;
+    expect(text, contains('4 轮'));
     expect(text, contains('15K tok'), reason: '读数走同一个格式化函数');
   });
 
@@ -257,31 +285,25 @@ void main() {
       );
     });
 
-    test('「全部」原样给全部保留日期，仍是 52 周的连续日历', () {
-      final today = DateTime(2026, 10, 24);
-      const days = [
-        UsageDay(date: '2025-01-02', turns: 1, tokens: 10),
-        UsageDay(date: '2026-10-24', turns: 2, tokens: 20),
-      ];
-      final all = usageWindowOf(days, UsageRange.all, today);
-      expect(all.days, days, reason: '全部 = 一条都不切');
-      expect(all.weeks, 52);
-      // 对照组：7 天窗口把 2025 那条切掉。
-      expect(usageWindowOf(days, UsageRange.d7, today).days.length, 1);
+    test('窗口档位只有 7 / 30 / 90：越界的请求按最近那档显示', () {
+      // 三档就是连接器的 `days` 窗口；页面不再有"全部"（一年窗口要把全部
+      // 会话的日志读一遍，代价与收益不成比例）。
+      expect(UsageRange.ofDays(7), UsageRange.d7);
+      expect(UsageRange.ofDays(30), UsageRange.d30);
+      expect(UsageRange.ofDays(90), UsageRange.d90);
+      expect(UsageRange.ofDays(1), UsageRange.d7);
+      expect(UsageRange.ofDays(365), UsageRange.d90);
     });
 
-    testWidgets('切到 7 天后读数仍正确（窗口只影响取哪些天，不影响怎么读）', (tester) async {
-      final today = DateTime.now();
-      final key = _dayAgo(DateTime(today.year, today.month, today.day), 3);
+    testWidgets('切窗口是一次回调（数据要重新拉，不是本地切片）', (tester) async {
+      int? picked;
       await tester.pumpWidget(
         MaterialApp(
           home: UsagePage(
-            summary: UsageSummary(
-              sessions: 1,
-              grandTotalTokens: 9999,
-              bySession: const [],
-              byDay: [UsageDay(date: key, turns: 4, tokens: 15000)],
-            ),
+            summary: _summary,
+            days: const [UsageDay(date: '2026-10-24', turns: 1, tokens: 10)],
+            daysWindow: 30,
+            onSelectWindow: (value) => picked = value,
           ),
         ),
       );
@@ -289,13 +311,21 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey<String>('usage-range-d7')));
       await tester.pumpAndSettle();
-      expect(find.text('最近 7 天'), findsOneWidget);
+      expect(picked, 7, reason: '窗口变了要重新问电脑侧要这段时间的活动');
 
-      await tester.tap(find.byKey(Key('heat-$key')));
+      // 拿到新窗口之后（宿主传给页面的是 7）读数仍正确。
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UsagePage(
+            summary: _summary,
+            days: const [UsageDay(date: '2026-10-24', turns: 1, tokens: 10)],
+            daysWindow: 7,
+            onSelectWindow: (value) => picked = value,
+          ),
+        ),
+      );
       await tester.pumpAndSettle();
-      final readout = find.textContaining('4 轮');
-      expect(readout, findsOneWidget);
-      expect(tester.widget<Text>(readout).data, contains('15K tok'));
+      expect(find.text('最近 7 天'), findsOneWidget);
     });
   });
 
@@ -329,6 +359,79 @@ void main() {
     expect(old!.totals, isNull, reason: '不摆四个 0');
     expect(old.byDay, isEmpty);
     expect(old.totalTurns, isNull);
+  });
+
+  group('近期活动的读数（纯函数）', () {
+    final today = DateTime(2026, 11, 8);
+
+    test('今日 / 本段 / 前段各算各的；更早的不计', () {
+      // 窗口 30 天：本段 = 10-10..11-08，前段 = 09-10..10-09。
+      final days = [
+        const UsageDay(date: '2026-11-08', turns: 2, tokens: 100), // 今天
+        const UsageDay(date: '2026-11-07', turns: 1, tokens: 50), // 本段
+        const UsageDay(date: '2026-10-01', turns: 3, tokens: 400), // 前段
+        const UsageDay(date: '2026-09-01', turns: 9, tokens: 900), // 更早
+      ];
+      final stats = activityStatsOf(days, 30, today);
+      expect(stats.todayTokens, 100);
+      expect(stats.todayTurns, 2);
+      expect(stats.windowTokens, 150);
+      expect(stats.windowTurns, 3);
+      expect(stats.previousTokens, 400);
+    });
+
+    test('对比文案：前一段没有数据就说没有，不编 +100%', () {
+      expect(deltaTextOf(150, 400, 30), '较前 30 天 -63%');
+      expect(deltaTextOf(500, 400, 30), '较前 30 天 +25%');
+      expect(deltaTextOf(100, 0, 30), '前一段没有数据');
+      expect(deltaTextOf(0, 0, 30), isNull, reason: '两段都是 0 就没什么可说的');
+    });
+
+    test('缓存命中率走与统计条同一个格式化函数', () {
+      const totals = UsageTotals(
+        uncachedInputTokens: 1000,
+        outputTokens: 200,
+        cacheReadTokens: 30,
+        cacheWriteTokens: 4,
+      );
+      expect(totals.billedInput, 1034);
+      expect(totals.cacheHitText, '3');
+      // 没有任何计费输入 ⇒ null（不画 NaN%）。
+      expect(
+        const UsageTotals(
+          uncachedInputTokens: 0,
+          outputTokens: 10,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        ).cacheHitText,
+        isNull,
+      );
+    });
+  });
+
+  test('percentTextOf：四舍五入，极小占比不显示成 0%，没有合计就不编', () {
+    expect(percentTextOf(0.62), '62%');
+    expect(percentTextOf(0.004), '<1%', reason: '差一点点也是花了，不写成 0%');
+    expect(percentTextOf(0), '0%');
+    expect(percentTextOf(null), isNull, reason: '合计为 0 时没有占比可算');
+  });
+
+  testWidgets('一条用量都没有：说人话，不摆一张 0 卡', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: UsagePage(
+          summary: UsageSummary(
+            sessions: 2,
+            grandTotalTokens: 0,
+            bySession: [],
+            byProject: [],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('还没有用量数据'), findsOneWidget);
+    expect(find.text('这台电脑一共'), findsNothing, reason: '不摆 0 卡');
   });
 
   test('heatAlphaAt：0 是底色；色阶按**这一年自己的分位**，且严格单调', () {
@@ -446,26 +549,65 @@ void main() {
     await app.start();
 
     await tester.pumpWidget(MaterialApp(home: UsagePageHost(app: app)));
-    // 第一帧还是空态（拉取是异步的）。
-    expect(find.text('还没有用量数据'), findsOneWidget);
+    // 第一帧还是"正在读取"（拉取是异步的）—— **不能说"还没有用量数据"**，
+    // 那句话会被读成"电脑上真的没有"。
+    expect(find.text('正在读取…'), findsOneWidget);
 
     // 拉到之后必须**自己重画**（少了 `ListenableBuilder` 就永远停在这里）。
     await tester.pump();
     await tester.pump();
 
-    expect(find.text('还没有用量数据'), findsNothing);
+    expect(find.text('正在读取…'), findsNothing);
     expect(find.text('这台电脑一共'), findsOneWidget);
     // 10240 → `10.2K`（`formatTokenCount` 的 `_scaled`：< 100 保留一位小数）。
     // 总量 / 项目行 / 会话行各一处，所以是 `findsWidgets`。
     expect(find.text('10.2K'), findsWidgets, reason: '总量来自电脑侧的聚合结果');
-    expect(client.calls, 1, reason: '进页面只拉一次');
+    expect(client.calls, 2, reason: '总量一次 + 按天活动一次（活动要带 days）');
+    expect(client.lastDays, 60, reason: '活动窗口 30 天 × 2（本段 + 前段对比）');
+    expect(find.text('近期活动'), findsOneWidget);
+    app.dispose();
+  });
+
+  testWidgets('按天活动分批：没扫完就自己继续要，扫完就不再要', (tester) async {
+    final client = _UsageClient(progressTotal: 3);
+    final app = AppModel(client: client);
+    await app.start();
+
+    await tester.pumpWidget(MaterialApp(home: UsagePageHost(app: app)));
+    await tester.pump();
+    await tester.pump();
+    expect(client.daysCalls, 1);
+    expect(find.textContaining('正在统计活动：1/3'), findsOneWidget);
+
+    // 补批定时器 350ms：到点要下一批，且**不闪**"正在读取活动…"。
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    expect(client.daysCalls, 2);
+    expect(find.textContaining('正在统计活动：2/3'), findsOneWidget);
+    expect(find.text('正在读取活动…'), findsNothing);
+
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    expect(client.daysCalls, 3);
+    expect(find.textContaining('正在统计活动'), findsNothing, reason: '扫完就别再报进度');
     app.dispose();
   });
 }
 
 /// 只答 `usage.summary` 的替身（其余方法回 null）。
 class _UsageClient extends FakeSyncClient {
+  _UsageClient({this.progressTotal});
+
+  /// 给了就按批返回进度（`daysCalls` 逐次 +1，直到等于它）。
+  final int? progressTotal;
+
   int calls = 0;
+
+  /// 带 `days` 的请求有几次（按天活动）。
+  int daysCalls = 0;
+
+  /// 最后一次请求带的 `days`（按天活动那次才有）。
+  int? lastDays;
 
   @override
   ConnectionState get state => ConnectionState.serving;
@@ -494,6 +636,15 @@ class _UsageClient extends FakeSyncClient {
   }) async {
     if (method == 'usage.summary') {
       calls += 1;
+      final days = params['days'];
+      if (days is int) {
+        lastDays = days;
+        daysCalls += 1;
+      }
+      final total = progressTotal;
+      final scanned = total == null
+          ? null
+          : (daysCalls >= total ? total : daysCalls);
       return {
             'sessions': 1,
             'grandTotalTokens': 10240,
@@ -512,6 +663,21 @@ class _UsageClient extends FakeSyncClient {
                 'tokens': 10240,
               },
             ],
+            // **老连接器也在总量里报 `byDay`**（那版没有 `days`）；
+            // 新连接器只在带 `days` 的那次里给。
+            if (days is int)
+              'byDay': [
+                {
+                  'date':
+                      '${DateTime.now().year}-'
+                      '${DateTime.now().month.toString().padLeft(2, '0')}-'
+                      '${DateTime.now().day.toString().padLeft(2, '0')}',
+                  'turns': 2,
+                  'tokens': 5000,
+                },
+              ],
+            if (scanned != null)
+              'daysProgress': {'scanned': scanned, 'total': total},
           }
           as T;
     }

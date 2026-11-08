@@ -15,10 +15,10 @@
 /// （`memory.md` 教训 4："空"有两种表达，判空只查一种就会漏）。
 library;
 
-// `formatTokenCount` 在 `model/session_stats.dart`（单会话统计条用的同一个
-// 函数）—— 汇总与单会话的"同一个数字"必须格式化成同一个样子，
-// 所以这里 import 它而不是再写一份。
-import 'session_stats.dart' show formatTokenCount;
+// `formatTokenCount` / `formatCacheHitPercent` 在 `model/session_stats.dart`
+// （单会话统计条用的同两个函数）—— 汇总与单会话的"同一个数字"必须格式化成
+// 同一个样子，所以这里 import 它们而不是再写一份。
+import 'session_stats.dart' show formatCacheHitPercent, formatTokenCount;
 
 /// 四个 token 分项（`usage.summary.totals`）。
 ///
@@ -39,6 +39,25 @@ class UsageTotals {
 
   /// 缓存两项之和（"省下来的"那一格）。
   int get cacheTokens => cacheReadTokens + cacheWriteTokens;
+
+  /// 计费输入：三个互不重叠的 prompt 侧桶之和。
+  ///
+  /// 与 Web 的 `billedInputTokens` 逐字一致（`StatsPills.tsx:118-120`）——
+  /// 缓存命中率的分母是它，**不含输出**（输出不是"输入侧命中"）。
+  int get billedInput =>
+      uncachedInputTokens + cacheReadTokens + cacheWriteTokens;
+
+  /// 缓存命中率文字（`96` / `99.95`）；没有计费输入时 `null`。
+  ///
+  /// 与单会话统计条同一个函数 —— 同一个数字在两地不能长得不一样。
+  String? get cacheHitText =>
+      formatCacheHitPercent(cacheReadTokens, billedInput);
+
+  /// 四个桶的合计（与 `usage.summary.grandTotalTokens` 同一个口径）。
+  int get grandTotal => billedInput + outputTokens;
+
+  /// 某一项的占比（0..1）；合计为 0 时 `null`（不画一个 NaN / 0%）。
+  double? shareOf(int part) => grandTotal == 0 ? null : part / grandTotal;
 }
 
 /// 一天的活动（热力图一格）：轮次数 **与** 那天用掉的 token。
@@ -131,6 +150,7 @@ class UsageSummary {
     this.byProject = const [],
     this.totals,
     this.byDay = const [],
+    this.daysProgress,
   });
 
   /// 参与汇总的会话数（含全零的那些 —— "用了 0" 与 "没这项" 都不是"不存在"）。
@@ -144,6 +164,18 @@ class UsageSummary {
 
   /// 按天的轮次（升序；空表 = 电脑侧没报 / 没有历史）。
   final List<UsageDay> byDay;
+
+  /// 按天活动的扫描进度：`scanned / total` 个会话。
+  ///
+  /// 电脑侧**分批**扫（一次 4 个），所以 `scanned < total` 时 `byDay` 是
+  /// 不完整的 —— 界面明说"统计中"，并继续要下一批。`null` = 老连接器没报。
+  final ({int scanned, int total})? daysProgress;
+
+  /// 活动是否已经统计完整（`null` = 不知道，按完整处理 —— 老连接器一次性给全）。
+  bool get daysComplete {
+    final progress = daysProgress;
+    return progress == null || progress.scanned >= progress.total;
+  }
 
   /// 参与汇总的轮次总数（= `byDay` 之和；没有 `byDay` 时是 `null`）。
   int? get totalTurns {
@@ -242,6 +274,16 @@ class UsageSummary {
         );
       }
     }
+    // 按天扫描进度：两个非负整数才算；认不出就 `null`（按"不知道"处理）。
+    final rawProgress = data['daysProgress'];
+    ({int scanned, int total})? progress;
+    if (rawProgress is Map) {
+      final scanned = rawProgress['scanned'];
+      final total = rawProgress['total'];
+      if (scanned is int && total is int && scanned >= 0 && total >= 0) {
+        progress = (scanned: scanned, total: total);
+      }
+    }
     return UsageSummary(
       sessions: sessions,
       grandTotalTokens: grandTotal,
@@ -249,6 +291,7 @@ class UsageSummary {
       byProject: projects,
       totals: totals,
       byDay: days,
+      daysProgress: progress,
     );
   }
 

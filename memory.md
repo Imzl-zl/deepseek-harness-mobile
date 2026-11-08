@@ -4,8 +4,23 @@
 > 11-04 及更早的条目在 `memory/archive/2026-11.md`；稳定命令与坑点在 `tools.md`；
 > 现状事实在 `docs/`。
 
-## 现在（2026-11-07）
+## 现在（2026-11-08）
 
+- **新建会话不再"连点成好几个"（2026-11-08）**：`createSession` 照 DSH 的 `connectBlank`
+  按 `(工作区, 预设)` **在途合流**（同一目标连点只发一次 `session.create`）；本地那一行按
+  真值写 `blank: true` + `cwd`（原来默认 false 且没 cwd：App 把它画成正常会话、桌面按
+  `sessionVisible` 藏掉 —— 这就是"桌面上没有"，复用判据也因此失效）；建完重读会话清单。
+  blank 行现在显示「新建会话 / 尚未开始」（原来「未命名 / 2 条」，把系统事件当内容）。
+  **真机验收（隔离实例 + adb）**：连点 3 次 5→6（只建一个），再点复用不增。
+  笔记 `implemented/2026-11-08-new-session-inflight-guard.md`。
+- **用量页能出来了（2026-11-08）**：`usage.summary` 的总量 / 分项 / 项目 / 会话改读
+  `session.list` 行自带的 `tokenUsage` 投影提示（原来逐会话 `projections.of`：
+  本机 327 会话 / 539 MB 日志 ⇒ 页面永远空着）；按天活动改成可选 `{days: 1..366}`，
+  **每批只新扫 4 个会话**、按投影水位缓存，应答带 `daysProgress`，手机接着要下一批。
+  页面重排成**累计**（构成条 + 缓存命中 + 四格占比）/ **近期活动**（今天 · 近 30 天对比 ·
+  日均 · 平均每轮 · 7/30/90 热力图）/ **项目**（占比条 → 会话占比）。**真机验收**：
+  首屏 0.6 s 出总量，活动 4/6 → 6/6 两秒内补齐。笔记
+  `implemented/2026-11-08-usage-summary-from-list-rows.md`。
 - **v0.2.11 已发版**（`app/pubspec.yaml` `0.2.11+6`；Release：`dsh-mobile-v0.2.11.apk`（release 签名）
   + `dsh-mobile-connector-0.1.22.tgz`）：内容 = 抽屉分组补问账本（新建会话不再先落「未分组」）、
   Markdown 表格横滚条改细条且不常驻、顶栏开抽屉换回基线 `☰`；插件 0.1.22 的「配对新手机」
@@ -70,7 +85,7 @@
   侧迁移清掉（那台电脑换了随机 id `pc-Wjg3E1COkdC-` 并重新登记），重启中转后半秒内
   `connector.open` 就回来了 —— 旧令牌失效没有造成掉线，走的是既定的迁移路径。
   回滚：`git checkout 6c9d906 && docker compose -f docker-compose.server.yml up -d --build`。
-- **门禁**：app 1779 / boundary 843（29 条自检 + 190 文件）/ connector 844 / relay 183 /
+- **门禁**：app 1789 / boundary 843（29 条自检 + 190 文件）/ connector 851 / relay 183 /
   protocol 454·26·49；`dart analyze --fatal-infos` 与 `dart format` 各 0。
 
 ## 下一步
@@ -151,3 +166,4 @@
 - 2026-11-04 轨迹页重读、目标条、中转三块收口 — `implemented/2026-11-04-*`
 - 2026-11-05..07 双轨版本线 / S2/S4 / 面板六条 / connector 随机标识 / 0.2.2 三条链 —
   `implemented/2026-11-05-*`、`2026-11-06-*`、`2026-11-07-connector-id-force-random.md`
+- 2026-11-08 新建会话在途合并 / 用量汇总结算换源 — `implemented/2026-11-08-*`

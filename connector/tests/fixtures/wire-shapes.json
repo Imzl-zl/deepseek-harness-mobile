@@ -1369,13 +1369,36 @@
         "cacheReadTokens": 4000,
         "cacheWriteTokens": 600
       },
-      "byDay": [
+      "byProject": [
         {
-          "date": "1970-01-01",
-          "turns": 1,
-          "tokens": 12868
+          "path": "/repo/b",
+          "tokens": 6600,
+          "sessions": 1
         }
       ],
+      "bySession": [
+        {
+          "sid": "sid_33445566778899aa",
+          "title": "把 token 账算对",
+          "cwd": "/repo/b",
+          "tokens": 6600
+        }
+      ]
+    },
+    {
+      "sessions": 3,
+      "grandTotalTokens": 6600,
+      "totals": {
+        "uncachedInputTokens": 1200,
+        "outputTokens": 800,
+        "cacheReadTokens": 4000,
+        "cacheWriteTokens": 600
+      },
+      "byDay": [],
+      "daysProgress": {
+        "scanned": 0,
+        "total": 0
+      },
       "byProject": [
         {
           "path": "/repo/b",

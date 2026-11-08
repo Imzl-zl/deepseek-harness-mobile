@@ -487,10 +487,16 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
     return out
   }
 
+  /// 电脑侧本地时区的 `YYYY-MM-DD`。
+  ///
+  /// 热力图回答的是"这台电脑上哪天在干活"，所以日期取**电脑侧**本地时区
+  /// （`turn/start.time` 也是那台电脑的时钟）。窗口边界与格子键必须是同一个
+  /// 函数算的，否则"窗口内第一天"与"格子上的那天"会差一天。
+  const localDateKey = (date: Date): string =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+
   /// 把 `trajectory` 投影里每一轮的起点折成"按天计数"（热力图的数据面）。
   ///
-  /// 日期用**电脑侧本地时区**：`turn/start.time` 是那台电脑的时钟，
-  /// 而热力图回答的是"这台电脑上哪天在干活"。
   /// **覆盖范围受投影上限约束**（`dsh/trajectory.ts:98` 的 `MAX_TURNS = 200`，
   /// 超出保留窗口的轮不在里面）—— 这是如实的上界，写进契约 §5.7 那一行。
   const turnsByDayOf = (
@@ -505,8 +511,7 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       const time = (turn as { startTime?: unknown }).startTime
       if (typeof time !== 'number' || !Number.isFinite(time) || time <= 0) continue
       const tokens = (turn as { tokens?: unknown }).tokens
-      const date = new Date(time)
-      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+      const key = localDateKey(new Date(time))
       const acc = days.get(key) ?? { turns: 0, tokens: 0 }
       acc.turns += 1
       // 这一轮的 token 来自 `trajectory.turns[].tokens`（`assistant/message.usage`
@@ -966,19 +971,46 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       return aliasSubagentCatalog(values, deps.aliases)
     }
 
-    // **跨会话用量汇总**（2026-10-19，方案见
-    // `.agents/notes/proposed/2026-10-19-cross-session-usage-summary.md`）。
+    // **跨会话用量汇总**（方案见
+    // `.agents/notes/implemented/2026-11-08-usage-summary-from-list-rows.md`）。
     //
-    // DSH 的 `tokenUsage` 投影是**单会话**的（`token-meter/src/usage-projection.ts:56-63`
-    // 的 state 是 `{totals, last:{turn, step, buckets}}`），没有跨会话汇总接口，
-    // 所以这一层自己聚合。
+    // ## 数据从哪来（2026-11-08 改）
     //
-    // ## 为什么是"遍历 visible 会话读投影"而不是连接器本地记账
+    // `session.list` 的每一行**已经带着** `projections.values.tokenUsage`
+    // （白名单 `protocol/session-row.ts` 的 `SESSION_ROW_PROJECTION_KEYS`）——
+    // 那是宿主自己折好的四个桶（`token-meter/src/usage-projection.ts:149` 的
+    // `view: state => state.totals`），与列表行、单会话统计条同一个真值。
+    // 所以总量 / 分项 / 项目 / 会话**只读一次清单**就够了。
     //
-    // 本地记账只覆盖**插件在线期间**的会话，给出的数字看起来像总量其实不是 ——
-    // 那比没有更糟（项目纪律：不给看似数据的假数据）。遍历读投影拿的是
-    // DSH 的持久真值，与手机上单会话看到的那个数字同源。
-    handlers['usage.summary'] = async () => {
+    // 原来这里是"每个会话读一次 `session.projections`"：冷会话要把整份日志
+    // 读进来算全部投影，本机 327 个会话 / 539 MB 日志 ⇒ 页面在真机上永远
+    // 空着（2026-11-08 用户反馈「用量怎么也不显示」）。逐会话读投影是把清单
+    // 已经给过的东西再算一遍：不是更准，只是更慢。
+    //
+    // 只有**这一行没有 `tokenUsage` 提示**的会话才回落一次精确读（冷行缺
+    // 持久缓存 / 该部署没装 token-meter）—— 数值仍来自同一个投影。
+    //
+    // ## 按天活动要 `days`
+    //
+    // `trajectory`（每轮的起步时间与 token）**不在列表行白名单里**，逐个读
+    // 它就是原来那条慢路径。所以只在请求带 `days` 时读，且只读**窗口内更新
+    // 过**的会话；同一会话按投影水位缓存，翻页 / 重进不重读。
+    const dayCache = new Map<
+      string,
+      { watermark: string; days: Map<string, { turns: number; tokens: number }> }
+    >()
+    /** 缓存的会话数上限：它只是"少读一遍"，不是账本，不该无限长。 */
+    const DAY_CACHE_LIMIT = 512
+    /**
+     * 每次请求最多**新扫**几个会话的 `trajectory`。
+     *
+     * 为什么不一次读完窗口内全部会话：本机实测一个项目近 60 天就有 104 个会话 /
+     * 680 MB 解压日志（光解压 8 s），全库更多。一次读完就是"页面转很久"。
+     * 分批 + 缓存之后，首屏按批次出数，剩下的由手机继续要（`daysProgress` 报进度）。
+     */
+    const DAY_SCAN_BATCH = 4
+
+    handlers['usage.summary'] = async (params) => {
       const rows = await deps.sessions.list()
       // 别名可以**并发**分配（与 `session.list` 同一条纪律）：不同会话互不影响，
       // 同一个会话由 `ensure` 自己合流。
@@ -989,22 +1021,20 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       // 的 `tree.ts:245`）—— 子智能体的用量已经含在父会话的账里，
       // 再算一遍就是双计。
       const visible = assigned.filter(({ row }) => !row.subagent)
-      // 逐个读投影。**并发**（彼此独立，串行会让 20 个会话等 20 个往返）；
-      // 单个会话读失败**不影响其它**（那一项按 0 计，与"没数据"区分不开是
-      // 可接受的降级 —— 总量仍然对，只是少了那一份）。
+      // 逐行取总量与四个桶：**清单已经给过的不再读投影**。
       const usages = await Promise.all(
         visible.map(async ({ row }) => {
+          const hinted = row.projections?.values?.['tokenUsage']
+          if (hinted !== undefined) {
+            return { tokens: tokenTotalOf(hinted), buckets: bucketsOf(hinted) }
+          }
+          // 这一行没有提示：回落一次精确读（数值仍来自同一个投影）。
           const values = (await deps.projections!.of(row.dshSessionId)) as {
             tokenUsage?: unknown
-            trajectory?: unknown
           }
-          // **一次投影读要算三样**：总量（老字段）、四个分项、以及"哪几天在干活"。
-          // 三样都来自同一包 `values`，所以按天聚合**没有额外往返**
-          // （`trajectory` 本来就在 `session.projections` 的返回里）。
           return {
             tokens: tokenTotalOf(values.tokenUsage),
             buckets: bucketsOf(values.tokenUsage),
-            days: turnsByDayOf(values.trajectory),
           }
         }),
       )
@@ -1018,20 +1048,83 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
         }),
         { ...ZERO_BUCKETS },
       )
-      // 按天合并：**轮次与 token 都是真值**（token 来自每轮 `assistant/message.usage`
-      // 的累加，见 `dsh/trajectory.ts`）。日期升序 —— 热力图画的是连续的一段日历。
-      const dayMap = new Map<string, { turns: number; tokens: number }>()
-      for (const entry of usages) {
-        for (const [date, acc] of entry.days) {
-          const total = dayMap.get(date) ?? { turns: 0, tokens: 0 }
-          total.turns += acc.turns
-          total.tokens += acc.tokens
-          dayMap.set(date, total)
-        }
+      // **按天活动要 `days`**：`trajectory` 不在列表行白名单里，逐会话读它就是
+      // 那条慢路径。只读**窗口内更新过**的会话，同一会话按投影水位缓存。
+      // 不带 `days` 时响应里没有 `byDay`（老手机按"没报"处理，不画热力图）。
+      const days = optionalCount(params, 'days')
+      if (days !== undefined && (days < 1 || days > 366)) {
+        throw new ProtocolError('protocol/bad-frame', 'days 必须是 1..366 的整数')
       }
-      const byDay = [...dayMap.entries()]
-        .map(([date, acc]) => ({ date, turns: acc.turns, tokens: acc.tokens }))
-        .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+      const byDay: { date: string; turns: number; tokens: number }[] = []
+      let daysProgress: { scanned: number; total: number } | undefined
+      if (days !== undefined) {
+        const sinceMs = Date.now() - days * 86_400_000
+        const sinceDate = localDateKey(new Date(sinceMs))
+        // **最近更新的先扫**：活动的"大头"几乎总在最近的会话上，先给最有用的一段。
+        const inWindow = visible
+          .filter(({ row }) => row.updatedAt >= sinceMs)
+          .sort((a, b) => b.row.updatedAt - a.row.updatedAt)
+        const watermarkOf = (row: (typeof inWindow)[number]['row']): string =>
+          // 水位取清单行给的投影序号（它随会话事件前进）；没有提示的冷行
+          // 退回 `updatedAt`。水位没变 ⇒ 这段日志没变 ⇒ 同一份按天表可复用。
+          `${row.projections?.asOfSeq ?? ''}@${row.updatedAt}`
+        // 先收缓存里的，再按批扫没缓存的。
+        const cachedDays = new Map<
+          string,
+          Map<string, { turns: number; tokens: number }>
+        >()
+        const stale: typeof inWindow = []
+        for (const entry of inWindow) {
+          const cached = dayCache.get(entry.row.dshSessionId)
+          if (cached !== undefined && cached.watermark === watermarkOf(entry.row)) {
+            cachedDays.set(entry.row.dshSessionId, cached.days)
+          } else {
+            stale.push(entry)
+          }
+        }
+        const batch = stale.slice(0, DAY_SCAN_BATCH)
+        await Promise.all(
+          batch.map(async ({ row }) => {
+            const values = (await deps.projections!.of(row.dshSessionId)) as {
+              trajectory?: unknown
+            }
+            const computed = turnsByDayOf(values.trajectory)
+            const watermark = watermarkOf(row)
+            dayCache.set(row.dshSessionId, { watermark, days: computed })
+            cachedDays.set(row.dshSessionId, computed)
+          }),
+        )
+        if (dayCache.size > DAY_CACHE_LIMIT) {
+          let excess = dayCache.size - DAY_CACHE_LIMIT
+          for (const key of dayCache.keys()) {
+            if (excess <= 0) break
+            dayCache.delete(key)
+            excess -= 1
+          }
+        }
+        daysProgress = {
+          scanned: inWindow.length - (stale.length - batch.length),
+          total: inWindow.length,
+        }
+        // 按天合并：**轮次与 token 都是真值**（token 来自每轮 `assistant/message.usage`
+        // 的累加，见 `dsh/trajectory.ts`）。日期升序 —— 热力图画的是连续的一段日历。
+        // 窗口外的日期不返回（`trajectory` 保留的 200 轮可能跨出窗口）。
+        const dayMap = new Map<string, { turns: number; tokens: number }>()
+        for (const sessionDays of cachedDays.values()) {
+          for (const [date, acc] of sessionDays) {
+            if (date < sinceDate) continue
+            const total = dayMap.get(date) ?? { turns: 0, tokens: 0 }
+            total.turns += acc.turns
+            total.tokens += acc.tokens
+            dayMap.set(date, total)
+          }
+        }
+        byDay.push(
+          ...[...dayMap.entries()]
+            .map(([date, acc]) => ({ date, turns: acc.turns, tokens: acc.tokens }))
+            .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)),
+        )
+      }
       // **按项目（工作区目录）聚合**：`cwd` 就是 `session.list` 已经在发的那个
       // 字段（`dsh/sessions.ts` 的 `...(item.cwd === undefined ? {} : { cwd })`）。
       // 用户 2026-10-19 原话：「用量你最好也是做成一个页面的……总量，单个项目
@@ -1056,9 +1149,12 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
         grandTotalTokens: grandTotal,
         // 四个分项（键名是 DSH 的原名，手机自己给中文标签）。
         totals: totalBuckets,
-        // **按天只数轮次**：投影里没有"每一轮用了多少 token"，按天摊 token 就是编。
-        // 覆盖范围 = 各会话 `trajectory` 保留的最近 200 轮（`dsh/trajectory.ts:98`）。
-        byDay,
+        // **`byDay` 只在请求带 `days` 时出现**：按天活动要读 `trajectory`，
+        // 那是逐个会话的日志读 —— 页面先拿总量，活动另起一次、分批补齐。
+        // `daysProgress` 说这一批扫到哪了（`scanned == total` 才算完整）。
+        ...(days === undefined
+          ? {}
+          : { byDay, daysProgress: daysProgress ?? { scanned: 0, total: 0 } }),
         byProject,
         // 逐字段构造，**不 spread** —— 且只给手机认识的 `sid`
         // （`dshSessionId` 绝不能过线，契约 §5.1）。

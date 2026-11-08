@@ -127,7 +127,11 @@ abstract interface class HostReads {
   Future<PluginJob?> pluginJobStatus({required String requestId});
 
   /// 拉一次跨会话用量汇总（`usage.summary`）。读不出 ⇒ `null`（调用方说"拉不到"）。
-  Future<UsageSummary?> usageSummary();
+  ///
+  /// [days] 给了才返回按天活动（`byDay`），且只覆盖这段时间 —— 那一段要读
+  /// 每个会话的 `trajectory`（日志），所以与总量分成两次请求：先出总量，
+  /// 活动再补上（见 `.agents/notes/implemented/2026-11-08-usage-summary-from-list-rows.md`）。
+  Future<UsageSummary?> usageSummary({int? days});
 
   /// 拉一次电脑侧自报的端点表（`endpoint.describe`）。
   Future<SnapshotReply<List<Endpoint>>> endpoints();

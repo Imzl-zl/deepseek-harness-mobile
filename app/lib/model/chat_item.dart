@@ -939,7 +939,9 @@ class SessionSummary {
   final TokenUsage? tokenUsage;
 
   /// 展示用标题。链与 DSH 的**侧栏规则**一致：
-  /// 投影提示里的标题 → 「未命名」。
+  /// 投影提示里的标题 → 「未命名」；**blank 会话显示「新建会话」**
+  /// （DSH 把 blank 行当"新建会话"占位：`sessionTitle` 给空串、
+  /// 渲染层本地化，`ui-workspace/src/client/tree.ts:286-288`）。
   ///
   /// DSH 的 Web 侧栏对没有标题的会话显示本地化的「未命名 / Untitled」，
   /// **不使用目录名兜底**（`ui-workspace/README.zh.md:32`，原话
@@ -955,10 +957,15 @@ class SessionSummary {
   /// 没有独立的持久标题字段，见 `dsh-api-session-controller` 的
   /// `lib/types/types.d.ts`），所以远程客户端拿不到 Web 那个"持久标题"，
   /// 提示标题是列表行唯一的标题来源——这不是将就，是契约。
-  String get displayTitle => title.isNotEmpty ? title : kUntitledSessionTitle;
+  String get displayTitle => blank
+      ? kNewSessionTitle
+      : (title.isNotEmpty ? title : kUntitledSessionTitle);
 
   /// 没有标题的会话在列表里的显示名（照 DSH 的 `session.untitled` 本地化值）。
   static const String kUntitledSessionTitle = '未命名';
+
+  /// blank 会话在列表里的显示名（DSH 的"新建会话"占位行同一件事）。
+  static const String kNewSessionTitle = '新建会话';
 
   SessionSummary copyWith({
     String? title,

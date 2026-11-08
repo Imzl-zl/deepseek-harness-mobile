@@ -229,7 +229,9 @@ const SAMPLES: Record<SampledMethod, readonly WireSample[]> = {
     { params: { sid: sidOf('dsh-1'), line: '/plan 写个计划' }, context: { requestId: 'cmd-1' } },
   ],
   // 跨会话用量：需要 projections 面（夹具已给）与可见会话（夹具已给）。
-  'usage.summary': [{}],
+  // 两条：不带 `days` ⇒ 没有 `byDay`（页面先拿总量）；带 `days` ⇒ 键在（窗口
+  // 内没有会话时是空表，不是"没报"）。
+  'usage.summary': [{}, { params: { days: 30 } }],
   // 交互答复：回执只有 `{itemId}`（`RespondOk`）。
   'interaction.respond': [
     {

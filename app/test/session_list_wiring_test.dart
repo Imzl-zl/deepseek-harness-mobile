@@ -15,6 +15,7 @@ import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/core/sync_client_impl.dart'
     show encodeRequestEnvelope;
 import 'package:dsh_mobile/data/app_model.dart';
+import 'package:dsh_mobile/model/chat_item.dart';
 import 'package:dsh_mobile/wire/reading.dart' show WireDiagnostics;
 import 'package:flutter_test/flutter_test.dart';
 import 'fake_sync_client.dart';
@@ -494,6 +495,22 @@ void main() {
       expect(app.sessions.single.displayTitle, '重构连接层');
       expect(app.currentTitle, '重构连接层', reason: '顶栏与列表必须是同一个名字,否则用户以为点错了会话');
       app.dispose();
+    });
+
+    test('blank 会话的 displayTitle 是「新建会话」，不是「未命名」', () {
+      // DSH 把 blank 行当"新建会话"占位（`tree.ts:286-288` 的 `sessionTitle`
+      // 给空串，渲染层本地化）。手机上如果也叫「未命名」，一个刚建出来、
+      // 什么都没聊的会话看起来像"历史会话"。
+      const blank = SessionSummary(
+        sid: 's1',
+        title: '',
+        updatedAt: 0,
+        blank: true,
+      );
+      expect(blank.displayTitle, '新建会话');
+      // 对照组：非 blank 的匿名会话仍然叫「未命名」。
+      const untitled = SessionSummary(sid: 's2', title: '', updatedAt: 0);
+      expect(untitled.displayTitle, '未命名');
     });
 
     test('投影里没有标题:显示「未命名」,不用目录名兜底', () async {

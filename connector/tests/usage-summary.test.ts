@@ -58,11 +58,14 @@ function deps({
   rows,
   usageOf,
   trajectoryOf,
+  reads,
 }: {
   rows: ReturnType<typeof row>[]
   usageOf: (dshSessionId: string) => unknown
   /** 可选：这个会话的 `trajectory` 投影（按天热力图的数据面）。 */
   trajectoryOf?: (dshSessionId: string) => unknown
+  /** 可选：记录**真的发生了**的投影读（用来钉"清单已给的不要再读"）。 */
+  reads?: string[]
 }): HandlerDeps {
   return {
     caps: () => ({}) as never,
@@ -82,12 +85,15 @@ function deps({
         Object.keys(ALIAS).find((key) => ALIAS[key] === sid),
     },
     projections: {
-      of: async (dshSessionId: string) => ({
-        tokenUsage: usageOf(dshSessionId),
-        ...(trajectoryOf === undefined
-          ? {}
-          : { trajectory: trajectoryOf(dshSessionId) }),
-      }),
+      of: async (dshSessionId: string) => {
+        reads?.push(dshSessionId)
+        return {
+          tokenUsage: usageOf(dshSessionId),
+          ...(trajectoryOf === undefined
+            ? {}
+            : { trajectory: trajectoryOf(dshSessionId) }),
+        }
+      },
     },
   } as unknown as HandlerDeps
 }
@@ -349,35 +355,239 @@ void describe('usage.summary 聚合规则', () => {
   })
 
   void it('byDay 跨会话按天合并轮次与 token，日期升序', async () => {
-    // 2026-10-01 与 2026-10-02 各一条（本地时区，取当天中午避开边界）。
-    const d1 = new Date(2026, 9, 1, 12).getTime()
-    const d2 = new Date(2026, 9, 2, 12).getTime()
+    // 用**今天 / 昨天**而不是写死的日期：`days` 是一条真窗口，
+    // 写死的 2026-10-01 在窗口外时这条会以"实现坏了"的样子红。
+    const todayDate = new Date()
+    const todayNoon = new Date(
+      todayDate.getFullYear(),
+      todayDate.getMonth(),
+      todayDate.getDate(),
+      12,
+    ).getTime()
+    const yesterdayNoon = new Date(
+      todayDate.getFullYear(),
+      todayDate.getMonth(),
+      todayDate.getDate() - 1,
+      12,
+    ).getTime()
+    const keyOf = (time: number) => {
+      const date = new Date(time)
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    }
+    const now = Date.now()
     const handlers = createHandlers(
       deps({
-        rows: [row('a'), row('b')],
+        rows: [
+          row('a', { updatedAt: now }),
+          row('b', { updatedAt: now }),
+        ],
         usageOf: () => tokenUsage({ uncachedInputTokens: 1 }),
         // b 的两轮**早于** a 的两轮：排序不能靠"会话顺序"。
-        // token 每轮 100：a 有 2 轮、b 有 3 轮 ⇒ 10-01 是 200、10-02 是 300。
+        // token 每轮 100：a 有 2 轮、b 有 3 轮 ⇒ 昨天 200、今天 300。
         trajectoryOf: (id) =>
-          trajectory(id === 'a' ? [d2, d2] : [d1, d1, d2], 100),
+          trajectory(
+            id === 'a'
+              ? [todayNoon, todayNoon]
+              : [yesterdayNoon, yesterdayNoon, todayNoon],
+            100,
+          ),
       }),
     )
-    const result = (await handlers['usage.summary']!({}, {} as never)) as {
+    const result = (await handlers['usage.summary']!({ days: 7 }, {} as never)) as {
       byDay: { date: string; turns: number; tokens: number }[]
     }
     assert.deepEqual(result.byDay, [
-      { date: '2026-10-01', turns: 2, tokens: 200 },
-      { date: '2026-10-02', turns: 3, tokens: 300 },
+      { date: keyOf(yesterdayNoon), turns: 2, tokens: 200 },
+      { date: keyOf(todayNoon), turns: 3, tokens: 300 },
     ])
   })
 
   void it('没有 trajectory 投影 ⇒ byDay 空（不是"今天 0 轮"）', async () => {
     const handlers = createHandlers(
-      deps({ rows: [row('a')], usageOf: () => tokenUsage({ uncachedInputTokens: 5 }) }),
+      deps({
+        rows: [row('a', { updatedAt: Date.now() })],
+        usageOf: () => tokenUsage({ uncachedInputTokens: 5 }),
+      }),
     )
-    const result = (await handlers['usage.summary']!({}, {} as never)) as {
+    const result = (await handlers['usage.summary']!(
+      { days: 30 },
+      {} as never,
+    )) as {
       byDay: unknown[]
     }
     assert.deepEqual(result.byDay, [])
+  })
+
+  void it('不带 days ⇒ 响应里没有 byDay 键（页面先拿总量，活动另起一次）', async () => {
+    const handlers = createHandlers(
+      deps({
+        rows: [row('a', { updatedAt: Date.now() })],
+        usageOf: () => tokenUsage({ uncachedInputTokens: 5 }),
+      }),
+    )
+    const result = (await handlers['usage.summary']!({}, {} as never)) as Record<
+      string,
+      unknown
+    >
+    assert.equal('byDay' in result, false)
+  })
+
+  void it('清单行已带 tokenUsage 时一次投影都不读（327 个会话的根因）', async () => {
+    // 2026-11-08：真机上 327 个会话 / 539 MB 日志，逐个 `projections.of()`
+    // 让页面永远空着。清单行本来就带着同一个投影提示 —— 读它就不该再读投影。
+    const reads: string[] = []
+    const rows = Array.from({ length: 20 }, (_, i) =>
+      row(`s${i}`, {
+        projections: {
+          kind: 'cached',
+          asOfSeq: 1,
+          values: { tokenUsage: { uncachedInputTokens: 10 } },
+        },
+      }),
+    )
+    const handlers = createHandlers(
+      deps({
+        rows,
+        // 投影里的数字故意不同：读了就会是 999×20。
+        usageOf: () => tokenUsage({ uncachedInputTokens: 999 }),
+        reads,
+      }),
+    )
+    const result = (await handlers['usage.summary']!({}, {} as never)) as {
+      grandTotalTokens: number
+    }
+    assert.deepEqual(reads, [], '20 个会话一个都不该读投影')
+    assert.equal(result.grandTotalTokens, 200)
+  })
+
+  void it('这一行没有提示时才回落一次精确读', async () => {
+    const reads: string[] = []
+    const handlers = createHandlers(
+      deps({
+        rows: [row('a')],
+        usageOf: () => tokenUsage({ uncachedInputTokens: 42 }),
+        reads,
+      }),
+    )
+    const result = (await handlers['usage.summary']!({}, {} as never)) as {
+      grandTotalTokens: number
+    }
+    assert.deepEqual(reads, ['a'])
+    assert.equal(result.grandTotalTokens, 42)
+  })
+
+  void it('days 只读窗口内更新过的会话', async () => {
+    const reads: string[] = []
+    const hinted = {
+      kind: 'cached',
+      asOfSeq: 3,
+      values: { tokenUsage: { uncachedInputTokens: 1 } },
+    }
+    const handlers = createHandlers(
+      deps({
+        rows: [
+          row('old', { updatedAt: Date.now() - 120 * 86_400_000, projections: hinted }),
+          row('fresh', { updatedAt: Date.now(), projections: hinted }),
+        ],
+        usageOf: () => tokenUsage({ uncachedInputTokens: 1 }),
+        trajectoryOf: () => trajectory([Date.now()], 100),
+        reads,
+      }),
+    )
+    const result = (await handlers['usage.summary']!({ days: 30 }, {} as never)) as {
+      byDay: { turns: number; tokens: number }[]
+    }
+    assert.deepEqual(reads, ['fresh'], '120 天没动过的会话不该被读')
+    assert.equal(result.byDay.length, 1)
+    assert.equal(result.byDay[0]!.tokens, 100)
+  })
+
+  void it('同一会话第二次请求复用按天缓存（水位没变就不重读）', async () => {
+    const reads: string[] = []
+    const handlers = createHandlers(
+      deps({
+        rows: [
+          row('a', {
+            updatedAt: Date.now(),
+            projections: {
+              kind: 'cached',
+              asOfSeq: 7,
+              values: { tokenUsage: { uncachedInputTokens: 1 } },
+            },
+          }),
+        ],
+        usageOf: () => tokenUsage({ uncachedInputTokens: 1 }),
+        trajectoryOf: () => trajectory([Date.now()], 5),
+        reads,
+      }),
+    )
+    await handlers['usage.summary']!({ days: 30 }, {} as never)
+    await handlers['usage.summary']!({ days: 30 }, {} as never)
+    assert.deepEqual(reads, ['a'], '第二次应命中缓存')
+  })
+
+  void it('按天活动分批扫：一次 4 个会话，报 scanned/total，后面的批次接着扫', async () => {
+    // 2026-11-08：真库一个项目近 60 天就有 104 个会话 / 680 MB 解压日志。
+    // 一次读完就是"页面转很久"，所以按批扫、报进度，手机接着要下一批。
+    const reads: string[] = []
+    const now = Date.now()
+    const rows = Array.from({ length: 10 }, (_, i) =>
+      row(`s${i}`, {
+        updatedAt: now - i * 1000,
+        projections: {
+          kind: 'cached',
+          asOfSeq: 1,
+          values: { tokenUsage: { uncachedInputTokens: 1 } },
+        },
+      }),
+    )
+    const handlers = createHandlers(
+      deps({
+        rows,
+        usageOf: () => tokenUsage({ uncachedInputTokens: 1 }),
+        trajectoryOf: () => trajectory([now], 10),
+        reads,
+      }),
+    )
+    type Reply = {
+      daysProgress: { scanned: number; total: number }
+      byDay: { turns: number }[]
+    }
+    const call = async () =>
+      (await handlers['usage.summary']!({ days: 30 }, {} as never)) as Reply
+
+    const first = await call()
+    assert.deepEqual(first.daysProgress, { scanned: 4, total: 10 })
+    assert.equal(reads.length, 4, '一批只读 4 个')
+    assert.equal(first.byDay[0]!.turns, 4, '已扫的部分先给出来')
+
+    const second = await call()
+    assert.deepEqual(second.daysProgress, { scanned: 8, total: 10 })
+    assert.equal(reads.length, 8)
+
+    const third = await call()
+    assert.deepEqual(third.daysProgress, { scanned: 10, total: 10 })
+    assert.equal(reads.length, 10)
+    assert.equal(third.byDay[0]!.turns, 10, '扫完就是完整的一天')
+
+    // 扫完之后再要：一个都不读（全部命中缓存）。
+    await call()
+    assert.equal(reads.length, 10)
+  })
+
+  void it('days 越界 ⇒ protocol/bad-frame（不静默截断）', async () => {
+    const handlers = createHandlers(deps({ rows: [], usageOf: () => undefined }))
+    await assert.rejects(
+      async () => {
+        await handlers['usage.summary']!({ days: 0 }, {} as never)
+      },
+      /days/,
+    )
+    await assert.rejects(
+      async () => {
+        await handlers['usage.summary']!({ days: 367 }, {} as never)
+      },
+      /days/,
+    )
   })
 })

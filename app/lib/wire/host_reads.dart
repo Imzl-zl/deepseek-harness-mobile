@@ -132,7 +132,8 @@ final class WireHostReads implements HostReads {
       wire.pluginJobStatus(client, requestId: requestId);
 
   @override
-  Future<UsageSummary?> usageSummary() => wire.loadUsageSummary(client);
+  Future<UsageSummary?> usageSummary({int? days}) =>
+      wire.loadUsageSummary(client, days: days);
 
   @override
   Future<SnapshotReply<List<Endpoint>>> endpoints() =>

@@ -1212,12 +1212,13 @@ void _expectRowMatchesGolden(Map<String, Object?> row, SessionSummary summary) {
   final title = values?['title'];
   final expectedTitle = title is String ? title : '';
   expect(summary.title, expectedTitle);
-  expect(
-    summary.displayTitle,
-    expectedTitle.isEmpty
-        ? SessionSummary.kUntitledSessionTitle
-        : expectedTitle,
-  );
+  // **blank 行显示「新建会话」**（DSH 的占位行），匿名历史会话才是「未命名」。
+  final expectedLabel = summary.blank
+      ? SessionSummary.kNewSessionTitle
+      : expectedTitle.isEmpty
+      ? SessionSummary.kUntitledSessionTitle
+      : expectedTitle;
+  expect(summary.displayTitle, expectedLabel);
 
   // 模型：投影提示优先（`next ?? lastUsed`），否则行顶层的 `model`。
   final selection = values?['modelSelection'];
