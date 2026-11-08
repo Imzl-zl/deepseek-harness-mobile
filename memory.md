@@ -4,16 +4,20 @@
 > 11-04 及更早的条目在 `memory/archive/2026-11.md`；稳定命令与坑点在 `tools.md`；
 > 现状事实在 `docs/`。
 
-## 现在（2026-11-08）
+## 现在（2026-11-09）
 
+- **v0.2.13 已发版（2026-11-09）**：`dsh-mobile-v0.2.13.apk`（78.8 MB）+
+  `dsh-mobile-connector-0.1.23.tgz`（连接器没改）。内容 = **「添加电脑」入口**（连接 sheet，
+  已配对时给）：它只进配对页、**不清任何槽**，取消也不动凭据；加完记 `_previousHostId`，
+  「切回上一台」立刻可用。「重新配对（换一台电脑）」仍是先清当前槽的那条路。取舍见
+  `implemented/2026-11-08-add-computer-without-clearing.md`。**真机**：0.2.13（code 16）已装，
+  官方包直接覆盖本机构建 —— 本机 `key.properties` 与 CI 是同一把签名密钥，不用再卸载重装。
 - **v0.2.12 已发版（2026-11-08）**：Release `dsh-mobile-v0.2.12.apk`（release 签名，
   `CN=dsh-mobile, OU=release`，75 MB）+ `dsh-mobile-connector-0.1.23.tgz`（0.19 MB）；
   npm `latest` = **0.1.23**（OIDC + provenance）。内容 = 新建会话在途合并、用量页换源与
   按天活动分批（见下两条）。CI 首轮 `connector` 红：Dart 探针下载
   `libsqlite3.x64.linux.so` 的哈希与 sqlite3 构建钩子的期望值不符（**远端资产 flake，
-  与本次改动无关**），`gh run rerun --failed` 后四个 job 全绿。**真机注意**：手机上装的是
-  本地 debug 签名（versionName 0.2.11 / code 6），与 CI 的 release 签名不同 —— 要换官方包
-  必须先卸载（配对凭据一起没，要重新扫码）。
+  与本次改动无关**），`gh run rerun --failed` 后四个 job 全绿。
 - **新建会话不再"连点成好几个"（2026-11-08）**：`createSession` 照 DSH 的 `connectBlank`
   按 `(工作区, 预设)` **在途合流**（同一目标连点只发一次 `session.create`）；本地那一行按
   真值写 `blank: true` + `cwd`（原来默认 false 且没 cwd：App 把它画成正常会话、桌面按
@@ -93,7 +97,7 @@
   侧迁移清掉（那台电脑换了随机 id `pc-Wjg3E1COkdC-` 并重新登记），重启中转后半秒内
   `connector.open` 就回来了 —— 旧令牌失效没有造成掉线，走的是既定的迁移路径。
   回滚：`git checkout 6c9d906 && docker compose -f docker-compose.server.yml up -d --build`。
-- **门禁**：app 1789 / boundary 843（29 条自检 + 190 文件）/ connector 851 / relay 183 /
+- **门禁**：app 1791 / boundary 843（29 条自检 + 190 文件）/ connector 851 / relay 183 /
   protocol 454·26·49；`dart analyze --fatal-infos` 与 `dart format` 各 0。
 
 ## 下一步
