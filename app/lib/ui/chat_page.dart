@@ -44,6 +44,7 @@ import '../core/live_message.dart';
 import '../data/app_model.dart';
 import '../data/composer_gate.dart';
 import '../data/ids.dart';
+import '../data/projection.dart' show askUserQuestionTool;
 import '../model/agent_preset.dart';
 import '../model/changes.dart';
 import '../model/chat_item.dart';
@@ -3965,7 +3966,16 @@ class _TurnView extends StatelessWidget {
         :final diffStat,
       ) =>
         ToolCard(
-          name: name,
+          // **已回答的问答不再显示工具名**：标题回答"这一条是什么"，而不是"调用了哪个函数"。
+          // 问题与所选答案都在 `detail` 里（展开可回看），所以标题只给状态。
+          // 与接管卡的「已回答 · <选项>」（`ui/takeover.dart:559`）不是一回事 ——
+          // 那是答完之后的瞬时回执，这里是聊天流里的历史条目。
+          // Note: 为什么改标题、为什么只改已完成的问答 —— 见
+          // `.agents/notes/implemented/2026-11-09-answered-question-title.md`
+          name:
+              name == askUserQuestionTool && status == ToolCallStatus.completed
+              ? '问答 · 已回答'
+              : name,
           status: status,
           argument: summary,
           detail: detail,
