@@ -438,13 +438,29 @@ for (const sample of SELF_TEST) {
 
 // ---- 真实扫描 ----
 const files = SCAN_DIRS.flatMap((dir) => walk(join(ROOT, dir)))
+/** 每条规则实际扫到几个文件 —— 0 就是一条永不触发的规则（见下面的覆盖自检）。 */
+const scannedByRule = new Map(RULES.map((rule) => [rule.id, 0]))
 for (const file of files) {
   const code = stripComments(readFileSync(join(ROOT, file), 'utf8'))
   for (const rule of RULES) {
     if (!rule.appliesTo(file)) continue
+    scannedByRule.set(rule.id, scannedByRule.get(rule.id) + 1)
     const hit = rule.match(code)
     checks += 1
     if (hit) failures.push(`${rule.id}: ${file} → 命中「${hit}」（${rule.why}）`)
+  }
+}
+
+// ---- 规则覆盖自检：每条规则至少要有一个适用文件 ----
+//
+// 指向不存在的路径 = 规则永不求值 = 假绿。这台仓库栽过两次：
+// `app/packages`（目录从没建过）与 `platform/registry.dart`（文件从没存在过）——
+// 两次门禁都照样打印 ALL CHECKS PASSED，因为"没扫到"和"扫到且干净"输出一模一样。
+// 扫到 0 个文件就红：要么修 `appliesTo`，要么删掉这条规则，不许留一条永远绿的。
+for (const rule of RULES) {
+  checks += 1
+  if (scannedByRule.get(rule.id) === 0) {
+    failures.push(`规则 ${rule.id} 没有适用文件（appliesTo 指向不存在的路径？）`)
   }
 }
 
@@ -454,4 +470,4 @@ if (failures.length > 0) {
   process.exit(1)
 }
 
-console.log(`ALL CHECKS PASSED — ${checks} 项（规则自检 ${SELF_TEST.length} 条 + 扫描 ${files.length} 个 Dart 文件）`)
+console.log(`ALL CHECKS PASSED — ${checks} 项（规则自检 ${SELF_TEST.length} 条 + 扫描 ${files.length} 个 Dart 文件 + ${RULES.length} 条规则各有适用文件）`)

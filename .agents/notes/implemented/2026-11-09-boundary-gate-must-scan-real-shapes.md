@@ -54,3 +54,17 @@ Status: implemented
 变异校验：去掉 `notify_factory.dart` 的 `if (kReleaseMode)` 守卫（保留 `MemoryNotify()`）→
 `FAIL 1/853`，恰好 `fallback-not-in-release: app/lib/platform/notify_factory.dart`；还原 → 全绿。
 
+## 再补（同日）：每条规则必须有适用文件
+
+规则"永不求值"这件事，光靠自检样本抓不到 —— 样本是喂给规则的，不经过 `appliesTo` 的真实文件集合。
+两次事故（`app/packages`、`platform/registry.dart`）的共同形态都是"扫到 0 个文件，输出和干净一模一样"。
+
+所以扫描之后加一条覆盖自检：`scannedByRule` 为 0 就红，提示"要么修 `appliesTo`，要么删掉这条规则"。
+项数 853 → **862**（37 条自检 + 816 条逐文件判定 + 9 条覆盖检查；816 = 9 条规则各自适用的文件数之和，
+不是 190 × 9 —— 每条规则只判它 `appliesTo` 的文件）。
+
+变异校验：把 `SCAN_DIRS` 临时改成 `['app/lib/ui']` → `FAIL 3/340`，恰好三条规则报"没有适用文件"
+（`core-no-platform-import` / `fallback-not-in-release` / `data-no-field-name`），而 37 条自检**仍然全绿**
+—— 证明红的是覆盖检查，不是样本。还原 → `ALL CHECKS PASSED — 862 项`。
+
+
