@@ -5,8 +5,9 @@
 /// 1. 保活的三条判据：**退到后台 + 有通知权限 + 连接在服务态**。
 ///    缺任何一条都不起服务（没权限还起服务 = 一条看不见的通知 + 白耗电）。
 /// 2. 提醒**只从既有事实派生**：审批（本地 `ApprovalItem` 未决）、提问
-///    （`ask_user_question` 的 `tool/call` 还没结果）、以及"你没看着时跑完了一轮"
-///    （`completionUnread`）。**没有第四份状态机、不落盘**。
+///    （`ask_user_question` 的 `tool/call` 还没结果）、"你没看着时跑完了一轮"
+///    （`completionUnread`）、以及**后台任务结束**（`JobRow` 落了终态且
+///    `finishedAt` 在 30 分钟内，按 `jobId` 去重）。**没有第二份状态机、不落盘**。
 /// 3. 前台且正看着那个会话 ⇒ **不提醒**。
 /// 4. 通知上的「允许一次 / 拒绝」走既有唯一出口 `interaction.respond`，
 ///    载荷是 DSH 的 outcome 值（`allowed-once` / 空 `selected`）——
@@ -33,12 +34,16 @@ class _Client extends FakeSyncClient {
 
   List<Map<String, Object?>> rows;
 
+  /// `job.list` 的应答（`{jobs: [...]}`，形状见 `wire/rpc/job.dart`）。
+  List<Map<String, Object?>> jobs = const [];
+
   /// 连接态（保活的第三条判据读它）。本组一律在服务态。
   @override
   conn.ConnectionState get state => conn.ConnectionState.serving;
 
   final _sessions = <String, StreamController<SessionDelta>>{};
   final _status = StreamController<SessionStatus>.broadcast();
+  final _jobs = StreamController<JobFrame>.broadcast();
   final calls =
       <({String method, Map<String, Object?> params, String? requestId})>[];
 
@@ -51,8 +56,12 @@ class _Client extends FakeSyncClient {
   void emitStatus(String sid, bool running) =>
       _status.add(SessionStatus(sid: sid, running: running));
 
+  /// 推一条任务帧（生产里就是 `job` 帧的 `status` kind）。
+  void emitJob(JobFrame frame) => _jobs.add(frame);
+
   Future<void> closeAll() async {
     await _status.close();
+    await _jobs.close();
     for (final controller in _sessions.values) {
       await controller.close();
     }
@@ -61,7 +70,7 @@ class _Client extends FakeSyncClient {
   @override
   Stream<conn.ConnectionState> get connection => const Stream.empty();
   @override
-  Stream<JobFrame> get jobUpdates => const Stream.empty();
+  Stream<JobFrame> get jobUpdates => _jobs.stream;
   @override
   Stream<SessionStatus> get sessionStatus => _status.stream;
   @override
@@ -87,6 +96,7 @@ class _Client extends FakeSyncClient {
   }) async {
     calls.add((method: method, params: params, requestId: requestId));
     if (method == 'session.list') return {'sessions': rows} as T;
+    if (method == 'job.list') return {'jobs': jobs} as T;
     return <String, Object?>{} as T;
   }
 }
@@ -99,6 +109,52 @@ Map<String, Object?> _row(String sid) => {
   'blank': false,
   'subagent': false,
 };
+
+/// 一行 `job.list` 的线上形状（六个必填键 + 可选三件，见 `wire/rpc/job.dart:97-110`）。
+///
+/// 可选键用**显式赋值**而不是 null-aware element：本仓的请求体那边踩过
+/// `?x: x` 展开成 `x: x` 的坑（`tools.md` · `app_model.dart` 的 ignore 注释），
+/// 测试里没必要再赌一次语法行为。
+Map<String, Object?> _jobRow({
+  required String id,
+  String label = 'npm test',
+  String status = 'completed',
+  int? finishedAt,
+  String? detail,
+  String? progress,
+}) {
+  final row = <String, Object?>{
+    'id': id,
+    'kind': 'pwsh',
+    'label': label,
+    'status': status,
+    'startedAt': 0,
+    'outputTotal': 0,
+  };
+  if (finishedAt != null) row['finishedAt'] = finishedAt;
+  if (detail != null) row['detail'] = detail;
+  if (progress != null) row['progress'] = progress;
+  return row;
+}
+
+/// 一条 `job` 帧里的任务行（**带 sid**：连接器在帧上盖的）。
+JobRow _jobFrameRow({
+  required String id,
+  String label = 'npm test',
+  String status = 'completed',
+  int? finishedAt,
+  String? detail,
+}) => JobRow(
+  id: id,
+  kind: 'pwsh',
+  label: label,
+  status: status,
+  startedAt: 0,
+  outputTotal: 0,
+  finishedAt: finishedAt,
+  detail: detail,
+  sid: 'a',
+);
 
 /// 让异步链（`_syncKeepAlive` 的 `await`、`_syncNotices` 的 `unawaited`）跑完。
 Future<void> pump() async {
@@ -290,6 +346,100 @@ void main() {
       isFalse,
       reason: '看见了就不该还挂着',
     );
+  });
+
+  test('后台任务结束 ⇒ 一条完成通知（标题带状态与任务名，正文取摘要前两行）', () async {
+    // 任务清单走"进服务态 / 切会话时拉一次"的那条路（`refreshJobs`），
+    // 与生产同形：通知直接从这份快照派生。
+    final now = DateTime.now().millisecondsSinceEpoch;
+    client.jobs = [
+      _jobRow(
+        id: 'j1',
+        label: 'npm test',
+        finishedAt: now - 1000,
+        detail: '全部通过\n耗时 2 s\n第三行不进正文',
+      ),
+    ];
+    await app.refreshJobs('a');
+    await pump();
+
+    final jobs = notify.shown.where((n) => n.title.startsWith('后台任务')).toList();
+    expect(jobs, hasLength(1), reason: '看的是 b，a 的任务结束了 ⇒ 该提醒');
+    expect(jobs.single.title, '后台任务已完成 · npm test');
+    expect(jobs.single.body, '全部通过 耗时 2 s', reason: '正文只取 detail 前两行，压成一行');
+    expect(jobs.single.sid, 'a');
+    expect(
+      jobs.single.id,
+      noticeIdOf('job:j1'),
+      reason: '通知 id 从 jobId 算，才撤得掉、才去得重',
+    );
+  });
+
+  test('同一个任务重复推状态帧 ⇒ 只贴一条（按 jobId 去重）', () async {
+    await app.openSession('a');
+    await app.openSession('b');
+    await pump();
+    await app.refreshJobs('a'); // 建桶：帧不带 sid 时靠"这个会话有桶"归位
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final row = _jobFrameRow(id: 'j1', finishedAt: now - 1000);
+    client.emitJob(JobStatus(jobId: row.id, row: row));
+    await pump();
+    client.emitJob(JobStatus(jobId: row.id, row: row)); // 同一条再来一次（状态帧重发是正常的）
+    await pump();
+
+    expect(
+      notify.shown.where((n) => n.title.startsWith('后台任务')),
+      hasLength(1),
+      reason: 'id 从 jobId 算 ⇒ 第二条被当成同一条，不再贴',
+    );
+  });
+
+  test('30 分钟窗口：过期的任务不补提醒，运行中的任务也不提醒', () async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    client.jobs = [
+      _jobRow(id: 'old', label: 'old-task', finishedAt: now - 31 * 60 * 1000),
+      _jobRow(id: 'live', label: 'live-task', status: 'running'),
+      _jobRow(
+        id: 'fresh',
+        label: 'fresh-task',
+        finishedAt: now - 29 * 60 * 1000,
+      ),
+    ];
+    await app.refreshJobs('a');
+    await pump();
+
+    final titles = notify.shown.map((n) => n.title).toList();
+    expect(titles, contains('后台任务已完成 · fresh-task'));
+    expect(
+      titles.any((t) => t.contains('old-task')),
+      isFalse,
+      reason: '半小時前结束的任务不该在冷启动时补一遍',
+    );
+    expect(
+      titles.any((t) => t.contains('live-task')),
+      isFalse,
+      reason: '还在跑的任务不是"结束"',
+    );
+  });
+
+  test('失败的任务标题按状态说，不冒充"完成"', () async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    client.jobs = [
+      _jobRow(
+        id: 'jf',
+        label: 'build',
+        status: 'failed',
+        finishedAt: now - 1000,
+        detail: 'exit 1',
+      ),
+    ];
+    await app.refreshJobs('a');
+    await pump();
+
+    final notice = notify.shown.firstWhere((n) => n.title.startsWith('后台任务'));
+    expect(notice.title, '后台任务失败 · build');
+    expect(notice.body, 'exit 1');
   });
 
   test('同一 sid / 同一 itemId 在两台电脑下算出不同的通知 id：撤一台不动另一台', () async {

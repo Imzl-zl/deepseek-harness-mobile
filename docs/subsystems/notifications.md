@@ -81,16 +81,22 @@ App 退到后台之后还能不能提醒、以及靠什么保住那条连接。
 它们既不符合宿主语义（DSH 没有"后台守护"这个概念），也违反应用市场规则；证据在手就更没有必要赌。
 **正确性承诺保持不变**：回到 App 时状态一定正确（`sync.hello` 补课 + `session.list` 覆盖）。
 
-## 3. 三类提醒（触发源全是既有语义）
+## 3. 四类提醒（触发源全是既有语义）
 
 | 通知 | 触发源 | 能不能直接答 |
 |---|---|---|
 | 等你审批 | 本地条目里的 `ApprovalItem` 且 `!decided` | **能**：「允许一次」/「拒绝」两个按钮 |
 | 有人在问 | `ask_user_question` 的 `tool/call` 且 `ToolCallStatus.running` | **不能**（点开去答） |
 | 跑完了 | `completionUnread`（`running` 的 `true→false` 边沿） | — |
+| 后台任务结束 | `JobRow` 落了终态（`finishedAt != null`）且在 **30 分钟**内；通知 id 从 `jobId` 算（去重） | — |
 
-**没有第四份状态机**：三类都是既有事实的投影；"已提醒过哪几条"也只记在内存
+**没有第二份状态机**：四类都是既有事实的投影；"已提醒过哪几条"也只记在内存
 （`_activeNotices`，杀 App 即丢，与"完成绿点"同一条理由）。
+
+**后台任务为什么有 30 分钟窗口**：`_jobs` 是会话级的任务表，冷启动时里面全是历史终态
+任务 —— 不设窗口就会一次补贴几十条"某某任务跑完了"。窗口内的才叫"刚结束"。
+标题按任务状态说（`后台任务已完成 / 失败 / 已停止 · <label>`），正文取 `detail` 前两行，
+没有 `detail` 才退到 `progress`。
 
 **前台且正看着那个会话 ⇒ 不提醒**：结果就在眼前（与 DSH 的"在主视图里就不算未读"同一条）。
 
@@ -106,6 +112,8 @@ App 退到后台之后还能不能提醒、以及靠什么保住那条连接。
 ## 5. 撤销口径
 
 - 那个 `itemId` 离开待处理集合（有人答了 / `approval/decided` 到）⇒ `cancel`。
+- 后台任务那条：任务行离开 `_jobs`（新快照里没有它）或滑出 30 分钟窗口 ⇒ 下一次重算时
+  `cancel`。**没有定时器**：撤销跟着"期望集合"的下一次重算走。
 - 切到那个会话、或 App 回前台且看着它 ⇒ `cancel`。**"看着它"按台算**：池化之后只有
   界面上那一台的当前会话算"在眼前"（`AppModel` 的 `visibleOf`），别台的当前会话照旧提醒
   —— 否则 A 上等着的审批在用户看着 B 时永远收不到提醒。
@@ -141,11 +149,17 @@ App 退到后台之后还能不能提醒、以及靠什么保住那条连接。
 提问不做通知内答题）。另：**用户从最近任务里划掉 = 结束** —— 那时 Activity 被 finish、
 Flutter 引擎随之销毁，Dart 侧的连接与服务一起没了（不做缓存引擎，这正是"手动杀了才没"）。
 
+非 Android 宿主只有 **debug** 构建有通知端口：iOS / 鸿蒙的实现还没落地，`createNotifyPort()`
+在 release 的非 Android 宿主上**装配即抛** `UnsupportedError`，不静默回落到 `MemoryNotify`。
+`kReleaseMode` 是编译期常量、`flutter test` 只有 debug，所以判据是源码形状断言
+（`test/assembly_invariants_test.dart` 的「notify 装配在 release 下不许静默降级」）。
+
 ## 9. 验证
 
-- `cd app && flutter test test/notice_test.dart` —— 12 项：保活三条判据、审批/完成两类提醒、
+- `cd app && flutter test test/notice_test.dart` —— 16 项：保活三条判据、审批/完成两类提醒、
   "看着它就不提醒"、**别台的当前会话照旧提醒**、"decided 就撤"、两个按钮的载荷
-  （`allowed-once` / 空 `selected`）、**同一 `sid` 两台算出不同 id**、**移除一台不撤别台的通知**。
+  （`allowed-once` / 空 `selected`）、**同一 `sid` 两台算出不同 id**、**移除一台不撤别台的通知**、
+  **后台任务结束一条通知（摘要前两行）/ 同 jobId 只贴一条 / 30 分钟窗口外不补 / 失败任务不冒充完成**。
 - `cd app && flutter test test/app_services_test.dart` —— 2 项：两次装配拿到**同一个**端口
   （两台的提醒落在同一份记录里）、模型释放不关端口（关闭点只有 `AppServices.dispose`）。
 - `cd app && flutter test test/host_sessions_test.dart` —— 3 项：切 A→B→A 不重启、
