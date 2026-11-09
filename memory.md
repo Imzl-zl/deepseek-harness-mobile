@@ -97,8 +97,8 @@
   侧迁移清掉（那台电脑换了随机 id `pc-Wjg3E1COkdC-` 并重新登记），重启中转后半秒内
   `connector.open` 就回来了 —— 旧令牌失效没有造成掉线，走的是既定的迁移路径。
   回滚：`git checkout 6c9d906 && docker compose -f docker-compose.server.yml up -d --build`。
-- **门禁**：app 1791 / boundary 848（34 条自检 + 190 文件）/ connector 851 / relay 183 /
-  protocol 454·26·49；`dart analyze --fatal-infos` 与 `dart format` 各 0。
+- **门禁**：全绿即通过；**各项条数只住 `tools.md`**（protocol 三条 / boundary / connector / relay /
+  app 的 format·analyze·test）。
 
 ## 下一步
 
@@ -124,14 +124,14 @@
 
 | 命令 | 覆盖 |
 |---|---|
-| `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 454 / 26 / 49 项 |
-| `node app/tools/verify-platform-boundary.mjs` | 848 项（34 条规则自检 + 190 个 Dart 文件） |
+| `node protocol/verify-{fixtures,loopback,vectors}.mjs` | 通道协议（三条都全绿） |
+| `node app/tools/verify-platform-boundary.mjs` | 多端边界（规则自检 + 全量扫描） |
 | `node app/tools/verify-rpc-single-caller.mjs` | `app/lib`（`wire/` 外）零 `call<` |
 | `node mock/proto/tools/verify-{icons.cjs,tool-paths.mjs}` | 图标集 / 24 个工具脚本无硬编码盘符 |
-| `cd app && flutter test` | 1779 项（约 1 分钟） |
+| `cd app && flutter test` | 手机端全量（约 1 分钟） |
 | `cd app && dart analyze --fatal-infos lib test integration_test` + `dart format` | 各 0 |
-| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + **844** 项 |
-| `cd relay && pnpm typecheck && node --test` | 类型 + **183** 条 |
+| `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 类型 + 产物 + 全量 |
+| `cd relay && pnpm typecheck && node --test` | 类型 + 全量 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
 ## 八条教训
