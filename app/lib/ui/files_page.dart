@@ -150,14 +150,7 @@ class _FilesPageHostState extends State<FilesPageHost> {
               onPressed: () => unawaited(_load(_parentOf(_path))),
               child: const Text('上级'),
             ),
-          Expanded(
-            child: Text(
-              _path.isEmpty ? '工作区根' : _path,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 12, color: c.labelCaption),
-            ),
-          ),
+          Expanded(child: _breadcrumbs(context)),
         ],
       ),
       if (listing.entries.isEmpty)
@@ -171,6 +164,45 @@ class _FilesPageHostState extends State<FilesPageHost> {
         const _FileHint(text: '这个目录的条目超过这台电脑的上限，只列出了前面一部分。'),
       ],
     ];
+  }
+
+  /// 面包屑：根 → … → 当前目录，每一段都能点回去。
+  ///
+  /// 桌面那棵"常驻目录树"在手机窄屏上放不下一整棵树；这条**可点的路径链**提供同一件事：
+  /// 知道自己在哪、能跳回任意祖先。**不假装是树**（没有展开/收起，也不列兄弟目录）。
+  ///
+  /// 当前目录那一段禁用：点它没有意义（已经在里面）。
+  Widget _breadcrumbs(BuildContext context) {
+    final c = context.dshColors;
+    final segments = _path.isEmpty ? const <String>[] : _path.split('/');
+    final crumbs = <Widget>[
+      TextButton(
+        key: const ValueKey<String>('files-crumb-root'),
+        onPressed: _path.isEmpty ? null : () => unawaited(_load('')),
+        child: const Text('工作区根', style: TextStyle(fontSize: 12)),
+      ),
+    ];
+    var accumulated = '';
+    for (final segment in segments) {
+      if (segment.isEmpty) continue;
+      accumulated = accumulated.isEmpty ? segment : '$accumulated/$segment';
+      final target = accumulated;
+      crumbs.add(
+        Text('›', style: TextStyle(fontSize: 12, color: c.labelTertiary)),
+      );
+      crumbs.add(
+        TextButton(
+          key: ValueKey<String>('files-crumb-$target'),
+          onPressed: target == _path ? null : () => unawaited(_load(target)),
+          child: Text(segment, style: const TextStyle(fontSize: 12)),
+        ),
+      );
+    }
+    // 长路径横向滚，不换行：面包屑一旦折成两行就会把目录清单往下挤。
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(children: crumbs),
+    );
   }
 
   void _open(FileListing listing, FileEntryRow entry) {
@@ -195,6 +227,25 @@ class _FilesPageHostState extends State<FilesPageHost> {
 String _parentOf(String path) {
   final at = path.lastIndexOf('/');
   return at <= 0 ? '' : path.substring(0, at);
+}
+
+/// 预览正文 → 带行号的行（`number` 从 1 起）。
+///
+/// 编号是**文件行号**，不是 `model/diff.dart` 的 `DiffLine`：那是 diff 的双列
+/// （旧/新两侧各一套行号），这里只有一列、只有"这一份文件的第几行"。
+///
+/// 末尾那个换行不算一行 —— 否则每一份以换行结尾的文件都会多出一个空号。
+/// 分页是**追加**（`AppModel.loadMoreOpenedFile`），所以 1..N 始终对得上文件行号。
+///
+/// Note: 为什么单列、为什么用面包屑而不是目录树 —— 见
+/// `.agents/notes/implemented/2026-11-09-files-page-line-numbers-breadcrumbs.md`
+List<({int number, String text})> filePreviewLines(String text) {
+  if (text.isEmpty) return const [];
+  final lines = text.split('\n');
+  if (lines.last.isEmpty) lines.removeLast();
+  return [
+    for (var i = 0; i < lines.length; i += 1) (number: i + 1, text: lines[i]),
+  ];
 }
 
 /// 目录里的一行。
@@ -289,6 +340,36 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
     super.dispose();
   }
 
+  /// 正文 + 行号。
+  ///
+  /// 行号是**装饰**：弱色、与正文同一个等宽体，`SelectableText.rich` 仍可整段选中复制。
+  /// 宽度按最大的那个号补齐，所以 9 行与 10 行不会让正文错位。
+  Widget _numberedText(BuildContext context, String text) {
+    final c = context.dshColors;
+    final lines = filePreviewLines(text);
+    final width = lines.isEmpty ? 1 : lines.last.number.toString().length;
+    return SelectableText.rich(
+      TextSpan(
+        children: [
+          for (var i = 0; i < lines.length; i += 1) ...[
+            TextSpan(
+              text: '${lines[i].number.toString().padLeft(width)} ',
+              style: TextStyle(color: c.labelCaption),
+            ),
+            TextSpan(text: lines[i].text),
+            if (i != lines.length - 1) const TextSpan(text: '\n'),
+          ],
+        ],
+      ),
+      style: TextStyle(
+        fontFamily: 'monospace',
+        fontSize: 12,
+        height: 19 / 12,
+        color: c.labelSecondary,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
@@ -341,15 +422,7 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
                     color: c.layer1,
                     borderRadius: BorderRadius.circular(DshRadius.md),
                   ),
-                  child: SelectableText(
-                    opened.text,
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                      height: 19 / 12,
-                      color: c.labelSecondary,
-                    ),
-                  ),
+                  child: _numberedText(context, opened.text),
                 ),
               const SizedBox(height: 10),
               if (opened != null && opened.lines > 0)
