@@ -347,4 +347,57 @@ void main() {
       reason: '端口要有人关：不关的话方法处理器与 approvals 流随进程一直留着',
     );
   });
+
+  test('notify 装配在 release 下不许静默降级', () {
+    // **为什么这条不是行为测试**：`kReleaseMode` 是编译期常量
+    // （`packages/flutter/lib/src/foundation/constants.dart`），`flutter test` 永远跑
+    // debug —— 常量折叠后 `if (kReleaseMode)` 那一支在本进程里根本不存在，调
+    // `createNotifyPort()` 只会得到 `MemoryNotify()`。要断言"release 会抛"，需要一次
+    // release 构建的 Dart 运行，而 `flutter test` 没有 release 模式（`--release` 不接受）。
+    // 所以能机械判定的只有**源码形状**：判断留在 `lib/platform/` 的装配点，
+    // 这里钉住它没有退回静默降级，也没有被挪到运行时变量上。
+    final factory = File('lib/platform/notify_factory.dart').readAsStringSync();
+    expect(
+      factory.contains('Platform.isAndroid'),
+      isTrue,
+      reason: '安卓必须先分到真通道',
+    );
+    expect(
+      factory.contains('AndroidNotify()'),
+      isTrue,
+      reason: '安卓的实现是 AndroidNotify',
+    );
+    expect(
+      factory.contains('show kReleaseMode'),
+      isTrue,
+      reason: '守卫只能是编译期常量 kReleaseMode（运行时变量会让 release 与 debug 变成配置差异）',
+    );
+    expect(
+      RegExp(r'if\s*\(\s*kReleaseMode\s*\)').hasMatch(factory),
+      isTrue,
+      reason: 'kReleaseMode 必须真的用在分支里 —— 只 import 不算守卫（2026-11-04 被这种写法骗过一次）',
+    );
+    expect(
+      factory.contains('throw UnsupportedError'),
+      isTrue,
+      reason: 'release 的非安卓宿主必须抛，不许静默回落到内存实现',
+    );
+    expect(
+      factory.indexOf('MemoryNotify()'),
+      greaterThan(factory.indexOf('throw UnsupportedError')),
+      reason: 'MemoryNotify() 只能出现在 throw 之后，也就是 debug 那一支',
+    );
+    // 判断不许挪到运行时变量：那会让"release 会不会抛"变成一次配置读取的结果，
+    // 而它本该是编译期事实。
+    expect(
+      factory.contains('fromEnvironment'),
+      isFalse,
+      reason: 'release 判断不许挪到运行时环境变量',
+    );
+    expect(
+      RegExp(r'\bfinal\s+bool\b').hasMatch(factory),
+      isFalse,
+      reason: '不许自定义 bool 再分流',
+    );
+  });
 }

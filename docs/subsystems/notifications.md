@@ -141,6 +141,11 @@ App 退到后台之后还能不能提醒、以及靠什么保住那条连接。
 提问不做通知内答题）。另：**用户从最近任务里划掉 = 结束** —— 那时 Activity 被 finish、
 Flutter 引擎随之销毁，Dart 侧的连接与服务一起没了（不做缓存引擎，这正是"手动杀了才没"）。
 
+非 Android 宿主只有 **debug** 构建有通知端口：iOS / 鸿蒙的实现还没落地，`createNotifyPort()`
+在 release 的非 Android 宿主上**装配即抛** `UnsupportedError`，不静默回落到 `MemoryNotify`。
+`kReleaseMode` 是编译期常量、`flutter test` 只有 debug，所以判据是源码形状断言
+（`test/assembly_invariants_test.dart` 的「notify 装配在 release 下不许静默降级」）。
+
 ## 9. 验证
 
 - `cd app && flutter test test/notice_test.dart` —— 12 项：保活三条判据、审批/完成两类提醒、
