@@ -2148,6 +2148,22 @@ class ChatPageState extends State<ChatPage> {
         ),
         actions: [
           DshSheetAction(
+            label: '原始 JSON',
+            // **字段级投影，不是原始 payload**：`trajectory` 投影只下发每段的结构化
+            // 字段，电脑侧的原始事件帧没有过线。对话框标题写清这件事，见
+            // `ui/trajectory_page.dart` 的 `trajectoryFieldsJson`。
+            onPressed: () {
+              Navigator.of(context).pop();
+              unawaited(
+                showTrajectoryFieldsJson(
+                  context,
+                  turn: turn.turn,
+                  steps: steps,
+                ),
+              );
+            },
+          ),
+          DshSheetAction(
             label: '关闭',
             filled: true,
             onPressed: () => Navigator.of(context).pop(),
