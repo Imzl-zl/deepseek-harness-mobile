@@ -6,9 +6,15 @@
 
 ## 现在（2026-11-09）
 
-- **v0.2.14 发版中（2026-11-09）**：内容 = #8 的四件（后台任务完成通知 / 已回答问答标题 /
-  文件预览行号 + 面包屑 / 轨迹段字段 JSON）+ notify 在非 Android 的 release 装配即抛 +
-  边界门禁两处唤醒。连接器**没改**（仍 0.1.23，Release 里那份 tgz 与 0.2.13 相同）。
+- **v0.2.14 已发版（2026-11-09）**：Release `dsh-mobile-v0.2.14.apk`（78.79 MB，
+  `versionCode 17` / `versionName 0.2.14`）+ `dsh-mobile-connector-0.1.23.tgz`（201 KB，
+  与 0.2.13 那份相同 —— 连接器本次没改）。内容 = **#8 的四件**（后台任务完成通知（按 jobId
+  去重 / 30 分钟窗口）/ 已回答问答标题「问答 · 已回答」/ 文件预览行号 + 面包屑 /
+  轨迹段字段 JSON（标题注明非原始 payload））+ notify 在非 Android 的 release 装配即抛 +
+  边界门禁两处唤醒（扫真实形态、每条规则必须有适用文件）。Release notes 由流水线按 PR
+  自动生成（7 条）。**签名核对**：`apksigner verify --print-certs` →
+  `CN=dsh-mobile, OU=release, O=Imzl-zl, C=CN`、SHA-256 `c0a55225…`，与本机
+  `app/android/app/release.jks` 同一把（`keytool -list -v` 同指纹）⇒ 官方包可覆盖本机构建。
   笔记 `implemented/2026-11-09-*`。
 - **2026-11-09 一批**：边界门禁唤醒（只扫 `app/lib` / 认文件形态 import / 剥注释只在一处，
   843→862 含规则覆盖检查）、notify 在非 Android 的 release 装配即抛、#8 四件（语义来自
