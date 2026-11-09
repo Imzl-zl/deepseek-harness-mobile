@@ -43,6 +43,11 @@
 理由：这三张是会话里出现频率最高的（读/改/跑），其余多数在手机上一天见不到几次；
 而每做一张都要自己的解析分支与渲染规格，收益递减。**下一轮别以为已经对齐**。
 
+问答有一处**标题**例外（不是专用视图）：已完成的 `ask_user_question` 那条卡片的标题
+是「问答 · 已回答」而不是工具名 —— 标题回答"这一条是什么"，问题与所选答案仍在通用卡的
+明细里（展开可回看）。接管卡的「已回答 · <选项>」（`ui/takeover.dart:559`）是答完后的
+瞬时回执，答完就撤，与这里的历史条目不共用任何判据。
+
 另外两处已知缺口：
 - **图片结果不渲染**（`attachmentCount` 只数不画，读附件要 `session/attachment` 面，尚未接）；
 - `DiffLine` / `DiffKind` 这两个类型还住在 `ui/dsh_diff.dart`，而 `model/diff.dart`
@@ -50,6 +55,10 @@
 
 ## 4. 判据
 
+- 单测 `app/test/answered_question_label_test.dart`（2 条）：已回答的问答卡标题是
+  「问答 · 已回答」（工具名不再出现）；`bash` 照旧显示工具名（规则不外溢）。
+  条目走 `projectEvent`（`test/projection_fixture.dart`，身份按生产规则算），
+  不从手搓的 `ToolCallItem` 起 —— 那样"投影会不会把它画成已完成"就被排除在测试之外。
 - 单测 `app/test/tool_views_test.dart`（14 条）：`read` 用**真日志那一帧**解析；
   `bash` 的五种收口（正常 / 非零 / stderr / 被杀 / 超时）；`edit|write` 的 `+N −M`
   是 diff 行数而非文本行数；diff 的前后缀剥离与行号；三张卡的渲染。
