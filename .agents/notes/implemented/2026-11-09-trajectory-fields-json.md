@@ -42,3 +42,11 @@ Status: implemented
 - 收益：核对投影字段有了入口；误解被标题与正文第一句挡住。
 - 代价：这份 JSON 是**我们这边的形状**（连接器 fold 出来的投影），不是线上形状 —— 排线上问题时它只能证明"投影出了什么"，不能证明"电脑侧发了什么"。
 - 代价：字段表要与 `TrajectoryStep` 手工同步（Flutter 没有反射）。加字段时这里不会自动跟上，靠 review 与测试兜；测试只钉现有字段，新增字段漏了不会被发现。
+
+## 来源
+
+语义来自 @williamking-art 的 #8 `6a92716`（"P1-4 Trajectory 段详情可查看原始 JSON（投影字段级，
+注明非原始 payload）"）。按当时 main 的结构重写成 `trajectory_page.dart` 里的
+`trajectoryFieldsJson` / `showTrajectoryFieldsJson`（原实现写在 `chat_page` 的 sheet 里），
+不是 cherry-pick。原始提交在 `refs/pull/8/head`。
+

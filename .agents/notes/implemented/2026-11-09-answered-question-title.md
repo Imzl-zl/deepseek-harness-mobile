@@ -38,3 +38,10 @@ Status: implemented
 - 代价：想按工具名找这一条（复制/搜索）时找不到 `ask_user_question` —— 目前没有按标题搜索的功能，若将来加，得记得这条标题被改写过。
 - 代价：文案是硬编码中文；将来做多语言时要把它抽出去（`ToolCard` 不知道"问答"这回事）。
 - 代价：判据钉在 `ToolCallStatus.completed` 上。若将来出现"已回答但工具报错"的形态，这条不会生效 —— 那时应当显式加一条判据，而不是把 `completed` 放宽成"不算 running"。
+
+## 来源
+
+语义来自 @williamking-art 的 #8 `8e2c94a`（"P1-3 已回答问答在聊天流标记为「问答 · 已回答」"）。
+按当时 main 的结构重写（`_TurnView` + `projection.dart` 的 `askUserQuestionTool`），不是 cherry-pick。
+原始提交在 `refs/pull/8/head`。
+
