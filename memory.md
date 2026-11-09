@@ -6,17 +6,19 @@
 
 ## 现在（2026-11-09）
 
-- **2026-11-09 一批**：边界门禁唤醒（只扫 `app/lib` / 认文件形态 import / 剥注释只在一处，
-  843→848）、notify 在非 Android 的 release 装配即抛、#8 四件（任务完成通知 / 已回答标题 /
-  文件行号 + 面包屑 / 轨迹投影字段 JSON —— 语义来自 @williamking-art 的 #8，重写见各 PR 的
-  「来源与署名」）、测试条数只住 `tools.md`、#8 文档漂移逐条判过（十组落地、三组不成立）。
+- **v0.2.14 发版中（2026-11-09）**：内容 = #8 的四件（后台任务完成通知 / 已回答问答标题 /
+  文件预览行号 + 面包屑 / 轨迹段字段 JSON）+ notify 在非 Android 的 release 装配即抛 +
+  边界门禁两处唤醒。连接器**没改**（仍 0.1.23，Release 里那份 tgz 与 0.2.13 相同）。
   笔记 `implemented/2026-11-09-*`。
+- **2026-11-09 一批**：边界门禁唤醒（只扫 `app/lib` / 认文件形态 import / 剥注释只在一处，
+  843→862 含规则覆盖检查）、notify 在非 Android 的 release 装配即抛、#8 四件（语义来自
+  @williamking-art 的 #8，重写见各 PR 的「来源与署名」）、测试条数只住 `tools.md`、
+  #8 文档漂移逐条判过（十组落地、三组不成立）。笔记 `implemented/2026-11-09-*`。
 - **v0.2.13 已发版（2026-11-09）**：`dsh-mobile-v0.2.13.apk`（78.8 MB）+
-  `dsh-mobile-connector-0.1.23.tgz`（连接器没改）。内容 = **「添加电脑」入口**（连接 sheet，
-  已配对时给）：它只进配对页、**不清任何槽**，取消也不动凭据；加完记 `_previousHostId`，
-  「切回上一台」立刻可用。「重新配对（换一台电脑）」仍是先清当前槽的那条路。取舍见
-  `implemented/2026-11-08-add-computer-without-clearing.md`。**真机**：0.2.13（code 16）已装，
-  官方包直接覆盖本机构建 —— 本机 `key.properties` 与 CI 是同一把签名密钥，不用再卸载重装。
+  `dsh-mobile-connector-0.1.23.tgz`。内容 = **「添加电脑」入口**（连接 sheet，已配对时给）：
+  只进配对页、**不清任何槽**，取消也不动凭据；加完记 `_previousHostId`，「切回上一台」立刻可用。
+  取舍见 `implemented/2026-11-08-add-computer-without-clearing.md`。**真机**：0.2.13（code 16）
+  已装，官方包直接覆盖本机构建 —— 本机 `key.properties` 与 CI 是同一把签名密钥，不用卸载重装。
 - **v0.2.12 已发版（2026-11-08）**：Release `dsh-mobile-v0.2.12.apk`（release 签名，
   `CN=dsh-mobile, OU=release`，75 MB）+ `dsh-mobile-connector-0.1.23.tgz`（0.19 MB）；
   npm `latest` = **0.1.23**（OIDC + provenance）。内容 = 新建会话在途合并、用量页换源与
