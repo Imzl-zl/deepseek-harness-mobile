@@ -182,11 +182,30 @@ const RULES = [
   },
   {
     id: 'fallback-not-in-release',
-    why: '兜底实现混进 release 装配点（必须由 kDebugMode 守住），禁止静默降级',
-    appliesTo: (p) => p === 'app/lib/platform/registry.dart',
-    match: (content) => (/InMemory|NullPush|Noop/.test(content) && !/kDebugMode/.test(content)
-      ? '装配点引用了兜底实现但没有 kDebugMode 守卫'
-      : null),
+    why: '兜底实现混进 release 装配点（必须由 kReleaseMode / kDebugMode 守住），禁止静默降级',
+    // 装配点 = `lib/platform/` 下按能力选实现的 `<能力>_factory.dart`。
+    // 判据两条：装配点里出现了兜底实现，且**代码里**没有 release 守卫。
+    //
+    // 兜底按"内存 / 空实现"这一族认（现在叫 `MemoryNotify`），不再写死旧名字：
+    // 旧写法只认 `InMemory` / `NullPush` / `Noop`，且路径指向一个不存在的
+    // `platform/registry.dart` —— 于是这条规则从 2026-09 起一次都没触发过。
+    // 2026-11-09 按当前布局重写（见
+    // `.agents/notes/implemented/2026-11-09-boundary-gate-must-scan-real-shapes.md`）。
+    appliesTo: (p) => /^app\/lib\/platform\/[^/]+_factory\.dart$/.test(p),
+    match: (content) => {
+      const fallback = firstCodeUse(
+        content,
+        /\b(?:Memory[A-Z]\w*|InMemory\w*|NullPush|Noop\w*)\b/g,
+      )
+      if (fallback === null) return null
+      // 守卫必须**真的用在分支里**：`if (kReleaseMode)` / `if (!kReleaseMode)`
+      // 或 `kReleaseMode ? …`。光有一行 `import '…' show kReleaseMode;` 不算 ——
+      // 2026-11-04 的变异校验正是被它骗过一次（去掉守卫只留 import，规则照样绿）。
+      const guarded = firstCodeUse(content, /\bk(?:Release|Debug)Mode\b\s*[?)]/g)
+      return guarded === null
+        ? `装配点引用了兜底实现（${fallback}）但没有 release 守卫`
+        : null
+    },
   },
   {
     // 2026-10-25 事故：`tool/call` 的 `arguments` 在线上是 JSON 字符串，
@@ -280,23 +299,48 @@ const SELF_TEST = [
   { rule: 'no-platform-isohos', path: 'app/lib/platform/notify_factory.dart', content: '/// 别用 Platform.isOhos：CPF 的 FAQ 说会让 build har 失败\nconst x = 1;', shouldFail: false },
   // 装配点可以有自己的平台分支 —— 这条规则的豁免面就是 `app/lib/platform/**`。
   { rule: 'branch-whitelist', path: 'app/lib/platform/notify_factory.dart', content: 'if (Platform.isAndroid) {}', shouldFail: false },
+  // 装配点 = `lib/platform/*_factory.dart`。旧样本指向一个不存在的
+  // `platform/registry.dart` —— 规则休眠了两个月，样本却一直是绿的：
+  // 自检只证明规则"会拦"，不证明它"扫得到"（2026-11-09 修）。
   {
     rule: 'fallback-not-in-release',
-    path: 'app/lib/platform/registry.dart',
-    content: 'final store = InMemorySecureStore();',
+    path: 'app/lib/platform/notify_factory.dart',
+    content: 'NotifyPort create() => Platform.isAndroid ? AndroidNotify() : MemoryNotify();',
     shouldFail: true,
   },
   {
     rule: 'fallback-not-in-release',
-    path: 'app/lib/platform/registry.dart',
-    content: 'final store = kDebugMode ? InMemorySecureStore() : fail();',
+    path: 'app/lib/platform/notify_factory.dart',
+    content: 'NotifyPort create() {\n  if (!kReleaseMode) return MemoryNotify();\n  throw UnsupportedError("x");\n}',
     shouldFail: false,
+  },
+  // **import 那一行不算守卫**：2026-11-04 的变异校验正是被它骗过一次 ——
+  // 去掉 `if (!kReleaseMode)` 只留 `show kReleaseMode`，规则照样绿。
+  {
+    rule: 'fallback-not-in-release',
+    path: 'app/lib/platform/notify_factory.dart',
+    content: "import 'package:flutter/foundation.dart' show kReleaseMode;\nNotifyPort create() => MemoryNotify();",
+    shouldFail: true,
   },
   // **注释里提到兜底实现不算违规**：写清"release 下不许回落到它"正是我们要的。
   {
     rule: 'fallback-not-in-release',
-    path: 'app/lib/platform/registry.dart',
-    content: '/// release 下不许回落到 InMemorySecureStore\nfinal store = open();',
+    path: 'app/lib/platform/notify_factory.dart',
+    content: '/// release 下不许回落到 MemoryNotify\nNotifyPort create() => AndroidNotify();',
+    shouldFail: false,
+  },
+  // 兜底自己的文件里当然会出现它的名字 —— 规则的作用域只有装配点。
+  {
+    rule: 'fallback-not-in-release',
+    path: 'app/lib/platform/notify_memory.dart',
+    content: 'class MemoryNotify implements NotifyPort {}',
+    shouldFail: false,
+  },
+  // 装配点里根本没有兜底实现 ⇒ 不违规。
+  {
+    rule: 'fallback-not-in-release',
+    path: 'app/lib/platform/notify_factory.dart',
+    content: 'NotifyPort create() => AndroidNotify();',
     shouldFail: false,
   },
   // 事件字段只有一个读者（`wire-field-single-reader`）。
