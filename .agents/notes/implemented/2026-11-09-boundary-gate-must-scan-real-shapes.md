@@ -40,6 +40,17 @@ Status: implemented
 
 ## Consequences
 
-- 收益：三条规则从"永远绿"变成会红，且用一次真实变异校验证明了红在哪一行；新增 5 条自检样本后总数 843 → **848**（34 条自检 + 190 文件），文件数不变，说明改的是规则不是扫描面。
+- 收益：三条规则从"永远绿"变成会红，且用一次真实变异校验证明了红在哪一行；这批把总数从 843 推到 **848**（34 条自检 + 190 文件），同一天补上第三条规则（`fallback-not-in-release`）后是 **853**（37 条自检 + 190 文件）—— 文件数不变，说明改的是规则不是扫描面。
 - 代价：剥注释现在会把**字符串里的 `//`** 一起抹掉到行尾，因此同一行字符串之后的代码对规则不可见。这是已知的假阴性方向（少报），今天 `app/lib` 里没有任何一行同时含 `://` 与规则记号（实测：`Select-String '://'` 与规则记号取交集为空）。将来若写出 `final u = 'wss://x'; if (Platform.isAndroid) …` 这种一行两事，规则会漏 —— 补真正的词法分析之前，这条限制写在这里，不要当成"已经不会漏"。
 - 代价：`match(code)` 的契约从"文件原文"变成"已剥注释的正文"，规则作者不能再假设拿到原文。`data-no-field-name` 的行号依赖"逐字符留白"，这条约束写在 `stripComments` 的注释里。
+
+## 补记（同日）：第三条规则也唤醒了
+
+替代方案 3 说"`fallback-not-in-release` 指向不存在的 `registry.dart`，那条单独一批做"。同一天做了：
+`appliesTo` 改成 `app/lib/platform/*_factory.dart`，兜底名认 `Memory*` / `InMemory*` / `NullPush` /
+`Noop*`，守卫必须真的用在分支里（`if (kReleaseMode)` / `if (!kReleaseMode)` / `kReleaseMode ? …`；
+只 `import … show kReleaseMode` 不算）。
+
+变异校验：去掉 `notify_factory.dart` 的 `if (kReleaseMode)` 守卫（保留 `MemoryNotify()`）→
+`FAIL 1/853`，恰好 `fallback-not-in-release: app/lib/platform/notify_factory.dart`；还原 → 全绿。
+
