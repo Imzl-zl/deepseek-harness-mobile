@@ -1114,6 +1114,9 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     if (_disposed || rows == null) return;
     client.commitSnapshot(reply.key);
     _mergeJobSnapshot(sid, rows);
+    // 任务清单是一次性快照，但"该不该提醒"要跟着重算：进服务态时那批刚结束的
+    // 任务正是要靠这一下贴上（否则要等下一个无关事件才提醒）。
+    _syncNotices();
     notifyListeners();
   }
 
@@ -1193,6 +1196,9 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       case JobError(:final jobId, :final message):
         _jobErrors[jobId] = message;
     }
+    // 任务行变化是"该不该提醒"的输入（后台任务完成通知）。
+    // **只有开任务 / 状态帧要重算**：输出帧按 chunk 计，跟着算一遍提醒太浪费。
+    if (frame is JobOpened || frame is JobStatus) _syncNotices();
     notifyListeners();
   }
 
@@ -3170,6 +3176,13 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     return null;
   }
 
+  /// 后台任务结束的**提醒窗口**：只有在这个时间窗内结束的任务才贴通知。
+  ///
+  /// 不设窗口的后果很具体：冷启动时 `_jobs` 里全是历史终态任务，一次重算就把
+  /// 几十条"某某任务跑完了"贴上去 —— 那些事早就过去了，用户只会关掉通知权限。
+  /// 30 分钟与"这一轮刚跑完"对齐（参考实现 `refs/remotes/pr/8:a4a9775` 同一档）。
+  static const Duration _jobNoticeWindow = Duration(minutes: 30);
+
   /// 期望的通知集合 —— **完全从既有事实派生**。
   List<AttentionNotice> _desiredNotices() {
     final notices = <AttentionNotice>[];
@@ -3208,6 +3221,33 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
             ),
           );
         }
+      }
+      // 后台任务结束：**一个任务一条**（同一会话同时结束三个任务就是三件事），
+      // 按 `jobId` 去重 —— 通知 id 从 jobId 算，重复帧不会变成两条。
+      // 摘要优先取 `detail` 的前两行（电脑侧给失败原因/输出尾巴），其次是进度，
+      // 都没有就说明"结束了但没话说"，不给假摘要。
+      //
+      // Note: 为什么任务单独一类、为什么是 30 分钟窗口 —— 见
+      // `.agents/notes/implemented/2026-11-09-job-completion-notice.md`
+      final now = DateTime.now().millisecondsSinceEpoch;
+      for (final job in _jobs[session.sid] ?? const <JobRow>[]) {
+        final finishedAt = job.finishedAt;
+        if (finishedAt == null || job.isLive) continue;
+        if (now - finishedAt > _jobNoticeWindow.inMilliseconds) continue;
+        final detail = (job.detail ?? '').trim();
+        final progress = (job.progress ?? '').trim();
+        final summary = detail.isNotEmpty
+            ? detail.split('\n').take(2).join(' ').trim()
+            : (progress.isNotEmpty ? progress : '任务已结束，点开查看详情');
+        notices.add(
+          AttentionNotice(
+            id: noticeIdOf(_noticeKeyOf('job', job.id)),
+            kind: NoticeKind.completed,
+            sid: session.sid,
+            title: '后台任务${job.statusText} · ${job.label}',
+            body: summary,
+          ),
+        );
       }
       if (completionUnreadOf(session.sid)) {
         notices.add(
