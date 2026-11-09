@@ -89,7 +89,7 @@
 - **授权路径**:未授权绝不生效、勾选态不跨次残留、"允许一次"≠永久授权(方案 §7.10)。
 - **插件**:不做"逐插件页面适配"(架构上不存在通用渲染);只做清单/状态/启停/安装日志 + `volatile` 字段通用表单,其余标注"需在电脑上编辑"(方案 §12)。
 - **密钥**:API 密钥值不回传手机,改密钥只发新值(方案 §7.5)。
-- **从别人的 PR 重做代码**:原始提交在 `refs/pull/<n>/head`(PR 关闭后 GitHub 仍保留),`git fetch origin refs/pull/<n>/head` 可取;重写不是 cherry-pick —— PR 正文写「来源与署名」(原始 commit + 作者 + `Co-authored-by`),决策笔记同步记一条来源,署名不随重写消失。
+- **从别人的 PR 重做代码**:原始提交在 `refs/pull/<n>/head`(PR 关闭后 GitHub 仍保留),`git fetch origin refs/pull/<n>/head` 可取。重写不是 cherry-pick —— **要保留作者就用 `git commit --author='Name <email>'` 写提交**(committer 仍是维护者),PR 正文再写「来源与署名」、笔记记来源。**PR 正文里的 `Co-authored-by` 不进贡献者列表**:GitHub 按 commit 的 author 统计,正文只是给人看的。
 
 ## 7. 维护原则
 
