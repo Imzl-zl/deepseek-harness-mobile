@@ -110,6 +110,8 @@ app/
 - **自定义文本选择菜单**:官方只提供默认路径的 `AdaptiveTextSelectionToolbar`;自绘选择区等于两端各实现一遍。
 - **系统"减弱动效"**:本次未找到跨端官方等价 API(LocalSend 的做法是三端各写一条原生通道) → 按 C1 处理,进能力包。
 - **鸿蒙侧已知问题**(CPF 官方 FAQ 索引):`Platform.isOhos` 构建失败、TabBar/TabBarView 手势冲突、输入框长按无法粘贴、安全避让区异常、混淆导致白屏 → 鸿蒙端必须在真机过一遍这份清单。
+- **IME inset 由引擎报给 Dart,两档 `windowSoftInputMode` 没有差别**(2026-11-09 实测:Android 16 / API 36 / Flutter 3.41.9 / Xiaomi 23113RKC6C):`adjustResize` 与 `adjustNothing` 下 `MediaQuery.viewInsets.bottom` 都是 0 → **368 dp**(≈921 px),窗口尺寸全程 411.4×914.3 dp 不变 —— 键盘让位走的是 insets,不是窗口缩小。**要加"从原生量 IME inset"的通道,先给出"引擎报 0"的机型与日志**;本机两档都报,不存在这个缺口。
+- **MIUI 安全输入法会让截图整屏变黑**:配对页那个粘贴框(为防自动纠错关掉了联想)聚焦时,MIUI 切到 `com.miui.securityinputmethod`;那个窗口带 `FLAG_SECURE` 且铺满全屏,`screencap` 出来是全黑,屏幕上其实是正常的安全键盘。别把它当 App 黑屏排查(2026-11-09 实测,App 窗口本身没有 `SECURE` 标志)。
 
 ## 6. 验证
 
