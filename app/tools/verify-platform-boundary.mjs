@@ -4,18 +4,40 @@
  * 跑法：node app/tools/verify-platform-boundary.mjs
  *
  * 判据与取舍见 .agents/notes/proposed/2026-09-30-experience-first-three-layer-split.md
+ * 与 .agents/notes/implemented/2026-11-09-boundary-gate-must-scan-real-shapes.md
+ * （后者：为什么扫描面只留 `app/lib`、为什么认文件形态、为什么剥注释只在一处）
  *
- * 现在 app/lib 只有主题层，真实扫描几乎是空的——所以脚本自带**自检**：
+ * 真实扫描的项数随 `app/lib` 长大而变，但脚本永远自带**自检**：
  * 用合成样本证明每条规则真的会拦。自检不过 = 规则写错了，而不是代码干净。
+ * 2026-11-09 的教训：规则写对了却**扫不到东西**（目录不存在、只认目录形态、
+ * 规则各自记着要不要剥注释）时，门禁照样全绿 —— 所以自检样本必须覆盖
+ * "现在的实际写法"，而不只是"理论上的反例"。
  */
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 
 const ROOT = process.cwd()
-const SCAN_DIRS = ['app/lib', 'app/packages']
 
-/** 各端实现包的后缀；UI 不允许 import 它们。 */
-const IMPL_SUFFIX = /import\s+['"][^'"]*_(ios|android|ohos)\//
+/**
+ * 只扫 `app/lib`。
+ *
+ * 曾经还有 `app/packages`（按能力切包的计划落点），但那个目录从没建起来：
+ * 各端实现现在住在 `app/lib/platform/`（见
+ * `.agents/notes/implemented/2026-11-04-platform-layout-is-lib-platform.md`）。
+ * **别把它加回来当作"以后可能要用"**：扫一个不存在的目录等于给门禁一条
+ * 永不作废的假绿（`walk()` 对不存在的目录静默返回空，没人会发现）。
+ * 真要重新引入，先改 `docs/subsystems/app-platform-boundaries.md` §1，再改这一行。
+ */
+const SCAN_DIRS = ['app/lib']
+
+/**
+ * 各端实现的后缀；UI 不允许 import 它们。
+ *
+ * 两种形态都要认（2026-11-04 前只认第一种，规则因此休眠）：
+ * - 目录形态 `.../secure_store_ohos/secure_store_ohos.dart`
+ * - 文件形态 `.../platform/notify_android.dart` ← **现在的实际写法**
+ */
+const IMPL_SUFFIX = /import\s+['"][^'"]*_(ios|android|ohos)(?:\/|\.dart['"])/
 
 /**
  * 纯 Dart 层禁用的库，**匹配 import / export 指令本身**，不匹配正文。
@@ -60,6 +82,9 @@ function firstUiForbiddenImport(content) {
  *
  * 与 [firstCodeUse] 同一个判据：**说明为什么不该这么写**是好代码，
  * 按正文 grep 会让规则惩罚把理由写下来的人。
+ *
+ * **只在这一处剥，剥完把正文交给每条规则**（见下面的 `match(code)` 契约）：
+ * 规则不该各自记着"要不要先剥注释"—— 漏一条就是一条休眠的假绿。
  */
 function stripComments(content) {
   return content
@@ -68,23 +93,24 @@ function stripComments(content) {
 }
 
 /**
- * 在**去掉了注释**的源码里找第一个匹配。
+ * 在**已去掉注释的源码**里找第一个匹配。
  *
  * 用于"某符号的**用法**"这类规则（如 `Icons.*`）。与"只认 import 指令"是同一个道理：
  * **说明为什么不用它**是好代码，而按正文 grep 会让规则惩罚把理由写下来的人。
  * 本项目在 `core-no-platform-import` 上踩过同一个坑（见那条规则的注释）。
  *
- * 去掉的是 `//…` 行注释与 `/*…*\/` 块注释。**不去字符串**：
- * 那需要真正的词法分析，而这里的规则只关心"有没有真的用这个符号" ——
+ * 参数是 [stripComments] 的输出 —— 剥注释由扫描循环统一做一次，这里不再剥。
+ * **不去字符串**：那需要真正的词法分析，而这里的规则只关心"有没有真的用这个符号" ——
  * 字符串里写 `Icons.send` 不是用法，但它极罕见，且真出现时多报一次比漏报安全。
  */
-function firstCodeUse(content, pattern) {
-  const found = pattern.exec(stripComments(content))
+function firstCodeUse(code, pattern) {
+  const found = pattern.exec(code)
   return found ? found[0].trim() : null
 }
 
 /**
- * 找代码里第一处"把线上字段名当字面量传给宽松取值助手"（跳过注释），返回它**在第几行**。
+ * 找代码里第一处"把线上字段名当字面量传给宽松取值助手"（注释已被 [stripComments] 抹掉），
+ * 返回它**在第几行**。
  *
  * 判据是**字段名**，不是某个函数名：`fieldOf(data, 'failure')` 与
  * `stringField(data, 'toolName')` 是同一个动作的两种拼写，只钉前者会被后者绕过
@@ -97,9 +123,8 @@ function firstCodeUse(content, pattern) {
 const LENIENT_FIELD_READER =
   /(?<![\w.$])(fieldOf|stringField|intField)\([^,();{}]*,\s*(['"])([^'"]*)\2/g
 
-function firstFieldNameUse(content) {
-  // 行号来自去注释后的串 —— [stripComments] 逐字符留白、换行不动，所以对得上原文。
-  const code = stripComments(content)
+function firstFieldNameUse(code) {
+  // 行号来自剥注释后的串 —— [stripComments] 逐字符留白、换行不动，所以对得上原文。
   LENIENT_FIELD_READER.lastIndex = 0
   const found = LENIENT_FIELD_READER.exec(code)
   if (!found) return null
@@ -108,6 +133,13 @@ function firstFieldNameUse(content) {
   return `${found[1]}(…, ${quote}${found[3]}${quote})（第 ${line} 行）`
 }
 
+/**
+ * 规则表。
+ *
+ * **`match(code)` 收到的是 [stripComments] 的输出**（注释已被等长空白替换），
+ * 不是文件原文 —— 于是"注释里写着 `Icons.send` / `Platform.isAndroid` / 兜底实现名"
+ * 一律不算违规。行号不受影响（换行原样保留），需要报行号的规则自己从 `code` 里数。
+ */
 const RULES = [
   {
     id: 'core-no-platform-import',
@@ -130,7 +162,8 @@ const RULES = [
   {
     id: 'branch-whitelist',
     why: '平台分支只允许出现在能力实现包、装配点与 ui/adaptive 层里',
-    appliesTo: (p) => !/^app\/packages\//.test(p) && !/^app\/lib\/platform\//.test(p) && !/^app\/lib\/ui\/adaptive\//.test(p),
+    // `app/packages/**` 那条豁免随 SCAN_DIRS 一起去掉了：目录不存在，豁免也就没有对象。
+    appliesTo: (p) => !/^app\/lib\/platform\//.test(p) && !/^app\/lib\/ui\/adaptive\//.test(p),
     match: (content) => firstMatch(content, /Platform\.|defaultTargetPlatform|MethodChannel|EventChannel/g),
   },
   {
@@ -212,6 +245,13 @@ const SELF_TEST = [
   },
   { rule: 'ui-no-impl-import', path: 'app/lib/ui/chat.dart', content: "import '../../packages/secure_store_ohos/secure_store_ohos.dart';", shouldFail: true },
   { rule: 'ui-no-impl-import', path: 'app/lib/ui/chat.dart', content: "import '../../packages/secure_store/secure_store.dart';", shouldFail: false },
+  // **现在的实际写法是文件形态**：`platform/<能力>_<端>.dart`
+  // （`notify_factory.dart:11` 引 `notify_android.dart` 就是这么写的）。
+  // 只认目录形态的旧正则因此**一次都没命中过**：`app/packages` 至今不存在，
+  // 全仓 `_ios/` `_android/` `_ohos/` 形态的 import 一条都没有 —— 规则活着，但永远绿。
+  { rule: 'ui-no-impl-import', path: 'app/lib/ui/chat.dart', content: "import '../platform/notify_android.dart';", shouldFail: true },
+  // 端口 / 装配点不算实现：UI 只能走 `notify_factory.dart`，不能点某个端。
+  { rule: 'ui-no-impl-import', path: 'app/lib/ui/chat.dart', content: "import '../platform/notify_factory.dart';", shouldFail: false },
   { rule: 'ui-no-platform-import', path: 'app/lib/ui/chat.dart', content: "import 'dart:io';", shouldFail: true },
   // **界面层必须能 import Material** —— 那是它写 UI 的语言。
   // 缺这条自检时，`ui/` 的规则误用了 core 的禁用表（那张表含 material.dart），
@@ -228,11 +268,18 @@ const SELF_TEST = [
   // 这条规则的适用范围就是 UI 层，不该外溢。
   { rule: 'no-material-icons', path: 'app/lib/platform/registry.dart', content: 'const Icon(Icons.send)', shouldFail: false },
   { rule: 'branch-whitelist', path: 'app/lib/ui/chat.dart', content: 'if (Platform.isAndroid) {}', shouldFail: true },
+  // **注释里提到平台分支不算违规**：写"这里为什么不做平台判断"是好代码。
+  // 这两条样本证明分支规则也跑在**剥完注释**的正文上（2026-11-09 起统一剥一次），
+  // 而不是各自记着要不要剥 —— 漏一条就是一条休眠的假绿。
+  { rule: 'branch-whitelist', path: 'app/lib/ui/chat.dart', content: '// 这里不做 if (Platform.isAndroid) 分支，走端口', shouldFail: false },
+  { rule: 'branch-whitelist', path: 'app/lib/ui/chat.dart', content: '/* 反例：if (Platform.isIOS) {} */\nconst x = 1;', shouldFail: false },
   { rule: 'branch-whitelist', path: 'app/lib/ui/adaptive/switcher.dart', content: 'if (Platform.isIOS) {}', shouldFail: false },
   { rule: 'no-platform-isohos', path: 'app/packages/notify_ohos/lib/notify_ohos.dart', content: 'if (Platform.isOhos) {}', shouldFail: true },
   { rule: 'no-platform-isohos', path: 'app/packages/notify_ohos/lib/notify_ohos.dart', content: 'if (defaultTargetPlatform == TargetPlatform.ohos) {}', shouldFail: false },
-  { rule: 'branch-whitelist', path: 'app/packages/push_android/lib/push_android.dart', content: 'if (Platform.isAndroid) {}', shouldFail: false },
-  { rule: 'branch-whitelist', path: 'app/lib/platform/registry.dart', content: 'if (Platform.isAndroid) {}', shouldFail: false },
+  // 文档注释里写"别用 Platform.isOhos"同样不算违规（同 `branch-whitelist` 那两条样本）。
+  { rule: 'no-platform-isohos', path: 'app/lib/platform/notify_factory.dart', content: '/// 别用 Platform.isOhos：CPF 的 FAQ 说会让 build har 失败\nconst x = 1;', shouldFail: false },
+  // 装配点可以有自己的平台分支 —— 这条规则的豁免面就是 `app/lib/platform/**`。
+  { rule: 'branch-whitelist', path: 'app/lib/platform/notify_factory.dart', content: 'if (Platform.isAndroid) {}', shouldFail: false },
   {
     rule: 'fallback-not-in-release',
     path: 'app/lib/platform/registry.dart',
@@ -243,6 +290,13 @@ const SELF_TEST = [
     rule: 'fallback-not-in-release',
     path: 'app/lib/platform/registry.dart',
     content: 'final store = kDebugMode ? InMemorySecureStore() : fail();',
+    shouldFail: false,
+  },
+  // **注释里提到兜底实现不算违规**：写清"release 下不许回落到它"正是我们要的。
+  {
+    rule: 'fallback-not-in-release',
+    path: 'app/lib/platform/registry.dart',
+    content: '/// release 下不许回落到 InMemorySecureStore\nfinal store = open();',
     shouldFail: false,
   },
   // 事件字段只有一个读者（`wire-field-single-reader`）。
@@ -322,6 +376,8 @@ const failures = []
 let checks = 0
 
 // ---- 自检：先证明规则本身有效 ----
+// 自检走**与真实扫描同一条路**（先剥注释再 match），否则"注释不算违规"这类断言
+// 只证明了 `stripComments` 被调用过，没证明规则跑在剥完的正文上。
 for (const sample of SELF_TEST) {
   checks += 1
   const rule = RULES.find((r) => r.id === sample.rule)
@@ -329,7 +385,8 @@ for (const sample of SELF_TEST) {
     failures.push(`自检: 规则 ${sample.rule} 不存在`)
     continue
   }
-  const fires = rule.appliesTo(sample.path) && Boolean(rule.match(sample.content))
+  const code = stripComments(sample.content)
+  const fires = rule.appliesTo(sample.path) && Boolean(rule.match(code))
   if (fires !== sample.shouldFail) {
     failures.push(`自检: ${sample.rule} 对样本应${sample.shouldFail ? '拦下' : '放过'}却相反 → ${sample.content}`)
   }
@@ -338,10 +395,10 @@ for (const sample of SELF_TEST) {
 // ---- 真实扫描 ----
 const files = SCAN_DIRS.flatMap((dir) => walk(join(ROOT, dir)))
 for (const file of files) {
-  const content = readFileSync(join(ROOT, file), 'utf8')
+  const code = stripComments(readFileSync(join(ROOT, file), 'utf8'))
   for (const rule of RULES) {
     if (!rule.appliesTo(file)) continue
-    const hit = rule.match(content)
+    const hit = rule.match(code)
     checks += 1
     if (hit) failures.push(`${rule.id}: ${file} → 命中「${hit}」（${rule.why}）`)
   }
