@@ -187,6 +187,10 @@
   "多久"与"成没成"塞得下两个；还在跑的段说 `进行中`，不补 0；
 - 合并格（§3.3）在这里**逐段列出**，并多一行说明"这几段在时间轴上挨得太近，
   画成了一格"。
+- 动作多一个「原始 JSON」：把这几段的**投影字段**编成 JSON（`trajectoryFieldsJson`）。
+  标题带「非原始 payload」、正文第一句是"这些是轨迹投影的字段，不是电脑侧的原始事件帧"
+  —— `trajectory` 投影只下发结构化字段，原始事件帧没有过线（契约 §5.7），
+  这个按钮不能被当成抓包证据。字段缺席的（如进行中的 `durationMs`）保持 `null`，不补 0。
 
 ## 6. 验证
 
@@ -196,6 +200,7 @@
 | `cd app && flutter test test/trajectory_test.dart` | 行规格、时间轴几何（位置 / 长度 / 泳道）、进行中只画标记、合并规则与"一段都不少"、`truncated` 文案、空态三种（含「重读」）、无假入口、390dp 不横滑 |
 | `cd app && flutter test test/ui_state_wiring_test.dart` | 切到轨迹页签**真的重读了一次投影**（触发点没有返回值可断言，判据是"发出了那一个请求"） |
 | `cd app && flutter test test/trajectory_outline_test.dart` | `turnOutline` 解析 + `buildTraceTurns` 的 join（投影缺席 / 进行中 / 结局以投影为准） |
+| `cd app && flutter test test/trajectory_json_test.dart` | 「原始 JSON」是**投影字段级**：字段名与值原样、进行中的段不补 0、对话框标题带「非原始 payload」且正文先说明它不是原始事件帧 |
 | `cd app && flutter test test/turn_outcome_test.dart` | 过程摘要**不再**算时长；`statsWith` 只拼串 |
 | `cd app && flutter test test/dsh_sheet_test.dart` | `DshKeyValue.multiline` 在 390dp 下不溢出 |
 

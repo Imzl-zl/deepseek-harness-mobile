@@ -34,6 +34,8 @@
 /// 用户无法分辨。假轨迹与真轨迹长得一模一样，所以"没有"必须显示成"没有"。
 library;
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../model/chat_item.dart';
@@ -563,4 +565,88 @@ class _EmptyTrajectory extends StatelessWidget {
       ),
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// 「原始 JSON」：**投影字段级**，不是原始事件帧
+// ---------------------------------------------------------------------------
+
+/// 把这几段的投影字段编成 JSON 文本。
+///
+/// **这不是原始 payload**：`trajectory` 投影只下发每段的结构化字段
+/// （`kind` / `seq` / `startTime` / `endTime` / `offsetMs` / `durationMs` /
+/// `isError` / `label`），原始事件帧没有过线（契约 §5.7 的投影包）。
+/// 所以这一屏能回答的是"电脑侧投影出了什么"，不是"电脑侧到底发了什么" ——
+/// 界面上必须以这句话署名，别让人拿它当抓包证据。
+///
+/// Note: 取舍（为什么不接原始帧、为什么标题必须写这句）见
+/// `.agents/notes/implemented/2026-11-09-trajectory-fields-json.md`
+String trajectoryFieldsJson(List<TrajectoryStep> steps) =>
+    const JsonEncoder.withIndent('  ').convert(<Map<String, Object?>>[
+      for (final step in steps)
+        <String, Object?>{
+          'kind': step.kind.name,
+          'seq': step.seq,
+          'startTime': step.startTime,
+          'endTime': step.endTime,
+          'offsetMs': step.offsetMs,
+          'durationMs': step.durationMs,
+          'isError': step.isError,
+          'label': step.label,
+        },
+    ]);
+
+/// 打开「投影字段 JSON」对话框。
+///
+/// 标题**必须**带「非原始 payload」：这是这一屏唯一的防误解手段（见
+/// [trajectoryFieldsJson]）。正文仍可整段选中复制。
+Future<void> showTrajectoryFieldsJson(
+  BuildContext context, {
+  required int turn,
+  required List<TrajectoryStep> steps,
+}) {
+  final count = steps.length;
+  return showDialog<void>(
+    context: context,
+    builder: (dialogContext) {
+      final c = dialogContext.dshColors;
+      return AlertDialog(
+        backgroundColor: c.layer1,
+        title: Text(
+          '第 $turn 轮 · ${count > 1 ? '$count 段' : ''}字段（非原始 payload）',
+          style: TextStyle(fontSize: 15, color: c.labelPrimary),
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '这些是轨迹投影的字段，不是电脑侧的原始事件帧。',
+                  style: TextStyle(fontSize: 11, color: c.labelTertiary),
+                ),
+                const SizedBox(height: 8),
+                SelectableText(
+                  trajectoryFieldsJson(steps),
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 11,
+                    color: c.labelSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      );
+    },
+  );
 }
