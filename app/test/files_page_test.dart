@@ -6,6 +6,8 @@
 ///    拼出来的那一条（手机不解析路径归属，越界由宿主判）。
 /// 2. 空目录与"没有文件服务"是两句不同的话（后者是老连接器，且**不发请求**）。
 /// 3. 预览按行分页：第一页读不到就显示电脑侧的原话；`eof` 之前有「加载更多」。
+/// 4. 预览正文带**文件行号**（末尾换行不算一行；编号是单列的，不是 diff 的双列）；
+///    目录位置是**可点的面包屑**（每一段都是 `file.list` 的 `path`）。
 library;
 
 import 'package:dsh_mobile/core/connection.dart';
@@ -161,6 +163,27 @@ void main() {
     });
   });
 
+  group('预览行号', () {
+    test('末尾换行不算一行；编号从 1 连续', () {
+      expect(filePreviewLines(''), isEmpty);
+      expect(
+        filePreviewLines('a\nb\n').map((l) => '${l.number}:${l.text}'),
+        ['1:a', '2:b'],
+        reason: '以换行结尾的文件不该多出一个空行号',
+      );
+      expect(
+        filePreviewLines('a\nb').map((l) => '${l.number}:${l.text}'),
+        ['1:a', '2:b'],
+        reason: '没有末尾换行也是两行',
+      );
+      expect(
+        filePreviewLines('\n').map((l) => '${l.number}:[${l.text}]'),
+        ['1:[]'],
+        reason: '一个空行也是第 1 行',
+      );
+    });
+  });
+
   group('目录页', () {
     testWidgets('根目录两行；点目录 ⇒ 请求里是拼出来的路径', (tester) async {
       final client = _FilesClient(
@@ -210,6 +233,57 @@ void main() {
       await tester.tap(find.byKey(const ValueKey<String>('files-up')));
       await tester.pumpAndSettle();
       expect(find.text('上级'), findsNothing, reason: '根目录没有上级');
+    });
+
+    testWidgets('面包屑：每一段都是可点的路径，点回根就真的读根', (tester) async {
+      final client = _FilesClient(
+        listings: const {'': _rootListing, 'src': _srcListing},
+      );
+      final app = await _app(client);
+      addTearDown(app.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: DshTheme.dark(),
+          home: FilesPageHost(app: app),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 根：只有"工作区根"这一段，且它是禁用态（已经在根）。
+      expect(
+        find.byKey(const ValueKey<String>('files-crumb-root')),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<TextButton>(
+              find.byKey(const ValueKey<String>('files-crumb-root')),
+            )
+            .onPressed,
+        isNull,
+        reason: '当前目录那一段点了没有意义',
+      );
+
+      await tester.tap(find.text('src'));
+      await tester.pumpAndSettle();
+
+      // 进到 src：根 + `›` + src 两段，当前段禁用。
+      final srcCrumb = find.byKey(const ValueKey<String>('files-crumb-src'));
+      expect(srcCrumb, findsOneWidget);
+      expect(
+        tester.widget<TextButton>(srcCrumb).onPressed,
+        isNull,
+        reason: '当前目录那一段禁用',
+      );
+
+      await tester.tap(find.byKey(const ValueKey<String>('files-crumb-root')));
+      await tester.pumpAndSettle();
+      expect(
+        client.sent.where((c) => c.$1 == 'file.list').map((c) => c.$2['path']),
+        ['', 'src', ''],
+        reason: '点面包屑就是按那一段的路径再读一次',
+      );
+      expect(find.text('README.md'), findsOneWidget, reason: '回到根的文件清单');
     });
 
     testWidgets('老连接器（没有 caps.files）⇒ 说清原因，且一次请求都不发', (tester) async {
@@ -268,6 +342,19 @@ void main() {
       expect(find.textContaining('第一行'), findsOneWidget);
       expect(find.textContaining('已到末尾'), findsOneWidget);
       expect(find.byKey(const ValueKey<String>('files-more')), findsNothing);
+
+      // 正文带**文件行号**（单列，从 1 起；末尾换行不算一行）。
+      final preview = tester.widget<SelectableText>(
+        find.descendant(
+          of: find.byType(FilePreviewPage),
+          matching: find.byType(SelectableText),
+        ),
+      );
+      expect(
+        preview.textSpan!.toPlainText(),
+        '1 第一行\n2 第二行',
+        reason: '行号与正文同一个等宽块；编号只占一列',
+      );
     });
 
     testWidgets('读失败 ⇒ 显示电脑侧原话（不翻译成"文件不存在"）', (tester) async {
