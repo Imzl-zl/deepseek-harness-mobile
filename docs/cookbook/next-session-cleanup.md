@@ -1,5 +1,13 @@
 # 新会话提示词：v0.2.13 之后的欠账收尾
 
+> **已收口（2026-11-09）**：下面静态可验的 A–F 全部落地 —— A（门禁唤醒）与 B（notify release
+> 即抛）见 `implemented/2026-11-09-boundary-gate-must-scan-real-shapes.md` /
+> `2026-11-09-notify-release-throws-instead-of-degrading.md`；C 的四件各一个 PR（#10 任务完成
+> 通知 / #11 已回答标题 / #12 文件行号 + 面包屑 / #13 轨迹字段 JSON）；D（条数归口）与
+> F（#8 文档漂移）见 `2026-11-09-test-counts-live-in-tools-md.md` /
+> `2026-11-09-pr8-doc-drift-verdicts.md`。**`refs/remotes/pr/*` 已删除**，别再按本文的
+> `git show refs/remotes/pr/N:<path>` 取参考实现。末尾"需要真机"那两条仍未做。
+
 > 复制下面 `---` 之间的全部内容到新会话。**先做静态可验的,需要真机的放最后。**
 
 ---
