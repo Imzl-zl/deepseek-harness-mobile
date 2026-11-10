@@ -4156,6 +4156,12 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// —— 那正是"没变就别再搬"要消灭的东西。判据见
   /// `.agents/notes/implemented/2026-11-01-resume-from-persisted-watermark.md`。
   Future<void> openSession(String sid) async {
+    // **流式尾属于「那一个会话正在生成的内容」，换会话就作废**：
+    // 它是页面上的一个虚拟尾条目（`ui/chat_page.dart` 的 `hasLive`），
+    // 而 `_liveTail` 是 AppModel 上的单例 —— 不清的话，新会话页会继续
+    // 画上一个会话的流式正文，而顶栏已经是新会话（2026-11-10 真机，公网中转）。
+    // 与 [_liveTailBelongs] 配套：那一条挡住旧会话后续帧把尾巴重新填上。
+    if (_currentSid != sid) _setLiveTail(null);
     _currentSid = sid;
     // 打开它就是"看见了"：未读的完成点当场消失（DSH 的"在主视图里就清"，`:511`）。
     _rows.markSeen(sid);
@@ -4208,6 +4214,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   Future<void> closeSession() async {
     final sid = _currentSid;
     _currentSid = null;
+    // 没有当前会话了，流式尾也不该继续画（同 [openSession] 那条）。
+    _setLiveTail(null);
     if (!_disposed) notifyListeners();
     if (sid == null) return;
     await _deltaSubs.remove(sid)?.cancel();
@@ -4385,7 +4393,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     if (delta.events.isEmpty) {
       // `_setLiveTail` 的返回值 = "格数变了"，只有那种情况才需要整页通知一次。
       final live = delta.liveMessage;
-      if (live != null && _setLiveTail(live)) {
+      if (live != null && _liveTailBelongs(sid) && _setLiveTail(live)) {
         notifyListeners();
       }
       return;
@@ -4596,7 +4604,11 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       // 原来只赋值不清空，于是持久 `assistant/message` 落库后 UI 会**同时**画
       // "列表里那条"和"流式尾那条虚拟条目"；Web 只画一次，因为它那份 live 状态
       // 随持久帧一起被替换。`turn/end` 也清：这一轮结束了不该还挂着半截流式文本。
-      if (assistantPersisted || turnEnded) _setLiveTail(null);
+      // 清空也只看当前会话：切走的会话收尾时不该把**当前**那句话的半截抹掉
+      // （抹了也没人补 —— 那一批已经在别处了；下次 `live` 帧才会回来）。
+      if ((assistantPersisted || turnEnded) && _liveTailBelongs(sid)) {
+        _setLiveTail(null);
+      }
       if (inboxChanged) {
         // 队列变了：重读一次投影拿新队列（`inbox` 段）。不等它 ——
         // 收帧路径上的回调不该被一个网络往返挡住。
@@ -4635,7 +4647,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     // **流式内容** → 单独的槽位（尾条目自己订阅，见 [liveTail]）。
     // 它**不进 store**：没有稳定 itemId，且会被随后的持久 `assistant/message`
     // 整体替换（`app-channel-client.md` §2.2：以持久为准）。
-    if (delta.liveMessage != null) {
+    if (delta.liveMessage != null && _liveTailBelongs(sid)) {
       _setLiveTail(delta.liveMessage);
     }
 
@@ -4779,6 +4791,16 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   final ValueNotifier<LiveMessage?> _liveTail = ValueNotifier<LiveMessage?>(
     null,
   );
+
+  /// 这一批流式内容是不是该上屏：**只有当前会话的才算**。
+  ///
+  /// 切走的会话，它的订阅仍然活着（`openSession` 不退订，退订是 [closeSession]
+  /// 的事），所以旧会话的 `live` 帧还会继续到 —— 那是最直接的“新会话页写着
+  /// 旧会话正文”的来路。
+  ///
+  /// Note: 为什么所有权钉在会话上（而不是退订 / per-sid 表）—— 见
+  /// `.agents/notes/implemented/2026-11-10-live-tail-belongs-to-session.md`。
+  bool _liveTailBelongs(String sid) => sid == _currentSid;
 
   /// 写流式内容；**返回"尾条目的存在性变了没有"**（变了才需要整页通知一次）。
   ///

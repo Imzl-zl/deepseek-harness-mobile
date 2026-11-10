@@ -31,11 +31,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'fake_sync_client.dart';
 
 /// 能推 `live` 帧的替身（`SessionDelta.liveMessage`）。
+///
+/// **每条会话一条流**（与真客户端同形）：共一条流的话，切会话之后
+/// 两个订阅会收到同一帧，把「旧会话的帧落在新会话上」这条真实形状测反。
 class _LiveClient extends FakeSyncClient {
-  final _sessions = StreamController<SessionDelta>.broadcast();
+  final Map<String, StreamController<SessionDelta>> _streams =
+      <String, StreamController<SessionDelta>>{};
+
+  StreamController<SessionDelta> _streamOf(String sid) => _streams.putIfAbsent(
+    sid,
+    () => StreamController<SessionDelta>.broadcast(),
+  );
 
   void emitLive(String sid, String text, {String reasoning = ''}) {
-    _sessions.add(
+    _streamOf(sid).add(
       SessionDelta(
         sid: sid,
         events: const [],
@@ -62,7 +71,7 @@ class _LiveClient extends FakeSyncClient {
   @override
   Future<void> unsubscribe(String sid) async {}
   @override
-  Stream<SessionDelta> sessionUpdates(String sid) => _sessions.stream;
+  Stream<SessionDelta> sessionUpdates(String sid) => _streamOf(sid).stream;
 
   @override
   Future<T> call<T>(
@@ -204,12 +213,43 @@ void main() {
     expect(app.items, isEmpty);
     expect(app.liveTail.value?.text, '正文');
   });
+
+  test('切到别的会话 ⇒ 流式尾必须清空（否则新会话页继续画上一个会话的正文）', () async {
+    final client = _LiveClient();
+    final app = AppModel(client: client);
+    addTearDown(app.dispose);
+    await app.start();
+    await app.openSession('s1');
+
+    client.emitLive('s1', '上一个会话正在生成的正文');
+    await Future<void>.delayed(Duration.zero);
+    expect(app.liveTail.value?.text, '上一个会话正在生成的正文');
+
+    // 旧会话还在生成时点了「新建会话」（真机 2026-11-10，公网中转）：
+    // 标题已经换成新会话，正文却还是旧会话的。
+    // 成因：`_liveTail` 是 `AppModel` 上的**单例**，只在 `turn/end` /
+    // 助手消息落盘时清（`_onDelta`），切会话时没清；
+    // 而旧会话的订阅在切走之后仍然活着，流式内容还会继续往里灌。
+    await app.openSession('s2');
+
+    expect(
+      app.liveTail.value,
+      isNull,
+      reason: '流式尾属于「那一个会话正在生成的内容」；换会话还留着，新页面就会画旧正文',
+    );
+
+    // 旧会话的订阅还活着（`openSession` 不退订）：它后续的 `live` 帧
+    // **不许**把尾巴重新填上，否则新会话页又会长出旧会话的正文。
+    client.emitLive('s1', '旧会话又推了一批');
+    await Future<void>.delayed(Duration.zero);
+    expect(app.liveTail.value, isNull, reason: '切走的会话不许再往新会话页写流式正文');
+  });
 }
 
 extension on _LiveClient {
   /// 一条持久的 `assistant/message`（清空流式槽位的那条路）。
   void emitPersisted(String sid) {
-    _sessions.add(
+    _streamOf(sid).add(
       SessionDelta(
         sid: sid,
         events: <SessionEvent>[

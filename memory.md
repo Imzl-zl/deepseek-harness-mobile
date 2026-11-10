@@ -6,15 +6,20 @@
 
 ## 现在（2026-11-10）
 
-- **「新建会话点了没用」——根因未定（2026-11-10）**。真机 A/B 把代码路径排除了：
-  旧会话上点 ＋ → 真的换到「新建会话」页；发一句之后再点 ＋ 也正常换页
-  （DSH 首句后一秒内就落 `session/title`，它会把整行刷真）。已排除：代码路径、内容缓存
-  （`_derivationFor` 按 sid + 来源同一性失效）。**仍可能**：落点就在电脑侧已有的 blank 上
-  （那是 DSH 的 reuse-or-create，本就不是 bug；你机器今天 14:18 就有一条 328 B 空会话）、
-  已配对但断连时写失败（页面不动，只有一条 toast）。要哪一条，看点击前顶栏是不是「新建会话」。
-  顺手修的一条**真的有、但窗口只有秒级**的欠账：手机侧的 `blank` 缓存不会跟 `turn/start` 走，
-  现已对齐（`_applySessionStarted`）；笔记 `implemented/2026-11-10-blank-row-stale-after-turn.md`
-  里写明了「这不是那次反馈的根因」。
+- **「新建会话后正文还是旧会话」根因已找到并修掉（2026-11-10，未发版）**：
+  症状是**标题已是新会话、正文还是旧的**（所以看、起像“不稳定复现”：直连那台正常、
+  另一台走公网中转就中）。根因：流式尾 `_liveTail` 是 `AppModel` 上的**单例**，
+  只在 `turn/end` / 持久 `assistant/message` 时清；而 `openSession` 不退订旧会话，
+  旧会话的 `live` 帧继续写进这个单例 ⇒ 新会话页的虚拟尾条目继续画旧正文。
+  公网中转让流式窗口更长，所以那台撞上。修法：流式尾所有权钉在**当前会话**
+  （`openSession`/`closeSession` 清空 + `_onDelta` 三处过 `_liveTailBelongs`）。
+  单测红→绿；变异校验（恒 true）恰好那一条红。
+  笔记 `implemented/2026-11-10-live-tail-belongs-to-session.md`；
+  文档 `docs/subsystems/app-channel-client.md` §2.2。
+- **顺手修的另一条（2026-11-10）**：手机侧的 `blank` 缓存不跟 `turn/start` 走
+  （窗口秒级：`session/title` 一到就刷真）；已对齐。笔记
+  `implemented/2026-11-10-blank-row-stale-after-turn.md`（里面写明了它**不是**
+  「新建会话没用」的根因）。
 - **真机复现环境（2026-11-10 跑通）**：隔离 home `D:\tmp\dsh-mobile-home` + `--profile dsh-mobile-test`
   （web 3099 / 直连 18791）。三件坑在 `tools.md` 的「隔离实例」第 10 条：`relayUrl` 必须私网地址、
   `POST /api/dsh-mobile/pair` 回 SVG 要 jsQR 解、直连端点要 `pairingStore.saveEndpoints` 自己塞。
