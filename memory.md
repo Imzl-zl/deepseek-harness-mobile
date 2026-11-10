@@ -6,6 +6,19 @@
 
 ## 现在（2026-11-10）
 
+- **v0.2.15 已发版（2026-11-10）**：Release `dsh-mobile-v0.2.15.apk` + `dsh-mobile-connector-0.1.23.tgz`
+  （连接器本次没改）。内容 = **三笔与「新建会话」相关的修复** + 一个新真机用例：
+  1. 会话行的 `blank` 缓存跟着 `turn/start` 当场翻（原来只等清单重读）；
+  2. 流式尾归**当前会话**（`_liveTailBelongs`：切会话清空、只收当前会话的 `live` 帧）；
+  3. **「标题说新会话、正文是旧对话、点 ＋ 没反应」的兜底**：判据收成
+     `AppModel.sessionBlankOf`（宿主说 `blank` **且** 手里没可见条目，`OtherItem` 不算），
+     顶栏 / hero / 复用 / 抽屉可见性与标签 / 内联列表 / 分页水位全部走它 ——
+     `session/title` 那条通知丢一百次也不会再自相矛盾。
+     笔记 `implemented/2026-11-10-stale-blank-row-self-heals.md`（里面写明“通知为何会丢”仍未证）。
+  真机证据：隔离实例（`D:\tmp\dsh-mobile-home` + `--profile dsh-mobile-test`，直连 18791）
+  + 本机 3425 网关的免费渠道（`free/deepseek-v4.1-flash`，真跑了两轮生成、不花官方账号的钱）；
+  `new_session_real_device_test.dart` 的旧会话换页 / 复用不多建 / 发过一句再点 ＋ 三条全过。
+
 - **「标题变新会话、正文还是旧对话、点 ＋ 没反应」= 那一行停在了 `blank: true`**（2026-11-10）：
   `blank` 是宿主的字段、手机只缓存，重读清单靠 `session/title` 之类的通知；那条通知
   一丢（中转抖动 / 进程被冻结 / 重取失败），行就永久卡住 —— 而 `displayTitle` 里
