@@ -6,14 +6,23 @@
 
 ## 现在（2026-11-10）
 
-- **v0.2.15 已发版（2026-11-10）**：Release `dsh-mobile-v0.2.15.apk` + `dsh-mobile-connector-0.1.23.tgz`
-  （连接器本次没改）。内容 = **三笔与「新建会话」相关的修复** + 一个新真机用例：
+- **v0.2.15 已发版（2026-11-10）**：Release `dsh-mobile-v0.2.15.apk`（**75.14 MB**，
+  `versionCode 18`（= CI 的 run number）/ `versionName 0.2.15`）+
+  `dsh-mobile-connector-0.1.23.tgz`（连接器本次没改，npm `latest` 仍 0.1.23）。
+  **签名核对**：`apksigner verify --print-certs` → `CN=dsh-mobile, OU=release, O=Imzl-zl, C=CN`、
+  SHA-256 `c0a55225…`，与本机 `app/android/app/release.jks` 同一把。
+  三个 run 全绿（`ci` / `release` / `publish-connector`）；Release notes 是**手填**的
+  （三笔修复直提 main、没走 PR，流水线自动生成的只剩一行 compare 链接）。
+  **真机**：官方包已装，但必须**卸载重装**——我试装时用了 `--build-number=19..23`，
+  比 CI 这次的 run number（18）大，`adb install -r` 会被判降级；卸载导致隔离实例的配对丢失（重扫即可）。
+  教训：以后本机试装包**不要**用大于当前 run number 的 build number，否则会挡住官方更新。
+  内容 = **三笔与「新建会话」相关的修复** + 一个新真机用例：
   1. 会话行的 `blank` 缓存跟着 `turn/start` 当场翻（原来只等清单重读）；
   2. 流式尾归**当前会话**（`_liveTailBelongs`：切会话清空、只收当前会话的 `live` 帧）；
   3. **「标题说新会话、正文是旧对话、点 ＋ 没反应」的兜底**：判据收成
      `AppModel.sessionBlankOf`（宿主说 `blank` **且** 手里没可见条目，`OtherItem` 不算），
      顶栏 / hero / 复用 / 抽屉可见性与标签 / 内联列表 / 分页水位全部走它 ——
-     `session/title` 那条通知丢一百次也不会再自相矛盾。
+     `session/title` 那条通知丢多少次也不会再自相矛盾。
      笔记 `implemented/2026-11-10-stale-blank-row-self-heals.md`（里面写明“通知为何会丢”仍未证）。
   真机证据：隔离实例（`D:\tmp\dsh-mobile-home` + `--profile dsh-mobile-test`，直连 18791）
   + 本机 3425 网关的免费渠道（`free/deepseek-v4.1-flash`，真跑了两轮生成、不花官方账号的钱）；
