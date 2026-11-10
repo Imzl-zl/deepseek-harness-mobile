@@ -957,9 +957,14 @@ class SessionSummary {
   /// 没有独立的持久标题字段，见 `dsh-api-session-controller` 的
   /// `lib/types/types.d.ts`），所以远程客户端拿不到 Web 那个"持久标题"，
   /// 提示标题是列表行唯一的标题来源——这不是将就，是契约。
-  String get displayTitle => blank
-      ? kNewSessionTitle
-      : (title.isNotEmpty ? title : kUntitledSessionTitle);
+  String get displayTitle => blank ? kNewSessionTitle : displayTitleOfHistory;
+
+  /// 不看 `blank` 的显示名：真标题 → 「未命名」。
+  ///
+  /// 给“行里说 blank、手里却有可见条目”那种陈旧状态用（见
+  /// `AppModel.sessionBlankOf`）：那时候它已经不沉默了，不能再画成「新建会话」。
+  String get displayTitleOfHistory =>
+      title.isNotEmpty ? title : kUntitledSessionTitle;
 
   /// 没有标题的会话在列表里的显示名（照 DSH 的 `session.untitled` 本地化值）。
   static const String kUntitledSessionTitle = '未命名';

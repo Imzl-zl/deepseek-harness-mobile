@@ -1407,7 +1407,9 @@ class _DshMobileAppState extends State<DshMobileApp>
         .where(
           (s) => sessionVisible(
             subagent: s.subagent,
-            blank: s.blank,
+            // **行里的 blank 可能停在旧值**：拿得出来西就不算新会话（见
+            // `AppModel.sessionBlankOf`）。抽屉与顶栏、复用判据必须同一道门。
+            blank: app.sessionBlankOf(s.sid),
             isCurrent: s.sid == app.currentSid,
             // 已归档的默认不列（照 Web 的默认过滤档）——
             // 它们在自己的「归档」列表里，取消归档就回原位。
@@ -1417,13 +1419,15 @@ class _DshMobileAppState extends State<DshMobileApp>
         .toList();
     DrawerSession rowOf(SessionSummary s) => DrawerSession(
       sid: s.sid,
-      title: s.displayTitle,
+      title: app.sessionBlankOf(s.sid)
+          ? s.displayTitle
+          : s.displayTitleOfHistory,
       // **待处理数进副标题**：多会话并行时，用户靠它知道该切去哪个会话
       // （DSH 的待处理是 per-session 的，切过去才看得见）。
       //
       // blank 会话不数条目：它刚建出来，宿主落的 3 条系统事件会被投影成条目，
       // 写"2 条"会让一个**什么都没聊过**的会话看起来有内容（2026-11-08 真机）。
-      preview: s.blank
+      preview: app.sessionBlankOf(s.sid)
           ? '尚未开始'
           : [
               if (s.pendingCount > 0) '${s.pendingCount} 个待处理',
@@ -1494,7 +1498,8 @@ class _DshMobileAppState extends State<DshMobileApp>
     final revealed = _revealedGroups.contains(key);
     final wm = watermarkRowsOf(
       bucket.sessionIds,
-      isBlank: (sid) => bySid[sid]?.blank ?? false,
+      // 同抽屉行那一处的门（`AppModel.sessionBlankOf`）：行停在旧值时不裁错人。
+      isBlank: (sid) => bySid[sid] == null || app.sessionBlankOf(sid),
       // 桌面的 `requiredWatermark`：在跑 / 有子在跑 / 有待处理 / 当前
       // 这几类**不许被裁掉**（裁掉就等于"正在出活的会话看不见"）。
       mustShow: <String>{

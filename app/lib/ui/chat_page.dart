@@ -3060,7 +3060,10 @@ class _ChatTab extends StatelessWidget {
     // 屏幕却是一片空白"）。判据只能是 **blank 本身**（规格
     // `docs/subsystems/blank-session-hero.md` §5）+ 没有可见内容。
     // 取舍见 `.agents/notes/implemented/2026-10-17-hero-never-rendered-other-items.md`。
-    final hasVisibleItems = items.any((item) => item is! OtherItem);
+    // 口径只有一处（`AppModel.hasVisibleItemsOf`）：hero 的“有新会话”判定与
+    // 顶栏标题 / 复用判据必须看同一份东西，否则会出现“页面画的是对话、
+    // 顶栏却写『新建会话』”这种自相矛盾（2026-11-10 真机）。
+    final hasVisibleItems = app.hasVisibleItemsOf(app.currentSid ?? '');
     final disconnected =
         paired && app.connection != ConnectionStateView.serving;
     // **blank 会话先走 hero**（DSH 的首页就是这一屏，见 `ConversationHero` 的文件头）。
@@ -3082,6 +3085,7 @@ class _ChatTab extends StatelessWidget {
       if (app.currentSid == null && app.sessions.isNotEmpty) {
         return _SessionListInline(
           sessions: app.sessions,
+          isBlank: app.sessionBlankOf,
           onOpen: onOpenSession,
           archived: app.archivedSids,
           onRefresh: paired ? onRefreshSessions : null,
@@ -3695,6 +3699,7 @@ class _SessionListInline extends StatefulWidget {
     required this.sessions,
     required this.onOpen,
     required this.archived,
+    required this.isBlank,
     this.onRefresh,
     this.workspaces = const [],
     this.hasMore = false,
@@ -3702,6 +3707,10 @@ class _SessionListInline extends StatefulWidget {
   });
 
   final List<SessionSummary> sessions;
+
+  /// “这条会话还算不算新会话”——**抽屉、顶栏、复用判据共用的一道门**
+  /// （`AppModel.sessionBlankOf`；行里的 `blank` 可能停在旧值）。
+  final bool Function(String sid) isBlank;
   final void Function(SessionSummary session) onOpen;
   final VoidCallback? onRefresh;
 
@@ -3739,7 +3748,7 @@ class _SessionListInlineState extends State<_SessionListInline> {
         .where(
           (s) => sessionVisible(
             subagent: s.subagent,
-            blank: s.blank,
+            blank: widget.isBlank(s.sid),
             isCurrent: false,
             archived: widget.archived.contains(s.sid),
           ),

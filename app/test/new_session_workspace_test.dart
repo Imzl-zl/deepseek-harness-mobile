@@ -21,6 +21,7 @@ import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
+import 'package:dsh_mobile/model/chat_item.dart' show SessionSummary;
 import 'package:dsh_mobile/model/workspace.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -522,6 +523,43 @@ void main() {
     });
   });
 
+  test('折回：行停在 blank: true 但手里已有可见条目 ⇒ 不算新会话', () async {
+    // 2026-11-10 真机（另一台手机、公网中转）：会话跑完了才点「新建会话」，
+    // **顶栏变成「新建会话」而正文还是旧对话**。成因不在切会话，在那个会话的**行**：
+    // `blank` 是宿主的字段、手机只缓存，重读清单靠 `session/title` 之类的通知
+    // （`connector/src/protocol/host-state.ts`）；那条通知一旦没落地，
+    // 行就永远停在 `blank: true` —— 而 `displayTitle` 里 blank 压过 title。
+    final client = _StreamingClient(
+      rows: [_row('s1', cwd: r'D:\w2', updatedAt: 10, blank: true)],
+      workspacesReply: _workspaces([
+        _group('w2', r'D:\w2', ['s1']),
+      ]),
+    );
+    addTearDown(client.close);
+    final app = AppModel(client: client);
+    addTearDown(app.dispose);
+    await app.start();
+    await app.refreshSessionRows();
+    await app.refreshWorkspaces();
+    await app.openSession('s1');
+
+    // 宿主那边真的跑过（用户那句话到了），而清单那一行没被重读。
+    client.pushUserMessage('s1');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(app.currentIsBlank, isFalse, reason: '手里有可见条目 ⇒ 这一屏不可能是新会话页');
+    expect(
+      app.currentTitle,
+      isNot(SessionSummary.kNewSessionTitle),
+      reason: '顶栏不能对着一整段对话写「新建会话」',
+    );
+    expect(
+      await app.findBlankSession(),
+      isNull,
+      reason: '否则下一次「新建会话」复用的就是它自己，页面一动不动',
+    );
+  });
+
   group('workspace.list 的 createdAt', () {
     test('原样落到 WorkspaceGroup.createdAt（空工作区当"最近"要靠它）', () async {
       final client = _CreateClient(
@@ -600,5 +638,29 @@ class _StreamingClient extends _CreateClient {
     for (final stream in _streams.values) {
       await stream.close();
     }
+  }
+
+  /// 一条**真形状**的用户消息（让会话拥有可见条目）。
+  void pushUserMessage(String sid) {
+    _streamOf(sid).add(
+      SessionDelta(
+        sid: sid,
+        transient: const <String, Object?>{},
+        events: const <SessionEvent>[
+          SessionEvent(
+            itemId: 'm:m-1',
+            type: 'user/message',
+            seq: 1,
+            time: 1,
+            data: <String, Object?>{
+              'id': 'm-1',
+              'role': 'user',
+              'source': <String, Object?>{'kind': 'user'},
+              'content': '在吗',
+            },
+          ),
+        ],
+      ),
+    );
   }
 }

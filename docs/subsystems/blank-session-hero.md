@@ -144,6 +144,14 @@ blank 复用也照 DSH 的 `createInWorkspace`(`navigation.ts:220-233`):只复�
 整行刷真,`connector/src/protocol/host-state.ts`),`findBlankSession` 会把当前这个
 会话当成新会话点开 —— `openSession(自己)` 页面不动;抽屉也会把这行画成
 「新建会话 / 尚未开始」。
+
+**通知丢了也不出错**:行里的 `blank` 可能停在旧值(通知没落地 / 那次重取失败),
+所以"还算不算新会话"收成一道判据 `AppModel.sessionBlankOf`:
+**宿主说 blank 且手里没有可见条目**(`OtherItem` 不算,与本文 §5 的 hero 判据同一个口径)。
+顶栏标题(blank 压过 title,与 DSH `tree.ts:287` 同形)、hero、复用、抽屉可见性 / 行标签 /
+副标题、内联列表、分页水位**全部**走它 —— 否则会出现"顶栏写『新建会话』、正文却是一段
+对话、再点 ＋ 还没反应"那种自相矛盾。取舍见
+`.agents/notes/implemented/2026-11-10-stale-blank-row-self-heals.md`。
 **这条不变量不是「点新建会话没用」那条反馈的根因**:真机 A/B 证实首句之后一秒内
 title 就已落地、点 ＋ 正常换页;窗口是秒级,反馈的根因仍未确定。
 取舍与被否方案见 `.agents/notes/implemented/2026-11-10-blank-row-stale-after-turn.md`。

@@ -1463,7 +1463,11 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   String? get currentTitle {
     final sid = _currentSid;
     if (sid == null) return null;
-    return _sessions.where((s) => s.sid == sid).firstOrNull?.displayTitle;
+    final row = _sessions.where((s) => s.sid == sid).firstOrNull;
+    if (row == null) return null;
+    // 同一道门：拿得出来西就不是新会话（见 [sessionBlankOf]）。
+    if (!sessionBlankOf(sid)) return row.displayTitleOfHistory;
+    return row.displayTitle;
   }
 
   // ---- 设备本地 UI 状态（`data/ui_state.dart` 的消费者）----
@@ -3595,7 +3599,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       if (group == null) return null;
     }
     for (final s in _sessions) {
-      if (!s.blank || s.subagent) continue;
+      // **拿得出来西就不算 blank**：见 [sessionBlankOf]（行可能停在旧值）。
+      if (!sessionBlankOf(s.sid) || s.subagent) continue;
       if (_archivedSids.contains(s.sid)) continue;
       if (group == null) return s.sid;
       if (!group.sessionIds.contains(s.sid)) continue;
@@ -3678,8 +3683,40 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   bool get currentIsBlank {
     final sid = _currentSid;
     if (sid == null) return false;
-    return sessionOf(sid)?.blank ?? false;
+    return sessionBlankOf(sid);
   }
+
+  /// 这条会话"还算不算新会话"：**宿主说 blank，并且手里确实没有可见内容**。
+  ///
+  /// ## 为什么不能只读 `session.list` 的 `blank`
+  ///
+  /// `blank` 是宿主的字段（`blank && type !== 'turn/start'`，
+  /// `packages/api/session-controller/src/list.ts:51`），手机那一行是它的缓存；
+  /// 而缓存**只在重读清单时**更新，重读又依赖 `session/title` 之类的通知
+  /// （`connector/src/protocol/host-state.ts` 的 `hostStateForSessionEvent`）。
+  /// 那条通知一旦没落地（中转抖动 / 进程被冻结 / 清单重取失败），行就永停在
+  /// `blank: true` —— 于是顶栏一直写「新建会话」（`displayTitle` 里 blank 压过 title，
+  /// 与 DSH `tree.ts:287` 同形），而正文里明明是同一个会话的对话。
+  ///
+  /// ## 为什么“有可见条目”是硬证据
+  ///
+  /// 新会话页的判据本来就是"blank **且** 没有可见内容"
+  /// （`ui/chat_page.dart` 的 `isBlank && !hasVisibleItems`）。
+  /// 而 `OtherItem` 不算 —— 上下文注入 / 系统事件会出现在从未跑过的会话里，
+  /// 它们不能把 hero 顶掉（那正是 `2026-10-17-hero-never-rendered-other-items` 那条）。
+  /// 所以这里复用的就是同一条口径，不新增第三种"什么算内容"。
+  ///
+  /// Note: 为什么不再靠“重读清单”纠正 —— 见
+  /// `.agents/notes/implemented/2026-11-10-stale-blank-row-self-heals.md`。
+  bool sessionBlankOf(String sid) {
+    final row = sessionOf(sid);
+    if (row == null || !row.blank) return false;
+    return !hasVisibleItemsOf(sid);
+  }
+
+  /// 这个会话手里有没有**可见**条目（口径与 `ui/chat_page.dart` 的 hero 判据一致）。
+  bool hasVisibleItemsOf(String sid) =>
+      _storeOf(sid).items.any((item) => item is! OtherItem);
 
   /// 拉一次工作区清单（会话列表按它分组）。
   ///

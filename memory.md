@@ -6,20 +6,19 @@
 
 ## 现在（2026-11-10）
 
-- **「新建会话后正文还是旧会话」根因已找到并修掉（2026-11-10，未发版）**：
-  症状是**标题已是新会话、正文还是旧的**（所以看、起像“不稳定复现”：直连那台正常、
-  另一台走公网中转就中）。根因：流式尾 `_liveTail` 是 `AppModel` 上的**单例**，
-  只在 `turn/end` / 持久 `assistant/message` 时清；而 `openSession` 不退订旧会话，
-  旧会话的 `live` 帧继续写进这个单例 ⇒ 新会话页的虚拟尾条目继续画旧正文。
-  公网中转让流式窗口更长，所以那台撞上。修法：流式尾所有权钉在**当前会话**
-  （`openSession`/`closeSession` 清空 + `_onDelta` 三处过 `_liveTailBelongs`）。
-  单测红→绿；变异校验（恒 true）恰好那一条红。
-  笔记 `implemented/2026-11-10-live-tail-belongs-to-session.md`；
-  文档 `docs/subsystems/app-channel-client.md` §2.2。
-- **顺手修的另一条（2026-11-10）**：手机侧的 `blank` 缓存不跟 `turn/start` 走
-  （窗口秒级：`session/title` 一到就刷真）；已对齐。笔记
-  `implemented/2026-11-10-blank-row-stale-after-turn.md`（里面写明了它**不是**
-  「新建会话没用」的根因）。
+- **「标题变新会话、正文还是旧对话、点 ＋ 没反应」= 那一行停在了 `blank: true`**（2026-11-10）：
+  `blank` 是宿主的字段、手机只缓存，重读清单靠 `session/title` 之类的通知；那条通知
+  一丢（中转抖动 / 进程被冻结 / 重取失败），行就永久卡住 —— 而 `displayTitle` 里
+  blank 压过 title（与 DSH `tree.ts:287` 同形），于是顶栏写「新建会话」、正文还是旧对话，
+  `findBlankSession` 又把它当新会话复用 ⇒ 再点也没反应。健康连接上它自愈（实测标题事件
+  ~1 秒就把整行刷真）。**未证**：通知为什么丢（中转只做字节转发，代码看不出会吞帧）。
+  修法：这道判据收成一道 `AppModel.sessionBlankOf`（宿主说 blank **且** 手里没可见条目，
+  `OtherItem` 不算），顶栏 / hero / 复用 / 抽屉可见性 / 内联列表 / 分页水位全部走它。
+  单测红→绿 + 变异校验；笔记 `implemented/2026-11-10-stale-blank-row-self-heals.md`。
+- **另两条同日修复**：① `turn/start` 到达时那一行当场翻 `blank: false`（笔记
+  `implemented/2026-11-10-blank-row-stale-after-turn.md`）；② 流式尾归当前会话
+  （`_liveTailBelongs`，笔记 `implemented/2026-11-10-live-tail-belongs-to-session.md`）。
+  两条都有单测 + 变异校验，但**都不是**上面那条反馈的根因（真机 A/B 已排除）。
 - **真机复现环境（2026-11-10 跑通）**：隔离 home `D:\tmp\dsh-mobile-home` + `--profile dsh-mobile-test`
   （web 3099 / 直连 18791）。三件坑在 `tools.md` 的「隔离实例」第 10 条：`relayUrl` 必须私网地址、
   `POST /api/dsh-mobile/pair` 回 SVG 要 jsQR 解、直连端点要 `pairingStore.saveEndpoints` 自己塞。
