@@ -6,15 +6,15 @@
 
 ## 现在（2026-11-10）
 
-- **「新建会话点了没用」已定位并修掉（2026-11-10，未发版）**：真机复现口径是
-  **自己发过消息之后**——点 ＋ 建出 blank → 在它里面发第一句（宿主落 `turn/start`）→
-  再点 ＋，`findBlankSession` 拿着**陈旧的 `blank: true`** 把当前这个有内容的会话当成新会话
-  复用，`openSession(自己)` 页面一动不动（抽屉还把它画成「新建会话 / 尚未开始」）。
-  修法：`_onDelta` 的 `turn/start` 分支当场把该行翻 `blank: false`（宿主同一条规则，
-  `session-controller/src/list.ts:51`），**不重读清单**（那会把 `running` 压旧）。
-  笔记 `implemented/2026-11-10-blank-row-stale-after-turn.md`；`docs/subsystems/blank-session-hero.md` §4.2。
-  真机验收：`integration_test/new_session_real_device_test.dart`（隔离实例 + 真连接，
-  不花模型钱）：旧会话上点 ＋ → 顶栏变「新建会话」+ hero；电脑侧 leftover blank 时那一次是复用、不多建。
+- **「新建会话点了没用」——根因未定（2026-11-10）**。真机 A/B 把代码路径排除了：
+  旧会话上点 ＋ → 真的换到「新建会话」页；发一句之后再点 ＋ 也正常换页
+  （DSH 首句后一秒内就落 `session/title`，它会把整行刷真）。已排除：代码路径、内容缓存
+  （`_derivationFor` 按 sid + 来源同一性失效）。**仍可能**：落点就在电脑侧已有的 blank 上
+  （那是 DSH 的 reuse-or-create，本就不是 bug；你机器今天 14:18 就有一条 328 B 空会话）、
+  已配对但断连时写失败（页面不动，只有一条 toast）。要哪一条，看点击前顶栏是不是「新建会话」。
+  顺手修的一条**真的有、但窗口只有秒级**的欠账：手机侧的 `blank` 缓存不会跟 `turn/start` 走，
+  现已对齐（`_applySessionStarted`）；笔记 `implemented/2026-11-10-blank-row-stale-after-turn.md`
+  里写明了「这不是那次反馈的根因」。
 - **真机复现环境（2026-11-10 跑通）**：隔离 home `D:\tmp\dsh-mobile-home` + `--profile dsh-mobile-test`
   （web 3099 / 直连 18791）。三件坑在 `tools.md` 的「隔离实例」第 10 条：`relayUrl` 必须私网地址、
   `POST /api/dsh-mobile/pair` 回 SVG 要 jsQR 解、直连端点要 `pairingStore.saveEndpoints` 自己塞。

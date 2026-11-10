@@ -140,9 +140,12 @@ blank 复用也照 DSH 的 `createInWorkspace`(`navigation.ts:220-233`):只复�
 见 `data/app_model.dart` 的 `_onDelta` 注释),所以 `turn/start` 到达时那一行
 当场翻成 `blank: false` —— 与宿主**同一条规则**,不是第二份判据。
 
-不这么做的话,复用判据 `findBlankSession` 会把**当前这个有内容的会话**当成新会话:
-点「新建会话」⇒ `openSession(自己)` ⇒ 页面一动不动(2026-11-10 真机反馈),
-而且抽屉会把跑过的会话画成「新建会话 / 尚未开始」。
+不这么做的话,在「发完第一句」到「宿主落 `session/title`」之间那几秒里(标题事件会把
+整行刷真,`connector/src/protocol/host-state.ts`),`findBlankSession` 会把当前这个
+会话当成新会话点开 —— `openSession(自己)` 页面不动;抽屉也会把这行画成
+「新建会话 / 尚未开始」。
+**这条不变量不是「点新建会话没用」那条反馈的根因**:真机 A/B 证实首句之后一秒内
+title 就已落地、点 ＋ 正常换页;窗口是秒级,反馈的根因仍未确定。
 取舍与被否方案见 `.agents/notes/implemented/2026-11-10-blank-row-stale-after-turn.md`。
 
 ## 5. 什么时候落到这一屏

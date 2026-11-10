@@ -27,6 +27,10 @@
 /// 两种落点下，**再点一次 ＋ 都不能多建**（标题仍是「新建会话」）。
 /// 电脑侧的证据（`session.list` 只多一行）在跑完后的脚本里对。
 ///
+/// 最后一段还会在会话里**真发一句**（隔离实例没配模型密钥，这一轮会以
+/// `Connection error` 失败，不花钱），再点 ＋ —— 判据是那一句从页面消失
+/// （新会话没有条目）。它盯的是「刚聊过的会话不是新会话」这条不变量。
+///
 /// ## 跑法（电脑侧要有一台隔离实例，见 `tools.md` 的「隔离实例」一节）
 ///
 /// ```powershell
@@ -54,6 +58,7 @@ import 'package:dsh_mobile/platform/websocket_transport.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/conversation_hero.dart';
 import 'package:dsh_mobile/ui/dsh_app_bar.dart';
+import 'package:dsh_mobile/ui/dsh_composer.dart';
 import 'package:dsh_mobile/ui/pairing_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -268,8 +273,62 @@ void main() {
       reason: '第二次点击该复用，不该把页面切走；顶栏：${_appBarText(tester)}',
     );
 
+    // ---- 第五段：**这一句才是「点了没用」那一步** ----
+    //
+    // 在刚建出来的新会话里发一句（宿主落 `user/message` + `turn/start`），然后立刻
+    // 再点 ＋。判据：**那一句从页面上消失** —— 说明真的换到了一个没有条目的新会话。
+    //
+    // 不花钱：隔离实例没有配模型密钥，这一轮的模型调用会当场失败；
+    // 而 `turn/start` 在调模型**之前**就已经落了（DSH 的 `list.ts:51` 也是据此翻 blank）。
+    final composer = find.descendant(
+      of: find.byType(DshComposer),
+      matching: find.byType(TextField),
+    );
+    expect(composer, findsOneWidget, reason: '输入栏必须在');
+    await tester.enterText(composer, _probeText);
+    await tester.pump();
+    debugPrint('[new-session] 输入后页面：${_allText(tester)}');
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await _waitFor(tester, () async => false, rounds: 5, stepMs: 200);
+    debugPrint(
+      '[new-session] 发送后页面：${_allText(tester)}'
+      ' | probe 节点数=${find.text(_probeText).evaluate().length}',
+    );
+    final sent = await _waitFor(
+      tester,
+      () async => find.text(_probeText).evaluate().isNotEmpty,
+      rounds: 100,
+      stepMs: 200,
+    );
+    debugPrint('[new-session] 发完一句，顶栏：${_appBarText(tester)}');
+    expect(sent, isTrue, reason: '自己发的那一句必须出现在会话里；页面文案：${_allText(tester)}');
+    // 等 `turn/start` 到手机（宿主开轮次 → 下行 delta）。这 6 秒是本用例的**被测窗口**。
+    await _waitFor(tester, () async => false, rounds: 30, stepMs: 200);
+
+    await tester.tap(plus);
+    await tester.pump();
+    final gone = await _waitFor(
+      tester,
+      () async => find.text(_probeText).evaluate().isEmpty,
+      rounds: 100,
+      stepMs: 200,
+    );
+    debugPrint('[new-session] 发过一句之后点 ＋，顶栏：${_appBarText(tester)}');
+    expect(
+      gone,
+      isTrue,
+      reason:
+          '刚发过一句的会话已经不是 blank，再点 ＋ 必须换到**新**会话（那一句应该消失）。'
+          '它还在 = 复用判据把当前会话当成了新会话。'
+          '页面文案：${_allText(tester)}',
+    );
+
     // 收尾：凭据留着无妨（下一次跑会先清），但设备安全存储里不该留一份
     // 指向已关掉的隔离实例的凭据 —— 清掉。
     await pairingStore.clear();
   });
 }
+
+/// 第五段发出去的那一句（纯 ASCII：这台设备的 IME 吃不下中文）。
+const String _probeText = 'probe-blank-row';
