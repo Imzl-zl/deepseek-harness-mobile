@@ -117,7 +117,7 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
 - 图标集校验(不需要浏览器):`node mock/proto/tools/verify-icons.cjs`
 - **手机端 `app/`(Flutter 工程;`flutter` 装在 `D:\soft\flutter`,已进用户 PATH)**:
   - **版本闸门:锁 Flutter `3.41.9`**(上界由鸿蒙 fork 定,`app-platform-boundaries.md` §4)。当前上游 stable 是 3.47.6,**不许装** —— Dart SDK 版本决定语言特性,升上去等接鸿蒙时要回改一大片。自带 Dart 3.11.5。
-  - `cd app; flutter test` —— 跑 `test/`,当前 **1802 项**:core 单测(含封箱判据/握手门禁/恢复判定等)+ 连接层(状态机/退避/心跳半开/箱与握手/接线 e2e/outbox/LiveAccumulator/断连拒绝在途请求/落盘与 persisted)+ 平台层(真 socket)+ 配对(跨端向量:SAS/pairingId/设备标识/**握手上下文**)+ **配对客户端(状态码 → `ClientAction`,含 426 → 升级)** + **候选身份与上下文形状** + **配对通道 9(真驱动一个电脑侧替身:握手两帧、秘密只在密文里、`fc` 从 0 起、`pong` 回显)** + **配对编排(两段:确认前不发秘密)** + **带票传输(换票失败如实抛)** + **地址边界(升级 URL 形状 / 只认 wss)** + 图标(含**数像素**)+ **本地库(同一套断言在 sqflite 与内存实现上各跑一遍)** + 装配不变量 + 界面 + 跨端向量 + fixtures 三角色回放 + **`sync.hello`(前后台态 + 订阅集声明,含重连后由连接层重新声明)** + **交互投影(`approval/asked` 的 itemId 判据（审批 `i:<approvalId>`、提问 `t:<callId>`；**没有 `callId` 也开卡**）、`ask_user_question` 的 snake_case `multi_select`、"（推荐）"剥离子、两条收束路)** + **接管答复(`interaction.respond` 的载荷形状、显式跳过、计划 approveLabel)** + **跨层:事件 → 交互信号 → 答复** + **封了箱的 credit 必须被解开后记账(曾把密文喂给 decodeCredit)** + **前后台态上报(`platform/app_state_reporter.dart`:五个生命周期态只有 `resumed` 算前台、摘掉 observer 后不再上报、客户端换掉后报新的那个;`tester.binding.handleAppLifecycleStateChanged` 驱动,因为生命周期事件只从 `WidgetsBinding` 来)** + **发送模式(`model/send_mode.dart`:线上值↔枚举、偏好落盘与重启恢复、切模式写盘不重复通知、盘上怪值保持默认;widget 层钉"发送真的带了 mode")** + **多会话待处理(`ui/takeover.dart`:一会话一队、切桶不丢、优先级照 DSH 计划2>提问1>审批0、迟到收束不带 sid 全桶找、跨会话提示行;`interaction_wiring_test` 钉会话行待处理数从本地投影算)** + **权限档(`model/permission.dart` + `permission_test.dart`:目录/当前值/切换三种结论各自解析,展示映射不硬套内置档;`chat_takeover_wiring_test` 走完整条链——目录 → sheet → `permission.switch` → 电脑侧落值 → 重读投影 → chip 与接管队列都变)** + **连接方式选择器(`EndpointTransport.onAttempt` 拨号结果上报 → `AppModel.attemptOf` 记账;`connectionSummary` 的回落提示只在"首选拨过且失败"时给;设置页端点列表的置顶 / 状态四档 / 空端点空态)** + **重新配对替换(`pairing_channel`/`pairing_flow`:`previousPairingId` 传了才进 `pair-commit` 密文载荷、换票请求里没有它;装配不变量:配对页接了旧配对标识、清凭据的缝先抓快照再清)** + **新会话页 hero(`ui/conversation_hero.dart` + `model/agent_preset.dart` + `model/workspace.dart` 的工作区标签链):落点(连上后选中 blank 会话)、出现条件(非 blank / 断线都不显示)、占位符换 `placeholder.hero`、两枚 chip 的取值与写路径(`session.create({agentPreset})` / `({workspaceId})`,选中当前项时不建)、目录解析与显示名(内置走本地字典、自建永不翻译、broken 不进选择器)** + **带键写操作的结果与拒绝都要到得了调用方(在途登记建在 `flush()` 之前;`res {ok:false}` 照原样抛;帧头 `id` 另铸、不复用幂等键;同一幂等键只发一帧)** + **子智能体目录树(`model/subagent.dart` + `ui/subagent_tree.dart`):活动态来自子会话自己的 `running` + `subagentTiming.lastTurnCompleted`(**不再由 `mode` 推**)、时长是 `settledMs + (running ? now-since : active.through-since)`(一次性任务不再越涨越长)、目录三态(加载 / 就绪 / 失败+重试)与"已知空叶"分开、`session.list` 行的 `subagentTiming`/`tokenUsage` 解析、读子级目录不覆盖当前会话投影、两套手势(点行进入 / 点 disclosure 展开)、子会话头部条的当前标题与切换 sheet、54px 横向只读状态框)**
+  - `cd app; flutter test` —— 跑 `test/`,当前 **1803 项**:core 单测(含封箱判据/握手门禁/恢复判定等)+ 连接层(状态机/退避/心跳半开/箱与握手/接线 e2e/outbox/LiveAccumulator/断连拒绝在途请求/落盘与 persisted)+ 平台层(真 socket)+ 配对(跨端向量:SAS/pairingId/设备标识/**握手上下文**)+ **配对客户端(状态码 → `ClientAction`,含 426 → 升级)** + **候选身份与上下文形状** + **配对通道 9(真驱动一个电脑侧替身:握手两帧、秘密只在密文里、`fc` 从 0 起、`pong` 回显)** + **配对编排(两段:确认前不发秘密)** + **带票传输(换票失败如实抛)** + **地址边界(升级 URL 形状 / 只认 wss)** + 图标(含**数像素**)+ **本地库(同一套断言在 sqflite 与内存实现上各跑一遍)** + 装配不变量 + 界面 + 跨端向量 + fixtures 三角色回放 + **`sync.hello`(前后台态 + 订阅集声明,含重连后由连接层重新声明)** + **交互投影(`approval/asked` 的 itemId 判据（审批 `i:<approvalId>`、提问 `t:<callId>`；**没有 `callId` 也开卡**）、`ask_user_question` 的 snake_case `multi_select`、"（推荐）"剥离子、两条收束路)** + **接管答复(`interaction.respond` 的载荷形状、显式跳过、计划 approveLabel)** + **跨层:事件 → 交互信号 → 答复** + **封了箱的 credit 必须被解开后记账(曾把密文喂给 decodeCredit)** + **前后台态上报(`platform/app_state_reporter.dart`:五个生命周期态只有 `resumed` 算前台、摘掉 observer 后不再上报、客户端换掉后报新的那个;`tester.binding.handleAppLifecycleStateChanged` 驱动,因为生命周期事件只从 `WidgetsBinding` 来)** + **发送模式(`model/send_mode.dart`:线上值↔枚举、偏好落盘与重启恢复、切模式写盘不重复通知、盘上怪值保持默认;widget 层钉"发送真的带了 mode")** + **多会话待处理(`ui/takeover.dart`:一会话一队、切桶不丢、优先级照 DSH 计划2>提问1>审批0、迟到收束不带 sid 全桶找、跨会话提示行;`interaction_wiring_test` 钉会话行待处理数从本地投影算)** + **权限档(`model/permission.dart` + `permission_test.dart`:目录/当前值/切换三种结论各自解析,展示映射不硬套内置档;`chat_takeover_wiring_test` 走完整条链——目录 → sheet → `permission.switch` → 电脑侧落值 → 重读投影 → chip 与接管队列都变)** + **连接方式选择器(`EndpointTransport.onAttempt` 拨号结果上报 → `AppModel.attemptOf` 记账;`connectionSummary` 的回落提示只在"首选拨过且失败"时给;设置页端点列表的置顶 / 状态四档 / 空端点空态)** + **重新配对替换(`pairing_channel`/`pairing_flow`:`previousPairingId` 传了才进 `pair-commit` 密文载荷、换票请求里没有它;装配不变量:配对页接了旧配对标识、清凭据的缝先抓快照再清)** + **新会话页 hero(`ui/conversation_hero.dart` + `model/agent_preset.dart` + `model/workspace.dart` 的工作区标签链):落点(连上后选中 blank 会话)、出现条件(非 blank / 断线都不显示)、占位符换 `placeholder.hero`、两枚 chip 的取值与写路径(`session.create({agentPreset})` / `({workspaceId})`,选中当前项时不建)、目录解析与显示名(内置走本地字典、自建永不翻译、broken 不进选择器)** + **带键写操作的结果与拒绝都要到得了调用方(在途登记建在 `flush()` 之前;`res {ok:false}` 照原样抛;帧头 `id` 另铸、不复用幂等键;同一幂等键只发一帧)** + **子智能体目录树(`model/subagent.dart` + `ui/subagent_tree.dart`):活动态来自子会话自己的 `running` + `subagentTiming.lastTurnCompleted`(**不再由 `mode` 推**)、时长是 `settledMs + (running ? now-since : active.through-since)`(一次性任务不再越涨越长)、目录三态(加载 / 就绪 / 失败+重试)与"已知空叶"分开、`session.list` 行的 `subagentTiming`/`tokenUsage` 解析、读子级目录不覆盖当前会话投影、两套手势(点行进入 / 点 disclosure 展开)、子会话头部条的当前标题与切换 sheet、54px 横向只读状态框)**
   - **装到真机一律 `flutter build apk --debug` + `adb install -r`，不要用 `flutter install`**（2026-10-17 拿第 5 次配对换来的）：`flutter install -d <序列号>` 会**先卸载旧 App**（输出里那行 `Uninstalling old version...`），配对凭据在 App 私有目录里，一卸全没，必须重新扫码。`adb install -r build\app\outputs\flutter-apk\app-debug.apk` 原地替换、**不卸载、数据保留**（判据：`adb shell dumpsys package com.example.dsh_mobile` 的 `firstInstallTime` 不变）。`flutter run -d <序列号>` 默认 debug、同样原地装，不受影响。
     - **`flutter test integration_test/<x>.dart -d <序列号>` 两件事都要知道（2026-10-27 吞掉一次配对）**：① 它跑完**会把 App 卸掉**（配对凭据一起没，必须重新出码——那天用户先看到的就是"App 不见了"）；② 它打出来的 `app-debug.apk` **入口是那个测试文件**，事后拿这个 APK 装回手机会**白屏**（不是坏了）。正确恢复：`flutter build apk --debug` 重新打正常包再 `adb install -r`。跑真机组前要么先确认"这次可以丢配对"，要么跑完立刻重打重装。
   - **`flutter install` 默认打 release 包,而 debug/release 签名不同会先卸载旧 App**(2026-10-16 踩了):输出 `Installing app-release.apk` 且**先 `Uninstalling old version...`** —— 配对凭据在 App 私有目录里,一卸全没,必须重新扫码(载荷只存在于连接器内存 + 二维码,管理面刻意不回 payload,所以只能扫)。装 debug 必须显式 `flutter install -d <序列号> --debug`;`flutter run -d <序列号>` 默认 debug,不受影响。
@@ -679,6 +679,35 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
        **讯飞 MaaS 直接 400**（`code 400001`，"rejected by an internal MaaS component"）——
        事件已落盘，只是这一轮失败。**别把这种载荷发给按量计费的端点**。
      - 剪贴板里若是**文本**，Ctrl+V 会优先粘文本（曾把一段 `sk-` 密钥误粘进输入栏，没发送）。
+  10. **隔离实例要能被手机**配对**走通，三件必须同时成立**（2026-11-10 跑通并真机验收了「新建会话」）：
+      - **`relayUrl` 必须是私网 / 环回地址**。App 的 URL 闸门只认 `wss`，明文只放行
+        私网与环回（`app/lib/core/endpoint.dart` 的 `allowedPlaintext`）；写成公网明文
+        （如 `ws://<公网IP>:8787`）时配对页直接回「必须使用 WSS；明文仅限非公网地址」。
+        隔离 home 的 `profiles/<p>/cordis.patch.yml` 改成局域网地址即可（改配置文件按
+        §6 的规矩：备份 → shell 写 → 回读 + 看 mtime）。
+      - **`POST /api/dsh-mobile/pair` 回的是 SVG，不是 JSON 载荷**。载荷要用 jsQR 解回来：
+        SVG 里的黑格是 run-length（`M2 2.5h7m2 0h1…`），先按行拼成模块矩阵再放大成 RGBA 喂
+        `jsQR`（`jsqr` 就在 `connector/node_modules`）。脚本在仓库外：`D:\tmp\decode-pair.mjs`
+        （配合 `D:\tmp\iso-pair.mjs` 取 svg）。
+      - **直连端点要自己塞**：payload 里的 `lan` 只是候选，App 的端点表是**经中转连上之后**
+        由 `endpoint.describe` 学到的；隔离实例通常没有可用的中转，所以第一次连不上直连。
+        真机用例的做法：配对拿凭据后 `pairingStore.saveEndpoints(hostId: pcSignPubHex,
+        endpoints: [Endpoint(kind: direct, url: 'ws://<局域网IP>:<listenPort>')])`，再起 App。
+      - 跑法（`new_session_real_device_test.dart`，约 2 分钟、不花模型钱）：
+        ```powershell
+        # 电脑侧：起隔离实例 → 出码 → 解载荷
+        $env:DSH_HOME='D:\tmp\dsh-mobile-home'
+        dsh --profile dsh-mobile-test --no-open --port 3099 *> D:\tmp\iso.log
+        # 手机必须直连得上那台实例（426 = 端点通）
+        adb shell 'curl -m 5 -sS -o /dev/null -w "%{http_code}" http://<局域网IP>:<listenPort>/'
+        $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload))
+        cd app; flutter test integration_test/new_session_real_device_test.dart -d <序列号> `
+          --dart-define="DSH_QR_PAYLOAD_B64=$b64" --dart-define="DSH_DIRECT_URL=ws://<局域网IP>:<listenPort>"
+        ```
+        它验两件事：落点是**有内容的旧会话**时点 ＋ 必须换页；落点是**电脑侧 leftover blank**
+        时那一次 ＋ 是复用（页面不动）、再点一次也不多建。
+        **跑完 `flutter test integration_test/` 会把 App 卸掉**（§5 已记）——
+        事后用 `flutter build apk --debug` + `adb install -r`，或直接装 Release APK 装回来。
 - **真机验「桌面卡被手机撤掉」的配方**（2026-10-23 用一次验完，约 1 轮）：
   - **桌面侧不必开用户日常浏览器**：headless Chrome 里打开隔离实例的 Web GUI 就是**真客户端**
     （同一份 `ui-approval`），截图用 CDP，点按钮用 `document.querySelectorAll('button')` 里按文案点。

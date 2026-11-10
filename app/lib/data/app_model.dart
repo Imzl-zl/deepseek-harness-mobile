@@ -4417,6 +4417,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
           _rows.noteTurnStart(sid, time: event.time);
           // 唤醒判据要**这一轮从哪个 seq 开始**（DSH 的 `location.turn.start.seq`）。
           tracker.noteTurnStart(event.seq);
+          // 这一行不再是「新建会话」占位行（宿主同一条规则，见 [_applySessionStarted]）。
+          _applySessionStarted(sid);
         }
         // 唤醒判据还要**这一条消息落在第几步**（DSH 的 `location.step.step`）：
         // 只有"本轮第 1 步"的非人消息才可能是唤醒（见 [_InboxTracker.claimIfWaking]）。
@@ -4874,6 +4876,37 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     if (current.title == title) return;
     final next = [..._sessions];
     next[index] = current.withTitle(title);
+    _sessions = next;
+    if (!_disposed) notifyListeners();
+  }
+
+  /// 这一轮开始了 ⇒ 这一行不再是「新建会话」占位行（`blank = false`）。
+  ///
+  /// ## 这不是第二份判据，是宿主的同一条规则
+  ///
+  /// `blank` 就是 `sessionListMetadata` 这个投影算出来的，它的规则写在
+  /// `blank = state.blank && event.type !== 'turn/start'`
+  /// （`packages/api/session-controller/src/list.ts:51`）。手机手里那一行是它的**缓存**；
+  /// 既然我们已经在收 `turn/start`，让缓存跟着真值走只是把同一条规则用在同一份证据上。
+  ///
+  /// ## 为什么现在必须补
+  ///
+  /// 自己发消息**不重读清单**（在 `turn/start` 重读是回归：快照会把刚到的 `running`
+  /// 压回旧值，见 [_onDelta] 的那条注释），于是本地那行会一直写着 `blank: true`，
+  /// 直到下一次 `session.list`（重连 / 回前台 / 切模型）。后果不只是显示：
+  /// 「新建会话」的复用判据 [findBlankSession] 会把**当前这个有内容的会话**
+  /// 当成 blank 复用，`openSession(当前)` 什么都不换 ——
+  /// 2026-11-10 真机就是「点了新建会话，还是旧会话页面」，而电脑侧一个会话都没多。
+  ///
+  /// Note: 取舍与被否方案（重读清单 / 排除当前会话 / 只给提示）见
+  /// `.agents/notes/implemented/2026-11-10-blank-row-stale-after-turn.md`。
+  void _applySessionStarted(String sid) {
+    final index = _sessions.indexWhere((s) => s.sid == sid);
+    if (index < 0) return;
+    final current = _sessions[index];
+    if (!current.blank) return;
+    final next = [..._sessions];
+    next[index] = current.copyWith(blank: false);
     _sessions = next;
     if (!_disposed) notifyListeners();
   }

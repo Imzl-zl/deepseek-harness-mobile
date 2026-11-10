@@ -132,6 +132,19 @@ blank 复用也照 DSH 的 `createInWorkspace`(`navigation.ts:220-233`):只复�
 且 `cwd == workspace.path` 的那一个。取舍见
 `.agents/notes/implemented/2026-10-22-new-session-lands-in-a-workspace.md`。
 
+### 4.2 那一行缓存怎么保持真值
+
+`blank` 是宿主的投影(`sessionListMetadata`: `blank && type !== 'turn/start'`,
+`packages/api/session-controller/src/list.ts:51`),手机手里那一行是它的**缓存**。
+**自己发消息不重读清单**(在 `turn/start` 重读会把刚到的 `running` 压回旧值,
+见 `data/app_model.dart` 的 `_onDelta` 注释),所以 `turn/start` 到达时那一行
+当场翻成 `blank: false` —— 与宿主**同一条规则**,不是第二份判据。
+
+不这么做的话,复用判据 `findBlankSession` 会把**当前这个有内容的会话**当成新会话:
+点「新建会话」⇒ `openSession(自己)` ⇒ 页面一动不动(2026-11-10 真机反馈),
+而且抽屉会把跑过的会话画成「新建会话 / 尚未开始」。
+取舍与被否方案见 `.agents/notes/implemented/2026-11-10-blank-row-stale-after-turn.md`。
+
 ## 5. 什么时候落到这一屏
 
 没有选中会话时,取**第一个 blank 且非子智能体**的会话并打开它 ——

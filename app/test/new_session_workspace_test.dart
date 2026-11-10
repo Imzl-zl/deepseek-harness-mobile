@@ -483,6 +483,45 @@ void main() {
     });
   });
 
+  group('跑过一轮之后这一行不再算 blank（2026-11-10 真机："点了新建会话没用"）', () {
+    test('turn/start 到达 ⇒ blank 立刻翻 false，findBlankSession 不再把它当新会话', () async {
+      final client = _StreamingClient(
+        rows: [_row('s1', cwd: r'D:\w2', updatedAt: 10, blank: true)],
+        workspacesReply: _workspaces([
+          _group('w2', r'D:\w2', ['s1']),
+        ]),
+      );
+      addTearDown(client.close);
+      final app = AppModel(client: client);
+      addTearDown(app.dispose);
+      await app.start();
+      await app.refreshSessionRows();
+      await app.refreshWorkspaces();
+      await app.openSession('s1');
+      expect(app.sessionOf('s1')!.blank, isTrue, reason: '刚建出来、还没开轮次');
+      expect(await app.findBlankSession(), 's1');
+
+      // 真机上的那条路：**自己发了一句**（不重读清单），宿主起了轮次。
+      client.push('s1', 'turn/start', seq: 3);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        app.sessionOf('s1')!.blank,
+        isFalse,
+        reason:
+            '宿主同一条规则：blank = blank && type !== turn/start'
+            '（packages/api/session-controller/src/list.ts:51）',
+      );
+      expect(
+        await app.findBlankSession(),
+        isNull,
+        reason:
+            '还有内容却自称 blank ⇒ 下一次「新建会话」复用的就是它自己，'
+            'openSession(当前) 什么都不换 —— 真机表现就是"点了没用"',
+      );
+    });
+  });
+
   group('workspace.list 的 createdAt', () {
     test('原样落到 WorkspaceGroup.createdAt（空工作区当"最近"要靠它）', () async {
       final client = _CreateClient(
@@ -519,4 +558,47 @@ void main() {
       );
     });
   });
+}
+
+/// 能往某条会话的 delta 流里塞事件的替身（`turn/start` 那条用）。
+///
+/// 放在文件末尾而不是中间：替身是工具，读它的人先要看到用例在断言什么。
+class _StreamingClient extends _CreateClient {
+  _StreamingClient({required super.rows, required super.workspacesReply});
+
+  final Map<String, StreamController<SessionDelta>> _streams =
+      <String, StreamController<SessionDelta>>{};
+
+  StreamController<SessionDelta> _streamOf(String sid) => _streams.putIfAbsent(
+    sid,
+    () => StreamController<SessionDelta>.broadcast(),
+  );
+
+  @override
+  Stream<SessionDelta> sessionUpdates(String sid) => _streamOf(sid).stream;
+
+  void push(String sid, String type, {required int seq, int time = 1}) {
+    _streamOf(sid).add(
+      SessionDelta(
+        sid: sid,
+        transient: const <String, Object?>{},
+        events: [
+          SessionEvent(
+            itemId: '$type-$seq',
+            type: type,
+            seq: seq,
+            time: time,
+            data: const <String, Object?>{},
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Future<void> close() async {
+    for (final stream in _streams.values) {
+      await stream.close();
+    }
+  }
 }
