@@ -927,6 +927,13 @@ class _Ib extends StatelessWidget {
         ),
       ),
     );
-    return tooltip == null ? button : Tooltip(message: tooltip!, child: button);
+    return Semantics(
+      // 纯图标钮：角色自己报（`InkWell` 只装点击动作，不装 `isButton`）。
+      // 判据与验证见 `app/test/tappable_semantics_test.dart`。
+      button: true,
+      child: tooltip == null
+          ? button
+          : Tooltip(message: tooltip!, child: button),
+    );
   }
 }

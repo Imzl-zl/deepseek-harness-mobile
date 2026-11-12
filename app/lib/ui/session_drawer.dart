@@ -707,27 +707,31 @@ class _SessionMenuRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.dshColors;
     final enabled = onTap != null;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(DshRadius.sm),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 12),
-        child: Row(
-          children: [
-            DshIcon(
-              icon,
-              size: 18,
-              color: enabled ? c.labelSecondary : c.labelTertiary,
-            ),
-            const SizedBox(width: 12),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 14,
-                color: enabled ? c.labelPrimary : c.labelTertiary,
+    return Semantics(
+      // 菜单项对朗读器是一个按钮；不可用的边界项只是“文字”（点不动）。
+      button: enabled,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(DshRadius.sm),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 12),
+          child: Row(
+            children: [
+              DshIcon(
+                icon,
+                size: 18,
+                color: enabled ? c.labelSecondary : c.labelTertiary,
               ),
-            ),
-          ],
+              const SizedBox(width: 12),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: enabled ? c.labelPrimary : c.labelTertiary,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -819,16 +823,20 @@ class _RevealRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(DshRadius.sm),
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 40),
-        padding: const EdgeInsets.fromLTRB(28, 8, 12, 8),
-        alignment: Alignment.centerLeft,
-        child: Text(
-          '展开其余 $hiddenCount 个会话',
-          style: TextStyle(fontSize: 13, color: c.labelSecondary),
+    return Semantics(
+      // 展开/收起分组对朗读器是一个按钮（`onTap` 是必填，没有禁用态）。
+      button: true,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(DshRadius.sm),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 40),
+          padding: const EdgeInsets.fromLTRB(28, 8, 12, 8),
+          alignment: Alignment.centerLeft,
+          child: Text(
+            '展开其余 $hiddenCount 个会话',
+            style: TextStyle(fontSize: 13, color: c.labelSecondary),
+          ),
         ),
       ),
     );
@@ -864,94 +872,102 @@ class _SessionRow extends StatelessWidget {
     final c = context.dshColors;
     // `Builder` 让下面这一行拿到**自己的** `RenderBox`（见 [dshAnchorOf]）。
     return Builder(
-      builder: (row) => Material(
-        color: session.isActive ? c.layer2 : Colors.transparent,
-        borderRadius: BorderRadius.circular(DshRadius.sm),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Container(
-            constraints: const BoxConstraints(minHeight: 56),
-            padding: const EdgeInsets.fromLTRB(12, 11, 4, 11),
-            child: Row(
-              children: [
-                // 状态点（照 DSH 的 `StateDot`）：待处理琥珀 / **运行中转圈** /
-                // 已完成绿 / 空闲灰。**它不代表"当前会话"** —— 当前由底色说。
-                // 尺寸按最宽的那一态（转圈 14px）占位，避免行内文字左右跳。
-                SizedBox(
-                  key: ValueKey<String>('drawer-dot-${session.sid}'),
-                  width: 14,
-                  height: 14,
-                  child: Center(child: SessionDotView(dot: session.dot)),
-                ),
-                const SizedBox(width: 11),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              session.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: c.labelPrimary,
+      builder: (row) => Semantics(
+        // 会话行对朗读器是一个按钮。**只加角色，不抢子节点的文字**：
+        // 标题 / 预览 / 时间 / 行尾「…」的语义原样留着 —— 把整行合成一个节点
+        // （`MergeSemantics` 或 `excludeSemantics`）会让行尾菜单变得摸不到。
+        // 理由与验证见 `.agents/notes/implemented/2026-11-10-tappable-semantics.md`。
+        key: ValueKey<String>('session-row-${session.sid}'),
+        button: true,
+        child: Material(
+          color: session.isActive ? c.layer2 : Colors.transparent,
+          borderRadius: BorderRadius.circular(DshRadius.sm),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 56),
+              padding: const EdgeInsets.fromLTRB(12, 11, 4, 11),
+              child: Row(
+                children: [
+                  // 状态点（照 DSH 的 `StateDot`）：待处理琥珀 / **运行中转圈** /
+                  // 已完成绿 / 空闲灰。**它不代表"当前会话"** —— 当前由底色说。
+                  // 尺寸按最宽的那一态（转圈 14px）占位，避免行内文字左右跳。
+                  SizedBox(
+                    key: ValueKey<String>('drawer-dot-${session.sid}'),
+                    width: 14,
+                    height: 14,
+                    child: Center(child: SessionDotView(dot: session.dot)),
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                session.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: c.labelPrimary,
+                                ),
                               ),
                             ),
-                          ),
-                          // 置顶标记：DSH Web 的 `PinnedIndicator`（`Rows.tsx:660`）
-                          // 是一枚**非交互**的小图钉，动作在菜单里。
-                          if (session.isPinned) ...[
-                            const SizedBox(width: 6),
-                            DshIcon(
-                              'pinFill',
-                              size: 12,
-                              color: c.labelTertiary,
-                            ),
+                            // 置顶标记：DSH Web 的 `PinnedIndicator`（`Rows.tsx:660`）
+                            // 是一枚**非交互**的小图钉，动作在菜单里。
+                            if (session.isPinned) ...[
+                              const SizedBox(width: 6),
+                              DshIcon(
+                                'pinFill',
+                                size: 12,
+                                color: c.labelTertiary,
+                              ),
+                            ],
                           ],
-                        ],
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        session.preview,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 12, color: c.labelCaption),
-                      ),
-                    ],
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          session.preview,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 12, color: c.labelCaption),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  session.timeLabel,
-                  style: TextStyle(fontSize: 11, color: c.labelTertiary),
-                ),
-                // **行尾「…」**：菜单的唯一入口（长按已经给拖动了）。
-                // 36×36 是触摸目标；`key` 让用例能按 sid 定位到具体那一行。
-                SizedBox(
-                  width: 36,
-                  height: 36,
-                  child: Material(
-                    color: Colors.transparent,
-                    shape: const CircleBorder(),
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                      key: ValueKey<String>('session-menu-${session.sid}'),
-                      onTap: () => onMenu(dshAnchorOf(row)),
-                      child: Center(
-                        child: DshIcon(
-                          'ellipsis',
-                          size: 16,
-                          color: c.labelTertiary,
+                  const SizedBox(width: 6),
+                  Text(
+                    session.timeLabel,
+                    style: TextStyle(fontSize: 11, color: c.labelTertiary),
+                  ),
+                  // **行尾「…」**：菜单的唯一入口（长按已经给拖动了）。
+                  // 36×36 是触摸目标；`key` 让用例能按 sid 定位到具体那一行。
+                  SizedBox(
+                    width: 36,
+                    height: 36,
+                    child: Material(
+                      color: Colors.transparent,
+                      shape: const CircleBorder(),
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        key: ValueKey<String>('session-menu-${session.sid}'),
+                        onTap: () => onMenu(dshAnchorOf(row)),
+                        child: Center(
+                          child: DshIcon(
+                            'ellipsis',
+                            size: 16,
+                            color: c.labelTertiary,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -1360,6 +1376,13 @@ class _Ib extends StatelessWidget {
         ),
       ),
     );
-    return tooltip == null ? button : Tooltip(message: tooltip!, child: button);
+    return Semantics(
+      // 纯图标钮：角色自己报（`InkWell` 只装点击动作，不装 `isButton`）。
+      // 判据与验证见 `app/test/tappable_semantics_test.dart`。
+      button: true,
+      child: tooltip == null
+          ? button
+          : Tooltip(message: tooltip!, child: button),
+    );
   }
 }

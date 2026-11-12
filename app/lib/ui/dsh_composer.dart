@@ -693,7 +693,14 @@ class _RoundIconButton extends StatelessWidget {
         ),
       ),
     );
-    return tooltip == null ? button : Tooltip(message: tooltip!, child: button);
+    return Semantics(
+      // 纯图标钮：角色自己报（`InkWell` 只装点击动作，不装 `isButton`）。
+      button: onPressed != null,
+      enabled: onPressed != null,
+      child: tooltip == null
+          ? button
+          : Tooltip(message: tooltip!, child: button),
+    );
   }
 }
 
@@ -788,7 +795,14 @@ class _IconChip extends StatelessWidget {
         ),
       ),
     );
-    return tooltip == null ? chip : Tooltip(message: tooltip!, child: chip);
+    return Semantics(
+      // **纯图标控件必须自己报角色**：`Tooltip` 只给文字，`InkWell` 只给点击动作，
+      // 两者都不装 `isButton`（`gesture_detector.dart:1591` 的 `_GestureSemantics`）。
+      // 判据与验证见 `app/test/tappable_semantics_test.dart`。
+      button: onPressed != null,
+      enabled: onPressed != null,
+      child: tooltip == null ? chip : Tooltip(message: tooltip!, child: chip),
+    );
   }
 }
 
@@ -876,7 +890,14 @@ class _SendButton extends StatelessWidget {
         ),
       ),
     );
-    return tooltip == null ? button : Tooltip(message: tooltip!, child: button);
+    return Semantics(
+      // 发送 / 停止是同一颗钮的两种含义，对朗读器必须报成按钮（名字来自 tooltip）。
+      button: true,
+      enabled: enabled,
+      child: tooltip == null
+          ? button
+          : Tooltip(message: tooltip!, child: button),
+    );
   }
 }
 
