@@ -502,123 +502,128 @@ class _ToolCardState extends State<ToolCard> {
             // `.tool-r { background: var(--tool-bg) }` —— 暖色底，
             // 与助手正文的冷色底区分开（一眼看出"这不是模型说的话"）。
             color: c.roleToolBg,
-            child: InkWell(
-              onTap: hasDetail ? () => setState(() => _open = !_open) : null,
-              child: Container(
-                // `.tool-r { min-height:52; padding:13px 14px; gap:10 }`
-                constraints: const BoxConstraints(minHeight: 52),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 13,
-                ),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    // 工具名可能很长（`mcp__chrome-devtools__evaluate_script` 是 37 个
-                    // 字符），而它是这一行的标题：**不许把整行撑破**，也不该被参数挤没。
-                    // 上限按**可用宽度**算，不是一个写死的像素：固定件 = 图标 24 +
-                    // 两处间距 10/6 + 展开箭头 8+16 + diffStat 最坏 ~56。
-                    // 有参数时名字最多 55%（参数回答"它干了什么"）；没参数时用满 ——
-                    // 否则长 MCP 名会一直省略号，而右边空着。
-                    final fixed =
-                        24 +
-                        10 +
-                        6 +
-                        (hasDetail ? 8 + 16 : 0) +
-                        (widget.diffStat != null ? 8 + 56 : 0);
-                    final room = (constraints.maxWidth - fixed).clamp(
-                      0.0,
-                      double.infinity,
-                    );
-                    final nameMax = widget.argument.isEmpty
-                        ? room
-                        : room * 0.55;
-                    return Row(
-                      children: [
-                        // `.tool-ic { 24×24; border-radius:8; 底色 rgba(tool,.16) }`
-                        Container(
-                          width: 24,
-                          height: 24,
-                          decoration: BoxDecoration(
-                            color: c.roleTool.withValues(alpha: 0.16),
-                            borderRadius: BorderRadius.circular(8),
+            // 点这一下会展开 / 收起详情（只在带详情时有这回事）。
+            // 角色得自己报：`InkWell` 只装点击动作，朗读器念完工具名与状态就停。
+            child: Semantics(
+              button: hasDetail,
+              child: InkWell(
+                onTap: hasDetail ? () => setState(() => _open = !_open) : null,
+                child: Container(
+                  // `.tool-r { min-height:52; padding:13px 14px; gap:10 }`
+                  constraints: const BoxConstraints(minHeight: 52),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 13,
+                  ),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      // 工具名可能很长（`mcp__chrome-devtools__evaluate_script` 是 37 个
+                      // 字符），而它是这一行的标题：**不许把整行撑破**，也不该被参数挤没。
+                      // 上限按**可用宽度**算，不是一个写死的像素：固定件 = 图标 24 +
+                      // 两处间距 10/6 + 展开箭头 8+16 + diffStat 最坏 ~56。
+                      // 有参数时名字最多 55%（参数回答"它干了什么"）；没参数时用满 ——
+                      // 否则长 MCP 名会一直省略号，而右边空着。
+                      final fixed =
+                          24 +
+                          10 +
+                          6 +
+                          (hasDetail ? 8 + 16 : 0) +
+                          (widget.diffStat != null ? 8 + 56 : 0);
+                      final room = (constraints.maxWidth - fixed).clamp(
+                        0.0,
+                        double.infinity,
+                      );
+                      final nameMax = widget.argument.isEmpty
+                          ? room
+                          : room * 0.55;
+                      return Row(
+                        children: [
+                          // `.tool-ic { 24×24; border-radius:8; 底色 rgba(tool,.16) }`
+                          Container(
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              color: c.roleTool.withValues(alpha: 0.16),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Center(
+                              child: DshIcon(icon, size: 13, color: tone),
+                            ),
                           ),
-                          child: Center(
-                            child: DshIcon(icon, size: 13, color: tone),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        ConstrainedBox(
-                          constraints: BoxConstraints(maxWidth: nameMax),
-                          child: DshShimmer(
-                            // 只给**真的在跑**的工具行扫光（DSH 的
-                            // `ToolRow.tsx:181-182` 把 `running` 传给 `DisclosureRow`）。
-                            active: widget.status == ToolCallStatus.running,
-                            child: Text(
-                              widget.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              softWrap: false,
-                              style: TextStyle(
-                                fontFamily: 'monospace',
-                                // 工具名是流程行标题，走 secondary 档（DSH 同一条：
-                                // `--dsh-content-font-size-secondary`）。
-                                fontSize: type.secondary,
-                                fontWeight: FontWeight.w500,
-                                color: c.roleTool,
+                          const SizedBox(width: 10),
+                          ConstrainedBox(
+                            constraints: BoxConstraints(maxWidth: nameMax),
+                            child: DshShimmer(
+                              // 只给**真的在跑**的工具行扫光（DSH 的
+                              // `ToolRow.tsx:181-182` 把 `running` 传给 `DisclosureRow`）。
+                              active: widget.status == ToolCallStatus.running,
+                              child: Text(
+                                widget.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                                style: TextStyle(
+                                  fontFamily: 'monospace',
+                                  // 工具名是流程行标题，走 secondary 档（DSH 同一条：
+                                  // `--dsh-content-font-size-secondary`）。
+                                  fontSize: type.secondary,
+                                  fontWeight: FontWeight.w500,
+                                  color: c.roleTool,
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                        // `.tool-arg { flex:1; min-width:0; 等宽; 可省略 }`
-                        Expanded(
-                          child: Text(
-                            widget.argument,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 12,
-                              color: c.labelTertiary,
+                          const SizedBox(width: 6),
+                          // `.tool-arg { flex:1; min-width:0; 等宽; 可省略 }`
+                          Expanded(
+                            child: Text(
+                              widget.argument,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 12,
+                                color: c.labelTertiary,
+                              ),
                             ),
                           ),
-                        ),
-                        if (widget.diffStat != null) ...[
-                          const SizedBox(width: 8),
-                          Text(
-                            '+${widget.diffStat!.added}',
-                            style: TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 11,
-                              color: c.fileDiffAddMarker,
+                          if (widget.diffStat != null) ...[
+                            const SizedBox(width: 8),
+                            Text(
+                              '+${widget.diffStat!.added}',
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 11,
+                                color: c.fileDiffAddMarker,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            '−${widget.diffStat!.removed}',
-                            style: TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 11,
-                              color: c.fileDiffDelMarker,
+                            const SizedBox(width: 4),
+                            Text(
+                              '−${widget.diffStat!.removed}',
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 11,
+                                color: c.fileDiffDelMarker,
+                              ),
                             ),
-                          ),
+                          ],
+                          if (hasDetail) ...[
+                            const SizedBox(width: 8),
+                            // `.tool-cv` 展开时旋转 90°（`is-open` 那条规则）。
+                            AnimatedRotation(
+                              turns: _open ? 0.25 : 0,
+                              duration: const Duration(milliseconds: 160),
+                              child: DshIcon(
+                                'chevronRight',
+                                size: 16,
+                                color: c.labelTertiary,
+                              ),
+                            ),
+                          ],
                         ],
-                        if (hasDetail) ...[
-                          const SizedBox(width: 8),
-                          // `.tool-cv` 展开时旋转 90°（`is-open` 那条规则）。
-                          AnimatedRotation(
-                            turns: _open ? 0.25 : 0,
-                            duration: const Duration(milliseconds: 160),
-                            child: DshIcon(
-                              'chevronRight',
-                              size: 16,
-                              color: c.labelTertiary,
-                            ),
-                          ),
-                        ],
-                      ],
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
               ),
             ),
@@ -987,52 +992,55 @@ class _RetryRowState extends State<RetryRow> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        InkWell(
-          onTap: expandable ? () => setState(() => _open = !_open) : null,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              children: [
-                // 计划中与已开跑**图标不同**：前者是钟（在等 delay），
-                // 后者是转圈（在跑）。DSH 的 `ModelRetryItem` 也是
-                // `retryState === 'scheduled'` 时才显示"active"态。
-                DshIcon(
-                  widget.started ? 'loading' : 'alarmClock',
-                  size: 14,
-                  color: widget.started ? c.roleTool : c.labelCaption,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  widget.title,
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: widget.started ? c.roleTool : c.labelSecondary,
+        Semantics(
+          button: expandable,
+          child: InkWell(
+            onTap: expandable ? () => setState(() => _open = !_open) : null,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  // 计划中与已开跑**图标不同**：前者是钟（在等 delay），
+                  // 后者是转圈（在跑）。DSH 的 `ModelRetryItem` 也是
+                  // `retryState === 'scheduled'` 时才显示"active"态。
+                  DshIcon(
+                    widget.started ? 'loading' : 'alarmClock',
+                    size: 14,
+                    color: widget.started ? c.roleTool : c.labelCaption,
                   ),
-                ),
-                // 收起时把原因压成一行；展开后不再重复（正文里有完整的）。
-                if (hasReason && !_open) ...[
                   const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      reason,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 12, color: c.labelTertiary),
+                  Text(
+                    widget.title,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: widget.started ? c.roleTool : c.labelSecondary,
                     ),
                   ),
-                ] else
-                  const Spacer(),
-                if (expandable) ...[
-                  const SizedBox(width: 4),
-                  DshIcon(
-                    _open ? 'chevronDown' : 'chevronRight',
-                    size: 14,
-                    color: c.labelTertiary,
-                  ),
+                  // 收起时把原因压成一行；展开后不再重复（正文里有完整的）。
+                  if (hasReason && !_open) ...[
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        reason,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: c.labelTertiary),
+                      ),
+                    ),
+                  ] else
+                    const Spacer(),
+                  if (expandable) ...[
+                    const SizedBox(width: 4),
+                    DshIcon(
+                      _open ? 'chevronDown' : 'chevronRight',
+                      size: 14,
+                      color: c.labelTertiary,
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
@@ -1116,48 +1124,51 @@ class _CompactionRowState extends State<CompactionRow> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          InkWell(
-            onTap: hasSummary ? () => setState(() => _open = !_open) : null,
-            child: Row(
-              children: [
-                DshIcon('compact', size: 14, color: c.roleAssistant),
-                const SizedBox(width: 8),
-                Text(
-                  CompactionItem.kTitle,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: c.roleAssistant,
-                  ),
-                ),
-                if (widget.stats.isNotEmpty) ...[
+          Semantics(
+            button: hasSummary,
+            child: InkWell(
+              onTap: hasSummary ? () => setState(() => _open = !_open) : null,
+              child: Row(
+                children: [
+                  DshIcon('compact', size: 14, color: c.roleAssistant),
                   const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      widget.stats,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 11,
+                  Text(
+                    CompactionItem.kTitle,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: c.roleAssistant,
+                    ),
+                  ),
+                  if (widget.stats.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        widget.stats,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 11,
+                          color: c.labelTertiary,
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (hasSummary) ...[
+                    const SizedBox(width: 8),
+                    AnimatedRotation(
+                      turns: _open ? 0.25 : 0,
+                      duration: const Duration(milliseconds: 160),
+                      child: DshIcon(
+                        'chevronRight',
+                        size: 14,
                         color: c.labelTertiary,
                       ),
                     ),
-                  ),
+                  ],
                 ],
-                if (hasSummary) ...[
-                  const SizedBox(width: 8),
-                  AnimatedRotation(
-                    turns: _open ? 0.25 : 0,
-                    duration: const Duration(milliseconds: 160),
-                    child: DshIcon(
-                      'chevronRight',
-                      size: 14,
-                      color: c.labelTertiary,
-                    ),
-                  ),
-                ],
-              ],
+              ),
             ),
           ),
           if (hasSummary && _open) ...[
@@ -1332,37 +1343,43 @@ class _TurnProcessRowState extends State<TurnProcessRow> {
           // 与 DSH 的 `rotate(180deg)` 同一条，`TurnProcessNodeView.module.css:37-39`）。
           Material(
             color: Colors.transparent,
-            child: InkWell(
-              onTap: widget.onToggle,
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    DshIcon(
-                      widget.failed ? 'warningTriangle' : 'clock',
-                      size: 13,
-                      color: tone,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      widget.title,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: tone,
-                      ),
-                    ),
-                    if (widget.onToggle != null) ...[
-                      const SizedBox(width: 4),
+            child: Semantics(
+              button: widget.onToggle != null,
+              child: InkWell(
+                onTap: widget.onToggle,
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 2,
+                    vertical: 2,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
                       DshIcon(
-                        widget.expanded ? 'chevronUp' : 'chevronDown',
+                        widget.failed ? 'warningTriangle' : 'clock',
                         size: 13,
                         color: tone,
                       ),
+                      const SizedBox(width: 6),
+                      Text(
+                        widget.title,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: tone,
+                        ),
+                      ),
+                      if (widget.onToggle != null) ...[
+                        const SizedBox(width: 4),
+                        DshIcon(
+                          widget.expanded ? 'chevronUp' : 'chevronDown',
+                          size: 13,
+                          color: tone,
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -1419,23 +1436,26 @@ class _Pill extends StatelessWidget {
     return Material(
       color: c.layer2,
       borderRadius: BorderRadius.circular(11),
-      child: InkWell(
-        // 触摸目标 ≥ 28（`MessageIconActions` 的命中区就是 28）。
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(11),
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 28),
-          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DshIcon(icon, size: 12, color: c.labelSecondary),
-              const SizedBox(width: 5),
-              Text(
-                label,
-                style: TextStyle(fontSize: 11, color: c.labelSecondary),
-              ),
-            ],
+      child: Semantics(
+        button: true,
+        child: InkWell(
+          // 触摸目标 ≥ 28（`MessageIconActions` 的命中区就是 28）。
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(11),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 28),
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DshIcon(icon, size: 12, color: c.labelSecondary),
+                const SizedBox(width: 5),
+                Text(
+                  label,
+                  style: TextStyle(fontSize: 11, color: c.labelSecondary),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1713,65 +1733,69 @@ class _DisclosureHeader extends StatelessWidget {
     final c = context.dshColors;
     final type = context.dshType;
     final showPreview = preview.isNotEmpty && (keepPreviewWhenOpen || !open);
-    return InkWell(
-      onTap: expandable ? onTap : null,
-      child: ConstrainedBox(
-        // 偏离 1：DSH 的行高是 24（`DisclosureRow.module.css:36`）；
-        // 触屏要 36 才够点。**用 minHeight 不用 height**：界面字号放大后
-        // 文字行高会超过 36，写死会裁字（Apple HIG：布局要适配所有字号）。
-        constraints: const BoxConstraints(minHeight: 36),
-        child: Row(
-          children: [
-            // 偏离 2 的另一半：图标固定 14（`:69-72` 的 14px 字形）。
-            DshIcon(icon, size: 14, color: c.labelTertiary),
-            const SizedBox(width: 6),
-            DshShimmer(
-              active: running,
-              child: Text(
-                label,
-                style: TextStyle(
-                  // secondary 档（`:100-105` 的 `--dsh-content-font-size-secondary`）：
-                  // 流程行标题跟着字号刻度走。
-                  fontSize: type.secondary,
-                  color: c.labelTertiary,
-                ),
-              ),
-            ),
-            if (showPreview) ...[
-              // DSH 的分隔点 + 摘要（`ReasoningRow.module.css:32-51`）。
-              const SizedBox(width: 8),
-              Container(
-                width: 2,
-                height: 2,
-                decoration: BoxDecoration(
-                  color: c.labelCaption,
-                  borderRadius: BorderRadius.circular(1),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
+    // 可折叠 ⇒ 是一枚按钮（有去处）；不可折叠 ⇒ 纯展示，不报按钮。
+    return Semantics(
+      button: expandable,
+      child: InkWell(
+        onTap: expandable ? onTap : null,
+        child: ConstrainedBox(
+          // 偏离 1：DSH 的行高是 24（`DisclosureRow.module.css:36`）；
+          // 触屏要 36 才够点。**用 minHeight 不用 height**：界面字号放大后
+          // 文字行高会超过 36，写死会裁字（Apple HIG：布局要适配所有字号）。
+          constraints: const BoxConstraints(minHeight: 36),
+          child: Row(
+            children: [
+              // 偏离 2 的另一半：图标固定 14（`:69-72` 的 14px 字形）。
+              DshIcon(icon, size: 14, color: c.labelTertiary),
+              const SizedBox(width: 6),
+              DshShimmer(
+                active: running,
                 child: Text(
-                  preview,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  label,
                   style: TextStyle(
+                    // secondary 档（`:100-105` 的 `--dsh-content-font-size-secondary`）：
+                    // 流程行标题跟着字号刻度走。
                     fontSize: type.secondary,
-                    height: type.secondaryLine / type.secondary,
-                    color: previewColor ?? c.labelTertiary,
+                    color: c.labelTertiary,
                   ),
                 ),
               ),
-            ] else
-              const Spacer(),
-            if (expandable) ...[
-              const SizedBox(width: 8),
-              DshIcon(
-                open ? 'chevronDown' : 'chevronRight',
-                size: 14,
-                color: c.labelTertiary,
-              ),
+              if (showPreview) ...[
+                // DSH 的分隔点 + 摘要（`ReasoningRow.module.css:32-51`）。
+                const SizedBox(width: 8),
+                Container(
+                  width: 2,
+                  height: 2,
+                  decoration: BoxDecoration(
+                    color: c.labelCaption,
+                    borderRadius: BorderRadius.circular(1),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    preview,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: type.secondary,
+                      height: type.secondaryLine / type.secondary,
+                      color: previewColor ?? c.labelTertiary,
+                    ),
+                  ),
+                ),
+              ] else
+                const Spacer(),
+              if (expandable) ...[
+                const SizedBox(width: 8),
+                DshIcon(
+                  open ? 'chevronDown' : 'chevronRight',
+                  size: 14,
+                  color: c.labelTertiary,
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

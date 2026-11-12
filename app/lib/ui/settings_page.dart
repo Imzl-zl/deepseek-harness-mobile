@@ -971,102 +971,110 @@ class _EndpointRow extends StatelessWidget {
     final isFirst = app.endpoints.first.id == endpoint.id;
     final (status, statusColor) = _statusOf(isActive, c);
 
-    return InkWell(
-      // **点一行 = 设为首选**（回到 2026-10-18 之前的口径）。
-      //
-      // 曾经改成"点一行立刻重连"，用户当场否掉："当前连接点击弹框选择连接方式
-      // 直接连接就挺好啊……干嘛非要在队列上点？"——对：队列是**顺序与清单**，
-      // 在逐行点击上挂"立刻断当前连接"这种副作用，会在管理偏好时不断打断连接。
-      // 所以"换一条并立刻连"归顶部那块，「重连」归它右边的图标，这里只管顺序。
-      onTap: () => _preferThis(context),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        child: Row(
-          children: [
-            // 拖动柄：队列的顺序就是拨号优先级，**拖比"点一下置顶"精确**
-            // （用户原话："队列最好可以拖动换位置"）。
-            //
-            // **命中区 44×44**：图标本体只有 18px，而 `ReorderableDragStartListener`
-            // 的手势范围就是它的 child 尺寸 —— 直接拿图标当柄等于让手指去戳一个
-            // 1/3 指甲盖大小的东西（真机上拖不动就是这个原因）。
-            ReorderableDragStartListener(
-              index: index,
-              child: SizedBox(
-                width: 44,
-                height: 44,
-                child: Center(
-                  child: DshIcon(
-                    'chevronsUpDown',
-                    size: 18,
-                    color: c.labelTertiary,
+    // 这一行是**选择类行**（点它 = 把这条设为首选）：角色与选中态两个都要报，
+    // 否则朗读器只念得出地址与状态，念不出"它在队列里是首选"（那个徽标是文字没错，
+    // 但"首选 / 不是首选"对读屏用户是一道勾选态，不该要他拼文字才懂）。
+    // 判据同 `implemented/2026-11-12-a11y-sheet-and-trajectory.md`。
+    return Semantics(
+      button: true,
+      selected: isFirst,
+      child: InkWell(
+        // **点一行 = 设为首选**（回到 2026-10-18 之前的口径）。
+        //
+        // 曾经改成"点一行立刻重连"，用户当场否掉："当前连接点击弹框选择连接方式
+        // 直接连接就挺好啊……干嘛非要在队列上点？"——对：队列是**顺序与清单**，
+        // 在逐行点击上挂"立刻断当前连接"这种副作用，会在管理偏好时不断打断连接。
+        // 所以"换一条并立刻连"归顶部那块，「重连」归它右边的图标，这里只管顺序。
+        onTap: () => _preferThis(context),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              // 拖动柄：队列的顺序就是拨号优先级，**拖比"点一下置顶"精确**
+              // （用户原话："队列最好可以拖动换位置"）。
+              //
+              // **命中区 44×44**：图标本体只有 18px，而 `ReorderableDragStartListener`
+              // 的手势范围就是它的 child 尺寸 —— 直接拿图标当柄等于让手指去戳一个
+              // 1/3 指甲盖大小的东西（真机上拖不动就是这个原因）。
+              ReorderableDragStartListener(
+                index: index,
+                child: SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: Center(
+                    child: DshIcon(
+                      'chevronsUpDown',
+                      size: 18,
+                      color: c.labelTertiary,
+                    ),
                   ),
                 ),
               ),
-            ),
-            DshIcon(
-              endpoint.kind == EndpointKind.direct ? 'link' : 'globe',
-              size: 18,
-              color: c.labelSecondary,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    endpointKindLabel(endpoint.kind),
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      color: c.labelPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _addressLine(),
-                    maxLines: 2,
-                    style: TextStyle(fontSize: 12, color: c.labelSecondary),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    status,
-                    style: TextStyle(fontSize: 12, color: statusColor),
-                  ),
-                ],
+              DshIcon(
+                endpoint.kind == EndpointKind.direct ? 'link' : 'globe',
+                size: 18,
+                color: c.labelSecondary,
               ),
-            ),
-            // **恒占位的勾位**（§7.9）：首选徽标与空位同宽 ——
-            // 否则"选中才渲染"会让整行文字在置顶瞬间横移。
-            SizedBox(
-              width: 40,
-              child: isFirst
-                  ? Center(
-                      child: Text(
-                        '首选',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: c.accentBlue,
-                        ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      endpointKindLabel(endpoint.kind),
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                        color: c.labelPrimary,
                       ),
-                    )
-                  : null,
-            ),
-            SizedBox(
-              width: 36,
-              // **永远可点，包括正在按它连接的那一条**：以前这里在"点名连接中"
-              // 会把整枚按钮禁用（连带删除），理由是"删了就没地方回落"。那是替用户
-              // 做决定 —— 用户要删就删，回落自然落到表里下一条。
-              // 取舍见 `.agents/notes/implemented/2026-11-01-plugin-page-owns-the-delete.md`
-              child: IconButton(
-                tooltip: '更多',
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                onPressed: () => _onMore(context),
-                icon: DshIcon('ellipsis', size: 18, color: c.labelSecondary),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _addressLine(),
+                      maxLines: 2,
+                      style: TextStyle(fontSize: 12, color: c.labelSecondary),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      status,
+                      style: TextStyle(fontSize: 12, color: statusColor),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+              // **恒占位的勾位**（§7.9）：首选徽标与空位同宽 ——
+              // 否则"选中才渲染"会让整行文字在置顶瞬间横移。
+              SizedBox(
+                width: 40,
+                child: isFirst
+                    ? Center(
+                        child: Text(
+                          '首选',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: c.accentBlue,
+                          ),
+                        ),
+                      )
+                    : null,
+              ),
+              SizedBox(
+                width: 36,
+                // **永远可点，包括正在按它连接的那一条**：以前这里在"点名连接中"
+                // 会把整枚按钮禁用（连带删除），理由是"删了就没地方回落"。那是替用户
+                // 做决定 —— 用户要删就删，回落自然落到表里下一条。
+                // 取舍见 `.agents/notes/implemented/2026-11-01-plugin-page-owns-the-delete.md`
+                child: IconButton(
+                  tooltip: '更多',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  onPressed: () => _onMore(context),
+                  icon: DshIcon('ellipsis', size: 18, color: c.labelSecondary),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1248,33 +1256,37 @@ class _HiddenEndpoints extends StatelessWidget {
     if (hidden.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 8),
-      child: InkWell(
-        onTap: () async {
-          final id = await showDshSheet<String>(
-            context: context,
-            title: '已删除的端点（${hidden.length}）',
-            body: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final url in hidden)
-                  DshPickerRow(
-                    name: url,
-                    tags: const [],
-                    selected: false,
-                    icon: 'unarchive',
-                    onTap: () => Navigator.of(context).pop(url),
-                  ),
-              ],
+      child: Semantics(
+        // 这一行不是装饰：点它开「已删除」清单、选一条就恢复它。
+        button: true,
+        child: InkWell(
+          onTap: () async {
+            final id = await showDshSheet<String>(
+              context: context,
+              title: '已删除的端点（${hidden.length}）',
+              body: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final url in hidden)
+                    DshPickerRow(
+                      name: url,
+                      tags: const [],
+                      selected: false,
+                      icon: 'unarchive',
+                      onTap: () => Navigator.of(context).pop(url),
+                    ),
+                ],
+              ),
+            );
+            if (id == null) return;
+            await app.unhideEndpoint(id);
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            child: Text(
+              '已删除 ${hidden.length} 条端点 · 点这里恢复',
+              style: TextStyle(fontSize: 12, color: c.labelTertiary),
             ),
-          );
-          if (id == null) return;
-          await app.unhideEndpoint(id);
-        },
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-          child: Text(
-            '已删除 ${hidden.length} 条端点 · 点这里恢复',
-            style: TextStyle(fontSize: 12, color: c.labelTertiary),
           ),
         ),
       ),

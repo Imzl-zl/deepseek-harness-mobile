@@ -69,7 +69,7 @@ const FILE_BUDGET = [
   ['app/lib/ui/chat_page.dart', 4800], // 一个 State 里塞了整页脚手架（`_mainScaffold` 414 行）；2026-11-12 文件面板搬去 `ui/files_pane.dart`，收紧 5300 → 4800
   ['app/lib/data/app_model.dart', 5250], // host 投影的 façade；会话内存压缩策略（2026-11-11）在这里，+25 行是有意的；2026-11-12 `job.list` 等 `repo.info`（+15 行，见 `implemented/2026-11-12-caps-settlement.md`）
   ['app/lib/core/sync_client_impl.dart', 2050], // 连接层，收帧/恢复/写操作三件事在同一类
-  ['app/lib/ui/chat_turns.dart', 2000], // 逐种条目的渲染器，可按条目族分文件
+  ['app/lib/ui/chat_turns.dart', 2050], // 逐种条目的渲染器，可按条目族分文件；2026-11-12 a11y 批给六处可折行补了角色（+10 行，见 `implemented/2026-11-12-a11y-chat-turns-and-panes.md`）
   ['app/lib/main.dart', 1950], // 装配点 + 路由 + 抽屉回调，装配之外的部分可下沉
   ['app/lib/ui/dsh_composer.dart', 1850], // `build` 一个方法 357 行
   ['app/lib/ui/usage_page.dart', 1600], // 图表与列表可分开

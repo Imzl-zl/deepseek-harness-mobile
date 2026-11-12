@@ -194,45 +194,52 @@ class ChangesPaneState extends State<ChangesPane> {
                     Divider(height: 0.5, thickness: 0.5, color: c.borderL3),
                 itemBuilder: (context, index) {
                   final file = summary.files[index];
-                  return InkWell(
-                    onTap: () => _openRow(app, file, index),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 10,
-                      ),
-                      child: Row(
-                        children: [
-                          DshIcon(
-                            'deliverDoc',
-                            size: 14,
-                            color: c.labelTertiary,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              file.display,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                height: 1.35,
-                                fontFamily: 'monospace',
-                                color: c.labelPrimary,
+                  // 行是手写的 `InkWell`：它只装点击动作、不装按钮角色，
+                  // 朗读器念完文件名与 `+N −M` 就停。角色由这里报；
+                  // 行内文字仍是子节点（**不合并**，理由同 `settings_row.dart`）。
+                  return Semantics(
+                    key: ValueKey<String>('changed-file-$index'),
+                    button: true,
+                    child: InkWell(
+                      onTap: () => _openRow(app, file, index),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                        child: Row(
+                          children: [
+                            DshIcon(
+                              'deliverDoc',
+                              size: 14,
+                              color: c.labelTertiary,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                file.display,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  height: 1.35,
+                                  fontFamily: 'monospace',
+                                  color: c.labelPrimary,
+                                ),
                               ),
                             ),
-                          ),
-                          if (widget.tab == 0) ...[
-                            const SizedBox(width: 8),
-                            diffCountsOf(
-                              context,
-                              added: file.added,
-                              deleted: file.deleted,
-                              binary: file.binary,
-                              oversized: file.oversized,
-                            ),
+                            if (widget.tab == 0) ...[
+                              const SizedBox(width: 8),
+                              diffCountsOf(
+                                context,
+                                added: file.added,
+                                deleted: file.deleted,
+                                binary: file.binary,
+                                oversized: file.oversized,
+                              ),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
                     ),
                   );
@@ -277,51 +284,55 @@ class ChangedFileList extends StatelessWidget {
       itemBuilder: (context, index) {
         final row = rows[index];
         final stat = row.stat;
-        return InkWell(
-          // **点一行复制它的路径**（2026-10-20）。
-          //
-          // 这个动作先前被删掉过：那时面板里根本没有路径可复制，三个按钮
-          // 只会弹「还没做」。留下的话写在删它的注释里 ——
-          // 「等文件面板接上真的 deliverables 再一起做 —— 那时"复制路径"
-          // 才有路径可复制」。现在条件满足了：清单是真的（来自工具调用），
-          // 所以这个动作也是真的。
-          onTap: () async {
-            await Clipboard.setData(ClipboardData(text: row.path));
-            if (!context.mounted) return;
-            DshToast.show(context, '已复制 ${row.path}');
-          },
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            child: Row(
-              children: [
-                DshIcon('deliverDoc', size: 14, color: c.labelTertiary),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    row.path,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.35,
-                      fontFamily: 'monospace',
-                      color: c.labelPrimary,
+        return Semantics(
+          key: ValueKey<String>('changed-path-${row.path}'),
+          button: true,
+          child: InkWell(
+            // **点一行复制它的路径**（2026-10-20）。
+            //
+            // 这个动作先前被删掉过：那时面板里根本没有路径可复制，三个按钮
+            // 只会弹「还没做」。留下的话写在删它的注释里 ——
+            // 「等文件面板接上真的 deliverables 再一起做 —— 那时"复制路径"
+            // 才有路径可复制」。现在条件满足了：清单是真的（来自工具调用），
+            // 所以这个动作也是真的。
+            onTap: () async {
+              await Clipboard.setData(ClipboardData(text: row.path));
+              if (!context.mounted) return;
+              DshToast.show(context, '已复制 ${row.path}');
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              child: Row(
+                children: [
+                  DshIcon('deliverDoc', size: 14, color: c.labelTertiary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      row.path,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.35,
+                        fontFamily: 'monospace',
+                        color: c.labelPrimary,
+                      ),
                     ),
                   ),
-                ),
-                if (showStat && stat != null) ...[
-                  const SizedBox(width: 8),
-                  Text(
-                    '+${stat.added}',
-                    style: TextStyle(fontSize: 11, color: c.codeDiffAdd),
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '−${stat.removed}',
-                    style: TextStyle(fontSize: 11, color: c.codeDiffDel),
-                  ),
+                  if (showStat && stat != null) ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      '+${stat.added}',
+                      style: TextStyle(fontSize: 11, color: c.codeDiffAdd),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      '−${stat.removed}',
+                      style: TextStyle(fontSize: 11, color: c.codeDiffDel),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         );

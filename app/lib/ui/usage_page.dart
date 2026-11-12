@@ -627,7 +627,11 @@ class _ActivityCard extends StatelessWidget {
                       key: ValueKey<String>('usage-range-${option.name}'),
                       label: option.label,
                       selected: option.days == window,
-                      onTap: () => onSelectWindow?.call(option.days),
+                      // 没有切换窗口的去处（老连接器 / 页面没接这条回调）时
+                      // 不装成按钮：三枚点不动的胶囊是假入口。
+                      onTap: onSelectWindow == null
+                          ? null
+                          : () => onSelectWindow!(option.days),
                     ),
                 ],
               ),
@@ -907,6 +911,7 @@ class _HeatmapCardState extends State<_HeatmapCard> {
                                         final day = byDate[key];
                                         return _HeatCell(
                                           key: Key('heat-$key'),
+                                          label: _dayLabelOf(key, day),
                                           alpha: heatAlphaAt(
                                             day?.tokens ?? 0,
                                             scale,
@@ -942,9 +947,16 @@ class _HeatmapCardState extends State<_HeatmapCard> {
   }
 
   /// 选中那天的读出行：`10月3日 · 3 轮 · 12.4K tok`。
-  String _readoutOf(UsageDay day) {
-    final parts = _datePartsOf(day.date);
-    final label = parts == null ? day.date : '${parts.$2}月${parts.$3}日';
+  String _readoutOf(UsageDay day) => _dayLabelOf(day.date, day);
+
+  /// 一天对朗读器说的话（读数的**唯一**口径）。
+  ///
+  /// 热力图那一格没有文字（信息全在颜色里），所以同一句话还得当它的 `label` ——
+  /// 不然读屏用户只会听到一个无名按钮。`null` = 这天没有记录，那时只有日期可说。
+  String _dayLabelOf(String date, UsageDay? day) {
+    final parts = _datePartsOf(date);
+    final label = parts == null ? date : '${parts.$2}月${parts.$3}日';
+    if (day == null) return label;
     final tokens = day.tokens > 0 ? formatTokenCount(day.tokens) : '无计量';
     return '$label · ${day.turns} 轮 · $tokens tok';
   }
@@ -1091,12 +1103,19 @@ class _Legend extends StatelessWidget {
 class _HeatCell extends StatelessWidget {
   const _HeatCell({
     super.key,
+    required this.label,
     required this.alpha,
     required this.size,
     required this.future,
     required this.selected,
     this.onTap,
   });
+
+  /// 朗读器听到的那句话（哪一天、多少轮、多少 tok）。
+  ///
+  /// **这一格没有文字**："哪天有多少"全在颜色深浅里 —— 不给 label，
+  /// 读屏用户只能听到一个无名按钮。
+  final String label;
 
   final double alpha;
   final double size;
@@ -1126,10 +1145,20 @@ class _HeatCell extends StatelessWidget {
       ),
     );
     if (onTap == null) return box;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
+    // 角色 + 勾选态两个都要报（选中只画了一圈描边，读屏用户看不到）。
+    // 手势自己**不再造一个无名节点**：动作挂在 `Semantics` 上，
+    // 与时间轴那一条同一个取舍（`trajectory_timeline.dart`）。
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
       onTap: onTap,
-      child: box,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        excludeFromSemantics: true,
+        onTap: onTap,
+        child: box,
+      ),
     );
   }
 }
@@ -1203,29 +1232,36 @@ class _RangeChip extends StatelessWidget {
 
   final String label;
   final bool selected;
-  final VoidCallback onTap;
+
+  /// `null` = 没有切换窗口的去处（不接水波、不报按钮）。
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
     return Padding(
       padding: const EdgeInsets.only(right: 6),
-      child: Material(
-        color: selected ? c.layer2 : Colors.transparent,
-        borderRadius: BorderRadius.circular(DshRadius.sm),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Container(
-            constraints: const BoxConstraints(minHeight: 26, minWidth: 44),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            alignment: Alignment.center,
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                color: selected ? c.labelPrimary : c.labelCaption,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+      child: Semantics(
+        // 选择类控件：角色与选中态都要报（只换底色与字重，读屏看不见）。
+        button: onTap != null,
+        selected: selected,
+        child: Material(
+          color: selected ? c.layer2 : Colors.transparent,
+          borderRadius: BorderRadius.circular(DshRadius.sm),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 26, minWidth: 44),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              alignment: Alignment.center,
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: selected ? c.labelPrimary : c.labelCaption,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                ),
               ),
             ),
           ),
@@ -1294,77 +1330,81 @@ class _ProjectHeader extends StatelessWidget {
     final c = context.dshColors;
     final project = group.project;
     final share = totalTokens <= 0 ? 0.0 : project.tokens / totalTokens;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(DshRadius.sm),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                DshIcon('workspaceTree', size: 14, color: c.labelSecondary),
-                const SizedBox(width: 7),
-                Expanded(
-                  child: Text(
-                    project.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+    // 点整行 = 收起 / 展开这个项目的会话（真的会发生）⇒ 报按钮角色。
+    return Semantics(
+      button: true,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(DshRadius.sm),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  DshIcon('workspaceTree', size: 14, color: c.labelSecondary),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      project.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: c.labelPrimary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    formatTokenCount(project.tokens),
                     style: TextStyle(
-                      fontSize: 13,
+                      fontFamily: 'monospace',
+                      fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: c.labelPrimary,
+                      color: c.labelSecondary,
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  formatTokenCount(project.tokens),
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: c.labelSecondary,
+                  const SizedBox(width: 6),
+                  Text(
+                    '${project.sessions} 个会话',
+                    style: TextStyle(fontSize: 11, color: c.labelCaption),
                   ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  '${project.sessions} 个会话',
-                  style: TextStyle(fontSize: 11, color: c.labelCaption),
-                ),
-                const SizedBox(width: 2),
-                // 箭头朝向照落地端既有口径：收起朝右、展开朝下。
-                DshIcon(
-                  open ? 'chevronDown' : 'chevronRight',
-                  size: 14,
-                  color: c.labelTertiary,
-                ),
-              ],
-            ),
-            const SizedBox(height: 5),
-            // **占比条**：一眼看出"这台电脑的用量主要花在哪个项目"。
-            Row(
-              children: [
-                const SizedBox(width: 21),
-                Expanded(
-                  child: _ShareBar(fraction: share, color: c.accentBlue),
-                ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 34,
-                  child: Text(
-                    percentTextOf(share) ?? '',
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: c.labelCaption,
-                      fontFeatures: const [FontFeature.tabularFigures()],
+                  const SizedBox(width: 2),
+                  // 箭头朝向照落地端既有口径：收起朝右、展开朝下。
+                  DshIcon(
+                    open ? 'chevronDown' : 'chevronRight',
+                    size: 14,
+                    color: c.labelTertiary,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 5),
+              // **占比条**：一眼看出"这台电脑的用量主要花在哪个项目"。
+              Row(
+                children: [
+                  const SizedBox(width: 21),
+                  Expanded(
+                    child: _ShareBar(fraction: share, color: c.accentBlue),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 34,
+                    child: Text(
+                      percentTextOf(share) ?? '',
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: c.labelCaption,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
                     ),
                   ),
-                ),
-              ],
-            ),
-          ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

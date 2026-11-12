@@ -22,6 +22,7 @@ import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/model/usage_summary.dart';
 import 'package:dsh_mobile/ui/usage_page.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_sync_client.dart';
@@ -591,6 +592,107 @@ void main() {
     expect(client.daysCalls, 3);
     expect(find.textContaining('正在统计活动'), findsNothing, reason: '扫完就别再报进度');
     app.dispose();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 语义角色（a11y）
+  // ---------------------------------------------------------------------------
+
+  testWidgets('热力图一格：有名字（哪天 · 几轮 · 多少 tok）+ 按钮 + 选中态', (tester) async {
+    final today = DateTime.now();
+    final todayDate = DateTime(today.year, today.month, today.day);
+    final todayKey = _dayAgo(todayDate, 0);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UsagePage(
+          summary: const UsageSummary(
+            sessions: 1,
+            grandTotalTokens: 8400,
+            bySession: [],
+          ),
+          days: [UsageDay(date: todayKey, turns: 3, tokens: 8400)],
+          daysWindow: 30,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 这一格**没有文字**（信息全在颜色深浅里）：名字只能自己报。
+    final before = tester.getSemantics(find.byKey(Key('heat-$todayKey')));
+    expect(
+      before,
+      isSemantics(isButton: true, hasTapAction: true),
+      reason: '点一格会选中当天并在上方给出读数 —— 有真实后果',
+    );
+    expect(
+      before.getSemanticsData().label,
+      allOf(contains('3 轮'), contains('8.4K tok')),
+      reason: '无名按钮读不出"哪天、多少"',
+    );
+
+    await tester.tap(find.byKey(Key('heat-$todayKey')));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSemantics(find.byKey(Key('heat-$todayKey'))),
+      isSemantics(isSelected: true),
+      reason: '选中只画了一圈描边：读屏用户只能靠这个位知道选的是哪格',
+    );
+  });
+
+  testWidgets('范围胶囊：按钮 + 选中态；没有切换窗口的去处时不报按钮', (tester) async {
+    Future<void> pump({void Function(int days)? onSelectWindow}) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UsagePage(
+            summary: const UsageSummary(
+              sessions: 1,
+              grandTotalTokens: 10,
+              bySession: [],
+            ),
+            days: const [UsageDay(date: '2026-10-24', turns: 1, tokens: 10)],
+            daysWindow: 30,
+            onSelectWindow: onSelectWindow,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await pump(onSelectWindow: (_) {});
+    expect(
+      find.semantics.byLabel('30 天').evaluate().single,
+      isSemantics(isButton: true, isSelected: true, hasTapAction: true),
+      reason: '当前档既是按钮也是选中项',
+    );
+    expect(
+      find.semantics.byLabel('7 天').evaluate().single,
+      isSemantics(isButton: true, hasTapAction: true),
+    );
+
+    // 页面没接这条回调：三枚胶囊就成了点不动的装饰，不该报按钮。
+    await pump();
+    expect(
+      find.semantics.byLabel('7 天').evaluate().single,
+      isNot(isSemantics(isButton: true)),
+    );
+  });
+
+  testWidgets('项目头是按钮：语义动作真的收起了身子', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: UsagePage(summary: _summary)),
+    );
+    await tester.pumpAndSettle();
+
+    final header = find.semantics.byLabel(RegExp('dsh-mobile'));
+    expect(
+      header.evaluate().single,
+      isSemantics(isButton: true, hasTapAction: true),
+      reason: '点整行 = 收起 / 展开这个项目的会话',
+    );
+
+    tester.semantics.performAction(header, SemanticsAction.tap);
+    await tester.pumpAndSettle();
+    expect(find.text('插件UI与交互体验优化'), findsNothing, reason: '语义动作要真的走到折叠');
   });
 }
 

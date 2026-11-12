@@ -25,6 +25,7 @@ import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/dsh_sheet.dart';
 import 'package:dsh_mobile/ui/settings_page.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'fake_sync_client.dart';
 
@@ -584,6 +585,63 @@ void main() {
     expect(find.text('设备短码（点按复制）'), findsOneWidget);
     expect(find.text('abcdef'), findsOneWidget, reason: '展示前 6 位，与电脑面板同一口径');
     expect(app.deviceShortCode, 'abcdef');
+  });
+
+  // ---------------------------------------------------------------------------
+  // 语义角色（a11y）
+  // ---------------------------------------------------------------------------
+
+  testWidgets('端点行：朗读器听到「按钮」，首选那条还说「已选中」', (tester) async {
+    // 整行可点 = **设为首选**（不是重连，不是开 sheet）。那个事实在界面上
+    // 只画成一枚「首选」徽标 —— 对读屏用户来说它是一道**勾选态**，
+    // 而行本身是手写 `InkWell`，不装角色（`gesture_detector.dart:1591` 只装 onTap）。
+    final app = buildApp();
+    addTearDown(app.dispose);
+    await tester.pumpWidget(_host(app));
+    await tester.pumpAndSettle();
+    await _scrollTo(tester, find.text('连接方式'));
+    await tester.pumpAndSettle();
+
+    final first = find.semantics.byLabel(RegExp(r'192\.168\.2\.43:8790'));
+    expect(
+      first.evaluate().single,
+      isSemantics(isButton: true, isSelected: true, hasTapAction: true),
+      reason: '表里第一条 = 首选：既是按钮，也是当前选中项',
+    );
+
+    final second = find.semantics.byLabel(RegExp(r'192\.168\.2\.43:8787'));
+    expect(
+      second.evaluate().single,
+      isSemantics(isButton: true, hasTapAction: true),
+      reason: '点它是「设为首选」—— 有去处就该是按钮',
+    );
+    expect(
+      second.evaluate().single,
+      isNot(isSemantics(isSelected: true)),
+      reason: '非首选那条不能带「已选中」',
+    );
+  });
+
+  testWidgets('「已删除 N 条端点」是按钮（点它真会开恢复清单）', (tester) async {
+    final app = buildApp();
+    addTearDown(app.dispose);
+    await tester.pumpWidget(_host(app));
+    await tester.pumpAndSettle();
+
+    await app.removeEndpoint(_relay);
+    await tester.pumpAndSettle();
+    const hint = '已删除 1 条端点 · 点这里恢复';
+    await _scrollTo(tester, find.text(hint));
+
+    final row = find.semantics.byLabel(RegExp('已删除 1 条端点'));
+    expect(
+      row.evaluate().single,
+      isSemantics(isButton: true, hasTapAction: true),
+    );
+
+    tester.semantics.performAction(row, SemanticsAction.tap);
+    await tester.pumpAndSettle();
+    expect(find.text('已删除的端点（1）'), findsOneWidget, reason: '语义动作真的走到了开 sheet');
   });
 }
 
