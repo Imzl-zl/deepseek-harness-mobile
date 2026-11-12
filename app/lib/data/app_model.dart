@@ -1096,6 +1096,10 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 后续变化走 `job` 帧的 `status`。
   @override
   Future<void> refreshJobs(String sid) async {
+    // **缺服务就不发**：没装 jobs 的部署里连接器根本不挂 `job.*`
+    // （`connector/src/handlers.ts:1582`），发出去只会拿 `connector/unsupported`，
+    // 而它会被画成"任务读取失败"—— 把缺服务画成故障。
+    if (!_jobsAvailable) return;
     // **先建桶再早退**：`job` 帧不带 sid，只能靠"这个会话有桶"归位。
     // 桶不存在时帧会被丢 —— 而表现是"任务在跑但没有输出"，最难查的那类。
     _jobs.ensureBucket(sid);
@@ -2121,6 +2125,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       _filesAvailable = info.filesAvailable;
       _changesAvailable = info.changesAvailable;
       _pluginsAvailable = info.pluginsAvailable;
+      _jobsAvailable = info.jobsAvailable;
       // **读到了**才置位：界面靠它区分"这台电脑没有这个面"与"还没读到"
       // （离线时 `caps.files` 只是默认 false，不是电脑的答复）。
       _repoInfoKnown = true;
@@ -2340,6 +2345,14 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
 
   /// 电脑侧有没有插件面（`repo.info.caps.plugins`）。老连接器 ⇒ false。
   bool get pluginsAvailable => _pluginsAvailable;
+
+  /// 这台电脑有没有任务面（`caps.jobs`）。**只用来决定要不要发 `job.list`**。
+  ///
+  /// 默认 `true`（还没读到 `repo.info` 时按"有"处理）：猜错的代价是一次多余的
+  /// 成功调用，而不是整块能力消失。与上面四个"缺了就不画"的能力位相反 ——
+  /// 那四个决定 **UI 显不显示**，这个决定 **要不要发一次调用**。
+  bool get jobsAvailable => _jobsAvailable;
+  bool _jobsAvailable = true;
   bool _pluginsAvailable = false;
 
   /// 已经读到的插件行（**顺序就是电脑侧给的顺序**，手机不重排）。

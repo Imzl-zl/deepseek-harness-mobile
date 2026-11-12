@@ -18,6 +18,7 @@ final class RepoInfo {
     required this.filesAvailable,
     required this.changesAvailable,
     required this.pluginsAvailable,
+    required this.jobsAvailable,
     required this.dshVersion,
     required this.hostName,
     required this.methodCount,
@@ -40,6 +41,17 @@ final class RepoInfo {
 
   /// `caps.plugins`：插件页显不显示。
   final bool pluginsAvailable;
+
+  /// `caps.jobs`：能不能拉任务表。
+  ///
+  /// **与上面四个不同**：它们决定"这一屏显不显示"（缺了就不画），
+  /// 而这个决定**要不要发 `job.list`** —— 缺 jobs 服务的部署里连接器
+  /// 根本不挂 `job.*`（`connector/src/handlers.ts:1582`），发出去只会拿
+  /// `connector/unsupported`，而它会被画成"任务读取失败"：**把缺服务画成故障**。
+  ///
+  /// 反过来的默认也不同：caps 里**没有**这个键时按 `true` 处理（老连接器照样能拉），
+  /// 因为这里"猜错"的代价是一次多余的成功调用，而不是整块能力消失。
+  final bool jobsAvailable;
 
   /// 电脑侧 DSH 运行时版本（拿不到就是 `null`，不编一个）。
   final String? dshVersion;
