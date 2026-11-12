@@ -4,7 +4,26 @@
 > 11-04 及更早的条目在 `memory/archive/2026-11.md`；稳定命令与坑点在 `tools.md`；
 > 现状事实在 `docs/`。
 
-## 现在（2026-11-10）
+## 现在（2026-11-12）
+
+- **v0.2.16 已发版（2026-11-12）**：`versionName 0.2.16`（`versionCode` = CI run number）+ 
+  **首个按 ABI 拆包**的版本（`--split-per-abi`）：`dsh-mobile-v0.2.16-arm64-v8a.apk` **28.7 MB**
+  / `-armeabi-v7a` 25.0 MB / `-x86_64` 31.2 MB（上一版通用包 78.8 MB）；
+  `dsh-mobile-connector-0.1.24.tgz`（202 KB，npm `latest` = **0.1.24**，OIDC + provenance）。
+  三个 run 全绿（`ci` 8m12s / `release` 4m42s / `publish-connector` 30s），Release notes 待手填。
+  内容 = 八笔：a11y 第四批（13 处角色 + 关掉一个真入口）· `chat_page` 第二刀（4762 → 4422，
+  上限 4450）· `AppModel` 提醒簇搬去 `data/notices.dart`（5127 行 / 175 方法，上限 5150·175）·
+  直连收 `wss://`（手机手填 + 电脑侧 `extra`）· 三处文档漂移收口 · DSH 0.2.2-rc.2 体检（不用改代码）·
+  文档地图 + 点对点 cookbook · 否决 frp 隧道。各篇笔记见 `implemented/2026-11-12-*`。
+  **体积口径修正**：`docs/cookbook/release.md` §3.5 原写 arm64 41.4 MB（那是本机
+  `--target-platform android-arm64` 的一次量法）；发货的 `--split-per-abi` 产物是 28.7 MB —— 表已改。
+
+- **DSH 0.2.2-rc.2 体检（2026-11-12）**：本机安装的宿主仍是 **0.2.2-rc.1**（= 我们的 pin），
+  npm `next` 是 **rc.2**，`engines.dsh` 的 `>=0.2.2-rc.1 <0.2.3-0` 放行它；
+  16 个服务键 / 20+ 个方法 / `$events` 与两条 waterfall / 10 个事件形状 / 13 个包的导出差集
+  逐项核过，**没有一处被删改** ⇒ rc.2 不用改代码（也没抬类型基线：类型比运行宿主新会掩盖问题）。
+  顺手修掉两条过期引用（`agent-loop/src/tool-calls.ts` 在 rc.1 时就不存在了）。
+  方法与结果见 `implemented/2026-11-12-dsh-022-rc2-audit.md`。
 
 - **文档入口 + 点对点直连（2026-11-10 晚）**：新增 `docs/README.md`（一页纸地图：按任务找文档、
   连不上时的排查顺序）与 `docs/cookbook/direct-p2p.md`（不经服务器：Tailscale 打洞 / 公网 IPv6，
@@ -179,10 +198,9 @@
 3. **状态语义对齐（A–H 已落地）**：真机复验还差 4 条（子智能体在跑可见、提问草稿、
    发送模式真值、断连重连）。
 4. 真机复验改动卡 / 差异 / 提及（要模型请求 —— 先报价再跑）。
-5. `usage.summary` 的 byDay 时区；`plugin.installStatus` 的 4 键/8 键两形态。
-6. 大改后巡检 `docs/` 与代码漂移。已知一处：`connector/src/dsh/interaction-client.ts:63`
-   import 了 `transport/backoff.js`，与 `connector-and-relay.md` §1.2 的「`dsh/` 不 import
-   `transport/`」矛盾。
+5. `usage.summary` 的 byDay 时区。
+6. 大改后巡检 `docs/` 与代码漂移（2026-11-12 已清三处：分层规则、`installStatus` 两形态、
+   `caps.approval`；那次的结论与判据见 `implemented/2026-11-12-doc-drift-three.md`）。
 7. **投影包按消费者拆**（方案 `proposed/2026-11-04-projection-payload-split.md`，未实现）。
 
 ## 门禁（改代码后必须全绿，项数以 `tools.md` 为准）

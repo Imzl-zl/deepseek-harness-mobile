@@ -125,16 +125,18 @@ Publisher `GitHub Actions`、organization or user `Imzl-zl`、repository
 
 `release.yml` 用 `flutter build apk --release --split-per-abi`，一次出**三个**文件：
 
-| 文件 | 谁的手机 | 大致体积 |
+| 文件 | 谁的手机 | 体积（v0.2.16 实测） |
 |---|---|---|
-| `dsh-mobile-<tag>-arm64-v8a.apk` | **2017 年之后的安卓机都选这个**（几乎所有人） | **41.4 MB（实测）** |
-| `dsh-mobile-<tag>-armeabi-v7a.apk` | 32 位的老机 / 低价入门机 | ~40 MB（估） |
-| `dsh-mobile-<tag>-x86_64.apk` | 电脑上的安卓模拟器 | ~42 MB（估） |
+| `dsh-mobile-<tag>-arm64-v8a.apk` | **2017 年之后的安卓机都选这个**（几乎所有人） | **28.7 MB** |
+| `dsh-mobile-<tag>-armeabi-v7a.apk` | 32 位的老机 / 低价入门机 | 25.0 MB |
+| `dsh-mobile-<tag>-x86_64.apk` | 电脑上的安卓模拟器 | 31.2 MB |
 
-> 实测口径：本机 `flutter build apk --release --target-platform android-arm64`
-> （v0.2.15 代码、release 签名）→ **41.4 MB**；同一版本代码的通用包是 **75.14 MB**。
-> 不是 ~30 MB —— 因为每个拆分包仍然带同一份 dex + 资源（约 15 MB）。
-> **下载量 75 → 41（-45%）**，不是 -60%。
+> 实测口径：**CI 的 `--split-per-abi` 产物**（v0.2.16，`gh release view --json assets` 的字节数）。
+> 通用包是 **78.8 MB**（v0.2.15 实测）⇒ 下载量 **78.8 → 28.7（-64%）**。
+>
+> **别用本机 `--target-platform android-arm64` 那个数当发货体积**：同代码那样量出来是
+> 41.4 MB（拆开的三个包各自仍带同一份 dex + 资源，但非拆包构建会把别的 ABI 的资产留在里面）。
+> 要填这张表，就读 Release 资产的字节数；本机量只适合看趋势。
 
 **为什么要拆**：通用包会把三份 Flutter 引擎都塞进同一个文件（v0.2.15 实测 **75.14 MB**），
 而每台手机只会用其中一份 —— 另外两份是白下的下载量。
