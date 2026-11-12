@@ -646,11 +646,16 @@ class _AttachmentChip extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 2),
-          GestureDetector(
-            onTap: onRemove,
-            child: Padding(
-              padding: const EdgeInsets.all(2),
-              child: DshIcon('closeFill', size: 12, color: c.labelTertiary),
+          Semantics(
+            // 纯图标钮必须有名字（里面只有一个字形）。
+            label: '移除附件 ${item.name}',
+            button: true,
+            child: GestureDetector(
+              onTap: onRemove,
+              child: Padding(
+                padding: const EdgeInsets.all(2),
+                child: DshIcon('closeFill', size: 12, color: c.labelTertiary),
+              ),
             ),
           ),
         ],
@@ -694,7 +699,7 @@ class _RoundIconButton extends StatelessWidget {
       ),
     );
     return Semantics(
-      // 纯图标钮：角色自己报（`InkWell` 只装点击动作，不装 `isButton`）。
+      // 角色自己报（`InkWell` 只装动作，不装 `isButton`）。
       button: onPressed != null,
       enabled: onPressed != null,
       child: tooltip == null
@@ -796,9 +801,7 @@ class _IconChip extends StatelessWidget {
       ),
     );
     return Semantics(
-      // **纯图标控件必须自己报角色**：`Tooltip` 只给文字，`InkWell` 只给点击动作，
-      // 两者都不装 `isButton`（`gesture_detector.dart:1591` 的 `_GestureSemantics`）。
-      // 判据与验证见 `app/test/tappable_semantics_test.dart`。
+      // `Tooltip` 只给文字、`InkWell` 只给动作，都不装 `isButton`。
       button: onPressed != null,
       enabled: onPressed != null,
       child: tooltip == null ? chip : Tooltip(message: tooltip!, child: chip),

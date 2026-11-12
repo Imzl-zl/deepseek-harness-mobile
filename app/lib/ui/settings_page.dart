@@ -366,7 +366,7 @@ class SettingsPage extends StatelessWidget {
               icon: 'globe',
               label: '连接状态',
               value: connectionLabel(app.connection),
-              onTap: () {},
+              // 纯展示：没有去处就不接点击（否则是行尾带箭头的假按钮）。
             ),
             // **设备短码**：电脑面板「已配对设备」每行也有同一个前 6 位。
             // 每次重新扫码都是一条新身份、新短码 —— 用它认"哪行是手里这台"，
@@ -688,8 +688,13 @@ class _SettingPickerRow extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(value, style: TextStyle(fontSize: 13, color: c.labelCaption)),
-          const SizedBox(width: 4),
-          DshIcon('chevronRight', size: 14, color: c.labelTertiary),
+          // **`onTap == null` 时不画箭头**：目录还没读到（如 `permissionCatalog`
+          // 没回来）时这一行点不动，箭头却是"会带你去选"的承诺 —— 那是假入口。
+          // 判据与设置行的两种形态见 `test/settings_row_affordance_test.dart`。
+          if (onTap != null) ...[
+            const SizedBox(width: 4),
+            DshIcon('chevronRight', size: 14, color: c.labelTertiary),
+          ],
         ],
       ),
       onTap: onTap,
@@ -867,7 +872,7 @@ class _ModelSection extends StatelessWidget {
           value: current == null
               ? '未选择'
               : '${catalog?.displayNameOf(provider: current.provider, model: current.model) ?? current.label} · ${current.provider}',
-          onTap: () {},
+          // 纯展示：没有去处就不接点击（否则是行尾带箭头的假按钮）。
         ),
         if (catalog != null)
           SettingsRow(
@@ -876,7 +881,7 @@ class _ModelSection extends StatelessWidget {
             value:
                 '${catalog.allEntries.length} 个 · '
                 '${catalog.groups.length} 个 provider',
-            onTap: () {},
+            // 纯展示：没有去处就不接点击（否则是行尾带箭头的假按钮）。
           ),
         // **拉取失败的 provider 必须列出来**：静默丢掉 = "key 没配"在手机上
         // 毫无痕迹，而用户看到的是"我的 provider 不见了"。
@@ -886,7 +891,7 @@ class _ModelSection extends StatelessWidget {
             icon: 'warningTriangle',
             label: '${failure.name} 拉取失败',
             value: failure.message,
-            onTap: () {},
+            // 纯展示：没有去处就不接点击（否则是行尾带箭头的假按钮）。
           ),
         const _PrefNote('提供商与密钥在电脑上改。'),
       ],

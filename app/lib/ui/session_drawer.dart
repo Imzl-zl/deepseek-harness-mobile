@@ -953,14 +953,21 @@ class _SessionRow extends StatelessWidget {
                       color: Colors.transparent,
                       shape: const CircleBorder(),
                       clipBehavior: Clip.antiAlias,
-                      child: InkWell(
-                        key: ValueKey<String>('session-menu-${session.sid}'),
-                        onTap: () => onMenu(dshAnchorOf(row)),
-                        child: Center(
-                          child: DshIcon(
-                            'ellipsis',
-                            size: 16,
-                            color: c.labelTertiary,
+                      child: Semantics(
+                        // **纯图标钮必须有名字**：它里面只有一个 `ellipsis` 字形，
+                        // 朗读器原来读出一个无名按钮（`test/tappable_semantics_test.dart`
+                        // 钉住 label + 角色 + 独立的点击动作）。
+                        label: '会话操作：置顶 / 移动 / 归档',
+                        button: true,
+                        child: InkWell(
+                          key: ValueKey<String>('session-menu-${session.sid}'),
+                          onTap: () => onMenu(dshAnchorOf(row)),
+                          child: Center(
+                            child: DshIcon(
+                              'ellipsis',
+                              size: 16,
+                              color: c.labelTertiary,
+                            ),
                           ),
                         ),
                       ),

@@ -1,5 +1,14 @@
 /// 设置页的一行偏好：`[图标 + 名称] [当前值] [箭头]`。
 ///
+/// ## `onTap == null` = **纯展示**：没有箭头、点不动、朗读器不报按钮
+///
+/// 手机设置页有相当一部分行是"电脑侧的真值，这里只读"（当前模型、可用模型、
+/// 连接状态、provider 拉取失败的原话）。那些行原来一律传 `onTap: () {}` ——
+/// 结果是一个**行尾带箭头、点了什么都不发生**的按钮：`InkWell` 有水波、
+/// 朗读器报"按钮"、语义上还声称会跳转。
+///
+/// 判据：**箭头是"这一行会带你去别处"的承诺**。没有去处就不画箭头、也不接水波。
+///
 /// ## 为什么值有 42% 上限
 ///
 /// 基线是原型：`.settings-row .row-value{max-width:42%;white-space:nowrap;
@@ -23,53 +32,63 @@ class SettingsRow extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.value,
-    required this.onTap,
+    this.onTap,
   });
 
   final String icon;
   final String label;
   final String value;
-  final VoidCallback onTap;
+
+  /// `null` = **纯展示**（没有去处）。见文件头：不画箭头、不接水波、不报按钮。
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: LayoutBuilder(
-          builder: (context, constraints) => Row(
-            children: [
-              DshIcon(icon, size: 18, color: c.labelSecondary),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 14, color: c.labelPrimary),
-                ),
+    final tappable = onTap != null;
+    final row = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: LayoutBuilder(
+        builder: (context, constraints) => Row(
+          children: [
+            DshIcon(icon, size: 18, color: c.labelSecondary),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 14, color: c.labelPrimary),
               ),
-              const SizedBox(width: 8),
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: constraints.maxWidth * 0.42,
-                ),
-                child: Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.right,
-                  style: TextStyle(fontSize: 13, color: c.labelCaption),
-                ),
+            ),
+            const SizedBox(width: 8),
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: constraints.maxWidth * 0.42,
               ),
+              child: Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
+                style: TextStyle(fontSize: 13, color: c.labelCaption),
+              ),
+            ),
+            if (tappable) ...[
               const SizedBox(width: 4),
               DshIcon('chevronRight', size: 14, color: c.labelTertiary),
             ],
-          ),
+          ],
         ),
       ),
     );
+    // 有去处 ⇒ 按钮角色（`InkWell` 只装点击动作，不装 `isButton`）；
+    // 没有去处 ⇒ 普通文本节点，不报按钮、也没有点击动作。
+    return tappable
+        ? Semantics(
+            button: true,
+            child: InkWell(onTap: onTap, child: row),
+          )
+        : Semantics(container: true, child: row);
   }
 }

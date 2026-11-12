@@ -82,7 +82,7 @@ void main() {
     );
   });
 
-  testWidgets('行尾「…」仍是独立可点节点（不被整行合掉）', (tester) async {
+  testWidgets('行尾「…」仍是独立可点节点，且**有名字**', (tester) async {
     await tester.pumpWidget(_host(_drawer(['a'])));
 
     final menu = tester.getSemantics(
@@ -93,6 +93,9 @@ void main() {
       isSemantics(hasTapAction: true),
       reason: '整行合成一个语义节点会让行尾菜单摸不到',
     );
+    // **纯图标钮必须有名字**：它里面只有一个 `ellipsis` 字形。
+    // 没有 label 时朗读器只能念出一个无名按钮 —— 用户不知道点它会怎样。
+    expect(menu, isSemantics(isButton: true, label: '会话操作：置顶 / 移动 / 归档'));
   });
 
   testWidgets('菜单项：「取消置顶」是按钮，边界项「上移」不是', (tester) async {
