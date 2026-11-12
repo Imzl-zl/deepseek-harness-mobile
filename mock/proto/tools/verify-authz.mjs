@@ -1,6 +1,12 @@
 /* 授权矩阵验证:确认"没授权 → 绝不生效",以及"授权一次 ≠ 永久授权"。
    用法: node mock/proto/tools/verify-authz.mjs
-   前置: 一个 --remote-debugging-port=9334 的 headless Chrome(见 cdp.ps1。 */
+   前置: 一个 --remote-debugging-port=9334 的 headless Chrome(见 cdp.ps1。
+
+   **它验的是交互基线(原型),不是已发货的 App** —— `PAGE` 默认指向 `../index.html`。
+   产品侧的等价不变量在 `app/test/takeover_test.dart`(allowOnce 的回执是 `allowed-once`、
+   "一次就是一次"、未回答时提交无操作)与 `app/test/chat_takeover_wiring_test.dart`(UI → controller)。
+   为什么基线只到“会话页与输入栏”这一层、为什么这个 18 项矩阵不搬到真机:
+   `.agents/notes/implemented/2026-11-10-baseline-per-surface.md` */
 import { setTimeout as sleep } from 'node:timers/promises'
 
 const CDP = process.env.CDP_URL || 'http://127.0.0.1:9400'

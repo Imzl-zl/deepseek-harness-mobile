@@ -8,7 +8,7 @@
 - 非平凡改动必须留下决策笔记,代码与笔记同批提交;格式与判定见 `decision-notes` 技能。
 - 引用 DSH 行为时给出 `packages/...:行号`;查不到就写「未找到」,**禁止猜**。
 - **宿主语义优先**:DSH 原生怎么处理就怎么处理 —— **不新增宿主没有的边界**(超时 / 档位 / 失败兜底 / 重试与去重策略 / "谁接管"…)。判据是三句话:① 这条规则删掉,DSH 会不会已经给出答案?会 ⇒ 我们不该有;② 它是在补"我们这条通道没有的东西",还是替宿主做决定?补通道可以,替决定不行;③ 它写进 `docs/` 了吗,同一件事是不是只有一处表达?确需偏离时**先改文档、留决策笔记**,并在被约束的代码入口回指。
-- `mock/proto/` 是交互基线,`app/` 是 Flutter 落地端;**改基线要同步改落地端,不允许两边各自漂移**。
+- `mock/proto/` 是**会话页与输入栏**的交互金样,`app/` 是 Flutter 落地端。**一个面只有一条基线**:原型里有的面,改基线要同步改落地端;其余面的基线是 `docs/`,**不为「同步」塞进原型**(见 `docs/architecture.md`「基线划分」)。
 
 ## 0. 实施基线
 
@@ -21,6 +21,7 @@
 - 标准验证命令(完整清单、断言条数与截图命令见 §5 与 `tools.md`):
   - `node protocol/verify-fixtures.mjs` / `verify-loopback.mjs` / `verify-vectors.mjs` —— 通道协议(不需要浏览器)
   - `node app/tools/verify-platform-boundary.mjs` —— 多端边界(不需要 Flutter 工程)
+  - `node app/tools/verify-size.mjs` —— 尺寸预算棘轮(文件行数 / 类方法数只降不升,不需要 Flutter 工程)
   - `node mock/proto/tools/verify-icons.cjs` —— 图标集完整性(不需要浏览器)
   - `node mock/proto/tools/verify-tool-paths.mjs` —— 工具脚本不许硬编码盘符(不需要浏览器)
   - `pwsh -File mock/proto/tools/cdp.ps1` 起 headless Chrome,再设 `CDP_URL` / `NO_PROXY` 后跑 `verify-*.mjs`
@@ -44,9 +45,10 @@
 ## 3. 架构与项目结构
 
 - `app/lib/theme/` —— Flutter 主题层(`dsh_colors.dart` / `dsh_theme.dart`),token 抽自 DSH `ui-theme`,三端落地的唯一颜色/字体来源。
-- `mock/proto/` —— **交互基线原型**(唯一可运行的完整形态):
-  - `index.html` 全部页面标记;`styles.css` 设计 token 与组件样式;`app.js` 手势/抽屉/sheet/文件页/任务/输入栏;`interactions.js` 输入栏接管(审批/提问/计划);`icons.js` 100 个 DSH 图标(机生成,勿手改)。
+- `mock/proto/` —— **会话页与输入栏的交互金样**(浏览器里直接跑,无构建):
+  - `index.html` 页面标记;`styles.css` 设计 token 与组件样式;`app.js` 手势/抽屉/sheet/文件页/任务/输入栏;`interactions.js` 输入栏接管(审批/提问/计划);`icons.js` 100 个 DSH 图标(机生成,勿手改)。
   - `tools/` 抽取器与验证脚本;`shots/` 截图产物。
+  - **它不再是「唯一可运行的完整形态」**:用量 / 插件 / 轨迹 / 文件 / 配对只在产品里存在,基线是 `docs/`(见 `docs/architecture.md`「基线划分」)。
 - `docs/` —— 现状事实与设计真值(见 §2)。
 - 分层方向:原型内 `interactions.js` 通过注入的 `api` 调用 `app.js`,**不得裸调对方私有符号**(历史事故,见 §6)。
 - 模块级约束就近写在该目录的 `AGENTS.md`(现有:`mock/proto/AGENTS.md`、`docs/AGENTS.md`、`.agents/notes/AGENTS.md`),本节不复述。
@@ -69,6 +71,7 @@
 - 通道协议验证(不需要浏览器/手机/公网):`node protocol/verify-fixtures.mjs`(15 条 fixture / 454 项:恢复只有"增量或快照"两种结果)、`node protocol/verify-loopback.mjs`(26 项三角色回环,含中转清空后重启)、`node protocol/verify-vectors.mjs`(49 项跨端密码学向量:握手派生 + 设备身份 + transcript 拼串与签名 + AEAD 与箱容器 + 篡改拒绝)。**改 `protocol/` 后三条都必须全绿**;改断言时补一次变异校验(做法见 `tools.md`)。
 - connector 验证(pnpm 工程,细则见 `tools.md`):`cd connector; pnpm exec tsc --noEmit`、`pnpm build`、`pnpm test`(项数见 `tools.md` —— 不在此处复述,免得两处漂移;**fixtures 断言数须 = 454、向量须 = 49**,与参考侧相等)。**改 `connector/src/**` 后必须跑。**
 - 多端边界校验(不需要 Flutter 工程):`node app/tools/verify-platform-boundary.mjs` —— 9 条规则扫 `app/lib`,自带规则自检(细则与项数见 `tools.md`)。**改 `app/lib/` 后必须跑。**
+- 尺寸预算棘轮(不需要 Flutter 工程):`node app/tools/verify-size.mjs` —— 15 个文件 / 4 个类的行数与方法数**只降不升**,自带规则自检(细则见 `tools.md`)。**动 `app/lib/` 后必须跑。**
 - 浏览器验证(独立 headless,不碰日常浏览器):`pwsh -File mock/proto/tools/cdp.ps1 -Port 9400`,然后
   `$env:CDP_URL='http://127.0.0.1:9400'; $env:NO_PROXY='127.0.0.1,localhost'` 再跑对应脚本。
   - `verify-proto.mjs` 布局与交互;`verify-authz.mjs` 授权矩阵 18 项;`verify-picker.mjs` 列表列固定;`verify-settings.mjs` 设置页导航与边界;`verify-tasks.mjs` 对话 dock 与自动化任务页;`measure-composer.mjs` 量尺寸。

@@ -4,7 +4,10 @@
 
 - 本文件记录项目协作知识,不替代正式设计文档、`docs/` 或当前代码。
 - 真值优先级:`docs/design-and-tech-plan.md`(总纲)> 三份 `docs/*-notes.md`(专项)> 可跑通的验证脚本 > 本文件。
-- 主链路:改 `mock/proto/` → 跑验证脚本 → 截图 → 同步 `app/`(Flutter 落地端)。
+- 主链路:**改 `app/`(产品);改 `mock/proto/` → 跑验证脚本 → 截图 → 同步 `app/`(只在「会话页与输入栏」这条面上)**。
+  原型里**没有**的面(用量 / 插件 / 轨迹 / 文件 / 配对)基线是 `docs/`,不进原型 ——
+  近 60 次提交里 `app` 改了 197 个文件、`mock/proto` 只碰过 1 个,原先写成「唯一主链路」的那条
+  把成本与事实倒过来了。划分的判据与代价见 `docs/architecture.md` 的「基线划分」。
 - **CI 在 `.github/workflows/`**:`ci.yml` 跑与本地同一组门禁(protocol / relay / connector / app 四个 job),`release.yml` 在 `v*` 标签出插件 tgz 与 APK(发版步骤与签名 Secrets 见 `docs/cookbook/release.md`)。`mock/proto/`、`protocol/`、`app/tools/` 仍是显式 `node` 脚本,不存在 `npm test` 这类约定命令;**例外:`connector/` 与 `relay/` 是两个 pnpm 工程**(见下),它们的命令走 `pnpm exec` / `pnpm test` / `node --test`。
 - **`relay/` 也是工程,不需要构建**:`cd relay; pnpm install; node --test` 直接跑(**183 条**)。它靠 Node 的**类型剥离**(≥22.13,本机 24.13;账号库用 `node:sqlite`,unflagged 起点是 22.13)运行,所以**导入写 `.ts` 结尾**——Node 不做 `.js` → `.ts` 映射(写 `.js` 报 `ERR_MODULE_NOT_FOUND`,实测)。**`ws` 是运行时依赖,必须先 `pnpm install`**(`tests/server.test.ts` 起真服务器,缺 `ws` 直接 `ERR_MODULE_NOT_FOUND`);类型检查 `cd relay; pnpm typecheck`。**别把 relay 的导入"顺手统一"成连接器那样的 `.js`**:连接器是插件(要产物,tsdown 打包),中转是独立服务(直接 `node src/main.ts` 起),两者运行时不同。
   - **令牌 CLI 只签连接器**:`--issue-token connector <id>` / `--revoke-token connector <id>`。设备令牌**不由中转签发**(电脑侧签、摘要经 `POST /devices` 进名册),所以 CLI 收到 `device` 明确退出 2;摘要表里残留 `device` 条目也**拒绝启动**。取舍见 `.agents/notes/implemented/2026-10-09-relay-never-issues-device-tokens.md`。
@@ -93,6 +96,18 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
 
 ## Tools
 
+- **尺寸预算棘轮(不需要 Flutter 工程)**:`node app/tools/verify-size.mjs` —— 4 条规则:
+  1. `file-lines`:`app/lib/**/*.dart` 行数 ≤ 表内值(共 **15** 个文件在表内)/ 不在表里的 ≤ `DEFAULT_FILE_LINES`=800
+  2. `class-methods`:类的成员方法数 ≤ 表内值(共 **4** 个类)/ 不在表里的 ≤ `DEFAULT_CLASS_METHODS`=30
+  3. `budget-applies`:表里每一项必须能扫到真文件/真类(扫到 0 个 = 永不作废的假绿)
+  4. `budget-not-stale`:表里的数字必须跟实测对上 —— **长一个方法就红,瘦了也得改表**(棘轮两个方向都有牙)
+
+  **为什么只数行数与方法数,不数函数长度**:函数长度要真解析器才数得准,正则 + 括号计数在本仓会被注释/字符串里的 `{}` 吃掉 ——
+  第一版用它数过一个**实际一行**的方法得到 285 行。**会撒谎的门禁比没有更糟**。行数(数 `\n`,与 `wc -l` 同口径)与方法数(2 空格缩进的成员声明)是确定可数的。
+  **方法数余量是 0**:第一版取整到 5,变异校验里给 `AppModel` 加一个方法**没红**(那 2 个空档就是暗门);改成精确值后同一变异立刻红。行数留 50 的余量是刻意的:行数会因改注释/格式化而变。
+  自带规则自检 **19** 条(含「两空格的行注释与文档注释里的声明不算成员」「4 空格缩进的局部函数不算成员」「多行签名的首行照样数得着」「表里路径/类名抄错必须红」「表内类多一个方法就红」)。当前输出:
+  `规则自检 19 条 + 扫描 190 个 Dart 文件 / 505 个类 + 预算 15 个文件 / 4 个类`。**动 `app/lib/` 里那 19 个热点后必须跑**;
+  为什么需要它、为什么不锁函数长度、表怎么维护 —— 见 `.agents/notes/implemented/2026-11-10-size-budget-ratchet.md`
 - 多端边界校验(不需要 Flutter 工程):`node app/tools/verify-platform-boundary.mjs` —— 只扫描 `app/lib`(不存在的目录等于永不作废的假绿,别加回来),共 9 条规则:  1. `core-no-platform-import`:`app/lib/{core,data,model}` 禁 `dart:io` 与 `package:flutter/{services,widgets,material}.dart`(否则纯 Dart 单测写不了)
   2. `ui-no-impl-import`:`app/lib/ui` 禁 import 各端实现 —— **目录形态**(`*_(ios|android|ohos)/`)与**文件形态**(`*_(ios|android|ohos).dart`,即 `platform/notify_android.dart` 这种现在的写法)都认
   3. `ui-no-platform-import`:`app/lib/ui` 禁 `dart:io`
@@ -225,7 +240,7 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
   - `cd app; flutter run -d windows` —— **桌面调试**。本机 VS 18 + MSVC + Windows SDK 齐全,所以 UI 与状态机**不需要模拟器、不需要真机**
   - lint 规则集在 `app/analysis_options.yaml`,**每条都写了它针对的具体失败模式**(不是"更严格就好");改它要连注释一起改
   - 新增依赖前先看 `.agents/notes/implemented/2026-10-02-mobile-core-crypto-choice.md` 的选型闸门
-- 工具脚本路径门禁(不需要浏览器):`node mock/proto/tools/verify-tool-paths.mjs` —— 扫 `mock/proto/tools/*.mjs` **与 `app/tools/*.mjs`**(2026-10-16 起,共 **24** 个),**3 条规则**:① 禁 `file:///` + 盘符的字面量;② 禁 `C:\sudy` / `C:/sudy`(旧环境根);③ **禁任何盘符字面量**(`\b[A-Za-z]:[\\/]`)—— 确实需要写死的那两处(`extract-dsh-icons.mjs` 的 DSH 默认路径、`shoot.mjs` 截图夹具里的假 cwd)在**紧挨着的上方注释块**里标 `allow-hardcoded-path: <原因>` 豁免,**例外必须显式**(变异校验过:去掉标记立刻红)。**本仓库内的路径必须从 `import.meta.url` 派生**;理由与代价见 `.agents/notes/implemented/2026-10-02-paths-must-be-derived-not-hardcoded.md`(一次搬盘让 11 个脚本的 `PAGE` 全部指向不存在的 URL,而门禁是**静默全红**:脚本照常跑完、照常打印 JSON)
+- 工具脚本路径门禁(不需要浏览器):`node mock/proto/tools/verify-tool-paths.mjs` —— 扫 `mock/proto/tools/*.mjs` **与 `app/tools/*.mjs`**(2026-10-16 起;`verify-size.mjs` 落地后共 **25** 个),**3 条规则**:① 禁 `file:///` + 盘符的字面量;② 禁 `C:\sudy` / `C:/sudy`(旧环境根);③ **禁任何盘符字面量**(`\b[A-Za-z]:[\\/]`)—— 确实需要写死的那两处(`extract-dsh-icons.mjs` 的 DSH 默认路径、`shoot.mjs` 截图夹具里的假 cwd)在**紧挨着的上方注释块**里标 `allow-hardcoded-path: <原因>` 豁免,**例外必须显式**(变异校验过:去掉标记立刻红)。**本仓库内的路径必须从 `import.meta.url` 派生**;理由与代价见 `.agents/notes/implemented/2026-10-02-paths-must-be-derived-not-hardcoded.md`(一次搬盘让 11 个脚本的 `PAGE` 全部指向不存在的 URL,而门禁是**静默全红**:脚本照常跑完、照常打印 JSON)
 - **adb 无法往 MIUI 的第三方输入法里注入长字符串**（2026-10-15 实测，白绕了半小时）：
   这台设备（`d61cf622`，Android 16）只装了三个第三方输入法（百度/讯飞/搜狗），**没有 AOSP 键盘**。
   `adb shell input text '<330 字节 JSON>'` 会被输入法当成**一个词组做组合输入**：`{`、`"` 被丢弃，

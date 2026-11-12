@@ -39,12 +39,52 @@
 
 ## 扩展点
 
-- 新增移动端页面先进入原型信息架构,再进入 Flutter 页面;原型与 Flutter 不允许各自发明状态真值。
+- 新增移动端页面:先判它属于哪个面（见「基线划分」）—— 会话页 / 输入栏相关的**先进原型**再进 Flutter；其余直接以 `docs/` 为基线进 Flutter，**不进原型**。两边都不允许各自发明状态真值。
 - 新增电脑侧能力先核对桥接的**实际实现**,再改协议;不能只按 schema 文件或契约文本枚举能力(审批回应的"不支持"结论就是这么过期的)。
 - 新增通道能力先改 `protocol/fixtures/`,再改两侧实现;两端共用同一批 fixtures,不允许各自维护一份协议说明。
 - 新增平台 = 在 `app/lib/platform/` 加 `<能力>_<端>.dart`(端口在 `<能力>.dart`,兜底是 `<能力>_memory.dart`),并在同一个装配点登记;不得修改 `lib/core` / `lib/data` / `lib/model` / `lib/ui`(由 `app/tools/verify-platform-boundary.mjs` 拦)。
 - 新增设置项先在 `settings-porting-notes.md` 逐项给出 DSH 路径、行号、取值来源与处置,再加入页面映射。
 - 新增插件支持优先扩展声明式/Schema 能力,不做逐插件原生页面适配。
+
+## 基线划分（一个面只有一条基线）
+
+项目同时存在两个可执行的“真相层”，均有一个面由两边共同描述就会出现两套真值。划分如下：
+
+| 面 | 基线在哪 | 守卫在哪 |
+|---|---|---|
+| 会话页、输入栏、抽屉、右侧面板、后台任务页的手势与布局 | `mock/proto/` | `verify-proto` / `verify-authz` / `verify-picker` / `verify-tasks` / `verify-drawer` |
+| 用量、插件、轨迹、文件预览、设置、配对、扫码 | `docs/` + `app/test/` | `flutter test` |
+| 通道协议、密码学、恢复语义 | `protocol/fixtures` + `protocol/vectors` | `verify-fixtures` / `verify-loopback` / `verify-vectors` |
+
+为什么这样划：**近 60 次提交里 `app/` 改了 197 个文件、`mock/proto/` 只碰过 1 个**，而原型只有 694 行、产品 UI 有 2.6 万行。
+若继续要求“新页面也进原型”，守住的是“两边都不漂移”这句话本身，而不是它想防的问题——真正的漂移是“产品与 `docs/` 对不上”，而那不是原型能拦的。
+
+三条推论：
+
+1. **原型里有的面**：改基线要同步改落地端（`verify-*.mjs` 的断言就是这份基线）。
+2. **原型里没有的面**：基线是 `docs/`。**不要为了“同步”塞进原型**（那是把一个面的真值拆成两处）。
+3. **落地端有意偏离原型时**：偏离写进 `docs/`（“有意偏离 + 原因”，见 `design-and-tech-plan.md`），不靠改原型来“对齐”。
+
+取舍与代价见 `.agents/notes/implemented/2026-11-10-baseline-per-surface.md`。
+
+## 结构性约束与守卫
+
+本仓的硬约束都有一条**可机械执行**的守卫。这张表是“哪条约束、破在哪”的总图（命令与项数在 `tools.md`，此处不复述）。
+
+| 约束 | 守卫 | 破了会红的样子 |
+|---|---|---|
+| 七层依赖方向（`core` 不认平台、UI 不认实现） | `verify-platform-boundary.mjs`（9 条） | 某个文件 import 了错的层 |
+| 协议知识只在 `wire/` | `verify-rpc-single-caller.mjs`（零例外） | `client.call<` 漏在 `wire/` 外 |
+| 事件载荷字段名只一个读者 | 同上脚本的 `wire-field-single-reader` / `data-no-field-name` | `data/` 里按线上字段名取值 |
+| 图标只有一个来源 | `verify-icons.cjs` + `no-material-icons` | 新增 unicode 字形当图标 |
+| 工具脚本不许写盘符 | `verify-tool-paths.mjs`（3 条） | 写了个 `D:\…` 字面量 |
+| **文件/类不得无声长大** | `verify-size.mjs`（4 条，棘轮） | 给 `AppModel` 多一个方法 / 文件超表内行数 |
+| 线上形状不得漂 | `connector/tests/wire-shapes.test.ts` + `app/test/wire_shapes_replay_test.dart` | 连接器改了应答而 App 没跟 |
+| 恢复只有“增量或快照”两种结果 | `verify-fixtures.mjs` + connector 的 `flow` 用例 | 出现第三种“看起来补上了” |
+| 不得新增宿主没有的边界 | **无机械守卫**（靠 `proposed/2026-10-24-native-rules-audit.md` 的人工审计 + review） | — |
+
+最后一行是故意的：它是**基于语义的判断**（“这条规则删掉，DSH 会不会已经给出答案？”），不是文本模式能判的。
+它的代价是每次都可能悄悄回来，所以审计要周期性重跑，而不是当成一次性完成的事。
 
 ## 验证入口
 
@@ -52,6 +92,7 @@
 
 - `node protocol/verify-fixtures.mjs`、`node protocol/verify-loopback.mjs`、`node protocol/verify-vectors.mjs`
 - `node app/tools/verify-platform-boundary.mjs`
+- `node app/tools/verify-size.mjs`
 - `node mock/proto/tools/verify-icons.cjs`
 
 需要浏览器(独立 headless,不碰日常浏览器):

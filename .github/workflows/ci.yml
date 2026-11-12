@@ -36,6 +36,7 @@ jobs:
       - run: node protocol/verify-loopback.mjs
       - run: node protocol/verify-vectors.mjs
       - run: node app/tools/verify-platform-boundary.mjs
+      - run: node app/tools/verify-size.mjs
       - run: node app/tools/verify-rpc-single-caller.mjs
       - run: node mock/proto/tools/verify-icons.cjs
       - run: node mock/proto/tools/verify-tool-paths.mjs
