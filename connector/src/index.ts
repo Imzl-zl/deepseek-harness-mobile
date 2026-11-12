@@ -1027,16 +1027,25 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         }
 
         /**
-         * 提问 / 计划审查的内核（契约 §6.3）。
+         * 交互应答的内核：**审批 claim 与提问共用 `interaction.respond`**（契约 §6.3）。
          *
-         * **只在 `userQuestions` 服务在的时候挂**：缺了它，`interaction.respond` 就不该出现
-         * 在 `repo.info` 的 `methods` 里（手机据此置灰按钮，而不是点下去永远转圈）。
+         * 所以挂载判据是"两个来源里至少有一个在"，不是"`userQuestions` 在"：
+         * 缺 `userQuestions` 时提问事件根本不产生，但**审批照旧会有** —— 审批事件走
+         * gateway 的 waterfall（`mount-interactions` 那一步），与提问服务无关；
+         * 而它们的答复只有这一个入口（下面的 `settleClaim`）。按 `userQuestions` 单独挂
+         * 的后果是：那种部署里手机上每张审批卡都弹「没发出去，再试一次」并且永远答不掉，
+         * 而方法面里其实什么都不缺。
+         *
+         * 提问那半边的 `userQuestions` 由 `createQuestionFaceDeps` 自己判（缺了就在
+         * `answer` 那条路上报错，见 `dsh/questions.ts:96-100`），所以这里不必再挡一次。
          *
          * `settleClaim` 接的是端口的在途表：一次 `open` 提问被应答链堵着时，
          * 答复从这条路回到那个 `await`，而不是走 DSH 的 `answer()`（那个只认 `continued`）。
+         *
+         * Note: 判据与代价见 `.agents/notes/implemented/2026-11-12-caps-settlement.md`。
          */
-        const questionFace =
-          ctx.get('userQuestions') === undefined
+        const interactionFace =
+          ctx.get('userQuestions') === undefined && ctx.get('approval') === undefined
             ? null
             : createInteractionFace({
                 ...createQuestionFaceDeps(ctx, {
@@ -1045,8 +1054,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
                 settleClaim: (sid, itemId, answers) =>
                   interactionPort.settleClaim(sid, itemId, answers),
               })
-        if (questionFace !== null) {
-          handlerDeps.interaction = questionFace
+        if (interactionFace !== null) {
+          handlerDeps.interaction = interactionFace
         }
 
         /**

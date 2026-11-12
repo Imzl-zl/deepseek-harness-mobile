@@ -1096,6 +1096,21 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 后续变化走 `job` 帧的 `status`。
   @override
   Future<void> refreshJobs(String sid) async {
+    // **能力位还没读到，就先等那一次读取**（上一轮留下的假故障）：
+    // `_jobsAvailable` 的默认值是「有」（老连接器照样能拉，见 `wire/rpc/repo.dart`），
+    // 所以它**不是这台电脑的答复**。首屏那条路是「九项并行发起 → 只等行 → 落点」，
+    // 落点开会话时 `repo.info` 往往还没回来 —— 本来要在它的答复之后才能决定发不发。
+    //
+    // 等的是**首屏批次已经发起的那一次**（`HostStateRefresher.inFlightOf`），
+    // 不是新造一次读取，也不是新的触发点：没有在飞就不等 ——
+    // "从未读过 `repo.info`"的路径（单测 / 老流程）照旧发，不会变成静默不发。
+    //
+    // Note: 取舍与被否方案（把 openSession 的触发整体后移 / 未知一律不发）
+    // 见 `.agents/notes/implemented/2026-11-12-caps-settlement.md`。
+    if (!_repoInfoKnown) {
+      final inFlight = _hostState.inFlightOf(HostStateKey.repoInfo);
+      if (inFlight != null) await inFlight;
+    }
     // **缺服务就不发**：没装 jobs 的部署里连接器根本不挂 `job.*`
     // （`connector/src/handlers.ts:1582`），发出去只会拿 `connector/unsupported`，
     // 而它会被画成"任务读取失败"—— 把缺服务画成故障。

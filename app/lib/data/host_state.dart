@@ -358,6 +358,14 @@ class HostStateRefresher {
   /// 要么是"这个数在涨"；否则就是"通知到了但什么都没发生"，无迹可查。
   int get unknownKeys => _unknownKeys;
 
+  /// 某个 key 正在飞的那一次重取（`null` = 没在飞）。
+  ///
+  /// 给"必须先知道某份快照的答复、才能决定下一个调用发不发"的调用方用
+  /// —— 今天只有 `job.list` 等 `repo.info`（`caps.jobs` 决定发不发，而那次读取
+  /// 由首屏批次发起，`openSession` 往往抢在它前面）。**只读**：重取仍然只有
+  /// [notified] / [triggered] / [startBatch] 三个入口，这里不造第四个。
+  Future<void>? inFlightOf(String key) => _inFlight[key];
+
   /// 收到一条通知：按 key 排队，[window] 内同 key 合并。
   void notified(HostStateChanged notice) {
     for (final key in notice.keys) {
