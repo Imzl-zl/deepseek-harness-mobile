@@ -87,7 +87,7 @@ Publisher `GitHub Actions`、organization or user `Imzl-zl`、repository
 
 | 插件版本 | `engines.dsh` | 服务对象 | 维护状态 |
 |---|---|---|---|
-| `0.1.23` | `>=0.2.2-rc.1 <0.2.3-0` | DSH 0.2.2 线 | 当前线，功能跟进 |
+| `0.1.24` | `>=0.2.2-rc.1 <0.2.3-0` | DSH 0.2.2 线 | 当前线，功能跟进 |
 | `0.1.20` | `>=0.2.1-rc.5 <0.2.2` | DSH 0.2.1 线 | 冻结：只修致命问题 |
 
 两条线同时留在 npm 上。宿主按 `engines.dsh` **逐版本**判定（`plugin-manager` 的
