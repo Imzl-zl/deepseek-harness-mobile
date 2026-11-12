@@ -45,7 +45,6 @@ import '../data/composer_gate.dart';
 import '../data/ids.dart';
 import '../data/projection.dart' show askUserQuestionTool;
 import '../model/agent_preset.dart';
-import '../model/changes.dart';
 import '../model/chat_item.dart';
 import '../model/command.dart';
 import '../model/file_open.dart';
@@ -63,6 +62,7 @@ import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 import '../theme/dsh_type.dart';
+import 'changes_card.dart';
 import 'chat_jumper.dart';
 import 'chat_turns.dart';
 import 'collapsible_group.dart';
@@ -1034,7 +1034,7 @@ class ChatPageState extends State<ChatPage> {
                         // 已配对时给空态一条"重新配对"的出路（议题 3，1 步直达）。
                         onRePair: widget.paired ? widget.onRePair : null,
                       )
-                    : _TrajectoryTab(
+                    : TrajectoryTabHost(
                         app: widget.app,
                         sid: sid,
                         onTapTurn: _showTraceSheet,
@@ -4084,7 +4084,7 @@ class _TurnView extends StatelessWidget {
       ),
       // 一轮的改动记录（`workspace/changes`）：桌面在收口处那张「已编辑 N 个文件」卡。
       // **数字来自电脑**（`file.changes` → 宿主 `workspaceChanges`），手机只画。
-      ChangesItem(:final seq) => _ChangedFilesCard(app: app, seq: seq),
+      ChangesItem(:final seq) => ChangedFilesCard(app: app, seq: seq),
       // 一次上下文压缩（`compaction/*` 三条事件）。
       CompactionItem(:final summary, :final stats) => CompactionRow(
         summary: summary,
@@ -4094,247 +4094,6 @@ class _TurnView extends StatelessWidget {
       // 与工具卡同级，跟着轮组一起收起。
       ReasoningItem(:final text) => ReasoningRow(text: text),
     };
-  }
-}
-
-/// 收口处的**改动卡**（桌面 `ui-deliverables/src/client/ChangedFiles.tsx`）。
-///
-/// ## 数据是电脑的记录，手机只画
-///
-/// 标题用**完整**文件数（宿主的 `total`，含被 `maxFiles` 截掉的），行用宿主给的
-/// `display`，"二进制 / 过大"是宿主的两个标记（`workspace-changes/src/types.ts:14-21`）。
-/// 手机不拿工具调用自己推 `+N −M` —— 那会与桌面不同源。
-///
-/// ## 交互
-///
-/// 行点击与标题点击都只走 `AppModel.openFile`（唯一打开动作）；标题点第一个文件
-/// （逐行差异要等 `file.diff`，方案笔记批 C）。
-///
-/// ## 三态
-///
-/// 没读到 ⇒ **不画**（桌面也是拿到记录才出现）；电脑侧没有这条记录（`summary:null`）
-/// ⇒ 不画；读失败 ⇒ 把电脑侧原话摆出来 + 重试（不静默）。
-class _ChangedFilesCard extends StatefulWidget {
-  const _ChangedFilesCard({required this.app, required this.seq});
-
-  /// 会话模型；`null` = 不画（预览 / 测试里没有模型时）。
-  final AppModel? app;
-
-  /// `workspace/changes` 事件的序号 —— 向电脑要记录的唯一坐标。
-  final int seq;
-
-  @override
-  State<_ChangedFilesCard> createState() => _ChangedFilesCardState();
-}
-
-class _ChangedFilesCardState extends State<_ChangedFilesCard> {
-  /// 桌面默认只露四行（`ChangedFiles.tsx:18` 的 `COLLAPSED_ROWS`）。
-  static const int _collapsedRows = 4;
-
-  bool _expanded = false;
-
-  @override
-  void initState() {
-    super.initState();
-    // **下一帧再拉**：`loadChangesSummary` 会同步 `notifyListeners`，而在 initState 里
-    // 通知祖先（`main.dart` 的 ListenableBuilder）等于在 build 期间标脏 —— Flutter
-    // 会直接断言。等这一帧过去就没有这个窗口。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _ensureLoaded();
-    });
-  }
-
-  void _ensureLoaded() {
-    final app = widget.app;
-    if (app == null || !app.changesAvailable) return;
-    if (app.changesLoading(widget.seq)) return;
-    if (app.changesStateOf(widget.seq).loaded) return;
-    if (app.changesFailureOf(widget.seq) != null) return;
-    unawaited(app.loadChangesSummary(widget.seq));
-  }
-
-  void _open(AppModel app, String path) {
-    unawaited(app.openFile(FileOpenRequest(path: path)));
-  }
-
-  /// 打开这一轮里第 [index] 个文件的**逐行差异**（坐标 = 事件 seq + 下标）。
-  void _openDiff(AppModel app, String path, int index) {
-    unawaited(
-      app.openFile(
-        FileOpenRequest(
-          path: path,
-          mode: FileOpenMode.diff,
-          seq: widget.seq,
-          index: index,
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final app = widget.app;
-    if (app == null || !app.changesAvailable) return const SizedBox.shrink();
-    return ListenableBuilder(
-      listenable: app,
-      builder: (context, _) {
-        final failure = app.changesFailureOf(widget.seq);
-        if (failure != null) return _failure(context, app, failure);
-        final state = app.changesStateOf(widget.seq);
-        // 没读到 / 电脑侧没有记录：不画（不是失败）。
-        if (!state.loaded || state.summary == null) {
-          return const SizedBox.shrink();
-        }
-        return _card(context, app, state.summary!);
-      },
-    );
-  }
-
-  Widget _failure(BuildContext context, AppModel app, String failure) {
-    final c = context.dshColors;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          DshIcon('warningTriangle', size: 14, color: c.stateError),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              '改动记录读取失败：$failure',
-              style: TextStyle(fontSize: 12, color: c.stateError),
-            ),
-          ),
-          TextButton(
-            onPressed: () => unawaited(app.loadChangesSummary(widget.seq)),
-            child: const Text('重试'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _card(BuildContext context, AppModel app, ChangesSummary summary) {
-    final c = context.dshColors;
-    final single = summary.total == 1 && summary.files.isNotEmpty
-        ? summary.files.first
-        : null;
-    final rows = _expanded
-        ? summary.files
-        : summary.files.take(_collapsedRows).toList(growable: false);
-    final foldable = summary.files.length > _collapsedRows;
-    final title = single == null
-        ? '已编辑 ${summary.total} 个文件'
-        : '已编辑 ${fileNameOf(single.path)}';
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 10),
-      decoration: BoxDecoration(
-        color: c.layer1,
-        borderRadius: BorderRadius.circular(DshRadius.md),
-        border: Border.all(color: c.layer2),
-      ),
-      clipBehavior: Clip.antiAlias,
-      // `InkWell` 要 `Material` 祖先才画水波（`SidePane` 里同一处注释）。
-      child: Material(
-        color: Colors.transparent,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            InkWell(
-              // 标题点开**逐行差异**（桌面点卡头开的是本轮 review 的第一个文件）。
-              onTap: summary.files.isEmpty
-                  ? null
-                  : () => _openDiff(app, summary.files.first.path, 0),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                child: Row(
-                  children: [
-                    DshIcon('deliverDoc', size: 16, color: c.labelSecondary),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: c.labelPrimary,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    diffCountsOf(
-                      context,
-                      added: summary.added,
-                      deleted: summary.deleted,
-                      binary: single?.binary ?? false,
-                      oversized: single?.oversized ?? false,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            for (final file in rows) _row(context, app, file),
-            if (summary.truncated)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
-                child: Text(
-                  // **截断要说**：宿主的 `maxFiles` 砍掉了后面的文件。
-                  '还有 ${summary.total - summary.files.length} 个文件没列出（超过电脑侧上限）',
-                  style: TextStyle(fontSize: 11, color: c.labelCaption),
-                ),
-              ),
-            if (foldable)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(6, 0, 6, 4),
-                  child: TextButton(
-                    onPressed: () => setState(() => _expanded = !_expanded),
-                    child: Text(
-                      _expanded ? '收起' : '全部 ${summary.files.length} 个文件',
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _row(BuildContext context, AppModel app, ChangedFile file) {
-    final c = context.dshColors;
-    return InkWell(
-      onTap: () => _open(app, file.path),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 7, 12, 7),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                file.display,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontFamily: 'monospace',
-                  color: c.labelPrimary,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            diffCountsOf(
-              context,
-              added: file.added,
-              deleted: file.deleted,
-              binary: file.binary,
-              oversized: file.oversized,
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }
 
@@ -4520,105 +4279,6 @@ class _EmptyChat extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// 轨迹页签。
-///
-/// 实现已搬到 `ui/trajectory_page.dart`（轮次行 + 用时迷你条）——
-/// 它有自己的行规格，留在本文件里会让"聊天页"这个文件同时装两个页面的规格。
-/// 这里只留接线：**把 `turnOutline` 与本会话的条目 join 成轮次行**，点一行弹 `sheet-traj`。
-///
-/// ## 为什么之前轨迹页常驻空态
-///
-/// `TrajectoryTab` 一直接收 `rows` / `entries` 两个参数，而这一层**只传了
-/// `onTapEntry`** —— 于是两个表恒为空、轨迹页永远显示"电脑侧跑完一轮后…"。
-/// 契约里 `turnOutline` 投影一直都在（`session.projections`，§5.7），
-/// 手机也早就解析了别的投影，只是从没把它接进来。
-///
-/// ## 为什么进来要重读一次投影
-///
-/// 这一屏的全部内容都在 `session.projections` 一个包里，而那一包只在
-/// "打开会话 / `turn/end` / 队列变化"时重读。一轮跑二十分钟时**一个触发点都不来**：
-/// 手里那份包旧了（或缺键）就一直旧着，页面空着，直到重启 App —— 2026-11-04 真机
-/// 就是这个形态（同一台电脑、同一个连接器，重启后 20 轮立刻画出来）。
-/// 所以**进入这一屏**本身就是触发点（登记表的 `viewFocus` 列），代价是一次带摘要的
-/// 往返（没变约 41 B）。Note: `.agents/notes/implemented/2026-11-04-trajectory-view-refetch.md`
-class _TrajectoryTab extends StatefulWidget {
-  const _TrajectoryTab({
-    required this.app,
-    required this.sid,
-    required this.onTapTurn,
-    required this.onTapSegment,
-  });
-
-  final AppModel app;
-
-  /// 这一屏是哪个会话的（换会话要重读，包是按会话的）。
-  final String sid;
-
-  final void Function(TraceTurn turn) onTapTurn;
-  final void Function(TraceTurn turn, List<TrajectoryStep> steps) onTapSegment;
-
-  @override
-  State<_TrajectoryTab> createState() => _TrajectoryTabState();
-}
-
-class _TrajectoryTabState extends State<_TrajectoryTab> {
-  @override
-  void initState() {
-    super.initState();
-    _refetch();
-  }
-
-  @override
-  void didUpdateWidget(covariant _TrajectoryTab oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.sid != widget.sid) _refetch();
-  }
-
-  /// 重读这一屏要的那份快照。
-  ///
-  /// 放到首帧之后：首次读会先置 loading 并 `notifyListeners`，在 `initState` 里
-  /// 同步通知等于在 build 期间 `markNeedsBuild`。
-  void _refetch() {
-    final app = widget.app;
-    final sid = widget.sid;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(app.focusView(sid));
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final app = widget.app;
-    // 空态三态由**事实**决定，不由猜测决定（见 `TrajectoryEmptyReason`）：
-    // 包没到 / 包里没这个键 / 键在但没轮次。
-    final package = app.projections;
-    final trajectory = app.trajectory;
-    final emptyReason = package == null
-        ? TrajectoryEmptyReason.noPackage
-        : trajectory == null
-        ? TrajectoryEmptyReason.noTimelineKey
-        : TrajectoryEmptyReason.noTurns;
-    // 一轮一行：`turnOutline` 的 wire view 是 `[{turn, seq, prompt, response}]`
-    // （DSH `session-turn-outline/src/projection.ts:61-75`），用时与时间轴从
-    // `trajectory` 投影 join 进来、计数从本会话的 `TurnProcessItem` join 进来
-    // （join 规则只有一处：`buildTraceTurns`）。
-    // 空表时 `TrajectoryTab` 自己显示空态，不在这里兜假数据。
-    return TrajectoryTab(
-      turns: buildTraceTurns(
-        outline: app.turnOutline,
-        items: app.items,
-        trajectory: trajectory,
-      ),
-      onTapTurn: widget.onTapTurn,
-      onTapSegment: widget.onTapSegment,
-      truncationLabel: trajectoryTruncationLabel(trajectory),
-      emptyReason: emptyReason,
-      // 「重读」与"进来就重读"走同一个入口 —— 触发点只有登记表一处。
-      onRetry: () => unawaited(app.focusView(widget.sid)),
     );
   }
 }

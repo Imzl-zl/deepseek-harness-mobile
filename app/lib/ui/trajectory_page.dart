@@ -34,10 +34,12 @@
 /// 用户无法分辨。假轨迹与真轨迹长得一模一样，所以"没有"必须显示成"没有"。
 library;
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import '../data/app_model.dart';
 import '../model/chat_item.dart';
 import '../model/trajectory.dart';
 import '../model/turn_outline.dart';
@@ -573,6 +575,114 @@ class _EmptyTrajectory extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 这一屏的**装配**（从 `chat_page.dart` 搬来的）
+// ---------------------------------------------------------------------------
+
+/// 轨迹页签的装配（空态三态 + 进入即重读）。
+///
+/// **它自己就住在这个文件里（不是 `chat_page.dart`）** —— 2026-11-12 从那里整块搬来
+/// （原名 `_TrajectoryTab`）：接线与行规格是同一屏的两半，分居两个文件时
+/// "这一屏怎么装配"要跳两处才读得完。搬的理由与代价见
+/// `.agents/notes/implemented/2026-11-12-chat-page-second-cut.md`。
+///
+/// 职责只有接线：**把 `turnOutline` 与本会话的条目 join 成轮次行**，
+/// 点一行的后果（弹 `sheet-traj`）由装配层给，这里不认识路由。
+///
+/// ## 为什么之前轨迹页常驻空态
+///
+/// `TrajectoryTab` 一直接收 `rows` / `entries` 两个参数，而这一层**只传了
+/// `onTapEntry`** —— 于是两个表恒为空、轨迹页永远显示"电脑侧跑完一轮后…"。
+/// 契约里 `turnOutline` 投影一直都在（`session.projections`，§5.7），
+/// 手机也早就解析了别的投影，只是从没把它接进来。
+///
+/// ## 为什么进来要重读一次投影
+///
+/// 这一屏的全部内容都在 `session.projections` 一个包里，而那一包只在
+/// "打开会话 / `turn/end` / 队列变化"时重读。一轮跑二十分钟时**一个触发点都不来**：
+/// 手里那份包旧了（或缺键）就一直旧着，页面空着，直到重启 App —— 2026-11-04 真机
+/// 就是这个形态（同一台电脑、同一个连接器，重启后 20 轮立刻画出来）。
+/// 所以**进入这一屏**本身就是触发点（登记表的 `viewFocus` 列），代价是一次带摘要的
+/// 往返（没变约 41 B）。Note: `.agents/notes/implemented/2026-11-04-trajectory-view-refetch.md`
+class TrajectoryTabHost extends StatefulWidget {
+  const TrajectoryTabHost({
+    super.key,
+    required this.app,
+    required this.sid,
+    required this.onTapTurn,
+    required this.onTapSegment,
+  });
+
+  final AppModel app;
+
+  /// 这一屏是哪个会话的（换会话要重读，包是按会话的）。
+  final String sid;
+
+  final void Function(TraceTurn turn) onTapTurn;
+  final void Function(TraceTurn turn, List<TrajectoryStep> steps) onTapSegment;
+
+  @override
+  State<TrajectoryTabHost> createState() => _TrajectoryTabHostState();
+}
+
+class _TrajectoryTabHostState extends State<TrajectoryTabHost> {
+  @override
+  void initState() {
+    super.initState();
+    _refetch();
+  }
+
+  @override
+  void didUpdateWidget(covariant TrajectoryTabHost oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.sid != widget.sid) _refetch();
+  }
+
+  /// 重读这一屏要的那份快照。
+  ///
+  /// 放到首帧之后：首次读会先置 loading 并 `notifyListeners`，在 `initState` 里
+  /// 同步通知等于在 build 期间 `markNeedsBuild`。
+  void _refetch() {
+    final app = widget.app;
+    final sid = widget.sid;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(app.focusView(sid));
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final app = widget.app;
+    // 空态三态由**事实**决定，不由猜测决定（见 `TrajectoryEmptyReason`）：
+    // 包没到 / 包里没这个键 / 键在但没轮次。
+    final package = app.projections;
+    final trajectory = app.trajectory;
+    final emptyReason = package == null
+        ? TrajectoryEmptyReason.noPackage
+        : trajectory == null
+        ? TrajectoryEmptyReason.noTimelineKey
+        : TrajectoryEmptyReason.noTurns;
+    // 一轮一行：`turnOutline` 的 wire view 是 `[{turn, seq, prompt, response}]`
+    // （DSH `session-turn-outline/src/projection.ts:61-75`），用时与时间轴从
+    // `trajectory` 投影 join 进来、计数从本会话的 `TurnProcessItem` join 进来
+    // （join 规则只有一处：`buildTraceTurns`）。
+    // 空表时 `TrajectoryTab` 自己显示空态，不在这里兜假数据。
+    return TrajectoryTab(
+      turns: buildTraceTurns(
+        outline: app.turnOutline,
+        items: app.items,
+        trajectory: trajectory,
+      ),
+      onTapTurn: widget.onTapTurn,
+      onTapSegment: widget.onTapSegment,
+      truncationLabel: trajectoryTruncationLabel(trajectory),
+      emptyReason: emptyReason,
+      // 「重读」与"进来就重读"走同一个入口 —— 触发点只有登记表一处。
+      onRetry: () => unawaited(app.focusView(widget.sid)),
     );
   }
 }
