@@ -121,6 +121,30 @@ Publisher `GitHub Actions`、organization or user `Imzl-zl`、repository
    单测用的是替身，绿了不算证据。
 5. 发版；旧线冻结，只修致命问题，不追功能。
 
+## 3.5 三个 APK：按 ABI 拆开（该下哪个）
+
+`release.yml` 用 `flutter build apk --release --split-per-abi`，一次出**三个**文件：
+
+| 文件 | 谁的手机 | 大致体积 |
+|---|---|---|
+| `dsh-mobile-<tag>-arm64-v8a.apk` | **2017 年之后的安卓机都选这个**（几乎所有人） | ~30 MB |
+| `dsh-mobile-<tag>-armeabi-v7a.apk` | 32 位的老机 / 低价入门机 | ~28 MB |
+| `dsh-mobile-<tag>-x86_64.apk` | 电脑上的安卓模拟器 | ~30 MB |
+
+**为什么要拆**：通用包会把三份 Flutter 引擎都塞进同一个文件（v0.2.15 实测 **75.14 MB**），
+而每台手机只会用其中一份 —— 另外两份是白下的下载量。
+
+**选错了会怎样**：安卓会直接报「应用未安装」，**不会装坏**。改下对的那个重装即可。
+
+**要不要同时留一个通用包**：不要。那样 75 MB 那份还是会被一部分人下到，
+而它换来的只是“发布页少一次选择”。三个包各自都完整，没有兜底需求。
+
+**升级路径不变**：App 的「检查更新」只比 `tag`（`platform/update_checker.dart` 问
+`releases/latest`），不认资产名；点「下载」开的是 `releases/latest` 页面，
+用户在那里选自己那颗 —— 所以拆包**不改任何 App 代码**。
+
+取舍与代价见 `.agents/notes/implemented/2026-11-10-split-apk-per-abi.md`。
+
 ## 4. 本地先跑一遍门禁
 
 ```bash
@@ -132,7 +156,10 @@ cd app && dart analyze --fatal-infos lib test integration_test && flutter test
 
 CI（`.github/workflows/ci.yml`）跑的是同一组命令；标签构建前它必须绿。
 
+**APK 的构建产物体积没有门禁**（不同 ABI 差别大、且随依赖变）。要盯体积就本地跑
+`flutter build apk --release --split-per-abi --analyze-size` 看报告 —— 它只出报告，不改结论。
+
 ## 5. 上线这一步之后
 
 - 中转与插件是**独立升级**的：中转先升、插件后升（`?id=` 必带，旧连接器会被 403）。
-- App 升级只看 `versionCode`（CI 用 run number，单调递增）。
+- App 升级只看 `versionCode`（CI 用 run number，单调递增）。下载哪个包见 §3.5。

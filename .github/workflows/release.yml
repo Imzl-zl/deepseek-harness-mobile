@@ -82,7 +82,10 @@ jobs:
         working-directory: app
         run: |
           flutter pub get
-          flutter build apk --release \
+          # **按 ABI 拆开**：通用包会把三份 Flutter 引擎都塞进同一个文件
+          # （v0.2.15 实测 75.14 MB），而每台手机只需要其中一份。
+          # 取舍与「该下哪个」见 docs/cookbook/release.md §3。
+          flutter build apk --release --split-per-abi \
             --build-name="${GITHUB_REF_NAME#v}" \
             --build-number="$GITHUB_RUN_NUMBER" \
             --dart-define=APP_VERSION="${GITHUB_REF_NAME#v}"
@@ -90,7 +93,19 @@ jobs:
       - name: 收集产物
         run: |
           mkdir -p out
-          cp app/build/app/outputs/flutter-apk/app-release.apk "out/dsh-mobile-${GITHUB_REF_NAME}.apk"
+          # 三个 ABI 一个都不能少：缺哪个就当场红，而不是发一个少一个包的版本。
+          # （`flutter build apk --split-per-abi` 的产物名是 Flutter 定的，
+          # 不是我们起的 —— 对着 `flutter --version` 锁的 3.41.9 写死三个，
+          # 升级 Flutter 后这里红了就说明产物名变了。）
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            src="app/build/app/outputs/flutter-apk/app-${abi}-release.apk"
+            if [ ! -f "$src" ]; then
+              echo "缺少产物：$src" >&2
+              ls -l app/build/app/outputs/flutter-apk/ >&2
+              exit 1
+            fi
+            cp "$src" "out/dsh-mobile-${GITHUB_REF_NAME}-${abi}.apk"
+          done
           ls -lh out
 
       - uses: softprops/action-gh-release@v2
