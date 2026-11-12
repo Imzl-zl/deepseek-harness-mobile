@@ -58,7 +58,8 @@ connector/
 ├── src/
 │   ├── protocol/    帧与 AAD(§3)、密码学与握手(§4)、流控(§4.3)、恢复(§5.4)、itemId(§5.2)、幂等(§5.6)、错误码(§3.1)
 │   ├── dsh/         薄适配层:只做映射,不重建语义(§2.2 适配表)
-│   ├── transport/   出站 WSS:退避、心跳、半开、攒批、拨号接线;以及直连监听面(listener.ts,可选)
+│   ├── transport/   出站 WSS:退避、心跳、半开、攒批、拨号接线;以及直连监听面(listener.ts,可选)。
+│   │                 `backoff.ts` 是**零依赖的纯叶子**:`dsh/` 可以引它(§1.2 分层规则)
 │   ├── store/       ctx.storage domain KV + schema 迁移(§1.4)
 │   ├── push/        摘要生成与 60 s 合并,投递给中转
 │   └── 根部         挂载级装配 / 每连接装配 / 配置 / 生命周期顺序引擎 / 日志与指标
@@ -67,7 +68,18 @@ connector/
 
 **逐文件清单不写在这里**:它是源码的投影,抄一遍必然漂移(本节就曾漏掉握手与别名两个模块)。层与职责是稳定信息,文件看 `src/` 本身。
 
-分层规则:`protocol/` 与 `store/` 不 import 任何 DSH 类型;`dsh/` 不 import `transport/`。依赖方向单向向下,便于`protocol/` 在纯 Node 下跑 fixtures。
+分层规则(判据在 `connector/tests/layering.test.ts`,每条规则自带为什么与自检样本):
+
+- `protocol/` 与 `store/` **不 import 任何 DSH 类型** —— 它们要能在纯 Node 下跑 fixtures;
+- `dsh/` 可以引 `transport/`,**但目标必须是纯叶子**(那个模块自己不再 import 任何东西)。
+  今天只有一个:`transport/backoff.ts`(退避计时,零 I/O、零依赖) —— `dsh/interaction-client.ts`
+  用它重连 `$events` 流,而 `transport/connection.ts` 用的是**同一个事实**("多久重连一次"),
+  复制一份才是两处表达。带依赖的模块(`connection.ts` / `relay-link.ts` / `listener.ts` …)
+  **一次都不许引**:那会让适配层间接认识"socket 怎么开",而这条规则要挡的正是那个耦合。
+
+这条规则 2026-11-12 之前写的是「`dsh/` 不 import `transport/`」, **从来没被机械执行过**,
+而且当时就与 `transport/backoff.js` 那个 import 矛盾。定案(判据从"目录名"换成"目标有没有依赖")
+与被否方案见 `.agents/notes/implemented/2026-11-12-doc-drift-three.md`。
 
 ### 1.3 生命周期
 

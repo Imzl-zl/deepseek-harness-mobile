@@ -100,6 +100,94 @@ const SELF_TEST: Sample[] = [
   { rule: 'service-key-registered', path: 'dsh/jobs.ts', content: 'ctx.effect(() => {})', shouldFail: false },
 ]
 
+/**
+ * 跨层共用：`dsh/` 引 `transport/` 时，目标必须是**纯叶子**（自己不再 import 任何东西）。
+ *
+ * `docs/subsystems/connector-and-relay.md` §1.2 原话是「`dsh/` 不 import `transport/`」——
+ * 那句话从来没被机械执行过，而 `dsh/interaction-client.ts` 引 `transport/backoff.js`
+ * 已经与它矛盾（退避计时：零 I/O、零依赖，而且 `transport/connection.ts` 用的是同一个
+ * 事实）。规则的目的是**挡住耦合** —— 适配层不该间接认识"socket 怎么开"；
+ * 纯叶子不产生这种耦合。所以判据是"目标模块自己有没有依赖"，不是"目录名对不对"。
+ * 2026-11-12 定案，理由与被否方案见 `.agents/notes/implemented/2026-11-12-doc-drift-three.md`。
+ */
+const TRANSPORT_FROM_DSH = /from\s+['"]\.\.\/transport\/([\w.-]+)\.js['"]/g
+/** 任何 `import … from '<x>'` / `export … from '<x>'`（先剥注释再量）。 */
+const HAS_IMPORT = /\bfrom\s+['"]/
+
+/** 与 `app/tools/verify-platform-boundary.mjs` 同一条手法：注释不算代码。 */
+function stripComments(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\n)\s*\/\/[^\n]*/g, '$1')
+}
+
+/** 返回违规行（空 = 全绿）；`read` 注入是为了能自检。 */
+function crossLayerViolations(
+  files: readonly string[],
+  read: (path: string) => string,
+): string[] {
+  const out: string[] = []
+  for (const file of files) {
+    if (!file.startsWith('dsh/')) continue
+    for (const found of read(file).matchAll(TRANSPORT_FROM_DSH)) {
+      const target = `transport/${found[1]}.ts`
+      let body: string
+      try {
+        body = read(target)
+      } catch {
+        out.push(`${file} 引了不存在的 ${target}`)
+        continue
+      }
+      if (HAS_IMPORT.test(stripComments(body))) {
+        out.push(`${file} 引了 ${target}（它自己有依赖，不是纯叶子）`)
+      }
+    }
+  }
+  return out
+}
+
+interface CrossLayerSample {
+  name: string
+  files: string[]
+  contents: Record<string, string>
+  /** 期望被判违规的 dsh 文件数。 */
+  violations: number
+}
+
+const CROSS_LAYER_SELF_TEST: CrossLayerSample[] = [
+  {
+    name: '纯叶子（目标文件零依赖）⇒ 放过',
+    files: ['dsh/client.ts'],
+    contents: {
+      'dsh/client.ts': "import { createBackoff } from '../transport/backoff.js'",
+      'transport/backoff.ts': 'export function createBackoff() { return 1 }',
+    },
+    violations: 0,
+  },
+  {
+    name: '目标带依赖（它会间接把 socket 装配拖进来）⇒ 拦下',
+    files: ['dsh/client.ts'],
+    contents: {
+      'dsh/client.ts': "import { connect } from '../transport/connection.js'",
+      'transport/connection.ts': "import { open } from 'ws'",
+    },
+    violations: 1,
+  },
+  {
+    name: '注释里写着 from \'…\' 不算依赖 ⇒ 放过',
+    files: ['dsh/client.ts'],
+    contents: {
+      'dsh/client.ts': "import { b } from '../transport/backoff.js'",
+      'transport/backoff.ts': "// 旧写法：import { x } from './state.js'\nexport const a = 1",
+    },
+    violations: 0,
+  },
+  {
+    name: '路径写错（目标不存在）⇒ 拦下',
+    files: ['dsh/client.ts'],
+    contents: { 'dsh/client.ts': "import { b } from '../transport/backof.js'" },
+    violations: 1,
+  },
+]
+
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name)
@@ -129,6 +217,16 @@ test('分层校验：协议层零 DSH 依赖、适配层带源码引用、服务
     check(fires === sample.shouldFail, `自检：${sample.rule} 对样本应${sample.shouldFail ? '拦下' : '放过'}却相反`)
   }
 
+  // ---- 跨层共用：`dsh/` 只能引 `transport/` 的纯叶子 ----
+  for (const sample of CROSS_LAYER_SELF_TEST) {
+    const found = crossLayerViolations(sample.files, (path) => {
+      const body = sample.contents[path]
+      if (body === undefined) throw new Error(`样本里没有 ${path}`)
+      return body
+    })
+    check(found.length === sample.violations, `自检：${sample.name}`)
+  }
+
   // ---- 真实扫描 ----
   const files = walk(SRC)
   assert.ok(files.length > 0, 'src 下没有 .ts 文件')
@@ -139,6 +237,13 @@ test('分层校验：协议层零 DSH 依赖、适配层带源码引用、服务
       if (!rule.appliesTo(file)) continue
       check(rule.match(content) === null, `${file}: [${rule.id}] ${rule.why}`)
     }
+  }
+
+  // 跨层共用的真实扫描（读完的是**相对 src/** 的路径）。
+  for (const violation of crossLayerViolations(files, (path) =>
+    readFileSync(join(SRC, path), 'utf8'),
+  )) {
+    check(false, violation)
   }
 
   if (failures.length > 0) {

@@ -222,7 +222,13 @@ const SAMPLES: Record<SampledMethod, readonly WireSample[]> = {
   'plugin.setEnabled': [{ params: { id: 'plugin-1', enabled: false } }],
   'plugin.install': [{ params: { spec: 'dsh-mobile@0.1.0' }, context: { requestId: 'plug-1' } }],
   'plugin.remove': [{ params: { name: 'dsh-mobile' }, context: { requestId: 'plug-2' } }],
-  'plugin.installStatus': [{ params: { requestId: 'plug-1' } }],
+  // 两条：`done` 的 8 键形态 + **`unknown` 的 4 键形态**（这一代插件没有这个 id 的记录）。
+  // 后者不是"老连接器的兼容形状"：没有任务就没有 `kind` / `phase`，编一个就是假值 ——
+  // 两种形态是 `status` 上的判别联合，两边都要逐字钉住（契约 §7）。
+  'plugin.installStatus': [
+    { params: { requestId: 'plug-1' } },
+    { params: { requestId: 'plug-404' } },
+  ],
   'plugin.cancelInstall': [{ params: { requestId: 'plug-1' } }],
   // 命令执行：白名单里的 `/plan`（不在白名单的会回 connector/unsupported，那条路径由单测覆盖）。
   'command.execute': [

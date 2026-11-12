@@ -29,6 +29,7 @@ import { createHandlers } from '../../src/handlers.js'
 import { ProtocolError } from '../../src/protocol/errors.js'
 import { createSessionsAdapter } from '../../src/dsh/sessions.js'
 import { createFakeAliases } from './fake-aliases.js'
+import type { PluginJobStatus } from '../../src/dsh/plugin-install.js'
 import type { SessionController } from '@deepseek-ai/dsh-api-session-controller'
 import type { SessionSummary } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { JobSubscriptions } from '../../src/job-subscriptions.js'
@@ -541,27 +542,45 @@ export function fixtureHandlers(
       }),
     },
     // 插件安装面：**发起即返回**（只有 requestId）+ 一份确定的结论。
-    pluginInstall: {
-      install: (spec: string, requestId: string) => ({ requestId }),
-      remove: (name: string, requestId: string) => ({ requestId }),
-      cancel: async (requestId: string) => ({ status: 'cancelling' }),
-      status: (requestId: string) => ({
-        requestId,
-        status: 'done' as const,
-        kind: 'install' as const,
-        phase: 'applying',
-        log: ['added dsh-mobile'],
-        logTruncated: false,
-        result: {
-          changed: true,
-          application: 'applied',
-          stage: 'applying',
-          target: 'dsh-mobile',
-          bundle: 'dsh-mobile',
-          version: '0.1.0',
+    //
+    // **替身必须与真适配器同形**（`dsh/plugin-install.ts` 的 `status`）：它记着自己起过
+    // 哪些 requestId，没起过的回 `unknown` 的 4 键形状（`requestId` / `status` /
+    // `log` / `logTruncated`，**没有 `kind` / `phase`** —— 没有任务就没有它们，编一个
+    // 就是假值）。替身曾无差别地回 `done`，于是金样里只有一种形态，
+    // `unknown` 那条路线上没有任何形状断言（2026-11-12 修）。
+    pluginInstall: (() => {
+      const started = new Set<string>()
+      return {
+        install: (spec: string, requestId: string) => {
+          started.add(requestId)
+          return { requestId }
         },
-      }),
-    },
+        remove: (name: string, requestId: string) => {
+          started.add(requestId)
+          return { requestId }
+        },
+        cancel: async (requestId: string) => ({ status: 'cancelling' }),
+        status: (requestId: string): PluginJobStatus =>
+          started.has(requestId)
+            ? {
+                requestId,
+                status: 'done',
+                kind: 'install',
+                phase: 'applying',
+                log: ['added dsh-mobile'],
+                logTruncated: false,
+                result: {
+                  changed: true,
+                  application: 'applied',
+                  stage: 'applying',
+                  target: 'dsh-mobile',
+                  bundle: 'dsh-mobile',
+                  version: '0.1.0',
+                },
+              }
+            : { requestId, status: 'unknown', log: [], logTruncated: false },
+      }
+    })(),
     // 斜杠命令执行面：一条成功回执（`CommandRunView`）+ 一份命令说明。
     commandLine: {
       run: async (_sid: string, line: string) => ({

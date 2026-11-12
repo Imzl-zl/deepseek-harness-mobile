@@ -117,7 +117,16 @@ export interface Caps {
   sessions: boolean
   /** 增量缓冲与幂等表落盘；缺它保证不了 I7 / I8。 */
   storage: boolean
-  /** 审批接管。 */
+  /**
+   * 审批接管（`approval` 服务在不在）。
+   *
+   * **它不决定任何方法挂不挂**：审批是**事件**（gateway 的 waterfall），根本没有方法面。
+   * 留着是因为它是这种部署上**唯一**能看见"审批这只存在没存在"的地方（`/api/dsh-mobile/status`
+   * 与 `repo.info` 都照报），而 `interaction.respond` 现在按 **`approval` 或 `userQuestions`
+   * 至少一个在** 挂（`index.ts` 的判据）—— 用户报"审批卡答不掉"时，这个位与 `questions`
+   * 一起就能指出缺的是哪半边。删掉它只会让那种现场少一个可读的事实。
+   * 取舍见 `.agents/notes/implemented/2026-11-12-doc-drift-three.md`。
+   */
   approval: boolean
   /** 提问（含计划审查）。 */
   questions: boolean

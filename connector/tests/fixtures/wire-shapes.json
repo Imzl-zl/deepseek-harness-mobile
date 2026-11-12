@@ -1336,6 +1336,12 @@
         "bundle": "dsh-mobile",
         "version": "0.1.0"
       }
+    },
+    {
+      "requestId": "plug-404",
+      "status": "unknown",
+      "log": [],
+      "logTruncated": false
     }
   ],
   "plugin.cancelInstall": [

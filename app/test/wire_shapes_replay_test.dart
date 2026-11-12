@@ -131,12 +131,26 @@ Map<String, Object?>? _valuesOf(Map<String, Object?> row) {
 }
 
 /// 取某个方法的**第一条**样本（金样按"方法 → 样本数组"存，这里只要我们收的单形态）。
-Map<String, Object?> _sampleOf(Map<String, Object?> golden, String method) {
+Map<String, Object?> _sampleOf(Map<String, Object?> golden, String method) =>
+    _sampleAt(golden, method, 0);
+
+/// 第 [index] 条样本（多形态方法要逐条解：只解第一条等于只钉一种形态）。
+Map<String, Object?> _sampleAt(
+  Map<String, Object?> golden,
+  String method,
+  int index,
+) {
   final samples = golden[method];
   expect(samples, isA<List<Object?>>(), reason: '金样缺 $method 的样本数组');
-  final first = (samples! as List<Object?>).first;
-  expect(first, isA<Map<String, Object?>>(), reason: '$method 的样本不是对象');
-  return (first as Map).cast<String, Object?>();
+  final list = samples! as List<Object?>;
+  expect(
+    list.length,
+    greaterThan(index),
+    reason: '$method 的第 ${index + 1} 条样本不在金样里',
+  );
+  final picked = list[index];
+  expect(picked, isA<Map<String, Object?>>(), reason: '$method 的样本不是对象');
+  return (picked as Map).cast<String, Object?>();
 }
 
 /// 这一行覆盖了哪几种形态（名字从数据里长出来，所以不会与金样脱节）。
@@ -1101,6 +1115,19 @@ void main() {
     final job = (statusReading as WireOk<PluginJob>).value;
     expect(job.requestId, statusSample['requestId']);
     expect(job.status, statusSample['status']);
+
+    // 第二条样本是 `unknown`（这一代插件没有这个 id 的记录）：线上只有 **4 个键**，
+    // 没有 `kind` / `phase` —— 没有任务就没有它们，编一个就是假值。
+    // 两种形态是 `status` 上的判别联合，所以两条都要解（只解第一条等于只钉一种）。
+    final unknownSample = _sampleAt(golden, 'plugin.installStatus', 1);
+    final unknownReading = readPluginJob(unknownSample);
+    expect(unknownReading, isA<WireOk<PluginJob>>());
+    final unknown = (unknownReading as WireOk<PluginJob>).value;
+    expect(unknown.status, 'unknown');
+    expect(unknown.kind, isEmpty, reason: '没有任务就没有 kind，不许编一个');
+    expect(unknown.phase, isEmpty, reason: '没有任务就没有 phase，不许编一个');
+    expect(unknown.log, isEmpty);
+    expect(unknownSample.containsKey('kind'), isFalse, reason: '金样就是这条判据');
 
     final cancelSample = _sampleOf(golden, 'plugin.cancelInstall');
     final cancelReading = readPluginCancelStatus(cancelSample);

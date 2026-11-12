@@ -17,6 +17,11 @@
 /// `protocol` / `aliasVersion` 手机**不读**（前者在上线帧的 `v` 里校验，后者是连接器内部账），
 /// 所以**不声明** —— 少声明一个键就少一处要维护的漂移面。
 ///
+/// `caps` 里 `approval` / `questions` / `subagents` / `sessions` / `storage` / `settings` /
+/// `credentials` 手机同样**不读**（连接器照报：它们是电脑侧的自报服务面，排错时要看；
+/// `approval` 为什么留着不删写在 `connector/src/dsh/caps.ts` 那一行的注释里）。
+/// 不读就不声明 —— 同一个理由。
+///
 /// ## `methods` 为什么只数条数
 ///
 /// 它是 `Object.keys(handlers).sort()`（`handlers.ts:1552`）：**加任何一个方法它都会变**。
