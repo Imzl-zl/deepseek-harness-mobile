@@ -80,5 +80,30 @@ void main() {
         isFalse,
       );
     });
+
+    test('上次翻页失败：不翻（否则一次快速滚动会连发几个注定失败的请求）', () {
+      expect(
+        shouldLoadOlder(
+          pixels: 1000,
+          maxScrollExtent: 1000,
+          hasMore: true,
+          failed: true,
+        ),
+        isFalse,
+        reason:
+            '失败后 `hasMore` 故意不变假（那会让用户以为“历史就这么多”），'
+            '所以必须单独有这一挡，不然手指停在上端每次滑动都重试一遍',
+      );
+      // 失败挡掉不等于“没更多了”：调用方仍要能把失败讲出来。
+      expect(
+        shouldLoadOlder(
+          pixels: 100,
+          maxScrollExtent: 1000,
+          hasMore: true,
+          failed: true,
+        ),
+        isFalse,
+      );
+    });
   });
 }

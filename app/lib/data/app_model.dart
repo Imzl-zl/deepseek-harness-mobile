@@ -4157,6 +4157,10 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     try {
       await client.subscribe(sid);
       _lastError = null;
+      // 重新订阅成功 ⇒ 拿到的是一窗新快照，上一次翻页失败（`window-missed`）
+      // 已经不成立了。不清的话那条提示会**永远挂在最早那一端**
+      // （`ui/history_failure_note.dart` 读的就是它）。
+      _historyFailure.remove(sid);
     } on ProtocolException catch (error) {
       _lastError = error;
       if (!_disposed) notifyListeners();

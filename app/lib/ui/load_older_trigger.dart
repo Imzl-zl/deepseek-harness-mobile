@@ -31,13 +31,20 @@ const double kLoadOlderTriggerInset = 80;
 ///
 /// [hasMore] 为假时**永远不翻**：那是"不知道有没有更多"或"确定没有"，
 /// 两种情况都不该发一次必然空手的请求。
+///
+/// [failed] 为真时**也不翻**：上一次翻页失败了，而 `hasMore` 故意**不会**因失败
+/// 变假（那会让用户以为"历史就这么多"）。少了这一条，用户停在上端的手指
+/// 每滑动一次就发一次注定失败的请求 —— 既刷网络，也刷一遍失败通知。
+/// 恢复靠用户重进会话（契约 §3.1：`session/window-missed` 的动作是重新订阅走快照）。
 bool shouldLoadOlder({
   required double pixels,
   required double maxScrollExtent,
   required bool hasMore,
   bool reverse = true,
+  bool failed = false,
 }) {
   if (!hasMore) return false;
+  if (failed) return false;
   // 没有可滚内容时 `maxScrollExtent` 是 0，而 `pixels` 也是 0 ——
   // 那时"到顶"是恒真的，会在每次布局时都触发。所以要求真的有内容可滚。
   if (maxScrollExtent <= 0) return false;

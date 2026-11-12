@@ -86,6 +86,7 @@ import 'dsh_toast.dart';
 import 'edge_stick.dart';
 import 'frame_coalesced.dart';
 import 'goal_bar.dart';
+import 'history_failure_note.dart';
 import 'input_focus.dart';
 import 'load_more_on_scroll.dart';
 import 'load_older_trigger.dart';
@@ -3155,6 +3156,9 @@ class _ChatTab extends StatelessWidget {
       turnStartedAt: app.turnStartedAtOf(app.currentSid ?? ''),
       // 滚到顶翻页要它（`hasOlderHistory` + `loadOlderHistory`）。
       app: app,
+      // 翻页失败必须喂进界面（否则用户以为"历史就这么多"），
+      // 同时挡住自动重试（`load_older_trigger.dart` 的 `failed`）。
+      historyFailure: app.historyFailure,
     );
   }
 }
@@ -3207,6 +3211,7 @@ class _ConversationFlow extends StatefulWidget {
     this.running = false,
     this.turnStartedAt,
     this.app,
+    this.historyFailure,
   });
 
   final List<ChatItem> items;
@@ -3253,6 +3258,9 @@ class _ConversationFlow extends StatefulWidget {
   ///
   /// `null` = 不翻页（预览 / 测试里没有真模型时）。
   final AppModel? app;
+
+  /// 上一次翻页失败的原因（`AppModel.historyFailure`）；`null` = 没失败。
+  final String? historyFailure;
 
   @override
   State<_ConversationFlow> createState() => _ConversationFlowState();
@@ -3333,6 +3341,8 @@ class _ConversationFlowState extends State<_ConversationFlow> {
       pixels: position.pixels,
       maxScrollExtent: position.maxScrollExtent,
       hasMore: app.hasOlderHistory,
+      // 上次失败就别再自动重试（`hasMore` 故意不因失败变假，见那条判据的头注释）。
+      failed: app.historyFailure != null,
     )) {
       return;
     }
@@ -3463,6 +3473,15 @@ class _ConversationFlowState extends State<_ConversationFlow> {
 
   @override
   Widget build(BuildContext context) {
+    // **翻页失败那一格**：`reverse` 下列表最后一个 index 是屏幕上最早（最上）那一端
+    // —— 也就是"更早的历史"本该出现的位置，失败说明就长在那里。
+    final failure = widget.historyFailure;
+    // 列表与右侧跳转钮读**同一个格数**（两处各算一遍迟早对不上）。
+    final cellCount =
+        widget.items.length +
+        (widget.hasLive ? 1 : 0) +
+        (widget.running ? 1 : 0) +
+        (failure == null ? 0 : 1);
     return Stack(
       children: [
         NotificationListener<ScrollNotification>(
@@ -3493,10 +3512,7 @@ class _ConversationFlowState extends State<_ConversationFlow> {
               // 才变，而那时 AppModel 会整页通知（`_setLiveTail` 的返回值）。流式期间
               // 文本一直变、格数不变，所以这一层**不重建**：尾条目的内容由下面那个
               // `ValueListenableBuilder` 单独跟踪。
-              itemCount:
-                  widget.items.length +
-                  (widget.hasLive ? 1 : 0) +
-                  (widget.running ? 1 : 0),
+              itemCount: cellCount,
               itemBuilder: (context, index) {
                 // `reverse: true` 下 index 0 在**最下面**，往上递增。
                 // `items` 是 **seq 升序**（`session_store.dart:146`），所以 index 要
@@ -3505,6 +3521,13 @@ class _ConversationFlowState extends State<_ConversationFlow> {
                 // 2026-10-20 真机复现：原来这里是 `items[index - 1]`（正着取），
                 // 于是**最早的在上、最新的在下** —— 一整段对话是倒的，
                 // 而且"进入会话落在最新一条"也落到了最早一条。
+                // 失败那一格是最后一位（`reverse` 下＝屏幕上最早那一端）。
+                if (failure != null && index == cellCount - 1) {
+                  return KeyedSubtree(
+                    key: const ValueKey('history-failure'),
+                    child: HistoryFailureNote(reason: failure),
+                  );
+                }
                 final hasLive = widget.hasLive;
                 final hasRunning = widget.running;
                 // 运行条在最下面（它是流末尾），流式文本在它上面一格。
@@ -3574,10 +3597,7 @@ class _ConversationFlowState extends State<_ConversationFlow> {
         // `itemCount` 含流式尾条目 —— 它与持久条目一样"可跳"。
         Positioned.fill(
           child: ChatJumper(
-            itemCount:
-                widget.items.length +
-                (widget.hasLive ? 1 : 0) +
-                (widget.running ? 1 : 0),
+            itemCount: cellCount,
             onStep: _step,
             onEdge: _edge,
             onCreated: (controller) => _jumper = controller,
