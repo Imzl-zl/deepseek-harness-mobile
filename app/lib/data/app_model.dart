@@ -4214,6 +4214,14 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       final store = entry.value;
       if (store.pendingCount > 0) continue;
       store.compact();
+      // **同一台会话的附属缓存一起放掉**：改动记录按 `'<sid>:<seq>'` 存
+      // （`_changesBySeq`），一个会话看过的每一轮都留一条、永不清理。
+      // 重开这一屏时 `_ChangedFilesCard` 会在 `initState` 里重新拉（`loaded == false`），
+      // 所以放掉不会让卡片变空 —— 只是不会再替没人看的会话留着。
+      final prefix = '$sid:';
+      _changesBySeq.removeWhere((key, _) => key.startsWith(prefix));
+      _changesFailures.removeWhere((key, _) => key.startsWith(prefix));
+      _changesLoading.removeWhere(prefix.startsWith); // 集合里是 key 本身
     }
   }
 

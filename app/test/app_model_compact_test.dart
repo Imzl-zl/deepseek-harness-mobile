@@ -84,6 +84,15 @@ class _Client extends FakeSyncClient {
     Map<String, Object?> params, {
     String? requestId,
   }) async {
+    // 改动记录要 `repo.info.caps.changes` 才发请求（老连接器不发）。
+    if (method == 'repo.info') {
+      return <String, Object?>{
+            'protocol': 1,
+            'caps': <String, Object?>{'changes': true},
+            'methods': <String>[],
+          }
+          as T;
+    }
     if (method == 'session.list') {
       return {
             'sessions': [
@@ -231,6 +240,33 @@ void main() {
     await w.app.openSession('a');
 
     expect(w.app.items, hasLength(2), reason: '没有回读能力就不该放掉正文');
+  });
+
+  test('改动记录缓存（按 <sid>:<seq>）跟着放掉，别人的不受影响', () async {
+    final w = _build(tag: 'iso');
+    addTearDown(w.app.dispose);
+
+    // 两台会话各读过一条改动记录（键是 `<sid>:<seq>`）。
+    await w.app.refreshRepoInfo(); // 能力位：没有 `caps.changes` 就不发请求
+    await w.app.openSession('a');
+    await w.app.loadChangesSummary(7);
+    expect(w.app.changesStateOf(7).loaded, isTrue, reason: '读到了');
+
+    await w.app.openSession('b');
+    await w.app.loadChangesSummary(9);
+    expect(w.app.changesStateOf(9).loaded, isTrue);
+    // 注意：`changesStateOf` 的键取**当前会话**，所以此刻再问 7 拿到的是
+    // `'b:7'`，必然 false —— 那**不能**当"被清掉了"的证据（第一版就是这么误判的，
+    // 变异校验当场揭穿：不清缓存照样绿）。
+
+    // 切回 a：若 a 的缓存被压缩清掉了，`changesStateOf(7)` 就是 false
+    // （卡片会因此重新拉一次）；没清则仍是 true。
+    await w.app.openSession('a');
+    expect(
+      w.app.changesStateOf(7).loaded,
+      isFalse,
+      reason: 'a 被压缩过 ⇒ 它的改动记录缓存一起放掉（重开这一屏会重拉）',
+    );
   });
 
   test('blank 判据在压缩前后一致（宿主说 blank、手里有内容 ⇒ 不是新会话）', () async {
