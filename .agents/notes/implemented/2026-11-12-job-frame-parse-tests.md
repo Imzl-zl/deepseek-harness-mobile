@@ -45,20 +45,23 @@ Status: implemented
    |---|---|
    | 四种 kind 正样本 | `opened` / `output` / `status` / `error` 的**每个字段**（含 `from` / `next` / `lossy` / `chunks.at` / `channel` / `gapBefore`） |
    | 坏载荷必须抛 | 载荷不是对象、`jobId` 缺失/空串/非串、`kind` 不认识/缺失、`chunks` 不是数组（含"缺键"与"空数组"两件事）、`at`/`next`/`startedAt`/`outputTotal`/`from` 不是整数、`job` 不是对象 |
-   | 展示字段兜底 | `status`/`kind`/`label` 非 String ⇒ `running`/`''`/`''`；可选四键缺省即 `null`；`finishedAt` 只认 `int`；`error` 缺 `message` ⇒ `'未知原因'` |
+   | 兜底与必填 | `kind`/`label` 非 String ⇒ `''`；**`status` 缺失/非串/空串 ⇒ 抛**；可选四键缺省即 `null`；`finishedAt` 只认 `int`；`error` 缺 `message` ⇒ `'未知原因'` |
    | `output` 的可选取值 | `channel` 三种线上词 + 缺席 + 非法值、`gapBefore` / `lossy` 只有 `true` 算真、认不出的 chunk 条目跳过 |
 
 2. **`_parseRow` 补读 `sid`**（一行）：连接器已经在帧上盖了它，`JobRow` 与 `JobBook` 都按它
    归桶，只有解析层没读。修法不是"改语义"，而是把**已经存在于线上的字段**接到它唯一的读者上。
 
-3. **`status` / `kind` / `label` 的兜底保持原样**，并把兜底写成断言。理由写在用例注释里：
-   它们兜的是**展示字段**（画成什么样），不是**身份字段**（是谁、接着从哪读）。
+3. **`status` 也改成必填**（同一天追加）：`kind` / `label` 是展示字段，兜空串没问题；
+   而 `status` 承载「终态单向」这条不变量（`mergeJobRow` 只看 `isLive`），
+   `status ?? 'running'` 正是「任务永远转」的形态 —— `job.list` 那条路
+   （`wire/rpc/job.dart` 的 `_jobRowOf`）早就按这条判据要求必填。
+   两条路对同一个键只能同一个纪律，所以这里也认不出就抛。
    身份与游标（`jobId` / `kind`(帧) / `chunks` / `at` / `next` / `startedAt` / `outputTotal`）
-   认不出就抛，由调用方转成 `JobError` 让面板说"这一帧没解出来"。
+   一直是抛的，由调用方转成 `JobError` 让面板说"这一帧没解出来"。
 
 ## 准入判据
 
-`app/test/job_frame_parse_test.dart` 18 条，全绿即通过。`core/job.dart` 覆盖率
+`app/test/job_frame_parse_test.dart` **19 条**，全绿即通过。`core/job.dart` 覆盖率
 **97/97 = 100%**（`flutter test --coverage` 后按 `LF`/`LH` 读，注意 lcov 里 `LF` 在 `LH` 之前）。
 
 变异校验（**先 grep 确认变异落地，再看红**）：
@@ -67,6 +70,7 @@ Status: implemented
 |---|---|
 | 删掉 `jobId.isEmpty`（变成只查类型） | 恰好 1 条红：`缺 jobId / jobId 是空串 / 不是字符串`（`Expected: throws FormatException / Actual: <Closure>`） |
 | 删掉 `_parseRow` 里的 `sid:`（本次修复的前后对照） | 恰好 1 条红：`opened：行 + from`（`Expected: 's1' / Actual: <null>`）—— 这是**红先绿后**，不是事后补的变异 |
+| 把 `status` 的必填判据短路成 `if (false)` | 恰好 1 条红：`status 缺了 / 不是非空字符串 ⇒ **抛**` |
 
 ## Alternatives considered
 
@@ -94,10 +98,9 @@ Status: implemented
 - 收益：`app/test/` 的 job 面第一次有"解析 → 类型"的判据，与 `job_panel_test.dart` 的
   "`JobRow` → 桶"判据拼成完整一格（这正是 `open-findings.md` §4.2 要求的分层）。
 - 代价：`parseJobFrame` 的形状改动从此会红在 `job_frame_parse_test.dart` 上（这是想要的）。
-- **遗留（需要产品判断，未动）**：`_parseRow` 对 `status` 的兜底仍是 `'running'`，
-  而 `job.list` 那条路要求它是必填且**不许兜**（同一份 `JobRow`，两种纪律）。
-  两条路的输入不同（`job.list` 是应答，帧是推送），所以"是否统一"要单独判一次；
-  本批只把它写成断言，没有改。
+- 已决（同日追加）：`_parseRow` 的 `status` 从"兜 `running`"改成**必填**，
+  与 `job.list` 那条路同一条纪律。代价是一帧缺 `status` 会整帧报错 —— 那正是想要的：
+  漂移要在边界上现形，而不是画成一个永远在跑的任务。
 - 顺带记：`tools.md` 里 `flutter test` 的项数此前已漂移 33 条（写 1805，实测 1838），
   本批改成 **1856**。数字只有一处来源这一点没变，但"只在改测试时顺便对一次"显然不够 ——
   下次动 `app/test/` 时先跑一遍对数字。

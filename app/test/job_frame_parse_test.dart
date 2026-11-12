@@ -281,8 +281,8 @@ void main() {
     });
   });
 
-  group('展示字段的兜底（身份字段不兜）', () {
-    test('status / kind / label 不是 String ⇒ running / 空串 / 空串', () {
+  group('展示字段的兜底（身份字段与 status 都不兜）', () {
+    test('kind / label 不是 String ⇒ 空串（行 id 退回帧的 jobId）', () {
       final frame =
           parseJobFrame(
                 _frame({
@@ -292,7 +292,7 @@ void main() {
                     'id': 7,
                     'kind': 7,
                     'label': 7,
-                    'status': 7,
+                    'status': 'running',
                     'startedAt': 1,
                     'outputTotal': 0,
                   },
@@ -300,10 +300,28 @@ void main() {
               )
               as JobStatus;
 
-      expect(frame.row.status, 'running');
       expect(frame.row.kind, '');
       expect(frame.row.label, '');
       expect(frame.row.id, 'j9', reason: '行 id 缺失时退回帧的 jobId —— 身份字段只能取真值，不许编');
+    });
+
+    test('status 缺了 / 不是非空字符串 ⇒ **抛**（不当 running）', () {
+      // `status ?? 'running'` 就是「任务永远转」的形态：`job.list` 那条路
+      // （`wire/rpc/job.dart` 的 `_jobRowOf`）已经按这条判据要求必填，
+      // 两条路对同一个键只能同一个纪律。
+      for (final bad in <Object?>[null, 7, '']) {
+        expect(
+          () => parseJobFrame(
+            _frame({
+              'kind': 'status',
+              'jobId': 'j1',
+              'job': _wireRow(status: bad),
+            }),
+          ),
+          throwsFormatException,
+          reason: 'status = $bad 时整帧应该认不出（由调用方转成 JobError）',
+        );
+      }
     });
 
     test('可选项缺省即 null（progress / detail / finishedAt / sid）', () {

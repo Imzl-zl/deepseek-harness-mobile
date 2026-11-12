@@ -359,11 +359,19 @@ JobFrame parseJobFrame(String plaintext) {
 
 JobRow _parseRow(Object? raw, String jobId) {
   if (raw is! Map) throw const FormatException('任务帧的 job 必须是对象');
+  // `status` 与 `kind` / `label` **不是一类**：它承载「终态单向」这条不变量
+  // （`mergeJobRow` 只看 `isLive`），而 `status ?? 'running'` 正是「任务永远转」
+  // 的形态 —— `job.list` 那条路（`wire/rpc/job.dart` 的 `_jobRowOf`）已经按同一条
+  // 判据要求必填。两条路对同一个键必须同一个纪律，所以这里也认不出就抛。
+  final status = raw['status'];
+  if (status is! String || status.isEmpty) {
+    throw const FormatException('任务行的 status 必须是非空字符串');
+  }
   return JobRow(
     id: raw['id'] is String ? raw['id'] as String : jobId,
     kind: raw['kind'] is String ? raw['kind'] as String : '',
     label: raw['label'] is String ? raw['label'] as String : '',
-    status: raw['status'] is String ? raw['status'] as String : 'running',
+    status: status,
     startedAt: _requireInt(raw['startedAt'], 'startedAt'),
     outputTotal: _requireInt(raw['outputTotal'], 'outputTotal'),
     progress: raw['progress'] is String ? raw['progress'] as String : null,
