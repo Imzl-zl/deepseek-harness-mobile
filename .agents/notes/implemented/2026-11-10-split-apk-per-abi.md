@@ -28,9 +28,9 @@ Flutter 的默认 target platform 是 `armeabi-v7a` + `arm64-v8a` + `x86_64`，�
 `flutter build apk --release --split-per-abi`，出三个包：
 
 ```
-dsh-mobile-<tag>-arm64-v8a.apk     ← 2017 年之后的安卓机（几乎所有人），~30 MB
-dsh-mobile-<tag>-armeabi-v7a.apk   ← 32 位老机，~28 MB
-dsh-mobile-<tag>-x86_64.apk        ← 模拟器，~30 MB
+dsh-mobile-<tag>-arm64-v8a.apk     ← 2017 年之后的安卓机（几乎所有人），41.4 MB（实测）
+dsh-mobile-<tag>-armeabi-v7a.apk   ← 32 位老机，~40 MB（估）
+dsh-mobile-<tag>-x86_64.apk        ← 模拟器，~42 MB（估）
 ```
 
 准入的机械判据：
@@ -59,7 +59,9 @@ dsh-mobile-<tag>-x86_64.apk        ← 模拟器，~30 MB
 
 ## Consequences
 
-- 收益：下载量从 ~75 MB 降到 ~30 MB（-60%）；Release 资产总量基本不变，但每个人只取自己那份。
+- 收益：下载量从 75.14 MB 降到 **41.4 MB（-45%，本机实测）**。Release 资产**总量会变大**
+  （拆分后每个包都带同一份 dex + 资源），但每个人只取自己那份。
+  写这篇时的估算 "~30 MB" 是错的 —— 实测把估的数字盖掉了。
 - 代价：发布页从 1 个 APK 变成 3 个，下载的人要看一眼 CPU 架构。已在
   `docs/cookbook/release.md` §3.5 与 `README` 的安装表里写明"该下哪个"。
 - 代价：`release.yml` 的收集步骤从一行 `cp` 变成逐个检查的循环。这是刻意的：

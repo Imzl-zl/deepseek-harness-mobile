@@ -67,7 +67,7 @@ const FILE_STEP = 50
  */
 const FILE_BUDGET = [
   ['app/lib/ui/chat_page.dart', 5300], // 一个 State 里塞了整页脚手架（`_mainScaffold` 414 行）
-  ['app/lib/data/app_model.dart', 5150], // host 投影的 façade，还剩会话/通知两簇未拆
+  ['app/lib/data/app_model.dart', 5200], // host 投影的 façade；会话内存压缩策略（2026-11-11）在这里，+25 行是有意的
   ['app/lib/core/sync_client_impl.dart', 2050], // 连接层，收帧/恢复/写操作三件事在同一类
   ['app/lib/ui/chat_turns.dart', 2000], // 逐种条目的渲染器，可按条目族分文件
   ['app/lib/main.dart', 1950], // 装配点 + 路由 + 抽屉回调，装配之外的部分可下沉
@@ -88,7 +88,7 @@ const FILE_BUDGET = [
  * 名字必须**唯一**（同名类出现在两个文件里就是抄错了）。
  */
 const CLASS_BUDGET = [
-  ['AppModel', 176], // 见 `proposed/2026-10-27-ui-state-design.md` 的收窄；任务簇 2026-11-11 已搬去 `job_book.dart`
+  ['AppModel', 177], // 收窄：任务簇已搬走（176）；2026-11-11 会话内存压缩 +1（有意的）
   ['ChatPageState', 65], // 面板/文件区/轨迹该各自成 widget
   ['_SyncClient', 61], // 收帧 / 恢复 / 写操作三件事在同一类
   ['_DshMobileAppState', 48], // 装配之外的路由回调可下沉

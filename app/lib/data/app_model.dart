@@ -3642,8 +3642,10 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   }
 
   /// 这个会话手里有没有**可见**条目（口径与 `ui/chat_page.dart` 的 hero 判据一致）。
-  bool hasVisibleItemsOf(String sid) =>
-      _storeOf(sid).items.any((item) => item is! OtherItem);
+  ///
+  /// 读的是 `SessionStore.hasVisibleItems` —— **不是** `items.isNotEmpty`：
+  /// 正文可以被 [_compactIdleSessions] 放掉，而"有东西"这个事实不能丢。
+  bool hasVisibleItemsOf(String sid) => _storeOf(sid).hasVisibleItems;
 
   /// 拉一次工作区清单（会话列表按它分组）。
   ///
@@ -4078,7 +4080,9 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     final read = _readLocalItems;
     if (read == null || _disposed) return;
     final store = _storeOf(sid);
-    if (store.items.isNotEmpty) return;
+    // **正文在手就不再读盘**；但被 [compact] 放掉过（`isCompacted`）时必须读 ——
+    // 否则"放掉之后后台又来了两条"会让这一屏永远只剩那两条。
+    if (store.items.isNotEmpty && !store.isCompacted) return;
     try {
       final stored = await read(sid);
       if (_disposed || stored.isEmpty || store.items.isNotEmpty) return;
@@ -4150,7 +4154,6 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     // 读回条目 → 界面立刻有内容 → 水位取条目的 `seq` 上界 → 订阅带它。
     // 读不到就不调 [restoreSession]（保持水位 0 = 电脑侧给整窗，与今天一致）。
     await _restoreLocalHistory(sid);
-
     try {
       await client.subscribe(sid);
       _lastError = null;
@@ -4172,6 +4175,42 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     // 换了会话就重判通知：切到的那个会话不该再有一条"等你处理"挂在通知栏里
     // （与"点进去绿点消失"同一条判据）。
     _syncNotices();
+    // 切到的这个会话要全量，其余**不在看也不在跑**的只留事实（见那个方法的三条条件）。
+    // 放在最后：它不依赖上面任何一次网络往返的结果。
+    _compactIdleSessions(keep: sid);
+  }
+
+  /// 把**不在看、不在跑、没有待处理**的会话正文放掉（只留计数与"有内容"的事实）。
+  ///
+  /// ## 为什么需要它
+  ///
+  /// `_stores` 原来只增不减（整个类里只有 `dispose` 清它），于是"今天点开过多少个会话"
+  /// 直接等于"内存里压着多少条正文"。条目是落盘的（`StoreItemPersister`），所以
+  /// 正文全部可以重新从本地库读回来 —— 内存里没必要一直留着。
+  ///
+  /// ## 三条条件都是既有事实，不引入任何上限数字
+  ///
+  /// - **不在看**：`sid != _currentSid`。看着的那个必须全量（它就是屏幕上的东西）。
+  /// - **不在跑**：`_rows.runningOf(sid)` 为假。在跑的会话随时会追加条目，放掉等于刚放就要重建。
+  /// - **没有待处理**：`store.pendingCount == 0`。审批卡长在条目里，放掉会丢角标与提醒。
+  ///
+  /// ## 还有一条能力前提
+  ///
+  /// `_readLocalItems == null`（单测 / 没有本地库的装配）时**一律不压缩**：
+  /// 读不回来就不该放掉。这是能力判据，不是闸门。
+  ///
+  /// Note: 为什么不删整张表、为什么不退订、四个边角 —— 见
+  /// `.agents/notes/implemented/2026-11-11-session-memory-compaction.md`。
+  void _compactIdleSessions({required String? keep}) {
+    if (_readLocalItems == null) return;
+    for (final entry in _stores.entries) {
+      final sid = entry.key;
+      if (sid == keep || sid == _currentSid) continue;
+      if (_rows.runningOf(sid)) continue;
+      final store = entry.value;
+      if (store.pendingCount > 0) continue;
+      store.compact();
+    }
   }
 
   /// 关闭当前会话（退订）。

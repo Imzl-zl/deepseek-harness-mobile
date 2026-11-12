@@ -250,6 +250,21 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
   - **纯 ASCII 的长文本有一条活路：空格写成 `%s`**（2026-10-22 实测，264 字符的英文 prompt 一次进框）：
     `adb shell input text "Run%s55%sseparate%sshell%stool%scalls..."`。写成带空格的原串时
     输入法只吃下第一个词（实测只剩 `Run`）。中文仍然不行 —— 走粘贴。
+  - **把它彻底绕开：先把输入法全禁掉再打字**（2026-11-11 实测，**329 字节的配对码 JSON 一次原样进框**，
+    `"` / `:` / `{` 全部完好）：
+    ```powershell
+    $orig = adb shell settings get secure enabled_input_methods   # 先存下来
+    adb shell settings put secure enabled_input_methods '""'      # 全禁
+    adb shell input tap <输入框中心>                               # 先点聚焦
+    adb shell "input text '<原样字符串>'"                         # 设备侧单引号包住，不会被 sh 吃字符
+    adb shell settings put secure enabled_input_methods "$orig"    # 用完立刻恢复
+    ```
+    机制：mangling 来自 IME 的**组合输入**，没有 IME 时按键直接落到编辑器。
+    **一定要恢复**（不然后果是整机没输入法）。要**替换**已有内容先发 `adb shell input keycombination 113 29`（CTRL+A）。
+  - **看屏幕用 `adb exec-out screencap -p > 文件`**，不要 `adb shell screencap -p /sdcard/x.png`：
+    git-bash 会把 `/sdcard/...` 当本地路径转换，报 `Error opening file: D:/soft/Git/sdcard/x.png`。
+    另：**输入框有焦点时 `screencap` 是黑屏**（只剩状态栏）—— `adb shell input keyevent 111`（ESCAPE）
+    收焦点即可，比 BACK 安全（BACK 没有键盘时会把 App 退到桌面）。
   - **可点的按钮/页面切换照常用 `adb shell input tap <x> <y>`。** **坐标不要靠截图目测**
   （2026-10-18 白点五轮）：`adb shell uiautomator dump /sdcard/ui.xml` 之后
   `adb shell cat /sdcard/ui.xml`，**`content-desc` 与 `bounds` 都能拿到** ——

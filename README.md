@@ -26,7 +26,7 @@
 
 | 你要装的东西 | 从哪拿 | 说明 |
 |---|---|---|
-| **手机 App** | [**最新 Release 的 APK**](https://github.com/Imzl-zl/deepseek-harness-mobile/releases/latest)（`dsh-mobile-vX.Y.Z.apk`） | release 签名，覆盖升级用同一个包；第一次装要允许「未知来源」 |
+| **手机 App** | [**最新 Release 的 APK**](https://github.com/Imzl-zl/deepseek-harness-mobile/releases/latest)（`dsh-mobile-vX.Y.Z-arm64-v8a.apk`） | 按 CPU 架构拆了三个包：**2017 年后的安卓机选 `arm64-v8a`**（实测 41.4 MB），老的 32 位机选 `armeabi-v7a`，模拟器选 `x86_64`。release 签名，覆盖升级用同一个包；第一次装要允许「未知来源」。选错会报「应用未安装」，不会装坏 |
 | **电脑侧插件** | `dsh plugin add dsh-mobile-connector`，或 Release 里的 `dsh-mobile-connector-X.Y.Z.tgz` | npm 上的版本带 SLSA provenance |
 
 > 装了插件、打开侧边栏「手机」面板，在**配对新手机**那张卡下面就有一枚「下载最新版」按钮 ——
@@ -90,6 +90,7 @@ cd relay && docker compose up -d --build && docker compose logs -f relay
 | `cd relay && pnpm typecheck && node --test` | 中转 |
 | `cd connector && pnpm exec tsc --noEmit && pnpm build && pnpm test` | 电脑侧插件（fixtures 断言数须 = **454**、向量须 = **49**） |
 | `node app/tools/verify-platform-boundary.mjs` | 多端边界 |
+| `node app/tools/verify-size.mjs` | 尺寸预算棘轮（文件行数 / 类方法数只降不升） |
 | `cd app && dart format --output=none --set-exit-if-changed lib test integration_test && dart analyze --fatal-infos lib test integration_test && flutter test` | 手机端 |
 
 > **各项条数只写在一处：[`tools.md`](tools.md)。** 同一批数字抄在 README / `memory.md` / `tools.md`
@@ -104,9 +105,11 @@ CI（[`ci.yml`](.github/workflows/ci.yml)）跑同一组命令；发版见 [rele
 
 ## 文档
 
+**不知道读哪份？先看[文档地图](docs/README.md)** —— 一页纸，按任务指路。
+
 - 协议：[通道协议](docs/subsystems/remote-channel.md) · [配对 v2](docs/subsystems/pairing-v2.md)
 - 端：[连接器与中转](docs/subsystems/connector-and-relay.md) · [手机端通道客户端](docs/subsystems/app-channel-client.md) · [轮组与折叠](docs/subsystems/turn-groups.md)
-- 操作：[部署中转](docs/cookbook/relay-on-a-server.md) · [发版](docs/cookbook/release.md)
+- 操作：[部署中转](docs/cookbook/relay-on-a-server.md) · [点对点直连](docs/cookbook/direct-p2p.md) · [发版](docs/cookbook/release.md)
 
 ## 友链
 

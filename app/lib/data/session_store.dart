@@ -49,8 +49,22 @@ class SessionStore {
   /// "要不要重建"，而不必做深比较。
   List<ChatItem> get items => _sorted;
 
-  /// 条目数。
-  int get length => _sorted.length;
+  /// 条目数（**含已放掉的那些**）：[compact] 之后仍然是同一个数。
+  ///
+  /// 抽屉行与 `_touchSummary` 读它；少了这一条，压缩一下就会把"N 条"变成 0。
+  int get length => _droppedCount + _sorted.length;
+
+  /// 手里有没有**可见**条目（口径与 `ui/chat_page.dart` 的 hero 判据一致：
+  /// `OtherItem` 不算）。
+  ///
+  /// **必须是事实，不能等于 `items.isNotEmpty`**：`sessionBlankOf` 靠它判定
+  /// "宿主说 blank、但我手里有东西"，而正文可以被 [compact] 放掉 ——
+  /// 那时事实还在（[_droppedVisible]），只是正文不在内存里。
+  bool get hasVisibleItems =>
+      _droppedVisible || _sorted.any((item) => item is! OtherItem);
+
+  /// 已经放掉过正文（`_restoreLocalHistory` 据此允许从本地库重新回填）。
+  bool get isCompacted => _droppedCount > 0;
 
   /// 变更流（每次归并后发一次，**已合并到微任务**）。
   Stream<List<ChatItem>> get changes => _changes.stream;
@@ -78,7 +92,13 @@ class SessionStore {
   }
 
   /// 整体替换（快照收口用，契约 §5.4 规则 4：分页期间不渲染，收口时整体换）。
+  ///
+  /// **"整份换掉"包括标量**：`compact()` 攒下的计数与"有可见条目"标记必须归零，
+  /// 否则这批条目数会翻倍（`length` = 旧计数 + 新条目）。
   void replaceAll(Iterable<ChatItem> incoming) {
+    _droppedCount = 0;
+    _droppedVisible = false;
+    _droppedUpdatedAt = 0;
     _byId
       ..clear()
       ..addEntries(incoming.map((item) => MapEntry(item.itemId, item)));
@@ -86,11 +106,58 @@ class SessionStore {
     _markDirty();
   }
 
-  /// 清空（退订时调）。
-  void clear() {
-    if (_byId.isEmpty) return;
+  /// 放掉**正文**，只留三个事实：条目数、有没有过可见条目、最新时刻。
+  ///
+  /// ## 为什么是"放正文"而不是"把整张表删掉"
+  ///
+  /// `_stores` 不只是渲染缓存：抽屉的 `itemCount` / `pendingCount`、
+  /// `sessionBlankOf` 的判据、通知里"谁在等我"都从它读。整表删掉等于把
+  /// **事实**也删了，症状是"抽屉全归零"与"新建会话点了没反应"复发。
+  /// 所以只丢正文（几十上百 KB），事实留成三个标量（几十字节）。
+  ///
+  /// ## 调用方必须保证的前提
+  ///
+  /// **不在看、不在跑、没有待处理、且本地库读得回来**（见
+  /// `AppModel._compactIdleSessions` 的三个条件）。
+  /// 放掉的正文靠 `_restoreLocalHistory` 下次打开时从 sqflite 回填。
+  ///
+  /// ## 为什么**不发**变更通知
+  ///
+  /// 压缩只发生在非当前会话上，而 `changes` 的消费者是"正在渲染的那一屏"。
+  /// 发一次空列表只会在切换的那一帧里让旧屏幕闪一下空白 —— 没有收益。
+  void compact() {
+    if (_sorted.isEmpty) return;
+    _droppedCount += _sorted.length;
+    for (final item in _sorted) {
+      if (item is! OtherItem) {
+        _droppedVisible = true;
+      }
+      if (item.updatedAt > _droppedUpdatedAt) {
+        _droppedUpdatedAt = item.updatedAt;
+      }
+    }
     _byId.clear();
     _sorted = const <ChatItem>[];
+    _pendingCacheSource = null;
+    _updatedCacheSource = null;
+  }
+
+  int _droppedCount = 0;
+  bool _droppedVisible = false;
+  int _droppedUpdatedAt = 0;
+
+  /// 清空（退订时调）。
+  ///
+  /// 同 [replaceAll]：标量也归零（`clear` 的语义是"这个会话在这里什么都没有了"）。
+  void clear() {
+    if (_byId.isEmpty && _droppedCount == 0) return;
+    _byId.clear();
+    _droppedCount = 0;
+    _droppedVisible = false;
+    _droppedUpdatedAt = 0;
+    _sorted = const <ChatItem>[];
+    _pendingCacheSource = null;
+    _updatedCacheSource = null;
     _markDirty();
   }
 
@@ -130,7 +197,7 @@ class SessionStore {
   /// 缓存的理由与 [pendingCount] 一样（它也被逐会话问）。
   int get updatedAt {
     if (identical(_updatedCacheSource, _sorted)) return _updatedCache;
-    var newest = 0;
+    var newest = _droppedUpdatedAt;
     for (final item in _sorted) {
       if (item.updatedAt > newest) newest = item.updatedAt;
     }
