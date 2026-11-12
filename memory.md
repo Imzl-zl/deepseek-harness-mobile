@@ -6,6 +6,18 @@
 
 ## 现在（2026-11-10）
 
+- **文档入口 + 点对点直连（2026-11-10 晚）**：新增 `docs/README.md`（一页纸地图：按任务找文档、
+  连不上时的排查顺序）与 `docs/cookbook/direct-p2p.md`（不经服务器：Tailscale 打洞 / 公网 IPv6，
+  含 `tailscale ping` 证实真点对点的判据）。
+  **不提供 frp 方案**：普通 `tcp` 隧道数据经 VPS 转发，与已有中转重叠；
+  `xtcp` 要两端都跑 frpc，手机装不了 —— 否决理由见 `rejected/2026-11-10-no-frp-tunnel.md`。
+  代码上撤掉「直连只能明文」这条自设边界：手机手填直连收 `wss://`
+  （`app/lib/ui/add_endpoint_dialog.dart`），电脑侧 `extra` 收 `wss://` 任意主机
+  （`connector/src/admin/advertise.ts`）—— 监听面仍然不终结 TLS，TLS 在反代 / `tailscale serve` 那一跳。
+  笔记 `implemented/2026-11-10-direct-endpoint-accepts-wss.md`。顺手修掉一个死分支：
+  直连公网明文以前永远报「必须 WSS」，现在先走「请先勾选确认」。
+  门禁全绿（connector / app / `verify-platform-boundary`，条数以 `tools.md` 为准）。
+
 - **v0.2.15 已发版（2026-11-10）**：Release `dsh-mobile-v0.2.15.apk`（**75.14 MB**，
   `versionCode 18`（= CI 的 run number）/ `versionName 0.2.15`）+
   `dsh-mobile-connector-0.1.23.tgz`（连接器本次没改，npm `latest` 仍 0.1.23）。

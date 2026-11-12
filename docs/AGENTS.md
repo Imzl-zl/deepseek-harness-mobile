@@ -20,6 +20,7 @@
 
 | 文档 | 职责 |
 |---|---|
+| `README.md` | 文档地图：三分钟看懂怎么跑、按任务找文档、连不上时的排查顺序 |
 | `design-and-tech-plan.md` | 设计与技术基线(总纲):定位、架构、技术栈、设计 token、逐屏规格、授权与动效规则 |
 | `settings-porting-notes.md` | 设置项逐项搬运清单(42 项:搬 / 只读 / 不做 / 必须分叉) |
 | `plugin-and-jobs-notes.md` | 插件体系与后台任务的移动端边界(含插件页为何无法通用渲染、Schemastery 过线范围) |
@@ -32,6 +33,7 @@
 | `subsystems/app-channel-client.md` | 手机端通道客户端设计:core 分层与签名、连接/订阅状态机、渲染性能对策、三端平台能力(`lib/platform/`)、UI 接线点、测试策略 |
 | `cookbook/channel-bootstrap.md` | 开工实操:从零到真机连通的编号步骤与精确验证命令 |
 | `cookbook/relay-on-a-server.md` | 在服务器上用 Docker 跑中转(公网 wss):令牌签发、compose、Caddy、连接器与手机两端验证 |
+| `cookbook/direct-p2p.md` | 不经服务器:两条路(Tailscale 打洞 / 公网 IPv6)、如何证实真在点对点、为什么 App 不内置打洞 |
 | `subsystems/app-platform-boundaries.md` | 手机端多端边界:核心零平台分支、平台实现只住 `lib/platform/`、可机械判定的边界规则与校验命令 |
 | `subsystems/blank-session-hero.md` | 新会话页(blank 会话的 hero):落到这一屏的条件、结构、三样数据与标签链、写路径、有意偏离、验证 |
 | `subsystems/subagent-page.md` | 子智能体页:目录树(直接子级 + 展开才懒加载)、三态、行规格、子会话头部条与切换、一次性/未知的只读状态框、已知差异 |
