@@ -74,6 +74,7 @@ import 'host_state.dart';
 import 'ids.dart';
 import 'item_derivations.dart';
 import 'job_book.dart';
+import 'notices.dart';
 import 'projection.dart';
 import 'session_rows.dart';
 import 'session_store.dart';
@@ -3008,10 +3009,14 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
 
   // ---- 通知与后台保活（端口在 `core/notify.dart`，实现只在 `platform/`）----
   //
-  // 这一段的**全部输入都是既有事实**：`_runningSids` / `_completionUnread` /
-  // 本地条目里的 `ApprovalItem` 与 `ask_user_question` 的 `ToolCallItem` /
-  // `_currentSid` / 前后台态。**没有第四份状态机**，也没有落盘 —— "已提醒过哪几条"
-  // 就记在 [_activeNotices] 里（派生，杀 App 即丢，与"完成绿点"同一条理由）。
+  // 这一段的**全部输入都是既有事实**：运行集 / 未读集 / 本地条目里的
+  // `ApprovalItem` 与 `ask_user_question` 的 `ToolCallItem` / 当前会话 / 前后台态。
+  // **没有第四份状态机**，也没有落盘 —— "已提醒过哪几条"就记在 [NoticeBoard] 里
+  // （派生，杀 App 即丢，与"完成绿点"同一条理由）。
+  //
+  // 「身份 / 该提醒什么 / 已贴了哪一份」三件事住在 `data/notices.dart`
+  // （2026-11-12 搬出：它们原来在本类中段被重新表达了 6 + 4 次）。
+  // 这里只留两件跨簇的事：**前后台态**与**通知权限 / 保活**。
 
   /// 前台还是后台（`AppStateReporter` 翻译 Flutter 生命周期之后调 [setAppForeground]）。
   bool _appForeground = true;
@@ -3022,23 +3027,10 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 电脑侧此刻允许我们发通知吗（设置页那行用；`null` = 不知道）。
   bool? get notifyGranted => _notifyGranted;
 
-  /// 已经贴上去的那批（`id → notice`）：`_syncNotices` 靠它做增删差集。
-  final Map<int, AttentionNotice> _activeNotices = <int, AttentionNotice>{};
+  /// 已经贴上去的那批（提醒簇的唯一所有者，见 `data/notices.dart`）。
+  final NoticeBoard _notices = NoticeBoard();
 
   StreamSubscription<NotifyApproval>? _approvalSub;
-
-  /// 通知 id 的键：**带电脑前缀**。
-  ///
-  /// `sid` 是电脑侧独立分配的不透明别名，条目 id 同样是各电脑自己生成的 ——
-  /// 两台撞名完全可能。不带前缀时同一条审批在两台上算出同一个 `noticeIdOf`，
-  /// 于是撤掉 B 的那条会把 A 的也撤掉（`cancel(id)` 只按 id 认人）。
-  ///
-  /// 没有电脑身份时（未配对 / 单测）保持平铺形状：那种状态下不存在"哪一台"，
-  /// 与 `meta` 表里 `host.<field>` 的平铺键同一条理由（`docs/subsystems/ui-state.md` §2）。
-  String _noticeKeyOf(String kind, String id) {
-    final hostId = _hostKey;
-    return hostId.isEmpty ? '$kind:$id' : '$hostId|$kind:$id';
-  }
 
   /// 前后台态变化（装配点从 `AppStateReporter` 转过来）。
   ///
@@ -3086,13 +3078,14 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// `user-approval/src/types.ts:32`）；「拒绝」= 空 `selected` 且无 `custom`
   /// （契约 §5.7 那一行）。**没有"总是允许"**，所以通知按不出永久授权。
   Future<void> _answerFromNotification(NotifyApproval action) async {
+    // 这条通知的身份只有一处算法（`notices.dart`）：应答失效时要凭它撤掉自己。
+    final noticeId = approvalNoticeId(hostId: _hostKey, itemId: action.itemId);
     final sid = _sidOfPendingItem(action.itemId);
     if (sid == null) {
       // 找不到那个待处理项（已答 / 会话不在列表里）：撤掉通知，什么都不答。
       // 不猜一个 sid —— 答错会话比不答更糟。
-      final stale = noticeIdOf(_noticeKeyOf('approval', action.itemId));
-      _activeNotices.remove(stale);
-      await _notify?.cancel(stale);
+      _notices.drop(noticeId);
+      await _notify?.cancel(noticeId);
       return;
     }
     try {
@@ -3113,9 +3106,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       // 并撤掉那条通知 —— 让用户去 App 里看到真实状态，而不是对着一个
       // 已经无效的按钮反复按。
       _recordError('通知上的答复没能送达', error);
-      final id = noticeIdOf(_noticeKeyOf('approval', action.itemId));
-      _activeNotices.remove(id);
-      await _notify?.cancel(id);
+      _notices.drop(noticeId);
+      await _notify?.cancel(noticeId);
     }
   }
 
@@ -3135,110 +3127,31 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     return null;
   }
 
-  /// 后台任务结束的**提醒窗口**：只有在这个时间窗内结束的任务才贴通知。
-  ///
-  /// 不设窗口的后果很具体：冷启动时 `_jobs` 里全是历史终态任务，一次重算就把
-  /// 几十条"某某任务跑完了"贴上去 —— 那些事早就过去了，用户只会关掉通知权限。
-  /// 30 分钟与"这一轮刚跑完"对齐（参考实现 `refs/remotes/pr/8:a4a9775` 同一档）。
-  static const Duration _jobNoticeWindow = Duration(minutes: 30);
-
-  /// 期望的通知集合 —— **完全从既有事实派生**。
-  List<AttentionNotice> _desiredNotices() {
-    final notices = <AttentionNotice>[];
-    for (final session in _sessions) {
-      // 前台、**这一台可见**、且正看着它 ⇒ 不提醒：结果就在眼前（与"完成绿点"同一条判据）。
-      // "可见"这一条是池化之后才需要的：别的电脑的"当前会话"用户根本没在看着。
-      if (_appForeground && _visible && session.sid == _currentSid) continue;
-      final title = session.displayTitle;
-      for (final item in _storeOf(session.sid).items) {
-        if (item is ApprovalItem && !item.decided) {
-          notices.add(
-            AttentionNotice(
-              id: noticeIdOf(_noticeKeyOf('approval', item.itemId)),
-              kind: NoticeKind.approval,
-              sid: session.sid,
-              title: '等你审批 · $title',
-              body: item.title.isEmpty ? '有一项操作需要你确认' : item.title,
-              itemId: item.itemId,
-              allowLabel: '允许一次',
-              denyLabel: '拒绝',
-            ),
-          );
-        }
-        // 提问：`ask_user_question` 的 `tool/call` 还没有 `tool/result` ——
-        // 与连接器认身份的那条规则同一个判据（`connector/src/dsh/question-call.ts`）。
-        if (item is ToolCallItem &&
-            item.name == 'ask_user_question' &&
-            item.status == ToolCallStatus.running) {
-          notices.add(
-            AttentionNotice(
-              id: noticeIdOf(_noticeKeyOf('question', item.itemId)),
-              kind: NoticeKind.question,
-              sid: session.sid,
-              title: '有人在问你 · $title',
-              body: '点开回答（通知上不答题：答案要按问题逐条给）',
-            ),
-          );
-        }
-      }
-      // 后台任务结束：**一个任务一条**（同一会话同时结束三个任务就是三件事），
-      // 按 `jobId` 去重 —— 通知 id 从 jobId 算，重复帧不会变成两条。
-      // 摘要优先取 `detail` 的前两行（电脑侧给失败原因/输出尾巴），其次是进度，
-      // 都没有就说明"结束了但没话说"，不给假摘要。
-      //
-      // Note: 为什么任务单独一类、为什么是 30 分钟窗口 —— 见
-      // `.agents/notes/implemented/2026-11-09-job-completion-notice.md`
-      final now = DateTime.now().millisecondsSinceEpoch;
-      for (final job in _jobs.jobsOf(session.sid)) {
-        final finishedAt = job.finishedAt;
-        if (finishedAt == null || job.isLive) continue;
-        if (now - finishedAt > _jobNoticeWindow.inMilliseconds) continue;
-        final detail = (job.detail ?? '').trim();
-        final progress = (job.progress ?? '').trim();
-        final summary = detail.isNotEmpty
-            ? detail.split('\n').take(2).join(' ').trim()
-            : (progress.isNotEmpty ? progress : '任务已结束，点开查看详情');
-        notices.add(
-          AttentionNotice(
-            id: noticeIdOf(_noticeKeyOf('job', job.id)),
-            kind: NoticeKind.completed,
-            sid: session.sid,
-            title: '后台任务${job.statusText} · ${job.label}',
-            body: summary,
-          ),
-        );
-      }
-      if (completionUnreadOf(session.sid)) {
-        notices.add(
-          AttentionNotice(
-            id: noticeIdOf(_noticeKeyOf('completed', session.sid)),
-            kind: NoticeKind.completed,
-            sid: session.sid,
-            title: '跑完了 · $title',
-            body: '你没看着它的时候这一轮结束了',
-          ),
-        );
-      }
-    }
-    return notices;
-  }
-
   /// 把"该贴的"与"已贴的"对齐：消失的撤、新增的贴、同样的不动。
+  ///
+  /// 判据（哪四类事值得提醒）与"已贴了哪一份"都住在 `data/notices.dart`；
+  /// 这里只把**本类手里的既有事实**交过去，然后去调端口 —— 一个事实一处表达。
   void _syncNotices() {
     final port = _notify;
     if (port == null || _disposed) return;
-    final desired = <int, AttentionNotice>{
-      for (final notice in _desiredNotices()) notice.id: notice,
-    };
-    for (final id in _activeNotices.keys.toList()) {
-      if (desired.containsKey(id)) continue;
-      _activeNotices.remove(id);
+    final diff = _notices.reconcile(
+      desiredNotices(
+        hostId: _hostKey,
+        appForeground: _appForeground,
+        visible: _visible,
+        currentSid: _currentSid,
+        sessions: _sessions,
+        itemsOf: (sid) => _storeOf(sid).items,
+        jobsOf: _jobs.jobsOf,
+        completionUnreadOf: completionUnreadOf,
+        nowMs: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+    for (final id in diff.cancel) {
       unawaited(port.cancel(id));
     }
-    for (final entry in desired.entries) {
-      if (_activeNotices.containsKey(entry.key)) continue;
-      _activeNotices[entry.key] = entry.value;
-      unawaited(port.show(entry.value));
+    for (final notice in diff.show) {
+      unawaited(port.show(notice));
     }
   }
 
@@ -5005,10 +4918,9 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     // 通知：**只撤自己贴过的那批**。池化之后别的电脑还有自己的通知，而
     // `cancelAll` 会把它们一起撤掉 —— 通知 id 带电脑前缀，所以按 id 撤得准。
     unawaited(_approvalSub?.cancel());
-    for (final id in _activeNotices.keys.toList()) {
+    for (final id in _notices.clear()) {
       unawaited(_notify?.cancel(id));
     }
-    _activeNotices.clear();
     // 前台服务同理：只报"我这台不要再要了"，起停由 app 级汇总决定
     // （还有别的电脑在要就留着，见 `data/app_services.dart`）。
     final services = _services;
