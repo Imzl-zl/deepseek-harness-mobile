@@ -73,6 +73,7 @@ import 'host_catalogs.dart';
 import 'host_state.dart';
 import 'ids.dart';
 import 'item_derivations.dart';
+import 'job_book.dart';
 import 'projection.dart';
 import 'session_rows.dart';
 import 'session_store.dart';
@@ -1073,31 +1074,23 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
 
   // ---------------------------------------------------------------------------
   // 后台任务（契约 §7 的 job.* / §5.3 的 job 帧）
+  //
+  // **状态全在 `data/job_book.dart`**：四个表、桶的归属规则、终态单向合并都在那里。
+  // 这一段只做两件事：转发读面，与本层的编排（网络端口 + 通知）。
   // ---------------------------------------------------------------------------
 
+  final JobBook _jobs = JobBook();
+
   /// 当前会话的后台任务（按 sid 分桶：切会话看的是那一会话的任务）。
-  final Map<String, List<JobRow>> _jobs = {};
-
-  /// 正在订阅的任务（`sid` → `jobId` 集合）。展开时 follow、收起时 unfollow。
-  final Map<String, Set<String>> _followedJobs = {};
-
-  /// 每个任务已收到的输出（`jobId` → 文本）。**只追加，不重排** ——
-  /// 输出是日志，重排会让"读到这里"失去意义。
-  final Map<String, StringBuffer> _jobOutput = {};
-
-  /// 任务帧流出问题（订阅中断 / 帧解不开）时给界面的一句话。
-  final Map<String, String> _jobErrors = {};
-
-  List<JobRow> jobsOf(String sid) => List.unmodifiable(_jobs[sid] ?? const []);
+  List<JobRow> jobsOf(String sid) => _jobs.jobsOf(sid);
 
   /// 某个任务已收到的输出文本（没有订阅过就是空串）。
-  String jobOutput(String jobId) => _jobOutput[jobId]?.toString() ?? '';
+  String jobOutput(String jobId) => _jobs.outputOf(jobId);
 
   /// 某个任务的订阅问题；`null` = 没问题。
-  String? jobError(String jobId) => _jobErrors[jobId];
+  String? jobError(String jobId) => _jobs.errorOf(jobId);
 
-  bool isJobFollowed(String sid, String jobId) =>
-      _followedJobs[sid]?.contains(jobId) ?? false;
+  bool isJobFollowed(String sid, String jobId) => _jobs.isFollowed(sid, jobId);
 
   /// 拉一次任务清单。**只在进服务态与切会话时调** —— 它是一次性快照，
   /// 后续变化走 `job` 帧的 `status`。
@@ -1105,7 +1098,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   Future<void> refreshJobs(String sid) async {
     // **先建桶再早退**：`job` 帧不带 sid，只能靠"这个会话有桶"归位。
     // 桶不存在时帧会被丢 —— 而表现是"任务在跑但没有输出"，最难查的那类。
-    _jobs.putIfAbsent(sid, () => <JobRow>[]);
+    _jobs.ensureBucket(sid);
     // 形状（`{jobs: [...]}` 与一行任务）在 `wire/rpc/job.dart`。
     final reply = await _reads.jobList(sid: sid);
     // 没变 ⇒ 桶里已经是这一包（任务表只在任务增删 / 落终态时变）。
@@ -1113,21 +1106,12 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     final rows = reply.value;
     if (_disposed || rows == null) return;
     client.commitSnapshot(reply.key);
-    _mergeJobSnapshot(sid, rows);
+    // 快照合并的规则（终态单向）只在 `core/job.dart`，这里只给桶。
+    _jobs.applySnapshot(sid, rows);
     // 任务清单是一次性快照，但"该不该提醒"要跟着重算：进服务态时那批刚结束的
     // 任务正是要靠这一下贴上（否则要等下一个无关事件才提醒）。
     _syncNotices();
     notifyListeners();
-  }
-
-  /// 把一次 `job.list` 快照并进桶里。
-  ///
-  /// 判据（**终态单向**）只有一份：`core/job.dart` 的 [mergeJobSnapshot]。
-  /// 这里只负责"桶"（哪个会话）与"通知"，不重复规则本身 —— 快照与 `status`
-  /// 推送会赛跑（请求早于完成、回来晚于推送），两条写路径必须共用同一条规则，
-  /// 否则下一次只会修好一条（2026-10-26 评审）。
-  void _mergeJobSnapshot(String sid, List<JobRow> rows) {
-    _jobs[sid] = mergeJobSnapshot(_jobs[sid] ?? const <JobRow>[], rows);
   }
 
   /// 展开一个任务：订阅它的输出流。
@@ -1135,28 +1119,25 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// **幂等**：同一个 `(sid, jobId)` 重复 follow 由电脑侧合流，但本地也要挡一次，
   /// 否则 UI 上会出现"点了两下、输出翻倍"。
   Future<void> followJob(String sid, String jobId) async {
-    final followed = _followedJobs.putIfAbsent(sid, () => <String>{});
-    if (!followed.add(jobId)) return;
-    _jobOutput.putIfAbsent(jobId, StringBuffer.new);
-    _jobErrors.remove(jobId);
+    if (!_jobs.markFollowed(sid, jobId)) return;
     try {
       // **应答不读**：开流的作用在服务端，输出走 `job` 帧。
       await _writes.followJob(sid: sid, jobId: jobId);
     } on ProtocolException catch (error) {
       // 订阅没开成：把本地标记撤掉，否则 UI 会显示"已订阅"却永远没有输出。
-      followed.remove(jobId);
-      _jobErrors[jobId] = error.message;
+      _jobs.markUnfollowed(sid, jobId);
+      _jobs.setError(jobId, error.message);
       notifyListeners();
     }
   }
 
   /// 收起一个任务：退订。
   Future<void> unfollowJob(String sid, String jobId) async {
-    _followedJobs[sid]?.remove(jobId);
+    _jobs.markUnfollowed(sid, jobId);
     try {
       await _writes.unfollowJob(sid: sid, jobId: jobId);
     } on ProtocolException catch (error) {
-      _jobErrors[jobId] = error.message;
+      _jobs.setError(jobId, error.message);
     }
     notifyListeners();
   }
@@ -1166,74 +1147,20 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     try {
       return await _writes.killJob(sid: sid, jobId: jobId);
     } on ProtocolException catch (error) {
-      _jobErrors[jobId] = error.message;
+      _jobs.setError(jobId, error.message);
       notifyListeners();
       return null;
     }
   }
 
-  /// 把一条 `job` 帧应用到状态。**只认四种 kind**（`core/job.dart` 的 sealed 类），
-  /// 漏一种编译期就红。
+  /// 把一条 `job` 帧应用到状态（四种 kind 的形状在 `core/job.dart`）。
   void _applyJobFrame(JobFrame frame) {
-    switch (frame) {
-      case JobOpened(:final row):
-        _applyJobRow(row);
-        _jobOutput.putIfAbsent(row.id, StringBuffer.new);
-        _jobErrors.remove(row.id);
-      case JobOutput(:final jobId, :final chunks, :final lossy):
-        final buffer = _jobOutput.putIfAbsent(jobId, StringBuffer.new);
-        for (final chunk in chunks) {
-          if (chunk.gapBefore) {
-            buffer.write('…（较早的输出已被淘汰）\n');
-          }
-          buffer.write(chunk.text);
-        }
-        if (lossy) {
-          _jobErrors[jobId] = '部分输出已丢失（保留窗口之外）';
-        }
-      case JobStatus(:final row):
-        _applyJobRow(row);
-      case JobError(:final jobId, :final message):
-        _jobErrors[jobId] = message;
-    }
+    // `fallbackSid` = 老连接器不带 sid 时的退路（归到当前会话，且只在桶已存在时）。
+    final maybeRemind = _jobs.applyFrame(frame, fallbackSid: _currentSid);
     // 任务行变化是"该不该提醒"的输入（后台任务完成通知）。
     // **只有开任务 / 状态帧要重算**：输出帧按 chunk 计，跟着算一遍提醒太浪费。
-    if (frame is JobOpened || frame is JobStatus) _syncNotices();
+    if (maybeRemind) _syncNotices();
     notifyListeners();
-  }
-
-  void _applyJobRow(JobRow row) {
-    // **帧上带了 sid 就按它归桶**（连接器盖的）：这是唯一可靠的归属信息，
-    // 猜的代价是"正在看的会话不显示 chip、别的会话凭空多一个"。
-    //
-    // 2026-10-15 之前的做法是 `_jobs.keys.last`（地图插入序）——用户先开 A 再开 B，
-    // B 里新起的任务被归到 A，于是**正在看的 B 看不到后台任务**。
-    // 只有老连接器（帧不带 sid）才退回"当前会话"，且只在它的桶已存在时归。
-    final targetSid = row.sid ?? _currentSid;
-    if (targetSid != null && _jobs.containsKey(targetSid)) {
-      final bucket = _jobs[targetSid]!;
-      final index = bucket.indexWhere((j) => j.id == row.id);
-      // **同一份合并规则**：终态单向（`core/job.dart` 的 [mergeJobRow]）。
-      // 推送路径也曾漏过这条 —— 一条迟到的 `status` 帧会把已结束的任务改回 running。
-      final merged = mergeJobRow(index >= 0 ? bucket[index] : null, row);
-      _jobs[targetSid] = index >= 0
-          ? [...bucket..[index] = merged]
-          : [...bucket, merged];
-      notifyListeners();
-      return;
-    }
-    // 全局更新：任务在**任何**已建桶的会话里都同步（同 id 覆盖）。
-    // 这是为了"用户在 A 看任务、B 也开过"时状态不分裂 —— 但不新建桶
-    // （硬塞进一个错误的会话比丢一帧更糟）。
-    for (final entry in _jobs.entries) {
-      final index = entry.value.indexWhere((j) => j.id == row.id);
-      if (index >= 0) {
-        final merged = mergeJobRow(entry.value[index], row);
-        _jobs[entry.key] = [...entry.value..[index] = merged];
-        notifyListeners();
-        return;
-      }
-    }
   }
 
   final Map<String, SessionStore> _stores = {};
@@ -3234,7 +3161,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       // Note: 为什么任务单独一类、为什么是 30 分钟窗口 —— 见
       // `.agents/notes/implemented/2026-11-09-job-completion-notice.md`
       final now = DateTime.now().millisecondsSinceEpoch;
-      for (final job in _jobs[session.sid] ?? const <JobRow>[]) {
+      for (final job in _jobs.jobsOf(session.sid)) {
         final finishedAt = job.finishedAt;
         if (finishedAt == null || job.isLive) continue;
         if (now - finishedAt > _jobNoticeWindow.inMilliseconds) continue;

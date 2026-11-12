@@ -67,7 +67,7 @@ const FILE_STEP = 50
  */
 const FILE_BUDGET = [
   ['app/lib/ui/chat_page.dart', 5300], // 一个 State 里塞了整页脚手架（`_mainScaffold` 414 行）
-  ['app/lib/data/app_model.dart', 5250], // host 投影的 façade，还剩会话/任务/通知三簇未拆
+  ['app/lib/data/app_model.dart', 5150], // host 投影的 façade，还剩会话/通知两簇未拆
   ['app/lib/core/sync_client_impl.dart', 2050], // 连接层，收帧/恢复/写操作三件事在同一类
   ['app/lib/ui/chat_turns.dart', 2000], // 逐种条目的渲染器，可按条目族分文件
   ['app/lib/main.dart', 1950], // 装配点 + 路由 + 抽屉回调，装配之外的部分可下沉
@@ -88,7 +88,7 @@ const FILE_BUDGET = [
  * 名字必须**唯一**（同名类出现在两个文件里就是抄错了）。
  */
 const CLASS_BUDGET = [
-  ['AppModel', 178], // 见 `proposed/2026-10-27-ui-state-design.md` 的三簇收窄
+  ['AppModel', 176], // 见 `proposed/2026-10-27-ui-state-design.md` 的收窄；任务簇 2026-11-11 已搬去 `job_book.dart`
   ['ChatPageState', 65], // 面板/文件区/轨迹该各自成 widget
   ['_SyncClient', 61], // 收帧 / 恢复 / 写操作三件事在同一类
   ['_DshMobileAppState', 48], // 装配之外的路由回调可下沉
@@ -109,6 +109,16 @@ const METHOD_DECL =
   /^ {2}(?:@override\s+)?(?:static\s+)?(?:Future<[^>]*>|Stream<[^>]*>|void|bool|int|double|String|Widget|List<[^>]*>|[A-Z][\w.]*)\??\s+(\w+)\s*[<(]/
 
 const ceil = (n, step) => Math.ceil(n / step) * step
+
+// 自检样本**不手抄表里的数字**：表一改（收窄一次就要改），样本会跟着红 ——
+// 而那时红的是「样本过时」，读起来像「规则坏了」。从表里取。
+const budgetOf = (table, key) => {
+  const hit = table.find(([name]) => name === key)
+  if (hit === undefined) throw new Error(`自检样本指名的 ${key} 不在表里`)
+  return hit[1]
+}
+const CHAT_PAGE_LINES = budgetOf(FILE_BUDGET, 'app/lib/ui/chat_page.dart')
+const APP_MODEL_METHODS = budgetOf(CLASS_BUDGET, 'AppModel')
 
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir)) {
@@ -261,13 +271,13 @@ const SELF_TEST = [
   {
     rule: 'file-lines',
     why: '表内文件超过它自己的上限 → 拦（棘轮在这儿咬人）',
-    measured: [sample('app/lib/ui/chat_page.dart', 'const a = 1;\n'.repeat(5301))],
+    measured: [sample('app/lib/ui/chat_page.dart', 'const a = 1;\n'.repeat(CHAT_PAGE_LINES + 1))],
     shouldFail: true,
   },
   {
     rule: 'file-lines',
     why: '表内文件正好等于上限 → 放',
-    measured: [sample('app/lib/ui/chat_page.dart', 'const a = 1;\n'.repeat(5300))],
+    measured: [sample('app/lib/ui/chat_page.dart', 'const a = 1;\n'.repeat(CHAT_PAGE_LINES))],
     shouldFail: false,
   },
   // --- class-methods ---
@@ -286,19 +296,19 @@ const SELF_TEST = [
   {
     rule: 'class-methods',
     why: '表内的类超过它自己的上限 → 拦',
-    measured: [sample('app/lib/data/app_model.dart', cls('AppModel', 181))],
+    measured: [sample('app/lib/data/app_model.dart', cls('AppModel', APP_MODEL_METHODS + 2))],
     shouldFail: true,
   },
   {
     rule: 'class-methods',
     why: '表内的类正好等于上限 → 放',
-    measured: [sample('app/lib/data/app_model.dart', cls('AppModel', 178))],
+    measured: [sample('app/lib/data/app_model.dart', cls('AppModel', APP_MODEL_METHODS))],
     shouldFail: false,
   },
   {
     rule: 'class-methods',
     why: '**表内类多一个方法就红**（方法数没有余量：余量就是暗门）',
-    measured: [sample('app/lib/data/app_model.dart', cls('AppModel', 179))],
+    measured: [sample('app/lib/data/app_model.dart', cls('AppModel', APP_MODEL_METHODS + 1))],
     shouldFail: true,
   },
   {
@@ -360,7 +370,7 @@ const SELF_TEST = [
   {
     rule: 'budget-not-stale',
     why: '类长了却没提数字 → 拦（两个方向都要有牙，否则只能挡一边）',
-    measured: [sample('app/lib/data/app_model.dart', cls('AppModel', 179))],
+    measured: [sample('app/lib/data/app_model.dart', cls('AppModel', APP_MODEL_METHODS + 1))],
     shouldFail: true,
   },
 ]
