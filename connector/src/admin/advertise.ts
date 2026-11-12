@@ -19,11 +19,17 @@
  *
  * ## 校验只在写入处
  *
- * 直连地址是**明文 `ws://` + 非公网**（电脑侧监听面刻意不终结 TLS，
- * `transport/listener.ts` 的"不终结 TLS"）。公网地址要走中转，不在这里 ——
- * 所以 `extra` 只收 `ws://` + 非公网，**与手机侧的手填校验同一个判据**
- * （`app/lib/core/endpoint.dart` 的 `isPrivateOrLoopback`；两侧的对齐由
- * `tests/relay-url-nonpublic.test.ts` 用同一批地址钉住）。
+ * 监听面本身**不终结 TLS**（`transport/listener.ts`），所以地址分两档，判据与
+ * 手机侧手填同一套（`app/lib/core/endpoint.dart` 的 `isPrivateOrLoopback`）：
+ *
+ * - `ws://` 只收非公网：明文直连只在局域网 / 回环 / CGNAT 里有意义；把明文
+ *   指到公网等于把元数据摊开，而那一档要用户在**手机上**逐次确认，面板不替他拍板。
+ * - `wss://` 收任意主机：TLS 由外部终结（反向代理 / frp / `tailscale serve`），
+ *   于是"公网地址也能直连"成立，且这里是**唯一**能被手机自动发现的入口
+ *   （手填那条在手机上一次一条，换地址就得再填）。
+ *
+ * 为什么"公网只能走中转"被撤掉：见
+ * `.agents/notes/implemented/2026-11-10-direct-endpoint-accepts-wss.md`。
  */
 import { isNonPublicHost } from '../transport/relay-url.js'
 
@@ -77,7 +83,7 @@ export function advertiseMapOf(
 export class AdvertiseError extends Error {}
 
 /**
- * 校验一条 `extra` 地址。**只收 `ws://` + 非公网** —— 理由见文件头。
+ * 校验一条 `extra` 地址：`ws://` 限非公网，`wss://` 不限 —— 理由见文件头。
  *
  * `hide` 不需要校验：它只会让某个已有地址不上报，不引入新拨号面。
  */
@@ -88,15 +94,17 @@ export function assertExtraAddress(url: string): void {
   } catch {
     throw new AdvertiseError(`地址解析失败：${url}`)
   }
-  if (parsed.protocol !== 'ws:') {
-    throw new AdvertiseError('直连地址必须是 ws://（电脑侧监听面不终结 TLS）')
+  if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
+    throw new AdvertiseError('直连地址必须是 ws://（局域网）或 wss://（外部终结 TLS）')
   }
   if (parsed.username !== '' || parsed.password !== '' || parsed.hash !== '' || parsed.search !== '') {
     throw new AdvertiseError('地址不能带凭据、查询参数或片段')
   }
+  // `wss://` 到此为止：主机是不是公网不影响可行性（TLS 已由外部终结）。
+  if (parsed.protocol === 'wss:') return
   const host = parsed.hostname.replace(/^\[|\]$/g, '')
   if (!isNonPublicHost(host)) {
-    throw new AdvertiseError('直连地址必须是局域网 / 回环 / CGNAT 地址（公网请走中转）')
+    throw new AdvertiseError('公网直连要用 wss://（ws:// 明文仅限局域网 / 回环 / CGNAT）')
   }
 }
 

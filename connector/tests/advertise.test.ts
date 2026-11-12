@@ -5,8 +5,9 @@
  *
  * 1. **藏掉的地址不再出现在 `endpoint.describe` 里** —— 否则界面上"藏了"
  *    而手机照旧收到它，看起来像开关坏了。
- * 2. **追加的地址只收 `ws://` + 非公网** —— 直连面是明文（`listener.ts`
- *    刻意不终结 TLS），而公网地址必须走中转。这条与手机侧手填的判据同源
+ * 2. **追加的地址分两档**：`ws://` 只收非公网（监听面不终结 TLS，明文只该留在局域网）；
+ *    `wss://` 不限主机（TLS 由外部终结 —— 反代 / frp / `tailscale serve`），
+ *    所以公网地址也进得来。手机侧手填用同一套判据
  *    （`app/lib/core/endpoint.dart` 的 `isPrivateOrLoopback`）。
  */
 import assert from 'node:assert/strict'
@@ -86,8 +87,13 @@ test('上报：extra 与已有地址重名时只留一条', () => {
   assert.equal(urls.filter((url) => url === 'ws://192.168.1.4:8790').length, 1)
 })
 
-test('校验：extra 只收 ws:// + 非公网', () => {
-  // 局域网 / 回环 / CGNAT 都收。
+test('上报：extra 收 `wss://` 公网地址（frp / 反代穿透出去的那一条）', () => {
+  const urls = directUrls(new Map<string, 'hide' | 'extra'>([['wss://dsh.example.com', 'extra']]))
+  assert.deepEqual(urls, ['ws://192.168.1.4:8790', 'wss://dsh.example.com'])
+})
+
+test('校验：extra 分两档 —— ws:// 只收非公网，wss:// 不限', () => {
+  // 局域网 / 回环 / CGNAT 的明文都收。
   for (const url of [
     'ws://192.168.1.4:8790',
     'ws://10.0.0.9:8790',
@@ -96,14 +102,22 @@ test('校验：extra 只收 ws:// + 非公网', () => {
   ]) {
     assert.doesNotThrow(() => assertExtraAddress(url), `${url} 应该收`)
   }
-  // 公网必须走中转；直连面是明文，不能把明文指到公网。
+  // wss：TLS 已由外部终结，公网与私网都能拨。
+  for (const url of [
+    'wss://dsh.example.com',
+    'wss://dsh.example.com:8443',
+    'wss://192.168.1.4:8790',
+    'wss://100.64.1.9:8790',
+  ]) {
+    assert.doesNotThrow(() => assertExtraAddress(url), `${url} 应该收`)
+  }
+  // 公网明文仍然拒：那一档只能在手机上逐次确认，面板不替用户拍板。
   assert.throws(() => assertExtraAddress('ws://example.com:8790'), AdvertiseError)
   assert.throws(() => assertExtraAddress('ws://8.8.8.8:8790'), AdvertiseError)
-  // 直连不终结 TLS，wss:// 拨不通 —— 与其发一条永远连不上的地址，不如拒。
-  assert.throws(() => assertExtraAddress('wss://192.168.1.4:8790'), AdvertiseError)
   assert.throws(() => assertExtraAddress('http://192.168.1.4:8790'), AdvertiseError)
   // 带凭据 / 查询串的地址不是"一条地址"，是配置写错了。
   assert.throws(() => assertExtraAddress('ws://u:p@192.168.1.4:8790'), AdvertiseError)
+  assert.throws(() => assertExtraAddress('wss://u:p@dsh.example.com'), AdvertiseError)
   assert.throws(() => assertExtraAddress('ws://192.168.1.4:8790/?a=1'), AdvertiseError)
 })
 

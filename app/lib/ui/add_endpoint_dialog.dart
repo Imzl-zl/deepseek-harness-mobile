@@ -28,7 +28,9 @@
 /// - **公网**：只有用户**勾选确认**后才放行（自部署中转、暂无域名/证书的场景）。
 ///   `AppModel.addManualEndpoint` 只存值，两处各判一遍就会漂。
 ///
-/// **直连一般填 `ws://`**：电脑侧监听面不终结 TLS，写成 `wss://` 反而拨不通。
+/// **直连两档**：局域网填 `ws://IP:8790`（电脑侧监听面不终结 TLS）；
+/// 经 frp / 反向代理 / `tailscale serve` 穿透出去时填 `wss://域名` ——
+/// 这种写法是对的，TLS 发生在监听面**前面**那一跳（`transport/listener.ts` 的文件头）。
 ///
 /// Note: 为什么中转是二选一、内置值放在哪儿 —— 见
 /// `.agents/notes/implemented/2026-11-01-builtin-relay-is-a-choice.md`
@@ -105,15 +107,14 @@ class _AddEndpointDialogState extends State<AddEndpointDialog> {
       return;
     }
     try {
-      // 非公网明文一律放行；公网明文只认用户勾过的那一下。
-      checkedRelayUri(
-        raw,
-        allowInsecureLocal: true,
-        allowInsecurePublic: _acknowledged,
-      );
       if (_kind == EndpointKind.direct) {
-        if (!raw.startsWith('ws://')) {
-          setState(() => _error = '直连是明文 ws://（电脑侧监听面不终结 TLS）');
+        // 直连自己分两档，**先于** [checkedRelayUri]：那个函数的公网明文档是为
+        // 中转写的（"必须使用 WSS"），套到直连上会把"没勾确认"错报成"必须wss"，
+        // 而直连本来就有明文这一档。形状检查仍然复用它（凭据 / query / 片段）。
+        // Note: 直连也收 `wss://`（TLS 由外部终结）—— 见
+        // .agents/notes/implemented/2026-11-10-direct-endpoint-accepts-wss.md
+        if (!raw.startsWith('ws://') && !raw.startsWith('wss://')) {
+          setState(() => _error = '直连地址要 ws://（局域网）或 wss://（穿透 / 反代）');
           return;
         }
         // 直连到公网 IP 是"自己把监听面映射到公网"的自部署形态：允许，但要确认。
@@ -121,6 +122,18 @@ class _AddEndpointDialogState extends State<AddEndpointDialog> {
           setState(() => _error = '公网直连是明文，请先勾选确认');
           return;
         }
+        checkedRelayUri(
+          raw,
+          allowInsecureLocal: true,
+          allowInsecurePublic: true,
+        );
+      } else {
+        // 非公网明文一律放行；公网明文只认用户勾过的那一下。
+        checkedRelayUri(
+          raw,
+          allowInsecureLocal: true,
+          allowInsecurePublic: _acknowledged,
+        );
       }
     } on ProtocolException catch (error) {
       setState(() => _error = error.message);
@@ -190,10 +203,9 @@ class _AddEndpointDialogState extends State<AddEndpointDialog> {
                 autofocus: true,
                 style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
                 decoration: InputDecoration(
-                  // **占位不写死别人的 IP**：直连只收局域网明文（`core/endpoint.dart`
-                  // 的校验），形状固定成"电脑的局域网地址"；中转那栏给的是域名形状。
+                  // **占位不写死别人的 IP**：直连两档（局域网 ws:// / 穿透 wss://）。
                   hintText: _kind == EndpointKind.direct
-                      ? 'ws://电脑局域网IP:8790'
+                      ? 'ws://192.168.1.5:8790 或 wss://域名'
                       : 'wss://你的域名',
                   hintStyle: const TextStyle(fontSize: 12),
                   errorText: _error,
@@ -206,7 +218,7 @@ class _AddEndpointDialogState extends State<AddEndpointDialog> {
               const SizedBox(height: 8),
               Text(
                 _kind == EndpointKind.direct
-                    ? '电脑侧直连地址（局域网 IP，或映射到公网的自部署地址）。'
+                    ? '电脑侧直连地址：局域网填 ws://IP:8790；经 frp / 反代穿透填 wss://域名。'
                     : '中转根地址（不带路径）；有域名用 wss。',
                 style: TextStyle(fontSize: 11, color: c.labelTertiary),
               ),

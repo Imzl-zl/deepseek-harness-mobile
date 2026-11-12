@@ -134,6 +134,7 @@ void main() {
   });
 
   _relayGroup();
+  _directSchemeGroup();
 }
 
 /// 把 `addEndpointOnly` 包一层（它要 context，测试里从按钮的 context 拿）。
@@ -159,6 +160,53 @@ Widget _dialogOpener(
     ),
   ),
 );
+
+/// 直连两档：局域网的 `ws://`，或外部终结 TLS 的 `wss://`（frp / 反代 / tailscale serve）。
+///
+/// 监听面自己不终结 TLS，但「前面那一跳终结了」是合法且推荐的形态 ——
+/// 拒绝 `wss://` 等于把「有域名的人」挡在外面（frp 教程的主线正是它）。
+void _directSchemeGroup() {
+  testWidgets('直连收 wss://：TLS 在前面那一跳，地址本身仍然有效', (tester) async {
+    AddedEndpoint? added;
+    await tester.pumpWidget(
+      _dialogOpener((v) => added = v, EndpointKind.direct),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'wss://dsh.example.com');
+    await tester.tap(find.text('添加'));
+    await tester.pumpAndSettle();
+
+    expect(added?.endpoint.kind, EndpointKind.direct);
+    expect(added?.endpoint.url, 'wss://dsh.example.com');
+    expect(added?.allowPlaintextPublic, isFalse, reason: 'wss 有 TLS，不需要明文确认');
+  });
+
+  testWidgets('公网明文直连仍然要勾确认：不勾就加不进去', (tester) async {
+    AddedEndpoint? added;
+    await tester.pumpWidget(
+      _dialogOpener((v) => added = v, EndpointKind.direct),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    // 203.0.113.0/24 是 TEST-NET-3：肯定不是私网，走“公网”那一档。
+    await tester.enterText(find.byType(TextField), 'ws://203.0.113.9:18790');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('添加'));
+    await tester.pumpAndSettle();
+    expect(added, isNull, reason: '公网明文没确认就不许落表');
+    expect(find.textContaining('请先勾选确认'), findsOneWidget);
+
+    await tester.tap(find.byType(CheckboxListTile));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('添加'));
+    await tester.pumpAndSettle();
+    expect(added?.endpoint.url, 'ws://203.0.113.9:18790');
+    expect(added?.allowPlaintextPublic, isTrue);
+  });
+}
 
 void _relayGroup() {
   testWidgets('中转是**选**的：默认内置那条（开箱即用，不用填）', (tester) async {

@@ -484,7 +484,7 @@ void main() {
       isEmpty,
       reason: '公网明文不许进表',
     );
-    expect(find.textContaining('明文仅限'), findsOneWidget, reason: '要说出为什么');
+    expect(find.textContaining('公网直连是明文'), findsOneWidget, reason: '要说出为什么');
     addTearDown(app.dispose);
   });
 
