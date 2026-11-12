@@ -752,6 +752,29 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
         时那一次 ＋ 是复用（页面不动）、再点一次也不多建。
         **跑完 `flutter test integration_test/` 会把 App 卸掉**（§5 已记）——
         事后用 `flutter build apk --debug` + `adb install -r`，或直接装 Release APK 装回来。
+    11. **重配一台已配对的手机：四个新坑**（2026-11-12 一次踩全，约 40 分钟）
+        - **配对码 TTL 只有 5 分钟，超时后两条路都报同一句话**。粘贴慢了（改字符、找按钮）就会看到
+          `局域网直连没通（1 个地址）；配对码尚未在中转登记成功，请让电脑重新出码 (protocol/not-paired)`
+          —— 那句「在中转登记失败」是**降级话术**，真因可能只是过期。重新出码 + 一次走完就能过。
+        - **`lan` 为空 = 默认路由那张网卡不在监听面候选里**（这次：默认路由是以太网 `192.168.2.x`，
+          手机在 WiFi `192.168.110.x`）。出码前先看 `/api/dsh-mobile/advertise` 的 `candidates`，
+          用 `POST /api/dsh-mobile/advertise {"url":"ws://<WiFi IP>:<listenPort>","kind":"extra"}`
+          把手机能到的那条标成 `extra`，`lanAvailable` 才会是 true（否则手机只能走 `relay` 那格，
+          而 `relay` 的 host 也是默认路由的地址，同样拨不通）。
+        - **中转要真起来，否则出码直接 400**：`POST /pair` 回
+          `没能把这次配对登记到中转（fetch failed）`。启法（主机上 8787 没有被占用时）：
+          `cd relay; node src/main.ts --config relay.config.json`（**必须带 `--config`**，不带打印用法就退）。
+          连上后日志里会出现 `connector.open <pcId>`。
+        - **粘贴 327 字节载荷仍然只有「全禁输入法」一条稳定路**：`settings put secure enabled_input_methods '""'`
+          → 点输入框 → `input keycombination 113 29`（CTRL+A 替换原内容）→
+          `input text '<载荷>'` → 恢复原值 → `input keyevent 4`（收键盘）。
+          收键盘前 `screencap` 是**黑屏**（只剩电量）而不报错 —— 判据是
+          `dumpsys input_method | grep mInputShown` 变 `false`。
+        - **`uiautomator dump` 在没有无障碍服务时会给一份停住不更新的树**（这次对着旧屏点错了一次
+          「重新配对」，把配对凭据清了）。要验语义树就先把 TalkBack 或任意无障碍服务弄活
+          （`settings put secure enabled_accessibility_services <pkg>/<Service>` + `accessibility_enabled 1`；
+          MIUI 上第一次会弹「欢迎使用 TalkBack」，按两次「关闭 TalkBack」退出）。
+          只想操作界面时**别开**，开了单指点击就变成焦点选择。
 - **真机验「桌面卡被手机撤掉」的配方**（2026-10-23 用一次验完，约 1 轮）：
   - **桌面侧不必开用户日常浏览器**：headless Chrome 里打开隔离实例的 Web GUI 就是**真客户端**
     （同一份 `ui-approval`），截图用 CDP，点按钮用 `document.querySelectorAll('button')` 里按文案点。
