@@ -369,6 +369,11 @@ JobRow _parseRow(Object? raw, String jobId) {
     progress: raw['progress'] is String ? raw['progress'] as String : null,
     detail: raw['detail'] is String ? raw['detail'] as String : null,
     finishedAt: raw['finishedAt'] is int ? raw['finishedAt'] as int : null,
+    // 连接器在 `opened` / `status` 帧的 `job` 上盖了 sid
+    // （`connector/src/job-subscriptions.ts:98-101`）—— 帧本身不带会话，
+    // 不读它就只能退回归"当前会话"（[JobRow.sid] 已写明这件事）。
+    // 与 `job.list` 那条路同一个键、同一个读法（`wire/rpc/job.dart` 的 `_jobRowOf`）。
+    sid: raw['sid'] is String ? raw['sid'] as String : null,
   );
 }
 
