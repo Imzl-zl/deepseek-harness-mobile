@@ -26,6 +26,80 @@ library;
 
 import '../core/job.dart';
 
+/// 一个任务的输出要留多少 —— **直接取宿主自己的保留量**，不是拍的。
+///
+/// DSH 的 `jobs-local` 只保留最近一段输出（ring）：
+/// - 跑着的时候 `DEFAULT_RETAIN_BYTES = 256 * 1024`（`packages/jobs/jobs-local/src/index.ts:37`）
+/// - 结算之后收紧到 `DEFAULT_SETTLED_RETAIN_BYTES = 16 * 1024`（同文件 `:40`，收紧在 `:624-628`）
+///
+/// 手机留得比宿主更久，等于在保留宿主已经判定"不值得留"的字节，而且它自己
+/// 只增不减（`unfollow` 不释放）。所以这里跟着宿主的两档走。
+///
+/// **单位是字符而不是字节**：宿主按 UTF-8 字节算，而这里是一个 Dart `String`。
+/// 逐个 chunk 编 UTF-8 只为了数长度不值，而任务输出绝大多数是 ASCII 日志（两者相等）；
+/// 中文日志下这个上限相当于更宽松，但**仍然有界** —— 这条门禁要的是"不会无限涨"。
+const int kJobOutputLiveChars = 256 * 1024;
+const int kJobOutputSettledChars = 16 * 1024;
+
+/// 一次 append 之后允许超出的余量（超出这么多的整份裁剪一次，摊还到 O(1)/字符）。
+const int _kTrimSlackChars = kJobOutputLiveChars ~/ 4;
+
+/// 输出里"前面有洞"时给界面的那一句话（`jobError` 通道，与订阅中断共用一格）。
+///
+/// 文案与宿主 `gapBefore` 的含义对齐：**丢了就说出来**（`ui/side_pane.dart:709-716`）。
+const String kJobOutputDroppedNote = '部分输出已丢失（保留窗口之外）';
+
+/// 内联在输出正文最前面的缺口标记（与 `gapBefore` 用的是同一句话）。
+const String kJobOutputGapMarker = '…（较早的输出已被淘汰）';
+
+/// 一个任务的输出缓冲。
+class _Output {
+  final StringBuffer text = StringBuffer();
+
+  /// 前面有洞（被裁掉 / 这一条流从中途开始）。
+  ///
+  /// **内联在正文最前面，而不是走 `jobError`**：洞就长在开头，说在那里最不容易被
+  /// 读成"这是完整日志"，而且复制出去时它跟着走。`jobError` 留给"流本身出过问题"
+  /// （订阅断了 / 宿主报了 `lossy`）—— 两件事挤一个管道会让"为什么有洞"说不清。
+  bool dropped = false;
+
+  void reset({bool dropped = false}) {
+    text.clear();
+    this.dropped = dropped;
+  }
+
+  void append(String chunk) => text.write(chunk);
+
+  /// 超过 [kJobOutputLiveChars] 就只留尾巴（保留最近的）。
+  ///
+  /// 返回是否真的裁了。
+  bool trim({int cap = kJobOutputLiveChars}) {
+    if (text.length <= cap + _kTrimSlackChars) return false;
+    final whole = text.toString();
+    text
+      ..clear()
+      ..write(whole.substring(whole.length - cap));
+    dropped = true;
+    return true;
+  }
+
+  int get length => text.length;
+
+  /// 去掉第一行（裁掉的开头是半行时，不要让它当一个残缺的行显示）。
+  void dropPartialHead() {
+    final whole = text.toString();
+    final newline = whole.indexOf('\n');
+    if (newline < 0) return;
+    text
+      ..clear()
+      ..write(whole.substring(newline + 1));
+  }
+
+  @override
+  String toString() =>
+      dropped ? '$kJobOutputGapMarker\n${text.toString()}' : text.toString();
+}
+
 class JobBook {
   JobBook();
 
@@ -37,7 +111,9 @@ class JobBook {
 
   /// 每个任务已收到的输出（`jobId` → 文本）。**只追加，不重排** ——
   /// 输出是日志，重排会让"读到这里"失去意义。
-  final Map<String, StringBuffer> _output = {};
+  ///
+  /// 上限跟宿主走（见 [kJobOutputLiveChars]）；**重开流时整份换掉**（见 `applyFrame`）。
+  final Map<String, _Output> _output = {};
 
   /// 任务帧流出问题（订阅中断 / 帧解不开）时给界面的一句话。
   final Map<String, String> _errors = {};
@@ -79,27 +155,47 @@ class JobBook {
   /// 应用一条 `job` 帧。**只认四种 kind**（`core/job.dart` 的 sealed 类），
   /// 漏一种编译期就红。
   ///
+  /// ## `JobOpened` = 一条新流开始，缓冲**整份换掉**
+  ///
+  /// 宿主 `follow` 的契约（`packages/api/job-controller/src/types.ts:55-62`）：
+  /// 不给 `from` 就从**最老的保留字节**开始重放。而手机展开是 `follow`、收起是
+  /// `unfollow` —— 于是"展开 → 收起 → 再展开"会收到一遍重放。
+  /// 之前的写法是 `putIfAbsent`（保留旧缓冲），于是同一段日志**会被追加两遍**。
+  /// `opened` 带着 `from`，正好告诉我们这条流从哪儿开始：
+  /// - `from == 0`：从头重放 ⇒ 干净重置；
+  /// - `from > 0`：宿主已经淘汰了前面一段 ⇒ 重置 **并显式标注有洞**。
+  ///
   /// 返回"要不要重算提醒"：**只有开任务 / 状态帧要**。输出帧按 chunk 计，
   /// 跟着算一遍提醒太浪费。
   bool applyFrame(JobFrame frame, {String? fallbackSid}) {
     switch (frame) {
-      case JobOpened(:final row):
+      case JobOpened(:final row, :final from):
         _applyRow(row, fallbackSid: fallbackSid);
-        _output.putIfAbsent(row.id, StringBuffer.new);
+        // `from > 0` = 宿主已经淘汰了前面一段 ⇒ 重置 + 内联标出洞。
+        _output[row.id] = _Output()..reset(dropped: from > 0);
         _errors.remove(row.id);
       case JobOutput(:final jobId, :final chunks, :final lossy):
-        final buffer = _output.putIfAbsent(jobId, StringBuffer.new);
+        final buffer = _output.putIfAbsent(jobId, _Output.new);
         for (final chunk in chunks) {
           if (chunk.gapBefore) {
-            buffer.write('…（较早的输出已被淘汰）\n');
+            buffer.append('$kJobOutputGapMarker\n');
+            _errors[jobId] = kJobOutputDroppedNote;
           }
-          buffer.write(chunk.text);
+          buffer.append(chunk.text);
         }
-        if (lossy) {
-          _errors[jobId] = '部分输出已丢失（保留窗口之外）';
-        }
-      case JobStatus(:final row):
+        if (lossy) _errors[jobId] = kJobOutputDroppedNote;
+        if (buffer.trim()) buffer.dropPartialHead();
+      case JobStatus(:final row, :final jobId):
         _applyRow(row, fallbackSid: fallbackSid);
+        // 结算之后宿主把 ring 收紧（`jobs-local/src/index.ts:624-628`）：
+        // 跟着收紧，别替它留着它已经丢掉的字节。
+        final settled = _output[jobId];
+        if (!row.isLive &&
+            settled != null &&
+            settled.length > kJobOutputSettledChars) {
+          settled.trim(cap: kJobOutputSettledChars);
+          settled.dropPartialHead();
+        }
       case JobError(:final jobId, :final message):
         _errors[jobId] = message;
     }
@@ -113,7 +209,7 @@ class JobBook {
   bool markFollowed(String sid, String jobId) {
     final followed = _followed.putIfAbsent(sid, () => <String>{});
     if (!followed.add(jobId)) return false;
-    _output.putIfAbsent(jobId, StringBuffer.new);
+    _output.putIfAbsent(jobId, _Output.new);
     _errors.remove(jobId);
     return true;
   }
