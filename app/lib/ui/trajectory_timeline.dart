@@ -92,6 +92,21 @@ class TimelineSegment {
   bool get running => steps.any((step) => step.running);
 }
 
+/// 一格时间轴对朗读器的那句话：**这一格是什么**。
+///
+/// 不拼时长：合并格的合计要手机自己加，而本仓的纪律是“用时只读电脑侧算好的数”
+/// （`model/trajectory.dart` 的文件头）。时长在详情 sheet 里逐段列着。
+String segmentSemanticsLabel(TimelineSegment segment) {
+  final first = segment.steps.first;
+  final name = first.label.isEmpty
+      ? first.kindLabel
+      : '${first.kindLabel} ${first.label}';
+  final count = segment.merged ? ' 等 ${segment.steps.length} 段' : '';
+  final failed = segment.steps.any((step) => step.isError) ? '，失败' : '';
+  final running = segment.running ? '，进行中' : '';
+  return '$name$count$failed$running';
+}
+
 /// 泳道号：模型 0 / 压缩 1 / 工具 2。
 ///
 /// 固定顺序（不按出现先后重排）：同一轮里模型段永远在最上面，
@@ -280,11 +295,16 @@ class _Track extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
+    final onTap = onTapSegment;
     return SizedBox(
       height: height,
       child: GestureDetector(
         // 整条轨道一个手势，命中靠 [segmentAt] —— 3dp 的段自己收不到点击。
         behavior: HitTestBehavior.opaque,
+        // **手势本身不进语义树**：朗读器的双击是“激活当前节点”，不是按坐标点 ——
+        // 而这个手势节点没有名字，只能被念成一个无名可点区（假入口的语义版）。
+        // 可读的那份由下面每一格的 `Semantics` 表达（一格一个节点）。
+        excludeFromSemantics: true,
         onTapUp: onTapSegment == null
             ? null
             : (details) {
@@ -309,10 +329,18 @@ class _Track extends StatelessWidget {
                 top: segment.lane * (kTimelineLaneHeight + kTimelineLaneGap),
                 width: segment.width,
                 height: kTimelineLaneHeight,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: segment.color(c),
-                    borderRadius: BorderRadius.circular(1.5),
+                // **一格一个节点**：手指要 3dp 的精度，朗读器不要 ——
+                // 它靠焦点移动选节点、双击激活那一个的 `onTap`（不按坐标）。
+                // 于是同一份数据在这里第一次对读屏用户可达。
+                child: Semantics(
+                  button: onTap != null,
+                  label: segmentSemanticsLabel(segment),
+                  onTap: onTap == null ? null : () => onTap(segment.steps),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: segment.color(c),
+                      borderRadius: BorderRadius.circular(1.5),
+                    ),
                   ),
                 ),
               ),

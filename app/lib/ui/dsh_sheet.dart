@@ -414,55 +414,64 @@ class DshPickerRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.dshColors;
     final iconName = icon;
-    return Opacity(
-      opacity: enabled ? 1 : 0.45,
-      child: InkWell(
-        onTap: enabled ? onTap : _noop,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 11),
-          child: Row(
-            children: [
-              if (iconName != null) ...[
-                DshIcon(iconName, size: 18, color: c.labelSecondary),
-                const SizedBox(width: 10),
-              ],
-              // 名称 + 其下标签组（**第二行**，不是第三列）。
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 14, color: c.labelPrimary),
-                    ),
-                    if (tags.isNotEmpty) ...[
-                      const SizedBox(height: 5),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 4,
-                        children: [for (final tag in tags) _Tag(tag)],
+    // **角色 + 勾选态两个都要表达**（朗读器靠它们，不靠那个勾字形）：
+    // 只画打勾时，读屏用户听到的是一行“文字”，既不知道它能点，
+    // 也不知道它已经是当前项。禁用行（如“正在用的那条连接”）不报按钮 ——
+    // 它点不动，而“当前项”那个事实由 `selected` 说。
+    // 理由与判据见 `.agents/notes/implemented/2026-11-12-a11y-sheet-and-trajectory.md`。
+    return Semantics(
+      button: enabled,
+      selected: selected,
+      child: Opacity(
+        opacity: enabled ? 1 : 0.45,
+        child: InkWell(
+          onTap: enabled ? onTap : _noop,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 11),
+            child: Row(
+              children: [
+                if (iconName != null) ...[
+                  DshIcon(iconName, size: 18, color: c.labelSecondary),
+                  const SizedBox(width: 10),
+                ],
+                // 名称 + 其下标签组（**第二行**，不是第三列）。
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 14, color: c.labelPrimary),
                       ),
+                      if (tags.isNotEmpty) ...[
+                        const SizedBox(height: 5),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          children: [for (final tag in tags) _Tag(tag)],
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
-              ),
-              if (trailing != null) ...[const SizedBox(width: 8), trailing!],
-              const SizedBox(width: 10),
-              // 勾位**恒占位**（`flex: 0 0 16px`）——
-              // 用 `Visibility(maintainSize:)` 而不是 `if (selected)`。
-              SizedBox(
-                width: 16,
-                child: Visibility(
-                  visible: selected,
-                  maintainSize: true,
-                  maintainAnimation: true,
-                  maintainState: true,
-                  child: DshIcon('check', size: 16, color: c.accentBlue),
+                if (trailing != null) ...[const SizedBox(width: 8), trailing!],
+                const SizedBox(width: 10),
+                // 勾位**恒占位**（`flex: 0 0 16px`）——
+                // 用 `Visibility(maintainSize:)` 而不是 `if (selected)`。
+                SizedBox(
+                  width: 16,
+                  child: Visibility(
+                    visible: selected,
+                    maintainSize: true,
+                    maintainAnimation: true,
+                    maintainState: true,
+                    child: DshIcon('check', size: 16, color: c.accentBlue),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

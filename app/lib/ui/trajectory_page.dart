@@ -398,93 +398,103 @@ class _TurnRow extends StatelessWidget {
     final trajectory = turn.trajectory;
     return Material(
       color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
-          decoration: BoxDecoration(
-            border: Border(bottom: BorderSide(color: c.layer1)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Text(
-                    '第 ${turn.turn} 轮',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      color: c.labelPrimary,
+      // **一轮一行是一个按钮**（点它弹轮次详情）。只加角色，不抢子节点的文字：
+      // 时间轴里每一格自己还有节点（见 `trajectory_timeline.dart` 的 `_Track`）。
+      child: Semantics(
+        key: ValueKey<String>('trajectory-row-${turn.turn}'),
+        button: onTap != null,
+        child: InkWell(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: c.layer1)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      '第 ${turn.turn} 轮',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: c.labelPrimary,
+                      ),
+                    ),
+                    const Spacer(),
+                    // 用时靠右（与 DSH 的 turn-tail 同一位置感）。
+                    Text(
+                      turn.timeLabel,
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                        color: c.labelCaption,
+                      ),
+                    ),
+                    // **箭头是“会带你去别处”的承诺**（与 `settings_row.dart` 同一条）：
+                    // 没有回调就不画 —— 否则这一行又成了“有箭头、点不动”的假入口。
+                    if (onTap != null) ...[
+                      const SizedBox(width: 4),
+                      DshIcon('chevronRight', size: 16, color: c.labelTertiary),
+                    ],
+                  ],
+                ),
+                // **时间轴**：每轮一条，横向 = 这一轮的起止。
+                // 电脑侧没给这一轮就整条不画 —— 空轨会被读成"这一轮没花时间"。
+                if (trajectory != null && trajectory.steps.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 7),
+                    child: TrajectoryTimeline(
+                      turn: trajectory,
+                      onTapSegment: onTapSegment,
                     ),
                   ),
-                  const Spacer(),
-                  // 用时靠右（与 DSH 的 turn-tail 同一位置感）。
-                  Text(
-                    turn.timeLabel,
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 11,
-                      color: c.labelCaption,
+                // 这一轮的步数被上限截过：说在行里，而不是让用户以为时间轴就是全部。
+                if (turn.stepsTruncated)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      '只画了最近的若干步（这一轮步数超过上限）',
+                      style: TextStyle(fontSize: 11, color: c.labelCaption),
                     ),
                   ),
-                  const SizedBox(width: 4),
-                  DshIcon('chevronRight', size: 16, color: c.labelTertiary),
-                ],
-              ),
-              // **时间轴**：每轮一条，横向 = 这一轮的起止。
-              // 电脑侧没给这一轮就整条不画 —— 空轨会被读成"这一轮没花时间"。
-              if (trajectory != null && trajectory.steps.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 7),
-                  child: TrajectoryTimeline(
-                    turn: trajectory,
-                    onTapSegment: onTapSegment,
-                  ),
-                ),
-              // 这一轮的步数被上限截过：说在行里，而不是让用户以为时间轴就是全部。
-              if (turn.stepsTruncated)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    '只画了最近的若干步（这一轮步数超过上限）',
-                    style: TextStyle(fontSize: 11, color: c.labelCaption),
-                  ),
-                ),
-              if (turn.prompt.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 7),
-                  child: Text(
-                    '提问：${turn.prompt}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12, color: c.labelCaption),
-                  ),
-                ),
-              if (turn.response.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    '结果：${turn.response}',
-                    // 与原型 `.lg .r2 { line-clamp:2 }` 同一个上限。
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 18 / 12.5,
-                      color: c.labelTertiary,
+                if (turn.prompt.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 7),
+                    child: Text(
+                      '提问：${turn.prompt}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12, color: c.labelCaption),
                     ),
                   ),
-                ),
-              if (counts.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 5),
-                  child: Text(
-                    counts,
-                    style: TextStyle(fontSize: 11, color: c.labelCaption),
+                if (turn.response.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      '结果：${turn.response}',
+                      // 与原型 `.lg .r2 { line-clamp:2 }` 同一个上限。
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 18 / 12.5,
+                        color: c.labelTertiary,
+                      ),
+                    ),
                   ),
-                ),
-            ],
+                if (counts.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 5),
+                    child: Text(
+                      counts,
+                      style: TextStyle(fontSize: 11, color: c.labelCaption),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),

@@ -213,4 +213,21 @@ void main() {
     expect(find.byKey(popoverPanelKey), findsNothing, reason: '没有锚点就不该长成浮层');
     expect(find.text('重新配对（换一台电脑）'), findsOneWidget);
   });
+
+  testWidgets('动作行对朗读器是按钮，名字就是标题', (tester) async {
+    await tester.pumpWidget(_host(connection: fellBack, onRePair: () {}));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    // 这些行是 `ListTile`：它自带 `button: true`（`list_tile.dart:992-993` 的
+    // `internalAddSemanticForOnTap`）。这条用例钉的是**它们走的是那个控件** ——
+    // 哪天有人把某一行换成手写 `InkWell`，角色会静默消失，而视觉一点不变。
+    final node = tester.getSemantics(find.text('重新配对（换一台电脑）'));
+    expect(node, isSemantics(isButton: true, hasTapAction: true));
+    expect(
+      node.getSemanticsData().label,
+      contains('会清掉本机凭据'),
+      reason: '副标题是这一行的后果，不能只念标题',
+    );
+  });
 }
