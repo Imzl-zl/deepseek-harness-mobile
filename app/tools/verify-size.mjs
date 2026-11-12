@@ -66,7 +66,7 @@ const FILE_STEP = 50
  * 每项右侧的注释是"它为什么该被拆"；拆完就别再把它放回来。
  */
 const FILE_BUDGET = [
-  ['app/lib/ui/chat_page.dart', 5300], // 一个 State 里塞了整页脚手架（`_mainScaffold` 414 行）
+  ['app/lib/ui/chat_page.dart', 4800], // 一个 State 里塞了整页脚手架（`_mainScaffold` 414 行）；2026-11-12 文件面板搬去 `ui/files_pane.dart`，收紧 5300 → 4800
   ['app/lib/data/app_model.dart', 5250], // host 投影的 façade；会话内存压缩策略（2026-11-11）在这里，+25 行是有意的；2026-11-12 `job.list` 等 `repo.info`（+15 行，见 `implemented/2026-11-12-caps-settlement.md`）
   ['app/lib/core/sync_client_impl.dart', 2050], // 连接层，收帧/恢复/写操作三件事在同一类
   ['app/lib/ui/chat_turns.dart', 2000], // 逐种条目的渲染器，可按条目族分文件
