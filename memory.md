@@ -4,6 +4,24 @@
 > 11-04 及更早的条目在 `memory/archive/2026-11.md`；稳定命令与坑点在 `tools.md`；
 > 现状事实在 `docs/`。
 
+## 现在（2026-11-14）
+
+- **DSH 0.2.2-rc.3 体检：不用改代码，也没抬线**。本机宿主已在 **2026-11-13 15:30** 自己升到
+  **rc.3**（`app.asar` 的 `LastWriteTime`），而连接器 22:06 还在写落盘点 ⇒ 它**已经在 rc.3 上真跑过**。
+  形态因此与上一轮相反：**类型基线（rc.1）比跑着的宿主旧**。
+  体检结论：`caps.ts` 的 **21 个服务键**、16 个服务的方法、6 组事件形状、`session.projections`
+  的键集合（rc.1→rc.3 **49 → 51，只增 `conversationContinuation` / `worktree`，零删除**）
+  全部在 rc.3 上原样存在；rc.2→rc.3 只有 **6 个提交**，`packages/` 下 374 个 `package.json`
+  有差异、其中 373 个只改版本号（余 1 个是全新包），非清单文件只动了 90 个。
+  **不抬线的理由**：`tests/manifest-compat.test.ts` 强制 `engines.dsh` 下界 == 钉住的版本，
+  所以“抬 devDeps”必然连带放弃 rc.1/rc.2 宿主；而体检恰好证明那一段是真能用的。
+  笔记 `implemented/2026-11-14-dsh-022-rc3-audit.md`。
+- **一条要记住的反直觉事实**：`docs/upgrade-guide/v0.2.2-rc.2/` 的 **13 条 breaking topic
+  全都不在 rc.3 上** —— 那个目录只在 master，rc.2/rc.3 两个标签下最新都只到 `v0.2.2-rc.1`。
+  它们是 rc.3 之后才落到 master 的下一批（6 条已实测：`./brand` 子路径、`rankByName`、
+  `resolveConfig`、`authorizeIndex`、`ptc-runtime-python`、`JOB_BACKGROUND_DISABLED`
+  在 master 上都没了、在 rc.3 上都还在）。**有 guide ≠ 变更已进到你用的那一版。**
+
 ## 现在（2026-11-13）
 
 - **连接方式收成三层**：**能力**（电脑通道 `running` / `connected`）/ **策略**（手机
