@@ -242,6 +242,20 @@ export function changesAvailable(ctx: Context): boolean {
   return present(ctx, 'workspaceChanges')
 }
 
+/**
+ * Agent Teams 的写面能不能挂（`team.setEnabled`）。
+ *
+ * 与 `referencesAvailable` 同一个套路：**一处定义、两处用**（`readCaps` 的能力位与
+ * `index.ts` 的挂载判据）—— 两处各写一遍必然漂成"`repo.info` 说有能力、方法却不在表里"。
+ *
+ * 判据是**服务在不在**（`packages/team/agent-team/src/index.ts:61`），不看这个会话开没开 Team：
+ * 后者是投影的 `enabled`，会话级事实。挂载时还要再过一条"拿得到 in-process 通道"
+ * （`createTeamFace` 返回 null 就不挂）—— 那是**我们这条通道**的能力，不是宿主的。
+ */
+export function teamAvailable(ctx: Context): boolean {
+  return present(ctx, 'agentTeams')
+}
+
 export function readCaps(ctx: Context, options: { direct: boolean } = { direct: false }): Caps {
   return {
     sessions: present(ctx, 'sessionController'),
@@ -254,7 +268,7 @@ export function readCaps(ctx: Context, options: { direct: boolean } = { direct: 
     plugins: pluginsAvailable(ctx),
     files: filesAvailable(ctx),
     changes: changesAvailable(ctx),
-    team: present(ctx, 'agentTeams'),
+    team: teamAvailable(ctx),
     settings: present(ctx, 'settings'),
     credentials: present(ctx, 'credentials'),
     direct: options.direct,

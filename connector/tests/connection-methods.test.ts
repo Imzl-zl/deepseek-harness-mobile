@@ -133,6 +133,7 @@ test('端到端：手机问 repo.info，电脑侧回一个可解的 res（id 对
       'settings.describe',
       'settings.update',
       'subagent.prompt',
+      'team.setEnabled',
       'usage.summary',
       'workspace.archive',
       'workspace.insertBefore',

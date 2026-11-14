@@ -2196,6 +2196,43 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 不是这里，见 `model/team_board.dart` 文件头。
   TeamBoard? get teamBoard => projections?.team;
 
+  /// 这个会话用过模型没有（`modelSelection.lastUsed != null`）。
+  ///
+  /// Team 的**停用确认**只在用过模型时才弹（`TeamModeToggle.tsx:47`，理由是缓存复用），
+  /// 所以判据必须区分"选了还没用"与"用过"。
+  bool get modelEverUsed => projections?.modelEverUsed ?? false;
+
+  /// 开关 Agent Teams（`team.setEnabled`）。**只有根会话能改**（宿主侧
+  /// `TEAM_LEAD_REQUIRED`；手机上子会话不显示这个开关）。
+  ///
+  /// **不做乐观更新**：写成功后重读一次投影，界面照 `agentTeam.enabled` 画 ——
+  /// 与 DSH 的 `RootTeamModeToggle` 同一条（它 `checked={mode.enabled}`，
+  /// 从不先翻再回滚）。
+  ///
+  /// @returns `true` = 电脑侧接纳且投影已重读；`false` = 没成功（原因在 [lastError]）。
+  Future<bool> setTeamEnabled(bool enabled) async {
+    final sid = _currentSid;
+    if (sid == null) return false;
+    try {
+      final accepted = await _writes.setTeamEnabled(
+        sid: sid,
+        enabled: enabled,
+        requestId: newRequestId('team'),
+      );
+      if (!accepted) {
+        _recordError('设置智能体团队协作失败', StateError('电脑侧的 team.setEnabled 应答形状认不出'));
+        return false;
+      }
+      if (_disposed) return false;
+      await refreshProjections(sid);
+      return true;
+    } catch (error) {
+      // 与 `switchPermission` 同一条纪律：兜住所有异常，不让它逃逸成未处理的异步错误。
+      _recordError('设置智能体团队协作失败', error);
+      return false;
+    }
+  }
+
   /// 是否**成功读到过** `repo.info`。
   ///
   /// `filesAvailable == false` 有两种含义：电脑说"没有这个面"，或**还没读到**

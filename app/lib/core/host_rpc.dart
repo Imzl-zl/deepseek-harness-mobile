@@ -212,6 +212,17 @@ abstract interface class HostWrites {
     required String requestId,
   });
 
+  /// 开关 Agent Teams（`team.setEnabled`）。**只改根会话的档位**。
+  ///
+  /// 应答是空对象，真值靠重读 `agentTeam` 投影 —— 所以这里返回 `bool`
+  /// 只表示"电脑侧接纳了这次写入"，调用方必须重读投影再画。
+  /// 形状认不出 ⇒ `false`（不抛）；电脑侧拒绝 ⇒ 原样抛。
+  Future<bool> setTeamEnabled({
+    required String sid,
+    required bool enabled,
+    required String requestId,
+  });
+
   /// 答复一次审批/提问（`interaction.respond`）。**失败照原样抛**。
   Future<void> respondInteraction({
     required String sid,

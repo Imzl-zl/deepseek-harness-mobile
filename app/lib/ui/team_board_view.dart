@@ -26,7 +26,7 @@
 /// `ui-agent-team/src/client/locales.ts` 的 zh 字典。
 ///
 /// Note: 为什么只读、为什么子会话不给这枚 tab —— 见
-/// `.agents/notes/implemented/2026-11-14-agent-team-readonly.md`。
+/// `.agents/notes/implemented/2026-11-14-agent-team-integration.md`。
 library;
 
 import 'package:flutter/material.dart';

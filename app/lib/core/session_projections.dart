@@ -34,6 +34,7 @@ final class SessionProjections {
   const SessionProjections({
     this.title,
     this.modelSelection,
+    this.modelEverUsed = false,
     this.tokenUsage,
     this.sessionStats,
     this.contextPressure,
@@ -57,6 +58,15 @@ final class SessionProjections {
 
   /// `modelSelection` 投影的 `next ?? lastUsed`（`model-selection-projection.ts:65`）。
   final ModelRef? modelSelection;
+
+  /// 这个会话**用过**模型没有（`modelSelection.lastUsed != null`）。
+  ///
+  /// 与 [modelSelection] **不是一回事**：那一格是 `next ?? lastUsed`，
+  /// "选了还没用"与"用过"在它上面同形。Team 的停用确认只在**用过**时才弹
+  /// （`ui-agent-team/src/client/TeamModeToggle.tsx:47`：
+  /// `!enabled && modelSelection.lastUsed !== null`）—— 判据是缓存复用，
+  /// 所以必须分开取，不能拿 `modelSelection != null` 顶替。
+  final bool modelEverUsed;
 
   /// `tokenUsage` 投影（四个整数桶，DSH `token-meter/src/usage-projection.ts:45-50`）。
   final TokenUsage? tokenUsage;

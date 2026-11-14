@@ -24,6 +24,7 @@ import 'rpc/plugin.dart' as wire;
 import 'rpc/session.dart' as wire;
 import 'rpc/settings.dart' as wire;
 import 'rpc/subagent.dart' as wire;
+import 'rpc/team.dart' as wire;
 import 'rpc/workspace.dart' as wire;
 
 /// 端口 `HostWrites` 的唯一实现。
@@ -127,6 +128,18 @@ final class WireHostWrites implements HostWrites {
     client,
     sid: sid,
     preset: preset,
+    requestId: requestId,
+  );
+
+  @override
+  Future<bool> setTeamEnabled({
+    required String sid,
+    required bool enabled,
+    required String requestId,
+  }) => wire.setTeamEnabled(
+    client,
+    sid: sid,
+    enabled: enabled,
     requestId: requestId,
   );
 

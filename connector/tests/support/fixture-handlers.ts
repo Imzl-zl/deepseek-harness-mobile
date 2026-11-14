@@ -410,6 +410,11 @@ export function fixtureHandlers(
     // 改动面：一份确定的记录（普通行 + 二进制行，两种行形态都收进金样）。
     // **`seq: 10` 回 `undefined`** —— 那是"电脑侧没有这条记录"的形态（`file.changes` 的
     // `{summary:null}`），金样两条都收，App 侧解码才两边都钉得住。
+    // Agent Teams 的开关：应答是空对象（真值在投影 `agentTeam`，不在这里）。
+    // 假实现**不校验档位**：它只证明"写方法挂在表里、应答形状是 `{}`"。
+    team: {
+      setEnabled: async () => undefined,
+    },
     changes: {
       summary: (_sid: string, seq: number) =>
         seq === 10

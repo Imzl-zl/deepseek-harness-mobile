@@ -103,6 +103,7 @@ SessionProjections _buildProjections(
   return SessionProjections(
     title: _nonEmptyString(values['title']),
     modelSelection: modelSelectionOf(values['modelSelection'], fields),
+    modelEverUsed: _modelEverUsed(values['modelSelection']),
     tokenUsage: parseTokenUsage(values['tokenUsage']),
     sessionStats: SessionStats.fromWire(values['sessionStats']),
     contextPressure: ContextPressure.fromWire(values['contextPressure']),
@@ -156,6 +157,16 @@ TeamBoard? _teamOf(Map<String, Object?> values, WireFields fields) {
 
 String? _nonEmptyString(Object? raw) =>
     raw is String && raw.isNotEmpty ? raw : null;
+
+/// `modelSelection.lastUsed != null`：这个会话**用过**模型。
+///
+/// `modelSelectionOf` 取的是 `next ?? lastUsed`（两个来源合成一格），所以"用过"这件事
+/// 在解好的值里看不出来。Team 的停用确认需要它（`TeamModeToggle.tsx:47`），
+/// 而键名只在这一层出现 —— 所以就在这里单独取一次，不加解析器、不改 `ModelRef`。
+bool _modelEverUsed(Object? raw) {
+  if (raw is! Map) return false;
+  return raw['lastUsed'] != null;
+}
 
 /// `modelSelection` 投影 → `next ?? lastUsed`。
 ///

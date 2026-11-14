@@ -69,10 +69,33 @@
 - tab 徽标 = **进行中**的任务数（与另外两枚"在跑的才计数"同一条），0 时不显示。
 - 文案逐字取自 `ui-agent-team/src/client/locales.ts` 的 zh 字典；**没有自创措辞**。
 
+## 5. 开关（`team.setEnabled`）
+
+位置与 DSH 相同：**根会话的模型菜单里**（DSH 的 slot 是
+`conversation.input.model.options`，`ui-agent-team/src/client/TeamModeToggle.tsx`）。
+手机上就是「选择模型」那张 sheet 的末尾一行（`app/lib/ui/team_mode_row.dart`）。
+
+四条行为逐条照抄，判据与组件在同一处（`teamModeRowFor`）：
+
+| 行为 | 判据 | 出处 |
+|---|---|---|
+| 子会话不显示 | 当前会话 `subagent` | `TeamModeToggle.tsx:30-32` |
+| 没有投影就不显示 | `agentTeam` 未读到 | 同文件 `:44` |
+| 没有当前模型时禁用 | `modelSelection` 缺 | 同文件 `:62` |
+| **停用要先确认**（仅当用过模型） | `!enabled && lastUsed != null` | 同文件 `:47` |
+
+- **不做乐观更新**：开关只认投影 `agentTeam.enabled`，写成功后由
+  `AppModel.setTeamEnabled` 重读投影再画。
+- 确认框三段文案（标题 / 说明 / 警告）与按钮逐字取自 `locales.ts` 的 zh 字典。
+- 写方法经 gateway 转给宿主的 `agentTeams/setEnabled`（`{agentId, enabled}`），
+  **让宿主自己解析 `agent` 这个 lookup** —— 否则"要不要 resume 一个不在内存里的会话"
+  就成了连接器的决定。契约行见 `remote-channel.md` §5.7。
+- 失败一律 `internal`（错误码表封闭），宿主原始码写在消息里。
+
 ## 6. 边界
 
-- **只读**：这一面不写任何宿主状态，没有开关、没有建/改/删任务的入口。
-  写入（`agentTeams/setEnabled`，线上参数 `{agentId, enabled}`）属于另一批工作。
+- **任务板本身只读**：没有建/改/删任务的入口。唯一的写入面是上面那个开关，
+  而它只改档位（append 一条 `team/mode`），不动任务、不动子智能体。
 - `failure` 原样显示成「任务记录无效：…」，**不翻译成"加载失败"** —— 那时任务板本身仍可用。
 - 手机不展示 `blockedBy` 的图形化依赖（宿主只给 id 列表，画成图需要另一套语义），
   被阻塞只体现为那个琥珀点。

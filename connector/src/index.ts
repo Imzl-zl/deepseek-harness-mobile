@@ -69,6 +69,7 @@ import {
   pluginsAvailable,
   readCaps,
   referencesAvailable,
+  teamAvailable,
   type Caps,
 } from './dsh/caps.js'
 import { createEndpointsPort, defaultDirectUrls, describeEndpoints } from './endpoints.js'
@@ -125,6 +126,7 @@ import { createCommandLineRunner } from './dsh/command-line.js'
 import { createAgentPresetsFace } from './dsh/agent-presets.js'
 import { createReferencesFace } from './dsh/references.js'
 import { createPluginsFace } from './dsh/plugins.js'
+import { createTeamFace } from './dsh/team.js'
 import { createChangesFace } from './dsh/changes.js'
 import { createFilesFace } from './dsh/files.js'
 import { createPluginInstallFace } from './dsh/plugin-install.js'
@@ -1183,6 +1185,19 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           handlerDeps.files = createFilesFace(ctx, {
             sessionOf: (sid) => aliases?.sessionOf(sid),
           })
+        }
+
+        /**
+         * Agent Teams 的开关（`team.setEnabled`）。
+         *
+         * 两条判据：`dsh/caps.ts` 的 `teamAvailable(ctx)`（服务在不在）**且**
+         * `createTeamFace` 拿得到 in-process 通道（`connection`）。后者为 null 时不挂 ——
+         * 挂一个必然失败的方法比不挂更糟（手机侧会把它画成一次操作失败）。
+         * 只读那块任务板**不在这里**：它走投影透传，不需要方法。
+         */
+        if (teamAvailable(ctx) && aliases !== null) {
+          const teamFace = createTeamFace(ctx, { aliases })
+          if (teamFace !== null) handlerDeps.team = teamFace
         }
 
         /**

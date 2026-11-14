@@ -188,6 +188,14 @@ export const METHODS = [
   // 端点自报：当前可拨的地址表（中转 + 局域网直连）。只读。
   // 手机据此建"连接方式"列表，并在 IP 变了之后自愈 —— 详见 `endpoints.ts` 的文件头。
   'endpoint.describe',
+  // Agent Teams 的**开关**（契约 §5.7）。这是 Team 唯一的写入面：只改根会话的
+  // `team/mode`（宿主 `TeamService.setEnabled`，`packages/team/agent-team/src/index.ts:111-118`），
+  // 不建/改/删任务 —— 任务由智能体自己在对话里创建。
+  // 语义与 Web 一致：Web 在模型菜单里调 `remote.agentTeams.setEnabled(sessionId, enabled)`
+  // （`ui-agent-team/src/client/mount.ts:43`）；我们经 gateway 转一次，
+  // 让 `agent` 这个 lookup 由宿主自己解析（否则"要不要 resume 一个不在内存里的会话"
+  // 就成了我们的决定，见 `dsh/team.ts` 的文件头）。
+  'team.setEnabled',
   'sync.hello',
   'repo.info',
 ] as const
@@ -229,6 +237,9 @@ export const IDEMPOTENT_METHODS: ReadonlySet<MethodName> = new Set([
   // 启停插件是用户指令：重发不该把同一行的 profile patch 写两遍 / 热重载两轮。
   // 它天然按目标态幂等（同一个 `enabled` 落到同一个终态），键仍由这里强制。
   'plugin.setEnabled',
+  // Team 开关是用户指令：重发不该落两条 `team/mode`（宿主自己按"当前值是否相同"收束，
+  // `agent-team/src/index.ts:116` 只在档位变了才 append；指令层不靠它兜，键仍由这里强制）。
+  'team.setEnabled',
   // 安装 / 卸载带键，而且**键就是任务句柄**：同一次操作重发不能起第二遍 pnpm。
   // （取消不带键：重复取消落到同一个终态 `not-running`。）
   'plugin.install',

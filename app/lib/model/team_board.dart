@@ -23,7 +23,7 @@
 /// 所以「当前会话是不是子会话」要由会话行决定，不看这个键
 /// （与 `wire/rpc/projections.dart:113-114` 对 `subagentTiming` 的同一条纪律）。
 ///
-/// 取舍见 `.agents/notes/proposed/2026-11-14-agent-team-readonly.md`。
+/// 取舍见 `.agents/notes/proposed/2026-11-14-agent-team-integration.md`。
 library;
 
 /// 一条共享任务的生命周期（字面值照 `agent-team/src/types.ts:61` 的 `TeamTaskStatus`）。

@@ -19,7 +19,7 @@
 /// `caps.team` 只回答"这台电脑有没有这个服务"，**不管 Team 开没开**（那是投影的
 /// `enabled`）。两件事混成一个能力位，会出现"服务在、开关关着却被当成没能力"。
 ///
-/// 取舍与证据见 `.agents/notes/implemented/2026-11-14-agent-team-readonly.md`。
+/// 取舍与证据见 `.agents/notes/implemented/2026-11-14-agent-team-integration.md`。
 library;
 
 import 'side_pane.dart' show SidePanel;

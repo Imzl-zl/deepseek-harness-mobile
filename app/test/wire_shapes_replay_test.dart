@@ -65,6 +65,7 @@ import 'package:dsh_mobile/wire/rpc/repo.dart';
 import 'package:dsh_mobile/wire/rpc/session.dart';
 import 'package:dsh_mobile/wire/rpc/session_page.dart';
 import 'package:dsh_mobile/wire/rpc/settings.dart';
+import 'package:dsh_mobile/wire/rpc/team.dart';
 import 'package:dsh_mobile/wire/rpc/usage.dart';
 import 'package:dsh_mobile/wire/rpc/workspace.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -1092,6 +1093,18 @@ void main() {
       >(),
     );
     expect(valueOrReport(bad, 'plugin.setEnabled'), isNull);
+    expect(WireDiagnostics.badCount, 1);
+  });
+
+  test('team.setEnabled：应答是空对象；不是对象 ⇒ WireBad + 计数 1', () {
+    // 真值不在应答里（在 `agentTeam` 投影），所以这里只钉"形状"：
+    // 连接器回 `{}` 即接纳；回别的东西说明我们又开始在写方法的应答里编内容了。
+    final sample = _sampleOf(golden, 'team.setEnabled');
+    expect(readTeamSetEnabled(sample), isA<WireOk<bool>>());
+
+    final bad = readTeamSetEnabled('ok');
+    expect(bad, isA<WireBad<bool>>());
+    expect(valueOrReport(bad, 'team.setEnabled'), isNull);
     expect(WireDiagnostics.badCount, 1);
   });
 

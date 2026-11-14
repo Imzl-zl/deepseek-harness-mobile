@@ -110,6 +110,8 @@ const SAMPLED_METHODS = [
   'plugin.list',
   'plugin.listBundles',
   'plugin.setEnabled',
+  // Agent Teams 的开关（写）。**只有这一条 Team 方法** —— 任务板是投影，不占方法。
+  'team.setEnabled',
   'plugin.install',
   'plugin.installStatus',
   'plugin.cancelInstall',
@@ -220,6 +222,12 @@ const SAMPLES: Record<SampledMethod, readonly WireSample[]> = {
   'plugin.list': [{}],
   'plugin.listBundles': [{}],
   'plugin.setEnabled': [{ params: { id: 'plugin-1', enabled: false } }],
+  // Team 开关：应答是空对象（真值在 `agentTeam` 投影里，写完由手机重读）。
+  // 两种档位各收一条 —— 同一份形状，但"关"这条能证明我们没在连接器里自作主张不回包。
+  'team.setEnabled': [
+    { params: { sid: sidOf('dsh-1'), enabled: true } },
+    { params: { sid: sidOf('dsh-2'), enabled: false } },
+  ],
   'plugin.install': [{ params: { spec: 'dsh-mobile@0.1.0' }, context: { requestId: 'plug-1' } }],
   'plugin.remove': [{ params: { name: 'dsh-mobile' }, context: { requestId: 'plug-2' } }],
   // 两条：`done` 的 8 键形态 + **`unknown` 的 4 键形态**（这一代插件没有这个 id 的记录）。

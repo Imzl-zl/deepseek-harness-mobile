@@ -41,6 +41,7 @@ import type { ChangesFace } from './dsh/changes.js'
 import type { FilesFace } from './dsh/files.js'
 import { installableFromPhone, type PluginInstallFace } from './dsh/plugin-install.js'
 import type { PluginsFace } from './dsh/plugins.js'
+import type { TeamFace } from './dsh/team.js'
 import type { ReferencesFace } from './dsh/references.js'
 import type { SubagentsPort } from './dsh/subagents.js'
 import type { WorkspacesPort } from './dsh/workspaces.js'
@@ -365,6 +366,18 @@ export interface HandlerDeps {
    * 而写面按 (ns, path) 逐条放行 —— `mutate` 是能写密钥字段的，`settings.update` 不是那条通道。
    */
   settings?: SettingsFace
+  /**
+   * Agent Teams 的开关（`team.setEnabled`，可选服务 `agentTeams`）。
+   *
+   * **Team 唯一的写入面**：只改根会话的 `team/mode`
+   * （`packages/team/agent-team/src/index.ts:111-118`），不建/改/删任务。
+   * 与 Web 同一个动作（`ui-agent-team/src/client/mount.ts:43`），我们经 gateway 转一次 ——
+   * 理由（live Agent 与 resume 归谁决定）见 `dsh/team.ts` 的文件头。
+   *
+   * 挂载判据是 `caps.team` **且** 拿得到 in-process 通道（`createTeamFace` 非 null）：
+   * 断掉 `connection` 时宁可不挂这个方法，也不要挂一个必然失败的。
+   */
+  team?: TeamFace
 }
 
 export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, MethodHandler>> {
@@ -1493,6 +1506,25 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
         throw new ProtocolError('protocol/bad-frame', 'enabled 必须是布尔值')
       }
       return plugins.setEnabled(id, enabled)
+    }
+  }
+
+  // Agent Teams 的开关（契约 §5.7）。**带幂等键**（`IDEMPOTENT_METHODS`）：
+  // 重发不该落两条 `team/mode`。只读那块板走投影，不在这里。
+  if (deps.team !== undefined) {
+    const team = deps.team
+    handlers['team.setEnabled'] = async (params) => {
+      const sid = requireSid(params)
+      requireSession(sid)
+      const enabled = paramOf(params, 'enabled')
+      // 布尔就是布尔：`'off'` / `1` 在宿主那边会被 schema 拒成
+      // `gateway/arguments-invalid`，而那条错误到手机上只剩一句英文 —— 在这里拦住，
+      // 报的话是我们自己的（与 `plugin.setEnabled` 同一个口径）。
+      if (typeof enabled !== 'boolean') {
+        throw new ProtocolError('protocol/bad-frame', 'enabled 必须是布尔值')
+      }
+      await team.setEnabled(sid, enabled)
+      return {}
     }
   }
 

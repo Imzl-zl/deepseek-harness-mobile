@@ -67,7 +67,7 @@ const FILE_STEP = 50
  */
 const FILE_BUDGET = [
   ['app/lib/ui/chat_page.dart', 4450], // 一个 State 里塞了整页脚手架（`_mainScaffold` 414 行）；2026-11-12 文件面板搬去 `ui/files_pane.dart`（5300 → 4800），同日改动卡搬去 `ui/changes_card.dart`、轨迹页签搬进 `ui/trajectory_page.dart`（4800 → 4450）
-  ['app/lib/data/app_model.dart', 5167], // host 投影的 façade；会话内存压缩策略（2026-11-11）在这里，+25 行是有意的；2026-11-12 `job.list` 等 `repo.info`（+15 行，见 `implemented/2026-11-12-caps-settlement.md`）；同日提醒簇搬去 `data/notices.dart`（−88 行，5250 → 5150）；2026-11-14 Agent Teams 只读面 +17 行（`caps.team` 与 `teamBoard` 两个访问器，投影字段本身在 `model/team_board.dart`，见 `implemented/2026-11-14-agent-team-readonly.md`）
+  ['app/lib/data/app_model.dart', 5204], // host 投影的 façade；会话内存压缩策略（2026-11-11）在这里，+25 行是有意的；2026-11-12 `job.list` 等 `repo.info`（+15 行，见 `implemented/2026-11-12-caps-settlement.md`）；同日提醒簇搬去 `data/notices.dart`（−88 行，5250 → 5150）；2026-11-14 Agent Teams 只读面 +17 行（`caps.team` 与 `teamBoard`）；同日 +37 行是 Team 开关的写路径（`setTeamEnabled` + `modelEverUsed`，读完投影才改状态），两次都见 `implemented/2026-11-14-agent-team-integration.md`
   ['app/lib/core/sync_client_impl.dart', 2050], // 连接层，收帧/恢复/写操作三件事在同一类
   ['app/lib/ui/chat_turns.dart', 2050], // 逐种条目的渲染器，可按条目族分文件；2026-11-12 a11y 批给六处可折行补了角色（+10 行，见 `implemented/2026-11-12-a11y-chat-turns-and-panes.md`）
   ['app/lib/main.dart', 1950], // 装配点 + 路由 + 抽屉回调，装配之外的部分可下沉
@@ -79,7 +79,7 @@ const FILE_BUDGET = [
   ['app/lib/ui/takeover.dart', 1250], // 接管队列 + 三种卡
   ['app/lib/data/projection.dart', 1150], // 事件投影，可按事件族拆
   ['app/lib/ui/pairing_page.dart', 1000], // 配对三段式
-  ['app/lib/ui/side_pane.dart', 982], // 四个面板；2026-11-14 第四枚「任务板」+32 行（枚举值 / 三个入参 / 徽标与主体分支 / 选中项回落的 6 行），**可见性规则不在这个文件**（`ui/side_panel_visibility.dart`）—— 再长就按面板拆文件，见 `implemented/2026-11-14-agent-team-readonly.md`
+  ['app/lib/ui/side_pane.dart', 982], // 四个面板；2026-11-14 第四枚「任务板」+32 行（枚举值 / 三个入参 / 徽标与主体分支 / 选中项回落的 6 行），**可见性规则不在这个文件**（`ui/side_panel_visibility.dart`）—— 再长就按面板拆文件，见 `implemented/2026-11-14-agent-team-integration.md`
   ['app/lib/ui/plugins_page.dart', 900], // 清单/详情/日志三面
 ]
 
@@ -88,7 +88,7 @@ const FILE_BUDGET = [
  * 名字必须**唯一**（同名类出现在两个文件里就是抄错了）。
  */
 const CLASS_BUDGET = [
-  ['AppModel', 176], // 收窄：任务簇（2026-11-11）与提醒簇（2026-11-12：`_noticeKeyOf` / `_desiredNotices`）已搬走；+1 = 后台任务提醒档 setter（2026-11-13）
+  ['AppModel', 177], // 收窄：任务簇（2026-11-11）与提醒簇（2026-11-12：`_noticeKeyOf` / `_desiredNotices`）已搬走；+1 = 后台任务提醒档 setter（2026-11-13）；+1 = Agent Teams 开关 `setTeamEnabled`（2026-11-14，见 `implemented/2026-11-14-agent-team-integration.md`）
   ['ChatPageState', 65], // 面板/文件区/轨迹该各自成 widget
   ['_SyncClient', 61], // 收帧 / 恢复 / 写操作三件事在同一类
   ['_DshMobileAppState', 48], // 装配之外的路由回调可下沉

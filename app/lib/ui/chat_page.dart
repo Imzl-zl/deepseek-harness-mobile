@@ -94,6 +94,7 @@ import 'subagent_readonly_band.dart';
 import 'subagent_tree.dart';
 import 'takeover.dart';
 import 'team_board_view.dart';
+import 'team_mode_row.dart';
 import 'trajectory_page.dart';
 
 /// 会话至少露出来的高度：底部那一块（接管卡 + 输入栏 + 统计条）不许把它吃掉。
@@ -2261,6 +2262,24 @@ class ChatPageState extends State<ChatPage> {
                   onTap: () => _pickModel(group, entry),
                 ),
             ],
+            // Team 开关就在**模型菜单**里，与 DSH 同一个位置
+            // （slot `conversation.input.model.options`，`ui-agent-team/README.zh.md:28`）。
+            // 三条不显示的条件在 `teamModeRowFor` 一处判（子会话 / 没投影 / 没能力位）。
+            ?teamModeRowFor(
+              teamAvailable: widget.app.teamAvailable,
+              childSession:
+                  widget.app.sessionOf(widget.app.currentSid ?? '')?.subagent ??
+                  false,
+              boardReady: widget.app.teamBoard != null,
+              enabled: widget.app.teamBoard?.enabled ?? false,
+              modelEverUsed: widget.app.modelEverUsed,
+              hasCurrentModel: widget.app.currentModel != null,
+              onSetEnabled: (enabled) async {
+                // 写完由 `AppModel` 重读投影，整页跟着重画（不做乐观更新）。
+                if (await widget.app.setTeamEnabled(enabled)) return null;
+                return widget.app.lastError?.message ?? '未知原因';
+              },
+            ),
           ],
         ),
       ),

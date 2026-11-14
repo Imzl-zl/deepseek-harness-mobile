@@ -29,7 +29,7 @@
 | 加一个设置项 | [`settings-porting-notes.md`](settings-porting-notes.md) |
 | 加一个平台（iOS / 鸿蒙） | [`subsystems/app-platform-boundaries.md`](subsystems/app-platform-boundaries.md) |
 | 接一个新的只读投影面（能力位 + 面板可见性 + 投影解码） | [`subsystems/agent-team.md`](subsystems/agent-team.md) 是最新的一份样板 |
-| 发版 / 签名 | [`cookbook/release.md`](cookbook/release.md) |
+| 加一个宿主写方法（方法表 + 契约行 + 金样 + 两侧解码） | 同上，`team.setEnabled` 是从头到尾的完整一例 || 发版 / 签名 | [`cookbook/release.md`](cookbook/release.md) |
 | 搞清楚某个古怪写法为什么这样 | 仓库根的 `.agents/notes/`（因果），不是 `docs/`（现状） |
 
 ## 连不上时按顺序查
