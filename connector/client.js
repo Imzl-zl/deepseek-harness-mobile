@@ -222,6 +222,12 @@ window.__ModuleLoader__.load({
       devicesTitle: '已配对设备',
       pairTitle: '配对新手机',
       pairHint: '5 分钟内有效。',
+      // 这张码含哪几条路（2026-11-13）：两档二选一，不可用那档禁用并说原因。
+      pairPurposeLabel: '这张码给谁用',
+      pairPurposeLan: '同一 WiFi',
+      pairPurposeLanDown: '直连没开',
+      pairPurposeAny: '任何网络',
+      pairPurposeRelayDown: '中转没连上',
       // 装了插件不等于装了 App：出口就放在"出码"这张卡上。
       noAppHint: '还没装手机 App？',
       downloadApp: '下载最新版',
@@ -380,6 +386,11 @@ window.__ModuleLoader__.load({
       devicesTitle: 'Paired devices',
       pairTitle: 'Pair a new phone',
       pairHint: 'Valid for 5 minutes.',
+      pairPurposeLabel: 'This code is for',
+      pairPurposeLan: 'Same Wi-Fi',
+      pairPurposeLanDown: 'direct listener off',
+      pairPurposeAny: 'Any network',
+      pairPurposeRelayDown: 'relay offline',
       noAppHint: 'No app installed yet?',
       downloadApp: 'Download the latest build',
       pairLanOnly: 'Not registered with the relay: this code only works on the same Wi-Fi (it will not pair over the internet or mobile data).',
@@ -1037,6 +1048,13 @@ window.__ModuleLoader__.load({
       const [connectionError, setConnectionError] = useState(null)
       const [error, setError] = useState('')
       const [qr, setQr] = useState(null)
+      /**
+       * 这张码给谁用（`''` = 按能力自动：中转连上了就带它，否则只出局域网）。
+       *
+       * **只在用户点过两档之后才有值**：默认不替他选，也不把默认值写进状态
+       * （否则中转一断，界面还停在"任何网络"上）。
+       */
+      const [pairPurpose, setPairPurpose] = useState('')
       // 「检查更新」：一次只查一次，结论留在卡片上（不弹框）。
       const [updateInfo, setUpdateInfo] = useState(null)
       const [updateBusy, setUpdateBusy] = useState(false)
@@ -1123,12 +1141,23 @@ window.__ModuleLoader__.load({
         if (qr !== null && qr.expiresAt <= now) setQr(null)
       }, [qr, now])
 
-      const pair = async () => {
+      // 这张码**含哪几条路**：默认按此刻能力选（中转连上了才带它）。
+      // 面板不复述"为什么"，只把不可用的那档禁用并附原因。
+      const relayUp = connection !== null && connection.relay !== undefined && connection.relay.connected === true
+      const directUp = connection !== null && connection.direct !== undefined && connection.direct.running === true
+      const purposeChoice = pairPurpose === '' ? (relayUp ? 'any' : 'lan') : pairPurpose
+
+      const pair = async (purpose) => {
         setBusy('pair')
         setQr(null)
         setError('')
         try {
-          const response = await fetch(PAIR, { method: 'POST' })
+          const response = await fetch(PAIR, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            // `purpose` 缺省 = 按电脑此刻的能力选（中转连上了就 `any`）。
+            body: JSON.stringify(purpose ? { purpose } : {}),
+          })
           const body = await jsonOf(response)
           if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
           if (typeof body.svg !== 'string') throw new Error('电脑侧没有返回二维码')
@@ -1985,10 +2014,34 @@ window.__ModuleLoader__.load({
               key: 'b', type: 'button',
               style: busy === 'pair' ? { ...S.btn, ...S.btnDisabled } : S.btn,
               disabled: busy !== '',
-              onClick: pair,
+              onClick: () => pair(purposeChoice),
             }, busy === 'pair' ? t('pairing') : t('pair')),
           ),
           h('p', { key: 'd', style: { ...S.label, margin: 0 } }, t('pairHint')),
+          // **这张码给谁用**（2026-11-13）：两档二选一，不可用的那档禁用并说原因。
+          // 默认不写进状态：中转一断，界面不会还停在"任何网络"上。
+          h('div', {
+            key: 'pp',
+            style: { display: 'flex', gap: 8, marginTop: 10, alignItems: 'center', flexWrap: 'wrap' },
+          },
+            h('span', { style: { ...S.label, margin: 0 } }, t('pairPurposeLabel')),
+            h('button', {
+              key: 'lan', type: 'button',
+              style: purposeChoice === 'lan'
+                ? { ...S.btn, borderColor: 'currentColor', fontWeight: 600 }
+                : S.btn,
+              disabled: busy !== '' || !directUp,
+              onClick: () => setPairPurpose('lan'),
+            }, directUp ? t('pairPurposeLan') : `${t('pairPurposeLan')} · ${t('pairPurposeLanDown')}`),
+            h('button', {
+              key: 'any', type: 'button',
+              style: purposeChoice === 'any'
+                ? { ...S.btn, borderColor: 'currentColor', fontWeight: 600 }
+                : S.btn,
+              disabled: busy !== '' || !relayUp,
+              onClick: () => setPairPurpose('any'),
+            }, relayUp ? t('pairPurposeAny') : `${t('pairPurposeAny')} · ${t('pairPurposeRelayDown')}`),
+          ),
           // 「还没装 App？」——放在出码按钮下面：走到这一步的人正好缺这个。
           h('div', { key: 'dl', style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 } },
             h('span', { style: { ...S.label, margin: 0 } }, t('noAppHint')),

@@ -45,9 +45,15 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show debugPrint;
 
+import '../model/route_policy.dart';
 import 'endpoint.dart';
+import 'endpoint_policy.dart';
 import 'errors.dart';
 import 'transport.dart';
+
+/// 本模块的默认策略（`auto`）。写成静态函数是为了能当可选参数的默认值
+/// （闭包字面量不是常量）。
+RoutePolicy _autoPolicy() => RoutePolicy.auto;
 
 /// 造一个端点的传输。**由 `platform/` 的装配点注入** ——
 /// `core/` 不 import `platform/`（`verify-platform-boundary.mjs` 的
@@ -67,11 +73,18 @@ class EndpointTransport implements ChannelTransport {
   EndpointTransport({
     required this.endpointsOf,
     required this.factory,
+    this.policyOf = _autoPolicy,
     this.onActivated,
     this.onAttempt,
     this.dialStagger = const Duration(milliseconds: 250),
     this.totalBudget = const Duration(seconds: 15),
   });
+
+  /// 用户想走哪条路（`model/route_policy.dart`）。**现取**：设置页改完立刻生效。
+  ///
+  /// 过滤只有一处（`core/endpoint_policy.dart`）：这里不判"要不要试中转"，
+  /// 只按它给出的候选拨号。点名的端点**不受它约束** —— 那是本次覆盖。
+  final RoutePolicy Function() policyOf;
 
   /// **一轮拨号的总预算**（方案决策 7：15 s 是硬上限）。
   ///
@@ -137,8 +150,11 @@ class EndpointTransport implements ChannelTransport {
     // **点名优先**：用户指定了那一条就只试它，**不顺延** ——
     // 顺延会让"我选了直连"变成"其实又偷偷走了中转"，而用户无从得知。
     // 失败由上层（`AppModel.useEndpointNow`）清掉点名、回到自动并说明原因。
+    // 点名**不受策略过滤**：那是本次覆盖，策略是长期意图。
     final requested = _requested;
-    final endpoints = requested != null ? [requested] : endpointsOf();
+    final endpoints = requested != null
+        ? <Endpoint>[requested]
+        : endpointsForPolicy(endpointsOf(), policy: policyOf());
     if (endpoints.isEmpty) {
       throw const TransportException('没有可拨的端点');
     }

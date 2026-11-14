@@ -67,12 +67,12 @@ import 'chat_jumper.dart';
 import 'chat_turns.dart';
 import 'collapsible_group.dart';
 import 'connection_actions_sheet.dart';
+import 'connection_mode_page.dart';
 import 'connection_summary_block.dart';
 import 'conversation_hero.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_brand.dart';
 import 'dsh_composer.dart';
-import 'dsh_menu_glyph.dart';
 import 'dsh_popover.dart';
 import 'dsh_sheet.dart';
 import 'dsh_shimmer.dart';
@@ -1547,23 +1547,22 @@ class ChatPageState extends State<ChatPage> {
         // 它就是"再配一台"。不另加一条缝：两条缝迟早对不上（一条会清槽）。
         onAddHost: widget.paired ? () => widget.onConnect?.call() : null,
         onRePair: () => widget.onRePair?.call(),
-        onOpenSide: openSide,
         onDisconnect: () => widget.onDisconnect?.call(),
         // **右上角那个点也管"换方式"与"重连"**（用户原话："页面的右上角的点
         // 最好也可以点击切换方式重连"）。两个动作与设置页顶部块**同一份实现**：
-        // `pickEndpointToConnect` / `reconnectNow` 住在 `connection_summary_block.dart`。
+        // `reconnectNow` 住在 `connection_summary_block.dart`；选地址与改策略
+        // 都进了 `connection_mode_page.dart`（2026-11-13 合并两处入口）。
         //
         // **必须等这个 sheet 关完再开下一个**（`pop` 之后 `await` 一拍）：
         // 两层面板同时做退出/进入动画时，后开的那个会被前一个的 pop 带走 ——
         // 真机上表现为"点了「换个连接方式」，面板关了、选择框没出来"。
-        onPickEndpoint: () => unawaited(
-          _afterCurrentSheet(() => pickEndpointToConnect(context, widget.app)),
+        // 连接方式（策略 + 地址）都在这一页：从顶栏进，一步到位。
+        onOpenMode: () => unawaited(
+          _afterCurrentSheet(() => openConnectionModePage(context, widget.app)),
         ),
-        // **换了网络之后的那条出路**：把电脑的新地址加进表，**由用户自己选它连接**
-        // （不自动拨 —— 「什么时候连」是用户的动作，与设置页「添加端点」同一句承诺）。
-        onManualEndpoint: () => unawaited(
-          _afterCurrentSheet(() => addEndpointOnly(context, widget.app)),
-        ),
+        routePolicyLabel: widget.app.routePolicy.label,
+        // 重新拨一次（不改偏好、不换端点）。放弃自动重连后，同一行会显示成
+        // 「重试连接」—— 两个同义动作不再各占一行（2026-11-13）。
         onReconnect: () => unawaited(
           _afterCurrentSheet(() => reconnectNow(context, widget.app)),
         ),
@@ -4188,7 +4187,7 @@ class _EmptyChat extends StatelessWidget {
         : selectedSid != null
         ? ('newChat', '这个会话还没有内容', '在电脑上继续它，或直接在下面发一句。')
         : hasSessions
-        ? ('panelLeft', '选一个会话', '会话历史在左侧抽屉里。')
+        ? ('panelLeft', '选一个会话', '')
         : ('newChat', '还没有会话', '在电脑上用 DSH 开一个，它会出现在抽屉里。');
     // **投影失败要与"真没有内容"分开说**：逐条隔离之后，坏事件不再炸掉
     // 整批，但它少渲染的那几条必须让人看见 —— 否则"事件到了却没显示"
@@ -4219,11 +4218,12 @@ class _EmptyChat extends StatelessWidget {
                   style: TextStyle(fontSize: 15, color: c.labelSecondary),
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  detail,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 12, color: c.labelTertiary),
-                ),
+                if (detail.isNotEmpty)
+                  Text(
+                    detail,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: c.labelTertiary),
+                  ),
                 if (failureNote != null) ...[
                   const SizedBox(height: 8),
                   Text(
@@ -4233,14 +4233,9 @@ class _EmptyChat extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(height: 24),
-                // 两个入口都不需要连电脑。
-                if (hasSessions || paired)
-                  FilledButton.icon(
-                    onPressed: onOpenDrawer,
-                    // 与顶栏同一枚字形（`☰`，会话列表抽屉；见 `dsh_menu_glyph.dart`）。
-                    icon: DshMenuGlyph(size: 14, color: c.onAccent),
-                    label: const Text('打开会话抽屉'),
-                  ),
+                // **不再摆「打开会话抽屉」按钮**（2026-11-13）：顶栏 `☰` 常驻、
+                // 左缘也能跟手拖出，第三处入口只是重复。用户原话：
+                // "我侧滑都打开了，用得着点开在这里打开吗？"
                 // 已配对但列表是空的：给一条"重新拉一次"的出路。
                 // 会话由电脑侧新建，而自动拉只在连上那一刻发生一次 ——
                 // 没有它，用户只能杀 App 重进。

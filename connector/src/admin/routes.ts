@@ -166,8 +166,20 @@ export interface AdminDeps {
    * 面板据此在二维码旁边显式提示，而不是让用户出门才发现配不上。
    * `lanAvailable` 说明码里还有没有局域网地址，面板据此选择**正面**那句文案
    * （"两条路都在，出门走中转（已登记）" / "只有中转（已登记）"）。
+   *
+   * `purpose`（2026-11-13）：
+   * - `any` = 直连 + 中转（默认，按此刻能力选）；
+   * - `lan` = 只有局域网，**不登记**。
+   *
+   * 缺省 = 按能力自动选：中转连上了出 `any`，否则出 `lan`。
+   * 选了一档而那条路不可用时**报错并给修复动作**，不降级成另一档。
    */
-  offer(): Promise<{ svg: string; expiresAt: number; lanOnly: boolean; lanAvailable: boolean }>
+  offer(purpose?: 'any' | 'lan'): Promise<{
+    svg: string
+    expiresAt: number
+    lanOnly: boolean
+    lanAvailable: boolean
+  }>
   /**
    * 停用（`enabled: false`）或解禁（`enabled: true`）一台设备。
    *
@@ -308,15 +320,35 @@ export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
       path: PAIR_PATH,
       methods: ['POST'],
       requestBody: 'buffered',
-      fetch: async () => {
+      fetch: async (request: Request) => {
         // 出码是**有副作用的**（登记一次 offer），所以是 POST 而不是 GET：
         // GET 会被预取/刷新重复触发，那会白烧一堆一次性 offer。
         //
         // **失败必须带正文**：登记失败（中转没连上 / 令牌不认）以前会抛出路由，
         // 由 DSH 的桥接回一个**空正文的 400** —— 面板上只剩一句 `HTTP 400`，
         // 操作者拿不到任何下一步（2026-11-03 真机就卡在这里）。
+        // **空 body 是合法的**（旧面板 / curl 只发 POST）：`bodyOf` 会把空 body
+        // 当成"不是合法 JSON"，而这里缺省 = 按能力自动选，不是错误。
+        const text = await request.text()
+        let purpose: 'any' | 'lan' | undefined
+        if (text.trim() !== '') {
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(text)
+          } catch {
+            return badRequest(new Error('请求体不是合法 JSON'))
+          }
+          if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+            return badRequest(new Error('请求体必须是 JSON 对象'))
+          }
+          const raw = (parsed as Record<string, unknown>)['purpose']
+          if (raw !== undefined && raw !== 'any' && raw !== 'lan') {
+            return badRequest(new Error('purpose 必须是 any / lan'))
+          }
+          purpose = raw
+        }
         try {
-          return json(await deps.offer())
+          return json(await deps.offer(purpose))
         } catch (error) {
           return badRequest(error)
         }

@@ -2265,7 +2265,7 @@
   }
 
   /* 顶栏连接状态点(§7.8):一档 = 一个点(服务中绿 / 连接中转圈 / 其余红),
-     点它弹「连接操作」sheet(重新配对 / 打开侧面板 / 取消)。
+     点它弹「连接操作」sheet(当前连接 / 重新连接 / 重新配对 / 取消)。
      右抽屉的入口是**隔壁那个独立按钮**(data-act="side-open")—— DSH 的右面板入口
      同样是 header 角落的独立席位(ui-sidebar-right 的 ExpandButton),与连接指示器无关。
      形状照 DSH 的 StateDot:10px 槽里画 6px 核(StateDot.module.css:1-15)。
@@ -4128,8 +4128,8 @@
         openSide("file");
         break;
       case "status-open":
-        /* 点顶栏连接状态位 → 弹「连接操作」sheet(议题 3):重新配对 / 打开侧面板 / 取消。
-           不再是直接开右抽屉——"打开侧面板"降为 sheet 里的一个选项(见 docs §7.8 偏离)。
+        /* 点顶栏连接状态位 → 弹「连接操作」sheet(议题 3):当前连接 / 重新连接 / 重新配对 / 取消。
+           **不再有「打开侧面板」**(2026-11-13):右缘把手一步就到,连接面板不该是第二个入口。
            重新配对是演示动作,走 data-act="toast"(照本文件现有 toast 演示项先例);
            取消 / 点遮罩关闭。原型永远有会话、没有空态,故无空态那枚「重新配对」按钮。 */
         openSheet({
@@ -4140,26 +4140,16 @@
               "link",
               16
             )}</span><span class="m">当前连接:直连 · ws://192.168.2.43:8790</span></div>
+            <button class="sitem" data-act="toast" data-msg="演示:重新连接(真实动作需 bridge)"><span class="i">${ic(
+              "refresh",
+              16
+            )}</span><span class="m">重新连接</span></button>
             <button class="sitem" data-act="toast" data-msg="演示:重新配对会清掉本机凭据,回扫码页(真实动作需 bridge)"><span class="i">${ic(
               "refresh",
               16
             )}</span><span class="m">重新配对(换一台电脑)<span class="s">会清掉本机凭据,需要重新扫码</span></span></button>
-            <button class="sitem" data-act="conn-open-side"><span class="i">${ic(
-              "panelLeft",
-              16
-            )}</span><span class="m">打开侧面板</span></button>
             <button class="sitem" data-act="conn-cancel"><span class="m">取消</span></button>`,
         });
-        break;
-      case "conn-open-side":
-        /* 从连接 sheet 里开右抽屉:.sheet-host(z:25)盖在 .page--side(z:12)之上,
-           所以不能像 jobs-all 那样只 openSide(那会把连接 sheet 留在 side 之上);
-           也不能先 closeSheet() 再 openSide()——closeSheet() 的 history.back() 是异步的,
-           会和 side 的 pushState 竞态把 side 误关(AGENTS.md 层规则)。
-           照 settings-open/tasks-open 的处理:先**同步**摘掉 sheet 层
-           (closeLayer("sheet", true):拆 DOM + 出栈,不再 history.back),再开 side 层。 */
-        if (topLayer() && topLayer().kind === "sheet") closeLayer("sheet", true);
-        openSide("file");
         break;
       case "conn-cancel":
         closeSheet();

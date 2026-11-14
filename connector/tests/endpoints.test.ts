@@ -121,3 +121,20 @@ test('中转地址为空串当没有（装配层的兜底不该变成一条假�
   const result = describeEndpoints({ relayUrl: '', listener: null })
   assert.deepEqual(result.endpoints, [])
 })
+
+test('监听面没起：`extra` 也一条都不报（否则二维码会宣称"局域网可用"）', () => {
+  // 2026-11-14 真机验收踩到：直连监听停了，但 `extra` 里点名的那条地址
+  // 照旧进上报集合 ⇒ `lanAvailable` 为真、二维码带着一条拨不通的局域网地址。
+  // `extra` 的语义是"额外上报哪几条"，不是"凭空造一条能拨的路"。
+  const result = describeEndpoints({
+    relayUrl: 'wss://relay.example',
+    listener: null,
+    lanHint: '192.168.110.79',
+    advertise: new Map([['ws://192.168.2.41:18791', 'extra' as const]]),
+  })
+  assert.deepEqual(
+    result.endpoints.filter((e) => e.kind === 'direct'),
+    [],
+    '没在监听就没有可拨的直连地址 —— 用户点名也不该让它上码',
+  )
+})

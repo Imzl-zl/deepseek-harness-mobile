@@ -104,6 +104,8 @@ const out = await evalJs(async () => {
   const connSheet = q('.sheet')
   const connSheetOpen = !!connSheet && !!(q('.sheet-h') && q('.sheet-h').textContent.includes('连接'))
   const openSideBtn = connSheet ? [...connSheet.querySelectorAll('.sitem')].find(b => b.textContent.includes('打开侧面板')) : null
+  // 重新连接与重新配对是这张面板的常用动作（2026-11-13 收窄后一级只剩它们）。
+  const reconnectBtn = connSheet ? [...connSheet.querySelectorAll('.sitem')].find(b => b.textContent.includes('重新连接')) : null
   if (q('.sheet-scrim')) { q('.sheet-scrim').click(); await sleep(400) }   // 关掉连接 sheet
   PROTO.openSideByEdge(); await sleep(60)
   const mid = getComputedStyle(q('#pageSide')).transform
@@ -114,6 +116,7 @@ const out = await evalJs(async () => {
     // 一眼能看"走的哪条",不用进设置。
     connSheetShowsCurrent: connSheet ? connSheet.textContent.includes('当前连接') : false,
     sheetHasOpenSide: !!openSideBtn,
+    connSheetHasReconnect: !!reconnectBtn,
     openedByRightEdge: q('#pageSide').classList.contains('is-in'),
     // 右抽屉开着 → 右边那条手势带与"棒棒"整条收起(用户:"侧滑之后棒要消失")。
     edgeHiddenWhileOpen: getComputedStyle(q('#edgeSide')).display === 'none',
@@ -263,7 +266,8 @@ const out = await evalJs(async () => {
 // 有断言的判据:探针跑完要**自己说不合格**,否则"跑过了"看起来永远像"没问题"。
 // 断言口径与 app/test/{widget,topbar_chips,stats_bar_layout}_test.dart 同源。
 const failures = []
-const check = (ok, label) => { if (!ok) failures.push(label) }
+let checks = 0
+const check = (ok, label) => { checks += 1; if (!ok) failures.push(label) }
 
 check(out.errors.length === 0, `页面无 JS 错误（${out.errors.join(' / ')}）`)
 check(out.topbar.titleWidth <= 140, `标题限宽 ≤140（实测 ${out.topbar.titleWidth}px）`)
@@ -277,6 +281,12 @@ check(out.stats.oneRow, '三项读数排在同一行')
 check(out.stats.overflowX === 'auto', `统计条可横滚（overflow-x: ${out.stats.overflowX}）`)
 check(out.stats.allVisible, '三项读数都渲染出来了（不是被裁成 0 宽）')
 check(!/^第/.test(out.stats.turnText), `轮次格逐字照 DSH 的 stats.counts（实测 "${out.stats.turnText}"）`)
+// 连接面板（2026-11-13 收窄）：一级只留当前连接 + 重新连接 + 重新配对，
+// 「打开侧面板」删掉（右缘把手一步到，用户原话"我侧滑都打开了"）。
+check(out.side.connSheetOpen, '顶栏状态点弹出「连接操作」面板')
+check(out.side.connSheetShowsCurrent, '面板顶部有「当前连接」')
+check(out.side.connSheetHasReconnect, '面板一级有「重新连接」')
+check(out.side.sheetHasOpenSide === false, '面板里不再有「打开侧面板」')
 
 // 新会话页(blank)的 hero。口径与 app/test/conversation_hero_test.dart 同源。
 check(out.hero.hiddenByDefault, '默认不显示 hero（演示会话是有内容的，blank 才显示）')
@@ -307,5 +317,5 @@ if (failures.length) {
   for (const f of failures) console.error('  ✗ ' + f)
   process.exit(1)
 }
-console.log(`\nALL CHECKS PASSED — 顶栏与统计条 ${13} 项 + 新会话页 hero ${18} 项`)
+console.log(`\nALL CHECKS PASSED — 共 ${checks} 项`)
 

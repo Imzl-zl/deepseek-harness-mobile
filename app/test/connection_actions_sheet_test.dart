@@ -21,6 +21,8 @@ Widget _host({
   Rect? anchor,
   HostSwitchSeam? hostSwitch,
   VoidCallback? onAddHost,
+  VoidCallback? onRetry,
+  VoidCallback? onReconnect,
 }) => MaterialApp(
   theme: DshTheme.dark(),
   home: Scaffold(
@@ -33,6 +35,8 @@ Widget _host({
           anchor: anchor,
           hostSwitch: hostSwitch,
           onAddHost: onAddHost,
+          onRetry: onRetry,
+          onReconnect: onReconnect,
         ),
         child: const Text('open'),
       ),
@@ -104,7 +108,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('切换电脑'), findsOneWidget);
-    expect(find.text('还有 1 台已配对的电脑'), findsOneWidget);
+    // 台数是动态事实：做成右侧的值，不再是一整句副标题（2026-11-13）。
+    expect(find.text('1 台'), findsOneWidget);
+    expect(find.text('还有 1 台已配对的电脑'), findsNothing);
     expect(find.text('切回上一台'), findsOneWidget);
     expect(find.text('回到「客厅那台」'), findsOneWidget);
 
@@ -129,7 +135,10 @@ void main() {
 
     expect(find.text('添加电脑'), findsOneWidget);
     // 两行后果相反（一个保留、一个清掉），副标题必须把这件事写出来。
-    expect(find.text('再配一台；现在这台保留'), findsOneWidget);
+    // 2026-11-13 收窄成「保留这台」：原句"再配一台；现在这台保留"里的前半句
+    // 从标题就能读出来。
+    expect(find.text('保留这台'), findsOneWidget);
+    expect(find.text('再配一台；现在这台保留'), findsNothing);
 
     await tester.tap(find.text('添加电脑'));
     await tester.pumpAndSettle();
@@ -145,6 +154,60 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('添加电脑'), findsNothing);
+  });
+
+  // ---- 2026-11-13 收窄：删掉的两条与合并的一对 ----
+
+  testWidgets('不再摆「打开侧面板」与「手动填写电脑地址」', (tester) async {
+    // 前者是右缘抽屉的第二个入口（用户原话："我侧滑都打开了"），
+    // 后者挪进「换个连接方式」列表的末尾。
+    await tester.pumpWidget(_host(connection: fellBack, onRePair: () {}));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('打开侧面板'), findsNothing);
+    expect(find.text('手动填写电脑地址'), findsNothing);
+  });
+
+  testWidgets('「重新连接」与「重试连接」只剩一行：放弃自动重连时换标题', (tester) async {
+    var reconnect = 0;
+    var retry = 0;
+    await tester.pumpWidget(
+      _host(
+        connection: fellBack,
+        onRePair: () {},
+        onReconnect: () => reconnect++,
+        onRetry: () => retry++,
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('重试连接'), findsOneWidget);
+    expect(find.text('重新连接'), findsNothing, reason: '两个同义动作不许各占一行');
+
+    await tester.tap(find.text('重试连接'));
+    await tester.pumpAndSettle();
+    expect(retry, 1);
+    expect(reconnect, 0, reason: 'gaveUp 时走的是"再试一轮"，不是普通重拨');
+  });
+
+  testWidgets('没有 onRetry 时这一行叫「重新连接」', (tester) async {
+    var reconnect = 0;
+    await tester.pumpWidget(
+      _host(
+        connection: fellBack,
+        onRePair: () {},
+        onReconnect: () => reconnect++,
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('重新连接'), findsOneWidget);
+    await tester.tap(find.text('重新连接'));
+    await tester.pumpAndSettle();
+    expect(reconnect, 1);
   });
 
   testWidgets('只有一台电脑时不摆「切换电脑」（没有可换的）', (tester) async {

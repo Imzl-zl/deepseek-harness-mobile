@@ -2,6 +2,10 @@
 
 Status: implemented
 
+> **默认值已改**：2026-11-13 起任务提醒的默认档是 `off`（设备键 `device.notify_tasks`），
+> 逐条提醒只在用户显式选 `all` 时成立。本文其余结论（窗口、去重、正文取法）仍然有效。
+> 见 `implemented/2026-11-13-notify-only-actionable.md`。
+
 ## Problem
 
 通知只有三类：审批、提问、"这一轮跑完了"。**任务不是轮次**：一个 10 分钟的 `bash`

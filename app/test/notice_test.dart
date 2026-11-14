@@ -23,6 +23,7 @@ import 'package:dsh_mobile/core/notify.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/data/app_services.dart';
+import 'package:dsh_mobile/model/task_notice_policy.dart';
 import 'package:dsh_mobile/platform/notify_memory.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -348,7 +349,25 @@ void main() {
     );
   });
 
+  // ---- 后台任务提醒：默认关，三档由设备本地策略决定（2026-11-13） ----
+
+  test('默认关：任务结束**不**贴通知（任务跑完不需要用户操作）', () async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    client.jobs = [
+      _jobRow(id: 'j1', label: 'npm test', finishedAt: now - 1000),
+    ];
+    await app.refreshJobs('a');
+    await pump();
+
+    expect(
+      notify.shown.where((n) => n.title.startsWith('后台任务')),
+      isEmpty,
+      reason: '默认策略是 off：通知只留给"需要你动手"的那三类',
+    );
+  });
+
   test('后台任务结束 ⇒ 一条完成通知（标题带状态与任务名，正文取摘要前两行）', () async {
+    await app.setTaskNoticePolicy(TaskNoticePolicy.all);
     // 任务清单走"进服务态 / 切会话时拉一次"的那条路（`refreshJobs`），
     // 与生产同形：通知直接从这份快照派生。
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -376,6 +395,7 @@ void main() {
   });
 
   test('同一个任务重复推状态帧 ⇒ 只贴一条（按 jobId 去重）', () async {
+    await app.setTaskNoticePolicy(TaskNoticePolicy.all);
     await app.openSession('a');
     await app.openSession('b');
     await pump();
@@ -396,6 +416,7 @@ void main() {
   });
 
   test('30 分钟窗口：过期的任务不补提醒，运行中的任务也不提醒', () async {
+    await app.setTaskNoticePolicy(TaskNoticePolicy.all);
     final now = DateTime.now().millisecondsSinceEpoch;
     client.jobs = [
       _jobRow(id: 'old', label: 'old-task', finishedAt: now - 31 * 60 * 1000),
@@ -424,6 +445,7 @@ void main() {
   });
 
   test('失败的任务标题按状态说，不冒充"完成"', () async {
+    await app.setTaskNoticePolicy(TaskNoticePolicy.all);
     final now = DateTime.now().millisecondsSinceEpoch;
     client.jobs = [
       _jobRow(
@@ -440,6 +462,37 @@ void main() {
     final notice = notify.shown.firstWhere((n) => n.title.startsWith('后台任务'));
     expect(notice.title, '后台任务失败 · build');
     expect(notice.body, 'exit 1');
+  });
+
+  test('仅失败档：成功的任务静音，失败 / 已停止照贴', () async {
+    await app.setTaskNoticePolicy(TaskNoticePolicy.failures);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    client.jobs = [
+      _jobRow(id: 'ok', label: 'fmt', finishedAt: now - 1000),
+      _jobRow(
+        id: 'bad',
+        label: 'build',
+        status: 'failed',
+        finishedAt: now - 1000,
+      ),
+      _jobRow(
+        id: 'killed',
+        label: 'serve',
+        status: 'killed',
+        finishedAt: now - 1000,
+      ),
+    ];
+    await app.refreshJobs('a');
+    await pump();
+
+    final titles = notify.shown.map((n) => n.title).toList();
+    expect(titles, contains('后台任务失败 · build'));
+    expect(titles, contains('后台任务已停止 · serve'));
+    expect(
+      titles.any((t) => t.contains('fmt')),
+      isFalse,
+      reason: '成功结束不需要用户操作，静音',
+    );
   });
 
   test('同一 sid / 同一 itemId 在两台电脑下算出不同的通知 id：撤一台不动另一台', () async {

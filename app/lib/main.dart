@@ -47,6 +47,7 @@ import 'data/scoped_store.dart';
 import 'data/store.dart';
 import 'model/appearance.dart';
 import 'model/chat_item.dart';
+import 'model/route_policy.dart';
 import 'model/session_dot.dart';
 import 'model/theme_mode.dart';
 import 'model/workspace.dart';
@@ -67,6 +68,7 @@ import 'theme/dsh_theme.dart';
 import 'ui/archive_sheet.dart';
 import 'ui/chat_page.dart';
 import 'ui/connection_actions_sheet.dart';
+import 'ui/connection_mode_page.dart';
 import 'ui/dsh_brand.dart';
 import 'ui/dsh_shimmer.dart';
 import 'ui/dsh_toast.dart';
@@ -942,8 +944,8 @@ class _DshMobileAppState extends State<DshMobileApp>
         previousPairingIdOf: _previousPairingIdOf,
         // 局域网地址的拨号顺序要用它（同一 /24 的先拨）；拿不到就是 null（不猜）。
         myIpv4: app.myLanIpv4,
-        // 先试哪条路只影响顺序，失败仍回落（`device.pairing_prefer`，默认自动）。
-        prefer: app.pairingPreference,
+        // 先试哪条路由设备级策略决定（与连接共用同一个设置）。
+        prefer: app.routePolicy,
       );
     }
     // **抽屉必须跟着 `AppModel` 重建**。
@@ -1274,7 +1276,9 @@ class _DshMobileAppState extends State<DshMobileApp>
       // 没配对时不给这一行（那时"连电脑"就是它本身）。
       onAddHost: _credentials == null ? null : _openPairing,
       onRePair: _repair,
-      onOpenSide: () => _chatKey.currentState?.openSide(),
+      // 连接方式（策略 + 地址）在同一页：与聊天页顶栏那个入口同一份实现。
+      onOpenMode: () => unawaited(openConnectionModePage(_navContext, app)),
+      routePolicyLabel: app.routePolicy.label,
       // 断开连接：**只断链，不动凭据**（清凭据是「重新配对」的事，藏在设置里）。
       onDisconnect: () => unawaited(app.disconnectLink()),
     );
@@ -1760,9 +1764,12 @@ Future<AppModel> _assemble(
   // "发现了一条直连"要等重启 App 才生效（`tools.md` 那句"重开 App 它就会
   // 改用直连"其实就是这个别名 bug 的症状，不是设计意图）。
   // 所以这里读 `appRef`（晚绑定），并套上 `dialOrder`：
-  // **记住的那条先试 → 同网段的次之 → 其余按用户排的顺序**。
+  // **直连桶 → 中转桶**（桶内：记住的 → 同网段 → 用户顺序 → 冷却区最后）。
   AppModel? appRef;
   final transport = EndpointTransport(
+    // 连接方式策略：用户说"只用直连 / 只用中转"时，另一半不进候选集合。
+    // 现取 —— 设置页改完下一轮重连立刻生效。
+    policyOf: () => appRef?.routePolicy ?? RoutePolicy.auto,
     endpointsOf: () {
       final app = appRef;
       final table = app?.endpoints ?? credentials.endpoints;

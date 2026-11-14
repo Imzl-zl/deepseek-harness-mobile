@@ -47,6 +47,7 @@ import '../core/pairing.dart';
 import '../core/pairing_client.dart';
 import '../core/pairing_flow.dart';
 import '../core/transport.dart';
+import '../model/route_policy.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
@@ -117,7 +118,7 @@ class PairingPage extends StatefulWidget {
     this.notice,
     this.previousPairingIdOf,
     this.myIpv4,
-    this.prefer = PairingPreference.auto,
+    this.prefer = RoutePolicy.auto,
   });
 
   /// 配对成功时回调（上层负责落盘与建连）。
@@ -175,11 +176,11 @@ class PairingPage extends StatefulWidget {
   /// 给的顺序拨 —— 不猜。
   final String? myIpv4;
 
-  /// 先试哪条路（`device.pairing_prefer`，默认自动）。
+  /// 先试哪条路（设备级策略 `device.route_policy`，默认自动）。
   ///
-  /// **只影响顺序**：选「中转优先」时如果中转不通，照样回落直连 —— 失败仍回落是这条
-  /// 偏好的前提（见 `core/pairing_flow.dart` 的 [PairingPreference]）。
-  final PairingPreference prefer;
+  /// 只有 `auto` 会回落；两档单一策略下**不偷偷改路** —— 那正是"想连哪条却连了
+  /// 另一条"的来源（见 `model/route_policy.dart`）。
+  final RoutePolicy prefer;
 
   @override
   State<PairingPage> createState() => _PairingPageState();

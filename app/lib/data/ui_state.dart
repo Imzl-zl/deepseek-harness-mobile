@@ -73,11 +73,21 @@ abstract final class UiKey {
   static const String performanceView = '${devicePrefix}performance_view';
   static const String collapseTiming = '${devicePrefix}collapse_timing';
 
-  /// 配对时先试哪条路（`auto` / `direct` / `relay`，见 `core/pairing_flow.dart`）。
+  /// 这台手机**想走哪条路**（`auto` / `direct` / `relay`，见 `model/route_policy.dart`）。
   ///
-  /// **只影响顺序，失败仍回落**；换电脑也保留（它说的是这台手机的偏好，
-  /// 不是某台电脑的路由）。
-  static const String pairingPrefer = '${devicePrefix}pairing_prefer';
+  /// **配对与连接共用**它，不再有第二套"配对偏好"；换电脑也保留
+  /// （它说的是这台手机的偏好，不是某台电脑的路由）。
+  static const String routePolicy = '${devicePrefix}route_policy';
+
+  /// 后台任务结束要不要提醒（`off` / `failures` / `all`，默认 `off`）。
+  ///
+  /// 判据见 `model/task_notice_policy.dart`：任务跑完不需要用户操作，
+  /// 所以默认不打扰；长任务失败可以主动订阅。
+  static const String taskNotice = '${devicePrefix}notify_tasks';
+
+  /// 旧键（2026-11-13 之前叫这个）：只在 [UiStateStore.open] 的一次性迁移里读，
+  /// 迁完即删。别在别处读它 —— 那会让"一个事实两处表达"回来。
+  static const String routePolicyLegacy = '${devicePrefix}pairing_prefer';
 
   /// 没有电脑身份时的键：`host.last_session`。
   static const String lastSession = '$hostPrefix$lastSessionField';
@@ -136,7 +146,8 @@ class UiStateStore {
   String? _transcriptView;
   String? _performanceView;
   String? _collapseTiming;
-  String? _pairingPrefer;
+  String? _routePolicy;
+  String? _taskNotice;
   String? _lastSession;
   Map<String, bool> _drawerExpansion = const <String, bool>{};
 
@@ -158,8 +169,10 @@ class UiStateStore {
   /// 首帧前跑一次。**只做固定几次读**（`device.*` 一次范围查 + 两个 host 键），
   /// 不随会话数增长。
   ///
-  /// **没有迁移步骤**：分桶是这套存储的第一版形状，不存在"升级前落在平铺键上的
-  /// 存量"（协议没发版）。少一步迁移 = `open()` 的写次数恒为 0。
+  /// **唯一的一步迁移**：`device.pairing_prefer` → `device.route_policy`
+  /// （2026-11-13 把"配对偏好"与"连接策略"合成一个）。两个键的取值一一对应，
+  /// 迁移是恒等的；写完新键就删旧键，此后那份值只有一处来源。只在真有旧键时
+  /// 才写，新用户首启仍然是零写。
   Future<void> open() async {
     final device = await _prefs.readAll(UiKey.devicePrefix);
     _themeMode = device[UiKey.themeMode];
@@ -168,7 +181,17 @@ class UiStateStore {
     _transcriptView = device[UiKey.transcriptView];
     _performanceView = device[UiKey.performanceView];
     _collapseTiming = device[UiKey.collapseTiming];
-    _pairingPrefer = device[UiKey.pairingPrefer];
+    final legacyPolicy = device[UiKey.routePolicyLegacy];
+    _routePolicy = device[UiKey.routePolicy] ?? legacyPolicy;
+    _taskNotice = device[UiKey.taskNotice];
+    if (legacyPolicy != null) {
+      if (device[UiKey.routePolicy] == null) {
+        await _write(UiKey.routePolicy, legacyPolicy);
+      }
+      await _enqueue(
+        () => _prefs.delete(UiKey.routePolicyLegacy, includePrefixed: false),
+      );
+    }
     _lastSession = await _prefs.read(_hostKey(UiKey.lastSessionField));
     _drawerExpansion = _decodeExpansion(
       await _prefs.read(_hostKey(UiKey.drawerExpansionField)),
@@ -186,7 +209,10 @@ class UiStateStore {
   String? get transcriptView => _transcriptView;
   String? get performanceView => _performanceView;
   String? get collapseTiming => _collapseTiming;
-  String? get pairingPrefer => _pairingPrefer;
+  String? get routePolicy => _routePolicy;
+
+  /// 后台任务提醒档（`null` = 没存过，调用方按 `off` 处理）。
+  String? get taskNotice => _taskNotice;
 
   Future<void> setThemeMode(String wire) async {
     if (wire == _themeMode) return;
@@ -225,10 +251,16 @@ class UiStateStore {
     await _write(UiKey.collapseTiming, wire);
   }
 
-  Future<void> setPairingPrefer(String wire) async {
-    if (wire == _pairingPrefer) return;
-    _pairingPrefer = wire;
-    await _write(UiKey.pairingPrefer, wire);
+  Future<void> setRoutePolicy(String wire) async {
+    if (wire == _routePolicy) return;
+    _routePolicy = wire;
+    await _write(UiKey.routePolicy, wire);
+  }
+
+  Future<void> setTaskNotice(String wire) async {
+    if (wire == _taskNotice) return;
+    _taskNotice = wire;
+    await _write(UiKey.taskNotice, wire);
   }
 
   // ---- host.*（换电脑整段清）----

@@ -25,6 +25,7 @@ class PairingOffer {
     required this.code,
     this.lanUrls = const [],
     this.lanOnly = false,
+    this.routes = const {},
   });
 
   factory PairingOffer.fromQrPayload(
@@ -69,6 +70,14 @@ class PairingOffer {
         offerId == code) {
       throw const ProtocolException(ErrorCode.notPaired, '二维码身份、邀请或秘密的格式不合法');
     }
+    final lanUrls = _lanUrlsOf(
+      parsed['lan'],
+      allowInsecureLocal: allowInsecureLocal,
+      allowInsecurePublic: allowInsecurePublic,
+    );
+    // **这张码有哪几条路**（电脑侧 2026-11-13 起写 `routes`）：
+    // 空 = 老载荷，按 `relay` 与 `lanUrls` 推断（旧行为）。
+    final routes = _routesOf(parsed['routes']);
     return PairingOffer(
       relayUrl: relay,
       pcId: pcId,
@@ -76,14 +85,14 @@ class PairingOffer {
       pcDhPubHex: pcDh,
       offerId: offerId,
       code: code,
-      lanUrls: _lanUrlsOf(
-        parsed['lan'],
-        allowInsecureLocal: allowInsecureLocal,
-        allowInsecurePublic: allowInsecurePublic,
-      ),
+      lanUrls: lanUrls,
       // **降级标**（契约 §12.1）：电脑侧出码时向中转登记失败，这张码只有局域网那条路。
       // 只认字面 `true`：别的值（缺、字符串、0）一律当"没这个标记"—— 不猜。
-      lanOnly: parsed['lanOnly'] == true,
+      // `routes` 不含 relay 是同一件事的新写法（新版电脑用它表达"中转没连上"）。
+      lanOnly:
+          parsed['lanOnly'] == true ||
+          (routes.isNotEmpty && !routes.contains('relay')),
+      routes: routes,
     );
   }
 
@@ -116,6 +125,16 @@ class PairingOffer {
   // Note: 为什么降级必须可见 —— 见
   // `.agents/notes/implemented/2026-11-04-pairing-degradation-is-visible.md`
   final bool lanOnly;
+
+  /// 这张码实际有哪几条路（`lan` / `relay`）。**空 = 老载荷**（按旧规则推断）。
+  ///
+  /// 电脑侧 2026-11-13 起写这一格：直连监听在跑才有 `lan`，**中转控制面连上了**
+  /// 才有 `relay`（不是配置里有地址就算）。"关掉中转"于是有确定语义 ——
+  /// 码里没有它，手机也不会去换一张注定换不到的票。
+  final Set<String> routes;
+
+  /// 码里有没有中转那条路。老载荷（`routes` 为空）当作有。
+  bool get hasRelay => routes.isEmpty || routes.contains('relay');
 
   Future<String> codeHash() => sha256Hex(code);
   Future<String> pairingId() async => base64UrlNoPad(
@@ -271,6 +290,17 @@ List<String> _lanUrlsOf(
       continue;
     }
     out.add(entry);
+  }
+  return out;
+}
+
+/// 载荷里的 `routes`（可选）。只收 `lan` / `relay` 两个值，其余丢掉 ——
+/// 它只影响"这台手机要不要去试中转"，不认识的值不该让整张码作废。
+Set<String> _routesOf(Object? raw) {
+  if (raw is! List) return const {};
+  final out = <String>{};
+  for (final entry in raw) {
+    if (entry == 'lan' || entry == 'relay') out.add(entry as String);
   }
   return out;
 }

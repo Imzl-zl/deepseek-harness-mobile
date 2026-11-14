@@ -19,12 +19,25 @@ const PAIRING_ID = /^[A-Za-z0-9_-]{43}$/
 const base64url = (bytes: Uint8Array): string => Buffer.from(bytes).toString('base64url')
 const hash = (text: string): Buffer => createHash('sha256').update(text, 'utf8').digest()
 
+/** 二维码里能走的一条路。`routes` 字段的取值。 */
+export type PairingRoute = 'lan' | 'relay'
+
 export interface PairingOffer {
   readonly offerId: string
   /** 只交给二维码，不登记到中转。 */
   readonly code: string
   readonly expiresAt: number
   readonly payload: string
+  /**
+   * 这张码里**实际有哪几条路**（给新版手机读，载荷里的 `routes`）。
+   *
+   * 由出码那一刻的能力算出来：直连监听在跑才有 `lan`，**中转连上了**才有 `relay`
+   * （不是配置里有地址就算）。旧版 App 忽略这个字段，仍按 `relay` + `lan` 试。
+   *
+   * 2026-11-13 起，"关掉中转"的确定语义就是这里没有 `relay` —— 以前登记成功
+   * 就写 `relay`，而那条腿可能已经死了（`issuePairingOffer` 的旧注释解释过）。
+   */
+  readonly routes: readonly PairingRoute[]
   /**
    * 载荷里那组**局域网直连地址**（`ws://<ip>:<port>`，手机在同网段时直接拨它们）。
    *
@@ -112,6 +125,14 @@ export interface PairingOptions {
    * 空/缺 = 这次配对只能走中转（老载荷形状，手机按老路换票）。
    */
   lanUrls?: () => readonly string[]
+  /**
+   * 中转**此刻真的连上了吗**（默认 `true`）。
+   *
+   * 出码时求值：登记成功不代表跨网那条腿活着 —— 关掉中转通道后登记仍能成功
+   * （`/pairing/register` 只验令牌），所以"码里有没有 relay"必须看控制面
+   * （`connection.connected`），不看配置里的地址。
+   */
+  relayAvailable?: () => boolean
   pcId: string
   pcPubEd: string
   pcPubDh: string
@@ -230,10 +251,14 @@ export function relayHintFor(configured: string, lanHint: string | null): string
  */
 export function markOfferLanOnly(offer: PairingOffer): PairingOffer {
   const payload = JSON.parse(offer.payload) as Record<string, unknown>
+  // 只有局域网：`routes` 里不能还留着一个 `relay` —— 新版手机据此跳过换票，
+  // 旧版手机本来就会先试 `lan`（这一格只是让"承诺"和"事实"对齐）。
+  const routes = offer.routes.filter((route) => route !== 'relay')
   return {
     ...offer,
     lanOnly: true,
-    payload: JSON.stringify({ ...payload, lanOnly: true }),
+    routes,
+    payload: JSON.stringify({ ...payload, lanOnly: true, routes }),
   }
 }
 
@@ -263,8 +288,14 @@ export function createPairing(options: PairingOptions): Pairing {
       const expiresAt = now() + PAIRING_TTL_MS
       current = { offerId, codeHash: hash(code), expiresAt, candidate: null, accepted: null }
       const lanUrls = [...(options.lanUrls?.() ?? [])]
+      // 码里有哪几条路：直连看地址、中转看**控制面**（不是配置）。
+      const relayAvailable = options.relayAvailable?.() ?? true
+      const routes: readonly PairingRoute[] = [
+        ...(lanUrls.length === 0 ? [] : (['lan'] as const)),
+        ...(relayAvailable ? (['relay'] as const) : []),
+      ]
       return {
-        offerId, code, expiresAt, lanUrls, lanOnly: false,
+        offerId, code, expiresAt, lanUrls, lanOnly: false, routes,
         payload: JSON.stringify({
           v: PAIRING_VERSION,
           // **出码时求值**：电脑换 WiFi 后二维码带的是当前地址，
@@ -273,6 +304,8 @@ export function createPairing(options: PairingOptions): Pairing {
           // 局域网直连地址：手机先拨这组，全拨不通才回落中转（见 `pairing-lan.ts`）。
           // **空就不写这一格** —— 老载荷形状照旧，手机按老路走。
           ...(lanUrls.length === 0 ? {} : { lan: lanUrls }),
+          // **这张码能走哪几条路**（新版手机读；旧版忽略）。
+          routes,
           pcId: options.pcId,
           pcPubEd: options.pcPubEd, pcPubDh: options.pcPubDh, offerId, code,
         }),

@@ -24,6 +24,7 @@ import 'package:dsh_mobile/core/pairing.dart';
 import 'package:dsh_mobile/core/pairing_client.dart';
 import 'package:dsh_mobile/core/pairing_flow.dart';
 import 'package:dsh_mobile/core/transport.dart';
+import 'package:dsh_mobile/model/route_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/fake_pc.dart';
@@ -468,9 +469,9 @@ void main() {
     expect(http.calls, isEmpty);
   });
 
-  // ---- 拨号顺序偏好（`device.pairing_prefer`）：只改顺序，失败仍回落 ----
+  // ---- 连接方式策略（`device.route_policy`）：配对与连接共用一个设置 ----
 
-  test('中转优先：两条都在也先换票；局域网那条一个都不拨', () async {
+  test('只用中转：只换票，局域网地址一个都不拨', () async {
     final lan = offerWithLan(['ws://192.168.1.5:8790']);
     final http = _TicketRecorder();
     final urls = <String>[];
@@ -486,19 +487,19 @@ void main() {
         return pc;
       },
       allowInsecureLocal: true,
-      prefer: PairingPreference.relay,
+      prefer: RoutePolicy.relayOnly,
       newFrameIdHex: () => 'p1',
       newEphemeralSeedHex: () => 'e5' * 32,
       newNonceHex: () => 'a7' * 32,
     );
     addTearDown(attempt.cancel);
 
-    expect(http.calls, hasLength(1), reason: '中转优先：先换票');
+    expect(http.calls, hasLength(1), reason: '只用中转：先换票');
     expect(attempt.dial, PairingDial.relay);
     expect(urls.single, startsWith('ws://127.0.0.1:8787/ws/device?ticket='));
   });
 
-  test('中转优先 + 中转失败：仍回落到局域网直连（"失败仍回落"是前提）', () async {
+  test('只用中转 + 中转失败：**不回落**局域网（"不偷偷改路"）', () async {
     final lan = offerWithLan(['ws://192.168.1.5:8790']);
     final http = _TicketRecorder(const [
       HttpResult(status: 409, body: '{"error":"pairing-unavailable"}'),
@@ -506,29 +507,29 @@ void main() {
     final urls = <String>[];
     final candidate = lan.candidate(identity, '我的手机');
     final pc = FakePc(pcSeedHex: _pcSeed, offer: lan, candidate: candidate);
-    final attempt = await beginPairing(
-      offer: lan,
-      identity: identity,
-      deviceName: '我的手机',
-      send: http.call,
-      transportFor: (url) {
-        urls.add(url);
-        return pc;
-      },
-      allowInsecureLocal: true,
-      prefer: PairingPreference.relay,
-      newFrameIdHex: () => 'p1',
-      newEphemeralSeedHex: () => 'e5' * 32,
-      newNonceHex: () => 'a7' * 32,
-    );
-    addTearDown(attempt.cancel);
 
-    expect(http.calls, hasLength(1));
-    expect(urls.single, startsWith('ws://192.168.1.5:8790'));
-    expect(attempt.dial, PairingDial.lan);
+    await expectLater(
+      beginPairing(
+        offer: lan,
+        identity: identity,
+        deviceName: '我的手机',
+        send: http.call,
+        transportFor: (url) {
+          urls.add(url);
+          return pc;
+        },
+        allowInsecureLocal: true,
+        prefer: RoutePolicy.relayOnly,
+        newFrameIdHex: () => 'p1',
+        newEphemeralSeedHex: () => 'e5' * 32,
+        newNonceHex: () => 'a7' * 32,
+      ),
+      throwsA(isA<ProtocolException>()),
+    );
+    expect(urls, isEmpty, reason: '用户说了只用中转，就不该去拨局域网那条');
   });
 
-  test('自动 + 不同网段：先中转（出门在外不该先为局域网白等一个超时）', () async {
+  test('自动：码里有局域网地址就先直连（不再按网段猜）', () async {
     final lan = offerWithLan(['ws://192.168.1.5:8790']);
     final http = _TicketRecorder();
     final urls = <String>[];
@@ -544,7 +545,8 @@ void main() {
         return pc;
       },
       allowInsecureLocal: true,
-      // 本机在 10.0.0.0/24，而码里只有 192.168.1.5。
+      // 本机在 10.0.0.0/24，而码里只有 192.168.1.5 —— 网段不同**不再**影响先试哪条：
+      // 码里有局域网地址就是电脑出码时的现证，先拨它；失败 3s 内才回落中转。
       myIpv4: '10.0.0.7',
       newFrameIdHex: () => 'p1',
       newEphemeralSeedHex: () => 'e5' * 32,
@@ -552,8 +554,42 @@ void main() {
     );
     addTearDown(attempt.cancel);
 
-    expect(http.calls, hasLength(1));
-    expect(attempt.dial, PairingDial.relay);
+    expect(http.calls, isEmpty, reason: '先去局域网，不先换票');
+    expect(attempt.dial, PairingDial.lan);
+    expect(urls.single, startsWith('ws://192.168.1.5:8790'));
+  });
+
+  test('只用直连而码里没有局域网地址：明说冲突，不猜一个中转出来', () async {
+    // 模块级 `offer` 就是"老载荷"形状：只有中转，没有 `lan`。
+    final http = _TicketRecorder();
+    final urls = <String>[];
+
+    await expectLater(
+      beginPairing(
+        offer: offer,
+        identity: identity,
+        deviceName: '我的手机',
+        send: http.call,
+        transportFor: (url) {
+          urls.add(url);
+          return _DeadTransport();
+        },
+        allowInsecureLocal: true,
+        prefer: RoutePolicy.directOnly,
+        newFrameIdHex: () => 'p1',
+        newEphemeralSeedHex: () => 'e5' * 32,
+        newNonceHex: () => 'a7' * 32,
+      ),
+      throwsA(
+        isA<TransportException>().having(
+          (error) => error.message,
+          'message',
+          contains('只用直连'),
+        ),
+      ),
+    );
+    expect(http.calls, isEmpty);
+    expect(urls, isEmpty);
   });
 }
 

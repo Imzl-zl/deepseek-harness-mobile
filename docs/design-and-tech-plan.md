@@ -499,8 +499,9 @@ DSH 右侧有一条**轮次导航轨**(`ui-chat/TurnNavigator.tsx`):每一轮一
     点它开;也能从**左缘跟手拖出**(原生 `drawer` + `drawerEdgeDragWidth`)。
   - `●` **连接状态点**:服务中=绿点、连接中/握手中/重连中=转圈、其余(未连接/已断开/连接不上)=红点。
     形状与颜色照 DSH `ui-primitives/src/StateDot.tsx:44-77` 与 `StateDot.module.css:1-45`(10px 槽里画 6px 核;转圈 14px、1.5s 匀速);三档语义照
-    `ui-primitives/src/ConnectionIndicator.tsx:7-11`。**点它弹「连接操作」sheet**(重试 / 重新配对 / 打开侧面板 / 断开)——
+    `ui-primitives/src/ConnectionIndicator.tsx:7-11`。**点它弹「连接操作」面板**(当前连接 / 连接方式 / 切换电脑 / 重新连接 / 重新配对 / 断开)——
     照 DSH 的按钮语义:`ConnectionIndicator` 的异常/重连态本身就是"立即重连"按钮(`:75-81`)。
+    「连接方式」进独立一页(策略三档 + 地址列表);**右抽屉不在这里开** —— 右缘一滑就到。
   - `⊕` 新建会话。
   - **右边不加图标**:右缘一条 **4×40 的棒棒**(`ui/edge_stick.dart`)当"这侧能划"的标识,
     从**右缘跟手拖出**右抽屉(原生 `endDrawer`);**右抽屉开着时棒棒整条消失**。

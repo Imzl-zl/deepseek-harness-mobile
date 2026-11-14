@@ -129,3 +129,53 @@ test('一次出码只登记一次，且用的是**这一次**的哈希（重新�
   assert.equal(registered.length, 2)
   assert.notEqual(registered[0], registered[1], '两次出码的哈希不同（码不同）')
 })
+
+// ---- 这张码给谁用（2026-11-13：出码不再永远带中转） ----
+
+test('只要「同一 WiFi」：**不登记**，载荷 routes 只留 lan', async () => {
+  const lan = ['ws://192.168.1.5:8790']
+  const { pairing } = setup(undefined, () => lan)
+  let registered = 0
+  const result = await offerForScanning({
+    pairing,
+    register: () => {
+      registered += 1
+      return Promise.resolve()
+    },
+    withRelay: false,
+  })
+
+  assert.equal(result.kind, 'success')
+  const payload = JSON.parse(result.text.split('\n')[1] ?? '') as Record<string, unknown>
+  assert.deepEqual(payload['routes'], ['lan'], '码里不该还留着一个 relay')
+  assert.equal(payload['lanOnly'], true, '只有局域网那一档的显式标记')
+  assert.equal(registered, 0, '没人会去换的票不该登记')
+})
+
+test('中转没连上（relayAvailable=false）：码里不含 relay，即使登记会成功', async () => {
+  const lan = ['ws://192.168.1.5:8790']
+  let sequence = 0
+  const pairing = createPairing({
+    pcId: 'pc-1',
+    relayUrl: 'wss://relay.example/ws',
+    pcPubEd: 'a'.repeat(64),
+    pcPubDh: 'b'.repeat(64),
+    randomBytes: (size) => Uint8Array.from({ length: size }, () => ++sequence % 256),
+    lanUrls: () => lan,
+    // 控制面没连上：登记仍可能成功（只验令牌），但那张票换来的路是死的。
+    relayAvailable: () => false,
+  })
+  let registered = 0
+  const result = await offerForScanning({
+    pairing,
+    register: () => {
+      registered += 1
+      return Promise.resolve()
+    },
+  })
+
+  assert.equal(result.kind, 'success')
+  const payload = JSON.parse(result.text.split('\n')[1] ?? '') as Record<string, unknown>
+  assert.deepEqual(payload['routes'], ['lan'], '承诺必须与"此刻活着"一致')
+  assert.equal(registered, 0, '中转那条腿不在，登记没有意义')
+})

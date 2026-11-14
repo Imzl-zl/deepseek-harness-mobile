@@ -269,20 +269,22 @@ void main() {
         reason: '记住的排第一；它失败之后同网段那条紧跟',
       );
 
-      // 拿不到本机 IP（移动网络）→ 退化成"记住的 + 用户顺序"，不猜网段。
+      // 拿不到本机 IP（移动网络）→ 直连桶内按"记住的 + 用户顺序"。
+      // **中转仍在两个桶之后**：`auto` 的语义是"能直连就直连"（2026-11-13 分桶）。
       expect(
         dialOrder(
           table,
           rememberedEndpointId: office.id,
         ).map((e) => e.url).toList(),
-        [office.url, relay.url, home.url],
+        [office.url, home.url, relay.url],
+        reason: '中转不压过直连，哪怕上次拨通的是它',
       );
 
-      // 没有记忆 → 同网段优先，其余按用户顺序。
+      // 没有记忆 → 同网段优先；中转仍最后。
       expect(dialOrder(table, myIpv4: '10.0.1.44').map((e) => e.url).toList(), [
         office.url,
-        relay.url,
         home.url,
+        relay.url,
       ]);
     });
 
@@ -332,8 +334,8 @@ void main() {
           },
           nowMs: now,
         ).map((e) => e.url).toList(),
-        [relay.url, lan.url, dead.url],
-        reason: '记住的那条刚失败 → 它也要排队尾，不再首试',
+        [lan.url, relay.url, dead.url],
+        reason: '记住的直连刚失败 → 冷却区放全局最后，这一轮先试还能通的中转',
       );
     });
 

@@ -88,7 +88,7 @@ const FILE_BUDGET = [
  * 名字必须**唯一**（同名类出现在两个文件里就是抄错了）。
  */
 const CLASS_BUDGET = [
-  ['AppModel', 175], // 收窄：任务簇（2026-11-11）与提醒簇（2026-11-12：`_noticeKeyOf` / `_desiredNotices`）已搬走
+  ['AppModel', 176], // 收窄：任务簇（2026-11-11）与提醒簇（2026-11-12：`_noticeKeyOf` / `_desiredNotices`）已搬走；+1 = 后台任务提醒档 setter（2026-11-13）
   ['ChatPageState', 65], // 面板/文件区/轨迹该各自成 widget
   ['_SyncClient', 61], // 收帧 / 恢复 / 写操作三件事在同一类
   ['_DshMobileAppState', 48], // 装配之外的路由回调可下沉

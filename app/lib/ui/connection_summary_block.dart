@@ -3,17 +3,11 @@
 /// 三行信息：走哪条（[ConnectionSummary.line]）+ 为什么没走首选
 /// （[ConnectionSummary.note]，只在回落时出现）。
 ///
-/// ## 它是**入口**，不只是呈示（2026-10-18 改）
+/// ## 它现在是**呈示**，入口在「连接方式」页（2026-11-13）
 ///
-/// 用户的原话是"当前连接点击弹框选择连接方式直接连接就挺好啊，最好再有一个
-/// 重连图标可以点；干嘛非要在队列上点？"——这条把两个动作**归位**：
-///
-/// - **切换连哪条**（会立刻断当前连接）：从这里进 → 弹框选一条 → 直接连；
-/// - **重连**（不断偏好，只是重新拨一次）：右侧那个刷新图标。
-///
-/// 而下面的端点列表回到它本来的角色：**看和管**（排序 / 删除 / 手填），
-/// 点一下不再触发重拨。理由：队列是"顺序与清单"，把"立刻重连"这种有副作用的
-/// 动作放在逐行点击上，会在管理偏好时不断打断当前连接。
+/// 选哪条地址、改策略都在 `connection_mode_page.dart`。这块以前自己弹一个
+/// 选择框，于是"选地址"有两处实现、策略又住在设置页第二组 —— 三处分头长。
+/// 现在它只显示事实 + 一个重连图标（`onReconnect`）。
 library;
 
 import 'package:flutter/material.dart';
@@ -24,44 +18,21 @@ import '../model/chat_item.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import 'add_endpoint_dialog.dart';
-import 'dsh_sheet.dart';
 import 'dsh_toast.dart';
 
-/// 「换个连接方式」：选一条端点并**立刻用它连**。
+/// 用一条端点**立刻连**（本次覆盖；失败回自动并说明原因）。
 ///
-/// 两处入口共用（设置页顶部块 / 顶栏状态点的连接 sheet）—— 用户的原话是
-/// "页面的右上角的点最好也可以点击切换方式重连"，所以两边必须是**同一个**选择框。
-///
-/// 列表按当前队列顺序排；正在用的那条打勾、点它无效（那是重连，不是换）。
-Future<void> pickEndpointToConnect(BuildContext context, AppModel app) async {
-  if (app.endpoints.isEmpty) return;
-  final picked = await showDshSheet<Endpoint>(
-    context: context,
-    title: '选择连接方式',
-    body: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (final endpoint in app.endpoints)
-          DshPickerRow(
-            name: endpointKindLabel(endpoint.kind),
-            tags: [endpoint.url, if (endpoint.label.isNotEmpty) endpoint.label],
-            // 正在用的那条**置灰 + 打勾**；状态由控件自己表达，
-            // 不再额外挂一句「当前连接」（同一个事实说两遍）。
-            selected: app.activeEndpoint?.id == endpoint.id,
-            icon: endpoint.kind == EndpointKind.direct ? 'link' : 'globe',
-            enabled: app.activeEndpoint?.id != endpoint.id,
-            onTap: () => Navigator.of(context).pop(endpoint),
-          ),
-      ],
-    ),
-  );
-  if (picked == null) return;
-  if (!context.mounted) return;
-
-  final label = endpointKindLabel(picked.kind);
+/// 连接 sheet 的列表、设置页端点行、连接方式页共用这一份反馈 ——
+/// 三处各写一遍 toast 文案就是"同一个事实多处表达"。
+Future<void> connectEndpointNow(
+  BuildContext context,
+  AppModel app,
+  Endpoint endpoint,
+) async {
+  final label = endpointKindLabel(endpoint.kind);
   // **先给"正在试"的反馈再 await**：握手要几百毫秒，静默会让人觉得没点上。
   DshToast.show(context, '正在用「$label」连接…');
-  final ok = await app.useEndpointNow(picked);
+  final ok = await app.useEndpointNow(endpoint);
   if (!context.mounted) return;
   if (ok) {
     // 切端点后"现在走哪条"只在设置块里看得到，不在当前屏 —— 成功要回执。
@@ -81,7 +52,7 @@ Future<void> pickEndpointToConnect(BuildContext context, AppModel app) async {
 /// **只加一条地址，不自动拨**（换了网络、旧地址全拨不通时的那条出路）。
 ///
 /// 与设置页「添加端点」共用同一个对话框、同一句承诺：加进表之后由用户自己选它连接
-/// （`pickEndpointToConnect`）。配对凭据与地址无关，所以**不需要重新扫码**。
+/// （`connection_mode_page.dart` 的地址行）。配对凭据与地址无关，所以**不需要重新扫码**。
 Future<void> addEndpointOnly(BuildContext context, AppModel app) async {
   final added = await showAddEndpointDialog(context);
   if (added == null || !context.mounted) return;

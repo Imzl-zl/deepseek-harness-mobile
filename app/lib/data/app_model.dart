@@ -34,7 +34,6 @@ import '../core/host_rpc.dart';
 import '../core/job.dart';
 import '../core/live_message.dart';
 import '../core/notify.dart';
-import '../core/pairing_flow.dart' show PairingPreference;
 import '../core/recovery.dart' show RecoveryOutcome;
 import '../core/session_list_page.dart';
 import '../core/session_projections.dart';
@@ -58,9 +57,11 @@ import '../model/permission.dart';
 import '../model/plugins.dart';
 import '../model/preferences.dart';
 import '../model/queue_item.dart';
+import '../model/route_policy.dart';
 import '../model/send_mode.dart';
 import '../model/session_stats.dart';
 import '../model/subagent.dart';
+import '../model/task_notice_policy.dart';
 import '../model/trajectory.dart';
 import '../model/turn_outline.dart';
 import '../model/usage_summary.dart';
@@ -1658,8 +1659,10 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     if (performance != null) _performanceUsage = performance;
     final collapse = CollapseTiming.fromWire(store.collapseTiming);
     if (collapse != null) _collapseTiming = collapse;
-    final prefer = PairingPreference.fromWire(store.pairingPrefer);
-    if (prefer != null) _pairingPreference = prefer;
+    final route = RoutePolicy.fromWire(store.routePolicy);
+    if (route != null) _routePolicy = route;
+    final taskNotice = TaskNoticePolicy.fromWire(store.taskNotice);
+    if (taskNotice != null) _taskNoticePolicy = taskNotice;
     final scale = store.uiScaleIndex;
     if (scale != null) _uiScaleIndex = scale.clamp(0, kUiScaleSteps.length - 1);
   }
@@ -1900,24 +1903,39 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     }
   }
 
-  /// 配对时先试哪条路（只影响顺序，失败仍回落）。
-  PairingPreference _pairingPreference = PairingPreference.auto;
+  /// 这台手机想走哪条路（`model/route_policy.dart`）：**配对与连接共用**。
+  RoutePolicy _routePolicy = RoutePolicy.auto;
+  RoutePolicy get routePolicy => _routePolicy;
 
-  PairingPreference get pairingPreference => _pairingPreference;
-
-  /// 落盘的 meta 键：配对拨号顺序偏好（`device.pairing_prefer`）。
-  static const String kPairingPreferKey = 'pairing_prefer';
-
-  /// 切配对拨号顺序。落盘；同一个值重复切是空操作。
-  Future<void> setPairingPreference(PairingPreference prefer) async {
-    if (_disposed || prefer == _pairingPreference) return;
-    _pairingPreference = prefer;
+  /// 落盘键：连接方式策略（旧键 `pairing_prefer` 由 `UiStateStore.open` 迁移）。
+  static const String kRoutePolicyKey = 'route_policy';
+  Future<void> setRoutePolicy(RoutePolicy policy) async {
+    if (_disposed || policy == _routePolicy) return;
+    _routePolicy = policy;
     notifyListeners();
     final store = _uiState;
     if (store != null) {
-      await store.setPairingPrefer(prefer.wire);
+      await store.setRoutePolicy(policy.wire);
     } else {
-      await _prefs?.write(kPairingPreferKey, prefer.wire);
+      await _prefs?.write(kRoutePolicyKey, policy.wire);
+    }
+  }
+
+  /// 后台任务结束要不要提醒（默认关；判据见 `model/task_notice_policy.dart`）。
+  TaskNoticePolicy _taskNoticePolicy = TaskNoticePolicy.off;
+  TaskNoticePolicy get taskNoticePolicy => _taskNoticePolicy;
+  static const String kTaskNoticeKey = 'notify_tasks';
+  Future<void> setTaskNoticePolicy(TaskNoticePolicy policy) async {
+    if (_disposed || policy == _taskNoticePolicy) return;
+    _taskNoticePolicy = policy;
+    // 改档立刻重算：切到"全部"时窗口内已结束的补上，切回"关"时把已贴的撤掉。
+    _syncNotices();
+    notifyListeners();
+    final store = _uiState;
+    if (store != null) {
+      await store.setTaskNotice(policy.wire);
+    } else {
+      await _prefs?.write(kTaskNoticeKey, policy.wire);
     }
   }
 
@@ -2685,11 +2703,14 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       await _prefs?.read(kCollapseTimingKey),
     );
     if (collapse != null) _collapseTiming = collapse;
-    // 配对拨号顺序：与 `device.pairing_prefer` 同一个值，只是没装配 UiState 时的退路。
-    final pairing = PairingPreference.fromWire(
-      await _prefs?.read(kPairingPreferKey),
+    // 设备级策略：与 `device.*` 同一份值，这里只是没装配 UiState 时的退路。
+    // （旧键 `pairing_prefer` 的迁移在 `UiStateStore.open` 里做，这里不重复。）
+    final policy = RoutePolicy.fromWire(await _prefs?.read(kRoutePolicyKey));
+    if (policy != null) _routePolicy = policy;
+    final taskNotice = TaskNoticePolicy.fromWire(
+      await _prefs?.read(kTaskNoticeKey),
     );
-    if (pairing != null) _pairingPreference = pairing;
+    if (taskNotice != null) _taskNoticePolicy = taskNotice;
     // 界面字号档位：存的是下标；认不出（没存过 / 坏了）就保持默认档（1.0）。
     final scaleIndex = int.tryParse(await _prefs?.read(kUiScaleKey) ?? '');
     if (scaleIndex != null) {
@@ -3145,6 +3166,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
         jobsOf: _jobs.jobsOf,
         completionUnreadOf: completionUnreadOf,
         nowMs: DateTime.now().millisecondsSinceEpoch,
+        jobNotices: _taskNoticePolicy,
       ),
     );
     for (final id in diff.cancel) {

@@ -21,14 +21,15 @@
 ///
 /// 顺序是**先局域网、全拨不通才回落中转**：同一 WiFi 下直连是毫秒级且不依赖任何服务器，
 /// 而中转要多一次 HTTP 换票 + 一条公网往返。反过来（先中转）会让"中转没开"直接变成
-/// 配对失败，尽管手机和电脑就在同一张桌子上。用户可以在设置里把顺序改成
-/// `中转优先`（`device.pairing_prefer`）；**改了顺序也不改回落**，而且默认只在
-/// "本机与某张局域网地址在同一 /24"时才直连优先（见 [PairingPreference]）。
+/// 配对失败，尽管手机和电脑就在同一张桌子上。
 ///
-// Note: 为什么先局域网、为什么全不通才回落 —— 见
-// `.agents/notes/implemented/2026-11-03-pairing-without-relay.md`；
-// 为什么降级标与拨号顺序偏好要显式 —— 见
-// `.agents/notes/implemented/2026-11-04-pairing-degradation-is-visible.md`。
+/// 先试哪条由**设备级策略** `RoutePolicy` 决定（`model/route_policy.dart`），
+/// 与"连上之后走哪条"共用同一个设置。`auto` 下"码里有局域网地址就先试它" ——
+/// 那是电脑**出码时**给出的现证，不再用手机 IP 猜是否同网段（`/24` 判据已删，
+/// `myIpv4` 只用于多条局域网地址之间的排序）。
+///
+// Note: 为什么先局域网、为什么按策略而不是按网段 —— 见
+// `.agents/notes/proposed/2026-11-13-connection-route-model.md`。
 ///
 /// ## 这条链上的失败，客户端动作完全不同
 ///
@@ -49,6 +50,7 @@
 /// （协议）与装配层注入的 [PairingTransportFactory]（真实 socket）。
 library;
 
+import '../model/route_policy.dart';
 import 'crypto.dart';
 import 'endpoint.dart';
 import 'errors.dart';
@@ -127,40 +129,8 @@ enum PairingDial {
   relay,
 }
 
-/// 拨号顺序偏好（设备本地设置 `device.pairing_prefer`，默认 [auto]）。
-///
-/// **只影响先试哪条，失败仍然回落**：三条路都还会被试到，没有"选了直连就永远不试中转"
-/// 这回事 —— 否则一次网络切换就会让一张好好的码配不上。
-///
-/// - [auto]：知道本机 IP、且码里有一张局域网地址在同一 /24 时先直连；否则**先中转**
-///   （出门在外不该先为一张局域网地址白等一个超时）。
-/// - [direct]：永远先试局域网直连。
-/// - [relay]：永远先试中转。
-///
-// Note: 为什么默认自动、为什么失败必须回落 —— 见
-// `.agents/notes/implemented/2026-11-04-pairing-degradation-is-visible.md`
-enum PairingPreference {
-  auto('自动', 'auto'),
-  direct('直连优先', 'direct'),
-  relay('中转优先', 'relay');
-
-  const PairingPreference(this.label, this.wire);
-
-  /// 设置页那一行显示的名字。
-  final String label;
-
-  /// 线上值（落盘用，`device.pairing_prefer`）。
-  final String wire;
-
-  /// 认不出回 `null`（调用方保持默认，不猜）。
-  static PairingPreference? fromWire(Object? raw) {
-    if (raw is! String) return null;
-    for (final value in values) {
-      if (value.wire == raw) return value;
-    }
-    return null;
-  }
-}
+// 先试哪条路由设备级策略决定：见 `model/route_policy.dart` 与 `beginPairing` 的
+// `prefer`。这里不再有本文件私有的"配对偏好"—— 它与连接共用同一个设置。
 
 /// 第一段：局域网直连（拨不通则回落换票 → 带票升级）→ 受限握手。
 ///
@@ -188,8 +158,12 @@ Future<PairingAttempt> beginPairing({
   /// 本机当前的局域网 IPv4（`platform/lan_address.dart`）；只用于排序。
   String? myIpv4,
 
-  /// 先试哪条路；失败仍回落（见 [PairingPreference]）。
-  PairingPreference prefer = PairingPreference.auto,
+  /// 先试哪条路（设备级策略，`model/route_policy.dart`）。
+  ///
+  /// `auto` 才回落：码里有局域网地址就先试它，全不通才走中转。
+  /// `directOnly` / `relayOnly` **不回落** —— 用户明确说"只想走这条"时，
+  /// 偷偷换一条正是要消除的那种混乱。
+  RoutePolicy prefer = RoutePolicy.auto,
 }) async {
   final candidate = offer.candidate(identity, deviceName);
   final devId = await candidate.deviceId();
@@ -270,9 +244,15 @@ Future<PairingAttempt> beginPairing({
     return attemptFor(channel, PairingDial.relay, offer.relayUrl);
   }
 
-  // 降级码（`lanOnly`）：中转那条腿这次**不存在** —— 不去换票（注定 409），
-  // 也不把失败说成"请让电脑重新出码"。原因只能是"不在同一个 WiFi"。
+  // 只有局域网那一档（`lanOnly`）：中转那条腿这次不存在 —— 不去换票（注定 409）。
+  // 策略是「只用中转」时直接说清冲突，而不是偷偷用局域网配上一张本该走中转的码。
   if (offer.lanOnly) {
+    if (prefer == RoutePolicy.relayOnly) {
+      throw const TransportException(
+        '这张码只能在同一 WiFi 下使用（出码时没有登记中转），'
+        '而你的设置是「只用中转」；可以在「连接方式」里改成自动',
+      );
+    }
     final attempt = await tryLan();
     if (attempt != null) return attempt;
     throw TransportException(
@@ -281,37 +261,42 @@ Future<PairingAttempt> beginPairing({
     );
   }
 
-  // 顺序：显式偏好优先；`auto` 只在"本机 IP 与某张局域网地址在同一 /24"时才直连优先。
-  // 拿不到本机 IP 时保持旧行为（先直连）—— 不猜。
-  final autoPrefersDirect =
-      offer.lanUrls.isEmpty ||
-      myIpv4 == null ||
-      offer.lanUrls.any((url) => sameSubnet(myIpv4, url));
-  final directFirst =
-      prefer == PairingPreference.direct ||
-      (prefer == PairingPreference.auto && autoPrefersDirect);
-
-  if (directFirst) {
-    final lanAttempt = await tryLan();
-    if (lanAttempt != null) return lanAttempt;
-    try {
-      return await tryRelay();
-    } catch (error, stack) {
-      // 局域网那几条失败过的话，**在原因前面点出来**：否则用户看到"请让电脑重新出码"，
-      // 而真因是"手机不在那个 WiFi"。
-      _rethrowWithLanNote(error, stack, lanFailures);
-    }
+  // 「只用直连」而这张码没有局域网地址：不猜一个中转出来。
+  if (prefer == RoutePolicy.directOnly && offer.lanUrls.isEmpty) {
+    throw const TransportException(
+      '这张码只有中转那条路，而你的设置是「只用直连」；'
+      '可以在「连接方式」里改成自动，或让电脑重新出码',
+    );
   }
 
-  // 中转优先：先换票；失败仍回落直连（"失败仍回落"是这条偏好的前提）。
-  try {
-    return await tryRelay();
-  } catch (error, stack) {
-    final lanAttempt = await tryLan();
-    if (lanAttempt != null) return lanAttempt;
-    // 两条都不通：以**中转那条原因**为准（它通常可照做：重新出码 / 检查网络），
-    // 局域网失败只作为补充说明。
-    _rethrowWithRelayNote(error, stack, lanFailures);
+  // 三档各走各的：`auto` 才回落。`myIpv4` 只参与多条局域网地址之间的排序
+  // （`tryLan` 里的 `dialOrder`），不再决定"要不要先走局域网"。
+  switch (prefer) {
+    case RoutePolicy.directOnly:
+      final lanAttempt = await tryLan();
+      if (lanAttempt != null) return lanAttempt;
+      throw TransportException(
+        '这张码里的局域网地址都没拨通（${lanFailures.length} 个地址）：'
+        '${lanFailures.isEmpty ? '没有可拨的局域网地址' : lanFailures.last}',
+      );
+    case RoutePolicy.relayOnly:
+      try {
+        return await tryRelay();
+      } catch (error, stack) {
+        _rethrowWithLanNote(error, stack, lanFailures);
+      }
+    case RoutePolicy.auto:
+      // 码里有局域网地址就先试它 —— 那是电脑出码时给出的现证，
+      // 不再用手机 IP 猜是否同网段（猜错一次就整条路错）。
+      final lanAttempt = await tryLan();
+      if (lanAttempt != null) return lanAttempt;
+      try {
+        return await tryRelay();
+      } catch (error, stack) {
+        // 局域网那几条失败过的话，**在原因前面点出来**：否则用户看到
+        // "请让电脑重新出码"，而真因是"手机不在那个 WiFi"。
+        _rethrowWithLanNote(error, stack, lanFailures);
+      }
   }
 }
 
@@ -325,28 +310,6 @@ Never _rethrowWithLanNote(
     Error.throwWithStackTrace(error, stack);
   }
   final prefix = '局域网直连没通（${failures.length} 个地址）；';
-  if (error is ProtocolException) {
-    Error.throwWithStackTrace(
-      ProtocolException(error.code, '$prefix${error.message}'),
-      stack,
-    );
-  }
-  if (error is TransportException) {
-    Error.throwWithStackTrace(
-      TransportException('$prefix${error.message}', code: error.code),
-      stack,
-    );
-  }
-  Error.throwWithStackTrace(TransportException('$prefix中转也没通：$error'), stack);
-}
-
-/// 中转优先那一路的收尾：**保留中转的错误码**，前面补一句"局域网也没通"。
-Never _rethrowWithRelayNote(
-  Object error,
-  StackTrace stack,
-  List<String> failures,
-) {
-  final prefix = failures.isEmpty ? '' : '局域网直连也没通（${failures.length} 个地址）；';
   if (error is ProtocolException) {
     Error.throwWithStackTrace(
       ProtocolException(error.code, '$prefix${error.message}'),

@@ -208,10 +208,10 @@ void main() {
 
     // 设置页比"只有连接方式"那版长了（通用/主题/模型/关于四组在它上面）——
     // 端点卡在屏外，先滚到**分区标题**（不是某一行：滚到行会把标题顶出懒加载窗口）。
-    await _scrollTo(tester, find.text('连接方式'));
+    await _scrollTo(tester, find.text('可用地址'));
     await tester.pumpAndSettle();
 
-    expect(find.text('连接方式'), findsOneWidget);
+    expect(find.text('可用地址'), findsOneWidget);
     expect(find.text('直连'), findsOneWidget);
     expect(find.text('中转'), findsOneWidget);
     // 连接器自报的名字（网卡名）拼在地址后面，没有就不显示。

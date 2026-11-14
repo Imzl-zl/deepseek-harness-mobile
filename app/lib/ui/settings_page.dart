@@ -31,7 +31,6 @@ import 'package:flutter/services.dart';
 
 import '../core/app_update.dart';
 import '../core/endpoint.dart';
-import '../core/pairing_flow.dart' show PairingPreference;
 import '../core/type_scale.dart';
 import '../data/app_model.dart';
 import '../model/agent_preset.dart';
@@ -41,10 +40,12 @@ import '../model/model_catalog.dart';
 import '../model/permission.dart';
 import '../model/preferences.dart';
 import '../model/send_mode.dart';
+import '../model/task_notice_policy.dart';
 import '../model/theme_mode.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import 'add_endpoint_dialog.dart';
+import 'connection_mode_page.dart';
 import 'connection_summary_block.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_sheet.dart';
@@ -138,7 +139,7 @@ class SettingsPage extends StatelessWidget {
                 attemptOf: app.attemptOf,
                 userDisconnected: app.userDisconnected,
               ),
-              onTap: () => pickEndpointToConnect(context, app),
+              onTap: () => unawaited(openConnectionModePage(context, app)),
               onReconnect: () => reconnectNow(context, app),
               reconnecting: app.connection == ConnectionStateView.connecting,
             ),
@@ -257,21 +258,13 @@ class SettingsPage extends StatelessWidget {
                 onPicked: app.setSendMode,
               ),
             ),
-            // **配对时先试哪条路**（`device.pairing_prefer`）：只影响顺序，失败仍回落。
-            // 默认「自动」= 同一 /24 才先直连，否则先中转 —— 出门在外不该先为一张
-            // 局域网地址白等一个超时。见 `core/pairing_flow.dart` 的 PairingPreference。
+            // **连接方式**（`device.route_policy`）：配对与连接共用同一个策略，
+            // 三档 + 地址列表都在这一页（2026-11-13 合并"配对时先试"与端点选择器）。
             SettingsRow(
               icon: 'link',
-              label: '配对时先试',
-              value: app.pairingPreference.label,
-              onTap: () => _pickEnum<PairingPreference>(
-                context: context,
-                title: '配对时先试哪条路',
-                values: PairingPreference.values,
-                labelOf: (v) => v.label,
-                current: app.pairingPreference,
-                onPicked: app.setPairingPreference,
-              ),
+              label: '连接方式',
+              value: app.routePolicy.label,
+              onTap: () => unawaited(openConnectionModePage(context, app)),
             ),
             // **以上是手机本地偏好，以下是电脑侧真值**（`settings.describe` /
             // `settings.update`）：前者只影响这台手机（有意偏离，见文件头），后者改的是
@@ -309,13 +302,28 @@ class SettingsPage extends StatelessWidget {
                   : (app.notifyGranted! ? '已开启' : '点这里开启'),
               onTap: () => unawaited(_onNotifyTap(context, app)),
             ),
+            // **后台任务提醒**（设备本地，默认关）：任务跑完不需要用户操作。
+            // 判据与三档见 `model/task_notice_policy.dart`。
+            SettingsRow(
+              icon: 'checklist',
+              label: '后台任务通知',
+              value: app.taskNoticePolicy.label,
+              onTap: () => _pickEnum<TaskNoticePolicy>(
+                context: context,
+                title: '后台任务结束提醒',
+                values: TaskNoticePolicy.values,
+                labelOf: (v) => v.label,
+                current: app.taskNoticePolicy,
+                onPicked: app.setTaskNoticePolicy,
+              ),
+            ),
             // **用量不在设置页**：2026-10-19 用户原话「用量在侧滑窗口菜单
             // 单独页面啊，这不是显眼，因为这个挺常用的，你藏太深了」。
             // 所以它是**抽屉底栏的一枚**（`main.dart` 的 `DrawerFootItem`），
             // 点开是独立一页（`ui/usage_page.dart`）。设置页只留不常改的偏好。
             const _SectionTitle('模型'),
             _ModelSection(app: app),
-            const _SectionTitle('连接方式'),
+            const _SectionTitle('可用地址'),
             if (app.endpoints.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(

@@ -338,20 +338,19 @@ void main() {
       );
     });
 
-    testWidgets('空态那枚「打开会话抽屉」按钮仍然调得到回调', (tester) async {
-      var opened = 0;
+    testWidgets('空态不再给第二枚「打开会话抽屉」按钮：顶栏 ☰ 与侧滑已经够了', (tester) async {
       await tester.pumpWidget(
         _wrap(
           AppModel(client: FakeClient()),
           paired: true,
-          onOpenDrawer: () => opened += 1,
+          onOpenDrawer: () {},
         ),
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('打开会话抽屉'));
-      await tester.pump();
-      expect(opened, 1, reason: '空态里的按钮是侧滑之外的备用入口，不能跟着 ☰ 一起失效');
+      // 2026-11-13 删掉：用户原话"我侧滑都打开了，用得着点开在这里打开吗？"
+      // 顶栏 `☰` 是常驻主入口，左缘还能跟手拖出 —— 第三处只是重复。
+      expect(find.text('打开会话抽屉'), findsNothing);
     });
   });
 
@@ -962,7 +961,9 @@ void main() {
       await tester.tap(find.byType(DshConnectionDotButton));
       await tester.pumpAndSettle();
       expect(find.text('重新配对（换一台电脑）'), findsOneWidget);
-      expect(find.text('打开侧面板'), findsOneWidget);
+      // 「打开侧面板」2026-11-13 删掉：右缘一滑就到，连接面板不该是它的第二个入口。
+      // 这里留着反断言 —— 它回来时必须有人解释为什么。
+      expect(find.text('打开侧面板'), findsNothing);
 
       // 第 2 次点击：sheet 里的"重新配对"。
       await tester.tap(find.text('重新配对（换一台电脑）'));

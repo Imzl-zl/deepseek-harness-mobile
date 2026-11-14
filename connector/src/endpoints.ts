@@ -79,17 +79,29 @@ export function describeEndpoints(input: {
   const endpoints: EndpointView[] = []
   const listenerUrls = input.listener?.urls ?? []
   const defaults = defaultDirectUrls(listenerUrls, input.lanHint)
-  const direct = listenerUrls
-    .filter((entry) => defaults.has(entry.url) && !hidden.has(entry.url))
-    .sort((a, b) => hintRank(a.url, input.lanHint) - hintRank(b.url, input.lanHint))
+  // **监听面没起 ⇒ 一条直连地址都不报**（含用户 `extra` 点名的那几条）。
+  //
+  // `extra` 的语义是"额外上报哪几条地址"，不是"凭空造一条能拨的路"：
+  // 监听面停着的时候，任何直连地址都拨不通，报出去就是撒谎。
+  // 2026-11-14 真机验收踩到 —— 直连停了，二维码还宣称局域网可用
+  // （`lanAvailable` 为真），手机拿到一张配不上的码。
+  const listening = input.listener !== null && input.listener !== undefined
+  const direct = listening
+    ? listenerUrls
+      .filter((entry) => defaults.has(entry.url) && !hidden.has(entry.url))
+      .sort((a, b) => hintRank(a.url, input.lanHint) - hintRank(b.url, input.lanHint))
+    : []
   for (const entry of direct) {
     endpoints.push({ kind: 'direct', url: entry.url, ...(entry.label === '' ? {} : { label: entry.label }) })
   }
   // 用户额外加的地址按字面原样上报 —— 它可能不在网卡枚举里，所以没有网卡名可带。
-  for (const url of extra) {
-    if (hidden.has(url)) continue
-    if (endpoints.some((endpoint) => endpoint.url === url)) continue
-    endpoints.push({ kind: 'direct', url })
+  // **仍然以监听面在跑为前提**（见上）。
+  if (listening) {
+    for (const url of extra) {
+      if (hidden.has(url)) continue
+      if (endpoints.some((endpoint) => endpoint.url === url)) continue
+      endpoints.push({ kind: 'direct', url })
+    }
   }
   if (input.relayUrl !== undefined && input.relayUrl !== '') {
     endpoints.push({

@@ -30,6 +30,7 @@ library;
 import '../core/job.dart';
 import '../core/notify.dart';
 import '../model/chat_item.dart';
+import '../model/task_notice_policy.dart';
 
 /// 后台任务结束的**提醒窗口**：只有在这个时间窗内结束的任务才贴通知。
 ///
@@ -100,6 +101,13 @@ List<AttentionNotice> desiredNotices({
   required int nowMs,
 
   Duration jobWindow = kJobNoticeWindow,
+
+  /// 后台任务提醒档（设备本地策略，**默认关**）。
+  ///
+  /// 默认关的理由：通知的判据是"需要你动手"，而任务跑完不需要。
+  /// 见 `model/task_notice_policy.dart` 与
+  /// `.agents/notes/proposed/2026-11-13-notify-only-actionable.md`。
+  TaskNoticePolicy jobNotices = TaskNoticePolicy.off,
 }) {
   final notices = <AttentionNotice>[];
   for (final session in sessions) {
@@ -148,6 +156,9 @@ List<AttentionNotice> desiredNotices({
     for (final job in jobsOf(session.sid)) {
       final finishedAt = job.finishedAt;
       if (finishedAt == null || job.isLive) continue;
+      // 设备策略：默认 `off` —— 任务跑完不需要用户操作。
+      // `failures` 只放 `failed` / `killed`（那两个收口才可能需要人看）。
+      if (!jobNotices.allows(job.status)) continue;
       if (nowMs - finishedAt > jobWindow.inMilliseconds) continue;
       final detail = (job.detail ?? '').trim();
       final progress = (job.progress ?? '').trim();

@@ -36,6 +36,13 @@ export interface PairingOfferDeps {
    * **失败要抛**：调用方据此判断这张码还有没有退路（有 `lan` 就降级，没有就拒绝出码）。
    */
   register: (offerId: string) => Promise<void>
+  /**
+   * 这张码要不要**带中转那条路**（默认 `true`）。
+   *
+   * `false` = 用户选了"同一 WiFi"：**不登记**（那张票没人会去换），载荷里只留局域网。
+   * 上层（装配层）负责先确认直连此刻可用 —— 这里只负责"别登记、别承诺中转"。
+   */
+  withRelay?: boolean
   log?: ChannelLogger
 }
 
@@ -63,21 +70,24 @@ export async function offerForScanning(deps: PairingOfferDeps): Promise<OfferRes
   try {
     const offer = await issuePairingOffer(deps)
     const minutes = Math.round(PAIRING_TTL_MS / 60_000)
-    // 正反两面都要说：只在失败时说话，用户在局域网里出码时仍不知道"出门能不能用"。
-    // `lanOnly: false` 的唯一含义就是**中转登记成功**（登记失败且有 lan 会被标成 true，
-    // 没有 lan 时登记失败根本不出码）。
-    const where = offer.lanOnly
-      ? `\n⚠ 中转没登记上：这张码只能在同一 WiFi 下使用（跨网或用流量扫它配不上）`
+    // 正反两面都要说，而且**按码里实际有哪几条路**说（`routes`）：
+    // 只在失败时说话，用户在局域网里出码时仍不知道"出门能不能用"；
+    // 反过来，中转没连上时也不能还写"两条路都在"。
+    const hasLan = offer.lanUrls.length > 0
+    const hasRelay = !offer.lanOnly && offer.routes.includes('relay')
+    const where = hasRelay && hasLan
+      ? `\n两条路都在：同一 WiFi 直连；出门 / 用流量走中转（已登记）。`
         + `\n局域网直连：${offer.lanUrls.join(' / ')}`
-      : offer.lanUrls.length === 0
+      : hasRelay
         ? '\n只有中转这条路（已登记）：手机不在同一 WiFi 时也能扫。'
-        : `\n两条路都在：同一 WiFi 直连；出门 / 用流量走中转（已登记）。`
-          + `\n局域网直连：${offer.lanUrls.join(' / ')}`
+        : hasLan
+          ? `\n⚠ 只有局域网这条路（这张码不含中转，未登记）：只能在同一 WiFi 下使用（跨网或用流量扫它配不上）。`
+            + `\n局域网直连：${offer.lanUrls.join(' / ')}`
+          : '\n这张码没有可用的路：直连没开、中转也没连上，先去「通道与地址」开一条再出码。'
     return {
       kind: 'success',
       text: `手机扫码配对（${minutes} 分钟内有效，一次性）：\n${offer.payload}${where}`,
-    }
-  } catch (error) {
+    }  } catch (error) {
     return { kind: 'error', text: error instanceof Error ? error.message : String(error) }
   }
 }
@@ -94,6 +104,15 @@ export async function offerForScanning(deps: PairingOfferDeps): Promise<OfferRes
  */
 export async function issuePairingOffer(deps: PairingOfferDeps): Promise<PairingOffer> {
   const offer = deps.pairing.offer()
+  // 中转这条腿此刻不存在（用户选了"同一 WiFi"，或控制面没连上）：**不登记**。
+  // 登记是给"跨网换票"用的，而这张码不会去换 —— 以前无条件登记，
+  // 于是二维码会承诺一条已经死掉的路（2026-11-13 修）。
+  if (deps.withRelay === false || !offer.routes.includes('relay')) {
+    deps.log?.info(
+      `已出码：只含局域网地址（${offer.lanUrls.length} 个，未登记中转）`,
+    )
+    return markOfferLanOnly(offer)
+  }
   try {
     await deps.register(offer.offerId)
   } catch (error) {

@@ -60,26 +60,26 @@ void main() {
       expect(ui.transcriptView, isNull);
       expect(ui.performanceView, isNull);
       expect(ui.collapseTiming, isNull);
-      expect(ui.pairingPrefer, isNull);
+      expect(ui.routePolicy, isNull);
     });
 
     test('写后能读回，且键就是约定名', () async {
       await ui.setThemeMode('dark');
       await ui.setUiScaleIndex(2);
       await ui.setTranscriptView('detailed');
-      await ui.setPairingPrefer('relay');
+      await ui.setRoutePolicy('relay');
       expect(prefs.values[UiKey.themeMode], 'dark');
       expect(prefs.values[UiKey.uiScaleIndex], '2');
       expect(prefs.values[UiKey.transcriptView], 'detailed');
-      // 配对拨号顺序也用 `device.` 前缀：它说的是这台手机的偏好，不是某台电脑的路由。
-      expect(prefs.values[UiKey.pairingPrefer], 'relay');
+      // 连接方式也用 `device.` 前缀：它说的是这台手机的偏好，不是某台电脑的路由。
+      expect(prefs.values[UiKey.routePolicy], 'relay');
 
       // 新建一个 store 也能读回（= 重启）。
       final again = UiStateStore(prefs: prefs);
       await again.open();
       expect(again.themeMode, 'dark');
       expect(again.uiScaleIndex, 2);
-      expect(again.pairingPrefer, 'relay');
+      expect(again.routePolicy, 'relay');
     });
 
     test('认不出的值保持 null（调用方用默认，不猜）', () async {
@@ -87,6 +87,21 @@ void main() {
       final again = UiStateStore(prefs: prefs);
       await again.open();
       expect(again.uiScaleIndex, isNull);
+    });
+
+    test('旧键 `pairing_prefer` 一次性迁到 `route_policy`，旧键删掉', () async {
+      prefs.values[UiKey.routePolicyLegacy] = 'relay';
+      final again = UiStateStore(prefs: prefs);
+      await again.open();
+      await again.flush();
+
+      expect(again.routePolicy, 'relay', reason: '旧值是合法取值，迁移是恒等的');
+      expect(prefs.values[UiKey.routePolicy], 'relay');
+      expect(
+        prefs.values.containsKey(UiKey.routePolicyLegacy),
+        isFalse,
+        reason: '旧键必须删掉，否则又是"一个事实两处存储"',
+      );
     });
 
     test('同一个值重复写是空操作（不产生第二次落盘）', () async {

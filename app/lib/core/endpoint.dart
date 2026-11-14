@@ -369,20 +369,25 @@ bool isCooling(
   return age < cooldown.inMilliseconds;
 }
 
-/// 拨号顺序：**记住的那条 → 同网段的 → 其余（本机）→ 别的电脑报的 → 冷却中的。**
+/// 拨号顺序：**直连桶 → 中转桶 → 冷却区**，桶内再按"记住的 → 同网段 → 其余 →
+/// 别的电脑报的"。
 ///
-/// ## 为什么是这个顺序
+/// ## 为什么分桶（2026-11-13）
 ///
-/// - **记住的那条先试**：同一台电脑很少换地址（DHCP 租约 / 固定分配），
-///   上次通了这次大概率还通，先试它是最省的。
-/// - **同网段的次之**：只有"记住的那条拨不通"才需要这一步 —— 换了地点
-///   （家 ⇄ 公司）时，用户列表里另一条地址正躺在**当前**这个网段里。
-///   这一步要的是 `myIpv4`，而它是**当前**的真实地址，所以换网后自动对。
-/// - **其余按用户排的顺序**：用户的手动排序在"都不是同网段"时就是唯一依据。
-/// - **别的电脑报的排在后面**：它们永远拨不通（对端身份不同），但**不删**
-///   —— 换回那台电脑时还要用；只是不该跟当前电脑的地址抢时间。
-/// - **冷却中的排最后**：刚失败过的地址这一轮不该再占一次超时；条目仍在，
-///   窗口一过自动回到它原来的桶（`kEndpointCooldown`）。
+/// `auto` 的语义是"能直连就直连"。以前 `remembered` 是第一优先、跨 kind 生效，
+/// 于是"上次走中转成功"会把直连压到第二位 —— 同一 WiFi 下也先拨中转。
+/// 现在 remembered 只在**同一条路的桶内**首发：直连全部排在中转之前，
+/// 而"上次通的是哪条直连"仍然最省。
+///
+/// ## 桶内的四条判据
+///
+/// - **记住的那条先试**：同一台电脑很少换地址，先试它最省。
+/// - **同网段的次之**：换地点（家 ⇄ 公司）时，另一条地址正躺在**当前**这个网段里。
+/// - **其余按用户排的顺序**：用户的手动排序在"都不是同网段"时是唯一依据。
+/// - **别的电脑报的排在后面**：它们永远拨不通（对端身份不同），但**不删**。
+///
+/// **冷却中的放全局最后**（两个 kind 都是）：刚失败过的地址这一轮不该再占一次
+/// 超时，而"直连刚被防火墙丢包"时更不该挡在中转前面。
 ///
 /// 它**不删任何条目**：排序只是尝试顺序，全试完仍然全失败才是真失败。
 /// 也不做"永久降权"：那是"出门一次就再也回不到直连"的来源。
@@ -409,42 +414,49 @@ List<Endpoint> dialOrder(
   bool cooled(Endpoint endpoint) =>
       nowMs != null && isCooling(attempts[endpoint.id], nowMs: nowMs);
 
-  Endpoint? remembered;
-  if (rememberedEndpointId != null) {
-    for (final endpoint in endpoints) {
-      // **按 id 找，不按 url**：同一地址属于两台电脑时，"记住的那条"只该是
-      // 当前这台的那一条（`endpointIdOf`）。
-      if (endpoint.id == rememberedEndpointId) {
-        remembered = endpoint;
-        break;
-      }
+  // 冷却区先摘出来：它全局排最后，不参与桶内的首选判断。
+  final direct = <Endpoint>[];
+  final relay = <Endpoint>[];
+  final coolingDirect = <Endpoint>[];
+  final coolingRelay = <Endpoint>[];
+  for (final endpoint in endpoints) {
+    final isDirect = endpoint.kind == EndpointKind.direct;
+    if (cooled(endpoint)) {
+      (isDirect ? coolingDirect : coolingRelay).add(endpoint);
+    } else {
+      (isDirect ? direct : relay).add(endpoint);
     }
-    // 记住的那条刚刚失败：它也要排队尾，不再首试（否则每轮都为它白等一个超时）。
-    if (remembered != null && cooled(remembered)) remembered = null;
   }
 
-  final inSubnet = <Endpoint>[];
-  final rest = <Endpoint>[];
-  final otherHost = <Endpoint>[];
-  final cooling = <Endpoint>[];
-  for (final endpoint in endpoints) {
-    if (remembered != null && endpoint.id == remembered.id) continue;
-    if (cooled(endpoint)) {
-      cooling.add(endpoint);
-    } else if (!isThisHost(endpoint)) {
-      otherHost.add(endpoint);
-    } else if (myIpv4 != null && sameSubnet(myIpv4, endpoint.url)) {
-      inSubnet.add(endpoint);
-    } else {
-      rest.add(endpoint);
+  /// 一个桶内的顺序。remembered 只在这个桶里首发。
+  List<Endpoint> arrange(List<Endpoint> bucket) {
+    Endpoint? remembered;
+    final inSubnet = <Endpoint>[];
+    final rest = <Endpoint>[];
+    final otherHost = <Endpoint>[];
+    for (final endpoint in bucket) {
+      // **按 id 找，不按 url**：同一地址属于两台电脑时，"记住的那条"只该是
+      // 当前这台的那一条（`endpointIdOf`）。
+      if (rememberedEndpointId != null && endpoint.id == rememberedEndpointId) {
+        remembered = endpoint;
+        continue;
+      }
+      if (!isThisHost(endpoint)) {
+        otherHost.add(endpoint);
+      } else if (myIpv4 != null && sameSubnet(myIpv4, endpoint.url)) {
+        inSubnet.add(endpoint);
+      } else {
+        rest.add(endpoint);
+      }
     }
+    return <Endpoint>[?remembered, ...inSubnet, ...rest, ...otherHost];
   }
+
   return <Endpoint>[
-    ?remembered,
-    ...inSubnet,
-    ...rest,
-    ...otherHost,
-    ...cooling,
+    ...arrange(direct),
+    ...arrange(relay),
+    ...coolingDirect,
+    ...coolingRelay,
   ];
 }
 

@@ -14,6 +14,7 @@ import 'dart:io';
 import 'package:dsh_mobile/core/pairing_client.dart';
 import 'package:dsh_mobile/core/pairing_flow.dart';
 import 'package:dsh_mobile/core/transport.dart';
+import 'package:dsh_mobile/model/route_policy.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/pairing_page.dart';
 import 'package:flutter/material.dart';
@@ -35,7 +36,7 @@ String _payload({List<String> lan = const [], bool lanOnly = false}) =>
 Widget _page({
   required HttpSender send,
   required PairingTransportFactory transportFor,
-  PairingPreference prefer = PairingPreference.auto,
+  RoutePolicy prefer = RoutePolicy.auto,
 }) => MaterialApp(
   theme: DshTheme.dark(),
   home: PairingPage(
@@ -94,8 +95,8 @@ void main() {
     final gate = Completer<HttpResult>();
     await tester.pumpWidget(
       _page(
-        // 中转优先：先换票（HTTP 卡在 gate 上，界面停在"正在试：换票…"）。
-        prefer: PairingPreference.relay,
+        // 只用中转：先换票（HTTP 卡在 gate 上，界面停在"正在试：换票…"）。
+        prefer: RoutePolicy.relayOnly,
         send: (HttpCall call) => gate.future,
         transportFor: (_) => _DeadTransport(),
       ),

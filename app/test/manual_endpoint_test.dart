@@ -1,7 +1,8 @@
 /// 换了网络连不上时的那条出路：**手动填电脑地址，只加进表，由用户自己选它连**。
 ///
-/// 守两件事：
-/// 1. 连接操作 sheet 里有这个入口（三处入口共用同一个 sheet）；
+/// 守三件事：
+/// 1. 入口在「换个连接方式」那张地址列表的末尾（2026-11-13 从连接面板一级移下来 ——
+///    那里才是"选哪条地址"的上下文，一级只留常用动作）；
 /// 2. 填完**不许自动拨** —— "什么时候连"是用户的动作（用户原话：
 ///    "我肯定手动去连接啊"）。设置页那句承诺也是同一句：*"已添加，下次重连会试它"*。
 library;
@@ -15,7 +16,7 @@ import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/add_endpoint_dialog.dart';
-import 'package:dsh_mobile/ui/connection_actions_sheet.dart';
+import 'package:dsh_mobile/ui/connection_mode_page.dart';
 import 'package:dsh_mobile/ui/connection_summary_block.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
@@ -50,42 +51,31 @@ class _BareClient extends FakeSyncClient {
 }
 
 void main() {
-  testWidgets('连接 sheet 有「手动填写电脑地址」这一行（带"不自动连"的说明）', (tester) async {
-    var tapped = 0;
+  testWidgets('地址列表末尾有「添加地址」：点它进添加对话框', (tester) async {
+    final app = AppModel(
+      client: _BareClient(),
+      endpoints: const [
+        Endpoint(
+          kind: EndpointKind.direct,
+          url: 'ws://192.168.2.43:8790',
+          label: 'Wi-Fi',
+        ),
+      ],
+    );
+    addTearDown(app.dispose);
     await tester.pumpWidget(
       MaterialApp(
         theme: DshTheme.dark(),
-        home: Builder(
-          builder: (context) => Scaffold(
-            body: Center(
-              child: TextButton(
-                onPressed: () => showConnectionActionsSheet(
-                  context,
-                  // `ConnectionSummary` 是记录（`({line, note})`），不是类。
-                  connection: (line: '我的电脑', note: null),
-                  onRePair: () {},
-                  onManualEndpoint: () => tapped += 1,
-                ),
-                child: const Text('open'),
-              ),
-            ),
-          ),
-        ),
+        home: ConnectionModePage(app: app),
       ),
     );
-    await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
 
-    expect(find.text('手动填写电脑地址'), findsOneWidget);
-    expect(
-      find.textContaining('不会自动连'),
-      findsOneWidget,
-      reason: '填完不会自己切过去 —— 这是唯一非显然的一条，要说出来',
-    );
-
-    await tester.tap(find.text('手动填写电脑地址'));
+    expect(find.text('添加地址'), findsOneWidget);
+    await tester.tap(find.text('添加地址'));
     await tester.pumpAndSettle();
-    expect(tapped, 1);
+
+    expect(find.text('添加端点'), findsOneWidget, reason: '选完"添加地址"直接进填写对话框');
   });
 
   testWidgets('填完地址只加进表：**不自动拨**', (tester) async {

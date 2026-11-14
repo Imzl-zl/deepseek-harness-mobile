@@ -14,12 +14,12 @@ import 'dart:async';
 import 'package:dsh_mobile/core/connection.dart' as conn;
 import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/job.dart';
-import 'package:dsh_mobile/core/pairing_flow.dart' show PairingPreference;
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/data/store.dart';
 import 'package:dsh_mobile/data/ui_state.dart';
 import 'package:dsh_mobile/model/preferences.dart';
+import 'package:dsh_mobile/model/route_policy.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/chat_page.dart';
 import 'package:dsh_mobile/ui/session_drawer.dart';
@@ -198,13 +198,13 @@ Future<void> _landingSettle() async {
 
 void main() {
   group('启动前置读（device.* → AppModel 字段）', () {
-    test('读回工作步骤密度 / 性能用量 / 收起时机 / 字号档 / 配对顺序', () async {
+    test('读回工作步骤密度 / 性能用量 / 收起时机 / 字号档 / 连接方式', () async {
       final prefs = _Prefs({
         UiKey.transcriptView: 'detailed',
         UiKey.performanceView: 'compact',
         UiKey.collapseTiming: 'next-input',
         UiKey.uiScaleIndex: '3',
-        UiKey.pairingPrefer: 'relay',
+        UiKey.routePolicy: 'relay',
       });
       final app = AppModel(client: _IdleClient(), prefs: prefs);
       addTearDown(app.dispose);
@@ -215,14 +215,14 @@ void main() {
       expect(app.performanceUsage, PerformanceUsage.compact);
       expect(app.collapseTiming, CollapseTiming.nextInput);
       expect(app.uiScaleIndex, 3);
-      expect(app.pairingPreference, PairingPreference.relay);
+      expect(app.routePolicy, RoutePolicy.relayOnly);
     });
 
     test('盘上是坏的 → 保持默认（不猜）', () async {
       final prefs = _Prefs({
         UiKey.transcriptView: '???',
         UiKey.uiScaleIndex: '9',
-        UiKey.pairingPrefer: '???',
+        UiKey.routePolicy: '???',
       });
       final app = AppModel(client: _IdleClient(), prefs: prefs);
       addTearDown(app.dispose);
@@ -231,7 +231,7 @@ void main() {
 
       expect(app.transcriptView, TranscriptView.standard);
       expect(app.uiScaleIndex, 3, reason: '越界要夹到边界，不是丢回默认');
-      expect(app.pairingPreference, PairingPreference.auto);
+      expect(app.routePolicy, RoutePolicy.auto);
     });
   });
 

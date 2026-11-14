@@ -654,7 +654,7 @@ test('二维码：把 pairingQrSvg 的产出铺到位图再解回来，等于原
 })
 
 test('issuePairingOffer：只有中转可走时，登记失败就抛，不出码', async () => {
-  const pairing = { offer: () => ({ offerId: 'o1', code: 'c', expiresAt: 1, payload: '{}', lanUrls: [] }) } as unknown as Pairing
+  const pairing = { offer: () => ({ offerId: 'o1', code: 'c', expiresAt: 1, payload: '{}', lanUrls: [], routes: ['relay'] }) } as unknown as Pairing
   await assert.rejects(
     () => issuePairingOffer({
       pairing,
@@ -666,7 +666,7 @@ test('issuePairingOffer：只有中转可走时，登记失败就抛，不出码
 })
 
 test('offerForScanning：成功时文本里带载荷；失败时是 error 而不是 success', async () => {
-  const pairing = { offer: () => ({ offerId: 'o1', code: 'c', expiresAt: Date.now() + 60000, payload: '{"v":2}', lanUrls: [] }) } as unknown as Pairing
+  const pairing = { offer: () => ({ offerId: 'o1', code: 'c', expiresAt: Date.now() + 60000, payload: '{"v":2}', lanUrls: [], routes: ['relay'] }) } as unknown as Pairing
   const ok = await offerForScanning({ pairing, register: async () => {} })
   assert.equal(ok.kind, 'success')
   assert.match(ok.kind === 'success' ? ok.text : '', /\{"v":2\}/)

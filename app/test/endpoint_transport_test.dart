@@ -19,6 +19,7 @@ import 'package:dsh_mobile/core/endpoint.dart';
 import 'package:dsh_mobile/core/endpoint_transport.dart';
 import 'package:dsh_mobile/core/errors.dart';
 import 'package:dsh_mobile/core/transport.dart';
+import 'package:dsh_mobile/model/route_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// 可配置成败与"什么时候连上"的假传输。
@@ -67,6 +68,7 @@ void main() {
     void Function(Endpoint)? onActivated,
     void Function(Endpoint, EndpointAttempt)? onAttempt,
     Duration totalBudget = const Duration(seconds: 15),
+    RoutePolicy policy = RoutePolicy.auto,
   }) {
     log = <Endpoint>[];
     created = <String, _FakeTransport>{};
@@ -74,6 +76,7 @@ void main() {
       // 竞速用例默认零错开：断言的是"同时启动"，不是 250ms 的节拍。
       dialStagger: Duration.zero,
       totalBudget: totalBudget,
+      policyOf: () => policy,
       endpointsOf: () => endpoints,
       onActivated: onActivated,
       onAttempt: onAttempt,
@@ -242,6 +245,33 @@ void main() {
     expect(transport.activeEndpoint, direct);
   });
 
+  // ---- 连接方式策略（`device.route_policy`）：过滤只有一处 ----
+
+  test('只用直连：中转不进工厂（用户说只走这条，就不去试另一条）', () async {
+    final transport = build([relay, direct], policy: RoutePolicy.directOnly);
+    await transport.connect();
+    expect(log.map((e) => e.url), [direct.url]);
+  });
+
+  test('只用中转：直连不进工厂', () async {
+    final transport = build([direct, relay], policy: RoutePolicy.relayOnly);
+    await transport.connect();
+    expect(log.map((e) => e.url), [relay.url]);
+  });
+
+  test('只用直连而表里只有中转：如实抛"没有可拨的端点"', () async {
+    final transport = build([relay], policy: RoutePolicy.directOnly);
+    await expectLater(transport.connect(), throwsA(isA<TransportException>()));
+    expect(log, isEmpty, reason: '不许偷偷建一条用户没选的路');
+  });
+
+  test('点名不受策略过滤：本次覆盖优先于长期意图', () async {
+    final transport = build([direct, relay], policy: RoutePolicy.directOnly);
+    transport.requestEndpoint(relay);
+    await transport.connect();
+    expect(log.map((e) => e.url), [relay.url]);
+  });
+
   test('没有端点：如实抛，不静默', () async {
     final transport = build(const []);
     await expectLater(transport.connect(), throwsA(isA<TransportException>()));
@@ -288,11 +318,14 @@ void main() {
 
   test('终态错误也报拨号结果（它是事实），然后照旧抛出', () async {
     final attempts = <(Endpoint, EndpointAttempt)>[];
+    // 直连那条**挂住不返回**：否则分桶后它排在前面会先赢，终态错误就测不到了。
+    final never = Completer<void>();
     final transport = EndpointTransport(
       endpointsOf: () => [relay, direct],
       onAttempt: (e, a) => attempts.add((e, a)),
       factory: (endpoint) => _FakeTransport(
         endpoint,
+        gate: endpoint.kind == EndpointKind.direct ? never.future : null,
         failWith: endpoint.kind == EndpointKind.relay
             ? const TransportException(
                 '换票失败：换票被拒（HTTP 401）',
@@ -319,6 +352,8 @@ void main() {
     // 直连要到握手处才失败，reason 变成 close 4003，而 401 那个
     // "电脑不认本机"的信号会被掩盖。必须**直接抛出**，让连接层判终态。
     final seen = <Endpoint>[];
+    // 直连那条挂住：分桶后它排在 relay 前面，不挂住就会先赢。
+    final never = Completer<void>();
     final transport = EndpointTransport(
       endpointsOf: () => [relay, direct],
       factory: (endpoint) {
@@ -332,7 +367,7 @@ void main() {
             ),
           );
         }
-        return _FakeTransport(endpoint);
+        return _FakeTransport(endpoint, gate: never.future);
       },
     );
 
@@ -432,11 +467,16 @@ void main() {
     expect(log, [direct, relay]);
     expect(transport.activeEndpoint, direct);
 
-    // 再连一次：表变了，顺序也变了。
+    // 再连一次：表变了，候选也变了。**顺序由策略定**（直连桶在前），
+    // 但同一条路内部的先后必须是现读的表序 —— 这里用两条直连来证明。
+    const direct2 = Endpoint(
+      kind: EndpointKind.direct,
+      url: 'ws://192.168.1.9:8788',
+    );
     log.clear();
-    mutable.insert(0, relay);
+    mutable.insert(0, direct2);
     await transport.connect();
-    expect(log.first, relay, reason: '现读要用上新的顺序');
+    expect(log.first, direct2, reason: '现读要用上新的顺序（同一条路内按表序）');
   });
 
   test('表被清空：如实抛"没有可拨的端点"，不静默', () async {
@@ -526,8 +566,8 @@ void main() {
       final connecting = transport.connect();
       await Future<void>.delayed(Duration.zero);
 
-      // 第一条 relay 与 direct 都在飞；**第二条 relay 还没被造出来**。
-      expect(log, [relay, direct]);
+      // **直连桶在前**：direct 先启动，relay 紧随；第二条 relay 还没被造出来。
+      expect(log, [direct, relay]);
       expect(created.containsKey(relay2.url), isFalse);
       expect(transport.activeEndpoint, isNull);
 
@@ -536,10 +576,10 @@ void main() {
       await connecting;
 
       expect(log, [
-        relay,
         direct,
+        relay,
         relay2,
-      ], reason: '第二条 relay 在闸放开之后才被造出来（它在队尾）');
+      ], reason: '第二条 relay 在闸放开之后才被造出来（同一时刻只有一条 relay 在飞）');
       expect(transport.activeEndpoint, relay2);
       expect(attempts.first.$2.ok, isFalse, reason: '第一条 relay 的失败照实报');
 

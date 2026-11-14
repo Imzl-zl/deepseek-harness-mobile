@@ -717,6 +717,9 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           relayUrl: () => relayHintFor(relayUrlInUse(), lanHint),
           // 局域网直连那一组：手机先拨它，全拨不通才回落中转（`pairing-lan.ts`）。
           lanUrls: lanUrlsOf,
+          // **码里有没有中转，看控制面而不是配置**：关掉中转通道后登记仍能成功
+          // （`/pairing/register` 只验令牌），以前二维码就会承诺一条已经死掉的路。
+          relayAvailable: () => connection?.connected === true,
           pcPubEd: pcIdentity.sign.publicKeyHex,
           pcPubDh: pcIdentity.dh.publicKeyHex,
         })
@@ -819,13 +822,22 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         /**
          * 出码：登记 → 生成二维码 SVG。
          *
+         * `purpose` 决定这张码**含哪几条路**（2026-11-13）：
+         * - `any`（默认）：直连 + 中转，先登记；
+         * - `lan`：只有局域网，**不登记**（用户就在同一 WiFi 下配对）。
+         *
+         * 默认按**此刻的能力**选：中转连上了就 `any`，否则 `lan`。
+         * 两档各有自己的"不可用"错误 —— 让用户先修路，而不是给一张撒谎的码。
+         *
          * **斜杠命令与管理面板共用同一个出码核心**（`issuePairingOffer`）——
-         * "登记不成就不出码"这条规则只有一份。命令那一侧只能回文本
+         * "什么时候能出码"只有一条规则。命令那一侧只能回文本
          * （DSH 的 `CommandResult` 没有图片出口，已核实
          * `packages/interaction/commands/src/types.ts:34`），所以二维码
          * 由插件面板承载；斜杠命令仍留着，方便在终端里直接出码。
          */
-        const offerPairing = async (): Promise<{
+        const offerPairing = async (
+          purpose?: 'any' | 'lan',
+        ): Promise<{
           svg: string
           expiresAt: number
           lanOnly: boolean
@@ -835,10 +847,28 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           // 当前地址"（配置里写的是环回拨号地址）。换 WiFi 之后第一次出码
           // 就要带上新地址，否则用户扫了一个拨不通的码。
           await refreshLanHint()
+          const lanAvailable = lanUrlsOf().length > 0
+          const relayUp = connection?.connected === true
+          const wanted = purpose ?? (relayUp ? 'any' : 'lan')
+          if (wanted === 'any' && !relayUp) {
+            throw new Error(
+              lanAvailable
+                ? '中转没连上：先启动中转拨号，或改出「同一 WiFi」的码（只含局域网）'
+                : '两条路都没开：先启动「中转拨号」或「直连监听」其中一条，再出码',
+            )
+          }
+          if (wanted === 'lan' && !lanAvailable) {
+            throw new Error(
+              relayUp
+                ? '直连监听没开：先启动「直连监听」，或改出「任何网络」的码（走中转）'
+                : '两条路都没开：先启动「直连监听」或「中转拨号」其中一条，再出码',
+            )
+          }
           // 结构化拿 offer，**不从命令文本里解析** —— 那等于解析自己刚拼的字符串。
           const offer = await issuePairingOffer({
             pairing: pairingCore,
             register: registerPairing,
+            withRelay: wanted === 'any',
             log: logger,
           })
           // **payload 不返回**：它含两把公钥，而浏览器只负责画图。
