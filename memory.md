@@ -6,6 +6,11 @@
 
 ## 现在（2026-11-14）
 
+- **v0.2.17 已发版（2026-11-14）**：`dsh-mobile-v0.2.17-arm64-v8a.apk` **27.3 MB**
+  （`armeabi-v7a` 23.8 / `x86_64` 29.7）+ `dsh-mobile-connector-0.1.25.tgz`（npm `latest` = **0.1.25**）。
+  三个 run 全绿（`ci` / `release` 5m54s / `publish-connector` 30s）。内容 = **Agent Teams 任务板 + 开关**
+  + 真机上修掉的两处（菜单不监听 `AppModel` 导致"写完不翻"、开关换成本仓原型的 42×25）。
+  **Release notes 待手填**（流水线按 PR 自动生成的只有一条 compare 链接）。
 - **DSH 0.2.2-rc.3 体检：不用改代码，也没抬线**。本机宿主已在 **2026-11-13 15:30** 自己升到
   **rc.3**（`app.asar` 的 `LastWriteTime`），而连接器 22:06 还在写落盘点 ⇒ 它**已经在 rc.3 上真跑过**。
   形态因此与上一轮相反：**类型基线（rc.1）比跑着的宿主旧**。
