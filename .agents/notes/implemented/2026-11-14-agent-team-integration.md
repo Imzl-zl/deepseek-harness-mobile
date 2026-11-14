@@ -131,6 +131,35 @@ Status: implemented
 ② `TeamTask.ownerText` 去掉 `ownerId` 回落 ⇒ 只有「ownerName 缺席回落 ownerId」那条红；
 ③ `TeamModeRow` 的停用确认判据加 `&& false` ⇒ 只有「停用且用过模型 ⇒ 先弹确认」那条红。
 
+## 真机验收（2026-11-14，隔离实例 :3099 + 直连 18791 + `d61cf622`）
+
+结论：**开关双向都通，任务板未验**（见下）。
+
+| 步骤 | 结果 |
+|---|---|
+| 新连接器生效 | `GET /api/dsh-mobile/status` 的 `caps.team = true` |
+| 开关出现 | 模型菜单末尾出现「启用智能体团队协作」+ 说明按钮 |
+| 开关反映投影 | 宿主 `agentTeam.enabled = true` 时，手机上 `checked=true` |
+| 关 → 宿主 | 点一下：手机 `checked=false`，宿主 `enabled=false`、投影 `seq 8 → 9` |
+| 开 → 宿主 | 再点：手机 `checked=true`，宿主 `enabled=true`、`seq 10` |
+| 写请求确实到了 | 连接器幂等表里 `team.setEnabled` 四条，全部 `status: done` + `{"ok":true,"result":{}}` |
+| 任务板 | **未验**：要看板得有任务，而任务只能由智能体在对话里创建 —— 那要一次模型请求 |
+
+**这一轮真机抓到两个只有真机才看得见的问题**（单测与门禁都绿）：
+
+1. **写成功、界面不翻**：宿主的 `team/mode` 已落盘、幂等表 4 条 `ok:true`，手机上开关还停在关。
+   真因是**模型菜单那张 sheet 是一次性构建的静态 widget**，不在 `ChatPage.build` 的监听范围里，
+   投影回读后没有任何东西会重画它。修法：主体包进 `ListenableBuilder(app)`
+   （`ui/model_sheet.dart` 的 `buildModelSheetBody`），并补一条"`setTeamEnabled` 必须通知监听者"
+   的用例 —— 那条用例钉的正是这个前提。
+2. **开关又大又偏**：先用 Flutter 默认 Material `Switch`（M3，52×32），在 13px 文案的行里
+   又大又跳、颜色也不在 token 体系里；改成照 DSH Web 的 36×20 仍然"风格不符"。
+   最后的判断：**手机端的开关基线不是 DSH Web，而是本仓原型**
+   （`mock/proto/styles.css` 的 `.settings-toggle`：42×25、圆角 13、滑块 19 内缩 3、
+   开态白滑块 + `accent` 轨道、0.1s `cubic-bezier(.4,0,.2,1)`）。按它重写成
+   `ui/dsh_switch.dart` 的 `DshSwitch`，并把**设置页的 `SwitchListTile.adaptive` 与
+   插件页的 Material `Switch` 一并换掉** —— 一个项目只该有一种开关。
+
 ## Alternatives considered
 
 1. **B：子会话里显示根会话的任务板（只读、无开关）**
@@ -163,10 +192,13 @@ Status: implemented
 - 代价：**子会话看不到共享任务板、也没有开关**。这是照抄宿主，但与"在子会话里也能看到全局"
   的直觉相反；根会话是唯一入口。
 - 代价：`side_pane.dart` 从 950 长到 982、`app_model.dart` 从 5150 长到 5204、
-  `AppModel` 方法数 176 → 177，三处预算都按规矩抬了数字并写明理由
-  （`app/tools/verify-size.mjs`）。`ChatPageState` **没有涨**：开关那行的判据与构造搬进
-  `ui/team_mode_row.dart` 的 `teamModeRowFor`，而不是往 `chat_page` 里再加两个私有方法 ——
+  `settings_page.dart` 从 1350 长到 1353、`AppModel` 方法数 176 → 177，四处预算都按规矩抬了
+  数字并写明理由（`app/tools/verify-size.mjs`）。`ChatPageState` **没有涨**：开关那行的判据与
+  构造搬进 `ui/team_mode_row.dart` 的 `teamModeRowFor`、模型菜单主体搬进 `ui/model_sheet.dart` ——
   棘轮在那一格上咬人时，正确的动作是搬走，不是提数字。
+- 代价：`DshSwitch` 替掉了两处 Material 控件（设置页行、插件页行），**行高与点击区域随之变了**：
+  原来的 `SwitchListTile` 自带整行点击，现在只有 `ListTile` 的默认行为 + 开关自己的 44 高热区。
+  这是有意的收窄（一个项目一种开关、一个热区口径），代价是那两页的"点整行切换"没了。
 - 代价：`caps.team` 与投影的 `enabled` 是两个判据，手机侧必须都读；少读一个的症状分别是
   "老宿主上出现一块空板" / "Team 开着却只画一块空白面板"。
 - 代价：开关的最后一下是**宿主的**决定，我们只能回显它的拒绝（`internal` + 原始码）。

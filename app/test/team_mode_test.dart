@@ -20,6 +20,7 @@ import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
+import 'package:dsh_mobile/ui/dsh_switch.dart';
 import 'package:dsh_mobile/ui/team_mode_row.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
@@ -102,11 +103,11 @@ void main() {
         ),
       );
       expect(find.text(TeamCopy.label), findsOneWidget);
-      await tester.tap(find.byType(Switch));
+      await tester.tap(find.byType(DshSwitch));
       await tester.pump();
       expect(called, isTrue, reason: '写发出去了');
-      final sw = tester.widget<Switch>(find.byType(Switch));
-      expect(sw.value, isFalse, reason: '投影没变，开关就不该翻（不做乐观更新）');
+      final sw = tester.widget<DshSwitch>(find.byType(DshSwitch));
+      expect(sw.checked, isFalse, reason: '投影没变，开关就不该翻（不做乐观更新）');
     });
 
     testWidgets('停用且用过模型 ⇒ 先弹确认；取消则一次都不写', (tester) async {
@@ -123,7 +124,7 @@ void main() {
           ),
         ),
       );
-      await tester.tap(find.byType(Switch));
+      await tester.tap(find.byType(DshSwitch));
       await tester.pumpAndSettle();
       expect(find.text(TeamCopy.disableTitle), findsOneWidget);
       expect(find.text(TeamCopy.disableDescription), findsOneWidget);
@@ -147,7 +148,7 @@ void main() {
           ),
         ),
       );
-      await tester.tap(find.byType(Switch));
+      await tester.tap(find.byType(DshSwitch));
       await tester.pumpAndSettle();
       expect(find.text(TeamCopy.disableTitle), findsNothing);
       expect(calls, 1);
@@ -163,7 +164,7 @@ void main() {
           ),
         ),
       );
-      await tester.tap(find.byType(Switch));
+      await tester.tap(find.byType(DshSwitch));
       await tester.pumpAndSettle();
       expect(find.text(TeamCopy.failed('TEAM_LEAD_REQUIRED')), findsOneWidget);
     });
@@ -179,8 +180,8 @@ void main() {
           ),
         ),
       );
-      final sw = tester.widget<Switch>(find.byType(Switch));
-      expect(sw.onChanged, isNull);
+      final sw = tester.widget<DshSwitch>(find.byType(DshSwitch));
+      expect(sw.enabled, isFalse, reason: '锁定时必须拒绝输入');
     });
   });
 
@@ -203,6 +204,26 @@ void main() {
       expect(client.setCalls.single['requestId'], isNotNull, reason: '要带幂等键');
       // 真值来自重读后的投影
       expect(app.teamBoard?.enabled, isTrue);
+    });
+
+    test('写成功后要通知监听者 —— 模型菜单靠这个重画（2026-11-14 真机的那个 bug）', () async {
+      // 那天宿主的 `team/mode` 已经写了、幂等表里 4 条 `ok:true`，手机上开关却还是关的：
+      // 因为那张 sheet 是一次性构建的静态 widget，不监听 `AppModel`。
+      // 修法是把 body 包进 `ListenableBuilder`；**它的前提是这里真的会 notify**，
+      // 所以这条钉的是那个前提。
+      final client = _TeamClient()
+        ..projectionsReply = {
+          'agentTeam': {'enabled': true, 'tasks': <Object?>[]},
+        };
+      final app = AppModel(client: client);
+      addTearDown(app.dispose);
+      await app.start();
+      await app.refreshRepoInfo();
+      await app.openSession('sid_A');
+      var notified = 0;
+      app.addListener(() => notified += 1);
+      await app.setTeamEnabled(true);
+      expect(notified, greaterThan(0), reason: '投影回读后必须通知，否则 sheet 停在旧值');
     });
 
     test('电脑侧拒绝 ⇒ false 且 lastError 有原因', () async {

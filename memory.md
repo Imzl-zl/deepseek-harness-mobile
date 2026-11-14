@@ -30,9 +30,19 @@
   真宿主证据：本机 rc.3 的 projcache 里 40 个样本有 13 个带 `agentTeam`（含 `enabled: true` 那份）。
   笔记 `implemented/2026-11-14-agent-team-integration.md`；契约 `docs/subsystems/agent-team.md`。
   **未做**：真机点一遍开关并看 `team/mode` 落盘。
-- **本轮门禁（2026-11-14）**：app **1931** · connector **860** · boundary **933** · size 通过
-  （三处预算按规矩抬了数字并写明理由：`side_pane.dart` 950 → 982、`app_model.dart` 5150 → 5204、
-  `AppModel` 方法数 176 → 177；`ChatPageState` **没涨**——开关那行搬进 `team_mode_row.dart`）。
+- **开关的样子只有一枚**（2026-11-14 真机反馈后定）：手机端开关基线**不是** DSH Web 的
+  36×20，而是本仓原型 `mock/proto/styles.css` 的 `.settings-toggle` —— 42×25、圆角 13、
+  滑块 19 内缩 3、开态白滑块 + `accent` 轨道、0.1s `cubic-bezier(.4,0,.2,1)`。
+  落成 `ui/dsh_switch.dart`，**设置页行尾 / 插件页逐行启停 / 团队开关三处共用**
+  （原来的 `SwitchListTile.adaptive` 与 Material `Switch` 都已换掉；代价：那两页"点整行切换"没了）。
+- **真机抓到的那个 bug**：模型菜单是一次性构建的静态 widget，不监听 `AppModel` ——
+  开关写完（宿主 `team/mode` 已落盘、幂等表 4 条 `ok:true`）手机上却停在旧值。
+  修法：菜单主体搬进 `ui/model_sheet.dart` 并包 `ListenableBuilder(app)`；
+  另有一条用例钉"`setTeamEnabled` 必须通知监听者"。**门禁与单测都没抓到它，只有真机抓到。**
+- **本轮门禁（2026-11-14）**：app **1932** · connector **860** · boundary **945** · size 通过
+  （四处预算按规矩抬了数字并写明理由：`side_pane.dart` 950 → 982、`app_model.dart` 5150 → 5204、
+  `settings_page.dart` 1350 → 1353、`AppModel` 方法数 176 → 177）；
+  `ChatPageState` **没涨**——开关那行与模型菜单主体都搬出去了。
   变异校验三条，各恰好红 1 条：拆掉"子会话不给 tab"、拆掉 `ownerId` 回落、拆掉停用确认判据。
 - **一条要记住的反直觉事实**：`docs/upgrade-guide/v0.2.2-rc.2/` 的 **13 条 breaking topic
   全都不在 rc.3 上** —— 那个目录只在 master，rc.2/rc.3 两个标签下最新都只到 `v0.2.2-rc.1`。

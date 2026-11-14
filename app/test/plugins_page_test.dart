@@ -16,6 +16,7 @@ import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/model/plugins.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
+import 'package:dsh_mobile/ui/dsh_switch.dart';
 import 'package:dsh_mobile/ui/plugins_page.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
@@ -188,16 +189,18 @@ void main() {
       expect(find.text('@deepseek-ai/dsh-base'), findsOneWidget);
       expect(find.text('只能在电脑上改'), findsOneWidget);
 
-      final toggleable = tester.widget<Switch>(
+      // 开关是项目基线那一枚（`ui/dsh_switch.dart`，原型 `.settings-toggle`），
+      // 不是 Material 的 `Switch` —— 门禁认的是"可点 / 不可点"，不是哪个类。
+      final toggleable = tester.widget<DshSwitch>(
         find.byKey(const ValueKey<String>('plugin-switch-entry-a')),
       );
-      expect(toggleable.value, isTrue);
-      expect(toggleable.onChanged, isNotNull);
+      expect(toggleable.checked, isTrue);
+      expect(toggleable.enabled, isTrue);
 
-      final readOnly = tester.widget<Switch>(
+      final readOnly = tester.widget<DshSwitch>(
         find.byKey(const ValueKey<String>('plugin-switch-entry-b')),
       );
-      expect(readOnly.onChanged, isNull, reason: '没有 patchId 的行不该可点');
+      expect(readOnly.enabled, isFalse, reason: '没有 patchId 的行不该可点');
     });
 
     testWidgets('空清单 ⇒ "没有可管理的插件"（与"没有插件服务"是两句话）', (tester) async {

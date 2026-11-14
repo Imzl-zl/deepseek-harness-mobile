@@ -71,9 +71,9 @@
 
 ## 5. 开关（`team.setEnabled`）
 
-位置与 DSH 相同：**根会话的模型菜单里**（DSH 的 slot 是
-`conversation.input.model.options`，`ui-agent-team/src/client/TeamModeToggle.tsx`）。
-手机上就是「选择模型」那张 sheet 的末尾一行（`app/lib/ui/team_mode_row.dart`）。
+位置与行为照 DSH：**根会话的模型菜单里**（slot `conversation.input.model.options`，
+`ui-agent-team/src/client/TeamModeToggle.tsx`）。手机上就是「选择模型」那张 sheet 的末尾一行
+（`app/lib/ui/model_sheet.dart` 建主体，行本身是 `app/lib/ui/team_mode_row.dart`）。
 
 四条行为逐条照抄，判据与组件在同一处（`teamModeRowFor`）：
 
@@ -85,12 +85,20 @@
 | **停用要先确认**（仅当用过模型） | `!enabled && lastUsed != null` | 同文件 `:47` |
 
 - **不做乐观更新**：开关只认投影 `agentTeam.enabled`，写成功后由
-  `AppModel.setTeamEnabled` 重读投影再画。
+  `AppModel.setTeamEnabled` 重读投影再画。**这张 sheet 自己监听 `AppModel`**
+  （`buildModelSheetBody` 里的 `ListenableBuilder`）—— sheet 是一次性构建的静态 widget，
+  不监听就会停在打开那一刻的值。
 - 确认框三段文案（标题 / 说明 / 警告）与按钮逐字取自 `locales.ts` 的 zh 字典。
 - 写方法经 gateway 转给宿主的 `agentTeams/setEnabled`（`{agentId, enabled}`），
   **让宿主自己解析 `agent` 这个 lookup** —— 否则"要不要 resume 一个不在内存里的会话"
   就成了连接器的决定。契约行见 `remote-channel.md` §5.7。
 - 失败一律 `internal`（错误码表封闭），宿主原始码写在消息里。
+
+**开关的样子不是 DSH Web 那一枚**（它的 `Switch` 是 36×20 的桌面尺寸）：手机端的开关基线是
+`mock/proto/styles.css` 的 `.settings-toggle` —— **42 × 25、圆角 13、滑块 19 内缩 3、
+开态轨道 `accent` / 滑块白、关态轨道 `layer3` / 滑块 `on3`、0.1s `cubic-bezier(.4,0,.2,1)`**。
+落地在 `app/lib/ui/dsh_switch.dart` 的 `DshSwitch`，**设置页行尾、插件页逐行启停、这一行
+三处共用同一枚**（`SwitchListTile.adaptive` 与 Material `Switch` 都已换掉）。
 
 ## 6. 边界
 

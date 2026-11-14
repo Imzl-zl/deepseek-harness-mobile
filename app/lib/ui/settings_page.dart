@@ -49,6 +49,7 @@ import 'connection_mode_page.dart';
 import 'connection_summary_block.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_sheet.dart';
+import 'dsh_switch.dart';
 import 'dsh_toast.dart';
 import 'settings_row.dart';
 
@@ -754,15 +755,21 @@ class _SettingSwitchRow extends StatelessWidget {
         ),
       );
     }
-    return SwitchListTile.adaptive(
+    // 开关用项目基线那一枚（`ui/dsh_switch.dart`，原型 `.settings-toggle`）：
+    // `SwitchListTile.adaptive` 按 M3 画 52×32，与本页 14px 标题 / 11px 说明不同比例。
+    return ListTile(
       dense: true,
-      value: known,
-      onChanged: onChanged,
-      secondary: DshIcon(icon, size: 18, color: c.labelSecondary),
+      leading: DshIcon(icon, size: 18, color: c.labelSecondary),
       title: Text(label, style: TextStyle(fontSize: 14, color: c.labelPrimary)),
       subtitle: Text(
         note,
         style: TextStyle(fontSize: 11, color: c.labelTertiary),
+      ),
+      trailing: DshSwitch(
+        checked: known,
+        label: label,
+        enabled: onChanged != null,
+        onChanged: (next) => onChanged?.call(next),
       ),
     );
   }

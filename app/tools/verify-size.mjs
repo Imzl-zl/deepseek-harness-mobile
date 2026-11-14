@@ -74,7 +74,7 @@ const FILE_BUDGET = [
   ['app/lib/ui/dsh_composer.dart', 1850], // `build` 一个方法 357 行
   ['app/lib/ui/usage_page.dart', 1600], // 图表与列表可分开
   ['app/lib/ui/session_drawer.dart', 1400], // 抽屉 + 会话行 + 分组
-  ['app/lib/ui/settings_page.dart', 1350], // 42 项设置，可按分组分文件
+  ['app/lib/ui/settings_page.dart', 1353], // 42 项设置，可按分组分文件；2026-11-14 行内开关换成本项目基线那一枚（`ListTile` + `DshSwitch`，+3 行，见 `implemented/2026-11-14-agent-team-integration.md`）
   ['app/lib/model/chat_item.dart', 1250], // 条目族定义，可按族拆
   ['app/lib/ui/takeover.dart', 1250], // 接管队列 + 三种卡
   ['app/lib/data/projection.dart', 1150], // 事件投影，可按事件族拆

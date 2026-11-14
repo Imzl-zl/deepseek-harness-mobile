@@ -86,6 +86,7 @@ import 'history_failure_note.dart';
 import 'input_focus.dart';
 import 'load_more_on_scroll.dart';
 import 'load_older_trigger.dart';
+import 'model_sheet.dart';
 import 'queue_dock.dart';
 import 'side_pane.dart';
 import 'side_panel_visibility.dart';
@@ -94,7 +95,6 @@ import 'subagent_readonly_band.dart';
 import 'subagent_tree.dart';
 import 'takeover.dart';
 import 'team_board_view.dart';
-import 'team_mode_row.dart';
 import 'trajectory_page.dart';
 
 /// 会话至少露出来的高度：底部那一块（接管卡 + 输入栏 + 统计条）不许把它吃掉。
@@ -2222,66 +2222,20 @@ class ChatPageState extends State<ChatPage> {
   /// 语义逐字对照 Web：选模型带 `defaultEffort`、选等级带那个 id、
   /// "默认"只在 `defaultEffort` 缺省时才出现（`ModelSelect.tsx:129-140`）。
   void _showModelSheet() {
-    final c = context.dshColors;
     final catalog = widget.app.modelCatalog;
     if (catalog == null || catalog.groups.isEmpty) {
       _toast('拿不到模型目录：电脑侧没有返回 session/modelCatalog');
       return;
     }
-    final current = widget.app.currentModel;
+    // 主体在 `ui/model_sheet.dart`：那是"按 provider 分组 + 末尾的 Agent Teams 开关"，
+    // 需要 `AppModel` 与 `_pickModel` 两样，不需要本类的任何状态 —— 留在这里只会让
+    // 这个已经超预算的文件继续长。**它内部自己 `ListenableBuilder(app)`**：
+    // sheet 不在本页的 build 里，不监听的话开关写完也不会重画（2026-11-14 真机）。
     unawaited(
       showDshSheet<void>(
         context: context,
         title: '选择模型',
-        body: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (final group in catalog.groups) ...[
-              // 分组头（provider 名）—— Web 的根菜单同样按 provider 分组。
-              Padding(
-                padding: const EdgeInsets.fromLTRB(4, 12, 4, 4),
-                child: Text(
-                  group.name,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: c.labelCaption,
-                  ),
-                ),
-              ),
-              for (final entry in group.models)
-                DshPickerRow(
-                  // **只显示模型名**：渠道由上面的分组头表达，说明文字与"几档推理"
-                  // 都是废话（用户 2026-10-26 原话："你就显示渠道和模型不就行了"）。
-                  name: entry.displayName,
-                  tags: const [],
-                  selected:
-                      current != null &&
-                      current.provider == group.id &&
-                      current.model == entry.id,
-                  onTap: () => _pickModel(group, entry),
-                ),
-            ],
-            // Team 开关就在**模型菜单**里，与 DSH 同一个位置
-            // （slot `conversation.input.model.options`，`ui-agent-team/README.zh.md:28`）。
-            // 三条不显示的条件在 `teamModeRowFor` 一处判（子会话 / 没投影 / 没能力位）。
-            ?teamModeRowFor(
-              teamAvailable: widget.app.teamAvailable,
-              childSession:
-                  widget.app.sessionOf(widget.app.currentSid ?? '')?.subagent ??
-                  false,
-              boardReady: widget.app.teamBoard != null,
-              enabled: widget.app.teamBoard?.enabled ?? false,
-              modelEverUsed: widget.app.modelEverUsed,
-              hasCurrentModel: widget.app.currentModel != null,
-              onSetEnabled: (enabled) async {
-                // 写完由 `AppModel` 重读投影，整页跟着重画（不做乐观更新）。
-                if (await widget.app.setTeamEnabled(enabled)) return null;
-                return widget.app.lastError?.message ?? '未知原因';
-              },
-            ),
-          ],
-        ),
+        body: buildModelSheetBody(app: widget.app, onPick: _pickModel),
       ),
     );
   }

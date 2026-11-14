@@ -19,6 +19,7 @@ import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/model/permission.dart';
 import 'package:dsh_mobile/model/theme_mode.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
+import 'package:dsh_mobile/ui/dsh_switch.dart';
 import 'package:dsh_mobile/ui/settings_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -282,7 +283,7 @@ void main() {
             of: find.text('上传 Session Log'),
             matching: find.byType(ListTile),
           ),
-          matching: find.byType(Switch),
+          matching: find.byType(DshSwitch),
         ),
         findsOneWidget,
       );
@@ -307,7 +308,7 @@ void main() {
       // 值本身在模型层是 `null`（不是 `false`）—— 界面这里只负责别撒谎。
       expect(app.settingsValue('session-log-deepseek', 'enabled'), isNull);
       expect(
-        find.descendant(of: row, matching: find.byType(Switch)),
+        find.descendant(of: row, matching: find.byType(DshSwitch)),
         findsNothing,
         reason: '没读到不许画成一个具体状态（"关"）',
       );

@@ -29,6 +29,8 @@ import 'package:flutter/material.dart';
 
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart' show DshIcon;
+import '../theme/dsh_theme.dart' show DshRadius;
+import 'dsh_switch.dart';
 
 /// DSH 的文案（`locales.ts` 的 zh 字典，逐字）。
 abstract final class TeamCopy {
@@ -157,55 +159,83 @@ class _TeamModeRowState extends State<TeamModeRow> {
   Widget build(BuildContext context) {
     final c = context.dshColors;
     final locked = widget.disabled || _saving;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 10, 4, 2),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        TeamCopy.label,
-                        style: TextStyle(fontSize: 13, color: c.labelPrimary),
-                      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 行规格照 `TeamModeToggle.module.css` 的 `.row`：`min-height 34`、`padding 0 8`、
+        // `justify-content: space-between`、`gap 16`、13px 主色。触屏把高度放到 44（热区），
+        // 其余不变。**整行可点**是 DSH 的行为（`.toggle::after { inset: 0 }` 把开关的
+        // 热区铺满整行），只是说明按钮自己吞掉点击。
+        ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 44),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(DshRadius.md),
+            onTap: locked ? null : () => unawaited(_select(!widget.enabled)),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  // `justify-content: space-between`：文字组吃掉剩余宽度，
+                  // 开关被顶到行尾（不紧跟文字 —— 那读起来像"标签的下标"）。
+                  Expanded(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            TeamCopy.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: c.labelPrimary,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        // 说明按钮（DSH 的 `.infoButton`：20×20、caption 色）。
+                        // 它的触摸半径保留 32，但视觉上是 20 —— 触屏上再小就点不准。
+                        IconButton(
+                          tooltip: TeamCopy.infoLabel,
+                          iconSize: 13,
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                          icon: DshIcon(
+                            'info',
+                            size: 13,
+                            color: c.labelCaption,
+                          ),
+                          onPressed: () => _toastInfo(context),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 4),
-                    IconButton(
-                      // 说明入口（DSH 的 `mode.infoLabel`）：点一下弹那段 description。
-                      tooltip: TeamCopy.infoLabel,
-                      iconSize: 14,
-                      visualDensity: VisualDensity.compact,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                        minWidth: 32,
-                        minHeight: 32,
-                      ),
-                      icon: DshIcon('info', size: 13, color: c.labelTertiary),
-                      onPressed: () => _toastInfo(context),
-                    ),
-                  ],
-                ),
-              ),
-              Switch(
-                value: widget.enabled,
-                onChanged: locked ? null : (v) => unawaited(_select(v)),
-              ),
-            ],
-          ),
-          if (_failure != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text(
-                TeamCopy.failed(_failure!),
-                style: TextStyle(fontSize: 11, color: c.stateError),
+                  ),
+                  // 项目基线的开关（42×25，原型 `.settings-toggle`）。**不用 Material 的
+                  // `Switch`**：它按 M3 画 52×32，放进 13px 文案的行里又大又跳。
+                  DshSwitch(
+                    checked: widget.enabled,
+                    label: TeamCopy.label,
+                    enabled: !locked,
+                    onChanged: (v) => unawaited(_select(v)),
+                  ),
+                ],
               ),
             ),
-        ],
-      ),
+          ),
+        ),
+        if (_failure != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+            child: Text(
+              TeamCopy.failed(_failure!),
+              style: TextStyle(fontSize: 11, color: c.stateError),
+            ),
+          ),
+      ],
     );
   }
 

@@ -48,6 +48,7 @@ import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 import 'dsh_app_bar.dart';
 import 'dsh_center_notice.dart';
+import 'dsh_switch.dart';
 
 /// 页面入口：进页拉一次清单，之后听 `AppModel`（**页面自己不发读请求**）。
 class PluginsPageHost extends StatefulWidget {
@@ -618,11 +619,15 @@ class _PluginLine extends StatelessWidget {
               ],
             ),
           ),
-          Switch(
+          // 开关用项目基线那一枚（原型 `.settings-toggle`），与设置页同一枚 ——
+          // 原来这里是 Material 的 `Switch`，比行里的 13px 文案大一圈。
+          DshSwitch(
             key: ValueKey<String>('plugin-switch-${row.entryId}'),
-            value: row.enabled,
-            // **不可改的行给 `null`**（禁用态）：点一个必然失败的开关比没有更糟。
-            onChanged: row.canToggle ? onToggle : null,
+            checked: row.enabled,
+            label: row.entryId,
+            // **不可改的行给 `enabled: false`**（禁用态）：点一个必然失败的开关比没有更糟。
+            enabled: row.canToggle,
+            onChanged: (next) => onToggle(next),
           ),
         ],
       ),
