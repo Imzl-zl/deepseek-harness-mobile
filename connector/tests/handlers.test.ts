@@ -67,6 +67,7 @@ const CAPS: Caps = {
   settings: true,
   credentials: true,
   direct: false,
+  team: false,
 }
 
 function build(overrides: Partial<Parameters<typeof createHandlers>[0]> = {}) {

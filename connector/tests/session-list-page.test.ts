@@ -44,7 +44,7 @@ function harness(count: number) {
     follow: (): never => { throw new Error('本用例不应建立订阅') },
   }
   const handlers = createHandlers({
-    caps: () => ({ sessions: true, storage: true, approval: false, questions: false, jobs: false, subagents: false, references: false, plugins: false, files: false, changes: false, settings: false, credentials: true, direct: false }),
+    caps: () => ({ sessions: true, storage: true, approval: false, questions: false, jobs: false, subagents: false, references: false, plugins: false, files: false, changes: false, settings: false, credentials: true, direct: false, team: false }),
     aliasVersion: () => 0,
     sessions,
     aliases: {

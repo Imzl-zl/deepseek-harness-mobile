@@ -106,7 +106,7 @@ async function startLanChain(t: Cleanup): Promise<LanChain> {
       caps: () => ({
         sessions: true, storage: true, approval: false, questions: false, jobs: false,
         subagents: false, references: false, plugins: false, files: false, changes: false,
-        settings: false, credentials: true, direct: true,
+        settings: false, credentials: true, direct: true, team: false,
       }),
       aliasVersion: () => 1, sessions,
       aliases: { ensure: async () => 's1', sessionOf: () => undefined },

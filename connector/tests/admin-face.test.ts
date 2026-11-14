@@ -56,6 +56,7 @@ const CAPS = {
   settings: true,
   credentials: true,
   direct: true,
+  team: false,
 }
 
 /** 三行设备：一台在线前台、一台离线未吊销、一台已吊销。 */

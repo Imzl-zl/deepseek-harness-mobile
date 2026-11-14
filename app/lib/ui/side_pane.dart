@@ -66,11 +66,20 @@ double sidePaneWidth({required double screenWidth, required bool fullscreen}) {
       : kSidePaneMaxWidth;
 }
 
-/// 侧抽屉的三个面板。
+/// 侧抽屉的面板。
+///
+/// **顺序即 tab 顺序**。`team` 排在 `subs` 之后是照 DSH 的位置：共享任务板是
+/// 子智能体目录的**下半块**（`ui-agent-team` 注册在
+/// `conversation.session.header.actions.subagent.footer`，`mount.ts:66-68`），
+/// 两者上下相邻 —— 手机并成两枚 tab，次序照旧。
+///
+/// **不是每个面板都会出现**：`SidePane.panels` 由调用方按能力位与会话种类过滤
+/// （老宿主没有 Team 服务 ⇒ 整枚 `team` 不出现）。
 enum SidePanel {
   file('文件', 'deliverDoc'),
   jobs('任务', 'loading'),
-  subs('子智能体', 'users');
+  subs('子智能体', 'users'),
+  team('任务板', 'checklist');
 
   const SidePanel(this.label, this.icon);
 
@@ -168,8 +177,11 @@ class SidePane extends StatelessWidget {
     this.fileBody,
     this.jobs = const [],
     this.subsBody,
+    this.teamBody,
+    this.panels = SidePanel.values,
     this.runningJobs = 0,
     this.runningSubs = 0,
+    this.runningTeam = 0,
     this.fileActions,
     this.jobActions,
     this.onToggleJob,
@@ -197,8 +209,28 @@ class SidePane extends StatelessWidget {
   /// 由 `ui/subagent_tree.dart` 自成一块。
   final Widget? subsBody;
 
+  /// 共享任务板的主体（`ui/team_board_view.dart`）。
+  ///
+  /// `null` = 这一屏不给这枚 tab（由 [panels] 决定，两者由调用方一处算出来 ——
+  /// 否则会出现"tab 在、body 空"）。
+  final Widget? teamBody;
+
+  /// 这次要显示哪几枚 tab（**默认全部**）。
+  ///
+  /// 面板集合是数据驱动的：老宿主没有 Team 服务就没有 `team` 这一枚；
+  /// 子会话照 DSH 也不显示任务板与开关（`ui-agent-team/src/client/TeamModeToggle.tsx:30-32`
+  /// 对子会话 `return null`）。所以过滤只发生在这一处，tab 条、计数徽标、
+  /// 主体三处都跟着它走。
+  ///
+  /// **它必须非空且包含 `panel`**：调用方在算它的时候就把
+  /// "当前选中的那枚还在不在"一起处理掉（见 `chat_page.dart` 的开抽屉入口）。
+  final List<SidePanel> panels;
+
   final int runningJobs;
   final int runningSubs;
+
+  /// 进行中的共享任务数（任务板 tab 的徽标）。
+  final int runningTeam;
 
   /// 文件面板底部的三个动作（复制路径 / 在电脑打开 / 分享）。
   final Widget? fileActions;
@@ -226,6 +258,12 @@ class SidePane extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.dshColors;
+    // 选中的那枚可能已经不在 [panels] 里了（Team 是**会话级**的：切到子会话、
+    // 或切到一台没有该服务的电脑，那一枚就消失）。这里**就地回落**到第一枚，
+    // 而不是留一个空主体 —— 也不能改写调用方的状态（那是在 build 里 setState）。
+    // 回落只影响这一次绘制：状态里仍是用户原来选的那枚，条件恢复时它自己回来。
+    final visible = panels.isEmpty ? const [SidePanel.file] : panels;
+    final current = visible.contains(panel) ? panel : visible.first;
     // **必须有 `Material` 祖先**：这一层里到处是 `InkWell`，而它们要求
     // 上方有 `Material` 才能画水波与接收点击。缺了它实测报
     // `No Material widget found` —— 而那个错误是**运行时**才出现的
@@ -342,14 +380,17 @@ class SidePane extends StatelessWidget {
                     padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
                     child: Row(
                       children: [
-                        for (final p in SidePanel.values) ...[
+                        for (final p in panels) ...[
                           _SideTab(
                             panel: p,
-                            active: p == panel,
+                            active: p == current,
                             // 计数徽标（`.stab .n`）：**只在有在跑的才显示**。
                             count: switch (p) {
                               SidePanel.jobs => runningJobs,
                               SidePanel.subs => runningSubs,
+                              // 任务板：**进行中**的任务数（待处理 / 已完成不入徽标，
+                              // 与另外两枚"在跑的才计数"同一条）。
+                              SidePanel.team => runningTeam,
                               _ => 0,
                             },
                             onTap: () => onPanelChanged(p),
@@ -365,7 +406,7 @@ class SidePane extends StatelessWidget {
 
             // ---- 面板主体 ----
             Expanded(
-              child: switch (panel) {
+              child: switch (current) {
                 SidePanel.file => _FilePanel(
                   body: fileBody,
                   actions: fileActions,
@@ -388,6 +429,8 @@ class SidePane extends StatelessWidget {
                 // 300dp 宽里会窄到不能读）——「仍未做的差异」记在
                 // `.agents/notes/implemented/2026-10-21-subagent-catalog-tree-and-state.md`。
                 SidePanel.subs => subsBody ?? const SizedBox.shrink(),
+                // 任务板：只读（这一轮不给开关，见方案 §4「只读先上」）。
+                SidePanel.team => teamBody ?? const SizedBox.shrink(),
               },
             ),
           ],

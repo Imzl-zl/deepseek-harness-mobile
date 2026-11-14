@@ -1099,7 +1099,8 @@
         "changes": false,
         "settings": false,
         "credentials": true,
-        "direct": false
+        "direct": false,
+        "team": false
       },
       "aliasVersion": 7,
       "hostName": "build-machine",

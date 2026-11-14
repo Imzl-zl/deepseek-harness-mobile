@@ -7,7 +7,7 @@
 ///
 /// | 键 | 手机拿它做什么 | 缺了怎么办 |
 /// |---|---|---|
-/// | `caps.references` / `caps.files` / `caps.changes` / `caps.plugins` | 决定 `@` 面板 / 文件页 / 改动卡 / 插件页**显不显示** | 按 `false`（老连接器） |
+/// | `caps.references` / `caps.files` / `caps.changes` / `caps.plugins` / `caps.team` | 决定 `@` 面板 / 文件页 / 改动卡 / 插件页 / 任务板 tab**显不显示** | 按 `false`（老连接器） |
 /// | `caps.jobs` | 决定**要不要发 `job.list`**（缺服务时那个方法不存在） | 按 `true`（老连接器照样能拉） |
 /// | `commands` | `/` 候选菜单的**唯一**内容来源 | 空表 ⇒ 不出菜单 |
 /// | `dshVersion` | 与 App 版本并排显示（排错用） | `null` ⇒ 显示"未读到" |
@@ -80,6 +80,10 @@ WireReading<RepoInfo> readRepoInfo(Object? result) =>
         // 不是"要不要画一屏"。老连接器不报这个键时照样该能拉任务 ——
         // 猜错的代价是一次多余的成功调用，而不是整块能力消失。
         jobsAvailable: caps['jobs'] != false,
+        // 与 `files` / `plugins` 同一档：**`== true` 才算有能力**（老连接器没有这个键
+        // ⇒ false ⇒ tab 不出现）。它只决定"画不画一块只读面板"，猜错的代价是
+        // 一整块不存在的界面，所以默认往"没有"那边倒。
+        teamAvailable: caps['team'] == true,
         dshVersion: fields.optionalNonEmptyString('dshVersion'),
         hostName: fields.optionalNonEmptyString('hostName'),
         methodCount: _methodCountOf(fields),

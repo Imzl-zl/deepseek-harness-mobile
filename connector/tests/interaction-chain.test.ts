@@ -58,6 +58,7 @@ function harness() {
         sessions: true, storage: true, approval: true, questions: true,
         jobs: false, subagents: false, references: false, plugins: false, files: false, changes: false, settings: false, credentials: true,
         direct: false,
+        team: false,
       }),
       aliasVersion: () => 0,
       sessions: {

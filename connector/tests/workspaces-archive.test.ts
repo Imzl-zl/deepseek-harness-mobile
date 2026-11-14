@@ -205,6 +205,7 @@ const CAPS: Caps = {
   settings: false,
   credentials: false,
   direct: false,
+  team: false,
 }
 
 /** 一个只关心被测量方法的完整端口；其余方法给"无害的空结果"。 */

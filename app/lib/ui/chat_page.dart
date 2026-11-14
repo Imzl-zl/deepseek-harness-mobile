@@ -88,10 +88,12 @@ import 'load_more_on_scroll.dart';
 import 'load_older_trigger.dart';
 import 'queue_dock.dart';
 import 'side_pane.dart';
+import 'side_panel_visibility.dart';
 import 'sticky_note.dart';
 import 'subagent_readonly_band.dart';
 import 'subagent_tree.dart';
 import 'takeover.dart';
+import 'team_board_view.dart';
 import 'trajectory_page.dart';
 
 /// 会话至少露出来的高度：底部那一块（接管卡 + 输入栏 + 统计条）不许把它吃掉。
@@ -945,6 +947,15 @@ class ChatPageState extends State<ChatPage> {
           ),
           runningJobs: runningJobs,
           runningSubs: runningSubs,
+          // 任务板（Agent Teams，只读）：**tab 与主体一处算**——
+          // 判据在 `side_panel_visibility.dart` 的 `visibleSidePanels`（能力位 × 会话种类），
+          // 子会话照 DSH 连 tab 一起不给。
+          panels: visibleSidePanels(
+            teamAvailable: widget.app.teamAvailable,
+            childSession: widget.app.sessionOf(sid ?? '')?.subagent ?? false,
+          ),
+          teamBody: TeamBoardView(board: widget.app.teamBoard),
+          runningTeam: widget.app.teamBoard?.activeCount ?? 0,
           onToggleJob: (job) => _toggleJob(job),
           // 停止：任务面板里最常见的那件事。**不传它就永远没有停止按钮**
           //（渲染条件里有 `onStop != null`）—— 第一版就漏了传，
@@ -1796,6 +1807,7 @@ class ChatPageState extends State<ChatPage> {
     SidePanel.file => _fileHeader(widget.app),
     SidePanel.jobs => const SideHeader(title: '后台任务'),
     SidePanel.subs => const SideHeader(title: '子智能体'),
+    SidePanel.team => const SideHeader(title: '共享任务'),
   };
 
   /// 文件面板的表头：**正在看某个文件时是那个文件**，否则是改动清单。

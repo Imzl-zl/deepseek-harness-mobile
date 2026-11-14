@@ -67,7 +67,7 @@ function makeDeps(overrides: Partial<ConnectionScopeDeps> = {}): ConnectionScope
     metrics: createMetrics(),
     sessions,
     handlers: {
-      caps: () => ({ sessions: true, storage: true, approval: false, questions: false, jobs: false, subagents: false, references: false, plugins: false, files: false, changes: false, settings: false, credentials: true, direct: false }),
+      caps: () => ({ sessions: true, storage: true, approval: false, questions: false, jobs: false, subagents: false, references: false, plugins: false, files: false, changes: false, settings: false, credentials: true, direct: false, team: false }),
       aliasVersion: () => 0,
       sessions,
       aliases: { ensure: async () => 's1', sessionOf: () => undefined },
@@ -83,7 +83,7 @@ function makeDeps(overrides: Partial<ConnectionScopeDeps> = {}): ConnectionScope
 /** 只关心"发了哪条通知"的方法面装配。 */
 function makeHandlerDeps(notified: HostStateNotice[], deviceOf?: string) {
   return {
-    caps: () => ({ sessions: true, storage: true, approval: false, questions: false, jobs: false, subagents: false, references: false, plugins: false, files: false, changes: false, settings: false, credentials: true, direct: false }),
+    caps: () => ({ sessions: true, storage: true, approval: false, questions: false, jobs: false, subagents: false, references: false, plugins: false, files: false, changes: false, settings: false, credentials: true, direct: false, team: false }),
     aliasVersion: () => 0,
     sessions: {
       list: async () => [],

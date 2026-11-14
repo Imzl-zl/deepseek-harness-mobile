@@ -16,6 +16,19 @@
   **不抬线的理由**：`tests/manifest-compat.test.ts` 强制 `engines.dsh` 下界 == 钉住的版本，
   所以“抬 devDeps”必然连带放弃 rc.1/rc.2 宿主；而体检恰好证明那一段是真能用的。
   笔记 `implemented/2026-11-14-dsh-022-rc3-audit.md`。
+- **Agent Teams 只读接入（右抽屉第四枚「任务板」）**：数据就是已在读的 `session.projections`
+  里的 `agentTeam`（**连接器零新增方法**，只多一个 `caps.team` 能力位；方法面仍 52）。
+  手机侧新增 `model/team_board.dart`（解析）+ `ui/team_board_view.dart`（行规格）+
+  `ui/side_panel_visibility.dart`（**可见性唯一判据**：`caps.team` × 根会话）。
+  **子会话不显示这块板**——照抄 DSH（`TeamModeToggle.tsx:30-32` 对子会话直接 `return null`），
+  且子会话自己那块投影是**空板**（与"根会话关着"同形，分不出来）。
+  宿主的三个判断手机一律不算：`ready`（DAG）、`writeScopeWarnings`、`ownerName ?? ownerId ?? 未分配`。
+  真宿主证据：本机 rc.3 的 projcache 里 40 个样本有 13 个带 `agentTeam`（含 `enabled: true` 那份）。
+  笔记 `implemented/2026-11-14-agent-team-readonly.md`；契约 `docs/subsystems/agent-team.md`。
+  **未做**：写入开关（阶段 C，只有根会话能调 `agentTeams/setEnabled` + `{agentId, enabled}`）。
+- **本轮门禁（2026-11-14）**：app **1923** · connector **860** · boundary **924** · size 通过
+  （两处预算按规矩抬了数字并写明理由：`side_pane.dart` 950 → 982、`app_model.dart` 5150 → 5167）。
+  变异校验两条，各恰好红 1 条：拆掉"子会话不给 tab"、拆掉 `ownerId` 回落。
 - **一条要记住的反直觉事实**：`docs/upgrade-guide/v0.2.2-rc.2/` 的 **13 条 breaking topic
   全都不在 rc.3 上** —— 那个目录只在 master，rc.2/rc.3 两个标签下最新都只到 `v0.2.2-rc.1`。
   它们是 rc.3 之后才落到 master 的下一批（6 条已实测：`./brand` 子路径、`rankByName`、

@@ -109,6 +109,12 @@ export const OPTIONAL_SERVICES = [
   // 订阅都不依赖它们）。
   'typertGateway',
   'connection',
+  // Agent Teams（`packages/team/agent-team/src/index.ts:61` 的 `super(ctx, 'agentTeams')`）。
+  // 这一轮它只被**只读**消费：任务板是投影 `agentTeam`（`projection.ts:210-211`），
+  // 由 DSH 自己注册、我们原样透传，所以这个键**不决定挂哪个方法**，
+  // 只决定 `caps.team` —— 老宿主 / 没带 tool bundle 的部署 ⇒ false ⇒
+  // 手机上那枚任务板 tab 整枚不出现（不是显示一块永远空着的板）。
+  'agentTeams',
 ] as const
 
 /** 通道对外公布的能力位。 */
@@ -175,6 +181,15 @@ export interface Caps {
    * 必然拨不通的地址。
    */
   direct: boolean
+  /**
+   * 智能体团队（Agent Teams）的任务板。判据 = `agentTeams` 服务在不在。
+   *
+   * **它只决定手机那枚 tab 出不出现**，不决定任何方法：这一轮是只读版，
+   * 数据走投影 `agentTeam`（`connector/src/dsh/projections.ts` 原样透传，不挑键）。
+   * 老宿主 ⇒ false ⇒ 整枚 tab 不出现 —— 而不是摆一块永远空着的板
+   * （"服务不在"与"Team 没开"是两件事，后者由投影的 `enabled` 表达）。
+   */
+  team: boolean
 }
 
 const present = (ctx: Context, name: string): boolean => ctx.get(name) !== undefined
@@ -239,6 +254,7 @@ export function readCaps(ctx: Context, options: { direct: boolean } = { direct: 
     plugins: pluginsAvailable(ctx),
     files: filesAvailable(ctx),
     changes: changesAvailable(ctx),
+    team: present(ctx, 'agentTeams'),
     settings: present(ctx, 'settings'),
     credentials: present(ctx, 'credentials'),
     direct: options.direct,

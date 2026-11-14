@@ -49,6 +49,10 @@ export const CAPS = {
   settings: false,
   credentials: true,
   direct: false,
+  // Agent Teams 的任务板（`caps.team`）。夹具按**最小宿主**来：这台假电脑没有 Team 服务，
+  // 所以手机那枚 tab 不出现（与 `jobs` / `subagents` / `files` 的 false 同一档）。
+  // 真宿主上它是 true —— 判据只看 `agentTeams` 服务在不在。
+  team: false,
 } as const
 
 /** 假会话 id → 别名。定值，且**不含** DSH 会话 id（"id 不过线"的断言才有意义）。 */

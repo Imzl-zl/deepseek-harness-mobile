@@ -62,6 +62,7 @@ import '../model/send_mode.dart';
 import '../model/session_stats.dart';
 import '../model/subagent.dart';
 import '../model/task_notice_policy.dart';
+import '../model/team_board.dart';
 import '../model/trajectory.dart';
 import '../model/turn_outline.dart';
 import '../model/usage_summary.dart';
@@ -2160,6 +2161,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       _changesAvailable = info.changesAvailable;
       _pluginsAvailable = info.pluginsAvailable;
       _jobsAvailable = info.jobsAvailable;
+      _teamAvailable = info.teamAvailable;
       // **读到了**才置位：界面靠它区分"这台电脑没有这个面"与"还没读到"
       // （离线时 `caps.files` 只是默认 false，不是电脑的答复）。
       _repoInfoKnown = true;
@@ -2177,6 +2179,22 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 电脑侧有没有文件面（`repo.info.caps.files`）。老连接器 ⇒ false。
   bool get filesAvailable => _filesAvailable;
   bool _filesAvailable = false;
+
+  /// 电脑侧有没有 Agent Teams 服务（`repo.info.caps.team`）。老宿主 / 老连接器 ⇒ false。
+  ///
+  /// **只决定右抽屉里那枚「任务板」tab 出不出现**，不决定要不要发任何请求：
+  /// 任务板走的是已经在读的 `session.projections`（投影 `agentTeam`）。
+  bool get teamAvailable => _teamAvailable;
+  bool _teamAvailable = false;
+
+  /// 当前会话的共享任务板；`null` = 没读到 / 这台电脑没有这个投影。
+  ///
+  /// 与 [projections] 同一个生命周期：换会话那一刻**不再返回上一包**
+  /// （那会把上一个会话的任务画到新会话里）。
+  ///
+  /// **子会话也会非 `null`**（一块空板）—— 是否显示看的是 tab 可见性判据，
+  /// 不是这里，见 `model/team_board.dart` 文件头。
+  TeamBoard? get teamBoard => projections?.team;
 
   /// 是否**成功读到过** `repo.info`。
   ///

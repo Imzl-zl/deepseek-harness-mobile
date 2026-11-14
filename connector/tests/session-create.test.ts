@@ -41,6 +41,7 @@ const CAPS: Caps = {
   settings: false,
   credentials: true,
   direct: false,
+  team: false,
 }
 
 /** 记下每次 `create` 收到的请求体，以及别名分配。 */

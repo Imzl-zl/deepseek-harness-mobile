@@ -46,6 +46,7 @@ const CAPS: Caps = {
   settings: false,
   credentials: true,
   direct: false,
+  team: false,
 }
 
 /**

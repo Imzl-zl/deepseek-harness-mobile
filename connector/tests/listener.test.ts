@@ -46,6 +46,7 @@ const CAPS: Caps = {
   settings: false,
   credentials: true,
   direct: false,
+  team: false,
 }
 
 /** 本套用例不建立订阅；被调到就是装配写错了。 */

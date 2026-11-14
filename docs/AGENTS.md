@@ -37,6 +37,7 @@
 | `subsystems/app-platform-boundaries.md` | 手机端多端边界:核心零平台分支、平台实现只住 `lib/platform/`、可机械判定的边界规则与校验命令 |
 | `subsystems/blank-session-hero.md` | 新会话页(blank 会话的 hero):落到这一屏的条件、结构、三样数据与标签链、写路径、有意偏离、验证 |
 | `subsystems/subagent-page.md` | 子智能体页:目录树(直接子级 + 展开才懒加载)、三态、行规格、子会话头部条与切换、一次性/未知的只读状态框、已知差异 |
+| `subsystems/agent-team.md` | 共享任务板(Agent Teams,只读):`agentTeam` 投影形状、哪三样是宿主的判断、tab 何时出现的两条判据、子会话为何是空板、界面规格与只读边界 |
 | `subsystems/trajectory-page.md` | 轨迹页:每轮一行的数据面(turnOutline + 本轮用时)、迷你条编码、条目详情 sheet、为什么没有甘特/调用明细、有意偏离 |
 | `subsystems/input-focus.md` | 输入焦点:输入法只许用户点输入框引起、五个页面级转换点的收口、判据与已知副作用 |
 | `subsystems/session-ordering.md` | 会话与项目的顺序:谁拥有(会话=电脑侧、Web=浏览器本地)、拖动反馈规格(插入线/扫到即显示/松手提交最后格)、边界 |

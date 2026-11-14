@@ -21,14 +21,15 @@ import '../model/image_limits.dart' show DshImageLimits;
 import '../model/session_stats.dart'
     show ContextBreakdown, ContextPressure, SessionStats, TokenUsage;
 import '../model/subagent.dart' show SubagentTiming;
+import '../model/team_board.dart' show TeamBoard;
 import '../model/trajectory.dart' show TrajectoryView;
 import '../model/turn_outline.dart' show TurnOutlineEntry;
 import 'job.dart' show SubagentRow;
 
-/// 一次投影读的**解码结果**：15 个被 App 消费的键各一个字段。
+/// 一次投影读的**解码结果**：16 个被 App 消费的键各一个字段。
 ///
-/// 字段顺序照"屏幕上从哪来"排：统计条 → 上下文 → 权限/预设 → 子智能体 → 轨迹 →
-/// 附件上限 → 队列 → 目标条。
+/// 字段顺序照"屏幕上从哪来"排：统计条 → 上下文 → 权限/预设 → 子智能体 → 共享任务板 →
+/// 轨迹 → 附件上限 → 队列 → 目标条。
 final class SessionProjections {
   const SessionProjections({
     this.title,
@@ -42,6 +43,7 @@ final class SessionProjections {
     this.agentPreset,
     this.subagentCatalog = const [],
     this.subagentTiming,
+    this.team,
     this.trajectory,
     this.imageLimits,
     this.inbox,
@@ -82,6 +84,17 @@ final class SessionProjections {
 
   /// `subagentTiming` 投影（`{settledMs, active?}`；**每个会话都有**，根会话是 `settledMs: 0`）。
   final SubagentTiming? subagentTiming;
+
+  /// `agentTeam` 投影（Agent Teams 的共享任务板，wire 形状见 [TeamBoard] 的文件头）。
+  ///
+  /// **两件事别混**：
+  /// - `null` = 这台电脑没有 Team 服务（老宿主 / 没装 `dsh-agent-team`）**或**还没读到；
+  ///   两者在界面上同一条路（能力位 `caps.team` 决定 tab 出不出来，不看这里）；
+  /// - 非 `null` 但 `enabled == false` = 服务在、这个会话没开 Team。
+  ///
+  /// **子会话也是非 `null`**（空板，见 [TeamBoard] 文件头），所以"是不是子会话"
+  /// 不能从这一格推。
+  final TeamBoard? team;
 
   /// `trajectory` 投影（本仓自带的投影，DSH 没有）。
   final TrajectoryView? trajectory;

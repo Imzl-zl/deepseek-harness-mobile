@@ -49,6 +49,7 @@ import '../../model/permission.dart' show parsePermissionValue;
 import '../../model/session_stats.dart'
     show ContextBreakdown, ContextPressure, SessionStats, parseTokenUsage;
 import '../../model/subagent.dart' show parseSubagentTiming;
+import '../../model/team_board.dart' show TeamBoard, parseTeamBoard;
 import '../../model/trajectory.dart' show parseTrajectory;
 import '../../model/turn_outline.dart' show TurnOutlineEntry;
 import '../fields.dart';
@@ -113,6 +114,7 @@ SessionProjections _buildProjections(
     // 根会话也会带 `{settledMs: 0}` —— 所以"非 null"不代表"是子会话"
     // （判是不是子会话看 `SessionSummary.subagent`，不看这里）。
     subagentTiming: parseSubagentTiming(values['subagentTiming']),
+    team: _teamOf(values, fields),
     trajectory: parseTrajectory(values['trajectory']),
     imageLimits: DshImageLimits.fromWire(values['imageLimits']),
     inbox: values['inbox'] is Map ? values['inbox']! as Map : null,
@@ -134,6 +136,22 @@ GoalView? _goalOf(Map<String, Object?> values, WireFields fields) {
     fields.report('goal 在但不是 {goal, roundsStarted, createdAt, updatedAt}');
   }
   return goal;
+}
+
+/// `agentTeam` 投影（Agent Teams 共享任务板）：**键在但顶层形状坏了**要留声。
+///
+/// 与 `goal` 同一条理由，但阈值不同：单条任务坏掉只丢那一条（解析器自己丢，
+/// 见 `model/team_board.dart`），只有 `enabled` / `tasks` 这一层坏掉才计数 ——
+/// 那时"Team 关着"与"投影读不动"在界面上长得一样，正是最需要线索的时候。
+///
+/// 键缺席（老宿主没装 team 包）**不计数**：那是如实的能力缺失，由 `caps.team` 表达。
+TeamBoard? _teamOf(Map<String, Object?> values, WireFields fields) {
+  final raw = values['agentTeam'];
+  final board = parseTeamBoard(raw);
+  if (raw != null && board == null) {
+    fields.report('agentTeam 在但不是 {enabled, tasks[], failure?}');
+  }
+  return board;
 }
 
 String? _nonEmptyString(Object? raw) =>

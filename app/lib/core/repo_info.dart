@@ -19,6 +19,7 @@ final class RepoInfo {
     required this.changesAvailable,
     required this.pluginsAvailable,
     required this.jobsAvailable,
+    required this.teamAvailable,
     required this.dshVersion,
     required this.hostName,
     required this.methodCount,
@@ -52,6 +53,14 @@ final class RepoInfo {
   /// 反过来的默认也不同：caps 里**没有**这个键时按 `true` 处理（老连接器照样能拉），
   /// 因为这里"猜错"的代价是一次多余的成功调用，而不是整块能力消失。
   final bool jobsAvailable;
+
+  /// `caps.team`：右抽屉里那枚「任务板」tab 出不出现。
+  ///
+  /// 判据是**电脑侧有没有 `agentTeams` 服务**（`connector/src/dsh/caps.ts` 的
+  /// `readCaps`）—— 老宿主 / 没带 tool bundle 的部署 ⇒ false ⇒ 整枚 tab 不出现。
+  /// **它不管"Team 开没开"**：那是投影 `agentTeam.enabled` 的事。两件事混起来
+  /// 会出现"服务在、开关关着却被当成没能力"（故意不混，见 `model/team_board.dart` 文件头）。
+  final bool teamAvailable;
 
   /// 电脑侧 DSH 运行时版本（拿不到就是 `null`，不编一个）。
   final String? dshVersion;
