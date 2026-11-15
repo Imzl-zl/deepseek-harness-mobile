@@ -52,6 +52,8 @@ import 'model/session_dot.dart';
 import 'model/theme_mode.dart';
 import 'model/workspace.dart';
 import 'platform/app_state_reporter.dart';
+import 'platform/app_update_downloader.dart' show deviceAbiName;
+import 'platform/app_update_factory.dart' show createAppUpdateDownloader;
 import 'platform/http_sender.dart';
 import 'platform/lan_address.dart';
 import 'platform/notify_factory.dart';
@@ -1620,7 +1622,9 @@ Future<AppModel> _assembleWithoutCredentials(
     // 冷启动读回本地条目：没配对时没有可归属的电脑，读回空（判据同上）。
     readLocalItems: (sid) => store.itemsOf(sid),
     // 没配对也照样能查更新（版本与连接无关）。
-    latestAppTag: fetchLatestAppVersion,
+    latestAppRelease: fetchLatestAppRelease,
+    deviceAbi: deviceAbiName,
+    downloadAppUpdate: createAppUpdateDownloader(),
     // 这一台（没配对那个）在"没有凭据"时就是界面上那一台（提醒判据用）。
     visibleOf: visibleOf,
     // 通知端口与真装配**是同一个**：端口属于 App，不属于"哪台电脑"。
@@ -1863,8 +1867,11 @@ Future<AppModel> _assemble(
     succeededEndpointIds: credentials.endpointMeta.succeededEndpointIds,
     // 本机 LAN 地址（拨号排序判"同网段"用）。拿不到就退化，不猜。
     myLanIpv4Of: currentLanIpv4,
-    // 查更新：只问 GitHub Release（平台层实现，见 `platform/update_checker.dart`）。
-    latestAppTag: fetchLatestAppVersion,
+    // 查更新：只问 GitHub Release（平台层实现，见 `platform/update_checker.dart`），
+    // 下载交给系统下载器（`platform/app_update_factory.dart`：只有 Android 有）。
+    latestAppRelease: fetchLatestAppRelease,
+    deviceAbi: deviceAbiName,
+    downloadAppUpdate: createAppUpdateDownloader(),
     // **这条地址是哪台电脑报的**：用配对时钉死的电脑公钥（`pcSignPubHex`），
     // 不用 `pcId` —— 连接器 id 默认就是 `"local"`，两台电脑会撞。
     // 换一台电脑后旧电脑的地址会被剪掉（永远拨不通，留着只拖慢每轮拨号）。

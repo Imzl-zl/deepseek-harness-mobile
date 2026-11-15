@@ -13,6 +13,7 @@ library;
 
 import 'dart:async';
 
+import 'package:dsh_mobile/core/app_update.dart';
 import 'package:dsh_mobile/core/connection.dart';
 import 'package:dsh_mobile/core/endpoint.dart';
 import 'package:dsh_mobile/core/errors.dart';
@@ -108,6 +109,51 @@ const _relay = Endpoint(
   url: 'ws://192.168.2.43:8787',
   label: '中转',
 );
+
+/// 把「查更新 / 下载」两件事做成可数的替身。
+///
+/// 为什么重写而不是注入缝：`AppModel.checkAppUpdate` 的结论要拿构建期注入的
+/// `kAppVersion` 去比（测试里是 `dev`，按规矩不参与比对），而这一组要钉的恰恰是
+/// **有新版时那一行长什么样、点下去做什么** —— 所以把结论直接给定，只留两条动作
+/// 可以被数次数。
+class _UpdateApp extends AppModel {
+  _UpdateApp({required super.client, this.release});
+
+  /// 远端 Release；`null` = 查出来"没有可比的版本"。
+  final AppRelease? release;
+
+  int checks = 0;
+  int downloads = 0;
+
+  AppUpdate? _result;
+
+  @override
+  AppUpdate? get appUpdate => _result;
+
+  /// 这台"设备"能直接下载（真实判据是装配层有没有注入下载器）。
+  @override
+  bool get canDownloadUpdate => true;
+
+  @override
+  Future<void> checkAppUpdate() async {
+    checks += 1;
+    final version = release?.version;
+    _result = AppUpdate(
+      current: '0.2.17',
+      latest: version,
+      downloadUrl: version == null
+          ? null
+          : 'https://example.invalid/dsh-mobile-v$version-arm64-v8a.apk',
+    );
+    notifyListeners();
+  }
+
+  @override
+  Future<String?> downloadAppUpdate() async {
+    downloads += 1;
+    return null;
+  }
+}
 
 Widget _host(AppModel app) => MaterialApp(
   theme: DshTheme.dark(),
@@ -549,12 +595,35 @@ void main() {
     addTearDown(app.dispose);
   });
 
-  testWidgets('关于与连接：检查更新在版本号上面；版本号那行写明"点按复制"', (tester) async {
-    // 2026-11-04 用户原话：「设置有版本号为啥是复制不是检查更新」——
-    // 两行都在，但顺序与文案必须让人一眼分清：上面是动作，下面是复制。
-    final app = AppModel(
+  testWidgets('关于与连接：「App 版本」只有一行，点一下就是检查更新（不再有独立的「检查更新」行）', (tester) async {
+    // 2026-11-15 用户原话：「为啥一个版本号一个检测更新，检测更新还只是检测更新，
+    // 不是直接下载」。上一版拆成两行（动作 + 版本号点按复制），点完还只得到一句
+    // "去 Releases 页下载"。这一条钉住：**一行**，点它就是动作。
+    final app = _UpdateApp(client: _FakeClient());
+    addTearDown(app.dispose);
+    await tester.pumpWidget(_host(app));
+    await tester.pumpAndSettle();
+    await _scrollTo(tester, find.text('关于与连接'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('App 版本'), findsOneWidget);
+    expect(find.text('检查更新'), findsNothing, reason: '动作并进版本号那一行');
+    expect(find.text('App 版本（点按复制）'), findsNothing);
+
+    await tester.tap(find.text('App 版本'));
+    await tester.pumpAndSettle();
+    expect(app.checks, 1, reason: '点一下就是查一次');
+  });
+
+  testWidgets('查到新版：那一行给出箭头；再点一下**直接下载**（不再问一次网络）', (tester) async {
+    final app = _UpdateApp(
       client: _FakeClient(),
-      latestAppTag: () async => '0.2.7',
+      release: const AppRelease(
+        version: '0.2.18',
+        assets: [
+          AppAsset(name: 'dsh-mobile-v0.2.18-arm64-v8a.apk', url: 'u-arm64'),
+        ],
+      ),
     );
     addTearDown(app.dispose);
     await tester.pumpWidget(_host(app));
@@ -562,11 +631,23 @@ void main() {
     await _scrollTo(tester, find.text('关于与连接'));
     await tester.pumpAndSettle();
 
-    expect(find.text('检查更新'), findsOneWidget);
-    expect(find.text('App 版本（点按复制）'), findsOneWidget);
-    final check = tester.getTopLeft(find.text('检查更新')).dy;
-    final version = tester.getTopLeft(find.text('App 版本（点按复制）')).dy;
-    expect(check, lessThan(version), reason: '找更新时第一眼应是「检查更新」，不是版本号');
+    // 第一次点：查 → 有新版 → 弹一句确认（不自动下载）。
+    await tester.tap(find.text('App 版本'));
+    await tester.pumpAndSettle();
+    expect(app.checks, 1);
+    expect(find.text('有新版本 v0.2.18'), findsOneWidget);
+    expect(app.downloads, 0, reason: '几十 MB 的流量该由用户点');
+
+    // 确认 → 交给系统下载器。
+    await tester.tap(find.text('下载并安装'));
+    await tester.pumpAndSettle();
+    expect(app.downloads, 1);
+
+    // 现在那一行已经写着"有新版本"：再点一下**直接下载**，不再查一次。
+    await tester.tap(find.text('App 版本'));
+    await tester.pumpAndSettle();
+    expect(app.checks, 1, reason: '已知有新版就别再白查一次网络');
+    expect(app.downloads, 2);
   });
 
   testWidgets('关于与连接：设备短码与电脑面板同值（前 6 位，点按复制完整 id）', (tester) async {

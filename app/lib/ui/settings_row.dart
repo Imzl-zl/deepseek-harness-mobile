@@ -33,6 +33,7 @@ class SettingsRow extends StatelessWidget {
     required this.label,
     required this.value,
     this.onTap,
+    this.onLongPress,
   });
 
   final String icon;
@@ -41,6 +42,14 @@ class SettingsRow extends StatelessWidget {
 
   /// `null` = **纯展示**（没有去处）。见文件头：不画箭头、不接水波、不报按钮。
   final VoidCallback? onTap;
+
+  /// 长按 = **同一行的次要动作**（例如「App 版本」长按复制、点按检查更新）。
+  ///
+  /// 为什么用长按而不是再开一行：一行只承诺一件事（`onTap` 那个动作），
+  /// 复制这种"偶尔要一次"的附加入口再占一行，就会把动作淹掉 ——
+  /// 2026-11-15 用户原话：「为啥一个版本号一个检测更新」。
+  /// 长按**不画箭头、不进朗读器的按钮语义**：它不是这一行的去处。
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -87,7 +96,7 @@ class SettingsRow extends StatelessWidget {
     return tappable
         ? Semantics(
             button: true,
-            child: InkWell(onTap: onTap, child: row),
+            child: InkWell(onTap: onTap, onLongPress: onLongPress, child: row),
           )
         : Semantics(container: true, child: row);
   }

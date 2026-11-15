@@ -1,10 +1,12 @@
-/// 「检查更新」：版本比较、远端解析、以及 `AppModel` 的三种结论。
+/// 「检查更新 / 直接下载」：版本比较、远端解析、挑哪个 APK，以及 `AppModel` 的结论。
 ///
-/// 守四件事：
+/// 守五件事：
 /// 1. 比较按**数字段**（`0.2.10 > 0.2.9`），预发布不算新；
 /// 2. GitHub 的 `tag_name` 去掉 `v`；认不出返回 `null`（不猜）；
-/// 3. 查到新版 → `hasUpdate`；没新版 → 已是最新；
-/// 4. **查不到 ≠ 已是最新**：`error` 留在结论上，`label` 说"查不到最新版本"。
+/// 3. **发布物按 ABI 挑**（`--split-per-abi` 发了三个包，装错 ABI 装不上）：
+///    精确命中 `-<abi>.apk` → 用；否则退任意 `.apk`；一个都没有 → `null`；
+/// 4. **查不到 ≠ 已是最新**：`error` 留在结论上，`label` 说"查不到最新版本"；
+/// 5. **下载是"把地址交给系统下载器"**：没有 url / 没有下载器 / 缝抛错各有自己的说法。
 library;
 
 import 'package:dsh_mobile/core/app_update.dart';
@@ -97,7 +99,7 @@ void main() {
     test('把远端结论落到 appUpdate 上（测试里 current 是 dev，所以不报有新版）', () async {
       final app = AppModel(
         client: _Client(),
-        latestAppTag: () async => '99.0.0',
+        latestAppRelease: () async => const AppRelease(version: '99.0.0'),
       );
       addTearDown(app.dispose);
 
@@ -111,7 +113,7 @@ void main() {
     test('查失败：**不画成已是最新**，原话留在结论上', () async {
       final app = AppModel(
         client: _Client(),
-        latestAppTag: () async => throw Exception('HTTP 503'),
+        latestAppRelease: () async => throw Exception('HTTP 503'),
       );
       addTearDown(app.dispose);
 
@@ -128,6 +130,179 @@ void main() {
       addTearDown(app.dispose);
       await app.checkAppUpdate();
       expect(app.appUpdate, isNull);
+    });
+
+    test('结论里带上"这台设备该下哪个包"（dev 构建也算，下载与"是否新版"无关）', () async {
+      final app = AppModel(
+        client: _Client(),
+        deviceAbi: () => 'arm64-v8a',
+        latestAppRelease: () async => const AppRelease(
+          version: '99.0.0',
+          assets: [
+            AppAsset(
+              name: 'dsh-mobile-v99.0.0-armeabi-v7a.apk',
+              url: 'https://example.invalid/v7a.apk',
+            ),
+            AppAsset(
+              name: 'dsh-mobile-v99.0.0-arm64-v8a.apk',
+              url: 'https://example.invalid/arm64.apk',
+            ),
+          ],
+        ),
+      );
+      addTearDown(app.dispose);
+      await app.checkAppUpdate();
+      expect(app.appUpdate!.downloadUrl, 'https://example.invalid/arm64.apk');
+    });
+  });
+
+  group('发布物：只留 APK，按 ABI 挑（`release.yml` 的 `--split-per-abi`）', () {
+    const assets = [
+      AppAsset(name: 'dsh-mobile-v0.2.17-armeabi-v7a.apk', url: 'u-v7a'),
+      AppAsset(name: 'dsh-mobile-v0.2.17-arm64-v8a.apk', url: 'u-arm64'),
+      AppAsset(name: 'dsh-mobile-v0.2.17-x86_64.apk', url: 'u-x64'),
+    ];
+
+    test('精确命中设备 ABI', () {
+      expect(apkAssetFor(assets, 'arm64-v8a')!.url, 'u-arm64');
+      expect(apkAssetFor(assets, 'armeabi-v7a')!.url, 'u-v7a');
+      expect(apkAssetFor(assets, 'x86_64')!.url, 'u-x64');
+    });
+
+    test('没有对应 ABI 就退到任意 APK（老版本发的是通用包）', () {
+      const universal = [
+        AppAsset(name: 'dsh-mobile-v0.2.15.apk', url: 'u-all'),
+      ];
+      expect(apkAssetFor(universal, 'arm64-v8a')!.url, 'u-all');
+    });
+
+    test('ABI 为空（桌面调试 / 认不出）只走兜底，**不猜一个 ABI**', () {
+      // 空 ABI 若去"猜"，会命中第一个 aarch64 之前的包 —— 那就可能装错。
+      expect(apkAssetFor(assets, '')!.url, 'u-v7a');
+    });
+
+    test('一个 APK 都没有 ⇒ null（不给一个 404 链接）', () {
+      expect(apkAssetFor(const [], 'arm64-v8a'), isNull);
+      expect(
+        apkAssetFor(const [
+          AppAsset(name: 'source.tar.gz', url: 'u'),
+        ], 'arm64-v8a'),
+        isNull,
+      );
+    });
+
+    test('`latestReleaseOf` 解析版本 + 只收 .apk，坏条目跳过而不是整份失败', () {
+      final release = latestReleaseOf({
+        'tag_name': 'v0.2.17',
+        'assets': [
+          {
+            'name': 'dsh-mobile-v0.2.17-arm64-v8a.apk',
+            'browser_download_url': 'a',
+          },
+          {'name': 'source.tar.gz', 'browser_download_url': 'b'},
+          {'name': 'broken.apk'},
+          {'browser_download_url': 'c'},
+          'not a map',
+        ],
+      });
+      expect(release, isNotNull);
+      expect(release!.version, '0.2.17');
+      expect(release.assets.length, 1, reason: '只有那一条真 APK');
+      expect(release.assets.first.url, 'a');
+      // 版本认不出 ⇒ 整份 null（与 `latestVersionOfTag` 同一条）。
+      expect(latestReleaseOf({'assets': []}), isNull);
+    });
+  });
+
+  group('版本那一行的字（`rowValue`）', () {
+    test('四种状态各自一句话（值列只有 42% 宽，所以用箭头不用长句）', () {
+      const updating = AppUpdate(
+        current: '0.2.17',
+        latest: '0.2.18',
+        downloadUrl: 'u',
+      );
+      expect(updating.rowValue, '0.2.17 → 0.2.18');
+
+      const latest = AppUpdate(current: '0.2.18', latest: '0.2.18');
+      expect(latest.rowValue, '0.2.18 · 已是最新');
+
+      const failed = AppUpdate(current: '0.2.17', error: 'HTTP 503');
+      expect(failed.rowValue, '0.2.17 · 查不到');
+
+      const unknown = AppUpdate(current: 'dev');
+      expect(unknown.rowValue, 'dev', reason: '没查过就是版本号本身');
+    });
+  });
+
+  group('AppModel.downloadAppUpdate', () {
+    test('没有 url ⇒ 如实说（不假装下载）', () async {
+      final app = AppModel(client: _Client());
+      addTearDown(app.dispose);
+      expect(await app.downloadAppUpdate(), contains('先检查更新'));
+    });
+
+    test('这台设备没有下载器 ⇒ 一句人话（界面据此退成复制链接）', () async {
+      final app = AppModel(
+        client: _Client(),
+        deviceAbi: () => 'arm64-v8a',
+        latestAppRelease: () async => const AppRelease(
+          version: '99.0.0',
+          assets: [
+            AppAsset(name: 'dsh-mobile-v99.0.0-arm64-v8a.apk', url: 'u-arm64'),
+          ],
+        ),
+      );
+      addTearDown(app.dispose);
+      await app.checkAppUpdate();
+      expect(app.canDownloadUpdate, isFalse);
+      expect(await app.downloadAppUpdate(), contains('不能直接下载'));
+    });
+
+    test('有下载器 ⇒ 把 **url 与文件名** 原样交出去（文件名取 URL 末段）', () async {
+      Uri? got;
+      String? name;
+      final app = AppModel(
+        client: _Client(),
+        deviceAbi: () => 'arm64-v8a',
+        latestAppRelease: () async => const AppRelease(
+          version: '99.0.0',
+          assets: [
+            AppAsset(
+              name: 'dsh-mobile-v99.0.0-arm64-v8a.apk',
+              url: 'https://example.invalid/dsh-mobile-v99.0.0-arm64-v8a.apk',
+            ),
+          ],
+        ),
+        downloadAppUpdate: ({required url, required fileName}) async {
+          got = url;
+          name = fileName;
+        },
+      );
+      addTearDown(app.dispose);
+      await app.checkAppUpdate();
+      expect(app.canDownloadUpdate, isTrue);
+      expect(await app.downloadAppUpdate(), isNull, reason: 'null = 已交给系统');
+      expect(got.toString(), contains('arm64-v8a.apk'));
+      expect(name, 'dsh-mobile-v99.0.0-arm64-v8a.apk');
+    });
+
+    test('系统拒了 ⇒ 把它的原话带出来（不吞）', () async {
+      final app = AppModel(
+        client: _Client(),
+        deviceAbi: () => 'arm64-v8a',
+        latestAppRelease: () async => const AppRelease(
+          version: '99.0.0',
+          assets: [
+            AppAsset(name: 'dsh-mobile-v99.0.0-arm64-v8a.apk', url: 'u-arm64'),
+          ],
+        ),
+        downloadAppUpdate: ({required url, required fileName}) async {
+          throw Exception('download-failed: no space left');
+        },
+      );
+      addTearDown(app.dispose);
+      await app.checkAppUpdate();
+      expect(await app.downloadAppUpdate(), contains('no space left'));
     });
   });
 }

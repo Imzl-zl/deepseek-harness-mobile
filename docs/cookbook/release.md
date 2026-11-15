@@ -147,11 +147,17 @@ Publisher `GitHub Actions`、organization or user `Imzl-zl`、repository
 **要不要同时留一个通用包**：不要。那样 75 MB 那份还是会被一部分人下到，
 而它换来的只是“发布页少一次选择”。三个包各自都完整，没有兜底需求。
 
-**升级路径不变**：App 的「检查更新」只比 `tag`（`platform/update_checker.dart` 问
-`releases/latest`），不认资产名；点「下载」开的是 `releases/latest` 页面，
-用户在那里选自己那颗 —— 所以拆包**不改任何 App 代码**。
+**升级路径**：App 的「App 版本」那一行点一下会查 `releases/latest`，并且**自己按 ABI
+挑包**（`core/app_update.dart` 的 `apkAssetFor`：先找 `-<abi>.apk`，没有才退任意 `.apk`），
+下载交给系统 `DownloadManager`（落到 `Downloads/`，完成通知点开即安装）。
+所以拆包之后**用户不需要在发布页里自己选**；认不出 ABI 时才退到"复制下载链接"。
 
-取舍与代价见 `.agents/notes/implemented/2026-11-10-split-apk-per-abi.md`。
+改了发布物命名就要回头看那条判据：`release.yml` 拼的是
+`dsh-mobile-${GITHUB_REF_NAME}-${abi}.apk`，而 App 侧匹配的是后缀 `-<abi>.apk`。
+
+取舍与代价见 `.agents/notes/implemented/2026-11-10-split-apk-per-abi.md`
+（其中"App 不认资产名"那一段已被
+`.agents/notes/implemented/2026-11-15-version-row-checks-and-downloads.md` 取代）。
 
 ## 4. 本地先跑一遍门禁
 

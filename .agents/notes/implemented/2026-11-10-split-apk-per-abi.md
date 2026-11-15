@@ -2,6 +2,12 @@
 
 Status: implemented
 
+> **2026-11-15 追加**：本篇 Decision 第 3 条（"不改任何 App 代码 / 下载开的是
+> `releases/latest` 页面"）已被
+> [2026-11-15-version-row-checks-and-downloads.md](2026-11-15-version-row-checks-and-downloads.md)
+> 取代 —— App 现在自己按 ABI 挑包并交给系统下载器。**拆包这个决定本身不变**，
+> 上面第 3 条的结论不改（已发生的事实），只在读它时注意那一条已失效。
+
 ## Problem
 
 `release.yml` 一直只有一句 `flutter build apk --release`，出来的是一份**通用包**。

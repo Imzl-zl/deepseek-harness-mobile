@@ -4,6 +4,45 @@
 > 11-04 及更早的条目在 `memory/archive/2026-11.md`；稳定命令与坑点在 `tools.md`；
 > 现状事实在 `docs/`。
 
+## 现在（2026-11-15）
+
+- **两条"数字显示成没变化"的真机反馈，两个根因都是照抄漏了一条宿主规则**：
+  1. **工具卡的 `+N −M` 在写新文件时是 `+0 −0`**。真日志（本机会话按帧解压）里
+     `write` 建文件的 `meta.diffs` 是**空数组**（`fs/tool-fs/src/write.ts:103-110`：
+     `before === null` 没有旧文本可比），而桌面在
+     `ui-tool/.../diff-card-model.ts:113-116` 有回退：**空 diffs 的 `write` 退回调用参数
+     的 `content`（整份算新增）、空 diffs 的 `edit` 整块不画**；失败的结果也不画。
+     现在 `model/tool_view.dart` 有 `intendedDiffOf` / `intendedDiffStatOf`，
+     `data/projection.dart` 按那三档决定（运行中也按参数先显示，`:110`）。
+     顺手把 `diffStatOf`（无专用卡的工具如 `apply_patch`）与 `diffStatOfTexts` 收成同一口径
+     —— 从前 `{a,b}→{a,c}` 在一张卡上算 `+2 −2`、另一张算 `+1 −1`。
+  2. **用量页"加载半天 + 偶尔报错"**。本机实测 **517 个会话全在 60 天窗口内（670 MB 日志）**，
+     而连接器是 `DAY_SCAN_BATCH = 4`（每请求只新扫 4 个）⇒ **130 个来回**，每个来回还重做
+     一遍 `session.list()` + 整份聚合（手机只读 `byDay`/`daysProgress`）；且那批用
+     `Promise.all` —— **一个会话读失败整页报错**，补批 `Timer` 停在成功分支外。
+     修法：**按时间预算分批**（`DAY_SCAN_BUDGET_MS = 1500`、并发 4）+ **失败隔离**
+     （`allSettled` + 新字段 `daysFailed`，页面写"有 N 个会话读不出来"）+
+     **失败也算"试过"**（`scanned` 按 `attempted` 走，否则补批循环追不上 `total`）。
+     笔记 `implemented/2026-11-15-usage-scan-budget-and-diffstat.md`。
+- **「App 版本」那一行既是状态也是动作**（2026-11-15 用户第二轮反馈：「为啥一个版本号
+  一个检测更新，检测更新还只是检测更新，不是直接下载」）。上一版拆成两行（「检查更新」+
+  「App 版本（点按复制）」），查到新版只给一句"去 Releases 页下载"——而发布物是按 ABI
+  拆的三个包，装错报「应用未安装」，等于把最容易错的一步推给用户。
+  现在**一行**（`ui/app_update_row.dart`）：点 = 查；查到 ⇒ 弹「下载并安装」；已知有新版
+  再点 = **直接下载**；复制挪到长按。挑包是纯函数（`core/app_update.dart` 的
+  `apkAssetFor`：先 `-<abi>.apk`、再任意 `.apk`，ABI 来自 `dart:ffi` 的 `Abi.current()`），
+  下载交给系统 `DownloadManager`（**新通道 `dsh/app-update`** + `DshAppUpdate.kt`，
+  落 `Downloads/`，完成通知点开即安装）。非 Android 退成"复制下载链接"。
+  笔记 `implemented/2026-11-15-version-row-checks-and-downloads.md`；
+  **`release.yml` 的资产命名（`dsh-mobile-<tag>-<abi>.apk`）从此是契约**（写进了
+  `docs/cookbook/release.md`，2026-11-10 那篇"App 不认资产名"的结论已被追加标注）。
+- **本轮门禁**：app **1953** · connector **862** · boundary **956** · size 通过
+  （两处预算按规矩抬数并写明理由：`app_model.dart` 5204 → 5213、`usage_page.dart` 1600 → 1634）。
+  变异校验四条，各恰好红 1-2 条：拆 `write` 回退 ⇒ 2；去"失败不画" ⇒ 1；
+  循环只跑一批 ⇒ 1；失败重新抛出 ⇒ 1。时间预算分支用 `node:test` 的 mock `Date` 做成确定性。
+- **未做**：这两处都**没有真机量过**（`+N −0` 长什么样、活动那几趟实际几秒）；
+  用量页每趟仍重算总量（被否方案，会话数再涨一个量级时回来做"两个面分开"）。
+
 ## 现在（2026-11-14）
 
 - **v0.2.17 已发版（2026-11-14）**：`dsh-mobile-v0.2.17-arm64-v8a.apk` **27.3 MB**

@@ -40,6 +40,7 @@ class MainActivity : FlutterActivity() {
     private val gestureChannelName = "dsh/gesture-exclusion"
     private val photoChannelName = "dsh/photo-picker"
     private val notifyChannelName = "dsh/notifications"
+    private val appUpdateChannelName = "dsh/app-update"
 
     /**
      * 单张图片**原样通过**的字节阈值。
@@ -95,6 +96,19 @@ class MainActivity : FlutterActivity() {
         registerGestureExclusion(flutterEngine)
         registerPhotoPicker(flutterEngine)
         registerNotifications(flutterEngine)
+        registerAppUpdate(flutterEngine)
+    }
+
+    /**
+     * 新版本下载（`dsh/app-update`）。
+     *
+     * 只有 `download` 一个方法：**ABI 不走通道** —— Dart 侧用 `dart:ffi` 的
+     * `Abi.current()` 就能拿到（编译期即目标 ABI），少一个能漂的映射。
+     * 细节与"为什么是 DownloadManager"见 `DshAppUpdate.kt` 的文件头。
+     */
+    private fun registerAppUpdate(flutterEngine: FlutterEngine) {
+        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, appUpdateChannelName)
+        DshAppUpdate.attach(this, channel)
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
