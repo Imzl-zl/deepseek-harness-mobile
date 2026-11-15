@@ -6,6 +6,16 @@
 
 ## 现在（2026-11-15）
 
+- **v0.2.18 已发版（2026-11-15）**：`dsh-mobile-v0.2.18-arm64-v8a.apk` **27.3 MB**
+  （`armeabi-v7a` 23.8 / `x86_64` 29.7）+ `dsh-mobile-connector-0.1.26.tgz`（200.8 KB，
+  npm `latest` = **0.1.26**，OIDC + provenance）。三个 run 全绿
+  （`ci` 7m38s / `release` 5m58s / `publish-connector` 35s）；**Release notes 已手填**
+  （流水线按 PR 自动生成的仍只有一条 compare 链接）。
+  内容 = 三笔：**① 改动卡 `+N −M` 不再显示 `+0 −0`**、**② 用量页按时间预算扫 +
+  `daysFailed`**、**③ 「App 版本」一行 = 检查更新 + 按 ABI 直接下载**（详见下两条）。
+- **该发版前未做的一件事**：这三笔**都没在真机上验过**（`+N −0` 长什么样、
+  用量页几趟、下载 → 通知 → 安装三跳）。发版是用户知情后要的。
+
 - **两条"数字显示成没变化"的真机反馈，两个根因都是照抄漏了一条宿主规则**：
   1. **工具卡的 `+N −M` 在写新文件时是 `+0 −0`**。真日志（本机会话按帧解压）里
      `write` 建文件的 `meta.diffs` 是**空数组**（`fs/tool-fs/src/write.ts:103-110`：
@@ -37,7 +47,9 @@
   **`release.yml` 的资产命名（`dsh-mobile-<tag>-<abi>.apk`）从此是契约**（写进了
   `docs/cookbook/release.md`，2026-11-10 那篇"App 不认资产名"的结论已被追加标注）。
 - **本轮门禁**：app **1953** · connector **862** · boundary **956** · size 通过
-  （两处预算按规矩抬数并写明理由：`app_model.dart` 5204 → 5213、`usage_page.dart` 1600 → 1634）。
+  （预算三处按规矩改并写明理由：`app_model.dart` 5204 → 5269、
+  `usage_page.dart` 1600 → 1634、`settings_page.dart` 1353 → **收紧成 1350**
+  ——版本行那三段搬去 `ui/app_update_row.dart`）。
   变异校验四条，各恰好红 1-2 条：拆 `write` 回退 ⇒ 2；去"失败不画" ⇒ 1；
   循环只跑一批 ⇒ 1；失败重新抛出 ⇒ 1。时间预算分支用 `node:test` 的 mock `Date` 做成确定性。
 - **未做**：这两处都**没有真机量过**（`+N −0` 长什么样、活动那几趟实际几秒）；
