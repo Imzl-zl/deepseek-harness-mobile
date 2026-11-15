@@ -151,6 +151,7 @@ class UsageSummary {
     this.totals,
     this.byDay = const [],
     this.daysProgress,
+    this.daysFailed = 0,
   });
 
   /// 参与汇总的会话数（含全零的那些 —— "用了 0" 与 "没这项" 都不是"不存在"）。
@@ -167,9 +168,17 @@ class UsageSummary {
 
   /// 按天活动的扫描进度：`scanned / total` 个会话。
   ///
-  /// 电脑侧**分批**扫（一次 4 个），所以 `scanned < total` 时 `byDay` 是
-  /// 不完整的 —— 界面明说"统计中"，并继续要下一批。`null` = 老连接器没报。
+  /// 电脑侧**按时间预算分批**扫（`connector/src/handlers.ts` 的 `DAY_SCAN_BUDGET_MS`），
+  /// 所以 `scanned < total` 时 `byDay` 是不完整的 —— 界面明说"统计中"，
+  /// 并继续要下一批。`null` = 老连接器没报。
   final ({int scanned, int total})? daysProgress;
+
+  /// **读不出来的会话数**（那些会话的活动没有计入 `byDay`）。
+  ///
+  /// `0` = 全都读到了（老连接器也不报这个键，同样按 0）。电脑侧一个会话的
+  /// 投影读失败时**不会**把整页打成错误，而是把数量报在这里 ——
+  /// 半份账要自己说清楚，不能装成完整结果。
+  final int daysFailed;
 
   /// 活动是否已经统计完整（`null` = 不知道，按完整处理 —— 老连接器一次性给全）。
   bool get daysComplete {
@@ -284,6 +293,8 @@ class UsageSummary {
         progress = (scanned: scanned, total: total);
       }
     }
+    // 读不出来的会话数：缺席 / 认不出都按 0（老连接器没有这个键）。
+    final rawFailed = data['daysFailed'];
     return UsageSummary(
       sessions: sessions,
       grandTotalTokens: grandTotal,
@@ -292,6 +303,7 @@ class UsageSummary {
       totals: totals,
       byDay: days,
       daysProgress: progress,
+      daysFailed: rawFailed is int && rawFailed > 0 ? rawFailed : 0,
     );
   }
 

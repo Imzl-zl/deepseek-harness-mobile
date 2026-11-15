@@ -362,6 +362,51 @@ void main() {
     expect(old.totalTurns, isNull);
   });
 
+  test('daysFailed：电脑侧报了几个会话读不出来就照收，缺席/怪值按 0', () {
+    // 2026-11-15：电脑侧改成"单会话读失败不让整页报错"，代价是这半份账要说清。
+    final failed = UsageSummary.fromWire({
+      'sessions': 1,
+      'grandTotalTokens': 10,
+      'daysFailed': 3,
+    });
+    expect(failed!.daysFailed, 3);
+    // 老连接器 / 没有失败：键缺席 ⇒ 0（界面不画那一行）。
+    final old = UsageSummary.fromWire({'sessions': 1, 'grandTotalTokens': 10});
+    expect(old!.daysFailed, 0);
+    final weird = UsageSummary.fromWire({
+      'sessions': 1,
+      'grandTotalTokens': 10,
+      'daysFailed': -2,
+    });
+    expect(weird!.daysFailed, 0, reason: '负数认不出就按 0，不画"有 -2 个会话读不出来"');
+  });
+
+  testWidgets('有会话读不出来时，活动块明说"不含它们"（不是静默少算）', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: UsagePage(
+          summary: _summary,
+          days: [UsageDay(date: '2026-11-08', turns: 2, tokens: 5000)],
+          daysFailed: 4,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('有 4 个会话读不出来'), findsOneWidget);
+
+    // 对照组：没有失败就**不**画这一行。
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: UsagePage(
+          summary: _summary,
+          days: [UsageDay(date: '2026-11-08', turns: 2, tokens: 5000)],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('读不出来'), findsNothing);
+  });
+
   group('近期活动的读数（纯函数）', () {
     final today = DateTime(2026, 11, 8);
 

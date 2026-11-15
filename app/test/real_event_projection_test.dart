@@ -199,4 +199,220 @@ void main() {
       expect(item.systemLabel, isNull);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // 卡片右上角的 `+N −M`
+  //
+  // 2026-11-15 用户反馈的原话：「桌面执行编辑啥的修改了那个变化，app 上显示 0，
+  // 我以为出错了，我看桌面不是 0，确实改了」。
+  //
+  // 根因是一条**真形状**：`write` 创建文件时宿主的 `presentationMeta.diffs` 是
+  // **空数组**（`packages/fs/tool-fs/src/write.ts:103-110`：`value.before === null`
+  // 就是 create，那时没有旧文本可比）。而桌面对"空 diffs"有回退规则 ——
+  // `packages/client/ui-tool/src/client/tool/models/diff-card-model.ts:113-116`：
+  //
+  //     if (applied === null || applied === 'empty') {
+  //       return intended.tool === 'write' ? { card: { diffs: [intended.diff] } } : null
+  //     }
+  //
+  // 也就是：**空 diffs + write ⇒ 用调用参数里的 content 当整份新增；空 diffs + edit
+  // ⇒ 整块不画**。我们只照抄了"读 meta.diffs"，于是 create 算出 `+0 −0`。
+  // ---------------------------------------------------------------------------
+  group('改动行数：空 diffs 的回退（DSH diffCardModel）', () {
+    /// 一次 `write` 调用（真参数形状：`file_path` + `content`）。
+    Map<String, Object?> writeCall(String content) => {
+      'type': 'tool/call',
+      'seq': 700,
+      'time': 1792500800000,
+      'data': {
+        'turn': 4,
+        'step': 1,
+        'callId': 'call-write-1',
+        'name': 'write',
+        'arguments': jsonEncode({
+          'file_path': 'D:/tmp/a.txt',
+          'content': content,
+        }),
+      },
+    };
+
+    /// 同一个调用的结果。**`meta.diffs` 是空数组** —— 真日志里 create 就是这样
+    /// （本机 2026-11-15 的 `session.v4.jsonl.zstd` 实测，`write` 建两篇笔记都是 `[]`）。
+    Map<String, Object?> writeResult({
+      List<Object?> diffs = const [],
+      bool isError = false,
+      String name = 'write',
+      Map<String, Object?>? meta,
+    }) => {
+      'type': 'tool/result',
+      'seq': 701,
+      'time': 1792500801000,
+      'data': {
+        'turn': 4,
+        'step': 1,
+        'message': {
+          'role': 'tool',
+          'source': {'kind': 'tool', 'callId': 'call-write-1'},
+          'toolCallId': 'call-write-1',
+          'content': [
+            {'type': 'text', 'text': 'Created file'},
+          ],
+          'isError': isError,
+          'id': 'msg-write-1',
+        },
+        'meta':
+            meta ??
+            <String, Object?>{
+              'operation': 'create',
+              'path': 'D:/tmp/a.txt',
+              'diffs': diffs,
+            },
+      },
+    };
+
+    test('运行中的 write 先按参数显示整份新增（DSH：running 用 intended）', () {
+      final call = _project(writeCall('x\ny\n')) as ToolCallItem;
+      expect(call.status, ToolCallStatus.running);
+      expect(call.diffStat, (
+        added: 2,
+        removed: 0,
+      ), reason: '桌面在跑的时候就按参数画整份内容（diff-card-model.ts:110）');
+    });
+
+    test('write 创建文件（meta.diffs 为空）不显示 +0 −0，而是整份新增', () {
+      final call = _project(writeCall('x\ny\n')) as ToolCallItem;
+      final result = _project(writeResult(), previous: call) as ToolCallItem;
+      expect(
+        result.diffStat,
+        (added: 2, removed: 0),
+        reason: '空 diffs 的 write 要回退到调用参数（diff-card-model.ts:113-116）',
+      );
+    });
+
+    test('冷启动：调用那一半从合并载荷读回来，回退照样成立', () {
+      // 历史只落到结果时 hand 里没有 `previous`；参数在**合并载荷**上
+      // （`StoreItemPersister` 把 `name` / `arguments` 留在同一行，见
+      // `wire/events.dart` 的 `mergedToolCallOf`）。
+      final data = writeResult()['data'] as Map<String, Object?>;
+      final merged = <String, Object?>{
+        ...data,
+        'name': 'write',
+        'arguments': jsonEncode({
+          'file_path': 'D:/tmp/a.txt',
+          'content': 'x\ny\n',
+        }),
+      };
+      final result =
+          _project({
+                'type': 'tool/result',
+                'seq': 701,
+                'time': 1792500801000,
+                'data': merged,
+              })
+              as ToolCallItem;
+      expect(result.diffStat, (added: 2, removed: 0));
+    });
+
+    test('连合并载荷都没有（合并写之前的老行）：**不编数字**，留空', () {
+      // 那时算不出行数，而 `+0 −0` 是"看起来像 0"的谎话
+      // （与 `files_pane.dart` 的同一条纪律）。
+      final result = _project(writeResult()) as ToolCallItem;
+      expect(result.diffStat, isNull);
+    });
+
+    test('edit 的空 diffs 整块不画（不是 +0 −0）', () {
+      final call =
+          _project({
+                'type': 'tool/call',
+                'seq': 700,
+                'time': 1792500800000,
+                'data': {
+                  'turn': 4,
+                  'step': 1,
+                  'callId': 'call-write-1',
+                  'name': 'edit',
+                  'arguments': jsonEncode({
+                    'file_path': 'D:/tmp/a.txt',
+                    'old_string': 'a',
+                    'new_string': 'b',
+                  }),
+                },
+              })
+              as ToolCallItem;
+      final result =
+          _project(
+                writeResult(
+                  meta: <String, Object?>{
+                    'path': 'D:/tmp/a.txt',
+                    'diffs': <Object?>[],
+                  },
+                ),
+                previous: call,
+              )
+              as ToolCallItem;
+      expect(result.name, 'edit');
+      expect(result.diffStat, isNull, reason: 'DSH 对空 diffs 的 edit 返回 null');
+    });
+
+    test('失败的结果不算改动（DSH：isError ⇒ 不画 diff）', () {
+      final call = _project(writeCall('x\ny\n')) as ToolCallItem;
+      final result =
+          _project(
+                writeResult(
+                  isError: true,
+                  meta: <String, Object?>{
+                    'path': 'D:/tmp/a.txt',
+                    'diffs': [
+                      {
+                        'path': 'D:/tmp/a.txt',
+                        'oldText': 'a\nb',
+                        'newText': 'a\nc',
+                      },
+                    ],
+                  },
+                ),
+                previous: call,
+              )
+              as ToolCallItem;
+      expect(result.status, ToolCallStatus.failed);
+      expect(result.diffStat, isNull);
+    });
+
+    test('没有专用卡的工具（apply_patch）按线级折，不是按两段文本的行数', () {
+      final call =
+          _project({
+                'type': 'tool/call',
+                'seq': 700,
+                'time': 1792500800000,
+                'data': {
+                  'turn': 4,
+                  'step': 1,
+                  'callId': 'call-write-1',
+                  'name': 'apply_patch',
+                  'arguments': '{"input":"*** Begin Patch"}',
+                },
+              })
+              as ToolCallItem;
+      final result =
+          _project(
+                writeResult(
+                  meta: <String, Object?>{
+                    'diffs': [
+                      {
+                        'path': 'D:/tmp/a.txt',
+                        'oldText': 'a\nb',
+                        'newText': 'a\nc',
+                      },
+                    ],
+                  },
+                ),
+                previous: call,
+              )
+              as ToolCallItem;
+      expect(result.name, 'apply_patch');
+      // 旧实现把 oldText 的 2 行全算删除、newText 的 2 行全算新增（`+2 −2`）；
+      // 真实只有 1 增 1 删 —— 与 `diffStatOfTexts` 同一个口径。
+      expect(result.diffStat, (added: 1, removed: 1));
+    });
+  });
 }

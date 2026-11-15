@@ -1015,13 +1015,30 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
     /** 缓存的会话数上限：它只是"少读一遍"，不是账本，不该无限长。 */
     const DAY_CACHE_LIMIT = 512
     /**
-     * 每次请求最多**新扫**几个会话的 `trajectory`。
+     * 一次请求最多扫多久（毫秒）。
      *
-     * 为什么不一次读完窗口内全部会话：本机实测一个项目近 60 天就有 104 个会话 /
-     * 680 MB 解压日志（光解压 8 s），全库更多。一次读完就是"页面转很久"。
-     * 分批 + 缓存之后，首屏按批次出数，剩下的由手机继续要（`daysProgress` 报进度）。
+     * ## 为什么按**时间**而不是按条数
+     *
+     * 那个常量从前叫 `DAY_SCAN_BATCH = 4`：每次请求只新扫 4 个会话。在本机
+     * 实测的规模上这是灾难 —— 2026-11-15 量到 **517 个会话全在 60 天窗口内**
+     * （合计 670 MB 日志），于是"扫完"要 **130 个来回**；而每个来回都要重做
+     * 一遍 `session.list()` 与整份总量聚合。用户看到的就是"用量页加载半天"，
+     * 而只要其中一次投影读失败，整页就变成一句报错。
+     *
+     * 按时间分批把来回数压成"总工作量 ÷ 每请求预算"（本机约 4 次），并且
+     * **不用条数当判据**：同一个数在快机器上太保守、在慢机器上又太激进。
+     *
+     * Note: 517 个会话 / 670 MB 的实测与"为什么不裁应答、不落盘、不加超时" ——
+     * 见 `.agents/notes/implemented/2026-11-15-usage-scan-budget-and-diffstat.md`
      */
-    const DAY_SCAN_BATCH = 4
+    const DAY_SCAN_BUDGET_MS = 1500
+    /**
+     * 同时在读的会话数（**并发度**，不是"一批到此为止"）。
+     *
+     * 与从前的 `DAY_SCAN_BATCH` 同值：每个会话都要读一次它的投影，
+     * 再大就会在同一瞬间抢宿主的投影服务。
+     */
+    const DAY_SCAN_CONCURRENCY = 4
 
     handlers['usage.summary'] = async (params) => {
       const rows = await deps.sessions.list()
@@ -1070,6 +1087,8 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       }
       const byDay: { date: string; turns: number; tokens: number }[] = []
       let daysProgress: { scanned: number; total: number } | undefined
+      /** 读不出来的会话数（那几天的活动**不计入**）；吞不掉的读失败在这里露出来。 */
+      let daysFailed: number | undefined
       if (days !== undefined) {
         const sinceMs = Date.now() - days * 86_400_000
         const sinceDate = localDateKey(new Date(sinceMs))
@@ -1095,18 +1114,48 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
             stale.push(entry)
           }
         }
-        const batch = stale.slice(0, DAY_SCAN_BATCH)
-        await Promise.all(
-          batch.map(async ({ row }) => {
-            const values = (await deps.projections!.of(row.dshSessionId)) as {
-              trajectory?: unknown
+        // **按时间预算分批扫**（见 [DAY_SCAN_BUDGET_MS]）：一次请求尽量多扫几个，
+        // 扫不完的下一批接着（`daysProgress` 报进度）。
+        const deadline = Date.now() + DAY_SCAN_BUDGET_MS
+        /** 已经**试过**的条数（成功与失败都算）：进度按它走，否则追不上 `total`。 */
+        let attempted = 0
+        const unreadable = new Set<string>()
+        while (
+          attempted < stale.length &&
+          // 至少跑一批：预算再紧也不能 0 进度，否则手机那个补批循环会空转到天亮。
+          (attempted === 0 || Date.now() < deadline)
+        ) {
+          const batch = stale.slice(attempted, attempted + DAY_SCAN_CONCURRENCY)
+          // **一个会话读不出来不该把整页打成错误**：从前这里是 `Promise.all`，
+          // 只要有一个 `projections.of` 抛（投影侧 30 s 上限 / 会话正在释放），
+          // 整个 `usage.summary` 就失败，手机上是一句"拉取用量汇总失败" ——
+          // 而用户真正想知道的是"其余 500 个会话用了多少"。
+          // 现在失败只让**那个会话**的活动缺席，并如实报进 `daysFailed`。
+          const settled = await Promise.allSettled(
+            batch.map(async ({ row }) => {
+              const values = (await deps.projections!.of(row.dshSessionId)) as {
+                trajectory?: unknown
+              }
+              return { row, days: turnsByDayOf(values.trajectory) }
+            }),
+          )
+          settled.forEach((result, index) => {
+            const row = batch[index]!.row
+            if (result.status === 'rejected') {
+              // 读不出来 ≠ 那几天是 0 轮：它的活动**不进** `byDay`，
+              // 数量进 `daysFailed`，页面明说"有 N 个会话读不出来"。
+              unreadable.add(row.dshSessionId)
+              return
             }
-            const computed = turnsByDayOf(values.trajectory)
-            const watermark = watermarkOf(row)
-            dayCache.set(row.dshSessionId, { watermark, days: computed })
+            const computed = result.value.days
+            dayCache.set(row.dshSessionId, {
+              watermark: watermarkOf(row),
+              days: computed,
+            })
             cachedDays.set(row.dshSessionId, computed)
-          }),
-        )
+          })
+          attempted += batch.length
+        }
         if (dayCache.size > DAY_CACHE_LIMIT) {
           let excess = dayCache.size - DAY_CACHE_LIMIT
           for (const key of dayCache.keys()) {
@@ -1116,9 +1165,10 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
           }
         }
         daysProgress = {
-          scanned: inWindow.length - (stale.length - batch.length),
+          scanned: inWindow.length - (stale.length - attempted),
           total: inWindow.length,
         }
+        if (unreadable.size > 0) daysFailed = unreadable.size
         // 按天合并：**轮次与 token 都是真值**（token 来自每轮 `assistant/message.usage`
         // 的累加，见 `dsh/trajectory.ts`）。日期升序 —— 热力图画的是连续的一段日历。
         // 窗口外的日期不返回（`trajectory` 保留的 200 轮可能跨出窗口）。
@@ -1167,7 +1217,13 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
         // `daysProgress` 说这一批扫到哪了（`scanned == total` 才算完整）。
         ...(days === undefined
           ? {}
-          : { byDay, daysProgress: daysProgress ?? { scanned: 0, total: 0 } }),
+          : {
+              byDay,
+              daysProgress: daysProgress ?? { scanned: 0, total: 0 },
+              // **读不出来的会话数**（缺席 = 0）：那些会话的活动没有计入，
+              // 所以这半份账要自己说清楚（与 `daysProgress` 同一条纪律）。
+              ...(daysFailed === undefined ? {} : { daysFailed }),
+            }),
         byProject,
         // 逐字段构造，**不 spread** —— 且只给手机认识的 `sid`
         // （`dshSessionId` 绝不能过线，契约 §5.1）。

@@ -88,6 +88,7 @@ class _UsagePageHostState extends State<UsagePageHost> {
           daysWindow: window,
           daysLoading: widget.app.usageDaysLoading,
           daysProgress: widget.app.usageDaysProgress,
+          daysFailed: widget.app.usageDaysFailed,
           daysFailure: widget.app.usageDaysFailure,
           onSelectWindow: (value) =>
               unawaited(widget.app.refreshUsageDays(value)),
@@ -112,6 +113,7 @@ class UsagePage extends StatelessWidget {
     this.daysWindow = 30,
     this.daysLoading = false,
     this.daysProgress,
+    this.daysFailed = 0,
     this.daysFailure,
     this.onSelectWindow,
     this.onRetryDays,
@@ -140,6 +142,12 @@ class UsagePage extends StatelessWidget {
 
   /// 按天活动的扫描进度（`scanned / total` 个会话）；`null` = 老连接器没报。
   final ({int scanned, int total})? daysProgress;
+
+  /// 活动统计里**读取失败**的会话数（那些会话的活动没计入）。
+  ///
+  /// 电脑侧一个会话读不出来不再让整页报错，代价是这半份账要说清：
+  /// `0` = 全都读到了。
+  final int daysFailed;
 
   /// 切换活动窗口（7 / 30 / 90 天）—— 会重新拉一次。
   final void Function(int days)? onSelectWindow;
@@ -177,6 +185,7 @@ class UsagePage extends StatelessWidget {
                   window: daysWindow,
                   loading: daysLoading,
                   progress: daysProgress,
+                  failed: daysFailed,
                   failure: daysFailure,
                   onSelectWindow: onSelectWindow,
                   onRetry: onRetryDays,
@@ -569,6 +578,7 @@ class _ActivityCard extends StatelessWidget {
     required this.window,
     required this.loading,
     this.progress,
+    this.failed = 0,
     this.failure,
     this.onSelectWindow,
     this.onRetry,
@@ -580,6 +590,9 @@ class _ActivityCard extends StatelessWidget {
 
   /// 扫描进度；`scanned < total` 时数字还会长，界面要说出来。
   final ({int scanned, int total})? progress;
+
+  /// 活动统计里读不出来的会话数（那些会话的活动没计入）。
+  final int failed;
   final String? failure;
   final void Function(int days)? onSelectWindow;
   final VoidCallback? onRetry;
@@ -714,6 +727,30 @@ class _ActivityCard extends StatelessWidget {
                       Text(
                         '正在统计活动：${progress!.scanned}/${progress!.total} 个会话…',
                         style: TextStyle(fontSize: 10.5, color: c.labelCaption),
+                      ),
+                    ],
+                  ),
+                ],
+                // **半份账要说清**：有会话的投影读不出来时，它们的活动不在这些数字里
+                // （电脑侧不再因此让整页报错，代价就是这一行必须存在）。
+                if (failed > 0) ...[
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      DshIcon(
+                        'warningTriangle',
+                        size: 11,
+                        color: c.labelCaption,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '有 $failed 个会话读不出来，活动统计不含它们',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: c.labelCaption,
+                          ),
+                        ),
                       ),
                     ],
                   ),

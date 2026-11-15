@@ -129,9 +129,18 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     Set<String> succeededEndpointIds = const {},
     Future<String?> Function()? myLanIpv4Of,
 
-    /// 查最新 App 版本（装配层注入 `platform/update_checker.dart`；
+    /// 查最新 App 发布（装配层注入 `platform/update_checker.dart`；
     /// `null` = 这个装配不查更新，界面显示"还没查过"）。
-    Future<String?> Function()? latestAppTag,
+    Future<AppRelease?> Function()? latestAppRelease,
+
+    /// 这台设备的 ABI 名（`platform/app_update_downloader.dart`）；
+    /// `null` = 不知道 ⇒ 挑包退到"任意 `.apk`"（判据在 `core/app_update.dart`）。
+    String Function()? deviceAbi,
+
+    /// 把新版本交给系统下载器（Android 的 `DownloadManager`，经 `dsh/app-update`）。
+    /// `null` = 这台设备不能直接下载 ⇒ 界面退成"复制下载链接"。
+    Future<void> Function({required Uri url, required String fileName})?
+    downloadAppUpdate,
 
     /// 当前配对那台电脑的身份 = 它的 Ed25519 公钥（`pcSignPubHex`）。
     ///
@@ -181,7 +190,9 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
        _initialHiddenEndpointIds = Set<String>.of(hiddenEndpointIds),
        _initialSucceededEndpointIds = Set<String>.of(succeededEndpointIds),
        _myLanIpv4Of = myLanIpv4Of,
-       _latestAppTag = latestAppTag,
+       _latestAppRelease = latestAppRelease,
+       _deviceAbi = deviceAbi,
+       _downloadAppUpdate = downloadAppUpdate,
        _hostIdOf = hostIdOf,
        _visibleOf = visibleOf,
        _allowPlaintextPublic = allowPlaintextPublic,
@@ -190,12 +201,22 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 冷启动读回本地条目的缝（不传 = 不读本地库）。
   final Future<List<StoredItem>> Function(String sid)? _readLocalItems;
 
-  /// 查最新 App 版本的缝（不传 = 这一版不查更新）。
-  final Future<String?> Function()? _latestAppTag;
+  /// 查最新 App 发布（版本 + 发布物）的缝（不传 = 这一版不查更新）。
+  final Future<AppRelease?> Function()? _latestAppRelease;
+
+  /// 这台设备 ABI 的缝（不传 = 不知道 ⇒ 挑包退到"任意 `.apk`"）。
+  final String Function()? _deviceAbi;
+
+  /// 把新版本交给系统下载器的缝（不传 = 这台设备不能直接下载）。
+  final Future<void> Function({required Uri url, required String fileName})?
+  _downloadAppUpdate;
 
   /// 最近一次版本查询的结论（`null` = 还没查过）。
   AppUpdate? get appUpdate => _appUpdate;
   AppUpdate? _appUpdate;
+
+  /// 这台设备能不能**直接下载**新版本（否则界面退成"复制下载链接"）。
+  bool get canDownloadUpdate => _downloadAppUpdate != null;
 
   /// 正在查（界面显示"查询中…"）。
   bool get updateChecking => _updateChecking;
@@ -204,14 +225,22 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 查一次最新版本。**失败也留结论**（`AppUpdate.error`），不把失败画成"已是最新"。
   ///
   /// 幂等：正在查时再点直接返回（不并发打两次网络）。
+  ///
+  /// **查到的结论里带"该下哪个包"**（`AppUpdate.downloadUrl`）：发布物是按 ABI 拆包的
+  /// （`release.yml` 的 `--split-per-abi`），装错 ABI 的包装不上 —— 所以
+  /// "给个 Releases 链接让人自己找"不算做完这件事。
   Future<void> checkAppUpdate() async {
-    final fetch = _latestAppTag;
+    final fetch = _latestAppRelease;
     if (fetch == null || _updateChecking) return;
     _updateChecking = true;
     notifyListeners();
     try {
-      final latest = await fetch();
-      _appUpdate = AppUpdate(current: kAppVersion, latest: latest);
+      final release = await fetch();
+      _appUpdate = AppUpdate(
+        current: kAppVersion,
+        latest: release?.version,
+        downloadUrl: release?.assetFor(_deviceAbi?.call() ?? '')?.url,
+      );
     } on Object catch (error) {
       _appUpdate = AppUpdate(
         current: kAppVersion,
@@ -222,6 +251,33 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     } finally {
       _updateChecking = false;
       notifyListeners();
+    }
+  }
+
+  /// 把查到的那个 APK **交给系统下载器**（Android `DownloadManager`，下载完
+  /// 通知栏点开即安装）。
+  ///
+  /// 返回 `null` = 已入队；非 null = 失败原话（交给界面如实显示）。
+  /// **不自己实现下载**：断点续传、通知、安装时的签名校验都是系统那套的事，
+  /// 自己写一遍只会多一个会过期的下载器。
+  Future<String?> downloadAppUpdate() async {
+    final update = _appUpdate;
+    final url = update?.downloadUrl;
+    if (url == null) return '还没有可下载的版本（先检查更新）';
+    final download = _downloadAppUpdate;
+    if (download == null) return '这台设备不能直接下载';
+    try {
+      await download(
+        url: Uri.parse(url),
+        // 文件名取 URL 末段（发布物名就是 `dsh-mobile-<tag>-<abi>.apk`）：
+        // 下载到 `Downloads/` 里一眼能认出是哪一版、哪个 ABI。
+        fileName: url.split('/').last,
+      );
+      return null;
+    } on Object catch (error) {
+      return error is Exception
+          ? error.toString().replaceFirst('Exception: ', '')
+          : '$error';
     }
   }
 
@@ -2645,6 +2701,13 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   ({int scanned, int total})? get usageDaysProgress => _usageDaysProgress;
   ({int scanned, int total})? _usageDaysProgress;
 
+  /// **读不出来的会话数**（那些会话的活动没计入 `byDay`）。
+  ///
+  /// 电脑侧单会话失败**不再**让整页报错（见 `connector/src/handlers.ts` 的
+  /// `Promise.allSettled`），代价是这半份账要自己说：`0` = 全都读到了。
+  int get usageDaysFailed => _usageDaysFailed;
+  int _usageDaysFailed = 0;
+
   /// 补批的定时器（电脑侧一次只扫几个会话，扫完一批要接着要下一批）。
   Timer? _usageDaysPoll;
 
@@ -2690,9 +2753,9 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   /// 天数只是同一批会话 `trajectory` 里相邻的几格，**不增加会话数**。
   /// 峰值封在 366 天（连接器的上限）。
   ///
-  /// 电脑侧**分批**扫（一次 4 个会话，见 `connector/src/handlers.ts` 的
-  /// `DAY_SCAN_BATCH`）：`daysProgress.scanned < total` 时继续要下一批
-  /// （[quiet] 让补批不闪"正在读取"），直到扫完。
+  /// 电脑侧**按时间预算分批**扫（`connector/src/handlers.ts` 的 `DAY_SCAN_BUDGET_MS`）：
+  /// `daysProgress.scanned < total` 时继续要下一批（[quiet] 让补批不闪"正在读取"），
+  /// 直到扫完。**一个会话读不出来不会让整页失败** —— 数量在 [usageDaysFailed]。
   Future<void> refreshUsageDays(int windowDays, {bool quiet = false}) async {
     if (_disposed) return;
     final requestDays = (windowDays * 2).clamp(1, 366);
@@ -2708,6 +2771,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       final summary = await _reads.usageSummary(days: requestDays);
       _usageDays = summary?.byDay ?? const [];
       _usageDaysProgress = summary?.daysProgress;
+      _usageDaysFailed = summary?.daysFailed ?? 0;
       _usageDaysFailure = summary == null ? '电脑侧没有回可读的用量' : null;
       final progress = _usageDaysProgress;
       if (!_disposed &&
@@ -2721,6 +2785,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     } catch (error) {
       _usageDays = const [];
       _usageDaysProgress = null;
+      _usageDaysFailed = 0;
       _usageDaysFailure = error is ProtocolException ? error.message : '$error';
     } finally {
       _usageDaysLoading = false;

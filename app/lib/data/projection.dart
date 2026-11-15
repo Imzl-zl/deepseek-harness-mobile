@@ -21,6 +21,7 @@ import 'dart:convert';
 import '../core/event_fields.dart';
 import '../model/changed_path.dart';
 import '../model/chat_item.dart';
+import '../model/diff.dart' show diffStatOfTexts;
 import '../model/interaction.dart';
 import '../model/tool_view.dart';
 
@@ -336,6 +337,16 @@ ChatProjection projectEvent({
                 name: call.name ?? '',
                 argumentsJson: call.argumentsRaw,
               ),
+        // **运行中就先按参数显示 `+N −M`**：桌面同样不等结果
+        // （`diff-card-model.ts:110` 的 `if (!('kind' in block)) return { card: { diffs: [intended.diff] } }`）。
+        // 参数里是整个文件内容，而这里只抽出一条 record（两个 int），
+        // 不把 `arguments` 留在条目上 —— 理由同上面 `changedPath` 那一段。
+        diffStat: call == null
+            ? null
+            : intendedDiffStatOf(
+                name: call.name ?? '',
+                argumentsJson: call.argumentsRaw,
+              ),
       ),
     );
   }
@@ -362,6 +373,8 @@ ChatProjection projectEvent({
     // 结果自己带 name 时照它（部分适配器会写）；否则用调用的名字。
     final name =
         resultMessage.name ?? call?.name ?? storedName ?? kUnknownToolName;
+    // **失败**是三条判据共用的事实（状态、路径、行数），只解一次。
+    final failed = fields.isToolError(data);
     // **专用视图**（bash / read / edit|write）从解好的 meta 判（DSH 的
     // `presentationMeta`，形状见 `model/tool_view.dart` 的文件头）。
     // 其余工具 / 形状不认识 ⇒ `null`，走通用卡。
@@ -377,9 +390,7 @@ ChatProjection projectEvent({
         updatedAt: time,
         turn: turn,
         name: name,
-        status: fields.isToolError(data)
-            ? ToolCallStatus.failed
-            : ToolCallStatus.completed,
+        status: failed ? ToolCallStatus.failed : ToolCallStatus.completed,
         // **参数摘要只用调用的那一份**：结果里没有参数，而把结果消息
         // 摊平只会得到 `role, source, toolCallId, conten…` 这种键名清单。
         // 冷启动时调用那一半从**合并载荷**读回来（见上面 `storedArgs`）；
@@ -396,10 +407,26 @@ ChatProjection projectEvent({
         // （`ToolCard` 的 `.tool-body` 一直是支持的，只是投影从不填）。
         detail: toolOutputOf(resultMessage),
         view: view,
-        // 文件变更的 +N/−M：优先用专用视图算好的（`meta.diffs` 的行数），
-        // 否则退回按 hunks 折算（老结果只有 `message.metadata.diffs`）。
-        diffStat: view is DiffResultView
+        // 右上角那个 `+N −M`：判据照 DSH 的 `diffCardModel`
+        // （`ui-tool/src/client/tool/models/diff-card-model.ts:102-118`），顺序不能换：
+        //
+        // 1. **失败的结果不算改动**（`:112` 的 `if (block.isError) return null`）；
+        // 2. 有**应用后**的 hunks ⇒ 用它们折（那是真值）；
+        // 3. hunks 为空 ⇒ **只有 `write` 回退到调用参数**（`:113-116`）：创建 /
+        //    内容相同的覆盖时宿主给的就是空 `diffs`
+        //    （`packages/fs/tool-fs/src/write.ts:103-110` 的 `before === null`）。
+        //    从前这里第 3 条缺席，于是 `write` 创建文件算成 `+0 −0` ——
+        //    真机上看起来像"一个字节都没改"（2026-11-15 用户反馈）。
+        // Note: 为什么必须有这条回退、以及"手机不画整份正文"的取舍 ——
+        // 见 `.agents/notes/implemented/2026-11-15-usage-scan-budget-and-diffstat.md`
+        diffStat: failed
+            ? null
+            : view is DiffResultView && view.hunks.isNotEmpty
             ? (added: view.added, removed: view.removed)
+            : name == 'write'
+            ? call?.diffStat ??
+                  intendedDiffStatOf(name: 'write', argumentsJson: storedArgs)
+            // 没有专用卡的工具（`apply_patch` / 老形状）：按结果自带的 hunks 折。
             : diffStatOf(fields.diffHunks(data)),
         // **改动的路径必须从调用继承**：结果载荷里没有路径字段
         // （真日志只有 `role / source / toolCallId / content / isError / id`），
@@ -417,7 +444,7 @@ ChatProjection projectEvent({
         //
         // Note: 为什么必须继承、"失败不算产出"、词表为什么按轮且只给收口正文 ——
         // 见 `.agents/notes/implemented/2026-10-26-file-mentions-and-open-file.md`
-        changedPath: fields.isToolError(data)
+        changedPath: failed
             ? null
             : call?.changedPath ??
                   (storedName == null && storedArgs.isEmpty
@@ -857,11 +884,15 @@ String toolOutputOf(MessagePayload message, {int maxLength = 4000}) {
       : '${single.substring(0, maxLength)}…';
 }
 
-/// 从工具结果的 diff hunks 折算 +N/−M。
+/// 从工具结果自带的 diff hunks 折算 +N/−M（**没有专用卡的工具**，如 `apply_patch`）。
 ///
 /// DSH 的 `diff-card-model.ts:29-41` 认的 hunk 形状是 `{path, oldText, newText}`；
-/// 这里只取**行数统计**（手机这一版不画 diff 正文，画正文是 `ui-tool` 的
-/// DiffBlock，属于独立一块）。按行折算：旧文本行数 = 删除，新文本行数 = 新增。
+/// 这里只取**行数统计**（正文由各自的卡自己画）。
+///
+/// **按折出来的 diff 行数算**（`diffStatOfTexts`），不是把旧文本全算删除、新文本
+/// 全算新增：`{a,b} → {a,c}` 是 `+1 −1`，而早先这一版会报 `+2 −2` —— 同一个事实
+/// 在两处（`edit` 卡与 `apply_patch` 卡）算出两个数。2026-11-15 由用户反馈的
+/// "app 上显示 0" 那批用例抓到。
 ///
 /// **hunks 从哪来**（`data.meta.diffs` 还是 `message.metadata.diffs`）不在这里判 ——
 /// `EventFields.diffHunks` 已经把两处合成一份。
@@ -870,12 +901,9 @@ String toolOutputOf(MessagePayload message, {int maxLength = 4000}) {
   var added = 0;
   var removed = 0;
   for (final hunk in hunks) {
-    if (hunk.oldText.isNotEmpty) {
-      removed += hunk.oldText.split('\n').length;
-    }
-    if (hunk.newText.isNotEmpty) {
-      added += hunk.newText.split('\n').length;
-    }
+    final stat = diffStatOfTexts(hunk.oldText, hunk.newText);
+    added += stat.added;
+    removed += stat.removed;
   }
   if (added == 0 && removed == 0) return null;
   return (added: added, removed: removed);

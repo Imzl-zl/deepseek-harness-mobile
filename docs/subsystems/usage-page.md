@@ -10,7 +10,7 @@
 |---|---|---|
 | 总量卡 | 全部会话的 token 总量 + 会话数 + **构成条**（四个桶按比例）+ 缓存命中率 | `grandTotalTokens` / `sessions` / `totals` |
 | 四格卡片 | 未缓存输入 / 输出 / 缓存读 / 缓存写，**每格带自己的占比**（与构成条同色圆点） | `totals.*` |
-| 近期活动 | 今天 / 近 N 天的 token 与轮次、与前 N 天的对比、日均与平均每轮；窗口 7 / 30 / 90（**切窗口 = 重新请求**）；**分批统计时显示 `已扫/总数`** | `byDay` + `daysProgress`（`usage.summary {days}`） |
+| 近期活动 | 今天 / 近 N 天的 token 与轮次、与前 N 天的对比、日均与平均每轮；窗口 7 / 30 / 90（**切窗口 = 重新请求**）；**分批统计时显示 `已扫/总数`**；**有会话读不出来时明说"不含它们"** | `byDay` + `daysProgress` + `daysFailed`（`usage.summary {days}`） |
 | 热力图 | 一格一天，深浅 = 那天用掉多少 token；点一格读出当天（日期 · 轮次 · token）；左星期、上月份、下图例 | 同上 |
 | 项目段 | 项目名 · 用量 · 会话数 · **占全库的比例条**，头可点折叠（默认展开），展开后是该项目的会话行（每行带项目内占比） | `byProject` + `bySession` |
 | 兜底 | 没有 `byProject`（老连接器）⇒ 退回"按会话"扁平榜 | — |
@@ -21,14 +21,20 @@
 
 ## 2. 数据面与口径
 
-`usage.summary` 回的字段：`{sessions, grandTotalTokens, totals, byProject, bySession, byDay?}`。
+`usage.summary` 回的字段：`{sessions, grandTotalTokens, totals, byProject, bySession, byDay?, daysProgress?, daysFailed?}`。
 
 - **总量 / 分项 / 项目 / 会话**来自 `session.list` 行自带的 `tokenUsage` 投影提示（一次往返）。
 - **按天活动**要读每个会话的 `trajectory`（日志），所以是**第二次请求**：带 `days` 才返回，
   只读窗口内更新过的会话，按投影水位缓存。页面先出总量，活动后补。
-- **活动分批扫**：电脑侧每次只新扫 4 个会话，应答带 `daysProgress:{scanned,total}`；
-  `scanned < total` 时手机 350ms 后自己要下一批（`AppModel.refreshUsageDays` 的补批，
-  不闪"正在读取"），界面写"正在统计活动 N/M 个会话"。扫完才是完整的一天一格。
+- **活动按时间预算分批扫**：电脑侧一次请求最多扫 `DAY_SCAN_BUDGET_MS`（1.5 s），
+  并发 4 个会话；应答带 `daysProgress:{scanned,total}`，`scanned < total` 时手机 350 ms 后
+  自己要下一批（`AppModel.refreshUsageDays` 的补批，不闪"正在读取"），界面写
+  "正在统计活动 N/M 个会话"。扫完才是完整的一天一格。
+  **为什么不按条数分批**：本机 517 个会话全在 60 天窗口内（670 MB 日志），
+  「一次 4 个」⇒ 130 个来回，每个来回还要重做一遍整份聚合 —— 那就是"加载半天"。
+- **单个会话读不出来不让整页失败**：应答把数量报进 `daysFailed`（缺席 = 0），
+  界面写"有 N 个会话读不出来，活动统计不含它们"。那些会话的活动**不进** `byDay`，
+  而 `daysProgress.scanned` 照样前进（失败也算"试过"）—— 否则补批循环永远追不上 `total`。
 - 页面要的天数是 `2 × 窗口`：多一点给"前一段"的对比，不增加会话数。
 
 **聚合规则写在契约 §5.7 的 `usage.summary` 行**（子智能体不计入 / 全零不进榜 /
@@ -59,6 +65,10 @@
   （`connector/src/dsh/trajectory.ts:98` 的 `MAX_TURNS`）。更早的活动不在里面 —— 这是上界，不是漏算。
 - **分批期间的数字会继续长**：`scanned < total` 时"近 N 天"只是已扫会话的和，
   界面必须同时显示 `已扫/总数` —— 半份账不能装成完整结果。
+- **读不出来的会话是"缺席"不是"0 轮"**：它们的活动不进 `byDay`，数量走 `daysFailed`；
+  界面必须说出这一句，否则用户拿到的是"少算了"的完整感。
+- **按天缓存是每进程的**（`usage.summary` 的 `dayCache`）：宿主重启后第一次进页面
+  会重新扫一遍（本机约几次往返、数秒），之后进入是缓存命中。
 - **折叠态不持久**：离开页面即回到默认展开（不为一个"看着方便"的开关开存储）。
 - **轮次只在活动区块出现**：全库轮次没有可靠来源（`trajectory` 只保留每会话最近 200 轮），
   摆一个"看起来是总量"的轮次就是编。
@@ -72,8 +82,12 @@
 
 ## 6. 验证
 
-`cd app && flutter test test/usage_page_test.dart` —— 22 项：三级结构、项目头折叠、
+`cd app && flutter test test/usage_page_test.dart` —— 27 项：三级结构、项目头折叠、
 四格 / 构成条尺寸与可见性 / 缓存命中 / 占比、活动两行读数与对比文案、分批补拉与进度、
-热力图"有数据才出现"（含对照组）、`fromWire` 两种形状、`heatAlphaAt` 阈值与单调性、
-窗口 7/30/90 与"切窗口是一次回调"、点会话行的回调、拉不到时如实说原因、
+热力图"有数据才出现"（含对照组）、`fromWire` 三种形状（含 `daysFailed` 的缺席与负数）、
+`heatAlphaAt` 阈值与单调性、窗口 7/30/90 与"切窗口是一次回调"、点会话行的回调、
+拉不到时如实说原因、"有 N 个会话读不出来"那句（含对照组）、
 `UsagePageHost` 拉到后自己重画且**两次请求**。
+
+电脑侧三条判据在 `cd connector && pnpm exec tsx --test tests/usage-summary.test.ts`（23 项）：
+一趟尽量扫完（不再固定 4 个）、预算用完就停且进度单调、单会话读不出来只报 `daysFailed`。

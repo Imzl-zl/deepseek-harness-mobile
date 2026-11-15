@@ -35,6 +35,27 @@
 顺带修掉一个生产 bug：旧代码从 `message.metadata.diffs` 读 hunk，
 而真日志里它在 `data.meta.diffs` —— 于是 +N/−M 在真机上**从来没出现过**。
 
+### 2.1 空 `diffs` 的回退（创建文件时的那个 0）
+
+`write` **创建**文件时宿主的 `meta.diffs` 是**空数组**（`packages/fs/tool-fs/src/write.ts:103-110`：
+`value.before === null` 就没有旧文本可比）。照"只读 meta.diffs"算，那条卡会说 `+0 −0` ——
+真机上看起来像"一个字节都没改"（2026-11-15 用户反馈）。桌面的判据是
+`ui-tool/src/client/tool/models/diff-card-model.ts:102-118`，手机照它：
+
+1. **失败的结果不算改动**（`:112`）；
+2. 有应用后的 hunks ⇒ 用它们折（`view.added` / `view.removed`）；
+3. hunks 为空 ⇒ **只有 `write` 回退到调用参数里的 `content`**（`:113-116`，整份算新增）；
+   `edit` 与其余工具一律不画 —— 算不出来就不显示，不摆 `+0 −0`。
+   运行中的调用**同样按参数先显示**（`:110`），参数来自 `tool/call`，只在条目上留两个 int。
+
+`str_replace_editor` / `apply_patch` 这类没有专用卡的工具，行数由结果自带的 hunks
+按 `diffStatOfTexts` 折（与 `edit` 卡同一个口径；早先这一支按"两段文本行数相加"，
+于是同一个改动在两种卡上算出两个数）。
+
+**有意偏离**：`write` 创建文件时桌面会把整份内容当 diff 正文画出来，手机**不画**
+（只有数字）—— 那要求把整个文件内容留在条目上，与 `data/projection.dart` 里
+"不留 `arguments`"的取舍冲突（会话里写过的每个文件会再存一份）。
+
 ## 3. 有意偏离：其余工具不专门做
 
 `grep`/`glob`（SearchBlock）、`web_*`（WebBlock）、`todo_write`（todo diff）、
@@ -63,6 +84,12 @@
   `bash` 的五种收口（正常 / 非零 / stderr / 被杀 / 超时）；`edit|write` 的 `+N −M`
   是 diff 行数而非文本行数；diff 的前后缀剥离与行号；三张卡的渲染。
   **变异校验**：把 `diffStatOfTexts` 换回"按文本行数"⇒ 两条断言当场红（`+1` 找不到）。
+- 单测 `app/test/real_event_projection_test.dart` 的「改动行数：空 diffs 的回退」组（7 条）：
+  运行中的 `write` 先按参数显示、`write` 建文件（`diffs: []`）回退成整份新增、
+  冷启动从合并载荷回退、连合并载荷都没有时**不编数字**、`edit` 空 diffs 不画、
+  失败的结果不画、`apply_patch` 按线级折。
+  **变异校验**：拆掉 `write` 回退 ⇒ 恰好 2 条红（建文件 + 冷启动）；
+  去掉"失败不画" ⇒ 恰好 1 条红。
 - 真机（`d61cf622`，`shots-2026-10-22/`）：`b2-bash-card.png`（`done` + `exit 0`）、
   `b6-read-block.png`（路径 + 共 3 行 + 行号）、`b7-edit-block.png`
   （`+1 −1` + 红 `− beta` / 绿 `+ BETA` 的内联 diff）。

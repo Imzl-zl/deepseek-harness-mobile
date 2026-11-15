@@ -1,4 +1,4 @@
-/// 「最新版本是多少」的平台侧实现：问 GitHub Releases。
+/// 「最新版本是多少、该下哪个包」的平台侧实现：问 GitHub Releases。
 ///
 /// ## 为什么是 GitHub 而不是应用商店
 ///
@@ -9,8 +9,14 @@
 ///
 /// 与 `http_sender.dart` 同一个理由：`core/` 是纯 Dart，
 /// `node app/tools/verify-platform-boundary.mjs` 会拦 `dart:io` 与 `package:http`。
-/// 所以"缝"（`Future<String?> Function()`）在 `core/app_update.dart` 的调用方，
+/// 所以"缝"（`Future<AppRelease?> Function()`）在 `core/app_update.dart` 的调用方，
 /// 实现留在这里，选哪个实现在装配层（`main.dart`）。
+///
+/// ## 答案里必须带**发布物清单**
+///
+/// 只回一个版本号是不够的：`release.yml` 用 `--split-per-abi` 出三个包，
+/// 装错 ABI 的包装不上。挑包判据是纯函数（`core/app_update.dart` 的
+/// `apkAssetFor`），这一层只负责把 GitHub 的原文原样交上去。
 ///
 /// ## 超时与 UA
 ///
@@ -27,11 +33,11 @@ import '../core/app_update.dart';
 /// 仓库坐标（与 `README`、CI 一致；改仓库名要改这一处）。
 const String kReleaseRepo = 'Imzl-zl/deepseek-harness-mobile';
 
-/// 查一次最新 Release 的版本号（去掉 `v`）。
+/// 查一次最新 Release（版本 + 发布物）。
 ///
 /// 失败**抛异常**（由调用方记成 `AppUpdate.error`）：
 /// "查不到"和"已是最新"必须能分开。
-Future<String?> fetchLatestAppVersion({http.Client? client}) async {
+Future<AppRelease?> fetchLatestAppRelease({http.Client? client}) async {
   final owned = client == null;
   final active = client ?? http.Client();
   try {
@@ -50,9 +56,9 @@ Future<String?> fetchLatestAppVersion({http.Client? client}) async {
       throw Exception('GitHub 回了 HTTP ${response.statusCode}');
     }
     final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-    final version = latestVersionOfTag(decoded);
-    if (version == null) throw Exception('Release 应答里没有 tag_name');
-    return version;
+    final release = latestReleaseOf(decoded);
+    if (release == null) throw Exception('Release 应答里没有 tag_name');
+    return release;
   } finally {
     if (owned) active.close();
   }

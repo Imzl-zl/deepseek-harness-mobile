@@ -27,6 +27,8 @@
 /// [ToolResultMeta]（解好的值），自己不按线上字段名取。
 library;
 
+import 'dart:convert';
+
 import 'diff.dart';
 
 /// 工具结果的专用视图（`null` = 走通用卡）。
@@ -292,3 +294,92 @@ _parseExitStatus(String raw) {
     marker: marker,
   );
 }
+
+// ---------------------------------------------------------------------------
+// 调用参数 → "这次调用本来要做的改动"
+// ---------------------------------------------------------------------------
+
+/// 从 `tool/call` 的参数推出这次调用**本来要改什么**。
+///
+/// ## 出处
+///
+/// DSH 的 `ui-tool/src/client/tool/models/diff-card-model.ts:45-81` 的 `intendedDiff`：
+/// 参数里有 `file_path` + `content`（`write`）或 `old_string` + `new_string`（`edit`）
+/// 时，桌面的 diff 卡**不需要等结果**就能画出来，也**不需要**结果里的 hunks
+/// （`:110` 的 running 分支就是拿它画的）。
+///
+/// ## 它为什么是必需的回退（不是锦上添花）
+///
+/// `write` **创建**文件时宿主的 `presentationMeta.diffs` 是**空数组**
+/// （`packages/fs/tool-fs/src/write.ts:103-110`：`value.before === null` 就没有旧文本可比）。
+/// 于是"等结果里的 hunks"在这条路上给出的行数是 `+0 −0`，而桌面的同一处
+/// （`diff-card-model.ts:113-116`）规定：**空 diffs 的 `write` 退回参数里的整份内容**。
+/// 2026-11-15 用户反馈的「桌面改了、app 上显示 0」就是照着这条缝漏出去的。
+///
+/// ## 只认 `write` / `edit`
+///
+/// `str_replace_editor` 在手机这一版没有专用卡（[hasDedicatedView]），它的行数仍由
+/// 结果自带的 hunks 折出来（`data/projection.dart` 的 `diffStatOf`）——
+/// 这里多认一个名字就会多一条没人读的分支。
+///
+/// [argumentsJson] 是线上原样的 JSON 字符串（`tool/call` 的 `arguments`）。
+/// 解不出来 / 形状不对 ⇒ `null`（不猜）。
+DiffHunk? intendedDiffOf({
+  required String name,
+  required String argumentsJson,
+}) {
+  // **先按名字挡一道**：解整份参数 JSON 是有代价的（`write` 的 content、`bash` 的
+  // 命令串都可能很长），而绝大多数工具根本没有"单一目标改动"这回事。
+  if (name != 'write' && name != 'edit') return null;
+  final args = _argumentsOf(argumentsJson);
+  if (args == null) return null;
+  switch (name) {
+    case 'write':
+      final path = _nonBlank(args['file_path']);
+      final content = args['content'];
+      // DSH：`typeof content === 'string'` 才算（内容不是字符串就不是一次写文件）。
+      if (path == null || content is! String) return null;
+      // `oldText` 用**空串**表示"没有旧文本"：`DiffHunk.oldText` 是非空类型，
+      // 而折 diff 时空串与 DSH 的 `null` 等价（`diffStatOfTexts('', x)` = 全新增）。
+      return DiffHunk(path: path, oldText: '', newText: content);
+    case 'edit':
+      final path = _nonBlank(args['file_path']);
+      final oldText = args['old_string'];
+      final newText = args['new_string'];
+      final replaceAll = args['replace_all'];
+      if (path == null || oldText is! String || newText is! String) return null;
+      if (replaceAll != null && replaceAll is! bool) return null;
+      return DiffHunk(path: path, oldText: oldText, newText: newText);
+    default:
+      return null;
+  }
+}
+
+/// 同 [intendedDiffOf]，但只要行数（`null` = 这个调用没有单一目标改动）。
+///
+/// 折法用 `diffStatOfTexts`（**按折出来的 diff 行数**，不是把两段文本的行数相加）：
+/// `{a,b} → {a,c}` 是 `+1 −1`，不是 `+2 −2`。
+({int added, int removed})? intendedDiffStatOf({
+  required String name,
+  required String argumentsJson,
+}) {
+  final diff = intendedDiffOf(name: name, argumentsJson: argumentsJson);
+  return diff == null ? null : diffStatOfTexts(diff.oldText, diff.newText);
+}
+
+/// `arguments` 解成对象；空串 / 非法 JSON / 不是对象都是 `null`。
+Map<Object?, Object?>? _argumentsOf(String argumentsJson) {
+  if (argumentsJson.isEmpty) return null;
+  final Object? parsed;
+  try {
+    parsed = jsonDecode(argumentsJson);
+  } on FormatException {
+    // 模型给的参数不是合法 JSON —— 与 `changed_path.dart` 同一条（不猜）。
+    return null;
+  }
+  return parsed is Map ? parsed : null;
+}
+
+/// 非空白字符串，原样返回（DSH 的 `path.trim() === ''` 判据）。
+String? _nonBlank(Object? value) =>
+    value is String && value.trim().isNotEmpty ? value : null;

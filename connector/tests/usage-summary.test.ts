@@ -15,7 +15,7 @@
 /// 测试替身必须复现真值形状：`projections.of` 返回的是**已拆信封的 values 映射**
 /// （`dsh/projections.ts` 的 `valuesOf`），不是 DSH 的 `{kind, asOfSeq, values}`。
 import assert from 'node:assert'
-import { describe, it } from 'node:test'
+import { describe, it, mock } from 'node:test'
 
 import { createHandlers } from '../src/handlers.js'
 import type { HandlerDeps } from '../src/handlers.js'
@@ -526,9 +526,11 @@ void describe('usage.summary 聚合规则', () => {
     assert.deepEqual(reads, ['a'], '第二次应命中缓存')
   })
 
-  void it('按天活动分批扫：一次 4 个会话，报 scanned/total，后面的批次接着扫', async () => {
-    // 2026-11-08：真库一个项目近 60 天就有 104 个会话 / 680 MB 解压日志。
-    // 一次读完就是"页面转很久"，所以按批扫、报进度，手机接着要下一批。
+  void it('按天活动一趟尽量扫完：不再固定 4 个会话一批', async () => {
+    // 2026-11-15 量的规模：**517 个会话全在 60 天窗口内**（670 MB 日志）。
+    // 从前「一次 4 个」⇒ 130 个来回，每个来回还重做一遍整份聚合 ——
+    // 用户看到的是"用量页加载半天"。现在按**时间预算**分批（`DAY_SCAN_BUDGET_MS`），
+    // 一趟之内扫得完就扫完，扫不完的才让手机要下一批。
     const reads: string[] = []
     const now = Date.now()
     const rows = Array.from({ length: 10 }, (_, i) =>
@@ -557,22 +559,101 @@ void describe('usage.summary 聚合规则', () => {
       (await handlers['usage.summary']!({ days: 30 }, {} as never)) as Reply
 
     const first = await call()
-    assert.deepEqual(first.daysProgress, { scanned: 4, total: 10 })
-    assert.equal(reads.length, 4, '一批只读 4 个')
-    assert.equal(first.byDay[0]!.turns, 4, '已扫的部分先给出来')
-
-    const second = await call()
-    assert.deepEqual(second.daysProgress, { scanned: 8, total: 10 })
-    assert.equal(reads.length, 8)
-
-    const third = await call()
-    assert.deepEqual(third.daysProgress, { scanned: 10, total: 10 })
-    assert.equal(reads.length, 10)
-    assert.equal(third.byDay[0]!.turns, 10, '扫完就是完整的一天')
+    assert.deepEqual(first.daysProgress, { scanned: 10, total: 10 })
+    assert.equal(reads.length, 10, '预算够就一趟扫完')
+    assert.equal(first.byDay[0]!.turns, 10, '扫完就是完整的一天')
+    assert.equal(
+      'daysFailed' in (first as object),
+      false,
+      '没有读不出来的会话时这个键缺席（页面按 0 处理）',
+    )
 
     // 扫完之后再要：一个都不读（全部命中缓存）。
     await call()
     assert.equal(reads.length, 10)
+  })
+
+  void it('预算用完就停下并报进度，下次请求接着扫（进度单调、最终一定扫完）', async () => {
+    // 时间预算的分支要**确定性**地测：用 mock 的 Date 让"每个会话花 400 ms"，
+    // 于是 4 个一批 = 1.6 s > 1.5 s 预算 ⇒ 一趟只能扫一批。真等 1.5 s 会让
+    // 这组用例既慢又脆。
+    const now = Date.now()
+    mock.timers.enable({ apis: ['Date'], now })
+    try {
+      const reads: string[] = []
+      const rows = Array.from({ length: 10 }, (_, i) =>
+        row(`s${i}`, {
+          updatedAt: now - i * 1000,
+          projections: {
+            kind: 'cached',
+            asOfSeq: 1,
+            values: { tokenUsage: { uncachedInputTokens: 1 } },
+          },
+        }),
+      )
+      const handlers = createHandlers(
+        deps({
+          rows,
+          usageOf: () => tokenUsage({ uncachedInputTokens: 1 }),
+          trajectoryOf: () => {
+            mock.timers.tick(400)
+            return trajectory([now], 10)
+          },
+          reads,
+        }),
+      )
+      type Reply = { daysProgress: { scanned: number; total: number } }
+      const call = async () =>
+        (await handlers['usage.summary']!({ days: 30 }, {} as never)) as Reply
+
+      assert.deepEqual((await call()).daysProgress, { scanned: 4, total: 10 })
+      assert.equal(reads.length, 4, '预算用完就停手')
+      assert.deepEqual((await call()).daysProgress, { scanned: 8, total: 10 })
+      assert.deepEqual((await call()).daysProgress, { scanned: 10, total: 10 })
+      assert.equal(reads.length, 10)
+    } finally {
+      mock.timers.reset()
+    }
+  })
+
+  void it('一个会话读不出来不影响整页：报 daysFailed，其余照常出数、进度照样走完', async () => {
+    // 从前这里是 `Promise.all`：一个 `projections.of` 抛（投影侧 30 s 上限 /
+    // 会话正在释放），整个 `usage.summary` 就失败 —— 手机上是一句
+    // "拉取用量汇总失败"，而用户想知道的是其余 500 个会话用了多少。
+    //
+    // 失败还必须**算进"试过"**（`attempted`）：否则进度永远追不上 total，
+    // 手机那个 350 ms 的补批循环会重试到天亮。
+    const now = Date.now()
+    const rows = ['a', 'b', 'c'].map((id) =>
+      row(id, {
+        updatedAt: now,
+        projections: {
+          kind: 'cached',
+          asOfSeq: 1,
+          values: { tokenUsage: { uncachedInputTokens: 1 } },
+        },
+      }),
+    )
+    const handlers = createHandlers(
+      deps({
+        rows,
+        usageOf: () => tokenUsage({ uncachedInputTokens: 1 }),
+        trajectoryOf: (id) => {
+          if (id === 'b') throw new Error('投影读不出来（模拟 30 s 上限）')
+          return trajectory([now], 10)
+        },
+      }),
+    )
+    const result = (await handlers['usage.summary']!({ days: 30 }, {} as never)) as {
+      grandTotalTokens: number
+      daysProgress: { scanned: number; total: number }
+      daysFailed?: number
+      byDay: { turns: number }[]
+    }
+    assert.equal(result.grandTotalTokens, 3, '总量照常（失败的是活动那一段）')
+    assert.deepEqual(result.daysProgress, { scanned: 3, total: 3 })
+    assert.equal(result.daysFailed, 1, '读不出来的会话数要报出来，不静默')
+    assert.equal(result.byDay[0]!.turns, 2, '失败那个会话的活动**不计入**（不是 0 轮）')
   })
 
   void it('days 越界 ⇒ protocol/bad-frame（不静默截断）', async () => {

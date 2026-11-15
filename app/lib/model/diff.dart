@@ -35,9 +35,17 @@ List<DiffLine> diffLinesOf(String oldText, String newText) {
 /// 旧实现把 `oldText` 的每一行都算删除、`newText` 的每一行都算新增
 /// （`{a,b}` → `{a,c}` 会报 `+2 −2`），而真实只有 1 增 1 删。
 ({int added, int removed}) diffStatOfTexts(String oldText, String newText) {
+  final oldLines = _split(oldText);
+  final newLines = _split(newText);
+  // **一侧为空时不必真的折**：行数就是另一侧的行数。`write` 创建文件走的正是这条
+  // （`model/tool_view.dart` 的 `intendedDiffOf` 给的是空旧文本），而内容可能几千行 ——
+  // 折一遍等于给每个写过的文件造几千个 `DiffLine`，只为数一个数。
+  if (oldLines.isEmpty || newLines.isEmpty) {
+    return (added: newLines.length, removed: oldLines.length);
+  }
   var added = 0;
   var removed = 0;
-  for (final line in diffLinesOf(oldText, newText)) {
+  for (final line in diffLineListsOf(oldLines, newLines)) {
     switch (line.kind) {
       case DiffKind.add:
         added += 1;
