@@ -120,6 +120,153 @@ class PairingAttempt {
   Future<void> cancel() => _channel.close();
 }
 
+/// 一条路径的探测结果：**已开着的**受限通道，或"拨不通"的人话原因。
+///
+/// 两件事一起给，因为界要把它们并列摆出来（`✗ 中转：换票 409 …` 与
+/// `✓ 局域网直连 ws://…` 是同一屏上的两行，不是成功/失败两种页面）。
+class PairingRouteProbe {
+  const PairingRouteProbe({
+    required this.dial,
+    required this.label,
+    this.attempt,
+    this.failure,
+  });
+
+  final PairingDial dial;
+
+  /// 给人看的路径名（`局域网直连` / `中转`）。
+  final String label;
+
+  final PairingAttempt? attempt;
+
+  /// 拨不通的人话；通了就是 `null`。
+  final String? failure;
+
+  bool get ok => attempt != null;
+
+  /// 通了才是可拨地址；中转那条给的是**根地址**（票不上界面）。
+  String get dialUrl => attempt?.dialUrl ?? '';
+}
+
+/// 一次"这张码里的路都探一遍"的结果。
+///
+/// **不抛异常**：两条都不通也是一种结果 —— 界面要把两条原因一起摆出来。
+/// 只报最后一条会让人以为另一条没试过，而"两条都试过"正是这次要消除的猜测。
+class PairingProbe {
+  const PairingProbe(this.routes);
+
+  final List<PairingRouteProbe> routes;
+
+  PairingAttempt? attemptOf(PairingDial dial) {
+    for (final route in routes) {
+      if (route.dial == dial) return route.attempt;
+    }
+    return null;
+  }
+
+  /// 关掉除 [keep] 之外的通道：用户选了一条，另一条不该还挂在电脑上。
+  ///
+  /// [keep] 为 `null` = 全收（取消、退出页面、探测结果作废时）。
+  Future<void> cancelExcept(PairingDial? keep) async {
+    for (final route in routes) {
+      final attempt = route.attempt;
+      if (attempt == null || route.dial == keep) continue;
+      await attempt.cancel();
+    }
+  }
+
+  Future<void> cancelAll() => cancelExcept(null);
+}
+
+/// 同时探这张码里的每一条路：**真的拨上去、完成受限握手**，不是 ping。
+///
+/// 与 [beginPairing] 的差别只有"要不要停"：这里两条都开、都留着，由界面选；
+/// `beginPairing` 按策略只走一条、失败才换。两者共用同一套拨号与握手
+/// （探测直接调 `beginPairing(directOnly)` / `beginPairing(relayOnly)`），
+/// 所以"探通"与"配对能走"是同一件事，不存在第二套判据。
+///
+/// 代价（明确接受）：中转那张票在探测时就被换掉了，用户最后选了局域网时
+/// 那张票作废（票是一次性的，但**没有秘密**，也不占电脑侧状态）。
+Future<PairingProbe> probePairing({
+  required PairingOffer offer,
+  required IdentityKeys identity,
+  required String deviceName,
+  required HttpSender send,
+  required PairingTransportFactory transportFor,
+  void Function(String stage)? onStage,
+  String Function()? newFrameIdHex,
+  String Function()? newEphemeralSeedHex,
+  String Function()? newNonceHex,
+  Duration handshakeTimeout = pairingHandshakeTimeout,
+  bool allowInsecureLocal = false,
+  bool allowInsecurePublic = false,
+  String? myIpv4,
+
+  /// 这台手机**愿意走哪条**（`device.route_policy`）。
+  ///
+  /// 它决定**探测范围**，不只是预选：`directOnly` 的用户可能在"不要碰中转"，
+  /// 那时连换票都不该发生。被策略排除的那条由界面说"按设置未尝试"，
+  /// 不显示成"不通"（它没有被拨过）。
+  RoutePolicy prefer = RoutePolicy.auto,
+}) async {
+  Future<PairingAttempt> dial(RoutePolicy policy) => beginPairing(
+    offer: offer,
+    identity: identity,
+    deviceName: deviceName,
+    send: send,
+    transportFor: transportFor,
+    onStage: onStage,
+    newFrameIdHex: newFrameIdHex,
+    newEphemeralSeedHex: newEphemeralSeedHex,
+    newNonceHex: newNonceHex,
+    handshakeTimeout: handshakeTimeout,
+    allowInsecureLocal: allowInsecureLocal,
+    allowInsecurePublic: allowInsecurePublic,
+    myIpv4: myIpv4,
+    prefer: policy,
+  );
+
+  PairingRouteProbe failed(PairingDial dial, String label, Object error) =>
+      PairingRouteProbe(
+        dial: dial,
+        label: label,
+        failure: _probeFailureText(error),
+      );
+
+  final pending = <Future<PairingRouteProbe>>[
+    // 被策略排除的那条**不拨**：`directOnly` 的用户不该因为一次配对就连上中转
+    // （换票是一次真实的 HTTP + 一张一次性票）。界面按策略画"未尝试"。
+    if (prefer != RoutePolicy.relayOnly && offer.lanUrls.isNotEmpty)
+      dial(RoutePolicy.directOnly).then(
+        (attempt) => PairingRouteProbe(
+          dial: PairingDial.lan,
+          label: '局域网直连',
+          attempt: attempt,
+        ),
+        onError: (Object error) => failed(PairingDial.lan, '局域网直连', error),
+      ),
+    // `lanOnly` 的码里没有中转那条路：**不显示成"拨不通"**，那是另一件事
+    // （界面按 `offer.lanOnly` 画"此码不含中转"）。
+    if (prefer != RoutePolicy.directOnly && !offer.lanOnly)
+      dial(RoutePolicy.relayOnly).then(
+        (attempt) => PairingRouteProbe(
+          dial: PairingDial.relay,
+          label: '中转',
+          attempt: attempt,
+        ),
+        onError: (Object error) => failed(PairingDial.relay, '中转', error),
+      ),
+  ];
+  return PairingProbe(await Future.wait(pending));
+}
+
+/// 探测失败的人话。**保留协议错误码**：界面与后续动作按它分类。
+String _probeFailureText(Object error) {
+  if (error is ProtocolException) return '${error.message}（${error.code.wire}）';
+  if (error is TransportException) return error.message;
+  return '拨不通：$error';
+}
+
 /// 配对通道实际走的那条路（确认卡据此说清"怎么连上的"）。
 enum PairingDial {
   /// 局域网直连（二维码里的 `lan`，不经过中转）。
@@ -238,7 +385,15 @@ Future<PairingAttempt> beginPairing({
 
     onStage?.call('连接电脑…');
     final channel = channelFor(deviceUpgradeUrl(offer.relayUrl, ticket.ticket));
-    await channel.open();
+    try {
+      await channel.open();
+    } catch (_) {
+      // 握手没成：这条半开的 socket 要收掉。局域网那边一直有这一步
+      // （`tryLan` 的 catch），中转这边曾漏掉 —— 而"中转连不上"是最常见的失败，
+      // 每次配对留一条半开连接，重试几次就攒起来了。
+      await channel.close();
+      rethrow;
+    }
 
     onStage?.call('等待你确认');
     return attemptFor(channel, PairingDial.relay, offer.relayUrl);

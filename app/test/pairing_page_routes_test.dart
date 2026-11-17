@@ -89,14 +89,14 @@ void main() {
     );
     // 局域网那条也拨不通时，原因必须说"同一 WiFi"，而不是"重新出码"。
     expect(find.textContaining('只能在同一 WiFi 下使用'), findsWidgets);
+    // 这张码里没有中转：行要说"不含"，**不能**说成"中转连不上"（那是另一件事）。
+    expect(find.textContaining('此码不含中转'), findsOneWidget);
   });
 
-  testWidgets('两条路都在：说明两条路，并显示"正在试"哪一条', (tester) async {
+  testWidgets('两条路都在：摆出两条路，并在下方分别检测', (tester) async {
     final gate = Completer<HttpResult>();
     await tester.pumpWidget(
       _page(
-        // 只用中转：先换票（HTTP 卡在 gate 上，界面停在"正在试：换票…"）。
-        prefer: RoutePolicy.relayOnly,
         send: (HttpCall call) => gate.future,
         transportFor: (_) => _DeadTransport(),
       ),
@@ -116,14 +116,63 @@ void main() {
       find.textContaining('这张码有两条路：局域网直连（1 个地址） · 中转（已登记）。'),
       findsOneWidget,
     );
-    expect(find.textContaining('出门 / 用流量会自动走中转'), findsOneWidget);
-    expect(find.byKey(const Key('pairing-stage')), findsOneWidget);
-    expect(find.textContaining('正在试：换票…'), findsOneWidget);
+    expect(find.textContaining('两条都通时，在下面选这次走哪条'), findsOneWidget);
+    // **两条都在探**：局域网那条已经死了，但界面要等两条都有结论再一起摆出来
+    // （只报先出结果的那条，等于又回到"猜另一条"）。
+    expect(find.byKey(const Key('pairing-route-lan')), findsOneWidget);
+    expect(find.byKey(const Key('pairing-route-relay')), findsOneWidget);
+    expect(find.text('检测中…'), findsNWidgets(2));
 
     gate.complete(
       const HttpResult(status: 409, body: '{"error":"pairing-unavailable"}'),
     );
     await tester.pumpAndSettle();
+    expect(find.textContaining('两条路都没通'), findsOneWidget);
     expect(find.textContaining('重新出码'), findsOneWidget);
+  });
+
+  testWidgets('只用直连：中转那行说"按设置未尝试"，且不换票', (tester) async {
+    await tester.pumpWidget(
+      _page(
+        prefer: RoutePolicy.directOnly,
+        // 一旦换票就红：这条策略的用户不该因为一次配对去碰中转。
+        send: (HttpCall call) async =>
+            throw StateError('只用直连时不该换票：${call.url}'),
+        transportFor: (_) => _DeadTransport(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byType(TextField),
+      _payload(lan: ['ws://192.168.1.5:8790']),
+    );
+    await tester.tap(find.text('连接电脑'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('按「只用直连」没有尝试'), findsOneWidget);
+    expect(find.textContaining('这条路没通'), findsOneWidget);
+  });
+
+  testWidgets('只用中转 + 只含局域网的码：说清是设置冲突，不是网络不通', (tester) async {
+    await tester.pumpWidget(
+      _page(
+        prefer: RoutePolicy.relayOnly,
+        send: (HttpCall call) async =>
+            throw StateError('这张码不含中转，不该换票：${call.url}'),
+        transportFor: (_) => _DeadTransport(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byType(TextField),
+      _payload(lan: ['ws://192.168.1.5:8790'], lanOnly: true),
+    );
+    await tester.tap(find.text('连接电脑'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('只含局域网直连，而你的设置是「只用中转」'), findsOneWidget);
+    expect(find.textContaining('按「只用中转」没有尝试'), findsOneWidget);
   });
 }

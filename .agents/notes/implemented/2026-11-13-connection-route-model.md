@@ -2,6 +2,9 @@
 
 Status: implemented
 
+<!-- 部分被取代（2026-11-17）：「两个用途二选一」已删，出码只写此刻活着的路。
+     见 implemented/2026-11-17-offer-carries-what-is-alive.md。三层模型（能力 / 策略 / 当前）不变。 -->
+
 ## Problem
 
 「走哪条路」在五处各判一次，没有任何一处能回答"这次为什么走中转"：

@@ -51,8 +51,9 @@ void main() {
     await tester.pump();
     await tester.pumpAndSettle();
 
-    // 判据是**用户看得见**：文案带"配对没走通"，而不是只剩一个空页面。
-    expect(find.textContaining('配对没走通'), findsOneWidget);
+    // 判据是**用户看得见**：这一条路失败也要有原因，而不是只剩一个空页面。
+    // （两条路都在时这里会是「两条路都没通」，逐条给出原因。）
+    expect(find.textContaining('这条路没通'), findsOneWidget);
     expect(
       find.textContaining('Software caused connection abort'),
       findsOneWidget,

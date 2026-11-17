@@ -373,6 +373,26 @@ test('出码端点：POST，回 svg、过期时刻与两条路由的标记（不
   assert.doesNotMatch(JSON.stringify(body), /payload/)
 })
 
+test('出码端点：旧面板发来的 {purpose} 被忽略 —— 不报错，也不改变结果', async () => {
+  let calls = 0
+  const routes = createAdminRoutes(deps({
+    offer: async () => {
+      calls += 1
+      return { svg: '<svg/>', expiresAt: 1, lanOnly: false, lanAvailable: true }
+    },
+  }))
+  const res = await routeOf(routes, '/api/dsh-mobile/pair').fetch(
+    new Request('http://x/api/dsh-mobile/pair', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ purpose: 'lan' }),
+    }),
+  )
+  // 缓存里的旧面板会带这一格：忽略它（那条路已经不存在），而不是回 400 让人以为连接器坏了。
+  assert.equal(res.status, 200)
+  assert.equal(calls, 1)
+})
+
 test('停用/启用：一对布尔端点 —— enabled:false 停用、enabled:true 解禁，同一个 devId', async () => {
   const seen: Array<[string, boolean]> = []
   const routes = createAdminRoutes(deps({
@@ -661,7 +681,7 @@ test('issuePairingOffer：只有中转可走时，登记失败就抛，不出码
       pairing,
       register: async () => { throw new Error('relay down') },
     }),
-    /登记到中转/,
+    /配对登记失败/,
     '没有局域网退路时登记不成必须抛 —— 吞掉它等于发出一张注定配不上的二维码',
   )
 })

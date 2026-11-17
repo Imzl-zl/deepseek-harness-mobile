@@ -51,6 +51,7 @@ import '../model/route_policy.dart';
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
+import 'pairing_routes_panel.dart';
 import 'qr_scan_page.dart';
 
 /// 配对完成的结果（交给装配点去落盘与建连）。
@@ -201,6 +202,15 @@ class _PairingPageState extends State<PairingPage> {
   /// 这次是不是降级码（`lanOnly`）—— 不让用户自己从失败文案里猜。
   PairingOffer? _offer;
 
+  /// 这张码里的路，**同时探一遍**的结果（通了的那条已经开在电脑上）。
+  ///
+  /// 探的不是"端口开没开"，是完整的受限握手 —— 所以这里 `ok` 就等于
+  /// "现在真的能用它配对"。
+  PairingProbe? _probe;
+
+  /// 用户在两条路里选的那条；`null` = 一条都没通。
+  PairingDial? _selectedDial;
+
   /// 本次配对生成的主种子（确认那一步之后才落盘，见 `_commit`）。
   String? _masterSeedHex;
 
@@ -217,10 +227,16 @@ class _PairingPageState extends State<PairingPage> {
 
   @override
   void dispose() {
-    // 页面上还挂着一条候选连接时必须关掉它：配对是短交互，而"用户退了页面、
+    // 页面上还挂着候选连接时必须关掉它们：配对是短交互，而"用户退了页面、
     // 电脑侧那条候选连接还开着"正是要避免的状态（`pairing-v2.md` §6）。
-    final attempt = _attempt;
-    if (attempt != null) unawaited(attempt.cancel());
+    // 两条都通时**两条都在电脑上开着**，所以收的是整组，不是一条。
+    final probe = _probe;
+    if (probe != null) {
+      unawaited(probe.cancelAll());
+    } else {
+      final attempt = _attempt;
+      if (attempt != null) unawaited(attempt.cancel());
+    }
     _input.dispose();
     super.dispose();
   }
@@ -240,7 +256,12 @@ class _PairingPageState extends State<PairingPage> {
     await _connect();
   }
 
-  /// 第一段：解析二维码 → 换票 → 带票升级 → 受限握手。**不发秘密。**
+  /// 第一段：解析二维码 → **同时探两条路**（真的拨上去、完成受限握手）。
+  /// **不发秘密。**
+  ///
+  /// 探完不自动选一条了事：两条都通时把选择交回用户（`PairingRoutePicker`），
+  /// 只有"按策略该先走哪条"作为预选。两种失败（这条不通 / 这张码不含这条）
+  /// 在界面上是两种说法，不混成一句。
   Future<void> _connect() async {
     final text = _input.text.trim();
     if (text.isEmpty) return;
@@ -249,8 +270,12 @@ class _PairingPageState extends State<PairingPage> {
       _error = null;
       _result = null;
       _offer = null;
+      _probe = null;
+      _selectedDial = null;
+      _attempt = null;
       _busyLabel = '解析二维码…';
     });
+    PairingProbe? probe;
     try {
       final offer = PairingOffer.fromQrPayload(
         text,
@@ -271,34 +296,42 @@ class _PairingPageState extends State<PairingPage> {
         offer.pcSignPubHex,
       )).substring(0, 16);
 
-      final attempt = await beginPairing(
+      if (mounted) setState(() => _busyLabel = '正在检测两条路径…');
+      probe = await probePairing(
         offer: offer,
         identity: identity,
         deviceName: widget.deviceName,
         send: widget.send,
         transportFor: widget.transportFor,
-        onStage: _setBusy,
         allowInsecureLocal: widget.allowInsecureLocal,
         allowInsecurePublic: widget.allowInsecurePublic,
         myIpv4: widget.myIpv4,
         prefer: widget.prefer,
       );
       if (!mounted) {
-        // 页面已经退了：把刚建起来的候选连接收掉，别留在中转上。
-        await attempt.cancel();
+        // 页面已经退了：把刚建起来的候选连接收掉，别留在电脑上。
+        await probe.cancelAll();
         return;
       }
+      final done = probe;
+      final chosen = _preselect(done, widget.prefer);
       setState(() {
+        _probe = done;
         _masterSeedHex = masterSeedHex;
         _previousPairingId = previousPairingId;
         _pcFingerprint = fingerprint;
-        _attempt = attempt;
+        _selectedDial = chosen;
+        _attempt = chosen == null ? null : done.attemptOf(chosen);
       });
+      if (chosen == null) _showError(_noRouteError(done));
     } on ProtocolException catch (error) {
+      await probe?.cancelAll();
       _showError('${error.message}（${error.code.wire}）');
     } on TransportException catch (error) {
+      await probe?.cancelAll();
       _showError('${error.message}（连不上中转）');
     } catch (error) {
+      await probe?.cancelAll();
       // **兜底必须说出来**：换票用的是 `http.Client`，它抛的是 `SocketException` /
       // `TimeoutException` 这类**既不是** ProtocolException **也不是** TransportException
       // 的东西（Android 的明文拦截就是这种：`SocketException … errno = 103`）。
@@ -307,6 +340,59 @@ class _PairingPageState extends State<PairingPage> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// 预选：**只在策略允许的那条里挑**，不跨策略回落。
+  ///
+  /// `directOnly` / `relayOnly` 是用户明确说过的意图；在配对页偷偷改用另一条，
+  /// 正是 2026-11-13 要消除的那种"选了直连连了中转"。被排除的那条根本不探，
+  /// 所以这里也不存在"它有 attempt 但不选"的中间态。
+  PairingDial? _preselect(PairingProbe probe, RoutePolicy policy) {
+    final hasLan = probe.attemptOf(PairingDial.lan) != null;
+    final hasRelay = probe.attemptOf(PairingDial.relay) != null;
+    switch (policy) {
+      case RoutePolicy.directOnly:
+        return hasLan ? PairingDial.lan : null;
+      case RoutePolicy.relayOnly:
+        return hasRelay ? PairingDial.relay : null;
+      case RoutePolicy.auto:
+        if (hasLan) return PairingDial.lan;
+        if (hasRelay) return PairingDial.relay;
+        return null;
+    }
+  }
+
+  /// 没有可选路径时的那一句。**先分辨"被策略排除"**：
+  /// 那不是"没通"，改设置就能走，动作完全不同。
+  String _noRouteError(PairingProbe probe) {
+    final offer = _offer;
+    if (offer != null &&
+        widget.prefer == RoutePolicy.relayOnly &&
+        offer.lanOnly) {
+      return '这张码只含局域网直连，而你的设置是「只用中转」；'
+          '去「连接方式」改成自动后可走它。';
+    }
+    if (offer != null &&
+        widget.prefer == RoutePolicy.directOnly &&
+        offer.lanUrls.isEmpty) {
+      return '这张码只含中转，而你的设置是「只用直连」；'
+          '去「连接方式」改成自动后可走它。';
+    }
+    if (probe.routes.isEmpty) {
+      return '这张码里没有任何可拨的路径：请让电脑重新出码，或检查连接方式设置。';
+    }
+    return probe.routes.length > 1 ? '两条路都没通，原因见下。' : '这条路没通，原因见下。';
+  }
+
+  /// 用户改选另一条（只有通了的那行可点）。
+  void _select(PairingDial dial) {
+    final attempt = _probe?.attemptOf(dial);
+    if (attempt == null || dial == _selectedDial) return;
+    setState(() {
+      _selectedDial = dial;
+      _attempt = attempt;
+      _error = null;
+    });
   }
 
   /// 第二段：提交配对码 → 取回执。
@@ -319,6 +405,9 @@ class _PairingPageState extends State<PairingPage> {
       _error = null;
       _busyLabel = '提交配对码…';
     });
+    // 用户选定了这一条：另一条已开的通道现在就该收掉 ——
+    // 电脑上同时挂着两条候选，既没意义，也让"这台设备到底走了哪条"说不清。
+    await _probe?.cancelExcept(_selectedDial);
     try {
       final ack = await attempt.commit(previousPairingId: _previousPairingId);
       final identity = attempt.identity;
@@ -339,34 +428,43 @@ class _PairingPageState extends State<PairingPage> {
         // 提交完这条短连接就关了（`PairingAttempt.commit` 的 finally）：
         // 之后再点一次"确认"没有意义，所以把它摘掉。
         _attempt = null;
+        _probe = null;
+        _selectedDial = null;
         _result = result;
       });
     } on ProtocolException catch (error) {
       // **如实报**：回执丢失时这一句是"结果待确认"，而不是"没配对过"。
       _showError('${error.message}（${error.code.wire}）');
-      if (mounted) setState(() => _attempt = null);
+      _dropAttemptState();
     } on TransportException catch (error) {
       _showError('${error.message}（配对连接断了，请到电脑上核对这台设备是否已登记）');
-      if (mounted) setState(() => _attempt = null);
+      _dropAttemptState();
     } catch (error) {
       // 同 `_connect`：任何别的异常也必须出现在用户眼前（结果仍然"待确认"）。
       _showError('提交没走通：$error（去电脑上核对这台设备是否已登记）');
-      if (mounted) setState(() => _attempt = null);
+      _dropAttemptState();
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  /// 用户放弃这一轮候选：关掉短连接，回到可重扫的状态。
+  /// 用户放弃这一轮候选：关掉所有已开通道，回到可重扫的状态。
   Future<void> _cancelAttempt() async {
+    final probe = _probe;
     final attempt = _attempt;
     setState(() {
       _attempt = null;
+      _probe = null;
+      _selectedDial = null;
       _masterSeedHex = null;
       _previousPairingId = null;
       _pcFingerprint = null;
     });
-    if (attempt != null) await attempt.cancel();
+    if (probe != null) {
+      await probe.cancelAll();
+    } else if (attempt != null) {
+      await attempt.cancel();
+    }
   }
 
   void _showError(String message) {
@@ -374,9 +472,16 @@ class _PairingPageState extends State<PairingPage> {
     setState(() => _error = message);
   }
 
-  void _setBusy(String label) {
+  /// 提交失败后把"这一轮候选"整组摘掉（通道已随 `commit` 的 finally 关闭）。
+  ///
+  /// 三处失败分支同一件事，写三遍就会有一处先腐化 —— 收成一个入口。
+  void _dropAttemptState() {
     if (!mounted) return;
-    setState(() => _busyLabel = label);
+    setState(() {
+      _attempt = null;
+      _probe = null;
+      _selectedDial = null;
+    });
   }
 
   @override
@@ -432,9 +537,15 @@ class _PairingPageState extends State<PairingPage> {
             ),
             const SizedBox(height: 16),
           ],
+          // **失败放在页首**：这一页在有了"两条路"选择之后会变长，
+          // 错误框留在按钮下方就等于要用户先滚到底才知道为什么没连上。
+          if (_error != null) ...[
+            PairingErrorBox(message: _error!),
+            const SizedBox(height: 16),
+          ],
           const _Step(index: 1, text: '在电脑上执行出码命令，得到二维码（5 分钟内有效、一次性）'),
           const _Step(index: 2, text: '扫二维码，或把内容粘贴到下面'),
-          const _Step(index: 3, text: '核对电脑身份；确认之后，配对码才会发出去'),
+          const _Step(index: 3, text: '核对电脑身份、选择走哪条；确认之后，配对码才会发出去'),
           const SizedBox(height: 12),
           // **扫码是首选入口**，粘贴是兜底。
           //
@@ -496,7 +607,19 @@ class _PairingPageState extends State<PairingPage> {
           // **这张码有哪几条路**：扫完就摆出来。降级码在这里显式说"只能同一 WiFi"，
           // 两条都在时说明先试哪条、正在试哪条（`_busyLabel` 就是当前那一步）。
           if (_offer != null && _result == null) ...[
-            _OfferRoutes(offer: _offer!, busy: _busy, stage: _busyLabel),
+            PairingOfferRoutes(offer: _offer!, busy: _busy, stage: _busyLabel),
+            const SizedBox(height: 12),
+            // **码里写了什么**（上面）与**此刻实测哪条通**（这里）是两件事：
+            // 前者是电脑出码时的承诺，后者是真的拨通了。分开画，用户不用从
+            // 一句失败文案里倒推是哪一边的问题。
+            PairingRoutePicker(
+              offer: _offer!,
+              probe: _probe,
+              selected: _selectedDial,
+              busy: _busy,
+              policy: widget.prefer,
+              onSelect: _select,
+            ),
             const SizedBox(height: 12),
           ],
           FilledButton(
@@ -510,10 +633,6 @@ class _PairingPageState extends State<PairingPage> {
             // 而不是"解析一下"。用户按下去之后电脑侧会出现一行候选记录。
             child: Text(_busy ? _busyLabel : '连接电脑'),
           ),
-          if (_error != null) ...[
-            const SizedBox(height: 16),
-            _ErrorBox(message: _error!),
-          ],
           if (attempt != null) ...[
             const SizedBox(height: 16),
             _IdentityCard(
@@ -575,128 +694,6 @@ class _Step extends StatelessWidget {
             child: Text(
               text,
               style: TextStyle(fontSize: 13, color: c.labelSecondary),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// **这张码有哪几条路**（扫完就摆出来，不等失败才说）。
-///
-/// 两件事都在这里说：
-/// - 降级码（电脑侧出码时没登记上中转）：**只有局域网**，出不了同一个 WiFi 就配不上；
-/// - 两条都在：走哪两条、先试哪条；连接过程中「正在试」跟着 `onStage` 走。
-///
-/// 为什么不让用户从失败文案里推断：换票失败与"不在同一个 WiFi"在文案上很难分，
-/// 而这两件事该做的事完全不同（重新出码 vs 回同一个 WiFi）。
-class _OfferRoutes extends StatelessWidget {
-  const _OfferRoutes({
-    required this.offer,
-    required this.busy,
-    required this.stage,
-  });
-
-  final PairingOffer offer;
-  final bool busy;
-  final String stage;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.dshColors;
-    final hasLan = offer.lanUrls.isNotEmpty;
-    final hasRelay = !offer.lanOnly;
-    final routes = <String>[
-      if (hasLan) '局域网直连（${offer.lanUrls.length} 个地址）',
-      // `lanOnly: false` 的唯一含义就是中转登记成功（契约 §12.1）——
-      // 这里明写"已登记"，用户不用从"没有警告"去猜出门能不能用。
-      if (hasRelay) '中转（已登记）',
-    ];
-    final lanOnly = offer.lanOnly;
-    return Container(
-      key: const Key('pairing-routes'),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: c.layer1,
-        borderRadius: BorderRadius.circular(DshRadius.sm),
-        border: Border.all(color: lanOnly ? c.error : c.borderL2),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              DshIcon(
-                lanOnly ? 'warningTriangle' : 'link',
-                size: 16,
-                color: lanOnly ? c.error : c.labelSecondary,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  lanOnly
-                      ? '此码只能在同一 Wi-Fi 下使用（出码时没登记上中转）。'
-                      : routes.length > 1
-                      ? '这张码有两条路：${routes.join(' · ')}。'
-                      : '这张码走：${routes.isEmpty ? '中转' : routes.single}。',
-                  key: lanOnly ? const Key('pairing-lan-only') : null,
-                  style: TextStyle(
-                    fontSize: 13,
-                    height: 1.5,
-                    color: lanOnly ? c.labelPrimary : c.labelSecondary,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          if (busy && stage.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              '正在试：$stage',
-              key: const Key('pairing-stage'),
-              style: TextStyle(fontSize: 12, color: c.labelSecondary),
-            ),
-          ],
-          if (!lanOnly && hasLan && hasRelay) ...[
-            const SizedBox(height: 6),
-            Text(
-              '出门 / 用流量会自动走中转；一条不通会换另一条。',
-              style: TextStyle(fontSize: 12, color: c.labelTertiary),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-/// 错误框。
-class _ErrorBox extends StatelessWidget {
-  const _ErrorBox({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.dshColors;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: c.layer1,
-        borderRadius: BorderRadius.circular(DshRadius.sm),
-        border: Border.all(color: c.error),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          DshIcon('warningTriangle', size: 16, color: c.error),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              message,
-              style: TextStyle(fontSize: 12, color: c.error),
             ),
           ),
         ],

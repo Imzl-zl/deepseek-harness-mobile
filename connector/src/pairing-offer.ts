@@ -37,10 +37,11 @@ export interface PairingOfferDeps {
    */
   register: (offerId: string) => Promise<void>
   /**
-   * 这张码要不要**带中转那条路**（默认 `true`）。
+   * 这张码要不要**带中转那条路**（由装配层按能力给：中转控制面连上了才是 `true`）。
    *
-   * `false` = 用户选了"同一 WiFi"：**不登记**（那张票没人会去换），载荷里只留局域网。
-   * 上层（装配层）负责先确认直连此刻可用 —— 这里只负责"别登记、别承诺中转"。
+   * `false` = 这条腿此刻不存在：**不登记**（没人会去换票），载荷里只留局域网。
+   * 本函数只负责"别登记、别承诺中转"，**不判断直连是否可用** —— 那是
+   * {@link planPairingOffer} 的判据。
    */
   withRelay?: boolean
   log?: ChannelLogger
@@ -48,6 +49,46 @@ export interface PairingOfferDeps {
 
 /** 命令结果（与 DSH 的 `CommandResult` 同形；这里不 import 它，免得这一层依赖 DSH）。 */
 export type OfferResult = { kind: 'success'; text: string } | { kind: 'error'; text: string }
+
+/**
+ * 出码那一刻这台电脑的**能力**：哪几条腿能写进码。
+ *
+ * 判据与面板、手机无关，只有两条事实：直连有没有一条**可上报的地址**（监听在跑
+ * 不等于有地址），中转控制面有没有 `connected`（配了地址不等于连上）。
+ */
+export interface PairingCapacity {
+  /** 直连那条腿能不能进码（监听在跑 **且** 选得出一个可上报的主地址）。 */
+  readonly lanAvailable: boolean
+  /** 中转控制面此刻连上了吗。 */
+  readonly relayConnected: boolean
+  /**
+   * `lanAvailable === false` 时的人话原因。
+   *
+   * **必须区分两档**：监听没开，和"监听开着但没有可上报的主地址"（默认路由拿不到、
+   * 主地址被用户隐藏）。混成一句"直连没开"会让明明开着监听的人无从下手 ——
+   * 2026-11-17 用户原话："我明明开着直连，它说没开"。
+   */
+  readonly lanReason?: string
+}
+
+/**
+ * 这张码能不能出、要不要带中转 —— **出码的唯一判据**（斜杠命令与管理面板共用）。
+ *
+ * 2026-11-17 起没有"这张码给谁用"这一档：码里写哪几条路只由此刻的能力决定，
+ * 选哪条是手机上的事。两条都没有时抛错，文案分别说清缺的是哪条、为什么。
+ *
+ * Note: 为什么删掉那个二选一、为什么 `lanReason` 必须分两档 —— 见
+ * `.agents/notes/implemented/2026-11-17-offer-carries-what-is-alive.md`。
+ */
+export function planPairingOffer(capacity: PairingCapacity): { readonly withRelay: boolean } {
+  if (!capacity.lanAvailable && !capacity.relayConnected) {
+    const lanWhy = capacity.lanReason ?? '直连不可用'
+    throw new Error(
+      `无法生成配对码：${lanWhy}；中转未连接。请先启动直连监听或中转拨号。`,
+    )
+  }
+  return { withRelay: capacity.relayConnected }
+}
 
 /**
  * 异常 → 一句能读的原因，嵌进给人看的失败文案里。
@@ -72,21 +113,22 @@ export async function offerForScanning(deps: PairingOfferDeps): Promise<OfferRes
     const minutes = Math.round(PAIRING_TTL_MS / 60_000)
     // 正反两面都要说，而且**按码里实际有哪几条路**说（`routes`）：
     // 只在失败时说话，用户在局域网里出码时仍不知道"出门能不能用"；
-    // 反过来，中转没连上时也不能还写"两条路都在"。
+    // 反过来，中转没连上时也不能还写"含中转"。
     const hasLan = offer.lanUrls.length > 0
     const hasRelay = !offer.lanOnly && offer.routes.includes('relay')
     const where = hasRelay && hasLan
-      ? `\n两条路都在：同一 WiFi 直连；出门 / 用流量走中转（已登记）。`
-        + `\n局域网直连：${offer.lanUrls.join(' / ')}`
+      ? `\n路径：局域网直连 + 中转（已登记）`
+        + `\n局域网地址：${offer.lanUrls.join(' / ')}`
       : hasRelay
-        ? '\n只有中转这条路（已登记）：手机不在同一 WiFi 时也能扫。'
+        ? '\n路径：仅中转（已登记）'
         : hasLan
-          ? `\n⚠ 只有局域网这条路（这张码不含中转，未登记）：只能在同一 WiFi 下使用（跨网或用流量扫它配不上）。`
-            + `\n局域网直连：${offer.lanUrls.join(' / ')}`
-          : '\n这张码没有可用的路：直连没开、中转也没连上，先去「通道与地址」开一条再出码。'
+          ? `\n路径：仅局域网直连（未登记中转）`
+            + '\n限制：须在同一 WiFi 下扫码'
+            + `\n局域网地址：${offer.lanUrls.join(' / ')}`
+          : '\n路径：无（直连监听未启动，中转未连接）'
     return {
       kind: 'success',
-      text: `手机扫码配对（${minutes} 分钟内有效，一次性）：\n${offer.payload}${where}`,
+      text: `手机扫码配对（${minutes} 分钟内有效，仅可使用一次）：\n${offer.payload}${where}`,
     }  } catch (error) {
     return { kind: 'error', text: error instanceof Error ? error.message : String(error) }
   }
@@ -122,8 +164,8 @@ export async function issuePairingOffer(deps: PairingOfferDeps): Promise<Pairing
       // "检查中转是否在运行、令牌是否有效"会把人引向错误的方向 —— 2026-11-03 那
       // 次真因是中转按另一个 id 找电脑（409），字面却像"你没启动中转"。
       throw new Error(
-        `没能把这次配对登记到中转（${causeText(error)}）。这次没有出码：`
-        + '把「直连监听」打开（同一 WiFi 下手机直接连电脑，不经过中转），或按上面的原因修好中转后重试。',
+        `配对登记失败（${causeText(error)}）。未生成二维码：当前没有可用的局域网地址。`
+        + '请启动直连监听后重试，或按上述原因修复中转。',
       )
     }
     // 有局域网地址 = 手机拨得通电脑，登记只影响"跨网也能扫同一张码"。

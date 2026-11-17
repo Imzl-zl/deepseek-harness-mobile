@@ -221,24 +221,25 @@ window.__ModuleLoader__.load({
       channelsTitle: '通道与地址',
       devicesTitle: '已配对设备',
       pairTitle: '配对新手机',
-      pairHint: '5 分钟内有效。',
-      // 这张码含哪几条路（2026-11-13）：两档二选一，不可用那档禁用并说原因。
-      pairPurposeLabel: '这张码给谁用',
-      pairPurposeLan: '同一 WiFi',
-      pairPurposeLanDown: '直连没开',
-      pairPurposeAny: '任何网络',
-      pairPurposeRelayDown: '中转没连上',
+      pairHint: '一次性，5 分钟内有效；出码后列出这张码实际包含的路径。',
+      // **只报通道事实，不预测码内容**（2026-11-17）：码里写哪几条路由出码那一刻的
+      // 能力决定（直连还要能选出一个可上报的地址），面板在出码前无从知道。
+      // 预测写在这里就是第二份判据 —— 上一版"本次二维码：…"正是在这个缝隙里撒了谎。
+      pairChannelsBoth: '通道：直连监听中 · 中转已连接',
+      pairChannelsLan: '通道：直连监听中 · 中转未连接',
+      pairChannelsRelay: '通道：直连未启动 · 中转已连接',
+      pairChannelsNone: '通道：直连未启动 · 中转未连接。请先启动其中一项。',
+      pairChannelsUnknown: '正在读取通道状态…',
       // 装了插件不等于装了 App：出口就放在"出码"这张卡上。
       noAppHint: '还没装手机 App？',
       downloadApp: '下载最新版',
-      // 出码时向中转登记失败 = 这张码只有局域网那条路（契约 §12.1 的 lanOnly）。
-      // 必须写在二维码旁边：用户出门 / 切流量之后才发现"配不上"就太晚了。
-      pairLanOnly: '中转没登记上：这张码只能在同一 WiFi 下使用（跨网或用流量扫它配不上）',
-      // **正面也要说**：登记成功时用户需要知道"出门还能用"，而不是只能从"没有警告"去猜。
-      pairRelayReady: '两条路都在：同一 WiFi 直连；出门 / 用流量走中转（出码时已登记）。',
-      pairRelayOnly: '只有中转这条路（出码时已登记）：不在同一 WiFi 也能扫。',
-      // 出码之后中转又断了：登记会随连接器断开失效，**不能继续显示"已登记"**。
-      pairRelayDropped: '中转已断开：这张码的跨网那条路已经失效，请重新出码（同一 WiFi 仍可用）。',
+      // 登记失败 = 这张码只有局域网那条路（契约 §12.1 的 lanOnly），必须写在二维码旁边。
+      pairLanOnly: '未登记中转：此码仅含局域网直连，须在同一 WiFi 下扫码。',
+      // **正面也要说**：登记成功时用户需要知道跨网络可用，而不是从"没有警告"去猜。
+      pairRelayReady: '此码含两条路径：局域网直连；中转（已登记）。',
+      pairRelayOnly: '此码仅含中转（已登记）：不在同一 WiFi 时也能配对。',
+      // 出码之后中转又断了：登记随连接器断开失效，**不能继续显示"已登记"**。
+      pairRelayDropped: '中转已断开：此码的跨网络路径已失效，请重新出码（同一 WiFi 仍可用）。',
       relayLabel: '中转',
       connectorIdLabel: '本机标识（中转「添加我的电脑」时填它）',
       relayConnected: '已连接',
@@ -385,18 +386,18 @@ window.__ModuleLoader__.load({
       channelsTitle: 'Channels & addresses',
       devicesTitle: 'Paired devices',
       pairTitle: 'Pair a new phone',
-      pairHint: 'Valid for 5 minutes.',
-      pairPurposeLabel: 'This code is for',
-      pairPurposeLan: 'Same Wi-Fi',
-      pairPurposeLanDown: 'direct listener off',
-      pairPurposeAny: 'Any network',
-      pairPurposeRelayDown: 'relay offline',
+      pairHint: 'Single use, valid for 5 minutes. The paths included are listed after issuing.',
+      pairChannelsBoth: 'Channels: direct listener running · relay connected',
+      pairChannelsLan: 'Channels: direct listener running · relay not connected',
+      pairChannelsRelay: 'Channels: direct listener not running · relay connected',
+      pairChannelsNone: 'Channels: direct listener not running · relay not connected. Start one of them first.',
+      pairChannelsUnknown: 'Reading channel state…',
       noAppHint: 'No app installed yet?',
       downloadApp: 'Download the latest build',
-      pairLanOnly: 'Not registered with the relay: this code only works on the same Wi-Fi (it will not pair over the internet or mobile data).',
-      pairRelayReady: 'Both routes are ready: direct on the same Wi-Fi, or via the relay (registered when the code was issued) when you are away.',
-      pairRelayOnly: 'Relay only (registered when the code was issued): it works away from this Wi-Fi too.',
-      pairRelayDropped: 'The relay has disconnected: the away-from-home route of this code is no longer valid — issue a new code (same Wi-Fi still works).',
+      pairLanOnly: 'Not registered with the relay: this code contains LAN direct only and must be scanned on the same Wi-Fi.',
+      pairRelayReady: 'This code contains both routes: LAN direct and relay (registered).',
+      pairRelayOnly: 'This code contains the relay route only (registered): it also pairs away from this Wi-Fi.',
+      pairRelayDropped: 'The relay has disconnected: the cross-network route of this code is no longer valid. Issue a new code (same Wi-Fi still works).',
       relayLabel: 'Relay',
       connectorIdLabel: 'Connector ID (use it when adding this computer on the relay)',
       relayConnected: 'Connected',
@@ -1048,13 +1049,6 @@ window.__ModuleLoader__.load({
       const [connectionError, setConnectionError] = useState(null)
       const [error, setError] = useState('')
       const [qr, setQr] = useState(null)
-      /**
-       * 这张码给谁用（`''` = 按能力自动：中转连上了就带它，否则只出局域网）。
-       *
-       * **只在用户点过两档之后才有值**：默认不替他选，也不把默认值写进状态
-       * （否则中转一断，界面还停在"任何网络"上）。
-       */
-      const [pairPurpose, setPairPurpose] = useState('')
       // 「检查更新」：一次只查一次，结论留在卡片上（不弹框）。
       const [updateInfo, setUpdateInfo] = useState(null)
       const [updateBusy, setUpdateBusy] = useState(false)
@@ -1141,13 +1135,28 @@ window.__ModuleLoader__.load({
         if (qr !== null && qr.expiresAt <= now) setQr(null)
       }, [qr, now])
 
-      // 这张码**含哪几条路**：默认按此刻能力选（中转连上了才带它）。
-      // 面板不复述"为什么"，只把不可用的那档禁用并附原因。
+      // 这张码**含哪几条路**只看能力（2026-11-17）：没有"这张码给谁用"这一档。
+      // 直连看监听在不在跑，中转看控制面 `connected` —— 与出码处同一条判据。
       const relayUp = connection !== null && connection.relay !== undefined && connection.relay.connected === true
       const directUp = connection !== null && connection.direct !== undefined && connection.direct.running === true
-      const purposeChoice = pairPurpose === '' ? (relayUp ? 'any' : 'lan') : pairPurpose
+      // 两条都没有：按钮禁用，并把通道状态写在旁边 —— 不让人先点、再读一句
+      // 与事实相反的报错（"直连没开"而其实开着，是从前最像 bug 的一处）。
+      //
+      // `connection === null`（还没读回来 / `/connection` 读失败）时**不扣按钮**：
+      // 那一步只是显示面，不能因为显示面缺失就宣称"都没开"—— 出码时服务端按真值回答。
+      const capacityKnown = connection !== null
+      const anyRoute = directUp || relayUp
+      const routeLine = !capacityKnown
+        ? t('pairChannelsUnknown')
+        : directUp && relayUp
+          ? t('pairChannelsBoth')
+          : directUp
+            ? t('pairChannelsLan')
+            : relayUp
+              ? t('pairChannelsRelay')
+              : t('pairChannelsNone')
 
-      const pair = async (purpose) => {
+      const pair = async () => {
         setBusy('pair')
         setQr(null)
         setError('')
@@ -1155,8 +1164,10 @@ window.__ModuleLoader__.load({
           const response = await fetch(PAIR, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            // `purpose` 缺省 = 按电脑此刻的能力选（中转连上了就 `any`）。
-            body: JSON.stringify(purpose ? { purpose } : {}),
+            // **空对象而不是空 body**：内容类型已经声明 JSON，而空 body 会让
+            // 上游的 body 解析先报 400（出码整条链路在真机上挂掉，单测看不出来）。
+            // 服务端不读它；留着是为了对任何声明过的解析器都成立。
+            body: JSON.stringify({}),
           })
           const body = await jsonOf(response)
           if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
@@ -2012,36 +2023,19 @@ window.__ModuleLoader__.load({
             h('span', { style: { flex: 1 } }),
             h('button', {
               key: 'b', type: 'button',
-              style: busy === 'pair' ? { ...S.btn, ...S.btnDisabled } : S.btn,
-              disabled: busy !== '',
-              onClick: () => pair(purposeChoice),
+              style: busy !== '' || (capacityKnown && !anyRoute) ? { ...S.btn, ...S.btnDisabled } : S.btn,
+              disabled: busy !== '' || (capacityKnown && !anyRoute),
+              onClick: () => pair(),
             }, busy === 'pair' ? t('pairing') : t('pair')),
           ),
           h('p', { key: 'd', style: { ...S.label, margin: 0 } }, t('pairHint')),
-          // **这张码给谁用**（2026-11-13）：两档二选一，不可用的那档禁用并说原因。
-          // 默认不写进状态：中转一断，界面不会还停在"任何网络"上。
-          h('div', {
-            key: 'pp',
-            style: { display: 'flex', gap: 8, marginTop: 10, alignItems: 'center', flexWrap: 'wrap' },
-          },
-            h('span', { style: { ...S.label, margin: 0 } }, t('pairPurposeLabel')),
-            h('button', {
-              key: 'lan', type: 'button',
-              style: purposeChoice === 'lan'
-                ? { ...S.btn, borderColor: 'currentColor', fontWeight: 600 }
-                : S.btn,
-              disabled: busy !== '' || !directUp,
-              onClick: () => setPairPurpose('lan'),
-            }, directUp ? t('pairPurposeLan') : `${t('pairPurposeLan')} · ${t('pairPurposeLanDown')}`),
-            h('button', {
-              key: 'any', type: 'button',
-              style: purposeChoice === 'any'
-                ? { ...S.btn, borderColor: 'currentColor', fontWeight: 600 }
-                : S.btn,
-              disabled: busy !== '' || !relayUp,
-              onClick: () => setPairPurpose('any'),
-            }, relayUp ? t('pairPurposeAny') : `${t('pairPurposeAny')} · ${t('pairPurposeRelayDown')}`),
-          ),
+          // **只报告，不选择**（2026-11-17）：码里写哪几条路由能力决定，
+          // 选哪条是手机上的事（扫完先测两条再选）。这一行是"这次会出什么"，
+          // 不是一道要人答的题。
+          h('p', {
+            key: 'rl',
+            style: { ...S.label, margin: '8px 0 0', ...(anyRoute ? {} : S.warn) },
+          }, routeLine),
           // 「还没装 App？」——放在出码按钮下面：走到这一步的人正好缺这个。
           h('div', { key: 'dl', style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 } },
             h('span', { style: { ...S.label, margin: 0 } }, t('noAppHint')),

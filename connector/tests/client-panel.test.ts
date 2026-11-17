@@ -1056,3 +1056,37 @@ test('连接卡：这个部署没有设置服务时只显示一句说明，不�
   assert.equal(buttonWith(tree, '保存'), undefined, 'capable=false 不给保存键')
 })
 
+// ---- 配对卡：只报通道事实，两条都没有时不给点（2026-11-17） ----
+
+test('配对卡：直连与中转都没开 ⇒ 出码按钮禁用，并说明缺哪条', async () => {
+  const view = {
+    ...CONNECTION_VIEW,
+    relay: { running: false, connected: false, public: false },
+    direct: { running: false },
+  }
+  const fetchImpl = async (url: string) => String(url).includes('/connection')
+    ? { ok: true, status: 200, json: async () => view }
+    : defaultFetch()(url)
+  const { tree } = await mountPanel({}, fetchImpl)
+  assert.match(allText(tree), /通道：直连未启动 · 中转未连接/)
+  assert.equal(
+    buttonWith(tree, '出配对码')?.props.disabled,
+    true,
+    '两条都没有时不该让人先点、再读一句报错',
+  )
+})
+
+test('配对卡：只有直连在监听 ⇒ 说明中转未连接，出码仍可点', async () => {
+  const view = {
+    ...CONNECTION_VIEW,
+    relay: { running: false, connected: false, public: false },
+    direct: { running: true },
+  }
+  const fetchImpl = async (url: string) => String(url).includes('/connection')
+    ? { ok: true, status: 200, json: async () => view }
+    : defaultFetch()(url)
+  const { tree } = await mountPanel({}, fetchImpl)
+  assert.match(allText(tree), /通道：直连监听中 · 中转未连接/)
+  assert.notEqual(buttonWith(tree, '出配对码')?.props.disabled, true)
+})
+

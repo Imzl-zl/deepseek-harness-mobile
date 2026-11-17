@@ -107,7 +107,7 @@ import {
 } from './dsh/relay-token.js'
 import { createPairingRegistrar } from './pairing-register.js'
 import { createDevicePublisher, rosterEntry } from './device-publish.js'
-import { offerForScanning, issuePairingOffer } from './pairing-offer.js'
+import { offerForScanning, issuePairingOffer, planPairingOffer } from './pairing-offer.js'
 import { pairingQrSvg } from './pairing-qr.js'
 import { mountAdminFace } from './admin/mount.js'
 import { createUpdateChecker } from './admin/update.js'
@@ -824,12 +824,14 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         /**
          * 出码：登记 → 生成二维码 SVG。
          *
-         * `purpose` 决定这张码**含哪几条路**（2026-11-13）：
-         * - `any`（默认）：直连 + 中转，先登记；
-         * - `lan`：只有局域网，**不登记**（用户就在同一 WiFi 下配对）。
+         * **没有"这张码给谁用"这一档**（2026-11-17）：码里写哪几条路，只由
+         * **此刻的能力**决定 —— 直连监听在跑且选得出可上报的地址就有 `lan`，
+         * 中转控制面 `connected` 就有 `relay`。选择留给手机（扫完先测两条再选），
+         * 电脑不再替用户押一条路。
          *
-         * 默认按**此刻的能力**选：中转连上了就 `any`，否则 `lan`。
-         * 两档各有自己的"不可用"错误 —— 让用户先修路，而不是给一张撒谎的码。
+         * 两条都没有 → 报错并**分别说清缺哪条**：`direct` 的失败有两档
+         * （监听没开 / 开着但没有可上报的主地址），混成一句"直连没开"会让
+         * 明明开着监听的人无从下手。
          *
          * **斜杠命令与管理面板共用同一个出码核心**（`issuePairingOffer`）——
          * "什么时候能出码"只有一条规则。命令那一侧只能回文本
@@ -837,9 +839,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
          * `packages/interaction/commands/src/types.ts:34`），所以二维码
          * 由插件面板承载；斜杠命令仍留着，方便在终端里直接出码。
          */
-        const offerPairing = async (
-          purpose?: 'any' | 'lan',
-        ): Promise<{
+        const offerPairing = async (): Promise<{
           svg: string
           expiresAt: number
           lanOnly: boolean
@@ -851,26 +851,21 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           await refreshLanHint()
           const lanAvailable = lanUrlsOf().length > 0
           const relayUp = connection?.connected === true
-          const wanted = purpose ?? (relayUp ? 'any' : 'lan')
-          if (wanted === 'any' && !relayUp) {
-            throw new Error(
-              lanAvailable
-                ? '中转没连上：先启动中转拨号，或改出「同一 WiFi」的码（只含局域网）'
-                : '两条路都没开：先启动「中转拨号」或「直连监听」其中一条，再出码',
-            )
-          }
-          if (wanted === 'lan' && !lanAvailable) {
-            throw new Error(
-              relayUp
-                ? '直连监听没开：先启动「直连监听」，或改出「任何网络」的码（走中转）'
-                : '两条路都没开：先启动「直连监听」或「中转拨号」其中一条，再出码',
-            )
-          }
+          // 判据与文案只有一处（`planPairingOffer`）：两条都没有就抛，且分档说清
+          // 直连是"监听没开"还是"开着但没有可上报的主地址"。
+          const plan = planPairingOffer({
+            lanAvailable,
+            relayConnected: relayUp,
+            lanReason: listener === null
+              ? '直连监听未启动'
+              : '直连监听已启动，但没有可上报的地址（默认路由不可用，或主地址已被隐藏）',
+          })
           // 结构化拿 offer，**不从命令文本里解析** —— 那等于解析自己刚拼的字符串。
+          // `withRelay` = 中转此刻真的连上了：没连上就不登记（登记只给跨网换票用）。
           const offer = await issuePairingOffer({
             pairing: pairingCore,
             register: registerPairing,
-            withRelay: wanted === 'any',
+            withRelay: plan.withRelay,
             log: logger,
           })
           // **payload 不返回**：它含两把公钥，而浏览器只负责画图。
@@ -899,7 +894,13 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           unregisterPairingCommand = commands.register({
             name: 'dsh-mobile-pair',
             description: `生成手机配对二维码（一次性、${Math.round(PAIRING_TTL_MS / 60_000)} 分钟有效）`,
-            handler: () => offerForScanning({ pairing: pairingCore, register: registerPairing, log: logger }),
+            // **与面板同一条地址新鲜度**：换 WiFi 之后第一次出码就要带新地址，
+            // 否则命令这条路上会留下一张写着死地址的码（面板侧早在
+            // `offerPairing` 里刷新，命令侧曾漏掉 —— 同一个动作两种行为）。
+            handler: async () => {
+              await refreshLanHint()
+              return offerForScanning({ pairing: pairingCore, register: registerPairing, log: logger })
+            },
           })
         }
 

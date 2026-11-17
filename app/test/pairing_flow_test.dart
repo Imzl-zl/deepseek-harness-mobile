@@ -591,6 +591,164 @@ void main() {
     expect(http.calls, isEmpty);
     expect(urls, isEmpty);
   });
+
+  // ---- 同时探两条路：配对页据此把选择交给用户（2026-11-17） ----
+
+  PairingOffer withLan({bool lanOnly = false}) => PairingOffer(
+    relayUrl: offer.relayUrl,
+    pcId: offer.pcId,
+    pcSignPubHex: offer.pcSignPubHex,
+    pcDhPubHex: offer.pcDhPubHex,
+    offerId: offer.offerId,
+    code: offer.code,
+    lanUrls: const ['ws://127.0.0.1:8790'],
+    lanOnly: lanOnly,
+    routes: lanOnly ? const {'lan'} : const {'lan', 'relay'},
+  );
+
+  test('两条都探：两条都开、只换一次票，结果各自如实', () async {
+    final target = withLan();
+    final http = _TicketRecorder();
+    final candidate = target.candidate(identity, '我的手机');
+    final seen = <String>[];
+    final probe = await probePairing(
+      offer: target,
+      identity: identity,
+      deviceName: '我的手机',
+      send: http.call,
+      transportFor: (url) {
+        seen.add(url);
+        return FakePc(pcSeedHex: _pcSeed, offer: target, candidate: candidate);
+      },
+      allowInsecureLocal: true,
+      newFrameIdHex: () => 'p1',
+      newEphemeralSeedHex: () => 'e5' * 32,
+      newNonceHex: () => 'a7' * 32,
+    );
+    addTearDown(probe.cancelAll);
+
+    expect(probe.routes.length, 2);
+    expect(probe.attemptOf(PairingDial.lan), isNotNull);
+    expect(probe.attemptOf(PairingDial.relay), isNotNull);
+    expect(http.calls.length, 1, reason: '中转那张票只换一次');
+    expect(seen.length, 2, reason: '两条路各拨一次');
+  });
+
+  test('降级码只探局域网：一条路、零 HTTP', () async {
+    final target = withLan(lanOnly: true);
+    final http = _TicketRecorder();
+    final candidate = target.candidate(identity, '我的手机');
+    final probe = await probePairing(
+      offer: target,
+      identity: identity,
+      deviceName: '我的手机',
+      send: http.call,
+      transportFor: (_) =>
+          FakePc(pcSeedHex: _pcSeed, offer: target, candidate: candidate),
+      allowInsecureLocal: true,
+      newFrameIdHex: () => 'p1',
+      newEphemeralSeedHex: () => 'e5' * 32,
+      newNonceHex: () => 'a7' * 32,
+    );
+    addTearDown(probe.cancelAll);
+
+    expect(probe.routes.length, 1);
+    expect(probe.attemptOf(PairingDial.lan), isNotNull);
+    expect(http.calls, isEmpty, reason: '没有中转那条腿，不该去换票');
+  });
+
+  test('两条都不通：不抛异常，两条原因都在（界面要一起摆出来）', () async {
+    final target = withLan();
+    final http = _TicketRecorder(const [
+      HttpResult(status: 409, body: '{"error":"pairing-unavailable"}'),
+    ]);
+    final probe = await probePairing(
+      offer: target,
+      identity: identity,
+      deviceName: '我的手机',
+      send: http.call,
+      transportFor: (_) => _DeadTransport(),
+      allowInsecureLocal: true,
+      newFrameIdHex: () => 'p1',
+      newEphemeralSeedHex: () => 'e5' * 32,
+      newNonceHex: () => 'a7' * 32,
+    );
+
+    expect(probe.routes.length, 2);
+    for (final route in probe.routes) {
+      expect(route.attempt, isNull);
+      expect(route.failure, isNotNull, reason: '每一条都要有自己的原因');
+    }
+  });
+
+  test('只用直连：**不碰中转**（零 HTTP），只探局域网', () async {
+    final target = withLan();
+    final candidate = target.candidate(identity, '我的手机');
+    final probe = await probePairing(
+      offer: target,
+      identity: identity,
+      deviceName: '我的手机',
+      send: (call) async => throw StateError('只用直连时不该换票：${call.url}'),
+      transportFor: (_) =>
+          FakePc(pcSeedHex: _pcSeed, offer: target, candidate: candidate),
+      allowInsecureLocal: true,
+      prefer: RoutePolicy.directOnly,
+      newFrameIdHex: () => 'p1',
+      newEphemeralSeedHex: () => 'e5' * 32,
+      newNonceHex: () => 'a7' * 32,
+    );
+    addTearDown(probe.cancelAll);
+
+    expect(probe.routes.length, 1);
+    expect(probe.attemptOf(PairingDial.lan), isNotNull);
+    expect(probe.attemptOf(PairingDial.relay), isNull, reason: '策略排除的那条不该被探');
+  });
+
+  test('只用中转：局域网地址一个都不拨', () async {
+    final target = withLan();
+    final http = _TicketRecorder();
+    final candidate = target.candidate(identity, '我的手机');
+    final dialed = <String>[];
+    final probe = await probePairing(
+      offer: target,
+      identity: identity,
+      deviceName: '我的手机',
+      send: http.call,
+      transportFor: (url) {
+        dialed.add(url);
+        return FakePc(pcSeedHex: _pcSeed, offer: target, candidate: candidate);
+      },
+      allowInsecureLocal: true,
+      prefer: RoutePolicy.relayOnly,
+      newFrameIdHex: () => 'p1',
+      newEphemeralSeedHex: () => 'e5' * 32,
+      newNonceHex: () => 'a7' * 32,
+    );
+    addTearDown(probe.cancelAll);
+
+    expect(probe.routes.length, 1);
+    expect(probe.attemptOf(PairingDial.relay), isNotNull);
+    expect(dialed.length, 1, reason: '只拨了中转那条');
+    expect(dialed.single, contains('/ws/device'), reason: '拨的是中转升级地址，不是局域网');
+  });
+
+  test('只用中转 + 只含局域网的码：一条都不探（策略与码冲突）', () async {
+    final target = withLan(lanOnly: true);
+    final probe = await probePairing(
+      offer: target,
+      identity: identity,
+      deviceName: '我的手机',
+      send: (call) async => throw StateError('这张码不含中转，不该换票：${call.url}'),
+      transportFor: (_) => _DeadTransport(),
+      allowInsecureLocal: true,
+      prefer: RoutePolicy.relayOnly,
+      newFrameIdHex: () => 'p1',
+      newEphemeralSeedHex: () => 'e5' * 32,
+      newNonceHex: () => 'a7' * 32,
+    );
+
+    expect(probe.routes, isEmpty);
+  });
 }
 
 /// 一条**拨不通**的传输：局域网地址死掉时 `connect()` 抛（与真机上的超时/拒绝同形）。
