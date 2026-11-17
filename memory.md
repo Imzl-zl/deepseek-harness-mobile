@@ -6,6 +6,11 @@
 
 ## 现在（2026-11-17）
 
+- **v0.2.19 已发版（2026-11-17）**：`dsh-mobile-v0.2.19-arm64-v8a.apk` **27.3 MB**
+  （`armeabi-v7a` 23.8 / `x86_64` 29.7）+ `dsh-mobile-connector-0.1.26.tgz`（连接器没动）。
+  三个 run 全绿（`ci` 7m11s / `release` 6m00s / `publish-connector` 21s，后者按幂等挡掉）。
+  Release notes 已手填（修了什么 + 该下哪个包 + 已知未对齐）。
+  内容 = 一笔：**「新建会话」那一行钉在组首**（见下一条）。
 - **「新建会话不在工作区第一个」= 组内分区漏了桌面那一条**（用户 2026-11-17 报的
   「可以新建但不在第一个」）。抽屉与内联列表都按 `workspace.list` 的账本行序排，而桌面把
   **当前 blank 会话钉在组首**（`pinCurrentBlank`，`tree.ts:213-219`）+ blank 一律排前
@@ -18,12 +23,16 @@
   **仍未对齐**：非 blank 之间手机按账本序，桌面默认按 `updatedAt`；要那条得先做
   「手动 / 最近更新」排序开关。笔记 `implemented/2026-11-17-blank-row-pinned-to-group-head.md`，
   文档 `docs/subsystems/session-ordering.md` §1.5。
+- **踩到一条 Flutter 事实（写进笔记与 docs）**：`DragTarget` 的 `onMove` **不受**
+  `onWillAccept` 约束 —— 框架先把 target 放进 `_enteredTargets`、再问 `didEnter`、
+  然后对全部 entered 报 move（`drag_target.dart:932-945`）。所以"这个落点不接"必须
+  在 `onMove` 里再判一次，否则插入线照样画上去。
 - **本轮门禁**：app **1960** · boundary **956** · size 通过（`session_drawer.dart` 一度
   1408 > 1400，压回上限内 —— 该文件下次加东西要先把注释收一收）。
   变异校验四条：删 blank 分区 ⇒ 分组 3 条红；`display` 改回含 blank ⇒ 菜单 2 条红；
   去掉 `onMove` 落点门 / `_canAccept` 落点行守卫 ⇒ 拖动那条各红一处。
-- **未做**：真机没验（新建之后抽屉里那一行是否真在组首）。桌面端不受影响 ——
-  这次只改显示层，一条账本写都没加。
+- **未做**：**真机没验**（新建之后抽屉里那一行是否真在组首）—— v0.2.19 就是给这一步用的。
+  接线缺口：`main.dart` 传的是不是真判据只有类型兜底，没有端到端用例。
 
 ## 现在（2026-11-15）
 
