@@ -4,7 +4,31 @@
 > 11-04 及更早的条目在 `memory/archive/2026-11.md`；稳定命令与坑点在 `tools.md`；
 > 现状事实在 `docs/`。
 
-## 现在（2026-11-17）
+## 现在（2026-11-17 晚 · v0.2.20）
+
+- **v0.2.20 已发版（2026-11-17）**：`dsh-mobile-v0.2.20-arm64-v8a.apk` **27.4 MB**
+  （`armeabi-v7a` 23.8 / `x86_64` 29.7）+ `dsh-mobile-connector-0.1.27.tgz`（0.1 MB，
+  npm `latest` = **0.1.27**）。三个 run 全绿（`ci` 6m31s / `release` 6m20s /
+  `publish-connector` 31s），Release notes 已手填。
+  内容 = 出码只写"此刻活着的路" + 手机扫完先探两条再选。
+- **出码不再问"这张码给谁用"**：面板删掉「同一 WiFi / 任何网络」二选一，`/pair` 不读 body；
+  判据收成 `planPairingOffer`（两条都没有就拒，文案分档说清"监听没启动"与"没有可上报地址"）。
+  面板只报通道事实，码里有什么只在出码后说。笔记
+  `implemented/2026-11-17-offer-carries-what-is-alive.md`；契约 `pairing-v2.md` §3。
+- **手机扫完同时探两条**：`probePairing` 直接复用 `beginPairing(directOnly/relayOnly)`
+  真拨一遍（探测=完整受限握手），逐条给「通 / 不通（原因）/ 这张码不含 / 按设置未尝试」；
+  用户选一条，预选按 `route_policy`，且**策略决定探测范围**（`directOnly` 不换票、
+  `relayOnly` 不拨局域网）。提交前收掉另一条。顺手修掉 `tryRelay` 握手失败不收半开
+  socket 的老漏。笔记 `implemented/2026-11-17-pairing-route-choice-on-phone.md`；
+  文档 `pairing-v2.md` §5、`remote-channel.md` §12.1。
+- **本轮门禁**：app **1968** · connector **870（869 过 / 1 跳过）** · relay **183** ·
+  protocol 454/26/49 · boundary **962** · size PASS（拆出 `ui/pairing_routes_panel.dart`）·
+  icons 62 · format 0。变异校验：出码判据 1 红；探测去掉 relay 分支 2 红（笔记按实测写）。
+- **未做**：**真机没验**（要重扫码，会清掉这台手机的配对凭据）；插件面板在 DSH 真 React 里的
+  落位只在隔离实例验了接口（`D:\tmp\dsh-mobile-home` + `dsh-mobile-test` + `--port 3099`），
+  没点界面。
+
+## 上一窗口（2026-11-17 早 · v0.2.19）
 
 - **v0.2.19 已发版（2026-11-17）**：`dsh-mobile-v0.2.19-arm64-v8a.apk` **27.3 MB**
   （`armeabi-v7a` 23.8 / `x86_64` 29.7）+ `dsh-mobile-connector-0.1.26.tgz`（连接器没动）。
