@@ -4,6 +4,27 @@
 > 11-04 及更早的条目在 `memory/archive/2026-11.md`；稳定命令与坑点在 `tools.md`；
 > 现状事实在 `docs/`。
 
+## 现在（2026-11-17）
+
+- **「新建会话不在工作区第一个」= 组内分区漏了桌面那一条**（用户 2026-11-17 报的
+  「可以新建但不在第一个」）。抽屉与内联列表都按 `workspace.list` 的账本行序排，而桌面把
+  **当前 blank 会话钉在组首**（`pinCurrentBlank`，`tree.ts:213-219`）+ blank 一律排前
+  （`sectionMembers`，`:269-283`）。账本序给不出它：点「新建会话」先复用账本里**已有的**
+  blank，位置还是它当初被建出来时的老位置（只有真新建的才被 `attachSession` 插到最前，
+  `entity.ts:147-149`）。现在 `bucketSessionsByWorkspace` 的分区是
+  **blank → 置顶 → 其余**，`isBlank` 必填（走 `sessionBlankOf`，与可见性 / watermark
+  同一道门）；blank 行被摘出 `DrawerSection.reorderableIds`，菜单与拖动都只认那一段
+  （它自己移不动，紧挨着它的那一行也上不去；拖到它身上不画线、松手按最后扫过的那一格插）。
+  **仍未对齐**：非 blank 之间手机按账本序，桌面默认按 `updatedAt`；要那条得先做
+  「手动 / 最近更新」排序开关。笔记 `implemented/2026-11-17-blank-row-pinned-to-group-head.md`，
+  文档 `docs/subsystems/session-ordering.md` §1.5。
+- **本轮门禁**：app **1960** · boundary **956** · size 通过（`session_drawer.dart` 一度
+  1408 > 1400，压回上限内 —— 该文件下次加东西要先把注释收一收）。
+  变异校验四条：删 blank 分区 ⇒ 分组 3 条红；`display` 改回含 blank ⇒ 菜单 2 条红；
+  去掉 `onMove` 落点门 / `_canAccept` 落点行守卫 ⇒ 拖动那条各红一处。
+- **未做**：真机没验（新建之后抽屉里那一行是否真在组首）。桌面端不受影响 ——
+  这次只改显示层，一条账本写都没加。
+
 ## 现在（2026-11-15）
 
 - **v0.2.18 已发版（2026-11-15）**：`dsh-mobile-v0.2.18-arm64-v8a.apk` **27.3 MB**

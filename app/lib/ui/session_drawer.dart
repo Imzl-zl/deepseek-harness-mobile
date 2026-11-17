@@ -48,6 +48,7 @@ class DrawerSession {
     required this.timeLabel,
     this.isActive = false,
     this.isPinned = false,
+    this.isBlank = false,
     this.dot = SessionDot.idle,
   });
 
@@ -74,6 +75,9 @@ class DrawerSession {
   /// 在 `workspace.list` 的 `pinnedSessionIds` 里。显示时排在分组最前，
   /// 行尾还有一枚小图钉（DSH Web 的 `PinnedIndicator`，`Rows.tsx:660`）。
   final bool isPinned;
+
+  /// 刚建出来、还没跑过的会话（`AppModel.sessionBlankOf`）：钉在组首，不参与上移/下移。
+  final bool isBlank;
 }
 
 /// 一个分组（`.dsec` + 若干 `.drow`）。`label` 由调用方给：
@@ -109,6 +113,12 @@ class DrawerSection {
 
   /// 组内排序是否可用。
   bool get canReorder => workspaceId != null;
+
+  /// 组内**可重排**的顺序：blank 行被钉在组首，越过它的移动等于原地。
+  List<String> get reorderableIds => [
+    for (final session in sessions)
+      if (!session.isBlank) session.sid,
+  ];
 }
 
 /// 连接状态（`.conn`）。
@@ -454,11 +464,7 @@ class _SessionDrawerState extends State<SessionDrawer> {
                                     in widget.sections[i].sessions)
                                   _SessionDrag(
                                     session: session,
-                                    order: [
-                                      for (final row
-                                          in widget.sections[i].sessions)
-                                        row.sid,
-                                    ],
+                                    order: widget.sections[i].reorderableIds,
                                     pinned: {
                                       for (final row
                                           in widget.sections[i].sessions)
@@ -587,26 +593,22 @@ class _SessionDrawerState extends State<SessionDrawer> {
     return null;
   }
 
-  /// 行长按菜单。动作与 Web 的会话菜单同义（置顶 / 归档），
-  /// 加上触屏需要的「上移 / 下移」。
+  /// 行长按菜单。动作与 Web 的会话菜单同义（置顶 / 归档），加上触屏需要的「上移 / 下移」。
   ///
-  /// **锚在那一行下面**（[anchor] 由 `_SessionRow` 自己量）：
-  /// 长按的是列表里的某一行，菜单从屏幕底部升起来就是"点在上面、弹在下面"
-  /// （用户 2026-10-21 对顶栏那条的原话，同一类问题）。
+  /// **锚在那一行下面**（[anchor] 由 `_SessionRow` 自己量）：长按的是列表里的某一行，
+  /// 菜单从屏幕底部升起来就是"点在上面、弹在下面"（用户 2026-10-21 的原话）。
   ///
   /// Note: 为什么是菜单不是拖动、为什么没有删除 —— 见
   /// `.agents/notes/implemented/2026-10-21-sidebar-session-pin-and-reorder.md`。
   Future<void> _showSessionMenu(DrawerSession session, Rect anchor) async {
     final section = _sectionOf(session.sid);
-    final rows = section?.sessions ?? const <DrawerSession>[];
     final pinned = {
-      for (final row in rows)
+      for (final row in section?.sessions ?? const <DrawerSession>[])
         if (row.isPinned) row.sid,
     };
-    final display = [for (final row in rows) row.sid];
-    // 不是真工作区的组（「未分组」/ 没有工作区清单）**不能重排**：
-    // `workspace.insertSessionBefore` 要 workspaceId，而这些会话没有归属。
-    // 硬发出去只会得到一句失败 —— 所以菜单项留着但不可点，与边界项同一条理由。
+    final display = section?.reorderableIds ?? const <String>[];
+    // 不是真工作区的组（「未分组」/ 没有清单）**不能重排**：`insertSessionBefore`
+    // 要 workspaceId，硬发只会得到一句失败 —— 菜单项留着但不可点，与边界项同一条理由。
     final reorderable = section?.canReorder ?? false;
     final up = !reorderable
         ? null
@@ -1094,8 +1096,7 @@ class _DropLinePainter extends CustomPainter {
 ///   后者带一段触摸偏移，会让"落在上半还是下半"判错）；
 /// - **落点跟着手指走**：`onMove` 里持续更新插入线与锚点，不是等松手（见 [_DropHover]）；
 /// - 落在哪一行的上半/下半 → 插在它前/后（`dropAnchorInDisplayOrder`）；
-/// - 置顶分区由模型函数挡：跨分区直接不接受（与 Web 的 `drag.pinned === node.pinned`
-///   同一条），不弹错、不发请求。
+/// - 置顶分区由模型函数挡：跨分区不接受（与 Web 的 `drag.pinned === node.pinned` 同一条）。
 class _SessionDrag extends StatefulWidget {
   const _SessionDrag({
     required this.session,
@@ -1108,7 +1109,7 @@ class _SessionDrag extends StatefulWidget {
 
   final DrawerSession session;
 
-  /// 本组当前的显示顺序（已分区：置顶在前）。
+  /// 本组可重排的顺序（已分区：置顶在前；blank 行不在内 —— 它钉在组首）。
   final List<String> order;
 
   /// 本组里置顶的 sid。
@@ -1145,8 +1146,9 @@ class _SessionDragState extends State<_SessionDrag> {
   bool _canAccept(DrawerSession data) {
     if (widget.onMove == null) return false;
     if (data.sid == widget.session.sid) return false;
-    // 跨组（= 跨工作区）不做：宿主的重排按工作区账本，跨组没有对应方法。
+    // 跨组不做（宿主的重排按工作区账本）；落点行不在可重排序列里（blank 钉在组首）也不行。
     if (!widget.order.contains(data.sid)) return false;
+    if (!widget.order.contains(widget.session.sid)) return false;
     final pinned = widget.pinned;
     return pinned.contains(data.sid) == pinned.contains(widget.session.sid);
   }
@@ -1195,6 +1197,9 @@ class _SessionDragState extends State<_SessionDrag> {
       onWillAcceptWithDetails: (details) => _canAccept(details.data),
       // **扫到就更新**：标记与锚点都在这里改（不是等松手）。
       onMove: (details) {
+        // 落点行不在可重排序列里（blank 钉在组首）⇒ 不画线：Flutter 对被拒的 target
+        // 也回调 onMove（`drag_target.dart:932-945`），`onWillAccept` 挡不住它。
+        if (!widget.order.contains(widget.session.sid)) return;
         final after = _afterAt(details.offset);
         final data = details.data;
         widget.hover.take(

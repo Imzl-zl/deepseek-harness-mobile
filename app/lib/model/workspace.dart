@@ -210,30 +210,58 @@ bool sessionVisible({
 /// 把会话按工作区分桶。**纯函数**——分组规则只有这一份,抽屉与内联列表都用它。
 ///
 /// 规则:
-/// 1. **顺序照 groups**（电脑侧给的行序即偏好），不为排序自己发明一套；
-/// 2. **置顶的排在各自分组的最前**（组内分区，见 `pinnedSessionIds`）；
+/// 1. **组的顺序照 groups**（电脑侧给的行序即偏好），不为排序自己发明一套；
+/// 2. **组内分区照 DSH Web 的 `sectionMembers`**
+///    （`ui-workspace/src/client/tree.ts:269-283`）：**blank 行在最前 → 置顶 →
+///    其余**，每个分区内部保持传入顺序；
 /// 3. 一个会话**只进一个桶**（第一次被认领就定），不会在两个工作区里出现两遍；
 /// 4. 不在任何工作区里的会话进「**未分组**」—— 如实兜底,不丢；
 /// 5. `groups` 为空（拿不到工作区清单）时返回单个「会话」桶 —— **不分组**，
 ///    而不是按 `cwd` 猜一个分组（`cwd` 与工作区不是一对一,猜错比不分组更难查）。
 ///
+/// ## 为什么 blank 必须打头（而不是跟着账本序）
+///
+/// blank 行就是"当前这个还没开始的新会话"。桌面把它钉在组首
+/// （`pinCurrentBlank`，`tree.ts:213-219`），于是"点新建会话 ⇒ 它在第一个"。
+/// 手机这边非当前的 blank 已被 `sessionVisible` 挡掉，可见集里最多一个 blank ——
+/// 所以"blank 打头"与桌面那条钉首规则在可见集上等价。
+///
+/// **账本序给不出这个结果**：点「新建会话」时先复用账本里已有的 blank
+/// （`AppModel.findBlankSession`），而它的账本位置是当初被建出来时的位置，可能早于
+/// 这一组里所有会话；只有**真正新建**的才会被 `attachSession` 插到账本最前
+/// （`packages/workspace/workspace/src/entity.ts:147-149`）。
+///
 /// [pinnedSessionIds] 来自 `workspace.list` 的 `pinnedSessionIds`
-/// （registry 全局集合）。分区顺序照 DSH Web 的 `sectionMembers`
-/// （`ui-workspace/src/client/tree.ts:273-287`）：**置顶在前，两个分区各自保持
-/// 电脑侧给的相对顺序**。不是把置顶项提到整张表的最前 —— 它属于哪个项目仍归哪个项目。
+/// （registry 全局集合）：**置顶在 blank 之后、普通行之前**。不是把置顶项提到整张表
+/// 的最前 —— 它属于哪个项目仍归哪个项目。
+///
+/// [isBlank] 走与抽屉同一个门（`AppModel.sessionBlankOf`，不是行上的 `blank` 字段）：
+/// 行可能停在旧值（见 `.agents/notes/implemented/2026-11-10-stale-blank-row-self-heals.md`）。
+///
+/// Note: 为什么是"显示层钉首"而不是把账本行挪到最前、为什么不做成时间序 ——
+/// 见 `.agents/notes/implemented/2026-11-17-blank-row-pinned-to-group-head.md`。
 List<WorkspaceBucket> bucketSessionsByWorkspace(
   List<String> sessionIds,
   List<WorkspaceGroup> groups, {
   Set<String> pinnedSessionIds = const {},
+  required bool Function(String sid) isBlank,
 }) {
-  /// 组内分区：置顶的在前，两边都保持原顺序。
-  List<String> partitionPinned(Iterable<String> ids) {
+  /// 组内分区：blank → 置顶 → 其余，三段各自保持原顺序。
+  List<String> partition(Iterable<String> ids) {
     final all = ids.toList();
+    // 先把 blank 问成一个集合再分区：`isBlank` 是调用方给的（读 `AppModel` 的行），
+    // 逐段各问一遍等于同一个判据算三次。
+    final blank = <String>{
+      for (final sid in all)
+        if (isBlank(sid)) sid,
+    };
     return [
       for (final sid in all)
-        if (pinnedSessionIds.contains(sid)) sid,
+        if (blank.contains(sid)) sid,
       for (final sid in all)
-        if (!pinnedSessionIds.contains(sid)) sid,
+        if (!blank.contains(sid) && pinnedSessionIds.contains(sid)) sid,
+      for (final sid in all)
+        if (!blank.contains(sid) && !pinnedSessionIds.contains(sid)) sid,
     ];
   }
 
@@ -241,11 +269,7 @@ List<WorkspaceBucket> bucketSessionsByWorkspace(
     return [
       if (sessionIds.isNotEmpty)
         // 没有工作区清单 ⇒ 这一组里的会话**没有 workspaceId**（上移/下移不可用）。
-        (
-          label: '会话',
-          sessionIds: partitionPinned(sessionIds),
-          workspaceId: null,
-        ),
+        (label: '会话', sessionIds: partition(sessionIds), workspaceId: null),
     ];
   }
   final wanted = sessionIds.toSet();
@@ -261,7 +285,7 @@ List<WorkspaceBucket> bucketSessionsByWorkspace(
     if (ids.isNotEmpty) {
       out.add((
         label: group.title,
-        sessionIds: partitionPinned(ids),
+        sessionIds: partition(ids),
         workspaceId: group.workspaceId,
       ));
     }
@@ -269,11 +293,7 @@ List<WorkspaceBucket> bucketSessionsByWorkspace(
   final orphans = sessionIds.where((sid) => !claimed.contains(sid)).toList();
   if (orphans.isNotEmpty) {
     // 兜底桶：不属于任何工作区 ⇒ 上移/下移不可用（没有 workspaceId 可发）。
-    out.add((
-      label: '未分组',
-      sessionIds: partitionPinned(orphans),
-      workspaceId: null,
-    ));
+    out.add((label: '未分组', sessionIds: partition(orphans), workspaceId: null));
   }
   return out;
 }

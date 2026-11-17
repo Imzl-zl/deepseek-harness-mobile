@@ -15,6 +15,9 @@ WorkspaceGroup ws(String id, String title, List<String> sids) => WorkspaceGroup(
   sessionIds: sids,
 );
 
+/// 一个 blank 都没有（大多数用例只关心归属与置顶分区）。
+bool _noBlank(String sid) => false;
+
 List<String> labelsOf(List<WorkspaceBucket> buckets) => [
   for (final b in buckets) b.label,
 ];
@@ -28,6 +31,7 @@ void main() {
           ws('w2', 'deepseek-harness', ['s3']),
           ws('w1', 'dsh-mobile', ['s1']),
         ],
+        isBlank: _noBlank,
       );
 
       expect(labelsOf(buckets), ['deepseek-harness', 'dsh-mobile', '未分组']);
@@ -44,6 +48,7 @@ void main() {
           ws('w1', 'A', ['s1']),
           ws('w2', 'B', ['s1']),
         ],
+        isBlank: _noBlank,
       );
 
       expect(labelsOf(buckets), ['A']);
@@ -55,13 +60,18 @@ void main() {
         [
           ws('w1', 'A', ['sX']),
         ],
+        isBlank: _noBlank,
       );
 
       expect(labelsOf(buckets), ['未分组'], reason: '空分组头会让人以为这个项目坏了');
     });
 
     test('拿不到工作区清单:不分组,而不是按 cwd 猜', () {
-      final buckets = bucketSessionsByWorkspace(['s1', 's2'], const []);
+      final buckets = bucketSessionsByWorkspace(
+        ['s1', 's2'],
+        const [],
+        isBlank: _noBlank,
+      );
 
       expect(labelsOf(buckets), ['会话']);
       expect(buckets.single.sessionIds, ['s1', 's2']);
@@ -76,13 +86,18 @@ void main() {
         [
           ws('w1', 'dsh-mobile', ['s1']),
         ],
+        isBlank: _noBlank,
       );
 
       expect(buckets[0].workspaceId, 'w1');
       expect(buckets[1].label, '未分组');
       expect(buckets[1].workspaceId, isNull, reason: '兜底桶不能组内重排');
       expect(
-        bucketSessionsByWorkspace(['s1'], const []).single.workspaceId,
+        bucketSessionsByWorkspace(
+          ['s1'],
+          const [],
+          isBlank: _noBlank,
+        ).single.workspaceId,
         isNull,
         reason: '拿不到工作区清单时同样不能重排',
       );
@@ -94,6 +109,7 @@ void main() {
         [
           ws('w1', 'A', ['s1', 's2']),
         ],
+        isBlank: _noBlank,
       );
 
       expect(labelsOf(buckets), ['A']);
@@ -109,6 +125,7 @@ void main() {
           ws('w2', 'B', ['s3', 's4']),
         ],
         pinnedSessionIds: {'s2', 's4'},
+        isBlank: _noBlank,
       );
 
       expect(labelsOf(buckets), ['A', 'B']);
@@ -121,6 +138,53 @@ void main() {
         ['s1', 's2'],
         const [],
         pinnedSessionIds: {'s2'},
+        isBlank: _noBlank,
+      );
+
+      expect(buckets.single.sessionIds, ['s2', 's1']);
+    });
+
+    // 「新建会话不在第一个」的回归网（2026-11-17）。
+    //
+    // 桌面把"当前这个还没开始的新会话"钉在组首（`pinCurrentBlank`，
+    // `tree.ts:213-219`），blank 行也一律排前（`sectionMembers`，`:269-283`）。
+    // 手机可见集里最多一个 blank（非当前的被 `sessionVisible` 挡掉），
+    // 所以"blank 打头"这一条就够 —— 而账本序给不出它：点「新建会话」时复用的
+    // 是账本里**已有的** blank，位置还是它当初被建出来时的老位置。
+    test('blank 行排在组首，不跟账本里它被建出来时的老位置走', () {
+      final buckets = bucketSessionsByWorkspace(
+        ['s1', 's2', 's3'],
+        [
+          ws('w1', 'A', ['s1', 's2', 's3']),
+        ],
+        isBlank: (sid) => sid == 's3',
+      );
+
+      expect(buckets.single.sessionIds, ['s3', 's1', 's2']);
+    });
+
+    test('分区次序是 blank → 置顶 → 其余', () {
+      final buckets = bucketSessionsByWorkspace(
+        ['s1', 's2', 's3'],
+        [
+          ws('w1', 'A', ['s1', 's2', 's3']),
+        ],
+        pinnedSessionIds: {'s2'},
+        isBlank: (sid) => sid == 's3',
+      );
+
+      expect(
+        buckets.single.sessionIds,
+        ['s3', 's2', 's1'],
+        reason: 'blank 压过置顶（`sectionMembers` 的 placeholders 在 leading 之前）',
+      );
+    });
+
+    test('不分组时 blank 同样打头（「会话」桶）', () {
+      final buckets = bucketSessionsByWorkspace(
+        ['s1', 's2'],
+        const [],
+        isBlank: (sid) => sid == 's2',
       );
 
       expect(buckets.single.sessionIds, ['s2', 's1']);

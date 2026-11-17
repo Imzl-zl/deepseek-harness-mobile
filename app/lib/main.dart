@@ -1455,6 +1455,9 @@ class _DshMobileAppState extends State<DshMobileApp>
       ),
       isActive: s.sid == app.currentSid,
       isPinned: app.pinnedSids.contains(s.sid),
+      // 与上面两处同一个判据（`sessionBlankOf`，不是行上的 `blank` 字段）：
+      // 组内分区据此把它钉在第一位，菜单据此把上移/下移置灰。
+      isBlank: app.sessionBlankOf(s.sid),
       // 行首那枚点表达**状态**（照 DSH 的 `Rows.tsx:344-398`），"是不是当前"
       // 由底色说。三个输入都是既有事实：待处理计数、宿主运行态、未读收口。
       // `running` 取 `app.runningOf` 而不是行上的 `s.running` —— 前者的
@@ -1482,6 +1485,10 @@ class _DshMobileAppState extends State<DshMobileApp>
         // 置顶的排在**各自分组**的最前（DSH 的 `sectionMembers`），
         // 不是把置顶项抽到整张表最上面。
         pinnedSessionIds: app.pinnedSids,
+        // blank 行打头（同一条 `sectionMembers`，配合桌面的 `pinCurrentBlank`）：
+        // 「新建会话」出来的那一行永远在组首，不跟账本里它被建出来时的老位置走。
+        // 判据与上面 `visible` / watermark 同一道门，不另算一份。
+        isBlank: app.sessionBlankOf,
       ))
         _sectionOfBucket(app, bucket, bySid, rowOf),
     ];

@@ -68,11 +68,15 @@ class _LedgerClient extends FakeSyncClient {
   }
 }
 
-Map<String, Object?> _row(String sid, {int updatedAt = 1}) => <String, Object?>{
+Map<String, Object?> _row(
+  String sid, {
+  int updatedAt = 1,
+  bool blank = false,
+}) => <String, Object?>{
   'sid': sid,
   'cwd': r'D:\w1',
   'updatedAt': updatedAt,
-  'blank': false,
+  'blank': blank,
   // 恒发键：连接器对每一行无条件写出它们（`connector/src/handlers.ts:740-744`）。
   'running': false,
   'subagent': false,
@@ -93,9 +97,11 @@ Map<String, Object?> _ledger(List<String> sessionIds) => <String, Object?>{
 };
 
 /// 抽屉看到的桶（与 `SessionDrawer` 同一份纯函数）。
-List<WorkspaceBucket> _buckets(AppModel app) => bucketSessionsByWorkspace([
-  for (final s in app.sessions) s.sid,
-], app.workspaces);
+List<WorkspaceBucket> _buckets(AppModel app) => bucketSessionsByWorkspace(
+  [for (final s in app.sessions) s.sid],
+  app.workspaces,
+  isBlank: app.sessionBlankOf,
+);
 
 void main() {
   test('新会话不在账本里 ⇒ 自动补问一次，回来就归组', () async {
@@ -120,6 +126,26 @@ void main() {
       's1',
       's2',
     ], reason: '归组照宿主给的账本，不该留在「未分组」');
+  });
+
+  // AppModel → 分区这条接线：判据是 `sessionBlankOf`（宿主 blank + 本地无可见条目），
+  // 不是行上的 `blank` 字段。场景是真实形态：复用一个老 blank，账本里它排在别的会话后面。
+  // 注：`main.dart` 传参那一处只有类型兜底（`isBlank` 是必填），没有端到端用例。
+  test('账本把新会话排在后面，它照样打头（分区读的是 AppModel 的 blank 判据）', () async {
+    final client = _LedgerClient(
+      rows: [_row('s2', updatedAt: 2), _row('s1', blank: true)],
+      ledger: _ledger(['s2', 's1']),
+    );
+    final app = AppModel(client: client);
+    addTearDown(app.dispose);
+    await app.start();
+    await app.refreshSessionRows();
+    await app.refreshWorkspaces();
+
+    expect(_buckets(app).single.sessionIds, [
+      's1',
+      's2',
+    ], reason: 'blank 行打头，不跟账本序（账本里 s1 在后）');
   });
 
   test('同一个会话只补问一次：宿主没归组就不再问', () async {

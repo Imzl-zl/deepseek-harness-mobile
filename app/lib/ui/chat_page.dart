@@ -3759,6 +3759,10 @@ class _SessionListInlineState extends State<_SessionListInline> {
     final buckets = bucketSessionsByWorkspace(
       visible.map((s) => s.sid).toList(),
       widget.workspaces,
+      // 与抽屉同一条分区规则（blank 打头）。这一屏 `isCurrent` 恒 `false`，
+      // blank 行本来就全被上面挡掉了 —— 传进去是为了让"规则只有一份"成立，
+      // 而不是在这里分叉成第二种顺序。
+      isBlank: widget.isBlank,
     );
     final bySid = {for (final s in visible) s.sid: s};
     // 分组后是"组头 + 行"的扁平序列：给 ListView 用。

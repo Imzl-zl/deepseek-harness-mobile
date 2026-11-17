@@ -21,17 +21,46 @@ import 'package:dsh_mobile/ui/session_drawer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-DrawerSession row(String sid, {bool pinned = false, SessionDot? dot}) =>
-    DrawerSession(
-      sid: sid,
-      title: sid.toUpperCase(),
-      preview: '预览',
-      timeLabel: '10:00',
-      isPinned: pinned,
-      dot: dot ?? SessionDot.idle,
-    );
+DrawerSession row(
+  String sid, {
+  bool pinned = false,
+  bool blank = false,
+  SessionDot? dot,
+}) => DrawerSession(
+  sid: sid,
+  title: sid.toUpperCase(),
+  preview: '预览',
+  timeLabel: '10:00',
+  isPinned: pinned,
+  isBlank: blank,
+  dot: dot ?? SessionDot.idle,
+);
 
 Widget host(SessionDrawer drawer) => MaterialApp(home: Scaffold(body: drawer));
+
+/// 组首是 blank 行的真工作区抽屉（`blank` 被钉在组首，后面是 a / b / c）。
+Widget blankHeadDrawer(void Function(DrawerSession, String?) onMove) => host(
+  SessionDrawer(
+    sections: [
+      DrawerSection(
+        label: 'dsh-mobile',
+        workspaceId: 'w1',
+        sessions: [row('blank', blank: true), row('a'), row('b'), row('c')],
+      ),
+    ],
+    connection: const DrawerConnection(
+      name: '我的电脑',
+      detail: '已连接',
+      platform: 'DSH',
+      online: true,
+    ),
+    footItems: const [],
+    onNewSession: () {},
+    onOpenSession: (_) {},
+    onClose: () {},
+    onMove: onMove,
+  ),
+);
 
 /// 开一行的「…」菜单（2026-10-21 起长按是拖动，菜单在行尾那枚按钮上）。
 Future<void> openMenu(WidgetTester tester, String sid) async {
@@ -189,6 +218,75 @@ void main() {
     await tester.tap(find.text('下移'));
     await tester.pumpAndSettle();
     expect(movedTo, isNull);
+  });
+
+  // Flutter 对被拒的 target 也回调 `onMove`（`drag_target.dart:932-945` 先入
+  // `_enteredTargets` 再问 `didEnter`），所以"落点行不是重排锚点"要挡两处：
+  // `onWillAccept`（别接受这次放下）+ `onMove`（别把线画到它身上）。
+  testWidgets('拖到 blank 行上：线不落到它身上，松手按"最后扫过的那一格"插', (tester) async {
+    String? movedTo;
+    await tester.pumpWidget(blankHeadDrawer((_, before) => movedTo = before));
+
+    final blankRect = tester.getRect(find.text('BLANK'));
+    final rowCenterY = tester
+        .getCenter(find.byKey(const ValueKey<String>('session-menu-blank')))
+        .dy;
+    final aCenterY = tester
+        .getCenter(find.byKey(const ValueKey<String>('session-menu-a')))
+        .dy;
+    final gesture = await tester.startGesture(tester.getCenter(find.text('C')));
+    await tester.pump(const Duration(milliseconds: 700));
+    // 先扫过 a 的上半，再落到 blank 上：线应当留在 a。
+    await gesture.moveTo(Offset(blankRect.center.dx, aCenterY - 8));
+    await tester.pump();
+    await gesture.moveTo(Offset(blankRect.center.dx, rowCenterY + 8));
+    await tester.pump();
+
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('session-drop-row-blank')),
+        matching: find.byKey(sessionDropLineKey),
+      ),
+      findsNothing,
+      reason: 'blank 行不是锚点：它身上不画插入线',
+    );
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(movedTo, 'a', reason: '松手提交最后扫过的那一格：插到 a 之前');
+  });
+
+  // 组首的 blank 行被钉住（`bucketSessionsByWorkspace` 照桌面 `pinCurrentBlank`），
+  // 所以它不参与重排：写回账本也改变不了显示位置。菜单项留着但不可点。
+  testWidgets('组首是 blank 行：它自己的上移/下移都不可点', (tester) async {
+    String? movedTo;
+    await tester.pumpWidget(blankHeadDrawer((_, before) => movedTo = before));
+
+    await openMenu(tester, 'blank');
+    await tester.tap(find.text('上移'));
+    await tester.pumpAndSettle();
+    expect(movedTo, isNull, reason: 'blank 钉在组首，上移是原地');
+    expect(find.text('上移'), findsOneWidget, reason: '不可点时点了不会关菜单');
+
+    await tester.tap(find.text('下移'));
+    await tester.pumpAndSettle();
+    expect(movedTo, isNull, reason: 'blank 钉在组首，下移也是原地');
+  });
+
+  // 这条是"紧挨着 blank 的那一行"：它上移的锚点会是 blank，越过钉住的行 = 原地，
+  // 从前会写回账本却什么都不动。下移不受影响（锚点是它下面那一行）。
+  testWidgets('组首是 blank 行：紧挨着它的那一行上不去，下移照常', (tester) async {
+    String? movedTo;
+    await tester.pumpWidget(blankHeadDrawer((_, before) => movedTo = before));
+
+    await openMenu(tester, 'a');
+    await tester.tap(find.text('上移'));
+    await tester.pumpAndSettle();
+    expect(movedTo, isNull, reason: '越过钉住的 blank 等于原地，不发请求');
+
+    await tester.tap(find.text('下移'));
+    await tester.pumpAndSettle();
+    expect(movedTo, 'c', reason: '下移的锚点是"目标位的下一行"（这里是 c）');
   });
 
   testWidgets('「…」菜单锚在**那一行**下面（跟手判据）', (tester) async {

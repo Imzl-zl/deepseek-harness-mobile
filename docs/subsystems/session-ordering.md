@@ -17,6 +17,42 @@
 真机判据（不是"看起来动了"）：`storages/workspace.json` 里该工作区的 `sessionIds`
 顺序真的变了，且 `storages/dsh_mobile_core.json` 的 dedupe 表出现 `mv-<requestId>`。
 
+## 1.5 组内显示顺序：blank 打头 → 置顶 → 其余
+
+组内分区由纯函数 `bucketSessionsByWorkspace`（`app/lib/model/workspace.dart`）一次算清，
+三个分区各自保持账本给的相对顺序：
+
+1. **blank 行在最前** —— `isBlank` 走 `AppModel.sessionBlankOf`，与抽屉可见性、watermark
+   同一道门（不是行上的 `blank` 字段，理由见 §3.5 与 `blank-session-hero.md`）；
+2. 置顶次之（`workspace.list` 的 `pinnedSessionIds`）；
+3. 其余照账本序（§1）。
+
+次序照桌面 `sectionMembers`（`packages/client/ui-workspace/src/client/tree.ts:269-283`：
+placeholders → leading → rest）。可见集里最多一个 blank —— 非当前的 blank 被
+`sessionVisible` 挡掉（`tree.ts:241`）—— 所以"blank 打头"与桌面的 `pinCurrentBlank`
+（`:213-219`）在可见集上等价。
+
+**它不跟账本序走**：点「新建会话」先复用账本里已有的 blank（`AppModel.findBlankSession`），
+那一行的账本位置是它当初被建出来时的位置，可能早于这一组里所有会话；只有真正新建的
+才会被 `attachSession` 插到账本最前
+（`packages/workspace/workspace/src/entity.ts:147-149`）。所以"新建的会话在第一个"
+是**显示层**给的，不是账本给的。
+
+**blank 行不在可重排序列里**：`DrawerSection.reorderableIds` 把它摘掉，菜单的上移/下移与
+拖动都只认这一段。于是它自己怎么移都是原地，紧挨着它的那一行也上不去（越过它 = 原地），
+拖动也落不到它上面 —— 松手按"最后扫过的那一格"提交（与拖到行间同一条）。它在显示上被钉在
+组首，写回账本改变不了位置。
+
+拖动这条要挡**两处**：`onWillAccept`（不接受这次放下）与 `onMove`（不把插入线画到它身上）。
+Flutter 对被拒的 target 也回调 `onMove`
+（`packages/flutter/lib/src/widgets/drag_target.dart:932-945`：先入 `_enteredTargets`、
+再问 `didEnter`、然后对全部 entered 报 move），只挡前者等于没挡。
+
+**与桌面的已知差异**：桌面默认模式（`orderBy: 'updated'`，
+`packages/client/ui-workspace/src/client/stores.ts:86`）按 `updatedAt` 倒序，回复过的会话
+会跳到组首；手机按账本序。要这条得先有"手动 / 最近更新"的排序开关（桌面那两档，
+`locales.ts:33-34`）。
+
 ## 2. 拖动的反馈：一条线、扫到就显示、松手提交最后扫过的那一格
 
 照 DSH Web 三条（`ui-workspace/src/client/rows/WorkspaceBrowser.module.css:451-493`、
