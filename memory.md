@@ -4,9 +4,17 @@
 > 11-04 及更早的条目在 `memory/archive/2026-11.md`，11-12 ~ 11-15 的窗口在
 > `memory/archive/2026-11b.md`；稳定命令与坑点在 `tools.md`；现状事实在 `docs/`。
 
-## 现在（2026-11-20 晚 · 待发 v0.2.21 / connector 0.1.28）
+## 现在（2026-11-20 晚 · v0.2.21 / connector 0.1.28）
 
-- **两个用户报的故障，都已修，待发版**：
+- **v0.2.21 已发版（2026-11-20）**：`dsh-mobile-v0.2.21-arm64-v8a.apk` **28.7 MB**
+  （`armeabi-v7a` 25.0 / `x86_64` 31.2）+ `dsh-mobile-connector-0.1.28.tgz`（208.6 KB，
+  npm `latest` = **0.1.28**）。Release notes 已手填。
+  **踩到一次**：打标签时 `ci` 红在 `dart format`（新测试文件没本地格式化），
+  `release` 与 `publish-connector` 却是绿的 —— 因为 `release.yml` 不含格式门禁。
+  已补 `f7a0888` 并转绿；`v0.2.21` 标签指向 `df02736`（产物不受影响：
+  APK 与 tgz 都不含那个测试文件，`lib/` 与 `src/` 逐字相同）。
+  **下次发版前先跑 `dart format --set-exit-if-changed`**，别只跑 analyze 和 test。
+- **两个用户报的故障，都已修并随本版发布**：
   1. **App 更新下载必然失败**（v0.2.18~0.2.20 全中）。`DshAppUpdate.kt:48` 回
      `DownloadManager.enqueue()` 的 `Long`，Dart 侧却写 `invokeMethod<String>`，
      `platform_channel.dart:366` 的 `as T?` 每次必抛
@@ -29,7 +37,8 @@
   电脑侧选对地址"为止。
 - **残留风险**：拿不到 MAC 的平台上 `virtual` 未知，VMware 地址仍可能被选中
   （按网段兜底）；网段偏好序是启发式，同机既有 `192.168.x`（不通）与 `10.x`（通）会选错。
-- **救急（升级前）**：管理面板 →「更多地址」→ 对真实局域网地址点「上报」。
+- **v0.2.18~0.2.20 的用户升级路径**：那几版的「App 版本」下载是坏的，
+  必须在 Release 页手动装一次 v0.2.21，之后的版本才能走应用内更新。
 
 ## 上一窗口（2026-11-17 晚 · v0.2.20）
 
