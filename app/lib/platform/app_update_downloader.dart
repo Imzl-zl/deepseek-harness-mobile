@@ -43,13 +43,32 @@ String deviceAbiName() => switch (Abi.current()) {
 
 /// 交给系统下载器。**入队即返回**（不等下载完）：进度与完成通知都归系统。
 ///
+/// ## 为什么是 `invokeMethod<void>` 而不是 `<String>` / `<int>`
+///
+/// 原生 `DshAppUpdate.kt:48` 回的是 `DownloadManager.enqueue()` 的返回值 ——
+/// Kotlin 的 `Long`，过 `StandardMessageCodec` 到 Dart 侧是 `int`，**不是 `String`**。
+/// 而 `MethodChannel._invokeMethod` 的最后一步是 `decodeEnvelope(result) as T?`
+/// （`packages/flutter/lib/src/services/platform_channel.dart:366`），
+/// 泛型一旦写具体就把"原生回了别的类型"变成一次 `TypeError`：
+/// v0.2.18~v0.2.20 这里写的是 `<String>`，用户点「下载」看到的就是
+/// `type 'int' is not a subtype of type 'String?' in type cast` ——
+/// 而且它**不是** `Exception` 的子类，会绕过 `AppModel.downloadAppUpdate`
+/// 的 `on Object catch` 被界面当成失败原话念出来。
+///
+/// 这一层本来就不读这个 id（"入队即返回"），所以类型对它没有意义：
+/// 用 `void` 让任意值都能过，**从形状上**消掉这条错。要读 id 就显式写 `<int>`
+/// 并在原生侧保证不空 —— 今天没有消费者。
+///
 /// 失败**抛异常**（`MissingPluginException` = 非 Android；`PlatformException` =
 /// 原生侧拒了），由 `AppModel.downloadAppUpdate` 收成一句人话给界面。
+/// 注意 `void` 只放过**返回值**，`error` 那条路照旧抛 `PlatformException`。
 Future<void> startAppUpdateDownload({
   required Uri url,
   required String fileName,
 }) async {
-  await _channel.invokeMethod<String>('download', {
+  // Note: 为什么这里必须是 `void` —— 见
+  // `.agents/notes/implemented/2026-11-20-update-download-channel-return-type.md`
+  await _channel.invokeMethod<void>('download', {
     'url': url.toString(),
     'fileName': fileName,
   });

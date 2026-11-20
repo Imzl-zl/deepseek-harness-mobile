@@ -114,30 +114,127 @@ export function describeEndpoints(input: {
 }
 
 /**
- * 默认上报的直连地址集合。
+ * 默认上报的直连地址集合。**最多一条**。
  *
- * 判据只有两条，按优先级：
- * 1. **默认路由那张网卡**（`lanHint`）：内核选路得来的 IPv4 就是手机同一局域网时
- *    最可能拨通的那条；同 IP 出现在多张网卡上也只报它。
- * 2. 拿不到 hint 时**只有唯一一条候选**才默认报：那可能是显式绑定到某个地址
- *    （`listenHost` 不是 `0.0.0.0`），也可能是单网卡机器。多候选且没有 hint
- *    就不猜 —— 让用户从「更多地址」里点名上报，比替他选一条可靠的。
+ * 判据按顺序：
+ * 1. `lanHint`（默认路由那张网卡的 IPv4）命中一条**非虚拟**候选 ⇒ 就报它。
+ *    普通机器（默认路由 = 局域网）走的正是这一条，与旧判据逐字一致。
+ * 2. hint 拿不到 / 已过期 / 指向虚拟网卡 ⇒ 在**真实局域网 IPv4** 里选一条：
+ *    只认 RFC1918 三段（`192.168/16` → `172.16/12` → `10/8` 偏好序），
+ *    同段取枚举顺序第一条。
+ * 3. 以上都没有 ⇒ **只有唯一一条非虚拟候选**才报（显式绑定 `listenHost` / 单网卡机器）。
+ *
+ * **虚拟网卡（TUN / VMware / Hyper-V / Docker，按 MAC OUI 认定）一律不进默认集合**，
+ * 即使它是唯一候选 —— 那种机器确实没有手机拨得通的局域网地址，该走中转。
+ * 不猜一条：一条拨不通的地址上码只会让手机白等超时。
+ *
+ * 其余候选（VMware 虚拟网卡、轮换出来的 IPv6 GUA、Tailscale 的 CGNAT）进「更多地址」
+ * 折叠区，用户点名 `extra` 才上报；`extra` 是显式表态，不受上面的判据约束。
+ *
+ * ## 为什么不再以 `lanHint` 为准（2026-11-20）
+ *
+ * 旧判据是"只报 `lanHint` 命中的那条"，它默认**默认路由所在的网卡就是局域网网卡**。
+ * 开代理 / VPN（TUN 模式）时这个前提不成立：内核选路会落到 TUN 虚拟网卡上
+ * （实测 `198.18.0.1`），于是
+ *
+ * - TUN 在候选池里 ⇒ 上报拨不通的 TUN 地址；
+ * - `lanHint` 刷新后匹配不上 ⇒ 多候选下**一条都不报** ⇒ 出码报"没有可上报的地址"。
+ *
+ * 两种坏法同一天在同一个用户身上出现过。而"哪条地址是局域网"是**地址自己**的
+ * 事实（RFC1918 段），不需要问内核 —— 内核只回答"先拨哪条"，那是排序问题。
+ *
+ * 判据与 `transport/relay-url.ts` 的 `isNonPublicHost` 同源：那个函数回答的是
+ * "要不要放行明文"，粒度更宽（含 CGNAT / link-local / ULA）；这里只认
+ * **家用/公司局域网 IPv4** 三个段 —— TUN 的 `198.18/15`、CGNAT 的 `100.64/10`
+ * 属于"手机拨不通"，不该进默认集合。
  *
  * 返回的是**完整 URL 集合**（端口也在内），因为上报/隐藏都按 URL 键控。
  *
- * Note: 为什么默认只报主地址、为什么多候选不猜 —— 见
- * `.agents/notes/implemented/2026-11-06-default-advertise-main-ip.md`
+ * Note: 为什么是"地址是不是局域网"而不是"默认路由是谁" —— 见
+ * `.agents/notes/implemented/2026-11-20-advertise-by-address-not-by-default-route.md`；
+ * 旧判据的来历与被取代的代价 —— 见
+ * `.agents/notes/implemented/2026-11-06-default-advertise-main-ip.md`。
  */
 export function defaultDirectUrls(
-  urls: readonly { url: string }[],
+  urls: readonly { url: string; virtual?: boolean }[],
   lanHint: string | null | undefined,
 ): ReadonlySet<string> {
-  const hint = lanHint
-  if (hint !== null && hint !== undefined && hint !== '') {
-    const matched = urls.filter((entry) => hostOf(entry.url) === hint)
+  // **虚拟网卡先排除**：TUN 的 `198.18.0.1`（FlClash）与 VMware 的 `192.168.x.1`
+  // 都落在可拨网段里，单看地址分不出来 —— 而它们手机都拨不通。
+  // 判据来自监听面带出的 MAC 事实（`transport/listener.ts` 的 `isVirtualMac`）。
+  const real = urls.filter((entry) => entry.virtual !== true)
+
+  // 1. `lanHint`（默认路由那张网卡的 IPv4）命中一条**真实**网卡 ⇒ 就报它。
+  //    TUN 抢走默认路由时 hint 指向的是虚拟网卡，这一步自然落空，
+  //    于是走到第 2 条 —— 这正是 2026-11-20 要修的那个洞。
+  const hint = lanHint ?? ''
+  if (hint !== '') {
+    const matched = real.filter((entry) => hostOf(entry.url) === hint)
     if (matched.length > 0) return new Set(matched.map((entry) => entry.url))
   }
-  return urls.length === 1 ? new Set([urls[0]!.url]) : new Set()
+
+  // 2. hint 拿不到 / 已过期 / 指向虚拟网卡：**在真实局域网 IPv4 里选**。
+  //    仍然只报一条（手机端点列表不该被多条地址占满 —— 2026-11-06 用户的
+  //    原话是"能用的就是主机的 IP 地址吧？这不是多余？"）。
+  //    选哪条：`192.168/16` 先于 `172.16/12` 先于 `10/8`
+  //    （家用/公司最常见的网段排前面），同段取枚举顺序第一条。
+  const lan = real.filter((entry) => isLanIpv4(hostOf(entry.url)))
+  if (lan.length > 0) {
+    const best = [...lan].sort(
+      (a, b) => lanRank(hostOf(a.url)) - lanRank(hostOf(b.url)),
+    )[0]!
+    return new Set([best.url])
+  }
+
+  // 3. 没有真实局域网地址：唯一一条候选（显式绑定 `listenHost` / 单网卡机器）才报。
+  //    **虚拟标过的不算** —— 那是"知道拨不通"的地址。
+  if (real.length === 1) return new Set([real[0]!.url])
+  return new Set()
+}
+
+/**
+ * 局域网网段的偏好序：`192.168/16` → `172.16/12` → `10/8`。
+ *
+ * 这只是**顺序**，不是"报不报"：三段都是 RFC1918 私有网段，都合法。
+ * 家用路由器出厂默认几乎都是 `192.168.0/24` 或 `192.168.1/24`，
+ * 所以它排前面命中率最高。
+ */
+function lanRank(host: string): number {
+  if (host.startsWith('192.168.')) return 0
+  if (host.startsWith('172.')) return 1
+  return 2 // 10/8
+}
+
+/**
+ * 这是不是一个**手机在同一局域网里拨得通**的 IPv4（`ws://` / `wss://` URL 也行）。
+ *
+ * 只认 RFC1918 的三段：`10/8`、`172.16/12`、`192.168/16`。
+ * **不认** CGNAT（`100.64/10`，Tailscale 等组网用它 —— 那是另一条路，
+ * 用户点名 `extra` 才该上码）、**不认** TUN 的 `198.18/15`、**不认**回环。
+ *
+ * 导出是给"报错文案要按同一判据分档"用的（`index.ts` 的 `listenerNoAddressReason`）——
+ * 文案与判据说两套话，就会在用户最需要准确的时刻给出一句错话。
+ */
+export function isLanAddress(url: string): boolean {
+  return isLanIpv4(hostOf(url))
+}
+
+function isLanIpv4(host: string): boolean {
+  const parts = host.split('.')
+  if (parts.length !== 4) return false
+  const octets: number[] = []
+  for (const part of parts) {
+    if (part === '' || part.length > 3) return false
+    const value = Number(part)
+    if (!Number.isInteger(value) || value < 0 || value > 255) return false
+    octets.push(value)
+  }
+  if (octets.length !== 4) return false
+  const [a, b] = octets as [number, number, number, number]
+  if (a === 10) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  if (a === 192 && b === 168) return true
+  return false
 }
 
 /** 取 URL 的主机部分（IPv6 去掉方括号）；解析失败回空串，不猜。 */

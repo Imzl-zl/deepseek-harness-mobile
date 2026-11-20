@@ -61,7 +61,11 @@ test('空 label 不上线（它不是身份，缺了让手机自己造）', () =
   assert.deepEqual(result.endpoints[0], { kind: 'direct', url: 'ws://10.0.0.2:8788' })
 })
 
-test('多个网卡且没有默认路由提示：一条都不默认报（多候选不猜）', () => {
+test('多个网卡且没有默认路由提示：仍选出**局域网 IPv4**，不选 CGNAH/组网地址', () => {
+  // 2026-11-20 改：旧判据在这里"一条都不报"（多候选不猜）。
+  // 但 `100.100.1.2` 是 Tailscale（CGNAT 段 `100.64/10`），手机在普通 WiFi 下
+  // 拨不通；而 `192.168.1.5` 是真局域网 —— 这不是"猜"，是**地址自己的事实**。
+  // 不选它的后果就是用户截图里那句「没有可上报的地址」。
   const result = describeEndpoints({
     relayUrl: 'wss://relay.example',
     listener: fakeListener([
@@ -70,9 +74,9 @@ test('多个网卡且没有默认路由提示：一条都不默认报（多候�
     ]),
   })
   assert.deepEqual(
-    result.endpoints.filter((e) => e.kind === 'direct'),
-    [],
-    '没有内核选路结果时，报哪条都是猜 —— 让用户从「更多地址」点名上报',
+    result.endpoints.filter((e) => e.kind === 'direct').map((e) => e.url),
+    ['ws://192.168.1.5:8788'],
+    '选真局域网地址；Tailscale 的 CGNAT 地址要用户点名 extra 才上报',
   )
 })
 

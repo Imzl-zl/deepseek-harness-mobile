@@ -92,6 +92,41 @@ export interface ListenerOptions {
 export interface DialableUrl {
   readonly url: string
   readonly label: string
+  /**
+   * 这张网卡看起来是**虚拟的**（TUN / VMware / Hyper-V / Docker…）。
+   *
+   * 判据在 [isVirtualMac]，**不是**网卡名 —— 名字随系统语言、驱动版本、
+   * 虚拟化产品变，而 MAC 的 OUI 是分配事实。
+   *
+   * 为什么这个字段只在这里标、不在这里过滤：监听面枚举的是**候选池**
+   * （面板的「更多地址」要从这里列），"默认上报哪几条"是
+   * `endpoints.ts` 的 `defaultDirectUrls` 的事。这里只把**观察到的事实**
+   * 带出去，判据仍然只有一处。
+   *
+   * `undefined` = 拿不到 MAC（某些平台不报）—— 那时当作"不知道"，
+   * 调用方按地址段判断，**不当成虚拟**。
+   */
+  readonly virtual?: boolean
+}
+
+/**
+ * 这张网卡的 MAC 是否属于**虚拟网卡**的特征。
+ *
+ * - `00:00:00:00:00:00`：TUN / 点对点隧道（FlClash、Clash Verge、WireGuard 的
+ *   wintun 适配器都是这个）；
+ * - `00:50:56` / `00:0c:29` / `00:05:69` / `00:1c:14`：VMware；
+ * - `00:15:5d`：Hyper-V；
+ * - `02:42`：Docker 网桥。
+ *
+ * **只认这些确定的事实**，不按名字猜（"VMware Network Adapter VMnet8" 这种
+ * 名字在中文/英文/其它虚拟化产品下各不相同，猜名字又脆又漏 —— 这正是
+ * `listener.ts` 当初拒绝按名字过滤的理由）。
+ */
+export function isVirtualMac(mac: string | undefined): boolean {
+  if (mac === undefined || mac === '') return false
+  const m = mac.toLowerCase()
+  if (m === '00:00:00:00:00:00') return true
+  return /^(00:50:56|00:0c:29|00:05:69|00:1c:14|00:15:5d|02:42)/.test(m)
 }
 
 export interface Listener {
@@ -119,12 +154,12 @@ const WILDCARD_HOSTS = new Set(['', '0.0.0.0', '::', '[::]'])
  * 每条带上网卡名 —— 手机上显示"同一网络(Wi-Fi)"比显示一个 IP 有用，
  * 而切网卡时列表自己变（这正是"发现"的意义）。
  */
-function dialableUrls(host: string, port: number): { url: string; label: string }[] {
+function dialableUrls(host: string, port: number): DialableUrl[] {
   const base = WILDCARD_HOSTS.has(host) ? null : normalizeHost(host)
-  const out: { url: string; label: string }[] = []
+  const out: DialableUrl[] = []
   const seen = new Set<string>()
 
-  const push = (address: string, label: string): void => {
+  const push = (address: string, label: string, virtual: boolean): void => {
     // IPv6 要括起来：`ws://[fe80::1]:8788`，否则端口会被当成地址的一部分。
     const wrapped = address.includes(':') && !address.startsWith('[')
       ? `[${address}]`
@@ -132,11 +167,12 @@ function dialableUrls(host: string, port: number): { url: string; label: string 
     const url = `ws://${wrapped}:${port}`
     if (seen.has(url)) return
     seen.add(url)
-    out.push({ url, label })
+    out.push(virtual ? { url, label, virtual } : { url, label })
   }
 
   if (base !== null) {
-    push(base, host)
+    // 显式绑定到某个地址：那是用户点名的，不按虚拟网卡判据打折。
+    push(base, host, false)
     return out
   }
 
@@ -152,11 +188,13 @@ function dialableUrls(host: string, port: number): { url: string; label: string 
       // （`fe80::1%eth0`），URL 里带 `%` 会被当成转义，所以跳过。
       if (entry.family === 'IPv6' && entry.address.toLowerCase().startsWith('fe80')) continue
       // **全部枚举，不按网卡名过滤**：哪些地址手机拨得通，电脑侧无从得知
-      // （这台机器同时有以太网与 WiFi，还有 VMware 虚拟网卡）。过滤虚拟网卡
-      // 靠名字匹配，又脆又漏；真正的默认上报集合在 `endpoints.ts` 的
-      // `defaultDirectUrls`（只报默认路由那张网卡的 IPv4），这里枚举的是
-      // **候选池** —— 面板的「更多地址」要靠它才列得出来。
-      push(entry.address, name)
+      // （这台机器同时有以太网与 WiFi，还有 VMware 虚拟网卡）。真正的默认上报集合在
+      // `endpoints.ts` 的 `defaultDirectUrls`，这里枚举的是 **候选池** ——
+      // 面板的「更多地址」要靠它才列得出来。
+      //
+      // 只把 [isVirtualMac] 观察到的事实带出去（虚拟网卡是 TUN 抢默认路由后
+      // 默认集合报错地址的根因），**不在这一层过滤** —— 判据只有一处。
+      push(entry.address, name, isVirtualMac(entry.mac))
     }
   }
   // **IPv4 排在前**：手机的常见情形是同局域网 IPv4 直连，而拨号是**顺序**的 ——

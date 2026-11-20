@@ -1,10 +1,37 @@
 # dsh-mobile 项目状态
 
 > 快照 + 最近窗口，**覆盖更新**，不做流水追加。历史在 git 与 `.agents/notes/`；
-> 11-04 及更早的条目在 `memory/archive/2026-11.md`；稳定命令与坑点在 `tools.md`；
-> 现状事实在 `docs/`。
+> 11-04 及更早的条目在 `memory/archive/2026-11.md`，11-12 ~ 11-15 的窗口在
+> `memory/archive/2026-11b.md`；稳定命令与坑点在 `tools.md`；现状事实在 `docs/`。
 
-## 现在（2026-11-17 晚 · v0.2.20）
+## 现在（2026-11-20 晚 · 待发 v0.2.21 / connector 0.1.28）
+
+- **两个用户报的故障，都已修，待发版**：
+  1. **App 更新下载必然失败**（v0.2.18~0.2.20 全中）。`DshAppUpdate.kt:48` 回
+     `DownloadManager.enqueue()` 的 `Long`，Dart 侧却写 `invokeMethod<String>`，
+     `platform_channel.dart:366` 的 `as T?` 每次必抛
+     `type 'int' is not a subtype of type 'String?'`。改成 `invokeMethod<void>`；
+     新增 `app/test/app_update_download_test.dart` 5 条（驱动真通道，此前只有缝的替身）。
+     笔记 `implemented/2026-11-20-update-download-channel-return-type.md`。
+  2. **代理 TUN 抢走默认路由 ⇒ 出码报"没有可上报的地址"**。旧 `defaultDirectUrls`
+     假设"默认路由网卡 = 局域网网卡"；TUN 在场时两个坏分支（码里写 `198.18.0.1`
+     手机拨不通 / hint 落空时 6 条候选一条都不报）。判据改成**地址自己的事实**：
+     `listener.ts` 新增 `isVirtualMac`（MAC OUI：全零=TUN、`00:50:56`=VMware、
+     `00:15:5d`=Hyper-V、`02:42`=Docker）带出 `virtual` 事实，`defaultDirectUrls`
+     排除虚拟网卡后优先 hint、否则在 RFC1918 里按 `192.168→172.16→10` 选一条
+     （**仍只报一条**）。报错文案按候选实况分档（`isLanAddress` 与判据同源）。
+     笔记 `implemented/2026-11-20-advertise-by-address-not-by-default-route.md`。
+- **本轮门禁**：app **1973** · connector **885** · relay **183** · protocol 454/26/49 ·
+  boundary **962** · size PASS · `dart analyze --fatal-infos` 0 issues。
+  变异校验：更新下载 2 红；TUN 判据两类各 3~4 红；文案分档 1 红。
+- **未做**：**两件都没真机验**。① 更新下载（`DownloadManager` 落盘/通知/点开安装
+  这三跳是系统行为）；② 扫码后局域网那条真能不能拨通。都只到"请求发得出 /
+  电脑侧选对地址"为止。
+- **残留风险**：拿不到 MAC 的平台上 `virtual` 未知，VMware 地址仍可能被选中
+  （按网段兜底）；网段偏好序是启发式，同机既有 `192.168.x`（不通）与 `10.x`（通）会选错。
+- **救急（升级前）**：管理面板 →「更多地址」→ 对真实局域网地址点「上报」。
+
+## 上一窗口（2026-11-17 晚 · v0.2.20）
 
 - **v0.2.20 已发版（2026-11-17）**：`dsh-mobile-v0.2.20-arm64-v8a.apk` **27.4 MB**
   （`armeabi-v7a` 23.8 / `x86_64` 29.7）+ `dsh-mobile-connector-0.1.27.tgz`（0.1 MB，
@@ -58,310 +85,6 @@
 - **未做**：**真机没验**（新建之后抽屉里那一行是否真在组首）—— v0.2.19 就是给这一步用的。
   接线缺口：`main.dart` 传的是不是真判据只有类型兜底，没有端到端用例。
 
-## 现在（2026-11-15）
-
-- **v0.2.18 已发版（2026-11-15）**：`dsh-mobile-v0.2.18-arm64-v8a.apk` **27.3 MB**
-  （`armeabi-v7a` 23.8 / `x86_64` 29.7）+ `dsh-mobile-connector-0.1.26.tgz`（200.8 KB，
-  npm `latest` = **0.1.26**，OIDC + provenance）。三个 run 全绿
-  （`ci` 7m38s / `release` 5m58s / `publish-connector` 35s）；**Release notes 已手填**
-  （流水线按 PR 自动生成的仍只有一条 compare 链接）。
-  内容 = 三笔：**① 改动卡 `+N −M` 不再显示 `+0 −0`**、**② 用量页按时间预算扫 +
-  `daysFailed`**、**③ 「App 版本」一行 = 检查更新 + 按 ABI 直接下载**（详见下两条）。
-- **该发版前未做的一件事**：这三笔**都没在真机上验过**（`+N −0` 长什么样、
-  用量页几趟、下载 → 通知 → 安装三跳）。发版是用户知情后要的。
-
-- **两条"数字显示成没变化"的真机反馈，两个根因都是照抄漏了一条宿主规则**：
-  1. **工具卡的 `+N −M` 在写新文件时是 `+0 −0`**。真日志（本机会话按帧解压）里
-     `write` 建文件的 `meta.diffs` 是**空数组**（`fs/tool-fs/src/write.ts:103-110`：
-     `before === null` 没有旧文本可比），而桌面在
-     `ui-tool/.../diff-card-model.ts:113-116` 有回退：**空 diffs 的 `write` 退回调用参数
-     的 `content`（整份算新增）、空 diffs 的 `edit` 整块不画**；失败的结果也不画。
-     现在 `model/tool_view.dart` 有 `intendedDiffOf` / `intendedDiffStatOf`，
-     `data/projection.dart` 按那三档决定（运行中也按参数先显示，`:110`）。
-     顺手把 `diffStatOf`（无专用卡的工具如 `apply_patch`）与 `diffStatOfTexts` 收成同一口径
-     —— 从前 `{a,b}→{a,c}` 在一张卡上算 `+2 −2`、另一张算 `+1 −1`。
-  2. **用量页"加载半天 + 偶尔报错"**。本机实测 **517 个会话全在 60 天窗口内（670 MB 日志）**，
-     而连接器是 `DAY_SCAN_BATCH = 4`（每请求只新扫 4 个）⇒ **130 个来回**，每个来回还重做
-     一遍 `session.list()` + 整份聚合（手机只读 `byDay`/`daysProgress`）；且那批用
-     `Promise.all` —— **一个会话读失败整页报错**，补批 `Timer` 停在成功分支外。
-     修法：**按时间预算分批**（`DAY_SCAN_BUDGET_MS = 1500`、并发 4）+ **失败隔离**
-     （`allSettled` + 新字段 `daysFailed`，页面写"有 N 个会话读不出来"）+
-     **失败也算"试过"**（`scanned` 按 `attempted` 走，否则补批循环追不上 `total`）。
-     笔记 `implemented/2026-11-15-usage-scan-budget-and-diffstat.md`。
-- **「App 版本」那一行既是状态也是动作**（2026-11-15 用户第二轮反馈：「为啥一个版本号
-  一个检测更新，检测更新还只是检测更新，不是直接下载」）。上一版拆成两行（「检查更新」+
-  「App 版本（点按复制）」），查到新版只给一句"去 Releases 页下载"——而发布物是按 ABI
-  拆的三个包，装错报「应用未安装」，等于把最容易错的一步推给用户。
-  现在**一行**（`ui/app_update_row.dart`）：点 = 查；查到 ⇒ 弹「下载并安装」；已知有新版
-  再点 = **直接下载**；复制挪到长按。挑包是纯函数（`core/app_update.dart` 的
-  `apkAssetFor`：先 `-<abi>.apk`、再任意 `.apk`，ABI 来自 `dart:ffi` 的 `Abi.current()`），
-  下载交给系统 `DownloadManager`（**新通道 `dsh/app-update`** + `DshAppUpdate.kt`，
-  落 `Downloads/`，完成通知点开即安装）。非 Android 退成"复制下载链接"。
-  笔记 `implemented/2026-11-15-version-row-checks-and-downloads.md`；
-  **`release.yml` 的资产命名（`dsh-mobile-<tag>-<abi>.apk`）从此是契约**（写进了
-  `docs/cookbook/release.md`，2026-11-10 那篇"App 不认资产名"的结论已被追加标注）。
-- **本轮门禁**：app **1953** · connector **862** · boundary **956** · size 通过
-  （预算三处按规矩改并写明理由：`app_model.dart` 5204 → 5269、
-  `usage_page.dart` 1600 → 1634、`settings_page.dart` 1353 → **收紧成 1350**
-  ——版本行那三段搬去 `ui/app_update_row.dart`）。
-  变异校验四条，各恰好红 1-2 条：拆 `write` 回退 ⇒ 2；去"失败不画" ⇒ 1；
-  循环只跑一批 ⇒ 1；失败重新抛出 ⇒ 1。时间预算分支用 `node:test` 的 mock `Date` 做成确定性。
-- **未做**：这两处都**没有真机量过**（`+N −0` 长什么样、活动那几趟实际几秒）；
-  用量页每趟仍重算总量（被否方案，会话数再涨一个量级时回来做"两个面分开"）。
-
-## 现在（2026-11-14）
-
-- **v0.2.17 已发版（2026-11-14）**：`dsh-mobile-v0.2.17-arm64-v8a.apk` **27.3 MB**
-  （`armeabi-v7a` 23.8 / `x86_64` 29.7）+ `dsh-mobile-connector-0.1.25.tgz`（npm `latest` = **0.1.25**）。
-  三个 run 全绿（`ci` / `release` 5m54s / `publish-connector` 30s）。内容 = **Agent Teams 任务板 + 开关**
-  + 真机上修掉的两处（菜单不监听 `AppModel` 导致"写完不翻"、开关换成本仓原型的 42×25）。
-  **Release notes 待手填**（流水线按 PR 自动生成的只有一条 compare 链接）。
-- **DSH 0.2.2-rc.3 体检：不用改代码，也没抬线**。本机宿主已在 **2026-11-13 15:30** 自己升到
-  **rc.3**（`app.asar` 的 `LastWriteTime`），而连接器 22:06 还在写落盘点 ⇒ 它**已经在 rc.3 上真跑过**。
-  形态因此与上一轮相反：**类型基线（rc.1）比跑着的宿主旧**。
-  体检结论：`caps.ts` 的 **21 个服务键**、16 个服务的方法、6 组事件形状、`session.projections`
-  的键集合（rc.1→rc.3 **49 → 51，只增 `conversationContinuation` / `worktree`，零删除**）
-  全部在 rc.3 上原样存在；rc.2→rc.3 只有 **6 个提交**，`packages/` 下 374 个 `package.json`
-  有差异、其中 373 个只改版本号（余 1 个是全新包），非清单文件只动了 90 个。
-  **不抬线的理由**：`tests/manifest-compat.test.ts` 强制 `engines.dsh` 下界 == 钉住的版本，
-  所以“抬 devDeps”必然连带放弃 rc.1/rc.2 宿主；而体检恰好证明那一段是真能用的。
-  笔记 `implemented/2026-11-14-dsh-022-rc3-audit.md`。
-- **Agent Teams 接入（任务板 + 开关）**：任务板是右抽屉第四枚「任务板」，数据就是已在读的
-  `session.projections` 里的 `agentTeam`（**读路径零新增方法**）；开关照 DSH 放在
-  **模型菜单**末尾（`ui/team_mode_row.dart`），停用要先确认且**只在用过模型时**确认
-  （`TeamModeToggle.tsx:47`），**不做乐观更新**（写成功→重读投影→再画）。
-  连接器只加 `caps.team` + **一个写方法** `team.setEnabled`（**方法面 52 → 53**），
-  它经 gateway 转给宿主的 `agentTeams/setEnabled({agentId, enabled})`——让宿主的 lookup
-  自己决定要不要 resume，与 Web 同一条路。
-  **子会话两边都不给**（tab 与开关都藏）：照抄 DSH（`TeamModeToggle.tsx:30-32`），
-  且子会话那块投影本身是空板（与"根会话关着"同形）。
-  宿主的三个判断手机一律不算：`ready`（DAG）、`writeScopeWarnings`、
-  `ownerName ?? ownerId ?? 未分配`。
-  真宿主证据：本机 rc.3 的 projcache 里 40 个样本有 13 个带 `agentTeam`（含 `enabled: true` 那份）。
-  笔记 `implemented/2026-11-14-agent-team-integration.md`；契约 `docs/subsystems/agent-team.md`。
-  **未做**：真机点一遍开关并看 `team/mode` 落盘。
-- **开关的样子只有一枚**（2026-11-14 真机反馈后定）：手机端开关基线**不是** DSH Web 的
-  36×20，而是本仓原型 `mock/proto/styles.css` 的 `.settings-toggle` —— 42×25、圆角 13、
-  滑块 19 内缩 3、开态白滑块 + `accent` 轨道、0.1s `cubic-bezier(.4,0,.2,1)`。
-  落成 `ui/dsh_switch.dart`，**设置页行尾 / 插件页逐行启停 / 团队开关三处共用**
-  （原来的 `SwitchListTile.adaptive` 与 Material `Switch` 都已换掉；代价：那两页"点整行切换"没了）。
-- **真机抓到的那个 bug**：模型菜单是一次性构建的静态 widget，不监听 `AppModel` ——
-  开关写完（宿主 `team/mode` 已落盘、幂等表 4 条 `ok:true`）手机上却停在旧值。
-  修法：菜单主体搬进 `ui/model_sheet.dart` 并包 `ListenableBuilder(app)`；
-  另有一条用例钉"`setTeamEnabled` 必须通知监听者"。**门禁与单测都没抓到它，只有真机抓到。**
-- **本轮门禁（2026-11-14）**：app **1932** · connector **860** · boundary **945** · size 通过
-  （四处预算按规矩抬了数字并写明理由：`side_pane.dart` 950 → 982、`app_model.dart` 5150 → 5204、
-  `settings_page.dart` 1350 → 1353、`AppModel` 方法数 176 → 177）；
-  `ChatPageState` **没涨**——开关那行与模型菜单主体都搬出去了。
-  变异校验三条，各恰好红 1 条：拆掉"子会话不给 tab"、拆掉 `ownerId` 回落、拆掉停用确认判据。
-- **一条要记住的反直觉事实**：`docs/upgrade-guide/v0.2.2-rc.2/` 的 **13 条 breaking topic
-  全都不在 rc.3 上** —— 那个目录只在 master，rc.2/rc.3 两个标签下最新都只到 `v0.2.2-rc.1`。
-  它们是 rc.3 之后才落到 master 的下一批（6 条已实测：`./brand` 子路径、`rankByName`、
-  `resolveConfig`、`authorizeIndex`、`ptc-runtime-python`、`JOB_BACKGROUND_DISABLED`
-  在 master 上都没了、在 rc.3 上都还在）。**有 guide ≠ 变更已进到你用的那一版。**
-
-## 现在（2026-11-13）
-
-- **连接方式收成三层**：**能力**（电脑通道 `running` / `connected`）/ **策略**（手机
-  `device.route_policy`：自动 / 只用直连 / 只用中转，**配对与连接共用**）/ **当前**（界面一句事实）。
-  拨号过滤只有一处（`core/endpoint_policy.dart`），`dialOrder` 分桶（直连整体在前，冷却全局最后）；
-  配对 `auto` 不再看 `/24`（`myIpv4` 只用于多条地址排序）。出码载荷多可选 `routes`：
-  中转控制面没连上就**不登记、码里没有 relay**；面板出码卡两档（同一 WiFi / 任何网络）。
-- **连接面板 11 → 6 行**：删「打开侧面板」「手动填写地址」，合并「重新连接 / 重试」；
-  新「连接方式」页（策略三档 + 地址即点即连 + 添加地址）；设置页「配对时先试」改名「连接方式」；
-  空态删「打开会话抽屉」。小字三原则（不可逆 / 与相邻项相反 / 动态值）见决策笔记。
-- **后台任务通知默认关**：`device.notify_tasks` = off（默认）/ failures / all；
-  审批、提问、整轮完成三类不给开关。
-- **本轮门禁**：app **1897** · connector **856** · boundary **908** · size 通过
-  （AppModel 176 方法，+1 = 通知策略 setter）· proto **34 项**（新增 4 条，做过变异校验：
-  把「打开侧面板」加回去恰好那一条红）。**真机验收四条全过**（2026-11-14，隔离实例 :3099 +
-  本地中继 :8787）：关中转出码→any 拒、lan 出码且手机直连；关直连出码→lan 拒、any 码里无 `lan`
-  且 `routes:["relay"]`，手机自动落中转；两条都关→「两条路都没开…」；策略=只用直连 + 停直连 +
-  开中转 → 手机**不回落**（证明是"不试"而非"排后"）。验收时顺带修掉一个真 bug：
-  **`extra` 在监听面停着时仍上报直连地址**，二维码因此谎称局域网可用 —— 修法是
-  `describeEndpoints` 里"没有监听面 ⇒ 一条直连都不报"（含 `extra`），回归用例在
-  `tests/endpoints.test.ts`，connector 现 **857 项**。
-
-## 现在（2026-11-12）
-
-- **v0.2.16 已发版（2026-11-12）**：`versionName 0.2.16`（`versionCode` = CI run number）+ 
-  **首个按 ABI 拆包**的版本（`--split-per-abi`）：`dsh-mobile-v0.2.16-arm64-v8a.apk` **28.7 MB**
-  / `-armeabi-v7a` 25.0 MB / `-x86_64` 31.2 MB（上一版通用包 78.8 MB）；
-  `dsh-mobile-connector-0.1.24.tgz`（202 KB，npm `latest` = **0.1.24**，OIDC + provenance）。
-  三个 run 全绿（`ci` 8m12s / `release` 4m42s / `publish-connector` 30s），Release notes 待手填。
-  内容 = 八笔：a11y 第四批（13 处角色 + 关掉一个真入口）· `chat_page` 第二刀（4762 → 4422，
-  上限 4450）· `AppModel` 提醒簇搬去 `data/notices.dart`（5127 行 / 175 方法，上限 5150·175）·
-  直连收 `wss://`（手机手填 + 电脑侧 `extra`）· 三处文档漂移收口 · DSH 0.2.2-rc.2 体检（不用改代码）·
-  文档地图 + 点对点 cookbook · 否决 frp 隧道。各篇笔记见 `implemented/2026-11-12-*`。
-  **体积口径修正**：`docs/cookbook/release.md` §3.5 原写 arm64 41.4 MB（那是本机
-  `--target-platform android-arm64` 的一次量法）；发货的 `--split-per-abi` 产物是 28.7 MB —— 表已改。
-
-- **DSH 0.2.2-rc.2 体检（2026-11-12）**：本机安装的宿主仍是 **0.2.2-rc.1**（= 我们的 pin），
-  npm `next` 是 **rc.2**，`engines.dsh` 的 `>=0.2.2-rc.1 <0.2.3-0` 放行它；
-  16 个服务键 / 20+ 个方法 / `$events` 与两条 waterfall / 10 个事件形状 / 13 个包的导出差集
-  逐项核过，**没有一处被删改** ⇒ rc.2 不用改代码（也没抬类型基线：类型比运行宿主新会掩盖问题）。
-  顺手修掉两条过期引用（`agent-loop/src/tool-calls.ts` 在 rc.1 时就不存在了）。
-  方法与结果见 `implemented/2026-11-12-dsh-022-rc2-audit.md`。
-
-- **文档入口 + 点对点直连（2026-11-10 晚）**：新增 `docs/README.md`（一页纸地图：按任务找文档、
-  连不上时的排查顺序）与 `docs/cookbook/direct-p2p.md`（不经服务器：Tailscale 打洞 / 公网 IPv6，
-  含 `tailscale ping` 证实真点对点的判据）。
-  **不提供 frp 方案**：普通 `tcp` 隧道数据经 VPS 转发，与已有中转重叠；
-  `xtcp` 要两端都跑 frpc，手机装不了 —— 否决理由见 `rejected/2026-11-10-no-frp-tunnel.md`。
-  代码上撤掉「直连只能明文」这条自设边界：手机手填直连收 `wss://`
-  （`app/lib/ui/add_endpoint_dialog.dart`），电脑侧 `extra` 收 `wss://` 任意主机
-  （`connector/src/admin/advertise.ts`）—— 监听面仍然不终结 TLS，TLS 在反代 / `tailscale serve` 那一跳。
-  笔记 `implemented/2026-11-10-direct-endpoint-accepts-wss.md`。顺手修掉一个死分支：
-  直连公网明文以前永远报「必须 WSS」，现在先走「请先勾选确认」。
-  门禁全绿（connector / app / `verify-platform-boundary`，条数以 `tools.md` 为准）。
-
-- **v0.2.15 已发版（2026-11-10）**：Release `dsh-mobile-v0.2.15.apk`（**75.14 MB**，
-  `versionCode 18`（= CI 的 run number）/ `versionName 0.2.15`）+
-  `dsh-mobile-connector-0.1.23.tgz`（连接器本次没改，npm `latest` 仍 0.1.23）。
-  **签名核对**：`apksigner verify --print-certs` → `CN=dsh-mobile, OU=release, O=Imzl-zl, C=CN`、
-  SHA-256 `c0a55225…`，与本机 `app/android/app/release.jks` 同一把。
-  三个 run 全绿（`ci` / `release` / `publish-connector`）；Release notes 是**手填**的
-  （三笔修复直提 main、没走 PR，流水线自动生成的只剩一行 compare 链接）。
-  **真机**：官方包已装，但必须**卸载重装**——我试装时用了 `--build-number=19..23`，
-  比 CI 这次的 run number（18）大，`adb install -r` 会被判降级；卸载导致隔离实例的配对丢失（重扫即可）。
-  教训：以后本机试装包**不要**用大于当前 run number 的 build number，否则会挡住官方更新。
-  内容 = **三笔与「新建会话」相关的修复** + 一个新真机用例：
-  1. 会话行的 `blank` 缓存跟着 `turn/start` 当场翻（原来只等清单重读）；
-  2. 流式尾归**当前会话**（`_liveTailBelongs`：切会话清空、只收当前会话的 `live` 帧）；
-  3. **「标题说新会话、正文是旧对话、点 ＋ 没反应」的兜底**：判据收成
-     `AppModel.sessionBlankOf`（宿主说 `blank` **且** 手里没可见条目，`OtherItem` 不算），
-     顶栏 / hero / 复用 / 抽屉可见性与标签 / 内联列表 / 分页水位全部走它 ——
-     `session/title` 那条通知丢多少次也不会再自相矛盾。
-     笔记 `implemented/2026-11-10-stale-blank-row-self-heals.md`（里面写明“通知为何会丢”仍未证）。
-  真机证据：隔离实例（`D:\tmp\dsh-mobile-home` + `--profile dsh-mobile-test`，直连 18791）
-  + 本机 3425 网关的免费渠道（`free/deepseek-v4.1-flash`，真跑了两轮生成、不花官方账号的钱）；
-  `new_session_real_device_test.dart` 的旧会话换页 / 复用不多建 / 发过一句再点 ＋ 三条全过。
-
-- **「标题变新会话、正文还是旧对话、点 ＋ 没反应」= 那一行停在了 `blank: true`**（2026-11-10）：
-  `blank` 是宿主的字段、手机只缓存，重读清单靠 `session/title` 之类的通知；那条通知
-  一丢（中转抖动 / 进程被冻结 / 重取失败），行就永久卡住 —— 而 `displayTitle` 里
-  blank 压过 title（与 DSH `tree.ts:287` 同形），于是顶栏写「新建会话」、正文还是旧对话，
-  `findBlankSession` 又把它当新会话复用 ⇒ 再点也没反应。健康连接上它自愈（实测标题事件
-  ~1 秒就把整行刷真）。**未证**：通知为什么丢（中转只做字节转发，代码看不出会吞帧）。
-  修法：这道判据收成一道 `AppModel.sessionBlankOf`（宿主说 blank **且** 手里没可见条目，
-  `OtherItem` 不算），顶栏 / hero / 复用 / 抽屉可见性 / 内联列表 / 分页水位全部走它。
-  单测红→绿 + 变异校验；笔记 `implemented/2026-11-10-stale-blank-row-self-heals.md`。
-- **另两条同日修复**：① `turn/start` 到达时那一行当场翻 `blank: false`（笔记
-  `implemented/2026-11-10-blank-row-stale-after-turn.md`）；② 流式尾归当前会话
-  （`_liveTailBelongs`，笔记 `implemented/2026-11-10-live-tail-belongs-to-session.md`）。
-  两条都有单测 + 变异校验，但**都不是**上面那条反馈的根因（真机 A/B 已排除）。
-- **真机复现环境（2026-11-10 跑通）**：隔离 home `D:\tmp\dsh-mobile-home` + `--profile dsh-mobile-test`
-  （web 3099 / 直连 18791）。三件坑在 `tools.md` 的「隔离实例」第 10 条：`relayUrl` 必须私网地址、
-  `POST /api/dsh-mobile/pair` 回 SVG 要 jsQR 解、直连端点要 `pairingStore.saveEndpoints` 自己塞。
-  跑 `integration_test/` **会卸 App**，事后装 Release APK 装回来。
-
-- **v0.2.14 已发版（2026-11-09）**：Release `dsh-mobile-v0.2.14.apk`（78.79 MB，
-  `versionCode 17` / `versionName 0.2.14`）+ `dsh-mobile-connector-0.1.23.tgz`（201 KB，
-  与 0.2.13 那份相同 —— 连接器本次没改）。内容 = **#8 的四件**（后台任务完成通知（按 jobId
-  去重 / 30 分钟窗口）/ 已回答问答标题「问答 · 已回答」/ 文件预览行号 + 面包屑 /
-  轨迹段字段 JSON（标题注明非原始 payload））+ notify 在非 Android 的 release 装配即抛 +
-  边界门禁两处唤醒（扫真实形态、每条规则必须有适用文件）。Release notes 由流水线按 PR
-  自动生成（7 条）。**签名核对**：`apksigner verify --print-certs` →
-  `CN=dsh-mobile, OU=release, O=Imzl-zl, C=CN`、SHA-256 `c0a55225…`，与本机
-  `app/android/app/release.jks` 同一把（`keytool -list -v` 同指纹）⇒ 官方包可覆盖本机构建。
-  笔记 `implemented/2026-11-09-*`。
-- **2026-11-09 一批**：边界门禁唤醒（只扫 `app/lib` / 认文件形态 import / 剥注释只在一处，
-  843→862 含规则覆盖检查）、notify 在非 Android 的 release 装配即抛、#8 四件（语义来自
-  @williamking-art 的 #8，重写见各 PR 的「来源与署名」）、测试条数只住 `tools.md`、
-  #8 文档漂移逐条判过（十组落地、三组不成立）。笔记 `implemented/2026-11-09-*`。
-- **v0.2.13 已发版（2026-11-09）**：`dsh-mobile-v0.2.13.apk`（78.8 MB）+
-  `dsh-mobile-connector-0.1.23.tgz`。内容 = **「添加电脑」入口**（连接 sheet，已配对时给）：
-  只进配对页、**不清任何槽**，取消也不动凭据；加完记 `_previousHostId`，「切回上一台」立刻可用。
-  取舍见 `implemented/2026-11-08-add-computer-without-clearing.md`。**真机**：0.2.13（code 16）
-  已装，官方包直接覆盖本机构建 —— 本机 `key.properties` 与 CI 是同一把签名密钥，不用卸载重装。
-- **v0.2.12 已发版（2026-11-08）**：Release `dsh-mobile-v0.2.12.apk`（release 签名，
-  `CN=dsh-mobile, OU=release`，75 MB）+ `dsh-mobile-connector-0.1.23.tgz`（0.19 MB）；
-  npm `latest` = **0.1.23**（OIDC + provenance）。内容 = 新建会话在途合并、用量页换源与
-  按天活动分批（见下两条）。CI 首轮 `connector` 红：Dart 探针下载
-  `libsqlite3.x64.linux.so` 的哈希与 sqlite3 构建钩子的期望值不符（**远端资产 flake，
-  与本次改动无关**），`gh run rerun --failed` 后四个 job 全绿。
-- **新建会话不再"连点成好几个"（2026-11-08）**：`createSession` 照 DSH 的 `connectBlank`
-  按 `(工作区, 预设)` **在途合流**（同一目标连点只发一次 `session.create`）；本地那一行按
-  真值写 `blank: true` + `cwd`（原来默认 false 且没 cwd：App 把它画成正常会话、桌面按
-  `sessionVisible` 藏掉 —— 这就是"桌面上没有"，复用判据也因此失效）；建完重读会话清单。
-  blank 行现在显示「新建会话 / 尚未开始」（原来「未命名 / 2 条」，把系统事件当内容）。
-  **真机验收（隔离实例 + adb）**：连点 3 次 5→6（只建一个），再点复用不增。
-  笔记 `implemented/2026-11-08-new-session-inflight-guard.md`。
-- **用量页能出来了（2026-11-08）**：`usage.summary` 的总量 / 分项 / 项目 / 会话改读
-  `session.list` 行自带的 `tokenUsage` 投影提示（原来逐会话 `projections.of`：
-  本机 327 会话 / 539 MB 日志 ⇒ 页面永远空着）；按天活动改成可选 `{days: 1..366}`，
-  **每批只新扫 4 个会话**、按投影水位缓存，应答带 `daysProgress`，手机接着要下一批。
-  页面重排成**累计**（构成条 + 缓存命中 + 四格占比）/ **近期活动**（今天 · 近 30 天对比 ·
-  日均 · 平均每轮 · 7/30/90 热力图）/ **项目**（占比条 → 会话占比）。**真机验收**：
-  首屏 0.6 s 出总量，活动 4/6 → 6/6 两秒内补齐。笔记
-  `implemented/2026-11-08-usage-summary-from-list-rows.md`。
-- **v0.2.11 已发版**（`app/pubspec.yaml` `0.2.11+6`；Release：`dsh-mobile-v0.2.11.apk`（release 签名）
-  + `dsh-mobile-connector-0.1.22.tgz`）：内容 = 抽屉分组补问账本（新建会话不再先落「未分组」）、
-  Markdown 表格横滚条改细条且不常驻、顶栏开抽屉换回基线 `☰`；插件 0.1.22 的「配对新手机」
-  卡加了 App 下载入口。README 重排（**下载**单独成节）并换成这一版的真机截图。
-- **流式条目与持久条目同形（2026-11-07）**：累加器按 `chunk.type` 分流成
-  `LiveMessage {reasoning, text}`（`app/lib/core/live_message.dart`），思考不再冒充正文；
-  尾条目搬到 `chat_turns.dart` 的 `LiveAssistantTurn`，与 `AssistantTurn` 并排，
-  思考走 `ReasoningRow(running: true)`（摘要 = 最后完成段落首行），正文 `selectable: false`。
-  决策笔记 `implemented/2026-11-07-live-message-shape.md`。**未做**：流式块级冻结、
-  阅读位置补偿（倒序列表最新端插入/增长会顶走阅读内容，已量到 100 px）。
-- **顶栏开抽屉改回基线 `☰`（2026-11-07）**：自画三横线（`ui/dsh_menu_glyph.dart`，
-  不进机生成的图标表；原型同一组坐标的 inline SVG）。`DshAppBarButton` 增 `glyph`。
-  笔记 `implemented/2026-11-07-drawer-toggle-icon.md`。
-- **抽屉分组与滚动条（2026-11-07）**：会话清单落地后若有会话不在任何工作区里，
-  补问一次 `workspace.list`（`_probeWorkspaceLedger`，一个 sid 一次）—— 桌面新建的会话
-  不再先落「未分组」；Markdown 表格的横向滚动条改由主题给（3 px 细条、半透明拇指、
-  无轨道），并关掉常驻拇指。笔记 `implemented/2026-11-07-workspace-ledger-probe.md`。
-- **插件面板给出 App 下载入口（2026-11-07）**：「配对新手机」卡里加「还没装手机 App？下载最新版」
-  → `releases/latest`；插件版本提到 **0.1.22**（面板文案属插件产物）。笔记
-  `implemented/2026-11-07-download-entry-in-panel.md`。README 重排：**下载**单独成节，
-  截图换成 0.2.10 真机（会话 / 设置 / 面板配对卡）。
-- **v0.2.10 已发版**（`app/pubspec.yaml` `0.2.10+5`；Release：`dsh-mobile-v0.2.10.apk`（release 签名）
-  + `dsh-mobile-connector-0.1.21.tgz`）：内容 = 流式思考与正文分流（`LiveMessage`，思考不再混进正文）、
-  **思考随轮组折叠的两处判据**（答复自带的思考算过程证据 / 未收口的一轮过程保持展开，
-  笔记 `implemented/2026-11-07-reasoning-is-process.md`）、端点动作弹框改「立即连接」并去掉
-  冗余状态句（笔记 `implemented/2026-11-07-endpoint-action-label-and-disabled-state.md`）。
-- **v0.2.9 已发版**（`app/pubspec.yaml` `0.2.9+4`；Release：`dsh-mobile-v0.2.9.apk`（release 签名）
-  + `dsh-mobile-connector-0.1.21.tgz`）：内容 = P1 能力口与事件载荷端口、S0–S4、设置行值封顶 42%、
-  一批过期与多余的解释句。**connector 0.1.21 一并发了**：`v*` 标签本来就会发插件
-  （`publish-connector.yml:19` 同时监听 `v*` 与 `connector-v*`，发布步没有标签守卫），npm
-  `latest` 现在就是 0.1.21（带 SLSA provenance）。三条链（投影 / 子代理 / 审批）已于
-  2026-11-07 在 0.2.2-rc.1 隔离宿主 + 真机跑通，证据在
-  `implemented/2026-11-05-022-rollout-handoff.md`。
-- **面板六条反馈 + 连接器标识（2026-11-06/07，`f441462`）**：本机版本读 `/status`（不联网）、
-  Kit 全角数字归一 + 错误带码位、`#电脑` 改已用/上限、服务端错误码统一翻人话、最后一名
-  管理员降级按钮真禁用、默认只报默认路由 IPv4（其余进「更多地址」）、设备行短码与
-  「最近答话 / 此刻连接」两列。connector **新装随机；旧装 `local` 强制迁移**（已配对
-  手机重扫、旧中转令牌清除），不再保留 `local`。决策笔记 `implemented/2026-11-06-*` 与
-  `implemented/2026-11-07-connector-id-force-random.md`。
-- **分层现状**（PR #9 → main `47b3472`）：`data → wire` 走能力口（`HostReads` 18 / `HostWrites`
-  22，`HostRpcHolder` 两个 getter），事件载荷走 `EventFields` 端口（core 声明、wire 实现）；
-  `core → wire` 与 `data/`、`ui/`、`core/` 的 `wire/` import 都是 **0**。`data/` 字段名读点
-  **22 → 0**，门禁 `data-no-field-name` 钉住（把线上字段名当字面量传给 `fieldOf` /
-  `stringField` / `intField` 即红，报行号）。代价：5 个测试文件因"字段名撞端口方法名"改名、
-  端口返回 `SnapshotReply` 三态、`core → model` 多了一条纯类型环。
-- **存储与主机**：`HostScope` + 装饰器 + v2→v3 迁移，**换电脑不再清库**（`clear()` 删掉只剩
-  `clearScope()`）；`HostSessions` 按 `hostId` 池化（切电脑 = 换可见指针，跨台通知 id 带主机
-  前缀）；`AppServices` 持唯一 `NotifyPort`。**未做**：S5（AppModel 切片、`chat_page` 拆文件）。
-- **真机验收**：真机库副本（24.5 MB）喂 v2→v3 —— 4136 条条目一条不少、14 个水位键全带前缀、
-  `device.*` 原样；debug 包装机实测迁移（未分域行 0、无崩溃，验完复原空 v3）。**唯一没验**：
-  两台电脑同时配对后切电脑外观不回默认（要两次扫码）。
-- **中转踩过的雷（v0.2.9 那次）**：令牌表里两条记录都绑 `connectorId: local`（两个租户的电脑都用
-  默认 `pcId`）时，中转**拒绝启动**（停了约 4 分钟）；清掉其中一条的绑定后恢复。修法见
-  `implemented/2026-11-07-connector-id-force-random.md`：新装随机 id、旧装 `local` 强制迁移
-  （手机重扫、旧令牌清除），中转侧把旧 `local` 当墓碑 —— v0.2.11 起这条已在生产生效，不会再触发。
-- **生产中转已更新到 v0.2.11 代码**（`dsh.0t0.me`，华为云 `/opt/dsh-mobile`，`v0.2.11` 标签 /
-  `841bc33`，镜像 `sha256:4e309b47…`）：`git fetch && git checkout v0.2.11` + `docker compose -f
-  docker-compose.server.yml up -d --build`，容器 healthy。本次中转侧变更 = **旧 `local` 令牌按
-  墓碑处理**（`token-table.ts`：保留在 `byId` 供管理台吊销，不进 `byConnector`/`byHash`）+
-  管理台页面与 UI kit。启动日志「摘要表 **3** 条」即墓碑生效（配置里 4 条，`local` 那条被排除）；
-  上次那颗"两条 `local` 拒绝启动"的雷因此不会复发。更新后实测：配置里 `local` 绑定已由连接器
-  侧迁移清掉（那台电脑换了随机 id `pc-Wjg3E1COkdC-` 并重新登记），重启中转后半秒内
-  `connector.open` 就回来了 —— 旧令牌失效没有造成掉线，走的是既定的迁移路径。
-  回滚：`git checkout 6c9d906 && docker compose -f docker-compose.server.yml up -d --build`。
-- **门禁**：全绿即通过；**各项条数只住 `tools.md`**（protocol 三条 / boundary / connector / relay /
-  app 的 format·analyze·test）。
-
 ## 下一步
 
 0. **旧装升级是一次性迁移**：所有 `local` 强制换随机，已配对手机重扫；`required` 模式需在
@@ -395,6 +118,7 @@
 | `cd relay && pnpm typecheck && node --test` | 类型 + 全量 |
 
 **改断言必须做一次变异校验**（故意破坏不变量，确认恰好那几条红，条数写进提交）。
+
 ## 八条教训
 
 1. **投影信封**：`session.projections` 回 `{kind, asOfSeq, values}`，手机要 `values`。

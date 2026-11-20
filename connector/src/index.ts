@@ -72,7 +72,7 @@ import {
   teamAvailable,
   type Caps,
 } from './dsh/caps.js'
-import { createEndpointsPort, defaultDirectUrls, describeEndpoints } from './endpoints.js'
+import { createEndpointsPort, defaultDirectUrls, describeEndpoints, isLanAddress } from './endpoints.js'
 import { createSubagentsPort } from './dsh/subagents.js'
 import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent'
 import { createProjectionsPort } from './dsh/projections.js'
@@ -822,6 +822,43 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         }
 
         /**
+         * 「直连开着，但选不出一条可上报的地址」时的**如实原因**。
+         *
+         * 旧文案是「默认路由不可用，或主地址已被隐藏」—— 两种情况被混成一句，
+         * 而 2026-11-20 用户的真实情形**两种都不是**：默认路由被代理 TUN 抢走了
+         * （`198.18.0.1`），而真实的 `192.168.2.75` 就在候选里。
+         * 用户看到那句话只能猜，猜的方向还是错的。
+         *
+         * 现在按**候选的实际情况**分档说，每句都对应一个可验证的事实。
+         * 判据必须与 `defaultDirectUrls` 同源：**不能**用"真实候选数 > 0"来判
+         * 最后一档 —— 一台只有 Tailscale（CGNAT）或纯 IPv6 的机器，真实候选有，
+         * 但没有一条是局域网 IPv4，那时说"都被你删掉了"又是一句错话。
+         */
+        const listenerNoAddressReason = (active: NonNullable<typeof listener>): string => {
+          const candidates = active.urls
+          if (candidates.length === 0) {
+            return '直连监听已启动，但没有枚举到任何网卡地址'
+          }
+          const virtualOnly = candidates.every((entry) => entry.virtual === true)
+          if (virtualOnly) {
+            const names = [...new Set(candidates.map((entry) => entry.label))]
+              .filter((name) => name !== '')
+              .slice(0, 3)
+              .join(' / ')
+            return `直连监听已启动，但可拨地址都在虚拟网卡上（${names || 'TUN / 虚拟机'}），`
+              + '手机拨不通。关掉代理的 TUN 模式后重试，或在「上报给手机的地址」里点名上报真实局域网地址'
+          }
+          // 有真实局域网 IPv4，却一条都没选中 ⇒ 只可能是被 `hide` 掉了。
+          if (active.urls.some((entry) => isLanAddress(entry.url))) {
+            return '直连监听已启动，但局域网地址都被「上报给手机的地址」里删掉了'
+              + '（展开「更多地址」可恢复，或点「恢复」把删掉的加回来）'
+          }
+          // 真实候选在，但**没有一条是局域网 IPv4**（只剩组网 / IPv6）。
+          return '直连监听已启动，但没有手机拨得通的局域网 IPv4'
+            + '（现有地址是组网或 IPv6）。可在「上报给手机的地址」里手动添加一条'
+        }
+
+        /**
          * 出码：登记 → 生成二维码 SVG。
          *
          * **没有"这张码给谁用"这一档**（2026-11-17）：码里写哪几条路，只由
@@ -858,7 +895,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             relayConnected: relayUp,
             lanReason: listener === null
               ? '直连监听未启动'
-              : '直连监听已启动，但没有可上报的地址（默认路由不可用，或主地址已被隐藏）',
+              : listenerNoAddressReason(listener),
           })
           // 结构化拿 offer，**不从命令文本里解析** —— 那等于解析自己刚拼的字符串。
           // `withRelay` = 中转此刻真的连上了：没连上就不登记（登记只给跨网换票用）。
