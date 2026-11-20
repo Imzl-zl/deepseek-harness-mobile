@@ -18,12 +18,15 @@ import 'package:flutter_test/flutter_test.dart';
 const _channel = MethodChannel('dsh/app-update');
 
 /// 起一个假的平台通道，回 [reply]。
-void _mockReply(Object? Function(MethodCall call) reply, List<MethodCall> calls) {
+void _mockReply(
+  Object? Function(MethodCall call) reply,
+  List<MethodCall> calls,
+) {
   TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
       .setMockMethodCallHandler(_channel, (call) async {
-    calls.add(call);
-    return reply(call);
-  });
+        calls.add(call);
+        return reply(call);
+      });
   addTearDown(
     () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(_channel, null),
@@ -68,7 +71,9 @@ void main() {
       _mockReply((_) => 1, calls);
 
       await startAppUpdateDownload(
-        url: Uri.parse('https://example.invalid/dsh-mobile-v0.2.20-arm64-v8a.apk'),
+        url: Uri.parse(
+          'https://example.invalid/dsh-mobile-v0.2.20-arm64-v8a.apk',
+        ),
         fileName: 'dsh-mobile-v0.2.20-arm64-v8a.apk',
       );
 
@@ -85,12 +90,12 @@ void main() {
     test('`result.error` 仍然抛成 PlatformException', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
-        _channel,
-        (call) async => throw PlatformException(
-          code: 'download-failed',
-          message: 'no space left',
-        ),
-      );
+            _channel,
+            (call) async => throw PlatformException(
+              code: 'download-failed',
+              message: 'no space left',
+            ),
+          );
       addTearDown(
         () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
             .setMockMethodCallHandler(_channel, null),
@@ -102,7 +107,11 @@ void main() {
           fileName: 'x.apk',
         ),
         throwsA(
-          isA<PlatformException>().having((e) => e.code, 'code', 'download-failed'),
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'download-failed',
+          ),
         ),
         reason: '「不读返回值」不等于「吞掉失败」',
       );
