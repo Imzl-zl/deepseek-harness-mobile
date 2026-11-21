@@ -108,6 +108,15 @@ enum HostStateTrigger {
   /// Note: 取舍见 `.agents/notes/implemented/2026-11-04-trajectory-view-refetch.md`。
   viewFocus,
 
+  /// **某一块面板被看见**（今天只有右抽屉的「子智能体」页）。
+  ///
+  /// 与 [viewFocus] 的区别是"看的是抽屉里的哪一页"，不是页签；它治的是另一类病：
+  /// **那条读取从来没人发起过**。目录原来只在 [openSession] / 通知 / 回前台时读，
+  /// 用户从连接操作直接进面板时，`openSession` 早发生过了（那时没读到，或读的是
+  /// 另一个会话）—— 面板停在一个"没有读取在飞"的状态上，只能永远转圈
+  /// （2026-11-21 真机）。有这一列之后，"该谁发起"是可机械判定的。
+  panelVisible,
+
   /// **自己发起的写**（切模型 / 分支 / 会话页"重试"）：回执已带回值，
   /// 重取只是让电脑侧的身份字段（行里的模型 / 标题 / 计数）跟上。
   /// 立即执行，不压 `notification` 的合并窗口。
@@ -233,6 +242,9 @@ const List<HostStateFetch> hostStateRegistry = <HostStateFetch>[
       HostStateTrigger.appResume,
       // 切到轨迹页签：这一包只在这几个时机重读，而轨迹页**整个屏**都靠它。
       HostStateTrigger.viewFocus,
+      // 右抽屉的「子智能体」页被看见：那是"这条读取可能从来没人发起过"的唯一出口
+      // （`never` 态），见枚举上的注释。
+      HostStateTrigger.panelVisible,
     },
   ),
   HostStateFetch(
@@ -463,23 +475,42 @@ class HostStateRefresher {
   }
 
   /// 跑一个 key。在飞时不另发一次，而是**返回那一次**并把"再补一次"记下来。
+  ///
+  /// **在飞机的键是 `(key, sid)`**（[inFlightToken]）：会话级 key 的两次读取
+  /// 属于两个不同的包，合流到一起会让后一个会话**根本不发请求**。
   Future<void> _run(String key, {List<Object>? errors}) {
-    final running = _inFlight[key];
+    final sid = _sids[key];
+    final token = inFlightToken(key, sid);
+    final running = _inFlight[token];
     if (running != null) {
-      _rerun.add(key);
+      _rerun.add(token);
       return running;
     }
-    final future = _fetchNow(key, errors: errors);
-    _inFlight[key] = future;
+    final future = _fetchNow(key, sid: sid, token: token, errors: errors);
+    _inFlight[token] = future;
     return future;
   }
 
-  Future<void> _fetchNow(String key, {List<Object>? errors}) async {
+  /// 在飞表里的键：**会话级 key 必须带 `sid`**。
+  ///
+  /// 原来只有 key —— 于是"A 会话的投影正在读"会把 B 会话的读取合流到它身上：
+  /// 真正传进去的 `sid` 是 A 的，B 那一次**请求根本没发**，而 `openSession(B)`
+  /// 拿到的 future 是 A 那次的结果。症状：打开 B，B 的子智能体面板永远转圈，
+  /// 而 A 的投影是好的（2026-11-21 真机）。
+  static String inFlightToken(String key, String? sid) =>
+      sid == null ? key : '$key\u0000$sid';
+
+  Future<void> _fetchNow(
+    String key, {
+    required String? sid,
+    required String token,
+    List<Object>? errors,
+  }) async {
     final entry = hostStateFetchOf(key);
     try {
       // 登记表外的 key 不进这里（两个入口都先查过一次），这里只是把兜底写成
       // `finally` 里的那一格簿记，免得"在飞"标记永远挂着。
-      if (entry != null) await entry.fetch(_app, _sids[key]);
+      if (entry != null) await entry.fetch(_app, sid);
     } catch (error) {
       if (errors != null) {
         errors.add(error);
@@ -487,8 +518,8 @@ class HostStateRefresher {
         _app.reportHostStateFailure(key, error);
       }
     } finally {
-      unawaited(_inFlight.remove(key));
-      if (_rerun.remove(key)) unawaited(_run(key));
+      unawaited(_inFlight.remove(token));
+      if (_rerun.remove(token)) unawaited(_run(key));
     }
   }
 }

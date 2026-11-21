@@ -78,9 +78,11 @@ import 'item_derivations.dart';
 import 'job_book.dart';
 import 'notices.dart';
 import 'projection.dart';
+import 'projection_coalescer.dart';
 import 'session_rows.dart';
 import 'session_store.dart';
 import 'store.dart';
+import 'subagent_catalog_cache.dart';
 import 'ui_state.dart';
 
 /// 应用级状态。
@@ -639,30 +641,17 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
 
   /// 重读投影，但**同一会话不并发**（在飞那次跑完后补一次）。
   ///
-  /// 为什么要有这一层：`turn/end` 与"队列变了"经常挤在同一批事件里，
-  /// 两条信号直接各发一次 `session.projections` 会**两个应答乱序落地** ——
-  /// 后到的旧包会把先到的新包盖掉（投影包没有版本号可比，手机上分不出
-  /// 谁更新）。合并成"在飞 + 攒一次"就只有一个应答会落地。
+  /// 合并规则本身搬到了 `data/projection_coalescer.dart`（尺寸棘轮只降不升，
+  /// 那一格自成体系）。为什么要有这一层见那个文件的文件头。
   void _refreshProjectionsOnce(String sid) {
     if (_disposed) return;
-    if (!_projectionRefresh.add(sid)) {
-      // 在飞：只记一笔，由那次收尾时兑现（连来十次也只补一次）。
-      _projectionRefreshQueued.add(sid);
-      return;
-    }
-    unawaited(
-      refreshProjections(sid).whenComplete(() {
-        _projectionRefresh.remove(sid);
-        if (_projectionRefreshQueued.remove(sid)) _refreshProjectionsOnce(sid);
-      }),
-    );
+    _projectionReads.request(sid);
   }
 
-  /// 正在飞投影重读的会话。
-  final Set<String> _projectionRefresh = <String>{};
-
-  /// 在飞期间又要求重读一次的会话。
-  final Set<String> _projectionRefreshQueued = <String>{};
+  /// 每次读投影走它：在飞不并发、攒一次。
+  late final ProjectionCoalescer _projectionReads = ProjectionCoalescer(
+    refreshProjections,
+  );
 
   /// 只重读一个会话的**子智能体目录**（展开子级时的懒加载）。
   ///
@@ -707,16 +696,13 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     // **能力口在 try 之外取**：缺能力是装配错误（见 [_reads]），不该被下面那个
     // "读不到就显示空态"的兜底吞成"这台电脑投影是空的"。
     final reads = _reads;
-    // "手里已经有这一包"的判据是**目录三态**（`ready` = 读到过），不是另记一份标记。
-    final firstRead =
-        _subagentCatalogs[sid]?.state != SubagentCatalogState.ready;
+    // "手里已经有这一包"的判据是**目录四态**（`ready` = 读到过），不是另记一份标记。
+    final holdsValue = _subagentCatalogs.holds(sid);
     if (_disposed) {
       return SnapshotReply<SessionProjections?>.body(null, key: key);
     }
-    if (firstRead) {
-      _subagentCatalogs[sid] = SubagentCatalog.loading(
-        entries: _subagentCatalogs[sid]?.entries ?? const [],
-      );
+    if (!holdsValue) {
+      _subagentCatalogs.begin(sid);
       if (!_disposed) notifyListeners();
     }
     try {
@@ -724,28 +710,51 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       if (_disposed) {
         return SnapshotReply<SessionProjections?>.body(null, key: reply.key);
       }
-      // 没变：**不动目录三态、不记错误**，原样往上交（含 `key`）。
-      if (reply.notModified) return reply;
+      if (reply.notModified) {
+        // **"没变"只在"手里真有这一包"时成立**：服务端说的是"你上次应用过的那份
+        // 仍然是最新的"。手里没有却收到"没变"，说明摘要（提交于一次更早的成功）
+        // 比内容活得久 —— 那**不能**让三态停在 `loading`：界面会永远转圈，
+        // 而重试行只画在 `error` 态（`subagent_tree.dart` 的 `_ErrorRow`），
+        // 于是连补救的入口都没有（2026-11-21 真机）。
+        if (holdsValue) return reply;
+        _subagentCatalogs.fail(sid);
+        _recordError(what, StateError('服务端答"没变"，但手机手里没有这一包（摘要比内容活得久）'));
+        return SnapshotReply<SessionProjections?>.body(null, key: key);
+      }
       final values = reply.value;
       if (values == null) {
         // **形状不对也是失败**，不是"没有子智能体" —— 静默当空会让
         // "这台电脑没装 subagent 插件"与"我们没看懂回复"分不开。
         // （形状错已经在 `wire/rpc/projections.dart` 计过数了，这里只落错误态。）
-        _subagentCatalogs[sid] = const SubagentCatalog.failed();
+        // 手里有内容时**保留它**：一次畸形回复不该把已经画出来的树擦掉。
+        if (holdsValue) {
+          _subagentCatalogs.keep(sid);
+        } else {
+          _subagentCatalogs.fail(sid);
+        }
         _recordError(
           what,
           const FormatException('session.projections 的应答不是对象'),
         );
         return reply;
       }
-      _subagentCatalogs[sid] = SubagentCatalog.ready(values.subagentCatalog);
+      _subagentCatalogs.applied(sid, values.subagentCatalog);
       return reply;
     } catch (error) {
       // **兜住所有异常，不只 `ProtocolException`**（与 `refreshSessionRows` 同一条纪律）：
       // 解析出错 / 类型不对 / 超时都只该让"这一批只读面显示空态"，
       // 逃逸成未处理的异步错误会让 `openSession` 半途而废 ——
       // 症状是"会话打开了但统计条/权限档永远空着且不报错"。
-      _subagentCatalogs[sid] = const SubagentCatalog.failed();
+      //
+      // **失败保留上一次的内容**（状态仍是 `ready`）：清成 `failed` 等于把
+      // "曾经读到过"改写成"从没读到过"，而服务端那边的摘要还在 —— 下一次
+      // 带摘要的读取会得到"没变"，这一屏就再也拿不回正文。清空只在手里
+      // 本来就没有内容时才有意义。规则本身在 `SubagentCatalogCache`。
+      if (holdsValue) {
+        _subagentCatalogs.keep(sid);
+      } else {
+        _subagentCatalogs.fail(sid);
+      }
       _recordError(what, error);
       // 失败**不是**"没变"：交一个没有正文的 body，调用方据此什么都不应用，
       // 而错误已经进 `lastError`（与 `notModified` 的安静是两件事）。
@@ -959,43 +968,23 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
 
   // ---- 子智能体（`subagentCatalog` 投影）----
 
-  /// 每个会话读到的目录结论（sid → 三态 + 内容）。
-  final Map<String, SubagentCatalog> _subagentCatalogs = {};
+  /// 每个会话读到的目录（sid → 四态 + 内容）。**迁移规则只在
+  /// `data/subagent_catalog_cache.dart` 一处**（含"失败保留上一次内容"那条）。
+  final SubagentCatalogCache _subagentCatalogs = SubagentCatalogCache();
 
-  /// 一个会话的子智能体目录（**直接子级**，带加载 / 就绪 / 失败三态）。
+  /// 一个会话的子智能体目录（**直接子级**，四态见 [SubagentCatalog]）。
   ///
-  /// 没读到过 ⇒ `loading`：Web 把 `idle` 与 `loading` 视为同一个可见状态
-  /// （`SubagentHeaderLineage.tsx:465-467`）。**空表不等于"没有子智能体"** ——
-  /// 要判空得看 `state == ready`（`SubagentCatalog.isKnownLeaf`），
-  /// 否则"没读到"会被说成"没有"。
-  SubagentCatalog subagentCatalogOf(String sid) =>
-      _subagentCatalogs[sid] ?? const SubagentCatalog.loading();
+  /// **没读过 ⇒ `never`，不是 `loading`**（2026-11-21 真机）：给 `loading` 等于
+  /// 声称"有一条读取在飞"，而并没有 —— 面板于是永久转圈，且手里没有一处事实能
+  /// 回答"到底有没有人在读"。`never` 让"该谁发起"可判定：面板被看见时由
+  /// `HostStateTrigger.panelVisible` 那一列发起。
+  ///
+  /// **空表不等于"没有子智能体"**：判空看 `isKnownLeaf`（`ready` + 空）。
+  SubagentCatalog subagentCatalogOf(String sid) => _subagentCatalogs.of(sid);
 
   /// 在**已读到的目录**里找 [sid] 这一行，返回它所在的父级 sid（找不到 = `null`）。
-  ///
-  /// **只服务 `chat_page.dart` 的 `_subagentParentSid` 第 2 档**：进入子会话时父级
-  /// 由画出那一行的那一层交出（DSH 的 `openChild(address)`，见
-  /// `SubagentHeaderLineage.tsx:279-287`），只有"恢复出来的子会话 + 老连接器"
-  /// （行里没有 `parentSessionId`）才需要回头扫目录。DSH 同一条：拿不到
-  /// `address.parentSessionId` 时才扫所有已加载的 catalog
-  /// （`SubagentHeaderLineage.tsx:790-797` 的 `projectionsBySession` 那一圈）。
-  ///
-  /// **只扫已读到的**：`subagentCatalogOf` 对没读过的会话返回 `loading` 占位，
-  /// 拿它扫是白扫。扫不到就如实返回 `null`，由调用方退到下一档 —— 不猜、
-  /// 也不为找父级发起一轮网络请求。
-  String? subagentParentOfCatalogEntry(String sid) {
-    for (final entry in _subagentCatalogs.entries) {
-      // 自引用：畸形投影里"自己是自己的子级"会让 `←` 原地重进自己。
-      if (entry.key == sid) continue;
-      if (entry.value.state != SubagentCatalogState.ready) {
-        // 失败/加载中的目录不算证据：它们的 `entries` 是上一次的内容
-        // （刷新不闪空，见 [_readProjections]），拿它认父级会认到旧关系上。
-        continue;
-      }
-      if (entry.value.entries.any((row) => row.id == sid)) return entry.key;
-    }
-    return null;
-  }
+  String? subagentParentOfCatalogEntry(String sid) =>
+      _subagentCatalogs.parentOf(sid);
 
   /// 打断：取消当前轮次但**保留待处理收件箱**。
   ///
@@ -1762,23 +1751,30 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     await _hostState.triggered(HostStateTrigger.appResume, sid: _currentSid);
   }
 
-  /// **切到某一屏**（页签）时对齐这一屏要的快照（登记表的 `viewFocus` 列）。
+  /// **切到某一屏**时对齐这一屏要的快照（登记表的 `viewFocus` / `panelVisible` 列）。
   ///
-  /// 只有轨迹页签用它。那一屏的轮次行与时间轴全在 `session.projections` 这一个包里，
-  /// 而这一包只在"打开会话 / `turn/end` / 队列变化"时重读 —— 一轮跑二十分钟时
-  /// 一个触发点都不来，手里那份包旧了（或缺键）就一直旧着，用户看到的是空态。
-  /// 切到这一屏就重读一次，代价是一次带摘要的往返（没变约 41 B，`notModified`）。
+  /// 两个调用方，同一条纪律（"进入这一屏"就是触发点，该读什么由登记表决定）：
+  /// - **轨迹页签**（`viewFocus`）：那一屏的轮次行与时间轴全在 `session.projections`
+  ///   这一个包里，而这一包只在"打开会话 / `turn/end` / 队列变化"时重读 —— 一轮跑
+  ///   二十分钟时一个触发点都不来，手里那份包旧了就一直旧着，用户看到的是空态。
+  /// - **右抽屉的「子智能体」页**（`panelVisible`）：治的是另一种病 —— 那条读取
+  ///   从来没人发起过（目录停在 `never`），面板只能永远转圈。
+  ///
+  /// 代价都是一次带摘要的往返（没变约 41 B，`notModified`）。
   ///
   /// 失败只留声（与 [reportHostStateFailure] 同一条）：这一屏显示"没读到"并给
   /// 「重读」，不把异常抛进 widget 的 post-frame 回调变成未处理异步错误。
   ///
   /// Note: 取舍见 `.agents/notes/implemented/2026-11-04-trajectory-view-refetch.md`。
-  Future<void> focusView(String sid) async {
+  Future<void> focusView(
+    String sid, {
+    HostStateTrigger trigger = HostStateTrigger.viewFocus,
+  }) async {
     if (_disposed) return;
     try {
-      await _hostState.triggered(HostStateTrigger.viewFocus, sid: sid);
+      await _hostState.triggered(trigger, sid: sid);
     } catch (error) {
-      _recordError('切换到这一屏时重读失败', error);
+      _recordError('进入这一屏时重读失败', error);
     }
   }
 
@@ -4737,7 +4733,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       // 而它只在 连上 / 建会话 / 打开子智能体面板 时拉过 —— 真机上于是
       // **计数（来自目录）会变、running 永远不亮**（2026-10-21 验收抓到）。
       // 只在当前会话**真有子智能体**时补一次：普通会话多一次 list 没有信息量。
-      if (turnEnded && _subagentCatalogs[sid]?.entries.isNotEmpty == true) {
+      if (turnEnded && _subagentCatalogs.of(sid).entries.isNotEmpty) {
         unawaited(refreshSessionMetrics());
       }
     }

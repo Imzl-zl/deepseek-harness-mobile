@@ -198,7 +198,7 @@ abstract class Outbox {
 | key | 重取 | 触发点 |
 |---|---|---|
 | `session.list` | `AppModel.refreshSessionRows()` | `notification` / `connectLanding` / `appResume` / `ownWrite` |
-| `session.projections` | `AppModel.refreshProjections(sid)` | `notification` / `openSession` / `connectLanding` / `appResume` / `viewFocus` |
+| `session.projections` | `AppModel.refreshProjections(sid)` | `notification` / `openSession` / `connectLanding` / `appResume` / `viewFocus` / `panelVisible` |
 | `settings.describe` | `AppModel.refreshSettings()` | `notification` / `connectLanding` |
 | `job.list` | `AppModel.refreshJobs(sid)` | `notification` / `openSession` / `connectLanding` |
 | `session.modelCatalog` | `AppModel.refreshModelCatalog()` | `notification` / `connectLanding` |
@@ -207,7 +207,7 @@ abstract class Outbox {
 | `workspace.list` | `AppModel.refreshWorkspaces()` | `connectLanding` |
 | `repo.info` | `AppModel.refreshRepoInfo()` | `connectLanding` |
 
-五列的判据:
+六列的判据:
 
 - **`notification`** 只有六个 key 有:它们都有生产者(契约 §5.9 的触发点表),而
   "桌面改了、手机没动静"正是这条通道要消灭的那一类。`session.modelCatalog` 由四条宿主
@@ -228,6 +228,13 @@ abstract class Outbox {
   那一屏的全部内容都在这一包里,而前四个时机**都不覆盖"会话没换、一轮还在跑"** ——
   一轮跑二十分钟时 `turn/end` 一次都不来,旧包就一直旧着(2026-11-04 真机:轨迹页空态,
   重启 App 才恢复)。进入这一屏就问一次,没变只花一个 `{notModified:true}`(约 41 B)。
+- **`panelVisible`** 同样只有 `session.projections`(由右抽屉的「子智能体」页发起,
+  `AppModel.focusView(sid, trigger: HostStateTrigger.panelVisible)`):它治的是
+  **"那条读取从来没人发起过"** —— 目录停在 `never` 时界面上只有一个永远转的圈。
+  与 `viewFocus` 的区别只是"看的是抽屉里的哪一页"而不是页签。
+- **会话级的在飞键是 `(key, sid)`**(`HostStateRefresher.inFlightToken`):同一 key
+  的两个会话是两个包,按 key 合流会让后一个会话**根本不发请求**(2026-11-21 真机:
+  A 会话的投影读取卡住时,打开 B 的子智能体面板永久转圈)。
 - **账本的补问**（`AppModel._probeWorkspaceLedger`）不属于上面五列：它是
   "会话清单落地后发现有会话不在任何工作区里" ⇒ 补问一次 `workspace.list`，
   同一个 sid 只问一次。理由与代价见

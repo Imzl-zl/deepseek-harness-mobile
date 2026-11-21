@@ -4,7 +4,28 @@
 > 11-04 及更早的条目在 `memory/archive/2026-11.md`，11-12 ~ 11-15 的窗口在
 > `memory/archive/2026-11b.md`；稳定命令与坑点在 `tools.md`；现状事实在 `docs/`。
 
-## 现在（2026-11-20 晚 · v0.2.21 / connector 0.1.28）
+## 现在（2026-11-22 凌晨 · 子智能体目录四态）
+
+- **用户 2026-11-21 报的三条，定位结论**（真机 v0.2.20 + connector 0.1.28，走中转）：
+  1. **子智能体面板永久转圈 = 已修**。三处叠加：目录"没读过"返回 `loading` 占位
+     （界面上转圈、实则零个在飞请求）；`notModified` 时不落状态（一次失败之后再重试
+     就永久停在 loading，且重试行只在 error 态 ⇒ 连补救入口都没有）；在飞表按 key
+     合流（A 的慢读让 B 的请求根本不发）。外加"面板被看见"不是触发点。
+     现为四态 `never/loading/ready/error`，迁移收在 `data/subagent_catalog_cache.dart`，
+     新增触发列 `panelVisible`，在飞键 `(key, sid)`。笔记
+     `implemented/2026-11-21-subagent-catalog-four-state.md`。
+  2. **`/` 只有 `/goal`、`/plan` = 连接器白名单**（`connector/src/handlers.ts` 的
+     `MOBILE_COMMANDS`）。桌面 `/` 菜单是"命令表 + 该会话的技能目录"
+     （`ui-chat/src/client/chat/chat-snapshot-builder.ts:646` 的 `SlashEntryKind`），
+     **技能目录手机端整块没接**。这一条**未动**，与"APP = 复刻桌面"同批做。
+  3. **「新建会话闪一下回旧会话」未复现**：两次都成功，且电脑侧确实建出会话
+     （`~/.dsh/sessions/…` 330 B 的 blank 文件）。仍缺一次带 RPC 轨迹的诊断包。
+- **本轮门禁**：app **1978**（+5 新 / 1 条改判）· boundary **972** · size PASS ·
+  `dart analyze --fatal-infos` 0 · 变异校验 2 次各 **1 红**（在飞键、`notModified` 分支）。
+- **已知缺口**：摘要与内容的寿命不一致这条**根因**仍在 —— 将来放掉某个会话的快照
+  必须同时放掉它的摘要，否则同一条"没变"死路会在别处复现。
+
+## 上一窗口（2026-11-20 晚 · v0.2.21 / connector 0.1.28）
 
 - **v0.2.21 已发版（2026-11-20）**：`dsh-mobile-v0.2.21-arm64-v8a.apk` **28.7 MB**
   （`armeabi-v7a` 25.0 / `x86_64` 31.2）+ `dsh-mobile-connector-0.1.28.tgz`（208.6 KB，

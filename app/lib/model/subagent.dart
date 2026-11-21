@@ -126,14 +126,21 @@ SubagentTiming? parseSubagentTiming(Object? raw) {
 
 /// 一份目录读取的结论：**内容 + 状态**。
 ///
-/// 三态必须分开，否则"读到空"与"没读到"在界面上是同一句话 ——
-/// 而它们下一步动作完全不同（等一秒 vs 点重试）。判据照 Web
+/// 四态必须分开，否则"读到空"、"正在读"与"没人发起过读"在界面上是同一句话 ——
+/// 而它们下一步动作完全不同（等一秒 / 点重试 / **先发一次读取**）。判据照 Web
 /// （`SubagentHeaderLineage.tsx:196-198,212-234`）：
 ///
-/// - `loading` + 空 entries ⇒ 「正在加载子智能体…」；
+/// - `never` ⇒ 本进程**从没读过**：界面可以转圈，但必须有人发起读取
+///   （`HostStateTrigger.panelVisible`），否则就是永久转圈；
+/// - `loading` + 空 entries ⇒ 「正在加载子智能体…」（**有读取在飞**）；
 /// - `error` ⇒ 「无法加载子智能体」+「重试」；
 /// - `ready` + 空 entries ⇒ **已知空叶**（`isKnownLeaf`），空态；
 /// - `loading` 但**有** entries ⇒ 保留旧内容（刷新不闪空）。
+///
+/// **`never` 与 `loading` 分开的理由**（2026-11-21 真机）：原来"没读过"返回
+/// `loading` 占位，于是"没人发起读取"和"读取卡住"在界面上不可区分 ——
+/// 用户看到的是同一个永远转圈的面板，而我们没有一处事实能回答
+/// "到底有没有人在读"。四态之后，这一条可以机械判定。
 ///
 /// **不带错误文本**：读取失败的那句话是固定的（Web 的兜底也是
 /// `t('load.error')`，`locales.ts:23`），而原始原因已经在
@@ -141,9 +148,12 @@ SubagentTiming? parseSubagentTiming(Object? raw) {
 class SubagentCatalog {
   const SubagentCatalog({required this.state, this.entries = const []});
 
-  /// 还没读到过 / 正在读。Web 把 `idle` 与 `loading` 合并成同一个
-  /// 可见状态（`SubagentHeaderLineage.tsx:465-467`：`idle` 且没有投影值
-  /// ⇒ `'loading'`），这里照同一条。
+  /// 本进程从没读过这个会话的目录（**没有读取在飞**）。
+  const SubagentCatalog.never()
+    : state = SubagentCatalogState.never,
+      entries = const [];
+
+  /// 有一条读取在飞（`entries` 是上一次的内容，可能为空）。
   const SubagentCatalog.loading({this.entries = const []})
     : state = SubagentCatalogState.loading;
 
@@ -158,17 +168,20 @@ class SubagentCatalog {
   final List<SubagentRow> entries;
 
   /// 这一层**成功读到且为空** —— 只有这时才敢说"它没有下级"。
-  /// `loading` / `error` 都不是证据（`SubagentHeaderLineage.tsx:196-198`）。
+  /// `never` / `loading` / `error` 都不是证据（`SubagentHeaderLineage.tsx:196-198`）。
   bool get isKnownLeaf =>
       state == SubagentCatalogState.ready && entries.isEmpty;
 
   /// 正在读且还没有内容（界面上那句「正在加载子智能体…」的判据）。
   bool get isLoadingEmpty =>
       state == SubagentCatalogState.loading && entries.isEmpty;
+
+  /// 从没读过（**没有读取在飞**）：这一屏要自己发起一次读取。
+  bool get isUnread => state == SubagentCatalogState.never;
 }
 
-/// 目录三态。
-enum SubagentCatalogState { loading, ready, error }
+/// 目录四态（`never` 的因果见 [SubagentCatalog]）。
+enum SubagentCatalogState { never, loading, ready, error }
 
 /// 目录一行 + 它此刻的运行态。
 ///

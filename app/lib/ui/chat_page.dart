@@ -42,6 +42,7 @@ import '../core/job.dart';
 import '../core/live_message.dart';
 import '../data/app_model.dart';
 import '../data/composer_gate.dart';
+import '../data/host_state.dart' show HostStateTrigger;
 import '../data/ids.dart';
 import '../data/projection.dart' show askUserQuestionTool;
 import '../model/agent_preset.dart';
@@ -359,15 +360,26 @@ class ChatPageState extends State<ChatPage> {
     openSide();
   }
 
-  /// 子智能体面板的指标要**现拉一次** `session.list`（见
-  /// `AppModel.refreshSessionMetrics` 的注释：子会话是在回合里才出现的，
-  /// 而行只在连上 / 建会话时读过）。
+  /// 子智能体面板**被看见**：行指标现拉一次 `session.list`，目录走登记表的
+  /// `panelVisible` 列补一次。
+  ///
+  /// 为什么目录要在这一层补：目录原来只在"打开会话 / 通知 / 回前台"时读。
+  /// 用户从连接操作直接进这一页时，那次 `openSession` 可能早就发生过（那时没
+  /// 读到，或读的是别的会话）—— 面板于是停在 `never`（**没有读取在飞**），
+  /// 界面只能永远转圈（2026-11-21 真机）。
+  ///
+  /// 行指标为什么也要现拉（`AppModel.refreshSessionMetrics` 的注释）：子会话是
+  /// 在回合里才出现的，而行只在连上 / 建会话时读过。
   ///
   /// 挂在"面板真的会被看见"的三个入口：抽屉打开、抽屉内切到子智能体页、
   /// 「切换子智能体」sheet 打开。**不是定时器** —— 这一层没有推送面。
   void _refreshSubsMetrics() {
-    if (widget.app.currentSid == null) return;
+    final sid = widget.app.currentSid;
+    if (sid == null) return;
     unawaited(widget.app.refreshSessionMetrics());
+    unawaited(
+      widget.app.focusView(sid, trigger: HostStateTrigger.panelVisible),
+    );
   }
 
   /// 右抽屉的宽度。
@@ -973,7 +985,8 @@ class ChatPageState extends State<ChatPage> {
         //（与左抽屉 `onDrawerChanged` 同一条，见 `input_focus.dart`）。
         dismissInputFocus();
         // 落在子智能体页就是"面板被看见了"的那一刻：那一页的指标（running /
-        // 时长 / token）来自 `session.list` 的行，现拉一次才不会停在旧值。
+        // 时长 / token）来自 `session.list` 的行，现拉一次才不会停在旧值；
+        // 目录也一起补一次 —— 否则这一页可能一次读取都没人发起过。
         if (open && _sidePanel == SidePanel.subs) _refreshSubsMetrics();
         // 右缘那条棒棒的显隐跟着它走（开着就收起来）。
         if (_sideOpen == open) return;

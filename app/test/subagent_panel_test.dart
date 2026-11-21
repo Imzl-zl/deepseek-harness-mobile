@@ -122,16 +122,21 @@ List<Map<String, Object?>> _catalogRow({
 
 void main() {
   group('目录三态（空 / 没读到 / 失败是三个说法）', () {
-    test('没读过一个会话的目录：loading，不是"没有子智能体"', () async {
+    test('没读过一个会话的目录：never（不是"正在加载"，也没有读取在飞）', () async {
       final app = AppModel(client: _SubClient(onCall: (m, p) async => null));
       await app.start();
 
       final catalog = app.subagentCatalogOf('sid_A');
-      expect(catalog.state, SubagentCatalogState.loading);
-      expect(catalog.entries, isEmpty);
+      // **2026-11-21 改判**：原来这里断言 `loading`，而 `loading` 的语义是
+      // "有一条读取在飞"——没读过时它一条都没有，界面上于是对着零个请求转圈，
+      // 而且没有任何事实能回答"到底有没有人在读"（真机：面板永久转圈）。
+      // 四态之后"该谁发起这次读取"才成为可机械判定的问题
+      // （`HostStateTrigger.panelVisible`）。
+      expect(catalog.state, SubagentCatalogState.never);
+      expect(catalog.isUnread, isTrue);
+      expect(catalog.isLoadingEmpty, isFalse, reason: '没有读取在飞就不画转圈');
       // **只有"成功读到且为空"才敢说它没有下级**（Web `:196-198`）。
       expect(catalog.isKnownLeaf, isFalse);
-      expect(catalog.isLoadingEmpty, isTrue);
       app.dispose();
     });
 

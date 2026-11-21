@@ -234,7 +234,8 @@ class _Level extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (catalog.isLoadingEmpty) const _Notice('正在加载子智能体…'),
+        if (catalog.isLoadingEmpty || catalog.isUnread)
+          const _Notice('正在加载子智能体…'),
         if (catalog.state == SubagentCatalogState.error)
           _ErrorRow(onRetry: () => tree.widget.onLoad(sid)),
         if (rows.isEmpty &&
@@ -253,7 +254,8 @@ class _Level extends StatelessWidget {
     final expanded = expandable && tree._expanded.contains(row.id);
     final childCatalog = tree.widget.catalogOf(row.id);
     // 展开着但子级还在读：`aria-busy` 那一档（`:376-402`）。
-    final childLoading = childCatalog.isLoadingEmpty;
+    // `isUnread` 也算："刚展开、读取才发起"与"读取在飞"在界面上是同一句。
+    final childLoading = childCatalog.isLoadingEmpty || childCatalog.isUnread;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
