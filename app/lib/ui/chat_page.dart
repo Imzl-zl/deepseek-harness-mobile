@@ -1135,6 +1135,9 @@ class ChatPageState extends State<ChatPage> {
                             // 候选菜单的名单来自电脑侧（`repo.info.commands`）——
                             // 手机侧不抄第二份（契约 §5.7 的 `repo.info` 行）。
                             slashCommands: widget.app.slashCommands,
+                            // 技能段：同一会话可见的目录（`skill.catalog`）。
+                            // 能力位缺了就是空表 —— 面板里不会有"技能"这一段。
+                            slashSkills: widget.app.slashSkills,
                             // **面板的高度上限来自底部预算**：不是屏幕的一个比例，
                             // 而是"输入卡上方真正剩下的空间"（扣除输入栏固定件、
                             // 统计条，接管卡在场时再扣它那两行）。

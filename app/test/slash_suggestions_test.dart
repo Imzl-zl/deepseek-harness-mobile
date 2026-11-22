@@ -15,6 +15,7 @@ import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/model/command.dart';
 import 'package:dsh_mobile/model/permission.dart';
 import 'package:dsh_mobile/model/send_mode.dart';
+import 'package:dsh_mobile/model/skill.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/dsh_composer.dart';
 import 'package:flutter/material.dart';
@@ -49,31 +50,31 @@ class _Client extends FakeSyncClient {
   }
 }
 
-Widget host(TextEditingController controller, List<SlashCommand> commands) =>
-    MaterialApp(
-      theme: DshTheme.dark(),
-      home: Scaffold(
-        body: DshComposer(
-          controller: controller,
-          attachments: const [],
-          modelName: 'auto',
-          reasoningLabel: null,
-          access: const PermissionChip(
-            icon: 'shield',
-            label: '工作区',
-            warn: false,
-          ),
-          sendMode: SendMode.queue,
-          sending: false,
-          slashCommands: commands,
-          onSend: () {},
-          onAttach: () {},
-          onPickModel: () {},
-          onPickAccess: () {},
-          onRemoveAttachment: (_) {},
-        ),
-      ),
-    );
+Widget host(
+  TextEditingController controller,
+  List<SlashCommand> commands, {
+  List<SkillEntry> skills = const <SkillEntry>[],
+}) => MaterialApp(
+  theme: DshTheme.dark(),
+  home: Scaffold(
+    body: DshComposer(
+      controller: controller,
+      attachments: const [],
+      modelName: 'auto',
+      reasoningLabel: null,
+      access: const PermissionChip(icon: 'shield', label: '工作区', warn: false),
+      sendMode: SendMode.queue,
+      sending: false,
+      slashCommands: commands,
+      slashSkills: skills,
+      onSend: () {},
+      onAttach: () {},
+      onPickModel: () {},
+      onPickAccess: () {},
+      onRemoveAttachment: (_) {},
+    ),
+  ),
+);
 
 const List<SlashCommand> _two = [
   SlashCommand(name: 'goal', description: 'Set or view the goal'),
@@ -252,6 +253,84 @@ void main() {
       addTearDown(app.dispose);
       await app.refreshRepoInfo();
       expect(app.slashCommands, isEmpty);
+    });
+  });
+
+  // 技能段：桌面 `/` 菜单的另一半（`skill.catalog`）。
+  // 判据在 `model/skill.dart` 与 `ui/dsh_composer.dart` 的 `_SlashSuggestions`。
+  group('技能段（与桌面同一个菜单的两段）', () {
+    const skills = <SkillEntry>[
+      SkillEntry(name: 'write-ppt', description: '做 PPT', modelInvocable: true),
+      SkillEntry(name: 'quiet', description: '只给用户的', modelInvocable: false),
+    ];
+
+    testWidgets('打一个 `/` 就同时出「指令」与「技能」两段', (tester) async {
+      final input = TextEditingController();
+      addTearDown(input.dispose);
+      await tester.pumpWidget(host(input, _two, skills: skills));
+
+      input.text = '/';
+      await tester.pump();
+
+      // 两段的分组标题都在（桌面也是两段：命令 order 1、技能 order 2）。
+      expect(find.text(kSectionCommands), findsOneWidget);
+      expect(find.text(kSectionSkills), findsOneWidget);
+      expect(find.byKey(const ValueKey<String>('slash-goal')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('slash-skill-write-ppt')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('点技能行 ⇒ 输入框变 `/名字 `，菜单消失（技能是插引用，不是跑命令）', (tester) async {
+      final input = TextEditingController();
+      addTearDown(input.dispose);
+      await tester.pumpWidget(host(input, const [], skills: skills));
+
+      input.text = '/wri';
+      await tester.pump();
+      final row = find.byKey(const ValueKey<String>('slash-skill-write-ppt'));
+      expect(row, findsOneWidget);
+
+      await tester.tap(row);
+      await tester.pump();
+
+      // 与命令行同一个动作：整段文本替换成 `/名字 `（带尾空格，光标落尾）。
+      expect(input.text, '/write-ppt ');
+      expect(
+        find.byKey(const ValueKey<String>('slash-panel')),
+        findsNothing,
+        reason: '有了尾空格 = 名字打完了，`slashQueryOf` 返回 null',
+      );
+    });
+
+    testWidgets('`modelInvocable == false` 的说明带「仅用户可调用」前缀（与桌面同一句）', (
+      tester,
+    ) async {
+      final input = TextEditingController();
+      addTearDown(input.dispose);
+      await tester.pumpWidget(host(input, const [], skills: skills));
+
+      input.text = '/quiet';
+      await tester.pump();
+
+      expect(find.textContaining('仅用户可调用'), findsOneWidget);
+      // 能模型调用的那条不加标记。
+      input.text = '/write-ppt';
+      await tester.pump();
+      expect(find.textContaining('仅用户可调用'), findsNothing);
+    });
+
+    testWidgets('技能为空（能力位缺 / 没有技能）⇒ 只剩命令段，不画空标题', (tester) async {
+      final input = TextEditingController();
+      addTearDown(input.dispose);
+      await tester.pumpWidget(host(input, _two));
+
+      input.text = '/';
+      await tester.pump();
+
+      expect(find.text(kSectionCommands), findsOneWidget);
+      expect(find.text(kSectionSkills), findsNothing);
     });
   });
 }

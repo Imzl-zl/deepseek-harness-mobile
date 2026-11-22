@@ -122,12 +122,13 @@ test('分页参数不同 ⇒ 摘要不互相命中（那是两个包，共用一
   assert.deepEqual(again.envelope, { ok: true, result: { notModified: true } })
 })
 
-test('白名单：九个宿主状态 key + endpoint.describe，写方法一个都不认', () => {
+test('白名单：十个宿主状态 key + endpoint.describe，写方法一个都不认', () => {
   for (const method of [
     'session.list',
     'session.projections',
     'settings.describe',
     'job.list',
+    'skill.catalog',
     'session.modelCatalog',
     'permission.catalog',
     'agentPresets.list',
@@ -142,7 +143,7 @@ test('白名单：九个宿主状态 key + endpoint.describe，写方法一个�
     assert.equal(acceptsSnapshotDigest(method), false, `${method} 不该认摘要`)
   }
   // 白名单必须**从宿主状态表派生**：两份字面量必然漂移，漂移的症状是"某个 key 永不命中"。
-  assert.equal(SNAPSHOT_DIGEST_METHODS.size, 10)
+  assert.equal(SNAPSHOT_DIGEST_METHODS.size, 11)
 })
 
 test('白名单外的方法带 digest：合法，但不比对（正文照发）', async () => {

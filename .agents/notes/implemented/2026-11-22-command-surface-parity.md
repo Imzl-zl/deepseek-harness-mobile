@@ -90,3 +90,28 @@ Status: implemented
 
 代码入口回指：`connector/src/handlers.ts` 的命令门注释、`connector/src/dsh/command-line.ts`
 的 `catalog()`、`app/lib/data/host_state.dart` 的 `repoInfo` 那一格各有一行指向本篇。
+
+## 附：技能段（同一批的第二步）
+
+桌面 `/` 菜单还有**另一半**：这一会话可见的技能目录
+（`ui-skill/src/client/index.ts:171-184`，`trigger:'/'`、`order:2`，子会话不出现）。
+手机端此前整块没接，因此 `/` 看起来"比桌面少一堆东西"。
+
+- **新方法 `skill.catalog`**（只读，`{sid}`）：宿主 `packages/api/session-controller/src/skill-catalog.ts:36`
+  的 `sessionSkillCatalog`（namespace `skills`，`list({sessionId}, signal)` →
+  `{skills:[{name, path?, description, whenToUse?, modelInvocable}]}`，已滤成用户可调用）。
+  连接器侧 `connector/src/dsh/skills.ts` 只做三件事：别名 → DSH 会话 id、30 s 上限、
+  形状过滤（名字不是字符串的行走掉）。**只留三样字段**（`name` / `description?` /
+  `modelInvocable?`）：`path` / `whenToUse` 是桌面侧的东西，手机菜单不画。
+- **`caps.skills`**：判据是 `sessionSkillCatalog` 在不在（`skillsAvailable`，一处定义两处用）。
+  可选字段 —— 老连接器不给这个键，手机按"没有技能段"处理。
+- **手机侧**：`HostStateKey.skillCatalog`（会话级，触发 `connectLanding` / `openSession`，
+  **没有通知列** —— 宿主没有"技能表变了"的事件）；`AppModel.slashSkills` 按 `_skillsSid`
+  判归属（换会话时不摆上一个会话的技能，与投影同一条）；菜单是同面板的第二段
+  （`kSectionSkills`），选中插 `/名字 `、按普通消息发出 —— **技能不是命令**，
+  `sendRouteOf` 不需要为它加分支。
+- 判据：connector 新增 5 条（形状过滤 / 别名未知 / 按能力位挂 / handler 两档），
+  app 新增 7 条（`slash_suggestions_test` 的 4 条技能段 + `skill_catalog_test` 的 3 条
+  数据面）。变异校验 1 次：把 `slashSkills` 的归属判据去掉 ⇒ **恰好 1 条红**
+  （"换会话时不许摆上一个会话的技能"）。
+- **未做**：真机复验；`whenToUse` 与技能正文预览（桌面点开能看到 SKILL.md，手机只列名字）。

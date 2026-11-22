@@ -23,6 +23,13 @@
 | 目录 | 同上（`kind: 'directory'`） | `@path/`（补一个斜杠，与宿主的目录 token 同形） |
 | 会话 | `refs.sessions`（宿主的 `sessionReferenceResolver` 的 `@Remote('candidates')`） | 宿主给的 `mention` **原样**：`@[标题](dsh-session:<base64url>)` |
 | 命令（`/`） | `repo.info.commands`（宿主的命令表 + 宿主的 `description`） | `/名字 `（带尾空格） |
+| 技能（`/`） | `skill.catalog`（宿主的 `sessionSkillCatalog.list`，这一会话可见的技能） | `/名字 `（**同一段文本**：技能是引用，不是命令） |
+
+`/` 面板是**两段**：`指令`（宿主的命令表）在前、`技能`（这一会话的目录）在后 ——
+与桌面同一个形状（`ui-skill/src/client/index.ts:171-184` 的 `trigger:'/'`、`order:2`）。
+技能段只在 `caps.skills` 为真时出现；`modelInvocable === false` 的技能在说明前
+带「仅用户可调用 · 」前缀（桌面 `:182` 同一条）。**子会话没有技能段**（桌面
+`subagentAddress !== undefined` 时候选为空）。
 
 ## 2. 触发判据（`app/lib/model/mention.dart` 的 `atTriggerOf`）
 

@@ -40,6 +40,7 @@ import '../model/mention.dart' show AtCandidate;
 import '../model/model_catalog.dart' show ModelCatalog;
 import '../model/permission.dart' show PermissionCatalog;
 import '../model/plugins.dart' show PluginJob;
+import '../model/skill.dart' show SkillEntry;
 import '../model/usage_summary.dart' show UsageSummary;
 import '../model/workspace_files.dart' show FileListing, FilePage;
 import 'endpoint.dart' show Endpoint;
@@ -122,6 +123,12 @@ abstract interface class HostReads {
 
   /// 拉一次任务清单（`job.list`；后续变化走 `job` 帧的 `status`）。
   Future<SnapshotReply<List<JobRow>?>> jobList({required String sid});
+
+  /// 这一会话可见的**技能目录**（`skill.catalog`，契约 §5.7）。
+  ///
+  /// 桌面 `/` 菜单的另一半：命令表 + 技能目录拼在同一个候选面板里。
+  /// **只读**：选中技能只是把 `/名字` 插进输入框、按普通消息发出去。
+  Future<SnapshotReply<List<SkillEntry>?>> skillCatalog({required String sid});
 
   /// 问一次插件任务状态（`plugin.installStatus`，轮询用）。
   Future<PluginJob?> pluginJobStatus({required String requestId});

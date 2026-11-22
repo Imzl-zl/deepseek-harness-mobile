@@ -33,9 +33,17 @@
   手机端整块没接。宿主那个 Remote 是 `session-controller/src/skill-catalog.ts` 的
   `sessionSkillCatalog`（namespace `skills`，`list(request, signal)` →
   `{skills:[{name, path?, description, whenToUse?, modelInvocable}]}`，已滤成用户可调用）。
-- **本轮门禁**：app **1978**（+5 新 / 1 条改判）· connector **885** · boundary **972** ·
-  size PASS · `dart analyze --fatal-infos` 0 · 变异校验 2 次各 **1 红**（在飞键、
-  `notModified` 分支）。
+- **`/` 菜单的技能段已接上（2026-11-22）**：新方法 `skill.catalog`（只读、会话级）+
+  连接器端口 `connector/src/dsh/skills.ts`（别名 → DSH 会话 id、30s 上限、坏行丢掉、
+  只过 `name`/`description?`/`modelInvocable?`）+ `caps.skills`。手机侧
+  `HostStateKey.skillCatalog`（会话级；触发 `connectLanding`/`openSession`，没有通知列）、
+  `AppModel.slashSkills` 按 `_skillsSid` 判归属、`/` 面板第二段 `kSectionSkills`
+  （选中插 `/名字 `，按普通消息发 —— 技能不是命令）。宿主面：
+  `packages/api/session-controller/src/skill-catalog.ts:36` 的 `sessionSkillCatalog`。
+  门禁：connector **890** · app **1985**；变异校验 1 次（去掉归属判据 ⇒ 恰好 1 红）。
+- **本轮门禁**：app **1985**（+12 新 / 1 条改判）· connector **890** · boundary **979** ·
+  size PASS（`app_model.dart` 5350 / `dsh_composer.dart` 1900，各是一次可见的提额）·
+  `dart analyze --fatal-infos` 0 · 变异校验 3 次（在飞键、`notModified`、技能归属）。
 - **已知缺口**：摘要与内容的寿命不一致这条**根因**仍在 —— 将来放掉某个会话的快照
   必须同时放掉它的摘要，否则同一条"没变"死路会在别处复现。
 

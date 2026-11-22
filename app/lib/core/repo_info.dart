@@ -18,6 +18,7 @@ final class RepoInfo {
     required this.filesAvailable,
     required this.changesAvailable,
     required this.pluginsAvailable,
+    required this.skillsAvailable,
     required this.jobsAvailable,
     required this.teamAvailable,
     required this.dshVersion,
@@ -43,6 +44,13 @@ final class RepoInfo {
   /// `caps.plugins`：插件页显不显示。
   final bool pluginsAvailable;
 
+  /// `caps.skills`：`/` 菜单里"技能"那一段出不出现（`skill.catalog`）。
+  ///
+  /// 判据是**电脑侧有没有 `sessionSkillCatalog` 服务**（`connector/src/dsh/caps.ts`
+  /// 的 `skillsAvailable`）。缺了（老连接器 / 没装 skill 插件的部署）⇒ 整段不出现，
+  /// 而不是画一个永远空的列表。
+  final bool skillsAvailable;
+
   /// `caps.jobs`：能不能拉任务表。
   ///
   /// **与上面四个不同**：它们决定"这一屏显不显示"（缺了就不画），
@@ -54,8 +62,7 @@ final class RepoInfo {
   /// 因为这里"猜错"的代价是一次多余的成功调用，而不是整块能力消失。
   final bool jobsAvailable;
 
-  /// `caps.team`：右抽屉里那枚「任务板」tab 出不出现。
-  ///
+  /// `caps.team`：右抽屉里那枚「任务板」tab 出不出现。  ///
   /// 判据是**电脑侧有没有 `agentTeams` 服务**（`connector/src/dsh/caps.ts` 的
   /// `readCaps`）—— 老宿主 / 没带 tool bundle 的部署 ⇒ false ⇒ 整枚 tab 不出现。
   /// **它不管"Team 开没开"**：那是投影 `agentTeam.enabled` 的事。两件事混起来

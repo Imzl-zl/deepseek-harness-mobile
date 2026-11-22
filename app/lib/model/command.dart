@@ -65,6 +65,13 @@ SendRoute sendRouteOf({required String text, required bool isSubagent}) {
 /// 不另起一个中文（"命令"/"指令"两种说法并存就是两处真值）。
 const String kSectionCommands = '指令';
 
+/// `/` 候选面板的第二段：这一会话可见的**技能**（`skill.catalog`）。
+///
+/// 桌面把命令与技能拼在同一个菜单里、用两个 order 排序
+/// （`ui-skill/src/client/index.ts:171-184` 的 `order: 2`），手机上就是这一段。
+/// **技能不是命令**：选中它只插一条 `/名字`，按普通消息发出去。
+const String kSectionSkills = '技能';
+
 /// 候选菜单里的一条命令（`repo.info.commands`）。
 ///
 /// **说明来自宿主的命令定义**（`CommandDefinition.description`，

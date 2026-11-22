@@ -45,6 +45,9 @@ abstract final class HostStateKey {
   /// `session.projections`：投影包（权限档 / 标题 / 统计 / 轨迹 / 队列）。**会话级**。
   static const String sessionProjections = 'session.projections';
 
+  /// `skill.catalog`：这一会话可见的技能目录（桌面 `/` 菜单的另一半）。**会话级**。
+  static const String skillCatalog = 'skill.catalog';
+
   /// `settings.describe`：设置文档。**宿主级**。
   static const String settingsDescribe = 'settings.describe';
 
@@ -73,6 +76,7 @@ abstract final class HostStateKey {
     sessionProjections,
     settingsDescribe,
     jobList,
+    skillCatalog,
     sessionModelCatalog,
     permissionCatalog,
     agentPresetsList,
@@ -82,7 +86,7 @@ abstract final class HostStateKey {
 
   /// 这个 key 要不要 `sid` 才能重取（= 那个方法要不要会话参数）。
   static bool isSessionScoped(String key) =>
-      key == sessionProjections || key == jobList;
+      key == sessionProjections || key == jobList || key == skillCatalog;
 }
 
 /// 允许重取一个 key 的时机。
@@ -134,6 +138,9 @@ enum HostStateTrigger {
 abstract interface class HostStateTarget {
   Future<void> refreshSessionRows();
   Future<void> refreshProjections(String sid);
+
+  /// 这一会话可见的技能目录（`skill.catalog`；桌面 `/` 菜单的另一半）。
+  Future<void> refreshSkillCatalog(String sid);
   Future<void> refreshSettings();
   Future<void> refreshJobs(String sid);
   Future<void> refreshModelCatalog();
@@ -177,6 +184,12 @@ Future<void> _refetchSessionRows(HostStateTarget app, String? sid) =>
 Future<void> _refetchProjections(HostStateTarget app, String? sid) async {
   if (sid == null) return;
   await app.refreshProjections(sid);
+}
+
+/// 技能目录（桌面 `/` 菜单的另一半）。**会话级**：换会话就是另一份目录。
+Future<void> _refetchSkillCatalog(HostStateTarget app, String? sid) async {
+  if (sid == null) return;
+  await app.refreshSkillCatalog(sid);
 }
 
 /// 设置文档（默认权限档 / 默认预设 / Session Log 开关）。
@@ -245,6 +258,17 @@ const List<HostStateFetch> hostStateRegistry = <HostStateFetch>[
       // 右抽屉的「子智能体」页被看见：那是"这条读取可能从来没人发起过"的唯一出口
       // （`never` 态），见枚举上的注释。
       HostStateTrigger.panelVisible,
+    },
+  ),
+  HostStateFetch(
+    key: HostStateKey.skillCatalog,
+    fetch: _refetchSkillCatalog,
+    // 会话级：换会话就是另一份目录。**没有 `notification` 列** —— 宿主没有
+    // "技能表变了"的事件（`skills.list` 是冷读目录，装/删技能改的是电脑上的文件），
+    // 编一个触发源就是替宿主做决定。`connectLanding` 覆盖"断开期间改了技能"。
+    triggers: <HostStateTrigger>{
+      HostStateTrigger.connectLanding,
+      HostStateTrigger.openSession,
     },
   ),
   HostStateFetch(

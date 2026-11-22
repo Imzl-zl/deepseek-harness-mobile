@@ -111,6 +111,13 @@ class _RecordingClient extends FakeSyncClient {
       'settings.describe' => <String, Object?>{'sections': <Object?>[]},
       'session.projections' => <String, Object?>{'values': <String, Object?>{}},
       'job.list' => <String, Object?>{'jobs': <Object?>[]},
+      // `skill.catalog`：技能目录（桌面 `/` 菜单的另一半）。
+      'skill.catalog' => <String, Object?>{'skills': <Object?>[]},
+      // `repo.info` 报能力位：技能段只在有 `sessionSkillCatalog` 服务的部署里出现，
+      // 而这一组用例要看到"该发的那几个都发了"，所以把这一位打开。
+      'repo.info' => <String, Object?>{
+        'caps': <String, Object?>{'skills': true},
+      },
       'session.modelCatalog' => <String, Object?>{'available': false},
       'permission.catalog' => <String, Object?>{
         'available': true,
@@ -220,7 +227,12 @@ void main() {
       // 否则一边认为"可以不带 sid"，另一边就永远重取不到。
       expect(
         HostStateKey.all.where(HostStateKey.isSessionScoped).toList(),
-        <String>[HostStateKey.sessionProjections, HostStateKey.jobList],
+        <String>[
+          HostStateKey.sessionProjections,
+          HostStateKey.jobList,
+          // 技能目录按会话：换会话就是另一份（桌面 `/` 菜单的技能段）。
+          HostStateKey.skillCatalog,
+        ],
       );
     });
   });
@@ -297,6 +309,11 @@ void main() {
         final client = _RecordingClient();
         final app = AppModel(client: client);
         addTearDown(app.dispose);
+        // **能力位先就位**：生产里 `connectLanding` 那批里 `repo.info` 与其余并发，
+        // 而按能力位挂的那几个 key（`job.list` / `skill.catalog`）在能力位为假时
+        // **故意不发**（缺服务不能画成故障）。这里先把这一位读出来，
+        // 判据才落在"fetch 调到了哪个方法"上。
+        await app.refreshRepoInfo();
         await fetch.fetch(app, 'sid_A');
         expect(
           client.finished,

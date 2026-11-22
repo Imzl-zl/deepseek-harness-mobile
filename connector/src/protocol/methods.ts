@@ -93,6 +93,14 @@ export const METHODS = [
   // 手机侧只有一处分流：命令走这里、普通消息走 `session.prompt`、
   // 子会话恒走 `subagent.prompt`（`app/lib/model/command.dart`）。
   'command.execute',
+  // 技能目录（只读，契约 §5.7）：桌面 `/` 菜单的另一半 —— 这一会话可见的技能，
+  // 与命令表拼在同一个候选面板里（`ui-skill/src/client/index.ts:171-184`）。
+  // **与 Web 同一个 DSH 方法**：`sessionSkillCatalog.list({sessionId}, signal)`
+  // （`session-controller/src/skill-catalog.ts:36` 的 `@Remote`，namespace `skills`）。
+  // 宿主已经滤成"用户可调用"；手机只用来画 `/` 菜单那一列，选中就是插一条
+  // `/名字`（技能不是命令：它在 DSH 里是被引用进消息的文本，不是一次 execute）。
+  // 按 `caps.skills` 挂（`dsh/caps.ts` 的 `skillsAvailable`）。
+  'skill.catalog',
   // `@` 候选的两个只读面（契约 §5.7）。**与 Web 同一对 DSH 方法**：
   // 文件 / 目录 `fileReferences.list(agent, query, signal)`
   // （`packages/api/session-controller/src/file-references.ts:32-39`），

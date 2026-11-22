@@ -60,6 +60,7 @@ import '../model/queue_item.dart';
 import '../model/route_policy.dart';
 import '../model/send_mode.dart';
 import '../model/session_stats.dart';
+import '../model/skill.dart';
 import '../model/subagent.dart';
 import '../model/task_notice_policy.dart';
 import '../model/team_board.dart';
@@ -674,8 +675,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     client.commitSnapshot(reply.key);
   }
 
-  /// 读一个会话的投影值包，**顺带把 `subagentCatalog` 落进目录三态**。
-  ///
+  /// 读一个会话的投影值包，**顺带把 `subagentCatalog` 落进目录三态**。  ///
   /// 返回 `notModified` = 这一包与手里那份逐字相同（**什么都没做**）；
   /// `value == null` = 这次没读到（失败已记进 [lastError]，目录进 `error` 态）。
   ///
@@ -2166,6 +2166,64 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   List<SlashCommand> get slashCommands => _slashCommands;
   List<SlashCommand> _slashCommands = const <SlashCommand>[];
 
+  /// 当前会话可见的**技能目录**（`skill.catalog`；桌面 `/` 菜单的另一半）。
+  ///
+  /// 与 [_projections] 同一条归属判据：目录**按会话**，换会话时新包还没落地之前
+  /// 不许把上一个会话的技能摆出来（那会让菜单里出现别的项目才有的技能）。
+  List<SkillEntry> _skills = const <SkillEntry>[];
+
+  /// 上面那份目录是**哪个会话**的。
+  String? _skillsSid;
+
+  /// 当前会话可见的技能（**不匹配就当作没有**，见 [_skillsSid]）。
+  List<SkillEntry> get slashSkills =>
+      _skillsSid == _currentSid ? _skills : const <SkillEntry>[];
+
+  /// 这一会话的技能目录（`skill.catalog`，契约 §5.7）。失败只留声：
+  /// 菜单里少一段技能，比 `openSession` 半途而废轻。
+  ///
+  /// `notModified` = "手里那份就是最新的"（摘要的键含 `sid`），什么都不做。
+  @override
+  Future<void> refreshSkillCatalog(String sid) async {
+    // **缺能力位就不发**（与 `refreshJobs` 同一条）：没装 skill 服务的部署里
+    // 连接器根本不挂 `skill.catalog`，发出去只会拿 `connector/unsupported`，
+    // 而它会被画成"技能读取失败"—— 把缺服务画成故障。
+    if (!_skillsAvailable) return;
+    try {
+      final reply = await _reads.skillCatalog(sid: sid);
+      if (reply.notModified) return;
+      final skills = reply.value;
+      if (skills == null) {
+        // 形状认不出：菜单退回"没有技能"，并留声（不静默当空）。
+        if (sid == _currentSid) {
+          _skills = const <SkillEntry>[];
+          _skillsSid = sid;
+          if (!_disposed) notifyListeners();
+        }
+        _recordError(
+          '读取技能目录失败',
+          const FormatException('skill.catalog 的应答不是对象'),
+        );
+        return;
+      }
+      if (sid == _currentSid) {
+        _skills = skills;
+        _skillsSid = sid;
+        if (!_disposed) notifyListeners();
+      }
+      client.commitSnapshot(reply.key);
+    } catch (error) {
+      _recordError('读取技能目录失败', error);
+    }
+  }
+
+  /// 电脑侧有没有技能目录（`repo.info.caps.skills`）。
+  ///
+  /// 缺了（老连接器 / 没装 skill 插件的部署）⇒ `/` 菜单里**整段不出现**，
+  /// 而不是画一个永远空的列表。
+  bool get skillsAvailable => _skillsAvailable;
+  bool _skillsAvailable = false;
+
   /// 电脑侧有没有 `@` 候选（`repo.info.caps.references`）。
   ///
   /// **只看能力位，不看方法表**：连接器那边两个判据是同一个函数
@@ -2197,6 +2255,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
         _hostName = null;
         _slashCommands = const <SlashCommand>[];
         _mentionsAvailable = false;
+        _skillsAvailable = false;
         _filesAvailable = false;
         _pluginsAvailable = false;
         if (!_disposed) notifyListeners();
@@ -2209,6 +2268,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
       if (name != null && name.isNotEmpty) onHostName?.call(name);
       _slashCommands = info.slashCommands;
       _mentionsAvailable = info.mentionsAvailable;
+      _skillsAvailable = info.skillsAvailable;
       _filesAvailable = info.filesAvailable;
       _changesAvailable = info.changesAvailable;
       _pluginsAvailable = info.pluginsAvailable;

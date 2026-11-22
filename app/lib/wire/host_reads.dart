@@ -28,6 +28,7 @@ import '../model/mention.dart' show AtCandidate;
 import '../model/model_catalog.dart' show ModelCatalog;
 import '../model/permission.dart' show PermissionCatalog;
 import '../model/plugins.dart' show PluginJob;
+import '../model/skill.dart' show SkillEntry;
 import '../model/usage_summary.dart' show UsageSummary;
 import '../model/workspace_files.dart' show FileListing, FilePage;
 import 'rpc/changes.dart' as wire;
@@ -42,6 +43,7 @@ import 'rpc/refs.dart' as wire;
 import 'rpc/repo.dart' as wire;
 import 'rpc/session.dart' as wire;
 import 'rpc/settings.dart' as wire;
+import 'rpc/skill.dart' as wire;
 import 'rpc/usage.dart' as wire;
 import 'rpc/workspace.dart' as wire;
 
@@ -126,6 +128,11 @@ final class WireHostReads implements HostReads {
   @override
   Future<SnapshotReply<List<JobRow>?>> jobList({required String sid}) =>
       wire.loadJobList(client, sid: sid);
+
+  @override
+  Future<SnapshotReply<List<SkillEntry>?>> skillCatalog({
+    required String sid,
+  }) => wire.loadSkillCatalog(client, sid: sid);
 
   @override
   Future<PluginJob?> pluginJobStatus({required String requestId}) =>

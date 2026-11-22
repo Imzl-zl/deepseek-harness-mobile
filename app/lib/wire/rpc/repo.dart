@@ -76,6 +76,9 @@ WireReading<RepoInfo> readRepoInfo(Object? result) =>
         filesAvailable: caps['files'] == true,
         changesAvailable: caps['changes'] == true,
         pluginsAvailable: caps['plugins'] == true,
+        // `caps.skills`：技能目录（`skill.catalog`）。**缺失 = 没有技能段**
+        // （老连接器不会有这个键），与 `files` / `changes` 同一条口径。
+        skillsAvailable: caps['skills'] == true,
         // **`!= false` 而不是 `== true`**：这个能力位决定"要不要发一次调用"，
         // 不是"要不要画一屏"。老连接器不报这个键时照样该能拉任务 ——
         // 猜错的代价是一次多余的成功调用，而不是整块能力消失。

@@ -29,6 +29,7 @@ import '../model/command.dart';
 import '../model/mention.dart';
 import '../model/permission.dart';
 import '../model/send_mode.dart';
+import '../model/skill.dart' show SkillEntry;
 import '../theme/dsh_colors.dart';
 import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
@@ -164,6 +165,7 @@ class DshComposer extends StatelessWidget {
     this.onStop,
     this.hintText = kComposerHintDefault,
     this.slashCommands = const <SlashCommand>[],
+    this.slashSkills = const <SkillEntry>[],
     this.mentionsEnabled = false,
     this.onQueryMentions,
     this.panelMaxHeight = kSuggestionPanelMax,
@@ -174,6 +176,13 @@ class DshComposer extends StatelessWidget {
   /// 空表 = 不知道 ⇒ 不出菜单。形状见 `model/command.dart` 的 [SlashCommand]：
   /// 老连接器只有名字，新连接器带宿主的说明。
   final List<SlashCommand> slashCommands;
+
+  /// 这一会话可见的**技能**（`skill.catalog`；桌面 `/` 菜单的另一半）。
+  ///
+  /// 与 [slashCommands] 同一个面板、**同一个触发字符**（桌面就是这样：命令 `order:1`、
+  /// 技能 `order:2`，`ui-skill/src/client/index.ts:171-184`）。区别只有一处：
+  /// 选中技能是**插一条 `/名字` 按普通消息发出去**，不是 `command.execute`。
+  final List<SkillEntry> slashSkills;
 
   /// 候选面板的高度上限（**输入卡上方真正剩下的空间**，由页面算好传进来）。
   ///
@@ -302,6 +311,7 @@ class DshComposer extends StatelessWidget {
           _SlashSuggestions(
             controller: controller,
             commands: slashCommands,
+            skills: slashSkills,
             enabled: enabled,
             panelMaxHeight: panelMaxHeight,
           ),
@@ -1798,51 +1808,78 @@ class _SlashSuggestions extends StatelessWidget {
   const _SlashSuggestions({
     required this.controller,
     required this.commands,
+    required this.skills,
     required this.enabled,
     required this.panelMaxHeight,
   });
 
   final TextEditingController controller;
   final List<SlashCommand> commands;
+  final List<SkillEntry> skills;
   final bool enabled;
   final double panelMaxHeight;
 
   @override
   Widget build(BuildContext context) {
-    if (!enabled || commands.isEmpty) return const SizedBox.shrink();
+    if (!enabled || (commands.isEmpty && skills.isEmpty)) {
+      return const SizedBox.shrink();
+    }
     return ValueListenableBuilder<TextEditingValue>(
       valueListenable: controller,
       builder: (context, value, _) {
         final query = slashQueryOf(value.text);
         if (query == null) return const SizedBox.shrink();
         // 名单是电脑侧给的，解析时已统一去掉前导 `/`（`parseSlashCommands`），
-        // 这里只按前缀筛。
-        final matched = [
+        // 这里只按前缀筛。**技能在同一层筛**：桌面那个菜单也是同一套过滤
+        // （`TextSearchIndex` 只搜名字）。
+        final matchedCommands = [
           for (final command in commands)
             if (command.name.startsWith(query)) command,
         ];
-        if (matched.isEmpty) return const SizedBox.shrink();
+        final matchedSkills = [
+          for (final skill in skills)
+            if (skill.name.startsWith(query)) skill,
+        ];
+        if (matchedCommands.isEmpty && matchedSkills.isEmpty) {
+          return const SizedBox.shrink();
+        }
         return _SuggestionPanel(
           key: const ValueKey<String>('slash-panel'),
           maxHeight: panelMaxHeight,
           rows: [
-            for (final command in matched)
+            for (final command in matchedCommands)
               _PanelRow(
                 key: ValueKey<String>('slash-${command.name}'),
                 name: '/${command.name}',
                 description: command.description ?? '',
                 section: kSectionCommands,
-                onTap: () {
-                  final text = '/${command.name} ';
-                  controller.value = TextEditingValue(
-                    text: text,
-                    selection: TextSelection.collapsed(offset: text.length),
-                  );
+                onTap: () => _insert('/${command.name} '),
+              ),
+            for (final skill in matchedSkills)
+              _PanelRow(
+                key: ValueKey<String>('slash-skill-${skill.name}'),
+                name: '/${skill.name}',
+                // 桌面对"仅用户可调用"的技能会在说明前加一个标记
+                // （`ui-skill/src/client/index.ts:182`）；手机沿用同一条，
+                // 数据来自 `modelInvocable`（宿主没报时不加）。
+                description: switch (skill.modelInvocable) {
+                  false => '仅用户可调用 · ${skill.description ?? ''}',
+                  _ => skill.description ?? '',
                 },
+                section: kSectionSkills,
+                onTap: () => _insert('/${skill.name} '),
               ),
           ],
         );
       },
+    );
+  }
+
+  /// 选中一行 = 把 `/名字 ` 写进输入框（光标落尾）。
+  void _insert(String text) {
+    controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
     );
   }
 }

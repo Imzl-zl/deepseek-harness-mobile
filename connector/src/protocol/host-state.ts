@@ -40,6 +40,11 @@ export const HOST_STATE_KEYS = [
   'session.projections',
   'settings.describe',
   'job.list',
+  // 技能目录（`skill.catalog`）。**没有生产者**：宿主没有"技能表变了"的事件
+  // （装/删技能改的是电脑上的文件），手机靠 `openSession` / 重连读一次。
+  // 它在这张表里是因为这张表是**两端的共同词汇**（手机 `HostStateKey.all` 必须
+  // 逐字相等），与 `repo.info` 同一个道理 —— 列在这里不等于会收到通知。
+  'skill.catalog',
   'session.modelCatalog',
   'permission.catalog',
   'agentPresets.list',

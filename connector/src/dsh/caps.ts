@@ -72,8 +72,7 @@ export const OPTIONAL_SERVICES = [
   // 手机 hero 上那枚模式 chip 退回"拿不到目录"，而不是摆一份手抄的四个内置预设。
   // 写路径不需要它：新建会话时带 `agentPreset` 走的是 `session.create`。
   'agentPresets',
-  // `@` 候选的两个只读面（`dsh/references.ts`，契约 §5.7）：
-  // `fileReferences` 是文件 / 目录候选的宿主服务
+  // `@` 候选的两个只读面（`dsh/references.ts`，契约 §5.7）：  // `fileReferences` 是文件 / 目录候选的宿主服务
   // （`packages/context/file-reference/src/index.ts:20-42`），
   // `sessionReferenceResolver` 是会话候选
   // （`packages/context/session-reference/src/index.ts:106,281-295`）。
@@ -82,6 +81,11 @@ export const OPTIONAL_SERVICES = [
   // 缺任一个手机就不显示 `@` 面板（契约 §7 的能力位模型）。
   'fileReferences',
   'sessionReferenceResolver',
+  // 技能目录（`dsh/skills.ts`，契约 §5.7 的 `skill.catalog`）：
+  // `session-controller/src/skill-catalog.ts:36` 的 `sessionSkillCatalog`
+  // （`@Remote`，namespace `skills`）。缺了只是 `skill.catalog` 不出现 ——
+  // 手机 `/` 菜单里少"技能"一段，而不是一个必然失败的候选。
+  'sessionSkillCatalog',
   // 插件面（`dsh/plugins.ts`，契约 §5.7 的 `plugin.list` / `plugin.setEnabled`）：
   // `pluginManager` 是 `packages/boot/plugin-manager/src/index.ts:333` 注册的服务
   // （14 个 `@Remote` 都在那里；`host/plugin-inventory` 那个 `list()` **没有 `@Remote`**，
@@ -190,6 +194,18 @@ export interface Caps {
    * （"服务不在"与"Team 没开"是两件事，后者由投影的 `enabled` 表达）。
    */
   team: boolean
+  /**
+   * 技能目录（`skill.catalog`）：`sessionSkillCatalog` 服务在不在。
+   *
+   * 判据是**服务在不在**，不是"这个会话有没有技能"（后者的答案就是空数组）。
+   * 与 `files` / `changes` 同一个套路：**一处定义、两处用**（`readCaps` 与
+   * `index.ts` 的挂载判据），两处各写一遍必然漂成"说有能力、方法却不在表里"。
+   *
+   * **可选**：这一版之后连接器总会给这个键，而老连接器不会有 —— 手机侧缺失
+   * 一律按"没有技能段"处理（`app/lib/data/app_model.dart` 的 `skillsAvailable`），
+   * 所以类型上留可选，测试桩不必为了编译而补一个假能力位。
+   */
+  skills?: boolean
 }
 
 const present = (ctx: Context, name: string): boolean => ctx.get(name) !== undefined
@@ -256,6 +272,16 @@ export function teamAvailable(ctx: Context): boolean {
   return present(ctx, 'agentTeams')
 }
 
+/**
+ * 技能目录能不能挂（`skill.catalog`）。
+ *
+ * 一个服务键：`sessionSkillCatalog`（`session-controller/src/skill-catalog.ts:36`）。
+ * 与 `changesAvailable` 同一个套路：**一处定义、两处用**。
+ */
+export function skillsAvailable(ctx: Context): boolean {
+  return present(ctx, 'sessionSkillCatalog')
+}
+
 export function readCaps(ctx: Context, options: { direct: boolean } = { direct: false }): Caps {
   return {
     sessions: present(ctx, 'sessionController'),
@@ -269,6 +295,7 @@ export function readCaps(ctx: Context, options: { direct: boolean } = { direct: 
     files: filesAvailable(ctx),
     changes: changesAvailable(ctx),
     team: teamAvailable(ctx),
+    skills: skillsAvailable(ctx),
     settings: present(ctx, 'settings'),
     credentials: present(ctx, 'credentials'),
     direct: options.direct,

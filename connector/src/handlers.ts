@@ -47,6 +47,7 @@ import type { SubagentsPort } from './dsh/subagents.js'
 import type { WorkspacesPort } from './dsh/workspaces.js'
 import type { PermissionFace } from './dsh/permissions.js'
 import { type CommandLineRunner } from './dsh/command-line.js'
+import type { SkillCatalogPort } from './dsh/skills.js'
 import type { AgentPresetsFace } from './dsh/agent-presets.js'
 import {
   SettingsConflictError,
@@ -182,6 +183,12 @@ export interface HandlerDeps {
    * 与 `permission.switch` 共用。
    */
   commandLine?: CommandLineRunner
+
+  /**
+   * 技能目录（`skill.catalog`，契约 §5.7）。缺了不挂那个方法 ——
+   * 手机 `/` 菜单里就没有"技能"一段，而不是一个会回错的候选。
+   */
+  skills?: SkillCatalogPort
   /**
    * Agent 预设目录（**`agentPresets` 服务不在时不给**）。
    *
@@ -1399,6 +1406,19 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       // 名字解析得出就原样执行 —— 认不认识这个名字是宿主的事（`find(agent,name)`），
       // 不是连接器的事：在这里再判一次就是第二份名单。
       return commandLine.run(sid, line)
+    }
+  }
+
+  // 技能目录（只读，契约 §5.7）：桌面 `/` 菜单的另一半。
+  // **按能力位挂**（`sessionSkillCatalog` 服务在不在）—— 缺了手机菜单里就没有
+  // "技能"那一段，而不是一个会回错的候选。
+  if (deps.skills !== undefined) {
+    const skills = deps.skills
+    handlers['skill.catalog'] = async (params) => {
+      const sid = requireSid(params)
+      // 不认识就 `session/not-found`（与 `session.projections` 同一个判据）。
+      requireSession(sid)
+      return skills.of(sid)
     }
   }
 

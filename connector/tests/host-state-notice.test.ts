@@ -152,6 +152,9 @@ test('清单是封闭集（手写拼错会在这里红）', () => {
     'session.modelCatalog',
     'session.projections',
     'settings.describe',
+    // 没有生产者（宿主没有"技能表变了"的事件），但它是两端的共同词汇 ——
+    // 手机 `HostStateKey.all` 必须逐字相等。
+    'skill.catalog',
     'workspace.list',
   ])
   // 每一条被这五个构造函数发出来的 key 都必须在封闭清单里。

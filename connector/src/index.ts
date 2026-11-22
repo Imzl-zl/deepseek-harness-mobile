@@ -76,6 +76,7 @@ import { createEndpointsPort, defaultDirectUrls, describeEndpoints, isLanAddress
 import { createSubagentsPort } from './dsh/subagents.js'
 import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent'
 import { createProjectionsPort } from './dsh/projections.js'
+import { createSkillCatalogPort } from './dsh/skills.js'
 import { createSettingsPort } from './dsh/settings.js'
 import { createSettingsFace } from './dsh/settings-face.js'
 import { hostDshVersion } from './dsh/host-version.js'
@@ -1079,6 +1080,15 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             },
             sessionOf: (sid) => aliases?.sessionOf(sid),
           },
+          // 技能目录（`skill.catalog`）：**按能力位挂**（`sessionSkillCatalog` 在不在）。
+          // 冷读，不需要活 agent —— 桌面 `/` 菜单的另一半就是这么来的。
+          ...(ctx.get('sessionSkillCatalog') === undefined
+            ? {}
+            : {
+                skills: createSkillCatalogPort(ctx, {
+                  sessionOf: (sid) => aliases?.sessionOf(sid),
+                }),
+              }),
           devices: () =>
             devicesTable === null
               ? []
