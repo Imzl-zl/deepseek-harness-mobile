@@ -83,8 +83,8 @@ DSH 有 `goals` 的 Remote（`pause` / `resume` / `clear` / `edit`），手机�
 | 清除 | `/goal clear` | `:39,171-174` |
 | 编辑 | `/goal edit <objective>` | `:43,154-164` |
 
-都走 `AppModel.executeCommand` → `command.execute`（白名单
-`connector/src/handlers.ts:88` 的 `MOBILE_COMMANDS` 已放行 `/goal`）。
+都走 `AppModel.executeCommand` → `command.execute`（连接器不再筛名字，
+注册过的命令一律交给宿主，见 `connector/src/handlers.ts` 的命令门）。
 
 **结论按 `CommandOutcome` 的既有约定呈现**（与 `chat_page.dart` 的
 `_switchPermission` 同一个三段式）：没有结论 ⇒ 浮层说「目标操作失败：<原因>」；

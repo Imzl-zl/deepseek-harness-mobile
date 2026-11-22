@@ -2154,11 +2154,11 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   String get deviceShortCode =>
       _deviceId.length <= 6 ? _deviceId : _deviceId.substring(0, 6);
 
-  /// 斜杠命令白名单（`repo.info.commands`，**电脑侧原样过线**）。
+  /// 斜杠命令表（`repo.info.commands`，**电脑侧原样过线**：宿主的命令表面）。
   ///
   /// 空表 = **不知道**（老连接器不报这个键）⇒ `/` 不出候选菜单。
-  /// **手机侧不抄第二份**：抄一份的后果是电脑侧加了第三条命令，手机菜单里永远没有它
-  /// （同一个事实两处表达必然漂）。判据与取舍在契约 §5.7 的 `repo.info` 行。
+  /// **手机侧不抄第二份**：抄一份的后果是电脑上装个插件多了一条命令，手机菜单里
+  /// 永远没有它（同一个事实两处表达必然漂）。判据与取舍在契约 §5.7 的 `repo.info` 行。
   ///
   /// 两种形状都收（老连接器的 `string[]` 与新连接器的 `{name, description?}[]`），
   /// 解析在 `model/command.dart` 的 `parseSlashCommands` —— 说明是**宿主命令定义里的话**，

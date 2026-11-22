@@ -1152,7 +1152,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
          * 换成它要的 live root agent。**两个键任一缺席就整块不挂** —— `repo.info` 的
          * `methods` 里也就没有 `command.execute`，手机侧不会摆一个必然失败的入口。
          *
-         * 分工：**白名单是方法面的政策**（`handlers.ts` 的 `MOBILE_COMMANDS`），
+         * 分工：**方法面就是宿主的命令表面**（没有名单，`handlers.ts` 上那段注释），
          * 执行那段（别名 → 活 agent、60 s 超时、`undefined` → `matched:false`）
          * 在 `dsh/command-line.ts`，与 `permission.switch` 共用同一份。
          */

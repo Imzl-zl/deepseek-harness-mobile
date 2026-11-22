@@ -590,14 +590,18 @@ export function fixtureHandlers(
             : { requestId, status: 'unknown', log: [], logTruncated: false },
       }
     })(),
-    // 斜杠命令执行面：一条成功回执（`CommandRunView`）+ 一份命令说明。
+    // 斜杠命令执行面：一条成功回执（`CommandRunView`）+ 一份**宿主的命令表**。
+    // 表是这里的真值：`repo.info.commands` 原样过线，所以金样不随白名单增减而变化
+    // （命令面是宿主的命令表面，连接器不再有名单）。
     commandLine: {
       run: async (_sid: string, line: string) => ({
         matched: true,
         execution: { result: { kind: 'text', text: `ran ${line}` } },
       }),
-      describe: (names: readonly string[]) =>
-        Object.fromEntries(names.map((name) => [name, `${name} 的说明`])),
+      catalog: () => [
+        { name: 'goal', description: 'goal 的说明' },
+        { name: 'plan', description: 'plan 的说明' },
+      ],
     },
     // 交互答复面：只用到 `respond`（其余成员对这条样本无意义，强制转型即可）。
     interaction: {

@@ -11,12 +11,13 @@
  *    `undefined`，`interaction/commands/src/index.ts:367-370`；Web 的推导在
  *    `session-controller/src/client/sessions/session.ts:390`）；
  * 5. **`{kind:'error'}` 原样过线** —— 命令在、但参数不对，是电脑侧的措辞；
- * 6. **白名单**：不在名单里的名字回 `connector/unsupported` 且**不去问 DSH**；
- *    不是命令形状的行**照原样交给宿主**（别自己发明语法）；
+ * 6. **没有名单**：注册过的名字一律原样交给宿主；不是命令形状的行也**照原样交给
+ *    宿主**（别自己发明语法）；连接器**不替宿主判名字**（判两次就是第二份名单）；
  * 7. **坏参数 → `protocol/bad-frame`**，未知 sid → `session/not-found`（都不去问 DSH）；
  * 8. **没有活动 agent → `internal`**（不是 `session/not-found`：那会让手机把会话删掉）；
- * 9. **白名单原样过线**（`repo.info.commands`）：手机侧画候选菜单只画这里给的名字，
- *    而 `command.execute` 没挂时**连 `commands` 这个键都不报**。
+ * 9. **命令表原样过线**（`repo.info.commands`）：手机菜单 == 宿主的
+ *    `commands.list(agent)`，一条也不筛；而 `command.execute` 没挂时
+ *    **连 `commands` 这个键都不报**。
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -50,29 +51,24 @@ function depsWith(commandLine: CommandLineRunner): HandlerDeps {
   } as unknown as HandlerDeps
 }
 
-/** 只记账、不真的跑：用来验"白名单/形状校验有没有走到 DSH"。 */
+/** 只记账、不真的跑：用来验"形状校验有没有走到 DSH"，以及命令表怎么过线。 */
 function spyRunner(
   view: unknown = { matched: true, execution: {} },
-  descriptions: Record<string, string> = {},
+  catalog: { name: string; description?: string }[] = [],
 ) {
   const seen: { sid: string; line: string }[] = []
-  const asked: string[][] = []
+  let catalogReads = 0
   const runner: CommandLineRunner = {
     run: async (sid, line) => {
       seen.push({ sid, line })
       return view as { matched: boolean }
     },
-    describe: (names) => {
-      asked.push([...names])
-      const declared: Record<string, string> = {}
-      for (const name of names) {
-        const description = descriptions[name]
-        if (description !== undefined) declared[name] = description
-      }
-      return declared
+    catalog: () => {
+      catalogReads += 1
+      return catalog
     },
   }
-  return { runner, seen, asked }
+  return { runner, seen, catalogReads: () => catalogReads }
 }
 
 test('方法表：command.execute 在封闭集里，且带幂等键', () => {
@@ -191,8 +187,19 @@ test('会话没有活动 agent：internal，不是 session/not-found', async () 
   )
 })
 
-test('白名单：/goal 与 /plan 放行，命令行原样交给执行层', async () => {
-  for (const line of ['/goal 睡觉', '/plan off']) {
+test('命令门不再有名单：注册过的命令一律原样交给宿主', async () => {
+  // 2026-11-22 改判：APP 的定位是复刻桌面，命令面就应当是宿主的命令表面。
+  // `/compact` / `/export` / `/feedback` / `/permission` 曾经被白名单挡在这里，
+  // 现在与 `/goal` / `/plan` 同一条路 —— 认不认识这个名字是宿主的事。
+  for (const line of [
+    '/goal 睡觉',
+    '/plan off',
+    '/compact',
+    '/export',
+    '/feedback 很好',
+    '/permission read-only',
+    '/select-model x',
+  ]) {
     const { runner, seen } = spyRunner()
     const handlers = createHandlers(depsWith(runner))
     await handlers['command.execute']!({ sid: SID, line }, undefined as never)
@@ -200,24 +207,16 @@ test('白名单：/goal 与 /plan 放行，命令行原样交给执行层', asyn
   }
 })
 
-test('白名单：不在名单里的命令回 connector/unsupported，且**不去问 DSH**', async () => {
-  // `/compact` 是本轮**有意**不放的那一个（没有反向命令 + 一次模型总结），
-  // 所以它是这条判据的样本。
-  for (const line of ['/compact', '/export', '/feedback 很好', '/permission read-only']) {
-    const { runner, seen } = spyRunner()
-    const handlers = createHandlers(depsWith(runner))
-    let caught: { code?: string; message?: string } | undefined
-    try {
-      await handlers['command.execute']!({ sid: SID, line }, undefined as never)
-    } catch (error) {
-      caught = error as { code?: string; message?: string }
-    }
-    assert.equal(caught?.code, 'connector/unsupported', `${line} 应被白名单拒掉`)
-    // 错误里要报出名单本身：手机原样显示这句话，不在本地抄第二份名单。
-    assert.match(caught?.message ?? '', /\/goal/)
-    assert.match(caught?.message ?? '', /\/plan/)
-    assert.equal(seen.length, 0, '被白名单拒掉的行不该走到 DSH')
-  }
+test('连接器不替宿主判名字：宿主不认识的名字也照原样转过去', async () => {
+  // 名字的合法性在宿主的 `find(agent, name)` 里；连接器再判一次就是第二份名单。
+  const { runner, seen } = spyRunner({ matched: false })
+  const handlers = createHandlers(depsWith(runner))
+  const result = await handlers['command.execute']!(
+    { sid: SID, line: '/no-such-command x' },
+    undefined as never,
+  )
+  assert.deepEqual(seen, [{ sid: SID, line: '/no-such-command x' }])
+  assert.deepEqual(result, { matched: false })
 })
 
 test('不是命令形状的行：照原样交给宿主（由它回 undefined）', async () => {
@@ -299,7 +298,7 @@ test('commandLine 缺席时方法不挂（repo.info 自然也不报）', () => {
   assert.equal('commands' in info, false)
 })
 
-test('命令说明从宿主定义读（`commands.list(agent)` 的 description），不手抄文案', () => {
+test('命令表从宿主读（`commands.list(agent)` 的名字 + 说明），不手抄文案', () => {
   // 断言值故意是一句**不可能被手抄到**的字符串：手抄文案的实现在这里必红。
   const fromHost = 'HOST-DECLARED-description-of-goal'
   const runner = createCommandLineRunner(
@@ -309,18 +308,23 @@ test('命令说明从宿主定义读（`commands.list(agent)` 的 description）
         list: () => [
           { name: 'goal', description: fromHost },
           { name: 'plan', description: '' },
-          { name: 'export', description: '不在白名单里' },
+          { name: 'compact', description: 'Compact the session log' },
+          { name: 7 },
         ],
       },
       agents: { get: () => undefined, list: () => [{ id: 'dsh-1' }] },
     }),
     { sessionOf: () => 'dsh-1' },
   )
-  // 空说明视同没给；不在询问名单里的不报。
-  assert.deepEqual(runner.describe(['goal', 'plan']), { goal: fromHost })
+  // 空说明视同没给（那一列不画）；名字不是字符串的整行丢掉。
+  assert.deepEqual(runner.catalog(), [
+    { name: 'goal', description: fromHost },
+    { name: 'plan' },
+    { name: 'compact', description: 'Compact the session log' },
+  ])
 })
 
-test('一个活 agent 都没有 ⇒ 说明为空（repo.info 只报名字）', () => {
+test('一个活 agent 都没有 ⇒ 命令表为空（不编一份全局的）', () => {
   const runner = createCommandLineRunner(
     fakeCtx({
       commands: { execute: async () => undefined, list: () => [{ name: 'goal', description: 'x' }] },
@@ -328,13 +332,15 @@ test('一个活 agent 都没有 ⇒ 说明为空（repo.info 只报名字）', (
     }),
     { sessionOf: () => 'dsh-1' },
   )
-  assert.deepEqual(runner.describe(['goal']), {}, '没有 agent 就没法读宿主定义：回空表，不编')
+  assert.deepEqual(runner.catalog(), [], '没有 agent 就没有"这个 agent 的有效命令视图"')
 })
 
-test('repo.info 报斜杠命令白名单（原样过线，手机据此画候选菜单）', () => {
-  const { runner, asked } = spyRunner(undefined, {
-    goal: 'Set or view the goal for a long-running task',
-  })
+test('repo.info 报宿主的命令表（原样过线，手机据此画候选菜单）', () => {
+  const { runner, catalogReads } = spyRunner(undefined, [
+    { name: 'goal', description: 'Set or view the goal for a long-running task' },
+    { name: 'plan' },
+    { name: 'compact', description: 'Compact the session log' },
+  ])
   const handlers = createHandlers({
     ...depsWith(runner),
     caps: () => ({
@@ -346,11 +352,12 @@ test('repo.info 报斜杠命令白名单（原样过线，手机据此画候选�
   const info = handlers['repo.info']!({}, undefined as never) as {
     commands?: { name: string; description?: string }[]
   }
-  // 与 `MOBILE_COMMANDS` **同一份**：手机侧不抄第二份，加一个名字这里就多一项。
-  // 形状是 `{name, description?}[]`：说明来自宿主的命令定义，读不到就不带这个键。
+  // 一条也不筛：手机菜单 == 宿主命令表。形状是 `{name, description?}[]`
+  // （老连接器只有 `string[]`，手机两种都收）。
   assert.deepEqual(info.commands, [
     { name: 'goal', description: 'Set or view the goal for a long-running task' },
     { name: 'plan' },
+    { name: 'compact', description: 'Compact the session log' },
   ])
-  assert.deepEqual(asked, [['goal', 'plan']], '一次问完全部白名单名字，不逐个往返')
+  assert.equal(catalogReads(), 1, '读一次就够（不逐个名字往返）')
 })

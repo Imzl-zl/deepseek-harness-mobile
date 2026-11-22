@@ -20,8 +20,22 @@
      **技能目录手机端整块没接**。这一条**未动**，与"APP = 复刻桌面"同批做。
   3. **「新建会话闪一下回旧会话」未复现**：两次都成功，且电脑侧确实建出会话
      （`~/.dsh/sessions/…` 330 B 的 blank 文件）。仍缺一次带 RPC 轨迹的诊断包。
-- **本轮门禁**：app **1978**（+5 新 / 1 条改判）· boundary **972** · size PASS ·
-  `dart analyze --fatal-infos` 0 · 变异校验 2 次各 **1 红**（在飞键、`notModified` 分支）。
+- **命令面已与桌面一致（2026-11-22）**：连接器的 `MOBILE_COMMANDS` 白名单**删掉**了 ——
+  `command.execute` 把任何 `/名字` 原样交给宿主，`repo.info.commands` 报宿主的整张
+  命令表（`CommandLineRunner.catalog()` 读 `commands.list(agent)`，一条不筛）。手机侧
+  零名单，所以电脑装个插件多一条命令，手机 `/` 菜单立刻多一行。代价写在明处：
+  `/export`、`/feedback` 的产物在手机上没有形态（界面如实显示宿主的 `text`，不假装
+  文件到了手机）；崩溃窗口的重发只靠幂等表（与桌面 Web 同一个暴露面）。
+  `repo.info` 触发点补了 `openSession`（命令表是 per-agent 的，刚连上可能为空）。
+  笔记 `implemented/2026-11-22-command-surface-parity.md`；旧篇移入 `archived/`。
+- **`/` 菜单的技能段仍未做**：桌面把 `skills.list({sessionId})` 的目录拼进同一个菜单
+  （`ui-skill/src/client/index.ts:171-184`，`trigger:'/'`、`order:2`、子会话不出现），
+  手机端整块没接。宿主那个 Remote 是 `session-controller/src/skill-catalog.ts` 的
+  `sessionSkillCatalog`（namespace `skills`，`list(request, signal)` →
+  `{skills:[{name, path?, description, whenToUse?, modelInvocable}]}`，已滤成用户可调用）。
+- **本轮门禁**：app **1978**（+5 新 / 1 条改判）· connector **885** · boundary **972** ·
+  size PASS · `dart analyze --fatal-infos` 0 · 变异校验 2 次各 **1 红**（在飞键、
+  `notModified` 分支）。
 - **已知缺口**：摘要与内容的寿命不一致这条**根因**仍在 —— 将来放掉某个会话的快照
   必须同时放掉它的摘要，否则同一条"没变"死路会在别处复现。
 

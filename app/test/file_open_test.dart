@@ -29,12 +29,17 @@ class _OpenClient extends FakeSyncClient {
   _OpenClient({
     this.filesAvailable = true,
     this.changesAvailable = false,
+    this.repoInfoReachable = true,
     this.pages = const {},
     this.diffResponse,
   });
 
   final bool filesAvailable;
   final bool changesAvailable;
+
+  /// `repo.info` 这一格读不读得到。`false` = 造出"能力位未知"那一档
+  /// （连接不在服务态），`openSession` 顺带的那次重读会失败。
+  final bool repoInfoReachable;
 
   /// `file.diff` 的应答（`{diff: ...}`）；给 `null` 时方法不会被调。
   final Map<String, Object?>? diffResponse;
@@ -72,6 +77,12 @@ class _OpenClient extends FakeSyncClient {
     sent.add((method, params));
     switch (method) {
       case 'repo.info':
+        // **读不到**这一面要能造出来：`openSession` 现在会顺带重读 `repo.info`
+        // （命令表是 per-agent 的，见 `data/host_state.dart` 的那一列），
+        // 所以"能力位未知"只能靠"这一格真的读不到"来表达。
+        if (!repoInfoReachable) {
+          throw StateError('连接不在服务态');
+        }
         return <String, Object?>{
               'protocol': 1,
               'caps': <String, Object?>{
@@ -268,7 +279,9 @@ void main() {
     });
 
     test('没读到 repo.info：说"还没连上"，不说"没有文件服务"', () async {
-      final client = _OpenClient();
+      // 这一档只能是"这一格真的读不到"：`openSession` 会顺带重读 `repo.info`
+      // （命令表 per-agent，见 `data/host_state.dart`），所以让假电脑把它拒掉。
+      final client = _OpenClient(repoInfoReachable: false);
       final app = await _app(client, known: false);
       addTearDown(app.dispose);
 

@@ -26,8 +26,8 @@
 /// **这不是静默降级**：宿主认识时命令会真的跑（`matched:true`，结果落在命令卡上），
 /// 只有它不认识时才回退 —— 而那种行在 Web 上本来也是一条消息。
 ///
-/// 取舍（为什么白名单在电脑侧、为什么子会话没有命令面、`matched:false` 为什么回落）
-/// 见 `.agents/notes/implemented/2026-10-23-slash-command-execution-surface.md`。
+/// 取舍（为什么命令表在电脑侧、为什么子会话没有命令面、`matched:false` 为什么回落）
+/// 见 `.agents/notes/implemented/2026-11-22-command-surface-parity.md`。
 library;
 
 /// 一次发送的落点（每条对应一个方法名，见 `chat_page.dart` 的 `_send()`）。
@@ -38,7 +38,7 @@ enum SendRoute {
   /// 子会话的消息 → `subagent.prompt`（宿主只认这条路）。
   subagentPrompt,
 
-  /// 斜杠命令 → `command.execute`（连接器按白名单放行，契约 §5.7）。
+  /// 斜杠命令 → `command.execute`（连接器不再筛名字，契约 §5.7）。
   command,
 }
 
@@ -49,8 +49,8 @@ enum SendRoute {
 ///
 /// 判据是"以 `/` 开头"，**与 Web 输入状态机的判据逐字一致**
 /// （`machine.ts:144-149`：`draft.trim()` 后 `startsWith('/')` 进 `adjudicating`）。
-/// 自己再写一个更窄的（比如先切出命令名再比白名单）就是第二份语法 ——
-/// 白名单在电脑侧（`connector/src/handlers.ts` 的 `MOBILE_COMMANDS`），手机不抄。
+/// 自己再写一个更窄的（比如先切出命令名再比一张名单）就是第二份语法 ——
+/// 名字的合法性在电脑侧（宿主的 `find(agent, name)`），手机不抄。
 ///
 /// 文本在这里再 `trim` 一次：调用方给的是草稿快照，而 Web 的判据也是先 trim
 /// （`machine.ts:144`）。两边同一个口径，才不会出现"手机上多发一个空格就换了方法"。

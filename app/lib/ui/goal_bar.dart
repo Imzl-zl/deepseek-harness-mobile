@@ -18,8 +18,8 @@
 /// DSH 有 `goals` 的 Remote（`pause` / `resume` / `clear` / `edit`），而手机这条通道
 /// 没有它（`connector/src/protocol/methods.ts` 的方法面里没有 `goal.*`）。所以四个动作
 /// 一律落到 `/goal …`（`command-goal/src/index.ts:16` 的用法串），
-/// 走已经放行的 `command.execute`（白名单 `connector/src/handlers.ts:88` 的
-/// `MOBILE_COMMANDS`）。**这条通道的结论按 `CommandOutcome` 的既有约定呈现**
+/// 走 `command.execute`（连接器不再筛名字，见 `connector/src/handlers.ts` 的命令门）。
+/// **这条通道的结论按 `CommandOutcome` 的既有约定呈现**
 /// （与 `chat_page.dart` 的 `_switchPermission` 同一个三段式），不新造文案。
 ///
 /// 代价写在 `docs/subsystems/goal-bar.md` §4：命令会在对话流里落一张命令卡

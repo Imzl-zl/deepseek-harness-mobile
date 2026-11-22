@@ -151,7 +151,7 @@ void main() {
       );
       expect(sendRouteOf(text: '睡觉', isSubagent: false), SendRoute.prompt);
       expect(sendRouteOf(text: '', isSubagent: false), SendRoute.prompt);
-      // **是不是命令由电脑侧判**（白名单 + DSH 的 parseCommand）：手机只认"以 / 开头"。
+      // **是不是命令由电脑侧判**（宿主的 parseCommand）：手机只认"以 / 开头"。
       // 这条行在 DSH 眼里不是命令（`/etc` 后面跟的是 `/`），于是电脑回 `undefined`，
       // 手机按 Web 的同一条退成普通消息 —— 路径字符串仍然发得出去。
       expect(

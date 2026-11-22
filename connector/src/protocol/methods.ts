@@ -85,8 +85,8 @@ export const METHODS = [
   // `remote.commands.execute` 调它（`ui-permission-presets/src/client/index.ts:126`）。
   // 当前值不走这个方法读 —— 它在 `permissions` 投影里，随 `session.projections` 到手机。
   'permission.switch',
-  // 通用命令门：跑一条**斜杠命令**，只放白名单里的命令名（判据与名单在
-  // `handlers.ts` 的 `MOBILE_COMMANDS`）。**与 Web 同一个 DSH 方法**：
+  // 通用命令门：跑一条**斜杠命令**，名字的合法性由宿主的 `find(agent,name)` 决定
+  // （连接器不再有名单，见 `handlers.ts` 上那段注释）。**与 Web 同一个 DSH 方法**：
   // `commands.execute`（`interaction/commands/src/index.ts:360`），Web 侧落到
   // `remote.commands.execute(sessionId, line, [])`
   // （`session-controller/src/client/sessions/session.ts:388`）。
@@ -227,8 +227,9 @@ export const IDEMPOTENT_METHODS: ReadonlySet<MethodName> = new Set([
   'permission.switch',
   // 跑一条命令是用户指令：重发不该落两遍 `command/run` / `command/done` 生命周期
   // （那是两张命令卡），也不该把命令的副作用做两遍。
-  // 键只覆盖"同键合流 + 24 h 内命中缓存"；崩溃窗口里的重发由白名单的第 2 条判据
-  // 兜（处理器自己是状态机，见 `handlers.ts` 的 `MOBILE_COMMANDS`）。
+  // 键只覆盖"同键合流 + 24 h 内命中缓存"；崩溃窗口里的重发**只**靠这张幂等表
+  // （表落盘在 `dsh_mobile_core.json` 的 `dedupe`）。DSH 自己不按 rpcId 去重，
+  // 所以这与桌面 Web 是同一个暴露面 —— 见 `handlers.ts` 命令门注释里的"代价"第 2 条。
   'command.execute',
   'interaction.respond',
   'settings.update',

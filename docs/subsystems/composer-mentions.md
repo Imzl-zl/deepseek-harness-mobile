@@ -22,7 +22,7 @@
 | 文件 | `refs.files`（宿主的 `fileReferences.list`） | `@path` |
 | 目录 | 同上（`kind: 'directory'`） | `@path/`（补一个斜杠，与宿主的目录 token 同形） |
 | 会话 | `refs.sessions`（宿主的 `sessionReferenceResolver` 的 `@Remote('candidates')`） | 宿主给的 `mention` **原样**：`@[标题](dsh-session:<base64url>)` |
-| 命令（`/`） | `repo.info.commands`（白名单 + 宿主的 `description`） | `/名字 `（带尾空格） |
+| 命令（`/`） | `repo.info.commands`（宿主的命令表 + 宿主的 `description`） | `/名字 `（带尾空格） |
 
 ## 2. 触发判据（`app/lib/model/mention.dart` 的 `atTriggerOf`）
 

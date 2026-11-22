@@ -299,8 +299,14 @@ const List<HostStateFetch> hostStateRegistry = <HostStateFetch>[
   HostStateFetch(
     key: HostStateKey.repoInfo,
     fetch: _refetchRepoInfo,
-    // 同上：进程级事实（版本 / 能力位）。
-    triggers: <HostStateTrigger>{HostStateTrigger.connectLanding},
+    // 进程级事实（版本 / 能力位）+ **命令表**。`openSession` 那一列是为命令表加的：
+    // 宿主的命令视图是 per-agent 的（`commands.list(agent)`），而没有活 agent 时
+    // 连接器只能报空表 —— 刚连上、一条会话都没开时菜单会是空的，开一次会话才补上。
+    // 排在 `openSession` 里没有额外代价：这一包是几十字节的目录，且带摘要。
+    triggers: <HostStateTrigger>{
+      HostStateTrigger.connectLanding,
+      HostStateTrigger.openSession,
+    },
   ),
 ];
 

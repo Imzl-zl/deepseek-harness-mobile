@@ -95,8 +95,8 @@ export interface CommandLineRunner {
   /** 在这个会话上跑一条命令行。别名未知 = 调用方的缺陷（handler 已经查过一次）。 */
   run(sid: string, line: string): Promise<CommandRunView>
   /**
-   * 这些命令名在宿主定义里的说明（`CommandDefinition.description`）—— 手机 `/` 菜单
-   * 那一列右对齐的字就来自这里，**手机侧不抄文案**。
+   * **这台部署此刻注册了哪些命令**（名字 + 宿主的说明）—— 手机 `/` 菜单就是它的
+   * 直接投影，`repo.info.commands` 原样过线，**手机侧不抄第二份名单、也不抄文案**。
    *
    * ## 为什么需要一个活 agent，以及"取哪一个"
    *
@@ -105,20 +105,17 @@ export interface CommandLineRunner {
    * （`register` 走 `ctx.effect` + `ScopedLayers`，`:285-292`）。而 `repo.info`
    * 是**无会话**的只读面，手上没有 `sid` 可换 agent。
    *
-   * 所以这里取**登记顺序里第一个活 agent** 的视图，并且只在**拿它与全局层一致**的
-   * 前提下有意义 —— 手机上白名单里的 `/goal`、`/plan` 都由插件在**根 context**
-   * 上注册（`goal/command-goal/src/index.ts:191`、`plan/plan-mode/src/index.ts:233`），
-   * 对每个 agent 都是同一份。真正的 per-agent 覆盖在本部署里不存在；
-   * 哪天出现了，`repo.info` 这条就会把"某一个 agent 的说明"当成全局的 ——
-   * 那时正确的修法是让说明跟着会话走（`command.list({sid})`），不是在这里取巧。
+   * 所以这里取**登记顺序里第一个活 agent** 的视图。命令定义今天都注册在根 context
+   * （`goal/command-goal/src/index.ts:191`、`plan/plan-mode/src/index.ts:233`），
+   * 对每个 agent 是同一份；哪天真的出现 per-agent 覆盖，`repo.info` 这条就会把
+   * "某一个 agent 的命令表"当成全局的 —— 那时正确的修法是让命令表跟着会话走
+   * （`command.catalog({sid})`），不是在这里取巧。
    *
-   * 一个活 agent 都没有（刚连上、一条会话都没开）⇒ 回空表：`repo.info` 只报名字，
-   * 手机那一列不画说明。下一次刷新（`session.list` 之后）就补上。
-   *
-   * Note: 为什么不手抄文案、也不新开 `command.list({sid})` ——
-   * 见 `.agents/notes/implemented/2026-10-25-command-descriptions-from-host.md`
+   * 一个活 agent 都没有（刚连上、一条会话都没开）⇒ 回空表。这是**如实**的空：
+   * 没有 agent 就没有"这个 agent 的有效命令视图"。手机侧因此把 `repo.info` 的
+   * 触发点也挂在 `openSession` 上（见 `app/lib/data/host_state.dart`）。
    */
-  describe(names: readonly string[]): Record<string, string>
+  catalog(): { name: string; description?: string }[]
 }
 
 /** 单条命令的超时。契约 §10 的请求超时是 60 s，取同一个值。 */
@@ -186,20 +183,22 @@ export function createCommandLineRunner(ctx: Context, deps: CommandLineDeps): Co
         : { matched: true, execution }
     },
 
-    describe(names) {
+    catalog() {
       const commands = commandsOf()
       const agent = agentsOf()?.list()[0]
-      if (commands === undefined || agent === undefined) return {}
-      const wanted = new Set(names)
-      const descriptions: Record<string, string> = {}
+      if (commands === undefined || agent === undefined) return []
+      const rows: { name: string; description?: string }[] = []
       for (const descriptor of commands.list(agent)) {
         const { name, description } = descriptor
-        if (typeof name !== 'string' || !wanted.has(name)) continue
+        if (typeof name !== 'string' || name === '') continue
         // 空说明视同没给（线上就是"这个键不出现"，手机那一列不画）。
-        if (typeof description !== 'string' || description === '') continue
-        descriptions[name] = description
+        if (typeof description === 'string' && description !== '') {
+          rows.push({ name, description })
+          continue
+        }
+        rows.push({ name })
       }
-      return descriptions
+      return rows
     },
   }
 }

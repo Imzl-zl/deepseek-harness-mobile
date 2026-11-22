@@ -1,6 +1,10 @@
 # Agent Note: 斜杠命令的执行面（`command.execute` + 白名单）
 
-Status: implemented
+> **被 `implemented/2026-11-22-command-surface-parity.md` 取代**（2026-11-22）：
+> `MOBILE_COMMANDS` 已删除，命令面改成"宿主的命令表面"（注册过的都放行）。
+> 本篇的三条准入判据与代价留作历史；`archived/` 不再更新。
+
+Status: archived
 
 ## Problem
 

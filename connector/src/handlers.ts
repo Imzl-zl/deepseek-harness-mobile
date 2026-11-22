@@ -46,7 +46,7 @@ import type { ReferencesFace } from './dsh/references.js'
 import type { SubagentsPort } from './dsh/subagents.js'
 import type { WorkspacesPort } from './dsh/workspaces.js'
 import type { PermissionFace } from './dsh/permissions.js'
-import { commandNameOf, type CommandLineRunner } from './dsh/command-line.js'
+import { type CommandLineRunner } from './dsh/command-line.js'
 import type { AgentPresetsFace } from './dsh/agent-presets.js'
 import {
   SettingsConflictError,
@@ -64,49 +64,33 @@ export interface DeviceRow {
 }
 
 /**
- * 手机上的命令面白名单（`command.execute` 的准入，契约 §5.7）。
+ * 手机上的命令面：**宿主注册了什么，手机就能画什么、就能跑什么**。
  *
- * **判据三条，加一个名字要三条都成立**：
+ * ## 为什么不再有白名单（2026-11-22 改判）
  *
- * 1. **结果就是 `CommandResult` 的 `{kind,text}`**（`interaction/commands/src/types.ts:34-41`），
- *    不产生**会话之外**的新产物 —— 手机拿不到的东西（`/export` 的 ZIP 下载、
- *    `/feedback` 的反馈记录）在电脑侧发生了也呈现不了、更撤不回来。
- * 2. **效果是会话级状态，且处理器自己是状态机**：非法转移被拒、重复执行落到同一终态。
- *    这一条同时是幂等的前提 —— 契约 §5.6 对"崩溃窗口里重新执行"的承诺，靠的正是
- *    下游认得出重复（`idempotency.ts` 文件头那张表）。`/compact` 不满足：没有反向命令，
- *    且一次调用就是一次模型总结（`command-compact/src/index.ts:67`）。
- * 3. **没有已存在的窄口**：`/permission` 的写入口是 `permission.switch`，
- *    同一个状态不开第二条路。
+ * 原来的白名单（`/goal`、`/plan`）用三条判据挡住了"手机上呈现不了"的命令
+ * （`/export` 的 ZIP、`/feedback` 的会话外记录、`/compact` 没有反向命令、
+ * `/permission` 已有窄口）。它的代价是**手机与桌面的命令面永远不一致** ——
+ * 而 APP 的定位是复刻桌面（用户 2026-11-21 原话："桌面有的都有"）。
  *
- * 名单**只有这一处**：手机侧不抄第二份 —— 它按"以 `/` 开头"分流发给 `command.execute`，
- * 候选菜单要画的名字由 `repo.info.commands` **原样过线**（同一份 `MOBILE_COMMANDS`）。
- * 所以电脑侧加一个名字，手机上的菜单立刻多一行；拿掉一个名字，手机收到的是
- * `connector/unsupported` + 一句人话，而不是"电脑不认识这条命令"。
+ * 现在：命令表由宿主的 `commands.list(agent)` 决定，`repo.info.commands` 原样过线
+ * （`dsh/command-line.ts` 的 `catalog()`），`command.execute` 放行任何注册过的名字。
+ * **手机侧没有第二份名单**，所以电脑上装个插件多了一条命令，手机菜单立刻多一行。
  *
- * 取舍（为什么是白名单而不是推翻 §5.7 的通用命令面、为什么第 2 条同时是幂等的依据）见
- * `.agents/notes/implemented/2026-10-23-slash-command-execution-surface.md`。
+ * ## 代价，写在明处
+ *
+ * 1. **"跑成功但看不见"是可能的**：`/export` 的产物是电脑侧的 ZIP 下载、`/feedback`
+ *    的产物在会话之外。手机拿到的是 `{kind:'success', text}`，界面上如实显示那句话，
+ *    **不假装文件到了手机上**。产物面（手机端接收文件 / 查看反馈记录）是独立的一单。
+ * 2. **崩溃窗口里的重发**：DSH 不按 rpcId 去重（命令每次都铸新的 `commandId`），
+ *    真正的保护是连接器的幂等表（`idempotency.ts`：同键合流 + 24 h 内命中缓存，
+ *    表落盘在 `dsh_mobile_core.json` 的 `dedupe`）。白名单里"处理器自己是状态机"
+ *    那条曾是第二层保险；现在这层保险对 `/compact` 这类**不存在** ——
+ *    与桌面 Web 客户端同一个暴露面（它也不去重），这是有意的对齐，不是疏漏。
+ *
+ * 取舍与被否方案见 `.agents/notes/implemented/2026-11-22-command-surface-parity.md`
+ * （它取代 `archived/2026-10-23-slash-command-execution-surface.md`）。
  */
-const MOBILE_COMMANDS: ReadonlySet<string> = new Set(['goal', 'plan'])
-
-/** 白名单的人话（错误信息里用；顺序固定，便于用户照抄）。 */
-const MOBILE_COMMAND_LIST = [...MOBILE_COMMANDS].map((name) => `/${name}`).join('、')
-
-/**
- * `repo.info.commands` 的行：白名单的名字 + **宿主的说明**。
- *
- * 说明来自 `commands.list(agent)` 的 `description`（`CommandLineRunner.describe`），
- * 不是手抄的文案 —— DSH 改词时我们跟着变。读不到就**不带这个键**：
- * 手机上那一列不画说明，而不是画一句编的。
- */
-function commandRows(
-  runner: CommandLineRunner,
-): { name: string; description?: string }[] {
-  const descriptions = runner.describe([...MOBILE_COMMANDS])
-  return [...MOBILE_COMMANDS].map((name) => {
-    const description = descriptions[name]
-    return description === undefined ? { name } : { name, description }
-  })
-}
 
 /** `tokenUsage` 的四个分项（键名是 DSH 的原名，`usage-projection.ts:16-21`）。 */
 interface TokenBuckets {
@@ -1392,14 +1376,14 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
     }
   }
 
-  // 通用命令门：**白名单里的命令才放行**（判据见文件头 `MOBILE_COMMANDS`）。
+  // 通用命令门：**宿主注册过的命令都放行**（判据见上面那段"手机上的命令面"）。
   // 与 Web 同一个 DSH 方法（`commands.execute`，`interaction/commands/src/index.ts:360`；
   // Web 侧 `session-controller/.../session.ts:388`），执行那段在 `dsh/command-line.ts`。
   if (deps.commandLine !== undefined) {
     const commandLine = deps.commandLine
     // **带幂等键**（`IDEMPOTENT_METHODS`）：分发前就拦，所以这里一定拿得到。
-    // 键只保证"同一次重发不跑两遍"（同键合流 / 24 h 内命中缓存）；崩溃窗口里的
-    // 重发靠的是白名单那三条判据里的第 2 条（处理器自己认得出重复）。
+    // 键只保证"同一次重发不跑两遍"（同键合流 / 24 h 内命中缓存）——
+    // 这是崩溃窗口里唯一的保护，见文件头的"代价"第 2 条。
     handlers['command.execute'] = async (params) => {
       const sid = requireSid(params)
       requireSession(sid)
@@ -1410,18 +1394,10 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       if (/[\r\n]/.test(line)) {
         throw new ProtocolError('protocol/bad-frame', 'line 不能包含换行')
       }
-      const name = commandNameOf(line)
-      if (name !== undefined && !MOBILE_COMMANDS.has(name)) {
-        // **不是 `matched:false`**：那个值让手机按"电脑不认识"退成普通消息，
-        // 等于把 `/compact` 悄悄当消息发出去 —— 正是本轮要消灭的形状。
-        // 也不是 `protocol/bad-frame`：请求本身合法，是**这台手机**没有这个动作。
-        throw new ProtocolError(
-          'connector/unsupported',
-          `手机上的命令面只放 ${MOBILE_COMMAND_LIST}：/${name} 不在其中`,
-        )
-      }
-      // 名字解析不出（`/etc/passwd 是啥` 这种）就交给宿主：它会回 `undefined`，
+      // 名字解析不出（`/etc/passwd 是啥` 这种）也交给宿主：它会回 `undefined`，
       // 手机按 Web 的同一条推导退成普通消息（`machine.ts:170-175`）。
+      // 名字解析得出就原样执行 —— 认不认识这个名字是宿主的事（`find(agent,name)`），
+      // 不是连接器的事：在这里再判一次就是第二份名单。
       return commandLine.run(sid, line)
     }
   }
@@ -1875,19 +1851,19 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
       ? {}
       : { hostName: deps.hostName() }),
     methods: Object.keys(handlers).sort(),
-    // **斜杠命令白名单原样过线**（候选菜单用）。仍然是**一处**真值：
-    // 手机上那张菜单只画这里给的名字，加/减一个名字不需要改手机。
+    // **命令表原样过线**（候选菜单用）：手机那张菜单就是宿主的 `commands.list(agent)`，
+    // 装个插件多一条命令，手机菜单立刻多一行 —— 手机侧不抄名单。
     // **只在 `command.execute` 真的挂上时才报**：报一个调不通的名字，就是
     // 契约 §5.7 表后那句"多一个必然失败的按钮"。
     //
     // 形状是 `{name, description?}[]`（老连接器只有 `string[]`，手机两种都收）：
     // 说明**从宿主的命令定义读**（`commands.list(agent)` 的 `description`，
     // `interaction/commands/src/types.ts:56-66`），不手抄 —— DSH 改词我们跟着变。
-    // 读不到（一个活 agent 都没有）就不带这个键：手机上那一列不画说明，
-    // 不是画一句编的。
+    // 一个活 agent 都没有时是空表（没有 agent 就没有"这个 agent 的有效命令视图"）；
+    // 手机侧因此把 `repo.info` 的触发点也挂在 `openSession` 上。
     ...(handlers['command.execute'] === undefined || deps.commandLine === undefined
       ? {}
-      : { commands: commandRows(deps.commandLine) }),
+      : { commands: deps.commandLine.catalog() }),
   })
 
   return handlers
