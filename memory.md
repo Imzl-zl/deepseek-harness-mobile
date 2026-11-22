@@ -28,11 +28,6 @@
   文件到了手机）；崩溃窗口的重发只靠幂等表（与桌面 Web 同一个暴露面）。
   `repo.info` 触发点补了 `openSession`（命令表是 per-agent 的，刚连上可能为空）。
   笔记 `implemented/2026-11-22-command-surface-parity.md`；旧篇移入 `archived/`。
-- **`/` 菜单的技能段仍未做**：桌面把 `skills.list({sessionId})` 的目录拼进同一个菜单
-  （`ui-skill/src/client/index.ts:171-184`，`trigger:'/'`、`order:2`、子会话不出现），
-  手机端整块没接。宿主那个 Remote 是 `session-controller/src/skill-catalog.ts` 的
-  `sessionSkillCatalog`（namespace `skills`，`list(request, signal)` →
-  `{skills:[{name, path?, description, whenToUse?, modelInvocable}]}`，已滤成用户可调用）。
 - **`/` 菜单的技能段已接上（2026-11-22）**：新方法 `skill.catalog`（只读、会话级）+
   连接器端口 `connector/src/dsh/skills.ts`（别名 → DSH 会话 id、30s 上限、坏行丢掉、
   只过 `name`/`description?`/`modelInvocable?`）+ `caps.skills`。手机侧
@@ -46,6 +41,14 @@
   `dart analyze --fatal-infos` 0 · 变异校验 3 次（在飞键、`notModified`、技能归属）。
 - **已知缺口**：摘要与内容的寿命不一致这条**根因**仍在 —— 将来放掉某个会话的快照
   必须同时放掉它的摘要，否则同一条"没变"死路会在别处复现。
+- **这台开发机的 `desktop` profile 里是手工覆盖的连接器**（为了真机验上面两批）：
+  `~/.dsh/profiles/desktop/node_modules/dsh-mobile-connector/lib/` 换成了
+  `connector/lib/` 的产物，旧代码在同目录 `lib.bak-2026-11-22/`。
+  **npm 上仍是 0.1.28**（用户 2026-11-22 说"发版那个先不管"），所以 `npm i` 会覆盖回
+  0.1.28（= 退回白名单、无技能段）；回退也可以直接把 `lib.bak-2026-11-22` 改名回 `lib`。
+  **下次发版连接器必须抬版本**（0.1.29），否则手机会看起来"时好时坏"。
+- **仍未做**：「新建会话闪回旧会话」要带 RPC 轨迹的诊断包才能钉死（用户未批准）；
+  上面两批的真机复验只到"能进会话 / `/` 出两段"这一步。
 
 ## 上一窗口（2026-11-20 晚 · v0.2.21 / connector 0.1.28）
 
