@@ -4,7 +4,16 @@
 > 11-04 及更早的条目在 `memory/archive/2026-11.md`，11-12 ~ 11-15 的窗口在
 > `memory/archive/2026-11b.md`；稳定命令与坑点在 `tools.md`；现状事实在 `docs/`。
 
-## 现在（2026-11-22 凌晨 · 子智能体目录四态）
+## 现在（2026-11-22 · v0.2.22 / connector 0.1.29）
+
+- **v0.2.22 已发版（2026-11-22）**：`dsh-mobile-v0.2.22-arm64-v8a.apk` **28.7 MB**
+  （`armeabi-v7a` 25.0 / `x86_64` 31.2）+ `dsh-mobile-connector-0.1.29.tgz`（208.1 KB，
+  npm `latest` = **0.1.29**，带 provenance）。Release notes 已手填。
+  内容 = 本窗口三笔：子智能体目录四态 / 命令面 = 宿主的命令表面 / `/` 菜单技能段。
+  **踩到一次**：`v0.2.22` 与 `connector-v0.1.29` 两个标签同时触发 `publish-connector`，
+  两个 run 都过了 `npm view` 的幂等检查再同时 publish，后到的拿到
+  `E409 Cannot publish over previously staged version`（npm 上的结果是对的，
+  但 Actions 多一条红）。已给该 workflow 加 `concurrency: publish-connector` 串行化。
 
 - **用户 2026-11-21 报的三条，定位结论**（真机 v0.2.20 + connector 0.1.28，走中转）：
   1. **子智能体面板永久转圈 = 已修**。三处叠加：目录"没读过"返回 `loading` 占位

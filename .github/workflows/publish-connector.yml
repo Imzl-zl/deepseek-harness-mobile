@@ -19,6 +19,15 @@ on:
     tags: ['v*', 'connector-v*']
   workflow_dispatch:
 
+# **两个标签会同时触发**（`v*` 与 `connector-v*` 各一个 run），而发布不是原子的：
+# 两个 run 都能通过上面 `npm view` 的幂等检查，然后**同时** publish —— 后到的那个
+# 拿 E409「Cannot publish over previously staged version」（2026-11-22 实测：
+# 0.1.29 的两个 run 各自 publish，后到的红，虽然 npm 上的结果是对的）。
+# 串行化之后，第二个 run 在检查处干净跳过，不再留一条红。
+concurrency:
+  group: publish-connector
+  cancel-in-progress: false
+
 permissions:
   contents: read
   # 可信发布 / provenance：npm CLI 用 GitHub 的 OIDC 换短期凭据。
