@@ -20,6 +20,7 @@ import 'package:dsh_mobile/data/store.dart';
 import 'package:dsh_mobile/data/ui_state.dart';
 import 'package:dsh_mobile/model/preferences.dart';
 import 'package:dsh_mobile/model/route_policy.dart';
+import 'package:dsh_mobile/model/session_order.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/ui/chat_page.dart';
 import 'package:dsh_mobile/ui/session_drawer.dart';
@@ -198,13 +199,14 @@ Future<void> _landingSettle() async {
 
 void main() {
   group('启动前置读（device.* → AppModel 字段）', () {
-    test('读回工作步骤密度 / 性能用量 / 收起时机 / 字号档 / 连接方式', () async {
+    test('读回工作步骤密度 / 性能用量 / 收起时机 / 字号档 / 连接方式 / 会话排序', () async {
       final prefs = _Prefs({
         UiKey.transcriptView: 'detailed',
         UiKey.performanceView: 'compact',
         UiKey.collapseTiming: 'next-input',
         UiKey.uiScaleIndex: '3',
         UiKey.routePolicy: 'relay',
+        UiKey.sessionOrder: 'manual',
       });
       final app = AppModel(client: _IdleClient(), prefs: prefs);
       addTearDown(app.dispose);
@@ -216,6 +218,7 @@ void main() {
       expect(app.collapseTiming, CollapseTiming.nextInput);
       expect(app.uiScaleIndex, 3);
       expect(app.routePolicy, RoutePolicy.relayOnly);
+      expect(app.sessionOrder, SessionOrder.manual);
     });
 
     test('盘上是坏的 → 保持默认（不猜）', () async {
@@ -223,6 +226,7 @@ void main() {
         UiKey.transcriptView: '???',
         UiKey.uiScaleIndex: '9',
         UiKey.routePolicy: '???',
+        UiKey.sessionOrder: '???',
       });
       final app = AppModel(client: _IdleClient(), prefs: prefs);
       addTearDown(app.dispose);
@@ -232,6 +236,11 @@ void main() {
       expect(app.transcriptView, TranscriptView.standard);
       expect(app.uiScaleIndex, 3, reason: '越界要夹到边界，不是丢回默认');
       expect(app.routePolicy, RoutePolicy.auto);
+      expect(
+        app.sessionOrder,
+        SessionOrder.updated,
+        reason: '认不出的档位回默认「最近更新」，不许猜成手动',
+      );
     });
   });
 

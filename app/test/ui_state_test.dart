@@ -61,6 +61,7 @@ void main() {
       expect(ui.performanceView, isNull);
       expect(ui.collapseTiming, isNull);
       expect(ui.routePolicy, isNull);
+      expect(ui.sessionOrder, isNull);
     });
 
     test('写后能读回，且键就是约定名', () async {
@@ -68,11 +69,14 @@ void main() {
       await ui.setUiScaleIndex(2);
       await ui.setTranscriptView('detailed');
       await ui.setRoutePolicy('relay');
+      await ui.setSessionOrder('manual');
       expect(prefs.values[UiKey.themeMode], 'dark');
       expect(prefs.values[UiKey.uiScaleIndex], '2');
       expect(prefs.values[UiKey.transcriptView], 'detailed');
       // 连接方式也用 `device.` 前缀：它说的是这台手机的偏好，不是某台电脑的路由。
       expect(prefs.values[UiKey.routePolicy], 'relay');
+      // 会话排序档同理：这台手机怎么排列表，与它连的是哪台电脑无关。
+      expect(prefs.values[UiKey.sessionOrder], 'manual');
 
       // 新建一个 store 也能读回（= 重启）。
       final again = UiStateStore(prefs: prefs);
@@ -80,6 +84,7 @@ void main() {
       expect(again.themeMode, 'dark');
       expect(again.uiScaleIndex, 2);
       expect(again.routePolicy, 'relay');
+      expect(again.sessionOrder, 'manual');
     });
 
     test('认不出的值保持 null（调用方用默认，不猜）', () async {

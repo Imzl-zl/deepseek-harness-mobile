@@ -153,10 +153,10 @@ export interface AdminDeps {
     set(url: string, kind: AdvertiseKind | 'clear'): Promise<void>
   }
   /**
-   * 出一次配对码（**已登记到中转**）。
+   * 出一次配对码（**面板是唯一入口**；2026-11-24 删掉 `/dsh-mobile-pair` 命令）。
    *
-   * 实现是 `issuePairingOffer` + `pairingQrSvg`：登记失败就不出码
-   * （否则给出一张扫了也配不上的码）。
+   * 实现是 `issuePairingOffer` + `pairingQrSvg`：登记失败**且**没有局域网地址时
+   * 抛错（否则给出一张扫了也配不上的码）；有局域网地址时降级出码并标 `lanOnly`。
    *
    * **只回 svg、过期时刻与降级标，不回 payload**：载荷里有两把 64 hex 公钥，
    * 而浏览器只负责把它画成图。让 payload 过线等于把密钥材料送到一个
@@ -167,9 +167,14 @@ export interface AdminDeps {
    * `lanAvailable` 说明码里还有没有局域网地址，面板据此在出码后说
    * 「此码含两条路径…」还是「此码仅含中转…」。
    *
+   * **码里的 `lan` 是此刻枚举到的全部局域网 IPv4**（不只是"一条主地址"）：
+   * 哪条拨得通只有手机知道，所以电脑不再替它押一条。面板要显示这些地址时
+   * 读 `connection.direct.lanUrls`（同一份判据）。
+   *
    * **没有 `purpose`**（2026-11-17）：码里写哪几条路由此刻的能力决定，不由
    * 操作者选 —— 选择留给手机（扫完先测两条再选）。两条都没有时抛错，文案
-   * 分别说清"直连没开 / 没有可上报地址"与"中转没连上"。
+   * 说清"直连为什么没有局域网地址"（`endpoints.ts` 的 `noLanAddressReason`）
+   * 与"中转没连上"。
    */
   offer(): Promise<{
     svg: string

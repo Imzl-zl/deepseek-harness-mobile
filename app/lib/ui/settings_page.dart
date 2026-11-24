@@ -39,6 +39,7 @@ import '../model/model_catalog.dart';
 import '../model/permission.dart';
 import '../model/preferences.dart';
 import '../model/send_mode.dart';
+import '../model/session_order.dart';
 import '../model/task_notice_policy.dart';
 import '../model/theme_mode.dart';
 import '../theme/dsh_colors.dart';
@@ -213,7 +214,7 @@ class SettingsPage extends StatelessWidget {
                 values: TranscriptView.values,
                 labelOf: (v) => v.label,
                 current: app.transcriptView,
-                onPicked: app.setTranscriptView,
+                onPicked: app.devicePrefs.setTranscriptView,
               ),
             ),
             // **工作步骤收起时机**：只在有轮组之后才有语义（一轮收口后，
@@ -230,7 +231,7 @@ class SettingsPage extends StatelessWidget {
                 values: CollapseTiming.values,
                 labelOf: (v) => v.label,
                 current: app.collapseTiming,
-                onPicked: app.setCollapseTiming,
+                onPicked: app.devicePrefs.setCollapseTiming,
               ),
             ),
             SettingsRow(
@@ -243,7 +244,7 @@ class SettingsPage extends StatelessWidget {
                 values: PerformanceUsage.values,
                 labelOf: (v) => v.label,
                 current: app.performanceUsage,
-                onPicked: app.setPerformanceUsage,
+                onPicked: app.devicePrefs.setPerformanceUsage,
               ),
             ),
             SettingsRow(
@@ -316,6 +317,27 @@ class SettingsPage extends StatelessWidget {
                 labelOf: (v) => v.label,
                 current: app.taskNoticePolicy,
                 onPicked: app.setTaskNoticePolicy,
+              ),
+            ),
+            // **会话排序**（`device.session_order`）：两档，默认「最近更新」——
+            // 桌面的默认档就是它（`orderBy: 'updated'`，
+            // `packages/client/ui-workspace/src/client/stores.ts:86`）。
+            //
+            // 为什么这一行必须在：用户一动顺序（拖动 / 上移 / 下移）档位会自动切成
+            // 「手动」（`AppModel.moveSession`），切不回来就等于一次误触永久改掉了
+            // 列表的顺序 —— 入口留在这里，切回「最近更新」立刻按 recency 重排。
+            // 两档与取舍见 `model/session_order.dart`。
+            SettingsRow(
+              icon: 'chevronsUpDown',
+              label: '会话排序',
+              value: app.sessionOrder.label,
+              onTap: () => _pickEnum<SessionOrder>(
+                context: context,
+                title: '会话排序',
+                values: SessionOrder.values,
+                labelOf: (v) => v.label,
+                current: app.sessionOrder,
+                onPicked: app.devicePrefs.setSessionOrder,
               ),
             ),
             // **用量不在设置页**：2026-10-19 用户原话「用量在侧滑窗口菜单
@@ -458,7 +480,7 @@ Future<void> _pickUiScale(BuildContext context, AppModel app) async {
     ),
   );
   if (picked == null) return;
-  await app.setUiScaleIndex(picked);
+  await app.devicePrefs.setUiScaleIndex(picked);
 }
 
 /// 选一个枚举值（底部 sheet，行结构照 §7.9）。

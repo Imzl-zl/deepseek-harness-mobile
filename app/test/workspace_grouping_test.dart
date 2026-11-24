@@ -5,6 +5,7 @@
 /// "我好多项目,我找半天会话吗"。
 library;
 
+import 'package:dsh_mobile/model/session_order.dart';
 import 'package:dsh_mobile/model/workspace.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -22,10 +23,31 @@ List<String> labelsOf(List<WorkspaceBucket> buckets) => [
   for (final b in buckets) b.label,
 ];
 
+/// 分桶的测试入口：把两个新的必填参数（[SessionOrder] 与 `updatedAtOf`）喂进去。
+///
+/// **缺省档是 [SessionOrder.manual]** —— 本文件前半那些用例钉的是**分区与归属**
+/// （账本序保持原样），不钉时间序；时间序的用例在文件后半的「组内排序档」一组，
+/// 那里必须显式传 `order` 与 `updatedAtOf`。
+List<WorkspaceBucket> bucketOf(
+  List<String> sessionIds,
+  List<WorkspaceGroup> groups, {
+  Set<String> pinnedSessionIds = const {},
+  required bool Function(String sid) isBlank,
+  SessionOrder order = SessionOrder.manual,
+  int Function(String sid)? updatedAtOf,
+}) => bucketSessionsByWorkspace(
+  sessionIds,
+  groups,
+  pinnedSessionIds: pinnedSessionIds,
+  isBlank: isBlank,
+  order: order,
+  updatedAtOf: updatedAtOf ?? (_) => -1,
+);
+
 void main() {
   group('按工作区分桶', () {
     test('顺序照电脑侧给的行序,分组头用工作区的名字', () {
-      final buckets = bucketSessionsByWorkspace(
+      final buckets = bucketOf(
         ['s1', 's2', 's3'],
         [
           ws('w2', 'deepseek-harness', ['s3']),
@@ -42,7 +64,7 @@ void main() {
 
     test('一个会话只进一个桶(不重复出现)', () {
       // 同一个 sid 被两个工作区同时报到(电脑侧数据不一致时):第一次认领就定。
-      final buckets = bucketSessionsByWorkspace(
+      final buckets = bucketOf(
         ['s1'],
         [
           ws('w1', 'A', ['s1']),
@@ -55,7 +77,7 @@ void main() {
     });
 
     test('工作区里没有会话就不出这个桶(不出空组)', () {
-      final buckets = bucketSessionsByWorkspace(
+      final buckets = bucketOf(
         ['s1'],
         [
           ws('w1', 'A', ['sX']),
@@ -67,11 +89,7 @@ void main() {
     });
 
     test('拿不到工作区清单:不分组,而不是按 cwd 猜', () {
-      final buckets = bucketSessionsByWorkspace(
-        ['s1', 's2'],
-        const [],
-        isBlank: _noBlank,
-      );
+      final buckets = bucketOf(['s1', 's2'], const [], isBlank: _noBlank);
 
       expect(labelsOf(buckets), ['会话']);
       expect(buckets.single.sessionIds, ['s1', 's2']);
@@ -81,7 +99,7 @@ void main() {
     // 桶能发 `workspace.insertSessionBefore`；兜底桶里的会话没有归属，
     // 菜单里的上移/下移必须不可点（否则只会得到一句"不属于任何工作区"）。
     test('桶带工作区 id：真工作区有，兜底桶没有', () {
-      final buckets = bucketSessionsByWorkspace(
+      final buckets = bucketOf(
         ['s1', 's2'],
         [
           ws('w1', 'dsh-mobile', ['s1']),
@@ -93,18 +111,14 @@ void main() {
       expect(buckets[1].label, '未分组');
       expect(buckets[1].workspaceId, isNull, reason: '兜底桶不能组内重排');
       expect(
-        bucketSessionsByWorkspace(
-          ['s1'],
-          const [],
-          isBlank: _noBlank,
-        ).single.workspaceId,
+        bucketOf(['s1'], const [], isBlank: _noBlank).single.workspaceId,
         isNull,
         reason: '拿不到工作区清单时同样不能重排',
       );
     });
 
     test('全部分组完就没有「未分组」桶', () {
-      final buckets = bucketSessionsByWorkspace(
+      final buckets = bucketOf(
         ['s1', 's2'],
         [
           ws('w1', 'A', ['s1', 's2']),
@@ -118,7 +132,7 @@ void main() {
     // 置顶是**组内分区**（DSH 的 `sectionMembers`，`tree.ts:273-287`），
     // 不是把置顶项抽到整张表最上面 —— 它属于哪个项目仍归哪个项目。
     test('置顶的排在各自分组最前，两个分区内部保持电脑侧顺序', () {
-      final buckets = bucketSessionsByWorkspace(
+      final buckets = bucketOf(
         ['s1', 's2', 's3', 's4'],
         [
           ws('w1', 'A', ['s1', 's2']),
@@ -134,7 +148,7 @@ void main() {
     });
 
     test('不分组时置顶同样领先（「会话」桶）', () {
-      final buckets = bucketSessionsByWorkspace(
+      final buckets = bucketOf(
         ['s1', 's2'],
         const [],
         pinnedSessionIds: {'s2'},
@@ -152,7 +166,7 @@ void main() {
     // 所以"blank 打头"这一条就够 —— 而账本序给不出它：点「新建会话」时复用的
     // 是账本里**已有的** blank，位置还是它当初被建出来时的老位置。
     test('blank 行排在组首，不跟账本里它被建出来时的老位置走', () {
-      final buckets = bucketSessionsByWorkspace(
+      final buckets = bucketOf(
         ['s1', 's2', 's3'],
         [
           ws('w1', 'A', ['s1', 's2', 's3']),
@@ -164,7 +178,7 @@ void main() {
     });
 
     test('分区次序是 blank → 置顶 → 其余', () {
-      final buckets = bucketSessionsByWorkspace(
+      final buckets = bucketOf(
         ['s1', 's2', 's3'],
         [
           ws('w1', 'A', ['s1', 's2', 's3']),
@@ -181,7 +195,7 @@ void main() {
     });
 
     test('不分组时 blank 同样打头（「会话」桶）', () {
-      final buckets = bucketSessionsByWorkspace(
+      final buckets = bucketOf(
         ['s1', 's2'],
         const [],
         isBlank: (sid) => sid == 's2',
@@ -497,6 +511,159 @@ void main() {
       expect(workspaceGroupOf('s2', groups)?.workspaceId, 'w2');
       expect(workspaceGroupOf('s9', groups), isNull);
       expect(workspaceGroupOf('s1', const []), isNull);
+    });
+  });
+
+  // ---- 组内排序档（`device.session_order`）----
+  //
+  // 桌面默认按 `updatedAt` 降序（`orderByRecency`，
+  // `packages/client/ui-workspace/src/client/tree.ts:151-165`，默认档来自
+  // `stores.ts:86` 的 `orderBy: 'updated'`）；手机以前按账本行序 —— 于是
+  // 「新建会话 / 刚发过消息的会话」排在后面，甚至掉进「展开其余 N 个」。
+  // 2026-11-24 用户原话：「我 APP 新建会话怎么桌面上显示的不是第一个是后面？」
+  group('组内排序档（照 DSH 的 updated / manual 两档）', () {
+    /// 账本序 [ledger] 摆在一个工作区里；`updatedAt` 由 [times] 给
+    /// （不在表里 = 拿不到 = `-1`，与生产同一个兜底）。
+    List<WorkspaceBucket> one(
+      List<String> ledger, {
+      required SessionOrder order,
+      Map<String, int> times = const {},
+      Set<String> pinned = const {},
+      bool Function(String sid)? isBlank,
+    }) => bucketOf(
+      ledger,
+      [ws('w1', 'A', ledger)],
+      pinnedSessionIds: pinned,
+      isBlank: isBlank ?? _noBlank,
+      order: order,
+      updatedAtOf: (sid) => times[sid] ?? -1,
+    );
+
+    test('① updated 档：账本序 [a,b,c] 而 c 最新 ⇒ 显示 [c,a,b]', () {
+      final buckets = one(
+        ['a', 'b', 'c'],
+        order: SessionOrder.updated,
+        // c 最新；a 比 b 新（所以 [c,a,b] 而不是 [c,b,a]）。
+        times: {'a': 20, 'b': 10, 'c': 30},
+      );
+
+      expect(
+        buckets.single.sessionIds,
+        ['c', 'a', 'b'],
+        reason: '桌面的 orderByRecency：updatedAt 降序；账本序在这一档不参与',
+      );
+    });
+
+    test('② 并列 updatedAt：按 sid 升序', () {
+      final buckets = one(
+        ['b', 'a', 'c'],
+        order: SessionOrder.updated,
+        times: {'a': 5, 'b': 5, 'c': 4},
+      );
+
+      expect(
+        buckets.single.sessionIds,
+        ['a', 'b', 'c'],
+        reason: '并列时用 sid 字符串升序（DSH 写的是 `a.id < b.id ? -1 : 1`），c 最旧垫底',
+      );
+    });
+
+    test('③ manual 档：保持账本序（时间不参与）', () {
+      final buckets = one(
+        ['a', 'b', 'c'],
+        order: SessionOrder.manual,
+        times: {'a': 10, 'b': 20, 'c': 30},
+      );
+
+      expect(buckets.single.sessionIds, [
+        'a',
+        'b',
+        'c',
+      ], reason: '手动档 = 账本序（拖动 / 上移 / 下移写回去的那个顺序）');
+    });
+
+    test('④ blank 恒在最前：连它 updatedAt 最旧也一样', () {
+      final buckets = one(
+        ['a', 'n'],
+        order: SessionOrder.updated,
+        isBlank: (sid) => sid == 'n',
+        times: {'a': 100, 'n': 0},
+      );
+
+      expect(
+        buckets.single.sessionIds,
+        ['n', 'a'],
+        reason: 'blank 由分区钉在组首（`pinCurrentBlank`），不是按时间挤上去的',
+      );
+    });
+
+    // **用户报的就是这一条**：发第一条消息后 `sessionBlankOf` 翻 false
+    // （`data/app_model.dart` 的 `sessionBlankOf`：宿主 blank 且本地无可见条目），
+    // 该行丢掉 blank 特权；而账本里它还在当初被建出来时的位置（这里是最末）。
+    // 所以这条写成「先按 blank 分组 → 模拟一次 blank→false 的状态变化 → 再分组」。
+    test('⑤ 发第一条消息（blank 翻 false）后它仍在组首', () {
+      final ledger = ['x', 'y', 'n'];
+      // 时间：`n` 刚被跑过一轮 ⇒ 它是最新的（宿主在 turn/start 时刷新 updatedAt）。
+      final times = {'x': 100, 'y': 200, 'n': 300};
+      var blank = <String>{'n'};
+
+      List<String> grouped() => one(
+        ledger,
+        order: SessionOrder.updated,
+        times: times,
+        isBlank: blank.contains,
+      ).single.sessionIds;
+
+      expect(grouped(), [
+        'n',
+        'y',
+        'x',
+      ], reason: '发消息前：blank 打头（后面两行已按 recency 排：y 比 x 新）');
+
+      // 发第一条消息：宿主记了一轮 ⇒ `sessionBlankOf` 翻 false（blank 特权的门关上）。
+      blank = <String>{};
+      expect(
+        grouped(),
+        ['n', 'y', 'x'],
+        reason:
+            '发消息后照样在组首 —— 这次靠的是「最近更新」档（n 的 updatedAt 最新）；'
+            '账本序会把它打回最末 [x,y,n]',
+      );
+    });
+
+    test('updated 档：置顶段同样按 recency 排，但仍在普通行前面', () {
+      final buckets = one(
+        ['p1', 'p2', 'n1'],
+        order: SessionOrder.updated,
+        pinned: {'p1', 'p2'},
+        times: {'p1': 1, 'p2': 2, 'n1': 99},
+      );
+
+      expect(
+        buckets.single.sessionIds,
+        ['p2', 'p1', 'n1'],
+        reason: '两个非 blank 段都按 updatedAt 降序；n1 最新也不越过置顶块',
+      );
+    });
+
+    test('「未分组」桶同样按档位排（它走同一个 partition）', () {
+      final buckets = bucketOf(
+        ['s1', 's3', 's4'],
+        [
+          ws('w1', 'A', ['s1']),
+        ],
+        isBlank: _noBlank,
+        order: SessionOrder.updated,
+        updatedAtOf: (sid) =>
+            const <String, int>{'s1': 1, 's3': 10, 's4': 20}[sid] ?? -1,
+      );
+
+      expect(labelsOf(buckets), ['A', '未分组']);
+      expect(
+        buckets.last.sessionIds,
+        ['s4', 's3'],
+        reason: '兜底桶没有第二条规则：同一个 partition ⇒ 也按 updatedAt 降序',
+      );
     });
   });
 }

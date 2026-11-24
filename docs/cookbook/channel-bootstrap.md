@@ -135,7 +135,8 @@ dsh plugin --profile <name> add <connector 本地路径>
 **缺服务的部署里对应方法根本不在表里**（`job.*` 要 `jobs` 与 `jobController`；
 `endpoint.describe` 要配了 `listenPort` 且监听面起得来；`session.projections` 要 `sessionProjections`）。
 其余回 `connector/unsupported`。
-配对(§12.1)在代码层面已闭合:电脑侧出码(斜杠命令 `dsh-mobile-pair`,**登记不成就绝不出码**)
+配对(§12.1)在代码层面已闭合:电脑侧出码(**插件面板**的 `POST /api/dsh-mobile/pair`,旧斜杠命令已删除;
+登记不成就只在**没有局域网地址**时拒绝出码)
 → 手机带 `codeHash` 换票 → 经中转转发 → 电脑侧校验并落设备行 → 明文回执;
 `relay/` 已可运行(`node relay/src/main.ts --config <json>`,配置里只放令牌摘要)。
 **带密钥的三方链路已 e2e**:`connector/tests/relay-keyed-three-party.test.ts` ——

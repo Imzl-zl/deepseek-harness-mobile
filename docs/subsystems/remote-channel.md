@@ -448,7 +448,7 @@ type SyncSnapshot = {
 | `workspace.unpin` | 手机→电脑 | `requestId` | 取消置顶。DSH 的 `unpinSession`(`index.ts:189-191` → `commands.ts:224-227`)。**幂等**:没置顶过的 id 也成功。返回置顶全集 |
 | `workspace.insertBefore` | 手机→电脑 | `requestId` | 把一个**工作区**挪到另一个之前(侧栏项目头的上下位置;不改会话归属,也不动组内会话顺序)。线上请求 `{workspaceId, beforeWorkspaceId?}`(`beforeWorkspaceId` 缺省 = 移到末尾)。DSH 的 `insertBefore`(`index.ts:135-145` → `commands.ts:108-125`,DSH 侧请求 `{workspaceId, beforeWorkspaceId?}`,`types.ts:97-105`)。返回**整份** `{workspaceIds}`(注册表顺序),手机据此重排分组。与 `workspace.insertSessionBefore` 是两条:**那条改组内会话顺序,这条改工作区自己的顺序**。Web 拖动项目头调的就是它 |
 | `sync.hello` | 手机→电脑 | — | §5.4 的恢复握手。**两个职责**:① 一次声明整份订阅集(手机回到前台时要恢复的是"所有会话",不是一个;断线之后 UI 不会重新 `subscribe`,所以恢复由持有连接的这一层发起);② 上报前后台态(`app`)。每个声明的会话都走同一个 `session.subscribe` 的订阅面,不另起一套恢复语义;失败语义与它逐字一致(一个别名未知就整票失败并回 `session/not-found`) |
-| `endpoint.describe` | 手机→电脑 | — | **端点自报**:当前可拨的地址表(`{ endpoints: [{kind,url,label?}] }`,`kind` ∈ `relay`/`direct`)。**默认只报一条直连 + 中转**(`connector/src/endpoints.ts` 的 `defaultDirectUrls`):候选里**排除虚拟网卡**(TUN / VMware / Hyper-V / Docker,按 MAC OUI 认定,`transport/listener.ts` 的 `isVirtualMac`)之后,优先取默认路由那张网卡(`lanHint`,内核选路、不发包);hint 拿不到 / 已过期 / 指向虚拟网卡时,在**真实局域网 IPv4**（RFC1918:`192.168/16` → `172.16/12` → `10/8` 偏好序）里取第一条。网卡枚举里的其余地址（VMware 虚拟网卡、轮换出来的 IPv6 GUA、Tailscale 的 CGNAT）是**候选不是默认上报**,用户点名 `extra` 才进表,`hide` 仍可藏掉默认那条。没有直连监听面时这个方法**不出现**(能力位 `caps.direct` 为 false),而不是挂上去回 `connector/unsupported`。手机据此建"连接方式"列表,并在 IP 变了之后自愈 —— 顺序即偏好(`direct` 先于 `relay`)。取舍与被否方案(二维码字段 / mDNS / 手填 / 塞进 `sync.hello`)见 `.agents/notes/implemented/2026-10-14-endpoint-switching-lan-direct.md`;判据为何是"地址自己是什么"而不是"默认路由是谁"见 `.agents/notes/implemented/2026-11-20-advertise-by-address-not-by-default-route.md` |
+| `endpoint.describe` | 手机→电脑 | — | **端点自报**:当前可拨的地址表(`{ endpoints: [{kind,url,label?}] }`,`kind` ∈ `relay`/`direct`)。**默认上报此刻枚举到的全部局域网 IPv4**(`connector/src/endpoints.ts` 的 `autoAdvertisedUrls`,判据只有一条:`isLanAddress` —— `10/8`、`172.16/12`、`192.168/16`)。地址是**现取**的(`Listener.urls` 每次读都重新 `os.networkInterfaces()`),顺序上默认路由那条排第一(`lanHint`,内核选路、不发包)、其余按 `192.168 → 172.16 → 10` 段序 —— **hint 只当排序,不当判据**。不是局域网段的候选(IPv6 GUA、Tailscale 的 CGNAT、TUN 的 `198.18/15`)**不是默认上报**,用户点名 `extra` 才进表;`hide` 可藏掉任意一条。没有直连监听面时这个方法**不出现**(能力位 `caps.direct` 为 false),而不是挂上去回 `connector/unsupported`。手机据此建"连接方式"列表,并在 IP 变了之后自愈 —— 顺序即偏好(`direct` 先于 `relay`)。取舍与被否方案(二维码字段 / mDNS / 手填 / 塞进 `sync.hello`)见 `.agents/notes/implemented/2026-10-14-endpoint-switching-lan-direct.md`;"报全部而不是挑一条"与"判据只看地址段"见 `.agents/notes/implemented/2026-11-24-offer-carries-current-lan-addresses.md` |
 | `repo.info` | 手机→电脑 | — | 版本、能力位、别名→会话元的映射版本、电脑名。**`hostName` 是电脑自报的名字(`os.hostname()`)**:纯展示值,可改 / 可伪造 / 会重名,不参与任何判据、不进握手 transcript;取不到或为空就**不带这个键**(手机那边不显示名字,而不是一个空名字)。**`commands` 是宿主的命令表,形状 `{name, description?}[]`**(原样过线,手机据此画 `/` 候选菜单 —— 电脑上装个插件多一条命令,手机菜单立刻多一行)。**说明从宿主的命令定义读**(`commands.list(agent)` 的 `CommandDefinition.description`,`interaction/commands/src/types.ts:56-66`,见 `connector/src/dsh/command-line.ts` 的 `catalog`) —— 手抄一份就是第二真值;一个活 agent 都没有时是空表(没有 agent 就没有"这个 agent 的有效命令视图"),手机侧因此把 `repo.info` 也挂在 `openSession` 上。**老连接器的 `string[]` 手机也收**(`model/command.dart` 的 `parseSlashCommands`):两种形状是兼容,不是两个真值。老连接器不给这个键 ⇒ 不出菜单(那是"不知道",不是"没有命令可用") |
 | `session.create` | 手机→电脑 | `requestId` | 新建会话。**与 Web 同一个 DSH 方法**(`session-controller/src/index.ts:280`,请求形状 `{workspaceId?, cwd?, sessionId?, agentPreset?}`,回 `{sessionId, agentPreset?}`)。**`workspaceId` / `cwd` 都不传**:手机侧不知道电脑有哪些工作区(那要另接 `workspace-controller`),而不传时 DSH 用它自己的当前工作区 —— 与 Web 点"新建会话"一致;硬传一个猜的比不传更糟。**只在给了参数时才进请求体**:DSH 对缺省字段有自己的默认,塞空串会被当成"显式选空" |
 
@@ -1092,19 +1092,20 @@ job-settled        后台任务终结     turn-failed       轮次异常结束
     手机**只信任这里带出的 `pcPubEd` / `pcPubDh`**(§12.1 的硬规则:不接受任何网络下发的电脑公钥)。`v: 1` 的码会被拒(`protocol/unsupported-version`)。
     `pcId` 新装/升级后都是随机 `pc-…`（`connector/src/connector-id.ts`）；旧装的 `local`
     在升级时强制迁移（手机要重扫）。它是**配对身份**，不要求跨电脑唯一，中转的连接器身份见 §8.2。
-  - **`lan`(局域网直连地址)**:电脑侧直连监听面此刻**默认会上报**的地址(`ws://<ip>:<port>`,来自 `defaultDirectUrls`:默认路由那张网卡,或真实局域网 IPv4 —— 虚拟网卡除外)。手机**先拨这组**,全拨不通才回落中转;配对成功后它们与中转一起进端点表(`direct` 在前)。空/缺 = 老载荷,只能走中转。
-  - **`lanOnly`(降级标,可选布尔)**:电脑侧出码时**先把 `offerId` 登记到中转**;登记失败时如果码里还有 `lan`,仍然出码,但载荷带 `"lanOnly": true` —— 这张码**只能在同一 WiFi 下用**。手机见到标记:配对页显式提示「此码只能在同一 Wi-Fi 下使用」,并且**不去换票**(那条路这次注定 409);电脑侧的命令文案与插件面板同步说同一句话。没有 `lan` 时登记失败照旧**不出码**(给一张扫了也配不上的码更糟)。
-    - **`lanOnly` 缺省/false 的唯一含义是"中转登记成功"**(这张码跨网可用)。所以三处提示都要说**正反两面**:登记成功时明说「此码含两条路径：局域网直连；中转（已登记）」,不能只从"没有警告"让用户去猜。
-  - **出码的四种情况**(始终**一张码**,不拆两张):
+  - **`lan`(局域网直连地址)**:电脑侧直连监听面**此刻**枚举到的**全部**局域网 IPv4(`ws://<ip>:<port>`,来自 `autoAdvertisedUrls`;端口是实际绑定端口)。**出码那一刻现取** —— 换 WiFi / 换网段之后重出码就是新地址。手机**并行拨这组**,先通先用,全部不通才回落中转;配对成功后它们与中转一起进端点表(`direct` 在前)。空/缺 = 老载荷,只能走中转。
+     - **为什么给全部而不是一条**:哪条地址手机拨得通,只有手机知道(AP 隔离、双网卡、VMware host-only 都存在);电脑侧"挑一条"必然要猜,猜错的两种表现是"码里写着死地址"或"明明有局域网却说没有"(因果见 `.agents/notes/implemented/2026-11-24-offer-carries-current-lan-addresses.md`)。
+  - **`lanOnly`(降级标,可选布尔)**:电脑侧出码时**先把 `offerId` 登记到中转**;登记失败时如果码里还有 `lan`,仍然出码,但载荷带 `"lanOnly": true` —— 这张码**只能在同一 WiFi 下用**。手机见到标记:配对页显式提示「此码只能在同一 Wi-Fi 下使用」,并且**不去换票**(那条路这次注定 409);电脑侧插件面板同步说同一句话。没有 `lan` 时登记失败照旧**不出码**(给一张扫了也配不上的码更糟)。
+    - **`lanOnly` 缺省/false 的唯一含义是"中转登记成功"**(这张码跨网可用)。所以两处提示都要说**正反两面**:登记成功时明说「此码含两条路径：局域网直连；中转（已登记）」,不能只从"没有警告"让用户去猜。
+  - **出码的四种情况**(始终**一张码**,不拆两张;**唯一入口是插件面板**,`POST /api/dsh-mobile/pair`):
 
-    | 中转登记 | 有 `lan` | 载荷 | 命令文案 | 面板(出码后) | 手机配对页 | 这张码怎么用 |
-    |---|---|---|---|---|---|---|
-    | 成功 | 有 | 无 `lanOnly` | 「路径：局域网直连 + 中转（已登记）」 | 「此码含两条路径：局域网直连；中转（已登记）。」 | 「局域网直连(N 个地址) · 中转(已登记)」 | **现在扫**、同一 WiFi 直连;配对后出门自动回落中转,不用重扫 |
-    | 成功 | 无 | 无 `lanOnly` | 「路径：仅中转（已登记）」 | 「此码仅含中转（已登记）：不在同一 WiFi 时也能配对。」 | 「这张码走:中转(已登记)」 | 扫码时不在同一 WiFi 也能配(手机要能连上中转) |
-    | 失败 | 有 | `lanOnly: true` | 「路径：仅局域网直连（未登记中转）」 | 红字「未登记中转：此码仅含局域网直连，须在同一 WiFi 下扫码。」 | 红字「只能在同一 Wi-Fi 下使用」,且**不换票** | 只能在同一个 WiFi 下扫;出门前扫完再走 |
-    | 失败 | 无 | **不出码** | 错误正文带中转原话 | 同左 | — | 先修中转,或打开直连监听再出码 |
+    | 中转登记 | 有 `lan` | 载荷 | 面板(出码后) | 手机配对页 | 这张码怎么用 |
+    |---|---|---|---|---|---|
+    | 成功 | 有 | 无 `lanOnly` | 「此码含两条路径：局域网直连；中转（已登记）。」 | 「局域网直连(N 个地址) · 中转(已登记)」 | **现在扫**、同一 WiFi 直连;配对后出门自动回落中转,不用重扫 |
+    | 成功 | 无 | 无 `lanOnly` | 「此码仅含中转（已登记）：不在同一 WiFi 时也能配对。」 | 「这张码走:中转(已登记)」 | 扫码时不在同一 WiFi 也能配(手机要能连上中转) |
+    | 失败 | 有 | `lanOnly: true` | 红字「未登记中转：此码仅含局域网直连，须在同一 WiFi 下扫码。」 | 红字「只能在同一 Wi-Fi 下使用」,且**不换票** | 只能在同一个 WiFi 下扫;出门前扫完再走 |
+    | 失败 | 无 | **不出码** | 红字带原因(缺哪条腿、为什么) | — | 先修中转,或打开直连监听再出码 |
 
-    - **出码前面板只报通道事实**（「通道：直连监听中 · 中转未连接」）：码里能不能写直连还要看有没有可上报的地址，那在出码那一刻才知道；在面板上预测它就是第二份判据。
+    - **面板在出码前显示"此刻可拨的地址"**（`connection.direct.lanUrls`，与出码同一份判据）：出码卡上一行「此刻可拨：ws://192.168.x.x:8790 / …」。监听在跑但一条局域网地址都没有时，面板说「直连监听中，但此刻没有局域网 IPv4 地址」—— **不说**"直连未启动"（监听确实在跑，那句话与事实相反）。
     - **码的有效期只约束"扫码配对"这一步**(5 分钟、一次性);配对成功后连接走端点表里的两条路,与码是否过期无关。
     - "已登记"不是口头保证:中转只在**连接器控制面在线**时接受登记(`relay/src/core.ts` 的 `registerPairing` 先查 `connectors.has`),连接器一断开,未认领的登记立即失效。
     - **出码之后中转又断了**:登记随连接器断开失效,面板改说「中转已断开：此码的跨网络路径已失效，请重新出码（同一 WiFi 仍可用）。」—— 不能继续显示"已登记"。

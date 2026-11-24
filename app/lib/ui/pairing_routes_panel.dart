@@ -183,7 +183,14 @@ class PairingRoutePicker extends StatelessWidget {
         (dial == PairingDial.relay && policy == RoutePolicy.directOnly);
     final selectable = ok && !excluded;
     final isSelected = selected == dial;
-    final title = dial == PairingDial.lan ? '局域网直连' : '中转';
+    // 局域网那一行给**地址总数**：电脑报几条局域网地址，这里就说几条 ——
+    // 失败时那句「试了 N 个地址」才对得上（`core/pairing_flow.dart` 的
+    // `_lanDownText`）。**仍是一行**：逐条地址一行会把这块面板变成日志。
+    final title = switch (dial) {
+      PairingDial.lan =>
+        offer.lanUrls.isEmpty ? '局域网直连' : '局域网直连（${offer.lanUrls.length} 个地址）',
+      PairingDial.relay => '中转',
+    };
     final String subtitle;
     if (!inCode) {
       subtitle = dial == PairingDial.lan

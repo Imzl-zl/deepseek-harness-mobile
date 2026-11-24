@@ -29,7 +29,7 @@ import { test } from 'node:test'
 import { createAdminRoutes } from '../src/admin/routes.js'
 import type { AdminDeviceRow, AdminDeps } from '../src/admin/routes.js'
 import { pairingQrSvg } from '../src/pairing-qr.js'
-import { issuePairingOffer, offerForScanning } from '../src/pairing-offer.js'
+import { issuePairingOffer } from '../src/pairing-offer.js'
 import type { Pairing } from '../src/pairing.js'
 
 /**
@@ -84,7 +84,7 @@ const CONNECTION_VIEW = {
   },
   token: { configured: true, writable: true },
   relay: { running: true, connected: true, public: false },
-  direct: { running: true },
+  direct: { running: true, lanUrls: ['ws://192.168.1.5:8790'] },
 }
 
 function deps(over: Partial<AdminDeps> = {}): AdminDeps {
@@ -684,20 +684,6 @@ test('issuePairingOffer：只有中转可走时，登记失败就抛，不出码
     /配对登记失败/,
     '没有局域网退路时登记不成必须抛 —— 吞掉它等于发出一张注定配不上的二维码',
   )
-})
-
-test('offerForScanning：成功时文本里带载荷；失败时是 error 而不是 success', async () => {
-  const pairing = { offer: () => ({ offerId: 'o1', code: 'c', expiresAt: Date.now() + 60000, payload: '{"v":2}', lanUrls: [], routes: ['relay'] }) } as unknown as Pairing
-  const ok = await offerForScanning({ pairing, register: async () => {} })
-  assert.equal(ok.kind, 'success')
-  assert.match(ok.kind === 'success' ? ok.text : '', /\{"v":2\}/)
-
-  const bad = await offerForScanning({
-    pairing,
-    register: async () => { throw new Error('nope') },
-  })
-  assert.equal(bad.kind, 'error')
-  assert.match(bad.kind === 'error' ? bad.text : '', /中转/)
 })
 
 test('出码失败：400 且正文带原因（不是空正文 —— 面板上只剩 HTTP 400 的那个坑）', async () => {

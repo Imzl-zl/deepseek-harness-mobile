@@ -53,6 +53,7 @@ import '../model/image_limits.dart';
 import '../model/model_catalog.dart';
 import '../model/permission.dart';
 import '../model/preferences.dart';
+import '../model/session_order.dart';
 import '../model/session_stats.dart';
 import '../model/subagent.dart';
 import '../model/trajectory.dart';
@@ -3083,6 +3084,9 @@ class _ChatTab extends StatelessWidget {
         return _SessionListInline(
           sessions: app.sessions,
           isBlank: app.sessionBlankOf,
+          // 排序档与时间键都从 `AppModel` 读：与抽屉同一个值，不在这里另取一份。
+          sessionOrder: app.sessionOrder,
+          updatedAtOf: app.updatedAtOf,
           onOpen: onOpenSession,
           archived: app.archivedSids,
           onRefresh: paired ? onRefreshSessions : null,
@@ -3716,6 +3720,8 @@ class _SessionListInline extends StatefulWidget {
     required this.onOpen,
     required this.archived,
     required this.isBlank,
+    required this.sessionOrder,
+    required this.updatedAtOf,
     this.onRefresh,
     this.workspaces = const [],
     this.hasMore = false,
@@ -3727,6 +3733,13 @@ class _SessionListInline extends StatefulWidget {
   /// “这条会话还算不算新会话”——**抽屉、顶栏、复用判据共用的一道门**
   /// （`AppModel.sessionBlankOf`；行里的 `blank` 可能停在旧值）。
   final bool Function(String sid) isBlank;
+
+  /// 组内排序档（`device.session_order`，`AppModel.sessionOrder`）——
+  /// 与抽屉同一个值、同一条规则（`bucketSessionsByWorkspace` 的 `order`）。
+  final SessionOrder sessionOrder;
+
+  /// 组内排序键（`AppModel.updatedAtOf`：不在清单里回 `-1`）。
+  final int Function(String sid) updatedAtOf;
   final void Function(SessionSummary session) onOpen;
   final VoidCallback? onRefresh;
 
@@ -3779,6 +3792,10 @@ class _SessionListInlineState extends State<_SessionListInline> {
       // blank 行本来就全被上面挡掉了 —— 传进去是为了让"规则只有一份"成立，
       // 而不是在这里分叉成第二种顺序。
       isBlank: widget.isBlank,
+      // 组内顺序同样照档位（`device.session_order`）：这里与抽屉看的是同一份列表，
+      // 顺序也必须一样，否则关掉抽屉再看首页会像"换了个列表"。
+      order: widget.sessionOrder,
+      updatedAtOf: widget.updatedAtOf,
     );
     final bySid = {for (final s in visible) s.sid: s};
     // 分组后是"组头 + 行"的扁平序列：给 ListView 用。

@@ -229,7 +229,14 @@ window.__ModuleLoader__.load({
       pairChannelsLan: '通道：直连监听中 · 中转未连接',
       pairChannelsRelay: '通道：直连未启动 · 中转已连接',
       pairChannelsNone: '通道：直连未启动 · 中转未连接。请先启动其中一项。',
+      // 监听在跑、但此刻没有局域网 IPv4（只剩组网 / IPv6）：说"直连未启动"是假话。
+      pairChannelsLanNoAddress: '通道：直连监听中，但此刻没有局域网 IPv4 地址',
+      pairChannelsLanNoAddressRelay: '通道：直连监听中（此刻没有局域网 IPv4 地址） · 中转已连接',
       pairChannelsUnknown: '正在读取通道状态…',
+      // **此刻可拨的地址**：出码就是"当前网络的地址:端口"，面板要让人肉眼核对，
+      // 而不是等手机报「连接不上」。判据与出码同源（服务端 `lanUrlsOf`）。
+      pairLanAddresses: '此刻可拨：{list}',
+      pairNoLanAddress: '直连在跑，但此刻没有局域网 IPv4 地址（可在「上报给手机的地址」里加一条）',
       // 装了插件不等于装了 App：出口就放在"出码"这张卡上。
       noAppHint: '还没装手机 App？',
       downloadApp: '下载最新版',
@@ -285,9 +292,9 @@ window.__ModuleLoader__.load({
       channelStop: '停止',
       failedChannel: '{action}失败：{reason}',
       // ---- 上报哪些地址（2026-10-18）----
-      // 监听面**按设计枚举全部非内部网卡**（`transport/listener.ts:134-138`：
-      // 过滤虚拟网卡靠名字匹配"又脆又漏"）。所以装了 VMware 的机器会多报几条
-      // 手机永远拨不通的地址 —— 由用户点名禁用，比猜网卡名可靠。
+      // 监听面**按设计枚举全部非内部网卡**，默认上报的是**此刻的全部局域网 IPv4**
+      // （判据只看地址段，不猜网卡名/MAC）。所以装了 VMware 的机器会把那些
+      // `192.168.x.1` 也报出来 —— 手机并行拨、先通先用；确实不想要就点名删除。
       advertiseTitle: '上报给手机的地址',
       // 界面词与设备那一段一致：**删除**（= 不再报给手机；网卡还在，可恢复）。
       advertiseHide: '删除',
@@ -391,6 +398,10 @@ window.__ModuleLoader__.load({
       pairChannelsLan: 'Channels: direct listener running · relay not connected',
       pairChannelsRelay: 'Channels: direct listener not running · relay connected',
       pairChannelsNone: 'Channels: direct listener not running · relay not connected. Start one of them first.',
+      pairChannelsLanNoAddress: 'Channels: direct listener running, but no LAN IPv4 address right now',
+      pairChannelsLanNoAddressRelay: 'Channels: direct listener running (no LAN IPv4 address right now) · relay connected',
+      pairLanAddresses: 'Dialable right now: {list}',
+      pairNoLanAddress: 'The direct listener is running, but there is no LAN IPv4 address right now (you can add one under "Addresses reported to the phone")',
       pairChannelsUnknown: 'Reading channel state…',
       noAppHint: 'No app installed yet?',
       downloadApp: 'Download the latest build',
@@ -1033,8 +1044,8 @@ window.__ModuleLoader__.load({
       const [advertiseInput, setAdvertiseInput] = useState('')
       // 被"删除"（= 不上报）的地址默认收起：网卡还在，但它们不该占着列表。
       const [showHiddenAddresses, setShowHiddenAddresses] = useState(false)
-      // 默认不上报的地址（VMware / 多余 IPv6）也默认收起：**默认只报主地址**，
-      // 这是 2026-11-06 真机反馈的核心 —— 列表不该一上来就摆一堆没用的。
+      // 默认不上报的地址（IPv6 / 组网 / TUN 段）默认收起：默认集合是全部局域网 IPv4，
+      // 折叠区只放"不在局域网段里"的那些 —— 列表不该一上来就摆一堆没用的。
       const [showFoldedAddresses, setShowFoldedAddresses] = useState(false)
       /** 哪一格输入框有焦点（手写 bundle 没有样式表，焦点环只能靠 state 套）。 */
       const [focusedField, setFocusedField] = useState('')
@@ -1138,7 +1149,13 @@ window.__ModuleLoader__.load({
       // 这张码**含哪几条路**只看能力（2026-11-17）：没有"这张码给谁用"这一档。
       // 直连看监听在不在跑，中转看控制面 `connected` —— 与出码处同一条判据。
       const relayUp = connection !== null && connection.relay !== undefined && connection.relay.connected === true
-      const directUp = connection !== null && connection.direct !== undefined && connection.direct.running === true
+      const directRunning = connection !== null && connection.direct !== undefined && connection.direct.running === true
+      // **此刻可拨的地址**（服务端现取）：码里写的就是它。直连那条腿"在跑"不等于
+      // "有地址"（监听在跑但只剩组网 / IPv6 时出码会拒）—— 面板按同一件事说话。
+      const lanUrls = connection !== null && connection.direct !== undefined && Array.isArray(connection.direct.lanUrls)
+        ? connection.direct.lanUrls
+        : []
+      const directUp = directRunning && lanUrls.length > 0
       // 两条都没有：按钮禁用，并把通道状态写在旁边 —— 不让人先点、再读一句
       // 与事实相反的报错（"直连没开"而其实开着，是从前最像 bug 的一处）。
       //
@@ -1153,8 +1170,16 @@ window.__ModuleLoader__.load({
           : directUp
             ? t('pairChannelsLan')
             : relayUp
-              ? t('pairChannelsRelay')
-              : t('pairChannelsNone')
+              ? (directRunning ? t('pairChannelsLanNoAddressRelay') : t('pairChannelsRelay'))
+              : (directRunning ? t('pairChannelsLanNoAddress') : t('pairChannelsNone'))
+      // 地址那一行：有就列出来（可核对），在跑但没地址就直说 —— 两种都比"连接不上"好查。
+      const lanLine = !capacityKnown
+        ? ''
+        : lanUrls.length > 0
+          ? t('pairLanAddresses', { list: lanUrls.join(' / ') })
+          : directRunning
+            ? t('pairNoLanAddress')
+            : ''
 
       const pair = async () => {
         setBusy('pair')
@@ -1734,7 +1759,7 @@ window.__ModuleLoader__.load({
               ),
               // 会报给手机的地址：**删除 = 不再上报**（自报的那种，网卡还在，
               // 所以删掉的进下面那排「已删除」，可恢复）。
-              // 默认会报的（通常只有主地址一条）：删除 = 不再上报。
+              // 默认会报的（此刻的全部局域网 IPv4）：删除 = 不再上报。
               advertise === null
                 ? null
                 : advertise.advertised
@@ -2036,6 +2061,9 @@ window.__ModuleLoader__.load({
             key: 'rl',
             style: { ...S.label, margin: '8px 0 0', ...(anyRoute ? {} : S.warn) },
           }, routeLine),
+          lanLine === ''
+            ? null
+            : h('p', { key: 'lu', style: { ...S.label, margin: '4px 0 0' } }, lanLine),
           // 「还没装 App？」——放在出码按钮下面：走到这一步的人正好缺这个。
           h('div', { key: 'dl', style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 } },
             h('span', { style: { ...S.label, margin: 0 } }, t('noAppHint')),

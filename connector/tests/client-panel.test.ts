@@ -193,7 +193,7 @@ const CONNECTION_VIEW = {
   },
   token: { configured: true, writable: true },
   relay: { running: true, connected: true, public: false },
-  direct: { running: true },
+  direct: { running: true, lanUrls: ['ws://192.168.1.5:8790'] },
 }
 
 /** status / transport / connection 三个读面的默认桩。 */
@@ -1062,7 +1062,7 @@ test('配对卡：直连与中转都没开 ⇒ 出码按钮禁用，并说明缺
   const view = {
     ...CONNECTION_VIEW,
     relay: { running: false, connected: false, public: false },
-    direct: { running: false },
+    direct: { running: false, lanUrls: [] },
   }
   const fetchImpl = async (url: string) => String(url).includes('/connection')
     ? { ok: true, status: 200, json: async () => view }
@@ -1080,13 +1080,33 @@ test('配对卡：只有直连在监听 ⇒ 说明中转未连接，出码仍可
   const view = {
     ...CONNECTION_VIEW,
     relay: { running: false, connected: false, public: false },
-    direct: { running: true },
+    direct: { running: true, lanUrls: ['ws://192.168.2.75:8790'] },
   }
   const fetchImpl = async (url: string) => String(url).includes('/connection')
     ? { ok: true, status: 200, json: async () => view }
     : defaultFetch()(url)
   const { tree } = await mountPanel({}, fetchImpl)
   assert.match(allText(tree), /通道：直连监听中 · 中转未连接/)
+  // **此刻可拨的地址**（2026-11-24）：面板要让人肉眼核对"出码就是当前网络的地址"。
+  assert.match(allText(tree), /此刻可拨：ws:\/\/192\.168\.2\.75:8790/)
   assert.notEqual(buttonWith(tree, '出配对码')?.props.disabled, true)
+})
+
+test('配对卡：监听在跑但此刻没有局域网地址 ⇒ 说事实，且不谎称"直连未启动"', async () => {
+  // 这就是 2026-11-24 用户看到的那类错话：监听明明开着，面板说"直连未启动"。
+  // 服务端此刻会拒（除中转在），所以按钮也禁用 —— 但说的是真原因。
+  const view = {
+    ...CONNECTION_VIEW,
+    relay: { running: false, connected: false, public: false },
+    direct: { running: true, lanUrls: [] },
+  }
+  const fetchImpl = async (url: string) => String(url).includes('/connection')
+    ? { ok: true, status: 200, json: async () => view }
+    : defaultFetch()(url)
+  const { tree } = await mountPanel({}, fetchImpl)
+  const text = allText(tree)
+  assert.match(text, /没有局域网 IPv4 地址/)
+  assert.equal(/直连未启动/.test(text), false, '监听在跑，不许说"未启动"')
+  assert.equal(buttonWith(tree, '出配对码')?.props.disabled, true, '没有可拨地址也出不了码')
 })
 

@@ -97,10 +97,15 @@ Map<String, Object?> _ledger(List<String> sessionIds) => <String, Object?>{
 };
 
 /// 抽屉看到的桶（与 `SessionDrawer` 同一份纯函数）。
+///
+/// 排序档与时间键都从 `AppModel` 读 —— 与装配层（`main.dart` / `chat_page.dart`）
+/// 完全同一条接线，于是这里量到的顺序就是真机上那份顺序。
 List<WorkspaceBucket> _buckets(AppModel app) => bucketSessionsByWorkspace(
   [for (final s in app.sessions) s.sid],
   app.workspaces,
   isBlank: app.sessionBlankOf,
+  order: app.sessionOrder,
+  updatedAtOf: app.updatedAtOf,
 );
 
 void main() {
@@ -122,10 +127,11 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(client.ledgerCalls, 2, reason: '出现未归组的会话 ⇒ 补问一次账本');
-    expect(_buckets(app).single.sessionIds, [
-      's1',
-      's2',
-    ], reason: '归组照宿主给的账本，不该留在「未分组」');
+    expect(
+      _buckets(app).single.sessionIds,
+      ['s2', 's1'],
+      reason: '归组照宿主给的账本（两个都在 w1 里，没有「未分组」）；组内顺序照默认档「最近更新」⇒ s2(2) 在 s1(1) 前面',
+    );
   });
 
   // AppModel → 分区这条接线：判据是 `sessionBlankOf`（宿主 blank + 本地无可见条目），

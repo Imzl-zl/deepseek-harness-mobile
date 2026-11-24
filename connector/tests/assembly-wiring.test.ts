@@ -75,6 +75,8 @@ function inputs(over: Partial<ConnectionReadInputs> = {}): ConnectionReadInputs 
       return { configured: true, writable: true }
     },
     configuredListenPort: () => 0,
+    // 此刻可拨的地址：与出码同一份判据（`endpoints.ts` 的 `autoAdvertisedUrls`）。
+    lanUrlsOf: () => ['ws://192.168.1.5:8790'],
     ...over,
   }
 }
@@ -90,7 +92,7 @@ test('投影：白名单四格照快照，revision 一并带出（写入要拿�
     relayTokenRef: 'relay-connector',
     token: { configured: true, writable: true },
     relay: { running: true, connected: true },
-    direct: { running: true },
+    direct: { running: true, lanUrls: ['ws://192.168.1.5:8790'] },
   })
 })
 
@@ -158,7 +160,7 @@ test('投影：布尔格只认真 true（字符串 "false" 不能被当成打开
 test('投影：注册表还没建（空列表）时如实报"未运行"，不是抛错也不是猜', async () => {
   const state = await readConnectionState(inputs({ channels: [] }))
   assert.deepEqual(state.relay, { running: false, connected: false })
-  assert.deepEqual(state.direct, { running: false })
+  assert.deepEqual(state.direct, { running: false, lanUrls: [] }, '没在跑就不给地址')
 })
 
 test('投影：通道按 id 找，不按位置（顺序变了不该读串）', async () => {
@@ -168,7 +170,7 @@ test('投影：通道按 id 找，不按位置（顺序变了不该读串）', a
       channel({ id: 'relay', running: true, connected: false }),
     ],
   }))
-  assert.deepEqual(state.direct, { running: true })
+  assert.deepEqual(state.direct, { running: true, lanUrls: ['ws://192.168.1.5:8790'] })
   // `running` 与 `connected` 是两件事：跑着但控制面没通。
   assert.deepEqual(state.relay, { running: true, connected: false })
 })

@@ -1,6 +1,13 @@
 # 默认只上报主地址：端点候选不再自动变成手机端点
 
-Status: implemented
+Status: archived
+
+Superseded by: `.agents/notes/implemented/2026-11-24-offer-carries-current-lan-addresses.md`
+（经 `.agents/notes/archived/2026-11-20-advertise-by-address-not-by-default-route.md` 中转）
+取代范围：本篇"默认只报主地址一条"的结论已不成立 —— 2026-11-20 先把判据从"默认路由"
+改成"地址段"，2026-11-24 再把"最多一条"整条删掉（默认集合 = 此刻全部局域网 IPv4）。
+本篇记录的问题本身（候选池原样上手机 = 列表被虚拟机地址占满）仍然成立，解法改在
+手机侧的展示与并行拨号，不在电脑侧的"挑一条"。
 
 ## Problem
 

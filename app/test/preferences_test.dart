@@ -69,8 +69,8 @@ void main() {
     await app.start();
     expect(app.transcriptView, TranscriptView.standard, reason: '默认标准');
 
-    await app.setTranscriptView(TranscriptView.fullyOpen);
-    await app.setPerformanceUsage(PerformanceUsage.compact);
+    await app.devicePrefs.setTranscriptView(TranscriptView.fullyOpen);
+    await app.devicePrefs.setPerformanceUsage(PerformanceUsage.compact);
     expect(app.transcriptView, TranscriptView.fullyOpen);
 
     // 重启：新 AppModel 读同一个 store。
@@ -102,7 +102,7 @@ void main() {
     final store = _FakePrefs();
     final app = AppModel(client: _PrefClient(), prefs: store);
     await app.start();
-    await app.setTranscriptView(TranscriptView.standard); // 就是默认值
+    await app.devicePrefs.setTranscriptView(TranscriptView.standard); // 就是默认值
     expect(store.writes, isEmpty, reason: '空操作不该落盘');
     app.dispose();
   });

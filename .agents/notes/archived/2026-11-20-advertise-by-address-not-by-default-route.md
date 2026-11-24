@@ -1,6 +1,11 @@
 # Agent Note: 上报哪条直连地址 = 地址自己的事实，不是默认路由是谁
 
-Status: implemented
+Status: archived
+
+Superseded by: `.agents/notes/implemented/2026-11-24-offer-carries-current-lan-addresses.md`
+取代范围：本篇后半条结论（"默认集合**最多一条**，在真实局域网 IPv4 里选一条"）已被删除 ——
+`defaultDirectUrls` 与 `isVirtualMac` 整段下线，默认集合改为**此刻枚举到的全部局域网 IPv4**。
+本篇前半条结论（判据看**地址自己是不是局域网段**，不看默认路由是谁）仍然成立，新篇原样保留。
 
 ## Problem
 

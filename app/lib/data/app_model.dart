@@ -59,6 +59,7 @@ import '../model/preferences.dart';
 import '../model/queue_item.dart';
 import '../model/route_policy.dart';
 import '../model/send_mode.dart';
+import '../model/session_order.dart';
 import '../model/session_stats.dart';
 import '../model/skill.dart';
 import '../model/subagent.dart';
@@ -70,6 +71,7 @@ import '../model/usage_summary.dart';
 import '../model/workspace.dart';
 import '../model/workspace_files.dart';
 import 'app_services.dart';
+import 'device_prefs.dart';
 import 'endpoint_book.dart';
 import 'file_preview.dart';
 import 'host_catalogs.dart';
@@ -1692,25 +1694,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     await store.open();
     if (_disposed) return;
     _uiState = store;
-    _applyDevicePreferences();
-  }
-
-  /// 把 `device.*` 落进现有字段。**认不出就保持默认**（与 `fromWire` 同一条纪律）。
-  void _applyDevicePreferences() {
-    final store = _uiState;
-    if (store == null) return;
-    final transcript = TranscriptView.fromWire(store.transcriptView);
-    if (transcript != null) _transcriptView = transcript;
-    final performance = PerformanceUsage.fromWire(store.performanceView);
-    if (performance != null) _performanceUsage = performance;
-    final collapse = CollapseTiming.fromWire(store.collapseTiming);
-    if (collapse != null) _collapseTiming = collapse;
-    final route = RoutePolicy.fromWire(store.routePolicy);
-    if (route != null) _routePolicy = route;
-    final taskNotice = TaskNoticePolicy.fromWire(store.taskNotice);
-    if (taskNotice != null) _taskNoticePolicy = taskNotice;
-    final scale = store.uiScaleIndex;
-    if (scale != null) _uiScaleIndex = scale.clamp(0, kUiScaleSteps.length - 1);
+    // `device.*` 的读回在 `DevicePrefs` 里（同一个类也管写，见 `data/device_prefs.dart`）。
+    _devicePrefs.applyFromStore(store);
   }
 
   // ---------------------------------------------------------------------------
@@ -1861,9 +1846,10 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     final stored = await _prefs?.read(kSendModeKey);
     final restored = SendMode.fromWire(stored);
     if (restored != null) _sendMode = restored;
-    // 其余本地偏好（工作步骤展示 / 性能与用量）：装配层已经用 `loadUiState()`
-    // 在**首帧前**读过了；没装配这条缝时（单测）才退到旧的单键读法。
-    if (_uiState == null) await _restorePreferences();
+    // 其余本地偏好（工作步骤展示 / 性能与用量 / 连接方式 / 会话排序 …）：装配层
+    // 已经用 `loadUiState()` 在**首帧前**读过了；没装配这条缝时（单测）才退到
+    // 旧的单键读法（同一个类 `DevicePrefs` 也有 `loadFromPrefs`）。
+    if (_uiState == null) await _devicePrefs.loadFromPrefs();
     notifyListeners();
     await client.start();
   }
@@ -1898,126 +1884,56 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   }
 
   // ---- 手机本地的界面偏好（DSH 的"纯 UI 偏好"，有意偏离存本地）----
+  //
+  // **值与写入口都在 `data/device_prefs.dart`（`DevicePrefs`）**：这七项是同形的
+  // （typed 值 + wire 字符串 + 落盘键 + "改了才写"的守卫），以前在这里各写一份
+  // setter —— 加一档偏好就多抄一遍，2026-11-24 加「会话排序」时正是这样把尺寸
+  // 棘轮顶破了。现在这一簇只剩**读的 passthrough**（getter，不占方法预算）与
+  // 一个 [devicePrefs] 写入口；加一档偏好去 `device_prefs.dart`，不碰这个 façade。
+  //
+  // 装配顺序：`_prefs` 构造时就有；`UiStateStore` 要等首帧前的 `loadUiState()`
+  // 才装上 —— 所以 `DevicePrefs` 拿的是它**取当前 store 的闭包**，不是一份快照。
+  late final DevicePrefs _devicePrefs = DevicePrefs(
+    prefs: _prefs,
+    uiState: () => _uiState,
+    isDisposed: () => _disposed,
+    onChanged: notifyListeners,
+  );
 
-  TranscriptView _transcriptView = TranscriptView.standard;
-  PerformanceUsage _performanceUsage = PerformanceUsage.detailed;
-  CollapseTiming _collapseTiming = CollapseTiming.completion;
+  /// 设备级偏好的**读写入口**（`data/device_prefs.dart`）：写走它，
+  /// 读直接用下面这些 getter。
+  DevicePrefs get devicePrefs => _devicePrefs;
 
-  TranscriptView get transcriptView => _transcriptView;
-  PerformanceUsage get performanceUsage => _performanceUsage;
+  TranscriptView get transcriptView => _devicePrefs.transcriptView;
+  PerformanceUsage get performanceUsage => _devicePrefs.performanceUsage;
 
   /// 轮组的过程什么时候收起来（`docs/subsystems/turn-groups.md`）。
-  CollapseTiming get collapseTiming => _collapseTiming;
-
-  /// 落盘的 meta 键：偏好类。**契约两端共用的字符串**，改动等于作废用户的偏好。
-  static const String kTranscriptViewKey = 'transcript_view';
-  static const String kPerformanceUsageKey = 'performance_usage';
-  static const String kCollapseTimingKey = 'collapse_timing';
-
-  /// 切工作步骤展示密度。落盘；同一个值重复切是空操作。
-  Future<void> setTranscriptView(TranscriptView view) async {
-    if (_disposed || view == _transcriptView) return;
-    _transcriptView = view;
-    notifyListeners();
-    final store = _uiState;
-    if (store != null) {
-      await store.setTranscriptView(view.wire);
-    } else {
-      await _prefs?.write(kTranscriptViewKey, view.wire);
-    }
-  }
-
-  /// 切性能与用量的详细程度。落盘；同一个值重复切是空操作。
-  Future<void> setPerformanceUsage(PerformanceUsage usage) async {
-    if (_disposed || usage == _performanceUsage) return;
-    _performanceUsage = usage;
-    notifyListeners();
-    final store = _uiState;
-    if (store != null) {
-      await store.setPerformanceView(usage.wire);
-    } else {
-      await _prefs?.write(kPerformanceUsageKey, usage.wire);
-    }
-  }
-
-  /// 切"过程什么时候收起"。落盘；同一个值重复切是空操作。
-  ///
-  /// 切完**要清掉用户手动的展开/收起**：那是对旧默认态的手工覆盖，
-  /// 留着会让"我改了设置但没反应"（`clearTurnOpen()` 由界面调）。
-  Future<void> setCollapseTiming(CollapseTiming timing) async {
-    if (_disposed || timing == _collapseTiming) return;
-    _collapseTiming = timing;
-    notifyListeners();
-    final store = _uiState;
-    if (store != null) {
-      await store.setCollapseTiming(timing.wire);
-    } else {
-      await _prefs?.write(kCollapseTimingKey, timing.wire);
-    }
-  }
+  CollapseTiming get collapseTiming => _devicePrefs.collapseTiming;
 
   /// 这台手机想走哪条路（`model/route_policy.dart`）：**配对与连接共用**。
-  RoutePolicy _routePolicy = RoutePolicy.auto;
-  RoutePolicy get routePolicy => _routePolicy;
+  RoutePolicy get routePolicy => _devicePrefs.routePolicy;
 
-  /// 落盘键：连接方式策略（旧键 `pairing_prefer` 由 `UiStateStore.open` 迁移）。
-  static const String kRoutePolicyKey = 'route_policy';
-  Future<void> setRoutePolicy(RoutePolicy policy) async {
-    if (_disposed || policy == _routePolicy) return;
-    _routePolicy = policy;
-    notifyListeners();
-    final store = _uiState;
-    if (store != null) {
-      await store.setRoutePolicy(policy.wire);
-    } else {
-      await _prefs?.write(kRoutePolicyKey, policy.wire);
-    }
-  }
+  /// 会话列表的**组内排序档**（`model/session_order.dart`）：默认「最近更新」。
+  SessionOrder get sessionOrder => _devicePrefs.sessionOrder;
 
   /// 后台任务结束要不要提醒（默认关；判据见 `model/task_notice_policy.dart`）。
-  TaskNoticePolicy _taskNoticePolicy = TaskNoticePolicy.off;
-  TaskNoticePolicy get taskNoticePolicy => _taskNoticePolicy;
-  static const String kTaskNoticeKey = 'notify_tasks';
-  Future<void> setTaskNoticePolicy(TaskNoticePolicy policy) async {
-    if (_disposed || policy == _taskNoticePolicy) return;
-    _taskNoticePolicy = policy;
-    // 改档立刻重算：切到"全部"时窗口内已结束的补上，切回"关"时把已贴的撤掉。
-    _syncNotices();
-    notifyListeners();
-    final store = _uiState;
-    if (store != null) {
-      await store.setTaskNotice(policy.wire);
-    } else {
-      await _prefs?.write(kTaskNoticeKey, policy.wire);
-    }
-  }
+  TaskNoticePolicy get taskNoticePolicy => _devicePrefs.taskNoticePolicy;
 
-  /// 落盘的 meta 键：**界面字号档位**（App 内倍率的下标，0–3）。
-  /// 旧键 `content_font_size`（10–22 的内容字号）已作废 —— 那一版只放大内容，
-  /// 对比会被拉到 2 倍（用户原话「丑」）。见
-  /// `.agents/notes/implemented/2026-10-22-global-ui-scale.md`。
-  static const String kUiScaleKey = 'ui_scale_index';
-
-  int _uiScaleIndex = kUiScaleDefaultIndex;
-
-  /// 界面字号档位的下标（[kUiScaleSteps] / [kUiScaleLabels] 的下标）。
-  int get uiScaleIndex => _uiScaleIndex;
+  /// 界面字号档位的下标（[kUiScaleSteps] 的下标）。
+  int get uiScaleIndex => _devicePrefs.uiScaleIndex;
 
   /// 当前倍率（叠在系统字号之上；`main.dart` 把它乘进 `MediaQuery.textScaler`）。
-  double get uiScale => kUiScaleSteps[_uiScaleIndex];
+  double get uiScale => _devicePrefs.uiScale;
 
-  /// 切界面字号档位。落盘；同一个档位重复设是空操作；越界**夹到边界**。
-  Future<void> setUiScaleIndex(int index) async {
-    final clamped = index.clamp(0, kUiScaleSteps.length - 1);
-    if (_disposed || clamped == _uiScaleIndex) return;
-    _uiScaleIndex = clamped;
-    notifyListeners();
-    final store = _uiState;
-    if (store != null) {
-      await store.setUiScaleIndex(clamped);
-    } else {
-      await _prefs?.write(kUiScaleKey, '$clamped');
-    }
+  /// 切后台任务提醒档。
+  ///
+  /// **副作用留在这里**：改档要立刻重算已贴的提醒（`_syncNotices`）—— 它读的是
+  /// 会话 / 任务状态，不是一条偏好，所以不下沉到 `DevicePrefs`。
+  Future<void> setTaskNoticePolicy(TaskNoticePolicy policy) async {
+    if (policy == _devicePrefs.taskNoticePolicy) return;
+    await _devicePrefs.setTaskNotice(policy);
+    // 改档立刻重算：切到"全部"时窗口内已结束的补上，切回"关"时把已贴的撤掉。
+    if (!_disposed) _syncNotices();
   }
 
   // ---- 电脑侧设置（`settings.describe` / `settings.update`，契约 §5.7）----
@@ -2862,38 +2778,6 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     await _prefs?.write(key, value);
   }
 
-  /// 把落盘的偏好读回来（`start()` 里调一次）。
-  ///
-  /// 读不到（没存过 / 存了个不认识的值）就保持默认 —— 与发送模式同一条纪律，
-  /// **不猜**。
-  Future<void> _restorePreferences() async {
-    final transcript = TranscriptView.fromWire(
-      await _prefs?.read(kTranscriptViewKey),
-    );
-    if (transcript != null) _transcriptView = transcript;
-    final performance = PerformanceUsage.fromWire(
-      await _prefs?.read(kPerformanceUsageKey),
-    );
-    if (performance != null) _performanceUsage = performance;
-    final collapse = CollapseTiming.fromWire(
-      await _prefs?.read(kCollapseTimingKey),
-    );
-    if (collapse != null) _collapseTiming = collapse;
-    // 设备级策略：与 `device.*` 同一份值，这里只是没装配 UiState 时的退路。
-    // （旧键 `pairing_prefer` 的迁移在 `UiStateStore.open` 里做，这里不重复。）
-    final policy = RoutePolicy.fromWire(await _prefs?.read(kRoutePolicyKey));
-    if (policy != null) _routePolicy = policy;
-    final taskNotice = TaskNoticePolicy.fromWire(
-      await _prefs?.read(kTaskNoticeKey),
-    );
-    if (taskNotice != null) _taskNoticePolicy = taskNotice;
-    // 界面字号档位：存的是下标；认不出（没存过 / 坏了）就保持默认档（1.0）。
-    final scaleIndex = int.tryParse(await _prefs?.read(kUiScaleKey) ?? '');
-    if (scaleIndex != null) {
-      _uiScaleIndex = scaleIndex.clamp(0, kUiScaleSteps.length - 1);
-    }
-  }
-
   void _onConnectionChanged(ConnectionState state) {
     if (_disposed) return;
     _connection = _viewOf(state, client);
@@ -3342,7 +3226,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
         jobsOf: _jobs.jobsOf,
         completionUnreadOf: completionUnreadOf,
         nowMs: DateTime.now().millisecondsSinceEpoch,
-        jobNotices: _taskNoticePolicy,
+        jobNotices: taskNoticePolicy,
       ),
     );
     for (final id in diff.cancel) {
@@ -3707,6 +3591,14 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   List<WorkspaceGroup>? _indexedWorkspaces;
   Map<String, WorkspaceGroup> _workspaceIndex = const {};
 
+  /// 一个会话的 `updatedAt`（毫秒）；**不在清单里回 `-1`**（不知道就是最旧，不猜）。
+  ///
+  /// 两个读者共用这一个口径：
+  /// - 新建会话该落哪个工作区（[defaultNewSessionWorkspaceId] 的 `updatedAtOf`）；
+  /// - 抽屉 / 首页的**组内排序**（`model/workspace.dart` 的
+  ///   `bucketSessionsByWorkspace` 的 `updatedAtOf`，`updated` 档要它）。
+  int updatedAtOf(String sid) => sessionOf(sid)?.updatedAt ?? -1;
+
   /// 新建会话会落在哪个工作区（`null` = 这台电脑一个工作区都没有）。
   ///
   /// 链照 DSH 的 `startSession`：当前会话所在工作区 → 最近工作区
@@ -3720,12 +3612,7 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   String? get defaultNewSessionWorkspaceId => newSessionWorkspaceId(
     currentWorkspaceId: currentWorkspace?.workspaceId,
     groups: _workspaces,
-    updatedAtOf: (sid) {
-      for (final s in _sessions) {
-        if (s.sid == sid) return s.updatedAt;
-      }
-      return -1;
-    },
+    updatedAtOf: updatedAtOf,
   );
 
   /// 一个工作区的目录。本地行（刚建的 blank）的 `cwd` 用它 —— DSH 的复用判据
@@ -3954,6 +3841,8 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   ///
   /// 返回的是该工作区**新的**会话顺序（`{sessionIds}`，已换回手机见的 sid），
   /// 所以落本地时直接替换那一组的 `sessionIds`，不重读整份基线。
+  ///
+  /// **成功即把排序档切到「手动」**（见方法内那条注释）：用户动了顺序就按他动的来。
   Future<bool> moveSession(String sid, {required String? beforeSid}) async {
     final group = workspaceGroupOf(sid, _workspaces);
     if (group == null) {
@@ -3972,6 +3861,16 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
         return false;
       }
       _applyWorkspaceOrder(group.workspaceId, order);
+      // **用户一动顺序，档位就切到「手动」**（拖动落点提交与菜单上移/下移都经过
+      // 这里 —— `main.dart` 的 `_moveFromDrawer` 是唯一调用方）。
+      //
+      // 理由：[SessionOrder.updated] 档下**账本序不再是显示序**，所以写完账本
+      // 不换档，用户看到的就是"拖完一点变化都没有"（精确移动的那条退路失效）。
+      // 他既然亲手排了序，就按他排的来 —— 与桌面的同一条行为（`setSessionOrder`
+      // 写完把 `orderBy` 切成 `manual`，`ui-workspace/src/client/stores.ts:114-119`）。
+      // 这条规则只在这里表达一次，见
+      // `.agents/notes/implemented/2026-11-24-session-order-by-recency.md`。
+      await _devicePrefs.setSessionOrder(SessionOrder.manual);
       return true;
     } catch (error) {
       _recordError('移动会话失败', error);

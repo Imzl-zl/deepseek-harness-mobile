@@ -301,7 +301,7 @@ void main() {
     final client = _FeedClient();
     final app = await _pump(tester, client);
     addTearDown(app.dispose);
-    await app.setCollapseTiming(CollapseTiming.nextInput);
+    await app.devicePrefs.setCollapseTiming(CollapseTiming.nextInput);
     await tester.pumpAndSettle();
 
     client.emit('s1', _closedTurn(1));

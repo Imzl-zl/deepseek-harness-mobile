@@ -68,8 +68,7 @@ dsh --profile dsh-mobile-test --no-open --port 8099
 adb -s d61cf622 reverse tcp:8787 tcp:8787
 adb -s d61cf622 shell svc power stayon true
 
-# 4) 出码:Web UI 里对**一个现成的空闲会话**跑 `/dsh-mobile-pair`
-#    (POST /api/commands/execute,信封形状见 tools.md;不要为此新建会话)
+# 4) 出码:插件面板点「出配对码」(POST /api/dsh-mobile/pair;旧斜杠命令已删除)
 ```
 
 **改过 `connector/src/**` 必须先 `pnpm build`**(真加载的是 `lib/index.js`)。
@@ -102,8 +101,8 @@ fail-closed 报后台**。取舍、被否方案与代价见
 
 ## 真机三次尝试(2026-10-13;第三次把失败点缩到很小,根因待确认)
 
-三次都是**全自动**跑的(二维码由浏览器自动化在 Web UI 里跑 `/dsh-mobile-pair` 取得,
-不用人贴;tools.md 里"信封形状见 tools.md"是过期引用,那条路没走通)。
+三次都是**全自动**跑的(二维码由浏览器自动化 `POST /api/dsh-mobile/pair` 取得,
+不用人贴;旧斜杠命令那条路已删除)。
 
 | | ④ marker 回读 | ⑤ 审批卡 |
 |---|---|---|

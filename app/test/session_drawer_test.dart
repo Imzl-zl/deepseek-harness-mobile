@@ -14,12 +14,21 @@
 /// 6. **拖动项目头**：落到另一个头的上半/下半 ⇒ 插到它前/后（`workspace.insertBefore`）。
 library;
 
+// 前缀：`package:flutter/material.dart` 里也有一个 `ConnectionState`（`async.dart`），
+// 不前缀会 ambiguous_import —— 这是测试文件独有的冲突（`lib` 里没人同时引两者）。
+import 'package:dsh_mobile/core/connection.dart' as core;
+import 'package:dsh_mobile/core/job.dart';
+import 'package:dsh_mobile/core/sync_client.dart';
+import 'package:dsh_mobile/data/app_model.dart';
 import 'package:dsh_mobile/model/session_dot.dart';
+import 'package:dsh_mobile/model/session_order.dart';
 import 'package:dsh_mobile/ui/dsh_popover.dart';
 import 'package:dsh_mobile/ui/session_dot_view.dart';
 import 'package:dsh_mobile/ui/session_drawer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'fake_sync_client.dart';
 
 DrawerSession row(
   String sid, {
@@ -37,6 +46,61 @@ DrawerSession row(
 );
 
 Widget host(SessionDrawer drawer) => MaterialApp(home: Scaffold(body: drawer));
+
+/// 拖动提交要打到的那一段**真实现**：`workspace.list` 给一份账本，
+/// `workspace.insertSessionBefore` 回新的组内顺序。**不起真服务**
+/// —— 走的是测试文件里既有的注入面（`FakeSyncClient` + 抽屉的 `onMove`）。
+class _MoveClient extends FakeSyncClient {
+  @override
+  core.ConnectionState get state => core.ConnectionState.serving;
+  @override
+  Stream<core.ConnectionState> get connection => const Stream.empty();
+  @override
+  Stream<JobFrame> get jobUpdates => const Stream.empty();
+  @override
+  Stream<SessionDelta> sessionUpdates(String sid) => const Stream.empty();
+  @override
+  Future<void> start() async {}
+  @override
+  Future<void> reconnect() => start();
+  @override
+  Future<void> setAppState(AppState state) async {}
+  @override
+  Future<void> unsubscribe(String sid) async {}
+
+  @override
+  Future<T> call<T>(
+    String method,
+    Map<String, Object?> params, {
+    String? requestId,
+  }) async {
+    switch (method) {
+      case 'workspace.list':
+        return <String, Object?>{
+              'workspaces': <Map<String, Object?>>[
+                <String, Object?>{
+                  'workspaceId': 'w1',
+                  'title': 'W',
+                  'path': '/repo/w1',
+                  'sessionIds': <String>['a', 'b'],
+                  'createdAt': '',
+                },
+              ],
+              'archivedSessionIds': const <String>[],
+              'pinnedSessionIds': const <String>[],
+            }
+            as T;
+      case 'workspace.insertSessionBefore':
+        // 用例里拖的是 B → A 的上半，宿主把 b 插到 a 前面。
+        return <String, Object?>{
+              'sessionIds': <String>['b', 'a'],
+            }
+            as T;
+      default:
+        return <String, Object?>{} as T;
+    }
+  }
+}
 
 /// 组首是 blank 行的真工作区抽屉（`blank` 被钉在组首，后面是 a / b / c）。
 Widget blankHeadDrawer(void Function(DrawerSession, String?) onMove) => host(
@@ -653,6 +717,74 @@ void main() {
       ),
       findsNothing,
       reason: '已完成是实心点，不转',
+    );
+  });
+
+  // ---- 排序档位（`device.session_order`，2026-11-24）----
+  //
+  // **用户一动顺序，档位就切「手动」**：`updated` 档下账本序不再是显示序，
+  // 写完账本却不换档，用户看到的就是"拖完一点变化都没有"。
+  // 规则只在 `AppModel.moveSession` 里表达一次（拖动落点与菜单上移/下移都过它）；
+  // 这条用例从抽屉的拖动提交走进去，删掉那一行切档它就红。
+  testWidgets('拖动提交（一次成功的会话重排）后排序档位切到「手动」', (tester) async {
+    final client = _MoveClient();
+    final app = AppModel(client: client);
+    addTearDown(app.dispose);
+    await app.refreshWorkspaces();
+    expect(
+      app.sessionOrder,
+      SessionOrder.updated,
+      reason: '没存过就是默认档「最近更新」（与桌面 `orderBy: updated` 同一条）',
+    );
+
+    Future<void>? move;
+    await tester.pumpWidget(
+      host(
+        SessionDrawer(
+          sections: [
+            DrawerSection(
+              label: 'w',
+              workspaceId: 'w1',
+              sessions: [row('a'), row('b')],
+            ),
+          ],
+          connection: const DrawerConnection(
+            name: '我的电脑',
+            detail: '已连接',
+            platform: 'DSH',
+            online: true,
+          ),
+          footItems: const [],
+          onNewSession: () {},
+          onOpenSession: (_) {},
+          onClose: () {},
+          // 装配层的那一条线（`main.dart` 的 `_moveFromDrawer` → `AppModel.moveSession`）。
+          onMove: (session, beforeSid) {
+            move = app.moveSession(session.sid, beforeSid: beforeSid);
+          },
+        ),
+      ),
+    );
+
+    final a = tester.getRect(find.text('A'));
+    final aRow = tester.getRect(
+      find.byKey(const ValueKey<String>('session-menu-a')),
+    );
+    await dragTo(
+      tester,
+      tester.getCenter(find.text('B')),
+      Offset(a.center.dx, aRow.center.dy - 20),
+    );
+    await move;
+
+    expect(app.workspaces.single.sessionIds, [
+      'b',
+      'a',
+    ], reason: '拖动确实落成了一次重排（宿主回了新顺序，本地照它换）');
+    expect(
+      app.sessionOrder,
+      SessionOrder.manual,
+      reason: '用户动过顺序 ⇒ 档位切手动，否则账本序不参与显示，拖完看不见变化',
     );
   });
 }

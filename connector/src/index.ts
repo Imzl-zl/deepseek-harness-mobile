@@ -72,7 +72,7 @@ import {
   teamAvailable,
   type Caps,
 } from './dsh/caps.js'
-import { createEndpointsPort, defaultDirectUrls, describeEndpoints, isLanAddress } from './endpoints.js'
+import { autoAdvertisedUrls, createEndpointsPort, describeEndpoints, noLanAddressReason } from './endpoints.js'
 import { createSubagentsPort } from './dsh/subagents.js'
 import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent'
 import { createProjectionsPort } from './dsh/projections.js'
@@ -108,7 +108,7 @@ import {
 } from './dsh/relay-token.js'
 import { createPairingRegistrar } from './pairing-register.js'
 import { createDevicePublisher, rosterEntry } from './device-publish.js'
-import { offerForScanning, issuePairingOffer, planPairingOffer } from './pairing-offer.js'
+import { issuePairingOffer, planPairingOffer } from './pairing-offer.js'
 import { pairingQrSvg } from './pairing-qr.js'
 import { mountAdminFace } from './admin/mount.js'
 import { createUpdateChecker } from './admin/update.js'
@@ -314,8 +314,6 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
    */
   /** 交互客户端（gateway 的 owner client）。缺宿主缝时是 `null`，那时不做手机交互。 */
   let interactionClient: InteractionClient | null = null
-  /** 出码命令的注销（ctx.commands.register 返回的就是它）。 */
-  let unregisterPairingCommand: (() => void) | null = null
   /** 管理面 RPC（`/api/dsh-mobile/*`）的注销。**不用 ctx.effect**，理由见 `admin/mount.ts`。 */
   let unregisterAdminFace: (() => void) | null = null
   /**
@@ -823,59 +821,14 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         }
 
         /**
-         * 「直连开着，但选不出一条可上报的地址」时的**如实原因**。
+         * 出码：登记 → 生成二维码 SVG。**面板是唯一入口**（2026-11-24 删掉斜杠命令）。
          *
-         * 旧文案是「默认路由不可用，或主地址已被隐藏」—— 两种情况被混成一句，
-         * 而 2026-11-20 用户的真实情形**两种都不是**：默认路由被代理 TUN 抢走了
-         * （`198.18.0.1`），而真实的 `192.168.2.75` 就在候选里。
-         * 用户看到那句话只能猜，猜的方向还是错的。
+         * 码里写哪几条路由此刻的能力决定：直连监听在跑**且有局域网 IPv4** 就有 `lan`
+         * （此刻枚举到的**全部**局域网 IPv4，不只一条 —— 哪条拨得通只有手机知道），
+         * 中转控制面 `connected` 才有 `relay`。选择留给手机。
          *
-         * 现在按**候选的实际情况**分档说，每句都对应一个可验证的事实。
-         * 判据必须与 `defaultDirectUrls` 同源：**不能**用"真实候选数 > 0"来判
-         * 最后一档 —— 一台只有 Tailscale（CGNAT）或纯 IPv6 的机器，真实候选有，
-         * 但没有一条是局域网 IPv4，那时说"都被你删掉了"又是一句错话。
-         */
-        const listenerNoAddressReason = (active: NonNullable<typeof listener>): string => {
-          const candidates = active.urls
-          if (candidates.length === 0) {
-            return '直连监听已启动，但没有枚举到任何网卡地址'
-          }
-          const virtualOnly = candidates.every((entry) => entry.virtual === true)
-          if (virtualOnly) {
-            const names = [...new Set(candidates.map((entry) => entry.label))]
-              .filter((name) => name !== '')
-              .slice(0, 3)
-              .join(' / ')
-            return `直连监听已启动，但可拨地址都在虚拟网卡上（${names || 'TUN / 虚拟机'}），`
-              + '手机拨不通。关掉代理的 TUN 模式后重试，或在「上报给手机的地址」里点名上报真实局域网地址'
-          }
-          // 有真实局域网 IPv4，却一条都没选中 ⇒ 只可能是被 `hide` 掉了。
-          if (active.urls.some((entry) => isLanAddress(entry.url))) {
-            return '直连监听已启动，但局域网地址都被「上报给手机的地址」里删掉了'
-              + '（展开「更多地址」可恢复，或点「恢复」把删掉的加回来）'
-          }
-          // 真实候选在，但**没有一条是局域网 IPv4**（只剩组网 / IPv6）。
-          return '直连监听已启动，但没有手机拨得通的局域网 IPv4'
-            + '（现有地址是组网或 IPv6）。可在「上报给手机的地址」里手动添加一条'
-        }
-
-        /**
-         * 出码：登记 → 生成二维码 SVG。
-         *
-         * **没有"这张码给谁用"这一档**（2026-11-17）：码里写哪几条路，只由
-         * **此刻的能力**决定 —— 直连监听在跑且选得出可上报的地址就有 `lan`，
-         * 中转控制面 `connected` 就有 `relay`。选择留给手机（扫完先测两条再选），
-         * 电脑不再替用户押一条路。
-         *
-         * 两条都没有 → 报错并**分别说清缺哪条**：`direct` 的失败有两档
-         * （监听没开 / 开着但没有可上报的主地址），混成一句"直连没开"会让
-         * 明明开着监听的人无从下手。
-         *
-         * **斜杠命令与管理面板共用同一个出码核心**（`issuePairingOffer`）——
-         * "什么时候能出码"只有一条规则。命令那一侧只能回文本
-         * （DSH 的 `CommandResult` 没有图片出口，已核实
-         * `packages/interaction/commands/src/types.ts:34`），所以二维码
-         * 由插件面板承载；斜杠命令仍留着，方便在终端里直接出码。
+         * "没有"只剩事实档位（`endpoints.ts` 的 `noLanAddressReason`）与
+         * 「中转未连接」—— 不再有"虚拟网卡"这种猜出来的档位。
          */
         const offerPairing = async (): Promise<{
           svg: string
@@ -889,14 +842,14 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           await refreshLanHint()
           const lanAvailable = lanUrlsOf().length > 0
           const relayUp = connection?.connected === true
-          // 判据与文案只有一处（`planPairingOffer`）：两条都没有就抛，且分档说清
-          // 直连是"监听没开"还是"开着但没有可上报的主地址"。
+          // 判据与文案各只有一处：`planPairingOffer` 决定能不能出码，
+          // `noLanAddressReason` 说清直连为什么没有可上报的局域网地址。
           const plan = planPairingOffer({
             lanAvailable,
             relayConnected: relayUp,
             lanReason: listener === null
               ? '直连监听未启动'
-              : listenerNoAddressReason(listener),
+              : noLanAddressReason(listener.urls),
           })
           // 结构化拿 offer，**不从命令文本里解析** —— 那等于解析自己刚拼的字符串。
           // `withRelay` = 中转此刻真的连上了：没连上就不登记（登记只给跨网换票用）。
@@ -920,27 +873,11 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           }
         }
 
-        // 出码入口：一条斜杠命令。**登记不成就不出码**（`offerForScanning` 的判断），
-        // 否则操作者会拿到一张扫了也配不上的二维码，而失败面出现在手机侧。
-        const commands = ctx.get('commands') as
-          | { register(definition: unknown): () => void }
-          | undefined
-        if (commands === undefined) {
-          // `commands` 不在服务清单里时插件仍能工作（配对靠管理页面触发），所以只留声。
-          logger.warn('commands 服务不在：`dsh-mobile-pair` 出码命令不可用（管理页面仍可出码）')
-        } else {
-          unregisterPairingCommand = commands.register({
-            name: 'dsh-mobile-pair',
-            description: `生成手机配对二维码（一次性、${Math.round(PAIRING_TTL_MS / 60_000)} 分钟有效）`,
-            // **与面板同一条地址新鲜度**：换 WiFi 之后第一次出码就要带新地址，
-            // 否则命令这条路上会留下一张写着死地址的码（面板侧早在
-            // `offerPairing` 里刷新，命令侧曾漏掉 —— 同一个动作两种行为）。
-            handler: async () => {
-              await refreshLanHint()
-              return offerForScanning({ pairing: pairingCore, register: registerPairing, log: logger })
-            },
-          })
-        }
+        // **出码只有面板这一个入口**（2026-11-24 删掉 `/dsh-mobile-pair` 斜杠命令）：
+        // 命令那一侧只能回文本（DSH 的 `CommandResult` 没有图片出口，
+        // `packages/interaction/commands/src/types.ts:34`），却让"什么时候能出码"
+        // 多出一条**绕过 `planPairingOffer`** 的路 —— 两个入口对同一次出码给出
+        // 不同结论（一个拒绝、一个给空码）。用户原话：「谁在会话生成？我肯定在插件界面啊」。
 
         // 插件面板的四个 RPC（`/api/dsh-mobile/{status,pair,devices/enabled,devices/remove}`）。
         // UI 在 DSH 界面里（浏览器半侧 `client.js` 注册 `plugins.bundle.config` slot），
@@ -971,9 +908,9 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         const advertiseAdmin = createAdvertiseAdmin({
           tableOf: () => advertiseRows,
           candidatesOf: () => listener?.urls ?? [],
-          // 默认只报主地址：判据在 `endpoints.ts` 的 `defaultDirectUrls`（唯一一处），
-          // 这里只把当前监听面与默认路由提示喂进去，不另判"哪张网卡是主网卡"。
-          defaultUrlsOf: () => defaultDirectUrls(listener?.urls ?? [], lanHint),
+          // 默认会报的是**此刻全部局域网 IPv4**：判据在 `endpoints.ts` 的
+          // `autoAdvertisedUrls`（唯一一处，只看地址段），这里不另判"哪张网卡是主网卡"。
+          defaultUrlsOf: () => autoAdvertisedUrls(listener?.urls ?? [], advertiseMapOf(advertiseRows)),
         })
         // 插件面板的 RPC（`/api/dsh-mobile/*`）在**传输section 之后**才挂 ——
         // 按通道生成的起停路由要在 `transportChannels` 注册表存在之后才能生成
@@ -1774,6 +1711,8 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
               tokenStatusOf: (ref) => relayTokenStatusOf(ctx.credentials, ref),
               // 兜底是**访问器**：快照里没有 `listenPort` 时才去读配置（与另外两个来源同一条"用时取"）。
               configuredListenPort: () => listenPortInUse(),
+              // 面板要显示"此刻可拨的地址"：与出码同一份判据（`lanUrlsOf`）。
+              lanUrlsOf,
             })
           },
           async writeFields(patch, expected) {
@@ -1875,10 +1814,6 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         offVolatileUpdate = null
         pairingEndpoint?.dispose()
         pairingEndpoint = null
-        // 出码命令**在这一步注册**，所以也在这一步注销（它一度挂在 `register-answerers`
-        // 的 undo 上：一个从没被赋过值的变量 + 一个不拥有它的步骤）。
-        unregisterPairingCommand?.()
-        unregisterPairingCommand = null
       },
     },
   ]

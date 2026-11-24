@@ -15,8 +15,9 @@
  *
  * ## 三条刻意的选择
  *
- * - **默认不监听**：`port` 为 `0` 时直接不建服务端。不配置就等于这个功能不存在，
- *   而不是"监听了但没人用"—— 后者会在真机上表现为"莫名其妙多开了一个端口"。
+ * - **`port: 0` 就不建服务端**：本函数不判"要不要监听"（那是装配层的决定 ——
+ *   配置里 `listenPort: 0` 表示关，于是装配层根本不调这里），`0` 在本函数里是
+ *   "由系统分配一个空闲端口"（测试要的正是这个）。
  * - **不终结 TLS**：插件只监听明文 WS，TLS 由外部终结（Tailscale `tailscale serve` 或反向代理）。
  *   于是插件里**没有一条"跳过 TLS"的分支**可被误开，也不必持有证书私钥。
  *   手机侧始终拨 `wss://`，契约 §2 的两跳都成立。
@@ -92,41 +93,6 @@ export interface ListenerOptions {
 export interface DialableUrl {
   readonly url: string
   readonly label: string
-  /**
-   * 这张网卡看起来是**虚拟的**（TUN / VMware / Hyper-V / Docker…）。
-   *
-   * 判据在 [isVirtualMac]，**不是**网卡名 —— 名字随系统语言、驱动版本、
-   * 虚拟化产品变，而 MAC 的 OUI 是分配事实。
-   *
-   * 为什么这个字段只在这里标、不在这里过滤：监听面枚举的是**候选池**
-   * （面板的「更多地址」要从这里列），"默认上报哪几条"是
-   * `endpoints.ts` 的 `defaultDirectUrls` 的事。这里只把**观察到的事实**
-   * 带出去，判据仍然只有一处。
-   *
-   * `undefined` = 拿不到 MAC（某些平台不报）—— 那时当作"不知道"，
-   * 调用方按地址段判断，**不当成虚拟**。
-   */
-  readonly virtual?: boolean
-}
-
-/**
- * 这张网卡的 MAC 是否属于**虚拟网卡**的特征。
- *
- * - `00:00:00:00:00:00`：TUN / 点对点隧道（FlClash、Clash Verge、WireGuard 的
- *   wintun 适配器都是这个）；
- * - `00:50:56` / `00:0c:29` / `00:05:69` / `00:1c:14`：VMware；
- * - `00:15:5d`：Hyper-V；
- * - `02:42`：Docker 网桥。
- *
- * **只认这些确定的事实**，不按名字猜（"VMware Network Adapter VMnet8" 这种
- * 名字在中文/英文/其它虚拟化产品下各不相同，猜名字又脆又漏 —— 这正是
- * `listener.ts` 当初拒绝按名字过滤的理由）。
- */
-export function isVirtualMac(mac: string | undefined): boolean {
-  if (mac === undefined || mac === '') return false
-  const m = mac.toLowerCase()
-  if (m === '00:00:00:00:00:00') return true
-  return /^(00:50:56|00:0c:29|00:05:69|00:1c:14|00:15:5d|02:42)/.test(m)
 }
 
 export interface Listener {
@@ -135,11 +101,15 @@ export interface Listener {
   /** 当前活着的被接受连接数。 */
   readonly active: number
   /**
-   * **实际可拨**的地址（`ws://<ip>:<port>`），已滤掉内部地址、已去重。
+   * **此刻**实际可拨的地址（`ws://<ip>:<port>`），已滤掉内部地址、已去重。
    *
    * 为什么不直接用配置里的 `host`：配 `0.0.0.0` 时它不是一个可拨地址，
    * 而手机要的是"往哪拨"。所以这里按 `host` 是不是通配地址分两支：
    * 通配 → 枚举非内部网卡；具体地址 → 就用它。
+   *
+   * **每次读都重新枚举**（不是启动时的快照）：换 WiFi / DHCP 换段之后，
+   * 同一张码必须写新地址 —— 2026-11-24 用户原话「出码不应该出当前网络的
+   * 地址和端口？」。端口仍是**实际绑定**的那个（{@link Listener.port}）。
    */
   readonly urls: readonly DialableUrl[]
   close(): Promise<void>
@@ -153,13 +123,20 @@ const WILDCARD_HOSTS = new Set(['', '0.0.0.0', '::', '[::]'])
  *
  * 每条带上网卡名 —— 手机上显示"同一网络(Wi-Fi)"比显示一个 IP 有用，
  * 而切网卡时列表自己变（这正是"发现"的意义）。
+ *
+ * `enumerate` 是**边界注入**：默认就是 `os.networkInterfaces()`；测试要证明
+ * "地址跟着此刻的网卡走"，不能靠改本机网络，只能喂两份不同的枚举。
  */
-function dialableUrls(host: string, port: number): DialableUrl[] {
+export function dialableUrls(
+  host: string,
+  port: number,
+  enumerate: typeof networkInterfaces = networkInterfaces,
+): DialableUrl[] {
   const base = WILDCARD_HOSTS.has(host) ? null : normalizeHost(host)
   const out: DialableUrl[] = []
   const seen = new Set<string>()
 
-  const push = (address: string, label: string, virtual: boolean): void => {
+  const push = (address: string, label: string): void => {
     // IPv6 要括起来：`ws://[fe80::1]:8788`，否则端口会被当成地址的一部分。
     const wrapped = address.includes(':') && !address.startsWith('[')
       ? `[${address}]`
@@ -167,16 +144,16 @@ function dialableUrls(host: string, port: number): DialableUrl[] {
     const url = `ws://${wrapped}:${port}`
     if (seen.has(url)) return
     seen.add(url)
-    out.push(virtual ? { url, label, virtual } : { url, label })
+    out.push({ url, label })
   }
 
   if (base !== null) {
-    // 显式绑定到某个地址：那是用户点名的，不按虚拟网卡判据打折。
-    push(base, host, false)
+    // 显式绑定到某个地址：用户点名的就是它，不再枚举。
+    push(base, host)
     return out
   }
 
-  for (const [name, entries] of Object.entries(networkInterfaces())) {
+  for (const [name, entries] of Object.entries(enumerate())) {
     // `Object.entries` 的值类型是 `T | undefined`（TS 的索引签名语义）——
     // 运行时不会缺，但类型上要收窄，否则就是在骗编译器。
     if (entries === undefined) continue
@@ -187,14 +164,10 @@ function dialableUrls(host: string, port: number): DialableUrl[] {
       // 只要 IPv4 与 IPv6 的全球/本地地址；link-local 的 IPv6 需要作用域 id
       // （`fe80::1%eth0`），URL 里带 `%` 会被当成转义，所以跳过。
       if (entry.family === 'IPv6' && entry.address.toLowerCase().startsWith('fe80')) continue
-      // **全部枚举，不按网卡名过滤**：哪些地址手机拨得通，电脑侧无从得知
-      // （这台机器同时有以太网与 WiFi，还有 VMware 虚拟网卡）。真正的默认上报集合在
-      // `endpoints.ts` 的 `defaultDirectUrls`，这里枚举的是 **候选池** ——
-      // 面板的「更多地址」要靠它才列得出来。
-      //
-      // 只把 [isVirtualMac] 观察到的事实带出去（虚拟网卡是 TUN 抢默认路由后
-      // 默认集合报错地址的根因），**不在这一层过滤** —— 判据只有一处。
-      push(entry.address, name, isVirtualMac(entry.mac))
+      // **全部枚举，不按网卡名/MAC 过滤**：哪些地址手机拨得通，电脑侧无从得知
+      // （这台机器同时有以太网与 WiFi，还有 VMware 虚拟网卡）。这里给的是
+      // **候选池** —— 默认上报哪几条在 `endpoints.ts`（按地址段判，不猜网卡）。
+      push(entry.address, name)
     }
   }
   // **IPv4 排在前**：手机的常见情形是同局域网 IPv4 直连，而拨号是**顺序**的 ——
@@ -270,9 +243,10 @@ export async function startListener(options: ListenerOptions): Promise<Listener>
 
   const address = server.address()
   const bound = typeof address === 'object' && address !== null ? address.port : options.port
-  const urls = dialableUrls(options.host ?? '127.0.0.1', bound)
+  const host = options.host ?? '127.0.0.1'
+  const atStart = dialableUrls(host, bound)
   log?.info(
-    `直连监听面已就绪：${urls.map((u) => u.url).join(' / ') || 'ws://' + (options.host ?? '127.0.0.1') + ':' + bound}`
+    `直连监听面已就绪：${atStart.map((u) => u.url).join(' / ') || `ws://${host}:${bound}`}`
     + '（TLS 由外部终结）',
   )
 
@@ -281,8 +255,10 @@ export async function startListener(options: ListenerOptions): Promise<Listener>
     get active() {
       return connections.size
     },
+    // **现取**：换 WiFi / DHCP 换段之后同一张码必须写新地址（2026-11-24）。
+    // 端口不重取 —— 它是这次绑定的事实，只有重起监听才会变。
     get urls() {
-      return urls
+      return dialableUrls(host, bound)
     },
     async close() {
       for (const accepted of connections) {

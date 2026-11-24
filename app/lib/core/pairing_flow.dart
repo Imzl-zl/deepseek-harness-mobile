@@ -23,6 +23,14 @@
 /// 而中转要多一次 HTTP 换票 + 一条公网往返。反过来（先中转）会让"中转没开"直接变成
 /// 配对失败，尽管手机和电脑就在同一张桌子上。
 ///
+/// ## 局域网那一窝候选：一起拨，只报一句话
+///
+/// 电脑侧现在报的是"此刻枚举到的**全部**局域网 IPv4"（WiFi / 以太网 / 虚拟网卡各一条），
+/// 而配对只需要其中一条成功。所以那几条**同时发起**受限握手、先通者胜、其余当场收掉
+/// （2026-11-24；同一条纪律见 `core/endpoint_transport.dart` 的拨号竞速）。
+/// 全灭时对外只有**一句话**（试了几个地址 + 用户该做什么）—— 逐条拼地址与原始错误
+/// 只会刷成一屏红字，而用户能做的动作只有一个。中转那条腿仍然自己说自己不通的原因。
+///
 /// 先试哪条由**设备级策略** `RoutePolicy` 决定（`model/route_policy.dart`），
 /// 与"连上之后走哪条"共用同一个设置。`auto` 下"码里有局域网地址就先试它" ——
 /// 那是电脑**出码时**给出的现证，不再用手机 IP 猜是否同网段（`/24` 判据已删，
@@ -49,6 +57,10 @@
 /// `ui/` 调它；它调 `core/pairing_client.dart`（HTTP 缝）、`core/pairing_channel.dart`
 /// （协议）与装配层注入的 [PairingTransportFactory]（真实 socket）。
 library;
+
+import 'dart:async';
+
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../model/route_policy.dart';
 import 'crypto.dart';
@@ -284,8 +296,9 @@ enum PairingDial {
 /// **不发送秘密、不创建有效设备记录、不签发任何令牌** —— 那三件事都发生在
 /// [PairingAttempt.commit]。
 ///
-/// [myIpv4] 只影响**顺序**（同一 /24 的那条先拨，见 `dialOrder`）；拿不到就按电脑侧
-/// 给的顺序拨，不猜。[prefer] 也只影响顺序（见 [PairingPreference]）。
+/// [myIpv4] 只影响**发起顺序**（同一 /24 的那条排前面先发起，见 `dialOrder`；
+/// 全部候选仍在同一轮里同时拨）；拿不到就按电脑侧给的顺序拨，不猜。
+/// [prefer] 只影响走哪条（见 [RoutePolicy]）。
 Future<PairingAttempt> beginPairing({
   required PairingOffer offer,
   required IdentityKeys identity,
@@ -345,32 +358,71 @@ Future<PairingAttempt> beginPairing({
 
   // ---- ① 局域网直连（不需要中转）----
   //
-  // 地址来自二维码的 `lan`：电脑自己持有这次 offer、自己也听得见这个端口，
+  // 地址来自二维码的 `lan`：电脑自己持有这次 offer、自己也听得见这些端口，
   // 所以"保管邀请"与"通知有候选"这两件事在局域网上都不需要服务器。
-  final lanFailures = <String>[];
+  //
+  // **全部候选同时拨**（2026-11-24）：电脑侧现在报的是"此刻枚举到的全部局域网 IPv4"
+  // （WiFi / 以太网 / 虚拟网卡各一条），而成功只需要其中**一条**。串行一条一条
+  // 等满超时会把配对拖到几十秒，也正是"逐条刷不通"的来源。
+  // 与 `core/endpoint_transport.dart` 的拨号竞速同一条纪律：**先通者胜**，
+  // 其余当场收掉 —— 半开的 socket 留着只占端口与超时预算（`tryRelay` 曾经漏掉
+  // 这一步收尾，见下面的注释）。不设并行上限：候选数是电脑**此刻**报的条数，
+  // 多一条就多一条，没有另一档档位可调。
+  var lanTried = 0;
   Future<PairingAttempt?> tryLan() async {
-    for (final endpoint in dialOrder([
+    final endpoints = dialOrder([
       for (final url in offer.lanUrls)
         Endpoint(kind: EndpointKind.direct, url: url),
-    ], myIpv4: myIpv4)) {
-      onStage?.call('局域网直连…');
+    ], myIpv4: myIpv4);
+    lanTried = endpoints.length;
+    if (endpoints.isEmpty) return null;
+    onStage?.call('局域网直连…');
+
+    // 先通者胜（或全灭）的那一个结果。**每一条各自完成握手，谁先到谁算**。
+    final settled = Completer<PairingAttempt?>();
+    final dialed = <PairingChannel>[];
+    var pending = endpoints.length;
+    for (final endpoint in endpoints) {
       final channel = channelFor(pairingDialUrl(endpoint.url, candidate));
-      try {
-        await channel.open();
-        onStage?.call('等待你确认');
-        return attemptFor(channel, PairingDial.lan, endpoint.url);
-      } catch (error) {
-        // 这一条不通：收干净再试下一条（半开的 socket 留着只会占端口与超时预算）。
-        await channel.close();
-        lanFailures.add('${endpoint.url}：$error');
-      }
+      dialed.add(channel);
+      unawaited(() async {
+        try {
+          await channel.open();
+        } catch (error) {
+          // 这一条不通：收干净（半开的 socket 留着只会占端口与超时预算），
+          // 再记账。**原始原因不上界面**：全部候选失败时对外只有一句话
+          // （见 `_lanDownText`），而地址与异常在这里的 debugPrint 里 ——
+          // 真机排查要它，用户不需要一屏红字。
+          debugPrint('[pair] 局域网 ${endpoint.url} 不通：$error');
+          await channel.close();
+          pending -= 1;
+          if (pending == 0 && !settled.isCompleted) settled.complete(null);
+          return;
+        }
+        if (settled.isCompleted) {
+          // 赢家已经定了：这条慢到的当场收掉，不留半开连接。
+          await channel.close();
+          return;
+        }
+        settled.complete(attemptFor(channel, PairingDial.lan, endpoint.url));
+      }());
     }
-    return null;
+
+    final attempt = await settled.future;
+    if (attempt == null) return null;
+    // 赢家之外的那些（**包括还在握手中的**）：等它们收干净再往下走 ——
+    // 调用方拿到确认卡时，电脑侧不该还挂着几条没人要的候选连接。
+    for (final channel in dialed) {
+      if (channel == attempt._channel) continue;
+      await channel.close();
+    }
+    onStage?.call('等待你确认');
+    return attempt;
   }
 
   // ---- ② 中转（跨网 / 没有局域网地址 / 局域网全拨不通）----
   Future<PairingAttempt> tryRelay() async {
-    onStage?.call(lanFailures.isEmpty ? '换票…' : '局域网没通，改用中转…');
+    onStage?.call(lanTried == 0 ? '换票…' : '局域网没通，改用中转…');
     // 首配这一跳**没有令牌**：凭据就是公开邀请 + 候选公钥。这一条是整条链能起步的原因
     // —— 换票要设备令牌，而设备令牌是配对的产物，那会成环。
     //
@@ -411,8 +463,7 @@ Future<PairingAttempt> beginPairing({
     final attempt = await tryLan();
     if (attempt != null) return attempt;
     throw TransportException(
-      '这张码只能在同一 WiFi 下使用（出码时没登记上中转），局域网直连也没通'
-      '（${lanFailures.length} 个地址）：${lanFailures.isEmpty ? '没有可拨的局域网地址' : lanFailures.last}',
+      '这张码只能在同一 WiFi 下使用（出码时没登记上中转），${_lanDownText(lanTried)}',
     );
   }
 
@@ -430,15 +481,12 @@ Future<PairingAttempt> beginPairing({
     case RoutePolicy.directOnly:
       final lanAttempt = await tryLan();
       if (lanAttempt != null) return lanAttempt;
-      throw TransportException(
-        '这张码里的局域网地址都没拨通（${lanFailures.length} 个地址）：'
-        '${lanFailures.isEmpty ? '没有可拨的局域网地址' : lanFailures.last}',
-      );
+      throw TransportException(_lanDownText(lanTried));
     case RoutePolicy.relayOnly:
       try {
         return await tryRelay();
       } catch (error, stack) {
-        _rethrowWithLanNote(error, stack, lanFailures);
+        _rethrowWithLanNote(error, stack, lanTried);
       }
     case RoutePolicy.auto:
       // 码里有局域网地址就先试它 —— 那是电脑出码时给出的现证，
@@ -450,21 +498,34 @@ Future<PairingAttempt> beginPairing({
       } catch (error, stack) {
         // 局域网那几条失败过的话，**在原因前面点出来**：否则用户看到
         // "请让电脑重新出码"，而真因是"手机不在那个 WiFi"。
-        _rethrowWithLanNote(error, stack, lanFailures);
+        _rethrowWithLanNote(error, stack, lanTried);
       }
   }
 }
 
+/// 局域网那条腿全灭时对外给的**一句话**。
+///
+/// 为什么不再逐条报：电脑现在报的是"此刻枚举到的全部局域网 IPv4"，一张码里
+/// 三四条是常态；把每条的地址与原始错误拼起来，用户看到的是三行红字，而他能做的
+/// 动作只有一个 —— 确认手机和电脑是不是同一个 Wi-Fi。所以这里只说**规模**
+/// （试了几个）与**那个动作**，地址与异常留在 `tryLan` 的 `debugPrint` 里
+/// （真机排查要它，界面不要）。
+///
+/// 与 `core/endpoint_transport.dart` 的"全失败"收口同一条口径：先说规模、
+/// 再说用户该做什么。**中转那条腿不并进来** —— 两条腿对用户是两件事，
+/// 中转自己的原因仍由它自己的消息说（见 [_rethrowWithLanNote]）。
+String _lanDownText(int tried) =>
+    tried == 0 ? '这张码里没有可拨的局域网地址' : '局域网不通（试了 $tried 个地址，是否同一 Wi-Fi？）';
+
 /// 把"局域网也试过了"这件事加进最终错误里，**保留原错误码**（`clientAction` 靠它）。
-Never _rethrowWithLanNote(
-  Object error,
-  StackTrace stack,
-  List<String> failures,
-) {
-  if (failures.isEmpty) {
+///
+/// 只加**一句**局域网结论，后面接中转自己给的原因：两条腿是两件事，
+/// 而把它们并成一句会让"到底是网不通还是码过期"重新变成一个谜。
+Never _rethrowWithLanNote(Object error, StackTrace stack, int lanTried) {
+  if (lanTried == 0) {
     Error.throwWithStackTrace(error, stack);
   }
-  final prefix = '局域网直连没通（${failures.length} 个地址）；';
+  final prefix = '${_lanDownText(lanTried)}；';
   if (error is ProtocolException) {
     Error.throwWithStackTrace(
       ProtocolException(error.code, '$prefix${error.message}'),

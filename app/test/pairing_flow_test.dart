@@ -16,6 +16,7 @@
 /// 在这里就能钉住。电脑侧那一半由 `test/support/fake_pc.dart` 说。
 library;
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dsh_mobile/core/crypto.dart';
@@ -357,14 +358,16 @@ void main() {
         isA<ProtocolException>()
             // **错误码不能丢**（`clientAction` 靠它决定"重扫"还是"重试"）。
             .having((e) => e.code, 'code', ErrorCode.notPaired)
-            .having((e) => e.message, 'message', contains('局域网直连没通（1 个地址）')),
+            // 局域网那句是聚合的，中转那句仍是它自己那句（两条腿两件事）。
+            .having((e) => e.message, 'message', contains('试了 1 个地址'))
+            .having((e) => e.message, '中转原因', contains('配对码尚未在中转登记成功')),
       ),
     );
     expect(urls, hasLength(1), reason: '换票被拒就不该再去建连');
     expect(http.calls, hasLength(1), reason: '局域网失败之后要真的回落去换票');
   });
 
-  test('局域网：一条拨不通就换下一条（电脑侧给的顺序即偏好）', () async {
+  test('局域网：候选全部**同时**拨出，一条不通不影响另一条', () async {
     final lan = offerWithLan(['ws://10.0.0.7:8790', 'ws://192.168.1.5:8790']);
     final http = _TicketRecorder();
     final urls = <String>[];
@@ -386,13 +389,15 @@ void main() {
     );
     addTearDown(attempt.cancel);
 
+    // 死的那条不会拖住第二条：两条都在这一轮里被拨到（串行时会先等满第一条的超时）。
     expect(urls, hasLength(2));
     expect(urls[0], startsWith('ws://10.0.0.7:8790'));
     expect(urls[1], startsWith('ws://192.168.1.5:8790'));
-    expect(http.calls, isEmpty, reason: '第二条通了就不该再走中转');
+    expect(attempt.dialUrl, 'ws://192.168.1.5:8790');
+    expect(http.calls, isEmpty, reason: '有一条局域网通了就不该再走中转');
   });
 
-  test('局域网：同一 /24 的那条先拨（换 WiFi 之后不用用户手动排）', () async {
+  test('局域网：同一 /24 的那条先发起（换 WiFi 之后不用用户手动排）', () async {
     final lan = offerWithLan(['ws://10.0.0.7:8790', 'ws://192.168.1.5:8790']);
     final http = _TicketRecorder();
     final urls = <String>[];
@@ -405,10 +410,10 @@ void main() {
       send: http.call,
       transportFor: (url) {
         urls.add(url);
-        return pc;
+        return url.startsWith('ws://192.168.1.5') ? pc : _DeadTransport();
       },
       allowInsecureLocal: true,
-      // 本机在 192.168.1.0/24 上：那条应当被提到最前面。
+      // 本机在 192.168.1.0/24 上：那条应当被提到最前面（先发起、先占赢面）。
       myIpv4: '192.168.1.23',
       newFrameIdHex: () => 'p1',
       newEphemeralSeedHex: () => 'e5' * 32,
@@ -416,8 +421,167 @@ void main() {
     );
     addTearDown(attempt.cancel);
 
-    expect(urls.single, startsWith('ws://192.168.1.5:8790'));
+    expect(urls.first, startsWith('ws://192.168.1.5:8790'));
+    expect(urls, hasLength(2), reason: '两条都拨（并行），只是同网段那条排在前面');
+    expect(attempt.dialUrl, 'ws://192.168.1.5:8790');
     expect(http.calls, isEmpty, reason: '同一 /24 直连通了就不该再换票');
+  });
+
+  // ---- 多选题（电脑报多条局域网地址）：先通者胜，失败只说一句话 ----
+
+  test('三个候选里第二个通：配对成功，第一条/第三条的失败不影响结论', () async {
+    final lan = offerWithLan([
+      'ws://192.168.1.5:8790',
+      'ws://192.168.1.6:8790',
+      'ws://192.168.1.7:8790',
+    ]);
+    final http = _TicketRecorder();
+    final urls = <String>[];
+    final candidate = lan.candidate(identity, '我的手机');
+    final pc = FakePc(pcSeedHex: _pcSeed, offer: lan, candidate: candidate);
+    final attempt = await beginPairing(
+      offer: lan,
+      identity: identity,
+      deviceName: '我的手机',
+      send: http.call,
+      transportFor: (url) {
+        urls.add(url);
+        return url.startsWith('ws://192.168.1.6') ? pc : _DeadTransport();
+      },
+      allowInsecureLocal: true,
+      newFrameIdHex: () => 'p1',
+      newEphemeralSeedHex: () => 'e5' * 32,
+      newNonceHex: () => 'a7' * 32,
+    );
+    addTearDown(attempt.cancel);
+
+    expect(urls, hasLength(3), reason: '三条候选都要被拨到');
+    expect(attempt.dial, PairingDial.lan);
+    expect(attempt.dialUrl, 'ws://192.168.1.6:8790', reason: '通的这条才是这次的路');
+    expect(http.calls, isEmpty, reason: '有一条通了就不该走中转');
+    // 结论是"这一次配对能走下去"，而不是"有一条失败就整轮失败"。
+    final ack = await attempt.commit();
+    expect(ack.devId, await candidate.deviceId());
+  });
+
+  test('三个全不通：失败文案只说一句（含"试了 3 个地址"），不含具体 IP', () async {
+    final lan = offerWithLan([
+      'ws://192.168.1.5:8790',
+      'ws://192.168.1.6:8790',
+      'ws://192.168.1.7:8790',
+    ]);
+    final http = _TicketRecorder();
+    final urls = <String>[];
+    String? message;
+    await expectLater(
+      beginPairing(
+        offer: lan,
+        identity: identity,
+        deviceName: '我的手机',
+        send: http.call,
+        allowInsecureLocal: true,
+        // 只用直连：把"局域网这条腿的文案"单独钉住（auto 会在后面接中转那句）。
+        prefer: RoutePolicy.directOnly,
+        transportFor: (url) {
+          urls.add(url);
+          return _DeadTransport();
+        },
+        newFrameIdHex: () => 'p1',
+        newEphemeralSeedHex: () => 'e5' * 32,
+        newNonceHex: () => 'a7' * 32,
+      ),
+      throwsA(
+        isA<TransportException>().having(
+          (e) => message = e.message,
+          'message',
+          contains('试了 3 个地址'),
+        ),
+      ),
+    );
+    expect(urls, hasLength(3));
+    expect(message, contains('局域网不通'));
+    expect(message, contains('是否同一 Wi-Fi'), reason: '一句话里带用户能做的动作');
+    // **不逐条拼明细**：地址与原始错误不该出现在给用户看的那句话里。
+    expect(message, isNot(contains('192.168.')), reason: '失败文案里不该有具体 IP');
+    expect(message, isNot(contains('拨不通')), reason: '也不该把每条原始错误拼进来');
+    expect(http.calls, isEmpty, reason: '只用直连：不换票');
+  });
+
+  test('并行：三条握手是**同时发起**的（不是一条等满超时再下一条）', () async {
+    final lan = offerWithLan([
+      'ws://192.168.1.5:8790',
+      'ws://192.168.1.6:8790',
+      'ws://192.168.1.7:8790',
+    ]);
+    final http = _TicketRecorder();
+    final started = <String>[];
+    final gated = <_GatedTransport>[];
+    final pairing = beginPairing(
+      offer: lan,
+      identity: identity,
+      deviceName: '我的手机',
+      send: http.call,
+      allowInsecureLocal: true,
+      prefer: RoutePolicy.directOnly,
+      transportFor: (url) {
+        started.add(url);
+        final transport = _GatedTransport();
+        gated.add(transport);
+        return transport;
+      },
+      newFrameIdHex: () => 'p1',
+      newEphemeralSeedHex: () => 'e5' * 32,
+      newNonceHex: () => 'a7' * 32,
+    );
+    // 把已排队的微任务跑完，但**一条握手都还没回来**（gate 全关着）。
+    await pumpEventQueue();
+    expect(started, hasLength(3), reason: '串行写法在这里只会发起 1 条（第一条没回来就不会拨第二条）');
+    expect(gated, hasLength(3));
+
+    // 全部放开（都失败）：三条都在飞，结论是那一句聚合文案。
+    for (final transport in gated) {
+      transport.fail();
+    }
+    await expectLater(
+      pairing,
+      throwsA(
+        isA<TransportException>().having(
+          (e) => e.message,
+          'message',
+          contains('试了 3 个地址'),
+        ),
+      ),
+    );
+  });
+
+  test('并行：先通者胜，还在握手的那几条**当场收掉**（不留半开连接）', () async {
+    final lan = offerWithLan([
+      'ws://192.168.1.5:8790',
+      'ws://192.168.1.6:8790',
+    ]);
+    final http = _TicketRecorder();
+    final candidate = lan.candidate(identity, '我的手机');
+    final pc = FakePc(pcSeedHex: _pcSeed, offer: lan, candidate: candidate);
+    final slow = _GatedTransport();
+    final attempt = await beginPairing(
+      offer: lan,
+      identity: identity,
+      deviceName: '我的手机',
+      send: http.call,
+      transportFor: (url) => url.startsWith('ws://192.168.1.5') ? slow : pc,
+      allowInsecureLocal: true,
+      newFrameIdHex: () => 'p1',
+      newEphemeralSeedHex: () => 'e5' * 32,
+      newNonceHex: () => 'a7' * 32,
+    );
+    addTearDown(attempt.cancel);
+
+    expect(
+      attempt.dialUrl,
+      'ws://192.168.1.6:8790',
+      reason: '先通的那条赢，而不是排在前面那条（它还在握手中）',
+    );
+    expect(slow.closed, isTrue, reason: '输家必须被收掉：半开的 socket 会占端口与超时预算');
   });
 
   // ---- 降级码（`lanOnly`）：只有局域网那条路 ----
@@ -762,4 +926,36 @@ class _DeadTransport implements ChannelTransport {
 
   @override
   Future<void> close() async {}
+}
+
+/// 一条**由测试控制何时回话**的传输：用来证明"同时发起"与"输家被收掉"。
+///
+/// 不用真实 sleep 竞速：`connect()` 停在 [_gate] 上，只有测试放手（或 [close]）才继续，
+/// 于是"三条都发起了"是**观察得到的事实**，而不是"等得够久"的猜测。
+class _GatedTransport implements ChannelTransport {
+  final Completer<void> _gate = Completer<void>();
+
+  /// 被 [close] 收掉过（输家必须走到这里，否则就是一条半开连接）。
+  bool closed = false;
+
+  /// 放手：让它像一条拨不通的地址那样结束（握手失败）。
+  void fail() {
+    if (!_gate.isCompleted) _gate.complete();
+  }
+
+  @override
+  Future<Stream<TransportEvent>> connect() async {
+    await _gate.future;
+    throw const TransportException('建连失败：拨不通');
+  }
+
+  @override
+  bool send(String line) => false;
+
+  @override
+  Future<void> close() async {
+    closed = true;
+    // 收尾也要放手：否则这里的 `connect()` 会永远挂着（一条永不完成的 future）。
+    fail();
+  }
 }

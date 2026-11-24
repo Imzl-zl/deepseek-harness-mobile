@@ -28,6 +28,7 @@
 | `device.collapse_timing` | `completion` / `next-input` |
 | `device.transparency` | 整数百分数 `0`..`100`（缺省 = `0`，表面实心）；壁纸本身不进键，见 [appearance-wallpaper.md](appearance-wallpaper.md) |
 | `device.route_policy` | `auto` / `direct` / `relay`：这台手机想走哪条路，**配对与连接共用**（`direct` / `relay` 不回落；`auto` 直连优先）（[remote-channel.md](remote-channel.md) §12.1） |
+| `device.session_order` | `updated`（默认）/ `manual`：抽屉与首页列表的**组内顺序**。`updated` = `updatedAt` 降序（照桌面默认档）；`manual` = 账本序。**用户一动顺序（拖动 / 上移 / 下移）自动切 `manual`**，设置页「会话排序」可切回（[session-ordering.md](session-ordering.md) §1.5） |
 | `device.notify_tasks` | `off`（默认）/ `failures` / `all`：后台任务结束要不要提醒（[notifications.md](notifications.md) §3） |
 | `host.<hostId>.last_session` | sid |
 | `host.<hostId>.drawer_expansion` | `{"<workspaceId>": bool}` |

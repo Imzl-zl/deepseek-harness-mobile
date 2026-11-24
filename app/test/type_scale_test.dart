@@ -17,6 +17,7 @@ import 'package:dsh_mobile/core/job.dart';
 import 'package:dsh_mobile/core/sync_client.dart';
 import 'package:dsh_mobile/core/type_scale.dart';
 import 'package:dsh_mobile/data/app_model.dart';
+import 'package:dsh_mobile/data/device_prefs.dart';
 import 'package:dsh_mobile/data/store.dart';
 import 'package:dsh_mobile/theme/dsh_theme.dart';
 import 'package:dsh_mobile/theme/dsh_type.dart';
@@ -72,18 +73,18 @@ void main() {
       addTearDown(app.dispose);
 
       expect(app.uiScale, 1.0, reason: '默认标准档');
-      await app.setUiScaleIndex(3);
+      await app.devicePrefs.setUiScaleIndex(3);
       expect(app.uiScale, 1.3);
-      expect(prefs.values[AppModel.kUiScaleKey], '3');
+      expect(prefs.values[DevicePrefs.kUiScaleKey], '3');
 
-      await app.setUiScaleIndex(99);
+      await app.devicePrefs.setUiScaleIndex(99);
       expect(app.uiScaleIndex, 3, reason: '上界夹到最后档');
-      await app.setUiScaleIndex(-5);
+      await app.devicePrefs.setUiScaleIndex(-5);
       expect(app.uiScaleIndex, 0, reason: '下界夹到第一档');
     });
 
     test('重启后读回同一个档位；盘中是垃圾值就用默认', () async {
-      final prefs = _MemoryPreferences()..values[AppModel.kUiScaleKey] = '2';
+      final prefs = _MemoryPreferences()..values[DevicePrefs.kUiScaleKey] = '2';
       final app = AppModel(client: _NullClient(), prefs: prefs);
       addTearDown(app.dispose);
       await app.start();
@@ -91,7 +92,7 @@ void main() {
       expect(app.uiScale, 1.15);
 
       final broken = _MemoryPreferences()
-        ..values[AppModel.kUiScaleKey] = 'huge';
+        ..values[DevicePrefs.kUiScaleKey] = 'huge';
       final app2 = AppModel(client: _NullClient(), prefs: broken);
       addTearDown(app2.dispose);
       await app2.start();

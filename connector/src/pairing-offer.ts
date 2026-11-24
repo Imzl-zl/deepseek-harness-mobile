@@ -20,13 +20,17 @@
  * 命令的接线（`ctx.commands.register`）留在装配层；这里只管"能不能出码、出什么"，
  * 于是它可以脱离 DSH 与网络测（登记做成端口）。
  *
+ * **2026-11-24 起没有斜杠命令了**：面板是唯一入口（用户原话「谁在会话生成？
+ * 我肯定在插件界面啊」）。原来命令那条路绕过 {@link planPairingOffer}，
+ * 同一件事有两个结论；`offerForScanning` 随之删除（没有第二个调用方）。
+ *
  * Note: 为什么"登记失败"只在没有局域网退路时才拒绝出码 —— 见
  * `.agents/notes/implemented/2026-11-03-pairing-without-relay.md`；
  * 为什么降级必须写进载荷并让三处说出来 —— 见
  * `.agents/notes/implemented/2026-11-04-pairing-degradation-is-visible.md`。
  */
 import type { ChannelLogger } from './observability.js'
-import { PAIRING_TTL_MS, markOfferLanOnly, type Pairing, type PairingOffer } from './pairing.js'
+import { markOfferLanOnly, type Pairing, type PairingOffer } from './pairing.js'
 
 export interface PairingOfferDeps {
   pairing: Pairing
@@ -46,9 +50,6 @@ export interface PairingOfferDeps {
   withRelay?: boolean
   log?: ChannelLogger
 }
-
-/** 命令结果（与 DSH 的 `CommandResult` 同形；这里不 import 它，免得这一层依赖 DSH）。 */
-export type OfferResult = { kind: 'success'; text: string } | { kind: 'error'; text: string }
 
 /**
  * 出码那一刻这台电脑的**能力**：哪几条腿能写进码。
@@ -101,44 +102,9 @@ const causeText = (error: unknown): string => {
 }
 
 /**
- * 斜杠命令那一侧：把出码核心的结果翻译成 `CommandResult`。
- *
- * 与管理页面**共用 `issuePairingOffer`**（"什么时候能出码"只有一条规则），
- * 差别只在失败怎么呈现：命令只能回文本，所以 catch 成 `{kind:'error'}`；
- * 管理页面那边让它抛，由 Connection 的桥接归一成 500 + 消息。
- */
-export async function offerForScanning(deps: PairingOfferDeps): Promise<OfferResult> {
-  try {
-    const offer = await issuePairingOffer(deps)
-    const minutes = Math.round(PAIRING_TTL_MS / 60_000)
-    // 正反两面都要说，而且**按码里实际有哪几条路**说（`routes`）：
-    // 只在失败时说话，用户在局域网里出码时仍不知道"出门能不能用"；
-    // 反过来，中转没连上时也不能还写"含中转"。
-    const hasLan = offer.lanUrls.length > 0
-    const hasRelay = !offer.lanOnly && offer.routes.includes('relay')
-    const where = hasRelay && hasLan
-      ? `\n路径：局域网直连 + 中转（已登记）`
-        + `\n局域网地址：${offer.lanUrls.join(' / ')}`
-      : hasRelay
-        ? '\n路径：仅中转（已登记）'
-        : hasLan
-          ? `\n路径：仅局域网直连（未登记中转）`
-            + '\n限制：须在同一 WiFi 下扫码'
-            + `\n局域网地址：${offer.lanUrls.join(' / ')}`
-          : '\n路径：无（直连监听未启动，中转未连接）'
-    return {
-      kind: 'success',
-      text: `手机扫码配对（${minutes} 分钟内有效，仅可使用一次）：\n${offer.payload}${where}`,
-    }  } catch (error) {
-    return { kind: 'error', text: error instanceof Error ? error.message : String(error) }
-  }
-}
-
-/**
  * 出码核心：**先登记到中转；登记失败时看有没有局域网退路**。
  *
- * 斜杠命令（`offerForScanning`）与管理页面（`admin/`）共用这一个判断 ——
- * "什么时候能出码"是一条规则，写两份就会有一处先腐化。
+ * 插件面板（`admin/`）是唯一调用方 —— 这条判断只有一处，写两份就会有一处先腐化。
  *
  * @returns 可用的 offer（含 `payload` 与 `expiresAt`）。
  * @throws 登记失败**且**没有局域网地址：调用方各自把失败呈现给它的用户

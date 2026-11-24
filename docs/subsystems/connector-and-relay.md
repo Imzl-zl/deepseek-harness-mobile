@@ -117,7 +117,7 @@ dispose
 
 | 层级 | 构造物 | 位置 |
 |---|---|---|
-| 挂载级(每挂载一份) | 配置与校验、`store.open()`、`ctx.provide('dshMobileConnector')`、交互客户端(owner peer + `$events` 流)、在途 claim 表、本机身份、会话与任务适配器、幂等表、配对核心、出码命令、**增量缓冲** | `src/index.ts` |
+| 挂载级(每挂载一份) | 配置与校验、`store.open()`、`ctx.provide('dshMobileConnector')`、交互客户端(owner peer + `$events` 流)、在途 claim 表、本机身份、会话与任务适配器、幂等表、配对核心、出码核心、**增量缓冲** | `src/index.ts` |
 | 每连接(每条 socket 一份) | 入站帧处理、方法面与处理器表、会话订阅、任务输出订阅、翻页器、配对端点 | `src/connection-scope.ts` 的 `createConnectionScope(port, deps)` |
 
 - **`deps` 全是挂载级的,`port` 是每连接唯一的输入**。窄端口的成员集合是 `ConnectionPort`(3 个):

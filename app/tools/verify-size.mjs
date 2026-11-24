@@ -67,7 +67,7 @@ const FILE_STEP = 50
  */
 const FILE_BUDGET = [
   ['app/lib/ui/chat_page.dart', 4450], // 一个 State 里塞了整页脚手架（`_mainScaffold` 414 行）；2026-11-12 文件面板搬去 `ui/files_pane.dart`（5300 → 4800），同日改动卡搬去 `ui/changes_card.dart`、轨迹页签搬进 `ui/trajectory_page.dart`（4800 → 4450）
-  ['app/lib/data/app_model.dart', 5350], // host 投影的 façade；会话内存压缩策略（2026-11-11）在这里，+25 行是有意的；2026-11-12 `job.list` 等 `repo.info`（+15 行，见 `implemented/2026-11-12-caps-settlement.md`）；同日提醒簇搬去 `data/notices.dart`（−88 行，5250 → 5150）；2026-11-14 Agent Teams 只读面 +17 行（`caps.team` 与 `teamBoard`）；同日 +37 行是 Team 开关的写路径（`setTeamEnabled` + `modelEverUsed`，读完投影才改状态），两次都见 `implemented/2026-11-14-agent-team-integration.md`；2026-11-15 +9 行是 `usageDaysFailed`（读不出来的会话数要能显示）；同日再 +56 行是**版本更新簇**（两个缝 + `downloadAppUpdate` + 注释，见 `implemented/2026-11-15-version-row-checks-and-downloads.md`）—— 这一簇已经够自成一体，**下一批该按 `job_book.dart` / `notices.dart` 的先例搬出去**，而不是继续在这里抬数
+  ['app/lib/data/app_model.dart', 5250], // host 投影的 façade；会话内存压缩策略（2026-11-11）在这里，+25 行是有意的；2026-11-12 `job.list` 等 `repo.info`（+15 行，见 `implemented/2026-11-12-caps-settlement.md`）；同日提醒簇搬去 `data/notices.dart`（−88 行，5250 → 5150）；2026-11-14 Agent Teams 只读面 +17 行（`caps.team` 与 `teamBoard`）；同日 +37 行是 Team 开关的写路径（`setTeamEnabled` + `modelEverUsed`，读完投影才改状态），两次都见 `implemented/2026-11-14-agent-team-integration.md`；2026-11-15 +9 行是 `usageDaysFailed`（读不出来的会话数要能显示）；同日再 +56 行是**版本更新簇**（两个缝 + `downloadAppUpdate` + 注释，见 `implemented/2026-11-15-version-row-checks-and-downloads.md`）；2026-11-24 加「会话排序」时顺势把**设备偏好这一簇整簇搬去 `data/device_prefs.dart`**（七个同形偏好 + 两条读回路径），净 −146 行（5370 → 5224），见 `implemented/2026-11-24-session-order-by-recency.md` —— 这一簇的下一站是 `notices.dart` 那种"一簇一文件"的先例，不再往这里塞
   ['app/lib/core/sync_client_impl.dart', 2050], // 连接层，收帧/恢复/写操作三件事在同一类
   ['app/lib/ui/chat_turns.dart', 2050], // 逐种条目的渲染器，可按条目族分文件；2026-11-12 a11y 批给六处可折行补了角色（+10 行，见 `implemented/2026-11-12-a11y-chat-turns-and-panes.md`）
   ['app/lib/main.dart', 1950], // 装配点 + 路由 + 抽屉回调，装配之外的部分可下沉
@@ -88,7 +88,7 @@ const FILE_BUDGET = [
  * 名字必须**唯一**（同名类出现在两个文件里就是抄错了）。
  */
 const CLASS_BUDGET = [
-  ['AppModel', 179], // 收窄：任务簇（2026-11-11）与提醒簇（2026-11-12：`_noticeKeyOf` / `_desiredNotices`）已搬走；+1 = 后台任务提醒档 setter（2026-11-13）；+1 = Agent Teams 开关 `setTeamEnabled`（2026-11-14，见 `implemented/2026-11-14-agent-team-integration.md`）；+1 = 新版本下载 `downloadAppUpdate`（2026-11-15，见 `implemented/2026-11-15-version-row-checks-and-downloads.md`）
+  ['AppModel', 173], // 收窄：任务簇（2026-11-11）与提醒簇（2026-11-12：`_noticeKeyOf` / `_desiredNotices`）已搬走；+1 = 后台任务提醒档 setter（2026-11-13）；+1 = Agent Teams 开关 `setTeamEnabled`（2026-11-14，见 `implemented/2026-11-14-agent-team-integration.md`）；+1 = 新版本下载 `downloadAppUpdate`（2026-11-15，见 `implemented/2026-11-15-version-row-checks-and-downloads.md`）；2026-11-24 会话排序档：+2（`updatedAtOf` 与 `moveSession` 的切档），但**设备偏好那七个 setter 与两条读回路径整簇搬去 `DevicePrefs`**，净 −6（179 → 173）—— 读只剩 passthrough getter（不占方法数），`setTaskNoticePolicy` 留在本类是因为它带 `_syncNotices` 副作用
   ['ChatPageState', 65], // 面板/文件区/轨迹该各自成 widget
   ['_SyncClient', 61], // 收帧 / 恢复 / 写操作三件事在同一类
   ['_DshMobileAppState', 48], // 装配之外的路由回调可下沉

@@ -41,19 +41,23 @@ export interface EndpointsPort {
 /**
  * 算端点表。**纯函数** —— 单测不需要真监听面。
  *
- * ## 默认只报"主机的 IP"
+ * ## 默认集合 = 此刻的**全部局域网 IPv4**
  *
- * 监听面枚举全部非内部网卡是**候选池**（`transport/listener.ts:134-138` 刻意不按
- * 网卡名过滤：猜名字又脆又漏）。但**自报给手机**的默认集合不是整个候选池 ——
- * 一台装了 VMware 的机器会多出两条永远拨不通的 `192.168.x.1`，三条 IPv6 GUA，
- * 手机上每一条都占一行（2026-11-06 真机原话："能用的就是主机的 IP 地址吧？"）。
+ * 监听面枚举全部非内部网卡是**候选池**（`transport/listener.ts` 刻意不按网卡名
+ * 或 MAC 过滤）。但上报给手机的默认集合只取**地址本身是局域网段**的那些
+ * （{@link autoAdvertisedUrls} 的判据 `isLanAddress`：`10/8`、`172.16/12`、
+ * `192.168/16`）。
  *
- * 所以默认集合是 {@link defaultDirectUrls}：**默认路由那张网卡的 IPv4**
- * （`lan-address.ts:40` 的内核选路，不发包），拿不到 hint 时只敢报唯一一条候选。
- * 其余地址要用户显式 `extra` 才上报；`hide` 仍然对默认那条生效。
+ * 这条判据只回答"这个地址是不是局域网"，**不猜哪一条手机拨得通**：
+ * 那是手机自己拨一次才知道的事（码里全给，手机先通先用）。所以这里不再按
+ * 默认路由/网卡挑唯一一条 —— 那种猜法在开代理 TUN、有线 + WiFi 双网卡的机器上
+ * 会把真实地址筛掉或把拨不通的地址报出去（2026-11-20、2026-11-24 两次都是它）。
  *
- * 顺序：direct 先于 relay；direct 内部默认路由的地址排第一（现在默认集合通常
- * 只有它一条，排序是为"用户追加了 extra"时的稳定顺序）。
+ * 其余候选（IPv6 GUA、CGNAT、TUN 的 `198.18/15`）进「更多地址」折叠区，
+ * 用户点名 `extra` 才上报；`hide` 仍对默认集合生效。
+ *
+ * 顺序：direct 先于 relay；direct 内部**默认路由那条排第一**（`lanHint` 只当排序，
+ * 不当判据），其余按 `192.168 → 172.16 → 10` 段序。
  */
 export function describeEndpoints(input: {
   relayUrl?: string | undefined
@@ -62,9 +66,9 @@ export function describeEndpoints(input: {
   /**
    * 用户对**上报哪些地址**的显式表态（`url → 'hide' | 'extra'`）。
    *
-   * 为什么需要它：默认集合只含主地址，但一台机器可能有第二条真的可拨的网
-   * （Tailscale / 第二张网卡）。`extra` 让用户点名上报；`hide` 让用户把默认那条
-   * 也藏掉（例如默认路由是 WAN，手机其实在同网段的另一张网卡上）。
+   * 为什么需要它：默认集合只含局域网 IPv4，但一台机器可能有另一条真的可拨的网
+   * （Tailscale / 第二张网卡 / 外部终结 TLS 的 wss）。`extra` 让用户点名上报；
+   * `hide` 让用户把某条局域网地址也藏掉（例如那条其实是虚拟网卡的 host-only 网段）。
    */
   advertise?: ReadonlyMap<string, 'hide' | 'extra'> | undefined
 }): { endpoints: EndpointView[] } {
@@ -78,7 +82,7 @@ export function describeEndpoints(input: {
 
   const endpoints: EndpointView[] = []
   const listenerUrls = input.listener?.urls ?? []
-  const defaults = defaultDirectUrls(listenerUrls, input.lanHint)
+  const defaults = autoAdvertisedUrls(listenerUrls, settings)
   // **监听面没起 ⇒ 一条直连地址都不报**（含用户 `extra` 点名的那几条）。
   //
   // `extra` 的语义是"额外上报哪几条地址"，不是"凭空造一条能拨的路"：
@@ -88,8 +92,9 @@ export function describeEndpoints(input: {
   const listening = input.listener !== null && input.listener !== undefined
   const direct = listening
     ? listenerUrls
-      .filter((entry) => defaults.has(entry.url) && !hidden.has(entry.url))
-      .sort((a, b) => hintRank(a.url, input.lanHint) - hintRank(b.url, input.lanHint))
+      .filter((entry) => defaults.has(entry.url))
+      .sort((a, b) => hintRank(a.url, input.lanHint) - hintRank(b.url, input.lanHint)
+        || lanRank(hostOf(a.url)) - lanRank(hostOf(b.url)))
     : []
   for (const entry of direct) {
     endpoints.push({ kind: 'direct', url: entry.url, ...(entry.label === '' ? {} : { label: entry.label }) })
@@ -114,82 +119,57 @@ export function describeEndpoints(input: {
 }
 
 /**
- * 默认上报的直连地址集合。**最多一条**。
+ * 默认会上报的地址集合：**此刻枚举到的全部局域网 IPv4**（{@link isLanAddress}），
+ * 减去用户 `hide` 的。
  *
- * 判据按顺序：
- * 1. `lanHint`（默认路由那张网卡的 IPv4）命中一条**非虚拟**候选 ⇒ 就报它。
- *    普通机器（默认路由 = 局域网）走的正是这一条，与旧判据逐字一致。
- * 2. hint 拿不到 / 已过期 / 指向虚拟网卡 ⇒ 在**真实局域网 IPv4** 里选一条：
- *    只认 RFC1918 三段（`192.168/16` → `172.16/12` → `10/8` 偏好序），
- *    同段取枚举顺序第一条。
- * 3. 以上都没有 ⇒ **只有唯一一条非虚拟候选**才报（显式绑定 `listenHost` / 单网卡机器）。
+ * 判据只看**地址本身**，不看网卡名、不看 MAC、不看默认路由 —— 一台机器的
+ * 默认路由可能被代理 TUN 抢走（`198.18.0.1`），而真实局域网地址一直在候选池里。
+ * "这个地址是不是局域网段"是地址自己的事实，不需要问内核，也不需要猜。
  *
- * **虚拟网卡（TUN / VMware / Hyper-V / Docker，按 MAC OUI 认定）一律不进默认集合**，
- * 即使它是唯一候选 —— 那种机器确实没有手机拨得通的局域网地址，该走中转。
- * 不猜一条：一条拨不通的地址上码只会让手机白等超时。
+ * 为什么不再只报一条：只报一条就必须猜"哪条对"，而**哪条拨得通只有手机知道**。
+ * 猜错的表现是"码里写着死地址"或"明明有局域网却说没有"（2026-11-20 / 2026-11-24）。
+ * 现在全给，手机并行拨；配对成功后端点表只留拨通的那条（手机侧收敛）。
  *
- * 其余候选（VMware 虚拟网卡、轮换出来的 IPv6 GUA、Tailscale 的 CGNAT）进「更多地址」
- * 折叠区，用户点名 `extra` 才上报；`extra` 是显式表态，不受上面的判据约束。
- *
- * ## 为什么不再以 `lanHint` 为准（2026-11-20）
- *
- * 旧判据是"只报 `lanHint` 命中的那条"，它默认**默认路由所在的网卡就是局域网网卡**。
- * 开代理 / VPN（TUN 模式）时这个前提不成立：内核选路会落到 TUN 虚拟网卡上
- * （实测 `198.18.0.1`），于是
- *
- * - TUN 在候选池里 ⇒ 上报拨不通的 TUN 地址；
- * - `lanHint` 刷新后匹配不上 ⇒ 多候选下**一条都不报** ⇒ 出码报"没有可上报的地址"。
- *
- * 两种坏法同一天在同一个用户身上出现过。而"哪条地址是局域网"是**地址自己**的
- * 事实（RFC1918 段），不需要问内核 —— 内核只回答"先拨哪条"，那是排序问题。
- *
- * 判据与 `transport/relay-url.ts` 的 `isNonPublicHost` 同源：那个函数回答的是
- * "要不要放行明文"，粒度更宽（含 CGNAT / link-local / ULA）；这里只认
- * **家用/公司局域网 IPv4** 三个段 —— TUN 的 `198.18/15`、CGNAT 的 `100.64/10`
- * 属于"手机拨不通"，不该进默认集合。
- *
- * 返回的是**完整 URL 集合**（端口也在内），因为上报/隐藏都按 URL 键控。
- *
- * Note: 为什么是"地址是不是局域网"而不是"默认路由是谁" —— 见
- * `.agents/notes/implemented/2026-11-20-advertise-by-address-not-by-default-route.md`；
- * 旧判据的来历与被取代的代价 —— 见
- * `.agents/notes/implemented/2026-11-06-default-advertise-main-ip.md`。
+ * Note: 取代"默认路由那张网卡 + 虚拟网卡 MAC 判据" —— 见
+ * `.agents/notes/implemented/2026-11-24-offer-carries-current-lan-addresses.md`
+ * 与被它取代的 `.agents/notes/implemented/2026-11-20-advertise-by-address-not-by-default-route.md`。
  */
-export function defaultDirectUrls(
-  urls: readonly { url: string; virtual?: boolean }[],
-  lanHint: string | null | undefined,
+export function autoAdvertisedUrls(
+  urls: readonly { url: string }[],
+  settings: ReadonlyMap<string, 'hide' | 'extra'> = new Map(),
 ): ReadonlySet<string> {
-  // **虚拟网卡先排除**：TUN 的 `198.18.0.1`（FlClash）与 VMware 的 `192.168.x.1`
-  // 都落在可拨网段里，单看地址分不出来 —— 而它们手机都拨不通。
-  // 判据来自监听面带出的 MAC 事实（`transport/listener.ts` 的 `isVirtualMac`）。
-  const real = urls.filter((entry) => entry.virtual !== true)
-
-  // 1. `lanHint`（默认路由那张网卡的 IPv4）命中一条**真实**网卡 ⇒ 就报它。
-  //    TUN 抢走默认路由时 hint 指向的是虚拟网卡，这一步自然落空，
-  //    于是走到第 2 条 —— 这正是 2026-11-20 要修的那个洞。
-  const hint = lanHint ?? ''
-  if (hint !== '') {
-    const matched = real.filter((entry) => hostOf(entry.url) === hint)
-    if (matched.length > 0) return new Set(matched.map((entry) => entry.url))
+  const out = new Set<string>()
+  for (const entry of urls) {
+    if (settings.get(entry.url) === 'hide') continue
+    if (!isLanAddress(entry.url)) continue
+    out.add(entry.url)
   }
+  return out
+}
 
-  // 2. hint 拿不到 / 已过期 / 指向虚拟网卡：**在真实局域网 IPv4 里选**。
-  //    仍然只报一条（手机端点列表不该被多条地址占满 —— 2026-11-06 用户的
-  //    原话是"能用的就是主机的 IP 地址吧？这不是多余？"）。
-  //    选哪条：`192.168/16` 先于 `172.16/12` 先于 `10/8`
-  //    （家用/公司最常见的网段排前面），同段取枚举顺序第一条。
-  const lan = real.filter((entry) => isLanIpv4(hostOf(entry.url)))
-  if (lan.length > 0) {
-    const best = [...lan].sort(
-      (a, b) => lanRank(hostOf(a.url)) - lanRank(hostOf(b.url)),
-    )[0]!
-    return new Set([best.url])
+/**
+ * 「直连开着，但没有一条局域网地址可上报」时的**如实原因**。
+ *
+ * 调用前提：{@link autoAdvertisedUrls} 算出来是空的（出码那一侧正是这么用的）。
+ * 三档，每档都对应一个可验证的事实：
+ *
+ * 1. 一条地址都没枚举到；
+ * 2. 有地址，但没有一条是局域网 IPv4（只剩组网 / IPv6 / TUN 段）；
+ * 3. 有局域网 IPv4，那就只可能是被用户 `hide` 掉了。
+ *
+ * 为什么单独一个函数：**文案与判据必须同源**。以前文案在 `index.ts` 里自己分档，
+ * 判据改动一次文案就撒一次谎（2026-11-20 与 2026-11-24 各一次）。
+ */
+export function noLanAddressReason(candidates: readonly { url: string }[]): string {
+  if (candidates.length === 0) {
+    return '直连监听已启动，但没有枚举到任何网卡地址'
   }
-
-  // 3. 没有真实局域网地址：唯一一条候选（显式绑定 `listenHost` / 单网卡机器）才报。
-  //    **虚拟标过的不算** —— 那是"知道拨不通"的地址。
-  if (real.length === 1) return new Set([real[0]!.url])
-  return new Set()
+  if (!candidates.some((entry) => isLanAddress(entry.url))) {
+    return '直连监听已启动，但没有局域网 IPv4 地址'
+      + '（现有的是组网或 IPv6）。可在「上报给手机的地址」里手动添加一条'
+  }
+  return '直连监听已启动，但局域网地址都被「上报给手机的地址」里删掉了'
+    + '（展开「更多地址」可恢复，或点「恢复」把删掉的加回来）'
 }
 
 /**

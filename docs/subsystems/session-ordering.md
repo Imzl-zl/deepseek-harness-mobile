@@ -19,24 +19,38 @@
 
 ## 1.5 组内显示顺序：blank 打头 → 置顶 → 其余
 
-组内分区由纯函数 `bucketSessionsByWorkspace`（`app/lib/model/workspace.dart`）一次算清，
-三个分区各自保持账本给的相对顺序：
+组内分区由纯函数 `bucketSessionsByWorkspace`（`app/lib/model/workspace.dart`）一次算清：
 
 1. **blank 行在最前** —— `isBlank` 走 `AppModel.sessionBlankOf`，与抽屉可见性、watermark
    同一道门（不是行上的 `blank` 字段，理由见 §3.5 与 `blank-session-hero.md`）；
+   blank 段**恒按传入顺序**：它的 `updatedAt` 最旧也一样在最前。
 2. 置顶次之（`workspace.list` 的 `pinnedSessionIds`）；
-3. 其余照账本序（§1）。
+3. 其余最后。
+
+**2、3 两段的内部顺序由设备排序档决定**（`device.session_order`，
+`app/lib/model/session_order.dart`）：
+
+| 档 | 组内顺序 |
+|---|---|
+| `updated`（默认） | **`updatedAt` 降序，并列按 sid 升序** —— 逐字照桌面 `orderByRecency`（`packages/client/ui-workspace/src/client/tree.ts:151-165`）与其默认档 `orderBy: 'updated'`（同目录 `stores.ts:86`）；`sectionMembers`（`tree.ts:270-284`）只分区、不改调用方给的顺序 |
+| `manual` | **账本序** —— `workspace.list` 的 `sessionIds` 行序，也就是拖动 / 上移 / 下移写回去的那个顺序 |
+
+「未分组」桶走同一个 `partition`，不另写一条规则。
 
 次序照桌面 `sectionMembers`（`packages/client/ui-workspace/src/client/tree.ts:269-283`：
 placeholders → leading → rest）。可见集里最多一个 blank —— 非当前的 blank 被
 `sessionVisible` 挡掉（`tree.ts:241`）—— 所以"blank 打头"与桌面的 `pinCurrentBlank`
 （`:213-219`）在可见集上等价。
 
-**它不跟账本序走**：点「新建会话」先复用账本里已有的 blank（`AppModel.findBlankSession`），
-那一行的账本位置是它当初被建出来时的位置，可能早于这一组里所有会话；只有真正新建的
-才会被 `attachSession` 插到账本最前
-（`packages/workspace/workspace/src/entity.ts:147-149`）。所以"新建的会话在第一个"
-是**显示层**给的，不是账本给的。
+**为什么默认是"最近更新"**：点「新建会话」先复用账本里已有的 blank
+（`AppModel.findBlankSession`），那一行的账本位置是它当初被建出来的位置；`updatedAt`
+是"最后一次动过"，发第一条消息之后它就该在组首 —— 桌面就是这样排的。取舍见
+`.agents/notes/implemented/2026-11-24-session-order-by-recency.md`。
+
+**手动档不另存一份顺序**：拖动写的就是账本（`workspace.insertSessionBefore`），
+所以 `manual` = 账本序本身。**任何一次成功的会话重排都会把档位切到 `manual`**
+（唯一一处：`AppModel.moveSession`）—— `updated` 档下账本序就是显示序以外的第二种排法，
+写完不换档等于"拖完看不见变化"。
 
 **blank 行不在可重排序列里**：`DrawerSection.reorderableIds` 把它摘掉，菜单的上移/下移与
 拖动都只认这一段。于是它自己怎么移都是原地，紧挨着它的那一行也上不去（越过它 = 原地），
@@ -48,10 +62,8 @@ Flutter 对被拒的 target 也回调 `onMove`
 （`packages/flutter/lib/src/widgets/drag_target.dart:932-945`：先入 `_enteredTargets`、
 再问 `didEnter`、然后对全部 entered 报 move），只挡前者等于没挡。
 
-**与桌面的已知差异**：桌面默认模式（`orderBy: 'updated'`，
-`packages/client/ui-workspace/src/client/stores.ts:86`）按 `updatedAt` 倒序，回复过的会话
-会跳到组首；手机按账本序。要这条得先有"手动 / 最近更新"的排序开关（桌面那两档，
-`locales.ts:33-34`）。
+**切回默认档**：设置页「会话排序」一行给两档（最近更新 / 手动），切回「最近更新」立刻按
+`updatedAt` 重排；账本没有改，所以再切回手动时之前拖出来的顺序还在。
 
 ## 2. 拖动的反馈：一条线、扫到就显示、松手提交最后扫过的那一格
 

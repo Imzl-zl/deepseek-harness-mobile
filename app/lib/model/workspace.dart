@@ -5,6 +5,8 @@
 /// 只有 `sessionIds` 被连接器换成了**手机见的 sid**。
 library;
 
+import 'session_order.dart';
+
 /// 路径的最后一段（显示用）。**逐字移植 DSH 的 `workspaceTitleOf`**
 /// （`packages/util/workspace-path/src/index.ts:58-62`）：去掉尾部所有分隔符，
 /// 再从最后一个 `/` 或 `\` 之后取。
@@ -213,13 +215,24 @@ bool sessionVisible({
 /// 1. **组的顺序照 groups**（电脑侧给的行序即偏好），不为排序自己发明一套；
 /// 2. **组内分区照 DSH Web 的 `sectionMembers`**
 ///    （`ui-workspace/src/client/tree.ts:269-283`）：**blank 行在最前 → 置顶 →
-///    其余**，每个分区内部保持传入顺序；
+///    其余**；两个非 blank **分区内部的顺序由 [order] 决定**：
+///    - [SessionOrder.updated]（默认）：按 (**`updatedAt` 降序, sid 升序**) ——
+///      逐字照桌面的 `orderByRecency`（同文件 `:151-165`），也就是桌面默认档
+///      `orderBy: 'updated'`（`ui-workspace/src/client/stores.ts:86`）喂给
+///      `sectionMembers` 的那个顺序（它的注释原文：分区"without changing either
+///      partition's caller order"—— 调用方给的就是 recency 序）；
+///    - [SessionOrder.manual]：保持传入顺序（= `workspace.list` 的账本行序）。
+///
+///    blank 那一段**恒按传入顺序**：可见集里最多一个 blank（非当前的被
+///    `sessionVisible` 挡掉），它由分区本身钉在组首，**与它的 `updatedAt` 无关**
+///    （最旧也一样在最前）。
 /// 3. 一个会话**只进一个桶**（第一次被认领就定），不会在两个工作区里出现两遍；
-/// 4. 不在任何工作区里的会话进「**未分组**」—— 如实兜底,不丢；
+/// 4. 不在任何工作区里的会话进「**未分组**」—— 如实兜底,不丢；**它同样按 [order]
+///    排**（走同一个 `partition`，不另写一条规则）；
 /// 5. `groups` 为空（拿不到工作区清单）时返回单个「会话」桶 —— **不分组**，
 ///    而不是按 `cwd` 猜一个分组（`cwd` 与工作区不是一对一,猜错比不分组更难查）。
 ///
-/// ## 为什么 blank 必须打头（而不是跟着账本序）
+/// ## 为什么 blank 必须打头（而不是跟着排序键）
 ///
 /// blank 行就是"当前这个还没开始的新会话"。桌面把它钉在组首
 /// （`pinCurrentBlank`，`tree.ts:213-219`），于是"点新建会话 ⇒ 它在第一个"。
@@ -231,6 +244,14 @@ bool sessionVisible({
 /// 这一组里所有会话；只有**真正新建**的才会被 `attachSession` 插到账本最前
 /// （`packages/workspace/workspace/src/entity.ts:147-149`）。
 ///
+/// **时间序同样给不出**：`updatedAt` 是"最后一次动过"，一个刚建出来还没跑过的
+/// 会话可以比组里所有会话都旧（复用老 blank 时正是如此）。
+///
+/// ## [updatedAtOf]：不知道就是最旧
+///
+/// 拿不到会话（不在清单里 / 只是被别的桶认领了）时调用方返回 `-1` ——
+/// **不猜一个时间**，与 [newSessionWorkspaceId] 同一条纪律。
+///
 /// [pinnedSessionIds] 来自 `workspace.list` 的 `pinnedSessionIds`
 /// （registry 全局集合）：**置顶在 blank 之后、普通行之前**。不是把置顶项提到整张表
 /// 的最前 —— 它属于哪个项目仍归哪个项目。
@@ -238,15 +259,19 @@ bool sessionVisible({
 /// [isBlank] 走与抽屉同一个门（`AppModel.sessionBlankOf`，不是行上的 `blank` 字段）：
 /// 行可能停在旧值（见 `.agents/notes/implemented/2026-11-10-stale-blank-row-self-heals.md`）。
 ///
-/// Note: 为什么是"显示层钉首"而不是把账本行挪到最前、为什么不做成时间序 ——
-/// 见 `.agents/notes/implemented/2026-11-17-blank-row-pinned-to-group-head.md`。
+/// Note: 为什么是"显示层钉首"而不是把账本行挪到最前 ——
+/// 见 `.agents/notes/implemented/2026-11-17-blank-row-pinned-to-group-head.md`；
+/// 为什么组内顺序照桌面的两档（默认最近更新）——
+/// 见 `.agents/notes/implemented/2026-11-24-session-order-by-recency.md`。
 List<WorkspaceBucket> bucketSessionsByWorkspace(
   List<String> sessionIds,
   List<WorkspaceGroup> groups, {
   Set<String> pinnedSessionIds = const {},
   required bool Function(String sid) isBlank,
+  required SessionOrder order,
+  required int Function(String sid) updatedAtOf,
 }) {
-  /// 组内分区：blank → 置顶 → 其余，三段各自保持原顺序。
+  /// 组内分区：blank → 置顶 → 其余；两个非 blank 段按 [order] 给内部顺序。
   List<String> partition(Iterable<String> ids) {
     final all = ids.toList();
     // 先把 blank 问成一个集合再分区：`isBlank` 是调用方给的（读 `AppModel` 的行），
@@ -255,13 +280,33 @@ List<WorkspaceBucket> bucketSessionsByWorkspace(
       for (final sid in all)
         if (isBlank(sid)) sid,
     };
+    final pinned = <String>[
+      for (final sid in all)
+        if (!blank.contains(sid) && pinnedSessionIds.contains(sid)) sid,
+    ];
+    final rest = <String>[
+      for (final sid in all)
+        if (!blank.contains(sid) && !pinnedSessionIds.contains(sid)) sid,
+    ];
+    if (order == SessionOrder.updated) {
+      // 桌面的 `orderByRecency`（`tree.ts:151-165`）：先按 `updatedAt` 降序，
+      // 并列时按 sid 升序（DSH 写的是 `a.id < b.id ? -1 : 1`，即字符串序 ——
+      // Dart 的 `compareTo` 同样按 UTF-16 码位比，等价）。
+      int byRecency(String a, String b) {
+        final at = updatedAtOf(a);
+        final bt = updatedAtOf(b);
+        if (at != bt) return bt.compareTo(at);
+        return a.compareTo(b);
+      }
+
+      pinned.sort(byRecency);
+      rest.sort(byRecency);
+    }
     return [
       for (final sid in all)
         if (blank.contains(sid)) sid,
-      for (final sid in all)
-        if (!blank.contains(sid) && pinnedSessionIds.contains(sid)) sid,
-      for (final sid in all)
-        if (!blank.contains(sid) && !pinnedSessionIds.contains(sid)) sid,
+      ...pinned,
+      ...rest,
     ];
   }
 

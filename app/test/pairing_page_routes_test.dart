@@ -121,6 +121,9 @@ void main() {
     // （只报先出结果的那条，等于又回到"猜另一条"）。
     expect(find.byKey(const Key('pairing-route-lan')), findsOneWidget);
     expect(find.byKey(const Key('pairing-route-relay')), findsOneWidget);
+    // 局域网**仍是一行**（只多一个地址总数）：电脑报几条就在标题里说几条，
+    // 不为每条地址开一行 —— 那会把这块面板变成日志。
+    expect(find.text('局域网直连（1 个地址）'), findsOneWidget);
     expect(find.text('检测中…'), findsNWidgets(2));
 
     gate.complete(

@@ -53,7 +53,7 @@ class ConnectionModePage extends StatelessWidget {
               _ChoiceRow(
                 title: policy.label,
                 selected: app.routePolicy == policy,
-                onTap: () => app.setRoutePolicy(policy),
+                onTap: () => app.devicePrefs.setRoutePolicy(policy),
               ),
             const _SectionTitle('可用地址'),
             if (app.endpoints.isEmpty)

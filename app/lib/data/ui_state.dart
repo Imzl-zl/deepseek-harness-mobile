@@ -85,6 +85,12 @@ abstract final class UiKey {
   /// 所以默认不打扰；长任务失败可以主动订阅。
   static const String taskNotice = '${devicePrefix}notify_tasks';
 
+  /// 会话列表的组内排序档（`updated` / `manual`，默认 `updated`）。
+  ///
+  /// 两档与取舍见 `model/session_order.dart`。**没有旧键、没有迁移**：
+  /// 此前这个排序是写死的账本序，盘上没有任何一个值需要搬。
+  static const String sessionOrder = '${devicePrefix}session_order';
+
   /// 旧键（2026-11-13 之前叫这个）：只在 [UiStateStore.open] 的一次性迁移里读，
   /// 迁完即删。别在别处读它 —— 那会让"一个事实两处表达"回来。
   static const String routePolicyLegacy = '${devicePrefix}pairing_prefer';
@@ -148,6 +154,7 @@ class UiStateStore {
   String? _collapseTiming;
   String? _routePolicy;
   String? _taskNotice;
+  String? _sessionOrder;
   String? _lastSession;
   Map<String, bool> _drawerExpansion = const <String, bool>{};
 
@@ -184,6 +191,7 @@ class UiStateStore {
     final legacyPolicy = device[UiKey.routePolicyLegacy];
     _routePolicy = device[UiKey.routePolicy] ?? legacyPolicy;
     _taskNotice = device[UiKey.taskNotice];
+    _sessionOrder = device[UiKey.sessionOrder];
     if (legacyPolicy != null) {
       if (device[UiKey.routePolicy] == null) {
         await _write(UiKey.routePolicy, legacyPolicy);
@@ -213,6 +221,9 @@ class UiStateStore {
 
   /// 后台任务提醒档（`null` = 没存过，调用方按 `off` 处理）。
   String? get taskNotice => _taskNotice;
+
+  /// 组内排序档（`null` = 没存过，调用方按 `updated` 处理）。
+  String? get sessionOrder => _sessionOrder;
 
   Future<void> setThemeMode(String wire) async {
     if (wire == _themeMode) return;
@@ -261,6 +272,12 @@ class UiStateStore {
     if (wire == _taskNotice) return;
     _taskNotice = wire;
     await _write(UiKey.taskNotice, wire);
+  }
+
+  Future<void> setSessionOrder(String wire) async {
+    if (wire == _sessionOrder) return;
+    _sessionOrder = wire;
+    await _write(UiKey.sessionOrder, wire);
   }
 
   // ---- host.*（换电脑整段清）----

@@ -1,56 +1,45 @@
 /**
- * 上报地址判据：**TUN 抢走默认路由后，真实局域网地址仍然要上报**。
+ * 出码地址判据：**只认地址段，不猜网卡**（2026-11-24）。
  *
- * ## 为什么这一组用例存在
+ * ## 这一组替代了什么
  *
- * 2026-11-06 把默认上报集合收成"默认路由那张网卡的 IPv4"
- * （`defaultDirectUrls`），代价里写明："默认路由不是手机所在局域网时
- * （双网卡、默认路由走 WAN），直连默认不生效"。当时把那种情形当作**少数派代价**。
+ * 2026-11-06 → 2026-11-20 之间，默认上报集合是"默认路由那张网卡的 IPv4"，
+ * 再用 MAC OUI 判虚拟网卡（`isVirtualMac`）把它排除。两次真机事故都出在同一处猜法上：
  *
- * 2026-11-20 用户的实机（原话："我确实开了代理的TUN这还影响吗？那这咋办？
- * 我确实需要开代理啊？"）证明它**不是少数派**：
+ * - TUN 抢走默认路由 ⇒ 上报 `198.18.0.1`（手机拨不通）；
+ * - hint 匹配不上 ⇒ **一条都不报** ⇒ 出码报"没有可上报的地址"。
  *
- * ```
- * defaultRouteIPv4 = 198.18.0.1        ← FlClash TUN 虚拟网卡
- * WLAN 2  IPv4      192.168.2.75       ← 真正的局域网
- * VMware VMnet1/8   192.168.40.1 / 192.168.235.1
- * 候选池共 6 条
- * ```
+ * 用户 2026-11-24 的原话：「开了 TUN……我只需要局域网地址就行吧，什么网卡，
+ * 虚拟网卡啥的，用不上吧？」—— 对，判据收成一条：**地址是不是 RFC1918 局域网 IPv4**。
+ * 哪一条拨得通，只有手机拨了才知道（码里全给，手机并行拨、先通先用）。
  *
- * 旧判据下这台机器有两个坏分支：
- * 1. TUN 的 `198.18.0.1` 在候选池里 ⇒ 上报**它** ⇒ 手机拨不通；
- * 2. `lanHint` 刷新后匹配不上（代理开关切换）⇒ 候选有 6 条、不满足"只有 1 条"
- *    ⇒ **一条都不报** ⇒ 出码失败「没有可上报的地址」。
+ * ## 这里钉的事实
  *
- * 这两条在**同一天**都出现过，所以下面每个分支各有一组用例。
+ * 1. TUN 段（`198.18/15`）、CGNAT（`100.64/10`）、IPv6、回环都不进默认集合；
+ * 2. **全部**局域网 IPv4 都进（不再"只报一条"）—— 包括 VMware 的 `192.168.x.1`：
+ *    那不是猜出来的，是地址段的事实；手机拨不通会自己失败，代价只是并行拨里多一条；
+ * 3. 默认路由那条**只当排序**：排第一，不当判据；
+ * 4. `hide` 生效、`extra` 追加，二者都不改变第 1、2 条。
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { defaultDirectUrls, describeEndpoints } from '../src/endpoints.js'
+import { autoAdvertisedUrls, describeEndpoints } from '../src/endpoints.js'
 import type { Listener } from '../src/transport/listener.js'
 
-function fakeListener(urls: { url: string; label: string; virtual?: boolean }[]): Listener {
+function fakeListener(urls: { url: string; label: string }[]): Listener {
   return { port: 8790, active: 0, urls, close: async () => {} }
 }
 
 /**
- * 2026-11-20 用户实机的网卡快照（`os.networkInterfaces()` 实际输出）。
- *
- * 形状照 `transport/listener.ts` 的 `dialableUrls`：跳过 internal、跳过
- * `fe80` 开头的 IPv6、IPv4 排在前。FlClash 的 TUN 网卡也在里面 ——
- * 它对内核是普通网卡，枚举分不出来。
- *
- * `virtual` 来自 MAC 实测（`isVirtualMac`）：
- * - FlClash TUN → `00:00:00:00:00:00`；
- * - VMware → `00:50:56:c0:00:01` / `00:50:56:c0:00:08`；
- * - 真实 WLAN 2 → `d0:76:02:c9:f5:46`（真实网卡厂商 OUI）。
+ * 2026-11-20 用户实机的网卡快照（`os.networkInterfaces()` 实际输出形态）：
+ * FlClash 的 TUN、真实 WLAN、两个 VMware host-only、两条轮换出来的 IPv6 GUA。
  */
 const REAL_MACHINE = [
-  { url: 'ws://198.18.0.1:8790', label: 'FlClash', virtual: true },
+  { url: 'ws://198.18.0.1:8790', label: 'FlClash' },
   { url: 'ws://192.168.2.75:8790', label: 'WLAN 2' },
-  { url: 'ws://192.168.40.1:8790', label: 'VMware Network Adapter VMnet1', virtual: true },
-  { url: 'ws://192.168.235.1:8790', label: 'VMware Network Adapter VMnet8', virtual: true },
+  { url: 'ws://192.168.40.1:8790', label: 'VMware Network Adapter VMnet1' },
+  { url: 'ws://192.168.235.1:8790', label: 'VMware Network Adapter VMnet8' },
   { url: 'ws://[2408:8220:7113:3604:2fe4:601d:2aa0:9348]:8790', label: 'WLAN 2' },
   { url: 'ws://[2408:8220:7113:3604:ec92:404d:2e2f:e32f]:8790', label: 'WLAN 2' },
 ]
@@ -58,90 +47,68 @@ const REAL_MACHINE = [
 const directUrls = (result: { endpoints: { kind: string; url: string }[] }): string[] =>
   result.endpoints.filter((e) => e.kind === 'direct').map((e) => e.url)
 
-// ---- 分支 ①：TUN 抢走默认路由（上报了拨不通的地址）----
-
-test('TUN 抢走默认路由：上报真实局域网，**不**上报 TUN 那条', () => {
+test('TUN 抢走默认路由：TUN 的 198.18 不上报，真实局域网照报', () => {
   const result = describeEndpoints({
     relayUrl: 'wss://relay.example',
     lanHint: '198.18.0.1',
     listener: fakeListener(REAL_MACHINE),
   })
   const urls = directUrls(result)
-  assert.ok(
-    urls.includes('ws://192.168.2.75:8790'),
-    `必须带真实局域网地址，实际 ${JSON.stringify(urls)}`,
-  )
-  assert.ok(
-    !urls.includes('ws://198.18.0.1:8790'),
-    'TUN 网卡地址手机拨不通，不该进默认上报集合',
-  )
+  assert.ok(urls.includes('ws://192.168.2.75:8790'), `必须带真实局域网地址，实际 ${JSON.stringify(urls)}`)
+  assert.ok(!urls.includes('ws://198.18.0.1:8790'), 'TUN 不是 RFC1918，手机拨不通')
 })
 
-test('TUN 抢走默认路由时，VMware 虚拟网卡也不该借机上码', () => {
-  const result = describeEndpoints({
-    lanHint: '198.18.0.1',
-    listener: fakeListener(REAL_MACHINE),
-  })
-  const urls = directUrls(result)
-  assert.ok(!urls.some((u) => u.includes('192.168.40.1')), 'VMnet1 不该上报')
-  assert.ok(!urls.some((u) => u.includes('192.168.235.1')), 'VMnet8 不该上报')
+test('全部局域网 IPv4 都进码：VMware 的 192.168.x.1 也在（不按网卡猜）', () => {
+  const urls = directUrls(describeEndpoints({ lanHint: '198.18.0.1', listener: fakeListener(REAL_MACHINE) }))
+  assert.deepEqual(urls, [
+    'ws://192.168.2.75:8790',
+    'ws://192.168.40.1:8790',
+    'ws://192.168.235.1:8790',
+  ], '三条都是局域网 IPv4 —— 哪条拨得通由手机拨了才知道')
 })
 
-// ---- 分支 ②：lanHint 拿不到 / 已过期（一条都不报，出码直接失败）----
+test('IPv6 与 CGNAT 不进默认集合（要上码得用户 `extra` 点名）', () => {
+  const urls = directUrls(describeEndpoints({ listener: fakeListener(REAL_MACHINE) }))
+  assert.ok(!urls.some((u) => u.includes('[')), 'IPv6 GUA 默认不上报')
+  assert.ok(!urls.some((u) => u.includes('100.100.')), 'CGNAT / Tailscale 默认不上报')
+})
 
-test('`lanHint` 为 null（选路失败 / 代理切换中）：多候选也要选出局域网地址', () => {
-  const result = describeEndpoints({
+test('`lanHint` 只当排序：拿不到 / 已过期时照样全报，且不影响成员集合', () => {
+  const noHint = directUrls(describeEndpoints({ lanHint: null, listener: fakeListener(REAL_MACHINE) }))
+  const staleHint = directUrls(describeEndpoints({ lanHint: '192.168.110.79', listener: fakeListener(REAL_MACHINE) }))
+  assert.deepEqual(noHint, staleHint, '换网后的旧 hint 不许改变"报哪几条"')
+  assert.equal(noHint.length, 3)
+})
+
+test('默认路由那条排第一（排序而不筛选）', () => {
+  const urls = directUrls(describeEndpoints({ lanHint: '192.168.235.1', listener: fakeListener(REAL_MACHINE) }))
+  assert.equal(urls[0], 'ws://192.168.235.1:8790', '手机先拨最可能通的那条')
+  assert.equal(urls.length, 3, '排第一不等于只报一条')
+})
+
+test('段序：192.168 先于 172.16 先于 10（hint 落空时）', () => {
+  const urls = directUrls(describeEndpoints({
     lanHint: null,
-    listener: fakeListener(REAL_MACHINE),
-  })
-  const urls = directUrls(result)
-  assert.deepEqual(
-    urls,
-    ['ws://192.168.2.75:8790'],
-    '这就是用户截图里「没有可上报的地址」的那条路 —— 候选明明有可拨的',
-  )
-})
-
-test('`lanHint` 是过期旧地址（换网后没刷新）：仍然选中真实局域网', () => {
-  const result = describeEndpoints({
-    lanHint: '192.168.110.79', // 上一张网的地址，这台机器上已不存在
-    listener: fakeListener(REAL_MACHINE),
-  })
-  assert.deepEqual(directUrls(result), ['ws://192.168.2.75:8790'])
-})
-
-// ---- 不回归：原来那几条行为必须还在 ----
-
-test('默认路由就是局域网时行为不变（仍只报它一条）', () => {
-  const result = describeEndpoints({
-    lanHint: '192.168.2.75',
-    listener: fakeListener(REAL_MACHINE),
-  })
-  assert.deepEqual(directUrls(result), ['ws://192.168.2.75:8790'])
-})
-
-test('单网卡机器行为不变', () => {
-  const urls = [{ url: 'ws://10.0.0.2:8790', label: 'eth0' }]
-  assert.deepEqual([...defaultDirectUrls(urls, null)], ['ws://10.0.0.2:8790'])
-})
-
-test('只有虚拟网卡可用时**不猜**：宁可不报，也不给一条拨不通的地址', () => {
-  // 一台只有 TUN + VMware 的机器（Tailscale 独占、无真实局域网）。
-  // 旧判据会报 TUN 那条；新判据不许退化成"随便挑一条"。
-  const result = describeEndpoints({
     listener: fakeListener([
-      { url: 'ws://198.18.0.1:8790', label: 'FlClash', virtual: true },
-      { url: 'ws://192.168.40.1:8790', label: 'VMware VMnet1', virtual: true },
+      { url: 'ws://10.1.2.3:8790', label: 'eth1' },
+      { url: 'ws://172.20.0.5:8790', label: 'eth2' },
+      { url: 'ws://192.168.3.4:8790', label: 'wlan' },
     ]),
-  })
-  assert.deepEqual(
-    directUrls(result),
-    [],
-    '没有真实局域网地址时如实不上报，由用户从「更多地址」点名',
-  )
+  }))
+  assert.deepEqual(urls, ['ws://192.168.3.4:8790', 'ws://172.20.0.5:8790', 'ws://10.1.2.3:8790'])
 })
 
-test('监听面没起：一条 direct 都不报（与原行为一致）', () => {
+test('只有 TUN / CGNAT / IPv6 的机器：如实一条都不报（由用户从「更多地址」点名）', () => {
+  const urls = directUrls(describeEndpoints({
+    listener: fakeListener([
+      { url: 'ws://198.18.0.1:8790', label: 'FlClash' },
+      { url: 'ws://100.100.1.2:8790', label: 'Tailscale' },
+    ]),
+  }))
+  assert.deepEqual(urls, [], '没有局域网 IPv4 时不猜一条能拨的地址')
+})
+
+test('监听面没起：一条 direct 都不报（含用户 extra）', () => {
   const result = describeEndpoints({
     lanHint: '192.168.2.75',
     listener: null,
@@ -150,24 +117,34 @@ test('监听面没起：一条 direct 都不报（与原行为一致）', () => 
   assert.deepEqual(directUrls(result), [])
 })
 
-test('用户 `hide` 掉真实局域网后：不许自动挑回 TUN 那条来顶替', () => {
-  const result = describeEndpoints({
+test('`hide` 生效，且不许因此退回去报 TUN 那条', () => {
+  const urls = directUrls(describeEndpoints({
     lanHint: '198.18.0.1',
     listener: fakeListener(REAL_MACHINE),
     advertise: new Map([['ws://192.168.2.75:8790', 'hide' as const]]),
-  })
-  const urls = directUrls(result)
+  }))
   assert.ok(!urls.includes('ws://192.168.2.75:8790'), 'hide 必须生效')
   assert.ok(!urls.includes('ws://198.18.0.1:8790'), 'hidden 之后不许退到 TUN')
+  assert.ok(urls.includes('ws://192.168.40.1:8790'), '其余局域网地址照旧')
 })
 
-test('用户 `extra` 点名 TUN 那条：仍然尊重（显式表态优先于自动判据）', () => {
-  const result = describeEndpoints({
+test('`extra` 点名 TUN 那条：仍然尊重（显式表态优先于自动判据）', () => {
+  const urls = directUrls(describeEndpoints({
     lanHint: '192.168.2.75',
     listener: fakeListener(REAL_MACHINE),
     advertise: new Map([['ws://198.18.0.1:8790', 'extra' as const]]),
-  })
-  const urls = directUrls(result)
+  }))
   assert.ok(urls.includes('ws://198.18.0.1:8790'), 'extra 是用户的显式表态')
   assert.ok(urls.includes('ws://192.168.2.75:8790'), '默认那条也在')
+})
+
+test('`autoAdvertisedUrls`：与 describe 同一条判据（成员集合，不含排序）', () => {
+  const set = autoAdvertisedUrls(REAL_MACHINE)
+  assert.deepEqual([...set].sort(), [
+    'ws://192.168.2.75:8790',
+    'ws://192.168.235.1:8790',
+    'ws://192.168.40.1:8790',
+  ])
+  const hidden = autoAdvertisedUrls(REAL_MACHINE, new Map([['ws://192.168.2.75:8790', 'hide' as const]]))
+  assert.equal(hidden.has('ws://192.168.2.75:8790'), false)
 })

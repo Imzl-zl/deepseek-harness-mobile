@@ -41,7 +41,7 @@ function state(over: Partial<ConnectionState> = {}): ConnectionState {
     relayTokenRef: 'relay-connector',
     token: { configured: true, writable: true },
     relay: { running: true, connected: true },
-    direct: { running: true },
+    direct: { running: true, lanUrls: ['ws://192.168.1.5:8790'] },
     ...over,
   }
 }

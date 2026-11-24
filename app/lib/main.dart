@@ -1489,6 +1489,12 @@ class _DshMobileAppState extends State<DshMobileApp>
         // 「新建会话」出来的那一行永远在组首，不跟账本里它被建出来时的老位置走。
         // 判据与上面 `visible` / watermark 同一道门，不另算一份。
         isBlank: app.sessionBlankOf,
+        // **组内顺序照档位**（`device.session_order`）：默认「最近更新」=
+        // 桌面 `orderBy: 'updated'`（`ui-workspace/src/client/stores.ts:86`），
+        // 「手动」= 账本序。`updatedAtOf` 与新建会话落点同一个口径
+        // （`AppModel.updatedAtOf`：不在清单里回 `-1`）。
+        order: app.sessionOrder,
+        updatedAtOf: app.updatedAtOf,
       ))
         _sectionOfBucket(app, bucket, bySid, rowOf),
     ];

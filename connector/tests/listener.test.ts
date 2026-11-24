@@ -25,7 +25,7 @@ import { createHandshakeDriver } from '../src/protocol/handshake-driver.js'
 import { createSessionBuffer } from '../src/session-buffer.js'
 import { createConnectionScope, type ConnectionScopeDeps } from '../src/connection-scope.js'
 import { createConnection, type DialSocket } from '../src/transport/connection.js'
-import { startListener } from '../src/transport/listener.js'
+import { dialableUrls, startListener } from '../src/transport/listener.js'
 import { createMetrics, silentLogger } from '../src/observability.js'
 import type { Caps } from '../src/dsh/caps.js'
 import { createPhone, phoneOpenBox, phoneSealBox, type Phone } from './support/phone.js'
@@ -389,4 +389,51 @@ test('未配对的设备：握手在 hello 处被拒，连接被关（鉴权就�
 
   const code = await closed
   assert.equal(code, 4003, '未配对 → protocol/not-paired → 关闭码 4003（§4.1）')
+})
+
+// ---- 可拨地址是**现取**的（2026-11-24：出码地址必须跟着当前网络走）----
+
+/** 一份假的网卡枚举（`os.networkInterfaces()` 的形状，返回的是**枚举函数**）。 */
+function fakeNics(
+  entries: { name: string; address: string; family: string; internal?: boolean }[],
+): typeof import('node:os').networkInterfaces {
+  const out: Record<string, { address: string; family: string; internal: boolean }[]> = {}
+  for (const entry of entries) {
+    out[entry.name] ??= []
+    out[entry.name]!.push({ address: entry.address, family: entry.family, internal: entry.internal ?? false })
+  }
+  return (() => out) as unknown as typeof import('node:os').networkInterfaces
+}
+
+test('`dialableUrls` 派生自**当下**的枚举：换网后同一台监听面的地址跟着变', () => {
+  const before = fakeNics([{ name: 'Wi-Fi', address: '192.168.2.75', family: 'IPv4' }])
+  const after = fakeNics([{ name: 'Wi-Fi', address: '192.168.110.79', family: 'IPv4' }])
+
+  assert.deepEqual(dialableUrls('0.0.0.0', 8790, before).map((u) => u.url), ['ws://192.168.2.75:8790'])
+  assert.deepEqual(
+    dialableUrls('0.0.0.0', 8790, after).map((u) => u.url),
+    ['ws://192.168.110.79:8790'],
+    '这就是用户 2026-11-24 报的那件事：码里必须是**当前**网络的地址',
+  )
+})
+
+test('`dialableUrls` 的过滤规则：跳 internal / fe80，IPv6 带方括号，IPv4 排前', () => {
+  const nics = fakeNics([
+    { name: 'lo', address: '127.0.0.1', family: 'IPv4', internal: true },
+    { name: 'Wi-Fi', address: '2408:8220::1', family: 'IPv6' },
+    { name: 'Wi-Fi', address: 'fe80::1', family: 'IPv6' },
+    { name: 'Wi-Fi', address: '192.168.2.75', family: 'IPv4' },
+  ])
+  assert.deepEqual(dialableUrls('0.0.0.0', 8790, nics).map((u) => u.url), [
+    'ws://192.168.2.75:8790',
+    'ws://[2408:8220::1]:8790',
+  ])
+})
+
+test('`listener.urls` 每次读都重新算（不是启动时的冻快照）', async (t) => {
+  const { listener } = await startTracking(t, makeScopeDeps())
+  const first = listener.urls
+  const second = listener.urls
+  assert.notEqual(first, second, '同一个数组实例就等于把地址冻在启动那一刻')
+  assert.deepEqual(first.map((u) => u.url), second.map((u) => u.url))
 })

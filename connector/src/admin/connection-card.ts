@@ -50,7 +50,14 @@ export interface ConnectionState {
   relayTokenRef: string | undefined
   token: { configured: boolean; writable: boolean }
   relay: { running: boolean; connected: boolean }
-  direct: { running: boolean }
+  /**
+   * 直连那条腿：监听在不在跑，**以及此刻枚举到的可拨地址**（`ws://ip:port`）。
+   *
+   * 为什么要带地址：出码写的地址就是"当前网络的地址:端口"，面板得让人肉眼核对
+   * （2026-11-24 用户原话「出码不应该出当前网络的地址和端口？」）。
+   * 判据与出码同源（`endpoints.ts` 的 `autoAdvertisedUrls`）—— 面板不另算一份。
+   */
+  direct: { running: boolean; lanUrls: readonly string[] }
 }
 
 /** 过线的形状（`GET` 与保存回执共用）。**只有白名单字段**。 */
@@ -66,7 +73,7 @@ export interface ConnectionView {
   token: { configured: boolean; writable: boolean }
   /** `public` = 中转主机是公网（判据同 `relayUrlOf`：域名一律算公网）。 */
   relay: { running: boolean; connected: boolean; public: boolean }
-  direct: { running: boolean }
+  direct: { running: boolean; lanUrls: readonly string[] }
 }
 
 /** 装配层给的能力（每一格都是**用时取值**，不是挂载时快照）。 */
@@ -182,6 +189,13 @@ export interface ConnectionReadInputs {
    * "活读"这件事挪到了调用方的义务里（本文件第 183 行那句说明会变成假的）。
    */
   configuredListenPort(): number
+  /**
+   * 此刻**会上报给手机**的局域网地址（`ws://ip:port`）。与出码共用同一份判据
+   * （`endpoints.ts` 的 `autoAdvertisedUrls`），面板只显示、不重算。
+   *
+   * 也是访问器（同"用时取"）：换 WiFi / 改 `hide` 之后面板刷新就该看到新值。
+   */
+  lanUrlsOf(): readonly string[]
 }
 
 /**
@@ -225,7 +239,12 @@ export async function readConnectionState(
     relayTokenRef: ref,
     token: await inputs.tokenStatusOf(ref),
     relay: { running: relay?.running ?? false, connected: relay?.connected === true },
-    direct: { running: direct?.running ?? false },
+    // **监听没跑就不给地址**：两份真值来自不同来源（通道注册表 / 监听面），
+    // 投影出来自相矛盾的"能拨但没在跑"只会让面板与出码各说一套。
+    direct: {
+      running: direct?.running ?? false,
+      lanUrls: direct?.running === true ? [...inputs.lanUrlsOf()] : [],
+    },
   }
 }
 

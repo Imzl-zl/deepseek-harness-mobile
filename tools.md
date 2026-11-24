@@ -229,9 +229,9 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
         写死 IP 会把 `relayHintFor` 的自愈**整条绕开** —— 它**只对环回生效**("环回 → 换成 lanHint;其它 IP → 原样返回"),因为"其它 IP"被解释为"用户显式钉的地址(中转在另一台机器)"。于是:
         - 连接器自己拨得通(本机就有这个 IP),**二维码里给的也是这个 IP** → 电脑一换 WiFi / 换网卡,手机立刻拨不通,而**重新出码还是那个死地址**;
         - 症状有误导性:管理面 `/transport` 显示 `relay: running=true`(那只表示"代码跑了",`running: connection !== null` 恒真),中转日志一行没有,`POST /api/dsh-mobile/pair` 回 **400 且 body 为空**。
-        **多网卡时先问内核手机走哪块**:`Get-NetIPAddress -AddressFamily IPv4` 会列出**所有**网卡(含 VMware 虚拟网卡),而手机实际走**默认路由**那块。判据:手机侧 `adb shell ip route` 的 `src` + 从手机 `curl` 哪块通(实测两块都能 ping 通,但只有默认路由那块能被手机拨通)。
+        **多网卡时先问内核手机走哪块**:`Get-NetIPAddress -AddressFamily IPv4` 会列出**所有**网卡(含 VMware 虚拟网卡)。2026-11-24 起出码会把**全部局域网 IPv4** 写进码（手机并行拨、先通先用），所以不再需要为"默认路由不是手机那块"手工加 `extra`；但要确认"手机到底能到哪条"，仍用手机侧 `adb shell ip route` 的 `src` + 从手机 `curl` 逐个试。
         **换网无感的判据**:`relayUrl` 写环回;`(Invoke-RestMethod .../api/dsh-mobile/status).relayUrl` 应显示**当前 lanHint**,而不是配置里的字面量。
-      - **⚠ `POST /api/dsh-mobile/pair` 回 400 且 body 为空 = 中转没拨通**(2026-10-18):出码前要先向中转登记 offer,登记失败就拒出码(否则给一张扫了也配不上的码),但**拒的原因不进响应体**。判据:中转日志没有「连接器 home-pc 控制面已连接」。先修中转连通,再出码。
+      - **⚠ `POST /api/dsh-mobile/pair` 回 400 = 出码判据拒了**(2026-10-18，2026-11-24 更新)：直连没有局域网地址**且**中转没拨通时拒出码；现在**响应体带原因**（`connector/src/pairing-offer.ts` 的 `causeText`，含中转原话与"缺哪条腿"），不再只有空正文。判据先看 `GET /api/dsh-mobile/connection` 的 `direct.lanUrls` 与 `relay.connected`。
       - **⚠ pnpm 的 `link:` 依赖可能不落地,而 pnpm 坚称 "Already up to date"**(2026-10-18):profile 的 `node_modules/@dsh-mobile` 是**空目录**,`pnpm install` 与 `--force` 都不补;症状是 `dsh --profile dsh-mobile-test` 起来就 `skipping profile bundle "@dsh-mobile/connector": cannot resolve profile bundle`,直连监听面(8790)根本不监听。
         判据:`Get-ChildItem "$env:USERPROFILE\.dsh\profiles\dsh-mobile-test\node_modules\@dsh-mobile"` 为空。
         修法(环境层,不动工程):`New-Item -ItemType Directory -Path "<profile>\node_modules\@dsh-mobile" -Force`,再 `cmd /c mklink /J "<profile>\node_modules\@dsh-mobile\connector" "<repo>\connector"`;然后用连接器自己的判据验产物:`node -e "import('file:///<repo>/connector/lib/index.js').then(m=>console.log(Object.keys(m)))"` → 应含 `Config, apply, inject, name`。
@@ -754,13 +754,16 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
         事后用 `flutter build apk --debug` + `adb install -r`，或直接装 Release APK 装回来。
     11. **重配一台已配对的手机：四个新坑**（2026-11-12 一次踩全，约 40 分钟）
         - **配对码 TTL 只有 5 分钟，超时后两条路都报同一句话**。粘贴慢了（改字符、找按钮）就会看到
-          `局域网直连没通（1 个地址）；配对码尚未在中转登记成功，请让电脑重新出码 (protocol/not-paired)`
+          `局域网不通（试了 N 个地址，是否同一 Wi-Fi？）；配对码尚未在中转登记成功，请让电脑重新出码 (protocol/not-paired)`
           —— 那句「在中转登记失败」是**降级话术**，真因可能只是过期。重新出码 + 一次走完就能过。
-        - **`lan` 为空 = 默认路由那张网卡不在监听面候选里**（这次：默认路由是以太网 `192.168.2.x`，
-          手机在 WiFi `192.168.110.x`）。出码前先看 `/api/dsh-mobile/advertise` 的 `candidates`，
-          用 `POST /api/dsh-mobile/advertise {"url":"ws://<WiFi IP>:<listenPort>","kind":"extra"}`
-          把手机能到的那条标成 `extra`，`lanAvailable` 才会是 true（否则手机只能走 `relay` 那格，
-          而 `relay` 的 host 也是默认路由的地址，同样拨不通）。
+          （2026-11-24 起局域网失败**只给一句汇总**，具体每个地址的错进 `debugPrint('[pair] …')`；
+          以前是「局域网直连没通（1 个地址）」。）
+        - **`lan` 为空只有三种**（2026-11-24 起判据是"此刻枚举到的全部局域网 IPv4"）：
+          监听没开、机器上没有 RFC1918 地址、或都被「上报给手机的地址」里删掉了。
+          排查先看 `GET /api/dsh-mobile/connection` 的 `direct.lanUrls`（与出码同一份判据），
+          再看 `GET /api/dsh-mobile/advertise` 的 `candidates` / `hidden`；
+          要额外上码用 `POST /api/dsh-mobile/advertise {"url":"ws://<IP>:<listenPort>","kind":"extra"}`。
+          （旧坑：以前只有"默认路由那张网卡"会上报，双网卡机器得手工 `extra` —— 现在不需要了。）
         - **中转要真起来，否则出码直接 400**：`POST /pair` 回
           `没能把这次配对登记到中转（fetch failed）`。启法（主机上 8787 没有被占用时）：
           `cd relay; node src/main.ts --config relay.config.json`（**必须带 `--config`**，不带打印用法就退）。
@@ -806,11 +809,12 @@ node app/tools/flutter-api.mjs "SystemGesture|gestureExclusion" --limit 30
   - **`uiautomator dump` 偶尔返回空语义树**（本轮两次，尺寸约 1.5 KB、`content-desc` 全空）：
     别据此判"页面没东西"，改用截图 + 上一次 dump 的 bounds。另：**dump 是物理像素，而人看截图时
     图被缩放**（1080→约 880），目测 y 会差 ~250 px —— 一律以 dump 的 bounds 为准。
-- **出码可以直接走 RPC，不必开浏览器敲命令**（2026-10-24）：cookie 鉴权后
-  `POST http://127.0.0.1:<port>/api/commands/execute`，体
-  `{"type":"client-request","rpcId":"x","method":"commands/execute","payload":{"args":{"agentId":"<会话 id>","line":"/dsh-mobile-pair","submittedAttachments":[]}}}`
-  ⇒ 应答 `result.value.result.text` 里就有 payload JSON（`{"v":2,…}`）。`agentId` 就是
-  `$DSH_HOME/sessions/<workspace>/session-<uuid>/` 那个 uuid。**少开一个浏览器**。
+- **出码走 HTTP，不必开浏览器敲命令**（2026-11-24 起斜杠命令已删除）：cookie 鉴权后
+  `POST http://127.0.0.1:<port>/api/dsh-mobile/pair`，空 JSON 体 `{}` ⇒ 应答
+  `{svg, expiresAt, lanOnly, lanAvailable}`（**没有 payload**：载荷只在服务端画二维码用）。要把码
+  存成 PNG 就解 SVG 或直接用 `D:\tmp\dsh-e2e\qr2.ts` 那类脚本从 `svg` 转。
+  （斜杠命令那条路曾用 `commands/execute` 的 `{"type":"client-request",… "line":"/dsh-mobile-pair"}`
+  取 `result.value.result.text` 里的载荷 JSON —— 已随命令一起删除，别再用。）
 - **抓"换票 401"这类窄窗口要用替身，不要赌时序**（2026-10-24）：中转重启后连接器**立刻**重放名册，
   401 窗口只有几百毫秒。做法是让一个只回 `401 {"error":"unauthorized"}` 的小服务占住同一端口
   （形状照 `relay/src/http-face.ts:77`），手机就会稳定地反复撞它 —— 脚本在

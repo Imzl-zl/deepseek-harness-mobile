@@ -75,6 +75,10 @@ class PairingChannel {
     // "未处理异常"的形式炸出来，而现象与真因毫无关系。`ignore()` 只标记"这个错误有人管"，
     // [commit] 里那次 await 照样会收到它。
     _ack.future.ignore();
+    // `_ready` 同一个道理：[close] 会在竞速里**主动**给还在握手中的 `open()` 一个答案
+    // （见那里的注释），而那条通道可能连 `transport.connect()` 都没回来过、因此
+    // 还没人挂上监听 —— 不标记的话，一次正常的"收起输家"会变成测试里的未处理异常。
+    _ready.future.ignore();
   }
 
   /// 已经带票的传输（实现由装配层注入：`platform/websocket_transport.dart`）。
@@ -233,6 +237,12 @@ class PairingChannel {
   Future<void> close() async {
     if (_closed) return; // 幂等：收口路径可能被调两次（`dispose` 与用户放弃）
     _closed = true;
+    // 还卡在握手里的那个 `open()` 必须**当场**得到答案：局域网竞速里被收掉的候选
+    // 正是这种状态（`core/pairing_flow.dart` 的 `tryLan`），不完成它就挂在一个
+    // 永远不会完成的 Future 上 —— 而"通道已经关了"这件事只有这里知道。
+    if (!_ready.isCompleted) {
+      _ready.completeError(const TransportException('配对通道已关闭，握手已取消'));
+    }
     final events = _events;
     _events = null;
     _handshake?.dispose();
