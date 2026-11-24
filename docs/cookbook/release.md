@@ -78,6 +78,11 @@ Publisher `GitHub Actions`、organization or user `Imzl-zl`、repository
 改 `connector/package.json` 的 `version` → `git tag connector-vX.Y.Z` → push。
 流水线校验 `标签 == version`，用 OIDC 发布并带 **provenance（SLSA v1）**，不需要任何 token。
 
+**两个标签都会触发发布**（`v*` 与 `connector-v*`），这是故意的：只推 `v*` 时 Release 有产物、
+npm 却停在旧版是踩过的坑（2026-11-02）。两条 run 由 `concurrency` 串行；判据是
+"npm 上有没有这个版本" —— 前置查一次，`npm publish` 失败后再重查 30 秒，版本已在就算成功
+（registry 读有传播延迟，见 `.agents/notes/implemented/2026-11-24-publish-idempotency-tolerates-registry-lag.md`）。
+
 ## 3. 插件包与宿主版本线
 
 `connector` 是 DSH 插件（`dsh.bundle.patch` 指向 `cordis.patch.yml`），发版产物就是

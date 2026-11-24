@@ -79,12 +79,33 @@ jobs:
           else
             echo "路径：可信发布（OIDC）—— 需要包上已配 Trusted Publisher"
           fi
-          # **幂等**：npm 上已经有这个版本就跳过（同一个 `v*` 标签重推、或
-          # connector-v 与 v 两个标签指向同一次发布，都不该让流水线红）。
           VERSION=$(node -p "require('./package.json').version")
-          if npm view "dsh-mobile-connector@$VERSION" version >/dev/null 2>&1; then
+          # **判据是"npm 上有没有这个版本"**，不是"publish 有没有报错"（2026-11-24）：
+          # 两个标签（v* / connector-v*）都会发布同一个版本，串行化只保证不并发，
+          # 不保证后跑的那个**立刻看得见** —— registry 读有传播延迟，前置检查读到
+          # "还没有"就去 publish，会撞 E409。取舍见
+          # .agents/notes/implemented/2026-11-24-publish-idempotency-tolerates-registry-lag.md
+          present() { npm view "dsh-mobile-connector@$VERSION" version >/dev/null 2>&1; }
+          if present; then
             echo "npm 上已经有 $VERSION，跳过发布"
             exit 0
           fi
+          # `bash -e` 会把非零退出直接变失败；这里要自己判，所以先关掉。
+          set +e
           # `--provenance` 两种路径都成立：仓库是公开的，OIDC 可用。
           npm publish --access public --provenance
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -eq 0 ]; then
+            exit 0
+          fi
+          # 失败重查：唯一可接受的失败是"这个版本已经在 npm 上"（另一个标签的 run 先发了）。
+          for attempt in 1 2 3 4 5 6; do
+            if present; then
+              echo "$VERSION 已在 npm 上（另一个标签的 run 先发布；E409 是 registry 传播延迟）—— 按成功处理"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "publish 失败，且 30 秒内 npm 上仍没有 $VERSION —— 按真失败处理"
+          exit "$STATUS"
