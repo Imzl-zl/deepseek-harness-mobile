@@ -1,0 +1,13 @@
+{
+  "package": "io.github.imzlzl.dsh_mobile",
+  "versionCode": 2026,
+  "versionName": "0.2.23",
+  "assetUrl": "https://github.com/Imzl-zl/deepseek-harness-mobile/releases/download/v0.2.23/dsh-mobile-v0.2.23-arm64-v8a.apk",
+  "assetSha256": "5a841a6779f7d64ba5a165846c320035c2a4663be84984957f6a03d40307b792",
+  "certificateSha256": "c0a552257833d3d1f0b7ae9da94885e783f7fb361646390d39d8b6172519acdb",
+  "source": "aapt dump badging and apksigner verify --print-certs on the published APK",
+  "abi": "arm64-v8a",
+  "abiVersionCode": 2,
+  "abiMultiplier": 1000,
+  "flutterSource": "Flutter 3.41.9: packages/flutter_tools/gradle/src/main/kotlin/FlutterPlugin.kt:607-626 and FlutterPluginConstants.kt:37-42"
+}

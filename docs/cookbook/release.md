@@ -6,8 +6,7 @@
 ## 1. 版本号在哪
 
 - 插件：`connector/package.json` 的 `version`（打包名与它一致）。
-- App：`app/pubspec.yaml` 的 `version: 1.0.0+1`。CI 用 `--build-name="${tag#v}"`
-  与 `--build-number=$GITHUB_RUN_NUMBER` 覆盖，所以**发版时只认标签**。
+- App：[manifest](<app/pubspec.yaml>) 声明版本与基础 build number；CI 用 `--build-name="${tag#v}"` 与 `--build-number=$GITHUB_RUN_NUMBER` 覆盖基础值。`--split-per-abi` 后的实际 APK versionCode 由锁定 Flutter SDK 添加 ABI 偏移，不能拿它与基础计数直接比较。
 - 标签：`v1.2.3`（不要带 `v` 以外的修饰）。
 
 ## 2. 签名（Android 必须，开源项目也一样）
@@ -133,6 +132,8 @@ npm 却停在旧版是踩过的坑（2026-11-02）。两条 run 由 `concurrency
 5. 发版；旧线冻结，只修致命问题，不追功能。
 
 ## 3.5 三个 APK：按 ABI 拆开（该下哪个）
+
+Flutter `3.41.9` 的实际拆包 code 为 `ABI_VERSION × 1000 + 基础 buildNumber`；SDK 来源是 `packages/flutter_tools/gradle/src/main/kotlin/FlutterPlugin.kt:607–626`、`FlutterPluginConstants.kt:37–42`，ARM32/ARM64/x86_64 分别为 1/2/4。同架构升级比较实际 APK code，同时校验证书和应用 ID。发布基础号 26 的 ARM64 code 是 2026；基础号 27 的三架构 code 预期 1027/2027/4027，必须由产物读取确认，不手工再次加偏移。
 
 `release.yml` 用 `flutter build apk --release --split-per-abi`，一次出**三个**文件：
 

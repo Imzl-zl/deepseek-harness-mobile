@@ -85,6 +85,7 @@ jobs:
           # **按 ABI 拆开**：通用包会把三份 Flutter 引擎都塞进同一个文件
           # （v0.2.15 实测 75.14 MB），而每台手机只需要其中一份。
           # 取舍与「该下哪个」见 docs/cookbook/release.md §3。
+          # Note: 同ABI实际code包含SDK偏移，见 .agents/notes/implemented/2026-11-25-split-apk-version-code-verification.md
           flutter build apk --release --split-per-abi \
             --build-name="${GITHUB_REF_NAME#v}" \
             --build-number="$GITHUB_RUN_NUMBER" \
