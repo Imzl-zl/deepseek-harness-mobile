@@ -198,7 +198,9 @@ void main() {
     // "我一个手机怎么显示五个"吵过一次。取舍与威胁模型见
     // `.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`。
     expect(
-      source.contains('previousPairingIdOf: _previousPairingIdOf'),
+      source.contains(
+        'previousPairingIdOf: (offer) => pairingStore.previousPairingIdFor(',
+      ),
       isTrue,
       reason: '装配点必须把旧配对标识接进配对页，否则替换退化成新增',
     );
@@ -206,8 +208,23 @@ void main() {
     // pairingStore.clear`）就抓不到 —— 顺序反了快照永远是 null。
     expect(
       source.contains('clearCredentials: pairingStore.clear'),
-      isFalse,
-      reason: '清凭据之前必须先抓旧配对标识快照，直接传方法引用抓不到',
+      isTrue,
+      reason: '清槽与非凭据hint由同一个持久所有者完成，State不再另存快照',
+    );
+  });
+
+  test('稳定设备码来自安全存储，旧标识按扫码目标公钥取，不只抓当前电脑', () {
+    expect(
+      source.contains('loadDeviceCode: pairingStore.getOrCreateDeviceCode'),
+      isTrue,
+    );
+    expect(source.contains('pairingStore.previousPairingIdFor('), isTrue);
+    expect(source.contains('pcSignPubHex: offer.pcSignPubHex'), isTrue);
+    expect(source.contains('pcId: offer.pcId'), isTrue);
+    expect(
+      source.contains('deviceId: await pairingStore.getOrCreateDeviceCode()'),
+      isTrue,
+      reason: '展示码使用独立持久值；握手仍使用原鉴权devId',
     );
   });
 

@@ -117,14 +117,14 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('两条都通时，在下面选这次走哪条'), findsOneWidget);
-    // **两条都在探**：局域网那条已经死了，但界面要等两条都有结论再一起摆出来
-    // （只报先出结果的那条，等于又回到"猜另一条"）。
+    // 局域网已失败就立刻给原因，中转仍在探；不能把已完成的结果扣住。
     expect(find.byKey(const Key('pairing-route-lan')), findsOneWidget);
     expect(find.byKey(const Key('pairing-route-relay')), findsOneWidget);
     // 局域网**仍是一行**（只多一个地址总数）：电脑报几条就在标题里说几条，
     // 不为每条地址开一行 —— 那会把这块面板变成日志。
     expect(find.text('局域网直连（1 个地址）'), findsOneWidget);
-    expect(find.text('检测中…'), findsNWidgets(2));
+    expect(find.text('检测中…'), findsOneWidget);
+    expect(find.textContaining('局域网不通'), findsOneWidget);
 
     gate.complete(
       const HttpResult(status: 409, body: '{"error":"pairing-unavailable"}'),

@@ -2058,10 +2058,10 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
   String? get hostName => _hostName;
   String? _hostName;
 
-  /// 本机设备 id（`hello` 里的 `devId`）；未装配时是空串。
+  /// 本机安装级设备显示码；鉴权的 hello.devId 仍从配对凭据取得。
   ///
-  /// Note: 为什么按配对身份、不按手机聚合 —— 见
-  /// `.agents/notes/implemented/2026-11-06-device-rows-short-code.md`
+  /// Note: 显示与鉴权代次分离 —— 见
+  /// `.agents/notes/implemented/2026-11-24-stable-device-code-and-pairing-continuity.md`
   String get deviceId => _deviceId;
   final String _deviceId;
 

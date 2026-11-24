@@ -107,7 +107,7 @@ import {
   writeRelayToken,
 } from './dsh/relay-token.js'
 import { createPairingRegistrar } from './pairing-register.js'
-import { createDevicePublisher, rosterEntry } from './device-publish.js'
+import { createDevicePublisher, rosterEntry, type DeviceRegistration } from './device-publish.js'
 import { issuePairingOffer, planPairingOffer } from './pairing-offer.js'
 import { pairingQrSvg } from './pairing-qr.js'
 import { mountAdminFace } from './admin/mount.js'
@@ -736,6 +736,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           allowInsecurePublic: () => config.allowInsecurePublic(),
           relayUrl: () => relayUrlInUse(),
           tokenSource: () => readRelayToken(ctx.credentials, tokenRef()),
+          available: () => connection?.connected === true,
           log: logger,
         })
         /** 字段名在这一层对齐（配对的设备行叫 `edPubHex`，域表叫 `edPub`）。 */
@@ -753,19 +754,21 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             ...(row.tokenHash === undefined ? {} : { tokenHash: row.tokenHash }),
             // 重新配对写下的"我替换了谁"：等新身份握手成功再裁（`pruneReplaced`）。
             ...(row.replaces === undefined ? {} : { replaces: row.replaces }),
+            ...(row.replacesAll === undefined ? {} : { replacesAll: [...row.replacesAll] }),
+            ...(row.deviceCode === undefined ? {} : { deviceCode: row.deviceCode }),
           })
         }
 
         /**
          * 名册上报（§8.2 / I7）：把**整份**设备摘要交给中转，让它重建归属与凭据面。
          *
-         * 两处调用：配对成功时（回执之前）与每次连上中转时（`publish-service` 之后的
-         * `onEstablished`）。前者让手机拿到的令牌立刻能用，后者让中转重启后设备能自己回来。
+         * 配对/本地管理完成只调度发布，不让回执等待公网；每次连上中转仍等待式重报。
+         * 同一rosterRows与FIFO保证顺序，pending/error/deferred由状态面明确呈现。
          *
          * **没有令牌摘要的行不进名册**：它认不下任何设备，报上去只是噪音 ——
          * 而"漏报"与"报一条没用的"在中转侧是同一件事（那台设备换不到票）。
          */
-        const publishDevices = async (): Promise<void> => {
+        const rosterRows = (): DeviceRegistration[] => {
           const table = devicesTable
           if (table === null) {
             throw new Error('devices 表尚未就绪：装配顺序有误')
@@ -774,14 +777,16 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           // `device-revoked` 的唯一来源（手机据此清凭据回配对页）。只报未停用的行
           // 会让"停用"与"名册还没同步"在手机侧完全同一个症状（一直重试）。
           // 行本身什么时候消失？用户删除时才删（`device-admin` 的显式删除）。
-          const rows = [...table.keys()].flatMap((id) => {
+          return [...table.keys()].flatMap((id) => {
             const record = table.get(id)
             if (record === undefined) return []
             const entry = rosterEntry(id, record)
             return entry === undefined ? [] : [entry]
           })
-          await publisher(rows)
         }
+        const publishDevices = (): Promise<void> => publisher(rosterRows())
+        // Note: 本地持久提交后仅调度名册，状态由发布器持有；见 .agents/notes/implemented/2026-11-24-device-admin-local-commit-and-roster-sync.md。
+        const scheduleDevices = async (): Promise<void> => { publisher.schedule(rosterRows()) }
 
         // 出码的**登记面**（`offerId` → 中转）。斜杠命令与管理页面共用同一个实例 ——
         // 两处各建一个的话，"令牌换了哪边先生效"会有两个答案。
@@ -815,9 +820,10 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             devId,
           )
           if (doomed.length === 0) return
-          for (const id of doomed) await table.delete(id)
+          await table.deleteMany(doomed)
+          for (const id of doomed) servingConnections.get(id)?.stop()
           logger.info(`设备 ${devId} 已用新凭据连上：裁掉被它替换的 ${doomed.length} 行`)
-          await publishDevices()
+          await scheduleDevices()
         }
 
         /**
@@ -894,13 +900,13 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         const deviceAdmin = createDeviceAdmin({
           tableOf: () => devicesTable,
           onlineIds: () => new Set(presence.devices().filter((row) => row.online).map((row) => row.id)),
-          publish: publishDevices,
+          publish: scheduleDevices,
           // **停用/删除 = 立刻下线**：`revokedAt` 只是名册上的字，那条 socket 得真的
           // 收掉 —— 否则手机带着一条"已吊销"的连接继续收发、继续以为自己在线。
           // 停用是操作者"把那台踢下线"的唯一入口，所以它必须断。映射由
           // `makeConnection` 在握手成功时登记。
           disconnect: (ids) => {
-            for (const id of ids) servingConnections.get(id)?.stop()
+            for (const id of ids) servingConnections.get(id)?.stop('protocol/not-paired')
           },
         })
         // 「上报哪些地址」的管理面。候选表是**网卡枚举的原始结果**（含被藏掉的），
@@ -1036,6 +1042,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
                     {
                       id,
                       name: record.name,
+                      ...(record.deviceCode === undefined ? {} : { deviceCode: record.deviceCode }),
                       pairedAt: record.pairedAt,
                       revoked: record.revokedAt !== undefined,
                     },
@@ -1360,7 +1367,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
         // 出码登记也现读（`registerPairing` 的 `tokenSource`）—— 换令牌后两者都立刻生效，
         // 而且"没有令牌"不再是挂载失败（见 `transportStart` 的说明）。
         const enrollment = createPairingEndpoint({
-          pairing: pairingCore, pcId: connectorId, putDevice, announce: publishDevices, log: logger,
+          pairing: pairingCore, pcId: connectorId, putDevice, announce: scheduleDevices, log: logger,
           // 重新配对的替换钩子：手机自报的 `previousPairingId` 只是**行定位符**
           // （授权已由一次性二维码秘密完成），据此找到这台手机上一次的行。
           // `findPreviousPairingRow` 是纯函数（`pairing-endpoint.ts`），**不按
@@ -1368,7 +1375,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
           // 取舍与威胁模型：`.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`。
           // 旧行的清理**不在这里**：提交只写新行 + `replaces`，等新身份握手成功
           // 由 `pruneReplaced` 裁（`pair-result` 可能没送到手机，见那里的说明）。
-          findPreviousPairing: (pairingId) => {
+          findPreviousPairing: (pairingId, deviceCode) => {
             const table = devicesTable
             if (table === null) return null
             return findPreviousPairingRow(
@@ -1377,6 +1384,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
                 return record === undefined ? [] : [[id, record] as const]
               }),
               pairingId,
+              deviceCode,
             )
           },
         })
@@ -1404,16 +1412,17 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
               // （见 `deviceAdmin` 的 `disconnect`）。同一台设备重连会覆盖旧条目，
               // 旧连接本身已经被拨号层收口（`replaced`）。
               onDeviceEstablished: (devId) => {
-                if (self !== null) servingConnections.set(devId, self)
-                scopeDeps.onDeviceEstablished?.(devId)
                 // **行在握手中被停用/删除**：`peerOf` 是 `hello` 那一刻判的，
                 // 而吊销可能发生在那之后、`established` 之前。这里再判一次，
                 // 否则这台设备会带着一条"已吊销"的连接继续收发帧（此时行已经没了或
                 // 已标记，再没有别处会来收它）。与 `disconnect` 同一条不变式。
                 const record = devicesTable?.get(devId)
-                if (self !== null && (record === undefined || record.revokedAt !== undefined)) {
-                  self.stop()
+                if (record === undefined || record.revokedAt !== undefined) {
+                  self?.stop('protocol/not-paired')
+                  return
                 }
+                if (self !== null) servingConnections.set(devId, self)
+                scopeDeps.onDeviceEstablished?.(devId)
               },
             },
             ...(binding === undefined ? {} : { binding }),
@@ -1754,6 +1763,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
             metrics: () => metrics.snapshot(),
             relayUrl: () => relayUrlInUse(),
             connection: connectionCard,
+            rosterSync: publisher.state,
             // 启停开关：**按通道**（两个方式两个开关，2026-10-17 用户要求）。
             channels: () => transportChannels?.channels() ?? [],
             advertise: advertiseAdmin,
@@ -1771,6 +1781,7 @@ function buildSteps(assembly: Assembly): LifecycleStep[] {
                   {
                     id,
                     name: record.name,
+                    ...(record.deviceCode === undefined ? {} : { deviceCode: record.deviceCode }),
                     pairedAt: record.pairedAt,
                     revoked: record.revokedAt !== undefined,
                     online: present?.online ?? false,

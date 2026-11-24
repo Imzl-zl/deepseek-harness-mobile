@@ -66,6 +66,7 @@
  * 断开连接"是荒谬的。所以 `skippedOnline` 只对 scope 形状非 0。
  */
 import type { Caps } from '../dsh/caps.js'
+import type { DevicePublishState } from '../device-publish.js'
 import type { ChannelState } from '../transport/channels.js'
 import type { AdvertiseKind, AdvertiseView } from './advertise.js'
 import type { ConnectionSaveResult, ConnectionView } from './connection-card.js'
@@ -96,6 +97,7 @@ export interface ConnectionFetchRoute {
 
 /** 管理面需要的一切（装配层给；这里不认识 cordis，便于纯 Node 单测）。 */
 export interface AdminDeviceRow {
+  deviceCode?: string
   id: string
   name: string
   pairedAt: number
@@ -130,6 +132,7 @@ export interface AdminDeps {
   update: { check(): Promise<UpdateInfo> }
   caps(): Caps
   metrics(): Readonly<Record<string, number>>
+  rosterSync?(): Readonly<DevicePublishState>
   devices(): readonly AdminDeviceRow[]
   /** 当前拨向的中转地址；没有配 `relayUrl` 就是 `null`。 */
   relayUrl(): string | null
@@ -269,6 +272,10 @@ const CONNECTION_PATH = '/api/dsh-mobile/connection'
 const UPDATE_PATH = '/api/dsh-mobile/update'
 
 export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
+  const rosterState = () => deps.rosterSync === undefined ? {} : { rosterSync: deps.rosterSync() }
+  const deviceWrite = async (write: () => Promise<Response>): Promise<Response> => {
+    try { return await write() } catch (error) { return badRequest(error) }
+  }
   const routes: ConnectionFetchRoute[] = [
     {
       path: STATUS_PATH,
@@ -281,6 +288,7 @@ export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
             connectorId: deps.connectorId,
             caps: deps.caps(),
             metrics: deps.metrics(),
+            ...rosterState(),
             relayUrl: deps.relayUrl(),
             devices: deps.devices(),
           }),
@@ -409,15 +417,10 @@ export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
         const known = deps.devices().some((row) => row.id === devId)
         // **不认识的设备 id 不当成功**：那会让页面显示"已停用"而实际上什么都没发生。
         if (!known) return json({ ok: false, error: `未知设备：${devId}` }, 400)
-        try {
+        return deviceWrite(async () => {
           await deps.setEnabled(devId, enabled)
-        } catch (error) {
-          // 失败必须带原因（照 DSH `停用失败：{reason}` / `启用失败：{reason}`，
-          // `presentation.ts:63-70` 的 FAILED_KEYS）—— 静默的失败会让人以为按钮坏了。
-          // id 刚验过还在，这里还抛只可能是并发删掉了那行；归一成 400 把原话带回界面。
-          return badRequest(error)
-        }
-        return json({ ok: true, enabled, devices: deps.devices() })
+          return json({ ok: true, enabled, devices: deps.devices(), ...rosterState() })
+        })
       },
     },
 
@@ -439,8 +442,10 @@ export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
           if (scope !== 'revoked' && scope !== 'all') {
             return badRequest(new Error('scope 必须是 revoked / all'))
           }
-          const result = await deps.removeScope(scope)
-          return json({ ok: true, ...result, devices: deps.devices() })
+          return deviceWrite(async () => {
+            const result = await deps.removeScope(scope)
+            return json({ ok: true, ...result, devices: deps.devices(), ...rosterState() })
+          })
         }
         // **多选删**：显式点出来的几台。单个删除就是长度 1 的数组 ——
         // 与按状态共用同一条服务端路径，差别只在"要不要跳过在线"（见文件头）。
@@ -460,15 +465,17 @@ export function createAdminRoutes(deps: AdminDeps): ConnectionFetchRoute[] {
         // **不认识的 id 不当成功**：那会让界面显示"已删除"而实际上什么都没发生。
         // 400 而不是 404 —— 本文件其余失败都走 `badRequest`，404 是异类。
         if (unknown !== undefined) return badRequest(new Error(`未知设备：${unknown}`))
-        const result = await deps.remove(ids)
-        // **没停用的行不许直接删**（全有或全无）：手机唯一能知道"被移除"的通道是
-        // 换票 401 带原因，硬删会把撤销记录一起抹掉 → 那台手机一直重试。
-        if (result.refusedActive.length > 0) {
-          return badRequest(
-            new Error(`这些设备还在用，请先停用再删除：${result.refusedActive.join('、')}`),
-          )
-        }
-        return json({ ok: true, ...result, devices: deps.devices() })
+        return deviceWrite(async () => {
+          const result = await deps.remove(ids)
+          // **没停用的行不许直接删**（全有或全无）：手机唯一能知道"被移除"的通道是
+          // 换票 401 带原因，硬删会把撤销记录一起抹掉 → 那台手机一直重试。
+          if (result.refusedActive.length > 0) {
+            return badRequest(
+              new Error(`这些设备还在用，请先停用再删除：${result.refusedActive.join('、')}`),
+            )
+          }
+          return json({ ok: true, ...result, devices: deps.devices(), ...rosterState() })
+        })
       },
     },
   ]

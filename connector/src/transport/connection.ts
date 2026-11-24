@@ -187,7 +187,7 @@ export type ConnectionPort = Pick<
 
 export interface Connection {
   start(): void
-  stop(): void
+  stop(reason?: 'protocol/not-paired'): void
   /**
    * 发一帧**业务帧**。
    *
@@ -747,7 +747,7 @@ export function createConnection(options: ConnectionOptions): Connection {
       connect()
     },
 
-    stop() {
+    stop(reason) {
       stopped = true
       cancelTick?.()
       cancelFlush?.()
@@ -759,7 +759,8 @@ export function createConnection(options: ConnectionOptions): Connection {
       const current = socket
       socket = null
       // 关掉在途 socket；它的 onclose 会因为 `stopped` 直接返回，不再重连。
-      current?.close(1000, 'stopped')
+      // Note: 已知撤销用协议终态，不等待名册窗口；见 .agents/notes/implemented/2026-11-24-device-admin-local-commit-and-roster-sync.md。
+      current?.close(reason === undefined ? 1000 : 4003, reason ?? 'stopped')
       // 只有「进行中」的三个态能去 `closed`（迁移表是白名单，`idle → closed` 非法）。
       if (machine.is('connecting', 'handshake', 'serving')) transition('closed')
       // `closed` 与 `backoff` 都能回 `idle`；`idle` 自己不用动。

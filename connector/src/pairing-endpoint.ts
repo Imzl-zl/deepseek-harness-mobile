@@ -15,6 +15,10 @@ export interface PairedDeviceRow {
   dhPubHex: string
   pairingId: string
   pairedAt: number
+  /** 安装级展示/定位码；老客户端行没有，不据名称归并。 */
+  deviceCode?: string
+  /** 登记时的旧身份集合，不包含后续注册的身份。 */
+  replacesAll?: string[]
   tokenHash?: string
   /**
    * 这一行替换掉的上一个 devId（重新配对才有）。
@@ -29,10 +33,12 @@ export interface PairedDeviceRow {
 export interface PreviousPairingRow {
   readonly devId: string
   readonly pairedAt: number
+  readonly replacesAll?: readonly string[]
 }
 
 /**
- * 按 `pairingId` 在设备表里找旧行。**纯函数** —— 单测不需要真域表。
+ * 精确旧 `pairingId` 优先关联无 code 的旧行，其次按完整设备码定位。
+ * 同 code 可有多代待收尾行；本函数只选择 pairedAt/替换锚点，不宣称行唯一。
  *
  * **不按 `revokedAt` 过滤**：重新扫码本身就是停用设备的恢复路径（2026-10-15
  * 定的语义），旧行停没停用过都允许被替换；替换后写进去的新行天然不带吊销标记。
@@ -41,34 +47,84 @@ export interface PreviousPairingRow {
  * @param rows - `[devId, 行]` 的可迭代（域表的 `keys()` + `get()`）
  * @returns 命中的旧行；没有（首配 / 凭据丢过 / 被清理过）返回 `null`
  */
-export function findPreviousPairingRow(
-  rows: Iterable<readonly [string, { pairingId: string; pairedAt: number }]>,
-  pairingId: string,
-): PreviousPairingRow | null {
-  for (const [devId, row] of rows) {
-    if (row.pairingId === pairingId) return { devId, pairedAt: row.pairedAt }
-  }
-  return null
+type ReplacementLinks = {
+  deviceCode?: string
+  replaces?: string
+  replacesAll?: readonly string[]
 }
 
-/**
- * 这台设备（`devId`）替换掉的旧行 —— 重新配对的收尾要删的那一条。
- *
- * **纯函数**：装配层照它删，单测不需要真域表。判据在**自己这行**上：
- * `replaces` 指着的就是它取代的旧 devId。方向不能反 —— 旧行上没有
- * "我被谁替换了"的字段（那样需要改动旧行，且崩溃窗口里会两边都不一致）。
- *
- * @returns 旧 devId（没有 `replaces` 或指向自己 ⇒ 空数组）
- */
+/** 只沿已记录的替换关系；不根据同 code 的实时清单推断未来身份。 */
+function replacementClosure(
+  table: ReadonlyMap<string, ReplacementLinks>,
+  roots: Iterable<string>,
+  exclude?: string,
+  code?: string,
+): string[] {
+  const pending = [...roots]
+  const visited = new Set(exclude === undefined ? [] : [exclude])
+  const result: string[] = []
+  for (let index = 0; index < pending.length; index += 1) {
+    const id = pending[index]!
+    if (visited.has(id)) continue
+    visited.add(id)
+    const row = table.get(id)
+    if (row === undefined) continue
+    if (code !== undefined && row.deviceCode !== undefined && row.deviceCode !== code) continue
+    result.push(id)
+    if (row.replaces !== undefined) pending.push(row.replaces)
+    if (row.replacesAll !== undefined) pending.push(...row.replacesAll)
+  }
+  return result
+}
+
+export function findPreviousPairingRow(
+  rows: Iterable<readonly [string, { pairingId: string; pairedAt: number } & ReplacementLinks]>,
+  pairingId: string,
+  deviceCode?: string,
+): PreviousPairingRow | null {
+  const table = new Map(rows)
+  let exact: PreviousPairingRow | null = null
+  let first: PreviousPairingRow | null = null
+  const matching = new Set<string>()
+  for (const [devId, row] of table) {
+    const sameCode = deviceCode !== undefined && row.deviceCode === deviceCode
+    if (pairingId !== '' && row.pairingId === pairingId
+      && (deviceCode === undefined || row.deviceCode === undefined || sameCode)) {
+      exact = { devId, pairedAt: row.pairedAt }
+    }
+    if (sameCode) {
+      matching.add(devId)
+      // 时间仅继承定位锚点的展示值，不据此猜谁是旧代次。
+      first ??= { devId, pairedAt: row.pairedAt }
+    }
+  }
+  const anchor = exact ?? first
+  if (anchor === null) return null
+  if (exact !== null) matching.add(exact.devId)
+  const replacesAll = replacementClosure(table, matching, undefined, deviceCode).sort()
+  // 无code的既有单行定位保持旧返回形状；有已知旧链时也必须捕获完整集合。
+  return deviceCode === undefined && replacesAll.length <= 1 ? anchor : { ...anchor, replacesAll }
+}
+
+/** 新身份只能裁登记时记录的集合与兼容旧 replaces 链，旧重连不能删未来身份。 */
 export function replacedRowsOf(
-  rows: Iterable<readonly [string, { replaces?: string }]>,
+  rows: Iterable<readonly [string, ReplacementLinks]>,
   devId: string,
 ): string[] {
-  for (const [id, row] of rows) {
-    if (id !== devId) continue
-    return row.replaces === undefined || row.replaces === devId ? [] : [row.replaces]
+  // Note: .agents/notes/implemented/2026-11-24-stable-device-code-and-pairing-continuity.md
+  const table = new Map(rows)
+  const current = table.get(devId)
+  if (current === undefined) return []
+  if (current.replacesAll !== undefined) {
+    // 当代快照是完整事实；目标的关系若后来被重写，不得带进未来身份。
+    return [...new Set(current.replacesAll)].filter(id => {
+      const row = table.get(id)
+      return id !== devId && row !== undefined
+        && (current.deviceCode === undefined || row.deviceCode === undefined || row.deviceCode === current.deviceCode)
+    })
   }
-  return []
+  // 只有旧格式没有快照时，沿已存的replaces关系传递。
+  return replacementClosure(table, current.replaces === undefined ? [] : [current.replaces], devId, current.deviceCode)
 }
 
 export interface PairingEndpointOptions {
@@ -83,7 +139,7 @@ export interface PairingEndpointOptions {
    * 必填而不是可选 —— 可选端口会让"替换旧行"悄悄退化回"又攒一行"，
    * 而那种退化没有任何报错。
    */
-  findPreviousPairing: (pairingId: string) => PreviousPairingRow | null
+  findPreviousPairing: (pairingId: string, deviceCode?: string) => PreviousPairingRow | null
   announce: () => Promise<void>
   log?: ChannelLogger
 }
@@ -96,6 +152,7 @@ interface Commit {
   accepted: PairingAccepted
   issued: IssuedDeviceTokens | null
   registered: boolean
+  registration: PairedDeviceRow | null
   work: Promise<PairingReply> | null
 }
 const REASONS: Record<string, string> = {
@@ -110,6 +167,41 @@ export function createPairingEndpoint(options: PairingEndpointOptions): PairingE
   let current: Commit | null = null
   let expiry: ReturnType<typeof setTimeout> | null = null
   let disposed = false
+  let registrationTail: Promise<void> = Promise.resolve()
+
+  const register = (state: Commit, credentials: IssuedDeviceTokens): Promise<void> => {
+    // 找旧集合→put→registered是一条写链；announce不在链内，不阻塞后续授权。
+    const work = registrationTail.then(async () => {
+      if (disposed) throw new Error('连接器已关闭，授权未保存')
+      if (state.registered) return
+      if (state.registration === null) {
+        const accepted = state.accepted
+        const previous = accepted.previousPairingId === undefined && accepted.device.deviceCode === undefined
+          ? null
+          : options.findPreviousPairing(accepted.previousPairingId ?? '', accepted.device.deviceCode)
+        const replaces = previous !== null && previous.devId !== accepted.device.devId ? previous.devId : undefined
+        const replacesAll = [...new Set(previous?.replacesAll ?? (previous === null ? [] : [previous.devId]))]
+          .filter(id => id !== accepted.device.devId).sort()
+        // 关系随本次授权缓存，写库失败重试不得改写成另一套代次事实。
+        state.registration = {
+          name: accepted.device.name,
+          edPubHex: accepted.device.edPubHex,
+          dhPubHex: accepted.device.dhPubHex,
+          pairingId: accepted.pairingId,
+          pairedAt: previous?.pairedAt ?? accepted.device.pairedAt,
+          tokenHash: tokenHashOf(credentials.deviceToken),
+          ...(accepted.device.deviceCode === undefined ? {} : { deviceCode: accepted.device.deviceCode }),
+          ...(replaces === undefined ? {} : { replaces }),
+          replacesAll,
+        }
+      }
+      await options.putDevice(state.accepted.device.devId, state.registration)
+      state.registered = true
+    })
+    // 只结算写链控制句柄；原work仍失败，由commit如实回报。
+    registrationTail = work.catch(() => {})
+    return work
+  }
 
   const commit = async (state: Commit): Promise<PairingReply> => {
     try {
@@ -117,39 +209,7 @@ export function createPairingEndpoint(options: PairingEndpointOptions): PairingE
       if (disposed) return { ok: false, reason: '连接器已关闭，请重新连接' }
       const accepted = state.accepted
       const credentials = state.issued
-      if (!state.registered) {
-        // **重新配对 = 换凭证、替换旧行**（2026-10-17 用户："为啥每次扫都是
-        // 一个新设备"）：手机自报的 `previousPairingId` 是**行定位符，不是凭据**
-        // —— 授权已由一次性二维码秘密 + 候选持钥证明完成（`pairing.accept` 先验
-        // 秘密才 accept）。据此找到这台手机上一次的记录，换密钥 / 换令牌 /
-        // 换 pairingId 写成新行，**保留首次配对的 pairedAt**。没有旧行（首配、
-        // 凭据丢过、被管理面清理过）就照旧写新行。
-        // 威胁模型与取舍：`.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`。
-        const previous = accepted.previousPairingId === undefined
-          ? null
-          : options.findPreviousPairing(accepted.previousPairingId)
-        // **旧行先留着**，只在新行上记下"我替换了谁"。
-        //
-        // 不能在这里删旧行：轮换与"新令牌送达手机"不是一件事，而 `pair-result`
-        // 可能根本没到手机（`:197-199` 就有这条 warn）。旧行一删，手机手里那把
-        // 凭据就成了孤儿 —— 下次握手 `protocol/not-paired`，手机按契约清凭据，
-        // 用户看到的是"凭据莫名失效"。裁剪改在**新身份真的握手成功之后**
-        // （装配层 `pruneReplaced`），那时旧行才确定没人用了。
-        // 同一个 devId（手机复用密钥）就只覆盖 —— 那种情况没有两行可留。
-        const replaces = previous !== null && previous.devId !== accepted.device.devId
-          ? previous.devId
-          : undefined
-        await options.putDevice(accepted.device.devId, {
-          name: accepted.device.name,
-          edPubHex: accepted.device.edPubHex,
-          dhPubHex: accepted.device.dhPubHex,
-          pairingId: accepted.pairingId,
-          pairedAt: previous?.pairedAt ?? accepted.device.pairedAt,
-          tokenHash: tokenHashOf(credentials.deviceToken),
-          ...(replaces === undefined ? {} : { replaces }),
-        })
-        state.registered = true
-      }
+      await register(state, credentials)
       // **名册上报失败不是配对失败**（2026-11-03）：
       //
       // - 设备行已经落盘、令牌已经签发 —— 手机拿到的是**真凭据**；
@@ -192,7 +252,7 @@ export function createPairingEndpoint(options: PairingEndpointOptions): PairingE
       if ('rejected' in accepted) return { ok: false, reason: REASONS[accepted.rejected] ?? '配对被拒绝' }
       if (current?.offerId !== candidate.offerId) {
         if (expiry !== null) clearTimeout(expiry)
-        current = { offerId: candidate.offerId, accepted, issued: null, registered: false, work: null }
+        current = { offerId: candidate.offerId, accepted, issued: null, registered: false, registration: null, work: null }
         const state = current
         expiry = setTimeout(() => {
           if (current === state) current = null

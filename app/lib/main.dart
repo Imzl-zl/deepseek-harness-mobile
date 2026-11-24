@@ -173,6 +173,7 @@ class _DshMobileAppState extends State<DshMobileApp>
   Iterable<AppModel> get _liveApps => <AppModel>[..._sessions.live, ?_unpaired];
 
   bool _booting = true;
+  String? _bootError;
 
   /// **已配对的电脑**（凭据层的派生读：`PairingStore.hosts()`）。
   ///
@@ -228,26 +229,6 @@ class _DshMobileAppState extends State<DshMobileApp>
   /// 配对页顶部横幅的一句话（**为什么会被送到这一页**）；主动进来时为 `null`。
   String? _pairingNotice;
 
-  /// 进配对页时上报给电脑侧的**旧配对标识**（`pair-commit` 的 `previousPairingId`）。
-  ///
-  /// 两个来源：① 凭据还在（直接进配对页）—— 现算；② 凭据刚被"重新配对 /
-  /// 断开重来"清掉 —— 清之前抓成快照。没有它，电脑侧认不出"这是同一台手机
-  /// 在换凭证"，只会又攒一行（2026-10-17 真机：一个手机扫 5 次 = 5 行）。
-  /// 取值器按二维码的 `pcId` 过滤：换一台电脑扫它是 null（那边没有旧行可替换）。
-  /// 取舍与威胁模型：`.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`。
-  String? Function(String pcId)? _previousPairingIdOf;
-
-  /// 刷新旧配对标识快照。**凭据已被清掉时不清空** —— 那正是要靠清之前的
-  /// 快照的时候（`_recovery.repair` 先清凭据、再开配对页）。
-  void _refreshRePairHint() {
-    final credentials = _credentials;
-    if (credentials == null || credentials.pairingId.isEmpty) return;
-    final pairingId = credentials.pairingId;
-    final pcId = credentials.pcId;
-    _previousPairingIdOf = (String scannedPcId) =>
-        pcId.isNotEmpty && pcId == scannedPcId ? pairingId : null;
-  }
-
   /// 前后台态的上报者（契约 §2.2、§9）：**唯一的**那个观察者。
   ///
   /// 它只把 Flutter 的态翻成"前台/后台"，扇出在 [_onAppLifecycle] ——
@@ -294,13 +275,8 @@ class _DshMobileAppState extends State<DshMobileApp>
   void initState() {
     super.initState();
     _recovery = ConnectionRecovery(
-      // 清凭据**之前**先把旧配对标识抓成快照：重新配对要靠它替换电脑侧的
-      // 旧行，而清完之后手机就没有"我上次配过"的记忆了。
-      clearCredentials: () async {
-        _refreshRePairHint();
-        // **只清这一台**：身份被某台电脑拒掉，不该顺手把别的电脑的配对也删了。
-        await pairingStore.clear();
-      },
+      // 只清当前电脑；旧定位信息由同一PairingStore先持久记录，再清秘密。
+      clearCredentials: pairingStore.clear,
       openPairing: _enterPairing,
       report: _reportConnectionDefect,
     );
@@ -309,7 +285,26 @@ class _DshMobileAppState extends State<DshMobileApp>
     // 而 `_app` 是 `_boot()` 建的。两条 `unawaited` 并行跑的话，
     // 主题恢复会读到 null（`_readPreference` 在 `_app == null` 时返回 null）
     // —— 于是用户选过的主题每次重启都被打回"跟随系统"（2026-10-19 真机复现）。
-    unawaited(_boot().then((_) => _restoreAppearance()));
+    unawaited(_bootWithError());
+  }
+
+  Future<void> _bootWithError() async {
+    if (mounted) {
+      setState(() {
+        _booting = true;
+        _bootError = null;
+      });
+    }
+    try {
+      await _boot();
+      await _restoreAppearance();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _booting = false;
+        _bootError = '读取本机配对或启动失败：$error';
+      });
+    }
   }
 
   /// 读回**外观**偏好（主题三档 / 透明度 / 壁纸）并落到界面层。
@@ -558,7 +553,6 @@ class _DshMobileAppState extends State<DshMobileApp>
   /// 以为"我刚又被拒了一次"。
   void _openPairing() {
     // 直接进配对页（凭据还在）：现算旧配对标识。被清掉之后进来的走快照。
-    _refreshRePairHint();
     setState(() {
       _pairing = true;
       _pairingNotice = null;
@@ -573,16 +567,6 @@ class _DshMobileAppState extends State<DshMobileApp>
     // 平时只由 `_switchTo` 记 —— 新增这一路不是"切换"，不在这里补就永远没有
     // 「切回上一台」那一行。
     final previousHost = _credentials?.pcSignPubHex;
-    // **配对页的确认卡就是"公网明文"的同意书**：那一步把中转地址与电脑身份
-    // 摆给用户看，并（地址是公网 `ws://` 时）明写"元数据可见，点确认即接受"。
-    // 这里把这次同意落成用户级偏好 —— 否则配对成功之后，每一次换票都会被
-    // 地址边界拒（症状是"配上了、一直连不上"）。
-    final relayUri = Uri.tryParse(result.offer.relayUrl);
-    if (relayUri != null &&
-        relayUri.scheme == 'ws' &&
-        !isPrivateOrLoopback(relayUri.host)) {
-      await _app?.setAllowPlaintextPublic(true);
-    }
     // 端点表的种子：**局域网直连在前、中转在后**（`core/pairing.dart` 的
     // `pairingEndpoints` —— 那里有单测，这里只负责落盘）。
     //
@@ -610,6 +594,16 @@ class _DshMobileAppState extends State<DshMobileApp>
       devId: result.devId,
     );
     await pairingStore.save(credentials);
+    // **配对页的确认卡就是"公网明文"的同意书**：那一步把中转地址与电脑身份
+    // 摆给用户看，并（地址是公网 `ws://` 时）明写"元数据可见，点确认即接受"。
+    // 这里把这次同意落成用户级偏好 —— 否则配对成功之后，每一次换票都会被
+    // 地址边界拒（症状是"配上了、一直连不上"）。
+    final relayUri = Uri.tryParse(result.offer.relayUrl);
+    if (relayUri != null &&
+        relayUri.scheme == 'ws' &&
+        !isPrivateOrLoopback(relayUri.host)) {
+      await _app?.setAllowPlaintextPublic(true);
+    }
     // 配对可能新增了一台（也可能是替换同一台的行）：列表重读一次。
     final hosts = await pairingStore.hosts();
     if (!mounted) return;
@@ -640,7 +634,6 @@ class _DshMobileAppState extends State<DshMobileApp>
       }
     });
     // 下一次重新配对要报**新**的 pairingId（旧的那一行已经被替换掉了）。
-    _refreshRePairHint();
     await app.start();
   }
 
@@ -918,6 +911,28 @@ class _DshMobileAppState extends State<DshMobileApp>
   BuildContext get _navContext => navigatorKey.currentState!.overlay!.context;
 
   Widget _body() {
+    if (_bootError != null) {
+      return Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(_bootError!),
+                  const SizedBox(height: 12),
+                  FilledButton(
+                    onPressed: () => unawaited(_bootWithError()),
+                    child: const Text('重试读取'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     if (_booting) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
@@ -943,7 +958,11 @@ class _DshMobileAppState extends State<DshMobileApp>
         // 不用 SnackBar：它 4 秒就消失，而用户是被自动送到这里的。
         notice: _pairingNotice,
         // 旧配对标识（重新配对同一台电脑时电脑侧据此替换旧行）。
-        previousPairingIdOf: _previousPairingIdOf,
+        loadDeviceCode: pairingStore.getOrCreateDeviceCode,
+        previousPairingIdOf: (offer) => pairingStore.previousPairingIdFor(
+          pcSignPubHex: offer.pcSignPubHex,
+          pcId: offer.pcId,
+        ),
         // 局域网地址的拨号顺序要用它（同一 /24 的先拨）；拿不到就是 null（不猜）。
         myIpv4: app.myLanIpv4,
         // 先试哪条路由设备级策略决定（与连接共用同一个设置）。
@@ -1863,7 +1882,7 @@ Future<AppModel> _assemble(
     client: client,
     // 本机设备 id：**只用于展示**（设置页的「设备短码」，与电脑面板对照）。
     // 它不是授权判据；`hello` 里的那个仍由连接层从同一份凭据取。
-    deviceId: deviceId,
+    deviceId: await pairingStore.getOrCreateDeviceCode(),
     // 冷启动读回本地条目（判据见 `core/session_restore.dart`）。
     readLocalItems: (sid) => store.itemsOf(sid),
     // 通知端口与后台保活：**app 级单例**（`data/app_services.dart`），

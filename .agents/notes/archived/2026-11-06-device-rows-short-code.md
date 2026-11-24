@@ -1,6 +1,8 @@
 # 设备行按配对身份保留：加短码、改列名，不按手机聚合
 
-Status: implemented
+Status: archived
+
+> 由 [.agents/notes/implemented/2026-11-24-stable-device-code-and-pairing-continuity.md](<.agents/notes/implemented/2026-11-24-stable-device-code-and-pairing-continuity.md>) 取代显示/关联结论；鉴权密钥轮换边界沿用。
 
 ## Problem
 

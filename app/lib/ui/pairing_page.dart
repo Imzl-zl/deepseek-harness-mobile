@@ -27,17 +27,12 @@
 ///
 /// 所以错误原样带出（含错误码）而不是笼统的"配对失败"——后者会让人在"码不对"时去查网络。
 ///
-/// ## 为什么不做相机扫码（此刻）
-///
-/// 相机权限 + 各端扫码库是三端能力包的事（`packages/`），而它的判据是
-/// "App 不在前台也要工作吗"（C1）—— 扫码显然不是。所以这里先做**粘贴二维码内容**：
-/// 功能等价（二维码里就是一段 JSON），零权限、零依赖、三端同样能跑，而且是**可测**的。
+/// 摄像头与粘贴只负责取得同一二维码载荷，后续探测/授权/保存共用这条链。
 library;
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../core/crypto.dart';
 import '../core/endpoint.dart' show isPrivateOrLoopback;
@@ -118,6 +113,7 @@ class PairingPage extends StatefulWidget {
     this.allowInsecurePublic = false,
     this.notice,
     this.previousPairingIdOf,
+    this.loadDeviceCode,
     this.myIpv4,
     this.prefer = RoutePolicy.auto,
   });
@@ -160,15 +156,18 @@ class PairingPage extends StatefulWidget {
   /// 手动点"重新配对"也给一句（"已清掉本机凭据"），两条路同一字段。
   final String? notice;
 
-  /// **旧配对标识**的取值器：给这台电脑的 `pcId`，返回本机上次配对的
-  /// `pairingId`（没有就 `null`）。
+  /// 按二维码钉死的目标电脑公钥异步读取旧 `pairingId`，并核对 `pcId`。
+  /// 没有目标槽/非凭据hint就返回null，不用当前可见电脑或名称猜。
   ///
   /// 重新配对（换密钥）时电脑侧靠它**替换旧行**而不是又攒一行 —— 2026-10-17
   /// 用户："为啥每次扫都是一个新设备"。它**不是凭据**（授权仍是这一次的二维码
   /// 秘密），只是行定位符，且只在 `pair-commit` 的密文里过线。
-  /// 装配层（`main.dart`）注入：凭据还在时现算，被"重新配对"清掉之前抓快照。
+  /// 装配层注入唯一PairingStore，清槽前的hint也在该所有者内持久记录。
   /// 取舍与威胁模型：`.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`。
-  final String? Function(String pcId)? previousPairingIdOf;
+  final Future<String?> Function(PairingOffer offer)? previousPairingIdOf;
+
+  /// 安装级设备显示/定位码；来源是系统安全存储，不是硬件权限或鉴权密钥。
+  final Future<String> Function()? loadDeviceCode;
 
   /// 本机当前的局域网 IPv4（`AppModel.myLanIpv4`）。
   ///
@@ -191,6 +190,10 @@ class _PairingPageState extends State<PairingPage> {
   final _input = TextEditingController();
   String? _error;
   bool _busy = false;
+  bool _probing = false;
+  int _probeGeneration = 0;
+  Completer<PairingDial?>? _cancelProbe;
+  String? _deviceCode;
 
   /// 忙碌时的进度文案（配对链有好几步，用户该看到自己在哪一步）。
   String _busyLabel = '处理中…';
@@ -227,6 +230,9 @@ class _PairingPageState extends State<PairingPage> {
 
   @override
   void dispose() {
+    _probeGeneration += 1;
+    final cancelled = _cancelProbe;
+    if (cancelled != null && !cancelled.isCompleted) cancelled.complete(null);
     // 页面上还挂着候选连接时必须关掉它们：配对是短交互，而"用户退了页面、
     // 电脑侧那条候选连接还开着"正是要避免的状态（`pairing-v2.md` §6）。
     // 两条都通时**两条都在电脑上开着**，所以收的是整组，不是一条。
@@ -251,7 +257,7 @@ class _PairingPageState extends State<PairingPage> {
       context,
     ).push<String>(MaterialPageRoute(builder: (_) => const QrScanPage()));
     // `null` = 用户按返回退出取景;空串 = 扫到了但不是我们要的载荷。
-    if (scanned == null || scanned.isEmpty) return;
+    if (!mounted || scanned == null || scanned.isEmpty) return;
     _input.text = scanned;
     await _connect();
   }
@@ -265,8 +271,13 @@ class _PairingPageState extends State<PairingPage> {
   Future<void> _connect() async {
     final text = _input.text.trim();
     if (text.isEmpty) return;
+    final previous = _cancelProbe;
+    if (previous != null && !previous.isCompleted) previous.complete(null);
+    final generation = ++_probeGeneration;
+    final cancelled = _cancelProbe = Completer<PairingDial?>();
     setState(() {
       _busy = true;
+      _probing = true;
       _error = null;
       _result = null;
       _offer = null;
@@ -287,7 +298,8 @@ class _PairingPageState extends State<PairingPage> {
       if (mounted) setState(() => _offer = offer);
       // 旧配对标识：**只有扫的是同一台电脑**（pcId 相同）才报上去。
       // 换一台电脑时它是 null —— 那边没有旧行可替换，报了也白报。
-      final previousPairingId = widget.previousPairingIdOf?.call(offer.pcId);
+      final previousPairingId = await widget.previousPairingIdOf?.call(offer);
+      final deviceCode = await widget.loadDeviceCode?.call();
       // 设备身份：主种子 + 派生的两把公钥。主种子此刻只在本页内存里，
       // 确认并配对成功之后才进系统安全存储。
       final masterSeedHex = toHex(randomBytes(32));
@@ -296,8 +308,27 @@ class _PairingPageState extends State<PairingPage> {
         offer.pcSignPubHex,
       )).substring(0, 16);
 
-      if (mounted) setState(() => _busyLabel = '正在检测两条路径…');
+      if (!mounted || generation != _probeGeneration) return;
+      setState(() {
+        _masterSeedHex = masterSeedHex;
+        _previousPairingId = previousPairingId;
+        _deviceCode = deviceCode;
+        _pcFingerprint = fingerprint;
+        _busyLabel = '正在检测可用路径…';
+      });
       probe = await probePairing(
+        cancelExcept: cancelled.future,
+        onRoute: (route) {
+          if (!mounted || generation != _probeGeneration) return;
+          final partial = PairingProbe([...?_probe?.routes, route]);
+          final chosen = _selectedDial ?? _preselect(partial, widget.prefer);
+          setState(() {
+            _probe = partial;
+            _selectedDial = chosen;
+            _attempt = chosen == null ? null : partial.attemptOf(chosen);
+            if (chosen != null) _busy = false;
+          });
+        },
         offer: offer,
         identity: identity,
         deviceName: widget.deviceName,
@@ -308,13 +339,12 @@ class _PairingPageState extends State<PairingPage> {
         myIpv4: widget.myIpv4,
         prefer: widget.prefer,
       );
-      if (!mounted) {
-        // 页面已经退了：把刚建起来的候选连接收掉，别留在电脑上。
-        await probe.cancelAll();
+      if (!mounted || generation != _probeGeneration) {
+        // 用户已选定或退出：选定的通道属于提交，不能被迟到探测收掉。
         return;
       }
       final done = probe;
-      final chosen = _preselect(done, widget.prefer);
+      final chosen = _selectedDial ?? _preselect(done, widget.prefer);
       setState(() {
         _probe = done;
         _masterSeedHex = masterSeedHex;
@@ -338,7 +368,12 @@ class _PairingPageState extends State<PairingPage> {
       // 少了这一支，用户看到的是"点了没反应"——今天真机上就是这么白等了十几分钟。
       _showError('配对没走通：$error');
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted && generation == _probeGeneration) {
+        setState(() {
+          _busy = false;
+          _probing = false;
+        });
+      }
     }
   }
 
@@ -386,6 +421,7 @@ class _PairingPageState extends State<PairingPage> {
 
   /// 用户改选另一条（只有通了的那行可点）。
   void _select(PairingDial dial) {
+    if (_busy) return;
     final attempt = _probe?.attemptOf(dial);
     if (attempt == null || dial == _selectedDial) return;
     setState(() {
@@ -400,16 +436,25 @@ class _PairingPageState extends State<PairingPage> {
     final attempt = _attempt;
     final masterSeedHex = _masterSeedHex;
     if (attempt == null || masterSeedHex == null) return;
+    _probeGeneration += 1;
+    final cancelled = _cancelProbe;
+    if (cancelled != null && !cancelled.isCompleted) {
+      cancelled.complete(_selectedDial);
+    }
     setState(() {
+      _probing = false;
       _busy = true;
       _error = null;
       _busyLabel = '提交配对码…';
     });
     // 用户选定了这一条：另一条已开的通道现在就该收掉 ——
     // 电脑上同时挂着两条候选，既没意义，也让"这台设备到底走了哪条"说不清。
-    await _probe?.cancelExcept(_selectedDial);
     try {
-      final ack = await attempt.commit(previousPairingId: _previousPairingId);
+      await _probe?.cancelExcept(_selectedDial);
+      final ack = await attempt.commit(
+        previousPairingId: _previousPairingId,
+        deviceCode: _deviceCode,
+      );
       final identity = attempt.identity;
       final result = PairingResult(
         offer: attempt.offer,
@@ -423,15 +468,16 @@ class _PairingPageState extends State<PairingPage> {
         pcId: ack.pcId,
         devId: ack.devId,
       );
-      if (!mounted) return;
-      setState(() {
-        // 提交完这条短连接就关了（`PairingAttempt.commit` 的 finally）：
-        // 之后再点一次"确认"没有意义，所以把它摘掉。
-        _attempt = null;
-        _probe = null;
-        _selectedDial = null;
-        _result = result;
-      });
+      if (mounted) {
+        setState(() {
+          _attempt = null;
+          _probe = null;
+          _selectedDial = null;
+          _result = result;
+        });
+      }
+      // Note: 回执收到即持久保存，辅助 SAS 不再充当落盘门；见 .agents/notes/implemented/2026-11-24-stable-device-code-and-pairing-continuity.md。
+      await _completePairing(result);
     } on ProtocolException catch (error) {
       // **如实报**：回执丢失时这一句是"结果待确认"，而不是"没配对过"。
       _showError('${error.message}（${error.code.wire}）');
@@ -448,11 +494,34 @@ class _PairingPageState extends State<PairingPage> {
     }
   }
 
+  Future<void> _completePairing(PairingResult result) async {
+    if (mounted) {
+      setState(() {
+        _busy = true;
+        _error = null;
+        _busyLabel = '保存配对并连接…';
+      });
+    }
+    try {
+      await widget.onPaired(result);
+      if (mounted) setState(() => _result = null);
+    } catch (error) {
+      _showError('电脑已经登记这台设备，本机保存或连接未完成：$error。可以重试继续，不需要重扫。');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   /// 用户放弃这一轮候选：关掉所有已开通道，回到可重扫的状态。
   Future<void> _cancelAttempt() async {
+    _probeGeneration += 1;
+    final cancelled = _cancelProbe;
+    if (cancelled != null && !cancelled.isCompleted) cancelled.complete(null);
     final probe = _probe;
     final attempt = _attempt;
     setState(() {
+      _busy = false;
+      _probing = false;
       _attempt = null;
       _probe = null;
       _selectedDial = null;
@@ -556,7 +625,9 @@ class _PairingPageState extends State<PairingPage> {
           // 上下文切换，见
           // `.agents/notes/implemented/2026-10-14-pairing-scans-in-app.md`
           FilledButton.icon(
-            onPressed: _busy || attempt != null ? null : _scan,
+            onPressed: _busy || _probing || attempt != null || result != null
+                ? null
+                : _scan,
             style: FilledButton.styleFrom(
               backgroundColor: c.accentBlue,
               foregroundColor: c.onAccent,
@@ -607,7 +678,11 @@ class _PairingPageState extends State<PairingPage> {
           // **这张码有哪几条路**：扫完就摆出来。降级码在这里显式说"只能同一 WiFi"，
           // 两条都在时说明先试哪条、正在试哪条（`_busyLabel` 就是当前那一步）。
           if (_offer != null && _result == null) ...[
-            PairingOfferRoutes(offer: _offer!, busy: _busy, stage: _busyLabel),
+            PairingOfferRoutes(
+              offer: _offer!,
+              busy: _busy || _probing,
+              stage: _busyLabel,
+            ),
             const SizedBox(height: 12),
             // **码里写了什么**（上面）与**此刻实测哪条通**（这里）是两件事：
             // 前者是电脑出码时的承诺，后者是真的拨通了。分开画，用户不用从
@@ -616,7 +691,7 @@ class _PairingPageState extends State<PairingPage> {
               offer: _offer!,
               probe: _probe,
               selected: _selectedDial,
-              busy: _busy,
+              busy: _probing,
               policy: widget.prefer,
               onSelect: _select,
             ),
@@ -624,7 +699,9 @@ class _PairingPageState extends State<PairingPage> {
           ],
           FilledButton(
             // 已经有一条候选通道挂着时不许再开一条（中转对同一台设备只该有一条）。
-            onPressed: _busy || attempt != null ? null : _connect,
+            onPressed: _busy || _probing || attempt != null || result != null
+                ? null
+                : _connect,
             style: FilledButton.styleFrom(
               backgroundColor: c.accentBlue,
               foregroundColor: c.onAccent,
@@ -652,10 +729,9 @@ class _PairingPageState extends State<PairingPage> {
           ],
           if (result != null) ...[
             const SizedBox(height: 16),
-            _DoneCard(
-              result: result,
-              deviceName: widget.deviceName,
-              onDone: () => unawaited(widget.onPaired(result)),
+            FilledButton(
+              onPressed: _busy ? null : () => _completePairing(result),
+              child: const Text('重试保存并连接'),
             ),
           ],
         ],
@@ -835,122 +911,6 @@ class _IdentityCard extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// 完成卡：配对已经成功（设备令牌已拿到），把它记下来再进主界面。
-///
-/// SAS 在这里是**辅助指纹**：它由两端各算一遍，值相同说明双方看到的是同一组公钥。
-/// v2 的授权判据不依赖它（那由二维码固定的电脑身份 + 候选持钥证明 + 配对码承担）。
-class _DoneCard extends StatelessWidget {
-  const _DoneCard({
-    required this.result,
-    required this.deviceName,
-    required this.onDone,
-  });
-
-  final PairingResult result;
-  final String deviceName;
-  final VoidCallback onDone;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.dshColors;
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: c.layer1,
-        borderRadius: BorderRadius.circular(DshRadius.md),
-        border: Border.all(color: c.layer3),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '配对成功',
-            style: TextStyle(
-              fontSize: 13,
-              color: c.labelPrimary,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '电脑已经登记这台设备并签发了设备令牌。下面是这台设备的辅助指纹，'
-            '与电脑侧记录里的值相同（不参与授权判定）。',
-            style: TextStyle(fontSize: 11, color: c.labelTertiary),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              _SasDisplay(sas: result.sas),
-              const Spacer(),
-              IconButton(
-                tooltip: '复制',
-                onPressed: () => unawaited(
-                  Clipboard.setData(ClipboardData(text: result.sas)),
-                ),
-                icon: DshIcon('copy', size: 16, color: c.labelTertiary),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _Field(label: '设备名', value: deviceName),
-          _Field(label: '设备 ID', value: result.devId),
-          _Field(label: '电脑 ID', value: result.pcId),
-          _Field(label: '中转', value: result.offer.relayUrl),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: onDone,
-              style: FilledButton.styleFrom(
-                backgroundColor: c.roleContext,
-                foregroundColor: c.onAccent,
-              ),
-              child: const Text('完成'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 6 位数字（等宽、放大 —— 它是给人看/念的东西）。
-class _SasDisplay extends StatelessWidget {
-  const _SasDisplay({required this.sas});
-
-  final String sas;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.dshColors;
-    return Row(
-      children: [
-        for (final digit in sas.split(''))
-          Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: Container(
-              width: 26,
-              height: 34,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: c.layer2,
-                borderRadius: BorderRadius.circular(DshRadius.xs),
-              ),
-              child: Text(
-                digit,
-                style: TextStyle(
-                  fontSize: 18,
-                  fontFamily: 'monospace',
-                  color: c.labelPrimary,
-                ),
-              ),
-            ),
-          ),
-      ],
     );
   }
 }

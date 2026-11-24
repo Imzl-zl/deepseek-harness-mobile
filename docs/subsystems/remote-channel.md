@@ -878,7 +878,7 @@ ctx.get('typertGateway').wireStream.open('$events', { args: {} }, uplink, peer, 
 
 ```text
 dsh_mobile_meta      表 meta        { schema: 1, connectorId, relayUrl, connTokenSecretRef, aliasVersion }
-dsh_mobile_devices   表 devices     { devId: { edPub(32B), dhPub(32B), name, pairedAt, pairingId, revokedAt? } }
+dsh_mobile_devices   表 devices     { devId: { edPub(32B), dhPub(32B), name, pairedAt, pairingId, tokenHash?, revokedAt?, deviceCode?, replaces?, replacesAll? } }
 dsh_mobile_aliases   表 by_sid      { sid: dshSessionId }
                      表 by_session  { dshSessionId: sid }
 dsh_mobile_dedupe    表 dedupe      { requestId: { at, status, resultRef } }   // 有界 10000 / TTL 24h
@@ -895,11 +895,7 @@ dsh_mobile_windows   表 windows     { sid: { frames: BoundedBuffer, trimmedUpto
     不是"最后在线"；管理面把这一列叫「最近答话」，没答过就是「还没答过话」。
   - 管理面的「此刻连接」就是这份内存态：连接器重启后显示「未连接」，直到手机重连；
     它不代表这一行废弃，也不代表这台设备被停用。
-- **设备行按配对身份，不按手机聚合**：每次扫码生成新主种子 → 新 `devId` → 新行（决策见
-  `.agents/notes/implemented/2026-10-15-new-identity-per-pairing-is-intentional.md`）。
-  管理面每行显示 `devId` 前 6 位的「设备短码」；手机「设置 → 关于与连接」显示同一个短码，
-  用户据此认出"哪一行是手里这台"。**不做 stable phone id**：那会把"换身份"变成需要额外入口的
-  特殊操作，并让重新配对自动解禁旧行（同一篇笔记的备选 1 已否）。
+- **安装级设备码与鉴权身份分开**：手机本机安全存储持有稳定 `deviceCode`，管理面和手机设置对照同一短码；重新配对仍轮换密钥/`devId`/令牌。电脑将已知旧身份集合作为 `replacesAll` 随新行持久化，新身份正式鉴权且当前仍有效时才退役该快照中的旧记录。无设备码且旧定位丢失的历史行不按名字补关联。完整契约见 [首配与连续性](pairing-v2.md) §5。
 - schema 版本与迁移写在 `meta.schema`;**不使用** DSH 的会话落盘格式(v4 且仍在演进,见 `../channel-review-notes.md` §2.7)。
 - **storage domain 本身没有迁移函数**:介质格式的演进靠声明 —— `version` + `compatibleVersions` + `layout` + `invalidRecords`(`packages/storage/storage-domain/src/spec.ts:35-72`);**业务** schema 的逐代迁移要自己按 `meta.schema` 做。两个号互相独立。
 
@@ -1074,7 +1070,7 @@ job-settled        后台任务终结     turn-failed       轮次异常结束
     ```
     中转替换候选公钥、或把 A 设备的 `confirm` 挪给 B 邀请,都会在这里验签失败(电脑侧同一处见 `connector/src/device-connection.ts`)。
   - **换票请求里没有秘密**(§3):`{ "v": 2, "offerId": "<22 字符 base64url>", "devPubEd": "<hex>", "devPubDh": "<hex>", "name": "我的手机" }` —— 秘密只在受限通道的 `pair-commit` 密文里出现,中转全程看不到它。
-  - **配对两帧要封箱**(§3):`pair-commit` 的载荷是 `{ "v": 2, "offerId": "<…>", "code": "<…>", "previousPairingId": "<43 字符 base64url,可选>" }`,`pair-result` 的载荷是回执。v1 的明文 `pair` / `pair-ack` 已删除,旧形状被拒(`426`)。`previousPairingId` 是**重新配对**的手机自报的旧配对标识:电脑侧据此替换旧行(换密钥/令牌,保留首次 `pairedAt`),同一台手机不再攒行。它是**行定位符不是凭据**(授权仍是这一次的二维码秘密),只在密文里过线;规格与威胁模型见 `pairing-v2.md` §5。
+  - **配对两帧要封箱**(§3):`pair-commit` 的载荷是 `{ "v": 2, "offerId": "<…>", "code": "<…>", "previousPairingId": "<43 字符 base64url,可选>", "deviceCode": "<22 字符 base64url,可选>" }`,`pair-result` 的载荷是回执。v1 的明文 `pair` / `pair-ack` 已删除,旧形状被拒(`426`)。`previousPairingId` 是**重新配对**的手机自报的旧配对标识:电脑侧据此替换旧行(换密钥/令牌,保留首次 `pairedAt`),同一台手机不再攒行。它是**行定位符不是凭据**(授权仍是这一次的二维码秘密),只在密文里过线;规格与威胁模型见 `pairing-v2.md` §5。
   - **中转换票与路由靠公开邀请**:电脑侧出码时把 `offerId` 登记给中转(秘密**不登记**);手机换票带同一个 `offerId`,中转据此把票与那台连接器绑定,并**为这次连接生成 `channelId`**,通过控制面向电脑侧要一条数据连接(`relay.open`)。
     - **过期与断线都失效**:登记 5 分钟过期;连接器断开时它全部未认领的登记立即失效(否则设备会拿到一张指向一条已经不存在的连接的票)。
     - **设备必须先换到票才能升级**(`relay/src/server.ts` 的 `/ws/device` 要 `ticket`),受限通道也一样。

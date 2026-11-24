@@ -108,3 +108,35 @@ test('既有 pairingId 与辅助 SAS 保持确定性，身份改变会改变摘�
   assert.notEqual(sasOf(PC_ED, 'c'.repeat(64)), sasOf(PC_ED, 'e'.repeat(64)))
   assert.notEqual(sasOf(PC_ED, 'c'.repeat(64)), sasOf('f'.repeat(64), 'c'.repeat(64)))
 })
+
+
+const DEVICE_CODE = 'abcdefghijklmnopqrstuv'
+test('设备码仅在已授权提交中保留，不改变鉴权 devId 或公钥', { timeout: 60_000 }, () => {
+  const pairing = setup()
+  const offer = pairing.offer()
+  const peer = candidate(offer)
+  const accepted = pairing.accept({ ...request(offer), deviceCode: DEVICE_CODE }, peer)
+  assert.ok('device' in accepted)
+  assert.equal(accepted.device.deviceCode, DEVICE_CODE)
+  assert.equal(accepted.device.edPubHex, peer.devPubEd)
+  assert.equal(accepted.device.dhPubHex, peer.devPubDh)
+  const withoutCode = setup()
+  const otherOffer = withoutCode.offer()
+  const other = withoutCode.accept(request(otherOffer), candidate(otherOffer))
+  assert.ok('device' in other)
+  assert.equal(accepted.device.devId, other.device.devId)
+})
+test('坏设备码明确拒绝，不忽略成首配也不消费邀请', { timeout: 60_000 }, () => {
+  for (const deviceCode of ['', 'x'.repeat(21), 'x'.repeat(23), '!'.repeat(22), 1]) {
+    const pairing = setup()
+    const offer = pairing.offer()
+    assert.deepEqual(pairing.accept({ ...request(offer), deviceCode } as never, candidate(offer)), { rejected: 'invalid' })
+    assert.equal(pairing.pending, true)
+  }
+})
+test('设备码不能代替二维码秘密或候选持钥上下文', { timeout: 60_000 }, () => {
+  const pairing = setup()
+  const offer = pairing.offer()
+  assert.deepEqual(pairing.accept({ ...request(offer, 'Z'.repeat(22)), deviceCode: DEVICE_CODE }, candidate(offer)), { rejected: 'mismatch' })
+  assert.equal(pairing.pending, true)
+})

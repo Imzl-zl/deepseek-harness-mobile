@@ -220,6 +220,13 @@ window.__ModuleLoader__.load({
       versionOpen: '打开 npm 页面',
       channelsTitle: '通道与地址',
       devicesTitle: '已配对设备',
+      rosterPending: '本地已生效，中转名册正在同步',
+      rosterSynced: '最近一次中转名册已同步',
+      rosterDeferred: '本地已生效，中转名册待重连后同步',
+      rosterError: '本地已生效，中转名册同步失败：{reason}',
+      rosterUnknown: '中转名册同步状态未知',
+      rosterRefresh: '刷新同步状态',
+      legacyPairingShort: '旧配对短码 {code}',
       pairTitle: '配对新手机',
       pairHint: '一次性，5 分钟内有效；出码后列出这张码实际包含的路径。',
       // **只报通道事实，不预测码内容**（2026-11-17）：码里写哪几条路由出码那一刻的
@@ -327,7 +334,7 @@ window.__ModuleLoader__.load({
       disabled: '已停用',
       neverSeen: '还没答过话',
       deviceShort: '短码 {code}',
-      devicesHint: '每行是一条配对身份（重扫 = 新行）；短码对照手机「设置 → 关于与连接」的设备短码。',
+      devicesHint: '设备码对照手机「设置 → 关于与连接」；正常覆盖升级和重配不变。新身份连上后替换旧记录，未关联的历史配对请确认后清理。',
       lastAnswered: '最近答话',
       connectionNow: '此刻连接',
       justNow: '刚刚',
@@ -392,6 +399,13 @@ window.__ModuleLoader__.load({
       versionOpen: 'Open npm page',
       channelsTitle: 'Channels & addresses',
       devicesTitle: 'Paired devices',
+      rosterPending: 'Local change saved; relay roster is syncing',
+      rosterSynced: 'The last relay roster update was synced',
+      rosterDeferred: 'Local change saved; relay offline, roster sync deferred until reconnect',
+      rosterError: 'Local change saved; relay roster sync failed: {reason}',
+      rosterUnknown: 'Relay roster sync status unknown',
+      rosterRefresh: 'Refresh sync status',
+      legacyPairingShort: 'Legacy pairing {code}',
       pairTitle: 'Pair a new phone',
       pairHint: 'Single use, valid for 5 minutes. The paths included are listed after issuing.',
       pairChannelsBoth: 'Channels: direct listener running · relay connected',
@@ -472,7 +486,7 @@ window.__ModuleLoader__.load({
       disabled: 'disabled',
       neverSeen: 'no answers yet',
       deviceShort: 'code {code}',
-      devicesHint: 'Each row is one pairing identity (re-scan = new row); match the short code with Settings → About on the phone.',
+      devicesHint: 'Match the device code with Settings → About on the phone. Updates and re-pairing keep it stable; old credentials retire after the new connection. Review unlinked legacy pairings before removal.',
       lastAnswered: 'Last answered',
       connectionNow: 'Connected now',
       justNow: 'just now',
@@ -1077,48 +1091,53 @@ window.__ModuleLoader__.load({
       /** 对话框挂住时记录的"打开前焦点"，关闭后还回去。 */
       const restoreFocus = useRef(null)
 
-      const refresh = useCallback(async () => {
-        try {
-          // **四个读面一起拉**：status 管设备与连接态，/transport 管按方式的
-          // 通道开关，/advertise 管"上报给手机哪些地址"，/connection 管
-          // "这台电脑怎么连中转"。只拉一个的话，另一个面永远停在空态（假数据）。
-          const [statusResponse, transportResponse, advertiseResponse, connectionResponse] = await Promise.all([
-            fetch(STATUS), fetch(TRANSPORT), fetch(ADVERTISE), fetch(CONNECTION),
-          ])
-          if (!statusResponse.ok) throw new Error(`${t('loadFailed')}：HTTP ${statusResponse.status}`)
-          if (!transportResponse.ok) throw new Error(`${t('loadFailed')}：HTTP ${transportResponse.status}`)
-          // `/advertise` **不参与硬失败**：它管的是"上报哪些地址"这一节。
-          // 读不到（旧版连接器没有这个路由 / 存储还没就绪）就只让那一节空着，
-          // 不该让设备管理与配对一起变成错误页 —— 那两个面与它无关。
-          setStatus(await statusResponse.json())
-          const transport = await transportResponse.json()
-          setChannels(Array.isArray(transport.channels) ? transport.channels : [])
-          // **读面兜底成空表**：`candidates` 来自监听面的网卡枚举，`listenPort: 0`
-          // 时本来就是空的。直接 `.map` 会让整个面板崩成一块白。
-          const advertiseBody = advertiseResponse.ok ? await advertiseResponse.json() : {}
-          setAdvertiseView({
-            advertised: Array.isArray(advertiseBody.advertised) ? advertiseBody.advertised : [],
-            hidden: Array.isArray(advertiseBody.hidden) ? advertiseBody.hidden : [],
-            // 旧版连接器没有 `folded`：兜底成空表，不能让它把整个面板崩掉。
-            folded: Array.isArray(advertiseBody.folded) ? advertiseBody.folded : [],
-            candidates: Array.isArray(advertiseBody.candidates) ? advertiseBody.candidates : [],
-          })
-          // `/connection` 同样**不参与硬失败**（理由同上）。读到了就回填真值；
-          // 草稿只在**还没有草稿**时（首次）由真值生成 —— 否则刷新会把用户
-          // 正在编辑的地址冲掉，而保存失败时我们已经显式回填过。
-          if (connectionResponse.ok) {
-            const connectionBody = await connectionResponse.json()
-            setConnection(connectionBody)
-            // 已有草稿就不动它：自动刷新（停启通道 / 改上报地址后都会重拉）
-            // 不能把用户正在编辑的地址冲掉。冲突时由 409 的回执显式覆盖。
-            setDraft((current) => (current === null ? draftOf(connectionBody) : current))
-          }
+      const statusRequest = useRef(0)
+      const refreshStatus = useCallback(async () => {
+        const request = ++statusRequest.current
+        const response = await fetch(STATUS)
+        if (!response.ok) throw new Error(`${t('loadFailed')}：HTTP ${response.status}`)
+        const body = await response.json()
+        // 先发的旧快照迟到，不能把删除后确认过的新清单覆回去。
+        if (request === statusRequest.current) {
+          setStatus(body)
           setError('')
-        } catch (caught) {
-          // **失败要留声**：静默的空面板会让人以为"没有设备"。
-          setError(messageOf(caught))
         }
       }, [t])
+
+      const refresh = useCallback(async () => {
+        try {
+          // Note: 读面各自提交，设备动作只等 status；见 .agents/notes/implemented/2026-11-24-device-admin-local-commit-and-roster-sync.md。
+          await Promise.all([
+            refreshStatus(),
+            (async () => {
+              const response = await fetch(TRANSPORT)
+              if (!response.ok) throw new Error(`${t('loadFailed')}：HTTP ${response.status}`)
+              const body = await response.json()
+              setChannels(Array.isArray(body.channels) ? body.channels : [])
+            })(),
+            (async () => {
+              const response = await fetch(ADVERTISE)
+              const body = response.ok ? await response.json() : {}
+              setAdvertiseView({
+                advertised: Array.isArray(body.advertised) ? body.advertised : [],
+                hidden: Array.isArray(body.hidden) ? body.hidden : [],
+                folded: Array.isArray(body.folded) ? body.folded : [],
+                candidates: Array.isArray(body.candidates) ? body.candidates : [],
+              })
+            })(),
+            (async () => {
+              const response = await fetch(CONNECTION)
+              if (!response.ok) return
+              const body = await response.json()
+              setConnection(body)
+              // 显示面不能冲掉正在编辑的草稿；冲突由保存回执处理。
+              setDraft((current) => (current === null ? draftOf(body) : current))
+            })(),
+          ])
+        } catch (caught) {
+          setError(messageOf(caught))
+        }
+      }, [refreshStatus, t])
 
       // 首渲染就把状态与通道列表拉回来（面板的唯一数据源）。
       useEffect(() => { refresh() }, [refresh])
@@ -1244,7 +1263,7 @@ window.__ModuleLoader__.load({
         setBusy(device.id)
         try {
           await callEnabled(device.id, enabled)
-          await refresh()
+          await refreshStatus()
         } catch (caught) {
           setError(failText(messageOf(caught)))
         } finally {
@@ -1271,7 +1290,7 @@ window.__ModuleLoader__.load({
           })
           const body = await jsonOf(response)
           if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
-          await refresh()
+          await refreshStatus()
           if (body.skippedOnline > 0) {
             // 跳过了在线的必须说出来：用户按了"删除所选"却发现自己那台还在，
             // 会以为按钮坏了。
@@ -1465,29 +1484,8 @@ window.__ModuleLoader__.load({
         if (port !== before.listenPort) payload.listenPort = port
         if (draft.tokenInput.trim() !== '') payload.token = { op: 'set', value: draft.tokenInput }
 
-        const touched = 'relayUrl' in payload || 'allowInsecurePublic' in payload
-          || 'listenPort' in payload || 'token' in payload
-        if (await sendConnection(payload)) {
-          if (!touched) return
-          // 改了连接参数 ⇒ 电脑侧会重建通道。等真值落地再收工（最多 ~6s）：
-          // 否则面板刚点完保存就显示上一秒的"已连接"。
-          setBusy('connection')
-          try {
-            let latest = null
-            for (let attempt = 0; attempt < 12; attempt += 1) {
-              const response = await fetch(CONNECTION)
-              if (!response.ok) break
-              latest = await jsonOf(response)
-              setConnection(latest)
-              // 连上了，或者干脆没在跑（缺令牌/坏地址）—— 两种都是"到头了"。
-              if (latest.relay && (latest.relay.connected || !latest.relay.running)) break
-              if (attempt < 11) await new Promise((resolve) => setTimeout(resolve, 500))
-            }
-            if (latest !== null) setDraft(draftOf(latest))
-          } finally {
-            setBusy('')
-          }
-        }
+        // 后端回执已包含本次重建后的真值；保存不另等中转握手。
+        await sendConnection(payload)
       }
 
       /** 清除令牌：破坏性，走页面内确认框（后果句在 locale 里）。 */
@@ -1507,6 +1505,13 @@ window.__ModuleLoader__.load({
       const setDraftField = (patch) => setDraft((current) => ({ ...(current || {}), ...patch }))
 
       // ---- 派生值：全部只由 `status` 算出来，放在动作前面，免得闭包向前引用 ----
+      const rosterSync = status && status.rosterSync ? status.rosterSync : null
+      const rosterMessages = {
+        pending: t('rosterPending'), synced: t('rosterSynced'), deferred: t('rosterDeferred'),
+      }
+      const rosterMessage = rosterSync === null ? '' : rosterSync.status === 'error'
+        ? t('rosterError', { reason: rosterSync.error || t('rosterUnknown') })
+        : (rosterMessages[rosterSync.status] || t('rosterUnknown'))
       const devices = status && status.devices ? status.devices : []
       const live = devices.filter((d) => !d.revoked)
       const revoked = devices.filter((d) => d.revoked)
@@ -1592,7 +1597,7 @@ window.__ModuleLoader__.load({
             setBusy('selected')
             try {
               for (const device of active) await callEnabled(device.id, false)
-              await refresh()
+              await refreshStatus()
               setSelected(new Set())
             } catch (caught) {
               setError(t('failedDisable', { reason: messageOf(caught) }))
@@ -1873,6 +1878,10 @@ window.__ModuleLoader__.load({
           ),
           // 多选浮现栏：**只在有勾选时出现**，不改变行本身的交互（见文件头）。
           h('p', { key: 'hint', style: { ...S.label, margin: '0 0 8px' } }, t('devicesHint')),
+          rosterSync === null ? null : h('div', { key: 'roster', role: 'status', 'aria-live': 'polite', 'data-roster-state': rosterSync.status, style: { ...S.row, marginBottom: 8 } },
+            h('span', { style: rosterSync.status === 'error' ? S.err : S.dim }, rosterMessage),
+            h('button', { type: 'button', style: S.btn, disabled: busy !== '', onClick: async () => { try { await refreshStatus() } catch (caught) { setError(messageOf(caught)) } } }, t('rosterRefresh')),
+          ),
           selectedIds.length === 0
             ? null
             : h('div', { key: 'sel', style: S.bar },
@@ -1929,12 +1938,10 @@ window.__ModuleLoader__.load({
                   // 编一个出来就是替用户做决定。
                   h('td', { style: S.td },
                     device.name,
-                    // **设备短码**：电脑侧能给的稳定身份就是 `devId`；前 6 位与手机
-                    // 「设置 → 关于与连接」那一行同值。每次重扫都是新身份、新短码。
-                    // Note: 为什么不按手机聚合、为什么这两列改名 —— 见
-                    // `.agents/notes/implemented/2026-11-06-device-rows-short-code.md`
+                    // 安装码用于与本机设置对照；旧无code行明确标历史配对，不按名称归并。
+                    // Note: 显示码与鉴权代次分开 —— .agents/notes/implemented/2026-11-24-stable-device-code-and-pairing-continuity.md
                     h('div', { style: { ...S.dim, fontSize: 11, marginTop: 2 } },
-                      t('deviceShort', { code: device.id.slice(0, 6) })),
+                      t(device.deviceCode ? 'deviceShort' : 'legacyPairingShort', { code: (device.deviceCode || device.id).slice(0, 6) })),
                     narrow
                       ? h('div', { style: { ...S.dim, fontSize: 11, marginTop: 2 } },
                           `${fmtWhen(device.pairedAt, t)} · ${device.revoked ? '—' : fmtAgo(device.lastInteractedAt, t)}`)

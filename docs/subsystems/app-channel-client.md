@@ -387,6 +387,8 @@ abstract class Outbox {
 真正按端分叉的只有通知(`notify_factory.dart` → `notify_android.dart` / `notify_memory.dart`),
 其余能力(本地库、传输、选图)要么是一份纯 Dart,要么走跨端插件。
 
+**当前配对持久化**：[PairingStore](<app/lib/platform/pairing_store.dart>) 将每台电脑不可分割的身份/令牌/握手上下文写成单个 `credentials_v2` 安全存储 JSON（v2），端点、端点元数据与展示名独立更新。完整已发版分槽按 v1→v2 规范化后清旧秘密键；坏 v2 不回落旧键。不识别旧平铺格式。迁移、保存、切换与清理共用同一 Store 操作链，迟到迁移不能覆回新身份。安装码 `dsh.device_code` 与非凭据 `dsh.pairing_hint.<pcSignPubHex>` 独立持有，清配对不清它们；Android 安全存储 `resetOnError:false`，读取失败可见，不默清或重建。系统原生断电持久性须在真机另验。
+
 下面是**各端开工时**要落成的目标形态(设计目标,不是现状):
 
 ```text

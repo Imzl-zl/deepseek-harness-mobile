@@ -117,11 +117,16 @@ class PairingAttempt {
   /// 电脑侧据此替换旧行而不是又攒一行。**行定位符，不是凭据** —— 见
   /// `pairing_channel.dart` 的 `commit` 与
   /// `.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`。
-  Future<PairingAck> commit({String? code, String? previousPairingId}) async {
+  Future<PairingAck> commit({
+    String? code,
+    String? previousPairingId,
+    String? deviceCode,
+  }) async {
     try {
       return await _channel.commit(
         code ?? offer.code,
         previousPairingId: previousPairingId,
+        deviceCode: deviceCode,
       );
     } finally {
       await _channel.close();
@@ -191,6 +196,7 @@ class PairingProbe {
 }
 
 /// 同时探这张码里的每一条路：**真的拨上去、完成受限握手**，不是 ping。
+/// Note: 逐条交付真实结果，选定即取消其余候选；见 .agents/notes/implemented/2026-11-24-pairing-cancellation-and-progress.md。
 ///
 /// 与 [beginPairing] 的差别只有"要不要停"：这里两条都开、都留着，由界面选；
 /// `beginPairing` 按策略只走一条、失败才换。两者共用同一套拨号与握手
@@ -200,6 +206,8 @@ class PairingProbe {
 /// 代价（明确接受）：中转那张票在探测时就被换掉了，用户最后选了局域网时
 /// 那张票作废（票是一次性的，但**没有秘密**，也不占电脑侧状态）。
 Future<PairingProbe> probePairing({
+  void Function(PairingRouteProbe route)? onRoute,
+  Future<PairingDial?>? cancelExcept,
   required PairingOffer offer,
   required IdentityKeys identity,
   required String deviceName,
@@ -221,12 +229,42 @@ Future<PairingProbe> probePairing({
   /// 不显示成"不通"（它没有被拨过）。
   RoutePolicy prefer = RoutePolicy.auto,
 }) async {
+  final transports = <ChannelTransport, PairingDial>{};
+  var stopped = false;
+  PairingDial? keep;
+  unawaited(
+    cancelExcept?.then((selected) {
+      stopped = true;
+      keep = selected;
+      for (final entry in transports.entries) {
+        if (entry.value == keep) continue;
+        unawaited(
+          entry.key.close().catchError((Object error) {
+            debugPrint('[pair] 取消候选连接失败：$error');
+          }),
+        );
+      }
+    }),
+  );
+  PairingRouteProbe report(PairingRouteProbe route) {
+    if (!stopped) onRoute?.call(route);
+    return route;
+  }
+
   Future<PairingAttempt> dial(RoutePolicy policy) => beginPairing(
     offer: offer,
     identity: identity,
     deviceName: deviceName,
     send: send,
-    transportFor: transportFor,
+    transportFor: (url) {
+      final dial = policy == RoutePolicy.directOnly
+          ? PairingDial.lan
+          : PairingDial.relay;
+      if (stopped && dial != keep) throw const TransportException('配对检测已取消');
+      final transport = transportFor(url);
+      transports[transport] = dial;
+      return transport;
+    },
     onStage: onStage,
     newFrameIdHex: newFrameIdHex,
     newEphemeralSeedHex: newEphemeralSeedHex,
@@ -249,25 +287,29 @@ Future<PairingProbe> probePairing({
     // 被策略排除的那条**不拨**：`directOnly` 的用户不该因为一次配对就连上中转
     // （换票是一次真实的 HTTP + 一张一次性票）。界面按策略画"未尝试"。
     if (prefer != RoutePolicy.relayOnly && offer.lanUrls.isNotEmpty)
-      dial(RoutePolicy.directOnly).then(
-        (attempt) => PairingRouteProbe(
-          dial: PairingDial.lan,
-          label: '局域网直连',
-          attempt: attempt,
-        ),
-        onError: (Object error) => failed(PairingDial.lan, '局域网直连', error),
-      ),
+      dial(RoutePolicy.directOnly)
+          .then(
+            (attempt) => PairingRouteProbe(
+              dial: PairingDial.lan,
+              label: '局域网直连',
+              attempt: attempt,
+            ),
+            onError: (Object error) => failed(PairingDial.lan, '局域网直连', error),
+          )
+          .then(report),
     // `lanOnly` 的码里没有中转那条路：**不显示成"拨不通"**，那是另一件事
     // （界面按 `offer.lanOnly` 画"此码不含中转"）。
     if (prefer != RoutePolicy.directOnly && !offer.lanOnly)
-      dial(RoutePolicy.relayOnly).then(
-        (attempt) => PairingRouteProbe(
-          dial: PairingDial.relay,
-          label: '中转',
-          attempt: attempt,
-        ),
-        onError: (Object error) => failed(PairingDial.relay, '中转', error),
-      ),
+      dial(RoutePolicy.relayOnly)
+          .then(
+            (attempt) => PairingRouteProbe(
+              dial: PairingDial.relay,
+              label: '中转',
+              attempt: attempt,
+            ),
+            onError: (Object error) => failed(PairingDial.relay, '中转', error),
+          )
+          .then(report),
   ];
   return PairingProbe(await Future.wait(pending));
 }

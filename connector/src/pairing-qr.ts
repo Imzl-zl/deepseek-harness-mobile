@@ -75,7 +75,8 @@ export async function pairingQrSvg(payload: string): Promise<string> {
   return qrToString(payload, {
     type: 'svg',
     errorCorrectionLevel: QR_ERROR_CORRECTION,
-    margin: 2,
+    // Note: 标准 QR 四码元静区；见 .agents/notes/implemented/2026-11-24-pairing-cancellation-and-progress.md。
+    margin: 4,
     // 深色背景上的浅色前景:二维码本身仍是黑块白底(SVG 的 rect),
     // 这里只控制 SVG 根元素的背景,让它嵌进深色界面时不显得突兀。
     color: {

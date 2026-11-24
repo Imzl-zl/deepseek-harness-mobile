@@ -317,3 +317,20 @@ test('**没握手成功之前不许判半开**：那条连接还没进入服务�
     '不该出现"判定为半开连接"',
   )
 })
+
+
+test('已停用设备主动断开携带not-paired终态，不能等删除后的匿名换票猜原因', { timeout: 60_000 }, async (t) => {
+  const peer = await startPeer()
+  const connection = track(t, peer, (url) => createConnection({
+    url, dial: (target) => new WebSocket(target) as never, onFrame: () => {}, ...TRANSPORT_DEFAULTS,
+  }))
+  connection.start()
+  await waitFor('进入handshake', () => connection.state === 'handshake')
+  connection.markHandshakeDone()
+  const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+    peer.sockets[0]!.once('close', (code, reason) => resolve({ code, reason: reason.toString() }))
+  })
+  ;(connection.stop as (reason?: string) => void)('protocol/not-paired')
+  assert.deepEqual(await closed, { code: 4003, reason: 'protocol/not-paired' },
+    '本地停用已确认，手机应立即收到已有协议终态，不依赖中转同步窗口')
+})

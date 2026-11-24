@@ -53,6 +53,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../core/crypto.dart';
 import '../core/endpoint.dart';
+import '../core/frame.dart' show randomBytes;
 
 /// 配对得到的凭据（**值类型**：可安全地在各层之间传递，它不是秘密的"容器"）。
 class PairedCredentials {
@@ -185,6 +186,7 @@ class FlutterSecureStore implements SecureStore {
       //
       // iOS：`afterFirstUnlockThisDeviceOnly` —— 锁屏也能读（后台收推送时要读），
       // 但**不随备份迁移到新设备**（设备身份不该被备份复制，契约 §12.2）。
+      aOptions: AndroidOptions(resetOnError: false),
       iOptions: IOSOptions(
         accessibility: KeychainAccessibility.first_unlock_this_device,
       ),
@@ -214,8 +216,8 @@ class FlutterSecureStore implements SecureStore {
 /// 所以配对第二台是**新增一个槽**，不是覆盖第一台（`proposed/2026-10-29-one-phone-many-computers.md`
 /// 决策 3）。
 ///
-/// **不做旧数据兼容**：这套协议还没发版、没有存量安装，所以旧平铺键 `dsh.<field>`
-/// 不再被识别（读到就当作没有）。少一条迁移分支 = 少一处会漂的二值形状。
+/// 凭据主体存单个 v2 JSON，完整已发版分槽 v1 在读取时相邻迁移。
+/// 旧平铺键 `dsh.<field>` 不识别；坏 v2 明确报错，不拿 v1 字段补半份。
 /// 取舍见 `.agents/notes/implemented/2026-10-30-drop-legacy-compat.md`。
 class PairingStore {
   PairingStore(this._secure);
@@ -226,6 +228,155 @@ class PairingStore {
 
   /// 当前那台电脑（`hostId`）。
   static const String activeKey = '${keyPrefix}active';
+
+  // Note: 安装码/定位信息与凭据分离，凭据 v1→v2 原子迁移。
+  // .agents/notes/implemented/2026-11-24-stable-device-code-and-pairing-continuity.md
+  static const String deviceCodeKey = 'dsh.device_code';
+  static const String hintPrefix = 'dsh.pairing_hint.';
+  static const String credentialsField = 'credentials_v2';
+  static const List<String> _credentialFields = [
+    'relay_url',
+    'pc_sign_pub',
+    'pc_dh_pub',
+    'pairing_id',
+    'master_seed',
+    'dev_sign_pub',
+    'dev_dh_pub',
+    'device_token',
+    'refresh_token',
+    'pc_id',
+    'dev_id',
+  ];
+  Future<String>? _deviceCodeWork;
+  Future<void> _operations = Future<void>.value();
+  static final RegExp _deviceCodePattern = RegExp(r'^[A-Za-z0-9_-]{22}$');
+
+  /// 迁移和保存共享一个写入口；错误只结算控制队列，原调用仍然失败。
+  Future<T> _enqueue<T>(Future<T> Function() operation) {
+    final result = _operations.then((_) => operation());
+    _operations = result.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stack) {},
+    );
+    return result;
+  }
+
+  /// 应用安全存储生命周期内稳定的展示/定位码，不参与持钥鉴权。
+  /// 缺值才创建；读错或已有坏值明确报错，绝不重铸。
+  Future<String> getOrCreateDeviceCode() => _deviceCodeWork ??= _enqueue(
+    _readDeviceCodeUnlocked,
+  ).whenComplete(() => _deviceCodeWork = null);
+
+  Future<String> _readDeviceCodeUnlocked() async {
+    final values = await _secure.readAll();
+    final stored = values[deviceCodeKey];
+    if (stored != null) {
+      if (!_deviceCodePattern.hasMatch(stored)) {
+        throw StateError('安全存储中的设备码不合法，未覆盖或重置');
+      }
+      return stored;
+    }
+    // 覆盖升级缺安装码时，以当前完整配对的实际展示 ID 相邻迁移。
+    // 非当前槽不参与 canonical 选择；后续鉴权轮换不再重写设备码。
+    final active = values[activeKey];
+    final current = active == null || active.isEmpty
+        ? null
+        : await _loadSlotUnlocked(values, active);
+    final code = current == null
+        ? base64UrlNoPad(randomBytes(16))
+        : await current.helloDeviceId();
+    if (!_deviceCodePattern.hasMatch(code)) {
+      throw StateError('当前配对设备标识不合法，未生成或覆盖设备码');
+    }
+    await _secure.write(deviceCodeKey, code);
+    return code;
+  }
+
+  /// 按二维码里的目标公钥读旧标识；路由 pcId 也须一致。
+  /// 清配对后只读非凭据定位信息，不恢复任何身份秘密。
+  Future<String?> previousPairingIdFor({
+    required String pcSignPubHex,
+    required String pcId,
+  }) => _enqueue(() async {
+    final values = await _secure.readAll();
+    final credentials = await _loadSlotUnlocked(values, pcSignPubHex);
+    if (credentials != null) {
+      return credentials.pcId == pcId ? credentials.pairingId : null;
+    }
+    final raw = values['$hintPrefix$pcSignPubHex'];
+    if (raw == null) return null;
+    final hint = jsonDecode(raw);
+    if (hint is! Map<String, dynamic> ||
+        hint['pcId'] is! String ||
+        hint['pairingId'] is! String ||
+        (hint['pairingId'] as String).isEmpty) {
+      throw const FormatException('安全存储中的旧配对定位信息不合法');
+    }
+    return hint['pcId'] == pcId ? hint['pairingId'] as String : null;
+  });
+
+  static Set<String> _slotIds(Map<String, String> values) => {
+    for (final key in values.keys)
+      if (key.startsWith(keyPrefix) &&
+          key != activeKey &&
+          key.substring(keyPrefix.length).contains('.'))
+        key.substring(keyPrefix.length).split('.').first,
+  };
+
+  static String _encodeCredentials(PairedCredentials c) => jsonEncode({
+    'v': 2,
+    'relay_url': c.relayUrl,
+    'pc_sign_pub': c.pcSignPubHex,
+    'pc_dh_pub': c.pcDhPubHex,
+    'pairing_id': c.pairingId,
+    'master_seed': c.masterSeedHex,
+    'dev_sign_pub': c.devSignPubHex,
+    'dev_dh_pub': c.devDhPubHex,
+    'device_token': c.deviceToken,
+    'refresh_token': c.refreshToken,
+    'pc_id': c.pcId,
+    'dev_id': c.devId,
+  });
+
+  Future<void> _rememberHint(
+    PairedCredentials c,
+    Map<String, String> values,
+  ) async {
+    if (c.pcId.isEmpty || c.pairingId.isEmpty) return;
+    final key = '$hintPrefix${c.pcSignPubHex}';
+    final raw = jsonEncode({'pcId': c.pcId, 'pairingId': c.pairingId});
+    if (values[key] != raw) await _secure.write(key, raw);
+  }
+
+  Future<void> _deleteLegacyCredentials(
+    String hostId,
+    Map<String, String> values,
+  ) async {
+    for (final field in _credentialFields) {
+      final key = slotKey(hostId, field);
+      if (values.containsKey(key)) await _secure.delete(key);
+    }
+  }
+
+  Future<PairedCredentials?> _loadSlotUnlocked(
+    Map<String, String> values,
+    String hostId,
+  ) async {
+    final credentials = _decodeSlot(values, hostId);
+    if (credentials == null) return null;
+    final hasLegacy = _credentialFields.any(
+      (f) => values.containsKey(slotKey(hostId, f)),
+    );
+    if (!values.containsKey(slotKey(hostId, credentialsField))) {
+      // 完整已发版分槽（v1）→v2：先原子写，成功后才删旧秘密。
+      await _write(hostId, credentialsField, _encodeCredentials(credentials));
+    }
+    if (hasLegacy) {
+      await _rememberHint(credentials, values);
+      await _deleteLegacyCredentials(hostId, values);
+    }
+    return credentials;
+  }
 
   /// 一台电脑的一个字段键。
   static String slotKey(String hostId, String field) =>
@@ -241,18 +392,44 @@ class PairingStore {
   /// 那时没人会想到是存储缺字段。
   ///
   /// 没有 `active` 也没有指定 [hostId] 时回 `null`（**不猜哪一台**）。
-  Future<PairedCredentials?> load({String? hostId}) async {
+  Future<PairedCredentials?> load({String? hostId}) => _enqueue(() async {
     final values = await _secure.readAll();
     final target = hostId == null || hostId.isEmpty
         ? values[activeKey]
         : hostId;
     if (target == null || target.isEmpty) return null;
-    return _decodeSlot(values, target);
-  }
+    return _loadSlotUnlocked(values, target);
+  });
 
   /// 解一个槽。**槽里必须齐**（必填字段缺一个就回 `null`，不拼半份）。
   PairedCredentials? _decodeSlot(Map<String, String> values, String hostId) {
-    String? read(String field) => values[slotKey(hostId, field)];
+    Map<String, dynamic>? blob;
+    final raw = values[slotKey(hostId, credentialsField)];
+    if (raw != null) {
+      Object? decoded;
+      try {
+        decoded = jsonDecode(raw);
+      } on FormatException {
+        // 原始 blob 含秘密，异常不能把 source 带给界面或诊断日志。
+        throw const FormatException('配对凭据 v2 JSON 无法解析，未回落旧键');
+      }
+      if (decoded is! Map<String, dynamic> || decoded['v'] != 2) {
+        throw const FormatException('配对凭据 v2 格式不合法，未回落旧键');
+      }
+      for (final field in _credentialFields) {
+        final value = decoded[field];
+        if (value is! String ||
+            (value.isEmpty && field != 'pc_id' && field != 'dev_id')) {
+          throw FormatException('配对凭据 v2 缺少合法字段 $field，未回落旧键');
+        }
+      }
+      if (decoded['pc_sign_pub'] != hostId) {
+        throw const FormatException('配对凭据 v2 与目标电脑公钥不一致');
+      }
+      blob = decoded;
+    }
+    String? read(String field) =>
+        blob == null ? values[slotKey(hostId, field)] : blob[field] as String?;
     final relayUrl = read('relay_url');
     final pcSignPub = read('pc_sign_pub');
     final pcDhPub = read('pc_dh_pub');
@@ -278,7 +455,11 @@ class PairingStore {
     // **端点归属在读取时补齐**：这份凭据就是这一台电脑的（`pcSignPub` 是它的身份），
     // 所以表里没有 `hostId` 的条目（升级前落的 / 配对种子）都归它。
     // 端点身份是 `hostId|url`（`core/endpoint.dart` 的 `endpointIdOf`）。
-    final endpoints = _decodeEndpoints(read('endpoints'), relayUrl, pcSignPub);
+    final endpoints = _decodeEndpoints(
+      values[slotKey(hostId, 'endpoints')],
+      relayUrl,
+      pcSignPub,
+    );
 
     return PairedCredentials(
       relayUrl: relayUrl,
@@ -293,7 +474,7 @@ class PairingStore {
       endpoints: endpoints,
       // id 一律是 `hostId|url`（`endpointIdOf`），**不做旧形状识别**。
       endpointMeta: _decodeEndpointMeta(
-        read('endpoint_meta'),
+        values[slotKey(hostId, 'endpoint_meta')],
         endpoints: endpoints,
       ),
       pcId: read('pc_id') ?? '',
@@ -381,13 +562,14 @@ class PairingStore {
         : out;
   }
 
-  /// 写入凭据：**先写完整槽、最后写 `active`**。
-  ///
-  /// 半份凭据比没有更糟 —— 崩在中途时 `active` 还指着上一台（或没有），
-  /// 这个不完整的槽永远不会被 `load()` 选中。
-  Future<void> save(PairedCredentials credentials) async {
+  /// 先单次写入完整身份/令牌/配对上下文，再写独立路由与 active。
+  /// 同 host 更新中断只会留下完整旧或新身份，不会混合新旧密钥。
+  Future<void> save(PairedCredentials credentials) => _enqueue(() async {
     final hostId = credentials.pcSignPubHex;
-    await _write(hostId, 'relay_url', credentials.relayUrl);
+    final values = await _secure.readAll();
+    // 同 host 更新只在这一次安全存储写中替换全部身份/令牌/配对上下文。
+    await _write(hostId, credentialsField, _encodeCredentials(credentials));
+    await _deleteLegacyCredentials(hostId, values);
     await _write(
       hostId,
       'endpoints',
@@ -398,23 +580,9 @@ class PairingStore {
       'endpoint_meta',
       _encodeMeta(credentials.endpointMeta),
     );
-    await _write(hostId, 'pc_sign_pub', credentials.pcSignPubHex);
-    await _write(hostId, 'pc_dh_pub', credentials.pcDhPubHex);
-    await _write(hostId, 'pairing_id', credentials.pairingId);
-    await _write(hostId, 'master_seed', credentials.masterSeedHex);
-    await _write(hostId, 'dev_sign_pub', credentials.devSignPubHex);
-    await _write(hostId, 'dev_dh_pub', credentials.devDhPubHex);
-    if (credentials.pcId.isNotEmpty) {
-      await _write(hostId, 'pc_id', credentials.pcId);
-    }
-    if (credentials.devId.isNotEmpty) {
-      await _write(hostId, 'dev_id', credentials.devId);
-    }
-    await _write(hostId, 'device_token', credentials.deviceToken);
-    await _write(hostId, 'refresh_token', credentials.refreshToken);
-    // **最后才把这一台设为当前**：槽写全之前，它不该被选中。
+    await _rememberHint(credentials, values);
     await _secure.write(activeKey, hostId);
-  }
+  });
 
   Future<void> _write(String hostId, String field, String value) =>
       _secure.write(slotKey(hostId, field), value);
@@ -466,60 +634,66 @@ class PairingStore {
   ///
   /// 顺序：**当前那台最前**，其余按 hostId 字典序 —— 那台是"我正连着的"，
   /// 用户在列表里第一眼要找的就是它。
-  Future<List<PairedHost>> hosts() async {
+  Future<List<PairedHost>> hosts() => _enqueue(() async {
     final values = await _secure.readAll();
     final active = values[activeKey] ?? '';
-    final ids = <String>{};
-    for (final key in values.keys) {
-      if (!key.startsWith(keyPrefix) || key == activeKey) continue;
-      final rest = key.substring(keyPrefix.length);
-      final dot = rest.indexOf('.');
-      if (dot <= 0) continue;
-      ids.add(rest.substring(0, dot));
+    final rows = <PairedHost>[];
+    for (final id in _slotIds(values)) {
+      if (await _loadSlotUnlocked(values, id) != null) {
+        rows.add(
+          PairedHost(hostId: id, name: values[slotKey(id, hostNameField)]),
+        );
+      }
     }
-    final rows =
-        <PairedHost>[
-          for (final id in ids)
-            if (_decodeSlot(values, id) != null)
-              PairedHost(hostId: id, name: values[slotKey(id, hostNameField)]),
-        ]..sort((a, b) {
-          if (a.hostId == active) return -1;
-          if (b.hostId == active) return 1;
-          return a.hostId.compareTo(b.hostId);
-        });
+    rows.sort((a, b) {
+      if (a.hostId == active) return -1;
+      if (b.hostId == active) return 1;
+      return a.hostId.compareTo(b.hostId);
+    });
     return rows;
-  }
+  });
 
   /// 把**当前槽**切到 [hostId]：只写 `active`，不重写槽、不动别的电脑。
   ///
   /// 槽不完整时抛（调用方本该先 `load` 成功）：让一个半个槽变成当前，
   /// 换来的是启动时"有 active、却读不出凭据"——那种状态没有任何出路。
-  Future<void> activate(String hostId) async {
+  Future<void> activate(String hostId) => _enqueue(() async {
     final values = await _secure.readAll();
-    if (_decodeSlot(values, hostId) == null) {
+    if (await _loadSlotUnlocked(values, hostId) == null) {
       throw StateError('这台电脑的配对凭据不完整：$hostId');
     }
     await _secure.write(activeKey, hostId);
-  }
+  });
 
   /// **删这一台**（[hostId] 为空 = 当前那台）：只删这个槽。
   ///
   /// 键集合从整份存储里现扫（前缀 `dsh.pairing.<hostId>.`），所以将来加字段
   /// 不会漏删。删的是**当前那台**时顺手清 `active`（其余槽仍可被切回）；
   /// 别的电脑的槽一律不碰。
-  Future<void> clear({String? hostId}) async {
+  Future<void> clear({String? hostId}) => _enqueue(() async {
     final values = await _secure.readAll();
     final target = hostId ?? values[activeKey];
     if (target == null || target.isEmpty) return;
+    final credentials = _decodeSlot(values, target);
+    if (credentials != null) await _rememberHint(credentials, values);
     final prefix = '$keyPrefix$target.';
     for (final key in values.keys.where((k) => k.startsWith(prefix)).toList()) {
       await _secure.delete(key);
     }
     if (values[activeKey] == target) await _secure.delete(activeKey);
-  }
+  });
 
-  /// **撤销所有配对**：清空整个安全存储（用户明确要"这台手机谁都不认"）。
-  Future<void> clearAll() => _secure.deleteAll();
+  /// 清全部配对秘密；安装级设备码、非凭据定位信息与其他安全记录保留。
+  Future<void> clearAll() => _enqueue(() async {
+    final values = await _secure.readAll();
+    for (final id in _slotIds(values)) {
+      final credentials = _decodeSlot(values, id);
+      if (credentials != null) await _rememberHint(credentials, values);
+    }
+    for (final key in values.keys.where((k) => k.startsWith(keyPrefix))) {
+      await _secure.delete(key);
+    }
+  });
 }
 
 /// 一台**已配对电脑**的展示信息（切换电脑的列表用）。

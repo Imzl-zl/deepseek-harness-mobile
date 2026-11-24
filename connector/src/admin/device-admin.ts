@@ -55,6 +55,8 @@ export interface DeviceTablePort {
   keys(): Iterable<string>
   put(key: string, value: DeviceRecord): Promise<void>
   delete(key: string): Promise<boolean>
+  /** 宿主原生的一批一次提交；不以逐行删除作后备。 */
+  deleteMany(keys: readonly string[]): Promise<number>
 }
 
 /** 一次删除的结果：真删了几台，以及**因在线而跳过**几台。 */
@@ -106,6 +108,7 @@ export interface DeviceAdminDeps {
  * 而不是"还没准备好"，所以它是抛出来的断言，不是一条静默返回。
  */
 export function createDeviceAdmin(deps: DeviceAdminDeps): DeviceAdmin {
+  // Note: 一批一次提交、本地提交与名册同步分开 —— .agents/notes/implemented/2026-11-24-device-admin-local-commit-and-roster-sync.md
   /**
    * 删除的**唯一**实现：多选与按状态共用，于是"跳过在线"的判据只有一处。
    *
@@ -149,13 +152,13 @@ export function createDeviceAdmin(deps: DeviceAdminDeps): DeviceAdmin {
         skippedOnline += 1
         continue
       }
-      await table.delete(id)
       deleted.push(id)
-      removed += 1
     }
+    // 先筛完整集合，再用宿主原语做一次提交：失败时不留下逐台删除的半成功。
+    if (deleted.length > 0) removed = await table.deleteMany(deleted)
     // 行没了 ⇒ 那台设备的连接也必须收掉（`revokedAt` 那个字段已经不在了，
     // 旧 socket 还活着就再没有任何东西能认出它该下线）。
-    if (deleted.length > 0) deps.disconnect?.(deleted)
+    if (removed > 0) deps.disconnect?.(deleted)
     // 一台都没删就不重发：无事可报，不打扰中转。删过才发 —— 删掉的行不该再报给中转。
     if (removed > 0) await deps.publish()
     return { removed, skippedOnline, refusedActive: [] }

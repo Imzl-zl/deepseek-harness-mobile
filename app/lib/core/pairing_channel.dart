@@ -119,10 +119,13 @@ class PairingChannel {
 
   /// 建连 + 受限握手。**不发任何秘密**（电脑侧此刻仍没有这台设备的记录）。
   Future<void> open() async {
+    _assertOpen();
     // 上下文先算：它只依赖本地输入，而下面一旦订阅了帧流，就必须保证
     // `_handshake` 已经就位 —— 否则一个早到的 `hello-ack` 会被静默丢掉（表现为握手超时）。
     final transcriptContext = await candidate.handshakeContext(offer);
+    _assertOpen();
     final events = await transport.connect();
+    _assertOpen();
     _events = events.listen(
       _onEvent,
       onError: (Object error) => _fail(TransportException('配对连接出错：$error')),
@@ -173,6 +176,11 @@ class PairingChannel {
     await _ready.future;
   }
 
+  // Note: 关闭是终态，迟到 connect 不得复活；见 .agents/notes/implemented/2026-11-24-pairing-cancellation-and-progress.md。
+  void _assertOpen() {
+    if (_closed) throw const TransportException('配对通道已关闭，握手已取消');
+  }
+
   /// 提交秘密（配对码）。**整条链上唯一一次把码发出去。**
   ///
   /// 返回电脑侧的回执（含设备令牌与辅助 SAS）。结果不确定时**如实抛错**，
@@ -183,7 +191,11 @@ class PairingChannel {
   /// 反复扫码不再攒行。它**不是凭据** —— 授权仍是这一次的二维码秘密；它只在
   /// 密文里过线（中转看不见，I10）。取舍与威胁模型见
   /// `.agents/notes/implemented/2026-10-17-repair-replaces-device-row.md`。
-  Future<PairingAck> commit(String code, {String? previousPairingId}) async {
+  Future<PairingAck> commit(
+    String code, {
+    String? previousPairingId,
+    String? deviceCode,
+  }) async {
     if (_committed) {
       throw const ProtocolException(ErrorCode.internal, '这次配对已经提交过了');
     }
@@ -218,6 +230,8 @@ class PairingChannel {
         // 显式 `if` 才是对的。同一条约束见 `data/app_model.dart`。
         // ignore: use_null_aware_elements
         if (previousPairingId != null) 'previousPairingId': previousPairingId,
+        // ignore: use_null_aware_elements
+        if (deviceCode != null) 'deviceCode': deviceCode,
       }),
       id: id,
     );

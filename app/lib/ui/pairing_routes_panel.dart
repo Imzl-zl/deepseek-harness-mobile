@@ -205,10 +205,15 @@ class PairingRoutePicker extends StatelessWidget {
     } else {
       subtitle = result.failure ?? '拨不通';
     }
-    final icon = selectable
+    final pending = result == null && busy && inCode && !excluded;
+    final icon = pending
+        ? 'link'
+        : selectable
         ? 'check'
         : (inCode && !excluded ? 'warningTriangle' : 'link');
-    final iconColor = selectable
+    final iconColor = pending
+        ? c.labelSecondary
+        : selectable
         ? c.accentBlue
         : (inCode && !excluded ? c.error : c.labelTertiary);
     return Semantics(
@@ -252,7 +257,7 @@ class PairingRoutePicker extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 12,
                         height: 1.4,
-                        color: selectable
+                        color: selectable || pending
                             ? c.labelSecondary
                             : (inCode && !excluded ? c.error : c.labelTertiary),
                       ),

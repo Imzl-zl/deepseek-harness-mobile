@@ -12,6 +12,8 @@ export const SAS_INFO = 'dsh-mobile/v1/sas'
 export const MAX_DEVICE_NAME_BYTES = 256
 
 const TOKEN = /^[A-Za-z0-9_-]{22}$/
+/** 安装级展示/行定位码，绝不代替候选持钥与二维码秘密。 */
+export const DEVICE_CODE_PATTERN = /^[A-Za-z0-9_-]{22}$/
 const PUBLIC_KEY = /^[0-9a-f]{64}$/
 const ID = /^[A-Za-z0-9_-]+$/
 /** `pairingId` 的形状：32 字节 HKDF 输出的无填充 base64url（43 字符）。 */
@@ -88,6 +90,8 @@ export interface PairingRequest {
    * 绝不能把它放进去。
    */
   readonly previousPairingId?: string
+  /** 加密提交中的稳定展示/定位码，不参与鉴权 devId 派生。 */
+  readonly deviceCode?: string
 }
 
 export interface PairingAccepted {
@@ -100,6 +104,7 @@ export interface PairingAccepted {
     readonly dhPubHex: string
     readonly pairingId: string
     readonly pairedAt: number
+    readonly deviceCode?: string
   }
   /** 手机自报的旧配对标识（可选）。**行定位符，不是凭据** —— 见 {@link PairingRequest}。 */
   readonly previousPairingId?: string
@@ -194,6 +199,11 @@ export function pairingHandshakeContext(
 function isRequest(value: unknown): value is PairingRequest {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const record = value as Record<string, unknown>
+  // Note: .agents/notes/implemented/2026-11-24-stable-device-code-and-pairing-continuity.md
+  if ('deviceCode' in record
+    && (typeof record['deviceCode'] !== 'string' || !DEVICE_CODE_PATTERN.test(record['deviceCode']))) {
+    return false
+  }
   // `previousPairingId` 是**可选**的：缺它 = 首配或凭据已丢，走"新行"。
   // 在却格式不对 = 客户端 bug 或篡改 —— **拒**而不是静默忽略：忽略会让
   // "重新配对替换旧行"悄悄退化成"又攒一行"，而用户看不到任何原因。
@@ -338,6 +348,7 @@ export function createPairing(options: PairingOptions): Pairing {
           devId: identify(candidate), name: candidate.name,
           edPubHex: candidate.devPubEd, dhPubHex: candidate.devPubDh,
           pairingId, pairedAt: now(),
+          ...(request.deviceCode === undefined ? {} : { deviceCode: request.deviceCode }),
         },
         ...(request.previousPairingId === undefined ? {} : { previousPairingId: request.previousPairingId }),
       }

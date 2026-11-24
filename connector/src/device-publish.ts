@@ -14,12 +14,11 @@
  *
  * 1. `ws://` → `http://` 的派生用同一个 `httpBaseOf`（**丢掉路径**：HTTP 端点不在 WS 那条路径上）；
  * 2. 令牌走 `Authorization: Bearer`（不进 URL），且**现读**（换令牌后立刻生效）；
- * 3. 非 2xx 与网络错误都**抛** —— 静默成功会让操作者以为名册已经在转发了，
- *    而症状是"那台手机再也连不上"。
+ * 3. 非 2xx 与网络错误在等待式入口仍**抛**；后台 schedule 把失败明示为 state.error
+ *    并写日志，不能让操作者以为名册已经在转发了。
  *
- * 与出码登记的一处不同：**名册上报要重试**。它是连接建立后的自动动作（不是人工触发），
- * 失败一次就放弃会让"中转刚起来还没就绪"变成永久失联。重试由调用方按退避驱动
- * （`Connection` 的 `onEstablished` 每次重连都会再报一遍，这就是它的兜底）。
+ * 重连后的名册重放由调用方的既有退避驱动：`RelayLink.onConnected` 每次重连都报全量。
+ * 本模块只有一次请求的有序发布；schedule 离线时明示 deferred，不私自重试或设超时。
  *
  * Note: 名册为什么存在（I7 的机制）—— 见
  * `.agents/notes/implemented/2026-10-02-pairing-bootstrap-and-device-binding.md`
@@ -92,12 +91,27 @@ export interface DevicePublisherOptions {
   tokenSource: () => Promise<string>
   /** 注入 `fetch` 以便测（装配层用全局的那个）。 */
   fetchImpl?: typeof fetch
+  /** 只供 schedule 判当前控制面是否已连接；缺省保持独立发布器可直接调用的语义。 */
+  available?: () => boolean
   log?: ChannelLogger
+}
+
+/** 最新一次请求的名册同步状态；pending/deferred 都不是成功。 */
+export interface DevicePublishState {
+  readonly status: 'pending' | 'synced' | 'error' | 'deferred'
+  readonly error?: string
+}
+
+/** 等待式入口与后台调度共用同一 FIFO；只有后台入口把失败送到日志。 */
+export interface DevicePublisher {
+  (rows: readonly DeviceRegistration[]): Promise<void>
+  schedule(rows: readonly DeviceRegistration[]): void
+  state(): Readonly<DevicePublishState>
 }
 
 export function createDevicePublisher(
   options: DevicePublisherOptions,
-): (rows: readonly DeviceRegistration[]) => Promise<void> {
+): DevicePublisher {
   const doFetch = options.fetchImpl ?? fetch
   const endpointOf = (): string =>
     `${httpBaseOf(
@@ -106,11 +120,26 @@ export function createDevicePublisher(
       options.allowInsecurePublic?.() ?? false,
     )}/devices`
 
-  return async (rows) => {
+  // Note: 本地提交不等待公网，名册共用有序发布与显式状态 —— .agents/notes/implemented/2026-11-24-device-admin-local-commit-and-roster-sync.md
+  let tail: Promise<void> = Promise.resolve()
+  let latestRequest = 0
+  let state: Readonly<DevicePublishState> = Object.freeze({ status: 'deferred' })
+  const errorState = (error: unknown): DevicePublishState => ({
+    status: 'error',
+    error: error instanceof Error ? error.message : String(error),
+  })
+
+  const publishOne = async (
+    rows: readonly DeviceRegistration[],
+    scheduled: boolean,
+  ): Promise<'synced' | 'deferred'> => {
+    if (scheduled && options.available?.() === false) return 'deferred'
     const endpoint = endpointOf()
     // 空名册也要报：那正是"这台电脑上已经没有设备了"的形状（比如全部吊销）。
     // 少报这一次会让中转留着一份过期的归属。
     const token = await options.tokenSource()
+    // 等令牌期间也可能断开；后台调度不能在此后继续向已离线的通道发请求。
+    if (scheduled && options.available?.() === false) return 'deferred'
     const response = await doFetch(endpoint, {
       method: 'POST',
       headers: {
@@ -127,5 +156,50 @@ export function createDevicePublisher(
       )
     }
     options.log?.debug('设备名册已上报', { endpoint, rows: rows.length })
+    return 'synced'
   }
+
+  const enqueue = (rows: readonly DeviceRegistration[], scheduled: boolean): Promise<void> => {
+    const request = ++latestRequest
+    state = Object.freeze({ status: 'pending' })
+    let snapshot: readonly DeviceRegistration[]
+    try {
+      if (scheduled && options.available?.() === false) {
+        state = Object.freeze({ status: 'deferred' })
+        return Promise.resolve()
+      }
+      // 每行都是纯标量；入队即复制，调用者后来改名/停用不会改写这次快照。
+      snapshot = rows.map((row) => ({ ...row }))
+    } catch (error) {
+      state = Object.freeze(errorState(error))
+      return Promise.reject(error)
+    }
+    const result = tail.then(async () => {
+      try {
+        const status = await publishOne(snapshot, scheduled)
+        // 旧任务完成不能把仍待发布的新快照冒充已同步。
+        if (request === latestRequest) state = Object.freeze({ status })
+      } catch (error) {
+        if (request === latestRequest) state = Object.freeze(errorState(error))
+        throw error
+      }
+    })
+    // 这里只结算队列控制链，让后续已请求的发布可继续；等待式调用仍收到 result 的拒绝。
+    tail = result.then(() => {}, () => {})
+    return result
+  }
+
+  return Object.assign(
+    (rows: readonly DeviceRegistration[]) => enqueue(rows, false),
+    {
+      schedule(rows: readonly DeviceRegistration[]): void {
+        void enqueue(rows, true).catch((error: unknown) => {
+          // 后台入口没有调用者来接 reject；失败必须同时可查状态、可查日志。
+          if (options.log !== undefined) options.log.error('设备名册上报失败', error)
+          else console.error('[dsh-mobile] 设备名册上报失败', error)
+        })
+      },
+      state: () => state,
+    },
+  )
 }

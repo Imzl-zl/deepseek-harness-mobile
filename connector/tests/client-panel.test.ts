@@ -27,6 +27,7 @@ import { test } from 'node:test'
 // 内置中转的地址在**两个地方各有一份**：`src/config.ts` 的常量与 `client.js` 里手写的那份
 // （浏览器半侧不进构建）。这里拿服务端那份当期望值 —— 两份一旦不同步，这条就红。
 import { BUILTIN_RELAY_URL } from '../src/config.js'
+import { createDevicePublisher } from '../src/device-publish.js'
 
 /** `client.js` 在包根，`exports['./client']` 指向它。 */
 const CLIENT_PATH = new URL('../client.js', import.meta.url)
@@ -388,7 +389,7 @@ test('面板：每行的动作按钮与状态词对上新行为', async () => {
   assert.match(text, /还没答过话/, '没答过话要这么说，而不是"从未交互"')
   // 设备短码：同一台手机重扫会得到新行，靠短码认出"手里这台"。
   assert.match(text, /短码 dev-li/, '每行带设备短码')
-  assert.match(text, /每行是一条配对身份/)
+  assert.match(text, /正常覆盖升级和重配不变/)
   // 已停用默认折叠，有一行展开入口。
   assert.match(text, /已停用 1 台 · 展开/)
 
@@ -1110,3 +1111,100 @@ test('配对卡：监听在跑但此刻没有局域网地址 ⇒ 说事实，且
   assert.equal(buttonWith(tree, '出配对码')?.props.disabled, true, '没有可拨地址也出不了码')
 })
 
+
+
+test('连接卡只改直连端口：保存不等待无关中转，也不追加 5.5 秒轮询', { timeout: 60_000 }, async () => {
+  let view = { ...CONNECTION_VIEW, relay: { ...CONNECTION_VIEW.relay, connected: false } }
+  const posts: Record<string, unknown>[] = []
+  const waits: number[] = []
+  const originalTimeout = globalThis.setTimeout
+  try {
+    globalThis.setTimeout = ((callback: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+      if (ms === 500) { waits.push(ms); return originalTimeout(callback, 0, ...args) }
+      return originalTimeout(callback, ms, ...args)
+    }) as typeof setTimeout
+    const mounted = await mountPanel({}, async (url, init) => {
+      const request = init as { method?: string; body?: string } | undefined
+      if (url.endsWith('/connection')) {
+        if (request?.method === 'POST') {
+          const body = JSON.parse(request.body ?? '{}') as Record<string, unknown>
+          posts.push(body)
+          view = { ...view, revision: view.revision + 1, value: { ...view.value, listenPort: Number(body['listenPort']) } }
+          return { ok: true, status: 200, json: async () => ({ ok: true, applied: ['listenPort'], tokenApplied: 'none', view }) }
+        }
+        return { ok: true, status: 200, json: async () => view }
+      }
+      if (url.endsWith('/transport')) return { ok: true, status: 200, json: async () => ({ channels: CHANNELS }) }
+      return { ok: true, status: 200, json: async () => ({ devices: DEVICES }) }
+    })
+    ;(inputOfType(mounted.tree, 'number')!.props.onChange as (event: unknown) => void)({ target: { value: '8791' } })
+    const edited = mounted.react.render(mounted.panel, mounted.props)
+    await (buttonWith(edited, '保存')!.props.onClick as () => Promise<void>)()
+    assert.deepEqual(Object.keys(posts[0]!).sort(), ['listenPort', 'revision'])
+    assert.equal(waits.length, 0, '后端已返回本次直连重建真值，中转重连不能扣住保存')
+  } finally {
+    globalThis.setTimeout = originalTimeout
+  }
+})
+
+test('设备删除已确认：无关 connection 读面挂起不扣住设备列表和操作锁', { timeout: 60_000 }, async () => {
+  let removed = false
+  let release!: (value: unknown) => void
+  const held = new Promise<unknown>((resolve) => { release = resolve })
+  const remaining = DEVICES.filter((device) => device.id !== 'dev-gone')
+  const mounted = await mountPanel({}, async (url, init) => {
+    const request = init as { method?: string } | undefined
+    if (url.endsWith('/devices/remove') && request?.method === 'POST') {
+      removed = true
+      return { ok: true, status: 200, json: async () => ({ ok: true, removed: 1, skippedOnline: 0 }) }
+    }
+    if (url.endsWith('/connection')) {
+      if (removed) return held
+      return { ok: true, status: 200, json: async () => CONNECTION_VIEW }
+    }
+    if (url.endsWith('/transport')) return { ok: true, status: 200, json: async () => ({ channels: CHANNELS }) }
+    return { ok: true, status: 200, json: async () => ({ devices: removed ? remaining : DEVICES }) }
+  })
+  try {
+    ;(buttonWith(mounted.tree, '已停用 1 台 · 展开')!.props.onClick as () => void)()
+    let tree = mounted.react.render(mounted.panel, mounted.props)
+    const row = bodyRows(tree).find((item) => allText(item).includes('旧手机'))!
+    ;(buttonWith(row, '删除')!.props.onClick as () => void)()
+    tree = mounted.react.render(mounted.panel, mounted.props)
+    ;(buttonWith(dialogOf(tree)!, '删除')!.props.onClick as () => void)()
+    await flush()
+    tree = mounted.react.render(mounted.panel, mounted.props)
+    assert.equal(removed, true, '真实删除 POST 已成功')
+    assert.ok(!allText(tree).includes('旧手机'), '列表必须采用已确认的 status，不等无关 connection')
+    assert.equal(buttonWith(tree, '保存')!.props.disabled, false, '本地动作完成后解除全局操作锁')
+  } finally {
+    release({ ok: true, status: 200, json: async () => CONNECTION_VIEW })
+    await flush()
+  }
+})
+
+
+test('同步状态对操作者可见，失败原文来自发布器且可手动刷新，不再锁删除', { timeout: 60_000 }, async () => {
+  const publisher = createDevicePublisher({
+    relayUrl: () => 'ws://127.0.0.1:8787', allowInsecureLocal: () => true,
+    available: () => false, tokenSource: async () => 'test-token',
+    fetchImpl: async () => new Response('test-relay-rejected', { status: 401 }),
+  })
+  publisher.schedule([])
+  const fetchWithState = async (url: string) => url.endsWith('/connection')
+    ? { ok: true, status: 200, json: async () => CONNECTION_VIEW }
+    : url.endsWith('/transport')
+      ? { ok: true, status: 200, json: async () => ({ channels: CHANNELS }) }
+      : { ok: true, status: 200, json: async () => ({ devices: DEVICES, rosterSync: publisher.state() }) }
+  const mounted = await mountPanel({}, fetchWithState)
+  let tree = mounted.tree
+  const caption = flatten(tree).find((element) => element.props['data-roster-state'] === publisher.state().status)
+  assert.ok(caption !== undefined, '发布器状态不能只留在API/日志里，必须有用户可见状态区')
+  assert.ok(textOf(caption.props.children).includes('中转名册'))
+  assert.equal(buttonWith(tree, '保存')!.props.disabled, false)
+  await assert.rejects(publisher([]))
+  await (buttonWith(tree, '刷新同步状态')!.props.onClick as () => Promise<void>)()
+  tree = mounted.react.render(mounted.panel, mounted.props)
+  assert.ok(allText(tree).includes(publisher.state().error!), '错误详情从真实发布器状态来，不捏造成功')
+  assert.equal(buttonWith(tree, '保存')!.props.disabled, false)
+})

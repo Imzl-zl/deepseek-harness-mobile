@@ -56,6 +56,32 @@ test('换一份载荷编出来的是另一张能解的图(不是缓存/常量)',
   assert.equal(decoded, other, '解回来的必须是新那一份')
 })
 
+test('二维码自身四边至少有 4 个码元静区，不靠测试另外补白边', { timeout: 60_000 }, async () => {
+  // DENSO WAVE: https://www.qrcode.com/zh/howto/code.html（标准 QR，不是 Micro QR）。
+  const svg = await pairingQrSvg(PAYLOAD)
+  const box = /viewBox="0 0 (\d+) (\d+)"/.exec(svg)
+  assert.ok(box !== null)
+  const side = Number(box[1])
+  const path = /<path stroke="#000000" d="([^"]+)"/.exec(svg)?.[1]
+  assert.ok(path !== undefined)
+  let x = 0, y = 0
+  let left = side, top = side, right = 0, bottom = 0
+  for (const token of path.matchAll(/([Mm])\s*(-?[\d.]+)\s+(-?[\d.]+)|h(-?[\d.]+)/g)) {
+    if (token[1] !== undefined) {
+      if (token[1] === 'M') { x = Number(token[2]); y = Number(token[3]) }
+      else { x += Number(token[2]); y += Number(token[3]) }
+    } else {
+      const length = Number(token[4])
+      left = Math.min(left, x); right = Math.max(right, x + length)
+      top = Math.min(top, Math.floor(y)); bottom = Math.max(bottom, Math.floor(y) + 1)
+      x += length
+    }
+  }
+  for (const [edge, modules] of Object.entries({ left, top, right: side - right, bottom: side - bottom })) {
+    assert.ok(modules >= 4, `${edge} 只有 ${modules} 码元白边，标准 QR 需要至少 4`)
+  }
+})
+
 test('空载荷直接抛,不给空二维码', async () => {
   await assert.rejects(() => pairingQrSvg(''), /配对载荷为空/)
 })
@@ -84,10 +110,10 @@ function decodeSvg(svg: string): string | null {
   const viewBox = /viewBox="0 0 (\d+) (\d+)"/.exec(svg)
   assert.ok(viewBox !== null, 'SVG 要有 viewBox')
   const size = Number(viewBox[1])
-  // `pairing-qr.ts` 里 margin=2 → 两侧各 2 模块留白。
-  const margin = 2
-  const modules = size - margin * 2
-  assert.ok(modules > 0 && (modules - 17) % 4 === 0, `模块数 ${modules} 不是 17+4N`)
+  // 直接解实际 SVG 全部范围：既不裁生成器的静区，也不替它额外补白边。
+  const margin = 0
+  const modules = size
+  assert.ok(modules > 0)
 
   const matrix = new Uint8ClampedArray(modules * modules)
   const paths = [...svg.matchAll(/<path[^>]*stroke="#000000"[^>]*d="([^"]+)"/g)]

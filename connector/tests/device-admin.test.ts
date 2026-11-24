@@ -19,11 +19,12 @@
  * 3. **删完要重发名册**：中转按名册认设备（§8.2 / I7），不重发的话删掉的行
  *    还换得到票。一台都没删则不重发。
  *
- * 这里用**真域表**（`coreDomain` 的 `devices` 表）而不是手写替身：`revokedAt`
- * 的存法与读法都是 zod schema 决定的，替身会把这条最关键的环节绕开。
+ * 行级不变量用 coreDomain 的真 schema + 内存介质；批提交回归用真 DomainFacility
+ * 域表 + 注入 KvUnit，确保计数命中宿主写链和原生提交，不把替身行为当作事实。
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 
 import { createDeviceAdmin, type DeviceTablePort } from '../src/admin/device-admin.js'
 import { createDevicePresence } from '../src/presence.js'
@@ -61,6 +62,11 @@ function tableOf(seed: Record<string, DeviceRecord>): DeviceTablePort & { snapsh
     },
     async delete(key) {
       return records.delete(key)
+    },
+    async deleteMany(keys: readonly string[]) {
+      const present = [...new Set(keys)].filter((key) => records.has(key))
+      for (const key of present) records.delete(key)
+      return present.length
     },
     snapshot: () => records,
   }
@@ -329,4 +335,106 @@ test('两台同时在线：停用 A 只断 A，B 原样在线', { timeout: 60_00
     'B 仍在线；A 被吊销后不再出现在快照里',
   )
   assert.equal(presence.liveOf('dev-b')?.online, true, 'B 的记录一帧都没被动过')
+})
+
+/** 真域表 + 注入的内存介质：计数的是宿主提交原语，不是 admin 的替身。 */
+async function domainTableOf(
+  seed: Record<string, DeviceRecord>,
+  options: { commitError?: Error; commitGate?: Promise<void> } = {},
+) {
+  const medium = new Map(Object.entries(seed))
+  const calls = { singles: [] as string[], batches: [] as string[][] }
+  const unit = {
+    loadAll: async () => ({ global: null, tables: { devices: Object.fromEntries(medium) } }),
+    async putRecord(_table: string, key: string, value: DeviceRecord) { medium.set(key, value) },
+    async deleteRecord(_table: string, key: string) {
+      calls.singles.push(key)
+      // 旧逐行路径第二次提交失败，暴露“前一台已经删掉”的半成功。
+      if (calls.singles.length === 2 && options.commitError !== undefined) throw options.commitError
+      await options.commitGate
+      medium.delete(key)
+    },
+    async deleteRecords(_table: string, keys: readonly string[]) {
+      calls.batches.push([...keys])
+      await options.commitGate
+      if (options.commitError !== undefined) throw options.commitError
+      for (const key of keys) medium.delete(key)
+    },
+    close: async () => {},
+  }
+  const ctx = {
+    storage: { backend: { get: () => ({ kv: { open: async () => unit } }) } },
+    emit: () => {},
+    logger: { warn: () => {}, error: () => {} },
+  } as unknown as ConstructorParameters<typeof DomainFacility>[0]
+  const domain = await new DomainFacility(ctx, { backend: 'memory' }).open(coreDomain)
+  return { domain, table: domain.table('devices'), medium, calls }
+}
+
+const afterTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+test('批删：真域表只做一次原生批提交，不逐台回写', { timeout: 60_000 }, async (t) => {
+  const ids = Array.from({ length: 8 }, (_, index) => `dev-${index}`)
+  const stored = await domainTableOf(Object.fromEntries(ids.map((id) => [id, row({ revokedAt: 1 })])))
+  t.after(() => stored.domain.close())
+  const published: number[] = []
+  const disconnected: string[] = []
+  const result = await adminOf(stored.table, [], published, disconnected).remove(ids)
+
+  assert.deepEqual(result, { removed: ids.length, skippedOnline: 0, refusedActive: [] })
+  assert.deepEqual(stored.calls.batches, [ids], '筛出完整集合后只提交一次')
+  assert.deepEqual(stored.calls.singles, [], '宿主已有 deleteMany，不许退回逐行写')
+  assert.equal(stored.table.size, 0)
+  assert.equal(stored.medium.size, 0)
+  assert.deepEqual(disconnected, ids)
+  assert.equal(published.length, 1)
+})
+
+test('批删：介质提交失败时整批仍在，不踢连接、不报已同步', { timeout: 60_000 }, async (t) => {
+  const error = new Error('介质提交失败')
+  const stored = await domainTableOf({ a: row({ revokedAt: 1 }), b: row({ revokedAt: 1 }) }, { commitError: error })
+  t.after(() => stored.domain.close())
+  const published: number[] = []
+  const disconnected: string[] = []
+
+  await assert.rejects(adminOf(stored.table, [], published, disconnected).remove(['a', 'b']), (actual) => actual === error)
+  assert.deepEqual([...stored.table.keys()], ['a', 'b'], '失败不能留“先删掉的那一台”')
+  assert.deepEqual([...stored.medium.keys()], ['a', 'b'])
+  assert.deepEqual(disconnected, [])
+  assert.deepEqual(published, [])
+})
+
+test('批删：提交完成后才一起收连接、发名册', { timeout: 60_000 }, async (t) => {
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const stored = await domainTableOf({ a: row({ revokedAt: 1 }), b: row({ revokedAt: 1 }) }, { commitGate: gate })
+  t.after(() => stored.domain.close())
+  const published: number[] = []
+  const disconnected: string[] = []
+  const pending = adminOf(stored.table, [], published, disconnected).remove(['a', 'b'])
+  try {
+    await afterTurn()
+    assert.deepEqual(stored.calls.batches, [['a', 'b']])
+    assert.deepEqual([...stored.table.keys()], ['a', 'b'])
+    assert.deepEqual(disconnected, [])
+    assert.deepEqual(published, [])
+  } finally {
+    release()
+    await pending
+  }
+  assert.deepEqual(disconnected, ['a', 'b'])
+  assert.equal(published.length, 1)
+})
+
+test('批删：先整批拒活跃、scope 跳在线，原生批提交只收到最终集合', { timeout: 60_000 }, async (t) => {
+  const stored = await domainTableOf({ active: row(), online: row({ revokedAt: 1 }), gone: row({ revokedAt: 1 }) })
+  t.after(() => stored.domain.close())
+  const admin = adminOf(stored.table, ['online'])
+  assert.deepEqual(await admin.remove(['active', 'gone']), { removed: 0, skippedOnline: 0, refusedActive: ['active'] })
+  assert.deepEqual(stored.calls.batches, [], '拒绝整批时不进入介质')
+  assert.deepEqual(await admin.removeScope('revoked'), { removed: 1, skippedOnline: 1, refusedActive: [] })
+  assert.deepEqual(stored.calls.batches, [['gone']])
+  assert.deepEqual([...stored.table.keys()], ['active', 'online'])
+  await admin.removeScope('revoked')
+  assert.deepEqual(stored.calls.batches, [['gone']], '只剩在线匹配行时也不提交空批次')
 })

@@ -108,3 +108,27 @@ test('设备记录：pairingId 是必填 —— 缺了它设备能配对却再�
     '空串不是配对标识',
   )
 })
+
+
+test('设备码是可选持久字段，新行保留全长码而旧行不要求迁移', { timeout: 60_000 }, () => {
+  const schema = coreDomain.tables['devices']!.valueSchema
+  const row = { edPub: 'a'.repeat(64), dhPub: 'b'.repeat(64), name: '同名手机', pairedAt: 1, pairingId: 'p'.repeat(43) }
+  assert.equal(schema.safeParse(row).success, true)
+  const deviceCode = 'abcdefghijklmnopqrstuv'
+  const parsed = schema.safeParse({ ...row, deviceCode })
+  assert.ok(parsed.success)
+  assert.equal(parsed.data.deviceCode, deviceCode)
+  for (const bad of ['', 'x'.repeat(21), '!'.repeat(22)]) {
+    assert.equal(schema.safeParse({ ...row, deviceCode: bad }).success, false)
+  }
+})
+
+test('替换集合是可选本地代次事实，schema保留数组并兼容旧replaces', { timeout: 60_000 }, () => {
+  const schema = coreDomain.tables['devices']!.valueSchema
+  const row = { edPub: 'a'.repeat(64), dhPub: 'b'.repeat(64), name: '手机', pairedAt: 1, pairingId: 'p'.repeat(43), replaces: 'old' }
+  assert.equal(schema.safeParse(row).success, true)
+  const parsed = schema.safeParse({ ...row, replacesAll: ['old', 'older'] })
+  assert.ok(parsed.success)
+  assert.deepEqual(parsed.data.replacesAll, ['old', 'older'])
+  assert.equal(schema.safeParse({ ...row, replacesAll: 'old' }).success, false)
+})

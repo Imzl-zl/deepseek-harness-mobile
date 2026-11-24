@@ -91,7 +91,7 @@ const CLASS_BUDGET = [
   ['AppModel', 173], // 收窄：任务簇（2026-11-11）与提醒簇（2026-11-12：`_noticeKeyOf` / `_desiredNotices`）已搬走；+1 = 后台任务提醒档 setter（2026-11-13）；+1 = Agent Teams 开关 `setTeamEnabled`（2026-11-14，见 `implemented/2026-11-14-agent-team-integration.md`）；+1 = 新版本下载 `downloadAppUpdate`（2026-11-15，见 `implemented/2026-11-15-version-row-checks-and-downloads.md`）；2026-11-24 会话排序档：+2（`updatedAtOf` 与 `moveSession` 的切档），但**设备偏好那七个 setter 与两条读回路径整簇搬去 `DevicePrefs`**，净 −6（179 → 173）—— 读只剩 passthrough getter（不占方法数），`setTaskNoticePolicy` 留在本类是因为它带 `_syncNotices` 副作用
   ['ChatPageState', 65], // 面板/文件区/轨迹该各自成 widget
   ['_SyncClient', 61], // 收帧 / 恢复 / 写操作三件事在同一类
-  ['_DshMobileAppState', 48], // 装配之外的路由回调可下沉
+  ['_DshMobileAppState', 47], // 装配之外的路由回调可下沉
 ]
 
 const CLASS_DECL = /^class\s+(\w+)/

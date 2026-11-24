@@ -29,6 +29,7 @@ import { test } from 'node:test'
 import { createAdminRoutes } from '../src/admin/routes.js'
 import type { AdminDeviceRow, AdminDeps } from '../src/admin/routes.js'
 import { pairingQrSvg } from '../src/pairing-qr.js'
+import { createDevicePublisher } from '../src/device-publish.js'
 import { issuePairingOffer } from '../src/pairing-offer.js'
 import type { Pairing } from '../src/pairing.js'
 
@@ -698,4 +699,36 @@ test('出码失败：400 且正文带原因（不是空正文 —— 面板上�
   assert.equal(res.status, 400, '出码失败要是 400，但正文必须说原因')
   const body = await jsonOf(res)
   assert.match(String(body['error']), /中转没拨通/, '正文要带失败原因，否则操作者拿不到下一步')
+})
+
+
+test('状态面如实暴露名册deferred，不能把本地完成说成远端已同步', { timeout: 60_000 }, async () => {
+  const publisher = createDevicePublisher({
+    relayUrl: () => 'ws://127.0.0.1:8787', allowInsecureLocal: () => true,
+    available: () => false,
+    tokenSource: async () => { throw new Error('离线不能读令牌') },
+  })
+  publisher.schedule([])
+  const extra = { version: '0.1.test', rosterSync: publisher.state }
+  const routes = createAdminRoutes(deps(extra))
+  const response = await routeOf(routes, '/api/dsh-mobile/status').fetch(new Request('http://x/api/dsh-mobile/status'))
+  const body = await jsonOf(response)
+  assert.deepEqual(body['rosterSync'], publisher.state(), '取发布器真实状态，不造另一套同步成功标记')
+})
+
+
+test('显式和按状态删除的原生提交失败都在HTTP边界返回原因，不reject路由', { timeout: 60_000 }, async () => {
+  const failure = new Error('test-native-commit-failed')
+  const routes = createAdminRoutes(deps({
+    remove: async () => { throw failure },
+    removeScope: async () => { throw failure },
+  }))
+  for (const body of [{ devIds: ['dev-gone'] }, { scope: 'revoked' }]) {
+    const response = await post(routes, '/api/dsh-mobile/devices/remove', body).then((value) => value, (error: unknown) => error)
+    assert.ok(response instanceof Response, '应用I/O失败必须转为结构化HTTP应答')
+    assert.equal(response.status, 400)
+    const result = await jsonOf(response)
+    assert.equal(result['ok'], false)
+    assert.ok(String(result['error']).includes(failure.message))
+  }
 })

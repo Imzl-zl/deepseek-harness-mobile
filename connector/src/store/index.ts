@@ -35,6 +35,7 @@
  */
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import { z } from 'zod'
+import { DEVICE_CODE_PATTERN } from '../pairing.js'
 
 /** 业务 schema 版本，写在 `meta.schema`（契约 §1.4）。 */
 export const SCHEMA_VERSION = 2
@@ -49,6 +50,8 @@ const deviceSchema = z.object({
   /** X25519 静态 DH 公钥（32 字节 hex）。 */
   dhPub: z.string().length(PUB_HEX),
   name: z.string().min(1),
+  // Note: .agents/notes/implemented/2026-11-24-stable-device-code-and-pairing-continuity.md
+  deviceCode: z.string().regex(DEVICE_CODE_PATTERN).optional(),
   pairedAt: z.number(),
   /**
    * 配对标识（契约 §12.1）：配对码的 HKDF 输出，参与 §4.1 的 `info`。
@@ -80,6 +83,8 @@ const deviceSchema = z.object({
    * `.agents/notes/implemented/2026-10-28-atomic-repair-keeps-old-device-row.md`。
    */
   replaces: z.string().optional(),
+  /** 授权登记时的既有身份快照；旧重连不能实时扫描未来身份。 */
+  replacesAll: z.array(z.string().min(1)).optional(),
   /** 吊销时间；存在即已吊销（电脑侧删除公钥）。 */
   revokedAt: z.number().optional(),
 })

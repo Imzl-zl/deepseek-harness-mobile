@@ -30,6 +30,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io' show HttpClient;
 
 // 用 `io.dart` 而不是跨平台的 `WebSocketChannel.connect`：**后者不接受 `headers`**
 // （已核实 3.0.3 的源码：`static WebSocketChannel connect(Uri uri, {Iterable<String>? protocols})`
@@ -80,29 +81,49 @@ class WebSocketTransport implements ChannelTransport {
   final WebSocketTransportOptions options;
 
   WebSocketChannel? _channel;
+  HttpClient? _client;
+  Completer<void>? _cancelConnect;
+  bool _ready = false;
 
   @override
   Future<Stream<TransportEvent>> connect() async {
     // `IOWebSocketChannel.connect` 是**唯一**接受 `headers` 的入口（见文件头的选型说明）。
+    final client = HttpClient();
+    final cancelled = Completer<void>();
+    cancelled.future.ignore();
     final channel = IOWebSocketChannel.connect(
       Uri.parse(options.url),
       headers: options.headers,
+      customClient: client,
       // 建连超时由包自己管（它也接受 `connectTimeout`），但**这里仍用 `ready.timeout`**：
       // 包的 `connectTimeout` 只覆盖 `WebSocket.connect` 那一段，而 `ready` 才是
       // "这条 channel 可用"的完整信号。用一个判据而不是两个，避免"到底哪个超时了"。
       pingInterval: options.pingInterval,
     );
     _channel = channel;
+    _client = client;
+    _cancelConnect = cancelled;
+    _ready = false;
 
     try {
-      await channel.ready.timeout(options.connectTimeout);
-    } on TimeoutException {
-      _closeQuietly();
-      throw TransportException(
-        '建连超时（${options.connectTimeout.inSeconds}s）：${options.url}',
-      );
+      await Future.any([
+        channel.ready,
+        cancelled.future,
+      ]).timeout(options.connectTimeout);
+      if (_channel != channel) {
+        throw const TransportException('建连已取消');
+      }
+      _ready = true;
     } catch (error) {
-      _closeQuietly();
+      // 迟到的旧拨号不能清掉新连接。关闭只作用于本次拥有的 client。
+      if (_channel == channel) await close();
+      client.close(force: true);
+      if (error is TimeoutException) {
+        throw TransportException(
+          '建连超时（${options.connectTimeout.inSeconds}s）：${options.url}',
+        );
+      }
+      if (error is TransportException) rethrow;
       throw TransportException('建连失败：$error');
     }
 
@@ -130,8 +151,8 @@ class WebSocketTransport implements ChannelTransport {
         handleDone: (EventSink<TransportEvent> sink) {
           sink.add(
             TransportClosed(
-              code: _channel?.closeCode,
-              reason: _channel?.closeReason,
+              code: channel.closeCode,
+              reason: channel.closeReason,
             ),
           );
           sink.close();
@@ -143,7 +164,7 @@ class WebSocketTransport implements ChannelTransport {
   @override
   bool send(String line) {
     final channel = _channel;
-    if (channel == null) return false;
+    if (channel == null || !_ready) return false;
     try {
       // **一行一帧**（行级分帧，§3）：`line` 由 `core/frame.dart` 的
       // `encodeFrame` 产出，**已经带换行**，这里不再补 —— 分隔符只有一个 owner。
@@ -159,32 +180,27 @@ class WebSocketTransport implements ChannelTransport {
   @override
   Future<void> close() async {
     final channel = _channel;
+    final client = _client;
+    final cancelled = _cancelConnect;
+    final ready = _ready;
     _channel = null;
+    _client = null;
+    _cancelConnect = null;
+    _ready = false;
+    if (cancelled != null && !cancelled.isCompleted) {
+      cancelled.completeError(const TransportException('建连已取消'));
+    }
+    // Note: 未升级的 sink 没有完成关闭的消费者；见 .agents/notes/implemented/2026-11-24-pairing-cancellation-and-progress.md。
+    client?.close(force: true);
     if (channel == null) return;
-    await channel.sink
+    final closing = channel.sink
         .close(ws_status.normalClosure, 'client closing')
         .catchError((Object _) {});
-  }
-
-  /// 建连失败时的清场。
-  ///
-  /// **绝不 `await`** —— 这是读包源码得出的结论（`adapter_web_socket_channel.dart`）：
-  /// `AdapterWebSocketChannel` 只在 ``webSocketFuture.then(...)`` 里订阅内部流，
-  /// 而**连不上时那段从不执行**（走 `onError` 分支：`completeError` 之后只
-  /// `addError` + `close` 那个 local sink，**从不订阅** foreign sink）。
-  /// 于是 `sink.close()` 的 Future **永远不会完成**：
-  ///
-  /// - 实测症状：3 s 的 `connectTimeout` 变成 30 s 的**测试超时**，
-  ///   报错指向"测试超时"而不是"连不上" —— 排查时容易往错的方向找；
-  /// - 修法：清场是**礼节**（连接本来就没建起来），发出去、不等它。
-  void _closeQuietly() {
-    final channel = _channel;
-    _channel = null;
-    if (channel == null) return;
-    unawaited(
-      channel.sink
-          .close(ws_status.goingAway, 'connect failed')
-          .catchError((Object _) {}),
-    );
+    if (ready) {
+      await closing;
+    } else {
+      // 拨号已经由本次 HttpClient 取消，不等待不存在的 WebSocket 关闭回执。
+      unawaited(closing);
+    }
   }
 }
