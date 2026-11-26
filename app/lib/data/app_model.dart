@@ -3905,6 +3905,93 @@ class AppModel extends ChangeNotifier implements HostStateTarget {
     }
   }
 
+  /// 改工作区标题（`workspace.rename`）。
+  ///
+  /// **只替换那一行**，不重读整份基线：宿主回的就是改后的行。
+  /// 标题**原样发出**（不在这里 `trim`）：宿主自己 `trim()` 并判空
+  /// （`workspace-controller/src/commands.ts:74-77`），重名回
+  /// `workspace/name-conflict`（`:80-87`）—— 两条都由 [lastError] 如实带出，
+  /// 界面据此提示，**不吞成一句"保存失败"**。
+  ///
+  /// [title] 与现有标题**完全相同时直接返回 true 不发请求**：宿主那条路径
+  /// 也会跳过落盘（`:80-83`），但白跑一次往返没有意义。
+  Future<bool> renameWorkspace(String workspaceId, String title) async {
+    final current = _workspaceById(workspaceId);
+    if (current == null) {
+      _recordError('重命名工作区失败', StateError('没有这个工作区：$workspaceId'));
+      return false;
+    }
+    if (current.title == title) return true;
+    try {
+      final row = await _writes.renameWorkspace(
+        workspaceId: workspaceId,
+        title: title,
+        requestId: newRequestId('wrn'),
+      );
+      if (row == null) {
+        _recordError('重命名工作区失败', StateError('应答缺少 workspace 行'));
+        return false;
+      }
+      _replaceWorkspaceRow(row);
+      return true;
+    } catch (error) {
+      _recordError('重命名工作区失败', error);
+      return false;
+    }
+  }
+
+  /// 注销一个工作区注册（`workspace.delete`）。
+  ///
+  /// **只删注册**：目录与会话都留在宿主的磁盘上（宿主
+  /// `workspace-controller/src/commands.ts:94` 的原注释）。所以本地只摘掉这一组，
+  /// **不碰 [_sessions]** —— 那些会话可能还挂着，界面文案也不能写"删除项目"。
+  ///
+  /// 应答认不出（`null`）时**不动本地表**：凭空摘掉一组会让用户以为删成功了。
+  Future<bool> deleteWorkspace(String workspaceId) async {
+    try {
+      final deleted = await _writes.deleteWorkspace(
+        workspaceId: workspaceId,
+        requestId: newRequestId('wdl'),
+      );
+      if (deleted != true) {
+        _recordError('删除工作区失败', StateError('应答不是 {deleted: true}'));
+        return false;
+      }
+      _dropWorkspace(workspaceId);
+      return true;
+    } catch (error) {
+      _recordError('删除工作区失败', error);
+      return false;
+    }
+  }
+
+  WorkspaceGroup? _workspaceById(String workspaceId) {
+    for (final group in _workspaces) {
+      if (group.workspaceId == workspaceId) return group;
+    }
+    return null;
+  }
+
+  /// 用应答里的那一行替换同 id 的组；顺序不动（改名/改归属都不该跳位）。
+  void _replaceWorkspaceRow(WorkspaceGroup row) {
+    if (_disposed) return;
+    _workspaces = [
+      for (final group in _workspaces)
+        if (group.workspaceId == row.workspaceId) row else group,
+    ];
+    notifyListeners();
+  }
+
+  /// 摘掉一组。**只动分组表**：会话列表原样保留。
+  void _dropWorkspace(String workspaceId) {
+    if (_disposed) return;
+    _workspaces = [
+      for (final group in _workspaces)
+        if (group.workspaceId != workspaceId) group,
+    ];
+    notifyListeners();
+  }
+
   /// 用应答里的**整份**顺序重排 [_workspaces]。
   ///
   /// 只认已知的 workspaceId：应答里多出来的（宿主新增、手机还没读到的）跳过，

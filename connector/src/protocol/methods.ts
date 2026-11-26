@@ -175,12 +175,15 @@ export const METHODS = [
   // （`packages/api/workspace-controller/src/types.ts:18-30`）——
   // `SessionSummary` 里**没有** workspaceId，所以手机要照 Web 分组只能读这里。
   //
-  // 写入面**只做这三件**（都是 Web 侧栏本来就有的动作，API 均已核实）：
+  // 写入面（都是 Web 侧栏本来就有的动作，API 均已核实）：
   // - 同工作区内重排：`insertSessionBefore`（`index.ts:149-152`，DOM insertBefore 语义，
   //   跨工作区会被拒成 `workspace/move-invalid`）；
   // - 置顶 / 取消置顶：`pinSession` / `unpinSession`（`index.ts` 的两个 `@Remote`，
-  //   返回 registry 全局的 `{pinnedSessionIds}`）。
-  // 改名 / 新建 / 删除工作区**仍不做**：手机上还没有它们的落点。
+  //   返回 registry 全局的 `{pinnedSessionIds}`）；
+  // - 改名 / 删除工作区：`rename` / `delete`（`workspace-controller/src/index.ts:120,130`
+  //   → `commands.ts:72-106`）。**新建工作区仍不做**：手机上要输一个宿主目录路径，
+  //   那是电脑上的事（`create` 的 `path` 必须是宿主已存在的目录，
+  //   `commands.ts:36-70` 会去 realpath 校验）。
   'workspace.list',
   // 归档 / 取消归档。`stopActivity` 见 `dsh/workspaces.ts` 的注释：不带它时
   // 有活动在跑的会话会被拒（`workspace/session-active`），带上才停活动。
@@ -193,6 +196,11 @@ export const METHODS = [
   'workspace.insertBefore',
   'workspace.pin',
   'workspace.unpin',
+  // 改名 / 删除工作区注册。失败语义原样过线（都在 `ERROR_TABLE` 里）：
+  // 空标题 `gateway/bad-request`、重名 `workspace/name-conflict`、
+  // 认不出的 id `workspace/not-found`。
+  'workspace.rename',
+  'workspace.delete',
   // 端点自报：当前可拨的地址表（中转 + 局域网直连）。只读。
   // 手机据此建"连接方式"列表，并在 IP 变了之后自愈 —— 详见 `endpoints.ts` 的文件头。
   'endpoint.describe',
@@ -264,6 +272,12 @@ export const IDEMPOTENT_METHODS: ReadonlySet<MethodName> = new Set([
   'workspace.insertBefore',
   'workspace.pin',
   'workspace.unpin',
+  // 改名 / 删除是用户指令：重发不该多落一次。
+  // 改名天然按目标态收敛（同一个 title 落到同一个终态，宿主还判"与自己的名字相同
+  // 就不落盘"，`commands.ts:80-83`）；删除第二发会得 `workspace/not-found`，
+  // 那是**已经删掉了**的意思 —— 有键才能让重发在指令层就收住，不把这条报错弹给用户。
+  'workspace.rename',
+  'workspace.delete',
 ])
 
 export function isMethod(value: unknown): value is MethodName {

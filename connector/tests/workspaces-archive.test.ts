@@ -218,6 +218,15 @@ function portOf(overrides: Partial<WorkspacesPort>): WorkspacesPort {
     insertBefore: () => Promise.resolve([]),
     pin: () => Promise.resolve([]),
     unpin: () => Promise.resolve([]),
+    rename: (_workspaceId, title) =>
+      Promise.resolve({
+        workspaceId: 'ws-1',
+        title,
+        path: '/repo/dsh-mobile',
+        createdAt: '2026-10-01T00:00:00.000Z',
+        sessionIds: [],
+      }),
+    delete: () => Promise.resolve(),
     ...overrides,
   }
 }
@@ -476,6 +485,99 @@ test('宿主封闭错误码抬成协议错误：session-active 原样，表外�
       // 不在这里发一个手机不认识的码。
       assert.equal(error instanceof ProtocolError, false)
       assert.match(String((error as Error).message), /move-invalid/)
+      return true
+    },
+  )
+})
+// ---------------------------------------------------------------------------
+// 工作区行的改名 / 删除（2026-11-26）
+// ---------------------------------------------------------------------------
+
+test('workspace.rename：title 原样交给宿主，回那一行且 sessionIds 换成 sid', async () => {
+  const seen: unknown[] = []
+  const { handlers } = build({
+    list: () => Promise.resolve({ workspaces: [], archivedSessionIds: [], pinnedSessionIds: [] }),
+    rename: (workspaceId: string, title: string) => {
+      seen.push({ workspaceId, title })
+      return Promise.resolve({
+        workspaceId,
+        title,
+        path: 'D:/repo',
+        sessionIds: ['dsh-a'],
+        createdAt: '2026-10-21T15:42:56.03Z',
+      })
+    },
+  })
+
+  const handler = handlers['workspace.rename']
+  assert.ok(handler !== undefined)
+  const result = await handler({ workspaceId: 'ws-1', title: '  新名字  ' }, {})
+
+  // **不 trim**：宿主自己 trim 并判空（commands.ts:74-77），这一层再裁就是两份规则。
+  assert.deepEqual(seen, [{ workspaceId: 'ws-1', title: '  新名字  ' }])
+  assert.deepEqual(result, {
+    workspace: {
+      workspaceId: 'ws-1',
+      title: '  新名字  ',
+      path: 'D:/repo',
+      // 同一份载荷里只换一半就是 bug：行里的 sessionIds 也必须过别名。
+      sessionIds: ['sid_dsh-a'],
+      createdAt: '2026-10-21T15:42:56.03Z',
+    },
+  })
+})
+
+test('workspace.rename：宿主报重名时原样抛 protocol 码（不归一成 internal）', async () => {
+  const { handlers } = build({
+    list: () => Promise.resolve({ workspaces: [], archivedSessionIds: [], pinnedSessionIds: [] }),
+    rename: () => Promise.reject(new ProtocolError('workspace/name-conflict', 'taken')),
+  })
+
+  const handler = handlers['workspace.rename']
+  assert.ok(handler !== undefined)
+  await assert.rejects(
+    async () => {
+      await handler({ workspaceId: 'ws-1', title: 'taken' }, {})
+    },
+    (error: unknown) => {
+      // 这个码在 ERROR_TABLE 里，所以它是给用户看的"名字被占用"，不是故障。
+      assert.equal(error instanceof ProtocolError, true)
+      assert.equal((error as ProtocolError).code, 'workspace/name-conflict')
+      return true
+    },
+  )
+})
+
+test('workspace.delete：只发 workspaceId，回 {deleted: true}', async () => {
+  const seen: string[] = []
+  const { handlers } = build({
+    list: () => Promise.resolve({ workspaces: [], archivedSessionIds: [], pinnedSessionIds: [] }),
+    delete: (workspaceId: string) => {
+      seen.push(workspaceId)
+      return Promise.resolve()
+    },
+  })
+
+  const handler = handlers['workspace.delete']
+  assert.ok(handler !== undefined)
+  assert.deepEqual(await handler({ workspaceId: 'ws-1' }, {}), { deleted: true })
+  assert.deepEqual(seen, ['ws-1'])
+})
+
+test('workspace.delete：端口抛错就不回 deleted（不把失败说成成功）', async () => {
+  const { handlers } = build({
+    list: () => Promise.resolve({ workspaces: [], archivedSessionIds: [], pinnedSessionIds: [] }),
+    delete: () => Promise.reject(new ProtocolError('workspace/not-found', 'gone')),
+  })
+
+  const handler = handlers['workspace.delete']
+  assert.ok(handler !== undefined)
+  await assert.rejects(
+    async () => {
+      await handler({ workspaceId: 'ws-1' }, {})
+    },
+    (error: unknown) => {
+      assert.equal((error as ProtocolError).code, 'workspace/not-found')
       return true
     },
   )

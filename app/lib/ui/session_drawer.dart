@@ -35,7 +35,9 @@ import '../theme/dsh_icons.dart';
 import '../theme/dsh_theme.dart';
 import 'collapsible_group.dart';
 import 'dsh_brand.dart';
+import 'dsh_group_action.dart';
 import 'dsh_popover.dart';
+import 'dsh_sheet.dart';
 import 'load_more_on_scroll.dart';
 import 'session_dot_view.dart';
 
@@ -170,6 +172,9 @@ class SessionDrawer extends StatefulWidget {
     this.onUnpin,
     this.onMove,
     this.onMoveWorkspace,
+    this.onNewSessionInWorkspace,
+    this.onRenameWorkspace,
+    this.onDeleteWorkspace,
     this.onSearch,
     this.expandedOf,
     this.onExpandedChanged,
@@ -233,6 +238,20 @@ class SessionDrawer extends StatefulWidget {
   /// （侧栏项目头的上下位置）。走 `workspace.insertBefore`。
   final void Function(String workspaceId, String? beforeWorkspaceId)?
   onMoveWorkspace;
+
+  /// 在**指定工作区**里新建一条会话（组头的「＋」）。
+  ///
+  /// 与顶部那个全局 [onNewSession] 是两条：那个落到"最近的工作区"
+  /// （`AppModel.newSessionWorkspaceId`），这条落到用户点的这一组 ——
+  /// DSH Web 的项目行也有这一枚（`ui-workspace/src/client/rows/Rows.tsx:238-249`）。
+  final void Function(String workspaceId)? onNewSessionInWorkspace;
+
+  /// 改工作区标题（`workspace.rename`）。回 `true` 表示已落盘。
+  final Future<bool> Function(String workspaceId, String title)?
+  onRenameWorkspace;
+
+  /// 注销工作区注册（`workspace.delete`）。**只删注册**，目录与会话都留着。
+  final Future<bool> Function(String workspaceId)? onDeleteWorkspace;
 
   final ValueChanged<String>? onSearch;
 
@@ -459,6 +478,7 @@ class _SessionDrawerState extends State<SessionDrawer> {
                                 (s) => s.isActive,
                               ),
                               headerWrapper: _headerDragFor(i),
+                              trailing: _groupActionsOf(widget.sections[i]),
                               children: [
                                 for (final session
                                     in widget.sections[i].sessions)
@@ -584,6 +604,183 @@ class _SessionDrawerState extends State<SessionDrawer> {
     );
   }
 
+  /// 组头那两枚动作（「…」改名/删除、「＋」新建会话）。
+  ///
+  /// **只有真工作区才有**：`workspaceId == null` 的桶（「未分组」/ 没有清单时的
+  /// 「会话」）背后没有宿主工作区，新建会话要指定归属、改名删除要工作区 id ——
+  /// 硬放按钮只会得到一句失败。这与 DSH Web 的 `ProjectRowActions`
+  /// （`ui-workspace/src/client/rows/Rows.tsx:142` 的接口；
+  /// `:238` 的 `create !== undefined` 门；未分组桶因为 `create` 缺席就没这一枚）同一条。
+  Widget? _groupActionsOf(DrawerSection section) {
+    final workspaceId = section.workspaceId;
+    if (workspaceId == null) return null;
+    final canCreate = widget.onNewSessionInWorkspace != null;
+    final canMenu =
+        widget.onRenameWorkspace != null || widget.onDeleteWorkspace != null;
+    if (!canCreate && !canMenu) return null;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // **顺序照 DSH**：`Rows.tsx:230-249` 的 `rowActions` 里，
+        // 「…」（`:231-237` 的 `contextMenu.button`）在**前**、「＋」（`:238-249`）在后。
+        // `Rows.module.css:118` 只给了高度、没有反转，所以 DOM 序 = 视觉序。
+        if (canMenu)
+          Builder(
+            builder: (context) => _GroupAction(
+              icon: 'ellipsis',
+              semanticLabel: '「${section.label}」的更多操作',
+              onTap: () =>
+                  unawaited(_showWorkspaceMenu(section, _anchorOf(context))),
+            ),
+          ),
+        if (canCreate)
+          _GroupAction(
+            icon: 'newChat',
+            semanticLabel: '在「${section.label}」里新建会话',
+            onTap: () => widget.onNewSessionInWorkspace!(workspaceId),
+          ),
+      ],
+    );
+  }
+
+  /// 拿一个按钮自己的矩形当浮层锚点（与 `_SessionRow.onMenu` 同一条路子）。
+  Rect _anchorOf(BuildContext context) {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return Rect.zero;
+    return box.localToGlobal(Offset.zero) & box.size;
+  }
+
+  /// 工作区行的「…」菜单：改名 / 删除。
+  ///
+  /// **没有「在文件夹中显示」**：那个动作让电脑弹文件管理器，用户在手机上看不见
+  /// 结果（用户 2026-11-26 原话：「我是远程，你就是打开了我又看不了啊」）——
+  /// 放进菜单等于给一个屏幕上什么都不会发生的按钮。
+  Future<void> _showWorkspaceMenu(DrawerSection section, Rect anchor) async {
+    final action = await showDshPopover<_WorkspaceMenuAction>(
+      context: context,
+      anchor: anchor,
+      title: section.label,
+      body: Builder(
+        builder: (inner) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (widget.onRenameWorkspace != null)
+              _SessionMenuRow(
+                icon: 'edit',
+                label: '重命名',
+                onTap: () =>
+                    Navigator.of(inner).pop(_WorkspaceMenuAction.rename),
+              ),
+            if (widget.onDeleteWorkspace != null)
+              _SessionMenuRow(
+                icon: 'trash',
+                label: '删除工作区',
+                onTap: () =>
+                    Navigator.of(inner).pop(_WorkspaceMenuAction.delete),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    // 浮层退出动画没走完就开下一个对话框，后开的会被前一个的 pop 一起带走
+    // （`_showSessionMenu` 的归档那条踩过两次同样的坑）。
+    await Future<void>.delayed(const Duration(milliseconds: 260));
+    if (!mounted) return;
+    switch (action) {
+      case _WorkspaceMenuAction.rename:
+        await _renameWorkspace(section);
+      case _WorkspaceMenuAction.delete:
+        await _deleteWorkspace(section);
+    }
+  }
+
+  Future<void> _renameWorkspace(DrawerSection section) async {
+    final workspaceId = section.workspaceId;
+    final rename = widget.onRenameWorkspace;
+    if (workspaceId == null || rename == null) return;
+    final title = await _promptWorkspaceTitle(section.label);
+    if (!mounted || title == null) return;
+    await rename(workspaceId, title);
+  }
+
+  /// 改名输入框（`showDshSheet` + `TextField`，与 [showAddEndpointDialog] 同一族）。
+  ///
+  /// **不在这里 `trim` 完再判空就返回**：空标题要发出去让宿主拒
+  /// （`gateway/bad-request`），这样"为什么没改成"的原文能到用户眼前；
+  /// 在客户端静默 return 会让对话框关掉却什么都没发生。
+  Future<String?> _promptWorkspaceTitle(String current) {
+    final controller = TextEditingController(text: current);
+    return showDshSheet<String>(
+      context: context,
+      title: '重命名工作区',
+      body: StatefulBuilder(
+        builder: (context, setState) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: controller,
+              autofocus: true,
+              // 只改标题，不动目录：宿主 `rename` 只 `setTitle`
+              // （`workspace-controller/src/commands.ts:80-89`）。
+              decoration: const InputDecoration(
+                labelText: '名称',
+                helperText: '只改显示名，不会改电脑上的文件夹',
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        DshSheetAction(
+          label: '取消',
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        DshSheetAction(
+          label: '保存',
+          filled: true,
+          onPressed: () => Navigator.of(context).pop(controller.text),
+        ),
+      ],
+    ).whenComplete(controller.dispose);
+  }
+
+  Future<void> _deleteWorkspace(DrawerSection section) async {
+    final workspaceId = section.workspaceId;
+    final remove = widget.onDeleteWorkspace;
+    if (workspaceId == null || remove == null) return;
+    final ok = await showDshSheet<bool>(
+      context: context,
+      title: '删除「${section.label}」？',
+      body: Text(
+        // **措辞照宿主的真实语义**：只删注册，目录与会话都留着
+        // （`workspace-controller/src/commands.ts:94` 的原注释）。
+        // 写成"删除项目/删除全部会话"就是骗用户。
+        '这台电脑上的文件夹和里面的会话都不会被删除，只是不再把它列在项目里。',
+        style: TextStyle(
+          fontSize: 13,
+          height: 1.6,
+          color: context.dshColors.labelSecondary,
+        ),
+      ),
+      actions: [
+        DshSheetAction(
+          label: '取消',
+          onPressed: () => Navigator.of(context).pop(false),
+        ),
+        DshSheetAction(
+          label: '删除',
+          filled: true,
+          onPressed: () => Navigator.of(context).pop(true),
+        ),
+      ],
+    );
+    if (!mounted || ok != true) return;
+    await remove(workspaceId);
+  }
+
   /// 这个组**之后**第一个真工作区的 id（落到"下半"时的锚点；没有就是末尾）。
   String? _nextWorkspaceIdAfter(int index) {
     for (var i = index + 1; i < widget.sections.length; i += 1) {
@@ -690,6 +887,14 @@ class _SessionDrawerState extends State<SessionDrawer> {
 
 /// 行长按菜单的一项。
 enum _SessionMenuAction { pin, unpin, moveUp, moveDown, archive }
+
+/// 工作区行「…」菜单的一项。
+///
+/// **没有 reveal / "在文件夹中显示"**：那是让电脑弹文件管理器，远程用户在手机上
+/// 看不到任何结果（2026-11-26 用户的判断）。宿主确实有 `openWorkspacePath`
+/// （`session-controller/src/index.ts:347-354` 的 `action: 'reveal'`），
+/// 但"能做"不等于"有用"。
+enum _WorkspaceMenuAction { rename, delete }
 
 class _SessionMenuRow extends StatelessWidget {
   const _SessionMenuRow({
@@ -1398,3 +1603,10 @@ class _Ib extends StatelessWidget {
     );
   }
 }
+
+/// 组头那两枚紧凑动作钮（「＋」与「…」）。
+///
+/// **实现搬到 `ui/dsh_group_action.dart` 了**：它服务的是组头而不是抽屉，
+/// 内联列表将来要挂同样的动作时不该 import 整个抽屉。这里只保留名字，
+/// 免得本文件里十几处 `_GroupAction` 一起改。
+typedef _GroupAction = DshGroupAction;

@@ -45,9 +45,11 @@ test('方法表：封闭集，幂等键标记与契约 §5.7 的表一致', () =
   // （一个改动文件的逐行比对）后是 **51**；同日加 `session.fork`（收口处分支）后是 **52**。
   // 2026-11-14 加 `team.setEnabled`（Agent Teams 的开关，Team 唯一的写入面）后是 **53**。
   // 2026-11-22 加 `skill.catalog`（`/` 菜单的技能段，只读）后是 **54**。
+  // 2026-11-26 加 `workspace.rename` / `workspace.delete`（工作区行改名与注销，
+  // DSH 的 `workspace-controller/src/index.ts:120,130`）后是 **56**。
   // **这个数是契约 §5.7 的表与 `tools.md` 的同步闸**：加了方法不改这里就会红，
   // 而它红的方式是"数不对"，所以改它必须同时改契约那一行。
-  assert.equal(METHODS.length, 54, '方法数变了要同步契约 §5.7 的表')
+  assert.equal(METHODS.length, 56, '方法数变了要同步契约 §5.7 的表')
   assert.equal(new Set(METHODS).size, METHODS.length, '方法名不能重复')
 
   // 幂等集**从契约 §5.7 的表里读**，不在测试里手抄第二份 ——

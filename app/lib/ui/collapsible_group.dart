@@ -14,8 +14,9 @@
 ///    用户 2026-10-21 原话：「不是按照工作区分类然后每个工作区下面多少会话？」。
 ///    这是有意偏离，理由与 `design-and-tech-plan.md` §6 同一条：没有 hover 的界面
 ///    不该把"有多少"藏在折叠态里）。
-/// 2. **当前会话所在的组即使折叠也高亮**（`Rows.tsx:211,236` 的
-///    `containsCurrentDescendant`）—— 否则用户看不到"我在哪个项目里"。
+/// 2. **当前会话所在的组即使折叠也高亮**（`Rows.tsx:131` 的
+///    `containsCurrentDescendant`、`:197` 的判据 `active = containsCurrentDescendant
+///    || (group.expanded && group.containsCurrent)`）—— 否则用户看不到"我在哪个项目里"。
 /// 3. 折叠状态由**调用方**持有（这里是 widget 内的局部态）：
 ///    DSH 是 `setGroupExpanded(key, expanded)`（`WorkspaceBrowser.tsx:281`），
 ///    手机侧一期只做"这一次打开期间的记忆"，不落盘 ——
@@ -38,6 +39,7 @@ class CollapsibleGroup extends StatelessWidget {
     required this.childCount,
     this.containsCurrent = false,
     this.headerWrapper,
+    this.trailing,
     this.indent = 14,
     required this.children,
   });
@@ -68,6 +70,13 @@ class CollapsibleGroup extends StatelessWidget {
   /// 而这一层还服务内联列表（`chat_page.dart`）—— 把两处的交互塞进同一个组件
   /// 会让"内联列表能不能拖"变成隐式行为。
   final Widget Function(BuildContext context, Widget header)? headerWrapper;
+
+  /// 组头右侧的附加动作（工作区行："新建会话" + 溢出菜单）。
+  ///
+  /// 放在**个数与三角之间**（DSH `Rows.tsx:230-249` 的 `rowActions` 就是这个位置）：
+  /// 动作属于这个项目，不属于整份列表；贴在最右边会让它看起来像"全局"按钮。
+  /// 内联列表不传，行为不变。
+  final Widget? trailing;
 
   final List<Widget> children;
 
@@ -116,6 +125,10 @@ class CollapsibleGroup extends StatelessWidget {
                 style: TextStyle(fontSize: 11, color: c.labelSecondary),
               ),
             ],
+            // 动作排在个数之后、三角之前（DSH `Rows.tsx:230-249` 的位置）：
+            // 组头本身是"切换展开"的按钮，动作必须是**并列的兄弟**而不是嵌套，
+            // 否则点动作会连带把组折起来。
+            if (trailing != null) ...[const SizedBox(width: 2), trailing!],
             const SizedBox(width: 4),
             // 右三角：展开时转 90°（DSH `Rows.tsx:263` 的 `arrowOpen`）。
             AnimatedRotation(

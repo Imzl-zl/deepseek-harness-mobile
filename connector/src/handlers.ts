@@ -1349,6 +1349,42 @@ export function createHandlers(deps: HandlerDeps): Partial<Record<MethodName, Me
         await deps.workspaces!.unarchive(requireSession(requireSid(params))),
       ),
     })
+
+    // 改名：`{workspaceId, title}` → 改后的**那一行**。
+    //
+    // 三条纪律：
+    // 1. **不在这里 trim / 判空** —— 宿主先 `trim()` 再判（`commands.ts:74-77`），
+    //    重名报 `workspace/name-conflict`（`:80-87`）。这两条都在 `ERROR_TABLE` 里，
+    //    原样到手机，手机照文案提示即可。这一层再判一次就是两份规则。
+    // 2. 工作区 id **不过 `aliased`**：它不是别名，`workspace.list` 也原样给
+    //    （与 `workspace.insertBefore` 同一条）。
+    // 3. `sessionIds` **要过 `aliased`** —— 这一行里有 id 列表，同一份载荷里
+    //    只换一半就是 bug（见 `workspace.list` 的注释）。手机拿到明文 id 会分组错位。
+    handlers['workspace.rename'] = async (params) => {
+      const row = await deps.workspaces!.rename(
+        requireString(params, 'workspaceId'),
+        requireString(params, 'title'),
+      )
+      return {
+        workspace: {
+          workspaceId: row.workspaceId,
+          title: row.title,
+          path: row.path,
+          createdAt: row.createdAt,
+          sessionIds: await aliased(row.sessionIds),
+        },
+      }
+    }
+
+    // 删除工作区注册。**只删注册**：目录与会话都留着（宿主
+    // `commands.ts:94` 的原注释）。手机上因此不能写成"删除项目"。
+    //
+    // 应答 `{deleted: true}` 照宿主（`types.ts:93-95`）；这个 `true` 是
+    // 形状的一部分，不是我们判出来的 —— 失败会抛 `workspace/not-found`。
+    handlers['workspace.delete'] = async (params) => {
+      await deps.workspaces!.delete(requireString(params, 'workspaceId'))
+      return { deleted: true }
+    }
   }
 
   // 权限预设：清单与写路径都按能力位挂（`dsh/permissions.ts` 的文件头列了三个服务键）。

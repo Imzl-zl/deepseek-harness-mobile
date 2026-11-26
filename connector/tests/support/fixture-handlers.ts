@@ -379,6 +379,16 @@ export function fixtureHandlers(
       unpin: async () => ['dsh-2'],
       insertSessionBefore: async () => ['dsh-2', 'dsh-1'],
       insertBefore: async () => ['ws-1'],
+      // 改名：回**那一行**（形状要与 `workspace.list` 的行同构，含 `createdAt`）。
+      rename: async (_workspaceId: string, title: string) => ({
+        workspaceId: 'ws-1',
+        title,
+        path: '/repo/dsh-mobile',
+        createdAt: '2026-10-01T00:00:00.000Z',
+        sessionIds: ['dsh-1', 'dsh-2'],
+      }),
+      // 删除：宿主只回 `{deleted: true}`，端口层收敛成 void。
+      delete: async () => {},
     },
     // 端点自报：一张确定性的端点表（顺序即偏好：direct 先于 relay）。
     endpoints: {

@@ -49,6 +49,8 @@ const String _kPin = 'workspace.pin';
 const String _kUnpin = 'workspace.unpin';
 const String _kArchive = 'workspace.archive';
 const String _kUnarchive = 'workspace.unarchive';
+const String _kRename = 'workspace.rename';
+const String _kDelete = 'workspace.delete';
 
 // 一次解码的**值类型**（分组 + 两列 id）在 `core/workspace_snapshot.dart`
 // （端口 `HostRpc` 要能返回它）；下面只剩"怎么从同一份应答里一起解出来"。
@@ -152,9 +154,81 @@ Future<List<String>?> workspaceInsertBefore(
   return valueOrReport(readWorkspaceOrder(result), _kInsertBefore);
 }
 
+/// 改工作区标题：回**改后的那一行**（`null` = 应答认不出）。
+///
+/// **标题原样发**，不在这里 `trim`：宿主先 `trim()` 再判空
+/// （`workspace-controller/src/commands.ts:74-77`），空标题会回
+/// `gateway/bad-request`；重名回 `workspace/name-conflict`。两条都在
+/// `ERROR_TABLE` 里、原样到手机，这一层再判一次就是两份规则。
+Future<WorkspaceGroup?> workspaceRename(
+  SyncClient client, {
+  required String workspaceId,
+  required String title,
+  required String requestId,
+}) async {
+  final result = await client.call<Object?>(_kRename, {
+    'workspaceId': workspaceId,
+    'title': title,
+  }, requestId: requestId);
+  return valueOrReport(readRenameWorkspace(result), _kRename);
+}
+
+/// 注销一个工作区（**只删注册，目录与会话都留着**）。
+///
+/// 回 `bool` 而不是 `void`：`null` = 应答认不出（调用方如实报错、不动本地表），
+/// `true` = 宿主确认删掉了。宿主只回 `{deleted: true}`，所以除了"没有抛错"
+/// 没有别的信息可用 —— 但**认不出**（形状变了）与**已删除**必须能分开，
+/// 否则一个坏应答会被当成成功，界面上那一行凭空消失。
+Future<bool?> workspaceDelete(
+  SyncClient client, {
+  required String workspaceId,
+  required String requestId,
+}) async {
+  final result = await client.call<Object?>(_kDelete, {
+    'workspaceId': workspaceId,
+  }, requestId: requestId);
+  if (result is! Map) return _unreadableDelete();
+  if (WireFields(result, _kDelete).map['deleted'] != true) {
+    return _unreadableDelete();
+  }
+  return true;
+}
+
+/// `workspace.delete` 认不出时的唯一出口：计一次数、交 `null`。
+///
+/// 走 [valueOrReport] 的同一条纪律（那一条是"计数 + 交付"绑在一起，
+/// 见 `reading.dart:17` 的注释）—— 这里没有解码器可传，所以用 [WireBad]
+/// 造一个只为了拿同一个出口，不另写一套 `report + return null`。
+bool? _unreadableDelete() => valueOrReport(
+  const WireBad<bool>('应答不是 {deleted: true}（`workspace.delete`）'),
+  _kDelete,
+);
+
 // ---------------------------------------------------------------------------
 // 纯解码
 // ---------------------------------------------------------------------------
+
+/// `workspace.rename` 的应答 → 改后的那一行。
+///
+/// 形状与 `workspace.list` 的一行**同构**（`connector/src/handlers.ts` 的
+/// `workspace.rename` 就是拿同一组键拼的），所以这里直接复用列表行的构造器 ——
+/// 两个地方各写一份解析，迟早有一边漏掉 `createdAt`（那种漏写发生过一次，
+/// 见 `_kList` 上面的注释）。
+WireReading<WorkspaceGroup> readRenameWorkspace(Object? result) {
+  if (result is! Map) {
+    return const WireBad('应答不是 {workspace}（`workspace.rename`）');
+  }
+  final fields = WireFields(result, _kRename);
+  final row = fields.map['workspace'];
+  if (row is! Map) {
+    return const WireBad('workspace 认不出（`workspace.rename`）');
+  }
+  try {
+    return WireOk(_groupOf(WireFields(row, _kRename)));
+  } on WireFieldError catch (error) {
+    return WireBad('workspace 行认不出（`workspace.rename`）：${error.detail}');
+  }
+}
 
 /// `workspace.list` 的应答 → 分组 + 两列 id。
 ///

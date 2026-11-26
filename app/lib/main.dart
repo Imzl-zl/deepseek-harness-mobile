@@ -1088,6 +1088,23 @@ class _DshMobileAppState extends State<DshMobileApp>
           onMoveWorkspace: (workspaceId, beforeWorkspaceId) => unawaited(
             _moveWorkspaceFromDrawer(app, workspaceId, beforeWorkspaceId),
           ),
+          // 工作区行的「＋」：在**这一组**里新建会话（与顶部那个全局新建是
+          // 两条：那个落到"最近的工作区"，这条落到用户点的这一组）。
+          onNewSessionInWorkspace: (workspaceId) =>
+              unawaited(_newSessionInWorkspace(workspaceId)),
+          onRenameWorkspace: (workspaceId, title) async {
+            final ok = await app.renameWorkspace(workspaceId, title);
+            // 失败要让用户看到**宿主的原话**：空标题是 `gateway/bad-request`、
+            // 重名是 `workspace/name-conflict` —— 都在 `ERROR_TABLE` 里，
+            // 所以 `_showActionFailure` 打出来的是可读的原因而不是 `internal`。
+            if (!ok && mounted) _showActionFailure(app);
+            return ok;
+          },
+          onDeleteWorkspace: (workspaceId) async {
+            final ok = await app.deleteWorkspace(workspaceId);
+            if (!ok && mounted) _showActionFailure(app);
+            return ok;
+          },
           // 点连接状态行 → 已配对时给"重新配对 / 断开"的选择，没配对上配对页。
           onClose: () {
             if (_credentials == null) {
@@ -1359,38 +1376,60 @@ class _DshMobileAppState extends State<DshMobileApp>
     }
     final app = _app;
     if (app == null) return;
-    unawaited(() async {
-      // **在第一个 await 之前拿好 context**：`_navContext` 是个 getter，
-      // 跨 await 再用会被 `use_build_context_synchronously` 拦（它没有错，
-      // 只是读不出来"这个 context 属于本 State 的 Navigator 且一直活着"）。
-      final navContext = _navContext;
-      // 目标工作区照 DSH 的链（显式没有 → 当前会话工作区 → 最近工作区，
-      // 见 `AppModel.defaultNewSessionWorkspaceId`）：
-      // **不带 `workspaceId` 建的会话不会进任何工作区的账本**，于是它在抽屉里
-      // 永远落在「未分组」（2026-10-22 真机反馈）。
-      final workspaceId = app.defaultNewSessionWorkspaceId;
-      // ① 先复用**这个工作区里**现有的 blank（**不新建**）。
-      final existing = await app.findBlankSession(workspaceId: workspaceId);
-      if (existing != null) {
-        await app.openSession(existing);
-        return;
+    // 目标工作区照 DSH 的链（显式没有 → 当前会话工作区 → 最近工作区，
+    // 见 `AppModel.defaultNewSessionWorkspaceId`）：
+    // **不带 `workspaceId` 建的会话不会进任何工作区的账本**，于是它在抽屉里
+    // 永远落在「未分组」（2026-10-22 真机反馈）。
+    unawaited(
+      _newSessionIn(app: app, workspaceId: app.defaultNewSessionWorkspaceId),
+    );
+  }
+
+  /// 在工作区行的「＋」里新建：**落到用户点的那一组**。
+  ///
+  /// 与顶部那个全局新建共用 [_newSessionIn] —— 两条入口的差别只有"目标工作区
+  /// 怎么定"，其余（复用 blank、在途合并、失败照实说）必须完全一致：
+  /// 各写一份迟早有一边忘了复用 blank，于是每点一次电脑上就多一条空会话。
+  Future<void> _newSessionInWorkspace(String workspaceId) async {
+    _closeDrawer();
+    if (_credentials == null) {
+      _openPairing();
+      return;
+    }
+    final app = _app;
+    if (app == null) return;
+    await _newSessionIn(app: app, workspaceId: workspaceId);
+  }
+
+  Future<void> _newSessionIn({
+    required AppModel app,
+    required String? workspaceId,
+  }) async {
+    // **在第一个 await 之前拿好 context**：`_navContext` 是个 getter，
+    // 跨 await 再用会被 `use_build_context_synchronously` 拦（它没有错，
+    // 只是读不出来"这个 context 属于本 State 的 Navigator 且一直活着"）。
+    final navContext = _navContext;
+    // ① 先复用**这个工作区里**现有的 blank（**不新建**）。
+    final existing = await app.findBlankSession(workspaceId: workspaceId);
+    if (existing != null) {
+      await app.openSession(existing);
+      return;
+    }
+    // ② 没有才建。建失败照实说，不吞。
+    try {
+      // **只说一次**：在途合并之后，连点几下也只会建一个（`AppModel.createSession`
+      // 的 `connecting` 表）；没有这句时"半天没反应"会被读成"没点上"。
+      if (navContext.mounted && !app.creatingNewSession) {
+        DshToast.show(navContext, '正在新建会话…');
       }
-      // ② 没有才建。建失败照实说，不吞。
-      try {
-        // **只说一次**：在途合并之后，连点几下也只会建一个（`AppModel.createSession`
-        // 的 `connecting` 表）；没有这句时"半天没反应"会被读成"没点上"。
-        if (navContext.mounted && !app.creatingNewSession) {
-          DshToast.show(navContext, '正在新建会话…');
-        }
-        await app.createSession(workspaceId: workspaceId);
-      } catch (error) {
-        // **不借用 `_notYet`**：那是"这个功能还没做"，而这里是"电脑侧拒绝了"。
-        // 两句话混在一起会让用户以为功能缺失（2026-11-08 顺带修）。
-        if (navContext.mounted) {
-          DshToast.show(navContext, '新建会话失败：$error', kind: DshToastKind.error);
-        }
+      await app.createSession(workspaceId: workspaceId);
+    } catch (error) {
+      // **不借用 `_notYet`**：那是"这个功能还没做"，而这里是"电脑侧拒绝了"。
+      // 两句话混在一起会让用户以为功能缺失（2026-11-08 顺带修）。
+      if (navContext.mounted) {
+        DshToast.show(navContext, '新建会话失败：$error', kind: DshToastKind.error);
       }
-    }());
+    }
   }
 
   /// 抽屉连接行的详情（换设备 / 断开重配）。

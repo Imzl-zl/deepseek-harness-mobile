@@ -55,6 +55,11 @@ export const ERROR_TABLE = {
   // 新建会话(commands.ts:107,114)
   'workspace/not-found': 'disable-and-annotate',
   'agent-preset/conflict': 'disable-and-annotate',
+  // 工作区改名(workspace-controller/src/commands.ts:80-87)：新标题撞上另一个
+  // 已注册工作区。**不是故障** —— 手机上要提示"这个名字已被占用"，让用户改一个；
+  // 不收进这张表就会被归一成 `internal` → `log-and-retry`，
+  // 用户对着一个永远重试也不好的对话框反复点（`:19-22` 记的正是这条）。
+  'workspace/name-conflict': 'disable-and-annotate',
   // 网关面(gateway/src/index.ts、settings-controller/src/index.ts)
   'gateway/bad-request': 'report-defect', // 我们发的参数宿主不认 = 我们的缺陷
   // 归档面(workspace-controller/src/commands.ts:172-178)：会话还有在跑的活动，

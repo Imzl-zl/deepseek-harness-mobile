@@ -126,6 +126,33 @@ export interface WorkspacesPort {
 
   /** 取消置顶。返回置顶全集（**幂等**：没置顶过的 id 也成功，照 `commands.ts:218-226`）。 */
   unpin(sessionId: string): Promise<readonly string[]>
+
+  /**
+   * 改工作区标题。
+   *
+   * DSH：`@Remote` 的 `rename`（`packages/api/workspace-controller/src/index.ts:120`）
+   * → `commands.ts:72-89`。请求 `{workspaceId, title}`（`types.ts:76-80`）。
+   *
+   * 两条拒绝是**信息**不是故障，且都在 `ERROR_TABLE` 里、原样到手机：
+   * - 空标题 → `gateway/bad-request`（`commands.ts:75-77`，先 `trim()` 再判）；
+   * - 撞别的已注册工作区名 → `workspace/name-conflict`（`commands.ts:80-87`，
+   *   **与自己的名字相同不算冲突**，那条会直接返回旧视图不落盘）。
+   *
+   * @returns 改后的工作区视图（同一行的 `WorkspaceRow`）—— 调用方只刷新那一行即可。
+   */
+  rename(workspaceId: string, title: string): Promise<WorkspaceRow>
+
+  /**
+   * 注销一个工作区（**只删注册，不删目录、不删会话**）。
+   *
+   * DSH：`@Remote` 的 `delete`（`index.ts:130`）→ `commands.ts:97-106`。
+   * 请求 `{workspaceId}`（`types.ts:88-90`），返回 `{deleted: true}`（`:93-95`）。
+   *
+   * 认不出的 id → `workspace/not-found`（`commands.ts:101`）。
+   * 「目录与会话都留着」这一点写在宿主的方法注释里（`commands.ts:94`），
+   * 不是我们的推断 —— 手机上的确认文案要照这个说，别写成"删除项目"。
+   */
+  delete(workspaceId: string): Promise<void>
 }
 
 /**
@@ -233,6 +260,34 @@ export function createWorkspacesPort(
         controller.unpinSession({ sessionId: sessionId as DshSessionId }),
       )
       return value.pinnedSessionIds.map(String)
+    },
+
+    async rename(workspaceId, title) {
+      // **不在这里判空 / trim**：宿主自己 `trim()` 后判空（`commands.ts:74-77`），
+      // 在那儿拒绝会得到 `gateway/bad-request`。这一层再判一次等于把同一条规则
+      // 写两个地方，而两处的 `trim` 语义迟早漂移（手机侧要的是"原文发给宿主"）。
+      const value = await asProtocolError(() =>
+        controller.rename({
+          workspaceId: workspaceId as DshWorkspaceId,
+          title,
+        }),
+      )
+      // 只回改后的那一行：调用方按 `workspaceId` 替换，不必再读一次基线。
+      return {
+        workspaceId: String(value.workspace.workspaceId),
+        title: value.workspace.title,
+        path: value.workspace.path,
+        sessionIds: value.workspace.sessionIds.map(String),
+        createdAt: value.workspace.createdAt,
+      }
+    },
+
+    async delete(workspaceId) {
+      // 宿主回 `{deleted: true}`（`types.ts:93-95`）：除了"没有抛错"没有别的信息，
+      // 所以端口层收敛成 `void` —— 把 `deleted` 传上去只会诱使调用方去判一个恒真的值。
+      await asProtocolError(() =>
+        controller.delete({ workspaceId: workspaceId as DshWorkspaceId }),
+      )
     },
   }
 }

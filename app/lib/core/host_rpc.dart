@@ -42,6 +42,7 @@ import '../model/permission.dart' show PermissionCatalog;
 import '../model/plugins.dart' show PluginJob;
 import '../model/skill.dart' show SkillEntry;
 import '../model/usage_summary.dart' show UsageSummary;
+import '../model/workspace.dart' show WorkspaceGroup;
 import '../model/workspace_files.dart' show FileListing, FilePage;
 import 'endpoint.dart' show Endpoint;
 import 'event_fields.dart';
@@ -312,6 +313,25 @@ abstract interface class HostWrites {
   Future<List<String>?> moveWorkspace({
     required String workspaceId,
     required String? beforeWorkspaceId,
+    required String requestId,
+  });
+
+  /// 改工作区标题（`workspace.rename`），回改后的那一行（`null` = 应答认不出）。
+  ///
+  /// `title` **原样发**：宿主自己 `trim` 并判空/重名
+  /// （`workspace-controller/src/commands.ts:74-87`）。
+  Future<WorkspaceGroup?> renameWorkspace({
+    required String workspaceId,
+    required String title,
+    required String requestId,
+  });
+
+  /// 注销一个工作区注册（`workspace.delete`）。
+  ///
+  /// 只删注册：目录与会话都留着。`null` = 应答认不出（调用方**不要**动本地表），
+  /// `true` = 宿主确认删掉了。
+  Future<bool?> deleteWorkspace({
+    required String workspaceId,
     required String requestId,
   });
 

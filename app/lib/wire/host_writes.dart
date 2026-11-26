@@ -16,6 +16,7 @@ import '../core/setting_section.dart';
 import '../core/sync_client.dart';
 import '../model/chat_item.dart' show ModelRef;
 import '../model/command.dart' show CommandOutcome;
+import '../model/workspace.dart' show WorkspaceGroup;
 import 'rpc/command.dart' as wire;
 import 'rpc/interaction.dart' as wire;
 import 'rpc/job.dart' as wire;
@@ -253,6 +254,28 @@ final class WireHostWrites implements HostWrites {
     client,
     workspaceId: workspaceId,
     beforeWorkspaceId: beforeWorkspaceId,
+    requestId: requestId,
+  );
+
+  @override
+  Future<WorkspaceGroup?> renameWorkspace({
+    required String workspaceId,
+    required String title,
+    required String requestId,
+  }) => wire.workspaceRename(
+    client,
+    workspaceId: workspaceId,
+    title: title,
+    requestId: requestId,
+  );
+
+  @override
+  Future<bool?> deleteWorkspace({
+    required String workspaceId,
+    required String requestId,
+  }) => wire.workspaceDelete(
+    client,
+    workspaceId: workspaceId,
     requestId: requestId,
   );
 
