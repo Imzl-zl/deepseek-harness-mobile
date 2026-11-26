@@ -2,37 +2,30 @@
 
 > 覆盖快照；正式契约在 docs，因果在决策笔记，稳定命令在 tools。
 
-## 现在（2026-11-25 · v0.2.24 / connector 0.1.31 已正式发布）
+## 现在（2026-11-26 · v0.2.25 / connector 0.1.32 已正式发布）
 
-用户在已知真机/真实GUI缺口后明确要求发版，已提交/推送本轮修复并公开发行。未安装到运行profile、未重启用户DSH、未改两部手机或真实设备表。
+用户在问「可以发版吧」后要求直接执行，已提交/推送本轮两项改动并公开发行。未安装到运行profile、未重启用户DSH、未改两部手机或真实设备表。
 
-- 发行提交 f07b0378cc15cc98aebfbfd56a239e5de2e5c161；App v0.2.24（基础27）与connector-v0.1.31两个annotated tag均指向该提交。
-- [发行页](https://github.com/Imzl-zl/deepseek-harness-mobile/releases/tag/v0.2.24) 非draft/非prerelease，三APK与TGZ全部uploaded。
-- APK体积：arm64 **28,736,956B / 27.4MiB**、v7a25,032,748B、x64 31,227,322B；TGZ207,647B。
-- 三APK实际code **v7a1027 / arm642027 / x644027**，versionName0.2.24，包名io.github.imzlzl.dsh_mobile；aapt/apksigner每项exit0。
-- 同v0.2.23发行证书 SHA256 c0a552257833d3d1f0b7ae9da94885e783f7fb361646390d39d8b6172519acdb，RSA4096/v2签名通过；不要求卸载覆盖更新。
-- npm **latest=0.1.31**，Trusted Publisher首run成功，SLSA v1 provenance已核验；未手动重发或修改已发内容。
-- **重复发布run仍有一次E409**：第二标签run45446419975的前置/30秒重查未见registry传播，首次run45446419955已成功且npm实际0.1.31可读取。不要将该红run说成版本未发布，也不宣称所有发布run都绿。
-- 后续仅SDK版本code解释/回归维护提交30bd46c；其CI99成功。生产计数策略未改，基础27与ARM64实际2027不同来自Flutter拆ABI偏移，不是漏参。
+- 发行提交 283a6dbc86f935394ea19c6700d46360be57023b（两个提交：43de918 表格滚动条、283a6db 工作区行）；App v0.2.25（基础28）与connector-v0.1.32两个annotated tag均指向它。
+- [发行页](https://github.com/Imzl-zl/deepseek-harness-mobile/releases/tag/v0.2.25) 非draft/非prerelease，三APK与TGZ全部uploaded；notes已手写本版内容与「插件需同升0.1.32」要求。
+- APK体积：arm64 **28,802,492B / 27.5MiB**、v7a25,049,132B、x64 31,227,322B；TGZ207,856B。
+- 三APK实际code**本轮未实测**（CI日志无aapt抽码步骤）：按上版规律预计 v7a1028 / arm642028 / x644028，**装机时应回读确认**，不要把预计写成实测。
+- npm **latest=0.1.32**，provenance已published。
+- **重复发布run仍有一次E409**（本次45747831392）：`connector-v0.1.32`那条45747831437先成功（35s），`v*`那条晚到撞「Cannot publish over previously staged version」。npm实际0.1.32可读、latest已指向它。不要把该红run说成版本未发布，也不宣称发布run全绿。
 
 ## 本轮主要修复
 
-- 真实未升级WebSocket的close不等待不存在的回执，在途HttpClient可取消；迟到connect不复活握手。
-- 路径探测逐条真实握手即反馈，任一允许路径可确认；秘密仍等用户确认。SVG自带标准4码元静区，回归不补边。
-- 安装级deviceCode长期保存，正常升级缺码取当前完整槽实际helloDeviceId，重配/清配对保留；鉴权密钥/devId/令牌仍轮换，不采硬件ID。
-- 旧定位按目标电脑公钥/pcId读，clear前持久非凭据hint；credentials_v2单原子JSON，与迁移/保存单写链；坏新blob/读错不默清、Android resetOnError:false。
-- 成功回执立即await保存，取消额外完成落盘门；保存重试不重新提交秘密。
-- 登记串行捕获旧集合replacesAll；有效新身份业务鉴权才裁当代快照，旧重连不删除未来行。
-- 设备deleteMany一批一次提交，本地应答不等公网/无关读面；名册FIFO有pending/synced/error/deferred日志与面板状态。
-- 连接卡保存不盯无关relay额外5.5s；明确撤销4003/not-paired及时给手机终态，普通停止1000不清凭据。
+- **表格横向滚动条压住最后一行**：根因是表格那层`Scrollbar`把`MediaQuery.padding`当自身padding（`material/scrollbar.dart:360`），条按`widgets/scrollbar.dart:610`被底部安全区顶进内容（inset34实测压33px）、按`:603,408`被左右安全区错位并缩短。修法：`DshMarkdown`对整棵子树`removePadding(removeLeft/right/bottom)`，`tablePadding.bottom`4→8让出条高。回归5条，变异4项全红。
+- **工作区行三个动作**：`workspace.rename`/`workspace.delete`（宿主`workspace-controller/src/index.ts:119,129`，都是`@Remote`）+组头「＋」在该组内新建会话；两个新建入口共用`_newSessionIn`。标题原样发不trim（trim/判空/重名是宿主`commands.ts:74-87`的事）。新增错误码`workspace/name-conflict`两侧同步、契约§3.1补齐。
+- **明确不做「在文件夹中显示」**：宿主确有`openWorkspacePath(reveal)`（`session-controller/src/index.ts:347-354`），但它在电脑弹文件管理器、远程用户看不到结果（用户原话「我是远程，你就是打开了我又看不了」）。
 
 ## 验证与构建
 
-- 本轮fresh发行前14门禁全绿（141.608秒），冻结751个source/test/config文件哈希前后相同；App2026/2026、发行源码connector938/938、relay183/183，format421files0changed/analyze0。
-- 协议454/26/49、boundary988、size/rpc/图标/工具路径均PASS；关键回归先红后绿和内存变异有效。
-- [同SHA CI98](https://github.com/Imzl-zl/deepseek-harness-mobile/actions/runs/45442484193) success后才推tag；[Release27](https://github.com/Imzl-zl/deepseek-harness-mobile/actions/runs/45446420026) success。
-- 追加同ABI发行计数捕获回归后当前main connector **940/940**，tsc0；[维护CI99](https://github.com/Imzl-zl/deepseek-harness-mobile/actions/runs/45448421650) success。
-- 四项下载SHA256与GHdigest/size一致；[资产核验](<app/build/release-meta/downloads/task10-verified-assets.json>)、[包manifest](<app/build/release-meta/downloads/task10-tgz-package.json>)在忽略生成目录。TGZ确含lib/client、deviceCode/replacesAll/schedule和roster反馈。
+- connector **944/944**、tsc0、build通过；App **2040/2040**、analyze0。
+- 协议454/26/49、boundary994、size、图标均PASS。
+- [同SHA CI100](https://github.com/Imzl-zl/deepseek-harness-mobile/actions/runs/45747098021) success后才推tag；[Release](https://github.com/Imzl-zl/deepseek-harness-mobile/actions/runs/45747831452) success。
+- 尺寸棘轮本轮**提了三处**（app_model 5250→5320、main 1950→1995、session_drawer 1400→1650），各在表内写明原因；同时把`DshGroupAction`抽去`ui/dsh_group_action.dart`做了一次真削减。方法数54→56、错误码35→36、`repo.info`金样方法清单+2四处同步。
+
 
 ## 未验证与恢复边界
 
@@ -45,4 +38,4 @@
 
 [配对连续性](<docs/subsystems/pairing-v2.md>)、[存储](<docs/subsystems/remote-channel.md>)、[手机持久化](<docs/subsystems/app-channel-client.md>)、[设备管理](<docs/subsystems/connector-and-relay.md>)为真值；原因在11-24三篇implemented笔记和 [ABI计数查证](<.agents/notes/implemented/2026-11-25-split-apk-version-code-verification.md>)。
 
-下一步由用户在原安装上覆盖升级v0.2.24并将电脑连接器更新0.1.31，验两手机码/重配回收/删除反馈；不先卸载或清数据。新建会话闪回未复现、数据面剩余收敛与多设备/状态/差异面真机复验仍保留。当前默认会话最近更新排序与出码全部现取LAN IPv4未变。
+下一步：在手机原安装上覆盖升级 v0.2.25，并把电脑插件更新到 0.1.32（**只升 App 不升插件时，工作区改名/删除会回 `connector/unsupported`**，功能不可用但不损坏数据）；随后验工作区行三个动作与宽表滚动条在真机上的表现。真机摄像头扫码、两手机覆盖安装/原生断电、真实当前GUI React端到端仍未验；不要宣称秒扫或生产毫秒。
