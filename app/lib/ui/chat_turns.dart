@@ -73,6 +73,18 @@ class UserTurn extends StatelessWidget {
                 // **`sizeOf`**：用户气泡在列表里，而 `MediaQuery.of(context).size`
                 // 会让**每一条气泡**都依赖整份 MediaQueryData —— 键盘弹起时
                 // 一屏气泡全部重建。这里只需要宽度。
+                //
+                // 实测复核（2026-11-26，`const` 子树 + 逐项改 `MediaQueryData`）：
+                //
+                // | 变更 | `of` | `paddingOf` | `sizeOf` |
+                // |---|---|---|---|
+                // | 键盘（viewInsets）| 重建 | 不重建 | 不重建 |
+                // | 安全区（padding）| 重建 | 重建 | 不重建 |
+                // | 旋转（size）| 重建 | 不重建 | 重建 |
+                //
+                // 所以这条注释成立，**别再写成"`of` 与 `sizeOf` 等价"** ——
+                // 第一版探针每轮 new 一个 widget，测到的是父级重建，得出过
+                // "三者等价"的错结论。
                 maxWidth: MediaQuery.sizeOf(context).width * 0.82,
               ),
               padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),

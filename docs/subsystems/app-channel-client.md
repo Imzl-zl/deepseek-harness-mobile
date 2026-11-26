@@ -351,6 +351,16 @@ abstract class Outbox {
   `IntrinsicColumnWidth` / `FixedColumnWidth` 时才套横向 `SingleChildScrollView`
   （`flutter_markdown_plus-1.0.12/lib/src/builder.dart:447-463`），默认 `FlexColumnWidth`
   （`style_sheet.dart:143`）没有横滚出路 ⇒ 我们固定用 `IntrinsicColumnWidth`。
+- **横向条的位置**：那层 `Scrollbar` 把 `MediaQuery.paddingOf(context)` 当成自己的
+  padding（`packages/flutter/lib/src/material/scrollbar.dart:360`），而这个 padding
+  在画笔里用在三处（`packages/flutter/lib/src/widgets/scrollbar.dart`）：
+  `:610` 横向条 y、`:603` 横向条 x 起点、`:408,413` 轨道长。
+  该 padding 本是为"滚动条贴着屏幕边缘时避让刘海"准备的（`:293-296`），
+  而我们的滚动条永远在内容流内部 —— 于是 `DshMarkdown` 对整棵子树
+  `MediaQuery.removePadding(removeLeft/right/bottom: true)` 关掉这一路；
+  条与表格底边之间的净空由 `tablePadding.bottom`（4 + 4 = 8，条高 3 ⇒ 净空 5）给。
+  成因、被否方案、二阶影响与回归网见
+  `.agents/notes/implemented/2026-11-26-table-scrollbar-safe-area.md`。
 - **围栏识别**：`~~~` 与 ```` ``` ```` 等价（`markdown-7.3.1/lib/src/block_syntaxes/
   fenced_code_block_syntax.dart:13`），行内 HTML 归一必须按"同记号、长度不短于开围栏、
   未闭合一直算围栏内"逐行扫描，否则会改写围栏内的源码。

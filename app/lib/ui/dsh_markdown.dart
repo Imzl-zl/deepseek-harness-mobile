@@ -138,6 +138,16 @@ String _convertInlineTags(String text) {
   return out;
 }
 
+/// 表格内容底部、横向滚动条之上要留的净空（px）。
+///
+/// 横向条画在滚动盒子**底部内侧**，占 `thickness`（主题 3，
+/// `theme/dsh_theme.dart` 的 `scrollbarTheme`），所以"表格最后一行到条"的
+/// 净空 = `tablePadding.bottom - thickness`。4 + 4 = 8 ⇒ 净空 5。
+///
+/// 它只解决"条贴着字"，不解决"条压着字"：后者是 `padding.bottom` 漏进
+/// `Scrollbar` 造成的，由 `DshMarkdown.build` 里的 `MediaQuery.removePadding` 管。
+const double _kScrollbarClearance = 4;
+
 /// 把一个 Markdown 串渲染成 DSH 风格。
 ///
 /// Note: 为什么正文是 14/24、为什么 compact 是 13/20、为什么表格用
@@ -207,30 +217,66 @@ class DshMarkdown extends StatelessWidget {
     final size = compact ? type.secondary : type.body;
     final line = compact ? type.secondaryLine : type.bodyLine;
     final body = TextStyle(fontSize: size, height: line / size, color: color);
-    return MarkdownBody(
-      // **行内 HTML 先归一成 Markdown**：否则 `<b>` 会原样露出
-      //（探针实测，见 `normalizeInlineHtml` 的说明）。
-      data: normalizeInlineHtml(data),
-      selectable: selectable,
-      // `softLineBreak`：Markdown 里的单个换行**也换行**。
-      //
-      // 这是刻意的偏离：CommonMark 规定单个换行当空格，而**聊天场景里
-      // 用户按回车就是想要换行**。DSH 桌面端的表现也是换行。
-      softLineBreak: true,
-      // **代码块自己接管**：默认渲染只是一个横滚的 `<pre>`，而 DSH 的代码块
-      // 有头部工具条（语言 / 自动换行 / 复制，`ui-primitives/src/CodeBlock.tsx`）。
-      // 这跟"有没有语法高亮"是两件事 —— 工具条不需要高亮器。
-      builders: {
-        'pre': _DshCodeBlockBuilder(),
-        // **两个都给才挂**：只有词表没有回调（或反过来）时不该长出点不动的链接
-        // —— 那种入口比没有更糟（用户会以为功能坏了）。
-        if (fileMentions != null && onOpenFile != null)
-          'code': _FileMentionCodeBuilder(
-            targets: fileMentions!,
-            onOpen: onOpenFile!,
-          ),
-      },
-      styleSheet: _sheet(context, c, body),
+    // **安全区不许漏进 Markdown 内部**（2026-11-26 真机：横向滚动条压住最后一行）。
+    //
+    // 宽表那层 `Scrollbar` 是 Material 的，它把 `MediaQuery.paddingOf(context)`
+    // 原样当成自己的 padding（`packages/flutter/lib/src/material/scrollbar.dart:360`）。
+    // 那个 padding 是**有意设计**（`widgets/scrollbar.dart:293-296` 的文档：
+    // "typically set to MediaQueryData.padding to avoid partial obstructions such as
+    // display notches"）—— 但它的前提是**滚动条贴着屏幕边缘**，而我们这里不是。
+    // 实测四个方向各漏了一半：
+    //
+    // | 方向 | 公式 | 漏进来的后果 |
+    // |---|---|---|
+    // | `bottom` | `y = h - thickness - crossMargin - pad.bottom`（`:610`）| 条被顶进最后一行（inset 34 ⇒ 压住 33px）|
+    // | `left` | 水平条 `x` 起点 = `pad.left`（`:603`）| 条整体右移 44、与表格左缘错位 |
+    // | `right` | 水平轨道长 = 视口 − (`pad.left`+`pad.right`)（`:408,413`）| 条缩短 88，短于表格宽度 |
+    //
+    // 一句话：安全区属于**页面**（输入栏 / 底部条要不要让开），不属于内容流里的
+    // 一次横滚 —— 我们的滚动条永远在内容流中，不在屏幕边缘，避开屏幕边缘是
+    // 页面那层的责任（聊天页输入栏自己吃 `padding.bottom + 6`）。
+    //
+    // **为什么是整棵子树而不是只包表格**：代码块（`builder.dart:350-357`）用的是
+    // 同一个 `Scrollbar`，同一条病；只修表格会留下第二份规则。
+    //
+    // **代价（实测过，不是推断）**：`removePadding` 调 `MediaQuery.of(context)`，
+    // 实测它与 `sizeOf` / `paddingOf` 的重建粒度**完全相同**（viewInsets / size /
+    // padding 任一变化都触发重建），所以这里没有额外开销 ——
+    // `chat_turns.dart:73-76` 那条"用 `sizeOf` 避免整份依赖"的注释**不成立**
+    // （2026-11-26 探针：三种读法计数恒等）。
+    //
+    // Note: 成因三条链、被否方案（fork 包改 `padding` / 只加大 `tablePadding`）
+    // 与回归网见 `.agents/notes/implemented/2026-11-26-table-scrollbar-safe-area.md`。
+    return MediaQuery.removePadding(
+      context: context,
+      removeLeft: true,
+      removeRight: true,
+      removeBottom: true,
+      child: MarkdownBody(
+        // **行内 HTML 先归一成 Markdown**：否则 `<b>` 会原样露出
+        //（探针实测，见 `normalizeInlineHtml` 的说明）。
+        data: normalizeInlineHtml(data),
+        selectable: selectable,
+        // `softLineBreak`：Markdown 里的单个换行**也换行**。
+        //
+        // 这是刻意的偏离：CommonMark 规定单个换行当空格，而**聊天场景里
+        // 用户按回车就是想要换行**。DSH 桌面端的表现也是换行。
+        softLineBreak: true,
+        // **代码块自己接管**：默认渲染只是一个横滚的 `<pre>`，而 DSH 的代码块
+        // 有头部工具条（语言 / 自动换行 / 复制，`ui-primitives/src/CodeBlock.tsx`）。
+        // 这跟"有没有语法高亮"是两件事 —— 工具条不需要高亮器。
+        builders: {
+          'pre': _DshCodeBlockBuilder(),
+          // **两个都给才挂**：只有词表没有回调（或反过来）时不该长出点不动的链接
+          // —— 那种入口比没有更糟（用户会以为功能坏了）。
+          if (fileMentions != null && onOpenFile != null)
+            'code': _FileMentionCodeBuilder(
+              targets: fileMentions!,
+              onOpen: onOpenFile!,
+            ),
+        },
+        styleSheet: _sheet(context, c, body),
+      ),
     );
   }
 
@@ -362,6 +408,13 @@ class DshMarkdown extends StatelessWidget {
       // - DSH 的 `td { max-width: min(30vw, 320px); min-width: 100px }`
       //   （`:250-262`）在 `IntrinsicColumnWidth` 下没有等价物。
       tableColumnWidth: const IntrinsicColumnWidth(),
+      // **内容底部给横向条让位**（2026-11-26）。条画在滚动盒子底部内侧
+      // （`widgets/scrollbar.dart:606-611`），而 `tablePadding` 正是那层
+      // `SingleChildScrollView` 的 padding（`builder.dart:456-458`）——
+      // 所以这里的 bottom 就是"表格最后一行到条"的净空。
+      // 主题 thickness = 3（`theme/dsh_theme.dart`），留 8：条上方 5px 间隙。
+      // 默认值 4（`style_sheet.dart:139`）不够，条会贴着末行字。
+      tablePadding: const EdgeInsets.only(bottom: 4 + _kScrollbarClearance),
       // **别让它常驻**：表格那层 `Scrollbar` 的拇指可见性默认交给平台
       // （`builder.dart:451-455` 只是把 `tableScrollbarThumbVisibility` 原样传下去；
       // 桌面上解析成"一直显示"），于是表格一出现就压一条粗条在正文里。
